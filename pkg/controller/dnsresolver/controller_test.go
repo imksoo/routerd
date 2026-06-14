@@ -253,6 +253,38 @@ func dnsResolverRouterWithPartialUpstreamFrom(source api.StatusValueSourceSpec) 
 	}}}
 }
 
+func dnsResolverRouterWithBootstrapFrom(source api.RequiredFieldStatusValueSourceSpec) *api.Router {
+	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
+			Metadata: api.ObjectMeta{Name: "lan-resolver"},
+			Spec: api.DNSResolverSpec{
+				Listen: []api.DNSResolverListenSpec{{Name: "lan", Addresses: []string{"127.0.0.1"}, Port: 53}},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSForwarder"},
+			Metadata: api.ObjectMeta{Name: "default"},
+			Spec: api.DNSForwarderSpec{
+				Resolver:  "DNSResolver/lan-resolver",
+				Match:     []string{"."},
+				Upstreams: []string{"DNSUpstream/default-nextdns-doh"},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSUpstream"},
+			Metadata: api.ObjectMeta{Name: "default-nextdns-doh"},
+			Spec: api.DNSUpstreamSpec{
+				Protocol:      "doh",
+				Address:       "dns.nextdns.io",
+				Path:          "/abc123",
+				BootstrapFrom: []api.RequiredFieldStatusValueSourceSpec{source},
+				Bootstrap:     []string{"1.1.1.1"},
+			},
+		},
+	}}}
+}
+
 // A forward source whose only upstream is derived from another resource's status
 // (e.g. a DHCPv6Information server's dnsServers) must wait as Pending until that
 // status is populated, not fail validation during bootstrap.
@@ -373,6 +405,68 @@ func TestReconcileConvergesFromDegradedWhenUpstreamResolves(t *testing.T) {
 	}
 	if len(spec.Sources[1].Upstreams) != 1 || spec.Sources[1].Upstreams[0] != "udp://[2409:10:3d60:1200:1eb1:7fff:fe73:76d8]:53" {
 		t.Fatalf("ngn-aftr upstreams = %#v", spec.Sources[1].Upstreams)
+	}
+}
+
+func TestReconcileResolvesBootstrapFromStatus(t *testing.T) {
+	store := mapStore{
+		api.NetAPIVersion + "/DHCPv6Information/wan-info": {"dnsServers": []any{"2409:10:3d60:1200:1eb1:7fff:fe73:76d8"}},
+	}
+	controller := Controller{
+		Router: dnsResolverRouterWithBootstrapFrom(api.RequiredFieldStatusValueSourceSpec{Resource: "DHCPv6Information/wan-info", Field: "dnsServers"}),
+		Store:  store,
+		DryRun: true,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
+	if status["phase"] != "Applied" {
+		t.Fatalf("status = %#v", status)
+	}
+
+	spec, err := controller.Router.Spec.Resources[0].DNSResolverSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err = controller.attachForwarders("lan-resolver", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec = resolverruntime.NormalizeSpec(spec)
+	spec, waiting, blockReason, err := controller.expandSpec(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blockReason != "" || len(waiting) != 0 {
+		t.Fatalf("waiting=%#v blockReason=%q", waiting, blockReason)
+	}
+	if len(spec.Sources) != 1 {
+		t.Fatalf("sources = %#v", spec.Sources)
+	}
+	want := []string{"2409:10:3d60:1200:1eb1:7fff:fe73:76d8", "1.1.1.1"}
+	if strings.Join(spec.Sources[0].BootstrapResolver, ",") != strings.Join(want, ",") {
+		t.Fatalf("bootstrapResolver = %#v, want %#v", spec.Sources[0].BootstrapResolver, want)
+	}
+}
+
+func TestReconcilePendingWhenBootstrapFromUnresolved(t *testing.T) {
+	store := mapStore{}
+	controller := Controller{
+		Router: dnsResolverRouterWithBootstrapFrom(api.RequiredFieldStatusValueSourceSpec{Resource: "DHCPv6Information/wan-info", Field: "dnsServers"}),
+		Store:  store,
+		DryRun: true,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
+	if status["phase"] != "Pending" {
+		t.Fatalf("status = %#v", status)
+	}
+	waiting, _ := status["waiting"].([]map[string]string)
+	if len(waiting) != 1 || waiting[0]["reason"] != "BootstrapResolverUnresolved" {
+		t.Fatalf("waiting = %#v", status["waiting"])
 	}
 }
 

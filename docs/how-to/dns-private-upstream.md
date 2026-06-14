@@ -143,7 +143,7 @@ Some private DNS providers serve their resolver endpoint from a domain that the 
 
 Add a conditional source for the provider domain that points to a public resolver or to access-network DNS. Keep account IDs (e.g. provider profile IDs) out of shared examples; put them only in your local secrets file or in a per-host YAML overlay.
 
-The `DNSUpstream.spec.bootstrap` field provides the same protection at a finer granularity: it specifies which resolvers to use for resolving the upstream endpoint name itself, before the encrypted transport is established.
+The `DNSUpstream.spec.bootstrap` field provides the same protection at a finer granularity: it specifies which resolvers to use for resolving the upstream endpoint name itself, before the encrypted transport is established. Use `bootstrapFrom` when those resolver addresses come from another resource status, such as DHCPv6-provided DNS servers.
 
 ## Interface binding
 

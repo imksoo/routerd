@@ -112,7 +112,9 @@ explicit with resource ownership or ordering and keep the resolver pending
 until the interface exists.
 
 `DNSUpstream.spec.bootstrap` supplies DNS server addresses for resolving DoH and DoT endpoint names.
-This is useful when the endpoint name is only resolvable inside an access network.
+`DNSUpstream.spec.bootstrapFrom` can derive those resolver addresses from another
+resource status, such as `DHCPv6Information/<name>.dnsServers`.
+These fields are useful when the endpoint name is only resolvable inside an access network.
 
 Use `addressFrom` when the upstream server list comes from another resource
 status.

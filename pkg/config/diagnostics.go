@@ -946,6 +946,14 @@ func validateDNSUpstream(resourceID string, spec api.DNSUpstreamSpec) error {
 			return fmt.Errorf("%s spec.addressFrom[%d].field is required", resourceID, i)
 		}
 	}
+	for i, source := range spec.BootstrapFrom {
+		if strings.TrimSpace(source.Resource) == "" {
+			return fmt.Errorf("%s spec.bootstrapFrom[%d].resource is required", resourceID, i)
+		}
+		if strings.TrimSpace(source.Field) == "" {
+			return fmt.Errorf("%s spec.bootstrapFrom[%d].field is required", resourceID, i)
+		}
+	}
 	if strings.EqualFold(spec.Protocol, "doh") && strings.TrimSpace(spec.Path) != "" && !strings.HasPrefix(strings.TrimSpace(spec.Path), "/") {
 		return fmt.Errorf("%s spec.path must start with /", resourceID)
 	}

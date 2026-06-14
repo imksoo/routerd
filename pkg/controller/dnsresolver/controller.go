@@ -340,6 +340,9 @@ func (c Controller) attachForwarders(resolverName string, spec api.DNSResolverSp
 				if len(upstream.Bootstrap) > 0 {
 					source.BootstrapResolver = append(source.BootstrapResolver, upstream.Bootstrap...)
 				}
+				if len(upstream.BootstrapFrom) > 0 {
+					source.BootstrapResolverFrom = append(source.BootstrapResolverFrom, requiredFieldStatusValueSources(upstream.BootstrapFrom)...)
+				}
 				if source.ViaInterface == "" && strings.TrimSpace(upstream.SourceInterface) != "" {
 					source.ViaInterface = upstream.SourceInterface
 				}
@@ -466,9 +469,15 @@ func (c Controller) expandSpec(spec api.DNSResolverSpec) (api.DNSResolverSpec, [
 			waiting = append(waiting, waitingForSource(source, upstreamWaiting)...)
 			continue
 		}
+		bootstrapResolvers, bootstrapWaiting := expandBootstrapResolvers(c.Store, source.BootstrapResolverFrom, source.BootstrapResolver)
+		if len(bootstrapWaiting) > 0 {
+			waiting = append(waiting, waitingForSource(source, bootstrapWaiting)...)
+			continue
+		}
 		source.Upstreams = upstreams
 		source.UpstreamFrom = nil
-		source.BootstrapResolver = expandStrings(c.Store, source.BootstrapResolver)
+		source.BootstrapResolver = bootstrapResolvers
+		source.BootstrapResolverFrom = nil
 		if (source.Kind == "forward" || source.Kind == "upstream") && len(source.Upstreams) == 0 && sourceHasDynamicUpstreams(spec.Sources[i]) {
 			continue
 		}
@@ -711,6 +720,38 @@ func expandStrings(store Store, values []string) []string {
 		}
 	}
 	return out
+}
+
+func expandBootstrapResolvers(store Store, sources []api.StatusValueSourceSpec, values []string) ([]string, []map[string]string) {
+	var out []string
+	var waiting []map[string]string
+	for _, source := range sources {
+		resolved := false
+		for _, value := range resourcequery.Values(store, source) {
+			if strings.TrimSpace(value) == "" {
+				continue
+			}
+			resolved = true
+			if list := decodeStringList(value); len(list) > 0 {
+				for _, item := range list {
+					if trimmed := strings.TrimSpace(item); trimmed != "" {
+						out = append(out, trimmed)
+					}
+				}
+				continue
+			}
+			out = append(out, strings.TrimSpace(value))
+		}
+		if !resolved && !source.Optional {
+			waiting = append(waiting, map[string]string{
+				"field":  "bootstrapResolver",
+				"source": source.Resource,
+				"reason": "BootstrapResolverUnresolved",
+			})
+		}
+	}
+	out = append(out, expandStrings(store, values)...)
+	return compactStrings(out), waiting
 }
 
 func expandListenAddresses(store Store, listen api.DNSResolverListenSpec) ([]string, []map[string]string, string) {
@@ -1044,6 +1085,11 @@ func dnsResolverStatusRefs(spec api.DNSResolverSpec) []daemonapi.ResourceRef {
 		for _, resolver := range source.BootstrapResolver {
 			add(resolver)
 		}
+		for _, resolver := range source.BootstrapResolverFrom {
+			if ref, ok := resourcequery.SourceRef(resolver); ok {
+				refs = append(refs, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: ref.Kind, Name: ref.Name})
+			}
+		}
 	}
 	return refs
 }
@@ -1055,7 +1101,20 @@ func dnsUpstreamStatusRefs(spec api.DNSUpstreamSpec) []daemonapi.ResourceRef {
 			refs = append(refs, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: ref.Kind, Name: ref.Name})
 		}
 	}
+	for _, source := range spec.BootstrapFrom {
+		if ref, ok := resourcequery.SourceRef(source.StatusValueSourceSpec()); ok {
+			refs = append(refs, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: ref.Kind, Name: ref.Name})
+		}
+	}
 	return refs
+}
+
+func requiredFieldStatusValueSources(sources []api.RequiredFieldStatusValueSourceSpec) []api.StatusValueSourceSpec {
+	out := make([]api.StatusValueSourceSpec, 0, len(sources))
+	for _, source := range sources {
+		out = append(out, source.StatusValueSourceSpec())
+	}
+	return out
 }
 
 func statusRefResource(expr string) (string, string, bool) {
