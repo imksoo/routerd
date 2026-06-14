@@ -570,6 +570,33 @@ interfaces. `lastReconcileRemoved: true` means the most recent reconcile
 actually removed the address; it is normally `false` in steady state once the
 address is already absent.
 
+## Inspecting Ownership
+
+`MobilityPool` status exposes two ownership views:
+
+- `ownershipResolverOwnerTable` is the local resolver table used by `doctor sam`
+  and FIB policy checks.
+- `ownershipResolverControlPlaneOwnerTable` is the operator-facing
+  control-plane table. It keeps one deterministic row per observed mobility
+  address and includes the selected owner node/provider/NIC/subnet/resource,
+  local evidence node/provider/NIC/subnet/resource/source, capture state,
+  advertise/suppression state, and conflict reason when present.
+
+Use `routerctl mobility owners` to inspect the control-plane table without
+pattern-matching raw status JSON:
+
+```sh
+routerctl mobility owners
+routerctl mobility owners --pool cloudedge --address 10.77.60.10/32 -o json
+```
+
+Rows are sorted by pool and address. When a remote provider owner overlaps local
+evidence, or when two fresh provider owners claim the same `/32`, the row state
+is `Conflict` and `conflictReason` explains the condition. Expired ownership
+events are not retained as live conflicts. `routerctl doctor sam` consumes the
+same ownership state for conflict checks and, with host checks enabled, compares
+local/provider-owned rows with the Linux main FIB.
+
 FreeBSD and other non-Linux hosts do not have live SAM capture yet. The
 controller no-ops and reports `SAM capture not implemented on this OS`.
 

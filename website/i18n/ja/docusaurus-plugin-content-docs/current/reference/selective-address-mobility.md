@@ -392,6 +392,22 @@ Linux での `proxy-arp` 捕捉では、routerd は以下を行います。
 
 ステータスではこれを `captureOSAddressAbsence` として報告します。`enforced: true` は、routerd が捕捉されたアドレスをローカル OS インターフェースに存在させないことを継続的に適用していることを示す監査フラグです。`lastReconcileRemoved: true` は、直近のリコンサイルで実際にそのアドレスを削除したことを示します。アドレスがすでに存在しない定常状態では通常 `false` です。
 
+## 所有権の確認
+
+`MobilityPool` status は 2 つの所有権ビューを公開します。
+
+- `ownershipResolverOwnerTable` は、`doctor sam` と FIB policy check が使うローカル resolver table です。
+- `ownershipResolverControlPlaneOwnerTable` は、運用者向けの control-plane table です。観測された mobility address ごとに決定的な 1 行を持ち、選択された owner node/provider/NIC/subnet/resource、local evidence node/provider/NIC/subnet/resource/source、capture state、advertise/suppression state、conflict reason を含みます。
+
+raw status JSON に依存せず control-plane table を確認するには、`routerctl mobility owners` を使います。
+
+```sh
+routerctl mobility owners
+routerctl mobility owners --pool cloudedge --address 10.77.60.10/32 -o json
+```
+
+行は pool と address でソートされます。remote provider owner が local evidence と重なる場合や、2 つの fresh provider owner が同じ `/32` を主張する場合、行の state は `Conflict` になり、`conflictReason` が理由を示します。期限切れの ownership event は live conflict としては残しません。`routerctl doctor sam` は同じ ownership state を conflict check に使い、host check が有効な場合は local/provider-owned 行と Linux main FIB も比較します。
+
 FreeBSD など Linux 以外のホストでは、ライブ SAM 捕捉は未対応です。コントローラーはホストを変更せず、`SAM capture not implemented on this OS` と報告します。
 
 Linux のライブデータプレーンは Azure + PVE 同一サブネットのラボでスモークテスト済みです。ただしプレリリースの動作であるため、本番利用前にプロバイダーとファイアウォールポリシーの実構成で検証してください。
