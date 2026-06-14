@@ -6,6 +6,7 @@ package bgp
 
 import (
 	"net"
+	"net/netip"
 	"testing"
 
 	"github.com/vishvananda/netlink"
@@ -58,12 +59,34 @@ func TestFilterLocalHostFIBRoutes(t *testing.T) {
 		"10.77.60.5/32":  {Prefix: "10.77.60.5/32", NextHops: []string{"10.255.0.41"}},
 		"10.77.60.11/32": {Prefix: "10.77.60.11/32", NextHops: []string{"10.255.0.41"}},
 	}
-	got := filterLocalHostFIBRoutes(routes, map[string]bool{"10.77.60.5/32": true})
+	got := filterLocalHostFIBRoutes(routes, localIPv4HostPrefixes([]localIPv4Address{{
+		Address: netip.MustParseAddr("10.77.60.5"),
+		Prefix:  netip.MustParsePrefix("10.77.60.0/24"),
+	}}))
 	if _, ok := got["10.77.60.5/32"]; ok {
 		t.Fatalf("local host route was kept: %#v", got)
 	}
 	if _, ok := got["10.77.60.11/32"]; !ok {
 		t.Fatalf("remote route was removed: %#v", got)
+	}
+}
+
+func TestInferPreferredSourceUsesConnectedAddressForRemoteMobilityPrefix(t *testing.T) {
+	got := inferPreferredSource("10.77.60.12/32", []localIPv4Address{
+		{Address: netip.MustParseAddr("10.255.70.4"), Prefix: netip.MustParsePrefix("10.255.70.4/31")},
+		{Address: netip.MustParseAddr("10.77.60.4"), Prefix: netip.MustParsePrefix("10.77.60.0/24")},
+	})
+	if got != "10.77.60.4" {
+		t.Fatalf("preferred source = %q, want 10.77.60.4", got)
+	}
+}
+
+func TestInferPreferredSourceDoesNotUseDestinationAddress(t *testing.T) {
+	got := inferPreferredSource("10.77.60.4/32", []localIPv4Address{
+		{Address: netip.MustParseAddr("10.77.60.4"), Prefix: netip.MustParsePrefix("10.77.60.0/24")},
+	})
+	if got != "" {
+		t.Fatalf("preferred source = %q, want empty for local destination", got)
 	}
 }
 

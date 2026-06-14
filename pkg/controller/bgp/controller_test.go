@@ -94,6 +94,7 @@ type fakeServer struct {
 	applied          bgpdaemon.AppliedConfig
 	deletedPathUUIDs [][]byte
 	resetRequests    []*gobgpapi.ResetPeerRequest
+	callLog          []string
 
 	policyRequest     *gobgpapi.SetPoliciesRequest
 	policyAssignment  *gobgpapi.PolicyAssignment
@@ -149,6 +150,7 @@ func (s *fakeServer) StartBgp(_ context.Context, req *gobgpapi.StartBgpRequest) 
 
 func (s *fakeServer) AddPeer(_ context.Context, req *gobgpapi.AddPeerRequest) error {
 	s.adds++
+	s.callLog = append(s.callLog, "AddPeer:"+req.GetPeer().GetConf().GetNeighborAddress())
 	if s.peers == nil {
 		s.peers = map[string]*gobgpapi.Peer{}
 	}
@@ -171,6 +173,7 @@ func (s *fakeServer) UpdatePeer(_ context.Context, req *gobgpapi.UpdatePeerReque
 	s.updates++
 	peer := req.GetPeer()
 	address := peer.GetConf().GetNeighborAddress()
+	s.callLog = append(s.callLog, "UpdatePeer:"+address)
 	if s.peers == nil {
 		s.peers = map[string]*gobgpapi.Peer{}
 	}
@@ -211,6 +214,7 @@ func (s *fakeServer) SaveAppliedConfig(_ context.Context, config bgpdaemon.Appli
 
 func (s *fakeServer) DeletePeer(_ context.Context, req *gobgpapi.DeletePeerRequest) error {
 	s.deletes++
+	s.callLog = append(s.callLog, "DeletePeer:"+req.GetAddress())
 	delete(s.peers, req.GetAddress())
 	return nil
 }
@@ -228,6 +232,7 @@ func (s *fakeServer) ListPeer(_ context.Context, _ *gobgpapi.ListPeerRequest, fn
 
 func (s *fakeServer) SetPolicies(_ context.Context, req *gobgpapi.SetPoliciesRequest) error {
 	s.policies++
+	s.callLog = append(s.callLog, "SetPolicies")
 	s.policyRequest = req
 	if s.definedSets == nil {
 		s.definedSets = map[string]*gobgpapi.DefinedSet{}
@@ -246,6 +251,7 @@ func (s *fakeServer) SetPolicies(_ context.Context, req *gobgpapi.SetPoliciesReq
 
 func (s *fakeServer) SetPolicyAssignment(_ context.Context, req *gobgpapi.SetPolicyAssignmentRequest) error {
 	s.assigns++
+	s.callLog = append(s.callLog, "SetPolicyAssignment")
 	s.policyAssignment = req.GetAssignment()
 	if s.assignments == nil {
 		s.assignments = map[string]*gobgpapi.PolicyAssignment{}
@@ -333,6 +339,24 @@ func policyRequestHasPolicy(req *gobgpapi.SetPoliciesRequest, name string) bool 
 		}
 	}
 	return false
+}
+
+func indexString(values []string, target string) int {
+	for i, value := range values {
+		if value == target {
+			return i
+		}
+	}
+	return -1
+}
+
+func indexStringPrefix(values []string, prefix string) int {
+	for i, value := range values {
+		if strings.HasPrefix(value, prefix) {
+			return i
+		}
+	}
+	return -1
 }
 
 func policyRequestHasStatement(req *gobgpapi.SetPoliciesRequest, policyName, statementName string) bool {
@@ -849,7 +873,7 @@ func TestReconcileDoesNotRefreshUnchangedImportPolicy(t *testing.T) {
 	}
 }
 
-func TestReconcileHydratesAppliedImportPolicyAfterRestart(t *testing.T) {
+func TestReconcileAdoptsRestoredPoliciesAfterControllerRestart(t *testing.T) {
 	router := bgpRouterWithImportPrefixes("10.250.0.0/24")
 	peerResource := router.Spec.Resources[1]
 	peerSpec := peerResource.Spec.(api.BGPPeerSpec)
@@ -868,6 +892,7 @@ func TestReconcileHydratesAppliedImportPolicyAfterRestart(t *testing.T) {
 	}
 	server.policies = 0
 	server.assigns = 0
+	server.callLog = nil
 	second := Controller{
 		Router: router,
 		Store:  mapStore{},
@@ -878,13 +903,107 @@ func TestReconcileHydratesAppliedImportPolicyAfterRestart(t *testing.T) {
 		t.Fatalf("post-restart reconcile: %v", err)
 	}
 	if server.assigns != 0 {
-		t.Fatalf("SetPolicyAssignment calls = %d, want post-restart same-intent no-op", server.assigns)
+		t.Fatalf("SetPolicyAssignment calls = %d, want restored policy no-op after restart", server.assigns)
 	}
 	if server.policies != 0 {
-		t.Fatalf("SetPolicies calls = %d, want post-restart same-intent no-op", server.policies)
+		t.Fatalf("SetPolicies calls = %d, want restored policy no-op after restart", server.policies)
 	}
 	if second.importPolicyKey == "" {
-		t.Fatal("importPolicyKey was not hydrated from applied state")
+		t.Fatal("importPolicyKey was not set after restored policy adoption")
+	}
+	if len(server.callLog) != 0 {
+		t.Fatalf("post-restart call order = %#v, want no live policy/peer churn", server.callLog)
+	}
+}
+
+func TestReconcileRefreshesPoliciesBeforePeerAssignmentAfterRestart(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.250.0.0/24")
+	peerResource := router.Spec.Resources[1]
+	peerSpec := peerResource.Spec.(api.BGPPeerSpec)
+	peerSpec.Peers = []string{"192.168.1.38"}
+	peerResource.Spec = peerSpec
+	router.Spec.Resources[1] = peerResource
+	server := &fakeServer{}
+	first := Controller{
+		Router: router,
+		Store:  mapStore{},
+		Server: server,
+		FIB:    &fakeFIB{},
+	}
+	if err := first.Reconcile(context.Background()); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	delete(server.policiesByName, "routerd-lan-import")
+	server.peers["192.168.1.38"].ApplyPolicy.ImportPolicy = nil
+	server.policies = 0
+	server.assigns = 0
+	server.updates = 0
+	server.callLog = nil
+
+	second := Controller{
+		Router: router,
+		Store:  mapStore{},
+		Server: server,
+		FIB:    &fakeFIB{},
+	}
+	if err := second.Reconcile(context.Background()); err != nil {
+		t.Fatalf("post-restart reconcile: %v", err)
+	}
+	firstPolicy := indexString(server.callLog, "SetPolicies")
+	firstUpdate := indexStringPrefix(server.callLog, "UpdatePeer:")
+	if firstPolicy < 0 {
+		t.Fatalf("call order = %#v, want SetPolicies", server.callLog)
+	}
+	if firstUpdate < 0 || firstPolicy > firstUpdate {
+		t.Fatalf("call order = %#v, policy refresh must precede peer assignment update", server.callLog)
+	}
+	if server.policies == 0 || server.updates == 0 {
+		t.Fatalf("policies/updates = %d/%d, want policy refresh and peer assignment refresh", server.policies, server.updates)
+	}
+}
+
+func TestReconcileRefreshesPoliciesBeforeReaddingDeletedPeerAfterRestart(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.250.0.0/24")
+	peerResource := router.Spec.Resources[1]
+	peerSpec := peerResource.Spec.(api.BGPPeerSpec)
+	peerSpec.Peers = []string{"192.168.1.38"}
+	peerResource.Spec = peerSpec
+	router.Spec.Resources[1] = peerResource
+	server := &fakeServer{}
+	first := Controller{
+		Router: router,
+		Store:  mapStore{},
+		Server: server,
+		FIB:    &fakeFIB{},
+	}
+	if err := first.Reconcile(context.Background()); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	delete(server.peers, "192.168.1.38")
+	server.policies = 0
+	server.assigns = 0
+	server.adds = 0
+	server.callLog = nil
+
+	second := Controller{
+		Router: router,
+		Store:  mapStore{},
+		Server: server,
+		FIB:    &fakeFIB{},
+	}
+	if err := second.Reconcile(context.Background()); err != nil {
+		t.Fatalf("post-restart reconcile: %v", err)
+	}
+	firstPolicy := indexString(server.callLog, "SetPolicies")
+	firstAdd := indexStringPrefix(server.callLog, "AddPeer:")
+	if firstPolicy < 0 || firstAdd < 0 {
+		t.Fatalf("call order = %#v, want SetPolicies and AddPeer", server.callLog)
+	}
+	if firstPolicy > firstAdd {
+		t.Fatalf("call order = %#v, policy refresh must precede peer add", server.callLog)
+	}
+	if server.policies == 0 || server.adds == 0 {
+		t.Fatalf("policies/adds = %d/%d, want policy refresh and peer re-add", server.policies, server.adds)
 	}
 }
 

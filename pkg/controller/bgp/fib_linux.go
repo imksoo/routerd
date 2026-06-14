@@ -44,7 +44,8 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 		return FIBSyncResult{}, fmt.Errorf("list current BGP routes: %w", err)
 	}
 	s.installed = kernel
-	localHostPrefixes := localIPv4HostPrefixes()
+	localAddresses := localIPv4Addresses()
+	localHostPrefixes := localIPv4HostPrefixes(localAddresses)
 	result := FIBSyncResult{
 		Installed:                    map[string]bool{},
 		Unsupported:                  map[string]string{},
@@ -59,6 +60,9 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 		route = normalizeFIBRoute(route)
 		if route.Prefix == "" {
 			continue
+		}
+		if route.PreferredSource == "" {
+			route.PreferredSource = inferPreferredSource(route.Prefix, localAddresses)
 		}
 		if route.PreferredSource != "" && !preferredSourceIsLocal(route.PreferredSource) {
 			result.PreferredSourceSkipped[route.Prefix] = true
@@ -138,8 +142,13 @@ func filterLocalHostFIBRoutes(routes map[string]FIBRoute, localHostPrefixes map[
 	return out
 }
 
-func localIPv4HostPrefixes() map[string]bool {
-	out := map[string]bool{}
+type localIPv4Address struct {
+	Address netip.Addr
+	Prefix  netip.Prefix
+}
+
+func localIPv4Addresses() []localIPv4Address {
+	var out []localIPv4Address
 	links, err := netlink.LinkList()
 	if err != nil {
 		return out
@@ -154,12 +163,65 @@ func localIPv4HostPrefixes() map[string]bool {
 				continue
 			}
 			addr, ok := netip.AddrFromSlice(local.IP.To4())
-			if ok && addr.Is4() {
-				out[netip.PrefixFrom(addr, 32).String()] = true
+			if !ok || !addr.Is4() || local.IPNet == nil {
+				continue
 			}
+			bits, size := local.IPNet.Mask.Size()
+			if size != 32 || bits < 0 || bits > 32 {
+				continue
+			}
+			prefix := netip.PrefixFrom(addr, bits).Masked()
+			out = append(out, localIPv4Address{Address: addr, Prefix: prefix})
 		}
 	}
 	return out
+}
+
+func localIPv4HostPrefixes(addresses []localIPv4Address) map[string]bool {
+	out := map[string]bool{}
+	for _, local := range addresses {
+		if local.Address.Is4() {
+			out[netip.PrefixFrom(local.Address, 32).String()] = true
+		}
+	}
+	return out
+}
+
+func inferPreferredSource(routePrefix string, addresses []localIPv4Address) string {
+	prefix, err := netip.ParsePrefix(routePrefix)
+	if err != nil || !prefix.Addr().Is4() {
+		return ""
+	}
+	dst := prefix.Addr()
+	var best localIPv4Address
+	bestBits := -1
+	for _, local := range addresses {
+		if !local.Address.Is4() || local.Address == dst || !local.Prefix.Contains(dst) {
+			continue
+		}
+		bits := local.Prefix.Bits()
+		if bits > bestBits {
+			best = local
+			bestBits = bits
+		}
+	}
+	if bestBits < 0 {
+		return ""
+	}
+	return best.Address.String()
+}
+
+func preferredSourceIsLocal(value string) bool {
+	addr, err := netip.ParseAddr(strings.TrimSpace(value))
+	if err != nil || !addr.Is4() {
+		return false
+	}
+	for _, local := range localIPv4Addresses() {
+		if local.Address == addr {
+			return true
+		}
+	}
+	return false
 }
 
 func kernelBGPRoutes() (map[string]kernelBGPRoute, error) {
@@ -272,33 +334,6 @@ func normalizePreferredSource(value string) string {
 		return ""
 	}
 	return addr.String()
-}
-
-func preferredSourceIsLocal(value string) bool {
-	addr, err := netip.ParseAddr(strings.TrimSpace(value))
-	if err != nil || !addr.Is4() {
-		return false
-	}
-	links, err := netlink.LinkList()
-	if err != nil {
-		return false
-	}
-	for _, link := range links {
-		addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
-		if err != nil {
-			continue
-		}
-		for _, local := range addrs {
-			if local.IP == nil {
-				continue
-			}
-			parsed, ok := netip.AddrFromSlice(local.IP.To4())
-			if ok && parsed == addr {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func normalizeNextHops(values []string) []string {
