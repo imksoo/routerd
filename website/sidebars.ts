@@ -177,6 +177,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'design',
         'design-notes',
+        'design/cloudedge-sam-provider-fabric',
       ],
     },
     {
