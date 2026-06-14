@@ -216,8 +216,11 @@ func desiredCaptureObservedOnSelf(decision ownershipDecision, self memberPlanInf
 	if !providerCaptureObservedOnSelf(decision, self, observedSelfIPs) {
 		return false
 	}
+	if standbyShouldReleaseCapture(self, placement) {
+		return false
+	}
 	if decision.Class == ownershipClassConfirmedCapture {
-		return !standbyShouldReleaseCapture(self, placement)
+		return true
 	}
 	return decisionEligibleForCapture(decision, self, members, placement)
 }
@@ -345,9 +348,15 @@ func observedSelfStaleCaptureActionPlans(in bgpDeliveryPlannerInput, candidates 
 	recentTrapCandidates := previousBGPTrapCandidateAddresses(in.PreviousPlans, poolPrefix)
 	var staleAddresses []string
 	staleSinceByAddress := map[string]time.Time{}
+	releaseStandby := standbyShouldReleaseCapture(in.Self, in.Placement)
 	for _, decision := range in.Decisions {
 		address := normalizeAddressString(decision.Address)
 		if address == "" || desired[address] {
+			continue
+		}
+		if releaseStandby && in.ObservedSelfCaptures[address] {
+			staleAddresses = append(staleAddresses, address)
+			staleSinceByAddress[address] = in.Now.UTC()
 			continue
 		}
 		if decision.Class != ownershipClassStaleCapture || strings.TrimSpace(decision.SuppressionReason) != "self-captured-secondary" {
