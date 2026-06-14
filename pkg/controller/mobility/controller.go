@@ -263,7 +263,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		ForwardingObserved:   forwardingObserved,
 		ForwardingEnabled:    forwardingEnabled,
 		ForwardingObservedAt: forwardingObservedAt,
-		SuppressDeprovision:  c.SuppressProviderDeprovision || (effectiveCaptureStrategy("", captureStrategyValue(self.Capture)) == captureStrategySecondaryIP && !self.MaintenanceDrain),
+		SuppressDeprovision:  c.SuppressProviderDeprovision,
 		Now:                  now,
 	})
 	if err != nil {
@@ -1092,7 +1092,11 @@ func bgpProviderActionPlans(poolName, selfNode string, spec api.MobilityPoolSpec
 			}
 			capture := captureFromActionPlan(self.Capture, self.CaptureTarget, previous)
 			capture = captureWithTargetFallback(capture, previous.Target)
+			strategy := effectiveCaptureStrategy("", captureStrategyValue(capture))
 			if capture.Type != "provider-secondary-ip" {
+				continue
+			}
+			if strategy == captureStrategySecondaryIP && !self.MaintenanceDrain {
 				continue
 			}
 			transitionKey := providerCaptureTransitionKey(capture.ProviderRef, providerCaptureRefFromCapture(capture, previous.Target), address)

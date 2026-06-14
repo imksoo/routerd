@@ -2100,8 +2100,8 @@ func TestControllerBGPModeObservedSelfStaleCaptureIsProtectedWithoutPriorAction(
 	if findActionPlanByAddress(plans, "assign-secondary-ip", address) != nil {
 		t.Fatalf("plans = %#v, observed stale capture must not recreate assign", plans)
 	}
-	if unassign := findActionPlanByAddress(plans, "unassign-secondary-ip", address); unassign != nil {
-		t.Fatalf("plans = %#v, observed provider-secondary capture must be protected from automatic deprovision", plans)
+	if unassign := findActionPlanByAddress(plans, "unassign-secondary-ip", address); unassign == nil {
+		t.Fatalf("plans = %#v, observed stale provider-secondary capture must be deprovisioned", plans)
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
 	decisions := ownershipStatusDecisions(t, status["ownershipResolverDecisions"])
@@ -2162,8 +2162,10 @@ func TestControllerBGPModeObservedSelfStaleCaptureUsesDiscoveredSelfNIC(t *testi
 		t.Fatalf("Reconcile: %v", err)
 	}
 	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "azure-router")).ActionPlansJSON)
-	if unassign := findActionPlanByAddress(plans, "unassign-secondary-ip", address); unassign != nil {
-		t.Fatalf("plans = %#v, observed provider-secondary capture must not be deprovisioned via discovered NIC cleanup", plans)
+	if unassign := findActionPlanByAddress(plans, "unassign-secondary-ip", address); unassign == nil {
+		t.Fatalf("plans = %#v, observed stale provider-secondary capture must be deprovisioned via discovered NIC cleanup", plans)
+	} else if unassign.Target["nicRef"] != discoveredNIC {
+		t.Fatalf("unassign target = %#v, want discovered nicRef %q", unassign.Target, discoveredNIC)
 	}
 }
 
@@ -2193,8 +2195,10 @@ func TestControllerBGPModeObservedSelfStaleCaptureUsesCaptureTargetNIC(t *testin
 		t.Fatalf("Reconcile: %v", err)
 	}
 	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "azure-router")).ActionPlansJSON)
-	if unassign := findActionPlanByAddress(plans, "unassign-secondary-ip", address); unassign != nil {
-		t.Fatalf("plans = %#v, observed provider-secondary capture must not be deprovisioned via capture-target NIC cleanup", plans)
+	if unassign := findActionPlanByAddress(plans, "unassign-secondary-ip", address); unassign == nil {
+		t.Fatalf("plans = %#v, observed stale provider-secondary capture must be deprovisioned via capture-target NIC cleanup", plans)
+	} else if unassign.Target["nicRef"] != spec.Members[3].Capture.Target["nicRef"] {
+		t.Fatalf("unassign target = %#v, want capture target nicRef %q", unassign.Target, spec.Members[3].Capture.Target["nicRef"])
 	}
 }
 
@@ -2389,7 +2393,7 @@ func TestControllerBGPModeProtectOnlyCaptureKeepsForwardingEnabled(t *testing.T)
 	}
 	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-a")).ActionPlansJSON)
 	if findActionPlanByAddress(plans, "unassign-secondary-ip", stale) != nil {
-		t.Fatalf("plans = %#v, provider-secondary stale capture must not be automatically unassigned while confirmed capture remains", plans)
+		t.Fatalf("plans = %#v, stale capture absent from provider inventory must not be unassigned while confirmed capture remains", plans)
 	}
 	if findActionPlan(plans, "ensure-forwarding-disabled") != nil {
 		t.Fatalf("plans = %#v, must not disable forwarding while confirmed capture remains on same provider target", plans)
@@ -2418,8 +2422,8 @@ func TestControllerBGPModeStaleCaptureCleanupKeepsForwardingReady(t *testing.T) 
 		t.Fatalf("Reconcile: %v", err)
 	}
 	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-a")).ActionPlansJSON)
-	if findActionPlanByAddress(plans, "unassign-secondary-ip", stale) != nil {
-		t.Fatalf("plans = %#v, provider-secondary stale capture must not be automatically unassigned", plans)
+	if findActionPlanByAddress(plans, "unassign-secondary-ip", stale) == nil {
+		t.Fatalf("plans = %#v, stale provider-secondary capture must be automatically unassigned", plans)
 	}
 	if findActionPlan(plans, "ensure-forwarding-disabled") != nil {
 		t.Fatalf("plans = %#v, BGP SAM router candidates must keep provider forwarding ready after capture cleanup", plans)
