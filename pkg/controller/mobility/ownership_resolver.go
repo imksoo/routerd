@@ -50,6 +50,8 @@ type ownershipDecision struct {
 	HomeProviderRef    string
 	HomeSubnetRef      string
 	HomeNICRef         string
+	HomeResourceRef    string
+	HomeResourceType   string
 	LocalNodeRef       string
 	LocalProviderRef   string
 	LocalSubnetRef     string
@@ -462,6 +464,8 @@ func applyProviderHomeOwnerFact(decision *ownershipDecision, fact providerInvent
 	decision.HomeProviderRef = strings.TrimSpace(fact.ProviderRef)
 	decision.HomeSubnetRef = strings.TrimSpace(fact.SubnetRef)
 	decision.HomeNICRef = strings.TrimSpace(fact.NICRef)
+	decision.HomeResourceRef = strings.TrimSpace(fact.ResourceRef)
+	decision.HomeResourceType = strings.TrimSpace(fact.ResourceType)
 }
 
 type resolverPrivateIPRecord struct {
@@ -867,12 +871,13 @@ func ownershipResolverStatus(decisions []ownershipDecision) map[string]any {
 		reason = "remote home owner overlaps local ownership evidence"
 	}
 	status := map[string]any{
-		"ownershipResolverPhase":        "Resolved",
-		"ownershipResolverAddressCount": len(decisions),
-		"ownershipResolverClassCounts":  countMap,
-		"ownershipResolverDecisions":    items,
-		"ownershipResolverOwnerTable":   ownershipResolverOwnerTable(decisions),
-		"ownershipResolverFIBVerdicts":  ownershipResolverFIBVerdicts(decisions),
+		"ownershipResolverPhase":                  "Resolved",
+		"ownershipResolverAddressCount":           len(decisions),
+		"ownershipResolverClassCounts":            countMap,
+		"ownershipResolverDecisions":              items,
+		"ownershipResolverOwnerTable":             ownershipResolverOwnerTable(decisions),
+		"ownershipResolverControlPlaneOwnerTable": ownershipResolverControlPlaneOwnerTable(decisions),
+		"ownershipResolverFIBVerdicts":            ownershipResolverFIBVerdicts(decisions),
 	}
 	status["ownershipResolverPhase"] = phase
 	status["ownershipResolverConflictCount"] = len(conflicts)
@@ -1070,4 +1075,60 @@ func ownershipResolverOwnerTable(decisions []ownershipDecision) []map[string]any
 		return fmt.Sprint(rows[i]["address"]) < fmt.Sprint(rows[j]["address"])
 	})
 	return rows
+}
+
+func ownershipResolverControlPlaneOwnerTable(decisions []ownershipDecision) []map[string]any {
+	rows := make([]map[string]any, 0, len(decisions))
+	for _, d := range decisions {
+		row := map[string]any{
+			"address": d.Address,
+			"state":   ownershipResolverClaimState(d),
+			"class":   d.Class,
+			"source":  d.Source,
+		}
+		putNonEmpty(row, "ownerNode", d.HomeOwnerNode)
+		putNonEmpty(row, "ownerProviderRef", d.HomeProviderRef)
+		putNonEmpty(row, "ownerSubnetRef", d.HomeSubnetRef)
+		putNonEmpty(row, "ownerNICRef", d.HomeNICRef)
+		putNonEmpty(row, "ownerResourceRef", d.HomeResourceRef)
+		putNonEmpty(row, "ownerResourceType", d.HomeResourceType)
+		putNonEmpty(row, "localEvidenceNode", d.LocalNodeRef)
+		putNonEmpty(row, "localEvidenceProviderRef", d.LocalProviderRef)
+		putNonEmpty(row, "localEvidenceSubnetRef", d.LocalSubnetRef)
+		putNonEmpty(row, "localEvidenceNICRef", d.LocalNICRef)
+		putNonEmpty(row, "localEvidenceResourceRef", d.LocalResourceRef)
+		putNonEmpty(row, "localEvidenceResourceType", d.LocalResourceType)
+		putNonEmpty(row, "localEvidenceSource", d.LocalSource)
+		putNonEmpty(row, "localEvidenceSourceType", d.LocalSourceType)
+		putNonEmpty(row, "captureHolderNode", d.CaptureHolderNode)
+		putNonEmpty(row, "captureProviderRef", d.CaptureProviderRef)
+		putNonEmpty(row, "captureTargetRef", d.CaptureTargetRef)
+		putNonEmpty(row, "captureStrategy", d.CaptureStrategy)
+		if d.CaptureState != "" && d.CaptureState != captureStateNone {
+			row["captureState"] = d.CaptureState
+		}
+		putNonEmpty(row, "advertiseOwnerNode", d.AdvertiseOwnerNode)
+		putNonEmpty(row, "advertiseReason", d.AdvertiseReason)
+		putNonEmpty(row, "suppressionReason", d.SuppressionReason)
+		putNonEmpty(row, "conflictReason", d.ConflictReason)
+		if len(d.ConflictOwners) > 0 {
+			row["conflictOwners"] = providerInventoryOwnerFactStatusRows(d.ConflictOwners)
+		}
+		rows = append(rows, row)
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		left := fmt.Sprint(rows[i]["address"])
+		right := fmt.Sprint(rows[j]["address"])
+		if left == right {
+			return fmt.Sprint(rows[i]["localEvidenceNode"]) < fmt.Sprint(rows[j]["localEvidenceNode"])
+		}
+		return left < right
+	})
+	return rows
+}
+
+func putNonEmpty(row map[string]any, key, value string) {
+	if value = strings.TrimSpace(value); value != "" {
+		row[key] = value
+	}
 }

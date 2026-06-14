@@ -12,6 +12,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -32,6 +33,24 @@ type mobilityTrapRow struct {
 	IdempotencyKey string `json:"idempotencyKey" yaml:"idempotencyKey"`
 }
 
+type mobilityOwnerRow struct {
+	Pool                  string `json:"pool" yaml:"pool"`
+	Address               string `json:"address" yaml:"address"`
+	State                 string `json:"state" yaml:"state"`
+	Class                 string `json:"class" yaml:"class"`
+	OwnerNode             string `json:"ownerNode,omitempty" yaml:"ownerNode,omitempty"`
+	OwnerProviderRef      string `json:"ownerProviderRef,omitempty" yaml:"ownerProviderRef,omitempty"`
+	OwnerNICRef           string `json:"ownerNICRef,omitempty" yaml:"ownerNICRef,omitempty"`
+	OwnerResourceRef      string `json:"ownerResourceRef,omitempty" yaml:"ownerResourceRef,omitempty"`
+	LocalEvidenceNode     string `json:"localEvidenceNode,omitempty" yaml:"localEvidenceNode,omitempty"`
+	LocalEvidenceSource   string `json:"localEvidenceSource,omitempty" yaml:"localEvidenceSource,omitempty"`
+	LocalEvidenceNICRef   string `json:"localEvidenceNICRef,omitempty" yaml:"localEvidenceNICRef,omitempty"`
+	LocalEvidenceResource string `json:"localEvidenceResourceRef,omitempty" yaml:"localEvidenceResourceRef,omitempty"`
+	AdvertiseOwnerNode    string `json:"advertiseOwnerNode,omitempty" yaml:"advertiseOwnerNode,omitempty"`
+	SuppressionReason     string `json:"suppressionReason,omitempty" yaml:"suppressionReason,omitempty"`
+	ConflictReason        string `json:"conflictReason,omitempty" yaml:"conflictReason,omitempty"`
+}
+
 func mobilityCommand(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		mobilityUsage(stderr)
@@ -42,14 +61,53 @@ func mobilityCommand(args []string, stdout, stderr io.Writer) error {
 		return mobilityPathsCommand(args[1:], stdout)
 	case "traps":
 		return mobilityTrapsCommand(args[1:], stdout)
-	case "leases", "list", "ownership", "owners", "show":
-		return fmt.Errorf("mobility %s was removed with BGP mobility; use `routerctl mobility paths` or `routerctl mobility traps`", args[0])
+	case "owners":
+		return mobilityOwnersCommand(args[1:], stdout)
+	case "leases", "list", "ownership", "show":
+		return fmt.Errorf("mobility %s was removed with BGP mobility; use `routerctl mobility owners`, `routerctl mobility paths`, or `routerctl mobility traps`", args[0])
 	case "help", "-h", "--help":
 		mobilityUsage(stdout)
 		return nil
 	default:
 		return fmt.Errorf("unknown mobility subcommand %q", args[0])
 	}
+}
+
+func mobilityOwnersCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("mobility owners", flag.ContinueOnError)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"Show SAM control-plane owner table state from MobilityPool status.",
+			"routerctl mobility owners\n"+
+				"routerctl mobility owners --pool cloudedge --address 10.77.60.10/32 -o json")
+	}
+	statePath := fs.String("state-file", defaultStatePath(), "routerd state database file")
+	poolFilter := fs.String("pool", "", "filter by MobilityPool name")
+	addressFilter := fs.String("address", "", "filter by mobility address")
+	output := "table"
+	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
+	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected mobility owners argument %q", fs.Arg(0))
+	}
+	store, err := openLedgerStateReadOnly(*statePath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	statuses, err := store.ListObjectStatuses()
+	if err != nil {
+		return err
+	}
+	rows := mobilityOwnerRows(statuses, *poolFilter, *addressFilter)
+	return writeMobilityOwners(stdout, rows, output)
 }
 
 func mobilityPathsCommand(args []string, stdout io.Writer) error {
@@ -128,8 +186,57 @@ func mobilityUsage(w io.Writer) {
 	fmt.Fprintln(w, "usage: routerctl mobility <command> [options]")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "commands:")
+	fmt.Fprintln(w, "  owners [--pool <name>] [--address <ipv4/32>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  paths [--prefix <prefix>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  traps [--address <ipv4/32>] [--state-file <path>] [-o table|json|yaml]")
+}
+
+func mobilityOwnerRows(statuses []routerstate.ObjectStatus, poolFilter, addressFilter string) []mobilityOwnerRow {
+	poolFilter = strings.TrimSpace(poolFilter)
+	addressFilter = strings.TrimSpace(addressFilter)
+	var rows []mobilityOwnerRow
+	for _, status := range statuses {
+		if status.APIVersion != api.MobilityAPIVersion || status.Kind != "MobilityPool" {
+			continue
+		}
+		if poolFilter != "" && status.Name != poolFilter {
+			continue
+		}
+		table := statusMaps(status.Status["ownershipResolverControlPlaneOwnerTable"])
+		if len(table) == 0 {
+			table = statusMaps(status.Status["ownershipResolverOwnerTable"])
+		}
+		for _, item := range table {
+			address := stringStatus(item, "address")
+			if addressFilter != "" && address != addressFilter {
+				continue
+			}
+			rows = append(rows, mobilityOwnerRow{
+				Pool:                  status.Name,
+				Address:               address,
+				State:                 firstNonEmpty(stringStatus(item, "state"), "Unknown"),
+				Class:                 stringStatus(item, "class"),
+				OwnerNode:             firstNonEmpty(stringStatus(item, "ownerNode"), stringStatus(item, "homeOwnerNode")),
+				OwnerProviderRef:      stringStatus(item, "ownerProviderRef"),
+				OwnerNICRef:           stringStatus(item, "ownerNICRef"),
+				OwnerResourceRef:      stringStatus(item, "ownerResourceRef"),
+				LocalEvidenceNode:     firstNonEmpty(stringStatus(item, "localEvidenceNode"), stringStatus(item, "localNode")),
+				LocalEvidenceSource:   firstNonEmpty(stringStatus(item, "localEvidenceSource"), stringStatus(item, "localSource")),
+				LocalEvidenceNICRef:   firstNonEmpty(stringStatus(item, "localEvidenceNICRef"), stringStatus(item, "localNICRef")),
+				LocalEvidenceResource: firstNonEmpty(stringStatus(item, "localEvidenceResourceRef"), stringStatus(item, "localResourceRef")),
+				AdvertiseOwnerNode:    stringStatus(item, "advertiseOwnerNode"),
+				SuppressionReason:     stringStatus(item, "suppressionReason"),
+				ConflictReason:        stringStatus(item, "conflictReason"),
+			})
+		}
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].Pool == rows[j].Pool {
+			return rows[i].Address < rows[j].Address
+		}
+		return rows[i].Pool < rows[j].Pool
+	})
+	return rows
 }
 
 func mobilityPathRows(statuses []routerstate.ObjectStatus, prefixFilter string) []mobilityPathRow {
@@ -253,6 +360,37 @@ func writeMobilityTraps(stdout io.Writer, rows []mobilityTrapRow, output string)
 				displayCell(row.NICRef),
 				displayCell(row.Address),
 				displayCell(row.IdempotencyKey),
+			)
+		}
+		return w.Flush()
+	case "json":
+		return writeJSON(stdout, rows)
+	case "yaml":
+		return writeYAML(stdout, rows)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
+func writeMobilityOwners(stdout io.Writer, rows []mobilityOwnerRow, output string) error {
+	switch output {
+	case "", "table":
+		w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "POOL\tADDRESS\tSTATE\tCLASS\tOWNER\tOWNER_PROVIDER\tOWNER_NIC\tLOCAL_EVIDENCE\tLOCAL_SOURCE\tADVERTISE\tSUPPRESSION\tCONFLICT")
+		for _, row := range rows {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				row.Pool,
+				row.Address,
+				displayCell(row.State),
+				displayCell(row.Class),
+				displayCell(row.OwnerNode),
+				displayCell(row.OwnerProviderRef),
+				displayCell(row.OwnerNICRef),
+				displayCell(row.LocalEvidenceNode),
+				displayCell(row.LocalEvidenceSource),
+				displayCell(row.AdvertiseOwnerNode),
+				displayCell(row.SuppressionReason),
+				displayCell(row.ConflictReason),
 			)
 		}
 		return w.Flush()
