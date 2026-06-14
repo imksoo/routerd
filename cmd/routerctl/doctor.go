@@ -348,6 +348,7 @@ func (r doctorRunner) doctorSAM() []doctorCheck {
 		}
 		checks = append(checks, r.doctorSAMFederationDiscoveryChecks(res.Metadata.Name, poolSpec, status)...)
 		checks = append(checks, doctorSAMOwnershipConflictCheck(res.Metadata.Name, status))
+		checks = append(checks, doctorSAMStaleCaptureCheck(res.Metadata.Name, status))
 		checks = append(checks, r.doctorSAMOwnerTableRouteChecks(res.Metadata.Name, poolSpec, status)...)
 		checks = append(checks, r.doctorSAMBGPDeliveryChecks(res)...)
 		phase := stringStatus(status, "providerActionPhase")
@@ -651,6 +652,32 @@ func doctorSAMOwnershipConflictCheck(pool string, status map[string]any) doctorC
 		return doctorCheck{Area: "sam", Name: label, Status: doctorSkip, Detail: "MobilityPool status unavailable"}
 	}
 	return doctorCheck{Area: "sam", Name: label, Status: doctorPass, Detail: "no ownership conflicts"}
+}
+
+func doctorSAMStaleCaptureCheck(pool string, status map[string]any) doctorCheck {
+	label := "MobilityPool/" + pool + " stale capture evidence"
+	if len(status) == 0 {
+		return doctorCheck{Area: "sam", Name: label, Status: doctorSkip, Detail: "MobilityPool status unavailable"}
+	}
+	stale := statusMaps(status["ownershipResolverStaleClaims"])
+	count := statusInt(status["ownershipResolverStaleCount"])
+	if len(stale) > count {
+		count = len(stale)
+	}
+	if count == 0 {
+		return doctorCheck{Area: "sam", Name: label, Status: doctorPass, Detail: "no stale capture evidence"}
+	}
+	detail := fmt.Sprintf("%d stale capture evidence row(s)", count)
+	if len(stale) > 0 {
+		detail = appendDoctorDetail(detail, doctorSAMOwnerRowsSummary(stale, 3))
+	}
+	return doctorCheck{
+		Area:   "sam",
+		Name:   label,
+		Status: doctorWarn,
+		Detail: detail,
+		Remedy: "treat stale capture as diagnostic evidence; verify provider inventory, OS capture, BGP/FIB, and dataplane before deleting or reassigning artifacts",
+	}
 }
 
 func (r doctorRunner) doctorSAMOwnerTableRouteChecks(pool string, poolSpec api.MobilityPoolSpec, status map[string]any) []doctorCheck {
