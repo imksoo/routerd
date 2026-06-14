@@ -11,7 +11,12 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## 未リリース
 
-（未リリースの変更はありません。）
+### 追加
+
+- `routerctl doctor routes` を追加しました。Installed な `IPv4Route`
+  status と Linux host FIB を比較し、destination、gateway、device、
+  preferred-source、metric の stale/mismatch を運用者向け証跡として
+  報告します（#439）。
 
 ## v20260608.2325
 

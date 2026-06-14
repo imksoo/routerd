@@ -83,7 +83,7 @@ type doctorRunner struct {
 	store  routerstate.Store
 }
 
-var doctorAreas = []string{"wan", "dns", "dslite", "dhcpv6-pd", "nat", "firewall", "rollback", "disk", "mgmt", "reconcile", "runtime", "dynamic", "plugin", "hybrid", "sam"}
+var doctorAreas = []string{"wan", "dns", "dslite", "dhcpv6-pd", "nat", "firewall", "rollback", "disk", "mgmt", "reconcile", "runtime", "dynamic", "routes", "plugin", "hybrid", "sam"}
 
 // doctorReconcileWarnThreshold is the total historical error count (across all
 // controllers) that promotes the reconcile area to warn. Current controller
@@ -235,6 +235,8 @@ func (r doctorRunner) runArea(area string) []doctorCheck {
 		return r.doctorRuntime()
 	case "dynamic":
 		return r.doctorDynamic()
+	case "routes":
+		return r.doctorRoutes()
 	case "plugin":
 		return r.doctorPlugin()
 	case "hybrid":
@@ -1687,6 +1689,163 @@ func (r doctorRunner) doctorDynamic() []doctorCheck {
 	}
 	checks = append(checks, r.doctorDynamicOverridePolicyCheck(activeParts, policies))
 	return checks
+}
+
+func (r doctorRunner) doctorRoutes() []doctorCheck {
+	lister, ok := r.store.(routerstate.ObjectStatusLister)
+	if !ok {
+		return []doctorCheck{{Area: "routes", Name: "IPv4Route drift", Status: doctorSkip, Detail: "state backend does not expose object statuses"}}
+	}
+	statuses, err := lister.ListObjectStatuses()
+	if err != nil {
+		return []doctorCheck{{Area: "routes", Name: "IPv4Route drift", Status: doctorFail, Detail: err.Error(), Remedy: "check state backend and retry"}}
+	}
+	var checks []doctorCheck
+	for _, item := range statuses {
+		if item.APIVersion != api.NetAPIVersion || item.Kind != "IPv4Route" {
+			continue
+		}
+		status := item.Status
+		if !strings.EqualFold(stringStatus(status, "phase"), "Installed") {
+			continue
+		}
+		if boolStatus(status, "dryRun") {
+			continue
+		}
+		checks = append(checks, r.doctorIPv4RouteStatusDriftCheck(item.Name, status))
+	}
+	if len(checks) == 0 {
+		return []doctorCheck{{Area: "routes", Name: "IPv4Route drift", Status: doctorSkip, Detail: "no installed IPv4Route statuses"}}
+	}
+	return checks
+}
+
+func (r doctorRunner) doctorIPv4RouteStatusDriftCheck(name string, status map[string]any) doctorCheck {
+	label := "IPv4Route/" + name + " host route"
+	if !r.opts.Host {
+		return doctorHostSkipped("routes", label)
+	}
+	if doctorCurrentOS() != platform.OSLinux {
+		return doctorCheck{Area: "routes", Name: label, Status: doctorSkip, Detail: "host route drift checks require Linux iproute2"}
+	}
+	destination := firstNonEmpty(stringStatus(status, "destination"), "0.0.0.0/0")
+	if normalizeDoctorIPv4RoutePrefix(destination) == "" {
+		return doctorCheck{Area: "routes", Name: label, Status: doctorSkip, Detail: "non-IPv4 destination " + destination}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
+	defer cancel()
+	command := doctorRunDiagnosticCommand(ctx, "ip -4 route show "+destination, "ip", "-4", "route", "show", destination)
+	if !command.OK {
+		return doctorCheck{Area: "routes", Name: label, Status: doctorFail, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "route snapshot unavailable"), Remedy: "inspect ip -4 route show " + destination}
+	}
+	lines := doctorRouteLines(command.Stdout)
+	if len(lines) == 0 {
+		return doctorCheck{Area: "routes", Name: label, Status: doctorFail, Detail: "missing desired route; expected " + doctorIPv4RouteExpectedDetail(status), Remedy: "wait for routerd reconcile or inspect IPv4Route/" + name + " controller status"}
+	}
+	for _, line := range lines {
+		if doctorIPv4RouteLineMatchesStatus(line, status) {
+			return doctorCheck{Area: "routes", Name: label, Status: doctorPass, Detail: appendDoctorDetail(line, "matches "+doctorIPv4RouteExpectedDetail(status))}
+		}
+	}
+	return doctorCheck{
+		Area:   "routes",
+		Name:   label,
+		Status: doctorFail,
+		Detail: appendDoctorDetail("mismatched desired route; expected "+doctorIPv4RouteExpectedDetail(status), "actual="+strings.Join(lines, " | ")),
+		Remedy: "compare IPv4Route/" + name + " status with `ip -4 route show " + destination + "` and rerun routerd reconcile if the host FIB is stale",
+	}
+}
+
+func doctorRouteLines(output string) []string {
+	var out []string
+	for _, line := range strings.Split(output, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func doctorIPv4RouteLineMatchesStatus(line string, status map[string]any) bool {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return false
+	}
+	routeType := firstNonEmpty(stringStatus(status, "type"), "unicast")
+	destination := firstNonEmpty(stringStatus(status, "destination"), "0.0.0.0/0")
+	if routeType == "blackhole" {
+		if fields[0] != "blackhole" {
+			return false
+		}
+		if len(fields) < 2 || !doctorIPv4RouteDestinationMatches(fields[1], destination) {
+			return false
+		}
+	} else if !doctorIPv4RouteDestinationMatches(fields[0], destination) {
+		return false
+	}
+	if gateway := stringStatus(status, "gateway"); gateway != "" && !doctorRouteFieldsContainPair(fields, "via", gateway) {
+		return false
+	}
+	if device := stringStatus(status, "device"); routeType != "blackhole" && device != "" && !doctorRouteFieldsContainPair(fields, "dev", device) {
+		return false
+	}
+	if preferredSource := doctorIPv4RoutePreferredSource(status); preferredSource != "" && !doctorRouteFieldsContainPair(fields, "src", preferredSource) {
+		return false
+	}
+	if metric := statusInt(status["metric"]); metric > 0 && !doctorRouteFieldsContainPair(fields, "metric", fmt.Sprintf("%d", metric)) {
+		return false
+	}
+	return true
+}
+
+func doctorIPv4RouteDestinationMatches(actual, expected string) bool {
+	expected = strings.TrimSpace(expected)
+	actual = strings.TrimSpace(actual)
+	if expected == "0.0.0.0/0" && actual == "default" {
+		return true
+	}
+	return normalizeDoctorIPv4RoutePrefix(actual) == normalizeDoctorIPv4RoutePrefix(expected)
+}
+
+func doctorRouteFieldsContainPair(fields []string, key, value string) bool {
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == key && fields[i+1] == value {
+			return true
+		}
+	}
+	return false
+}
+
+func doctorIPv4RoutePreferredSource(status map[string]any) string {
+	if boolStatus(status, "preferredSourceSkipped") {
+		return ""
+	}
+	if _, ok := status["effectivePreferredSource"]; ok {
+		return stringStatus(status, "effectivePreferredSource")
+	}
+	return stringStatus(status, "preferredSource")
+}
+
+func doctorIPv4RouteExpectedDetail(status map[string]any) string {
+	parts := []string{
+		"type=" + firstNonEmpty(stringStatus(status, "type"), "unicast"),
+		"destination=" + firstNonEmpty(stringStatus(status, "destination"), "0.0.0.0/0"),
+	}
+	for _, key := range []string{"gateway", "device"} {
+		if value := stringStatus(status, key); value != "" {
+			parts = append(parts, key+"="+value)
+		}
+	}
+	if preferredSource := doctorIPv4RoutePreferredSource(status); preferredSource != "" {
+		parts = append(parts, "preferredSource="+preferredSource)
+	}
+	if boolStatus(status, "preferredSourceSkipped") {
+		parts = append(parts, "preferredSourceSkipped=true")
+	}
+	if metric := statusInt(status["metric"]); metric > 0 {
+		parts = append(parts, fmt.Sprintf("metric=%d", metric))
+	}
+	return strings.Join(parts, " ")
 }
 
 func (r doctorRunner) doctorDynamicOverridePolicyCheck(parts []dynamicconfig.DynamicConfigPart, policies []dynamicconfig.DynamicOverridePolicy) doctorCheck {

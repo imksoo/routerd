@@ -48,7 +48,11 @@ Per-call options reuse the `diagnose` flag set: `--config`, `--state-file`,
 | `mgmt` | Management interface presence (best-effort from `ManagementAccess` or `FirewallZone role=mgmt`); WebConsole binding (FAIL/WARN on `0.0.0.0` / `::`). |
 | `reconcile` | Per-controller reconcile error history from the read-only status socket. `--since <duration>` bounds the window. WARN at ≥1 error in the window, FAIL at ≥10; up to 5 sample entries are shown in the detail. |
 | `runtime` | routerd's own heap / goroutine / fd footprint from the read-only status socket: `heapAlloc`, `heapObjects`, `numGoroutine`, `numGC`, `openFds`/`maxFds`. WARN when `numGoroutine` exceeds 10000 or open fds reach ≥80% of `RLIMIT_NOFILE`. Observational — never FAILs. |
+| `dynamic` | `DynamicConfigPart` freshness, masks, and override policies, including stale or masking parts that can make the effective config diverge from the intended generated state. |
+| `routes` | Installed `IPv4Route` status compared with the Linux host FIB (`ip -4 route show <destination>`), including destination, type, gateway, device, preferred source when applicable, and metric. Use this as drift evidence; it does not replace dataplane probes. |
+| `plugin` | Trusted local plugin executable presence, permissions, and recent run freshness from plugin status where available. |
 | `hybrid` | `HybridRoute` / `OverlayPeer` references, Selective Address Mobility config references, default-route safety, MTU estimate, optional `HealthCheck` status, read-only route-table observation (`ip -4 route show <prefix>`), and Linux SAM checks for `/32` delivery routes, provider local-address absence, proxy-neighbor capture, `proxy_arp`, `ip_forward`, route lookup, warning-only `rp_filter`, and default-drop `FORWARD` policy heuristics. When the FORWARD policy table cannot be inspected, the detail distinguishes `nft` unavailable, permission denied, `routerd_filter` table absent, and other `nft list table` failures. |
+| `sam` | CloudEdge SAM ownership/capture diagnostics, including provider ownership freshness, OS capture state, delivery route lookup, forwarding prerequisites, and blocking reasons. This is a diagnostic view only; real dataplane checks still decide CloudEdge acceptance. |
 
 Each check returns one of `pass`, `warn`, `fail`, or `skip` (the resource
 or signal is not present on this router).

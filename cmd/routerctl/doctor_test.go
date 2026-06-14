@@ -808,6 +808,163 @@ func TestDoctorDynamicMaskWithoutPolicyFailsEffectiveBuild(t *testing.T) {
 	}
 }
 
+func TestDoctorRoutesDetectsIPv4RouteDeviceMetricDrift(t *testing.T) {
+	oldRun := doctorRunDiagnosticCommand
+	defer func() { doctorRunDiagnosticCommand = oldRun }()
+	doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
+		if label == "ip -4 route show 10.44.0.0/24" {
+			return diagnoseCommandCheck{
+				Name:   label,
+				OK:     true,
+				Stdout: "10.44.0.0/24 via 192.0.2.1 dev eth1 metric 300\n",
+			}
+		}
+		return diagnoseCommandCheck{Name: label, OK: true}
+	}
+	configPath, statePath := writeDoctorFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", "cloud-route", map[string]any{
+		"phase":       "Installed",
+		"type":        "unicast",
+		"destination": "10.44.0.0/24",
+		"gateway":     "192.0.2.1",
+		"device":      "eth0",
+		"metric":      200,
+	}); err != nil {
+		t.Fatalf("save route status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	err := run([]string{"doctor", "routes", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("doctor routes succeeded with route drift:\n%s", out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "IPv4Route/cloud-route host route")
+	if check.Status != doctorFail || !strings.Contains(check.Detail, "device=eth0") || !strings.Contains(check.Detail, "metric=200") || !strings.Contains(check.Detail, "dev eth1 metric 300") {
+		t.Fatalf("check = %#v, want device/metric drift detail", check)
+	}
+}
+
+func TestDoctorRoutesPassesMatchingIPv4Route(t *testing.T) {
+	oldRun := doctorRunDiagnosticCommand
+	defer func() { doctorRunDiagnosticCommand = oldRun }()
+	doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
+		if label == "ip -4 route show 10.44.0.0/24" {
+			return diagnoseCommandCheck{
+				Name:   label,
+				OK:     true,
+				Stdout: "10.44.0.0/24 via 192.0.2.1 dev eth0 src 10.44.0.1 metric 200\n",
+			}
+		}
+		return diagnoseCommandCheck{Name: label, OK: true}
+	}
+	configPath, statePath := writeDoctorFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", "cloud-route", map[string]any{
+		"phase":                    "Installed",
+		"type":                     "unicast",
+		"destination":              "10.44.0.0/24",
+		"gateway":                  "192.0.2.1",
+		"device":                   "eth0",
+		"effectivePreferredSource": "10.44.0.1",
+		"metric":                   200,
+	}); err != nil {
+		t.Fatalf("save route status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "routes", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor routes: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "IPv4Route/cloud-route host route")
+	if check.Status != doctorPass {
+		t.Fatalf("check = %#v, want pass", check)
+	}
+}
+
+func TestDoctorRoutesHonorsPreferredSourceSkipped(t *testing.T) {
+	oldRun := doctorRunDiagnosticCommand
+	defer func() { doctorRunDiagnosticCommand = oldRun }()
+	doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
+		if label == "ip -4 route show 10.44.0.0/24" {
+			return diagnoseCommandCheck{
+				Name:   label,
+				OK:     true,
+				Stdout: "10.44.0.0/24 via 192.0.2.1 dev eth0 metric 200\n",
+			}
+		}
+		return diagnoseCommandCheck{Name: label, OK: true}
+	}
+	configPath, statePath := writeDoctorFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", "cloud-route", map[string]any{
+		"phase":                  "Installed",
+		"type":                   "unicast",
+		"destination":            "10.44.0.0/24",
+		"gateway":                "192.0.2.1",
+		"device":                 "eth0",
+		"preferredSource":        "10.44.0.1",
+		"preferredSourceSkipped": true,
+		"metric":                 200,
+	}); err != nil {
+		t.Fatalf("save route status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "routes", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor routes: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "IPv4Route/cloud-route host route")
+	if check.Status != doctorPass {
+		t.Fatalf("check = %#v, want pass", check)
+	}
+	if strings.Contains(check.Detail, "preferredSource=10.44.0.1") {
+		t.Fatalf("check detail = %q, should not require skipped preferred source", check.Detail)
+	}
+}
+
+func TestDoctorRoutesSkipsHostChecksWithNoHost(t *testing.T) {
+	configPath, statePath := writeDoctorFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", "cloud-route", map[string]any{
+		"phase":       "Installed",
+		"destination": "10.44.0.0/24",
+		"device":      "eth0",
+		"metric":      200,
+	}); err != nil {
+		t.Fatalf("save route status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "routes", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor routes --no-host: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "IPv4Route/cloud-route host route")
+	if check.Status != doctorSkip {
+		t.Fatalf("check = %#v, want skip", check)
+	}
+}
+
 func TestDoctorPluginExecutableRunAndFreshnessChecks(t *testing.T) {
 	dir := t.TempDir()
 	pluginPath := filepath.Join(dir, "cloud-plugin.sh")

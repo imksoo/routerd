@@ -47,7 +47,11 @@ routerctl doctor -o yaml
 | `mgmt` | 管理用 interface の存在（`ManagementAccess` または `FirewallZone role=mgmt` から推定）。WebConsole の bind 先（`0.0.0.0` / `::` は WARN/FAIL）。 |
 | `reconcile` | 読み取り専用ステータスソケットから、コントローラーごとの reconcile 失敗履歴を確認します。`--since <duration>` で対象期間を区切ります。期間内に 1 件以上で WARN、10 件以上で FAIL。detail に最大 5 件のサンプルを表示します。 |
 | `runtime` | 読み取り専用ステータスソケットから、routerd 自身の heap / goroutine / fd を確認します: `heapAlloc`、`heapObjects`、`numGoroutine`、`numGC`、`openFds`/`maxFds`。`numGoroutine` が 10000 超、または open fd が `RLIMIT_NOFILE` の 80% 以上で WARN。観測用で FAIL にはなりません。 |
+| `dynamic` | `DynamicConfigPart` の鮮度、mask、override policy を確認し、effective config が意図した生成状態からズレる原因になる stale part や mask を検出します。 |
+| `routes` | Installed な `IPv4Route` status と Linux host FIB（`ip -4 route show <destination>`）を比較します。destination、type、gateway、device、必要な場合の preferred source、metric を確認します。drift の証跡用であり、dataplane probe の代替ではありません。 |
+| `plugin` | trusted local plugin executable の存在、権限、status から見える直近実行の鮮度を確認します。 |
 | `hybrid` | `HybridRoute` / `OverlayPeer` の参照、Selective Address Mobility の設定参照、デフォルト経路を触らない安全性、MTU 推定、任意の `HealthCheck` status、読み取り専用の経路表確認（`ip -4 route show <prefix>`）。Linux SAM では `/32` delivery route、provider local-address absence、proxy neighbor capture、`proxy_arp`、`ip_forward`、route lookup、warning-only の `rp_filter`、default-drop `FORWARD` policy heuristic も確認します。 |
+| `sam` | CloudEdge SAM の ownership/capture 診断です。provider ownership の鮮度、OS capture state、delivery route lookup、forwarding prerequisites、blocking reasons を確認します。これは診断ビューであり、CloudEdge acceptance は実 dataplane check で判断します。 |
 
 各チェックは `pass` / `warn` / `fail` / `skip`（該当リソース/シグナルが無い）のいずれかを返します。
 
