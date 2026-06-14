@@ -246,7 +246,7 @@ func parseDiagnoseOptions(name string, args []string, helpOutput io.Writer) (dia
 				"routerctl diagnose lan-client 192.168.1.10 --no-host\n" +
 				"routerctl diagnose lan-client 192.168.1.10 -o json"
 		case "doctor":
-			summary = "routerd の各 area (wan/dns/dslite/dhcpv6-pd/nat/firewall/rollback/disk/mgmt/reconcile/runtime/dynamic/plugin/hybrid) の\n" +
+			summary = "routerd の各 area (" + strings.Join(doctorAreas, "/") + ") の\n" +
 				"健全性チェックをまとめて実行する。\n" +
 				"--incident を付けると host ダンプ(診断コマンド出力/イベント/オブジェクトステータス/プラグイン実行履歴)を付加する。\n" +
 				"位置引数: [area] (省略時は全 area)。--probe は control API 経由の対象別 probe を実行する。"

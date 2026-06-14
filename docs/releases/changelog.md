@@ -12,7 +12,11 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
-(No unreleased changes.)
+### Added
+
+- `routerctl doctor routes` compares installed `IPv4Route` status rows with
+  the Linux host FIB and reports stale or mismatched destination, gateway,
+  device, preferred-source, and metric drift as operator evidence (#439).
 
 ## v20260608.2325
 
