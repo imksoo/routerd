@@ -938,6 +938,21 @@ type StatusValueSourceSpec struct {
 	Optional bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
 }
 
+type RequiredFieldStatusValueSourceSpec struct {
+	// Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.
+	Resource string `yaml:"resource" json:"resource"`
+	Field    string `yaml:"field" json:"field" jsonschema:"required"`
+	Optional bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
+}
+
+func (s RequiredFieldStatusValueSourceSpec) StatusValueSourceSpec() StatusValueSourceSpec {
+	return StatusValueSourceSpec{
+		Resource: s.Resource,
+		Field:    s.Field,
+		Optional: s.Optional,
+	}
+}
+
 type ResourceDependencySpec struct {
 	Resource string `yaml:"resource" json:"resource"`
 	// Field defaults to phase unless phase is set.
@@ -1098,16 +1113,16 @@ type DNSForwarderSpec struct {
 }
 
 type DNSUpstreamSpec struct {
-	Protocol        string                  `yaml:"protocol" json:"protocol" jsonschema:"enum=udp,enum=tcp,enum=dot,enum=doh"`
-	Address         string                  `yaml:"address,omitempty" json:"address,omitempty"`
-	AddressFrom     []StatusValueSourceSpec `yaml:"addressFrom,omitempty" json:"addressFrom,omitempty"`
-	Port            int                     `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=1,maximum=65535"`
-	Path            string                  `yaml:"path,omitempty" json:"path,omitempty"`
-	TLSName         string                  `yaml:"tlsName,omitempty" json:"tlsName,omitempty"`
-	Bootstrap       []string                `yaml:"bootstrap,omitempty" json:"bootstrap,omitempty"`
-	BootstrapFrom   []StatusValueSourceSpec `yaml:"bootstrapFrom,omitempty" json:"bootstrapFrom,omitempty"`
-	SourceInterface string                  `yaml:"sourceInterface,omitempty" json:"sourceInterface,omitempty"`
-	When            ResourceWhenSpec        `yaml:"when,omitempty" json:"when,omitempty"`
+	Protocol        string                               `yaml:"protocol" json:"protocol" jsonschema:"enum=udp,enum=tcp,enum=dot,enum=doh"`
+	Address         string                               `yaml:"address,omitempty" json:"address,omitempty"`
+	AddressFrom     []StatusValueSourceSpec              `yaml:"addressFrom,omitempty" json:"addressFrom,omitempty"`
+	Port            int                                  `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=1,maximum=65535"`
+	Path            string                               `yaml:"path,omitempty" json:"path,omitempty"`
+	TLSName         string                               `yaml:"tlsName,omitempty" json:"tlsName,omitempty"`
+	Bootstrap       []string                             `yaml:"bootstrap,omitempty" json:"bootstrap,omitempty"`
+	BootstrapFrom   []RequiredFieldStatusValueSourceSpec `yaml:"bootstrapFrom,omitempty" json:"bootstrapFrom,omitempty"`
+	SourceInterface string                               `yaml:"sourceInterface,omitempty" json:"sourceInterface,omitempty"`
+	When            ResourceWhenSpec                     `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type DNSResolverCacheSpec struct {

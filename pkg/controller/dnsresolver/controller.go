@@ -341,7 +341,7 @@ func (c Controller) attachForwarders(resolverName string, spec api.DNSResolverSp
 					source.BootstrapResolver = append(source.BootstrapResolver, upstream.Bootstrap...)
 				}
 				if len(upstream.BootstrapFrom) > 0 {
-					source.BootstrapResolverFrom = append(source.BootstrapResolverFrom, upstream.BootstrapFrom...)
+					source.BootstrapResolverFrom = append(source.BootstrapResolverFrom, requiredFieldStatusValueSources(upstream.BootstrapFrom)...)
 				}
 				if source.ViaInterface == "" && strings.TrimSpace(upstream.SourceInterface) != "" {
 					source.ViaInterface = upstream.SourceInterface
@@ -1102,11 +1102,19 @@ func dnsUpstreamStatusRefs(spec api.DNSUpstreamSpec) []daemonapi.ResourceRef {
 		}
 	}
 	for _, source := range spec.BootstrapFrom {
-		if ref, ok := resourcequery.SourceRef(source); ok {
+		if ref, ok := resourcequery.SourceRef(source.StatusValueSourceSpec()); ok {
 			refs = append(refs, daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: ref.Kind, Name: ref.Name})
 		}
 	}
 	return refs
+}
+
+func requiredFieldStatusValueSources(sources []api.RequiredFieldStatusValueSourceSpec) []api.StatusValueSourceSpec {
+	out := make([]api.StatusValueSourceSpec, 0, len(sources))
+	for _, source := range sources {
+		out = append(out, source.StatusValueSourceSpec())
+	}
+	return out
 }
 
 func statusRefResource(expr string) (string, string, bool) {

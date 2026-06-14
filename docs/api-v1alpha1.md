@@ -175,7 +175,7 @@ declared on `DNSForwarder.spec.dnssecValidate`.
 `DNSUpstream.spec.protocol` is `udp`, `tcp`, `dot`, or `doh`. `addressFrom`
 can derive UDP upstream addresses from resources such as
 `DHCPv6Information/<name>.dnsServers`. `sourceInterface` binds outgoing DNS
-queries to a Linux interface name, and `bootstrap` or `bootstrapFrom` supplies
+queries to a Linux interface name, and `bootstrap` or `bootstrapFrom` supply
 resolver addresses for DoH or DoT endpoint name resolution.
 
 ## DS-Lite, Routes, and NAT

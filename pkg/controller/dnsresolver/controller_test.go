@@ -253,7 +253,7 @@ func dnsResolverRouterWithPartialUpstreamFrom(source api.StatusValueSourceSpec) 
 	}}}
 }
 
-func dnsResolverRouterWithBootstrapFrom(source api.StatusValueSourceSpec) *api.Router {
+func dnsResolverRouterWithBootstrapFrom(source api.RequiredFieldStatusValueSourceSpec) *api.Router {
 	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
@@ -278,7 +278,7 @@ func dnsResolverRouterWithBootstrapFrom(source api.StatusValueSourceSpec) *api.R
 				Protocol:      "doh",
 				Address:       "dns.nextdns.io",
 				Path:          "/abc123",
-				BootstrapFrom: []api.StatusValueSourceSpec{source},
+				BootstrapFrom: []api.RequiredFieldStatusValueSourceSpec{source},
 				Bootstrap:     []string{"1.1.1.1"},
 			},
 		},
@@ -413,7 +413,7 @@ func TestReconcileResolvesBootstrapFromStatus(t *testing.T) {
 		api.NetAPIVersion + "/DHCPv6Information/wan-info": {"dnsServers": []any{"2409:10:3d60:1200:1eb1:7fff:fe73:76d8"}},
 	}
 	controller := Controller{
-		Router: dnsResolverRouterWithBootstrapFrom(api.StatusValueSourceSpec{Resource: "DHCPv6Information/wan-info", Field: "dnsServers"}),
+		Router: dnsResolverRouterWithBootstrapFrom(api.RequiredFieldStatusValueSourceSpec{Resource: "DHCPv6Information/wan-info", Field: "dnsServers"}),
 		Store:  store,
 		DryRun: true,
 	}
@@ -453,7 +453,7 @@ func TestReconcileResolvesBootstrapFromStatus(t *testing.T) {
 func TestReconcilePendingWhenBootstrapFromUnresolved(t *testing.T) {
 	store := mapStore{}
 	controller := Controller{
-		Router: dnsResolverRouterWithBootstrapFrom(api.StatusValueSourceSpec{Resource: "DHCPv6Information/wan-info", Field: "dnsServers"}),
+		Router: dnsResolverRouterWithBootstrapFrom(api.RequiredFieldStatusValueSourceSpec{Resource: "DHCPv6Information/wan-info", Field: "dnsServers"}),
 		Store:  store,
 		DryRun: true,
 	}
