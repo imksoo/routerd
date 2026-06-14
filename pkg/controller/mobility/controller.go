@@ -213,7 +213,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	if err != nil {
 		return fmt.Errorf("list action journal: %w", err)
 	}
-	failedActions := latestFailedProviderActions(actionJournal)
+	failedActions := suppressObservedSelfCaptureFailures(latestFailedProviderActions(actionJournal), discoverySelfCaptures)
 	previousActionPlans, err := c.previousGeneratedActionPlans(res.Metadata.Name, selfNode)
 	if err != nil {
 		return err
@@ -2386,4 +2386,18 @@ func latestFailedProviderActions(actions []routerstate.ActionExecutionRecord) ma
 		}
 	}
 	return failed
+}
+
+func suppressObservedSelfCaptureFailures(failed map[string]routerstate.ActionExecutionRecord, observedSelfCaptures map[string]bool) map[string]routerstate.ActionExecutionRecord {
+	if len(failed) == 0 || len(observedSelfCaptures) == 0 {
+		return failed
+	}
+	filtered := map[string]routerstate.ActionExecutionRecord{}
+	for addr, rec := range failed {
+		if observedSelfCaptures[normalizeAddressString(addr)] {
+			continue
+		}
+		filtered[addr] = rec
+	}
+	return filtered
 }

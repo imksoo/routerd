@@ -626,6 +626,33 @@ func TestControllerBGPModeClearsStaleProviderActionFailureStatus(t *testing.T) {
 	}
 }
 
+func TestSuppressObservedSelfCaptureFailures(t *testing.T) {
+	now := time.Date(2026, 6, 14, 19, 8, 31, 0, time.UTC)
+	failed := map[string]routerstate.ActionExecutionRecord{
+		"10.88.60.11/32": {
+			Action:     "assign-secondary-ip",
+			Status:     routerstate.ActionFailed,
+			TargetJSON: `{"address":"10.88.60.11/32"}`,
+			Error:      "provider conflict: address already allocated",
+			UpdatedAt:  now,
+		},
+		"10.88.60.12/32": {
+			Action:     "assign-secondary-ip",
+			Status:     routerstate.ActionFailed,
+			TargetJSON: `{"address":"10.88.60.12/32"}`,
+			Error:      "provider unavailable",
+			UpdatedAt:  now,
+		},
+	}
+	filtered := suppressObservedSelfCaptureFailures(failed, map[string]bool{"10.88.60.11/32": true})
+	if _, ok := filtered["10.88.60.11/32"]; ok {
+		t.Fatalf("observed self capture failure was not suppressed: %#v", filtered)
+	}
+	if _, ok := filtered["10.88.60.12/32"]; !ok {
+		t.Fatalf("unobserved failure was suppressed: %#v", filtered)
+	}
+}
+
 func TestControllerBGPModeUsesDiscoveredSelfNICForProviderActions(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
