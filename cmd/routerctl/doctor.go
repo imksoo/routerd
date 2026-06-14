@@ -704,6 +704,9 @@ func (r doctorRunner) doctorSAMOwnerTableRouteChecks(pool string, poolSpec api.M
 		}
 		checks = append(checks, doctorCheck{Area: "sam", Name: name, Status: doctorPass, Detail: detail})
 	}
+	for _, route := range doctorSAMObservedBGPReturnRoutes(status) {
+		expectedPrefixes[route] = true
+	}
 	if snapshotCommand.OK {
 		checks = append(checks, doctorSAMUnexpectedRouteResidueChecks(pool, poolSpec, expectedPrefixes, actualRoutes)...)
 	}
@@ -711,6 +714,34 @@ func (r doctorRunner) doctorSAMOwnerTableRouteChecks(pool string, poolSpec api.M
 		return []doctorCheck{{Area: "sam", Name: label, Status: doctorSkip, Detail: "no local owner rows"}}
 	}
 	return checks
+}
+
+func doctorSAMObservedBGPReturnRoutes(status map[string]any) []string {
+	var out []string
+	switch value := status["observedBGPReturnRoutes"].(type) {
+	case []string:
+		out = append(out, value...)
+	case []any:
+		for _, item := range value {
+			out = append(out, strings.TrimSpace(fmt.Sprint(item)))
+		}
+	case string:
+		out = append(out, strings.FieldsFunc(value, func(r rune) bool {
+			return r == ',' || r == ' ' || r == '\n' || r == '\t'
+		})...)
+	}
+	seen := map[string]bool{}
+	var normalized []string
+	for _, raw := range out {
+		prefix := normalizeDoctorIPv4RoutePrefix(raw)
+		if prefix == "" || seen[prefix] {
+			continue
+		}
+		seen[prefix] = true
+		normalized = append(normalized, prefix)
+	}
+	sort.Strings(normalized)
+	return normalized
 }
 
 func doctorSAMOwnerRowNeedsLocalFIB(row map[string]any) bool {
