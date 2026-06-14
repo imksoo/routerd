@@ -349,7 +349,7 @@ func TestPlanCaptureProviderSecondaryIPConfigureOSAddressTrueSkipsDeassign(t *te
 	}
 }
 
-func TestPlanCaptureProviderSecondaryIPBGPDeassignsAndForwardsWithConfigureOSAddressTrue(t *testing.T) {
+func TestPlanCaptureProviderSecondaryIPBGPProxiesAndForwardsWithConfigureOSAddressTrue(t *testing.T) {
 	router := testRouter()
 	router.Spec.Resources = router.Spec.Resources[:4]
 	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
@@ -368,6 +368,40 @@ func TestPlanCaptureProviderSecondaryIPBGPDeassignsAndForwardsWithConfigureOSAdd
 	}
 	if !hasAction(actions, "deassign-os-address", "", "10.0.1.122/32", "") {
 		t.Fatalf("actions missing OS address deassign: %#v", actions)
+	}
+	if !hasAction(actions, "sysctl", "net.ipv4.conf.ens3.proxy_arp", "", "ens3") {
+		t.Fatalf("actions missing provider-secondary BGP proxy_arp: %#v", actions)
+	}
+	if !hasAction(actions, "proxy-neighbor", "", "10.0.1.122/32", "ens3") {
+		t.Fatalf("actions missing provider-secondary BGP proxy neighbor: %#v", actions)
+	}
+	if !hasAction(actions, "forward-path", "", "10.0.1.122/32", "ens3") {
+		t.Fatalf("actions missing provider-secondary BGP forward path: %#v", actions)
+	}
+}
+
+func TestPlanCaptureProviderSecondaryIPBGPDeassignsWhenConfigureOSAddressFalse(t *testing.T) {
+	router := testRouter()
+	router.Spec.Resources = router.Spec.Resources[:4]
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+		Metadata: api.ObjectMeta{Name: "samt0"},
+		Spec:     api.TunnelInterfaceSpec{Mode: "ipip", Local: "10.99.0.2", Remote: "10.99.0.1", Address: "10.255.0.2/31"},
+	})
+	spec := router.Spec.Resources[3].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ConfigureOSAddress = false
+	spec.Capture.Interface = "ens3"
+	spec.Delivery = api.AddressDelivery{Mode: "bgp"}
+	router.Spec.Resources[3].Spec = spec
+	actions, err := PlanCapture(router, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("PlanCapture: %v", err)
+	}
+	if !hasAction(actions, "deassign-os-address", "", "10.0.1.122/32", "") {
+		t.Fatalf("actions missing OS address deassign: %#v", actions)
+	}
+	if !hasAction(actions, "proxy-neighbor", "", "10.0.1.122/32", "ens3") {
+		t.Fatalf("actions missing provider-secondary BGP proxy neighbor: %#v", actions)
 	}
 	if !hasAction(actions, "forward-path", "", "10.0.1.122/32", "ens3") {
 		t.Fatalf("actions missing provider-secondary BGP forward path: %#v", actions)

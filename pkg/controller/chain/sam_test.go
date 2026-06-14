@@ -414,6 +414,29 @@ func TestSAMIPTablesRuleKeyMatchesIPTablesSaveOrder(t *testing.T) {
 	}
 }
 
+func TestSAMForwardPathInterfacesFromRule(t *testing.T) {
+	got := forwardPathInterfacesFromRule([]string{"-s", "10.77.60.10/32", "-i", "ens5", "-o", "samt0", "-j", "ACCEPT"})
+	want := []string{"ens5", "samt0"}
+	if len(got) != len(want) {
+		t.Fatalf("interfaces = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("interfaces = %#v, want %#v", got, want)
+		}
+	}
+	got = forwardPathInterfacesFromRule([]string{"--in-interface", "samt0", "--out-interface", "ens5", "--in-interface", "samt0", "-j", "ACCEPT"})
+	want = []string{"samt0", "ens5"}
+	if len(got) != len(want) {
+		t.Fatalf("interfaces = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("interfaces = %#v, want %#v", got, want)
+		}
+	}
+}
+
 type fakeSAMApplier struct {
 	ensure         []string
 	delete         []string

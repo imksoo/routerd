@@ -353,8 +353,10 @@ func TestDynamicRouteSAMViewDerivesBGPProviderSecondaryForwardPath(t *testing.T)
 		t.Fatalf("SAM reconcile: %v", err)
 	}
 	assertSAMCalls(t, applier.calls, []string{
+		"proxyarp:ens3=1",
 		"forward:10.77.70.50/32@ens3<->samtd2b3cb08326",
 		"deassign:10.77.70.50/32",
+		"ensure:10.77.70.50/32@ens3",
 	})
 }
 
