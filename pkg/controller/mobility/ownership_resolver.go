@@ -187,6 +187,7 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 				decision.Class = ownershipClassRemoteHomeOwned
 				decision.SuppressionReason = "static-owned-by-remote"
 			}
+			clearDisprovedStaleCapture(&decision, capturedIPs, selfIPsObserved, address)
 			out = append(out, decision)
 			continue
 		}
@@ -326,6 +327,7 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 				decision.Class = ownershipClassRemoteHomeOwned
 				decision.SuppressionReason = "remote-home-owner"
 			}
+			clearDisprovedStaleCapture(&decision, capturedIPs, selfIPsObserved, address)
 			out = append(out, decision)
 			continue
 		}
@@ -397,6 +399,7 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 				decision.SuppressionReason = "bgp-owner"
 			}
 			if decision.Class != ownershipClassUnknown {
+				clearDisprovedStaleCapture(&decision, capturedIPs, selfIPsObserved, address)
 				out = append(out, decision)
 				continue
 			}
@@ -414,6 +417,18 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 		out = append(out, decision)
 	}
 	return out, nil
+}
+
+func clearDisprovedStaleCapture(decision *ownershipDecision, capturedIPs map[string]bool, selfIPsObserved bool, address string) {
+	if decision == nil || decision.CaptureState != captureStateStale || !selfIPsObserved || capturedIPs[normalizeAddressString(address)] {
+		return
+	}
+	decision.CaptureState = captureStateNone
+	decision.CaptureHolderNode = ""
+	decision.CaptureProviderRef = ""
+	decision.CaptureTargetRef = ""
+	decision.CaptureStrategy = ""
+	decision.CaptureSucceeded = false
 }
 
 func selectedProviderInventoryHomeOwnerFacts(sets map[string][]providerInventoryOwnerFact) map[string]providerInventoryOwnerFact {

@@ -71,6 +71,70 @@ func TestOwnershipResolverScenario392SameProviderConfirmedCapture(t *testing.T) 
 	}
 }
 
+func TestOwnershipResolverClearsDisprovedStaleCaptureForRemoteBGPOwner(t *testing.T) {
+	now := time.Date(2026, 6, 14, 8, 30, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	address := "10.88.60.11/32"
+	action := resolverSucceededAction(t, "aws-provider", "eni-b", "aws-router-b", address, "assign-secondary-ip", now.Add(-time.Minute))
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "aws-router-b",
+		Spec:     spec,
+		Status: map[string]any{
+			"discoverySelfPrivateIPs":        []string{"10.88.60.6/32"},
+			"discoverySelfCapturedAddresses": []string{},
+			"discoveryLastScanAt":            now.Format(time.RFC3339Nano),
+		},
+		ActionJournal: []routerstate.ActionExecutionRecord{action},
+		BGPHomeOwnerNodes: map[string]string{
+			address: "aws-router-a",
+		},
+		Now: now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, address)
+	if decision.Class != ownershipClassRemoteHomeOwned || decision.CaptureState != captureStateNone || decision.CaptureHolderNode != "" {
+		t.Fatalf("decision = %#v, want remote BGP owner without stale capture after provider inventory disproves self capture", decision)
+	}
+	status := ownershipResolverStatus(decisions)
+	if status["ownershipResolverStaleCount"] != 0 {
+		t.Fatalf("status = %#v, want no stale claims for disproved standby capture", status)
+	}
+}
+
+func TestOwnershipResolverClearsDisprovedStaleCaptureForStaticRemoteOwner(t *testing.T) {
+	now := time.Date(2026, 6, 14, 8, 35, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	address := "10.88.60.10/32"
+	spec.Members[0].StaticOwnedAddresses = []string{address}
+	action := resolverSucceededAction(t, "aws-provider", "eni-b", "aws-router-b", address, "assign-secondary-ip", now.Add(-time.Minute))
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "aws-router-b",
+		Spec:     spec,
+		Status: map[string]any{
+			"discoverySelfPrivateIPs":        []string{"10.88.60.6/32"},
+			"discoverySelfCapturedAddresses": []string{},
+			"discoveryLastScanAt":            now.Format(time.RFC3339Nano),
+		},
+		ActionJournal: []routerstate.ActionExecutionRecord{action},
+		Now:           now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, address)
+	if decision.Class != ownershipClassRemoteHomeOwned || decision.SuppressionReason != "static-owned-by-remote" || decision.CaptureState != captureStateNone {
+		t.Fatalf("decision = %#v, want static remote owner without stale capture after provider inventory disproves self capture", decision)
+	}
+	status := ownershipResolverStatus(decisions)
+	if status["ownershipResolverStaleCount"] != 0 {
+		t.Fatalf("status = %#v, want no stale claims for disproved static remote capture", status)
+	}
+}
+
 func TestOwnershipResolverDoesNotConfirmRouterPrimaryFromActionJournal(t *testing.T) {
 	now := time.Date(2026, 6, 10, 15, 0, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()
