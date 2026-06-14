@@ -19,22 +19,16 @@ USAGE:
 
 ENV:
   SSH_KEY_FILE, SSH_USER, CE_SSH_USER, CE_SSH_EXTRA_OPTS
+  CE_SSH_KNOWN_HOSTS          Known-hosts file for source VM SSH verification
   <SITE>_CLIENT_SSH_HOST or CE_<SITE>_CLIENT_SSH_HOST
   CLIENT_SSH_USER             User for nested site-to-site SSH (default ubuntu)
+  CE_NESTED_SSH_KNOWN_HOSTS   Known-hosts file visible on the source VM
   CE_NESTED_SSH_EXTRA_OPTS    Extra nested SSH options
 
 The runner executes commands on the source client VM over SSH, then uses the
 source client to ping/SSH the destination logical IP. It prints peer_ip and
 default_gw for the matrix source-IP/default-gateway checks.
 EOF
-}
-
-nested_ssh_opts() {
-  local user_opts="-o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=${CE_NESTED_SSH_CONNECT_TIMEOUT:-8}"
-  if [[ -n "${CE_NESTED_SSH_EXTRA_OPTS:-}" ]]; then
-    user_opts="$user_opts ${CE_NESTED_SSH_EXTRA_OPTS}"
-  fi
-  printf '%s' "$user_opts"
 }
 
 cmd_ping() {

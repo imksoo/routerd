@@ -172,7 +172,7 @@ except Exception as e:
     print('iperf_parse_error=%s' % str(e).replace(' ', '_'))
 PY")
   else
-    ce_client_ssh "$client" "dd if=/dev/zero bs=1M count=16 status=none | ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $(printf '%q' "$ip") 'cat >/tmp/cloudedge-bulk.bin'"
+    ce_client_ssh "$client" "dd if=/dev/zero bs=1M count=16 status=none | ssh $(nested_ssh_opts) $(printf '%q' "$ip") 'cat >/tmp/cloudedge-bulk.bin'"
     summary="bytes_sent=$bytes"
   fi
   printf 'bytes=%s\n' "$bytes"
@@ -252,7 +252,7 @@ cmd_nested_ssh_peer() {
   local client=$1 server=$2 ip user
   ip=$(server_ip "$server")
   user=${CLIENT_SSH_USER:-ubuntu}
-  ce_client_ssh "$client" "ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8 $(printf '%q' "$user@$ip") 'echo peer_ip=\$(echo \$SSH_CONNECTION | awk \"{print \\\$1}\")'"
+  ce_client_ssh "$client" "ssh $(nested_ssh_opts) $(printf '%q' "$user@$ip") 'echo peer_ip=\$(echo \$SSH_CONNECTION | awk \"{print \\\$1}\")'"
 }
 
 cmd_source_preserved() {
