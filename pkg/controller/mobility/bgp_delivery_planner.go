@@ -36,6 +36,7 @@ type bgpDeliveryPlannerInput struct {
 	ForwardingObserved   bool
 	ForwardingEnabled    bool
 	ForwardingObservedAt time.Time
+	ObservedStaleSince   map[string]time.Time
 	SuppressDeprovision  bool
 	Now                  time.Time
 }
@@ -364,6 +365,12 @@ func observedSelfStaleCaptureActionPlans(in bgpDeliveryPlannerInput, candidates 
 			installed[address] = true
 		}
 	}
+	poolPrefix, err := netip.ParsePrefix(strings.TrimSpace(in.Spec.Prefix))
+	if err != nil {
+		return nil, fmt.Errorf("parse pool prefix: %w", err)
+	}
+	poolPrefix = poolPrefix.Masked()
+	recentTrapCandidates := previousBGPTrapCandidateAddresses(in.PreviousPlans, poolPrefix)
 	var staleAddresses []string
 	for _, decision := range in.Decisions {
 		address := normalizeAddressString(decision.Address)
@@ -377,6 +384,12 @@ func observedSelfStaleCaptureActionPlans(in bgpDeliveryPlannerInput, candidates 
 			continue
 		}
 		if strings.TrimSpace(decision.CaptureHolderNode) != "" && strings.TrimSpace(decision.CaptureHolderNode) != strings.TrimSpace(in.Self.NodeRef) {
+			continue
+		}
+		if staleSince, ok := in.ObservedStaleSince[address]; !ok || staleSince.IsZero() || in.Now.UTC().Sub(staleSince.UTC()) < bgpTrapRIBMissingHold {
+			continue
+		}
+		if candidate, ok := recentTrapCandidates[address]; ok && bgpTrapCandidateWithinMissingHold(candidate, in.Now) {
 			continue
 		}
 		staleAddresses = append(staleAddresses, address)
