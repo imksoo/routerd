@@ -399,6 +399,69 @@ func TestDoctorSAMOwnerTableRouteDriftAllowsUnselectedOverlayRoute(t *testing.T)
 	}
 }
 
+func TestDoctorSAMOwnerTableReportsUnexpectedRouteResidue(t *testing.T) {
+	oldRun := doctorRunDiagnosticCommand
+	defer func() { doctorRunDiagnosticCommand = oldRun }()
+	doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
+		if label == "ip -4 route show table main" {
+			return diagnoseCommandCheck{
+				Name: label,
+				OK:   true,
+				Stdout: strings.Join([]string{
+					"10.77.60.7 dev ens5 scope link metric 1",
+					"10.77.60.8 dev ens5 scope link metric 1",
+					"10.88.60.9 dev ens5 scope link metric 1",
+				}, "\n") + "\n",
+				Output: strings.Join([]string{
+					"10.77.60.7 dev ens5 scope link metric 1",
+					"10.77.60.8 dev ens5 scope link metric 1",
+					"10.88.60.9 dev ens5 scope link metric 1",
+				}, "\n") + "\n",
+			}
+		}
+		return diagnoseCommandCheck{
+			Name:   label,
+			OK:     true,
+			Stdout: "10.77.60.7 dev ens5 src 10.77.60.4 uid 1000",
+			Output: "10.77.60.7 dev ens5 src 10.77.60.4 uid 1000",
+		}
+	}
+
+	configPath, statePath := writeDoctorSAMFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"plannerPhase":                   "BGPPlanned",
+		"ownershipResolverPhase":         "Resolved",
+		"ownershipResolverConflictCount": 0,
+		"ownershipResolverOwnerTable": []map[string]any{{
+			"address":          "10.77.60.7/32",
+			"state":            "OK",
+			"class":            "LocalHomeOwned",
+			"ownerNode":        "azure-router",
+			"localNode":        "azure-router",
+			"localProviderRef": "azure-provider",
+		}},
+	}); err != nil {
+		t.Fatalf("save mobility status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	err := run([]string{"doctor", "sam", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("doctor sam succeeded with unexpected route residue:\n%s", out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "MobilityPool/cloudedge owner-table unexpected route residue 10.77.60.8/32")
+	if check.Status != doctorFail || !strings.Contains(check.Detail, "absent from ownershipResolverOwnerTable") || !strings.Contains(check.Detail, "10.77.60.8 dev ens5") {
+		t.Fatalf("check = %#v, want failing unexpected residue detail", check)
+	}
+	assertDoctorCheckAbsent(t, report, "MobilityPool/cloudedge owner-table unexpected route residue 10.88.60.9/32")
+}
+
 func TestDoctorSAMFederationDiscoveryWarnsWhenNoPeerDiscoveryEvents(t *testing.T) {
 	configPath, statePath := writeDoctorSAMFederationFixture(t)
 	store := openDoctorState(t, statePath)

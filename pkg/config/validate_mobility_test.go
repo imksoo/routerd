@@ -69,6 +69,32 @@ func TestValidateMobilityPoolAllowsProviderCaptureConfigureOSAddress(t *testing.
 	}
 }
 
+func TestValidateMobilityPoolRejectsOverlappingPrefixes(t *testing.T) {
+	router := mobilityPoolRouter(api.MobilityPoolSpec{
+		Prefix:   "10.88.60.0/24",
+		GroupRef: "cloudedge-a",
+		Members: []api.MobilityPoolMember{
+			{NodeRef: "onprem-a", Site: "onprem-a", Role: "onprem"},
+			{NodeRef: "cloud-a", Site: "cloud-a", Role: "cloud"},
+		},
+	}, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+		Metadata: api.ObjectMeta{Name: "cloudedge-b"},
+		Spec: api.MobilityPoolSpec{
+			Prefix:   "10.88.60.128/25",
+			GroupRef: "cloudedge-b",
+			Members: []api.MobilityPoolMember{
+				{NodeRef: "onprem-b", Site: "onprem-b", Role: "onprem"},
+				{NodeRef: "cloud-b", Site: "cloud-b", Role: "cloud"},
+			},
+		},
+	})
+	err := Validate(router)
+	if err == nil || !strings.Contains(err.Error(), "MobilityPool prefixes must be disjoint") {
+		t.Fatalf("Validate overlap error = %v, want disjoint MobilityPool prefix error", err)
+	}
+}
+
 func TestValidateSAMTransportProfile(t *testing.T) {
 	router := samTransportProfileRouter(validSAMTransportProfileSpec())
 	if err := Validate(router); err != nil {
