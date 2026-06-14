@@ -192,6 +192,36 @@ func TestOwnershipResolverKeepsObservedSelfCapture(t *testing.T) {
 	}
 }
 
+func TestOwnershipResolverDoesNotConfirmCaptureWithoutProviderObservation(t *testing.T) {
+	now := time.Date(2026, 6, 14, 8, 45, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	address := "10.88.60.11/32"
+	action := resolverSucceededAction(t, "aws-provider", "eni-b", "aws-router-b", address, "assign-secondary-ip", now.Add(-time.Minute))
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "aws-router-b",
+		Spec:     spec,
+		Status:   map[string]any{},
+		ActionJournal: []routerstate.ActionExecutionRecord{
+			action,
+		},
+		BGPHomeOwnerNodes: map[string]string{
+			address: "aws-router-a",
+		},
+		Now: now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, address)
+	if decision.Class == ownershipClassConfirmedCapture || decision.CaptureState == captureStateConfirmed {
+		t.Fatalf("decision = %#v, action journal without provider observation must not confirm capture", decision)
+	}
+	if decision.CaptureState != captureStateStale {
+		t.Fatalf("decision = %#v, want historical assign kept only as stale diagnostic evidence", decision)
+	}
+}
+
 func TestOwnershipResolverDoesNotClearOtherHolderStaleCapture(t *testing.T) {
 	address := "10.88.60.11/32"
 	decision := ownershipDecision{
