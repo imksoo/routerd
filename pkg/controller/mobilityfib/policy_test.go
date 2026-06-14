@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
+	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 )
 
 type mapStatusReader map[string]map[string]any
@@ -80,6 +81,25 @@ func TestSnapshotFailsClosedForUnknownMobilityAddress(t *testing.T) {
 	}
 }
 
+func TestSnapshotAdmitsRemoteSiteReturnRouteAndRejectsSameSiteReturnRoute(t *testing.T) {
+	snapshot := NewSnapshot(testRouter("aws-router-a"), mapStatusReader{})
+	if snapshot.AdmitBGPPath(netip.MustParsePrefix("10.77.60.6/32"), []string{
+		communityMobilityReturnRoute,
+		bgpstate.MobilityNodeIdentityCommunity("aws-router-b"),
+	}) {
+		t.Fatal("same-site router return-route was admitted; want local fabric route to win")
+	}
+	if !snapshot.AdmitBGPPath(netip.MustParsePrefix("10.77.60.14/32"), []string{
+		communityMobilityReturnRoute,
+		bgpstate.MobilityNodeIdentityCommunity("azure-router"),
+	}) {
+		t.Fatal("remote-site router return-route was rejected; want return path installed")
+	}
+	if snapshot.AdmitBGPPath(netip.MustParsePrefix("10.77.60.14/32"), []string{communityMobilityReturnRoute}) {
+		t.Fatal("return-route without node identity was admitted; want fail-closed")
+	}
+}
+
 func TestSnapshotRejectsTrustedBGPPathForLocalStaticOwnedAddress(t *testing.T) {
 	router := testRouter("aws-router-a")
 	spec := router.Spec.Resources[1].Spec.(api.MobilityPoolSpec)
@@ -148,13 +168,14 @@ func testRouter(self string) *api.Router {
 						Members: []api.MobilityPoolMember{
 							{
 								NodeRef: self,
+								Site:    "aws",
 								Capture: api.MobilityMemberCapture{
 									Type:      "provider-secondary-ip",
 									Interface: "ens5",
 								},
 							},
-							{NodeRef: "aws-router-b"},
-							{NodeRef: "azure-router"},
+							{NodeRef: "aws-router-b", Site: "aws"},
+							{NodeRef: "azure-router", Site: "azure"},
 						},
 					},
 				},

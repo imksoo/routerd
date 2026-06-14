@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
+	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
 )
 
@@ -26,6 +27,7 @@ type poolSnapshot struct {
 	prefix      netip.Prefix
 	verdicts    map[string]Verdict
 	staticLocal map[string]bool
+	localReturn map[string]bool
 }
 
 const (
@@ -39,6 +41,7 @@ const (
 	communityMobilitySourceObserved = "64512:110"
 	communityMobilitySourceStatic   = "64512:111"
 	communityMobilitySourceHandover = "64512:112"
+	communityMobilityReturnRoute    = bgpstate.MobilityCommunityReturnRoute
 )
 
 type Verdict struct {
@@ -84,9 +87,26 @@ func NewSnapshot(router *api.Router, reader StatusReader) Snapshot {
 			prefix:      prefix.Masked(),
 			verdicts:    map[string]Verdict{},
 			staticLocal: map[string]bool{},
+			localReturn: map[string]bool{},
+		}
+		var selfMember api.MobilityPoolMember
+		for _, member := range spec.Members {
+			if strings.TrimSpace(member.NodeRef) == selfNode {
+				selfMember = member
+				break
+			}
 		}
 		for _, member := range spec.Members {
-			if strings.TrimSpace(member.NodeRef) != selfNode {
+			nodeRef := strings.TrimSpace(member.NodeRef)
+			if nodeRef == "" {
+				continue
+			}
+			if sameReturnRouteSite(selfMember, member) {
+				if community := bgpstate.MobilityNodeIdentityCommunity(canonicalNodeIdentity(nodeRef)); community != "" {
+					pool.localReturn[community] = true
+				}
+			}
+			if nodeRef != selfNode {
 				continue
 			}
 			for _, raw := range member.StaticOwnedAddresses {
@@ -128,12 +148,26 @@ func (s Snapshot) AdmitBGPPath(prefix netip.Prefix, communities []string) bool {
 	if verdict, ok := pool.verdicts[address]; ok {
 		return strings.TrimSpace(verdict.Action) == ActionDeliverRemote
 	}
+	if hasCommunity(communities, communityMobilityReturnRoute) {
+		return pool.admitReturnRoute(communities)
+	}
 	if !hasCommunity(communities, communityMobilityOwner) {
 		return false
 	}
 	return hasCommunity(communities, communityMobilitySourceObserved) ||
 		hasCommunity(communities, communityMobilitySourceStatic) ||
 		hasCommunity(communities, communityMobilitySourceHandover)
+}
+
+func (p poolSnapshot) admitReturnRoute(communities []string) bool {
+	for _, community := range communities {
+		community = strings.TrimSpace(community)
+		if !bgpstate.IsMobilityNodeIdentityCommunity(community) {
+			continue
+		}
+		return !p.localReturn[community]
+	}
+	return false
 }
 
 func (s Snapshot) LocalRouteAddressesForPool(poolName string) []string {
@@ -252,6 +286,28 @@ func mobilityDeliveryMode(spec api.MobilityPoolSpec) string {
 	default:
 		return strings.TrimSpace(spec.DeliveryPolicy.Mode)
 	}
+}
+
+func sameReturnRouteSite(a, b api.MobilityPoolMember) bool {
+	aNode := strings.TrimSpace(a.NodeRef)
+	bNode := strings.TrimSpace(b.NodeRef)
+	if aNode == "" || bNode == "" {
+		return false
+	}
+	if aNode == bNode {
+		return true
+	}
+	aSite := strings.TrimSpace(a.Site)
+	bSite := strings.TrimSpace(b.Site)
+	return aSite != "" && aSite == bSite
+}
+
+func canonicalNodeIdentity(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "Node/") {
+		return strings.TrimSpace(strings.TrimPrefix(value, "Node/"))
+	}
+	return value
 }
 
 func normalizePoolAddress(value string, pool netip.Prefix) (string, bool) {

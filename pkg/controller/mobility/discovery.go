@@ -847,6 +847,7 @@ type discoverySelfInventory struct {
 	ResourceType      string
 	PrivateIPs        []string
 	CapturedAddresses []string
+	PrimaryObserved   bool
 	ForwardingEnabled *bool
 }
 
@@ -988,6 +989,7 @@ func scopedDiscoverySelfInventory(self discoverySelfInventory, localInventory []
 	if matched {
 		if primaryObserved {
 			self.PrivateIPs = cleanStrings(privateIPs)
+			self.PrimaryObserved = true
 		} else {
 			self.PrivateIPs = normalizedDiscoveryAddresses(self.PrivateIPs, poolPrefix)
 		}
@@ -1030,6 +1032,7 @@ func discoverySelfInventoryStatus(self discoverySelfInventory) map[string]any {
 		"discoverySelfSubnetRef":          self.SubnetRef,
 		"discoverySelfPrivateIPs":         append([]string(nil), self.PrivateIPs...),
 		"discoverySelfCapturedAddresses":  append([]string(nil), self.CapturedAddresses...),
+		"discoverySelfPrimaryObserved":    self.PrimaryObserved,
 		"discoverySelfForwardingObserved": self.ForwardingEnabled != nil,
 	}
 	if self.ResourceRef != "" {

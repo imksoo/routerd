@@ -463,6 +463,9 @@ func TestDiscoveryControllerScopesProviderInventoryToSelfNICAndSubnet(t *testing
 	if got := statusStringSlice(status["discoverySelfPrivateIPs"]); len(got) != 1 || got[0] != "10.88.60.4/32" {
 		t.Fatalf("discoverySelfPrivateIPs = %#v, want only self NIC primary", status["discoverySelfPrivateIPs"])
 	}
+	if got, ok := statusBool(status["discoverySelfPrimaryObserved"]); !ok || !got {
+		t.Fatalf("discoverySelfPrimaryObserved = %#v, want true", status["discoverySelfPrimaryObserved"])
+	}
 	if got := statusStringSlice(status["discoverySelfCapturedAddresses"]); len(got) != 1 || got[0] != "10.88.60.13/32" {
 		t.Fatalf("discoverySelfCapturedAddresses = %#v, want self NIC secondary split out", status["discoverySelfCapturedAddresses"])
 	}
@@ -533,6 +536,9 @@ func TestDiscoveryControllerExcludesSelfResourceSecondaryFromOwnership(t *testin
 	}
 	if got := statusStringSlice(status["discoverySelfCapturedAddresses"]); len(got) != 1 || got[0] != "10.88.60.12/32" {
 		t.Fatalf("discoverySelfCapturedAddresses = %#v, want self resource secondary split out", got)
+	}
+	if got, ok := statusBool(status["discoverySelfPrimaryObserved"]); !ok || !got {
+		t.Fatalf("discoverySelfPrimaryObserved = %#v, want true", status["discoverySelfPrimaryObserved"])
 	}
 	if got := statusStringSlice(status["discoveryLocalInventoryIPs"]); stringSliceContains(got, "10.88.60.12/32") {
 		t.Fatalf("discoveryLocalInventoryIPs = %#v, want self resource secondary excluded", got)
