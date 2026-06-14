@@ -145,11 +145,11 @@ func (s Snapshot) AdmitBGPPath(prefix netip.Prefix, communities []string) bool {
 	if pool.staticLocal[address] {
 		return false
 	}
-	if verdict, ok := pool.verdicts[address]; ok {
-		return strings.TrimSpace(verdict.Action) == ActionDeliverRemote
-	}
 	if hasCommunity(communities, communityMobilityReturnRoute) {
 		return pool.admitReturnRoute(communities)
+	}
+	if verdict, ok := pool.verdicts[address]; ok {
+		return strings.TrimSpace(verdict.Action) == ActionDeliverRemote
 	}
 	if !hasCommunity(communities, communityMobilityOwner) {
 		return false

@@ -1826,6 +1826,50 @@ func TestControllerBGPModeProviderTrapRejectsUnknownBGPOnlyAddress(t *testing.T)
 	}
 }
 
+func TestControllerBGPModeReturnRouteDoesNotBecomeUnknownClaim(t *testing.T) {
+	now := time.Date(2026, 6, 9, 23, 3, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := plannedPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	saveBGPStatus(t, store,
+		map[string][]string{
+			"10.88.60.4/32": {"10.99.0.2"},
+		},
+		[]map[string]any{
+			{
+				"prefix":  "10.88.60.4/32",
+				"nextHop": "10.99.0.2",
+				"best":    true,
+				"valid":   true,
+				"communities": []string{
+					bgpstate.MobilityCommunityReturnRoute,
+					bgpstate.MobilityNodeIdentityCommunity("aws-router-a"),
+				},
+			},
+		},
+		nil,
+	)
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("azure-router", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	decisions := ownershipStatusDecisions(t, status["ownershipResolverDecisions"])
+	for _, decision := range decisions {
+		if decision["address"] == "10.88.60.4/32" {
+			t.Fatalf("return-route leaked into ownership resolver decisions: %#v", decision)
+		}
+	}
+	unknown := ownershipStatusDecisions(t, status["ownershipResolverUnknownClaims"])
+	for _, claim := range unknown {
+		if claim["address"] == "10.88.60.4/32" {
+			t.Fatalf("return-route leaked into unknown claims: %#v", claim)
+		}
+	}
+}
+
 func TestControllerBGPModeRouteTableWrongLocalUDRIsDeprovisioned(t *testing.T) {
 	now := time.Date(2026, 6, 9, 23, 5, 0, 0, time.UTC)
 	store := testStore(t, now)

@@ -224,6 +224,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		bgpRIBObserved = true
 	}
 	bgpHomeOwnerNodes := c.bgpHomeOwnerNodes(spec)
+	bgpReturnRoutes := c.bgpReturnRoutes(spec)
 	forwardingObserved, forwardingEnabled, forwardingObservedAt := c.discoverySelfForwardingState(res.Metadata.Name)
 	ownershipDecisions, ownershipErr := resolveAddressOwnership(ownershipResolverInput{
 		PoolName:          res.Metadata.Name,
@@ -235,6 +236,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		PreviousPlans:     previousActionPlans,
 		InstalledNextHops: installedNextHops,
 		BGPHomeOwnerNodes: bgpHomeOwnerNodes,
+		BGPReturnRoutes:   bgpReturnRoutes,
 		Now:               now,
 	})
 	if ownershipErr != nil {
@@ -1283,6 +1285,35 @@ func (c Controller) bgpHomeOwnerNodes(spec api.MobilityPoolSpec) map[string]stri
 				out[address] = owner
 				break
 			}
+		}
+	}
+	return out
+}
+
+func (c Controller) bgpReturnRoutes(spec api.MobilityPoolSpec) map[string]bool {
+	out := map[string]bool{}
+	if c.Router == nil || c.Store == nil {
+		return out
+	}
+	poolPrefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+	if err != nil {
+		return out
+	}
+	poolPrefix = poolPrefix.Masked()
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" {
+			continue
+		}
+		status := c.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", resource.Metadata.Name)
+		for _, prefix := range bgpStatusPrefixesValue(status["prefixes"]) {
+			if !prefix.Valid || prefix.Stale || !bgpstate.HasCommunity(prefix.Communities, bgpstate.MobilityCommunityReturnRoute) {
+				continue
+			}
+			address, ok := normalizeBGPTrapPrefix(prefix.Prefix, poolPrefix)
+			if !ok {
+				continue
+			}
+			out[address] = true
 		}
 	}
 	return out

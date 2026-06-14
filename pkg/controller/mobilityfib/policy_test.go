@@ -100,6 +100,33 @@ func TestSnapshotAdmitsRemoteSiteReturnRouteAndRejectsSameSiteReturnRoute(t *tes
 	}
 }
 
+func TestSnapshotAdmitsRemoteSiteReturnRouteDespiteUnknownVerdict(t *testing.T) {
+	snapshot := NewSnapshot(testRouter("aws-router-a"), mapStatusReader{
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
+			"ownershipResolverFIBVerdicts": []any{
+				map[string]any{
+					"address": "10.77.60.14/32",
+					"action":  ActionWithhold,
+					"class":   "Unknown",
+					"reason":  "bgp-rib",
+				},
+			},
+		},
+	})
+	if !snapshot.AdmitBGPPath(netip.MustParsePrefix("10.77.60.14/32"), []string{
+		communityMobilityReturnRoute,
+		bgpstate.MobilityNodeIdentityCommunity("azure-router"),
+	}) {
+		t.Fatal("remote-site return-route was rejected by an Unknown ownership verdict")
+	}
+	if snapshot.AdmitBGPPath(netip.MustParsePrefix("10.77.60.6/32"), []string{
+		communityMobilityReturnRoute,
+		bgpstate.MobilityNodeIdentityCommunity("aws-router-b"),
+	}) {
+		t.Fatal("same-site return-route was admitted despite Unknown verdict ordering")
+	}
+}
+
 func TestSnapshotRejectsTrustedBGPPathForLocalStaticOwnedAddress(t *testing.T) {
 	router := testRouter("aws-router-a")
 	spec := router.Spec.Resources[1].Spec.(api.MobilityPoolSpec)

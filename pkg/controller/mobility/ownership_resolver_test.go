@@ -38,6 +38,34 @@ func TestOwnershipResolverScenario391BaselineSameSubnetHome(t *testing.T) {
 	}
 }
 
+func TestOwnershipResolverSkipsUnresolvedReturnRoutePeer(t *testing.T) {
+	now := time.Date(2026, 6, 14, 10, 58, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "aws-router-a",
+		Spec:     spec,
+		Status: map[string]any{
+			"discoveryLocalInventory": []map[string]any{
+				{"address": "10.88.60.5/32", "nicRef": "eni-peer", "subnetRef": "subnet-a", "providerRef": "aws-provider", "resourceType": "instance-nic", "primary": true},
+			},
+			"discoverySelfPrivateIPs": []string{"10.88.60.4"},
+		},
+		BGPReturnRoutes: map[string]bool{
+			"10.88.60.5/32": true,
+		},
+		Now: now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	for _, decision := range decisions {
+		if decision.Address == "10.88.60.5/32" {
+			t.Fatalf("return-route peer leaked into ownership resolver decisions: %#v", decision)
+		}
+	}
+}
+
 func TestOwnershipResolverScenario392SameProviderConfirmedCapture(t *testing.T) {
 	now := time.Date(2026, 6, 9, 22, 5, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()
