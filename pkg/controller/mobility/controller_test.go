@@ -1656,6 +1656,106 @@ func TestControllerBGPModeStandbyReleasesConfirmedCaptureWhenActiveMarkerReturns
 	}
 }
 
+func TestControllerBGPModeStandbyReleasesObservedSelfCaptureWithoutPriorAction(t *testing.T) {
+	now := time.Date(2026, 6, 14, 21, 40, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-b"]
+	address := "10.88.60.10/32"
+	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+		PoolName: "cloudedge",
+		Source:   DynamicSource("cloudedge", self.NodeRef),
+		Self:     self,
+		Members:  members,
+		Spec:     spec,
+		Decisions: []ownershipDecision{{
+			Address:           address,
+			Class:             ownershipClassRemoteHomeOwned,
+			HomeOwnerNode:     "onprem-router",
+			CaptureHolderNode:  self.NodeRef,
+			CaptureProviderRef: "aws-provider",
+			CaptureTargetRef:   "eni-b",
+			CaptureState:       captureStateConfirmed,
+			CaptureStrategy:    captureStrategySecondaryIP,
+			CaptureSucceeded:   true,
+			Source:            staticOwnedType,
+			SuppressionReason: "static-owned-by-remote",
+		}},
+		Placement: PlacementDecision{
+			Group:               "aws-edge",
+			Active:              false,
+			ActiveNode:          "aws-router-a",
+			ActiveMarkerPresent: true,
+			Reason:              "configured active has returned",
+		},
+		Profiles:             map[string]api.CloudProviderProfileSpec{"aws-provider": {Provider: "aws"}},
+		ObservedSelfCaptures: map[string]bool{address: true},
+		ObservedSelfIPsOK:    true,
+		RIBObserved:          true,
+		Now:                  now,
+	})
+	if err != nil {
+		t.Fatalf("planBGPMobilityDelivery: %v", err)
+	}
+	if unassign := findActionPlanByAddress(delivery.ActionPlans, "unassign-secondary-ip", address); unassign == nil {
+		t.Fatalf("action plans = %#v, standby observed self-capture must release once active liveness is present", delivery.ActionPlans)
+	}
+	if assign := findActionPlanByAddress(delivery.ActionPlans, "assign-secondary-ip", address); assign != nil {
+		t.Fatalf("action plans = %#v, standby observed self-capture must not reassign", delivery.ActionPlans)
+	}
+}
+
+func TestControllerBGPModeStandbyKeepsObservedSelfCaptureWhileActiveMarkerAbsent(t *testing.T) {
+	now := time.Date(2026, 6, 14, 21, 45, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-b"]
+	address := "10.88.60.10/32"
+	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+		PoolName: "cloudedge",
+		Source:   DynamicSource("cloudedge", self.NodeRef),
+		Self:     self,
+		Members:  members,
+		Spec:     spec,
+		Decisions: []ownershipDecision{{
+			Address:           address,
+			Class:             ownershipClassRemoteHomeOwned,
+			HomeOwnerNode:     "onprem-router",
+			CaptureHolderNode:  self.NodeRef,
+			CaptureProviderRef: "aws-provider",
+			CaptureTargetRef:   "eni-b",
+			CaptureState:       captureStateConfirmed,
+			CaptureStrategy:    captureStrategySecondaryIP,
+			CaptureSucceeded:   true,
+			Source:            staticOwnedType,
+			SuppressionReason: "static-owned-by-remote",
+		}},
+		Placement: PlacementDecision{
+			Group:               "aws-edge",
+			Active:              false,
+			ActiveNode:          "aws-router-a",
+			ActiveMarkerPresent: false,
+			Reason:              "configured active marker absent",
+		},
+		Profiles:             map[string]api.CloudProviderProfileSpec{"aws-provider": {Provider: "aws"}},
+		ObservedSelfCaptures: map[string]bool{address: true},
+		ObservedSelfIPsOK:    true,
+		RIBObserved:          true,
+		Now:                  now,
+	})
+	if err != nil {
+		t.Fatalf("planBGPMobilityDelivery: %v", err)
+	}
+	if len(delivery.CaptureCandidates) != 1 || !delivery.CaptureCandidates[address].ProtectOnly {
+		t.Fatalf("capture candidates = %#v, standby holder must stay protected while active liveness is absent", delivery.CaptureCandidates)
+	}
+	if unassign := findActionPlanByAddress(delivery.ActionPlans, "unassign-secondary-ip", address); unassign != nil {
+		t.Fatalf("action plans = %#v, standby observed self-capture must not release before active liveness returns", delivery.ActionPlans)
+	}
+}
+
 func TestControllerBGPModeStandbyReleaseSkipsAbsentObservedSelfCapture(t *testing.T) {
 	now := time.Date(2026, 6, 14, 17, 30, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()
