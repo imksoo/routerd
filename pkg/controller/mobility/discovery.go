@@ -139,7 +139,12 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 		return fmt.Errorf("ownershipDiscovery requires cloud provider-secondary-ip member %q", self.NodeRef)
 	}
 	livenessMarkers, livenessMarkersObserved := bgpLivenessMarkersFromStatus(c.Router, c.Store)
-	placement := c.applyBGPCaptureSeizeHoldDown(poolName, evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved), now)
+	poolStatus := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName)
+	observedHolderNode := bgpObservedGroupHolder(self, members, livenessMarkers, bgpMobilityPrefixCommunitiesFromStatus(c.Router, c.Store, spec))
+	placement := c.applyBGPCaptureSeizeHoldDown(poolName, evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved, observedHolderNode), now)
+	placement = fencePlacementForStartup(placement, observedHolderNode, now)
+	selfHolds := discoveryStatusListLen(poolStatus, "discoverySelfCapturedAddresses") > 0
+	placement = applyHolderRetention(placement, selfHolds, higherPriorityHolderActive(self, members, observedHolderNode), now)
 	interval := discoveryScanInterval(discovery)
 	if !forceProviderScan && !c.scanDue(poolName, interval, now, true, self.Capture.Type == "provider-secondary-ip" && strings.TrimSpace(self.Capture.NICRef) == "", placement) {
 		return nil
@@ -1142,6 +1147,17 @@ func discoveryStatusBool(status map[string]any, key string) bool {
 		return parsed
 	}
 	return false
+}
+
+func discoveryStatusListLen(status map[string]any, key string) int {
+	switch typed := status[key].(type) {
+	case []string:
+		return len(typed)
+	case []any:
+		return len(typed)
+	default:
+		return 0
+	}
 }
 
 func (c DiscoveryController) resolveInventoryPlugin(provider string, discovery api.MobilityOwnershipDiscovery) (api.PluginSpec, string, error) {
