@@ -46,6 +46,12 @@ const (
 	bgpMobilityCommunitySourceCapture  = "64512:113"
 	bgpMobilityCommunitySourceReturn   = bgpstate.MobilityCommunityReturnRoute
 	bgpMobilityCommunityFailover       = "64512:120"
+	// bgpMobilityCommunityActiveHolder is advertised only by the active capture
+	// holder (placement.Active) on its owner /32. It is the holder-beacon: peers
+	// treat a node as the group's holder only when its owner /32 carries this
+	// community, so a standby's lower-preference make-before-break advertisement and
+	// a cold-start advertisement (neither active) are not mistaken for holdership.
+	bgpMobilityCommunityActiveHolder = "64512:121"
 
 	bgpPathSigParam             = "mobilityPathSig"
 	bgpTrapLastSeenAtParam      = "mobilityTrapLastSeenAt"
@@ -208,7 +214,10 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	discoverySelfCaptures, _ := c.discoverySelfCapturedAddressSet(res.Metadata.Name, spec)
 	discoverySelfObservedAt := c.discoveryLastScanAt(res.Metadata.Name)
 	livenessMarkers, livenessMarkersObserved := c.bgpLivenessMarkers()
-	ownerPlacement := c.applyBGPCaptureSeizeHoldDown(res.Metadata.Name, evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved), now)
+	observedHolderNode := bgpObservedGroupHolder(self, members, livenessMarkers, bgpMobilityPrefixCommunitiesFromStatus(c.Router, c.Store, spec))
+	ownerPlacement := c.applyBGPCaptureSeizeHoldDown(res.Metadata.Name, evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved, observedHolderNode), now)
+	ownerPlacement = fencePlacementForStartup(ownerPlacement, observedHolderNode, now)
+	ownerPlacement = applyHolderRetention(ownerPlacement, len(discoverySelfCaptures) > 0, higherPriorityHolderActive(self, members, observedHolderNode), now)
 	actionJournal, err := c.Store.ListActions(routerstate.ActionExecutionFilter{})
 	if err != nil {
 		return fmt.Errorf("list action journal: %w", err)
@@ -1230,9 +1239,18 @@ func (c Controller) bgpInstalledNextHops() (map[string][]string, bool) {
 }
 
 func (c Controller) bgpCaptureCandidateNextHops(spec api.MobilityPoolSpec) (map[string][]string, bool) {
+	if c.Router == nil || c.Store == nil {
+		return map[string][]string{}, false
+	}
+	return bgpCaptureCandidateNextHopsFromStatus(c.Router, c.Store, spec)
+}
+
+func bgpCaptureCandidateNextHopsFromStatus(router *api.Router, store interface {
+	ObjectStatus(apiVersion, kind, name string) map[string]any
+}, spec api.MobilityPoolSpec) (map[string][]string, bool) {
 	out := map[string][]string{}
 	observed := false
-	if c.Router == nil || c.Store == nil {
+	if router == nil || store == nil {
 		return out, observed
 	}
 	poolPrefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
@@ -1240,11 +1258,11 @@ func (c Controller) bgpCaptureCandidateNextHops(spec api.MobilityPoolSpec) (map[
 		return out, observed
 	}
 	poolPrefix = poolPrefix.Masked()
-	for _, resource := range c.Router.Spec.Resources {
+	for _, resource := range router.Spec.Resources {
 		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" {
 			continue
 		}
-		status := c.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", resource.Metadata.Name)
+		status := store.ObjectStatus(api.NetAPIVersion, "BGPRouter", resource.Metadata.Name)
 		if _, ok := status["prefixes"]; !ok {
 			continue
 		}
@@ -1274,6 +1292,45 @@ func (c Controller) bgpCaptureCandidateNextHops(spec api.MobilityPoolSpec) (map[
 		return out, false
 	}
 	return out, true
+}
+
+// bgpMobilityPrefixCommunitiesFromStatus returns, for each best/valid/non-stale
+// mobility /32 inside the pool prefix observed in the BGP RIB, the BGP communities
+// carried on the best path. The node-identity community among them identifies the
+// active holder (the higher-preference, best-path advertiser of the owner /32),
+// which bgpObservedGroupHolder maps back to a member: the holder-beacon.
+func bgpMobilityPrefixCommunitiesFromStatus(router *api.Router, store interface {
+	ObjectStatus(apiVersion, kind, name string) map[string]any
+}, spec api.MobilityPoolSpec) map[string][]string {
+	out := map[string][]string{}
+	if router == nil || store == nil {
+		return out
+	}
+	poolPrefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+	if err != nil {
+		return out
+	}
+	poolPrefix = poolPrefix.Masked()
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" {
+			continue
+		}
+		status := store.ObjectStatus(api.NetAPIVersion, "BGPRouter", resource.Metadata.Name)
+		if _, ok := status["prefixes"]; !ok {
+			continue
+		}
+		for _, prefix := range bgpStatusPrefixesValue(status["prefixes"]) {
+			if !prefix.Best || !prefix.Valid || prefix.Stale {
+				continue
+			}
+			address, ok := normalizeBGPTrapPrefix(prefix.Prefix, poolPrefix)
+			if !ok {
+				continue
+			}
+			out[address] = mergeStringSet(out[address], prefix.Communities)
+		}
+	}
+	return out
 }
 
 func (c Controller) bgpHomeOwnerNodes(spec api.MobilityPoolSpec) map[string]string {
@@ -1522,8 +1579,8 @@ func bgpTrapHasRemoteNextHop(nextHops []string, selfNextHop string) bool {
 	return false
 }
 
-func evaluateBGPCapturePlacement(self memberPlanInfo, members map[string]memberPlanInfo, livenessMarkers map[string]string, livenessMarkersObserved bool) PlacementDecision {
-	placement := evaluatePlacement(self, members)
+func evaluateBGPCapturePlacement(self memberPlanInfo, members map[string]memberPlanInfo, livenessMarkers map[string]string, livenessMarkersObserved bool, observedHolderNode string) PlacementDecision {
+	placement := evaluatePlacementWithIncumbent(self, members, observedHolderNode)
 	placement.LivenessObserved = livenessMarkersObserved
 	selfCommunity, selfMarker, selfMarkerPresent := livenessMarkerForNode(livenessMarkers, self.NodeRef)
 	placement.SelfCommunity = selfCommunity
@@ -2261,6 +2318,9 @@ func bgpMobilityPathAttrs(member memberPlanInfo, sourceType string, active bool)
 	localPref := bgpMobilityLocalPrefBase
 	if active {
 		localPref = bgpMobilityLocalPref(1)
+		if !captureSource {
+			communities = append(communities, bgpMobilityCommunityActiveHolder)
+		}
 	}
 	attrs := bgpdaemon.AppliedPathAttrs{
 		LocalPref:   localPref,

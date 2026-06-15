@@ -221,6 +221,156 @@ func autoPlacementPriorities(members []api.MobilityPoolMember) map[string]int {
 }
 
 func evaluatePlacement(self memberPlanInfo, members map[string]memberPlanInfo) PlacementDecision {
+	return evaluatePlacementWithIncumbent(self, members, "")
+}
+
+// placementSettleStart anchors the post-startup settle window. It is captured when
+// the process loads this package, so a node restart (VM stop/start or reboot) resets
+// it — which is exactly what flags a returning node that must not preempt before its
+// observations converge. placementSettleWindow is the settle duration (a package var
+// so tests and operators can tune it).
+var (
+	placementSettleStart  = time.Now()
+	placementSettleWindow = 120 * time.Second
+)
+
+// placementSettleDefersActive reports whether a node must defer a brand-new active
+// assertion because it is still inside the post-startup settle window and has not
+// yet observed an incumbent. This is the startup fence: a returning node would
+// otherwise win the equal-priority tie-break and reclaim captures before its fresh
+// BGP RIB / provider observations surface the live peer that took over.
+//
+// It defers only when the node WOULD assert active, no incumbent peer has been
+// observed yet, and the settle window has not elapsed. Once the window elapses (or
+// an incumbent appears, in which case the tie-break already defers) normal placement
+// applies, so cold start and genuine failover are unaffected: a long-running standby
+// is past its settle window and seizes immediately when the active dies.
+func placementSettleDefersActive(active bool, incumbent string, sinceStart, settle time.Duration) bool {
+	if !active || strings.TrimSpace(incumbent) != "" {
+		return false
+	}
+	return sinceStart < settle
+}
+
+// applyHolderRetention keeps a node active while it still physically holds its
+// group's captures, so the live holder never yields to the deterministic tie-break
+// winner or to a transient peer observation (ADR 0016: yield only on losing your
+// own holdership, never because a peer was observed). It applies only after the
+// startup settle window so the selfHolds signal (the node's fresh provider
+// self-capture observation) is trustworthy rather than the returning node's stale
+// "I used to hold" memory.
+// higherPriorityHolderActive reports that the observed active holder beacon belongs
+// to a strictly higher-priority peer (lower priority number). When true the local
+// holder must yield rather than retain, so a returning higher-priority node performs
+// the configured priority restore instead of deadlocking against retention.
+func higherPriorityHolderActive(self memberPlanInfo, members map[string]memberPlanInfo, observedHolder string) bool {
+	holder := strings.TrimSpace(observedHolder)
+	if holder == "" {
+		return false
+	}
+	member, ok := lookupMemberByNodeRef(members, holder)
+	if !ok || member.NodeRef == self.NodeRef {
+		return false
+	}
+	return member.PlacementPriority < self.PlacementPriority
+}
+
+func applyHolderRetention(placement PlacementDecision, selfHolds bool, yieldToHigherPriority bool, now time.Time) PlacementDecision {
+	if placement.Active || !selfHolds || yieldToHigherPriority {
+		return placement
+	}
+	if now.Sub(placementSettleStart) < placementSettleWindow {
+		return placement
+	}
+	placement.Active = true
+	placement.Seize = false
+	placement.Reason = fmt.Sprintf("holder retention: keeping active while self holds placement group %q captures", placement.Group)
+	return placement
+}
+
+// fencePlacementForStartup applies placementSettleDefersActive to a placement
+// decision, converting a fenced active assertion into a standby decision.
+func fencePlacementForStartup(placement PlacementDecision, incumbent string, now time.Time) PlacementDecision {
+	if !placementSettleDefersActive(placement.Active, incumbent, now.Sub(placementSettleStart), placementSettleWindow) {
+		return placement
+	}
+	placement.Active = false
+	placement.Seize = false
+	placement.Reason = fmt.Sprintf("startup settle: deferring active assertion in placement group %q until peer-holder state converges", placement.Group)
+	return placement
+}
+
+// bgpObservedGroupHolder returns the live placement-group peer that is currently the
+// active capture holder according to the fresh BGP RIB, or "" if no peer is. The
+// active holder advertises the group's owner /32 at the active (higher) preference,
+// so it is the best-path advertiser; mobilityPrefixCommunities carries the best-path
+// communities, and the holder is identified by its node-identity community there.
+// This is the holder-beacon: it is independent of the provider plugin (BGP is always
+// present) and of a standby's lower-preference make-before-break advertisement
+// (which never wins best path).
+//
+// It deliberately does NOT guard on self's own community: holder retention keeps the
+// real holder active regardless, and a node defers only to a peer it actually sees on
+// a best path. BGP best-path tie-break keeps exactly one advertiser best even when
+// both briefly advertise at the active preference, so this cannot deadlock.
+func bgpObservedGroupHolder(self memberPlanInfo, members map[string]memberPlanInfo, livenessMarkers map[string]string, mobilityPrefixCommunities map[string][]string) string {
+	group := strings.TrimSpace(self.PlacementGroup)
+	if group == "" {
+		return ""
+	}
+	communityToPeer := map[string]string{}
+	for _, member := range members {
+		if strings.TrimSpace(member.PlacementGroup) != group || member.NodeRef == self.NodeRef {
+			continue
+		}
+		if community, _, present := livenessMarkerForNode(livenessMarkers, member.NodeRef); present && strings.TrimSpace(community) != "" {
+			communityToPeer[strings.TrimSpace(community)] = member.NodeRef
+		}
+	}
+	if len(communityToPeer) == 0 {
+		return ""
+	}
+	matched := ""
+	for _, communities := range mobilityPrefixCommunities {
+		holderPeer := ""
+		hasActiveHolder := false
+		for _, community := range communities {
+			community = strings.TrimSpace(community)
+			if community == bgpMobilityCommunityActiveHolder {
+				hasActiveHolder = true
+				continue
+			}
+			if node, ok := communityToPeer[community]; ok {
+				if holderPeer == "" || node < holderPeer {
+					holderPeer = node
+				}
+			}
+		}
+		// Only an owner /32 advertised at the active preference (carrying the
+		// active-holder beacon) marks its advertiser as the group holder; a standby's
+		// lower-preference advertisement and cold-start advertisements are ignored.
+		if !hasActiveHolder || holderPeer == "" {
+			continue
+		}
+		if matched == "" || holderPeer < matched {
+			matched = holderPeer
+		}
+	}
+	return matched
+}
+
+// evaluatePlacementWithIncumbent selects the active member for self's placement
+// group. Members are ordered by ascending priority, then by NodeRef as a stable
+// deterministic tie-break.
+//
+// On an equal-priority tie the current capture holder (incumbentHolder, observed
+// from provider inventory) is preferred over the NodeRef tie-break so a returning
+// peer does not preempt a live holder and trigger an avoidable capture handoff.
+// A strictly higher-priority member (lower priority number) still reclaims, because
+// the incumbent override only applies when the incumbent shares the top priority.
+// An empty incumbentHolder reproduces the deterministic priority/NodeRef ordering,
+// which also bootstraps the group before any holder has been observed.
+func evaluatePlacementWithIncumbent(self memberPlanInfo, members map[string]memberPlanInfo, incumbentHolder string) PlacementDecision {
 	group := strings.TrimSpace(self.PlacementGroup)
 	if group == "" {
 		return PlacementDecision{Active: true, ActiveNode: self.NodeRef}
@@ -246,6 +396,17 @@ func evaluatePlacement(self memberPlanInfo, members map[string]memberPlanInfo) P
 		}
 	}
 	activeNode := candidates[0].NodeRef
+	// No-preempt on equal priority: keep the live incumbent holder active instead
+	// of the NodeRef tie-break winner when both share the top priority.
+	if incumbent := strings.TrimSpace(incumbentHolder); incumbent != "" {
+		if member, ok := lookupMemberByNodeRef(members, incumbent); ok &&
+			member.NodeRef != activeNode &&
+			strings.TrimSpace(member.PlacementGroup) == group &&
+			!member.MaintenanceDrain &&
+			member.PlacementPriority == candidates[0].PlacementPriority {
+			activeNode = member.NodeRef
+		}
+	}
 	if activeNode == self.NodeRef {
 		return PlacementDecision{Group: group, Active: true, ActiveNode: activeNode}
 	}
