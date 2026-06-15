@@ -257,17 +257,6 @@ func evaluatePlacement(self memberPlanInfo, members map[string]memberPlanInfo) P
 	}
 }
 
-func decodeActionParameters(raw string) map[string]string {
-	if strings.TrimSpace(raw) == "" {
-		return nil
-	}
-	out := map[string]string{}
-	if err := json.Unmarshal([]byte(raw), &out); err != nil {
-		return nil
-	}
-	return out
-}
-
 func normalizeAddressString(address string) string {
 	return strings.TrimSpace(address)
 }
@@ -512,10 +501,6 @@ func isProviderCaptureAssignAction(action string) bool {
 func isProviderCaptureUnassignAction(action string) bool {
 	action = strings.TrimSpace(action)
 	return action == actionUnassignSecondaryIP || action == actionUnassignRouteTableRoute
-}
-
-func isProviderCaptureAction(action string) bool {
-	return isProviderCaptureAssignAction(action) || isProviderCaptureUnassignAction(action)
 }
 
 func providerCaptureTargetRef(strategy string, target map[string]string) string {
