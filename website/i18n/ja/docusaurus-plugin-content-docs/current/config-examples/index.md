@@ -51,7 +51,7 @@ DS-Lite 優先 + PPPoE フォールバック、apply 時のロックアウト防
 | [ゲスト / IoT 端末の分離](./guest-isolation.md) | Linux nftables で利用可能 | 一部の MAC アドレスだけインターネットを許可し、LAN と管理網へは届かせたくない。 |
 | [ファイアウォールのレート制限と ICMP ルール](./firewall-rate-limit.md) | Linux nftables で利用可能 | 複数ポートのサービス開放、ICMP type のマッチ、SSH ブルートフォース緩和を使いたい。 |
 | [Multi-WAN IPv4 failover](./multi-wan-failover.md) | 現在の実装で利用可能。ヘルスチェックは慎重に調整 | 複数の IPv4 出口から正常な default route を選びたい。 |
-| [パブリック DNS をローカルリゾルバへリダイレクト](./local-dns-redirect.md) | Linux nftables で利用可能 | LAN クライアントが平文 DNS を外へ直接投げるのを、ルーターの DNS に集約したい。 |
+| [パブリック DNS をローカルリゾルバーへリダイレクト](./local-dns-redirect.md) | Linux nftables で利用可能 | LAN クライアントが平文 DNS を外へ直接投げるのを、ルーターの DNS に集約したい。 |
 | [Tailscale subnet / exit node](./tailscale-subnet-exit.md) | Tailscale が利用できる環境で利用可能 | LAN の経路や exit node を tailnet に広告したい。 |
 | [WireGuard ハブ＆スポーク template](./wireguard-hub-spoke.md) | 鍵と peer の経路を置き換える template | routed な WireGuard hub の出発点が欲しい。 |
 | [OTLP collector への telemetry エクスポート](./telemetry-export.md) | collector があれば利用可能 | routerd の logs、metrics、traces を観測基盤へ送りたい。 |

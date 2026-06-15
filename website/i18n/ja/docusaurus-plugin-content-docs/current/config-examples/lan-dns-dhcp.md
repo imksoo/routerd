@@ -41,7 +41,7 @@ flowchart LR
 | --- | --- |
 | LAN アドレス | `Interface/lan`, `IPv4StaticAddress/lan-base` |
 | ローカルの名前 | `DNSZone/home` |
-| リゾルバ | `DNSResolver/lan-resolver` |
+| リゾルバー | `DNSResolver/lan-resolver` |
 | DHCPv4 | `DHCPv4Server/lan-dhcpv4`, `DHCPv4Reservation/nas` |
 
 ## 設定の要点

@@ -96,7 +96,7 @@ config を返すエンドポイント — `/api/v1/config`、
 `/api/v1/generations/<from>/diff/<to>` — は、**シリアライズ前に secrets を
 redact します**。WireGuard `privateKey` / `preSharedKey`、Tailscale
 `authKey`、BGP/PPPoE/IPsec `password`、WebConsole `initialPassword`、
-および bearer / token / API key 系のフィールドは、マーカ値
+および bearer / token / API key 系のフィールドは、マーカー値
 （`***REDACTED***`）に置き換えられます。キーは残るため UI の構造は壊れません。
 
 読み取り専用の Web Console から生の secrets が見える経路はありません。

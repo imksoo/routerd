@@ -6,7 +6,7 @@ title: Ingress のメンテナンス
 
 ![Diagram showing ingress maintenance with routerctl drain writing temporary state, reconcile marking a backend drained and unhealthy, existing conntrack preserved, and undrain or expiry restoring service](/img/diagrams/operations-ingress-maintenance.png)
 
-router の YAML を編集せずに `IngressService` のバックエンドを一時的に外したい場合は、`routerctl drain` を使います。
+ルーターの YAML を編集せずに `IngressService` のバックエンドを一時的に外したい場合は、`routerctl drain` を使います。
 
 ```sh
 routerctl drain ingress/kubernetes-api backend=cp-01 --duration 10m

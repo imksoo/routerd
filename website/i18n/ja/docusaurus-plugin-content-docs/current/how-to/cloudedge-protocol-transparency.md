@@ -59,7 +59,7 @@ scripts/cloudedge-acceptance.sh run \
 
 ## ランナーコントラクト
 
-`scripts/runners/cloudedge-protocol-runner.sh` は `PROTOCOL_PROBE_RUNNER` を実装します。意図的に環境変数でパラメータ化されており、プロバイダーアカウント ID、リソース ID、秘密情報は含まれていません。
+`scripts/runners/cloudedge-protocol-runner.sh` は `PROTOCOL_PROBE_RUNNER` を実装します。意図的に環境変数でパラメーター化されており、プロバイダーアカウント ID、リソース ID、秘密情報は含まれていません。
 
 サイトごとに必要な設定:
 

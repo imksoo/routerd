@@ -242,7 +242,7 @@ lease/heartbeat 伝搬ではありません。
 1. ローカルの owner が eligible になり、所有 `/32` と marker を広告。
 2. RR がルートをクラウド/on-prem ピアに反映。
 3. ピアが best path をローカル FIB にインポート。
-4. RIB trap が必要に応じて provider/on-prem の capture reconciliation をトリガ。
+4. RIB trap が必要に応じて provider/on-prem の capture reconciliation をトリガー。
 5. データプレーンが新しい owner パスへの転送を開始。
 
 ### 削除または移動した `/32`

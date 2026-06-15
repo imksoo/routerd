@@ -128,7 +128,7 @@ AFTR FQDN、DNS サーバー、DHCPv6 クライアントの profile を置き換
 ```
 
 `DNSResolver` には、AFTR 名向けの条件付きフォワーダーを入れています。AFTR のレコードが
-回線側のリゾルバでだけ意味を持つ構成では、この指定が重要です。
+回線側のリゾルバーでだけ意味を持つ構成では、この指定が重要です。
 
 ## 適用手順
 
@@ -142,7 +142,7 @@ plan では次を確認します。
 
 - WAN / LAN のインターフェース名が正しい。
 - 管理アクセスを誤って消さない。
-- AFTR FQDN とリゾルバのアドレスが意図した値になっている。
+- AFTR FQDN とリゾルバーのアドレスが意図した値になっている。
 - NAT の出口が物理 WAN ではなく DS-Lite tunnel になっている。
 
 問題なければ適用します。
@@ -175,6 +175,6 @@ dig router.home.example
 ## よく変える場所
 
 - プラットフォームに合わせて `client` と `profile` を変更する。
-- Transix 以外では `gw.transix.jp` と AFTR リゾルバのアドレスを置き換える。
+- Transix 以外では `gw.transix.jp` と AFTR リゾルバーのアドレスを置き換える。
 - DS-Lite トンネルを WAN RA アドレスから張る必要がある場合は `localAddressSource: interface` を使う。
 - DS-Lite では MSS クランプが必要になりやすい。routerd はトンネルの MTU と LAN/WAN のファイアウォールゾーンから自動導出する。

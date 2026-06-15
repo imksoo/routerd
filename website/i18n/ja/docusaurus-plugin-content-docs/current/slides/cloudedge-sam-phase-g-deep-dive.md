@@ -121,7 +121,7 @@ outer パケット:
 | on-prem | proxy ARP / GARP | OS ネットワーキング + VRRP ゲート | master のみ、backup は fail-closed |
 
 BGP best-path が owner を決める。secondary IP / ARP は ingress 実現。
-単一 on-prem ルータ構成では `capture.activeWhen.type: single-router` で VRRP 無しの常時 capture を選べる。
+単一 on-prem ルーター構成では `capture.activeWhen.type: single-router` で VRRP 無しの常時 capture を選べる。
 
 ---
 

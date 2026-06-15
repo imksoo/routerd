@@ -106,9 +106,9 @@ network:
 
 プロバイダー DNS や AFTR の解決のために、WAN リンクで RA 由来の IPv6 デフォルト経路が必要な場合は、その WAN インターフェースと DHCPv6 / RA のリソースを宣言します。routerd は必要な systemd-networkd の drop-in を導出し、systemd-networkd の DHCP クライアントが競合しないようにします。
 
-Alpine / OpenRC では、`routerd render alpine --out-dir <dir>` が、明示的な生成済みサービス成果物、管理対象の dnsmasq、`routerd-healthcheck`、DHCP クライアント、DNS リゾルバ、ファイアウォールロガー、PPPoE、Tailscale の OpenRC スクリプトを生成できます。
+Alpine / OpenRC では、`routerd render alpine --out-dir <dir>` が、明示的な生成済みサービス成果物、管理対象の dnsmasq、`routerd-healthcheck`、DHCP クライアント、DNS リゾルバー、ファイアウォールロガー、PPPoE、Tailscale の OpenRC スクリプトを生成できます。
 適用時は `/etc/init.d` にスクリプトを配置し、現在の OpenRC 状態と差分がある場合だけ `rc-update` と `rc-service` を実行します。
-自動生成された DNS リゾルバのスクリプトは、コントローラーループの外でランタイム設定を実体化できるようになるまでは、enable や start を行いません。
+自動生成された DNS リゾルバーのスクリプトは、コントローラーループの外でランタイム設定を実体化できるようになるまでは、enable や start を行いません。
 systemd 専用の挙動は模倣しません。
 systemd-networkd / resolved 向けの drop-in、systemd のサンドボックス用フィールド、timesyncd の所有は、Alpine ネイティブな意味を持つまで OpenRC では未対応として扱います。
 
