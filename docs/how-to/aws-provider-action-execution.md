@@ -277,8 +277,11 @@ Acceptance (all must hold):
       shows `<address>` in `PrivateIpAddresses`).
 - [ ] **Source/dest check disabled** on the ENI (`SourceDestCheck=false`), with
       `Observed.priorSourceDestCheck` recorded in the journal.
-- [ ] `routerd-cloud` does **NOT** retain the address as a local OS address when
-      `configureOSAddress=false` (capture is route/forward-only, no OS address).
+- [ ] `routerd-cloud` does **NOT** retain the address as a local OS address for
+      no-local capture: `configureOSAddress=false`, and BGP delivery to a remote
+      owner even when the provider secondary IP remains assigned on the ENI.
+      Capture is provider ingress plus route/forwarding state, not a Linux local
+      `/32`.
 - [ ] `RemoteAddressClaim` reaches **Ready**.
 - [ ] `routerctl doctor` hybrid checks **pass**.
 - [ ] cloud-client **`.7`** ↔ on-prem-client **`.9`** — **ping and ssh both
