@@ -558,17 +558,25 @@ For `proxy-arp` capture on Linux, routerd:
 
 For `provider-secondary-ip`, the provider fabric owns address capture. routerd
 does not assign the mobile address to the local OS when
-`configureOSAddress: false`; on Linux it also removes that specific address
-from local interfaces if cloud-init, netplan, or another guest agent adds it
-back. It then ensures IPv4 forwarding; the overlay `/32` delivery route comes
-from BGP best-path import. routerd does not re-add the address when the capture
-is removed, because it never owned the guest OS assignment.
+`configureOSAddress: false`. For BGP delivery, routerd also keeps the mobile
+`/32` absent from local OS interfaces even if `configureOSAddress` is true:
+the cloud provider secondary IP is only the provider-fabric ingress owner, and
+the Linux FIB must forward the packet through the selected overlay path instead
+of treating it as a local destination. On Linux routerd removes that specific
+address from local interfaces if cloud-init, netplan, or another guest agent
+adds it back. It then ensures IPv4 forwarding, explicit proxy-neighbor state
+for provider ingress when needed, and per-interface forwarding state; the
+overlay `/32` delivery route comes from BGP best-path import. routerd does not
+re-add the address when the capture is removed, because it never owned the guest
+OS assignment.
 
 Status reports this as `captureOSAddressAbsence`. `enforced: true` means
 routerd is actively enforcing that the captured address is absent from local OS
 interfaces. `lastReconcileRemoved: true` means the most recent reconcile
 actually removed the address; it is normally `false` in steady state once the
-address is already absent.
+address is already absent. `reason` distinguishes explicit
+`configureOSAddress=false` enforcement from the BGP-delivery no-local-address
+projection.
 
 ## Inspecting Ownership
 

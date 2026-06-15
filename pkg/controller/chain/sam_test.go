@@ -84,6 +84,17 @@ func TestSAMControllerProviderSecondaryBGPUsesProxyNeighborWithoutProxyARP(t *te
 		"deassign:10.0.1.122/32",
 		"ensure:10.0.1.122/32@ens3",
 	})
+	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+	note, ok := status["captureOSAddressAbsence"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing captureOSAddressAbsence in status %#v", status)
+	}
+	if note["address"] != "10.0.1.122/32" || note["reason"] != "bgp-delivery" || note["enforced"] != true {
+		t.Fatalf("OS absence note = %#v", note)
+	}
+	if _, ok := status["captureProxyNeighbor"]; ok {
+		t.Fatalf("provider-secondary BGP status must not be reported as proxy-ARP capture: %#v", status)
+	}
 }
 
 func TestSAMControllerDeassignAbsentAddressIsNoopButTracked(t *testing.T) {
