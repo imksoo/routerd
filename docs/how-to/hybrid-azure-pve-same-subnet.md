@@ -18,9 +18,12 @@ for resource semantics.
   is what captures packets for the on-prem `/32`.
 - Do not let the Ubuntu guest OS hold the captured `/32`. cloud-init or netplan
   may auto-assign secondary NIC IPs; suppress that configuration or remove it.
-  routerd enforces this during reconcile when the claim uses
-  `configureOSAddress: false` by de-assigning the specific address from local
-  interfaces.
+  routerd enforces this during reconcile for no-local capture: explicitly when
+  the claim uses `configureOSAddress: false`, and also for BGP delivery to a
+  remote owner even if provider capture keeps the secondary IP assigned in
+  Azure. In that BGP case the Azure NIC owns ingress, while Linux forwards by
+  proxy-neighbor, forwarding sysctls/rules, and the imported `/32` route instead
+  of a local `/32` address.
 - Enable IP forwarding on the Azure NIC and in Linux
   (`net.ipv4.ip_forward=1`).
 
@@ -57,11 +60,12 @@ Run:
 routerctl doctor hybrid
 ```
 
-For `provider-secondary-ip` with `configureOSAddress: false`, confirm the
-doctor reports the captured `/32` absent from local `ip addr`, the delivery
-route points at the tunnel, and `ip_forward=1`. For `proxy-arp`, confirm
-`proxy_arp=1`, the proxy neighbor exists, the delivery route points at the
-tunnel, and `ip_forward=1`.
+For `provider-secondary-ip` no-local capture, confirm the doctor reports the
+captured `/32` absent from local `ip addr`, the delivery route points at the
+tunnel, and `ip_forward=1`. This includes `configureOSAddress: false` claims and
+BGP delivery to a remote owner. For `proxy-arp`, confirm `proxy_arp=1`, the
+proxy neighbor exists, the delivery route points at the tunnel, and
+`ip_forward=1`.
 
 For low-MTU overlays, confirm `doctor hybrid` reports a SAM MSS clamp and
 `nft list table inet routerd_mss` contains both capture-to-tunnel and

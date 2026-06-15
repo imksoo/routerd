@@ -11,7 +11,7 @@ title: Azure と PVE の同一サブネット SAM スモークテスト
 ## Azure 側
 
 - Azure NIC のセカンダリ IP は Azure 側に残します。このプロバイダー側のオブジェクトが、オンプレミスの `/32` 宛てのパケットを捕捉します。
-- Ubuntu ゲスト OS には、捕捉した `/32` を持たせないでください。cloud-init や netplan がセカンダリ NIC の IP を自動付与することがあります。その設定は抑止するか削除します。Claim が `configureOSAddress: false` の場合、routerd はリコンサイル時にそのアドレスをローカルインターフェースから外し、アドレスが存在しない状態を維持します。
+- Ubuntu ゲスト OS には、捕捉した `/32` を持たせないでください。cloud-init や netplan がセカンダリ NIC の IP を自動付与することがあります。その設定は抑止するか削除します。routerd は no-local 捕捉ではリコンサイル時にそのアドレスをローカルインターフェースから外し、アドレスが存在しない状態を維持します。これは Claim が `configureOSAddress: false` の場合だけでなく、プロバイダー捕捉のセカンダリ IP を Azure に残したまま BGP delivery でリモートオーナーへ配送する場合も含みます。この BGP ケースでは、Azure NIC が ingress を所有し、Linux はローカル `/32` アドレスではなく proxy neighbor、forwarding sysctl/rule、インポートされた `/32` route で転送します。
 - Azure NIC と Linux の両方で IP 転送を有効化します（`net.ipv4.ip_forward=1`）。
 
 ## オンプレミス PVE 側
@@ -36,6 +36,6 @@ title: Azure と PVE の同一サブネット SAM スモークテスト
 routerctl doctor hybrid
 ```
 
-`provider-secondary-ip` と `configureOSAddress: false` の組み合わせでは、捕捉した `/32` がローカルの `ip addr` に存在しないこと、配送経路がトンネルを向いていること、`ip_forward=1` であることを確認します。`proxy-arp` では、`proxy_arp=1`、プロキシネイバーの存在、トンネルへの配送経路、`ip_forward=1` を確認します。
+`provider-secondary-ip` の no-local 捕捉では、捕捉した `/32` がローカルの `ip addr` に存在しないこと、配送経路がトンネルを向いていること、`ip_forward=1` であることを確認します。これには `configureOSAddress: false` の Claim と、BGP delivery でリモートオーナーへ配送する場合の両方が含まれます。`proxy-arp` では、`proxy_arp=1`、プロキシネイバーの存在、トンネルへの配送経路、`ip_forward=1` を確認します。
 
 低 MTU のオーバーレイでは、`doctor hybrid` が SAM MSS clamp を報告し、`nft list table inet routerd_mss` に、選択した `/32` 経路の捕捉からトンネルへ、およびトンネルから捕捉への両方のルールが含まれていることを確認します。

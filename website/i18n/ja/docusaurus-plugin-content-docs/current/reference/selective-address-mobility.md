@@ -388,9 +388,9 @@ Linux での `proxy-arp` 捕捉では、routerd は以下を行います。
 - `ip neigh add proxy <address> dev <capture-interface>` 相当のプロキシネイバーエントリを netlink で追加する。
 - 通常の sysctl コントローラーで `net.ipv4.ip_forward=1` を有効化する。
 
-`provider-secondary-ip` では、プロバイダーファブリックがアドレス捕捉を担当します。`configureOSAddress: false` の場合、routerd はモバイルアドレスをローカル OS のアドレスとして設定しません。Linux では cloud-init、netplan、ゲストエージェントなどがそのアドレスを戻した場合でも、その特定のアドレスだけをローカルインターフェースから削除します。そのうえで IPv4 フォワーディングを確保し、オーバーレイへの `/32` 配送経路は BGP ベストパスのインポートから得ます。捕捉を削除しても routerd はアドレスを戻しません。ゲスト OS へのアドレス割り当ては routerd が所有していないためです。
+`provider-secondary-ip` では、プロバイダーファブリックがアドレス捕捉を担当します。`configureOSAddress: false` の場合、routerd はモバイルアドレスをローカル OS のアドレスとして設定しません。BGP delivery では、`configureOSAddress` が true であっても routerd はモバイル `/32` をローカル OS インターフェースに存在させません。クラウドプロバイダーのセカンダリ IP は provider-fabric ingress owner であり、Linux FIB はそのパケットをローカル宛てとして扱うのではなく、選択された overlay path へ転送する必要があるためです。Linux では cloud-init、netplan、ゲストエージェントなどがそのアドレスを戻した場合でも、その特定のアドレスだけをローカルインターフェースから削除します。そのうえで IPv4 フォワーディング、必要に応じた provider ingress 用の明示的 proxy neighbor、インターフェース単位の forwarding state を確保し、オーバーレイへの `/32` 配送経路は BGP ベストパスのインポートから得ます。捕捉を削除しても routerd はアドレスを戻しません。ゲスト OS へのアドレス割り当ては routerd が所有していないためです。
 
-ステータスではこれを `captureOSAddressAbsence` として報告します。`enforced: true` は、routerd が捕捉されたアドレスをローカル OS インターフェースに存在させないことを継続的に適用していることを示す監査フラグです。`lastReconcileRemoved: true` は、直近のリコンサイルで実際にそのアドレスを削除したことを示します。アドレスがすでに存在しない定常状態では通常 `false` です。
+ステータスではこれを `captureOSAddressAbsence` として報告します。`enforced: true` は、routerd が捕捉されたアドレスをローカル OS インターフェースに存在させないことを継続的に適用していることを示す監査フラグです。`lastReconcileRemoved: true` は、直近のリコンサイルで実際にそのアドレスを削除したことを示します。アドレスがすでに存在しない定常状態では通常 `false` です。`reason` は、明示的な `configureOSAddress=false` enforcement と BGP delivery の no-local-address projection を区別します。
 
 ## 所有権の確認
 
@@ -406,7 +406,7 @@ routerctl mobility owners
 routerctl mobility owners --pool cloudedge --address 10.77.60.10/32 -o json
 ```
 
-行は pool と address でソートされます。remote provider owner が local evidence と重なる場合や、2 つの fresh provider owner が同じ `/32` を主張する場合、行の state は `Conflict` になり、`conflictReason` が理由を示します。期限切れの ownership event は live conflict としては残しません。`routerctl doctor sam` は同じ ownership state を conflict check に使い、host check が有効な場合は local/provider-owned 行と Linux main FIB も比較します。
+行は pool と address でソートされます。remote provider owner が local evidence と重なる場合や、2 つの fresh provider owner が同じ `/32` を主張する場合、行の state は `Conflict` になり、`conflictReason` が理由を示します。期限切れの ownership event は live conflict としては残しません。`routerctl doctor sam` は同じ ownership state を conflict check に使い、host check が有効な場合は endpoint owner としてローカル所有する行を Linux main FIB と比較します。provider-secondary BGP capture holder 行はローカル endpoint owner ではないため、local/cloud route として解決されることを要求しません。その経路は delivery/forwarding check と dataplane probe で確認します。
 
 FreeBSD など Linux 以外のホストでは、ライブ SAM 捕捉は未対応です。コントローラーはホストを変更せず、`SAM capture not implemented on this OS` と報告します。
 

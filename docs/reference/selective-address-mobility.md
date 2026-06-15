@@ -603,7 +603,10 @@ evidence, or when two fresh provider owners claim the same `/32`, the row state
 is `Conflict` and `conflictReason` explains the condition. Expired ownership
 events are not retained as live conflicts. `routerctl doctor sam` consumes the
 same ownership state for conflict checks and, with host checks enabled, compares
-local/provider-owned rows with the Linux main FIB.
+endpoint-owned local rows with the Linux main FIB. Provider-secondary BGP
+capture-holder rows are not local endpoint owners, so they are not required to
+resolve as local/cloud routes; delivery/forwarding checks and dataplane probes
+prove that path.
 
 FreeBSD and other non-Linux hosts do not have live SAM capture yet. The
 controller no-ops and reports `SAM capture not implemented on this OS`.
