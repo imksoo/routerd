@@ -88,7 +88,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	if err := c.cleanupChangedCaptures(ctx, statuses, actions); err != nil {
 		return err
 	}
-	if err := c.reconcileProxyARPInterfaces(ctx, actions); err != nil {
+	if err := c.reconcileProxyARPSysctls(ctx, actions); err != nil {
 		return err
 	}
 	if err := c.reconcileForwardPaths(ctx, actions); err != nil {
@@ -173,7 +173,7 @@ func (c SAMController) reconcileForwardPaths(ctx context.Context, actions []sam.
 	return applier.ReconcileForwardPaths(ctx, paths)
 }
 
-func (c SAMController) reconcileProxyARPInterfaces(ctx context.Context, actions []sam.CaptureAction) error {
+func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []sam.CaptureAction) error {
 	if c.DryRun {
 		return nil
 	}
@@ -189,6 +189,9 @@ func (c SAMController) reconcileProxyARPInterfaces(ctx context.Context, actions 
 		}
 		captureType := strings.TrimSpace(spec.Capture.Type)
 		bgpDelivery := strings.TrimSpace(spec.Delivery.Mode) == "bgp"
+		// provider-secondary+BGP uses explicit proxy-neighbor entries but must
+		// keep interface-wide proxy_arp disabled. Include its interfaces here
+		// so older routerd state is actively reset to proxy_arp=0.
 		if captureType != "proxy-arp" && !(captureType == "provider-secondary-ip" && bgpDelivery) {
 			continue
 		}
@@ -237,7 +240,7 @@ func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults m
 						status["lastGARPError"] = garpErrors[claim.Metadata.Name]
 					}
 				}
-			} else if err == nil && strings.TrimSpace(spec.Capture.Type) == "provider-secondary-ip" && !spec.Capture.ConfigureOSAddress {
+			} else if err == nil && providerSecondaryEnforcesOSAddressAbsence(spec) {
 				result := deassignResults[claim.Metadata.Name]
 				note := map[string]any{
 					"address": firstNonEmpty(result.address, strings.TrimSpace(spec.Address)),
@@ -250,6 +253,11 @@ func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults m
 				}
 				if result.ifname != "" {
 					note["interface"] = result.ifname
+				}
+				if strings.TrimSpace(spec.Delivery.Mode) == "bgp" {
+					note["reason"] = "bgp-delivery"
+				} else {
+					note["reason"] = "configureOSAddress=false"
 				}
 				status["captureOSAddressAbsence"] = note
 			}
@@ -265,6 +273,13 @@ func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults m
 		}
 	}
 	return nil
+}
+
+func providerSecondaryEnforcesOSAddressAbsence(spec api.RemoteAddressClaimSpec) bool {
+	if strings.TrimSpace(spec.Capture.Type) != "provider-secondary-ip" {
+		return false
+	}
+	return !spec.Capture.ConfigureOSAddress || strings.TrimSpace(spec.Delivery.Mode) == "bgp"
 }
 
 func (c SAMController) cleanupRemovedCaptures(ctx context.Context, statuses []routerstate.ObjectStatus) error {

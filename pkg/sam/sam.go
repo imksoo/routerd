@@ -223,38 +223,60 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 			continue
 		}
 		addForwarding()
-		if captureType != "proxy-arp" {
-			if captureType == "provider-secondary-ip" {
-				bgpDelivery := strings.TrimSpace(spec.Delivery.Mode) == "bgp"
-				if !spec.Capture.ConfigureOSAddress || bgpDelivery {
-					actions = append(actions, CaptureAction{Kind: "deassign-os-address", ClaimName: resource.Metadata.Name, Address: address})
-				}
-				if bgpDelivery {
-					iface := ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), interfaceAliases)
-					if iface == "" {
-						return nil, fmt.Errorf("%s spec.capture.interface is required for provider-secondary-ip BGP forwarding", resource.ID())
-					}
-					actions = append(actions, CaptureAction{Kind: "proxy-neighbor", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, GratuitousARP: wantsGratuitousARP(spec.Capture)})
-					for _, tunnelIface := range bgpDeliveryForwardInterfaces(router) {
-						actions = append(actions, CaptureAction{Kind: "forward-path", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, PeerInterface: tunnelIface})
-					}
-				}
+		switch captureType {
+		case "proxy-arp":
+			proxyActions, err := planProxyARPCapture(resource, spec, address, interfaceAliases, interfaces)
+			if err != nil {
+				return nil, err
 			}
+			actions = append(actions, proxyActions...)
+		case "provider-secondary-ip":
+			providerActions, err := planProviderSecondaryCapture(router, resource, spec, address, interfaceAliases)
+			if err != nil {
+				return nil, err
+			}
+			actions = append(actions, providerActions...)
+		default:
 			continue
 		}
-		iface := ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), interfaceAliases)
-		if iface == "" {
-			return nil, fmt.Errorf("%s spec.capture.interface is required for proxy-arp", resource.ID())
-		}
-		if !interfaces[iface] {
-			interfaces[iface] = true
-			actions = append(actions, CaptureAction{Kind: "sysctl", Key: "net.ipv4.conf." + iface + ".proxy_arp", Value: "1", Interface: iface})
-		}
-		actions = append(actions, CaptureAction{Kind: "proxy-neighbor", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, GratuitousARP: wantsGratuitousARP(spec.Capture)})
 	}
 	for _, action := range localInventoryForwardPathActions(router) {
 		addForwarding()
 		actions = append(actions, action)
+	}
+	return actions, nil
+}
+
+func planProxyARPCapture(resource api.Resource, spec api.RemoteAddressClaimSpec, address string, interfaceAliases map[string]string, enabled map[string]bool) ([]CaptureAction, error) {
+	iface := ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), interfaceAliases)
+	if iface == "" {
+		return nil, fmt.Errorf("%s spec.capture.interface is required for proxy-arp", resource.ID())
+	}
+	var actions []CaptureAction
+	if !enabled[iface] {
+		enabled[iface] = true
+		actions = append(actions, CaptureAction{Kind: "sysctl", Key: "net.ipv4.conf." + iface + ".proxy_arp", Value: "1", Interface: iface})
+	}
+	actions = append(actions, CaptureAction{Kind: "proxy-neighbor", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, GratuitousARP: wantsGratuitousARP(spec.Capture)})
+	return actions, nil
+}
+
+func planProviderSecondaryCapture(router *api.Router, resource api.Resource, spec api.RemoteAddressClaimSpec, address string, interfaceAliases map[string]string) ([]CaptureAction, error) {
+	bgpDelivery := strings.TrimSpace(spec.Delivery.Mode) == "bgp"
+	var actions []CaptureAction
+	if !spec.Capture.ConfigureOSAddress || bgpDelivery {
+		actions = append(actions, CaptureAction{Kind: "deassign-os-address", ClaimName: resource.Metadata.Name, Address: address})
+	}
+	if !bgpDelivery {
+		return actions, nil
+	}
+	iface := ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), interfaceAliases)
+	if iface == "" {
+		return nil, fmt.Errorf("%s spec.capture.interface is required for provider-secondary-ip BGP forwarding", resource.ID())
+	}
+	actions = append(actions, CaptureAction{Kind: "proxy-neighbor", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, GratuitousARP: wantsGratuitousARP(spec.Capture)})
+	for _, tunnelIface := range bgpDeliveryForwardInterfaces(router) {
+		actions = append(actions, CaptureAction{Kind: "forward-path", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, PeerInterface: tunnelIface})
 	}
 	return actions, nil
 }
