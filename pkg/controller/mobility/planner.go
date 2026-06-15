@@ -77,63 +77,6 @@ type deliveryTargetPlanInfo struct {
 	Delivery api.AddressDelivery
 }
 
-func (c Controller) upsertEmptyPlan(poolName string, spec api.MobilityPoolSpec, selfNode string, now time.Time) error {
-	part := dynamicconfig.DynamicConfigPart{
-		TypeMeta: api.TypeMeta{APIVersion: dynamicconfig.ConfigAPIVersion, Kind: "DynamicConfigPart"},
-		Metadata: api.ObjectMeta{
-			Name: safeName("mobility-" + poolName + "-" + selfNode),
-			OwnerRefs: []api.OwnerRef{{
-				APIVersion: api.MobilityAPIVersion,
-				Kind:       "MobilityPool",
-				Name:       poolName,
-			}},
-		},
-		Spec: dynamicconfig.DynamicConfigPartSpec{
-			Source:      DynamicSource(poolName, selfNode),
-			Generation:  dynamicGeneration,
-			ObservedAt:  now,
-			ExpiresAt:   now.Add(DefaultLeaseTTL),
-			Resources:   []api.Resource{},
-			Directives:  []dynamicconfig.DynamicConfigDirective{},
-			ActionPlans: []dynamicconfig.ActionPlan{},
-		},
-	}
-	part.Spec.Digest = digestDynamicPart(part)
-	record, err := dynamicPartRecord(part)
-	if err != nil {
-		return err
-	}
-	return c.Store.UpsertDynamicConfigPart(record)
-}
-
-func (c Controller) previousGeneratedClaims(poolName, selfNode string) ([]api.Resource, error) {
-	source := DynamicSource(poolName, selfNode)
-	parts, err := c.Store.GetDynamicConfigPartsBySource(source)
-	if err != nil {
-		return nil, fmt.Errorf("get previous dynamic config part %s: %w", source, err)
-	}
-	if len(parts) == 0 {
-		return nil, nil
-	}
-	sort.SliceStable(parts, func(i, j int) bool {
-		if parts[i].Generation == parts[j].Generation {
-			return parts[i].UpdatedAt.After(parts[j].UpdatedAt)
-		}
-		return parts[i].Generation > parts[j].Generation
-	})
-	resources, err := decodeDynamicConfigResources(parts[0].ResourcesJSON)
-	if err != nil {
-		return nil, fmt.Errorf("decode previous dynamic config part %s: %w", source, err)
-	}
-	var claims []api.Resource
-	for _, res := range resources {
-		if res.APIVersion == api.HybridAPIVersion && res.Kind == "RemoteAddressClaim" {
-			claims = append(claims, res)
-		}
-	}
-	return claims, nil
-}
-
 func (c Controller) previousGeneratedActionPlans(poolName, selfNode string) ([]dynamicconfig.ActionPlan, error) {
 	source := DynamicSource(poolName, selfNode)
 	parts, err := c.Store.GetDynamicConfigPartsBySource(source)
