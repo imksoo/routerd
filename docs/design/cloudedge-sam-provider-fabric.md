@@ -80,7 +80,9 @@ view: local route, deliver remote, or withhold.
 ## Provider Secondary-IP Mode
 
 Secondary-IP capture is valid only when the provider fabric confirms that the
-secondary private IP belongs to this node's provider attachment.
+secondary private IP belongs to this node's provider attachment. The provider
+secondary IP is an ingress holder, not by itself proof that the guest OS is the
+endpoint owner.
 
 Expected steady state for an active cloud holder:
 
@@ -89,11 +91,19 @@ Expected steady state for an active cloud holder:
    - AWS source/destination check disabled.
    - Azure `enableIPForwarding=true`.
    - OCI source/destination check skipped.
-3. Guest OS state matches the capture policy:
-   - If `configureOSAddress=true`, the `/32` is present on the declared local
-     interface.
-   - If `configureOSAddress=false`, the provider-captured address is absent from
-     guest interfaces and packets are forwarded to the BGP-imported owner path.
+3. Guest OS state matches the delivery role:
+   - For BGP delivery to a remote owner, the provider-captured `/32` is absent
+     from guest interfaces even when `configureOSAddress=true`. Linux must
+     forward the packet through the selected overlay path rather than consume it
+     as a local destination. The OS projection is explicit proxy-neighbor state,
+     forwarding rules, per-interface `accept_local`/forwarding sysctls, and the
+     BGP-imported `/32` route.
+   - For a local endpoint owner path where the node is expected to terminate the
+     address, the `/32` may be present on the declared interface when the capture
+     policy explicitly enables OS address configuration.
+   - For no-local-address provider capture, the provider-captured address is
+     absent from guest interfaces and packets are forwarded to the selected
+     owner path.
 4. BGP owner advertisement is allowed only for addresses the ownership resolver
    classifies as local/static/on-prem owned or as a valid ownership event. A
    mere provider capture holder is not a home owner by itself.
