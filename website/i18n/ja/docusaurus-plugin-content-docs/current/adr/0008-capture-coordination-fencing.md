@@ -104,7 +104,7 @@ stale マーカーは同じフェンス（`dropStaleDeprovisionMarkers`）で除
 ### 4. インポート / エグゼキューターゲートでフェンス
 
 アドレス X のプロバイダーアクションをインポートする前、およびジャーナルをスイープするとき、
-その `captureEpoch`/holder を X の**現在の** `captureEpoch` と比較する：
+その `captureEpoch`/ホルダーを X の**現在の** `captureEpoch` と比較する：
 
 - epoch が現在と不一致、**または** ホルダーがもはや現在のものでない acquire、
   **または** ホルダーがまだ現在のものである release → アクションは **stale** → スキップ（フェンス）、
@@ -142,7 +142,7 @@ stale マーカーは同じフェンス（`dropStaleDeprovisionMarkers`）で除
 
 - **Phase A（この ADR の最小スコープ — #70 を決定的に修正）**: `captureEpoch` の導入。
   アクションへのスタンプ。マーカーを epoch キー付きレベル射影にする。
-  stale epoch / holder 不一致でのインポート時フェンス。cancel パスと
+  stale epoch / ホルダー不一致でのインポート時フェンス。cancel パスと
   wall-clock ライフサイクルキーの**除去**。受け入れ条件：
   `TestServeChainMobilityCancelsPendingDeprovisionWhenDesiredAgain` が
   `-count=100`（および `-race`）で決定的に通過、アサーション緩和（`< 2`）は

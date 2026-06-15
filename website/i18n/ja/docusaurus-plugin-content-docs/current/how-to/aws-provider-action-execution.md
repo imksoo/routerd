@@ -19,7 +19,7 @@ SAM データプレーンは AWS×PVE（ENI セカンダリプライベート IP
 ## 1. スコープと境界
 
 - **AWS のみ。プロバイダーは 1 つだけ。** この Runbook には Azure も OCI も含みません。
-- **トポロジ:** `routerd-cloud` ノード 1 台 + cloud-client 1 台 + on-prem-client 1 台で、on-prem から cloud ENI へ移動する捕捉済み **`/32` は 1 つだけ**です。ラボアドレスとしては（SAM リファレンスに従い）cloud-client が `.7`、on-prem-client が `.9` です。
+- **トポロジー:** `routerd-cloud` ノード 1 台 + cloud-client 1 台 + on-prem-client 1 台で、on-prem から cloud ENI へ移動する捕捉済み **`/32` は 1 つだけ**です。ラボアドレスとしては（SAM リファレンスに従い）cloud-client が `.7`、on-prem-client が `.9` です。
 - **専用ラボ限定。** このテスト用に作成した使い捨ての VPC / サブネット / インスタンスです。**本番リソースや共有リソースは使いません。** 他が依存する EIP、セキュリティグループ、ルートテーブル、インスタンスもありません。
 - **ライブ実行はオーナーの明示的な承認後のみ。** 読み取り専用 preflight（Section 4）まではいつでも実行できます。Section 7 の変更はゲートされています。
 

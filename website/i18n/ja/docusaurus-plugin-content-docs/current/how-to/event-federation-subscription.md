@@ -84,5 +84,5 @@ routerctl dynamic render \
 
 - サンプルプラグインは**プロバイダー非依存**であり、**クラウドへの変更を行いません**。`capture` ブロックは dry-run 意図のプレースホルダーです（`configureOSAddress: false`）。
 - アドレスを実際にクレームするためのプロバイダーオペレーション（`actionPlan`）の実行は **Phase 4/5** であり、MVP ではアクションプランは実行しません。
-- routerd は設定や秘密をプラグインに渡しません -- 観測されたイベントのみです。
+- routerd は設定や秘密をプラグインに渡しません。渡すのは観測されたイベントのみです。
 - `EventSubscription.match.types` は必須であるため、サブスクリプションがグループ内のすべてのイベントでプラグインを無差別にトリガーすることはできません。ループを防ぐためには `subjectPrefixes` と `sourceNodes` でさらに絞り込んでください。

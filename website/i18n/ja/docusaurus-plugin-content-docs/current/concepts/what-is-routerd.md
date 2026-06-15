@@ -18,7 +18,7 @@ routerd はディストリビューションでも、集中管理サービスで
 
 - インターフェースのアドレスは、netplan・systemd-networkd・rc.d・NixOS 設定に分かれます。
 - DHCP、DHCPv6、DHCP 中継、RA は、dnsmasq の設定に分かれます。
-- DNS 転送とローカルレコードは、リゾルバごとの設定に分かれます。
+- DNS 転送とローカルレコードは、リゾルバーごとの設定に分かれます。
 - NAT、経路ポリシー、conntrack、ファイアウォールは、nftables と iproute2 に分かれます。
 - DHCPv4、DHCPv6-PD、PPPoE、ヘルスチェック、ログは、別々のデーモンになります。
 - パッケージ、sysctl、サービスユニットは、ホスト準備スクリプトに残りがちです。

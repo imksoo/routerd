@@ -25,7 +25,7 @@ L3 トランスポートを選べるようにしたい。
   `OverlayPeer.Underlay.Type` を `(device, gateway)` にマップし、`/32` 配送ルート
   （`RemoteAddressClaim` / `HybridRoute`）がそのデバイスを指す。トランスポートの追加は
   新しい `switch` ケース。
-- **MTU / MSS clamp はパラメータ化済み。** `hybrid.EstimateMTU = underlayMTU(interface)
+- **MTU / MSS clamp はパラメーター化済み。** `hybrid.EstimateMTU = underlayMTU(interface)
   − overheadFor(type)`。ゾーン非依存の clamp は `EstimateMTU` に従う。新しいトランスポートは
   オーバーヘッド値とインターフェース MTU さえあれば、clamp は自動追従する。
 
@@ -80,7 +80,7 @@ Phase 2 で同一 Kind を IPIP-over-UDP に拡張：
 ### オーバーヘッド、配送、MTU
 
 - `overheadFor`: `ipip = 20`、`gre = 24`（外側 IPv4 20 + GRE base 4）、`fou = 28`
-  （外側 IPv4 + UDP）、`gue = 32`（外側 IPv4 + UDP + 最小 4 バイト GUE ヘッダ）。
+  （外側 IPv4 + UDP）、`gue = 32`（外側 IPv4 + UDP + 最小 4 バイト GUE ヘッダー）。
   GRE `key` で +4。
 - `RouteTarget`: `ipip`、`gre`、`fou`、`gue` → `(device, "")` （`/32` ルートは
   WireGuard と同様にトンネルデバイスを指す）。
@@ -114,7 +114,7 @@ Phase 2 で同一 Kind を IPIP-over-UDP に拡張：
   デバイスが存在しない場合を許容する必要がある。
 - **Phase 2（実装済み）**: `fou` / `gue`（IPIP-over-UDP）。GRE-over-FOU/GUE は
   意図的に公開しない。inner-mode フィールドまたは複合タイプ文字列が必要になるため。
-  `ip fou add` の encap-port セットアップを追加。最小ヘッダオーバーヘッドの仮定を
+  `ip fou add` の encap-port セットアップを追加。最小ヘッダーオーバーヘッドの仮定を
   既存の明示的 `mtu` エスケープハッチとともにドキュメントする。
 - **Phase 3**: FreeBSD（`gif` for ipip、`gre`）— 設定/ステータスの表面が異なるため、
   Linux コントローラーに詰め込まない。

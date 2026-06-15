@@ -89,7 +89,7 @@ pending  ->  approved  ->  succeeded
 
 | コマンド | 目的 |
 | --- | --- |
-| `routerctl action list` | journal エントリを一覧表示（ステータス/プロバイダーでフィルタ）。 |
+| `routerctl action list` | journal エントリを一覧表示（ステータス/プロバイダーでフィルター）。 |
 | `routerctl action show ID` | 1 つの journal エントリを表示。 |
 | `routerctl action approve ID` | 運用者承認: `pending` から `approved` へ。 |
 | `routerctl action execute --dry-run` | バリデーションとプレビュー。変更なし。 |

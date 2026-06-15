@@ -56,7 +56,7 @@ DNS の応答と転送は、`routerd-dns-resolver` が担当します。
 - `dhcp-script=/usr/local/libexec/routerd/dhcp-event-relay` がある (リースの変化を routerd へ通知する経路)
 - 必要な構成で `enable-ra` が入っている
 
-## DNS リゾルバ
+## DNS リゾルバー
 
 ```bash
 sudo curl --unix-socket /run/routerd/dns-resolver/<resource>.sock http://unix/v1/healthz
@@ -69,7 +69,7 @@ dig @<lan-ip> example.com A
 - 待ち受けが、想定したアドレスとポートで開いているか (`ss -lnup`)
 - ローカルの権威ゾーンが応答するか (`DNSZone` の手動レコードと DHCP 由来のレコード)
 - 条件付き転送が、指定した上流へ届いているか (`dig @<lan-ip> <forwarded-domain>`)
-- 既定の上流が、DoH / DoT / TCP / 平文 UDP のいずれで応答しているか (リゾルバの status と上流の health を見る)
+- 既定の上流が、DoH / DoT / TCP / 平文 UDP のいずれで応答しているか (リゾルバーの status と上流の health を見る)
 
 ## DS-Lite
 
@@ -86,7 +86,7 @@ AFTR の FQDN が解決できない場合は、`DNSResolver` の `forward` sourc
 
 環境によっては、`/proc/net/nf_conntrack` がありません。
 この場合、routerd は sysctl 由来の集計へ縮退します。
-詳細なフロー一覧が空でも、必ずしも NAT が壊れているとは限りません。`routerctl connections` のサマリを見てください。
+詳細なフロー一覧が空でも、必ずしも NAT が壊れているとは限りません。`routerctl connections` のサマリーを見てください。
 
 ## 調査時に避けること
 

@@ -7,8 +7,8 @@ sidebar_position: 80
 
 ![LAN の平文 DNS が IPAddressSet で一致しローカル DNSResolver へリダイレクトされる構成](/img/diagrams/config-example-local-dns-redirect.png)
 
-LAN クライアントが有名なパブリックリゾルバへ平文 DNS を直接送ろうとしたときに、
-TCP/UDP の port 53 だけをルーターのローカルリゾルバへリダイレクトする例です。
+LAN クライアントが有名なパブリックリゾルバーへ平文 DNS を直接送ろうとしたときに、
+TCP/UDP の port 53 だけをルーターのローカルリゾルバーへリダイレクトする例です。
 DoH や DoT の port には手を加えません。
 
 完全な YAML は `examples/example-local-dns-redirect.yaml` にあります。
@@ -19,7 +19,7 @@ DoH や DoT の port には手を加えません。
 flowchart LR
   client["[1] LAN client"]
   lan["[2] lan"]
-  router["[3] routerd DNS リゾルバ<br/>192.168.50.1:53"]
+  router["[3] routerd DNS リゾルバー<br/>192.168.50.1:53"]
   public["[4] public DNS names<br/>dns.google / one.one.one.one"]
   upstream["[5] actual upstream DNS"]
 
@@ -34,9 +34,9 @@ flowchart LR
 | --- | --- | --- |
 | [1] | パブリック DNS へ直接問い合わせようとするクライアント。 | external client |
 | [2] | prerouting のリダイレクトルールが一致する LAN インターフェース。 | `LocalServiceRedirect/lan-local-services.spec.interface` |
-| [3] | リダイレクトされた port 53 のトラフィックを受けるローカルリゾルバ。 | `DNSResolver/lan-resolver` |
+| [3] | リダイレクトされた port 53 のトラフィックを受けるローカルリゾルバー。 | `DNSResolver/lan-resolver` |
 | [4] | nftables の set に展開される完全一致の FQDN。 | `IPAddressSet/public-dns` |
-| [5] | ローカルリゾルバが実際に使う上流リゾルバ。 | `DNSForwarder`, `DNSUpstream` |
+| [5] | ローカルリゾルバーが実際に使う上流リゾルバー。 | `DNSForwarder`, `DNSUpstream` |
 
 ## この例で管理するもの
 

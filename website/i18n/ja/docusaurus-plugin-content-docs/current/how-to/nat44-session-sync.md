@@ -3,7 +3,7 @@ title: HA ルータ向け NAT44 セッション同期
 slug: /how-to/nat44-session-sync
 ---
 
-# HA ルータ向け NAT44 セッション同期
+# HA ルーター向け NAT44 セッション同期
 
 ![NAT44SessionSync が active router の conntrack SNAT entry を dump し、SSH restore し、insert failure を standby status に出す流れ](/img/diagrams/how-to-nat44-session-sync.png)
 

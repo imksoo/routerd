@@ -3,7 +3,7 @@
 Result: PASS
 
 日付: 2026-05-31 UTC  
-ブランチ/ビルド: `main` / `routerd v20260528.2308 (92f4cc94)` (`execute.providerAction` のローカルバリデータ修正付き)  
+ブランチ/ビルド: `main` / `routerd v20260528.2308 (92f4cc94)` (`execute.providerAction` のローカルバリデーター修正付き)  
 エビデンスバンドル: `/home/imksoo/routerd-labs/cloudedge-sam/evidence/20260530T235341Z-phase5-aws-rebaseline-92f4cc94`
 
 ## スコープ

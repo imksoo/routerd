@@ -16,7 +16,7 @@ L3 到達性を復旧する仕組みです。
 - **ownership = BGP best-path** — `/32` の所有者は BGP の最良経路が決める（中央ロックや
   lease/epoch を持たない単一の真実源）。
 - **liveness = per-node marker** — 各ノードが overlay `/32` + identity community の
-  marker を広告。active marker の消失が failover トリガ。
+  marker を広告。active marker の消失がフェイルオーバーのトリガー。
 - **trap = RIB-driven** — RIB の変化（remote-owned `/32` の best-path）を routerd が trap。
 - **seize = liveness-driven** — active marker 消失で同一サイトの standby が seize。
 

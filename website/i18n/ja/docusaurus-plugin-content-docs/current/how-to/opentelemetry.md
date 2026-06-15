@@ -17,7 +17,7 @@ routerd は、すべての常駐デーモンから OpenTelemetry でエクスポ
 
 | デーモン | service.name | 内容 |
 | --- | --- | --- |
-| `routerd` (制御プレーン) | `routerd` | `controller.reconcile` トレース、`routerd.controller.reconcile` カウンタ、構造化 slog ログ |
+| `routerd` (制御プレーン) | `routerd` | `controller.reconcile` トレース、`routerd.controller.reconcile` カウンター、構造化 slog ログ |
 | `routerd-dhcpv6-client` | `routerd-dhcpv6-client` | DHCPv6 ライフサイクルのトレースと構造化ログ（Solicit/Request/Renew、リースイベント） |
 | `routerd-dhcpv4-client` | `routerd-dhcpv4-client` | DHCPv4 ライフサイクルのトレースと構造化ログ |
 | `routerd-pppoe-client` | `routerd-pppoe-client` | PPPoE セッションのライフサイクル |

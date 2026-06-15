@@ -36,7 +36,7 @@ routerd は、ホスト上の構成物をリソースに対応付けて管理し
 | `RogueRADetector` | 自動導出された `routerd-ra-observer` のソケット、受動的な IPv6 RA 観測、不正 RA イベント |
 | `DNSZone` | `routerd-dns-resolver` のローカル権威ゾーン |
 | `DNSResolver` | `routerd-dns-resolver` のソケット、状態、イベント、待ち受け設定 |
-| `DNSForwarder` | `routerd-dns-resolver` の転送ルール。リゾルバ設定として生成されます |
+| `DNSForwarder` | `routerd-dns-resolver` の転送ルール。リゾルバー設定として生成されます |
 | `DNSUpstream` | `routerd-dns-resolver` の上流エンドポイント。転送ルールとして生成されます |
 | `DSLiteTunnel` | Linux の `ip6tnl` インターフェース |
 | `TunnelInterface` | Linux の `ipip` / `gre` tunnel device。FOU/GUE mode では対応する `ip fou` listener port も ensure します |

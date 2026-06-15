@@ -14,7 +14,7 @@ routerd は `vYYYYMMDD.HHmm` 形式で頻繁にリリースしますが、その
 | --- | --- |
 | バージョン | **v20260608.2325** |
 | 位置づけ | 推奨安定版（v20260608.1354 を置き換え。peersFrom/membersFrom による動的配布でゼロタッチの leaf 設定を実現） |
-| 稼働実績 | k8s クラスタ（10 ノード: 2 RR + 8 leaf、peersFrom + membersFrom + peer-group-sync すべて緑、フル verify 通過）、lab 環境（FreeBSD router01/04 アップグレード検証済み）、本番ルーター（homert02、validate pass）で検証済み。不具合 0 件 |
+| 稼働実績 | k8s クラスター（10 ノード: 2 RR + 8 leaf、peersFrom + membersFrom + peer-group-sync すべて緑、フル verify 通過）、lab 環境（FreeBSD router01/04 アップグレード検証済み）、本番ルーター（homert02、validate pass）で検証済み。不具合 0 件 |
 | バイナリ | 静的リンク（`CGO_ENABLED=0`）、CI と Release ワークフローをすべて通過 |
 
 ## v20260608.2325 を推奨する理由
@@ -50,7 +50,7 @@ v20260608.1354 の全特性を継承: pair-stable アドレッシング、ADR 00
 - **v20260528.2308 から上げる場合:** ADR 0014 により CLI の verb 体系が変わりました。`routerd apply` → `routerctl apply`、`routerd validate` → `routerctl validate` など。サービスユニットやスクリプトで旧コマンドを使っている場合は書き直してください。`install.sh` が新しいサービスユニットを自動配置するため、systemd 管理下のユニットは自動で更新されます。
 - **`install.sh` は必ず展開したリリースディレクトリに `cd` してから実行してください。**
 - **v20260523.1542 以前から上げる場合:** `disabled:` フィールド（`enabled: false` を使用してください）と `--controller-chain*` / `--observe-interval` フラグは削除済みです。
-- **DNS リゾルバのサービスユニット化:** リゾルバは `routerd-dns-resolver@<name>.service` として動きます。初回アップグレード時だけ短い DNS 瞬断が出ます。
+- **DNS リゾルバーのサービスユニット化:** リゾルバーは `routerd-dns-resolver@<name>.service` として動きます。初回アップグレード時だけ短い DNS 瞬断が出ます。
 :::
 
 ## 「安定版」の意味と注意点

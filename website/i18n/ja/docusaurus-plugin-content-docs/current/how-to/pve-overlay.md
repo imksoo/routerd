@@ -29,7 +29,7 @@ routerd は、オーバーレイを 4 つのプリミティブでモデル化し
 | `VXLANTunnel` | underlay 上に乗せる L2 セグメント (本当に L2 拡張が必要なときのみ) |
 | `EgressRoutePolicy` + `HealthCheck` | underlay の準備完了確認と L3 フェイルオーバー (任意) |
 
-可能な限り L3 ルーティングを優先してください。L2 拡張は MTU の制約 (Ethernet ヘッダ + WireGuard のオーバーヘッド + VXLAN ヘッダ) を重ねるうえに、ブロードキャストストームが複数ホスト規模に広がります。
+可能な限り L3 ルーティングを優先してください。L2 拡張は MTU の制約 (Ethernet ヘッダー + WireGuard のオーバーヘッド + VXLAN ヘッダー) を重ねるうえに、ブロードキャストストームが複数ホスト規模に広がります。
 `VXLANTunnel` は、本当にホスト間で広げる必要があるセグメントだけに使ってください。
 
 ## 最小構成
@@ -80,7 +80,7 @@ spec:
   mtu: 1370
 ```
 
-VXLAN は 50 バイトのヘッダ (外側 Ethernet 14 + 外側 IPv4 20 + UDP 8 + VXLAN 8) を加えるため、1420 の WireGuard 内では内側の MTU が 1370 になります。
+VXLAN は 50 バイトのヘッダー (外側 Ethernet 14 + 外側 IPv4 20 + UDP 8 + VXLAN 8) を加えるため、1420 の WireGuard 内では内側の MTU が 1370 になります。
 カプセル化を重ねるときは、MTU を明示し、自動計算に任せないでください。
 
 ## 動作確認

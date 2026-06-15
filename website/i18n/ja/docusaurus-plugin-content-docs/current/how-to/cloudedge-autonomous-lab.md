@@ -100,7 +100,7 @@ routerd.cloudedge.purpose
 }
 ```
 
-データプレーンのチェックと `source_ip_preserved` / `default_gateway_unchanged` は接続マトリクスから自動的に導出されます。seize/fencing アサーション（`ownership_epoch_bumped`、`allow_reassignment_maintained_until_success`、`old_holder_residue_absent`、`stale_action_fenced`）と `providerState` は最初 `na` で、ラボ運用者がプロバイダーインベントリ、BGP mobility パス、プロバイダー trap アクションプラン、アクションジャーナルから取り込みます（`collect-evidence.sh` 参照）。ランが **PASS** となるのは `result == pass` かつすべての必須アサーションがパスした場合のみです。
+データプレーンのチェックと `source_ip_preserved` / `default_gateway_unchanged` は接続マトリクスから自動的に導出されます。seize/フェンシングアサーション（`ownership_epoch_bumped`、`allow_reassignment_maintained_until_success`、`old_holder_residue_absent`、`stale_action_fenced`）と `providerState` は最初 `na` で、ラボ運用者がプロバイダーインベントリ、BGP mobility パス、プロバイダー trap アクションプラン、アクションジャーナルから取り込みます（`collect-evidence.sh` 参照）。ランが **PASS** となるのは `result == pass` かつすべての必須アサーションがパスした場合のみです。
 
 ## 接続マトリクス
 
