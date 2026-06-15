@@ -109,6 +109,38 @@ func TestProviderActionPlansRouteTableStrategy(t *testing.T) {
 	}
 }
 
+func TestProviderActionPlansRouteTableStrategyRequiresRouteTableRef(t *testing.T) {
+	profile := api.CloudProviderProfileSpec{Provider: "aws"}
+	capture := api.AddressCapture{
+		Type:            "provider-secondary-ip",
+		ProviderRef:     "aws-provider",
+		CaptureStrategy: captureStrategyRouteTable,
+		NICRef:          "eni-router",
+	}
+	_, err := providerActionPlans("cloudedge", profile, capture, map[string]string{
+		"region": "ap-northeast-1",
+	}, "10.88.60.10/32", map[string]bool{}, false)
+	if err == nil || !strings.Contains(err.Error(), "capture.captureStrategy route-table requires capture.target.routeTableRef") {
+		t.Fatalf("providerActionPlans error = %v, want missing routeTableRef", err)
+	}
+}
+
+func TestProviderActionPlansAzureRouteTableStrategyRequiresNextHopIPAddress(t *testing.T) {
+	profile := api.CloudProviderProfileSpec{Provider: "azure"}
+	capture := api.AddressCapture{
+		Type:            "provider-secondary-ip",
+		ProviderRef:     "azure-provider",
+		CaptureStrategy: captureStrategyRouteTable,
+		NICRef:          "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic",
+	}
+	_, err := providerActionPlans("cloudedge", profile, capture, map[string]string{
+		"routeTableRef": "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/routeTables/rt-cloudedge",
+	}, "10.88.60.10/32", map[string]bool{}, false)
+	if err == nil || !strings.Contains(err.Error(), "provider azure capture.captureStrategy route-table requires capture.target.nextHopIPAddress") {
+		t.Fatalf("providerActionPlans error = %v, want missing nextHopIPAddress", err)
+	}
+}
+
 func TestProviderActionTargetUsesCaptureTargetNICFallback(t *testing.T) {
 	profile := api.CloudProviderProfileSpec{Provider: "azure", SubscriptionID: "sub-1", ResourceGroup: "rg-router"}
 	target := providerActionTarget("cloudedge", profile, api.AddressCapture{
