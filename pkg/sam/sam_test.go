@@ -369,8 +369,8 @@ func TestPlanCaptureProviderSecondaryIPBGPProxiesAndForwardsWithConfigureOSAddre
 	if !hasAction(actions, "deassign-os-address", "", "10.0.1.122/32", "") {
 		t.Fatalf("actions missing OS address deassign: %#v", actions)
 	}
-	if !hasAction(actions, "sysctl", "net.ipv4.conf.ens3.proxy_arp", "", "ens3") {
-		t.Fatalf("actions missing provider-secondary BGP proxy_arp: %#v", actions)
+	if hasAction(actions, "sysctl", "net.ipv4.conf.ens3.proxy_arp", "", "ens3") {
+		t.Fatalf("provider-secondary BGP must not require interface-wide proxy_arp: %#v", actions)
 	}
 	if !hasAction(actions, "proxy-neighbor", "", "10.0.1.122/32", "ens3") {
 		t.Fatalf("actions missing provider-secondary BGP proxy neighbor: %#v", actions)

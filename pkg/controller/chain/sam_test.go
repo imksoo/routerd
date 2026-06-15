@@ -60,6 +60,32 @@ func TestSAMControllerDeassignsProviderSecondaryOSAddressAndStatus(t *testing.T)
 	}
 }
 
+func TestSAMControllerProviderSecondaryBGPUsesProxyNeighborWithoutProxyARP(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.122/32", "provider-secondary-ip", "ens3")
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+		Metadata: api.ObjectMeta{Name: "samt0"},
+		Spec:     api.TunnelInterfaceSpec{Mode: "ipip", Local: "10.99.0.2", Remote: "10.99.0.1", Address: "10.255.0.2/31"},
+	})
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ConfigureOSAddress = true
+	spec.Delivery = api.AddressDelivery{PeerRef: "cloud", Mode: "bgp"}
+	router.Spec.Resources[1].Spec = spec
+
+	store := &samStore{objects: map[string]map[string]any{}}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{
+		"proxyarp:ens3=0",
+		"forward:10.0.1.122/32@ens3<->samt0",
+		"deassign:10.0.1.122/32",
+		"ensure:10.0.1.122/32@ens3",
+	})
+}
+
 func TestSAMControllerDeassignAbsentAddressIsNoopButTracked(t *testing.T) {
 	router := samControllerRouterWithClaim("10.0.1.122/32", "provider-secondary-ip", "")
 	store := &samStore{objects: map[string]map[string]any{}}
