@@ -714,7 +714,7 @@ func (r doctorRunner) doctorSAMOwnerTableRouteChecks(pool string, poolSpec api.M
 		command := doctorRunDiagnosticCommand(ctx, "ip route get "+ip, "ip", "-4", "route", "get", ip)
 		if !command.OK {
 			if badLine := doctorSAMForbiddenLocalOwnerRoute(actual); badLine != "" {
-				checks = append(checks, doctorCheck{Area: "sam", Name: name, Status: doctorFail, Detail: appendDoctorDetail("expected local/provider-owned route, actual "+badLine, "actual FIB snapshot has stale BGP/SAM route and route get failed"), Remedy: "reconcile routerd and remove stale remote /32 FIB state; expected local/cloud route to win"})
+				checks = append(checks, doctorCheck{Area: "sam", Name: name, Status: doctorFail, Detail: appendDoctorDetail("expected endpoint-owned local route, actual "+badLine, "actual FIB snapshot has stale BGP/SAM route and route get failed"), Remedy: "reconcile routerd and remove stale remote /32 FIB state; expected endpoint-owned local/cloud route to win"})
 				continue
 			}
 			checks = append(checks, doctorCheck{Area: "sam", Name: name, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "route lookup failed"), Remedy: "inspect Linux route selection for local owned address"})
@@ -722,7 +722,7 @@ func (r doctorRunner) doctorSAMOwnerTableRouteChecks(pool string, poolSpec api.M
 		}
 		out := oneLine(command.Stdout)
 		if strings.Contains(out, " dev sam") || strings.Contains(out, " dev wg-") || strings.Contains(out, " dev ipip") {
-			checks = append(checks, doctorCheck{Area: "sam", Name: name, Status: doctorFail, Detail: appendDoctorDetail(out, "expected local/provider-owned route, route get selects SAM/overlay device"), Remedy: "reconcile routerd and remove stale remote /32 FIB state; expected local/cloud route to win"})
+			checks = append(checks, doctorCheck{Area: "sam", Name: name, Status: doctorFail, Detail: appendDoctorDetail(out, "expected endpoint-owned local route, route get selects SAM/overlay device"), Remedy: "reconcile routerd and remove stale remote /32 FIB state; expected endpoint-owned local/cloud route to win"})
 			continue
 		}
 		detail := out

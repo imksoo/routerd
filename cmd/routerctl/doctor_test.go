@@ -335,8 +335,11 @@ func TestDoctorSAMOwnerTableRouteDriftFails(t *testing.T) {
 		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
 	}
 	check := findDoctorCheck(t, report, "MobilityPool/cloudedge owner-table route drift 10.77.60.7/32")
-	if check.Status != doctorFail || !strings.Contains(check.Detail, "samtc72ffb1610c") {
+	if check.Status != doctorFail || !strings.Contains(check.Detail, "samtc72ffb1610c") || !strings.Contains(check.Detail, "expected endpoint-owned local route") {
 		t.Fatalf("check = %#v, want failing route drift detail", check)
+	}
+	if strings.Contains(check.Detail, "local/provider-owned") || strings.Contains(check.Remedy, "local/provider-owned") {
+		t.Fatalf("check = %#v, must not use stale local/provider-owned wording", check)
 	}
 }
 
@@ -397,6 +400,53 @@ func TestDoctorSAMOwnerTableRouteDriftAllowsUnselectedOverlayRoute(t *testing.T)
 	if check.Status != doctorPass || !strings.Contains(check.Detail, "dev ens5") || !strings.Contains(check.Detail, "samtc72ffb1610c") {
 		t.Fatalf("check = %#v, want pass with selected local route and snapshot context", check)
 	}
+}
+
+func TestDoctorSAMOwnerTableRouteDriftSkipsRemoteCaptureHolder(t *testing.T) {
+	oldRun := doctorRunDiagnosticCommand
+	defer func() { doctorRunDiagnosticCommand = oldRun }()
+	doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
+		if label == "ip -4 route show table main" {
+			return diagnoseCommandCheck{
+				Name:   label,
+				OK:     true,
+				Stdout: "10.77.60.7 via 10.255.0.28 dev samtc72ffb1610c proto bgp src 10.77.60.4 metric 200\n",
+				Output: "10.77.60.7 via 10.255.0.28 dev samtc72ffb1610c proto bgp src 10.77.60.4 metric 200\n",
+			}
+		}
+		t.Fatalf("unexpected diagnostic command %q %s", label, strings.Join(args, " "))
+		return diagnoseCommandCheck{}
+	}
+
+	configPath, statePath := writeDoctorSAMFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"plannerPhase":                   "BGPPlanned",
+		"ownershipResolverPhase":         "Resolved",
+		"ownershipResolverConflictCount": 0,
+		"ownershipResolverOwnerTable": []map[string]any{{
+			"address":          "10.77.60.7/32",
+			"state":            "OK",
+			"class":            "RemoteHomeOwned",
+			"ownerNode":        "onprem-router",
+			"localNode":        "azure-router",
+			"localProviderRef": "azure-provider",
+			"localNICRef":      "azure-nic",
+		}},
+	}); err != nil {
+		t.Fatalf("save mobility status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "sam", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor sam: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	assertDoctorCheckAbsent(t, report, "MobilityPool/cloudedge owner-table route drift 10.77.60.7/32")
 }
 
 func TestDoctorSAMOwnerTableReportsUnexpectedRouteResidue(t *testing.T) {
