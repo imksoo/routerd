@@ -19,10 +19,11 @@ import (
 // fakeOCI is a FAKE oci command runner: it records every argv and returns canned
 // get/list JSON. It NEVER calls real OCI. Tests assert against recorded calls.
 type fakeOCI struct {
-	calls      [][]string
-	vnicGetOut []byte
-	listOut    []byte
-	err        error
+	calls            [][]string
+	vnicGetOut       []byte
+	listOut          []byte
+	routeTableGetOut []byte
+	err              error
 }
 
 func (f *fakeOCI) run(ctx context.Context, argv ...string) ([]byte, error) {
@@ -35,7 +36,18 @@ func (f *fakeOCI) run(ctx context.Context, argv ...string) ([]byte, error) {
 	if len(toks) > 0 {
 		verb = toks[len(toks)-1]
 	}
+	isRouteTable := false
+	for _, t := range toks {
+		if t == "route-table" {
+			isRouteTable = true
+		}
+	}
 	switch {
+	case verb == "get" && isRouteTable: // network route-table get
+		if f.routeTableGetOut != nil {
+			return f.routeTableGetOut, nil
+		}
+		return cannedRouteTableGet(), nil
 	case verb == "get": // network vnic get
 		if f.vnicGetOut != nil {
 			return f.vnicGetOut, nil
@@ -50,6 +62,13 @@ func (f *fakeOCI) run(ctx context.Context, argv ...string) ([]byte, error) {
 		// Mutating verbs return a benign (ignored) JSON body.
 		return []byte(`{}`), nil
 	}
+}
+
+// cannedRouteTableGet returns an empty route table (just a default gateway rule)
+// so a fresh assign appends the mobility rule. Tests that need a pre-existing
+// mobility rule set routeTableGetOut explicitly.
+func cannedRouteTableGet() []byte {
+	return []byte(`{"data":{"route-rules":[{"destination":"0.0.0.0/0","destination-type":"CIDR_BLOCK","network-entity-id":"ocid1.internetgateway.oc1..igw","description":null}]}}`)
 }
 
 func cannedVNICGet(skip bool) []byte {

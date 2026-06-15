@@ -89,10 +89,16 @@ const (
 	statusFailed    = "failed"
 	statusSkipped   = "skipped"
 
-	actionAssignSecondaryIP    = "assign-secondary-ip"
-	actionUnassignSecondaryIP  = "unassign-secondary-ip"
-	actionEnsureFwdEnabled     = "ensure-forwarding-enabled"
-	actionEnsureFwdDisabled    = "ensure-forwarding-disabled"
+	actionAssignSecondaryIP       = "assign-secondary-ip"
+	actionUnassignSecondaryIP     = "unassign-secondary-ip"
+	actionAssignRouteTableRoute   = "assign-route-table-route"
+	actionUnassignRouteTableRoute = "unassign-route-table-route"
+	actionEnsureFwdEnabled        = "ensure-forwarding-enabled"
+	actionEnsureFwdDisabled       = "ensure-forwarding-disabled"
+
+	captureStrategyRouteTable = "route-table"
+	routeRuleDescription      = "routerd CloudEdge SAM mobility"
+
 	defaultOCICommandTimeoutMs = 25000
 )
 
@@ -187,6 +193,10 @@ func ociPermissionHint(msg string) string {
 		return "use vnics"
 	case strings.Contains(msg, "ensure-forwarding"):
 		return "use vnics"
+	case strings.Contains(msg, "route-table") && strings.Contains(msg, "private-ip lookup"):
+		return "use private-ips"
+	case strings.Contains(msg, "route-table"):
+		return "manage route-tables"
 	default:
 		return "oci-policy"
 	}
@@ -241,16 +251,170 @@ func dispatch(ctx context.Context, req executeActionRequest, runner ociRunner) e
 
 	switch spec.Action {
 	case actionAssignSecondaryIP:
+		if captureStrategy(spec) == captureStrategyRouteTable {
+			return assignRouteTableRoute(ctx, spec, mode, runner)
+		}
 		return assignSecondaryIP(ctx, spec, mode, runner)
+	case actionAssignRouteTableRoute:
+		return assignRouteTableRoute(ctx, spec, mode, runner)
 	case actionEnsureFwdEnabled:
 		return ensureForwardingEnabled(ctx, spec, mode, runner)
 	case actionUnassignSecondaryIP:
+		if captureStrategy(spec) == captureStrategyRouteTable {
+			return unassignRouteTableRoute(ctx, spec, mode, runner)
+		}
 		return unassignSecondaryIP(ctx, spec, mode, runner)
+	case actionUnassignRouteTableRoute:
+		return unassignRouteTableRoute(ctx, spec, mode, runner)
 	case actionEnsureFwdDisabled:
 		return ensureForwardingDisabled(ctx, spec, mode, runner)
 	default:
 		return failed(fmt.Sprintf("unsupported action %q", spec.Action), nil)
 	}
+}
+
+// captureStrategy returns the capture strategy the planner selected for this
+// action. An empty value means the default secondary-ip strategy; "route-table"
+// routes the action to the VCN route-rule path instead.
+func captureStrategy(spec executeActionRequestSpec) string {
+	return strings.TrimSpace(spec.Target["captureStrategy"])
+}
+
+// requireRouteTarget extracts the fields the route-table path needs. OCI route
+// rules point at a Private IP (the router's next hop), so unlike the secondary-ip
+// path this also requires nextHopIPAddress: the router VNIC private IP whose OCID
+// becomes the rule's networkEntityId. nicRef is the router VNIC the next hop
+// belongs to. routeTableRef is the VCN route table OCID to write into.
+func requireRouteTarget(spec executeActionRequestSpec) (rtID, vnic, address, nextHop string, err error) {
+	rtID = strings.TrimSpace(spec.Target["routeTableRef"])
+	vnic = strings.TrimSpace(spec.Target["nicRef"])
+	address = bareIP(spec.Target["address"])
+	nextHop = bareIP(spec.Target["nextHopIPAddress"])
+	if rtID == "" {
+		return "", "", "", "", fmt.Errorf("target.routeTableRef (route table OCID) is required")
+	}
+	if vnic == "" {
+		return "", "", "", "", fmt.Errorf("target.nicRef (VNIC OCID) is required")
+	}
+	if address == "" {
+		return "", "", "", "", fmt.Errorf("target.address is required")
+	}
+	if nextHop == "" {
+		return "", "", "", "", fmt.Errorf("target.nextHopIPAddress is required for oci route-table")
+	}
+	return rtID, vnic, address, nextHop, nil
+}
+
+// assignRouteTableRoute steers the captured /32 to the router by adding a VCN
+// route rule whose next hop is the router's private IP (networkEntityId). OCI has
+// no per-rule add, so this reads the full rule set, merges in one rule, and writes
+// the set back.
+//   - dry-run: read-only `route-table get`, report "would route".
+//   - execute: resolve the next-hop private-ip OCID, read rules, append (or
+//     replace on seize) the one rule for our /32, and `route-table update`.
+func assignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec, mode string, runner ociRunner) executeActionResult {
+	rtID, vnic, address, nextHop, err := requireRouteTarget(spec)
+	if err != nil {
+		return failed("assign-route-table-route: missing target field", err)
+	}
+	res := newResult()
+	res.Status.UndoAvailable = true
+	dest := address + "/32"
+
+	if mode == modeDryRun {
+		if _, derr := getRouteTableRules(ctx, runner, rtID); derr != nil {
+			return failed("assign-route-table-route dry-run: route-table get failed", derr)
+		}
+		res.Status.Status = statusSucceeded
+		res.Status.Message = fmt.Sprintf("would route %s via %s in %s", dest, nextHop, rtID)
+		return res
+	}
+
+	nextHopOCID, derr := findPrivateIPOCID(ctx, runner, vnic, nextHop)
+	if derr != nil {
+		return failed("assign-route-table-route execute: next-hop private-ip lookup failed", derr)
+	}
+	rules, derr := getRouteTableRules(ctx, runner, rtID)
+	if derr != nil {
+		return failed("assign-route-table-route execute: route-table get failed", derr)
+	}
+	allowReassignment := stringBool(spec.Parameters["allowReassignment"])
+	newRule := ociRouteRule{
+		Destination:     dest,
+		DestinationType: "CIDR_BLOCK",
+		NetworkEntityID: nextHopOCID,
+		Description:     routeRuleDescription,
+	}
+	if idx := routeRuleIndexForDest(rules, dest); idx >= 0 {
+		if rules[idx].NetworkEntityID == nextHopOCID {
+			res.Status.Status = statusSucceeded
+			res.Status.Message = fmt.Sprintf("%s already routes to %s in %s", dest, nextHopOCID, rtID)
+			res.Status.Observed = map[string]string{"assignedRoute": dest, "routeTableRef": rtID, "nextHopPrivateIP": nextHopOCID}
+			return res
+		}
+		if !allowReassignment {
+			return failed("assign-route-table-route execute: route exists for a different next hop (set allowReassignment to seize)", nil)
+		}
+		rules[idx] = newRule
+	} else {
+		rules = append(rules, newRule)
+	}
+	if err := updateRouteTableRules(ctx, runner, rtID, rules); err != nil {
+		return failed("assign-route-table-route execute: route-table update failed", err)
+	}
+	res.Status.Status = statusSucceeded
+	res.Status.Message = fmt.Sprintf("routed %s to %s in %s", dest, nextHopOCID, rtID)
+	res.Status.Observed = map[string]string{"assignedRoute": dest, "routeTableRef": rtID, "nextHopPrivateIP": nextHopOCID}
+	return res
+}
+
+// unassignRouteTableRoute is the undo of assignRouteTableRoute. It removes the
+// /32 route rule, but ONLY when it still points at our own next-hop private IP, so
+// a route a different holder has already seized is never deleted (foreign-holder
+// protection). A missing rule is idempotently skipped.
+func unassignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec, mode string, runner ociRunner) executeActionResult {
+	rtID, vnic, address, nextHop, err := requireRouteTarget(spec)
+	if err != nil {
+		return failed("unassign-route-table-route: missing target field", err)
+	}
+	res := newResult()
+	dest := address + "/32"
+
+	if mode == modeDryRun {
+		if _, derr := getRouteTableRules(ctx, runner, rtID); derr != nil {
+			return failed("unassign-route-table-route dry-run: route-table get failed", derr)
+		}
+		res.Status.Status = statusSucceeded
+		res.Status.Message = fmt.Sprintf("would remove %s from %s", dest, rtID)
+		return res
+	}
+
+	nextHopOCID, derr := findPrivateIPOCID(ctx, runner, vnic, nextHop)
+	if derr != nil {
+		return failed("unassign-route-table-route execute: next-hop private-ip lookup failed", derr)
+	}
+	rules, derr := getRouteTableRules(ctx, runner, rtID)
+	if derr != nil {
+		return failed("unassign-route-table-route execute: route-table get failed", derr)
+	}
+	idx := routeRuleIndexForDest(rules, dest)
+	if idx < 0 {
+		res.Status.Status = statusSkipped
+		res.Status.Message = fmt.Sprintf("no route for %s in %s; nothing to remove", dest, rtID)
+		return res
+	}
+	if rules[idx].NetworkEntityID != nextHopOCID {
+		res.Status.Status = statusSkipped
+		res.Status.Message = fmt.Sprintf("route for %s targets a different next hop (foreign holder); not removing", dest)
+		return res
+	}
+	rules = append(rules[:idx], rules[idx+1:]...)
+	if err := updateRouteTableRules(ctx, runner, rtID, rules); err != nil {
+		return failed("unassign-route-table-route execute: route-table update failed", err)
+	}
+	res.Status.Status = statusSucceeded
+	res.Status.Message = fmt.Sprintf("removed %s from %s (was %s)", dest, rtID, nextHopOCID)
+	return res
 }
 
 // assignSecondaryIP attaches the captured /32 to the VNIC.

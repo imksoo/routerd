@@ -190,3 +190,93 @@ func hostPart(addr string) string {
 	}
 	return addr
 }
+
+// ociRouteRule is the camelCase shape OCI's `route-table update --route-rules`
+// complex input accepts. The read path converts the kebab-case `route-table get`
+// output into this form, so the same struct round-trips through an update. OCI
+// replaces the ENTIRE rule set on update (there is no per-rule add/delete like
+// AWS create/delete-route or an Azure per-route create), so route-table capture
+// is a read-modify-write of the full set.
+type ociRouteRule struct {
+	Destination     string `json:"destination,omitempty"`
+	DestinationType string `json:"destinationType,omitempty"`
+	NetworkEntityID string `json:"networkEntityId,omitempty"`
+	Description     string `json:"description,omitempty"`
+}
+
+// routeTableGetOutput mirrors `oci network route-table get`, whose payload wraps
+// the route rules (kebab-case keys) under a top-level "data" object.
+type routeTableGetOutput struct {
+	Data struct {
+		RouteRules []struct {
+			Destination     string `json:"destination"`
+			DestinationType string `json:"destination-type"`
+			CidrBlock       string `json:"cidr-block"`
+			NetworkEntityID string `json:"network-entity-id"`
+			Description     string `json:"description"`
+		} `json:"route-rules"`
+	} `json:"data"`
+}
+
+// getRouteTableRules runs the read-only `oci network route-table get` and returns
+// the existing rules normalized into the camelCase update shape, preserving every
+// unrelated rule (including service-gateway rules) so a read-modify-write update
+// never drops routes the executor did not author.
+func getRouteTableRules(ctx context.Context, runner ociRunner, rtID string) ([]ociRouteRule, error) {
+	out, err := runner(ctx, "network", "route-table", "get", "--rt-id", rtID)
+	if err != nil {
+		return nil, err
+	}
+	var parsed routeTableGetOutput
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		return nil, fmt.Errorf("parse network route-table get output: %w", err)
+	}
+	rules := make([]ociRouteRule, 0, len(parsed.Data.RouteRules))
+	for _, r := range parsed.Data.RouteRules {
+		dest := strings.TrimSpace(r.Destination)
+		if dest == "" {
+			dest = strings.TrimSpace(r.CidrBlock)
+		}
+		dtype := strings.TrimSpace(r.DestinationType)
+		if dtype == "" {
+			dtype = "CIDR_BLOCK"
+		}
+		rules = append(rules, ociRouteRule{
+			Destination:     dest,
+			DestinationType: dtype,
+			NetworkEntityID: strings.TrimSpace(r.NetworkEntityID),
+			Description:     r.Description,
+		})
+	}
+	return rules, nil
+}
+
+// updateRouteTableRules writes the full rule set back with `route-table update`.
+// Callers MUST pass the merged set (existing rules plus/minus the one mobility
+// rule) returned from getRouteTableRules, because OCI replaces the entire set.
+func updateRouteTableRules(ctx context.Context, runner ociRunner, rtID string, rules []ociRouteRule) error {
+	if rules == nil {
+		rules = []ociRouteRule{}
+	}
+	payload, err := json.Marshal(rules)
+	if err != nil {
+		return fmt.Errorf("marshal route-rules: %w", err)
+	}
+	_, err = runner(ctx, "network", "route-table", "update",
+		"--rt-id", rtID,
+		"--route-rules", string(payload),
+		"--force")
+	return err
+}
+
+// routeRuleIndexForDest returns the index of the rule whose destination host
+// matches the captured /32 (compared by host so "10.88.60.9/32" matches), or -1.
+func routeRuleIndexForDest(rules []ociRouteRule, dest string) int {
+	want := hostPart(strings.TrimSpace(dest))
+	for i, r := range rules {
+		if hostPart(strings.TrimSpace(r.Destination)) == want {
+			return i
+		}
+	}
+	return -1
+}
