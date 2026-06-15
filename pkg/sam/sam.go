@@ -234,10 +234,6 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 					if iface == "" {
 						return nil, fmt.Errorf("%s spec.capture.interface is required for provider-secondary-ip BGP forwarding", resource.ID())
 					}
-					if !interfaces[iface] {
-						interfaces[iface] = true
-						actions = append(actions, CaptureAction{Kind: "sysctl", Key: "net.ipv4.conf." + iface + ".proxy_arp", Value: "1", Interface: iface})
-					}
 					actions = append(actions, CaptureAction{Kind: "proxy-neighbor", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, GratuitousARP: wantsGratuitousARP(spec.Capture)})
 					for _, tunnelIface := range bgpDeliveryForwardInterfaces(router) {
 						actions = append(actions, CaptureAction{Kind: "forward-path", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, PeerInterface: tunnelIface})
