@@ -35,6 +35,7 @@ const sidebars: SidebarsConfig = {
         'concepts/state-and-ownership',
         'resource-ownership',
         'operations/reconcile',
+        'concepts/cloudedge-sam',
         'concepts/path-mtu',
         'concepts/web-console',
       ],
@@ -153,6 +154,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'api-v1alpha1',
         'reference/selective-address-mobility',
+        'reference/cloudedge-sam-internals',
         'reference/event-federation',
         'control-api-v1alpha1',
         'plugin-protocol',

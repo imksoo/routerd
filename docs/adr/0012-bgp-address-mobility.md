@@ -5,6 +5,9 @@
 ## Status
 
 Accepted. Phase 1 clean Option B implemented through B6/B7 -- 2026-06-03.
+Placement no-preempt + holder-beacon addendum implemented and validated on real
+cloud hardware -- 2026-06-15 (see the addendum at the end of this ADR and
+[CloudEdge SAM internals](../reference/cloudedge-sam-internals)).
 
 Supersedes the custom overlay-reachability source of truth introduced by
 [ADR 0006](../adr/0006-event-federation.md),
@@ -212,3 +215,48 @@ Negative / risks:
 - VRRP/proxy-ARP on-prem fail-closed semantics remain unchanged.
 - The old mobility lease/planner path is removed after tests and live evidence
   cover the BGP path.
+
+## Addendum: Placement no-preempt, startup fence, and the holder-beacon (2026-06-15)
+
+Phase 1 established the BGP `/32` source of truth but left a gap: with two
+placement members at equal priority, the deterministic best-path/nodeRef
+tie-break would let a *returning* node reclaim a live holder, churning the
+dataplane. The opposite failure also existed at cold start: both members could
+mutually defer and leave the group with no holder. This addendum records the
+mechanism that closes both gaps while keeping abrupt failover fast. It is
+implemented in `pkg/controller/mobility/` and validated on real AWS/Azure/OCI
+hardware. The operational detail lives in
+[CloudEdge SAM internals](../reference/cloudedge-sam-internals); this section
+captures the decision.
+
+**Holder-beacon community.** The active capture holder (and only the active
+holder) advertises its owner `/32` with community `64512:121`
+(`bgpMobilityCommunityActiveHolder`). A peer treats a node as the group holder
+only when that node's owner `/32` best path carries both its node-identity
+community and `64512:121`. This is deliberately independent of the provider
+plugin (BGP is always present) and of a standby's lower-preference
+make-before-break advertisement (which never wins best path). It supersedes the
+earlier attempts to infer holdership from next-hop matching or provider
+self-scan, both of which proved unreliable.
+
+**Equal-priority no-preempt.** On an equal-priority tie, placement prefers the
+observed incumbent holder over the nodeRef tie-break, so a returning peer does
+not preempt a live holder. A strictly higher-priority member still reclaims.
+
+**Startup fence.** A node anchors a settle window at process start
+(`placementSettleStart`, reset on every VM stop/start or reboot). Inside the
+window, a node that would assert active but has not yet observed an incumbent
+defers, so a returning node cannot reclaim before its fresh BGP RIB / provider
+observations converge. A long-running standby is past its window and seizes
+immediately when the active dies, so genuine failover is not delayed.
+
+**Holder retention and priority restore.** While a node physically holds its
+group's captures it stays active (it yields only on losing its own holdership,
+never because of a transient peer observation). The single exception is when the
+holder-beacon shows a strictly higher-priority peer is now the holder, in which
+case a low-priority interim holder yields so the configured priority restore
+proceeds — handing the `/32`s over one at a time with no dataplane dip.
+
+The community taxonomy, placement evaluation, and the three mechanisms above are
+specified in full in
+[CloudEdge SAM internals](../reference/cloudedge-sam-internals).

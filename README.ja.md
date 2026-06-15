@@ -69,6 +69,11 @@ routerd は、次の独立した特徴を大切にします。
   対応 platform での MAC ベース guest isolation を扱います。
 - **CloudEdge SAM**: 選択した IPv4 `/32` を BGP で移動し、IPIP/GRE transport
   profile と endpoint 専用 underlay としての WireGuard 暗号化を組み合わせます。
+  on-prem/AWS/Azure/OCI をまたいでアドレスが移動し、BGP best-path を真実の源と
+  します。同優先度のメンバーは no-preempt で切り替えを最小化し、異優先度では
+  瞬断なしで高優先へ自動復帰し、稼働系の死亡時は必ず standby へ failover します。
+  詳細は [CloudEdge SAM とは](docs/concepts/cloudedge-sam.md) と
+  [CloudEdge SAM 内部実装](docs/reference/cloudedge-sam-internals.md) を参照。
 - **作成支援**: 生成済み JSON Schema、VS Code/YAML Language Server の
   modeline、`https://routerd.net/wizard` の browser config wizard を提供します。
 
