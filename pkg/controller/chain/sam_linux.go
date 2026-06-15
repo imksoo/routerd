@@ -261,10 +261,8 @@ func sortedIPTablesRules(rules map[string][]string) [][]string {
 
 func ensureIPTablesRule(chain string, runIPTables func(args ...string) ([]byte, error), rule ...string) error {
 	checkArgs := append([]string{"-C", chain}, rule...)
-	if out, err := runIPTables(checkArgs...); err == nil {
+	if _, err := runIPTables(checkArgs...); err == nil {
 		return nil
-	} else if strings.TrimSpace(string(out)) != "" {
-		_ = out
 	}
 	addArgs := append([]string{"-A", chain}, rule...)
 	out, err := runIPTables(addArgs...)
