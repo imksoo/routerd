@@ -277,6 +277,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		ForwardingObservedAt: forwardingObservedAt,
 		ObservedStaleSince:   observedStaleSince,
 		SuppressDeprovision:  c.SuppressProviderDeprovision,
+		LivenessMarkers:      livenessMarkers,
 		Now:                  now,
 	})
 	if err != nil {
@@ -354,6 +355,16 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	}
 	for key, value := range bgpSeizeHoldDownStatus(delivery.Placement) {
 		status[key] = value
+	}
+	if delivery.Distribution != nil {
+		status["captureDistributionMode"] = "distributed"
+		status["captureDistributionNodeCounts"] = delivery.Distribution.NodeCounts
+		selfCount := 0
+		if c, ok := delivery.Distribution.NodeCounts[selfNode]; ok {
+			selfCount = c
+		}
+		status["captureDistributionSelfCount"] = selfCount
+		status["captureDistributionTotalAssigned"] = len(delivery.Distribution.Assignments)
 	}
 	if selfCaptureReason != "" {
 		status["selfCaptureReason"] = selfCaptureReason

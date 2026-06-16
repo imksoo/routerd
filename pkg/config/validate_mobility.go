@@ -975,6 +975,9 @@ func validateMobilityMemberPlacement(res api.Resource, index int, member api.Mob
 		if member.Maintenance.Drain {
 			return fmt.Errorf("%s spec.members[%d].maintenance.drain requires placement.group", res.ID(), index)
 		}
+		if member.MaxSecondaryIPs > 0 {
+			return fmt.Errorf("%s spec.members[%d].maxSecondaryIPs requires placement.group", res.ID(), index)
+		}
 		return nil
 	}
 	if member.Placement.Priority < 0 || member.Placement.Priority > 1000000 {
