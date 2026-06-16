@@ -581,8 +581,8 @@ func validateRouteTableCaptureTarget(provider string, target map[string]string) 
 	if routeTableRef == "" {
 		return "", fmt.Errorf("capture.captureStrategy route-table requires capture.target.routeTableRef")
 	}
-	if provider == "azure" && strings.TrimSpace(target["nextHopIPAddress"]) == "" {
-		return "", fmt.Errorf("provider azure capture.captureStrategy route-table requires capture.target.nextHopIPAddress")
+	if (provider == "azure" || provider == "oci") && strings.TrimSpace(target["nextHopIPAddress"]) == "" {
+		return "", fmt.Errorf("provider %s capture.captureStrategy route-table requires capture.target.nextHopIPAddress", provider)
 	}
 	return routeTableRef, nil
 }
@@ -640,7 +640,7 @@ func validateProviderCaptureStrategy(provider, strategy string) error {
 		return nil
 	case captureStrategyRouteTable:
 		switch strings.TrimSpace(provider) {
-		case "aws", "azure":
+		case "aws", "azure", "oci":
 			return nil
 		default:
 			return fmt.Errorf("provider %q does not support capture.captureStrategy route-table", provider)

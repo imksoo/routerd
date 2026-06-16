@@ -354,6 +354,50 @@ func TestProviderActionPlansAzureRouteTableStrategyRequiresNextHopIPAddress(t *t
 	}
 }
 
+func TestProviderActionPlansOCIRouteTableStrategy(t *testing.T) {
+	profile := api.CloudProviderProfileSpec{Provider: "oci"}
+	capture := api.AddressCapture{
+		Type:            "provider-secondary-ip",
+		ProviderRef:     "oci-provider",
+		ProviderMode:    "route-table",
+		CaptureStrategy: captureStrategyRouteTable,
+		NICRef:          "ocid1.vnic.oc1..router",
+	}
+	plans, err := providerActionPlans("cloudedge", profile, capture, map[string]string{
+		"routeTableRef":    "ocid1.routetable.oc1..rt1",
+		"nextHopIPAddress": "10.88.60.1",
+	}, "10.88.60.10/32", map[string]bool{}, true)
+	if err != nil {
+		t.Fatalf("providerActionPlans: %v", err)
+	}
+	assign := findActionPlanByAddress(plans, actionAssignSecondaryIP, "10.88.60.10/32")
+	if assign == nil {
+		t.Fatalf("plans = %#v, want abstract assign action", plans)
+	}
+	if assign.Target["routeTableRef"] != "ocid1.routetable.oc1..rt1" ||
+		assign.Target["nextHopIPAddress"] != "10.88.60.1" ||
+		assign.Target["nicRef"] != "ocid1.vnic.oc1..router" ||
+		assign.Target["captureStrategy"] != captureStrategyRouteTable {
+		t.Fatalf("assign target = %#v, want oci route table target", assign.Target)
+	}
+}
+
+func TestProviderActionPlansOCIRouteTableStrategyRequiresNextHopIPAddress(t *testing.T) {
+	profile := api.CloudProviderProfileSpec{Provider: "oci"}
+	capture := api.AddressCapture{
+		Type:            "provider-secondary-ip",
+		ProviderRef:     "oci-provider",
+		CaptureStrategy: captureStrategyRouteTable,
+		NICRef:          "ocid1.vnic.oc1..router",
+	}
+	_, err := providerActionPlans("cloudedge", profile, capture, map[string]string{
+		"routeTableRef": "ocid1.routetable.oc1..rt1",
+	}, "10.88.60.10/32", map[string]bool{}, false)
+	if err == nil || !strings.Contains(err.Error(), "provider oci capture.captureStrategy route-table requires capture.target.nextHopIPAddress") {
+		t.Fatalf("providerActionPlans error = %v, want missing nextHopIPAddress", err)
+	}
+}
+
 func TestProviderActionTargetUsesCaptureTargetNICFallback(t *testing.T) {
 	profile := api.CloudProviderProfileSpec{Provider: "azure", SubscriptionID: "sub-1", ResourceGroup: "rg-router"}
 	target := providerActionTarget("cloudedge", profile, api.AddressCapture{
