@@ -118,14 +118,21 @@ diagnostic breadcrumb.
 Route-table capture is a separate lifecycle from secondary-IP capture. It should
 not be treated as proof that the guest owns the destination address.
 
-Expected steady state:
+**Platform constraint ([#516](https://github.com/imksoo/routerd/issues/516),
+live-validated 2026-06-16):** Same-subnet `/32` route-table capture is only
+supported on Azure (UDR with `NextHopType=VirtualAppliance`). AWS VPC rejects
+intra-subnet `/32` routes (`InvalidParameterValue`), and OCI VCN rejects
+intra-subnet route rules (`Intra-subnet/vlan rule is not supported`). For
+same-subnet lift-and-shift, AWS and OCI must use `secondary-ip`.
 
-1. Provider discovery confirms the cloud route/UDR target points at this router
-   node or its NIC.
-2. Provider forwarding prerequisites are true.
+Expected steady state (Azure UDR):
+
+1. Provider discovery confirms the UDR target points at this router
+   node's private IP via `NextHopType=VirtualAppliance`.
+2. Provider forwarding prerequisites are true (IP forwarding enabled on NIC).
 3. Guest OS has forwarding-ready state, but does not add the destination `/32`
-   as a local address merely because the route-table target points here.
-4. BGP advertisement is gated on route-table target confirmation plus forwarding
+   as a local address merely because the UDR target points here.
+4. BGP advertisement is gated on UDR target confirmation plus forwarding
    readiness, not on local address presence.
 
 Secondary-IP and route-table modes should share normalized owner/capture rows,

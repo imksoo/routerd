@@ -502,12 +502,17 @@ tokens, and private keys must stay in provider auth mechanisms.
 
 Cloud `provider-secondary-ip` capture supports `members[].capture.strategy`.
 The default is `secondary-ip`, which keeps the historical AWS ENI, Azure NIC
-ipConfig, and OCI VNIC secondary-address behavior. AWS and Azure may instead set
-`strategy: route-table`: AWS writes a `/32` route in `capture.target.routeTableRef`
-to `capture.nicRef`; Azure writes a UDR in `capture.target.routeTableRef` and
-requires `capture.target.nextHopIPAddress`. Provider inventory must confirm that
+ipConfig, and OCI VNIC secondary-address behavior. Azure may instead set
+`strategy: route-table`: Azure writes a UDR in `capture.target.routeTableRef`
+with `NextHopType=VirtualAppliance` and requires
+`capture.target.nextHopIPAddress`. Provider inventory must confirm that
 the route table points at the local router before routerd advertises the captured
 `/32` to BGP.
+
+**Same-subnet limitation (validated in [#516](https://github.com/imksoo/routerd/issues/516)):**
+AWS rejects VPC-internal `/32` route destinations, and OCI rejects intra-subnet
+VCN route rules. For the primary same-subnet lift-and-shift use case,
+`route-table` is effective only on Azure. AWS and OCI must use `secondary-ip`.
 
 For BGP-mode on-prem `proxy-arp` capture, `members[].capture.sourceAddress`
 optionally declares the router's local sender address on the capture
@@ -631,9 +636,9 @@ mode (`2`) on the affected interfaces.
 
 | Provider | MVP capability descriptor |
 | --- | --- |
-| Azure | NIC secondary IP plus IP forwarding enabled on the router NIC. |
-| AWS | ENI secondary private IPv4 plus source/destination check disabled. |
-| OCI | VNIC private IP object plus source/destination check disabled. |
+| Azure | NIC secondary IP plus IP forwarding enabled on the router NIC. Route-table (UDR) capture also available for same-subnet `/32` (`NextHopType=VirtualAppliance`, limit 1000). |
+| AWS | ENI secondary private IPv4 plus source/destination check disabled. Route-table capture rejected for VPC-internal `/32`. |
+| OCI | VNIC private IP object plus source/destination check disabled. VCN route-rule capture rejected for intra-subnet `/32`. |
 | GCP | Alias IP or route capability, gated by the declared provider profile. |
 
 The profile is declarative. The mobility planner can produce provider

@@ -196,14 +196,26 @@ Seize (the takeover during failover) has dedicated hold-downs:
 | strategy | providers | behavior |
 | --- | --- | --- |
 | `secondary-ip` (default) | AWS / Azure / OCI / GCP | assign the `/32` to the NIC as a secondary IP |
-| `route-table` | AWS / Azure | point a route-table / UDR entry at the holder's NIC |
+| `route-table` | Azure | point a UDR entry at the holder's NIC (`NextHopType=VirtualAppliance`) |
 | `proxy-arp` | on-prem | capture on the L2 segment via proxy-ARP/GARP |
 | `addr-add` | (generic) | add the OS address |
 
-The `route-table` strategy is AWS/Azure only and requires
-`capture.target.nextHopIPAddress` on Azure. Live validation of the
-route-table/UDR strategy is tracked in
-[#516](https://github.com/imksoo/routerd/issues/516).
+The `route-table` strategy requires `capture.target.nextHopIPAddress` on Azure.
+
+**Same-subnet constraint ([#516](https://github.com/imksoo/routerd/issues/516),
+live-validated 2026-06-16):** CloudEdge SAM's primary use case is same-subnet
+lift-and-shift, where the mobility prefix falls inside the VPC/VNet/VCN CIDR.
+Under this constraint, only Azure UDR accepts intra-subnet `/32` routes. AWS
+rejects VPC-internal `/32` destinations with `InvalidParameterValue`, and OCI
+rejects intra-subnet rules with `InvalidParameter: Intra-subnet/vlan rule is
+not supported`. Consequently `route-table` is effective only on Azure for
+same-subnet deployments.
+
+| Cloud | Same-subnet `/32` route | Recommended strategy |
+| --- | --- | --- |
+| **Azure** | UDR accepted | `secondary-ip` (few addresses) or `route-table` (many addresses, UDR limit 1000) |
+| **AWS** | Rejected by VPC API | `secondary-ip` only; scale via N+1 instance distribution ([#352](https://github.com/imksoo/routerd/issues/352)) |
+| **OCI** | Rejected by VCN API | `secondary-ip` only (VNIC limit ~31) |
 
 Every capture is accompanied by a **forwarding-enable** action so the NIC can
 forward packets that are not addressed to itself.
