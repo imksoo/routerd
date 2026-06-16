@@ -654,6 +654,117 @@ spec:
 	}
 }
 
+func TestWireGuardControllerGeneratesSAMEndpointRoutes(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: router-a}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg0}
+      spec:
+        selfNodeRef: router-a
+        privateKey: priv
+        peersFrom:
+          - resource: SAMNodeSet/fabric
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMNodeSet
+      metadata: {name: fabric}
+      spec:
+        nodes:
+          - nodeRef: router-a
+            samEndpoint: 10.99.70.1
+            wireGuard:
+              publicKey: selfpub
+              allowedIPs: [10.99.70.1/32]
+          - nodeRef: router-b
+            samEndpoint: 10.99.70.2
+            wireGuard:
+              publicKey: peerpub-b
+              endpoint: 198.51.100.2:51820
+              allowedIPs: [10.99.70.2/32]
+          - nodeRef: router-c
+            samEndpoint: 10.99.70.3
+            wireGuard:
+              publicKey: peerpub-c
+              endpoint: 198.51.100.3:51820
+              allowedIPs: [10.99.70.3/32]
+`)
+	ctrl := WireGuardController{Router: router, Store: mapStore{}}
+	resolved, err := ctrl.resolvePeerResources()
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := map[string]string{}
+	for _, r := range resolved.Router.Spec.Resources {
+		if r.Kind == "IPv4Route" {
+			spec, _ := r.IPv4RouteSpec()
+			routes[r.Metadata.Name] = spec.Destination + " dev " + spec.Device
+		}
+	}
+	if got, ok := routes["wg-sam-endpoint-router-b"]; !ok || got != "10.99.70.2/32 dev wg0" {
+		t.Fatalf("expected route for router-b; routes=%v", routes)
+	}
+	if got, ok := routes["wg-sam-endpoint-router-c"]; !ok || got != "10.99.70.3/32 dev wg0" {
+		t.Fatalf("expected route for router-c; routes=%v", routes)
+	}
+	if _, ok := routes["wg-sam-endpoint-router-a"]; ok {
+		t.Fatal("self node route must not be generated")
+	}
+}
+
+func TestWireGuardControllerStaticRouteOverridesGeneratedEndpointRoute(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: router-a}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg0}
+      spec:
+        selfNodeRef: router-a
+        privateKey: priv
+        peersFrom:
+          - resource: SAMNodeSet/fabric
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMNodeSet
+      metadata: {name: fabric}
+      spec:
+        nodes:
+          - nodeRef: router-b
+            samEndpoint: 10.99.70.2
+            wireGuard:
+              publicKey: peerpub-b
+              allowedIPs: [10.99.70.2/32]
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata: {name: wg-sam-endpoint-router-b}
+      spec:
+        destination: 10.99.70.2/32
+        device: custom0
+        metric: 42
+`)
+	ctrl := WireGuardController{Router: router, Store: mapStore{}}
+	resolved, err := ctrl.resolvePeerResources()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range resolved.Router.Spec.Resources {
+		if r.Kind == "IPv4Route" && r.Metadata.Name == "wg-sam-endpoint-router-b" {
+			spec, _ := r.IPv4RouteSpec()
+			if spec.Device != "custom0" || spec.Metric != 42 {
+				t.Fatalf("static route did not override generated: %+v", spec)
+			}
+			return
+		}
+	}
+	t.Fatal("route not found in resolved resources")
+}
+
 func TestWireGuardControllerStaticPeerOverridesPeersFrom(t *testing.T) {
 	router := mustWireGuardRouter(t, `
 apiVersion: routerd.net/v1alpha1

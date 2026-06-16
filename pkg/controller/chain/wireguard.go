@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"sort"
 	"strconv"
 	"strings"
@@ -102,26 +103,32 @@ func (c WireGuardController) resolvePeerResources() (wireGuardPeerResolution, er
 		return resolution, nil
 	}
 	merged := make([]api.Resource, 0, len(c.Router.Spec.Resources)+len(generated))
-	peerIndex := map[string]int{}
-	addPeer := func(peer api.Resource) {
-		name := strings.TrimSpace(peer.Metadata.Name)
+	genIndex := map[string]int{}
+	addGenerated := func(res api.Resource) {
+		name := strings.TrimSpace(res.Metadata.Name)
 		if name == "" {
 			return
 		}
-		peer.Metadata.Name = name
-		if existing, ok := peerIndex[name]; ok {
-			merged[existing] = peer
+		res.Metadata.Name = name
+		key := res.Kind + "/" + name
+		if existing, ok := genIndex[key]; ok {
+			merged[existing] = res
 			return
 		}
-		peerIndex[name] = len(merged)
-		merged = append(merged, peer)
+		genIndex[key] = len(merged)
+		merged = append(merged, res)
 	}
-	for _, peer := range generated {
-		addPeer(peer)
+	for _, res := range generated {
+		addGenerated(res)
 	}
 	for _, resource := range c.Router.Spec.Resources {
+		key := resource.Kind + "/" + resource.Metadata.Name
 		if resource.Kind == "WireGuardPeer" {
-			addPeer(resource)
+			addGenerated(resource)
+			continue
+		}
+		if _, overrides := genIndex[key]; overrides {
+			addGenerated(resource)
 			continue
 		}
 		merged = append(merged, resource)
@@ -185,6 +192,23 @@ func (c WireGuardController) resolvePeersFrom(iface string, spec api.WireGuardIn
 					PersistentKeepalive: wg.PersistentKeepalive,
 				},
 			})
+			if ep := strings.TrimSpace(node.SAMEndpoint); ep != "" {
+				if addr, err := netip.ParseAddr(ep); err == nil {
+					peers = append(peers, api.Resource{
+						TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
+						Metadata: api.ObjectMeta{
+							Name: "wg-sam-endpoint-" + nodeRef,
+							Annotations: map[string]string{
+								"routerd.net/generated-from": ref,
+							},
+						},
+						Spec: api.IPv4RouteSpec{
+							Destination: netip.PrefixFrom(addr, 32).String(),
+							Device:      iface,
+						},
+					})
+				}
+			}
 			status.PeerCount++
 		}
 		statuses = append(statuses, status)
