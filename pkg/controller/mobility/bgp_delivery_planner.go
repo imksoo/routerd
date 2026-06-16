@@ -38,6 +38,7 @@ type bgpDeliveryPlannerInput struct {
 	ForwardingObservedAt time.Time
 	ObservedStaleSince   map[string]time.Time
 	SuppressDeprovision  bool
+	LivenessMarkers      map[string]string
 	Now                  time.Time
 }
 
@@ -46,6 +47,7 @@ type bgpDeliveryPlannerResult struct {
 	ActionPlans           []dynamicconfig.ActionPlan
 	CaptureCandidates     map[string]bgpTrapCandidate
 	Placement             PlacementDecision
+	Distribution          *captureDistribution
 }
 
 func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResult, error) {
@@ -65,7 +67,7 @@ func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResu
 	if len(captureNextHops) == 0 {
 		captureNextHops = in.InstalledNextHops
 	}
-	candidates := planCaptureCandidates(in.Self, in.Members, decisions, in.Placement, captureNextHops, in.RIBObserved, in.PreviousPlans, in.ObservedSelfCaptures, failedActions, poolPrefix, now)
+	candidates, dist := planCaptureCandidatesWithDistribution(in.Self, in.Members, decisions, in.Placement, captureNextHops, in.RIBObserved, in.PreviousPlans, in.ObservedSelfCaptures, failedActions, in.LivenessMarkers, poolPrefix, now)
 	actionPlans, err := planCaptureActionPlans(in, candidates)
 	if err != nil {
 		return bgpDeliveryPlannerResult{}, err
@@ -75,6 +77,7 @@ func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResu
 		ActionPlans:           actionPlans,
 		CaptureCandidates:     candidates,
 		Placement:             in.Placement,
+		Distribution:          dist,
 	}, nil
 }
 
@@ -124,18 +127,36 @@ func bgpDecisionSourceType(decision ownershipDecision) string {
 	}
 }
 
-func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInfo, decisions map[string]ownershipDecision, placement PlacementDecision, installedNextHops map[string][]string, ribObserved bool, previousPlans []dynamicconfig.ActionPlan, observedSelfIPs map[string]bool, failedActions map[string]routerstate.ActionExecutionRecord, poolPrefix netip.Prefix, now time.Time) map[string]bgpTrapCandidate {
+func planCaptureCandidatesWithDistribution(self memberPlanInfo, members map[string]memberPlanInfo, decisions map[string]ownershipDecision, placement PlacementDecision, installedNextHops map[string][]string, ribObserved bool, previousPlans []dynamicconfig.ActionPlan, observedSelfIPs map[string]bool, failedActions map[string]routerstate.ActionExecutionRecord, livenessMarkers map[string]string, poolPrefix netip.Prefix, now time.Time) (map[string]bgpTrapCandidate, *captureDistribution) {
 	out := map[string]bgpTrapCandidate{}
 	if self.Capture.Type != "provider-secondary-ip" {
-		return out
+		return out, nil
 	}
 	for address, decision := range decisions {
 		if desiredCaptureObservedOnSelf(decision, self, members, placement, observedSelfIPs) {
 			out[address] = bgpTrapCandidate{ProtectOnly: true}
 		}
 	}
-	if !placement.Active {
-		return out
+	group := strings.TrimSpace(self.PlacementGroup)
+	distributed := distributedCaptureEnabled(members, group)
+	if !distributed && !placement.Active {
+		return out, nil
+	}
+	var selfAssigned map[string]bool
+	var dist *captureDistribution
+	if distributed {
+		distributedPlacement := PlacementDecision{Group: group, Active: true, ActiveNode: self.NodeRef}
+		eligibleAddresses := collectEligibleCaptureAddresses(self, members, decisions, distributedPlacement, installedNextHops, previousPlans, failedActions, poolPrefix)
+		liveNodes := distributedLiveNodes(self, members, livenessMarkers)
+		nodes := distributedCaptureNodes(members, group, liveNodes)
+		d := distributeCaptures(eligibleAddresses, nodes)
+		dist = &d
+		selfAssigned = map[string]bool{}
+		for addr, node := range d.Assignments {
+			if node == self.NodeRef {
+				selfAssigned[addr] = true
+			}
+		}
 	}
 	installedAddresses := map[string]bool{}
 	for rawPrefix, nextHops := range installedNextHops {
@@ -173,6 +194,9 @@ func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInf
 		if !routeTableCaptureAllowed(decision, self) {
 			continue
 		}
+		if selfAssigned != nil && !selfAssigned[address] {
+			continue
+		}
 		out[address] = bgpTrapCandidate{PathSig: bgpTrapPathSig(address, cleanNextHops), LastSeenAt: now.UTC(), Seize: placement.Seize}
 	}
 	for address, candidate := range previousBGPTrapCandidateAddresses(previousPlans, poolPrefix) {
@@ -201,6 +225,9 @@ func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInf
 		if _, desired := out[address]; desired {
 			continue
 		}
+		if selfAssigned != nil && !selfAssigned[address] {
+			continue
+		}
 		if !ribObserved || bgpTrapCandidateWithinMissingHold(candidate, now) {
 			if candidate.LastSeenAt.IsZero() {
 				candidate.LastSeenAt = now.UTC()
@@ -209,6 +236,54 @@ func planCaptureCandidates(self memberPlanInfo, members map[string]memberPlanInf
 			out[address] = candidate
 		}
 	}
+	return out, dist
+}
+
+func collectEligibleCaptureAddresses(self memberPlanInfo, members map[string]memberPlanInfo, decisions map[string]ownershipDecision, placement PlacementDecision, installedNextHops map[string][]string, previousPlans []dynamicconfig.ActionPlan, failedActions map[string]routerstate.ActionExecutionRecord, poolPrefix netip.Prefix) []string {
+	eligible := map[string]bool{}
+	for rawPrefix, nextHops := range installedNextHops {
+		if len(cleanStrings(nextHops)) == 0 {
+			continue
+		}
+		address, ok := normalizeBGPTrapPrefix(rawPrefix, poolPrefix)
+		if !ok {
+			continue
+		}
+		decision, ok := decisions[address]
+		if !ok {
+			continue
+		}
+		if decision.Class == ownershipClassConfirmedCapture {
+			continue
+		}
+		if !decisionEligibleForCapture(decision, self, members, placement) {
+			if _, failed := failedActions[address]; !failed {
+				continue
+			}
+		}
+		if !routeTableCaptureAllowed(decision, self) {
+			continue
+		}
+		eligible[address] = true
+	}
+	for address := range previousBGPTrapCandidateAddresses(previousPlans, poolPrefix) {
+		decision, ok := decisions[address]
+		if !ok {
+			continue
+		}
+		if decision.Class == ownershipClassConfirmedCapture {
+			continue
+		}
+		if !routeTableCaptureAllowed(decision, self) {
+			continue
+		}
+		eligible[address] = true
+	}
+	out := make([]string, 0, len(eligible))
+	for addr := range eligible {
+		out = append(out, addr)
+	}
+	sort.Strings(out)
 	return out
 }
 

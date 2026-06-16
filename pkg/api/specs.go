@@ -1671,6 +1671,12 @@ type MobilityPoolMember struct {
 	// Maintenance carries declarative operator maintenance intent for this member.
 	// Drained placement members are excluded from active capture selection.
 	Maintenance MobilityMemberMaintenance `yaml:"maintenance,omitempty" json:"maintenance,omitempty"`
+	// MaxSecondaryIPs limits the number of provider secondary IPs this member can
+	// capture. When set on any member in a placement group, the group switches to
+	// distributed capture mode: addresses are spread across all live members using
+	// rendezvous hashing, each member capturing only its assigned subset.
+	// 0 (default) means no limit and single-active placement applies.
+	MaxSecondaryIPs int `yaml:"maxSecondaryIPs,omitempty" json:"maxSecondaryIPs,omitempty" jsonschema:"minimum=0"`
 }
 
 type MobilityStaticHandover struct {

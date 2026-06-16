@@ -68,6 +68,7 @@ type memberPlanInfo struct {
 	PlacementGroup     string
 	PlacementPriority  int
 	MaintenanceDrain   bool
+	MaxSecondaryIPs    int
 }
 
 type deliveryTargetPlanInfo struct {
@@ -175,6 +176,7 @@ func plannerMembers(members []api.MobilityPoolMember) map[string]memberPlanInfo 
 			PlacementGroup:     strings.TrimSpace(member.Placement.Group),
 			PlacementPriority:  priorities[nodeRef],
 			MaintenanceDrain:   member.Maintenance.Drain,
+			MaxSecondaryIPs:    member.MaxSecondaryIPs,
 		}
 	}
 	return out
