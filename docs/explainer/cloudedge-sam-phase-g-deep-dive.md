@@ -148,9 +148,9 @@ physically or locally reachable at the correct edge.
 
 | Environment | Capture method | Control/API | Failover movement | Notes |
 | --- | --- | --- | --- | --- |
-| AWS | ENI secondary private IP | `assign-private-ip-addresses` with allow-reassignment behavior | Standby seizes the secondary IP when active marker/path disappears. | Keep ENI permissions and source/dest check behavior consistent. |
-| Azure | NIC secondary IP via ipConfig | delete old holder ipConfig, create new holder ipConfig | Two-step remove/add; retry must handle partial failure. | There is a short window where no NIC owns the IP. Make executor idempotent. |
-| OCI | VNIC secondary private IP | `assign-private-ip --unassign-if-already-assigned` | Standby reassigns the private IP to its VNIC. | Validate VNIC/private-IP state, forwarding, and local firewall. |
+| AWS | ENI secondary private IP | `assign-private-ip-addresses` with allow-reassignment behavior | Standby seizes the secondary IP when active marker/path disappears. | Keep ENI permissions and source/dest check behavior consistent. Route-table rejected for same-subnet `/32` ([#516](https://github.com/imksoo/routerd/issues/516)). |
+| Azure | NIC secondary IP via ipConfig **or** UDR route-table | secondary-ip: delete old holder ipConfig, create new; route-table: UDR `NextHopType=VirtualAppliance` | Two-step remove/add; retry must handle partial failure. | UDR capture works for same-subnet `/32` (limit 1000, [#516](https://github.com/imksoo/routerd/issues/516)). Use route-table when secondary-IP count approaches NIC limits. |
+| OCI | VNIC secondary private IP | `assign-private-ip --unassign-if-already-assigned` | Standby reassigns the private IP to its VNIC. | Validate VNIC/private-IP state, forwarding, and local firewall. VCN route-rule rejected for intra-subnet `/32` ([#516](https://github.com/imksoo/routerd/issues/516)). |
 | On-prem | proxy ARP + GARP | OS networking gated by VRRP/CARP-like mastership, or `capture.activeWhen.type: single-router` for one-site/one-router/one-owner labs | HA pairs use the VRRP master gate; a single-router site can choose always-active capture without VRRP. | Prevent duplicate ARP response; split-brain doctor must fail loudly. |
 
 Provider secondary IP reconciliation is a background fabric-ingress realization. It
