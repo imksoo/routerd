@@ -216,6 +216,7 @@ var declarations = []Declaration{
 	declare(api.MobilityAPIVersion, "SAMNodeSet", ClassRendererInput, "SAM fabric node identity input", noHostTeardown("node set input is resolved by SAM fabric controllers")),
 	declare(api.MobilityAPIVersion, "SAMPeerGroup", ClassRendererInput, "SAM transport peer group input", noHostTeardown("peer group input is resolved by SAMTransportProfile")),
 	declare(api.MobilityAPIVersion, "SAMTransportProfile", ClassDynamicSource, "generates transport TunnelInterface/BGPPeer resources", noHostTeardown("generated transport resources own teardown through the effective view")),
+	declare(api.MobilityAPIVersion, "SAMSubnetPolicy", ClassController, "shard distribution controller for subnet-level mobility", noHostTeardown("controller emits federation events without owning host artifacts")),
 	declare(api.NetAPIVersion, "IPv4Route", ClassManagedHost, "IPv4 route", resourceLifecycle()),
 	declare(api.NetAPIVersion, "HealthCheck", ClassManagedHost, "health check service/socket artifacts", resourceLifecycle()),
 	declare(api.NetAPIVersion, "EgressRoutePolicy", ClassManagedHost, "policy routing and nft mark artifacts", artifacts("nft.table", "linux.ipv4.fwmarkRule", "linux.ipv4.routeTable")),

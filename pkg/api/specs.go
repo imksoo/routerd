@@ -709,6 +709,29 @@ type SAMPeerGroupSpec struct {
 	Peers []SAMTransportPeerSpec `yaml:"peers" json:"peers"`
 }
 
+// SAMSubnetPolicySpec shards a large on-prem prefix across multiple cloud-edge
+// node groups. The RR emits per-shard federation events; leaf nodes narrow their
+// MobilityPool discovery scope to the assigned shards automatically.
+type SAMSubnetPolicySpec struct {
+	// SourcePrefix is the large prefix being sharded (e.g. 10.0.0.0/8).
+	SourcePrefix string `yaml:"sourcePrefix" json:"sourcePrefix"`
+	// PoolRef names the MobilityPool whose discovery scope is narrowed.
+	PoolRef string `yaml:"poolRef" json:"poolRef"`
+	// GroupRef is the EventGroup used for shard assignment delivery.
+	GroupRef string `yaml:"groupRef" json:"groupRef"`
+	// Shards maps sub-prefixes to assigned nodes. Each prefix must be within
+	// sourcePrefix and shards must not overlap.
+	Shards []SAMSubnetShard `yaml:"shards" json:"shards"`
+}
+
+type SAMSubnetShard struct {
+	// Prefix is the sub-prefix this shard covers (e.g. 10.0.1.0/25).
+	Prefix string `yaml:"prefix" json:"prefix"`
+	// AssignedNodes lists the nodeRefs responsible for this shard. Nodes in
+	// the same shard form a redundancy group (#352 placement semantics apply).
+	AssignedNodes []string `yaml:"assignedNodes" json:"assignedNodes"`
+}
+
 type MobilityMemberSetSpec struct {
 	Members []MobilityMemberSetMember `yaml:"members" json:"members"`
 }
@@ -2463,6 +2486,10 @@ func (r Resource) BGPPeerSpec() (BGPPeerSpec, error) {
 
 func (r Resource) SAMPeerGroupSpec() (SAMPeerGroupSpec, error) {
 	return specAs[SAMPeerGroupSpec](r)
+}
+
+func (r Resource) SAMSubnetPolicySpec() (SAMSubnetPolicySpec, error) {
+	return specAs[SAMSubnetPolicySpec](r)
 }
 
 func (r Resource) MobilityMemberSetSpec() (MobilityMemberSetSpec, error) {

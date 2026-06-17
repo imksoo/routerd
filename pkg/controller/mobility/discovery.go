@@ -135,6 +135,9 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	default:
 		return nil
 	}
+	if shardPrefixes := ResolveShardScope(c.Store, spec.GroupRef, poolName, selfNode, now); len(shardPrefixes) > 0 {
+		discovery.Scope.IncludeAddresses = shardPrefixes
+	}
 	if self.Role != "cloud" || self.Capture.Type != "provider-secondary-ip" {
 		return fmt.Errorf("ownershipDiscovery requires cloud provider-secondary-ip member %q", self.NodeRef)
 	}

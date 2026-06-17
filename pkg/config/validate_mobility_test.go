@@ -1278,3 +1278,108 @@ func testInterfaceResource(name string) api.Resource {
 		Spec:     api.InterfaceSpec{IfName: name, Managed: true},
 	}
 }
+
+func TestValidateSAMSubnetPolicy(t *testing.T) {
+	validPolicy := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMSubnetPolicy"},
+		Metadata: api.ObjectMeta{Name: "office-10-net"},
+		Spec: api.SAMSubnetPolicySpec{
+			SourcePrefix: "10.0.0.0/8",
+			PoolRef:      "cloudedge",
+			GroupRef:     "cloudedge",
+			Shards: []api.SAMSubnetShard{
+				{Prefix: "10.0.1.0/25", AssignedNodes: []string{"oci-a", "oci-b"}},
+				{Prefix: "10.0.2.0/25", AssignedNodes: []string{"aws-a"}},
+			},
+		},
+	}
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec:     api.RouterSpec{Resources: []api.Resource{validPolicy}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("valid SAMSubnetPolicy rejected: %v", err)
+	}
+}
+
+func TestValidateSAMSubnetPolicyRejects(t *testing.T) {
+	tests := []struct {
+		name string
+		spec api.SAMSubnetPolicySpec
+		want string
+	}{
+		{
+			name: "empty sourcePrefix",
+			spec: api.SAMSubnetPolicySpec{PoolRef: "p", GroupRef: "g", Shards: []api.SAMSubnetShard{{Prefix: "10.0.1.0/25", AssignedNodes: []string{"a"}}}},
+			want: "sourcePrefix is required",
+		},
+		{
+			name: "invalid sourcePrefix",
+			spec: api.SAMSubnetPolicySpec{SourcePrefix: "not-a-cidr", PoolRef: "p", GroupRef: "g", Shards: []api.SAMSubnetShard{{Prefix: "10.0.1.0/25", AssignedNodes: []string{"a"}}}},
+			want: "must be a CIDR",
+		},
+		{
+			name: "empty poolRef",
+			spec: api.SAMSubnetPolicySpec{SourcePrefix: "10.0.0.0/8", GroupRef: "g", Shards: []api.SAMSubnetShard{{Prefix: "10.0.1.0/25", AssignedNodes: []string{"a"}}}},
+			want: "poolRef is required",
+		},
+		{
+			name: "empty groupRef",
+			spec: api.SAMSubnetPolicySpec{SourcePrefix: "10.0.0.0/8", PoolRef: "p", Shards: []api.SAMSubnetShard{{Prefix: "10.0.1.0/25", AssignedNodes: []string{"a"}}}},
+			want: "groupRef is required",
+		},
+		{
+			name: "no shards",
+			spec: api.SAMSubnetPolicySpec{SourcePrefix: "10.0.0.0/8", PoolRef: "p", GroupRef: "g"},
+			want: "requires at least one shard",
+		},
+		{
+			name: "shard outside source prefix",
+			spec: api.SAMSubnetPolicySpec{SourcePrefix: "10.0.0.0/16", PoolRef: "p", GroupRef: "g", Shards: []api.SAMSubnetShard{{Prefix: "10.1.0.0/25", AssignedNodes: []string{"a"}}}},
+			want: "is not within sourcePrefix",
+		},
+		{
+			name: "overlapping shards",
+			spec: api.SAMSubnetPolicySpec{
+				SourcePrefix: "10.0.0.0/8", PoolRef: "p", GroupRef: "g",
+				Shards: []api.SAMSubnetShard{
+					{Prefix: "10.0.1.0/24", AssignedNodes: []string{"a"}},
+					{Prefix: "10.0.1.0/25", AssignedNodes: []string{"b"}},
+				},
+			},
+			want: "overlaps",
+		},
+		{
+			name: "empty assignedNodes",
+			spec: api.SAMSubnetPolicySpec{SourcePrefix: "10.0.0.0/8", PoolRef: "p", GroupRef: "g", Shards: []api.SAMSubnetShard{{Prefix: "10.0.1.0/25", AssignedNodes: []string{}}}},
+			want: "requires at least one node",
+		},
+		{
+			name: "duplicate node in shard",
+			spec: api.SAMSubnetPolicySpec{SourcePrefix: "10.0.0.0/8", PoolRef: "p", GroupRef: "g", Shards: []api.SAMSubnetShard{{Prefix: "10.0.1.0/25", AssignedNodes: []string{"a", "a"}}}},
+			want: "duplicate",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			res := api.Resource{
+				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMSubnetPolicy"},
+				Metadata: api.ObjectMeta{Name: "test"},
+				Spec:     tc.spec,
+			}
+			router := &api.Router{
+				TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+				Metadata: api.ObjectMeta{Name: "test"},
+				Spec:     api.RouterSpec{Resources: []api.Resource{res}},
+			}
+			err := Validate(router)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected error containing %q, got %q", tc.want, err.Error())
+			}
+		})
+	}
+}
