@@ -18,6 +18,19 @@ const (
 	DeliveryFailed    = "failed"
 )
 
+// DeliverySummaryRow aggregates delivery statistics for a (group, peer) pair.
+type DeliverySummaryRow struct {
+	Group               string `json:"group" yaml:"group"`
+	Peer                string `json:"peer" yaml:"peer"`
+	Events              int    `json:"events" yaml:"events"`
+	Delivered           int    `json:"delivered" yaml:"delivered"`
+	StaleTTL            int    `json:"staleTTL" yaml:"staleTTL"`
+	Failed              int    `json:"failed" yaml:"failed"`
+	Pending             int    `json:"pending" yaml:"pending"`
+	MaxLagSeconds       int64  `json:"maxLagSeconds" yaml:"maxLagSeconds"`
+	MinExpiresInSeconds int64  `json:"minExpiresInSeconds" yaml:"minExpiresInSeconds"`
+}
+
 // DeliveryRecord is one (event, peer) push attempt tracked in event_deliveries
 // (ADR 0006, Phase 2). Times are persisted as unix seconds; zero time is NULL.
 type DeliveryRecord struct {
@@ -266,7 +279,104 @@ func (s *SQLiteStore) ListDeliveriesFiltered(group, eventID, peer, status string
 		records = append(records, rec)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate deliveries: %w", err)
+		return nil, fmt.Errorf("iterate deliveries filtered: %w", err)
 	}
 	return records, nil
+}
+
+// ListDeliverySummary returns per-(group, peer) delivery aggregates. Empty
+// group, peer, or eventType disables that filter. When includeExpired is false,
+// events whose expires_at has passed relative to now are excluded. The summary
+// is read-only and never mutates delivery state.
+func (s *SQLiteStore) ListDeliverySummary(group, peer, eventType string, includeExpired bool, now time.Time) ([]DeliverySummaryRow, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, errStoreClosed
+	}
+	nowUnix := now.UTC().Unix()
+	query := `
+		SELECT
+			e.group_name,
+			d.peer,
+			COUNT(*) AS total,
+			SUM(CASE WHEN d.status = 'delivered' THEN 1 ELSE 0 END) AS delivered,
+			SUM(CASE WHEN d.status = 'failed' THEN 1 ELSE 0 END) AS failed,
+			SUM(CASE WHEN d.status = 'pending' THEN 1 ELSE 0 END) AS pending,
+			SUM(CASE WHEN d.status = 'delivered'
+			              AND d.event_expires_at IS NOT NULL AND d.event_expires_at > 0
+			              AND e.expires_at IS NOT NULL AND e.expires_at > 0
+			              AND e.expires_at > d.event_expires_at
+			     THEN 1 ELSE 0 END) AS stale_ttl,
+			MAX(CASE WHEN d.delivered_at IS NOT NULL AND d.delivered_at > 0
+			              AND e.observed_at > 0
+			     THEN d.delivered_at - e.observed_at
+			     ELSE NULL END) AS max_lag_seconds,
+			MIN(CASE WHEN e.expires_at IS NOT NULL AND e.expires_at > 0
+			     THEN e.expires_at - ?
+			     ELSE NULL END) AS min_expires_in_seconds
+		FROM event_deliveries d
+		JOIN federation_events e ON d.event_id = e.id
+	`
+	var (
+		clauses []string
+		args    = []any{nowUnix}
+	)
+	if group != "" {
+		clauses = append(clauses, "e.group_name = ?")
+		args = append(args, group)
+	}
+	if peer != "" {
+		clauses = append(clauses, "d.peer = ?")
+		args = append(args, peer)
+	}
+	if eventType != "" {
+		clauses = append(clauses, "e.type = ?")
+		args = append(args, eventType)
+	}
+	if !includeExpired {
+		clauses = append(clauses, "(e.expires_at IS NULL OR e.expires_at = 0 OR e.expires_at >= ?)")
+		args = append(args, nowUnix)
+	}
+	for i, clause := range clauses {
+		if i == 0 {
+			query += " WHERE "
+		} else {
+			query += " AND "
+		}
+		query += clause
+	}
+	query += " GROUP BY e.group_name, d.peer ORDER BY e.group_name, d.peer"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list delivery summary: %w", err)
+	}
+	defer rows.Close()
+	var result []DeliverySummaryRow
+	for rows.Next() {
+		var (
+			row          DeliverySummaryRow
+			maxLag       sql.NullInt64
+			minExpiresIn sql.NullInt64
+		)
+		if err := rows.Scan(
+			&row.Group, &row.Peer, &row.Events,
+			&row.Delivered, &row.Failed, &row.Pending, &row.StaleTTL,
+			&maxLag, &minExpiresIn,
+		); err != nil {
+			return nil, fmt.Errorf("scan delivery summary: %w", err)
+		}
+		if maxLag.Valid {
+			row.MaxLagSeconds = maxLag.Int64
+		}
+		if minExpiresIn.Valid {
+			row.MinExpiresInSeconds = minExpiresIn.Int64
+		}
+		result = append(result, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate delivery summary: %w", err)
+	}
+	return result, nil
 }

@@ -89,6 +89,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "commands:")
 	fmt.Fprintln(w, "  federation event emit --group <name> --type <topic> [--subject <s>] [--source-node <n>] [--payload k=v ...] [--ttl <dur>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  federation event list [--group <name>] [--include-expired] [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  federation deliveries summary [--group <name>] [--peer <name>] [--type <type>] [--include-expired] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  ledger integrity-check [--state-file <path>] [-o table|json]")
 	fmt.Fprintln(w, "  ledger vacuum [--state-file <path>]")
 	fmt.Fprintln(w, "  ledger backup <dest-path> [--state-file <path>]")
