@@ -258,6 +258,9 @@ CREATE INDEX IF NOT EXISTS action_executions_status ON action_executions(status,
 	if err := s.ensureActionExecutionColumns(); err != nil {
 		return err
 	}
+	if err := s.ensureEventDeliveryColumns(); err != nil {
+		return err
+	}
 	return nil
 }
 

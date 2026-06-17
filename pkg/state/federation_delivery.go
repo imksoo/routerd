@@ -21,14 +21,28 @@ const (
 // DeliveryRecord is one (event, peer) push attempt tracked in event_deliveries
 // (ADR 0006, Phase 2). Times are persisted as unix seconds; zero time is NULL.
 type DeliveryRecord struct {
-	ID            int64
-	EventID       string
-	Peer          string
-	Status        string
-	Attempts      int
-	LastAttemptAt time.Time
-	LastError     string
-	DeliveredAt   time.Time
+	ID             int64
+	EventID        string
+	Peer           string
+	Status         string
+	Attempts       int
+	LastAttemptAt  time.Time
+	LastError      string
+	DeliveredAt    time.Time
+	EventExpiresAt time.Time
+}
+
+func (s *SQLiteStore) ensureEventDeliveryColumns() error {
+	hasCol, err := s.tableHasColumn("event_deliveries", "event_expires_at")
+	if err != nil {
+		return err
+	}
+	if !hasCol {
+		if _, err := s.db.Exec(`ALTER TABLE event_deliveries ADD COLUMN event_expires_at INTEGER`); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RecordDelivery enqueues a (event_id, peer) delivery row in status pending with
@@ -58,10 +72,10 @@ func (s *SQLiteStore) RecordDelivery(eventID, peer string) error {
 }
 
 // UpdateDeliveryStatus updates the status, attempts, last_attempt_at,
-// last_error, and delivered_at for the (event_id, peer) row. last_attempt_at is
-// stamped with the store clock. deliveredAt is stored only when non-zero
-// (otherwise delivered_at is left NULL), mirroring expires_at handling.
-func (s *SQLiteStore) UpdateDeliveryStatus(eventID, peer, status string, attempts int, lastErr string, deliveredAt time.Time) error {
+// last_error, delivered_at, and event_expires_at for the (event_id, peer) row.
+// last_attempt_at is stamped with the store clock. deliveredAt and
+// eventExpiresAt are stored only when non-zero (otherwise left NULL).
+func (s *SQLiteStore) UpdateDeliveryStatus(eventID, peer, status string, attempts int, lastErr string, deliveredAt time.Time, eventExpiresAt time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -78,11 +92,15 @@ func (s *SQLiteStore) UpdateDeliveryStatus(eventID, peer, status string, attempt
 	if !deliveredAt.IsZero() {
 		delivered = sql.NullInt64{Int64: deliveredAt.UTC().Unix(), Valid: true}
 	}
+	var expiresAt sql.NullInt64
+	if !eventExpiresAt.IsZero() {
+		expiresAt = sql.NullInt64{Int64: eventExpiresAt.UTC().Unix(), Valid: true}
+	}
 	_, err := s.db.Exec(`
 		UPDATE event_deliveries
-		SET status = ?, attempts = ?, last_attempt_at = ?, last_error = ?, delivered_at = ?
+		SET status = ?, attempts = ?, last_attempt_at = ?, last_error = ?, delivered_at = ?, event_expires_at = ?
 		WHERE event_id = ? AND peer = ?
-	`, status, attempts, lastAttempt, lastErr, delivered, eventID, peer)
+	`, status, attempts, lastAttempt, lastErr, delivered, expiresAt, eventID, peer)
 	if err != nil {
 		return fmt.Errorf("update delivery status: %w", err)
 	}
@@ -98,7 +116,7 @@ func (s *SQLiteStore) ListDeliveries(eventID, peer string) ([]DeliveryRecord, er
 		return nil, errStoreClosed
 	}
 	query := `
-		SELECT id, event_id, peer, status, attempts, last_attempt_at, last_error, delivered_at
+		SELECT id, event_id, peer, status, attempts, last_attempt_at, last_error, delivered_at, event_expires_at
 		FROM event_deliveries
 	`
 	var (
@@ -131,12 +149,13 @@ func (s *SQLiteStore) ListDeliveries(eventID, peer string) ([]DeliveryRecord, er
 	var records []DeliveryRecord
 	for rows.Next() {
 		var (
-			rec         DeliveryRecord
-			lastAttempt sql.NullInt64
-			lastError   sql.NullString
-			delivered   sql.NullInt64
+			rec            DeliveryRecord
+			lastAttempt    sql.NullInt64
+			lastError      sql.NullString
+			delivered      sql.NullInt64
+			eventExpiresAt sql.NullInt64
 		)
-		if err := rows.Scan(&rec.ID, &rec.EventID, &rec.Peer, &rec.Status, &rec.Attempts, &lastAttempt, &lastError, &delivered); err != nil {
+		if err := rows.Scan(&rec.ID, &rec.EventID, &rec.Peer, &rec.Status, &rec.Attempts, &lastAttempt, &lastError, &delivered, &eventExpiresAt); err != nil {
 			return nil, fmt.Errorf("scan delivery: %w", err)
 		}
 		if lastAttempt.Valid && lastAttempt.Int64 > 0 {
@@ -147,6 +166,9 @@ func (s *SQLiteStore) ListDeliveries(eventID, peer string) ([]DeliveryRecord, er
 		}
 		if delivered.Valid && delivered.Int64 > 0 {
 			rec.DeliveredAt = time.Unix(delivered.Int64, 0).UTC()
+		}
+		if eventExpiresAt.Valid && eventExpiresAt.Int64 > 0 {
+			rec.EventExpiresAt = time.Unix(eventExpiresAt.Int64, 0).UTC()
 		}
 		records = append(records, rec)
 	}
@@ -178,7 +200,7 @@ func (s *SQLiteStore) ListDeliveriesFiltered(group, eventID, peer, status string
 	if group != "" {
 		col = "d."
 		query = `
-			SELECT d.event_id, d.peer, d.status, d.attempts, d.last_attempt_at, d.last_error, d.delivered_at
+			SELECT d.event_id, d.peer, d.status, d.attempts, d.last_attempt_at, d.last_error, d.delivered_at, d.event_expires_at
 			FROM event_deliveries d
 			JOIN federation_events e ON d.event_id = e.id
 		`
@@ -186,7 +208,7 @@ func (s *SQLiteStore) ListDeliveriesFiltered(group, eventID, peer, status string
 		args = append(args, group)
 	} else {
 		query = `
-			SELECT event_id, peer, status, attempts, last_attempt_at, last_error, delivered_at
+			SELECT event_id, peer, status, attempts, last_attempt_at, last_error, delivered_at, event_expires_at
 			FROM event_deliveries
 		`
 	}
@@ -220,12 +242,13 @@ func (s *SQLiteStore) ListDeliveriesFiltered(group, eventID, peer, status string
 	var records []DeliveryRecord
 	for rows.Next() {
 		var (
-			rec         DeliveryRecord
-			lastAttempt sql.NullInt64
-			lastError   sql.NullString
-			delivered   sql.NullInt64
+			rec            DeliveryRecord
+			lastAttempt    sql.NullInt64
+			lastError      sql.NullString
+			delivered      sql.NullInt64
+			eventExpiresAt sql.NullInt64
 		)
-		if err := rows.Scan(&rec.EventID, &rec.Peer, &rec.Status, &rec.Attempts, &lastAttempt, &lastError, &delivered); err != nil {
+		if err := rows.Scan(&rec.EventID, &rec.Peer, &rec.Status, &rec.Attempts, &lastAttempt, &lastError, &delivered, &eventExpiresAt); err != nil {
 			return nil, fmt.Errorf("scan delivery: %w", err)
 		}
 		if lastAttempt.Valid && lastAttempt.Int64 > 0 {
@@ -236,6 +259,9 @@ func (s *SQLiteStore) ListDeliveriesFiltered(group, eventID, peer, status string
 		}
 		if delivered.Valid && delivered.Int64 > 0 {
 			rec.DeliveredAt = time.Unix(delivered.Int64, 0).UTC()
+		}
+		if eventExpiresAt.Valid && eventExpiresAt.Int64 > 0 {
+			rec.EventExpiresAt = time.Unix(eventExpiresAt.Int64, 0).UTC()
 		}
 		records = append(records, rec)
 	}

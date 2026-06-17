@@ -299,3 +299,87 @@ func TestOutboxRestartResend(t *testing.T) {
 		t.Fatalf("receiver event count = %d, want 1 (resent after restart)", len(got))
 	}
 }
+
+// TestOutboxRepushOnTTLRefresh verifies the core fix for #529: when an event's
+// ExpiresAt is extended (TTL refreshed by re-emission), the outbox re-pushes
+// even though the event was previously delivered.
+func TestOutboxRepushOnTTLRefresh(t *testing.T) {
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	clock := fixedClock(now)
+	const group = "cloudedge"
+	const nodeName = "rr-node"
+	const peerName = "leaf-a"
+
+	store := openStore(t, "outbox-ttl.db")
+
+	var posts atomic.Uint64
+	receiver := eventd.NewReceiver(store, testSecret, group, "leaf", 5*time.Minute, clock)
+	mux := http.NewServeMux()
+	receiver.Register(mux)
+	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/events" {
+			posts.Add(1)
+		}
+		mux.ServeHTTP(w, r)
+	})
+	srv := httptest.NewServer(wrapped)
+	defer srv.Close()
+
+	peers := []eventd.PeerConfig{{NodeName: peerName, Endpoint: srv.URL}}
+	noSleep := func(time.Duration) {}
+	pusher := eventd.NewPusher(store, testSecret, peers,
+		eventd.PushRetry{MaxAttempts: 3, BaseBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
+		srv.Client(), clock, noSleep)
+
+	expires1 := now.Add(10 * time.Minute)
+	seedEventExpiring(t, store, "shard-1", group, nodeName, "10.77.60.0/25", now, expires1)
+
+	outbox := eventd.NewOutbox(store, store, pusher, group, nodeName, time.Second, clock)
+	if err := outbox.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce #1: %v", err)
+	}
+	if got := posts.Load(); got != 1 {
+		t.Fatalf("after run #1 POST count = %d, want 1", got)
+	}
+	d1, _ := store.ListDeliveries("shard-1", peerName)
+	if len(d1) != 1 || d1[0].Status != routerstate.DeliveryDelivered {
+		t.Fatalf("after run #1 delivery = %+v, want delivered", d1)
+	}
+	if !d1[0].EventExpiresAt.Equal(expires1) {
+		t.Fatalf("delivery EventExpiresAt = %v, want %v", d1[0].EventExpiresAt, expires1)
+	}
+
+	// Second RunOnce without TTL refresh: should NOT re-push.
+	if err := outbox.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce #2: %v", err)
+	}
+	if got := posts.Load(); got != 1 {
+		t.Fatalf("after run #2 POST count = %d, want 1 (no re-push)", got)
+	}
+
+	// Simulate TTL refresh: re-record same event with extended ExpiresAt.
+	expires2 := now.Add(20 * time.Minute)
+	if err := store.RecordFederationEvent(routerstate.EventRecord{
+		ID: "shard-1", Group: group, SourceNode: nodeName,
+		Type: "routerd.client.ipv4.observed", Subject: "10.77.60.0/25",
+		DedupeKey: "10.77.60.0/25", Payload: map[string]string{"mac": "aa:bb:cc:dd:ee:ff"},
+		ObservedAt: now, ExpiresAt: expires2,
+	}); err != nil {
+		t.Fatalf("re-record with extended TTL: %v", err)
+	}
+
+	// Third RunOnce: event expires_at moved forward → outbox MUST re-push.
+	if err := outbox.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce #3: %v", err)
+	}
+	if got := posts.Load(); got != 2 {
+		t.Fatalf("after run #3 POST count = %d, want 2 (re-pushed after TTL refresh)", got)
+	}
+	d3, _ := store.ListDeliveries("shard-1", peerName)
+	if len(d3) != 1 || d3[0].Status != routerstate.DeliveryDelivered {
+		t.Fatalf("after run #3 delivery = %+v, want delivered", d3)
+	}
+	if !d3[0].EventExpiresAt.Equal(expires2) {
+		t.Fatalf("after run #3 EventExpiresAt = %v, want %v (updated)", d3[0].EventExpiresAt, expires2)
+	}
+}

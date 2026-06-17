@@ -93,7 +93,7 @@ func (o *Outbox) RunOnce(ctx context.Context) error {
 			ObservedAt: rec.ObservedAt,
 			ExpiresAt:  rec.ExpiresAt,
 		}
-		delivered, err := o.deliveredPeers(rec.ID)
+		delivered, err := o.deliveredPeers(rec.ID, rec.ExpiresAt)
 		if err != nil {
 			return err
 		}
@@ -107,18 +107,24 @@ func (o *Outbox) RunOnce(ctx context.Context) error {
 }
 
 // deliveredPeers returns the set of peer node names whose latest delivery row
-// for eventID is in status delivered. ListDeliveries with an empty peer wildcard
-// returns at most one row per peer (the table is keyed on (event_id, peer)).
-func (o *Outbox) deliveredPeers(eventID string) (map[string]bool, error) {
+// for eventID is in status delivered AND whose recorded event_expires_at matches
+// the event's current ExpiresAt. When the event's TTL has been refreshed
+// (ExpiresAt moved forward since the last push), the peer is treated as
+// not-yet-delivered so the outbox re-pushes the refreshed event.
+func (o *Outbox) deliveredPeers(eventID string, eventExpiresAt time.Time) (map[string]bool, error) {
 	rows, err := o.deliveries.ListDeliveries(eventID, "")
 	if err != nil {
 		return nil, err
 	}
 	set := make(map[string]bool, len(rows))
 	for _, row := range rows {
-		if row.Status == routerstate.DeliveryDelivered {
-			set[row.Peer] = true
+		if row.Status != routerstate.DeliveryDelivered {
+			continue
 		}
+		if !eventExpiresAt.IsZero() && row.EventExpiresAt.Before(eventExpiresAt) {
+			continue
+		}
+		set[row.Peer] = true
 	}
 	return set, nil
 }

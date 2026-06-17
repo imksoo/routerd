@@ -227,7 +227,7 @@ func TestFederationEventDeliveriesFilters(t *testing.T) {
 			t.Fatalf("record delivery %s/%s: %v", s.eventID, s.peer, err)
 		}
 		if s.status != routerstate.DeliveryPending {
-			if err := store.UpdateDeliveryStatus(s.eventID, s.peer, s.status, 1, "", time.Time{}); err != nil {
+			if err := store.UpdateDeliveryStatus(s.eventID, s.peer, s.status, 1, "", time.Time{}, time.Time{}); err != nil {
 				t.Fatalf("update delivery %s/%s: %v", s.eventID, s.peer, err)
 			}
 		}
