@@ -72,7 +72,6 @@ func (c ShardController) reconcilePolicy(policyName string, spec api.SAMSubnetPo
 	if err != nil {
 		return err
 	}
-	_ = selfNode
 
 	emitted := 0
 	for i, shard := range spec.Shards {
@@ -85,7 +84,7 @@ func (c ShardController) reconcilePolicy(policyName string, spec api.SAMSubnetPo
 			if nodeRef == "" {
 				continue
 			}
-			ev := shardAssignmentEvent(policyName, spec.GroupRef, spec.PoolRef, prefix, nodeRef, i, now)
+			ev := shardAssignmentEvent(policyName, spec.GroupRef, spec.PoolRef, prefix, selfNode, nodeRef, i, now)
 			if err := c.Store.RecordFederationEvent(ev); err != nil {
 				return fmt.Errorf("emit shard event for %s shard[%d] node %s: %w", policyName, i, nodeRef, err)
 			}
@@ -102,14 +101,14 @@ func (c ShardController) reconcilePolicy(policyName string, spec api.SAMSubnetPo
 	return nil
 }
 
-func shardAssignmentEvent(policyName, group, poolRef, prefix, targetNode string, shardIndex int, now time.Time) routerstate.EventRecord {
+func shardAssignmentEvent(policyName, group, poolRef, prefix, sourceNode, targetNode string, shardIndex int, now time.Time) routerstate.EventRecord {
 	dedupeKey := fmt.Sprintf("shard:%s:%s:%s", policyName, prefix, targetNode)
 	h := sha256.Sum256([]byte(dedupeKey))
 	id := "shard-" + hex.EncodeToString(h[:8])
 	return routerstate.EventRecord{
 		ID:         id,
 		Group:      group,
-		SourceNode: targetNode,
+		SourceNode: sourceNode,
 		Type:       ShardAssignedEventType,
 		Subject:    fmt.Sprintf("SAMSubnetPolicy/%s/shard/%d", policyName, shardIndex),
 		DedupeKey:  dedupeKey,

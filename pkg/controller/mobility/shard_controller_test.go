@@ -98,6 +98,9 @@ func TestShardControllerEmitsEvents(t *testing.T) {
 		if ev.Group != "cloudedge" {
 			t.Fatalf("unexpected group %q", ev.Group)
 		}
+		if ev.SourceNode != "rr-node" {
+			t.Fatalf("expected SourceNode rr-node (emitter), got %q", ev.SourceNode)
+		}
 		pools[ev.Payload["prefix"]] = append(pools[ev.Payload["prefix"]], ev.Payload["node"])
 	}
 	if len(pools["10.0.1.0/25"]) != 2 {

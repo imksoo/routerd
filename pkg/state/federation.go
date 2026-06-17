@@ -79,7 +79,11 @@ func (s *SQLiteStore) RecordFederationEvent(rec EventRecord) error {
 	_, err := s.db.Exec(`
 		INSERT INTO federation_events (id, group_name, source_node, type, subject, dedupe_key, payload, observed_at, expires_at, recorded_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO NOTHING
+		ON CONFLICT(id) DO UPDATE SET
+			source_node = excluded.source_node,
+			observed_at = MAX(excluded.observed_at, federation_events.observed_at),
+			expires_at  = MAX(excluded.expires_at,  federation_events.expires_at),
+			recorded_at = excluded.recorded_at
 	`, rec.ID, rec.Group, rec.SourceNode, rec.Type, rec.Subject, rec.DedupeKey, payloadJSON, rec.ObservedAt.UTC().Unix(), expiresAt, rec.RecordedAt.UTC().Unix())
 	if err != nil {
 		return fmt.Errorf("record federation event: %w", err)
