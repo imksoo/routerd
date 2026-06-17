@@ -25,6 +25,7 @@ type Outbox struct {
 	nodeName   string
 	interval   time.Duration
 	now        func() time.Time
+	metrics    *Metrics
 }
 
 // NewOutbox builds an Outbox. now may be nil to use time.Now. interval <= 0
@@ -46,6 +47,8 @@ func NewOutbox(events EventStore, deliveries DeliveryStore, pusher *Pusher, grou
 		now:        now,
 	}
 }
+
+func (o *Outbox) SetMetrics(m *Metrics) { o.metrics = m }
 
 // Run drains once immediately, then on every interval tick until ctx is done.
 // onError, when non-nil, is invoked with any drain error. Mirrors Pruner.Run.
@@ -93,7 +96,7 @@ func (o *Outbox) RunOnce(ctx context.Context) error {
 			ObservedAt: rec.ObservedAt,
 			ExpiresAt:  rec.ExpiresAt,
 		}
-		delivered, err := o.deliveredPeers(rec.ID, rec.ExpiresAt)
+		delivered, err := o.deliveredPeers(ctx, rec.ID, rec.Type, rec.ExpiresAt)
 		if err != nil {
 			return err
 		}
@@ -111,7 +114,7 @@ func (o *Outbox) RunOnce(ctx context.Context) error {
 // the event's current ExpiresAt. When the event's TTL has been refreshed
 // (ExpiresAt moved forward since the last push), the peer is treated as
 // not-yet-delivered so the outbox re-pushes the refreshed event.
-func (o *Outbox) deliveredPeers(eventID string, eventExpiresAt time.Time) (map[string]bool, error) {
+func (o *Outbox) deliveredPeers(ctx context.Context, eventID, eventType string, eventExpiresAt time.Time) (map[string]bool, error) {
 	rows, err := o.deliveries.ListDeliveries(eventID, "")
 	if err != nil {
 		return nil, err
@@ -122,6 +125,8 @@ func (o *Outbox) deliveredPeers(eventID string, eventExpiresAt time.Time) (map[s
 			continue
 		}
 		if !eventExpiresAt.IsZero() && row.EventExpiresAt.Before(eventExpiresAt) {
+			o.metrics.RecordStaleTTL(ctx, o.group, row.Peer, eventType)
+			o.metrics.RecordRepush(ctx, o.group, row.Peer, eventType)
 			continue
 		}
 		set[row.Peer] = true

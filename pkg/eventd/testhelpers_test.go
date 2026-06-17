@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/eventd"
+	"github.com/imksoo/routerd/pkg/federation"
 )
 
 func jsonMarshal(v any) ([]byte, error) {
@@ -35,4 +36,8 @@ func postRaw(t *testing.T, url string, ts int64, sig string, body []byte) int {
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
 	return resp.StatusCode
+}
+
+func signWithSecret(secret []byte, ts int64, body []byte) string {
+	return federation.Sign(secret, ts, body)
 }
