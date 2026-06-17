@@ -1200,6 +1200,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	var mobility mobilitycontroller.Controller
 	var mobilityDiscovery mobilitycontroller.DiscoveryController
 	var mobilityTransport mobilitycontroller.TransportController
+	var mobilityShard mobilitycontroller.ShardController
 	if rawStore, ok := r.Store.(mobilityDataStore); ok {
 		mobilityData := mobilityStore{evented: store, data: rawStore}
 		peerGroupSync := r.Opts.PeerGroupSyncClient
@@ -1228,6 +1229,11 @@ func (r *Runner) Start(ctx context.Context) error {
 			Router:        r.Router,
 			Store:         mobilityData,
 			PeerGroupSync: peerGroupSync,
+		}
+		mobilityShard = mobilitycontroller.ShardController{
+			Router: r.Router,
+			Bus:    r.Bus,
+			Store:  mobilityData,
 		}
 	}
 	var providerAction provideractioncontroller.Controller
@@ -1578,6 +1584,15 @@ func (r *Runner) Start(ctx context.Context) error {
 				return err
 			}
 			current := mobility
+			current.Router = effective
+			return current.Reconcile(ctx)
+		}},
+		framework.FuncController{ControllerName: "mobility-shard", Every: 30 * time.Second, PeriodicFunc: func(ctx context.Context) error {
+			effective, err := effectiveDynamicForReconcile()
+			if err != nil {
+				return err
+			}
+			current := mobilityShard
 			current.Router = effective
 			return current.Reconcile(ctx)
 		}},

@@ -165,6 +165,18 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 			return true, err
 		}
 		return true, nil
+	case "SAMSubnetPolicy":
+		if res.APIVersion != api.MobilityAPIVersion {
+			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.MobilityAPIVersion)
+		}
+		spec, err := res.SAMSubnetPolicySpec()
+		if err != nil {
+			return true, err
+		}
+		if err := validateSAMSubnetPolicy(res, spec); err != nil {
+			return true, err
+		}
+		return true, nil
 	case "SAMTransportProfile":
 		if res.APIVersion != api.MobilityAPIVersion {
 			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.MobilityAPIVersion)
@@ -1183,4 +1195,69 @@ func effectiveMobilityDeliveryMode(spec api.MobilityPoolSpec) string {
 		return "bgp"
 	}
 	return mode
+}
+
+func validateSAMSubnetPolicy(res api.Resource, spec api.SAMSubnetPolicySpec) error {
+	sourcePrefix := strings.TrimSpace(spec.SourcePrefix)
+	if sourcePrefix == "" {
+		return fmt.Errorf("%s spec.sourcePrefix is required", res.ID())
+	}
+	parsed, err := netip.ParsePrefix(sourcePrefix)
+	if err != nil {
+		return fmt.Errorf("%s spec.sourcePrefix must be a CIDR: %w", res.ID(), err)
+	}
+	if !parsed.Addr().Is4() {
+		return fmt.Errorf("%s spec.sourcePrefix must be an IPv4 CIDR", res.ID())
+	}
+	if strings.TrimSpace(spec.PoolRef) == "" {
+		return fmt.Errorf("%s spec.poolRef is required", res.ID())
+	}
+	if strings.TrimSpace(spec.GroupRef) == "" {
+		return fmt.Errorf("%s spec.groupRef is required", res.ID())
+	}
+	if len(spec.Shards) == 0 {
+		return fmt.Errorf("%s spec.shards requires at least one shard", res.ID())
+	}
+	type parsedShard struct {
+		prefix netip.Prefix
+		index  int
+	}
+	var shards []parsedShard
+	for i, shard := range spec.Shards {
+		shardPrefix := strings.TrimSpace(shard.Prefix)
+		if shardPrefix == "" {
+			return fmt.Errorf("%s spec.shards[%d].prefix is required", res.ID(), i)
+		}
+		sp, err := netip.ParsePrefix(shardPrefix)
+		if err != nil {
+			return fmt.Errorf("%s spec.shards[%d].prefix must be a CIDR: %w", res.ID(), i, err)
+		}
+		if !sp.Addr().Is4() {
+			return fmt.Errorf("%s spec.shards[%d].prefix must be an IPv4 CIDR", res.ID(), i)
+		}
+		if !parsed.Contains(sp.Addr()) || sp.Bits() < parsed.Bits() {
+			return fmt.Errorf("%s spec.shards[%d].prefix %s is not within sourcePrefix %s", res.ID(), i, sp, parsed)
+		}
+		if len(shard.AssignedNodes) == 0 {
+			return fmt.Errorf("%s spec.shards[%d].assignedNodes requires at least one node", res.ID(), i)
+		}
+		nodesSeen := map[string]bool{}
+		for j, nodeRef := range shard.AssignedNodes {
+			nr := strings.TrimSpace(nodeRef)
+			if nr == "" {
+				return fmt.Errorf("%s spec.shards[%d].assignedNodes[%d] is empty", res.ID(), i, j)
+			}
+			if nodesSeen[nr] {
+				return fmt.Errorf("%s spec.shards[%d].assignedNodes has duplicate %q", res.ID(), i, nr)
+			}
+			nodesSeen[nr] = true
+		}
+		for _, prev := range shards {
+			if sp.Overlaps(prev.prefix) {
+				return fmt.Errorf("%s spec.shards[%d].prefix %s overlaps with spec.shards[%d].prefix %s", res.ID(), i, sp, prev.index, prev.prefix)
+			}
+		}
+		shards = append(shards, parsedShard{prefix: sp.Masked(), index: i})
+	}
+	return nil
 }
