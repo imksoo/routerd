@@ -944,3 +944,158 @@ spec:
 		t.Fatalf("status = %+v, want derived public key %q", status, publicKey)
 	}
 }
+
+func TestResolveWireGuardSAMResourcesGeneratesSelfAddressAndPeerRoutes(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: router-a}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg-sam}
+      spec:
+        selfNodeRef: router-a
+        privateKey: priv
+        peersFrom:
+          - resource: SAMNodeSet/fabric
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMNodeSet
+      metadata: {name: fabric}
+      spec:
+        nodes:
+          - nodeRef: router-a
+            samEndpoint: 10.99.70.1
+            wireGuard:
+              publicKey: selfpub
+              allowedIPs: [10.99.70.1/32]
+          - nodeRef: router-b
+            samEndpoint: 10.99.70.2
+            wireGuard:
+              publicKey: peerpub-b
+              endpoint: 198.51.100.2:51820
+              allowedIPs: [10.99.70.2/32]
+`)
+	resolved, err := resolveWireGuardSAMResources(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var selfAddr, peerRoute, peerPeer bool
+	for _, r := range resolved.Spec.Resources {
+		switch {
+		case r.Kind == "IPv4StaticAddress" && r.Metadata.Name == "wg-sam-addr-wg-sam":
+			spec, _ := r.IPv4StaticAddressSpec()
+			if spec.Interface != "wg-sam" || spec.Address != "10.99.70.1/32" {
+				t.Fatalf("self address spec mismatch: %+v", spec)
+			}
+			selfAddr = true
+		case r.Kind == "IPv4Route" && r.Metadata.Name == "wg-sam-endpoint-router-b":
+			spec, _ := r.IPv4RouteSpec()
+			if spec.Destination != "10.99.70.2/32" || spec.Device != "wg-sam" {
+				t.Fatalf("peer route spec mismatch: %+v", spec)
+			}
+			peerRoute = true
+		case r.Kind == "WireGuardPeer" && r.Metadata.Name == "router-b":
+			spec, _ := r.WireGuardPeerSpec()
+			if spec.PublicKey != "peerpub-b" || spec.Interface != "wg-sam" {
+				t.Fatalf("peer spec mismatch: %+v", spec)
+			}
+			peerPeer = true
+		}
+	}
+	if !selfAddr {
+		t.Fatal("self-node IPv4StaticAddress not generated")
+	}
+	if !peerRoute {
+		t.Fatal("peer IPv4Route not generated")
+	}
+	if !peerPeer {
+		t.Fatal("peer WireGuardPeer not generated")
+	}
+	for _, r := range resolved.Spec.Resources {
+		if r.Kind == "IPv4Route" && r.Metadata.Name == "wg-sam-endpoint-router-a" {
+			t.Fatal("self-node route must not be generated")
+		}
+	}
+}
+
+func TestResolveWireGuardSAMResourcesStaticAddressOverride(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: router-a}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg-sam}
+      spec:
+        selfNodeRef: router-a
+        privateKey: priv
+        peersFrom:
+          - resource: SAMNodeSet/fabric
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMNodeSet
+      metadata: {name: fabric}
+      spec:
+        nodes:
+          - nodeRef: router-a
+            samEndpoint: 10.99.70.1
+            wireGuard:
+              publicKey: selfpub
+              allowedIPs: [10.99.70.1/32]
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata: {name: wg-sam-addr-wg-sam}
+      spec:
+        interface: wg-sam
+        address: 10.99.70.99/32
+`)
+	resolved, err := resolveWireGuardSAMResources(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range resolved.Spec.Resources {
+		if r.Kind == "IPv4StaticAddress" && r.Metadata.Name == "wg-sam-addr-wg-sam" {
+			spec, _ := r.IPv4StaticAddressSpec()
+			if spec.Address != "10.99.70.99/32" {
+				t.Fatalf("static override not respected: got %s", spec.Address)
+			}
+			return
+		}
+	}
+	t.Fatal("IPv4StaticAddress not found")
+}
+
+func TestResolveWireGuardSAMResourcesNilRouter(t *testing.T) {
+	resolved, err := resolveWireGuardSAMResources(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved != nil {
+		t.Fatalf("expected nil router, got %+v", resolved)
+	}
+}
+
+func TestResolveWireGuardSAMResourcesNoPeersFromIsNoOp(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: router-a}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg0}
+      spec:
+        privateKey: priv
+`)
+	resolved, err := resolveWireGuardSAMResources(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved.Spec.Resources) != len(router.Spec.Resources) {
+		t.Fatalf("expected no change; before=%d after=%d", len(router.Spec.Resources), len(resolved.Spec.Resources))
+	}
+}

@@ -981,7 +981,12 @@ func (r *Runner) effectiveRouterForReconcile(store eventedStore) (*api.Router, e
 	if err := r.saveWhenFalseStatuses(store); err != nil {
 		return nil, err
 	}
-	return r.effectiveRouter(store), nil
+	effective := r.effectiveRouter(store)
+	resolved, err := resolveWireGuardSAMResources(effective)
+	if err != nil {
+		return nil, err
+	}
+	return resolved, nil
 }
 
 func (r *Runner) effectiveDynamicRouterForReconcile(store eventedStore, now time.Time, targetOS platform.OS) (*api.Router, error) {
