@@ -7942,6 +7942,11 @@
                               },
                               "type": "object"
                             },
+                            "maxSecondaryIPs": {
+                              "description": "MaxSecondaryIPs limits the number of provider secondary IPs this member can\ncapture. When set on any member in a placement group, the group switches to\ndistributed capture mode: addresses are spread across all live members using\nrendezvous hashing, each member capturing only its assigned subset.\n0 (default) means no limit and single-active placement applies.",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
                             "nodeRef": {
                               "description": "NodeRef is the routerd node identity (matches federation sourceNode).",
                               "type": "string"
@@ -9447,6 +9452,93 @@
                       "innerPrefix",
                       "underlayInterface",
                       "bgp"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "mobility.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "SAMSubnetPolicy",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "description": "SAMSubnetPolicySpec shards a large on-prem prefix across multiple cloud-edge node groups.",
+                    "properties": {
+                      "groupRef": {
+                        "description": "GroupRef is the EventGroup used for shard assignment delivery.",
+                        "type": "string"
+                      },
+                      "poolRef": {
+                        "description": "PoolRef names the MobilityPool whose discovery scope is narrowed.",
+                        "type": "string"
+                      },
+                      "shards": {
+                        "description": "Shards maps sub-prefixes to assigned nodes. Each prefix must be within\nsourcePrefix and shards must not overlap.",
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "assignedNodes": {
+                              "description": "AssignedNodes lists the nodeRefs responsible for this shard. Nodes in\nthe same shard form a redundancy group (#352 placement semantics apply).",
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "prefix": {
+                              "description": "Prefix is the sub-prefix this shard covers (e.g. 10.0.1.0/25).",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "prefix",
+                            "assignedNodes"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "sourcePrefix": {
+                        "description": "SourcePrefix is the large prefix being sharded (e.g. 10.0.0.0/8).",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "sourcePrefix",
+                      "poolRef",
+                      "groupRef",
+                      "shards"
                     ],
                     "type": "object"
                   },
