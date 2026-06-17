@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/eventd"
+	routerotel "github.com/imksoo/routerd/pkg/otel"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -121,6 +122,13 @@ func daemonCommand(args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	telemetry, err := routerotel.Setup(ctx, "routerd-eventd")
+	if err != nil {
+		return fmt.Errorf("otel setup: %w", err)
+	}
+	defer telemetry.ShutdownGracefully()
+	metrics := eventd.NewMetrics(telemetry.Meter)
+
 	signals := make(chan os.Signal, 2)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
@@ -134,6 +142,7 @@ func daemonCommand(args []string) error {
 	}()
 
 	receiver := eventd.NewReceiver(store, secret, cfg.Group, cfg.NodeName, cfg.ReplayWindow, time.Now)
+	receiver.SetMetrics(metrics)
 	pruner := eventd.NewPruner(store, cfg.Group, cfg.Retention, cfg.PruneInterval, time.Now)
 	go pruner.Run(ctx, func(err error) {
 		log.Printf("routerd-eventd: prune error: %v", err)
@@ -142,7 +151,9 @@ func daemonCommand(args []string) error {
 	// Drive the outbox: push locally-originated events to peers. A node with no
 	// peers (or a push-only node) runs this as a harmless no-op / push-only.
 	pusher := eventd.NewPusher(store, secret, cfg.Peers, cfg.PushRetry, &http.Client{Timeout: 30 * time.Second}, time.Now, time.Sleep)
+	pusher.SetMetrics(metrics)
 	outbox := eventd.NewOutbox(store, store, pusher, cfg.Group, cfg.NodeName, cfg.PushInterval, time.Now)
+	outbox.SetMetrics(metrics)
 	go outbox.Run(ctx, func(err error) {
 		log.Printf("routerd-eventd: outbox error: %v", err)
 	})

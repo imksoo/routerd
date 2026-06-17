@@ -26,10 +26,11 @@ type httpDoer interface {
 // per-peer filtering, idempotent enqueue, and bounded exponential backoff. The
 // clock, http doer, and sleep func are injectable for deterministic tests.
 type Pusher struct {
-	store  DeliveryStore
-	secret []byte
-	peers  []PeerConfig
-	retry  PushRetry
+	store   DeliveryStore
+	secret  []byte
+	peers   []PeerConfig
+	retry   PushRetry
+	metrics *Metrics
 
 	client httpDoer
 	now    func() time.Time
@@ -67,6 +68,8 @@ func NewPusher(store DeliveryStore, secret []byte, peers []PeerConfig, retry Pus
 		sleep:  sleep,
 	}
 }
+
+func (p *Pusher) SetMetrics(m *Metrics) { p.metrics = m }
 
 // peerMatches reports whether ev should be delivered to peer per its filters:
 // empty Types means all types; empty SubjectPrefixes means all subjects.
@@ -111,7 +114,7 @@ func (p *Pusher) PushEvent(ctx context.Context, ev federation.Event) error {
 		if !peerMatches(peer, ev) {
 			continue
 		}
-		if err := p.deliverToPeer(ctx, peer, ev.ID, body, ev.ExpiresAt); err != nil {
+		if err := p.deliverToPeer(ctx, peer, ev, body); err != nil {
 			return err
 		}
 	}
@@ -137,7 +140,7 @@ func (p *Pusher) PushEventPending(ctx context.Context, ev federation.Event, isDe
 		if isDelivered != nil && isDelivered(peer.NodeName) {
 			continue
 		}
-		if err := p.deliverToPeer(ctx, peer, ev.ID, body, ev.ExpiresAt); err != nil {
+		if err := p.deliverToPeer(ctx, peer, ev, body); err != nil {
 			return err
 		}
 	}
@@ -145,9 +148,9 @@ func (p *Pusher) PushEventPending(ctx context.Context, ev federation.Event, isDe
 }
 
 // deliverToPeer enqueues then attempts delivery to a single peer with retries.
-func (p *Pusher) deliverToPeer(ctx context.Context, peer PeerConfig, eventID string, body []byte, eventExpiresAt time.Time) error {
-	if err := p.store.RecordDelivery(eventID, peer.NodeName); err != nil {
-		return fmt.Errorf("enqueue delivery %s -> %s: %w", eventID, peer.NodeName, err)
+func (p *Pusher) deliverToPeer(ctx context.Context, peer PeerConfig, ev federation.Event, body []byte) error {
+	if err := p.store.RecordDelivery(ev.ID, peer.NodeName); err != nil {
+		return fmt.Errorf("enqueue delivery %s -> %s: %w", ev.ID, peer.NodeName, err)
 	}
 	endpoint := strings.TrimRight(peer.Endpoint, "/") + "/v1/events"
 
@@ -161,14 +164,31 @@ func (p *Pusher) deliverToPeer(ctx context.Context, peer PeerConfig, eventID str
 		attempts = attempt
 		err := p.postOnce(ctx, endpoint, body)
 		if err == nil {
-			return p.store.UpdateDeliveryStatus(eventID, peer.NodeName, "delivered", attempts, "", p.now(), eventExpiresAt)
+			deliveredAt := p.now()
+			if storeErr := p.store.UpdateDeliveryStatus(ev.ID, peer.NodeName, "delivered", attempts, "", deliveredAt, ev.ExpiresAt); storeErr != nil {
+				return storeErr
+			}
+			p.metrics.RecordDelivery(ctx, ev.Group, peer.NodeName, ev.Type, "delivered")
+			p.metrics.RecordAttempts(ctx, ev.Group, peer.NodeName, ev.Type, "delivered", int64(attempts))
+			if !ev.ObservedAt.IsZero() && !deliveredAt.IsZero() {
+				lag := deliveredAt.Sub(ev.ObservedAt).Seconds()
+				if lag >= 0 {
+					p.metrics.RecordDeliveryLag(ctx, ev.Group, peer.NodeName, ev.Type, lag)
+				}
+			}
+			return nil
 		}
 		lastErr = err.Error()
 		if attempt < p.retry.MaxAttempts {
 			p.sleep(p.backoff(attempt))
 		}
 	}
-	return p.store.UpdateDeliveryStatus(eventID, peer.NodeName, "failed", attempts, lastErr, time.Time{}, eventExpiresAt)
+	if storeErr := p.store.UpdateDeliveryStatus(ev.ID, peer.NodeName, "failed", attempts, lastErr, time.Time{}, ev.ExpiresAt); storeErr != nil {
+		return storeErr
+	}
+	p.metrics.RecordDelivery(ctx, ev.Group, peer.NodeName, ev.Type, "failed")
+	p.metrics.RecordAttempts(ctx, ev.Group, peer.NodeName, ev.Type, "failed", int64(attempts))
+	return nil
 }
 
 // postOnce signs and POSTs the body once, returning an error for transport

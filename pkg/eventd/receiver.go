@@ -33,6 +33,7 @@ type Receiver struct {
 	node         string
 	replayWindow time.Duration
 	now          func() time.Time
+	metrics      *Metrics
 
 	received  atomic.Uint64
 	rejected  atomic.Uint64
@@ -54,6 +55,8 @@ func NewReceiver(store EventStore, secret []byte, group, node string, replayWind
 	}
 }
 
+func (r *Receiver) SetMetrics(m *Metrics) { r.metrics = m }
+
 // Register mounts the receiver routes on mux.
 func (r *Receiver) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/events", r.handleEvents)
@@ -68,6 +71,7 @@ func (r *Receiver) Handler() http.Handler {
 }
 
 func (r *Receiver) handleEvents(w http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
 	if req.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -75,6 +79,7 @@ func (r *Receiver) handleEvents(w http.ResponseWriter, req *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(req.Body, maxBodyBytes))
 	if err != nil {
 		r.rejected.Add(1)
+		r.metrics.RecordReceiverReject(ctx, r.group, "read_body")
 		http.Error(w, "read body", http.StatusBadRequest)
 		return
 	}
@@ -83,6 +88,7 @@ func (r *Receiver) handleEvents(w http.ResponseWriter, req *http.Request) {
 	ts, err := strconv.ParseInt(tsRaw, 10, 64)
 	if err != nil {
 		r.rejected.Add(1)
+		r.metrics.RecordReceiverReject(ctx, r.group, "bad_timestamp")
 		http.Error(w, "bad timestamp", http.StatusBadRequest)
 		return
 	}
@@ -90,8 +96,10 @@ func (r *Receiver) handleEvents(w http.ResponseWriter, req *http.Request) {
 		r.rejected.Add(1)
 		switch err {
 		case federation.ErrStaleTimestamp:
+			r.metrics.RecordReceiverReject(ctx, r.group, "stale_timestamp")
 			http.Error(w, "stale timestamp", http.StatusForbidden)
 		default:
+			r.metrics.RecordReceiverReject(ctx, r.group, "bad_signature")
 			http.Error(w, "bad signature", http.StatusUnauthorized)
 		}
 		return
@@ -100,11 +108,13 @@ func (r *Receiver) handleEvents(w http.ResponseWriter, req *http.Request) {
 	var ev federation.Event
 	if err := json.Unmarshal(body, &ev); err != nil {
 		r.rejected.Add(1)
+		r.metrics.RecordReceiverReject(ctx, r.group, "bad_body")
 		http.Error(w, "bad event body", http.StatusBadRequest)
 		return
 	}
 	if err := ev.Normalize(); err != nil {
 		r.rejected.Add(1)
+		r.metrics.RecordReceiverReject(ctx, r.group, "validation")
 		http.Error(w, "invalid event: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -135,13 +145,16 @@ func (r *Receiver) handleEvents(w http.ResponseWriter, req *http.Request) {
 		// Persistence failure is the one case we must NOT 200 on: the peer
 		// should retry. Do not count it as received.
 		r.rejected.Add(1)
+		r.metrics.RecordReceiverReject(ctx, r.group, "store_error")
 		http.Error(w, "store error", http.StatusInternalServerError)
 		return
 	}
 	if dup {
 		r.duplicate.Add(1)
+		r.metrics.RecordReceiverDuplicate(ctx, r.group)
 	} else {
 		r.received.Add(1)
+		r.metrics.RecordReceiverAccepted(ctx, r.group)
 	}
 	// 200 even on duplicate id — at-least-once.
 	w.Header().Set("Content-Type", "application/json")
