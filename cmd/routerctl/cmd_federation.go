@@ -26,6 +26,8 @@ func federationCommand(args []string, stdout, stderr io.Writer) error {
 	switch args[0] {
 	case "event":
 		return federationEventCommand(args[1:], stdout, stderr)
+	case "deliveries":
+		return federationDeliveriesCommand(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		federationUsage(stdout)
 		return nil
@@ -360,6 +362,108 @@ func generateEventID() string {
 	return fmt.Sprintf("evt-%d-%s", time.Now().UnixNano(), hex.EncodeToString(buf[:]))
 }
 
+func federationDeliveriesCommand(args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		federationUsage(stderr)
+		return errors.New("federation deliveries requires subcommand")
+	}
+	switch args[0] {
+	case "summary":
+		return federationDeliveriesSummaryCommand(args[1:], stdout)
+	case "help", "-h", "--help":
+		federationUsage(stdout)
+		return nil
+	default:
+		return fmt.Errorf("unknown federation deliveries subcommand %q", args[0])
+	}
+}
+
+func federationDeliveriesSummaryCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("federation deliveries summary", flag.ContinueOnError)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"Show per-peer delivery summary for CloudEdge federation events (ADR 0006, Phase 2).\n"+
+				"Aggregates delivery status, stale TTL detection, lag, and expiry across peers.",
+			"routerctl federation deliveries summary --group cloudedge\n"+
+				"routerctl fed deliveries summary --group cloudedge --peer oci-router-b\n"+
+				"routerctl fed deliveries summary --group cloudedge --type routerd.mobility.shard.assigned -o json")
+	}
+	statePath := fs.String("state-file", defaultStatePath(), "routerd state database file")
+	group := fs.String("group", "", "filter to a single EventGroup (bus) name")
+	peer := fs.String("peer", "", "filter to a single peer node name")
+	eventType := fs.String("type", "", "filter to a single event type")
+	includeExpired := fs.Bool("include-expired", false, "include deliveries for expired events")
+	output := "table"
+	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
+	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected federation deliveries summary argument %q", fs.Arg(0))
+	}
+
+	store, err := routerstate.Open(*statePath)
+	if err != nil {
+		return err
+	}
+	if closer, ok := store.(interface{ Close() error }); ok {
+		defer closer.Close()
+	}
+	summaryStore, ok := store.(routerstate.FederationDeliverySummaryStore)
+	if !ok {
+		return fmt.Errorf("state file %s does not support federation delivery summary", *statePath)
+	}
+	rows, err := summaryStore.ListDeliverySummary(*group, *peer, *eventType, *includeExpired, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	switch output {
+	case "", "table":
+		return writeDeliverySummaryTable(stdout, rows)
+	case "json":
+		return writeJSON(stdout, rows)
+	case "yaml":
+		return writeYAML(stdout, rows)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
+func writeDeliverySummaryTable(stdout io.Writer, rows []routerstate.DeliverySummaryRow) error {
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "GROUP\tPEER\tEVENTS\tDELIVERED\tSTALE_TTL\tFAILED\tPENDING\tMAX_LAG\tMIN_EXPIRES_IN")
+	for _, r := range rows {
+		fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%s\t%s\n",
+			r.Group,
+			r.Peer,
+			r.Events,
+			r.Delivered,
+			r.StaleTTL,
+			r.Failed,
+			r.Pending,
+			formatDurationSeconds(r.MaxLagSeconds),
+			formatDurationSeconds(r.MinExpiresInSeconds),
+		)
+	}
+	return w.Flush()
+}
+
+func formatDurationSeconds(seconds int64) string {
+	if seconds == 0 {
+		return "-"
+	}
+	d := time.Duration(seconds) * time.Second
+	if d < 0 {
+		return fmt.Sprintf("-%s", (-d).Truncate(time.Second))
+	}
+	return d.Truncate(time.Second).String()
+}
+
 func federationUsage(w io.Writer) {
 	fmt.Fprintln(w, "usage: routerctl federation <subcommand> [options]")
 	fmt.Fprintln(w, "")
@@ -367,4 +471,5 @@ func federationUsage(w io.Writer) {
 	fmt.Fprintln(w, "  event emit --group <name> --type <topic> [--subject <s>] [--source-node <n>] [--id <id>] [--dedupe-key <k>] [--payload k=v ...] [--ttl <dur>] [--observed-at <rfc3339>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  event list [--group <name>] [--include-expired] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  event deliveries [--group <name>] [--event-id <id>] [--peer <name>] [--status pending|delivered|failed] [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  deliveries summary [--group <name>] [--peer <name>] [--type <type>] [--include-expired] [--state-file <path>] [-o table|json|yaml]")
 }

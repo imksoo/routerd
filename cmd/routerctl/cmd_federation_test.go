@@ -307,3 +307,195 @@ func TestFederationEventDeliveriesFilters(t *testing.T) {
 		t.Fatalf("invalid --status should error, got nil\n%s", errOut.String())
 	}
 }
+
+func TestFederationDeliveriesSummary(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "fed.db")
+
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+
+	now := time.Now().UTC()
+	observedAt := now.Add(-30 * time.Second)
+	expiresAt := now.Add(10 * time.Minute)
+
+	events := []routerstate.EventRecord{
+		{ID: "evt-1", Group: "cloudedge", Type: "routerd.mobility.shard.assigned", Subject: "shard-a", SourceNode: "node-a", ObservedAt: observedAt, ExpiresAt: expiresAt},
+		{ID: "evt-2", Group: "cloudedge", Type: "routerd.mobility.shard.assigned", Subject: "shard-b", SourceNode: "node-a", ObservedAt: observedAt, ExpiresAt: expiresAt},
+		{ID: "evt-3", Group: "other", Type: "routerd.client.ipv4.observed", Subject: "10.1.2.3/32", SourceNode: "node-b", ObservedAt: observedAt, ExpiresAt: expiresAt},
+	}
+	for _, ev := range events {
+		if err := store.RecordFederationEvent(ev); err != nil {
+			t.Fatalf("record event %s: %v", ev.ID, err)
+		}
+	}
+
+	type delivery struct {
+		eventID, peer, status string
+		deliveredAt           time.Time
+		eventExpiresAt        time.Time
+	}
+	deliveries := []delivery{
+		{"evt-1", "peer-a", routerstate.DeliveryDelivered, now.Add(-25 * time.Second), expiresAt},
+		{"evt-1", "peer-b", routerstate.DeliveryDelivered, now.Add(-20 * time.Second), expiresAt},
+		{"evt-2", "peer-a", routerstate.DeliveryDelivered, now.Add(-22 * time.Second), expiresAt.Add(-5 * time.Minute)},
+		{"evt-2", "peer-b", routerstate.DeliveryFailed, time.Time{}, time.Time{}},
+		{"evt-3", "peer-c", routerstate.DeliveryPending, time.Time{}, time.Time{}},
+	}
+	for _, d := range deliveries {
+		if err := store.RecordDelivery(d.eventID, d.peer); err != nil {
+			t.Fatalf("record delivery %s/%s: %v", d.eventID, d.peer, err)
+		}
+		if d.status != routerstate.DeliveryPending {
+			if err := store.UpdateDeliveryStatus(d.eventID, d.peer, d.status, 1, "", d.deliveredAt, d.eventExpiresAt); err != nil {
+				t.Fatalf("update delivery %s/%s: %v", d.eventID, d.peer, err)
+			}
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	summaryJSON := func(t *testing.T, extra ...string) []routerstate.DeliverySummaryRow {
+		t.Helper()
+		args := append([]string{
+			"federation", "deliveries", "summary",
+			"--state-file", statePath,
+			"-o", "json",
+		}, extra...)
+		var out bytes.Buffer
+		if err := run(args, &out, &bytes.Buffer{}); err != nil {
+			t.Fatalf("summary %v: %v\n%s", extra, err, out.String())
+		}
+		var rows []routerstate.DeliverySummaryRow
+		if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+			t.Fatalf("decode summary %v: %v\n%s", extra, err, out.String())
+		}
+		return rows
+	}
+
+	// (1) All groups, all peers.
+	all := summaryJSON(t)
+	if len(all) != 3 {
+		t.Fatalf("want 3 summary rows (cloudedge/peer-a, cloudedge/peer-b, other/peer-c), got %d: %+v", len(all), all)
+	}
+
+	// (2) Filter by group.
+	cloudedge := summaryJSON(t, "--group", "cloudedge")
+	if len(cloudedge) != 2 {
+		t.Fatalf("want 2 rows for cloudedge, got %d: %+v", len(cloudedge), cloudedge)
+	}
+	// peer-a: 2 delivered (1 stale TTL), 0 failed.
+	peerA := cloudedge[0]
+	if peerA.Peer != "peer-a" {
+		t.Fatalf("first row peer = %q, want peer-a", peerA.Peer)
+	}
+	if peerA.Events != 2 || peerA.Delivered != 2 || peerA.Failed != 0 {
+		t.Fatalf("peer-a summary = events=%d delivered=%d failed=%d, want 2/2/0", peerA.Events, peerA.Delivered, peerA.Failed)
+	}
+	if peerA.StaleTTL != 1 {
+		t.Fatalf("peer-a staleTTL = %d, want 1 (evt-2 delivered with older eventExpiresAt)", peerA.StaleTTL)
+	}
+	if peerA.MaxLagSeconds <= 0 {
+		t.Fatalf("peer-a maxLagSeconds = %d, want > 0", peerA.MaxLagSeconds)
+	}
+
+	// peer-b: 1 delivered, 1 failed.
+	peerB := cloudedge[1]
+	if peerB.Peer != "peer-b" {
+		t.Fatalf("second row peer = %q, want peer-b", peerB.Peer)
+	}
+	if peerB.Delivered != 1 || peerB.Failed != 1 {
+		t.Fatalf("peer-b summary = delivered=%d failed=%d, want 1/1", peerB.Delivered, peerB.Failed)
+	}
+
+	// (3) Filter by peer.
+	byPeer := summaryJSON(t, "--group", "cloudedge", "--peer", "peer-a")
+	if len(byPeer) != 1 || byPeer[0].Peer != "peer-a" {
+		t.Fatalf("peer filter: got %+v", byPeer)
+	}
+
+	// (4) Filter by type.
+	byType := summaryJSON(t, "--type", "routerd.client.ipv4.observed")
+	if len(byType) != 1 || byType[0].Group != "other" {
+		t.Fatalf("type filter: got %+v", byType)
+	}
+
+	// (5) Unknown group -> empty.
+	empty := summaryJSON(t, "--group", "no-such-group")
+	if len(empty) != 0 {
+		t.Fatalf("unknown group: got %d rows", len(empty))
+	}
+
+	// (6) Table output doesn't error.
+	var tableOut bytes.Buffer
+	if err := run([]string{
+		"federation", "deliveries", "summary",
+		"--state-file", statePath,
+		"--group", "cloudedge",
+	}, &tableOut, &bytes.Buffer{}); err != nil {
+		t.Fatalf("table output: %v\n%s", err, tableOut.String())
+	}
+	table := tableOut.String()
+	for _, want := range []string{"GROUP", "PEER", "DELIVERED", "STALE_TTL", "MAX_LAG"} {
+		if !strings.Contains(table, want) {
+			t.Fatalf("table output missing %q:\n%s", want, table)
+		}
+	}
+}
+
+func TestFederationDeliveriesSummaryMinExpiresIn(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "fed.db")
+
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+
+	now := time.Now().UTC()
+	ev := routerstate.EventRecord{
+		ID:         "evt-ttl",
+		Group:      "g",
+		Type:       "t",
+		SourceNode: "n",
+		ObservedAt: now.Add(-10 * time.Second),
+		ExpiresAt:  now.Add(5 * time.Minute),
+	}
+	if err := store.RecordFederationEvent(ev); err != nil {
+		t.Fatalf("record event: %v", err)
+	}
+	if err := store.RecordDelivery("evt-ttl", "p"); err != nil {
+		t.Fatalf("record delivery: %v", err)
+	}
+	if err := store.UpdateDeliveryStatus("evt-ttl", "p", routerstate.DeliveryDelivered, 1, "", now, ev.ExpiresAt); err != nil {
+		t.Fatalf("update delivery: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := run([]string{
+		"federation", "deliveries", "summary",
+		"--state-file", statePath,
+		"-o", "json",
+	}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("summary: %v\n%s", err, out.String())
+	}
+	var rows []routerstate.DeliverySummaryRow
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode: %v\n%s", err, out.String())
+	}
+	if len(rows) != 1 {
+		t.Fatalf("want 1 row, got %d", len(rows))
+	}
+	if rows[0].MinExpiresInSeconds <= 0 || rows[0].MinExpiresInSeconds > 300 {
+		t.Fatalf("minExpiresInSeconds = %d, want (0, 300]", rows[0].MinExpiresInSeconds)
+	}
+	if rows[0].StaleTTL != 0 {
+		t.Fatalf("staleTTL = %d, want 0 (no TTL drift)", rows[0].StaleTTL)
+	}
+}

@@ -83,7 +83,7 @@ type doctorRunner struct {
 	store  routerstate.Store
 }
 
-var doctorAreas = []string{"wan", "dns", "dslite", "dhcpv6-pd", "nat", "firewall", "rollback", "disk", "mgmt", "reconcile", "runtime", "dynamic", "routes", "plugin", "hybrid", "sam"}
+var doctorAreas = []string{"wan", "dns", "dslite", "dhcpv6-pd", "nat", "firewall", "rollback", "disk", "mgmt", "reconcile", "runtime", "dynamic", "routes", "plugin", "hybrid", "sam", "federation"}
 
 // doctorReconcileWarnThreshold is the total historical error count (across all
 // controllers) that promotes the reconcile area to warn. Current controller
@@ -243,6 +243,8 @@ func (r doctorRunner) runArea(area string) []doctorCheck {
 		return r.doctorHybrid()
 	case "sam":
 		return r.doctorSAM()
+	case "federation":
+		return r.doctorFederation()
 	default:
 		return []doctorCheck{{Area: area, Name: "area", Status: doctorSkip, Detail: "unknown area"}}
 	}

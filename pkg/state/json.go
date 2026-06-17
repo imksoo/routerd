@@ -117,6 +117,12 @@ type FederationDeliveryStore interface {
 	ListDeliveriesFiltered(group, eventID, peer, status string) ([]DeliveryRecord, error)
 }
 
+// FederationDeliverySummaryStore provides aggregated per-(group, peer) delivery
+// statistics for observability and doctor checks. Read-only.
+type FederationDeliverySummaryStore interface {
+	ListDeliverySummary(group, peer, eventType string, includeExpired bool, now time.Time) ([]DeliverySummaryRow, error)
+}
+
 type DynamicConfigPartLister interface {
 	ListDynamicConfigParts() ([]DynamicConfigPartRecord, error)
 	GetDynamicConfigPartsBySource(source string) ([]DynamicConfigPartRecord, error)
