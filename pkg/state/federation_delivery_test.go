@@ -42,10 +42,10 @@ func TestDeliveryRecordUpdateListRoundTrip(t *testing.T) {
 	}
 
 	delivered := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-	if err := store.UpdateDeliveryStatus("evt-1", "peer-a", DeliveryDelivered, 1, "", delivered); err != nil {
+	if err := store.UpdateDeliveryStatus("evt-1", "peer-a", DeliveryDelivered, 1, "", delivered, time.Time{}); err != nil {
 		t.Fatalf("update delivered: %v", err)
 	}
-	if err := store.UpdateDeliveryStatus("evt-1", "peer-b", DeliveryFailed, 3, "connection refused", time.Time{}); err != nil {
+	if err := store.UpdateDeliveryStatus("evt-1", "peer-b", DeliveryFailed, 3, "connection refused", time.Time{}, time.Time{}); err != nil {
 		t.Fatalf("update failed: %v", err)
 	}
 
@@ -117,7 +117,7 @@ func TestListDeliveriesFiltered(t *testing.T) {
 			t.Fatalf("record delivery %s/%s: %v", d.eventID, d.peer, err)
 		}
 		if d.status != DeliveryPending {
-			if err := store.UpdateDeliveryStatus(d.eventID, d.peer, d.status, d.attempts, "", time.Time{}); err != nil {
+			if err := store.UpdateDeliveryStatus(d.eventID, d.peer, d.status, d.attempts, "", time.Time{}, time.Time{}); err != nil {
 				t.Fatalf("update delivery %s/%s: %v", d.eventID, d.peer, err)
 			}
 		}
