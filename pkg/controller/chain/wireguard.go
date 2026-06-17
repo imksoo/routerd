@@ -218,14 +218,18 @@ func (c WireGuardController) resolvePeersFrom(iface string, spec api.WireGuardIn
 }
 
 func (c WireGuardController) samNodeSet(ref string) (api.SAMNodeSetSpec, bool, error) {
+	if c.Router == nil {
+		return api.SAMNodeSetSpec{}, false, nil
+	}
+	return lookupSAMNodeSet(c.Router, ref)
+}
+
+func lookupSAMNodeSet(router *api.Router, ref string) (api.SAMNodeSetSpec, bool, error) {
 	kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
 	if !ok || kind != "SAMNodeSet" || strings.TrimSpace(name) == "" {
 		return api.SAMNodeSetSpec{}, false, fmt.Errorf("peersFrom resource must reference SAMNodeSet/<name>")
 	}
-	if c.Router == nil {
-		return api.SAMNodeSetSpec{}, false, nil
-	}
-	for _, resource := range c.Router.Spec.Resources {
+	for _, resource := range router.Spec.Resources {
 		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMNodeSet" || resource.Metadata.Name != strings.TrimSpace(name) {
 			continue
 		}
@@ -236,6 +240,149 @@ func (c WireGuardController) samNodeSet(ref string) (api.SAMNodeSetSpec, bool, e
 		return spec, true, nil
 	}
 	return api.SAMNodeSetSpec{}, false, nil
+}
+
+// resolveWireGuardSAMResources resolves peersFrom SAMNodeSet references on
+// WireGuardInterface resources, generating WireGuardPeer (peer),
+// IPv4Route (peer samEndpoint), and IPv4StaticAddress (self samEndpoint)
+// resources. Called from effectiveRouterForReconcile so all controllers
+// see the generated resources and each independently reconciles its own
+// resource types.
+func resolveWireGuardSAMResources(router *api.Router) (*api.Router, error) {
+	if router == nil {
+		return router, nil
+	}
+	var generated []api.Resource
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "WireGuardInterface" {
+			continue
+		}
+		spec, err := resource.WireGuardInterfaceSpec()
+		if err != nil {
+			return nil, err
+		}
+		if len(spec.PeersFrom) == 0 {
+			continue
+		}
+		iface := resource.Metadata.Name
+		self := strings.TrimSpace(spec.SelfNodeRef)
+		if self == "" {
+			self = strings.TrimSpace(router.Metadata.Name)
+		}
+		for _, source := range spec.PeersFrom {
+			ref := strings.TrimSpace(source.Resource)
+			nodeSet, found, err := lookupSAMNodeSet(router, ref)
+			if err != nil {
+				if source.Optional {
+					continue
+				}
+				return nil, err
+			}
+			if !found {
+				continue
+			}
+			for _, node := range nodeSet.Nodes {
+				nodeRef := strings.TrimSpace(node.NodeRef)
+				if nodeRef == "" {
+					continue
+				}
+				if nodeRef == self {
+					if ep := strings.TrimSpace(node.SAMEndpoint); ep != "" {
+						if addr, parseErr := netip.ParseAddr(ep); parseErr == nil {
+							generated = append(generated, api.Resource{
+								TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+								Metadata: api.ObjectMeta{
+									Name: "wg-sam-addr-" + iface,
+									Annotations: map[string]string{
+										"routerd.net/generated-from": ref,
+									},
+								},
+								Spec: api.IPv4StaticAddressSpec{
+									Interface: iface,
+									Address:   netip.PrefixFrom(addr, 32).String(),
+								},
+							})
+						}
+					}
+					continue
+				}
+				wg := node.WireGuard
+				if !samNodeWireGuardConfigured(wg) {
+					continue
+				}
+				generated = append(generated, api.Resource{
+					TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardPeer"},
+					Metadata: api.ObjectMeta{
+						Name: nodeRef,
+						Annotations: map[string]string{
+							"routerd.net/generated-from": ref,
+						},
+					},
+					Spec: api.WireGuardPeerSpec{
+						Interface:           iface,
+						PublicKey:            strings.TrimSpace(wg.PublicKey),
+						AllowedIPs:           append([]string(nil), wg.AllowedIPs...),
+						Endpoint:             strings.TrimSpace(wg.Endpoint),
+						PersistentKeepalive:  wg.PersistentKeepalive,
+					},
+				})
+				if ep := strings.TrimSpace(node.SAMEndpoint); ep != "" {
+					if addr, parseErr := netip.ParseAddr(ep); parseErr == nil {
+						generated = append(generated, api.Resource{
+							TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
+							Metadata: api.ObjectMeta{
+								Name: "wg-sam-endpoint-" + nodeRef,
+								Annotations: map[string]string{
+									"routerd.net/generated-from": ref,
+								},
+							},
+							Spec: api.IPv4RouteSpec{
+								Destination: netip.PrefixFrom(addr, 32).String(),
+								Device:      iface,
+							},
+						})
+					}
+				}
+			}
+		}
+	}
+	if len(generated) == 0 {
+		return router, nil
+	}
+	merged := make([]api.Resource, 0, len(router.Spec.Resources)+len(generated))
+	genIndex := map[string]int{}
+	addGenerated := func(res api.Resource) {
+		name := strings.TrimSpace(res.Metadata.Name)
+		if name == "" {
+			return
+		}
+		res.Metadata.Name = name
+		key := res.Kind + "/" + name
+		if existing, ok := genIndex[key]; ok {
+			merged[existing] = res
+			return
+		}
+		genIndex[key] = len(merged)
+		merged = append(merged, res)
+	}
+	for _, res := range generated {
+		addGenerated(res)
+	}
+	for _, resource := range router.Spec.Resources {
+		key := resource.Kind + "/" + resource.Metadata.Name
+		if resource.Kind == "WireGuardPeer" {
+			addGenerated(resource)
+			continue
+		}
+		if _, overrides := genIndex[key]; overrides {
+			addGenerated(resource)
+			continue
+		}
+		merged = append(merged, resource)
+	}
+	result := *router
+	result.Spec.Resources = merged
+	return &result, nil
 }
 
 func samNodeWireGuardConfigured(spec api.SAMNodeWireGuardSpec) bool {
