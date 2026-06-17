@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -29,19 +30,22 @@ func (r doctorRunner) doctorFederation() []doctorCheck {
 	if err != nil {
 		return []doctorCheck{{Area: "federation", Name: "delivery summary", Status: doctorFail, Detail: err.Error(), Remedy: "check state backend and retry"}}
 	}
-	if len(rows) == 0 {
-		return []doctorCheck{{Area: "federation", Name: "delivery summary", Status: doctorSkip, Detail: "no federation delivery records"}}
-	}
 
 	var checks []doctorCheck
-	for _, row := range rows {
-		label := row.Group + "/" + row.Peer
-		checks = append(checks, doctorFederationFailedCheck(label, row))
-		checks = append(checks, doctorFederationPendingCheck(label, row, now, hasFedEvents, fedStore, hasDeliveries, deliveryStore))
-		checks = append(checks, doctorFederationStaleTTLCheck(label, row))
-		checks = append(checks, doctorFederationLagCheck(label, row))
-		checks = append(checks, doctorFederationExpiresCheck(label, row))
+	if len(rows) == 0 {
+		checks = append(checks, doctorCheck{Area: "federation", Name: "delivery summary", Status: doctorSkip, Detail: "no federation delivery records"})
+	} else {
+		for _, row := range rows {
+			label := row.Group + "/" + row.Peer
+			checks = append(checks, doctorFederationFailedCheck(label, row))
+			checks = append(checks, doctorFederationPendingCheck(label, row, now, hasFedEvents, fedStore, hasDeliveries, deliveryStore))
+			checks = append(checks, doctorFederationStaleTTLCheck(label, row))
+			checks = append(checks, doctorFederationLagCheck(label, row))
+			checks = append(checks, doctorFederationExpiresCheck(label, row))
+		}
 	}
+
+	checks = append(checks, r.doctorFederationExpectedPeerChecks(now, hasFedEvents, fedStore, hasDeliveries, deliveryStore)...)
 	return checks
 }
 
@@ -187,4 +191,153 @@ func doctorFederationExpiresCheck(label string, row routerstate.DeliverySummaryR
 		}
 	}
 	return doctorCheck{Area: "federation", Name: name, Status: doctorPass, Detail: detail}
+}
+
+// doctorFederationExpectedPeerChecks compares the expected peer set (derived from
+// EventPeer resources in the startup config) against actual delivery rows in the
+// state store. A peer that should receive active events but has no delivery row
+// is a FAIL — the outbox never enqueued delivery for that peer.
+func (r doctorRunner) doctorFederationExpectedPeerChecks(now time.Time, hasFedEvents bool, fedStore routerstate.FederationEventStore, hasDeliveries bool, deliveryStore routerstate.FederationDeliveryStore) []doctorCheck {
+	if r.router == nil {
+		return []doctorCheck{{Area: "federation", Name: "expected peers", Status: doctorSkip, Detail: "startup config unavailable"}}
+	}
+	if !hasFedEvents || !hasDeliveries {
+		return []doctorCheck{{Area: "federation", Name: "expected peers", Status: doctorSkip, Detail: "federation store unavailable"}}
+	}
+
+	type expectedPeer struct {
+		nodeName string
+		endpoint string
+	}
+	groupPeers := map[string][]expectedPeer{}
+	groupSelf := map[string]string{}
+
+	for _, res := range r.router.Spec.Resources {
+		if res.Kind == "EventGroup" {
+			spec, err := res.EventGroupSpec()
+			if err != nil {
+				continue
+			}
+			groupSelf[res.Metadata.Name] = strings.TrimSpace(spec.NodeName)
+		}
+	}
+
+	for _, res := range r.router.Spec.Resources {
+		if res.Kind != "EventPeer" {
+			continue
+		}
+		spec, err := res.EventPeerSpec()
+		if err != nil {
+			continue
+		}
+		groupRef := strings.TrimSpace(spec.GroupRef)
+		nodeName := strings.TrimSpace(spec.NodeName)
+		if groupRef == "" || nodeName == "" {
+			continue
+		}
+		self := groupSelf[groupRef]
+		if nodeName == self {
+			continue
+		}
+		groupPeers[groupRef] = append(groupPeers[groupRef], expectedPeer{
+			nodeName: nodeName,
+			endpoint: strings.TrimSpace(spec.Endpoint),
+		})
+	}
+
+	if len(groupPeers) == 0 {
+		return []doctorCheck{{Area: "federation", Name: "expected peers", Status: doctorSkip, Detail: "no EventPeer resources configured"}}
+	}
+
+	var checks []doctorCheck
+	for group, peers := range groupPeers {
+		events, err := fedStore.ListFederationEvents(group, false, now.Unix())
+		if err != nil {
+			checks = append(checks, doctorCheck{
+				Area: "federation", Name: group + " expected peers",
+				Status: doctorWarn, Detail: "events unavailable: " + err.Error(),
+			})
+			continue
+		}
+		selfEmitted := filterSelfEmittedEvents(events, groupSelf[group])
+		if len(selfEmitted) == 0 {
+			checks = append(checks, doctorCheck{
+				Area: "federation", Name: group + " expected peers",
+				Status: doctorSkip, Detail: "no self-emitted active events to deliver",
+			})
+			continue
+		}
+
+		for _, peer := range peers {
+			label := group + "/" + peer.nodeName + " expected delivery"
+
+			if peer.endpoint == "" {
+				checks = append(checks, doctorCheck{
+					Area:   "federation",
+					Name:   label,
+					Status: doctorFail,
+					Detail: "EventPeer endpoint is empty",
+					Remedy: "set spec.endpoint on EventPeer/" + peer.nodeName + " for group " + group,
+				})
+				continue
+			}
+
+			deliveries, err := deliveryStore.ListDeliveriesFiltered(group, "", peer.nodeName, "")
+			if err != nil {
+				checks = append(checks, doctorCheck{
+					Area: "federation", Name: label,
+					Status: doctorWarn, Detail: "delivery lookup failed: " + err.Error(),
+				})
+				continue
+			}
+			deliveredEvents := map[string]bool{}
+			for _, d := range deliveries {
+				deliveredEvents[d.EventID] = true
+			}
+
+			var missing []string
+			for _, ev := range selfEmitted {
+				if !deliveredEvents[ev.ID] {
+					missing = append(missing, ev.ID)
+				}
+			}
+			if len(missing) > 0 {
+				sort.Strings(missing)
+				detail := fmt.Sprintf("%d of %d active event(s) have no delivery row", len(missing), len(selfEmitted))
+				if len(missing) <= 3 {
+					detail += ": " + strings.Join(missing, ", ")
+				} else {
+					detail += ": " + strings.Join(missing[:3], ", ") + fmt.Sprintf(" +%d more", len(missing)-3)
+				}
+				checks = append(checks, doctorCheck{
+					Area:   "federation",
+					Name:   label,
+					Status: doctorFail,
+					Detail: detail,
+					Remedy: "outbox never enqueued delivery for this peer; check EventPeer config and outbox peer filter",
+				})
+			} else {
+				checks = append(checks, doctorCheck{
+					Area:   "federation",
+					Name:   label,
+					Status: doctorPass,
+					Detail: fmt.Sprintf("all %d active event(s) have delivery rows", len(selfEmitted)),
+				})
+			}
+		}
+	}
+	return checks
+}
+
+func filterSelfEmittedEvents(events []routerstate.EventRecord, selfNode string) []routerstate.EventRecord {
+	if selfNode == "" {
+		return events
+	}
+	var result []routerstate.EventRecord
+	for _, ev := range events {
+		if strings.TrimSpace(ev.SourceNode) == selfNode {
+			result = append(result, ev)
+		}
+	}
+	return result
 }
