@@ -69,7 +69,7 @@ install -d "${overlay_root}/usr/local/sbin" \
     "${overlay_root}/etc/init.d" \
     "${overlay_root}/etc/local.d" \
     "${overlay_root}/etc/runlevels/default" \
-    "${overlay_root}/root"
+    -m 0700 "${overlay_root}/root"
 
 for binary in bin/linux-amd64/*; do
     [ -f "${binary}" ] || continue
@@ -848,13 +848,10 @@ ensure_openssh() {
 configure_sshd() {
     mkdir -p /etc/ssh
     cat > /etc/ssh/sshd_config << 'SSHD_EOF'
-Protocol 2
 PermitRootLogin prohibit-password
 PubkeyAuthentication yes
 AuthorizedKeysFile .ssh/authorized_keys
 PasswordAuthentication no
-ChallengeResponseAuthentication no
-UsePAM no
 PrintMotd no
 SSHD_EOF
     chmod 0600 /etc/ssh/sshd_config
@@ -891,6 +888,7 @@ if [ -z "${keys_src}" ]; then
     exit 0
 fi
 
+chmod 0700 /root
 mkdir -p /root/.ssh
 chmod 0700 /root/.ssh
 install -m 0600 "${keys_src}" /root/.ssh/authorized_keys
