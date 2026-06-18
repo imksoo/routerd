@@ -1,26 +1,28 @@
+{/* This file is a template — copy it, replace TEMPLATE with the run date, remove this comment, and fill in. */}
+
 # Federation P4 Operational Qualification — Evidence
 
-> Fill in after running `scripts/cloudedge-federation-qualification.sh`.
-> Copy this file, replace TEMPLATE with the run date, and commit the filled version.
+Fill in after running `scripts/cloudedge-federation-qualification.sh`.
+Copy this file, replace TEMPLATE with the run date, and commit the filled version.
 
 ## Run metadata
 
 | Field | Value |
 |-------|-------|
-| Run ID | `<runId from run-metadata.json>` |
-| Commit | `<git short SHA>` |
-| Date | `<YYYY-MM-DD>` |
+| Run ID | `(runId from run-metadata.json)` |
+| Commit | `(git short SHA)` |
+| Date | `(YYYY-MM-DD)` |
 | Branch | `feat/p4-federation-operational-qualification` |
 | Harness | `scripts/cloudedge-federation-qualification.sh` |
-| Cycles | `<N>` |
-| Duration/scenario | `<N>s` |
+| Cycles | `(N)` |
+| Duration/scenario | `(N)s` |
 
 ## Topology
 
 | Role | Host | Provider | Config digest |
 |------|------|----------|---------------|
-| Sender | `<hostname>` | `<pve/aws/azure/oci>` | `<sha256>` |
-| Receiver | `<hostname>` | `<pve/aws/azure/oci>` | `<sha256>` |
+| Sender | `(hostname)` | `(pve/aws/azure/oci)` | `(sha256)` |
+| Receiver | `(hostname)` | `(pve/aws/azure/oci)` | `(sha256)` |
 
 ## Scenario results
 
@@ -35,39 +37,39 @@
 | 7 | security | | | HMAC / malformed rejection |
 | 8 | multi-group | | | Multi-group SLO isolation |
 
-Overall: **<pass/fail>**
+Overall: **(pass/fail)**
 
 ## Doctor snapshots
 
 ### Before qualification
 
 ```json
-<paste doctorBefore from healthy.json>
+(paste doctorBefore from healthy.json)
 ```
 
 ### After qualification
 
 ```json
-<paste doctorAfter from last scenario>
+(paste doctorAfter from last scenario)
 ```
 
 ## Remediation plan (plan-only)
 
 ```json
-<paste remediationPlan from healthy.json>
+(paste remediationPlan from healthy.json)
 ```
 
 ## Metrics verification
 
 | Metric | Observed | Expected | Status |
 |--------|----------|----------|--------|
-| `routerd_eventd_delivery_total` | | >0 | |
-| `routerd_eventd_delivery_lag_seconds` | | <SLO threshold | |
+| `routerd_eventd_delivery_total` | | &gt;0 | |
+| `routerd_eventd_delivery_lag_seconds` | | within SLO threshold | |
 | `routerd_eventd_repush_total` | | ≥0 | |
 | `routerd_eventd_stale_ttl_total` | | 0 after recovery | |
-| `routerd_eventd_accepted_total` | | >0 | |
+| `routerd_eventd_accepted_total` | | &gt;0 | |
 | `routerd_eventd_duplicate_total` | | ≥0 | |
-| `routerd_eventd_reject_total` | | ≥0 (>0 for security scenario) | |
+| `routerd_eventd_reject_total` | | ≥0 (&gt;0 for security scenario) | |
 
 ## Evidence files
 
