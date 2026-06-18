@@ -48,6 +48,7 @@ type Options struct {
 	VPNStatus              func() (VPNStatus, error)
 	Title                  string
 	BasePath               string
+	ConsoleLinks           []ConsoleLink
 	ConnectionsLimit       int
 	DNSQueryLogPath        string
 	TrafficFlowLogPath     string
@@ -74,6 +75,7 @@ type Handler struct {
 
 type Snapshot struct {
 	GeneratedAt      time.Time                     `json:"generatedAt"`
+	ConsoleLinks     []ConsoleLink                 `json:"consoleLinks,omitempty"`
 	Status           controlapi.Status             `json:"status"`
 	Controllers      []controlapi.ControllerStatus `json:"controllers,omitempty"`
 	GatewayHealth    GatewayHealth                 `json:"gatewayHealth"`
@@ -94,6 +96,12 @@ type Snapshot struct {
 	DPI              *DPIStatus                    `json:"dpi,omitempty"`
 	SystemUsage      SystemUsage                   `json:"systemUsage,omitempty"`
 	Errors           []string                      `json:"errors,omitempty"`
+}
+
+type ConsoleLink struct {
+	Label       string `json:"label"`
+	URL         string `json:"url"`
+	Description string `json:"description,omitempty"`
 }
 
 type SystemUsage struct {
@@ -571,6 +579,7 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 	recordConsoleMetrics(context.Background(), resources, controllers, dhcpLeases, clients, stickyLeases, now)
 	return Snapshot{
 		GeneratedAt:      now,
+		ConsoleLinks:     cleanConsoleLinks(h.opts.ConsoleLinks),
 		Status:           statusWithControllers(result, controllers),
 		Controllers:      controllers,
 		GatewayHealth:    gatewayHealth(resources),
@@ -592,6 +601,23 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 		SystemUsage:      systemUsage,
 		Errors:           errors,
 	}
+}
+
+func cleanConsoleLinks(links []ConsoleLink) []ConsoleLink {
+	cleaned := make([]ConsoleLink, 0, len(links))
+	for _, link := range links {
+		label := strings.TrimSpace(link.Label)
+		url := strings.TrimSpace(link.URL)
+		if label == "" || url == "" {
+			continue
+		}
+		cleaned = append(cleaned, ConsoleLink{
+			Label:       label,
+			URL:         url,
+			Description: strings.TrimSpace(link.Description),
+		})
+	}
+	return cleaned
 }
 
 func statusWithControllers(result *apply.Result, controllers []controlapi.ControllerStatus) controlapi.Status {
@@ -1053,19 +1079,19 @@ type SAMNode struct {
 }
 
 type SAMPool struct {
-	Name                   string           `json:"name"`
-	Prefix                 string           `json:"prefix,omitempty"`
-	Phase                  string           `json:"phase,omitempty"`
-	Reason                 string           `json:"reason,omitempty"`
-	DiscoveryMode          string           `json:"discoveryMode,omitempty"`
-	DiscoveryPhase         string           `json:"discoveryPhase,omitempty"`
-	GeneratedBGPPaths      int              `json:"generatedBGPPaths,omitempty"`
-	ResolvedMemberCount    int              `json:"resolvedMemberCount,omitempty"`
-	PlacementActive        bool             `json:"placementActive,omitempty"`
-	PlacementActiveNode    string           `json:"placementActiveNode,omitempty"`
-	Addresses              []SAMPoolAddress `json:"addresses,omitempty"`
-	HeldAddresses          []string         `json:"heldAddresses,omitempty"`
-	StoppedInstancePolicy  string           `json:"stoppedInstancePolicy,omitempty"`
+	Name                  string           `json:"name"`
+	Prefix                string           `json:"prefix,omitempty"`
+	Phase                 string           `json:"phase,omitempty"`
+	Reason                string           `json:"reason,omitempty"`
+	DiscoveryMode         string           `json:"discoveryMode,omitempty"`
+	DiscoveryPhase        string           `json:"discoveryPhase,omitempty"`
+	GeneratedBGPPaths     int              `json:"generatedBGPPaths,omitempty"`
+	ResolvedMemberCount   int              `json:"resolvedMemberCount,omitempty"`
+	PlacementActive       bool             `json:"placementActive,omitempty"`
+	PlacementActiveNode   string           `json:"placementActiveNode,omitempty"`
+	Addresses             []SAMPoolAddress `json:"addresses,omitempty"`
+	HeldAddresses         []string         `json:"heldAddresses,omitempty"`
+	StoppedInstancePolicy string           `json:"stoppedInstancePolicy,omitempty"`
 }
 
 type SAMPoolAddress struct {
@@ -1084,11 +1110,11 @@ type SAMTunnel struct {
 }
 
 type SAMFederation struct {
-	GroupName   string `json:"groupName"`
-	Phase       string `json:"phase,omitempty"`
-	Reason      string `json:"reason,omitempty"`
-	PeerCount   int    `json:"peerCount,omitempty"`
-	ListenAddr  string `json:"listenAddr,omitempty"`
+	GroupName  string `json:"groupName"`
+	Phase      string `json:"phase,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	PeerCount  int    `json:"peerCount,omitempty"`
+	ListenAddr string `json:"listenAddr,omitempty"`
 }
 
 type RoutesStatus struct {

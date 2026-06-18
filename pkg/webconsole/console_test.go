@@ -333,6 +333,34 @@ func TestSummaryIncludesGatewayHealthJSON(t *testing.T) {
 	}
 }
 
+func TestSummaryIncludesCleanConsoleLinks(t *testing.T) {
+	handler := New(Options{
+		Store: fakeStore{},
+		ConsoleLinks: []ConsoleLink{
+			{Label: "homert03", URL: " http://192.168.123.132:8080/ ", Description: " peer console "},
+			{Label: "missing-url"},
+			{URL: "http://192.168.123.129:8080/"},
+		},
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/summary?events=-1&connections=-1&dnsQueries=-1&trafficFlows=-1&firewallLogs=-1&vpn=0&dhcpLeases=0", nil)
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var snapshot Snapshot
+	if err := json.Unmarshal(rec.Body.Bytes(), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.ConsoleLinks) != 1 {
+		t.Fatalf("consoleLinks = %+v, want one valid link", snapshot.ConsoleLinks)
+	}
+	got := snapshot.ConsoleLinks[0]
+	if got.Label != "homert03" || got.URL != "http://192.168.123.132:8080/" || got.Description != "peer console" {
+		t.Fatalf("console link = %+v", got)
+	}
+}
+
 func TestSummaryIncludesNewGatewayHealthComponentsJSON(t *testing.T) {
 	handler := New(Options{Store: fakeStore{resources: []routerstate.ObjectStatus{
 		{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy", Name: "ipv4-default", Status: map[string]any{
