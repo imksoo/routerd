@@ -311,6 +311,7 @@ type NTPClientSpec struct {
 	Servers         []string                `yaml:"servers,omitempty" json:"servers,omitempty"`
 	ServerFrom      []StatusValueSourceSpec `yaml:"serverFrom,omitempty" json:"serverFrom,omitempty"`
 	FallbackServers []string                `yaml:"fallbackServers,omitempty" json:"fallbackServers,omitempty"`
+	When            ResourceWhenSpec        `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type NTPServerSpec struct {
@@ -1048,6 +1049,7 @@ type IPv6DelegatedAddressSpec struct {
 type DHCPv6InformationSpec struct {
 	Interface string                   `yaml:"interface" json:"interface"`
 	Request   []string                 `yaml:"request,omitempty" json:"request,omitempty"`
+	When      ResourceWhenSpec         `yaml:"when,omitempty" json:"when,omitempty"`
 	DependsOn []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
 	ReadyWhen []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
 }
