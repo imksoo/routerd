@@ -148,6 +148,49 @@ func TestLivePersistenceSupportsLabeledConfigImport(t *testing.T) {
 	}
 }
 
+func TestLivePersistenceSupportsPVECloudInitConfigURL(t *testing.T) {
+	data, err := os.ReadFile("../../scripts/build-live-iso.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(data)
+	required := []string{
+		"cloudinit_mount_dir=/media/routerd-cloudinit",
+		"cloudinit_candidates()",
+		"CIDATA cidata CONFIG-2 config-2",
+		"cloudinit_user_data()",
+		"${cloudinit_mount_dir}/user-data",
+		"cloudinit_first_value \"${user_data}\" config_url config-url configUrl",
+		"fetch_url()",
+		"apk add --no-cache curl ca-certificates",
+		"curl -fsSL --connect-timeout 10 --retry 3",
+		"wget -q -O",
+		"config_sha256",
+		"cloud-init config_url sha256 mismatch",
+		"source=cloud-init:user-data:config_url",
+		"restore_cloudinit_configs",
+		"cloud-init|cloudinit)",
+		"/usr/share/routerd/live-persistence.sh cloud-init",
+	}
+	for _, needle := range required {
+		if !strings.Contains(script, needle) {
+			t.Fatalf("live PVE cloud-init bootstrap missing %q", needle)
+		}
+	}
+
+	dhcpIdx := strings.Index(script, "/usr/share/routerd/live-dhcp.sh start || true\n    /usr/share/routerd/live-persistence.sh cloud-init || true")
+	if dhcpIdx < 0 {
+		t.Fatal("cloud-init fetch must run after DHCP when no local config is present")
+	}
+	configGuardIdx := strings.Index(script, "[ -f \"${config}\" ] || exit 0")
+	if configGuardIdx < 0 {
+		t.Fatal("config guard not found")
+	}
+	if dhcpIdx > configGuardIdx {
+		t.Fatal("cloud-init config fetch must run before the final config guard")
+	}
+}
+
 func TestLiveISOIncludesCDROMModulesForConfigMedia(t *testing.T) {
 	data, err := os.ReadFile("../../scripts/build-live-iso.sh")
 	if err != nil {

@@ -109,6 +109,7 @@ set -eu
 
 state_dir=/run/routerd/live
 mount_dir=/media/routerd-usb
+cloudinit_mount_dir=/media/routerd-cloudinit
 config_file=/usr/local/etc/routerd/router.yaml
 secrets_dir=/usr/local/etc/routerd/secrets
 usb_state_file=/run/routerd/live/usb-device
@@ -379,6 +380,148 @@ restore_config()
     return 1
 }
 
+cloudinit_candidates()
+{
+    {
+        if dev=$(cmdline_value routerd.cloudinit 2>/dev/null); then
+            [ -b "${dev}" ] && printf '%s\n' "${dev}"
+        fi
+        if command -v blkid >/dev/null 2>&1; then
+            for label in CIDATA cidata CONFIG-2 config-2; do
+                dev=$(blkid -L "${label}" 2>/dev/null || true)
+                [ -n "${dev}" ] && [ -b "${dev}" ] && printf '%s\n' "${dev}"
+            done
+        fi
+        for dev in /dev/disk/by-label/CIDATA /dev/disk/by-label/cidata /dev/disk/by-label/CONFIG-2 /dev/disk/by-label/config-2 /dev/sr* /dev/vd*[0-9] /dev/sd*[0-9]; do
+            [ -b "${dev}" ] || continue
+            printf '%s\n' "${dev}"
+        done
+    } | awk '!seen[$0]++'
+}
+
+mount_cloudinit()
+{
+    dev=$1
+    [ -b "${dev}" ] || return 1
+    mkdir -p "${cloudinit_mount_dir}"
+    if grep -q " ${cloudinit_mount_dir} " /proc/mounts 2>/dev/null; then
+        umount "${cloudinit_mount_dir}" 2>/dev/null || true
+    fi
+    mount -o ro,noatime "${dev}" "${cloudinit_mount_dir}" 2>/dev/null || mount -o ro "${dev}" "${cloudinit_mount_dir}"
+}
+
+cloudinit_user_data()
+{
+    for path in \
+        "${cloudinit_mount_dir}/user-data" \
+        "${cloudinit_mount_dir}/userdata" \
+        "${cloudinit_mount_dir}/openstack/latest/user_data" \
+        "${cloudinit_mount_dir}/openstack/latest/user-data"; do
+        [ -f "${path}" ] && { printf '%s\n' "${path}"; return 0; }
+    done
+    return 1
+}
+
+cloudinit_value()
+{
+    file=$1
+    key=$2
+    awk -v want="${key}" '
+        function trim(s) {
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+            gsub(/^["'\'']|["'\'']$/, "", s)
+            return s
+        }
+        /^[[:space:]]*#/ { next }
+        /^[[:space:]]*routerd:[[:space:]]*$/ { in_routerd = 1; next }
+        in_routerd && /^[^[:space:]]/ { in_routerd = 0 }
+        {
+            line = $0
+            if (in_routerd) {
+                sub(/^[[:space:]]+/, "", line)
+            }
+            if (line ~ "^" want "[[:space:]]*:") {
+                sub("^[^:]*:[[:space:]]*", "", line)
+                print trim(line)
+                exit
+            }
+        }
+    ' "${file}"
+}
+
+cloudinit_first_value()
+{
+    file=$1
+    shift
+    for key in "$@"; do
+        value=$(cloudinit_value "${file}" "${key}" 2>/dev/null || true)
+        [ -n "${value}" ] && { printf '%s\n' "${value}"; return 0; }
+    done
+    return 1
+}
+
+fetch_url()
+{
+    url=$1
+    dest=$2
+    if ! command -v curl >/dev/null 2>&1 && command -v apk >/dev/null 2>&1; then
+        apk add --no-cache curl ca-certificates >/dev/null 2>&1 || true
+    fi
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --connect-timeout 10 --retry 3 --retry-delay 1 "${url}" -o "${dest}"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q -O "${dest}" "${url}"
+    else
+        log "cloud-init config_url requires curl or wget"
+        return 1
+    fi
+}
+
+restore_cloudinit_config()
+{
+    dev=$1
+    mount_cloudinit "${dev}" || return 1
+    user_data=$(cloudinit_user_data 2>/dev/null || true)
+    [ -n "${user_data}" ] || return 1
+    config_url=$(cloudinit_first_value "${user_data}" config_url config-url configUrl routerd_config_url routerd-config-url 2>/dev/null || true)
+    [ -n "${config_url}" ] || return 1
+    config_sha256=$(cloudinit_first_value "${user_data}" config_sha256 config-sha256 configSha256 routerd_config_sha256 routerd-config-sha256 2>/dev/null || true)
+    tmp="${state_dir}/router.yaml.cloudinit"
+    log "fetching routerd config from cloud-init config_url"
+    fetch_url "${config_url}" "${tmp}" || return 1
+    if [ -n "${config_sha256}" ]; then
+        got=$(sha256sum "${tmp}" 2>/dev/null | awk '{print $1}' || true)
+        if [ "${got}" != "${config_sha256}" ]; then
+            log "cloud-init config_url sha256 mismatch: got ${got:-unknown}"
+            rm -f "${tmp}"
+            return 1
+        fi
+    fi
+    mkdir -p "$(dirname "${config_file}")"
+    install -m 0600 "${tmp}" "${config_file}"
+    {
+        printf 'device=%s\n' "${dev}"
+        printf 'label=%s\n' "$(device_label "${dev}")"
+        printf 'source=cloud-init:user-data:config_url\n'
+        printf 'url=%s\n' "${config_url}"
+        printf 'installed=%s\n' "${config_file}"
+    } > "${config_source_file}"
+    sha256sum "${config_file}" | awk '{print $1}' > "${config_checksum_file}" 2>/dev/null || true
+    log "restored ${config_file} from cloud-init user-data on ${dev}"
+    return 0
+}
+
+restore_cloudinit_configs()
+{
+    for candidate in $(cloudinit_candidates 2>/dev/null || true); do
+        [ -b "${candidate}" ] || continue
+        if restore_cloudinit_config "${candidate}"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 restore_secrets()
 {
     config_src=$1
@@ -569,6 +712,9 @@ case "${1:-init}" in
             log "no USB persistence device found; running in ephemeral mode"
         fi
         ;;
+    cloud-init|cloudinit)
+        restore_cloudinit_configs
+        ;;
     list-devices)
         if command -v lsblk >/dev/null 2>&1; then
             lsblk -rpno NAME,SIZE,FSTYPE,LABEL,TYPE 2>/dev/null | awk '$5 == "part" || $5 == "rom" {print "  - " $1 " " $2 " " $3 " " $4 " " $5}'
@@ -611,7 +757,7 @@ case "${1:-init}" in
         ensure_log_tmpfs "${2:-100M}"
         ;;
     *)
-        echo "usage: live-persistence.sh {init|list-devices|status|umount|save-config|flush|ensure-logs}" >&2
+        echo "usage: live-persistence.sh {init|cloud-init|list-devices|status|umount|save-config|flush|ensure-logs}" >&2
         exit 2
         ;;
 esac
@@ -999,6 +1145,11 @@ if [ -x /etc/init.d/routerd ]; then
             echo "routerd-live: failed to remove routerd from default runlevel; relying on stale serve restart path: ${rc_update_out}" >> "${log_dir}/routerd-live.log"
         fi
     fi
+fi
+
+if [ ! -f "${config}" ]; then
+    /usr/share/routerd/live-dhcp.sh start || true
+    /usr/share/routerd/live-persistence.sh cloud-init || true
 fi
 
 [ -f "${config}" ] || exit 0
