@@ -17,16 +17,17 @@ func liveISOScript(t *testing.T) string {
 	return string(data)
 }
 
-func TestLiveISOUsesUbuntuBase(t *testing.T) {
+func TestLiveISOUsesDebootstrapUbuntuBase(t *testing.T) {
 	script := liveISOScript(t)
 	for _, needle := range []string{
-		"UBUNTU_ISO_URL",
-		"ubuntu-24.04",
-		"ubuntu_iso_url",
-		"ubuntu_iso=",
+		"UBUNTU_SUITE",
+		"ubuntu_suite=${UBUNTU_SUITE:-noble}",
+		"UBUNTU_MIRROR",
+		"debootstrap --variant=minbase",
+		"\"${ubuntu_suite}\" \"${rootfs}\" \"${ubuntu_mirror}\"",
 	} {
 		if !strings.Contains(script, needle) {
-			t.Fatalf("Ubuntu live ISO script missing %q", needle)
+			t.Fatalf("debootstrap Ubuntu live ISO script missing %q", needle)
 		}
 	}
 }
@@ -52,12 +53,13 @@ func TestLiveISOIncludesRouterdPayload(t *testing.T) {
 func TestLiveISOInstallsUbuntuPackagesIntoSquashFS(t *testing.T) {
 	script := liveISOScript(t)
 	for _, needle := range []string{
+		"UBUNTU_BASE_PACKAGES",
 		"UBUNTU_LIVE_PACKAGES",
-		"unsquashfs -d \"${rootfs}\" \"${squashfs}\"",
 		"chroot_run apt-get update",
-		"chroot_run apt-get install -y --no-install-recommends \"${ubuntu_package_list[@]}\"",
+		"linux-image-generic systemd-sysv dbus sudo casper initramfs-tools",
+		"chroot_run apt-get install -y --no-install-recommends \"${ubuntu_base_package_list[@]}\" \"${ubuntu_package_list[@]}\"",
 		"chroot_run apt-get clean",
-		"mksquashfs \"${rootfs}\" \"${squashfs}\" -noappend -comp xz",
+		"mksquashfs \"${rootfs}\" \"${iso_root}/casper/filesystem.squashfs\" -noappend -comp xz",
 		"filesystem.size",
 		"filesystem.manifest",
 	} {
@@ -87,7 +89,10 @@ func TestLiveISOBootsUbuntuCasperWithSerialConsole(t *testing.T) {
 	for _, needle := range []string{
 		"grub-mkrescue",
 		"menuentry \"routerd Ubuntu live",
+		"install -m 0644 \"${kernel_image}\" \"${iso_root}/casper/vmlinuz\"",
+		"install -m 0644 \"${initrd_image}\" \"${iso_root}/casper/initrd\"",
 		"linux /casper/vmlinuz",
+		"boot=casper",
 		"initrd /casper/initrd",
 		"console=ttyS0,115200n8",
 	} {
