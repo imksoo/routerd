@@ -144,6 +144,7 @@ func daemonCommand(args []string) error {
 	receiver := eventd.NewReceiver(store, secret, cfg.Group, cfg.NodeName, cfg.ReplayWindow, time.Now)
 	receiver.SetMetrics(metrics)
 	pruner := eventd.NewPruner(store, cfg.Group, cfg.Retention, cfg.PruneInterval, time.Now)
+	pruner.SetMetrics(metrics)
 	go pruner.Run(ctx, func(err error) {
 		log.Printf("routerd-eventd: prune error: %v", err)
 	})

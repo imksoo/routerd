@@ -234,6 +234,64 @@ func TestDoctorFederationPendingExpiringSoon(t *testing.T) {
 	}
 }
 
+func writeDoctorFederationSubscriptionFixture(t *testing.T, selfNode string, peers []struct{ name, endpoint string }, subscriptions []string) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+
+	var peerYAML string
+	for _, p := range peers {
+		peerYAML += `    - apiVersion: federation.routerd.net/v1alpha1
+      kind: EventPeer
+      metadata:
+        name: peer-` + p.name + `
+      spec:
+        groupRef: cloudedge
+        nodeName: ` + p.name + `
+        endpoint: ` + p.endpoint + "\n"
+	}
+	var subYAML string
+	for _, s := range subscriptions {
+		subYAML += `    - apiVersion: federation.routerd.net/v1alpha1
+      kind: EventSubscription
+      metadata:
+        name: ` + s + `
+      spec:
+        groupRef: cloudedge
+        match:
+          types: ["routerd.client.ipv4.observed"]
+        trigger:
+          pluginRef: cloud-claims
+` + "\n"
+	}
+
+	data := []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: wan
+      spec:
+        ifname: eth0
+        managed: false
+        owner: external
+    - apiVersion: federation.routerd.net/v1alpha1
+      kind: EventGroup
+      metadata:
+        name: cloudedge
+      spec:
+        nodeName: ` + selfNode + `
+` + peerYAML + subYAML)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return configPath, filepath.Join(dir, "routerd.db")
+}
+
 func writeDoctorFederationFixture(t *testing.T, selfNode string, peers []struct{ name, endpoint string }) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -615,5 +673,139 @@ func TestDoctorFederationJSONSummaryTableUnchanged(t *testing.T) {
 	}
 	if strings.Contains(output, "severityCounts") || strings.Contains(output, "failedDeliveryCount") {
 		t.Fatalf("table output should not contain JSON field names:\n%s", output)
+	}
+}
+
+func TestDoctorFederationSubscriptionAllSucceeded(t *testing.T) {
+	configPath, statePath := writeDoctorFederationSubscriptionFixture(t, "onprem",
+		[]struct{ name, endpoint string }{{name: "leaf-a", endpoint: "https://10.0.0.1:8443"}},
+		[]string{"cloud-claims"})
+	store := openDoctorState(t, statePath)
+
+	now := time.Now().UTC()
+	ev := routerstate.EventRecord{
+		ID: "evt-1", Group: "cloudedge", Type: "routerd.client.ipv4.observed",
+		SourceNode: "onprem", ObservedAt: now.Add(-5 * time.Second), ExpiresAt: now.Add(30 * time.Minute),
+	}
+	if err := store.RecordFederationEvent(ev); err != nil {
+		t.Fatalf("record event: %v", err)
+	}
+	if err := store.RecordDelivery("evt-1", "leaf-a"); err != nil {
+		t.Fatalf("record delivery: %v", err)
+	}
+	if err := store.UpdateDeliveryStatus("evt-1", "leaf-a", routerstate.DeliveryDelivered, 1, "", now, ev.ExpiresAt); err != nil {
+		t.Fatalf("update delivery: %v", err)
+	}
+	if err := store.UpsertSubscriptionRunStart("EventSubscription/cloud-claims", "evt-1", "cloudedge", "cloud-claims"); err != nil {
+		t.Fatalf("upsert run start: %v", err)
+	}
+	if err := store.MarkSubscriptionRunResult("EventSubscription/cloud-claims", "evt-1", "succeeded", "EventSubscription/cloud-claims/evt-1", 1, ""); err != nil {
+		t.Fatalf("mark run result: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "federation", "--config", configPath, "--state-file", statePath, "--no-host"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor: %v\n%s", err, out.String())
+	}
+	got := out.String()
+	if !strings.Contains(got, "subscription runs") || !strings.Contains(got, "PASS") {
+		t.Fatalf("expected PASS for subscription runs:\n%s", got)
+	}
+}
+
+func TestDoctorFederationSubscriptionFailed(t *testing.T) {
+	configPath, statePath := writeDoctorFederationSubscriptionFixture(t, "onprem",
+		[]struct{ name, endpoint string }{{name: "leaf-a", endpoint: "https://10.0.0.1:8443"}},
+		[]string{"cloud-claims"})
+	store := openDoctorState(t, statePath)
+
+	now := time.Now().UTC()
+	ev := routerstate.EventRecord{
+		ID: "evt-1", Group: "cloudedge", Type: "routerd.client.ipv4.observed",
+		SourceNode: "onprem", ObservedAt: now.Add(-5 * time.Second), ExpiresAt: now.Add(30 * time.Minute),
+	}
+	if err := store.RecordFederationEvent(ev); err != nil {
+		t.Fatalf("record event: %v", err)
+	}
+	if err := store.RecordDelivery("evt-1", "leaf-a"); err != nil {
+		t.Fatalf("record delivery: %v", err)
+	}
+	if err := store.UpdateDeliveryStatus("evt-1", "leaf-a", routerstate.DeliveryDelivered, 1, "", now, ev.ExpiresAt); err != nil {
+		t.Fatalf("update delivery: %v", err)
+	}
+	if err := store.UpsertSubscriptionRunStart("EventSubscription/cloud-claims", "evt-1", "cloudedge", "cloud-claims"); err != nil {
+		t.Fatalf("upsert run start: %v", err)
+	}
+	if err := store.MarkSubscriptionRunResult("EventSubscription/cloud-claims", "evt-1", "failed", "", 0, "plugin exited 1"); err != nil {
+		t.Fatalf("mark run result: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	err := run([]string{"doctor", "federation", "--config", configPath, "--state-file", statePath, "--no-host"}, &out, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("expected error from doctor with failed subscription runs:\n%s", out.String())
+	}
+	got := out.String()
+	if !strings.Contains(got, "subscription runs") || !strings.Contains(got, "FAIL") {
+		t.Fatalf("expected FAIL for subscription runs:\n%s", got)
+	}
+	if !strings.Contains(got, "1 failed") {
+		t.Fatalf("expected '1 failed' in detail:\n%s", got)
+	}
+}
+
+func TestDoctorFederationSubscriptionJSONSummary(t *testing.T) {
+	configPath, statePath := writeDoctorFederationSubscriptionFixture(t, "onprem",
+		[]struct{ name, endpoint string }{{name: "leaf-a", endpoint: "https://10.0.0.1:8443"}},
+		[]string{"cloud-claims"})
+	store := openDoctorState(t, statePath)
+
+	now := time.Now().UTC()
+	ev := routerstate.EventRecord{
+		ID: "evt-1", Group: "cloudedge", Type: "routerd.client.ipv4.observed",
+		SourceNode: "onprem", ObservedAt: now.Add(-5 * time.Second), ExpiresAt: now.Add(30 * time.Minute),
+	}
+	if err := store.RecordFederationEvent(ev); err != nil {
+		t.Fatalf("record event: %v", err)
+	}
+	if err := store.RecordDelivery("evt-1", "leaf-a"); err != nil {
+		t.Fatalf("record delivery: %v", err)
+	}
+	if err := store.UpdateDeliveryStatus("evt-1", "leaf-a", routerstate.DeliveryDelivered, 1, "", now, ev.ExpiresAt); err != nil {
+		t.Fatalf("update delivery: %v", err)
+	}
+	if err := store.UpsertSubscriptionRunStart("EventSubscription/cloud-claims", "evt-1", "cloudedge", "cloud-claims"); err != nil {
+		t.Fatalf("upsert run start: %v", err)
+	}
+	if err := store.MarkSubscriptionRunResult("EventSubscription/cloud-claims", "evt-1", "succeeded", "EventSubscription/cloud-claims/evt-1", 1, ""); err != nil {
+		t.Fatalf("mark run result: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "federation", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("decode: %v\n%s", err, out.String())
+	}
+	if report.Federation == nil {
+		t.Fatal("federation summary is nil")
+	}
+	fs := report.Federation
+	if fs.SubscriptionRunsTotal != 1 {
+		t.Errorf("subscriptionRunsTotal = %d, want 1", fs.SubscriptionRunsTotal)
+	}
+	if fs.SubscriptionRunsSucceeded != 1 {
+		t.Errorf("subscriptionRunsSucceeded = %d, want 1", fs.SubscriptionRunsSucceeded)
+	}
+	if fs.SubscriptionRunsFailed != 0 {
+		t.Errorf("subscriptionRunsFailed = %d, want 0", fs.SubscriptionRunsFailed)
+	}
+	if fs.SubscriptionRunsPending != 0 {
+		t.Errorf("subscriptionRunsPending = %d, want 0", fs.SubscriptionRunsPending)
 	}
 }

@@ -306,6 +306,74 @@ func TestMetricsNoForbiddenLabels(t *testing.T) {
 	}
 }
 
+func TestMetricsOutboxTickRecorded(t *testing.T) {
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	clock := fixedClock(now)
+	rec := &eventd.TestRecorder{}
+	metrics := eventd.NewTestMetrics(rec)
+
+	store := openStore(t, "metrics-outbox-tick.db")
+	peers := []eventd.PeerConfig{}
+	pusher := eventd.NewPusher(store, testSecret, peers,
+		eventd.PushRetry{MaxAttempts: 1, BaseBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
+		nil, clock, func(time.Duration) {})
+	pusher.SetMetrics(metrics)
+
+	outbox := eventd.NewOutbox(store, store, pusher, "cloudedge", "onprem", time.Second, clock)
+	outbox.SetMetrics(metrics)
+
+	if err := outbox.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+
+	if got := rec.Count("routerd_eventd_outbox_tick_total"); got != 1 {
+		t.Fatalf("outbox_tick_total = %d, want 1", got)
+	}
+	durations := rec.Values("routerd_eventd_outbox_tick_duration_seconds")
+	if len(durations) != 1 {
+		t.Fatalf("outbox_tick_duration records = %d, want 1", len(durations))
+	}
+	if durations[0] < 0 {
+		t.Fatalf("outbox_tick_duration = %f, want >= 0", durations[0])
+	}
+	if got := rec.Count("routerd_eventd_outbox_tick_errors_total"); got != 0 {
+		t.Fatalf("outbox_tick_errors = %d, want 0", got)
+	}
+}
+
+func TestMetricsPrunerTickRecorded(t *testing.T) {
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	clock := fixedClock(now)
+	rec := &eventd.TestRecorder{}
+	metrics := eventd.NewTestMetrics(rec)
+
+	store := openStore(t, "metrics-pruner-tick.db")
+	seedEventFrom(t, store, "old-1", "cloudedge", "onprem", "10.88.60.1/32",
+		now.Add(-48*time.Hour))
+
+	pruner := eventd.NewPruner(store, "cloudedge",
+		eventd.Retention{MaxAge: 24 * time.Hour, MaxEvents: 100}, time.Minute, clock)
+	pruner.SetMetrics(metrics)
+
+	pruned, err := pruner.PruneOnce(context.Background())
+	if err != nil {
+		t.Fatalf("PruneOnce: %v", err)
+	}
+	if pruned != 1 {
+		t.Fatalf("pruned = %d, want 1", pruned)
+	}
+
+	if got := rec.Count("routerd_eventd_pruner_tick_total"); got != 1 {
+		t.Fatalf("pruner_tick_total = %d, want 1", got)
+	}
+	if got := rec.Count("routerd_eventd_pruner_pruned_total"); got != 1 {
+		t.Fatalf("pruner_pruned_total = %d, want 1", got)
+	}
+	if got := rec.Count("routerd_eventd_pruner_tick_errors_total"); got != 0 {
+		t.Fatalf("pruner_tick_errors = %d, want 0", got)
+	}
+}
+
 func signEvent(ts int64, body []byte) string {
 	return signWithSecret(testSecret, ts, body)
 }
