@@ -1,0 +1,155 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/imksoo/routerd/scripts/cloudedge-federation-evidence-schema.json",
+  "title": "routerd CloudEdge Federation Qualification evidence",
+  "description": "Machine-readable evidence emitted by cloudedge-federation-qualification.sh. One file per scenario per cycle, validated by this schema.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["runId", "commit", "cycle", "scenario", "result"],
+  "properties": {
+    "runId": {
+      "type": "string",
+      "description": "Run identifier from the qualification harness.",
+      "minLength": 1
+    },
+    "commit": {
+      "type": "string",
+      "description": "Git commit (or HEAD sha) of the routerd build under test.",
+      "minLength": 1
+    },
+    "cycle": {
+      "type": "integer",
+      "description": "Cycle number (1-based).",
+      "minimum": 1
+    },
+    "scenario": {
+      "type": "string",
+      "description": "Scenario name from the qualification matrix.",
+      "enum": [
+        "healthy",
+        "partition",
+        "ttl-refresh",
+        "restart",
+        "subscription",
+        "config-fault",
+        "security",
+        "multi-group"
+      ]
+    },
+    "result": {
+      "type": "string",
+      "enum": ["pass", "fail", "skip"]
+    },
+    "reason": {
+      "type": "string",
+      "description": "Required for fail/skip results — why the scenario did not pass."
+    },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC timestamp when the scenario started."
+    },
+    "endedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC timestamp when the scenario completed."
+    },
+    "testedEventId": {
+      "type": "string",
+      "description": "Primary test event ID emitted during the scenario."
+    },
+    "doctorBefore": {
+      "description": "routerctl doctor federation JSON snapshot before the scenario.",
+      "type": ["object", "string"]
+    },
+    "doctorDuring": {
+      "description": "routerctl doctor federation JSON snapshot during fault injection.",
+      "type": ["object", "string"]
+    },
+    "doctorAfter": {
+      "description": "routerctl doctor federation JSON snapshot after the scenario.",
+      "type": ["object", "string"]
+    },
+    "deliverySummary": {
+      "description": "routerctl federation deliveries summary JSON after the scenario.",
+      "type": ["object", "string", "array"]
+    },
+    "remediationPlan": {
+      "description": "routerctl doctor federation --remediation-plan JSON output.",
+      "type": ["object", "string"]
+    },
+    "doctorJson": {
+      "description": "Full doctor JSON for scenarios that only read doctor state.",
+      "type": ["object", "string"]
+    },
+    "recoveryDurationSeconds": {
+      "description": "Time in seconds for partition/fault recovery.",
+      "type": ["string", "integer"]
+    },
+    "senderPidBefore": {
+      "description": "Sender eventd PID before restart.",
+      "type": ["string", "integer"]
+    },
+    "senderPidAfter": {
+      "description": "Sender eventd PID after restart.",
+      "type": ["string", "integer"]
+    },
+    "receiverPidBefore": {
+      "description": "Receiver eventd PID before restart.",
+      "type": ["string", "integer"]
+    },
+    "receiverPidAfter": {
+      "description": "Receiver eventd PID after restart.",
+      "type": ["string", "integer"]
+    },
+    "malformedStatus": {
+      "description": "HTTP status from malformed body security test.",
+      "type": "string"
+    },
+    "wrongStatus": {
+      "description": "HTTP status from wrong-structure security test.",
+      "type": "string"
+    },
+    "badAuthStatus": {
+      "description": "HTTP status from bad-auth security test.",
+      "type": "string"
+    },
+    "eventCountBefore": {
+      "description": "Event list count before security test.",
+      "type": ["string", "integer"]
+    },
+    "eventCountAfter": {
+      "description": "Event list count after security test.",
+      "type": ["string", "integer"]
+    },
+    "groupCheck": {
+      "description": "Multi-group isolation check result string.",
+      "type": "string"
+    },
+    "foundCodes": {
+      "description": "Doctor check codes found in config-fault scenario.",
+      "type": "string"
+    },
+    "expectedAction": {
+      "description": "Remediation actions found in config-fault scenario.",
+      "type": "string"
+    },
+    "subscriptionRunsDuring": {
+      "description": "Subscription run JSON during plugin failure.",
+      "type": ["object", "string", "array"]
+    },
+    "subscriptionRunsAfter": {
+      "description": "Subscription run JSON after plugin restore.",
+      "type": ["object", "string", "array"]
+    }
+  },
+  "if": {
+    "properties": { "result": { "const": "pass" } }
+  },
+  "then": {
+    "required": ["startedAt", "endedAt"]
+  },
+  "else": {
+    "required": ["reason"]
+  }
+}

@@ -18,8 +18,18 @@ Phases 1, 1.5, 2, and 3 are **implemented on `event-federation`**:
   ([subscription evidence](../releases/evidence/cloudedge-event-federation-subscription-20260530.md),
   [how-to](../how-to/event-federation-subscription.md)).
 
-Phase 4 (provider `actionPlan` plugins, dry-run) is **next, not started**.
-Phase 5 (provider action execution) is **out of MVP**.
+Phase 4 (provider `actionPlan` plugins, dry-run) and Phase 5 (provider action
+execution) are **implemented on `main`**.
+
+Post-MVP reliability phases:
+
+- **P1** (federation pipeline observability — 14 OTel metrics in `routerd-eventd`:
+  delivery, receiver, pruner, loop health) — done.
+- **P2** (federation pipeline & loop health observability — `routerctl doctor
+  federation` checks, delivery summary, expected-peer audit) — done.
+- **P3** (federation reliability engineering — `FederationSLO` Kind, per-group SLO
+  JSON, effective-value validation, plan-only remediation, stable check codes and
+  typed action constants) — done.
 
 ## Context
 
@@ -83,11 +93,12 @@ ships a working, demoable slice and gates the next.
 3. **Reuse, don't reinvent.** Reuse the `DaemonEvent` envelope, the control-socket
    HTTP transport idiom, the Plugin→DynamicConfigPart pipeline, SQLite state, and
    `CloudProviderProfile`/`Plugin` (no new `CloudProviderPlugin` Kind).
-4. **Minimize new Kinds.** MVP introduces **three**: `EventGroup` (bus identity +
-   auth + retention), `EventPeer` (delivery target + inline push/receive filters),
-   `EventSubscription` (received-event → local plugin trigger). Fold the proposed
-   standalone `EventFilter` into `EventPeer` for now; promote to its own Kind only
-   if filters need to be shared across peers.
+4. **Minimize new Kinds.** MVP introduces **three** transport Kinds: `EventGroup`
+   (bus identity + auth + retention), `EventPeer` (delivery target + inline
+   push/receive filters), `EventSubscription` (received-event → local plugin
+   trigger). A fourth, `FederationSLO`, was added for declarative per-group SLO
+   thresholds. Fold the proposed standalone `EventFilter` into `EventPeer` for
+   now; promote to its own Kind only if filters need to be shared across peers.
 5. **Separate daemon.** Federation send/receive lives in a new
    `cmd/routerd-eventd` long-lived daemon (per ADR 0004 precedent), not the
    reconcile loop. It binds to the overlay (`wg-hybrid`) only.
@@ -164,12 +175,19 @@ acceptance. Implementation delegated to codex; claude orchestrates + reviews.
   receives `client.ipv4.observed` for `10.88.60.9/32` → plugin → `RemoteAddressClaim`
   DynamicConfigPart visible in `routerctl dynamic render`; actionPlan shown,
   not executed.
-- **⏭ NEXT (not started) — Phase 4 — Provider actionPlan plugins (dry-run).** `aws/azure/oci-address-claim`
-  example plugins; standardized `actionPlan` format; instance-identity auth.
-  *Accept:* plugins propose assign-secondary-IP; no mutation; plan visible in
+- **✅ DONE — Phase 4 — Provider actionPlan plugins (dry-run).** `aws/azure/oci-address-claim`
+  plugins; standardized `actionPlan` format; instance-identity auth.
+  Plugins propose assign-secondary-IP; plan visible in
   `routerctl plugin`/`dynamic`.
-- **Phase 5 — (post-MVP) provider action execution.** Approval/auto-apply policy;
-  action journal; best-effort undo; identity docs. Out of MVP.
+- **✅ DONE (lab-smoke PASS) — Phase 5 — Provider action execution.** Approval/auto-apply policy;
+  action journal; `routerctl action` commands; engine.go + executor.go.
+- **✅ DONE — P1 Federation Pipeline Observability.** 14 OTel metrics in
+  `routerd-eventd` (delivery, receiver, pruner, loop health).
+- **✅ DONE — P2 Federation Pipeline & Loop Health Observability.** `routerctl
+  doctor federation` checks, delivery summary, expected-peer audit.
+- **✅ DONE — P3 Federation Reliability Engineering.** `FederationSLO` Kind,
+  per-group SLO JSON, effective-value validation, plan-only remediation, stable
+  check codes and typed action constants.
 
 The first end-to-end smoke is **manual `routerctl federation event emit` →
 federation → DynamicConfigPart** (Phases 1–3). The ARP/Clients observer plugin comes *after*

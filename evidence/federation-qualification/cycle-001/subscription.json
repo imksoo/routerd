@@ -1,0 +1,312 @@
+{
+  "runId": "20260618T100643Z-federation-qual",
+  "commit": "bf46e53d",
+  "cycle": 1,
+  "scenario": "subscription",
+  "result": "pass",
+  "startedAt": "2026-06-18T10:08:07Z",
+  "endedAt": "2026-06-18T10:08:45Z",
+  "doctorDuring": {
+    "summary": {
+      "overall": "pass",
+      "pass": 6,
+      "warn": 0,
+      "fail": 0,
+      "skip": 1
+    },
+    "checks": [
+      {
+        "area": "federation",
+        "code": "failed-deliveries",
+        "name": "fedqual-primary/fedqual-receiver failed deliveries",
+        "status": "pass",
+        "detail": "no failed deliveries"
+      },
+      {
+        "area": "federation",
+        "code": "pending-deliveries",
+        "name": "fedqual-primary/fedqual-receiver pending deliveries",
+        "status": "pass",
+        "detail": "no pending deliveries"
+      },
+      {
+        "area": "federation",
+        "code": "stale-ttl",
+        "name": "fedqual-primary/fedqual-receiver stale TTL",
+        "status": "pass",
+        "detail": "no stale TTL deliveries"
+      },
+      {
+        "area": "federation",
+        "code": "delivery-lag",
+        "name": "fedqual-primary/fedqual-receiver delivery lag",
+        "status": "pass",
+        "detail": "max delivery lag 9s"
+      },
+      {
+        "area": "federation",
+        "code": "event-expiry",
+        "name": "fedqual-primary/fedqual-receiver event expiry",
+        "status": "pass",
+        "detail": "nearest event expires in 504s"
+      },
+      {
+        "area": "federation",
+        "code": "expected-delivery",
+        "name": "fedqual-primary/fedqual-receiver expected delivery",
+        "status": "pass",
+        "detail": "all 6 active event(s) have delivery rows"
+      },
+      {
+        "area": "federation",
+        "name": "fedqual-secondary expected peers",
+        "status": "skip",
+        "detail": "no self-emitted active events to deliver"
+      }
+    ],
+    "federation": {
+      "severityCounts": {
+        "pass": 6,
+        "warn": 0,
+        "fail": 0,
+        "skip": 1
+      },
+      "failedDeliveryCount": 0,
+      "staleTTLCount": 0,
+      "pendingDeliveryCount": 0,
+      "missingExpectedPeerCount": 0,
+      "maxDeliveryLagSeconds": 9,
+      "minExpiresInSeconds": 504,
+      "totalEvents": 6,
+      "totalDelivered": 6,
+      "subscriptionRunsTotal": 0,
+      "subscriptionRunsSucceeded": 0,
+      "subscriptionRunsFailed": 0,
+      "subscriptionRunsPending": 0,
+      "slo": {
+        "groups": [
+          {
+            "group": "fedqual-primary",
+            "defined": true,
+            "thresholds": {
+              "delivery": {
+                "lagWarnSeconds": 30,
+                "lagFailSeconds": 120,
+                "expiresSoonSeconds": 60
+              },
+              "subscription": {
+                "maxPendingRuns": 5,
+                "maxFailedRuns": 3
+              }
+            },
+            "violations": []
+          },
+          {
+            "group": "fedqual-secondary",
+            "defined": true,
+            "thresholds": {
+              "delivery": {
+                "lagWarnSeconds": 60,
+                "lagFailSeconds": 240,
+                "expiresSoonSeconds": 120
+              },
+              "subscription": {
+                "maxPendingRuns": 10,
+                "maxFailedRuns": 5
+              }
+            },
+            "violations": []
+          }
+        ]
+      }
+    }
+  },
+  "subscriptionRunsDuring": [
+    {
+      "ID": 1,
+      "Subscription": "EventSubscription/fedqual-sub-primary",
+      "EventID": "qual-healthy-20260618T100643Z-federation-qual-c1-1781777210",
+      "EventGroup": "fedqual-primary",
+      "Plugin": "fedqual-test-plugin",
+      "Status": "succeeded",
+      "Attempts": 1,
+      "StartedAt": "2026-06-18T10:07:05.315206208Z",
+      "CompletedAt": "2026-06-18T10:07:05.328780353Z",
+      "DynamicSource": "EventSubscription/fedqual-sub-primary/fcdeb463c2b24254",
+      "DynamicGeneration": 1,
+      "Error": ""
+    },
+    {
+      "ID": 2,
+      "Subscription": "EventSubscription/fedqual-sub-primary",
+      "EventID": "qual-partition-20260618T100643Z-federation-qual-c1-1781777228",
+      "EventGroup": "fedqual-primary",
+      "Plugin": "fedqual-test-plugin",
+      "Status": "succeeded",
+      "Attempts": 1,
+      "StartedAt": "2026-06-18T10:07:20.315640516Z",
+      "CompletedAt": "2026-06-18T10:07:20.330337343Z",
+      "DynamicSource": "EventSubscription/fedqual-sub-primary/570a6bfe19923a82",
+      "DynamicGeneration": 1,
+      "Error": ""
+    },
+    {
+      "ID": 3,
+      "Subscription": "EventSubscription/fedqual-sub-primary",
+      "EventID": "qual-ttl-20260618T100643Z-federation-qual-c1-1781777238",
+      "EventGroup": "fedqual-primary",
+      "Plugin": "fedqual-test-plugin",
+      "Status": "succeeded",
+      "Attempts": 1,
+      "StartedAt": "2026-06-18T10:07:25.315413851Z",
+      "CompletedAt": "2026-06-18T10:07:25.330450329Z",
+      "DynamicSource": "EventSubscription/fedqual-sub-primary/79c6f2b881186664",
+      "DynamicGeneration": 1,
+      "Error": ""
+    },
+    {
+      "ID": 4,
+      "Subscription": "EventSubscription/fedqual-sub-primary",
+      "EventID": "qual-restart-s-20260618T100643Z-federation-qual-c1-1781777268",
+      "EventGroup": "fedqual-primary",
+      "Plugin": "fedqual-test-plugin",
+      "Status": "succeeded",
+      "Attempts": 1,
+      "StartedAt": "2026-06-18T10:07:55.31466409Z",
+      "CompletedAt": "2026-06-18T10:07:55.331443999Z",
+      "DynamicSource": "EventSubscription/fedqual-sub-primary/8a69412319c59ee0",
+      "DynamicGeneration": 1,
+      "Error": ""
+    },
+    {
+      "ID": 5,
+      "Subscription": "EventSubscription/fedqual-sub-primary",
+      "EventID": "qual-restart-r-20260618T100643Z-federation-qual-c1-1781777281",
+      "EventGroup": "fedqual-primary",
+      "Plugin": "fedqual-test-plugin",
+      "Status": "succeeded",
+      "Attempts": 1,
+      "StartedAt": "2026-06-18T10:08:05.315565316Z",
+      "CompletedAt": "2026-06-18T10:08:05.328573905Z",
+      "DynamicSource": "EventSubscription/fedqual-sub-primary/a5e9523602accf01",
+      "DynamicGeneration": 1,
+      "Error": ""
+    },
+    {
+      "ID": 6,
+      "Subscription": "EventSubscription/fedqual-sub-primary",
+      "EventID": "qual-sub-fail-20260618T100643Z-federation-qual-c1-1781777288",
+      "EventGroup": "fedqual-primary",
+      "Plugin": "fedqual-test-plugin",
+      "Status": "failed",
+      "Attempts": 3,
+      "StartedAt": "2026-06-18T10:08:20.314153104Z",
+      "CompletedAt": "2026-06-18T10:08:20.322130567Z",
+      "DynamicSource": "",
+      "DynamicGeneration": 0,
+      "Error": "plugin executable \"/usr/local/libexec/routerd/plugins/fedqual-test-plugin\" is not executable"
+    }
+  ],
+  "subscriptionRunsAfter": [
+    {
+      "ID": 1,
+      "Subscription": "EventSubscription/fedqual-sub-primary",
+      "EventID": "qual-healthy-20260618T100643Z-federation-qual-c1-1781777210",
+      "EventGroup": "fedqual-primary",
+      "Plugin": "fedqual-test-plugin",
+      "Status": "succeeded",
+      "Attempts": 1,
+      "StartedAt": "2026-06-18T10:07:05.315206208Z",
+      "CompletedAt": "2026-06-18T10:07:05.328780353Z",
+      "DynamicSource": "EventSubscription/fedqual-sub-primary/fcdeb463c2b24254",
+      "DynamicGeneration": 1,
+      "Error": ""
+    },
+    {
+      "ID": 2,
+      "Subscription": "EventSubscription/fedqual-sub-primary",
+      "EventID": "qual-partition-20260618T100643Z-federation-qual-c1-1781777228",
+      "EventGroup": "fedqual-primary",
+      "Plugin": "fedqual-test-plugin",
+      "Status": "succeeded",
+      "Attempts": 1,
+      "StartedAt": "2026-06-18T10:07:20.315640516Z",
+      "CompletedAt": "2026-06-18T10:07:20.330337343Z",
+      "DynamicSource": "EventSubscription/fedqual-sub-primary/570a6bfe19923a82",
+      "DynamicGeneration": 1,
+      "Error": ""
+    },
+    {
+      "ID": 3,
+      "Subscription": "EventSubscription/fedqual-sub-primary",
+      "EventID": "qual-ttl-20260618T100643Z-federation-qual-c1-1781777238",
+      "EventGroup": "fedqual-primary",
+      "Plugin": "fedqual-test-plugin",
+      "Status": "succeeded",
+      "Attempts": 1,
+      "StartedAt": "2026-06-18T10:07:25.315413851Z",
+      "CompletedAt": "2026-06-18T10:07:25.330450329Z",
+      "DynamicSource": "EventSubscription/fedqual-sub-primary/79c6f2b881186664",
+      "DynamicGeneration": 1,
+      "Error": ""
+    },
+    {
+      "ID": 4,
+      "Subscription": "EventSubscription/fedqual-sub-primary",
+      "EventID": "qual-restart-s-20260618T100643Z-federation-qual-c1-1781777268",
+      "EventGroup": "fedqual-primary",
+      "Plugin": "fedqual-test-plugin",
+      "Status": "succeeded",
+      "Attempts": 1,
+      "StartedAt": "2026-06-18T10:07:55.31466409Z",
+      "CompletedAt": "2026-06-18T10:07:55.331443999Z",
+      "DynamicSource": "EventSubscription/fedqual-sub-primary/8a69412319c59ee0",
+      "DynamicGeneration": 1,
+      "Error": ""
+    },
+    {
+      "ID": 5,
+      "Subscription": "EventSubscription/fedqual-sub-primary",
+      "EventID": "qual-restart-r-20260618T100643Z-federation-qual-c1-1781777281",
+      "EventGroup": "fedqual-primary",
+      "Plugin": "fedqual-test-plugin",
+      "Status": "succeeded",
+      "Attempts": 1,
+      "StartedAt": "2026-06-18T10:08:05.315565316Z",
+      "CompletedAt": "2026-06-18T10:08:05.328573905Z",
+      "DynamicSource": "EventSubscription/fedqual-sub-primary/a5e9523602accf01",
+      "DynamicGeneration": 1,
+      "Error": ""
+    },
+    {
+      "ID": 6,
+      "Subscription": "EventSubscription/fedqual-sub-primary",
+      "EventID": "qual-sub-fail-20260618T100643Z-federation-qual-c1-1781777288",
+      "EventGroup": "fedqual-primary",
+      "Plugin": "fedqual-test-plugin",
+      "Status": "failed",
+      "Attempts": 3,
+      "StartedAt": "2026-06-18T10:08:20.314153104Z",
+      "CompletedAt": "2026-06-18T10:08:20.322130567Z",
+      "DynamicSource": "",
+      "DynamicGeneration": 0,
+      "Error": "plugin executable \"/usr/local/libexec/routerd/plugins/fedqual-test-plugin\" is not executable"
+    },
+    {
+      "ID": 9,
+      "Subscription": "EventSubscription/fedqual-sub-primary",
+      "EventID": "qual-sub-ok-20260618T100643Z-federation-qual-c1-1781777307",
+      "EventGroup": "fedqual-primary",
+      "Plugin": "fedqual-test-plugin",
+      "Status": "succeeded",
+      "Attempts": 1,
+      "StartedAt": "2026-06-18T10:08:35.315849204Z",
+      "CompletedAt": "2026-06-18T10:08:35.328663612Z",
+      "DynamicSource": "EventSubscription/fedqual-sub-primary/ca52d8363a7b0740",
+      "DynamicGeneration": 1,
+      "Error": ""
+    }
+  ],
+  "testedEventId1": "qual-sub-fail-20260618T100643Z-federation-qual-c1-1781777288",
+  "testedEventId2": "qual-sub-ok-20260618T100643Z-federation-qual-c1-1781777307"
+}

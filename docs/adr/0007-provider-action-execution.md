@@ -5,16 +5,23 @@
 ## Status
 
 Proposed; Accepted for experimental implementation — 2026-05-30.
+Phases 5.0 through 5.1 are **implemented**:
 
-This ADR builds directly on [ADR 0006: CloudEdge Event Federation](../adr/0006-event-federation.md)
-and the [Selective Address Mobility](../reference/selective-address-mobility)
-dataplane. It is **experimental**.
+- **Phase 5.0** (framework + data model): `ProviderActionPolicy` Kind,
+  `action_executions` journal, schema/validation — done.
+- **Phase 5.0+** (execution engine + CLI): `pkg/provideraction` execution state
+  machine (pending → approved → succeeded/failed/skipped → rolledBack),
+  `routerctl action` operator surface (import, list, show, approve, execute,
+  journal, rollback) — done.
+- **Phase 5.1** (live cloud executors): AWS, Azure, OCI provider executor plugins
+  with real mutation; **lab-smoke PASS**
+  ([AWS evidence](../releases/evidence/cloudedge-phase5-aws-provider-executor-smoke-20260530.md),
+  [Azure evidence](../releases/evidence/cloudedge-phase5-azure-provider-executor-smoke-20260531.md),
+  [OCI evidence](../releases/evidence/cloudedge-phase5-oci-provider-executor-smoke-20260531.md)).
 
-Phase 5.0 (this chunk) lands the **design, the `ProviderActionPolicy` Kind, and
-the `action_executions` journal only**. Phase 5.0 contains **no execution state
-machine, no `routerctl action` commands, no executor invocation, and no real
-provider CLI/SDK calls** — a fake executor and the execution path arrive in
-later chunks.
+This ADR builds directly on [ADR 0006](0006-event-federation.md) and the
+[Selective Address Mobility](../reference/selective-address-mobility) dataplane.
+It is **experimental**.
 
 ## Context
 
@@ -84,20 +91,24 @@ state:
 - `allowUndo` (bool, default false).
 - `executionWindow` (string, validated leniently).
 
-### `routerctl action` UX surface (later chunks, documented here)
+### `routerctl action` UX surface
 
 `routerctl action list`, `show`, `approve`, `execute --dry-run|--approved`,
-`journal`, and `rollback --dry-run`. These are the operator surface; Phase 5.0
-ships **none** of them.
+`journal`, and `rollback --dry-run`. These are the operator surface;
+implemented in `cmd/routerctl/cmd_action.go` (Phase 5.0+).
 
 ### Phasing
 
-- **Phase 5.0** — framework + data model: `ProviderActionPolicy` Kind, the
-  `action_executions` journal, schema/validation. A **fake executor** (no real
-  cloud) arrives in Phase 5.0's later chunk to exercise the path end-to-end.
-  **Phase 5.0 calls no real provider CLI/SDK.**
-- **Live mutation smoke** — gated, one provider at a time, against the
-  SAM-validated cloud.
+- ✅ **Phase 5.0** — framework + data model: `ProviderActionPolicy` Kind, the
+  `action_executions` journal, schema/validation. **DONE.**
+- ✅ **Phase 5.0+** — execution engine + CLI: `pkg/provideraction` execution
+  state machine with approval workflow (`engine.go`), executor runner with
+  capability gating (`executor.go`), `routerctl action` operator surface
+  (`cmd/routerctl/cmd_action.go`: import, list, show, approve, execute,
+  journal, rollback). **DONE.**
+- ✅ **Phase 5.1** — live cloud executors: AWS, Azure, OCI provider executor
+  plugins with real mutation against SAM-validated cloud. **DONE (lab-smoke
+  PASS).**
 - **Phase 5.x** — hardening (windows, rate limits, richer rollback, audit).
 
 ## Hard safety stops
@@ -118,7 +129,8 @@ ships **none** of them.
    is gated by `allowUndo`.
 7. **Provider credentials never traverse routerd core** — the executor holds and
    uses its own cloud-native identity.
-8. **Phase 5.0 calls no real provider CLI/SDK** — fake executor only.
+8. **Live executors are gated by policy** — real provider CLI/SDK calls require
+   `ProviderActionPolicy.enabled=true`, `dryRunOnly=false`, and approval.
 
 ## Consequences
 

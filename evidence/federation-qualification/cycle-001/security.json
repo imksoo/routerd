@@ -1,0 +1,15 @@
+{
+  "runId": "20260618T100643Z-federation-qual",
+  "commit": "bf46e53d",
+  "cycle": 1,
+  "scenario": "security",
+  "result": "pass",
+  "startedAt": "2026-06-18T10:08:48Z",
+  "endedAt": "2026-06-18T10:08:55Z",
+  "malformedStatus": 400,
+  "wrongStatus": 400,
+  "badAuthStatus": 400,
+  "eventCountBefore": 7,
+  "eventCountAfter": 7,
+  "testedEventId": "qual-security-20260618T100643Z-federation-qual-c1-1781777331"
+}
