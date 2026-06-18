@@ -8,7 +8,7 @@ distbase=${DISTBASE:-dist}
 workdir=${ROUTERD_LIVE_WORKDIR:-"${distbase}/live/work"}
 cachedir=${ROUTERD_LIVE_CACHEDIR:-"${distbase}/live/cache"}
 outdir=${ROUTERD_LIVE_OUTDIR:-"${distbase}/iso"}
-ubuntu_iso_url=${UBUNTU_ISO_URL:-https://releases.ubuntu.com/24.04/ubuntu-24.04.2-live-server-amd64.iso}
+ubuntu_iso_url=${UBUNTU_ISO_URL:-https://releases.ubuntu.com/24.04/ubuntu-24.04.4-live-server-amd64.iso}
 ubuntu_packages=${UBUNTU_LIVE_PACKAGES:-"ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables keepalived openssh-server"}
 read -r -a ubuntu_package_list <<< "${ubuntu_packages}"
 
