@@ -468,7 +468,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	controllerBus = bus.NewWithStore(stateStore)
 	controllerBus.SetLogger(slog.Default())
 	publishControllerModeEvents(ctx, controllerBus, controllerStatuses)
-	_, hostFeatures := platform.Current()
 	peerGroupSyncClient := mobilitycontroller.NewPeerGroupSyncClient(stateStore)
 	if !*sandbox && (mobilitycontroller.HasPublishedPeerGroups(router) || mobilitycontroller.HasPublishedMemberSets(router)) {
 		if err := startPeerGroupSyncServer(ctx, stateStore, logger); err != nil {
@@ -477,7 +476,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}
 	controllerOpts := controllerchain.Options{
 		SuperviseClientDaemons: true,
-		SuperviseDNSResolvers:  hostFeatures.HasOpenRC,
+		SuperviseDNSResolvers:  false,
 		DnsmasqCommand:         "dnsmasq",
 		DnsmasqConfig:          "/run/routerd/dnsmasq.conf",
 		DnsmasqPID:             "/run/routerd/dnsmasq.pid",

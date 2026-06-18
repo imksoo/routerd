@@ -92,7 +92,7 @@ WireGuard 的監聽埠請使用其他號碼。
 該服務負責建立 `wg` 介面、從檔案讀取私鑰，
 並套用所宣告的 peer 與靜態位址。
 
-核心模組，以及 systemd-networkd/resolved 的 adoption drop-in 均從路由器資源自動導出。若已刪除的 `KernelModule`、`NetworkAdoption`、`Link`、`NixOSHost` 仍殘留在設定中，routerd 不會靜默忽略，而是回傳錯誤。
+核心模組，以及 systemd-networkd/resolved 的 adoption drop-in 均從路由器資源自動導出。若已刪除的 `KernelModule`、`NetworkAdoption`、`Link` 仍殘留在設定中，routerd 不會靜默忽略，而是回傳錯誤。
 
 ## WAN 位址與委派
 

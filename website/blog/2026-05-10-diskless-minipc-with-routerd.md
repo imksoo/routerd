@@ -78,8 +78,7 @@ routerd/
 ```
 
 The live helper detects `ext4`, `vfat`, and `exfat`, mounts with
-`async,noatime` by default, and uses Alpine `lbu` to preserve selected local
-state.
+`async,noatime` by default to preserve selected local state.
 
 ![USB persistence placeholder](/img/tutorials/diskless-05-usb-persistence.svg)
 

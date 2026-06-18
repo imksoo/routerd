@@ -17,24 +17,28 @@ create_veth_pair "$NS" eth0 10.88.67.1/24 "$NS" eth1 10.88.67.2/24
 CONFIG="$WORKDIR/keepalived.conf"
 PIDFILE="$WORKDIR/keepalived.pid"
 LOGFILE="$WORKDIR/keepalived.log"
-ACTION_LOG="$WORKDIR/rc-service.log"
+ACTION_LOG="$WORKDIR/systemctl.log"
 IP_BIN="$(command -v ip)"
 add_cleanup "test -s '$PIDFILE' && kill \"\$(cat '$PIDFILE')\""
 
-cat >"$WORKDIR/rc-service" <<'EOF'
+cat >"$WORKDIR/systemctl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-svc=$1
-action=$2
-[ "$svc" = keepalived ] || exit 2
+action=$1
+if [ "${2:-}" = "--quiet" ]; then
+  svc=$3
+else
+  svc=$2
+fi
+[ "$svc" = keepalived.service ] || exit 2
 
 running() {
   [ -s "$KEEPALIVED_PIDFILE" ] && kill -0 "$(cat "$KEEPALIVED_PIDFILE")" 2>/dev/null
 }
 
 case "$action" in
-  status)
+  is-active|status)
     running
     ;;
   reload)
@@ -56,7 +60,7 @@ case "$action" in
     ;;
 esac
 EOF
-chmod 0755 "$WORKDIR/rc-service"
+chmod 0755 "$WORKDIR/systemctl"
 
 cat >"$WORKDIR/ip" <<EOF
 #!/usr/bin/env bash
@@ -95,10 +99,10 @@ func (s store) ObjectStatus(apiVersion, kind, name string) map[string]any {
 
 func main() {
 	config := os.Getenv("KEEPALIVED_CONFIG")
-	rcService := os.Getenv("FAKE_RC_SERVICE")
+	systemctl := os.Getenv("FAKE_SYSTEMCTL")
 	ipCmd := os.Getenv("FAKE_IP")
 	pidfile := os.Getenv("KEEPALIVED_PIDFILE")
-	if config == "" || rcService == "" || ipCmd == "" || pidfile == "" {
+	if config == "" || systemctl == "" || ipCmd == "" || pidfile == "" {
 		panic("missing test environment")
 	}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
@@ -122,8 +126,7 @@ func main() {
 		Router:     router,
 		Store:      store{},
 		ConfigPath: config,
-		OpenRC:     true,
-		RCService:  rcService,
+		Systemctl:  systemctl,
 		IP:         ipCmd,
 	}
 	ctx := context.Background()
@@ -168,7 +171,7 @@ KEEPALIVED_CONFIG="$CONFIG" \
 KEEPALIVED_PIDFILE="$PIDFILE" \
 KEEPALIVED_LOG="$LOGFILE" \
 KEEPALIVED_ACTION_LOG="$ACTION_LOG" \
-FAKE_RC_SERVICE="$WORKDIR/rc-service" \
+FAKE_SYSTEMCTL="$WORKDIR/systemctl" \
 FAKE_IP="$WORKDIR/ip" \
 go run "$WORKDIR/no_spurious.go"
 

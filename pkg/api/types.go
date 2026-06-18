@@ -698,8 +698,6 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "NetworkAdoption":
 		return RemovedLegacyKindError(raw.Kind, r.ID())
-	case "NixOSHost":
-		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "Link":
 		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "StatePolicy":

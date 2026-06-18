@@ -43,19 +43,6 @@ func (c KernelModuleController) Reconcile(ctx context.Context) error {
 		if osName == "" {
 			osName = packageOSName(runtime.GOOS)
 		}
-		if osName == "nixos" {
-			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "KernelModule", resource.Metadata.Name, map[string]any{
-				"phase":     "Applied",
-				"reason":    "NixOSDeclarativeKernelModules",
-				"os":        osName,
-				"modules":   compactStringList(append([]string(nil), spec.Modules...)),
-				"dryRun":    c.DryRun,
-				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
-			}); err != nil {
-				return err
-			}
-			continue
-		}
 		if runtime.GOOS != "linux" && osName != "linux" && osName != "ubuntu" && osName != "debian" {
 			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "KernelModule", resource.Metadata.Name, map[string]any{
 				"phase":     "Pending",

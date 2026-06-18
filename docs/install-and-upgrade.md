@@ -125,7 +125,7 @@ hardening, not a regression. No service-unit change is required.
 
 ## Try the live ISO
 
-The release page also publishes a bootable Alpine-based live ISO:
+The release page also publishes a bootable Ubuntu-based live ISO:
 
 ```sh
 curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-live.iso
@@ -192,7 +192,7 @@ For safe USB removal, run:
 ```
 
 See [Operations → USB persistence](./operations/usb-persistence) for the full
-layout, mount options, and Alpine `lbu` behavior.
+layout and mount options.
 
 Versioned ISO files are also published, for example
 `routerd-live-vYYYYMMDD.HHmm.iso`.
@@ -249,17 +249,6 @@ The installer uses `pacman` and installs:
 ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables keepalived openssh
 ```
 
-### Alpine
-
-The installer uses `apk` and installs:
-
-```text
-alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables keepalived util-linux e2fsprogs dosfstools exfatprogs qemu-guest-agent openssh
-```
-
-`alpine-conf` provides `lbu`, which routerd uses on the live ISO to preserve
-the router configuration and selected local system state on USB media.
-
 ### FreeBSD
 
 The installer uses `pkg` and installs:
@@ -271,16 +260,6 @@ ca_root_nss curl dnsmasq wireguard-tools mpd5 bind-tools tcpdump jq chrony stron
 FreeBSD `pf`, `ifconfig`, `route`, `sysctl`, `service`, `sysrc`, `cron`,
 `netstat`, `sockstat`, `ping`, and `traceroute` are base-system tools.
 The installer checks for the commands but does not install them as packages.
-
-### NixOS
-
-NixOS should keep package state in the NixOS configuration.
-When `install.sh` detects NixOS-style tooling, it prints a warning instead of
-calling `nix-env`.
-Declare packages through the NixOS configuration or routerd `Package` resources.
-The release installer can still place `/usr/local/sbin/routerd` binaries, but it
-does not install, enable, or restart systemd units on NixOS. Manage the routerd
-service declaratively through the NixOS module.
 
 ## Upgrade
 

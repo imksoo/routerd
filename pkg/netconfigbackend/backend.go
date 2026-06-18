@@ -77,31 +77,6 @@ func (Networkd) Render(router *api.Router) ([]render.File, error) {
 	return render.NetworkdDropins(router)
 }
 
-type NixOS struct {
-	Path string
-}
-
-func (NixOS) Name() string { return "nixos" }
-
-func (NixOS) Declarations(router *api.Router) (Declarations, error) {
-	return DeclarationsFromRouter(router)
-}
-
-func (b NixOS) Render(router *api.Router) ([]render.File, error) {
-	data, err := render.NixOSModule(router)
-	if err != nil || len(data) == 0 {
-		return nil, err
-	}
-	path := b.Path
-	if path == "" {
-		path = "/etc/nixos/routerd-generated.nix"
-	}
-	if err := validateOutputPath(b.Name(), path); err != nil {
-		return nil, err
-	}
-	return []render.File{{Path: path, Data: data}}, nil
-}
-
 type RCConf struct {
 	Path        string
 	PasswordFor func(api.Resource, api.PPPoESessionSpec) (string, error)

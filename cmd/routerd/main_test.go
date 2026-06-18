@@ -890,15 +890,8 @@ func TestRunApplyOnceVRRPRendersKeepalivedWithoutDaemonLifecycle(t *testing.T) {
 		t.Fatalf("create fake bin dir: %v", err)
 	}
 	commandLog := filepath.Join(dir, "commands.log")
-	writeExecutable(t, filepath.Join(binDir, "rc-update"), fmt.Sprintf(`#!/bin/sh
-echo "rc-update $@" >> %q
-if [ "$1" = "show" ]; then
-  exit 0
-fi
-exit 0
-`, commandLog))
-	writeExecutable(t, filepath.Join(binDir, "rc-service"), fmt.Sprintf(`#!/bin/sh
-echo "rc-service $@" >> %q
+	writeExecutable(t, filepath.Join(binDir, "systemctl"), fmt.Sprintf(`#!/bin/sh
+echo "systemctl $@" >> %q
 exit 0
 `, commandLog))
 	writeExecutable(t, filepath.Join(binDir, "keepalived"), fmt.Sprintf(`#!/bin/sh
@@ -919,10 +912,9 @@ exit 0
 	oldKeepalivedPath := runtimeKeepalivedConfigPath
 	platformDefaults = oldDefaults
 	platformDefaults.OS = platform.OSLinux
-	platformDefaults.OpenRCScriptDir = filepath.Join(dir, "etc", "init.d")
 	platformDefaults.RuntimeDir = filepath.Join(dir, "run")
 	platformDefaults.StateDir = filepath.Join(dir, "var", "lib", "routerd")
-	platformFeatures = platform.Features{HasOpenRC: true}
+	platformFeatures = platform.Features{HasSystemd: true}
 	runtimeKeepalivedConfigPath = filepath.Join(dir, "etc", "keepalived", "keepalived.conf")
 	t.Cleanup(func() {
 		platformDefaults = oldDefaults
@@ -992,7 +984,7 @@ exit 0
 	if err != nil {
 		t.Fatalf("read command log: %v", err)
 	}
-	for _, unwanted := range []string{"rc-service keepalived reload", "rc-service keepalived restart", "keepalived --config-test", "ip -4 addr"} {
+	for _, unwanted := range []string{"systemctl reload keepalived.service", "systemctl restart keepalived.service", "keepalived --config-test", "ip -4 addr"} {
 		if strings.Contains(string(commands), unwanted) {
 			t.Fatalf("apply --once must not run VRRP daemon lifecycle command %q:\n%s", unwanted, commands)
 		}
@@ -1009,7 +1001,7 @@ func TestRunApplyOnceBGPHandoffsToEmbeddedGoBGPServe(t *testing.T) {
 		t.Fatalf("create fake bin dir: %v", err)
 	}
 	commandLog := filepath.Join(dir, "commands.log")
-	for _, name := range []string{"systemctl", "rc-service", "ss", "vtysh", "frr-reload.py"} {
+	for _, name := range []string{"systemctl", "ss", "vtysh", "frr-reload.py"} {
 		writeExecutable(t, filepath.Join(binDir, name), fmt.Sprintf(`#!/bin/sh
 echo "%s $@" >> %q
 exit 99
@@ -1071,7 +1063,6 @@ exit 99
 		for _, unwanted := range []string{
 			"systemctl enable frr.service",
 			"systemctl restart frr.service",
-			"rc-service frr restart",
 			"ss -ltn",
 			"vtysh ",
 			"frr-reload.py ",
@@ -1716,7 +1707,7 @@ func TestRouterWithIPv6PDClientOptionsResolvesFlavorDefaults(t *testing.T) {
 		Profile:   api.IPv6PDProfileNTTHGWLANPD,
 	})
 
-	got, warnings, err := routerWithIPv6PDClientOptions(router, applyOptions{}, "linux", false)
+	got, warnings, err := routerWithIPv6PDClientOptions(router, applyOptions{}, "linux")
 	if err != nil {
 		t.Fatalf("resolve PD options: %v", err)
 	}
@@ -1734,20 +1725,6 @@ func TestRouterWithIPv6PDClientOptionsResolvesFlavorDefaults(t *testing.T) {
 		t.Fatalf("profile = %q, want original profile", spec.Profile)
 	}
 
-	got, warnings, err = routerWithIPv6PDClientOptions(router, applyOptions{}, "linux", true)
-	if err != nil {
-		t.Fatalf("resolve NixOS PD options: %v", err)
-	}
-	if len(warnings) != 0 {
-		t.Fatalf("nixos warnings = %v, want none", warnings)
-	}
-	spec, err = got.Spec.Resources[1].DHCPv6PrefixDelegationSpec()
-	if err != nil {
-		t.Fatalf("read nixos spec: %v", err)
-	}
-	if spec.Client != api.IPv6PDClientRouterd {
-		t.Fatalf("nixos client = %q, want routerd-dhcpv6-client", spec.Client)
-	}
 }
 
 func TestRouterWithIPv6PDClientOptionsOverridesAndWarns(t *testing.T) {
@@ -1759,7 +1736,7 @@ func TestRouterWithIPv6PDClientOptionsOverridesAndWarns(t *testing.T) {
 
 	got, warnings, err := routerWithIPv6PDClientOptions(router, applyOptions{
 		OverrideClient: api.IPv6PDClientDHCPCD,
-	}, "freebsd", false)
+	}, "freebsd")
 	if err != nil {
 		t.Fatalf("resolve overridden PD options: %v", err)
 	}
@@ -1788,10 +1765,10 @@ func TestRouterWithIPv6PDClientOptionsOverridesAndWarns(t *testing.T) {
 
 func TestRouterWithIPv6PDClientOptionsRejectsInvalidOverride(t *testing.T) {
 	router := testRouterWithPrefixDelegation(api.DHCPv6PrefixDelegationSpec{Interface: "wan"})
-	if _, _, err := routerWithIPv6PDClientOptions(router, applyOptions{OverrideClient: "bad"}, "linux", false); err == nil {
+	if _, _, err := routerWithIPv6PDClientOptions(router, applyOptions{OverrideClient: "bad"}, "linux"); err == nil {
 		t.Fatal("expected invalid override client to be rejected")
 	}
-	if _, _, err := routerWithIPv6PDClientOptions(router, applyOptions{OverrideProfile: "bad"}, "linux", false); err == nil {
+	if _, _, err := routerWithIPv6PDClientOptions(router, applyOptions{OverrideProfile: "bad"}, "linux"); err == nil {
 		t.Fatal("expected invalid override profile to be rejected")
 	}
 }
@@ -2259,211 +2236,6 @@ exit 0
 	}
 }
 
-func TestApplyOpenRCServiceResourcesIsIdempotent(t *testing.T) {
-	dir := t.TempDir()
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatalf("create fake bin dir: %v", err)
-	}
-	commandLog := filepath.Join(dir, "commands.log")
-	enabledFile := filepath.Join(dir, "enabled")
-	activeDir := filepath.Join(dir, "active")
-	if err := os.MkdirAll(activeDir, 0755); err != nil {
-		t.Fatalf("create active dir: %v", err)
-	}
-	writeExecutable(t, filepath.Join(binDir, "rc-update"), fmt.Sprintf(`#!/bin/sh
-if [ "$1" = "show" ]; then
-  cat %q 2>/dev/null || true
-  exit 0
-fi
-echo "rc-update $@" >> %q
-if [ "$1" = "add" ]; then
-  grep -qx "$2" %q 2>/dev/null || echo "$2" >> %q
-elif [ "$1" = "del" ]; then
-  tmp=%q.tmp
-  grep -vx "$2" %q > "$tmp" 2>/dev/null || true
-  mv "$tmp" %q
-fi
-`, enabledFile, commandLog, enabledFile, enabledFile, enabledFile, enabledFile, enabledFile))
-	writeExecutable(t, filepath.Join(binDir, "rc-service"), fmt.Sprintf(`#!/bin/sh
-echo "rc-service $@" >> %q
-if [ "$2" = "status" ]; then
-  test -f %q/"$1"
-  exit $?
-fi
-if [ "$2" = "start" ] || [ "$2" = "restart" ]; then
-  touch %q/"$1"
-  exit 0
-fi
-if [ "$2" = "stop" ]; then
-  rm -f %q/"$1"
-  exit 0
-fi
-exit 0
-`, commandLog, activeDir, activeDir, activeDir))
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	oldDefaults := platformDefaults
-	oldFeatures := platformFeatures
-	platformDefaults = platform.Defaults{
-		OS:              platform.OSLinux,
-		OpenRCScriptDir: filepath.Join(dir, "etc", "init.d"),
-	}
-	platformFeatures = platform.Features{HasOpenRC: true}
-	t.Cleanup(func() {
-		platformDefaults = oldDefaults
-		platformFeatures = oldFeatures
-	})
-
-	router := &api.Router{Spec: api.RouterSpec{}}
-	changed, err := applyOpenRCServiceResources(router)
-	if err != nil {
-		t.Fatalf("apply OpenRC service resources: %v", err)
-	}
-	if !containsString(changed, filepath.Join(platformDefaults.OpenRCScriptDir, "routerd")) {
-		t.Fatalf("changed = %v, want routerd OpenRC script", changed)
-	}
-	commands, err := os.ReadFile(commandLog)
-	if err != nil {
-		t.Fatalf("read command log: %v", err)
-	}
-	first := string(commands)
-	for _, want := range []string{"rc-update add routerd default", "rc-service routerd status", "rc-service routerd start"} {
-		if !strings.Contains(first, want) {
-			t.Fatalf("first apply missing %q:\n%s", want, first)
-		}
-	}
-	if err := os.WriteFile(commandLog, nil, 0644); err != nil {
-		t.Fatalf("clear command log: %v", err)
-	}
-	changed, err = applyOpenRCServiceResources(router)
-	if err != nil {
-		t.Fatalf("second OpenRC apply: %v", err)
-	}
-	if len(changed) != 0 {
-		t.Fatalf("second apply changed = %v, want none", changed)
-	}
-	commands, err = os.ReadFile(commandLog)
-	if err != nil {
-		t.Fatalf("read second command log: %v", err)
-	}
-	second := string(commands)
-	for _, unwanted := range []string{"rc-update add smoke default", "rc-service smoke start", "rc-service smoke restart"} {
-		if strings.Contains(second, unwanted) {
-			t.Fatalf("second apply should not repeat %q:\n%s", unwanted, second)
-		}
-	}
-}
-
-func TestApplyOpenRCServiceResourcesRemovesStaleDNSResolverServices(t *testing.T) {
-	dir := t.TempDir()
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatalf("create fake bin dir: %v", err)
-	}
-	commandLog := filepath.Join(dir, "commands.log")
-	enabledFile := filepath.Join(dir, "enabled")
-	activeDir := filepath.Join(dir, "active")
-	if err := os.MkdirAll(activeDir, 0755); err != nil {
-		t.Fatalf("create active dir: %v", err)
-	}
-	staleService := "routerd_dns_resolver_lan"
-	if err := os.WriteFile(enabledFile, []byte(staleService+"\n"), 0644); err != nil {
-		t.Fatalf("seed enabled services: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(activeDir, staleService), nil, 0644); err != nil {
-		t.Fatalf("seed active service: %v", err)
-	}
-	writeExecutable(t, filepath.Join(binDir, "rc-update"), fmt.Sprintf(`#!/bin/sh
-if [ "$1" = "show" ]; then
-  cat %q 2>/dev/null || true
-  exit 0
-fi
-echo "rc-update $@" >> %q
-if [ "$1" = "add" ]; then
-  grep -qx "$2" %q 2>/dev/null || echo "$2" >> %q
-elif [ "$1" = "del" ]; then
-  tmp=%q.tmp
-  grep -vx "$2" %q > "$tmp" 2>/dev/null || true
-  mv "$tmp" %q
-fi
-`, enabledFile, commandLog, enabledFile, enabledFile, enabledFile, enabledFile, enabledFile))
-	writeExecutable(t, filepath.Join(binDir, "rc-service"), fmt.Sprintf(`#!/bin/sh
-echo "rc-service $@" >> %q
-if [ "$2" = "status" ]; then
-  test -f %q/"$1"
-  exit $?
-fi
-if [ "$2" = "start" ] || [ "$2" = "restart" ]; then
-  touch %q/"$1"
-  exit 0
-fi
-if [ "$2" = "stop" ]; then
-  rm -f %q/"$1"
-  exit 0
-fi
-exit 0
-`, commandLog, activeDir, activeDir, activeDir))
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	oldDefaults := platformDefaults
-	oldFeatures := platformFeatures
-	platformDefaults = platform.Defaults{
-		OS:              platform.OSLinux,
-		OpenRCScriptDir: filepath.Join(dir, "etc", "init.d"),
-	}
-	platformFeatures = platform.Features{HasOpenRC: true}
-	t.Cleanup(func() {
-		platformDefaults = oldDefaults
-		platformFeatures = oldFeatures
-	})
-	if err := os.MkdirAll(platformDefaults.OpenRCScriptDir, 0755); err != nil {
-		t.Fatalf("create init.d: %v", err)
-	}
-	stalePath := filepath.Join(platformDefaults.OpenRCScriptDir, staleService)
-	if err := os.WriteFile(stalePath, []byte("# stale\n"), 0755); err != nil {
-		t.Fatalf("seed stale service: %v", err)
-	}
-
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
-			Metadata: api.ObjectMeta{Name: "lan"},
-			Spec: api.DNSResolverSpec{
-				Listen:  []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}, Port: 5053}},
-				Sources: []api.DNSResolverSourceSpec{{Kind: "upstream", Match: []string{"."}, Upstreams: []string{"udp://1.1.1.1:53"}}},
-			},
-		},
-	}}}
-	changed, err := applyOpenRCServiceResources(router)
-	if err != nil {
-		t.Fatalf("apply OpenRC service resources: %v", err)
-	}
-	if !containsString(changed, stalePath) {
-		t.Fatalf("changed = %v, want stale service removal %s", changed, stalePath)
-	}
-	if _, err := os.Stat(stalePath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("stale service still exists, stat err=%v", err)
-	}
-	commands, err := os.ReadFile(commandLog)
-	if err != nil {
-		t.Fatalf("read command log: %v", err)
-	}
-	log := string(commands)
-	for _, want := range []string{"rc-service routerd_dns_resolver_lan stop", "rc-update del routerd_dns_resolver_lan default"} {
-		if !strings.Contains(log, want) {
-			t.Fatalf("command log missing %q:\n%s", want, log)
-		}
-	}
-	enabled, err := os.ReadFile(enabledFile)
-	if err != nil {
-		t.Fatalf("read enabled services: %v", err)
-	}
-	if strings.Contains(string(enabled), staleService) {
-		t.Fatalf("stale service still enabled:\n%s", enabled)
-	}
-}
-
 func TestApplyFreeBSDConfigContinuesAfterPackageFailure(t *testing.T) {
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")
@@ -2521,13 +2293,13 @@ exit 0
 	}
 }
 
-func TestLinuxPackageOSNameFromRecognizesAlpine(t *testing.T) {
-	got := linuxPackageOSNameFrom("NAME=\"Alpine Linux\"\nID=alpine\n")
-	if got != "alpine" {
-		t.Fatalf("linuxPackageOSNameFrom = %q, want alpine", got)
+func TestLinuxPackageOSNameFromRecognizesDebianLike(t *testing.T) {
+	got := linuxPackageOSNameFrom("NAME=\"Pop!_OS\"\nID=pop\nID_LIKE=debian\n")
+	if got != "ubuntu" {
+		t.Fatalf("linuxPackageOSNameFrom = %q, want ubuntu", got)
 	}
-	if got := defaultLinuxPackageManager(got); got != "apk" {
-		t.Fatalf("defaultLinuxPackageManager = %q, want apk", got)
+	if got := defaultLinuxPackageManager(got); got != "apt" {
+		t.Fatalf("defaultLinuxPackageManager = %q, want apt", got)
 	}
 }
 
@@ -2721,97 +2493,6 @@ exit 1
 	}
 	if serviceCalls, err := os.ReadFile(serviceLog); err == nil && len(serviceCalls) > 0 {
 		t.Fatalf("service/sysrc must not be called without a service path:\n%s", serviceCalls)
-	}
-}
-
-func TestApplyOpenRCDnsmasqConfigIsIdempotent(t *testing.T) {
-	dir := t.TempDir()
-	oldDefaults := platformDefaults
-	platformDefaults = platform.Defaults{
-		OS:              platform.OSLinux,
-		RuntimeDir:      filepath.Join(dir, "run", "routerd"),
-		StateDir:        filepath.Join(dir, "lib", "routerd"),
-		OpenRCScriptDir: filepath.Join(dir, "etc", "init.d"),
-	}
-	t.Cleanup(func() { platformDefaults = oldDefaults })
-
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatalf("create fake bin dir: %v", err)
-	}
-	commandLog := filepath.Join(dir, "commands.log")
-	enabledFile := filepath.Join(dir, "enabled")
-	activeDir := filepath.Join(dir, "active")
-	if err := os.MkdirAll(activeDir, 0755); err != nil {
-		t.Fatalf("create active dir: %v", err)
-	}
-	writeExecutable(t, filepath.Join(binDir, "dnsmasq"), fmt.Sprintf(`#!/bin/sh
-echo "dnsmasq $@" >> %q
-exit 0
-`, commandLog))
-	writeExecutable(t, filepath.Join(binDir, "rc-update"), fmt.Sprintf(`#!/bin/sh
-if [ "$1" = "show" ]; then
-  cat %q 2>/dev/null || true
-  exit 0
-fi
-echo "rc-update $@" >> %q
-if [ "$1" = "add" ]; then
-  grep -qx "$2" %q 2>/dev/null || echo "$2" >> %q
-fi
-`, enabledFile, commandLog, enabledFile, enabledFile))
-	writeExecutable(t, filepath.Join(binDir, "rc-service"), fmt.Sprintf(`#!/bin/sh
-echo "rc-service $@" >> %q
-if [ "$2" = "status" ]; then
-  test -f %q/"$1"
-  exit $?
-fi
-if [ "$2" = "start" ] || [ "$2" = "restart" ]; then
-  touch %q/"$1"
-  exit 0
-fi
-exit 0
-`, commandLog, activeDir, activeDir))
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	configPath := filepath.Join(dir, "usr", "local", "etc", "routerd", "dnsmasq.conf")
-	servicePath := filepath.Join(platformDefaults.OpenRCScriptDir, "routerd_dnsmasq")
-	configData := []byte("port=0\ndhcp-leasefile=" + filepath.Join(platformDefaults.StateDir, "dnsmasq", "dnsmasq.leases") + "\n")
-	changed, err := applyOpenRCDnsmasqConfig(configPath, servicePath, configData, filepath.Join(binDir, "dnsmasq"))
-	if err != nil {
-		t.Fatalf("apply OpenRC dnsmasq: %v", err)
-	}
-	if !containsString(changed, configPath) || !containsString(changed, servicePath) || !containsString(changed, "service:routerd_dnsmasq") {
-		t.Fatalf("changed = %v", changed)
-	}
-	commands, err := os.ReadFile(commandLog)
-	if err != nil {
-		t.Fatalf("read command log: %v", err)
-	}
-	first := string(commands)
-	for _, want := range []string{"dnsmasq --test --conf-file=" + configPath, "rc-update add routerd_dnsmasq default", "rc-service routerd_dnsmasq start"} {
-		if !strings.Contains(first, want) {
-			t.Fatalf("first apply missing %q:\n%s", want, first)
-		}
-	}
-	if err := os.WriteFile(commandLog, nil, 0644); err != nil {
-		t.Fatalf("clear command log: %v", err)
-	}
-	changed, err = applyOpenRCDnsmasqConfig(configPath, servicePath, configData, filepath.Join(binDir, "dnsmasq"))
-	if err != nil {
-		t.Fatalf("second OpenRC dnsmasq apply: %v", err)
-	}
-	if len(changed) != 0 {
-		t.Fatalf("second apply changed = %v, want none", changed)
-	}
-	commands, err = os.ReadFile(commandLog)
-	if err != nil {
-		t.Fatalf("read second command log: %v", err)
-	}
-	second := string(commands)
-	for _, unwanted := range []string{"rc-update add routerd_dnsmasq default", "rc-service routerd_dnsmasq start", "rc-service routerd_dnsmasq restart"} {
-		if strings.Contains(second, unwanted) {
-			t.Fatalf("second apply should not repeat %q:\n%s", unwanted, second)
-		}
 	}
 }
 

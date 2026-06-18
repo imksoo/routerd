@@ -1229,9 +1229,7 @@
                               "enum": [
                                 "",
                                 "apt",
-                                "apk",
                                 "dnf",
-                                "nix",
                                 "pkg"
                               ],
                               "type": "string"
@@ -1249,12 +1247,10 @@
                               "enum": [
                                 "ubuntu",
                                 "debian",
-                                "alpine",
                                 "fedora",
                                 "rhel",
                                 "rocky",
                                 "almalinux",
-                                "nixos",
                                 "freebsd"
                               ],
                               "type": "string"

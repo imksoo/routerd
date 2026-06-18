@@ -830,12 +830,8 @@ func defaultPackageManager(osName string) string {
 	switch osName {
 	case "ubuntu", "debian":
 		return "apt"
-	case "alpine":
-		return "apk"
 	case "fedora", "rhel", "rocky", "almalinux":
 		return "dnf"
-	case "nixos":
-		return "nix"
 	case "freebsd":
 		return "pkg"
 	default:

@@ -51,7 +51,6 @@ var serviceDeclarations = []serviceDeclaration{
 			name := render.SafePPPoEName(ctx.res.Metadata.Name)
 			return []resource.Intent{serviceIntent(ctx, servicemgr.Service{
 				SystemdName: "routerd-pppoe-" + name + ".service",
-				OpenRCName:  "routerd_pppoe_client_" + name,
 			}, resource.ActionEnsure, map[string]string{"disabled": fmt.Sprintf("%t", !api.BoolDefault(spec.Enabled, true))})}
 		},
 	},
@@ -62,7 +61,7 @@ var serviceDeclarations = []serviceDeclaration{
 			if err != nil || defaultString(spec.Mode, "static") != "vrrp" {
 				return nil
 			}
-			service := servicemgr.Service{SystemdName: "keepalived.service", OpenRCName: "keepalived", RCDName: "keepalived"}
+			service := servicemgr.Service{SystemdName: "keepalived.service", RCDName: "keepalived"}
 			if ctx.targetOS == platform.OSFreeBSD {
 				service = servicemgr.Service{RCDName: "routerd_carp", SystemdName: "routerd-carp.service"}
 			}
@@ -107,9 +106,6 @@ var serviceDeclarations = []serviceDeclaration{
 	{
 		kind: "DNSResolver",
 		declare: func(ctx serviceDeclarationContext) []resource.Intent {
-			if ctx.features.HasOpenRC {
-				return nil
-			}
 			return []resource.Intent{serviceIntent(ctx, servicemgr.Service{SystemdName: "routerd-dns-resolver@" + ctx.res.Metadata.Name + ".service"}, resource.ActionEnsure, nil)}
 		},
 	},
@@ -131,9 +127,7 @@ func serviceIntent(ctx serviceDeclarationContext, service servicemgr.Service, ac
 func dnsmasqServiceIntent(ctx serviceDeclarationContext) resource.Intent {
 	return serviceIntent(ctx, servicemgr.Service{
 		SystemdName: "routerd-dnsmasq.service",
-		OpenRCName:  "routerd_dnsmasq",
 		RCDName:     "routerd_dnsmasq",
-		NixName:     "routerd-dnsmasq",
 	}, resource.ActionEnsure, nil)
 }
 

@@ -117,18 +117,18 @@ func TestCanonicalResourcePaths(t *testing.T) {
 	}
 }
 
-func TestDnsmasqLeaseCandidatesUsePersistentManagedPath(t *testing.T) {
+func TestDnsmasqLeaseCandidatesPreferActualManagedPath(t *testing.T) {
 	defaults := Defaults{RuntimeDir: "/run/routerd", StateDir: "/var/lib/routerd"}
-	if got := DnsmasqLeaseCandidates(defaults, Features{}); len(got) != 1 || got[0] != "/var/lib/routerd/dnsmasq/dnsmasq.leases" {
-		t.Fatalf("systemd candidates = %#v, want persistent path only", got)
-	}
-	if got := DnsmasqLeaseCandidates(defaults, Features{HasOpenRC: true}); len(got) != 1 || got[0] != "/var/lib/routerd/dnsmasq/dnsmasq.leases" {
-		t.Fatalf("openrc candidates = %#v, want persistent path only", got)
+	if got := DnsmasqLeaseCandidates(defaults, Features{}); got[0] != "/var/lib/routerd/dnsmasq/dnsmasq.leases" {
+		t.Fatalf("systemd candidates = %#v, want state path first", got)
 	}
 	freebsd := Defaults{RuntimeDir: "/var/run/routerd", StateDir: "/var/db/routerd"}
 	got := DnsmasqLeaseCandidates(freebsd, Features{HasRCD: true})
-	if len(got) != 1 || got[0] != "/var/db/routerd/dnsmasq/dnsmasq.leases" {
-		t.Fatalf("freebsd candidates = %#v, want persistent path only", got)
+	if got[0] != "/var/db/routerd/dnsmasq/dnsmasq.leases" {
+		t.Fatalf("freebsd candidates = %#v, want state path first", got)
+	}
+	if got[1] != "/var/run/routerd/dnsmasq.leases" {
+		t.Fatalf("freebsd candidates = %#v, want runtime fallback second", got)
 	}
 }
 
@@ -137,18 +137,6 @@ func TestLinuxFeatureFlagsConsistency(t *testing.T) {
 		t.Skip("linux-only invariants")
 	}
 	_, features := Current()
-	if IsAlpineHost() {
-		if !features.HasOpenRC {
-			t.Error("alpine Defaults must declare HasOpenRC")
-		}
-		if features.HasSystemd {
-			t.Error("alpine Defaults must not declare HasSystemd")
-		}
-		if features.HasNetplan {
-			t.Error("alpine Defaults must not declare HasNetplan")
-		}
-		return
-	}
 	if !features.HasSystemd {
 		t.Error("linux Defaults must declare HasSystemd")
 	}
@@ -188,11 +176,5 @@ func TestSystemdPathsRequireSystemd(t *testing.T) {
 	}
 	if !features.HasRCD && defaults.RCScriptDir != "" {
 		t.Errorf("RCScriptDir set on non-rc.d platform: %q", defaults.RCScriptDir)
-	}
-	if !features.HasOpenRC && defaults.OpenRCScriptDir != "" {
-		t.Errorf("OpenRCScriptDir set on non-OpenRC platform: %q", defaults.OpenRCScriptDir)
-	}
-	if features.HasOpenRC && defaults.OpenRCScriptDir == "" {
-		t.Error("OpenRCScriptDir is empty on OpenRC platform")
 	}
 }

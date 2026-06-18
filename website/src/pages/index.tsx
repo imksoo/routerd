@@ -32,7 +32,7 @@ const copy = {
   en: {
     title: 'Declarative router control for real hosts',
     description:
-      'routerd turns typed YAML resources into a working, observable router on Linux, NixOS, and FreeBSD hosts.',
+      'routerd turns typed YAML resources into a working, observable router on Linux and FreeBSD hosts.',
     eyebrow: 'Open router control plane',
     headline: 'Make a host router readable again.',
     subtitle:
@@ -72,10 +72,10 @@ const copy = {
         resources: ['Interface', 'WireGuardInterface', 'VXLAN'],
       },
       {
-        title: 'NixOS / FreeBSD host router',
+        title: 'FreeBSD host router',
         problem:
           'Same resource model renders to systemd, networkd, nftables, rc.conf, or pf depending on the host OS.',
-        link: '/docs/tutorials/nixos-getting-started',
+        link: '/docs/tutorials/freebsd-getting-started',
         linkLabel: 'Start here →',
         resources: ['Package', 'SysctlProfile', 'cross-OS render'],
       },
@@ -138,7 +138,7 @@ const copy = {
   ja: {
     title: '実ホスト向け宣言的ルーター制御',
     description:
-      'routerd は型付き YAML リソースを、動作し観測できる Linux、NixOS、FreeBSD ルーターへ反映します。',
+      'routerd は型付き YAML リソースを、動作し観測できる Linux、FreeBSD ルーターへ反映します。',
     eyebrow: 'オープンなルーター制御プレーン',
     headline: 'ホストルーターを、もう一度読める形に。',
     subtitle:
@@ -178,10 +178,10 @@ const copy = {
         resources: ['Interface', 'WireGuardInterface', 'VXLAN'],
       },
       {
-        title: 'NixOS / FreeBSD ホストルーター',
+        title: 'FreeBSD ホストルーター',
         problem:
           '同じリソースモデルがホストOSに応じて systemd / networkd / nftables / rc.conf / pf へ反映されます。',
-        link: '/docs/tutorials/nixos-getting-started',
+        link: '/docs/tutorials/freebsd-getting-started',
         linkLabel: 'ここから始める →',
         resources: ['Package', 'SysctlProfile', 'クロスOS レンダー'],
       },

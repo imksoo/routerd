@@ -8,7 +8,6 @@ func TestEffectiveIPv6PDClient(t *testing.T) {
 	tests := []struct {
 		name       string
 		osName     string
-		nixOS      bool
 		profile    string
 		configured string
 		want       string
@@ -16,13 +15,12 @@ func TestEffectiveIPv6PDClient(t *testing.T) {
 		{name: "freebsd default", osName: "freebsd", want: IPv6PDClientRouterd},
 		{name: "linux default profile", osName: "linux", profile: IPv6PDProfileDefault, want: IPv6PDClientRouterd},
 		{name: "linux ntt profile", osName: "linux", profile: IPv6PDProfileNTTHGWLANPD, want: IPv6PDClientRouterd},
-		{name: "nixos ntt profile", osName: "linux", nixOS: true, profile: IPv6PDProfileNTTHGWLANPD, want: IPv6PDClientRouterd},
-		{name: "configured wins", osName: "linux", nixOS: true, profile: IPv6PDProfileNTTHGWLANPD, configured: IPv6PDClientNetworkd, want: IPv6PDClientNetworkd},
+		{name: "configured wins", osName: "linux", profile: IPv6PDProfileNTTHGWLANPD, configured: IPv6PDClientNetworkd, want: IPv6PDClientNetworkd},
 		{name: "unknown os", osName: "plan9", want: IPv6PDClientRouterd},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := EffectiveIPv6PDClient(tt.osName, tt.nixOS, tt.profile, tt.configured); got != tt.want {
+			if got := EffectiveIPv6PDClient(tt.osName, tt.profile, tt.configured); got != tt.want {
 				t.Fatalf("EffectiveIPv6PDClient() = %q, want %q", got, tt.want)
 			}
 		})

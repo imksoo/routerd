@@ -51,7 +51,7 @@ sudo routerd serve --config /usr/local/etc/routerd/router.yaml
 
 ## 產生
 
-文件中的「產生」，是指 routerd 組裝 dnsmasq 設定、nftables 設定、systemd 單元、NixOS 設定等面向主機的檔案。
+文件中的「產生」，是指 routerd 組裝 dnsmasq 設定、nftables 設定、systemd 單元等面向主機的檔案。
 僅完成產生並不代表主機會立即變更。
 是否實際套用，取決於套用處理與模擬執行的指定方式。
 

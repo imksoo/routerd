@@ -33,7 +33,6 @@ func TestSpecsSecretFieldsAreReviewedAndRedacted(t *testing.T) {
 		"BGPPeerSpec.Password":                  {Struct: "BGPPeerSpec", Field: "Password", JSON: "password", YAML: "password"},
 		"BGPPeerSpec.PasswordFrom":              {Struct: "BGPPeerSpec", Field: "PasswordFrom", JSON: "passwordFrom", YAML: "passwordFrom"},
 		"IPsecConnectionSpec.PreSharedKey":      {Struct: "IPsecConnectionSpec", Field: "PreSharedKey", JSON: "preSharedKey", YAML: "preSharedKey"},
-		"NixOSUserSpec.InitialPassword":         {Struct: "NixOSUserSpec", Field: "InitialPassword", JSON: "initialPassword", YAML: "initialPassword"},
 		"PPPoESessionSpec.Password":             {Struct: "PPPoESessionSpec", Field: "Password", JSON: "password", YAML: "password"},
 		"PPPoESessionSpec.PasswordFile":         {Struct: "PPPoESessionSpec", Field: "PasswordFile", JSON: "passwordFile", YAML: "passwordFile"},
 		"TailscaleNodeSpec.AuthKey":             {Struct: "TailscaleNodeSpec", Field: "AuthKey", JSON: "authKey", YAML: "authKey"},

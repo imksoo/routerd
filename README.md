@@ -52,14 +52,14 @@ segments and a diskless physical mini PC router can use the same resource
 model. The host artifacts differ. The intent file stays recognizable.
 
 routerd is not trying to replace every router project or appliance UI. It is
-strongest when the same network intent must move between a Proxmox lab, a NixOS
-or FreeBSD router, an Ubuntu home gateway, and a diskless mini PC booted from
+strongest when the same network intent must move between a Proxmox lab, a
+FreeBSD router, an Ubuntu home gateway, and a diskless mini PC booted from
 the live ISO.
 
 The project focuses on a few independent strengths:
 
-- **Cross-OS declarative resources** for Ubuntu, NixOS, and FreeBSD host
-  integration, with Alpine Linux groundwork for the live ISO and minimal hosts.
+- **Cross-OS declarative resources** for Ubuntu and FreeBSD host
+  integration.
 - **Live ISO plus USB persistence** for diskless mini PC routers.
 - **Observable routing decisions** through events, generation diffs,
   health checks, Web Console, and OpenTelemetry.
@@ -132,7 +132,6 @@ The production-style examples show how the pieces fit together:
   bootstrap auto-derivation, DHCPv6-PD, DS-Lite, DNS resolver, DHCP server,
   RA, BGP peering, and Web Console.
 - `examples/router-lab.yaml`: smaller Linux lab configuration.
-- `examples/nixos-edge.yaml`: NixOS-oriented rendering path.
 - `examples/freebsd-edge.yaml`: compact FreeBSD-native rc.d, pf, dnsmasq, and
   DS-Lite rendering example.
 - `examples/tailscale-exit-subnet.yaml`: Tailscale exit-node and subnet-router
@@ -224,8 +223,8 @@ and source availability paths. The ISO as a whole is not relicensed as one GPL
 work.
 
 The release archive includes `share/doc/LICENSE` and
-`share/doc/THIRD_PARTY_LICENSES.md`. The live ISO exposes the same notices under
-`/usr/share/licenses/routerd/`. Regenerate the inventory with:
+`share/doc/THIRD_PARTY_LICENSES.md`. The live ISO exposes the same notices
+under `/usr/share/licenses/routerd/`. Regenerate the inventory with:
 
 ```sh
 make third-party-licenses

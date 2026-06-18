@@ -6,10 +6,6 @@ out=${1:-THIRD_PARTY_LICENSES.md}
 tmpdir=$(mktemp -d)
 trap 'rm -rf "${tmpdir}"' EXIT INT TERM
 
-alpine_mirror=${ALPINE_MIRROR:-https://dl-cdn.alpinelinux.org/alpine}
-alpine_branch=${ALPINE_BRANCH:-latest-stable}
-alpine_arch=${ALPINE_ARCH:-x86_64}
-
 license_file()
 {
     dir=$1
@@ -81,71 +77,8 @@ go_source_url()
     printf 'https://pkg.go.dev/%s@%s\n' "${module}" "${version}"
 }
 
-apk_packages()
-{
-    awk '
-        /^[[:space:]]*apk\)/ { in_apk = 1; next }
-        in_apk && /^[[:space:]]*;;/ { in_apk = 0 }
-        in_apk && /packages="/ {
-            line = $0
-            sub(/^.*packages="/, "", line)
-            sub(/".*$/, "", line)
-            print line
-        }
-    ' packaging/install.sh
-}
-
-fetch_apk_index()
-{
-    index_file=$1
-    : > "${index_file}"
-    for repo in main community; do
-        url="${alpine_mirror}/${alpine_branch}/${repo}/${alpine_arch}/APKINDEX.tar.gz"
-        if command -v curl >/dev/null 2>&1; then
-            if curl -fsSL "${url}" | tar -xzO APKINDEX >> "${index_file}" 2>/dev/null; then
-                printf '\n' >> "${index_file}"
-            else
-                echo "warning: could not fetch ${url}" >&2
-            fi
-        elif command -v wget >/dev/null 2>&1; then
-            if wget -qO- "${url}" | tar -xzO APKINDEX >> "${index_file}" 2>/dev/null; then
-                printf '\n' >> "${index_file}"
-            else
-                echo "warning: could not fetch ${url}" >&2
-            fi
-        else
-            echo "warning: curl or wget is required to collect Alpine package license metadata" >&2
-            return 0
-        fi
-    done
-}
-
-apk_field()
-{
-    index_file=$1
-    package=$2
-    key=$3
-    awk -v package="${package}" -v key="${key}" '
-        BEGIN { RS = ""; FS = "\n" }
-        {
-            found = 0
-            value = ""
-            for (i = 1; i <= NF; i++) {
-                if ($i == "P:" package) found = 1
-                if (substr($i, 1, length(key) + 1) == key ":") value = substr($i, length(key) + 2)
-            }
-            if (found) {
-                print value
-                exit
-            }
-        }
-    ' "${index_file}"
-}
-
 go_copyleft="${tmpdir}/go-copyleft"
 : > "${go_copyleft}"
-apk_index="${tmpdir}/APKINDEX"
-fetch_apk_index "${apk_index}"
 
 {
     echo "# Third-party licenses"
@@ -161,8 +94,8 @@ fetch_apk_index "${apk_index}"
     echo "<kirino.minato@gmail.com> (https://github.com/imksoo) and routerd"
     echo "contributors. Release archives and the live ISO also include third-party"
     echo "software. The live ISO is an aggregate distribution: each"
-    echo "included Alpine package keeps its own upstream license and source"
-    echo "availability path. The ISO is not relicensed as a single GPL work."
+    echo "included operating-system package keeps its own upstream license and"
+    echo "source availability path. The ISO is not relicensed as a single GPL work."
     echo
     echo "This file summarizes dependencies used to build, install, or boot routerd."
     echo "It is not a substitute for reviewing the original upstream license files."
@@ -217,25 +150,13 @@ fetch_apk_index "${apk_index}"
         echo "This check is heuristic and should be reviewed before formal releases."
     fi
     echo
-    echo "## Alpine packages used by the live ISO"
+    echo "## Operating-system packages used by the live ISO"
     echo
-    echo "The live ISO is based on Alpine Linux. Package license metadata below is"
-    echo "collected from Alpine APKINDEX records for \`${alpine_branch}\` /"
-    echo "\`${alpine_arch}\`. Source code for Alpine packages is available through"
-    echo "Alpine package repositories, APKBUILD files, and upstream project URLs."
-    echo
-    echo "| Package | Version | License | Upstream URL |"
-    echo "| --- | --- | --- | --- |"
-    for package in $(apk_packages); do
-        version=$(apk_field "${apk_index}" "${package}" V)
-        license=$(apk_field "${apk_index}" "${package}" L)
-        url=$(apk_field "${apk_index}" "${package}" U)
-        [ -n "${version}" ] || version="unknown"
-        [ -n "${license}" ] || license="unknown"
-        [ -n "${url}" ] || url="Alpine package repository"
-        # shellcheck disable=SC2016 # Markdown backticks are literal output.
-        printf '| `%s` | `%s` | `%s` | %s |\n' "${package}" "${version}" "${license}" "${url}"
-    done
+    echo "The live ISO is based on Ubuntu Server. Ubuntu package source and license"
+    echo "metadata is provided by the Ubuntu archive for the release used to build"
+    echo "the ISO. The routerd live ISO build script copies routerd payload files into"
+    echo "that base image and does not vendor those package sources into this"
+    echo "repository."
     echo
     echo "## Optional runtime dependencies"
     echo
@@ -251,9 +172,9 @@ fetch_apk_index "${apk_index}"
     echo
     echo "- routerd source code is published at <https://github.com/imksoo/routerd>."
     echo "- routerd release tags use the \`vYYYYMMDD.HHmm\` format."
-    echo "- Alpine package source information is available from Alpine package"
-    echo "  repositories and the upstream URLs listed above."
-    echo "- The routerd live ISO combines routerd binaries, scripts, and Alpine"
+    echo "- Ubuntu package source information is available from Ubuntu archive"
+    echo "  metadata for the release used as the live ISO base."
+    echo "- The routerd live ISO combines routerd binaries, scripts, and base OS"
     echo "  packages as separate components with their own licenses."
 } > "${out}"
 

@@ -60,9 +60,7 @@ routerd 以跨 OS 为前提设计，同一份 binary 与相同配置可支持多
 | OS | 强项 | 用途 |
 | --- | --- | --- |
 | **Linux（Ubuntu / Debian）** | systemd 标准、易获取、内核版本较新 | 开发与生产环境的主流 |
-| **NixOS** | 声明式 OS 与 routerd 高度契合、可重现性高 | 声明式运维的最佳选择 |
 | **FreeBSD** | base 稳定、资源占用小、jail 隔离 | 长期运转与低资源环境 |
-| **Alpine** | 最小体积、musl、apk | 未来的最小配置文件 |
 
 OS 之间的差异由 `pkg/platform` 层吸收。
 nftables ↔ pf、systemd-networkd ↔ rc.conf、systemd unit ↔ rc.d 脚本等对应，由各 OS 的生成器（renderer）负责。

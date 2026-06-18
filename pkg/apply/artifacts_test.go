@@ -259,8 +259,8 @@ func TestForceFragmentNftTableIsRouterOwnedNotOrphan(t *testing.T) {
 	}
 }
 
-func TestVirtualAddressIPv4UsesOpenRCAndBGPRouterUsesEmbeddedGoBGP(t *testing.T) {
-	features := platform.Features{HasOpenRC: true}
+func TestVirtualAddressIPv4UsesSystemdAndBGPRouterUsesEmbeddedGoBGP(t *testing.T) {
+	features := platform.Features{HasSystemd: true}
 	vip := api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
 		Metadata: api.ObjectMeta{Name: "api-vip"},
@@ -272,13 +272,9 @@ func TestVirtualAddressIPv4UsesOpenRCAndBGPRouterUsesEmbeddedGoBGP(t *testing.T)
 		},
 	}
 	vipIntents := resourceArtifactIntentsForPlatform(vip, map[string]string{"lan": "eth0"}, platform.OSLinux, features)
-	if !hasArtifactIntent(vipIntents, "openrc.service", "keepalived", "rc-service") {
-		t.Fatalf("VRRP VIP missing keepalived OpenRC intent: %+v", vipIntents)
+	if !hasArtifactIntent(vipIntents, "systemd.service", "keepalived.service", "systemctl") {
+		t.Fatalf("VRRP VIP missing keepalived systemd intent: %+v", vipIntents)
 	}
-	if hasArtifactIntent(vipIntents, "systemd.service", "keepalived.service", "systemctl") {
-		t.Fatalf("VRRP VIP should not claim systemd keepalived on OpenRC: %+v", vipIntents)
-	}
-
 	bgp := api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
 		Metadata: api.ObjectMeta{Name: "lan"},
@@ -288,13 +284,10 @@ func TestVirtualAddressIPv4UsesOpenRCAndBGPRouterUsesEmbeddedGoBGP(t *testing.T)
 	if !hasArtifactIntent(bgpIntents, "gobgp.router", "lan", "routerd-serve") {
 		t.Fatalf("BGPRouter missing embedded GoBGP intent: %+v", bgpIntents)
 	}
-	if hasArtifactIntent(bgpIntents, "openrc.service", "frr", "rc-service") {
-		t.Fatalf("BGPRouter should not claim FRR OpenRC intent: %+v", bgpIntents)
-	}
 }
 
-func TestOpenRCServiceArtifactIntentsAvoidSystemd(t *testing.T) {
-	features := platform.Features{HasOpenRC: true}
+func TestLinuxServiceArtifactIntentsUseSystemd(t *testing.T) {
+	features := platform.Features{HasSystemd: true}
 	resources := []api.Resource{
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"},
@@ -338,17 +331,12 @@ func TestOpenRCServiceArtifactIntentsAvoidSystemd(t *testing.T) {
 	for _, res := range resources {
 		t.Run(res.Kind, func(t *testing.T) {
 			intents := resourceArtifactIntentsForPlatform(res, map[string]string{"lan": "eth0", "wan": "eth1"}, platform.OSLinux, features)
-			if res.Kind == "DNSResolver" {
-				if hasArtifactKind(intents, "openrc.service") {
-					t.Fatalf("DNSResolver should not claim OpenRC service intent when routerd serve supervises DNS helpers: %+v", intents)
-				}
-				return
+			wantKind := "systemd.service"
+			if res.Kind == "TailscaleNode" {
+				wantKind = "systemd.unit"
 			}
-			if !hasArtifactKind(intents, "openrc.service") {
-				t.Fatalf("%s missing OpenRC service intent: %+v", res.Kind, intents)
-			}
-			if hasArtifactKind(intents, "systemd.service") || hasArtifactKind(intents, "systemd.unit") {
-				t.Fatalf("%s should not claim systemd artifacts on OpenRC: %+v", res.Kind, intents)
+			if !hasArtifactKind(intents, wantKind) {
+				t.Fatalf("%s missing %s intent: %+v", res.Kind, wantKind, intents)
 			}
 		})
 	}
@@ -408,9 +396,7 @@ func TestServiceDeclarationsUsePlatformManagerMatrix(t *testing.T) {
 		apply    string
 	}{
 		{name: "systemd", targetOS: platform.OSLinux, features: platform.Features{HasSystemd: true}, kind: "systemd.service", apply: "systemctl"},
-		{name: "openrc", targetOS: platform.OSLinux, features: platform.Features{HasOpenRC: true}, kind: "openrc.service", apply: "rc-service"},
 		{name: "rcd", targetOS: platform.OSFreeBSD, features: platform.Features{HasRCD: true}, kind: "rc.d.service", apply: "service"},
-		{name: "nixos", targetOS: platform.OSLinux, features: platform.Features{}, kind: "nixos.service", apply: "nixos-module"},
 	}
 	for _, res := range resources {
 		for _, platformCase := range platforms {
@@ -419,12 +405,6 @@ func TestServiceDeclarationsUsePlatformManagerMatrix(t *testing.T) {
 				wantKind := platformCase.kind
 				if res.Kind == "TailscaleNode" && platformCase.name == "systemd" {
 					wantKind = "systemd.unit"
-				}
-				if res.Kind == "DNSResolver" && platformCase.name == "openrc" {
-					if hasArtifactKind(intents, wantKind) {
-						t.Fatalf("DNSResolver should not claim OpenRC service intent when routerd serve supervises DNS helpers: %+v", intents)
-					}
-					return
 				}
 				if !hasArtifactKind(intents, wantKind) {
 					t.Fatalf("missing %s service intent: %+v", wantKind, intents)

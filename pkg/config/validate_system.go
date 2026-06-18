@@ -195,15 +195,15 @@ func validateSystemResource(res api.Resource, targetOS platform.OS) (bool, error
 		}
 		for i, set := range spec.Packages {
 			switch set.OS {
-			case "ubuntu", "debian", "alpine", "fedora", "rhel", "rocky", "almalinux", "nixos", "freebsd":
+			case "ubuntu", "debian", "fedora", "rhel", "rocky", "almalinux", "freebsd":
 			default:
-				return true, fmt.Errorf("%s spec.packages[%d].os must be ubuntu, debian, alpine, fedora, rhel, rocky, almalinux, nixos, or freebsd", res.ID(), i)
+				return true, fmt.Errorf("%s spec.packages[%d].os must be ubuntu, debian, fedora, rhel, rocky, almalinux, or freebsd", res.ID(), i)
 			}
 			manager := defaultString(set.Manager, defaultPackageManager(set.OS))
 			switch manager {
-			case "apt", "apk", "dnf", "nix", "pkg":
+			case "apt", "dnf", "pkg":
 			default:
-				return true, fmt.Errorf("%s spec.packages[%d].manager must be apt, apk, dnf, nix, or pkg", res.ID(), i)
+				return true, fmt.Errorf("%s spec.packages[%d].manager must be apt, dnf, or pkg", res.ID(), i)
 			}
 			if expected := defaultPackageManager(set.OS); expected != "" && manager != expected {
 				return true, fmt.Errorf("%s spec.packages[%d].manager must be %s for os %s", res.ID(), i, expected, set.OS)
@@ -377,68 +377,6 @@ func validateSystemResource(res api.Resource, targetOS platform.OS) (bool, error
 		if spec.BasePath != "" {
 			if !strings.HasPrefix(spec.BasePath, "/") || strings.ContainsAny(spec.BasePath, "\x00\r\n") {
 				return true, fmt.Errorf("%s spec.basePath must be an absolute HTTP path", res.ID())
-			}
-		}
-	case "NixOSHost":
-		if res.APIVersion != api.SystemAPIVersion {
-			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.SystemAPIVersion)
-		}
-		spec, err := res.NixOSHostSpec()
-		if err != nil {
-			return true, err
-		}
-		if spec.Hostname != "" && strings.ContainsAny(spec.Hostname, " \t\n/") {
-			return true, fmt.Errorf("%s spec.hostname contains invalid whitespace or slash", res.ID())
-		}
-		if spec.Domain != "" && strings.ContainsAny(spec.Domain, " \t\n/") {
-			return true, fmt.Errorf("%s spec.domain contains invalid whitespace or slash", res.ID())
-		}
-		switch spec.Boot.Loader {
-		case "", "grub":
-		default:
-			return true, fmt.Errorf("%s spec.boot.loader is invalid", res.ID())
-		}
-		if spec.Boot.GrubDevice != "" && strings.ContainsAny(spec.Boot.GrubDevice, " \t\n\r") {
-			return true, fmt.Errorf("%s spec.boot.grubDevice must be a single device path", res.ID())
-		}
-		switch spec.SSH.PermitRootLogin {
-		case "", "no", "yes", "prohibit-password", "forced-commands-only":
-		default:
-			return true, fmt.Errorf("%s spec.ssh.permitRootLogin is invalid", res.ID())
-		}
-		if spec.RouterdService.BinaryPath != "" && strings.ContainsAny(spec.RouterdService.BinaryPath, " \t\n\r") {
-			return true, fmt.Errorf("%s spec.routerdService.binaryPath must be a single path", res.ID())
-		}
-		if spec.RouterdService.ConfigFile != "" && strings.ContainsAny(spec.RouterdService.ConfigFile, " \t\n\r") {
-			return true, fmt.Errorf("%s spec.routerdService.configFile must be a single path", res.ID())
-		}
-		if spec.RouterdService.Socket != "" && strings.ContainsAny(spec.RouterdService.Socket, " \t\n\r") {
-			return true, fmt.Errorf("%s spec.routerdService.socket must be a single path", res.ID())
-		}
-		if spec.RouterdService.ApplyInterval != "" && strings.ContainsAny(spec.RouterdService.ApplyInterval, " \t\n\r") {
-			return true, fmt.Errorf("%s spec.routerdService.applyInterval must be a single duration", res.ID())
-		}
-		for i, flag := range spec.RouterdService.ExtraFlags {
-			if strings.TrimSpace(flag) == "" || strings.ContainsAny(flag, "\n\r") {
-				return true, fmt.Errorf("%s spec.routerdService.extraFlags[%d] is invalid", res.ID(), i)
-			}
-		}
-		for i, user := range spec.Users {
-			if user.Name == "" {
-				return true, fmt.Errorf("%s spec.users[%d].name is required", res.ID(), i)
-			}
-			if strings.ContainsAny(user.Name, " \t\n/:") {
-				return true, fmt.Errorf("%s spec.users[%d].name contains invalid whitespace, slash, or colon", res.ID(), i)
-			}
-			for j, group := range user.Groups {
-				if group == "" || strings.ContainsAny(group, " \t\n/:") {
-					return true, fmt.Errorf("%s spec.users[%d].groups[%d] is invalid", res.ID(), i, j)
-				}
-			}
-			for j, key := range user.SSHAuthorizedKeys {
-				if strings.TrimSpace(key) == "" || strings.ContainsAny(key, "\n\r") {
-					return true, fmt.Errorf("%s spec.users[%d].sshAuthorizedKeys[%d] is invalid", res.ID(), i, j)
-				}
 			}
 		}
 	case "Inventory":

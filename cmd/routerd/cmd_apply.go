@@ -23,7 +23,6 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
-	nixosapply "github.com/imksoo/routerd/pkg/apply/nixos"
 	"github.com/imksoo/routerd/pkg/config"
 	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
 	"github.com/imksoo/routerd/pkg/eventlog"
@@ -100,7 +99,7 @@ func effectiveApplyPolicy(router *api.Router) api.ApplyPolicySpec {
 	return policy
 }
 
-func routerWithIPv6PDClientOptions(router *api.Router, opts applyOptions, osName string, nixOS bool) (*api.Router, []string, error) {
+func routerWithIPv6PDClientOptions(router *api.Router, opts applyOptions, osName string) (*api.Router, []string, error) {
 	if router == nil {
 		return nil, nil, errors.New("router is nil")
 	}
@@ -130,7 +129,7 @@ func routerWithIPv6PDClientOptions(router *api.Router, opts applyOptions, osName
 		if opts.OverrideClient != "" {
 			spec.Client = opts.OverrideClient
 		} else {
-			spec.Client = api.EffectiveIPv6PDClient(osName, nixOS, profile, spec.Client)
+			spec.Client = api.EffectiveIPv6PDClient(osName, profile, spec.Client)
 		}
 		if !api.ValidIPv6PDClient(spec.Client) {
 			return nil, nil, fmt.Errorf("%s spec.client is invalid: %q", res.ID(), spec.Client)
@@ -139,9 +138,9 @@ func routerWithIPv6PDClientOptions(router *api.Router, opts applyOptions, osName
 			return nil, nil, fmt.Errorf("%s spec.profile is invalid: %q", res.ID(), spec.Profile)
 		}
 		out.Spec.Resources[i].Spec = spec
-		ctx := api.IPv6PDClientContext{OS: strings.ToLower(osName), NixOS: nixOS, Client: spec.Client, Profile: profile}
+		ctx := api.IPv6PDClientContext{OS: strings.ToLower(osName), Client: spec.Client, Profile: profile}
 		for _, item := range api.MatchKnownIPv6PDNGCombinations(ctx) {
-			warnings = append(warnings, fmt.Sprintf("%s uses known problematic DHCPv6PrefixDelegation combination os=%s nixos=%t client=%s profile=%s: %s See %s. Continuing because known problematic combinations are warnings, not validation errors.", res.ID(), strings.ToLower(osName), nixOS, spec.Client, profile, item.Reason, item.DocLink))
+			warnings = append(warnings, fmt.Sprintf("%s uses known problematic DHCPv6PrefixDelegation combination os=%s client=%s profile=%s: %s See %s. Continuing because known problematic combinations are warnings, not validation errors.", res.ID(), strings.ToLower(osName), spec.Client, profile, item.Reason, item.DocLink))
 		}
 	}
 	if err := config.Validate(&out); err != nil {
@@ -500,7 +499,7 @@ func compactStringList(values []string) []string {
 
 func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logger *eventlog.Logger) (*apply.Result, error) {
 	var optionWarnings []string
-	effectiveConfig, warnings, err := routerWithIPv6PDClientOptions(router, opts, string(platformDefaults.OS), isNixOSHost())
+	effectiveConfig, warnings, err := routerWithIPv6PDClientOptions(router, opts, string(platformDefaults.OS))
 	if err != nil {
 		return nil, err
 	}
@@ -633,34 +632,11 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			return nil, err
 		}
 
-		var nixOSChangedFiles []string
-		if isNixOSHost() {
-			if err := recordStageError("nixos-rebuild", func() error {
-				nixResult, err := nixosapply.Apply(context.Background(), effectiveRouter, nixosapply.Options{Mode: "switch"})
-				nixOSChangedFiles = append(nixOSChangedFiles, nixResult.ChangedFiles...)
-				if err == nil {
-					logger.Emit(eventlog.LevelInfo, "apply", "applied NixOS module", map[string]string{
-						"mode":             nixResult.Mode,
-						"module":           nixResult.ModulePath,
-						"generationBefore": nixResult.GenerationBefore,
-						"generationAfter":  nixResult.GenerationAfter,
-					})
-				}
-				return err
-			}()); err != nil {
-				return nil, err
-			}
-		}
-
 		var systemdUnitChangedFiles []string
 		if !opts.SkipServiceManager {
 			if err := recordStageError("service-manager", func() error {
 				var err error
-				if platformFeatures.HasOpenRC {
-					systemdUnitChangedFiles, err = applyOpenRCServiceResources(effectiveRouter)
-				} else {
-					systemdUnitChangedFiles, err = applySystemdUnitResources(effectiveRouter)
-				}
+				systemdUnitChangedFiles, err = applySystemdUnitResources(effectiveRouter)
 				return err
 			}()); err != nil {
 				return nil, err
@@ -689,10 +665,6 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 
 		var networkChangedFiles []string
 		if err := recordStageError("network", func() error {
-			if isNixOSHost() {
-				logger.Emit(eventlog.LevelInfo, "apply", "skipping direct network apply on NixOS; nixos-rebuild owns activation", map[string]string{"stage": "network"})
-				return nil
-			}
 			if !platformFeatures.HasNetplan && !platformFeatures.HasSystemdNetworkd {
 				var err error
 				networkChangedFiles, err = applyRuntimeLinuxNetworkResources(effectiveRouter)
@@ -779,9 +751,6 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 			if err != nil {
 				return err
 			}
-			if isNixOSHost() {
-				timesyncdConfig = nil
-			}
 			timesyncdChangedFiles, err = applyTimesyncdConfig(defaultTimesyncdPath, timesyncdConfig)
 			return err
 		}()); err != nil {
@@ -853,7 +822,7 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		} else {
 			result.Warnings = append(result.Warnings, "skipped ledger orphan cleanup and ownership recording because apply completed with stage errors")
 		}
-		changedFiles := append(nixOSChangedFiles, networkChangedFiles...)
+		changedFiles := append([]string{}, networkChangedFiles...)
 		changedFiles = append(changedFiles, systemdUnitChangedFiles...)
 		changedFiles = append(changedFiles, vrrpChangedFiles...)
 		changedFiles = append(changedFiles, bgpChangedFiles...)
@@ -972,22 +941,6 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 	}
 	if opts.AnnounceDryRunToCLI {
 		fmt.Fprintf(stdout, "dry-run apply plan for %s\n", opts.ConfigPath)
-	}
-	if isNixOSHost() {
-		nixResult, err := nixosapply.Apply(context.Background(), effectiveRouter, nixosapply.Options{Mode: "test"})
-		if err != nil {
-			return nil, err
-		}
-		for _, path := range nixResult.ChangedFiles {
-			fmt.Fprintf(stdout, "wrote %s\n", path)
-		}
-		fmt.Fprintln(stdout, "tested NixOS module with nixos-rebuild test")
-		logger.Emit(eventlog.LevelInfo, "apply", "tested NixOS module", map[string]string{
-			"mode":             nixResult.Mode,
-			"module":           nixResult.ModulePath,
-			"generationBefore": nixResult.GenerationBefore,
-			"generationAfter":  nixResult.GenerationAfter,
-		})
 	}
 	logger.Emit(eventlog.LevelInfo, "apply", "routerd dry-run completed", map[string]string{
 		"phase":     result.Phase,

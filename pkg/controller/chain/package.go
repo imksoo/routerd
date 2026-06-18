@@ -47,19 +47,6 @@ func (c PackageController) Reconcile(ctx context.Context) error {
 			continue
 		}
 		manager := firstNonEmpty(set.Manager, packageManagerForOS(set.OS))
-		if manager == "nix" {
-			_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, "Package", resource.Metadata.Name, map[string]any{
-				"phase":     "Applied",
-				"reason":    "NixOSDeclarativePackageSet",
-				"os":        set.OS,
-				"manager":   manager,
-				"names":     set.Names,
-				"changed":   false,
-				"dryRun":    c.DryRun,
-				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
-			})
-			continue
-		}
 		if manager != "apt" && manager != "dnf" && manager != "pkg" {
 			_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, "Package", resource.Metadata.Name, map[string]any{
 				"phase":     "Pending",
@@ -171,7 +158,7 @@ func packageOSName(goos string) string {
 	}
 	fields := parseOSReleaseID(string(data))
 	switch fields {
-	case "ubuntu", "debian", "fedora", "rhel", "rocky", "almalinux", "nixos":
+	case "ubuntu", "debian", "fedora", "rhel", "rocky", "almalinux":
 		return fields
 	default:
 		return "linux"
@@ -195,8 +182,6 @@ func packageManagerForOS(osName string) string {
 		return "apt"
 	case "fedora", "rhel", "rocky", "almalinux":
 		return "dnf"
-	case "nixos":
-		return "nix"
 	case "freebsd":
 		return "pkg"
 	default:

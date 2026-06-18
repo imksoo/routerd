@@ -42,7 +42,6 @@ func TestLoadRejectsRemovedImplementationResources(t *testing.T) {
 	}{
 		{kind: "KernelModule", apiVersion: "system.routerd.net/v1alpha1", spec: "modules: [nf_conntrack]\n"},
 		{kind: "NetworkAdoption", apiVersion: "system.routerd.net/v1alpha1", spec: "interface: wan\n"},
-		{kind: "NixOSHost", apiVersion: "system.routerd.net/v1alpha1", spec: "hostname: router\n"},
 		{kind: "Link", apiVersion: "net.routerd.net/v1alpha1", spec: "ifname: eth0\n"},
 		{kind: "StatePolicy", apiVersion: "net.routerd.net/v1alpha1", spec: "variable: wan.mode\nvalues:\n  - value: ready\n    when: {}\n"},
 		{kind: "DHCPv4Lease", apiVersion: "net.routerd.net/v1alpha1", spec: "interface: wan\n"},

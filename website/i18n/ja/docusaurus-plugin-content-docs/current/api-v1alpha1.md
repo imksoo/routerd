@@ -109,7 +109,7 @@ FreeBSD では、routerd が rc.d サービスを生成します。
 `SAMNodeSet.spec.nodes[].wireGuard` から peer を導出します。同じ `metadata.name` の
 静的 `WireGuardPeer` は生成 peer を override します。
 
-Kernel module と、systemd-networkd/resolved の adoption drop-in は、router resource から自動で導出されます。削除済みの `KernelModule`、`NetworkAdoption`、`Link`、`NixOSHost` が config に残っている場合、routerd は黙って無視せず、エラーを返します。
+Kernel module と、systemd-networkd/resolved の adoption drop-in は、router resource から自動で導出されます。削除済みの `KernelModule`、`NetworkAdoption`、`Link` が config に残っている場合、routerd は黙って無視せず、エラーを返します。
 
 ## WAN アドレスと委任
 

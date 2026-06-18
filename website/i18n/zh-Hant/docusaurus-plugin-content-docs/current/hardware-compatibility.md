@@ -88,7 +88,7 @@ Live ISO 同時適用於短期評估與無磁碟運作。
 ## 平台備註
 
 Ubuntu Server 為主要支援對象。
-NixOS 與 FreeBSD 透過平台專屬的產生器（renderer）與服務整合提供支援。
+FreeBSD 透過平台專屬的產生器（renderer）與服務整合提供支援。
 在 Linux 以外的平台上依賴特定功能時，請參閱[平台](./platforms)頁面確認。
 
 ## 驗證清單

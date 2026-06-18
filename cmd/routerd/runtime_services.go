@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -33,12 +32,6 @@ func applyDnsmasqConfig(configPath, servicePath string, configData []byte) ([]st
 	}
 	if platformDefaults.OS == platform.OSFreeBSD {
 		return applyFreeBSDDnsmasqConfig(configPath, servicePath, configData, dnsmasqPath)
-	}
-	if isNixOSHost() {
-		return applyNixOSDnsmasqConfig(configPath, configData, dnsmasqPath)
-	}
-	if platformFeatures.HasOpenRC {
-		return applyOpenRCDnsmasqConfig(configPath, servicePath, configData, dnsmasqPath)
 	}
 	if !platformFeatures.HasSystemd {
 		return applyDirectDnsmasqConfig(configPath, configData, dnsmasqPath)
@@ -100,7 +93,7 @@ func applyDnsmasqConfig(configPath, servicePath string, configData []byte) ([]st
 }
 
 func applyVRRPArtifactsOnce(router *api.Router, store routerstate.Store) ([]string, bool, error) {
-	if router == nil || platformDefaults.OS == platform.OSFreeBSD || isNixOSHost() || !routerHasVirtualAddress(router) {
+	if router == nil || platformDefaults.OS == platform.OSFreeBSD || !routerHasVirtualAddress(router) {
 		return nil, false, nil
 	}
 	data, err := render.KeepalivedConfig(router, routerInterfaceAliases(router.Spec.Resources))
@@ -189,7 +182,7 @@ func routerHasBGP(router *api.Router) bool {
 }
 
 func applyBGPArtifactsOnce(router *api.Router, store routerstate.Store) ([]string, bool, error) {
-	if router == nil || platformDefaults.OS == platform.OSFreeBSD || isNixOSHost() || !routerHasBGP(router) {
+	if router == nil || platformDefaults.OS == platform.OSFreeBSD || !routerHasBGP(router) {
 		return nil, false, nil
 	}
 	if statusStore, ok := store.(routerstate.ObjectStatusStore); ok {
@@ -264,72 +257,6 @@ func applyDirectDnsmasqConfig(configPath string, configData []byte, dnsmasqPath 
 	return changedFiles, nil
 }
 
-func applyOpenRCDnsmasqConfig(configPath, servicePath string, configData []byte, dnsmasqPath string) ([]string, error) {
-	if servicePath == "" {
-		if platformDefaults.OpenRCScriptDir == "" {
-			return nil, errors.New("OpenRC script directory is not configured")
-		}
-		servicePath = filepath.Join(platformDefaults.OpenRCScriptDir, "routerd_dnsmasq")
-	}
-	var changedFiles []string
-	if err := os.MkdirAll(filepathDir(configPath), 0755); err != nil {
-		return nil, fmt.Errorf("create directory for %s: %w", configPath, err)
-	}
-	if err := os.MkdirAll(platformDefaults.RuntimeDir, 0755); err != nil {
-		return nil, fmt.Errorf("create runtime directory %s: %w", platformDefaults.RuntimeDir, err)
-	}
-	leaseFile := dnsmasqLeaseFileForPlatform()
-	if err := os.MkdirAll(filepathDir(leaseFile), 0755); err != nil {
-		return nil, fmt.Errorf("create dnsmasq lease directory %s: %w", filepathDir(leaseFile), err)
-	}
-	changed, err := writeFileIfChanged(configPath, configData, 0644)
-	if err != nil {
-		return nil, fmt.Errorf("write dnsmasq config %s: %w", configPath, err)
-	}
-	if changed {
-		changedFiles = append(changedFiles, configPath)
-	}
-	out, err := exec.Command(dnsmasqPath, "--test", "--conf-file="+configPath).CombinedOutput()
-	if err != nil {
-		return changedFiles, fmt.Errorf("%s --test --conf-file=%s: %w: %s", dnsmasqPath, configPath, err, strings.TrimSpace(string(out)))
-	}
-	if err := os.MkdirAll(filepathDir(servicePath), 0755); err != nil {
-		return changedFiles, fmt.Errorf("create directory for %s: %w", servicePath, err)
-	}
-	script, err := render.DnsmasqOpenRCScript(configPath, dnsmasqPath)
-	if err != nil {
-		return changedFiles, err
-	}
-	serviceChanged, err := writeFileIfChanged(servicePath, script, 0755)
-	if err != nil {
-		return changedFiles, fmt.Errorf("write OpenRC dnsmasq script %s: %w", servicePath, err)
-	}
-	if serviceChanged {
-		changedFiles = append(changedFiles, servicePath)
-	}
-	enabledServices := openRCEnabledServices()
-	if !enabledServices["routerd_dnsmasq"] {
-		if err := runLogged("rc-update", "add", "routerd_dnsmasq", "default"); err != nil {
-			return changedFiles, err
-		}
-	}
-	active := openRCServiceActive("routerd_dnsmasq")
-	if len(changedFiles) > 0 && active {
-		if err := runLogged("rc-service", "routerd_dnsmasq", "restart"); err != nil {
-			return changedFiles, err
-		}
-		changedFiles = append(changedFiles, "service:routerd_dnsmasq")
-		return changedFiles, nil
-	}
-	if !active {
-		if err := runLogged("rc-service", "routerd_dnsmasq", "start"); err != nil {
-			return changedFiles, err
-		}
-		changedFiles = append(changedFiles, "service:routerd_dnsmasq")
-	}
-	return changedFiles, nil
-}
-
 func processRunningFromPIDFile(path string) bool {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -378,8 +305,6 @@ func findDnsmasqPath() (string, error) {
 		return dnsmasqPath, nil
 	}
 	for _, path := range []string{
-		"/run/current-system/sw/bin/dnsmasq",
-		"/nix/var/nix/profiles/system/sw/bin/dnsmasq",
 		"/usr/local/sbin/dnsmasq",
 		"/usr/sbin/dnsmasq",
 	} {
@@ -388,68 +313,6 @@ func findDnsmasqPath() (string, error) {
 		}
 	}
 	return "", err
-}
-
-func applyNixOSDnsmasqConfig(configPath string, configData []byte, dnsmasqPath string) ([]string, error) {
-	var changedFiles []string
-	if err := os.MkdirAll(filepathDir(configPath), 0755); err != nil {
-		return nil, fmt.Errorf("create directory for %s: %w", configPath, err)
-	}
-	leaseFile := dnsmasqLeaseFileForPlatform()
-	if err := os.MkdirAll(filepathDir(leaseFile), 0755); err != nil {
-		return nil, fmt.Errorf("create dnsmasq lease directory %s: %w", filepathDir(leaseFile), err)
-	}
-	changed, err := writeFileIfChanged(configPath, configData, 0644)
-	if err != nil {
-		return nil, fmt.Errorf("write dnsmasq config %s: %w", configPath, err)
-	}
-	if changed {
-		changedFiles = append(changedFiles, configPath)
-	}
-	if err := runLogged(dnsmasqPath, "--test", "--conf-file="+configPath); err != nil {
-		return nil, err
-	}
-	if err := removeStaleNixOSRuntimeDnsmasqUnit(&changedFiles); err != nil {
-		return nil, err
-	}
-	if changed {
-		if err := restartNixOSDnsmasqService(); err != nil {
-			return nil, err
-		}
-		return changedFiles, nil
-	}
-	if err := runLogged("systemctl", "is-active", "--quiet", routerdDnsmasqService); err != nil {
-		if err := restartNixOSDnsmasqService(); err != nil {
-			return nil, err
-		}
-	}
-	return changedFiles, nil
-}
-
-func removeStaleNixOSRuntimeDnsmasqUnit(changedFiles *[]string) error {
-	// Temporary migration cleanup for hosts that received the old imperative
-	// runtime unit before dnsmasq moved into the generated NixOS module.
-	// Remove after the first release containing generated routerd-dnsmasq
-	// NixOS service ownership has completed one deployment cycle.
-	path := "/run/systemd/system/" + routerdDnsmasqService
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	if err := os.Remove(path); err != nil {
-		return err
-	}
-	if changedFiles != nil {
-		*changedFiles = append(*changedFiles, path)
-	}
-	return runLogged("systemctl", "daemon-reload")
-}
-
-func restartNixOSDnsmasqService() error {
-	_ = runLogged("systemctl", "reset-failed", routerdDnsmasqService)
-	return runLogged("systemctl", "restart", routerdDnsmasqService)
 }
 
 func applyFreeBSDDnsmasqConfig(configPath, servicePath string, configData []byte, dnsmasqPath string) ([]string, error) {
@@ -509,7 +372,10 @@ func applyFreeBSDDnsmasqConfig(configPath, servicePath string, configData []byte
 }
 
 func dnsmasqLeaseFileForPlatform() string {
-	return platformDefaults.DnsmasqLeaseFile()
+	if platformDefaults.OS == platform.OSFreeBSD {
+		return platformDefaults.DnsmasqLeaseFile()
+	}
+	return ""
 }
 
 func dhcpStickyLogPath() string {
@@ -686,173 +552,6 @@ func applySystemdUnitResources(router *api.Router) ([]string, error) {
 	return nil, nil
 }
 
-func applyOpenRCServiceResources(router *api.Router) ([]string, error) {
-	if !platformFeatures.HasOpenRC {
-		return nil, nil
-	}
-	if platformDefaults.OpenRCScriptDir == "" {
-		return nil, errors.New("OpenRC script directory is not configured")
-	}
-	cfg, err := render.OpenRCWithOptions(router, render.OpenRCOptions{IncludeDnsmasq: false})
-	if err != nil {
-		return nil, err
-	}
-	if err := os.MkdirAll(platformDefaults.OpenRCScriptDir, 0755); err != nil {
-		return nil, fmt.Errorf("create OpenRC script directory %s: %w", platformDefaults.OpenRCScriptDir, err)
-	}
-	var changedFiles []string
-	changedServices := map[string]bool{}
-	enabledServices := openRCEnabledServices()
-	staleDNSResolverServices, err := cleanupStaleOpenRCDNSResolverServices(cfg, enabledServices)
-	if err != nil {
-		return nil, err
-	}
-	changedFiles = append(changedFiles, staleDNSResolverServices...)
-	for _, name := range sortedByteMapKeysMain(cfg.InitScripts) {
-		path := filepath.Join(platformDefaults.OpenRCScriptDir, name)
-		changed, err := writeFileIfChanged(path, cfg.InitScripts[name], 0755)
-		if err != nil {
-			return nil, fmt.Errorf("write OpenRC script %s: %w", path, err)
-		}
-		if changed {
-			changedFiles = append(changedFiles, path)
-			changedServices[name] = true
-		}
-	}
-	for _, service := range cfg.Services {
-		if service.Enabled {
-			if !enabledServices[service.Name] {
-				if err := runLogged("rc-update", "add", service.Name, "default"); err != nil {
-					return nil, err
-				}
-				enabledServices[service.Name] = true
-			}
-		} else if enabledServices[service.Name] {
-			if err := runLogged("rc-update", "del", service.Name, "default"); err != nil {
-				return nil, err
-			}
-			delete(enabledServices, service.Name)
-		}
-		if service.Name == "keepalived" {
-			continue
-		}
-		active := openRCServiceActive(service.Name)
-		if service.Started {
-			if service.Name == "routerd" && changedServices[service.Name] && active {
-				continue
-			}
-			if changedServices[service.Name] && active {
-				if err := runLogged("rc-service", service.Name, "restart"); err != nil {
-					return nil, err
-				}
-				continue
-			}
-			if !active {
-				if err := runLogged("rc-service", service.Name, "start"); err != nil {
-					return nil, err
-				}
-			}
-			continue
-		}
-		if service.Name == "routerd" {
-			continue
-		}
-		if active {
-			if err := runLogged("rc-service", service.Name, "stop"); err != nil {
-				return nil, err
-			}
-		}
-	}
-	return changedFiles, nil
-}
-
-func cleanupStaleOpenRCDNSResolverServices(cfg render.OpenRCConfig, enabledServices map[string]bool) ([]string, error) {
-	const prefix = "routerd_dns_resolver_"
-	desired := map[string]bool{}
-	for _, service := range cfg.Services {
-		desired[service.Name] = true
-	}
-	candidates := map[string]bool{}
-	for name := range enabledServices {
-		if strings.HasPrefix(name, prefix) {
-			candidates[name] = true
-		}
-	}
-	matches, err := filepath.Glob(filepath.Join(platformDefaults.OpenRCScriptDir, prefix+"*"))
-	if err != nil {
-		return nil, err
-	}
-	for _, path := range matches {
-		info, err := os.Stat(path)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
-			return nil, fmt.Errorf("stat stale OpenRC DNSResolver service %s: %w", path, err)
-		}
-		if info.IsDir() {
-			continue
-		}
-		candidates[filepath.Base(path)] = true
-	}
-	var names []string
-	for name := range candidates {
-		if desired[name] {
-			continue
-		}
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	var changed []string
-	for _, name := range names {
-		_ = runLogged("rc-service", name, "stop")
-		if enabledServices[name] {
-			if err := runLogged("rc-update", "del", name, "default"); err != nil {
-				return nil, err
-			}
-			delete(enabledServices, name)
-		}
-		path := filepath.Join(platformDefaults.OpenRCScriptDir, name)
-		if err := os.Remove(path); err != nil {
-			if !errors.Is(err, os.ErrNotExist) {
-				return nil, fmt.Errorf("remove stale OpenRC DNSResolver service %s: %w", path, err)
-			}
-			changed = append(changed, "openrc.service:"+name)
-			continue
-		}
-		changed = append(changed, path)
-	}
-	return changed, nil
-}
-
-func openRCEnabledServices() map[string]bool {
-	enabled := map[string]bool{}
-	out, err := exec.Command("rc-update", "show", "default").CombinedOutput()
-	if err != nil {
-		return enabled
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) > 0 {
-			enabled[fields[0]] = true
-		}
-	}
-	return enabled
-}
-
-func openRCServiceActive(name string) bool {
-	return exec.Command("rc-service", name, "status").Run() == nil
-}
-
-func sortedByteMapKeysMain(values map[string][]byte) []string {
-	out := make([]string, 0, len(values))
-	for key := range values {
-		out = append(out, key)
-	}
-	sort.Strings(out)
-	return out
-}
-
 func scheduleRouterdServiceRestartLogged() error {
 	return runLogged(
 		"systemd-run",
@@ -906,23 +605,8 @@ func applyPPPoEConfig(router *api.Router) ([]string, error) {
 		return nil, errors.New("pppd is required for managed PPPoE interfaces")
 	}
 
-	nixOS := isNixOSHost()
-	managedUnits := map[string]bool{}
-	for _, unit := range config.Units {
-		managedUnits[unit] = true
-	}
-	for _, unit := range config.DisabledUnits {
-		managedUnits[unit] = true
-	}
 	var changedFiles []string
 	for _, file := range config.Files {
-		if strings.HasPrefix(file.Path, "/etc/systemd/system/") && strings.HasSuffix(file.Path, ".service") && nixOS {
-			unit := filepath.Base(file.Path)
-			if !managedUnits[unit] {
-				continue
-			}
-			file.Path = filepath.Join("/run/systemd/system", unit)
-		}
 		if err := os.MkdirAll(filepathDir(file.Path), 0755); err != nil {
 			return nil, fmt.Errorf("create directory for %s: %w", file.Path, err)
 		}
@@ -952,33 +636,12 @@ func applyPPPoEConfig(router *api.Router) ([]string, error) {
 		}
 	}
 	for _, unit := range config.DisabledUnits {
-		if nixOS {
-			if err := runLogged("systemctl", "stop", unit); err != nil {
-				return nil, err
-			}
-			_ = runLogged("systemctl", "reset-failed", unit)
-			continue
-		}
 		if err := runLogged("systemctl", "disable", "--now", unit); err != nil {
 			return nil, err
 		}
 		_ = runLogged("systemctl", "reset-failed", unit)
 	}
 	for _, unit := range config.Units {
-		if nixOS {
-			if len(changedFiles) > 0 {
-				if err := runLogged("systemctl", "restart", unit); err != nil {
-					return nil, err
-				}
-				continue
-			}
-			if err := runLogged("systemctl", "is-active", "--quiet", unit); err != nil {
-				if err := runLogged("systemctl", "start", unit); err != nil {
-					return nil, err
-				}
-			}
-			continue
-		}
 		if len(changedFiles) > 0 {
 			if err := runLogged("systemctl", "enable", unit); err != nil {
 				return nil, err

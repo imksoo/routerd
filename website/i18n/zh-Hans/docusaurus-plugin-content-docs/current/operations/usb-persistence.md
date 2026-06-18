@@ -128,21 +128,6 @@ ext4，而不是 vfat/exfat。
 Live 辅助程序会输出警告，在设备重新插入并挂载前，
 不再将 USB 路径作为持久存储目的地。
 
-## Alpine lbu
-
-ISO 内含 Alpine 的 `lbu`。
-Live 辅助程序会将 routerd 的路径加入 lbu 的 include 清单。
-
-```text
-/usr/local/etc/routerd
-/var/lib/routerd
-/var/db/routerd
-/etc/periodic/daily/routerd-usb-flush
-```
-
-保存配置或写出状态后，辅助程序会执行 `lbu commit`。
-一般情况下不需要直接执行 `lbu`。
-
 ## 常用命令
 
 列出候选设备。

@@ -121,4 +121,3 @@ ss -tlnp | grep :22
 ## 関連項目
 
 - [USB 永続化](./usb-persistence) — config ディスクのレイアウトとデバイス検出
-- [Alpine / OpenRC デプロイ](./alpine-deployment) — ライブ ISO のブートパラメータ

@@ -2276,15 +2276,6 @@ spec:
         listenAddress: 127.0.0.1
         port: 8443
         initialPassword: REDACTION_SENTINEL_webconsole_initialPassword
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: NixOSHost
-      metadata:
-        name: nix
-      spec:
-        hostname: %s
-        users:
-          - name: admin
-            initialPassword: REDACTION_SENTINEL_nixos_user_initialPassword
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
       metadata:
@@ -2292,7 +2283,7 @@ spec:
       spec:
         interface: lan0
         address: 192.0.2.1/24
-`, name, hostname, hostname, hostname)
+`, name, hostname, hostname)
 }
 
 func redactionRegressionSentinels() []string {
@@ -2311,7 +2302,6 @@ func redactionRegressionSentinels() []string {
 		"REDACTION_SENTINEL_bgp_passwordFrom_file",
 		"REDACTION_SENTINEL_bgp_passwordFrom_env",
 		"REDACTION_SENTINEL_webconsole_initialPassword",
-		"REDACTION_SENTINEL_nixos_user_initialPassword",
 	}
 }
 

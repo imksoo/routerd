@@ -33,8 +33,6 @@ make third-party-licenses
 - 検出したライセンステキストの種類
 - ライセンスファイル名
 - モジュールのソース URL
-- ライブ ISO で使う Alpine パッケージ
-- Alpine パッケージのライセンスメタデータと upstream URL
 
 現在の監査処理は、Go モジュールのライセンスファイルから GPL、LGPL、AGPL の
 テキストを検出します。リンクする Go モジュールとして見つかった場合は、リリースを
@@ -48,7 +46,7 @@ SPDX-License-Identifier: BSD-3-Clause
 ```
 
 このヘッダーは routerd ソースのライセンスを示します。
-同梱するツール、Alpine パッケージ、Go モジュール、その他の第三者コンポーネントの
+同梱するツール、Go モジュール、その他の第三者コンポーネントの
 ライセンスを変えるものではありません。
 それらは `THIRD_PARTY_LICENSES.md` に一覧化します。
 
@@ -70,11 +68,11 @@ SPDX-License-Identifier: BSD-3-Clause
 ライブ ISO は集合的な配布物で、次を組み合わせています。
 
 - routerd バイナリとスクリプト
-- Alpine Linux のベースファイル
+- Ubuntu のベースファイル
 - dnsmasq、nftables、WireGuard tools、ppp、iproute2、chrony、
-  tcpdump などの Alpine パッケージ
+  tcpdump などのパッケージ
 
-これらの Alpine パッケージは、それぞれの upstream ライセンスを保ちます。
+これらのパッケージは、それぞれの upstream ライセンスを保ちます。
 一部は GPL ライセンスです。
 ライブ ISO 全体を 1 つの GPL 著作物として再ライセンスする扱いではありません。
 
@@ -85,16 +83,13 @@ SPDX-License-Identifier: BSD-3-Clause
 /usr/share/licenses/routerd/THIRD_PARTY_LICENSES.txt
 ```
 
-Alpine パッケージのソース情報は、Alpine パッケージリポジトリ、APKBUILD、
-`THIRD_PARTY_LICENSES.md` にある upstream URL から確認できます。
-
 ## リリースチェックリスト
 
 リリース前に確認します。
 
 1. `make third-party-licenses` を実行します。
 2. Go モジュールの copyleft チェックで、GPL、LGPL、AGPL のモジュールがないことを確認します。
-3. GPL 系ライセンスが、分離して配布する Alpine パッケージや外部ツールにだけ
+3. GPL 系ライセンスが、分離して配布するパッケージや外部ツールにだけ
    現れることを確認します。
 4. 通常のテスト、スキーマ、example、website、アーカイブ、ライブ ISO のチェックを実行します。
 5. リリースアーカイブに `share/doc/LICENSE` と

@@ -34,13 +34,11 @@ type Controller struct {
 	DryRun          bool
 	ConfigPath      string
 	Systemctl       string
-	RCService       string
 	KeepalivedCheck string
 	IP              string
 	Ifconfig        string
 	Sysctl          string
 	Kldload         string
-	OpenRC          bool
 	OperatingSystem platform.OS
 	Command         CommandFunc
 	Logger          *slog.Logger
@@ -91,16 +89,6 @@ func (c *Controller) stopVirtualAddressBackend(ctx context.Context) error {
 	}
 	path := firstNonEmpty(c.ConfigPath, "/etc/keepalived/keepalived.conf")
 	if _, err := os.Stat(path); err != nil {
-		return nil
-	}
-	if c.useOpenRC() {
-		rcService := firstNonEmpty(c.RCService, "rc-service")
-		if _, err := c.run(ctx, rcService, "keepalived", "status"); err != nil {
-			return nil
-		}
-		if out, err := c.run(ctx, rcService, "keepalived", "stop"); err != nil {
-			return fmt.Errorf("%s keepalived stop: %w: %s", rcService, err, strings.TrimSpace(string(out)))
-		}
 		return nil
 	}
 	systemctl := firstNonEmpty(c.Systemctl, "systemctl")

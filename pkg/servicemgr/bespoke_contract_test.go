@@ -46,8 +46,6 @@ func TestBespokeLifecycleContractsAvoidForbiddenGenericFallbacks(t *testing.T) {
 func TestBespokeLifecycleContractsCoverRequiredIntegrations(t *testing.T) {
 	contracts := bespokeLifecycleContracts()
 	required := []string{
-		"keepalived-openrc-reload",
-		"keepalived-openrc-restart",
 		"dnsmasq-sighup-reload",
 		"dhcp-client-renew-release-ipc",
 		"ingress-nft-map-apply",
@@ -87,28 +85,12 @@ func TestBespokeLifecycleContractsCoverOSMatrix(t *testing.T) {
 }
 
 func bespokeLifecycleContracts() []bespokeLifecycleContract {
-	keepalived := Service{SystemdName: "keepalived.service", OpenRCName: "keepalived", RCDName: "keepalived"}
-	dnsmasq := Service{SystemdName: "routerd-dnsmasq.service", OpenRCName: "routerd_dnsmasq", RCDName: "routerd_dnsmasq"}
-	dhcp4 := Service{SystemdName: "routerd-dhcpv4-client@wan.service", OpenRCName: "routerd_dhcpv4_client_wan", RCDName: "routerd_dhcpv4_client_wan"}
-	dhcp6 := Service{SystemdName: "routerd-dhcpv6-client@wan-pd.service", OpenRCName: "routerd_dhcpv6_client_wan_pd", RCDName: "routerd_dhcpv6_client_wan_pd"}
+	keepalived := Service{SystemdName: "keepalived.service", RCDName: "keepalived"}
+	dnsmasq := Service{SystemdName: "routerd-dnsmasq.service", RCDName: "routerd_dnsmasq"}
+	dhcp4 := Service{SystemdName: "routerd-dhcpv4-client@wan.service", RCDName: "routerd_dhcpv4_client_wan"}
+	dhcp6 := Service{SystemdName: "routerd-dhcpv6-client@wan-pd.service", RCDName: "routerd_dhcpv6_client_wan_pd"}
 
 	return []bespokeLifecycleContract{
-		{
-			name:   "keepalived-openrc-reload",
-			proves: "OpenRC keepalived config changes use signal reload instead of restart when the daemon is already running.",
-			plan:   OpenRC{}.Plan(OperationReload, keepalived),
-			forbidden: []Command{
-				{Name: "rc-service", Args: []string{"keepalived", "restart"}},
-			},
-		},
-		{
-			name:   "keepalived-openrc-restart",
-			proves: "OpenRC keepalived restart remains available as the fallback path and is not conflated with reload.",
-			plan:   OpenRC{}.Plan(OperationRestart, keepalived),
-			forbidden: []Command{
-				{Name: "rc-service", Args: []string{"keepalived", "reload"}},
-			},
-		},
 		{
 			name:   "dnsmasq-sighup-reload",
 			proves: "dnsmasq host and lease updates can be reloaded with SIGHUP through the pid file without a service restart.",
@@ -148,10 +130,10 @@ func bespokeLifecycleContracts() []bespokeLifecycleContract {
 			proves: "VRRP track scripts remain explicit artifacts with executable permissions for keepalived callbacks.",
 			plan: Plan{Operation: OperationEnable, Commands: []Command{
 				{Name: "artifact-write", Args: []string{"/usr/local/libexec/routerd/keepalived-track.d", "mode=0755"}},
-				OpenRC{}.Command(OperationReload, keepalived),
+				Systemd{}.Command(OperationReload, keepalived),
 			}},
 			forbidden: []Command{
-				OpenRC{}.Command(OperationRestart, keepalived),
+				Systemd{}.Command(OperationRestart, keepalived),
 			},
 		},
 		{
@@ -224,17 +206,13 @@ func renderBespokeLifecycleGolden(t *testing.T, contracts []bespokeLifecycleCont
 }
 
 func lifecycleMatrixManagers() []Manager {
-	return []Manager{Systemd{}, OpenRC{}, RCD{}, NixOS{}}
+	return []Manager{Systemd{}, RCD{}}
 }
 
 func bespokeMatrixPlan(contract bespokeLifecycleContract, manager Manager) Plan {
-	keepalived := Service{SystemdName: "keepalived.service", OpenRCName: "keepalived", RCDName: "keepalived"}
-	dnsmasq := Service{SystemdName: "routerd-dnsmasq.service", OpenRCName: "routerd_dnsmasq", RCDName: "routerd_dnsmasq", NixName: "routerd-dnsmasq"}
+	keepalived := Service{SystemdName: "keepalived.service", RCDName: "keepalived"}
+	dnsmasq := Service{SystemdName: "routerd-dnsmasq.service", RCDName: "routerd_dnsmasq"}
 	switch contract.name {
-	case "keepalived-openrc-reload":
-		return manager.Plan(OperationReload, keepalived)
-	case "keepalived-openrc-restart":
-		return manager.Plan(OperationRestart, keepalived)
 	case "dnsmasq-sighup-reload":
 		return manager.Plan(OperationReload, dnsmasq, PIDSignalHook(OperationReload, "HUP", "/run/routerd/dnsmasq.pid"))
 	case "vrrp-track-script-artifacts":
@@ -248,23 +226,12 @@ func bespokeMatrixPlan(contract bespokeLifecycleContract, manager Manager) Plan 
 }
 
 func bespokeMatrixForbidden(contract bespokeLifecycleContract, manager Manager) []Command {
-	keepalived := Service{SystemdName: "keepalived.service", OpenRCName: "keepalived", RCDName: "keepalived"}
-	dnsmasq := Service{SystemdName: "routerd-dnsmasq.service", OpenRCName: "routerd_dnsmasq", RCDName: "routerd_dnsmasq", NixName: "routerd-dnsmasq"}
+	keepalived := Service{SystemdName: "keepalived.service", RCDName: "keepalived"}
+	dnsmasq := Service{SystemdName: "routerd-dnsmasq.service", RCDName: "routerd_dnsmasq"}
 	switch contract.name {
-	case "keepalived-openrc-reload", "vrrp-track-script-artifacts":
-		if manager.Name() == "nixos" {
-			return nil
-		}
+	case "vrrp-track-script-artifacts":
 		return []Command{manager.Command(OperationRestart, keepalived)}
-	case "keepalived-openrc-restart":
-		if manager.Name() == "nixos" {
-			return nil
-		}
-		return []Command{manager.Command(OperationReload, keepalived)}
 	case "dnsmasq-sighup-reload":
-		if manager.Name() == "nixos" {
-			return nil
-		}
 		return []Command{manager.Command(OperationRestart, dnsmasq), manager.Command(OperationReload, dnsmasq)}
 	default:
 		return contract.forbidden

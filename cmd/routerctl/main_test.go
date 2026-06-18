@@ -131,7 +131,7 @@ spec:
 		t.Fatal(err)
 	}
 	logPath := filepath.Join(dir, "commands.log")
-	for _, binary := range []string{"systemctl", "rc-service", "service", "nixos-rebuild"} {
+	for _, binary := range []string{"systemctl", "service"} {
 		if err := os.WriteFile(filepath.Join(binDir, binary), []byte("#!/bin/sh\necho "+binary+" \"$@\" >> \""+logPath+"\"\n"), 0755); err != nil {
 			t.Fatal(err)
 		}

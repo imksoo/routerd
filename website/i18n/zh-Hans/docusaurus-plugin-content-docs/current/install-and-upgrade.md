@@ -67,7 +67,7 @@ sudo ./install.sh --with-ndpi \
 
 ## 使用 Live ISO 试用
 
-发布页面也提供以 Alpine 为基础的可启动 Live ISO。
+发布页面也提供以 Ubuntu 为基础的可启动 Live ISO。
 
 ```sh
 curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-live.iso
@@ -131,7 +131,7 @@ tmpfs 日志上限默认为 100 MiB，
 /usr/share/routerd/live-persistence.sh umount
 ```
 
-有关部署位置、挂载选项及 Alpine `lbu` 的行为，
+有关部署位置与挂载选项，
 请参阅 [Operations → USB 持久化](./operations/usb-persistence)。
 
 也提供带版本号的 ISO，格式如 `routerd-live-vYYYYMMDD.HHmm.iso`。
@@ -187,17 +187,6 @@ ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump 
 ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables
 ```
 
-### Alpine
-
-安装程序使用 `apk` 安装以下软件包：
-
-```text
-alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables util-linux e2fsprogs dosfstools exfatprogs
-```
-
-`alpine-conf` 提供 `lbu`。
-routerd 在 Live ISO 中使用 `lbu` 将路由器配置及选定的本地状态保存至 USB 媒体。
-
 ### FreeBSD
 
 安装程序使用 `pkg` 安装以下软件包：
@@ -209,15 +198,6 @@ ca_root_nss curl dnsmasq wireguard-tools mpd5 bind-tools tcpdump jq chrony stron
 FreeBSD 的 `pf`、`ifconfig`、`route`、`sysctl`、`service`、`sysrc`、`cron`、
 `netstat`、`sockstat`、`ping`、`traceroute` 均为基本系统功能，
 不通过软件包安装，仅确认命令是否存在。
-
-### NixOS
-
-在 NixOS 上，软件包状态应保留在 NixOS 配置中。
-`install.sh` 检测到 NixOS 时，不会执行 `nix-env`，而是输出警告。
-请在 NixOS 配置或 routerd 的 `Package` 资源中声明软件包。
-发布安装程序可将 `/usr/local/sbin/routerd` 可执行文件放置到位，
-但在 NixOS 上不会安装、启用或重启 systemd 单元。
-routerd 服务请通过 NixOS module 以声明式方式管理。
 
 ## 升级
 
