@@ -1602,24 +1602,24 @@ type FederationSLOSpec struct {
 // FederationSLODelivery contains delivery-lag and expiry SLO thresholds.
 type FederationSLODelivery struct {
 	// LagWarnSeconds is the delivery lag (in seconds) above which doctor warns.
-	// Default: 60.
-	LagWarnSeconds int `yaml:"lagWarnSeconds,omitempty" json:"lagWarnSeconds,omitempty" jsonschema:"minimum=1"`
+	// 0 means use default (60).
+	LagWarnSeconds int `yaml:"lagWarnSeconds,omitempty" json:"lagWarnSeconds,omitempty" jsonschema:"minimum=0"`
 	// LagFailSeconds is the delivery lag (in seconds) above which doctor fails.
-	// Default: 180.
-	LagFailSeconds int `yaml:"lagFailSeconds,omitempty" json:"lagFailSeconds,omitempty" jsonschema:"minimum=1"`
+	// 0 means use default (180).
+	LagFailSeconds int `yaml:"lagFailSeconds,omitempty" json:"lagFailSeconds,omitempty" jsonschema:"minimum=0"`
 	// ExpiresSoonSeconds is the remaining TTL (in seconds) below which pending
-	// events are considered expiring-soon. Default: 120.
-	ExpiresSoonSeconds int `yaml:"expiresSoonSeconds,omitempty" json:"expiresSoonSeconds,omitempty" jsonschema:"minimum=1"`
+	// events are considered expiring-soon. 0 means use default (120).
+	ExpiresSoonSeconds int `yaml:"expiresSoonSeconds,omitempty" json:"expiresSoonSeconds,omitempty" jsonschema:"minimum=0"`
 }
 
 // FederationSLOSubscription contains subscription-processing SLO thresholds.
 type FederationSLOSubscription struct {
-	// MaxPendingWarn is the number of pending subscription runs above which
-	// doctor warns. Default: 0 (any pending triggers warn).
-	MaxPendingWarn int `yaml:"maxPendingWarn,omitempty" json:"maxPendingWarn,omitempty" jsonschema:"minimum=0"`
-	// MaxFailedWarn is the number of failed subscription runs above which
-	// doctor warns. Default: 0 (any failure triggers fail).
-	MaxFailedWarn int `yaml:"maxFailedWarn,omitempty" json:"maxFailedWarn,omitempty" jsonschema:"minimum=0"`
+	// MaxPendingRuns is the number of pending runs allowed before WARN.
+	// 0 = any pending triggers warn.
+	MaxPendingRuns int `yaml:"maxPendingRuns,omitempty" json:"maxPendingRuns,omitempty" jsonschema:"minimum=0"`
+	// MaxFailedRuns is the number of failed runs allowed before FAIL.
+	// 0 = any failure triggers fail.
+	MaxFailedRuns int `yaml:"maxFailedRuns,omitempty" json:"maxFailedRuns,omitempty" jsonschema:"minimum=0"`
 }
 
 // MobilityPoolSpec declares a selective-address mobility pool for the CloudEdge

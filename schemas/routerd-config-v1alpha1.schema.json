@@ -7673,18 +7673,18 @@
                         "description": "Delivery defines delivery-health SLO targets.",
                         "properties": {
                           "expiresSoonSeconds": {
-                            "description": "ExpiresSoonSeconds is the remaining TTL (in seconds) below which pending\nevents are considered expiring-soon. Default: 120.",
-                            "minimum": 1,
+                            "description": "ExpiresSoonSeconds is the remaining TTL (in seconds) below which pending\nevents are considered expiring-soon. 0 means use default (120).",
+                            "minimum": 0,
                             "type": "integer"
                           },
                           "lagFailSeconds": {
-                            "description": "LagFailSeconds is the delivery lag (in seconds) above which doctor fails.\nDefault: 180.",
-                            "minimum": 1,
+                            "description": "LagFailSeconds is the delivery lag (in seconds) above which doctor fails.\n0 means use default (180).",
+                            "minimum": 0,
                             "type": "integer"
                           },
                           "lagWarnSeconds": {
-                            "description": "LagWarnSeconds is the delivery lag (in seconds) above which doctor warns.\nDefault: 60.",
-                            "minimum": 1,
+                            "description": "LagWarnSeconds is the delivery lag (in seconds) above which doctor warns.\n0 means use default (60).",
+                            "minimum": 0,
                             "type": "integer"
                           }
                         },
@@ -7698,13 +7698,13 @@
                         "additionalProperties": false,
                         "description": "Subscription defines subscription-processing SLO targets.",
                         "properties": {
-                          "maxFailedWarn": {
-                            "description": "MaxFailedWarn is the number of failed subscription runs above which\ndoctor warns. Default: 0 (any failure triggers fail).",
+                          "maxFailedRuns": {
+                            "description": "MaxFailedRuns is the number of failed runs allowed before FAIL.\n0 = any failure triggers fail.",
                             "minimum": 0,
                             "type": "integer"
                           },
-                          "maxPendingWarn": {
-                            "description": "MaxPendingWarn is the number of pending subscription runs above which\ndoctor warns. Default: 0 (any pending triggers warn).",
+                          "maxPendingRuns": {
+                            "description": "MaxPendingRuns is the number of pending runs allowed before WARN.\n0 = any pending triggers warn.",
                             "minimum": 0,
                             "type": "integer"
                           }

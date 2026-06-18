@@ -103,8 +103,8 @@ spec:
     lagFailSeconds: 180     # default: 180
     expiresSoonSeconds: 120 # default: 120
   subscription:
-    maxPendingWarn: 0       # default: 0 (any pending triggers warn)
-    maxFailedWarn: 0        # default: 0 (any failure triggers fail)
+    maxPendingRuns: 0       # default: 0 (any pending triggers warn)
+    maxFailedRuns: 0        # default: 0 (any failure triggers fail)
 ```
 
 When a `FederationSLO` is present, `routerctl doctor federation` uses its
@@ -120,7 +120,9 @@ Validation rules:
 - Only one `FederationSLO` per `EventGroup` is allowed; duplicate `groupRef`
   values are rejected at config validation time.
 - `spec.delivery.lagWarnSeconds` must be strictly less than `lagFailSeconds`
-  when both are set.
+  after applying defaults (0 falls back to the default). For example,
+  `lagWarnSeconds: 200` with `lagFailSeconds: 0` (default 180) is rejected
+  because effective 200 >= 180.
 - Zero values (`0`) mean "use the default threshold"; negative values are
   rejected.
 
@@ -360,22 +362,37 @@ When the `federation` area is checked, the doctor JSON includes a
     "subscriptionRunsFailed": 0,
     "subscriptionRunsPending": 0,
     "slo": {
-      "defined": true,
-      "thresholds": {
-        "lagWarnSeconds": 60,
-        "lagFailSeconds": 180,
-        "expiresSoonSeconds": 120
-      },
-      "violations": []
+      "groups": [
+        {
+          "group": "cloudedge",
+          "defined": true,
+          "thresholds": {
+            "delivery": {
+              "lagWarnSeconds": 60,
+              "lagFailSeconds": 180,
+              "expiresSoonSeconds": 120
+            },
+            "subscription": {
+              "maxPendingRuns": 0,
+              "maxFailedRuns": 0
+            }
+          },
+          "violations": []
+        }
+      ]
     }
   }
 }
 ```
 
-The `slo.defined` field indicates whether a `FederationSLO` resource is
-configured (`true`) or defaults are used (`false`). The `violations` array
-lists any threshold breaches with check name, threshold, actual value, and
-severity.
+The `slo.groups` array contains one entry per EventGroup (union of config
+and observed groups, sorted by name). Each entry has:
+
+- `defined`: whether a `FederationSLO` resource is configured for this group
+- `thresholds.delivery`: effective delivery lag/expiry thresholds
+- `thresholds.subscription`: effective subscription run thresholds
+- `violations`: threshold breaches with check name, threshold, actual value,
+  and severity (empty `[]` when healthy)
 
 ### jq examples
 
@@ -420,11 +437,12 @@ routerctl doctor federation -o json \
 ## Subscription monitoring
 
 When `EventSubscription` resources are configured, `routerctl doctor federation`
-also checks subscription processing health:
+also checks subscription processing health. Thresholds are derived from the
+`FederationSLO` for the subscription's `groupRef`:
 
 | Check | FAIL | WARN | PASS |
 |-------|------|------|------|
-| **subscription runs** | Any run in `failed` status | Pending runs exist | All runs succeeded |
+| **subscription runs** | Failed > `maxFailedRuns` (default 0) | Pending > `maxPendingRuns` (default 0) | Within SLO thresholds |
 
 ### Inspecting subscription runs
 

@@ -157,17 +157,26 @@ func validateEventResource(res api.Resource, _ platform.OS) (bool, error) {
 		if spec.Delivery.LagFailSeconds < 0 {
 			return true, fmt.Errorf("%s spec.delivery.lagFailSeconds must be >= 0", res.ID())
 		}
-		if spec.Delivery.LagWarnSeconds > 0 && spec.Delivery.LagFailSeconds > 0 && spec.Delivery.LagWarnSeconds >= spec.Delivery.LagFailSeconds {
-			return true, fmt.Errorf("%s spec.delivery.lagWarnSeconds (%d) must be less than lagFailSeconds (%d)", res.ID(), spec.Delivery.LagWarnSeconds, spec.Delivery.LagFailSeconds)
-		}
 		if spec.Delivery.ExpiresSoonSeconds < 0 {
 			return true, fmt.Errorf("%s spec.delivery.expiresSoonSeconds must be >= 0", res.ID())
 		}
-		if spec.Subscription.MaxPendingWarn < 0 {
-			return true, fmt.Errorf("%s spec.subscription.maxPendingWarn must be >= 0", res.ID())
+		// Apply defaults for effective-value validation.
+		effectiveWarn := spec.Delivery.LagWarnSeconds
+		if effectiveWarn == 0 {
+			effectiveWarn = 60 // defaultFederationWarnLag
 		}
-		if spec.Subscription.MaxFailedWarn < 0 {
-			return true, fmt.Errorf("%s spec.subscription.maxFailedWarn must be >= 0", res.ID())
+		effectiveFail := spec.Delivery.LagFailSeconds
+		if effectiveFail == 0 {
+			effectiveFail = 180 // defaultFederationFailLag
+		}
+		if effectiveWarn >= effectiveFail {
+			return true, fmt.Errorf("%s spec.delivery.lagWarnSeconds (effective %d) must be less than lagFailSeconds (effective %d)", res.ID(), effectiveWarn, effectiveFail)
+		}
+		if spec.Subscription.MaxPendingRuns < 0 {
+			return true, fmt.Errorf("%s spec.subscription.maxPendingRuns must be >= 0", res.ID())
+		}
+		if spec.Subscription.MaxFailedRuns < 0 {
+			return true, fmt.Errorf("%s spec.subscription.maxFailedRuns must be >= 0", res.ID())
 		}
 	default:
 		return false, nil
