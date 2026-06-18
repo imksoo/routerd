@@ -589,6 +589,30 @@ func resolverEventOwnedAddresses(poolName, selfNode string, spec api.MobilityPoo
 		}
 		out[address] = resolverEventOwnedAddress{AdvertiseOwnerNode: strings.TrimSpace(selfNode), SourceType: item.SourceType}
 	}
+	if self, ok := lookupMemberByNodeRef(plannerMembers(spec.Members), selfNode); ok && strings.TrimSpace(self.OwnershipDiscovery.Mode) == "onprem-l2" {
+		for _, snapshot := range onPremObservedClientSnapshotsFromStatus(status) {
+			for _, client := range snapshot.Clients {
+				observation := onPremObservation{
+					Action:     "observed",
+					Address:    firstNonEmpty(client.Address, client.IP),
+					MAC:        client.MAC,
+					Interface:  snapshot.Interface,
+					Network:    snapshot.Network,
+					Bridge:     snapshot.Bridge,
+					SourceType: firstNonEmpty(client.SourceType, snapshot.SourceType),
+					ObservedAt: now,
+				}
+				address, ok := normalizeDiscoveredAddress(observation.Address, poolPrefix)
+				if !ok || !discoveryScopeAllowsAddress(self.OwnershipDiscovery.Scope, address) {
+					continue
+				}
+				if _, ok := matchingOnPremDiscoverySource(self, observation); !ok {
+					continue
+				}
+				out[address] = resolverEventOwnedAddress{AdvertiseOwnerNode: strings.TrimSpace(selfNode), SourceType: observation.SourceType}
+			}
+		}
+	}
 	return out
 }
 

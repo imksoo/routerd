@@ -188,7 +188,6 @@ func TestDiscoveryControllerOnPremL2StatusObservedClientsFeedBGPAdvertisement(t 
 					Mode:     "onprem-l2",
 					LeaseTTL: "2m",
 					Scope: api.MobilityOwnershipDiscoveryScope{
-						IncludeAddresses: []string{"192.168.123.132/32"},
 						ExcludeAddresses: []string{"192.168.123.1/32"},
 					},
 					Sources: []api.MobilityOwnershipDiscoverySource{
@@ -201,6 +200,11 @@ func TestDiscoveryControllerOnPremL2StatusObservedClientsFeedBGPAdvertisement(t 
 	}
 	router := staticRouter("pve-rt08", spec)
 	clients := []onPremObservedClientStatus{{
+		IP:         "192.168.123.113",
+		MAC:        "bc:24:11:fb:ea:f0",
+		SourceType: OnPremSourceOnDemandARP,
+		SeenAt:     now.Add(-10 * time.Second).Format(time.RFC3339Nano),
+	}, {
 		IP:         "192.168.123.132",
 		MAC:        "bc:24:11:c9:33:c2",
 		SourceType: OnPremSourceOnDemandARP,
@@ -227,15 +231,25 @@ func TestDiscoveryControllerOnPremL2StatusObservedClientsFeedBGPAdvertisement(t 
 	if err != nil {
 		t.Fatalf("ListFederationEvents: %v", err)
 	}
-	if len(events) != 1 || events[0].Type != ObservedEventType || events[0].Subject != "192.168.123.132/32" {
-		t.Fatalf("events = %#v, want one status-backed ownership fact", events)
+	if len(events) != 2 || events[0].Type != ObservedEventType || events[1].Type != ObservedEventType {
+		t.Fatalf("events = %#v, want two status-backed ownership facts", events)
+	}
+	subjects := map[string]bool{}
+	for _, event := range events {
+		subjects[event.Subject] = true
+	}
+	if !subjects["192.168.123.113/32"] || !subjects["192.168.123.132/32"] {
+		t.Fatalf("event subjects = %#v, want 192.168.123.113/32 and 192.168.123.132/32", subjects)
 	}
 	if events[0].Payload["source"] != onPremDiscoverySource || events[0].Payload["sourceType"] != OnPremSourceOnDemandARP {
 		t.Fatalf("payload = %#v, want on-demand onprem source", events[0].Payload)
 	}
+	if !events[0].ExpiresAt.Equal(now.Add(2 * time.Minute)) {
+		t.Fatalf("expiresAt = %s, want status snapshot to refresh TTL from reconcile time", events[0].ExpiresAt)
+	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
-	if fmt.Sprint(status["discoveryObserved"]) != "1" {
-		t.Fatalf("status = %#v, want discoveryObserved=1", status)
+	if fmt.Sprint(status["discoveryObserved"]) != "2" {
+		t.Fatalf("status = %#v, want discoveryObserved=2", status)
 	}
 
 	bgp := &fakeBGPPaths{}

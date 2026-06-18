@@ -210,6 +210,47 @@ func TestMobilityPoolMembersFromPreservesCaptureFields(t *testing.T) {
 	}
 }
 
+func TestMobilityPoolMembersFromMergesOwnershipDiscoveryDetails(t *testing.T) {
+	spec := plannedPoolSpec()
+	spec.Members = []api.MobilityPoolMember{{
+		NodeRef: "onprem-router",
+		OwnershipDiscovery: api.MobilityOwnershipDiscovery{
+			Mode: "onprem-l2",
+			Sources: []api.MobilityOwnershipDiscoverySource{
+				{Type: OnPremSourceARPObserver, Interface: "svnet1"},
+				{Type: OnPremSourcePVESVNet, Interface: "svnet1", Network: "svnet1"},
+			},
+			Scope: api.MobilityOwnershipDiscoveryScope{
+				ExcludeAddresses: []string{"192.168.123.1/32"},
+			},
+			Selector: api.MobilityOwnershipDiscoverySelector{Tags: map[string]string{"role": "client"}},
+		},
+	}}
+	spec.MembersFrom = []api.MobilityMembersSourceSpec{{Resource: "MobilityMemberSet/cloudedge"}}
+	router := planningRouterForNode("onprem-router", spec)
+	router.Spec.Resources = append(router.Spec.Resources, mobilityMemberSetResource("cloudedge", []api.MobilityMemberSetMember{{
+		NodeRef: "onprem-router",
+		Site:    "pve",
+		Role:    "onprem",
+		Capture: api.MobilityMemberCapture{Type: "proxy-arp", Interface: "svnet1"},
+	}}))
+
+	resolved, err := (mobilityMemberResolver{Router: router}).resolve(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	member := resolved.Spec.Members[0]
+	if len(member.OwnershipDiscovery.Sources) != 2 || member.OwnershipDiscovery.Sources[1].Network != "svnet1" {
+		t.Fatalf("ownershipDiscovery.sources = %#v, want local patch sources", member.OwnershipDiscovery.Sources)
+	}
+	if len(member.OwnershipDiscovery.Scope.ExcludeAddresses) != 1 || member.OwnershipDiscovery.Scope.ExcludeAddresses[0] != "192.168.123.1/32" {
+		t.Fatalf("ownershipDiscovery.scope = %#v, want local patch scope", member.OwnershipDiscovery.Scope)
+	}
+	if member.OwnershipDiscovery.Selector.Tags["role"] != "client" {
+		t.Fatalf("ownershipDiscovery.selector = %#v, want local patch selector", member.OwnershipDiscovery.Selector)
+	}
+}
+
 func TestMobilityPoolPublishesMemberSetDynamicPart(t *testing.T) {
 	now := time.Date(2026, 6, 8, 11, 2, 0, 0, time.UTC)
 	store := testStore(t, now)
