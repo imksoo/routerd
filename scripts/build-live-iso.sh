@@ -92,6 +92,13 @@ DPkg::Options {
 };
 EOF
 printf 'routerd-live\n' > "${rootfs}/etc/hostname"
+cat > "${rootfs}/etc/apt/sources.list.d/ubuntu.sources" <<EOF
+Types: deb
+URIs: ${ubuntu_mirror}
+Suites: ${ubuntu_suite} ${ubuntu_suite}-updates ${ubuntu_suite}-security
+Components: main restricted universe
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+EOF
 rm -f "${rootfs}/etc/resolv.conf"
 cp /etc/resolv.conf "${rootfs}/etc/resolv.conf"
 
