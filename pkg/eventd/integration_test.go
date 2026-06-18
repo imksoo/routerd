@@ -188,7 +188,7 @@ func TestPushDeliveryRoundTrip(t *testing.T) {
 
 	pruner := eventd.NewPruner(pruneStore, pruneGroup,
 		eventd.Retention{MaxAge: 24 * time.Hour, MaxEvents: 2}, time.Minute, clock)
-	if _, err := pruner.PruneOnce(); err != nil {
+	if _, err := pruner.PruneOnce(context.Background()); err != nil {
 		t.Fatalf("prune: %v", err)
 	}
 	remaining, _ := pruneStore.ListFederationEvents(pruneGroup, true, now.Unix())

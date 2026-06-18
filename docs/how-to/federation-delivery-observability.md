@@ -254,7 +254,7 @@ When the `federation` area is checked, the doctor JSON includes a
 ```json
 {
   "federation": {
-    "severityCounts": {"pass": 5, "warn": 0, "fail": 0, "skip": 1},
+    "severityCounts": {"pass": 7, "warn": 0, "fail": 0, "skip": 1},
     "failedDeliveryCount": 0,
     "staleTTLCount": 0,
     "pendingDeliveryCount": 0,
@@ -262,7 +262,11 @@ When the `federation` area is checked, the doctor JSON includes a
     "maxDeliveryLagSeconds": 2,
     "minExpiresInSeconds": 1740,
     "totalEvents": 3,
-    "totalDelivered": 3
+    "totalDelivered": 3,
+    "subscriptionRunsTotal": 3,
+    "subscriptionRunsSucceeded": 3,
+    "subscriptionRunsFailed": 0,
+    "subscriptionRunsPending": 0
   }
 }
 ```
@@ -299,4 +303,131 @@ routerctl doctor federation -o json \
   --state-file /var/lib/routerd/routerd.db \
   --config /usr/local/etc/routerd/router.yaml \
   | jq '{stale: .federation.staleTTLCount, pending: .federation.pendingDeliveryCount, lag: .federation.maxDeliveryLagSeconds}'
+
+# Subscription run failures (exit 1 if > 0)
+routerctl doctor federation -o json \
+  --state-file /var/lib/routerd/routerd.db \
+  --config /usr/local/etc/routerd/router.yaml \
+  | jq -e '.federation.subscriptionRunsFailed == 0'
+```
+
+## Subscription monitoring
+
+When `EventSubscription` resources are configured, `routerctl doctor federation`
+also checks subscription processing health:
+
+| Check | FAIL | WARN | PASS |
+|-------|------|------|------|
+| **subscription runs** | Any run in `failed` status | Pending runs exist | All runs succeeded |
+
+### Inspecting subscription runs
+
+List processing records for a specific subscription:
+
+```sh
+routerctl federation subscription runs \
+  --subscription EventSubscription/cloud-claims \
+  --state-file /var/lib/routerd/routerd.db
+```
+
+Output:
+
+```
+ID  SUBSCRIPTION                      EVENT_ID  GROUP      PLUGIN        STATUS     ATTEMPTS  STARTED                    COMPLETED                  ERROR
+1   EventSubscription/cloud-claims    evt-abc   cloudedge  cloud-claims  succeeded  1         2026-06-17T12:00:00Z       2026-06-17T12:00:01Z
+2   EventSubscription/cloud-claims    evt-def   cloudedge  cloud-claims  failed     3         2026-06-17T12:01:00Z       2026-06-17T12:01:05Z       plugin exited 1
+```
+
+Add `-o json` for machine-readable output. Failed runs indicate the plugin
+returned an error; check the plugin output and event payload.
+
+### End-to-end delivery verification
+
+To verify the full pipeline from event emission to DynamicConfigPart:
+
+```sh
+# 1. Verify events are delivered
+routerctl federation deliveries summary --group cloudedge \
+  --state-file /var/lib/routerd/routerd.db
+
+# 2. Verify subscriptions processed events
+routerctl federation subscription runs \
+  --subscription EventSubscription/cloud-claims \
+  --state-file /var/lib/routerd/routerd.db
+
+# 3. Verify DynamicConfigParts were generated
+routerctl dynamic list --state-file /var/lib/routerd/routerd.db
+```
+
+If events are delivered but subscription runs show failures, the issue is in the
+plugin or its inputs. If subscription runs succeed but no DynamicConfigPart
+appears, check the plugin output format.
+
+## OpenTelemetry metrics reference
+
+`routerd-eventd` emits the following metrics when an OTLP endpoint is configured
+(see [Send telemetry to an OTLP collector](./opentelemetry)):
+
+### Outbox delivery metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `routerd_eventd_outbox_delivery_total` | counter | group, peer, event_type, status | Delivery results (delivered/failed) |
+| `routerd_eventd_outbox_delivery_attempts_total` | counter | group, peer, event_type, status | Total push attempts |
+| `routerd_eventd_outbox_delivery_lag_seconds` | histogram | group, peer, event_type | Time between event observation and delivery |
+| `routerd_eventd_outbox_repush_total` | counter | group, peer, event_type | Re-pushes after TTL refresh |
+| `routerd_eventd_outbox_stale_ttl_delivery_total` | counter | group, peer, event_type | Stale TTL detections |
+
+### Outbox loop health metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `routerd_eventd_outbox_tick_total` | counter | group | Outbox loop iterations |
+| `routerd_eventd_outbox_tick_errors_total` | counter | group | Failed outbox iterations |
+| `routerd_eventd_outbox_tick_duration_seconds` | histogram | group | Time per outbox iteration |
+
+### Receiver metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `routerd_eventd_receiver_accepted_total` | counter | group | Events accepted |
+| `routerd_eventd_receiver_duplicate_total` | counter | group | Duplicate events received |
+| `routerd_eventd_receiver_reject_total` | counter | group, reason | Events rejected (reason: bad_timestamp, stale_timestamp, bad_signature, bad_body, validation, read_body, store_error) |
+
+### Pruner metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `routerd_eventd_pruner_tick_total` | counter | group | Pruner loop iterations |
+| `routerd_eventd_pruner_pruned_total` | counter | group | Events pruned by retention |
+| `routerd_eventd_pruner_tick_errors_total` | counter | group | Failed pruner iterations |
+
+### Label policy
+
+Allowed labels: `group`, `peer`, `event_type`, `status`, `reason`. High-cardinality
+values (`event_id`, `subject`, `address`, `dedupe_key`, `endpoint`, raw `error`
+strings) are never used as metric labels.
+
+### Alerting thresholds
+
+Recommended Prometheus alerting rules:
+
+```
+# Outbox loop stalled (no tick in 5 minutes)
+rate(routerd_eventd_outbox_tick_total[5m]) == 0
+
+# High delivery failure rate
+rate(routerd_eventd_outbox_delivery_total{status="failed"}[5m]) > 0
+
+# Outbox loop errors
+rate(routerd_eventd_outbox_tick_errors_total[5m]) > 0
+
+# Receiver rejecting events
+rate(routerd_eventd_receiver_reject_total[5m]) > 0.1
+
+# Pruner errors
+rate(routerd_eventd_pruner_tick_errors_total[5m]) > 0
+
+# Delivery lag p99 above 60s
+histogram_quantile(0.99, rate(routerd_eventd_outbox_delivery_lag_seconds_bucket[5m])) > 60
 ```

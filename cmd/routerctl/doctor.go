@@ -68,15 +68,19 @@ type doctorReport struct {
 }
 
 type doctorFederationSummary struct {
-	SeverityCounts           doctorSeverityCounts `json:"severityCounts" yaml:"severityCounts"`
-	FailedDeliveryCount      int                  `json:"failedDeliveryCount" yaml:"failedDeliveryCount"`
-	StaleTTLCount            int                  `json:"staleTTLCount" yaml:"staleTTLCount"`
-	PendingDeliveryCount     int                  `json:"pendingDeliveryCount" yaml:"pendingDeliveryCount"`
-	MissingExpectedPeerCount int                  `json:"missingExpectedPeerCount" yaml:"missingExpectedPeerCount"`
-	MaxDeliveryLagSeconds    int64                `json:"maxDeliveryLagSeconds" yaml:"maxDeliveryLagSeconds"`
-	MinExpiresInSeconds      int64                `json:"minExpiresInSeconds" yaml:"minExpiresInSeconds"`
-	TotalEvents              int                  `json:"totalEvents" yaml:"totalEvents"`
-	TotalDelivered           int                  `json:"totalDelivered" yaml:"totalDelivered"`
+	SeverityCounts            doctorSeverityCounts `json:"severityCounts" yaml:"severityCounts"`
+	FailedDeliveryCount       int                  `json:"failedDeliveryCount" yaml:"failedDeliveryCount"`
+	StaleTTLCount             int                  `json:"staleTTLCount" yaml:"staleTTLCount"`
+	PendingDeliveryCount      int                  `json:"pendingDeliveryCount" yaml:"pendingDeliveryCount"`
+	MissingExpectedPeerCount  int                  `json:"missingExpectedPeerCount" yaml:"missingExpectedPeerCount"`
+	MaxDeliveryLagSeconds     int64                `json:"maxDeliveryLagSeconds" yaml:"maxDeliveryLagSeconds"`
+	MinExpiresInSeconds       int64                `json:"minExpiresInSeconds" yaml:"minExpiresInSeconds"`
+	TotalEvents               int                  `json:"totalEvents" yaml:"totalEvents"`
+	TotalDelivered            int                  `json:"totalDelivered" yaml:"totalDelivered"`
+	SubscriptionRunsTotal     int                  `json:"subscriptionRunsTotal" yaml:"subscriptionRunsTotal"`
+	SubscriptionRunsSucceeded int                  `json:"subscriptionRunsSucceeded" yaml:"subscriptionRunsSucceeded"`
+	SubscriptionRunsFailed    int                  `json:"subscriptionRunsFailed" yaml:"subscriptionRunsFailed"`
+	SubscriptionRunsPending   int                  `json:"subscriptionRunsPending" yaml:"subscriptionRunsPending"`
 }
 
 type doctorSeverityCounts struct {

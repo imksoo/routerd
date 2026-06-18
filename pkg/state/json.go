@@ -123,6 +123,12 @@ type FederationDeliverySummaryStore interface {
 	ListDeliverySummary(group, peer, eventType string, includeExpired bool, now time.Time) ([]DeliverySummaryRow, error)
 }
 
+// SubscriptionRunStore provides read access to EventSubscription processing
+// records (event_subscription_runs table, ADR 0006 Phase 3).
+type SubscriptionRunStore interface {
+	ListSubscriptionRuns(subscription string) ([]SubscriptionRun, error)
+}
+
 type DynamicConfigPartLister interface {
 	ListDynamicConfigParts() ([]DynamicConfigPartRecord, error)
 	GetDynamicConfigPartsBySource(source string) ([]DynamicConfigPartRecord, error)

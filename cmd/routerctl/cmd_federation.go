@@ -28,6 +28,8 @@ func federationCommand(args []string, stdout, stderr io.Writer) error {
 		return federationEventCommand(args[1:], stdout, stderr)
 	case "deliveries":
 		return federationDeliveriesCommand(args[1:], stdout, stderr)
+	case "subscription":
+		return federationSubscriptionCommand(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		federationUsage(stdout)
 		return nil
@@ -464,6 +466,98 @@ func formatDurationSeconds(seconds int64) string {
 	return d.Truncate(time.Second).String()
 }
 
+func federationSubscriptionCommand(args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		federationUsage(stderr)
+		return errors.New("federation subscription requires subcommand")
+	}
+	switch args[0] {
+	case "runs":
+		return federationSubscriptionRunsCommand(args[1:], stdout)
+	case "help", "-h", "--help":
+		federationUsage(stdout)
+		return nil
+	default:
+		return fmt.Errorf("unknown federation subscription subcommand %q", args[0])
+	}
+}
+
+func federationSubscriptionRunsCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("federation subscription runs", flag.ContinueOnError)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"Show EventSubscription processing history (ADR 0006, Phase 3).\n"+
+				"Lists subscription run records from event_subscription_runs.",
+			"routerctl federation subscription runs --subscription EventSubscription/cloud-claims\n"+
+				"routerctl fed subscription runs --subscription EventSubscription/cloud-claims -o json")
+	}
+	statePath := fs.String("state-file", defaultStatePath(), "routerd state database file")
+	subscription := fs.String("subscription", "", "subscription key (e.g. EventSubscription/cloud-claims)")
+	output := "table"
+	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
+	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if *subscription == "" {
+		return errors.New("--subscription is required")
+	}
+
+	store, err := routerstate.Open(*statePath)
+	if err != nil {
+		return err
+	}
+	if closer, ok := store.(interface{ Close() error }); ok {
+		defer closer.Close()
+	}
+	subStore, ok := store.(routerstate.SubscriptionRunStore)
+	if !ok {
+		return fmt.Errorf("state file %s does not support subscription run listing", *statePath)
+	}
+	runs, err := subStore.ListSubscriptionRuns(*subscription)
+	if err != nil {
+		return err
+	}
+	switch output {
+	case "", "table":
+		return writeSubscriptionRunsTable(stdout, runs)
+	case "json":
+		return writeJSON(stdout, runs)
+	case "yaml":
+		return writeYAML(stdout, runs)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
+func writeSubscriptionRunsTable(stdout io.Writer, runs []routerstate.SubscriptionRun) error {
+	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "ID\tSUBSCRIPTION\tEVENT_ID\tGROUP\tPLUGIN\tSTATUS\tATTEMPTS\tSTARTED\tCOMPLETED\tERROR")
+	for _, r := range runs {
+		errText := r.Error
+		if len(errText) > 60 {
+			errText = errText[:57] + "..."
+		}
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\n",
+			r.ID,
+			r.Subscription,
+			r.EventID,
+			r.EventGroup,
+			r.Plugin,
+			r.Status,
+			r.Attempts,
+			r.StartedAt,
+			r.CompletedAt,
+			errText,
+		)
+	}
+	return w.Flush()
+}
+
 func federationUsage(w io.Writer) {
 	fmt.Fprintln(w, "usage: routerctl federation <subcommand> [options]")
 	fmt.Fprintln(w, "")
@@ -472,4 +566,5 @@ func federationUsage(w io.Writer) {
 	fmt.Fprintln(w, "  event list [--group <name>] [--include-expired] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  event deliveries [--group <name>] [--event-id <id>] [--peer <name>] [--status pending|delivered|failed] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  deliveries summary [--group <name>] [--peer <name>] [--type <type>] [--include-expired] [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  subscription runs --subscription <key> [--state-file <path>] [-o table|json|yaml]")
 }

@@ -22,6 +22,7 @@ routerd exposes OpenTelemetry export from every long-running daemon. There is no
 | `routerd-dhcpv4-client` | `routerd-dhcpv4-client` | DHCPv4 lifecycle traces and structured logs |
 | `routerd-pppoe-client` | `routerd-pppoe-client` | PPPoE session lifecycle |
 | `routerd-healthcheck` | `routerd-healthcheck` | Probe results (success/failure with target attributes) |
+| `routerd-eventd` | `routerd-eventd` | Federation delivery metrics (outbox push/receive/TTL/lag counters, loop health, pruner) |
 
 Each daemon adds `routerd.resource.name` as a resource attribute so you can split signals per resource (e.g. one DHCPv6 client per WAN).
 

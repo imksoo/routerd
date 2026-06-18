@@ -46,6 +46,7 @@ func (r doctorRunner) doctorFederation() []doctorCheck {
 	}
 
 	checks = append(checks, r.doctorFederationExpectedPeerChecks(now, hasFedEvents, fedStore, hasDeliveries, deliveryStore)...)
+	checks = append(checks, r.doctorFederationSubscriptionChecks()...)
 	return checks
 }
 
@@ -371,7 +372,109 @@ func (r doctorRunner) buildFederationSummary(checks []doctorCheck) *doctorFedera
 			fs.MinExpiresInSeconds = row.MinExpiresInSeconds
 		}
 	}
+
+	if subStore, ok := r.store.(routerstate.SubscriptionRunStore); ok && r.router != nil {
+		for _, res := range r.router.Spec.Resources {
+			if res.Kind != "EventSubscription" {
+				continue
+			}
+			subKey := "EventSubscription/" + res.Metadata.Name
+			runs, err := subStore.ListSubscriptionRuns(subKey)
+			if err != nil {
+				continue
+			}
+			for _, run := range runs {
+				fs.SubscriptionRunsTotal++
+				switch run.Status {
+				case "succeeded":
+					fs.SubscriptionRunsSucceeded++
+				case "failed":
+					fs.SubscriptionRunsFailed++
+				default:
+					fs.SubscriptionRunsPending++
+				}
+			}
+		}
+	}
 	return fs
+}
+
+func (r doctorRunner) doctorFederationSubscriptionChecks() []doctorCheck {
+	if r.router == nil {
+		return nil
+	}
+	subStore, ok := r.store.(routerstate.SubscriptionRunStore)
+	if !ok {
+		return nil
+	}
+	var subs []string
+	for _, res := range r.router.Spec.Resources {
+		if res.Kind == "EventSubscription" {
+			subs = append(subs, res.Metadata.Name)
+		}
+	}
+	if len(subs) == 0 {
+		return nil
+	}
+	var checks []doctorCheck
+	for _, sub := range subs {
+		subKey := "EventSubscription/" + sub
+		runs, err := subStore.ListSubscriptionRuns(subKey)
+		if err != nil {
+			checks = append(checks, doctorCheck{
+				Area: "federation", Name: subKey + " subscription runs",
+				Status: doctorWarn, Detail: "subscription runs unavailable: " + err.Error(),
+			})
+			continue
+		}
+		if len(runs) == 0 {
+			checks = append(checks, doctorCheck{
+				Area: "federation", Name: subKey + " subscription runs",
+				Status: doctorSkip, Detail: "no subscription run records",
+			})
+			continue
+		}
+		var succeeded, failed, pending int
+		var maxAttempts int
+		for _, run := range runs {
+			switch run.Status {
+			case "succeeded":
+				succeeded++
+			case "failed":
+				failed++
+			default:
+				pending++
+			}
+			if run.Attempts > maxAttempts {
+				maxAttempts = run.Attempts
+			}
+		}
+		if failed > 0 {
+			checks = append(checks, doctorCheck{
+				Area:   "federation",
+				Name:   subKey + " subscription runs",
+				Status: doctorFail,
+				Detail: fmt.Sprintf("%d succeeded, %d failed, %d pending (max attempts %d)", succeeded, failed, pending, maxAttempts),
+				Remedy: "inspect failed runs: routerctl federation subscription runs --subscription " + subKey,
+			})
+		} else if pending > 0 {
+			checks = append(checks, doctorCheck{
+				Area:   "federation",
+				Name:   subKey + " subscription runs",
+				Status: doctorWarn,
+				Detail: fmt.Sprintf("%d succeeded, %d pending (max attempts %d)", succeeded, pending, maxAttempts),
+				Remedy: "pending runs may resolve on next reconcile tick; if persistent, check plugin and eventd logs",
+			})
+		} else {
+			checks = append(checks, doctorCheck{
+				Area:   "federation",
+				Name:   subKey + " subscription runs",
+				Status: doctorPass,
+				Detail: fmt.Sprintf("all %d run(s) succeeded", succeeded),
+			})
+		}
+	}
+	return checks
 }
 
 func filterSelfEmittedEvents(events []routerstate.EventRecord, selfNode string) []routerstate.EventRecord {

@@ -73,6 +73,18 @@ func (o *Outbox) Run(ctx context.Context, onError func(error)) {
 // RunOnce performs a single drain pass: list non-expired events for the group
 // and push each locally-originated, not-yet-delivered (event,peer) pair.
 func (o *Outbox) RunOnce(ctx context.Context) error {
+	start := o.now()
+	err := o.runOnceInner(ctx)
+	elapsed := o.now().Sub(start).Seconds()
+	o.metrics.RecordOutboxTick(ctx, o.group)
+	o.metrics.RecordOutboxTickDuration(ctx, o.group, elapsed)
+	if err != nil {
+		o.metrics.RecordOutboxTickError(ctx, o.group)
+	}
+	return err
+}
+
+func (o *Outbox) runOnceInner(ctx context.Context) error {
 	events, err := o.events.ListFederationEvents(o.group, false, o.now().Unix())
 	if err != nil {
 		return err

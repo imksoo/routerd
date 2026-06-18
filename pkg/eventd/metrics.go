@@ -28,6 +28,13 @@ type Metrics struct {
 	receiverReject    otelmetric.Int64Counter
 	receiverAccepted  otelmetric.Int64Counter
 	receiverDuplicate otelmetric.Int64Counter
+
+	outboxTickTotal      otelmetric.Int64Counter
+	outboxTickErrors     otelmetric.Int64Counter
+	outboxTickDuration   otelmetric.Float64Histogram
+	prunerTickTotal      otelmetric.Int64Counter
+	prunerPrunedTotal    otelmetric.Int64Counter
+	prunerTickErrors     otelmetric.Int64Counter
 }
 
 func NewMetrics(meter otelmetric.Meter) *Metrics {
@@ -48,6 +55,18 @@ func NewMetrics(meter otelmetric.Meter) *Metrics {
 		otelmetric.WithDescription("Events accepted by the receiver"))
 	m.receiverDuplicate, _ = meter.Int64Counter("routerd_eventd_receiver_duplicate_total",
 		otelmetric.WithDescription("Duplicate events received"))
+	m.outboxTickTotal, _ = meter.Int64Counter("routerd_eventd_outbox_tick_total",
+		otelmetric.WithDescription("Outbox loop iterations"))
+	m.outboxTickErrors, _ = meter.Int64Counter("routerd_eventd_outbox_tick_errors_total",
+		otelmetric.WithDescription("Outbox loop iteration errors"))
+	m.outboxTickDuration, _ = meter.Float64Histogram("routerd_eventd_outbox_tick_duration_seconds",
+		otelmetric.WithDescription("Time per outbox loop iteration"))
+	m.prunerTickTotal, _ = meter.Int64Counter("routerd_eventd_pruner_tick_total",
+		otelmetric.WithDescription("Pruner loop iterations"))
+	m.prunerPrunedTotal, _ = meter.Int64Counter("routerd_eventd_pruner_pruned_total",
+		otelmetric.WithDescription("Events pruned by retention"))
+	m.prunerTickErrors, _ = meter.Int64Counter("routerd_eventd_pruner_tick_errors_total",
+		otelmetric.WithDescription("Pruner loop iteration errors"))
 	return m
 }
 
@@ -136,6 +155,48 @@ func (m *Metrics) RecordReceiverDuplicate(ctx context.Context, group string) {
 		return
 	}
 	m.receiverDuplicate.Add(ctx, 1, otelmetric.WithAttributes(attrGroup.String(group)))
+}
+
+func (m *Metrics) RecordOutboxTick(ctx context.Context, group string) {
+	if m == nil {
+		return
+	}
+	m.outboxTickTotal.Add(ctx, 1, otelmetric.WithAttributes(attrGroup.String(group)))
+}
+
+func (m *Metrics) RecordOutboxTickError(ctx context.Context, group string) {
+	if m == nil {
+		return
+	}
+	m.outboxTickErrors.Add(ctx, 1, otelmetric.WithAttributes(attrGroup.String(group)))
+}
+
+func (m *Metrics) RecordOutboxTickDuration(ctx context.Context, group string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.outboxTickDuration.Record(ctx, seconds, otelmetric.WithAttributes(attrGroup.String(group)))
+}
+
+func (m *Metrics) RecordPrunerTick(ctx context.Context, group string) {
+	if m == nil {
+		return
+	}
+	m.prunerTickTotal.Add(ctx, 1, otelmetric.WithAttributes(attrGroup.String(group)))
+}
+
+func (m *Metrics) RecordPrunerPruned(ctx context.Context, group string, count int64) {
+	if m == nil {
+		return
+	}
+	m.prunerPrunedTotal.Add(ctx, count, otelmetric.WithAttributes(attrGroup.String(group)))
+}
+
+func (m *Metrics) RecordPrunerTickError(ctx context.Context, group string) {
+	if m == nil {
+		return
+	}
+	m.prunerTickErrors.Add(ctx, 1, otelmetric.WithAttributes(attrGroup.String(group)))
 }
 
 // TestRecorder captures metric events for testing without an OTel SDK.
@@ -229,6 +290,12 @@ func NewTestMetrics(recorder *TestRecorder) *Metrics {
 	m.receiverReject = &testCounter{name: "routerd_eventd_receiver_reject_total", rec: recorder}
 	m.receiverAccepted = &testCounter{name: "routerd_eventd_receiver_accepted_total", rec: recorder}
 	m.receiverDuplicate = &testCounter{name: "routerd_eventd_receiver_duplicate_total", rec: recorder}
+	m.outboxTickTotal = &testCounter{name: "routerd_eventd_outbox_tick_total", rec: recorder}
+	m.outboxTickErrors = &testCounter{name: "routerd_eventd_outbox_tick_errors_total", rec: recorder}
+	m.outboxTickDuration = &testHistogram{name: "routerd_eventd_outbox_tick_duration_seconds", rec: recorder}
+	m.prunerTickTotal = &testCounter{name: "routerd_eventd_pruner_tick_total", rec: recorder}
+	m.prunerPrunedTotal = &testCounter{name: "routerd_eventd_pruner_pruned_total", rec: recorder}
+	m.prunerTickErrors = &testCounter{name: "routerd_eventd_pruner_tick_errors_total", rec: recorder}
 	return m
 }
 
