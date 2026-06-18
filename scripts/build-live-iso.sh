@@ -6,10 +6,13 @@ version=${VERSION:-$(awk '/^VERSION[[:space:]]*\?=/{print $3; exit}' Makefile)}
 git_commit=${GIT_COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || true)}
 distbase=${DISTBASE:-dist}
 workdir=${ROUTERD_LIVE_WORKDIR:-"${distbase}/live/work"}
-cachedir=${ROUTERD_LIVE_CACHEDIR:-"${distbase}/live/cache"}
 outdir=${ROUTERD_LIVE_OUTDIR:-"${distbase}/iso"}
-ubuntu_iso_url=${UBUNTU_ISO_URL:-https://releases.ubuntu.com/24.04/ubuntu-24.04.4-live-server-amd64.iso}
+ubuntu_suite=${UBUNTU_SUITE:-noble}
+ubuntu_mirror=${UBUNTU_MIRROR:-http://archive.ubuntu.com/ubuntu}
+ubuntu_arch=${UBUNTU_ARCH:-amd64}
+ubuntu_base_packages=${UBUNTU_BASE_PACKAGES:-"linux-image-generic systemd-sysv dbus sudo casper initramfs-tools"}
 ubuntu_packages=${UBUNTU_LIVE_PACKAGES:-"ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables keepalived openssh-server"}
+read -r -a ubuntu_base_package_list <<< "${ubuntu_base_packages}"
 read -r -a ubuntu_package_list <<< "${ubuntu_packages}"
 
 require()
@@ -58,10 +61,8 @@ cleanup_mounts()
     fi
 }
 
-require curl
-require bsdtar
+require debootstrap
 require mksquashfs
-require unsquashfs
 require grub-mkrescue
 require xorriso
 
@@ -71,39 +72,41 @@ if [ -d "${workdir}" ]; then
     chmod -R u+w "${workdir}" 2>/dev/null || true
 fi
 rm -rf "${workdir}"
-mkdir -p "${workdir}" "${cachedir}" "${outdir}"
-
-ubuntu_iso_file=$(basename "${ubuntu_iso_url}")
-ubuntu_iso="${cachedir}/${ubuntu_iso_file}"
-if [ ! -f "${ubuntu_iso}" ]; then
-    curl -fL "${ubuntu_iso_url}" -o "${ubuntu_iso}"
-fi
+mkdir -p "${workdir}" "${outdir}"
 
 iso_root="${workdir}/iso-root"
 rootfs="${workdir}/rootfs"
 payload_root="${iso_root}/routerd"
-mkdir -p "${iso_root}" "${payload_root}"
-bsdtar -C "${iso_root}" -xf "${ubuntu_iso}"
-chmod -R u+w "${iso_root}"
+mkdir -p "${iso_root}/casper" "${iso_root}/boot/grub" "${payload_root}"
 
-squashfs=""
-for candidate in \
-    "${iso_root}/casper/filesystem.squashfs" \
-    "${iso_root}/casper/ubuntu-server-minimal.squashfs" \
-    "${iso_root}/casper/"*.squashfs; do
-    if [ -f "${candidate}" ]; then
-        squashfs="${candidate}"
-        break
-    fi
-done
-if [ -z "${squashfs}" ]; then
-    echo "Ubuntu ISO does not contain a squashfs filesystem under casper/" >&2
-    ls -la "${iso_root}/casper/" 2>/dev/null || true
-    exit 1
-fi
-echo "using squashfs: ${squashfs}"
-run_root unsquashfs -d "${rootfs}" "${squashfs}" >/dev/null
+run_root debootstrap --variant=minbase --arch="${ubuntu_arch}" "${ubuntu_suite}" "${rootfs}" "${ubuntu_mirror}"
 run_root chown -R "$(id -u):$(id -g)" "${rootfs}"
+
+install -d "${rootfs}/etc/apt/apt.conf.d"
+cat > "${rootfs}/etc/apt/apt.conf.d/99routerd-live" <<'EOF'
+APT::Install-Recommends "false";
+APT::Install-Suggests "false";
+DPkg::Options {
+  "--force-confdef";
+  "--force-confold";
+};
+EOF
+printf 'routerd-live\n' > "${rootfs}/etc/hostname"
+rm -f "${rootfs}/etc/resolv.conf"
+cp /etc/resolv.conf "${rootfs}/etc/resolv.conf"
+
+for dir in dev proc sys run; do
+    run_root mount --bind "/${dir}" "${rootfs}/${dir}"
+done
+if [ -d "${rootfs}/dev/pts" ]; then
+    run_root mount --bind /dev/pts "${rootfs}/dev/pts"
+fi
+
+chroot_run apt-get update
+chroot_run apt-get install -y --no-install-recommends "${ubuntu_base_package_list[@]}" "${ubuntu_package_list[@]}"
+chroot_run apt-get clean
+run_root rm -rf "${rootfs}/var/lib/apt/lists/"*
+cleanup_mounts
 
 make build-daemons ROUTERD_OS=linux GOARCH=amd64 GIT_COMMIT="${git_commit}"
 
@@ -132,8 +135,8 @@ fi
 cat > "${payload_root}/README.txt" <<EOF
 routerd live payload ${version}
 
-This Ubuntu-based live image carries routerd binaries and installer assets
-under /cdrom/routerd after boot.
+This debootstrap-based Ubuntu live image carries routerd binaries and installer
+assets under /cdrom/routerd after boot.
 
 Suggested first steps:
   sudo /cdrom/routerd/install.sh --prefix /usr/local --no-start-service
@@ -179,35 +182,25 @@ WantedBy=multi-user.target
 EOF
 ln -sf ../routerd-live-setup.service "${rootfs}/etc/systemd/system/multi-user.target.wants/routerd-live-setup.service"
 
-cp /etc/resolv.conf "${rootfs}/etc/resolv.conf"
-for dir in dev proc sys run; do
-    run_root mount --bind "/${dir}" "${rootfs}/${dir}"
-done
-if [ -d "${rootfs}/dev/pts" ]; then
-    run_root mount --bind /dev/pts "${rootfs}/dev/pts"
-fi
-
-chroot_run apt-get update
-chroot_run apt-get install -y --no-install-recommends "${ubuntu_package_list[@]}"
-chroot_run apt-get clean
-run_root rm -rf "${rootfs}/var/lib/apt/lists/"*
-cleanup_mounts
-
 printf '%s\n' "${version}" > "${rootfs}/etc/routerd-live-version"
 printf '%s\n' "${git_commit:-unknown}" > "${rootfs}/etc/routerd-live-commit"
+: > "${rootfs}/etc/machine-id"
 
-rm -f "${squashfs}"
-run_root mksquashfs "${rootfs}" "${squashfs}" -noappend -comp xz -all-root >/dev/null
+kernel_image=$(find "${rootfs}/boot" -maxdepth 1 -type f -name 'vmlinuz-*' | sort -V | tail -n 1)
+initrd_image=$(find "${rootfs}/boot" -maxdepth 1 -type f -name 'initrd.img-*' | sort -V | tail -n 1)
+if [ -z "${kernel_image}" ] || [ -z "${initrd_image}" ]; then
+    echo "missing kernel or initrd in ${rootfs}/boot" >&2
+    exit 1
+fi
+install -m 0644 "${kernel_image}" "${iso_root}/casper/vmlinuz"
+install -m 0644 "${initrd_image}" "${iso_root}/casper/initrd"
+
+# shellcheck disable=SC2016 # dpkg-query expands this format string inside the chroot.
+chroot_run dpkg-query -W --showformat='${Package} ${Version}\n' > "${iso_root}/casper/filesystem.manifest"
 printf '%s' "$(du -sx --block-size=1 "${rootfs}" | awk '{print $1}')" > "${iso_root}/casper/filesystem.size"
-if [ -f "${iso_root}/casper/filesystem.manifest" ]; then
-    # shellcheck disable=SC2016 # dpkg-query expands this format string inside the chroot.
-    chroot_run dpkg-query -W --showformat='${Package} ${Version}\n' > "${iso_root}/casper/filesystem.manifest"
-fi
-if [ -f "${iso_root}/md5sum.txt" ]; then
-    (cd "${iso_root}" && find . -type f ! -name md5sum.txt -print0 | sort -z | xargs -0 md5sum > md5sum.txt.new && mv md5sum.txt.new md5sum.txt)
-fi
+run_root mksquashfs "${rootfs}" "${iso_root}/casper/filesystem.squashfs" -noappend -comp xz -all-root >/dev/null
+(cd "${iso_root}" && find . -type f ! -name md5sum.txt -print0 | sort -z | xargs -0 md5sum > md5sum.txt.new && mv md5sum.txt.new md5sum.txt)
 
-install -d "${iso_root}/boot/grub"
 cat > "${iso_root}/boot/grub/grub.cfg" <<EOF
 serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
 terminal_input console serial
@@ -216,7 +209,7 @@ set timeout=5
 set default=0
 
 menuentry "routerd Ubuntu live ${version}" {
-    linux /casper/vmlinuz quiet autoinstall ds=nocloud\\;s=/cdrom/nocloud/ console=tty0 console=ttyS0,115200n8 ---
+    linux /casper/vmlinuz boot=casper quiet console=tty0 console=ttyS0,115200n8 ---
     initrd /casper/initrd
 }
 EOF

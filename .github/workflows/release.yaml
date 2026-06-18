@@ -223,7 +223,7 @@ jobs:
       - name: Install ISO build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl grub-pc-bin grub-efi-amd64-bin mtools xorriso libarchive-tools squashfs-tools
+          sudo apt-get install -y debootstrap grub-pc-bin grub-efi-amd64-bin mtools xorriso squashfs-tools
 
       - name: Build live ISO
         run: make live-iso VERSION=${{ needs.resolve-release.outputs.tag }}
