@@ -86,11 +86,22 @@ mkdir -p "${iso_root}" "${payload_root}"
 bsdtar -C "${iso_root}" -xf "${ubuntu_iso}"
 chmod -R u+w "${iso_root}"
 
-squashfs="${iso_root}/casper/filesystem.squashfs"
-if [ ! -f "${squashfs}" ]; then
-    echo "Ubuntu ISO does not contain ${squashfs}" >&2
+squashfs=""
+for candidate in \
+    "${iso_root}/casper/filesystem.squashfs" \
+    "${iso_root}/casper/ubuntu-server-minimal.squashfs" \
+    "${iso_root}/casper/"*.squashfs; do
+    if [ -f "${candidate}" ]; then
+        squashfs="${candidate}"
+        break
+    fi
+done
+if [ -z "${squashfs}" ]; then
+    echo "Ubuntu ISO does not contain a squashfs filesystem under casper/" >&2
+    ls -la "${iso_root}/casper/" 2>/dev/null || true
     exit 1
 fi
+echo "using squashfs: ${squashfs}"
 run_root unsquashfs -d "${rootfs}" "${squashfs}" >/dev/null
 run_root chown -R "$(id -u):$(id -g)" "${rootfs}"
 
