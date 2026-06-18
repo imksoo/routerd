@@ -211,6 +211,7 @@ var declarations = []Declaration{
 	declare(api.FederationAPIVersion, "EventGroup", ClassController, "event federation group state", noHostTeardown("controller state does not own standalone host artifacts")),
 	declare(api.FederationAPIVersion, "EventPeer", ClassController, "event federation peer state", noHostTeardown("controller state does not own standalone host artifacts")),
 	declare(api.FederationAPIVersion, "EventSubscription", ClassDynamicSource, "event subscription can emit DynamicConfigPart", noHostTeardown("dynamic output is represented as DynamicConfigPart and then handled by the effective resource view")),
+	declare(api.FederationAPIVersion, "FederationSLO", ClassRendererInput, "SLO thresholds for federation doctor checks", noHostTeardown("declarative SLO definition, no host artifacts")),
 	declare(api.MobilityAPIVersion, "MobilityPool", ClassDynamicSource, "SAM capture/control-plane dynamic source", noHostTeardown("dynamic source emits capture resources that are handled through the effective view")),
 	declare(api.MobilityAPIVersion, "MobilityMemberSet", ClassRendererInput, "MobilityPool member set input", noHostTeardown("member set input is resolved by MobilityPool")),
 	declare(api.MobilityAPIVersion, "SAMNodeSet", ClassRendererInput, "SAM fabric node identity input", noHostTeardown("node set input is resolved by SAM fabric controllers")),

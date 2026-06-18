@@ -8,14 +8,59 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/pkg/api"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 const (
-	doctorFederationWarnLag        = 60
-	doctorFederationFailLag        = 180
-	doctorFederationExpiresSoonSec = 120
+	defaultFederationWarnLag        = 60
+	defaultFederationFailLag        = 180
+	defaultFederationExpiresSoonSec = 120
 )
+
+type federationSLOThresholds struct {
+	LagWarnSeconds     int
+	LagFailSeconds     int
+	ExpiresSoonSeconds int
+}
+
+func defaultSLOThresholds() federationSLOThresholds {
+	return federationSLOThresholds{
+		LagWarnSeconds:     defaultFederationWarnLag,
+		LagFailSeconds:     defaultFederationFailLag,
+		ExpiresSoonSeconds: defaultFederationExpiresSoonSec,
+	}
+}
+
+func loadSLOThresholds(router *api.Router, group string) federationSLOThresholds {
+	t := defaultSLOThresholds()
+	if router == nil {
+		return t
+	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "FederationSLO" {
+			continue
+		}
+		spec, err := res.FederationSLOSpec()
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(spec.GroupRef) != strings.TrimSpace(group) {
+			continue
+		}
+		if spec.Delivery.LagWarnSeconds > 0 {
+			t.LagWarnSeconds = spec.Delivery.LagWarnSeconds
+		}
+		if spec.Delivery.LagFailSeconds > 0 {
+			t.LagFailSeconds = spec.Delivery.LagFailSeconds
+		}
+		if spec.Delivery.ExpiresSoonSeconds > 0 {
+			t.ExpiresSoonSeconds = spec.Delivery.ExpiresSoonSeconds
+		}
+		break
+	}
+	return t
+}
 
 func (r doctorRunner) doctorFederation() []doctorCheck {
 	summaryStore, ok := r.store.(routerstate.FederationDeliverySummaryStore)
@@ -37,11 +82,12 @@ func (r doctorRunner) doctorFederation() []doctorCheck {
 	} else {
 		for _, row := range rows {
 			label := row.Group + "/" + row.Peer
+			slo := loadSLOThresholds(r.router, row.Group)
 			checks = append(checks, doctorFederationFailedCheck(label, row))
-			checks = append(checks, doctorFederationPendingCheck(label, row, now, hasFedEvents, fedStore, hasDeliveries, deliveryStore))
+			checks = append(checks, doctorFederationPendingCheck(label, row, now, slo, hasFedEvents, fedStore, hasDeliveries, deliveryStore))
 			checks = append(checks, doctorFederationStaleTTLCheck(label, row))
-			checks = append(checks, doctorFederationLagCheck(label, row))
-			checks = append(checks, doctorFederationExpiresCheck(label, row))
+			checks = append(checks, doctorFederationLagCheck(label, row, slo))
+			checks = append(checks, doctorFederationExpiresCheck(label, row, slo))
 		}
 	}
 
@@ -64,7 +110,7 @@ func doctorFederationFailedCheck(label string, row routerstate.DeliverySummaryRo
 	return doctorCheck{Area: "federation", Name: name, Status: doctorPass, Detail: "no failed deliveries"}
 }
 
-func doctorFederationPendingCheck(label string, row routerstate.DeliverySummaryRow, now time.Time, hasFedEvents bool, fedStore routerstate.FederationEventStore, hasDeliveries bool, deliveryStore routerstate.FederationDeliveryStore) doctorCheck {
+func doctorFederationPendingCheck(label string, row routerstate.DeliverySummaryRow, now time.Time, slo federationSLOThresholds, hasFedEvents bool, fedStore routerstate.FederationEventStore, hasDeliveries bool, deliveryStore routerstate.FederationDeliveryStore) doctorCheck {
 	name := label + " pending deliveries"
 	if row.Pending == 0 {
 		return doctorCheck{Area: "federation", Name: name, Status: doctorPass, Detail: "no pending deliveries"}
@@ -96,7 +142,7 @@ func doctorFederationPendingCheck(label string, row routerstate.DeliverySummaryR
 		if !ok {
 			continue
 		}
-		if !ev.ExpiresAt.IsZero() && ev.ExpiresAt.Sub(now).Seconds() < doctorFederationExpiresSoonSec {
+		if !ev.ExpiresAt.IsZero() && ev.ExpiresAt.Sub(now).Seconds() < float64(slo.ExpiresSoonSeconds) {
 			expiringSoon++
 		}
 	}
@@ -105,7 +151,7 @@ func doctorFederationPendingCheck(label string, row routerstate.DeliverySummaryR
 			Area:   "federation",
 			Name:   name,
 			Status: doctorFail,
-			Detail: fmt.Sprintf("%d pending; %d event(s) expire within %ds without delivery", row.Pending, expiringSoon, doctorFederationExpiresSoonSec),
+			Detail: fmt.Sprintf("%d pending; %d event(s) expire within %ds without delivery", row.Pending, expiringSoon, slo.ExpiresSoonSeconds),
 			Remedy: "outbox may be stalled or peer unreachable; check eventd logs and peer endpoint",
 		}
 	}
@@ -138,34 +184,34 @@ func doctorFederationStaleTTLCheck(label string, row routerstate.DeliverySummary
 	return doctorCheck{Area: "federation", Name: name, Status: doctorPass, Detail: "no stale TTL deliveries"}
 }
 
-func doctorFederationLagCheck(label string, row routerstate.DeliverySummaryRow) doctorCheck {
+func doctorFederationLagCheck(label string, row routerstate.DeliverySummaryRow, slo federationSLOThresholds) doctorCheck {
 	name := label + " delivery lag"
 	if row.MaxLagSeconds == 0 && row.Delivered == 0 {
 		return doctorCheck{Area: "federation", Name: name, Status: doctorSkip, Detail: "no delivered events to measure lag"}
 	}
 	detail := fmt.Sprintf("max delivery lag %ds", row.MaxLagSeconds)
-	if row.MaxLagSeconds >= doctorFederationFailLag {
+	if row.MaxLagSeconds >= int64(slo.LagFailSeconds) {
 		return doctorCheck{
 			Area:   "federation",
 			Name:   name,
 			Status: doctorFail,
 			Detail: detail,
-			Remedy: fmt.Sprintf("delivery lag exceeds %ds; check network latency to peer and outbox interval", doctorFederationFailLag),
+			Remedy: fmt.Sprintf("delivery lag exceeds SLO fail threshold %ds; check network latency to peer and outbox interval", slo.LagFailSeconds),
 		}
 	}
-	if row.MaxLagSeconds >= doctorFederationWarnLag {
+	if row.MaxLagSeconds >= int64(slo.LagWarnSeconds) {
 		return doctorCheck{
 			Area:   "federation",
 			Name:   name,
 			Status: doctorWarn,
 			Detail: detail,
-			Remedy: fmt.Sprintf("delivery lag exceeds %ds; monitor peer connectivity", doctorFederationWarnLag),
+			Remedy: fmt.Sprintf("delivery lag exceeds SLO warn threshold %ds; monitor peer connectivity", slo.LagWarnSeconds),
 		}
 	}
 	return doctorCheck{Area: "federation", Name: name, Status: doctorPass, Detail: detail}
 }
 
-func doctorFederationExpiresCheck(label string, row routerstate.DeliverySummaryRow) doctorCheck {
+func doctorFederationExpiresCheck(label string, row routerstate.DeliverySummaryRow, slo federationSLOThresholds) doctorCheck {
 	name := label + " event expiry"
 	if row.MinExpiresInSeconds <= 0 && row.Events > 0 {
 		detail := "events with no expiry"
@@ -178,7 +224,7 @@ func doctorFederationExpiresCheck(label string, row routerstate.DeliverySummaryR
 		return doctorCheck{Area: "federation", Name: name, Status: doctorSkip, Detail: "no expiry data"}
 	}
 	detail := fmt.Sprintf("nearest event expires in %ds", row.MinExpiresInSeconds)
-	if row.MinExpiresInSeconds < doctorFederationExpiresSoonSec {
+	if row.MinExpiresInSeconds < int64(slo.ExpiresSoonSeconds) {
 		status := doctorWarn
 		if row.Pending > 0 || row.Failed > 0 {
 			status = doctorFail
@@ -188,7 +234,7 @@ func doctorFederationExpiresCheck(label string, row routerstate.DeliverySummaryR
 			Name:   name,
 			Status: status,
 			Detail: fmt.Sprintf("%s; %d pending %d failed", detail, row.Pending, row.Failed),
-			Remedy: strings.TrimSpace(fmt.Sprintf("event TTL running low; verify outbox re-push and peer delivery")),
+			Remedy: "event TTL running low; verify outbox re-push and peer delivery",
 		}
 	}
 	return doctorCheck{Area: "federation", Name: name, Status: doctorPass, Detail: detail}
@@ -396,7 +442,175 @@ func (r doctorRunner) buildFederationSummary(checks []doctorCheck) *doctorFedera
 			}
 		}
 	}
+
+	sloStatus := r.buildFederationSLOStatus(rows)
+	fs.SLO = &sloStatus
 	return fs
+}
+
+func (r doctorRunner) buildFederationSLOStatus(rows []routerstate.DeliverySummaryRow) doctorFederationSLOStatus {
+	hasSLO := false
+	if r.router != nil {
+		for _, res := range r.router.Spec.Resources {
+			if res.Kind == "FederationSLO" {
+				hasSLO = true
+				break
+			}
+		}
+	}
+
+	group := ""
+	if len(rows) > 0 {
+		group = rows[0].Group
+	}
+	slo := loadSLOThresholds(r.router, group)
+	status := doctorFederationSLOStatus{
+		Defined: hasSLO,
+		Thresholds: doctorFederationSLOValues{
+			LagWarnSeconds:     slo.LagWarnSeconds,
+			LagFailSeconds:     slo.LagFailSeconds,
+			ExpiresSoonSeconds: slo.ExpiresSoonSeconds,
+		},
+	}
+
+	for _, row := range rows {
+		label := row.Group + "/" + row.Peer
+		if row.MaxLagSeconds >= int64(slo.LagFailSeconds) {
+			status.Violations = append(status.Violations, doctorFederationViolation{
+				Check:     label + " delivery lag",
+				Threshold: fmt.Sprintf("lagFailSeconds=%d", slo.LagFailSeconds),
+				Actual:    fmt.Sprintf("%ds", row.MaxLagSeconds),
+				Severity:  doctorFail,
+			})
+		} else if row.MaxLagSeconds >= int64(slo.LagWarnSeconds) {
+			status.Violations = append(status.Violations, doctorFederationViolation{
+				Check:     label + " delivery lag",
+				Threshold: fmt.Sprintf("lagWarnSeconds=%d", slo.LagWarnSeconds),
+				Actual:    fmt.Sprintf("%ds", row.MaxLagSeconds),
+				Severity:  doctorWarn,
+			})
+		}
+		if row.Failed > 0 {
+			status.Violations = append(status.Violations, doctorFederationViolation{
+				Check:     label + " failed deliveries",
+				Threshold: "failedDeliveryCount=0",
+				Actual:    fmt.Sprintf("%d", row.Failed),
+				Severity:  doctorFail,
+			})
+		}
+		if row.Pending > 0 && row.MinExpiresInSeconds > 0 && row.MinExpiresInSeconds < int64(slo.ExpiresSoonSeconds) {
+			status.Violations = append(status.Violations, doctorFederationViolation{
+				Check:     label + " pending expiring-soon",
+				Threshold: fmt.Sprintf("expiresSoonSeconds=%d", slo.ExpiresSoonSeconds),
+				Actual:    fmt.Sprintf("minExpiresIn=%ds, pending=%d", row.MinExpiresInSeconds, row.Pending),
+				Severity:  doctorFail,
+			})
+		}
+	}
+	return status
+}
+
+func (r doctorRunner) buildFederationRemediationPlan(checks []doctorCheck, federation *doctorFederationSummary) *doctorRemediationPlan {
+	plan := &doctorRemediationPlan{
+		GeneratedAt: doctorNow().UTC().Format("2006-01-02T15:04:05Z"),
+	}
+
+	for _, c := range checks {
+		if c.Area != "federation" || c.Status == doctorPass || c.Status == doctorSkip {
+			continue
+		}
+		action := remediationActionFromCheck(c)
+		if action.Action != "" {
+			plan.Actions = append(plan.Actions, action)
+		}
+	}
+	return plan
+}
+
+func remediationActionFromCheck(c doctorCheck) doctorRemediationAction {
+	switch {
+	case strings.Contains(c.Name, "failed deliveries"):
+		group, peer := splitGroupPeerFromLabel(c.Name)
+		return doctorRemediationAction{
+			Action:                   "retry-failed-deliveries",
+			Reason:                   c.Detail,
+			TargetPeer:               peer,
+			TargetGroup:              group,
+			Safe:                     true,
+			RequiresOperatorApproval: false,
+		}
+	case strings.Contains(c.Name, "pending deliveries"):
+		group, peer := splitGroupPeerFromLabel(c.Name)
+		return doctorRemediationAction{
+			Action:                   "investigate-pending-deliveries",
+			Reason:                   c.Detail,
+			TargetPeer:               peer,
+			TargetGroup:              group,
+			Safe:                     true,
+			RequiresOperatorApproval: false,
+		}
+	case strings.Contains(c.Name, "stale TTL"):
+		group, peer := splitGroupPeerFromLabel(c.Name)
+		return doctorRemediationAction{
+			Action:                   "force-repush-stale-ttl",
+			Reason:                   c.Detail,
+			TargetPeer:               peer,
+			TargetGroup:              group,
+			Safe:                     true,
+			RequiresOperatorApproval: false,
+		}
+	case strings.Contains(c.Name, "delivery lag"):
+		group, peer := splitGroupPeerFromLabel(c.Name)
+		return doctorRemediationAction{
+			Action:                   "check-peer-connectivity",
+			Reason:                   c.Detail,
+			TargetPeer:               peer,
+			TargetGroup:              group,
+			Safe:                     true,
+			RequiresOperatorApproval: false,
+		}
+	case strings.Contains(c.Name, "expected delivery") && strings.Contains(c.Detail, "endpoint is empty"):
+		group, peer := splitGroupPeerFromLabel(c.Name)
+		return doctorRemediationAction{
+			Action:                   "configure-peer-endpoint",
+			Reason:                   c.Detail,
+			TargetPeer:               peer,
+			TargetGroup:              group,
+			Safe:                     false,
+			RequiresOperatorApproval: true,
+		}
+	case strings.Contains(c.Name, "expected delivery"):
+		group, peer := splitGroupPeerFromLabel(c.Name)
+		return doctorRemediationAction{
+			Action:                   "investigate-missing-delivery-rows",
+			Reason:                   c.Detail,
+			TargetPeer:               peer,
+			TargetGroup:              group,
+			Safe:                     true,
+			RequiresOperatorApproval: false,
+		}
+	case strings.Contains(c.Name, "subscription runs"):
+		return doctorRemediationAction{
+			Action:                   "inspect-failed-subscription-runs",
+			Reason:                   c.Detail,
+			Safe:                     true,
+			RequiresOperatorApproval: false,
+		}
+	}
+	return doctorRemediationAction{}
+}
+
+func splitGroupPeerFromLabel(name string) (string, string) {
+	// name format: "group/peer check-type" e.g. "cloudedge/leaf-az delivery lag"
+	parts := strings.SplitN(name, " ", 2)
+	if len(parts) == 0 {
+		return "", ""
+	}
+	groupPeer := parts[0]
+	if idx := strings.Index(groupPeer, "/"); idx >= 0 {
+		return groupPeer[:idx], groupPeer[idx+1:]
+	}
+	return groupPeer, ""
 }
 
 func (r doctorRunner) doctorFederationSubscriptionChecks() []doctorCheck {
