@@ -1,5 +1,12 @@
 # CloudEdge Event Federation — checkpoint (Phase 1 + 1.5 complete)
 
+> **Historical checkpoint.** This note records the Phase 1 + 1.5 milestone.
+> Cross-node delivery (Phase 2), subscriptions (Phase 3), provider execution
+> (Phases 4–5), and reliability engineering (P1–P3) have since been implemented.
+> See [ADR 0006](../adr/0006-event-federation.md) for current status and
+> [federation delivery observability](../how-to/federation-delivery-observability.md)
+> for the P3 operational contract.
+
 Status: **experimental** (in development; NOT recommended-stable)
 Branch: `event-federation` · Checkpoint commit: `2bfd8b4d` · Date: 2026-05-30
 

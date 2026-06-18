@@ -14,9 +14,38 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ### Added
 
+- `FederationSLO` Kind (`federation.routerd.net/v1alpha1`) for declarative
+  per-EventGroup SLO thresholds. Custom `lagWarnSeconds`, `lagFailSeconds`,
+  `expiresSoonSeconds` override hardcoded defaults; `maxPendingRuns` and
+  `maxFailedRuns` gate subscription health checks. Zero values fall back
+  to defaults with effective-value validation (#541).
+- `routerctl doctor federation` performs 19 checks across delivery health,
+  expected-peer audit, subscription runs, delivery lag, event expiry, and
+  stale TTL. Per-group SLO violations are reported in the JSON `slo.groups[]`
+  array (#537, #539, #540, #541).
+- `routerctl doctor federation --remediation-plan` generates a plan-only
+  JSON remediation plan with stable typed action constants and check codes.
+  Actions are deduped by (action, group, peer, resource) and sorted
+  deterministically. The plan never mutates state (#541).
+- `routerctl federation deliveries summary` aggregates per-(group, peer)
+  delivery statistics: events, delivered, failed, pending, stale TTL,
+  max lag, min expires-in (#537).
+- 14 OpenTelemetry metrics in `routerd-eventd`: outbox delivery
+  (`delivery_total`, `delivery_lag_seconds`, `repush_total`,
+  `stale_ttl_total`), receiver (`accepted_total`, `duplicate_total`,
+  `reject_total`), pruner, and loop health counters (#540).
+- Outbox re-pushes federation events when their TTL is refreshed,
+  ensuring peers receive the latest expiry (#529).
 - `routerctl doctor routes` compares installed `IPv4Route` status rows with
   the Linux host FIB and reports stale or mismatched destination, gateway,
   device, preferred-source, and metric drift as operator evidence (#439).
+- `routerctl action` operator surface for gated provider action execution:
+  `import`, `list`, `show`, `approve`, `execute`, `journal`, `rollback`
+  subcommands. Execution requires explicit approval and
+  `ProviderActionPolicy` gating; dry-run is non-destructive (#Phase5).
+- Provider executor plugins for AWS, Azure, and OCI with real cloud
+  mutation (secondary IP assign/unassign, source/dest check, route table).
+  Lab-smoke PASS for all three providers (#Phase5).
 
 ## v20260608.2325
 

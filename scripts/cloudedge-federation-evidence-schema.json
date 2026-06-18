@@ -1,0 +1,89 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/imksoo/routerd/scripts/cloudedge-federation-evidence-schema.json",
+  "title": "routerd CloudEdge Federation Qualification evidence",
+  "description": "Machine-readable evidence emitted by cloudedge-federation-qualification.sh. One file per scenario, validated by this schema.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["runId", "commit", "scenario", "result"],
+  "properties": {
+    "runId": {
+      "type": "string",
+      "description": "Run identifier from the qualification harness.",
+      "minLength": 1
+    },
+    "commit": {
+      "type": "string",
+      "description": "Git commit (or HEAD sha) of the routerd build under test.",
+      "minLength": 1
+    },
+    "scenario": {
+      "type": "string",
+      "description": "Scenario name from the qualification matrix.",
+      "enum": [
+        "healthy",
+        "partition",
+        "ttl-refresh",
+        "restart",
+        "subscription",
+        "config-fault",
+        "security",
+        "multi-group"
+      ]
+    },
+    "result": {
+      "type": "string",
+      "enum": ["pass", "fail", "skip"]
+    },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC timestamp when the scenario started."
+    },
+    "endedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC timestamp when the scenario completed."
+    },
+    "error": {
+      "type": "string",
+      "description": "Human-readable error message for fail/skip results."
+    },
+    "doctorBefore": {
+      "description": "routerctl doctor federation JSON snapshot before the scenario.",
+      "type": ["object", "string"]
+    },
+    "doctorDuring": {
+      "description": "routerctl doctor federation JSON snapshot during fault injection.",
+      "type": ["object", "string"]
+    },
+    "doctorAfter": {
+      "description": "routerctl doctor federation JSON snapshot after the scenario.",
+      "type": ["object", "string"]
+    },
+    "deliverySummary": {
+      "description": "routerctl federation deliveries summary JSON after the scenario.",
+      "type": ["object", "string", "array"]
+    },
+    "remediationPlan": {
+      "description": "routerctl doctor federation --remediation-plan JSON output.",
+      "type": ["object", "string"]
+    },
+    "doctorJson": {
+      "description": "Full doctor JSON for scenarios that only read doctor state.",
+      "type": ["object", "string"]
+    },
+    "groupCount": {
+      "description": "Number of EventGroups observed in multi-group scenario.",
+      "type": ["string", "integer"]
+    },
+    "eventCountBefore": {
+      "description": "Event list count before security test.",
+      "type": ["string", "integer"]
+    },
+    "eventCountAfter": {
+      "description": "Event list count after security test.",
+      "type": ["string", "integer"]
+    }
+  }
+}
