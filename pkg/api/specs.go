@@ -334,6 +334,13 @@ type WebConsoleSpec struct {
 	Port              int                   `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=1,maximum=65535"`
 	BasePath          string                `yaml:"basePath,omitempty" json:"basePath,omitempty"`
 	Title             string                `yaml:"title,omitempty" json:"title,omitempty"`
+	Links             []WebConsoleLinkSpec  `yaml:"links,omitempty" json:"links,omitempty"`
+}
+
+type WebConsoleLinkSpec struct {
+	Label       string `yaml:"label" json:"label"`
+	URL         string `yaml:"url" json:"url"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 }
 
 type ManagementAccessSpec struct {

@@ -1494,6 +1494,7 @@ func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.R
 		Connections:            observe.Connections,
 		Title:                  spec.Title,
 		BasePath:               spec.BasePath,
+		ConsoleLinks:           webConsoleLinks(spec.Links),
 		DNSQueryLogPath:        platformDefaults.StateDir + "/dns-queries.db",
 		TrafficFlowLogPath:     platformDefaults.StateDir + "/traffic-flows.db",
 		FirewallLogPath:        platformDefaults.FirewallLogFile(),
@@ -1524,6 +1525,18 @@ func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.R
 		}
 	}()
 	return nil
+}
+
+func webConsoleLinks(links []api.WebConsoleLinkSpec) []webconsole.ConsoleLink {
+	out := make([]webconsole.ConsoleLink, 0, len(links))
+	for _, link := range links {
+		out = append(out, webconsole.ConsoleLink{
+			Label:       link.Label,
+			URL:         link.URL,
+			Description: link.Description,
+		})
+	}
+	return out
 }
 
 type resultCache struct {

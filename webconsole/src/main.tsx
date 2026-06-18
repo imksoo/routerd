@@ -70,6 +70,7 @@ declare global {
 
 type Summary = {
   generatedAt?: string;
+  consoleLinks?: ConsoleLink[];
   status?: { status?: Record<string, unknown> };
   controllers?: ControllerStatus[];
   gatewayHealth?: GatewayHealth;
@@ -179,6 +180,12 @@ type RouteEntry = {
   peer?: string;
   phase?: string;
   observedAt?: string;
+};
+
+type ConsoleLink = {
+  label?: string;
+  url?: string;
+  description?: string;
 };
 
 type RouteBGPPeer = {
@@ -676,7 +683,7 @@ type ClientRow = {
   isolationPolicy: Set<string>;
 };
 
-type ViewKey = "overview" | "resources" | "routes" | "controllers" | "clients" | "connections" | "gateway-health" | "vpn" | "sam" | "events" | "firewall" | "config" | "generations";
+type ViewKey = "overview" | "resources" | "routes" | "controllers" | "clients" | "connections" | "gateway-health" | "vrrp" | "vpn" | "sam" | "events" | "firewall" | "config" | "generations";
 type NavSubItem = { key: string; label: string; count?: number; view: ViewKey; targetID: string };
 
 const cfg = window.__ROUTERD_WEB_CONSOLE__ ?? { basePath: "/", title: "routerd" };
@@ -694,6 +701,7 @@ const navItems: { key: ViewKey; label: string; description: string; icon: React.
   { key: "clients", label: "Clients", description: "Leases and endpoint traffic", icon: <PeopleRegular /> },
   { key: "connections", label: "Connections", description: "conntrack and live flows", icon: <PlugConnectedRegular /> },
   { key: "gateway-health", label: "Gateway Health", description: "Egress path status and evidence", icon: <HeartPulseRegular /> },
+  { key: "vrrp", label: "VRRP", description: "Virtual address roles and peer consoles", icon: <NavigationRegular /> },
   { key: "vpn", label: "VPN", description: "WireGuard and Tailscale peers", icon: <PlugConnectedRegular /> },
   { key: "sam", label: "SAM", description: "Selective Address Mobility topology", icon: <GlobeRegular /> },
   { key: "events", label: "Events", description: "Bus events and resource changes", icon: <ServerRegular /> },
@@ -1713,6 +1721,26 @@ const useStyles = makeStyles({
     gap: "16px",
     gridTemplateColumns: "1fr",
   },
+  linkGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 14rem), 1fr))",
+    gap: "10px",
+  },
+  consoleLink: {
+    display: "grid",
+    gap: "4px",
+    minWidth: 0,
+    padding: "10px",
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackground2,
+    color: tokens.colorNeutralForeground1,
+    textDecorationLine: "none",
+    ":hover": {
+      border: `1px solid ${tokens.colorNeutralStroke1}`,
+      backgroundColor: tokens.colorNeutralBackground2Hover,
+    },
+  },
   vpnSummaryGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 13rem), 1fr))",
@@ -2587,7 +2615,7 @@ function App() {
     const includeVPN = selected === "vpn";
     const includeDPI = selected === "connections" || selected === "clients" || selected === "firewall";
     const trafficFlowLimit = selected === "clients" ? 200 : selected === "connections" ? 600 : -1;
-    const includeResources = selected === "resources" || selected === "gateway-health";
+    const includeResources = selected === "resources" || selected === "gateway-health" || selected === "vrrp";
     const includeEvents = selected === "events";
     const includeDHCPLeases = selected === "clients" || selected === "connections";
     const summaryQuery = new URLSearchParams({
@@ -2981,7 +3009,7 @@ function App() {
               <span className={`${styles.navText} ${!compact && navCollapsed ? styles.navTextCollapsed : ""}`}>
                 <span className={styles.navTextHeader}>
                   <Text weight={selected === item.key ? "semibold" : "regular"}>{item.label}</Text>
-                  {item.key === "resources" && resources.filter(r => ["danger","warning"].includes(phaseColor(r.status?.phase))).length > 0 ? <Badge size="small" appearance="tint" color="danger">{resources.filter(r => ["danger","warning"].includes(phaseColor(r.status?.phase))).length}</Badge> : null}
+                  {item.key === "resources" && resourceAlertCount(resources) > 0 ? <Badge size="small" appearance="tint" color="danger">{resourceAlertCount(resources)}</Badge> : null}
                 </span>
                 <Text size={200} className={styles.navDescription}>{item.description}</Text>
               </span>
@@ -3124,9 +3152,9 @@ function App() {
                 />
                 <div className={styles.grid}>
                   <Metric label="total" value={String(resources.length)} />
-                  <Metric label="healthy" value={String(resources.filter(r => phaseColor(r.status?.phase) === "success").length)} />
-                  <Metric label="warning" value={String(resources.filter(r => phaseColor(r.status?.phase) === "warning").length)} />
-                  <Metric label="danger" value={String(resources.filter(r => phaseColor(r.status?.phase) === "danger").length)} />
+                  <Metric label="healthy" value={String(resources.filter(r => resourcePhaseColor(r) === "success").length)} />
+                  <Metric label="warning" value={String(resources.filter(r => resourcePhaseColor(r) === "warning").length)} />
+                  <Metric label="danger" value={String(resources.filter(r => resourcePhaseColor(r) === "danger").length)} />
                   <Metric label="dry-run kinds" value={String(controllers.filter(c => c.mode === "dry-run").length)} />
                 </div>
                 <ResourceTable resources={resources} controllers={controllers} navigateTo={navigateTo} />
@@ -3325,6 +3353,9 @@ function App() {
             ) : null}
             {selected === "gateway-health" ? (
               <GatewayHealthBanner health={summary?.gatewayHealth} />
+            ) : null}
+            {selected === "vrrp" ? (
+              <VRRPView resources={summary?.resources ?? []} links={summary?.consoleLinks ?? []} />
             ) : null}
             {selected === "vpn" ? (
               <div className={styles.vpnGrid}>
@@ -4349,7 +4380,7 @@ function ResourceTable({ resources, controllers, navigateTo }: { resources: Reso
                 <TableRow key={`${resource.apiVersion}/${resource.kind}/${resource.name}`} className={styles.stableTableRow}>
                   <TableCell><Highlighted text={resource.kind ?? ""} query={query} /></TableCell>
                   <TableCell><code className={styles.code}><Highlighted text={resource.name ?? ""} query={query} /></code></TableCell>
-                  <TableCell><Badge appearance="tint" color={phaseColor(status.phase)}><Highlighted text={String(status.phase ?? "Unknown")} query={query} /></Badge></TableCell>
+                  <TableCell><Badge appearance="tint" color={resourcePhaseColor(resource)}><Highlighted text={String(status.phase ?? "Unknown")} query={query} /></Badge></TableCell>
                   <TableCell>{dryRunController ? <ModeBadge mode="dry-run" /> : <Text size={200} className={styles.muted}>live</Text>}</TableCell>
                   <TableCell>
                     <div className={styles.connectionFlow}>
@@ -4373,7 +4404,7 @@ function ResourceTable({ resources, controllers, navigateTo }: { resources: Reso
             <div className={styles.resourceMobileCard} key={`m-${resource.apiVersion}/${resource.kind}/${resource.name}`}>
               <div className={styles.resourceMobileHeader}>
                 <Text weight="semibold"><Highlighted text={resource.kind ?? ""} query={query} /></Text>
-                <Badge appearance="tint" color={phaseColor(status.phase)}>{String(status.phase ?? "Unknown")}</Badge>
+                <Badge appearance="tint" color={resourcePhaseColor(resource)}>{String(status.phase ?? "Unknown")}</Badge>
               </div>
               <code className={styles.code}><Highlighted text={resource.name ?? ""} query={query} /></code>
               <div className={styles.resourceMobileMeta}>
@@ -4389,6 +4420,174 @@ function ResourceTable({ resources, controllers, navigateTo }: { resources: Reso
       </div>
     </>
   );
+}
+
+function VRRPView({ resources, links }: { resources: ResourceStatus[]; links: ConsoleLink[] }) {
+  const styles = useStyles();
+  const vrrp = resources.filter(resource => resource.kind === "VirtualAddress");
+  const masters = vrrp.filter(resource => vrrpRole(resource) === "master").length;
+  const backups = vrrp.filter(resource => vrrpRole(resource) === "backup").length;
+  const unknown = Math.max(0, vrrp.length - masters - backups);
+  return (
+    <div className={styles.vpnGrid}>
+      <Card id="vrrp-summary" className={styles.connectionAnchor}>
+        <CardHeader
+          header={<Text weight="semibold">VRRP</Text>}
+          description={<Text className={styles.muted}>VirtualAddress role, priority, and transition status</Text>}
+        />
+        <div className={styles.grid}>
+          <Metric label="virtual addresses" value={String(vrrp.length)} />
+          <Metric label="master" value={String(masters)} />
+          <Metric label="backup" value={String(backups)} />
+          <Metric label="unknown" value={String(unknown)} />
+        </div>
+      </Card>
+      <Card id="vrrp-consoles" className={styles.connectionAnchor}>
+        <CardHeader
+          header={<Text weight="semibold">Management UI</Text>}
+          description={<Text className={styles.muted}>Configured peer and local console shortcuts</Text>}
+        />
+        {links.length ? (
+          <div className={styles.linkGrid}>
+            {links.map(link => {
+              const url = link.url || "#";
+              return (
+                <a key={`${link.label}-${url}`} className={styles.consoleLink} href={url} target="_blank" rel="noopener noreferrer">
+                  <Text weight="semibold">{link.label || url}</Text>
+                  <code className={styles.wrapCode}>{url}</code>
+                  {link.description ? <Text size={200} className={styles.muted}>{link.description}</Text> : null}
+                </a>
+              );
+            })}
+          </div>
+        ) : (
+          <Text className={styles.muted}>No management links configured in WebConsole spec.</Text>
+        )}
+      </Card>
+      <Card id="vrrp-addresses" className={styles.connectionAnchor}>
+        <CardHeader
+          header={<Text weight="semibold">Virtual addresses</Text>}
+          description={<Text className={styles.muted}>Role and effective priority from keepalived-backed VirtualAddress resources</Text>}
+        />
+        <div className={styles.tableWrap} data-routerd-scroll-key="vrrp-addresses">
+          <Table size="small">
+            <TableHeader>
+              <TableRow>
+                <TableHeaderCell>Name</TableHeaderCell>
+                <TableHeaderCell>VIP</TableHeaderCell>
+                <TableHeaderCell>Role</TableHeaderCell>
+                <TableHeaderCell>Priority</TableHeaderCell>
+                <TableHeaderCell>Interface</TableHeaderCell>
+                <TableHeaderCell>VRID</TableHeaderCell>
+                <TableHeaderCell>Last transition</TableHeaderCell>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {vrrp.map(resource => {
+                const status = resource.status ?? {};
+                const role = vrrpRole(resource);
+                return (
+                  <TableRow key={`${resource.apiVersion}/${resource.kind}/${resource.name}`} className={styles.stableTableRow}>
+                    <TableCell><code className={styles.code}>{resource.name ?? "-"}</code></TableCell>
+                    <TableCell><code className={styles.code}>{statusString(status, "address") || "-"}</code></TableCell>
+                    <TableCell><Badge appearance="tint" color={vrrpRoleColor(role)}>{role || "unknown"}</Badge></TableCell>
+                    <TableCell>{vrrpPriorityLabel(status)}</TableCell>
+                    <TableCell>{statusString(status, "interface") || statusString(status, "ifname") || "-"}</TableCell>
+                    <TableCell>{statusString(status, "virtualRouterID") || "-"}</TableCell>
+                    <TableCell>{statusString(status, "lastRoleTransitionAt") ? <RelativeTime value={statusString(status, "lastRoleTransitionAt")} /> : "-"}</TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      </Card>
+      <Card id="vrrp-track" className={styles.connectionAnchor}>
+        <CardHeader
+          header={<Text weight="semibold">Track state</Text>}
+          description={<Text className={styles.muted}>Health checks and penalties contributing to effective priority</Text>}
+        />
+        <div className={styles.tableWrap} data-routerd-scroll-key="vrrp-track">
+          <Table size="small">
+            <TableHeader>
+              <TableRow>
+                <TableHeaderCell>VIP</TableHeaderCell>
+                <TableHeaderCell>Track</TableHeaderCell>
+                <TableHeaderCell>State</TableHeaderCell>
+                <TableHeaderCell>Penalty</TableHeaderCell>
+                <TableHeaderCell>Unhealthy</TableHeaderCell>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {vrrpTrackRows(vrrp).map((row, index) => (
+                <TableRow key={`${row.vip}-${row.track}-${index}`} className={styles.stableTableRow}>
+                  <TableCell><code className={styles.code}>{row.vip}</code></TableCell>
+                  <TableCell>{row.track}</TableCell>
+                  <TableCell><Badge appearance="outline" color={phaseColor(row.state)}>{row.state}</Badge></TableCell>
+                  <TableCell>{row.penalty}</TableCell>
+                  <TableCell>{row.unhealthy}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function vrrpRole(resource: ResourceStatus) {
+  return String(resource.status?.role ?? "").toLowerCase();
+}
+
+function vrrpRoleColor(role: string): "success" | "warning" | "danger" | "informative" | "subtle" {
+  if (role === "master") return "success";
+  if (role === "backup") return "warning";
+  if (role === "fault") return "danger";
+  if (!role) return "subtle";
+  return "informative";
+}
+
+function statusString(status: Record<string, unknown>, key: string) {
+  const value = status[key];
+  if (value === undefined || value === null || value === "") return "";
+  return String(value);
+}
+
+function vrrpPriorityLabel(status: Record<string, unknown>) {
+  const priority = statusString(status, "priority");
+  const base = statusString(status, "basePriority");
+  if (priority && base) return `${priority}/${base}`;
+  return priority || base || "-";
+}
+
+function vrrpTrackRows(resources: ResourceStatus[]) {
+  const rows: { vip: string; track: string; state: string; penalty: string; unhealthy: string }[] = [];
+  for (const resource of resources) {
+    const status = resource.status ?? {};
+    const vip = statusString(status, "address") || resource.name || "-";
+    const track = status.track;
+    if (!Array.isArray(track)) continue;
+    for (const item of track) {
+      if (!item || typeof item !== "object") continue;
+      const row = item as Record<string, unknown>;
+      rows.push({
+        vip,
+        track: statusString(row, "resource") || statusString(row, "name") || "-",
+        state: statusString(row, "state") || "unknown",
+        penalty: statusString(row, "penalty") || "-",
+        unhealthy: statusString(row, "unhealthyConsecutive") || "0",
+      });
+    }
+  }
+  if (rows.length > 0) return rows;
+  return resources.map(resource => ({
+    vip: statusString(resource.status ?? {}, "address") || resource.name || "-",
+    track: "-",
+    state: "no track",
+    penalty: "-",
+    unhealthy: "-",
+  }));
 }
 
 function SAMView({ status }: { status: SAMStatusResponse | null }) {
@@ -5337,7 +5536,7 @@ function OverviewActivity({
 }) {
   const styles = useStyles();
   const alerts = resources
-    .filter(resource => ["danger", "warning"].includes(phaseColor(resource.status?.phase)))
+    .filter(resource => ["danger", "warning"].includes(resourcePhaseColor(resource)))
     .slice(0, 8);
   const recent = events.slice(0, 8);
   return (
@@ -5354,7 +5553,7 @@ function OverviewActivity({
           <div className={styles.alertList}>
             {alerts.map(resource => (
               <div className={styles.alertRow} key={`${resource.kind}/${resource.name}`}>
-                <Badge appearance="tint" color={phaseColor(resource.status?.phase)}>{String(resource.status?.phase ?? "Unknown")}</Badge>
+                <Badge appearance="tint" color={resourcePhaseColor(resource)}>{String(resource.status?.phase ?? "Unknown")}</Badge>
                 <div className={styles.connectionFlow}>
                   <Text><code className={styles.code}>{resource.kind}/{resource.name}</code></Text>
                   <Text size={200} className={styles.muted}>{resourceDetail(resource.status ?? {}) || "No detail"}</Text>
@@ -6386,6 +6585,23 @@ function phaseColor(phase: unknown): "success" | "warning" | "danger" | "informa
   return "informative";
 }
 
+function resourcePhaseColor(resource: ResourceStatus): "success" | "warning" | "danger" | "informative" | "subtle" {
+  if (resourcePendingByDesign(resource)) return "subtle";
+  return phaseColor(resource.status?.phase);
+}
+
+function resourcePendingByDesign(resource: ResourceStatus) {
+  const status = resource.status ?? {};
+  const phase = String(status.phase ?? "");
+  const reason = String(status.reason ?? "");
+  if (phase !== "Pending") return false;
+  return reason === "WhenFalse" || reason === "DependsOnFalse";
+}
+
+function resourceAlertCount(resources: ResourceStatus[]) {
+  return resources.filter(resource => ["danger", "warning"].includes(resourcePhaseColor(resource))).length;
+}
+
 function normalizeGatewayStatus(value: unknown) {
   const status = String(value ?? "").toLowerCase();
   if (status === "pass" || status === "passing") return "ok";
@@ -6527,7 +6743,7 @@ function roleColor(role: unknown): "success" | "warning" | "danger" | "informati
 }
 
 function importantResources(resources: ResourceStatus[]) {
-  return resources.filter(resource => /EgressRoutePolicy|HealthCheck|DNSResolver|DHCP|DSLiteTunnel|NAT44Rule|IPv4Route|Firewall|WireGuard|VXLAN/.test(resource.kind ?? ""));
+  return resources.filter(resource => /EgressRoutePolicy|HealthCheck|DNSResolver|DHCP|DSLiteTunnel|NAT44Rule|IPv4Route|Firewall|VirtualAddress|WireGuard|VXLAN/.test(resource.kind ?? ""));
 }
 
 function conntrackLabel(table?: ConnectionTable) {
@@ -7839,6 +8055,15 @@ function navigationSubItems(selected: ViewKey, groups: { key: string; rows: Conn
   if (selected === "gateway-health") {
     return [
       { key: "components", label: "Components", count: summary?.gatewayHealth?.components?.length ?? 0, view: "gateway-health", targetID: "gateway-health-components" },
+    ];
+  }
+  if (selected === "vrrp") {
+    const vrrp = (summary?.resources ?? []).filter(resource => resource.kind === "VirtualAddress");
+    return [
+      { key: "summary", label: "Summary", count: vrrp.length, view: "vrrp", targetID: "vrrp-summary" },
+      { key: "consoles", label: "Management UI", count: summary?.consoleLinks?.length ?? 0, view: "vrrp", targetID: "vrrp-consoles" },
+      { key: "addresses", label: "Virtual addresses", count: vrrp.length, view: "vrrp", targetID: "vrrp-addresses" },
+      { key: "track", label: "Track state", count: vrrpTrackRows(vrrp).length, view: "vrrp", targetID: "vrrp-track" },
     ];
   }
   if (selected === "clients") {

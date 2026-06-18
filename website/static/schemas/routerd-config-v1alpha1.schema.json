@@ -1625,6 +1625,28 @@
                       "enabled": {
                         "type": "boolean"
                       },
+                      "links": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "description": {
+                              "type": "string"
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "url": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "label",
+                            "url"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
                       "listenAddress": {
                         "type": "string"
                       },
