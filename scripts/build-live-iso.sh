@@ -114,6 +114,7 @@ chroot_run apt-get install -y --no-install-recommends "${ubuntu_base_package_lis
 chroot_run apt-get clean
 run_root rm -rf "${rootfs}/var/lib/apt/lists/"*
 cleanup_mounts
+run_root chown -R "$(id -u):$(id -g)" "${rootfs}"
 
 make build-daemons ROUTERD_OS=linux GOARCH=amd64 GIT_COMMIT="${git_commit}"
 
