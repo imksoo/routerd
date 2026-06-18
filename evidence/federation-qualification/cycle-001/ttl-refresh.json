@@ -1,0 +1,254 @@
+{
+  "runId": "20260618T100643Z-federation-qual",
+  "commit": "bf46e53d",
+  "cycle": 1,
+  "scenario": "ttl-refresh",
+  "result": "pass",
+  "startedAt": "2026-06-18T10:07:18Z",
+  "endedAt": "2026-06-18T10:07:43Z",
+  "doctorDuring": {
+    "summary": {
+      "overall": "warn",
+      "pass": 5,
+      "warn": 1,
+      "fail": 0,
+      "skip": 1
+    },
+    "checks": [
+      {
+        "area": "federation",
+        "code": "failed-deliveries",
+        "name": "fedqual-primary/fedqual-receiver failed deliveries",
+        "status": "pass",
+        "detail": "no failed deliveries"
+      },
+      {
+        "area": "federation",
+        "code": "pending-deliveries",
+        "name": "fedqual-primary/fedqual-receiver pending deliveries",
+        "status": "pass",
+        "detail": "no pending deliveries"
+      },
+      {
+        "area": "federation",
+        "code": "stale-ttl",
+        "name": "fedqual-primary/fedqual-receiver stale TTL",
+        "status": "warn",
+        "detail": "1 of 3 delivered event(s) have stale TTL (event.expiresAt > delivery.eventExpiresAt)",
+        "remedy": "outbox should re-push refreshed events on next tick; if this persists, check outbox interval and delivery filtering"
+      },
+      {
+        "area": "federation",
+        "code": "delivery-lag",
+        "name": "fedqual-primary/fedqual-receiver delivery lag",
+        "status": "pass",
+        "detail": "max delivery lag 9s"
+      },
+      {
+        "area": "federation",
+        "code": "event-expiry",
+        "name": "fedqual-primary/fedqual-receiver event expiry",
+        "status": "pass",
+        "detail": "nearest event expires in 560s"
+      },
+      {
+        "area": "federation",
+        "code": "expected-delivery",
+        "name": "fedqual-primary/fedqual-receiver expected delivery",
+        "status": "pass",
+        "detail": "all 3 active event(s) have delivery rows"
+      },
+      {
+        "area": "federation",
+        "name": "fedqual-secondary expected peers",
+        "status": "skip",
+        "detail": "no self-emitted active events to deliver"
+      }
+    ],
+    "federation": {
+      "severityCounts": {
+        "pass": 5,
+        "warn": 1,
+        "fail": 0,
+        "skip": 1
+      },
+      "failedDeliveryCount": 0,
+      "staleTTLCount": 1,
+      "pendingDeliveryCount": 0,
+      "missingExpectedPeerCount": 0,
+      "maxDeliveryLagSeconds": 9,
+      "minExpiresInSeconds": 560,
+      "totalEvents": 3,
+      "totalDelivered": 3,
+      "subscriptionRunsTotal": 0,
+      "subscriptionRunsSucceeded": 0,
+      "subscriptionRunsFailed": 0,
+      "subscriptionRunsPending": 0,
+      "slo": {
+        "groups": [
+          {
+            "group": "fedqual-primary",
+            "defined": true,
+            "thresholds": {
+              "delivery": {
+                "lagWarnSeconds": 30,
+                "lagFailSeconds": 120,
+                "expiresSoonSeconds": 60
+              },
+              "subscription": {
+                "maxPendingRuns": 5,
+                "maxFailedRuns": 3
+              }
+            },
+            "violations": []
+          },
+          {
+            "group": "fedqual-secondary",
+            "defined": true,
+            "thresholds": {
+              "delivery": {
+                "lagWarnSeconds": 60,
+                "lagFailSeconds": 240,
+                "expiresSoonSeconds": 120
+              },
+              "subscription": {
+                "maxPendingRuns": 10,
+                "maxFailedRuns": 5
+              }
+            },
+            "violations": []
+          }
+        ]
+      }
+    }
+  },
+  "doctorAfter": {
+    "summary": {
+      "overall": "pass",
+      "pass": 6,
+      "warn": 0,
+      "fail": 0,
+      "skip": 1
+    },
+    "checks": [
+      {
+        "area": "federation",
+        "code": "failed-deliveries",
+        "name": "fedqual-primary/fedqual-receiver failed deliveries",
+        "status": "pass",
+        "detail": "no failed deliveries"
+      },
+      {
+        "area": "federation",
+        "code": "pending-deliveries",
+        "name": "fedqual-primary/fedqual-receiver pending deliveries",
+        "status": "pass",
+        "detail": "no pending deliveries"
+      },
+      {
+        "area": "federation",
+        "code": "stale-ttl",
+        "name": "fedqual-primary/fedqual-receiver stale TTL",
+        "status": "pass",
+        "detail": "no stale TTL deliveries"
+      },
+      {
+        "area": "federation",
+        "code": "delivery-lag",
+        "name": "fedqual-primary/fedqual-receiver delivery lag",
+        "status": "pass",
+        "detail": "max delivery lag 9s"
+      },
+      {
+        "area": "federation",
+        "code": "event-expiry",
+        "name": "fedqual-primary/fedqual-receiver event expiry",
+        "status": "pass",
+        "detail": "nearest event expires in 548s"
+      },
+      {
+        "area": "federation",
+        "code": "expected-delivery",
+        "name": "fedqual-primary/fedqual-receiver expected delivery",
+        "status": "pass",
+        "detail": "all 3 active event(s) have delivery rows"
+      },
+      {
+        "area": "federation",
+        "name": "fedqual-secondary expected peers",
+        "status": "skip",
+        "detail": "no self-emitted active events to deliver"
+      }
+    ],
+    "federation": {
+      "severityCounts": {
+        "pass": 6,
+        "warn": 0,
+        "fail": 0,
+        "skip": 1
+      },
+      "failedDeliveryCount": 0,
+      "staleTTLCount": 0,
+      "pendingDeliveryCount": 0,
+      "missingExpectedPeerCount": 0,
+      "maxDeliveryLagSeconds": 9,
+      "minExpiresInSeconds": 548,
+      "totalEvents": 3,
+      "totalDelivered": 3,
+      "subscriptionRunsTotal": 0,
+      "subscriptionRunsSucceeded": 0,
+      "subscriptionRunsFailed": 0,
+      "subscriptionRunsPending": 0,
+      "slo": {
+        "groups": [
+          {
+            "group": "fedqual-primary",
+            "defined": true,
+            "thresholds": {
+              "delivery": {
+                "lagWarnSeconds": 30,
+                "lagFailSeconds": 120,
+                "expiresSoonSeconds": 60
+              },
+              "subscription": {
+                "maxPendingRuns": 5,
+                "maxFailedRuns": 3
+              }
+            },
+            "violations": []
+          },
+          {
+            "group": "fedqual-secondary",
+            "defined": true,
+            "thresholds": {
+              "delivery": {
+                "lagWarnSeconds": 60,
+                "lagFailSeconds": 240,
+                "expiresSoonSeconds": 120
+              },
+              "subscription": {
+                "maxPendingRuns": 10,
+                "maxFailedRuns": 5
+              }
+            },
+            "violations": []
+          }
+        ]
+      }
+    }
+  },
+  "deliverySummary": [
+    {
+      "group": "fedqual-primary",
+      "peer": "fedqual-receiver",
+      "events": 3,
+      "delivered": 3,
+      "staleTTL": 0,
+      "failed": 0,
+      "pending": 0,
+      "maxLagSeconds": 9,
+      "minExpiresInSeconds": 548
+    }
+  ],
+  "testedEventId": "qual-ttl-20260618T100643Z-federation-qual-c1-1781777238"
+}

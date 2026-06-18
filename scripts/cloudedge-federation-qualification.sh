@@ -449,8 +449,11 @@ wait_delivery() {
     if echo "$status" | python3 -c "
 import json,sys
 data=json.load(sys.stdin)
+target=sys.argv[1]
 for d in data:
-  if d.get('peer','')==sys.argv[1] and d.get('status','')=='delivered':
+  peer=d.get('Peer',d.get('peer',''))
+  st=d.get('Status',d.get('status',''))
+  if peer==target and st=='delivered':
     sys.exit(0)
 sys.exit(1)
 " "$RECEIVER_NODE" 2>/dev/null; then
@@ -487,7 +490,8 @@ receiver_has_event() {
 import json,sys
 data=json.load(sys.stdin)
 for e in data:
-  if e.get('id','')==sys.argv[1]: sys.exit(0)
+  eid=e.get('ID',e.get('id',''))
+  if eid==sys.argv[1]: sys.exit(0)
 sys.exit(1)
 " "$event_id" 2>/dev/null
 }
@@ -498,9 +502,11 @@ get_delivery_status() {
     | python3 -c "
 import json,sys
 data=json.load(sys.stdin)
+target=sys.argv[1]
 for d in data:
-  if d.get('peer','')==sys.argv[1]:
-    print(d.get('status','unknown'))
+  peer=d.get('Peer',d.get('peer',''))
+  if peer==target:
+    print(d.get('Status',d.get('status','unknown')))
     sys.exit(0)
 print('missing')
 " "$RECEIVER_NODE" 2>/dev/null || echo "error"
@@ -897,8 +903,11 @@ scenario_ttl_refresh() {
     if echo "$del_json" | python3 -c "
 import json,sys
 data=json.load(sys.stdin)
+target=sys.argv[1]
 for d in data:
-  if d.get('peer','')==sys.argv[1] and d.get('status','')=='delivered':
+  peer=d.get('Peer',d.get('peer',''))
+  st=d.get('Status',d.get('status',''))
+  if peer==target and st=='delivered':
     sys.exit(0)
 sys.exit(1)
 " "$RECEIVER_NODE" 2>/dev/null; then
@@ -916,19 +925,26 @@ sys.exit(1)
     return
   fi
 
-  # Verify stale TTL resolved
+  # Verify stale TTL resolved (poll for up to 30s since outbox re-push
+  # may take one more cycle to fully resolve the staleTTL counter)
+  local stale_deadline=$((SECONDS + 30))
+  local stale_count="1"
   local delivery_summary doctor_after
-  delivery_summary=$(sender_delivery_summary) || true
-  doctor_after=$(sender_doctor_json) || true
-
-  local stale_count
-  stale_count=$(echo "$delivery_summary" | python3 -c "
+  while [[ $SECONDS -lt $stale_deadline ]]; do
+    delivery_summary=$(sender_delivery_summary) || true
+    stale_count=$(echo "$delivery_summary" | python3 -c "
 import json,sys
 data=json.load(sys.stdin)
 if not isinstance(data,list): print('error'); sys.exit(0)
-total=sum(r.get('staleTTL',0) for r in data)
+total=sum(r.get('staleTTL',r.get('StaleTTL',0)) for r in data)
 print(total)
 " 2>/dev/null)
+    if [[ "$stale_count" == "0" ]]; then
+      break
+    fi
+    sleep 3
+  done
+  doctor_after=$(sender_doctor_json) || true
 
   if [[ -z "$stale_count" ]] || [[ "$stale_count" == "error" ]]; then
     scenario_evidence ttl-refresh fail "failed to parse delivery summary for stale TTL count" \
@@ -1085,12 +1101,14 @@ scenario_subscription() {
 
   # Check for failed subscription runs
   local sub_runs_during
-  sub_runs_during=$(receiver_routerctl "federation subscription runs --subscription $SUBSCRIPTION_KEY --state-file $RECEIVER_STATE_DB -o json" 2>/dev/null || echo "[]")
+  local qualified_sub_key="EventSubscription/${SUBSCRIPTION_KEY#EventSubscription/}"
+  sub_runs_during=$(receiver_routerctl "federation subscription runs --subscription '$qualified_sub_key' --state-file $RECEIVER_STATE_DB -o json" 2>/dev/null || echo "[]")
   local has_failed_run
   has_failed_run=$(echo "$sub_runs_during" | python3 -c "
 import json,sys
 data=json.load(sys.stdin)
-failed=[r for r in data if r.get('status','')=='failed']
+if not isinstance(data, list): data=[]
+failed=[r for r in data if r.get('Status',r.get('status',''))=='failed']
 print('yes' if failed else 'no')
 " 2>/dev/null || echo "no")
 
@@ -1121,12 +1139,13 @@ print('yes' if failed else 'no')
 
   # Check for succeeded run
   local sub_runs_after
-  sub_runs_after=$(receiver_routerctl "federation subscription runs --subscription $SUBSCRIPTION_KEY --state-file $RECEIVER_STATE_DB -o json" 2>/dev/null || echo "[]")
+  sub_runs_after=$(receiver_routerctl "federation subscription runs --subscription '$qualified_sub_key' --state-file $RECEIVER_STATE_DB -o json" 2>/dev/null || echo "[]")
   local has_succeeded_run
   has_succeeded_run=$(echo "$sub_runs_after" | python3 -c "
 import json,sys
 data=json.load(sys.stdin)
-succeeded=[r for r in data if r.get('status','')=='succeeded']
+if not isinstance(data, list): data=[]
+succeeded=[r for r in data if r.get('Status',r.get('status',''))=='succeeded']
 print('yes' if succeeded else 'no')
 " 2>/dev/null || echo "no")
 
@@ -1184,14 +1203,16 @@ with open('$fault_config', 'w') as f:
 
   # Verify specific check codes
   local found_codes expected_action
-  read -r found_codes expected_action < <(echo "$fault_doctor" "$fault_remediation" | python3 -c "
+  read -r found_codes expected_action < <(python3 -c "
 import json,sys
-# Read doctor output (first JSON object from stdin)
-import io
-raw = sys.stdin.read()
-parts = raw.split('}{')
-doc = json.loads(parts[0] + ('}' if len(parts)>1 else ''))
-rem = json.loads(('{' if len(parts)>1 else '') + parts[-1]) if len(parts)>1 else {}
+decoder = json.JSONDecoder()
+def first_json(s):
+    s = s.strip()
+    if not s: return {}
+    obj, _ = decoder.raw_decode(s)
+    return obj
+doc = first_json(sys.argv[1])
+rem = first_json(sys.argv[2])
 
 expected_codes = {'expected-delivery-no-endpoint', 'expected-delivery'}
 found = [c['code'] for c in doc.get('checks',[]) if c.get('code') in expected_codes]
@@ -1200,7 +1221,7 @@ expected_actions = {'configure-peer-endpoint', 'investigate-missing-delivery-row
 actions = [a['action'] for a in rem.get('remediationPlan',{}).get('actions',[]) if a.get('action') in expected_actions]
 
 print(' '.join(found) if found else 'none', ' '.join(actions) if actions else 'none')
-" 2>/dev/null || echo "none none")
+" "$fault_doctor" "$fault_remediation" 2>/dev/null || echo "none none")
 
   # Cleanup temp config
   sender_ssh "rm -f $fault_config" || true
@@ -1560,9 +1581,9 @@ for CYCLE_NUM in $(seq 1 "$CYCLES"); do
   for entry in "${SCENARIO_RESULTS[@]}"; do
     result="${entry#*=}"
     case "$result" in
-      pass) ((cycle_pass++)) ;;
-      fail) ((cycle_fail++)) ;;
-      skip) ((cycle_skip++)) ;;
+      pass) cycle_pass=$((cycle_pass + 1)) ;;
+      fail) cycle_fail=$((cycle_fail + 1)) ;;
+      skip) cycle_skip=$((cycle_skip + 1)) ;;
     esac
   done
 

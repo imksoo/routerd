@@ -1,0 +1,45 @@
+{
+  "runId": "20260618T100643Z-federation-qual",
+  "commit": "bf46e53d",
+  "startedAt": "2026-06-18T10:06:50Z",
+  "parameters": {
+    "cycles": 2,
+    "durationPerScenario": 300,
+    "scenarios": [
+      "healthy",
+      "partition",
+      "ttl-refresh",
+      "restart",
+      "subscription",
+      "config-fault",
+      "security",
+      "multi-group"
+    ],
+    "allowSkip": true
+  },
+  "cycles": [
+    {
+      "cycle": 1,
+      "pass": 8,
+      "fail": 0,
+      "skip": 0,
+      "startedAt": "2026-06-18T10:06:50Z",
+      "completedAt": "2026-06-18T10:08:55Z"
+    },
+    {
+      "cycle": 2,
+      "pass": 8,
+      "fail": 0,
+      "skip": 0,
+      "startedAt": "2026-06-18T10:08:56Z",
+      "completedAt": "2026-06-18T10:10:58Z"
+    }
+  ],
+  "completedAt": "2026-06-18T10:10:58Z",
+  "summary": {
+    "overall": "pass",
+    "totalPass": 16,
+    "totalFail": 0,
+    "totalSkip": 0
+  }
+}

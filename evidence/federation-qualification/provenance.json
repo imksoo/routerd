@@ -1,0 +1,33 @@
+{
+  "prHeadCommit": "bf46e53d",
+  "fullCommit": "bf46e53de3232e23810ed86496488f5ff88fa883",
+  "sender": {
+    "hostname": "fedqual-sender",
+    "nodeName": "fedqual-sender",
+    "routerctl": {
+      "version": "routerctl v20260528.2308",
+      "sha256": ""
+    },
+    "routerdEventd": {
+      "version": "unknown",
+      "sha256": ""
+    },
+    "configDigest": "456a0de77800f56a7e11e66d31fabe23267fa2332f55f082b816d37d519b8bf8",
+    "eventdUnit": "routerd-eventd@fedqual-primary.service"
+  },
+  "receiver": {
+    "hostname": "fedqual-receiver",
+    "nodeName": "fedqual-receiver",
+    "endpoint": "http://192.168.123.211:8410",
+    "routerctl": {
+      "version": "routerctl v20260528.2308",
+      "sha256": ""
+    },
+    "routerdEventd": {
+      "version": "unknown",
+      "sha256": ""
+    },
+    "configDigest": "491df7718cc3a5c13e711278057fe4a0051e2009e080a80575c18b48bf2ab8b9",
+    "eventdUnit": "routerd-eventd@fedqual-primary.service"
+  }
+}
