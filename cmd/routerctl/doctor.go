@@ -61,9 +61,29 @@ type doctorSummary struct {
 }
 
 type doctorReport struct {
-	Summary  doctorSummary         `json:"summary" yaml:"summary"`
-	Checks   []doctorCheck         `json:"checks" yaml:"checks"`
-	Incident *doctorIncidentReport `json:"incident,omitempty" yaml:"incident,omitempty"`
+	Summary    doctorSummary              `json:"summary" yaml:"summary"`
+	Checks     []doctorCheck              `json:"checks" yaml:"checks"`
+	Federation *doctorFederationSummary   `json:"federation,omitempty" yaml:"federation,omitempty"`
+	Incident   *doctorIncidentReport      `json:"incident,omitempty" yaml:"incident,omitempty"`
+}
+
+type doctorFederationSummary struct {
+	SeverityCounts           doctorSeverityCounts `json:"severityCounts" yaml:"severityCounts"`
+	FailedDeliveryCount      int                  `json:"failedDeliveryCount" yaml:"failedDeliveryCount"`
+	StaleTTLCount            int                  `json:"staleTTLCount" yaml:"staleTTLCount"`
+	PendingDeliveryCount     int                  `json:"pendingDeliveryCount" yaml:"pendingDeliveryCount"`
+	MissingExpectedPeerCount int                  `json:"missingExpectedPeerCount" yaml:"missingExpectedPeerCount"`
+	MaxDeliveryLagSeconds    int64                `json:"maxDeliveryLagSeconds" yaml:"maxDeliveryLagSeconds"`
+	MinExpiresInSeconds      int64                `json:"minExpiresInSeconds" yaml:"minExpiresInSeconds"`
+	TotalEvents              int                  `json:"totalEvents" yaml:"totalEvents"`
+	TotalDelivered           int                  `json:"totalDelivered" yaml:"totalDelivered"`
+}
+
+type doctorSeverityCounts struct {
+	Pass int `json:"pass" yaml:"pass"`
+	Warn int `json:"warn" yaml:"warn"`
+	Fail int `json:"fail" yaml:"fail"`
+	Skip int `json:"skip" yaml:"skip"`
 }
 
 type doctorIncidentReport struct {
@@ -147,10 +167,17 @@ func doctorCommand(args []string, stdout, stderr io.Writer) error {
 		areas = []string{opts.Target}
 	}
 	report := doctorReport{}
+	hasFederation := false
 	if collectChecks {
 		for _, area := range areas {
 			report.Checks = append(report.Checks, runner.runArea(area)...)
+			if area == "federation" {
+				hasFederation = true
+			}
 		}
+	}
+	if hasFederation {
+		report.Federation = runner.buildFederationSummary(report.Checks)
 	}
 	if opts.Incident || opts.Target == "incident" {
 		incident := runner.doctorIncidentDump()

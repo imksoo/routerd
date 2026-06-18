@@ -329,6 +329,51 @@ func (r doctorRunner) doctorFederationExpectedPeerChecks(now time.Time, hasFedEv
 	return checks
 }
 
+func (r doctorRunner) buildFederationSummary(checks []doctorCheck) *doctorFederationSummary {
+	fs := &doctorFederationSummary{}
+	for _, c := range checks {
+		if c.Area != "federation" {
+			continue
+		}
+		switch c.Status {
+		case doctorPass:
+			fs.SeverityCounts.Pass++
+		case doctorWarn:
+			fs.SeverityCounts.Warn++
+		case doctorFail:
+			fs.SeverityCounts.Fail++
+		case doctorSkip:
+			fs.SeverityCounts.Skip++
+		}
+		if strings.Contains(c.Name, "expected delivery") && c.Status == doctorFail {
+			fs.MissingExpectedPeerCount++
+		}
+	}
+
+	summaryStore, ok := r.store.(routerstate.FederationDeliverySummaryStore)
+	if !ok {
+		return fs
+	}
+	rows, err := summaryStore.ListDeliverySummary("", "", "", false, doctorNow().UTC())
+	if err != nil {
+		return fs
+	}
+	for _, row := range rows {
+		fs.TotalEvents += row.Events
+		fs.TotalDelivered += row.Delivered
+		fs.FailedDeliveryCount += row.Failed
+		fs.StaleTTLCount += row.StaleTTL
+		fs.PendingDeliveryCount += row.Pending
+		if row.MaxLagSeconds > fs.MaxDeliveryLagSeconds {
+			fs.MaxDeliveryLagSeconds = row.MaxLagSeconds
+		}
+		if row.MinExpiresInSeconds != 0 && (fs.MinExpiresInSeconds == 0 || row.MinExpiresInSeconds < fs.MinExpiresInSeconds) {
+			fs.MinExpiresInSeconds = row.MinExpiresInSeconds
+		}
+	}
+	return fs
+}
+
 func filterSelfEmittedEvents(events []routerstate.EventRecord, selfNode string) []routerstate.EventRecord {
 	if selfNode == "" {
 		return events

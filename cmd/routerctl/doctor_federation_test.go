@@ -441,3 +441,179 @@ func TestDoctorFederationExpectedPeerSkipNoSelfEvents(t *testing.T) {
 		t.Fatalf("expected skip for no self-emitted events:\n%s", got)
 	}
 }
+
+func TestDoctorFederationJSONSummaryHealthy(t *testing.T) {
+	configPath, statePath := writeDoctorFixture(t)
+	store := openDoctorState(t, statePath)
+
+	now := time.Now().UTC()
+	ev := routerstate.EventRecord{
+		ID: "evt-1", Group: "cloudedge", Type: "routerd.client.ipv4.observed",
+		SourceNode: "n", ObservedAt: now.Add(-5 * time.Second), ExpiresAt: now.Add(30 * time.Minute),
+	}
+	if err := store.RecordFederationEvent(ev); err != nil {
+		t.Fatalf("record event: %v", err)
+	}
+	if err := store.RecordDelivery("evt-1", "peer-a"); err != nil {
+		t.Fatalf("record delivery: %v", err)
+	}
+	if err := store.UpdateDeliveryStatus("evt-1", "peer-a", routerstate.DeliveryDelivered, 1, "", now, ev.ExpiresAt); err != nil {
+		t.Fatalf("update delivery: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "federation", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("decode: %v\n%s", err, out.String())
+	}
+	if report.Federation == nil {
+		t.Fatal("federation summary is nil")
+	}
+	fs := report.Federation
+	if fs.TotalEvents != 1 {
+		t.Errorf("totalEvents = %d, want 1", fs.TotalEvents)
+	}
+	if fs.TotalDelivered != 1 {
+		t.Errorf("totalDelivered = %d, want 1", fs.TotalDelivered)
+	}
+	if fs.FailedDeliveryCount != 0 {
+		t.Errorf("failedDeliveryCount = %d, want 0", fs.FailedDeliveryCount)
+	}
+	if fs.StaleTTLCount != 0 {
+		t.Errorf("staleTTLCount = %d, want 0", fs.StaleTTLCount)
+	}
+	if fs.PendingDeliveryCount != 0 {
+		t.Errorf("pendingDeliveryCount = %d, want 0", fs.PendingDeliveryCount)
+	}
+	if fs.MissingExpectedPeerCount != 0 {
+		t.Errorf("missingExpectedPeerCount = %d, want 0", fs.MissingExpectedPeerCount)
+	}
+	if fs.MaxDeliveryLagSeconds < 0 {
+		t.Errorf("maxDeliveryLagSeconds = %d, want >= 0", fs.MaxDeliveryLagSeconds)
+	}
+	if fs.MinExpiresInSeconds <= 0 {
+		t.Errorf("minExpiresInSeconds = %d, want > 0", fs.MinExpiresInSeconds)
+	}
+	if fs.SeverityCounts.Pass == 0 {
+		t.Errorf("severityCounts.pass = 0, want > 0")
+	}
+	if fs.SeverityCounts.Fail != 0 {
+		t.Errorf("severityCounts.fail = %d, want 0", fs.SeverityCounts.Fail)
+	}
+}
+
+func TestDoctorFederationJSONSummaryWithFailures(t *testing.T) {
+	configPath, statePath := writeDoctorFixture(t)
+	store := openDoctorState(t, statePath)
+
+	now := time.Now().UTC()
+	ev := routerstate.EventRecord{
+		ID: "evt-1", Group: "cloudedge", Type: "routerd.client.ipv4.observed",
+		SourceNode: "n", ObservedAt: now.Add(-200 * time.Second), ExpiresAt: now.Add(30 * time.Minute),
+	}
+	if err := store.RecordFederationEvent(ev); err != nil {
+		t.Fatalf("record event: %v", err)
+	}
+	if err := store.RecordDelivery("evt-1", "peer-a"); err != nil {
+		t.Fatalf("record delivery: %v", err)
+	}
+	if err := store.UpdateDeliveryStatus("evt-1", "peer-a", routerstate.DeliveryFailed, 3, "timeout", time.Time{}, ev.ExpiresAt); err != nil {
+		t.Fatalf("update delivery: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	err := run([]string{"doctor", "federation", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error for failed checks")
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("decode: %v\n%s", err, out.String())
+	}
+	if report.Federation == nil {
+		t.Fatal("federation summary is nil")
+	}
+	fs := report.Federation
+	if fs.FailedDeliveryCount != 1 {
+		t.Errorf("failedDeliveryCount = %d, want 1", fs.FailedDeliveryCount)
+	}
+	if fs.SeverityCounts.Fail == 0 {
+		t.Errorf("severityCounts.fail = 0, want > 0")
+	}
+	if fs.TotalEvents != 1 {
+		t.Errorf("totalEvents = %d, want 1", fs.TotalEvents)
+	}
+}
+
+func TestDoctorFederationJSONSummaryMissingPeer(t *testing.T) {
+	configPath, statePath := writeDoctorFederationFixture(t, "onprem",
+		[]struct{ name, endpoint string }{{name: "leaf-az", endpoint: "https://10.252.0.3:8443"}})
+	store := openDoctorState(t, statePath)
+
+	now := time.Now().UTC()
+	ev := routerstate.EventRecord{
+		ID: "evt-1", Group: "cloudedge", Type: "routerd.client.ipv4.observed",
+		SourceNode: "onprem", ObservedAt: now.Add(-5 * time.Second), ExpiresAt: now.Add(30 * time.Minute),
+	}
+	if err := store.RecordFederationEvent(ev); err != nil {
+		t.Fatalf("record event: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	err := run([]string{"doctor", "federation", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected error for missing delivery")
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("decode: %v\n%s", err, out.String())
+	}
+	if report.Federation == nil {
+		t.Fatal("federation summary is nil")
+	}
+	if report.Federation.MissingExpectedPeerCount != 1 {
+		t.Errorf("missingExpectedPeerCount = %d, want 1", report.Federation.MissingExpectedPeerCount)
+	}
+}
+
+func TestDoctorFederationJSONSummaryTableUnchanged(t *testing.T) {
+	configPath, statePath := writeDoctorFixture(t)
+	store := openDoctorState(t, statePath)
+
+	now := time.Now().UTC()
+	ev := routerstate.EventRecord{
+		ID: "evt-1", Group: "cloudedge", Type: "t", SourceNode: "n",
+		ObservedAt: now.Add(-5 * time.Second), ExpiresAt: now.Add(30 * time.Minute),
+	}
+	if err := store.RecordFederationEvent(ev); err != nil {
+		t.Fatalf("record event: %v", err)
+	}
+	if err := store.RecordDelivery("evt-1", "peer-a"); err != nil {
+		t.Fatalf("record delivery: %v", err)
+	}
+	if err := store.UpdateDeliveryStatus("evt-1", "peer-a", routerstate.DeliveryDelivered, 1, "", now, ev.ExpiresAt); err != nil {
+		t.Fatalf("update delivery: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "federation", "--config", configPath, "--state-file", statePath, "--no-host"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor: %v\n%s", err, out.String())
+	}
+	output := out.String()
+	if !strings.Contains(output, "DOCTOR") {
+		t.Fatalf("table output missing DOCTOR header:\n%s", output)
+	}
+	if strings.Contains(output, "federation") && !strings.Contains(output, "AREA") {
+		t.Fatalf("table output missing AREA column:\n%s", output)
+	}
+	if strings.Contains(output, "severityCounts") || strings.Contains(output, "failedDeliveryCount") {
+		t.Fatalf("table output should not contain JSON field names:\n%s", output)
+	}
+}
