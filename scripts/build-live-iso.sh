@@ -115,6 +115,7 @@ chroot_run apt-get clean
 run_root rm -rf "${rootfs}/var/lib/apt/lists/"*
 cleanup_mounts
 run_root chown -R "$(id -u):$(id -g)" "${rootfs}"
+chmod -R u+w "${rootfs}"
 
 make build-daemons ROUTERD_OS=linux GOARCH=amd64 GIT_COMMIT="${git_commit}"
 
