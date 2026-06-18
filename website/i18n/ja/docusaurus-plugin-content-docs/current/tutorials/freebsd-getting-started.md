@@ -6,7 +6,7 @@ title: FreeBSD から始める
 
 ![リリースアーカイブの導入から rc.d、rc.conf.d、pf、dnsmasq、mpd5 の生成と適用検証へ進む FreeBSD 入門の流れ](/img/diagrams/tutorial-freebsd-getting-started.png)
 
-FreeBSD は、Ubuntu や NixOS と同じ routerd リソースモデルを使います。
+FreeBSD は、Ubuntu と同じ routerd リソースモデルを使います。
 ただし、生成されるホスト成果物は FreeBSD の機構に合わせます。
 routerd は、`rc.conf.d`、`rc.d` スクリプト、`pf.conf`、`dhclient.conf`、
 dnsmasq 設定、`mpd5.conf`、そして DS-Lite 用の動的な `ifconfig gif` 操作を扱います。

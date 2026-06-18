@@ -38,7 +38,6 @@ func TestBackendsRenderThroughExistingNativeRenderers(t *testing.T) {
 	}{
 		{name: "netplan", backend: Netplan{Path: "/etc/netplan/90-routerd.yaml"}, want: "addresses:\n        - 192.0.2.1/24"},
 		{name: "networkd", backend: Networkd{}, want: "Destination=198.51.100.0/24"},
-		{name: "nixos", backend: NixOS{}, want: `systemd.network.networks."10-netplan-ens19"`},
 		{name: "rcconf", backend: RCConf{}, want: `ifconfig_ens19="inet 192.0.2.1/24"`},
 	}
 	for _, tt := range tests {
@@ -61,7 +60,7 @@ func TestBackendDeclarationsMatchAcrossOSBackends(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, backend := range []Backend{Netplan{}, Networkd{}, NixOS{}, RCConf{}} {
+	for _, backend := range []Backend{Netplan{}, Networkd{}, RCConf{}} {
 		got, err := backend.Declarations(router)
 		if err != nil {
 			t.Fatalf("%s declarations: %v", backend.Name(), err)
@@ -76,7 +75,6 @@ func TestBackendsRejectInvalidOutputPaths(t *testing.T) {
 	router := networkConfigRouter()
 	tests := []Backend{
 		Netplan{Path: "bad\x00netplan.yaml"},
-		NixOS{Path: "bad\x00module.nix"},
 		RCConf{Path: "bad\x00rc.conf"},
 	}
 	for _, backend := range tests {
@@ -121,7 +119,7 @@ func TestNetworkConfigSemanticEquivalenceAcrossBackends(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, backend := range []Backend{Netplan{}, Networkd{}, NixOS{}, RCConf{}} {
+	for _, backend := range []Backend{Netplan{}, Networkd{}, RCConf{}} {
 		t.Run(backend.Name(), func(t *testing.T) {
 			got, err := backend.Declarations(router)
 			if err != nil {

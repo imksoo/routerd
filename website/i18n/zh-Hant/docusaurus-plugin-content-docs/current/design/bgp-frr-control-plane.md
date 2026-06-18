@@ -14,7 +14,7 @@ routerd 目前使用以 GoBGP 為基礎的 `routerd-bgp` 常駐程式，而非 F
 
 ## 問題整理
 
-在停用 TCP VTY 監聽的 Alpine Live ISO 或類似 FRR 建置版本中（`vty_serv_start()` 內 `port=0`），routerd 原本以 `tcp/2605`（bgpd 的 VTY 監聽埠）作為就緒判斷依據，導致該判斷永遠為假。結果控制器會不斷重啟 FRR，而非對已產生（render）的設定執行 `frr-reload.py`，使 FRR 的 BGP 實例始終未設定完成（缺少 `router bgp X` 段落，亦不監聽 `tcp/179`）。
+在停用 TCP VTY 監聽的 FRR 建置版本中（`vty_serv_start()` 內 `port=0`），routerd 原本以 `tcp/2605`（bgpd 的 VTY 監聽埠）作為就緒判斷依據，導致該判斷永遠為假。結果控制器會不斷重啟 FRR，而非對已產生（render）的設定執行 `frr-reload.py`，使 FRR 的 BGP 實例始終未設定完成（缺少 `router bgp X` 段落，亦不監聽 `tcp/179`）。
 
 手動執行 `frr-reload.py --reload /run/routerd/frr/routerd.conf` 即可恢復正常。這表示已產生的設定是正確的，且 frr-reload.py 能夠從無實例的狀態建立 BGP 實例。
 
@@ -44,8 +44,7 @@ FRR 的服務狀態是所有調和的前提條件。控制器應將「FRR 正在
 ```
 1. 產生（render） /run/routerd/frr/routerd.conf 與 /etc/frr/daemons。
 2. 透過平台服務管理員確認 FRR 的服務狀態
-   （Alpine 使用 `rc-service frr status`，systemd 平台使用
-   `systemctl is-active frr`）：
+   （`systemctl is-active frr`）：
      - active/running → 不重啟，繼續執行。
      - inactive/stopped → 啟用並啟動 FRR。
      - failed → 重啟 FRR。
@@ -106,12 +105,6 @@ BGPRouter / BGPPeer 的 status 物件公開以下欄位：
 
 不設指數退避，亦無絕對失敗閾值。定期調和會自然地無限重試。介入與否交由操作員判斷，並透過上述明確的原因碼將狀態呈現出來。
 
-### `routerd serve` 重複啟動防護
-
-`scripts/build-live-iso.sh` 與 `live-autostart.sh` 在已有 `routerd serve` 持有 `/run/routerd/routerd.sock` 的情況下，不得啟動第二個實例。此防護使自動啟動具有冪等性。然而，啟動時的首次自動啟動路徑同時也是設定交接的邊界。若持久化的 OpenRC runlevel 在 USB 設定還原之前啟動了 `routerd serve`，`live-autostart.sh` 不應將既有程序視為成功，而必須在 `apply` 之後重啟該服務。此重啟以 `reason=LiveISOStaleServeRestarted` 記錄日誌。啟動標記置於 `/run/routerd` 下，每次啟動時重新評估此交接邏輯。若缺少重複啟動防護，兩個 routerd 控制器將爭奪 FRR 的服務鎖（rc-service / systemctl 的 `flock`），產生 Phase 0 記錄中可見的 `ERROR: frr stopped by something else` 症狀。若還原後未重啟，早期的 `serve` 程序將遺漏已還原的設定，使 BGP 停留在 apply-once 的 `Rendered` 交接狀態。
-
-此項與 BGP 判斷變更屬於同一熱修補，但可獨立還原，且為使變更歷程清晰，以獨立 commit 的形式提供。
-
 ### Healthy 判斷（AND 條件）
 
 BGPRouter 必須滿足以下所有條件，才會進入 `Healthy` 狀態：
@@ -126,8 +119,7 @@ BGPRouter 必須滿足以下所有條件，才會進入 `Healthy` 狀態：
 
 ## 驗收標準
 
-- Alpine Live ISO 啟動後，恰好只有一個 `routerd serve` 在運行，無需手動執行 `frr-reload.py`，`vtysh -c "show running-config"` 即出現 BGP `router bgp X`，且 `tcp/179` 正在監聽。
-- 啟動時 FRR 服務處於 `FAILED` 狀態，控制器能偵測並自行恢復（無需手動執行 `rc-service frr start`）。
+- 啟動時 FRR 服務處於 `FAILED` 狀態，控制器能偵測並自行恢復。
 - FRR 停止期間，或 `:179` 未監聽期間，`routerctl status` 不回報 `Healthy`。
 - 在啟用 TCP VTY 的 Linux 發行版上不產生迴歸。
 - `runningConfigMatches` 不將 `failed to connect` 視為一致。
@@ -135,24 +127,20 @@ BGPRouter 必須滿足以下所有條件，才會進入 `Healthy` 狀態：
 
 ## 測試情境
 
-1. Alpine 首次啟動：無 tcp/2605，vtysh 成功，running-config 最小化 → 執行重新載入，建立 BGP 實例，`tcp/179` 開始監聽。
-2. Linux 發行版首次啟動（tcp/2605 在監聽）：執行重新載入，runningConfig diff 與 status 均無迴歸。
-3. 從損壞狀態恢復：在無 BGP 實例的 FRR 運行中的路由器上升級 routerd 二進位 → 無需手動介入即執行重新載入。
-4. 常駐程式重啟期間 vtysh 暫時 `failed to connect` → 控制器在就緒預算內等待，vtysh 恢復後繼續進行驗證與重新載入。
-5. vtysh 永久失敗 → 逾時後顯示 `FRRControlUnavailable`，定期調和重試。
-6. `vtysh -C -f` 拒絕語法 → `FRRSyntaxInvalid`。不執行重新載入，不產生 churn。
-7. `frr-reload.py` 回傳非 0 → `FRRReloadFailed`。下次調和時重試。
-8. `frr-reload.py` 回傳 0，但 running-config 中尚無產生的段落 → `FRRReloadIncomplete`。下次調和時重試。
-9. 暫時發生 configure-lock → 現有的 transient-lock 重試路徑成功完成。
-10. `live-autostart.sh` 在 serve 程序持有 socket 期間再次呼叫 → 不啟動第二個程序，以結束碼 0 退出。
-11. Alpine Live ISO 煙霧測試（發布閘門）：啟動新 ISO，確認 BGP 自律收斂。
-12. 具有持久化 `routerd` OpenRC default-runlevel 條目的 Live ISO：`routerd serve` 可能在 USB 設定還原前啟動，但 `live-autostart.sh` 會刪除 default-runlevel 條目，並在設定還原 + `apply` 後重啟服務，以 `reason=LiveISOStaleServeRestarted` 記錄日誌，因此無需手動執行 `frr-reload.py` 即可使 BGP 重新載入收斂。
-13. 啟動時 FRR 服務處於 FAILED 狀態：routerd 必須執行 `rc-service frr start`（或重啟），無需手動介入即可恢復常駐程式。常駐程式啟動前，status 應反映 FAILED 狀態。
-14. status 正確性：在曾達到 Healthy 狀態後強制停止 FRR（`rc-service frr stop`），下次調和必須呈現 `FRRControlUnavailable` 或 `FRRServiceDown`，而非 `Healthy`。失敗期間，BGPRouter status 的 `lastSuccessTime` 不得推進。
+1. Linux 發行版首次啟動（tcp/2605 在監聽）：執行重新載入，runningConfig diff 與 status 均無迴歸。
+2. 從損壞狀態恢復：在無 BGP 實例的 FRR 運行中的路由器上升級 routerd 二進位 → 無需手動介入即執行重新載入。
+3. 常駐程式重啟期間 vtysh 暫時 `failed to connect` → 控制器在就緒預算內等待，vtysh 恢復後繼續進行驗證與重新載入。
+4. vtysh 永久失敗 → 逾時後顯示 `FRRControlUnavailable`，定期調和重試。
+5. `vtysh -C -f` 拒絕語法 → `FRRSyntaxInvalid`。不執行重新載入，不產生 churn。
+6. `frr-reload.py` 回傳非 0 → `FRRReloadFailed`。下次調和時重試。
+7. `frr-reload.py` 回傳 0，但 running-config 中尚無產生的段落 → `FRRReloadIncomplete`。下次調和時重試。
+8. 暫時發生 configure-lock → 現有的 transient-lock 重試路徑成功完成。
+9. 啟動時 FRR 服務處於 FAILED 狀態：routerd 必須重啟 FRR，無需手動介入即可恢復常駐程式。常駐程式啟動前，status 應反映 FAILED 狀態。
+10. status 正確性：在曾達到 Healthy 狀態後強制停止 FRR（`systemctl stop frr`），下次調和必須呈現 `FRRControlUnavailable` 或 `FRRServiceDown`，而非 `Healthy`。失敗期間，BGPRouter status 的 `lastSuccessTime` 不得推進。
 
 ## FRR Issue #8403（graceful-restart 的結束碼 != 0）
 
-FRR 8.4.x 前後的版本中，包含 `bgp graceful-restart` 設定時，`frr-reload.py` 可能回傳非 0 的結束碼。Alpine Live ISO 會附帶較新的 FRR 版本，但需先取得 `frr -v` 的 Phase 0 記錄，確認附帶版本受影響後，才加入對應處理。不在熱修補中加入投機性的版本偵測程式碼。
+FRR 8.4.x 前後的版本中，包含 `bgp graceful-restart` 設定時，`frr-reload.py` 可能回傳非 0 的結束碼。需先取得 `frr -v` 的 Phase 0 記錄，確認附帶版本受影響後，才加入對應處理。不在熱修補中加入投機性的版本偵測程式碼。
 
 ## 架構後續對應（熱修補後）
 

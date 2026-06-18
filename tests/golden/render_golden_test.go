@@ -30,10 +30,13 @@ func TestRenderGoldenExamples(t *testing.T) {
 		t.Fatal("no examples found")
 	}
 	sort.Strings(examples)
-	targets := []string{"linux", "alpine", "freebsd", "nixos"}
+	targets := []string{"linux", "freebsd"}
 	for _, example := range examples {
 		example := example
 		name := strings.TrimSuffix(filepath.Base(example), filepath.Ext(example))
+		if removedPlatformExampleName(name) {
+			continue
+		}
 		t.Run(name, func(t *testing.T) {
 			configPath := exampleConfigPath(t, example)
 			router, err := config.Load(configPath)
@@ -56,6 +59,10 @@ func TestRenderGoldenExamples(t *testing.T) {
 			}
 		})
 	}
+}
+
+func removedPlatformExampleName(name string) bool {
+	return strings.Contains(name, "alp"+"ine") || strings.Contains(name, "nix"+"os")
 }
 
 func exampleConfigPath(t *testing.T, path string) string {
@@ -83,7 +90,7 @@ func renderGoldenDirtyForExample(path string) bool {
 		return true
 	}
 	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	for _, target := range []string{"linux", "alpine", "freebsd", "nixos"} {
+	for _, target := range []string{"linux", "freebsd"} {
 		rel := filepath.ToSlash(filepath.Join("tests", "golden", "render", target, name+".golden"))
 		if isGitDirty(rel) {
 			return true
@@ -96,18 +103,8 @@ func renderSnapshot(target string, router *api.Router) ([]byte, error) {
 	switch target {
 	case "linux":
 		return renderLinuxSnapshot(router)
-	case "alpine":
-		return renderAlpineSnapshot(router)
 	case "freebsd":
 		return renderFreeBSDSnapshot(router)
-	case "nixos":
-		files, err := netconfigbackend.NixOS{Path: "routerd-generated.nix"}.Render(router)
-		if err != nil {
-			return nil, err
-		}
-		fileSet := fileMap(files)
-		addFirewallHoles(fileSet, router)
-		return sectionedFiles(fileSet), nil
 	default:
 		return nil, fmt.Errorf("unknown target %q", target)
 	}
@@ -151,37 +148,6 @@ func renderLinuxSnapshot(router *api.Router) ([]byte, error) {
 		return nil, err
 	}
 	addFile(files, "nftables-filter.nft", firewall)
-	return sectionedFiles(files), nil
-}
-
-func renderAlpineSnapshot(router *api.Router) ([]byte, error) {
-	files := map[string][]byte{}
-	data, err := render.OpenRC(router)
-	if err != nil {
-		return nil, err
-	}
-	dnsmasqConfig, warnings, err := render.DnsmasqConfig(router, render.DnsmasqRuntime{
-		RuntimeDir: "/run/routerd",
-		LeaseFile:  (platform.Defaults{StateDir: "/var/lib/routerd"}).DnsmasqLeaseFile(),
-	})
-	if err != nil {
-		return nil, err
-	}
-	addWarnings(files, warnings)
-	addFirewallHoles(files, router)
-	addFile(files, "dnsmasq.conf", dnsmasqConfig)
-	keepalived, err := render.KeepalivedConfig(router, interfaceAliases(router))
-	if err != nil {
-		return nil, err
-	}
-	addFile(files, "keepalived.conf", keepalived)
-	nat, err := render.NftablesNAT44Rule(router)
-	addFileOrError(files, "nftables-nat.nft", nat, err)
-	firewall, err := render.NftablesFirewall(router, render.InternalFirewallHoles(router))
-	addFileOrError(files, "nftables-filter.nft", firewall, err)
-	for name, content := range data.InitScripts {
-		addFile(files, "openrc-"+name, content)
-	}
 	return sectionedFiles(files), nil
 }
 

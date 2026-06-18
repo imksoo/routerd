@@ -60,7 +60,7 @@ apply path 作出相同判断。
 | `Sysctl` | sysctl 值 |
 | `SysctlProfile` | 多个 sysctl 值 |
 | 衍生主机运行期 | 从 router 资源推导的内核模块加载状态，以及 systemd-networkd / resolved 的 drop-in |
-| `generated service artifacts` | systemd 单元、FreeBSD rc.d script 或 OpenRC init script，及其启用状态 |
+| `generated service artifacts` | systemd 单元、FreeBSD rc.d script，及其启用状态 |
 | `NTPClient` | NTP 客户端配置 |
 
 ## lifecycle contract

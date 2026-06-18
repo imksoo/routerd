@@ -123,21 +123,6 @@ routerd.usb_mount=sync
 ライブヘルパーは警告を出します。
 再接続してマウントするまで、USB のパスを永続保存先としては扱いません。
 
-## Alpine lbu
-
-ISO には Alpine の `lbu` が含まれます。
-ライブヘルパーは、routerd 用のパスを lbu の include list に追加します。
-
-```text
-/usr/local/etc/routerd
-/var/lib/routerd
-/var/db/routerd
-/etc/periodic/daily/routerd-usb-flush
-```
-
-設定の保存や状態の書き出しの後に、ヘルパーが `lbu commit` を実行します。
-通常は、`lbu` を直接実行する必要はありません。
-
 ## よく使うコマンド
 
 候補のデバイスを表示します。

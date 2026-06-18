@@ -5,7 +5,7 @@ slug: /tutorials
 
 # 教程
 
-![从 install、getting started、diskless live ISO 到 WAN services、LAN services、firewall、NixOS 与 FreeBSD 的 routerd tutorial path](/img/diagrams/tutorial-index.png)
+![从 install、getting started、diskless live ISO 到 WAN services、LAN services、firewall、FreeBSD 的 routerd tutorial path](/img/diagrams/tutorial-index.png)
 
 ## 五分钟打造无磁盘 mini PC 路由器
 
@@ -25,7 +25,6 @@ slug: /tutorials
 | 配置 WAN 获取与隧道 | [WAN 侧服务](/docs/tutorials/wan-side-services) |
 | 配置 LAN 的 DHCP、DNS、RA、NTP | [LAN 侧服务](/docs/tutorials/lan-side-services) |
 | 加入保守的防火墙基本配置 | [基本防火墙](/docs/tutorials/basic-firewall) |
-| 从 NixOS 开始 | [从 NixOS 开始](/docs/tutorials/nixos-getting-started) |
 | 从 FreeBSD 开始 | [从 FreeBSD 开始](/docs/tutorials/freebsd-getting-started) |
 
 routerd 的特色在于，使用同一套资源模型，既能描述虚拟 SDN/VNET 之间的路由器，

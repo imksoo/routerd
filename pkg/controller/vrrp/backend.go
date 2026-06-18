@@ -66,44 +66,24 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 		}
 		now := time.Now().UTC().Format(time.RFC3339Nano)
 		reason := "keepalived.config changed"
-		if c.useOpenRC() {
-			action, err := reloadOrRestartOpenRCKeepalived(ctx, c, path)
-			if err != nil {
-				return backendResult{}, err
-			}
-			serviceActive := c.keepalivedServiceActive(ctx)
-			result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRolesAfterChange(ctx, c, aliases), ServiceActive: &serviceActive, LastChangeReason: reason}
-			if action == "reload" {
-				result.LastReloadAt = now
-			} else {
-				result.LastRestartAt = now
-			}
-			return result, nil
-		} else {
-			action, err := reloadOrRestartSystemdKeepalived(ctx, c, path)
-			if err != nil {
-				return backendResult{}, err
-			}
-			serviceActive := c.keepalivedServiceActive(ctx)
-			result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRolesAfterChange(ctx, c, aliases), ServiceActive: &serviceActive, LastChangeReason: reason}
-			if action == "reload" {
-				result.LastReloadAt = now
-			} else {
-				result.LastRestartAt = now
-			}
-			return result, nil
+		action, err := reloadOrRestartSystemdKeepalived(ctx, c, path)
+		if err != nil {
+			return backendResult{}, err
 		}
+		serviceActive := c.keepalivedServiceActive(ctx)
+		result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRolesAfterChange(ctx, c, aliases), ServiceActive: &serviceActive, LastChangeReason: reason}
+		if action == "reload" {
+			result.LastReloadAt = now
+		} else {
+			result.LastRestartAt = now
+		}
+		return result, nil
 	}
 	serviceActive := c.keepalivedServiceActive(ctx)
 	if !serviceActive && !c.DryRun {
 		now := time.Now().UTC().Format(time.RFC3339Nano)
 		reason := "keepalived.service inactive"
-		action := ""
-		if c.useOpenRC() {
-			action, err = reloadOrRestartOpenRCKeepalived(ctx, c, path)
-		} else {
-			action, err = reloadOrRestartSystemdKeepalived(ctx, c, path)
-		}
+		action, err := reloadOrRestartSystemdKeepalived(ctx, c, path)
 		if err != nil {
 			return backendResult{}, err
 		}
@@ -119,21 +99,6 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 	return backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRoles(ctx, c, aliases), ServiceActive: &serviceActive}, nil
 }
 
-func reloadOrRestartOpenRCKeepalived(ctx context.Context, c *Controller, path string) (string, error) {
-	rcService := firstNonEmpty(c.RCService, "rc-service")
-	if _, err := c.run(ctx, rcService, "keepalived", "status"); err == nil {
-		if out, err := c.run(ctx, rcService, "keepalived", "reload"); err == nil {
-			return "reload", nil
-		} else if c.Logger != nil {
-			c.Logger.Warn("keepalived reload failed; restarting", "error", err, "output", strings.TrimSpace(string(out)))
-		}
-	}
-	if out, err := c.run(ctx, rcService, "keepalived", "restart"); err != nil {
-		return "", c.saveError(path, true, nil, "KeepalivedRestartFailed", fmt.Errorf("%s keepalived restart: %w: %s", rcService, err, strings.TrimSpace(string(out))))
-	}
-	return "restart", nil
-}
-
 func reloadOrRestartSystemdKeepalived(ctx context.Context, c *Controller, path string) (string, error) {
 	systemctl := firstNonEmpty(c.Systemctl, "systemctl")
 	if _, err := c.run(ctx, systemctl, "is-active", "--quiet", "keepalived.service"); err == nil {
@@ -147,10 +112,6 @@ func reloadOrRestartSystemdKeepalived(ctx context.Context, c *Controller, path s
 		return "", c.saveError(path, true, nil, "KeepalivedRestartFailed", fmt.Errorf("%s restart keepalived.service: %w: %s", systemctl, err, strings.TrimSpace(string(out))))
 	}
 	return "restart", nil
-}
-
-func (c *Controller) useOpenRC() bool {
-	return c.OpenRC || platform.IsAlpineHost()
 }
 
 func observeKeepalivedRoles(ctx context.Context, c *Controller, aliases map[string]string) map[string]string {
@@ -221,11 +182,6 @@ func observeKeepalivedRolesWithWait(ctx context.Context, c *Controller, aliases 
 }
 
 func (c *Controller) keepalivedServiceActive(ctx context.Context) bool {
-	if c.useOpenRC() {
-		rcService := firstNonEmpty(c.RCService, "rc-service")
-		_, err := c.run(ctx, rcService, "keepalived", "status")
-		return err == nil
-	}
 	systemctl := firstNonEmpty(c.Systemctl, "systemctl")
 	_, err := c.run(ctx, systemctl, "is-active", "--quiet", "keepalived.service")
 	return err == nil

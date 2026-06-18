@@ -92,7 +92,7 @@ WireGuard 的监听端口请使用其他号码。
 该服务负责创建 `wg` 接口、从文件读取私钥，
 并应用所声明的 peer 与静态地址。
 
-核心模块，以及 systemd-networkd/resolved 的 adoption drop-in 均从路由器资源自动导出。若已删除的 `KernelModule`、`NetworkAdoption`、`Link`、`NixOSHost` 仍残留在配置中，routerd 不会静默忽略，而是返回错误。
+核心模块，以及 systemd-networkd/resolved 的 adoption drop-in 均从路由器资源自动导出。若已删除的 `KernelModule`、`NetworkAdoption`、`Link` 仍残留在配置中，routerd 不会静默忽略，而是返回错误。
 
 ## WAN 地址与委派
 

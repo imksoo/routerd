@@ -56,8 +56,6 @@ func PackageSets(router *api.Router) []api.OSPackageSetSpec {
 	return []api.OSPackageSetSpec{
 		{OS: "ubuntu", Manager: "apt", Names: packageNamesForOS(features, ubuntuPackages)},
 		{OS: "debian", Manager: "apt", Names: packageNamesForOS(features, debianPackages)},
-		{OS: "nixos", Manager: "nix", Optional: true, Names: packageNamesForOS(features, nixosPackages)},
-		{OS: "alpine", Manager: "apk", Optional: true, Names: packageNamesForOS(features, alpinePackages)},
 		{OS: "freebsd", Manager: "pkg", Optional: true, Names: packageNamesForOS(features, freebsdPackages)},
 	}
 }
@@ -82,44 +80,6 @@ var ubuntuPackages = map[string][]string{
 }
 
 var debianPackages = ubuntuPackages
-
-var nixosPackages = map[string][]string{
-	"arping":        {"iputils"},
-	"base":          {"iproute2", "systemd"},
-	"bgp":           {},
-	"conntrack":     {"conntrack-tools"},
-	"dhcp-dns":      {"dnsmasq"},
-	"dpi":           {"libnetfilter_log", "ndpi"},
-	"ipsec":         {"strongswan"},
-	"kmod":          {"kmod"},
-	"nat":           {"nftables"},
-	"nft":           {"nftables"},
-	"ntp":           {"chrony"},
-	"pppoe":         {"ppp"},
-	"network-utils": {"iputils", "dnsutils", "traceroute"},
-	"tailscale":     {"tailscale"},
-	"vrrp":          {"keepalived"},
-	"wireguard":     {"wireguard-tools"},
-}
-
-var alpinePackages = map[string][]string{
-	"arping":        {"iputils"},
-	"base":          {"iproute2"},
-	"bgp":           {},
-	"conntrack":     {"conntrack-tools"},
-	"dhcp-dns":      {"dnsmasq"},
-	"dpi":           {"ndpi"},
-	"ipsec":         {"strongswan"},
-	"kmod":          {"kmod"},
-	"nat":           {"nftables"},
-	"nft":           {"nftables"},
-	"ntp":           {"chrony"},
-	"pppoe":         {"ppp", "ppp-pppoe"},
-	"network-utils": {"iputils", "bind-tools", "traceroute"},
-	"tailscale":     {"tailscale"},
-	"vrrp":          {"keepalived"},
-	"wireguard":     {"wireguard-tools"},
-}
 
 var freebsdPackages = map[string][]string{
 	"bgp":           {},

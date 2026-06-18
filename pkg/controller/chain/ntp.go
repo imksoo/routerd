@@ -187,13 +187,7 @@ func (c NTPClientController) ntpConfigPath(provider string, defaults platform.De
 		return "/usr/local/etc/routerd/ntp.conf"
 	}
 	if provider == "chrony" {
-		if platform.IsNixOSHost() {
-			return "/run/chrony/routerd-client.conf"
-		}
 		return "/etc/chrony/conf.d/routerd-client.conf"
-	}
-	if platform.IsNixOSHost() {
-		return "/run/systemd/timesyncd.conf.d/routerd.conf"
 	}
 	return firstNonEmpty(defaults.TimesyncdDropinFile, "/etc/systemd/timesyncd.conf.d/routerd.conf")
 }
@@ -231,17 +225,6 @@ func (c NTPClientController) applyNTPService(ctx context.Context, resourceName, 
 			return false, err
 		}
 	case "chrony":
-		if platform.IsNixOSHost() {
-			if changed {
-				_, err := command(ctx, "systemctl", "restart", "chronyd.service")
-				return false, err
-			}
-			if _, err := command(ctx, "systemctl", "is-active", "--quiet", "chronyd.service"); err != nil {
-				_, err := command(ctx, "systemctl", "restart", "chronyd.service")
-				return false, err
-			}
-			return false, nil
-		}
 		timesyncdDisabled := false
 		if systemdUnitEnabledOrActive(ctx, command, "systemd-timesyncd.service") {
 			if _, err := command(ctx, "systemctl", "disable", "--now", "systemd-timesyncd.service"); err != nil {
@@ -618,11 +601,7 @@ func (c NTPServerController) saveWhenFalseNTPServerStatus(name, provider, config
 func (c NTPServerController) reloadNTPServerProvider(ctx context.Context, provider string, command outputCommandFunc) error {
 	switch provider {
 	case "chrony":
-		unit := "chrony.service"
-		if platform.IsNixOSHost() {
-			unit = "chronyd.service"
-		}
-		_, err := command(ctx, "systemctl", "restart", unit)
+		_, err := command(ctx, "systemctl", "restart", "chrony.service")
 		return err
 	case "ntpd":
 		_, err := command(ctx, "service", "ntpd", "restart")
@@ -646,26 +625,12 @@ func (c NTPServerController) serverConfigPath(provider string) string {
 	if provider == "ntpd" {
 		return "/usr/local/etc/routerd/ntp.conf"
 	}
-	if platform.IsNixOSHost() {
-		return "/run/chrony/routerd-server.conf"
-	}
 	return "/etc/chrony/conf.d/routerd-server.conf"
 }
 
 func (c NTPServerController) applyNTPServer(ctx context.Context, resourceName, provider, configPath string, changed bool, command outputCommandFunc) (bool, error) {
 	switch provider {
 	case "chrony":
-		if platform.IsNixOSHost() {
-			if changed {
-				_, err := command(ctx, "systemctl", "restart", "chronyd.service")
-				return false, err
-			}
-			if _, err := command(ctx, "systemctl", "is-active", "--quiet", "chronyd.service"); err != nil {
-				_, err := command(ctx, "systemctl", "restart", "chronyd.service")
-				return false, err
-			}
-			return false, nil
-		}
 		timesyncdDisabled := false
 		if systemdUnitEnabledOrActive(ctx, command, "systemd-timesyncd.service") {
 			if _, err := command(ctx, "systemctl", "disable", "--now", "systemd-timesyncd.service"); err != nil {

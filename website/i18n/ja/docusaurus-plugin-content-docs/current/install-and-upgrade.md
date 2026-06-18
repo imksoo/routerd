@@ -134,7 +134,7 @@ sudo なしで `routerctl status` を使えるようにする手順:
 
 ## ライブ ISO で試す
 
-リリースページでは、Alpine ベースの起動可能なライブ ISO も公開します。
+リリースページでは、Ubuntu ベースの起動可能なライブ ISO も公開します。
 
 ```sh
 curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-live.iso
@@ -203,7 +203,7 @@ USB を安全に取り外す場合は、次を実行します。
 /usr/share/routerd/live-persistence.sh umount
 ```
 
-配置先、マウントオプション、Alpine `lbu` の動きは
+配置先、マウントオプションは
 [Operations → USB 永続化](./operations/usb-persistence) を参照してください。
 
 `routerd-live-vYYYYMMDD.HHmm.iso` のような版番号付き ISO も公開します。
@@ -260,17 +260,6 @@ ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump 
 ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables keepalived openssh
 ```
 
-### Alpine
-
-インストーラーは `apk` を使い、次を導入します。
-
-```text
-alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables keepalived util-linux e2fsprogs dosfstools exfatprogs qemu-guest-agent openssh
-```
-
-`alpine-conf` は `lbu` を提供します。
-routerd はライブ ISO で `lbu` を使い、ルーター設定と選んだローカル状態を USB メディアへ保存します。
-
 ### FreeBSD
 
 インストーラーは `pkg` を使い、次を導入します。
@@ -282,15 +271,6 @@ ca_root_nss curl dnsmasq wireguard-tools mpd5 bind-tools tcpdump jq chrony stron
 FreeBSD の `pf`、`ifconfig`、`route`、`sysctl`、`service`、`sysrc`、`cron`、
 `netstat`、`sockstat`、`ping`、`traceroute` は基本システムの機能です。
 これらはパッケージとして導入せず、コマンドの存在だけを確認します。
-
-### NixOS
-
-NixOS では、パッケージの状態を NixOS 設定に残すべきです。
-`install.sh` は NixOS を検出すると、`nix-env` を実行せず警告を出します。
-パッケージは NixOS 設定、または routerd の `Package` リソースで宣言してください。
-リリースインストーラーで `/usr/local/sbin/routerd` の実行ファイルを配置することは
-できますが、NixOS では systemd ユニットの導入、有効化、再起動は行いません。
-routerd サービスは NixOS module で宣言型に管理してください。
 
 ## アップグレード
 

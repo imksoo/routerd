@@ -13,7 +13,7 @@ routerd は、ホストの OS、利用できるコマンド、ネットワーク
 ## routerd が確認する項目
 
 - OS とリリース
-- サービス管理方式（systemd、rc.d、NixOS module）
+- サービス管理方式（systemd、rc.d）
 - 利用できるコマンド（iproute2、nftables、conntrack、dnsmasq、radvd、pppd、WireGuard、strongSwan など）
 - カーネル機能（IPv6、VRF、VXLAN、WireGuard）
 - `/run/routerd` と `/var/lib/routerd` の利用可否
@@ -21,7 +21,6 @@ routerd は、ホストの OS、利用できるコマンド、ネットワーク
 ## 振る舞いへの影響
 
 - Ubuntu では、systemd と Linux ネットワークスタックを対象にします。
-- NixOS では、実行時の変更よりも宣言型の生成を優先します。
 - FreeBSD では、`daemon(8)` と rc.d でサービスを制御します。
 
 ホストが提供しない機能に依存する設定は、`apply` の途中で失敗するのではなく、検証または計画の段階で明示します。

@@ -11,8 +11,8 @@ routerd itself is distributed under the BSD 3-Clause License in
 <kirino.minato@gmail.com> (https://github.com/imksoo) and routerd
 contributors. Release archives and the live ISO also include third-party
 software. The live ISO is an aggregate distribution: each
-included Alpine package keeps its own upstream license and source
-availability path. The ISO is not relicensed as a single GPL work.
+included operating-system package keeps its own upstream license and
+source availability path. The ISO is not relicensed as a single GPL work.
 
 This file summarizes dependencies used to build, install, or boot routerd.
 It is not a substitute for reviewing the original upstream license files.
@@ -21,50 +21,142 @@ It is not a substitute for reviewing the original upstream license files.
 
 | Module | Version | Detected license | License file | Source URL |
 | --- | --- | --- | --- | --- |
-| `routerd` | `(main module)` | `BSD-3-Clause` | LICENSE | https://github.com/imksoo/routerd |
+| `github.com/imksoo/routerd` | `(main module)` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/imksoo/routerd |
 | `cel.dev/expr` | `v0.25.1` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/cel.dev/expr@v0.25.1 |
+| `cloud.google.com/go` | `v0.110.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/cloud.google.com/go@v0.110.0 |
+| `cloud.google.com/go/bigquery` | `v1.8.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/cloud.google.com/go/bigquery@v1.8.0 |
+| `cloud.google.com/go/compute` | `v1.19.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/cloud.google.com/go/compute@v1.19.0 |
 | `cloud.google.com/go/compute/metadata` | `v0.9.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/cloud.google.com/go/compute/metadata@v0.9.0 |
+| `cloud.google.com/go/datastore` | `v1.1.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/cloud.google.com/go/datastore@v1.1.0 |
+| `cloud.google.com/go/firestore` | `v1.9.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/cloud.google.com/go/firestore@v1.9.0 |
+| `cloud.google.com/go/longrunning` | `v0.4.1` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/cloud.google.com/go/longrunning@v0.4.1 |
+| `cloud.google.com/go/pubsub` | `v1.3.1` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/cloud.google.com/go/pubsub@v1.3.1 |
+| `cloud.google.com/go/storage` | `v1.14.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/cloud.google.com/go/storage@v1.14.0 |
+| `dmitri.shuralyov.com/gpu/mtl` | `v0.0.0-20190408044501-666a987793e9` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/dmitri.shuralyov.com/gpu/mtl@v0.0.0-20190408044501-666a987793e9 |
+| `github.com/BurntSushi/toml` | `v1.3.2` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/BurntSushi/toml@v1.3.2 |
+| `github.com/BurntSushi/xgb` | `v0.0.0-20160522181843-27f122750802` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/BurntSushi/xgb@v0.0.0-20160522181843-27f122750802 |
 | `github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp` | `v1.31.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp@v1.31.0 |
 | `github.com/antihax/optional` | `v1.0.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/antihax/optional@v1.0.0 |
+| `github.com/armon/go-metrics` | `v0.4.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/armon/go-metrics@v0.4.0 |
 | `github.com/bahlo/generic-list-go` | `v0.2.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/bahlo/generic-list-go@v0.2.0 |
+| `github.com/beorn7/perks` | `v1.0.1` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/beorn7/perks@v1.0.1 |
 | `github.com/buger/jsonparser` | `v1.1.2` | `MIT` | LICENSE | https://pkg.go.dev/github.com/buger/jsonparser@v1.1.2 |
 | `github.com/cenkalti/backoff/v5` | `v5.0.3` | `MIT` | LICENSE | https://pkg.go.dev/github.com/cenkalti/backoff/v5@v5.0.3 |
+| `github.com/census-instrumentation/opencensus-proto` | `v0.2.1` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/census-instrumentation/opencensus-proto@v0.2.1 |
 | `github.com/cespare/xxhash/v2` | `v2.3.0` | `MIT` | LICENSE.txt | https://pkg.go.dev/github.com/cespare/xxhash/v2@v2.3.0 |
+| `github.com/chzyer/logex` | `v1.1.10` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/chzyer/logex@v1.1.10 |
+| `github.com/chzyer/readline` | `v0.0.0-20180603132655-2972be24d48e` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/chzyer/readline@v0.0.0-20180603132655-2972be24d48e |
+| `github.com/chzyer/test` | `v0.0.0-20180213035817-a1ea475d72b1` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/chzyer/test@v0.0.0-20180213035817-a1ea475d72b1 |
+| `github.com/client9/misspell` | `v0.3.4` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/client9/misspell@v0.3.4 |
+| `github.com/cncf/udpa/go` | `v0.0.0-20201120205902-5459f2c99403` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/cncf/udpa/go@v0.0.0-20201120205902-5459f2c99403 |
 | `github.com/cncf/xds/go` | `v0.0.0-20251210132809-ee656c7534f5` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/cncf/xds/go@v0.0.0-20251210132809-ee656c7534f5 |
+| `github.com/coreos/go-semver` | `v0.3.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/coreos/go-semver@v0.3.0 |
+| `github.com/coreos/go-systemd/v22` | `v22.5.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/coreos/go-systemd/v22@v22.5.0 |
 | `github.com/davecgh/go-spew` | `v1.1.1` | `ISC` | LICENSE | https://pkg.go.dev/github.com/davecgh/go-spew@v1.1.1 |
+| `github.com/dgryski/go-farm` | `v0.0.0-20200201041132-a6ae2369ad13` | `MIT` | LICENSE | https://pkg.go.dev/github.com/dgryski/go-farm@v0.0.0-20200201041132-a6ae2369ad13 |
 | `github.com/dustin/go-humanize` | `v1.0.1` | `MIT` | LICENSE | https://pkg.go.dev/github.com/dustin/go-humanize@v1.0.1 |
+| `github.com/eapache/channels` | `v1.1.0` | `MIT` | LICENSE | https://pkg.go.dev/github.com/eapache/channels@v1.1.0 |
+| `github.com/eapache/queue` | `v1.1.0` | `MIT` | LICENSE | https://pkg.go.dev/github.com/eapache/queue@v1.1.0 |
 | `github.com/envoyproxy/go-control-plane` | `v0.14.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/envoyproxy/go-control-plane@v0.14.0 |
 | `github.com/envoyproxy/go-control-plane/envoy` | `v1.36.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/envoyproxy/go-control-plane/envoy@v1.36.0 |
 | `github.com/envoyproxy/go-control-plane/ratelimit` | `v0.1.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/envoyproxy/go-control-plane/ratelimit@v0.1.0 |
 | `github.com/envoyproxy/protoc-gen-validate` | `v1.3.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/envoyproxy/protoc-gen-validate@v1.3.0 |
+| `github.com/fatih/color` | `v1.13.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/fatih/color@v1.13.0 |
+| `github.com/frankban/quicktest` | `v1.14.4` | `MIT` | LICENSE | https://pkg.go.dev/github.com/frankban/quicktest@v1.14.4 |
+| `github.com/fsnotify/fsnotify` | `v1.6.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/fsnotify/fsnotify@v1.6.0 |
+| `github.com/getsentry/sentry-go` | `v0.30.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/getsentry/sentry-go@v0.30.0 |
+| `github.com/go-gl/glfw` | `v0.0.0-20190409004039-e6da0acd62b1` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/go-gl/glfw@v0.0.0-20190409004039-e6da0acd62b1 |
+| `github.com/go-gl/glfw/v3.3/glfw` | `v0.0.0-20200222043503-6f7a984d4dc4` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/go-gl/glfw/v3.3/glfw@v0.0.0-20200222043503-6f7a984d4dc4 |
 | `github.com/go-jose/go-jose/v4` | `v4.1.3` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/go-jose/go-jose/v4@v4.1.3 |
 | `github.com/go-logr/logr` | `v1.4.3` | `Apache-2.0` | LICENSE | https://pkg.go.dev/github.com/go-logr/logr@v1.4.3 |
 | `github.com/go-logr/stdr` | `v1.2.2` | `Apache-2.0` | LICENSE | https://pkg.go.dev/github.com/go-logr/stdr@v1.2.2 |
+| `github.com/go-test/deep` | `v1.1.0` | `MIT` | LICENSE | https://pkg.go.dev/github.com/go-test/deep@v1.1.0 |
+| `github.com/gogo/protobuf` | `v1.3.2` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/gogo/protobuf@v1.3.2 |
 | `github.com/golang/glog` | `v1.2.5` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/golang/glog@v1.2.5 |
+| `github.com/golang/groupcache` | `v0.0.0-20210331224755-41bb18bfe9da` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/golang/groupcache@v0.0.0-20210331224755-41bb18bfe9da |
+| `github.com/golang/mock` | `v1.4.4` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/golang/mock@v1.4.4 |
 | `github.com/golang/protobuf` | `v1.5.4` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/golang/protobuf@v1.5.4 |
+| `github.com/google/btree` | `v1.0.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/google/btree@v1.0.0 |
 | `github.com/google/go-cmp` | `v0.7.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/google/go-cmp@v0.7.0 |
+| `github.com/google/martian` | `v2.1.0+incompatible` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/google/martian@v2.1.0+incompatible |
+| `github.com/google/martian/v3` | `v3.1.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/google/martian/v3@v3.1.0 |
 | `github.com/google/pprof` | `v0.0.0-20250317173921-a4b03ec1a45e` | `Apache-2.0` | LICENSE | https://pkg.go.dev/github.com/google/pprof@v0.0.0-20250317173921-a4b03ec1a45e |
+| `github.com/google/renameio` | `v0.1.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/google/renameio@v0.1.0 |
+| `github.com/google/s2a-go` | `v0.1.3` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/google/s2a-go@v0.1.3 |
 | `github.com/google/uuid` | `v1.6.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/google/uuid@v1.6.0 |
+| `github.com/googleapis/enterprise-certificate-proxy` | `v0.2.3` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/googleapis/enterprise-certificate-proxy@v0.2.3 |
+| `github.com/googleapis/gax-go/v2` | `v2.8.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/googleapis/gax-go/v2@v2.8.0 |
+| `github.com/googleapis/google-cloud-go-testing` | `v0.0.0-20200911160855-bcd43fbb19e8` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/googleapis/google-cloud-go-testing@v0.0.0-20200911160855-bcd43fbb19e8 |
+| `github.com/grpc-ecosystem/go-grpc-prometheus` | `v1.2.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/grpc-ecosystem/go-grpc-prometheus@v1.2.0 |
 | `github.com/grpc-ecosystem/grpc-gateway/v2` | `v2.28.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/grpc-ecosystem/grpc-gateway/v2@v2.28.0 |
+| `github.com/hashicorp/consul/api` | `v1.20.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/hashicorp/consul/api@v1.20.0 |
+| `github.com/hashicorp/go-cleanhttp` | `v0.5.2` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/hashicorp/go-cleanhttp@v0.5.2 |
+| `github.com/hashicorp/go-hclog` | `v1.2.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/hashicorp/go-hclog@v1.2.0 |
+| `github.com/hashicorp/go-immutable-radix` | `v1.3.1` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/hashicorp/go-immutable-radix@v1.3.1 |
+| `github.com/hashicorp/go-rootcerts` | `v1.0.2` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/hashicorp/go-rootcerts@v1.0.2 |
+| `github.com/hashicorp/golang-lru` | `v0.5.4` | `MPL-2.0` | LICENSE | https://pkg.go.dev/github.com/hashicorp/golang-lru@v0.5.4 |
 | `github.com/hashicorp/golang-lru/v2` | `v2.0.7` | `MPL-2.0` | LICENSE | https://pkg.go.dev/github.com/hashicorp/golang-lru/v2@v2.0.7 |
+| `github.com/hashicorp/hcl` | `v1.0.0` | `MPL-2.0` | LICENSE | https://pkg.go.dev/github.com/hashicorp/hcl@v1.0.0 |
+| `github.com/hashicorp/serf` | `v0.10.1` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/hashicorp/serf@v0.10.1 |
+| `github.com/ianlancetaylor/demangle` | `v0.0.0-20200824232613-28f6c0f3b639` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/ianlancetaylor/demangle@v0.0.0-20200824232613-28f6c0f3b639 |
+| `github.com/inconshreveable/mousetrap` | `v1.1.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/inconshreveable/mousetrap@v1.1.0 |
 | `github.com/invopop/jsonschema` | `v0.14.0` | `MIT` | COPYING | https://pkg.go.dev/github.com/invopop/jsonschema@v0.14.0 |
+| `github.com/jessevdk/go-flags` | `v1.5.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/jessevdk/go-flags@v1.5.0 |
 | `github.com/jordanlewis/gcassert` | `v0.0.0-20250430164644-389ef753e22e` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/jordanlewis/gcassert@v0.0.0-20250430164644-389ef753e22e |
-| `github.com/kr/pretty` | `v0.3.1` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/kr/pretty@v0.3.1 |
-| `github.com/kr/text` | `v0.2.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/kr/text@v0.2.0 |
+| `github.com/json-iterator/go` | `v1.1.12` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/json-iterator/go@v1.1.12 |
+| `github.com/jstemmer/go-junit-report` | `v0.9.1` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/jstemmer/go-junit-report@v0.9.1 |
+| `github.com/k-sone/critbitgo` | `v1.4.0` | `MIT` | LICENSE | https://pkg.go.dev/github.com/k-sone/critbitgo@v1.4.0 |
+| `github.com/kisielk/gotool` | `v1.0.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/kisielk/gotool@v1.0.0 |
+| `github.com/kr/fs` | `v0.1.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/kr/fs@v0.1.0 |
+| `github.com/kr/pretty` | `v0.3.1` | `unknown` | not found in module cache | https://pkg.go.dev/github.com/kr/pretty@v0.3.1 |
+| `github.com/kr/pty` | `v1.1.1` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/kr/pty@v1.1.1 |
+| `github.com/kr/text` | `v0.2.0` | `unknown` | not found in module cache | https://pkg.go.dev/github.com/kr/text@v0.2.0 |
+| `github.com/magiconair/properties` | `v1.8.7` | `BSD-style` | LICENSE.md | https://pkg.go.dev/github.com/magiconair/properties@v1.8.7 |
+| `github.com/mattn/go-colorable` | `v0.1.12` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/mattn/go-colorable@v0.1.12 |
 | `github.com/mattn/go-isatty` | `v0.0.20` | `MIT` | LICENSE | https://pkg.go.dev/github.com/mattn/go-isatty@v0.0.20 |
+| `github.com/matttproud/golang_protobuf_extensions` | `v1.0.4` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/matttproud/golang_protobuf_extensions@v1.0.4 |
 | `github.com/miekg/dns` | `v1.1.72` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/miekg/dns@v1.1.72 |
+| `github.com/mitchellh/go-homedir` | `v1.1.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/mitchellh/go-homedir@v1.1.0 |
+| `github.com/mitchellh/mapstructure` | `v1.5.0` | `MIT` | LICENSE | https://pkg.go.dev/github.com/mitchellh/mapstructure@v1.5.0 |
+| `github.com/modern-go/concurrent` | `v0.0.0-20180306012644-bacd9c7ef1dd` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/modern-go/concurrent@v0.0.0-20180306012644-bacd9c7ef1dd |
+| `github.com/modern-go/reflect2` | `v1.0.2` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/modern-go/reflect2@v1.0.2 |
 | `github.com/ncruces/go-strftime` | `v1.0.0` | `MIT` | LICENSE | https://pkg.go.dev/github.com/ncruces/go-strftime@v1.0.0 |
+| `github.com/osrg/gobgp/v3` | `v3.37.0` | `Apache-2.0` | LICENSE | https://pkg.go.dev/github.com/osrg/gobgp/v3@v3.37.0 |
 | `github.com/pb33f/ordered-map/v2` | `v2.3.1` | `Apache-2.0` | LICENSE | https://pkg.go.dev/github.com/pb33f/ordered-map/v2@v2.3.1 |
+| `github.com/pelletier/go-toml/v2` | `v2.0.8` | `MIT` | LICENSE | https://pkg.go.dev/github.com/pelletier/go-toml/v2@v2.0.8 |
+| `github.com/pkg/errors` | `v0.9.1` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/pkg/errors@v0.9.1 |
+| `github.com/pkg/sftp` | `v1.13.1` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/pkg/sftp@v1.13.1 |
 | `github.com/planetscale/vtprotobuf` | `v0.6.1-0.20240319094008-0393e58bdf10` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/planetscale/vtprotobuf@v0.6.1-0.20240319094008-0393e58bdf10 |
 | `github.com/pmezard/go-difflib` | `v1.0.0` | `BSD-style` | LICENSE | https://pkg.go.dev/github.com/pmezard/go-difflib@v1.0.0 |
+| `github.com/prometheus/client_golang` | `v1.16.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/prometheus/client_golang@v1.16.0 |
+| `github.com/prometheus/client_model` | `v0.3.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/prometheus/client_model@v0.3.0 |
+| `github.com/prometheus/common` | `v0.42.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/prometheus/common@v0.42.0 |
+| `github.com/prometheus/procfs` | `v0.10.1` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/prometheus/procfs@v0.10.1 |
 | `github.com/quic-go/qpack` | `v0.6.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/quic-go/qpack@v0.6.0 |
 | `github.com/quic-go/quic-go` | `v0.59.0` | `MIT` | LICENSE | https://pkg.go.dev/github.com/quic-go/quic-go@v0.59.0 |
 | `github.com/remyoudompheng/bigfft` | `v0.0.0-20230129092748-24d4a6f8daec` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec |
 | `github.com/rogpeppe/fastuuid` | `v1.2.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/rogpeppe/fastuuid@v1.2.0 |
 | `github.com/rogpeppe/go-internal` | `v1.14.1` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/rogpeppe/go-internal@v1.14.1 |
+| `github.com/sagikazarmark/crypt` | `v0.10.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/sagikazarmark/crypt@v0.10.0 |
+| `github.com/sirupsen/logrus` | `v1.9.3` | `MIT` | LICENSE | https://pkg.go.dev/github.com/sirupsen/logrus@v1.9.3 |
+| `github.com/spf13/afero` | `v1.9.5` | `Apache-2.0` | LICENSE.txt | https://pkg.go.dev/github.com/spf13/afero@v1.9.5 |
+| `github.com/spf13/cast` | `v1.5.1` | `MIT` | LICENSE | https://pkg.go.dev/github.com/spf13/cast@v1.5.1 |
+| `github.com/spf13/cobra` | `v1.7.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/spf13/cobra@v1.7.0 |
+| `github.com/spf13/jwalterweatherman` | `v1.1.0` | `MIT` | LICENSE | https://pkg.go.dev/github.com/spf13/jwalterweatherman@v1.1.0 |
+| `github.com/spf13/pflag` | `v1.0.5` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/spf13/pflag@v1.0.5 |
+| `github.com/spf13/viper` | `v1.16.0` | `MIT` | LICENSE | https://pkg.go.dev/github.com/spf13/viper@v1.16.0 |
 | `github.com/spiffe/go-spiffe/v2` | `v2.6.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/spiffe/go-spiffe/v2@v2.6.0 |
+| `github.com/stretchr/objx` | `v0.5.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/stretchr/objx@v0.5.0 |
 | `github.com/stretchr/testify` | `v1.11.1` | `MIT` | LICENSE | https://pkg.go.dev/github.com/stretchr/testify@v1.11.1 |
+| `github.com/subosito/gotenv` | `v1.4.2` | `MIT` | LICENSE | https://pkg.go.dev/github.com/subosito/gotenv@v1.4.2 |
+| `github.com/vishvananda/netlink` | `v1.3.1` | `Apache-2.0` | LICENSE | https://pkg.go.dev/github.com/vishvananda/netlink@v1.3.1 |
+| `github.com/vishvananda/netns` | `v0.0.5` | `Apache-2.0` | LICENSE | https://pkg.go.dev/github.com/vishvananda/netns@v0.0.5 |
 | `github.com/yuin/goldmark` | `v1.4.13` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/github.com/yuin/goldmark@v1.4.13 |
+| `go.etcd.io/etcd/api/v3` | `v3.5.9` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/go.etcd.io/etcd/api/v3@v3.5.9 |
+| `go.etcd.io/etcd/client/pkg/v3` | `v3.5.9` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/go.etcd.io/etcd/client/pkg/v3@v3.5.9 |
+| `go.etcd.io/etcd/client/v2` | `v2.305.7` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/go.etcd.io/etcd/client/v2@v2.305.7 |
+| `go.etcd.io/etcd/client/v3` | `v3.5.9` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/go.etcd.io/etcd/client/v3@v3.5.9 |
+| `go.opencensus.io` | `v0.24.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/go.opencensus.io@v0.24.0 |
 | `go.opentelemetry.io/auto/sdk` | `v1.2.1` | `Apache-2.0` | LICENSE | https://pkg.go.dev/go.opentelemetry.io/auto/sdk@v1.2.1 |
 | `go.opentelemetry.io/contrib/bridges/otelslog` | `v0.18.0` | `Apache-2.0` | LICENSE | https://pkg.go.dev/go.opentelemetry.io/contrib/bridges/otelslog@v0.18.0 |
 | `go.opentelemetry.io/contrib/detectors/gcp` | `v1.39.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/go.opentelemetry.io/contrib/detectors/gcp@v1.39.0 |
@@ -77,15 +169,22 @@ It is not a substitute for reviewing the original upstream license files.
 | `go.opentelemetry.io/otel/metric` | `v1.43.0` | `Apache-2.0` | LICENSE | https://pkg.go.dev/go.opentelemetry.io/otel/metric@v1.43.0 |
 | `go.opentelemetry.io/otel/sdk` | `v1.43.0` | `Apache-2.0` | LICENSE | https://pkg.go.dev/go.opentelemetry.io/otel/sdk@v1.43.0 |
 | `go.opentelemetry.io/otel/sdk/log` | `v0.19.0` | `Apache-2.0` | LICENSE | https://pkg.go.dev/go.opentelemetry.io/otel/sdk/log@v0.19.0 |
-| `go.opentelemetry.io/otel/sdk/log/logtest` | `v0.19.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/go.opentelemetry.io/otel/sdk/log/logtest@v0.19.0 |
+| `go.opentelemetry.io/otel/sdk/log/logtest` | `v0.19.0` | `Apache-2.0` | LICENSE | https://pkg.go.dev/go.opentelemetry.io/otel/sdk/log/logtest@v0.19.0 |
 | `go.opentelemetry.io/otel/sdk/metric` | `v1.43.0` | `Apache-2.0` | LICENSE | https://pkg.go.dev/go.opentelemetry.io/otel/sdk/metric@v1.43.0 |
 | `go.opentelemetry.io/otel/trace` | `v1.43.0` | `Apache-2.0` | LICENSE | https://pkg.go.dev/go.opentelemetry.io/otel/trace@v1.43.0 |
 | `go.opentelemetry.io/proto/otlp` | `v1.10.0` | `Apache-2.0` | LICENSE | https://pkg.go.dev/go.opentelemetry.io/proto/otlp@v1.10.0 |
-| `go.uber.org/goleak` | `v1.3.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/go.uber.org/goleak@v1.3.0 |
-| `go.uber.org/mock` | `v0.5.2` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/go.uber.org/mock@v0.5.2 |
+| `go.uber.org/atomic` | `v1.9.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/go.uber.org/atomic@v1.9.0 |
+| `go.uber.org/goleak` | `v1.3.0` | `MIT` | LICENSE | https://pkg.go.dev/go.uber.org/goleak@v1.3.0 |
+| `go.uber.org/mock` | `v0.5.2` | `Apache-2.0` | LICENSE | https://pkg.go.dev/go.uber.org/mock@v0.5.2 |
+| `go.uber.org/multierr` | `v1.8.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/go.uber.org/multierr@v1.8.0 |
+| `go.uber.org/zap` | `v1.21.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/go.uber.org/zap@v1.21.0 |
 | `go.yaml.in/yaml/v3` | `v3.0.4` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/go.yaml.in/yaml/v3@v3.0.4 |
 | `go.yaml.in/yaml/v4` | `v4.0.0-rc.2` | `Apache-2.0` | LICENSE | https://pkg.go.dev/go.yaml.in/yaml/v4@v4.0.0-rc.2 |
 | `golang.org/x/crypto` | `v0.49.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/golang.org/x/crypto@v0.49.0 |
+| `golang.org/x/exp` | `v0.0.0-20200224162631-6cc2880d07d6` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/golang.org/x/exp@v0.0.0-20200224162631-6cc2880d07d6 |
+| `golang.org/x/image` | `v0.0.0-20190802002840-cff245a6509b` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/golang.org/x/image@v0.0.0-20190802002840-cff245a6509b |
+| `golang.org/x/lint` | `v0.0.0-20201208152925-83fdc39ff7b5` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/golang.org/x/lint@v0.0.0-20201208152925-83fdc39ff7b5 |
+| `golang.org/x/mobile` | `v0.0.0-20190719004257-d2bd2a29d028` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/golang.org/x/mobile@v0.0.0-20190719004257-d2bd2a29d028 |
 | `golang.org/x/mod` | `v0.33.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/golang.org/x/mod@v0.33.0 |
 | `golang.org/x/net` | `v0.52.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/golang.org/x/net@v0.52.0 |
 | `golang.org/x/oauth2` | `v0.35.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/golang.org/x/oauth2@v0.35.0 |
@@ -94,14 +193,23 @@ It is not a substitute for reviewing the original upstream license files.
 | `golang.org/x/telemetry` | `v0.0.0-20260209163413-e7419c687ee4` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/golang.org/x/telemetry@v0.0.0-20260209163413-e7419c687ee4 |
 | `golang.org/x/term` | `v0.41.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/golang.org/x/term@v0.41.0 |
 | `golang.org/x/text` | `v0.35.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/golang.org/x/text@v0.35.0 |
+| `golang.org/x/time` | `v0.3.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/golang.org/x/time@v0.3.0 |
 | `golang.org/x/tools` | `v0.42.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/golang.org/x/tools@v0.42.0 |
+| `golang.org/x/xerrors` | `v0.0.0-20220907171357-04be3eba64a2` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/golang.org/x/xerrors@v0.0.0-20220907171357-04be3eba64a2 |
 | `gonum.org/v1/gonum` | `v0.17.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/gonum.org/v1/gonum@v0.17.0 |
+| `google.golang.org/api` | `v0.122.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/google.golang.org/api@v0.122.0 |
+| `google.golang.org/appengine` | `v1.6.7` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/google.golang.org/appengine@v1.6.7 |
+| `google.golang.org/genproto` | `v0.0.0-20230410155749-daa745c078e1` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/google.golang.org/genproto@v0.0.0-20230410155749-daa745c078e1 |
 | `google.golang.org/genproto/googleapis/api` | `v0.0.0-20260401024825-9d38bb4040a9` | `Apache-2.0` | LICENSE | https://pkg.go.dev/google.golang.org/genproto/googleapis/api@v0.0.0-20260401024825-9d38bb4040a9 |
 | `google.golang.org/genproto/googleapis/rpc` | `v0.0.0-20260401024825-9d38bb4040a9` | `Apache-2.0` | LICENSE | https://pkg.go.dev/google.golang.org/genproto/googleapis/rpc@v0.0.0-20260401024825-9d38bb4040a9 |
 | `google.golang.org/grpc` | `v1.80.0` | `Apache-2.0` | LICENSE | https://pkg.go.dev/google.golang.org/grpc@v1.80.0 |
 | `google.golang.org/protobuf` | `v1.36.11` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/google.golang.org/protobuf@v1.36.11 |
-| `gopkg.in/check.v1` | `v1.0.0-20201130134442-10cb98267c6c` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/gopkg.in/check.v1@v1.0.0-20201130134442-10cb98267c6c |
+| `gopkg.in/check.v1` | `v1.0.0-20201130134442-10cb98267c6c` | `BSD-style` | LICENSE | https://pkg.go.dev/gopkg.in/check.v1@v1.0.0-20201130134442-10cb98267c6c |
+| `gopkg.in/errgo.v2` | `v2.1.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/gopkg.in/errgo.v2@v2.1.0 |
+| `gopkg.in/ini.v1` | `v1.67.0` | `Apache-2.0` | LICENSE | https://pkg.go.dev/gopkg.in/ini.v1@v1.67.0 |
+| `gopkg.in/yaml.v2` | `v2.2.2` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/gopkg.in/yaml.v2@v2.2.2 |
 | `gopkg.in/yaml.v3` | `v3.0.1` | `Apache-2.0` | LICENSE | https://pkg.go.dev/gopkg.in/yaml.v3@v3.0.1 |
+| `honnef.co/go/tools` | `v0.0.1-2020.1.4` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/honnef.co/go/tools@v0.0.1-2020.1.4 |
 | `modernc.org/cc/v4` | `v4.27.3` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/modernc.org/cc/v4@v4.27.3 |
 | `modernc.org/ccgo/v4` | `v4.32.4` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/modernc.org/ccgo/v4@v4.32.4 |
 | `modernc.org/fileutil` | `v1.4.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/modernc.org/fileutil@v1.4.0 |
@@ -116,46 +224,22 @@ It is not a substitute for reviewing the original upstream license files.
 | `modernc.org/sqlite` | `v1.50.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/modernc.org/sqlite@v1.50.0 |
 | `modernc.org/strutil` | `v1.2.1` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/modernc.org/strutil@v1.2.1 |
 | `modernc.org/token` | `v1.1.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/modernc.org/token@v1.1.0 |
+| `rsc.io/binaryregexp` | `v0.2.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/rsc.io/binaryregexp@v0.2.0 |
+| `rsc.io/quote/v3` | `v3.1.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/rsc.io/quote/v3@v3.1.0 |
+| `rsc.io/sampler` | `v1.3.0` | `BSD-3-Clause` | LICENSE | https://pkg.go.dev/rsc.io/sampler@v1.3.0 |
 
 ### Go module copyleft check
 
 No GPL, LGPL, or AGPL license text was detected in Go module license files.
 This check is heuristic and should be reviewed before formal releases.
 
-## Alpine packages used by the live ISO
+## Operating-system packages used by the live ISO
 
-The live ISO is based on Alpine Linux. Package license metadata below is
-collected from Alpine APKINDEX records for `latest-stable` /
-`x86_64`. Source code for Alpine packages is available through
-Alpine package repositories, APKBUILD files, and upstream project URLs.
-
-| Package | Version | License | Upstream URL |
-| --- | --- | --- | --- |
-| `alpine-conf` | `3.21.0-r0` | `MIT` | https://gitlab.alpinelinux.org/alpine/alpine-conf |
-| `ca-certificates` | `20260413-r0` | `MPL-2.0 AND MIT` | https://www.mozilla.org/en-US/about/governance/policies/security-group/certs/ |
-| `curl` | `8.17.0-r1` | `curl` | https://curl.se/ |
-| `dnsmasq` | `2.91-r0` | `GPL-2.0-or-later` | https://www.thekelleys.org.uk/dnsmasq/ |
-| `nftables` | `1.1.5-r2` | `GPL-2.0-or-later` | https://netfilter.org/projects/nftables |
-| `wireguard-tools` | `1.0.20250521-r1` | `GPL-2.0-only` | https://www.wireguard.com |
-| `chrony` | `4.8-r2` | `GPL-2.0-or-later` | https://chrony-project.org/ |
-| `bind-tools` | `9.20.22-r0` | `MPL-2.0` | https://www.isc.org/bind/ |
-| `tcpdump` | `4.99.5-r1` | `BSD-3-Clause` | https://www.tcpdump.org/ |
-| `cronie` | `1.7.2-r0` | `ISC` | https://github.com/cronie-crond/cronie |
-| `jq` | `1.8.1-r0` | `MIT` | https://jqlang.github.io/jq/ |
-| `ppp` | `2.5.2-r1` | `BSD-3-Clause AND BSD-4-Clause AND BSD-4-Clause-Shortened AND GPL-2.0-or-later AND HPND AND LGPL-2.0-or-later AND Public-Domain AND RSA-MD` | https://ppp.samba.org/ |
-| `ppp-pppoe` | `2.5.2-r1` | `GPL-2.0-or-later` | https://ppp.samba.org/ |
-| `conntrack-tools` | `1.4.8-r0` | `GPL-2.0-or-later` | https://www.netfilter.org/projects/conntrack-tools/ |
-| `iproute2` | `6.17.0-r0` | `GPL-2.0-or-later` | https://wiki.linuxfoundation.org/networking/iproute2 |
-| `iputils` | `20250605-r0` | `BSD-3-Clause AND GPL-2.0-or-later` | https://github.com/iputils/iputils/ |
-| `iputils-tracepath` | `20250605-r0` | `BSD-3-Clause AND GPL-2.0-or-later` | https://github.com/iputils/iputils/ |
-| `kmod` | `34.2-r1` | `GPL-2.0-or-later` | http://git.kernel.org/?p=utils/kernel/kmod/kmod.git;a=summary |
-| `radvd` | `2.20-r0` | `BSD-Advertising-Acknowledgement` | http://www.litech.org/radvd |
-| `strongswan` | `5.9.14-r3` | `GPL-2.0-or-later WITH OpenSSL-Exception` | https://www.strongswan.org/ |
-| `iptables` | `1.8.11-r1` | `GPL-2.0-or-later` | https://www.netfilter.org/projects/iptables/index.html |
-| `util-linux` | `2.41.4-r0` | `GPL-3.0-or-later AND GPL-2.0-or-later AND GPL-2.0-only AND GPL-1.0-only AND LGPL-2.1-or-later AND BSD-1-Clause AND BSD-3-Clause AND BSD-4-Clause-UC AND MIT AND Public-Domain` | https://git.kernel.org/cgit/utils/util-linux/util-linux.git |
-| `e2fsprogs` | `1.47.3-r0` | `GPL-2.0-or-later AND LGPL-2.0-or-later AND BSD-3-Clause AND MIT` | https://e2fsprogs.sourceforge.net/ |
-| `dosfstools` | `4.2-r2` | `GPL-3.0-or-later` | https://github.com/dosfstools/dosfstools |
-| `exfatprogs` | `1.3.0-r0` | `GPL-2.0-or-later` | https://github.com/exfatprogs/exfatprogs |
+The live ISO is based on Ubuntu Server. Ubuntu package source and license
+metadata is provided by the Ubuntu archive for the release used to build
+the ISO. The routerd live ISO build script copies routerd payload files into
+that base image and does not vendor those package sources into this
+repository.
 
 ## Optional runtime dependencies
 
@@ -171,7 +255,7 @@ feature is explicitly enabled.
 
 - routerd source code is published at <https://github.com/imksoo/routerd>.
 - routerd release tags use the `vYYYYMMDD.HHmm` format.
-- Alpine package source information is available from Alpine package
-  repositories and the upstream URLs listed above.
-- The routerd live ISO combines routerd binaries, scripts, and Alpine
+- Ubuntu package source information is available from Ubuntu archive
+  metadata for the release used as the live ISO base.
+- The routerd live ISO combines routerd binaries, scripts, and base OS
   packages as separate components with their own licenses.

@@ -151,8 +151,8 @@ routerd 本体以 BSD 3-Clause License 发布。
 make third-party-licenses
 ```
 
-生成的 `THIRD_PARTY_LICENSES.md` 记录 Go 模块的授权文件与 Alpine 软件包的授权元数据。Live ISO 是集合性发布物。
-采用 GPL 授权的 Alpine 软件包各自保留其授权与源码获取方式，不视为以 GPL 著作重新授权整个 ISO。
+生成的 `THIRD_PARTY_LICENSES.md` 记录 Go 模块的授权文件与 OS 软件包的授权元数据。Live ISO 是集合性发布物。
+采用 GPL 授权的 OS 软件包各自保留其授权与源码获取方式，不视为以 GPL 著作重新授权整个 ISO。
 
 ## 运行期依赖
 
@@ -176,12 +176,6 @@ Arch 系统上，安装程序使用 `pacman` 安装下列软件包：
 ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables keepalived
 ```
 
-Alpine 上，安装程序使用 `apk` 安装下列软件包：
-
-```text
-alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables keepalived util-linux e2fsprogs dosfstools exfatprogs
-```
-
 FreeBSD 上，安装程序使用 `pkg` 安装下列软件包：
 
 ```text
@@ -189,9 +183,6 @@ ca_root_nss curl dnsmasq wireguard-tools mpd5 bind-tools tcpdump jq chrony stron
 ```
 
 FreeBSD 的 `pf`、`ifconfig`、`route`、`service`、`sysrc`、`cron` 均为基本系统工具，不以软件包方式安装，仅确认命令是否存在。
-
-NixOS 上，安装程序不调用 `nix-env`，而是显示警告。
-请通过 NixOS 配置或 routerd 的 `Package` 资源声明软件包。
 
 安装依赖软件包后，script 会确认预期的命令是否存在。
 由于软件包名称因发行版而异，若找不到命令，视为警告而非致命错误。

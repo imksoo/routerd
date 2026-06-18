@@ -73,20 +73,6 @@ sudo systemctl restart routerd.service \
                        'routerd-healthcheck@*.service'
 ```
 
-### NixOS
-
-routerd の NixOS モジュールが生成した各 systemd service の environment に、変数を加えます。
-
-```nix
-systemd.services.routerd.environment = {
-  OTEL_EXPORTER_OTLP_ENDPOINT = "http://collector.lan:4317";
-  OTEL_EXPORTER_OTLP_INSECURE = "true";
-  OTEL_SERVICE_NAMESPACE      = "routerd";
-};
-```
-
-routerd が生成したデーモン用の service にも、同じブロックを並べます。
-
 ### FreeBSD
 
 routerd が出力する rc.d ラッパーの `command_args` の環境ブロックに、変数を追加します（ラッパーが対応していれば `routerd_envfile=...` でも構いません）。
@@ -141,7 +127,7 @@ routerd を再起動すると、数秒以内に次が見えるはずです。
 
 ## 宣言型の Telemetry リソース
 
-`Telemetry` を使うと、OTLP エンドポイントを router の YAML に書けます。routerd は、対応する OpenTelemetry 環境変数を、生成済みの systemd、NixOS、FreeBSD rc.d の unit に入れます。コレクターは外部で用意します。routerd はエクスポーターの設定だけを準備します。
+`Telemetry` を使うと、OTLP エンドポイントを router の YAML に書けます。routerd は、対応する OpenTelemetry 環境変数を、生成済みの systemd、FreeBSD rc.d の unit に入れます。コレクターは外部で用意します。routerd はエクスポーターの設定だけを準備します。
 
 ```yaml
 apiVersion: observability.routerd.net/v1alpha1

@@ -21,7 +21,6 @@ assignees: ""
 ## Target platforms
 
 - [ ] Ubuntu
-- [ ] NixOS
 - [ ] FreeBSD
 
 ## Operational risk

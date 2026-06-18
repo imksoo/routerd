@@ -7,7 +7,6 @@
 - [ ] `make test`
 - [ ] `make check-schema`
 - [ ] `make check-install-deps`
-- [ ] `make alpine-vm-smoke` when changing Alpine/OpenRC activation
 - [ ] `make validate-example`
 - [ ] `make website-build`
 

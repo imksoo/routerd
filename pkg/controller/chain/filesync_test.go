@@ -189,12 +189,6 @@ func TestDefaultDNSMasqLeaseFileUsesPlatformHelpers(t *testing.T) {
 			features: platform.Features{HasRCD: true},
 			want:     "/var/db/routerd/dnsmasq/dnsmasq.leases",
 		},
-		{
-			name:     "openrc",
-			defaults: platform.Defaults{RuntimeDir: "/run/routerd", StateDir: "/var/lib/routerd"},
-			features: platform.Features{HasOpenRC: true},
-			want:     "/var/lib/routerd/dnsmasq/dnsmasq.leases",
-		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			got := defaultDNSMasqLeaseFileFor(tt.defaults, tt.features)

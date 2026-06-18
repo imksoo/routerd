@@ -42,9 +42,7 @@ type Service struct {
 	Name                string
 	SystemdName         string
 	SystemdArtifactKind string
-	OpenRCName          string
 	RCDName             string
-	NixName             string
 }
 
 func BeforeDefaultHook(op Operation, command Command) Hook {
@@ -76,14 +74,10 @@ type Manager interface {
 
 func ForPlatform(features platform.Features) Manager {
 	switch {
-	case features.HasOpenRC:
-		return OpenRC{}
 	case features.HasRCD:
 		return RCD{}
-	case features.HasSystemd:
-		return Systemd{}
 	default:
-		return NixOS{}
+		return Systemd{}
 	}
 }
 
@@ -116,12 +110,8 @@ func rawServiceName(manager Manager, service Service) string {
 	switch manager.(type) {
 	case Systemd:
 		return firstNonEmpty(service.SystemdName, service.Name)
-	case OpenRC:
-		return firstNonEmpty(service.OpenRCName, service.SystemdName, service.Name)
 	case RCD:
 		return firstNonEmpty(service.RCDName, service.SystemdName, service.Name)
-	case NixOS:
-		return firstNonEmpty(service.NixName, service.SystemdName, service.Name)
 	default:
 		return manager.ServiceName(service)
 	}
@@ -157,36 +147,6 @@ func (m Systemd) Intent(owner string, service Service, action string, attrs map[
 	return serviceIntent(owner, firstNonEmpty(service.SystemdArtifactKind, m.ArtifactKind()), m.ServiceName(service), action, m.ApplyWith(), attrs)
 }
 
-type OpenRC struct{}
-
-func (OpenRC) Name() string         { return "openrc" }
-func (OpenRC) ArtifactKind() string { return "openrc.service" }
-func (OpenRC) ApplyWith() string    { return "rc-service" }
-func (m OpenRC) ServiceName(s Service) string {
-	return normalizeRCServiceName(firstNonEmpty(s.OpenRCName, s.SystemdName, s.Name))
-}
-func (m OpenRC) Command(op Operation, s Service) Command {
-	name := m.ServiceName(s)
-	switch op {
-	case OperationEnable:
-		return Command{Name: "rc-update", Args: []string{"add", name, "default"}}
-	case OperationReload:
-		return Command{Name: "rc-service", Args: []string{name, "reload"}}
-	case OperationRestart:
-		return Command{Name: "rc-service", Args: []string{name, "restart"}}
-	case OperationStatus:
-		return Command{Name: "rc-service", Args: []string{name, "status"}}
-	default:
-		return Command{}
-	}
-}
-func (m OpenRC) Plan(op Operation, s Service, hooks ...Hook) Plan {
-	return operationPlan(op, m.Command(op, s), hooks...)
-}
-func (m OpenRC) Intent(owner string, service Service, action string, attrs map[string]string) resource.Intent {
-	return serviceIntent(owner, m.ArtifactKind(), m.ServiceName(service), action, m.ApplyWith(), attrs)
-}
-
 type RCD struct{}
 
 func (RCD) Name() string         { return "rc.d" }
@@ -214,33 +174,6 @@ func (m RCD) Plan(op Operation, s Service, hooks ...Hook) Plan {
 	return operationPlan(op, m.Command(op, s), hooks...)
 }
 func (m RCD) Intent(owner string, service Service, action string, attrs map[string]string) resource.Intent {
-	return serviceIntent(owner, m.ArtifactKind(), m.ServiceName(service), action, m.ApplyWith(), attrs)
-}
-
-type NixOS struct{}
-
-func (NixOS) Name() string         { return "nixos" }
-func (NixOS) ArtifactKind() string { return "nixos.service" }
-func (NixOS) ApplyWith() string    { return "nixos-module" }
-func (m NixOS) ServiceName(s Service) string {
-	name := firstNonEmpty(s.NixName, s.SystemdName, s.Name)
-	return strings.TrimSuffix(name, ".service")
-}
-func (m NixOS) Command(op Operation, s Service) Command {
-	name := m.ServiceName(s)
-	switch op {
-	case OperationEnable, OperationReload, OperationRestart:
-		return Command{Name: "nixos-rebuild", Args: []string{"switch"}}
-	case OperationStatus:
-		return Command{Name: "systemctl", Args: []string{"is-active", "--quiet", name + ".service"}}
-	default:
-		return Command{}
-	}
-}
-func (m NixOS) Plan(op Operation, s Service, hooks ...Hook) Plan {
-	return operationPlan(op, m.Command(op, s), hooks...)
-}
-func (m NixOS) Intent(owner string, service Service, action string, attrs map[string]string) resource.Intent {
 	return serviceIntent(owner, m.ArtifactKind(), m.ServiceName(service), action, m.ApplyWith(), attrs)
 }
 

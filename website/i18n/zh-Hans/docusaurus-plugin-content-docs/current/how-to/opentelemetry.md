@@ -73,20 +73,6 @@ sudo systemctl restart routerd.service \
                        'routerd-healthcheck@*.service'
 ```
 
-### NixOS
-
-在 routerd 的 NixOS 模块生成的各 systemd service 的 environment 中加入变量。
-
-```nix
-systemd.services.routerd.environment = {
-  OTEL_EXPORTER_OTLP_ENDPOINT = "http://collector.lan:4317";
-  OTEL_EXPORTER_OTLP_INSECURE = "true";
-  OTEL_SERVICE_NAMESPACE      = "routerd";
-};
-```
-
-routerd 生成的守护进程 service 也请同样设置。
-
 ### FreeBSD
 
 请将变量加入 routerd 生成的 rc.d 包装程序的 `command_args` 环境区块中（若包装程序支持，也可使用 `routerd_envfile=...`）。
@@ -141,7 +127,7 @@ otelcol-contrib --config /tmp/otel-test.yaml
 
 ## 声明式 Telemetry 资源
 
-使用 `Telemetry` 可以在路由器的 YAML 中指定 OTLP 端点。routerd 会将对应的 OpenTelemetry 环境变量注入至生成的 systemd、NixOS 及 FreeBSD rc.d unit 中。收集器需在外部另行准备，routerd 只负责配置导出器。
+使用 `Telemetry` 可以在路由器的 YAML 中指定 OTLP 端点。routerd 会将对应的 OpenTelemetry 环境变量注入至生成的 systemd 及 FreeBSD rc.d unit 中。收集器需在外部另行准备，routerd 只负责配置导出器。
 
 ```yaml
 apiVersion: observability.routerd.net/v1alpha1

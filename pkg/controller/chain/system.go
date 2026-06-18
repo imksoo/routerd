@@ -57,24 +57,6 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 		if osName == "" {
 			osName = networkAdoptionOSName(runtime.GOOS)
 		}
-		if osName == "nixos" {
-			ifname := strings.TrimSpace(spec.IfName)
-			if ifname == "" && spec.Interface != "" {
-				ifname = interfaceIfName(c.Router, spec.Interface)
-			}
-			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NetworkAdoption", resource.Metadata.Name, map[string]any{
-				"phase":     "Applied",
-				"reason":    "NixOSDeclarativeNetworkConfig",
-				"os":        osName,
-				"ifname":    ifname,
-				"changed":   false,
-				"dryRun":    c.DryRun,
-				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
-			}); err != nil {
-				return err
-			}
-			continue
-		}
 		if !features.HasSystemd {
 			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NetworkAdoption", resource.Metadata.Name, map[string]any{
 				"phase":     "Pending",

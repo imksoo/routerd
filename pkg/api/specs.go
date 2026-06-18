@@ -297,8 +297,8 @@ type SystemdUnitSpec struct {
 }
 
 type OSPackageSetSpec struct {
-	OS       string   `yaml:"os" json:"os" jsonschema:"enum=ubuntu,enum=debian,enum=alpine,enum=fedora,enum=rhel,enum=rocky,enum=almalinux,enum=nixos,enum=freebsd"`
-	Manager  string   `yaml:"manager,omitempty" json:"manager,omitempty" jsonschema:"enum=,enum=apt,enum=apk,enum=dnf,enum=nix,enum=pkg"`
+	OS       string   `yaml:"os" json:"os" jsonschema:"enum=ubuntu,enum=debian,enum=fedora,enum=rhel,enum=rocky,enum=almalinux,enum=freebsd"`
+	Manager  string   `yaml:"manager,omitempty" json:"manager,omitempty" jsonschema:"enum=,enum=apt,enum=dnf,enum=pkg"`
 	Names    []string `yaml:"names" json:"names"`
 	Optional bool     `yaml:"optional,omitempty" json:"optional,omitempty"`
 }
@@ -347,52 +347,6 @@ type ManagementAccessSpec struct {
 	Interfaces             []string `yaml:"interfaces" json:"interfaces" jsonschema:"title=Management interfaces"`
 	AllowSourceCIDRs       []string `yaml:"allowSourceCIDRs,omitempty" json:"allowSourceCIDRs,omitempty"`
 	RequireWebConsoleBound *bool    `yaml:"requireWebConsoleBound,omitempty" json:"requireWebConsoleBound,omitempty"`
-}
-
-type NixOSHostSpec struct {
-	Hostname              string                  `yaml:"hostname,omitempty" json:"hostname,omitempty"`
-	Domain                string                  `yaml:"domain,omitempty" json:"domain,omitempty"`
-	StateVersion          string                  `yaml:"stateVersion,omitempty" json:"stateVersion,omitempty"`
-	Boot                  NixOSBootSpec           `yaml:"boot,omitempty" json:"boot,omitempty"`
-	Users                 []NixOSUserSpec         `yaml:"users,omitempty" json:"users,omitempty"`
-	SSH                   NixOSSSHSpec            `yaml:"ssh,omitempty" json:"ssh,omitempty"`
-	Sudo                  NixOSSudoSpec           `yaml:"sudo,omitempty" json:"sudo,omitempty"`
-	RouterdService        NixOSRouterdServiceSpec `yaml:"routerdService,omitempty" json:"routerdService,omitempty"`
-	DebugSystemPackages   bool                    `yaml:"debugSystemPackages,omitempty" json:"debugSystemPackages,omitempty"`
-	AdditionalPackages    []string                `yaml:"additionalPackages,omitempty" json:"additionalPackages,omitempty"`
-	AdditionalServicePath []string                `yaml:"additionalServicePath,omitempty" json:"additionalServicePath,omitempty"`
-}
-
-type NixOSBootSpec struct {
-	Loader     string `yaml:"loader,omitempty" json:"loader,omitempty" jsonschema:"enum=,enum=grub"`
-	GrubDevice string `yaml:"grubDevice,omitempty" json:"grubDevice,omitempty"`
-}
-
-type NixOSUserSpec struct {
-	Name              string   `yaml:"name" json:"name"`
-	Description       string   `yaml:"description,omitempty" json:"description,omitempty"`
-	Groups            []string `yaml:"groups,omitempty" json:"groups,omitempty"`
-	InitialPassword   string   `yaml:"initialPassword,omitempty" json:"initialPassword,omitempty"`
-	SSHAuthorizedKeys []string `yaml:"sshAuthorizedKeys,omitempty" json:"sshAuthorizedKeys,omitempty"`
-}
-
-type NixOSSSHSpec struct {
-	Enabled                *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	PasswordAuthentication *bool  `yaml:"passwordAuthentication,omitempty" json:"passwordAuthentication,omitempty"`
-	PermitRootLogin        string `yaml:"permitRootLogin,omitempty" json:"permitRootLogin,omitempty" jsonschema:"enum=,enum=no,enum=yes,enum=prohibit-password,enum=forced-commands-only"`
-}
-
-type NixOSSudoSpec struct {
-	WheelNeedsPassword *bool `yaml:"wheelNeedsPassword,omitempty" json:"wheelNeedsPassword,omitempty"`
-}
-
-type NixOSRouterdServiceSpec struct {
-	Enabled       *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	BinaryPath    string   `yaml:"binaryPath,omitempty" json:"binaryPath,omitempty"`
-	ConfigFile    string   `yaml:"configFile,omitempty" json:"configFile,omitempty"`
-	Socket        string   `yaml:"socket,omitempty" json:"socket,omitempty"`
-	ApplyInterval string   `yaml:"applyInterval,omitempty" json:"applyInterval,omitempty"`
-	ExtraFlags    []string `yaml:"extraFlags,omitempty" json:"extraFlags,omitempty"`
 }
 
 type InventorySpec struct{}
@@ -2453,10 +2407,6 @@ func (r Resource) WebConsoleSpec() (WebConsoleSpec, error) {
 
 func (r Resource) ManagementAccessSpec() (ManagementAccessSpec, error) {
 	return specAs[ManagementAccessSpec](r)
-}
-
-func (r Resource) NixOSHostSpec() (NixOSHostSpec, error) {
-	return specAs[NixOSHostSpec](r)
 }
 
 func (r Resource) InventorySpec() (InventorySpec, error) {

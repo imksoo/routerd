@@ -4,7 +4,7 @@ title: 設計備忘錄
 
 # 設計備忘錄
 
-![Diagram showing routerd design notes covering daemon contracts, DHCPv6-PD ownership, honest LAN advertisement, DS-Lite AFTR resolution, event coordination, reusable building blocks, and OpenRC rendering](/img/diagrams/design-notes.png)
+![Diagram showing routerd design notes covering daemon contracts, DHCPv6-PD ownership, honest LAN advertisement, DS-Lite AFTR resolution, event coordination, and reusable building blocks](/img/diagrams/design-notes.png)
 
 本文件記錄 routerd 中值得保留的設計決策。
 內容僅保留現行程式碼所遵循的原則，以及未來變更時應恪守的方針，而非過往試錯的時序日誌。
@@ -71,31 +71,7 @@ WireGuard 與 VXLAN-over-WireGuard 已確認可在支援的 OS 之間互通。
 WireGuard、Tailscale、IPsec，以及未來的 SoftEther 整合，分別以獨立的 Kind 新增。
 原因是各自的狀態機差異甚大，若強行合併為多態的單一 Kind，將喪失語義清晰性。
 
-## 7. OpenRC 服務產生（render）
-
-Alpine 使用 OpenRC 而非 systemd。
-OpenRC 支援先以 renderer 而非 applier 的形式開始實作。
-`routerd render alpine --out-dir` 會輸出可供審閱的 init script 及相關設定，讓使用者在 routerd 變更 OpenRC 狀態之前，能先確認已部署主機的行為。
-
-初期支援的 OpenRC 範圍刻意保持精簡：
-
-- 從明確的 `generated service artifacts` 資源轉換為 OpenRC script
-- 自動產生 `routerd-healthcheck` script
-- 當 DHCP 或 RA 資源需要 dnsmasq 時，自動產生受管理的 dnsmasq script
-- 自動產生 DHCPv4 / DHCPv6 客戶端、防火牆日誌記錄、PPPoE、Tailscale 的 script
-- DNS 解析器 script，但在解析器的執行時期設定能夠在控制器循環之外實體化之前，不啟用或啟動
-
-這樣做是為了避免陷入相容性死胡同。
-API 形式暫時維持 `generated service artifacts`，但只有明確具備 init script 語義的欄位才會轉換為 OpenRC，具體包括 `ExecStart`、`ExecStartPre`、environment、working directory、user/group、runtime/state/log directory。
-systemd sandboxing、networkd、resolved、timesyncd 的語義，不在 OpenRC 上模擬。
-
-套用時的啟動以 `HasOpenRC` 進行分支。
-僅在內容或模式變更時才寫入 script；透過 `rc-update show default` 確認註冊狀態後，再執行 add / del；透過 `rc-service <name> status` 確認後，再執行 start / restart / stop。
-與 systemd 端相同，若期望狀態與檔案均未變更，不重複執行服務管理員指令。
-
-下一個實作階段，是將 Alpine 已部署主機的煙霧測試套件納入一般 VM job。
-
-## 8. 待解事項
+## 7. 待解事項
 
 - 具狀態防火牆的正式生產運用。`FirewallRule` 支援 ICMP type 比對、
   多個埠、nftables rate limit、每個來源的連線數限制。

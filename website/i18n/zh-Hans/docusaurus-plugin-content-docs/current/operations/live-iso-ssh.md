@@ -114,4 +114,3 @@ ss -tlnp | grep :22
 ## 相关内容
 
 - [USB persistence](./usb-persistence) — config 磁盘的布局和设备检测
-- [Alpine / OpenRC 部署](./alpine-deployment) — Live ISO 的启动参数

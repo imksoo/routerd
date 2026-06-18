@@ -16,14 +16,12 @@ const (
 
 type IPv6PDClientContext struct {
 	OS      string
-	NixOS   bool
 	Client  string
 	Profile string
 }
 
 type IPv6PDKnownNGCombination struct {
 	OS      string
-	NixOS   *bool
 	Client  string
 	Profile string
 	Reason  string
@@ -65,7 +63,7 @@ func ValidIPv6PDProfile(profile string) bool {
 	}
 }
 
-func EffectiveIPv6PDClient(osName string, nixOS bool, profile, configured string) string {
+func EffectiveIPv6PDClient(osName, profile, configured string) string {
 	if configured != "" {
 		return configured
 	}
@@ -76,9 +74,6 @@ func MatchKnownIPv6PDNGCombinations(ctx IPv6PDClientContext) []IPv6PDKnownNGComb
 	var matches []IPv6PDKnownNGCombination
 	for _, item := range KnownIPv6PDNGCombinations {
 		if item.OS != "" && !strings.EqualFold(item.OS, ctx.OS) {
-			continue
-		}
-		if item.NixOS != nil && *item.NixOS != ctx.NixOS {
 			continue
 		}
 		if item.Client != "" && item.Client != ctx.Client {

@@ -2,10 +2,7 @@
 
 package platform
 
-import (
-	"os"
-	"strings"
-)
+import "strings"
 
 // OS identifies the host operating system family routerd is running on.
 type OS string
@@ -19,7 +16,7 @@ const (
 // Defaults groups OS-specific filesystem locations used by routerd.
 //
 // Path values are intentionally absolute so they can be embedded in
-// generated systemd units, rc.d scripts, NixOS modules, packaging
+// generated systemd units, rc.d scripts, packaging
 // manifests, and command-line flag defaults.
 type Defaults struct {
 	OS OS
@@ -42,10 +39,6 @@ type Defaults struct {
 	// RCScriptDir is where the FreeBSD rc.d script is installed.
 	// Empty on platforms that do not use rc.d.
 	RCScriptDir string
-	// OpenRCScriptDir is where OpenRC init scripts are installed.
-	// Empty on platforms that do not use OpenRC.
-	OpenRCScriptDir string
-
 	// NetplanFile is the routerd-managed netplan drop-in path.
 	// Empty on platforms that do not use netplan.
 	NetplanFile string
@@ -61,8 +54,8 @@ type Defaults struct {
 
 	// DnsmasqConfigFile is the routerd-managed dnsmasq config.
 	DnsmasqConfigFile string
-	// DnsmasqServiceFile is the routerd-managed dnsmasq service unit,
-	// rc.d script, or OpenRC init script.
+	// DnsmasqServiceFile is the routerd-managed dnsmasq service unit
+	// or rc.d script.
 	DnsmasqServiceFile string
 	// FreeBSDDHClientConfigFile is the dhclient.conf path on FreeBSD.
 	FreeBSDDHClientConfigFile string
@@ -110,23 +103,6 @@ type Features struct {
 	HasResolvectl bool
 	// HasRCD indicates the FreeBSD rc.d service framework.
 	HasRCD bool
-	// HasOpenRC indicates an OpenRC-managed Linux host such as Alpine.
-	HasOpenRC bool
-}
-
-func osReleaseID() string {
-	data, err := os.ReadFile("/etc/os-release")
-	if err != nil {
-		return ""
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		key, value, ok := strings.Cut(line, "=")
-		if !ok || key != "ID" {
-			continue
-		}
-		return strings.Trim(value, `"`)
-	}
-	return ""
 }
 
 // Current returns the defaults and features for the OS this binary was
@@ -139,19 +115,6 @@ func Current() (Defaults, Features) {
 // CurrentOS returns the OS identifier for the build.
 func CurrentOS() OS {
 	return currentDefaults().OS
-}
-
-// IsNixOSHost reports whether the running Linux host is NixOS.
-//
-// NixOS is still a Linux platform from routerd's point of view, but service
-// activation is owned by nixos-rebuild instead of direct systemd unit writes.
-func IsNixOSHost() bool {
-	return osReleaseID() == "nixos"
-}
-
-// IsAlpineHost reports whether the running Linux host is Alpine Linux.
-func IsAlpineHost() bool {
-	return osReleaseID() == "alpine"
 }
 
 // StatusFile returns the default status file path.
@@ -199,10 +162,12 @@ func (d Defaults) RuntimeDnsmasqLeaseFile() string {
 	return strings.TrimRight(d.RuntimeDir, "/") + "/dnsmasq.leases"
 }
 
-// DnsmasqLeaseCandidates returns the managed dnsmasq lease path.
+// DnsmasqLeaseCandidates returns the dnsmasq lease paths readers should try.
 func DnsmasqLeaseCandidates(d Defaults, f Features) []string {
-	_ = f
-	return []string{d.DnsmasqLeaseFile()}
+	if f.HasRCD {
+		return []string{d.DnsmasqLeaseFile(), d.RuntimeDnsmasqLeaseFile(), "/var/lib/misc/dnsmasq.leases"}
+	}
+	return []string{d.DnsmasqLeaseFile(), d.RuntimeDnsmasqLeaseFile(), "/var/lib/misc/dnsmasq.leases"}
 }
 
 // ConfigFile returns the default router.yaml path.

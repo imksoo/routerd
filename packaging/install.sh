@@ -99,22 +99,6 @@ os_id()
     esac
 }
 
-is_nixos_host()
-{
-    [ "${os}" = "Linux" ] || return 1
-    [ -e /etc/NIXOS ] && return 0
-    if [ -r /etc/os-release ] && grep -Eq '(^ID=nixos$|^ID="nixos"$)' /etc/os-release; then
-        return 0
-    fi
-    [ -d /nix/store ] && [ -e /run/current-system ]
-}
-
-is_openrc_host()
-{
-    [ "${os}" = "Linux" ] || return 1
-    command -v rc-service >/dev/null 2>&1 && return 0
-    [ -x /sbin/openrc ]
-}
 
 safe_name()
 {
@@ -227,7 +211,6 @@ payload_install_kb()
     [ -d libexec ] && set -- "$@" libexec
     [ -d etc ] && set -- "$@" etc
     [ -d systemd ] && set -- "$@" systemd
-    [ -d openrc ] && set -- "$@" openrc
     [ -d rc.d ] && set -- "$@" rc.d
     du -sk "$@" 2>/dev/null | awk '{ total += $1 } END { print total + 0 }'
 }
@@ -766,68 +749,6 @@ restart_stale_routerd_helper_systemd_units_after_upgrade()
     done
 }
 
-restart_stale_openrc_routerd_helpers_after_upgrade()
-{
-    [ "${mode}" = "upgrade" ] || return 0
-    [ "${restart_service}" -eq 1 ] || return 0
-    [ "${manage_host_service}" -eq 1 ] || return 0
-    is_openrc_host || return 0
-    proc_dir=${ROUTERD_INSTALL_PROC_DIR:-/proc}
-    [ -d "${proc_dir}" ] || return 0
-
-    found=0
-    for proc in "${proc_dir}"/[0-9]*; do
-        [ -d "${proc}" ] || continue
-        pid=$(basename "${proc}")
-        case "${pid}" in
-            ""|*[!0-9]*)
-                continue
-                ;;
-        esac
-        exe=$(readlink "${proc}/exe" 2>/dev/null || true)
-        case "${exe}" in
-            *" (deleted)")
-                deleted_target=${exe% (deleted)}
-                ;;
-            *)
-                continue
-                ;;
-        esac
-        case "${deleted_target}" in
-            "${bindir}"/routerd-*)
-                ;;
-            *)
-                continue
-                ;;
-        esac
-        found=1
-        if [ "${dry_run}" -eq 1 ]; then
-            echo "dry-run: kill stale OpenRC routerd helper pid ${pid} (${deleted_target})"
-            continue
-        fi
-        echo "restarting stale OpenRC routerd helper pid ${pid}: ${deleted_target}"
-        if kill -TERM "${pid}" 2>/dev/null; then
-            i=0
-            while [ "${i}" -lt 20 ] && [ -d "${proc}" ]; do
-                sleep 0.5
-                i=$((i + 1))
-            done
-            if [ -d "${proc}" ]; then
-                echo "warning: stale OpenRC routerd helper pid ${pid} did not stop after TERM; sending KILL" >&2
-                kill -KILL "${pid}" 2>/dev/null || true
-            fi
-        else
-            echo "warning: failed to signal stale OpenRC routerd helper pid ${pid}" >&2
-        fi
-    done
-    if [ "${found}" -eq 1 ] && [ "${dry_run}" -eq 0 ]; then
-        # routerd owns these helper daemons on OpenRC/Live ISO. Once the stale
-        # process exits, the supervisor loop recreates it from the newly
-        # installed binary when its socket disappears.
-        sleep 2
-    fi
-}
-
 routerd_proc_cmdline()
 {
     proc=$1
@@ -849,73 +770,6 @@ routerd_current_service_pid()
     printf '%s\n' "${pid}"
 }
 
-restart_stale_openrc_routerd_serve_after_upgrade()
-{
-    [ "${mode}" = "upgrade" ] || return 0
-    [ "${restart_service}" -eq 1 ] || return 0
-    [ "${manage_host_service}" -eq 1 ] || return 0
-    is_openrc_host || return 0
-    proc_dir=${ROUTERD_INSTALL_PROC_DIR:-/proc}
-    [ -d "${proc_dir}" ] || return 0
-
-    current_pids=" $(routerd_current_service_pid | tr '\n' ' ') "
-    found=0
-    for proc in "${proc_dir}"/[0-9]*; do
-        [ -d "${proc}" ] || continue
-        pid=$(basename "${proc}")
-        case "${pid}" in
-            ""|*[!0-9]*)
-                continue
-                ;;
-        esac
-        case "${current_pids}" in
-            *" ${pid} "*)
-                continue
-                ;;
-        esac
-        exe=$(readlink "${proc}/exe" 2>/dev/null || true)
-        case "${exe}" in
-            *" (deleted)")
-                deleted_target=${exe% (deleted)}
-                ;;
-            *)
-                continue
-                ;;
-        esac
-        [ "${deleted_target}" = "${bindir}/routerd" ] || continue
-        cmdline=$(routerd_proc_cmdline "${proc}" || true)
-        case " ${cmdline} " in
-            *" routerd serve "*|*" ${bindir}/routerd serve "*)
-                ;;
-            *)
-                continue
-                ;;
-        esac
-        found=1
-        if [ "${dry_run}" -eq 1 ]; then
-            echo "dry-run: kill stale OpenRC routerd serve pid ${pid} (${deleted_target})"
-            continue
-        fi
-        echo "restarting stale OpenRC routerd serve pid ${pid}: ${deleted_target}"
-        if kill -TERM "${pid}" 2>/dev/null; then
-            i=0
-            while [ "${i}" -lt 20 ] && [ -d "${proc}" ]; do
-                sleep 0.5
-                i=$((i + 1))
-            done
-            if [ -d "${proc}" ]; then
-                echo "warning: stale OpenRC routerd serve pid ${pid} did not stop after TERM; sending KILL" >&2
-                kill -KILL "${pid}" 2>/dev/null || true
-            fi
-        else
-            echo "warning: failed to signal stale OpenRC routerd serve pid ${pid}" >&2
-        fi
-    done
-    if [ "${found}" -eq 1 ] && [ "${dry_run}" -eq 0 ]; then
-        sleep 2
-    fi
-}
-
 detect_package_manager()
 {
     if [ -n "${ROUTERD_INSTALL_PACKAGE_MANAGER:-}" ]; then
@@ -926,14 +780,10 @@ detect_package_manager()
         Linux)
             if command -v apt-get >/dev/null 2>&1; then
                 echo apt
-            elif command -v apk >/dev/null 2>&1; then
-                echo apk
             elif command -v dnf >/dev/null 2>&1; then
                 echo dnf
             elif command -v pacman >/dev/null 2>&1; then
                 echo pacman
-            elif command -v nix-env >/dev/null 2>&1; then
-                echo nix-env
             else
                 echo none
             fi
@@ -961,17 +811,11 @@ dependency_packages()
         dnf)
             packages="ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod radvd strongswan iptables keepalived openssh-server"
             ;;
-        apk)
-            packages="alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables util-linux e2fsprogs dosfstools exfatprogs keepalived qemu-guest-agent openssh"
-            ;;
         pacman)
             packages="ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables keepalived openssh"
             ;;
         pkg)
             packages="ca_root_nss curl dnsmasq wireguard-tools mpd5 bind-tools tcpdump jq chrony strongswan"
-            ;;
-        nix-env)
-            packages=""
             ;;
         *)
             packages=""
@@ -985,7 +829,7 @@ dependency_packages()
             apt)
                 packages="${packages} libndpi-bin"
                 ;;
-            dnf|pacman|apk|pkg)
+            dnf|pacman|pkg)
                 packages="${packages} ndpi"
                 ;;
         esac
@@ -997,10 +841,7 @@ dependency_commands()
 {
     manager=$(detect_package_manager)
     case "${manager}" in
-        apk)
-            commands="curl dnsmasq nft wg wg-quick chronyc dig tcpdump crond jq pppd conntrack ip ping tracepath modprobe radvd swanctl iptables keepalived lbu lsblk blkid mkfs.ext4 mkfs.vfat fsck.exfat"
-            ;;
-        apt|dnf|pacman|nix-env)
+        apt|dnf|pacman)
             commands="curl dnsmasq nft wg wg-quick chronyc dig tcpdump cron jq pppd conntrack ip ping tracepath modprobe radvd swanctl iptables keepalived"
             ;;
         pkg)
@@ -1043,8 +884,6 @@ print_dependencies()
         for package in ${packages}; do
             echo "    - ${package}"
         done
-    elif [ "${manager}" = "nix-env" ]; then
-        echo "  packages: declare these tools in NixOS configuration or routerd Package resources"
     else
         echo "  packages: unsupported package manager; install required commands manually"
     fi
@@ -1074,11 +913,7 @@ run_dependency_install()
         return 0
     fi
     if [ -z "${packages}" ]; then
-        if [ "${manager}" = "nix-env" ]; then
-            echo "warning: NixOS detected; declare dependencies in the NixOS configuration or routerd Package resources" >&2
-        else
-            echo "warning: no supported package manager detected; install dependencies manually" >&2
-        fi
+        echo "warning: no supported package manager detected; install dependencies manually" >&2
         verify_dependencies
         return 0
     fi
@@ -1100,23 +935,6 @@ run_dependency_install()
             else
                 # shellcheck disable=SC2086
                 dnf install -y ${packages}
-            fi
-            ;;
-        apk)
-            if [ "${dry_run}" -eq 1 ]; then
-                echo "dry-run: ensure Alpine main/community repositories"
-                echo "dry-run: apk update"
-                echo "dry-run: apk add --no-cache ${packages}"
-            else
-                if ! grep -q '^https://dl-cdn.alpinelinux.org/alpine/latest-stable/main$' /etc/apk/repositories 2>/dev/null; then
-                    echo "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main" >> /etc/apk/repositories
-                fi
-                if ! grep -q '^https://dl-cdn.alpinelinux.org/alpine/latest-stable/community$' /etc/apk/repositories 2>/dev/null; then
-                    echo "https://dl-cdn.alpinelinux.org/alpine/latest-stable/community" >> /etc/apk/repositories
-                fi
-                apk update
-                # shellcheck disable=SC2086
-                apk add --no-cache ${packages}
             fi
             ;;
         pacman)
@@ -1762,7 +1580,7 @@ maybe_start_live_routerd()
     if [ -S "${socket_path}" ]; then
         return 0
     fi
-    if [ ! -f /media/cdrom/routerd.apkovl.tar.gz ]; then
+    if [ ! -d /cdrom/routerd ]; then
         return 0
     fi
     if [ ! -x "${routerd_bin}" ]; then
@@ -2055,15 +1873,10 @@ fi
 bindir="${prefix}/sbin"
 sysconfdir="${prefix}/etc/routerd"
 systemd_system_dir=${ROUTERD_INSTALL_SYSTEMD_SYSTEM_DIR:-/etc/systemd/system}
-openrc_init_dir=${ROUTERD_INSTALL_OPENRC_INIT_DIR:-/etc/init.d}
 rcd_dir=${ROUTERD_INSTALL_RCD_DIR:-${prefix}/etc/rc.d}
 if [ "${prefix}" != "/usr/local" ]; then
     manage_host_service=0
     echo "non-default prefix ${prefix}; skipping host service manager"
-fi
-if is_nixos_host; then
-    manage_host_service=0
-    echo "NixOS detected; skipping host service manager"
 fi
 if [ "${ROUTERD_INSTALL_FORCE_SERVICE_MANAGER:-0}" = "1" ]; then
     manage_host_service=1
@@ -2092,7 +1905,7 @@ fi
 
 if [ ! -x bin/routerd ]; then
     echo "install.sh: required payload bin/routerd not found in current directory ($(pwd))" >&2
-    echo "install.sh: extract the routerd release archive and run install.sh from inside the directory containing bin/, etc/, systemd/, openrc/, ..." >&2
+    echo "install.sh: extract the routerd release archive and run install.sh from inside the directory containing bin/, etc/, systemd//, ..." >&2
     echo "install.sh: do NOT run as 'cd <other-dir> && ./<release>/install.sh' — that leaves cwd outside the payload tree and every 'bin/*' glob would be empty." >&2
     exit 2
 fi
@@ -2123,8 +1936,6 @@ ensure_install_capacity
 case "${os}" in
     Linux)
         if [ "${manage_host_service}" -eq 1 ] && command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet routerd.service; then
-            service_active=1
-        elif [ "${manage_host_service}" -eq 1 ] && is_openrc_host && command -v rc-service >/dev/null 2>&1 && rc-service routerd status >/dev/null 2>&1; then
             service_active=1
         fi
         ;;
@@ -2221,53 +2032,7 @@ case "${os}" in
                     restart_stale_routerd_helper_systemd_units_after_upgrade
                 fi
             fi
-        fi
-        if [ "${manage_host_service}" -eq 1 ] && [ -d openrc ] && is_openrc_host; then
-            if [ "${dry_run}" -eq 1 ]; then
-                echo "dry-run: install -d -m 0755 ${openrc_init_dir}"
-            else
-                install -d -m 0755 "${openrc_init_dir}"
-            fi
-            for script in openrc/*; do
-                [ -f "${script}" ] || continue
-                script_name=$(basename "${script}")
-                target_script="${openrc_init_dir}/${script_name}"
-                if [ "${script_name}" = "routerd" ] && routerd_script_calls_removed_check "${target_script}"; then
-                    echo "warning: replacing legacy routerd OpenRC init script with removed routerd check: ${target_script}" >&2
-                fi
-                atomic_install 0755 "${script}" "${target_script}"
-            done
-            if [ "${enable_service}" -eq 1 ] && command -v rc-update >/dev/null 2>&1; then
-                if [ "${dry_run}" -eq 1 ]; then
-                    echo "dry-run: rc-update add routerd default"
-                else
-                    rc-update add routerd default
-                fi
-            fi
-            restart_stale_openrc_routerd_serve_after_upgrade
-            if [ "${start_service}" -eq 1 ] || { [ "${service_active}" -eq 1 ] && [ "${restart_service}" -eq 1 ]; }; then
-                if command -v rc-service >/dev/null 2>&1; then
-                    if [ "${service_active}" -eq 1 ]; then
-                        if [ "${dry_run}" -eq 1 ]; then
-                            echo "dry-run: rc-service --nodeps routerd restart"
-                        else
-                            rc-service --nodeps routerd restart
-                            service_touched=1
-                        fi
-                    else
-                        if [ "${dry_run}" -eq 1 ]; then
-                            echo "dry-run: rc-service --nodeps routerd start"
-                        else
-                            rc-service --nodeps routerd start
-                            service_touched=1
-                        fi
-                    fi
-                fi
-            fi
-            restart_stale_openrc_routerd_serve_after_upgrade
-            restart_stale_openrc_routerd_helpers_after_upgrade
-        fi
-        ;;
+        fi        ;;
     FreeBSD)
         if [ "${manage_host_service}" -eq 1 ] && [ -d rc.d ]; then
             if [ "${dry_run}" -eq 1 ]; then

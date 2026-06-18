@@ -4,7 +4,7 @@ title: 支持的平台
 
 # 支持的平台
 
-![Diagram showing supported platforms with Linux systemd primary integration, Alpine OpenRC live ISO support, NixOS module activation, FreeBSD rc.d and pf groundwork, and pkg/platform feature-gated implementation rules](/img/diagrams/platforms.png)
+![Diagram showing supported platforms with Linux systemd primary integration, FreeBSD rc.d and pf groundwork, and pkg/platform feature-gated implementation rules](/img/diagrams/platforms.png)
 
 routerd 以跨 OS 为前提设计。
 各平台所使用的主机端机制因 OS 而异。
@@ -16,7 +16,7 @@ routerd 以跨 OS 为前提设计。
 以使用 systemd 的 Linux 为主要目标。
 发布安装程序的默认安装位置为 `/usr/local` 之下。
 展开 Linux 用的发布归档文件后，执行 `sudo ./install.sh`。
-安装程序可通过 `apt-get`、`dnf`、`apk`、`pacman` 之一安装运行时软件包。
+安装程序可通过 `apt-get`、`dnf`、`pacman` 之一安装运行时软件包。
 
 routerd 在 Linux 上使用的 OS 功能如下。
 
@@ -81,84 +81,6 @@ network:
 routerd 会作为 systemd-networkd drop-in 推导出 `IPv6AcceptRA=yes` 与
 `[IPv6AcceptRA] DHCPv6Client=no`，因此可在接受 RA 的同时停用 OS 侧的 DHCPv6 client。
 
-## Alpine Linux
-
-Alpine 是 Live ISO 与最小配置安装主机的 Linux 目标。
-目前尚未达到与 Ubuntu 同等的支持水准。
-routerd 在可用范围内使用 Linux 的 data plane 工具，但服务启用方面仍有尚待解决的 OpenRC 课题。
-
-已实现的项目如下。
-
-- Alpine 的 Live ISO 启动与 USB 持久化
-- `install.sh` 通过 `apk` 安装依赖软件包
-- `pkg/platform` 中的 Alpine 检测与 `HasOpenRC`
-- `Package` 资源的 `os: alpine` / `manager: apk`
-- Alpine 的 `install.sh --list-deps` 以及最小限度的 `Package` validate / plan 路径的 CI smoke coverage
-- `routerd render alpine --out-dir` 生成 OpenRC script 与 dnsmasq 配置
-- 明确的 `generated service artifacts`、受管理的 dnsmasq、`routerd-healthcheck`、DHCPv4 / DHCPv6 client、DNS resolver、防火墙日志记录器、PPPoE、Tailscale 的 OpenRC script 生成（render）
-- 应用时通过 `rc-update` / `rc-service` 启用；状态未变更时不重复执行 enable / start / restart 的确认
-- 针对已安装 Alpine guest 的 `make alpine-vm-smoke` 测试框架
-- Alpine 用的 nftables、conntrack、iproute2、dnsmasq、PPP、WireGuard、strongSwan、radvd、诊断软件包名称整理
-
-达到与 Ubuntu 同等水准前的待办事项如下。
-
-- Live ISO bootstrap 以外的已安装主机网络所有权
-- 将 Alpine 已安装主机的 smoke 测试框架升级为一般 VM CI 任务，持续确认 OpenRC 启用与实际 package-manager 命令路径
-- 针对仍未对应 OpenRC、仅支持 systemd 的资源补充详细文档
-
-| 分类 | 软件包 |
-| --- | --- |
-| Runtime | `dnsmasq`, `nftables`, `conntrack-tools`, `iproute2`, `ppp`, `ppp-pppoe`, `wireguard-tools`, `strongswan`, `radvd` |
-| Diagnostics | `bind-tools`, `iputils`, `iputils-tracepath`, `tcpdump` |
-| OS 控制 | `alpine-conf`, `kmod`, `util-linux`, `e2fsprogs`, `dosfstools`, `exfatprogs` |
-
-## NixOS
-
-NixOS 使用与 Ubuntu 相同的 routerd 资源模型。
-但应用方式经由 NixOS 模块。
-不写临时性的 systemd unit，而是生成 `/etc/nixos/routerd-generated.nix`，
-再通过 `nixos-rebuild test` / `nixos-rebuild switch` 启用。
-
-已实现的项目如下。
-
-- NixOS 的启用、重新启动后恢复、DHCPv6-PD、dnsmasq 的 LAN 服务、DNS resolver、DS-Lite、nftables 的 NAT 与防火墙、HealthCheck、Web 管理界面的世代差异、OpenTelemetry 传送的实机验证
-- `routerd-dhcpv6-client` 的 systemd unit 生成
-- `routerd-dhcpv4-client` 的 systemd unit 生成
-- `routerd-pppoe-client` 的 systemd unit 生成
-- `Package` override、`SysctlProfile`、衍生主机运行时产物、`generated service artifacts` 的 NixOS 模块生成
-- `nixos-rebuild test` / `nixos-rebuild switch` 集成
-- `nixos-rebuild switch` 失败时尝试 `nixos-rebuild switch --rollback`
-- `nixos-rebuild` 前后的世代（generation）记录
-- DHCPv6-PD 到达 `Bound`
-- DHCP 或 RA 资源需要 dnsmasq 时生成 `routerd-dnsmasq` 服务
-- `routerd-dnsmasq` 服务中使用 NixOS 系统 profile 内的绝对路径，并指定以 root 执行，以免在 systemd 保护配置下依赖 `PATH` 搜索或降权行为
-- DNS resolver、HealthCheck、防火墙日志记录器、Tailscale、DHCPv4 client、DHCPv6 client、PPPoE client 的服务生成
-- NAT、防火墙、策略路由、Path MTU 资源需要 nftables 时生成 `networking.nftables.enable = true`
-- WireGuard、Tailscale、VXLAN、systemd-networkd VRF 的生成
-- NixOS 原生网络声明无法表达的 Linux 运行时资源，由启用后的 `routerd.service` 进行调和（reconcile）
-
-在 NixOS 上，请将 routerd 所需的命令放入 `systemd.services.routerd.path`。
-`install.sh` 检测到 NixOS 时，不会执行 `nix-env`，只输出警告。
-NixOS 的软件包状态请以声明式管理。
-`Package` 资源若写了 `os: nixos`，routerd 不会在运行时安装软件包。
-`routerd render nixos` 会生成 `environment.systemPackages`。
-
-NixOS 启用后的清单如下。
-
-| 领域 | 当前拥有者 | 备注 |
-| --- | --- | --- |
-| 软件包与 routerd 服务路径 | 生成的 NixOS 模块 | `Package` 资源会对应至 `environment.systemPackages`。routerd 不调用 `nix-env`。 |
-| 辅助守护进程服务定义 | 生成的 NixOS 模块 | DHCPv4、DHCPv6、PPPoE、HealthCheck、防火墙日志记录器、Tailscale、dnsmasq 以 Nix 的 systemd 服务表示。 |
-| nftables 启用 | 生成的 NixOS 模块 | NAT、防火墙、策略路由、Path MTU 资源有需求时输出 `networking.nftables.enable = true`。 |
-| 仅运行时的网络变更 | 启用后的 `routerd.service` | 动态的 DS-Lite、临时性的路由判断、status 衍生的变更需要运行时的调和（reconcile）。 |
-| 旧运行时 dnsmasq unit 的清理 | 启用后的 `routerd.service` | 迁移时暂时保留，用于删除旧的 `/run/systemd/system/routerd-dnsmasq.service` 产物。已安装主机历经一个发布周期后删除。 |
-
-| 分类 | 软件包 |
-| --- | --- |
-| Runtime | `dnsmasq`, `nftables`, `conntrack-tools`, `iproute2`, `ppp`, `wireguard-tools`, `tailscale`, `strongswan`, `radvd` |
-| Diagnostics | `bind`, `iputils`, `tcpdump`, `traceroute`, `nettools` |
-| OS 控制 | `procps`, `systemd`, `kmod` |
-
 ## FreeBSD
 
 FreeBSD 同样使用与 Ubuntu 相同的 routerd 资源模型。
@@ -171,7 +93,7 @@ routerd 不使用 Linux 用的机制，而是将资源对应至 FreeBSD 的 `rc.
 已实现的项目如下。
 
 - DHCPv6-PD 守护进程与租约持久化
-- WireGuard 与 Linux / NixOS 的互通
+- WireGuard 与 Linux 的互通
 - VXLAN over WireGuard
 - 通过 `mpd5.conf`、`mpd_enable`、`mpd5` 服务重启实现 PPPoE
 - `Package` 通过 `pkg` 安装
@@ -227,15 +149,13 @@ dnsmasq 也会以 `dnsmasq --test` 确认配置后重新启动。
 
 ## Platform parity backlog
 
-Ubuntu、NixOS、FreeBSD、Alpine 相互比较时的已知差异。
+Ubuntu、FreeBSD 相互比较时的已知差异。
 
 | 领域 | 当前差异 | 待办事项 |
 | --- | --- | --- |
-| CI / runtime coverage | CI 在 Ubuntu 上执行 unit test 与 Linux static check。Alpine 有不依赖主机的安装程序依赖性 smoke、最小限度的 `Package` validate / plan coverage 及已安装主机的 smoke 测试框架，但 Alpine 的启用尚未成为一般 VM 任务。FreeBSD 在发布时进行 cross build，NixOS 的启用也尚未成为 VM 任务。 | 新增 FreeBSD VM、NixOS VM、Alpine VM 的 smoke 任务，涵盖 validate、plan、实际 package-manager 确认、服务启用、renderer 语法确认。 |
-| Alpine 的服务管理器 | Alpine 有明确的 `generated service artifacts`、受管理的 dnsmasq、`routerd-healthcheck`、DHCP client、DNS resolver、防火墙日志记录器、PPPoE、Tailscale 的 OpenRC 生成（render）。应用时的启用使用 `rc-update` / `rc-service`，状态未变更时避免重复执行 enable / start / restart。DNS resolver script 会生成，但在运行时配置实体化（materialize）加入前不执行 enable / start。 | 推进 OpenRC 用的 DNS resolver 运行时配置实体化（materialize）、已安装主机网络所有权的扩展、Alpine smoke 测试框架的 CI 升级。 |
-| NixOS 残留的命令式部分 | NixOS 生成模块，启用交由 `nixos-rebuild` 处理。仅运行时的网络变更与旧 dnsmasq unit 的清理残留于启用后的 `routerd.service`。此清理是为了第一个包含生成的 NixOS dnsmasq 服务拥有权的发布而刻意保留。 | 该发布周期后删除旧 dnsmasq 清理，对于 NixOS 原生声明可表达的部分减少启用后的调和（reconcile），并对剩余的仅运行时资源新增测试。 |
+| CI / runtime coverage | CI 在 Ubuntu 上执行 unit test 与 Linux static check。FreeBSD 在发布时进行 cross build。 | 新增 FreeBSD VM 的 smoke 任务，涵盖 validate、plan、实际 package-manager 确认、服务启用、renderer 语法确认。 |
 | FreeBSD 的功能例外 | `ClientPolicy` 依赖 nftables 的 Ethernet 来源地址 set，为 Linux 专用。 | 在找到可保留相同隔离语义的设计之前，明确拒绝。 |
-| 软件包 bootstrap | Ubuntu、Alpine、FreeBSD 可命令式安装软件包。NixOS 刻意生成软件包声明。schema、validation、示例、安装程序依赖性清单、CI smoke coverage 已更新至包含 `apk`。 | 对 `apt`、`apk`、`pkg`、Nix 声明的 schema、validation、安装程序软件包清单、示例、生成文档保持同步。 |
+| 软件包 bootstrap | Ubuntu、FreeBSD 可命令式安装软件包。 | 对 `apt`、`pkg` 的 schema、validation、安装程序软件包清单、示例、生成文档保持同步。 |
 
 ## OS 抽象化的实现方针
 

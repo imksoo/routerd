@@ -30,15 +30,6 @@ spec:
         - kmod
         - wireguard-tools
         - tailscale
-    - os: alpine
-      manager: apk
-      names:
-        - dnsmasq
-        - nftables
-        - conntrack-tools
-        - iproute2
-        - wireguard-tools
-        - tailscale
     - os: freebsd
       manager: pkg
       names:
@@ -116,10 +107,3 @@ network:
 请声明该 WAN 接口与 DHCPv6 / RA 的资源。
 routerd 会推导所需的 systemd-networkd drop-in，并避免 systemd-networkd DHCP 客户端产生竞争。
 
-在 Alpine / OpenRC 环境中，`routerd render alpine --out-dir <dir>` 可生成明确的已生成服务产物、
-受管的 dnsmasq、`routerd-healthcheck`、DHCP 客户端、DNS 解析器、防火墙记录器、PPPoE 及 Tailscale 的 OpenRC 脚本。
-应用时，脚本会放置至 `/etc/init.d`，并仅在与当前 OpenRC 状态有差异时才执行 `rc-update` 与 `rc-service`。
-自动生成的 DNS 解析器脚本，在控制器循环可实体化执行时配置之前，不会进行 enable 或 start。
-不会模拟 systemd 专有的行为。
-systemd-networkd / resolved 的 drop-in、systemd 沙箱字段、timesyncd 的管理权，
-在具备 Alpine 原生意义之前，于 OpenRC 上均视为不支持。

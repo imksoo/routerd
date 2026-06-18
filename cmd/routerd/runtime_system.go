@@ -102,18 +102,9 @@ func applyHostnames(router *api.Router) ([]string, error) {
 			}
 			return []string{hostname}, nil
 		}
-		if !isNixOSHost() {
-			return nil, err
-		}
-		if fallbackErr := runLogged("hostname", hostname); fallbackErr != nil {
-			return nil, fmt.Errorf("%w; fallback hostname failed: %v", err, fallbackErr)
-		}
+		return nil, err
 	}
 	return []string{hostname}, nil
-}
-
-func isNixOSHost() bool {
-	return platform.IsNixOSHost()
 }
 
 func runtimeDnsmasqServicePath(path string) string {
@@ -268,7 +259,7 @@ func linuxIPv4AddressPresent(ifname, address string) bool {
 }
 
 func applyLinuxPackages(router *api.Router) ([]string, error) {
-	if platformDefaults.OS != platform.OSLinux || isNixOSHost() {
+	if platformDefaults.OS != platform.OSLinux {
 		return nil, nil
 	}
 	osName := linuxPackageOSName()
@@ -290,7 +281,7 @@ func applyLinuxPackages(router *api.Router) ([]string, error) {
 			continue
 		}
 		manager := defaultString(set.Manager, defaultLinuxPackageManager(osName))
-		if manager != "apt" && manager != "apk" {
+		if manager != "apt" {
 			continue
 		}
 		for _, name := range set.Names {
@@ -305,10 +296,6 @@ func applyLinuxPackages(router *api.Router) ([]string, error) {
 				if err != nil || strings.TrimSpace(string(out)) != "install ok installed" {
 					missing = append(missing, name)
 				}
-			case "apk":
-				if _, err := exec.Command("apk", "info", "-e", name).CombinedOutput(); err != nil {
-					missing = append(missing, name)
-				}
 			}
 		}
 	}
@@ -320,11 +307,6 @@ func applyLinuxPackages(router *api.Router) ([]string, error) {
 	case "apt":
 		args := append([]string{"install", "-y"}, missing...)
 		if err := runLogged("apt-get", args...); err != nil {
-			return nil, err
-		}
-	case "apk":
-		args := append([]string{"add", "--no-cache"}, missing...)
-		if err := runLogged("apk", args...); err != nil {
 			return nil, err
 		}
 	default:
@@ -353,7 +335,7 @@ func linuxPackageOSNameFrom(text string) string {
 		}
 		value = strings.Trim(value, "\"'")
 		switch value {
-		case "ubuntu", "debian", "alpine":
+		case "ubuntu", "debian":
 			return value
 		}
 	}
@@ -367,8 +349,6 @@ func defaultLinuxPackageManager(osName string) string {
 	switch osName {
 	case "ubuntu", "debian":
 		return "apt"
-	case "alpine":
-		return "apk"
 	default:
 		return ""
 	}

@@ -79,7 +79,7 @@ ISP が同一 WAN インターフェースで IPv4 (DHCPv4) と IPv6 prefix (DHC
 
 `NTPClient` は、DHCPv4 option 42 または DHCPv6 option 31 から時刻サーバーを取り出せます。
 上流が時刻サーバーを配布しない場合は、指定した公開 NTP サーバーを OS の NTP クライアントに設定します。
-Linux / NixOS では `systemd-timesyncd`、FreeBSD では `ntpd` を使います。
+Linux では `systemd-timesyncd`、FreeBSD では `ntpd` を使います。
 
 ```yaml
 - apiVersion: system.routerd.net/v1alpha1

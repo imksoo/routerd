@@ -177,7 +177,7 @@ func daemonCommand(args []string) error {
 		// same way routerd-bgp idles until it is configured. routerd writes the
 		// config file and triggers a reload at runtime; coming up empty avoids a
 		// crash-loop when the service starts before the config exists (e.g. a
-		// fresh OpenRC live ISO before the first apply).
+		// fresh live ISO before the first apply).
 		fmt.Fprintf(os.Stderr, "routerd-dns-resolver: starting without config (%v); awaiting reload\n", err)
 		config = dnsresolver.RuntimeConfig{Resource: opts.resource}
 	}

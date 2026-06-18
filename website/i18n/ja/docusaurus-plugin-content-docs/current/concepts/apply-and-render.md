@@ -48,7 +48,7 @@ sudo routerd serve --config /usr/local/etc/routerd/router.yaml
 
 ## 生成する
 
-ドキュメント内の「生成」は、routerd が dnsmasq 設定、nftables 設定、systemd ユニット、NixOS 設定などのホスト向けファイルを組み立てることを指します。
+ドキュメント内の「生成」は、routerd が dnsmasq 設定、nftables 設定、systemd ユニットなどのホスト向けファイルを組み立てることを指します。
 生成しただけでホストが変わるとは限りません。
 実際に反映するかどうかは、適用処理と予行実行の指定で決まります。
 

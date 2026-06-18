@@ -435,7 +435,7 @@ func apiSpecStructsWithResourceWhen(t *testing.T) []string {
 	return out
 }
 
-func TestValidatePackageSupportsAlpineAPK(t *testing.T) {
+func TestValidatePackageSupportsUbuntuAPT(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -444,14 +444,14 @@ func TestValidatePackageSupportsAlpineAPK(t *testing.T) {
 				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Package"},
 				Metadata: api.ObjectMeta{Name: "router-deps"},
 				Spec: api.PackageSpec{Packages: []api.OSPackageSetSpec{
-					{OS: "alpine", Manager: "apk", Names: []string{"dnsmasq", "nftables"}},
+					{OS: "ubuntu", Manager: "apt", Names: []string{"dnsmasq-base", "nftables"}},
 				}},
 			},
 		}},
 	}
 
 	if err := Validate(router); err != nil {
-		t.Fatalf("validate alpine package resource: %v", err)
+		t.Fatalf("validate ubuntu package resource: %v", err)
 	}
 }
 

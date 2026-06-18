@@ -61,7 +61,7 @@ routerd は、ホスト上の構成物をリソースに対応付けて管理し
 | `Sysctl` | sysctl の値 |
 | `SysctlProfile` | 複数の sysctl 値 |
 | 派生するホストランタイム | router リソースから導出する、カーネルモジュールの読み込み状態と systemd-networkd / resolved の drop-in |
-| `generated service artifacts` | systemd ユニット、FreeBSD の rc.d スクリプト、または OpenRC の init スクリプトと、その有効化状態 |
+| `generated service artifacts` | systemd ユニット、FreeBSD の rc.d スクリプトと、その有効化状態 |
 | `NTPClient` | NTP クライアント設定 |
 
 ## lifecycle contract

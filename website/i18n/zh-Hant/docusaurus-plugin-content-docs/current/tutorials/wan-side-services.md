@@ -79,7 +79,7 @@ ISP 在同一 WAN 介面上同時發送 IPv4（DHCPv4）與 IPv6 前綴（DHCPv6
 
 `NTPClient` 可從 DHCPv4 option 42 或 DHCPv6 option 31 中擷取時間伺服器。
 若上游不發送時間伺服器，則將指定的公共 NTP 伺服器設定至 OS 的 NTP 用戶端。
-Linux / NixOS 使用 `systemd-timesyncd`，FreeBSD 使用 `ntpd`。
+Linux 使用 `systemd-timesyncd`，FreeBSD 使用 `ntpd`。
 
 ```yaml
 - apiVersion: system.routerd.net/v1alpha1

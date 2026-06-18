@@ -24,9 +24,7 @@ func TestManagersNormalizeServiceArtifacts(t *testing.T) {
 		apply   string
 	}{
 		{name: "systemd", manager: Systemd{}, kind: "systemd.service", service: "routerd-dhcpv6-client@wan-pd.service", apply: "systemctl"},
-		{name: "openrc", manager: OpenRC{}, kind: "openrc.service", service: "routerd_dhcpv6_client_wan_pd", apply: "rc-service"},
 		{name: "rcd", manager: RCD{}, kind: "rc.d.service", service: "routerd_dhcpv6_client_wan_pd", apply: "service"},
-		{name: "nixos", manager: NixOS{}, kind: "nixos.service", service: "routerd-dhcpv6-client@wan-pd", apply: "nixos-module"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -47,10 +45,9 @@ func TestForPlatformSelectsManager(t *testing.T) {
 		features platform.Features
 		want     string
 	}{
-		{name: "openrc", features: platform.Features{HasOpenRC: true}, want: "openrc"},
 		{name: "rcd", features: platform.Features{HasRCD: true}, want: "rc.d"},
 		{name: "systemd", features: platform.Features{HasSystemd: true}, want: "systemd"},
-		{name: "nixosFallback", features: platform.Features{}, want: "nixos"},
+		{name: "linuxFallback", features: platform.Features{}, want: "systemd"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -62,7 +59,7 @@ func TestForPlatformSelectsManager(t *testing.T) {
 }
 
 func TestManagerCommands(t *testing.T) {
-	service := Service{SystemdName: "routerd-dnsmasq.service", OpenRCName: "routerd_dnsmasq", RCDName: "routerd_dnsmasq"}
+	service := Service{SystemdName: "routerd-dnsmasq.service", RCDName: "routerd_dnsmasq"}
 	tests := []struct {
 		name    string
 		manager Manager
@@ -70,9 +67,7 @@ func TestManagerCommands(t *testing.T) {
 		want    Command
 	}{
 		{name: "systemdRestart", manager: Systemd{}, op: OperationRestart, want: Command{Name: "systemctl", Args: []string{"restart", "routerd-dnsmasq.service"}}},
-		{name: "openrcEnable", manager: OpenRC{}, op: OperationEnable, want: Command{Name: "rc-update", Args: []string{"add", "routerd_dnsmasq", "default"}}},
 		{name: "rcdReload", manager: RCD{}, op: OperationReload, want: Command{Name: "service", Args: []string{"routerd_dnsmasq", "reload"}}},
-		{name: "nixosApply", manager: NixOS{}, op: OperationRestart, want: Command{Name: "nixos-rebuild", Args: []string{"switch"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -83,26 +78,8 @@ func TestManagerCommands(t *testing.T) {
 	}
 }
 
-func TestManagerPlanDistinguishesKeepalivedReloadAndRestart(t *testing.T) {
-	service := Service{SystemdName: "keepalived.service", OpenRCName: "keepalived"}
-	reload := OpenRC{}.Plan(OperationReload, service)
-	restart := OpenRC{}.Plan(OperationRestart, service)
-	if len(reload.Commands) != 1 || len(restart.Commands) != 1 {
-		t.Fatalf("unexpected plans reload=%#v restart=%#v", reload, restart)
-	}
-	if reflect.DeepEqual(reload.Commands, restart.Commands) {
-		t.Fatalf("reload and restart collapsed to the same command: %#v", reload.Commands)
-	}
-	if got := reload.Commands[0]; !reflect.DeepEqual(got, Command{Name: "rc-service", Args: []string{"keepalived", "reload"}}) {
-		t.Fatalf("keepalived reload = %#v", got)
-	}
-	if got := restart.Commands[0]; !reflect.DeepEqual(got, Command{Name: "rc-service", Args: []string{"keepalived", "restart"}}) {
-		t.Fatalf("keepalived restart = %#v", got)
-	}
-}
-
 func TestManagerPlanAllowsSignalBasedDaemonReload(t *testing.T) {
-	service := Service{SystemdName: "routerd-dnsmasq.service", OpenRCName: "routerd_dnsmasq"}
+	service := Service{SystemdName: "routerd-dnsmasq.service"}
 	plan := Systemd{}.Plan(OperationReload, service, Hook{
 		Operation:      OperationReload,
 		ReplaceDefault: true,
@@ -117,11 +94,9 @@ func TestManagerPlanAllowsSignalBasedDaemonReload(t *testing.T) {
 func TestCrossOSDNSMasqServiceSemanticEquivalence(t *testing.T) {
 	service := Service{
 		SystemdName: "routerd-dnsmasq.service",
-		OpenRCName:  "routerd_dnsmasq",
 		RCDName:     "routerd_dnsmasq",
-		NixName:     "routerd-dnsmasq",
 	}
-	managers := []Manager{Systemd{}, OpenRC{}, RCD{}, NixOS{}}
+	managers := []Manager{Systemd{}, RCD{}}
 	for _, manager := range managers {
 		t.Run(manager.Name(), func(t *testing.T) {
 			if err := ValidateService(manager, service); err != nil {
@@ -146,9 +121,8 @@ func TestValidateServiceRejectsInvalidNames(t *testing.T) {
 		service Service
 	}{
 		{name: "empty", manager: Systemd{}, service: Service{}},
-		{name: "slash", manager: OpenRC{}, service: Service{OpenRCName: "bad/name"}},
 		{name: "nul", manager: RCD{}, service: Service{RCDName: "bad\x00name"}},
-		{name: "tooLong", manager: NixOS{}, service: Service{NixName: strings.Repeat("a", 65)}},
+		{name: "tooLong", manager: Systemd{}, service: Service{SystemdName: strings.Repeat("a", 65)}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -161,12 +135,12 @@ func TestValidateServiceRejectsInvalidNames(t *testing.T) {
 
 func TestServiceNameEdgeCasesAcrossManagers(t *testing.T) {
 	tests := []Service{
-		{SystemdName: "routerd-test.service", OpenRCName: "routerd_test", RCDName: "routerd_test", NixName: "routerd-test"},
-		{SystemdName: "routerd.special-name@lan.service", OpenRCName: "routerd_special_name_lan", RCDName: "routerd_special_name_lan", NixName: "routerd-special-name-lan"},
-		{SystemdName: strings.Repeat("a", 56) + ".service", OpenRCName: strings.Repeat("b", 64), RCDName: strings.Repeat("c", 64), NixName: strings.Repeat("d", 64)},
+		{SystemdName: "routerd-test.service", RCDName: "routerd_test"},
+		{SystemdName: "routerd.special-name@lan.service", RCDName: "routerd_special_name_lan"},
+		{SystemdName: strings.Repeat("a", 56) + ".service", RCDName: strings.Repeat("c", 64)},
 	}
 	for _, service := range tests {
-		for _, manager := range []Manager{Systemd{}, OpenRC{}, RCD{}, NixOS{}} {
+		for _, manager := range []Manager{Systemd{}, RCD{}} {
 			t.Run(manager.Name()+"/"+manager.ServiceName(service), func(t *testing.T) {
 				if err := ValidateService(manager, service); err != nil {
 					t.Fatalf("valid edge service rejected: %v", err)
@@ -174,8 +148,8 @@ func TestServiceNameEdgeCasesAcrossManagers(t *testing.T) {
 			})
 		}
 	}
-	unicodeService := Service{SystemdName: "routerd-測試.service", OpenRCName: "routerd_測試", RCDName: "routerd_測試", NixName: "routerd-測試"}
-	for _, manager := range []Manager{Systemd{}, OpenRC{}, RCD{}, NixOS{}} {
+	unicodeService := Service{SystemdName: "routerd-測試.service", RCDName: "routerd_測試"}
+	for _, manager := range []Manager{Systemd{}, RCD{}} {
 		if err := ValidateService(manager, unicodeService); err != nil {
 			t.Fatalf("%s rejected valid unicode service name: %v", manager.Name(), err)
 		}

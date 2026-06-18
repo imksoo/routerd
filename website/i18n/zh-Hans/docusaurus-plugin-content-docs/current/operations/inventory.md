@@ -13,7 +13,7 @@ routerd 会调查主机的 OS、可用命令及网络功能。
 ## routerd 确认的项目
 
 - OS 与发行版本
-- 服务管理方式（systemd、rc.d、NixOS module）
+- 服务管理方式（systemd、rc.d）
 - 可用命令（iproute2、nftables、conntrack、dnsmasq、radvd、pppd、WireGuard、strongSwan 等）
 - 内核功能（IPv6、VRF、VXLAN、WireGuard）
 - `/run/routerd` 与 `/var/lib/routerd` 的可用性
@@ -21,7 +21,6 @@ routerd 会调查主机的 OS、可用命令及网络功能。
 ## 对行为的影响
 
 - 在 Ubuntu 上，以 systemd 与 Linux 网络堆栈为目标。
-- 在 NixOS 上，优先使用声明式生成而非运行时变更。
 - 在 FreeBSD 上，以 `daemon(8)` 与 rc.d 控制服务。
 
 依赖主机未提供功能的配置，会在验证或计划阶段明确标示，而不是在 `apply` 中途失败。

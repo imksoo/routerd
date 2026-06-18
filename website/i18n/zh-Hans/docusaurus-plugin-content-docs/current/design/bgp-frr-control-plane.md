@@ -14,7 +14,7 @@ routerd 目前使用以 GoBGP 为基础的 `routerd-bgp` 守护进程，而非 F
 
 ## 问题整理
 
-在停用 TCP VTY 监听的 Alpine Live ISO 或类似 FRR 构建版本中（`vty_serv_start()` 内 `port=0`），routerd 原本以 `tcp/2605`（bgpd 的 VTY 监听端口）作为就绪判断依据，导致该判断永远为假。结果控制器会不断重启 FRR，而非对已生成（render）的配置执行 `frr-reload.py`，使 FRR 的 BGP 实例始终未配置完成（缺少 `router bgp X` 段落，也不监听 `tcp/179`）。
+在停用 TCP VTY 监听的 FRR 构建版本中（`vty_serv_start()` 内 `port=0`），routerd 原本以 `tcp/2605`（bgpd 的 VTY 监听端口）作为就绪判断依据，导致该判断永远为假。结果控制器会不断重启 FRR，而非对已生成（render）的配置执行 `frr-reload.py`，使 FRR 的 BGP 实例始终未配置完成（缺少 `router bgp X` 段落，也不监听 `tcp/179`）。
 
 手动执行 `frr-reload.py --reload /run/routerd/frr/routerd.conf` 即可恢复正常。这表明已生成的配置是正确的，且 frr-reload.py 能够从无实例的状态建立 BGP 实例。
 
@@ -44,8 +44,7 @@ FRR 的服务状态是所有调和的前提条件。控制器应将「FRR 正在
 ```
 1. 生成（render） /run/routerd/frr/routerd.conf 与 /etc/frr/daemons。
 2. 通过平台服务管理器确认 FRR 的服务状态
-   （Alpine 使用 `rc-service frr status`，systemd 平台使用
-   `systemctl is-active frr`）：
+   （`systemctl is-active frr`）：
      - active/running → 不重启，继续执行。
      - inactive/stopped → 启用并启动 FRR。
      - failed → 重启 FRR。
@@ -108,7 +107,7 @@ BGPRouter / BGPPeer 的 status 对象公开以下字段：
 
 ### `routerd serve` 重复启动防护
 
-`scripts/build-live-iso.sh` 与 `live-autostart.sh` 在已有 `routerd serve` 持有 `/run/routerd/routerd.sock` 的情况下，不得启动第二个实例。此防护使自动启动具有幂等性。然而，启动时的首次自动启动路径同时也是配置交接的边界。若持久化的 OpenRC runlevel 在 USB 配置还原之前启动了 `routerd serve`，`live-autostart.sh` 不应将既有进程视为成功，而必须在 `apply` 之后重启该服务。此重启以 `reason=LiveISOStaleServeRestarted` 记录日志。启动标记置于 `/run/routerd` 下，每次启动时重新评估此交接逻辑。若缺少重复启动防护，两个 routerd 控制器将争夺 FRR 的服务锁（rc-service / systemctl 的 `flock`），产生 Phase 0 记录中可见的 `ERROR: frr stopped by something else` 症状。若还原后未重启，早期的 `serve` 进程将遗漏已还原的配置，使 BGP 停留在 apply-once 的 `Rendered` 交接状态。
+`scripts/build-live-iso.sh` 与 `live-autostart.sh` 在已有 `routerd serve` 持有 `/run/routerd/routerd.sock` 的情况下，不得启动第二个实例。此防护使自动启动具有幂等性。然而，启动时的首次自动启动路径同时也是配置交接的边界。若 USB 配置还原之前启动了 `routerd serve`，`live-autostart.sh` 不应将既有进程视为成功，而必须在 `apply` 之后重启该服务。此重启以 `reason=LiveISOStaleServeRestarted` 记录日志。启动标记置于 `/run/routerd` 下，每次启动时重新评估此交接逻辑。若缺少重复启动防护，两个 routerd 控制器将争夺 FRR 的服务锁（rc-service / systemctl 的 `flock`），产生 Phase 0 记录中可见的 `ERROR: frr stopped by something else` 症状。若还原后未重启，早期的 `serve` 进程将遗漏已还原的配置，使 BGP 停留在 apply-once 的 `Rendered` 交接状态。
 
 此项与 BGP 判断变更属于同一热修补，但可独立还原，且为使变更历程清晰，以独立 commit 的形式提供。
 
@@ -126,7 +125,7 @@ BGPRouter 必须满足以下所有条件，才会进入 `Healthy` 状态：
 
 ## 验收标准
 
-- Alpine Live ISO 启动后，恰好只有一个 `routerd serve` 在运行，无需手动执行 `frr-reload.py`，`vtysh -c "show running-config"` 即出现 BGP `router bgp X`，且 `tcp/179` 正在监听。
+- Live ISO 启动后，恰好只有一个 `routerd serve` 在运行，无需手动执行 `frr-reload.py`，`vtysh -c "show running-config"` 即出现 BGP `router bgp X`，且 `tcp/179` 正在监听。
 - 启动时 FRR 服务处于 `FAILED` 状态，控制器能检测并自行恢复（无需手动执行 `rc-service frr start`）。
 - FRR 停止期间，或 `:179` 未监听期间，`routerctl status` 不回报 `Healthy`。
 - 在启用 TCP VTY 的 Linux 发行版上不产生回归。
@@ -135,7 +134,7 @@ BGPRouter 必须满足以下所有条件，才会进入 `Healthy` 状态：
 
 ## 测试场景
 
-1. Alpine 首次启动：无 tcp/2605，vtysh 成功，running-config 最小化 → 执行重新加载，建立 BGP 实例，`tcp/179` 开始监听。
+1. Live ISO 首次启动：无 tcp/2605，vtysh 成功，running-config 最小化 → 执行重新加载，建立 BGP 实例，`tcp/179` 开始监听。
 2. Linux 发行版首次启动（tcp/2605 在监听）：执行重新加载，runningConfig diff 与 status 均无回归。
 3. 从损坏状态恢复：在无 BGP 实例的 FRR 运行中的路由器上升级 routerd 二进制 → 无需手动介入即执行重新加载。
 4. 守护进程重启期间 vtysh 暂时 `failed to connect` → 控制器在就绪预算内等待，vtysh 恢复后继续进行验证与重新加载。
@@ -145,14 +144,14 @@ BGPRouter 必须满足以下所有条件，才会进入 `Healthy` 状态：
 8. `frr-reload.py` 返回 0，但 running-config 中尚无生成的段落 → `FRRReloadIncomplete`。下次调和时重试。
 9. 暂时发生 configure-lock → 现有的 transient-lock 重试路径成功完成。
 10. `live-autostart.sh` 在 serve 进程持有 socket 期间再次调用 → 不启动第二个进程，以退出码 0 退出。
-11. Alpine Live ISO 冒烟测试（发布门控）：启动新 ISO，确认 BGP 自主收敛。
-12. 具有持久化 `routerd` OpenRC default-runlevel 条目的 Live ISO：`routerd serve` 可能在 USB 配置还原前启动，但 `live-autostart.sh` 会删除 default-runlevel 条目，并在配置还原 + `apply` 后重启服务，以 `reason=LiveISOStaleServeRestarted` 记录日志，因此无需手动执行 `frr-reload.py` 即可使 BGP 重新加载收敛。
-13. 启动时 FRR 服务处于 FAILED 状态：routerd 必须执行 `rc-service frr start`（或重启），无需手动介入即可恢复守护进程。守护进程启动前，status 应反映 FAILED 状态。
-14. status 正确性：在曾达到 Healthy 状态后强制停止 FRR（`rc-service frr stop`），下次调和必须呈现 `FRRControlUnavailable` 或 `FRRServiceDown`，而非 `Healthy`。失败期间，BGPRouter status 的 `lastSuccessTime` 不得推进。
+11. Live ISO 冒烟测试（发布门控）：启动新 ISO，确认 BGP 自主收敛。
+12. 具有持久化 `routerd` 服务条目的 Live ISO：`routerd serve` 可能在 USB 配置还原前启动，但 `live-autostart.sh` 会删除该服务条目，并在配置还原 + `apply` 后重启服务，以 `reason=LiveISOStaleServeRestarted` 记录日志，因此无需手动执行 `frr-reload.py` 即可使 BGP 重新加载收敛。
+13. 启动时 FRR 服务处于 FAILED 状态：routerd 必须通过服务管理器启动（或重启）FRR，无需手动介入即可恢复守护进程。守护进程启动前，status 应反映 FAILED 状态。
+14. status 正确性：在曾达到 Healthy 状态后强制停止 FRR，下次调和必须呈现 `FRRControlUnavailable` 或 `FRRServiceDown`，而非 `Healthy`。失败期间，BGPRouter status 的 `lastSuccessTime` 不得推进。
 
 ## FRR Issue #8403（graceful-restart 的退出码 != 0）
 
-FRR 8.4.x 前后的版本中，包含 `bgp graceful-restart` 配置时，`frr-reload.py` 可能返回非 0 的退出码。Alpine Live ISO 会附带较新的 FRR 版本，但需先获取 `frr -v` 的 Phase 0 记录，确认附带版本受影响后，才加入对应处理。不在热修补中加入投机性的版本检测代码。
+FRR 8.4.x 前后的版本中，包含 `bgp graceful-restart` 配置时，`frr-reload.py` 可能返回非 0 的退出码。Live ISO 会附带较新的 FRR 版本，但需先获取 `frr -v` 的 Phase 0 记录，确认附带版本受影响后，才加入对应处理。不在热修补中加入投机性的版本检测代码。
 
 ## 架构后续对应（热修补后）
 

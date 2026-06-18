@@ -192,7 +192,7 @@ jobs:
 
       - name: Lint shell scripts
         run: |
-          shellcheck packaging/install.sh packaging/uninstall.sh packaging/bootstrap.sh scripts/pre-commit.sh scripts/release.sh scripts/build-live-iso.sh scripts/install-deps-smoke.sh scripts/install-sh-cwd-smoke.sh scripts/bootstrap-cleanup-smoke.sh scripts/check-active-stable.sh scripts/alpine-vm-smoke.sh
+          shellcheck packaging/install.sh packaging/uninstall.sh packaging/bootstrap.sh scripts/pre-commit.sh scripts/release.sh scripts/build-live-iso.sh scripts/install-deps-smoke.sh scripts/install-sh-cwd-smoke.sh scripts/bootstrap-cleanup-smoke.sh scripts/check-active-stable.sh
 
   website:
     name: Website build

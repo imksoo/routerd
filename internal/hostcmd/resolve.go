@@ -21,7 +21,7 @@ var defaultSearchDirs = []string{
 }
 
 // Resolve returns an executable path for host commands that may live outside
-// the service PATH, such as NixOS package-profile commands.
+// the service PATH, such as commands installed through package profiles.
 func Resolve(name string, extraDirs ...string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {

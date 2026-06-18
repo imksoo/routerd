@@ -11,7 +11,6 @@ var removedLegacyKindMessages = map[string]string{
 	"SystemdUnit":            "%s is not supported; declare router intent and let routerd generate service units",
 	"KernelModule":           "%s is not supported; routerd derives required kernel modules from declared resources",
 	"NetworkAdoption":        "%s is not supported; routerd derives networkd/resolved adoption from Interface and service resources",
-	"NixOSHost":              "%s is not supported; use router resources and platform renderers instead of host implementation resources",
 	"Link":                   "%s is not supported; use Interface resources as link status providers",
 	"StatePolicy":            "%s is not supported; use spec.when any/all predicates on the dependent resources",
 	"DHCPv4Lease":            "%s is not supported; use DHCPv4Client for routerd-managed DHCPv4 client intent",

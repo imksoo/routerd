@@ -1,1 +1,0 @@
-ERROR: system.routerd.net/v1alpha1/NTPClient/system-time has unsupported FreeBSD provider "systemd-timesyncd"

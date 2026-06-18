@@ -34,16 +34,3 @@ func RouterdServiceInitSpec() api.SystemdUnitSpec {
 	spec.ExecStartPre = nil
 	return spec
 }
-
-func RouterdServiceOpenRCSpec() api.SystemdUnitSpec {
-	spec := RouterdServiceInitSpec()
-	spec.ExecStart = []string{
-		"/usr/local/sbin/routerd",
-		"serve",
-		"--config", "/usr/local/etc/routerd/router.yaml",
-		"--socket", "/run/routerd/routerd.sock",
-		"--status-socket", "/run/routerd/routerd-status.sock",
-		"--apply-interval", "60s",
-	}
-	return spec
-}

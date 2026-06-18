@@ -13,7 +13,7 @@ routerd 會調查主機的 OS、可用指令及網路功能。
 ## routerd 確認的項目
 
 - OS 與發行版本
-- 服務管理方式（systemd、rc.d、NixOS module）
+- 服務管理方式（systemd、rc.d）
 - 可用指令（iproute2、nftables、conntrack、dnsmasq、radvd、pppd、WireGuard、strongSwan 等）
 - 核心功能（IPv6、VRF、VXLAN、WireGuard）
 - `/run/routerd` 與 `/var/lib/routerd` 的可用性
@@ -21,7 +21,6 @@ routerd 會調查主機的 OS、可用指令及網路功能。
 ## 對行為的影響
 
 - 在 Ubuntu 上，以 systemd 與 Linux 網路堆疊為目標。
-- 在 NixOS 上，優先使用宣告式產生而非執行時期變更。
 - 在 FreeBSD 上，以 `daemon(8)` 與 rc.d 控制服務。
 
 依賴主機未提供功能的設定，會在驗證或計畫階段明確標示，而不是在 `apply` 中途失敗。

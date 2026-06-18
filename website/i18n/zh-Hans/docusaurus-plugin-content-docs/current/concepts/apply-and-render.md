@@ -51,7 +51,7 @@ sudo routerd serve --config /usr/local/etc/routerd/router.yaml
 
 ## 生成（render）
 
-文档中的「生成」，是指 routerd 组装 dnsmasq 配置、nftables 配置、systemd 单元、NixOS 配置等面向主机的文件。
+文档中的「生成」，是指 routerd 组装 dnsmasq 配置、nftables 配置、systemd 单元等面向主机的文件。
 仅完成生成并不代表主机会立即变更。
 是否实际应用，取决于应用处理与模拟执行的指定方式。
 

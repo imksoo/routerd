@@ -59,9 +59,7 @@ routerd is designed to be cross-OS. The same binary and the same configuration t
 | OS | Strengths | Role |
 | --- | --- | --- |
 | **Linux (Ubuntu / Debian)** | systemd standard, easy to obtain, recent kernels | Primary platform for development and production |
-| **NixOS** | Declarative OS aligns with declarative routerd configuration; reproducible | Primary platform for declarative operations |
 | **FreeBSD** | Stable base, small footprint, jail isolation | Long-running and low-resource deployments |
-| **Alpine** | Minimal footprint, musl, apk | Minimal profile (future) |
 
 OS-specific differences are absorbed in the `pkg/platform` layer.
 Mappings such as nftables ↔ pf, systemd-networkd ↔ rc.conf, and systemd unit ↔ rc.d script are owned by per-OS renderers.
