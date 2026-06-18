@@ -1586,6 +1586,42 @@ type EventSubscriptionTrigger struct {
 	Debounce string `yaml:"debounce,omitempty" json:"debounce,omitempty"`
 }
 
+// FederationSLOSpec declares service-level objectives for an EventGroup.
+// Doctor checks derive thresholds from this resource instead of using
+// hardcoded constants, enabling per-group tuning and machine-readable
+// SLO violation reporting.
+type FederationSLOSpec struct {
+	// GroupRef is the EventGroup this SLO applies to (required).
+	GroupRef string `yaml:"groupRef" json:"groupRef"`
+	// Delivery defines delivery-health SLO targets.
+	Delivery FederationSLODelivery `yaml:"delivery,omitempty" json:"delivery,omitempty"`
+	// Subscription defines subscription-processing SLO targets.
+	Subscription FederationSLOSubscription `yaml:"subscription,omitempty" json:"subscription,omitempty"`
+}
+
+// FederationSLODelivery contains delivery-lag and expiry SLO thresholds.
+type FederationSLODelivery struct {
+	// LagWarnSeconds is the delivery lag (in seconds) above which doctor warns.
+	// 0 means use default (60).
+	LagWarnSeconds int `yaml:"lagWarnSeconds,omitempty" json:"lagWarnSeconds,omitempty" jsonschema:"minimum=0"`
+	// LagFailSeconds is the delivery lag (in seconds) above which doctor fails.
+	// 0 means use default (180).
+	LagFailSeconds int `yaml:"lagFailSeconds,omitempty" json:"lagFailSeconds,omitempty" jsonschema:"minimum=0"`
+	// ExpiresSoonSeconds is the remaining TTL (in seconds) below which pending
+	// events are considered expiring-soon. 0 means use default (120).
+	ExpiresSoonSeconds int `yaml:"expiresSoonSeconds,omitempty" json:"expiresSoonSeconds,omitempty" jsonschema:"minimum=0"`
+}
+
+// FederationSLOSubscription contains subscription-processing SLO thresholds.
+type FederationSLOSubscription struct {
+	// MaxPendingRuns is the number of pending runs allowed before WARN.
+	// 0 = any pending triggers warn.
+	MaxPendingRuns int `yaml:"maxPendingRuns,omitempty" json:"maxPendingRuns,omitempty" jsonschema:"minimum=0"`
+	// MaxFailedRuns is the number of failed runs allowed before FAIL.
+	// 0 = any failure triggers fail.
+	MaxFailedRuns int `yaml:"maxFailedRuns,omitempty" json:"maxFailedRuns,omitempty" jsonschema:"minimum=0"`
+}
+
 // MobilityPoolSpec declares a selective-address mobility pool for the CloudEdge
 // Mobility Control Plane. It is the ONLY operator-authored Kind in the
 // mobility plane: the operator declares the /24, which routerd nodes are members
@@ -2638,6 +2674,10 @@ func (r Resource) EventPeerSpec() (EventPeerSpec, error) {
 
 func (r Resource) EventSubscriptionSpec() (EventSubscriptionSpec, error) {
 	return specAs[EventSubscriptionSpec](r)
+}
+
+func (r Resource) FederationSLOSpec() (FederationSLOSpec, error) {
+	return specAs[FederationSLOSpec](r)
 }
 
 func (r Resource) MobilityPoolSpec() (MobilityPoolSpec, error) {

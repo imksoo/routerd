@@ -46,6 +46,7 @@ var doctorMACAddressPattern = regexp.MustCompile(`(?i)\b(?:[0-9a-f]{2}:){5}[0-9a
 
 type doctorCheck struct {
 	Area   string `json:"area" yaml:"area"`
+	Code   string `json:"code,omitempty" yaml:"code,omitempty"`
 	Name   string `json:"name" yaml:"name"`
 	Status string `json:"status" yaml:"status"`
 	Detail string `json:"detail,omitempty" yaml:"detail,omitempty"`
@@ -61,27 +62,99 @@ type doctorSummary struct {
 }
 
 type doctorReport struct {
-	Summary    doctorSummary              `json:"summary" yaml:"summary"`
-	Checks     []doctorCheck              `json:"checks" yaml:"checks"`
-	Federation *doctorFederationSummary   `json:"federation,omitempty" yaml:"federation,omitempty"`
-	Incident   *doctorIncidentReport      `json:"incident,omitempty" yaml:"incident,omitempty"`
+	Summary         doctorSummary              `json:"summary" yaml:"summary"`
+	Checks          []doctorCheck              `json:"checks" yaml:"checks"`
+	Federation      *doctorFederationSummary   `json:"federation,omitempty" yaml:"federation,omitempty"`
+	Incident        *doctorIncidentReport      `json:"incident,omitempty" yaml:"incident,omitempty"`
+	RemediationPlan *doctorRemediationPlan     `json:"remediationPlan,omitempty" yaml:"remediationPlan,omitempty"`
 }
 
 type doctorFederationSummary struct {
-	SeverityCounts            doctorSeverityCounts `json:"severityCounts" yaml:"severityCounts"`
-	FailedDeliveryCount       int                  `json:"failedDeliveryCount" yaml:"failedDeliveryCount"`
-	StaleTTLCount             int                  `json:"staleTTLCount" yaml:"staleTTLCount"`
-	PendingDeliveryCount      int                  `json:"pendingDeliveryCount" yaml:"pendingDeliveryCount"`
-	MissingExpectedPeerCount  int                  `json:"missingExpectedPeerCount" yaml:"missingExpectedPeerCount"`
-	MaxDeliveryLagSeconds     int64                `json:"maxDeliveryLagSeconds" yaml:"maxDeliveryLagSeconds"`
-	MinExpiresInSeconds       int64                `json:"minExpiresInSeconds" yaml:"minExpiresInSeconds"`
-	TotalEvents               int                  `json:"totalEvents" yaml:"totalEvents"`
-	TotalDelivered            int                  `json:"totalDelivered" yaml:"totalDelivered"`
-	SubscriptionRunsTotal     int                  `json:"subscriptionRunsTotal" yaml:"subscriptionRunsTotal"`
-	SubscriptionRunsSucceeded int                  `json:"subscriptionRunsSucceeded" yaml:"subscriptionRunsSucceeded"`
-	SubscriptionRunsFailed    int                  `json:"subscriptionRunsFailed" yaml:"subscriptionRunsFailed"`
-	SubscriptionRunsPending   int                  `json:"subscriptionRunsPending" yaml:"subscriptionRunsPending"`
+	SeverityCounts            doctorSeverityCounts       `json:"severityCounts" yaml:"severityCounts"`
+	FailedDeliveryCount       int                        `json:"failedDeliveryCount" yaml:"failedDeliveryCount"`
+	StaleTTLCount             int                        `json:"staleTTLCount" yaml:"staleTTLCount"`
+	PendingDeliveryCount      int                        `json:"pendingDeliveryCount" yaml:"pendingDeliveryCount"`
+	MissingExpectedPeerCount  int                        `json:"missingExpectedPeerCount" yaml:"missingExpectedPeerCount"`
+	MaxDeliveryLagSeconds     int64                      `json:"maxDeliveryLagSeconds" yaml:"maxDeliveryLagSeconds"`
+	MinExpiresInSeconds       int64                      `json:"minExpiresInSeconds" yaml:"minExpiresInSeconds"`
+	TotalEvents               int                        `json:"totalEvents" yaml:"totalEvents"`
+	TotalDelivered            int                        `json:"totalDelivered" yaml:"totalDelivered"`
+	SubscriptionRunsTotal     int                        `json:"subscriptionRunsTotal" yaml:"subscriptionRunsTotal"`
+	SubscriptionRunsSucceeded int                        `json:"subscriptionRunsSucceeded" yaml:"subscriptionRunsSucceeded"`
+	SubscriptionRunsFailed    int                        `json:"subscriptionRunsFailed" yaml:"subscriptionRunsFailed"`
+	SubscriptionRunsPending   int                        `json:"subscriptionRunsPending" yaml:"subscriptionRunsPending"`
+	SLO                       *doctorFederationSLOStatus `json:"slo,omitempty" yaml:"slo,omitempty"`
 }
+
+type doctorFederationSLOStatus struct {
+	Groups []doctorFederationSLOGroupStatus `json:"groups" yaml:"groups"`
+}
+
+type doctorFederationSLOGroupStatus struct {
+	Group      string                        `json:"group" yaml:"group"`
+	Defined    bool                          `json:"defined" yaml:"defined"`
+	Thresholds doctorFederationSLOThresholds `json:"thresholds" yaml:"thresholds"`
+	Violations []doctorFederationViolation   `json:"violations" yaml:"violations"`
+}
+
+type doctorFederationSLOThresholds struct {
+	Delivery     doctorFederationSLODeliveryValues     `json:"delivery" yaml:"delivery"`
+	Subscription doctorFederationSLOSubscriptionValues `json:"subscription" yaml:"subscription"`
+}
+
+type doctorFederationSLODeliveryValues struct {
+	LagWarnSeconds     int `json:"lagWarnSeconds" yaml:"lagWarnSeconds"`
+	LagFailSeconds     int `json:"lagFailSeconds" yaml:"lagFailSeconds"`
+	ExpiresSoonSeconds int `json:"expiresSoonSeconds" yaml:"expiresSoonSeconds"`
+}
+
+type doctorFederationSLOSubscriptionValues struct {
+	MaxPendingRuns int `json:"maxPendingRuns" yaml:"maxPendingRuns"`
+	MaxFailedRuns  int `json:"maxFailedRuns" yaml:"maxFailedRuns"`
+}
+
+type doctorFederationViolation struct {
+	Check     string `json:"check" yaml:"check"`
+	Threshold string `json:"threshold" yaml:"threshold"`
+	Actual    string `json:"actual" yaml:"actual"`
+	Severity  string `json:"severity" yaml:"severity"`
+}
+
+type doctorRemediationAction struct {
+	Action                   string `json:"action" yaml:"action"`
+	Reason                   string `json:"reason" yaml:"reason"`
+	TargetPeer               string `json:"targetPeer,omitempty" yaml:"targetPeer,omitempty"`
+	TargetGroup              string `json:"targetGroup,omitempty" yaml:"targetGroup,omitempty"`
+	TargetResource           string `json:"targetResource,omitempty" yaml:"targetResource,omitempty"`
+	Safe                     bool   `json:"safe" yaml:"safe"`
+	RequiresOperatorApproval bool   `json:"requiresOperatorApproval" yaml:"requiresOperatorApproval"`
+}
+
+type doctorRemediationPlan struct {
+	GeneratedAt string                    `json:"generatedAt" yaml:"generatedAt"`
+	Actions     []doctorRemediationAction `json:"actions" yaml:"actions"`
+}
+
+const (
+	remediationRetryFailedDeliveries          = "retry-failed-deliveries"
+	remediationInvestigatePendingDeliveries    = "investigate-pending-deliveries"
+	remediationForceRepushStaleTTL            = "force-repush-stale-ttl"
+	remediationCheckPeerConnectivity          = "check-peer-connectivity"
+	remediationConfigurePeerEndpoint          = "configure-peer-endpoint"
+	remediationInvestigateMissingDeliveryRows = "investigate-missing-delivery-rows"
+	remediationInspectFailedSubscriptionRuns  = "inspect-failed-subscription-runs"
+)
+
+const (
+	checkCodeFailedDeliveries           = "failed-deliveries"
+	checkCodePendingDeliveries          = "pending-deliveries"
+	checkCodeStaleTTL                   = "stale-ttl"
+	checkCodeDeliveryLag                = "delivery-lag"
+	checkCodeEventExpiry                = "event-expiry"
+	checkCodeExpectedDelivery           = "expected-delivery"
+	checkCodeExpectedDeliveryNoEndpoint = "expected-delivery-no-endpoint"
+	checkCodeSubscriptionRuns           = "subscription-runs"
+)
 
 type doctorSeverityCounts struct {
 	Pass int `json:"pass" yaml:"pass"`
@@ -182,6 +255,9 @@ func doctorCommand(args []string, stdout, stderr io.Writer) error {
 	}
 	if hasFederation {
 		report.Federation = runner.buildFederationSummary(report.Checks)
+	}
+	if hasFederation && opts.RemediationPlan {
+		report.RemediationPlan = runner.buildFederationRemediationPlan(report.Checks)
 	}
 	if opts.Incident || opts.Target == "incident" {
 		incident := runner.doctorIncidentDump()
@@ -3076,6 +3152,14 @@ func writeDoctorTable(stdout io.Writer, report doctorReport) error {
 	fmt.Fprintln(w, "AREA\tSTATUS\tCHECK\tDETAIL\tREMEDY")
 	for _, check := range report.Checks {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", check.Area, strings.ToUpper(check.Status), check.Name, displayCell(check.Detail), displayCell(check.Remedy))
+	}
+	if report.RemediationPlan != nil && len(report.RemediationPlan.Actions) > 0 {
+		fmt.Fprintln(w, "")
+		fmt.Fprintf(w, "REMEDIATION PLAN\t%s\t%d action(s)\n", report.RemediationPlan.GeneratedAt, len(report.RemediationPlan.Actions))
+		fmt.Fprintln(w, "ACTION\tGROUP\tPEER\tSAFE\tAPPROVAL\tREASON")
+		for _, a := range report.RemediationPlan.Actions {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%v\t%v\t%s\n", a.Action, a.TargetGroup, a.TargetPeer, a.Safe, a.RequiresOperatorApproval, displayCell(a.Reason))
+		}
 	}
 	return w.Flush()
 }

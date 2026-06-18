@@ -691,6 +691,9 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 			return fmt.Errorf("%s/BFD/%s is not referenced by any BGPPeer spec.bfd", api.NetAPIVersion, name)
 		}
 	}
+	if err := validateFederationSLOCrossRefs(router); err != nil {
+		return err
+	}
 	return nil
 }
 

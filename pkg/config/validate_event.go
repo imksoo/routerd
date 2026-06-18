@@ -140,10 +140,80 @@ func validateEventResource(res api.Resource, _ platform.OS) (bool, error) {
 				return true, fmt.Errorf("%s spec.trigger.debounce must be a Go duration: %w", res.ID(), err)
 			}
 		}
+	case "FederationSLO":
+		if res.APIVersion != api.FederationAPIVersion {
+			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.FederationAPIVersion)
+		}
+		spec, err := res.FederationSLOSpec()
+		if err != nil {
+			return true, err
+		}
+		if strings.TrimSpace(spec.GroupRef) == "" {
+			return true, fmt.Errorf("%s spec.groupRef is required", res.ID())
+		}
+		if spec.Delivery.LagWarnSeconds < 0 {
+			return true, fmt.Errorf("%s spec.delivery.lagWarnSeconds must be >= 0", res.ID())
+		}
+		if spec.Delivery.LagFailSeconds < 0 {
+			return true, fmt.Errorf("%s spec.delivery.lagFailSeconds must be >= 0", res.ID())
+		}
+		if spec.Delivery.ExpiresSoonSeconds < 0 {
+			return true, fmt.Errorf("%s spec.delivery.expiresSoonSeconds must be >= 0", res.ID())
+		}
+		// Apply defaults for effective-value validation.
+		effectiveWarn := spec.Delivery.LagWarnSeconds
+		if effectiveWarn == 0 {
+			effectiveWarn = 60 // defaultFederationWarnLag
+		}
+		effectiveFail := spec.Delivery.LagFailSeconds
+		if effectiveFail == 0 {
+			effectiveFail = 180 // defaultFederationFailLag
+		}
+		if effectiveWarn >= effectiveFail {
+			return true, fmt.Errorf("%s spec.delivery.lagWarnSeconds (effective %d) must be less than lagFailSeconds (effective %d)", res.ID(), effectiveWarn, effectiveFail)
+		}
+		if spec.Subscription.MaxPendingRuns < 0 {
+			return true, fmt.Errorf("%s spec.subscription.maxPendingRuns must be >= 0", res.ID())
+		}
+		if spec.Subscription.MaxFailedRuns < 0 {
+			return true, fmt.Errorf("%s spec.subscription.maxFailedRuns must be >= 0", res.ID())
+		}
 	default:
 		return false, nil
 	}
 	return true, nil
+}
+
+// validateFederationSLOCrossRefs checks cross-resource constraints for
+// FederationSLO: each groupRef must be unique across all FederationSLO
+// resources, and must reference an existing EventGroup resource.
+func validateFederationSLOCrossRefs(router *api.Router) error {
+	eventGroups := map[string]bool{}
+	for _, res := range router.Spec.Resources {
+		if res.Kind == "EventGroup" {
+			eventGroups[res.Metadata.Name] = true
+		}
+	}
+
+	sloGroupRefs := map[string]string{} // groupRef → resource name
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "FederationSLO" {
+			continue
+		}
+		spec, err := res.FederationSLOSpec()
+		if err != nil {
+			continue
+		}
+		groupRef := strings.TrimSpace(spec.GroupRef)
+		if existing, ok := sloGroupRefs[groupRef]; ok {
+			return fmt.Errorf("%s spec.groupRef %q conflicts with %s: only one FederationSLO per EventGroup is allowed", res.ID(), groupRef, existing)
+		}
+		sloGroupRefs[groupRef] = res.ID()
+		if !eventGroups[groupRef] {
+			return fmt.Errorf("%s spec.groupRef %q does not reference an existing EventGroup resource", res.ID(), groupRef)
+		}
+	}
+	return nil
 }
 
 func validateEventPeersFrom(resourceID string, index int, source api.EventPeersSourceSpec) error {

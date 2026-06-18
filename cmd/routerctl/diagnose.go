@@ -21,18 +21,19 @@ import (
 )
 
 type diagnoseOptions struct {
-	Target     string
-	Output     string
-	ConfigPath string
-	StatePath  string
-	Host       bool
-	Incident   bool
-	Server     string
-	Names      string
-	Timeout    time.Duration
-	Since      time.Duration
-	Socket     string
-	Probe      string
+	Target          string
+	Output          string
+	ConfigPath      string
+	StatePath       string
+	Host            bool
+	Incident        bool
+	RemediationPlan bool
+	Server          string
+	Names           string
+	Timeout         time.Duration
+	Since           time.Duration
+	Socket          string
+	Probe           string
 }
 
 type diagnoseReport struct {
@@ -249,10 +250,12 @@ func parseDiagnoseOptions(name string, args []string, helpOutput io.Writer) (dia
 			summary = "routerd の各 area (" + strings.Join(doctorAreas, "/") + ") の\n" +
 				"健全性チェックをまとめて実行する。\n" +
 				"--incident を付けると host ダンプ(診断コマンド出力/イベント/オブジェクトステータス/プラグイン実行履歴)を付加する。\n" +
+				"--remediation-plan を付けると federation SLO 違反に対する修復アクション計画を生成する(実行はしない)。\n" +
 				"位置引数: [area] (省略時は全 area)。--probe は control API 経由の対象別 probe を実行する。"
 			examples = "routerctl doctor\n" +
 				"routerctl doctor wan\n" +
 				"routerctl doctor --incident\n" +
+				"routerctl doctor federation --remediation-plan -o json\n" +
 				"routerctl doctor --probe egress ipv4-default\n" +
 				"routerctl doctor --probe dns -o json"
 		default:
@@ -275,6 +278,7 @@ func parseDiagnoseOptions(name string, args []string, helpOutput io.Writer) (dia
 	fs.StringVar(&opts.Socket, "socket", defaultStatusSocketPath(), "routerd read-only status Unix domain socket path")
 	fs.StringVar(&opts.Probe, "probe", "", "doctor probe subject (egress, dns, lan-client)")
 	fs.BoolVar(&opts.Incident, "incident", false, "collect incident debug dump (status/events/object status/plugin runs and host command outputs)")
+	fs.BoolVar(&opts.RemediationPlan, "remediation-plan", false, "generate a remediation plan for federation SLO violations (plan-only, no execution)")
 	normalized, err := normalizeDiagnoseArgs(args)
 	if err != nil {
 		return opts, err

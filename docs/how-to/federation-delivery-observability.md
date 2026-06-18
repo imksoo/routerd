@@ -86,19 +86,113 @@ the startup config.
 Healthy state: `DELIVERED == EVENTS`, `FAILED == 0`, `PENDING == 0`,
 `STALE_TTL == 0`.
 
+## FederationSLO
+
+You can declare a `FederationSLO` resource to override the default doctor
+thresholds for a specific EventGroup:
+
+```yaml
+apiVersion: federation.routerd.net/v1alpha1
+kind: FederationSLO
+metadata:
+  name: cloudedge-slo
+spec:
+  groupRef: cloudedge
+  delivery:
+    lagWarnSeconds: 60      # default: 60
+    lagFailSeconds: 180     # default: 180
+    expiresSoonSeconds: 120 # default: 120
+  subscription:
+    maxPendingRuns: 0       # default: 0 (any pending triggers warn)
+    maxFailedRuns: 0        # default: 0 (any failure triggers fail)
+```
+
+When a `FederationSLO` is present, `routerctl doctor federation` uses its
+thresholds instead of the hardcoded defaults. The JSON output includes an
+`slo` object showing the effective thresholds and any violations.
+
+Without a `FederationSLO` resource, the default thresholds apply unchanged.
+
+Validation rules:
+
+- `spec.groupRef` is required and must reference an existing `EventGroup`
+  resource by `metadata.name`.
+- Only one `FederationSLO` per `EventGroup` is allowed; duplicate `groupRef`
+  values are rejected at config validation time.
+- `spec.delivery.lagWarnSeconds` must be strictly less than `lagFailSeconds`
+  after applying defaults (0 falls back to the default). For example,
+  `lagWarnSeconds: 200` with `lagFailSeconds: 0` (default 180) is rejected
+  because effective 200 >= 180.
+- Zero values (`0`) mean "use the default threshold"; negative values are
+  rejected.
+
+## Remediation plan
+
+Generate a plan of suggested actions without executing them:
+
+```sh
+routerctl doctor federation --remediation-plan -o json \
+  --state-file /var/lib/routerd/routerd.db \
+  --config /usr/local/etc/routerd/router.yaml
+```
+
+The plan includes structured actions with `action`, `reason`, `targetPeer`,
+`targetGroup`, `safe`, and `requiresOperatorApproval` fields:
+
+```json
+{
+  "remediationPlan": {
+    "generatedAt": "2026-06-18T01:00:00Z",
+    "actions": [
+      {
+        "action": "retry-failed-deliveries",
+        "reason": "1 of 1 delivery(s) failed",
+        "targetPeer": "leaf-az",
+        "targetGroup": "cloudedge",
+        "safe": true,
+        "requiresOperatorApproval": false
+      }
+    ]
+  }
+}
+```
+
+The `--remediation-plan` flag is opt-in; without it, no `remediationPlan` key
+appears in the JSON output. The plan is read-only — it never mutates state.
+
+Field meanings:
+
+- `safe`: the suggested action is idempotent and can be retried without risk.
+- `requiresOperatorApproval`: the action changes configuration and requires
+  human review before execution.
+
+### Remediation action reference
+
+| Action | Trigger | `safe` | `requiresOperatorApproval` |
+|--------|---------|--------|---------------------------|
+| `retry-failed-deliveries` | Failed delivery rows exist | true | false |
+| `investigate-pending-deliveries` | Pending deliveries with possible expiry risk | true | false |
+| `force-repush-stale-ttl` | Stale TTL detected (event TTL refreshed since last push) | true | false |
+| `check-peer-connectivity` | Delivery lag exceeds SLO threshold | true | false |
+| `configure-peer-endpoint` | EventPeer endpoint is empty | false | true |
+| `investigate-missing-delivery-rows` | Expected peer has no delivery rows | true | false |
+| `inspect-failed-subscription-runs` | Subscription runs in failed status | true | false |
+
 ## Doctor check reference
 
 ### Recorded-delivery checks
 
 These run per (group, peer) pair that has delivery rows in the state store.
+Thresholds are derived from `FederationSLO` when present, otherwise defaults
+apply.
 
 | Check | FAIL | WARN | PASS |
 |-------|------|------|------|
 | **failed deliveries** | Any delivery row in `failed` status | — | `FAILED == 0` |
-| **pending deliveries** | Pending events whose TTL expires within 120 s | Pending exists but no imminent expiry | `PENDING == 0` |
+| **pending deliveries** | Pending events whose TTL expires within `expiresSoonSeconds` | Pending exists but no imminent expiry | `PENDING == 0` |
 | **stale TTL** | All delivered events have stale TTL (`STALE_TTL == DELIVERED`) | Some deliveries have stale TTL | `STALE_TTL == 0` |
-| **delivery lag** | Max lag >= 180 s | Max lag >= 60 s | Below 60 s |
-| **event expiry** | Nearest expiry < 120 s with pending/failed deliveries | Nearest expiry < 120 s, all delivered | Comfortable margin |
+| **delivery lag** | Max lag >= `lagFailSeconds` (default 180 s) | Max lag >= `lagWarnSeconds` (default 60 s) | Below `lagWarnSeconds` |
+| **event expiry** | Nearest expiry < `expiresSoonSeconds` (default 120 s) with pending/failed deliveries | Nearest expiry < `expiresSoonSeconds`, all delivered | Comfortable margin |
 
 ### Expected-peer audit
 
@@ -266,10 +360,39 @@ When the `federation` area is checked, the doctor JSON includes a
     "subscriptionRunsTotal": 3,
     "subscriptionRunsSucceeded": 3,
     "subscriptionRunsFailed": 0,
-    "subscriptionRunsPending": 0
+    "subscriptionRunsPending": 0,
+    "slo": {
+      "groups": [
+        {
+          "group": "cloudedge",
+          "defined": true,
+          "thresholds": {
+            "delivery": {
+              "lagWarnSeconds": 60,
+              "lagFailSeconds": 180,
+              "expiresSoonSeconds": 120
+            },
+            "subscription": {
+              "maxPendingRuns": 0,
+              "maxFailedRuns": 0
+            }
+          },
+          "violations": []
+        }
+      ]
+    }
   }
 }
 ```
+
+The `slo.groups` array contains one entry per EventGroup (union of config
+and observed groups, sorted by name). Each entry has:
+
+- `defined`: whether a `FederationSLO` resource is configured for this group
+- `thresholds.delivery`: effective delivery lag/expiry thresholds
+- `thresholds.subscription`: effective subscription run thresholds
+- `violations`: threshold breaches with check name, threshold, actual value,
+  and severity (empty `[]` when healthy)
 
 ### jq examples
 
@@ -314,11 +437,12 @@ routerctl doctor federation -o json \
 ## Subscription monitoring
 
 When `EventSubscription` resources are configured, `routerctl doctor federation`
-also checks subscription processing health:
+also checks subscription processing health. Thresholds are derived from the
+`FederationSLO` for the subscription's `groupRef`:
 
 | Check | FAIL | WARN | PASS |
 |-------|------|------|------|
-| **subscription runs** | Any run in `failed` status | Pending runs exist | All runs succeeded |
+| **subscription runs** | Failed > `maxFailedRuns` (default 0) | Pending > `maxPendingRuns` (default 0) | Within SLO thresholds |
 
 ### Inspecting subscription runs
 
