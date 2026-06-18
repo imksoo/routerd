@@ -420,10 +420,6 @@ func (c DiscoveryController) recordOnPremStatusObservations(ctx context.Context,
 	recorded := false
 	for _, snapshot := range snapshots {
 		for _, client := range snapshot.Clients {
-			seenAt := now
-			if parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(client.SeenAt)); err == nil {
-				seenAt = parsed.UTC()
-			}
 			observation := onPremObservation{
 				Action:     "observed",
 				Address:    firstNonEmpty(client.Address, client.IP),
@@ -432,7 +428,7 @@ func (c DiscoveryController) recordOnPremStatusObservations(ctx context.Context,
 				Network:    snapshot.Network,
 				Bridge:     snapshot.Bridge,
 				SourceType: firstNonEmpty(client.SourceType, snapshot.SourceType),
-				ObservedAt: seenAt,
+				ObservedAt: now,
 			}
 			ok, err := c.recordOnPremObservation(poolName, spec, self, poolPrefix, observation, now)
 			if err != nil {

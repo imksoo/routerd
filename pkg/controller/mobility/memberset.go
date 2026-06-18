@@ -193,6 +193,18 @@ func mergeMobilityPoolMembers(base, patch api.MobilityPoolMember) api.MobilityPo
 	if value := strings.TrimSpace(patch.OwnershipDiscovery.LeaseTTL); value != "" {
 		out.OwnershipDiscovery.LeaseTTL = value
 	}
+	if len(patch.OwnershipDiscovery.Sources) > 0 {
+		out.OwnershipDiscovery.Sources = append([]api.MobilityOwnershipDiscoverySource(nil), patch.OwnershipDiscovery.Sources...)
+	}
+	if len(patch.OwnershipDiscovery.Scope.IncludeAddresses) > 0 || len(patch.OwnershipDiscovery.Scope.ExcludeAddresses) > 0 {
+		out.OwnershipDiscovery.Scope = api.MobilityOwnershipDiscoveryScope{
+			IncludeAddresses: append([]string(nil), patch.OwnershipDiscovery.Scope.IncludeAddresses...),
+			ExcludeAddresses: append([]string(nil), patch.OwnershipDiscovery.Scope.ExcludeAddresses...),
+		}
+	}
+	if len(patch.OwnershipDiscovery.Selector.Tags) > 0 {
+		out.OwnershipDiscovery.Selector = api.MobilityOwnershipDiscoverySelector{Tags: copyStringMap(patch.OwnershipDiscovery.Selector.Tags)}
+	}
 	if value := strings.TrimSpace(patch.Placement.Group); value != "" {
 		out.Placement.Group = value
 	}

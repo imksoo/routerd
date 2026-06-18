@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/providerinventory"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -556,6 +557,64 @@ func TestOwnershipResolverReportsRemoteHomeLocalOwnershipEventConflict(t *testin
 	verdicts := status["ownershipResolverFIBVerdicts"].([]map[string]any)
 	if len(verdicts) != 1 || verdicts[0]["address"] != address || verdicts[0]["action"] != "local-route" {
 		t.Fatalf("fib verdicts = %#v, want local-route for onprem conflict evidence", verdicts)
+	}
+}
+
+func TestOwnershipResolverTreatsOnPremObservedStatusAsLocalOwner(t *testing.T) {
+	now := time.Date(2026, 6, 18, 6, 40, 0, 0, time.UTC)
+	spec := api.MobilityPoolSpec{
+		Prefix: "192.168.123.0/24",
+		Members: []api.MobilityPoolMember{
+			{
+				NodeRef: "pve-rt08",
+				Role:    "onprem",
+				Capture: api.MobilityMemberCapture{
+					Type:      "proxy-arp",
+					Interface: "svnet1",
+					ExcludeAddresses: []string{
+						"192.168.123.1/32",
+					},
+				},
+				OwnershipDiscovery: api.MobilityOwnershipDiscovery{
+					Mode: "onprem-l2",
+					Scope: api.MobilityOwnershipDiscoveryScope{
+						ExcludeAddresses: []string{"192.168.123.1/32"},
+					},
+					Sources: []api.MobilityOwnershipDiscoverySource{
+						{Type: OnPremSourceARPObserver, Interface: "svnet1"},
+						{Type: OnPremSourceOnDemandARP, Interface: "svnet1"},
+						{Type: OnPremSourcePVESVNet, Interface: "svnet1", Network: "svnet1"},
+					},
+				},
+			},
+		},
+	}
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "svnet1",
+		SelfNode: "pve-rt08",
+		Spec:     spec,
+		Status: map[string]any{
+			"interface":  "svnet1",
+			"network":    "svnet1",
+			"sourceType": OnPremSourcePVESVNet,
+			"observedClients": `[{"ip":"192.168.123.1","mac":"b6:83:16:4a:f1:88","sourceType":"pve-svnet","seenAt":"2026-06-18T06:31:57.938717262Z"},` +
+				`{"ip":"192.168.123.129","mac":"bc:24:11:82:0d:3f","sourceType":"pve-svnet","seenAt":"2026-06-18T06:35:27.444010391Z"}]`,
+		},
+		Now: now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	if len(decisions) != 1 {
+		t.Fatalf("decisions = %#v, want only non-excluded observed client", decisions)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, "192.168.123.129/32")
+	if decision.Class != ownershipClassLocalHomeOwned || decision.AdvertiseOwnerNode != "pve-rt08" || decision.AdvertiseReason != "ownership-event" {
+		t.Fatalf("decision = %#v, want observed onprem client advertised as local owner", decision)
+	}
+	status := ownershipResolverStatus(decisions)
+	if status["ownershipResolverAddressCount"] != 1 {
+		t.Fatalf("status = %#v, want one resolver address", status)
 	}
 }
 
