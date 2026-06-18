@@ -2,10 +2,10 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/imksoo/routerd/scripts/cloudedge-federation-evidence-schema.json",
   "title": "routerd CloudEdge Federation Qualification evidence",
-  "description": "Machine-readable evidence emitted by cloudedge-federation-qualification.sh. One file per scenario, validated by this schema.",
+  "description": "Machine-readable evidence emitted by cloudedge-federation-qualification.sh. One file per scenario per cycle, validated by this schema.",
   "type": "object",
   "additionalProperties": true,
-  "required": ["runId", "commit", "scenario", "result"],
+  "required": ["runId", "commit", "cycle", "scenario", "result"],
   "properties": {
     "runId": {
       "type": "string",
@@ -16,6 +16,11 @@
       "type": "string",
       "description": "Git commit (or HEAD sha) of the routerd build under test.",
       "minLength": 1
+    },
+    "cycle": {
+      "type": "integer",
+      "description": "Cycle number (1-based).",
+      "minimum": 1
     },
     "scenario": {
       "type": "string",
@@ -35,6 +40,10 @@
       "type": "string",
       "enum": ["pass", "fail", "skip"]
     },
+    "reason": {
+      "type": "string",
+      "description": "Required for fail/skip results — why the scenario did not pass."
+    },
     "startedAt": {
       "type": "string",
       "format": "date-time",
@@ -45,9 +54,9 @@
       "format": "date-time",
       "description": "UTC timestamp when the scenario completed."
     },
-    "error": {
+    "testedEventId": {
       "type": "string",
-      "description": "Human-readable error message for fail/skip results."
+      "description": "Primary test event ID emitted during the scenario."
     },
     "doctorBefore": {
       "description": "routerctl doctor federation JSON snapshot before the scenario.",
@@ -73,9 +82,37 @@
       "description": "Full doctor JSON for scenarios that only read doctor state.",
       "type": ["object", "string"]
     },
-    "groupCount": {
-      "description": "Number of EventGroups observed in multi-group scenario.",
+    "recoveryDurationSeconds": {
+      "description": "Time in seconds for partition/fault recovery.",
       "type": ["string", "integer"]
+    },
+    "senderPidBefore": {
+      "description": "Sender eventd PID before restart.",
+      "type": ["string", "integer"]
+    },
+    "senderPidAfter": {
+      "description": "Sender eventd PID after restart.",
+      "type": ["string", "integer"]
+    },
+    "receiverPidBefore": {
+      "description": "Receiver eventd PID before restart.",
+      "type": ["string", "integer"]
+    },
+    "receiverPidAfter": {
+      "description": "Receiver eventd PID after restart.",
+      "type": ["string", "integer"]
+    },
+    "malformedStatus": {
+      "description": "HTTP status from malformed body security test.",
+      "type": "string"
+    },
+    "wrongStatus": {
+      "description": "HTTP status from wrong-structure security test.",
+      "type": "string"
+    },
+    "badAuthStatus": {
+      "description": "HTTP status from bad-auth security test.",
+      "type": "string"
     },
     "eventCountBefore": {
       "description": "Event list count before security test.",
@@ -84,6 +121,35 @@
     "eventCountAfter": {
       "description": "Event list count after security test.",
       "type": ["string", "integer"]
+    },
+    "groupCheck": {
+      "description": "Multi-group isolation check result string.",
+      "type": "string"
+    },
+    "foundCodes": {
+      "description": "Doctor check codes found in config-fault scenario.",
+      "type": "string"
+    },
+    "expectedAction": {
+      "description": "Remediation actions found in config-fault scenario.",
+      "type": "string"
+    },
+    "subscriptionRunsDuring": {
+      "description": "Subscription run JSON during plugin failure.",
+      "type": ["object", "string", "array"]
+    },
+    "subscriptionRunsAfter": {
+      "description": "Subscription run JSON after plugin restore.",
+      "type": ["object", "string", "array"]
     }
+  },
+  "if": {
+    "properties": { "result": { "const": "pass" } }
+  },
+  "then": {
+    "required": ["startedAt", "endedAt"]
+  },
+  "else": {
+    "required": ["reason"]
   }
 }
