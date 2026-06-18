@@ -3569,6 +3569,7 @@ func TestResourceWhenCoversResourceLevelWhenSpecs(t *testing.T) {
 		testResourceWithSpecWhen("BGPPeer", api.BGPPeerSpec{When: want}),
 		testResourceWithSpecWhen("BFD", api.BFDSpec{When: want}),
 		testResourceWithSpecWhen("TailscaleNode", api.TailscaleNodeSpec{When: want}),
+		testResourceWithSpecWhen("NTPClient", api.NTPClientSpec{When: want}),
 		testResourceWithSpecWhen("NTPServer", api.NTPServerSpec{When: want}),
 		testResourceWithSpecWhen("DHCPv4Client", api.DHCPv4ClientSpec{When: want}),
 		testResourceWithSpecWhen("ClusterNetworkRoute", api.ClusterNetworkRouteSpec{When: want}),
@@ -3580,6 +3581,7 @@ func TestResourceWhenCoversResourceLevelWhenSpecs(t *testing.T) {
 		testResourceWithSpecWhen("DHCPv6ServerLeaseSync", api.DHCPv6ServerLeaseSyncSpec{When: want}),
 		testResourceWithSpecWhen("DHCPv6PrefixDelegationLeaseSync", api.DHCPv6PrefixDelegationLeaseSyncSpec{When: want}),
 		testResourceWithSpecWhen("DHCPv6PrefixDelegation", api.DHCPv6PrefixDelegationSpec{When: want}),
+		testResourceWithSpecWhen("DHCPv6Information", api.DHCPv6InformationSpec{When: want}),
 		testResourceWithSpecWhen("IPv6RouterAdvertisement", api.IPv6RouterAdvertisementSpec{When: want}),
 		testResourceWithSpecWhen("DSLiteTunnel", api.DSLiteTunnelSpec{When: want}),
 		testResourceWithSpecWhen("DNSForwarder", api.DNSForwarderSpec{When: want}),
@@ -3608,6 +3610,39 @@ func testResourceWithSpecWhen(kind string, spec any) api.Resource {
 		TypeMeta: api.TypeMeta{Kind: kind},
 		Metadata: api.ObjectMeta{Name: "test"},
 		Spec:     spec,
+	}
+}
+
+func TestFilterRouterByWhenFiltersDHCPv6Information(t *testing.T) {
+	when := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+		"VirtualAddress/lan-gw-v4.role": {Equals: "master"},
+	}}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
+			Metadata: api.ObjectMeta{Name: "wan-pd"},
+			Spec: api.DHCPv6PrefixDelegationSpec{
+				Interface: "wan",
+				When:      when,
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Information"},
+			Metadata: api.ObjectMeta{Name: "wan-info"},
+			Spec: api.DHCPv6InformationSpec{
+				Interface: "wan",
+				DependsOn: []api.ResourceDependencySpec{{
+					Resource: "DHCPv6PrefixDelegation/wan-pd",
+					Phase:    "Bound",
+				}},
+				When: when,
+			},
+		},
+	}}}
+
+	filtered := filterRouterByWhen(router, routerstate.New())
+	if len(filtered.Spec.Resources) != 0 {
+		t.Fatalf("resources = %+v, want none", filtered.Spec.Resources)
 	}
 }
 

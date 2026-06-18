@@ -911,6 +911,9 @@ func resourceWhens(res api.Resource) []resourceWhenRef {
 	case "TailscaleNode":
 		spec, _ := res.TailscaleNodeSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
+	case "NTPClient":
+		spec, _ := res.NTPClientSpec()
+		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "NTPServer":
 		spec, _ := res.NTPServerSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
@@ -943,6 +946,9 @@ func resourceWhens(res api.Resource) []resourceWhenRef {
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "DHCPv6PrefixDelegation":
 		spec, _ := res.DHCPv6PrefixDelegationSpec()
+		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
+	case "DHCPv6Information":
+		spec, _ := res.DHCPv6InformationSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "IPv6RouterAdvertisement":
 		spec, _ := res.IPv6RouterAdvertisementSpec()
