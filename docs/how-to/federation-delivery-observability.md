@@ -245,3 +245,58 @@ routerctl doctor federation -o json \
 The doctor JSON includes `summary.overall` (`"pass"`, `"warn"`, or `"fail"`)
 for alerting thresholds. A non-`"pass"` overall status indicates at least one
 check that warrants investigation.
+
+### Federation summary in doctor JSON
+
+When the `federation` area is checked, the doctor JSON includes a
+`federation` object with aggregated delivery statistics:
+
+```json
+{
+  "federation": {
+    "severityCounts": {"pass": 5, "warn": 0, "fail": 0, "skip": 1},
+    "failedDeliveryCount": 0,
+    "staleTTLCount": 0,
+    "pendingDeliveryCount": 0,
+    "missingExpectedPeerCount": 0,
+    "maxDeliveryLagSeconds": 2,
+    "minExpiresInSeconds": 1740,
+    "totalEvents": 3,
+    "totalDelivered": 3
+  }
+}
+```
+
+### jq examples
+
+```sh
+# Overall status for alerting
+routerctl doctor federation -o json \
+  --state-file /var/lib/routerd/routerd.db \
+  --config /usr/local/etc/routerd/router.yaml \
+  | jq -r '.summary.overall'
+
+# Failed delivery count (exit 1 if > 0)
+routerctl doctor federation -o json \
+  --state-file /var/lib/routerd/routerd.db \
+  --config /usr/local/etc/routerd/router.yaml \
+  | jq -e '.federation.failedDeliveryCount == 0'
+
+# Missing expected peers
+routerctl doctor federation -o json \
+  --state-file /var/lib/routerd/routerd.db \
+  --config /usr/local/etc/routerd/router.yaml \
+  | jq '.federation.missingExpectedPeerCount'
+
+# All failing checks with remedies
+routerctl doctor federation -o json \
+  --state-file /var/lib/routerd/routerd.db \
+  --config /usr/local/etc/routerd/router.yaml \
+  | jq '[.checks[] | select(.status == "fail") | {name, detail, remedy}]'
+
+# Stale TTL and pending counts for monitoring
+routerctl doctor federation -o json \
+  --state-file /var/lib/routerd/routerd.db \
+  --config /usr/local/etc/routerd/router.yaml \
+  | jq '{stale: .federation.staleTTLCount, pending: .federation.pendingDeliveryCount, lag: .federation.maxDeliveryLagSeconds}'
+```
