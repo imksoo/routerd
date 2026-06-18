@@ -169,6 +169,89 @@ func TestValidateResourceWhenRejectsMixedForms(t *testing.T) {
 	}
 }
 
+func TestValidateResourceWhenStatusReferenceUsesProvidesContract(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+				Metadata: api.ObjectMeta{Name: "lan-gw-v4"},
+				Spec: api.VirtualAddressSpec{
+					Interface: "lan",
+					Address:   "172.18.0.1/32",
+					Family:    "ipv4",
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
+				Metadata: api.ObjectMeta{Name: "wan-pd"},
+				Spec: api.DHCPv6PrefixDelegationSpec{
+					Interface: "wan",
+					When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+						"VirtualAddress/lan-gw-v4.status.status.role": {Equals: "master"},
+					}},
+				},
+			},
+		}},
+	}
+	err := Validate(router)
+	if err == nil || !strings.Contains(err.Error(), "does not provide field \"status.role\"") {
+		t.Fatalf("invalid when status reference error = %v", err)
+	}
+}
+
+func TestValidateResourceWhenStatusReferenceAcceptsStatusScheme(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+				Metadata: api.ObjectMeta{Name: "lan-gw-v4"},
+				Spec: api.VirtualAddressSpec{
+					Interface: "lan",
+					Address:   "172.18.0.1/32",
+					Family:    "ipv4",
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
+				Metadata: api.ObjectMeta{Name: "wan-pd"},
+				Spec: api.DHCPv6PrefixDelegationSpec{
+					Interface: "wan",
+					When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+						"${VirtualAddress/lan-gw-v4.status.role}": {Equals: "master"},
+					}},
+				},
+			},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("valid when status reference rejected: %v", err)
+	}
+}
+
 func TestValidateResourceWhenRejectsMixedFormsForEveryWhenField(t *testing.T) {
 	for _, tc := range whenValidationTestResources(invalidMixedResourceWhen()) {
 		t.Run(tc.specName, func(t *testing.T) {
