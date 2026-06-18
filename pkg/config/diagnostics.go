@@ -739,11 +739,16 @@ func collectStatusReferencesValue(value reflect.Value, path string, refs *[]stat
 	}
 	statusType := reflect.TypeOf(api.StatusValueSourceSpec{})
 	dependencyType := reflect.TypeOf(api.ResourceDependencySpec{})
+	whenType := reflect.TypeOf(api.ResourceWhenSpec{})
 	if value.Type() == statusType {
 		source := value.Interface().(api.StatusValueSourceSpec)
 		if strings.TrimSpace(source.Resource) != "" || strings.TrimSpace(source.Field) != "" {
 			*refs = append(*refs, statusReference{Path: path, Resource: source.Resource, Field: source.Field, Optional: source.Optional})
 		}
+		return
+	}
+	if value.Type() == whenType {
+		collectResourceWhenStatusReferences(value.Interface().(api.ResourceWhenSpec), path, refs)
 		return
 	}
 	if value.Type() == dependencyType {
@@ -782,6 +787,43 @@ func collectStatusReferencesValue(value reflect.Value, path string, refs *[]stat
 	case reflect.Map:
 		return
 	}
+}
+
+func collectResourceWhenStatusReferences(when api.ResourceWhenSpec, path string, refs *[]statusReference) {
+	for key := range when.State {
+		resource, field, ok := resourceWhenStatusReference(key)
+		if !ok {
+			continue
+		}
+		*refs = append(*refs, statusReference{Path: path + ".state[" + strconv.Quote(key) + "]", Resource: resource, Field: field})
+	}
+	for i, child := range when.All {
+		collectResourceWhenStatusReferences(child, fmt.Sprintf("%s.all[%d]", path, i), refs)
+	}
+	for i, child := range when.Any {
+		collectResourceWhenStatusReferences(child, fmt.Sprintf("%s.any[%d]", path, i), refs)
+	}
+}
+
+func resourceWhenStatusReference(key string) (string, string, bool) {
+	ref := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(key, "${"), "}"))
+	var left, field string
+	if before, after, ok := strings.Cut(ref, ".status."); ok {
+		left, field = before, after
+	} else {
+		before, after, ok := strings.Cut(ref, ".")
+		if !ok {
+			return "", "", false
+		}
+		left, field = before, after
+	}
+	if !strings.Contains(left, "/") {
+		return "", "", false
+	}
+	if validateSourceResourceRef(left) != nil || strings.TrimSpace(field) == "" {
+		return "", "", false
+	}
+	return strings.TrimSpace(left), strings.TrimSpace(field), true
 }
 
 func statusReferenceFieldName(field reflect.StructField) string {

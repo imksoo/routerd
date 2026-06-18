@@ -68,6 +68,46 @@ func TestSuperviseClientDaemonsStartsDNSResolverWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestReconcileSupervisedDaemonSpecsStopsStaleDaemon(t *testing.T) {
+	canceled := false
+	runner := &Runner{
+		clientDaemonStates: map[string]supervisedDaemonState{
+			supervisedDaemonKey("routerd-dhcpv6-client", "stale-pd"): {
+				Spec: supervisedDaemonSpec{
+					ResourceName: "stale-pd",
+					Binary:       "routerd-dhcpv6-client",
+					Args:         []string{"daemon", "--resource", "stale-pd"},
+				},
+				Cancel: func() { canceled = true },
+			},
+		},
+	}
+
+	runner.reconcileSupervisedDaemonSpecs(context.Background(), nil, nil)
+
+	if !canceled {
+		t.Fatalf("stale supervised daemon was not canceled")
+	}
+	if len(runner.clientDaemonStates) != 0 {
+		t.Fatalf("stale supervised daemon state remains: %#v", runner.clientDaemonStates)
+	}
+}
+
+func TestRouterdDaemonCmdlineMatchesResourceExactly(t *testing.T) {
+	if !routerdDaemonCmdlineMatches([]string{"/usr/local/sbin/routerd-dhcpv6-client", "daemon", "--resource", "wan-pd"}, "routerd-dhcpv6-client", "wan-pd") {
+		t.Fatalf("expected split --resource form to match")
+	}
+	if !routerdDaemonCmdlineMatches([]string{"routerd-dhcpv6-client", "daemon", "--resource=wan-pd"}, "routerd-dhcpv6-client", "wan-pd") {
+		t.Fatalf("expected equals --resource form to match")
+	}
+	if routerdDaemonCmdlineMatches([]string{"routerd-dhcpv6-client", "daemon", "--resource", "wan-pd-old"}, "routerd-dhcpv6-client", "wan-pd") {
+		t.Fatalf("resource prefix must not match")
+	}
+	if routerdDaemonCmdlineMatches([]string{"routerd-dhcpv6-client", "once", "--resource", "wan-pd"}, "routerd-dhcpv6-client", "wan-pd") {
+		t.Fatalf("non-daemon command must not match")
+	}
+}
+
 func stringSliceContains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

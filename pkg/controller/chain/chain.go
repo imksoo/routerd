@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -945,7 +946,19 @@ type Runner struct {
 
 	supervisedMu         sync.Mutex
 	supervisedDaemons    map[string]bool
+	clientDaemonStates   map[string]supervisedDaemonState
 	daemonSourcesStarted map[string]bool
+}
+
+type supervisedDaemonSpec struct {
+	ResourceName string
+	Binary       string
+	Args         []string
+}
+
+type supervisedDaemonState struct {
+	Spec   supervisedDaemonSpec
+	Cancel context.CancelFunc
 }
 
 func (r *Runner) effectiveRouter(store eventedStore) *api.Router {
@@ -1009,8 +1022,13 @@ func (r *Runner) Start(ctx context.Context) error {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	store := eventedStore{Store: r.Store, Bus: r.Bus, Router: r.Router}
 	if r.Opts.SuperviseClientDaemons && r.controllerEnabled("daemon-supervisor") {
-		r.superviseClientDaemons(ctx, logger)
+		effective, err := r.effectiveRouterForReconcile(store)
+		if err != nil {
+			return err
+		}
+		r.reconcileSupervisedClientDaemons(ctx, effective, logger)
 	}
 	for _, resource := range r.Router.Spec.Resources {
 		if resource.Kind != "DHCPv6PrefixDelegation" {
@@ -1102,7 +1120,6 @@ func (r *Runner) Start(ctx context.Context) error {
 	}
 	r.startARPObserverDaemonSources(ctx, logger)
 
-	store := eventedStore{Store: r.Store, Bus: r.Bus, Router: r.Router}
 	haDecision, err := acquireClusterLease(ctx, r.Router, store)
 	if err != nil {
 		return err
@@ -1299,6 +1316,14 @@ func (r *Runner) Start(ctx context.Context) error {
 			return observabilityPipeline.Reconcile(ctx)
 		}},
 		framework.FuncController{ControllerName: "daemon-status", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv6.client.**", "routerd.dhcpv4.client.**", "routerd.healthcheck.**", "routerd.pppoe.client.**", "routerd.mobility.arp.**", "routerd.mobility.pve-svnet.**"}}}, PeriodicFunc: daemonStatusSync.Reconcile},
+		framework.FuncController{ControllerName: "daemon-supervisor", Every: 5 * time.Second, Subs: whenStatusSubscriptions(r.Router, "DNSResolver", "DHCPv6PrefixDelegation", "DHCPv4Client", "PPPoESession"), PeriodicFunc: func(ctx context.Context) error {
+			effective, err := effectiveForReconcile()
+			if err != nil {
+				return err
+			}
+			r.reconcileSupervisedClientDaemons(ctx, effective, logger)
+			return nil
+		}},
 		framework.FuncController{ControllerName: "dhcp-lease-sync", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync"}, "DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
@@ -1840,7 +1865,22 @@ func (r *Runner) warmDaemonStatuses(ctx context.Context, controller DaemonStatus
 }
 
 func (r *Runner) superviseClientDaemons(ctx context.Context, logger *slog.Logger) {
-	for _, resource := range r.Router.Spec.Resources {
+	r.reconcileSupervisedDaemonSpecs(ctx, logger, r.clientDaemonSpecs(r.Router))
+}
+
+func (r *Runner) reconcileSupervisedClientDaemons(ctx context.Context, router *api.Router, logger *slog.Logger) {
+	if !r.Opts.SuperviseClientDaemons {
+		return
+	}
+	r.reconcileSupervisedDaemonSpecs(ctx, logger, r.clientDaemonSpecs(router))
+}
+
+func (r *Runner) clientDaemonSpecs(router *api.Router) []supervisedDaemonSpec {
+	if router == nil {
+		return nil
+	}
+	var out []supervisedDaemonSpec
+	for _, resource := range router.Spec.Resources {
 		switch resource.Kind {
 		case "DNSResolver":
 			if !r.Opts.SuperviseDNSResolvers {
@@ -1854,13 +1894,13 @@ func (r *Runner) superviseClientDaemons(ctx context.Context, logger *slog.Logger
 				"--state-file", filepath.Join(defaults.StateDir, "dns-resolver", name, "state.json"),
 				"--event-file", filepath.Join(defaults.StateDir, "dns-resolver", name, "events.jsonl"),
 			}
-			r.startSupervisedDaemon(ctx, logger, name, "routerd-dns-resolver", args)
+			out = append(out, supervisedDaemonSpec{ResourceName: name, Binary: "routerd-dns-resolver", Args: args})
 		case "DHCPv6PrefixDelegation":
 			spec, err := resource.DHCPv6PrefixDelegationSpec()
 			if err != nil {
 				continue
 			}
-			ifname := interfaceIfName(r.Router, spec.Interface)
+			ifname := interfaceIfName(router, spec.Interface)
 			if ifname == "" {
 				ifname = spec.Interface
 			}
@@ -1876,13 +1916,13 @@ func (r *Runner) superviseClientDaemons(ctx context.Context, logger *slog.Logger
 			if spec.ClientDUID != "" {
 				args = append(args, "--client-duid", spec.ClientDUID)
 			}
-			r.startSupervisedDaemon(ctx, logger, resource.Metadata.Name, "routerd-dhcpv6-client", args)
+			out = append(out, supervisedDaemonSpec{ResourceName: resource.Metadata.Name, Binary: "routerd-dhcpv6-client", Args: args})
 		case "DHCPv4Client":
 			spec, err := resource.DHCPv4ClientSpec()
 			if err != nil {
 				continue
 			}
-			ifname := interfaceIfName(r.Router, spec.Interface)
+			ifname := interfaceIfName(router, spec.Interface)
 			if ifname == "" {
 				ifname = spec.Interface
 			}
@@ -1904,13 +1944,13 @@ func (r *Runner) superviseClientDaemons(ctx context.Context, logger *slog.Logger
 			if spec.ClientID != "" {
 				args = append(args, "--client-id", spec.ClientID)
 			}
-			r.startSupervisedDaemon(ctx, logger, resource.Metadata.Name, "routerd-dhcpv4-client", args)
+			out = append(out, supervisedDaemonSpec{ResourceName: resource.Metadata.Name, Binary: "routerd-dhcpv4-client", Args: args})
 		case "PPPoESession":
 			spec, err := resource.PPPoESessionSpec()
 			if err != nil {
 				continue
 			}
-			ifname := interfaceIfName(r.Router, spec.Interface)
+			ifname := interfaceIfName(router, spec.Interface)
 			if ifname == "" {
 				ifname = spec.Interface
 			}
@@ -1941,10 +1981,70 @@ func (r *Runner) superviseClientDaemons(ctx context.Context, logger *slog.Logger
 			if spec.LCPEchoFailure != 0 {
 				args = append(args, "--lcp-echo-failure", fmt.Sprintf("%d", spec.LCPEchoFailure))
 			}
-			r.startSupervisedDaemon(ctx, logger, resource.Metadata.Name, "routerd-pppoe-client", args)
+			out = append(out, supervisedDaemonSpec{ResourceName: resource.Metadata.Name, Binary: "routerd-pppoe-client", Args: args})
 		}
 	}
+	return out
+}
+
+func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slog.Logger, specs []supervisedDaemonSpec) {
+	desired := make(map[string]supervisedDaemonSpec, len(specs))
+	for _, spec := range specs {
+		if spec.ResourceName == "" || spec.Binary == "" {
+			continue
+		}
+		desired[supervisedDaemonKey(spec.Binary, spec.ResourceName)] = spec
+	}
+
+	var stale []supervisedDaemonState
+	r.supervisedMu.Lock()
+	if r.clientDaemonStates == nil {
+		r.clientDaemonStates = map[string]supervisedDaemonState{}
+	}
+	for key, state := range r.clientDaemonStates {
+		next, ok := desired[key]
+		if ok && supervisedDaemonSpecEqual(state.Spec, next) {
+			delete(desired, key)
+			continue
+		}
+		state.Cancel()
+		delete(r.clientDaemonStates, key)
+		stale = append(stale, state)
+	}
+	r.supervisedMu.Unlock()
+
+	for _, state := range stale {
+		stopSupervisedDaemonProcess(state.Spec.Binary, state.Spec.ResourceName, logger)
+	}
+
+	r.supervisedMu.Lock()
+	for key, spec := range desired {
+		if _, ok := r.clientDaemonStates[key]; ok {
+			continue
+		}
+		childCtx, cancel := context.WithCancel(ctx)
+		r.clientDaemonStates[key] = supervisedDaemonState{Spec: spec, Cancel: cancel}
+		r.startSupervisedDaemon(childCtx, logger, spec.ResourceName, spec.Binary, spec.Args)
+	}
+	r.supervisedMu.Unlock()
+
 	r.reconcileARPObserverDaemons(ctx, logger)
+}
+
+func supervisedDaemonKey(binary, resourceName string) string {
+	return binary + "/" + resourceName
+}
+
+func supervisedDaemonSpecEqual(a, b supervisedDaemonSpec) bool {
+	if a.ResourceName != b.ResourceName || a.Binary != b.Binary || len(a.Args) != len(b.Args) {
+		return false
+	}
+	for i := range a.Args {
+		if a.Args[i] != b.Args[i] {
+			return false
+		}
+	}
+	return true
 }
 
 type mobilityARPObserverDaemonSpec struct {
@@ -2263,6 +2363,88 @@ func clientSocketReady(socket string) bool {
 	}
 	_ = conn.Close()
 	return true
+}
+
+func stopSupervisedDaemonProcess(binary, resourceName string, logger *slog.Logger) {
+	pids := matchingRouterdDaemonPIDs(binary, resourceName)
+	if len(pids) == 0 {
+		return
+	}
+	if logger != nil {
+		logger.Info("stopping stale supervised routerd client daemon", "binary", binary, "resource", resourceName, "pids", pids)
+	}
+	for _, pid := range pids {
+		_ = syscall.Kill(pid, syscall.SIGTERM)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(matchingRouterdDaemonPIDs(binary, resourceName)) == 0 {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	for _, pid := range matchingRouterdDaemonPIDs(binary, resourceName) {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+	}
+}
+
+func matchingRouterdDaemonPIDs(binary, resourceName string) []int {
+	if runtime.GOOS != "linux" {
+		return nil
+	}
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil
+	}
+	self := os.Getpid()
+	var out []int
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil || pid == self {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
+		if err != nil || len(data) == 0 {
+			continue
+		}
+		args := strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")
+		if routerdDaemonCmdlineMatches(args, binary, resourceName) {
+			out = append(out, pid)
+		}
+	}
+	sort.Ints(out)
+	return out
+}
+
+func routerdDaemonCmdlineMatches(args []string, binary, resourceName string) bool {
+	if len(args) == 0 || filepath.Base(args[0]) != binary {
+		return false
+	}
+	hasDaemon := false
+	for _, arg := range args[1:] {
+		if arg == "daemon" {
+			hasDaemon = true
+			break
+		}
+	}
+	if !hasDaemon {
+		return false
+	}
+	for i := 1; i < len(args)-1; i++ {
+		if args[i] == "--resource" && args[i+1] == resourceName {
+			return true
+		}
+	}
+	prefix := "--resource="
+	for _, arg := range args[1:] {
+		if strings.TrimPrefix(arg, prefix) != arg && strings.TrimPrefix(arg, prefix) == resourceName {
+			return true
+		}
+	}
+	return false
 }
 
 type PrefixDelegationController struct {
