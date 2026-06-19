@@ -254,6 +254,10 @@ func dnsResolverRouterWithPartialUpstreamFrom(source api.StatusValueSourceSpec) 
 }
 
 func dnsResolverRouterWithBootstrapFrom(source api.RequiredFieldStatusValueSourceSpec) *api.Router {
+	return dnsResolverRouterWithBootstrapFromValues(source, []string{"1.1.1.1"})
+}
+
+func dnsResolverRouterWithBootstrapFromValues(source api.RequiredFieldStatusValueSourceSpec, bootstrap []string) *api.Router {
 	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
@@ -279,7 +283,7 @@ func dnsResolverRouterWithBootstrapFrom(source api.RequiredFieldStatusValueSourc
 				Address:       "dns.nextdns.io",
 				Path:          "/abc123",
 				BootstrapFrom: []api.RequiredFieldStatusValueSourceSpec{source},
-				Bootstrap:     []string{"1.1.1.1"},
+				Bootstrap:     bootstrap,
 			},
 		},
 	}}}
@@ -450,10 +454,29 @@ func TestReconcileResolvesBootstrapFromStatus(t *testing.T) {
 	}
 }
 
-func TestReconcilePendingWhenBootstrapFromUnresolved(t *testing.T) {
+func TestReconcileAppliedWhenBootstrapFromUnresolvedButStaticBootstrapExists(t *testing.T) {
 	store := mapStore{}
 	controller := Controller{
 		Router: dnsResolverRouterWithBootstrapFrom(api.RequiredFieldStatusValueSourceSpec{Resource: "DHCPv6Information/wan-info", Field: "dnsServers"}),
+		Store:  store,
+		DryRun: true,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
+	if status["phase"] != "Applied" {
+		t.Fatalf("status = %#v", status)
+	}
+	if status["waiting"] != nil {
+		t.Fatalf("waiting = %#v", status["waiting"])
+	}
+}
+
+func TestReconcilePendingWhenBootstrapFromUnresolvedWithoutStaticBootstrap(t *testing.T) {
+	store := mapStore{}
+	controller := Controller{
+		Router: dnsResolverRouterWithBootstrapFromValues(api.RequiredFieldStatusValueSourceSpec{Resource: "DHCPv6Information/wan-info", Field: "dnsServers"}, nil),
 		Store:  store,
 		DryRun: true,
 	}
