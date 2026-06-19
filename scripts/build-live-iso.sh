@@ -61,10 +61,19 @@ cleanup_mounts()
     fi
 }
 
+rootfs_only=false
+for arg in "$@"; do
+    case "${arg}" in
+        --rootfs-only) rootfs_only=true ;;
+    esac
+done
+
 require debootstrap
-require mksquashfs
-require grub-mkrescue
-require xorriso
+if [ "${rootfs_only}" = false ]; then
+    require mksquashfs
+    require grub-mkrescue
+    require xorriso
+fi
 
 trap cleanup_mounts EXIT INT TERM
 
@@ -129,6 +138,11 @@ if [ -n "${rootfs_cache}" ]; then
     echo "saved rootfs cache at ${rootfs_cache}"
 fi
 
+fi
+
+if [ "${rootfs_only}" = true ]; then
+    echo "rootfs-only mode: done"
+    exit 0
 fi
 
 make build-daemons ROUTERD_OS=linux GOARCH=amd64 GIT_COMMIT="${git_commit}"

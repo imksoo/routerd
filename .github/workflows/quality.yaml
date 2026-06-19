@@ -194,6 +194,41 @@ jobs:
         run: |
           shellcheck packaging/install.sh packaging/uninstall.sh packaging/bootstrap.sh scripts/pre-commit.sh scripts/release.sh scripts/build-live-iso.sh scripts/install-deps-smoke.sh scripts/install-sh-cwd-smoke.sh scripts/bootstrap-cleanup-smoke.sh scripts/check-active-stable.sh
 
+  warm-iso-rootfs-cache:
+    name: Warm ISO rootfs cache
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout-ref || github.ref }}
+
+      - name: Compute rootfs cache key
+        id: rootfs-key
+        shell: bash
+        run: |
+          hash=$(grep -E '^ubuntu_(suite|arch|base_packages|packages)=' scripts/build-live-iso.sh | sha256sum | awk '{print $1}')
+          echo "hash=${hash}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore rootfs cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: dist/live/rootfs-cache.tar
+          key: live-iso-rootfs-${{ steps.rootfs-key.outputs.hash }}
+
+      - name: Install debootstrap
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y debootstrap
+
+      - name: Build rootfs cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: sudo --preserve-env=ROOTFS_CACHE_TAR bash scripts/build-live-iso.sh --rootfs-only
+        env:
+          ROOTFS_CACHE_TAR: dist/live/rootfs-cache.tar
+
   website:
     name: Website build
     runs-on: ubuntu-latest
