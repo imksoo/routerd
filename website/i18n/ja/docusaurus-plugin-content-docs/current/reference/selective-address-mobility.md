@@ -250,6 +250,8 @@ routerd はフェデレーションやプロバイダーディスカバリーで
 
 コントローラーはリコンサイル時にすべての source を解決し、取り込んだ peer を先に追加してから、プロファイル直下の `spec.peers` を重ねます。同じ `nodeRef` が両方にある場合は `spec.peers` が優先されるため、リーフ側に静的なブートストラップ用 peer やローカル override を残せます。必須の `peersFrom` source が未到着の場合、プロファイルは `Pending` になります。`optional: true` の source は到着するまで無視されます。
 
+`SAMNodeSet` の各 node は静的な `samEndpoint` か `samEndpointFrom` のどちらかを指定できます。`samEndpointFrom` は `DHCPv4Client/<name>.currentAddress` や `Interface/<name>.primaryIPv4` のような status field を読み、CIDR の prefix 長を取り除いた IPv4 アドレスを生成 peer の `remoteEndpoint` として使います。source が未解決の場合、古い endpoint で tunnel を生成せず、トランスポートプロファイルは `Pending` になります。
+
 ```yaml
 apiVersion: mobility.routerd.net/v1alpha1
 kind: SAMTransportProfile
