@@ -305,6 +305,55 @@ func TestStatusChangedIgnoresDHCPv4ClientLeaseTimestamps(t *testing.T) {
 	}
 }
 
+func TestStatusChangedEventSeverityDemotesChattyFields(t *testing.T) {
+	current := map[string]any{
+		"phase":                      "Ready",
+		"observedClients":            []any{"192.0.2.10=02:00:00:00:00:10"},
+		"ownershipResolverDecisions": map[string]any{"192.0.2.10/32": "node-a"},
+	}
+	next := map[string]any{
+		"phase":                      "Ready",
+		"observedClients":            []any{"192.0.2.10=02:00:00:00:00:10", "192.0.2.11=02:00:00:00:00:11"},
+		"ownershipResolverDecisions": map[string]any{"192.0.2.10/32": "node-a"},
+	}
+	fields := statusChangedFieldsForEvent(api.MobilityAPIVersion, "MobilityPool", current, next)
+	if got := statusChangedEventSeverity(api.MobilityAPIVersion, "MobilityPool", current, next, fields); got != daemonapi.SeverityDebug {
+		t.Fatalf("severity = %s, want debug", got)
+	}
+
+	next["phase"] = "Degraded"
+	fields = statusChangedFieldsForEvent(api.MobilityAPIVersion, "MobilityPool", current, next)
+	if got := statusChangedEventSeverity(api.MobilityAPIVersion, "MobilityPool", current, next, fields); got != daemonapi.SeverityInfo {
+		t.Fatalf("abnormal phase severity = %s, want info", got)
+	}
+}
+
+func TestStatusChangedEventSeverityDemotesRoutinePhaseTransitions(t *testing.T) {
+	current := map[string]any{"phase": "Watching"}
+	next := map[string]any{"phase": "Ready"}
+	fields := statusChangedFieldsForEvent(api.MobilityAPIVersion, "MobilityPool", current, next)
+	if got := statusChangedEventSeverity(api.MobilityAPIVersion, "MobilityPool", current, next, fields); got != daemonapi.SeverityDebug {
+		t.Fatalf("severity = %s, want debug", got)
+	}
+}
+
+func TestStatusChangedEventSeverityKeepsDHCPv4LeaseValueChangeInfo(t *testing.T) {
+	current := map[string]any{
+		"phase":          daemonapi.ResourcePhaseBound,
+		"currentAddress": "192.0.2.10",
+		"defaultGateway": "192.0.2.1",
+	}
+	next := map[string]any{
+		"phase":          daemonapi.ResourcePhaseBound,
+		"currentAddress": "192.0.2.11",
+		"defaultGateway": "192.0.2.1",
+	}
+	fields := statusChangedFieldsForEvent(api.NetAPIVersion, "DHCPv4Client", current, next)
+	if got := statusChangedEventSeverity(api.NetAPIVersion, "DHCPv4Client", current, next, fields); got != daemonapi.SeverityInfo {
+		t.Fatalf("DHCPv4 lease value severity = %s, want info", got)
+	}
+}
+
 func TestEventedStoreDoesNotPublishTimestampOnlyStatusChange(t *testing.T) {
 	base := mapStore{
 		api.NetAPIVersion + "/EgressRoutePolicy/ipv4-default": statusWithOwnership(api.NetAPIVersion, "EgressRoutePolicy", map[string]any{
