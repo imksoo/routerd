@@ -12,6 +12,15 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Changed
+
+- The Live ISO is now built with Ubuntu `debootstrap` instead of Alpine Linux.
+  Network interface names follow the Ubuntu/systemd predictable naming scheme
+  (`ens18`, `ens19`, …) instead of the kernel `eth0`/`eth1` convention used by
+  the former Alpine ISO. Existing `router.yaml` files that reference `eth*`
+  interface names must be updated to match the new names when migrating to the
+  Ubuntu-based ISO.
+
 ### Added
 
 - `FederationSLO` Kind (`federation.routerd.net/v1alpha1`) for declarative
