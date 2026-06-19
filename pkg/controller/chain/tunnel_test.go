@@ -56,6 +56,49 @@ func TestTunnelInterfaceControllerAddsIPIP(t *testing.T) {
 	}
 }
 
+func TestTunnelInterfaceControllerChangesExistingIPIPRemoteWithoutAdd(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+		Metadata: api.ObjectMeta{Name: "tun-ipip"},
+		Spec: api.TunnelInterfaceSpec{
+			Mode:            "ipip",
+			Local:           "192.0.2.10",
+			Remote:          "192.0.2.30",
+			TTL:             64,
+			TrustedUnderlay: true,
+		},
+	}}}}
+	var calls [][]string
+	controller := TunnelInterfaceController{
+		Router: router,
+		Store:  mapStore{},
+		OS:     platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, append([]string{name}, args...))
+			return []byte(`7: tun-ipip@NONE: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1480 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000 link/ipip 192.0.2.10 peer 192.0.2.20 ttl 64`), nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"ip", "-d", "-o", "link", "show", "dev", "tun-ipip"},
+		{"ip", "link", "set", "dev", "tun-ipip", "type", "ipip", "local", "192.0.2.10", "remote", "192.0.2.30", "ttl", "64"},
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+	for _, call := range calls {
+		if strings.Join(call, " ") == "ip link add dev tun-ipip type ipip local 192.0.2.10 remote 192.0.2.30 ttl 64" {
+			t.Fatalf("existing tunnel must not be added again: %#v", calls)
+		}
+	}
+	status := controller.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip")
+	if status["phase"] != "Up" || status["remote"] != "192.0.2.30" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
 func TestTunnelInterfaceControllerResolvesEndpointSources(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
@@ -482,7 +525,7 @@ func TestTunnelInterfaceControllerChangesExistingGREWithoutAdd(t *testing.T) {
 	}
 	want := [][]string{
 		{"ip", "-d", "-o", "link", "show", "dev", "tun-gre"},
-		{"ip", "tunnel", "change", "tun-gre", "mode", "gre", "local", "192.0.2.10", "remote", "192.0.2.20", "ttl", "64", "key", "42"},
+		{"ip", "link", "set", "dev", "tun-gre", "type", "gre", "local", "192.0.2.10", "remote", "192.0.2.20", "ttl", "64", "key", "42"},
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %#v, want %#v", calls, want)
