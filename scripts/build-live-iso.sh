@@ -92,6 +92,7 @@ rootfs_cache=${ROOTFS_CACHE_TAR:-}
 
 if [ -n "${rootfs_cache}" ] && [ -f "${rootfs_cache}" ]; then
     tar -xf "${rootfs_cache}" -C "${workdir}"
+    mkdir -p "${workdir}/rootfs/dev"
     echo "restored rootfs from cache (skipping debootstrap + apt-get)"
 else
 
@@ -134,7 +135,7 @@ run_root chown -R "$(id -u):$(id -g)" "${rootfs}"
 chmod -R u+w "${rootfs}"
 
 if [ -n "${rootfs_cache}" ]; then
-    tar -cf "${rootfs_cache}" -C "${workdir}" rootfs
+    tar -cf "${rootfs_cache}" -C "${workdir}" --exclude='rootfs/dev/*' rootfs
     echo "saved rootfs cache at ${rootfs_cache}"
 fi
 
