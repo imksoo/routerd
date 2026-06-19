@@ -84,6 +84,39 @@ func TestLiveISOUsesSystemdFirstBootSetup(t *testing.T) {
 	}
 }
 
+func TestLiveISOSupportsNoCloudHostname(t *testing.T) {
+	script := liveISOScript(t)
+	for _, needle := range []string{
+		"cloudinit_mount_dir=/media/routerd-cloudinit",
+		"cloudinit_candidates()",
+		"CIDATA cidata",
+		"/dev/disk/by-label/CIDATA",
+		"cloudinit_user_data()",
+		"${cloudinit_mount_dir}/user-data",
+		"cloudinit_hostname_value()",
+		"s/^[[:space:]]*hostname:[[:space:]]*//p",
+		"set_live_hostname()",
+		"hostnamectl set-hostname \"${host}\"",
+		"apply_cloudinit_hostname()",
+		"udevadm settle --timeout=10",
+		"set hostname ${host} from NoCloud user-data",
+		"apply_cloudinit_hostname || true",
+	} {
+		if !strings.Contains(script, needle) {
+			t.Fatalf("Ubuntu live ISO NoCloud hostname setup missing %q", needle)
+		}
+	}
+
+	hostnameIdx := strings.Index(script, "apply_cloudinit_hostname || true")
+	runtimeIdx := strings.Index(script, "install -d /run/routerd /var/lib/routerd /usr/local/etc/routerd")
+	if hostnameIdx < 0 || runtimeIdx < 0 {
+		t.Fatal("missing NoCloud hostname setup or live runtime setup")
+	}
+	if hostnameIdx > runtimeIdx {
+		t.Fatal("NoCloud hostname must be applied before routerd live runtime setup")
+	}
+}
+
 func TestLiveISOBootsUbuntuCasperWithSerialConsole(t *testing.T) {
 	script := liveISOScript(t)
 	for _, needle := range []string{
