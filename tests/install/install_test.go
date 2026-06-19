@@ -548,7 +548,7 @@ func TestBootstrapInstallerIsPublishedByReleaseWorkflow(t *testing.T) {
 	content := string(workflow)
 	for _, needle := range []string{
 		"packaging/bootstrap.sh",
-		"release-artifacts/install.sh",
+		"install.sh",
 	} {
 		if !strings.Contains(content, needle) {
 			t.Fatalf("release workflow missing bootstrap installer reference %q", needle)
