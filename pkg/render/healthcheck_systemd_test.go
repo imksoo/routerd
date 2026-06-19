@@ -39,12 +39,16 @@ func TestHealthCheckSystemdUnit(t *testing.T) {
 		"--source-address \"192.0.2.10\"",
 		"--socket \"/run/routerd/healthcheck/internet-icmp.sock\"",
 		"RuntimeDirectoryPreserve=yes",
-		"ProtectSystem=strict",
 		"CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW",
 		"AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW",
 	} {
 		if !strings.Contains(unit, want) {
 			t.Fatalf("unit missing %q:\n%s", want, unit)
+		}
+	}
+	for _, notWant := range []string{"RestrictAddressFamilies=", "ProtectSystem=", "ProtectHome=", "PrivateTmp=", "ReadWritePaths="} {
+		if strings.Contains(unit, notWant) {
+			t.Fatalf("unit must not contain %q:\n%s", notWant, unit)
 		}
 	}
 }

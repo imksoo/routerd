@@ -15,11 +15,15 @@ func TestEventdSystemdSpec(t *testing.T) {
 		"ExecStart=/usr/local/sbin/routerd-eventd daemon",
 		"--config-file /var/lib/routerd/eventd/edge/config.json",
 		"Restart=always",
-		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
 		"AmbientCapabilities=CAP_NET_BIND_SERVICE",
 	} {
 		if !strings.Contains(unit, want) {
 			t.Fatalf("unit missing %q:\n%s", want, unit)
+		}
+	}
+	for _, notWant := range []string{"RestrictAddressFamilies=", "ProtectSystem=", "ProtectHome=", "PrivateTmp=", "ReadWritePaths="} {
+		if strings.Contains(unit, notWant) {
+			t.Fatalf("unit must not contain %q:\n%s", notWant, unit)
 		}
 	}
 }

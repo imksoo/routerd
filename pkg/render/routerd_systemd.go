@@ -22,7 +22,6 @@ func RouterdServiceSystemdSpec() api.SystemdUnitSpec {
 		LogsDirectory:            []string{"routerd"},
 		AmbientCapabilities:      []string{"CAP_NET_ADMIN", "CAP_NET_RAW", "CAP_NET_BIND_SERVICE", "CAP_SETUID", "CAP_SETGID", "CAP_CHOWN"},
 		CapabilityBoundingSet:    []string{"CAP_NET_ADMIN", "CAP_NET_RAW", "CAP_NET_BIND_SERVICE", "CAP_SETUID", "CAP_SETGID", "CAP_CHOWN"},
-		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6", "AF_NETLINK", "AF_PACKET"},
 		NoNewPrivileges:          &noNewPrivileges,
 		Enabled:                  &enabled,
 		Started:                  &started,

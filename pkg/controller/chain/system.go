@@ -1018,7 +1018,6 @@ func interfaceAliases(router *api.Router) map[string]string {
 
 func dhcpv4ClientUnitSpec(resource, ifname string, spec api.DHCPv4ClientSpec, telemetryEnv []string) api.SystemdUnitSpec {
 	noNewPrivileges := true
-	privateTmp := true
 	exec := []string{"/usr/local/sbin/routerd-dhcpv4-client", "daemon", "--resource", resource, "--interface", ifname}
 	if spec.Hostname != "" {
 		exec = append(exec, "--hostname", spec.Hostname)
@@ -1045,20 +1044,14 @@ func dhcpv4ClientUnitSpec(resource, ifname string, spec api.DHCPv4ClientSpec, te
 		RuntimeDirectoryPreserve: "yes",
 		StateDirectory:           []string{"routerd/dhcpv4-client"},
 		LogsDirectory:            []string{"routerd"},
-		ReadWritePaths:           []string{"/run/routerd", "/var/lib/routerd", "/var/log/routerd"},
 		AmbientCapabilities:      []string{"CAP_NET_RAW", "CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE"},
 		CapabilityBoundingSet:    []string{"CAP_NET_RAW", "CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE"},
-		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6", "AF_NETLINK", "AF_PACKET"},
-		ProtectSystem:            "strict",
-		ProtectHome:              "yes",
 		NoNewPrivileges:          &noNewPrivileges,
-		PrivateTmp:               &privateTmp,
 	}
 }
 
 func dhcpv6ClientUnitSpec(resource, ifname string, spec api.DHCPv6PrefixDelegationSpec, telemetryEnv []string) api.SystemdUnitSpec {
 	noNewPrivileges := true
-	privateTmp := true
 	exec := []string{"/usr/local/sbin/routerd-dhcpv6-client", "daemon", "--resource", resource, "--interface", ifname}
 	if spec.IAID != "" {
 		exec = append(exec, "--iaid", spec.IAID)
@@ -1079,20 +1072,14 @@ func dhcpv6ClientUnitSpec(resource, ifname string, spec api.DHCPv6PrefixDelegati
 		RuntimeDirectoryPreserve: "yes",
 		StateDirectory:           []string{"routerd/dhcpv6-client"},
 		LogsDirectory:            []string{"routerd"},
-		ReadWritePaths:           []string{"/run/routerd", "/var/lib/routerd", "/var/log/routerd"},
 		AmbientCapabilities:      []string{"CAP_NET_RAW", "CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE"},
 		CapabilityBoundingSet:    []string{"CAP_NET_RAW", "CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE"},
-		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6", "AF_NETLINK"},
-		ProtectSystem:            "strict",
-		ProtectHome:              "yes",
 		NoNewPrivileges:          &noNewPrivileges,
-		PrivateTmp:               &privateTmp,
 	}
 }
 
 func raObserverUnitSpec(resource, ifname string, telemetryEnv []string) api.SystemdUnitSpec {
 	noNewPrivileges := true
-	privateTmp := true
 	exec := []string{
 		"/usr/local/sbin/routerd-ra-observer", "daemon",
 		"--resource", resource,
@@ -1112,14 +1099,9 @@ func raObserverUnitSpec(resource, ifname string, telemetryEnv []string) api.Syst
 		RuntimeDirectory:         []string{"routerd/ra-observer"},
 		RuntimeDirectoryPreserve: "yes",
 		LogsDirectory:            []string{"routerd"},
-		ReadWritePaths:           []string{"/run/routerd", "/var/log/routerd"},
 		AmbientCapabilities:      []string{"CAP_NET_RAW"},
 		CapabilityBoundingSet:    []string{"CAP_NET_RAW"},
-		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_PACKET"},
-		ProtectSystem:            "strict",
-		ProtectHome:              "yes",
 		NoNewPrivileges:          &noNewPrivileges,
-		PrivateTmp:               &privateTmp,
 	}
 }
 

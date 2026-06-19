@@ -43,12 +43,7 @@ func SystemdUnit(name string, spec api.SystemdUnitSpec) []byte {
 	if serviceType == "" {
 		serviceType = "simple"
 	}
-	protectHome := spec.ProtectHome
-	if protectHome == "" {
-		protectHome = "yes"
-	}
 	noNewPrivileges := api.BoolDefault(spec.NoNewPrivileges, true)
-	privateTmp := api.BoolDefault(spec.PrivateTmp, true)
 
 	var b strings.Builder
 	b.WriteString("# Managed by routerd. Do not edit by hand.\n")
@@ -94,11 +89,15 @@ func SystemdUnit(name string, spec api.SystemdUnitSpec) []byte {
 	writeSpaceList(&b, "LogsDirectory", spec.LogsDirectory)
 	writeSpaceList(&b, "ReadWritePaths", spec.ReadWritePaths)
 	b.WriteString("NoNewPrivileges=" + yesNo(noNewPrivileges) + "\n")
-	b.WriteString("PrivateTmp=" + yesNo(privateTmp) + "\n")
+	if spec.PrivateTmp != nil {
+		b.WriteString("PrivateTmp=" + yesNo(*spec.PrivateTmp) + "\n")
+	}
 	if spec.RemainAfterExit != nil {
 		b.WriteString("RemainAfterExit=" + yesNo(*spec.RemainAfterExit) + "\n")
 	}
-	b.WriteString("ProtectHome=" + protectHome + "\n")
+	if spec.ProtectHome != "" {
+		b.WriteString("ProtectHome=" + spec.ProtectHome + "\n")
+	}
 	if spec.ProtectSystem != "" {
 		b.WriteString("ProtectSystem=" + spec.ProtectSystem + "\n")
 	}
