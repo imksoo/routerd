@@ -53,8 +53,8 @@ bootstrap reader は provider 固有の data source を同じ user-data document
 | --- | --- | --- |
 | PVE | `CIDATA` / `cidata` label の NoCloud config drive | まず `/user-data` を読み、OpenStack 形式 path を fallback にする。`qm set --cicustom user=...` で配布できる。 |
 | AWS | IMDSv2 `http://169.254.169.254/latest/user-data` | user-data 取得前に session token を取る。 |
-| Azure | IMDS と wireserver | instance identity は metadata service から取る。user-data が必要な場合は image flow が提供する user-data/custom-data path を読む。 |
-| OCI | IMDSv2 `http://169.254.169.254/opc/v2/instance/metadata/` | OCI metadata header を使い、user-data/custom metadata 値を読む。 |
+| Azure | IMDS `http://169.254.169.254/metadata/instance/compute/userData?...` | `Metadata: true` header を使い、返された user-data を base64 decode する。 |
+| OCI | IMDSv2 `http://169.254.169.254/opc/v2/instance/metadata/user_data` | `Authorization: Bearer Oracle` header を使い、返された user-data を base64 decode する。 |
 
 Live ISO の first implementation は軽量に保ちます。後で module 互換性が必要になるまでは、
 完全な `cloud-init` package は入れません。Live ISO には systemd first boot path があるため、
@@ -109,7 +109,7 @@ metadata.json
 1. 完了: Ubuntu debootstrap Live ISO で PVE NoCloud `hostname` を反映する。
 2. PVE NoCloud では完了: user-data を parse し、任意の `routerd.config_sha256` 付きで `routerd.config_url` を取得する。
 3. systemd first boot path では完了: config disk precedence、単一 `router.yaml` の配置、`.tar.zst` / `.tar.gz` / `.tar` bundle extraction。
-4. AWS、Azure、OCI IMDS reader を同じ interface の下に追加する。
+4. 完了: AWS、Azure、OCI IMDS reader を同じ user-data parse interface の下に追加する。
 5. 検証済み config の optional persistent cache と SSH host key bootstrap を追加する。
 6. bundle format が固まったら signature verification と status reporting を強化する。
 

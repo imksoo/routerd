@@ -146,7 +146,7 @@ func TestLiveISORejectsCloudInitConfigSHA256Mismatch(t *testing.T) {
 		"sha256sum \"${file}\"",
 		"cloud-init config_url sha256 mismatch",
 		"verify_sha256 \"${tmp}\" \"${config_sha256}\" || { rm -f \"${tmp}\"; return 1; }",
-		"if ! restore_config_disk_config && ! restore_cloudinit_configs; then",
+		"if ! restore_config_disk_config && ! restore_cloudinit_configs && ! restore_provider_config; then",
 		"cp /usr/local/etc/routerd/router.yaml.sample \"${config_file}\"",
 	} {
 		if !strings.Contains(script, needle) {
@@ -184,20 +184,125 @@ func TestLiveISOConfigDiskTakesPrecedenceOverCloudInit(t *testing.T) {
 		"/dev/disk/by-label/ROUTERD_CONFIG",
 		"restore_config_disk_config()",
 		"restored ${config_file} from ROUTERD_CONFIG media",
-		"if ! restore_config_disk_config && ! restore_cloudinit_configs; then",
+		"if ! restore_config_disk_config && ! restore_cloudinit_configs && ! restore_provider_config; then",
 	} {
 		if !strings.Contains(script, needle) {
 			t.Fatalf("Ubuntu live ISO config disk precedence missing %q", needle)
 		}
 	}
 
-	precedenceIdx := strings.Index(script, "if ! restore_config_disk_config && ! restore_cloudinit_configs; then")
+	precedenceIdx := strings.Index(script, "if ! restore_config_disk_config && ! restore_cloudinit_configs && ! restore_provider_config; then")
 	sampleIdx := strings.Index(script, "cp /usr/local/etc/routerd/router.yaml.sample \"${config_file}\"")
 	if precedenceIdx < 0 || sampleIdx < 0 {
 		t.Fatal("missing config precedence chain or sample fallback")
 	}
 	if precedenceIdx > sampleIdx {
 		t.Fatal("config disk and cloud-init restore must run before sample fallback")
+	}
+}
+
+func TestLiveISOSupportsProviderIMDSDetection(t *testing.T) {
+	script := liveISOScript(t)
+	for _, needle := range []string{
+		"detect_provider()",
+		"nocloud_available()",
+		"dmi_value()",
+		"aws_detect()",
+		"azure_detect()",
+		"oci_detect()",
+		"printf '%s\\n' nocloud",
+		"printf '%s\\n' aws",
+		"printf '%s\\n' azure",
+		"printf '%s\\n' oci",
+		"printf '%s\\n' unknown",
+	} {
+		if !strings.Contains(script, needle) {
+			t.Fatalf("Ubuntu live ISO IMDS provider detection missing %q", needle)
+		}
+	}
+
+	nocloudIdx := strings.Index(script, "if nocloud_available; then")
+	awsIdx := strings.Index(script, "elif aws_detect; then")
+	azureIdx := strings.Index(script, "elif azure_detect; then")
+	ociIdx := strings.Index(script, "elif oci_detect; then")
+	if nocloudIdx < 0 || awsIdx < 0 || azureIdx < 0 || ociIdx < 0 {
+		t.Fatal("provider detection chain not found")
+	}
+	if !(nocloudIdx < awsIdx && awsIdx < azureIdx && azureIdx < ociIdx) {
+		t.Fatal("provider detection order must be NoCloud, AWS, Azure, OCI")
+	}
+}
+
+func TestLiveISOSupportsAWSIMDSv2UserData(t *testing.T) {
+	script := liveISOScript(t)
+	for _, needle := range []string{
+		"fetch_aws_userdata()",
+		"X-aws-ec2-metadata-token-ttl-seconds: 300",
+		"http://169.254.169.254/latest/api/token",
+		"X-aws-ec2-metadata-token: ${token}",
+		"http://169.254.169.254/latest/user-data",
+		"--connect-timeout 2 --max-time 5",
+	} {
+		if !strings.Contains(script, needle) {
+			t.Fatalf("Ubuntu live ISO AWS IMDSv2 support missing %q", needle)
+		}
+	}
+}
+
+func TestLiveISOSupportsAzureIMDSUserData(t *testing.T) {
+	script := liveISOScript(t)
+	for _, needle := range []string{
+		"fetch_azure_userdata()",
+		"7783-7084-3265-9085-8269-3286-77",
+		"Metadata: true",
+		"http://169.254.169.254/metadata/instance?api-version=2021-02-01",
+		"http://169.254.169.254/metadata/instance/compute/userData?api-version=2021-02-01&format=text",
+		"base64 -d \"${tmp}\" > \"${dest}\"",
+	} {
+		if !strings.Contains(script, needle) {
+			t.Fatalf("Ubuntu live ISO Azure IMDS support missing %q", needle)
+		}
+	}
+}
+
+func TestLiveISOSupportsOCIIMDSUserData(t *testing.T) {
+	script := liveISOScript(t)
+	for _, needle := range []string{
+		"fetch_oci_userdata()",
+		"OracleCloud",
+		"Authorization: Bearer Oracle",
+		"http://169.254.169.254/opc/v2/instance/metadata/",
+		"http://169.254.169.254/opc/v2/instance/metadata/user_data",
+		"base64 -d \"${tmp}\" > \"${dest}\"",
+	} {
+		if !strings.Contains(script, needle) {
+			t.Fatalf("Ubuntu live ISO OCI IMDS support missing %q", needle)
+		}
+	}
+}
+
+func TestLiveISOUsesIMDSAfterNoCloudForHostnameAndConfig(t *testing.T) {
+	script := liveISOScript(t)
+	for _, needle := range []string{
+		"fetch_provider_userdata()",
+		"log \"read cloud-init user-data from ${provider} IMDS\"",
+		"set hostname ${host} from IMDS user-data",
+		"restore_provider_config()",
+		"fetching routerd config from IMDS config_url",
+		"restored ${config_file} from IMDS config_url",
+		"if ! restore_config_disk_config && ! restore_cloudinit_configs && ! restore_provider_config; then",
+	} {
+		if !strings.Contains(script, needle) {
+			t.Fatalf("Ubuntu live ISO IMDS restore path missing %q", needle)
+		}
+	}
+	hostnameNoCloudIdx := strings.Index(script, "for candidate in $(cloudinit_candidates")
+	hostnameIMDSIdx := strings.Index(script, "if fetch_provider_userdata \"${provider_userdata_file}\"; then")
+	if hostnameNoCloudIdx < 0 || hostnameIMDSIdx < 0 {
+		t.Fatal("hostname NoCloud or IMDS path not found")
+	}
+	if hostnameNoCloudIdx > hostnameIMDSIdx {
+		t.Fatal("hostname setup must try NoCloud before IMDS")
 	}
 }
 
