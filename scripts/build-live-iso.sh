@@ -774,7 +774,7 @@ disable_bootstrap_dhcp
 
 if [ -x /usr/local/sbin/routerd ]; then
     systemctl enable routerd.service >/dev/null 2>&1 || true
-    systemctl start routerd.service >/dev/null 2>&1 || true
+    systemctl start --no-block routerd.service >/dev/null 2>&1 || true
 fi
 if [ -x /usr/local/sbin/routerd-dns-resolver ]; then
     systemctl enable routerd-dns-resolver@lan-resolver.service >/dev/null 2>&1 || true

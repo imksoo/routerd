@@ -76,7 +76,7 @@ func TestLiveISOUsesSystemdFirstBootSetup(t *testing.T) {
 		"routerd-live-setup.service",
 		"WantedBy=multi-user.target",
 		"systemctl enable routerd.service",
-		"systemctl start routerd.service",
+		"systemctl start --no-block routerd.service",
 		"systemctl enable routerd-dns-resolver@lan-resolver.service",
 		"multi-user.target.wants/routerd-live-setup.service",
 	} {
@@ -152,7 +152,7 @@ func TestLiveISODisablesBootstrapDHCPBeforeRouterdStarts(t *testing.T) {
 
 	configIdx := strings.Index(script, "if ! restore_config_disk_config")
 	disableIdx := strings.Index(script, "\ndisable_bootstrap_dhcp\n")
-	startIdx := strings.Index(script, "systemctl start routerd.service")
+	startIdx := strings.Index(script, "systemctl start --no-block routerd.service")
 	if configIdx < 0 || disableIdx < 0 || startIdx < 0 {
 		t.Fatal("missing config restore, bootstrap DHCP teardown, or routerd start order marker")
 	}
