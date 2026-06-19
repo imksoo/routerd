@@ -21,7 +21,6 @@ func TailscaleSystemdSpec(name string, spec api.TailscaleNodeSpec) api.SystemdUn
 		spec.AuthKeyEnv = "TS_AUTHKEY"
 	}
 	noNewPrivileges := true
-	privateTmp := true
 	remainAfterExit := true
 	var environmentFiles []string
 	if spec.AuthKeyFile != "" {
@@ -41,10 +40,6 @@ func TailscaleSystemdSpec(name string, spec api.TailscaleNodeSpec) api.SystemdUn
 		RuntimeDirectoryPreserve: "yes",
 		RemainAfterExit:          &remainAfterExit,
 		NoNewPrivileges:          &noNewPrivileges,
-		PrivateTmp:               &privateTmp,
-		ProtectHome:              "true",
-		ProtectSystem:            "no",
-		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6", "AF_NETLINK"},
 		CapabilityBoundingSet:    []string{"CAP_NET_ADMIN", "CAP_NET_RAW"},
 		AmbientCapabilities:      []string{"CAP_NET_ADMIN", "CAP_NET_RAW"},
 	}

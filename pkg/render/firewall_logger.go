@@ -22,7 +22,6 @@ func FirewallLoggerSystemdSpec(spec api.FirewallLogSpec, dpiSocket string) api.S
 		after = append(after, "routerd-dpi-classifier.service")
 	}
 	noNewPrivileges := true
-	privateTmp := true
 	return api.SystemdUnitSpec{
 		Description:              "routerd firewall log collector",
 		ExecStart:                exec,
@@ -34,11 +33,6 @@ func FirewallLoggerSystemdSpec(spec api.FirewallLogSpec, dpiSocket string) api.S
 		RuntimeDirectoryPreserve: "yes",
 		StateDirectory:           []string{"routerd"},
 		LogsDirectory:            []string{"routerd"},
-		ReadWritePaths:           []string{defaults.StateDir, "/var/log/routerd"},
-		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6", "AF_NETLINK"},
-		ProtectSystem:            "strict",
-		ProtectHome:              "true",
 		NoNewPrivileges:          &noNewPrivileges,
-		PrivateTmp:               &privateTmp,
 	}
 }

@@ -129,7 +129,10 @@ If you only see records from `routerd` itself but the per-daemon services are si
 
 ## Troubleshooting
 
-**"address family not supported by protocol" in a daemon's journal.** routerd's hardened systemd units restrict address families. If your collector runs over IPv4 (most do) the unit must allow `AF_INET`. The shipped templates do; if you have an older drop-in that overrides `RestrictAddressFamilies`, make sure `AF_INET AF_INET6` are both present.
+**"address family not supported by protocol" in a daemon's journal.** Current
+routerd-generated systemd units do not restrict address families. Check for an
+older local unit or drop-in that still sets `RestrictAddressFamilies`, then
+remove that override and run `systemctl daemon-reload`.
 
 **No data at the collector.** Check that the endpoint is a hostname/IP routerd can reach (test with `getent ahosts` and `nc -vz host port`), and that `OTEL_EXPORTER_OTLP_INSECURE=true` is set when you skip TLS.
 

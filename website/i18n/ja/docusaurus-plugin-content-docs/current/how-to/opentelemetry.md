@@ -114,7 +114,10 @@ routerd を再起動すると、数秒以内に次が見えるはずです。
 
 ## トラブルシューティング
 
-**デーモンの journal に `address family not supported by protocol` が出る。** routerd のハードン済み systemd unit は、アドレスファミリを制限しています。コレクターが IPv4 経由なら（多くの場合はそうです）、unit に `AF_INET` の許可が必要です。同梱テンプレートにはすでに入っています。古い drop-in で `RestrictAddressFamilies` を上書きしている場合は、`AF_INET AF_INET6` の両方が含まれていることを確認してください。
+**デーモンの journal に `address family not supported by protocol` が出る。** 現在の
+routerd 生成 systemd unit は address family を制限しません。古いローカル unit や
+drop-in に `RestrictAddressFamilies` が残っていないか確認し、その override を削除して
+`systemctl daemon-reload` を実行してください。
 
 **コレクターに何も届かない。** routerd から到達できるホスト・IP か（`getent ahosts` と `nc -vz host port` で確認）、TLS 無しなら `OTEL_EXPORTER_OTLP_INSECURE=true` を入れたかを確認します。
 

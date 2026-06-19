@@ -16,7 +16,6 @@ const (
 
 func NDPIAgentSystemdSpec(runtimeRoot string) api.SystemdUnitSpec {
 	noNewPrivileges := true
-	privateTmp := true
 	socket := filepath.Join(runtimeRoot, "routerd/ndpi-agent/default.sock")
 	return api.SystemdUnitSpec{
 		Description:              "routerd nDPI analysis agent",
@@ -28,11 +27,7 @@ func NDPIAgentSystemdSpec(runtimeRoot string) api.SystemdUnitSpec {
 		RestartSec:               "5s",
 		RuntimeDirectory:         []string{"routerd/ndpi-agent"},
 		RuntimeDirectoryPreserve: "yes",
-		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6"},
-		ProtectSystem:            "strict",
-		ProtectHome:              "true",
 		NoNewPrivileges:          &noNewPrivileges,
-		PrivateTmp:               &privateTmp,
 	}
 }
 
@@ -41,15 +36,14 @@ func DPIClassifierSystemdSpec(runtimeRoot string) api.SystemdUnitSpec {
 	socket := filepath.Join(runtimeRoot, "routerd/dpi-classifier/default.sock")
 	agentSocket := filepath.Join(runtimeRoot, "routerd/ndpi-agent/default.sock")
 	return api.SystemdUnitSpec{
-		Description:             "routerd DPI classifier",
-		ExecStart:               []string{"/usr/local/sbin/routerd-dpi-classifier", "daemon", "--socket", socket, "--engine", "auto", "--ndpi-agent-socket", agentSocket},
-		Wants:                   []string{"network-online.target", NDPIAgentUnitName},
-		After:                   []string{"network-online.target", NDPIAgentUnitName},
-		WantedBy:                []string{"multi-user.target"},
-		Restart:                 "on-failure",
-		RuntimeDirectory:        []string{"routerd/dpi-classifier"},
-		RestrictAddressFamilies: []string{"AF_UNIX"},
-		NoNewPrivileges:         &noNewPrivileges,
+		Description:      "routerd DPI classifier",
+		ExecStart:        []string{"/usr/local/sbin/routerd-dpi-classifier", "daemon", "--socket", socket, "--engine", "auto", "--ndpi-agent-socket", agentSocket},
+		Wants:            []string{"network-online.target", NDPIAgentUnitName},
+		After:            []string{"network-online.target", NDPIAgentUnitName},
+		WantedBy:         []string{"multi-user.target"},
+		Restart:          "on-failure",
+		RuntimeDirectory: []string{"routerd/dpi-classifier"},
+		NoNewPrivileges:  &noNewPrivileges,
 	}
 }
 

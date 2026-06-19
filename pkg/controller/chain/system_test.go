@@ -161,12 +161,12 @@ func TestSystemdUnitControllerRendersAndEnablesUnit(t *testing.T) {
 		t.Fatalf("read unit: %v", err)
 	}
 	gotUnit := string(data)
-	for _, want := range []string{"ExecStart=/usr/local/sbin/routerd serve", "RuntimeDirectory=routerd routerd/bgp routerd/dhcpv6-client routerd/dhcpv4-client routerd/pppoe-client routerd/dns-resolver", "StateDirectory=routerd", "AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN", "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_PACKET", "NoNewPrivileges=no"} {
+	for _, want := range []string{"ExecStart=/usr/local/sbin/routerd serve", "RuntimeDirectory=routerd routerd/bgp routerd/dhcpv6-client routerd/dhcpv4-client routerd/pppoe-client routerd/dns-resolver", "StateDirectory=routerd", "AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN", "NoNewPrivileges=no"} {
 		if !strings.Contains(gotUnit, want) {
 			t.Fatalf("unit missing %q:\n%s", want, gotUnit)
 		}
 	}
-	for _, notWant := range []string{"ExecStartPre=/usr/local/sbin/routerd check", "ReadWritePaths=", "ProtectSystem="} {
+	for _, notWant := range []string{"ExecStartPre=/usr/local/sbin/routerd check", "ReadWritePaths=", "ProtectSystem=", "ProtectHome=", "PrivateTmp=", "RestrictAddressFamilies="} {
 		if strings.Contains(gotUnit, notWant) {
 			t.Fatalf("routerd.service must not contain %q:\n%s", notWant, gotUnit)
 		}
@@ -239,7 +239,7 @@ func TestSystemdUnitControllerAugmentsRouterdServiceForBGPVRRPIngress(t *testing
 			t.Fatalf("unit missing %q:\n%s", want, gotUnit)
 		}
 	}
-	for _, notWant := range []string{"SupplementaryGroups=frr frrvty", "/run/frr", "/etc/frr", "/etc/keepalived", "ReadWritePaths=", "ProtectSystem="} {
+	for _, notWant := range []string{"SupplementaryGroups=frr frrvty", "/run/frr", "/etc/frr", "/etc/keepalived", "ReadWritePaths=", "ProtectSystem=", "ProtectHome=", "PrivateTmp=", "RestrictAddressFamilies="} {
 		if strings.Contains(gotUnit, notWant) {
 			t.Fatalf("unit should not contain %q:\n%s", notWant, gotUnit)
 		}
@@ -1070,7 +1070,6 @@ func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
 				`ExecStart=/usr/local/sbin/routerd-dhcpv4-client daemon --resource wan-v4 --interface ens18 --hostname routerd-test`,
 				`RuntimeDirectory=routerd/dhcpv4-client`,
 				`AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN CAP_NET_BIND_SERVICE`,
-				`RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_PACKET`,
 			},
 		},
 		{
@@ -1087,7 +1086,6 @@ func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
 				`ExecStart=/usr/local/sbin/routerd-ra-observer daemon --resource lan-ra --interface ens19 --socket /run/routerd/ra-observer/lan-ra.sock --event-file /var/log/routerd/ra-observer-lan-ra.events.jsonl`,
 				`RuntimeDirectory=routerd/ra-observer`,
 				`AmbientCapabilities=CAP_NET_RAW`,
-				`RestrictAddressFamilies=AF_UNIX AF_PACKET`,
 			},
 		},
 	} {
@@ -1099,6 +1097,11 @@ func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
 		for _, want := range tc.want {
 			if !strings.Contains(unit, want) {
 				t.Fatalf("%s missing %q:\n%s", tc.unit, want, unit)
+			}
+		}
+		for _, notWant := range []string{"RestrictAddressFamilies=", "ProtectSystem=", "ProtectHome=", "PrivateTmp=", "ReadWritePaths="} {
+			if strings.Contains(unit, notWant) {
+				t.Fatalf("%s must not contain %q:\n%s", tc.unit, notWant, unit)
 			}
 		}
 	}

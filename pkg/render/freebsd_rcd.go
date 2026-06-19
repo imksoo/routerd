@@ -497,7 +497,6 @@ func freeBSDDHCPv6ClientSystemdSpec(resource, ifname string, spec api.DHCPv6Pref
 		args = append(args, "--client-duid", spec.ClientDUID)
 	}
 	noNewPrivileges := true
-	privateTmp := true
 	return api.SystemdUnitSpec{
 		Description:              "routerd DHCPv6-PD client " + resource,
 		ExecStart:                args,
@@ -510,12 +509,7 @@ func freeBSDDHCPv6ClientSystemdSpec(resource, ifname string, spec api.DHCPv6Pref
 		RuntimeDirectoryPreserve: "yes",
 		StateDirectory:           []string{"routerd", "routerd/dhcpv6-client", "routerd/dhcpv6-client/" + resource},
 		LogsDirectory:            []string{"routerd"},
-		ReadWritePaths:           []string{"/var/run/routerd", "/var/db/routerd", "/var/log/routerd"},
-		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET6"},
-		ProtectSystem:            "strict",
-		ProtectHome:              "true",
 		NoNewPrivileges:          &noNewPrivileges,
-		PrivateTmp:               &privateTmp,
 	}
 }
 
@@ -542,7 +536,6 @@ func freeBSDDHCPv4ClientSystemdSpec(resource, ifname string, spec api.DHCPv4Clie
 		args = append(args, "--client-id", spec.ClientID)
 	}
 	noNewPrivileges := true
-	privateTmp := true
 	return api.SystemdUnitSpec{
 		Description:              "routerd DHCPv4 client " + resource,
 		ExecStart:                args,
@@ -555,12 +548,7 @@ func freeBSDDHCPv4ClientSystemdSpec(resource, ifname string, spec api.DHCPv4Clie
 		RuntimeDirectoryPreserve: "yes",
 		StateDirectory:           []string{"routerd", "routerd/dhcpv4-client", "routerd/dhcpv4-client/" + resource},
 		LogsDirectory:            []string{"routerd"},
-		ReadWritePaths:           []string{"/var/run/routerd", "/var/db/routerd", "/var/log/routerd"},
-		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET"},
-		ProtectSystem:            "strict",
-		ProtectHome:              "true",
 		NoNewPrivileges:          &noNewPrivileges,
-		PrivateTmp:               &privateTmp,
 	}
 }
 
@@ -578,7 +566,6 @@ func freeBSDFirewallLoggerSystemdSpec(spec api.FirewallLogSpec, dpiSocket string
 		after = append(after, "routerd_dpi_classifier")
 	}
 	noNewPrivileges := true
-	privateTmp := true
 	return api.SystemdUnitSpec{
 		Description:              "routerd firewall log collector",
 		ExecStart:                exec,
@@ -590,12 +577,7 @@ func freeBSDFirewallLoggerSystemdSpec(spec api.FirewallLogSpec, dpiSocket string
 		RuntimeDirectoryPreserve: "yes",
 		StateDirectory:           []string{"routerd"},
 		LogsDirectory:            []string{"routerd"},
-		ReadWritePaths:           []string{"/var/db/routerd", "/var/log/routerd"},
-		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6"},
-		ProtectSystem:            "strict",
-		ProtectHome:              "true",
 		NoNewPrivileges:          &noNewPrivileges,
-		PrivateTmp:               &privateTmp,
 	}
 }
 

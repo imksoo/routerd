@@ -89,7 +89,6 @@ func HealthCheckDaemonSystemdSpec(options HealthCheckDaemonUnitOptions) api.Syst
 		"--event-file", logRoot+"/routerd/healthcheck/"+resource+"/events.jsonl",
 	)
 	noNewPrivileges := true
-	privateTmp := true
 	capabilities := healthCheckCapabilities(spec.FwMark)
 	return api.SystemdUnitSpec{
 		Description:              "routerd healthcheck " + resource,
@@ -105,14 +104,9 @@ func HealthCheckDaemonSystemdSpec(options HealthCheckDaemonUnitOptions) api.Syst
 		RuntimeDirectoryPreserve: "yes",
 		StateDirectory:           []string{"routerd/healthcheck"},
 		LogsDirectory:            []string{"routerd"},
-		ReadWritePaths:           []string{runtimeRoot + "/routerd", stateRoot + "/routerd", logRoot + "/routerd"},
-		RestrictAddressFamilies:  []string{"AF_UNIX", "AF_INET", "AF_INET6"},
 		CapabilityBoundingSet:    capabilities,
 		AmbientCapabilities:      capabilities,
-		ProtectSystem:            "strict",
-		ProtectHome:              "yes",
 		NoNewPrivileges:          &noNewPrivileges,
-		PrivateTmp:               &privateTmp,
 	}
 }
 
@@ -191,11 +185,6 @@ RuntimeDirectoryPreserve=yes
 StateDirectory=routerd/healthcheck
 LogsDirectory=routerd
 NoNewPrivileges=yes
-PrivateTmp=yes
-ProtectHome=yes
-ProtectSystem=strict
-ReadWritePaths=/run/routerd /var/lib/routerd /var/log/routerd
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 CapabilityBoundingSet=%s
 AmbientCapabilities=%s
 
