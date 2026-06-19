@@ -716,6 +716,7 @@ restore_cloudinit_config()
     install_config_bundle "${tmp}" "${config_url}" || { rm -f "${tmp}"; return 1; }
     cache_validated_config || true
     rm -f "${tmp}"
+    bootstrap_config_url=${config_url}
     log "restored ${config_file} from cloud-init config_url"
     return 0
 }
@@ -747,13 +748,54 @@ restore_provider_config()
     install_config_bundle "${tmp}" "${config_url}" || { rm -f "${tmp}"; return 1; }
     cache_validated_config || true
     rm -f "${tmp}"
+    bootstrap_config_url=${config_url}
     log "restored ${config_file} from IMDS config_url"
     return 0
+}
+
+config_url_host()
+{
+    url=$1
+    printf '%s\n' "${url}" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://([^/:]+).*#\1#'
+}
+
+route_ifname_for_host()
+{
+    host=$1
+    ip=$(getent ahostsv4 "${host}" 2>/dev/null | awk '{print $1; exit}')
+    [ -n "${ip}" ] || ip=${host}
+    ip -o -4 route get "${ip}" 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}'
+}
+
+write_uplink_network()
+{
+    ifname=$1
+    [ -n "${ifname}" ] || return 0
+    cat > "/etc/systemd/network/10-routerd-uplink-${ifname}.network" <<UPLINKEOF
+[Match]
+Name=${ifname}
+
+[Network]
+DHCP=ipv4
+IPv6AcceptRA=yes
+
+[DHCPv4]
+ClientIdentifier=mac
+UseDNS=yes
+UseHostname=no
+RouteMetric=100
+UPLINKEOF
+    log "preserved DHCP/DNS on uplink ${ifname}"
 }
 
 disable_bootstrap_dhcp()
 {
     if [ -f /etc/systemd/network/80-dhcp.network ]; then
+        if [ -n "${bootstrap_config_url:-}" ]; then
+            host=$(config_url_host "${bootstrap_config_url}")
+            uplink=$(route_ifname_for_host "${host}" 2>/dev/null || true)
+            write_uplink_network "${uplink}"
+        fi
         rm -f /etc/systemd/network/80-dhcp.network
         systemctl reload-or-restart systemd-networkd >/dev/null 2>&1 || true
         log "disabled bootstrap DHCP; routerd will manage network from here"

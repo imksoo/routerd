@@ -139,10 +139,16 @@ func TestLiveISODisablesBootstrapDHCPBeforeRouterdStarts(t *testing.T) {
 	script := liveISOScript(t)
 	for _, needle := range []string{
 		"disable_bootstrap_dhcp()",
+		"config_url_host()",
+		"route_ifname_for_host()",
+		"write_uplink_network()",
+		"10-routerd-uplink-${ifname}.network",
+		"bootstrap_config_url",
 		"[ -f /etc/systemd/network/80-dhcp.network ]",
 		"rm -f /etc/systemd/network/80-dhcp.network",
 		"systemctl reload-or-restart systemd-networkd",
 		"disabled bootstrap DHCP; routerd will manage network from here",
+		"preserved DHCP/DNS on uplink",
 		"disable_bootstrap_dhcp",
 	} {
 		if !strings.Contains(script, needle) {
