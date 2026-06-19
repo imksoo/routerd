@@ -340,6 +340,38 @@ func TestControllerSkipsUnchangedDefaultRoute(t *testing.T) {
 	}
 }
 
+func TestLeaseEventChangedIgnoresLeaseTimestamps(t *testing.T) {
+	current := map[string]any{
+		"phase":          daemonapi.ResourcePhaseBound,
+		"currentAddress": "192.0.2.10",
+		"prefixLength":   "24",
+		"defaultGateway": "192.0.2.1",
+		"domain":         "example.test",
+		"leaseTime":      "3600",
+		"appliedAddress": "192.0.2.10/24",
+		"dnsServers":     []string{"192.0.2.53"},
+		"ntpServers":     []string{"192.0.2.123"},
+		"lastLeaseAt":    "2026-06-19T10:00:00Z",
+		"lastRenewAt":    "2026-06-19T10:00:00Z",
+		"lastAppliedAt":  "2026-06-19T10:00:00Z",
+	}
+	next := map[string]any{}
+	for key, value := range current {
+		next[key] = value
+	}
+	next["lastLeaseAt"] = "2026-06-19T10:00:30Z"
+	next["lastRenewAt"] = "2026-06-19T10:00:30Z"
+	next["lastAppliedAt"] = "2026-06-19T10:00:30Z"
+	if leaseEventChanged(current, next) {
+		t.Fatal("timestamp-only lease refresh must not emit DHCPv4 client applied event")
+	}
+
+	next["defaultGateway"] = "192.0.2.254"
+	if !leaseEventChanged(current, next) {
+		t.Fatal("default gateway change must emit DHCPv4 client applied event")
+	}
+}
+
 func TestControllerRepairsMissingLeaseAddressWithStaleStatus(t *testing.T) {
 	socket := filepath.Join(t.TempDir(), "wan.sock")
 	listener, err := net.Listen("unix", socket)

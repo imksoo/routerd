@@ -258,6 +258,34 @@ func TestStatusChangedIgnoresLastTransitionAt(t *testing.T) {
 	}
 }
 
+func TestStatusChangedIgnoresDHCPv4ClientLeaseTimestamps(t *testing.T) {
+	current := map[string]any{
+		"phase":          "Bound",
+		"currentAddress": "192.0.2.10",
+		"prefixLength":   "24",
+		"defaultGateway": "192.0.2.1",
+		"appliedAddress": "192.0.2.10/24",
+		"lastLeaseAt":    "2026-06-19T10:00:00Z",
+		"lastRenewAt":    "2026-06-19T10:00:00Z",
+		"lastAppliedAt":  "2026-06-19T10:00:00Z",
+	}
+	next := map[string]any{}
+	for key, value := range current {
+		next[key] = value
+	}
+	next["lastLeaseAt"] = "2026-06-19T10:00:30Z"
+	next["lastRenewAt"] = "2026-06-19T10:00:30Z"
+	next["lastAppliedAt"] = "2026-06-19T10:00:30Z"
+	if statusChangedForEvent(api.NetAPIVersion, "DHCPv4Client", current, next) {
+		t.Fatal("DHCPv4Client lease timestamp-only refresh should not be event-significant")
+	}
+
+	next["currentAddress"] = "192.0.2.11"
+	if !statusChangedForEvent(api.NetAPIVersion, "DHCPv4Client", current, next) {
+		t.Fatal("DHCPv4Client address change must remain event-significant")
+	}
+}
+
 func TestEventedStoreDoesNotPublishTimestampOnlyStatusChange(t *testing.T) {
 	base := mapStore{
 		api.NetAPIVersion + "/EgressRoutePolicy/ipv4-default": statusWithOwnership(api.NetAPIVersion, "EgressRoutePolicy", map[string]any{
@@ -313,17 +341,27 @@ func TestEventedStoreDoesNotPublishTimestampOnlyStatusChange(t *testing.T) {
 func TestEventedStoreDoesNotPublishMobilityTimestampOnlyStatusRefresh(t *testing.T) {
 	base := mapStore{
 		api.MobilityAPIVersion + "/MobilityPool/cloudedge": statusWithOwnership(api.MobilityAPIVersion, "MobilityPool", map[string]any{
-			"plannerPhase":       "Planned",
-			"phase":              "Projected",
-			"dynamicDigest":      "sha256:abc",
-			"generatedClaims":    1,
-			"generatedActions":   2,
-			"placementActive":    false,
-			"plannedAt":          "2026-06-01T10:00:00Z",
-			"projectedAt":        "2026-06-01T10:00:00Z",
-			"dynamicExpiresAt":   "2026-06-01T10:05:00Z",
-			"operatorIntent":     "MobilityPool",
-			"derivedConfigKinds": []string{"AddressMobilityDomain", "RemoteAddressClaim"},
+			"plannerPhase":        "Planned",
+			"phase":               "Projected",
+			"dynamicDigest":       "sha256:abc",
+			"generatedClaims":     1,
+			"generatedActions":    2,
+			"placementActive":     false,
+			"plannedAt":           "2026-06-01T10:00:00Z",
+			"projectedAt":         "2026-06-01T10:00:00Z",
+			"dynamicExpiresAt":    "2026-06-01T10:05:00Z",
+			"discoveryLastScanAt": "2026-06-01T10:00:00Z",
+			"lastEventAt":         "2026-06-01T10:00:00Z",
+			"lastPacketAt":        "2026-06-01T10:00:00Z",
+			"lastScanAt":          "2026-06-01T10:00:00Z",
+			"packetsSeen":         10,
+			"scanCount":           20,
+			"probeCount":          30,
+			"probeHitCount":       40,
+			"proactiveCount":      50,
+			"observedCount":       60,
+			"operatorIntent":      "MobilityPool",
+			"derivedConfigKinds":  []string{"AddressMobilityDomain", "RemoteAddressClaim"},
 		}),
 	}
 	eventBus := bus.New()
@@ -336,17 +374,27 @@ func TestEventedStoreDoesNotPublishMobilityTimestampOnlyStatusRefresh(t *testing
 
 	store := eventedStore{Store: base, Bus: eventBus}
 	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
-		"plannerPhase":       "Planned",
-		"phase":              "Projected",
-		"dynamicDigest":      "sha256:abc",
-		"generatedClaims":    1,
-		"generatedActions":   2,
-		"placementActive":    false,
-		"plannedAt":          "2026-06-01T10:00:30Z",
-		"projectedAt":        "2026-06-01T10:00:30Z",
-		"dynamicExpiresAt":   "2026-06-01T10:05:30Z",
-		"operatorIntent":     "MobilityPool",
-		"derivedConfigKinds": []string{"AddressMobilityDomain", "RemoteAddressClaim"},
+		"plannerPhase":        "Planned",
+		"phase":               "Projected",
+		"dynamicDigest":       "sha256:abc",
+		"generatedClaims":     1,
+		"generatedActions":    2,
+		"placementActive":     false,
+		"plannedAt":           "2026-06-01T10:00:30Z",
+		"projectedAt":         "2026-06-01T10:00:30Z",
+		"dynamicExpiresAt":    "2026-06-01T10:05:30Z",
+		"discoveryLastScanAt": "2026-06-01T10:00:30Z",
+		"lastEventAt":         "2026-06-01T10:00:30Z",
+		"lastPacketAt":        "2026-06-01T10:00:30Z",
+		"lastScanAt":          "2026-06-01T10:00:30Z",
+		"packetsSeen":         11,
+		"scanCount":           21,
+		"probeCount":          31,
+		"probeHitCount":       41,
+		"proactiveCount":      51,
+		"observedCount":       61,
+		"operatorIntent":      "MobilityPool",
+		"derivedConfigKinds":  []string{"AddressMobilityDomain", "RemoteAddressClaim"},
 	}); err != nil {
 		t.Fatalf("save mobility status refresh: %v", err)
 	}
@@ -382,7 +430,7 @@ func TestEventedStoreDoesNotPublishMobilityTimestampOnlyStatusRefresh(t *testing
 		if !strings.Contains(fields, "dynamicDigest") || !strings.Contains(fields, "generatedActions") {
 			t.Fatalf("changedFields = %q, want semantic fields", fields)
 		}
-		for _, volatile := range []string{"plannedAt", "projectedAt", "dynamicExpiresAt"} {
+		for _, volatile := range []string{"plannedAt", "projectedAt", "dynamicExpiresAt", "discoveryLastScanAt", "lastEventAt", "lastPacketAt", "lastScanAt", "packetsSeen", "scanCount", "probeCount", "probeHitCount", "proactiveCount", "observedCount"} {
 			if strings.Contains(fields, volatile) {
 				t.Fatalf("changedFields = %q, should omit volatile %s", fields, volatile)
 			}
@@ -437,8 +485,18 @@ func TestMobilityStatusEventComparisonKeepsBehavioralFields(t *testing.T) {
 	next["plannedAt"] = "2026-06-01T10:00:30Z"
 	next["projectedAt"] = "2026-06-01T10:00:30Z"
 	next["dynamicExpiresAt"] = "2026-06-01T10:05:30Z"
+	next["discoveryLastScanAt"] = "2026-06-01T10:00:30Z"
+	next["lastEventAt"] = "2026-06-01T10:00:30Z"
+	next["lastPacketAt"] = "2026-06-01T10:00:30Z"
+	next["lastScanAt"] = "2026-06-01T10:00:30Z"
+	next["packetsSeen"] = 11
+	next["scanCount"] = 21
+	next["probeCount"] = 31
+	next["probeHitCount"] = 41
+	next["proactiveCount"] = 51
+	next["observedCount"] = 61
 	if statusChangedForEvent(api.MobilityAPIVersion, "MobilityPool", current, next) {
-		t.Fatalf("mobility timestamp-only refresh should not be event-significant")
+		t.Fatalf("mobility scan-only refresh should not be event-significant")
 	}
 }
 

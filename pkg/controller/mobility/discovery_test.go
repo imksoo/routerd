@@ -167,6 +167,65 @@ func TestDiscoveryControllerOnPremL2DHCPLeaseEventFeedsBGPAdvertisement(t *testi
 	}
 }
 
+func TestDiscoveryControllerOnPremL2RepeatedSameOwnerObservationIsNotOwnershipChange(t *testing.T) {
+	now := time.Date(2026, 6, 5, 12, 10, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := api.MobilityPoolSpec{
+		Prefix:         "192.168.123.0/24",
+		GroupRef:       "cloudedge",
+		DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+		Members: []api.MobilityPoolMember{
+			{
+				NodeRef: "pve-rt01",
+				Site:    "pve01",
+				Role:    "onprem",
+				Capture: api.MobilityMemberCapture{
+					Type:       "proxy-arp",
+					Interface:  "eth1",
+					ActiveWhen: api.CaptureActiveWhen{Type: "single-router"},
+				},
+				OwnershipDiscovery: api.MobilityOwnershipDiscovery{
+					Mode: "onprem-l2",
+					Sources: []api.MobilityOwnershipDiscoverySource{
+						{Type: OnPremSourceDHCPv4Lease, Interface: "eth1", LeaseTTL: "2m"},
+					},
+				},
+			},
+			{NodeRef: "k8s-rt01", Site: "core", Role: "cloud"},
+		},
+	}
+	poolPrefix := netip.MustParsePrefix("192.168.123.0/24")
+	observation := onPremObservation{
+		Action:     "observed",
+		Address:    "192.168.123.201",
+		MAC:        "02:00:c0:a8:7b:c9",
+		Interface:  "eth1",
+		SourceType: OnPremSourceDHCPv4Lease,
+		ObservedAt: now,
+	}
+	recordEvent(t, store, onPremDiscoveryObservedEvent("cloudedge", "cloudedge", "pve-rt01", "192.168.123.201/32", observation, now.Add(-30*time.Second), 2*time.Minute))
+	members := plannerMembers(spec.Members)
+	self, ok := lookupMemberByNodeRef(members, "pve-rt01")
+	if !ok {
+		t.Fatal("missing self member")
+	}
+	controller := DiscoveryController{Store: store, Now: func() time.Time { return now }}
+	changed, err := controller.recordOnPremObservation("cloudedge", spec, self, poolPrefix, observation, now)
+	if err != nil {
+		t.Fatalf("recordOnPremObservation: %v", err)
+	}
+	if changed {
+		t.Fatal("same-owner unexpired observation must not be treated as ownership change")
+	}
+	events, err := store.ListFederationEvents("cloudedge", false, now.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %#v, want existing event only", events)
+	}
+}
+
 func TestDiscoveryControllerOnPremL2StatusObservedClientsFeedBGPAdvertisement(t *testing.T) {
 	now := time.Date(2026, 6, 5, 12, 30, 0, 0, time.UTC)
 	store := testStore(t, now)

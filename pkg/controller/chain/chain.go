@@ -611,6 +611,12 @@ func mobilityStatusEventVolatileField(key string) bool {
 	switch key {
 	case "plannedAt", "projectedAt", "dynamicExpiresAt":
 		return true
+	case "discoveryLastScanAt", "lastEventAt", "lastPacketAt", "lastScanAt":
+		return true
+	case "packetsSeen", "scanCount", "probeCount", "probeHitCount", "proactiveCount":
+		return true
+	case "observedCount":
+		return true
 	default:
 		return false
 	}
@@ -623,7 +629,7 @@ func stableStatus(status map[string]any) map[string]any {
 	out := map[string]any{}
 	for key, value := range status {
 		switch key {
-		case "updatedAt", "observedAt", "installedAt", "lastCheckedAt", "lastTransitionAt", "consecutivePassed", "consecutiveFailed", "createdHint", "packetRing", "conditions", "mtuObservedAt":
+		case "updatedAt", "observedAt", "installedAt", "lastCheckedAt", "lastTransitionAt", "lastLeaseAt", "lastRenewAt", "lastAppliedAt", "consecutivePassed", "consecutiveFailed", "createdHint", "packetRing", "conditions", "mtuObservedAt":
 			continue
 		case "ownerKey", "ownerRef", "ownerRefs", "lifecycleClass":
 			continue
