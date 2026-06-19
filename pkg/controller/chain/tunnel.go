@@ -617,7 +617,7 @@ func tunnelChangeArgs(desired tunnelDesired) []string {
 	if desired.Mode == "fou" || desired.Mode == "gue" {
 		linkMode = "ipip"
 	}
-	args := []string{"tunnel", "change", desired.Name, "mode", linkMode, "local", desired.Local, "remote", desired.Remote, "ttl", strconv.Itoa(desired.TTL)}
+	args := []string{"link", "set", "dev", desired.Name, "type", linkMode, "local", desired.Local, "remote", desired.Remote, "ttl", strconv.Itoa(desired.TTL)}
 	if desired.Mode == "gre" && desired.Key != 0 {
 		args = append(args, "key", strconv.Itoa(desired.Key))
 	}
