@@ -159,6 +159,100 @@ cat > "${rootfs}/opt/routerd-live/firstboot.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
+cloudinit_mount_dir=/media/routerd-cloudinit
+
+log()
+{
+    echo "routerd-live: $*"
+}
+
+cloudinit_candidates()
+{
+    {
+        if command -v blkid >/dev/null 2>&1; then
+            for label in CIDATA cidata; do
+                dev=$(blkid -L "${label}" 2>/dev/null || true)
+                [ -n "${dev}" ] && [ -b "${dev}" ] && printf '%s\n' "${dev}"
+            done
+        fi
+        for dev in /dev/disk/by-label/CIDATA /dev/disk/by-label/cidata /dev/sr* /dev/vd*[0-9] /dev/sd*[0-9]; do
+            [ -b "${dev}" ] || continue
+            printf '%s\n' "${dev}"
+        done
+    } | awk '!seen[$0]++'
+}
+
+mount_cloudinit()
+{
+    dev=$1
+    [ -b "${dev}" ] || return 1
+    install -d "${cloudinit_mount_dir}"
+    if grep -q " ${cloudinit_mount_dir} " /proc/mounts 2>/dev/null; then
+        umount "${cloudinit_mount_dir}" 2>/dev/null || true
+    fi
+    mount -o ro,noatime "${dev}" "${cloudinit_mount_dir}" 2>/dev/null || mount -o ro "${dev}" "${cloudinit_mount_dir}"
+}
+
+cloudinit_user_data()
+{
+    for path in \
+        "${cloudinit_mount_dir}/user-data" \
+        "${cloudinit_mount_dir}/userdata" \
+        "${cloudinit_mount_dir}/openstack/latest/user_data" \
+        "${cloudinit_mount_dir}/openstack/latest/user-data"; do
+        [ -f "${path}" ] && { printf '%s\n' "${path}"; return 0; }
+    done
+    return 1
+}
+
+cloudinit_hostname_value()
+{
+    file=$1
+    value=$(sed -n 's/^[[:space:]]*hostname:[[:space:]]*//p' "${file}" 2>/dev/null | sed -n '1p')
+    [ -n "${value}" ] || return 1
+    value=${value%%[[:space:]]#*}
+    value=$(printf '%s\n' "${value}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+    case "${value}" in
+        ''|'|'|'>') return 1 ;;
+        *[!A-Za-z0-9.-]*|.*|*..*|*.) return 1 ;;
+    esac
+    printf '%s\n' "${value}"
+}
+
+set_live_hostname()
+{
+    host=$1
+    printf '%s\n' "${host}" > /etc/hostname
+    if command -v hostnamectl >/dev/null 2>&1; then
+        hostnamectl set-hostname "${host}" || hostname "${host}" || true
+    else
+        hostname "${host}" || true
+    fi
+}
+
+apply_cloudinit_hostname()
+{
+    command -v udevadm >/dev/null 2>&1 && udevadm settle --timeout=10 2>/dev/null || true
+    for candidate in $(cloudinit_candidates 2>/dev/null || true); do
+        [ -b "${candidate}" ] || continue
+        mount_cloudinit "${candidate}" || continue
+        user_data=$(cloudinit_user_data 2>/dev/null || true)
+        if [ -n "${user_data}" ]; then
+            host=$(cloudinit_hostname_value "${user_data}" 2>/dev/null || true)
+            if [ -n "${host}" ]; then
+                set_live_hostname "${host}"
+                log "set hostname ${host} from NoCloud user-data on ${candidate}"
+                umount "${cloudinit_mount_dir}" 2>/dev/null || true
+                return 0
+            fi
+        fi
+        umount "${cloudinit_mount_dir}" 2>/dev/null || true
+    done
+    return 1
+}
+
+apply_cloudinit_hostname || true
+
 install -d /run/routerd /var/lib/routerd /usr/local/etc/routerd
 if [ ! -f /usr/local/etc/routerd/router.yaml ] && [ -f /usr/local/etc/routerd/router.yaml.sample ]; then
     cp /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
