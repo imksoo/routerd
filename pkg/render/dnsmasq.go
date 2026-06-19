@@ -691,6 +691,8 @@ Type=simple
 ExecStart=` + dnsmasqPath + ` --keep-in-foreground --conf-file=` + configPath + ` --pid-file=` + pidFile + `
 Restart=on-failure
 RestartSec=2s
+KillMode=mixed
+TimeoutStopSec=10s
 
 [Install]
 WantedBy=multi-user.target

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -17,10 +18,32 @@ import (
 	"github.com/imksoo/routerd/pkg/controlapi"
 )
 
+const (
+	requestTimeout = 3 * time.Second
+	hardTimeout    = 4 * time.Second
+)
+
 func main() {
-	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	os.Exit(exitCodeWithHardTimeout(func() error {
+		return run(os.Args[1:])
+	}, hardTimeout, os.Stderr))
+}
+
+func exitCodeWithHardTimeout(runFunc func() error, timeout time.Duration, stderr io.Writer) int {
+	done := make(chan error, 1)
+	go func() {
+		done <- runFunc()
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	case <-time.After(timeout):
+		fmt.Fprintln(stderr, "dhcp-event-relay: hard timeout")
+		return 2
 	}
 }
 
@@ -36,7 +59,7 @@ func run(args []string) error {
 		return fmt.Errorf("usage: routerd-dhcp-event-relay [add|old|del] MAC IP HOSTNAME")
 	}
 	body, _ := json.Marshal(event)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		var dialer net.Dialer
