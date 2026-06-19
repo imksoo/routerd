@@ -19,6 +19,7 @@ func TestRouterdServiceSystemdSpecDoesNotConstrainWritePaths(t *testing.T) {
 		"RuntimeDirectory=routerd routerd/bgp routerd/dhcpv6-client routerd/dhcpv4-client routerd/pppoe-client routerd/dns-resolver",
 		"StateDirectory=routerd",
 		"AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN",
+		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_PACKET",
 	} {
 		if !strings.Contains(unit, want) {
 			t.Fatalf("routerd.service missing %q:\n%s", want, unit)
