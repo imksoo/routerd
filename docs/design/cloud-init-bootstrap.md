@@ -79,6 +79,13 @@ SSH identity and host-specific config disk paths. A NoCloud `hostname` from
 user-data should set `/etc/hostname` and call `hostnamectl set-hostname` before
 routerd services start.
 
+The live ISO's broad systemd-networkd DHCP profile is bootstrap-only. It may be
+used to fetch `routerd.config_url`, but the first boot unit removes
+`/etc/systemd/network/80-dhcp.network` and reloads systemd-networkd after config
+restore and before starting `routerd.service`. From that point, routerd
+resources such as `DHCPv4Client` and `IPv4StaticAddress` are the only intended
+address and route managers.
+
 When both config disk and cloud-init provide a config URL, config disk wins. The
 cloud-init source can still provide hostname if the config disk does not.
 
@@ -126,7 +133,10 @@ Failure behavior:
    user-data parsing interface.
 5. Done: regenerate live ISO SSH host keys, install `ssh_authorized_keys`, enable
    sshd, and cache the last validated `router.yaml` for fetch-failure fallback.
-6. Add signature verification and richer status reporting once the bundle format
+6. Done: remove bootstrap DHCP after config restore and before starting
+   `routerd.service`, so OS DHCP routes do not persist as a competing network
+   manager.
+7. Add signature verification and richer status reporting once the bundle format
    stabilizes.
 
 PR #546's useful part is the config pointer and checksum idea. The Alpine

@@ -50,6 +50,8 @@ At boot, the live setup service:
 7. Installs the fetched `router.yaml` or extracts a supported config bundle.
 8. Falls back to the last validated cache, then to the built-in sample config
    when no external config is available.
+9. Removes the bootstrap systemd-networkd DHCP profile and starts
+   `routerd.service`.
 
 Supported bundle URLs currently end in `.tar.zst`, `.tzst`, `.tar.gz`, `.tgz`,
 or `.tar`. Bundles must contain `router.yaml` at the archive root. Optional
@@ -59,6 +61,11 @@ or `.tar`. Bundles must contain `router.yaml` at the archive root. Optional
 After a successful fetch and checksum verification, the installed `router.yaml`
 is cached under `/var/lib/routerd/validated-config/router.yaml`. If a later boot
 cannot fetch `routerd.config_url`, the live ISO restores that validated cache.
+
+The ISO's default DHCP profile exists only so first boot can reach
+`routerd.config_url`. After config restore, the setup service removes that
+profile before starting routerd, so routerd's own `DHCPv4Client`,
+`IPv4StaticAddress`, and route resources become the network authority.
 
 ## Scope
 

@@ -55,6 +55,7 @@ func TestLiveISOInstallsUbuntuPackagesIntoSquashFS(t *testing.T) {
 	for _, needle := range []string{
 		"UBUNTU_BASE_PACKAGES",
 		"UBUNTU_LIVE_PACKAGES",
+		"systemd-resolved",
 		"chroot_run apt-get update",
 		"linux-image-generic systemd-sysv dbus sudo casper initramfs-tools",
 		"chroot_run apt-get install -y --no-install-recommends \"${ubuntu_base_package_list[@]}\" \"${ubuntu_package_list[@]}\"",
@@ -75,6 +76,7 @@ func TestLiveISOUsesSystemdFirstBootSetup(t *testing.T) {
 		"routerd-live-setup.service",
 		"WantedBy=multi-user.target",
 		"systemctl enable routerd.service",
+		"systemctl start routerd.service",
 		"systemctl enable routerd-dns-resolver@lan-resolver.service",
 		"multi-user.target.wants/routerd-live-setup.service",
 	} {
@@ -130,6 +132,32 @@ func TestLiveISOSupportsNoCloudHostname(t *testing.T) {
 	}
 	if hostnameIdx > sshIdx {
 		t.Fatal("NoCloud hostname must be applied before SSH bootstrap")
+	}
+}
+
+func TestLiveISODisablesBootstrapDHCPBeforeRouterdStarts(t *testing.T) {
+	script := liveISOScript(t)
+	for _, needle := range []string{
+		"disable_bootstrap_dhcp()",
+		"[ -f /etc/systemd/network/80-dhcp.network ]",
+		"rm -f /etc/systemd/network/80-dhcp.network",
+		"systemctl reload-or-restart systemd-networkd",
+		"disabled bootstrap DHCP; routerd will manage network from here",
+		"disable_bootstrap_dhcp",
+	} {
+		if !strings.Contains(script, needle) {
+			t.Fatalf("Ubuntu live ISO bootstrap DHCP teardown missing %q", needle)
+		}
+	}
+
+	configIdx := strings.Index(script, "if ! restore_config_disk_config")
+	disableIdx := strings.Index(script, "\ndisable_bootstrap_dhcp\n")
+	startIdx := strings.Index(script, "systemctl start routerd.service")
+	if configIdx < 0 || disableIdx < 0 || startIdx < 0 {
+		t.Fatal("missing config restore, bootstrap DHCP teardown, or routerd start order marker")
+	}
+	if !(configIdx < disableIdx && disableIdx < startIdx) {
+		t.Fatal("bootstrap DHCP must be disabled after config restore and before routerd starts")
 	}
 }
 

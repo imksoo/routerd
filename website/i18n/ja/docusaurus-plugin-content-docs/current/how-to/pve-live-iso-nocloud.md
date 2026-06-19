@@ -46,6 +46,7 @@ qm reboot 169
 6. `routerd.config_sha256` がある場合は検証する。
 7. 取得した `router.yaml` を配置するか、対応する config bundle を展開する。
 8. 外部 config がない場合は最後に検証済みの cache、さらに組み込み sample config に fallback する。
+9. bootstrap 用の systemd-networkd DHCP profile を削除し、`routerd.service` を起動する。
 
 対応する bundle URL は `.tar.zst`、`.tzst`、`.tar.gz`、`.tgz`、`.tar` です。
 bundle には archive root に `router.yaml` が必要です。任意の `secrets/` と
@@ -54,6 +55,10 @@ bundle には archive root に `router.yaml` が必要です。任意の `secret
 fetch と checksum 検証が成功すると、配置済みの `router.yaml` は
 `/var/lib/routerd/validated-config/router.yaml` に cache されます。次回 boot で
 `routerd.config_url` を取得できない場合、Live ISO はこの検証済み cache を復元します。
+
+ISO の既定 DHCP profile は、first boot が `routerd.config_url` に到達するためだけのものです。
+config restore 後、setup service は routerd 起動前にこの profile を削除します。以後は
+routerd の `DHCPv4Client`、`IPv4StaticAddress`、route resource がネットワークの管理元になります。
 
 ## 範囲
 
