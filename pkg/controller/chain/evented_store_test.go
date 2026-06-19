@@ -5,6 +5,7 @@ package chain
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -36,6 +37,21 @@ func (s *mergeTrackingMapStore) MergeObjectStatus(apiVersion, kind, name string,
 		next[key] = value
 	}
 	return s.mapStore.SaveObjectStatus(apiVersion, kind, name, next)
+}
+
+func anyStringSlice(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, fmt.Sprint(item))
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func TestStatusWithOwnershipAddsControllerMetadata(t *testing.T) {
@@ -139,6 +155,210 @@ func TestDaemonStatusControllerMergesMobilityPoolStatus(t *testing.T) {
 	}
 	if status["phase"] != "Observed" || status["address"] != "10.88.60.10/32" {
 		t.Fatalf("daemon observed fields missing: %#v", status)
+	}
+}
+
+func TestDaemonStatusControllerKeepsDedicatedControllerStatusFields(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), "daemon.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatalf("listen unix socket: %v", err)
+	}
+	defer listener.Close()
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/status" {
+			http.NotFound(w, r)
+			return
+		}
+		status := daemonapi.DaemonStatus{Resources: []daemonapi.ResourceStatus{
+			{
+				Resource: daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client", Name: "wan"},
+				Phase:    daemonapi.ResourcePhaseBound,
+				Health:   daemonapi.HealthOK,
+				Observed: map[string]string{
+					"interface":      "ens18",
+					"currentAddress": "192.0.2.10",
+					"prefixLength":   "24",
+					"defaultGateway": "192.0.2.1",
+					"dnsServers":     `["192.0.2.53","192.0.2.54"]`,
+					"leaseTime":      "3600",
+				},
+			},
+			{
+				Resource: daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "PPPoESession", Name: "pppoe"},
+				Phase:    "Connected",
+				Health:   daemonapi.HealthOK,
+				Observed: map[string]string{
+					"ifname":         "ppp0",
+					"currentAddress": "198.51.100.10",
+					"peerAddress":    "198.51.100.1",
+					"dnsServers":     `["203.0.113.53"]`,
+					"bytesIn":        "100",
+					"bytesOut":       "200",
+				},
+			},
+			{
+				Resource: daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation", Name: "wan-pd"},
+				Phase:    daemonapi.ResourcePhaseBound,
+				Health:   daemonapi.HealthOK,
+				Observed: map[string]string{
+					"interface":     "ens18",
+					"currentPrefix": "2001:db8:1::/56",
+					"dnsServers":    `["2001:db8::53"]`,
+					"sntpServers":   `["2001:db8::123"]`,
+					"domainSearch":  `["example.test"]`,
+				},
+			},
+			{
+				Resource: daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DNSResolver", Name: "lan-dns"},
+				Phase:    "Applied",
+				Health:   daemonapi.HealthOK,
+				Observed: map[string]string{
+					"listeners": "2",
+					"zones":     "3",
+				},
+			},
+			{
+				Resource: daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "HealthCheck", Name: "internet"},
+				Phase:    "Healthy",
+				Health:   daemonapi.HealthOK,
+				Observed: map[string]string{
+					"lastResult": "passed",
+					"target":     "1.1.1.1",
+				},
+			},
+		}}
+		_ = json.NewEncoder(w).Encode(status)
+	})}
+	defer server.Close()
+	go func() { _ = server.Serve(listener) }()
+
+	base := mapStore{
+		api.NetAPIVersion + "/DHCPv4Client/wan": {
+			"phase":          daemonapi.ResourcePhaseBound,
+			"currentAddress": "192.0.2.10",
+			"prefixLength":   24,
+			"dnsServers":     []string{"192.0.2.53"},
+			"appliedAddress": "192.0.2.10/24",
+			"addressPresent": true,
+			"applyMode":      "dry-run",
+			"ifname":         "ens18",
+			"device":         "ens18",
+			"dryRun":         true,
+			"gateway":        "192.0.2.1",
+		},
+		api.NetAPIVersion + "/PPPoESession/pppoe": {
+			"phase":          "Connected",
+			"device":         "ppp0",
+			"currentAddress": "198.51.100.10",
+			"peerAddress":    "198.51.100.1",
+			"gateway":        "198.51.100.1",
+			"dnsServers":     []string{"203.0.113.53"},
+			"dryRun":         true,
+		},
+		api.NetAPIVersion + "/DHCPv6PrefixDelegation/wan-pd": {
+			"phase":         daemonapi.ResourcePhaseBound,
+			"currentPrefix": "2001:db8:1::/56",
+			"serverDUID":    "00010001",
+			"dnsServers":    []string{"2001:db8::53"},
+		},
+		api.NetAPIVersion + "/DNSResolver/lan-dns": {
+			"phase":           "Applied",
+			"listeners":       1,
+			"listenAddresses": []string{"127.0.0.1:53"},
+			"sources":         4,
+		},
+		api.NetAPIVersion + "/HealthCheck/internet": {
+			"phase":        "Healthy",
+			"lastResult":   "passed",
+			"failureCount": 0,
+		},
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"}, Metadata: api.ObjectMeta{Name: "pppoe"}, Spec: api.PPPoESessionSpec{Interface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"}, Metadata: api.ObjectMeta{Name: "lan-dns"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet"}},
+	}}}
+	controller := DaemonStatusController{
+		Router:        router,
+		Store:         base,
+		DaemonSockets: map[string]string{"wan": socket, "pppoe": socket, "wan-pd": socket, "lan-dns": socket, "internet": socket},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	dhcp := base.ObjectStatus(api.NetAPIVersion, "DHCPv4Client", "wan")
+	for key, want := range map[string]any{"appliedAddress": "192.0.2.10/24", "addressPresent": true, "applyMode": "dry-run", "ifname": "ens18", "device": "ens18", "dryRun": true, "gateway": "192.0.2.1"} {
+		if got := dhcp[key]; got != want {
+			t.Fatalf("DHCPv4Client %s = %#v, want %#v in %#v", key, got, want, dhcp)
+		}
+	}
+	if _, ok := dhcp["leaseTime"]; ok {
+		t.Fatalf("daemon observed leaseTime leaked to top-level status: %#v", dhcp)
+	}
+	dhcpObserved, ok := dhcp["observed"].(map[string]any)
+	if !ok {
+		t.Fatalf("DHCPv4Client observed = %#v", dhcp["observed"])
+	}
+	if dhcpObserved["prefixLength"] != 24 || dhcpObserved["leaseTime"] != int64(3600) {
+		t.Fatalf("DHCPv4Client normalized observed = %#v", dhcpObserved)
+	}
+	if got := anyStringSlice(dhcpObserved["dnsServers"]); strings.Join(got, ",") != "192.0.2.53,192.0.2.54" {
+		t.Fatalf("DHCPv4Client observed dnsServers = %#v", dhcpObserved["dnsServers"])
+	}
+
+	pppoe := base.ObjectStatus(api.NetAPIVersion, "PPPoESession", "pppoe")
+	if pppoe["device"] != "ppp0" || pppoe["dryRun"] != true || pppoe["gateway"] != "198.51.100.1" {
+		t.Fatalf("PPPoESession controller fields were not preserved: %#v", pppoe)
+	}
+	pppoeObserved, ok := pppoe["observed"].(map[string]any)
+	if !ok || pppoeObserved["bytesIn"] != uint64(100) || pppoeObserved["bytesOut"] != uint64(200) {
+		t.Fatalf("PPPoESession normalized observed = %#v", pppoe["observed"])
+	}
+	if got := anyStringSlice(pppoeObserved["dnsServers"]); strings.Join(got, ",") != "203.0.113.53" {
+		t.Fatalf("PPPoESession observed dnsServers = %#v", pppoeObserved["dnsServers"])
+	}
+
+	pd := base.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd")
+	if pd["currentPrefix"] != "2001:db8:1::/56" || pd["serverDUID"] != "00010001" {
+		t.Fatalf("DHCPv6PrefixDelegation controller fields were not preserved: %#v", pd)
+	}
+	pdObserved, ok := pd["observed"].(map[string]any)
+	if !ok {
+		t.Fatalf("DHCPv6PrefixDelegation observed = %#v", pd["observed"])
+	}
+	if got := anyStringSlice(pdObserved["dnsServers"]); strings.Join(got, ",") != "2001:db8::53" {
+		t.Fatalf("DHCPv6PrefixDelegation observed dnsServers = %#v", pdObserved["dnsServers"])
+	}
+	if got := anyStringSlice(pdObserved["domainSearch"]); strings.Join(got, ",") != "example.test" {
+		t.Fatalf("DHCPv6PrefixDelegation observed domainSearch = %#v", pdObserved["domainSearch"])
+	}
+
+	dns := base.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-dns")
+	if dns["listeners"] != 1 || strings.Join(anyStringSlice(dns["listenAddresses"]), ",") != "127.0.0.1:53" || dns["sources"] != 4 {
+		t.Fatalf("DNSResolver controller fields were not preserved: %#v", dns)
+	}
+	dnsObserved, ok := dns["observed"].(map[string]any)
+	if !ok || dnsObserved["listeners"] != 2 || dnsObserved["zones"] != 3 {
+		t.Fatalf("DNSResolver normalized observed = %#v", dns["observed"])
+	}
+
+	health := base.ObjectStatus(api.NetAPIVersion, "HealthCheck", "internet")
+	if health["lastResult"] != "passed" || health["failureCount"] != 0 {
+		t.Fatalf("HealthCheck controller fields were not preserved: %#v", health)
+	}
+	healthObserved, ok := health["observed"].(map[string]any)
+	if !ok || healthObserved["target"] != "1.1.1.1" {
+		t.Fatalf("HealthCheck observed = %#v", health["observed"])
+	}
+}
+
+func TestNormalizedDaemonObservedValueCoversDaemonBackedResources(t *testing.T) {
+	if got := normalizedDaemonObservedValue("DNSResolver", "listeners", "2"); got != 2 {
+		t.Fatalf("DNSResolver listeners = %#v, want 2", got)
 	}
 }
 
