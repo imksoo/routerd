@@ -21,6 +21,8 @@ jobs:
   resolve-release:
     name: Resolve release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       tag: ${{ steps.release.outputs.tag }}
       checkout-ref: ${{ steps.release.outputs.checkout-ref }}
@@ -45,6 +47,22 @@ jobs:
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
           echo "checkout-ref=${checkout_ref}" >> "${GITHUB_OUTPUT}"
 
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.release.outputs.tag }}"
+          if ! gh release view "${tag}" >/dev/null 2>&1; then
+            gh release create "${tag}" \
+              --title "routerd ${tag}" \
+              --generate-notes \
+              --verify-tag \
+              --draft
+          fi
+
   quality:
     name: Quality checks
     needs: resolve-release
@@ -58,6 +76,8 @@ jobs:
     needs:
       - resolve-release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -129,18 +149,19 @@ jobs:
             test ! -e "${smoke}/sbin/routerd"
           )
 
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: routerd-${{ needs.resolve-release.outputs.tag }}-${{ matrix.routerd_os }}-${{ matrix.goarch }}
-          path: release/*
-          if-no-files-found: error
+      - name: Upload to draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "${{ needs.resolve-release.outputs.tag }}" release/* --clobber
 
   build-ndpi-agent-libndpi:
     name: Build native nDPI agent linux-amd64
     needs:
       - resolve-release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -193,18 +214,19 @@ jobs:
           tar -C "${work}" -xzf "dist/linux-amd64/${package}"
           "${work}/bin/routerd-ndpi-agent" selftest | grep -q '"libndpiLoaded":true'
 
-      - name: Upload native nDPI agent artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: routerd-ndpi-agent-libndpi-${{ needs.resolve-release.outputs.tag }}-linux-amd64
-          path: release/*
-          if-no-files-found: error
+      - name: Upload to draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "${{ needs.resolve-release.outputs.tag }}" release/* --clobber
 
   build-iso:
     name: Build live ISO
     needs:
       - resolve-release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -249,20 +271,20 @@ jobs:
           cp "dist/iso/routerd-live-${tag}.iso" "dist/iso/routerd-live-${tag}.iso.sha256" \
             "dist/iso/routerd-live.iso" "dist/iso/routerd-live.iso.sha256" release/
 
-      - name: Upload live ISO artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: routerd-live-${{ needs.resolve-release.outputs.tag }}
-          path: release/*
-          if-no-files-found: error
+      - name: Upload to draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "${{ needs.resolve-release.outputs.tag }}" release/* --clobber
 
-  publish-binaries:
-    name: Publish binaries
+  publish:
+    name: Publish release
     needs:
       - resolve-release
       - quality
       - build-archives
       - build-ndpi-agent-libndpi
+      - build-iso
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -274,25 +296,7 @@ jobs:
           sparse-checkout: packaging/bootstrap.sh
           sparse-checkout-cone-mode: false
 
-      - name: Download archive artifacts
-        uses: actions/download-artifact@v8
-        with:
-          pattern: "routerd-${{ needs.resolve-release.outputs.tag }}-*"
-          path: release-artifacts
-          merge-multiple: true
-
-      - name: Download nDPI agent artifact
-        uses: actions/download-artifact@v8
-        with:
-          pattern: "routerd-ndpi-agent-libndpi-${{ needs.resolve-release.outputs.tag }}-*"
-          path: release-artifacts
-          merge-multiple: true
-
-      - name: Add bootstrap installer to artifacts
-        shell: bash
-        run: cp packaging/bootstrap.sh release-artifacts/install.sh
-
-      - name: Publish release with binaries
+      - name: Upload bootstrap installer
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -300,39 +304,12 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ needs.resolve-release.outputs.tag }}"
-          ls -l release-artifacts
-          if gh release view "${tag}" >/dev/null 2>&1; then
-            gh release upload "${tag}" release-artifacts/* --clobber
-          else
-            gh release create "${tag}" release-artifacts/* \
-              --title "routerd ${tag}" \
-              --generate-notes \
-              --verify-tag
-          fi
+          cp packaging/bootstrap.sh install.sh
+          gh release upload "${tag}" install.sh --clobber
 
-  publish-iso:
-    name: Publish ISO
-    needs:
-      - resolve-release
-      - build-iso
-      - publish-binaries
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download ISO artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: "routerd-live-${{ needs.resolve-release.outputs.tag }}"
-          path: release-artifacts
-
-      - name: Upload ISO to release
+      - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         shell: bash
-        run: |
-          set -euo pipefail
-          tag="${{ needs.resolve-release.outputs.tag }}"
-          ls -l release-artifacts
-          gh release upload "${tag}" release-artifacts/* --clobber
+        run: gh release edit "${{ needs.resolve-release.outputs.tag }}" --draft=false
