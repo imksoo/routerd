@@ -163,6 +163,7 @@ cloudinit_mount_dir=/media/routerd-cloudinit
 config_mount_dir=/media/routerd-config
 config_file=/usr/local/etc/routerd/router.yaml
 config_dir=/usr/local/etc/routerd
+provider_userdata_file=/run/routerd/cloudinit-provider-user-data
 
 log()
 {
@@ -183,6 +184,20 @@ cloudinit_candidates()
             printf '%s\n' "${dev}"
         done
     } | awk '!seen[$0]++'
+}
+
+nocloud_available()
+{
+    if command -v blkid >/dev/null 2>&1; then
+        for label in CIDATA cidata; do
+            dev=$(blkid -L "${label}" 2>/dev/null || true)
+            [ -n "${dev}" ] && [ -b "${dev}" ] && return 0
+        done
+    fi
+    for dev in /dev/disk/by-label/CIDATA /dev/disk/by-label/cidata; do
+        [ -b "${dev}" ] && return 0
+    done
+    return 1
 }
 
 mount_cloudinit()
@@ -206,6 +221,128 @@ cloudinit_user_data()
         [ -f "${path}" ] && { printf '%s\n' "${path}"; return 0; }
     done
     return 1
+}
+
+dmi_value()
+{
+    name=$1
+    path="/sys/class/dmi/id/${name}"
+    [ -r "${path}" ] || return 1
+    sed -n '1p' "${path}" 2>/dev/null || true
+}
+
+imds_get()
+{
+    url=$1
+    shift
+    curl -fsSL --connect-timeout 2 --max-time 5 "$@" "${url}"
+}
+
+aws_detect()
+{
+    product=$(dmi_value product_name 2>/dev/null || true)
+    asset=$(dmi_value chassis_asset_tag 2>/dev/null || true)
+    case "${product} ${asset}" in
+        *amazon*|*Amazon*|*"amazon ec2"*|*"Amazon EC2"*) return 0 ;;
+    esac
+    curl -fsS -X PUT --connect-timeout 2 --max-time 5 \
+        -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+        http://169.254.169.254/latest/api/token >/dev/null 2>&1
+}
+
+azure_detect()
+{
+    asset=$(dmi_value chassis_asset_tag 2>/dev/null || true)
+    case "${asset}" in
+        *7783-7084-3265-9085-8269-3286-77*) return 0 ;;
+    esac
+    imds_get "http://169.254.169.254/metadata/instance?api-version=2021-02-01" \
+        -H "Metadata: true" >/dev/null 2>&1
+}
+
+oci_detect()
+{
+    asset=$(dmi_value chassis_asset_tag 2>/dev/null || true)
+    case "${asset}" in
+        *OracleCloud*|*oraclecloud*) return 0 ;;
+    esac
+    imds_get "http://169.254.169.254/opc/v2/instance/metadata/" \
+        -H "Authorization: Bearer Oracle" >/dev/null 2>&1
+}
+
+detect_provider()
+{
+    if nocloud_available; then
+        printf '%s\n' nocloud
+    elif aws_detect; then
+        printf '%s\n' aws
+    elif azure_detect; then
+        printf '%s\n' azure
+    elif oci_detect; then
+        printf '%s\n' oci
+    else
+        printf '%s\n' unknown
+    fi
+}
+
+fetch_aws_userdata()
+{
+    dest=$1
+    token=$(curl -fsS -X PUT --connect-timeout 2 --max-time 5 \
+        -H "X-aws-ec2-metadata-token-ttl-seconds: 300" \
+        http://169.254.169.254/latest/api/token 2>/dev/null || true)
+    [ -n "${token}" ] || return 1
+    imds_get "http://169.254.169.254/latest/user-data" \
+        -H "X-aws-ec2-metadata-token: ${token}" > "${dest}"
+}
+
+fetch_azure_userdata()
+{
+    dest=$1
+    tmp="${dest}.b64"
+    imds_get "http://169.254.169.254/metadata/instance?api-version=2021-02-01" \
+        -H "Metadata: true" >/dev/null
+    imds_get "http://169.254.169.254/metadata/instance/compute/userData?api-version=2021-02-01&format=text" \
+        -H "Metadata: true" > "${tmp}"
+    base64 -d "${tmp}" > "${dest}"
+    rm -f "${tmp}"
+}
+
+fetch_oci_userdata()
+{
+    dest=$1
+    tmp="${dest}.b64"
+    imds_get "http://169.254.169.254/opc/v2/instance/metadata/" \
+        -H "Authorization: Bearer Oracle" >/dev/null
+    imds_get "http://169.254.169.254/opc/v2/instance/metadata/user_data" \
+        -H "Authorization: Bearer Oracle" > "${tmp}"
+    base64 -d "${tmp}" > "${dest}"
+    rm -f "${tmp}"
+}
+
+fetch_provider_userdata()
+{
+    dest=${1:-${provider_userdata_file}}
+    provider=$(detect_provider)
+    case "${provider}" in
+        nocloud|unknown)
+            return 1
+            ;;
+        aws)
+            fetch_aws_userdata "${dest}"
+            ;;
+        azure)
+            fetch_azure_userdata "${dest}"
+            ;;
+        oci)
+            fetch_oci_userdata "${dest}"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+    [ -s "${dest}" ] || return 1
+    log "read cloud-init user-data from ${provider} IMDS"
 }
 
 cloudinit_hostname_value()
@@ -301,6 +438,14 @@ apply_cloudinit_hostname()
         fi
         umount "${cloudinit_mount_dir}" 2>/dev/null || true
     done
+    if fetch_provider_userdata "${provider_userdata_file}"; then
+        host=$(cloudinit_hostname_value "${provider_userdata_file}" 2>/dev/null || true)
+        if [ -n "${host}" ]; then
+            set_live_hostname "${host}"
+            log "set hostname ${host} from IMDS user-data"
+            return 0
+        fi
+    fi
     return 1
 }
 
@@ -449,10 +594,28 @@ restore_cloudinit_configs()
     return 1
 }
 
+restore_provider_config()
+{
+    fetch_provider_userdata "${provider_userdata_file}" || return 1
+    user_data=${provider_userdata_file}
+    config_url=$(cloudinit_first_value "${user_data}" config_url config-url configUrl routerd_config_url routerd-config-url 2>/dev/null || true)
+    [ -n "${config_url}" ] || return 1
+    config_sha256=$(cloudinit_first_value "${user_data}" config_sha256 config-sha256 configSha256 routerd_config_sha256 routerd-config-sha256 2>/dev/null || true)
+
+    tmp=/run/routerd/routerd-config.imds
+    log "fetching routerd config from IMDS config_url"
+    fetch_url "${config_url}" "${tmp}" || return 1
+    verify_sha256 "${tmp}" "${config_sha256}" || { rm -f "${tmp}"; return 1; }
+    install_config_bundle "${tmp}" "${config_url}" || { rm -f "${tmp}"; return 1; }
+    rm -f "${tmp}"
+    log "restored ${config_file} from IMDS config_url"
+    return 0
+}
+
 apply_cloudinit_hostname || true
 
 install -d /run/routerd /var/lib/routerd "${config_dir}"
-if ! restore_config_disk_config && ! restore_cloudinit_configs; then
+if ! restore_config_disk_config && ! restore_cloudinit_configs && ! restore_provider_config; then
     if [ ! -f "${config_file}" ] && [ -f /usr/local/etc/routerd/router.yaml.sample ]; then
         cp /usr/local/etc/routerd/router.yaml.sample "${config_file}"
     fi

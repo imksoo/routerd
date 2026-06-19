@@ -58,8 +58,8 @@ same local user-data document:
 | --- | --- | --- |
 | PVE | NoCloud config drive with `CIDATA` or `cidata` label | Read `/user-data` first, with OpenStack-style paths as fallback. Works with `qm set --cicustom user=...`. |
 | AWS | IMDSv2 `http://169.254.169.254/latest/user-data` | Acquire a session token before reading user-data. |
-| Azure | IMDS and wireserver | Use the metadata service for instance identity. If user-data is needed, read the Azure provisioned user-data/custom-data path supported by the image flow. |
-| OCI | IMDSv2 `http://169.254.169.254/opc/v2/instance/metadata/` | Use OCI metadata headers and read the user-data/custom metadata value. |
+| Azure | IMDS `http://169.254.169.254/metadata/instance/compute/userData?...` | Use the `Metadata: true` header and base64-decode the returned user-data. |
+| OCI | IMDSv2 `http://169.254.169.254/opc/v2/instance/metadata/user_data` | Use the `Authorization: Bearer Oracle` header and base64-decode the returned user-data. |
 
 The first implementation for the live ISO should stay lightweight and should not
 install the full `cloud-init` package unless a later implementation needs module
@@ -122,7 +122,8 @@ Failure behavior:
    optional `routerd.config_sha256`.
 3. Done for the systemd first boot path: config disk precedence, single
    `router.yaml` install, and `.tar.zst` / `.tar.gz` / `.tar` bundle extraction.
-4. Add provider readers for AWS, Azure, and OCI IMDS behind the same interface.
+4. Done: add provider readers for AWS, Azure, and OCI IMDS behind the same
+   user-data parsing interface.
 5. Add optional persistent validated-config cache and SSH host key bootstrap.
 6. Add signature verification and richer status reporting once the bundle format
    stabilizes.
