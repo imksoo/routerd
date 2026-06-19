@@ -664,12 +664,61 @@ func (c DiscoveryController) recordOnPremObservation(poolName string, spec api.M
 	if observation.Action == "expired" {
 		ev = onPremDiscoveryExpiredEvent(poolName, spec.GroupRef, self.NodeRef, address, observation, eventTime, ttl)
 	} else {
+		unchanged, err := c.onPremObservationAlreadyOwned(poolName, spec.GroupRef, self.NodeRef, address, poolPrefix, now)
+		if err != nil {
+			return false, err
+		}
+		if unchanged {
+			return false, nil
+		}
 		ev = onPremDiscoveryObservedEvent(poolName, spec.GroupRef, self.NodeRef, address, observation, eventTime, ttl)
 	}
 	if err := c.Store.RecordFederationEvent(ev); err != nil {
 		return false, fmt.Errorf("record onprem ownership event %q: %w", ev.ID, err)
 	}
 	return true, nil
+}
+
+func (c DiscoveryController) onPremObservationAlreadyOwned(poolName, group, nodeRef, address string, poolPrefix netip.Prefix, now time.Time) (bool, error) {
+	events, err := c.Store.ListFederationEvents(group, false, now.Unix())
+	if err != nil {
+		return false, fmt.Errorf("list onprem ownership federation events: %w", err)
+	}
+	var latest routerstate.EventRecord
+	found := false
+	for _, ev := range events {
+		if ev.Group != group {
+			continue
+		}
+		if ev.Type != ObservedEventType && ev.Type != ExpiredEventType {
+			continue
+		}
+		if strings.TrimSpace(ev.Payload["source"]) != onPremDiscoverySource {
+			continue
+		}
+		if strings.TrimSpace(ev.Payload["pool"]) != strings.TrimSpace(poolName) {
+			continue
+		}
+		candidateAddress, ok := normalizeDiscoveredAddress(firstNonEmpty(ev.Payload["address"], ev.Subject), poolPrefix)
+		if !ok || candidateAddress != address {
+			continue
+		}
+		candidate := ev
+		if candidate.ObservedAt.IsZero() {
+			candidate.ObservedAt = now
+		}
+		if !found || eventRecordGreater(candidate, latest) {
+			latest = candidate
+			found = true
+		}
+	}
+	if !found || latest.Type != ObservedEventType {
+		return false, nil
+	}
+	if strings.TrimSpace(latest.SourceNode) != strings.TrimSpace(nodeRef) {
+		return false, nil
+	}
+	return latest.ExpiresAt.IsZero() || now.Before(latest.ExpiresAt), nil
 }
 
 func onPremObservationFromDaemonEvent(event daemonapi.DaemonEvent) (onPremObservation, bool) {
