@@ -106,11 +106,11 @@ metadata.json
 
 ## 段階実装
 
-1. 直近修正: Ubuntu debootstrap Live ISO で PVE NoCloud `hostname` を反映する。
-2. schema parse と `routerd.config_url` / `routerd.config_sha256` fetch を行う shared bootstrap reader を追加する。
-3. systemd first boot path に PVE config URL support を追加する。
+1. 完了: Ubuntu debootstrap Live ISO で PVE NoCloud `hostname` を反映する。
+2. PVE NoCloud では完了: user-data を parse し、任意の `routerd.config_sha256` 付きで `routerd.config_url` を取得する。
+3. systemd first boot path では完了: config disk precedence、単一 `router.yaml` の配置、`.tar.zst` / `.tar.gz` / `.tar` bundle extraction。
 4. AWS、Azure、OCI IMDS reader を同じ interface の下に追加する。
-5. bundle extraction と検証済み config の optional persistent cache を追加する。
+5. 検証済み config の optional persistent cache と SSH host key bootstrap を追加する。
 6. bundle format が固まったら signature verification と status reporting を強化する。
 
 PR #546 から引き継ぐべき点は config pointer と checksum の考え方です。Alpine/OpenRC 固有の実装は

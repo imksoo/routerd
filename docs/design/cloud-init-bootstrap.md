@@ -117,12 +117,13 @@ Failure behavior:
 
 ## Staged implementation
 
-1. Immediate live ISO fix: PVE NoCloud `hostname` on the Ubuntu debootstrap ISO.
-2. Add a shared bootstrap reader that can parse the schema and fetch
-   `routerd.config_url` with `routerd.config_sha256`.
-3. Add PVE config URL support in the systemd first boot path.
+1. Done: PVE NoCloud `hostname` on the Ubuntu debootstrap ISO.
+2. Done for PVE NoCloud: parse user-data and fetch `routerd.config_url` with
+   optional `routerd.config_sha256`.
+3. Done for the systemd first boot path: config disk precedence, single
+   `router.yaml` install, and `.tar.zst` / `.tar.gz` / `.tar` bundle extraction.
 4. Add provider readers for AWS, Azure, and OCI IMDS behind the same interface.
-5. Add bundle extraction and optional persistent validated-config cache.
+5. Add optional persistent validated-config cache and SSH host key bootstrap.
 6. Add signature verification and richer status reporting once the bundle format
    stabilizes.
 
