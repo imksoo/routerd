@@ -896,6 +896,7 @@ ln -sf /usr/lib/systemd/system/serial-getty@.service "${rootfs}/etc/systemd/syst
 # Allow passwordless root login on local consoles (serial/KVM).
 # SSH rejects empty passwords by default (PermitEmptyPasswords no).
 sed -i 's/^root:[^:]*:/root::/' "${rootfs}/etc/shadow"
+sed -i 's/pam_unix\.so/pam_unix.so nullok/' "${rootfs}/etc/pam.d/common-auth"
 
 printf '%s\n' "${version}" > "${rootfs}/etc/routerd-live-version"
 printf '%s\n' "${git_commit:-unknown}" > "${rootfs}/etc/routerd-live-commit"
