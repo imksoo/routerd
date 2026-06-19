@@ -889,6 +889,14 @@ WantedBy=multi-user.target
 EOF
 ln -sf ../routerd-live-setup.service "${rootfs}/etc/systemd/system/multi-user.target.wants/routerd-live-setup.service"
 
+# Enable serial console login (ttyS0 @ 115200 baud).
+install -d "${rootfs}/etc/systemd/system/getty.target.wants"
+ln -sf /usr/lib/systemd/system/serial-getty@.service "${rootfs}/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service"
+
+# Allow passwordless root login on local consoles (serial/KVM).
+# SSH rejects empty passwords by default (PermitEmptyPasswords no).
+sed -i 's/^root:[^:]*:/root::/' "${rootfs}/etc/shadow"
+
 printf '%s\n' "${version}" > "${rootfs}/etc/routerd-live-version"
 printf '%s\n' "${git_commit:-unknown}" > "${rootfs}/etc/routerd-live-commit"
 : > "${rootfs}/etc/machine-id"
