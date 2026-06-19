@@ -11,7 +11,7 @@ ubuntu_suite=${UBUNTU_SUITE:-noble}
 ubuntu_mirror=${UBUNTU_MIRROR:-http://archive.ubuntu.com/ubuntu}
 ubuntu_arch=${UBUNTU_ARCH:-amd64}
 ubuntu_base_packages=${UBUNTU_BASE_PACKAGES:-"linux-image-generic systemd-sysv dbus sudo casper initramfs-tools"}
-ubuntu_packages=${UBUNTU_LIVE_PACKAGES:-"ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables keepalived openssh-server qemu-guest-agent"}
+ubuntu_packages=${UBUNTU_LIVE_PACKAGES:-"ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables keepalived openssh-server qemu-guest-agent zstd"}
 read -r -a ubuntu_base_package_list <<< "${ubuntu_base_packages}"
 read -r -a ubuntu_package_list <<< "${ubuntu_packages}"
 
@@ -160,6 +160,9 @@ cat > "${rootfs}/opt/routerd-live/firstboot.sh" <<'EOF'
 set -euo pipefail
 
 cloudinit_mount_dir=/media/routerd-cloudinit
+config_mount_dir=/media/routerd-config
+config_file=/usr/local/etc/routerd/router.yaml
+config_dir=/usr/local/etc/routerd
 
 log()
 {
@@ -219,6 +222,56 @@ cloudinit_hostname_value()
     printf '%s\n' "${value}"
 }
 
+clean_yaml_scalar()
+{
+    value=${1:-}
+    value=${value%%[[:space:]]#*}
+    printf '%s\n' "${value}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
+}
+
+cloudinit_value()
+{
+    file=$1
+    key=$2
+    sed_key=$(printf '%s\n' "${key}" | sed 's/[][\/.^$*]/\\&/g')
+    value=$(sed -n "s/^[[:space:]]*${sed_key}:[[:space:]]*//p" "${file}" 2>/dev/null | sed -n '1p')
+    if [ -z "${value}" ]; then
+        value=$(awk -v want="${key}" '
+            function trim(s) {
+                sub(/^[[:space:]]+/, "", s)
+                sub(/[[:space:]]+$/, "", s)
+                return s
+            }
+            /^[[:space:]]*routerd:[[:space:]]*$/ { in_routerd = 1; next }
+            in_routerd && /^[^[:space:]#][^:]*:/ { in_routerd = 0 }
+            in_routerd {
+                line = $0
+                sub(/^[[:space:]]+/, "", line)
+                item = line
+                sub(/:.*/, "", item)
+                if (item == want) {
+                    sub(/^[^:]*:[[:space:]]*/, "", line)
+                    print trim(line)
+                    exit
+                }
+            }
+        ' "${file}" 2>/dev/null || true)
+    fi
+    [ -n "${value}" ] || return 1
+    clean_yaml_scalar "${value}"
+}
+
+cloudinit_first_value()
+{
+    file=$1
+    shift
+    for key in "$@"; do
+        value=$(cloudinit_value "${file}" "${key}" 2>/dev/null || true)
+        [ -n "${value}" ] && { printf '%s\n' "${value}"; return 0; }
+    done
+    return 1
+}
+
 set_live_hostname()
 {
     host=$1
@@ -251,11 +304,158 @@ apply_cloudinit_hostname()
     return 1
 }
 
+config_disk_candidates()
+{
+    {
+        if command -v blkid >/dev/null 2>&1; then
+            dev=$(blkid -L ROUTERD_CONFIG 2>/dev/null || true)
+            [ -n "${dev}" ] && [ -b "${dev}" ] && printf '%s\n' "${dev}"
+        fi
+        for dev in /dev/disk/by-label/ROUTERD_CONFIG; do
+            [ -b "${dev}" ] || continue
+            printf '%s\n' "${dev}"
+        done
+    } | awk '!seen[$0]++'
+}
+
+mount_config_disk()
+{
+    dev=$1
+    [ -b "${dev}" ] || return 1
+    install -d "${config_mount_dir}"
+    if grep -q " ${config_mount_dir} " /proc/mounts 2>/dev/null; then
+        umount "${config_mount_dir}" 2>/dev/null || true
+    fi
+    mount -o ro,noatime "${dev}" "${config_mount_dir}" 2>/dev/null || mount -o ro "${dev}" "${config_mount_dir}"
+}
+
+config_disk_router_yaml()
+{
+    for path in \
+        "${config_mount_dir}/router.yaml" \
+        "${config_mount_dir}/router.yml" \
+        "${config_mount_dir}/routerd/router.yaml" \
+        "${config_mount_dir}/routerd/router.yml"; do
+        [ -f "${path}" ] && { printf '%s\n' "${path}"; return 0; }
+    done
+    return 1
+}
+
+restore_config_disk_config()
+{
+    command -v udevadm >/dev/null 2>&1 && udevadm settle --timeout=10 2>/dev/null || true
+    for candidate in $(config_disk_candidates 2>/dev/null || true); do
+        [ -b "${candidate}" ] || continue
+        mount_config_disk "${candidate}" || continue
+        src=$(config_disk_router_yaml 2>/dev/null || true)
+        if [ -n "${src}" ]; then
+            install -m 0600 "${src}" "${config_file}"
+            log "restored ${config_file} from ROUTERD_CONFIG media ${candidate}"
+            umount "${config_mount_dir}" 2>/dev/null || true
+            return 0
+        fi
+        umount "${config_mount_dir}" 2>/dev/null || true
+    done
+    return 1
+}
+
+fetch_url()
+{
+    url=$1
+    dest=$2
+    curl -fsSL --connect-timeout 30 --max-time 300 --retry 3 --retry-delay 2 "${url}" -o "${dest}"
+}
+
+verify_sha256()
+{
+    file=$1
+    want=$2
+    [ -n "${want}" ] || return 0
+    got=$(sha256sum "${file}" 2>/dev/null | awk '{print $1}' || true)
+    if [ "${got}" != "${want}" ]; then
+        log "cloud-init config_url sha256 mismatch: got ${got:-unknown} want ${want}"
+        return 1
+    fi
+}
+
+install_config_bundle()
+{
+    file=$1
+    url=$2
+    work=/run/routerd/cloudinit-bundle
+    rm -rf "${work}"
+    install -d "${work}"
+    case "${url}" in
+        *.tar.zst|*.tzst)
+            tar --use-compress-program=zstd -xf "${file}" -C "${work}"
+            ;;
+        *.tar.gz|*.tgz)
+            tar -xzf "${file}" -C "${work}"
+            ;;
+        *.tar)
+            tar -xf "${file}" -C "${work}"
+            ;;
+        *)
+            install -m 0600 "${file}" "${config_file}"
+            return 0
+            ;;
+    esac
+    if [ ! -f "${work}/router.yaml" ]; then
+        log "cloud-init config bundle missing router.yaml"
+        return 1
+    fi
+    install -m 0600 "${work}/router.yaml" "${config_file}"
+    if [ -d "${work}/secrets" ]; then
+        rm -rf "${config_dir}/secrets"
+        install -d -m 0700 "${config_dir}/secrets"
+        cp -a "${work}/secrets/." "${config_dir}/secrets/"
+        chmod -R go-rwx "${config_dir}/secrets"
+    fi
+    if [ -f "${work}/metadata.json" ]; then
+        install -m 0600 "${work}/metadata.json" "${config_dir}/metadata.json"
+    fi
+}
+
+restore_cloudinit_config()
+{
+    dev=$1
+    mount_cloudinit "${dev}" || return 1
+    user_data=$(cloudinit_user_data 2>/dev/null || true)
+    [ -n "${user_data}" ] || { umount "${cloudinit_mount_dir}" 2>/dev/null || true; return 1; }
+    config_url=$(cloudinit_first_value "${user_data}" config_url config-url configUrl routerd_config_url routerd-config-url 2>/dev/null || true)
+    [ -n "${config_url}" ] || { umount "${cloudinit_mount_dir}" 2>/dev/null || true; return 1; }
+    config_sha256=$(cloudinit_first_value "${user_data}" config_sha256 config-sha256 configSha256 routerd_config_sha256 routerd-config-sha256 2>/dev/null || true)
+    umount "${cloudinit_mount_dir}" 2>/dev/null || true
+
+    tmp=/run/routerd/routerd-config.cloudinit
+    log "fetching routerd config from cloud-init config_url"
+    fetch_url "${config_url}" "${tmp}" || return 1
+    verify_sha256 "${tmp}" "${config_sha256}" || { rm -f "${tmp}"; return 1; }
+    install_config_bundle "${tmp}" "${config_url}" || { rm -f "${tmp}"; return 1; }
+    rm -f "${tmp}"
+    log "restored ${config_file} from cloud-init config_url"
+    return 0
+}
+
+restore_cloudinit_configs()
+{
+    command -v udevadm >/dev/null 2>&1 && udevadm settle --timeout=10 2>/dev/null || true
+    for candidate in $(cloudinit_candidates 2>/dev/null || true); do
+        [ -b "${candidate}" ] || continue
+        if restore_cloudinit_config "${candidate}"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 apply_cloudinit_hostname || true
 
-install -d /run/routerd /var/lib/routerd /usr/local/etc/routerd
-if [ ! -f /usr/local/etc/routerd/router.yaml ] && [ -f /usr/local/etc/routerd/router.yaml.sample ]; then
-    cp /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
+install -d /run/routerd /var/lib/routerd "${config_dir}"
+if ! restore_config_disk_config && ! restore_cloudinit_configs; then
+    if [ ! -f "${config_file}" ] && [ -f /usr/local/etc/routerd/router.yaml.sample ]; then
+        cp /usr/local/etc/routerd/router.yaml.sample "${config_file}"
+    fi
 fi
 
 if [ -x /usr/local/sbin/routerd ]; then

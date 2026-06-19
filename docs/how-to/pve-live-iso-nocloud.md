@@ -1,25 +1,30 @@
 ---
-title: PVE NoCloud hostname for the live ISO
+title: PVE NoCloud bootstrap for the live ISO
 ---
 
-# PVE NoCloud hostname for the live ISO
+# PVE NoCloud bootstrap for the live ISO
 
 The routerd live ISO is built from an Ubuntu `debootstrap` root filesystem and
 does not install the full `cloud-init` package. For Proxmox VE lab nodes, the
 image supports the small part of NoCloud that is needed before routerd starts:
-it reads `hostname` from `user-data` on a `cidata`/`CIDATA` config drive and
-applies it with `hostnamectl`.
+it reads `hostname`, `routerd.config_url`, and `routerd.config_sha256` from
+`user-data` on a `cidata`/`CIDATA` config drive.
 
 This keeps the live ISO small while still letting multiple VMs boot from the
-same ISO and appear as distinct hosts over SSH and in PVE validation logs.
+same ISO, appear as distinct hosts over SSH and in PVE validation logs, and pull
+their full routerd config from HTTP or object storage.
 
 ## user-data
 
-Create a PVE snippet with a top-level `hostname` field:
+Create a PVE snippet with a top-level `hostname` field and an optional routerd
+config pointer:
 
 ```yaml
 #cloud-config
 hostname: pve-rt07
+routerd:
+  config_url: http://10.0.0.10/routerd/pve-rt07/router.yaml
+  config_sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
 Attach it as the VM's cloud-init user-data:
@@ -31,15 +36,26 @@ qm set 169 --boot order=ide2
 qm reboot 169
 ```
 
-At boot, the live setup service waits briefly for block devices, searches
-NoCloud media labels `CIDATA` and `cidata`, reads `user-data`, validates the
-hostname, writes `/etc/hostname`, and calls `hostnamectl set-hostname`.
+At boot, the live setup service:
+
+1. Applies `hostname` from NoCloud user-data.
+2. Tries a `ROUTERD_CONFIG` config disk first.
+3. If no config disk is present, fetches `routerd.config_url` with `curl`.
+4. Verifies `routerd.config_sha256` when present.
+5. Installs the fetched `router.yaml` or extracts a supported config bundle.
+6. Falls back to the built-in sample config when no external config is available.
+
+Supported bundle URLs currently end in `.tar.zst`, `.tzst`, `.tar.gz`, `.tgz`,
+or `.tar`. Bundles must contain `router.yaml` at the archive root. Optional
+`secrets/` and `metadata.json` entries are installed under
+`/usr/local/etc/routerd/`.
 
 ## Scope
 
 This is intentionally not a full cloud-init implementation. The live ISO only
-uses NoCloud for early hostname identity. It does not run cloud-init modules or
-apply network, user, package, or SSH-key configuration from user-data.
+uses NoCloud for early hostname identity and routerd config bootstrap. It does
+not run cloud-init modules or apply network, user, package, or SSH-key
+configuration from user-data.
 
 For richer bootstrap behavior, keep using routerd configuration media or install
 Ubuntu Server to disk and manage normal cloud-init there.

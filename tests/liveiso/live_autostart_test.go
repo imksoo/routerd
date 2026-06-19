@@ -108,12 +108,96 @@ func TestLiveISOSupportsNoCloudHostname(t *testing.T) {
 	}
 
 	hostnameIdx := strings.Index(script, "apply_cloudinit_hostname || true")
-	runtimeIdx := strings.Index(script, "install -d /run/routerd /var/lib/routerd /usr/local/etc/routerd")
+	runtimeIdx := strings.Index(script, "install -d /run/routerd /var/lib/routerd \"${config_dir}\"")
 	if hostnameIdx < 0 || runtimeIdx < 0 {
 		t.Fatal("missing NoCloud hostname setup or live runtime setup")
 	}
 	if hostnameIdx > runtimeIdx {
 		t.Fatal("NoCloud hostname must be applied before routerd live runtime setup")
+	}
+}
+
+func TestLiveISOParsesCloudInitConfigURLSuccessAndFailure(t *testing.T) {
+	script := liveISOScript(t)
+	for _, needle := range []string{
+		"cloudinit_value()",
+		"cloudinit_first_value()",
+		"routerd:[[:space:]]*$",
+		"config_url config-url configUrl routerd_config_url routerd-config-url",
+		"config_sha256 config-sha256 configSha256 routerd_config_sha256 routerd-config-sha256",
+		"fetch_url()",
+		"curl -fsSL --connect-timeout 30 --max-time 300 --retry 3",
+		"restore_cloudinit_config()",
+		"fetching routerd config from cloud-init config_url",
+		"restored ${config_file} from cloud-init config_url",
+		"[ -n \"${user_data}\" ] || { umount \"${cloudinit_mount_dir}\" 2>/dev/null || true; return 1; }",
+		"[ -n \"${config_url}\" ] || { umount \"${cloudinit_mount_dir}\" 2>/dev/null || true; return 1; }",
+	} {
+		if !strings.Contains(script, needle) {
+			t.Fatalf("Ubuntu live ISO cloud-init config_url setup missing %q", needle)
+		}
+	}
+}
+
+func TestLiveISORejectsCloudInitConfigSHA256Mismatch(t *testing.T) {
+	script := liveISOScript(t)
+	for _, needle := range []string{
+		"verify_sha256()",
+		"sha256sum \"${file}\"",
+		"cloud-init config_url sha256 mismatch",
+		"verify_sha256 \"${tmp}\" \"${config_sha256}\" || { rm -f \"${tmp}\"; return 1; }",
+		"if ! restore_config_disk_config && ! restore_cloudinit_configs; then",
+		"cp /usr/local/etc/routerd/router.yaml.sample \"${config_file}\"",
+	} {
+		if !strings.Contains(script, needle) {
+			t.Fatalf("Ubuntu live ISO cloud-init sha256 handling missing %q", needle)
+		}
+	}
+}
+
+func TestLiveISOExtractsCloudInitConfigBundles(t *testing.T) {
+	script := liveISOScript(t)
+	for _, needle := range []string{
+		"zstd",
+		"install_config_bundle()",
+		"*.tar.zst|*.tzst)",
+		"tar --use-compress-program=zstd -xf \"${file}\"",
+		"*.tar.gz|*.tgz)",
+		"tar -xzf \"${file}\"",
+		"cloud-init config bundle missing router.yaml",
+		"install -m 0600 \"${work}/router.yaml\" \"${config_file}\"",
+		"cp -a \"${work}/secrets/.\" \"${config_dir}/secrets/\"",
+		"install -m 0600 \"${work}/metadata.json\" \"${config_dir}/metadata.json\"",
+	} {
+		if !strings.Contains(script, needle) {
+			t.Fatalf("Ubuntu live ISO cloud-init bundle handling missing %q", needle)
+		}
+	}
+}
+
+func TestLiveISOConfigDiskTakesPrecedenceOverCloudInit(t *testing.T) {
+	script := liveISOScript(t)
+	for _, needle := range []string{
+		"config_mount_dir=/media/routerd-config",
+		"config_disk_candidates()",
+		"blkid -L ROUTERD_CONFIG",
+		"/dev/disk/by-label/ROUTERD_CONFIG",
+		"restore_config_disk_config()",
+		"restored ${config_file} from ROUTERD_CONFIG media",
+		"if ! restore_config_disk_config && ! restore_cloudinit_configs; then",
+	} {
+		if !strings.Contains(script, needle) {
+			t.Fatalf("Ubuntu live ISO config disk precedence missing %q", needle)
+		}
+	}
+
+	precedenceIdx := strings.Index(script, "if ! restore_config_disk_config && ! restore_cloudinit_configs; then")
+	sampleIdx := strings.Index(script, "cp /usr/local/etc/routerd/router.yaml.sample \"${config_file}\"")
+	if precedenceIdx < 0 || sampleIdx < 0 {
+		t.Fatal("missing config precedence chain or sample fallback")
+	}
+	if precedenceIdx > sampleIdx {
+		t.Fatal("config disk and cloud-init restore must run before sample fallback")
 	}
 }
 
