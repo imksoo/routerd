@@ -211,7 +211,7 @@ func TestDaemonStatusControllerKeepsDedicatedControllerStatusFields(t *testing.T
 			},
 			{
 				Resource: daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DNSResolver", Name: "lan-dns"},
-				Phase:    "Applied",
+				Phase:    "Running",
 				Health:   daemonapi.HealthOK,
 				Observed: map[string]string{
 					"listeners": "2",
@@ -264,6 +264,7 @@ func TestDaemonStatusControllerKeepsDedicatedControllerStatusFields(t *testing.T
 		},
 		api.NetAPIVersion + "/DNSResolver/lan-dns": {
 			"phase":           "Applied",
+			"health":          "ControllerOK",
 			"listeners":       1,
 			"listenAddresses": []string{"127.0.0.1:53"},
 			"sources":         4,
@@ -338,11 +339,11 @@ func TestDaemonStatusControllerKeepsDedicatedControllerStatusFields(t *testing.T
 	}
 
 	dns := base.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-dns")
-	if dns["listeners"] != 1 || strings.Join(anyStringSlice(dns["listenAddresses"]), ",") != "127.0.0.1:53" || dns["sources"] != 4 {
+	if dns["phase"] != "Applied" || dns["health"] != "ControllerOK" || dns["listeners"] != 1 || strings.Join(anyStringSlice(dns["listenAddresses"]), ",") != "127.0.0.1:53" || dns["sources"] != 4 {
 		t.Fatalf("DNSResolver controller fields were not preserved: %#v", dns)
 	}
 	dnsObserved, ok := dns["observed"].(map[string]any)
-	if !ok || dnsObserved["listeners"] != 2 || dnsObserved["zones"] != 3 {
+	if !ok || dnsObserved["phase"] != "Running" || dnsObserved["health"] != daemonapi.HealthOK || dnsObserved["listeners"] != 2 || dnsObserved["zones"] != 3 {
 		t.Fatalf("DNSResolver normalized observed = %#v", dns["observed"])
 	}
 
