@@ -164,6 +164,8 @@ config_mount_dir=/media/routerd-config
 config_file=/usr/local/etc/routerd/router.yaml
 config_dir=/usr/local/etc/routerd
 provider_userdata_file=/run/routerd/cloudinit-provider-user-data
+validated_cache_dir=/var/lib/routerd/validated-config
+validated_cache_file=/var/lib/routerd/validated-config/router.yaml
 
 log()
 {
@@ -409,6 +411,25 @@ cloudinit_first_value()
     return 1
 }
 
+cloudinit_ssh_authorized_keys()
+{
+    file=$1
+    awk '
+        /^[[:space:]]*ssh_authorized_keys:[[:space:]]*$/ { in_keys = 1; next }
+        in_keys && /^[^[:space:]#][^:]*:/ { in_keys = 0 }
+        in_keys {
+            line = $0
+            sub(/^[[:space:]]*-[[:space:]]*/, "", line)
+            if (line != $0 && line != "") {
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+                gsub(/^"|"$/, "", line)
+                gsub(/^'\''|'\''$/, "", line)
+                print line
+            }
+        }
+    ' "${file}" 2>/dev/null
+}
+
 set_live_hostname()
 {
     host=$1
@@ -447,6 +468,65 @@ apply_cloudinit_hostname()
         fi
     fi
     return 1
+}
+
+regenerate_ssh_host_keys()
+{
+    rm -f /etc/ssh/ssh_host_*
+    if command -v ssh-keygen >/dev/null 2>&1; then
+        ssh-keygen -A
+        log "regenerated SSH host keys"
+    fi
+}
+
+install_authorized_keys()
+{
+    src=$1
+    keys=$(cloudinit_ssh_authorized_keys "${src}" 2>/dev/null || true)
+    [ -n "${keys}" ] || return 1
+    install -d -m 0700 /root/.ssh
+    {
+        [ -f /root/.ssh/authorized_keys ] && cat /root/.ssh/authorized_keys
+        printf '%s\n' "${keys}"
+    } | awk 'NF && !seen[$0]++' > /root/.ssh/authorized_keys.new
+    install -m 0600 /root/.ssh/authorized_keys.new /root/.ssh/authorized_keys
+    rm -f /root/.ssh/authorized_keys.new
+    chown root:root /root/.ssh /root/.ssh/authorized_keys
+    log "installed SSH authorized_keys from cloud-init user-data"
+}
+
+apply_cloudinit_authorized_keys()
+{
+    for candidate in $(cloudinit_candidates 2>/dev/null || true); do
+        [ -b "${candidate}" ] || continue
+        mount_cloudinit "${candidate}" || continue
+        user_data=$(cloudinit_user_data 2>/dev/null || true)
+        if [ -n "${user_data}" ] && install_authorized_keys "${user_data}"; then
+            umount "${cloudinit_mount_dir}" 2>/dev/null || true
+            return 0
+        fi
+        umount "${cloudinit_mount_dir}" 2>/dev/null || true
+    done
+    if fetch_provider_userdata "${provider_userdata_file}"; then
+        install_authorized_keys "${provider_userdata_file}" && return 0
+    fi
+    return 1
+}
+
+enable_sshd()
+{
+    if systemctl list-unit-files ssh.service >/dev/null 2>&1; then
+        systemctl enable --now ssh.service >/dev/null 2>&1 || true
+    elif systemctl list-unit-files sshd.service >/dev/null 2>&1; then
+        systemctl enable --now sshd.service >/dev/null 2>&1 || true
+    fi
+}
+
+apply_ssh_bootstrap()
+{
+    regenerate_ssh_host_keys
+    apply_cloudinit_authorized_keys || true
+    enable_sshd
 }
 
 config_disk_candidates()
@@ -561,6 +641,21 @@ install_config_bundle()
     fi
 }
 
+cache_validated_config()
+{
+    [ -f "${config_file}" ] || return 1
+    install -d -m 0700 "${validated_cache_dir}"
+    install -m 0600 "${config_file}" "${validated_cache_file}"
+    log "cached validated config at ${validated_cache_file}"
+}
+
+restore_validated_config_cache()
+{
+    [ -f "${validated_cache_file}" ] || return 1
+    install -m 0600 "${validated_cache_file}" "${config_file}"
+    log "restored config from validated cache (fetch failed)"
+}
+
 restore_cloudinit_config()
 {
     dev=$1
@@ -574,9 +669,10 @@ restore_cloudinit_config()
 
     tmp=/run/routerd/routerd-config.cloudinit
     log "fetching routerd config from cloud-init config_url"
-    fetch_url "${config_url}" "${tmp}" || return 1
+    fetch_url "${config_url}" "${tmp}" || { restore_validated_config_cache && return 0; return 1; }
     verify_sha256 "${tmp}" "${config_sha256}" || { rm -f "${tmp}"; return 1; }
     install_config_bundle "${tmp}" "${config_url}" || { rm -f "${tmp}"; return 1; }
+    cache_validated_config || true
     rm -f "${tmp}"
     log "restored ${config_file} from cloud-init config_url"
     return 0
@@ -604,17 +700,19 @@ restore_provider_config()
 
     tmp=/run/routerd/routerd-config.imds
     log "fetching routerd config from IMDS config_url"
-    fetch_url "${config_url}" "${tmp}" || return 1
+    fetch_url "${config_url}" "${tmp}" || { restore_validated_config_cache && return 0; return 1; }
     verify_sha256 "${tmp}" "${config_sha256}" || { rm -f "${tmp}"; return 1; }
     install_config_bundle "${tmp}" "${config_url}" || { rm -f "${tmp}"; return 1; }
+    cache_validated_config || true
     rm -f "${tmp}"
     log "restored ${config_file} from IMDS config_url"
     return 0
 }
 
-apply_cloudinit_hostname || true
-
 install -d /run/routerd /var/lib/routerd "${config_dir}"
+apply_cloudinit_hostname || true
+apply_ssh_bootstrap
+
 if ! restore_config_disk_config && ! restore_cloudinit_configs && ! restore_provider_config; then
     if [ ! -f "${config_file}" ] && [ -f /usr/local/etc/routerd/router.yaml.sample ]; then
         cp /usr/local/etc/routerd/router.yaml.sample "${config_file}"

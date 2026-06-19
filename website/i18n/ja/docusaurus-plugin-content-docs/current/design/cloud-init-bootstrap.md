@@ -110,7 +110,7 @@ metadata.json
 2. PVE NoCloud では完了: user-data を parse し、任意の `routerd.config_sha256` 付きで `routerd.config_url` を取得する。
 3. systemd first boot path では完了: config disk precedence、単一 `router.yaml` の配置、`.tar.zst` / `.tar.gz` / `.tar` bundle extraction。
 4. 完了: AWS、Azure、OCI IMDS reader を同じ user-data parse interface の下に追加する。
-5. 検証済み config の optional persistent cache と SSH host key bootstrap を追加する。
+5. 完了: Live ISO の SSH host key を再生成し、`ssh_authorized_keys` を配置し、sshd を有効化し、fetch 失敗時 fallback 用に最後の検証済み `router.yaml` を cache する。
 6. bundle format が固まったら signature verification と status reporting を強化する。
 
 PR #546 から引き継ぐべき点は config pointer と checksum の考え方です。Alpine/OpenRC 固有の実装は
