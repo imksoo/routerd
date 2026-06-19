@@ -2844,10 +2844,15 @@ func daemonStatusObservedOnlyKind(kind string) bool {
 
 func daemonObservedOnlyStatus(current, base map[string]any, observed daemonapi.ResourceStatus) map[string]any {
 	next := copyStatusMap(current)
-	for key, value := range base {
-		next[key] = value
+	for _, key := range []string{"conditions", "updatedAt"} {
+		if value, ok := base[key]; ok {
+			next[key] = value
+		}
 	}
-	next["observed"] = normalizedDaemonObserved(observed.Resource.Kind, observed.Observed)
+	daemonObserved := normalizedDaemonObserved(observed.Resource.Kind, observed.Observed)
+	daemonObserved["phase"] = observed.Phase
+	daemonObserved["health"] = observed.Health
+	next["observed"] = daemonObserved
 	return next
 }
 
