@@ -84,6 +84,22 @@ func TestLiveISOUsesSystemdFirstBootSetup(t *testing.T) {
 	}
 }
 
+func TestLiveISOInstallsRouterdSystemdUnits(t *testing.T) {
+	script := liveISOScript(t)
+	for _, needle := range []string{
+		"contrib/systemd/routerd.service",
+		"${rootfs}/etc/systemd/system/routerd.service",
+		"Description=routerd network router daemon",
+		"ExecStart=/usr/local/sbin/routerd serve --config /usr/local/etc/routerd/router.yaml --socket /run/routerd/routerd.sock --status-socket /run/routerd/routerd-status.sock --apply-interval 10s",
+		"routerd-dns-resolver@.service",
+		"ExecStart=/usr/local/sbin/routerd-dns-resolver daemon --resource %i --config-file /run/routerd/dns-resolver/%i.json",
+	} {
+		if !strings.Contains(script, needle) {
+			t.Fatalf("Ubuntu live ISO systemd unit install missing %q", needle)
+		}
+	}
+}
+
 func TestLiveISOSupportsNoCloudHostname(t *testing.T) {
 	script := liveISOScript(t)
 	for _, needle := range []string{
@@ -167,6 +183,7 @@ func TestLiveISOExtractsCloudInitConfigBundles(t *testing.T) {
 		"cloud-init config bundle missing router.yaml",
 		"install -m 0600 \"${work}/router.yaml\" \"${config_file}\"",
 		"cp -a \"${work}/secrets/.\" \"${config_dir}/secrets/\"",
+		"chown -R root:root \"${config_dir}/secrets\"",
 		"install -m 0600 \"${work}/metadata.json\" \"${config_dir}/metadata.json\"",
 	} {
 		if !strings.Contains(script, needle) {
