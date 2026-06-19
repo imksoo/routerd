@@ -5,8 +5,13 @@ package main
 import (
 	"net"
 	"net/netip"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/imksoo/routerd/pkg/daemonapi"
 )
 
 func TestParseEthernetARPReply(t *testing.T) {
@@ -121,6 +126,42 @@ func TestNextIPv4PrefixProbeTargetAllowsPointToPointHosts(t *testing.T) {
 	target, _, ok = nextIPv4PrefixProbeTarget(prefix, next, netip.Addr{})
 	if !ok || target.String() != "10.255.0.21" {
 		t.Fatalf("second target = %s ok=%v, want 10.255.0.21", target, ok)
+	}
+}
+
+func TestPublishObservationDemotesKnownSameIPMAC(t *testing.T) {
+	d := &daemon{
+		opts: options{
+			resource:       "arp",
+			ifname:         "eth1",
+			eventInterface: "eth1",
+			eventFile:      filepath.Join(t.TempDir(), "events.jsonl"),
+			poolName:       "svnet1",
+			prefix:         netip.MustParsePrefix("192.168.123.0/24"),
+		},
+		lastEventByKey: map[string]time.Time{},
+		clients:        map[string]arpClient{},
+	}
+	d.cond = sync.NewCond(&d.mu)
+	address := netip.MustParseAddr("192.168.123.10")
+	mac := mustMAC(t, "02:00:00:00:00:10")
+	d.publishObservation(address, mac, eventARPObserved, sourceARPObserver, "ARPObserved", "observed")
+	if len(d.events) != 1 || d.events[0].Severity != daemonapi.SeverityInfo {
+		t.Fatalf("first observation events = %#v, want one info event", d.events)
+	}
+
+	d.mu.Lock()
+	d.lastEventByKey[eventARPObserved+"|"+address.String()+"|"+strings.ToLower(mac.String())] = time.Now().Add(-time.Minute)
+	d.mu.Unlock()
+	d.publishObservation(address, mac, eventARPObserved, sourceARPObserver, "ARPObserved", "observed")
+	if len(d.events) != 2 || d.events[1].Severity != daemonapi.SeverityDebug {
+		t.Fatalf("repeat observation events = %#v, want second debug event", d.events)
+	}
+
+	changedMAC := mustMAC(t, "02:00:00:00:00:11")
+	d.publishObservation(address, changedMAC, eventARPObserved, sourceARPObserver, "ARPObserved", "observed")
+	if len(d.events) != 3 || d.events[2].Severity != daemonapi.SeverityInfo {
+		t.Fatalf("MAC change events = %#v, want third info event", d.events)
 	}
 }
 

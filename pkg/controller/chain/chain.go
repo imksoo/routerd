@@ -188,12 +188,13 @@ func (s eventedStore) SaveObjectStatus(apiVersion, kind, name string, status map
 		return err
 	}
 	if publishChanged && s.Bus != nil {
-		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "store"}, "routerd.resource.status.changed", daemonapi.SeverityInfo)
+		changedFields := statusChangedFieldsForEvent(apiVersion, kind, current, status)
+		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "store"}, "routerd.resource.status.changed", statusChangedEventSeverity(apiVersion, kind, current, status, changedFields))
 		event.Resource = &daemonapi.ResourceRef{APIVersion: apiVersion, Kind: kind, Name: name}
 		event.Attributes = map[string]string{
 			"phase":         fmt.Sprint(status["phase"]),
 			"previousPhase": fmt.Sprint(current["phase"]),
-			"changedFields": strings.Join(statusChangedFieldsForEvent(apiVersion, kind, current, status), ","),
+			"changedFields": strings.Join(changedFields, ","),
 		}
 		return s.Bus.Publish(context.Background(), event)
 	}
@@ -222,12 +223,13 @@ func (s eventedStore) MergeObjectStatus(apiVersion, kind, name string, updates m
 		return err
 	}
 	if publishChanged && s.Bus != nil {
-		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "store"}, "routerd.resource.status.changed", daemonapi.SeverityInfo)
+		changedFields := statusChangedFieldsForEvent(apiVersion, kind, current, next)
+		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "store"}, "routerd.resource.status.changed", statusChangedEventSeverity(apiVersion, kind, current, next, changedFields))
 		event.Resource = &daemonapi.ResourceRef{APIVersion: apiVersion, Kind: kind, Name: name}
 		event.Attributes = map[string]string{
 			"phase":         fmt.Sprint(next["phase"]),
 			"previousPhase": fmt.Sprint(current["phase"]),
-			"changedFields": strings.Join(statusChangedFieldsForEvent(apiVersion, kind, current, next), ","),
+			"changedFields": strings.Join(changedFields, ","),
 		}
 		return s.Bus.Publish(context.Background(), event)
 	}
@@ -590,6 +592,90 @@ func statusChangedForEvent(apiVersion, kind string, current, next map[string]any
 
 func statusChangedFieldsForEvent(apiVersion, kind string, current, next map[string]any) []string {
 	return changedFields(statusForEvent(apiVersion, kind, current), statusForEvent(apiVersion, kind, next))
+}
+
+func statusChangedEventSeverity(apiVersion, kind string, current, next map[string]any, fields []string) string {
+	if eventStateAbnormal(fmt.Sprint(next["phase"])) || eventStateAbnormal(fmt.Sprint(next["health"])) {
+		return daemonapi.SeverityInfo
+	}
+	if statusChangedFieldsOnly(fields, chattyStatusChangedFields()) {
+		return daemonapi.SeverityDebug
+	}
+	previousPhase := strings.TrimSpace(fmt.Sprint(current["phase"]))
+	phase := strings.TrimSpace(fmt.Sprint(next["phase"]))
+	if routinePhaseTransition(kind, previousPhase, phase) {
+		allowed := chattyStatusChangedFields()
+		allowed["phase"] = true
+		if statusChangedFieldsOnly(fields, allowed) {
+			return daemonapi.SeverityDebug
+		}
+	}
+	if kind == "DHCPv4Client" && previousPhase == daemonapi.ResourcePhaseBound && phase == daemonapi.ResourcePhaseBound && !statusChangedFieldsInclude(fields, dhcpv4ClientInfoFields()) {
+		return daemonapi.SeverityDebug
+	}
+	return daemonapi.SeverityInfo
+}
+
+func chattyStatusChangedFields() map[string]bool {
+	return map[string]bool{
+		"observedClients":           true,
+		"observedClientsBySource":   true,
+		"observedSelfStaleCaptures": true,
+		"sourceType":                true,
+		"observe":                   true,
+		"onDemand":                  true,
+		"ownershipResolverControlPlaneOwnerTable": true,
+		"ownershipResolverDecisions":              true,
+		"ownershipResolverOwnerTable":             true,
+		"discoveryObserved":                       true,
+	}
+}
+
+func dhcpv4ClientInfoFields() map[string]bool {
+	return map[string]bool{
+		"currentAddress": true,
+		"defaultGateway": true,
+		"gateway":        true,
+		"dnsServers":     true,
+		"prefixLength":   true,
+	}
+}
+
+func statusChangedFieldsOnly(fields []string, allowed map[string]bool) bool {
+	if len(fields) == 0 {
+		return false
+	}
+	for _, field := range fields {
+		if !allowed[strings.TrimSpace(field)] {
+			return false
+		}
+	}
+	return true
+}
+
+func statusChangedFieldsInclude(fields []string, candidates map[string]bool) bool {
+	for _, field := range fields {
+		if candidates[strings.TrimSpace(field)] {
+			return true
+		}
+	}
+	return false
+}
+
+func eventStateAbnormal(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "error", "failed", "failure", "degraded":
+		return true
+	default:
+		return false
+	}
+}
+
+func routinePhaseTransition(kind, previousPhase, phase string) bool {
+	if (previousPhase == "Watching" && phase == "Ready") || (previousPhase == "Ready" && phase == "Watching") {
+		return true
+	}
+	return kind == "DHCPv4Client" && previousPhase == daemonapi.ResourcePhaseBound && phase == daemonapi.ResourcePhaseBound
 }
 
 func statusForEvent(apiVersion, kind string, status map[string]any) map[string]any {

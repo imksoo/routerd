@@ -424,15 +424,20 @@ func (d *daemon) publishObservation(address netip.Addr, mac net.HardwareAddr, to
 		d.mu.Unlock()
 		return
 	}
+	macString := strings.ToLower(mac.String())
+	severity := daemonapi.SeverityInfo
+	if existing, ok := d.clients[address.String()]; ok && strings.EqualFold(existing.MAC, macString) {
+		severity = daemonapi.SeverityDebug
+	}
 	d.lastEventByKey[key] = now
-	d.clients[address.String()] = arpClient{IP: address.String(), MAC: strings.ToLower(mac.String()), SourceType: sourceType, SeenAt: now}
+	d.clients[address.String()] = arpClient{IP: address.String(), MAC: macString, SourceType: sourceType, SeenAt: now}
 	if topic == eventARPProbeHit {
 		d.probeHitCount++
 	} else {
 		d.observedCount++
 	}
 	d.lastEventAt = now
-	d.publishLocked(topic, daemonapi.SeverityInfo, reason, message, d.eventAttrs(address, mac, sourceType))
+	d.publishLocked(topic, severity, reason, message, d.eventAttrs(address, mac, sourceType))
 	d.mu.Unlock()
 }
 
