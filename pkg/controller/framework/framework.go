@@ -19,7 +19,7 @@ type Controller interface {
 	Name() string
 	Subscriptions() []bus.Subscription
 	Reconcile(context.Context, daemonapi.DaemonEvent) error
-	PeriodicReconcile(context.Context) error
+	PeriodicReconcile(context.Context) (bool, error)
 }
 
 type EventBus interface {
@@ -51,7 +51,7 @@ type FuncController struct {
 	Subs           []bus.Subscription
 	Every          time.Duration
 	ReconcileFunc  func(context.Context, daemonapi.DaemonEvent) error
-	PeriodicFunc   func(context.Context) error
+	PeriodicFunc   func(context.Context) (bool, error)
 }
 
 func (c FuncController) Name() string {
@@ -70,19 +70,21 @@ func (c FuncController) Reconcile(ctx context.Context, event daemonapi.DaemonEve
 		return c.ReconcileFunc(ctx, event)
 	}
 	if c.PeriodicFunc != nil {
-		return c.PeriodicFunc(ctx)
+		_, err := c.PeriodicFunc(ctx)
+		return err
 	}
 	return nil
 }
 
-func (c FuncController) PeriodicReconcile(ctx context.Context) error {
+func (c FuncController) PeriodicReconcile(ctx context.Context) (bool, error) {
 	if c.PeriodicFunc != nil {
 		return c.PeriodicFunc(ctx)
 	}
 	if c.ReconcileFunc != nil {
-		return c.ReconcileFunc(ctx, daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "event-loop"}, "routerd.controller.periodic", daemonapi.SeverityDebug))
+		err := c.ReconcileFunc(ctx, daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "event-loop"}, "routerd.controller.periodic", daemonapi.SeverityDebug))
+		return true, err
 	}
-	return nil
+	return false, nil
 }
 
 func (r Runner) Run(ctx context.Context, controllers ...Controller) error {
@@ -125,13 +127,15 @@ func (r Runner) Run(ctx context.Context, controllers ...Controller) error {
 }
 
 func runController(ctx context.Context, logger *slog.Logger, locker *lock.ResourceLocker, observer Observer, interval time.Duration, controller Controller, events <-chan daemonapi.DaemonEvent) {
-	ticker := time.NewTicker(interval)
+	intervals := adaptiveReconcileIntervalsForMax(interval)
+	level := 0
+	ticker := time.NewTicker(intervals[level])
 	defer ticker.Stop()
 	if observer != nil {
-		observer.ControllerStarted(controller.Name(), interval)
+		observer.ControllerStarted(controller.Name(), intervals[level])
 	}
 	bootstrap := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "event-loop"}, "routerd.controller.bootstrap", daemonapi.SeverityInfo)
-	runLocked(ctx, logger, locker, observer, controller.Name()+":bootstrap", controller.Name(), "bootstrap", "", "", interval, func(runCtx context.Context) error {
+	runLocked(ctx, logger, locker, observer, controller.Name()+":bootstrap", controller.Name(), "bootstrap", "", "", intervals[level], func(runCtx context.Context) error {
 		return controller.Reconcile(runCtx, bootstrap)
 	})
 	for {
@@ -142,15 +146,53 @@ func runController(ctx context.Context, logger *slog.Logger, locker *lock.Resour
 			}
 			key := eventResourceKey(event)
 			kind, name := eventResourceKindName(event)
-			runLocked(ctx, logger, locker, observer, key, controller.Name(), event.Type, kind, name, interval, func(runCtx context.Context) error {
+			runLocked(ctx, logger, locker, observer, key, controller.Name(), event.Type, kind, name, intervals[level], func(runCtx context.Context) error {
 				return controller.Reconcile(runCtx, event)
 			})
+			level = 0
+			ticker.Reset(intervals[level])
 		case <-ticker.C:
-			runLocked(ctx, logger, locker, observer, controller.Name()+":periodic", controller.Name(), "periodic", "", "", interval, controller.PeriodicReconcile)
+			didWork := false
+			err := runLocked(ctx, logger, locker, observer, controller.Name()+":periodic", controller.Name(), "periodic", "", "", intervals[level], func(runCtx context.Context) error {
+				worked, err := controller.PeriodicReconcile(runCtx)
+				didWork = worked
+				return err
+			})
+			level = nextAdaptiveReconcileLevel(level, didWork, err, len(intervals)-1)
+			ticker.Reset(intervals[level])
 		case <-ctx.Done():
 			return
 		}
 	}
+}
+
+func adaptiveReconcileIntervalsForMax(maxInterval time.Duration) []time.Duration {
+	base := []time.Duration{time.Second, 3 * time.Second, 7 * time.Second, 15 * time.Second, 31 * time.Second}
+	if maxInterval <= 0 {
+		return base
+	}
+	intervals := make([]time.Duration, 0, len(base))
+	for _, interval := range base {
+		if interval >= maxInterval {
+			intervals = append(intervals, maxInterval)
+			break
+		}
+		intervals = append(intervals, interval)
+	}
+	if len(intervals) == 0 {
+		return []time.Duration{maxInterval}
+	}
+	return intervals
+}
+
+func nextAdaptiveReconcileLevel(current int, didWork bool, err error, maxLevel int) int {
+	if didWork || err != nil {
+		return 0
+	}
+	if current < maxLevel {
+		return current + 1
+	}
+	return current
 }
 
 func controllerInterval(controller Controller, fallback time.Duration) time.Duration {
@@ -165,11 +207,11 @@ func controllerInterval(controller Controller, fallback time.Duration) time.Dura
 	return fallback
 }
 
-func runLocked(ctx context.Context, logger *slog.Logger, locker *lock.ResourceLocker, observer Observer, key, name, trigger, resourceKind, resourceName string, interval time.Duration, fn func(context.Context) error) {
+func runLocked(ctx context.Context, logger *slog.Logger, locker *lock.ResourceLocker, observer Observer, key, name, trigger, resourceKind, resourceName string, interval time.Duration, fn func(context.Context) error) error {
 	unlock, err := locker.Lock(ctx, key)
 	if err != nil {
 		logger.Warn("controller lock skipped", "controller", name, "error", err)
-		return
+		return err
 	}
 	defer unlock()
 	defer func() {
@@ -190,13 +232,14 @@ func runLocked(ctx context.Context, logger *slog.Logger, locker *lock.ResourceLo
 	attrs := []any{"controller", name, "trigger", trigger, "duration", duration.String(), "interval", interval.String()}
 	if err != nil {
 		logger.Warn("controller reconcile failed", append(attrs, "error", err)...)
-		return
+		return err
 	}
 	if trigger == "bootstrap" {
 		logger.Info("controller reconcile completed", attrs...)
-		return
+		return nil
 	}
 	logger.Debug("controller reconcile completed", attrs...)
+	return err
 }
 
 func eventResourceKey(event daemonapi.DaemonEvent) string {

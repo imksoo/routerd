@@ -58,9 +58,12 @@ func TestRunLockedDispatchesResourceObserver(t *testing.T) {
 	observer := &recordingResourceObserver{}
 	logger := slog.Default()
 	locker := lock.NewResourceLocker()
-	runLocked(context.Background(), logger, locker, observer, "key", "dns", "event", "DNSResolver", "lan", time.Second, func(context.Context) error {
+	err := runLocked(context.Background(), logger, locker, observer, "key", "dns", "event", "DNSResolver", "lan", time.Second, func(context.Context) error {
 		return errors.New("boom")
 	})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
 	got := observer.snapshot()
 	if len(got) != 1 {
 		t.Fatalf("calls = %d, want 1", len(got))
@@ -87,9 +90,11 @@ func (p *plainObserver) ControllerReconciled(name, trigger string, _, _ time.Dur
 
 func TestRunLockedFallsBackForPlainObserver(t *testing.T) {
 	observer := &plainObserver{}
-	runLocked(context.Background(), slog.Default(), lock.NewResourceLocker(), observer, "key", "dns", "event", "DNSResolver", "lan", time.Second, func(context.Context) error {
+	if err := runLocked(context.Background(), slog.Default(), lock.NewResourceLocker(), observer, "key", "dns", "event", "DNSResolver", "lan", time.Second, func(context.Context) error {
 		return nil
-	})
+	}); err != nil {
+		t.Fatalf("runLocked: %v", err)
+	}
 	observer.mu.Lock()
 	defer observer.mu.Unlock()
 	if len(observer.calls) != 1 {
@@ -97,6 +102,60 @@ func TestRunLockedFallsBackForPlainObserver(t *testing.T) {
 	}
 	if observer.calls[0].resourceKind != "" || observer.calls[0].resourceName != "" {
 		t.Fatalf("plain observer should not receive resource info: %+v", observer.calls[0])
+	}
+}
+
+func TestAdaptiveReconcileIntervals(t *testing.T) {
+	tests := []struct {
+		name string
+		max  time.Duration
+		want []time.Duration
+	}{
+		{name: "default", max: 0, want: []time.Duration{time.Second, 3 * time.Second, 7 * time.Second, 15 * time.Second, 31 * time.Second}},
+		{name: "bfd one second", max: time.Second, want: []time.Duration{time.Second}},
+		{name: "thirty second cap", max: 30 * time.Second, want: []time.Duration{time.Second, 3 * time.Second, 7 * time.Second, 15 * time.Second, 30 * time.Second}},
+		{name: "larger than max series", max: 5 * time.Minute, want: []time.Duration{time.Second, 3 * time.Second, 7 * time.Second, 15 * time.Second, 31 * time.Second}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := adaptiveReconcileIntervalsForMax(tt.max)
+			if len(got) != len(tt.want) {
+				t.Fatalf("intervals = %v, want %v", got, tt.want)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Fatalf("intervals = %v, want %v", got, tt.want)
+				}
+			}
+		})
+	}
+}
+
+func TestAdaptiveReconcileIntervalsForSubsecondCap(t *testing.T) {
+	got := adaptiveReconcileIntervalsForMax(500 * time.Millisecond)
+	want := []time.Duration{500 * time.Millisecond}
+	if len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("intervals = %v, want %v", got, want)
+	}
+}
+
+func TestNextAdaptiveReconcileLevel(t *testing.T) {
+	level := 0
+	maxLevel := 4
+	for _, want := range []int{1, 2, 3, 4, 4} {
+		level = nextAdaptiveReconcileLevel(level, false, nil, maxLevel)
+		if level != want {
+			t.Fatalf("empty reconcile level = %d, want %d", level, want)
+		}
+	}
+	if got := nextAdaptiveReconcileLevel(level, true, nil, maxLevel); got != 0 {
+		t.Fatalf("didWork reset level = %d, want 0", got)
+	}
+	if got := nextAdaptiveReconcileLevel(3, false, errors.New("boom"), maxLevel); got != 0 {
+		t.Fatalf("error reset level = %d, want 0", got)
+	}
+	if got := nextAdaptiveReconcileLevel(0, false, nil, 0); got != 0 {
+		t.Fatalf("single interval level = %d, want 0", got)
 	}
 }
 
