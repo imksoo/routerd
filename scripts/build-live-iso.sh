@@ -11,7 +11,7 @@ ubuntu_suite=${UBUNTU_SUITE:-noble}
 ubuntu_mirror=${UBUNTU_MIRROR:-http://archive.ubuntu.com/ubuntu}
 ubuntu_arch=${UBUNTU_ARCH:-amd64}
 ubuntu_base_packages=${UBUNTU_BASE_PACKAGES:-"linux-image-generic systemd-sysv dbus sudo casper initramfs-tools"}
-ubuntu_packages=${UBUNTU_LIVE_PACKAGES:-"ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables keepalived openssh-server qemu-guest-agent zstd"}
+ubuntu_packages=${UBUNTU_LIVE_PACKAGES:-"ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables keepalived openssh-server qemu-guest-agent zstd systemd-resolved"}
 read -r -a ubuntu_base_package_list <<< "${ubuntu_base_packages}"
 read -r -a ubuntu_package_list <<< "${ubuntu_packages}"
 
@@ -751,6 +751,15 @@ restore_provider_config()
     return 0
 }
 
+disable_bootstrap_dhcp()
+{
+    if [ -f /etc/systemd/network/80-dhcp.network ]; then
+        rm -f /etc/systemd/network/80-dhcp.network
+        systemctl reload-or-restart systemd-networkd >/dev/null 2>&1 || true
+        log "disabled bootstrap DHCP; routerd will manage network from here"
+    fi
+}
+
 install -d /run/routerd /var/lib/routerd "${config_dir}"
 apply_cloudinit_hostname || true
 apply_ssh_bootstrap
@@ -761,8 +770,11 @@ if ! restore_config_disk_config && ! restore_cloudinit_configs && ! restore_prov
     fi
 fi
 
+disable_bootstrap_dhcp
+
 if [ -x /usr/local/sbin/routerd ]; then
     systemctl enable routerd.service >/dev/null 2>&1 || true
+    systemctl start routerd.service >/dev/null 2>&1 || true
 fi
 if [ -x /usr/local/sbin/routerd-dns-resolver ]; then
     systemctl enable routerd-dns-resolver@lan-resolver.service >/dev/null 2>&1 || true
