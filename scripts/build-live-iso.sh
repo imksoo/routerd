@@ -141,6 +141,47 @@ if [ -f "${payload_root}/share/licenses/routerd/THIRD_PARTY_LICENSES.txt" ]; the
     install -m 0644 "${payload_root}/share/licenses/routerd/THIRD_PARTY_LICENSES.txt" "${rootfs}/usr/local/share/doc/routerd/THIRD_PARTY_LICENSES.txt"
 fi
 
+install -d "${rootfs}/etc/systemd/system"
+if [ -f contrib/systemd/routerd.service ]; then
+    install -m 0644 contrib/systemd/routerd.service "${rootfs}/etc/systemd/system/routerd.service"
+else
+    cat > "${rootfs}/etc/systemd/system/routerd.service" <<'EOF'
+[Unit]
+Description=routerd network router daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/routerd serve --config /usr/local/etc/routerd/router.yaml --socket /run/routerd/routerd.sock --status-socket /run/routerd/routerd-status.sock --apply-interval 10s
+Restart=always
+RestartSec=5
+RuntimeDirectory=routerd
+StateDirectory=routerd
+
+[Install]
+WantedBy=multi-user.target
+EOF
+fi
+
+cat > "${rootfs}/etc/systemd/system/routerd-dns-resolver@.service" <<'EOF'
+[Unit]
+Description=routerd DNS resolver daemon (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/routerd-dns-resolver daemon --resource %i --config-file /run/routerd/dns-resolver/%i.json
+Restart=always
+RestartSec=5
+RuntimeDirectory=routerd/dns-resolver
+StateDirectory=routerd/dns-resolver
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 cat > "${payload_root}/README.txt" <<EOF
 routerd live payload ${version}
 
@@ -634,6 +675,7 @@ install_config_bundle()
         rm -rf "${config_dir}/secrets"
         install -d -m 0700 "${config_dir}/secrets"
         cp -a "${work}/secrets/." "${config_dir}/secrets/"
+        chown -R root:root "${config_dir}/secrets"
         chmod -R go-rwx "${config_dir}/secrets"
     fi
     if [ -f "${work}/metadata.json" ]; then
