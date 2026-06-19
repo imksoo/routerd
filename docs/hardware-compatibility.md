@@ -90,8 +90,8 @@ persistence, the same mini PC can reboot into the saved router configuration.
 
 ## Platform notes
 
-Ubuntu Server is the primary target. NixOS and FreeBSD are supported through
-their platform-specific renderers and service integrations. Check
+Ubuntu Server is the primary target. FreeBSD is supported through
+its platform-specific renderer and service integrations. Check
 [Platforms](./platforms) before relying on a feature on a non-Linux host.
 
 ## Validation checklist

@@ -88,9 +88,9 @@ const config: Config = {
   themeConfig: {
     image: 'img/routerd-social-card.svg',
     announcementBar: {
-      id: 'stable-milestone-20260608-2325',
+      id: 'stable-milestone-20260619-1730',
       content:
-        'Stable milestone: <a href="/docs/releases/stable"><b>v20260608.2325</b></a> — peersFrom/membersFrom dynamic distribution for zero-touch leaf config',
+        'Stable milestone: <a href="/docs/releases/stable"><b>v20260619.1730</b></a> — Live ISO Ubuntu migration, SAMNodeSet/SAMSubnetPolicy, federation SLO',
       backgroundColor: '#1f6feb',
       textColor: '#ffffff',
       isCloseable: true,

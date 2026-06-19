@@ -173,8 +173,8 @@ make third-party-licenses
 ```
 
 The generated `THIRD_PARTY_LICENSES.md` records Go module license files and
-Alpine package license metadata. The live ISO is an aggregate distribution:
-GPL-licensed Alpine packages keep their own licenses and source availability
+Ubuntu package license metadata. The live ISO is an aggregate distribution:
+GPL-licensed Ubuntu packages keep their own licenses and source availability
 paths. The ISO is not relicensed as a single GPL work.
 
 ## Runtime dependencies
@@ -200,12 +200,6 @@ On Arch-like systems, the installer uses `pacman` and installs:
 ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables keepalived openssh
 ```
 
-On Alpine, the installer uses `apk` and installs:
-
-```text
-alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables keepalived util-linux e2fsprogs dosfstools exfatprogs qemu-guest-agent openssh
-```
-
 On FreeBSD, the installer uses `pkg` and installs:
 
 ```text
@@ -213,9 +207,6 @@ ca_root_nss curl dnsmasq wireguard-tools mpd5 bind-tools tcpdump jq chrony stron
 ```
 
 FreeBSD `pf`, `ifconfig`, `route`, `service`, `sysrc`, and `cron` are base-system tools and are checked as commands rather than installed as packages.
-
-On NixOS, the installer prints a warning instead of calling `nix-env`.
-Declare packages in the NixOS configuration or in routerd `Package` resources.
 
 After dependency installation, the script checks that the expected commands exist.
 Missing commands are warnings, not fatal errors, because package names vary between distributions.

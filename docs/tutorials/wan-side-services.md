@@ -76,7 +76,7 @@ The ISP gives you a public IPv4 address via DHCPv4 and an IPv6 prefix via DHCPv6
 
 ## Upstream NTP / SNTP
 
-`NTPClient` can derive time servers from DHCPv4 option 42 or DHCPv6 option 31. If the upstream does not provide one, routerd writes the configured public fallback servers to the OS NTP client (`systemd-timesyncd` on Linux / NixOS, `ntpd` on FreeBSD).
+`NTPClient` can derive time servers from DHCPv4 option 42 or DHCPv6 option 31. If the upstream does not provide one, routerd writes the configured public fallback servers to the OS NTP client (`systemd-timesyncd` on Linux, `ntpd` on FreeBSD).
 
 ```yaml
 - apiVersion: system.routerd.net/v1alpha1
