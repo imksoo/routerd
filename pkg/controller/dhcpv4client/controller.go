@@ -158,18 +158,19 @@ func (c Controller) reconcile(ctx context.Context, name string) error {
 }
 
 func leaseEventChanged(current, next map[string]any) bool {
-	for _, key := range []string{"phase", "currentAddress", "prefixLength", "defaultGateway", "domain", "appliedAddress"} {
-		if fmt.Sprint(current[key]) != fmt.Sprint(next[key]) {
+	for _, key := range []string{"phase", "currentAddress", "prefixLength", "defaultGateway"} {
+		if leaseFieldString(current[key]) != leaseFieldString(next[key]) {
 			return true
 		}
 	}
-	if fmt.Sprint(current["dnsServers"]) != fmt.Sprint(next["dnsServers"]) {
-		return true
-	}
-	if fmt.Sprint(current["ntpServers"]) != fmt.Sprint(next["ntpServers"]) {
-		return true
-	}
 	return false
+}
+
+func leaseFieldString(v any) string {
+	if v == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(v))
 }
 
 func (c Controller) applyLease(ctx context.Context, name string, current, next map[string]any) error {
