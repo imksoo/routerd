@@ -222,8 +222,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y debootstrap grub-pc-bin grub-efi-amd64-bin mtools xorriso squashfs-tools
 
+      - name: Compute rootfs cache key
+        id: rootfs-key
+        shell: bash
+        run: |
+          hash=$(grep -E '^ubuntu_(suite|arch|base_packages|packages)=' scripts/build-live-iso.sh | sha256sum | awk '{print $1}')
+          echo "hash=${hash}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache debootstrap rootfs
+        uses: actions/cache@v4
+        with:
+          path: dist/live/rootfs-cache.tar
+          key: live-iso-rootfs-${{ steps.rootfs-key.outputs.hash }}
+
       - name: Build live ISO
         run: make live-iso VERSION=${{ needs.resolve-release.outputs.tag }}
+        env:
+          ROOTFS_CACHE_TAR: dist/live/rootfs-cache.tar
 
       - name: Collect live ISO
         shell: bash
@@ -241,14 +256,13 @@ jobs:
           path: release/*
           if-no-files-found: error
 
-  publish:
-    name: Publish GitHub release
+  publish-binaries:
+    name: Publish binaries
     needs:
       - resolve-release
       - quality
       - build-archives
       - build-ndpi-agent-libndpi
-      - build-iso
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -260,9 +274,17 @@ jobs:
           sparse-checkout: packaging/bootstrap.sh
           sparse-checkout-cone-mode: false
 
-      - name: Download release artifacts
+      - name: Download archive artifacts
         uses: actions/download-artifact@v8
         with:
+          pattern: "routerd-${{ needs.resolve-release.outputs.tag }}-*"
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Download nDPI agent artifact
+        uses: actions/download-artifact@v8
+        with:
+          pattern: "routerd-ndpi-agent-libndpi-${{ needs.resolve-release.outputs.tag }}-*"
           path: release-artifacts
           merge-multiple: true
 
@@ -270,7 +292,7 @@ jobs:
         shell: bash
         run: cp packaging/bootstrap.sh release-artifacts/install.sh
 
-      - name: Publish release
+      - name: Publish release with binaries
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -287,3 +309,30 @@ jobs:
               --generate-notes \
               --verify-tag
           fi
+
+  publish-iso:
+    name: Publish ISO
+    needs:
+      - resolve-release
+      - build-iso
+      - publish-binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download ISO artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: "routerd-live-${{ needs.resolve-release.outputs.tag }}"
+          path: release-artifacts
+
+      - name: Upload ISO to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ needs.resolve-release.outputs.tag }}"
+          ls -l release-artifacts
+          gh release upload "${tag}" release-artifacts/* --clobber

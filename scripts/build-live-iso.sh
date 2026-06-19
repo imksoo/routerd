@@ -79,6 +79,13 @@ rootfs="${workdir}/rootfs"
 payload_root="${iso_root}/routerd"
 mkdir -p "${iso_root}/casper" "${iso_root}/boot/grub" "${payload_root}"
 
+rootfs_cache=${ROOTFS_CACHE_TAR:-}
+
+if [ -n "${rootfs_cache}" ] && [ -f "${rootfs_cache}" ]; then
+    tar -xf "${rootfs_cache}" -C "${workdir}"
+    echo "restored rootfs from cache (skipping debootstrap + apt-get)"
+else
+
 run_root debootstrap --variant=minbase --arch="${ubuntu_arch}" "${ubuntu_suite}" "${rootfs}" "${ubuntu_mirror}"
 run_root chown -R "$(id -u):$(id -g)" "${rootfs}"
 
@@ -116,6 +123,13 @@ run_root rm -rf "${rootfs}/var/lib/apt/lists/"*
 cleanup_mounts
 run_root chown -R "$(id -u):$(id -g)" "${rootfs}"
 chmod -R u+w "${rootfs}"
+
+if [ -n "${rootfs_cache}" ]; then
+    tar -cf "${rootfs_cache}" -C "${workdir}" rootfs
+    echo "saved rootfs cache at ${rootfs_cache}"
+fi
+
+fi
 
 make build-daemons ROUTERD_OS=linux GOARCH=amd64 GIT_COMMIT="${git_commit}"
 
