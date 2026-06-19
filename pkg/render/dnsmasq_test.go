@@ -761,6 +761,11 @@ func TestDnsmasqServiceUnitDoesNotOwnRouterdRuntimeDirectory(t *testing.T) {
 	if !strings.Contains(unit, "--pid-file=/run/routerd/dnsmasq.pid") {
 		t.Fatalf("dnsmasq unit should keep the managed pid path:\n%s", unit)
 	}
+	for _, want := range []string{"KillMode=mixed", "TimeoutStopSec=10s"} {
+		if !strings.Contains(unit, want) {
+			t.Fatalf("dnsmasq unit missing %q:\n%s", want, unit)
+		}
+	}
 }
 
 func TestDnsmasqServiceUnitWithCustomPIDFile(t *testing.T) {
