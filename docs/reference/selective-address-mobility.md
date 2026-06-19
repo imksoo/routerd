@@ -334,6 +334,13 @@ bootstrap or override entries on a leaf. If a required `peersFrom` source is not
 yet present, the profile reports `Pending`; optional sources are ignored until
 they arrive.
 
+`SAMNodeSet` entries may provide either a static `samEndpoint` or
+`samEndpointFrom`. The latter reads a status field such as
+`DHCPv4Client/<name>.currentAddress` or `Interface/<name>.primaryIPv4`, strips
+any prefix length, and feeds the resolved IPv4 address into generated peer
+`remoteEndpoint` values. When the source is not resolved, the transport profile
+stays `Pending` instead of generating a tunnel with a stale endpoint.
+
 ```yaml
 apiVersion: mobility.routerd.net/v1alpha1
 kind: SAMTransportProfile

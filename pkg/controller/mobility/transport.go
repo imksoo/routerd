@@ -331,7 +331,19 @@ func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Re
 				if nodeRef == self {
 					continue
 				}
-				endpoint := strings.TrimSpace(node.SAMEndpoint)
+				endpoint, endpointPending, err := c.samNodeEndpoint(node)
+				if err != nil {
+					status.Phase = "Invalid"
+					status.Reason = fmt.Sprintf("%s node %s samEndpoint: %v", ref, nodeRef, err)
+					statuses = append(statuses, status)
+					return nil, nil, statuses, pending, fmt.Errorf("%s", status.Reason)
+				}
+				if endpointPending != "" {
+					status.Phase = "Pending"
+					status.Reason = endpointPending + " not resolved"
+					pending = append(pending, endpointPending)
+					continue
+				}
 				if endpoint == "" {
 					continue
 				}
@@ -409,6 +421,24 @@ func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Re
 	}
 	sort.Strings(pending)
 	return peers, topology, statuses, pending, nil
+}
+
+func (c TransportController) samNodeEndpoint(node api.SAMNodeSpec) (string, string, error) {
+	if endpoint := strings.TrimSpace(node.SAMEndpoint); endpoint != "" {
+		return endpoint, "", nil
+	}
+	if strings.TrimSpace(node.SAMEndpointFrom.Resource) == "" {
+		return "", "", nil
+	}
+	value := resourcequery.Value(c.Store, node.SAMEndpointFrom)
+	if strings.TrimSpace(value) == "" {
+		return "", node.SAMEndpointFrom.Resource + "." + firstNonEmpty(strings.TrimSpace(node.SAMEndpointFrom.Field), "phase"), nil
+	}
+	addr, err := endpointAddress(value)
+	if err != nil {
+		return "", "", fmt.Errorf("samEndpointFrom %s value %q: %w", node.SAMEndpointFrom.Resource, value, err)
+	}
+	return addr.String(), "", nil
 }
 
 func nameFromPeerGroupRef(ref string) string {

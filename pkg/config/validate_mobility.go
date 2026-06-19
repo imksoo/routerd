@@ -222,6 +222,12 @@ func validateSAMNodeSet(res api.Resource, spec api.SAMNodeSetSpec) error {
 				return fmt.Errorf("%s spec.nodes[%d].samEndpoint: %w", res.ID(), i, err)
 			}
 		}
+		if strings.TrimSpace(node.SAMEndpoint) != "" && strings.TrimSpace(node.SAMEndpointFrom.Resource) != "" {
+			return fmt.Errorf("%s spec.nodes[%d].samEndpoint and samEndpointFrom are mutually exclusive", res.ID(), i)
+		}
+		if strings.TrimSpace(node.SAMEndpointFrom.Resource) != "" && strings.TrimSpace(node.SAMEndpointFrom.Field) == "" {
+			return fmt.Errorf("%s spec.nodes[%d].samEndpointFrom.field is required", res.ID(), i)
+		}
 		if err := validateSAMNodeWireGuard(res.ID(), i, node.WireGuard); err != nil {
 			return err
 		}

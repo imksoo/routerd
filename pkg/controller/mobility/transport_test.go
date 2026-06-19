@@ -11,6 +11,23 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 )
 
+func testStringSlice(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text, ok := item.(string); ok {
+				out = append(out, text)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
 func TestSAMTransportProfileDerivesSymmetricSortedEdge31(t *testing.T) {
 	now := time.Date(2026, 6, 6, 9, 0, 0, 0, time.UTC)
 	aStore := testStore(t, now)
@@ -393,6 +410,67 @@ func TestSAMTransportProfileDerivesPeersAndTopologyFromSAMNodeSet(t *testing.T) 
 	topology, ok := status["topologyNodeRefs"].([]any)
 	if !ok || len(topology) != 3 {
 		t.Fatalf("topologyNodeRefs = %#v, want three nodes", status["topologyNodeRefs"])
+	}
+}
+
+func TestSAMTransportProfileDerivesSAMNodeSetEndpointFromStatus(t *testing.T) {
+	now := time.Date(2026, 6, 6, 9, 5, 35, 0, time.UTC)
+	store := testStore(t, now)
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Client", "rr-underlay", map[string]any{"currentAddress": "203.0.113.11/24"}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+	router := transportRouterWithTopology("svnet1", "leaf-rt01", nil, nil)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMNodeSet/svnet1-nodes"}}
+	router.Spec.Resources[0].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources, samNodeSetResource("svnet1-nodes", []api.SAMNodeSpec{
+		{NodeRef: "leaf-rt01", SAMEndpoint: "203.0.113.10"},
+		{NodeRef: "rr-rt01", SAMEndpointFrom: api.StatusValueSourceSpec{Resource: "DHCPv4Client/rr-underlay", Field: "currentAddress"}},
+	}))
+
+	controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("svnet1", "leaf-rt01")).ResourcesJSON)
+	tunnel := findTransportTunnelForPeer(t, resources, "leaf-rt01", "rr-rt01")
+	if tunnel.Remote != "203.0.113.11" {
+		t.Fatalf("tunnel remote = %q, want resolved samEndpointFrom address", tunnel.Remote)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "svnet1")
+	if status["phase"] != "Derived" {
+		t.Fatalf("status = %#v, want Derived", status)
+	}
+}
+
+func TestSAMTransportProfileSAMNodeSetEndpointFromPending(t *testing.T) {
+	now := time.Date(2026, 6, 6, 9, 5, 35, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouterWithMode("svnet1", "leaf-rt01", "pair-stable", nil)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMNodeSet/svnet1-nodes"}}
+	router.Spec.Resources[0].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources, samNodeSetResource("svnet1-nodes", []api.SAMNodeSpec{
+		{NodeRef: "leaf-rt01", SAMEndpoint: "203.0.113.10"},
+		{NodeRef: "rr-rt01", SAMEndpointFrom: api.StatusValueSourceSpec{Resource: "DHCPv4Client/rr-underlay", Field: "currentAddress"}},
+	}))
+
+	controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("svnet1", "leaf-rt01")).ResourcesJSON); len(resources) != 0 {
+		t.Fatalf("resources = %#v, want none while samEndpointFrom is pending", resources)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "svnet1")
+	if status["phase"] != "Pending" || !strings.Contains(strings.Join(testStringSlice(status["pendingSources"]), ","), "DHCPv4Client/rr-underlay.currentAddress") {
+		t.Fatalf("status = %#v, want pending samEndpointFrom source", status)
 	}
 }
 

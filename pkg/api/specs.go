@@ -721,15 +721,16 @@ type SAMNodeSetSpec struct {
 }
 
 type SAMNodeSpec struct {
-	NodeRef        string                    `yaml:"nodeRef" json:"nodeRef"`
-	Site           string                    `yaml:"site,omitempty" json:"site,omitempty"`
-	Role           string                    `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=,enum=onprem,enum=cloud"`
-	RouteReflector bool                      `yaml:"routeReflector,omitempty" json:"routeReflector,omitempty"`
-	EventEndpoint  string                    `yaml:"eventEndpoint,omitempty" json:"eventEndpoint,omitempty"`
-	SAMEndpoint    string                    `yaml:"samEndpoint,omitempty" json:"samEndpoint,omitempty"`
-	WireGuard      SAMNodeWireGuardSpec      `yaml:"wireGuard,omitempty" json:"wireGuard,omitempty"`
-	Placement      MobilityMemberPlacement   `yaml:"placement,omitempty" json:"placement,omitempty"`
-	Maintenance    MobilityMemberMaintenance `yaml:"maintenance,omitempty" json:"maintenance,omitempty"`
+	NodeRef         string                    `yaml:"nodeRef" json:"nodeRef"`
+	Site            string                    `yaml:"site,omitempty" json:"site,omitempty"`
+	Role            string                    `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=,enum=onprem,enum=cloud"`
+	RouteReflector  bool                      `yaml:"routeReflector,omitempty" json:"routeReflector,omitempty"`
+	EventEndpoint   string                    `yaml:"eventEndpoint,omitempty" json:"eventEndpoint,omitempty"`
+	SAMEndpoint     string                    `yaml:"samEndpoint,omitempty" json:"samEndpoint,omitempty"`
+	SAMEndpointFrom StatusValueSourceSpec     `yaml:"samEndpointFrom,omitempty" json:"samEndpointFrom,omitempty"`
+	WireGuard       SAMNodeWireGuardSpec      `yaml:"wireGuard,omitempty" json:"wireGuard,omitempty"`
+	Placement       MobilityMemberPlacement   `yaml:"placement,omitempty" json:"placement,omitempty"`
+	Maintenance     MobilityMemberMaintenance `yaml:"maintenance,omitempty" json:"maintenance,omitempty"`
 }
 
 type SAMNodeWireGuardSpec struct {

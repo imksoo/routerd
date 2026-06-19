@@ -319,6 +319,21 @@ func TestValidateSAMNodeSetRejectsInvalidFields(t *testing.T) {
 			want: "spec.nodes[0].samEndpoint: must be IPv4",
 		},
 		{
+			name: "sam endpoint with source",
+			mut: func(spec *api.SAMNodeSetSpec) {
+				spec.Nodes[0].SAMEndpointFrom = api.StatusValueSourceSpec{Resource: "DHCPv4Client/wan", Field: "currentAddress"}
+			},
+			want: "spec.nodes[0].samEndpoint and samEndpointFrom are mutually exclusive",
+		},
+		{
+			name: "sam endpoint source missing field",
+			mut: func(spec *api.SAMNodeSetSpec) {
+				spec.Nodes[0].SAMEndpoint = ""
+				spec.Nodes[0].SAMEndpointFrom = api.StatusValueSourceSpec{Resource: "DHCPv4Client/wan"}
+			},
+			want: "spec.nodes[0].samEndpointFrom.field is required",
+		},
+		{
 			name: "wireguard public key required",
 			mut:  func(spec *api.SAMNodeSetSpec) { spec.Nodes[0].WireGuard.PublicKey = "" },
 			want: "spec.nodes[0].wireGuard.publicKey is required when wireGuard is set",
