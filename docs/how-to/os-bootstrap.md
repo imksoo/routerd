@@ -32,15 +32,6 @@ spec:
         - kmod
         - wireguard-tools
         - tailscale
-    - os: alpine
-      manager: apk
-      names:
-        - dnsmasq
-        - nftables
-        - conntrack-tools
-        - iproute2
-        - wireguard-tools
-        - tailscale
     - os: freebsd
       manager: pkg
       names:
@@ -125,17 +116,6 @@ routerd-managed service units and init scripts are generated from the owning
 resource kinds. Do not declare local service-manager units in routerd config;
 write the desired router resources and let the renderer derive the host
 artifacts.
-
-On Alpine/OpenRC, `routerd render alpine --out-dir <dir>` can render OpenRC
-scripts for routerd, managed dnsmasq, `routerd-healthcheck`, DNS resolver,
-firewall logger, PPPoE, and Tailscale. During apply, routerd installs those
-scripts under `/etc/init.d` and uses `rc-update` and `rc-service` only when the
-current OpenRC state needs a change.
-Synthesized DNS resolver scripts are rendered but not enabled or started until
-runtime config materialization is available outside the controller loop.
-It does not emulate systemd-only concepts. systemd-networkd/resolved drop-ins,
-systemd sandboxing fields, and timesyncd ownership remain unsupported on OpenRC
-until they have native Alpine semantics.
 
 ## Apply order
 

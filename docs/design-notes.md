@@ -4,7 +4,7 @@ title: Design notes
 
 # Design notes
 
-![Diagram showing routerd design notes covering daemon contracts, DHCPv6-PD ownership, honest LAN advertisement, DS-Lite AFTR resolution, event coordination, reusable building blocks, and OpenRC rendering](/img/diagrams/design-notes.png)
+![Diagram showing routerd design notes covering daemon contracts, DHCPv6-PD ownership, honest LAN advertisement, DS-Lite AFTR resolution, event coordination, and reusable building blocks](/img/diagrams/design-notes.png)
 
 This document records design decisions worth keeping. It is not a chronological log of past experiments — only the principles current code follows and that future changes should respect.
 

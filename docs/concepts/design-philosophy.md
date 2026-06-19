@@ -32,7 +32,7 @@ This shape makes it much easier to find which step stopped progressing.
 
 ## Confine OS differences
 
-The same intent maps to different host-level expressions on Linux, NixOS, and FreeBSD. routerd confines those differences inside `pkg/platform` feature flags and per-OS renderers. The user-visible resource names stay as similar as possible across platforms.
+The same intent maps to different host-level expressions on Linux and FreeBSD. routerd confines those differences inside `pkg/platform` feature flags and per-OS renderers. The user-visible resource names stay as similar as possible across platforms.
 
 ## Prefer correct names over compatibility (for now)
 
