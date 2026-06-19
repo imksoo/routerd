@@ -173,6 +173,23 @@ fi
 EOF
 chmod 0755 "${rootfs}/opt/routerd-live/firstboot.sh"
 
+install -d "${rootfs}/etc/systemd/network"
+cat > "${rootfs}/etc/systemd/network/80-dhcp.network" <<'EOF'
+[Match]
+Name=en* eth*
+
+[Network]
+DHCP=yes
+
+[DHCPv4]
+UseDNS=yes
+UseHostname=no
+EOF
+ln -sf /run/systemd/resolve/resolv.conf "${rootfs}/etc/resolv.conf"
+install -d "${rootfs}/etc/systemd/system/multi-user.target.wants"
+ln -sf /usr/lib/systemd/system/systemd-networkd.service "${rootfs}/etc/systemd/system/multi-user.target.wants/systemd-networkd.service"
+ln -sf /usr/lib/systemd/system/systemd-resolved.service "${rootfs}/etc/systemd/system/multi-user.target.wants/systemd-resolved.service"
+
 install -d "${rootfs}/etc/systemd/system" "${rootfs}/etc/systemd/system/multi-user.target.wants"
 cat > "${rootfs}/etc/systemd/system/routerd-live-setup.service" <<'EOF'
 [Unit]
