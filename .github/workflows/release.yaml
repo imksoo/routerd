@@ -57,7 +57,6 @@ jobs:
     name: Build ${{ matrix.routerd_os }}-${{ matrix.goarch }}
     needs:
       - resolve-release
-      - quality
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -141,7 +140,6 @@ jobs:
     name: Build native nDPI agent linux-amd64
     needs:
       - resolve-release
-      - quality
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -206,7 +204,6 @@ jobs:
     name: Build live ISO
     needs:
       - resolve-release
-      - quality
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -248,6 +245,7 @@ jobs:
     name: Publish GitHub release
     needs:
       - resolve-release
+      - quality
       - build-archives
       - build-ndpi-agent-libndpi
       - build-iso
