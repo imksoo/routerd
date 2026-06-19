@@ -124,7 +124,8 @@ Failure behavior:
    `router.yaml` install, and `.tar.zst` / `.tar.gz` / `.tar` bundle extraction.
 4. Done: add provider readers for AWS, Azure, and OCI IMDS behind the same
    user-data parsing interface.
-5. Add optional persistent validated-config cache and SSH host key bootstrap.
+5. Done: regenerate live ISO SSH host keys, install `ssh_authorized_keys`, enable
+   sshd, and cache the last validated `router.yaml` for fetch-failure fallback.
 6. Add signature verification and richer status reporting once the bundle format
    stabilizes.
 

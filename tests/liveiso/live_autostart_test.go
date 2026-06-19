@@ -108,12 +108,12 @@ func TestLiveISOSupportsNoCloudHostname(t *testing.T) {
 	}
 
 	hostnameIdx := strings.Index(script, "apply_cloudinit_hostname || true")
-	runtimeIdx := strings.Index(script, "install -d /run/routerd /var/lib/routerd \"${config_dir}\"")
-	if hostnameIdx < 0 || runtimeIdx < 0 {
-		t.Fatal("missing NoCloud hostname setup or live runtime setup")
+	sshIdx := strings.Index(script, "\napply_ssh_bootstrap\n")
+	if hostnameIdx < 0 || sshIdx < 0 {
+		t.Fatal("missing NoCloud hostname setup or SSH bootstrap setup")
 	}
-	if hostnameIdx > runtimeIdx {
-		t.Fatal("NoCloud hostname must be applied before routerd live runtime setup")
+	if hostnameIdx > sshIdx {
+		t.Fatal("NoCloud hostname must be applied before SSH bootstrap")
 	}
 }
 
@@ -303,6 +303,83 @@ func TestLiveISOUsesIMDSAfterNoCloudForHostnameAndConfig(t *testing.T) {
 	}
 	if hostnameNoCloudIdx > hostnameIMDSIdx {
 		t.Fatal("hostname setup must try NoCloud before IMDS")
+	}
+}
+
+func TestLiveISORegeneratesSSHHostKeys(t *testing.T) {
+	script := liveISOScript(t)
+	for _, needle := range []string{
+		"regenerate_ssh_host_keys()",
+		"rm -f /etc/ssh/ssh_host_*",
+		"ssh-keygen -A",
+		"regenerated SSH host keys",
+	} {
+		if !strings.Contains(script, needle) {
+			t.Fatalf("Ubuntu live ISO SSH host key regeneration missing %q", needle)
+		}
+	}
+}
+
+func TestLiveISOInstallsSSHAuthorizedKeysFromUserData(t *testing.T) {
+	script := liveISOScript(t)
+	for _, needle := range []string{
+		"cloudinit_ssh_authorized_keys()",
+		"ssh_authorized_keys:[[:space:]]*$",
+		"sub(/^[[:space:]]*-[[:space:]]*/, \"\", line)",
+		"install_authorized_keys()",
+		"install -d -m 0700 /root/.ssh",
+		"/root/.ssh/authorized_keys.new",
+		"install -m 0600 /root/.ssh/authorized_keys.new /root/.ssh/authorized_keys",
+		"chown root:root /root/.ssh /root/.ssh/authorized_keys",
+		"apply_cloudinit_authorized_keys()",
+	} {
+		if !strings.Contains(script, needle) {
+			t.Fatalf("Ubuntu live ISO SSH authorized_keys bootstrap missing %q", needle)
+		}
+	}
+}
+
+func TestLiveISOEnablesSSHDFromFirstBoot(t *testing.T) {
+	script := liveISOScript(t)
+	for _, needle := range []string{
+		"enable_sshd()",
+		"systemctl enable --now ssh.service",
+		"systemctl enable --now sshd.service",
+		"apply_ssh_bootstrap()",
+		"apply_ssh_bootstrap",
+	} {
+		if !strings.Contains(script, needle) {
+			t.Fatalf("Ubuntu live ISO sshd enablement missing %q", needle)
+		}
+	}
+
+	hostnameIdx := strings.Index(script, "apply_cloudinit_hostname || true")
+	sshIdx := strings.Index(script, "\napply_ssh_bootstrap\n")
+	configIdx := strings.Index(script, "if ! restore_config_disk_config")
+	if hostnameIdx < 0 || sshIdx < 0 || configIdx < 0 {
+		t.Fatal("missing hostname, SSH bootstrap, or config restore order marker")
+	}
+	if !(hostnameIdx < sshIdx && sshIdx < configIdx) {
+		t.Fatal("firstboot order must be hostname, SSH bootstrap, then config restore")
+	}
+}
+
+func TestLiveISOUsesValidatedConfigCache(t *testing.T) {
+	script := liveISOScript(t)
+	for _, needle := range []string{
+		"validated_cache_dir=/var/lib/routerd/validated-config",
+		"validated_cache_file=/var/lib/routerd/validated-config/router.yaml",
+		"cache_validated_config()",
+		"install -d -m 0700 \"${validated_cache_dir}\"",
+		"install -m 0600 \"${config_file}\" \"${validated_cache_file}\"",
+		"restore_validated_config_cache()",
+		"restored config from validated cache (fetch failed)",
+		"fetch_url \"${config_url}\" \"${tmp}\" || { restore_validated_config_cache && return 0; return 1; }",
+		"cache_validated_config || true",
+	} {
+		if !strings.Contains(script, needle) {
+			t.Fatalf("Ubuntu live ISO validated config cache missing %q", needle)
+		}
 	}
 }
 
