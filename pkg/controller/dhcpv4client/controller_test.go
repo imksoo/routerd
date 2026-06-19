@@ -362,8 +362,9 @@ func TestLeaseEventChangedIgnoresLeaseTimestamps(t *testing.T) {
 	next["lastLeaseAt"] = "2026-06-19T10:00:30Z"
 	next["lastRenewAt"] = "2026-06-19T10:00:30Z"
 	next["lastAppliedAt"] = "2026-06-19T10:00:30Z"
+	next["leaseTime"] = "3570"
 	if leaseEventChanged(current, next) {
-		t.Fatal("timestamp-only lease refresh must not emit DHCPv4 client applied event")
+		t.Fatal("lease timer-only refresh must not emit DHCPv4 client applied event")
 	}
 
 	next["defaultGateway"] = "192.0.2.254"
