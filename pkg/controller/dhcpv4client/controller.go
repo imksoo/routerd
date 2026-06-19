@@ -158,7 +158,7 @@ func (c Controller) reconcile(ctx context.Context, name string) error {
 }
 
 func leaseEventChanged(current, next map[string]any) bool {
-	for _, key := range []string{"phase", "currentAddress", "prefixLength", "defaultGateway", "domain", "leaseTime", "appliedAddress"} {
+	for _, key := range []string{"phase", "currentAddress", "prefixLength", "defaultGateway", "domain", "appliedAddress"} {
 		if fmt.Sprint(current[key]) != fmt.Sprint(next[key]) {
 			return true
 		}

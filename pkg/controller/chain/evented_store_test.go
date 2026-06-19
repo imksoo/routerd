@@ -268,6 +268,14 @@ func TestStatusChangedIgnoresDHCPv4ClientLeaseTimestamps(t *testing.T) {
 		"lastLeaseAt":    "2026-06-19T10:00:00Z",
 		"lastRenewAt":    "2026-06-19T10:00:00Z",
 		"lastAppliedAt":  "2026-06-19T10:00:00Z",
+		"renewAt":        "2026-06-19T10:30:00Z",
+		"rebindAt":       "2026-06-19T10:45:00Z",
+		"expiresAt":      "2026-06-19T11:00:00Z",
+		"observed": map[string]any{
+			"leaseTime": "3600",
+			"renewAt":   "2026-06-19T10:30:00Z",
+			"expiresAt": "2026-06-19T11:00:00Z",
+		},
 	}
 	next := map[string]any{}
 	for key, value := range current {
@@ -276,8 +284,19 @@ func TestStatusChangedIgnoresDHCPv4ClientLeaseTimestamps(t *testing.T) {
 	next["lastLeaseAt"] = "2026-06-19T10:00:30Z"
 	next["lastRenewAt"] = "2026-06-19T10:00:30Z"
 	next["lastAppliedAt"] = "2026-06-19T10:00:30Z"
+	next["renewAt"] = "2026-06-19T10:29:30Z"
+	next["rebindAt"] = "2026-06-19T10:44:30Z"
+	next["expiresAt"] = "2026-06-19T10:59:30Z"
+	next["observed"] = map[string]any{
+		"leaseTime": "3570",
+		"renewAt":   "2026-06-19T10:29:30Z",
+		"expiresAt": "2026-06-19T10:59:30Z",
+	}
 	if statusChangedForEvent(api.NetAPIVersion, "DHCPv4Client", current, next) {
 		t.Fatal("DHCPv4Client lease timestamp-only refresh should not be event-significant")
+	}
+	if fields := statusChangedFields(current, next); len(fields) != 0 {
+		t.Fatalf("changed fields = %v, want none", fields)
 	}
 
 	next["currentAddress"] = "192.0.2.11"

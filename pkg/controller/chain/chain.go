@@ -629,7 +629,9 @@ func stableStatus(status map[string]any) map[string]any {
 	out := map[string]any{}
 	for key, value := range status {
 		switch key {
-		case "updatedAt", "observedAt", "installedAt", "lastCheckedAt", "lastTransitionAt", "lastLeaseAt", "lastRenewAt", "lastAppliedAt", "consecutivePassed", "consecutiveFailed", "createdHint", "packetRing", "conditions", "mtuObservedAt":
+		case "updatedAt", "observedAt", "installedAt", "lastCheckedAt", "lastTransitionAt", "lastLeaseAt", "lastRenewAt", "lastAppliedAt", "renewAt", "rebindAt", "expiresAt", "consecutivePassed", "consecutiveFailed", "createdHint", "packetRing", "conditions", "mtuObservedAt":
+			continue
+		case "observed":
 			continue
 		case "ownerKey", "ownerRef", "ownerRefs", "lifecycleClass":
 			continue
