@@ -182,6 +182,7 @@ Name=en* eth*
 DHCP=yes
 
 [DHCPv4]
+ClientIdentifier=mac
 UseDNS=yes
 UseHostname=no
 EOF
