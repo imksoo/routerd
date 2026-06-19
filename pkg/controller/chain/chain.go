@@ -2789,13 +2789,14 @@ func (c DaemonStatusController) Reconcile(ctx context.Context) error {
 			continue
 		}
 		for _, observed := range status.Resources {
-			next := map[string]any{
+			base := map[string]any{
 				"phase":      observed.Phase,
 				"health":     observed.Health,
 				"conditions": observed.Conditions,
 				"updatedAt":  time.Now().UTC().Format(time.RFC3339Nano),
 			}
 			if observed.Resource.APIVersion == api.MobilityAPIVersion && observed.Resource.Kind == "MobilityPool" {
+				next := copyStatusMap(base)
 				for key, value := range observed.Observed {
 					next[key] = value
 				}
@@ -2811,6 +2812,14 @@ func (c DaemonStatusController) Reconcile(ctx context.Context) error {
 					full[key] = value
 				}
 				next = full
+				if err := c.Store.SaveObjectStatus(observed.Resource.APIVersion, observed.Resource.Kind, observed.Resource.Name, next); err != nil {
+					return err
+				}
+				continue
+			}
+			next := copyStatusMap(base)
+			if daemonStatusObservedOnlyKind(observed.Resource.Kind) {
+				next = daemonObservedOnlyStatus(c.Store.ObjectStatus(observed.Resource.APIVersion, observed.Resource.Kind, observed.Resource.Name), base, observed)
 			} else {
 				for key, value := range observed.Observed {
 					next[key] = value
@@ -2822,6 +2831,66 @@ func (c DaemonStatusController) Reconcile(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func daemonStatusObservedOnlyKind(kind string) bool {
+	switch kind {
+	case "DHCPv4Client", "PPPoESession", "DHCPv6PrefixDelegation", "DNSResolver", "HealthCheck":
+		return true
+	default:
+		return false
+	}
+}
+
+func daemonObservedOnlyStatus(current, base map[string]any, observed daemonapi.ResourceStatus) map[string]any {
+	next := copyStatusMap(current)
+	for key, value := range base {
+		next[key] = value
+	}
+	next["observed"] = normalizedDaemonObserved(observed.Resource.Kind, observed.Observed)
+	return next
+}
+
+func normalizedDaemonObserved(kind string, observed map[string]string) map[string]any {
+	out := make(map[string]any, len(observed))
+	for key, value := range observed {
+		out[key] = normalizedDaemonObservedValue(kind, key, value)
+	}
+	return out
+}
+
+func normalizedDaemonObservedValue(kind, key, value string) any {
+	switch key {
+	case "dnsServers", "ntpServers", "sntpServers", "domainSearch":
+		if values := decodeStringList(value); len(values) > 0 {
+			return values
+		}
+	case "prefixLength":
+		if kind == "DHCPv4Client" {
+			if parsed, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && parsed > 0 {
+				return parsed
+			}
+		}
+	case "leaseTime":
+		if kind == "DHCPv4Client" {
+			if parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err == nil {
+				return parsed
+			}
+		}
+	case "bytesIn", "bytesOut":
+		if kind == "PPPoESession" {
+			if parsed, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64); err == nil {
+				return parsed
+			}
+		}
+	case "listeners", "zones":
+		if kind == "DNSResolver" {
+			if parsed, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
+				return parsed
+			}
+		}
+	}
+	return value
 }
 
 func mergeMobilityObservedSourceStatus(status map[string]any, observed map[string]string) {
@@ -2888,8 +2957,18 @@ func (c DaemonStatusController) daemonSockets() []string {
 			if err != nil || healthCheckDisabled(spec) {
 				continue
 			}
-			defaults, _ := platform.Current()
-			socket := filepath.Join(defaults.RuntimeDir, "healthcheck", resource.Metadata.Name+".sock")
+			socket := c.DaemonSockets[resource.Metadata.Name]
+			if socket == "" {
+				defaults, _ := platform.Current()
+				socket = filepath.Join(defaults.RuntimeDir, "healthcheck", resource.Metadata.Name+".sock")
+			}
+			add(socket)
+		case "DNSResolver":
+			socket := c.DaemonSockets[resource.Metadata.Name]
+			if socket == "" {
+				defaults, _ := platform.Current()
+				socket = filepath.Join(defaults.RuntimeDir, "dns-resolver", resource.Metadata.Name+".sock")
+			}
 			add(socket)
 		case "PPPoESession":
 			_, err := resource.PPPoESessionSpec()
