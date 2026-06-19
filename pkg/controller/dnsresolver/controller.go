@@ -723,6 +723,7 @@ func expandStrings(store Store, values []string) []string {
 }
 
 func expandBootstrapResolvers(store Store, sources []api.StatusValueSourceSpec, values []string) ([]string, []map[string]string) {
+	static := expandStrings(store, values)
 	var out []string
 	var waiting []map[string]string
 	for _, source := range sources {
@@ -742,7 +743,7 @@ func expandBootstrapResolvers(store Store, sources []api.StatusValueSourceSpec, 
 			}
 			out = append(out, strings.TrimSpace(value))
 		}
-		if !resolved && !source.Optional {
+		if !resolved && !source.Optional && len(static) == 0 {
 			waiting = append(waiting, map[string]string{
 				"field":  "bootstrapResolver",
 				"source": source.Resource,
@@ -750,7 +751,7 @@ func expandBootstrapResolvers(store Store, sources []api.StatusValueSourceSpec, 
 			})
 		}
 	}
-	out = append(out, expandStrings(store, values)...)
+	out = append(out, static...)
 	return compactStrings(out), waiting
 }
 
