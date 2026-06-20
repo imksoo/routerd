@@ -72,8 +72,10 @@ aws_inventory() {
     else
       record aws instances FAIL "non-terminated instances=$active_count"
     fi
+  elif grep -Eq 'InvalidInstanceID\.NotFound|InvalidInstanceID\.Malformed' "$evidence_dir/aws-instances.stderr"; then
+    record aws instances PASS "describe-instances returned instance NotFound; see aws-instances.stderr"
   else
-    record aws instances PASS "describe-instances returned NotFound/error; see aws-instances.stderr"
+    record aws instances FAIL "describe-instances failed for an unexpected reason; see aws-instances.stderr"
   fi
 }
 
@@ -96,7 +98,7 @@ azure_inventory() {
     az resource list --resource-group "$rg" --output json >"$evidence_dir/azure-resources.json" 2>"$evidence_dir/azure-resources.stderr" || true
     record azure resource_group FAIL "$rg still exists"
   else
-    record azure resource_group SKIP "could not determine group existence"
+    record azure resource_group FAIL "could not determine group existence"
   fi
 }
 
@@ -105,7 +107,7 @@ oci_inventory() {
     record oci cli SKIP "oci CLI not found"
     return 0
   }
-  local region node id out state active_count=0 checked=0
+  local region node id out state active_count=0 checked=0 unknown_count=0
   region="$(jq -r '.oci.region // empty' "$fabric_json")"
   [ -n "$region" ] || {
     record oci region SKIP "missing fabric.oci.region"
@@ -120,10 +122,16 @@ oci_inventory() {
       if [ "$state" != "TERMINATED" ]; then
         active_count=$((active_count + 1))
       fi
+    elif grep -Eqi 'NotAuthorizedOrNotFound|NotFound|404' "$evidence_dir/oci-instance-${node}.stderr"; then
+      true
+    else
+      unknown_count=$((unknown_count + 1))
     fi
   done < <(jq -r 'to_entries[] | select(.value.site == "oci") | [.key, (.value.instance_id // "")] | @tsv' "$nodes_json")
   if [ "$checked" -eq 0 ]; then
     record oci instances SKIP "no oci instances in tofu output"
+  elif [ "$unknown_count" -gt 0 ]; then
+    record oci instances FAIL "could not verify instances=$unknown_count"
   elif [ "$active_count" -eq 0 ]; then
     record oci instances PASS "no non-terminated OCI instances observed"
   else
