@@ -208,19 +208,9 @@ wait_convergence() {
     done
     for node in "${leaf_routers[@]}"; do
       node_is_stopped "$node" && continue
-      if ! ssh_node "$node" "sudo routerctl describe MobilityPool/cloudedge -o json | jq -e --argjson want '$client_ips_json' '
-        (.resource.status.ownershipResolverOwnerTable // []) as \$rows
-        | (\$rows | map(.address)) as \$have
-        | all(\$want[]; . as \$ip | \$have | index(\$ip))
-      ' >/dev/null"; then
-        ok=0
-        continue
-      fi
-      if ! ssh_node "$node" "sudo routerctl action list -o json 2>/dev/null | jq -e '
-        (if type == \"array\" then . else (.items // []) end)
-        | map(select(.status == \"pending\" or .status == \"running\"))
-        | length == 0
-      ' >/dev/null"; then
+      if ! ssh_node "$node" "jq -r '.[] | sub(\"/32$\"; \"\")' <<'JSON' | while read -r ip; do ip route get \"\$ip\" >/dev/null || exit 1; done
+$client_ips_json
+JSON"; then
         ok=0
       fi
     done
