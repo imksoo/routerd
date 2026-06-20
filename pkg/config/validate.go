@@ -896,6 +896,9 @@ func resourceWhens(res api.Resource) []resourceWhenRef {
 	case "RouterdCluster":
 		spec, _ := res.RouterdClusterSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
+	case "Interface":
+		spec, _ := res.InterfaceSpec()
+		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "VirtualAddress":
 		spec, _ := res.VirtualAddressSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
@@ -919,6 +922,9 @@ func resourceWhens(res api.Resource) []resourceWhenRef {
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "DHCPv4Client":
 		spec, _ := res.DHCPv4ClientSpec()
+		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
+	case "IPv4StaticAddress":
+		spec, _ := res.IPv4StaticAddressSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "ClusterNetworkRoute":
 		spec, _ := res.ClusterNetworkRouteSpec()

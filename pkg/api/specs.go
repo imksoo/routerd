@@ -353,11 +353,12 @@ type ManagementAccessSpec struct {
 type InventorySpec struct{}
 
 type InterfaceSpec struct {
-	IfName  string `yaml:"ifname" json:"ifname"`
-	AdminUp bool   `yaml:"adminUp,omitempty" json:"adminUp,omitempty"`
-	MTU     int    `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=576,maximum=9216"`
-	Managed bool   `yaml:"managed" json:"managed"`
-	Owner   string `yaml:"owner,omitempty" json:"owner,omitempty" jsonschema:"enum=routerd,enum=external"`
+	IfName  string           `yaml:"ifname" json:"ifname"`
+	When    ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
+	AdminUp bool             `yaml:"adminUp,omitempty" json:"adminUp,omitempty"`
+	MTU     int              `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=576,maximum=9216"`
+	Managed bool             `yaml:"managed" json:"managed"`
+	Owner   string           `yaml:"owner,omitempty" json:"owner,omitempty" jsonschema:"enum=routerd,enum=external"`
 }
 
 type LinkSpec struct {
@@ -516,8 +517,9 @@ type PPPoESessionSpec struct {
 }
 
 type IPv4StaticAddressSpec struct {
-	Interface string `yaml:"interface" json:"interface"`
-	Address   string `yaml:"address" json:"address"`
+	Interface string           `yaml:"interface" json:"interface"`
+	Address   string           `yaml:"address" json:"address"`
+	When      ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
 	// Exclusive removes other IPv4 addresses from the target interface before adding this address.
 	Exclusive bool `yaml:"exclusive,omitempty" json:"exclusive,omitempty"`
 	// AllowOverlap permits an address prefix that overlaps another configured IPv4 prefix.

@@ -1066,12 +1066,18 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	for _, res := range r.Router.Spec.Resources {
 		when := resourcequery.ResourceWhen(res)
-		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, store) {
+		if !resourcequery.ResourceWhenPresent(when) {
 			continue
 		}
 		apiVersion := res.APIVersion
 		if apiVersion == "" {
 			apiVersion = resourcequery.APIVersionForKind(res.Kind)
+		}
+		if resourcequery.ResourceWhenMatches(when, store) {
+			if err := r.clearWhenFalseStatus(apiVersion, res.Kind, res.Metadata.Name, store); err != nil {
+				return err
+			}
+			continue
 		}
 		if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, map[string]any{
 			"phase":      "Pending",
@@ -1082,6 +1088,25 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 		}
 	}
 	return nil
+}
+
+func (r *Runner) clearWhenFalseStatus(apiVersion, kind, name string, store eventedStore) error {
+	current := store.ObjectStatus(apiVersion, kind, name)
+	reason := strings.TrimSpace(fmt.Sprint(current["reason"]))
+	if reason != "WhenFalse" {
+		return nil
+	}
+	observed, ok := current["observed"].(map[string]any)
+	if !ok || len(observed) == 0 || strings.TrimSpace(fmt.Sprint(observed["phase"])) == "" {
+		return nil
+	}
+	next := copyStatusMap(current)
+	for key, value := range observed {
+		next[key] = value
+	}
+	delete(next, "reason")
+	next["observed"] = observed
+	return store.SaveObjectStatus(apiVersion, kind, name, next)
 }
 
 func (r *Runner) effectiveRouterForReconcile(store eventedStore) (*api.Router, error) {
@@ -3013,6 +3038,21 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 		spec, err := resource.IPv4StaticAddressSpec()
 		if err != nil {
 			return err
+		}
+		if resourcequery.ResourceWhenPresent(spec.When) {
+			stateStore, ok := c.Store.(resourcequery.StateStore)
+			if ok && !resourcequery.ResourceWhenMatches(spec.When, stateStore) {
+				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name, map[string]any{
+					"phase":     "Pending",
+					"reason":    "WhenFalse",
+					"interface": spec.Interface,
+					"address":   spec.Address,
+					"dryRun":    c.DryRun,
+				}); err != nil {
+					return err
+				}
+				continue
+			}
 		}
 		ifname := interfaceIfName(c.Router, spec.Interface)
 		if ifname == "" {

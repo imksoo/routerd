@@ -452,6 +452,7 @@ func whenValidationTestResources(when api.ResourceWhenSpec) []whenValidationTest
 	return []whenValidationTestResource{
 		{specName: "ObservabilityPipelineSpec", resource: testResource(api.SystemAPIVersion, "ObservabilityPipeline", "observability", api.ObservabilityPipelineSpec{When: when})},
 		{specName: "RouterdClusterSpec", resource: testResource(api.SystemAPIVersion, "RouterdCluster", "cluster", api.RouterdClusterSpec{Peers: []string{"router-a", "router-b"}, LeasePath: "/run/routerd/cluster/lease", When: when})},
+		{specName: "InterfaceSpec", resource: testResource(api.NetAPIVersion, "Interface", "wan", api.InterfaceSpec{IfName: "eth0", Managed: false, When: when})},
 		{specName: "VirtualAddressSpec", resource: testResource(api.NetAPIVersion, "VirtualAddress", "vip", api.VirtualAddressSpec{Family: "ipv4", Interface: "lan", Address: "192.0.2.10/32", When: when})},
 		{specName: "BGPRouterSpec", resource: testResource(api.NetAPIVersion, "BGPRouter", "main", api.BGPRouterSpec{ASN: 64500, RouterID: "192.0.2.1", When: when})},
 		{specName: "BGPPeerSpec", resource: testResource(api.NetAPIVersion, "BGPPeer", "k8s-rt", api.BGPPeerSpec{RouterRef: "BGPRouter/main", PeerASN: 64512, Peers: []string{"192.0.2.2"}, When: when})},
@@ -460,6 +461,7 @@ func whenValidationTestResources(when api.ResourceWhenSpec) []whenValidationTest
 		{specName: "NTPClientSpec", resource: testResource(api.SystemAPIVersion, "NTPClient", "system-time", api.NTPClientSpec{Provider: "chrony", Managed: true, Source: "auto", FallbackServers: []string{"192.0.2.123"}, When: when})},
 		{specName: "NTPServerSpec", resource: testResource(api.SystemAPIVersion, "NTPServer", "lan-time", api.NTPServerSpec{Provider: "chrony", Managed: true, Source: "auto", FallbackServers: []string{"192.0.2.123"}, ListenAddresses: []string{"192.0.2.1"}, When: when})},
 		{specName: "DHCPv4ClientSpec", resource: testResource(api.NetAPIVersion, "DHCPv4Client", "wan-v4", api.DHCPv4ClientSpec{Interface: "wan", When: when})},
+		{specName: "IPv4StaticAddressSpec", resource: testResource(api.NetAPIVersion, "IPv4StaticAddress", "wan-v4", api.IPv4StaticAddressSpec{Interface: "wan", Address: "192.0.2.1/32", When: when})},
 		{specName: "ClusterNetworkRouteSpec", resource: testResource(api.NetAPIVersion, "ClusterNetworkRoute", "k8s", api.ClusterNetworkRouteSpec{Pods: api.ClusterNetworkRouteCIDRSpec{CIDRs: []string{"10.244.0.0/16"}}, Via: []api.ClusterNetworkRouteViaSpec{{Interface: "lan", NextHop: "192.0.2.2"}}, When: when})},
 		{specName: "DHCPv4ServerSpec", resource: testResource(api.NetAPIVersion, "DHCPv4Server", "lan", api.DHCPv4ServerSpec{Server: "dnsmasq", Interface: "lan", RangeStart: "192.0.2.100", RangeEnd: "192.0.2.150", When: when})},
 		{specName: "DHCPv4ReservationSpec", resource: testResource(api.NetAPIVersion, "DHCPv4Reservation", "printer", api.DHCPv4ReservationSpec{Server: "lan", MACAddress: "02:00:00:00:01:50", Hostname: "printer", IPAddress: "192.0.2.50", When: when})},

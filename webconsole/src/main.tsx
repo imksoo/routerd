@@ -158,6 +158,9 @@ type ResourceStatus = {
   status?: Record<string, unknown>;
 };
 
+type StatusBadgeColor = "success" | "warning" | "danger" | "informative" | "subtle";
+type ResourceDisposition = "healthy" | "warning" | "danger" | "neutral" | "unknown";
+
 type RoutesStatus = {
   generatedAt?: string;
   routes?: RouteEntry[];
@@ -3152,9 +3155,9 @@ function App() {
                 />
                 <div className={styles.grid}>
                   <Metric label="total" value={String(resources.length)} />
-                  <Metric label="healthy" value={String(resources.filter(r => resourcePhaseColor(r) === "success").length)} />
-                  <Metric label="warning" value={String(resources.filter(r => resourcePhaseColor(r) === "warning").length)} />
-                  <Metric label="danger" value={String(resources.filter(r => resourcePhaseColor(r) === "danger").length)} />
+                  <Metric label="healthy" value={String(resources.filter(r => resourceStatusClassification(r).disposition === "healthy").length)} />
+                  <Metric label="warning" value={String(resources.filter(r => resourceStatusClassification(r).disposition === "warning").length)} />
+                  <Metric label="danger" value={String(resources.filter(r => resourceStatusClassification(r).disposition === "danger").length)} />
                   <Metric label="dry-run kinds" value={String(controllers.filter(c => c.mode === "dry-run").length)} />
                 </div>
                 <ResourceTable resources={resources} controllers={controllers} navigateTo={navigateTo} />
@@ -5536,7 +5539,7 @@ function OverviewActivity({
 }) {
   const styles = useStyles();
   const alerts = resources
-    .filter(resource => ["danger", "warning"].includes(resourcePhaseColor(resource)))
+    .filter(resource => ["danger", "warning"].includes(resourceStatusClassification(resource).disposition))
     .slice(0, 8);
   const recent = events.slice(0, 8);
   return (
@@ -6576,7 +6579,7 @@ function normalizeBasePath(value: string) {
   return base;
 }
 
-function phaseColor(phase: unknown): "success" | "warning" | "danger" | "informative" | "subtle" {
+function phaseColor(phase: unknown): StatusBadgeColor {
   const text = String(phase ?? "");
   if (/Disabled|Standby|NotApplicable/.test(text)) return "subtle";
   if (/Healthy|Applied|Active|Bound|Installed|Ready|Running|Up|Observed/.test(text)) return "success";
@@ -6585,21 +6588,30 @@ function phaseColor(phase: unknown): "success" | "warning" | "danger" | "informa
   return "informative";
 }
 
-function resourcePhaseColor(resource: ResourceStatus): "success" | "warning" | "danger" | "informative" | "subtle" {
-  if (resourcePendingByDesign(resource)) return "subtle";
-  return phaseColor(resource.status?.phase);
+function resourcePhaseColor(resource: ResourceStatus): StatusBadgeColor {
+  return resourceStatusClassification(resource).color;
 }
 
-function resourcePendingByDesign(resource: ResourceStatus) {
+function resourceStatusClassification(resource: ResourceStatus): { disposition: ResourceDisposition; color: StatusBadgeColor } {
   const status = resource.status ?? {};
   const phase = String(status.phase ?? "");
   const reason = String(status.reason ?? "");
-  if (phase !== "Pending") return false;
-  return reason === "WhenFalse" || reason === "DependsOnFalse";
+  if (resourcePhaseSuppressedByReason(phase, reason)) return { disposition: "neutral", color: "subtle" };
+  const color = phaseColor(phase);
+  if (color === "success") return { disposition: "healthy", color };
+  if (color === "danger") return { disposition: "danger", color };
+  if (color === "warning") return { disposition: "warning", color };
+  if (color === "subtle") return { disposition: "neutral", color };
+  return { disposition: "unknown", color };
+}
+
+function resourcePhaseSuppressedByReason(phase: unknown, reason: unknown) {
+  if (String(phase ?? "") !== "Pending") return false;
+  return ["WhenFalse", "DependsOnFalse"].includes(String(reason ?? ""));
 }
 
 function resourceAlertCount(resources: ResourceStatus[]) {
-  return resources.filter(resource => ["danger", "warning"].includes(resourcePhaseColor(resource))).length;
+  return resources.filter(resource => ["danger", "warning"].includes(resourceStatusClassification(resource).disposition)).length;
 }
 
 function normalizeGatewayStatus(value: unknown) {
@@ -6966,15 +6978,14 @@ function metricSample(summary: Summary): MetricSample {
   let healthHealthy = 0;
   let healthUnhealthy = 0;
   for (const resource of summary.resources ?? []) {
-    const phase = resource.status?.phase;
-    if (neutralPhase(phase)) continue;
-    const color = phaseColor(phase);
-    if (color === "success") healthy++;
-    else if (color === "danger") danger++;
+    const classification = resourceStatusClassification(resource);
+    if (classification.disposition === "neutral") continue;
+    if (classification.disposition === "healthy") healthy++;
+    else if (classification.disposition === "danger") danger++;
     else warning++;
     if (resource.kind === "HealthCheck") {
-      if (color === "success") healthHealthy++;
-      if (color === "danger") healthUnhealthy++;
+      if (classification.disposition === "healthy") healthHealthy++;
+      if (classification.disposition === "danger") healthUnhealthy++;
     }
   }
   return {
