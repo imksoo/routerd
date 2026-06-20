@@ -109,7 +109,7 @@ ssh_node() {
   local user host
   user="$(node_field "$node" ssh_user)"
   host="$(node_field "$node" public_ip)"
-  ssh "${ssh_base[@]}" "$user@$host" "$@"
+  ssh -n "${ssh_base[@]}" "$user@$host" "$@"
 }
 
 scp_node() {
@@ -361,7 +361,7 @@ pasv_max_port=30010
 VSFTPEOF
         sudo systemctl restart vsftpd
         sudo pkill iperf3 >/dev/null 2>&1 || true
-        sudo iperf3 -s -D
+        sudo iperf3 -s -D </dev/null >/dev/null 2>&1
         sudo systemctl --no-pager --plain is-active rpcbind || true
         sudo systemctl --no-pager --plain is-active nfs-server nfs-kernel-server smbd vsftpd 2>/dev/null || true
         ss -lntup | grep -E ":(21|111|139|445|2049|20048|5201)\b" || true'
