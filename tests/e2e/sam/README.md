@@ -132,6 +132,7 @@ sam-e2e.sh [options]
   --skip-matrix              SSH hostname matrix をスキップ
   --skip-legacy-protocols    FTP/RPC/NFS/CIFS テストをスキップ
   --performance-tests        SAM経由のiperf3/ping性能テストと、AWS/Azure/OCIのcloud間public直結比較を実行
+  --failover-transfer-tests  failover停止操作中にclient間HTTP転送を流して結果を保存
   --destroy-cmd CMD          テスト後に実行する破棄コマンド
 ```
 
@@ -162,10 +163,11 @@ tofu output -json > tofu-output.json
    full SSH hostname matrix、legacy protocol、SAM private performance、
    AWS/Azure/OCI cloud 間 public direct comparison を保存する。
 4. RR redundancy は `--skip-deploy --failover-node aws-rr-a
-   --rejoin-after-failover` と `aws-rr-b` で別々に実行する。
+   --rejoin-after-failover --failover-transfer-tests` と `aws-rr-b` で別々に実行する。
 5. Leaf failover は各siteの片系ずつ、例: `aws-leaf-a`、`azure-leaf-a`、
    `oci-leaf-a`、`pve-leaf-a` を `--failover-node` に指定し、
-   `--rejoin-after-failover --load-balance-report --performance-tests` を付ける。
+   `--rejoin-after-failover --load-balance-report --performance-tests
+   --failover-transfer-tests` を付ける。
 6. Load-balance は `--skip-deploy --load-balance-report` で owner table、
    route、traceroute、E2E matrix を同じ evidence directory に残す。
 7. 成功時だけ `tofu destroy` し、provider/PVE inventory で残存がないことを
@@ -175,6 +177,9 @@ tofu output -json > tofu-output.json
 `convergence/summary.tsv` に記録する。failover/rejoin では
 `diagnostics/before-*` と `diagnostics/after-*` に doctor/status/owner table、
 OS route/address、routerd/routerd-bgp journal を保存する。
+`--failover-transfer-tests` は停止操作の直前に疑似クライアント間の
+SAM private HTTP 転送を開始し、`failover-transfer/` に転送ペア、curl結果、
+終了コード、受信ファイルサイズを保存する。
 
 ## GitHub Actions (将来)
 

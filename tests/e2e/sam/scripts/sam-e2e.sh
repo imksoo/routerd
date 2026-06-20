@@ -16,6 +16,7 @@ Options:
   --skip-matrix           Skip SSH hostname matrix; useful when rerunning performance after a clean matrix
   --skip-legacy-protocols Skip FTP/RPC/NFS/CIFS pseudo-client matrix
   --performance-tests     Run SAM iperf3/ping probes, plus public direct comparison for cross-cloud AWS/Azure/OCI pairs
+  --failover-transfer-tests Run a throttled client-to-client HTTP transfer during each failover stop
   --destroy-cmd CMD       Optional teardown command, for example: 'tofu destroy -auto-approve'
 
 This harness consumes `tofu output -json` from cloudedge-mobility/terraform/envs/sam-e2e.
@@ -36,6 +37,7 @@ load_balance_report=0
 skip_matrix=0
 legacy_protocols=1
 performance_tests=0
+failover_transfer_tests=0
 destroy_cmd=
 overall=0
 
@@ -53,6 +55,7 @@ while [ "$#" -gt 0 ]; do
     --skip-matrix) skip_matrix=1; shift ;;
     --skip-legacy-protocols) legacy_protocols=0; shift ;;
     --performance-tests) performance_tests=1; shift ;;
+    --failover-transfer-tests) failover_transfer_tests=1; shift ;;
     --destroy-cmd) destroy_cmd="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -67,7 +70,7 @@ done
 [ -f "$ssh_key" ] || { echo "ssh key not found: $ssh_key" >&2; exit 2; }
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }
 
-mkdir -p "$evidence_dir"/{preflight,deploy,convergence,matrix,legacy,performance,diagnostics,cleanup,ssh}
+mkdir -p "$evidence_dir"/{preflight,deploy,convergence,matrix,legacy,performance,failover-transfer,diagnostics,cleanup,ssh}
 cp "$tofu_output" "$evidence_dir/tofu-output.json"
 nodes_json="$evidence_dir/nodes.json"
 jq '.nodes.value' "$tofu_output" >"$nodes_json"
@@ -132,6 +135,7 @@ record_note() {
     ssh-keygen -lf "${ssh_key}.pub" 2>/dev/null || ssh-keygen -y -f "$ssh_key" | ssh-keygen -lf -
     echo "legacy_protocols=$legacy_protocols"
     echo "performance_tests=$performance_tests"
+    echo "failover_transfer_tests=$failover_transfer_tests"
     echo "rejoin_after_failover=$rejoin_after_failover"
     echo "policy_read=cloudedge-mobility/LAB_POLICY.md and ~/routerd-orchestration.md must be reread before real-machine validation"
   } >"$evidence_dir/run-note.txt"
@@ -393,6 +397,35 @@ setup_performance_services() {
   done
 }
 
+setup_failover_transfer_services() {
+  [ "$failover_transfer_tests" -eq 1 ] || return 0
+  local node
+  for node in "${clients[@]}"; do
+    {
+      echo "## setup failover transfer service on $node"
+      ssh_node "$node" 'set -euo pipefail
+        export DEBIAN_FRONTEND=noninteractive
+        if command -v apt-get >/dev/null 2>&1; then
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends curl python3
+        fi
+        sudo mkdir -p /srv/routerd-e2e/http
+        if [ ! -f /srv/routerd-e2e/http/failover-transfer.bin ]; then
+          sudo dd if=/dev/zero of=/srv/routerd-e2e/http/failover-transfer.bin bs=1M count=64 status=none
+        fi
+        sudo chmod -R 0755 /srv/routerd-e2e/http
+        if sudo iptables -S INPUT >/dev/null 2>&1; then
+          sudo iptables -C INPUT -s 10.77.60.0/24 -p tcp --dport 8080 -j ACCEPT >/dev/null 2>&1 || sudo iptables -I INPUT 1 -s 10.77.60.0/24 -p tcp --dport 8080 -j ACCEPT
+        fi
+        sudo pkill -f "python3 -m http.server 8080" >/dev/null 2>&1 || true
+        nohup python3 -m http.server 8080 --bind 0.0.0.0 --directory /srv/routerd-e2e/http >/tmp/routerd-e2e-http.log 2>&1 &
+        echo $! >/tmp/routerd-e2e-http.pid
+        sleep 1
+        ss -lntp | grep -E ":8080\b"'
+    } >"$evidence_dir/failover-transfer/setup-${node}.txt" 2>&1 || return 1
+  done
+}
+
 is_global_ipv4() {
   local ip="$1" a b c d
   IFS=. read -r a b c d <<EOF
@@ -635,14 +668,90 @@ collect_load_balance_report() {
   fi
 }
 
+failover_transfer_pair() {
+  local failed_node="$1"
+  local failed_role failed_site dst="" src="" dst_site client
+  failed_role="$(node_field "$failed_node" role)"
+  failed_site="$(node_field "$failed_node" site)"
+  if [ "$failed_role" = "leaf" ]; then
+    for client in "${clients[@]}"; do
+      [ "$(node_field "$client" site)" = "$failed_site" ] || continue
+      dst="$client"
+      break
+    done
+  fi
+  [ -n "$dst" ] || dst="${clients[0]}"
+  dst_site="$(node_field "$dst" site)"
+  for client in "${clients[@]}"; do
+    [ "$client" != "$dst" ] || continue
+    [ "$(node_field "$client" site)" != "$dst_site" ] || continue
+    src="$client"
+    break
+  done
+  if [ -z "$src" ]; then
+    for client in "${clients[@]}"; do
+      [ "$client" = "$dst" ] || { src="$client"; break; }
+    done
+  fi
+  printf '%s %s\n' "$src" "$dst"
+}
+
+start_failover_transfer() {
+  [ "$failover_transfer_tests" -eq 1 ] || return 0
+  local label="$1" failed_node="$2"
+  local src dst src_ip dst_ip out remote_pid
+  read -r src dst < <(failover_transfer_pair "$failed_node")
+  [ -n "$src" ] && [ -n "$dst" ] || return 1
+  src_ip="$(node_field "$src" private_ip)"
+  dst_ip="$(node_field "$dst" private_ip)"
+  out="$evidence_dir/failover-transfer/$label"
+  mkdir -p "$out"
+  {
+    echo "label=$label"
+    echo "failed_node=$failed_node"
+    echo "src=$src"
+    echo "src_ip=$src_ip"
+    echo "dst=$dst"
+    echo "dst_ip=$dst_ip"
+    echo "url=http://$dst_ip:8080/failover-transfer.bin"
+  } >"$out/metadata.txt"
+  remote_pid="$(ssh_node "$src" "rm -f /tmp/routerd-${label}.log /tmp/routerd-${label}.bin; (date -u '+started=%Y-%m-%dT%H:%M:%SZ'; timeout 150s curl -fS --limit-rate 512k --connect-timeout 10 --max-time 150 -o /tmp/routerd-${label}.bin 'http://$dst_ip:8080/failover-transfer.bin'; rc=\$?; date -u '+finished=%Y-%m-%dT%H:%M:%SZ'; echo \"rc=\$rc\"; ls -l /tmp/routerd-${label}.bin 2>/dev/null || true; exit \$rc) >/tmp/routerd-${label}.log 2>&1 & echo \$!")"
+  printf '%s %s\n' "$src" "$remote_pid"
+}
+
+finish_failover_transfer() {
+  [ "$failover_transfer_tests" -eq 1 ] || return 0
+  local label="$1" src="$2" remote_pid="$3"
+  local out="$evidence_dir/failover-transfer/$label"
+  [ -n "$src" ] && [ -n "$remote_pid" ] || return 1
+  mkdir -p "$out"
+  {
+    echo "## wait remote transfer"
+    ssh_node "$src" "deadline=\$((SECONDS + 170)); while kill -0 '$remote_pid' >/dev/null 2>&1 && [ \"\$SECONDS\" -lt \"\$deadline\" ]; do sleep 2; done; if kill -0 '$remote_pid' >/dev/null 2>&1; then echo still-running; kill '$remote_pid' >/dev/null 2>&1 || true; fi"
+    echo "## transfer log"
+    ssh_node "$src" "cat /tmp/routerd-${label}.log; rm -f /tmp/routerd-${label}.bin"
+  } >"$out/result.txt" 2>&1 || return 1
+  grep -q '^rc=0$' "$out/result.txt"
+}
+
 run_failover() {
   local status=0
+  local transfer_src transfer_pid
   [ "${#failover_nodes[@]}" -gt 0 ] || return 0
   for node in "${failover_nodes[@]}"; do
     collect_diagnostics "before-failover-${node}"
+    transfer_src=
+    transfer_pid=
+    if [ "$failover_transfer_tests" -eq 1 ]; then
+      read -r transfer_src transfer_pid < <(start_failover_transfer "during-failover-${node}" "$node") || status=1
+      sleep 3
+    fi
     ssh_node "$node" 'sudo systemctl stop routerd.service routerd-bgp.service' >"$evidence_dir/convergence/failover-stop-${node}.txt" 2>&1
     stopped_routers+=("$node")
     run_validation_set "after-failover-${node}" || status=1
+    if [ "$failover_transfer_tests" -eq 1 ]; then
+      finish_failover_transfer "during-failover-${node}" "$transfer_src" "$transfer_pid" || status=1
+    fi
     collect_diagnostics "after-failover-${node}"
   done
   return "$status"
@@ -687,6 +796,9 @@ if [ "$overall" -eq 0 ]; then
 fi
 if [ "$overall" -eq 0 ]; then
   setup_performance_services || mark_failed "performance service setup"
+fi
+if [ "$overall" -eq 0 ]; then
+  setup_failover_transfer_services || mark_failed "failover transfer service setup"
 fi
 if [ "$overall" -eq 0 ]; then
   run_validation_set "initial" || mark_failed "initial validation set"
