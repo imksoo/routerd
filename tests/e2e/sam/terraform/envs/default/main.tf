@@ -46,12 +46,12 @@ locals {
 module "aws_rr" {
   source = "../../modules/aws_rr"
 
-  run_id      = var.run_id
-  purpose     = var.purpose
-  commit      = var.commit
-  expires_at  = var.expires_at
-  vpc_cidr    = "10.77.0.0/16"
-  subnet_cidr = "10.77.10.0/24"
+  run_id          = var.run_id
+  purpose         = var.purpose
+  commit          = var.commit
+  expires_at      = var.expires_at
+  vpc_cidr        = "10.77.0.0/16"
+  subnet_cidr     = "10.77.10.0/24"
   rr_nodes        = local.rr_nodes
   ami_id          = var.aws_ami_id
   instance_type   = "t3.medium"
@@ -75,7 +75,7 @@ module "aws_leaf" {
   subnet_cidr          = "10.77.60.0/24"
   router_private_ip    = "10.77.60.4"
   client_private_ip    = "10.77.60.11"
-  extra_leaf_nodes    = local.aws_extra_leaf_nodes
+  extra_leaf_nodes     = local.aws_extra_leaf_nodes
   ami_id               = var.aws_ami_id
   instance_type        = "t3.medium"
   client_instance_type = "t3.micro"
@@ -96,11 +96,11 @@ module "azure_leaf" {
   client_name       = "azure-client-a"
   router_private_ip = "10.77.60.14"
   client_private_ip = "10.77.60.12"
-  extra_leaf_nodes = local.azure_extra_leaf_nodes
-  admin_username  = var.azure_admin_username
-  ssh_public_key  = var.ssh_public_key
-  vm_size         = "Standard_B1s"
-  ssh_cidr_blocks = var.ssh_cidr_blocks
+  extra_leaf_nodes  = local.azure_extra_leaf_nodes
+  admin_username    = var.azure_admin_username
+  ssh_public_key    = var.ssh_public_key
+  vm_size           = "Standard_B1s"
+  ssh_cidr_blocks   = var.ssh_cidr_blocks
 }
 
 module "oci_leaf" {
@@ -150,10 +150,10 @@ module "pve_leaf" {
   client_ipv4_cidr            = "10.77.60.15/24"
   router_management_ipv4_cidr = "192.168.1.134/24"
   client_management_ipv4_cidr = "192.168.1.115/24"
-  extra_leaf_nodes = local.pve_extra_leaf_nodes
-  gateway_ipv4   = "192.168.1.1"
-  ssh_public_key = var.ssh_public_key
-  username       = var.pve_username
-  router_vm_id   = var.pve_router_vm_id
-  client_vm_id   = var.pve_client_vm_id
+  extra_leaf_nodes            = local.pve_extra_leaf_nodes
+  gateway_ipv4                = "192.168.1.1"
+  ssh_public_key              = var.ssh_public_key
+  username                    = var.pve_username
+  router_vm_id                = var.pve_router_vm_id
+  client_vm_id                = var.pve_client_vm_id
 }
