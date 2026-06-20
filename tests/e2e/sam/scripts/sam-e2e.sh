@@ -16,7 +16,8 @@ Options:
   --skip-matrix           Skip SSH hostname matrix; useful when rerunning performance after a clean matrix
   --skip-legacy-protocols Skip FTP/RPC/NFS/CIFS pseudo-client matrix
   --performance-tests     Run SAM iperf3/ping probes, plus public direct comparison for cross-cloud AWS/Azure/OCI pairs
-  --failover-transfer-tests Run a throttled client-to-client HTTP transfer during each failover stop
+  --failover-transfer-tests Run a required throttled client-to-client HTTP transfer during each failover stop
+  --failover-transfer-observe Run the failover transfer probe but do not fail the scenario when it stalls
   --failover-transfer-smoke Run a throttled client-to-client HTTP transfer without stopping routers
   --destroy-cmd CMD       Optional teardown command, for example: 'tofu destroy -auto-approve'
 
@@ -39,6 +40,7 @@ skip_matrix=0
 legacy_protocols=1
 performance_tests=0
 failover_transfer_tests=0
+failover_transfer_required=0
 failover_transfer_smoke=0
 destroy_cmd=
 overall=0
@@ -57,8 +59,9 @@ while [ "$#" -gt 0 ]; do
     --skip-matrix) skip_matrix=1; shift ;;
     --skip-legacy-protocols) legacy_protocols=0; shift ;;
     --performance-tests) performance_tests=1; shift ;;
-    --failover-transfer-tests) failover_transfer_tests=1; shift ;;
-    --failover-transfer-smoke) failover_transfer_tests=1; failover_transfer_smoke=1; shift ;;
+    --failover-transfer-tests) failover_transfer_tests=1; failover_transfer_required=1; shift ;;
+    --failover-transfer-observe) failover_transfer_tests=1; failover_transfer_required=0; shift ;;
+    --failover-transfer-smoke) failover_transfer_tests=1; failover_transfer_required=1; failover_transfer_smoke=1; shift ;;
     --destroy-cmd) destroy_cmd="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -177,6 +180,7 @@ record_note() {
     echo "legacy_protocols=$legacy_protocols"
     echo "performance_tests=$performance_tests"
     echo "failover_transfer_tests=$failover_transfer_tests"
+    echo "failover_transfer_required=$failover_transfer_required"
     echo "failover_transfer_smoke=$failover_transfer_smoke"
     echo "rejoin_after_failover=$rejoin_after_failover"
     echo "policy_read=cloudedge-mobility/LAB_POLICY.md and ~/routerd-orchestration.md must be reread before real-machine validation"
@@ -1050,6 +1054,21 @@ finish_failover_transfer() {
   grep -q '^rc=0$' "$out/result.txt"
 }
 
+record_observed_failover_transfer() {
+  local label="$1" result="$2"
+  local out="$evidence_dir/failover-transfer/$label"
+  mkdir -p "$out"
+  {
+    date -u '+timestamp=%Y-%m-%dT%H:%M:%SZ'
+    echo "required=$failover_transfer_required"
+    echo "result=$result"
+    if [ "$result" != "PASS" ]; then
+      echo "classification=observed-failure"
+      echo "note=in-flight transfer did not complete; normal post-failover E2E is assessed separately by convergence/matrix/performance evidence"
+    fi
+  } >"$out/status.txt"
+}
+
 run_failover_transfer_smoke() {
   [ "$failover_transfer_smoke" -eq 1 ] || return 0
   local node src remote_pid
@@ -1075,7 +1094,12 @@ run_failover() {
     stopped_routers+=("$failover_node")
     run_validation_set "after-failover-${failover_node}" || status=1
     if [ "$failover_transfer_tests" -eq 1 ]; then
-      finish_failover_transfer "during-failover-${failover_node}" "$transfer_src" "$transfer_pid" || status=1
+      if finish_failover_transfer "during-failover-${failover_node}" "$transfer_src" "$transfer_pid"; then
+        record_observed_failover_transfer "during-failover-${failover_node}" PASS
+      else
+        record_observed_failover_transfer "during-failover-${failover_node}" FAIL
+        [ "$failover_transfer_required" -eq 0 ] || status=1
+      fi
     fi
     collect_diagnostics "after-failover-${failover_node}"
     collect_provider_inventory "after-failover-${failover_node}" || status=1

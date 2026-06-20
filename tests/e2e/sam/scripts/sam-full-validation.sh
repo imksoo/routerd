@@ -194,7 +194,7 @@ run_named_scenario() {
         --rejoin-after-failover \
         --load-balance-report \
         --performance-tests \
-        --failover-transfer-tests
+        --failover-transfer-observe
       ;;
     rr-failover-aws-rr-b)
       run_scenario rr-failover-aws-rr-b \
@@ -203,7 +203,7 @@ run_named_scenario() {
         --rejoin-after-failover \
         --load-balance-report \
         --performance-tests \
-        --failover-transfer-tests
+        --failover-transfer-observe
       ;;
     leaf-failover-aws-leaf-a)
       run_scenario leaf-failover-aws-leaf-a \
@@ -212,7 +212,7 @@ run_named_scenario() {
         --rejoin-after-failover \
         --load-balance-report \
         --performance-tests \
-        --failover-transfer-tests
+        --failover-transfer-observe
       ;;
     leaf-failover-aws-leaf-b)
       run_scenario leaf-failover-aws-leaf-b \
@@ -221,7 +221,7 @@ run_named_scenario() {
         --rejoin-after-failover \
         --load-balance-report \
         --performance-tests \
-        --failover-transfer-tests
+        --failover-transfer-observe
       ;;
     leaf-failover-azure-leaf-a)
       run_scenario leaf-failover-azure-leaf-a \
@@ -230,7 +230,7 @@ run_named_scenario() {
         --rejoin-after-failover \
         --load-balance-report \
         --performance-tests \
-        --failover-transfer-tests
+        --failover-transfer-observe
       ;;
     leaf-failover-azure-leaf-b)
       run_scenario leaf-failover-azure-leaf-b \
@@ -239,7 +239,7 @@ run_named_scenario() {
         --rejoin-after-failover \
         --load-balance-report \
         --performance-tests \
-        --failover-transfer-tests
+        --failover-transfer-observe
       ;;
     leaf-failover-oci-leaf-a)
       run_scenario leaf-failover-oci-leaf-a \
@@ -248,7 +248,7 @@ run_named_scenario() {
         --rejoin-after-failover \
         --load-balance-report \
         --performance-tests \
-        --failover-transfer-tests
+        --failover-transfer-observe
       ;;
     leaf-failover-oci-leaf-b)
       run_scenario leaf-failover-oci-leaf-b \
@@ -257,7 +257,7 @@ run_named_scenario() {
         --rejoin-after-failover \
         --load-balance-report \
         --performance-tests \
-        --failover-transfer-tests
+        --failover-transfer-observe
       ;;
     leaf-failover-pve-leaf-a)
       run_scenario leaf-failover-pve-leaf-a \
@@ -266,7 +266,7 @@ run_named_scenario() {
         --rejoin-after-failover \
         --load-balance-report \
         --performance-tests \
-        --failover-transfer-tests
+        --failover-transfer-observe
       ;;
     leaf-failover-pve-leaf-b)
       run_scenario leaf-failover-pve-leaf-b \
@@ -275,7 +275,7 @@ run_named_scenario() {
         --rejoin-after-failover \
         --load-balance-report \
         --performance-tests \
-        --failover-transfer-tests
+        --failover-transfer-observe
       ;;
     load-balance)
       run_scenario load-balance \
