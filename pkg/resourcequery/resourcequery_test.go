@@ -56,6 +56,25 @@ func TestDependencyReadyUsesKindAPIVersion(t *testing.T) {
 	}
 }
 
+func TestDependencyReadyUsesObservedPhase(t *testing.T) {
+	store := mapStore{
+		api.NetAPIVersion + "/DHCPv6PrefixDelegation/wan-pd": {
+			"phase":  "Pending",
+			"reason": "WhenFalse",
+			"observed": map[string]any{
+				"phase": "Bound",
+			},
+		},
+	}
+
+	if !DependencyReady(store, api.ResourceDependencySpec{
+		Resource: "DHCPv6PrefixDelegation/wan-pd",
+		Phase:    "Bound",
+	}) {
+		t.Fatalf("expected observed phase to satisfy dependency")
+	}
+}
+
 func TestValueUsesKindAPIVersion(t *testing.T) {
 	store := mapStore{
 		api.SystemAPIVersion + "/Package/router-runtime": {
@@ -96,6 +115,21 @@ func TestSourceReadyUsesKindAPIVersion(t *testing.T) {
 
 	if !SourceReady(store, "FirewallPolicy/default") {
 		t.Fatalf("expected firewall resource source to be ready")
+	}
+}
+
+func TestSourceReadyUsesObservedPhase(t *testing.T) {
+	store := mapStore{
+		api.NetAPIVersion + "/DSLiteTunnel/ds-lite": {
+			"phase": "Pending",
+			"observed": map[string]any{
+				"phase": "Up",
+			},
+		},
+	}
+
+	if !SourceReady(store, "DSLiteTunnel/ds-lite") {
+		t.Fatalf("expected observed phase to make source ready")
 	}
 }
 

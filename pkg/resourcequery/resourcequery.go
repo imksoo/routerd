@@ -90,7 +90,8 @@ func DependencyReady(store Store, dependency api.ResourceDependencySpec) bool {
 	if dependency.Phase != "" {
 		field = "phase"
 	}
-	values := normalizeValues(store.ObjectStatus(APIVersionForKind(kind), kind, name)[field])
+	status := store.ObjectStatus(APIVersionForKind(kind), kind, name)
+	values := normalizeValues(statusValue(status, field))
 	if len(values) == 0 {
 		return dependency.Optional
 	}
@@ -123,12 +124,24 @@ func SourceReady(store Store, source string) bool {
 	if !ok {
 		return false
 	}
-	switch fmt.Sprint(store.ObjectStatus(APIVersionForKind(kind), kind, name)["phase"]) {
+	switch fmt.Sprint(statusValue(store.ObjectStatus(APIVersionForKind(kind), kind, name), "phase")) {
 	case "Applied", "Bound", "Healthy", "Installed", "Ready", "Running", "Up":
 		return true
 	default:
 		return false
 	}
+}
+
+func statusValue(status map[string]any, field string) any {
+	if strings.TrimSpace(field) != "phase" {
+		return status[field]
+	}
+	if observed, ok := status["observed"].(map[string]any); ok {
+		if phase := observed["phase"]; phase != nil && strings.TrimSpace(fmt.Sprint(phase)) != "" {
+			return phase
+		}
+	}
+	return status[field]
 }
 
 func APIVersionForKind(kind string) string {
