@@ -13,6 +13,7 @@ Options:
   --failover-node NODE    Optional router node name; may be repeated. Stops routerd.service and reruns convergence/matrix
   --rejoin-after-failover Restart stopped failover nodes and rerun convergence/matrix
   --load-balance-report   Capture MobilityPool owner-table snapshots after each matrix run
+  --skip-matrix           Skip SSH hostname matrix; useful when rerunning performance after a clean matrix
   --skip-legacy-protocols Skip FTP/RPC/NFS/CIFS pseudo-client matrix
   --performance-tests     Run iperf3/ping performance probes between pseudo-clients
   --destroy-cmd CMD       Optional teardown command, for example: 'tofu destroy -auto-approve'
@@ -32,6 +33,7 @@ failover_nodes=()
 stopped_routers=()
 rejoin_after_failover=0
 load_balance_report=0
+skip_matrix=0
 legacy_protocols=1
 performance_tests=0
 destroy_cmd=
@@ -48,6 +50,7 @@ while [ "$#" -gt 0 ]; do
     --failover-node) failover_nodes+=("$2"); shift 2 ;;
     --rejoin-after-failover) rejoin_after_failover=1; shift ;;
     --load-balance-report) load_balance_report=1; shift ;;
+    --skip-matrix) skip_matrix=1; shift ;;
     --skip-legacy-protocols) legacy_protocols=0; shift ;;
     --performance-tests) performance_tests=1; shift ;;
     --destroy-cmd) destroy_cmd="$2"; shift 2 ;;
@@ -247,9 +250,14 @@ client_matrix() {
         echo "## traceroute"
         ssh_node "$src" "timeout 20s sh -c \"traceroute -n -w 2 -q 1 '$dst_ip' || tracepath '$dst_ip'\" || true"
         echo "## ssh-hostname"
-        actual="$(ssh -i "$ssh_key" -o UserKnownHostsFile="$known_hosts" -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 "$src_user@$src_public" "ssh -i ~/.ssh/routerd-cloudedge-lab-20260529 -o UserKnownHostsFile=~/.ssh/routerd-e2e-known_hosts -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 '$dst_user@$dst_ip' hostname 2>/dev/null" 2>"$out/${src}_to_${dst}.nested-ssh.stderr" | tail -n 1)" || result=FAIL
-        printf '%s\n' "$actual"
+        actual=
+        for attempt in 1 2 3; do
+          actual="$(ssh -i "$ssh_key" -o UserKnownHostsFile="$known_hosts" -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 "$src_user@$src_public" "ssh -i ~/.ssh/routerd-cloudedge-lab-20260529 -o UserKnownHostsFile=~/.ssh/routerd-e2e-known_hosts -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 '$dst_user@$dst_ip' hostname 2>/dev/null" 2>"$out/${src}_to_${dst}.nested-ssh.stderr" | tail -n 1)" || true
+          [ "$actual" = "$dst_host" ] && break
+          sleep 2
+        done
         [ "$actual" = "$dst_host" ] || result=FAIL_HOSTNAME
+        printf '%s\n' "$actual"
       } >"$out/${src}_to_${dst}.txt" 2>&1 || result=FAIL
       printf '%s\t%s\t%s\n' "$src" "$dst" "$result" >>"$out/summary.tsv"
     done
@@ -357,6 +365,65 @@ VSFTPEOF
   done
 }
 
+setup_performance_services() {
+  [ "$performance_tests" -eq 1 ] || return 0
+  local node
+  for node in "${clients[@]}"; do
+    {
+      echo "## setup performance services on $node"
+      ssh_node "$node" 'set -euo pipefail
+        export DEBIAN_FRONTEND=noninteractive
+        if command -v apt-get >/dev/null 2>&1; then
+          echo "iperf3 iperf3/start_daemon boolean false" | sudo debconf-set-selections || true
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends iperf3
+        fi
+        if sudo iptables -S INPUT >/dev/null 2>&1; then
+          sudo iptables -C INPUT -p tcp --dport 5201 -j ACCEPT >/dev/null 2>&1 || sudo iptables -I INPUT 1 -p tcp --dport 5201 -j ACCEPT
+          sudo iptables -C INPUT -p udp --dport 5201 -j ACCEPT >/dev/null 2>&1 || sudo iptables -I INPUT 1 -p udp --dport 5201 -j ACCEPT
+        fi
+        sudo pkill iperf3 >/dev/null 2>&1 || true
+        sudo iperf3 -s -D </dev/null >/dev/null 2>&1
+        ss -lntup | grep -E ":5201\b" || true'
+    } >"$evidence_dir/performance/setup-${node}.txt" 2>&1 || return 1
+  done
+}
+
+is_global_ipv4() {
+  local ip="$1" a b c d
+  IFS=. read -r a b c d <<EOF
+$ip
+EOF
+  case "$a.$b.$c.$d" in
+    ""|*[!0-9.]*)
+      return 1
+      ;;
+  esac
+  [ "$a" -ge 1 ] 2>/dev/null && [ "$a" -le 223 ] || return 1
+  [ "$b" -ge 0 ] 2>/dev/null && [ "$b" -le 255 ] || return 1
+  [ "$c" -ge 0 ] 2>/dev/null && [ "$c" -le 255 ] || return 1
+  [ "$d" -ge 0 ] 2>/dev/null && [ "$d" -le 255 ] || return 1
+  [ "$a" -eq 10 ] && return 1
+  [ "$a" -eq 127 ] && return 1
+  [ "$a" -eq 169 ] && [ "$b" -eq 254 ] && return 1
+  [ "$a" -eq 172 ] && [ "$b" -ge 16 ] && [ "$b" -le 31 ] && return 1
+  [ "$a" -eq 192 ] && [ "$b" -eq 168 ] && return 1
+  [ "$a" -eq 100 ] && [ "$b" -ge 64 ] && [ "$b" -le 127 ] && return 1
+  [ "$a" -ge 224 ] && return 1
+  return 0
+}
+
+is_cloud_site() {
+  case "$1" in
+    aws|azure|oci)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 legacy_protocol_matrix() {
   [ "$legacy_protocols" -eq 1 ] || return 0
   local label="$1"
@@ -397,27 +464,106 @@ performance_matrix() {
   [ "$performance_tests" -eq 1 ] || return 0
   local label="$1"
   local out="$evidence_dir/performance/$label"
-  local status=0 src dst src_ip dst_ip result
+  local status=0 src dst src_ip dst_ip src_public dst_public src_site dst_site result public_result
   mkdir -p "$out"
   : >"$out/summary.tsv"
+  : >"$out/public-summary.tsv"
+  : >"$out/comparison.tsv"
+  printf 'src\tdst\tsam_tcp_bps\tsam_udp_bps\tsam_ping_loss_pct\tpublic_tcp_bps\tpublic_udp_bps\tpublic_ping_loss_pct\tpublic_status\n' >"$out/comparison.tsv"
   for src in "${clients[@]}"; do
     for dst in "${clients[@]}"; do
       [ "$src" != "$dst" ] || continue
       src_ip="$(node_field "$src" private_ip)"
       dst_ip="$(node_field "$dst" private_ip)"
+      src_public="$(node_field "$src" public_ip)"
+      dst_public="$(node_field "$dst" public_ip)"
+      src_site="$(node_field "$src" site)"
+      dst_site="$(node_field "$dst" site)"
       result=PASS
       {
-        echo "=== performance $src -> $dst ==="
+        echo "=== sam private performance $src -> $dst ==="
         echo "SRC=$src SRCIP=$src_ip DST=$dst DSTIP=$dst_ip"
         echo "## tcp iperf3"
-        ssh_node "$src" "timeout 20s iperf3 -J -c '$dst_ip' -B '$src_ip' -t 5" >"$out/${src}_to_${dst}.iperf3-tcp.json" || result=FAIL_TCP
+        ok=0
+        for attempt in 1 2 3; do
+          ssh_node "$dst" 'sudo pkill -9 iperf3 >/dev/null 2>&1 || true; sleep 2; sudo iperf3 -s -D </dev/null >/dev/null 2>&1; sleep 2'
+          ssh_node "$src" "timeout 20s iperf3 -J -c '$dst_ip' -B '$src_ip' -t 5" >"$out/${src}_to_${dst}.iperf3-tcp.json" && { ok=1; break; }
+          sleep 5
+        done
+        [ "$ok" -eq 1 ] || result=FAIL_TCP
         echo "## udp iperf3"
-        ssh_node "$src" "timeout 20s iperf3 -J -u -b 10M -c '$dst_ip' -B '$src_ip' -t 5" >"$out/${src}_to_${dst}.iperf3-udp.json" || result=FAIL_UDP
+        ok=0
+        for attempt in 1 2 3; do
+          ssh_node "$dst" 'sudo pkill -9 iperf3 >/dev/null 2>&1 || true; sleep 2; sudo iperf3 -s -D </dev/null >/dev/null 2>&1; sleep 2'
+          ssh_node "$src" "timeout 20s iperf3 -J -u -b 10M -c '$dst_ip' -B '$src_ip' -t 5" >"$out/${src}_to_${dst}.iperf3-udp.json" && { ok=1; break; }
+          sleep 5
+        done
+        [ "$ok" -eq 1 ] || result=FAIL_UDP
         echo "## small packet ping sample"
-        ssh_node "$src" "timeout 20s ping -I '$src_ip' -s 56 -c 100 -i 0.01 '$dst_ip'" >"$out/${src}_to_${dst}.ping-pps.txt" || result=FAIL_PING_PPS
+        ok=0
+        for attempt in 1 2 3; do
+          ssh_node "$src" "timeout 20s ping -I '$src_ip' -s 56 -c 100 -i 0.01 '$dst_ip'" >"$out/${src}_to_${dst}.ping-pps.txt" && { ok=1; break; }
+          sleep 2
+        done
+        [ "$ok" -eq 1 ] || result=FAIL_PING_PPS
       } >"$out/${src}_to_${dst}.txt" 2>&1 || result=FAIL
       printf '%s\t%s\t%s\n' "$src" "$dst" "$result" >>"$out/summary.tsv"
       [ "$result" = "PASS" ] || status=1
+
+      public_result=PASS
+      if ! is_cloud_site "$src_site" || ! is_cloud_site "$dst_site"; then
+        public_result=SKIP_PUBLIC_CLOUD_ONLY
+        printf '%s\t%s\t%s\n' "$src" "$dst" "$public_result" >>"$out/public-summary.tsv"
+      elif [ "$src_site" = "$dst_site" ]; then
+        public_result=SKIP_PUBLIC_SAME_CLOUD
+        printf '%s\t%s\t%s\n' "$src" "$dst" "$public_result" >>"$out/public-summary.tsv"
+      elif ! is_global_ipv4 "$dst_public"; then
+        public_result=SKIP_PUBLIC_NON_GLOBAL_DST
+        printf '%s\t%s\t%s\n' "$src" "$dst" "$public_result" >>"$out/public-summary.tsv"
+      else
+        {
+          echo "=== public direct performance $src -> $dst ==="
+          echo "SRC=$src SRCPUBLIC=$src_public DST=$dst DSTPUBLIC=$dst_public"
+          echo "## tcp iperf3"
+          ok=0
+          for attempt in 1 2 3; do
+            ssh_node "$dst" 'sudo pkill -9 iperf3 >/dev/null 2>&1 || true; sleep 2; sudo iperf3 -s -D </dev/null >/dev/null 2>&1; sleep 2'
+            ssh_node "$src" "timeout 20s iperf3 -J -c '$dst_public' -t 5" >"$out/${src}_to_${dst}.public-iperf3-tcp.json" && { ok=1; break; }
+            sleep 5
+          done
+          [ "$ok" -eq 1 ] || public_result=FAIL_PUBLIC_TCP
+          echo "## udp iperf3"
+          ok=0
+          for attempt in 1 2 3; do
+            ssh_node "$dst" 'sudo pkill -9 iperf3 >/dev/null 2>&1 || true; sleep 2; sudo iperf3 -s -D </dev/null >/dev/null 2>&1; sleep 2'
+            ssh_node "$src" "timeout 20s iperf3 -J -u -b 10M -c '$dst_public' -t 5" >"$out/${src}_to_${dst}.public-iperf3-udp.json" && { ok=1; break; }
+            sleep 5
+          done
+          [ "$ok" -eq 1 ] || public_result=FAIL_PUBLIC_UDP
+          echo "## public ping sample"
+          ok=0
+          for attempt in 1 2 3; do
+            ssh_node "$src" "timeout 20s ping -c 20 -W 2 '$dst_public'" >"$out/${src}_to_${dst}.public-ping.txt" && { ok=1; break; }
+            sleep 2
+          done
+          [ "$ok" -eq 1 ] || public_result=FAIL_PUBLIC_PING
+        } >"$out/${src}_to_${dst}.public.txt" 2>&1 || public_result=FAIL_PUBLIC
+        printf '%s\t%s\t%s\n' "$src" "$dst" "$public_result" >>"$out/public-summary.tsv"
+        [ "$public_result" = "PASS" ] || status=1
+      fi
+
+      sam_tcp_bps="$(jq -r '.end.sum_received.bits_per_second // .end.sum.bits_per_second // empty' "$out/${src}_to_${dst}.iperf3-tcp.json" 2>/dev/null || true)"
+      sam_udp_bps="$(jq -r '.end.sum.bits_per_second // empty' "$out/${src}_to_${dst}.iperf3-udp.json" 2>/dev/null || true)"
+      sam_ping_loss="$(awk -F, '/packet loss/ {gsub(/^[[:space:]]+|% packet loss.*/, "", $3); print $3}' "$out/${src}_to_${dst}.ping-pps.txt" 2>/dev/null || true)"
+      public_tcp_bps=
+      public_udp_bps=
+      public_ping_loss=
+      if [ "$public_result" = "PASS" ]; then
+        public_tcp_bps="$(jq -r '.end.sum_received.bits_per_second // .end.sum.bits_per_second // empty' "$out/${src}_to_${dst}.public-iperf3-tcp.json" 2>/dev/null || true)"
+        public_udp_bps="$(jq -r '.end.sum.bits_per_second // empty' "$out/${src}_to_${dst}.public-iperf3-udp.json" 2>/dev/null || true)"
+        public_ping_loss="$(awk -F, '/packet loss/ {gsub(/^[[:space:]]+|% packet loss.*/, "", $3); print $3}' "$out/${src}_to_${dst}.public-ping.txt" 2>/dev/null || true)"
+      fi
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$src" "$dst" "$sam_tcp_bps" "$sam_udp_bps" "$sam_ping_loss" "$public_tcp_bps" "$public_udp_bps" "$public_ping_loss" "$public_result" >>"$out/comparison.tsv"
     done
   done
   return "$status"
@@ -427,7 +573,7 @@ run_validation_set() {
   local label="$1"
   local status=0
   wait_convergence "$label" || status=1
-  client_matrix "$label" || status=1
+  [ "$skip_matrix" -eq 1 ] || client_matrix "$label" || status=1
   legacy_protocol_matrix "$label" || status=1
   performance_matrix "$label" || status=1
   collect_load_balance_report "$label"
@@ -529,6 +675,9 @@ if [ "$overall" -eq 0 ]; then
 fi
 if [ "$overall" -eq 0 ]; then
   setup_legacy_protocol_services || mark_failed "legacy protocol service setup"
+fi
+if [ "$overall" -eq 0 ]; then
+  setup_performance_services || mark_failed "performance service setup"
 fi
 if [ "$overall" -eq 0 ]; then
   run_validation_set "initial" || mark_failed "initial validation set"

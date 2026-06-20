@@ -92,6 +92,22 @@ resource "aws_security_group" "lab" {
   }
 
   ingress {
+    description = "iperf3 public comparison"
+    protocol    = "tcp"
+    from_port   = 5201
+    to_port     = 5201
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "iperf3 udp public comparison"
+    protocol    = "udp"
+    from_port   = 5201
+    to_port     = 5201
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
     description = "same vpc"
     protocol    = "-1"
     from_port   = 0

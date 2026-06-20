@@ -127,6 +127,30 @@ resource "azurerm_network_security_group" "lab" {
   }
 
   security_rule {
+    name                       = "allow-iperf3-tcp"
+    priority                   = 215
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "5201"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "allow-iperf3-udp"
+    priority                   = 216
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Udp"
+    source_port_range          = "*"
+    destination_port_range     = "5201"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
     name                       = "allow-leaf-subnet"
     priority                   = 220
     direction                  = "Inbound"
