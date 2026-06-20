@@ -553,10 +553,6 @@ printf "ftp probe from %s\n" "$(hostname)" | sudo tee /srv/routerd-e2e/ftp/pub/p
         sudo chmod 0755 /srv/routerd-e2e /srv/routerd-e2e/ftp
         sudo chmod -R 0777 /srv/routerd-e2e/ftp/pub /srv/routerd-e2e/nfs /srv/routerd-e2e/cifs /srv/routerd-e2e/http
 
-        if sudo iptables -S INPUT >/dev/null 2>&1; then
-          sudo iptables -C INPUT -s 10.77.60.0/24 -j ACCEPT >/dev/null 2>&1 || sudo iptables -I INPUT 1 -s 10.77.60.0/24 -j ACCEPT
-        fi
-
         sudo mkdir -p /etc/exports.d
         printf "/srv/routerd-e2e/nfs 10.77.60.0/24(rw,sync,no_subtree_check,no_root_squash,insecure)\n" | sudo tee /etc/exports.d/routerd-e2e.exports >/dev/null
         sudo mkdir -p /etc/nfs.conf.d
@@ -632,10 +628,6 @@ if command -v apt-get >/dev/null 2>&1; then
   apt_update
   apt_install iperf3
 fi
-if sudo iptables -S INPUT >/dev/null 2>&1; then
-          sudo iptables -C INPUT -p tcp --dport 5201 -j ACCEPT >/dev/null 2>&1 || sudo iptables -I INPUT 1 -p tcp --dport 5201 -j ACCEPT
-          sudo iptables -C INPUT -p udp --dport 5201 -j ACCEPT >/dev/null 2>&1 || sudo iptables -I INPUT 1 -p udp --dport 5201 -j ACCEPT
-        fi
 sudo pkill iperf3 >/dev/null 2>&1 || true
 sudo iperf3 -s -D </dev/null >/dev/null 2>&1
 ss -lntup | grep -E ":5201\b" || true
@@ -663,9 +655,6 @@ fi
           sudo dd if=/dev/zero of=/srv/routerd-e2e/http/failover-transfer.bin bs=1M count=64 status=none
         fi
         sudo chmod -R 0755 /srv/routerd-e2e/http
-        if sudo iptables -S INPUT >/dev/null 2>&1; then
-          sudo iptables -C INPUT -s 10.77.60.0/24 -p tcp --dport 8080 -j ACCEPT >/dev/null 2>&1 || sudo iptables -I INPUT 1 -s 10.77.60.0/24 -p tcp --dport 8080 -j ACCEPT
-        fi
         if [ -s /tmp/routerd-e2e-http.pid ]; then
           sudo kill "$(cat /tmp/routerd-e2e-http.pid)" >/dev/null 2>&1 || true
         fi
