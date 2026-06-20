@@ -77,7 +77,7 @@ module "aws_leaf" {
   client_private_ip    = "10.77.60.11"
   extra_leaf_nodes     = local.aws_extra_leaf_nodes
   ami_id               = var.aws_ami_id
-  instance_type        = "t3.medium"
+  instance_type        = "t3.large"
   client_instance_type = "t3.micro"
   key_name             = var.aws_key_name
 }
