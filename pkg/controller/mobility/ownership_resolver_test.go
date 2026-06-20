@@ -4,6 +4,7 @@ package mobility
 
 import (
 	"encoding/json"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -801,6 +802,150 @@ func TestOwnershipResolverReportsDuplicateProviderHomeOwnerConflict(t *testing.T
 	if len(verdicts) != 1 || verdicts[0]["address"] != address || verdicts[0]["action"] != "withhold" {
 		t.Fatalf("fib verdicts = %#v, want withhold for duplicate remote owners", verdicts)
 	}
+}
+
+func TestOwnershipResolverCoalescesRedundantProviderHomeOwnerObservers(t *testing.T) {
+	now := time.Date(2026, 6, 20, 12, 5, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	for i := range spec.Members {
+		if spec.Members[i].NodeRef == "oci-router" {
+			spec.Members[i].Placement = api.MobilityMemberPlacement{Group: "oci-edge", Priority: 10}
+		}
+	}
+	spec.Members = append(spec.Members, api.MobilityPoolMember{
+		NodeRef: "oci-router-b",
+		Site:    "oci",
+		Role:    "cloud",
+		Capture: api.MobilityMemberCapture{
+			Type:         "provider-secondary-ip",
+			ProviderRef:  "oci-provider",
+			ProviderMode: "vnic-secondary-ip",
+			NICRef:       "oci-vnic-b",
+		},
+		Delivery:  api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
+		Placement: api.MobilityMemberPlacement{Group: "oci-edge", Priority: 20},
+	})
+	address := "10.88.60.13/32"
+	ociA := providerDiscoveryObservedEvent("cloudedge", "cloudedge", "oci-router", address, "oci", "oci-provider", providerinventory.PrivateIPRecord{
+		Address:      "10.88.60.13",
+		NICRef:       "oci-client-nic",
+		SubnetRef:    "oci-subnet",
+		ResourceRef:  "ocid1.instance.oc1.test.client",
+		ResourceType: "instance-nic",
+	}, now.Add(-time.Second), time.Hour)
+	ociB := providerDiscoveryObservedEvent("cloudedge", "cloudedge", "oci-router-b", address, "oci", "oci-provider", providerinventory.PrivateIPRecord{
+		Address:      "10.88.60.13",
+		NICRef:       "oci-client-nic",
+		SubnetRef:    "oci-subnet",
+		ResourceRef:  "ocid1.instance.oc1.test.client",
+		ResourceType: "instance-nic",
+	}, now.Add(-2*time.Second), time.Hour)
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "aws-router-b",
+		Spec:     spec,
+		Events:   []routerstate.EventRecord{ociB, ociA},
+		Now:      now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, address)
+	if decision.ConflictReason != "" || len(decision.ConflictOwners) != 0 {
+		t.Fatalf("decision = %#v, want redundant same-endpoint observers coalesced", decision)
+	}
+	if decision.Class != ownershipClassRemoteHomeOwned || decision.HomeOwnerNode != "oci-router" {
+		t.Fatalf("decision = %#v, want priority OCI endpoint observer selected", decision)
+	}
+	status := ownershipResolverStatus(decisions)
+	if status["ownershipResolverPhase"] != "Resolved" || status["ownershipResolverConflictCount"] != 0 {
+		t.Fatalf("status = %#v, want no duplicate conflict for same provider endpoint", status)
+	}
+
+	activeDecisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "oci-router",
+		Spec:     spec,
+		Events:   []routerstate.EventRecord{ociB, ociA},
+		Now:      now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership active: %v", err)
+	}
+	activeDecision := ownershipDecisionByAddress(t, activeDecisions, address)
+	if activeDecision.AdvertiseOwnerNode != "oci-router" || activeDecision.AdvertiseReason != "provider-home-owner" {
+		t.Fatalf("active decision = %#v, want exactly the priority winner to advertise", activeDecision)
+	}
+	standbyDecisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "oci-router-b",
+		Spec:     spec,
+		Events:   []routerstate.EventRecord{ociB, ociA},
+		Now:      now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership standby: %v", err)
+	}
+	standbyDecision := ownershipDecisionByAddress(t, standbyDecisions, address)
+	if standbyDecision.AdvertiseOwnerNode != "" || standbyDecision.Class != ownershipClassRemoteHomeOwned {
+		t.Fatalf("standby decision = %#v, want non-winner observer not to advertise", standbyDecision)
+	}
+}
+
+func TestBGPLocalOwnedAddressesSelectsSingleProviderDiscoveryAdvertiser(t *testing.T) {
+	now := time.Date(2026, 6, 20, 12, 10, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	for i := range spec.Members {
+		if spec.Members[i].NodeRef == "oci-router" {
+			spec.Members[i].Placement = api.MobilityMemberPlacement{Group: "oci-edge", Priority: 10}
+		}
+	}
+	spec.Members = append(spec.Members, api.MobilityPoolMember{
+		NodeRef: "oci-router-b",
+		Site:    "oci",
+		Role:    "cloud",
+		Capture: api.MobilityMemberCapture{
+			Type:         "provider-secondary-ip",
+			ProviderRef:  "oci-provider",
+			ProviderMode: "vnic-secondary-ip",
+			NICRef:       "oci-vnic-b",
+		},
+		Delivery:  api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
+		Placement: api.MobilityMemberPlacement{Group: "oci-edge", Priority: 20},
+	})
+	address := "10.88.60.13/32"
+	ociA := providerDiscoveryObservedEvent("cloudedge", "cloudedge", "oci-router", address, "oci", "oci-provider", providerinventory.PrivateIPRecord{
+		Address:      "10.88.60.13",
+		NICRef:       "oci-client-nic",
+		SubnetRef:    "oci-subnet",
+		ResourceRef:  "ocid1.instance.oc1.test.client",
+		ResourceType: "instance-nic",
+	}, now.Add(-time.Minute), time.Hour)
+	ociB := providerDiscoveryObservedEvent("cloudedge", "cloudedge", "oci-router-b", address, "oci", "oci-provider", providerinventory.PrivateIPRecord{
+		Address:      "10.88.60.13",
+		NICRef:       "oci-client-nic",
+		SubnetRef:    "oci-subnet",
+		ResourceRef:  "ocid1.instance.oc1.test.client",
+		ResourceType: "instance-nic",
+	}, now.Add(-time.Second), time.Hour)
+	prefix := netip.MustParsePrefix("10.88.60.0/24")
+
+	activeOwned := bgpLocalOwnedAddressesFromConfigAndEvents("cloudedge", "oci-router", spec, []routerstate.EventRecord{ociB, ociA}, nil, false, nil, false, prefix, now)
+	if !bgpOwnedAddressSet(activeOwned)[address] {
+		t.Fatalf("active owned = %#v, want priority winner to advertise %s", activeOwned, address)
+	}
+	standbyOwned := bgpLocalOwnedAddressesFromConfigAndEvents("cloudedge", "oci-router-b", spec, []routerstate.EventRecord{ociB, ociA}, nil, false, nil, false, prefix, now)
+	if bgpOwnedAddressSet(standbyOwned)[address] {
+		t.Fatalf("standby owned = %#v, want non-winner observer not to advertise %s", standbyOwned, address)
+	}
+}
+
+func bgpOwnedAddressSet(rows []bgpOwnedAddress) map[string]bool {
+	out := map[string]bool{}
+	for _, row := range rows {
+		out[row.Address] = true
+	}
+	return out
 }
 
 func TestOwnershipResolverIgnoresExpiredDuplicateProviderHomeOwner(t *testing.T) {

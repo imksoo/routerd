@@ -93,8 +93,8 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 	}
 	staticOwners := staticOwnedOwnerNodesByAddress(in.Spec)
 	remoteHomeFactSets := providerInventoryHomeOwnerFactSets(in.PoolName, in.Spec, in.Events, now)
-	remoteHomeFacts := selectedProviderInventoryHomeOwnerFacts(remoteHomeFactSets)
-	remoteHomeConflicts := duplicateProviderHomeOwnerFacts(remoteHomeFactSets)
+	remoteHomeFacts := selectedProviderInventoryHomeOwnerFacts(remoteHomeFactSets, members)
+	remoteHomeConflicts := duplicateProviderHomeOwnerFacts(remoteHomeFactSets, members)
 	localInventory := localInventoryRecordsFromStatus(in.Status, prefix)
 	removeSelfResourceLocalInventory(localInventory, statusString(in.Status["discoverySelfResourceRef"]))
 	discoveryOwned := statusStringSet(in.Status["discoveryOwnedAddresses"], prefix)
@@ -441,36 +441,42 @@ func clearDisprovedStaleCapture(decision *ownershipDecision, selfNode string, ca
 	decision.CaptureSucceeded = false
 }
 
-func selectedProviderInventoryHomeOwnerFacts(sets map[string][]providerInventoryOwnerFact) map[string]providerInventoryOwnerFact {
+func selectedProviderInventoryHomeOwnerFacts(sets map[string][]providerInventoryOwnerFact, members map[string]memberPlanInfo) map[string]providerInventoryOwnerFact {
 	out := map[string]providerInventoryOwnerFact{}
 	for address, facts := range sets {
 		if len(facts) == 0 {
 			continue
 		}
-		out[address] = facts[0]
+		selected := facts[0]
+		for _, fact := range facts[1:] {
+			if providerInventoryOwnerFactPreferred(fact, selected, members) {
+				selected = fact
+			}
+		}
+		out[address] = selected
 	}
 	return out
 }
 
-func duplicateProviderHomeOwnerFacts(sets map[string][]providerInventoryOwnerFact) map[string][]providerInventoryOwnerFact {
+func duplicateProviderHomeOwnerFacts(sets map[string][]providerInventoryOwnerFact, members map[string]memberPlanInfo) map[string][]providerInventoryOwnerFact {
 	out := map[string][]providerInventoryOwnerFact{}
 	for address, facts := range sets {
-		byNode := map[string]providerInventoryOwnerFact{}
+		byEndpoint := map[string]providerInventoryOwnerFact{}
 		for _, fact := range facts {
-			node := strings.TrimSpace(fact.NodeRef)
-			if node == "" {
+			endpoint := providerInventoryOwnerFactEndpointKey(fact)
+			if endpoint == "" {
 				continue
 			}
-			current, found := byNode[node]
-			if !found || providerInventoryOwnerFactGreater(fact, current) {
-				byNode[node] = fact
+			current, found := byEndpoint[endpoint]
+			if !found || providerInventoryOwnerFactPreferred(fact, current, members) {
+				byEndpoint[endpoint] = fact
 			}
 		}
-		if len(byNode) < 2 {
+		if len(byEndpoint) < 2 {
 			continue
 		}
-		rows := make([]providerInventoryOwnerFact, 0, len(byNode))
-		for _, fact := range byNode {
+		rows := make([]providerInventoryOwnerFact, 0, len(byEndpoint))
+		for _, fact := range byEndpoint {
 			rows = append(rows, fact)
 		}
 		sort.SliceStable(rows, func(i, j int) bool {
@@ -482,6 +488,49 @@ func duplicateProviderHomeOwnerFacts(sets map[string][]providerInventoryOwnerFac
 		out[address] = rows
 	}
 	return out
+}
+
+func providerInventoryOwnerFactEndpointKey(fact providerInventoryOwnerFact) string {
+	parts := []string{
+		strings.TrimSpace(fact.Provider),
+		strings.TrimSpace(fact.ProviderRef),
+		strings.TrimSpace(fact.SubnetRef),
+		strings.TrimSpace(fact.NICRef),
+		strings.TrimSpace(fact.ResourceRef),
+		strings.TrimSpace(fact.ResourceType),
+	}
+	empty := true
+	for _, part := range parts {
+		if part != "" {
+			empty = false
+			break
+		}
+	}
+	if empty {
+		node := strings.TrimSpace(fact.NodeRef)
+		if node == "" {
+			return ""
+		}
+		parts = append(parts, node)
+	}
+	return strings.Join(parts, "\x00")
+}
+
+func providerInventoryOwnerFactPreferred(candidate, current providerInventoryOwnerFact, members map[string]memberPlanInfo) bool {
+	candidateMember, candidateOK := lookupMemberByNodeRef(members, candidate.NodeRef)
+	currentMember, currentOK := lookupMemberByNodeRef(members, current.NodeRef)
+	if candidateOK && currentOK && candidateMember.PlacementPriority != currentMember.PlacementPriority {
+		return candidateMember.PlacementPriority < currentMember.PlacementPriority
+	}
+	if candidateOK != currentOK {
+		return candidateOK
+	}
+	candidateNode := strings.TrimSpace(candidate.NodeRef)
+	currentNode := strings.TrimSpace(current.NodeRef)
+	if candidateNode != currentNode {
+		return candidateNode < currentNode
+	}
+	return providerInventoryOwnerFactGreater(candidate, current)
 }
 
 func applyProviderHomeOwnerFact(decision *ownershipDecision, fact providerInventoryOwnerFact) {
