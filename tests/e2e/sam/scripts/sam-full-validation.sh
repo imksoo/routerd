@@ -16,7 +16,7 @@ Runs the standard full-topology SAM validation sequence against an already
 applied OpenTofu environment:
   1. baseline full matrix + legacy + performance + load-balance report
   2. RR failover/rejoin for aws-rr-a and aws-rr-b
-  3. leaf failover/rejoin for one leaf per site
+  3. leaf failover/rejoin for both leaf nodes at each site
   4. load-balance report rerun
 
 If any scenario fails, the script stops and does not run destroy-cmd. Inspect
@@ -70,7 +70,7 @@ require_node() {
   }
 }
 
-for node in aws-rr-a aws-rr-b aws-leaf-a azure-leaf-a oci-leaf-a pve-leaf-a; do
+for node in aws-rr-a aws-rr-b aws-leaf-a aws-leaf-b azure-leaf-a azure-leaf-b oci-leaf-a oci-leaf-b pve-leaf-a pve-leaf-b; do
   require_node "$node"
 done
 
@@ -79,9 +79,13 @@ scenario_names=(
   rr-failover-aws-rr-a
   rr-failover-aws-rr-b
   leaf-failover-aws-leaf-a
+  leaf-failover-aws-leaf-b
   leaf-failover-azure-leaf-a
+  leaf-failover-azure-leaf-b
   leaf-failover-oci-leaf-a
+  leaf-failover-oci-leaf-b
   leaf-failover-pve-leaf-a
+  leaf-failover-pve-leaf-b
   load-balance
 )
 
@@ -201,10 +205,28 @@ run_named_scenario() {
         --performance-tests \
         --failover-transfer-tests
       ;;
+    leaf-failover-aws-leaf-b)
+      run_scenario leaf-failover-aws-leaf-b \
+        --skip-deploy \
+        --failover-node aws-leaf-b \
+        --rejoin-after-failover \
+        --load-balance-report \
+        --performance-tests \
+        --failover-transfer-tests
+      ;;
     leaf-failover-azure-leaf-a)
       run_scenario leaf-failover-azure-leaf-a \
         --skip-deploy \
         --failover-node azure-leaf-a \
+        --rejoin-after-failover \
+        --load-balance-report \
+        --performance-tests \
+        --failover-transfer-tests
+      ;;
+    leaf-failover-azure-leaf-b)
+      run_scenario leaf-failover-azure-leaf-b \
+        --skip-deploy \
+        --failover-node azure-leaf-b \
         --rejoin-after-failover \
         --load-balance-report \
         --performance-tests \
@@ -219,10 +241,28 @@ run_named_scenario() {
         --performance-tests \
         --failover-transfer-tests
       ;;
+    leaf-failover-oci-leaf-b)
+      run_scenario leaf-failover-oci-leaf-b \
+        --skip-deploy \
+        --failover-node oci-leaf-b \
+        --rejoin-after-failover \
+        --load-balance-report \
+        --performance-tests \
+        --failover-transfer-tests
+      ;;
     leaf-failover-pve-leaf-a)
       run_scenario leaf-failover-pve-leaf-a \
         --skip-deploy \
         --failover-node pve-leaf-a \
+        --rejoin-after-failover \
+        --load-balance-report \
+        --performance-tests \
+        --failover-transfer-tests
+      ;;
+    leaf-failover-pve-leaf-b)
+      run_scenario leaf-failover-pve-leaf-b \
+        --skip-deploy \
+        --failover-node pve-leaf-b \
         --rejoin-after-failover \
         --load-balance-report \
         --performance-tests \

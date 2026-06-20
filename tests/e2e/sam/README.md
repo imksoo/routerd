@@ -168,8 +168,9 @@ tofu output -json > tofu-output.json
    AWS/Azure/OCI cloud 間 public direct comparison を保存する。
 4. RR redundancy は `--skip-deploy --failover-node aws-rr-a
    --rejoin-after-failover --failover-transfer-tests` と `aws-rr-b` で別々に実行する。
-5. Leaf failover は各siteの片系ずつ、例: `aws-leaf-a`、`azure-leaf-a`、
-   `oci-leaf-a`、`pve-leaf-a` を `--failover-node` に指定し、
+5. Leaf failover は各siteのA/B両系、例: `aws-leaf-a` / `aws-leaf-b`、
+   `azure-leaf-a` / `azure-leaf-b`、`oci-leaf-a` / `oci-leaf-b`、
+   `pve-leaf-a` / `pve-leaf-b` を対象にし、
    `--rejoin-after-failover --load-balance-report --performance-tests
    --failover-transfer-tests` を付ける。
 6. Load-balance は `--skip-deploy --load-balance-report` で owner table、
