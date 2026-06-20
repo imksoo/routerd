@@ -8,7 +8,7 @@ sidebar_position: 110
 ![routerd のログ、メトリクス、トレース、サービス属性を Telemetry リソースから OTLP コレクターへ送出する構成](/img/diagrams/config-example-telemetry-export.png)
 
 routerd のテレメトリを OpenTelemetry コレクターへ送る例です。
-長時間稼働、ヘルスチェック、DPI、apply のレイテンシーの観測に使えます。
+長時間稼働やヘルスチェック、DPI、apply のレイテンシーの観測に使います。
 
 完全な YAML は `examples/telemetry-export.yaml` にあります。
 

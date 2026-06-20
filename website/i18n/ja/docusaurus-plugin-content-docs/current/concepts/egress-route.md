@@ -14,7 +14,7 @@ egress-route セレクターが選択のみの status と、`role: advisory` / `
 を付けた `routerd.lan.route.changed` イベントを発行します。この status は稼働中の
 コントローラーの出力であり、適用のドライランではありません。
 `mode: priority`、`mark`、`hash` の場合は、ポリシー経路コントローラーが、実際に
-適用したルーティング・NAT mark の状態の所有者になります。依存するコントローラーは、
+適用したルーティングと NAT mark の状態の所有者になります。依存するコントローラーは、
 旧来の route-changed イベントではなく `routerd.resource.status.changed` を見て追従します。
 
 `mode: priority` でも `selection: highest-weight-ready` を使います。
@@ -22,7 +22,7 @@ egress-route セレクターが選択のみの status と、`role: advisory` / `
 決着と、ポリシー経路ルールの優先度として扱います。`priority` は選択ポリシーの
 代替ではありません。`weighted-ecmp` は実装されるまでの予約値であり、
 黙って無視せず `UnsupportedSelection` として報告します。`enabled: false` の候補は
-選択対象から外れ、生成されるポリシー経路ルール・経路表の所有からも外れます。
+選択対象から外れ、生成されるポリシー経路ルールと経路表の所有からも外れます。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1

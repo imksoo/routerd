@@ -17,12 +17,12 @@ ISP が IPv6 のみのアクセス網を提供し、IPv4 接続は AFTR (Address
 - AFTR の FQDN はアクセス網の DNS でしか解けない場合があるため、条件付き転送を使います。
 - IPv6 RA に RDNSS を含めて、SLAAC クライアント (Android を含む) へ DNS を伝えます。
 
-このパターンは、日本国内のフレッツ系回線 (NTT NGN + `gw.transix.jp` など) で典型的ですが、同様の DS-Lite 配備全般に適用できます。
+このパターンは、日本国内のフレッツ系回線 (NTT NGN + `gw.transix.jp` など) で典型的ですが、同様の DS-Lite 配備に広く適用できます。
 
 ## 前提
 
-- WAN インターフェースが、HGW か ONU を経由して IPv6 のみのアクセス網につながっています。
-- そのインターフェースで DHCPv6-PD を利用できます。
+- WAN インターフェースが、HGW か ONU を経由して IPv6 のみのアクセス網につながっている。
+- そのインターフェースで DHCPv6-PD を利用できる。
 - AFTR の DNS が DHCPv6 の information-request で返るかどうかは ISP や HGW 次第です。どちらの場合にも備えてください。
 
 ## DHCPv6-PD

@@ -6,7 +6,7 @@ title: CloudEdge プロトコル透過性の受け入れ検証
 
 ![CloudEdge プロトコル透過性プローブの FTP、NFS、バルク転送、PMTU、ソース IP 保持、no-NAT エビデンスの流れ](/img/diagrams/how-to-cloudedge-protocol-transparency.png)
 
-CloudEdge mobility が、NAT、ヘルパー ALG、動的ポート、MTU/PMTU の振る舞いに敏感なコネクション指向プロトコルに対して透過的であることを検証するための、クラウドを使わないハーネス計画です。実際のライブランはラボ運用者が後日実施します。このドキュメントと `scripts/` 配下のスクリプトは、契約とエビデンスの形式を準備するだけです。
+CloudEdge mobility が、NAT、ヘルパー ALG、動的ポート、MTU と PMTU の振る舞いに敏感なコネクション指向プロトコルに対して透過的であることを検証するための、クラウドを使わないハーネス計画です。実際のライブランはラボ運用者が後日実施します。このドキュメントと `scripts/` 配下のスクリプトは、契約とエビデンスの形式を準備するだけです。
 
 ## 目標
 
@@ -17,7 +17,7 @@ CloudEdge mobility が、NAT、ヘルパー ALG、動的ポート、MTU/PMTU の
 - FTP アクティブモードとパッシブモードの両方で、NAT ALG なしにデータ転送が完了する。
 - `rpcbind` 経由の RPC エンドポイント探索と、NFSv3 のマウント/読み書きがサイト間で動作する。
 - 大容量転送が PMTU ブラックホールなしに完了する。
-- MSS/PMTU エビデンスがオーバーレイ MTU、ルート MTU/advmss（利用可能な場合）、設定済み MSS clamp 値を記録する。
+- MSS と PMTU のエビデンスがオーバーレイ MTU、ルート MTU や advmss（利用可能な場合）、設定済み MSS clamp 値を記録する。
 
 ## 最小限のライブマトリクス
 
@@ -26,7 +26,7 @@ CloudEdge mobility が、NAT、ヘルパー ALG、動的ポート、MTU/PMTU の
 | ペア | 理由 |
 | --- | --- |
 | `aws -> azure` | 両端でクラウドプロバイダートラッピングを行うクラウド間オーバーレイパス |
-| `aws -> onprem` | on-prem 側で proxy-ARP/VRRP 権限を持つクラウド-on-prem 間パス |
+| `aws -> onprem` | on-prem 側で proxy-ARP と VRRP 権限を持つクラウドから on-prem へのパス |
 
 シナリオカタログでは、これを `examples/cloudedge-acceptance-scenarios.json` の `d11-protocol-transparency` としてエンコードしています。
 
@@ -98,24 +98,24 @@ export CE_PROTOCOL_NFS_COMMAND='...'
 
 | オペレーション | アサーション |
 | --- | --- |
-| `setup` | 有効時に `vsftpd`、`rpcbind`、NFS サーバー/クライアントツール、`iperf3` をインストール/設定 |
+| `setup` | 有効時に `vsftpd`、`rpcbind`、NFS サーバーとクライアントのツール、`iperf3` をインストールおよび設定 |
 | `ftp-active` | FTP `PORT` モードデータチャネルが完了 |
 | `ftp-passive` | FTP パッシブモードデータチャネルが完了 |
-| `nfs` | NFSv3 マウント + 要求バイト量の書き込み/読み取りが完了 |
+| `nfs` | NFSv3 マウントおよび要求バイト量の書き込みと読み取りが完了 |
 | `rpc` | `rpcinfo -p` が `rpcbind` と少なくとも 1 つの動的 RPC/NFS ポートを検出 |
-| `bulk` | `iperf3 -n <bytes>` が完了し、スループット/再送を記録 |
-| `pmtu` | DF ping が成功し、オーバーレイ MTU、ルート MTU/advmss、MSS clamp を記録 |
+| `bulk` | `iperf3 -n <bytes>` が完了し、スループットと再送を記録 |
+| `pmtu` | DF ping が成功し、オーバーレイ MTU、ルート MTU と advmss、MSS clamp を記録 |
 | `source-preserved` | サーバー側 SSH がクライアントの mobility `/32` をピア IP として認識 |
 | `no-nat` | 同じピア IP チェックを、明示的な no-NAT アサーションとして記録 |
 
 ## Forcefrag / MSS の比較
 
-通常の実行では routerd 導出の MSS clamp で問題なくパスするはずです。ラボで P2-b の force fragmentation 動作を証明する必要がある場合は、同じ D11 ペアセットを 2 回実行します:
+通常の実行では routerd 導出の MSS clamp で問題なくパスします。ラボで P2-b の force fragmentation 動作を証明する必要がある場合は、同じ D11 ペアセットを 2 回実行します。
 
 1. `forceFragmentIPv4: false`（デフォルト）: TCP 転送は MSS clamp で通過するはず。オーバーサイズの DF 非 TCP はアンダーレイの PMTU に依存して失敗する場合があります。
 2. 該当する `OverlayPeer` または `TunnelInterface` で `forceFragmentIPv4: true`: 同じ DF プローブがパスし、ルーターエビデンスに `routerd_forcefrag` が表示されるはずです。
 
-force fragmentation をグローバルに有効化しないでください。パススコープに限定し、before/after の設定ダイジェストをエビデンスバンドルに記録してください。
+force fragmentation をグローバルに有効化しないでください。パススコープに限定し、変更前後の設定ダイジェストをエビデンスバンドルに記録してください。
 
 ## エビデンスレビューチェックリスト
 
@@ -125,7 +125,7 @@ force fragmentation をグローバルに有効化しないでください。パ
 - `details.sourceIpPreserved.peer_ip` がクライアントサイトの mobility `/32` と一致。
 - `details.rpc.dynamic_port` が存在し、`111` ではない。
 - `iperf3` が利用可能な場合、`details.bulkTransfer.retransmits` が記録されている。
-- `details.pmtu.overlay_mtu`、`route_mtu` または `route_advmss`、`mss_clamp` が記録されている。
+- `details.pmtu.overlay_mtu`、`route_mtu` または `route_advmss`、および `mss_clamp` が記録されている。
 
 外側の `result.json` には以下のパスアサーションを含める必要があります:
 

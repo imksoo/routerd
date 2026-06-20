@@ -2,17 +2,22 @@
 
 ![Diagram showing Telemetry, LogSink, and ObservabilityPipeline resources feeding routerd OpenTelemetry SDK signals and routerd event exporter output to OTLP, syslog, stdout, or Loki sinks](/img/diagrams/operations-observability.png)
 
-`Telemetry` は、routerd 自身のメトリクス・トレース・ログを OTLP へ出すための小さなリソースです。`LogSink` は、運用イベントや観測ログの転送経路を表します。OTLP の `LogSink` は、コレクターのエンドポイントを重複して書かず、`Telemetry` リソースを参照します。routerd のイベントログを Loki などパイプライン型のリモート sink に送りたい場合は、`ObservabilityPipeline` を使います。
+**`Telemetry`** は、routerd 自身のメトリクス、トレース、ログを OTLP へ出すためのリソースです。
+**`LogSink`** は、運用イベントや観測ログの転送経路を表します。
+OTLP の `LogSink` は、コレクターのエンドポイントを重複して書かず、`Telemetry` リソースを参照します。
+routerd のイベントログを Loki などパイプライン型のリモート sink に送りたい場合は、`ObservabilityPipeline` を使います。
 
-`ObservabilityPipeline` は、同梱の `otelcol` プロセスではなく、routerd 内蔵のパイプラインです。OTLP のログ・メトリクス・トレースは通常の OpenTelemetry SDK を使い、設定したログ sink には軽量なイベントエクスポーターが送信します。
+`ObservabilityPipeline` は、同梱の `otelcol` プロセスではなく、routerd 内蔵のパイプラインです。
+OTLP のログ、メトリクス、トレースは通常の OpenTelemetry SDK を使い、設定したログ sink には軽量なイベントエクスポーターが送信します。
 
 現在のログ sink は次のとおりです。
 
-- `stdout`: JSON 形式のイベント行。サービスマネージャー配下で管理されるログ出力に適しています。
-- `syslog`: 既存の `LogSink` と同じ syslog 形式。ローカルまたはリモートの syslog を使います。
-- `loki`: `/loki/api/v1/push` への HTTP push。
+- **`stdout`**：JSON 形式のイベント行。サービスマネージャー配下で管理されるログ出力に適しています。
+- **`syslog`**：既存の `LogSink` と同じ syslog 形式。ローカルまたはリモートの syslog を使います。
+- **`loki`**：`/loki/api/v1/push` への HTTP push。
 
-`kafka` は、意図する外部パイプラインを設定に残すためのメタデータとして受け付けます。routerd はまだ Kafka へ直接 publish しません。
+`kafka` は、意図する外部パイプラインを設定に残すためのメタデータとして受け付けます。
+routerd はまだ Kafka へ直接 publish しません。
 
 設定例:
 
@@ -43,8 +48,11 @@ spec:
           tenant: routerd
 ```
 
-OTLP のフィールドは、routerd が管理するユニットの標準的な OpenTelemetry 環境変数に展開されます。ログ sink のエクスポーターはプロセス内バスの `routerd.**` イベントを購読するため、`journalctl` を scrape せずに、コントローラーの状態変化やデーモンのイベントを転送できます。
+OTLP のフィールドは、routerd が管理するユニットの標準的な OpenTelemetry 環境変数に展開されます。
+ログ sink のエクスポーターはプロセス内バスの `routerd.**` イベントを購読するため、`journalctl` を scrape せずに、コントローラーの状態変化やデーモンのイベントを転送できます。
 
-サンプリングはパイプラインごとに決定的で、sink への分配の前に適用されます。運用イベントログでは `1`（全件）のままにしてください。高頻度のソースを意図的にダウンサンプリングする場合にのみ変更します。
+サンプリングはパイプラインごとに決定的で、sink への分配の前に適用されます。
+運用イベントログでは `1`（全件）のままにしてください。
+高頻度のソースを意図的にダウンサンプリングする場合にのみ変更します。
 
 完全な例は `examples/observability-loki.yaml` にあります。

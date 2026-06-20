@@ -70,7 +70,8 @@ FreeBSD では、対応するパスは `/var/run/routerd/...` です。
 | `POST /v1/commands/renew` | デーモンごとの能動操作（DHCPv6 Renew、DHCPv4 のリース更新、即時の health probe など） |
 | `POST /v1/commands/stop` | 安全に停止 |
 
-`renew` の意味はデーモンごとに異なります。DHCPv6 は Renew の送信、DHCPv4 はリース更新、healthcheck は即時の probe です。
+`renew` の意味はデーモンごとに異なります。
+DHCPv6 は Renew の送信、DHCPv4 はリース更新、healthcheck は即時の probe です。
 
 ## フェーズ語彙
 
@@ -87,7 +88,8 @@ FreeBSD では、対応するパスは `/var/run/routerd/...` です。
 | `Unhealthy` | health check が failure threshold を満たしています |
 | `Error` | 操作に失敗しました |
 
-各 phase には `conditions` 配列が付きます。client 側のコードでは、log 文字列ではなく `phase` と `conditions` で判定してください。
+各 phase には `conditions` 配列が付きます。
+client 側のコードでは、log 文字列ではなく `phase` と `conditions` で判定してください。
 
 ## イベント
 

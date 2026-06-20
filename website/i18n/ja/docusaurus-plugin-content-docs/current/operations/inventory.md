@@ -8,7 +8,7 @@ slug: /operations/inventory
 ![Diagram showing host inventory detection of OS, service manager, commands, kernel features, and paths feeding platform decisions and validation or planning output](/img/diagrams/operations-inventory.png)
 
 routerd は、ホストの OS、利用できるコマンド、ネットワーク機能を調べます。
-このインベントリは、レンダラーと適用処理が、OS 固有の判断を検証または計画の段階で明示するために使います。
+このインベントリは、レンダラーと適用処理が OS 固有の判断を検証または計画の段階で明示するために使います。
 
 ## routerd が確認する項目
 
