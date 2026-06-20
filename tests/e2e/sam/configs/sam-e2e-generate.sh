@@ -220,7 +220,7 @@ render_members() {
       echo "            profileRef: $self_profile"
     fi
     if [ "$site" != "pve" ]; then
-      echo "            placement: { group: $site-leaf, priority: 10 }"
+      echo "            placement: { group: $site-leaf }"
     fi
   done
 }
@@ -435,7 +435,7 @@ EOF
       echo "            role: onprem"
     else
       echo "            role: cloud"
-      echo "            placement: { group: $site-leaf, priority: 10 }"
+      echo "            placement: { group: $site-leaf }"
     fi
     if [ "$member" = "$node" ]; then
       cat <<EOF
