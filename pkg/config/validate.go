@@ -896,6 +896,9 @@ func resourceWhens(res api.Resource) []resourceWhenRef {
 	case "RouterdCluster":
 		spec, _ := res.RouterdClusterSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
+	case "Interface":
+		spec, _ := res.InterfaceSpec()
+		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "VirtualAddress":
 		spec, _ := res.VirtualAddressSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}

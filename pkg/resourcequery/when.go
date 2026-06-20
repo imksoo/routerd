@@ -52,6 +52,9 @@ func ResourceWhen(res api.Resource) api.ResourceWhenSpec {
 	case "RouterdCluster":
 		spec, _ := res.RouterdClusterSpec()
 		return spec.When
+	case "Interface":
+		spec, _ := res.InterfaceSpec()
+		return spec.When
 	case "VirtualAddress":
 		spec, _ := res.VirtualAddressSpec()
 		return spec.When

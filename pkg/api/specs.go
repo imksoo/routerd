@@ -353,11 +353,12 @@ type ManagementAccessSpec struct {
 type InventorySpec struct{}
 
 type InterfaceSpec struct {
-	IfName  string `yaml:"ifname" json:"ifname"`
-	AdminUp bool   `yaml:"adminUp,omitempty" json:"adminUp,omitempty"`
-	MTU     int    `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=576,maximum=9216"`
-	Managed bool   `yaml:"managed" json:"managed"`
-	Owner   string `yaml:"owner,omitempty" json:"owner,omitempty" jsonschema:"enum=routerd,enum=external"`
+	IfName  string           `yaml:"ifname" json:"ifname"`
+	When    ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
+	AdminUp bool             `yaml:"adminUp,omitempty" json:"adminUp,omitempty"`
+	MTU     int              `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=576,maximum=9216"`
+	Managed bool             `yaml:"managed" json:"managed"`
+	Owner   string           `yaml:"owner,omitempty" json:"owner,omitempty" jsonschema:"enum=routerd,enum=external"`
 }
 
 type LinkSpec struct {
