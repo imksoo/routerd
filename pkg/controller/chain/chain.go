@@ -1066,12 +1066,18 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	for _, res := range r.Router.Spec.Resources {
 		when := resourcequery.ResourceWhen(res)
-		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, store) {
+		if !resourcequery.ResourceWhenPresent(when) {
 			continue
 		}
 		apiVersion := res.APIVersion
 		if apiVersion == "" {
 			apiVersion = resourcequery.APIVersionForKind(res.Kind)
+		}
+		if resourcequery.ResourceWhenMatches(when, store) {
+			if err := r.clearWhenFalseStatus(apiVersion, res.Kind, res.Metadata.Name, store); err != nil {
+				return err
+			}
+			continue
 		}
 		if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, map[string]any{
 			"phase":      "Pending",
@@ -1082,6 +1088,25 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 		}
 	}
 	return nil
+}
+
+func (r *Runner) clearWhenFalseStatus(apiVersion, kind, name string, store eventedStore) error {
+	current := store.ObjectStatus(apiVersion, kind, name)
+	reason := strings.TrimSpace(fmt.Sprint(current["reason"]))
+	if reason != "WhenFalse" && reason != "DependsOnFalse" {
+		return nil
+	}
+	observed, ok := current["observed"].(map[string]any)
+	if !ok || len(observed) == 0 || strings.TrimSpace(fmt.Sprint(observed["phase"])) == "" {
+		return nil
+	}
+	next := copyStatusMap(current)
+	for key, value := range observed {
+		next[key] = value
+	}
+	delete(next, "reason")
+	next["observed"] = observed
+	return store.SaveObjectStatus(apiVersion, kind, name, next)
 }
 
 func (r *Runner) effectiveRouterForReconcile(store eventedStore) (*api.Router, error) {
