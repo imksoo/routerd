@@ -44,11 +44,8 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ -n "$tofu_output" ] || { echo "--tofu-output is required" >&2; exit 2; }
-[ -n "$artifact" ] || { echo "--artifact is required" >&2; exit 2; }
 [ -n "$evidence_root" ] || { echo "--evidence-root is required" >&2; exit 2; }
 [ -f "$tofu_output" ] || { echo "tofu output not found: $tofu_output" >&2; exit 2; }
-[ -f "$artifact" ] || { echo "artifact not found: $artifact" >&2; exit 2; }
-[ -f "$ssh_key" ] || { echo "ssh key not found: $ssh_key" >&2; exit 2; }
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -87,6 +84,10 @@ if [ "$list_scenarios" -eq 1 ]; then
   printf '%s\n' "${scenario_names[@]}"
   exit 0
 fi
+
+[ -n "$artifact" ] || { echo "--artifact is required" >&2; exit 2; }
+[ -f "$artifact" ] || { echo "artifact not found: $artifact" >&2; exit 2; }
+[ -f "$ssh_key" ] || { echo "ssh key not found: $ssh_key" >&2; exit 2; }
 
 run_scenario() {
   local name="$1"; shift

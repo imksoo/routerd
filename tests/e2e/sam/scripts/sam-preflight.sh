@@ -27,6 +27,7 @@ done
 [ -n "$tfvars" ] || { echo "--tfvars is required" >&2; exit 2; }
 [ -f "$tfvars" ] || { echo "tfvars not found: $tfvars" >&2; exit 2; }
 command -v oci >/dev/null || { echo "oci CLI is required" >&2; exit 2; }
+command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }
 
 extract_tfvars_string() {
   local key="$1"
