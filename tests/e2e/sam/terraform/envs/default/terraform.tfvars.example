@@ -1,0 +1,59 @@
+# routerd SAM E2E -- terraform.tfvars.example
+#
+# Copy this file to terraform.tfvars and fill in the values.
+# Sensitive values (PVE API token) should be set via environment variables:
+#
+#   export TF_VAR_pve_api_token='root@pam!tofu=<secret>'
+#
+# *.tfvars is gitignored. Do not commit real credentials.
+
+# --- Run metadata ---
+run_id     = "sam-e2e-YYYYMMDD-HHMM"
+commit     = "v20260619.1730"
+expires_at = "2026-06-21T00:00:00Z"
+
+# Start with "single" for the low-cost first apply:
+#   1 AWS RR + one leaf/client pair per AWS/Azure/OCI/PVE site.
+# Use "full" for the target 2RR + 8leaf + 8client matrix.
+topology_scale = "single"
+
+# --- SSH ---
+# Public key for the operator identity used across all providers.
+ssh_public_key = "ssh-ed25519 AAAA..."
+
+# --- AWS ---
+# Run:  aws configure --profile <name>
+aws_profile  = "default"
+aws_region   = "ap-northeast-1"
+aws_key_name = "my-key-pair"          # EC2 Key Pair name (must exist in the target region)
+aws_ami_id   = "ami-0abcdef1234567890" # Ubuntu 22.04 LTS in ap-northeast-1
+
+# --- Azure ---
+# Run:  az login
+azure_subscription_id = "00000000-0000-0000-0000-000000000000"
+azure_location        = "japaneast"
+azure_admin_username  = "ubuntu"
+
+# --- OCI ---
+# Run:  oci setup config  (creates ~/.oci/config)
+# Before tofu apply, verify this OCID with:
+#   ../../scripts/sam-preflight.sh --tfvars terraform.tfvars --evidence-dir /tmp/sam-preflight
+oci_profile             = "DEFAULT"
+oci_region              = "ap-tokyo-1"
+oci_compartment_id      = "ocid1.compartment.oc1..<unique>" # MUST NOT be ManagedCompartmentForPaaS
+oci_availability_domain = "xxxx:AP-TOKYO-1-AD-1"
+oci_image_id            = "ocid1.image.oc1.ap-tokyo-1.<unique>"
+oci_shape               = "VM.Standard.E2.1"
+
+# --- Proxmox VE ---
+# PVE API token is sensitive. Set via env var instead of this file:
+#   export TF_VAR_pve_api_token='root@pam!tofu=<secret>'
+pve_endpoint        = "https://pve01.local:8006/"
+pve_node_name       = "pve01"
+pve_boot_source     = "template"        # "iso" to boot from ISO instead
+pve_template_vm_id  = 9000              # cloud-init template VM ID
+# pve_iso_file_id   = "local:iso/routerd.iso"
+pve_datastore_id    = "local-lvm"
+pve_underlay_bridge = "svnet1"          # management/underlay bridge
+pve_capture_bridge  = null              # null auto-creates a run-scoped bridge
+pve_username        = "ubuntu"
