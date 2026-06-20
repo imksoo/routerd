@@ -105,7 +105,33 @@ run_scenario() {
   set -e
   "$summary_script" "$dir" >"$dir/summary.txt"
   sed -n '1,160p' "$dir/summary.txt"
+  if [ "$rc" -eq 0 ]; then
+    printf '%s\tPASS\t%s\n' "$name" "$dir" >>"$evidence_root/scenario-status.tsv"
+  else
+    printf '%s\tFAIL\t%s\n' "$name" "$dir" >>"$evidence_root/scenario-status.tsv"
+  fi
   return "$rc"
+}
+
+write_overall_summary() {
+  {
+    echo "evidence_root=$evidence_root"
+    echo "== scenario status =="
+    if [ -f "$evidence_root/scenario-status.tsv" ]; then
+      column -t -s $'\t' "$evidence_root/scenario-status.tsv" 2>/dev/null || cat "$evidence_root/scenario-status.tsv"
+    fi
+    echo "== scenario summaries =="
+    if [ -f "$evidence_root/scenario-status.tsv" ]; then
+      tail -n +2 "$evidence_root/scenario-status.tsv" | while IFS=$'\t' read -r name status dir; do
+        echo "## $name $status"
+        if [ -f "$dir/summary.txt" ]; then
+          sed -n '1,120p' "$dir/summary.txt"
+        else
+          echo "summary missing: $dir/summary.txt"
+        fi
+      done
+    fi
+  } >"$evidence_root/overall-summary.txt"
 }
 
 {
@@ -118,6 +144,9 @@ run_scenario() {
   echo "destroy_cmd=${destroy_cmd:-}"
   echo "policy_read=Read ~/routerd-orchestration.md and cloudedge-mobility/LAB_POLICY.md before running this on real machines."
 } >"$evidence_root/full-validation-note.txt"
+
+printf 'scenario\tstatus\tevidence_dir\n' >"$evidence_root/scenario-status.tsv"
+trap write_overall_summary EXIT
 
 run_scenario baseline \
   --load-balance-report \
