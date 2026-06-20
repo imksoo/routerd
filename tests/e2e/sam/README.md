@@ -181,7 +181,8 @@ tofu output -json > tofu-output.json
    performance/failover-transfer/provider evidence の要約を作り、PR/issue
    コメントには要約と raw evidence path の両方を残す。
 
-フル構成を apply 済みの場合は、標準scenarioをまとめて実行できる:
+`topology_scale = "full"` のフル構成を apply 済みの場合は、標準scenarioを
+まとめて実行できる:
 
 ```bash
 ../../scripts/sam-full-validation.sh \
@@ -190,7 +191,8 @@ tofu output -json > tofu-output.json
   --evidence-root /tmp/sam-full-validation
 ```
 
-`sam-full-validation.sh` は途中scenarioが失敗したらそこで停止し、
+`sam-full-validation.sh` は `fabric.topology_scale = "full"` を要求する。
+途中scenarioが失敗したらそこで停止し、
 `--destroy-cmd` が指定されていても実行しない。失敗時は live environment を
 残したまま、該当scenarioの evidence と実機状態を確認してから次の判断を行う。
 全scenario成功後に `--destroy-cmd` を実行した場合は、

@@ -60,7 +60,16 @@ post_destroy_script="$script_dir/sam-post-destroy-inventory.sh"
 mkdir -p "$evidence_root"
 
 nodes_json="$evidence_root/nodes.json"
+fabric_json="$evidence_root/fabric.json"
 jq '.nodes.value' "$tofu_output" >"$nodes_json"
+jq '.fabric.value' "$tofu_output" >"$fabric_json"
+
+topology_scale="$(jq -r '.topology_scale // empty' "$fabric_json")"
+if [ "$topology_scale" != "full" ]; then
+  echo "sam-full-validation.sh requires fabric.topology_scale=full; got: ${topology_scale:-<empty>}" >&2
+  echo "Use sam-e2e.sh directly for single-topology smoke tests." >&2
+  exit 2
+fi
 
 require_node() {
   local node="$1"
@@ -290,6 +299,7 @@ run_named_scenario() {
   echo "ssh_key=$ssh_key"
   ssh-keygen -lf "${ssh_key}.pub" 2>/dev/null || ssh-keygen -y -f "$ssh_key" | ssh-keygen -lf -
   echo "destroy_cmd=${destroy_cmd:-}"
+  printf 'selected_scenarios=%s\n' "$(IFS=,; echo "${selected_scenarios[*]}")"
   echo "policy_read=Read ~/routerd-orchestration.md and cloudedge-mobility/LAB_POLICY.md before running this on real machines."
 } >"$evidence_root/full-validation-note.txt"
 
