@@ -188,76 +188,133 @@ collect_provider_inventory() {
   ' "$nodes_json" >"$dir/nodes.tsv"
 
   aws_region="$(jq -r '.aws.region // empty' "$fabric_json")"
-  if command -v aws >/dev/null 2>&1 && [ -n "$aws_region" ]; then
+  if [ -n "$aws_region" ]; then
+    if ! command -v aws >/dev/null 2>&1; then
+      echo "FAIL: aws CLI is required for AWS provider inventory" >"$dir/aws.txt"
+      status=1
+    else
     {
       echo "## aws caller identity"
-      aws sts get-caller-identity || true
+      if ! aws sts get-caller-identity; then
+        echo "FAIL: aws CLI authentication failed; check AWS_PROFILE/credentials"
+        status=1
+      fi
       echo "## aws instances"
       mapfile -t ids < <(jq -r 'to_entries[] | select(.value.site == "aws") | .value.instance_id // empty' "$nodes_json" | sort -u)
       if [ "${#ids[@]}" -gt 0 ]; then
-        aws ec2 describe-instances --region "$aws_region" --instance-ids "${ids[@]}" || true
+        if ! aws ec2 describe-instances --region "$aws_region" --instance-ids "${ids[@]}"; then
+          echo "FAIL: aws EC2 instance inventory failed"
+          status=1
+        fi
       fi
       echo "## aws network interfaces"
       mapfile -t ifaces < <(jq -r 'to_entries[] | select(.value.site == "aws") | .value.interface_id // empty' "$nodes_json" | sort -u)
       if [ "${#ifaces[@]}" -gt 0 ]; then
-        aws ec2 describe-network-interfaces --region "$aws_region" --network-interface-ids "${ifaces[@]}" || true
+        if ! aws ec2 describe-network-interfaces --region "$aws_region" --network-interface-ids "${ifaces[@]}"; then
+          echo "FAIL: aws EC2 network-interface inventory failed"
+          status=1
+        fi
       fi
       echo "## aws route tables"
-      aws ec2 describe-route-tables --region "$aws_region" --route-table-ids \
+      if ! aws ec2 describe-route-tables --region "$aws_region" --route-table-ids \
         "$(jq -r '.aws.rr_route_table // empty' "$fabric_json")" \
-        "$(jq -r '.aws.leaf_route_table_id // empty' "$fabric_json")" || true
+        "$(jq -r '.aws.leaf_route_table_id // empty' "$fabric_json")"; then
+        echo "FAIL: aws EC2 route-table inventory failed"
+        status=1
+      fi
     } >"$dir/aws.txt" 2>&1
+    fi
   fi
 
   azure_rg="$(jq -r '.azure.resource_group_name // empty' "$fabric_json")"
   azure_route_table="$(jq -r '.azure.route_table_name // empty' "$fabric_json")"
-  if command -v az >/dev/null 2>&1 && [ -n "$azure_rg" ]; then
+  if [ -n "$azure_rg" ]; then
+    if ! command -v az >/dev/null 2>&1; then
+      echo "FAIL: az CLI is required for Azure provider inventory" >"$dir/azure.txt"
+      status=1
+    else
     {
       echo "## azure account"
-      az account show --output json || true
+      if ! az account show --output json; then
+        echo "FAIL: azure CLI authentication failed; check az login/subscription"
+        status=1
+      fi
       echo "## azure vm list"
-      az vm list --resource-group "$azure_rg" --show-details --output json || true
+      if ! az vm list --resource-group "$azure_rg" --show-details --output json; then
+        echo "FAIL: azure VM inventory failed"
+        status=1
+      fi
       echo "## azure nic list"
-      az network nic list --resource-group "$azure_rg" --output json || true
+      if ! az network nic list --resource-group "$azure_rg" --output json; then
+        echo "FAIL: azure NIC inventory failed"
+        status=1
+      fi
       echo "## azure route table"
       if [ -n "$azure_route_table" ]; then
-        az network route-table show --resource-group "$azure_rg" --name "$azure_route_table" --output json || true
+        if ! az network route-table show --resource-group "$azure_rg" --name "$azure_route_table" --output json; then
+          echo "FAIL: azure route-table inventory failed"
+          status=1
+        fi
       fi
       echo "## azure role assignments"
-      az role assignment list --resource-group "$azure_rg" --output json || true
+      if ! az role assignment list --resource-group "$azure_rg" --output json; then
+        echo "FAIL: azure role-assignment inventory failed"
+        status=1
+      fi
     } >"$dir/azure.txt" 2>&1
+    fi
   fi
 
   oci_region="$(jq -r '.oci.region // empty' "$fabric_json")"
   oci_compartment_id="$(jq -r '.oci.compartment_id // empty' "$fabric_json")"
   oci_route_table_id="$(jq -r '.oci.route_table_id // empty' "$fabric_json")"
-  if command -v oci >/dev/null 2>&1 && [ -n "$oci_region" ] && [ -n "$oci_compartment_id" ]; then
+  if [ -n "$oci_region" ] && [ -n "$oci_compartment_id" ]; then
+    if ! command -v oci >/dev/null 2>&1; then
+      echo "FAIL: oci CLI is required for OCI provider inventory" >"$dir/oci.txt"
+      status=1
+    else
     {
       echo "## oci compartment"
-      oci iam compartment get --region "$oci_region" --compartment-id "$oci_compartment_id" || true
+      if ! oci iam compartment get --region "$oci_region" --compartment-id "$oci_compartment_id"; then
+        echo "FAIL: oci CLI authentication or compartment lookup failed"
+        status=1
+      fi
       oci_compartment_name="$(oci iam compartment get --region "$oci_region" --compartment-id "$oci_compartment_id" --query 'data.name' --raw-output 2>/dev/null || true)"
       echo "oci_compartment_name=$oci_compartment_name"
       if [ "$oci_compartment_name" = "ManagedCompartmentForPaaS" ]; then
         echo "FAIL: OCI compartment must not be ManagedCompartmentForPaaS"
+        status=1
+      elif [ -z "$oci_compartment_name" ]; then
+        echo "FAIL: OCI compartment name is empty; check OCI profile, region, and OCID"
         status=1
       fi
       echo "## oci instances"
       while read -r node id; do
         [ -n "$id" ] || continue
         echo "### $node $id"
-        oci compute instance get --region "$oci_region" --instance-id "$id" || true
+        if ! oci compute instance get --region "$oci_region" --instance-id "$id"; then
+          echo "FAIL: oci instance inventory failed for $node"
+          status=1
+        fi
       done < <(jq -r 'to_entries[] | select(.value.site == "oci") | [.key, (.value.instance_id // "")] | @tsv' "$nodes_json")
       echo "## oci vnics"
       while read -r node iface; do
         [ -n "$iface" ] || continue
         echo "### $node $iface"
-        oci network vnic get --region "$oci_region" --vnic-id "$iface" || true
+        if ! oci network vnic get --region "$oci_region" --vnic-id "$iface"; then
+          echo "FAIL: oci VNIC inventory failed for $node"
+          status=1
+        fi
       done < <(jq -r 'to_entries[] | select(.value.site == "oci") | [.key, (.value.interface_id // "")] | @tsv' "$nodes_json")
       echo "## oci route table"
       if [ -n "$oci_route_table_id" ]; then
-        oci network route-table get --region "$oci_region" --rt-id "$oci_route_table_id" || true
+        if ! oci network route-table get --region "$oci_region" --rt-id "$oci_route_table_id"; then
+          echo "FAIL: oci route-table inventory failed"
+          status=1
+        fi
       fi
     } >"$dir/oci.txt" 2>&1
+    fi
   fi
 
   {
