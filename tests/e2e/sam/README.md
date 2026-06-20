@@ -127,7 +127,9 @@ tofu destroy
 ```
 sam-e2e.sh [options]
   --failover-node NODE       指定ノードの routerd を停止して failover テスト
+  --rejoin-after-failover    停止した failover node を再起動して rejoin テスト
   --load-balance-report      owner table のスナップショットを取得
+  --skip-matrix              SSH hostname matrix をスキップ
   --skip-legacy-protocols    FTP/RPC/NFS/CIFS テストをスキップ
   --performance-tests        SAM経由のiperf3/ping性能テストと、AWS/Azure/OCIのcloud間public直結比較を実行
   --destroy-cmd CMD          テスト後に実行する破棄コマンド
@@ -137,6 +139,42 @@ sam-e2e.sh [options]
 比較用のpublic直結iperf3/pingはcloud間のみを対象にし、AWS/Azure/OCIの異なる
 cloud pairだけを実行する。同一cloud内、およびPVE/on-premを含むpairは
 `public-summary.tsv` に skip として記録する。
+
+## Full validation sequence
+
+実機検証の前に `~/routerd-orchestration.md` と
+`cloudedge-mobility/LAB_POLICY.md` を読み直し、run note に記録する。
+OCI の `compartment_ocid` は display name が `ManagedCompartmentForPaaS`
+ではないことを apply 前に確認し、その出力を evidence に保存する。
+
+標準の進め方:
+
+```bash
+cd tests/e2e/sam/terraform/envs/default
+tofu plan
+tofu apply
+tofu output -json > tofu-output.json
+```
+
+1. `topology_scale = "single"` で apply と初回 E2E を確認する。
+2. `topology_scale = "full"` に変更し、2RR/8leaf/8client を apply する。
+3. baseline は `--load-balance-report --performance-tests` 付きで実行し、
+   full SSH hostname matrix、legacy protocol、SAM private performance、
+   AWS/Azure/OCI cloud 間 public direct comparison を保存する。
+4. RR redundancy は `--skip-deploy --failover-node aws-rr-a
+   --rejoin-after-failover` と `aws-rr-b` で別々に実行する。
+5. Leaf failover は各siteの片系ずつ、例: `aws-leaf-a`、`azure-leaf-a`、
+   `oci-leaf-a`、`pve-leaf-a` を `--failover-node` に指定し、
+   `--rejoin-after-failover --load-balance-report --performance-tests` を付ける。
+6. Load-balance は `--skip-deploy --load-balance-report` で owner table、
+   route、traceroute、E2E matrix を同じ evidence directory に残す。
+7. 成功時だけ `tofu destroy` し、provider/PVE inventory で残存がないことを
+   cleanup evidence に保存する。失敗時は destroy せず live inspection を行う。
+
+`sam-e2e.sh` は各 convergence run の所要秒数を
+`convergence/summary.tsv` に記録する。failover/rejoin では
+`diagnostics/before-*` と `diagnostics/after-*` に doctor/status/owner table、
+OS route/address、routerd/routerd-bgp journal を保存する。
 
 ## GitHub Actions (将来)
 

@@ -197,8 +197,10 @@ setup_pve_dataplane() {
 
 wait_convergence() {
   local label="$1"
+  local started="$SECONDS"
   local deadline=$((SECONDS + 600))
   local ok=0
+  local status_text=TIMEOUT
   local client_ips_json
   client_ips_json="$(jq -c '[to_entries[] | select(.value.role == "client") | .value.private_ip + "/32"]' "$nodes_json")"
   while [ "$SECONDS" -lt "$deadline" ]; do
@@ -218,6 +220,8 @@ JSON"; then
     [ "$ok" -eq 1 ] && break
     sleep 10
   done
+  [ "$ok" -eq 1 ] && status_text=PASS
+  printf '%s\t%s\t%s\n' "$label" "$status_text" "$((SECONDS - started))" >>"$evidence_dir/convergence/summary.tsv"
   for node in "${routers[@]}"; do
     node_is_stopped "$node" && continue
     ssh_node "$node" 'sudo routerctl doctor sam; sudo routerctl get status -o json; ip -br addr; ip route' >"$evidence_dir/convergence/${label}-${node}.txt" 2>&1 || true
@@ -585,7 +589,7 @@ collect_diagnostics() {
   local dir="$evidence_dir/diagnostics/$label"
   mkdir -p "$dir"
   for node in "${routers[@]}"; do
-    ssh_node "$node" 'hostname; sudo routerctl doctor sam || true; sudo routerctl get status -o json || true; sudo routerctl describe MobilityPool/cloudedge -o json || true; ip -br addr; ip route; journalctl -u routerd.service -u routerd-bgp.service --since "30 minutes ago" --no-pager -n 500' >"$dir/${node}.txt" 2>&1 || true
+    ssh_node "$node" 'hostname; sudo routerctl doctor sam || true; sudo routerctl get status -o json || true; sudo routerctl describe MobilityPool/cloudedge -o json || true; sudo routerctl action list || true; ip -br addr; ip route; ip rule; ip neigh show || true; sysctl net.ipv4.ip_forward net.ipv4.conf.all.rp_filter net.ipv4.conf.default.rp_filter net.ipv4.conf.all.proxy_arp net.ipv4.conf.all.accept_local 2>/dev/null || true; journalctl -u routerd.service -u routerd-bgp.service --since "30 minutes ago" --no-pager -n 500' >"$dir/${node}.txt" 2>&1 || true
   done
 }
 
@@ -635,9 +639,11 @@ run_failover() {
   local status=0
   [ "${#failover_nodes[@]}" -gt 0 ] || return 0
   for node in "${failover_nodes[@]}"; do
+    collect_diagnostics "before-failover-${node}"
     ssh_node "$node" 'sudo systemctl stop routerd.service routerd-bgp.service' >"$evidence_dir/convergence/failover-stop-${node}.txt" 2>&1
     stopped_routers+=("$node")
     run_validation_set "after-failover-${node}" || status=1
+    collect_diagnostics "after-failover-${node}"
   done
   return "$status"
 }
@@ -647,9 +653,11 @@ run_rejoin() {
   [ "$rejoin_after_failover" -eq 1 ] || return 0
   [ "${#failover_nodes[@]}" -gt 0 ] || return 0
   for node in "${failover_nodes[@]}"; do
+    collect_diagnostics "before-rejoin-${node}"
     ssh_node "$node" 'sudo systemctl start routerd-bgp.service routerd.service; sudo systemctl is-active routerd.service routerd-bgp.service' >"$evidence_dir/convergence/rejoin-start-${node}.txt" 2>&1 || status=1
     mark_node_running "$node"
     run_validation_set "after-rejoin-${node}" || status=1
+    collect_diagnostics "after-rejoin-${node}"
   done
   return "$status"
 }
@@ -660,6 +668,7 @@ teardown() {
 }
 
 record_note
+printf 'label\tstatus\telapsed_seconds\n' >"$evidence_dir/convergence/summary.tsv"
 preflight || mark_failed "preflight"
 if [ "$overall" -eq 0 ]; then
   setup_pve_dataplane || mark_failed "PVE dataplane IP setup"
