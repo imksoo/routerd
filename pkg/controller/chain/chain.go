@@ -1093,7 +1093,7 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 func (r *Runner) clearWhenFalseStatus(apiVersion, kind, name string, store eventedStore) error {
 	current := store.ObjectStatus(apiVersion, kind, name)
 	reason := strings.TrimSpace(fmt.Sprint(current["reason"]))
-	if reason != "WhenFalse" && reason != "DependsOnFalse" {
+	if reason != "WhenFalse" {
 		return nil
 	}
 	observed, ok := current["observed"].(map[string]any)

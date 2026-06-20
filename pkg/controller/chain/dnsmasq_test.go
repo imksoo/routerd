@@ -722,6 +722,33 @@ func TestRunnerClearsWhenFalseStatusFromObservedPhase(t *testing.T) {
 	}
 }
 
+func TestRunnerKeepsDependsOnFalseStatusWhenWhenTrue(t *testing.T) {
+	whenMaster := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+		"VirtualAddress/lan-gw-v4.role": {Equals: "master"},
+	}}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan", When: whenMaster}},
+	}}}
+	store := mapStore{}
+	store.SaveObjectStatus(api.NetAPIVersion, "VirtualAddress", "lan-gw-v4", map[string]any{"role": "master"})
+	store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{
+		"phase":  "Pending",
+		"reason": "DependsOnFalse",
+		"observed": map[string]any{
+			"phase":         daemonapi.ResourcePhaseBound,
+			"currentPrefix": "2001:db8:10::/60",
+		},
+	})
+	runner := &Runner{Router: router, Store: store}
+	if err := runner.saveWhenFalseStatuses(eventedStore{Store: store}); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd")
+	if status["phase"] != "Pending" || status["reason"] != "DependsOnFalse" || status["currentPrefix"] != nil {
+		t.Fatalf("status = %#v, want DependsOnFalse preserved without observed promotion", status)
+	}
+}
+
 func TestIPv4StaticAddressApplyCommandFreeBSD(t *testing.T) {
 	name, args := ipv4StaticAddressApplyCommand("freebsd", "vtnet1", "192.168.160.4/24")
 	got := strings.Join(append([]string{name}, args...), " ")
