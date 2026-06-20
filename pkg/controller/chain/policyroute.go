@@ -612,7 +612,7 @@ func (c IPv4PolicyRouteController) targetHealthy(name string) bool {
 	if name == "" {
 		return true
 	}
-	status := c.Store.ObjectStatus(api.NetAPIVersion, "HealthCheck", name)
+	status := healthCheckEffectiveStatus(c.Store.ObjectStatus(api.NetAPIVersion, "HealthCheck", name))
 	switch fmt.Sprint(status["phase"]) {
 	case "Healthy":
 	case "Failing":
@@ -631,6 +631,14 @@ func (c IPv4PolicyRouteController) targetHealthy(name string) bool {
 	}
 	maxAge := c.healthCheckFreshness(name)
 	return time.Since(checkedAt) <= maxAge
+}
+
+func healthCheckEffectiveStatus(status map[string]any) map[string]any {
+	observed, ok := status["observed"].(map[string]any)
+	if !ok || len(observed) == 0 {
+		return status
+	}
+	return observed
 }
 
 func (c IPv4PolicyRouteController) healthCheckFreshness(name string) time.Duration {

@@ -95,6 +95,25 @@ func TestIPv4PolicyRouteKeepsCandidateDuringTransientFailing(t *testing.T) {
 	}
 }
 
+func TestIPv4PolicyRouteUsesObservedHealthCheckStatus(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet"}, Spec: api.HealthCheckSpec{Interval: "30s", Timeout: "3s"}},
+	}}}
+	controller := IPv4PolicyRouteController{Router: router, Store: mapStore{
+		api.NetAPIVersion + "/HealthCheck/internet": {
+			"phase":         "Healthy",
+			"lastCheckedAt": time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339Nano),
+			"observed": map[string]any{
+				"phase":         "Healthy",
+				"lastCheckedAt": time.Now().UTC().Format(time.RFC3339Nano),
+			},
+		},
+	}}
+	if !controller.targetHealthy("internet") {
+		t.Fatal("fresh observed healthcheck status should keep a policy route candidate ready")
+	}
+}
+
 func TestIPv4PolicyRouteInstallsFwmarkBootstrapRouteForHealthCheck(t *testing.T) {
 	store := mapStore{
 		api.NetAPIVersion + "/HealthCheck/internet-via-hgw": {
