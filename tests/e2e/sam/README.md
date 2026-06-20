@@ -176,6 +176,21 @@ tofu output -json > tofu-output.json
    performance/failover-transfer/provider evidence の要約を作り、PR/issue
    コメントには要約と raw evidence path の両方を残す。
 
+フル構成を apply 済みの場合は、標準scenarioをまとめて実行できる:
+
+```bash
+../../scripts/sam-full-validation.sh \
+  --tofu-output tofu-output.json \
+  --artifact /path/to/routerd-<version>-linux-amd64.tar.gz \
+  --evidence-root /tmp/sam-full-validation
+```
+
+`sam-full-validation.sh` は途中scenarioが失敗したらそこで停止し、
+`--destroy-cmd` が指定されていても実行しない。失敗時は live environment を
+残したまま、該当scenarioの evidence と実機状態を確認してから次の判断を行う。
+`--list-scenarios` を付けると、`tofu output` に必要nodeが存在することだけを
+確認し、実機へSSHせずに実行予定scenarioを表示する。
+
 `sam-e2e.sh` は各 convergence run の所要秒数を
 `convergence/summary.tsv` に記録する。failover/rejoin では
 `diagnostics/before-*` と `diagnostics/after-*` に doctor/status/owner table、
@@ -212,6 +227,7 @@ tests/e2e/sam/
 │   └── sam-e2e-generate.sh     # tofu output → routerd YAML config
 ├── scripts/
 │   ├── sam-e2e.sh              # E2E test harness
+│   ├── sam-full-validation.sh  # Standard full-topology scenario runner
 │   └── sam-e2e-summary.sh      # Evidence summary helper
 └── terraform/
     ├── modules/
