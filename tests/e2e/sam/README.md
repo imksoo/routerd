@@ -172,6 +172,9 @@ tofu output -json > tofu-output.json
    route、traceroute、E2E matrix を同じ evidence directory に残す。
 7. 成功時だけ `tofu destroy` し、provider/PVE inventory で残存がないことを
    cleanup evidence に保存する。失敗時は destroy せず live inspection を行う。
+8. run完了後、`scripts/sam-e2e-summary.sh <evidence-dir>` で matrix/legacy/
+   performance/failover-transfer/provider evidence の要約を作り、PR/issue
+   コメントには要約と raw evidence path の両方を残す。
 
 `sam-e2e.sh` は各 convergence run の所要秒数を
 `convergence/summary.tsv` に記録する。failover/rejoin では
@@ -208,7 +211,8 @@ tests/e2e/sam/
 ├── configs/
 │   └── sam-e2e-generate.sh     # tofu output → routerd YAML config
 ├── scripts/
-│   └── sam-e2e.sh              # E2E test harness
+│   ├── sam-e2e.sh              # E2E test harness
+│   └── sam-e2e-summary.sh      # Evidence summary helper
 └── terraform/
     ├── modules/
     │   ├── aws_rr/             # AWS Route Reflector (VPC, SG, IAM, EC2)
