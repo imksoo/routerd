@@ -177,6 +177,10 @@ tofu output -json > tofu-output.json
 `convergence/summary.tsv` に記録する。failover/rejoin では
 `diagnostics/before-*` と `diagnostics/after-*` に doctor/status/owner table、
 OS route/address、routerd/routerd-bgp journal を保存する。
+`provider/` には `tofu output` の fabric/nodes と、利用可能なCLIから取得した
+AWS instance/ENI/route table、Azure VM/NIC/route table/RBAC、OCI compartment/
+instance/VNIC/route table、PVE VMID/bridge情報を保存する。これらはE2E判定の
+補助証跡であり、PASS/FAILの正本は疑似クライアント間E2Eのままとする。
 `--failover-transfer-tests` は停止操作の直前に疑似クライアント間の
 SAM private HTTP 転送を開始し、`failover-transfer/` に転送ペア、curl結果、
 終了コード、受信ファイルサイズを保存する。

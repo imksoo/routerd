@@ -70,10 +70,12 @@ done
 [ -f "$ssh_key" ] || { echo "ssh key not found: $ssh_key" >&2; exit 2; }
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }
 
-mkdir -p "$evidence_dir"/{preflight,deploy,convergence,matrix,legacy,performance,failover-transfer,diagnostics,cleanup,ssh}
+mkdir -p "$evidence_dir"/{preflight,deploy,convergence,matrix,legacy,performance,failover-transfer,provider,diagnostics,cleanup,ssh}
 cp "$tofu_output" "$evidence_dir/tofu-output.json"
 nodes_json="$evidence_dir/nodes.json"
+fabric_json="$evidence_dir/fabric.json"
 jq '.nodes.value' "$tofu_output" >"$nodes_json"
+jq '.fabric.value' "$tofu_output" >"$fabric_json"
 
 mapfile -t routers < <(jq -r 'to_entries[] | select(.value.role == "rr" or .value.role == "leaf") | .key' "$nodes_json" | sort)
 mapfile -t leaf_routers < <(jq -r 'to_entries[] | select(.value.role == "leaf") | .key' "$nodes_json" | sort)
@@ -161,6 +163,119 @@ preflight() {
       return 1
     }
   done
+}
+
+collect_provider_inventory() {
+  local label="$1"
+  local dir="$evidence_dir/provider/$label"
+  local aws_region azure_rg azure_route_table oci_region oci_compartment_id oci_route_table_id
+  local pve_node pve_capture_bridge node id iface
+  local status=0 oci_compartment_name
+  mkdir -p "$dir"
+
+  cp "$fabric_json" "$dir/fabric.json"
+  jq -r '
+    to_entries[]
+    | [
+        .key,
+        (.value.site // ""),
+        (.value.role // ""),
+        (.value.instance_id // ""),
+        (.value.interface_id // ""),
+        (.value.vm_id // "")
+      ]
+    | @tsv
+  ' "$nodes_json" >"$dir/nodes.tsv"
+
+  aws_region="$(jq -r '.aws.region // empty' "$fabric_json")"
+  if command -v aws >/dev/null 2>&1 && [ -n "$aws_region" ]; then
+    {
+      echo "## aws caller identity"
+      aws sts get-caller-identity || true
+      echo "## aws instances"
+      mapfile -t ids < <(jq -r 'to_entries[] | select(.value.site == "aws") | .value.instance_id // empty' "$nodes_json" | sort -u)
+      if [ "${#ids[@]}" -gt 0 ]; then
+        aws ec2 describe-instances --region "$aws_region" --instance-ids "${ids[@]}" || true
+      fi
+      echo "## aws network interfaces"
+      mapfile -t ifaces < <(jq -r 'to_entries[] | select(.value.site == "aws") | .value.interface_id // empty' "$nodes_json" | sort -u)
+      if [ "${#ifaces[@]}" -gt 0 ]; then
+        aws ec2 describe-network-interfaces --region "$aws_region" --network-interface-ids "${ifaces[@]}" || true
+      fi
+      echo "## aws route tables"
+      aws ec2 describe-route-tables --region "$aws_region" --route-table-ids \
+        "$(jq -r '.aws.rr_route_table // empty' "$fabric_json")" \
+        "$(jq -r '.aws.leaf_route_table_id // empty' "$fabric_json")" || true
+    } >"$dir/aws.txt" 2>&1
+  fi
+
+  azure_rg="$(jq -r '.azure.resource_group_name // empty' "$fabric_json")"
+  azure_route_table="$(jq -r '.azure.route_table_name // empty' "$fabric_json")"
+  if command -v az >/dev/null 2>&1 && [ -n "$azure_rg" ]; then
+    {
+      echo "## azure account"
+      az account show --output json || true
+      echo "## azure vm list"
+      az vm list --resource-group "$azure_rg" --show-details --output json || true
+      echo "## azure nic list"
+      az network nic list --resource-group "$azure_rg" --output json || true
+      echo "## azure route table"
+      if [ -n "$azure_route_table" ]; then
+        az network route-table show --resource-group "$azure_rg" --name "$azure_route_table" --output json || true
+      fi
+      echo "## azure role assignments"
+      az role assignment list --resource-group "$azure_rg" --output json || true
+    } >"$dir/azure.txt" 2>&1
+  fi
+
+  oci_region="$(jq -r '.oci.region // empty' "$fabric_json")"
+  oci_compartment_id="$(jq -r '.oci.compartment_id // empty' "$fabric_json")"
+  oci_route_table_id="$(jq -r '.oci.route_table_id // empty' "$fabric_json")"
+  if command -v oci >/dev/null 2>&1 && [ -n "$oci_region" ] && [ -n "$oci_compartment_id" ]; then
+    {
+      echo "## oci compartment"
+      oci iam compartment get --region "$oci_region" --compartment-id "$oci_compartment_id" || true
+      oci_compartment_name="$(oci iam compartment get --region "$oci_region" --compartment-id "$oci_compartment_id" --query 'data."display-name"' --raw-output 2>/dev/null || true)"
+      echo "oci_compartment_display_name=$oci_compartment_name"
+      if [ "$oci_compartment_name" = "ManagedCompartmentForPaaS" ]; then
+        echo "FAIL: OCI compartment must not be ManagedCompartmentForPaaS"
+        status=1
+      fi
+      echo "## oci instances"
+      while read -r node id; do
+        [ -n "$id" ] || continue
+        echo "### $node $id"
+        oci compute instance get --region "$oci_region" --instance-id "$id" || true
+      done < <(jq -r 'to_entries[] | select(.value.site == "oci") | [.key, (.value.instance_id // "")] | @tsv' "$nodes_json")
+      echo "## oci vnics"
+      while read -r node iface; do
+        [ -n "$iface" ] || continue
+        echo "### $node $iface"
+        oci network vnic get --region "$oci_region" --vnic-id "$iface" || true
+      done < <(jq -r 'to_entries[] | select(.value.site == "oci") | [.key, (.value.interface_id // "")] | @tsv' "$nodes_json")
+      echo "## oci route table"
+      if [ -n "$oci_route_table_id" ]; then
+        oci network route-table get --region "$oci_region" --rt-id "$oci_route_table_id" || true
+      fi
+    } >"$dir/oci.txt" 2>&1
+  fi
+
+  {
+    pve_node="$(jq -r '.pve.node_name // empty' "$fabric_json")"
+    pve_capture_bridge="$(jq -r '.pve.capture_bridge // empty' "$fabric_json")"
+    echo "pve_node=$pve_node"
+    echo "pve_capture_bridge=$pve_capture_bridge"
+    jq -r 'to_entries[] | select(.value.site == "pve") | [.key, (.value.role // ""), (.value.vm_id // ""), (.value.private_ip // ""), (.value.public_ip // "")] | @tsv' "$nodes_json"
+    if command -v qm >/dev/null 2>&1; then
+      while read -r node id; do
+        [ -n "$id" ] || continue
+        echo "### qm config $node $id"
+        qm config "$id" || true
+      done < <(jq -r 'to_entries[] | select(.value.site == "pve") | [.key, (.value.vm_id // "")] | @tsv' "$nodes_json")
+    fi
+  } >"$dir/pve.txt" 2>&1
+
+  return "$status"
 }
 
 generate_configs() {
@@ -740,6 +855,7 @@ run_failover() {
   [ "${#failover_nodes[@]}" -gt 0 ] || return 0
   for node in "${failover_nodes[@]}"; do
     collect_diagnostics "before-failover-${node}"
+    collect_provider_inventory "before-failover-${node}" || status=1
     transfer_src=
     transfer_pid=
     if [ "$failover_transfer_tests" -eq 1 ]; then
@@ -753,6 +869,7 @@ run_failover() {
       finish_failover_transfer "during-failover-${node}" "$transfer_src" "$transfer_pid" || status=1
     fi
     collect_diagnostics "after-failover-${node}"
+    collect_provider_inventory "after-failover-${node}" || status=1
   done
   return "$status"
 }
@@ -763,10 +880,12 @@ run_rejoin() {
   [ "${#failover_nodes[@]}" -gt 0 ] || return 0
   for node in "${failover_nodes[@]}"; do
     collect_diagnostics "before-rejoin-${node}"
+    collect_provider_inventory "before-rejoin-${node}" || status=1
     ssh_node "$node" 'sudo systemctl start routerd-bgp.service routerd.service; sudo systemctl is-active routerd.service routerd-bgp.service' >"$evidence_dir/convergence/rejoin-start-${node}.txt" 2>&1 || status=1
     mark_node_running "$node"
     run_validation_set "after-rejoin-${node}" || status=1
     collect_diagnostics "after-rejoin-${node}"
+    collect_provider_inventory "after-rejoin-${node}" || status=1
   done
   return "$status"
 }
@@ -779,6 +898,7 @@ teardown() {
 record_note
 printf 'label\tstatus\telapsed_seconds\n' >"$evidence_dir/convergence/summary.tsv"
 preflight || mark_failed "preflight"
+collect_provider_inventory "preflight" || mark_failed "provider inventory preflight"
 if [ "$overall" -eq 0 ]; then
   setup_pve_dataplane || mark_failed "PVE dataplane IP setup"
 fi
@@ -804,6 +924,7 @@ if [ "$overall" -eq 0 ]; then
   run_validation_set "initial" || mark_failed "initial validation set"
 fi
 collect_diagnostics "post-matrix"
+collect_provider_inventory "post-matrix" || mark_failed "provider inventory post-matrix"
 if [ "$overall" -eq 0 ]; then
   run_failover || mark_failed "failover"
 fi
