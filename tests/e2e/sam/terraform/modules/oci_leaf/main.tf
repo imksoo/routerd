@@ -161,7 +161,7 @@ resource "oci_core_instance" "node" {
   preserve_boot_volume = false
   freeform_tags = merge(local.common_freeform_tags, {
     Role               = each.value.role
-    cloudedge-mobility = each.key == "client" ? "true" : "false"
+    cloudedge-mobility = each.value.role == "client" ? "true" : "false"
   })
 
   create_vnic_details {
@@ -172,7 +172,7 @@ resource "oci_core_instance" "node" {
     skip_source_dest_check = each.value.skip_source_dest_check
     freeform_tags = merge(local.common_freeform_tags, {
       Role               = each.value.role
-      cloudedge-mobility = each.key == "client" ? "true" : "false"
+      cloudedge-mobility = each.value.role == "client" ? "true" : "false"
     })
   }
 

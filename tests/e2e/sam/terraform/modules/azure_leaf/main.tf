@@ -175,7 +175,7 @@ resource "azurerm_network_interface" "node" {
   accelerated_networking_enabled = false
   tags = merge(local.common_tags, {
     routerd-role       = each.value.role
-    cloudedge-mobility = each.key == "client" ? "true" : "false"
+    cloudedge-mobility = each.value.role == "client" ? "true" : "false"
   })
 
   ip_configuration {
@@ -200,7 +200,7 @@ resource "azurerm_linux_virtual_machine" "node" {
   custom_data                     = each.value.custom_data
   tags = merge(local.common_tags, {
     routerd-role       = each.value.role
-    cloudedge-mobility = each.key == "client" ? "true" : "false"
+    cloudedge-mobility = each.value.role == "client" ? "true" : "false"
   })
 
   admin_ssh_key {
