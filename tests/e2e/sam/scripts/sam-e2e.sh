@@ -106,7 +106,8 @@ node_is_stopped() {
 }
 
 mark_node_running() {
-  local want="$1" node next=()
+  local want="$1" node
+  local next=()
   for node in "${stopped_routers[@]}"; do
     [ "$node" = "$want" ] || next+=("$node")
   done
@@ -154,6 +155,7 @@ mark_failed() {
 
 preflight() {
   echo "== preflight =="
+  local node host
   for node in "${routers[@]}" "${clients[@]}"; do
     host="$(node_field "$node" public_ip)"
     ssh-keyscan -H "$host" >>"$known_hosts" 2>"$evidence_dir/ssh/${node}.keyscan.err" || true
@@ -352,6 +354,7 @@ generate_configs() {
 deploy() {
   [ "$skip_deploy" -eq 0 ] || return 0
   local cfg_dir="$1"
+  local node cfg
   for node in "${routers[@]}"; do
     cfg="$cfg_dir/$node.yaml"
     [ -f "$cfg" ] || { echo "missing config for $node: $cfg" >&2; return 1; }
@@ -368,6 +371,7 @@ deploy() {
 }
 
 setup_pve_dataplane() {
+  local node ip
   for node in "${pve_dataplane_nodes[@]}"; do
     ip="$(node_field "$node" private_ip)"
     ssh_node "$node" "set -e; if ! ip -4 addr show dev eth1 | grep -qw '$ip/24'; then sudo ip addr add '$ip/24' dev eth1; fi; ip -br addr show dev eth1" \
@@ -381,7 +385,7 @@ wait_convergence() {
   local deadline=$((SECONDS + 600))
   local ok=0
   local status_text=TIMEOUT
-  local client_ips_json
+  local client_ips_json node
   client_ips_json="$(jq -c '[to_entries[] | select(.value.role == "client") | .value.private_ip + "/32"]' "$nodes_json")"
   while [ "$SECONDS" -lt "$deadline" ]; do
     ok=1
@@ -412,6 +416,7 @@ JSON"; then
 client_matrix() {
   local label="$1"
   local out="$evidence_dir/matrix/$label"
+  local src dst src_ip dst_ip dst_host src_user src_public dst_user result actual attempt
   mkdir -p "$out"
   : >"$out/summary.tsv"
   for src in "${clients[@]}"; do
@@ -451,6 +456,7 @@ client_matrix() {
 
 setup_client_ssh() {
   local client_known_hosts="$evidence_dir/ssh/client_known_hosts"
+  local dst dst_ip dst_public client client_name
   : >"$client_known_hosts"
   for dst in "${clients[@]}"; do
     dst_ip="$(node_field "$dst" private_ip)"
@@ -682,6 +688,7 @@ performance_matrix() {
   local label="$1"
   local out="$evidence_dir/performance/$label"
   local status=0 src dst src_ip dst_ip src_public dst_public src_site dst_site result public_result
+  local ok attempt sam_tcp_bps sam_udp_bps sam_ping_loss public_tcp_bps public_udp_bps public_ping_loss
   mkdir -p "$out"
   : >"$out/summary.tsv"
   : >"$out/public-summary.tsv"
@@ -800,6 +807,7 @@ run_validation_set() {
 collect_diagnostics() {
   local label="$1"
   local dir="$evidence_dir/diagnostics/$label"
+  local node
   mkdir -p "$dir"
   for node in "${routers[@]}"; do
     ssh_node "$node" 'hostname; sudo routerctl doctor sam || true; sudo routerctl get status -o json || true; sudo routerctl describe MobilityPool/cloudedge -o json || true; sudo routerctl action list || true; ip -br addr; ip route; ip rule; ip neigh show || true; sysctl net.ipv4.ip_forward net.ipv4.conf.all.rp_filter net.ipv4.conf.default.rp_filter net.ipv4.conf.all.proxy_arp net.ipv4.conf.all.accept_local 2>/dev/null || true; journalctl -u routerd.service -u routerd-bgp.service --since "30 minutes ago" --no-pager -n 500' >"$dir/${node}.txt" 2>&1 || true
@@ -810,6 +818,7 @@ collect_load_balance_report() {
   [ "$load_balance_report" -eq 1 ] || return 0
   local label="$1"
   local dir="$evidence_dir/diagnostics/load-balance-$label"
+  local node
   mkdir -p "$dir"
   : >"$dir/owner-table.tsv"
   : >"$dir/owner-summary.tsv"
@@ -980,41 +989,41 @@ run_failover_transfer_smoke() {
 
 run_failover() {
   local status=0
-  local transfer_src transfer_pid
+  local failover_node transfer_src transfer_pid
   [ "${#failover_nodes[@]}" -gt 0 ] || return 0
-  for node in "${failover_nodes[@]}"; do
-    collect_diagnostics "before-failover-${node}"
-    collect_provider_inventory "before-failover-${node}" || status=1
+  for failover_node in "${failover_nodes[@]}"; do
+    collect_diagnostics "before-failover-${failover_node}"
+    collect_provider_inventory "before-failover-${failover_node}" || status=1
     transfer_src=
     transfer_pid=
     if [ "$failover_transfer_tests" -eq 1 ]; then
-      read -r transfer_src transfer_pid < <(start_failover_transfer "during-failover-${node}" "$node") || status=1
+      read -r transfer_src transfer_pid < <(start_failover_transfer "during-failover-${failover_node}" "$failover_node") || status=1
       sleep 3
     fi
-    ssh_node "$node" 'sudo systemctl stop routerd.service routerd-bgp.service' >"$evidence_dir/convergence/failover-stop-${node}.txt" 2>&1
-    stopped_routers+=("$node")
-    run_validation_set "after-failover-${node}" || status=1
+    ssh_node "$failover_node" 'sudo systemctl stop routerd.service routerd-bgp.service' >"$evidence_dir/convergence/failover-stop-${failover_node}.txt" 2>&1
+    stopped_routers+=("$failover_node")
+    run_validation_set "after-failover-${failover_node}" || status=1
     if [ "$failover_transfer_tests" -eq 1 ]; then
-      finish_failover_transfer "during-failover-${node}" "$transfer_src" "$transfer_pid" || status=1
+      finish_failover_transfer "during-failover-${failover_node}" "$transfer_src" "$transfer_pid" || status=1
     fi
-    collect_diagnostics "after-failover-${node}"
-    collect_provider_inventory "after-failover-${node}" || status=1
+    collect_diagnostics "after-failover-${failover_node}"
+    collect_provider_inventory "after-failover-${failover_node}" || status=1
   done
   return "$status"
 }
 
 run_rejoin() {
-  local status=0 node
+  local status=0 failover_node
   [ "$rejoin_after_failover" -eq 1 ] || return 0
   [ "${#failover_nodes[@]}" -gt 0 ] || return 0
-  for node in "${failover_nodes[@]}"; do
-    collect_diagnostics "before-rejoin-${node}"
-    collect_provider_inventory "before-rejoin-${node}" || status=1
-    ssh_node "$node" 'sudo systemctl start routerd-bgp.service routerd.service; sudo systemctl is-active routerd.service routerd-bgp.service' >"$evidence_dir/convergence/rejoin-start-${node}.txt" 2>&1 || status=1
-    mark_node_running "$node"
-    run_validation_set "after-rejoin-${node}" || status=1
-    collect_diagnostics "after-rejoin-${node}"
-    collect_provider_inventory "after-rejoin-${node}" || status=1
+  for failover_node in "${failover_nodes[@]}"; do
+    collect_diagnostics "before-rejoin-${failover_node}"
+    collect_provider_inventory "before-rejoin-${failover_node}" || status=1
+    ssh_node "$failover_node" 'sudo systemctl start routerd-bgp.service routerd.service; sudo systemctl is-active routerd.service routerd-bgp.service' >"$evidence_dir/convergence/rejoin-start-${failover_node}.txt" 2>&1 || status=1
+    mark_node_running "$failover_node"
+    run_validation_set "after-rejoin-${failover_node}" || status=1
+    collect_diagnostics "after-rejoin-${failover_node}"
+    collect_provider_inventory "after-rejoin-${failover_node}" || status=1
   done
   return "$status"
 }
@@ -1058,10 +1067,14 @@ fi
 collect_diagnostics "post-matrix"
 collect_provider_inventory "post-matrix" || mark_failed "provider inventory post-matrix"
 if [ "$overall" -eq 0 ]; then
-  run_failover || mark_failed "failover"
-fi
-if [ "$overall" -eq 0 ]; then
-  run_rejoin || mark_failed "rejoin"
+  failover_status=0
+  rejoin_status=0
+  run_failover || failover_status=$?
+  if [ "$rejoin_after_failover" -eq 1 ] && [ "${#failover_nodes[@]}" -gt 0 ]; then
+    run_rejoin || rejoin_status=$?
+  fi
+  [ "$failover_status" -eq 0 ] || mark_failed "failover"
+  [ "$rejoin_status" -eq 0 ] || mark_failed "rejoin"
 fi
 teardown || mark_failed "teardown"
 
