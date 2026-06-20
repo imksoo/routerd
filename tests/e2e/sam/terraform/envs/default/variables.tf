@@ -17,6 +17,16 @@ variable "expires_at" {
   type        = string
 }
 
+variable "topology_scale" {
+  description = "SAM topology scale. Use single for the first low-cost apply, full for the target 2RR/8leaf matrix."
+  type        = string
+  default     = "full"
+  validation {
+    condition     = contains(["single", "full"], var.topology_scale)
+    error_message = "topology_scale must be either single or full."
+  }
+}
+
 # --- SSH ---
 
 variable "ssh_public_key" {

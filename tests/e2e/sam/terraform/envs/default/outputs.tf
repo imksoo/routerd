@@ -35,6 +35,7 @@ output "nodes" {
 output "fabric" {
   value = {
     run_id              = var.run_id
+    topology_scale      = var.topology_scale
     mobility_prefix     = "10.77.60.0/24"
     tunnel_inner_prefix = "10.255.0.0/24"
     wg_port             = 51820

@@ -1,3 +1,48 @@
+locals {
+  rr_nodes = var.topology_scale == "single" ? {
+    aws-rr-a = { private_ip = "10.77.10.10" }
+    } : {
+    aws-rr-a = { private_ip = "10.77.10.10" }
+    aws-rr-b = { private_ip = "10.77.10.11" }
+  }
+
+  aws_extra_leaf_nodes = var.topology_scale == "single" ? {} : {
+    aws-leaf-b = {
+      router_private_ip = "10.77.60.5"
+      client_name       = "aws-client-b"
+      client_private_ip = "10.77.60.16"
+    }
+  }
+
+  azure_extra_leaf_nodes = var.topology_scale == "single" ? {} : {
+    azure-leaf-b = {
+      router_private_ip = "10.77.60.15"
+      client_name       = "azure-client-b"
+      client_private_ip = "10.77.60.17"
+    }
+  }
+
+  oci_extra_leaf_nodes = var.topology_scale == "single" ? {} : {
+    oci-leaf-b = {
+      router_private_ip = "10.77.60.25"
+      client_name       = "oci-client-b"
+      client_private_ip = "10.77.60.18"
+    }
+  }
+
+  pve_extra_leaf_nodes = var.topology_scale == "single" ? {} : {
+    pve-leaf-b = {
+      router_vm_id                = 112
+      router_ipv4_cidr            = "10.77.60.35/24"
+      router_management_ipv4_cidr = "192.168.1.135/24"
+      client_name                 = "pve-client-b"
+      client_vm_id                = 115
+      client_ipv4_cidr            = "10.77.60.19/24"
+      client_management_ipv4_cidr = "192.168.1.116/24"
+    }
+  }
+}
+
 module "aws_rr" {
   source = "../../modules/aws_rr"
 
@@ -7,10 +52,7 @@ module "aws_rr" {
   expires_at  = var.expires_at
   vpc_cidr    = "10.77.0.0/16"
   subnet_cidr = "10.77.10.0/24"
-  rr_nodes = {
-    aws-rr-a = { private_ip = "10.77.10.10" }
-    aws-rr-b = { private_ip = "10.77.10.11" }
-  }
+  rr_nodes        = local.rr_nodes
   ami_id          = var.aws_ami_id
   instance_type   = "t3.medium"
   key_name        = var.aws_key_name
@@ -33,13 +75,7 @@ module "aws_leaf" {
   subnet_cidr          = "10.77.60.0/24"
   router_private_ip    = "10.77.60.4"
   client_private_ip    = "10.77.60.11"
-  extra_leaf_nodes = {
-    aws-leaf-b = {
-      router_private_ip = "10.77.60.5"
-      client_name       = "aws-client-b"
-      client_private_ip = "10.77.60.16"
-    }
-  }
+  extra_leaf_nodes    = local.aws_extra_leaf_nodes
   ami_id               = var.aws_ami_id
   instance_type        = "t3.medium"
   client_instance_type = "t3.micro"
@@ -60,13 +96,7 @@ module "azure_leaf" {
   client_name       = "azure-client-a"
   router_private_ip = "10.77.60.14"
   client_private_ip = "10.77.60.12"
-  extra_leaf_nodes = {
-    azure-leaf-b = {
-      router_private_ip = "10.77.60.15"
-      client_name       = "azure-client-b"
-      client_private_ip = "10.77.60.17"
-    }
-  }
+  extra_leaf_nodes = local.azure_extra_leaf_nodes
   admin_username  = var.azure_admin_username
   ssh_public_key  = var.ssh_public_key
   vm_size         = "Standard_B1s"
@@ -88,13 +118,7 @@ module "oci_leaf" {
   client_name         = "oci-client-a"
   router_private_ip   = "10.77.60.24"
   client_private_ip   = "10.77.60.13"
-  extra_leaf_nodes = {
-    oci-leaf-b = {
-      router_private_ip = "10.77.60.25"
-      client_name       = "oci-client-b"
-      client_private_ip = "10.77.60.18"
-    }
-  }
+  extra_leaf_nodes    = local.oci_extra_leaf_nodes
   image_id            = var.oci_image_id
   shape               = var.oci_shape
   shape_ocpus         = var.oci_shape_ocpus
@@ -126,17 +150,7 @@ module "pve_leaf" {
   client_ipv4_cidr            = "10.77.60.15/24"
   router_management_ipv4_cidr = "192.168.1.134/24"
   client_management_ipv4_cidr = "192.168.1.115/24"
-  extra_leaf_nodes = {
-    pve-leaf-b = {
-      router_vm_id                = 112
-      router_ipv4_cidr            = "10.77.60.35/24"
-      router_management_ipv4_cidr = "192.168.1.135/24"
-      client_name                 = "pve-client-b"
-      client_vm_id                = 115
-      client_ipv4_cidr            = "10.77.60.19/24"
-      client_management_ipv4_cidr = "192.168.1.116/24"
-    }
-  }
+  extra_leaf_nodes = local.pve_extra_leaf_nodes
   gateway_ipv4   = "192.168.1.1"
   ssh_public_key = var.ssh_public_key
   username       = var.pve_username

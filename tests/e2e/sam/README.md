@@ -32,6 +32,13 @@ cp terraform.tfvars.example terraform.tfvars
 # terraform.tfvars を編集して実際の値を記入
 ```
 
+`topology_scale` は実機コストと試験段階に合わせて選ぶ:
+
+- `single`: 最初の apply 確認用。AWS RR 1台と、AWS/Azure/OCI/PVE
+  各siteの leaf/client 1組だけを作る。
+- `full`: 最終matrix用。AWS RR 2台と、AWS/Azure/OCI/PVE
+  各siteの leaf/client 2組を作る。
+
 ### 3. インフラ構築
 
 ```bash
@@ -65,6 +72,8 @@ tofu destroy
 ```
 
 ## Standard topology
+
+`topology_scale = "full"` の標準トポロジ:
 
 ```
   AWS VPC 10.77.0.0/16

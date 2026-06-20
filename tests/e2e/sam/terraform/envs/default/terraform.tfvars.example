@@ -12,6 +12,11 @@ run_id     = "sam-e2e-YYYYMMDD-HHMM"
 commit     = "v20260619.1730"
 expires_at = "2026-06-21T00:00:00Z"
 
+# Start with "single" for the low-cost first apply:
+#   1 AWS RR + one leaf/client pair per AWS/Azure/OCI/PVE site.
+# Use "full" for the target 2RR + 8leaf + 8client matrix.
+topology_scale = "single"
+
 # --- SSH ---
 # Public key for the operator identity used across all providers.
 ssh_public_key = "ssh-ed25519 AAAA..."
