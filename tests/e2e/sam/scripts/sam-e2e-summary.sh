@@ -100,9 +100,18 @@ if [ -d "$evidence_dir/failover-transfer" ]; then
     label="${label#"$evidence_dir/failover-transfer/"}"
     rc="$(awk -F= '/^rc=/ {print $2}' "$file" | tail -n 1)"
     bytes="$(awk '/routerd-.*\.bin$/ {print $5}' "$file" | tail -n 1)"
+    status_file="$evidence_dir/failover-transfer/$label/status.txt"
+    status=
+    required=
+    if [ -f "$status_file" ]; then
+      status="$(awk -F= '/^result=/ {print $2}' "$status_file" | tail -n 1)"
+      required="$(awk -F= '/^required=/ {print $2}' "$status_file" | tail -n 1)"
+    fi
     [ -n "$rc" ] || rc=missing
     [ -n "$bytes" ] || bytes=missing
-    printf '%s\trc=%s\tbytes=%s\n' "$label" "$rc" "$bytes"
+    [ -n "$status" ] || status=unknown
+    [ -n "$required" ] || required=unknown
+    printf '%s\tstatus=%s\trequired=%s\trc=%s\tbytes=%s\n' "$label" "$status" "$required" "$rc" "$bytes"
   done
 fi
 

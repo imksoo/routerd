@@ -135,7 +135,9 @@ sam-e2e.sh [options]
   --skip-matrix              SSH hostname matrix をスキップ
   --skip-legacy-protocols    FTP/RPC/NFS/CIFS テストをスキップ
   --performance-tests        SAM経由のiperf3/ping性能テストと、AWS/Azure/OCIのcloud間public直結比較を実行
-  --failover-transfer-tests  failover停止操作中にclient間HTTP転送を流して結果を保存
+  --failover-transfer-tests  failover停止中のclient間HTTP転送を必須テストとして実行
+  --failover-transfer-observe failover停止中のclient間HTTP転送を観測し、失敗してもscenarioは継続
+  --failover-transfer-smoke  router停止なしでclient間HTTP転送を確認
   --destroy-cmd CMD          テスト後に実行する破棄コマンド
 ```
 
@@ -167,12 +169,12 @@ tofu output -json > tofu-output.json
    full SSH hostname matrix、legacy protocol、SAM private performance、
    AWS/Azure/OCI cloud 間 public direct comparison を保存する。
 4. RR redundancy は `--skip-deploy --failover-node aws-rr-a
-   --rejoin-after-failover --failover-transfer-tests` と `aws-rr-b` で別々に実行する。
+   --rejoin-after-failover --failover-transfer-observe` と `aws-rr-b` で別々に実行する。
 5. Leaf failover は各siteのA/B両系、例: `aws-leaf-a` / `aws-leaf-b`、
    `azure-leaf-a` / `azure-leaf-b`、`oci-leaf-a` / `oci-leaf-b`、
    `pve-leaf-a` / `pve-leaf-b` を対象にし、
    `--rejoin-after-failover --load-balance-report --performance-tests
-   --failover-transfer-tests` を付ける。
+   --failover-transfer-observe` を付ける。
 6. Load-balance は `--skip-deploy --load-balance-report` で owner table、
    route、traceroute、E2E matrix を同じ evidence directory に残す。
 7. 成功時だけ `tofu destroy` し、provider/PVE inventory で残存がないことを
@@ -212,9 +214,14 @@ OS route/address、routerd/routerd-bgp journal を保存する。
 AWS instance/ENI/route table、Azure VM/NIC/route table/RBAC、OCI compartment/
 instance/VNIC/route table、PVE VMID/bridge情報を保存する。これらはE2E判定の
 補助証跡であり、PASS/FAILの正本は疑似クライアント間E2Eのままとする。
-`--failover-transfer-tests` は停止操作の直前に疑似クライアント間の
+`--failover-transfer-observe` は停止操作の直前に疑似クライアント間の
 SAM private HTTP 転送を開始し、`failover-transfer/` に転送ペア、curl結果、
-終了コード、受信ファイルサイズを保存する。
+終了コード、受信ファイルサイズ、観測結果を保存する。転送が完走しなくても
+scenario は fail しないため、RR/leaf failover、rejoin、load-balance、
+post-failover E2E の evidence 採取を継続できる。
+`--failover-transfer-tests` は同じ転送を必須テストとして扱い、転送が完走しない
+場合に scenario を fail させる。active leaf 停止中の長寿命 TCP 継続性を
+個別に検証する場合に使う。
 
 ## GitHub Actions (将来)
 

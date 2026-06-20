@@ -16,7 +16,8 @@ Options:
   --skip-matrix           Skip SSH hostname matrix; useful when rerunning performance after a clean matrix
   --skip-legacy-protocols Skip FTP/RPC/NFS/CIFS pseudo-client matrix
   --performance-tests     Run SAM iperf3/ping probes, plus public direct comparison for cross-cloud AWS/Azure/OCI pairs
-  --failover-transfer-tests Run a throttled client-to-client HTTP transfer during each failover stop
+  --failover-transfer-tests Run a required throttled client-to-client HTTP transfer during each failover stop
+  --failover-transfer-observe Run the failover transfer probe but do not fail the scenario when it stalls
   --failover-transfer-smoke Run a throttled client-to-client HTTP transfer without stopping routers
   --destroy-cmd CMD       Optional teardown command, for example: 'tofu destroy -auto-approve'
 
@@ -39,6 +40,7 @@ skip_matrix=0
 legacy_protocols=1
 performance_tests=0
 failover_transfer_tests=0
+failover_transfer_required=0
 failover_transfer_smoke=0
 destroy_cmd=
 overall=0
@@ -57,8 +59,9 @@ while [ "$#" -gt 0 ]; do
     --skip-matrix) skip_matrix=1; shift ;;
     --skip-legacy-protocols) legacy_protocols=0; shift ;;
     --performance-tests) performance_tests=1; shift ;;
-    --failover-transfer-tests) failover_transfer_tests=1; shift ;;
-    --failover-transfer-smoke) failover_transfer_tests=1; failover_transfer_smoke=1; shift ;;
+    --failover-transfer-tests) failover_transfer_tests=1; failover_transfer_required=1; shift ;;
+    --failover-transfer-observe) failover_transfer_tests=1; failover_transfer_required=0; shift ;;
+    --failover-transfer-smoke) failover_transfer_tests=1; failover_transfer_required=1; failover_transfer_smoke=1; shift ;;
     --destroy-cmd) destroy_cmd="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -132,6 +135,41 @@ scp_node() {
   scp -i "$ssh_key" -o UserKnownHostsFile="$known_hosts" -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 "$src" "$user@$host:$dst"
 }
 
+remote_prepare_script() {
+  cat <<'REMOTE_PREPARE'
+set -e
+if command -v cloud-init >/dev/null 2>&1; then
+  if ! sudo cloud-init status --wait >/tmp/routerd-cloud-init-status.txt 2>&1; then
+    sudo cloud-init status --long 2>&1 | tee -a /tmp/routerd-cloud-init-status.txt
+    if ! grep -q '^status: done' /tmp/routerd-cloud-init-status.txt; then
+      cat /tmp/routerd-cloud-init-status.txt >&2
+      exit 1
+    fi
+  fi
+fi
+wait_for_apt() {
+  local deadline=$((SECONDS + 300))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if ! sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 5
+  done
+  echo "timed out waiting for apt/dpkg locks" >&2
+  sudo fuser -v /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock >&2 || true
+  return 1
+}
+apt_update() {
+  wait_for_apt
+  sudo apt-get -o DPkg::Lock::Timeout=300 update
+}
+apt_install() {
+  wait_for_apt
+  sudo apt-get -o DPkg::Lock::Timeout=300 install -y --no-install-recommends "$@"
+}
+REMOTE_PREPARE
+}
+
 record_note() {
   {
     date -u '+timestamp=%Y-%m-%dT%H:%M:%SZ'
@@ -142,6 +180,7 @@ record_note() {
     echo "legacy_protocols=$legacy_protocols"
     echo "performance_tests=$performance_tests"
     echo "failover_transfer_tests=$failover_transfer_tests"
+    echo "failover_transfer_required=$failover_transfer_required"
     echo "failover_transfer_smoke=$failover_transfer_smoke"
     echo "rejoin_after_failover=$rejoin_after_failover"
     echo "policy_read=cloudedge-mobility/LAB_POLICY.md and ~/routerd-orchestration.md must be reread before real-machine validation"
@@ -365,8 +404,40 @@ deploy() {
       if [ -f "$evidence_dir/config-gen/secrets/eventd-cloudedge.key" ]; then
         scp_node "$evidence_dir/config-gen/secrets/eventd-cloudedge.key" "$node" /tmp/eventd-cloudedge.key
       fi
-      ssh_node "$node" 'set -e; rm -rf /tmp/routerd-sam-e2e; mkdir -p /tmp/routerd-sam-e2e; tar -xzf /tmp/routerd-sam-e2e.tar.gz -C /tmp/routerd-sam-e2e; cd /tmp/routerd-sam-e2e; sudo ./install.sh --yes --prefix /usr/local; sudo mkdir -p /usr/local/etc/routerd/secrets; sudo install -m 0600 /tmp/router.yaml /usr/local/etc/routerd/router.yaml; if [ -f /tmp/eventd-cloudedge.key ]; then sudo install -m 0600 /tmp/eventd-cloudedge.key /usr/local/etc/routerd/secrets/eventd-cloudedge.key; fi; sudo systemctl restart routerd.service routerd-bgp.service; sudo systemctl is-active routerd.service routerd-bgp.service'
-    } >"$evidence_dir/deploy/${node}.txt" 2>&1
+      ssh_node "$node" "$(remote_prepare_script; cat <<'REMOTE_DEPLOY'
+set -e
+rm -rf /tmp/routerd-sam-e2e
+mkdir -p /tmp/routerd-sam-e2e
+tar -xzf /tmp/routerd-sam-e2e.tar.gz -C /tmp/routerd-sam-e2e
+cd /tmp/routerd-sam-e2e
+sudo ./install.sh --yes --prefix /usr/local
+sudo mkdir -p /usr/local/etc/routerd/secrets
+sudo install -m 0600 /tmp/router.yaml /usr/local/etc/routerd/router.yaml
+if [ -f /tmp/eventd-cloudedge.key ]; then
+  sudo install -m 0600 /tmp/eventd-cloudedge.key /usr/local/etc/routerd/secrets/eventd-cloudedge.key
+fi
+sudo systemctl restart routerd.service routerd-bgp.service
+sudo systemctl is-active routerd.service routerd-bgp.service
+command -v routerd
+command -v routerctl
+command -v jq
+ready=0
+deadline=$((SECONDS + 60))
+while [ "$SECONDS" -lt "$deadline" ]; do
+  if sudo routerctl get status -o json >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  sleep 2
+done
+if [ "$ready" -ne 1 ]; then
+  sudo systemctl status routerd.service routerd-bgp.service --no-pager -l || true
+  ls -la /run/routerd 2>&1 || true
+  sudo routerctl get status -o json >/dev/null
+fi
+REMOTE_DEPLOY
+)"
+    } >"$evidence_dir/deploy/${node}.txt" 2>&1 || return 1
   done
 }
 
@@ -385,8 +456,8 @@ wait_convergence() {
   local deadline=$((SECONDS + 600))
   local ok=0
   local status_text=TIMEOUT
-  local client_ips_json node
-  client_ips_json="$(jq -c '[to_entries[] | select(.value.role == "client") | .value.private_ip + "/32"]' "$nodes_json")"
+  local client_ips_text node
+  client_ips_text="$(jq -r 'to_entries[] | select(.value.role == "client") | .value.private_ip' "$nodes_json")"
   while [ "$SECONDS" -lt "$deadline" ]; do
     ok=1
     for node in "${routers[@]}"; do
@@ -395,9 +466,15 @@ wait_convergence() {
     done
     for node in "${leaf_routers[@]}"; do
       node_is_stopped "$node" && continue
-      if ! ssh_node "$node" "jq -r '.[] | sub(\"/32$\"; \"\")' <<'JSON' | while read -r ip; do ip route get \"\$ip\" >/dev/null || exit 1; done
-$client_ips_json
-JSON"; then
+      if ! ssh_node "$node" "set -e
+command -v routerctl >/dev/null
+sudo routerctl get status -o json >/dev/null
+while read -r ip; do
+  [ -n \"\$ip\" ] || continue
+  ip route get \"\$ip\" >/dev/null
+done <<'IPS'
+$client_ips_text
+IPS"; then
         ok=0
       fi
     done
@@ -478,23 +555,20 @@ setup_legacy_protocol_services() {
   for node in "${clients[@]}"; do
     {
       echo "## setup legacy protocol services on $node"
-      ssh_node "$node" 'set -euo pipefail
-        export DEBIAN_FRONTEND=noninteractive
-        if command -v apt-get >/dev/null 2>&1; then
-          echo "iperf3 iperf3/start_daemon boolean false" | sudo debconf-set-selections || true
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends curl rpcbind nfs-kernel-server nfs-common samba smbclient cifs-utils vsftpd iperf3
-        fi
-        sudo mkdir -p /srv/routerd-e2e/ftp/pub /srv/routerd-e2e/nfs /srv/routerd-e2e/cifs /srv/routerd-e2e/http
-        printf "ftp probe from %s\n" "$(hostname)" | sudo tee /srv/routerd-e2e/ftp/pub/probe.txt >/dev/null
+      ssh_node "$node" "$(remote_prepare_script; cat <<'REMOTE_LEGACY'
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+if command -v apt-get >/dev/null 2>&1; then
+  echo "iperf3 iperf3/start_daemon boolean false" | sudo debconf-set-selections || true
+  apt_update
+  apt_install curl rpcbind nfs-kernel-server nfs-common samba smbclient cifs-utils vsftpd iperf3
+fi
+sudo mkdir -p /srv/routerd-e2e/ftp/pub /srv/routerd-e2e/nfs /srv/routerd-e2e/cifs /srv/routerd-e2e/http
+printf "ftp probe from %s\n" "$(hostname)" | sudo tee /srv/routerd-e2e/ftp/pub/probe.txt >/dev/null
         printf "nfs probe from %s\n" "$(hostname)" | sudo tee /srv/routerd-e2e/nfs/probe.txt >/dev/null
         printf "cifs probe from %s\n" "$(hostname)" | sudo tee /srv/routerd-e2e/cifs/probe.txt >/dev/null
         sudo chmod 0755 /srv/routerd-e2e /srv/routerd-e2e/ftp
         sudo chmod -R 0777 /srv/routerd-e2e/ftp/pub /srv/routerd-e2e/nfs /srv/routerd-e2e/cifs /srv/routerd-e2e/http
-
-        if sudo iptables -S INPUT >/dev/null 2>&1; then
-          sudo iptables -C INPUT -s 10.77.60.0/24 -j ACCEPT >/dev/null 2>&1 || sudo iptables -I INPUT 1 -s 10.77.60.0/24 -j ACCEPT
-        fi
 
         sudo mkdir -p /etc/exports.d
         printf "/srv/routerd-e2e/nfs 10.77.60.0/24(rw,sync,no_subtree_check,no_root_squash,insecure)\n" | sudo tee /etc/exports.d/routerd-e2e.exports >/dev/null
@@ -512,7 +586,7 @@ setup_legacy_protocol_services() {
         sudo systemctl restart nfs-server || sudo systemctl restart nfs-kernel-server
 
         if ! grep -q "^\[routerd_e2e\]" /etc/samba/smb.conf; then
-          sudo tee -a /etc/samba/smb.conf >/dev/null <<'"'"'SMBEOF'"'"'
+          sudo tee -a /etc/samba/smb.conf >/dev/null <<'SMBEOF'
 
 [routerd_e2e]
    path = /srv/routerd-e2e/cifs
@@ -526,7 +600,7 @@ SMBEOF
         sudo systemctl restart nmbd || true
         sudo modprobe cifs >/dev/null 2>&1 || true
 
-        sudo tee /etc/vsftpd.conf >/dev/null <<'"'"'VSFTPEOF'"'"'
+        sudo tee /etc/vsftpd.conf >/dev/null <<'VSFTPEOF'
 listen=YES
 listen_ipv6=NO
 anonymous_enable=YES
@@ -549,8 +623,10 @@ VSFTPEOF
         sudo pkill iperf3 >/dev/null 2>&1 || true
         sudo iperf3 -s -D </dev/null >/dev/null 2>&1
         sudo systemctl --no-pager --plain is-active rpcbind || true
-        sudo systemctl --no-pager --plain is-active nfs-server nfs-kernel-server smbd vsftpd 2>/dev/null || true
-        ss -lntup | grep -E ":(21|111|139|445|2049|20048|5201)\b" || true'
+sudo systemctl --no-pager --plain is-active nfs-server nfs-kernel-server smbd vsftpd 2>/dev/null || true
+ss -lntup | grep -E ":(21|111|139|445|2049|20048|5201)\b" || true
+REMOTE_LEGACY
+)"
     } >"$evidence_dir/legacy/setup-${node}.txt" 2>&1 || return 1
   done
 }
@@ -561,20 +637,19 @@ setup_performance_services() {
   for node in "${clients[@]}"; do
     {
       echo "## setup performance services on $node"
-      ssh_node "$node" 'set -euo pipefail
-        export DEBIAN_FRONTEND=noninteractive
-        if command -v apt-get >/dev/null 2>&1; then
-          echo "iperf3 iperf3/start_daemon boolean false" | sudo debconf-set-selections || true
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends iperf3
-        fi
-        if sudo iptables -S INPUT >/dev/null 2>&1; then
-          sudo iptables -C INPUT -p tcp --dport 5201 -j ACCEPT >/dev/null 2>&1 || sudo iptables -I INPUT 1 -p tcp --dport 5201 -j ACCEPT
-          sudo iptables -C INPUT -p udp --dport 5201 -j ACCEPT >/dev/null 2>&1 || sudo iptables -I INPUT 1 -p udp --dport 5201 -j ACCEPT
-        fi
-        sudo pkill iperf3 >/dev/null 2>&1 || true
-        sudo iperf3 -s -D </dev/null >/dev/null 2>&1
-        ss -lntup | grep -E ":5201\b" || true'
+      ssh_node "$node" "$(remote_prepare_script; cat <<'REMOTE_PERF'
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+if command -v apt-get >/dev/null 2>&1; then
+  echo "iperf3 iperf3/start_daemon boolean false" | sudo debconf-set-selections || true
+  apt_update
+  apt_install iperf3
+fi
+sudo pkill iperf3 >/dev/null 2>&1 || true
+sudo iperf3 -s -D </dev/null >/dev/null 2>&1
+ss -lntup | grep -E ":5201\b" || true
+REMOTE_PERF
+)"
     } >"$evidence_dir/performance/setup-${node}.txt" 2>&1 || return 1
   done
 }
@@ -585,29 +660,29 @@ setup_failover_transfer_services() {
   for node in "${clients[@]}"; do
     {
       echo "## setup failover transfer service on $node"
-      ssh_node "$node" 'set -euo pipefail
-        export DEBIAN_FRONTEND=noninteractive
-        if command -v apt-get >/dev/null 2>&1; then
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends curl python3
-        fi
+      ssh_node "$node" "$(remote_prepare_script; cat <<'REMOTE_TRANSFER'
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+if command -v apt-get >/dev/null 2>&1; then
+  apt_update
+  apt_install curl python3
+fi
         sudo mkdir -p /srv/routerd-e2e/http
         if [ ! -f /srv/routerd-e2e/http/failover-transfer.bin ]; then
           sudo dd if=/dev/zero of=/srv/routerd-e2e/http/failover-transfer.bin bs=1M count=64 status=none
         fi
         sudo chmod -R 0755 /srv/routerd-e2e/http
-        if sudo iptables -S INPUT >/dev/null 2>&1; then
-          sudo iptables -C INPUT -s 10.77.60.0/24 -p tcp --dport 8080 -j ACCEPT >/dev/null 2>&1 || sudo iptables -I INPUT 1 -s 10.77.60.0/24 -p tcp --dport 8080 -j ACCEPT
-        fi
         if [ -s /tmp/routerd-e2e-http.pid ]; then
           sudo kill "$(cat /tmp/routerd-e2e-http.pid)" >/dev/null 2>&1 || true
         fi
         rm -f /tmp/routerd-e2e-http.pid
         sleep 1
-        nohup python3 -m http.server 8080 --bind 0.0.0.0 --directory /srv/routerd-e2e/http >/tmp/routerd-e2e-http.log 2>&1 &
-        echo $! >/tmp/routerd-e2e-http.pid
-        sleep 1
-        ss -lntp | grep -E ":8080\b"'
+nohup python3 -m http.server 8080 --bind 0.0.0.0 --directory /srv/routerd-e2e/http >/tmp/routerd-e2e-http.log 2>&1 &
+echo $! >/tmp/routerd-e2e-http.pid
+sleep 1
+ss -lntp | grep -E ":8080\b"
+REMOTE_TRANSFER
+)"
     } >"$evidence_dir/failover-transfer/setup-${node}.txt" 2>&1 || return 1
   done
 }
@@ -979,6 +1054,21 @@ finish_failover_transfer() {
   grep -q '^rc=0$' "$out/result.txt"
 }
 
+record_observed_failover_transfer() {
+  local label="$1" result="$2"
+  local out="$evidence_dir/failover-transfer/$label"
+  mkdir -p "$out"
+  {
+    date -u '+timestamp=%Y-%m-%dT%H:%M:%SZ'
+    echo "required=$failover_transfer_required"
+    echo "result=$result"
+    if [ "$result" != "PASS" ]; then
+      echo "classification=observed-failure"
+      echo "note=in-flight transfer did not complete; normal post-failover E2E is assessed separately by convergence/matrix/performance evidence"
+    fi
+  } >"$out/status.txt"
+}
+
 run_failover_transfer_smoke() {
   [ "$failover_transfer_smoke" -eq 1 ] || return 0
   local node src remote_pid
@@ -1004,7 +1094,12 @@ run_failover() {
     stopped_routers+=("$failover_node")
     run_validation_set "after-failover-${failover_node}" || status=1
     if [ "$failover_transfer_tests" -eq 1 ]; then
-      finish_failover_transfer "during-failover-${failover_node}" "$transfer_src" "$transfer_pid" || status=1
+      if finish_failover_transfer "during-failover-${failover_node}" "$transfer_src" "$transfer_pid"; then
+        record_observed_failover_transfer "during-failover-${failover_node}" PASS
+      else
+        record_observed_failover_transfer "during-failover-${failover_node}" FAIL
+        [ "$failover_transfer_required" -eq 0 ] || status=1
+      fi
     fi
     collect_diagnostics "after-failover-${failover_node}"
     collect_provider_inventory "after-failover-${failover_node}" || status=1

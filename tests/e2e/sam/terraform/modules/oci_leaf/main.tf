@@ -27,7 +27,7 @@ locals {
       role                   = "client"
       skip_source_dest_check = false
       fault_domain           = "FAULT-DOMAIN-2"
-      user_data              = null
+      user_data              = base64encode(local.client_cloud_init)
     }
   }
 
@@ -51,7 +51,7 @@ locals {
       role                   = "client"
       skip_source_dest_check = false
       fault_domain           = "FAULT-DOMAIN-2"
-      user_data              = null
+      user_data              = base64encode(local.client_cloud_init)
     }
   }
 
@@ -64,6 +64,13 @@ locals {
       - [bash, -lc, 'bash /tmp/oci-cli-install.sh --accept-all-defaults --install-dir /opt/oci-cli --exec-dir /usr/local/bin --script-dir /usr/local/bin']
       - [bash, -lc, 'oci --version']
       - [bash, -lc, 'rm -f /tmp/oci-cli-install.sh']
+  CLOUD_INIT
+
+  client_cloud_init = <<-CLOUD_INIT
+    #cloud-config
+    runcmd:
+      - [bash, -lc, 'iptables -C INPUT -p tcp --dport 5201 -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p tcp --dport 5201 -j ACCEPT']
+      - [bash, -lc, 'iptables -C INPUT -p udp --dport 5201 -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p udp --dport 5201 -j ACCEPT']
   CLOUD_INIT
 }
 
