@@ -32,7 +32,7 @@ locals {
 
   pve_extra_leaf_nodes = var.topology_scale == "single" ? {} : {
     pve-leaf-b = {
-      router_vm_id                = 112
+      router_vm_id                = 181
       router_ipv4_cidr            = "10.77.60.35/24"
       router_management_ipv4_cidr = "192.168.1.135/24"
       client_name                 = "pve-client-b"
