@@ -42,6 +42,9 @@ cp terraform.tfvars.example terraform.tfvars
 ### 3. インフラ構築
 
 ```bash
+../../scripts/sam-preflight.sh \
+  --tfvars terraform.tfvars \
+  --evidence-dir /tmp/sam-e2e-preflight
 tofu init
 tofu plan
 tofu apply
@@ -152,6 +155,7 @@ OCI の `compartment_ocid` は display name が `ManagedCompartmentForPaaS`
 
 ```bash
 cd tests/e2e/sam/terraform/envs/default
+../../scripts/sam-preflight.sh --tfvars terraform.tfvars --evidence-dir /tmp/sam-preflight
 tofu plan
 tofu apply
 tofu output -json > tofu-output.json
@@ -228,7 +232,8 @@ tests/e2e/sam/
 ├── scripts/
 │   ├── sam-e2e.sh              # E2E test harness
 │   ├── sam-full-validation.sh  # Standard full-topology scenario runner
-│   └── sam-e2e-summary.sh      # Evidence summary helper
+│   ├── sam-e2e-summary.sh      # Evidence summary helper
+│   └── sam-preflight.sh        # Pre-apply provider checks
 └── terraform/
     ├── modules/
     │   ├── aws_rr/             # AWS Route Reflector (VPC, SG, IAM, EC2)

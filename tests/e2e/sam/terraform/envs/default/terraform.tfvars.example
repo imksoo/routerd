@@ -36,6 +36,8 @@ azure_admin_username  = "ubuntu"
 
 # --- OCI ---
 # Run:  oci setup config  (creates ~/.oci/config)
+# Before tofu apply, verify this OCID with:
+#   ../../scripts/sam-preflight.sh --tfvars terraform.tfvars --evidence-dir /tmp/sam-preflight
 oci_profile             = "DEFAULT"
 oci_region              = "ap-tokyo-1"
 oci_compartment_id      = "ocid1.compartment.oc1..<unique>" # MUST NOT be ManagedCompartmentForPaaS
