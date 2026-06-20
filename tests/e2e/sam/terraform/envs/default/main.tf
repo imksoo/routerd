@@ -16,7 +16,7 @@ locals {
 
   azure_extra_leaf_nodes = var.topology_scale == "single" ? {} : {
     azure-leaf-b = {
-      router_private_ip = "10.77.60.15"
+      router_private_ip = "10.77.60.21"
       client_name       = "azure-client-b"
       client_private_ip = "10.77.60.17"
     }

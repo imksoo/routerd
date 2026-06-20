@@ -86,7 +86,7 @@ tofu destroy
 
   Azure VNet 10.77.60.0/24
       ├── azure-leaf-a (10.77.60.14) + azure-client-a (10.77.60.12)
-      └── azure-leaf-b (10.77.60.15) + azure-client-b (10.77.60.17)
+      └── azure-leaf-b (10.77.60.21) + azure-client-b (10.77.60.17)
 
   OCI VCN 10.77.60.0/24
       ├── oci-leaf-a   (10.77.60.24) + oci-client-a   (10.77.60.13)
