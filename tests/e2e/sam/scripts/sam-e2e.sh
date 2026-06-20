@@ -136,7 +136,13 @@ remote_prepare_script() {
   cat <<'REMOTE_PREPARE'
 set -e
 if command -v cloud-init >/dev/null 2>&1; then
-  sudo cloud-init status --wait >/dev/null 2>&1 || sudo cloud-init status --long
+  if ! sudo cloud-init status --wait >/tmp/routerd-cloud-init-status.txt 2>&1; then
+    sudo cloud-init status --long 2>&1 | tee -a /tmp/routerd-cloud-init-status.txt
+    if ! grep -q '^status: done' /tmp/routerd-cloud-init-status.txt; then
+      cat /tmp/routerd-cloud-init-status.txt >&2
+      exit 1
+    fi
+  fi
 fi
 wait_for_apt() {
   local deadline=$((SECONDS + 300))
