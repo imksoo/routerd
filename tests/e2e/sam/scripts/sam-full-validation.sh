@@ -8,6 +8,7 @@ Usage:
 
 Options:
   --ssh-key FILE      Fixed lab SSH key (default: ~/.ssh/routerd-cloudedge-lab-20260529)
+  --scenario NAME     Run only the named scenario; may be repeated. Use --list-scenarios for names
   --destroy-cmd CMD   Optional teardown command to run only after every scenario passes
   --list-scenarios    Validate tofu output has required nodes, print scenario list, and exit
 
@@ -29,6 +30,8 @@ evidence_root=
 ssh_key="${HOME}/.ssh/routerd-cloudedge-lab-20260529"
 destroy_cmd=
 list_scenarios=0
+selected_scenarios=()
+scenario_filter=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -36,6 +39,7 @@ while [ "$#" -gt 0 ]; do
     --artifact) artifact="$2"; shift 2 ;;
     --evidence-root) evidence_root="$2"; shift 2 ;;
     --ssh-key) ssh_key="$2"; shift 2 ;;
+    --scenario) selected_scenarios+=("$2"); scenario_filter=1; shift 2 ;;
     --destroy-cmd) destroy_cmd="$2"; shift 2 ;;
     --list-scenarios) list_scenarios=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -85,6 +89,32 @@ if [ "$list_scenarios" -eq 1 ]; then
   printf '%s\n' "${scenario_names[@]}"
   exit 0
 fi
+
+if [ "${#selected_scenarios[@]}" -eq 0 ]; then
+  selected_scenarios=("${scenario_names[@]}")
+fi
+
+if [ -n "$destroy_cmd" ] && [ "$scenario_filter" -eq 1 ]; then
+  echo "--destroy-cmd is only allowed when running the full default scenario set" >&2
+  exit 2
+fi
+
+scenario_exists() {
+  local want="$1" scenario
+  for scenario in "${scenario_names[@]}"; do
+    [ "$scenario" = "$want" ] && return 0
+  done
+  return 1
+}
+
+for scenario in "${selected_scenarios[@]}"; do
+  scenario_exists "$scenario" || {
+    echo "unknown scenario: $scenario" >&2
+    echo "valid scenarios:" >&2
+    printf '  %s\n' "${scenario_names[@]}" >&2
+    exit 2
+  }
+done
 
 [ -n "$artifact" ] || { echo "--artifact is required" >&2; exit 2; }
 [ -f "$artifact" ] || { echo "artifact not found: $artifact" >&2; exit 2; }
@@ -136,6 +166,82 @@ write_overall_summary() {
   } >"$evidence_root/overall-summary.txt"
 }
 
+run_named_scenario() {
+  local scenario="$1"
+  case "$scenario" in
+    baseline)
+      run_scenario baseline \
+        --load-balance-report \
+        --performance-tests
+      ;;
+    rr-failover-aws-rr-a)
+      run_scenario rr-failover-aws-rr-a \
+        --skip-deploy \
+        --failover-node aws-rr-a \
+        --rejoin-after-failover \
+        --load-balance-report \
+        --performance-tests \
+        --failover-transfer-tests
+      ;;
+    rr-failover-aws-rr-b)
+      run_scenario rr-failover-aws-rr-b \
+        --skip-deploy \
+        --failover-node aws-rr-b \
+        --rejoin-after-failover \
+        --load-balance-report \
+        --performance-tests \
+        --failover-transfer-tests
+      ;;
+    leaf-failover-aws-leaf-a)
+      run_scenario leaf-failover-aws-leaf-a \
+        --skip-deploy \
+        --failover-node aws-leaf-a \
+        --rejoin-after-failover \
+        --load-balance-report \
+        --performance-tests \
+        --failover-transfer-tests
+      ;;
+    leaf-failover-azure-leaf-a)
+      run_scenario leaf-failover-azure-leaf-a \
+        --skip-deploy \
+        --failover-node azure-leaf-a \
+        --rejoin-after-failover \
+        --load-balance-report \
+        --performance-tests \
+        --failover-transfer-tests
+      ;;
+    leaf-failover-oci-leaf-a)
+      run_scenario leaf-failover-oci-leaf-a \
+        --skip-deploy \
+        --failover-node oci-leaf-a \
+        --rejoin-after-failover \
+        --load-balance-report \
+        --performance-tests \
+        --failover-transfer-tests
+      ;;
+    leaf-failover-pve-leaf-a)
+      run_scenario leaf-failover-pve-leaf-a \
+        --skip-deploy \
+        --failover-node pve-leaf-a \
+        --rejoin-after-failover \
+        --load-balance-report \
+        --performance-tests \
+        --failover-transfer-tests
+      ;;
+    load-balance)
+      run_scenario load-balance \
+        --skip-deploy \
+        --load-balance-report \
+        --skip-legacy-protocols \
+        --performance-tests
+      ;;
+    *)
+      echo "unhandled scenario: $scenario" >&2
+      return 2
+      ;;
+  esac
+}
+
 {
   date -u '+timestamp=%Y-%m-%dT%H:%M:%SZ'
   echo "tofu_output=$tofu_output"
@@ -150,41 +256,9 @@ write_overall_summary() {
 printf 'scenario\tstatus\tevidence_dir\n' >"$evidence_root/scenario-status.tsv"
 trap write_overall_summary EXIT
 
-run_scenario baseline \
-  --load-balance-report \
-  --performance-tests
-
-run_scenario rr-failover-aws-rr-a \
-  --skip-deploy \
-  --failover-node aws-rr-a \
-  --rejoin-after-failover \
-  --load-balance-report \
-  --performance-tests \
-  --failover-transfer-tests
-
-run_scenario rr-failover-aws-rr-b \
-  --skip-deploy \
-  --failover-node aws-rr-b \
-  --rejoin-after-failover \
-  --load-balance-report \
-  --performance-tests \
-  --failover-transfer-tests
-
-for leaf in aws-leaf-a azure-leaf-a oci-leaf-a pve-leaf-a; do
-  run_scenario "leaf-failover-${leaf}" \
-    --skip-deploy \
-    --failover-node "$leaf" \
-    --rejoin-after-failover \
-    --load-balance-report \
-    --performance-tests \
-    --failover-transfer-tests
+for scenario in "${selected_scenarios[@]}"; do
+  run_named_scenario "$scenario"
 done
-
-run_scenario load-balance \
-  --skip-deploy \
-  --load-balance-report \
-  --skip-legacy-protocols \
-  --performance-tests
 
 if [ -n "$destroy_cmd" ]; then
   echo "== destroy =="

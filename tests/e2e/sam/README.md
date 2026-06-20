@@ -197,6 +197,9 @@ tofu output -json > tofu-output.json
 `post-destroy/` と `post-destroy-summary.txt` にcleanup evidenceを保存する。
 `--list-scenarios` を付けると、`tofu output` に必要nodeが存在することだけを
 確認し、実機へSSHせずに実行予定scenarioを表示する。
+失敗scenarioの再試行や段階実行では `--scenario <name>` を指定できる。
+`--scenario` は複数回指定できるが、部分実行時は誤cleanupを避けるため
+`--destroy-cmd` を指定できない。
 
 `sam-e2e.sh` は各 convergence run の所要秒数を
 `convergence/summary.tsv` に記録する。failover/rejoin では
