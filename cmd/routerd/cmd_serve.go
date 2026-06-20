@@ -1588,7 +1588,7 @@ func overallStatusPhase(base string, lister routerstate.ObjectStatusLister) stri
 		if resourcePhase == "" {
 			continue
 		}
-		phase = worseStatusPhase(phase, resourcePhase)
+		phase = worseStatusPhase(phase, resourcePhase, statusStringMap(item.Status, "reason"))
 		if phase == "Error" {
 			break
 		}
@@ -1607,7 +1607,8 @@ func resourcePhaseIssues(lister routerstate.ObjectStatusLister) []controlapi.Res
 	var out []controlapi.ResourcePhaseIssue
 	for _, item := range statuses {
 		phase := strings.TrimSpace(fmt.Sprint(item.Status["phase"]))
-		if phase == "" || statusPhaseRank(phase) <= 0 {
+		reason := statusStringMap(item.Status, "reason")
+		if phase == "" || statusPhaseRank(phase, reason) <= 0 {
 			continue
 		}
 		out = append(out, controlapi.ResourcePhaseIssue{
@@ -1615,13 +1616,13 @@ func resourcePhaseIssues(lister routerstate.ObjectStatusLister) []controlapi.Res
 			Kind:       item.Kind,
 			Name:       item.Name,
 			Phase:      phase,
-			Reason:     statusStringMap(item.Status, "reason"),
+			Reason:     reason,
 			Message:    statusStringMap(item.Status, "message"),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
-		leftRank := statusPhaseRank(out[i].Phase)
-		rightRank := statusPhaseRank(out[j].Phase)
+		leftRank := statusPhaseRank(out[i].Phase, out[i].Reason)
+		rightRank := statusPhaseRank(out[j].Phase, out[j].Reason)
 		if leftRank != rightRank {
 			return leftRank > rightRank
 		}
@@ -1633,14 +1634,17 @@ func resourcePhaseIssues(lister routerstate.ObjectStatusLister) []controlapi.Res
 	return out
 }
 
-func worseStatusPhase(current, candidate string) string {
-	if statusPhaseRank(candidate) > statusPhaseRank(current) {
-		return canonicalOverallPhase(candidate)
+func worseStatusPhase(current, candidate, candidateReason string) string {
+	if statusPhaseRank(candidate, candidateReason) > statusPhaseRank(current, "") {
+		return canonicalOverallPhase(candidate, candidateReason)
 	}
-	return canonicalOverallPhase(current)
+	return canonicalOverallPhase(current, "")
 }
 
-func statusPhaseRank(phase string) int {
+func statusPhaseRank(phase, reason string) int {
+	if statusPhaseSuppressedByReason(phase, reason) {
+		return 0
+	}
 	switch strings.ToLower(strings.TrimSpace(phase)) {
 	case "error", "blocked", "failed", "unhealthy":
 		return 4
@@ -1657,7 +1661,10 @@ func statusPhaseRank(phase string) int {
 	}
 }
 
-func canonicalOverallPhase(phase string) string {
+func canonicalOverallPhase(phase, reason string) string {
+	if statusPhaseSuppressedByReason(phase, reason) {
+		return "Healthy"
+	}
 	switch strings.ToLower(strings.TrimSpace(phase)) {
 	case "error", "blocked", "failed", "unhealthy":
 		return "Error"
@@ -1671,6 +1678,18 @@ func canonicalOverallPhase(phase string) string {
 		return "Healthy"
 	default:
 		return phase
+	}
+}
+
+func statusPhaseSuppressedByReason(phase, reason string) bool {
+	if !strings.EqualFold(strings.TrimSpace(phase), "Pending") {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(reason)) {
+	case "whenfalse", "dependsonfalse":
+		return true
+	default:
+		return false
 	}
 }
 

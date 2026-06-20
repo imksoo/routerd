@@ -1127,6 +1127,12 @@ func TestOverallStatusPhaseUsesResourceStatuses(t *testing.T) {
 		t.Fatalf("open state: %v", err)
 	}
 	defer func() { _ = store.Close() }()
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Reservation", "client", map[string]any{"phase": "Pending", "reason": "WhenFalse"}); err != nil {
+		t.Fatalf("save when false status: %v", err)
+	}
+	if got := overallStatusPhase("Healthy", store); got != "Healthy" {
+		t.Fatalf("phase = %q, want Healthy for WhenFalse pending", got)
+	}
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "lan", map[string]any{"phase": "Pending"}); err != nil {
 		t.Fatalf("save pending status: %v", err)
 	}
@@ -1153,6 +1159,9 @@ func TestResourcePhaseIssuesReportsNonHealthyStatuses(t *testing.T) {
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Reservation", "client", map[string]any{"phase": "Pending", "reason": "WhenFalse"}); err != nil {
 		t.Fatalf("save pending status: %v", err)
 	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{"phase": "Pending", "reason": "NoPrefix"}); err != nil {
+		t.Fatalf("save real pending status: %v", err)
+	}
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "NAT44SessionSync", "sessions", map[string]any{"phase": "Error", "reason": "SyncFailed", "message": "ssh failed"}); err != nil {
 		t.Fatalf("save error status: %v", err)
 	}
@@ -1163,7 +1172,7 @@ func TestResourcePhaseIssuesReportsNonHealthyStatuses(t *testing.T) {
 	if issues[0].Kind != "NAT44SessionSync" || issues[0].Name != "sessions" || issues[0].Phase != "Error" || issues[0].Reason != "SyncFailed" {
 		t.Fatalf("first issue = %+v", issues[0])
 	}
-	if issues[1].Kind != "DHCPv4Reservation" || issues[1].Name != "client" || issues[1].Phase != "Pending" || issues[1].Reason != "WhenFalse" {
+	if issues[1].Kind != "DHCPv6PrefixDelegation" || issues[1].Name != "wan-pd" || issues[1].Phase != "Pending" || issues[1].Reason != "NoPrefix" {
 		t.Fatalf("second issue = %+v", issues[1])
 	}
 }
