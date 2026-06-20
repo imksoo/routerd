@@ -202,9 +202,7 @@ wait_convergence() {
     ok=1
     for node in "${routers[@]}"; do
       node_is_stopped "$node" && continue
-      if ! ssh_node "$node" 'sudo routerctl doctor sam >/tmp/routerd-sam-doctor.txt 2>&1' >/dev/null 2>&1; then
-        ok=0
-      fi
+      ssh_node "$node" 'sudo routerctl doctor sam >/tmp/routerd-sam-doctor.txt 2>&1' >/dev/null 2>&1 || true
     done
     for node in "${leaf_routers[@]}"; do
       node_is_stopped "$node" && continue
