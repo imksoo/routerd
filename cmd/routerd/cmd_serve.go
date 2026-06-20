@@ -1584,7 +1584,7 @@ func overallStatusPhase(base string, lister routerstate.ObjectStatusLister) stri
 	}
 	phase := base
 	for _, item := range statuses {
-		resourcePhase := strings.TrimSpace(fmt.Sprint(item.Status["phase"]))
+		resourcePhase := strings.TrimSpace(statusStringMap(item.Status, "phase"))
 		if resourcePhase == "" {
 			continue
 		}
@@ -1606,7 +1606,7 @@ func resourcePhaseIssues(lister routerstate.ObjectStatusLister) []controlapi.Res
 	}
 	var out []controlapi.ResourcePhaseIssue
 	for _, item := range statuses {
-		phase := strings.TrimSpace(fmt.Sprint(item.Status["phase"]))
+		phase := strings.TrimSpace(statusStringMap(item.Status, "phase"))
 		reason := statusStringMap(item.Status, "reason")
 		if phase == "" || statusPhaseRank(phase, reason) <= 0 {
 			continue

@@ -1130,8 +1130,11 @@ func TestOverallStatusPhaseUsesResourceStatuses(t *testing.T) {
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Reservation", "client", map[string]any{"phase": "Pending", "reason": "WhenFalse"}); err != nil {
 		t.Fatalf("save when false status: %v", err)
 	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "DNSForwarder", "default", map[string]any{"matches": 1}); err != nil {
+		t.Fatalf("save status without phase: %v", err)
+	}
 	if got := overallStatusPhase("Healthy", store); got != "Healthy" {
-		t.Fatalf("phase = %q, want Healthy for WhenFalse pending", got)
+		t.Fatalf("phase = %q, want Healthy for WhenFalse pending and phase-less status", got)
 	}
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "lan", map[string]any{"phase": "Pending"}); err != nil {
 		t.Fatalf("save pending status: %v", err)
@@ -1155,6 +1158,9 @@ func TestResourcePhaseIssuesReportsNonHealthyStatuses(t *testing.T) {
 	defer func() { _ = store.Close() }()
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4ServerLeaseSync", "lan", map[string]any{"phase": "Synced"}); err != nil {
 		t.Fatalf("save synced status: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "DNSUpstream", "default", map[string]any{"address": "192.0.2.53"}); err != nil {
+		t.Fatalf("save status without phase: %v", err)
 	}
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Reservation", "client", map[string]any{"phase": "Pending", "reason": "WhenFalse"}); err != nil {
 		t.Fatalf("save pending status: %v", err)
