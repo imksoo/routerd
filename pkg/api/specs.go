@@ -516,8 +516,9 @@ type PPPoESessionSpec struct {
 }
 
 type IPv4StaticAddressSpec struct {
-	Interface string `yaml:"interface" json:"interface"`
-	Address   string `yaml:"address" json:"address"`
+	Interface string           `yaml:"interface" json:"interface"`
+	Address   string           `yaml:"address" json:"address"`
+	When      ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
 	// Exclusive removes other IPv4 addresses from the target interface before adding this address.
 	Exclusive bool `yaml:"exclusive,omitempty" json:"exclusive,omitempty"`
 	// AllowOverlap permits an address prefix that overlaps another configured IPv4 prefix.

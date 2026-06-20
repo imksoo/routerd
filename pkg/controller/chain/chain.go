@@ -3014,6 +3014,21 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		if resourcequery.ResourceWhenPresent(spec.When) {
+			stateStore, ok := c.Store.(resourcequery.StateStore)
+			if ok && !resourcequery.ResourceWhenMatches(spec.When, stateStore) {
+				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name, map[string]any{
+					"phase":     "Pending",
+					"reason":    "WhenFalse",
+					"interface": spec.Interface,
+					"address":   spec.Address,
+					"dryRun":    c.DryRun,
+				}); err != nil {
+					return err
+				}
+				continue
+			}
+		}
 		ifname := interfaceIfName(c.Router, spec.Interface)
 		if ifname == "" {
 			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name, map[string]any{

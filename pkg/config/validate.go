@@ -920,6 +920,9 @@ func resourceWhens(res api.Resource) []resourceWhenRef {
 	case "DHCPv4Client":
 		spec, _ := res.DHCPv4ClientSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
+	case "IPv4StaticAddress":
+		spec, _ := res.IPv4StaticAddressSpec()
+		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "ClusterNetworkRoute":
 		spec, _ := res.ClusterNetworkRouteSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}

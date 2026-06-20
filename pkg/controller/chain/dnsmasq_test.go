@@ -32,6 +32,19 @@ func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 	return map[string]any{}
 }
 
+func (s mapStore) Get(name string) routerstate.Value {
+	now := s.Now()
+	return routerstate.Value{Status: routerstate.StatusUnknown, Since: now, UpdatedAt: now}
+}
+
+func (s mapStore) Age(name string) time.Duration {
+	return 0
+}
+
+func (s mapStore) Now() time.Time {
+	return time.Now().UTC()
+}
+
 type statefulDHCPMapStore struct {
 	mapStore
 	now time.Time
@@ -644,6 +657,41 @@ func TestIPv4StaticAddressControllerAppliesAddressOnAliasedInterface(t *testing.
 	status := store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "lan-base")
 	if status["phase"] != "Applied" || status["ifname"] != "ens19" {
 		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestIPv4StaticAddressControllerKeepsWhenFalseOutOfInterfaceChecks(t *testing.T) {
+	whenMaster := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+		"VirtualAddress/lan-gw-v4.role": {Equals: "master"},
+	}}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-a"}, Spec: api.DSLiteTunnelSpec{TunnelName: "ds-lite-a"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "ds-lite-a-source"}, Spec: api.IPv4StaticAddressSpec{Interface: "ds-lite-a", Address: "192.0.0.2/29", When: whenMaster}},
+	}}}
+	store := mapStore{}
+	store.SaveObjectStatus(api.NetAPIVersion, "VirtualAddress", "lan-gw-v4", map[string]any{"role": "backup"})
+	var checkedDevice bool
+	controller := IPv4StaticAddressController{
+		Router: router,
+		Store:  store,
+		DevicePresent: func(context.Context, string) bool {
+			checkedDevice = true
+			return false
+		},
+		Command: func(context.Context, string, ...string) error {
+			t.Fatal("unexpected address command for when-false IPv4StaticAddress")
+			return nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if checkedDevice {
+		t.Fatal("device check ran for when-false IPv4StaticAddress")
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "ds-lite-a-source")
+	if status["phase"] != "Pending" || status["reason"] != "WhenFalse" {
+		t.Fatalf("status = %#v, want Pending/WhenFalse", status)
 	}
 }
 
