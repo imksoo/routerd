@@ -60,7 +60,7 @@ if [ -n "$out_dir" ]; then
 fi
 
 compartment_json="$(oci --profile "$oci_profile" --region "$oci_region" iam compartment get --compartment-id "$oci_compartment_id")"
-display_name="$(printf '%s\n' "$compartment_json" | jq -r '.data."display-name" // empty')"
+compartment_name="$(printf '%s\n' "$compartment_json" | jq -r '.data.name // .data."display-name" // empty')"
 
 if [ -n "$out_dir" ]; then
   printf '%s\n' "$compartment_json" >"$out_dir/oci-compartment.json"
@@ -69,20 +69,20 @@ if [ -n "$out_dir" ]; then
     echo "oci_profile=$oci_profile"
     echo "oci_region=$oci_region"
     echo "oci_compartment_id=$oci_compartment_id"
-    echo "oci_compartment_display_name=$display_name"
+    echo "oci_compartment_name=$compartment_name"
   } >"$out_dir/oci-compartment-summary.txt"
 fi
 
 echo "oci_compartment_id=$oci_compartment_id"
-echo "oci_compartment_display_name=$display_name"
+echo "oci_compartment_name=$compartment_name"
 
-if [ "$display_name" = "ManagedCompartmentForPaaS" ]; then
+if [ "$compartment_name" = "ManagedCompartmentForPaaS" ]; then
   echo "FAIL: OCI compartment must not be ManagedCompartmentForPaaS" >&2
   exit 1
 fi
 
-if [ -z "$display_name" ]; then
-  echo "FAIL: OCI compartment display name is empty; check OCI profile, region, and OCID" >&2
+if [ -z "$compartment_name" ]; then
+  echo "FAIL: OCI compartment name is empty; check OCI profile, region, and OCID" >&2
   exit 1
 fi
 

@@ -235,8 +235,8 @@ collect_provider_inventory() {
     {
       echo "## oci compartment"
       oci iam compartment get --region "$oci_region" --compartment-id "$oci_compartment_id" || true
-      oci_compartment_name="$(oci iam compartment get --region "$oci_region" --compartment-id "$oci_compartment_id" --query 'data."display-name"' --raw-output 2>/dev/null || true)"
-      echo "oci_compartment_display_name=$oci_compartment_name"
+      oci_compartment_name="$(oci iam compartment get --region "$oci_region" --compartment-id "$oci_compartment_id" --query 'data.name' --raw-output 2>/dev/null || true)"
+      echo "oci_compartment_name=$oci_compartment_name"
       if [ "$oci_compartment_name" = "ManagedCompartmentForPaaS" ]; then
         echo "FAIL: OCI compartment must not be ManagedCompartmentForPaaS"
         status=1
