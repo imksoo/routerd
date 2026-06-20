@@ -129,9 +129,14 @@ sam-e2e.sh [options]
   --failover-node NODE       指定ノードの routerd を停止して failover テスト
   --load-balance-report      owner table のスナップショットを取得
   --skip-legacy-protocols    FTP/RPC/NFS/CIFS テストをスキップ
-  --performance-tests        iperf3/ping 性能テストを実行
+  --performance-tests        SAM経由のiperf3/ping性能テストと、AWS/Azure/OCIのcloud間public直結比較を実行
   --destroy-cmd CMD          テスト後に実行する破棄コマンド
 ```
+
+`--performance-tests` のSAM経由性能テストは全疑似クライアント間を対象にする。
+比較用のpublic直結iperf3/pingはcloud間のみを対象にし、AWS/Azure/OCIの異なる
+cloud pairだけを実行する。同一cloud内、およびPVE/on-premを含むpairは
+`public-summary.tsv` に skip として記録する。
 
 ## GitHub Actions (将来)
 

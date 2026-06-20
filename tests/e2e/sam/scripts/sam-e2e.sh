@@ -15,7 +15,7 @@ Options:
   --load-balance-report   Capture MobilityPool owner-table snapshots after each matrix run
   --skip-matrix           Skip SSH hostname matrix; useful when rerunning performance after a clean matrix
   --skip-legacy-protocols Skip FTP/RPC/NFS/CIFS pseudo-client matrix
-  --performance-tests     Run iperf3/ping performance probes between pseudo-clients
+  --performance-tests     Run SAM iperf3/ping probes, plus public direct comparison for cross-cloud AWS/Azure/OCI pairs
   --destroy-cmd CMD       Optional teardown command, for example: 'tofu destroy -auto-approve'
 
 This harness consumes `tofu output -json` from cloudedge-mobility/terraform/envs/sam-e2e.
