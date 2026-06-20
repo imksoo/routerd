@@ -108,6 +108,13 @@ Expected steady state for an active cloud holder:
    classifies as local/static/on-prem owned or as a valid ownership event. A
    mere provider capture holder is not a home owner by itself.
 
+Provider discovery reports endpoint ownership, not observer ownership. Multiple
+routers in the same redundant site can observe the same cloud endpoint address
+from the same provider NIC/resource; those observations are coalesced as one
+home-owner fact. A duplicate-provider-home-owner conflict is reserved for
+distinct endpoint identities, such as different providers, subnets, NICs, or
+resource refs claiming the same address.
+
 Failed provider assign actions are active failures only while provider discovery
 does not observe the address as self-captured. Once current provider truth
 observes self-capture, the old failed action is superseded and retained only as

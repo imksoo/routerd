@@ -700,6 +700,7 @@ func bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode string, spec a
 	staticHandovers := staticHandoversByFrom(spec.StaticHandovers, poolPrefix)
 	members := plannerMembers(spec.Members)
 	self := members[strings.TrimSpace(selfNode)]
+	providerHomeAdvertisers := selectedProviderInventoryHomeOwnerFacts(providerInventoryHomeOwnerFactSets(poolName, spec, events, now), members)
 	for _, member := range spec.Members {
 		nodeRef := strings.TrimSpace(member.NodeRef)
 		if !bgpMemberAdvertisesOwnedAddress(self, members[nodeRef]) {
@@ -755,6 +756,12 @@ func bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode string, spec a
 				continue
 			}
 			sourceType := bgpOwnershipEventSourceType(ev)
+			if sourceType == providerDiscoverySource {
+				selected, ok := providerHomeAdvertisers[address]
+				if !ok || strings.TrimSpace(ev.SourceNode) != strings.TrimSpace(selected.NodeRef) {
+					continue
+				}
+			}
 			if sourceType == providerDiscoverySource && strings.TrimSpace(ev.SourceNode) == strings.TrimSpace(selfNode) {
 				eventNIC := strings.TrimSpace(ev.Payload["nicRef"])
 				selfNIC := strings.TrimSpace(self.Capture.NICRef)
