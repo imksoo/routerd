@@ -17,6 +17,7 @@ Options:
   --skip-legacy-protocols Skip FTP/RPC/NFS/CIFS pseudo-client matrix
   --performance-tests     Run SAM iperf3/ping probes, plus public direct comparison for cross-cloud AWS/Azure/OCI pairs
   --failover-transfer-tests Run a throttled client-to-client HTTP transfer during each failover stop
+  --failover-transfer-smoke Run a throttled client-to-client HTTP transfer without stopping routers
   --destroy-cmd CMD       Optional teardown command, for example: 'tofu destroy -auto-approve'
 
 This harness consumes `tofu output -json` from cloudedge-mobility/terraform/envs/sam-e2e.
@@ -38,6 +39,7 @@ skip_matrix=0
 legacy_protocols=1
 performance_tests=0
 failover_transfer_tests=0
+failover_transfer_smoke=0
 destroy_cmd=
 overall=0
 
@@ -56,6 +58,7 @@ while [ "$#" -gt 0 ]; do
     --skip-legacy-protocols) legacy_protocols=0; shift ;;
     --performance-tests) performance_tests=1; shift ;;
     --failover-transfer-tests) failover_transfer_tests=1; shift ;;
+    --failover-transfer-smoke) failover_transfer_tests=1; failover_transfer_smoke=1; shift ;;
     --destroy-cmd) destroy_cmd="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -138,6 +141,7 @@ record_note() {
     echo "legacy_protocols=$legacy_protocols"
     echo "performance_tests=$performance_tests"
     echo "failover_transfer_tests=$failover_transfer_tests"
+    echo "failover_transfer_smoke=$failover_transfer_smoke"
     echo "rejoin_after_failover=$rejoin_after_failover"
     echo "policy_read=cloudedge-mobility/LAB_POLICY.md and ~/routerd-orchestration.md must be reread before real-machine validation"
   } >"$evidence_dir/run-note.txt"
@@ -966,6 +970,14 @@ finish_failover_transfer() {
   grep -q '^rc=0$' "$out/result.txt"
 }
 
+run_failover_transfer_smoke() {
+  [ "$failover_transfer_smoke" -eq 1 ] || return 0
+  local node src remote_pid
+  node="${leaf_routers[0]}"
+  read -r src remote_pid < <(start_failover_transfer "smoke" "$node")
+  finish_failover_transfer "smoke" "$src" "$remote_pid"
+}
+
 run_failover() {
   local status=0
   local transfer_src transfer_pid
@@ -1036,6 +1048,9 @@ if [ "$overall" -eq 0 ]; then
 fi
 if [ "$overall" -eq 0 ]; then
   setup_failover_transfer_services || mark_failed "failover transfer service setup"
+fi
+if [ "$overall" -eq 0 ]; then
+  run_failover_transfer_smoke || mark_failed "failover transfer smoke"
 fi
 if [ "$overall" -eq 0 ]; then
   run_validation_set "initial" || mark_failed "initial validation set"
