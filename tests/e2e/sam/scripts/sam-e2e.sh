@@ -589,7 +589,7 @@ setup_failover_transfer_services() {
         if sudo iptables -S INPUT >/dev/null 2>&1; then
           sudo iptables -C INPUT -s 10.77.60.0/24 -p tcp --dport 8080 -j ACCEPT >/dev/null 2>&1 || sudo iptables -I INPUT 1 -s 10.77.60.0/24 -p tcp --dport 8080 -j ACCEPT
         fi
-        sudo pkill -f "python3 -m http.server 8080" >/dev/null 2>&1 || true
+        sudo pkill -f "[p]ython3 -m http.server 8080" >/dev/null 2>&1 || true
         nohup python3 -m http.server 8080 --bind 0.0.0.0 --directory /srv/routerd-e2e/http >/tmp/routerd-e2e-http.log 2>&1 &
         echo $! >/tmp/routerd-e2e-http.pid
         sleep 1
