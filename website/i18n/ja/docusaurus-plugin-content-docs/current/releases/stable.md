@@ -6,7 +6,8 @@ sidebar_position: 0
 
 # 安定版マイルストーン
 
-routerd は `vYYYYMMDD.HHmm` 形式で頻繁にリリースしますが、その中から**本番運用に推奨できる版**を「安定版マイルストーン」として節目ごとに選びます。新しく導入するときは、このページで案内する版を使ってください。
+routerd は `vYYYYMMDD.HHmm` 形式で頻繁にリリースしますが、その中から**本番運用に推奨できる版**を「安定版マイルストーン」として節目ごとに選びます。
+新しく導入するときは、このページで案内する版を使ってください。
 
 ## 現在の推奨版
 
@@ -23,23 +24,31 @@ routerd は `vYYYYMMDD.HHmm` 形式で頻繁にリリースしますが、その
 
 ### peersFrom + SAMPeerGroup（#332, #333）
 
-`SAMTransportProfile` に `spec.peersFrom` が追加され、`SAMPeerGroup` リソースを参照できるようになりました。union セマンティクス: `peersFrom` のメンバーを先に読み込み、静的な `peers` が `nodeRef` 単位で上書きします。RR ノードで `publishPeerGroup: true` を設定すると、`SAMPeerGroup` の `DynamicConfigPart` を自動生成します。
+`SAMTransportProfile` に `spec.peersFrom` が追加され、`SAMPeerGroup` リソースを参照できるようになりました。
+union セマンティクス: `peersFrom` のメンバーを先に読み込み、静的な `peers` が `nodeRef` 単位で上書きします。
+RR ノードで `publishPeerGroup: true` を設定すると、「SAMPeerGroup」の `DynamicConfigPart` を自動生成します。
 
 ### ピアグループ同期（#334, #336）
 
-WireGuard 内部ネットワーク上のポート 19652 で動作する軽量 HTTP サービスです。RR が `GET /v1/peer-groups` を提供し、leaf は WireGuard ピアを検出して一致するグループを自動取得します。手動で `SAMPeerGroup` を配布する必要はありません。
+WireGuard 内部ネットワーク上のポート 19652 で動作する軽量 HTTP サービスです。
+RR が `GET /v1/peer-groups` を提供し、leaf は WireGuard ピアを検出して一致するグループを自動取得します。
+手動で「SAMPeerGroup」を配布する必要はありません。
 
 ### MobilityMemberSet + membersFrom（#339, #340）
 
-`MobilityMemberSet` Kind は、共有の識別情報のみのプールメンバー（`nodeRef`、`site`、`role`）を保持します。`MobilityPool.spec.membersFrom` でこれらを取り込むことで、leaf は自身の捕捉/検出の詳細だけをインラインに残し、O(N^2) の設定重複を削減します。`publishMemberSet: true` を設定すると、`GET /v1/member-sets` 経由でメンバーセットを生成・配布します。svnet1 設定で 78 行削減（2624 → 2546）。
+`MobilityMemberSet` Kind は、共有の識別情報のみのプールメンバー（`nodeRef`、`site`、`role`）を保持します。
+`MobilityPool.spec.membersFrom` でこれらを取り込むことで、leaf は自身の捕捉/検出の詳細だけをインラインに残し、O(N^2) の設定重複を削減します。
+`publishMemberSet: true` を設定すると、`GET /v1/member-sets` 経由でメンバーセットを生成し配布します。
+svnet1 設定で 78 行削減（2624 → 2546）。
 
 ### FreeBSD 旧フラグ互換（#337, #338）
 
-廃止された `routerd serve` フラグ（`--observe-interval`、`--controller-chain*`）が `/etc/rc.conf` に残っていても、警告付きで受理・無視されるようになり、アップグレード失敗を防ぎます。
+廃止された `routerd serve` フラグ（`--observe-interval`、`--controller-chain*`）が `/etc/rc.conf` に残っていても、警告付きで受理し無視するようになり、アップグレード失敗を防ぎます。
 
 ### v20260608.1354 からの継承事項
 
-v20260608.1354 の全特性を継承: pair-stable アドレッシング、ADR 0014 CLI 再設計、およびそれ以前の全本番安全修正。
+v20260608.1354 の全特性を継承しています。
+pair-stable アドレッシング、ADR 0014 CLI 再設計、およびそれ以前の全本番安全修正を含みます。
 
 ## 既知の観測（リリースを止めない事項）
 
@@ -65,4 +74,5 @@ v20260608.1354 の全特性を継承: pair-stable アドレッシング、ADR 00
 
 ## 導入とアップグレード
 
-導入手順は [導入とアップグレード](../install-and-upgrade.md) を参照してください。アップグレードは、推奨マイルストーン版を起点に行うことを勧めます。
+導入手順は [導入とアップグレード](../install-and-upgrade.md) を参照してください。
+アップグレードは、推奨マイルストーン版を起点に行うことを勧めます。

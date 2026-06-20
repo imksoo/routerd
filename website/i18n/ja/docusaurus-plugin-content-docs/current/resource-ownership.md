@@ -18,10 +18,10 @@ routerd は、ホスト上の構成物をリソースに対応付けて管理し
 | 取り込み | 既存の構成物を routerd の管理対象として扱います。 |
 | 観測 | routerd は状態を見るだけで変更しません。 |
 
-安定した所有者識別子は `apiVersion/kind/name` です。apply の世代番号は所有者キーに
-含めません。同じリソースは世代が変わっても同じ所有者として、生成済みの構成物の
-置換や削除を行えます。object status も所有者メタデータとライフサイクルクラスを持ち、
-古い状態の整理が apply と同じ判断を行えるようにします。
+安定した所有者識別子は `apiVersion/kind/name` です。
+apply の世代番号は所有者キーに含めません。
+同じリソースは世代が変わっても同じ所有者として、生成済みの構成物の置換や削除を行えます。
+object status も所有者メタデータとライフサイクルクラスを持ち、古い状態の整理が apply と同じ判断を行えるようにします。
 
 ## 主な構成物
 
@@ -66,46 +66,36 @@ routerd は、ホスト上の構成物をリソースに対応付けて管理し
 
 ## lifecycle contract
 
-すべての config resource kind は lifecycle registry に宣言されています。宣言は
-resource class と、次のいずれか 1 つの teardown contract を持ちます。
+すべての config resource kind は lifecycle registry に宣言されています。
+宣言は resource class と、次のいずれか 1 つの teardown contract を持ちます。
 
-- `ArtifactKinds`: resource が具体的な host artifact を ownership ledger に記録し、
-  generic artifact teardown registry がその artifact kind の削除方法を知っています。
-- `TeardownLifecycle: resource`: kernel route、WireGuard の adopted/external 保護、
-  SAM proxy-ARP cleanup など、object status から resource 固有 teardown を実行します。
-- `NoHostTeardownReason`: renderer input、external policy、dynamic source など、
-  単独の host artifact を所有しない理由を明示します。
+- **`ArtifactKinds`**：resource が具体的な host artifact を ownership ledger に記録し、generic artifact teardown registry がその artifact kind の削除方法を知っています。
+- **`TeardownLifecycle: resource`**：kernel route、WireGuard の adopted/external 保護、SAM proxy-ARP cleanup など、object status から resource 固有 teardown を実行します。
+- **`NoHostTeardownReason`**：renderer input、external policy、dynamic source など、単独の host artifact を所有しない理由を明示します。
 
-CI は、全 config kind が明示的な contract を持つことと、`ArtifactKinds` に書いた
-artifact kind が teardown registry に存在することを検査します。新しい resource が
-cleanup を黙って迂回しないための guard です。
+CI は、全 config kind が明示的な contract を持つことと、`ArtifactKinds` に書いた artifact kind が teardown registry に存在することを検査します。
+新しい resource が cleanup を黙って迂回しないための guard です。
 
 ## 削除時の考え方
 
 routerd は、知らない構成物を勝手に削除しません。
-YAML からリソースが消えても、削除できるのは routerd が作成した、または明示的に
-取り込んだと分かる構成物だけです。
+YAML からリソースが消えても、削除できるのは routerd が作成した、または明示的に取り込んだと分かる構成物だけです。
 
-GC planner は current effective resource set、ownership ledger、object status、
-host inventory を比較し、dry-run 可能な plan を作ります。plan には artifact removal、
-resource-specific teardown、ledger forget、stale status deletion、state backup、
-audit event が含まれます。
+GC planner は current effective resource set、ownership ledger、object status、host inventory を比較し、dry-run 可能な plan を作ります。
+plan には artifact removal、resource-specific teardown、ledger forget、stale status deletion、state backup、audit event が含まれます。
 
-desired set は apply と serve が使う effective view です。`FilterRouterByWhen`、
-dynamic SAM resource、`DynamicConfigPart` の merge 後を使うため、`when: false` の
-resource や、まだ profile が存在する SAM 生成 tunnel/BGP/route resource を orphan と
-誤判定しません。
+desired set は apply と serve が使う effective view です。
+`FilterRouterByWhen`、dynamic SAM resource、`DynamicConfigPart` の merge 後を使うため、`when: false` の resource や、まだ profile が存在する SAM 生成 tunnel/BGP/route resource を orphan と誤判定しません。
 
-`SAMTransportProfile` を削除すると、profile の dynamic part は空の active part に
-置き換わります。その結果、生成された `TunnelInterface` / `BGPPeer` / endpoint route
-が effective config から消え、各生成 resource の owner に従って cleanup されます。
+`SAMTransportProfile` を削除すると、profile の dynamic part は空の active part に置き換わります。
+その結果、生成された `TunnelInterface` / `BGPPeer` / endpoint route が effective config から消え、各生成 resource の owner に従って cleanup されます。
 
-破壊的 cleanup は state backup と event 記録を伴います。未対応 OS の integration は
-破壊せず skip します。adopted または external managed の object status は、
-resource lifecycle GC の teardown 対象にしません。
+破壊的 cleanup は state backup と event 記録を伴います。
+未対応 OS の integration は破壊せず skip します。
+adopted または external managed の object status は、resource lifecycle GC の teardown 対象にしません。
 
 現在は、完全なロールバック機能を目標にしていません。
-特に本番ネットワークへ影響する変更では、次の順序を守ります。
+本番ネットワークへ影響する変更では、次の順序を守ります。
 
 1. 検証します。
 2. 計画を確認します。

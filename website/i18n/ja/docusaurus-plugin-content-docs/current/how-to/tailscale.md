@@ -11,18 +11,16 @@ title: Tailscale の exit node と subnet router
 `TailscaleNode` は、routerd ホストを tailnet に参加させ、次の経路を広告したい場合に使います。
 
 - exit node（`0.0.0.0/0` と `::/0`）
-- 1 個以上の subnet route
+- 1 つ以上の subnet route
 - exit node と subnet route の両方
 
 routerd は `tailscaled` を置き換えません。
-routerd は `tailscale up` を実行する systemd ユニットを生成し、ノードの広告設定を管理します。
+`tailscale up` を実行する systemd ユニットを生成し、ノードの広告設定を管理します。
 Tailscale のアカウント、制御プレーン、経路承認は Tailscale 側に残します。
-routerd はホスト上の宣言設定を管理します。
 
-## tailscale を導入する
+## tailscale の導入
 
 依存パッケージを `Package` で宣言します。
-これにより、必要なパッケージが YAML から分かります。
 
 ```yaml
 apiVersion: system.routerd.net/v1alpha1
@@ -104,13 +102,11 @@ spec:
 ```
 
 この設定を反映したあと、Tailscale の管理画面で広告された経路を承認します。
-承認前は、`tailscale debug prefs` では要求した経路が見えます。
-ただし、`tailscale status --self --json` の `Self.AllowedIPs` にはまだ出ないことがあります。
+承認前でも `tailscale debug prefs` では要求した経路が見えますが、`tailscale status --self --json` の `Self.AllowedIPs` にはまだ出ないことがあります。
 
-## ファイアウォールゾーンの置き方
+## ファイアウォールゾーンの配置
 
-`tailscale0` を `Interface` として宣言します。
-これにより、状態と Web 管理画面の Interfaces に表示できます。
+`tailscale0` を `Interface` として宣言すると、状態と Web 管理画面の Interfaces に表示できます。
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
@@ -123,7 +119,7 @@ spec:
   managed: false
 ```
 
-`mtu: 1280` を指定すると、派生する TCP MSS clamp が Tailscale 経由の経路を考慮しつつ、
+`mtu: 1280` を指定すると、派生する TCP MSS clamp が Tailscale 経由の経路を考慮します。
 無関係な LAN から WAN への経路まで低い MTU に下げることはありません。
 
 家庭ルーターでは、`tailscale0` は `mgmt` ではなく `trust` ゾーンに置くのが自然です。
@@ -158,7 +154,7 @@ tailnet 全体を管理ネットワークとして扱いたい場合だけ、`ta
 
 ## 反映と確認
 
-設定を確認してから routerd を再起動します。
+設定を検証してから routerd を再起動します。
 
 ```sh
 routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
@@ -199,10 +195,8 @@ curl -f http://100.64.0.1:8080/
 
 ## 補足
 
-- `acceptDNS: false` にすると、Tailscale がルーター自身の DNS 設定を置き換えません。routerd の基本方針は LAN の DNS を優先することです。`DNSResolver`、ローカルゾーン、DHCP 由来のレコード、条件付き転送を LAN 側の権威として維持し、MagicDNS にホストのリゾルバーを乗っ取らせません。
-- `acceptRoutes: false` にすると、ルーターはほかのノードが広告する経路を取り込みません。
-  経路を外へ広告するルーターでは、この設定が自然です。
-- routerd は Tailscale ピアのメトリクスとして `routerd.tailscale.peer.count` と `routerd.tailscale.last_handshake.seconds` を出します。運用上のハンドシェイク経過時間としては、Tailscale status の `LastSeen` を使います。
+- `acceptDNS: false` にすると、Tailscale がルーター自身の DNS 設定を置き換えません。routerd は LAN の DNS を優先します。`DNSResolver`、ローカルゾーン、DHCP 由来のレコード、条件付き転送を LAN 側の権威として維持し、MagicDNS にホストのリゾルバーを乗っ取らせません。
+- `acceptRoutes: false` にすると、ルーターはほかのノードが広告する経路を取り込みません。経路を外へ広告するルーターでは自然な設定です。
+- routerd は Tailscale ピアのメトリクスとして `routerd.tailscale.peer.count` と `routerd.tailscale.last_handshake.seconds` を出力します。運用上のハンドシェイク経過時間としては Tailscale status の `LastSeen` を使います。
 - exit node と subnet route の承認は Tailscale 側で行います。
-- auth key は examples や Git 履歴に残さないでください。
-  実機では `authKeyFile` を使います。
+- auth key は examples や Git 履歴に残さず、実機では `authKeyFile` を使います。

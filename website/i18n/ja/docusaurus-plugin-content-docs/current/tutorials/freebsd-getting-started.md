@@ -7,9 +7,8 @@ title: FreeBSD から始める
 ![リリースアーカイブの導入から rc.d、rc.conf.d、pf、dnsmasq、mpd5 の生成と適用検証へ進む FreeBSD 入門の流れ](/img/diagrams/tutorial-freebsd-getting-started.png)
 
 FreeBSD は、Ubuntu と同じ routerd リソースモデルを使います。
-ただし、生成されるホスト成果物は FreeBSD の機構に合わせます。
-routerd は、`rc.conf.d`、`rc.d` スクリプト、`pf.conf`、`dhclient.conf`、
-dnsmasq 設定、`mpd5.conf`、そして DS-Lite 用の動的な `ifconfig gif` 操作を扱います。
+ただし、生成されるホスト成果物は FreeBSD の機構に合わせたものになります。
+routerd は `rc.conf.d`、`rc.d` スクリプト、`pf.conf`、`dhclient.conf`、dnsmasq 設定、`mpd5.conf`、DS-Lite 用の動的な `ifconfig gif` 操作を扱います。
 
 このチュートリアルは、FreeBSD 14 系を前提とします。
 リリースインストーラーの配置先は `/usr/local` 配下です。
@@ -30,11 +29,9 @@ sudo ./install.sh
 ```
 
 `install.sh` は、通常必要になる FreeBSD パッケージを導入します。
-対象は `ca_root_nss`、`curl`、`dnsmasq`、`wireguard-tools`、`mpd5`、
-`bind-tools`、`tcpdump`、`jq`、`chrony`、`strongswan` です。
+対象は `ca_root_nss`、`curl`、`dnsmasq`、`wireguard-tools`、`mpd5`、`bind-tools`、`tcpdump`、`jq`、`chrony`、`strongswan` です。
 Tailscale もあわせて入れる場合は `sudo ./install.sh --with-tailscale` を使います。
-FreeBSD の基本システムには、`ifconfig`、`route`、`sysctl`、`service`、`sysrc`、
-`pfctl`、`pflog0`、`netstat`、`sockstat`、`ping`、`traceroute` があります。
+FreeBSD の基本システムには `ifconfig`、`route`、`sysctl`、`service`、`sysrc`、`pfctl`、`pflog0`、`netstat`、`sockstat`、`ping`、`traceroute` が含まれています。
 依存パッケージの一覧は `./install.sh --list-deps` で確認できます。
 
 ## 2. ルーター設定を配置する
@@ -45,7 +42,7 @@ sudo install -m 0600 examples/freebsd-edge.yaml /usr/local/etc/routerd/router.ya
 ```
 
 適用する前に、インターフェース名、アドレス、秘密値を編集してください。
-初回は、管理用の SSH を別のインターフェースに置くか、ハイパーバイザーのコンソールを用意しておいてください。
+初回は管理用の SSH を別のインターフェースに置くか、ハイパーバイザーのコンソールを用意しておいてください。
 
 ## 3. 検証し、生成ファイルを確認する
 
@@ -142,7 +139,7 @@ sudo tcpdump -n -e -ttt -i pflog0
 ```
 
 `FirewallEventLog` を有効にすると、routerd は `pflog0` の内容を取り込みます。
-取り込んだログは、`routerctl` と Web 管理画面から確認できます。
+取り込んだログは `routerctl` と Web 管理画面から確認できます。
 
 ## 関連項目
 

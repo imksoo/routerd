@@ -20,13 +20,11 @@ sudo ./install.sh
 
 Linux arm64 ホストでは `routerd-linux-arm64.tar.gz` を使います。
 
-FreeBSD では `routerd-freebsd-amd64.tar.gz` を取得し、同じ
-`./install.sh` を実行します。
+FreeBSD では `routerd-freebsd-amd64.tar.gz` を取得し、同じ `./install.sh` を実行します。
 FreeBSD arm64 ホストでは `routerd-freebsd-arm64.tar.gz` を使います。
 特定の版に固定したい場合は、リリースページにある版番号付きアーカイブを使います。
 
-Linux 用アーカイブには、静的リンクした routerd バイナリを含めます
-(`CGO_ENABLED=0`)。
+Linux 用アーカイブには、静的リンクした routerd バイナリを含めます（`CGO_ENABLED=0`）。
 ルーターホストの glibc 版には依存しません。
 
 インストーラーは次を行います。
@@ -66,12 +64,10 @@ routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
 sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
-OS 別のパッケージ一覧、アップグレード、アンインストール、開発者向けの
-リリース手順は [インストールとアップグレード](../install-and-upgrade.md) を
-参照してください。
+OS 別のパッケージ一覧、アップグレード、アンインストール、開発者向けのリリース手順は [インストールとアップグレード](../install-and-upgrade.md) を参照してください。
 
-ディスクに導入せず試す場合は、`routerd-live.iso` を起動します。
+ディスクに導入せず試す場合は `routerd-live.iso` を起動します。
 root でログインすると、同じ `install.sh configure` ウィザードが起動します。
 Proxmox VE の `qm terminal` によるシリアルコンソールにも対応します。
 ウィザードで USB 永続化を選べば、ライブ ISO をディスクレスの永続ルーターとして使えます。
-USB 永続化を選ばない場合、ISO は一時的なデモとして動作し、再起動で設定が消えます。
+USB 永続化を選ばない場合は一時的なデモとして動作し、再起動で設定が消えます。

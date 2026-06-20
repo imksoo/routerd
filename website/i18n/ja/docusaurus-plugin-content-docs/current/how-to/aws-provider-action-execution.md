@@ -19,17 +19,19 @@ SAM データプレーンは AWS×PVE（ENI セカンダリプライベート IP
 ## 1. スコープと境界
 
 - **AWS のみ。プロバイダーは 1 つだけ。** この Runbook には Azure も OCI も含みません。
-- **トポロジー:** `routerd-cloud` ノード 1 台 + cloud-client 1 台 + on-prem-client 1 台で、on-prem から cloud ENI へ移動する捕捉済み **`/32` は 1 つだけ**です。ラボアドレスとしては（SAM リファレンスに従い）cloud-client が `.7`、on-prem-client が `.9` です。
-- **専用ラボ限定。** このテスト用に作成した使い捨ての VPC / サブネット / インスタンスです。**本番リソースや共有リソースは使いません。** 他が依存する EIP、セキュリティグループ、ルートテーブル、インスタンスもありません。
+- **トポロジー:** `routerd-cloud` ノード 1 台、cloud-client 1 台、on-prem-client 1 台で構成します。on-prem から cloud ENI へ移動する捕捉済み **`/32` は 1 つだけ**です。ラボアドレスは SAM リファレンスに従い、cloud-client が `.7`、on-prem-client が `.9` です。
+- **専用ラボ限定。** このテスト用に作成した使い捨ての VPC、サブネット、インスタンスです。**本番リソースや共有リソースは使いません。** 他が依存する EIP、セキュリティグループ、ルートテーブル、インスタンスもありません。
 - **ライブ実行はオーナーの明示的な承認後のみ。** 読み取り専用 preflight（Section 4）まではいつでも実行できます。Section 7 の変更はゲートされています。
 
 ## 2. Executor の設計
 
-`aws-provider-executor` は `execute.providerAction` ケーパビリティ（`PluginSpec.Capabilities` の Phase 5 列挙値）を通知するプラグインです。**独立したプロセス**で動作し、AWS CLI 経由で **EC2 インスタンス IAM ロール（インスタンスプロファイル）** を使って認証します。**routerd コアは認証情報を一切渡しません** — executor は ADR 0007 のハード不変条件に従い、クラウドネイティブの識別情報のみを使います。
+`aws-provider-executor` は `execute.providerAction` ケーパビリティ（`PluginSpec.Capabilities` の Phase 5 列挙値）を通知するプラグインです。**独立したプロセス**で動作し、AWS CLI 経由で **EC2 インスタンス IAM ロール（インスタンスプロファイル）** を使って認証します。**routerd コアは認証情報を一切渡しません**。executor は ADR 0007 のハード不変条件に従い、クラウドネイティブの識別情報のみを使います。
 
-executor は **stdin** から `ExecuteActionRequest` を 1 つ読み取り、stdout に `ExecuteActionResult` を 1 つ出力します。リクエスト仕様には `Action`、`Provider`、`ProviderRef`、`Target`（プロバイダーキー: AWS の場合は `nicRef` = ENI id、`address`、`region`）、`Parameters`、`Mode`（`dry-run` | `execute`）、`IdempotencyKey`、許可リスト済みの `Context` が含まれます。結果には `Status`（`succeeded` | `failed` | `skipped`）、`Message`、`Observed`（ジャーナルが記録する非秘密の事実）、`UndoAvailable`、`Error` が含まれます。
+executor は **stdin** から `ExecuteActionRequest` を 1 つ読み取り、stdout に `ExecuteActionResult` を 1 つ出力します。
+リクエスト仕様には `Action`、`Provider`、`ProviderRef`、`Target`（プロバイダーキー: AWS の場合は `nicRef` = ENI id、`address`、`region`）、`Parameters`、`Mode`（`dry-run` | `execute`）、`IdempotencyKey`、許可リスト済みの `Context` が含まれます。
+結果には `Status`（`succeeded` | `failed` | `skipped`）、`Message`、`Observed`（ジャーナルが記録する非秘密の事実）、`UndoAvailable`、`Error` が含まれます。
 
-**`dry-run` モードは変更を一切行いません** — describe / 読み取り専用の呼び出しのみです。`execute` モードが変更を行います。
+**`dry-run` モードは変更を一切行いません**。describe など読み取り専用の呼び出しのみです。`execute` モードが変更を行います。
 
 ### `assign-secondary-ip`
 
@@ -85,7 +87,7 @@ aws ec2 unassign-private-ip-addresses \
 **ジャーナルの `Observed.priorSourceDestCheck` に記録された変更前の状態を復元します。**
 これが安全性を支える重要なルールです:
 
-- `priorSourceDestCheck == true` の場合 → 操作前にチェックが有効だった → 復元します:
+- `priorSourceDestCheck == true` の場合: 操作前にチェックが有効だったので、復元します。
 
   ```sh
   aws ec2 modify-network-interface-attribute \
@@ -93,7 +95,7 @@ aws ec2 unassign-private-ip-addresses \
     --source-dest-check --region "<region>"
   ```
 
-- `priorSourceDestCheck == false` の場合 → 操作前に**すでに無効だった**（ENI はすでにフォワーダーだった） → **何もしません**。`Status=skipped` を返します。チェックを強制的に再有効化**しないでください**。
+- `priorSourceDestCheck == false` の場合: 操作前に**すでに無効だった**ので（ENI はすでにフォワーダーだった）、**何もしません**。`Status=skipped` を返します。チェックを強制的に再有効化**しないでください**。
 
 **undo = チェックを有効化、とハードコードしてはいけません。** 盲目的に「undo で source/dest-check を再有効化する」と、独自の理由ですでにフォワーダーとして動作していたアプライアンス/ENI を壊します。undo は観測した値を読み戻し、実際に変更した部分だけを元に戻す必要があります。
 
@@ -103,12 +105,12 @@ executor の EC2 インスタンスにアタッチされたインスタンスプ
 
 | アクション | 使用箇所 |
 |--------|---------|
-| `ec2:DescribeNetworkInterfaces` | dry-run + preflight + 変更前状態キャプチャ |
+| `ec2:DescribeNetworkInterfaces` | dry-run、preflight、変更前状態キャプチャ |
 | `ec2:AssignPrivateIpAddresses` | `assign-secondary-ip` の execute |
 | `ec2:UnassignPrivateIpAddresses` | `unassign-secondary-ip` の undo |
-| `ec2:ModifyNetworkInterfaceAttribute` | forwarding の有効化/無効化 execute |
+| `ec2:ModifyNetworkInterfaceAttribute` | forwarding の有効化と無効化の execute |
 
-ラボの ENI / VPC にスコープを限定するため、API がサポートする範囲でリソース ARN と条件を設定します（変更系の ENI アクションはラボ ENI ARN にリソーススコープ可能、`Describe*` はリソーススコープ不可のため `ec2:Region` / `ec2:Vpc` などの条件キーで制限）:
+ラボの ENI と VPC にスコープを限定するため、API がサポートする範囲でリソース ARN と条件を設定します。変更系の ENI アクションはラボ ENI ARN にリソーススコープでき、`Describe*` はリソーススコープ不可のため `ec2:Region` や `ec2:Vpc` などの条件キーで制限します。
 
 ```json
 {
@@ -164,22 +166,22 @@ aws ec2 describe-route-tables \
 
 確認事項:
 
-1. **IAM ロールが Section 3 の 4 権限のみであること** — インスタンスプロファイルのアタッチ済みポリシーを確認し、広い EC2 権限、IAM/STS 書き込み権限、他のサービスがないことを検証します。（ポリシードキュメントの読み取り専用検査です。ここでは変更しません。）
-2. **アドレスがまだ割り当てられていないこと** — `<address>` が上記の最初の describe で取得した ENI の `PrivateIpAddresses` に**まだ含まれていない**ことを確認します。すでに含まれている場合、assign は no-op であり、ラボが汚れています — 停止して調査してください。
-3. **`SourceDestCheck` の現在値が記録されていること** — この値は executor が execute 時に `priorSourceDestCheck` としてキャプチャする値です。
+1. **IAM ロールが Section 3 の 4 権限のみであること。** インスタンスプロファイルのアタッチ済みポリシーを確認し、広い EC2 権限、IAM/STS 書き込み権限、他のサービスがないことを検証します（ポリシードキュメントの読み取り専用検査であり、ここでは変更しません）。
+2. **アドレスがまだ割り当てられていないこと。** `<address>` が上記の最初の describe で取得した ENI の `PrivateIpAddresses` に**まだ含まれていない**ことを確認します。すでに含まれている場合、assign は no-op であり、ラボが汚れています。停止して調査してください。
+3. **`SourceDestCheck` の現在値が記録されていること。** この値は executor が execute 時に `priorSourceDestCheck` としてキャプチャする値です。
 
 ## 5. スモークが依存するアクションジャーナルのフィールド
 
 `action_executions` ジャーナルは、アクションごとに以下を記録します:
 
-- `idempotencyKey` — 重複排除キー。すでに succeeded のキーは再実行されません。
-- `provider` — `aws`。
-- `action` — 例: `assign-secondary-ip`、`ensure-forwarding-enabled`。
-- `target` — `eni`、`address`、`region`。
-- `status` — `pending` / `approved` / `succeeded` / `failed` / `skipped` / `rolledBack`。
-- `Observed.priorSourceDestCheck` — `true` | `false`。変更前にキャプチャされた値で、`ensure-forwarding-enabled` の undo がこの値を読みます。
-- `executedAt` — タイムスタンプ。
-- `result` / `error` — `ExecuteActionResult` のメッセージ / `Error`。
+- **`idempotencyKey`**：重複排除キー。すでに succeeded のキーは再実行されません。
+- **`provider`**：`aws`。
+- **`action`**：例: `assign-secondary-ip`、`ensure-forwarding-enabled`。
+- **`target`**：`eni`、`address`、`region`。
+- **`status`**：`pending`、`approved`、`succeeded`、`failed`、`skipped`、`rolledBack`。
+- **`Observed.priorSourceDestCheck`**：`true` | `false`。変更前にキャプチャされた値で、`ensure-forwarding-enabled` の undo がこの値を読みます。
+- **`executedAt`**：タイムスタンプ。
+- **`result`** と **`error`**：`ExecuteActionResult` のメッセージと `Error`。
 
 ジャーナルは、何が実行されたかと冪等性ガードの単一の信頼できるソースです。認証情報は**一切**ジャーナルに記録されません。
 
@@ -195,9 +197,9 @@ aws ec2 describe-route-tables \
      --network-interface-id "<eni-id>" \
      --private-ip-addresses "<address>" --region "<region>"
    ```
-3. **ラボインスタンスの停止/終了とコスト発生リソースの解放** — `routerd-cloud`、cloud-client、on-prem-client のラボインスタンスを停止または終了します。割り当て済みの **EIP** を解放し、孤立した **EBS** ボリュームを削除し、このテスト専用に作成した VPC/サブネット/SG を削除します。
+3. **ラボインスタンスの停止または終了とコスト発生リソースの解放。** `routerd-cloud`、cloud-client、on-prem-client のラボインスタンスを停止または終了します。割り当て済みの **EIP** を解放し、孤立した **EBS** ボリュームを削除し、このテスト専用に作成した VPC、サブネット、SG を削除します。
 
-**エビデンスをキャプチャした後、すべてのコスト発生リソースを停止または削除してください。** ラボインスタンスをアイドル状態で放置しないでください。
+エビデンスをキャプチャした後、**すべてのコスト発生リソースを停止または削除してください**。ラボインスタンスをアイドル状態で放置しないでください。
 
 ## 7. ライブ変更スモーク計画 + 受け入れ
 
@@ -216,14 +218,14 @@ aws ec2 describe-route-tables \
 - [ ] actionPlan 生成 → インポート → 承認 → 実行 → ジャーナル `succeeded`。
 - [ ] **セカンダリ IP が ENI 上に存在する**（`describe-network-interfaces` で `<address>` が `PrivateIpAddresses` に表示される）。
 - [ ] ENI で **Source/dest check が無効化**されている（`SourceDestCheck=false`）。ジャーナルに `Observed.priorSourceDestCheck` が記録されている。
-- [ ] no-local 捕捉では、`routerd-cloud` はアドレスを OS のローカルアドレスとして**保持しない**。これは `configureOSAddress=false` の場合と、プロバイダーのセカンダリ IP を ENI に残したまま BGP delivery でリモートオーナーへ配送する場合の両方を含む。捕捉はプロバイダー ingress とルート/転送状態であり、Linux local `/32` ではない。
+- [ ] no-local 捕捉では、`routerd-cloud` はアドレスを OS のローカルアドレスとして**保持しない**。これは `configureOSAddress=false` の場合と、プロバイダーのセカンダリ IP を ENI に残したまま BGP delivery でリモートオーナーへ配送する場合の両方を含む。捕捉はプロバイダー ingress とルートの転送状態であり、Linux local `/32` ではない。
 - [ ] `RemoteAddressClaim` が **Ready** に到達する。
 - [ ] `routerctl doctor` の hybrid チェックが**パス**する。
 - [ ] cloud-client **`.7`** と on-prem-client **`.9`** — **ping と ssh が双方向で**成功する。
 - [ ] 捕捉パスに **NAT が存在しない**（ルーティング/転送され、変換されない）。
 - [ ] すべてのノードで**デフォルトゲートウェイが変更されていない**。
-- [ ] Section 6 の **Teardown / undo が成功する**（source/dest-check の変更前状態復元ルールを含む）。
-- [ ] エビデンスキャプチャ後に**コスト発生リソースが停止/削除されている**。
+- [ ] Section 6 の **teardown と undo が成功する**（source/dest-check の変更前状態復元ルールを含む）。
+- [ ] エビデンスキャプチャ後に**コスト発生リソースが停止または削除されている**。
 
 ## 8. ハードストップ
 
@@ -235,7 +237,7 @@ aws ec2 describe-route-tables \
 4. **ロールバック/クリーンアップが事前に記述できない。**
 5. プロバイダー API が**曖昧な/部分的な成功**を返す。
 6. **コスト発生リソースがアクティブなテストなしに稼働し続ける。**
-7. クラウドリソースが稼働中に人間の判断を **10 分以上待つ** → **停止して deallocate する**（インスタンスを停止してコスト削減）。判断後に再開します。
+7. クラウドリソースが稼働中に人間の判断を **10 分以上待つ**場合は、**停止して deallocate する**（インスタンスを停止してコスト削減）。判断後に再開します。
 8. いずれかのコマンドが**本番または共有リソースへの変更を意味する**。
 
 ## 9. ライブ実行のゲート

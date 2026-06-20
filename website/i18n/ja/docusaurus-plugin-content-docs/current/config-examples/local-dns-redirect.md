@@ -7,8 +7,7 @@ sidebar_position: 80
 
 ![LAN の平文 DNS が IPAddressSet で一致しローカル DNSResolver へリダイレクトされる構成](/img/diagrams/config-example-local-dns-redirect.png)
 
-LAN クライアントが有名なパブリックリゾルバーへ平文 DNS を直接送ろうとしたときに、
-TCP/UDP の port 53 だけをルーターのローカルリゾルバーへリダイレクトする例です。
+LAN クライアントが有名なパブリックリゾルバーへ平文 DNS を直接送ろうとしたときに、TCP/UDP の port 53 だけをルーターのローカルリゾルバーへリダイレクトする例です。
 DoH や DoT の port には手を加えません。
 
 完全な YAML は `examples/example-local-dns-redirect.yaml` にあります。

@@ -7,8 +7,7 @@ title: インストールとアップグレード
 ![Diagram showing routerd install and upgrade from release archive download and install.sh through first router.yaml validation, plan, serve mode, preserved config and state, and uninstall](/img/diagrams/install-and-upgrade.png)
 
 ルーターホストへはリリースアーカイブから導入します。
-アーカイブには、実行ファイル、サービステンプレート、設定例、インストーラーが
-含まれます。
+アーカイブには、実行ファイル、サービステンプレート、設定例、インストーラーが含まれます。
 ルーターホストに Go や Makefile は要りません。
 
 ## クイックインストール
@@ -40,19 +39,14 @@ sudo ./install.sh
 ```
 
 FreeBSD arm64 では `freebsd-arm64` アーカイブを使います。
-最新リリースには `routerd-vYYYYMMDD.HHmm-linux-amd64.tar.gz` のような
-版番号付きアーカイブもあります。
+最新リリースには `routerd-vYYYYMMDD.HHmm-linux-amd64.tar.gz` のような版番号付きアーカイブもあります。
 特定の版に固定する場合は、版番号付きアーカイブを使います。
 
-Linux 用アーカイブには、`CGO_ENABLED=0` で静的リンクした routerd バイナリを
-含めます。
-そのため、配置先ホストの glibc 版には依存しません。
-`dnsmasq`、`nft`、`ip`、`conntrack`、`tcpdump` などの実行時ツールは、
-引き続き `install.sh` が導入または確認します。
+Linux 用アーカイブには、`CGO_ENABLED=0` で静的リンクした routerd バイナリを含めます。
+配置先ホストの glibc 版には依存しません。
+`dnsmasq`、`nft`、`ip`、`conntrack`、`tcpdump` などの実行時ツールは、引き続き `install.sh` が導入または確認します。
 
-native nDPI によるアプリケーション識別が必要なホストでは、対応する
-`routerd-ndpi-agent-libndpi-linux-amd64.tar.gz` も取得し、通常のアーカイブと
-同じインストール処理の中で明示的に適用します。
+native nDPI によるアプリケーション識別が必要なホストでは、対応する `routerd-ndpi-agent-libndpi-linux-amd64.tar.gz` も取得し、通常のアーカイブと同じインストール処理の中で明示的に適用します。
 
 ```sh
 curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
@@ -62,73 +56,55 @@ sudo ./install.sh --with-ndpi \
   --with-ndpi-archive ./routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
 ```
 
-`--with-ndpi` を付けた場合、導入後の `routerd-ndpi-agent` が
-`libndpiLoaded: true` を返さなければ処理は失敗します。これにより、static な
-フォールバックエージェントが native nDPI の要件を黙って満たしたことにはなりません。
+`--with-ndpi` を付けた場合、導入後の `routerd-ndpi-agent` が `libndpiLoaded: true` を返さなければ処理は失敗します。
+static なフォールバックエージェントが native nDPI の要件を黙って満たしたことにはなりません。
 
 `install.sh` は新規導入かアップグレードかを自動で判定します。
 実行ファイルを `/usr/local/sbin` に配置し、サービステンプレートを導入します。
 また、`/usr/local/etc/routerd/router.yaml.sample` を作成します。
 既存の `/usr/local/etc/routerd/router.yaml` は上書きしません。
-systemd ホストでは、インストーラーがローカルソケットアクセス用の `routerd` グループを
-作成します。`sudo usermod -aG routerd <user>` で運用者を追加すれば、
-`routerctl status` などのローカル制御ソケット操作を sudo なしで実行できます。
+systemd ホストでは、インストーラーがローカルソケットアクセス用の `routerd` グループを作成します。
+`sudo usermod -aG routerd <user>` で運用者を追加すれば、`routerctl status` などのローカル制御ソケット操作を sudo なしで実行できます。
 
 ## BGP を動かしているルーターのアップグレード
 
 `routerd-bgp` は長寿命のデーモンで、BGP セッションを保持します。
-再起動するとセッションが切断され、ピアは保留タイマーが満了するまで古い経路を
-保持するため、その間 ECMP の幅が縮小します。
-systemd ホストでは、`install.sh` がアップグレード前の削除済みバイナリをまだ
-実行中のアクティブな routerd ヘルパーサービス (`routerd-bgp` や
-`routerd-dns-resolver` など) を自動でリフレッシュします。
-これにより、アップグレード後のホストが `/proc/*/exe` の下に古い実行ファイルを
-抱え続けることを防ぎます。
+再起動するとセッションが切断され、ピアは保留タイマーが満了するまで古い経路を保持するため、その間 ECMP の幅が縮小します。
+systemd ホストでは、`install.sh` がアップグレード前の削除済みバイナリをまだ実行中のアクティブな routerd ヘルパーサービス（`routerd-bgp` や `routerd-dns-resolver` など）を自動でリフレッシュします。
+アップグレード後のホストが `/proc/*/exe` の下に古い実行ファイルを抱え続けることを防ぐためです。
 
 インストーラーがヘルパーを再起動した後は、BGP の再収束が起きます。
-再収束中に `routerd-bgp` を再度再起動しないでください。短時間に 2 回再起動すると、
-ピアが古い経路を保持し続け、ECMP が崩壊します。
+再収束中に `routerd-bgp` を再度再起動しないでください。
+短時間に 2 回再起動すると、ピアが古い経路を保持し続け、ECMP が崩壊します。
 Graceful Restart が保護できるのは 1 回の再起動だけです。
-判断は再収束を待ってから行います (BGP の保留タイマーと Graceful Restart の
-stale-path タイマーにより、最大約 3--6 分かかります)。
-合格条件は、すべてのピアが `Established` に戻ること、影響するプレフィックスで
-ECMP 幅が回復すること、エンドツーエンドの疎通 (例: ECMP 経路を通る HTTP 200) が
-成功することです。
+判断は再収束を待ってから行います（BGP の保留タイマーと Graceful Restart の stale-path タイマーにより、最大約 3--6 分かかります）。
+合格条件は、すべてのピアが `Established` に戻ること、影響するプレフィックスで ECMP 幅が回復すること、エンドツーエンドの疎通（例: ECMP 経路を通る HTTP 200）が成功することです。
 
-この間、1 つのピアが `IDLE` のまま `Closed an accepted connection` を
-繰り返しログに出すことがあります。これは、前のセッションをまだ保持している
-ピアが保留タイマーの満了を待っている状態です。
-追加の再起動はせず、待ってください。タイマー満了後にピアは自動で接続を確立し、
-ECMP も回復します。
+この間、1 つのピアが `IDLE` のまま `Closed an accepted connection` を繰り返しログに出すことがあります。
+前のセッションをまだ保持しているピアが保留タイマーの満了を待っている状態です。
+追加の再起動はせず、待ってください。
+タイマー満了後にピアは自動で接続を確立し、ECMP も回復します。
 
 ## root 以外の運用者によるローカル制御ソケットアクセス
 
-読み取り専用の状態ソケット (`/run/routerd/routerd-status.sock`) を使えば、
-root 以外の運用者も sudo なしで `routerctl status` を実行できます。
-`routerd` グループが存在する場合、routerd はこのソケットを
-`root:routerd`、モード `0o660` で作成します。
-Unix ソケットへの接続には書き込み権限が必要なので、グループのメンバーは
-読み書き可能です。
-このグループ所有権は、routerd がソケットを作成する際に自身で設定するため、
-サービスユニットの `Group=` 設定には依存**しません**。
-`routerd` グループが存在しない場合は、誰もロックアウトされないよう、
-状態ソケットを全アクセス可 (`0o666`) にフォールバックします。
+読み取り専用の状態ソケット（`/run/routerd/routerd-status.sock`）を使えば、root 以外の運用者も sudo なしで `routerctl status` を実行できます。
+`routerd` グループが存在する場合、routerd はこのソケットを `root:routerd`、モード `0o660` で作成します。
+Unix ソケットへの接続には書き込み権限が必要なので、グループのメンバーは読み書き可能です。
+このグループ所有権は、routerd がソケットを作成する際に自身で設定するため、サービスユニットの `Group=` 設定には依存**しません**。
+`routerd` グループが存在しない場合は、誰もロックアウトされないよう、状態ソケットを全アクセス可（`0o666`）にフォールバックします。
 
-読み書き用の制御ソケット (`/run/routerd/routerd.sock`、`routerctl apply` /
-`delete` で使用) は、`root` 所有の `0o660` のままです。
+読み書き用の制御ソケット（`/run/routerd/routerd.sock`、`routerctl apply` / `delete` で使用）は、`root` 所有の `0o660` のままです。
 ルーターへの変更操作には、引き続き root / sudo が必要です。
 
 sudo なしで `routerctl status` を使えるようにする手順:
 
 1. `sudo usermod -aG routerd <user>` (インストーラーがグループを作成済み)。
 2. グループメンバーシップは**新しい**ログインセッションにのみ適用されます。
-   反映前に再ログイン (または新しい SSH セッションを開く / `newgrp routerd` を
-   実行) してください。フルの再ログインなしで現在のシェルでグループを使うには、
-   コマンドをラップします: `sg routerd -c 'routerctl status'`。
+   反映前に再ログイン（または新しい SSH セッションを開く、`newgrp routerd` を実行）してください。
+   フルの再ログインなしで現在のシェルでグループを使うには、`sg routerd -c 'routerctl status'` でコマンドをラップします。
 
-`ls -l /run/routerd/routerd-status.sock` で確認します (期待値:
-`srw-rw---- root routerd`)。`id <user>` でグループ一覧に `routerd` が含まれる
-ことを確認します。
+`ls -l /run/routerd/routerd-status.sock` で確認します（期待値: `srw-rw---- root routerd`）。
+`id <user>` でグループ一覧に `routerd` が含まれることを確認します。
 グループに入っていないユーザーが拒否されるのは、意図した堅牢化であり、
 後退ではありません。サービスユニットの変更は不要です。
 
@@ -149,8 +125,7 @@ ISO はデモや短時間の試用に向いています。
 永続的なルーターとして使う場合は、リリースアーカイブからディスクへ導入します。
 
 ライブ ISO は、ビデオコンソールとシリアルコンソールの両方を有効にします。
-仮想マシン (KVM / Proxmox など) では、ライブ起動時に `qemu-guest-agent`
-サービスが利用可能であれば自動起動を試みます。
+仮想マシン（KVM / Proxmox など）では、ライブ起動時に `qemu-guest-agent` サービスが利用可能であれば自動起動を試みます。
 `sshd` は仮想化環境での運用者アクセス用に同梱していますが、ライブ ISO ではデフォルトで停止しています。
 Proxmox VE では、シリアルソケットを追加し、`qm terminal` で接続します。
 
@@ -173,15 +148,12 @@ qm terminal 200
 DHCP や RA を試す場合は、`net1` に隔離した LAN ブリッジを使います。
 シリアルコンソールは 115200 8N1 です。
 ウィザードはプレーンテキストで表示します。
-そのため、`qm terminal`、フレームバッファーコンソール、最小構成の端末のいずれでも同じように動きます。
+`qm terminal`、フレームバッファーコンソール、最小構成の端末のいずれでも同じように動きます。
 
-ライブ ISO には 2 つの動作があります。
+ライブ ISO には 2 つの動作モードがあります。
 
-- **一時デモモード:** USB ストレージを選びません。
-  設定とログは RAM 上に置かれ、再起動で消えます。
-- **永続ルーターモード:** ウィザードで USB パーティションを選びます。
-  ウィザードが `router.yaml` を USB デバイスへ保存します。
-  次回の起動時には、ISO が USB デバイスをマウントし、設定を復元して自動的に反映します。
+- **一時デモモード**：USB ストレージを選びません。設定とログは RAM 上に置かれ、再起動で消えます。
+- **永続ルーターモード**：ウィザードで USB パーティションを選びます。ウィザードが `router.yaml` を USB デバイスへ保存します。次回の起動時には、ISO が USB デバイスをマウントし、設定を復元して自動的に反映します。
 
 永続モードでは、USB パーティションに `ROUTERD` というラベルを付けます。
 リムーバブルデバイスが複数ある場合は、カーネル引数に
@@ -281,30 +253,21 @@ tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
-`/usr/local/sbin/routerd` が存在する場合、インストーラーはアップグレードモードに
-切り替わります。
-このとき、古い `routerd --version` と新しい `routerd --version` を表示します。
+`/usr/local/sbin/routerd` が存在する場合、インストーラーはアップグレードモードに切り替わります。
+古い `routerd --version` と新しい `routerd --version` を表示します。
 実行ファイルとサービステンプレートを置き換える一方で、設定と状態は保持します。
 routerd サービスが起動中であれば再起動します。
-systemd ホストでは、再起動した `routerd.service` の状態ソケットを待ち、
-routerd が管理するユニットファイルの更新が落ち着いてから、更新が必要な
-routerd ヘルパーサービスだけを再起動します。
-再起動するのは、削除済みのアップグレード前バイナリを実行している場合、または
-ヘルパーのプロセス起動後にユニットファイルが更新された場合だけです。
-`/etc/systemd/system/routerd.service` が routerd の設定で管理されている場合は、
-アーカイブのテンプレートで上書きせず、そのユニットを保持します。
+systemd ホストでは、再起動した `routerd.service` の状態ソケットを待ち、routerd が管理するユニットファイルの更新が落ち着いてから、更新が必要な routerd ヘルパーサービスだけを再起動します。
+再起動するのは、削除済みのアップグレード前バイナリを実行している場合、またはヘルパーのプロセス起動後にユニットファイルが更新された場合だけです。
+`/etc/systemd/system/routerd.service` が routerd の設定で管理されている場合は、アーカイブのテンプレートで上書きせず、そのユニットを保持します。
 
 置き換えるファイルは `*.backup.YYYYMMDDHHMMSS` に退避します。
 途中で失敗した場合は、一時バックアップから復元します。
 
-routerd 自身が `routerd.service` を、生成されるサービス成果物のリソースとして管理している場合、
-ユニットファイルの変更は慎重に扱います。
-適用の途中で自分自身を直接再起動するのではなく、`systemd-run` で少し遅らせた
-自己再起動を予約します。
-VRRP または ingress サービスのリソースを同じ設定に含む場合は、生成される
-`routerd.service` に、keepalived 用の書き込み可能なパスと capability を自動で追加します。
-BGP は長寿命の `routerd-bgp` デーモンをローカルの gRPC Unix ソケットで制御するため、
-FRR group や FRR の実行時ディレクトリは要りません。
+routerd 自身が `routerd.service` を、生成されるサービス成果物のリソースとして管理している場合、ユニットファイルの変更は慎重に扱います。
+適用の途中で自分自身を直接再起動するのではなく、`systemd-run` で少し遅らせた自己再起動を予約します。
+VRRP または ingress サービスのリソースを同じ設定に含む場合は、生成される `routerd.service` に、keepalived 用の書き込み可能なパスと capability を自動で追加します。
+BGP は長寿命の `routerd-bgp` デーモンをローカルの gRPC Unix ソケットで制御するため、FRR group や FRR の実行時ディレクトリは要りません。
 
 よく使うオプション:
 
@@ -343,8 +306,7 @@ sudo ./install.sh --no-config-update
 sudo ./install.sh configure
 ```
 
-ウィザードは、WAN インターフェース、LAN インターフェース、LAN アドレス、
-LAN 向けサービス、管理経路の置き場所、任意の USB 永続化を順に確認します。
+ウィザードは、WAN インターフェース、LAN インターフェース、LAN アドレス、LAN 向けサービス、管理経路の置き場所、任意の USB 永続化を順に確認します。
 生成した候補は `/usr/local/etc/routerd/router.yaml.configure` に保存します。
 既存の設定がある場合は差分を表示します。
 確認後、`/usr/local/etc/routerd/router.yaml` へ導入します。
@@ -416,8 +378,7 @@ sudo service routerd start
 ## アンインストール
 
 リリースアーカイブには `uninstall.sh` も含まれます。
-既定では、実行ファイル、サービステンプレート、実行時ファイルを削除し、
-設定と状態は残します。
+既定では、実行ファイル、サービステンプレート、実行時ファイルを削除し、設定と状態は残します。
 
 ```sh
 sudo ./uninstall.sh --yes
@@ -436,8 +397,7 @@ sudo ./uninstall.sh --yes --all
 ## 開発者向けワークフロー
 
 Makefile は開発用です。
-テスト、ビルド、スキーマ生成、設定例の検証、Web サイトのビルド、
-リリースアーカイブの作成に使います。
+テスト、ビルド、スキーマ生成、設定例の検証、Web サイトのビルド、リリースアーカイブの作成に使います。
 
 ```sh
 make test

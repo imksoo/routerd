@@ -39,7 +39,7 @@ routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
 
 ## 適用する
 
-`routerctl apply` は、一度きりのホスト操作です。意図を検証し、必要に応じてホストの現在状態を観測し、生成した成果物を書き出し、状態を記録して終了します。長時間動くデーモンのライフサイクルは管理しません。管理対象デーモンの起動・有効化・再起動・再読み込みは `routerd serve` が担当します。
+`routerctl apply` は、一度きりのホスト操作です。意図を検証し、必要に応じてホストの現在状態を観測し、生成した成果物を書き出し、状態を記録して終了します。長時間動くデーモンのライフサイクルは管理しません。管理対象デーモンの起動、有効化、再起動、再読み込みは `routerd serve` が担当します。
 
 ```bash
 sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace

@@ -8,9 +8,9 @@ title: ファイアウォールのレート制限と ICMP ルール
 
 この例は、小規模なルーター向けのステートフルな `FirewallRule` の書き方を示します。
 
-- HTTP と HTTPS を 1 つの複数ポートのルールで許可する
+- HTTP と HTTPS を 1 つの複数ポートルールで許可する
 - WAN からの ICMP echo request だけを許可する
-- パケットのレート、または送信元ごとの接続数の上限を超えた SSH の試行を reject する
+- パケットレート、または送信元ごとの接続数の上限を超えた SSH の試行を reject する
 
 完全な YAML は `examples/firewall-rate-limit.yaml` にあります。
 

@@ -11,8 +11,7 @@ routerd は 2 つの自動化経路を分けています。
 - CI ワークフローは通常の push と pull request を検証します。
 - Release ワークフローはリリースタグを push した後にリリースアーカイブを生成します。
 
-Release ワークフローは複数の OS と CPU アーキテクチャーを対象にします。
-また、GitHub Release の成果物も公開します。
+Release ワークフローは複数の OS と CPU アーキテクチャーを対象にし、GitHub Release の成果物も公開します。
 そのため、通常の CI とは分けています。
 
 ## CI ワークフロー

@@ -7,7 +7,8 @@ sidebar_position: 2
 
 ![DHCPv4 WAN、静的 LAN アドレス、最小限の Interface リソース、validate-plan-dry-run の適用ループを示す最初のルーターチュートリアル](/img/diagrams/tutorial-first-router.png)
 
-このチュートリアルでは、最小の routerd 構成を立ち上げます。構成は「DHCPv4 で IPv4 を取得する WAN 1 本」と「固定 IPv4 アドレスの LAN 1 本」です。
+このチュートリアルでは、最小の routerd 構成を立ち上げます。
+構成は「DHCPv4 で IPv4 を取得する WAN 1 本」と「固定 IPv4 アドレスの LAN 1 本」です。
 
 ```yaml
 apiVersion: routerd.net/v1alpha1
@@ -51,7 +52,8 @@ spec:
 ```
 
 `DHCPv4Client` は `routerd-dhcpv4-client` が所有します。
-routerd は OS 付属のクライアントには任せません。このデーモンは、他の routerd デーモンと同じ取り決め（`/v1/status`、`lease.json`、`events.jsonl`）で状態を公開します。
+routerd は OS 付属のクライアントには任せません。
+このデーモンは、他の routerd デーモンと同じ取り決め（`/v1/status`、`lease.json`、`events.jsonl`）で状態を公開します。
 
 本番に適用する前に、validate と plan で確認してください。
 
@@ -60,10 +62,10 @@ routerctl validate -f first-router.yaml --replace
 routerctl plan -f first-router.yaml --replace
 ```
 
-管理経路（LAN 経由の SSH、コンソール、ハイパーバイザーのコンソール）が変更後も残ることを確認してから、`--dry-run` を付けずに適用します。
+管理経路（LAN 経由の SSH、コンソール、ハイパーバイザーのコンソール）が変更後も残ることを確認してから適用します。
 
 ## 次に読むもの
 
-- [WAN 側サービス](./wan-side-services.md) — DHCPv6-PD、PPPoE、DS-Lite
-- [LAN 側サービス](./lan-side-services.md) — DHCP、RA、DNS、ローカルゾーン
+- [WAN 側サービス](./wan-side-services.md)（DHCPv6-PD、PPPoE、DS-Lite）
+- [LAN 側サービス](./lan-side-services.md)（DHCP、RA、DNS、ローカルゾーン）
 - [基本の NAT とファイアウォールポリシー](./basic-firewall.md)

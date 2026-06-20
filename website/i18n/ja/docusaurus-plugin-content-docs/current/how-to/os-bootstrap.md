@@ -6,7 +6,8 @@ title: ルーターホストを宣言型でブートストラップする
 
 ![derived package、kernel module、sysctl、adoption drop-in、minimal installer networking による declarative host bootstrap](/img/diagrams/how-to-os-bootstrap.png)
 
-routerd は、初回構築時に手作業になりがちなホスト準備を YAML へ寄せられます。インストーラーの代替ではなく、ルーター固有の差分を shell 履歴ではなく設定として残すための機能です。
+routerd は、初回構築時に手作業になりがちなホスト準備を YAML へ寄せられます。
+インストーラーの代替ではなく、ルーター固有の差分を shell 履歴ではなく設定として残すための機能です。
 
 ## パッケージ
 
@@ -38,11 +39,13 @@ spec:
 
 ## カーネルモジュール
 
-Linux のカーネルモジュールは、NAT、ファイアウォールログ、トラフィックフローログ、WireGuard などのリソースから自動で導出します。`KernelModule` は、利用者が直接書く設定 Kind ではありません。
+Linux のカーネルモジュールは、NAT, ファイアウォールログ, トラフィックフローログ, WireGuard などのリソースから自動で導出します。
+`KernelModule` は、利用者が直接書く設定 Kind ではありません。
 
 ## Sysctl
 
-routerd は、forwarding、conntrack accounting、reverse path filter、redirect、TCP、RA の sysctl を、ルーターのリソースから自動で導出します。通常、設定に `SysctlProfile` を書く必要はありません。
+routerd は、forwarding, conntrack accounting, reverse path filter, redirect, TCP, RA の sysctl を、ルーターのリソースから自動で導出します。
+通常、設定に `SysctlProfile` を書く必要はありません。
 
 `SysctlProfile` は、routerd がまだ導出できないプラットフォーム固有のカーネル設定を補う、狭い逃げ道としてだけ使います。差分だけを `overrides` で指定します。
 
@@ -61,13 +64,14 @@ spec:
 
 ## 既存ホスト設定の引き継ぎ
 
-systemd-networkd や systemd-resolved の引き継ぎ用 drop-in は、`Interface`、DHCP、DNS、RA などのリソースから自動で導出します。DHCP、DNS、PPPoE、healthcheck、Tailscale などの routerd 管理ユニットも、それぞれのリソース Kind から生成されるため、重複して定義しないでください。
+systemd-networkd や systemd-resolved の引き継ぎ用 drop-in は、`Interface`, DHCP, DNS, RA などのリソースから自動で導出します。
+DHCP, DNS, PPPoE, healthcheck, Tailscale などの routerd 管理ユニットも、それぞれのリソース Kind から生成されるため、重複して定義しないでください。
 
 Ubuntu 26.04 LTS では、RA の状態によっては、インストーラーが書いた netplan で `dhcp6: false` にしていても、
 systemd-networkd がインターフェース上で DHCPv6 クライアントのソケットを開くことがあります。
-routerd が所有する WAN/LAN リンクでは、OS のブートストラップ時に `accept-ra: false` も明示し、
-インストーラーの netplan レイヤーでは IPv6 のリンクローカルのみにしてください。
-こうすると、UDP ポート 546 を `routerd-dhcpv6-client` が使える状態に保てます。OS の初期ネットワーク設定が、routerd の DHCPv6-PD や RA/DHCPv6 の生成と競合するのを避けられます。
+routerd が所有する WAN/LAN リンクでは、OS のブートストラップ時に `accept-ra: false` も明示し、インストーラーの netplan レイヤーでは IPv6 のリンクローカルのみにしてください。
+こうすると、UDP ポート 546 を `routerd-dhcpv6-client` が使える状態に保てます。
+OS の初期ネットワーク設定が、routerd の DHCPv6-PD や RA/DHCPv6 の生成と競合するのを避けられます。
 管理用 DHCP は、別の管理インターフェースに残してください。
 
 ```yaml
