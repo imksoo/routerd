@@ -417,7 +417,20 @@ sudo systemctl is-active routerd.service routerd-bgp.service
 command -v routerd
 command -v routerctl
 command -v jq
-sudo routerctl get status -o json >/dev/null
+ready=0
+deadline=$((SECONDS + 60))
+while [ "$SECONDS" -lt "$deadline" ]; do
+  if sudo routerctl get status -o json >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  sleep 2
+done
+if [ "$ready" -ne 1 ]; then
+  sudo systemctl status routerd.service routerd-bgp.service --no-pager -l || true
+  ls -la /run/routerd 2>&1 || true
+  sudo routerctl get status -o json >/dev/null
+fi
 REMOTE_DEPLOY
 )"
     } >"$evidence_dir/deploy/${node}.txt" 2>&1 || return 1
