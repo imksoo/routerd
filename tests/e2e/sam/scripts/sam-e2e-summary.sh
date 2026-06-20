@@ -122,3 +122,16 @@ if [ -d "$evidence_dir/provider" ]; then
     printf '\n'
   done
 fi
+
+if [ -d "$evidence_dir/diagnostics" ]; then
+  echo "== load-balance evidence =="
+  find "$evidence_dir/diagnostics" -mindepth 1 -maxdepth 1 -type d -name 'load-balance-*' | sort | while read -r dir; do
+    label="${dir#"$evidence_dir/diagnostics/load-balance-"}"
+    rows=0
+    [ -f "$dir/owner-table.tsv" ] && rows="$(wc -l <"$dir/owner-table.tsv" | tr -d ' ')"
+    printf '%s\towner_rows=%s\n' "$label" "$rows"
+    if [ -f "$dir/owner-distribution.tsv" ]; then
+      sed 's/^/  /' "$dir/owner-distribution.tsv"
+    fi
+  done
+fi

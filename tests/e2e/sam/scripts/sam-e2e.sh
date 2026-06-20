@@ -748,6 +748,8 @@ collect_load_balance_report() {
   mkdir -p "$dir"
   : >"$dir/owner-table.tsv"
   : >"$dir/owner-summary.tsv"
+  : >"$dir/owner-site-summary.tsv"
+  : >"$dir/owner-distribution.tsv"
   for node in "${leaf_routers[@]}"; do
     node_is_stopped "$node" && continue
     ssh_node "$node" 'sudo routerctl describe MobilityPool/cloudedge -o json' >"$dir/${node}.json" 2>"$dir/${node}.stderr" || continue
@@ -780,6 +782,60 @@ collect_load_balance_report() {
       }
       ' "$dir/owner-table.tsv" | sort
     } >"$dir/owner-summary.tsv"
+    {
+      echo $'observer_site\towner_site\tcount'
+      awk -F '\t' '
+      function site_from_node(node) {
+        if (node ~ /^aws-/) return "aws"
+        if (node ~ /^azure-/) return "azure"
+        if (node ~ /^oci-/) return "oci"
+        if (node ~ /^pve-/) return "pve"
+        if (node == "" || node == "<unknown>") return "<unknown>"
+        return "other"
+      }
+      {
+        observer_site = site_from_node($1)
+        owner = ($3 == "" ? "<unknown>" : $3)
+        owner_site = site_from_node(owner)
+        key = observer_site "\t" owner_site
+        count[key]++
+      }
+      END {
+        for (key in count) {
+          print key "\t" count[key]
+        }
+      }
+      ' "$dir/owner-table.tsv" | sort
+    } >"$dir/owner-site-summary.tsv"
+    {
+      echo $'owner_site\towner\tunique_addresses\tobserver_rows'
+      awk -F '\t' '
+      function site_from_node(node) {
+        if (node ~ /^aws-/) return "aws"
+        if (node ~ /^azure-/) return "azure"
+        if (node ~ /^oci-/) return "oci"
+        if (node ~ /^pve-/) return "pve"
+        if (node == "" || node == "<unknown>") return "<unknown>"
+        return "other"
+      }
+      {
+        owner = ($3 == "" ? "<unknown>" : $3)
+        owner_site = site_from_node(owner)
+        owner_key = owner_site "\t" owner
+        rows[owner_key]++
+        addresses[owner_key SUBSEP $2] = 1
+      }
+      END {
+        for (k in addresses) {
+          split(k, parts, SUBSEP)
+          unique[parts[1]]++
+        }
+        for (owner_key in rows) {
+          print owner_key "\t" unique[owner_key] "\t" rows[owner_key]
+        }
+      }
+      ' "$dir/owner-table.tsv" | sort
+    } >"$dir/owner-distribution.tsv"
   fi
 }
 
