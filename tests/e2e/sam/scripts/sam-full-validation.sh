@@ -51,6 +51,7 @@ command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 e2e_script="$script_dir/sam-e2e.sh"
 summary_script="$script_dir/sam-e2e-summary.sh"
+post_destroy_script="$script_dir/sam-post-destroy-inventory.sh"
 
 mkdir -p "$evidence_root"
 
@@ -188,6 +189,7 @@ run_scenario load-balance \
 if [ -n "$destroy_cmd" ]; then
   echo "== destroy =="
   bash -lc "$destroy_cmd" >"$evidence_root/destroy.log" 2>&1
+  "$post_destroy_script" --tofu-output "$tofu_output" --evidence-dir "$evidence_root/post-destroy" >"$evidence_root/post-destroy-summary.txt"
   "$summary_script" "$evidence_root/load-balance" >"$evidence_root/final-summary.txt"
 fi
 

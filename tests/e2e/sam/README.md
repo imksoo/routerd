@@ -192,6 +192,9 @@ tofu output -json > tofu-output.json
 `sam-full-validation.sh` は途中scenarioが失敗したらそこで停止し、
 `--destroy-cmd` が指定されていても実行しない。失敗時は live environment を
 残したまま、該当scenarioの evidence と実機状態を確認してから次の判断を行う。
+全scenario成功後に `--destroy-cmd` を実行した場合は、
+`sam-post-destroy-inventory.sh` で provider/PVE の残存確認を行い、
+`post-destroy/` と `post-destroy-summary.txt` にcleanup evidenceを保存する。
 `--list-scenarios` を付けると、`tofu output` に必要nodeが存在することだけを
 確認し、実機へSSHせずに実行予定scenarioを表示する。
 
@@ -233,6 +236,7 @@ tests/e2e/sam/
 │   ├── sam-e2e.sh              # E2E test harness
 │   ├── sam-full-validation.sh  # Standard full-topology scenario runner
 │   ├── sam-e2e-summary.sh      # Evidence summary helper
+│   ├── sam-post-destroy-inventory.sh # Post-destroy cleanup evidence
 │   └── sam-preflight.sh        # Pre-apply provider checks
 └── terraform/
     ├── modules/
