@@ -813,7 +813,7 @@ func localInventoryRecordIsSameSitePeerCapture(rec resolverPrivateIPRecord, self
 }
 
 func sameSitePeerCaptureStateFromInventory(rec resolverPrivateIPRecord, self memberPlanInfo, members map[string]memberPlanInfo) (resolverCaptureState, bool) {
-	if rec.Primary || strings.TrimSpace(rec.ResourceType) != "router-nic" || self.Capture.Type != "provider-secondary-ip" {
+	if rec.Primary || self.Capture.Type != "provider-secondary-ip" {
 		return resolverCaptureState{}, false
 	}
 	nodeRef := strings.TrimSpace(rec.NodeRef)
@@ -835,7 +835,7 @@ func sameSitePeerCaptureStateFromInventory(rec resolverPrivateIPRecord, self mem
 				continue
 			}
 		} else {
-			if member.Capture.Type != "provider-secondary-ip" || memberNICRef == "" || nicRef != memberNICRef {
+			if strings.TrimSpace(rec.ResourceType) != "router-nic" || member.Capture.Type != "provider-secondary-ip" || memberNICRef == "" || nicRef != memberNICRef {
 				continue
 			}
 		}

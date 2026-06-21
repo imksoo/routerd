@@ -520,6 +520,80 @@ func TestOwnershipResolverPromotesAzurePeerSecondaryForRemoteHomeFact(t *testing
 	}
 }
 
+func TestOwnershipResolverPromotesNodeTaggedAzurePeerSecondaryEvenWhenResourceTypeIsInstanceNIC(t *testing.T) {
+	now := time.Date(2026, 6, 21, 8, 5, 0, 0, time.UTC)
+	spec := placementPoolSpec()
+	spec.Members = append(spec.Members, api.MobilityPoolMember{
+		NodeRef: "aws-leaf-a",
+		Site:    "aws",
+		Role:    "cloud",
+		Capture: api.MobilityMemberCapture{
+			Type:         "provider-secondary-ip",
+			ProviderRef:  "aws-lab",
+			ProviderMode: "nic-secondary-ip",
+			NICRef:       "eni-a",
+		},
+		Delivery: api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
+	})
+	address := "10.88.60.16/32"
+	homeEvent := providerDiscoveryObservedEvent("cloudedge", "cloudedge", "aws-leaf-a", address, "aws", "aws-lab", providerinventory.PrivateIPRecord{
+		Address:      "10.88.60.16",
+		NICRef:       "eni-client-a",
+		SubnetRef:    "subnet-aws",
+		ResourceRef:  "i-aws-client-a",
+		ResourceType: "instance-nic",
+	}, now.Add(-time.Second), time.Hour)
+
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "azure-router-a",
+		Spec:     spec,
+		Events:   []routerstate.EventRecord{homeEvent},
+		Status: map[string]any{
+			"discoveryLocalInventory": []map[string]any{
+				{
+					"address":      address,
+					"nodeRef":      "azure-router-b",
+					"nicRef":       "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-b",
+					"subnetRef":    "azure-subnet",
+					"providerRef":  "azure-provider",
+					"resourceType": "instance-nic",
+				},
+				{
+					"address":      "10.88.60.21/32",
+					"nodeRef":      "azure-router-b",
+					"nicRef":       "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-b",
+					"subnetRef":    "azure-subnet",
+					"providerRef":  "azure-provider",
+					"resourceType": "instance-nic",
+					"primary":      true,
+				},
+			},
+		},
+		BGPLiveNodes:        map[string]bool{"aws-leaf-a": true, "azure-router-a": true, "azure-router-b": true},
+		BGPLivenessObserved: true,
+		Now:                 now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, address)
+	if decision.ConflictReason != "" {
+		t.Fatalf("decision = %#v, node-tagged Azure peer secondary must not conflict even when resourceType is instance-nic", decision)
+	}
+	if decision.Class != ownershipClassConfirmedCapture ||
+		decision.CaptureState != captureStateConfirmed ||
+		decision.CaptureHolderNode != "azure-router-b" ||
+		decision.CaptureTargetRef != "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-b" {
+		t.Fatalf("decision = %#v, want node-tagged Azure peer secondary promoted to confirmed capture", decision)
+	}
+
+	primaryDecision := ownershipDecisionByAddress(t, decisions, "10.88.60.21/32")
+	if primaryDecision.Class == ownershipClassConfirmedCapture || primaryDecision.CaptureState == captureStateConfirmed {
+		t.Fatalf("primary decision = %#v, primary peer address must not be promoted as capture", primaryDecision)
+	}
+}
+
 func TestOwnershipResolverPromotesTaggedSameSitePeerSecondaryToConfirmedCapture(t *testing.T) {
 	now := time.Date(2026, 6, 21, 7, 15, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()
