@@ -147,8 +147,11 @@ func planCaptureCandidatesWithDistribution(self memberPlanInfo, members map[stri
 	var dist *captureDistribution
 	if distributed {
 		distributedPlacement := PlacementDecision{Group: group, Active: true, ActiveNode: self.NodeRef}
-		eligibleAddresses := collectEligibleCaptureAddresses(self, members, decisions, distributedPlacement, installedNextHops, previousPlans, failedActions, poolPrefix)
-		liveNodes := distributedLiveNodes(self, members, livenessMarkers)
+		eligibleAddresses := collectDistributedEligibleCaptureAddresses(self, members, decisions, distributedPlacement)
+		var liveNodes map[string]bool
+		if placement.Seize {
+			liveNodes = distributedLiveNodes(self, members, livenessMarkers)
+		}
 		nodes := distributedCaptureNodes(members, group, liveNodes)
 		d := distributeCapturesWithIncumbents(eligibleAddresses, nodes, captureIncumbents(decisions))
 		if forceRebalance {
@@ -262,39 +265,18 @@ func captureIncumbents(decisions map[string]ownershipDecision) map[string]string
 	return out
 }
 
-func collectEligibleCaptureAddresses(self memberPlanInfo, members map[string]memberPlanInfo, decisions map[string]ownershipDecision, placement PlacementDecision, installedNextHops map[string][]string, previousPlans []dynamicconfig.ActionPlan, failedActions map[string]routerstate.ActionExecutionRecord, poolPrefix netip.Prefix) []string {
+func collectDistributedEligibleCaptureAddresses(self memberPlanInfo, members map[string]memberPlanInfo, decisions map[string]ownershipDecision, placement PlacementDecision) []string {
 	eligible := map[string]bool{}
-	for rawPrefix, nextHops := range installedNextHops {
-		if len(cleanStrings(nextHops)) == 0 {
-			continue
+	for key, decision := range decisions {
+		address := normalizeAddressString(decision.Address)
+		if address == "" {
+			address = normalizeAddressString(key)
 		}
-		address, ok := normalizeBGPTrapPrefix(rawPrefix, poolPrefix)
-		if !ok {
-			continue
-		}
-		decision, ok := decisions[address]
-		if !ok {
-			continue
-		}
-		if decision.Class == ownershipClassConfirmedCapture {
-			continue
-		}
+		decision.Address = address
 		if !decisionEligibleForCapture(decision, self, members, placement) {
-			if _, failed := failedActions[address]; !failed {
-				continue
-			}
-		}
-		if !routeTableCaptureAllowed(decision, self) {
 			continue
 		}
-		eligible[address] = true
-	}
-	for address := range previousBGPTrapCandidateAddresses(previousPlans, poolPrefix) {
-		decision, ok := decisions[address]
-		if !ok {
-			continue
-		}
-		if decision.Class == ownershipClassConfirmedCapture {
+		if decisionHomeOwnerSameSite(decision, self, members) {
 			continue
 		}
 		if !routeTableCaptureAllowed(decision, self) {
@@ -372,6 +354,18 @@ func decisionEligibleForCapture(decision ownershipDecision, self memberPlanInfo,
 		return true
 	}
 	return false
+}
+
+func decisionHomeOwnerSameSite(decision ownershipDecision, self memberPlanInfo, members map[string]memberPlanInfo) bool {
+	ownerNode := strings.TrimSpace(decision.HomeOwnerNode)
+	if ownerNode == "" {
+		return false
+	}
+	owner, ok := lookupMemberByNodeRef(members, ownerNode)
+	if !ok {
+		return false
+	}
+	return strings.TrimSpace(self.Site) != "" && strings.TrimSpace(self.Site) == strings.TrimSpace(owner.Site)
 }
 
 func decisionIsCaptureNotDesiredStale(decision ownershipDecision) bool {

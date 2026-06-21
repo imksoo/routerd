@@ -1708,6 +1708,186 @@ func TestControllerBGPModeForceRebalanceIgnoresPeerIncumbents(t *testing.T) {
 	}
 }
 
+func TestControllerBGPModeDistributedCaptureExcludesSameSiteHomeOwner(t *testing.T) {
+	now := time.Date(2026, 6, 21, 3, 55, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	for i := range spec.Members {
+		if spec.Members[i].Placement.Group == "aws-edge" {
+			spec.Members[i].MaxSecondaryIPs = 128
+		}
+	}
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-a"]
+	poolPrefix, err := netip.ParsePrefix(spec.Prefix)
+	if err != nil {
+		t.Fatalf("parse pool prefix: %v", err)
+	}
+	sameSitePrimary := "10.88.60.16/32"
+	remoteSitePrimary := "10.88.60.12/32"
+	candidates, dist := planCaptureCandidatesWithDistribution(
+		self,
+		members,
+		map[string]ownershipDecision{
+			sameSitePrimary: {
+				Address:       sameSitePrimary,
+				Class:         ownershipClassRemoteHomeOwned,
+				HomeOwnerNode: "aws-router-b",
+			},
+			remoteSitePrimary: {
+				Address:       remoteSitePrimary,
+				Class:         ownershipClassRemoteHomeOwned,
+				HomeOwnerNode: "azure-router",
+			},
+		},
+		PlacementDecision{Group: "aws-edge", Active: true, ActiveNode: self.NodeRef},
+		map[string][]string{
+			sameSitePrimary:   {"10.99.0.4"},
+			remoteSitePrimary: {"10.99.0.3"},
+		},
+		true,
+		nil,
+		nil,
+		nil,
+		map[string]string{bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.255.255.2/32"},
+		false,
+		poolPrefix,
+		now,
+	)
+	if _, ok := candidates[sameSitePrimary]; ok {
+		t.Fatalf("capture candidates = %#v, same-site home owner must not be captured", candidates)
+	}
+	if dist == nil {
+		t.Fatal("distribution is nil")
+	}
+	if _, ok := dist.Assignments[sameSitePrimary]; ok {
+		t.Fatalf("distribution = %#v, same-site home owner must not be assigned", dist)
+	}
+	if _, ok := dist.Assignments[remoteSitePrimary]; !ok {
+		t.Fatalf("distribution = %#v, remote-site home owner must remain eligible", dist)
+	}
+}
+
+func TestControllerBGPModeDistributedCaptureStatusStableAcrossLeaves(t *testing.T) {
+	now := time.Date(2026, 6, 21, 4, 5, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	for i := range spec.Members {
+		if spec.Members[i].Placement.Group == "aws-edge" {
+			spec.Members[i].MaxSecondaryIPs = 128
+		}
+	}
+	members := plannerMembers(spec.Members)
+	poolPrefix, err := netip.ParsePrefix(spec.Prefix)
+	if err != nil {
+		t.Fatalf("parse pool prefix: %v", err)
+	}
+	decisions := map[string]ownershipDecision{}
+	installedA := map[string][]string{}
+	installedB := map[string][]string{}
+	for i := 0; i < 18; i++ {
+		address := fmt.Sprintf("10.88.60.%d/32", 30+i)
+		decisions[address] = ownershipDecision{
+			Address:       address,
+			Class:         ownershipClassRemoteHomeOwned,
+			HomeOwnerNode: "azure-router",
+		}
+		if i < 5 {
+			installedA[address] = []string{"10.99.0.3"}
+		}
+		if i >= 7 {
+			installedB[address] = []string{"10.99.0.4"}
+		}
+	}
+	liveness := map[string]string{bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.255.255.2/32"}
+	_, distA := planCaptureCandidatesWithDistribution(
+		members["aws-router-a"],
+		members,
+		decisions,
+		PlacementDecision{Group: "aws-edge", Active: true, ActiveNode: "aws-router-a"},
+		installedA,
+		true,
+		nil,
+		nil,
+		nil,
+		liveness,
+		false,
+		poolPrefix,
+		now,
+	)
+	_, distB := planCaptureCandidatesWithDistribution(
+		members["aws-router-b"],
+		members,
+		decisions,
+		PlacementDecision{Group: "aws-edge", Active: true, ActiveNode: "aws-router-b"},
+		installedB,
+		true,
+		nil,
+		nil,
+		nil,
+		liveness,
+		false,
+		poolPrefix,
+		now,
+	)
+	if distA == nil || distB == nil {
+		t.Fatalf("distribution is nil: a=%#v b=%#v", distA, distB)
+	}
+	if fmt.Sprint(distA.NodeCounts) != fmt.Sprint(distB.NodeCounts) || fmt.Sprint(distA.Assignments) != fmt.Sprint(distB.Assignments) {
+		t.Fatalf("distribution mismatch:\na=%#v\nb=%#v", distA, distB)
+	}
+	if got := distA.NodeCounts["aws-router-a"] + distA.NodeCounts["aws-router-b"]; got != 18 {
+		t.Fatalf("node counts = %#v, want total 18", distA.NodeCounts)
+	}
+}
+
+func TestControllerBGPModeDistributedCaptureSeizeAssignsAllToSurvivor(t *testing.T) {
+	now := time.Date(2026, 6, 21, 4, 20, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	for i := range spec.Members {
+		if spec.Members[i].Placement.Group == "aws-edge" {
+			spec.Members[i].MaxSecondaryIPs = 128
+		}
+	}
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-a"]
+	poolPrefix, err := netip.ParsePrefix(spec.Prefix)
+	if err != nil {
+		t.Fatalf("parse pool prefix: %v", err)
+	}
+	decisions := map[string]ownershipDecision{}
+	for i := 0; i < 6; i++ {
+		address := fmt.Sprintf("10.88.60.%d/32", 50+i)
+		decisions[address] = ownershipDecision{
+			Address:       address,
+			Class:         ownershipClassRemoteHomeOwned,
+			HomeOwnerNode: "azure-router",
+		}
+	}
+	_, dist := planCaptureCandidatesWithDistribution(
+		self,
+		members,
+		decisions,
+		PlacementDecision{Group: "aws-edge", Active: true, ActiveNode: self.NodeRef, Seize: true},
+		nil,
+		true,
+		nil,
+		nil,
+		nil,
+		nil,
+		false,
+		poolPrefix,
+		now,
+	)
+	if dist == nil {
+		t.Fatal("distribution is nil")
+	}
+	if dist.NodeCounts["aws-router-a"] != 6 || dist.NodeCounts["aws-router-b"] != 0 {
+		t.Fatalf("distribution = %#v, survivor must own all captures while seizing without peer liveness", dist)
+	}
+}
+
 func TestControllerBGPModeStandbyReleasesConfirmedCaptureWhenActiveMarkerReturns(t *testing.T) {
 	now := time.Date(2026, 6, 13, 22, 5, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()
