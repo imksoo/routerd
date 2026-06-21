@@ -448,6 +448,70 @@ func TestOwnershipResolverReportsRemoteHomeLocalInventoryConflict(t *testing.T) 
 	}
 }
 
+func TestOwnershipResolverSuppressesRemoteHomeOnSameSitePeerCaptureNIC(t *testing.T) {
+	now := time.Date(2026, 6, 21, 5, 55, 0, 0, time.UTC)
+	spec := placementPoolSpec()
+	spec.Members = append(spec.Members, api.MobilityPoolMember{
+		NodeRef: "aws-router-a",
+		Site:    "aws",
+		Role:    "cloud",
+		Capture: api.MobilityMemberCapture{
+			Type:         "provider-secondary-ip",
+			ProviderRef:  "aws-provider",
+			ProviderMode: "nic-secondary-ip",
+			NICRef:       "eni-a",
+		},
+		Delivery: api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
+	})
+	address := "10.88.60.16/32"
+	homeEvent := providerDiscoveryObservedEvent("cloudedge", "cloudedge", "aws-router-a", address, "aws", "aws-provider", providerinventory.PrivateIPRecord{
+		Address:      "10.88.60.16",
+		NICRef:       "eni-client-b",
+		SubnetRef:    "subnet-aws",
+		ResourceRef:  "i-aws-client-b",
+		ResourceType: "instance-nic",
+	}, now.Add(-time.Second), time.Hour)
+
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "azure-router-a",
+		Spec:     spec,
+		Events:   []routerstate.EventRecord{homeEvent},
+		Status: map[string]any{
+			"discoveryLocalInventory": []map[string]any{
+				{
+					"address":      address,
+					"nicRef":       "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-b",
+					"subnetRef":    "azure-subnet",
+					"providerRef":  "azure-provider",
+					"resourceRef":  "azure-router-b-vm",
+					"resourceType": "instance-nic",
+				},
+			},
+		},
+		BGPLiveNodes:        map[string]bool{"aws-router-a": true, "azure-router-a": true, "azure-router-b": true},
+		BGPLivenessObserved: true,
+		Now:                 now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, address)
+	if decision.ConflictReason != "" {
+		t.Fatalf("decision = %#v, peer capture on same-site leaf NIC must not conflict", decision)
+	}
+	if decision.Class != ownershipClassRemoteHomeOwned || decision.HomeOwnerNode != "aws-router-a" || decision.SuppressionReason != "remote-home-owner" {
+		t.Fatalf("decision = %#v, want remote home suppressed while peer capture is locally visible", decision)
+	}
+	if decision.LocalNICRef != "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-b" || decision.LocalProviderRef != "azure-provider" {
+		t.Fatalf("decision = %#v, want local peer capture evidence preserved", decision)
+	}
+	status := ownershipResolverStatus(decisions)
+	if status["ownershipResolverPhase"] != "Resolved" || status["ownershipResolverConflictCount"] != 0 {
+		t.Fatalf("status = %#v, want resolved peer capture without conflict", status)
+	}
+}
+
 func TestOwnershipResolverTakesOverDeadColocatedRemoteHomeOwnerWithLocalInventory(t *testing.T) {
 	now := time.Date(2026, 6, 21, 3, 0, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()

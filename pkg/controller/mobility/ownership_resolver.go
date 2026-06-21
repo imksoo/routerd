@@ -342,6 +342,12 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 					out = append(out, decision)
 					continue
 				}
+				if localInventoryRecordIsSameSitePeerCapture(rec, self, members) {
+					decision.Class = ownershipClassRemoteHomeOwned
+					decision.SuppressionReason = "remote-home-owner"
+					out = append(out, decision)
+					continue
+				}
 				decision.ConflictReason = "remote-home-owner-overlaps-local-inventory"
 			}
 			homeProviderRef := strings.TrimSpace(fact.ProviderRef)
@@ -783,6 +789,31 @@ func localInventoryRecordIsRouterSelf(rec resolverPrivateIPRecord, self memberPl
 		return true
 	}
 	return strings.TrimSpace(rec.ResourceType) == "router-nic"
+}
+
+func localInventoryRecordIsSameSitePeerCapture(rec resolverPrivateIPRecord, self memberPlanInfo, members map[string]memberPlanInfo) bool {
+	nicRef := strings.TrimSpace(rec.NICRef)
+	if nicRef == "" {
+		return false
+	}
+	for _, member := range members {
+		if strings.TrimSpace(member.NodeRef) == strings.TrimSpace(self.NodeRef) {
+			continue
+		}
+		if member.Capture.Type != "provider-secondary-ip" {
+			continue
+		}
+		if !samePlacementSite(self, member) {
+			continue
+		}
+		if nicRef != strings.TrimSpace(member.Capture.NICRef) {
+			continue
+		}
+		providerRef := strings.TrimSpace(rec.ProviderRef)
+		memberProviderRef := strings.TrimSpace(member.Capture.ProviderRef)
+		return providerRef == "" || memberProviderRef == "" || providerRef == memberProviderRef
+	}
+	return false
 }
 
 type resolverCaptureState struct {
