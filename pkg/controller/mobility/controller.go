@@ -237,6 +237,8 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	bgpReturnRoutes := c.bgpReturnRoutes(spec)
 	forwardingObserved, forwardingEnabled, forwardingObservedAt := c.discoverySelfForwardingState(res.Metadata.Name)
 	poolStatus := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", res.Metadata.Name)
+	rebalanceRequest := captureRebalanceRequestFromStatus(poolStatus)
+	forceRebalance := rebalanceRequest.Pending()
 	observedStaleSince := observedSelfStaleCaptureSinceFromStatus(poolStatus)
 	ownershipDecisions, ownershipErr := resolveAddressOwnership(ownershipResolverInput{
 		PoolName:            res.Metadata.Name,
@@ -280,6 +282,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		ObservedStaleSince:   observedStaleSince,
 		SuppressDeprovision:  c.SuppressProviderDeprovision,
 		LivenessMarkers:      livenessMarkers,
+		ForceRebalance:       forceRebalance,
 		Now:                  now,
 	})
 	if err != nil {
@@ -361,6 +364,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	if delivery.Distribution != nil {
 		status["captureDistributionMode"] = "distributed"
 		status["captureDistributionNodeCounts"] = delivery.Distribution.NodeCounts
+		status["captureDistributionTargetPerNode"] = delivery.Distribution.Target
 		selfCount := 0
 		if c, ok := delivery.Distribution.NodeCounts[selfNode]; ok {
 			selfCount = c
@@ -368,6 +372,9 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		status["captureDistributionSelfCount"] = selfCount
 		status["captureDistributionTotalAssigned"] = len(delivery.Distribution.Assignments)
 		status["captureDistributionReasonCounts"] = captureDistributionReasonCounts(delivery.Distribution)
+	}
+	for key, value := range captureRebalanceStatus(rebalanceRequest, delivery.Distribution, forceRebalance, now) {
+		status[key] = value
 	}
 	if selfCaptureReason != "" {
 		status["selfCaptureReason"] = selfCaptureReason
@@ -573,6 +580,56 @@ func (c Controller) upsertBGPPlan(poolName string, spec api.MobilityPoolSpec, se
 
 func mobilityBGPMode(spec api.MobilityPoolSpec) bool {
 	return mobilityDeliveryMode(spec) == "bgp"
+}
+
+type captureRebalanceRequest struct {
+	ID        string
+	At        string
+	By        string
+	Reason    string
+	AppliedID string
+	AppliedAt string
+}
+
+func (r captureRebalanceRequest) Pending() bool {
+	return strings.TrimSpace(r.ID) != "" && strings.TrimSpace(r.ID) != strings.TrimSpace(r.AppliedID)
+}
+
+func captureRebalanceRequestFromStatus(status map[string]any) captureRebalanceRequest {
+	return captureRebalanceRequest{
+		ID:        statusString(status["captureRebalanceRequestID"]),
+		At:        statusString(status["captureRebalanceRequestedAt"]),
+		By:        statusString(status["captureRebalanceRequestedBy"]),
+		Reason:    statusString(status["captureRebalanceReason"]),
+		AppliedID: statusString(status["captureRebalanceAppliedRequestID"]),
+		AppliedAt: statusString(status["captureRebalanceAppliedAt"]),
+	}
+}
+
+func captureRebalanceStatus(request captureRebalanceRequest, dist *captureDistribution, force bool, now time.Time) map[string]any {
+	out := map[string]any{
+		"captureRebalanceRequestID":        request.ID,
+		"captureRebalanceRequestedAt":      request.At,
+		"captureRebalanceRequestedBy":      request.By,
+		"captureRebalanceReason":           request.Reason,
+		"captureRebalanceAppliedRequestID": request.AppliedID,
+		"captureRebalanceAppliedAt":        request.AppliedAt,
+	}
+	switch {
+	case force && dist != nil:
+		out["captureRebalancePhase"] = "Applied"
+		out["captureRebalanceAppliedRequestID"] = request.ID
+		out["captureRebalanceAppliedAt"] = now.UTC().Format(time.RFC3339Nano)
+		out["captureRebalanceAppliedNodeCounts"] = dist.NodeCounts
+		out["captureRebalanceAppliedReasonCounts"] = captureDistributionReasonCounts(dist)
+	case request.Pending():
+		out["captureRebalancePhase"] = "Pending"
+	case strings.TrimSpace(request.ID) != "" && strings.TrimSpace(request.ID) == strings.TrimSpace(request.AppliedID):
+		out["captureRebalancePhase"] = "Applied"
+	default:
+		out["captureRebalancePhase"] = "Idle"
+	}
+	return out
 }
 
 func mobilityDeliveryMode(spec api.MobilityPoolSpec) string {

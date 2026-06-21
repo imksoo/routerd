@@ -359,6 +359,15 @@ def tags_indicate_router(tags):
     return False
 
 
+def node_ref_from_tags(tags):
+    normalized = {str(key).strip().lower(): str(value).strip() for key, value in (tags or {}).items()}
+    for key in ("routerd-node", "routerd.node", "routerd_node", "routerdnode", "noderef", "node-ref", "node"):
+        value = normalized.get(key)
+        if value:
+            return value
+    return ""
+
+
 def azure_api_url(resource_path, api_version, params=None):
     base = azure_arm_base()
     if resource_path.startswith("http://") or resource_path.startswith("https://"):
@@ -550,6 +559,9 @@ def aws_inventory(spec):
                 "primary": bool(rec.get("Primary")),
                 "tags": tags,
             }
+            node_ref = node_ref_from_tags(tags)
+            if node_ref:
+                entry["nodeRef"] = node_ref
             if resource_ref:
                 entry["resourceRef"] = resource_ref
             if instance_state:
@@ -703,6 +715,9 @@ def azure_inventory_cli(spec):
                 "primary": bool(cfg.get("primary")),
                 "tags": tags,
             }
+            node_ref = node_ref_from_tags(tags)
+            if node_ref:
+                entry["nodeRef"] = node_ref
             if resource_ref:
                 entry["resourceRef"] = resource_ref
             if instance_state:
@@ -841,6 +856,9 @@ def azure_inventory_rest(spec):
                 "primary": azure_ip_config_primary(cfg),
                 "tags": tags,
             }
+            node_ref = node_ref_from_tags(tags)
+            if node_ref:
+                entry["nodeRef"] = node_ref
             if resource_ref:
                 entry["resourceRef"] = resource_ref
             if instance_state:
@@ -1013,6 +1031,9 @@ def oci_inventory(spec):
             "primary": bool(rec.get("is-primary")),
             "tags": tags,
         }
+        node_ref = node_ref_from_tags(tags)
+        if node_ref:
+            entry["nodeRef"] = node_ref
         if resource_ref:
             entry["resourceRef"] = resource_ref
         if instance_state:

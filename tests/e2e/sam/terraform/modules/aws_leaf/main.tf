@@ -65,6 +65,7 @@ resource "aws_instance" "router" {
 
   tags = merge(local.common_tags, {
     Name                 = "routerd-${var.run_id}-${local.router_name}"
+    "routerd-node"       = local.router_name
     "routerd-role"       = "leaf"
     "cloudedge-mobility" = "false"
   })
@@ -82,6 +83,7 @@ resource "aws_instance" "client" {
 
   tags = merge(local.common_tags, {
     Name                 = "routerd-${var.run_id}-${local.client_name}"
+    "routerd-node"       = local.client_name
     "routerd-role"       = "client"
     "cloudedge-mobility" = "true"
   })
@@ -102,6 +104,7 @@ resource "aws_instance" "extra_router" {
 
   tags = merge(local.common_tags, {
     Name                 = "routerd-${var.run_id}-${each.key}"
+    "routerd-node"       = each.key
     "routerd-role"       = "leaf"
     "cloudedge-mobility" = "false"
   })
@@ -120,6 +123,7 @@ resource "aws_instance" "extra_client" {
 
   tags = merge(local.common_tags, {
     Name                 = "routerd-${var.run_id}-${each.value.client_name}"
+    "routerd-node"       = each.value.client_name
     "routerd-role"       = "client"
     "cloudedge-mobility" = "true"
   })

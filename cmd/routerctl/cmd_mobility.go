@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
@@ -51,6 +52,29 @@ type mobilityOwnerRow struct {
 	ConflictReason        string `json:"conflictReason,omitempty" yaml:"conflictReason,omitempty"`
 }
 
+type mobilityDistributionRow struct {
+	Pool           string         `json:"pool" yaml:"pool"`
+	Mode           string         `json:"mode" yaml:"mode"`
+	Node           string         `json:"node" yaml:"node"`
+	Captures       int            `json:"captures" yaml:"captures"`
+	Target         int            `json:"target,omitempty" yaml:"target,omitempty"`
+	TotalAssigned  int            `json:"totalAssigned,omitempty" yaml:"totalAssigned,omitempty"`
+	ReasonCounts   map[string]int `json:"reasonCounts,omitempty" yaml:"reasonCounts,omitempty"`
+	RebalancePhase string         `json:"rebalancePhase,omitempty" yaml:"rebalancePhase,omitempty"`
+	RebalanceID    string         `json:"rebalanceID,omitempty" yaml:"rebalanceID,omitempty"`
+	RequestedAt    string         `json:"requestedAt,omitempty" yaml:"requestedAt,omitempty"`
+	RequestedBy    string         `json:"requestedBy,omitempty" yaml:"requestedBy,omitempty"`
+}
+
+type mobilityRebalanceResult struct {
+	Pool        string `json:"pool" yaml:"pool"`
+	RequestID   string `json:"requestID" yaml:"requestID"`
+	Phase       string `json:"phase" yaml:"phase"`
+	RequestedAt string `json:"requestedAt" yaml:"requestedAt"`
+	RequestedBy string `json:"requestedBy" yaml:"requestedBy"`
+	Reason      string `json:"reason,omitempty" yaml:"reason,omitempty"`
+}
+
 func mobilityCommand(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		mobilityUsage(stderr)
@@ -63,6 +87,10 @@ func mobilityCommand(args []string, stdout, stderr io.Writer) error {
 		return mobilityTrapsCommand(args[1:], stdout)
 	case "owners":
 		return mobilityOwnersCommand(args[1:], stdout)
+	case "distribution":
+		return mobilityDistributionCommand(args[1:], stdout)
+	case "rebalance-captures":
+		return mobilityRebalanceCapturesCommand(args[1:], stdout)
 	case "leases", "list", "ownership", "show":
 		return fmt.Errorf("mobility %s was removed with BGP mobility; use `routerctl mobility owners`, `routerctl mobility paths`, or `routerctl mobility traps`", args[0])
 	case "help", "-h", "--help":
@@ -187,8 +215,106 @@ func mobilityUsage(w io.Writer) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "commands:")
 	fmt.Fprintln(w, "  owners [--pool <name>] [--address <ipv4/32>] [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  distribution [--pool <name>] [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  rebalance-captures --pool <name> [--state-file <path>] [--by <name>] [--reason <text>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  paths [--prefix <prefix>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  traps [--address <ipv4/32>] [--state-file <path>] [-o table|json|yaml]")
+}
+
+func mobilityDistributionCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("mobility distribution", flag.ContinueOnError)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"Show SAM capture distribution counts from MobilityPool status.",
+			"routerctl mobility distribution\n"+
+				"routerctl mobility distribution --pool cloudedge -o json")
+	}
+	statePath := fs.String("state-file", defaultStatePath(), "routerd state database file")
+	poolFilter := fs.String("pool", "", "filter by MobilityPool name")
+	output := "table"
+	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
+	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected mobility distribution argument %q", fs.Arg(0))
+	}
+	store, err := openLedgerStateReadOnly(*statePath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	statuses, err := store.ListObjectStatuses()
+	if err != nil {
+		return err
+	}
+	return writeMobilityDistribution(stdout, mobilityDistributionRows(statuses, *poolFilter), output)
+}
+
+func mobilityRebalanceCapturesCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("mobility rebalance-captures", flag.ContinueOnError)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"Request one forced SAM capture rebalance for a MobilityPool.",
+			"routerctl mobility rebalance-captures --pool cloudedge\n"+
+				"routerctl mobility rebalance-captures --pool cloudedge --by operator --reason rejoin -o json")
+	}
+	statePath := fs.String("state-file", defaultStatePath(), "routerd state database file")
+	poolName := fs.String("pool", "", "MobilityPool name")
+	requestedBy := fs.String("by", "routerctl", "operator identity recorded in status")
+	reason := fs.String("reason", "operator-forced-rebalance", "reason recorded in status")
+	output := "table"
+	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
+	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected mobility rebalance-captures argument %q", fs.Arg(0))
+	}
+	pool := strings.TrimSpace(*poolName)
+	if pool == "" {
+		return errors.New("mobility rebalance-captures requires --pool")
+	}
+	store, err := openLedgerState(*statePath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", pool)
+	if len(status) == 0 {
+		return fmt.Errorf("MobilityPool/%s status not found", pool)
+	}
+	now := time.Now().UTC()
+	requestID := fmt.Sprintf("rebalance-%s-%d", pool, now.UnixNano())
+	next := map[string]any{}
+	for key, value := range status {
+		next[key] = value
+	}
+	by := strings.TrimSpace(*requestedBy)
+	if by == "" {
+		by = "routerctl"
+	}
+	why := strings.TrimSpace(*reason)
+	next["captureRebalanceRequestID"] = requestID
+	next["captureRebalanceRequestedAt"] = now.Format(time.RFC3339Nano)
+	next["captureRebalanceRequestedBy"] = by
+	next["captureRebalanceReason"] = why
+	next["captureRebalancePhase"] = "Pending"
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", pool, next); err != nil {
+		return err
+	}
+	result := mobilityRebalanceResult{Pool: pool, RequestID: requestID, Phase: "Pending", RequestedAt: now.Format(time.RFC3339Nano), RequestedBy: by, Reason: why}
+	return writeMobilityRebalanceResult(stdout, result, output)
 }
 
 func mobilityOwnerRows(statuses []routerstate.ObjectStatus, poolFilter, addressFilter string) []mobilityOwnerRow {
@@ -239,6 +365,51 @@ func mobilityOwnerRows(statuses []routerstate.ObjectStatus, poolFilter, addressF
 	return rows
 }
 
+func mobilityDistributionRows(statuses []routerstate.ObjectStatus, poolFilter string) []mobilityDistributionRow {
+	poolFilter = strings.TrimSpace(poolFilter)
+	var rows []mobilityDistributionRow
+	for _, status := range statuses {
+		if status.APIVersion != api.MobilityAPIVersion || status.Kind != "MobilityPool" {
+			continue
+		}
+		if poolFilter != "" && status.Name != poolFilter {
+			continue
+		}
+		counts := mobilityIntMap(status.Status["captureDistributionNodeCounts"])
+		if len(counts) == 0 {
+			continue
+		}
+		nodes := make([]string, 0, len(counts))
+		for node := range counts {
+			nodes = append(nodes, node)
+		}
+		sort.Strings(nodes)
+		reasons := mobilityIntMap(status.Status["captureDistributionReasonCounts"])
+		for _, node := range nodes {
+			rows = append(rows, mobilityDistributionRow{
+				Pool:           status.Name,
+				Mode:           firstNonEmpty(stringStatus(status.Status, "captureDistributionMode"), "unknown"),
+				Node:           node,
+				Captures:       counts[node],
+				Target:         mobilityInt(status.Status["captureDistributionTargetPerNode"]),
+				TotalAssigned:  mobilityInt(status.Status["captureDistributionTotalAssigned"]),
+				ReasonCounts:   reasons,
+				RebalancePhase: stringStatus(status.Status, "captureRebalancePhase"),
+				RebalanceID:    stringStatus(status.Status, "captureRebalanceRequestID"),
+				RequestedAt:    stringStatus(status.Status, "captureRebalanceRequestedAt"),
+				RequestedBy:    stringStatus(status.Status, "captureRebalanceRequestedBy"),
+			})
+		}
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].Pool == rows[j].Pool {
+			return rows[i].Node < rows[j].Node
+		}
+		return rows[i].Pool < rows[j].Pool
+	})
+	return rows
+}
+
 func mobilityPathRows(statuses []routerstate.ObjectStatus, prefixFilter string) []mobilityPathRow {
 	prefixFilter = strings.TrimSpace(prefixFilter)
 	var rows []mobilityPathRow
@@ -260,6 +431,49 @@ func mobilityPathRows(statuses []routerstate.ObjectStatus, prefixFilter string) 
 		return rows[i].Router < rows[j].Router
 	})
 	return rows
+}
+
+func writeMobilityDistribution(stdout io.Writer, rows []mobilityDistributionRow, output string) error {
+	switch output {
+	case "", "table":
+		w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "POOL\tMODE\tNODE\tCAPTURES\tTARGET\tTOTAL\tREASONS\tREBALANCE")
+		for _, row := range rows {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\n",
+				row.Pool,
+				displayCell(row.Mode),
+				row.Node,
+				row.Captures,
+				row.Target,
+				row.TotalAssigned,
+				displayCell(mobilityReasonCountsString(row.ReasonCounts)),
+				displayCell(firstNonEmpty(row.RebalancePhase, "Idle")),
+			)
+		}
+		return w.Flush()
+	case "json":
+		return writeJSON(stdout, rows)
+	case "yaml":
+		return writeYAML(stdout, rows)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
+func writeMobilityRebalanceResult(stdout io.Writer, result mobilityRebalanceResult, output string) error {
+	switch output {
+	case "", "table":
+		w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "POOL\tREQUEST_ID\tPHASE\tREQUESTED_AT\tREQUESTED_BY\tREASON")
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", result.Pool, result.RequestID, result.Phase, result.RequestedAt, displayCell(result.RequestedBy), displayCell(result.Reason))
+		return w.Flush()
+	case "json":
+		return writeJSON(stdout, result)
+	case "yaml":
+		return writeYAML(stdout, result)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
 }
 
 func mobilityInstalledNextHops(value any) map[string][]string {
@@ -436,4 +650,60 @@ func cleanMobilityStrings(values []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func mobilityIntMap(value any) map[string]int {
+	out := map[string]int{}
+	switch typed := value.(type) {
+	case map[string]int:
+		for key, value := range typed {
+			if key = strings.TrimSpace(key); key != "" {
+				out[key] = value
+			}
+		}
+	case map[string]any:
+		for key, raw := range typed {
+			if key = strings.TrimSpace(key); key != "" {
+				out[key] = mobilityInt(raw)
+			}
+		}
+	}
+	return out
+}
+
+func mobilityInt(value any) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case json.Number:
+		if n, err := typed.Int64(); err == nil {
+			return int(n)
+		}
+	default:
+		var n int
+		if _, err := fmt.Sscanf(strings.TrimSpace(fmt.Sprint(value)), "%d", &n); err == nil {
+			return n
+		}
+	}
+	return 0
+}
+
+func mobilityReasonCountsString(counts map[string]int) string {
+	if len(counts) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(counts))
+	for key := range counts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", key, counts[key]))
+	}
+	return strings.Join(parts, ",")
 }

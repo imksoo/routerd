@@ -198,6 +198,7 @@ resource "azurerm_network_interface" "node" {
   ip_forwarding_enabled          = each.value.enable_ip_forwarding
   accelerated_networking_enabled = false
   tags = merge(local.common_tags, {
+    routerd-node       = each.value.name
     routerd-role       = each.value.role
     cloudedge-mobility = each.value.role == "client" ? "true" : "false"
   })
@@ -223,6 +224,7 @@ resource "azurerm_linux_virtual_machine" "node" {
   disable_password_authentication = true
   custom_data                     = each.value.custom_data
   tags = merge(local.common_tags, {
+    routerd-node       = each.value.name
     routerd-role       = each.value.role
     cloudedge-mobility = each.value.role == "client" ? "true" : "false"
   })

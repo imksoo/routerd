@@ -18,6 +18,7 @@ type captureDistribution struct {
 	Assignments map[string]string
 	NodeCounts  map[string]int
 	Reasons     map[string]string
+	Target      int
 }
 
 func distributedCaptureEnabled(members map[string]memberPlanInfo, group string) bool {
@@ -57,6 +58,14 @@ func distributeCaptures(addresses []string, nodes []captureDistributionNode) cap
 }
 
 func distributeCapturesWithIncumbents(addresses []string, nodes []captureDistributionNode, incumbents map[string]string) captureDistribution {
+	return distributeCapturesWithOptions(addresses, nodes, incumbents, false)
+}
+
+func distributeCapturesForRebalance(addresses []string, nodes []captureDistributionNode) captureDistribution {
+	return distributeCapturesWithOptions(addresses, nodes, nil, true)
+}
+
+func distributeCapturesWithOptions(addresses []string, nodes []captureDistributionNode, incumbents map[string]string, forceRebalance bool) captureDistribution {
 	dist := captureDistribution{
 		Assignments: make(map[string]string, len(addresses)),
 		NodeCounts:  make(map[string]int, len(nodes)),
@@ -72,9 +81,14 @@ func distributeCapturesWithIncumbents(addresses []string, nodes []captureDistrib
 	}
 	sort.Strings(addresses)
 	target := (len(addresses) + len(nodes) - 1) / len(nodes)
+	dist.Target = target
 	var remaining []string
 	pendingReasons := map[string]string{}
 	for _, address := range addresses {
+		if forceRebalance {
+			remaining = append(remaining, address)
+			continue
+		}
 		incumbent := strings.TrimSpace(incumbents[address])
 		if incumbent == "" {
 			remaining = append(remaining, address)

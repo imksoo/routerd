@@ -254,6 +254,11 @@ set `resourceRef`/`resourceType` for the local router instance. SAM uses this
 identity to distinguish a secondary IP captured onto the router instance from a
 real home client address on the same provider subnet.
 
+Provider inventory plugins may also set `nodeRef` on private-IP records when a
+cloud tag or provider metadata identifies the corresponding routerd node. SAM
+uses this optional field to recognize secondary IPs held by a same-site peer
+router in providers that expose shared subnet or compartment inventory.
+
 ## CLI
 
 The MVP operator commands are:

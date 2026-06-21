@@ -237,6 +237,9 @@ SAM の ownership resolver は shadow locality 分類に `localIPs` を使い、
 `status.self` もローカル router instance の `resourceRef` / `resourceType` を設定できます。
 SAM はこの identity を使って、router instance に capture された secondary IP と、同じ provider subnet 上の本来の home client address を区別します。
 
+プロバイダーのタグやメタデータから対応する routerd node が分かる場合、provider inventory plugin は private IP record に任意の `nodeRef` を設定できます。
+SAM はこの情報を使い、共有 subnet や compartment inventory を返す provider で、同一 site の peer router が保持している secondary IP を識別します。
+
 ## CLI
 
 MVP の運用者向けコマンドは次の通りです。
