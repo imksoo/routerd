@@ -176,6 +176,12 @@ jobs:
       - name: Run CloudEdge PoC evidence offline smoke
         run: make cloudedge-poc-evidence-offline-test
 
+      - name: Run SAM config generator offline smoke
+        run: make sam-e2e-generate-offline-test
+
+      - name: Run SAM harness args offline smoke
+        run: make sam-e2e-harness-offline-test
+
   shellcheck:
     name: Shell scripts
     runs-on: ubuntu-latest

@@ -57,7 +57,7 @@ WIZARD_FIXTURE_DIR := website/fixtures/wizard
 
 WEBSITE_NODE_MODULES_STAMP := website/node_modules/.package-lock.json
 
-.PHONY: test check-version-ldflags check-tmp-dir-mutations check-tar-safe-paths-test build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-linux-static check-ndpi-agent-libndpi check-install-deps cloudedge-acceptance-lint cloudedge-acceptance-offline-test cloudedge-runners-offline-test cloudedge-poc-evidence-offline-test webconsole-build webconsole-browser-install webconsole-screenshot generate-schema sync-website-schemas check-schema check-website-schemas generate-wizard-fixtures check-wizard-fixtures validate-wizard-fixtures check-examples-line-limits check-render-golden update-render-golden check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist dist-ndpi-agent-libndpi live-iso validate-example dry-run-example plan-config release clean
+.PHONY: test check-version-ldflags check-tmp-dir-mutations check-tar-safe-paths-test build build-daemons build-provider-executors build-ndpi-agent build-ndpi-agent-libndpi build-daemons-freebsd check-linux-static check-ndpi-agent-libndpi check-install-deps cloudedge-acceptance-lint cloudedge-acceptance-offline-test cloudedge-runners-offline-test cloudedge-poc-evidence-offline-test sam-e2e-generate-offline-test sam-e2e-harness-offline-test webconsole-build webconsole-browser-install webconsole-screenshot generate-schema sync-website-schemas check-schema check-website-schemas generate-wizard-fixtures check-wizard-fixtures validate-wizard-fixtures check-examples-line-limits check-render-golden update-render-golden check-bespoke-lifecycle website-deps website-build third-party-licenses check-build-deps dist dist-ndpi-agent-libndpi live-iso validate-example dry-run-example plan-config release clean
 
 test: check-version-ldflags check-tmp-dir-mutations check-tar-safe-paths-test
 	go test ./...
@@ -161,6 +161,12 @@ cloudedge-runners-offline-test:
 
 cloudedge-poc-evidence-offline-test:
 	./scripts/cloudedge-poc-evidence-offline-test.sh
+
+sam-e2e-generate-offline-test:
+	tests/e2e/sam/configs/sam-e2e-generate-test.sh
+
+sam-e2e-harness-offline-test:
+	tests/e2e/sam/scripts/sam-e2e-args-test.sh
 
 webconsole-build:
 	cd webconsole && npm ci && npm run build

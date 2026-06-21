@@ -9,6 +9,7 @@ Usage:
 Options:
   --ssh-key FILE          Fixed lab SSH key (default: ~/.ssh/routerd-cloudedge-lab-20260529)
   --configs-dir DIR       Use existing generated configs instead of generating into evidence/config-gen
+  --secrets-dir DIR       Reuse generated secrets for partial redeploys; also supplies eventd secret with --configs-dir
   --skip-deploy           Do not install routerd/configs; useful for diagnostics-only reruns
   --failover-node NODE    Optional router node name; may be repeated. Stops routerd.service and reruns convergence/matrix
   --rejoin-after-failover Restart stopped failover nodes and rerun convergence/matrix
@@ -31,6 +32,7 @@ artifact=
 evidence_dir=
 ssh_key="${HOME}/.ssh/routerd-cloudedge-lab-20260529"
 configs_dir=
+secrets_dir=
 skip_deploy=0
 failover_nodes=()
 stopped_routers=()
@@ -52,6 +54,7 @@ while [ "$#" -gt 0 ]; do
     --evidence-dir) evidence_dir="$2"; shift 2 ;;
     --ssh-key) ssh_key="$2"; shift 2 ;;
     --configs-dir) configs_dir="$2"; shift 2 ;;
+    --secrets-dir) secrets_dir="$2"; shift 2 ;;
     --skip-deploy) skip_deploy=1; shift ;;
     --failover-node) failover_nodes+=("$2"); shift 2 ;;
     --rejoin-after-failover) rejoin_after_failover=1; shift ;;
@@ -74,6 +77,8 @@ done
 [ -f "$tofu_output" ] || { echo "tofu output not found: $tofu_output" >&2; exit 2; }
 [ -f "$artifact" ] || { echo "artifact not found: $artifact" >&2; exit 2; }
 [ -f "$ssh_key" ] || { echo "ssh key not found: $ssh_key" >&2; exit 2; }
+[ -z "$configs_dir" ] || [ -d "$configs_dir" ] || { echo "configs dir not found: $configs_dir" >&2; exit 2; }
+[ -z "$secrets_dir" ] || [ -d "$secrets_dir" ] || { echo "secrets dir not found: $secrets_dir" >&2; exit 2; }
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -181,6 +186,8 @@ record_note() {
     sha256sum "$artifact"
     echo "ssh_key=$ssh_key"
     ssh-keygen -lf "${ssh_key}.pub" 2>/dev/null || ssh-keygen -y -f "$ssh_key" | ssh-keygen -lf -
+    echo "configs_dir=${configs_dir:-<generated>}"
+    echo "secrets_dir=${secrets_dir:-<generated>}"
     echo "legacy_protocols=$legacy_protocols"
     echo "performance_tests=$performance_tests"
     echo "failover_transfer_tests=$failover_transfer_tests"
@@ -390,7 +397,11 @@ generate_configs() {
     return
   fi
   local gen_dir="$evidence_dir/config-gen"
-  "$config_generator" --tofu-output "$tofu_output" --out-dir "$gen_dir" >"$evidence_dir/deploy/config-generate.log" 2>&1
+  local args=(--tofu-output "$tofu_output" --out-dir "$gen_dir")
+  if [ -n "$secrets_dir" ]; then
+    args+=(--secrets-dir "$secrets_dir")
+  fi
+  "$config_generator" "${args[@]}" >"$evidence_dir/deploy/config-generate.log" 2>&1
   echo "$gen_dir/configs"
 }
 
@@ -398,6 +409,14 @@ deploy() {
   [ "$skip_deploy" -eq 0 ] || return 0
   local cfg_dir="$1"
   local node cfg
+  local event_secret_file=
+  if [ -n "$secrets_dir" ] && [ -f "$secrets_dir/eventd-cloudedge.key" ]; then
+    event_secret_file="$secrets_dir/eventd-cloudedge.key"
+  elif [ -f "$evidence_dir/config-gen/secrets/eventd-cloudedge.key" ]; then
+    event_secret_file="$evidence_dir/config-gen/secrets/eventd-cloudedge.key"
+  elif [ -f "$(cd "$cfg_dir/.." && pwd)/secrets/eventd-cloudedge.key" ]; then
+    event_secret_file="$(cd "$cfg_dir/.." && pwd)/secrets/eventd-cloudedge.key"
+  fi
   for node in "${routers[@]}"; do
     cfg="$cfg_dir/$node.yaml"
     [ -f "$cfg" ] || { echo "missing config for $node: $cfg" >&2; return 1; }
@@ -405,8 +424,8 @@ deploy() {
       echo "## install $node"
       scp_node "$artifact" "$node" /tmp/routerd-sam-e2e.tar.gz
       scp_node "$cfg" "$node" /tmp/router.yaml
-      if [ -f "$evidence_dir/config-gen/secrets/eventd-cloudedge.key" ]; then
-        scp_node "$evidence_dir/config-gen/secrets/eventd-cloudedge.key" "$node" /tmp/eventd-cloudedge.key
+      if [ -n "$event_secret_file" ]; then
+        scp_node "$event_secret_file" "$node" /tmp/eventd-cloudedge.key
       fi
       ssh_node "$node" "$(remote_prepare_script; cat <<'REMOTE_DEPLOY'
 set -e
@@ -497,7 +516,7 @@ IPS"; then
 client_matrix() {
   local label="$1"
   local out="$evidence_dir/matrix/$label"
-  local src dst src_ip dst_ip dst_host src_user src_public dst_user result actual attempt
+  local src dst src_ip dst_ip dst_host src_user src_public dst_user result actual
   mkdir -p "$out"
   : >"$out/summary.tsv"
   for src in "${clients[@]}"; do
@@ -521,7 +540,7 @@ client_matrix() {
         ssh_node "$src" "timeout 20s sh -c \"traceroute -n -w 2 -q 1 '$dst_ip' || tracepath '$dst_ip'\" || true"
         echo "## ssh-hostname"
         actual=
-        for attempt in 1 2 3; do
+        for _attempt in 1 2 3; do
           actual="$(ssh -i "$ssh_key" -o UserKnownHostsFile="$known_hosts" -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 "$src_user@$src_public" "ssh -i ~/.ssh/routerd-cloudedge-lab-20260529 -o UserKnownHostsFile=~/.ssh/routerd-e2e-known_hosts -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 '$dst_user@$dst_ip' hostname 2>/dev/null" 2>"$out/${src}_to_${dst}.nested-ssh.stderr" | tail -n 1)" || true
           [ "$actual" = "$dst_host" ] && break
           sleep 2
@@ -718,8 +737,11 @@ is_global_ipv4() {
   IFS=. read -r a b c d <<EOF
 $ip
 EOF
+  if [ -z "$a" ] || [ -z "$b" ] || [ -z "$c" ] || [ -z "$d" ]; then
+    return 1
+  fi
   case "$a.$b.$c.$d" in
-    ""|*[!0-9.]*)
+    *[!0-9.]*)
       return 1
       ;;
   esac
@@ -789,7 +811,7 @@ performance_matrix() {
   local label="$1"
   local out="$evidence_dir/performance/$label"
   local status=0 src dst src_ip dst_ip src_public dst_public src_site dst_site result public_result
-  local ok attempt sam_tcp_bps sam_udp_bps sam_ping_loss public_tcp_bps public_udp_bps public_ping_loss
+  local ok sam_tcp_bps sam_udp_bps sam_ping_loss public_tcp_bps public_udp_bps public_ping_loss
   mkdir -p "$out"
   : >"$out/summary.tsv"
   : >"$out/public-summary.tsv"
@@ -810,7 +832,7 @@ performance_matrix() {
         echo "SRC=$src SRCIP=$src_ip DST=$dst DSTIP=$dst_ip"
         echo "## tcp iperf3"
         ok=0
-        for attempt in 1 2 3; do
+        for _attempt in 1 2 3; do
           ssh_node "$dst" 'sudo pkill -9 iperf3 >/dev/null 2>&1 || true; sleep 2; sudo iperf3 -s -D </dev/null >/dev/null 2>&1; sleep 2'
           ssh_node "$src" "timeout 20s iperf3 -J -c '$dst_ip' -B '$src_ip' -t 5" >"$out/${src}_to_${dst}.iperf3-tcp.json" && { ok=1; break; }
           sleep 5
@@ -818,7 +840,7 @@ performance_matrix() {
         [ "$ok" -eq 1 ] || result=FAIL_TCP
         echo "## udp iperf3"
         ok=0
-        for attempt in 1 2 3; do
+        for _attempt in 1 2 3; do
           ssh_node "$dst" 'sudo pkill -9 iperf3 >/dev/null 2>&1 || true; sleep 2; sudo iperf3 -s -D </dev/null >/dev/null 2>&1; sleep 2'
           ssh_node "$src" "timeout 20s iperf3 -J -u -b 10M -c '$dst_ip' -B '$src_ip' -t 5" >"$out/${src}_to_${dst}.iperf3-udp.json" && { ok=1; break; }
           sleep 5
@@ -826,7 +848,7 @@ performance_matrix() {
         [ "$ok" -eq 1 ] || result=FAIL_UDP
         echo "## small packet ping sample"
         ok=0
-        for attempt in 1 2 3; do
+        for _attempt in 1 2 3; do
           ssh_node "$src" "timeout 20s ping -I '$src_ip' -s 56 -c 100 -i 0.01 '$dst_ip'" >"$out/${src}_to_${dst}.ping-pps.txt" && { ok=1; break; }
           sleep 2
         done
@@ -851,7 +873,7 @@ performance_matrix() {
           echo "SRC=$src SRCPUBLIC=$src_public DST=$dst DSTPUBLIC=$dst_public"
           echo "## tcp iperf3"
           ok=0
-          for attempt in 1 2 3; do
+          for _attempt in 1 2 3; do
             ssh_node "$dst" 'sudo pkill -9 iperf3 >/dev/null 2>&1 || true; sleep 2; sudo iperf3 -s -D </dev/null >/dev/null 2>&1; sleep 2'
             ssh_node "$src" "timeout 20s iperf3 -J -c '$dst_public' -t 5" >"$out/${src}_to_${dst}.public-iperf3-tcp.json" && { ok=1; break; }
             sleep 5
@@ -859,7 +881,7 @@ performance_matrix() {
           [ "$ok" -eq 1 ] || public_result=FAIL_PUBLIC_TCP
           echo "## udp iperf3"
           ok=0
-          for attempt in 1 2 3; do
+          for _attempt in 1 2 3; do
             ssh_node "$dst" 'sudo pkill -9 iperf3 >/dev/null 2>&1 || true; sleep 2; sudo iperf3 -s -D </dev/null >/dev/null 2>&1; sleep 2'
             ssh_node "$src" "timeout 20s iperf3 -J -u -b 10M -c '$dst_public' -t 5" >"$out/${src}_to_${dst}.public-iperf3-udp.json" && { ok=1; break; }
             sleep 5
@@ -867,7 +889,7 @@ performance_matrix() {
           [ "$ok" -eq 1 ] || public_result=FAIL_PUBLIC_UDP
           echo "## public ping sample"
           ok=0
-          for attempt in 1 2 3; do
+          for _attempt in 1 2 3; do
             ssh_node "$src" "timeout 20s ping -c 20 -W 2 '$dst_public'" >"$out/${src}_to_${dst}.public-ping.txt" && { ok=1; break; }
             sleep 2
           done

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016
 set -euo pipefail
 
 usage() {
   cat <<'USAGE'
 Usage:
-  sam-e2e-generate.sh --tofu-output tofu-output.json --out-dir DIR [--event-secret-file FILE]
+  sam-e2e-generate.sh --tofu-output tofu-output.json --out-dir DIR [--event-secret-file FILE] [--secrets-dir DIR]
 
 Generates routerd configs for all router nodes in the SAM E2E topology.
 Router, leaf, and client identities are read from `nodes.value` in the
@@ -13,18 +14,24 @@ OpenTofu output; do not keep a second hardcoded topology list here.
 The input must be `tofu output -json` from cloudedge-mobility/terraform/envs/sam-e2e.
 WireGuard private keys and the event federation HMAC secret are generated under
 OUT_DIR/secrets and are intentionally not checked into git.
+
+Use --secrets-dir to seed OUT_DIR/secrets from a previous generation when
+regenerating configs for an existing live topology. This preserves WireGuard
+identity during partial redeploys; missing keys are generated normally.
 USAGE
 }
 
 tofu_output=
 out_dir=
 event_secret_file=
+seed_secrets_dir=
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --tofu-output) tofu_output="$2"; shift 2 ;;
     --out-dir) out_dir="$2"; shift 2 ;;
     --event-secret-file) event_secret_file="$2"; shift 2 ;;
+    --secrets-dir) seed_secrets_dir="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -35,8 +42,12 @@ done
 [ -f "$tofu_output" ] || { echo "tofu output not found: $tofu_output" >&2; exit 2; }
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }
 command -v wg >/dev/null || { echo "wg is required to generate WireGuard keys" >&2; exit 2; }
+[ -z "$seed_secrets_dir" ] || [ -d "$seed_secrets_dir" ] || { echo "secrets dir not found: $seed_secrets_dir" >&2; exit 2; }
 
 mkdir -p "$out_dir/configs" "$out_dir/secrets"
+if [ -n "$seed_secrets_dir" ] && [ "$(cd "$seed_secrets_dir" && pwd)" != "$(cd "$out_dir/secrets" && pwd)" ]; then
+  cp -a "$seed_secrets_dir/." "$out_dir/secrets/"
+fi
 secret_path="${event_secret_file:-$out_dir/secrets/eventd-cloudedge.key}"
 if [ ! -s "$secret_path" ]; then
   umask 077
@@ -53,7 +64,6 @@ mapfile -t rr_nodes < <(jq -r 'to_entries[] | select(.value.role == "rr") | .key
 mapfile -t leaf_nodes < <(jq -r 'to_entries[] | select(.value.role == "leaf") | .key' "$nodes_json" | sort)
 mapfile -t cloud_leaf_nodes < <(jq -r 'to_entries[] | select(.value.role == "leaf" and .value.site != "pve") | .key' "$nodes_json" | sort)
 mapfile -t pve_leaf_nodes < <(jq -r 'to_entries[] | select(.value.role == "leaf" and .value.site == "pve") | .key' "$nodes_json" | sort)
-mapfile -t clients < <(jq -r 'to_entries[] | select(.value.role == "client") | .key' "$nodes_json" | sort)
 
 [ "${#routers[@]}" -gt 0 ] || { echo "no router nodes found in $nodes_json" >&2; exit 2; }
 [ "${#leaf_nodes[@]}" -gt 0 ] || { echo "no leaf nodes found in $nodes_json" >&2; exit 2; }
@@ -117,23 +127,23 @@ wg_endpoint_host() {
 
 render_node_set() {
   local self_node="$1"
-  local node site node_role role overlay endpoint_host pub_key rr
+  local peer_node site node_role role overlay endpoint_host pub_key rr
   echo "    - apiVersion: mobility.routerd.net/v1alpha1"
   echo "      kind: SAMNodeSet"
   echo "      metadata: { name: cloudedge-nodes }"
   echo "      spec:"
   echo "        nodes:"
-  for node in "${routers[@]}"; do
-    site="$(jq_node "$node" '.[$node].site')"
-    node_role="$(jq_node "$node" '.[$node].role')"
+  for peer_node in "${routers[@]}"; do
+    site="$(jq_node "$peer_node" '.[$node].site')"
+    node_role="$(jq_node "$peer_node" '.[$node].role')"
     role="cloud"
     [ "$site" = "pve" ] && role="onprem"
-    overlay="$(jq_node "$node" '.[$node].overlay_ip')"
-    endpoint_host="$(wg_endpoint_host "$self_node" "$node")"
-    pub_key="$(cat "$out_dir/secrets/${node}.wg.pub")"
+    overlay="$(jq_node "$peer_node" '.[$node].overlay_ip')"
+    endpoint_host="$(wg_endpoint_host "$self_node" "$peer_node")"
+    pub_key="$(cat "$out_dir/secrets/${peer_node}.wg.pub")"
     rr=false
     [ "$node_role" = "rr" ] && rr=true
-    echo "          - nodeRef: $node"
+    echo "          - nodeRef: $peer_node"
     echo "            site: $site"
     echo "            role: $role"
     echo "            routeReflector: $rr"
@@ -223,16 +233,17 @@ EOF
 
 render_members() {
   local self_node="$1" self_profile="$2"
-  for node in "${leaf_nodes[@]}"; do
-    site="$(jq_node "$node" '.[$node].site')"
-    echo "          - nodeRef: $node"
+  local member site
+  for member in "${leaf_nodes[@]}"; do
+    site="$(jq_node "$member" '.[$node].site')"
+    echo "          - nodeRef: $member"
     echo "            site: $site"
     if [ "$site" = "pve" ]; then
       echo "            role: onprem"
     else
       echo "            role: cloud"
     fi
-    if [ "$node" = "$self_node" ] && [ -n "$self_profile" ]; then
+    if [ "$member" = "$self_node" ] && [ -n "$self_profile" ]; then
       echo "            profileRef: $self_profile"
     fi
     if [ "$site" != "pve" ]; then
@@ -421,6 +432,7 @@ EOF
 
 render_pve_leaf() {
   local node="$1" overlay
+  local member site
   overlay="$(jq_node "$node" '.[$node].overlay_ip')"
   cat <<EOF
 apiVersion: routerd.net/v1alpha1

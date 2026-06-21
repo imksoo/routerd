@@ -59,6 +59,30 @@ tofu output -json > tofu-output.json
   --out-dir /tmp/sam-e2e-configs
 ```
 
+既存の live topology に対して config だけを再生成して部分 redeploy する場合は、
+既存の WireGuard identity を変えないため、前回の `config-gen/secrets` を
+seed として渡す。
+
+```bash
+../../configs/sam-e2e-generate.sh \
+  --tofu-output tofu-output.json \
+  --out-dir /tmp/sam-e2e-configs-regenerated \
+  --secrets-dir /path/to/previous/config-gen/secrets
+```
+
+`sam-e2e.sh` から deploy まで実行する場合も同じ `--secrets-dir` を渡す。
+`--configs-dir` で既存 config を使う場合は、同じ directory が event
+federation secret の配布元にもなる。
+
+```bash
+../scripts/sam-e2e.sh \
+  --tofu-output tofu-output.json \
+  --artifact /path/to/routerd.tar.gz \
+  --evidence-dir /path/to/evidence/redeploy \
+  --secrets-dir /path/to/previous/config-gen/secrets \
+  --skip-matrix --skip-legacy-protocols
+```
+
 ### 5. E2E テストの実行
 
 ```bash
