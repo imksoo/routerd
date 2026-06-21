@@ -1639,6 +1639,7 @@ func TestControllerBGPModeDistributedCaptureKeepsPeerIncumbent(t *testing.T) {
 		nil,
 		nil,
 		map[string]string{bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.255.255.2/32"},
+		false,
 		poolPrefix,
 		now,
 	)
@@ -1650,6 +1651,60 @@ func TestControllerBGPModeDistributedCaptureKeepsPeerIncumbent(t *testing.T) {
 	}
 	if got := captureDistributionReasonCounts(dist)["incumbent-kept"]; got != 1 {
 		t.Fatalf("reason counts = %#v, want incumbent-kept=1", captureDistributionReasonCounts(dist))
+	}
+}
+
+func TestControllerBGPModeForceRebalanceIgnoresPeerIncumbents(t *testing.T) {
+	now := time.Date(2026, 6, 21, 3, 25, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	for i := range spec.Members {
+		if spec.Members[i].Placement.Group == "aws-edge" {
+			spec.Members[i].MaxSecondaryIPs = 128
+		}
+	}
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-a"]
+	poolPrefix, err := netip.ParsePrefix(spec.Prefix)
+	if err != nil {
+		t.Fatalf("parse pool prefix: %v", err)
+	}
+	decisions := map[string]ownershipDecision{}
+	installed := map[string][]string{}
+	for i := 1; i <= 18; i++ {
+		address := fmt.Sprintf("10.88.60.%d/32", 10+i)
+		decisions[address] = ownershipDecision{
+			Address:           address,
+			Class:             ownershipClassRemoteHomeOwned,
+			HomeOwnerNode:     "azure-router",
+			CaptureState:      captureStateConfirmed,
+			CaptureHolderNode: "aws-router-b",
+		}
+		installed[address] = []string{"10.99.0.4"}
+	}
+	_, dist := planCaptureCandidatesWithDistribution(
+		self,
+		members,
+		decisions,
+		PlacementDecision{Group: "aws-edge", Active: true, ActiveNode: self.NodeRef},
+		installed,
+		true,
+		nil,
+		nil,
+		nil,
+		map[string]string{bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.255.255.2/32"},
+		true,
+		poolPrefix,
+		now,
+	)
+	if dist == nil {
+		t.Fatal("distribution is nil")
+	}
+	if dist.NodeCounts["aws-router-a"] != 9 || dist.NodeCounts["aws-router-b"] != 9 {
+		t.Fatalf("distribution = %#v, want forced rebalance to restore 9/9 split", dist)
+	}
+	if got := captureDistributionReasonCounts(dist)["hash-assigned"]; got != 18 {
+		t.Fatalf("reason counts = %#v, want hash-assigned=18", captureDistributionReasonCounts(dist))
 	}
 }
 
