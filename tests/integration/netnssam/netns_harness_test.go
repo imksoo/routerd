@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"net"
 	"os"
 	"os/exec"
@@ -17,6 +18,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -24,13 +26,17 @@ import (
 	"github.com/imksoo/routerd/pkg/config"
 )
 
-const enableEnv = "ROUTERD_NETNS_INTEGRATION"
+const (
+	enableEnv = "ROUTERD_NETNS_INTEGRATION"
+	keepEnv   = "ROUTERD_NETNS_KEEP"
+)
 
 type lab struct {
 	t       *testing.T
 	ctx     context.Context
 	name    string
 	workDir string
+	repoDir string
 	binDir  string
 	nodes   []node
 	bridges []string
@@ -58,7 +64,7 @@ func (e cmdError) Error() string {
 
 func TestNetNSSAMRealRouterdTopologySmoke(t *testing.T) {
 	requireNetNS(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
 
 	l := newLab(t, ctx)
@@ -67,11 +73,13 @@ func TestNetNSSAMRealRouterdTopologySmoke(t *testing.T) {
 	l.BuildBinaries()
 	l.CreateTopology(defaultTopology())
 	l.StartRouterProcesses()
+	l.StartProviderPrimaryGuard()
 	l.AssertUnderlayReachability()
 	l.AssertRouterdStatusReady(2 * time.Minute)
 	l.AssertWireGuardReachability(2 * time.Minute)
-	l.AssertBGPEstablished(2 * time.Minute)
-	l.AssertClientMatrix(3 * time.Minute)
+	l.AssertBGPEstablished(4 * time.Minute)
+	l.AssertMobilityReady(6 * time.Minute)
+	l.AssertClientMatrix(6 * time.Minute)
 }
 
 func requireNetNS(t *testing.T) {
@@ -85,7 +93,7 @@ func requireNetNS(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("network namespace tests require root")
 	}
-	for _, name := range []string{"ip", "wg"} {
+	for _, name := range []string{"ip", "timeout", "wg"} {
 		if _, err := exec.LookPath(name); err != nil {
 			t.Skipf("%s is required: %v", name, err)
 		}
@@ -95,12 +103,21 @@ func requireNetNS(t *testing.T) {
 func newLab(t *testing.T, ctx context.Context) *lab {
 	t.Helper()
 	workDir := t.TempDir()
-	name := "routerd622-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	if os.Getenv(keepEnv) == "1" {
+		var err error
+		workDir, err = os.MkdirTemp("", "routerd-netns-622-*")
+		if err != nil {
+			t.Fatalf("create persistent netns work dir: %v", err)
+		}
+	}
+	const nameSpace = 36 * 36 * 36 * 36 * 36
+	name := "r622" + strconv.FormatInt(time.Now().UnixNano()%nameSpace, 36)
 	return &lab{
 		t:       t,
 		ctx:     ctx,
 		name:    shortName(name),
 		workDir: workDir,
+		repoDir: repoRoot(t),
 		binDir:  filepath.Join(workDir, "bin"),
 	}
 }
@@ -143,8 +160,17 @@ func (l *lab) BuildBinaries() {
 		{Name: "netns-provider-executor", Pkg: "./examples/plugins/netns-provider-executor"},
 		{Name: "netns-provider-inventory", Pkg: "./examples/plugins/netns-provider-inventory"},
 	} {
-		l.run("", "go", "build", "-o", filepath.Join(l.binDir, target.Name), target.Pkg)
+		l.run(l.repoDir, "go", "build", "-o", filepath.Join(l.binDir, target.Name), target.Pkg)
 	}
+}
+
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot resolve test file path")
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
 }
 
 func (l *lab) CreateTopology(nodes []node) {
@@ -176,6 +202,12 @@ func (l *lab) CreateTopology(nodes []node) {
 	for _, n := range nodes {
 		if n.Role == "client" {
 			l.netns(n.Name, "ip", "route", "replace", "default", "via", siteGateway(n.Site))
+			for _, remote := range nodes {
+				if remote.Role != "client" || remote.Site == n.Site {
+					continue
+				}
+				l.netns(n.Name, "ip", "route", "replace", ipOnly(remote.SiteCIDR)+"/32", "via", siteGateway(n.Site))
+			}
 		}
 	}
 	l.writeRouterConfigs()
@@ -209,9 +241,32 @@ func (l *lab) StartRouterProcesses() {
 			"--bgp-socket", filepath.Join(runtimeDir, "bgp", "gobgp.sock"),
 			"--bgp-control-socket", filepath.Join(runtimeDir, "bgp", "control.sock"),
 			"--bgp-state-file", filepath.Join(stateDir, "bgp", "applied.json"),
+			"--controllers", "link,sam-transport,tunnel,wireguard,ipv4-static-address,ipv4-route,hybrid-route,sam,mobility-discovery,mobility,mobility-shard,provider-action-execution,bgp",
 			"--apply-interval", "5s",
 		)
 		l.procs = append(l.procs, routerd)
+	}
+}
+
+func (l *lab) StartProviderPrimaryGuard() {
+	l.t.Helper()
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			l.reconcileProviderPrimaryAddresses()
+			select {
+			case <-l.ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
+func (l *lab) reconcileProviderPrimaryAddresses() {
+	for _, n := range l.routerNodes() {
+		_ = l.netnsErrWithin(2*time.Second, n.Name, "ip", "addr", "replace", n.SiteCIDR, "dev", "eth1")
 	}
 }
 
@@ -222,7 +277,7 @@ func (l *lab) AssertUnderlayReachability() {
 			if from.Name == to.Name {
 				continue
 			}
-			l.netns(from.Name, "ping", "-c", "1", "-W", "2", ipOnly(to.Transport))
+			l.netns(from.Name, "timeout", "3s", "ping", "-c", "1", "-W", "2", ipOnly(to.Transport))
 		}
 	}
 }
@@ -234,7 +289,7 @@ func (l *lab) AssertRouterdStatusReady(timeout time.Duration) {
 		var pending []string
 		for _, n := range l.routerNodes() {
 			statusSocket := filepath.Join(l.nodeDir(n.Name, "run"), "status.sock")
-			err := l.netnsErr(n.Name, filepath.Join(l.binDir, "routerctl"), "status", "--socket", statusSocket, "-o", "json")
+			err := l.netnsErr(n.Name, filepath.Join(l.binDir, "routerctl"), "get", "status", "--socket", statusSocket, "-o", "json")
 			if err != nil {
 				pending = append(pending, n.Name+": "+err.Error())
 			}
@@ -261,7 +316,7 @@ func (l *lab) AssertWireGuardReachability(timeout time.Duration) {
 					continue
 				}
 				target := fmt.Sprintf("10.253.0.%d", nodeIndex(to.Name)+10)
-				if err := l.netnsErr(from.Name, "ping", "-c", "1", "-W", "1", target); err != nil {
+				if err := l.netnsErr(from.Name, "timeout", "3s", "ping", "-c", "1", "-W", "1", target); err != nil {
 					pending = append(pending, from.Name+" -> "+target+": "+err.Error())
 				}
 			}
@@ -309,22 +364,67 @@ func (l *lab) AssertBGPEstablished(timeout time.Duration) {
 	}
 }
 
+func (l *lab) AssertMobilityReady(timeout time.Duration) {
+	l.t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		var pending []string
+		for _, n := range l.nodes {
+			if n.Role != "leaf" {
+				continue
+			}
+			statusSocket := filepath.Join(l.nodeDir(n.Name, "run"), "status.sock")
+			out, err := l.netnsOutput(n.Name, filepath.Join(l.binDir, "routerctl"), "get", "MobilityPool/cloudedge", "--socket", statusSocket, "-o", "json")
+			if err != nil {
+				pending = append(pending, n.Name+": "+err.Error())
+				continue
+			}
+			phase, phaseOK := jsonStringField([]byte(out), "phase")
+			providerPhase, providerOK := jsonStringField([]byte(out), "providerActionPhase")
+			conflicts, _ := jsonNumberField([]byte(out), "ownershipResolverConflictCount")
+			if !phaseOK || phase != "Ready" || !providerOK || providerPhase != "OK" || conflicts != 0 {
+				pending = append(pending, fmt.Sprintf("%s: phase=%q providerActionPhase=%q conflicts=%d", n.Name, phase, providerPhase, conflicts))
+			}
+		}
+		if len(pending) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			l.dumpLogs()
+			l.t.Fatalf("MobilityPool/cloudedge did not become ready:\n%s", strings.Join(pending, "\n"))
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
 func (l *lab) AssertClientMatrix(timeout time.Duration) {
 	l.t.Helper()
 	clients := l.clientNodes()
 	deadline := time.Now().Add(timeout)
 	for {
+		l.reconcileProviderPrimaryAddresses()
 		var pending []string
+		var mu sync.Mutex
+		var wg sync.WaitGroup
 		for _, from := range clients {
 			for _, to := range clients {
 				if from.Name == to.Name {
 					continue
 				}
-				if err := l.netnsErr(from.Name, "ping", "-c", "1", "-W", "1", ipOnly(to.SiteCIDR)); err != nil {
-					pending = append(pending, from.Name+" -> "+to.Name+"("+ipOnly(to.SiteCIDR)+"): "+err.Error())
-				}
+				from := from
+				to := to
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					if err := l.netnsErrWithin(4*time.Second, from.Name, "timeout", "3s", "ping", "-c", "1", "-W", "1", ipOnly(to.SiteCIDR)); err != nil {
+						mu.Lock()
+						pending = append(pending, from.Name+" -> "+to.Name+"("+ipOnly(to.SiteCIDR)+"): "+err.Error())
+						mu.Unlock()
+					}
+				}()
 			}
 		}
+		wg.Wait()
 		if len(pending) == 0 {
 			return
 		}
@@ -337,6 +437,10 @@ func (l *lab) AssertClientMatrix(timeout time.Duration) {
 }
 
 func (l *lab) Cleanup() {
+	if os.Getenv(keepEnv) == "1" {
+		l.t.Logf("%s=1; preserving netns lab %s under %s", keepEnv, l.name, l.workDir)
+		return
+	}
 	for i := len(l.procs) - 1; i >= 0; i-- {
 		stopProcess(l.procs[i])
 	}
@@ -359,8 +463,8 @@ func (l *lab) createBridge(name string) {
 
 func (l *lab) attach(nodeName, ifName, bridge string) {
 	l.t.Helper()
-	hostIf := shortName(l.ns(nodeName) + "-" + ifName)
-	peerIf := shortName(hostIf + "p")
+	hostIf := linuxIfName("rh", l.name, nodeName, ifName)
+	peerIf := linuxIfName("rp", l.name, nodeName, ifName)
 	l.run("", "ip", "link", "add", hostIf, "type", "veth", "peer", "name", peerIf)
 	l.run("", "ip", "link", "set", hostIf, "master", bridge)
 	l.run("", "ip", "link", "set", hostIf, "up")
@@ -438,6 +542,14 @@ func (l *lab) netnsErr(nodeName string, args ...string) error {
 	return err
 }
 
+func (l *lab) netnsErrWithin(timeout time.Duration, nodeName string, args ...string) error {
+	ctx, cancel := context.WithTimeout(l.ctx, timeout)
+	defer cancel()
+	full := append([]string{"netns", "exec", l.ns(nodeName)}, args...)
+	_, err := runOutput(ctx, "", "ip", full...)
+	return err
+}
+
 func (l *lab) netnsOutput(nodeName string, args ...string) (string, error) {
 	full := append([]string{"netns", "exec", l.ns(nodeName)}, args...)
 	return runOutput(l.ctx, "", "ip", full...)
@@ -463,10 +575,18 @@ func (l *lab) dumpLogs() {
 			path := l.nodeDir(n.Name, base)
 			content, err := os.ReadFile(path)
 			if err == nil && len(content) > 0 {
-				l.t.Logf("%s %s:\n%s", n.Name, base, content)
+				l.t.Logf("%s %s:\n%s", n.Name, base, tailLines(string(content), 80))
 			}
 		}
 	}
+}
+
+func tailLines(s string, maxLines int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) <= maxLines {
+		return strings.Join(lines, "\n")
+	}
+	return strings.Join(lines[len(lines)-maxLines:], "\n")
 }
 
 func (l *lab) routerNodes() []node {
@@ -504,7 +624,7 @@ func (l *lab) ns(name string) string {
 }
 
 func (l *lab) bridge(name string) string {
-	return shortName(l.name + "-" + name)
+	return linuxIfName("rb", l.name, name)
 }
 
 func (l *lab) nodeDir(nodeName string, parts ...string) string {
@@ -517,6 +637,19 @@ func shortName(name string) string {
 		return name
 	}
 	return name[:48]
+}
+
+func linuxIfName(prefix string, parts ...string) string {
+	h := fnv.New32a()
+	for _, part := range parts {
+		_, _ = h.Write([]byte(part))
+		_, _ = h.Write([]byte{0})
+	}
+	name := fmt.Sprintf("%s%x", prefix, h.Sum32())
+	if len(name) <= 15 {
+		return name
+	}
+	return name[:15]
 }
 
 func siteGateway(site string) string {
@@ -584,6 +717,19 @@ func jsonNumberField(data []byte, name string) (int, bool) {
 	}
 }
 
+func jsonStringField(data []byte, name string) (string, bool) {
+	var value any
+	if err := json.Unmarshal(data, &value); err != nil {
+		return "", false
+	}
+	found, ok := findJSONField(value, name)
+	if !ok {
+		return "", false
+	}
+	s, ok := found.(string)
+	return s, ok
+}
+
 func findJSONField(value any, name string) (any, bool) {
 	switch typed := value.(type) {
 	case map[string]any:
@@ -635,6 +781,17 @@ func (l *lab) renderRouterConfig(self node) string {
 		fmt.Fprintf(&b, "              persistentKeepalive: 5\n")
 	}
 	fmt.Fprintf(&b, `
+    - apiVersion: federation.routerd.net/v1alpha1
+      kind: EventGroup
+      metadata: { name: cloudedge }
+      spec:
+        nodeName: %s
+        peersFrom:
+          - resource: SAMNodeSet/local-netns-nodes
+        retention: { maxEvents: 1000, maxAge: 24h }
+        listen: { address: 10.253.0.%d, port: 9443 }
+        replayWindow: 5m
+
     - apiVersion: net.routerd.net/v1alpha1
       kind: WireGuardInterface
       metadata: { name: wg-netns }
@@ -652,9 +809,9 @@ func (l *lab) renderRouterConfig(self node) string {
       spec: { ifname: wg-netns, managed: false, mtu: 1420 }
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4StaticAddress
-      metadata: { name: wg-netns-self }
-      spec: { interface: wg-netns, address: 10.253.0.%d/32 }
+      kind: Interface
+      metadata: { name: site-lan }
+      spec: { ifname: eth1, managed: false }
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: BGPRouter
@@ -687,7 +844,7 @@ func (l *lab) renderRouterConfig(self node) string {
           importPolicy:
             allowedPrefixes: [10.77.60.0/24]
             nextHopRewrite: peer-address
-`, self.Name, privateKeys[self.Name], nodeIndex(self.Name)+10, nodeIndex(self.Name)+10, self.Name, nodeIndex(self.Name)+10)
+`, self.Name, nodeIndex(self.Name)+10, self.Name, privateKeys[self.Name], nodeIndex(self.Name)+10, self.Name, nodeIndex(self.Name)+10)
 	if self.Role == "leaf" {
 		fmt.Fprintf(&b, `
     - apiVersion: hybrid.routerd.net/v1alpha1

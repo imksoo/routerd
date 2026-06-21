@@ -130,6 +130,15 @@ func assignSecondary(ctx context.Context, spec executeActionRequestSpec, runCmd 
 	if spec.Mode == modeDryRun {
 		return res
 	}
+	nextHop := mobilityNextHop(spec.Parameters)
+	if nextHop != "" {
+		if _, err := runCmd(ctx, "ip", "route", "replace", address, "via", nextHop, "metric", "50"); err != nil {
+			return failed("assign-secondary-ip execute: ip route replace failed", err)
+		}
+		res.Status.Message = fmt.Sprintf("routed %s via %s", address, nextHop)
+		res.Status.Observed = map[string]string{"assignedRoute": address, "nextHop": nextHop, "interface": iface}
+		return res
+	}
 	if _, err := runCmd(ctx, "ip", "addr", "replace", address, "dev", iface); err != nil {
 		return failed("assign-secondary-ip execute: ip addr replace failed", err)
 	}
@@ -145,6 +154,18 @@ func unassignSecondary(ctx context.Context, spec executeActionRequestSpec, runCm
 	}
 	res := succeeded(fmt.Sprintf("would delete %s from %s", address, iface), false)
 	if spec.Mode == modeDryRun {
+		return res
+	}
+	if nextHop := mobilityNextHop(spec.Parameters); nextHop != "" {
+		if _, err := runCmd(ctx, "ip", "route", "del", address); err != nil {
+			if strings.Contains(err.Error(), "No such process") || strings.Contains(err.Error(), "No such file or directory") {
+				res.Status.Message = fmt.Sprintf("route %s was already absent", address)
+				return res
+			}
+			return failed("unassign-secondary-ip execute: ip route del failed", err)
+		}
+		res.Status.Message = fmt.Sprintf("deleted route %s", address)
+		res.Status.Observed = map[string]string{"removedRoute": address, "nextHop": nextHop, "interface": iface}
 		return res
 	}
 	if _, err := runCmd(ctx, "ip", "addr", "del", address, "dev", iface); err != nil {
@@ -185,6 +206,21 @@ func requireInterfaceAddress(spec executeActionRequestSpec) (string, string, err
 		return "", "", fmt.Errorf("target.address is required")
 	}
 	return iface, address, nil
+}
+
+func mobilityNextHop(params map[string]string) string {
+	sig := strings.TrimSpace(params["mobilityPathSig"])
+	for _, part := range strings.Split(sig, ";") {
+		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok || strings.TrimSpace(key) != "nextHops" {
+			continue
+		}
+		nextHop := strings.TrimSpace(strings.Split(value, ",")[0])
+		if net.ParseIP(nextHop) != nil {
+			return nextHop
+		}
+	}
+	return ""
 }
 
 func canonicalAddress(raw string) string {

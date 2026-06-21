@@ -25,6 +25,21 @@ func TestAssignSecondaryExecutesIPAddrReplace(t *testing.T) {
 	}
 }
 
+func TestAssignSecondaryWithMobilityPathExecutesRouteReplace(t *testing.T) {
+	var calls []string
+	req := `{"spec":{"action":"assign-secondary-ip","provider":"netns","mode":"execute","target":{"interface":"eth2","address":"10.77.60.11/32","captureStrategy":"secondary-ip"},"parameters":{"mobilityPathSig":"prefix=10.77.60.11/32;nextHops=10.99.0.55"}}}`
+	err := run(context.Background(), strings.NewReader(req), &bytes.Buffer{}, func(_ context.Context, name string, args ...string) (string, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return "", nil
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(calls) != 1 || calls[0] != "ip route replace 10.77.60.11/32 via 10.99.0.55 metric 50" {
+		t.Fatalf("calls = %#v", calls)
+	}
+}
+
 func TestDryRunDoesNotMutate(t *testing.T) {
 	req := `{"spec":{"action":"assign-secondary-ip","provider":"netns","mode":"dry-run","target":{"interface":"eth2","address":"10.77.60.11/32"}}}`
 	var out bytes.Buffer
