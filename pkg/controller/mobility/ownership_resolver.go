@@ -182,6 +182,16 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			decision.CaptureStrategy = capture.Strategy
 			decision.CaptureSucceeded = capture.Succeeded
 		}
+		if rec, ok := localInventory[address]; ok && decision.CaptureState == captureStateNone {
+			if peerCapture, ok := sameSitePeerCaptureStateFromInventory(rec, self, members); ok {
+				decision.CaptureState = captureStateConfirmed
+				decision.CaptureHolderNode = peerCapture.HolderNode
+				decision.CaptureProviderRef = peerCapture.ProviderRef
+				decision.CaptureTargetRef = peerCapture.TargetRef
+				decision.CaptureStrategy = peerCapture.Strategy
+				decision.CaptureSucceeded = peerCapture.Succeeded
+			}
+		}
 		if owner := strings.TrimSpace(staticOwners[address]); owner != "" {
 			decision.HomeOwnerNode = owner
 			decision.Source = staticOwnedType
@@ -609,6 +619,7 @@ func applyProviderHomeOwnerFact(decision *ownershipDecision, fact providerInvent
 
 type resolverPrivateIPRecord struct {
 	Address       string
+	NodeRef       string
 	NICRef        string
 	SubnetRef     string
 	VPCRef        string
@@ -628,6 +639,7 @@ func localInventoryRecordsFromStatus(status map[string]any, poolPrefix netip.Pre
 		}
 		out[address] = resolverPrivateIPRecord{
 			Address:       address,
+			NodeRef:       strings.TrimSpace(raw["nodeRef"]),
 			NICRef:        strings.TrimSpace(raw["nicRef"]),
 			SubnetRef:     strings.TrimSpace(raw["subnetRef"]),
 			VPCRef:        strings.TrimSpace(raw["vpcRef"]),
@@ -788,6 +800,9 @@ func statusString(value any) string {
 }
 
 func localInventoryRecordIsRouterSelf(rec resolverPrivateIPRecord, self memberPlanInfo) bool {
+	if nodeRef := strings.TrimSpace(rec.NodeRef); nodeRef != "" {
+		return nodeRef == strings.TrimSpace(self.NodeRef)
+	}
 	nicRef := strings.TrimSpace(rec.NICRef)
 	if nicRef == "" {
 		return false
@@ -795,32 +810,59 @@ func localInventoryRecordIsRouterSelf(rec resolverPrivateIPRecord, self memberPl
 	if nicRef == strings.TrimSpace(self.Capture.NICRef) {
 		return true
 	}
-	return strings.TrimSpace(rec.ResourceType) == "router-nic"
+	return false
 }
 
 func localInventoryRecordIsSameSitePeerCapture(rec resolverPrivateIPRecord, self memberPlanInfo, members map[string]memberPlanInfo) bool {
+	_, ok := sameSitePeerCaptureStateFromInventory(rec, self, members)
+	return ok
+}
+
+func sameSitePeerCaptureStateFromInventory(rec resolverPrivateIPRecord, self memberPlanInfo, members map[string]memberPlanInfo) (resolverCaptureState, bool) {
+	if rec.Primary || strings.TrimSpace(rec.ResourceType) != "router-nic" || self.Capture.Type != "provider-secondary-ip" {
+		return resolverCaptureState{}, false
+	}
+	nodeRef := strings.TrimSpace(rec.NodeRef)
 	nicRef := strings.TrimSpace(rec.NICRef)
-	if nicRef == "" {
-		return false
+	if nodeRef == "" && nicRef == "" {
+		return resolverCaptureState{}, false
 	}
 	for _, member := range members {
-		if strings.TrimSpace(member.NodeRef) == strings.TrimSpace(self.NodeRef) {
-			continue
-		}
-		if member.Capture.Type != "provider-secondary-ip" {
+		memberNodeRef := strings.TrimSpace(member.NodeRef)
+		if memberNodeRef == strings.TrimSpace(self.NodeRef) {
 			continue
 		}
 		if !samePlacementSite(self, member) {
 			continue
 		}
-		if nicRef != strings.TrimSpace(member.Capture.NICRef) {
-			continue
+		memberNICRef := strings.TrimSpace(member.Capture.NICRef)
+		if nodeRef != "" {
+			if nodeRef != memberNodeRef {
+				continue
+			}
+		} else {
+			if member.Capture.Type != "provider-secondary-ip" || memberNICRef == "" || nicRef != memberNICRef {
+				continue
+			}
 		}
 		providerRef := strings.TrimSpace(rec.ProviderRef)
 		memberProviderRef := strings.TrimSpace(member.Capture.ProviderRef)
-		return providerRef == "" || memberProviderRef == "" || providerRef == memberProviderRef
+		if providerRef != "" && memberProviderRef != "" && providerRef != memberProviderRef {
+			continue
+		}
+		strategy := effectiveCaptureStrategy("", captureStrategyValue(member.Capture))
+		if strategy == "" {
+			strategy = effectiveCaptureStrategy("", captureStrategyValue(self.Capture))
+		}
+		return resolverCaptureState{
+			HolderNode:  memberNodeRef,
+			ProviderRef: firstNonEmpty(providerRef, memberProviderRef, self.Capture.ProviderRef),
+			TargetRef:   firstNonEmpty(nicRef, memberNICRef),
+			Strategy:    strategy,
+			Succeeded:   true,
+		}, true
 	}
-	return false
+	return resolverCaptureState{}, false
 }
 
 type resolverCaptureState struct {

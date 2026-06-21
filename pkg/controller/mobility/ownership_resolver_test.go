@@ -515,6 +515,190 @@ func TestOwnershipResolverSuppressesRemoteHomeOnSameSitePeerCaptureNIC(t *testin
 	}
 }
 
+func TestOwnershipResolverPromotesTaggedSameSitePeerSecondaryToConfirmedCapture(t *testing.T) {
+	now := time.Date(2026, 6, 21, 7, 15, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	address := "10.88.60.12/32"
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "aws-router-a",
+		Spec:     spec,
+		Status: map[string]any{
+			"discoveryLocalInventory": []map[string]any{{
+				"address":      address,
+				"nodeRef":      "aws-router-b",
+				"nicRef":       "eni-b",
+				"subnetRef":    "subnet-aws",
+				"providerRef":  "aws-provider",
+				"resourceType": "router-nic",
+				"primary":      false,
+			}},
+			"discoverySelfPrivateIPs": []string{"10.88.60.4/32"},
+		},
+		BGPHomeOwnerNodes: map[string]string{
+			address: "azure-router",
+		},
+		Now: now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, address)
+	if decision.Class != ownershipClassConfirmedCapture ||
+		decision.CaptureState != captureStateConfirmed ||
+		decision.CaptureHolderNode != "aws-router-b" ||
+		decision.HomeOwnerNode != "azure-router" {
+		t.Fatalf("decision = %#v, want peer secondary to be confirmed capture for remote home owner", decision)
+	}
+	if decision.ConflictReason != "" {
+		t.Fatalf("decision = %#v, peer secondary must not create a local inventory conflict", decision)
+	}
+}
+
+func TestOwnershipResolverPromotesTaggedSameSitePeerSecondaryWithoutPeerCaptureDetails(t *testing.T) {
+	now := time.Date(2026, 6, 21, 7, 25, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	for i := range spec.Members {
+		if spec.Members[i].NodeRef == "aws-router-b" {
+			spec.Members[i].Capture = api.MobilityMemberCapture{}
+		}
+	}
+	address := "10.88.60.12/32"
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "aws-router-a",
+		Spec:     spec,
+		Status: map[string]any{
+			"discoveryLocalInventory": []map[string]any{{
+				"address":      address,
+				"nodeRef":      "aws-router-b",
+				"nicRef":       "eni-b",
+				"subnetRef":    "subnet-aws",
+				"providerRef":  "aws-provider",
+				"resourceType": "router-nic",
+				"primary":      false,
+			}},
+			"discoverySelfPrivateIPs": []string{"10.88.60.4/32"},
+		},
+		BGPHomeOwnerNodes: map[string]string{
+			address: "azure-router",
+		},
+		Now: now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, address)
+	if decision.Class != ownershipClassConfirmedCapture ||
+		decision.CaptureState != captureStateConfirmed ||
+		decision.CaptureHolderNode != "aws-router-b" ||
+		decision.CaptureProviderRef != "aws-provider" ||
+		decision.CaptureTargetRef != "eni-b" {
+		t.Fatalf("decision = %#v, want nodeRef-tagged peer secondary to define incumbent holder without peer capture details", decision)
+	}
+}
+
+func TestOwnershipResolverOCIPeerSecondaryPreventsDuplicateDistributedAssignment(t *testing.T) {
+	now := time.Date(2026, 6, 21, 7, 35, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	for i := range spec.Members {
+		if spec.Members[i].NodeRef == "oci-router" {
+			spec.Members[i].NodeRef = "oci-router-a"
+			spec.Members[i].Placement = api.MobilityMemberPlacement{Group: "oci-edge", Priority: 10}
+			spec.Members[i].MaxSecondaryIPs = 128
+		}
+	}
+	spec.Members = append(spec.Members, api.MobilityPoolMember{
+		NodeRef: "oci-router-b",
+		Site:    "oci",
+		Role:    "cloud",
+		Capture: api.MobilityMemberCapture{
+			Type:         "provider-secondary-ip",
+			ProviderRef:  "oci-provider",
+			ProviderMode: "vnic-secondary-ip",
+			NICRef:       "oci-vnic-b",
+		},
+		Delivery:        api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
+		Placement:       api.MobilityMemberPlacement{Group: "oci-edge", Priority: 20},
+		MaxSecondaryIPs: 128,
+	})
+	address := "10.88.60.17/32"
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "oci-router-a",
+		Spec:     spec,
+		Status: map[string]any{
+			"discoveryLocalInventory": []map[string]any{{
+				"address":      address,
+				"nodeRef":      "oci-router-b",
+				"nicRef":       "oci-vnic-b",
+				"subnetRef":    "oci-subnet",
+				"providerRef":  "oci-provider",
+				"resourceType": "router-nic",
+				"primary":      false,
+			}},
+		},
+		BGPHomeOwnerNodes: map[string]string{
+			address: "azure-router",
+		},
+		Now: now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, address)
+	if decision.Class != ownershipClassConfirmedCapture ||
+		decision.CaptureState != captureStateConfirmed ||
+		decision.CaptureHolderNode != "oci-router-b" ||
+		decision.HomeOwnerNode != "azure-router" ||
+		decision.ConflictReason != "" {
+		t.Fatalf("decision = %#v, want OCI peer secondary promoted to non-conflicting confirmed capture", decision)
+	}
+
+	members := plannerMembers(spec.Members)
+	poolPrefix := netip.MustParsePrefix(spec.Prefix)
+	decisionMap := map[string]ownershipDecision{address: decision}
+	_, distA := planCaptureCandidatesWithDistribution(
+		members["oci-router-a"],
+		members,
+		decisionMap,
+		PlacementDecision{Group: "oci-edge", Active: true, ActiveNode: "oci-router-a"},
+		nil,
+		true,
+		nil,
+		nil,
+		nil,
+		nil,
+		false,
+		poolPrefix,
+		now,
+	)
+	_, distB := planCaptureCandidatesWithDistribution(
+		members["oci-router-b"],
+		members,
+		decisionMap,
+		PlacementDecision{Group: "oci-edge", Active: true, ActiveNode: "oci-router-b"},
+		nil,
+		true,
+		nil,
+		nil,
+		nil,
+		nil,
+		false,
+		poolPrefix,
+		now,
+	)
+	if distA == nil || distB == nil {
+		t.Fatalf("distribution is nil: a=%#v b=%#v", distA, distB)
+	}
+	if distA.Assignments[address] != "oci-router-b" || distB.Assignments[address] != "oci-router-b" {
+		t.Fatalf("distribution mismatch: a=%#v b=%#v, want single peer holder oci-router-b", distA, distB)
+	}
+	if len(distA.Assignments) != 1 || len(distB.Assignments) != 1 || distA.NodeCounts["oci-router-b"] != 1 || distB.NodeCounts["oci-router-b"] != 1 {
+		t.Fatalf("distribution counts mismatch: a=%#v b=%#v", distA, distB)
+	}
+}
+
 func TestOwnershipResolverTakesOverDeadColocatedRemoteHomeOwnerWithLocalInventory(t *testing.T) {
 	now := time.Date(2026, 6, 21, 3, 0, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()

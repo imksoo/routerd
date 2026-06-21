@@ -185,6 +185,7 @@ resource "oci_core_instance" "node" {
   fault_domain         = each.value.fault_domain
   preserve_boot_volume = false
   freeform_tags = merge(local.common_freeform_tags, {
+    RouterdNode        = each.value.name
     Role               = each.value.role
     cloudedge-mobility = each.value.role == "client" ? "true" : "false"
   })
@@ -196,6 +197,7 @@ resource "oci_core_instance" "node" {
     private_ip             = each.value.private_ip
     skip_source_dest_check = each.value.skip_source_dest_check
     freeform_tags = merge(local.common_freeform_tags, {
+      RouterdNode        = each.value.name
       Role               = each.value.role
       cloudedge-mobility = each.value.role == "client" ? "true" : "false"
     })
