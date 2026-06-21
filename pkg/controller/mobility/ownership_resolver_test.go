@@ -448,6 +448,134 @@ func TestOwnershipResolverReportsRemoteHomeLocalInventoryConflict(t *testing.T) 
 	}
 }
 
+func TestOwnershipResolverTakesOverDeadColocatedRemoteHomeOwnerWithLocalInventory(t *testing.T) {
+	now := time.Date(2026, 6, 21, 3, 0, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	address := "10.88.60.11/32"
+	homeEvent := providerDiscoveryObservedEvent("cloudedge", "cloudedge", "aws-router-a", address, "aws", "aws-provider", providerinventory.PrivateIPRecord{
+		Address:      "10.88.60.11",
+		NICRef:       "eni-client",
+		SubnetRef:    "subnet-aws",
+		ResourceRef:  "i-aws-client",
+		ResourceType: "instance-nic",
+	}, now.Add(-time.Second), time.Hour)
+
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "aws-router-b",
+		Spec:     spec,
+		Events:   []routerstate.EventRecord{homeEvent},
+		Status: map[string]any{
+			"discoveryLocalInventory": []map[string]any{
+				{"address": address, "nicRef": "eni-client", "subnetRef": "subnet-aws", "providerRef": "aws-provider", "resourceRef": "i-aws-client", "resourceType": "instance-nic"},
+			},
+		},
+		BGPLiveNodes:        map[string]bool{"aws-router-b": true},
+		BGPLivenessObserved: true,
+		Now:                 now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, address)
+	if decision.Class != ownershipClassLocalHomeOwned || decision.HomeOwnerNode != "aws-router-b" || decision.AdvertiseOwnerNode != "aws-router-b" {
+		t.Fatalf("decision = %#v, want survivor local home-owner takeover", decision)
+	}
+	if decision.AdvertiseReason != "local-home-inventory-takeover" || decision.ConflictReason != "" {
+		t.Fatalf("decision = %#v, want takeover advertisement without conflict", decision)
+	}
+	status := ownershipResolverStatus(decisions)
+	if status["ownershipResolverPhase"] != "Resolved" || status["ownershipResolverConflictCount"] != 0 {
+		t.Fatalf("status = %#v, want resolved takeover without conflicts", status)
+	}
+}
+
+func TestOwnershipResolverDoesNotTakeOverLiveColocatedRemoteHomeOwner(t *testing.T) {
+	now := time.Date(2026, 6, 21, 3, 5, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	address := "10.88.60.11/32"
+	homeEvent := providerDiscoveryObservedEvent("cloudedge", "cloudedge", "aws-router-a", address, "aws", "aws-provider", providerinventory.PrivateIPRecord{
+		Address:      "10.88.60.11",
+		NICRef:       "eni-client",
+		SubnetRef:    "subnet-aws",
+		ResourceRef:  "i-aws-client",
+		ResourceType: "instance-nic",
+	}, now.Add(-time.Second), time.Hour)
+
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "aws-router-b",
+		Spec:     spec,
+		Events:   []routerstate.EventRecord{homeEvent},
+		Status: map[string]any{
+			"discoveryLocalInventory": []map[string]any{
+				{"address": address, "nicRef": "eni-client", "subnetRef": "subnet-aws", "providerRef": "aws-provider", "resourceRef": "i-aws-client", "resourceType": "instance-nic"},
+			},
+		},
+		BGPLiveNodes:        map[string]bool{"aws-router-a": true, "aws-router-b": true},
+		BGPLivenessObserved: true,
+		Now:                 now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, address)
+	if decision.Class != ownershipClassRemoteHomeOwned || decision.HomeOwnerNode != "aws-router-a" || decision.AdvertiseOwnerNode != "" {
+		t.Fatalf("decision = %#v, want live colocated owner preserved without self advertisement", decision)
+	}
+	if decision.ConflictReason != "" {
+		t.Fatalf("decision = %#v, want live colocated owner overlap to stay resolved", decision)
+	}
+	status := ownershipResolverStatus(decisions)
+	if status["ownershipResolverPhase"] != "Resolved" || status["ownershipResolverConflictCount"] != 0 {
+		t.Fatalf("status = %#v, want resolved remote owner without conflicts", status)
+	}
+}
+
+func TestOwnershipResolverRejoinCoalescesToSingleLiveColocatedOwner(t *testing.T) {
+	now := time.Date(2026, 6, 21, 3, 10, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	address := "10.88.60.11/32"
+	record := providerinventory.PrivateIPRecord{
+		Address:      "10.88.60.11",
+		NICRef:       "eni-client",
+		SubnetRef:    "subnet-aws",
+		ResourceRef:  "i-aws-client",
+		ResourceType: "instance-nic",
+	}
+	ownerA := providerDiscoveryObservedEvent("cloudedge", "cloudedge", "aws-router-a", address, "aws", "aws-provider", record, now.Add(-time.Second), time.Hour)
+	ownerB := providerDiscoveryObservedEvent("cloudedge", "cloudedge", "aws-router-b", address, "aws", "aws-provider", record, now.Add(-2*time.Second), time.Hour)
+
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "aws-router-b",
+		Spec:     spec,
+		Events:   []routerstate.EventRecord{ownerB, ownerA},
+		Status: map[string]any{
+			"discoveryLocalInventory": []map[string]any{
+				{"address": address, "nicRef": "eni-client", "subnetRef": "subnet-aws", "providerRef": "aws-provider", "resourceRef": "i-aws-client", "resourceType": "instance-nic"},
+			},
+		},
+		BGPLiveNodes:        map[string]bool{"aws-router-a": true, "aws-router-b": true},
+		BGPLivenessObserved: true,
+		Now:                 now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, address)
+	if decision.Class != ownershipClassRemoteHomeOwned || decision.HomeOwnerNode != "aws-router-a" || decision.AdvertiseOwnerNode != "" {
+		t.Fatalf("decision = %#v, want rejoined priority owner selected as the single owner", decision)
+	}
+	if decision.ConflictReason != "" || len(decision.ConflictOwners) != 0 {
+		t.Fatalf("decision = %#v, want rejoin coalesced without duplicate/conflict", decision)
+	}
+	status := ownershipResolverStatus(decisions)
+	if status["ownershipResolverPhase"] != "Resolved" || status["ownershipResolverConflictCount"] != 0 {
+		t.Fatalf("status = %#v, want rejoin to resolve to one owner", status)
+	}
+}
+
 func TestOwnershipResolverStatusDistinguishesStaleConflictAndUnknown(t *testing.T) {
 	decisions := []ownershipDecision{
 		{

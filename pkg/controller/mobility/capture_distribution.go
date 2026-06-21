@@ -173,6 +173,26 @@ func distributedLiveNodes(self memberPlanInfo, members map[string]memberPlanInfo
 	return live
 }
 
+func bgpLiveNodesFromMarkers(self memberPlanInfo, members map[string]memberPlanInfo, livenessMarkers map[string]string, observed bool) map[string]bool {
+	if !observed {
+		return nil
+	}
+	live := map[string]bool{}
+	if selfNode := strings.TrimSpace(self.NodeRef); selfNode != "" {
+		live[selfNode] = true
+	}
+	for _, member := range members {
+		nodeRef := strings.TrimSpace(member.NodeRef)
+		if nodeRef == "" {
+			continue
+		}
+		if _, _, present := livenessMarkerForNode(livenessMarkers, nodeRef); present {
+			live[nodeRef] = true
+		}
+	}
+	return live
+}
+
 func rendezvousScore(address, nodeRef string) uint64 {
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(address))

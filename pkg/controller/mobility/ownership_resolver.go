@@ -31,17 +31,19 @@ const (
 )
 
 type ownershipResolverInput struct {
-	PoolName          string
-	SelfNode          string
-	Spec              api.MobilityPoolSpec
-	Events            []routerstate.EventRecord
-	Status            map[string]any
-	ActionJournal     []routerstate.ActionExecutionRecord
-	PreviousPlans     []dynamicconfig.ActionPlan
-	InstalledNextHops map[string][]string
-	BGPHomeOwnerNodes map[string]string
-	BGPReturnRoutes   map[string]bool
-	Now               time.Time
+	PoolName            string
+	SelfNode            string
+	Spec                api.MobilityPoolSpec
+	Events              []routerstate.EventRecord
+	Status              map[string]any
+	ActionJournal       []routerstate.ActionExecutionRecord
+	PreviousPlans       []dynamicconfig.ActionPlan
+	InstalledNextHops   map[string][]string
+	BGPHomeOwnerNodes   map[string]string
+	BGPReturnRoutes     map[string]bool
+	BGPLiveNodes        map[string]bool
+	BGPLivenessObserved bool
+	Now                 time.Time
 }
 
 type ownershipDecision struct {
@@ -306,7 +308,27 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			decision.Source = providerDiscoverySource
 			decision.Fresh = true
 			if rec, local := localInventory[address]; local {
-				decision.ConflictReason = "remote-home-owner-overlaps-local-inventory"
+				if remoteHomeOwnerUnavailableForLocalInventoryTakeover(self, members, in.BGPLiveNodes, in.BGPLivenessObserved, fact) {
+					decision.Class = ownershipClassLocalHomeOwned
+					decision.HomeOwnerNode = self.NodeRef
+					decision.HomeProviderRef = firstNonEmpty(rec.ProviderRef, self.OwnershipDiscovery.ProviderRef, self.Capture.ProviderRef)
+					decision.HomeSubnetRef = rec.SubnetRef
+					decision.HomeNICRef = rec.NICRef
+					decision.HomeResourceRef = rec.ResourceRef
+					decision.HomeResourceType = rec.ResourceType
+					decision.LocalNodeRef = self.NodeRef
+					decision.LocalProviderRef = decision.HomeProviderRef
+					decision.LocalSubnetRef = rec.SubnetRef
+					decision.LocalNICRef = rec.NICRef
+					decision.LocalResourceRef = rec.ResourceRef
+					decision.LocalResourceType = rec.ResourceType
+					decision.LocalSource = "local-inventory"
+					decision.AdvertiseOwnerNode = self.NodeRef
+					decision.AdvertiseReason = "local-home-inventory-takeover"
+					decision.Source = "local-inventory"
+					out = append(out, decision)
+					continue
+				}
 				decision.LocalNodeRef = self.NodeRef
 				decision.LocalProviderRef = firstNonEmpty(rec.ProviderRef, self.OwnershipDiscovery.ProviderRef, self.Capture.ProviderRef)
 				decision.LocalSubnetRef = rec.SubnetRef
@@ -314,6 +336,13 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 				decision.LocalResourceRef = rec.ResourceRef
 				decision.LocalResourceType = rec.ResourceType
 				decision.LocalSource = "local-inventory"
+				if remoteHomeOwnerSharesPlacementSite(self, members, fact) {
+					decision.Class = ownershipClassRemoteHomeOwned
+					decision.SuppressionReason = "remote-home-owner"
+					out = append(out, decision)
+					continue
+				}
+				decision.ConflictReason = "remote-home-owner-overlaps-local-inventory"
 			}
 			homeProviderRef := strings.TrimSpace(fact.ProviderRef)
 			selfProviderRef := strings.TrimSpace(self.Capture.ProviderRef)
@@ -424,6 +453,29 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 		out = append(out, decision)
 	}
 	return out, nil
+}
+
+func remoteHomeOwnerSharesPlacementSite(self memberPlanInfo, members map[string]memberPlanInfo, fact providerInventoryOwnerFact) bool {
+	ownerNode := strings.TrimSpace(fact.NodeRef)
+	if ownerNode == "" || ownerNode == strings.TrimSpace(self.NodeRef) {
+		return false
+	}
+	owner, ok := lookupMemberByNodeRef(members, ownerNode)
+	return ok && samePlacementSite(self, owner)
+}
+
+func remoteHomeOwnerUnavailableForLocalInventoryTakeover(self memberPlanInfo, members map[string]memberPlanInfo, liveNodes map[string]bool, livenessObserved bool, fact providerInventoryOwnerFact) bool {
+	if !livenessObserved || strings.TrimSpace(self.NodeRef) == "" {
+		return false
+	}
+	if !remoteHomeOwnerSharesPlacementSite(self, members, fact) {
+		return false
+	}
+	ownerNode := strings.TrimSpace(fact.NodeRef)
+	if liveNodes[strings.TrimSpace(self.NodeRef)] {
+		return !liveNodes[ownerNode]
+	}
+	return false
 }
 
 func clearDisprovedStaleCapture(decision *ownershipDecision, selfNode string, capturedIPs map[string]bool, selfIPsObserved bool, address string) {
