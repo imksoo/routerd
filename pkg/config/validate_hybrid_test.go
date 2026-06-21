@@ -161,7 +161,7 @@ func TestValidateHybridFailures(t *testing.T) {
 				spec.Provider = "do"
 				router.Spec.Resources[5].Spec = spec
 			},
-			want: "spec.provider must be azure, aws, oci, or gcp",
+			want: "spec.provider must be azure, aws, oci, gcp, or netns",
 		},
 		{
 			name: "cloud provider profile empty capabilities",

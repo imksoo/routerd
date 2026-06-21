@@ -20,6 +20,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/imksoo/routerd/pkg/config"
 )
 
 const enableEnv = "ROUTERD_NETNS_INTEGRATION"
@@ -36,11 +38,12 @@ type lab struct {
 }
 
 type node struct {
-	Name     string
-	Role     string
-	Underlay string
-	Access   string
-	Router   bool
+	Name      string
+	Site      string
+	Role      string
+	SiteCIDR  string
+	Transport string
+	Router    bool
 }
 
 type cmdError struct {
@@ -68,6 +71,7 @@ func TestNetNSSAMRealRouterdTopologySmoke(t *testing.T) {
 	l.AssertRouterdStatusReady(2 * time.Minute)
 	l.AssertWireGuardReachability(2 * time.Minute)
 	l.AssertBGPEstablished(2 * time.Minute)
+	l.AssertClientMatrix(3 * time.Minute)
 }
 
 func requireNetNS(t *testing.T) {
@@ -103,11 +107,24 @@ func newLab(t *testing.T, ctx context.Context) *lab {
 
 func defaultTopology() []node {
 	return []node{
-		{Name: "rr1", Role: "rr", Underlay: "10.252.0.10/24", Router: true},
-		{Name: "leaf-a", Role: "leaf", Underlay: "10.252.0.11/24", Access: "10.88.10.1/24", Router: true},
-		{Name: "leaf-b", Role: "leaf", Underlay: "10.252.0.12/24", Access: "10.88.20.1/24", Router: true},
-		{Name: "client-a", Role: "client", Access: "10.88.10.16/24"},
-		{Name: "client-b", Role: "client", Access: "10.88.20.16/24"},
+		{Name: "aws-rr-a", Site: "aws-rr", Role: "rr", SiteCIDR: "10.77.10.10/24", Transport: "172.31.0.10/24", Router: true},
+		{Name: "aws-rr-b", Site: "aws-rr", Role: "rr", SiteCIDR: "10.77.10.11/24", Transport: "172.31.0.11/24", Router: true},
+		{Name: "aws-leaf-a", Site: "aws-leaf", Role: "leaf", SiteCIDR: "10.77.60.4/24", Transport: "172.31.0.12/24", Router: true},
+		{Name: "aws-leaf-b", Site: "aws-leaf", Role: "leaf", SiteCIDR: "10.77.60.5/24", Transport: "172.31.0.13/24", Router: true},
+		{Name: "aws-client-a", Site: "aws-leaf", Role: "client", SiteCIDR: "10.77.60.11/24"},
+		{Name: "aws-client-b", Site: "aws-leaf", Role: "client", SiteCIDR: "10.77.60.16/24"},
+		{Name: "azure-leaf-a", Site: "azure-leaf", Role: "leaf", SiteCIDR: "10.77.60.14/24", Transport: "172.31.0.14/24", Router: true},
+		{Name: "azure-leaf-b", Site: "azure-leaf", Role: "leaf", SiteCIDR: "10.77.60.21/24", Transport: "172.31.0.15/24", Router: true},
+		{Name: "azure-client-a", Site: "azure-leaf", Role: "client", SiteCIDR: "10.77.60.12/24"},
+		{Name: "azure-client-b", Site: "azure-leaf", Role: "client", SiteCIDR: "10.77.60.17/24"},
+		{Name: "oci-leaf-a", Site: "oci-leaf", Role: "leaf", SiteCIDR: "10.77.60.24/24", Transport: "172.31.0.16/24", Router: true},
+		{Name: "oci-leaf-b", Site: "oci-leaf", Role: "leaf", SiteCIDR: "10.77.60.25/24", Transport: "172.31.0.17/24", Router: true},
+		{Name: "oci-client-a", Site: "oci-leaf", Role: "client", SiteCIDR: "10.77.60.13/24"},
+		{Name: "oci-client-b", Site: "oci-leaf", Role: "client", SiteCIDR: "10.77.60.18/24"},
+		{Name: "pve-leaf-a", Site: "pve-leaf", Role: "leaf", SiteCIDR: "10.77.60.30/24", Transport: "172.31.0.18/24", Router: true},
+		{Name: "pve-leaf-b", Site: "pve-leaf", Role: "leaf", SiteCIDR: "10.77.60.35/24", Transport: "172.31.0.19/24", Router: true},
+		{Name: "pve-client-a", Site: "pve-leaf", Role: "client", SiteCIDR: "10.77.60.15/24"},
+		{Name: "pve-client-b", Site: "pve-leaf", Role: "client", SiteCIDR: "10.77.60.19/24"},
 	}
 }
 
@@ -123,6 +140,8 @@ func (l *lab) BuildBinaries() {
 		{Name: "routerd", Pkg: "./cmd/routerd"},
 		{Name: "routerctl", Pkg: "./cmd/routerctl"},
 		{Name: "routerd-bgp", Pkg: "./cmd/routerd-bgp"},
+		{Name: "netns-provider-executor", Pkg: "./examples/plugins/netns-provider-executor"},
+		{Name: "netns-provider-inventory", Pkg: "./examples/plugins/netns-provider-inventory"},
 	} {
 		l.run("", "go", "build", "-o", filepath.Join(l.binDir, target.Name), target.Pkg)
 	}
@@ -135,33 +154,28 @@ func (l *lab) CreateTopology(nodes []node) {
 		l.run("", "ip", "netns", "add", l.ns(n.Name))
 		l.run("", "ip", "-n", l.ns(n.Name), "link", "set", "lo", "up")
 	}
-	l.createBridge(l.bridge("underlay"))
+	l.createBridge(l.bridge("transport"))
+	siteSeen := map[string]bool{}
 	for _, n := range nodes {
+		if !siteSeen[n.Site] {
+			l.createBridge(l.bridge(n.Site))
+			siteSeen[n.Site] = true
+		}
+	}
+	for _, n := range nodes {
+		l.attach(n.Name, "eth1", l.bridge(n.Site))
+		l.netns(n.Name, "ip", "addr", "add", n.SiteCIDR, "dev", "eth1")
+		l.netns(n.Name, "ip", "link", "set", "eth1", "up")
 		if n.Router {
-			l.attach(n.Name, "eth1", l.bridge("underlay"))
-			l.netns(n.Name, "ip", "addr", "add", n.Underlay, "dev", "eth1")
-			l.netns(n.Name, "ip", "link", "set", "eth1", "up")
+			l.attach(n.Name, "eth0", l.bridge("transport"))
+			l.netns(n.Name, "ip", "addr", "add", n.Transport, "dev", "eth0")
+			l.netns(n.Name, "ip", "link", "set", "eth0", "up")
 			l.netns(n.Name, "sysctl", "-w", "net.ipv4.ip_forward=1")
 		}
 	}
-	l.createBridge(l.bridge("access-a"))
-	l.createBridge(l.bridge("access-b"))
-	l.attach("leaf-a", "eth2", l.bridge("access-a"))
-	l.attach("client-a", "eth1", l.bridge("access-a"))
-	l.attach("leaf-b", "eth2", l.bridge("access-b"))
-	l.attach("client-b", "eth1", l.bridge("access-b"))
 	for _, n := range nodes {
-		if n.Access == "" {
-			continue
-		}
-		dev := "eth1"
-		if n.Router {
-			dev = "eth2"
-		}
-		l.netns(n.Name, "ip", "addr", "add", n.Access, "dev", dev)
-		l.netns(n.Name, "ip", "link", "set", dev, "up")
 		if n.Role == "client" {
-			l.netns(n.Name, "ip", "route", "replace", "10.88.60.0/24", "via", clientGateway(n.Name))
+			l.netns(n.Name, "ip", "route", "replace", "default", "via", siteGateway(n.Site))
 		}
 	}
 	l.writeRouterConfigs()
@@ -208,7 +222,7 @@ func (l *lab) AssertUnderlayReachability() {
 			if from.Name == to.Name {
 				continue
 			}
-			l.netns(from.Name, "ping", "-c", "1", "-W", "2", ipOnly(to.Underlay))
+			l.netns(from.Name, "ping", "-c", "1", "-W", "2", ipOnly(to.Transport))
 		}
 	}
 }
@@ -269,9 +283,9 @@ func (l *lab) AssertBGPEstablished(timeout time.Duration) {
 	for {
 		var pending []string
 		for _, n := range l.routerNodes() {
-			wantPeers := 1
+			wantPeers := l.rrCount()
 			if n.Role == "rr" {
-				wantPeers = 2
+				wantPeers = len(l.routerNodes()) - 1
 			}
 			statusSocket := filepath.Join(l.nodeDir(n.Name, "run"), "status.sock")
 			out, err := l.netnsOutput(n.Name, filepath.Join(l.binDir, "routerctl"), "get", "BGPRouter/mobility-bgp", "--socket", statusSocket, "-o", "json")
@@ -290,6 +304,33 @@ func (l *lab) AssertBGPEstablished(timeout time.Duration) {
 		if time.Now().After(deadline) {
 			l.dumpLogs()
 			l.t.Fatalf("BGP did not establish:\n%s", strings.Join(pending, "\n"))
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func (l *lab) AssertClientMatrix(timeout time.Duration) {
+	l.t.Helper()
+	clients := l.clientNodes()
+	deadline := time.Now().Add(timeout)
+	for {
+		var pending []string
+		for _, from := range clients {
+			for _, to := range clients {
+				if from.Name == to.Name {
+					continue
+				}
+				if err := l.netnsErr(from.Name, "ping", "-c", "1", "-W", "1", ipOnly(to.SiteCIDR)); err != nil {
+					pending = append(pending, from.Name+" -> "+to.Name+"("+ipOnly(to.SiteCIDR)+"): "+err.Error())
+				}
+			}
+		}
+		if len(pending) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			l.dumpLogs()
+			l.t.Fatalf("client hostname-matrix-equivalent reachability did not converge:\n%s", strings.Join(pending, "\n"))
 		}
 		time.Sleep(2 * time.Second)
 	}
@@ -438,6 +479,26 @@ func (l *lab) routerNodes() []node {
 	return out
 }
 
+func (l *lab) clientNodes() []node {
+	var out []node
+	for _, n := range l.nodes {
+		if n.Role == "client" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func (l *lab) rrCount() int {
+	count := 0
+	for _, n := range l.nodes {
+		if n.Role == "rr" {
+			count++
+		}
+	}
+	return count
+}
+
 func (l *lab) ns(name string) string {
 	return shortName(l.name + "-" + name)
 }
@@ -458,12 +519,16 @@ func shortName(name string) string {
 	return name[:48]
 }
 
-func clientGateway(name string) string {
-	switch name {
-	case "client-a":
-		return "10.88.10.1"
-	case "client-b":
-		return "10.88.20.1"
+func siteGateway(site string) string {
+	switch site {
+	case "aws-leaf":
+		return "10.77.60.4"
+	case "azure-leaf":
+		return "10.77.60.14"
+	case "oci-leaf":
+		return "10.77.60.24"
+	case "pve-leaf":
+		return "10.77.60.30"
 	default:
 		return ""
 	}
@@ -475,12 +540,26 @@ func ipOnly(cidr string) string {
 
 func nodeIndex(name string) int {
 	switch name {
-	case "rr1":
+	case "aws-rr-a":
 		return 1
-	case "leaf-a":
+	case "aws-rr-b":
 		return 2
-	case "leaf-b":
+	case "aws-leaf-a":
 		return 3
+	case "aws-leaf-b":
+		return 4
+	case "azure-leaf-a":
+		return 5
+	case "azure-leaf-b":
+		return 6
+	case "oci-leaf-a":
+		return 7
+	case "oci-leaf-b":
+		return 8
+	case "pve-leaf-a":
+		return 9
+	case "pve-leaf-b":
+		return 10
 	default:
 		return 99
 	}
@@ -543,19 +622,15 @@ func (l *lab) renderRouterConfig(self node) string {
         nodes:
 `)
 	for _, n := range l.routerNodes() {
-		site := "local-a"
-		if n.Name == "leaf-b" {
-			site = "local-b"
-		}
 		fmt.Fprintf(&b, "          - nodeRef: %s\n", n.Name)
-		fmt.Fprintf(&b, "            site: %s\n", site)
-		fmt.Fprintf(&b, "            role: onprem\n")
+		fmt.Fprintf(&b, "            site: %s\n", n.Site)
+		fmt.Fprintf(&b, "            role: cloud\n")
 		fmt.Fprintf(&b, "            routeReflector: %v\n", n.Role == "rr")
 		fmt.Fprintf(&b, "            eventEndpoint: http://10.253.0.%d:9443\n", nodeIndex(n.Name)+10)
 		fmt.Fprintf(&b, "            samEndpoint: 10.253.0.%d\n", nodeIndex(n.Name)+10)
 		fmt.Fprintf(&b, "            wireGuard:\n")
 		fmt.Fprintf(&b, "              publicKey: %s\n", publicKeys[n.Name])
-		fmt.Fprintf(&b, "              endpoint: %s:51820\n", ipOnly(n.Underlay))
+		fmt.Fprintf(&b, "              endpoint: %s:51820\n", ipOnly(n.Transport))
 		fmt.Fprintf(&b, "              allowedIPs: [10.253.0.%d/32]\n", nodeIndex(n.Name)+10)
 		fmt.Fprintf(&b, "              persistentKeepalive: 5\n")
 	}
@@ -590,7 +665,7 @@ func (l *lab) renderRouterConfig(self node) string {
         listen: { port: 179 }
         timers: { profile: fast }
         convergenceProfile: fast
-        importPolicy: { allowedPrefixes: [10.88.60.0/24, 10.99.0.0/24], nextHopRewrite: unchanged }
+        importPolicy: { allowedPrefixes: [10.77.60.0/24, 10.99.0.0/24], nextHopRewrite: unchanged }
 
     - apiVersion: mobility.routerd.net/v1alpha1
       kind: SAMTransportProfile
@@ -610,48 +685,98 @@ func (l *lab) renderRouterConfig(self node) string {
           peerASN: 64522
           timersPreset: fast
           importPolicy:
-            allowedPrefixes: [10.88.60.0/24]
+            allowedPrefixes: [10.77.60.0/24]
             nextHopRewrite: peer-address
 `, self.Name, privateKeys[self.Name], nodeIndex(self.Name)+10, nodeIndex(self.Name)+10, self.Name, nodeIndex(self.Name)+10)
 	if self.Role == "leaf" {
 		fmt.Fprintf(&b, `
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: CloudProviderProfile
+      metadata: { name: netns-lab }
+      spec:
+        provider: netns
+        capabilities: [secondary-ip, ip-forwarding]
+        auth: { mode: external-command, command: /bin/true }
+
+    - apiVersion: plugin.routerd.net/v1alpha1
+      kind: Plugin
+      metadata: { name: netns-executor }
+      spec:
+        executable: %s
+        timeout: 15s
+        capabilities: [execute.providerAction]
+
+    - apiVersion: plugin.routerd.net/v1alpha1
+      kind: Plugin
+      metadata: { name: netns-inventory }
+      spec:
+        executable: %s
+        timeout: 15s
+        env:
+          ROUTERD_NETNS_SITE: %s
+          ROUTERD_NETNS_SELF_IP: %s
+          ROUTERD_NETNS_CLIENT_IPS: %s
+        capabilities: [observe.providerPrivateIPs]
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: ProviderActionPolicy
+      metadata: { name: netns-live-mutation }
+      spec:
+        enabled: true
+        dryRunOnly: false
+        requireApproval: false
+        allowedProviders: [netns]
+        allowedProviderRefs: [netns-lab]
+        allowedActions: [assign-secondary-ip, unassign-secondary-ip, ensure-forwarding-enabled, ensure-forwarding-disabled]
+        allowedCIDRs: [10.77.60.0/24]
+        maxActionsPerRun: 64
+        allowUndo: true
+
     - apiVersion: mobility.routerd.net/v1alpha1
       kind: MobilityPool
-      metadata: { name: local-capture }
+      metadata: { name: cloudedge }
       spec:
-        prefix: 10.88.60.0/24
-        groupRef: local
+        prefix: 10.77.60.0/24
+        groupRef: cloudedge
         deliveryPolicy: { mode: bgp }
         capturePolicy: { mode: all-non-owner-sites }
         ipOwnershipPolicy: { type: centralized, autoFailover: true }
-        members:
-          - nodeRef: leaf-a
-            site: local-a
-            role: onprem
-            ownershipDiscovery:
-              mode: onprem-l2
-              sources:
-                - type: arp-observer
-                  interface: eth2
-            capture:
-              type: proxy-arp
-              interface: eth2
-              gratuitousARP: true
-              activeWhen: { type: single-router }
-          - nodeRef: leaf-b
-            site: local-b
-            role: onprem
-            ownershipDiscovery:
-              mode: onprem-l2
-              sources:
-                - type: arp-observer
-                  interface: eth2
-            capture:
-              type: proxy-arp
-              interface: eth2
-              gratuitousARP: true
-              activeWhen: { type: single-router }
+        profiles:
+          cloudCaptures:
+`, filepath.Join(l.binDir, "netns-provider-executor"), filepath.Join(l.binDir, "netns-provider-inventory"), self.Site, self.SiteCIDR, l.siteClientEnv(self.Site))
+		for _, leaf := range l.leafNodes() {
+			fmt.Fprintf(&b, "            %s-self:\n", leaf.Name)
+			fmt.Fprintf(&b, "              capture:\n")
+			fmt.Fprintf(&b, "                type: provider-secondary-ip\n")
+			fmt.Fprintf(&b, "                interface: eth1\n")
+			fmt.Fprintf(&b, "                providerRef: netns-lab\n")
+			fmt.Fprintf(&b, "                providerMode: secondary-ip\n")
+			fmt.Fprintf(&b, "                captureStrategy: secondary-ip\n")
+			fmt.Fprintf(&b, "                nicRef: eth1\n")
+			fmt.Fprintf(&b, "                configureOSAddress: false\n")
+			fmt.Fprintf(&b, "                target: { interface: eth1 }\n")
+			fmt.Fprintf(&b, "              ownershipDiscovery:\n")
+			fmt.Fprintf(&b, "                mode: provider-private-ip\n")
+			fmt.Fprintf(&b, "                providerRef: netns-lab\n")
+			fmt.Fprintf(&b, "                pluginRef: netns-inventory\n")
+			fmt.Fprintf(&b, "                subnetRef: %s\n", leaf.Site)
+			fmt.Fprintf(&b, "                scanInterval: 30s\n")
+			fmt.Fprintf(&b, "                leaseTTL: 2m\n")
+			fmt.Fprintf(&b, "                selector:\n")
+			fmt.Fprintf(&b, "                  tags:\n")
+			fmt.Fprintf(&b, "                    cloudedge-mobility: \"true\"\n")
+		}
+		fmt.Fprintf(&b, `        members:
 `)
+		for _, leaf := range l.leafNodes() {
+			fmt.Fprintf(&b, "          - nodeRef: %s\n", leaf.Name)
+			fmt.Fprintf(&b, "            site: %s\n", leaf.Site)
+			fmt.Fprintf(&b, "            role: cloud\n")
+			fmt.Fprintf(&b, "            profileRef: %s-self\n", leaf.Name)
+			fmt.Fprintf(&b, "            placement: { group: %s, priority: %d }\n", leaf.Site, leafPriority(leaf.Name))
+			fmt.Fprintf(&b, "            maxSecondaryIPs: 128\n")
+		}
+		fmt.Fprintf(&b, "\n")
 	}
 	return b.String()
 }
@@ -694,6 +819,33 @@ func (l *lab) wireGuardKeyPair(nodeName string) (string, string) {
 	return strings.TrimSpace(string(key)), strings.TrimSpace(string(pub))
 }
 
+func (l *lab) leafNodes() []node {
+	var out []node
+	for _, n := range l.nodes {
+		if n.Role == "leaf" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func (l *lab) siteClientEnv(site string) string {
+	var parts []string
+	for _, n := range l.nodes {
+		if n.Role == "client" && n.Site == site {
+			parts = append(parts, n.Name+"="+n.SiteCIDR)
+		}
+	}
+	return strings.Join(parts, ",")
+}
+
+func leafPriority(name string) int {
+	if strings.HasSuffix(name, "-a") {
+		return 10
+	}
+	return 20
+}
+
 func TestRenderedNetNSRouterConfigs(t *testing.T) {
 	if _, err := exec.LookPath("wg"); err != nil {
 		t.Skipf("wg is required to render WireGuard keys: %v", err)
@@ -703,17 +855,24 @@ func TestRenderedNetNSRouterConfigs(t *testing.T) {
 	l := newLab(t, ctx)
 	l.nodes = defaultTopology()
 	for _, n := range l.routerNodes() {
-		config := l.renderRouterConfig(n)
+		rendered := l.renderRouterConfig(n)
 		for _, want := range []string{"kind: Router", "kind: WireGuardInterface", "kind: BGPRouter", "kind: SAMTransportProfile"} {
-			if !strings.Contains(config, want) {
-				t.Fatalf("%s config missing %q:\n%s", n.Name, want, config)
+			if !strings.Contains(rendered, want) {
+				t.Fatalf("%s config missing %q:\n%s", n.Name, want, rendered)
 			}
 		}
-		if n.Role == "leaf" && !strings.Contains(config, "kind: MobilityPool") {
-			t.Fatalf("%s leaf config missing MobilityPool:\n%s", n.Name, config)
+		if n.Role == "leaf" && !strings.Contains(rendered, "kind: MobilityPool") {
+			t.Fatalf("%s leaf config missing MobilityPool:\n%s", n.Name, rendered)
 		}
-		if net.ParseIP(ipOnly(n.Underlay)) == nil {
-			t.Fatalf("%s underlay IP is invalid: %s", n.Name, n.Underlay)
+		router, err := config.LoadBytes([]byte(rendered), n.Name+".yaml")
+		if err != nil {
+			t.Fatalf("%s config load: %v\n%s", n.Name, err, rendered)
+		}
+		if err := config.Validate(router); err != nil {
+			t.Fatalf("%s config validate: %v\n%s", n.Name, err, rendered)
+		}
+		if net.ParseIP(ipOnly(n.Transport)) == nil {
+			t.Fatalf("%s transport IP is invalid: %s", n.Name, n.Transport)
 		}
 	}
 }

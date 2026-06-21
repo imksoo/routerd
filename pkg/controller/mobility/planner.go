@@ -743,6 +743,8 @@ func forwardingParams(provider string) (map[string]string, error) {
 		return map[string]string{"skipSourceDestCheck": "true"}, nil
 	case "gcp":
 		return map[string]string{"canIpForward": "true"}, nil
+	case "netns":
+		return map[string]string{"ipForwarding": "true"}, nil
 	default:
 		return nil, fmt.Errorf("provider %q is not supported for mobility action plans", provider)
 	}

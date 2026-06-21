@@ -15,19 +15,23 @@ state and require root:
 sudo ROUTERD_NETNS_INTEGRATION=1 go test ./tests/integration/netnssam -count=1 -run TestNetNS
 ```
 
-Initial topology:
+Initial topology mirrors the current full cloud/on-prem lab:
 
-- `rr1`
-- `leaf-a`
-- `leaf-b`
-- `client-a`
-- `client-b`
+- `aws-rr`: `aws-rr-a`, `aws-rr-b`
+- `aws-leaf`: `aws-leaf-a`, `aws-leaf-b`, `aws-client-a`, `aws-client-b`
+- `azure-leaf`: `azure-leaf-a`, `azure-leaf-b`, `azure-client-a`, `azure-client-b`
+- `oci-leaf`: `oci-leaf-a`, `oci-leaf-b`, `oci-client-a`, `oci-client-b`
+- `pve-leaf`: `pve-leaf-a`, `pve-leaf-b`, `pve-client-a`, `pve-client-b`
 
-All router namespaces share an underlay bridge. Each client namespace connects
-to a leaf through a separate access bridge. The first test builds the binaries,
-creates the namespaces, starts real `routerd-bgp` and `routerd` processes in
-the router namespaces, verifies underlay reachability, and polls real
-`routerctl status` through per-node Unix sockets.
+Each site has an independent L2 bridge. The leaf sites intentionally reuse
+`10.77.60.0/24` on separate bridges to model same-subnet cloud/on-prem sites.
+Router namespaces also attach to a transport bridge used only as the local
+replacement for cloud underlay reachability between WireGuard endpoints.
+
+The first test builds the binaries and the netns provider executor, creates the
+namespaces, starts real `routerd-bgp` and `routerd` processes in the RR/leaf
+namespaces, verifies transport reachability, polls real `routerctl status`, then
+waits for WireGuard and BGP convergence.
 
 This is the foundation for the next slices of #622:
 
@@ -37,4 +41,3 @@ This is the foundation for the next slices of #622:
 3. stop `routerd` in one leaf namespace for failover takeover;
 4. restart it and assert no-preempt rejoin;
 5. add explicit forced rebalance and distribution checks.
-

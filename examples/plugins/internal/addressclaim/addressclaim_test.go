@@ -290,8 +290,9 @@ func TestBuildMissingNICRef(t *testing.T) {
 // forbidden import paths.
 //
 // SCOPING (Phase 5.1): the REAL provider executors (aws-provider-executor,
-// oci-provider-executor, azure-provider-executor) LEGITIMATELY use os/exec to run
-// their provider CLI binary (`aws`/`oci`/`az`) and link no cloud SDK. They are
+// oci-provider-executor, azure-provider-executor, netns-provider-executor)
+// LEGITIMATELY use os/exec to run their provider CLI binary (`aws`/`oci`/`az` or
+// local `ip`) and link no cloud SDK. They are
 // therefore EXCLUDED from this os/exec-forbidding invariant; each one's own test
 // (TestExecutorImportsNoCloudSDK) asserts it imports no cloud SDK and uses
 // os/exec only to exec its CLI. Planners + the fake executor remain bound by the
@@ -311,6 +312,7 @@ func TestNoExecImports(t *testing.T) {
 		filepath.Join(pluginsDir, "aws-provider-executor"):   true,
 		filepath.Join(pluginsDir, "oci-provider-executor"):   true,
 		filepath.Join(pluginsDir, "azure-provider-executor"): true,
+		filepath.Join(pluginsDir, "netns-provider-executor"): true,
 	}
 
 	forbidden := []string{

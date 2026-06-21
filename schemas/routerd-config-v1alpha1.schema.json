@@ -7173,7 +7173,8 @@
                           "azure",
                           "aws",
                           "oci",
-                          "gcp"
+                          "gcp",
+                          "netns"
                         ],
                         "type": "string"
                       },
