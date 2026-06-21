@@ -21,7 +21,7 @@ Options:
   --failover-transfer-smoke Run a throttled client-to-client HTTP transfer without stopping routers
   --destroy-cmd CMD       Optional teardown command, for example: 'tofu destroy -auto-approve'
 
-This harness consumes `tofu output -json` from cloudedge-mobility/terraform/envs/sam-e2e.
+This harness consumes `tofu output -json` from the SAM E2E OpenTofu environment.
 Pseudo-client to pseudo-client SSH hostname verification is the PASS authority.
 USAGE
 }
@@ -75,6 +75,10 @@ done
 [ -f "$artifact" ] || { echo "artifact not found: $artifact" >&2; exit 2; }
 [ -f "$ssh_key" ] || { echo "ssh key not found: $ssh_key" >&2; exit 2; }
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+config_generator="$(cd "$script_dir/.." && pwd)/configs/sam-e2e-generate.sh"
+[ -x "$config_generator" ] || { echo "config generator not found or not executable: $config_generator" >&2; exit 2; }
 
 mkdir -p "$evidence_dir"/{preflight,deploy,convergence,matrix,legacy,performance,failover-transfer,provider,diagnostics,cleanup,ssh}
 cp "$tofu_output" "$evidence_dir/tofu-output.json"
@@ -386,7 +390,7 @@ generate_configs() {
     return
   fi
   local gen_dir="$evidence_dir/config-gen"
-  cloudedge-mobility/configs/sam-e2e-generate.sh --tofu-output "$tofu_output" --out-dir "$gen_dir" >"$evidence_dir/deploy/config-generate.log" 2>&1
+  "$config_generator" --tofu-output "$tofu_output" --out-dir "$gen_dir" >"$evidence_dir/deploy/config-generate.log" 2>&1
   echo "$gen_dir/configs"
 }
 
@@ -622,6 +626,23 @@ VSFTPEOF
         sudo systemctl restart vsftpd
         sudo pkill iperf3 >/dev/null 2>&1 || true
         sudo iperf3 -s -D </dev/null >/dev/null 2>&1
+        if command -v iptables >/dev/null 2>&1; then
+          for rule in \
+            "-p tcp --dport 21" \
+            "-p tcp --dport 111" \
+            "-p udp --dport 111" \
+            "-p tcp --dport 139" \
+            "-p tcp --dport 445" \
+            "-p tcp --dport 2049" \
+            "-p udp --dport 2049" \
+            "-p tcp --dport 20048" \
+            "-p udp --dport 20048" \
+            "-p tcp --dport 30000:30010" \
+            "-p tcp --dport 5201" \
+            "-p udp --dport 5201"; do
+            sudo sh -c "iptables -C INPUT $rule -j ACCEPT 2>/dev/null || iptables -I INPUT 1 $rule -j ACCEPT"
+          done
+        fi
         sudo systemctl --no-pager --plain is-active rpcbind || true
 sudo systemctl --no-pager --plain is-active nfs-server nfs-kernel-server smbd vsftpd 2>/dev/null || true
 ss -lntup | grep -E ":(21|111|139|445|2049|20048|5201)\b" || true
@@ -647,6 +668,11 @@ if command -v apt-get >/dev/null 2>&1; then
 fi
 sudo pkill iperf3 >/dev/null 2>&1 || true
 sudo iperf3 -s -D </dev/null >/dev/null 2>&1
+if command -v iptables >/dev/null 2>&1; then
+  for rule in "-p tcp --dport 5201" "-p udp --dport 5201"; do
+    sudo sh -c "iptables -C INPUT $rule -j ACCEPT 2>/dev/null || iptables -I INPUT 1 $rule -j ACCEPT"
+  done
+fi
 ss -lntup | grep -E ":5201\b" || true
 REMOTE_PERF
 )"
