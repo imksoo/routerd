@@ -46,9 +46,6 @@ type PlacementDecision struct {
 	ActiveMarker          string
 	ActiveMarkerPresent   bool
 	ActiveIdentityNodeRef string
-	ActivePeerAddress     string
-	ActivePeerObserved    bool
-	ActivePeerEstablished bool
 	SeizeHoldDown         bool
 	SeizeHoldDownKey      string
 	SeizeHoldDownSince    time.Time
