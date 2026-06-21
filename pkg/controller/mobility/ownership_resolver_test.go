@@ -451,7 +451,7 @@ func TestOwnershipResolverReportsRemoteHomeLocalInventoryConflict(t *testing.T) 
 	}
 }
 
-func TestOwnershipResolverSuppressesRemoteHomeOnSameSitePeerCaptureNIC(t *testing.T) {
+func TestOwnershipResolverPromotesAzurePeerSecondaryForRemoteHomeFact(t *testing.T) {
 	now := time.Date(2026, 6, 21, 5, 55, 0, 0, time.UTC)
 	spec := placementPoolSpec()
 	spec.Members = append(spec.Members, api.MobilityPoolMember{
@@ -484,11 +484,13 @@ func TestOwnershipResolverSuppressesRemoteHomeOnSameSitePeerCaptureNIC(t *testin
 			"discoveryLocalInventory": []map[string]any{
 				{
 					"address":      address,
+					"nodeRef":      "azure-router-b",
 					"nicRef":       "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-b",
 					"subnetRef":    "azure-subnet",
 					"providerRef":  "azure-provider",
 					"resourceRef":  "azure-router-b-vm",
-					"resourceType": "instance-nic",
+					"resourceType": "router-nic",
+					"primary":      false,
 				},
 			},
 		},
@@ -501,10 +503,13 @@ func TestOwnershipResolverSuppressesRemoteHomeOnSameSitePeerCaptureNIC(t *testin
 	}
 	decision := ownershipDecisionByAddress(t, decisions, address)
 	if decision.ConflictReason != "" {
-		t.Fatalf("decision = %#v, peer capture on same-site leaf NIC must not conflict", decision)
+		t.Fatalf("decision = %#v, peer capture on same-site leaf NIC must not conflict with remote home", decision)
 	}
-	if decision.Class != ownershipClassRemoteHomeOwned || decision.HomeOwnerNode != "aws-router-a" || decision.SuppressionReason != "remote-home-owner" {
-		t.Fatalf("decision = %#v, want remote home suppressed while peer capture is locally visible", decision)
+	if decision.Class != ownershipClassConfirmedCapture ||
+		decision.CaptureState != captureStateConfirmed ||
+		decision.CaptureHolderNode != "azure-router-b" ||
+		decision.HomeOwnerNode != "aws-router-a" {
+		t.Fatalf("decision = %#v, want Azure peer secondary promoted to confirmed capture for remote home", decision)
 	}
 	if decision.LocalNICRef != "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-b" || decision.LocalProviderRef != "azure-provider" {
 		t.Fatalf("decision = %#v, want local peer capture evidence preserved", decision)

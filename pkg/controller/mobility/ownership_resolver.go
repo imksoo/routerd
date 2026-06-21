@@ -352,16 +352,10 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 					out = append(out, decision)
 					continue
 				}
-				if !rec.Primary || localInventoryRecordIsSameSitePeerCapture(rec, self, members) {
-					// A remote-home-owned address that appears in local provider
-					// inventory only as a secondary IP is a distributed-capture
-					// secondary (held by self or a same-site peer leaf for
-					// delivery), not a competing home-ownership claim. Suppress
-					// instead of raising a duplicate-owner conflict. Only a
-					// primary local-inventory record (an actual client home on a
-					// local NIC) overlapping a remote home owner is a real conflict.
-					decision.Class = ownershipClassRemoteHomeOwned
-					decision.SuppressionReason = "remote-home-owner"
+				if localInventoryRecordIsSameSitePeerCapture(rec, self, members) {
+					decision.Class = ownershipClassConfirmedCapture
+					decision.AdvertiseReason = "confirmed-capture"
+					decision.Source = "local-inventory"
 					out = append(out, decision)
 					continue
 				}
