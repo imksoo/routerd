@@ -187,6 +187,9 @@ func planCaptureCandidatesWithDistribution(self memberPlanInfo, members map[stri
 		if !ok {
 			continue
 		}
+		if suppressSameSiteHomeOwnedCaptureCandidate(distributed, decision, self, members, failedActions) {
+			continue
+		}
 		if decision.Class == ownershipClassConfirmedCapture {
 			if providerCaptureObservedOnSelf(decision, self, observedSelfIPs) {
 				out[address] = bgpTrapCandidate{ProtectOnly: true}
@@ -209,6 +212,9 @@ func planCaptureCandidatesWithDistribution(self memberPlanInfo, members map[stri
 	for address, candidate := range previousBGPTrapCandidateAddresses(previousPlans, poolPrefix) {
 		decision, ok := decisions[address]
 		if !ok {
+			continue
+		}
+		if suppressSameSiteHomeOwnedCaptureCandidate(distributed, decision, self, members, failedActions) {
 			continue
 		}
 		if !decisionEligibleForCapture(decision, self, members, placement) {
@@ -354,6 +360,17 @@ func decisionEligibleForCapture(decision ownershipDecision, self memberPlanInfo,
 		return true
 	}
 	return false
+}
+
+func suppressSameSiteHomeOwnedCaptureCandidate(distributed bool, decision ownershipDecision, self memberPlanInfo, members map[string]memberPlanInfo, failedActions map[string]routerstate.ActionExecutionRecord) bool {
+	if !decisionHomeOwnerSameSite(decision, self, members) {
+		return false
+	}
+	if distributed {
+		return true
+	}
+	_, failed := failedActions[normalizeAddressString(decision.Address)]
+	return failed
 }
 
 func decisionHomeOwnerSameSite(decision ownershipDecision, self memberPlanInfo, members map[string]memberPlanInfo) bool {

@@ -1768,6 +1768,103 @@ func TestControllerBGPModeDistributedCaptureExcludesSameSiteHomeOwner(t *testing
 	}
 }
 
+func TestControllerBGPModeDistributedCaptureExcludesSameSiteHomeOwnerFromPreviousPlans(t *testing.T) {
+	now := time.Date(2026, 6, 21, 4, 45, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	for i := range spec.Members {
+		if spec.Members[i].Placement.Group == "aws-edge" {
+			spec.Members[i].MaxSecondaryIPs = 128
+		}
+	}
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-a"]
+	poolPrefix, err := netip.ParsePrefix(spec.Prefix)
+	if err != nil {
+		t.Fatalf("parse pool prefix: %v", err)
+	}
+	sameSitePrimary := "10.88.60.16/32"
+	previous, err := providerActionPlans("cloudedge", api.CloudProviderProfileSpec{Provider: "aws"}, self.Capture, self.CaptureTarget, sameSitePrimary, map[string]bool{}, true)
+	if err != nil {
+		t.Fatalf("providerActionPlans: %v", err)
+	}
+	stampBGPPathFenceActionPlans(previous, sameSitePrimary, "prefix="+sameSitePrimary+";nextHops=10.99.0.4", self.NodeRef, now.Add(-time.Minute))
+	candidates, dist := planCaptureCandidatesWithDistribution(
+		self,
+		members,
+		map[string]ownershipDecision{
+			sameSitePrimary: {
+				Address:           sameSitePrimary,
+				Class:             ownershipClassStaleCapture,
+				HomeOwnerNode:     "aws-router-b",
+				SuppressionReason: "capture-not-desired",
+				CaptureSucceeded:  false,
+			},
+		},
+		PlacementDecision{Group: "aws-edge", Active: true, ActiveNode: self.NodeRef},
+		nil,
+		true,
+		previous,
+		nil,
+		nil,
+		map[string]string{bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.255.255.2/32"},
+		false,
+		poolPrefix,
+		now,
+	)
+	if dist == nil {
+		t.Fatal("distribution is nil")
+	}
+	if _, ok := dist.Assignments[sameSitePrimary]; ok {
+		t.Fatalf("distribution = %#v, same-site home owner must not be assigned", dist)
+	}
+	if _, ok := candidates[sameSitePrimary]; ok {
+		t.Fatalf("capture candidates = %#v, previousPlans must not reintroduce same-site home owner", candidates)
+	}
+}
+
+func TestControllerBGPModeSameSiteHomeOwnerFailedActionDoesNotRetry(t *testing.T) {
+	now := time.Date(2026, 6, 21, 4, 50, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-a"]
+	poolPrefix, err := netip.ParsePrefix(spec.Prefix)
+	if err != nil {
+		t.Fatalf("parse pool prefix: %v", err)
+	}
+	sameSitePrimary := "10.88.60.16/32"
+	candidates, dist := planCaptureCandidatesWithDistribution(
+		self,
+		members,
+		map[string]ownershipDecision{
+			sameSitePrimary: {
+				Address:       sameSitePrimary,
+				Class:         ownershipClassRemoteHomeOwned,
+				HomeOwnerNode: "aws-router-b",
+			},
+		},
+		PlacementDecision{Group: "aws-edge", Active: true, ActiveNode: self.NodeRef},
+		map[string][]string{sameSitePrimary: {"10.99.0.4"}},
+		true,
+		nil,
+		nil,
+		map[string]routerstate.ActionExecutionRecord{
+			sameSitePrimary: {Status: routerstate.ActionFailed},
+		},
+		nil,
+		false,
+		poolPrefix,
+		now,
+	)
+	if dist != nil {
+		t.Fatalf("distribution = %#v, test setup should keep distributed mode disabled", dist)
+	}
+	if _, ok := candidates[sameSitePrimary]; ok {
+		t.Fatalf("capture candidates = %#v, same-site failedAction must not retry", candidates)
+	}
+}
+
 func TestControllerBGPModeDistributedCaptureStatusStableAcrossLeaves(t *testing.T) {
 	now := time.Date(2026, 6, 21, 4, 5, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()
