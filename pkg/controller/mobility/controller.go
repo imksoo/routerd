@@ -219,7 +219,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	discoverySelfObservedAt := c.discoveryLastScanAt(res.Metadata.Name)
 	livenessMarkers, livenessMarkersObserved := c.bgpLivenessMarkers()
 	observedHolderNode := bgpObservedGroupHolder(self, members, livenessMarkers, bgpMobilityPrefixCommunitiesFromStatus(c.Router, c.Store, spec))
-	ownerPlacement := c.applyBGPCaptureSeizeHoldDown(res.Metadata.Name, evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved, observedHolderNode), now)
+	ownerPlacement := c.applyBGPCaptureSeizeHoldDown(res.Metadata.Name, evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved, observedHolderNode, bgpPeerSessionsByNodeFromStatus(c.Router, c.Store)), now)
 	ownerPlacement = fencePlacementForStartup(ownerPlacement, observedHolderNode, now)
 	ownerPlacement = applyHolderRetention(ownerPlacement, len(discoverySelfCaptures) > 0, higherPriorityHolderActive(self, members, observedHolderNode), now)
 	actionJournal, err := c.Store.ListActions(routerstate.ActionExecutionFilter{})
@@ -1626,6 +1626,179 @@ func bgpLivenessMarkersValue(value any) map[string]string {
 	return out
 }
 
+func bgpPeerSessionsByNodeFromStatus(router *api.Router, store interface {
+	ObjectStatus(apiVersion, kind, name string) map[string]any
+}) map[string]bgpPeerSessionState {
+	out := map[string]bgpPeerSessionState{}
+	if router == nil || store == nil {
+		return out
+	}
+	peerAddresses := bgpPeerAddressesByNode(router, store)
+	if len(peerAddresses) == 0 {
+		return out
+	}
+	peerStatus, bgpObserved := bgpPeerStatusByAddress(router, store)
+	for nodeRef, address := range peerAddresses {
+		if strings.TrimSpace(nodeRef) == "" || strings.TrimSpace(address) == "" {
+			continue
+		}
+		session := bgpPeerSessionState{Address: address}
+		if peer, ok := peerStatus[address]; ok {
+			session.Observed = true
+			session.Established = peer.Established || strings.EqualFold(strings.TrimSpace(peer.State), "Established")
+		} else if bgpObserved {
+			session.Observed = true
+		}
+		out[nodeRef] = session
+		canonical := canonicalNodeIdentity(nodeRef)
+		if canonical != "" {
+			out[canonical] = session
+		}
+	}
+	return out
+}
+
+func bgpPeerAddressesByNode(router *api.Router, store interface {
+	ObjectStatus(apiVersion, kind, name string) map[string]any
+}) map[string]string {
+	out := map[string]string{}
+	if router == nil {
+		return out
+	}
+	for _, resource := range router.Spec.Resources {
+		switch {
+		case resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "SAMTransportProfile" && store != nil:
+			status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", resource.Metadata.Name)
+			for _, peer := range statusMapSlice(status["peers"]) {
+				rememberBGPPeerAddress(out, peer["nodeRef"], peer["remoteInner"])
+			}
+		case resource.APIVersion == api.NetAPIVersion && resource.Kind == "BGPPeer":
+			nodeRef := strings.TrimSpace(resource.Metadata.Annotations["mobility.routerd.net/peer-node"])
+			if nodeRef == "" {
+				continue
+			}
+			spec, err := resource.BGPPeerSpec()
+			if err != nil || len(spec.Peers) == 0 {
+				continue
+			}
+			rememberBGPPeerAddress(out, nodeRef, spec.Peers[0])
+		}
+	}
+	return out
+}
+
+func rememberBGPPeerAddress(out map[string]string, nodeRef, address string) {
+	nodeRef = strings.TrimSpace(nodeRef)
+	address = normalizeBGPNeighborAddress(address)
+	if nodeRef == "" || address == "" {
+		return
+	}
+	if _, exists := out[nodeRef]; !exists {
+		out[nodeRef] = address
+	}
+	canonical := canonicalNodeIdentity(nodeRef)
+	if canonical != "" {
+		if _, exists := out[canonical]; !exists {
+			out[canonical] = address
+		}
+	}
+}
+
+func bgpPeerStatusByAddress(router *api.Router, store interface {
+	ObjectStatus(apiVersion, kind, name string) map[string]any
+}) (map[string]bgpstate.Peer, bool) {
+	out := map[string]bgpstate.Peer{}
+	observed := false
+	if router == nil || store == nil {
+		return out, observed
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" {
+			continue
+		}
+		status := store.ObjectStatus(api.NetAPIVersion, "BGPRouter", resource.Metadata.Name)
+		raw, ok := status["peers"]
+		if !ok {
+			continue
+		}
+		observed = true
+		for _, peer := range bgpStatusPeersValue(raw) {
+			address := normalizeBGPNeighborAddress(peer.Address)
+			if address != "" {
+				peer.Address = address
+				out[address] = peer
+			}
+		}
+	}
+	return out, observed
+}
+
+func bgpStatusPeersValue(value any) []bgpstate.Peer {
+	switch typed := value.(type) {
+	case []bgpstate.Peer:
+		return append([]bgpstate.Peer(nil), typed...)
+	case []map[string]any:
+		out := make([]bgpstate.Peer, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, bgpStatusPeerFromMap(item))
+		}
+		return out
+	case []map[string]string:
+		out := make([]bgpstate.Peer, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, bgpStatusPeerFromStringMap(item))
+		}
+		return out
+	case []any:
+		out := make([]bgpstate.Peer, 0, len(typed))
+		for _, raw := range typed {
+			switch item := raw.(type) {
+			case bgpstate.Peer:
+				out = append(out, item)
+			case map[string]any:
+				out = append(out, bgpStatusPeerFromMap(item))
+			case map[string]string:
+				out = append(out, bgpStatusPeerFromStringMap(item))
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func bgpStatusPeerFromMap(item map[string]any) bgpstate.Peer {
+	established, _ := statusBool(item["established"])
+	return bgpstate.Peer{
+		Address:     normalizeBGPNeighborAddress(statusString(item["address"])),
+		State:       statusString(item["state"]),
+		Established: established,
+	}
+}
+
+func bgpStatusPeerFromStringMap(item map[string]string) bgpstate.Peer {
+	established, _ := statusBool(item["established"])
+	return bgpstate.Peer{
+		Address:     normalizeBGPNeighborAddress(item["address"]),
+		State:       strings.TrimSpace(item["state"]),
+		Established: established,
+	}
+}
+
+func normalizeBGPNeighborAddress(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if prefix, err := netip.ParsePrefix(value); err == nil {
+		return prefix.Addr().String()
+	}
+	if addr, err := netip.ParseAddr(value); err == nil {
+		return addr.String()
+	}
+	return value
+}
+
 func normalizeObservedBGPPrefix(value string) string {
 	prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
 	if err != nil {
@@ -1661,7 +1834,13 @@ func bgpTrapHasRemoteNextHop(nextHops []string, selfNextHop string) bool {
 	return false
 }
 
-func evaluateBGPCapturePlacement(self memberPlanInfo, members map[string]memberPlanInfo, livenessMarkers map[string]string, livenessMarkersObserved bool, observedHolderNode string) PlacementDecision {
+type bgpPeerSessionState struct {
+	Address     string
+	Observed    bool
+	Established bool
+}
+
+func evaluateBGPCapturePlacement(self memberPlanInfo, members map[string]memberPlanInfo, livenessMarkers map[string]string, livenessMarkersObserved bool, observedHolderNode string, peerSessions map[string]bgpPeerSessionState) PlacementDecision {
 	placement := evaluatePlacementWithIncumbent(self, members, observedHolderNode)
 	placement.LivenessObserved = livenessMarkersObserved
 	selfCommunity, selfMarker, selfMarkerPresent := livenessMarkerForNode(livenessMarkers, self.NodeRef)
@@ -1693,6 +1872,15 @@ func evaluateBGPCapturePlacement(self memberPlanInfo, members map[string]memberP
 	if activeCommunity == "" || activeMarkerPresent {
 		return placement
 	}
+	if activePeer := peerSessionForNode(peerSessions, active.NodeRef); activePeer.Observed {
+		placement.ActivePeerAddress = activePeer.Address
+		placement.ActivePeerObserved = true
+		placement.ActivePeerEstablished = activePeer.Established
+		if activePeer.Established {
+			placement.Reason = strings.TrimSpace(firstNonEmpty(placement.Reason, fmt.Sprintf("placement group %q active %q has an established BGP peer session", placement.Group, active.NodeRef)))
+			return placement
+		}
+	}
 	return PlacementDecision{
 		Group:                 placement.Group,
 		Active:                true,
@@ -1707,7 +1895,23 @@ func evaluateBGPCapturePlacement(self memberPlanInfo, members map[string]memberP
 		ActiveCommunity:       activeCommunity,
 		ActiveMarker:          activeMarker,
 		ActiveMarkerPresent:   false,
+		ActivePeerAddress:     placement.ActivePeerAddress,
+		ActivePeerObserved:    placement.ActivePeerObserved,
+		ActivePeerEstablished: placement.ActivePeerEstablished,
 	}
+}
+
+func peerSessionForNode(sessions map[string]bgpPeerSessionState, nodeRef string) bgpPeerSessionState {
+	if len(sessions) == 0 {
+		return bgpPeerSessionState{}
+	}
+	if session, ok := sessions[strings.TrimSpace(nodeRef)]; ok {
+		return session
+	}
+	if session, ok := sessions[canonicalNodeIdentity(nodeRef)]; ok {
+		return session
+	}
+	return bgpPeerSessionState{}
 }
 
 func (c Controller) applyBGPCaptureSeizeHoldDown(poolName string, placement PlacementDecision, now time.Time) PlacementDecision {
@@ -1890,6 +2094,11 @@ func bgpCaptureElectionStatus(decision PlacementDecision) map[string]any {
 	}
 	if decision.ActiveIdentityNodeRef != "" {
 		status["activeIdentityNodeRef"] = decision.ActiveIdentityNodeRef
+	}
+	if decision.ActivePeerAddress != "" {
+		status["activePeerAddress"] = decision.ActivePeerAddress
+		status["activePeerObserved"] = decision.ActivePeerObserved
+		status["activePeerEstablished"] = decision.ActivePeerEstablished
 	}
 	if decision.SeizeHoldDownKey != "" {
 		status["seizeHoldDown"] = decision.SeizeHoldDown

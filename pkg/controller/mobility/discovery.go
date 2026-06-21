@@ -144,7 +144,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, poolNam
 	livenessMarkers, livenessMarkersObserved := bgpLivenessMarkersFromStatus(c.Router, c.Store)
 	poolStatus := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName)
 	observedHolderNode := bgpObservedGroupHolder(self, members, livenessMarkers, bgpMobilityPrefixCommunitiesFromStatus(c.Router, c.Store, spec))
-	placement := c.applyBGPCaptureSeizeHoldDown(poolName, evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved, observedHolderNode), now)
+	placement := c.applyBGPCaptureSeizeHoldDown(poolName, evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved, observedHolderNode, bgpPeerSessionsByNodeFromStatus(c.Router, c.Store)), now)
 	placement = fencePlacementForStartup(placement, observedHolderNode, now)
 	selfHolds := discoveryStatusListLen(poolStatus, "discoverySelfCapturedAddresses") > 0
 	placement = applyHolderRetention(placement, selfHolds, higherPriorityHolderActive(self, members, observedHolderNode), now)

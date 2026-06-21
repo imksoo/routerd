@@ -269,7 +269,7 @@ func TestBGPCapturePlacementEqualPriorityNoPreemptButFailsOver(t *testing.T) {
 	}
 	// Both routers live, router-b is the incumbent holder: returning router-a must
 	// not preempt or seize.
-	if got := evaluateBGPCapturePlacement(members["aws-router-a"], members, bothLive, true, "aws-router-b"); got.Active || got.Seize || got.ActiveNode != "aws-router-b" {
+	if got := evaluateBGPCapturePlacement(members["aws-router-a"], members, bothLive, true, "aws-router-b", nil); got.Active || got.Seize || got.ActiveNode != "aws-router-b" {
 		t.Fatalf("equal-priority no-preempt = %+v, want aws-router-a standby", got)
 	}
 	// Incumbent router-b then dies (marker absent): router-a must still seize so a
@@ -277,7 +277,7 @@ func TestBGPCapturePlacementEqualPriorityNoPreemptButFailsOver(t *testing.T) {
 	bDead := map[string]string{
 		bgpstate.MobilityNodeIdentityCommunity("aws-router-a"): "10.99.0.2/32",
 	}
-	if got := evaluateBGPCapturePlacement(members["aws-router-a"], members, bDead, true, "aws-router-b"); !got.Active || !got.Seize || got.ActiveNode != "aws-router-a" {
+	if got := evaluateBGPCapturePlacement(members["aws-router-a"], members, bDead, true, "aws-router-b", nil); !got.Active || !got.Seize || got.ActiveNode != "aws-router-a" {
 		t.Fatalf("incumbent dead failover = %+v, want aws-router-a seize", got)
 	}
 }
@@ -466,7 +466,7 @@ func TestBGPCapturePlacementSeizesWhenActiveMarkerAbsentWithCanonicalNodeIdentit
 	markers := map[string]string{
 		bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32",
 	}
-	got := evaluateBGPCapturePlacement(members["aws-router-b"], members, markers, true, "")
+	got := evaluateBGPCapturePlacement(members["aws-router-b"], members, markers, true, "", nil)
 	if !got.Active || !got.Seize || got.ActiveNode != "Node/aws-router-b" {
 		t.Fatalf("placement = %+v, want canonical identity failover seize by aws-router-b", got)
 	}
@@ -499,14 +499,48 @@ func TestBGPCapturePlacementUsesCanonicalAdvertisedMarkerForReverseNodeRefForms(
 		bgpstate.MobilityNodeIdentityCommunity("aws-router-a"): "10.99.0.2/32",
 		bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32",
 	}
-	if got := evaluateBGPCapturePlacement(self, members, present, true, ""); got.Active || got.Seize || !got.ActiveMarkerPresent {
+	if got := evaluateBGPCapturePlacement(self, members, present, true, "", nil); got.Active || got.Seize || !got.ActiveMarkerPresent {
 		t.Fatalf("placement with active marker = %+v, want standby defer", got)
 	}
 	absent := map[string]string{
 		bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32",
 	}
-	if got := evaluateBGPCapturePlacement(self, members, absent, true, ""); !got.Active || !got.Seize || got.ActiveNode != "Node/aws-router-b" {
+	if got := evaluateBGPCapturePlacement(self, members, absent, true, "", nil); !got.Active || !got.Seize || got.ActiveNode != "Node/aws-router-b" {
 		t.Fatalf("placement without active marker = %+v, want canonical reverse-form seize", got)
+	}
+}
+
+func TestBGPCapturePlacementSuppressesSeizeWhenActivePeerSessionEstablished(t *testing.T) {
+	members := equalPriorityPlacementMembers()
+	markers := map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32",
+	}
+	sessions := map[string]bgpPeerSessionState{
+		"aws-router-a": {Address: "10.99.0.2", Observed: true, Established: true},
+	}
+	got := evaluateBGPCapturePlacement(members["aws-router-b"], members, markers, true, "", sessions)
+	if got.Active || got.Seize || got.ActiveNode != "aws-router-a" {
+		t.Fatalf("placement = %+v, want active peer session to suppress marker-loss seize", got)
+	}
+	if !got.ActivePeerObserved || !got.ActivePeerEstablished || got.ActivePeerAddress != "10.99.0.2" {
+		t.Fatalf("active peer state = %+v, want established peer recorded", got)
+	}
+}
+
+func TestBGPCapturePlacementSeizesWhenActivePeerSessionDownAndMarkerAbsent(t *testing.T) {
+	members := equalPriorityPlacementMembers()
+	markers := map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32",
+	}
+	sessions := map[string]bgpPeerSessionState{
+		"aws-router-a": {Address: "10.99.0.2", Observed: true, Established: false},
+	}
+	got := evaluateBGPCapturePlacement(members["aws-router-b"], members, markers, true, "", sessions)
+	if !got.Active || !got.Seize || got.ActiveNode != "aws-router-b" {
+		t.Fatalf("placement = %+v, want down active peer session to allow marker-loss seize", got)
+	}
+	if !got.ActivePeerObserved || got.ActivePeerEstablished || got.ActivePeerAddress != "10.99.0.2" {
+		t.Fatalf("active peer state = %+v, want down peer recorded", got)
 	}
 }
 
@@ -529,13 +563,13 @@ func TestBGPCapturePlacementRecognizesEventGroupAliasMarkerForActiveMember(t *te
 		bgpstate.MobilityNodeIdentityCommunity("azure-router"):   "10.99.0.3/32",
 		bgpstate.MobilityNodeIdentityCommunity("azure-router-b"): "10.99.0.6/32",
 	}
-	if got := evaluateBGPCapturePlacement(members["azure-router-b"], members, present, true, ""); got.Active || got.Seize || !got.ActiveMarkerPresent {
+	if got := evaluateBGPCapturePlacement(members["azure-router-b"], members, present, true, "", nil); got.Active || got.Seize || !got.ActiveMarkerPresent {
 		t.Fatalf("placement with active alias marker = %+v, want standby defer", got)
 	}
 	absent := map[string]string{
 		bgpstate.MobilityNodeIdentityCommunity("azure-router-b"): "10.99.0.6/32",
 	}
-	if got := evaluateBGPCapturePlacement(members["azure-router-b"], members, absent, true, ""); !got.Active || !got.Seize || got.ActiveMarkerPresent {
+	if got := evaluateBGPCapturePlacement(members["azure-router-b"], members, absent, true, "", nil); !got.Active || !got.Seize || got.ActiveMarkerPresent {
 		t.Fatalf("placement without active alias marker = %+v, want standby seize", got)
 	}
 }
@@ -836,7 +870,7 @@ func seedElapsedBGPSeizeHoldDown(t *testing.T, store interface {
 	if !ok {
 		t.Fatalf("self member %q not found", selfNode)
 	}
-	placement := evaluateBGPCapturePlacement(self, members, livenessMarkers, true, "")
+	placement := evaluateBGPCapturePlacement(self, members, livenessMarkers, true, "", nil)
 	key := bgpSeizeHoldDownKey(placement)
 	if key == "" {
 		t.Fatalf("placement = %#v, want seize hold-down key", placement)

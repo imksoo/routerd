@@ -1355,6 +1355,68 @@ func TestControllerBGPModeStandbySeizesTrapAfterActiveLivenessHoldDown(t *testin
 	}
 }
 
+func TestControllerBGPModeSuppressesSeizeWhenActivePeerSessionEstablished(t *testing.T) {
+	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "evt-aws-a",
+		Group:      "cloudedge",
+		SourceNode: "aws-router-a",
+		Type:       ObservedEventType,
+		Subject:    "10.88.60.11/32",
+		ObservedAt: now.Add(-time.Second),
+		ExpiresAt:  now.Add(time.Hour),
+	})
+	saveBGPStatus(t, store, map[string][]string{
+		"10.88.60.10/32": {"10.99.0.1"},
+		"10.88.60.11/32": {"10.99.0.5"},
+		"10.88.60.12/32": {"10.99.0.3"},
+		"10.88.60.13/32": {"10.99.0.4"},
+	}, []map[string]any{}, map[string]string{bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32"})
+	bgpStatus := store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "mobility-bgp")
+	bgpStatus["peers"] = []bgpstate.Peer{{Address: "10.99.0.2", State: "Established", Established: true}}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "mobility-bgp", bgpStatus); err != nil {
+		t.Fatalf("SaveObjectStatus(BGPRouter/mobility-bgp): %v", err)
+	}
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "cloudedge-transport", map[string]any{
+		"peers": []map[string]any{{
+			"nodeRef":     "aws-router-a",
+			"remoteInner": "10.99.0.2/32",
+		}},
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus(SAMTransportProfile/cloudedge-transport): %v", err)
+	}
+	seedElapsedBGPSeizeHoldDown(t, store, "cloudedge", "aws-router-b", spec, map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32",
+	}, now)
+	bgp := &fakeBGPPaths{}
+	router := routerWithBGPRouter(planningRouterForNode("aws-router-b", spec))
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile"},
+		Metadata: api.ObjectMeta{Name: "cloudedge-transport"},
+	})
+	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-b")).ActionPlansJSON)
+	if findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.10/32") != nil ||
+		findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.12/32") != nil ||
+		findActionPlanByAddress(plans, "assign-secondary-ip", "10.88.60.13/32") != nil {
+		t.Fatalf("plans = %#v, want established active BGP peer session to suppress liveness-marker seize", plans)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	election, ok := status["bgpCaptureElection"].(map[string]any)
+	if !ok {
+		t.Fatalf("bgpCaptureElection = %#v, want map status", status["bgpCaptureElection"])
+	}
+	if election["seize"] != false || election["activeMarkerPresent"] != false || election["activePeerEstablished"] != true || election["activePeerAddress"] != "10.99.0.2" {
+		t.Fatalf("bgpCaptureElection = %#v, want marker absent but active peer established suppressing seize", election)
+	}
+}
+
 func TestControllerBGPModeSeizeSuccessDoesNotAdvertiseTrapAsOwner(t *testing.T) {
 	now := time.Date(2026, 6, 3, 11, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
