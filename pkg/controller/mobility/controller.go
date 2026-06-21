@@ -365,6 +365,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		}
 		status["captureDistributionSelfCount"] = selfCount
 		status["captureDistributionTotalAssigned"] = len(delivery.Distribution.Assignments)
+		status["captureDistributionReasonCounts"] = captureDistributionReasonCounts(delivery.Distribution)
 	}
 	if selfCaptureReason != "" {
 		status["selfCaptureReason"] = selfCaptureReason

@@ -249,6 +249,14 @@ so only the active member emits provider trap actions while every member can
 advertise its BGP standby path. Distribute the same `MobilityPool` config to
 every node in the pool to keep placement projection deterministic.
 
+When any member in a placement group sets `members[].maxSecondaryIPs`, routerd
+switches that group to distributed capture mode. The planner spreads provider
+secondary-IP capture assignments across the live, non-drained members with a
+soft target of `ceil(addresses/liveMembers)`, while keeping existing live
+holders to avoid preempting a recovered peer. Treat `maxSecondaryIPs` as
+failover capacity, not the normal steady-state share: set it high enough for one
+surviving leaf to hold the whole site's capture set.
+
 ### North-Star Field Reference
 
 `spec.values`
@@ -283,6 +291,13 @@ every node in the pool to keep placement projection deterministic.
 : Declares deterministic active/standby capture placement. Placement is still
   useful on identity-only remote cloud members because other nodes need to know
   which same-site member is active.
+
+`members[].maxSecondaryIPs`
+: Enables distributed capture for the member's placement group when set on any
+  member in that group. Live members split new provider-secondary captures near
+  evenly; a single survivor can still take all captures when its capacity allows;
+  and a returning member does not preempt captures already confirmed on the live
+  holder.
 
 The older "remote-full inline" style, where each node repeats every remote
 member's provider details, remains accepted during the pre-release period for
