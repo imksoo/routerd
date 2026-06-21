@@ -39,6 +39,7 @@ type bgpDeliveryPlannerInput struct {
 	ObservedStaleSince   map[string]time.Time
 	SuppressDeprovision  bool
 	LivenessMarkers      map[string]string
+	ForceRebalance       bool
 	Now                  time.Time
 }
 
@@ -67,7 +68,7 @@ func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResu
 	if len(captureNextHops) == 0 {
 		captureNextHops = in.InstalledNextHops
 	}
-	candidates, dist := planCaptureCandidatesWithDistribution(in.Self, in.Members, decisions, in.Placement, captureNextHops, in.RIBObserved, in.PreviousPlans, in.ObservedSelfCaptures, failedActions, in.LivenessMarkers, poolPrefix, now)
+	candidates, dist := planCaptureCandidatesWithDistribution(in.Self, in.Members, decisions, in.Placement, captureNextHops, in.RIBObserved, in.PreviousPlans, in.ObservedSelfCaptures, failedActions, in.LivenessMarkers, in.ForceRebalance, poolPrefix, now)
 	actionPlans, err := planCaptureActionPlans(in, candidates)
 	if err != nil {
 		return bgpDeliveryPlannerResult{}, err
@@ -127,7 +128,7 @@ func bgpDecisionSourceType(decision ownershipDecision) string {
 	}
 }
 
-func planCaptureCandidatesWithDistribution(self memberPlanInfo, members map[string]memberPlanInfo, decisions map[string]ownershipDecision, placement PlacementDecision, installedNextHops map[string][]string, ribObserved bool, previousPlans []dynamicconfig.ActionPlan, observedSelfIPs map[string]bool, failedActions map[string]routerstate.ActionExecutionRecord, livenessMarkers map[string]string, poolPrefix netip.Prefix, now time.Time) (map[string]bgpTrapCandidate, *captureDistribution) {
+func planCaptureCandidatesWithDistribution(self memberPlanInfo, members map[string]memberPlanInfo, decisions map[string]ownershipDecision, placement PlacementDecision, installedNextHops map[string][]string, ribObserved bool, previousPlans []dynamicconfig.ActionPlan, observedSelfIPs map[string]bool, failedActions map[string]routerstate.ActionExecutionRecord, livenessMarkers map[string]string, forceRebalance bool, poolPrefix netip.Prefix, now time.Time) (map[string]bgpTrapCandidate, *captureDistribution) {
 	out := map[string]bgpTrapCandidate{}
 	if self.Capture.Type != "provider-secondary-ip" {
 		return out, nil
@@ -150,6 +151,9 @@ func planCaptureCandidatesWithDistribution(self memberPlanInfo, members map[stri
 		liveNodes := distributedLiveNodes(self, members, livenessMarkers)
 		nodes := distributedCaptureNodes(members, group, liveNodes)
 		d := distributeCapturesWithIncumbents(eligibleAddresses, nodes, captureIncumbents(decisions))
+		if forceRebalance {
+			d = distributeCapturesForRebalance(eligibleAddresses, nodes)
+		}
 		dist = &d
 		selfAssigned = map[string]bool{}
 		for addr, node := range d.Assignments {

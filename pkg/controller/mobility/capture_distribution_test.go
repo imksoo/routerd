@@ -177,6 +177,39 @@ func TestDistributeCaptures_RejoinDoesNotPreemptSurvivor(t *testing.T) {
 	if rejoined.NodeCounts["node-b"] != 18 || rejoined.NodeCounts["node-a"] != 0 {
 		t.Fatalf("rejoined node should not preempt survivor captures, got %v", rejoined.NodeCounts)
 	}
+	if got := captureDistributionReasonCounts(&rejoined)["incumbent-kept"]; got != 18 {
+		t.Fatalf("rejoin reason counts = %#v, want incumbent-kept=18", captureDistributionReasonCounts(&rejoined))
+	}
+}
+
+func TestDistributeCaptures_ForceRebalanceAfterRejoin(t *testing.T) {
+	nodesAll := []captureDistributionNode{
+		{NodeRef: "node-a", MaxSecondaryIPs: 128},
+		{NodeRef: "node-b", MaxSecondaryIPs: 128},
+	}
+	nodesSurvivors := []captureDistributionNode{
+		{NodeRef: "node-b", MaxSecondaryIPs: 128},
+	}
+	var addresses []string
+	for i := 1; i <= 18; i++ {
+		addresses = append(addresses, fmt.Sprintf("10.0.0.%d", i))
+	}
+	steady := distributeCaptures(addresses, nodesAll)
+	failover := distributeCapturesWithIncumbents(addresses, nodesSurvivors, steady.Assignments)
+	rejoined := distributeCapturesWithIncumbents(addresses, nodesAll, failover.Assignments)
+	if rejoined.NodeCounts["node-b"] != 18 || rejoined.NodeCounts["node-a"] != 0 {
+		t.Fatalf("test setup expected survivor to retain all captures, got %v", rejoined.NodeCounts)
+	}
+	forced := distributeCapturesForRebalance(addresses, nodesAll)
+	if forced.NodeCounts["node-a"] != 9 || forced.NodeCounts["node-b"] != 9 {
+		t.Fatalf("forced rebalance should restore 9/9 split, got %v", forced.NodeCounts)
+	}
+	if got := captureDistributionReasonCounts(&forced)["hash-assigned"]; got != 18 {
+		t.Fatalf("forced reason counts = %#v, want hash-assigned=18", captureDistributionReasonCounts(&forced))
+	}
+	if forced.Target != 9 {
+		t.Fatalf("forced target = %d, want 9", forced.Target)
+	}
 }
 
 func TestDistributedCaptureEnabled(t *testing.T) {
