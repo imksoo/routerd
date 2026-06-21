@@ -43,11 +43,11 @@ type bgpDeliveryPlannerInput struct {
 }
 
 type bgpDeliveryPlannerResult struct {
-	Paths                 []bgpdaemon.AppliedPath
-	ActionPlans           []dynamicconfig.ActionPlan
-	CaptureCandidates     map[string]bgpTrapCandidate
-	Placement             PlacementDecision
-	Distribution          *captureDistribution
+	Paths             []bgpdaemon.AppliedPath
+	ActionPlans       []dynamicconfig.ActionPlan
+	CaptureCandidates map[string]bgpTrapCandidate
+	Placement         PlacementDecision
+	Distribution      *captureDistribution
 }
 
 func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResult, error) {
@@ -73,11 +73,11 @@ func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResu
 		return bgpDeliveryPlannerResult{}, err
 	}
 	return bgpDeliveryPlannerResult{
-		Paths:                 paths,
-		ActionPlans:           actionPlans,
-		CaptureCandidates:     candidates,
-		Placement:             in.Placement,
-		Distribution:          dist,
+		Paths:             paths,
+		ActionPlans:       actionPlans,
+		CaptureCandidates: candidates,
+		Placement:         in.Placement,
+		Distribution:      dist,
 	}, nil
 }
 
@@ -149,7 +149,7 @@ func planCaptureCandidatesWithDistribution(self memberPlanInfo, members map[stri
 		eligibleAddresses := collectEligibleCaptureAddresses(self, members, decisions, distributedPlacement, installedNextHops, previousPlans, failedActions, poolPrefix)
 		liveNodes := distributedLiveNodes(self, members, livenessMarkers)
 		nodes := distributedCaptureNodes(members, group, liveNodes)
-		d := distributeCaptures(eligibleAddresses, nodes)
+		d := distributeCapturesWithIncumbents(eligibleAddresses, nodes, captureIncumbents(decisions))
 		dist = &d
 		selfAssigned = map[string]bool{}
 		for addr, node := range d.Assignments {
@@ -237,6 +237,25 @@ func planCaptureCandidatesWithDistribution(self memberPlanInfo, members map[stri
 		}
 	}
 	return out, dist
+}
+
+func captureIncumbents(decisions map[string]ownershipDecision) map[string]string {
+	out := map[string]string{}
+	for key, decision := range decisions {
+		if decision.CaptureState != captureStateConfirmed {
+			continue
+		}
+		holder := strings.TrimSpace(decision.CaptureHolderNode)
+		if holder == "" {
+			continue
+		}
+		address := normalizeAddressString(decision.Address)
+		if address == "" {
+			address = normalizeAddressString(key)
+		}
+		out[normalizeAddressString(address)] = holder
+	}
+	return out
 }
 
 func collectEligibleCaptureAddresses(self memberPlanInfo, members map[string]memberPlanInfo, decisions map[string]ownershipDecision, placement PlacementDecision, installedNextHops map[string][]string, previousPlans []dynamicconfig.ActionPlan, failedActions map[string]routerstate.ActionExecutionRecord, poolPrefix netip.Prefix) []string {

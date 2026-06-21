@@ -99,6 +99,7 @@ inner_prefix="$(fabric '.tunnel_inner_prefix')"
 bgp_asn="$(fabric '.bgp_asn')"
 wg_port="$(fabric '.wg_port')"
 pve_capture_interface="${PVE_CAPTURE_INTERFACE:-eth1}"
+capture_max_secondary_ips="${SAM_E2E_MAX_SECONDARY_IPS:-128}"
 
 node_set_file="$out_dir/node-set.yaml"
 {
@@ -221,6 +222,7 @@ render_members() {
     fi
     if [ "$site" != "pve" ]; then
       echo "            placement: { group: $site-leaf }"
+      echo "            maxSecondaryIPs: $capture_max_secondary_ips"
     fi
   done
 }
@@ -436,6 +438,7 @@ EOF
     else
       echo "            role: cloud"
       echo "            placement: { group: $site-leaf }"
+      echo "            maxSecondaryIPs: $capture_max_secondary_ips"
     fi
     if [ "$member" = "$node" ]; then
       cat <<EOF

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -1603,6 +1604,55 @@ func TestControllerBGPModeStandbyKeepsConfirmedCaptureWhileActiveMarkerAbsent(t 
 	}
 }
 
+func TestControllerBGPModeDistributedCaptureKeepsPeerIncumbent(t *testing.T) {
+	now := time.Date(2026, 6, 21, 1, 10, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	for i := range spec.Members {
+		if spec.Members[i].Placement.Group == "aws-edge" {
+			spec.Members[i].MaxSecondaryIPs = 128
+		}
+	}
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-a"]
+	address := "10.88.60.12/32"
+	poolPrefix, err := netip.ParsePrefix(spec.Prefix)
+	if err != nil {
+		t.Fatalf("parse pool prefix: %v", err)
+	}
+	candidates, dist := planCaptureCandidatesWithDistribution(
+		self,
+		members,
+		map[string]ownershipDecision{
+			address: {
+				Address:           address,
+				Class:             ownershipClassRemoteHomeOwned,
+				HomeOwnerNode:     "azure-router",
+				CaptureState:      captureStateConfirmed,
+				CaptureHolderNode: "aws-router-b",
+			},
+		},
+		PlacementDecision{Group: "aws-edge", Active: true, ActiveNode: self.NodeRef},
+		map[string][]string{address: {"10.99.0.4"}},
+		true,
+		nil,
+		nil,
+		nil,
+		map[string]string{bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.255.255.2/32"},
+		poolPrefix,
+		now,
+	)
+	if _, ok := candidates[address]; ok {
+		t.Fatalf("capture candidates = %#v, peer incumbent must not be preempted", candidates)
+	}
+	if dist == nil || dist.Assignments[address] != "aws-router-b" {
+		t.Fatalf("distribution = %#v, want address assigned to incumbent aws-router-b", dist)
+	}
+	if got := captureDistributionReasonCounts(dist)["incumbent-kept"]; got != 1 {
+		t.Fatalf("reason counts = %#v, want incumbent-kept=1", captureDistributionReasonCounts(dist))
+	}
+}
+
 func TestControllerBGPModeStandbyReleasesConfirmedCaptureWhenActiveMarkerReturns(t *testing.T) {
 	now := time.Date(2026, 6, 13, 22, 5, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()
@@ -1670,17 +1720,17 @@ func TestControllerBGPModeStandbyReleasesObservedSelfCaptureWithoutPriorAction(t
 		Members:  members,
 		Spec:     spec,
 		Decisions: []ownershipDecision{{
-			Address:           address,
-			Class:             ownershipClassRemoteHomeOwned,
-			HomeOwnerNode:     "onprem-router",
+			Address:            address,
+			Class:              ownershipClassRemoteHomeOwned,
+			HomeOwnerNode:      "onprem-router",
 			CaptureHolderNode:  self.NodeRef,
 			CaptureProviderRef: "aws-provider",
 			CaptureTargetRef:   "eni-b",
 			CaptureState:       captureStateConfirmed,
 			CaptureStrategy:    captureStrategySecondaryIP,
 			CaptureSucceeded:   true,
-			Source:            staticOwnedType,
-			SuppressionReason: "static-owned-by-remote",
+			Source:             staticOwnedType,
+			SuppressionReason:  "static-owned-by-remote",
 		}},
 		Placement: PlacementDecision{
 			Group:               "aws-edge",
@@ -1720,17 +1770,17 @@ func TestControllerBGPModeStandbyKeepsObservedSelfCaptureWhileActiveMarkerAbsent
 		Members:  members,
 		Spec:     spec,
 		Decisions: []ownershipDecision{{
-			Address:           address,
-			Class:             ownershipClassRemoteHomeOwned,
-			HomeOwnerNode:     "onprem-router",
+			Address:            address,
+			Class:              ownershipClassRemoteHomeOwned,
+			HomeOwnerNode:      "onprem-router",
 			CaptureHolderNode:  self.NodeRef,
 			CaptureProviderRef: "aws-provider",
 			CaptureTargetRef:   "eni-b",
 			CaptureState:       captureStateConfirmed,
 			CaptureStrategy:    captureStrategySecondaryIP,
 			CaptureSucceeded:   true,
-			Source:            staticOwnedType,
-			SuppressionReason: "static-owned-by-remote",
+			Source:             staticOwnedType,
+			SuppressionReason:  "static-owned-by-remote",
 		}},
 		Placement: PlacementDecision{
 			Group:               "aws-edge",

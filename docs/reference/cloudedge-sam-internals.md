@@ -120,6 +120,23 @@ Each `MobilityPool` member has `placement.group` and `placement.priority`.
 When `incumbentHolder` is empty the logic is pure priority/nodeRef ordering,
 which is also how the group bootstraps before any holder is observed.
 
+### Distributed capture within a placement group
+
+When any member in a placement group sets `maxSecondaryIPs`, the BGP delivery
+planner switches provider-secondary capture from single-active placement to
+per-address distribution. It first keeps confirmed captures on live,
+non-drained incumbent holders. Remaining addresses are assigned with rendezvous
+hashing against a soft target of `ceil(addresses/liveMembers)`, so steady state
+is close to even while each member's `maxSecondaryIPs` remains a hard capacity
+guard.
+
+Operationally, set `maxSecondaryIPs` as failover capacity. For a two-leaf site,
+each leaf should be able to hold the whole site's capture set; the soft target,
+not the configured maximum, produces the normal near-half split. If one leaf is
+down, the survivor receives all addresses. When the failed leaf returns, the
+confirmed survivor holders are retained and the returning node does not preempt
+them.
+
 ## Three mechanisms that reconcile no-preempt with failover
 
 On top of the bare placement decision, three mechanisms suppress return-time
