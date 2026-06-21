@@ -386,6 +386,9 @@ func TestOwnershipResolverReportsRemoteHomeLocalInventoryConflict(t *testing.T) 
 					"providerRef":  "aws-provider",
 					"resourceRef":  "i-aws-client",
 					"resourceType": "instance-nic",
+					// Primary local home (client's own primary IP) overlapping a
+					// remote home owner is a genuine duplicate-owner conflict.
+					"primary": "true",
 				},
 			},
 		},

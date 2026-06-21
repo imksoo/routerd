@@ -3156,6 +3156,7 @@ func TestControllerBGPModeRemoteHomeLocalInventoryConflictBlocksProviderAction(t
 				"providerRef":  "aws-provider",
 				"resourceRef":  "i-aws-client",
 				"resourceType": "instance-nic",
+				"primary":     "true",
 			},
 		},
 		"discoverySelfPrivateIPs": []string{"10.88.60.4/32"},
