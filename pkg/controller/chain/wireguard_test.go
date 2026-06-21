@@ -26,6 +26,23 @@ func mustWireGuardRouter(t *testing.T, body string) *api.Router {
 	return &router
 }
 
+func assertCommandBefore(t *testing.T, calls []string, before, after string) {
+	t.Helper()
+	beforeIndex := -1
+	afterIndex := -1
+	for i, call := range calls {
+		if beforeIndex < 0 && strings.HasPrefix(call, before) {
+			beforeIndex = i
+		}
+		if afterIndex < 0 && strings.HasPrefix(call, after) {
+			afterIndex = i
+		}
+	}
+	if beforeIndex < 0 || afterIndex < 0 || beforeIndex >= afterIndex {
+		t.Fatalf("command order = %#v, want %q before %q", calls, before, after)
+	}
+}
+
 func (s mapStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
 	out := make([]routerstate.ObjectStatus, 0, len(s))
 	for key, status := range s {
@@ -176,6 +193,7 @@ spec:
 			t.Fatalf("commands missing %q:\n%s", want, gotCommands)
 		}
 	}
+	assertCommandBefore(t, calls, "iptables -I INPUT 1 -p udp --dport 51820 -j ACCEPT", "ip link set up dev wg0")
 	iface := store.ObjectStatus(api.NetAPIVersion, "WireGuardInterface", "wg0")
 	hostFirewall, ok := iface["hostFirewall"].(map[string]any)
 	if !ok {

@@ -320,10 +320,10 @@ func resolveWireGuardSAMResources(router *api.Router) (*api.Router, error) {
 					},
 					Spec: api.WireGuardPeerSpec{
 						Interface:           iface,
-						PublicKey:            strings.TrimSpace(wg.PublicKey),
-						AllowedIPs:           append([]string(nil), wg.AllowedIPs...),
-						Endpoint:             strings.TrimSpace(wg.Endpoint),
-						PersistentKeepalive:  wg.PersistentKeepalive,
+						PublicKey:           strings.TrimSpace(wg.PublicKey),
+						AllowedIPs:          append([]string(nil), wg.AllowedIPs...),
+						Endpoint:            strings.TrimSpace(wg.Endpoint),
+						PersistentKeepalive: wg.PersistentKeepalive,
 					},
 				})
 				if ep := strings.TrimSpace(node.SAMEndpoint); ep != "" {
@@ -612,25 +612,6 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 		c.savePeerPendingStatuses(resource.Metadata.Name, cfg.Peers, "InterfacePending")
 		return nil
 	}
-	controller := wireguard.Controller{Command: c.Command, CommandStdin: c.CommandStdin, DryRun: c.DryRun}
-	observed, statusErr := c.interfaceStatus(ctx, cfg.Name)
-	applied := false
-	current := c.Store.ObjectStatus(api.NetAPIVersion, "WireGuardInterface", resource.Metadata.Name)
-	if !c.DryRun && statusErr == nil && configHash != "" && fmt.Sprint(current["configHash"]) == configHash && c.interfaceMatchesDesired(ctx, cfg, observed) {
-		status["reason"] = "AlreadyConfigured"
-	} else if _, err := controller.Apply(ctx, cfg); err != nil {
-		status["phase"] = "Error"
-		status["reason"] = "ApplyFailed"
-		status["error"] = err.Error()
-		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "WireGuardInterface", resource.Metadata.Name, status); err != nil {
-			return err
-		}
-		c.savePeerPendingStatuses(resource.Metadata.Name, cfg.Peers, "InterfaceError")
-		return nil
-	} else {
-		applied = true
-		observed, statusErr = c.interfaceStatus(ctx, cfg.Name)
-	}
 	firewallStatus := map[string]any{
 		"managedBy": "routerd",
 		"protocol":  "udp",
@@ -659,6 +640,25 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 			firewallStatus["phase"] = "Applied"
 		}
 		status["hostFirewall"] = firewallStatus
+	}
+	controller := wireguard.Controller{Command: c.Command, CommandStdin: c.CommandStdin, DryRun: c.DryRun}
+	observed, statusErr := c.interfaceStatus(ctx, cfg.Name)
+	applied := false
+	current := c.Store.ObjectStatus(api.NetAPIVersion, "WireGuardInterface", resource.Metadata.Name)
+	if !c.DryRun && statusErr == nil && configHash != "" && fmt.Sprint(current["configHash"]) == configHash && c.interfaceMatchesDesired(ctx, cfg, observed) {
+		status["reason"] = "AlreadyConfigured"
+	} else if _, err := controller.Apply(ctx, cfg); err != nil {
+		status["phase"] = "Error"
+		status["reason"] = "ApplyFailed"
+		status["error"] = err.Error()
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "WireGuardInterface", resource.Metadata.Name, status); err != nil {
+			return err
+		}
+		c.savePeerPendingStatuses(resource.Metadata.Name, cfg.Peers, "InterfaceError")
+		return nil
+	} else {
+		applied = true
+		observed, statusErr = c.interfaceStatus(ctx, cfg.Name)
 	}
 	status["phase"] = "Up"
 	if c.DryRun {

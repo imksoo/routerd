@@ -101,8 +101,23 @@ wg_port="$(fabric '.wg_port')"
 pve_capture_interface="${PVE_CAPTURE_INTERFACE:-eth1}"
 capture_max_secondary_ips="${SAM_E2E_MAX_SECONDARY_IPS:-128}"
 
+wg_endpoint_host() {
+  local self_node="$1" peer_node="$2"
+  local self_site peer_site private_ip public_ip
+  self_site="$(jq_node "$self_node" '.[$node].site')"
+  peer_site="$(jq_node "$peer_node" '.[$node].site')"
+  private_ip="$(jq_node "$peer_node" '.[$node].private_ip // empty')"
+  public_ip="$(jq_node "$peer_node" '.[$node].public_ip')"
+  if [ "$self_site" = "$peer_site" ] && [ -n "$private_ip" ]; then
+    printf '%s\n' "$private_ip"
+  else
+    printf '%s\n' "$public_ip"
+  fi
+}
+
 render_node_set() {
-  local node site node_role role overlay public_ip pub_key rr
+  local self_node="$1"
+  local node site node_role role overlay endpoint_host pub_key rr
   echo "    - apiVersion: mobility.routerd.net/v1alpha1"
   echo "      kind: SAMNodeSet"
   echo "      metadata: { name: cloudedge-nodes }"
@@ -114,7 +129,7 @@ render_node_set() {
     role="cloud"
     [ "$site" = "pve" ] && role="onprem"
     overlay="$(jq_node "$node" '.[$node].overlay_ip')"
-    public_ip="$(jq_node "$node" '.[$node].public_ip')"
+    endpoint_host="$(wg_endpoint_host "$self_node" "$node")"
     pub_key="$(cat "$out_dir/secrets/${node}.wg.pub")"
     rr=false
     [ "$node_role" = "rr" ] && rr=true
@@ -126,7 +141,7 @@ render_node_set() {
     echo "            samEndpoint: $overlay"
     echo "            wireGuard:"
     echo "              publicKey: $pub_key"
-    echo "              endpoint: $public_ip:$wg_port"
+    echo "              endpoint: $endpoint_host:$wg_port"
     echo "              allowedIPs: [$overlay/32]"
     echo "              persistentKeepalive: 25"
   done
@@ -137,7 +152,7 @@ render_common() {
   local router_id="$2"
   local private_key
   private_key="$(cat "$out_dir/secrets/${node}.wg.key")"
-  render_node_set
+  render_node_set "$node"
   cat <<EOF
 
     - apiVersion: federation.routerd.net/v1alpha1
