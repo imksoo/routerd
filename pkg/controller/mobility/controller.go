@@ -1148,29 +1148,6 @@ func statusBool(value any) (bool, bool) {
 	return false, false
 }
 
-func statusIntValue(value any) int {
-	switch typed := value.(type) {
-	case int:
-		return typed
-	case int64:
-		return int(typed)
-	case uint:
-		return int(typed)
-	case uint32:
-		return int(typed)
-	case uint64:
-		return int(typed)
-	case float64:
-		return int(typed)
-	case string:
-		var out int
-		_, _ = fmt.Sscanf(strings.TrimSpace(typed), "%d", &out)
-		return out
-	default:
-		return 0
-	}
-}
-
 func decodeActionRecordMap(raw string) map[string]string {
 	if strings.TrimSpace(raw) == "" {
 		return nil
@@ -1656,48 +1633,35 @@ func bgpPeerSessionsByNodeFromStatus(router *api.Router, store interface {
 	if router == nil || store == nil {
 		return out
 	}
-	peerRefs := bgpPeerRefsByNode(router, store)
-	if len(peerRefs) == 0 {
+	peerAddresses := bgpPeerAddressesByNode(router, store)
+	if len(peerAddresses) == 0 {
 		return out
 	}
 	peerStatus, bgpObserved := bgpPeerStatusByAddress(router, store)
-	for nodeRef, ref := range peerRefs {
-		if strings.TrimSpace(nodeRef) == "" {
+	for nodeRef, address := range peerAddresses {
+		if strings.TrimSpace(nodeRef) == "" || strings.TrimSpace(address) == "" {
 			continue
 		}
-		session := bgpPeerSessionState{Address: ref.Address}
-		if strings.TrimSpace(ref.BGPPeer) != "" {
-			session = bgpPeerSessionFromStatus(store.ObjectStatus(api.NetAPIVersion, "BGPPeer", ref.BGPPeer))
-			if session.Observed {
-				rememberBGPPeerSession(out, nodeRef, session)
-				continue
-			}
+		session := bgpPeerSessionState{Address: address}
+		if peer, ok := peerStatus[address]; ok {
+			session.Observed = true
+			session.Established = peer.Established || strings.EqualFold(strings.TrimSpace(peer.State), "Established")
+		} else if bgpObserved {
+			session.Observed = true
 		}
-		if ref.Address != "" {
-			if peer, ok := peerStatus[ref.Address]; ok {
-				session.Observed = true
-				session.Established = peerEstablished(peer)
-				if session.Address == "" {
-					session.Address = ref.Address
-				}
-			} else if bgpObserved {
-				session.Observed = true
-			}
+		out[nodeRef] = session
+		canonical := canonicalNodeIdentity(nodeRef)
+		if canonical != "" {
+			out[canonical] = session
 		}
-		rememberBGPPeerSession(out, nodeRef, session)
 	}
 	return out
 }
 
-type bgpPeerSessionRef struct {
-	Address string
-	BGPPeer string
-}
-
-func bgpPeerRefsByNode(router *api.Router, store interface {
+func bgpPeerAddressesByNode(router *api.Router, store interface {
 	ObjectStatus(apiVersion, kind, name string) map[string]any
-}) map[string]bgpPeerSessionRef {
-	out := map[string]bgpPeerSessionRef{}
+}) map[string]string {
+	out := map[string]string{}
 	if router == nil {
 		return out
 	}
@@ -1706,10 +1670,7 @@ func bgpPeerRefsByNode(router *api.Router, store interface {
 		case resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "SAMTransportProfile" && store != nil:
 			status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", resource.Metadata.Name)
 			for _, peer := range statusMapSlice(status["peers"]) {
-				rememberBGPPeerRef(out, peer["nodeRef"], bgpPeerSessionRef{
-					Address: normalizeBGPNeighborAddress(peer["remoteInner"]),
-					BGPPeer: strings.TrimSpace(peer["bgpPeer"]),
-				})
+				rememberBGPPeerAddress(out, peer["nodeRef"], peer["remoteInner"])
 			}
 		case resource.APIVersion == api.NetAPIVersion && resource.Kind == "BGPPeer":
 			nodeRef := strings.TrimSpace(resource.Metadata.Annotations["mobility.routerd.net/peer-node"])
@@ -1720,75 +1681,27 @@ func bgpPeerRefsByNode(router *api.Router, store interface {
 			if err != nil || len(spec.Peers) == 0 {
 				continue
 			}
-			rememberBGPPeerRef(out, nodeRef, bgpPeerSessionRef{
-				Address: normalizeBGPNeighborAddress(spec.Peers[0]),
-				BGPPeer: strings.TrimSpace(resource.Metadata.Name),
-			})
+			rememberBGPPeerAddress(out, nodeRef, spec.Peers[0])
 		}
 	}
 	return out
 }
 
-func rememberBGPPeerRef(out map[string]bgpPeerSessionRef, nodeRef string, ref bgpPeerSessionRef) {
+func rememberBGPPeerAddress(out map[string]string, nodeRef, address string) {
 	nodeRef = strings.TrimSpace(nodeRef)
-	ref.Address = normalizeBGPNeighborAddress(ref.Address)
-	ref.BGPPeer = strings.TrimSpace(ref.BGPPeer)
-	if nodeRef == "" || (ref.Address == "" && ref.BGPPeer == "") {
+	address = normalizeBGPNeighborAddress(address)
+	if nodeRef == "" || address == "" {
 		return
 	}
 	if _, exists := out[nodeRef]; !exists {
-		out[nodeRef] = ref
+		out[nodeRef] = address
 	}
 	canonical := canonicalNodeIdentity(nodeRef)
 	if canonical != "" {
 		if _, exists := out[canonical]; !exists {
-			out[canonical] = ref
+			out[canonical] = address
 		}
 	}
-}
-
-func rememberBGPPeerSession(out map[string]bgpPeerSessionState, nodeRef string, session bgpPeerSessionState) {
-	nodeRef = strings.TrimSpace(nodeRef)
-	if nodeRef == "" || (!session.Observed && session.Address == "") {
-		return
-	}
-	out[nodeRef] = session
-	canonical := canonicalNodeIdentity(nodeRef)
-	if canonical != "" {
-		out[canonical] = session
-	}
-}
-
-func bgpPeerSessionFromStatus(status map[string]any) bgpPeerSessionState {
-	session := bgpPeerSessionState{}
-	if _, ok := status["peers"]; ok {
-		session.Observed = true
-		for _, peer := range bgpStatusPeersValue(status["peers"]) {
-			if session.Address == "" {
-				session.Address = normalizeBGPNeighborAddress(peer.Address)
-			}
-			if peerEstablished(peer) {
-				session.Address = normalizeBGPNeighborAddress(peer.Address)
-				session.Established = true
-				return session
-			}
-		}
-		return session
-	}
-	if statusIntValue(status["establishedPeers"]) > 0 {
-		session.Observed = true
-		session.Established = true
-		return session
-	}
-	if _, ok := status["phase"]; ok {
-		session.Observed = true
-		session.Established = strings.EqualFold(statusString(status["phase"]), "Established")
-	}
-	return session
-}
-
-func peerEstablished(peer bgpstate.Peer) bool {
-	return peer.Established || strings.EqualFold(strings.TrimSpace(peer.State), "Established")
 }
 
 func bgpPeerStatusByAddress(router *api.Router, store interface {
