@@ -64,6 +64,9 @@ locals {
   router_cloud_init = <<-CLOUD_INIT
     #cloud-config
     runcmd:
+      - [bash, -lc, 'iptables -D INPUT -j REJECT --reject-with icmp-host-prohibited 2>/dev/null || true']
+      - [bash, -lc, 'iptables -D FORWARD -j REJECT --reject-with icmp-host-prohibited 2>/dev/null || true']
+      - [bash, -lc, 'netfilter-persistent save 2>/dev/null || true']
       - [bash, -lc, 'curl -fsSL https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh -o /tmp/oci-cli-install.sh']
       - [bash, -lc, 'bash /tmp/oci-cli-install.sh --accept-all-defaults --install-dir /opt/oci-cli --exec-dir /usr/local/bin --script-dir /usr/local/bin']
       - [bash, -lc, 'oci --version']
@@ -73,6 +76,9 @@ locals {
   client_cloud_init = <<-CLOUD_INIT
     #cloud-config
     runcmd:
+      - [bash, -lc, 'iptables -D INPUT -j REJECT --reject-with icmp-host-prohibited 2>/dev/null || true']
+      - [bash, -lc, 'iptables -D FORWARD -j REJECT --reject-with icmp-host-prohibited 2>/dev/null || true']
+      - [bash, -lc, 'netfilter-persistent save 2>/dev/null || true']
       - [bash, -lc, 'iptables -C INPUT -p tcp --dport 5201 -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p tcp --dport 5201 -j ACCEPT']
       - [bash, -lc, 'iptables -C INPUT -p udp --dport 5201 -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p udp --dport 5201 -j ACCEPT']
   CLOUD_INIT
