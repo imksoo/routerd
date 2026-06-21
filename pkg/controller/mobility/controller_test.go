@@ -1938,6 +1938,76 @@ func TestControllerBGPModeDistributedCaptureStatusStableAcrossLeaves(t *testing.
 	}
 }
 
+func TestControllerBGPModeDistributedCaptureAssignmentsStableAcrossLeafIncumbents(t *testing.T) {
+	now := time.Date(2026, 6, 21, 5, 40, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	for i := range spec.Members {
+		if spec.Members[i].Placement.Group == "aws-edge" {
+			spec.Members[i].MaxSecondaryIPs = 128
+		}
+	}
+	members := plannerMembers(spec.Members)
+	poolPrefix, err := netip.ParsePrefix(spec.Prefix)
+	if err != nil {
+		t.Fatalf("parse pool prefix: %v", err)
+	}
+	decisions := map[string]ownershipDecision{}
+	for i := 0; i < 8; i++ {
+		address := fmt.Sprintf("10.88.60.%d/32", 70+i)
+		holder := "aws-router-a"
+		if i%2 == 1 {
+			holder = "aws-router-b"
+		}
+		decisions[address] = ownershipDecision{
+			Address:            address,
+			Class:              ownershipClassRemoteHomeOwned,
+			HomeOwnerNode:      "azure-router",
+			AdvertiseOwnerNode: holder,
+		}
+	}
+	liveness := map[string]string{bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.255.255.2/32"}
+	_, distA := planCaptureCandidatesWithDistribution(
+		members["aws-router-a"],
+		members,
+		decisions,
+		PlacementDecision{Group: "aws-edge", Active: true, ActiveNode: "aws-router-a"},
+		nil,
+		true,
+		nil,
+		nil,
+		nil,
+		liveness,
+		false,
+		poolPrefix,
+		now,
+	)
+	_, distB := planCaptureCandidatesWithDistribution(
+		members["aws-router-b"],
+		members,
+		decisions,
+		PlacementDecision{Group: "aws-edge", Active: true, ActiveNode: "aws-router-b"},
+		nil,
+		true,
+		nil,
+		nil,
+		nil,
+		liveness,
+		false,
+		poolPrefix,
+		now,
+	)
+	if distA == nil || distB == nil {
+		t.Fatalf("distribution is nil: a=%#v b=%#v", distA, distB)
+	}
+	if fmt.Sprint(distA.Assignments) != fmt.Sprint(distB.Assignments) || fmt.Sprint(distA.NodeCounts) != fmt.Sprint(distB.NodeCounts) {
+		t.Fatalf("leaf assignments must match for identical pool state:\na=%#v\nb=%#v", distA, distB)
+	}
+	if len(distA.Assignments) != len(decisions) {
+		t.Fatalf("assignments = %#v, want all %d captures assigned exactly once", distA.Assignments, len(decisions))
+	}
+}
+
 func TestControllerBGPModeDistributedCaptureSeizeAssignsAllToSurvivor(t *testing.T) {
 	now := time.Date(2026, 6, 21, 4, 20, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()

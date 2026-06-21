@@ -279,13 +279,10 @@ func collectDistributedEligibleCaptureAddresses(self memberPlanInfo, members map
 			address = normalizeAddressString(key)
 		}
 		decision.Address = address
-		if !decisionEligibleForCapture(decision, self, members, placement) {
+		if !decisionEligibleForDistributedCapture(decision) {
 			continue
 		}
 		if decisionHomeOwnerSameSite(decision, self, members) {
-			continue
-		}
-		if !routeTableCaptureAllowed(decision, self) {
 			continue
 		}
 		eligible[address] = true
@@ -357,6 +354,35 @@ func decisionEligibleForCapture(decision ownershipDecision, self memberPlanInfo,
 		if owner, ok := lookupMemberByNodeRef(members, decision.HomeOwnerNode); ok && samePlacementSite(self, owner) && !placement.Active && !placement.Seize {
 			return false
 		}
+		return true
+	}
+	return false
+}
+
+func decisionEligibleForDistributedCapture(decision ownershipDecision) bool {
+	if normalizeAddressString(decision.Address) == "" {
+		return false
+	}
+	if strings.TrimSpace(decision.ConflictReason) != "" {
+		return false
+	}
+	switch decision.Class {
+	case ownershipClassLocalRouterSelf, ownershipClassStaticOwned, ownershipClassStaticHandover:
+		return false
+	case ownershipClassConfirmedCapture:
+		return true
+	case ownershipClassLocalHomeOwned:
+		return decision.Source == providerDiscoverySource && decision.AdvertiseReason == "ownership-event"
+	case ownershipClassStaleCapture:
+		switch strings.TrimSpace(decision.SuppressionReason) {
+		case "capture-not-desired", "local-router-self", "local-home-owner", "self-captured-secondary":
+			return false
+		case "fresh-home-owner":
+			return strings.TrimSpace(decision.HomeOwnerNode) != ""
+		default:
+			return true
+		}
+	case ownershipClassRemoteHomeOwned:
 		return true
 	}
 	return false
