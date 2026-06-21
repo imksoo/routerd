@@ -239,17 +239,19 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	poolStatus := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", res.Metadata.Name)
 	observedStaleSince := observedSelfStaleCaptureSinceFromStatus(poolStatus)
 	ownershipDecisions, ownershipErr := resolveAddressOwnership(ownershipResolverInput{
-		PoolName:          res.Metadata.Name,
-		SelfNode:          selfNode,
-		Spec:              spec,
-		Events:            events,
-		Status:            poolStatus,
-		ActionJournal:     actionJournal,
-		PreviousPlans:     previousActionPlans,
-		InstalledNextHops: installedNextHops,
-		BGPHomeOwnerNodes: bgpHomeOwnerNodes,
-		BGPReturnRoutes:   bgpReturnRoutes,
-		Now:               now,
+		PoolName:            res.Metadata.Name,
+		SelfNode:            selfNode,
+		Spec:                spec,
+		Events:              events,
+		Status:              poolStatus,
+		ActionJournal:       actionJournal,
+		PreviousPlans:       previousActionPlans,
+		InstalledNextHops:   installedNextHops,
+		BGPHomeOwnerNodes:   bgpHomeOwnerNodes,
+		BGPReturnRoutes:     bgpReturnRoutes,
+		BGPLiveNodes:        bgpLiveNodesFromMarkers(self, members, livenessMarkers, livenessMarkersObserved),
+		BGPLivenessObserved: livenessMarkersObserved,
+		Now:                 now,
 	})
 	if ownershipErr != nil {
 		return ownershipErr
