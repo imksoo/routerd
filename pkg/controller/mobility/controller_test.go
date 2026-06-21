@@ -1380,10 +1380,18 @@ func TestControllerBGPModeSuppressesSeizeWhenActivePeerSessionEstablished(t *tes
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "mobility-bgp", bgpStatus); err != nil {
 		t.Fatalf("SaveObjectStatus(BGPRouter/mobility-bgp): %v", err)
 	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPPeer", "sam-transport-cloudedge-aws-router-b-aws-router-a", map[string]any{
+		"phase":            "Established",
+		"establishedPeers": 1,
+		"peers":            []bgpstate.Peer{{Address: "10.99.0.2", State: "Established", Established: true}},
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus(BGPPeer/sam-transport-cloudedge-aws-router-b-aws-router-a): %v", err)
+	}
 	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "cloudedge-transport", map[string]any{
 		"peers": []map[string]any{{
 			"nodeRef":     "aws-router-a",
-			"remoteInner": "10.99.0.2/32",
+			"bgpPeer":     "sam-transport-cloudedge-aws-router-b-aws-router-a",
+			"remoteInner": "10.255.0.16/32",
 		}},
 	}); err != nil {
 		t.Fatalf("SaveObjectStatus(SAMTransportProfile/cloudedge-transport): %v", err)
