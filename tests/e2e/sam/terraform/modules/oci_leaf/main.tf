@@ -57,9 +57,18 @@ locals {
 
   all_nodes = merge(local.nodes, local.extra_router_nodes, local.extra_client_nodes)
 
+  oci_firewall_open_commands = [
+    "systemctl disable --now ufw firewalld netfilter-persistent 2>/dev/null || true",
+    "for table in filter; do iptables -t $table -P INPUT ACCEPT 2>/dev/null || true; iptables -t $table -P FORWARD ACCEPT 2>/dev/null || true; iptables -t $table -P OUTPUT ACCEPT 2>/dev/null || true; iptables -t $table -F 2>/dev/null || true; iptables -t $table -X 2>/dev/null || true; done",
+    "for table in filter; do ip6tables -t $table -P INPUT ACCEPT 2>/dev/null || true; ip6tables -t $table -P FORWARD ACCEPT 2>/dev/null || true; ip6tables -t $table -P OUTPUT ACCEPT 2>/dev/null || true; ip6tables -t $table -F 2>/dev/null || true; ip6tables -t $table -X 2>/dev/null || true; done",
+  ]
+
   router_cloud_init = <<-CLOUD_INIT
     #cloud-config
     runcmd:
+%{for command in local.oci_firewall_open_commands~}
+      - [bash, -lc, ${jsonencode(command)}]
+%{endfor~}
       - [bash, -lc, 'curl -fsSL https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh -o /tmp/oci-cli-install.sh']
       - [bash, -lc, 'bash /tmp/oci-cli-install.sh --accept-all-defaults --install-dir /opt/oci-cli --exec-dir /usr/local/bin --script-dir /usr/local/bin']
       - [bash, -lc, 'oci --version']
@@ -69,6 +78,9 @@ locals {
   client_cloud_init = <<-CLOUD_INIT
     #cloud-config
     runcmd:
+%{for command in local.oci_firewall_open_commands~}
+      - [bash, -lc, ${jsonencode(command)}]
+%{endfor~}
       - [bash, -lc, 'iptables -C INPUT -p tcp --dport 5201 -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p tcp --dport 5201 -j ACCEPT']
       - [bash, -lc, 'iptables -C INPUT -p udp --dport 5201 -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p udp --dport 5201 -j ACCEPT']
   CLOUD_INIT
