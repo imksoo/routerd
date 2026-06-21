@@ -101,33 +101,8 @@ wg_port="$(fabric '.wg_port')"
 pve_capture_interface="${PVE_CAPTURE_INTERFACE:-eth1}"
 capture_max_secondary_ips="${SAM_E2E_MAX_SECONDARY_IPS:-128}"
 
-json_value_present() {
-  local value="$1"
-  [ -n "$value" ] && [ "$value" != "null" ]
-}
-
-wg_endpoint_host() {
-  local self_node="$1" peer_node="$2"
-  local self_site peer_site private_ip public_ip endpoint
-  self_site="$(jq_node "$self_node" '.[$node].site')"
-  peer_site="$(jq_node "$peer_node" '.[$node].site')"
-  private_ip="$(jq_node "$peer_node" '.[$node].private_ip')"
-  public_ip="$(jq_node "$peer_node" '.[$node].public_ip')"
-  if [ "$self_site" = "$peer_site" ] && json_value_present "$private_ip"; then
-    endpoint="$private_ip"
-  elif json_value_present "$public_ip"; then
-    endpoint="$public_ip"
-  elif json_value_present "$private_ip"; then
-    endpoint="$private_ip"
-  else
-    echo "node $peer_node has neither public_ip nor private_ip for WireGuard endpoint" >&2
-    return 1
-  fi
-  printf '%s\n' "$endpoint"
-}
-
 render_node_set() {
-  local self_node="$1"
+  local node site node_role role overlay public_ip pub_key rr
   echo "    - apiVersion: mobility.routerd.net/v1alpha1"
   echo "      kind: SAMNodeSet"
   echo "      metadata: { name: cloudedge-nodes }"
@@ -139,7 +114,7 @@ render_node_set() {
     role="cloud"
     [ "$site" = "pve" ] && role="onprem"
     overlay="$(jq_node "$node" '.[$node].overlay_ip')"
-    endpoint_host="$(wg_endpoint_host "$self_node" "$node")"
+    public_ip="$(jq_node "$node" '.[$node].public_ip')"
     pub_key="$(cat "$out_dir/secrets/${node}.wg.pub")"
     rr=false
     [ "$node_role" = "rr" ] && rr=true
@@ -151,7 +126,7 @@ render_node_set() {
     echo "            samEndpoint: $overlay"
     echo "            wireGuard:"
     echo "              publicKey: $pub_key"
-    echo "              endpoint: $endpoint_host:$wg_port"
+    echo "              endpoint: $public_ip:$wg_port"
     echo "              allowedIPs: [$overlay/32]"
     echo "              persistentKeepalive: 25"
   done
@@ -162,7 +137,7 @@ render_common() {
   local router_id="$2"
   local private_key
   private_key="$(cat "$out_dir/secrets/${node}.wg.key")"
-  render_node_set "$node"
+  render_node_set
   cat <<EOF
 
     - apiVersion: federation.routerd.net/v1alpha1
