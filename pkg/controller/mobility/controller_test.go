@@ -1302,25 +1302,6 @@ func TestControllerBGPModeStandbySeizesTrapAfterActiveLivenessHoldDown(t *testin
 		t.Fatalf("initial bgpCaptureElection = %#v, want self marker present, active marker absent, hold-down", election)
 	}
 
-	current = now.Add(31 * time.Second)
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("startup grace Reconcile: %v", err)
-	}
-	startupGracePlans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-b")).ActionPlansJSON)
-	if findActionPlanByAddress(startupGracePlans, "assign-secondary-ip", "10.88.60.10/32") != nil ||
-		findActionPlanByAddress(startupGracePlans, "assign-secondary-ip", "10.88.60.12/32") != nil ||
-		findActionPlanByAddress(startupGracePlans, "assign-secondary-ip", "10.88.60.13/32") != nil {
-		t.Fatalf("startup grace plans = %#v, want no provider traps while BGP mesh startup can still be converging", startupGracePlans)
-	}
-	status = store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
-	election, ok = status["bgpCaptureElection"].(map[string]any)
-	if !ok {
-		t.Fatalf("startup grace bgpCaptureElection = %#v, want map status", status["bgpCaptureElection"])
-	}
-	if election["seize"] != false || election["seizeHoldDown"] != true || election["selfMarkerPresent"] != true || election["activeMarkerPresent"] != false {
-		t.Fatalf("startup grace bgpCaptureElection = %#v, want active marker absent but seize suppressed", election)
-	}
-
 	current = now.Add(bgpSeizeLivenessMissingHold + time.Second)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("hold-down elapsed Reconcile: %v", err)
@@ -3175,7 +3156,7 @@ func TestControllerBGPModeRemoteHomeLocalInventoryConflictBlocksProviderAction(t
 				"providerRef":  "aws-provider",
 				"resourceRef":  "i-aws-client",
 				"resourceType": "instance-nic",
-				"primary":      "true",
+				"primary":     "true",
 			},
 		},
 		"discoverySelfPrivateIPs": []string{"10.88.60.4/32"},

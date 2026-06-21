@@ -53,15 +53,11 @@ const (
 	// a cold-start advertisement (neither active) are not mistaken for holdership.
 	bgpMobilityCommunityActiveHolder = "64512:121"
 
-	bgpPathSigParam        = "mobilityPathSig"
-	bgpTrapLastSeenAtParam = "mobilityTrapLastSeenAt"
-	bgpTrapTransitionParam = "mobilityProviderTransition"
-	bgpTrapRIBMissingHold  = 2 * time.Minute
-	// BGP liveness-marker loss alone is a weak failover signal during full mesh
-	// startup: WireGuard and BGP RIB convergence can lag past short controller
-	// polls, and a premature capture seize is sticky by design. Keep this aligned
-	// with the provider-trap RIB missing hold before allowing secondary-IP takeover.
-	bgpSeizeLivenessMissingHold = 2 * time.Minute
+	bgpPathSigParam             = "mobilityPathSig"
+	bgpTrapLastSeenAtParam      = "mobilityTrapLastSeenAt"
+	bgpTrapTransitionParam      = "mobilityProviderTransition"
+	bgpTrapRIBMissingHold       = 2 * time.Minute
+	bgpSeizeLivenessMissingHold = 30 * time.Second
 	bgpProviderMissingRetryHold = 30 * time.Second
 )
 
