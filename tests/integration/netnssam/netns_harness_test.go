@@ -88,13 +88,7 @@ func TestLeafFailover(t *testing.T) {
 
 func TestLeafRejoinNoPreempt(t *testing.T) {
 	l := setupConvergedLab(t, 18*time.Minute)
-	failed := "aws-leaf-a"
-	survivor := "aws-leaf-b"
-	before := l.captureAddresses(failed)
-	if len(before) == 0 {
-		l.dumpLogs()
-		t.Fatalf("%s has no captures before failover", failed)
-	}
+	failed, survivor, before := l.leafFailoverPair("aws-leaf")
 	l.KillRouterNode(failed)
 	l.AssertCapturesPresent(survivor, len(before), 6*time.Minute)
 	l.AssertFabricRoutesSynced(before, 6*time.Minute)
@@ -110,13 +104,7 @@ func TestLeafRejoinNoPreempt(t *testing.T) {
 
 func TestForcedRebalance(t *testing.T) {
 	l := setupConvergedLab(t, 20*time.Minute)
-	failed := "aws-leaf-a"
-	survivor := "aws-leaf-b"
-	before := l.captureAddresses(failed)
-	if len(before) == 0 {
-		l.dumpLogs()
-		t.Fatalf("%s has no captures before failover", failed)
-	}
+	failed, survivor, before := l.leafFailoverPair("aws-leaf")
 	l.KillRouterNode(failed)
 	l.AssertCapturesPresent(survivor, len(before), 6*time.Minute)
 	l.AssertFabricRoutesSynced(before, 6*time.Minute)
@@ -133,30 +121,18 @@ func TestForcedRebalance(t *testing.T) {
 
 func TestGracefulDrain(t *testing.T) {
 	l := setupConvergedLab(t, 18*time.Minute)
-	drained := "aws-leaf-a"
-	survivor := "aws-leaf-b"
-	before := l.captureAddresses(drained)
-	if len(before) == 0 {
-		l.dumpLogs()
-		t.Fatalf("%s has no captures before drain", drained)
-	}
+	drained, survivor, before := l.leafFailoverPair("aws-leaf")
 	stopMatrix := l.StartClientMatrixMonitor(5*time.Second, 3*time.Minute)
 	l.GracefullyStopRouterd(drained, 3*time.Minute)
-	l.AssertCapturesAbsent(drained, 3*time.Minute)
-	l.AssertCapturesPresent(survivor, len(before), 6*time.Minute)
+	l.AssertCaptureAddressesPresent(survivor, before, 6*time.Minute)
+	l.AssertFabricRoutesSynced(before, 6*time.Minute)
 	stopMatrix()
 	l.AssertClientMatrix(6 * time.Minute)
 }
 
 func TestBFDLivenessDetection(t *testing.T) {
 	l := setupConvergedLabWithOptions(t, 20*time.Minute, labOptions{EnableBFD: true})
-	failed := "aws-leaf-a"
-	survivor := "aws-leaf-b"
-	before := l.captureAddresses(failed)
-	if len(before) == 0 {
-		l.dumpLogs()
-		t.Fatalf("%s has no captures before BFD failure", failed)
-	}
+	failed, survivor, before := l.leafFailoverPair("aws-leaf")
 	l.netns(failed, "ip", "link", "set", "eth0", "down")
 	l.AssertBFDPeerState(survivor, bfdResourceName(survivor, failed), "Down", 4*time.Minute)
 	l.AssertCapturesPresent(survivor, len(before), 8*time.Minute)
@@ -503,6 +479,18 @@ func (l *lab) reconcileFabricRoutes() {
 
 	l.routeMu.Lock()
 	defer l.routeMu.Unlock()
+	for key, via := range l.routes {
+		if _, ok := desired[key]; ok {
+			continue
+		}
+		site, address, ok := strings.Cut(key, "|")
+		if !ok {
+			continue
+		}
+		if clientOwners[address] != "" && site != clientOwners[address] {
+			desired[key] = via
+		}
+	}
 	for key, via := range desired {
 		site, address, ok := strings.Cut(key, "|")
 		if !ok {
@@ -862,6 +850,60 @@ func (l *lab) AssertCapturesAbsent(nodeName string, timeout time.Duration) {
 		if time.Now().After(deadline) {
 			l.dumpLogs()
 			l.t.Fatalf("%s still has captures after timeout: %v", nodeName, l.captureAddresses(nodeName))
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func (l *lab) AssertCaptureAddressesAbsent(nodeName string, addresses []string, timeout time.Duration) {
+	l.t.Helper()
+	wantAbsent := map[string]bool{}
+	for _, address := range addresses {
+		wantAbsent[address] = true
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		var remaining []string
+		for _, got := range l.captureAddresses(nodeName) {
+			if wantAbsent[got] {
+				remaining = append(remaining, got)
+			}
+		}
+		if len(remaining) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			l.dumpLogs()
+			l.t.Fatalf("%s still has drained captures after timeout: %v", nodeName, remaining)
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func (l *lab) AssertCaptureAddressesPresent(nodeName string, addresses []string, timeout time.Duration) {
+	l.t.Helper()
+	wantPresent := map[string]bool{}
+	for _, address := range addresses {
+		wantPresent[address] = true
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		gotPresent := map[string]bool{}
+		for _, got := range l.captureAddresses(nodeName) {
+			gotPresent[got] = true
+		}
+		var missing []string
+		for address := range wantPresent {
+			if !gotPresent[address] {
+				missing = append(missing, address)
+			}
+		}
+		if len(missing) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			l.dumpLogs()
+			l.t.Fatalf("%s missing handed-off captures after timeout: %v", nodeName, missing)
 		}
 		time.Sleep(2 * time.Second)
 	}
