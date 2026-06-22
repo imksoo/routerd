@@ -32,21 +32,25 @@ const (
 )
 
 type lab struct {
-	t       *testing.T
-	ctx     context.Context
-	name    string
-	workDir string
-	repoDir string
-	binDir  string
-	bfd     bool
-	nodes   []node
-	bridges []string
-	fabrics []string
-	procs   []*exec.Cmd
-	bgp     map[string]*exec.Cmd
-	routerd map[string]*exec.Cmd
-	routes  map[string]string
-	routeMu sync.Mutex
+	t             *testing.T
+	ctx           context.Context
+	name          string
+	workDir       string
+	repoDir       string
+	binDir        string
+	bfd           bool
+	pprof         bool
+	nodes         []node
+	bridges       []string
+	fabrics       []string
+	procs         []*exec.Cmd
+	bgp           map[string]*exec.Cmd
+	routerd       map[string]*exec.Cmd
+	routes        map[string]string
+	routeMu      sync.Mutex
+	fabricCancel context.CancelFunc
+	fabricDone   chan struct{}
+	lockFile     *os.File
 }
 
 type node struct {
@@ -59,7 +63,8 @@ type node struct {
 }
 
 type labOptions struct {
-	EnableBFD bool
+	EnableBFD   bool
+	EnablePprof bool
 }
 
 type cmdError struct {
@@ -80,6 +85,7 @@ func TestNetNSSAMRealRouterdTopologySmoke(t *testing.T) {
 func TestLeafFailover(t *testing.T) {
 	l := setupConvergedLab(t, 16*time.Minute)
 	failed, survivor, before := l.leafFailoverPair("aws-leaf")
+	t.Logf("scenario pair: failed=%s survivor=%s captures=%v", failed, survivor, before)
 	l.KillRouterNode(failed)
 	l.AssertCapturesPresent(survivor, len(before), 6*time.Minute)
 	l.AssertFabricRoutesSynced(before, 6*time.Minute)
@@ -89,6 +95,7 @@ func TestLeafFailover(t *testing.T) {
 func TestLeafRejoinNoPreempt(t *testing.T) {
 	l := setupConvergedLab(t, 18*time.Minute)
 	failed, survivor, before := l.leafFailoverPair("aws-leaf")
+	t.Logf("scenario pair: failed=%s survivor=%s captures=%v", failed, survivor, before)
 	l.KillRouterNode(failed)
 	l.AssertCapturesPresent(survivor, len(before), 6*time.Minute)
 	l.AssertFabricRoutesSynced(before, 6*time.Minute)
@@ -105,6 +112,7 @@ func TestLeafRejoinNoPreempt(t *testing.T) {
 func TestForcedRebalance(t *testing.T) {
 	l := setupConvergedLab(t, 20*time.Minute)
 	failed, survivor, before := l.leafFailoverPair("aws-leaf")
+	t.Logf("scenario pair: failed=%s survivor=%s captures=%v", failed, survivor, before)
 	l.KillRouterNode(failed)
 	l.AssertCapturesPresent(survivor, len(before), 6*time.Minute)
 	l.AssertFabricRoutesSynced(before, 6*time.Minute)
@@ -122,6 +130,7 @@ func TestForcedRebalance(t *testing.T) {
 func TestGracefulDrain(t *testing.T) {
 	l := setupConvergedLab(t, 18*time.Minute)
 	drained, survivor, before := l.leafFailoverPair("aws-leaf")
+	t.Logf("scenario pair: drained=%s survivor=%s captures=%v", drained, survivor, before)
 	stopMatrix := l.StartClientMatrixMonitor(5*time.Second, 3*time.Minute)
 	l.GracefullyStopRouterd(drained, 3*time.Minute)
 	l.AssertCaptureAddressesPresent(survivor, before, 6*time.Minute)
@@ -133,6 +142,7 @@ func TestGracefulDrain(t *testing.T) {
 func TestBFDLivenessDetection(t *testing.T) {
 	l := setupConvergedLabWithOptions(t, 20*time.Minute, labOptions{EnableBFD: true})
 	failed, survivor, before := l.leafFailoverPair("aws-leaf")
+	t.Logf("scenario pair: failed=%s survivor=%s captures=%v", failed, survivor, before)
 	l.netns(failed, "ip", "link", "set", "eth0", "down")
 	l.AssertBFDPeerState(survivor, bfdResourceName(survivor, failed), "Down", 4*time.Minute)
 	l.AssertCapturesPresent(survivor, len(before), 8*time.Minute)
@@ -154,10 +164,21 @@ func setupConvergedLabWithOptions(t *testing.T, timeout time.Duration, opts labO
 			}
 		}
 	}
+	lockF, err := os.OpenFile("/run/lock/routerd-netnssam.lock", os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		t.Fatalf("open netns test lock: %v", err)
+	}
+	if err := syscall.Flock(int(lockF.Fd()), syscall.LOCK_EX); err != nil {
+		lockF.Close()
+		t.Fatalf("acquire netns test lock: %v", err)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 
 	l := newLab(t, ctx)
 	l.bfd = opts.EnableBFD
+	l.pprof = opts.EnablePprof
+	l.lockFile = lockF
 	t.Cleanup(func() {
 		cancel()
 		l.Cleanup()
@@ -364,7 +385,7 @@ func (l *lab) StartRouterNode(nodeName string) {
 	if l.bfd {
 		controllers += ",bfd"
 	}
-	routerd := l.startNetNS(n.Name, filepath.Join(l.binDir, "routerd"),
+	args := []string{
 		"serve",
 		"--config", l.nodeDir(n.Name, "router.yaml"),
 		"--socket", filepath.Join(runtimeDir, "control.sock"),
@@ -376,7 +397,11 @@ func (l *lab) StartRouterNode(nodeName string) {
 		"--bgp-state-file", filepath.Join(stateDir, "bgp", "applied.json"),
 		"--controllers", controllers,
 		"--apply-interval", "5s",
-	)
+	}
+	if l.pprof {
+		args = append(args, "--pprof-addr", "0.0.0.0:6060")
+	}
+	routerd := l.startNetNS(n.Name, filepath.Join(l.binDir, "routerd"), args...)
 	l.procs = append(l.procs, routerd)
 	l.routerd[n.Name] = routerd
 }
@@ -432,18 +457,36 @@ func (l *lab) RequestCaptureRebalance(nodeName, reason string) {
 
 func (l *lab) StartFabricRouteReconciler() {
 	l.t.Helper()
+	ctx, cancel := context.WithCancel(l.ctx)
+	l.fabricCancel = cancel
+	l.fabricDone = make(chan struct{})
 	go func() {
+		defer close(l.fabricDone)
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 			l.reconcileFabricRoutes()
 			select {
-			case <-l.ctx.Done():
+			case <-ctx.Done():
 				return
 			case <-ticker.C:
 			}
 		}
 	}()
+}
+
+func (l *lab) stopFabricRouteReconciler() {
+	if l.fabricCancel != nil {
+		l.fabricCancel()
+	}
+	if l.fabricDone != nil {
+		<-l.fabricDone
+	}
 }
 
 func (l *lab) reconcileFabricRoutes() {
@@ -1067,6 +1110,7 @@ func (l *lab) bfdPeerState(nodeName, bfdName string) string {
 }
 
 func (l *lab) Cleanup() {
+	l.stopFabricRouteReconciler()
 	if os.Getenv(keepEnv) == "1" {
 		l.t.Logf("%s=1; preserving netns lab %s under %s", keepEnv, l.name, l.workDir)
 		return
@@ -1082,6 +1126,9 @@ func (l *lab) Cleanup() {
 	}
 	for i := len(l.bridges) - 1; i >= 0; i-- {
 		_, _ = runOutput(context.Background(), "", "ip", "link", "delete", l.bridges[i])
+	}
+	if l.lockFile != nil {
+		l.lockFile.Close()
 	}
 }
 
