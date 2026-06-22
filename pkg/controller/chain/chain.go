@@ -3276,10 +3276,16 @@ func (c IPv4StaticAddressController) cleanupStaleMobilityProviderOSAddresses(ctx
 			continue
 		}
 		privateHosts := map[string]bool{}
+		capturedHosts := map[string]bool{}
 		keepCIDRs := map[string]bool{}
 		for _, value := range statusStringSlice(status["discoverySelfPrivateIPs"]) {
 			if normalized, ok := normalizeIPv4HostPrefixInPool(value, prefix.Masked()); ok {
 				privateHosts[strings.TrimSuffix(normalized, "/32")] = true
+			}
+		}
+		for _, value := range statusStringSlice(status["discoverySelfCapturedAddresses"]) {
+			if normalized, ok := normalizeIPv4HostPrefixInPool(value, prefix.Masked()); ok {
+				capturedHosts[strings.TrimSuffix(normalized, "/32")] = true
 			}
 		}
 		for _, res := range c.Router.Spec.Resources {
@@ -3291,6 +3297,7 @@ func (c IPv4StaticAddressController) cleanupStaleMobilityProviderOSAddresses(ctx
 				continue
 			}
 			if normalized, ok := normalizeIPv4HostPrefixInPool(spec.Address, prefix.Masked()); ok {
+				keepCIDRs[strings.TrimSpace(spec.Address)] = true
 				keepCIDRs[normalized] = true
 			}
 		}
@@ -3309,7 +3316,7 @@ func (c IPv4StaticAddressController) cleanupStaleMobilityProviderOSAddresses(ctx
 				continue
 			}
 			host := strings.TrimSuffix(normalized, "/32")
-			if privateHosts[host] || actionAssignedHosts[host] || keepCIDRs[strings.TrimSpace(address)] || keepCIDRs[normalized] && strings.TrimSpace(address) == normalized {
+			if privateHosts[host] || capturedHosts[host] || actionAssignedHosts[host] || keepCIDRs[strings.TrimSpace(address)] || keepCIDRs[normalized] && strings.TrimSpace(address) == normalized {
 				continue
 			}
 			name, args := ipv4StaticAddressDeleteCommand(platform.CurrentOS(), ifname, address)

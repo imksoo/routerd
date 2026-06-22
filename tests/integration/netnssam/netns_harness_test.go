@@ -485,6 +485,7 @@ func (l *lab) reconcileFabricRoutes() {
 			if address == ipOnly(n.SiteCIDR)+"/32" {
 				continue
 			}
+			l.removeCaptureKernelRoutes(n.Name, address)
 			key := n.Site + "|" + address
 			desired[key] = ipOnly(n.SiteCIDR)
 		}
@@ -495,9 +496,6 @@ func (l *lab) reconcileFabricRoutes() {
 	for key, via := range desired {
 		site, address, ok := strings.Cut(key, "|")
 		if !ok {
-			continue
-		}
-		if l.routes[key] == via {
 			continue
 		}
 		if err := l.netnsErrWithinByName(2*time.Second, l.fabricNS(site), "ip", "route", "replace", address, "via", via); err == nil {
@@ -517,6 +515,21 @@ func (l *lab) reconcileFabricRoutes() {
 		if err == nil || strings.Contains(err.Error(), "No such process") || strings.Contains(err.Error(), "No such file or directory") {
 			delete(l.routes, key)
 		}
+	}
+}
+
+func (l *lab) removeCaptureKernelRoutes(nodeName, address string) {
+	for _, args := range [][]string{
+		{"ip", "route", "del", "table", "local", "local", address},
+		{"ip", "route", "del", "table", "local", "local", address, "dev", "eth1"},
+		{"ip", "route", "del", address, "dev", "eth1", "scope", "link", "metric", "1"},
+		{"ip", "route", "del", address, "dev", "eth1", "scope", "link"},
+	} {
+		err := l.netnsErrWithin(2*time.Second, nodeName, args...)
+		if err == nil || strings.Contains(err.Error(), "No such process") || strings.Contains(err.Error(), "No such file or directory") {
+			continue
+		}
+		l.t.Logf("%s: failed to remove capture kernel route %s (%s): %v", nodeName, address, strings.Join(args, " "), err)
 	}
 }
 
@@ -1392,6 +1405,11 @@ func (l *lab) renderRouterConfig(self node) string {
       spec: { ifname: eth1, managed: false }
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata: { name: site-primary }
+      spec: { interface: site-lan, address: %s }
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: BGPRouter
       metadata: { name: mobility-bgp }
       spec:
@@ -1422,7 +1440,7 @@ func (l *lab) renderRouterConfig(self node) string {
           importPolicy:
             allowedPrefixes: [10.77.60.0/24]
             nextHopRewrite: peer-address
-`, self.Name, nodeIndex(self.Name)+10, self.Name, privateKeys[self.Name], nodeIndex(self.Name)+10, self.Name, nodeIndex(self.Name)+10)
+`, self.Name, nodeIndex(self.Name)+10, self.Name, privateKeys[self.Name], self.SiteCIDR, nodeIndex(self.Name)+10, self.Name, nodeIndex(self.Name)+10)
 	if l.bfd {
 		for _, peer := range l.routerNodes() {
 			if peer.Name == self.Name {
