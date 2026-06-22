@@ -144,6 +144,7 @@ func appendBGPMobilityProxyARPClaims(router api.Router, store any) api.Router {
 		return router
 	}
 	selfByGroup := eventGroupSelfNodes(router)
+	staticAddresses := ipv4StaticAddressHostPrefixes(router)
 	var claims []api.Resource
 	for _, resource := range router.Spec.Resources {
 		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "MobilityPool" {
@@ -172,7 +173,7 @@ func appendBGPMobilityProxyARPClaims(router api.Router, store any) api.Router {
 		}
 		owned := mobilityStaticOwnedAddresses(self, prefix)
 		for _, address := range bgpMobilityInstalledAddresses(installed, prefix) {
-			if owned[address] {
+			if owned[address] || staticAddresses[normalizeIPv4HostPrefix(address)] {
 				continue
 			}
 			if sam.CaptureExcludesAddress(addressCaptureFromMobilityCapture(self.Capture), address) {
@@ -195,6 +196,7 @@ func appendBGPMobilityProviderSecondaryClaims(router api.Router, store any) api.
 		return router
 	}
 	selfByGroup := eventGroupSelfNodes(router)
+	staticAddresses := ipv4StaticAddressHostPrefixes(router)
 	var claims []api.Resource
 	for _, resource := range router.Spec.Resources {
 		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "MobilityPool" {
@@ -225,7 +227,7 @@ func appendBGPMobilityProviderSecondaryClaims(router api.Router, store any) api.
 		seen := map[string]bool{}
 		for _, address := range bgpStatusStringSlice(status["discoverySelfCapturedAddresses"]) {
 			normalized, ok := normalizeBGPMobilityHostPrefix(address, prefix)
-			if !ok || sam.CaptureExcludesAddress(addressCaptureFromMobilityCapture(self.Capture), normalized) {
+			if !ok || staticAddresses[normalizeIPv4HostPrefix(normalized)] || sam.CaptureExcludesAddress(addressCaptureFromMobilityCapture(self.Capture), normalized) {
 				continue
 			}
 			seen[normalized] = true
@@ -415,6 +417,7 @@ func appendBGPMobilityLocalInventoryRoutes(effective, routeRouter api.Router, st
 		return routeRouter
 	}
 	aliases := interfaceIfNames(effective)
+	staticAddresses := ipv4StaticAddressHostPrefixes(effective)
 	reader := statusReaderFromStore(store)
 	if reader == nil {
 		return routeRouter
@@ -446,6 +449,9 @@ func appendBGPMobilityLocalInventoryRoutes(effective, routeRouter api.Router, st
 			continue
 		}
 		for _, verdict := range snapshot.LocalRouteVerdictsForPool(resource.Metadata.Name) {
+			if staticAddresses[normalizeIPv4HostPrefix(verdict.Address)] {
+				continue
+			}
 			resources = append(resources, bgpMobilityLocalInventoryRoute(resource.Metadata.Name, verdict.Address, device, verdict))
 		}
 	}
@@ -455,6 +461,38 @@ func appendBGPMobilityLocalInventoryRoutes(effective, routeRouter api.Router, st
 	out := routeRouter
 	out.Spec.Resources = append(append([]api.Resource(nil), routeRouter.Spec.Resources...), resources...)
 	return out
+}
+
+func ipv4StaticAddressHostPrefixes(router api.Router) map[string]bool {
+	out := map[string]bool{}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "IPv4StaticAddress" {
+			continue
+		}
+		spec, err := resource.IPv4StaticAddressSpec()
+		if err != nil {
+			continue
+		}
+		if normalized := normalizeIPv4HostPrefix(spec.Address); normalized != "" {
+			out[normalized] = true
+		}
+	}
+	return out
+}
+
+func normalizeIPv4HostPrefix(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if addr, err := netip.ParseAddr(value); err == nil && addr.Is4() {
+		return netip.PrefixFrom(addr, 32).String()
+	}
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil || !prefix.Addr().Is4() {
+		return ""
+	}
+	return netip.PrefixFrom(prefix.Addr(), 32).String()
 }
 
 func bgpMobilityLocalInventoryRoute(poolName, address, device string, verdict mobilityfib.Verdict) api.Resource {

@@ -79,16 +79,10 @@ func TestNetNSSAMRealRouterdTopologySmoke(t *testing.T) {
 
 func TestLeafFailover(t *testing.T) {
 	l := setupConvergedLab(t, 16*time.Minute)
-	failed := "aws-leaf-a"
-	survivor := "aws-leaf-b"
-	before := l.captureAddresses(failed)
-	if len(before) == 0 {
-		l.dumpLogs()
-		t.Fatalf("%s has no captures before failover", failed)
-	}
+	failed, survivor, before := l.leafFailoverPair("aws-leaf")
 	l.KillRouterNode(failed)
 	l.AssertCapturesPresent(survivor, len(before), 6*time.Minute)
-	l.AssertFabricRoutesVia(survivor, before, 6*time.Minute)
+	l.AssertFabricRoutesSynced(before, 6*time.Minute)
 	l.AssertClientMatrix(8 * time.Minute)
 }
 
@@ -103,14 +97,14 @@ func TestLeafRejoinNoPreempt(t *testing.T) {
 	}
 	l.KillRouterNode(failed)
 	l.AssertCapturesPresent(survivor, len(before), 6*time.Minute)
-	l.AssertFabricRoutesVia(survivor, before, 6*time.Minute)
+	l.AssertFabricRoutesSynced(before, 6*time.Minute)
 	l.StartRouterNode(failed)
 	l.AssertRouterdStatusReady(3 * time.Minute)
 	l.AssertBGPEstablished(5 * time.Minute)
 	l.AssertMobilityReady(6 * time.Minute)
 	l.AssertCapturesAbsent(failed, 4*time.Minute)
 	l.AssertCapturesPresent(survivor, len(before), 4*time.Minute)
-	l.AssertFabricRoutesVia(survivor, before, 4*time.Minute)
+	l.AssertFabricRoutesSynced(before, 4*time.Minute)
 	l.AssertClientMatrix(8 * time.Minute)
 }
 
@@ -125,7 +119,7 @@ func TestForcedRebalance(t *testing.T) {
 	}
 	l.KillRouterNode(failed)
 	l.AssertCapturesPresent(survivor, len(before), 6*time.Minute)
-	l.AssertFabricRoutesVia(survivor, before, 6*time.Minute)
+	l.AssertFabricRoutesSynced(before, 6*time.Minute)
 	l.StartRouterNode(failed)
 	l.AssertRouterdStatusReady(3 * time.Minute)
 	l.AssertBGPEstablished(5 * time.Minute)
@@ -166,7 +160,7 @@ func TestBFDLivenessDetection(t *testing.T) {
 	l.netns(failed, "ip", "link", "set", "eth0", "down")
 	l.AssertBFDPeerState(survivor, bfdResourceName(survivor, failed), "Down", 4*time.Minute)
 	l.AssertCapturesPresent(survivor, len(before), 8*time.Minute)
-	l.AssertFabricRoutesVia(survivor, before, 8*time.Minute)
+	l.AssertFabricRoutesSynced(before, 8*time.Minute)
 	l.AssertClientMatrix(8 * time.Minute)
 }
 
@@ -185,11 +179,13 @@ func setupConvergedLabWithOptions(t *testing.T, timeout time.Duration, opts labO
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	t.Cleanup(cancel)
 
 	l := newLab(t, ctx)
 	l.bfd = opts.EnableBFD
-	t.Cleanup(l.Cleanup)
+	t.Cleanup(func() {
+		cancel()
+		l.Cleanup()
+	})
 
 	l.BuildBinaries()
 	l.CreateTopology(defaultTopology())
@@ -475,7 +471,10 @@ func (l *lab) StartFabricRouteReconciler() {
 }
 
 func (l *lab) reconcileFabricRoutes() {
-	desired := map[string]string{}
+	if l.ctx.Err() != nil {
+		return
+	}
+	captureHolders := map[string]node{}
 	for _, n := range l.leafNodes() {
 		out, err := l.netnsOutput(n.Name, "ip", "-o", "-4", "addr", "show", "dev", "eth1")
 		if err != nil {
@@ -486,8 +485,19 @@ func (l *lab) reconcileFabricRoutes() {
 				continue
 			}
 			l.removeCaptureKernelRoutes(n.Name, address)
-			key := n.Site + "|" + address
-			desired[key] = ipOnly(n.SiteCIDR)
+			captureHolders[address] = n
+		}
+	}
+	clientOwners := l.clientAddressOwners()
+	desired := map[string]string{}
+	for address, ownerSite := range clientOwners {
+		holder, captured := captureHolders[address]
+		for _, site := range l.leafSites() {
+			via := l.fabricClientNextHop(site, address, ownerSite, holder, captured)
+			if via == "" {
+				continue
+			}
+			desired[site+"|"+address] = via
 		}
 	}
 
@@ -498,9 +508,15 @@ func (l *lab) reconcileFabricRoutes() {
 		if !ok {
 			continue
 		}
-		if err := l.netnsErrWithinByName(2*time.Second, l.fabricNS(site), "ip", "route", "replace", address, "via", via); err == nil {
+		err := l.netnsErrWithinByName(2*time.Second, l.fabricNS(site), "ip", "route", "replace", address, "via", via, "dev", "eth-leaf")
+		if err == nil {
 			l.routes[key] = via
+			continue
 		}
+		if l.ctx.Err() != nil {
+			return
+		}
+		l.t.Logf("%s: failed to sync fabric route %s via %s: %v", l.fabricNS(site), address, via, err)
 	}
 	for key := range l.routes {
 		if _, ok := desired[key]; ok {
@@ -518,10 +534,78 @@ func (l *lab) reconcileFabricRoutes() {
 	}
 }
 
+func (l *lab) clientAddressOwners() map[string]string {
+	owners := map[string]string{}
+	for _, n := range l.clientNodes() {
+		owners[ipOnly(n.SiteCIDR)+"/32"] = n.Site
+	}
+	return owners
+}
+
+func (l *lab) leafSites() []string {
+	seen := map[string]bool{}
+	var sites []string
+	for _, n := range l.leafNodes() {
+		if seen[n.Site] {
+			continue
+		}
+		seen[n.Site] = true
+		sites = append(sites, n.Site)
+	}
+	return sites
+}
+
+func (l *lab) fabricClientNextHop(site, address, ownerSite string, holder node, captured bool) string {
+	if site == ownerSite {
+		return ""
+	}
+	for _, candidate := range l.leafNodes() {
+		if candidate.Site != site {
+			continue
+		}
+		if !l.leafHasPrimary(candidate) {
+			continue
+		}
+		if l.leafHasHostRoute(candidate, address) {
+			return ipOnly(candidate.SiteCIDR)
+		}
+	}
+	if captured && holder.Site == site && l.leafHasPrimary(holder) && l.leafHasHostRoute(holder, address) {
+		return ipOnly(holder.SiteCIDR)
+	}
+	return ""
+}
+
+func (l *lab) leafHasPrimary(n node) bool {
+	out, err := l.netnsOutput(n.Name, "ip", "-o", "-4", "addr", "show", "dev", "eth1")
+	return err == nil && strings.Contains(out, "inet "+n.SiteCIDR)
+}
+
+func (l *lab) leafHasHostRoute(n node, address string) bool {
+	out, err := l.netnsOutput(n.Name, "ip", "-4", "route", "show", address)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if fields[0] == address || fields[0] == ipOnly(address) {
+			return true
+		}
+	}
+	return false
+}
+
 func (l *lab) removeCaptureKernelRoutes(nodeName, address string) {
 	for _, args := range [][]string{
+		{"ip", "route", "del", "table", "local", "local", ipOnly(address)},
+		{"ip", "route", "del", "table", "local", "local", ipOnly(address), "dev", "eth1"},
 		{"ip", "route", "del", "table", "local", "local", address},
 		{"ip", "route", "del", "table", "local", "local", address, "dev", "eth1"},
+		{"ip", "route", "del", "table", "local", address, "dev", "eth1"},
+		{"ip", "route", "del", "table", "local", ipOnly(address), "dev", "eth1"},
 		{"ip", "route", "del", address, "dev", "eth1", "scope", "link", "metric", "1"},
 		{"ip", "route", "del", address, "dev", "eth1", "scope", "link"},
 	} {
@@ -798,19 +882,61 @@ func (l *lab) AssertCapturesPresent(nodeName string, minCount int, timeout time.
 	}
 }
 
-func (l *lab) AssertFabricRoutesVia(nodeName string, addresses []string, timeout time.Duration) {
+func (l *lab) leafFailoverPair(preferredSite string) (string, string, []string) {
 	l.t.Helper()
-	n, ok := l.nodeByName(nodeName)
-	if !ok {
-		l.t.Fatalf("unknown node %q", nodeName)
+	type candidate struct {
+		failed   node
+		survivor node
+		captures []string
 	}
-	via := ipOnly(n.SiteCIDR)
+	var fallback *candidate
+	for _, failed := range l.leafNodes() {
+		captures := l.captureAddresses(failed.Name)
+		if len(captures) == 0 {
+			continue
+		}
+		for _, survivor := range l.leafNodes() {
+			if survivor.Site != failed.Site || survivor.Name == failed.Name {
+				continue
+			}
+			c := candidate{failed: failed, survivor: survivor, captures: captures}
+			if failed.Site == preferredSite {
+				return c.failed.Name, c.survivor.Name, c.captures
+			}
+			if fallback == nil {
+				fallback = &c
+			}
+			break
+		}
+	}
+	if fallback != nil {
+		return fallback.failed.Name, fallback.survivor.Name, fallback.captures
+	}
+	l.dumpLogs()
+	l.t.Fatalf("no leaf has captures before failover")
+	return "", "", nil
+}
+
+func (l *lab) AssertFabricRoutesSynced(addresses []string, timeout time.Duration) {
+	l.t.Helper()
+	owners := l.clientAddressOwners()
 	deadline := time.Now().Add(timeout)
 	for {
+		l.reconcileFabricRoutes()
 		var pending []string
 		for _, address := range addresses {
-			if l.fabricRouteVia(n.Site, address) != via {
-				pending = append(pending, address+" via "+l.fabricRouteVia(n.Site, address))
+			ownerSite := owners[address]
+			for _, site := range l.leafSites() {
+				got := l.fabricRouteVia(site, address)
+				if site == ownerSite {
+					if got != "" {
+						pending = append(pending, site+" "+address+" via "+got+", want direct")
+					}
+					continue
+				}
+				if got == "" {
+					pending = append(pending, site+" "+address+" missing")
+				}
 			}
 		}
 		if len(pending) == 0 {
@@ -818,7 +944,7 @@ func (l *lab) AssertFabricRoutesVia(nodeName string, addresses []string, timeout
 		}
 		if time.Now().After(deadline) {
 			l.dumpLogs()
-			l.t.Fatalf("fabric routes for %s did not converge to via %s: %s", nodeName, via, strings.Join(pending, ", "))
+			l.t.Fatalf("fabric routes did not converge: %s", strings.Join(pending, ", "))
 		}
 		time.Sleep(2 * time.Second)
 	}
