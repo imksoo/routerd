@@ -40,7 +40,10 @@ type lab struct {
 	binDir  string
 	nodes   []node
 	bridges []string
+	fabrics []string
 	procs   []*exec.Cmd
+	routes  map[string]string
+	routeMu sync.Mutex
 }
 
 type node struct {
@@ -73,7 +76,7 @@ func TestNetNSSAMRealRouterdTopologySmoke(t *testing.T) {
 	l.BuildBinaries()
 	l.CreateTopology(defaultTopology())
 	l.StartRouterProcesses()
-	l.StartProviderPrimaryGuard()
+	l.StartFabricRouteReconciler()
 	l.AssertUnderlayReachability()
 	l.AssertRouterdStatusReady(2 * time.Minute)
 	l.AssertWireGuardReachability(2 * time.Minute)
@@ -119,6 +122,7 @@ func newLab(t *testing.T, ctx context.Context) *lab {
 		workDir: workDir,
 		repoDir: repoRoot(t),
 		binDir:  filepath.Join(workDir, "bin"),
+		routes:  map[string]string{},
 	}
 }
 
@@ -184,12 +188,23 @@ func (l *lab) CreateTopology(nodes []node) {
 	siteSeen := map[string]bool{}
 	for _, n := range nodes {
 		if !siteSeen[n.Site] {
-			l.createBridge(l.bridge(n.Site))
+			l.createFabric(n.Site)
+			l.createBridge(l.siteClientBridge(n.Site))
+			l.createBridge(l.siteLeafBridge(n.Site))
+			l.attachNamespace(l.fabricNS(n.Site), "fabric-"+n.Site, "eth-client", l.siteClientBridge(n.Site))
+			l.attachNamespace(l.fabricNS(n.Site), "fabric-"+n.Site, "eth-leaf", l.siteLeafBridge(n.Site))
+			l.netnsByName(l.fabricNS(n.Site), "ip", "addr", "add", cidrWithIP(siteFabricClientGateway(n.Site, nodes), n.SiteCIDR), "dev", "eth-client")
+			l.netnsByName(l.fabricNS(n.Site), "ip", "addr", "add", siteFabricLeafGateway(n.Site, nodes)+"/32", "dev", "eth-leaf")
+			l.netnsByName(l.fabricNS(n.Site), "sysctl", "-w", "net.ipv4.ip_forward=1")
 			siteSeen[n.Site] = true
 		}
 	}
 	for _, n := range nodes {
-		l.attach(n.Name, "eth1", l.bridge(n.Site))
+		siteBridge := l.siteClientBridge(n.Site)
+		if n.Router {
+			siteBridge = l.siteLeafBridge(n.Site)
+		}
+		l.attach(n.Name, "eth1", siteBridge)
 		l.netns(n.Name, "ip", "addr", "add", n.SiteCIDR, "dev", "eth1")
 		l.netns(n.Name, "ip", "link", "set", "eth1", "up")
 		if n.Router {
@@ -200,13 +215,23 @@ func (l *lab) CreateTopology(nodes []node) {
 		}
 	}
 	for _, n := range nodes {
+		if n.Router {
+			l.netnsByName(l.fabricNS(n.Site), "ip", "route", "replace", ipOnly(n.SiteCIDR)+"/32", "dev", "eth-leaf")
+			for _, client := range nodes {
+				if client.Role == "client" && client.Site == n.Site {
+					l.netns(n.Name, "ip", "route", "replace", ipOnly(client.SiteCIDR)+"/32", "via", siteFabricLeafGateway(n.Site, nodes), "dev", "eth1")
+				}
+			}
+		}
+	}
+	for _, n := range nodes {
 		if n.Role == "client" {
-			l.netns(n.Name, "ip", "route", "replace", "default", "via", siteGateway(n.Site))
+			l.netns(n.Name, "ip", "route", "replace", "default", "via", siteFabricClientGateway(n.Site, nodes))
 			for _, remote := range nodes {
 				if remote.Role != "client" || remote.Site == n.Site {
 					continue
 				}
-				l.netns(n.Name, "ip", "route", "replace", ipOnly(remote.SiteCIDR)+"/32", "via", siteGateway(n.Site))
+				l.netns(n.Name, "ip", "route", "replace", ipOnly(remote.SiteCIDR)+"/32", "via", siteFabricClientGateway(n.Site, nodes))
 			}
 		}
 	}
@@ -248,13 +273,13 @@ func (l *lab) StartRouterProcesses() {
 	}
 }
 
-func (l *lab) StartProviderPrimaryGuard() {
+func (l *lab) StartFabricRouteReconciler() {
 	l.t.Helper()
 	go func() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for {
-			l.reconcileProviderPrimaryAddresses()
+			l.reconcileFabricRoutes()
 			select {
 			case <-l.ctx.Done():
 				return
@@ -264,9 +289,49 @@ func (l *lab) StartProviderPrimaryGuard() {
 	}()
 }
 
-func (l *lab) reconcileProviderPrimaryAddresses() {
-	for _, n := range l.routerNodes() {
-		_ = l.netnsErrWithin(2*time.Second, n.Name, "ip", "addr", "replace", n.SiteCIDR, "dev", "eth1")
+func (l *lab) reconcileFabricRoutes() {
+	desired := map[string]string{}
+	for _, n := range l.leafNodes() {
+		out, err := l.netnsOutput(n.Name, "ip", "-o", "-4", "addr", "show", "dev", "eth1")
+		if err != nil {
+			continue
+		}
+		for _, address := range parseIPv4HostAddresses(out) {
+			if address == ipOnly(n.SiteCIDR)+"/32" {
+				continue
+			}
+			key := n.Site + "|" + address
+			desired[key] = ipOnly(n.SiteCIDR)
+		}
+	}
+
+	l.routeMu.Lock()
+	defer l.routeMu.Unlock()
+	for key, via := range desired {
+		site, address, ok := strings.Cut(key, "|")
+		if !ok {
+			continue
+		}
+		if l.routes[key] == via {
+			continue
+		}
+		if err := l.netnsErrWithinByName(2*time.Second, l.fabricNS(site), "ip", "route", "replace", address, "via", via); err == nil {
+			l.routes[key] = via
+		}
+	}
+	for key := range l.routes {
+		if _, ok := desired[key]; ok {
+			continue
+		}
+		site, address, ok := strings.Cut(key, "|")
+		if !ok {
+			delete(l.routes, key)
+			continue
+		}
+		err := l.netnsErrWithinByName(2*time.Second, l.fabricNS(site), "ip", "route", "del", address)
+		if err == nil || strings.Contains(err.Error(), "No such process") || strings.Contains(err.Error(), "No such file or directory") {
+			delete(l.routes, key)
+		}
 	}
 }
 
@@ -402,7 +467,7 @@ func (l *lab) AssertClientMatrix(timeout time.Duration) {
 	clients := l.clientNodes()
 	deadline := time.Now().Add(timeout)
 	for {
-		l.reconcileProviderPrimaryAddresses()
+		l.reconcileFabricRoutes()
 		var pending []string
 		var mu sync.Mutex
 		var wg sync.WaitGroup
@@ -447,9 +512,20 @@ func (l *lab) Cleanup() {
 	for i := len(l.nodes) - 1; i >= 0; i-- {
 		_, _ = runOutput(context.Background(), "", "ip", "netns", "delete", l.ns(l.nodes[i].Name))
 	}
+	for i := len(l.fabrics) - 1; i >= 0; i-- {
+		_, _ = runOutput(context.Background(), "", "ip", "netns", "delete", l.fabrics[i])
+	}
 	for i := len(l.bridges) - 1; i >= 0; i-- {
 		_, _ = runOutput(context.Background(), "", "ip", "link", "delete", l.bridges[i])
 	}
+}
+
+func (l *lab) createFabric(site string) {
+	l.t.Helper()
+	ns := l.fabricNS(site)
+	l.run("", "ip", "netns", "add", ns)
+	l.run("", "ip", "-n", ns, "link", "set", "lo", "up")
+	l.fabrics = append(l.fabrics, ns)
 }
 
 func (l *lab) createBridge(name string) {
@@ -463,14 +539,19 @@ func (l *lab) createBridge(name string) {
 
 func (l *lab) attach(nodeName, ifName, bridge string) {
 	l.t.Helper()
-	hostIf := linuxIfName("rh", l.name, nodeName, ifName)
-	peerIf := linuxIfName("rp", l.name, nodeName, ifName)
+	l.attachNamespace(l.ns(nodeName), nodeName, ifName, bridge)
+}
+
+func (l *lab) attachNamespace(nsName, endpointName, ifName, bridge string) {
+	l.t.Helper()
+	hostIf := linuxIfName("rh", l.name, endpointName, ifName)
+	peerIf := linuxIfName("rp", l.name, endpointName, ifName)
 	l.run("", "ip", "link", "add", hostIf, "type", "veth", "peer", "name", peerIf)
 	l.run("", "ip", "link", "set", hostIf, "master", bridge)
 	l.run("", "ip", "link", "set", hostIf, "up")
-	l.run("", "ip", "link", "set", peerIf, "netns", l.ns(nodeName))
-	l.netns(nodeName, "ip", "link", "set", peerIf, "name", ifName)
-	l.netns(nodeName, "ip", "link", "set", ifName, "up")
+	l.run("", "ip", "link", "set", peerIf, "netns", nsName)
+	l.netnsByName(nsName, "ip", "link", "set", peerIf, "name", ifName)
+	l.netnsByName(nsName, "ip", "link", "set", ifName, "up")
 }
 
 func (l *lab) writeRouterConfigs() {
@@ -543,15 +624,35 @@ func (l *lab) netnsErr(nodeName string, args ...string) error {
 }
 
 func (l *lab) netnsErrWithin(timeout time.Duration, nodeName string, args ...string) error {
+	return l.netnsErrWithinByName(timeout, l.ns(nodeName), args...)
+}
+
+func (l *lab) netnsErrWithinByName(timeout time.Duration, nsName string, args ...string) error {
 	ctx, cancel := context.WithTimeout(l.ctx, timeout)
 	defer cancel()
-	full := append([]string{"netns", "exec", l.ns(nodeName)}, args...)
+	full := append([]string{"netns", "exec", nsName}, args...)
 	_, err := runOutput(ctx, "", "ip", full...)
 	return err
 }
 
 func (l *lab) netnsOutput(nodeName string, args ...string) (string, error) {
-	full := append([]string{"netns", "exec", l.ns(nodeName)}, args...)
+	return l.netnsOutputByName(l.ns(nodeName), args...)
+}
+
+func (l *lab) netnsByName(nsName string, args ...string) {
+	l.t.Helper()
+	if err := l.netnsErrByName(nsName, args...); err != nil {
+		l.t.Fatal(err)
+	}
+}
+
+func (l *lab) netnsErrByName(nsName string, args ...string) error {
+	_, err := l.netnsOutputByName(nsName, args...)
+	return err
+}
+
+func (l *lab) netnsOutputByName(nsName string, args ...string) (string, error) {
+	full := append([]string{"netns", "exec", nsName}, args...)
 	return runOutput(l.ctx, "", "ip", full...)
 }
 
@@ -627,6 +728,18 @@ func (l *lab) bridge(name string) string {
 	return linuxIfName("rb", l.name, name)
 }
 
+func (l *lab) siteClientBridge(site string) string {
+	return l.bridge(site + "-client")
+}
+
+func (l *lab) siteLeafBridge(site string) string {
+	return l.bridge(site + "-leaf")
+}
+
+func (l *lab) fabricNS(site string) string {
+	return shortName(l.name + "-fabric-" + site)
+}
+
 func (l *lab) nodeDir(nodeName string, parts ...string) string {
 	all := append([]string{l.workDir, nodeName}, parts...)
 	return filepath.Join(all...)
@@ -652,23 +765,64 @@ func linuxIfName(prefix string, parts ...string) string {
 	return name[:15]
 }
 
-func siteGateway(site string) string {
-	switch site {
-	case "aws-leaf":
-		return "10.77.60.4"
-	case "azure-leaf":
-		return "10.77.60.14"
-	case "oci-leaf":
-		return "10.77.60.24"
-	case "pve-leaf":
-		return "10.77.60.30"
-	default:
-		return ""
-	}
-}
-
 func ipOnly(cidr string) string {
 	return strings.SplitN(cidr, "/", 2)[0]
+}
+
+func cidrWithIP(ip, cidr string) string {
+	if _, ipnet, err := net.ParseCIDR(cidr); err == nil {
+		ones, _ := ipnet.Mask.Size()
+		return ip + "/" + strconv.Itoa(ones)
+	}
+	return ip + "/24"
+}
+
+func siteFabricClientGateway(site string, nodes []node) string {
+	return siteHostIP(site, nodes, 1)
+}
+
+func siteFabricLeafGateway(site string, nodes []node) string {
+	return siteHostIP(site, nodes, 254)
+}
+
+func siteHostIP(site string, nodes []node, host byte) string {
+	for _, n := range nodes {
+		if n.Site != site {
+			continue
+		}
+		ip, _, err := net.ParseCIDR(n.SiteCIDR)
+		if err != nil {
+			return ""
+		}
+		v4 := ip.To4()
+		if v4 == nil {
+			return ""
+		}
+		v4[3] = host
+		return net.IPv4(v4[0], v4[1], v4[2], v4[3]).String()
+	}
+	return ""
+}
+
+func parseIPv4HostAddresses(output string) []string {
+	var out []string
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		for i, field := range fields {
+			if field != "inet" || i+1 >= len(fields) {
+				continue
+			}
+			ip, ipnet, err := net.ParseCIDR(fields[i+1])
+			if err != nil {
+				continue
+			}
+			ones, bits := ipnet.Mask.Size()
+			if bits == 32 && ones == 32 {
+				out = append(out, ip.String()+"/32")
+			}
+		}
+	}
+	return out
 }
 
 func nodeIndex(name string) int {
@@ -910,7 +1064,7 @@ func (l *lab) renderRouterConfig(self node) string {
 			fmt.Fprintf(&b, "                providerMode: secondary-ip\n")
 			fmt.Fprintf(&b, "                captureStrategy: secondary-ip\n")
 			fmt.Fprintf(&b, "                nicRef: eth1\n")
-			fmt.Fprintf(&b, "                configureOSAddress: false\n")
+			fmt.Fprintf(&b, "                configureOSAddress: true\n")
 			fmt.Fprintf(&b, "                target: { interface: eth1 }\n")
 			fmt.Fprintf(&b, "              ownershipDiscovery:\n")
 			fmt.Fprintf(&b, "                mode: provider-private-ip\n")

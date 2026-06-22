@@ -23,10 +23,20 @@ Initial topology mirrors the current full cloud/on-prem lab:
 - `oci-leaf`: `oci-leaf-a`, `oci-leaf-b`, `oci-client-a`, `oci-client-b`
 - `pve-leaf`: `pve-leaf-a`, `pve-leaf-b`, `pve-client-a`, `pve-client-b`
 
-Each site has an independent L2 bridge. The leaf sites intentionally reuse
-`10.77.60.0/24` on separate bridges to model same-subnet cloud/on-prem sites.
-Router namespaces also attach to a transport bridge used only as the local
-replacement for cloud underlay reachability between WireGuard endpoints.
+Each site has a small fabric namespace between clients and leaf routers:
+
+```text
+[client] --veth-- [fabric-<site> netns] --veth-- [leaf-<site>]
+```
+
+The fabric namespace uses separate client-side and leaf-side L2 bridges. This
+keeps client and leaf ARP domains apart while still letting the leaf sites reuse
+`10.77.60.0/24` in independent namespaces. The harness watches secondary `/32`
+addresses that the netns provider executor assigns to leaf `eth1` interfaces and
+programs the matching fabric route as `<capture>/32 via <leaf-primary>`. When
+the secondary address is removed, the harness removes that fabric route. Router
+namespaces also attach to a transport bridge used only as the local replacement
+for cloud underlay reachability between WireGuard endpoints.
 
 The first test builds the binaries and the netns provider executor, creates the
 namespaces, starts real `routerd-bgp` and `routerd` processes in the RR/leaf
