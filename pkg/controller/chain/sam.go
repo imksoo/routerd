@@ -53,14 +53,15 @@ func samSelectResources(resources []api.Resource, kind string) []api.Resource {
 }
 
 type SAMController struct {
-	Router    *api.Router
-	Bus       *bus.Bus
-	Store     Store
-	Lowerings []sam.DeliveryLowering
-	DryRun    bool
-	OS        platform.OS
-	Applier   samProxyNeighborApplier
-	GARP      samGratuitousARPAnnouncer
+	Router      *api.Router
+	Bus         *bus.Bus
+	Store       Store
+	Lowerings   []sam.DeliveryLowering
+	DryRun      bool
+	OS          platform.OS
+	Applier     samProxyNeighborApplier
+	GARP        samGratuitousARPAnnouncer
+	ListActions func(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)
 }
 
 func (c SAMController) Reconcile(ctx context.Context) error {
@@ -302,6 +303,7 @@ func (c SAMController) cleanupRemovedCaptures(ctx context.Context, statuses []ro
 	if applier == nil {
 		applier = defaultSAMProxyNeighborApplier()
 	}
+	recentlyAssigned := c.recentlyAssignedCaptureAddresses()
 	plan := lifecycle.PlanResourceTeardownGC(desired, statuses)
 	for _, action := range plan.Actions {
 		if action.Type != lifecycle.GCActionTeardownResource {
@@ -310,6 +312,12 @@ func (c SAMController) cleanupRemovedCaptures(ctx context.Context, statuses []ro
 		status := action.Status
 		if status.APIVersion != api.HybridAPIVersion || status.Kind != "RemoteAddressClaim" {
 			continue
+		}
+		if capture, ok := samStoredProxyNeighborFromStatus(status); ok {
+			addr := strings.TrimSuffix(strings.TrimSpace(capture.address), "/32")
+			if recentlyAssigned[addr] {
+				continue
+			}
 		}
 		if err := c.teardownRemovedCapture(ctx, status, applier, deleter); err != nil {
 			return err
@@ -339,6 +347,44 @@ func (c SAMController) teardownRemovedCapture(ctx context.Context, status router
 		}
 	}
 	return nil
+}
+
+func (c SAMController) recentlyAssignedCaptureAddresses() map[string]bool {
+	if c.ListActions == nil {
+		return nil
+	}
+	actions, err := c.ListActions(routerstate.ActionExecutionFilter{})
+	if err != nil {
+		return nil
+	}
+	type actionKey struct {
+		providerRef string
+		address     string
+	}
+	latest := map[actionKey]routerstate.ActionExecutionRecord{}
+	for _, a := range actions {
+		if a.Action != "assign-secondary-ip" && a.Action != "unassign-secondary-ip" {
+			continue
+		}
+		addr := actionTargetAddress(a.TargetJSON)
+		if addr == "" {
+			continue
+		}
+		key := actionKey{providerRef: a.ProviderRef, address: addr}
+		if prev, ok := latest[key]; !ok || a.ID > prev.ID {
+			latest[key] = a
+		}
+	}
+	out := map[string]bool{}
+	for _, a := range latest {
+		if a.Action != "assign-secondary-ip" || a.Status != routerstate.ActionSucceeded {
+			continue
+		}
+		if addr := actionTargetAddress(a.TargetJSON); addr != "" {
+			out[strings.TrimSuffix(strings.TrimSpace(addr), "/32")] = true
+		}
+	}
+	return out
 }
 
 func (c SAMController) cleanupChangedCaptures(ctx context.Context, statuses []routerstate.ObjectStatus, actions []sam.CaptureAction) error {
