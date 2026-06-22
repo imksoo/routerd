@@ -11,7 +11,9 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,21 +34,21 @@ const (
 )
 
 type lab struct {
-	t             *testing.T
-	ctx           context.Context
-	name          string
-	workDir       string
-	repoDir       string
-	binDir        string
-	bfd           bool
-	pprof         bool
-	nodes         []node
-	bridges       []string
-	fabrics       []string
-	procs         []*exec.Cmd
-	bgp           map[string]*exec.Cmd
-	routerd       map[string]*exec.Cmd
-	routes        map[string]string
+	t            *testing.T
+	ctx          context.Context
+	name         string
+	workDir      string
+	repoDir      string
+	binDir       string
+	bfd          bool
+	pprof        bool
+	nodes        []node
+	bridges      []string
+	fabrics      []string
+	procs        []*exec.Cmd
+	bgp          map[string]*exec.Cmd
+	routerd      map[string]*exec.Cmd
+	routes       map[string]string
 	routeMu      sync.Mutex
 	fabricCancel context.CancelFunc
 	fabricDone   chan struct{}
@@ -78,8 +80,36 @@ func (e cmdError) Error() string {
 }
 
 func TestNetNSSAMRealRouterdTopologySmoke(t *testing.T) {
-	l := setupConvergedLab(t, 12*time.Minute)
+	l := setupConvergedLabWithOptions(t, 12*time.Minute, labOptions{EnablePprof: netnsPprofEnabled()})
 	l.AssertClientMatrix(6 * time.Minute)
+	l.CollectPprofProfiles()
+}
+
+func netnsPprofEnabled() bool {
+	return os.Getenv("ROUTERD_NETNS_PPROF") == "1" || os.Getenv("ROUTERD_NETNS_PPROF_DIR") != ""
+}
+
+func TestNetNSSAMPprofFetchHelper(t *testing.T) {
+	if os.Getenv("ROUTERD_NETNS_PPROF_FETCH") != "1" {
+		return
+	}
+	path := os.Getenv("ROUTERD_NETNS_PPROF_PATH")
+	if path == "" {
+		t.Fatal("ROUTERD_NETNS_PPROF_PATH is required")
+	}
+	resp, err := http.Get("http://127.0.0.1:6060" + path)
+	if err != nil {
+		t.Fatalf("fetch pprof %s: %v", path, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		t.Fatalf("fetch pprof %s: %s\n%s", path, resp.Status, string(body))
+	}
+	if _, err := io.Copy(os.Stdout, resp.Body); err != nil {
+		t.Fatalf("write pprof %s: %v", path, err)
+	}
+	os.Exit(0)
 }
 
 func TestLeafFailover(t *testing.T) {
@@ -453,6 +483,69 @@ func (l *lab) RequestCaptureRebalance(nodeName, reason string) {
 		"--reason", reason,
 		"-o", "json",
 	)
+}
+
+func (l *lab) CollectPprofProfiles() {
+	l.t.Helper()
+	if !l.pprof {
+		return
+	}
+	profileDir := os.Getenv("ROUTERD_NETNS_PPROF_DIR")
+	if profileDir == "" {
+		profileDir = filepath.Join(os.TempDir(), "routerd-netns-pprof-"+l.name)
+	}
+	if err := os.MkdirAll(profileDir, 0o755); err != nil {
+		l.t.Fatalf("create pprof dir: %v", err)
+	}
+	targets := []struct {
+		name string
+		path string
+	}{
+		{name: "heap", path: "/debug/pprof/heap"},
+		{name: "cpu", path: "/debug/pprof/profile?seconds=10"},
+		{name: "goroutine", path: "/debug/pprof/goroutine"},
+	}
+	for _, n := range l.routerNodes() {
+		if l.routerd[n.Name] == nil {
+			continue
+		}
+		for _, target := range targets {
+			data, err := l.fetchPprofProfile(n.Name, target.path)
+			if err != nil {
+				l.t.Fatalf("fetch pprof %s %s: %v", n.Name, target.name, err)
+			}
+			path := filepath.Join(profileDir, n.Name+"-"+target.name+".pprof")
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				l.t.Fatalf("write pprof %s: %v", path, err)
+			}
+		}
+	}
+	l.t.Logf("pprof profiles written to %s", profileDir)
+}
+
+func (l *lab) fetchPprofProfile(nodeName, path string) ([]byte, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(l.ctx, 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ip", "netns", "exec", l.ns(nodeName), exe, "-test.run=^TestNetNSSAMPprofFetchHelper$")
+	cmd.Env = append(os.Environ(),
+		"ROUTERD_NETNS_PPROF_FETCH=1",
+		"ROUTERD_NETNS_PPROF_PATH="+path,
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, cmdError{
+			Command: strings.Join([]string{"ip", "netns", "exec", l.ns(nodeName), exe, "-test.run=^TestNetNSSAMPprofFetchHelper$", path}, " "),
+			Output:  stderr.String(),
+			Err:     err,
+		}
+	}
+	return stdout.Bytes(), nil
 }
 
 func (l *lab) StartFabricRouteReconciler() {
