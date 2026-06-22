@@ -211,10 +211,6 @@ func inferPreferredSource(routePrefix string, addresses []localIPv4Address) stri
 	return best.Address.String()
 }
 
-func preferredSourceIsLocal(value string) bool {
-	return preferredSourceInAddresses(value, localIPv4Addresses())
-}
-
 func preferredSourceInAddresses(value string, addresses []localIPv4Address) bool {
 	addr, err := netip.ParseAddr(strings.TrimSpace(value))
 	if err != nil || !addr.Is4() {
