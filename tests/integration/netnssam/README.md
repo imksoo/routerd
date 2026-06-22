@@ -38,16 +38,13 @@ the secondary address is removed, the harness removes that fabric route. Router
 namespaces also attach to a transport bridge used only as the local replacement
 for cloud underlay reachability between WireGuard endpoints.
 
-The first test builds the binaries and the netns provider executor, creates the
+The smoke test builds the binaries and the netns provider executor, creates the
 namespaces, starts real `routerd-bgp` and `routerd` processes in the RR/leaf
 namespaces, verifies transport reachability, polls real `routerctl status`, then
-waits for WireGuard and BGP convergence.
+waits for WireGuard, BGP, mobility, provider action, and client-matrix
+convergence.
 
-This is the foundation for the next slices of #622:
-
-1. assert WireGuard handshakes and GoBGP `Established` state from routerd
-   status;
-2. add route-table/proxy-ARP capture distribution assertions;
-3. stop `routerd` in one leaf namespace for failover takeover;
-4. restart it and assert no-preempt rejoin;
-5. add explicit forced rebalance and distribution checks.
+The fault tests reuse the same setup independently. They cover leaf process
+failure, no-preempt rejoin, forced capture rebalance, graceful mobility drain
+through routerd graceful stop, and BFD-assisted liveness detection. The BFD test
+requires FRR's `vtysh` and `bfdd` in addition to the base netns tools.
