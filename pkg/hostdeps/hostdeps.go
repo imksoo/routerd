@@ -344,6 +344,41 @@ func derivedRouterProfile(router *api.Router) (api.SysctlProfileSpec, bool) {
 func derivedInterfaceSysctls(router *api.Router) []sysctlResource {
 	aliases := interfaceAliases(router)
 	var out []sysctlResource
+	if hasMobilityPool(router) {
+		out = append(out,
+			sysctlResource{
+				Name: "sam-rp-filter-all",
+				Spec: api.SysctlSpec{
+					Key:        "net.ipv4.conf.all.rp_filter",
+					Value:      "0",
+					Runtime:    boolPtr(true),
+					Persistent: true,
+					Optional:   true,
+				},
+			},
+			sysctlResource{
+				Name: "sam-rp-filter-default",
+				Spec: api.SysctlSpec{
+					Key:        "net.ipv4.conf.default.rp_filter",
+					Value:      "0",
+					Runtime:    boolPtr(true),
+					Persistent: true,
+					Optional:   true,
+				},
+			},
+		)
+	}
+	for _, iface := range samCaptureInterfaceNames(router) {
+		out = append(out, sysctlResource{
+			Name: "sam-rp-filter-" + safeResourceName(iface),
+			Spec: api.SysctlSpec{
+				Key:      "net.ipv4.conf." + iface + ".rp_filter",
+				Value:    "0",
+				Runtime:  boolPtr(true),
+				Optional: true,
+			},
+		})
+	}
 	for _, tunnel := range ipv4TunnelInterfaceNames(router) {
 		out = append(out, sysctlResource{
 			Name: "rp-filter-" + safeResourceName(tunnel),
@@ -393,10 +428,69 @@ func derivedInterfaceSysctls(router *api.Router) []sysctlResource {
 	return out
 }
 
+func hasMobilityPool(router *api.Router) bool {
+	if router == nil {
+		return false
+	}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion == api.MobilityAPIVersion && res.Kind == "MobilityPool" {
+			return true
+		}
+	}
+	return false
+}
+
+func samCaptureInterfaceNames(router *api.Router) []string {
+	if router == nil {
+		return nil
+	}
+	aliases := sam.CaptureInterfaceAliases(router)
+	names := map[string]bool{}
+	for _, res := range router.Spec.Resources {
+		switch {
+		case res.APIVersion == api.HybridAPIVersion && res.Kind == "RemoteAddressClaim":
+			spec, err := res.RemoteAddressClaimSpec()
+			if err != nil {
+				continue
+			}
+			if iface := sam.ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), aliases); iface != "" {
+				names[iface] = true
+			}
+		case res.APIVersion == api.MobilityAPIVersion && res.Kind == "MobilityPool":
+			spec, err := res.MobilityPoolSpec()
+			if err != nil {
+				continue
+			}
+			for _, profile := range spec.Profiles.CloudCaptures {
+				if iface := sam.ResolveCaptureInterface(strings.TrimSpace(profile.Capture.Interface), aliases); iface != "" {
+					names[iface] = true
+				}
+			}
+			for _, member := range spec.Members {
+				if iface := sam.ResolveCaptureInterface(strings.TrimSpace(member.Capture.Interface), aliases); iface != "" {
+					names[iface] = true
+				}
+			}
+		}
+	}
+	return sortedKeys(names)
+}
+
 func ipv4TunnelInterfaceNames(router *api.Router) []string {
 	names := map[string]bool{}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
+		case "TunnelInterface":
+			spec, err := res.TunnelInterfaceSpec()
+			if err != nil {
+				continue
+			}
+			mode := strings.TrimSpace(spec.Mode)
+			if mode == "ipip" || mode == "gre" || mode == "fou" || mode == "gue" {
+				if res.Metadata.Name != "" {
+					names[res.Metadata.Name] = true
+				}
+			}
 		case "DSLiteTunnel":
 			spec, err := res.DSLiteTunnelSpec()
 			if err != nil {
