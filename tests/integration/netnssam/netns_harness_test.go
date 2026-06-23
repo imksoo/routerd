@@ -76,6 +76,16 @@ type cmdError struct {
 	Err     error
 }
 
+type netnsProviderState struct {
+	Assignments []netnsProviderAssignment `json:"assignments,omitempty"`
+}
+
+type netnsProviderAssignment struct {
+	NodeRef string `json:"nodeRef"`
+	NICRef  string `json:"nicRef"`
+	Address string `json:"address"`
+}
+
 func (e cmdError) Error() string {
 	return fmt.Sprintf("%s: %v\n%s", e.Command, e.Err, e.Output)
 }
@@ -629,25 +639,12 @@ func (l *lab) reconcileFabricRoutes() {
 	if l.ctx.Err() != nil {
 		return
 	}
-	captureHolders := map[string]node{}
-	for _, n := range l.leafNodes() {
-		out, err := l.netnsOutput(n.Name, "ip", "-o", "-4", "addr", "show", "dev", "eth1")
-		if err != nil {
-			continue
-		}
-		for _, address := range parseIPv4HostAddresses(out) {
-			if address == ipOnly(n.SiteCIDR)+"/32" {
-				continue
-			}
-			l.removeCaptureKernelRoutes(n.Name, address)
-			captureHolders[address] = n
-		}
-	}
+	captureHolders := l.providerCaptureHolders()
 	clientOwners := l.clientAddressOwners()
 	desired := map[string]string{}
 	for address, ownerSite := range clientOwners {
-		holder, captured := captureHolders[address]
 		for _, site := range l.leafSites() {
+			holder, captured := captureHolders[site+"|"+address]
 			via := l.fabricClientNextHop(site, address, ownerSite, holder, captured)
 			if via == "" {
 				continue
@@ -701,6 +698,61 @@ func (l *lab) reconcileFabricRoutes() {
 	}
 }
 
+func (l *lab) providerStatePath() string {
+	return filepath.Join(l.workDir, "netns-provider-state.json")
+}
+
+func (l *lab) providerCaptureHolders() map[string]node {
+	holders := map[string]node{}
+	state, err := readNetNSProviderState(l.providerStatePath())
+	if err != nil {
+		if !os.IsNotExist(err) && l.ctx.Err() == nil {
+			l.t.Logf("read netns provider state: %v", err)
+		}
+		return holders
+	}
+	for _, assignment := range state.Assignments {
+		if strings.TrimSpace(assignment.NICRef) != "" && strings.TrimSpace(assignment.NICRef) != "eth1" {
+			continue
+		}
+		n, ok := l.nodeByName(strings.TrimSpace(assignment.NodeRef))
+		if !ok || n.Role != "leaf" {
+			continue
+		}
+		address := canonicalHostAddress(assignment.Address)
+		if address == "" || address == ipOnly(n.SiteCIDR)+"/32" {
+			continue
+		}
+		holders[n.Site+"|"+address] = n
+	}
+	return holders
+}
+
+func readNetNSProviderState(path string) (netnsProviderState, error) {
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return netnsProviderState{}, err
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_SH); err != nil {
+		return netnsProviderState{}, err
+	}
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return netnsProviderState{}, err
+	}
+	if len(data) == 0 {
+		return netnsProviderState{}, nil
+	}
+	var state netnsProviderState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return netnsProviderState{}, err
+	}
+	return state, nil
+}
+
 func (l *lab) clientAddressOwners() map[string]string {
 	owners := map[string]string{}
 	for _, n := range l.clientNodes() {
@@ -726,6 +778,9 @@ func (l *lab) fabricClientNextHop(site, address, ownerSite string, holder node, 
 	if site == ownerSite {
 		return ""
 	}
+	if captured && holder.Site == site && l.leafHasPrimary(holder) && l.leafHasHostRoute(holder, address) {
+		return ipOnly(holder.SiteCIDR)
+	}
 	for _, candidate := range l.leafNodes() {
 		if candidate.Site != site {
 			continue
@@ -736,9 +791,6 @@ func (l *lab) fabricClientNextHop(site, address, ownerSite string, holder node, 
 		if l.leafHasHostRoute(candidate, address) {
 			return ipOnly(candidate.SiteCIDR)
 		}
-	}
-	if captured && holder.Site == site && l.leafHasPrimary(holder) && l.leafHasHostRoute(holder, address) {
-		return ipOnly(holder.SiteCIDR)
 	}
 	return ""
 }
@@ -1206,21 +1258,24 @@ func (l *lab) AssertAnyCapturesPresent(timeout time.Duration) {
 }
 
 func (l *lab) captureAddresses(nodeName string) []string {
-	n, ok := l.nodeByName(nodeName)
-	if !ok {
-		return nil
-	}
-	out, err := l.netnsOutput(nodeName, "ip", "-o", "-4", "addr", "show", "dev", "eth1")
+	state, err := readNetNSProviderState(l.providerStatePath())
 	if err != nil {
 		return nil
 	}
+	seen := map[string]bool{}
 	var captures []string
-	for _, address := range parseIPv4HostAddresses(out) {
-		if address == ipOnly(n.SiteCIDR)+"/32" {
+	for _, assignment := range state.Assignments {
+		if strings.TrimSpace(assignment.NodeRef) != nodeName {
 			continue
 		}
+		address := canonicalHostAddress(assignment.Address)
+		if address == "" || seen[address] {
+			continue
+		}
+		seen[address] = true
 		captures = append(captures, address)
 	}
+	sort.Strings(captures)
 	return captures
 }
 
@@ -1575,6 +1630,20 @@ func ipOnly(cidr string) string {
 	return strings.SplitN(cidr, "/", 2)[0]
 }
 
+func canonicalHostAddress(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if ip, _, err := net.ParseCIDR(raw); err == nil {
+		return ip.String() + "/32"
+	}
+	if ip := net.ParseIP(raw); ip != nil {
+		return ip.String() + "/32"
+	}
+	return raw
+}
+
 func cidrWithIP(ip, cidr string) string {
 	if _, ipnet, err := net.ParseCIDR(cidr); err == nil {
 		ones, _ := ipnet.Mask.Size()
@@ -1844,6 +1913,9 @@ func (l *lab) renderRouterConfig(self node) string {
       spec:
         executable: %s
         timeout: 15s
+        env:
+          ROUTERD_NETNS_PROVIDER_STATE: %s
+          ROUTERD_NETNS_SELF_NODE: %s
         capabilities: [execute.providerAction]
 
     - apiVersion: plugin.routerd.net/v1alpha1
@@ -1856,6 +1928,8 @@ func (l *lab) renderRouterConfig(self node) string {
           ROUTERD_NETNS_SITE: %s
           ROUTERD_NETNS_SELF_IP: %s
           ROUTERD_NETNS_CLIENT_IPS: %s
+          ROUTERD_NETNS_PROVIDER_STATE: %s
+          ROUTERD_NETNS_SELF_NODE: %s
         capabilities: [observe.providerPrivateIPs]
 
     - apiVersion: hybrid.routerd.net/v1alpha1
@@ -1883,7 +1957,7 @@ func (l *lab) renderRouterConfig(self node) string {
         ipOwnershipPolicy: { type: centralized, autoFailover: true }
         profiles:
           cloudCaptures:
-`, filepath.Join(l.binDir, "netns-provider-executor"), filepath.Join(l.binDir, "netns-provider-inventory"), self.Site, self.SiteCIDR, l.siteClientEnv(self.Site))
+`, filepath.Join(l.binDir, "netns-provider-executor"), l.providerStatePath(), self.Name, filepath.Join(l.binDir, "netns-provider-inventory"), self.Site, self.SiteCIDR, l.siteClientEnv(self.Site), l.providerStatePath(), self.Name)
 		for _, leaf := range l.leafNodes() {
 			fmt.Fprintf(&b, "            %s-self:\n", leaf.Name)
 			fmt.Fprintf(&b, "              capture:\n")

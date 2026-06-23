@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 // Command netns-provider-inventory is a local integration-test implementation
-// of observe.providerPrivateIPs. It reports the current namespace's configured
-// router interface and a static list of same-site client addresses supplied by
-// the netns integration harness.
+// of observe.providerPrivateIPs. It reports VM private IPs from harness env and
+// provider-side capture assignments from ROUTERD_NETNS_PROVIDER_STATE when set.
 package main
 
 import (
@@ -79,7 +78,20 @@ const (
 	resultKind       = "ObservePrivateIPsResult"
 	statusSucceeded  = "succeeded"
 	statusFailed     = "failed"
+
+	envProviderState = "ROUTERD_NETNS_PROVIDER_STATE"
+	envSelfNode      = "ROUTERD_NETNS_SELF_NODE"
 )
+
+type providerState struct {
+	Assignments []providerAssignment `json:"assignments,omitempty"`
+}
+
+type providerAssignment struct {
+	NodeRef string `json:"nodeRef"`
+	NICRef  string `json:"nicRef"`
+	Address string `json:"address"`
+}
 
 func main() {
 	if err := run(os.Stdin, os.Stdout); err != nil {
@@ -115,15 +127,17 @@ func build(spec observeSpec) observeResult {
 	}
 	selfIP := canonicalHost(os.Getenv("ROUTERD_NETNS_SELF_IP"))
 	subnet := firstNonEmpty(spec.SubnetRef, os.Getenv("ROUTERD_NETNS_SITE"))
+	selfNode := firstNonEmpty(spec.SelfNode, os.Getenv(envSelfNode))
+	selfNIC := firstNonEmpty(spec.SelfNICRef, spec.Target["interface"], spec.Target["nicRef"], "eth1")
 	forwarding := true
 	res.Status.Status = statusSucceeded
 	res.Status.Self = &privateIPSelf{
-		NICRef:            firstNonEmpty(spec.SelfNICRef, spec.Target["interface"], "eth1"),
+		NICRef:            selfNIC,
 		SubnetRef:         subnet,
-		ResourceRef:       spec.SelfNode,
+		ResourceRef:       selfNode,
 		ResourceType:      "router-nic",
 		PrivateIPs:        nonEmptySlice(selfIP),
-		CapturedAddresses: capturedAddresses(),
+		CapturedAddresses: capturedAddresses(selfNode, selfNIC),
 		ForwardingEnabled: &forwarding,
 	}
 	for _, item := range strings.Split(os.Getenv("ROUTERD_NETNS_CLIENT_IPS"), ",") {
@@ -154,7 +168,10 @@ func build(spec observeSpec) observeResult {
 	return res
 }
 
-func capturedAddresses() []string {
+func capturedAddresses(selfNode, selfNIC string) []string {
+	if statePath := strings.TrimSpace(os.Getenv(envProviderState)); statePath != "" {
+		return capturedAddressesFromState(statePath, selfNode, selfNIC)
+	}
 	raw, err := net.InterfaceAddrs()
 	if err != nil {
 		return nil
@@ -164,6 +181,30 @@ func capturedAddresses() []string {
 		prefix := canonicalHost(addr.String())
 		if prefix != "" && strings.HasSuffix(prefix, "/32") {
 			out = append(out, prefix)
+		}
+	}
+	return out
+}
+
+func capturedAddressesFromState(path, selfNode, selfNIC string) []string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var state providerState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil
+	}
+	var out []string
+	for _, assignment := range state.Assignments {
+		if strings.TrimSpace(assignment.NodeRef) != selfNode {
+			continue
+		}
+		if nic := strings.TrimSpace(assignment.NICRef); nic != "" && selfNIC != "" && nic != selfNIC {
+			continue
+		}
+		if address := canonicalHost(assignment.Address); address != "" {
+			out = append(out, address)
 		}
 	}
 	return out
