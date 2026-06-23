@@ -1336,6 +1336,8 @@ func (r *Runner) Start(ctx context.Context) error {
 	var mobilityShard mobilitycontroller.ShardController
 	if rawStore, ok := r.Store.(mobilityDataStore); ok {
 		mobilityData := mobilityStore{evented: store, data: rawStore}
+		ipv4Static.ListActions = rawStore.ListActions
+		samController.ListActions = rawStore.ListActions
 		peerGroupSync := r.Opts.PeerGroupSyncClient
 		if peerGroupSync == nil {
 			peerGroupSync = mobilitycontroller.NewPeerGroupSyncClient(rawStore)
@@ -2772,6 +2774,7 @@ type IPv4StaticAddressController struct {
 	AddressPresent func(context.Context, string, string) bool
 	DevicePresent  func(context.Context, string) bool
 	AddressList    func(context.Context, string) ([]string, error)
+	ListActions    func(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)
 }
 
 type DaemonStatusController struct {
@@ -3291,6 +3294,7 @@ func (c IPv4StaticAddressController) cleanupStaleMobilityProviderOSAddresses(ctx
 				keepCIDRs[normalized] = true
 			}
 		}
+		actionAssignedHosts := c.recentlyAssignedHosts(resource.Metadata.Name, prefix.Masked())
 		current, err := c.listIPv4InterfaceAddresses(ctx, ifname)
 		if err != nil {
 			return err
@@ -3305,7 +3309,7 @@ func (c IPv4StaticAddressController) cleanupStaleMobilityProviderOSAddresses(ctx
 				continue
 			}
 			host := strings.TrimSuffix(normalized, "/32")
-			if privateHosts[host] || keepCIDRs[strings.TrimSpace(address)] || keepCIDRs[normalized] && strings.TrimSpace(address) == normalized {
+			if privateHosts[host] || actionAssignedHosts[host] || keepCIDRs[strings.TrimSpace(address)] || keepCIDRs[normalized] && strings.TrimSpace(address) == normalized {
 				continue
 			}
 			name, args := ipv4StaticAddressDeleteCommand(platform.CurrentOS(), ifname, address)
@@ -3323,6 +3327,24 @@ func (c IPv4StaticAddressController) cleanupStaleMobilityProviderOSAddresses(ctx
 		}
 	}
 	return nil
+}
+
+func (c IPv4StaticAddressController) recentlyAssignedHosts(poolName string, poolPrefix netip.Prefix) map[string]bool {
+	if c.ListActions == nil {
+		return nil
+	}
+	actions, err := c.ListActions(routerstate.ActionExecutionFilter{})
+	if err != nil {
+		return nil
+	}
+	all := latestAssignedAddresses(actions)
+	hosts := map[string]bool{}
+	for addr := range all {
+		if normalized, ok := normalizeIPv4HostPrefixInPool(addr, poolPrefix); ok {
+			hosts[strings.TrimSuffix(normalized, "/32")] = true
+		}
+	}
+	return hosts
 }
 
 func (c IPv4StaticAddressController) listIPv4InterfaceAddresses(ctx context.Context, ifname string) ([]string, error) {
