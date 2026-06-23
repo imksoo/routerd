@@ -137,6 +137,10 @@
                 "type": "string"
               },
               "type": "array"
+            },
+            "samHandoffLeaseTTL": {
+              "description": "SAMHandoffLeaseTTL keeps a removed local SAM capture briefly during\nprovider-secondary BGP handoff. It defaults to 30s and fails open.",
+              "type": "string"
             }
           },
           "type": "object"

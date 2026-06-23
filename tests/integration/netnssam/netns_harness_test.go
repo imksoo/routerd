@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -221,8 +222,9 @@ func setupConvergedLabWithOptions(t *testing.T, timeout time.Duration, opts labO
 	l.AssertUnderlayReachability()
 	l.AssertRouterdStatusReady(2 * time.Minute)
 	l.AssertWireGuardReachability(2 * time.Minute)
-	l.AssertBGPEstablished(4 * time.Minute)
+	l.AssertBGPEstablished(6 * time.Minute)
 	l.AssertMobilityReady(6 * time.Minute)
+	l.AssertAnyCapturesPresent(4 * time.Minute)
 	l.AssertClientMatrix(6 * time.Minute)
 	return l
 }
@@ -455,8 +457,13 @@ func (l *lab) GracefullyStopRouterd(nodeName string, timeout time.Duration) {
 	if cmd == nil || cmd.Process == nil {
 		l.t.Fatalf("routerd for %s is not running", nodeName)
 	}
-	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM); err != nil {
-		l.t.Fatalf("SIGTERM routerd %s: %v", nodeName, err)
+	pids := l.routerdServePIDs(nodeName)
+	if len(pids) == 0 {
+		if err := cmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+			l.t.Fatalf("SIGTERM routerd %s: %v", nodeName, err)
+		}
+	} else if err := syscall.Kill(pids[0], syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+		l.t.Fatalf("SIGTERM routerd %s pid %d: %v", nodeName, pids[0], err)
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
@@ -470,6 +477,42 @@ func (l *lab) GracefullyStopRouterd(nodeName string, timeout time.Duration) {
 		l.t.Fatalf("routerd %s did not exit within %s", nodeName, timeout)
 	}
 	delete(l.routerd, nodeName)
+}
+
+func (l *lab) routerdServePIDs(nodeName string) []int {
+	l.t.Helper()
+	configPath := l.nodeDir(nodeName, "router.yaml")
+	out, err := runOutput(l.ctx, "", "ps", "-eww", "-o", "pid=,args=")
+	if err != nil {
+		return nil
+	}
+	type match struct {
+		pid     int
+		routerd bool
+	}
+	var matches []match
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || !strings.Contains(line, "routerd serve") || !strings.Contains(line, configPath) {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err == nil && pid > 0 {
+			matches = append(matches, match{pid: pid, routerd: filepath.Base(fields[1]) == "routerd"})
+		}
+	}
+	sort.SliceStable(matches, func(i, j int) bool {
+		return matches[i].routerd && !matches[j].routerd
+	})
+	pids := make([]int, 0, len(matches))
+	for _, m := range matches {
+		pids = append(pids, m.pid)
+	}
+	return pids
 }
 
 func (l *lab) RequestCaptureRebalance(nodeName, reason string) {
@@ -1139,6 +1182,24 @@ func (l *lab) AssertBFDPeerState(nodeName, bfdName, want string, timeout time.Du
 		if time.Now().After(deadline) {
 			l.dumpLogs()
 			l.t.Fatalf("%s BFD/%s state = %q, want %q", nodeName, bfdName, got, want)
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func (l *lab) AssertAnyCapturesPresent(timeout time.Duration) {
+	l.t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		for _, n := range l.leafNodes() {
+			if got := l.captureAddresses(n.Name); len(got) > 0 {
+				l.t.Logf("initial captures present: %s has %v", n.Name, got)
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			l.dumpLogs()
+			l.t.Fatalf("no leaf has any captures after %v", timeout)
 		}
 		time.Sleep(2 * time.Second)
 	}

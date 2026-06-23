@@ -50,6 +50,17 @@ func TestLatestAssignedAddressesFailedAssignNotProtected(t *testing.T) {
 	}
 }
 
+func TestLatestAssignedAddressesPendingAssignProtects(t *testing.T) {
+	actions := []routerstate.ActionExecutionRecord{
+		{ID: 1, ProviderRef: "p1", Action: "assign-secondary-ip", Status: routerstate.ActionSucceeded, TargetJSON: actionTargetJSON("10.0.0.1")},
+		{ID: 2, ProviderRef: "p1", Action: "assign-secondary-ip", Status: routerstate.ActionPending, TargetJSON: actionTargetJSON("10.0.0.1")},
+	}
+	got := latestAssignedAddresses(actions)
+	if !got["10.0.0.1"] {
+		t.Fatalf("pending assign (pathsig change) must still protect the address")
+	}
+}
+
 func TestLatestAssignedAddressesDifferentProviderIndependent(t *testing.T) {
 	actions := []routerstate.ActionExecutionRecord{
 		{ID: 1, ProviderRef: "p1", Action: "assign-secondary-ip", Status: routerstate.ActionSucceeded, TargetJSON: actionTargetJSON("10.0.0.1")},
