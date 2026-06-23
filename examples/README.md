@@ -32,7 +32,7 @@ routerctl plan -f examples/<name>.yaml --replace
 | `tailscale-exit-subnet.yaml` | You want to advertise this router as a Tailscale exit node or subnet router. |
 | `wireguard-hub-spoke.yaml` | You want a hub router with multiple WireGuard spokes and routed spoke prefixes. |
 | `vrf-lab.yaml` | You want to separate guest, staff, and IoT interfaces with Linux VRF route tables. |
-| `bgp-bfd.yaml` | You want BGP peers with FRR BFD session observation and tuned watcher limits. |
+| `bgp-bfd.yaml` | You want BGP peers with GoBGP native BFD and tuned watcher limits. |
 | `dualstack-bgp.yaml` | You want one BGP instance with mixed IPv4 and IPv6 unicast peers and policies. |
 | `k8s-cluster-routes.yaml` | You want static Pod CIDR and Service CIDR routes toward Kubernetes worker nodes. |
 | `k8s-api-vip-dualstack.yaml` | You want a Kubernetes API VIP pattern with IPv4 VRRP, IPv6 VRRPv3, DNS A/AAAA, and dual-stack BGP peers. |
