@@ -31,12 +31,15 @@ Each site has a small fabric namespace between clients and leaf routers:
 
 The fabric namespace uses separate client-side and leaf-side L2 bridges. This
 keeps client and leaf ARP domains apart while still letting the leaf sites reuse
-`10.77.60.0/24` in independent namespaces. The harness watches secondary `/32`
-addresses that the netns provider executor assigns to leaf `eth1` interfaces and
-programs the matching fabric route as `<capture>/32 via <leaf-primary>`. When
-the secondary address is removed, the harness removes that fabric route. Router
-namespaces also attach to a transport bridge used only as the local replacement
-for cloud underlay reachability between WireGuard endpoints.
+`10.77.60.0/24` in independent namespaces. Provider captures are modeled in a
+shared harness state file, representing the cloud/fabric side outside the VM.
+The netns provider executor updates that state file, the provider inventory
+plugin reports captures from it, and the fabric route reconciler programs
+`<capture>/32 via <leaf-primary>` from it. Router namespaces may still configure
+the same `/32` inside the VM via `configureOSAddress`, but that is intentionally
+separate from provider ownership. Router namespaces also attach to a transport
+bridge used only as the local replacement for cloud underlay reachability between
+WireGuard endpoints.
 
 The smoke test builds the binaries and the netns provider executor, creates the
 namespaces, starts real `routerd-bgp` and `routerd` processes in the RR/leaf
