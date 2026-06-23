@@ -49,5 +49,6 @@ convergence.
 
 The fault tests reuse the same setup independently. They cover leaf process
 failure, no-preempt rejoin, forced capture rebalance, graceful mobility drain
-through routerd graceful stop, and BFD-assisted liveness detection. The BFD test
-requires FRR's `vtysh` and `bfdd` in addition to the base netns tools.
+through routerd graceful stop, and BFD-assisted liveness detection. The BFD-only
+fault test uses GoBGP native BFD and requires `iptables` in addition to the base
+netns tools.

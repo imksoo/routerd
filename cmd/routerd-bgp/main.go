@@ -20,9 +20,10 @@ import (
 	"strings"
 	"syscall"
 
-	gobgpapi "github.com/osrg/gobgp/v3/api"
-	gobgpserver "github.com/osrg/gobgp/v3/pkg/server"
-	"google.golang.org/protobuf/types/known/anypb"
+	"github.com/google/uuid"
+	gobgpapi "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/apiutil"
+	gobgpserver "github.com/osrg/gobgp/v4/pkg/server"
 
 	"github.com/imksoo/routerd/pkg/bgpdaemon"
 	"github.com/imksoo/routerd/pkg/version"
@@ -80,10 +81,11 @@ func run(args []string) error {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	server := gobgpserver.NewBgpServer(gobgpserver.GrpcListenAddress("unix://" + *socketPath))
 	go server.Serve()
-	if err := restoreApplied(context.Background(), server, *statePath, logger); err != nil {
+	paths := directPathServer{server: server}
+	if err := restoreApplied(context.Background(), server, paths, *statePath, logger); err != nil {
 		return err
 	}
-	control, err := serveControlSocket(*controlSocketPath, *statePath, server)
+	control, err := serveControlSocket(*controlSocketPath, *statePath, paths)
 	if err != nil {
 		return err
 	}
@@ -110,6 +112,56 @@ type policyPathServer interface {
 	SetPolicies(context.Context, *gobgpapi.SetPoliciesRequest) error
 	SetPolicyAssignment(context.Context, *gobgpapi.SetPolicyAssignmentRequest) error
 	ResetPeer(context.Context, *gobgpapi.ResetPeerRequest) error
+}
+
+type directPathServer struct {
+	server *gobgpserver.BgpServer
+}
+
+func (s directPathServer) AddPath(_ context.Context, req *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error) {
+	nlri, err := apiutil.GetNativeNlri(req.GetPath())
+	if err != nil {
+		return nil, err
+	}
+	attrs, err := apiutil.GetNativePathAttributes(req.GetPath())
+	if err != nil {
+		return nil, err
+	}
+	resp, err := s.server.AddPath(apiutil.AddPathRequest{Paths: []*apiutil.Path{{
+		Family: apiutil.ToFamily(req.GetPath().GetFamily()),
+		Nlri:   nlri,
+		Attrs:  attrs,
+	}}})
+	if err != nil {
+		return nil, err
+	}
+	if len(resp) == 0 {
+		return nil, fmt.Errorf("gobgp AddPath returned no response")
+	}
+	if resp[0].Error != nil {
+		return nil, resp[0].Error
+	}
+	return &gobgpapi.AddPathResponse{Uuid: resp[0].UUID[:]}, nil
+}
+
+func (s directPathServer) DeletePath(_ context.Context, req *gobgpapi.DeletePathRequest) error {
+	id, err := uuid.FromBytes(req.GetUuid())
+	if err != nil {
+		return err
+	}
+	return s.server.DeletePath(apiutil.DeletePathRequest{UUIDs: []uuid.UUID{id}})
+}
+
+func (s directPathServer) SetPolicies(ctx context.Context, req *gobgpapi.SetPoliciesRequest) error {
+	return s.server.SetPolicies(ctx, req)
+}
+
+func (s directPathServer) SetPolicyAssignment(ctx context.Context, req *gobgpapi.SetPolicyAssignmentRequest) error {
+	return s.server.SetPolicyAssignment(ctx, req)
+}
+
+func (s directPathServer) ResetPeer(ctx context.Context, req *gobgpapi.ResetPeerRequest) error {
+	return s.server.ResetPeer(ctx, req)
 }
 
 func serveControlSocket(socketPath, statePath string, paths pathServer) (*http.Server, error) {
@@ -211,7 +263,7 @@ func writeJSON(w http.ResponseWriter, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
-func restoreApplied(ctx context.Context, server *gobgpserver.BgpServer, statePath string, logger *slog.Logger) error {
+func restoreApplied(ctx context.Context, server *gobgpserver.BgpServer, paths policyPathServer, statePath string, logger *slog.Logger) error {
 	applied, ok, err := bgpdaemon.ReadApplied(statePath)
 	if err != nil {
 		return fmt.Errorf("read applied BGP state: %w", err)
@@ -225,7 +277,7 @@ func restoreApplied(ctx context.Context, server *gobgpserver.BgpServer, statePat
 	if err := server.StartBgp(ctx, &gobgpapi.StartBgpRequest{Global: appliedGlobal(applied.Global)}); err != nil {
 		return fmt.Errorf("restore BGP global: %w", err)
 	}
-	if err := applyAppliedPolicies(ctx, server, applied); err != nil {
+	if err := applyAppliedPolicies(ctx, paths, applied); err != nil {
 		return fmt.Errorf("restore BGP policy: %w", err)
 	}
 	for _, peer := range sortedPeers(applied.Peers) {
@@ -233,10 +285,10 @@ func restoreApplied(ctx context.Context, server *gobgpserver.BgpServer, statePat
 			return fmt.Errorf("restore BGP peer %s: %w", peer.Address, err)
 		}
 	}
-	if err := restoreAppliedPaths(ctx, server, &applied); err != nil {
+	if err := restoreAppliedPaths(ctx, paths, &applied); err != nil {
 		return err
 	}
-	if err := refreshDynamicPathPolicies(ctx, server, applied); err != nil {
+	if err := refreshDynamicPathPolicies(ctx, paths, applied); err != nil {
 		return fmt.Errorf("restore BGP dynamic policy refresh: %w", err)
 	}
 	if err := bgpdaemon.WriteApplied(statePath, applied); err != nil {
@@ -274,7 +326,7 @@ func restoreAppliedPaths(ctx context.Context, server pathServer, applied *bgpdae
 		if err != nil {
 			return fmt.Errorf("restore BGP path %s/%s: %w", appliedPath.Source, appliedPath.Prefix, err)
 		}
-		resp, err := server.AddPath(ctx, &gobgpapi.AddPathRequest{TableType: gobgpapi.TableType_GLOBAL, Path: path})
+		resp, err := server.AddPath(ctx, &gobgpapi.AddPathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Path: path})
 		if err != nil {
 			return fmt.Errorf("restore BGP path %s/%s: %w", appliedPath.Source, appliedPath.Prefix, err)
 		}
@@ -310,9 +362,9 @@ func appliedGlobal(global bgpdaemon.AppliedGlobal) *gobgpapi.Global {
 }
 
 func appliedPeer(peer bgpdaemon.AppliedPeer, global bgpdaemon.AppliedGlobal) *gobgpapi.Peer {
-	peerType := gobgpapi.PeerType_EXTERNAL
+	peerType := gobgpapi.PeerType_PEER_TYPE_EXTERNAL
 	if global.ASN != 0 && peer.ASN == global.ASN {
-		peerType = gobgpapi.PeerType_INTERNAL
+		peerType = gobgpapi.PeerType_PEER_TYPE_INTERNAL
 	}
 	out := &gobgpapi.Peer{
 		Conf: &gobgpapi.PeerConf{
@@ -344,8 +396,8 @@ func appliedPeer(peer bgpdaemon.AppliedPeer, global bgpdaemon.AppliedGlobal) *go
 	if len(appliedPolicyPrefixes(peer.ImportPolicy)) > 0 && strings.TrimSpace(peer.ImportPolicyName) != "" {
 		applyPolicy.ImportPolicy = &gobgpapi.PolicyAssignment{
 			Name:          strings.TrimSpace(peer.Address),
-			Direction:     gobgpapi.PolicyDirection_IMPORT,
-			DefaultAction: gobgpapi.RouteAction_REJECT,
+			Direction:     gobgpapi.PolicyDirection_POLICY_DIRECTION_IMPORT,
+			DefaultAction: gobgpapi.RouteAction_ROUTE_ACTION_REJECT,
 			Policies: []*gobgpapi.Policy{{
 				Name: strings.TrimSpace(peer.ImportPolicyName),
 			}},
@@ -354,8 +406,8 @@ func appliedPeer(peer bgpdaemon.AppliedPeer, global bgpdaemon.AppliedGlobal) *go
 	if len(appliedExportPolicyPrefixes(peer.ExportPolicy)) > 0 && strings.TrimSpace(peer.ExportPolicyName) != "" {
 		applyPolicy.ExportPolicy = &gobgpapi.PolicyAssignment{
 			Name:          strings.TrimSpace(peer.Address),
-			Direction:     gobgpapi.PolicyDirection_EXPORT,
-			DefaultAction: gobgpapi.RouteAction_REJECT,
+			Direction:     gobgpapi.PolicyDirection_POLICY_DIRECTION_EXPORT,
+			DefaultAction: gobgpapi.RouteAction_ROUTE_ACTION_REJECT,
 			Policies: []*gobgpapi.Policy{{
 				Name: strings.TrimSpace(peer.ExportPolicyName),
 			}},
@@ -392,8 +444,8 @@ func appliedPolicies(config bgpdaemon.AppliedConfig) (*gobgpapi.SetPoliciesReque
 	req := &gobgpapi.SetPoliciesRequest{}
 	assignment := &gobgpapi.PolicyAssignment{
 		Name:          "global",
-		Direction:     gobgpapi.PolicyDirection_IMPORT,
-		DefaultAction: gobgpapi.RouteAction_ACCEPT,
+		Direction:     gobgpapi.PolicyDirection_POLICY_DIRECTION_IMPORT,
+		DefaultAction: gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT,
 	}
 	globalImportName := "routerd-restore-import"
 	seenImportPolicies := map[string]bool{}
@@ -405,7 +457,7 @@ func appliedPolicies(config bgpdaemon.AppliedConfig) (*gobgpapi.SetPoliciesReque
 	if len(appliedPolicyPrefixes(globalImportPolicy)) > 0 {
 		appendAppliedImportPolicy(req, globalImportName, globalImportName+"-prefixes", globalImportPolicy)
 		if len(peerImportPolicies) == 0 {
-			assignment.DefaultAction = gobgpapi.RouteAction_REJECT
+			assignment.DefaultAction = gobgpapi.RouteAction_ROUTE_ACTION_REJECT
 			assignment.Policies = append(assignment.Policies, &gobgpapi.Policy{Name: globalImportName})
 		}
 		seenImportPolicies[globalImportName] = true
@@ -424,7 +476,7 @@ func appliedPolicies(config bgpdaemon.AppliedConfig) (*gobgpapi.SetPoliciesReque
 		}
 		prefixSetName := policy.Name + "-prefixes"
 		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
-			DefinedType: gobgpapi.DefinedType_PREFIX,
+			DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_PREFIX,
 			Name:        prefixSetName,
 			Prefixes:    prefixes,
 		})
@@ -433,10 +485,10 @@ func appliedPolicies(config bgpdaemon.AppliedConfig) (*gobgpapi.SetPoliciesReque
 			Statements: []*gobgpapi.Statement{{
 				Name: appliedPolicyStatementName(policy.Name, "allow-export"),
 				Conditions: &gobgpapi.Conditions{PrefixSet: &gobgpapi.MatchSet{
-					Type: gobgpapi.MatchSet_ANY,
+					Type: gobgpapi.MatchSet_TYPE_ANY,
 					Name: prefixSetName,
 				}},
-				Actions: &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_ACCEPT},
+				Actions: &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT},
 			}},
 		})
 	}
@@ -449,7 +501,7 @@ func appendAppliedImportPolicy(req *gobgpapi.SetPoliciesRequest, policyName, pre
 		return
 	}
 	req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
-		DefinedType: gobgpapi.DefinedType_PREFIX,
+		DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_PREFIX,
 		Name:        strings.TrimSpace(prefixSetName),
 		Prefixes:    prefixes,
 	})
@@ -458,11 +510,11 @@ func appendAppliedImportPolicy(req *gobgpapi.SetPoliciesRequest, policyName, pre
 		Statements: []*gobgpapi.Statement{{
 			Name: appliedPolicyStatementName(policyName, "allow-import"),
 			Conditions: &gobgpapi.Conditions{PrefixSet: &gobgpapi.MatchSet{
-				Type: gobgpapi.MatchSet_ANY,
+				Type: gobgpapi.MatchSet_TYPE_ANY,
 				Name: strings.TrimSpace(prefixSetName),
 			}},
 			Actions: &gobgpapi.Actions{
-				RouteAction: gobgpapi.RouteAction_ACCEPT,
+				RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT,
 				Nexthop:     appliedNextHopAction(spec),
 			},
 		}},
@@ -673,7 +725,7 @@ func upsertDynamicPath(ctx context.Context, server pathServer, statePath string,
 			return applied, &applied.Paths[i], nil
 		}
 		if uuid, err := bgpdaemon.DecodeUUID(existing.UUID); err == nil && len(uuid) > 0 {
-			if err := server.DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_GLOBAL, Uuid: uuid}); err != nil {
+			if err := server.DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Uuid: uuid}); err != nil {
 				if !isMissingGoBGPPath(err) {
 					return bgpdaemon.AppliedConfig{}, nil, err
 				}
@@ -686,7 +738,7 @@ func upsertDynamicPath(ctx context.Context, server pathServer, statePath string,
 	if err != nil {
 		return bgpdaemon.AppliedConfig{}, nil, err
 	}
-	resp, err := server.AddPath(ctx, &gobgpapi.AddPathRequest{TableType: gobgpapi.TableType_GLOBAL, Path: reqPath})
+	resp, err := server.AddPath(ctx, &gobgpapi.AddPathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Path: reqPath})
 	if err != nil {
 		return bgpdaemon.AppliedConfig{}, nil, err
 	}
@@ -728,7 +780,7 @@ func deleteDynamicPath(ctx context.Context, server pathServer, statePath string,
 			continue
 		}
 		if uuid, err := bgpdaemon.DecodeUUID(existing.UUID); err == nil && len(uuid) > 0 {
-			if err := server.DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_GLOBAL, Uuid: uuid}); err != nil {
+			if err := server.DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Uuid: uuid}); err != nil {
 				if !isMissingGoBGPPath(err) {
 					return bgpdaemon.AppliedConfig{}, err
 				}
@@ -759,7 +811,7 @@ func refreshDynamicPathPolicies(ctx context.Context, server pathServer, applied 
 		if err := policyServer.ResetPeer(ctx, &gobgpapi.ResetPeerRequest{
 			Address:   address,
 			Soft:      true,
-			Direction: gobgpapi.ResetPeerRequest_OUT,
+			Direction: gobgpapi.ResetPeerRequest_DIRECTION_OUT,
 		}); err != nil {
 			return fmt.Errorf("soft reset export policy for peer %s: %w", address, err)
 		}
@@ -816,14 +868,8 @@ func pathFromAppliedPath(appliedPath bgpdaemon.AppliedPath) (*gobgpapi.Path, err
 		return nil, err
 	}
 	parsed = parsed.Masked()
-	nlri, err := anypb.New(&gobgpapi.IPAddressPrefix{Prefix: parsed.Addr().String(), PrefixLen: uint32(parsed.Bits())})
-	if err != nil {
-		return nil, err
-	}
-	origin, err := anypb.New(&gobgpapi.OriginAttribute{Origin: 0})
-	if err != nil {
-		return nil, err
-	}
+	nlri := prefixNLRI(parsed)
+	origin := originAttribute()
 	nextHop := "0.0.0.0"
 	if parsed.Addr().Is6() {
 		nextHop = "::"
@@ -831,37 +877,45 @@ func pathFromAppliedPath(appliedPath bgpdaemon.AppliedPath) (*gobgpapi.Path, err
 	if appliedPath.Attrs.NextHop != "" {
 		nextHop = appliedPath.Attrs.NextHop
 	}
-	nh, err := anypb.New(&gobgpapi.NextHopAttribute{NextHop: nextHop})
-	if err != nil {
-		return nil, err
-	}
-	attrs := []*anypb.Any{origin, nh}
+	attrs := []*gobgpapi.Attribute{origin, nextHopAttribute(nextHop)}
 	if appliedPath.Attrs.LocalPref > 0 {
-		localPref, err := anypb.New(&gobgpapi.LocalPrefAttribute{LocalPref: appliedPath.Attrs.LocalPref})
-		if err != nil {
-			return nil, err
-		}
-		attrs = append(attrs, localPref)
+		attrs = append(attrs, localPrefAttribute(appliedPath.Attrs.LocalPref))
 	}
 	if appliedPath.Attrs.MED > 0 {
-		med, err := anypb.New(&gobgpapi.MultiExitDiscAttribute{Med: appliedPath.Attrs.MED})
-		if err != nil {
-			return nil, err
-		}
-		attrs = append(attrs, med)
+		attrs = append(attrs, medAttribute(appliedPath.Attrs.MED))
 	}
 	communities, err := standardCommunities(appliedPath.Attrs.Communities)
 	if err != nil {
 		return nil, err
 	}
 	if len(communities) > 0 {
-		attr, err := anypb.New(&gobgpapi.CommunitiesAttribute{Communities: communities})
-		if err != nil {
-			return nil, err
-		}
-		attrs = append(attrs, attr)
+		attrs = append(attrs, communitiesAttribute(communities))
 	}
 	return &gobgpapi.Path{Family: familyForPrefix(parsed), Nlri: nlri, Pattrs: attrs}, nil
+}
+
+func prefixNLRI(prefix netip.Prefix) *gobgpapi.NLRI {
+	return &gobgpapi.NLRI{Nlri: &gobgpapi.NLRI_Prefix{Prefix: &gobgpapi.IPAddressPrefix{Prefix: prefix.Addr().String(), PrefixLen: uint32(prefix.Bits())}}}
+}
+
+func originAttribute() *gobgpapi.Attribute {
+	return &gobgpapi.Attribute{Attr: &gobgpapi.Attribute_Origin{Origin: &gobgpapi.OriginAttribute{Origin: 0}}}
+}
+
+func nextHopAttribute(nextHop string) *gobgpapi.Attribute {
+	return &gobgpapi.Attribute{Attr: &gobgpapi.Attribute_NextHop{NextHop: &gobgpapi.NextHopAttribute{NextHop: nextHop}}}
+}
+
+func localPrefAttribute(localPref uint32) *gobgpapi.Attribute {
+	return &gobgpapi.Attribute{Attr: &gobgpapi.Attribute_LocalPref{LocalPref: &gobgpapi.LocalPrefAttribute{LocalPref: localPref}}}
+}
+
+func medAttribute(med uint32) *gobgpapi.Attribute {
+	return &gobgpapi.Attribute{Attr: &gobgpapi.Attribute_MultiExitDisc{MultiExitDisc: &gobgpapi.MultiExitDiscAttribute{Med: med}}}
+}
+
+func communitiesAttribute(communities []uint32) *gobgpapi.Attribute {
+	return &gobgpapi.Attribute{Attr: &gobgpapi.Attribute_Communities{Communities: &gobgpapi.CommunitiesAttribute{Communities: communities}}}
 }
 
 func standardCommunities(values []string) ([]uint32, error) {

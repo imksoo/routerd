@@ -29,7 +29,7 @@ BGP advertisement**.
   install delivery routes via the overlay next hop into the FIB.
 - Address movement is expressed as **BGP withdraw / advertise and path
   preference changes**. Operators never hand-author leases or claims.
-- Failure detection is accelerated by **BFD** (FRR `bfdd`); when BFD is unstable,
+- Failure detection is accelerated by **BFD** (GoBGP native BFD); when BFD is unstable,
   BGP hold timers remain the non-destructive authority for route withdrawal.
 
 This is the decision in [ADR 0012](../adr/0012-bgp-address-mobility.md), which

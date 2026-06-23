@@ -595,7 +595,7 @@ func (e *Engine) observeBFD(res api.Resource, includePlan bool, rr *ResourceResu
 		rr.Observed["interface"] = spec.Interface
 	}
 	if includePlan {
-		rr.Plan = append(rr.Plan, "record BFD intent (embedded GoBGP backend does not support BFD yet)")
+		rr.Plan = append(rr.Plan, "record BFD intent for GoBGP native BFD")
 	}
 }
 

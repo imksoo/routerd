@@ -191,6 +191,46 @@ func TestBFDLivenessDetection(t *testing.T) {
 	l.AssertClientMatrix(8 * time.Minute)
 }
 
+func TestTwoNodeBGPBFDNetNS(t *testing.T) {
+	requireNetNS(t)
+	if _, err := exec.LookPath("iptables"); err != nil {
+		t.Skipf("iptables is required for BFD-only netns integration test: %v", err)
+	}
+	lockF, err := os.OpenFile("/run/lock/routerd-netnssam.lock", os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		t.Fatalf("open netns test lock: %v", err)
+	}
+	if err := syscall.Flock(int(lockF.Fd()), syscall.LOCK_EX); err != nil {
+		lockF.Close()
+		t.Fatalf("acquire netns test lock: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	l := newLab(t, ctx)
+	l.bfd = true
+	l.lockFile = lockF
+	t.Cleanup(func() {
+		cancel()
+		l.Cleanup()
+	})
+	l.BuildBinaries()
+	l.CreateTopology(twoNodeBGPBFDTopology())
+	l.StartRouterProcesses()
+	l.AssertUnderlayReachability()
+	l.AssertRouterdStatusReady(2 * time.Minute)
+	l.AssertWireGuardReachability(2 * time.Minute)
+	l.AssertBGPEstablished(4 * time.Minute)
+	l.AssertBFDPeerState("pve-leaf-a", bfdResourceName("pve-leaf-a", "pve-leaf-b"), "Up", 2*time.Minute)
+	l.AssertBFDPeerState("pve-leaf-b", bfdResourceName("pve-leaf-b", "pve-leaf-a"), "Up", 2*time.Minute)
+
+	l.dropBFDOnly("pve-leaf-b")
+	l.AssertBFDPeerState("pve-leaf-a", bfdResourceName("pve-leaf-a", "pve-leaf-b"), "Down", 2*time.Minute)
+	l.AssertBGPNotEstablished("pve-leaf-a", 2*time.Minute)
+
+	l.restoreBFDOnly("pve-leaf-b")
+	l.AssertBFDPeerState("pve-leaf-a", bfdResourceName("pve-leaf-a", "pve-leaf-b"), "Up", 3*time.Minute)
+	l.AssertBGPEstablished(4 * time.Minute)
+}
+
 func setupConvergedLab(t *testing.T, timeout time.Duration) *lab {
 	return setupConvergedLabWithOptions(t, timeout, labOptions{})
 }
@@ -198,13 +238,6 @@ func setupConvergedLab(t *testing.T, timeout time.Duration) *lab {
 func setupConvergedLabWithOptions(t *testing.T, timeout time.Duration, opts labOptions) *lab {
 	t.Helper()
 	requireNetNS(t)
-	if opts.EnableBFD {
-		for _, name := range []string{"vtysh", "bfdd"} {
-			if _, err := exec.LookPath(name); err != nil {
-				t.Skipf("%s is required for BFD netns integration test: %v", name, err)
-			}
-		}
-	}
 	lockF, err := os.OpenFile("/run/lock/routerd-netnssam.lock", os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		t.Fatalf("open netns test lock: %v", err)
@@ -302,6 +335,13 @@ func defaultTopology() []node {
 		{Name: "pve-leaf-b", Site: "pve-leaf", Role: "leaf", SiteCIDR: "10.77.60.35/24", Transport: "172.31.0.19/24", Router: true},
 		{Name: "pve-client-a", Site: "pve-leaf", Role: "client", SiteCIDR: "10.77.60.15/24"},
 		{Name: "pve-client-b", Site: "pve-leaf", Role: "client", SiteCIDR: "10.77.60.19/24"},
+	}
+}
+
+func twoNodeBGPBFDTopology() []node {
+	return []node{
+		{Name: "pve-leaf-a", Site: "pve-a", Role: "rr", SiteCIDR: "10.77.60.30/24", Transport: "172.31.0.18/24", Router: true},
+		{Name: "pve-leaf-b", Site: "pve-b", Role: "rr", SiteCIDR: "10.77.60.35/24", Transport: "172.31.0.19/24", Router: true},
 	}
 }
 
@@ -424,9 +464,6 @@ func (l *lab) StartRouterNode(nodeName string) {
 	l.procs = append(l.procs, bgp)
 	l.bgp[n.Name] = bgp
 	controllers := "link,sam-transport,tunnel,wireguard,ipv4-static-address,ipv4-route,hybrid-route,sam,mobility-discovery,mobility,mobility-shard,provider-action-execution,bgp"
-	if l.bfd {
-		controllers += ",bfd"
-	}
 	args := []string{
 		"serve",
 		"--config", l.nodeDir(n.Name, "router.yaml"),
@@ -930,6 +967,25 @@ func (l *lab) AssertBGPEstablished(timeout time.Duration) {
 	}
 }
 
+func (l *lab) AssertBGPNotEstablished(nodeName string, timeout time.Duration) {
+	l.t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		statusSocket := filepath.Join(l.nodeDir(nodeName, "run"), "status.sock")
+		out, err := l.netnsOutput(nodeName, filepath.Join(l.binDir, "routerctl"), "get", "BGPRouter/mobility-bgp", "--socket", statusSocket, "-o", "json")
+		if err == nil {
+			if established, ok := jsonNumberField([]byte(out), "establishedPeers"); ok && established == 0 {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			l.dumpLogs()
+			l.t.Fatalf("%s BGP remained established; last status=%s err=%v", nodeName, out, err)
+		}
+		time.Sleep(time.Second)
+	}
+}
+
 func (l *lab) AssertMobilityReady(timeout time.Duration) {
 	l.t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -1236,6 +1292,24 @@ func (l *lab) AssertBFDPeerState(nodeName, bfdName, want string, timeout time.Du
 			l.t.Fatalf("%s BFD/%s state = %q, want %q", nodeName, bfdName, got, want)
 		}
 		time.Sleep(2 * time.Second)
+	}
+}
+
+func (l *lab) dropBFDOnly(nodeName string) {
+	l.t.Helper()
+	l.netns(nodeName, "iptables", "-I", "INPUT", "1", "-p", "udp", "--dport", "3784", "-j", "DROP")
+	l.netns(nodeName, "iptables", "-I", "OUTPUT", "1", "-p", "udp", "--dport", "3784", "-j", "DROP")
+}
+
+func (l *lab) restoreBFDOnly(nodeName string) {
+	l.t.Helper()
+	for _, chain := range []string{"INPUT", "OUTPUT"} {
+		for {
+			err := l.netnsErr(nodeName, "iptables", "-D", chain, "-p", "udp", "--dport", "3784", "-j", "DROP")
+			if err != nil {
+				break
+			}
+		}
 	}
 }
 
