@@ -258,32 +258,10 @@ func actionJournalAssignedAddresses(store any) []string {
 	if err != nil {
 		return nil
 	}
-	type actionKey struct {
-		providerRef string
-		address     string
-	}
-	latest := map[actionKey]routerstate.ActionExecutionRecord{}
-	for _, a := range actions {
-		if a.Action != "assign-secondary-ip" && a.Action != "unassign-secondary-ip" {
-			continue
-		}
-		addr := actionTargetAddress(a.TargetJSON)
-		if addr == "" {
-			continue
-		}
-		key := actionKey{providerRef: a.ProviderRef, address: addr}
-		if prev, ok := latest[key]; !ok || a.ID > prev.ID {
-			latest[key] = a
-		}
-	}
-	var out []string
-	for _, a := range latest {
-		if a.Action != "assign-secondary-ip" || a.Status != routerstate.ActionSucceeded {
-			continue
-		}
-		if addr := actionTargetAddress(a.TargetJSON); addr != "" {
-			out = append(out, addr)
-		}
+	m := latestAssignedAddresses(actions)
+	out := make([]string, 0, len(m))
+	for addr := range m {
+		out = append(out, addr)
 	}
 	sort.Strings(out)
 	return out

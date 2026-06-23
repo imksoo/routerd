@@ -357,34 +357,7 @@ func (c SAMController) recentlyAssignedCaptureAddresses() map[string]bool {
 	if err != nil {
 		return nil
 	}
-	type actionKey struct {
-		providerRef string
-		address     string
-	}
-	latest := map[actionKey]routerstate.ActionExecutionRecord{}
-	for _, a := range actions {
-		if a.Action != "assign-secondary-ip" && a.Action != "unassign-secondary-ip" {
-			continue
-		}
-		addr := actionTargetAddress(a.TargetJSON)
-		if addr == "" {
-			continue
-		}
-		key := actionKey{providerRef: a.ProviderRef, address: addr}
-		if prev, ok := latest[key]; !ok || a.ID > prev.ID {
-			latest[key] = a
-		}
-	}
-	out := map[string]bool{}
-	for _, a := range latest {
-		if a.Action != "assign-secondary-ip" || a.Status != routerstate.ActionSucceeded {
-			continue
-		}
-		if addr := actionTargetAddress(a.TargetJSON); addr != "" {
-			out[strings.TrimSuffix(strings.TrimSpace(addr), "/32")] = true
-		}
-	}
-	return out
+	return latestAssignedAddresses(actions)
 }
 
 func (c SAMController) cleanupChangedCaptures(ctx context.Context, statuses []routerstate.ObjectStatus, actions []sam.CaptureAction) error {
