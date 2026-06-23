@@ -30,7 +30,13 @@ func latestAssignedAddresses(actions []routerstate.ActionExecutionRecord) map[st
 	}
 	out := map[string]bool{}
 	for _, a := range latest {
-		if a.Action != "assign-secondary-ip" || a.Status != routerstate.ActionSucceeded {
+		if a.Action != "assign-secondary-ip" {
+			continue
+		}
+		switch a.Status {
+		case routerstate.ActionSucceeded, routerstate.ActionPending,
+			routerstate.ActionApproved, routerstate.ActionRunning:
+		default:
 			continue
 		}
 		if addr := actionTargetAddress(a.TargetJSON); addr != "" {
