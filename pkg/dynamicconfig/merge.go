@@ -3,14 +3,15 @@
 package dynamicconfig
 
 import (
+	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
-	"gopkg.in/yaml.v3"
 )
 
 type EffectiveResult struct {
@@ -62,18 +63,10 @@ type suppressionAccumulator struct {
 // dynamic ownership in EffectiveResult.AddedResources instead of extending
 // api.ObjectMeta annotations for the MVP.
 func BuildEffectiveConfig(startup api.Router, parts []DynamicConfigPart, policies []DynamicOverridePolicy, now time.Time) (api.Router, EffectiveResult, error) {
-	effective, err := cloneRouter(startup)
-	if err != nil {
-		return api.Router{}, EffectiveResult{}, err
-	}
 	result := EffectiveResult{}
 
-	startupIDs := map[resourceIdentity]api.Resource{}
-	for _, res := range startup.Spec.Resources {
-		startupIDs[identityFromResource(res)] = res
-	}
-
 	activeParts := make([]DynamicConfigPart, 0, len(parts))
+	hasEffectiveConfigChanges := false
 	for _, part := range parts {
 		if part.IsExpired(now) {
 			result.ExpiredParts = append(result.ExpiredParts, part.Spec.Source)
@@ -81,6 +74,26 @@ func BuildEffectiveConfig(startup api.Router, parts []DynamicConfigPart, policie
 		}
 		result.ActiveParts = append(result.ActiveParts, part.Spec.Source)
 		activeParts = append(activeParts, part)
+		if len(part.Spec.Resources) > 0 || len(part.Spec.Directives) > 0 {
+			hasEffectiveConfigChanges = true
+		}
+	}
+	if !hasEffectiveConfigChanges {
+		out := shallowCloneRouter(startup)
+		if err := config.Validate(&out); err != nil {
+			return api.Router{}, result, err
+		}
+		return out, result, nil
+	}
+
+	effective, err := cloneRouter(startup)
+	if err != nil {
+		return api.Router{}, EffectiveResult{}, err
+	}
+
+	startupIDs := map[resourceIdentity]api.Resource{}
+	for _, res := range startup.Spec.Resources {
+		startupIDs[identityFromResource(res)] = res
 	}
 
 	masks := []maskRequest{}
@@ -300,26 +313,91 @@ func joinSortedMapKeys(values map[string]bool, sep string) string {
 	return strings.Join(keys, sep)
 }
 
+func shallowCloneRouter(router api.Router) api.Router {
+	out := router
+	out.Spec.Resources = append([]api.Resource(nil), router.Spec.Resources...)
+	return out
+}
+
 func cloneRouter(router api.Router) (api.Router, error) {
-	data, err := yaml.Marshal(router)
+	out := router
+	apply, err := cloneJSON(router.Spec.Apply)
 	if err != nil {
-		return api.Router{}, fmt.Errorf("clone startup config: %w", err)
+		return api.Router{}, fmt.Errorf("clone startup config reconcile policy: %w", err)
 	}
-	var out api.Router
-	if err := yaml.Unmarshal(data, &out); err != nil {
-		return api.Router{}, fmt.Errorf("clone startup config: %w", err)
+	out.Spec.Apply = apply
+	out.Spec.Resources = make([]api.Resource, 0, len(router.Spec.Resources))
+	for _, res := range router.Spec.Resources {
+		cloned, err := cloneResource(res)
+		if err != nil {
+			return api.Router{}, fmt.Errorf("clone startup config: %w", err)
+		}
+		out.Spec.Resources = append(out.Spec.Resources, cloned)
 	}
 	return out, nil
 }
 
 func cloneResource(resource api.Resource) (api.Resource, error) {
-	data, err := yaml.Marshal(resource)
+	metadata, err := cloneJSON(resource.Metadata)
 	if err != nil {
-		return api.Resource{}, fmt.Errorf("clone dynamic resource %s: %w", resource.ID(), err)
+		return api.Resource{}, fmt.Errorf("clone dynamic resource %s metadata: %w", resource.ID(), err)
 	}
-	var out api.Resource
-	if err := yaml.Unmarshal(data, &out); err != nil {
-		return api.Resource{}, fmt.Errorf("clone dynamic resource %s: %w", resource.ID(), err)
+	status, err := cloneJSON(resource.Status)
+	if err != nil {
+		return api.Resource{}, fmt.Errorf("clone dynamic resource %s status: %w", resource.ID(), err)
+	}
+	spec, err := cloneAnyJSON(resource.Spec)
+	if err != nil {
+		return api.Resource{}, fmt.Errorf("clone dynamic resource %s spec: %w", resource.ID(), err)
+	}
+	return api.Resource{
+		TypeMeta: resource.TypeMeta,
+		Metadata: metadata,
+		Spec:     spec,
+		Status:   status,
+	}, nil
+}
+
+func cloneJSON[T any](value T) (T, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	var out T
+	if err := json.Unmarshal(data, &out); err != nil {
+		var zero T
+		return zero, err
 	}
 	return out, nil
+}
+
+func cloneAnyJSON(value any) (any, error) {
+	if value == nil {
+		return nil, nil
+	}
+	typ := reflect.TypeOf(value)
+	if typ.Kind() == reflect.Pointer {
+		if reflect.ValueOf(value).IsNil() {
+			return value, nil
+		}
+		target := reflect.New(typ.Elem())
+		data, err := json.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(data, target.Interface()); err != nil {
+			return nil, err
+		}
+		return target.Interface(), nil
+	}
+	target := reflect.New(typ)
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(data, target.Interface()); err != nil {
+		return nil, err
+	}
+	return target.Elem().Interface(), nil
 }

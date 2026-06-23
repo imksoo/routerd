@@ -64,7 +64,7 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 		if route.PreferredSource == "" {
 			route.PreferredSource = inferPreferredSource(route.Prefix, localAddresses)
 		}
-		if route.PreferredSource != "" && !preferredSourceIsLocal(route.PreferredSource) {
+		if route.PreferredSource != "" && !preferredSourceInAddresses(route.PreferredSource, localAddresses) {
 			result.PreferredSourceSkipped[route.Prefix] = true
 			result.PreferredSourceSkippedReason[route.Prefix] = "LocalAddressMissing"
 			route.PreferredSource = ""
@@ -211,12 +211,12 @@ func inferPreferredSource(routePrefix string, addresses []localIPv4Address) stri
 	return best.Address.String()
 }
 
-func preferredSourceIsLocal(value string) bool {
+func preferredSourceInAddresses(value string, addresses []localIPv4Address) bool {
 	addr, err := netip.ParseAddr(strings.TrimSpace(value))
 	if err != nil || !addr.Is4() {
 		return false
 	}
-	for _, local := range localIPv4Addresses() {
+	for _, local := range addresses {
 		if local.Address == addr {
 			return true
 		}

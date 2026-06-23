@@ -312,6 +312,11 @@ func TestDynamicRouteSAMViewDerivesBGPProviderSecondaryForwardPath(t *testing.T)
 			},
 		},
 		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+			Metadata: api.ObjectMeta{Name: "site-primary"},
+			Spec:     api.IPv4StaticAddressSpec{Interface: "ens3", Address: "10.77.70.51/24"},
+		},
+		api.Resource{
 			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
 			Metadata: api.ObjectMeta{Name: "cloudedge"},
 			Spec: api.MobilityPoolSpec{
@@ -337,7 +342,7 @@ func TestDynamicRouteSAMViewDerivesBGPProviderSecondaryForwardPath(t *testing.T)
 	)
 	store := &dynamicRouteSAMStore{objects: map[string]map[string]any{
 		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
-			"discoverySelfCapturedAddresses": []any{"10.77.70.50/32"},
+			"discoverySelfCapturedAddresses": []any{"10.77.70.50/32", "10.77.70.51/32"},
 		},
 	}}
 	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
@@ -572,6 +577,67 @@ func TestDynamicRouteSAMViewBGPLocalHomeOwnerRouteBeatsRemoteHostRoute(t *testin
 	route := ipv4RouteSpecByName(t, view.RouteRouter, "sam-cloudedge-local-10-0-1-7")
 	if route.Destination != "10.0.1.7/32" || route.Device != "eth0" || route.Metric != 1 {
 		t.Fatalf("local inventory route = %#v, want 10.0.1.7/32 dev eth0 metric 1", route)
+	}
+}
+
+func TestDynamicRouteSAMViewBGPLocalInventorySkipsStaticAddress(t *testing.T) {
+	startup := startupHybridContextRouter()
+	startup.Spec.Resources = append(startup.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec:     api.EventGroupSpec{NodeName: "azure-router"},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+			Metadata: api.ObjectMeta{Name: "site-primary"},
+			Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "10.0.1.7/24"},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
+			Metadata: api.ObjectMeta{Name: "mobility-bgp"},
+			Spec:     api.BGPRouterSpec{ASN: 64577, RouterID: "10.99.0.3"},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec: api.MobilityPoolSpec{
+				Prefix:         "10.0.1.0/24",
+				GroupRef:       "cloudedge",
+				DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+				Members: []api.MobilityPoolMember{
+					{
+						NodeRef: "azure-router",
+						Site:    "azure",
+						Role:    "cloud",
+						Capture: api.MobilityMemberCapture{
+							Type:      "provider-secondary-ip",
+							Interface: "eth0",
+						},
+					},
+					{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
+				},
+			},
+		},
+	)
+	store := mapStore{
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
+			"ownershipResolverFIBVerdicts": []any{
+				map[string]any{
+					"address":   "10.0.1.7/32",
+					"action":    "local-route",
+					"ownerNode": "azure-router",
+					"localNode": "azure-router",
+				},
+			},
+		},
+	}
+	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView: %v", err)
+	}
+	if got := countResources(view.RouteRouter, api.NetAPIVersion, "IPv4Route"); got != 0 {
+		t.Fatalf("route IPv4Routes = %d, want none for static local address", got)
 	}
 }
 

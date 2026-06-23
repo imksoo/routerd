@@ -1880,7 +1880,7 @@ type MobilityAuthority struct {
 }
 
 type CloudProviderProfileSpec struct {
-	Provider       string       `yaml:"provider" json:"provider" jsonschema:"enum=azure,enum=aws,enum=oci,enum=gcp"`
+	Provider       string       `yaml:"provider" json:"provider" jsonschema:"enum=azure,enum=aws,enum=oci,enum=gcp,enum=netns"`
 	SubscriptionID string       `yaml:"subscriptionID,omitempty" json:"subscriptionID,omitempty"`
 	ResourceGroup  string       `yaml:"resourceGroup,omitempty" json:"resourceGroup,omitempty"`
 	Capabilities   []string     `yaml:"capabilities" json:"capabilities"`
