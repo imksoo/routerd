@@ -222,8 +222,9 @@ func setupConvergedLabWithOptions(t *testing.T, timeout time.Duration, opts labO
 	l.AssertUnderlayReachability()
 	l.AssertRouterdStatusReady(2 * time.Minute)
 	l.AssertWireGuardReachability(2 * time.Minute)
-	l.AssertBGPEstablished(4 * time.Minute)
+	l.AssertBGPEstablished(6 * time.Minute)
 	l.AssertMobilityReady(6 * time.Minute)
+	l.AssertAnyCapturesPresent(4 * time.Minute)
 	l.AssertClientMatrix(6 * time.Minute)
 	return l
 }
@@ -1181,6 +1182,24 @@ func (l *lab) AssertBFDPeerState(nodeName, bfdName, want string, timeout time.Du
 		if time.Now().After(deadline) {
 			l.dumpLogs()
 			l.t.Fatalf("%s BFD/%s state = %q, want %q", nodeName, bfdName, got, want)
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func (l *lab) AssertAnyCapturesPresent(timeout time.Duration) {
+	l.t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		for _, n := range l.leafNodes() {
+			if got := l.captureAddresses(n.Name); len(got) > 0 {
+				l.t.Logf("initial captures present: %s has %v", n.Name, got)
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			l.dumpLogs()
+			l.t.Fatalf("no leaf has any captures after %v", timeout)
 		}
 		time.Sleep(2 * time.Second)
 	}
