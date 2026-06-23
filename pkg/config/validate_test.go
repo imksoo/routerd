@@ -585,6 +585,25 @@ func TestValidateRejectsNetworkAdoptionOnProtectedInterface(t *testing.T) {
 	}
 }
 
+func TestValidateApplyPolicySAMHandoffLeaseTTL(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{
+			Apply:     api.ApplyPolicySpec{SAMHandoffLeaseTTL: "5s"},
+			Resources: []api.Resource{},
+		},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("valid samHandoffLeaseTTL rejected: %v", err)
+	}
+	router.Spec.Apply.SAMHandoffLeaseTTL = "0s"
+	err := Validate(router)
+	if err == nil || !strings.Contains(err.Error(), "spec.reconcile.samHandoffLeaseTTL") {
+		t.Fatalf("expected samHandoffLeaseTTL validation error, got %v", err)
+	}
+}
+
 func TestValidateLogSinkSyslog(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

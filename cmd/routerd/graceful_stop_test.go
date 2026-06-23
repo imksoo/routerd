@@ -88,6 +88,26 @@ func TestGracefulStopTakeoverCompleteRequiresPeerActivePath(t *testing.T) {
 	}
 }
 
+func TestWithdrawGracefulStopSelfNonHandoffPathsKeepsPoolPrefixes(t *testing.T) {
+	source := mobilitycontroller.DynamicSource("cloudedge", "aws-router-a")
+	targets := []gracefulStopTarget{{PoolName: "cloudedge", SelfNode: "aws-router-a", Source: source, Prefixes: []string{"10.88.60.11/32"}}}
+	handoff := bgpdaemon.NormalizeAppliedPath(bgpdaemon.AppliedPath{Source: source, Prefix: "10.88.60.11/32", Family: bgpdaemon.AppliedPathFamilyIPv4Unicast})
+	liveness := bgpdaemon.NormalizeAppliedPath(bgpdaemon.AppliedPath{Source: source, Prefix: "10.253.0.2/32", Family: bgpdaemon.AppliedPathFamilyIPv4Unicast})
+	bgp := &gracefulStopFakeBGP{paths: map[string]bgpdaemon.AppliedPath{
+		bgpdaemon.AppliedPathKey(handoff):  handoff,
+		bgpdaemon.AppliedPathKey(liveness): liveness,
+	}}
+	if err := withdrawGracefulStopSelfNonHandoffPaths(context.Background(), bgp, targets); err != nil {
+		t.Fatalf("withdrawGracefulStopSelfNonHandoffPaths: %v", err)
+	}
+	if _, ok := bgp.paths[bgpdaemon.AppliedPathKey(handoff)]; !ok {
+		t.Fatalf("handoff path was deleted: %#v", bgp.paths)
+	}
+	if _, ok := bgp.paths[bgpdaemon.AppliedPathKey(liveness)]; ok {
+		t.Fatalf("liveness marker was not deleted: %#v", bgp.paths)
+	}
+}
+
 func gracefulStopRouter() *api.Router {
 	return &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

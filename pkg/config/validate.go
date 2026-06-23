@@ -917,6 +917,12 @@ func validateApplyPolicy(spec api.ApplyPolicySpec) error {
 	default:
 		return fmt.Errorf("spec.reconcile.mode must be strict or progressive")
 	}
+	if ttl := strings.TrimSpace(spec.SAMHandoffLeaseTTL); ttl != "" {
+		duration, err := time.ParseDuration(ttl)
+		if err != nil || duration <= 0 {
+			return fmt.Errorf("spec.reconcile.samHandoffLeaseTTL must be a positive duration")
+		}
+	}
 	for _, name := range spec.ProtectedInterfaces {
 		if strings.TrimSpace(name) == "" {
 			return fmt.Errorf("spec.reconcile.protectedInterfaces must not contain empty names")

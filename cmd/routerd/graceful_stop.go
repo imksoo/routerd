@@ -62,6 +62,9 @@ func runGracefulStopHandoff(ctx context.Context, router *api.Router, store *rout
 	if err := prepare.Reconcile(ctx); err != nil {
 		return fmt.Errorf("prepare graceful mobility stop: %w", err)
 	}
+	if err := withdrawGracefulStopSelfNonHandoffPaths(ctx, opts.BGPPaths, targets); err != nil {
+		return err
+	}
 	logGracefulStop(opts.Logger, eventlog.LevelInfo, "graceful stop notified mobility peers", map[string]string{"targets": fmt.Sprint(gracefulStopTargetCount(targets))})
 	waitCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
@@ -218,6 +221,29 @@ func withdrawGracefulStopSelfPaths(ctx context.Context, bgp mobilitycontroller.B
 		for _, path := range paths {
 			if err := bgp.DeletePath(ctx, path); err != nil {
 				return fmt.Errorf("withdraw graceful stop BGP path %s/%s: %w", path.Source, path.Prefix, err)
+			}
+		}
+	}
+	return nil
+}
+
+func withdrawGracefulStopSelfNonHandoffPaths(ctx context.Context, bgp mobilitycontroller.BGPPathClient, targets []gracefulStopTarget) error {
+	for _, target := range targets {
+		paths, err := bgp.ListPaths(ctx, target.Source)
+		if err != nil {
+			return fmt.Errorf("list graceful stop non-handoff paths for %s: %w", target.Source, err)
+		}
+		keep := map[string]bool{}
+		for _, prefix := range target.Prefixes {
+			keep[strings.TrimSpace(prefix)] = true
+		}
+		for _, path := range paths {
+			path = bgpdaemon.NormalizeAppliedPath(path)
+			if keep[strings.TrimSpace(path.Prefix)] {
+				continue
+			}
+			if err := bgp.DeletePath(ctx, path); err != nil {
+				return fmt.Errorf("withdraw graceful stop non-handoff BGP path %s/%s: %w", path.Source, path.Prefix, err)
 			}
 		}
 	}

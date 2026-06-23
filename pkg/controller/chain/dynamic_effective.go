@@ -233,7 +233,7 @@ func appendBGPMobilityProviderSecondaryClaims(router api.Router, store any) api.
 			seen[normalized] = true
 			claims = append(claims, bgpMobilityProviderSecondaryClaim(resource.Metadata.Name, self, normalized))
 		}
-		for _, address := range actionJournalAssignedAddresses(store) {
+		for _, address := range actionJournalAssignedAddressesForMember(store, selfNode, self) {
 			normalized, ok := normalizeBGPMobilityHostPrefix(address, prefix)
 			if !ok || seen[normalized] || sam.CaptureExcludesAddress(addressCaptureFromMobilityCapture(self.Capture), normalized) {
 				continue
@@ -266,6 +266,73 @@ func actionJournalAssignedAddresses(store any) []string {
 		out = append(out, addr)
 	}
 	sort.Strings(out)
+	return out
+}
+
+func actionJournalAssignedAddressesForMember(store any, selfNode string, self api.MobilityPoolMember) []string {
+	lister, ok := store.(interface {
+		ListActions(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)
+	})
+	if !ok {
+		return nil
+	}
+	actions, err := lister.ListActions(routerstate.ActionExecutionFilter{})
+	if err != nil {
+		return nil
+	}
+	providerRef := strings.TrimSpace(self.Capture.ProviderRef)
+	nicRef := strings.TrimSpace(firstNonEmpty(self.Capture.NICRef, self.Capture.Target["nicRef"]))
+	holder := strings.TrimSpace(selfNode)
+	type actionKey struct {
+		providerRef string
+		nicRef      string
+		address     string
+	}
+	latest := map[actionKey]routerstate.ActionExecutionRecord{}
+	for _, a := range actions {
+		if a.Action != "assign-secondary-ip" && a.Action != "unassign-secondary-ip" {
+			continue
+		}
+		target := actionStringMap(a.TargetJSON)
+		address := strings.TrimSpace(target["address"])
+		if address == "" || strings.TrimSpace(a.ProviderRef) != providerRef {
+			continue
+		}
+		if nicRef != "" && strings.TrimSpace(target["nicRef"]) != nicRef {
+			continue
+		}
+		params := actionStringMap(a.ParametersJSON)
+		if actionHolder := strings.TrimSpace(params[actionParamMobilityCaptureHolder]); actionHolder != "" && actionHolder != holder {
+			continue
+		}
+		key := actionKey{providerRef: strings.TrimSpace(a.ProviderRef), nicRef: strings.TrimSpace(target["nicRef"]), address: address}
+		if prev, ok := latest[key]; !ok || a.ID > prev.ID {
+			latest[key] = a
+		}
+	}
+	var out []string
+	for _, a := range latest {
+		if a.Action != "assign-secondary-ip" || a.Status != routerstate.ActionSucceeded {
+			continue
+		}
+		if addr := actionTargetAddress(a.TargetJSON); addr != "" {
+			out = append(out, addr)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+const actionParamMobilityCaptureHolder = "mobilityCaptureHolder"
+
+func actionStringMap(raw string) map[string]string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var out map[string]string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil
+	}
 	return out
 }
 

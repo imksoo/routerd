@@ -116,6 +116,9 @@ type ApplyPolicySpec struct {
 	ProtectedInterfaces []string `yaml:"protectedInterfaces,omitempty" json:"protectedInterfaces,omitempty"`
 	ProtectedZones      []string `yaml:"protectedZones,omitempty" json:"protectedZones,omitempty"`
 	AutoTuneConntrack   bool     `yaml:"autoTuneConntrack,omitempty" json:"autoTuneConntrack,omitempty"`
+	// SAMHandoffLeaseTTL keeps a removed local SAM capture briefly during
+	// provider-secondary BGP handoff. It defaults to 30s and fails open.
+	SAMHandoffLeaseTTL string `yaml:"samHandoffLeaseTTL,omitempty" json:"samHandoffLeaseTTL,omitempty"`
 }
 
 type PluginSpec struct {

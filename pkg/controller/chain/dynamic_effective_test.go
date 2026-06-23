@@ -1287,6 +1287,16 @@ func actionTargetJSON(addr string) string {
 	return string(b)
 }
 
+func actionTargetJSONWithNIC(addr, nic string) string {
+	b, _ := json.Marshal(map[string]string{"address": addr, "nicRef": nic})
+	return string(b)
+}
+
+func actionParamsJSON(holder string) string {
+	b, _ := json.Marshal(map[string]string{"mobilityCaptureHolder": holder})
+	return string(b)
+}
+
 func TestActionJournalAssignNotHiddenByEnsureForwarding(t *testing.T) {
 	store := &fakeActionLister{actions: []routerstate.ActionExecutionRecord{
 		{ID: 1, ProviderRef: "p1", Action: "assign-secondary-ip", Status: routerstate.ActionSucceeded, TargetJSON: actionTargetJSON("10.0.0.1")},
@@ -1336,5 +1346,26 @@ func TestActionJournalAssignSurvivesRepeatedCleanupCycles(t *testing.T) {
 		if len(got) != 1 || got[0] != "10.0.0.1" {
 			t.Fatalf("cycle %d: got %v, want [10.0.0.1]; repeated ensure-forwarding must not erode assign", i, got)
 		}
+	}
+}
+
+func TestActionJournalAssignedAddressesForMemberFiltersHolderAndNIC(t *testing.T) {
+	store := &fakeActionLister{actions: []routerstate.ActionExecutionRecord{
+		{ID: 1, ProviderRef: "p1", Action: "assign-secondary-ip", Status: routerstate.ActionSucceeded, TargetJSON: actionTargetJSONWithNIC("10.0.0.1/32", "eth1"), ParametersJSON: actionParamsJSON("self")},
+		{ID: 2, ProviderRef: "p1", Action: "assign-secondary-ip", Status: routerstate.ActionSucceeded, TargetJSON: actionTargetJSONWithNIC("10.0.0.2/32", "eth1"), ParametersJSON: actionParamsJSON("peer")},
+		{ID: 3, ProviderRef: "p1", Action: "assign-secondary-ip", Status: routerstate.ActionSucceeded, TargetJSON: actionTargetJSONWithNIC("10.0.0.3/32", "eth2"), ParametersJSON: actionParamsJSON("self")},
+		{ID: 4, ProviderRef: "p2", Action: "assign-secondary-ip", Status: routerstate.ActionSucceeded, TargetJSON: actionTargetJSONWithNIC("10.0.0.4/32", "eth1"), ParametersJSON: actionParamsJSON("self")},
+	}}
+	member := api.MobilityPoolMember{
+		NodeRef: "self",
+		Capture: api.MobilityMemberCapture{
+			Type:        "provider-secondary-ip",
+			ProviderRef: "p1",
+			NICRef:      "eth1",
+		},
+	}
+	got := actionJournalAssignedAddressesForMember(store, "self", member)
+	if len(got) != 1 || got[0] != "10.0.0.1/32" {
+		t.Fatalf("got %v, want only self holder/provider/nic address", got)
 	}
 }
