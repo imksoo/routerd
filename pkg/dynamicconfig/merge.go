@@ -79,7 +79,11 @@ func BuildEffectiveConfig(startup api.Router, parts []DynamicConfigPart, policie
 		}
 	}
 	if !hasEffectiveConfigChanges {
-		return shallowCloneRouter(startup), result, nil
+		out := shallowCloneRouter(startup)
+		if err := config.Validate(&out); err != nil {
+			return api.Router{}, result, err
+		}
+		return out, result, nil
 	}
 
 	effective, err := cloneRouter(startup)
