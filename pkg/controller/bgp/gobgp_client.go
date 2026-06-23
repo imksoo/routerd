@@ -12,7 +12,7 @@ import (
 	"net/http"
 	"time"
 
-	gobgpapi "github.com/osrg/gobgp/v3/api"
+	gobgpapi "github.com/osrg/gobgp/v4/api"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -23,7 +23,7 @@ import (
 type remoteGoBGPServer struct {
 	daemon manageddaemon.Spec
 	conn   *grpc.ClientConn
-	client gobgpapi.GobgpApiClient
+	client gobgpapi.GoBgpServiceClient
 }
 
 func newRemoteGoBGPServer(daemon manageddaemon.Spec) GoBGPServer {
@@ -40,7 +40,7 @@ func (s *remoteGoBGPServer) Stop() {
 	s.client = nil
 }
 
-func (s *remoteGoBGPServer) api(ctx context.Context) (gobgpapi.GobgpApiClient, error) {
+func (s *remoteGoBGPServer) api(ctx context.Context) (gobgpapi.GoBgpServiceClient, error) {
 	if s.client != nil {
 		return s.client, nil
 	}
@@ -54,7 +54,7 @@ func (s *remoteGoBGPServer) api(ctx context.Context) (gobgpapi.GobgpApiClient, e
 		return nil, err
 	}
 	s.conn = conn
-	s.client = gobgpapi.NewGobgpApiClient(conn)
+	s.client = gobgpapi.NewGoBgpServiceClient(conn)
 	return s.client, nil
 }
 
