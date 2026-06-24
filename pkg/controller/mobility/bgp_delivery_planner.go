@@ -397,6 +397,7 @@ func planCaptureActionPlans(in bgpDeliveryPlannerInput, candidates map[string]bg
 	if err != nil {
 		return nil, err
 	}
+	plans = filterRetainedStaleCaptureUnassignPlans(plans, retainedStaleCaptureAddresses(in.Decisions, in.InstalledNextHops))
 	if !in.SuppressDeprovision {
 		observed, err := observedSelfStaleCaptureActionPlans(in, candidates)
 		if err != nil {
@@ -405,6 +406,48 @@ func planCaptureActionPlans(in bgpDeliveryPlannerInput, candidates map[string]bg
 		plans = append(plans, observed...)
 	}
 	return dedupeActionPlans(plans), nil
+}
+
+func retainedStaleCaptureAddresses(decisions []ownershipDecision, installedNextHops map[string][]string) map[string]bool {
+	out := map[string]bool{}
+	for _, decision := range decisions {
+		if !retainsStaleProviderCapture(decision, installedNextHops) {
+			continue
+		}
+		if address := normalizeAddressString(decision.Address); address != "" {
+			out[address] = true
+		}
+	}
+	return out
+}
+
+func retainsStaleProviderCapture(decision ownershipDecision, installedNextHops map[string][]string) bool {
+	if effectiveCaptureStrategy("", strings.TrimSpace(decision.CaptureStrategy)) != captureStrategySecondaryIP {
+		return false
+	}
+	if decisionIsCaptureNotDesiredStale(decision) {
+		return true
+	}
+	return decision.Class == ownershipClassStaleCapture &&
+		decision.CaptureSucceeded &&
+		strings.TrimSpace(decision.SuppressionReason) == "self-captured-secondary" &&
+		len(cleanStrings(installedNextHops[normalizeAddressString(decision.Address)])) > 0
+}
+
+func filterRetainedStaleCaptureUnassignPlans(plans []dynamicconfig.ActionPlan, retained map[string]bool) []dynamicconfig.ActionPlan {
+	if len(plans) == 0 || len(retained) == 0 {
+		return plans
+	}
+	out := plans[:0]
+	for _, plan := range plans {
+		if isProviderCaptureUnassignAction(plan.Action) &&
+			effectiveCaptureStrategy(plan.Provider, plan.Target["captureStrategy"]) == captureStrategySecondaryIP &&
+			retained[normalizeAddressString(plan.Target["address"])] {
+			continue
+		}
+		out = append(out, plan)
+	}
+	return out
 }
 
 func observedSelfStaleCaptureActionPlans(in bgpDeliveryPlannerInput, candidates map[string]bgpTrapCandidate) ([]dynamicconfig.ActionPlan, error) {
@@ -438,6 +481,9 @@ func observedSelfStaleCaptureActionPlans(in bgpDeliveryPlannerInput, candidates 
 			continue
 		}
 		if decision.Class != ownershipClassStaleCapture {
+			continue
+		}
+		if retainsStaleProviderCapture(decision, in.InstalledNextHops) {
 			continue
 		}
 		if strings.TrimSpace(decision.CaptureHolderNode) != "" && strings.TrimSpace(decision.CaptureHolderNode) != strings.TrimSpace(in.Self.NodeRef) {

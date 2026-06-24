@@ -2670,6 +2670,42 @@ func TestControllerBGPModeObservedSelfStaleCaptureWithInstalledReturnRouteIsClea
 	}
 }
 
+func TestControllerBGPModeSucceededSelfCapturedStaleDoesNotUnassignObservedSecondaryIP(t *testing.T) {
+	now := time.Date(2026, 6, 10, 18, 41, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	address := "10.88.60.12/32"
+	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-a", "aws-router-a", address, "assign-secondary-ip", 1, now.Add(-5*time.Minute))
+	saveBGPStatus(t, store, map[string][]string{address: {"10.99.0.2"}}, []map[string]any{
+		bgpOwnerPrefix(address, "10.99.0.2", "aws-router-a"),
+	}, nil)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoverySelfPrivateIPs":        []string{"10.88.60.4/32"},
+		"discoverySelfCapturedAddresses": []string{address},
+		"discoveryLastScanAt":            now.Format(time.RFC3339Nano),
+		"observedSelfStaleCaptures":      map[string]string{address: now.Add(-3 * time.Minute).Format(time.RFC3339Nano)},
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("aws-router-a", spec)), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", "aws-router-a")).ActionPlansJSON)
+	if unassign := findActionPlanByAddress(plans, "unassign-secondary-ip", address); unassign != nil {
+		t.Fatalf("plans = %#v, succeeded observed secondary IP must be retained instead of churned", plans)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	decisions := ownershipStatusDecisions(t, status["ownershipResolverDecisions"])
+	decision := ownershipStatusDecisionByAddress(t, decisions, address)
+	if decision["class"] != ownershipClassStaleCapture || decision["suppressionReason"] != "self-captured-secondary" {
+		t.Fatalf("decision = %#v, want succeeded self-captured-secondary stale capture", decision)
+	}
+}
+
 func TestControllerBGPModeObservedSelfStaleCaptureWithInstalledOwnerPathIsProtected(t *testing.T) {
 	now := time.Date(2026, 6, 10, 18, 42, 0, 0, time.UTC)
 	store := testStore(t, now)
