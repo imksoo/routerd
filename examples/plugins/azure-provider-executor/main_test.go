@@ -481,6 +481,38 @@ func TestAssignExecuteIssuesIPConfigCreate(t *testing.T) {
 	}
 }
 
+func TestAssignExecuteRecoversAzureAddressConflictWithoutSeizeParameter(t *testing.T) {
+	f := newSeizeFakeAz()
+	f.oldHolds = false
+	f.createErr = fmt.Errorf("PrivateIPAddressIsAllocated: private IP address 10.88.60.9 is already allocated to nic-old/ipcfg-mobility")
+	f.createErrOnce = true
+	f.conflictRevealsOld = true
+
+	res := dispatchWith(reqSpec(actionAssignSecondaryIP, modeExecute), f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("normal assign should recover stale Azure holder, got status=%q message=%q err=%q", res.Status.Status, res.Status.Message, res.Status.Error)
+	}
+	if res.Status.Observed["conflictRecovered"] != "true" {
+		t.Fatalf("observed = %+v, want conflictRecovered=true", res.Status.Observed)
+	}
+	got := joinedCalls(f.calls)
+	if !containsCallWithoutQuery(got, "network nic list --resource-group rg1") {
+		t.Fatalf("calls = %v, want holder rediscovery by NIC list", got)
+	}
+	if !containsCallWithoutQuery(got, "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility") {
+		t.Fatalf("calls = %v, want stale holder delete", got)
+	}
+	createCount := 0
+	for _, call := range got {
+		if call == "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9" {
+			createCount++
+		}
+	}
+	if createCount != 2 {
+		t.Fatalf("calls = %v, want create attempted twice around conflict", got)
+	}
+}
+
 func TestAuthorizationFailureIsClassified(t *testing.T) {
 	f := &fakeAz{err: fmt.Errorf("AuthorizationFailed: The client does not have authorization to perform action")}
 	res := dispatchWith(reqSpec(actionAssignSecondaryIP, modeExecute), f.run)

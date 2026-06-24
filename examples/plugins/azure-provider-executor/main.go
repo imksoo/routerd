@@ -560,16 +560,66 @@ func assignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mode 
 		return seizeSecondaryIP(ctx, t, runner)
 	}
 
-	if _, err := runner(ctx, "network", "nic", "ip-config", "create",
-		"--resource-group", t.resourceGroup,
-		"--nic-name", t.nicName,
-		"--name", t.ipConfigName,
-		"--private-ip-address", t.address); err != nil {
+	if err := createIPConfig(ctx, runner, t); err != nil {
+		if isAlreadyExistsError(err) {
+			cfg, serr := waitForSelfAddress(ctx, runner, t)
+			if serr != nil {
+				return failed("assign-secondary-ip execute: verify existing self ip-config failed", serr)
+			}
+			res.Status.Status = statusSucceeded
+			res.Status.Message = fmt.Sprintf("assigned %s to %s (already present as ip-config %s)", t.address, t.nicName, cfg.Name)
+			res.Status.Observed = map[string]string{"assignedAddress": t.address, "ipConfigName": cfg.Name, "assignAlreadyPresent": "true"}
+			return res
+		}
+		if isAddressConflictError(err) {
+			return recoverSecondaryIPConflict(ctx, t, runner, err)
+		}
 		return failed("assign-secondary-ip execute: ip-config create failed", err)
 	}
 	res.Status.Status = statusSucceeded
 	res.Status.Message = fmt.Sprintf("assigned %s to %s (ip-config %s)", t.address, t.nicName, t.ipConfigName)
 	res.Status.Observed = map[string]string{"assignedAddress": t.address, "ipConfigName": t.ipConfigName}
+	return res
+}
+
+func recoverSecondaryIPConflict(ctx context.Context, t nicTarget, runner azRunner, originalErr error) executeActionResult {
+	res := newResult()
+	res.Status.UndoAvailable = true
+
+	holder, found, err := discoverCurrentHolder(ctx, runner, t)
+	if err != nil {
+		return failed("assign-secondary-ip execute: holder rediscovery after conflict failed", err)
+	}
+	if !found {
+		return failed("assign-secondary-ip execute: ip-config create conflict but no displaced holder found", originalErr)
+	}
+	if holder.sameNIC(t.resourceGroup, t.nicName) {
+		cfg, serr := waitForSelfAddress(ctx, runner, t)
+		if serr != nil {
+			return failed("assign-secondary-ip execute: verify conflict self ip-config failed", serr)
+		}
+		res.Status.Status = statusSucceeded
+		res.Status.Message = fmt.Sprintf("assigned %s to %s (already present as ip-config %s)", t.address, t.nicName, cfg.Name)
+		res.Status.Observed = map[string]string{"assignedAddress": t.address, "ipConfigName": cfg.Name, "assignAlreadyPresent": "true"}
+		return res
+	}
+	if err := deleteIPConfig(ctx, runner, holder); err != nil {
+		return failed("assign-secondary-ip execute: displaced ip-config delete after conflict failed", err)
+	}
+	if err := createIPConfig(ctx, runner, t); err != nil {
+		return failed("assign-secondary-ip execute: ip-config create after conflict failed", err)
+	}
+	cfg, err := waitForSelfAddress(ctx, runner, t)
+	if err != nil {
+		return failed("assign-secondary-ip execute: verify self nic after conflict failed", err)
+	}
+	if err := waitForDisplacedRelease(ctx, runner, holder, t.address); err != nil {
+		return failed("assign-secondary-ip execute: verify displaced nic after conflict failed", err)
+	}
+
+	res.Status.Status = statusSucceeded
+	res.Status.Message = fmt.Sprintf("assigned %s to %s after releasing stale Azure holder %s/%s (ip-config %s)", t.address, t.nicName, holder.nicName, holder.ipConfigName, cfg.Name)
+	res.Status.Observed = map[string]string{"assignedAddress": t.address, "ipConfigName": cfg.Name, "conflictRecovered": "true"}
 	return res
 }
 
