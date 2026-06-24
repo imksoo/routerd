@@ -2,7 +2,7 @@
 
 ## ステータス
 
-提案（2026-06-07）。
+提案 — 2026-06-07。
 
 設定の永続化モデル、candidate/commit ライフサイクル、`routerd` / `routerctl` の
 コマンドサーフェスを定義する。`routerd` の場当たり的な verb 増殖を置き換え、
@@ -80,9 +80,9 @@ CLI サーフェスも意図ではなく実装によって成長していた：
 
 ### 3. 設定ライフサイクル verb（`routerctl` 上）
 
-- `validate [-f <file>]`：静的スキーマの妥当性。ホスト変更なし。
-- `plan [-f <file>]`：差分のプレビュー。ホスト変更なし。
-- `apply -f <file>`：正規ファイルを mutation し reconcile する。**入力必須。**
+- `validate [-f <file>]` — 静的スキーマの妥当性。ホスト変更なし。
+- `plan [-f <file>]` — 差分のプレビュー。ホスト変更なし。
+- `apply -f <file>` — 正規ファイルを mutation し reconcile する。**入力必須。**
   - デフォルトは**部分 upsert**（入力内のリソースを追加または更新。他のリソースは
     そのまま）。部分 `delete` と対称。
   - `--replace` は正規ファイルを入力と完全に等しくする（存在しないリソースは prune）。
@@ -91,7 +91,7 @@ CLI サーフェスも意図ではなく実装によって成長していた：
   - `serve` が稼働中のとき、apply はデフォルトで即座に reconcile する。
     `--no-reconcile` は書き込みのみ。serve が稼働していないとき、`routerctl apply` は
     エラーで `routerd serve` を指示する。
-- `delete <kind>/<name>`：正規ファイルからのアトミックな部分削除の後 reconcile。
+- `delete <kind>/<name>` — 正規ファイルからのアトミックな部分削除の後 reconcile。
 
 入力規約：`-f <file>` はファイルを読み、`-f -` は stdin を読み、`-f` を省略すると
 現在の正規ファイルを対象とする（`validate`/`plan` はライブの正本で動作）。
@@ -101,9 +101,9 @@ CLI サーフェスも意図ではなく実装によって成長していた：
 ### 4. 検査とランタイム verb（`routerctl` 上）
 
 - `get` / `status` / `show` / `describe` を 2 つに統合：
-  - `get [kind[/name]] [-o yaml|json|table]`：マシンリーダブル。spec と status を
+  - `get [kind[/name]] [-o yaml|json|table]` — マシンリーダブル。spec と status を
     subject でマージ。
-  - `describe <kind>/<name>`：人間が読める詳細（spec、status、conditions、
+  - `describe <kind>/<name>` — 人間が読める詳細（spec、status、conditions、
     最近のイベント、関連ランタイム）。
   - `status` と `show` は削除。それらのビューは `get`/`describe` に統合。
   - すべての検査は稼働中 daemon の制御 API に問い合わせ、verb ごとのデータソース
@@ -140,25 +140,26 @@ CLI サーフェスも意図ではなく実装によって成長していた：
   再起動をまたいで永続化される。
 - apply に失敗した設定は稼働中の正本にならない。起動時は last-good にフォールバック。
 - verb サーフェスが縮小し、データソースによる重複が解消される。
-- 制御 API に apply/plan/delete/validate の mutation を追加する必要がある。これが主な実装コストとなる。
+- 制御 API に apply/plan/delete/validate の mutation を追加する必要がある —
+  主な実装コスト。
 - 破壊的変更は許容される（ユーザー 1 名、後方互換 shim なし、プロジェクトポリシーに従う）。
   設定は新しいモデルに書き直す。
 
 ## 実装計画（ゴール）
 
-- **Phase 1：コミットコア。** daemon 内の正規ライター：yaml.v3 ラウンドトリップ
+- **Phase 1 — コミットコア。** daemon 内の正規ライター：yaml.v3 ラウンドトリップ
   （コメント/順序保持）、アトミック書き込み、成功 apply 時の generation スナップショット、
   `serve` の last-good 起動フォールバック。
-- **Phase 2：制御 API mutation。** 制御ソケット API に apply/plan/delete/validate を
+- **Phase 2 — 制御 API mutation。** 制御ソケット API に apply/plan/delete/validate を
   追加。ソケットパーミッションモデル付き。
-- **Phase 3：verb 移動。** `routerctl` が validate/plan/apply/delete
+- **Phase 3 — verb 移動。** `routerctl` が validate/plan/apply/delete
   （daemon 経由）を獲得。upsert デフォルト/`--replace`/入力必須付き。`serve`。
   `routerd` を serve 専用にトリム（check/observe/render/adopt/run の削除/移動、
   必須 `--once` の削除、rollback を routerctl に移動）。
-- **Phase 4：検査統合。** get/status/show/describe を制御 API 上の
+- **Phase 4 — 検査統合。** get/status/show/describe を制御 API 上の
   `get`+`describe` にマージ。6 つのデータテーブルダンプを `get <subject>` に統合。
   `diagnose` を `doctor --probe` に吸収。
-- **Phase 5：ドメインと制御の整理。** wireguard/tailscale の `vpn` サブツリー、
+- **Phase 5 — ドメインと制御の整理。** wireguard/tailscale の `vpn` サブツリー、
   `restart <daemon>`、`ingress drain/undrain`、`log-level`。
-- **Phase 6：ドキュメントとマイグレーション。** チュートリアル/how-to/リファレンスと
+- **Phase 6 — ドキュメントとマイグレーション。** チュートリアル/how-to/リファレンスと
   サンプル設定を新しいサーフェスに更新。非推奨 verb の削除。

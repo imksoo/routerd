@@ -116,7 +116,7 @@ with the same `metadata.name` override generated peers.
 
 Kernel modules and systemd-networkd/resolved adoption drop-ins are derived from
 router resources. If a config still contains the removed `KernelModule`,
-`NetworkAdoption`, or `Link` kinds, routerd returns an error
+`NetworkAdoption`, `Link`, or `NixOSHost` kinds, routerd returns an error
 instead of silently ignoring the input.
 
 ## WAN Addressing and Delegation
@@ -382,7 +382,8 @@ records; IPv4 VIPs create A records and IPv6 VIPs create AAAA records. Set
 `spec.externalDNS: true` when the name is owned by an outside DNS system; routerd
 will keep validating the hostname syntax but will not try to publish it or warn
 about missing DNSZone coverage. `routerctl show vrrp` shows role, priority,
-peers, and transition age.
+peers, and transition age. NixOS remains groundwork until a native
+service-manager module owns the same host artifacts.
 
 ### VRRP production tuning
 

@@ -8,7 +8,7 @@ title: ハイパーバイザー間のオーバーレイ VPN を置き換える
 
 ## 想定するシーン
 
-ハイパーバイザークラスター (Proxmox VE, KVM など) で、ノード間のブリッジを、すでに何らかの重量級のオーバーレイ VPN (ベンダー製の SoftEther bridge, 別の tap ベースのトンネルなど) に乗せている構成です。
+ハイパーバイザークラスター (Proxmox VE、KVM など) で、ノード間のブリッジを、すでに何らかの重量級のオーバーレイ VPN (ベンダー製の SoftEther bridge、別の tap ベースのトンネルなど) に乗せている構成です。
 症状としては、別ホスト上のゲスト同士の通信が遅い、MTU がずれる、ハイパーバイザー本体やルーターとは別の製品なので運用が脆い、といった問題があります。
 
 これを、次の性質を備えた仕組みに置き換えたいとします。
@@ -25,12 +25,11 @@ routerd は、オーバーレイを 4 つのプリミティブでモデル化し
 | リソース | 役割 |
 | --- | --- |
 | `WireGuardInterface` | ハイパーバイザー間の暗号化 L3 underlay |
-| `WireGuardPeer` | ピア (リモートホスト) ごとの公開鍵, エンドポイント, 許可 IP |
+| `WireGuardPeer` | ピア (リモートホスト) ごとの公開鍵、エンドポイント、許可 IP |
 | `VXLANTunnel` | underlay 上に乗せる L2 セグメント (本当に L2 拡張が必要なときのみ) |
 | `EgressRoutePolicy` + `HealthCheck` | underlay の準備完了確認と L3 フェイルオーバー (任意) |
 
-可能な限り L3 ルーティングを優先してください。
-L2 拡張は MTU の制約 (Ethernet ヘッダー + WireGuard のオーバーヘッド + VXLAN ヘッダー) を重ねるうえに、ブロードキャストストームが複数ホスト規模に広がります。
+可能な限り L3 ルーティングを優先してください。L2 拡張は MTU の制約 (Ethernet ヘッダー + WireGuard のオーバーヘッド + VXLAN ヘッダー) を重ねるうえに、ブロードキャストストームが複数ホスト規模に広がります。
 `VXLANTunnel` は、本当にホスト間で広げる必要があるセグメントだけに使ってください。
 
 ## 最小構成
@@ -102,10 +101,10 @@ ping -M do -s 1342 <peer-overlay-host>        # 1370 - 20 IP - 8 ICMP
 
 ## 運用上のヒント
 
-- **まず 1 ホストのペアから試す。** WireGuard や VXLAN が収束しない場合に備えて、ハイパーバイザーのコンソールアクセスを確保しておきます。
-- **MTU の誤りは「ping は速いが大容量転送だけ遅い」という現象の最大の要因です。** `ping -M do -s <size>` で underlay と overlay の両方の MTU を確認してから本番に投入してください。
-- **Linux NIC の offload をむやみに切らないでください。** TSO/GSO/GRO そのものは、通常は問題ありません。`mtu greater than device maximum` の真因は、ゲスト側ではなくハイパーバイザーの tap/veth の offload にあることが多いです。
-- **移行期間中は、新旧のオーバーレイを同一セグメントに載せないでください。** 新しい WireGuard underlay は旧 SoftEther とは別のセグメントに置き、計画的にカットオーバーします。
+- **まず 1 ホストのペアから試す**。WireGuard や VXLAN が収束しない場合に備えて、ハイパーバイザーのコンソールアクセスを確保しておきます。
+- **MTU の誤りは「ping は速いが大容量転送だけ遅い」という現象の最大の要因**。`ping -M do -s <size>` で underlay と overlay の両方の MTU を確認してから本番に投入してください。
+- **Linux NIC の offload をむやみに切らないでください**。TSO/GSO/GRO そのものは、通常は問題ありません。`mtu greater than device maximum` の真因は、ゲスト側ではなくハイパーバイザーの tap/veth の offload にあることが多いです。
+- **移行期間中は、新旧のオーバーレイを同一セグメントに載せない**。新しい WireGuard underlay は旧 SoftEther とは別のセグメントに置き、計画的にカットオーバーしてください。
 
 ## 関連項目
 

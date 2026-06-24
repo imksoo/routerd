@@ -31,7 +31,7 @@ flowchart LR
 
 | 番号 | 意味 | 主なリソース |
 | --- | --- | --- |
-| [1] | 経路と exit node の広告を受ける tailnet。 | Tailscale 制御プレーン |
+| [1] | 経路と exit node の広告を受ける tailnet。 | Tailscale control plane |
 | [2] | Tailscale node として登録されるルーター。 | `TailscaleNode/home` |
 | [3] | tailnet に広告する LAN プレフィックス。 | `advertiseRoutes` |
 | [4] | リモート管理用に広告する管理プレフィックス。 | `advertiseRoutes` |

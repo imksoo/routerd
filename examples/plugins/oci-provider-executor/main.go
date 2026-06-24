@@ -443,6 +443,19 @@ func assignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mode 
 		return res
 	}
 
+	if allowReassignment {
+		ocid, derr := findPrivateIPOCID(ctx, runner, vnic, address)
+		if derr == nil {
+			res.Status.Status = statusSucceeded
+			res.Status.Message = fmt.Sprintf("seized/reassigned %s to %s (already present as private-ip %s)", address, vnic, ocid)
+			res.Status.Observed = map[string]string{"assignedAddress": address, "privateIPOCID": ocid, "seizeAlreadyPresent": "true"}
+			return res
+		}
+		if !isPrivateIPNotFoundError(derr) {
+			return failed("assign-secondary-ip execute: private-ip lookup failed", derr)
+		}
+	}
+
 	args := []string{"network", "private-ip", "create",
 		"--vnic-id", vnic,
 		"--ip-address", address}
@@ -453,6 +466,14 @@ func assignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mode 
 			"--unassign-if-already-assigned"}
 	}
 	if _, err := runner(ctx, args...); err != nil {
+		if isAlreadyAssignedError(err) {
+			if ocid, derr := findPrivateIPOCID(ctx, runner, vnic, address); derr == nil {
+				res.Status.Status = statusSucceeded
+				res.Status.Message = fmt.Sprintf("%s already present on %s (private-ip %s)", address, vnic, ocid)
+				res.Status.Observed = map[string]string{"assignedAddress": address, "privateIPOCID": ocid, "seizeAlreadyPresent": "true"}
+				return res
+			}
+		}
 		return failed("assign-secondary-ip execute: assign failed", err)
 	}
 	res.Status.Status = statusSucceeded
@@ -524,11 +545,21 @@ func unassignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mod
 	// Resolve the private-ip OCID for this address on the VNIC (read-only list).
 	ocid, derr := findPrivateIPOCID(ctx, runner, vnic, address)
 	if derr != nil {
+		if isPrivateIPNotFoundError(derr) {
+			res.Status.Status = statusSkipped
+			res.Status.Message = fmt.Sprintf("%s is not present on %s; nothing to unassign", address, vnic)
+			return res
+		}
 		return failed("unassign-secondary-ip execute: private-ip lookup failed", derr)
 	}
 	if _, err := runner(ctx, "network", "private-ip", "delete",
 		"--private-ip-id", ocid,
 		"--force"); err != nil {
+		if isNotFoundError(err) {
+			res.Status.Status = statusSkipped
+			res.Status.Message = fmt.Sprintf("private-ip %s for %s is already absent; nothing to unassign", ocid, address)
+			return res
+		}
 		return failed("unassign-secondary-ip execute: private-ip delete failed", err)
 	}
 	res.Status.Status = statusSucceeded
@@ -601,6 +632,30 @@ func stringBool(v string) bool {
 	default:
 		return false
 	}
+}
+
+func isNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "notfound") ||
+		strings.Contains(msg, "could not be found") ||
+		strings.Contains(msg, "404")
+}
+
+func isAlreadyAssignedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "already assigned") ||
+		strings.Contains(msg, "already exists") ||
+		strings.Contains(msg, "already in use") ||
+		strings.Contains(msg, "in use") ||
+		strings.Contains(msg, "conflict") ||
+		strings.Contains(msg, "409")
 }
 
 // commandTimeout is the per-oci-invocation timeout.

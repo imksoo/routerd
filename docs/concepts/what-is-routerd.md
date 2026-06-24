@@ -8,7 +8,7 @@ sidebar_position: 1
 
 ![Diagram showing routerd turning YAML resources into local host networking, daemons, state, status, and owned cleanup](/img/diagrams/concept-what-is-routerd.png)
 
-routerd is a declarative router control plane for Linux hosts and
+routerd is a declarative router control plane for Linux hosts, NixOS, and
 FreeBSD. You write the router intent as YAML resources. routerd turns that
 intent into interfaces, addresses, DHCP service, DNS service, NAT, routes,
 tunnels, health checks, system packages, sysctl values, service units, logs,
@@ -23,7 +23,7 @@ the right boundary.
 
 A hand-built router spreads state across many places:
 
-- interface addresses in netplan, systemd-networkd, or rc.d settings
+- interface addresses in netplan, systemd-networkd, rc.d, or NixOS settings
 - DHCP, DHCPv6, DHCP relay, and RA in dnsmasq configuration
 - DNS forwarding and local records in resolver-specific files
 - NAT, route policy, conntrack, and firewall state in nftables and iproute2
@@ -85,8 +85,8 @@ more understandable.
 
 Stateful firewall filtering is intentionally scoped. routerd renders NAT44,
 zone policy, service holes, denial logging, and traffic inspection, but it is
-not a general-purpose firewall rule language. FreeBSD uses the same
-resource model through its native activation path. Platform-specific host
+not a general-purpose firewall rule language. NixOS and FreeBSD use the same
+resource model through their native activation paths. Platform-specific host
 surfaces are tracked in the platform matrix.
 
 ## Next Pages

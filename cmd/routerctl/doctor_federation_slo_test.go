@@ -969,26 +969,15 @@ func TestDoctorFederationRemediationPlanDeterministicOrdering(t *testing.T) {
 	}
 	closeDoctorState(t, store)
 
-	var results [][]string
+	var results []string
 	for i := 0; i < 3; i++ {
 		var out bytes.Buffer
 		_ = run([]string{"doctor", "federation", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json", "--remediation-plan"}, &out, &bytes.Buffer{})
-		var report doctorReport
-		if err := json.Unmarshal(out.Bytes(), &report); err != nil {
-			t.Fatalf("run %d decode: %v\n%s", i, err, out.String())
-		}
-		if report.RemediationPlan == nil {
-			t.Fatalf("run %d remediation plan is nil", i)
-		}
-		var actions []string
-		for _, a := range report.RemediationPlan.Actions {
-			actions = append(actions, a.Action+"/"+a.TargetGroup+"/"+a.TargetPeer)
-		}
-		results = append(results, actions)
+		results = append(results, out.String())
 	}
 	for i := 1; i < len(results); i++ {
-		if strings.Join(results[i], "\n") != strings.Join(results[0], "\n") {
-			t.Errorf("run %d actions differ from run 0:\nrun 0: %v\nrun %d: %v", i, results[0], i, results[i])
+		if results[i] != results[0] {
+			t.Errorf("run %d output differs from run 0:\nrun 0: %s\nrun %d: %s", i, results[0], i, results[i])
 		}
 	}
 }

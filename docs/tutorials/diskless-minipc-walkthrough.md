@@ -79,7 +79,7 @@ On Proxmox VE, the interactive wizard is normally easier to read through
 `qm terminal`; the VGA screenshots are useful for boot evidence, while the
 serial transcript below shows the actual inputs and results.
 
-![Boot messages](/img/iso-boot/iso-boot-02-alpine-boot.png)
+![Alpine boot messages](/img/iso-boot/iso-boot-02-alpine-boot.png)
 
 ## 3. Run the wizard
 
@@ -90,8 +90,8 @@ Log in as `root`. The live ISO starts the setup wizard.
 The serial console should show the live ISO message and the wizard prompt:
 
 ```text
-Welcome to Ubuntu 26.04 LTS
-Kernel 6.18.22-generic on x86_64 (/dev/ttyS0)
+Welcome to Alpine Linux 3.23
+Kernel 6.18.22-0-lts on x86_64 (/dev/ttyS0)
 
 localhost login: root
 routerd live v20260510.1811

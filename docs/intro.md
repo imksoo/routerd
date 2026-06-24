@@ -9,10 +9,10 @@ sidebar_label: Overview
 
 ![Diagram showing the routerd documentation map from install and first router goals through concepts, examples, tutorials, how-to guides, operations, API references, platforms, plugins, and schemas](/img/diagrams/intro.png)
 
-routerd turns typed YAML resources into a working, observable router on a Linux or FreeBSD host. Pick the section that matches what you are trying to do.
+routerd turns typed YAML resources into a working, observable router on a Linux, NixOS, or FreeBSD host. Pick the section that matches what you are trying to do.
 
 :::tip Recommended stable release
-For a new deployment, start from the recommended stable milestone **v20260619.1730**. See [Stable milestone](./releases/stable.md) for details.
+For a new deployment, start from the recommended stable milestone **v20260608.2325**. See [Stable milestone](./releases/stable.md) for details.
 :::
 
 ## By goal
@@ -36,7 +36,7 @@ For a new deployment, start from the recommended stable milestone **v20260619.17
 
 - **Concepts** — positioning, vision, design philosophy, resource model, ownership semantics
 - **Install and upgrade** — release archive install, package dependencies, upgrade, uninstall
-- **Tutorials** — diskless mini PC, first router, WAN/LAN services, basic firewall, FreeBSD quickstart
+- **Tutorials** — diskless mini PC, first router, WAN/LAN services, basic firewall, NixOS quickstart
 - **How-to** — multi-WAN, FLET'S setup, VS Code YAML schema, PVE overlay, OpenTelemetry export, troubleshooting
 - **Knowledge base** — field notes from real deployments (DHCPv6-PD clients, NTT NGN PD acquisition)
 - **Reference** — Resource API, control API, plugin protocol, supported platforms, hardware, ownership rules

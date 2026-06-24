@@ -104,8 +104,6 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  dynamic render [--config <path>] [--state-file <path>] [-o yaml|json]")
 	fmt.Fprintln(w, "  dynamic diff [--config <path>] [--state-file <path>] [-o text|json]")
 	fmt.Fprintln(w, "  mobility owners [--pool <name>] [--address <ipv4/32>] [--state-file <path>] [-o table|json|yaml]")
-	fmt.Fprintln(w, "  mobility distribution [--pool <name>] [--state-file <path>] [-o table|json|yaml]")
-	fmt.Fprintln(w, "  mobility rebalance-captures --pool <name> [--state-file <path>] [--by <name>] [--reason <text>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  mobility paths [--prefix <prefix>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  mobility traps [--address <ipv4/32>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  plugin list [--config <path>] [-o table|json|yaml]")

@@ -31,19 +31,17 @@ const (
 )
 
 type ownershipResolverInput struct {
-	PoolName            string
-	SelfNode            string
-	Spec                api.MobilityPoolSpec
-	Events              []routerstate.EventRecord
-	Status              map[string]any
-	ActionJournal       []routerstate.ActionExecutionRecord
-	PreviousPlans       []dynamicconfig.ActionPlan
-	InstalledNextHops   map[string][]string
-	BGPHomeOwnerNodes   map[string]string
-	BGPReturnRoutes     map[string]bool
-	BGPLiveNodes        map[string]bool
-	BGPLivenessObserved bool
-	Now                 time.Time
+	PoolName          string
+	SelfNode          string
+	Spec              api.MobilityPoolSpec
+	Events            []routerstate.EventRecord
+	Status            map[string]any
+	ActionJournal     []routerstate.ActionExecutionRecord
+	PreviousPlans     []dynamicconfig.ActionPlan
+	InstalledNextHops map[string][]string
+	BGPHomeOwnerNodes map[string]string
+	BGPReturnRoutes   map[string]bool
+	Now               time.Time
 }
 
 type ownershipDecision struct {
@@ -95,8 +93,8 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 	}
 	staticOwners := staticOwnedOwnerNodesByAddress(in.Spec)
 	remoteHomeFactSets := providerInventoryHomeOwnerFactSets(in.PoolName, in.Spec, in.Events, now)
-	remoteHomeFacts := selectedProviderInventoryHomeOwnerFacts(remoteHomeFactSets, members)
-	remoteHomeConflicts := duplicateProviderHomeOwnerFacts(remoteHomeFactSets, members)
+	remoteHomeFacts := selectedProviderInventoryHomeOwnerFacts(remoteHomeFactSets)
+	remoteHomeConflicts := duplicateProviderHomeOwnerFacts(remoteHomeFactSets)
 	localInventory := localInventoryRecordsFromStatus(in.Status, prefix)
 	removeSelfResourceLocalInventory(localInventory, statusString(in.Status["discoverySelfResourceRef"]))
 	discoveryOwned := statusStringSet(in.Status["discoveryOwnedAddresses"], prefix)
@@ -181,16 +179,6 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			decision.CaptureTargetRef = capture.TargetRef
 			decision.CaptureStrategy = capture.Strategy
 			decision.CaptureSucceeded = capture.Succeeded
-		}
-		if rec, ok := localInventory[address]; ok && decision.CaptureState == captureStateNone {
-			if peerCapture, ok := sameSitePeerCaptureStateFromInventory(rec, self, members); ok {
-				decision.CaptureState = captureStateConfirmed
-				decision.CaptureHolderNode = peerCapture.HolderNode
-				decision.CaptureProviderRef = peerCapture.ProviderRef
-				decision.CaptureTargetRef = peerCapture.TargetRef
-				decision.CaptureStrategy = peerCapture.Strategy
-				decision.CaptureSucceeded = peerCapture.Succeeded
-			}
 		}
 		if owner := strings.TrimSpace(staticOwners[address]); owner != "" {
 			decision.HomeOwnerNode = owner
@@ -318,27 +306,7 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			decision.Source = providerDiscoverySource
 			decision.Fresh = true
 			if rec, local := localInventory[address]; local {
-				if remoteHomeOwnerUnavailableForLocalInventoryTakeover(self, members, in.BGPLiveNodes, in.BGPLivenessObserved, fact) {
-					decision.Class = ownershipClassLocalHomeOwned
-					decision.HomeOwnerNode = self.NodeRef
-					decision.HomeProviderRef = firstNonEmpty(rec.ProviderRef, self.OwnershipDiscovery.ProviderRef, self.Capture.ProviderRef)
-					decision.HomeSubnetRef = rec.SubnetRef
-					decision.HomeNICRef = rec.NICRef
-					decision.HomeResourceRef = rec.ResourceRef
-					decision.HomeResourceType = rec.ResourceType
-					decision.LocalNodeRef = self.NodeRef
-					decision.LocalProviderRef = decision.HomeProviderRef
-					decision.LocalSubnetRef = rec.SubnetRef
-					decision.LocalNICRef = rec.NICRef
-					decision.LocalResourceRef = rec.ResourceRef
-					decision.LocalResourceType = rec.ResourceType
-					decision.LocalSource = "local-inventory"
-					decision.AdvertiseOwnerNode = self.NodeRef
-					decision.AdvertiseReason = "local-home-inventory-takeover"
-					decision.Source = "local-inventory"
-					out = append(out, decision)
-					continue
-				}
+				decision.ConflictReason = "remote-home-owner-overlaps-local-inventory"
 				decision.LocalNodeRef = self.NodeRef
 				decision.LocalProviderRef = firstNonEmpty(rec.ProviderRef, self.OwnershipDiscovery.ProviderRef, self.Capture.ProviderRef)
 				decision.LocalSubnetRef = rec.SubnetRef
@@ -346,20 +314,6 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 				decision.LocalResourceRef = rec.ResourceRef
 				decision.LocalResourceType = rec.ResourceType
 				decision.LocalSource = "local-inventory"
-				if remoteHomeOwnerSharesPlacementSite(self, members, fact) {
-					decision.Class = ownershipClassRemoteHomeOwned
-					decision.SuppressionReason = "remote-home-owner"
-					out = append(out, decision)
-					continue
-				}
-				if localInventoryRecordIsSameSitePeerCapture(rec, self, members) {
-					decision.Class = ownershipClassConfirmedCapture
-					decision.AdvertiseReason = "confirmed-capture"
-					decision.Source = "local-inventory"
-					out = append(out, decision)
-					continue
-				}
-				decision.ConflictReason = "remote-home-owner-overlaps-local-inventory"
 			}
 			homeProviderRef := strings.TrimSpace(fact.ProviderRef)
 			selfProviderRef := strings.TrimSpace(self.Capture.ProviderRef)
@@ -472,29 +426,6 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 	return out, nil
 }
 
-func remoteHomeOwnerSharesPlacementSite(self memberPlanInfo, members map[string]memberPlanInfo, fact providerInventoryOwnerFact) bool {
-	ownerNode := strings.TrimSpace(fact.NodeRef)
-	if ownerNode == "" || ownerNode == strings.TrimSpace(self.NodeRef) {
-		return false
-	}
-	owner, ok := lookupMemberByNodeRef(members, ownerNode)
-	return ok && samePlacementSite(self, owner)
-}
-
-func remoteHomeOwnerUnavailableForLocalInventoryTakeover(self memberPlanInfo, members map[string]memberPlanInfo, liveNodes map[string]bool, livenessObserved bool, fact providerInventoryOwnerFact) bool {
-	if !livenessObserved || strings.TrimSpace(self.NodeRef) == "" {
-		return false
-	}
-	if !remoteHomeOwnerSharesPlacementSite(self, members, fact) {
-		return false
-	}
-	ownerNode := strings.TrimSpace(fact.NodeRef)
-	if liveNodes[strings.TrimSpace(self.NodeRef)] {
-		return !liveNodes[ownerNode]
-	}
-	return false
-}
-
 func clearDisprovedStaleCapture(decision *ownershipDecision, selfNode string, capturedIPs map[string]bool, selfIPsObserved bool, address string) {
 	if decision == nil || decision.CaptureState != captureStateStale || !selfIPsObserved || capturedIPs[normalizeAddressString(address)] {
 		return
@@ -510,42 +441,36 @@ func clearDisprovedStaleCapture(decision *ownershipDecision, selfNode string, ca
 	decision.CaptureSucceeded = false
 }
 
-func selectedProviderInventoryHomeOwnerFacts(sets map[string][]providerInventoryOwnerFact, members map[string]memberPlanInfo) map[string]providerInventoryOwnerFact {
+func selectedProviderInventoryHomeOwnerFacts(sets map[string][]providerInventoryOwnerFact) map[string]providerInventoryOwnerFact {
 	out := map[string]providerInventoryOwnerFact{}
 	for address, facts := range sets {
 		if len(facts) == 0 {
 			continue
 		}
-		selected := facts[0]
-		for _, fact := range facts[1:] {
-			if providerInventoryOwnerFactPreferred(fact, selected, members) {
-				selected = fact
-			}
-		}
-		out[address] = selected
+		out[address] = facts[0]
 	}
 	return out
 }
 
-func duplicateProviderHomeOwnerFacts(sets map[string][]providerInventoryOwnerFact, members map[string]memberPlanInfo) map[string][]providerInventoryOwnerFact {
+func duplicateProviderHomeOwnerFacts(sets map[string][]providerInventoryOwnerFact) map[string][]providerInventoryOwnerFact {
 	out := map[string][]providerInventoryOwnerFact{}
 	for address, facts := range sets {
-		byEndpoint := map[string]providerInventoryOwnerFact{}
+		byNode := map[string]providerInventoryOwnerFact{}
 		for _, fact := range facts {
-			endpoint := providerInventoryOwnerFactEndpointKey(fact)
-			if endpoint == "" {
+			node := strings.TrimSpace(fact.NodeRef)
+			if node == "" {
 				continue
 			}
-			current, found := byEndpoint[endpoint]
-			if !found || providerInventoryOwnerFactPreferred(fact, current, members) {
-				byEndpoint[endpoint] = fact
+			current, found := byNode[node]
+			if !found || providerInventoryOwnerFactGreater(fact, current) {
+				byNode[node] = fact
 			}
 		}
-		if len(byEndpoint) < 2 {
+		if len(byNode) < 2 {
 			continue
 		}
-		rows := make([]providerInventoryOwnerFact, 0, len(byEndpoint))
-		for _, fact := range byEndpoint {
+		rows := make([]providerInventoryOwnerFact, 0, len(byNode))
+		for _, fact := range byNode {
 			rows = append(rows, fact)
 		}
 		sort.SliceStable(rows, func(i, j int) bool {
@@ -559,49 +484,6 @@ func duplicateProviderHomeOwnerFacts(sets map[string][]providerInventoryOwnerFac
 	return out
 }
 
-func providerInventoryOwnerFactEndpointKey(fact providerInventoryOwnerFact) string {
-	parts := []string{
-		strings.TrimSpace(fact.Provider),
-		strings.TrimSpace(fact.ProviderRef),
-		strings.TrimSpace(fact.SubnetRef),
-		strings.TrimSpace(fact.NICRef),
-		strings.TrimSpace(fact.ResourceRef),
-		strings.TrimSpace(fact.ResourceType),
-	}
-	empty := true
-	for _, part := range parts {
-		if part != "" {
-			empty = false
-			break
-		}
-	}
-	if empty {
-		node := strings.TrimSpace(fact.NodeRef)
-		if node == "" {
-			return ""
-		}
-		parts = append(parts, node)
-	}
-	return strings.Join(parts, "\x00")
-}
-
-func providerInventoryOwnerFactPreferred(candidate, current providerInventoryOwnerFact, members map[string]memberPlanInfo) bool {
-	candidateMember, candidateOK := lookupMemberByNodeRef(members, candidate.NodeRef)
-	currentMember, currentOK := lookupMemberByNodeRef(members, current.NodeRef)
-	if candidateOK && currentOK && candidateMember.PlacementPriority != currentMember.PlacementPriority {
-		return candidateMember.PlacementPriority < currentMember.PlacementPriority
-	}
-	if candidateOK != currentOK {
-		return candidateOK
-	}
-	candidateNode := strings.TrimSpace(candidate.NodeRef)
-	currentNode := strings.TrimSpace(current.NodeRef)
-	if candidateNode != currentNode {
-		return candidateNode < currentNode
-	}
-	return providerInventoryOwnerFactGreater(candidate, current)
-}
-
 func applyProviderHomeOwnerFact(decision *ownershipDecision, fact providerInventoryOwnerFact) {
 	decision.HomeOwnerNode = strings.TrimSpace(fact.NodeRef)
 	decision.HomeProviderRef = strings.TrimSpace(fact.ProviderRef)
@@ -613,7 +495,6 @@ func applyProviderHomeOwnerFact(decision *ownershipDecision, fact providerInvent
 
 type resolverPrivateIPRecord struct {
 	Address       string
-	NodeRef       string
 	NICRef        string
 	SubnetRef     string
 	VPCRef        string
@@ -633,7 +514,6 @@ func localInventoryRecordsFromStatus(status map[string]any, poolPrefix netip.Pre
 		}
 		out[address] = resolverPrivateIPRecord{
 			Address:       address,
-			NodeRef:       strings.TrimSpace(raw["nodeRef"]),
 			NICRef:        strings.TrimSpace(raw["nicRef"]),
 			SubnetRef:     strings.TrimSpace(raw["subnetRef"]),
 			VPCRef:        strings.TrimSpace(raw["vpcRef"]),
@@ -794,9 +674,6 @@ func statusString(value any) string {
 }
 
 func localInventoryRecordIsRouterSelf(rec resolverPrivateIPRecord, self memberPlanInfo) bool {
-	if nodeRef := strings.TrimSpace(rec.NodeRef); nodeRef != "" {
-		return nodeRef == strings.TrimSpace(self.NodeRef)
-	}
 	nicRef := strings.TrimSpace(rec.NICRef)
 	if nicRef == "" {
 		return false
@@ -804,59 +681,7 @@ func localInventoryRecordIsRouterSelf(rec resolverPrivateIPRecord, self memberPl
 	if nicRef == strings.TrimSpace(self.Capture.NICRef) {
 		return true
 	}
-	return false
-}
-
-func localInventoryRecordIsSameSitePeerCapture(rec resolverPrivateIPRecord, self memberPlanInfo, members map[string]memberPlanInfo) bool {
-	_, ok := sameSitePeerCaptureStateFromInventory(rec, self, members)
-	return ok
-}
-
-func sameSitePeerCaptureStateFromInventory(rec resolverPrivateIPRecord, self memberPlanInfo, members map[string]memberPlanInfo) (resolverCaptureState, bool) {
-	if rec.Primary || self.Capture.Type != "provider-secondary-ip" {
-		return resolverCaptureState{}, false
-	}
-	nodeRef := strings.TrimSpace(rec.NodeRef)
-	nicRef := strings.TrimSpace(rec.NICRef)
-	if nodeRef == "" && nicRef == "" {
-		return resolverCaptureState{}, false
-	}
-	for _, member := range members {
-		memberNodeRef := strings.TrimSpace(member.NodeRef)
-		if memberNodeRef == strings.TrimSpace(self.NodeRef) {
-			continue
-		}
-		if !samePlacementSite(self, member) {
-			continue
-		}
-		memberNICRef := strings.TrimSpace(member.Capture.NICRef)
-		if nodeRef != "" {
-			if nodeRef != memberNodeRef {
-				continue
-			}
-		} else {
-			if strings.TrimSpace(rec.ResourceType) != "router-nic" || member.Capture.Type != "provider-secondary-ip" || memberNICRef == "" || nicRef != memberNICRef {
-				continue
-			}
-		}
-		providerRef := strings.TrimSpace(rec.ProviderRef)
-		memberProviderRef := strings.TrimSpace(member.Capture.ProviderRef)
-		if providerRef != "" && memberProviderRef != "" && providerRef != memberProviderRef {
-			continue
-		}
-		strategy := effectiveCaptureStrategy("", captureStrategyValue(member.Capture))
-		if strategy == "" {
-			strategy = effectiveCaptureStrategy("", captureStrategyValue(self.Capture))
-		}
-		return resolverCaptureState{
-			HolderNode:  memberNodeRef,
-			ProviderRef: firstNonEmpty(providerRef, memberProviderRef, self.Capture.ProviderRef),
-			TargetRef:   firstNonEmpty(nicRef, memberNICRef),
-			Strategy:    strategy,
-			Succeeded:   true,
-		}, true
-	}
-	return resolverCaptureState{}, false
+	return strings.TrimSpace(rec.ResourceType) == "router-nic"
 }
 
 type resolverCaptureState struct {

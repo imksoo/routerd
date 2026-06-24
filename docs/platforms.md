@@ -93,7 +93,7 @@ The installer uses `pkg` for ports packages and leaves base-system tools alone.
 Implemented:
 
 - DHCPv6-PD daemon with persistent lease
-- WireGuard interop with Linux
+- WireGuard interop with Linux / NixOS
 - VXLAN over WireGuard
 - PPPoE via generated `mpd5.conf`, `mpd_enable`, and `mpd5` service restart
 - `Package` install through `pkg`

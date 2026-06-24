@@ -74,6 +74,19 @@ sudo systemctl restart routerd.service \
                        'routerd-healthcheck@*.service'
 ```
 
+### NixOS
+
+Add the variables under each generated systemd unit. With the routerd NixOS module:
+
+```nix
+systemd.services.routerd.environment = {
+  OTEL_EXPORTER_OTLP_ENDPOINT = "http://collector.lan:4317";
+  OTEL_EXPORTER_OTLP_INSECURE = "true";
+  OTEL_SERVICE_NAMESPACE      = "routerd";
+};
+```
+
+Mirror the same block on the per-daemon services routerd generated for you.
 
 ### FreeBSD
 
@@ -132,7 +145,7 @@ remove that override and run `systemctl daemon-reload`.
 
 ## Declarative Telemetry resource
 
-Use `Telemetry` to describe the OTLP endpoint in router YAML. routerd injects the matching OpenTelemetry environment variables into generated systemd and FreeBSD rc.d units. The collector is still external; routerd only prepares the exporter configuration.
+Use `Telemetry` to describe the OTLP endpoint in router YAML. routerd injects the matching OpenTelemetry environment variables into generated systemd, NixOS, and FreeBSD rc.d units. The collector is still external; routerd only prepares the exporter configuration.
 
 ```yaml
 apiVersion: observability.routerd.net/v1alpha1

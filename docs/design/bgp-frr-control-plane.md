@@ -12,7 +12,7 @@ routing protocols.
 
 ## Problem statement
 
-On FRR builds that disable TCP VTY listening
+On Alpine Live ISO + similar FRR builds that disable TCP VTY listening
 (`port=0` in `vty_serv_start()`), routerd's prior readiness gate based on
 `tcp/2605` (bgpd VTY listen) is permanently false. The controller then
 restarts FRR repeatedly instead of running `frr-reload.py` against the
@@ -71,8 +71,8 @@ that ever started FRR on first boot.
 ```
 1. Render /run/routerd/frr/routerd.conf and /etc/frr/daemons.
 2. Inspect FRR service state via the platform service manager
-   (`systemctl is-active frr` on systemd platforms,
-   `service frr status` on FreeBSD):
+   (`rc-service frr status` on Alpine / `systemctl is-active frr` on
+   systemd platforms):
      - active/running → continue without restarting.
      - inactive/stopped → enable + start FRR.
      - failed → restart FRR.
@@ -150,13 +150,13 @@ judgment, surfaced via the explicit reason codes above.
 `scripts/build-live-iso.sh` / `live-autostart.sh` must not start a second
 `routerd serve` if one already owns `/run/routerd/routerd.sock`. The guard
 keeps autostart idempotent, but the first autostart pass of a boot is also
-the config handoff boundary. If a persisted service-manager entry starts
+the config handoff boundary. If a persisted OpenRC runlevel starts
 `routerd serve` before USB config restore, `live-autostart.sh` must restart
 that service after `apply` instead of treating the existing process as
 success. That restart is logged with `reason=LiveISOStaleServeRestarted`.
 The boot marker lives under `/run/routerd` so each boot re-evaluates this
 handoff. Without the duplicate guard, two routerd controllers compete for the
-FRR service lock (`flock` on systemctl), causing the
+FRR service lock (`flock` on rc-service / systemctl), causing the
 `ERROR: frr stopped by something else` symptom seen in Phase 0 evidence.
 Without the post-restore restart, the early `serve` process can miss the
 restored config and leave BGP at the apply-once `Rendered` handoff state.
@@ -184,11 +184,11 @@ must never collapse to `Healthy` while FRR is down. The v2007 regression
 
 ## Acceptance criteria
 
-- Live ISO boots → exactly one `routerd serve` → BGP `router bgp X`
+- Alpine Live ISO boots → exactly one `routerd serve` → BGP `router bgp X`
   appears in `vtysh -c "show running-config"` and `tcp/179` listens
   without manual `frr-reload.py`.
 - FRR service starting in `FAILED` state at boot is detected and
-  recovered by the controller (no manual `systemctl start frr`).
+  recovered by the controller (no manual `rc-service frr start`).
 - `routerctl status` never reports `Healthy` while FRR is down or while
   `:179` is not listening.
 - Linux distro with TCP VTY enabled regresses neither.
@@ -198,7 +198,7 @@ must never collapse to `Healthy` while FRR is down. The v2007 regression
 
 ## Test scenarios
 
-1. Live ISO first boot: no tcp/2605, vtysh succeeds, running-config minimal
+1. Alpine first boot: no tcp/2605, vtysh succeeds, running-config minimal
    → reload executed, BGP instance created, `tcp/179` listening.
 2. Linux distro first boot (tcp/2605 listens): reload executed; no
    regression in runningConfig diff or status.
@@ -220,19 +220,19 @@ must never collapse to `Healthy` while FRR is down. The v2007 regression
    completes successfully.
 10. `live-autostart.sh` re-invocation while a serve process holds the
     socket → exits 0 without starting a second process.
-11. Live ISO smoke test (release gate): boot a fresh ISO, observe
+11. Alpine Live ISO smoke test (release gate): boot a fresh ISO, observe
     autonomous BGP convergence.
-12. Live ISO with a persisted `routerd` service-manager entry:
+12. Live ISO with a persisted `routerd` OpenRC default-runlevel entry:
     `routerd serve` may be started before USB config restore, but
-    `live-autostart.sh` removes the service-manager entry and restarts the
+    `live-autostart.sh` removes the default-runlevel entry and restarts the
     service after config restore + `apply`, logging
     `reason=LiveISOStaleServeRestarted`, so BGP reload still converges without
     manual `frr-reload.py`.
 13. FRR service starting in FAILED state at boot: routerd must invoke
-    `systemctl start frr` (or restart) and recover the daemons without
+    `rc-service frr start` (or restart) and recover the daemons without
     manual intervention; status reflects the FAILED state until daemons
     are running.
-14. Status accuracy: with FRR forcibly stopped (`systemctl stop frr`)
+14. Status accuracy: with FRR forcibly stopped (`rc-service frr stop`)
     after a previously Healthy state, the next reconcile must surface
     `FRRControlUnavailable` or `FRRServiceDown`, not `Healthy`. The
     BGPRouter status' `lastSuccessTime` must not advance during the
@@ -241,7 +241,7 @@ must never collapse to `Healthy` while FRR is down. The v2007 regression
 ## FRR Issue #8403 (graceful-restart exit !=0)
 
 FRR < ~8.4.x can have `frr-reload.py` exit non-zero for configs
-containing `bgp graceful-restart`. The Live ISO ships a recent FRR
+containing `bgp graceful-restart`. Alpine Live ISO ships a recent FRR
 release, but we should capture `frr -v` as part of Phase 0 evidence and
 add a follow-up only if the shipped version is affected. We do not add
 speculative version-detect code in the hotfix.

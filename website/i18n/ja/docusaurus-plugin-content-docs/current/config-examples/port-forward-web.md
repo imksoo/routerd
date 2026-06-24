@@ -7,7 +7,8 @@ sidebar_position: 50
 
 ![内部 HTTPS サーバー向けの PortForward による受信 DNAT、LAN ヘアピンアクセス、ファイアウォールゾーン分離の構成](/img/diagrams/config-example-port-forward-web.png)
 
-内部の HTTPS サーバーを WAN 側の IPv4 アドレスで公開し、LAN クライアントからも同じ公開名で到達できるよう hairpin を有効にする例です。
+内部の HTTPS サーバーを WAN 側の IPv4 アドレスで公開し、LAN クライアントからも同じ公開名で
+到達できるよう hairpin を有効にする例です。
 
 完全な YAML は `examples/example-port-forward-web.yaml` にあります。
 

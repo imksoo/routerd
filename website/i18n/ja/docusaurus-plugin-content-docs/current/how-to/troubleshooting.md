@@ -12,10 +12,10 @@ routerd が何を意図しているかを確認してから、OS の状態と突
 
 ## 基本順序
 
-1. `routerctl status` (全体を確認する)
-2. `routerctl describe <kind>/<name>` (対象リソースの詳細を確認する)
-3. `routerctl plan` (次の適用で何が変わるか)
-4. OS コマンド (`ip`, `nft`, `ss`, `journalctl`) で実状態を確認する
+1. `routerctl status` — 全体を見る
+2. `routerctl describe <kind>/<name>` — 対象リソースを掘り下げる
+3. `routerctl plan` — 次の適用で何が変わるか
+4. OS コマンド (`ip`、`nft`、`ss`、`journalctl`) — 実状態
 5. 該当デーモンの `/v1/status` とイベントログ
 
 ## DHCPv6-PD
@@ -69,7 +69,7 @@ dig @<lan-ip> example.com A
 - 待ち受けが、想定したアドレスとポートで開いているか (`ss -lnup`)
 - ローカルの権威ゾーンが応答するか (`DNSZone` の手動レコードと DHCP 由来のレコード)
 - 条件付き転送が、指定した上流へ届いているか (`dig @<lan-ip> <forwarded-domain>`)
-- 既定の上流が、DoH, DoT, TCP, 平文 UDP のいずれで応答しているか (リゾルバーの status と上流の health を確認する)
+- 既定の上流が、DoH / DoT / TCP / 平文 UDP のいずれで応答しているか (リゾルバーの status と上流の health を見る)
 
 ## DS-Lite
 
@@ -92,7 +92,7 @@ AFTR の FQDN が解決できない場合は、`DNSResolver` の `forward` sourc
 
 - 本番 WAN で、古い DHCP クライアントや手動の試験用デーモンを、routerd と並行して動かさないでください。同じインターフェースから複数の DHCPv6-PD クライアントを出すと、上流のリース状態を壊すことがあります。
 - 経路変更時に `nf_conntrack` を flush しないでください。routerd は意図的に flush しません。flush すると、確立済みのセッションが切れます。
-- 1 ホスト上で `/usr/local/etc/routerd/router.yaml` を編集しつつ、別の場所にその場しのぎの YAML オーバーレイを置かないでください。1 ホストにつき設定ファイルを 1 つに保つと、リコンサイルの予測性が保たれます。
+- 1 ホスト上で `/usr/local/etc/routerd/router.yaml` を編集しつつ、別の場所にその場しのぎの YAML オーバーレイを置かないでください。1 ホストにつき設定ファイルを 1 つに保つと、調整（リコンサイル）の予測性が保たれます。
 
 ## 関連項目
 

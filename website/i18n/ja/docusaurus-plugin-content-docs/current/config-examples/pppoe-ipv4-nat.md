@@ -32,7 +32,7 @@ flowchart LR
 
 | 番号 | 意味 | 主なリソース |
 | --- | --- | --- |
-| [1] | routerd の管理外にある回線終端装置（ONU）。 | routerd 管理外 |
+| [1] | routerd の管理外にある回線終端 / ONU。 | routerd 管理外 |
 | [2] | PPPoE を通す物理 Ethernet インターフェース。 | `Interface/wan` |
 | [3] | PPPoE セッションと論理的な出口インターフェース。 | `PPPoESession/pppoe-home` |
 | [4] | IPv4 forwarding を導出し、nftables NAT を適用するホスト。 | Derived host runtime, `NAT44Rule/lan-to-pppoe` |
@@ -87,6 +87,6 @@ ip route show default
 
 ## よく変えるところ
 
-- PPPoE のパスワードは YAML に直書きせず、参照先の秘密ファイルに置く。
-- `mtu` と `mru` は ISP の案内に合わせる。
-- PPPoE をバックアップ経路にする場合は `defaultRoute: false` にする。
+- PPPoE のパスワードは YAML に直書きせず、参照先の秘密ファイルに置きます。
+- `mtu` と `mru` は ISP の案内に合わせます。
+- PPPoE をバックアップ経路にする場合は `defaultRoute: false` にします。

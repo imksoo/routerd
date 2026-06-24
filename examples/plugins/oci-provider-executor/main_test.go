@@ -186,7 +186,7 @@ func TestToolchainPermissionFailureIsNotAuthorization(t *testing.T) {
 }
 
 func TestAssignExecuteAllowReassignment(t *testing.T) {
-	f := &fakeOCI{}
+	f := &fakeOCI{listOut: cannedPrivateIPList("10.99.99.99", "ocid1.privateip.oc1..other")}
 	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
 	spec.Parameters = map[string]string{"allowReassignment": "true"}
 	res := dispatchWith(spec, f.run)
@@ -196,16 +196,56 @@ func TestAssignExecuteAllowReassignment(t *testing.T) {
 	if res.Status.Observed["assignedAddress"] != "10.88.60.9" {
 		t.Errorf("want assignedAddress observed, got %+v", res.Status.Observed)
 	}
-	if len(f.calls) != 1 {
-		t.Fatalf("execute assign should issue exactly one call, got %v", f.calls)
+	if len(f.calls) != 2 {
+		t.Fatalf("execute assign should list then assign, got %v", f.calls)
 	}
-	got := strings.Join(f.calls[0], " ")
+	got := strings.Join(f.calls[1], " ")
 	want := "network vnic assign-private-ip --vnic-id ocid1.vnic.oc1..vnic1 --ip-address 10.88.60.9 --unassign-if-already-assigned"
 	if got != want {
 		t.Fatalf("assign argv mismatch:\n got: %s\nwant: %s", got, want)
 	}
 	if !strings.Contains(res.Status.Message, "seized/reassigned") {
 		t.Fatalf("message = %q, want seize/reassign", res.Status.Message)
+	}
+}
+
+func TestAssignExecuteAllowReassignmentAlreadyPresent(t *testing.T) {
+	f := &fakeOCI{listOut: cannedPrivateIPList("10.88.60.9", "ocid1.privateip.oc1..pip9")}
+	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
+	spec.Parameters = map[string]string{"allowReassignment": "true"}
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	if res.Status.Observed["seizeAlreadyPresent"] != "true" {
+		t.Fatalf("want already-present observation, got %+v", res.Status.Observed)
+	}
+	if len(f.calls) != 1 || verbsOf(f.calls)[0] != "list" {
+		t.Fatalf("already-present assign should only list, got %v", f.calls)
+	}
+}
+
+func TestAssignExecuteAlreadyAssignedVerifiesSelf(t *testing.T) {
+	calls := 0
+	runner := func(ctx context.Context, argv ...string) ([]byte, error) {
+		calls++
+		if len(argv) >= 3 && argv[0] == "network" && argv[1] == "private-ip" && argv[2] == "create" {
+			return nil, fmt.Errorf("409 Conflict: private IP is already assigned")
+		}
+		if len(argv) >= 3 && argv[0] == "network" && argv[1] == "private-ip" && argv[2] == "list" {
+			return cannedPrivateIPList("10.88.60.9", "ocid1.privateip.oc1..pip9"), nil
+		}
+		return []byte(`{}`), nil
+	}
+	res := dispatchWith(reqSpec(actionAssignSecondaryIP, modeExecute), runner)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded after already-assigned self verification, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	if res.Status.Observed["privateIPOCID"] != "ocid1.privateip.oc1..pip9" {
+		t.Fatalf("unexpected observed: %+v", res.Status.Observed)
+	}
+	if calls != 2 {
+		t.Fatalf("want create then list, got %d calls", calls)
 	}
 }
 
@@ -325,17 +365,38 @@ func TestUnassignExecuteLooksUpThenDeletes(t *testing.T) {
 	}
 }
 
-func TestUnassignExecuteAddressNotFoundFails(t *testing.T) {
+func TestUnassignExecuteAddressNotFoundSkips(t *testing.T) {
 	f := &fakeOCI{listOut: cannedPrivateIPList("10.99.99.99", "ocid1.privateip.oc1..other")}
 	res := dispatchWith(reqSpec(actionUnassignSecondaryIP, modeExecute), f.run)
-	if res.Status.Status != statusFailed {
-		t.Fatalf("address not in list must fail (no blind delete), got %q", res.Status.Status)
+	if res.Status.Status != statusSkipped {
+		t.Fatalf("address not in list must skip idempotently, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
 	// Only the list call; never a delete.
 	for _, v := range verbsOf(f.calls) {
 		if v == "delete" {
 			t.Fatalf("must NOT delete when address not found, calls=%v", f.calls)
 		}
+	}
+}
+
+func TestUnassignExecuteDeleteNotFoundSkips(t *testing.T) {
+	calls := 0
+	runner := func(ctx context.Context, argv ...string) ([]byte, error) {
+		calls++
+		if len(argv) >= 3 && argv[0] == "network" && argv[1] == "private-ip" && argv[2] == "list" {
+			return cannedPrivateIPList("10.88.60.9", "ocid1.privateip.oc1..pip9"), nil
+		}
+		if len(argv) >= 3 && argv[0] == "network" && argv[1] == "private-ip" && argv[2] == "delete" {
+			return nil, fmt.Errorf("ServiceError: NotFound private IP not found")
+		}
+		return []byte(`{}`), nil
+	}
+	res := dispatchWith(reqSpec(actionUnassignSecondaryIP, modeExecute), runner)
+	if res.Status.Status != statusSkipped {
+		t.Fatalf("delete NotFound must skip idempotently, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	if calls != 2 {
+		t.Fatalf("want list then delete, got %d calls", calls)
 	}
 }
 

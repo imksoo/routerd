@@ -9,19 +9,19 @@ import (
 
 func TestDistributeCaptures_EvenSpread(t *testing.T) {
 	nodes := []captureDistributionNode{
-		{NodeRef: "node-a", MaxSecondaryIPs: 128},
-		{NodeRef: "node-b", MaxSecondaryIPs: 128},
+		{NodeRef: "node-a", MaxSecondaryIPs: 10},
+		{NodeRef: "node-b", MaxSecondaryIPs: 10},
 	}
 	var addresses []string
-	for i := 1; i <= 18; i++ {
+	for i := 1; i <= 20; i++ {
 		addresses = append(addresses, fmt.Sprintf("10.0.0.%d", i))
 	}
 	dist := distributeCaptures(addresses, nodes)
-	if len(dist.Assignments) != 18 {
-		t.Fatalf("expected 18 assignments, got %d", len(dist.Assignments))
+	if len(dist.Assignments) != 20 {
+		t.Fatalf("expected 20 assignments, got %d", len(dist.Assignments))
 	}
-	if dist.NodeCounts["node-a"] != 9 || dist.NodeCounts["node-b"] != 9 {
-		t.Fatalf("expected 9/9 steady-state split, got %v", dist.NodeCounts)
+	if dist.NodeCounts["node-a"] == 0 || dist.NodeCounts["node-b"] == 0 {
+		t.Fatalf("expected both nodes to get addresses: %v", dist.NodeCounts)
 	}
 }
 
@@ -77,24 +77,32 @@ func TestDistributeCaptures_Deterministic(t *testing.T) {
 	}
 }
 
-func TestDistributeCaptures_KeepsLiveIncumbents(t *testing.T) {
-	nodes := []captureDistributionNode{
-		{NodeRef: "node-a", MaxSecondaryIPs: 128},
-		{NodeRef: "node-b", MaxSecondaryIPs: 128},
+func TestDistributeCaptures_MinimalRedistribution(t *testing.T) {
+	nodes3 := []captureDistributionNode{
+		{NodeRef: "node-a", MaxSecondaryIPs: 100},
+		{NodeRef: "node-b", MaxSecondaryIPs: 100},
+		{NodeRef: "node-c", MaxSecondaryIPs: 100},
+	}
+	nodes2 := []captureDistributionNode{
+		{NodeRef: "node-a", MaxSecondaryIPs: 100},
+		{NodeRef: "node-b", MaxSecondaryIPs: 100},
 	}
 	var addresses []string
-	incumbents := map[string]string{}
-	for i := 1; i <= 18; i++ {
-		address := fmt.Sprintf("10.0.0.%d", i)
-		addresses = append(addresses, address)
-		incumbents[address] = "node-b"
+	for i := 1; i <= 90; i++ {
+		addresses = append(addresses, fmt.Sprintf("10.0.0.%d", i))
 	}
-	dist := distributeCapturesWithIncumbents(addresses, nodes, incumbents)
-	if dist.NodeCounts["node-b"] != 18 || dist.NodeCounts["node-a"] != 0 {
-		t.Fatalf("expected live incumbent node-b to keep all captures, got %v", dist.NodeCounts)
+	dist3 := distributeCaptures(addresses, nodes3)
+	dist2 := distributeCaptures(addresses, nodes2)
+	moved := 0
+	for addr, node3 := range dist3.Assignments {
+		if node2, ok := dist2.Assignments[addr]; ok && node3 != node2 {
+			if node3 != "node-c" {
+				moved++
+			}
+		}
 	}
-	if got := captureDistributionReasonCounts(&dist)["incumbent-kept"]; got != 18 {
-		t.Fatalf("incumbent-kept reasons = %d, want 18", got)
+	if moved > 5 {
+		t.Fatalf("too many non-node-c moves when removing node-c: %d (expected minimal)", moved)
 	}
 }
 
@@ -136,79 +144,34 @@ func TestDistributeCaptures_UnlimitedCapacity(t *testing.T) {
 
 func TestDistributeCaptures_FailoverRedistribution(t *testing.T) {
 	nodesAll := []captureDistributionNode{
-		{NodeRef: "node-a", MaxSecondaryIPs: 128},
-		{NodeRef: "node-b", MaxSecondaryIPs: 128},
+		{NodeRef: "node-a", MaxSecondaryIPs: 15},
+		{NodeRef: "node-b", MaxSecondaryIPs: 15},
+		{NodeRef: "node-c", MaxSecondaryIPs: 15},
 	}
 	nodesSurvivors := []captureDistributionNode{
-		{NodeRef: "node-b", MaxSecondaryIPs: 128},
+		{NodeRef: "node-a", MaxSecondaryIPs: 15},
+		{NodeRef: "node-b", MaxSecondaryIPs: 15},
 	}
 	var addresses []string
-	for i := 1; i <= 18; i++ {
+	for i := 1; i <= 30; i++ {
 		addresses = append(addresses, fmt.Sprintf("10.0.0.%d", i))
 	}
 	distBefore := distributeCaptures(addresses, nodesAll)
-	distAfter := distributeCapturesWithIncumbents(addresses, nodesSurvivors, distBefore.Assignments)
-	if len(distAfter.Assignments) != len(addresses) {
-		t.Fatalf("expected all addresses assigned after failover, got %d", len(distAfter.Assignments))
+	distAfter := distributeCaptures(addresses, nodesSurvivors)
+	for addr, nodeBefore := range distBefore.Assignments {
+		nodeAfter, ok := distAfter.Assignments[addr]
+		if !ok {
+			t.Fatalf("address %s unassigned after failover", addr)
+		}
+		if nodeBefore == "node-c" {
+			continue
+		}
+		if nodeBefore != nodeAfter {
+			t.Fatalf("address %s moved from %s to %s (not from dead node)", addr, nodeBefore, nodeAfter)
+		}
 	}
-	if distAfter.NodeCounts["node-b"] != 18 {
-		t.Fatalf("survivor should take all captures after failover, got %v", distAfter.NodeCounts)
-	}
-	if got := captureDistributionReasonCounts(&distAfter)["failover-reassigned"]; got != distBefore.NodeCounts["node-a"] {
-		t.Fatalf("failover-reassigned reasons = %d, want failed node count %d", got, distBefore.NodeCounts["node-a"])
-	}
-}
-
-func TestDistributeCaptures_RejoinDoesNotPreemptSurvivor(t *testing.T) {
-	nodesAll := []captureDistributionNode{
-		{NodeRef: "node-a", MaxSecondaryIPs: 128},
-		{NodeRef: "node-b", MaxSecondaryIPs: 128},
-	}
-	nodesSurvivors := []captureDistributionNode{
-		{NodeRef: "node-b", MaxSecondaryIPs: 128},
-	}
-	var addresses []string
-	for i := 1; i <= 18; i++ {
-		addresses = append(addresses, fmt.Sprintf("10.0.0.%d", i))
-	}
-	steady := distributeCaptures(addresses, nodesAll)
-	failover := distributeCapturesWithIncumbents(addresses, nodesSurvivors, steady.Assignments)
-	rejoined := distributeCapturesWithIncumbents(addresses, nodesAll, failover.Assignments)
-	if rejoined.NodeCounts["node-b"] != 18 || rejoined.NodeCounts["node-a"] != 0 {
-		t.Fatalf("rejoined node should not preempt survivor captures, got %v", rejoined.NodeCounts)
-	}
-	if got := captureDistributionReasonCounts(&rejoined)["incumbent-kept"]; got != 18 {
-		t.Fatalf("rejoin reason counts = %#v, want incumbent-kept=18", captureDistributionReasonCounts(&rejoined))
-	}
-}
-
-func TestDistributeCaptures_ForceRebalanceAfterRejoin(t *testing.T) {
-	nodesAll := []captureDistributionNode{
-		{NodeRef: "node-a", MaxSecondaryIPs: 128},
-		{NodeRef: "node-b", MaxSecondaryIPs: 128},
-	}
-	nodesSurvivors := []captureDistributionNode{
-		{NodeRef: "node-b", MaxSecondaryIPs: 128},
-	}
-	var addresses []string
-	for i := 1; i <= 18; i++ {
-		addresses = append(addresses, fmt.Sprintf("10.0.0.%d", i))
-	}
-	steady := distributeCaptures(addresses, nodesAll)
-	failover := distributeCapturesWithIncumbents(addresses, nodesSurvivors, steady.Assignments)
-	rejoined := distributeCapturesWithIncumbents(addresses, nodesAll, failover.Assignments)
-	if rejoined.NodeCounts["node-b"] != 18 || rejoined.NodeCounts["node-a"] != 0 {
-		t.Fatalf("test setup expected survivor to retain all captures, got %v", rejoined.NodeCounts)
-	}
-	forced := distributeCapturesForRebalance(addresses, nodesAll)
-	if forced.NodeCounts["node-a"] != 9 || forced.NodeCounts["node-b"] != 9 {
-		t.Fatalf("forced rebalance should restore 9/9 split, got %v", forced.NodeCounts)
-	}
-	if got := captureDistributionReasonCounts(&forced)["hash-assigned"]; got != 18 {
-		t.Fatalf("forced reason counts = %#v, want hash-assigned=18", captureDistributionReasonCounts(&forced))
-	}
-	if forced.Target != 9 {
-		t.Fatalf("forced target = %d, want 9", forced.Target)
+	if distAfter.NodeCounts["node-a"] > 15 || distAfter.NodeCounts["node-b"] > 15 {
+		t.Fatalf("capacity exceeded after failover: %v", distAfter.NodeCounts)
 	}
 }
 

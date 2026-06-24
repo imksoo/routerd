@@ -6,7 +6,7 @@ title: Getting started on FreeBSD
 
 ![Diagram showing the FreeBSD getting started flow from release archive install to rendered rc.d, rc.conf.d, pf, dnsmasq, mpd5, and apply validation](/img/diagrams/tutorial-freebsd-getting-started.png)
 
-FreeBSD uses the same routerd resource model as Ubuntu, but the host
+FreeBSD uses the same routerd resource model as Ubuntu and NixOS, but the host
 artifacts are FreeBSD-native. routerd renders `rc.conf.d`, `rc.d` scripts,
 `pf.conf`, `dhclient.conf`, dnsmasq configuration, `mpd5.conf`, and dynamic
 `ifconfig gif` operations for DS-Lite.

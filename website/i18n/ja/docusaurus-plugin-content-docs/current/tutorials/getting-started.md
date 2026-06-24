@@ -28,7 +28,7 @@ ip link
 実機では必ず自分のホストに合わせて読み替えてください。
 
 管理経路は、変更するインターフェースと分けてください。
-routerd が引き継ぐ予定のインターフェースだけで最初の検証を行うと、管理経路を失う可能性があります。
+routerd が引き継ぐ予定のインターフェースだけで最初の検証をすると危険です。
 
 ## 2. インターフェースとホスト準備の記述
 
@@ -68,7 +68,8 @@ spec:
 ```
 
 ルーター機能に必要なホスト側の実行時設定は、宣言したリソースから routerd が導き出します。
-`Package`、`Sysctl`、`SysctlProfile` は、自動で導けないパッケージやカーネル設定を補うための限定的な手段です。
+`Package`、`Sysctl`、`SysctlProfile` は、まだ自動で導けないパッケージやカーネル設定を補うための、
+限定的な逃げ道としてのみ使います。
 
 ## 3. 検証
 
@@ -102,7 +103,7 @@ sudo routerd serve --config first-router.yaml
 ```
 
 本番では、同梱のサービスマネージャー用ファイルを使って routerd を導入してください。
-起動時に `routerd serve` が自動的に開始されます。
+こうすると、起動時に `routerd serve` が自動的に開始されます。
 
 ## 7. 状態の確認
 
@@ -116,7 +117,7 @@ routerctl connections --limit 50
 
 ## 次に読むもの
 
-- [WAN 側サービス](./wan-side-services.md)（DHCPv6-PD、PPPoE、DS-Lite、DHCPv4 WAN の設定）
-- [LAN 側サービス](./lan-side-services.md)（DHCPv4 スコープ、RA、DNS、NTP の追加）
-- [基本のファイアウォール](./basic-firewall.md)（3 ロール構成のファイアウォールゾーンの有効化）
-- [routerctl doctor](../operations/routerctl-doctor.md)（適用後のルーター健全性の確認）
+- [WAN 側サービス](./wan-side-services.md) — DHCPv6-PD、PPPoE、DS-Lite、DHCPv4 WAN を設定する
+- [LAN 側サービス](./lan-side-services.md) — DHCPv4 スコープ、RA、DNS、NTP を追加する
+- [基本のファイアウォール](./basic-firewall.md) — 3 ロール構成のファイアウォールゾーンを有効にする
+- [routerctl doctor](../operations/routerctl-doctor.md) — 適用後のルーターの健全性を確認する

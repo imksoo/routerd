@@ -253,7 +253,7 @@ For details, see [log storage](./concepts/log-storage.md).
 
 OpenTelemetry export is configured by the `Telemetry` resource in
 `observability.routerd.net/v1alpha1`. routerd does not bundle an OTLP
-collector. When an endpoint is declared, generated systemd and FreeBSD
+collector. When an endpoint is declared, generated systemd, NixOS, and FreeBSD
 rc.d units receive the matching `OTEL_*` environment variables and the existing
 SDK path sends logs, metrics, and traces to that endpoint.
 

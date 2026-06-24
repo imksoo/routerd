@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -20,6 +21,12 @@ import (
 // `oci` binary, which resolves the instance principal on its own; routerd passes
 // NO credentials.
 type ociRunner func(ctx context.Context, argv ...string) ([]byte, error)
+
+var errPrivateIPNotFound = errors.New("private-ip not found")
+
+func isPrivateIPNotFoundError(err error) bool {
+	return errors.Is(err, errPrivateIPNotFound)
+}
 
 // defaultRunner returns the production runner that execs the real `oci` binary.
 // This is the ONLY use of os/exec in the executor, and it runs only `oci`.
@@ -179,7 +186,7 @@ func findPrivateIPOCID(ctx context.Context, runner ociRunner, vnicID, address st
 			return p.ID, nil
 		}
 	}
-	return "", fmt.Errorf("no private-ip found for address %q on vnic %q", address, vnicID)
+	return "", fmt.Errorf("%w: address %q on vnic %q", errPrivateIPNotFound, address, vnicID)
 }
 
 // hostPart strips a trailing "/<prefix>" so a captured /32 ("10.88.60.9/32")

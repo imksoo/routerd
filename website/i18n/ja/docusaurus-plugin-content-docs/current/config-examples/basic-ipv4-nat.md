@@ -7,7 +7,8 @@ sidebar_position: 10
 
 ![DHCP WAN、routerd 管理の LAN アドレス、DHCPv4 サーバー、NAT44、ファイアウォールゾーンで構成する基本的な IPv4 ゲートウェイ](/img/diagrams/config-example-basic-ipv4-nat.png)
 
-LAN クライアントが、DHCP で取得した WAN 側 IPv4 アドレスを使ってインターネットに出るための、最小構成に近いホームルーターの例です。
+LAN クライアントが、DHCP で取得した WAN 側 IPv4 アドレスを使ってインターネットに出るための、
+最小構成に近いホームルーターの例です。
 
 完全な検証済み YAML は `examples/example-basic-ipv4-nat.yaml` にあります。
 
@@ -45,9 +46,9 @@ flowchart LR
 | IPv4 インターネット接続 | `NAT44Rule/lan-to-wan` |
 | 基本的なフィルター | `FirewallZone/wan`, `FirewallZone/lan`, `FirewallPolicy/home` |
 
-この例では DNS をできるだけ単純にしています。
-DHCPv4 クライアントには、ルーターの LAN アドレスを DNS サーバーとして配ります。
-基本的なルーティングが動いたあとで、必要に応じて `DNSResolver` と `DNSZone` を追加してください。
+この例では DNS をできるだけ単純にしています。DHCPv4 クライアントには、ルーターの
+LAN アドレスを DNS サーバーとして配ります。基本的なルーティングが動いたあとで、
+必要に応じて `DNSResolver` と `DNSZone` を追加してください。
 
 ## 設定の要点
 
@@ -99,8 +100,9 @@ DHCPv4 クライアントには、ルーターの LAN アドレスを DNS サー
       - 192.168.10.0/24
 ```
 
-`NAT44Rule` は routerd の nftables NAT テーブルに反映されます。
-ファイアウォールのリソースでは、WAN インターフェースを `untrust` ゾーン、LAN インターフェースを `trust` ゾーンに入れます。
+`NAT44Rule` は routerd の nftables NAT テーブルに反映されます。ファイアウォールの
+リソースでは、WAN インターフェースを `untrust` ゾーン、LAN インターフェースを
+`trust` ゾーンに入れます。
 
 ## 適用手順
 
@@ -110,7 +112,8 @@ routerctl validate -f router.yaml --replace
 routerctl plan -f router.yaml --replace
 ```
 
-管理アクセスが、アドレスを変更しようとしている LAN インターフェースに依存していないこと、あるいはコンソールアクセスがあることを確認してから適用します。
+管理アクセスが、アドレスを変更しようとしている LAN インターフェースに依存していないこと、
+あるいはコンソールアクセスがあることを確認してから適用します。
 
 ```bash
 routerctl apply -f router.yaml --replace
@@ -138,5 +141,5 @@ curl https://1.1.1.1/
 ## よく変える場所
 
 - `ens18` と `ens19` を実際のインターフェース名に変更する。
-- 上流ネットワーク、VPN、管理ネットワークと重なる場合は `192.168.10.0/24` を変更する。
+- 上流、VPN、管理ネットワークと重なる場合は `192.168.10.0/24` を変更する。
 - ルーターを DNS サーバーとして配る前に、必要なら `DNSResolver` を追加する。

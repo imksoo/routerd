@@ -45,7 +45,7 @@ sudo routerd serve --config /usr/local/etc/routerd/router.yaml
 
 ## Render
 
-When this documentation says "render", it means routerd produces host-side files such as a dnsmasq configuration, an nftables ruleset, or a systemd unit. Rendering alone does not necessarily change the host — whether the host is updated depends on the operation (`plan`, `apply`, or `serve`) and the active controller mode.
+When this documentation says "render", it means routerd produces host-side files such as a dnsmasq configuration, an nftables ruleset, a systemd unit, or a NixOS module. Rendering alone does not necessarily change the host — whether the host is updated depends on the operation (`plan`, `apply`, or `serve`) and the active controller mode.
 
 In current routerd, dnsmasq is no longer responsible for DNS answering. dnsmasq renders DHCPv4, DHCPv6, relay, and RA configuration only. DNS listening, local zones, conditional forwarding, and encrypted DNS are handled by `DNSResolver`, which is the configuration shape for `routerd-dns-resolver`.
 

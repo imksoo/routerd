@@ -222,18 +222,9 @@ func appendBGPMobilityProviderSecondaryClaims(router api.Router, store any) api.
 			continue
 		}
 		status := reader.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", resource.Metadata.Name)
-		seen := map[string]bool{}
 		for _, address := range bgpStatusStringSlice(status["discoverySelfCapturedAddresses"]) {
 			normalized, ok := normalizeBGPMobilityHostPrefix(address, prefix)
 			if !ok || sam.CaptureExcludesAddress(addressCaptureFromMobilityCapture(self.Capture), normalized) {
-				continue
-			}
-			seen[normalized] = true
-			claims = append(claims, bgpMobilityProviderSecondaryClaim(resource.Metadata.Name, self, normalized))
-		}
-		for _, address := range actionJournalAssignedAddresses(store) {
-			normalized, ok := normalizeBGPMobilityHostPrefix(address, prefix)
-			if !ok || seen[normalized] || sam.CaptureExcludesAddress(addressCaptureFromMobilityCapture(self.Capture), normalized) {
 				continue
 			}
 			claims = append(claims, bgpMobilityProviderSecondaryClaim(resource.Metadata.Name, self, normalized))
@@ -244,26 +235,6 @@ func appendBGPMobilityProviderSecondaryClaims(router api.Router, store any) api.
 	}
 	out := router
 	out.Spec.Resources = append(append([]api.Resource(nil), router.Spec.Resources...), claims...)
-	return out
-}
-
-func actionJournalAssignedAddresses(store any) []string {
-	lister, ok := store.(interface {
-		ListActions(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)
-	})
-	if !ok {
-		return nil
-	}
-	actions, err := lister.ListActions(routerstate.ActionExecutionFilter{})
-	if err != nil {
-		return nil
-	}
-	m := latestAssignedAddresses(actions)
-	out := make([]string, 0, len(m))
-	for addr := range m {
-		out = append(out, addr)
-	}
-	sort.Strings(out)
 	return out
 }
 

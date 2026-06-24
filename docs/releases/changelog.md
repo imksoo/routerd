@@ -12,110 +12,49 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
-## v20260619.1730
+### Changed
+
+- The Live ISO is now built with Ubuntu `debootstrap` instead of Alpine Linux.
+  Network interface names follow the Ubuntu/systemd predictable naming scheme
+  (`ens18`, `ens19`, …) instead of the kernel `eth0`/`eth1` convention used by
+  the former Alpine ISO. Existing `router.yaml` files that reference `eth*`
+  interface names must be updated to match the new names when migrating to the
+  Ubuntu-based ISO.
 
 ### Added
 
-- **Live ISO cloud-init / IMDS / NoCloud bootstrap.** The Ubuntu-based live
-  ISO detects cloud-init, IMDS (AWS/Azure/OCI/GCP), and NoCloud data sources
-  at first boot. `router.yaml` and SSH keys are imported automatically.
-  Serial console login is enabled with empty-password root (`pam_unix nullok`)
-  (#558, #559, #560, #561, #562, #563, #571, #572, #573).
-- **`SAMNodeSet`** Kind for write-once SAM fabric node identity registry.
-  Transport peers, event peers, and WireGuard peers are derived dynamically
-  from the node set, eliminating per-leaf peer enumeration
-  (#347, #348, #351, #354).
-- **`SAMSubnetPolicy`** Kind for subnet-level shard distribution across
-  placement group members. Capture distribution now targets multiple members
-  instead of a single owner (#352, #353).
-- **`samEndpointFrom`** on `SAMTransportProfile` resolves SAM underlay
-  endpoints (address + routes) dynamically from `SAMNodeSet` status (#527, #603).
-- **Ownership resolver** for SAM capture decisions. Shadow-mode validation,
-  provider observation gating, and cross-capture home-owner precedence
-  replace legacy ownership helpers (#401, #402, #403, #405, #406, #408,
-  #409, #410, #418, #420, #421, #422).
-- **Capture strategy separation.** `seize` hold-down, per-provider strategy
-  (secondary-ip for AWS/Azure, route-table for OCI), and declarative IAM
-  for AWS capture (#393, #423, #430, #431, #433, #434).
-- **No-preempt failover.** Restored nodes do not preempt equal-priority
-  peers; unequal-priority restore is harmless. Standby capture retention
-  and failback preemption fixes (#385, #386).
-- **OCI route-table (VCN route-rule) capture strategy** with lab-validated
-  E2E mobility (#516).
-- **`FederationSLO`** Kind (`federation.routerd.net/v1alpha1`) for declarative
-  per-EventGroup SLO thresholds. Custom lag/expiry/pending/failed limits
-  override hardcoded defaults (#541).
-- **`routerctl doctor federation`** performs 19 checks across delivery health,
+- `FederationSLO` Kind (`federation.routerd.net/v1alpha1`) for declarative
+  per-EventGroup SLO thresholds. Custom `lagWarnSeconds`, `lagFailSeconds`,
+  `expiresSoonSeconds` override hardcoded defaults; `maxPendingRuns` and
+  `maxFailedRuns` gate subscription health checks. Zero values fall back
+  to defaults with effective-value validation (#541).
+- `routerctl doctor federation` performs 19 checks across delivery health,
   expected-peer audit, subscription runs, delivery lag, event expiry, and
-  stale TTL. `--remediation-plan` generates typed action constants (#537,
-  #539, #540, #541).
-- **`routerctl federation deliveries summary`** aggregates per-(group, peer)
-  delivery statistics (#537).
-- **14 OpenTelemetry metrics in `routerd-eventd`**: outbox delivery, receiver,
-  pruner, and loop health counters (#540).
-- Outbox re-pushes federation events when their TTL is refreshed (#529).
-- **`routerctl doctor routes`** compares `IPv4Route` status with the Linux
-  host FIB and reports drift (#439).
-- **`routerctl action`** operator surface for gated provider action execution
-  with AWS, Azure, and OCI executor plugins (#Phase5).
-- **SAM control-plane owner table** inspection via `routerctl` and doctor
-  checks for route residue, stale captures, and DHCP link-route false
-  positives (#495, #496, #498, #499, #500).
-- **Web Console** gains VRRP display with management links and SAM
-  dashboard (#369, #547).
-- **P4 federation operational qualification** harness: 16/16 pass on
-  Ubuntu VMs (#Phase4).
-- **Live ISO SSH hardening** and validated config bootstrap (#563, #568).
-
-### Changed
-
-- **Live ISO: Alpine → Ubuntu.** The ISO is now built with `debootstrap`
-  (Ubuntu 24.04.4). Network interface names follow the systemd predictable
-  naming scheme (`ens18`, `ens19`, …) instead of `eth0`/`eth1`. Existing
-  `router.yaml` files that reference `eth*` names must be updated (#556,
-  #557, #558, #559, #560, #569).
-- **Alpine Linux and NixOS support fully removed.** Ubuntu and FreeBSD are
-  the only supported platforms. All Alpine/NixOS/OpenRC documentation,
-  examples, tutorials, and i18n translations have been removed.
-- CI release pipeline runs builds in parallel with quality checks and
-  streams uploads from build jobs, reducing end-to-end release time.
-  ISO rootfs caching on the main branch enables cross-ref reuse
-  (#590, #593, #594, #597).
-- Adaptive controller reconcile intervals reduce chatty observation and
-  DHCPv4 lease-timer events.
-- `routerd.service` systemd unit hardening relaxed to allow `AF_PACKET`
-  sockets and avoid `--no-block` start deadlocks in firstboot (#571, #572,
-  #573).
-- `dnsmasq` host configuration split into `include` files (#454).
-- `DNSUpstream` can reference `bootstrapFrom` for upstream resolution (#458).
-- `dnsmasq` handles `VirtualAddress` references (#451).
-
-### Fixed
-
-- **DHCPv4Client / DNSResolver status stabilization.** Applied events
-  restricted to core lease fields; `bootstrapFrom` unresolved fallback
-  uses static bootstrap (#573).
-- **IPIP remote endpoint updates** now propagate correctly (#600).
-- Daemon-observed phase ownership and daemon-backed status ownership
-  fixes (#596, #602).
-- Provider secondary BGP capture forwarding and standby release (#500,
-  #507).
-- SAM failback capture preemption and stale capture cleanup (#494, #498).
-- CloudEdge return-route FIB admission and BGP preferred-source inference.
-- Federation event TTL refresh and shard event `SourceNode` (#353, #529).
-- Live ISO: MAC-based DHCP client identifier, `qemu-guest-agent` package,
-  `machine-id` permission fix, universe/restricted repo inclusion (#556,
-  #557, #558, #559).
-- PVE svnet onprem ownership resolution (#544).
-
-### Removed
-
-- Alpine Linux platform support (Live ISO, `apk` bootstrap, OpenRC
-  rendering, `lbu` persistence, Alpine VM smoke harness).
-- NixOS platform support (NixOS module generation, `nixos-rebuild`
-  integration, NixOS VM smoke harness).
-- Legacy mobility planner helpers, `iptables` check output, and obsolete
-  `eventd` units (#396, #406).
+  stale TTL. Per-group SLO violations are reported in the JSON `slo.groups[]`
+  array (#537, #539, #540, #541).
+- `routerctl doctor federation --remediation-plan` generates a plan-only
+  JSON remediation plan with stable typed action constants and check codes.
+  Actions are deduped by (action, group, peer, resource) and sorted
+  deterministically. The plan never mutates state (#541).
+- `routerctl federation deliveries summary` aggregates per-(group, peer)
+  delivery statistics: events, delivered, failed, pending, stale TTL,
+  max lag, min expires-in (#537).
+- 14 OpenTelemetry metrics in `routerd-eventd`: outbox delivery
+  (`delivery_total`, `delivery_lag_seconds`, `repush_total`,
+  `stale_ttl_total`), receiver (`accepted_total`, `duplicate_total`,
+  `reject_total`), pruner, and loop health counters (#540).
+- Outbox re-pushes federation events when their TTL is refreshed,
+  ensuring peers receive the latest expiry (#529).
+- `routerctl doctor routes` compares installed `IPv4Route` status rows with
+  the Linux host FIB and reports stale or mismatched destination, gateway,
+  device, preferred-source, and metric drift as operator evidence (#439).
+- `routerctl action` operator surface for gated provider action execution:
+  `import`, `list`, `show`, `approve`, `execute`, `journal`, `rollback`
+  subcommands. Execution requires explicit approval and
+  `ProviderActionPolicy` gating; dry-run is non-destructive (#Phase5).
+- Provider executor plugins for AWS, Azure, and OCI with real cloud
+  mutation (secondary IP assign/unassign, source/dest check, route table).
+  Lab-smoke PASS for all three providers (#Phase5).
 
 ## v20260608.2325
 

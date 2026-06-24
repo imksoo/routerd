@@ -2,28 +2,31 @@
 title: CloudEdge SAM Phase G — 詳細実装ガイド
 ---
 
-# CloudEdge SAM Phase G 詳細実装ガイド
+# CloudEdge Selective Address Mobility Phase G — 詳細実装ガイド
 
 ![CloudEdge SAM Phase G deep dive の各レイヤー（provider ネットワーク、transport underlay、SAM BGP mobility、Route Reflector 制御、capture 実現、パケットキャプチャ証跡、フェイルオーバー、PMTU 防御）を示す図](/img/diagrams/explainer-cloudedge-sam-phase-g-deep-dive.png)
 
-本ガイドは Phase G の概要を補足し、CloudEdge SAM の説明やトラブルシューティングで運用者が必要とする低レベルの詳細を扱います。
+本ガイドは Phase G の概要を補足し、CloudEdge SAM の説明やトラブルシューティングで
+運用者が必要とする低レベルの詳細を扱います。
 
 - underlay / transport / overlay の用語整理
 - WireGuard または `TunnelInterface` のカプセル化と実際の inner/outer パケットビュー
 - iBGP ピア、Route Reflector の動作、BGP `/32` 所有権、liveness marker
 - RIB 駆動の trap と provider/on-prem の capture 実現
 - AWS / Azure / OCI / on-prem の実装差異
-- 通常のデータプレーンフロー、フェイルオーバー、エンドポイントの追加と削除の動作
+- 通常のデータプレーンフロー、フェイルオーバー、エンドポイントの追加・削除の動作
 
-現行の Phase G 設計は **clean Option B** です。
-BGP が mobility の唯一の真実源です。
-以前の mobility 固有の `AddressLease`、`ownershipEpoch`、`captureEpoch`、heartbeat、route-lowering planner の状態はメインラインから削除されています。
-これらは歴史的な ADR や Phase G 以前の議論に残っている場合がありますが、現行の CloudEdge SAM を説明する主要なパスではありません。
+現行の Phase G 設計は **clean Option B** です。BGP が mobility の唯一の真実源です。
+以前の mobility 固有の `AddressLease`、`ownershipEpoch`、`captureEpoch`、heartbeat、
+route-lowering planner の状態はメインラインから削除されています。これらは歴史的な
+ADR や Phase G 以前の議論に残っている場合がありますが、現行の CloudEdge SAM を説明
+する主要なパスではありません。
 
 ## 1. レイヤーの用語
 
-CloudEdge の文書では「underlay」を SAM/BGP mobility overlay の下位にある transport の略称として使うことがあります。
-運用者との会話では 3 つのレイヤーを区別すると便利です。
+CloudEdge の文書では「underlay」を SAM/BGP mobility overlay の下位にある transport
+の略称として使うことがあります。運用者との会話では 3 つのレイヤーを区別すると
+便利です。
 
 | レイヤー | 意味 | CloudEdge SAM での例 |
 | --- | --- | --- |
@@ -32,8 +35,9 @@ CloudEdge の文書では「underlay」を SAM/BGP mobility overlay の下位に
 | **SAM/BGP mobility overlay** | 論理的な `/32` 到達性プレーン。 | BGP best-path の所有権、liveness marker route、RIB trap、バックグラウンド provider capture。 |
 | **ワークロードパケット** | transport 内部の実際のクライアント/サービストラフィック。 | `src=10.77.60.11`、`dst=10.77.60.12`、プロトコル TCP/UDP/NFS/RPC 等。 |
 
-CloudEdge 文書で「WireGuard underlay」と呼ぶ場合は、「SAM/BGP mobility overlay の下位にあるデフォルト transport」と読んでください。
-物理 provider ネットワークそのものではありません。
+CloudEdge 文書で「WireGuard underlay」と呼ぶ場合は、「SAM/BGP mobility overlay の
+下位にあるデフォルト transport」と読んでください。物理 provider ネットワークそのもの
+ではありません。
 
 ## 2. 全体トポロジ
 
@@ -42,7 +46,7 @@ CloudEdge 文書で「WireGuard underlay」と呼ぶ場合は、「SAM/BGP mobil
 - on-prem が iBGP Route Reflector ハブとして機能する
 - AWS、Azure、OCI の Cloud Edge Router が transport ネットワーク経由で on-prem RR にピアリングする
 - 各サイトにローカルフェイルオーバー用の active/standby ルーターがある
-- 論理プール内の選択アドレス、例えば `10.77.60.10/32` から `10.77.60.13/32` が BGP `/32` パスとして広告、学習される
+- 論理プール内の選択アドレス、例えば `10.77.60.10/32` から `10.77.60.13/32` が BGP `/32` パスとして広告・学習される
 
 ```mermaid
 flowchart TB
@@ -77,7 +81,8 @@ flowchart TB
 
 mobile `/32` の所有者は、そのプレフィクスの現在の BGP best path です。
 運用者が lease、claim、アドレスごとの provider action を手書きする必要はありません。
-routerd は `MobilityPool` の intent を BGP 広告に投影し、RIB を観測してローカルで何を実現すべきかを判断します。
+routerd は `MobilityPool` の intent を BGP 広告に投影し、RIB を観測してローカルで
+何を実現すべきかを判断します。
 
 ```mermaid
 sequenceDiagram
@@ -102,10 +107,10 @@ sequenceDiagram
 - BGP RIB/FIB の状態がデータプレーンで使われる所有者ビュー
 - provider capture action は現在の BGP mobility path signature でフェンスされる
 
-## 4. カプセル化と実際のパケットビュー
+## 4. カプセル化: 実際のパケットビュー
 
-あるサイトがリモートの owner `/32` にトラフィックを送信するとき、クライアントパケットは NAT されません。
-transport が運ぶ **inner packet** になります。
+あるサイトがリモートの owner `/32` にトラフィックを送信するとき、クライアントパケット
+は NAT されません。transport が運ぶ **inner packet** になります。
 
 例: AWS クライアント `.11` が Azure の owner `.12` と通信。
 
@@ -136,18 +141,19 @@ outer transport パケット:
 
 ## 5. 環境ごとの capture 実現
 
-BGP が到達性を決定します。
-provider または on-prem の capture が、選択された `/32` を正しいエッジで物理的またはローカルに到達可能にします。
+BGP が到達性を決定します。provider または on-prem の capture が、選択された `/32` を
+正しいエッジで物理的またはローカルに到達可能にします。
 
 | 環境 | capture 方法 | 制御/API | フェイルオーバーの動き | 注意 |
 | --- | --- | --- | --- | --- |
 | AWS | ENI secondary private IP | allow-reassignment 動作の `assign-private-ip-addresses` | active の marker/path が消えると standby が secondary IP を奪取。 | ENI 権限と source/dest check の動作を一貫させること。 |
 | Azure | NIC secondary IP（ipConfig 経由） | 旧保持者の ipConfig を削除し、新保持者の ipConfig を作成 | 2 ステップの remove/add。リトライは部分障害を処理する必要あり。 | IP を保持する NIC が一時的に存在しない短い窓がある。executor を冪等にすること。 |
 | OCI | VNIC secondary private IP | `assign-private-ip --unassign-if-already-assigned` | standby が自身の VNIC に private IP を再割当て。 | VNIC/private-IP の状態、forwarding、ローカルファイアウォールを検証すること。 |
-| On-prem | proxy ARP + GARP | VRRP/CARP 様の mastership でゲートされた OS ネットワーキング、または 1 サイト/1 ルーター/1 オーナーの lab 向けに `capture.activeWhen.type: single-router` | HA ペアは VRRP master ゲートを使用。単一ルーターサイトは VRRP なしで常時 active capture を選択可。 | 重複 ARP 応答を防止すること。split-brain doctor は検出時にハード障害として即座に報告すること。 |
+| On-prem | proxy ARP + GARP | VRRP/CARP 様の mastership でゲートされた OS ネットワーキング、または 1 サイト/1 ルーター/1 オーナーの lab 向けに `capture.activeWhen.type: single-router` | HA ペアは VRRP master ゲートを使用。単一ルーターサイトは VRRP なしで常時 active capture を選択可。 | 重複 ARP 応答を防止すること。split-brain doctor は大きな音で失敗しなければならない。 |
 
 provider secondary IP の reconciliation はバックグラウンドの fabric-ingress 実現です。
-クラウドネイティブな入口パスに必要ですが、overlay 到達性の真実源にしてはいけません。
+クラウドネイティブな入口パスにとって重要ですが、overlay 到達性の真実源になっては
+いけません。
 
 ## 6. 通常の通信シーケンス
 
@@ -207,8 +213,8 @@ provider ごとの動作:
 
 ## 8. On-prem の LAN capture と split-brain 安全性
 
-BGP はリモート overlay パスを決定できますが、それだけではローカル L2 の ARP 権限を保護しません。
-そのため on-prem の capture はローカルでゲートされます。
+BGP はリモート overlay パスを決定できますが、それだけではローカル L2 の ARP 権限を
+保護しません。そのため on-prem の capture はローカルでゲートされます。
 
 ```mermaid
 flowchart LR
@@ -226,10 +232,10 @@ flowchart LR
 - 1 サイト/1 ルーター/1 オーナーの構成では、`capture.activeWhen.type: single-router` が VRRP ゲートなしの明示的な常時 active proxy-ARP capture モード
 - 重複 proxy ARP 保持者はハード診断障害
 
-## 9. エンドポイントの追加と削除、ルート伝搬
+## 9. エンドポイントの追加・削除とルート伝搬
 
-メッセージ伝搬は BGP の advertise/withdraw で行います。
-mobility 固有の lease/heartbeat 伝搬は使いません。
+重要なメッセージ伝搬は BGP の advertise/withdraw であり、mobility 固有の
+lease/heartbeat 伝搬ではありません。
 
 ### 新規または復旧した `/32`
 
@@ -249,12 +255,12 @@ mobility 固有の lease/heartbeat 伝搬は使いません。
 
 ## 10. PMTU とプロトコル透過性
 
-カプセル化によりオーバーヘッドが追加されます。
-そのため CloudEdge は PMTU/MSS をデータプレーンの不変条件として扱います（単なる診断項目ではありません）。
+カプセル化によりオーバーヘッドが追加されます。そのため CloudEdge は PMTU/MSS を
+あると便利な診断項目ではなく、データプレーンの不変条件として扱います。
 
 - `EstimateMTU` は WireGuard または `TunnelInterface` のオーバーヘッドに追従。
 - `routerd_mss` が TCP MSS をクランプしてブラックホールを回避。
-- 信頼パスでは DF ブラックホール緩和が DF セマンティクスの保持より優先される場合に IPv4 force-fragment が利用可能。
+- 信頼パスでは DF ブラックホール緩和が DF セマンティクスの保持より重要な場合に IPv4 force-fragment が利用可能。
 - プロトコル透過性の acceptance は ping だけでなく、FTP active/passive、NFS、RPC/rpcbind、大容量 TCP bulk、DF/no-DF の PMTU プローブを含めるべき。
 
 ## 11. 運用チェックリスト
@@ -273,6 +279,8 @@ CloudEdge SAM の説明やデバッグ時には、このリストを順に確認
 
 ## 12. 人間向けの短い説明
 
-CloudEdge SAM は BGP best-path 駆動の `/32` mobility です。
-routerd は WireGuard 等の transport underlay でサイト間を接続し、iBGP で選択した `/32` の owner を学習して広告し、RIB の変化を trap し、provider secondary IP または on-prem proxy ARP/GARP で ingress を実現します。
-NAT なしでワークロードパケットを運ぶため、送信元 IP とクライアントのデフォルトゲートウェイの動作が変わりません。
+CloudEdge SAM は BGP best-path 駆動の `/32` mobility です。routerd は WireGuard 等の
+transport underlay でサイト間を接続し、iBGP で選択した `/32` の owner を学習・広告し、
+RIB の変化を trap し、provider secondary IP または on-prem proxy ARP/GARP で ingress
+を実現し、NAT なしでワークロードパケットを運ぶため、送信元 IP とクライアントの
+デフォルトゲートウェイの動作が変わりません。

@@ -7,7 +7,7 @@ sidebar_position: 20
 
 ![routerd が LAN ゲートウェイアドレス、DHCPv4 プールと予約、ローカル DNS ゾーン、リース由来の名前を提供する構成](/img/diagrams/config-example-lan-dns-dhcp.png)
 
-1 つの LAN インターフェースを、家庭内 LAN や検証用 LAN のサービスセグメントとして使う例です。
+1 つの LAN インターフェースを、小さな家庭内 LAN や検証用 LAN のサービスセグメントとして使う例です。
 routerd が LAN アドレス、DHCPv4、ローカル DNS ゾーン、DHCP リース由来の名前を管理します。
 
 完全な YAML は `examples/example-lan-dns-dhcp.yaml` にあります。
@@ -92,5 +92,5 @@ dig @192.168.30.1 router.home.example
 ## よく変えるところ
 
 - `home.example` を自分の search domain に変える。
-- NAS やプリンター、基盤機器は `DHCPv4Reservation` に追加する。
+- NAS、プリンター、基盤機器は `DHCPv4Reservation` に足す。
 - 一部のドメインだけプライベートな上流へ送りたい場合は `DNSForwarder` と `DNSUpstream` を追加する。

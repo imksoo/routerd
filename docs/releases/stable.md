@@ -12,38 +12,34 @@ routerd ships frequently using the `vYYYYMMDD.HHmm` scheme. From those builds we
 
 | Item | Value |
 | --- | --- |
-| Version | **v20260619.1730** |
-| Status | Recommended stable release (supersedes v20260608.2325; Live ISO Ubuntu migration, SAMNodeSet/SAMSubnetPolicy, federation SLO, cloud-init bootstrap) |
-| Track record | E2E validation pending (codex-lab results awaited) |
+| Version | **v20260608.2325** |
+| Status | Recommended stable release (supersedes v20260608.1354; peersFrom/membersFrom dynamic distribution for zero-touch leaf config) |
+| Track record | Validated on k8s cluster (10 nodes: 2 RR + 8 leaf, peersFrom + membersFrom + peer-group-sync all green, full verify passed), lab (FreeBSD router01/04 upgrade verified), and production router (homert02, validate pass). 0 open issues |
 | Binary | Statically linked (`CGO_ENABLED=0`), passes CI and the Release workflow |
 
-## Why v20260619.1730 is recommended
+## Why v20260608.2325 is recommended
 
-This is a major milestone: the Live ISO migrates from Alpine to Ubuntu, SAM gains first-class fabric primitives, and federation observability becomes SLO-driven. 167 commits since v20260608.2325.
+This release adds **peersFrom**, **membersFrom**, and **peer-group-sync** on top of v20260608.1354, enabling zero-touch leaf configuration for SAM fabrics.
 
-### Live ISO: Alpine → Ubuntu (#556–#573)
+### peersFrom + SAMPeerGroup (#332, #333)
 
-The ISO is rebuilt from Ubuntu 24.04.4 via `debootstrap`. Interface names switch to predictable naming (`ens18`, `ens19`, …). Cloud-init, IMDS (AWS/Azure/OCI/GCP), and NoCloud data sources bootstrap `router.yaml` and SSH keys at first boot. Serial console login with empty-password root is enabled.
+`SAMTransportProfile` gains `spec.peersFrom` referencing `SAMPeerGroup` resources. Union semantics: imported peers load first, static `peers` override by `nodeRef`. `publishPeerGroup: true` on RR generates a `SAMPeerGroup` `DynamicConfigPart` automatically.
 
-### SAMNodeSet + SAMSubnetPolicy (#347–#354)
+### Peer group sync (#334, #336)
 
-`SAMNodeSet` is a write-once node identity registry for SAM fabrics. Transport peers, event peers, and WireGuard peers derive dynamically from the node set. `SAMSubnetPolicy` distributes subnet-level shards across placement group members. `samEndpointFrom` resolves underlay endpoints from `SAMNodeSet` status (#527, #603).
+Lightweight HTTP service on port 19652 over WireGuard inner network. RR serves `GET /v1/peer-groups`; leaf discovers WireGuard peers and fetches matching groups automatically. No manual `SAMPeerGroup` distribution needed.
 
-### Ownership resolver + capture strategy (#393–#434)
+### MobilityMemberSet + membersFrom (#339, #340)
 
-A new ownership resolver replaces legacy helpers. Per-provider capture strategies (secondary-ip for AWS/Azure, route-table for OCI) are separated. No-preempt failover ensures restored nodes do not preempt equal-priority peers.
+`MobilityMemberSet` Kind carries shared identity-only pool members (`nodeRef`, `site`, `role`). `MobilityPool.spec.membersFrom` imports them; leaves keep only their own capture/discovery details inline. `publishMemberSet: true` generates and distributes the member set via `GET /v1/member-sets`. Reduces O(N²) config duplication — svnet1 configs reduced by 78 lines (2624 → 2546).
 
-### Federation SLO + doctor federation (#537–#541)
+### FreeBSD legacy flag compatibility (#337, #338)
 
-`FederationSLO` Kind declares per-EventGroup thresholds. `routerctl doctor federation` runs 19 checks with `--remediation-plan` for typed action constants. 14 OTel metrics in `routerd-eventd` cover delivery, receiver, and loop health.
+Removed `routerd serve` flags (`--observe-interval`, `--controller-chain*`) are now accepted and ignored with a warning, preventing upgrade failures when `/etc/rc.conf` retains stale entries.
 
-### CI pipeline acceleration (#590–#597)
+### Inherited from v20260608.1354
 
-Release builds run in parallel with quality checks. ISO rootfs caching on main and streaming uploads reduce end-to-end release time.
-
-### Inherited from v20260608.2325
-
-All properties from v20260608.2325 are carried forward: peersFrom/membersFrom dynamic distribution, peer-group-sync, pair-stable addressing, ADR 0014 CLI redesign.
+All properties from v20260608.1354 are carried forward: pair-stable addressing, ADR 0014 CLI redesign, and all prior production-safe fixes.
 
 ## Known observations (not release blockers)
 
@@ -51,8 +47,6 @@ All properties from v20260608.2325 are carried forward: peersFrom/membersFrom dy
 - **`routerctl doctor mgmt` SKIPs when no `ManagementAccess` is declared.** This is a live-config choice, not a release defect.
 
 :::warning Upgrading
-- **From v20260608.2325 or earlier Alpine ISO:** Network interface names changed from `eth0`/`eth1` to `ens18`/`ens19` (systemd predictable naming). Update `router.yaml` interface references before migrating to the new ISO.
-- **Alpine Linux and NixOS are no longer supported.** Ubuntu and FreeBSD are the only supported platforms.
 - **From v20260528.2308:** ADR 0014 changed the CLI verb surface. `routerd apply` → `routerctl apply`, `routerd validate` → `routerctl validate`, etc. Rewrite service units or scripts that use old commands. `install.sh` auto-deploys new service units, so systemd-managed units update automatically.
 - **Always `cd` into the extracted release directory before running `install.sh`.**
 - **From v20260523.1542 or earlier:** the `disabled:` field was removed (use `enabled: false`) along with `--controller-chain*` / `--observe-interval` flags.

@@ -5,7 +5,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -139,78 +138,6 @@ func TestMobilityOwnersCommand(t *testing.T) {
 	}
 }
 
-func TestMobilityDistributionCommand(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "routerd.db")
-	store, err := routerstate.OpenSQLite(path)
-	if err != nil {
-		t.Fatalf("OpenSQLite: %v", err)
-	}
-	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
-		"captureDistributionMode":          "distributed",
-		"captureDistributionNodeCounts":    map[string]any{"aws-router-a": 9, "aws-router-b": 9},
-		"captureDistributionReasonCounts":  map[string]any{"hash-assigned": 18},
-		"captureDistributionTargetPerNode": 9,
-		"captureDistributionTotalAssigned": 18,
-		"captureRebalancePhase":            "Applied",
-	}); err != nil {
-		t.Fatalf("SaveObjectStatus: %v", err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-
-	var stdout, stderr bytes.Buffer
-	if err := mobilityCommand([]string{"distribution", "--state-file", path}, &stdout, &stderr); err != nil {
-		t.Fatalf("mobility distribution: %v stderr=%s", err, stderr.String())
-	}
-	out := stdout.String()
-	for _, want := range []string{"cloudedge", "aws-router-a", "aws-router-b", "hash-assigned=18", "Applied"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("mobility distribution output missing %q:\n%s", want, out)
-		}
-	}
-	if strings.Contains(out, "<nil>") {
-		t.Fatalf("mobility distribution output leaked nil values:\n%s", out)
-	}
-}
-
-func TestMobilityRebalanceCapturesCommandRecordsRequest(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "routerd.db")
-	store, err := routerstate.OpenSQLite(path)
-	if err != nil {
-		t.Fatalf("OpenSQLite: %v", err)
-	}
-	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
-		"captureDistributionMode": "distributed",
-	}); err != nil {
-		t.Fatalf("SaveObjectStatus: %v", err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-
-	var stdout, stderr bytes.Buffer
-	if err := mobilityCommand([]string{"rebalance-captures", "--state-file", path, "--pool", "cloudedge", "--by", "tester", "--reason", "rejoin"}, &stdout, &stderr); err != nil {
-		t.Fatalf("mobility rebalance-captures: %v stderr=%s", err, stderr.String())
-	}
-	if out := stdout.String(); !strings.Contains(out, "cloudedge") || !strings.Contains(out, "Pending") || !strings.Contains(out, "tester") {
-		t.Fatalf("unexpected rebalance output:\n%s", out)
-	}
-
-	store, err = routerstate.OpenSQLite(path)
-	if err != nil {
-		t.Fatalf("OpenSQLite second: %v", err)
-	}
-	defer store.Close()
-	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
-	if status["captureRebalancePhase"] != "Pending" || status["captureRebalanceRequestedBy"] != "tester" || status["captureRebalanceReason"] != "rejoin" {
-		t.Fatalf("status = %#v, want pending rebalance request", status)
-	}
-	if strings.TrimSpace(fmt.Sprint(status["captureRebalanceRequestID"])) == "" {
-		t.Fatalf("status = %#v, want request ID", status)
-	}
-}
-
 func TestTopLevelUsageListsCurrentMobilityCommands(t *testing.T) {
 	var stdout bytes.Buffer
 	usage(&stdout)
@@ -218,8 +145,6 @@ func TestTopLevelUsageListsCurrentMobilityCommands(t *testing.T) {
 	out := stdout.String()
 	for _, want := range []string{
 		"mobility owners",
-		"mobility distribution",
-		"mobility rebalance-captures",
 		"mobility paths",
 		"mobility traps",
 	} {

@@ -983,7 +983,7 @@ func filterDiscoveryLocalInventoryStatusRecords(records []providerinventory.Priv
 	selfResourceRef = strings.TrimSpace(selfResourceRef)
 	var out []providerinventory.PrivateIPRecord
 	for _, rec := range records {
-		if providerInventoryRecordIsRouterNIC(rec) && rec.Primary {
+		if providerInventoryRecordIsRouterNIC(rec) {
 			continue
 		}
 		nicRef := strings.TrimSpace(rec.NICRef)
@@ -1679,9 +1679,6 @@ func privateIPRecordsStatus(records []providerinventory.PrivateIPRecord, poolPre
 			continue
 		}
 		item := map[string]any{"address": address}
-		if value := strings.TrimSpace(rec.NodeRef); value != "" {
-			item["nodeRef"] = value
-		}
 		if value := strings.TrimSpace(rec.NICRef); value != "" {
 			item["nicRef"] = value
 		}

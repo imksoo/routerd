@@ -122,3 +122,5 @@ ss -tlnp | grep :22
 
 - [USB persistence](./usb-persistence) — config disk layout and device
   discovery
+- [Alpine / OpenRC deployment](./alpine-deployment) — live ISO boot
+  parameters

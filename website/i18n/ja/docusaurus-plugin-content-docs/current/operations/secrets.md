@@ -6,8 +6,7 @@ title: 秘密情報の取得元
 
 ![Diagram showing secret sources referenced from YAML through file or environment providers, root-owned host storage or USB persistence, validation warnings, and render or apply requiring readable secrets](/img/diagrams/operations-secrets.png)
 
-routerd は、BGP ピアのパスワードと VRRP/CARP の認証に、ファイルまたは環境変数から秘密情報を取得できます。
-本番設定では、インラインの `password` や `authentication` よりも、次のフィールドを優先してください。
+routerd は、BGP ピアのパスワードと、VRRP/CARP の認証に、ファイルまたは環境変数から秘密情報を取得できます。本番設定では、インラインの `password` や `authentication` よりも、次のフィールドを優先してください。
 
 ```yaml
 passwordFrom:
@@ -29,6 +28,4 @@ authenticationFrom:
 - `base64: true` は、ファイルや環境変数で受け渡すためのエンコーディングであり、暗号化ではありません。
 - `routerctl validate` は、参照先の秘密情報ファイルがまだ存在しない場合に警告を出します。render と apply では、取得元が読み取り可能である必要があります。
 
-ライブ ISO で USB 永続化を使う場合、`/usr/local/etc/routerd/secrets` 配下のファイルは `live-persistence.sh save-config` と `flush` により永続化デバイスの `routerd/secrets/` へコピーされます。
-起動時には `router.yaml` を apply する前に復元します。
-ホスト固有の `routerd/hosts/<hostname>/secrets/` と `routerd/hosts/<mac>/secrets/` は、汎用の `routerd/secrets/` より優先されます。
+ライブ ISO で USB 永続化を使う場合、`/usr/local/etc/routerd/secrets` 配下のファイルは `live-persistence.sh save-config` と `flush` により永続化デバイスの `routerd/secrets/` へコピーされます。起動時には `router.yaml` を apply する前に復元します。ホスト固有の `routerd/hosts/<hostname>/secrets/` と `routerd/hosts/<mac>/secrets/` は、汎用の `routerd/secrets/` より優先されます。

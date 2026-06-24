@@ -12,7 +12,7 @@ routerd inspects the host's operating system, available commands, and network fe
 ## What routerctl plans
 
 - Operating system and release
-- Service-management scheme (systemd, rc.d)
+- Service-management scheme (systemd, rc.d, NixOS modules)
 - Available commands (iproute2, nftables, conntrack, dnsmasq, radvd, pppd, WireGuard, strongSwan, etc.)
 - Kernel features (IPv6, VRF, VXLAN, WireGuard)
 - Whether `/run/routerd` and `/var/lib/routerd` are usable
@@ -20,6 +20,7 @@ routerd inspects the host's operating system, available commands, and network fe
 ## How it informs behaviour
 
 - On Ubuntu, routerd targets systemd and the Linux networking stack.
+- On NixOS, declarative generation takes priority over runtime mutation.
 - On FreeBSD, routerd uses `daemon(8)` and rc.d for service control.
 
 If a configuration depends on a feature the host does not provide, routerd reports the gap during validation or planning rather than failing halfway through `apply`.

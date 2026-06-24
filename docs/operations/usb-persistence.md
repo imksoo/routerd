@@ -130,6 +130,21 @@ If the device is removed unexpectedly, routerd keeps running from RAM. The live
 helper logs a warning and stops treating the USB path as durable until the
 device is reinserted and mounted again.
 
+## Alpine lbu
+
+The ISO includes Alpine `lbu`. The live helper adds routerd paths to the lbu
+include list:
+
+```text
+/usr/local/etc/routerd
+/var/lib/routerd
+/var/db/routerd
+/etc/periodic/daily/routerd-usb-flush
+```
+
+The helper runs `lbu commit` after saving config or flushing state. You normally
+do not need to run `lbu` directly.
+
 ## Useful commands
 
 List candidate devices:

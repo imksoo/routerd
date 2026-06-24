@@ -33,8 +33,8 @@ That command regenerates `THIRD_PARTY_LICENSES.md`. It lists:
 - detected license text type
 - license file name
 - module source URL
-- Ubuntu packages used by the live ISO
-- Ubuntu package license metadata and upstream URL
+- Alpine packages used by the live ISO
+- Alpine package license metadata and upstream URL
 
 The current audit path checks Go module license files for GPL, LGPL, and AGPL
 text. If such a linked Go module appears, stop the release and review whether
@@ -48,7 +48,7 @@ SPDX-License-Identifier: BSD-3-Clause
 ```
 
 Those headers identify the routerd source license. They do not change the
-licenses of bundled tools, Ubuntu packages, Go modules, or other third-party
+licenses of bundled tools, Alpine packages, Go modules, or other third-party
 components listed in `THIRD_PARTY_LICENSES.md`.
 
 ## Release archives
@@ -69,11 +69,11 @@ When redistributing a release archive, keep those files with the archive.
 The live ISO is an aggregate distribution. It combines:
 
 - routerd binaries and scripts
-- Ubuntu base files
-- Ubuntu packages such as dnsmasq, nftables, WireGuard tools, ppp, iproute2,
+- Alpine Linux base files
+- Alpine packages such as dnsmasq, nftables, WireGuard tools, ppp, iproute2,
   chrony, tcpdump, and related utilities
 
-Those Ubuntu packages keep their own upstream licenses. Some are GPL licensed.
+Those Alpine packages keep their own upstream licenses. Some are GPL licensed.
 The live ISO is not relicensed as a single GPL work.
 
 The live ISO includes the routerd notices at:
@@ -83,8 +83,9 @@ The live ISO includes the routerd notices at:
 /usr/share/licenses/routerd/THIRD_PARTY_LICENSES.txt
 ```
 
-Source information for Ubuntu packages is available from Ubuntu package
-repositories and the upstream URLs listed in `THIRD_PARTY_LICENSES.md`.
+Source information for Alpine packages is available from Alpine package
+repositories, APKBUILD records, and the upstream URLs listed in
+`THIRD_PARTY_LICENSES.md`.
 
 ## Release checklist
 
@@ -92,7 +93,7 @@ Before publishing a release:
 
 1. Run `make third-party-licenses`.
 2. Confirm the Go module copyleft check reports no GPL, LGPL, or AGPL module.
-3. Confirm GPL-family licenses only appear in separately distributed Ubuntu
+3. Confirm GPL-family licenses only appear in separately distributed Alpine
    packages or other external tools.
 4. Run the normal test, schema, example, website, archive, and live ISO checks.
 5. Confirm release archives include `share/doc/LICENSE` and

@@ -4,45 +4,43 @@
 
 ## ステータス
 
-提案済み。
-実験的実装として承認（2026-06-01）。
+提案済み。実験的実装として承認 — 2026-06-01。
 
 CloudEdge オーバーレイ/SAM データプレーン（[ADR 0006](../adr/0006-event-federation.md)、
 [Selective Address Mobility](../reference/selective-address-mobility)）と
-ゾーン非依存の PMTU/MSS clamp（#53/#68）を土台とする。
-実験的。
+ゾーン非依存の PMTU/MSS clamp（#53/#68）を土台とする。実験的。
 
 ## 背景
 
 CloudEdge オーバーレイ（`OverlayPeer`）は現在、唯一の実装されたアンダーレイとして
-**WireGuard** を使用している。
-*信頼された*プライベートアンダーレイ（ExpressRoute、DirectConnect、FastConnect、VPC/VNet ピアリング）上では、「WireGuard」の暗号化は冗長であり、
-約 80 バイトのオーバーヘッドは純粋なコストになる。
-アンダーレイが既に信頼されている場合に、アドレスの配送方法を**変えることなく**、オペレーターがより軽量で低オーバーヘッドな L3 トランスポートを選べるようにしたい。
+**WireGuard** を使用している。*信頼された*プライベートアンダーレイ — ExpressRoute、
+DirectConnect、FastConnect、VPC/VNet ピアリング — 上では、WireGuard の暗号化は冗長であり、
+約 80 バイトのオーバーヘッドは純粋なコストになる。アンダーレイが既に信頼されている場合に、
+アドレスの配送方法を**変えることなく**、オペレーターがより軽量で低オーバーヘッドな
+L3 トランスポートを選べるようにしたい。
 
 オーバーレイは既に適切なシームで抽象化されている（コードで確認済み）：
 
 - **配送はアンダーレイ非依存。** `hybrid.RouteTarget(peer)` が
   `OverlayPeer.Underlay.Type` を `(device, gateway)` にマップし、`/32` 配送ルート
-  （`RemoteAddressClaim` / `HybridRoute`）がそのデバイスを指す。
-  トランスポートの追加は新しい `switch` ケース。
+  （`RemoteAddressClaim` / `HybridRoute`）がそのデバイスを指す。トランスポートの追加は
+  新しい `switch` ケース。
 - **MTU / MSS clamp はパラメーター化済み。** `hybrid.EstimateMTU = underlayMTU(interface)
-  − overheadFor(type)`。
-  ゾーン非依存の clamp は `EstimateMTU` に従う。
-  新しいトランスポートはオーバーヘッド値とインターフェース MTU さえあれば、clamp は自動追従する。
+  − overheadFor(type)`。ゾーン非依存の clamp は `EstimateMTU` に従う。新しいトランスポートは
+  オーバーヘッド値とインターフェース MTU さえあれば、clamp は自動追従する。
 
 唯一の実質的なギャップ：**デバイス作成が WireGuard 固有**（専用の
-`WireGuardInterface` Kind + コントローラー）。
-新しい L3 トランスポートには、「トンネルデバイスを作成する」同等のリソース + コントローラーが必要。
+`WireGuardInterface` Kind + コントローラー）。新しい L3 トランスポートには、
+「トンネルデバイスを作成する」同等のリソース + コントローラーが必要。
 
 ## 決定
 
 ### 新規 Kind `TunnelInterface`（`hybrid.routerd.net/v1alpha1`）
 
 `WireGuardInterface` のミラー：1 つの OS トンネルデバイスの desired state を所有するリソース。
-`OverlayPeer.Underlay` は*配送選択*の参照のまま。
-`TunnelInterface` は*デバイス desired state* を持つ。
-この分離により、`OverlayPeer` のインラインフィールドがピアごとにデバイス仕様を増殖させ、デバイスの所有権/冪等性/削除を曖昧にする問題を回避できる。
+`OverlayPeer.Underlay` は*配送選択*の参照のまま。`TunnelInterface` は
+*デバイス desired state* — クリーンな分離（`OverlayPeer` のインラインフィールドは
+ピアごとにデバイス仕様を増殖させ、デバイスの所有権/冪等性/削除を曖昧にする）。
 
 Phase 1 のフィールド：
 
@@ -52,7 +50,7 @@ Phase 1 のフィールド：
   `ipv4-static-address` コントローラーが設定）。
 - `mtu`（オプション）、`ttl`（オプション、デフォルト 64）、`key`（GRE のみ。設定時は
   +4 オーバーヘッド）。
-- `trustedUnderlay: true`（必須。安全性を参照）。
+- `trustedUnderlay: true` — **必須**（安全性を参照）。
 
 Phase 2 で同一 Kind を IPIP-over-UDP に拡張：
 
@@ -69,8 +67,8 @@ Phase 2 で同一 Kind を IPIP-over-UDP に拡張：
 `TunnelInterface` を reconcile する `framework.FuncController`（Phase 1 では Linux のみ。
 他のプラットフォームではチェーンをエラーにするのではなく unsupported ステータスを報告）：
 
-- **argv ベースの `ip` 呼び出し**（文字列連結シェルではない）。
-  `ip link show` → add/modify/`ip link del` で冪等：
+- **argv ベースの `ip` 呼び出し**（文字列連結シェルではない）。`ip link show` →
+  add/modify/`ip link del` で冪等：
   - `ip link add <dev> type ipip|gre local <L> remote <R> ttl <t> [key <k>]`
   - `fou`/`gue` の場合：`ip fou add port <sport> ipproto 4|gue`、次に
     `ip link add <dev> type ipip local <L> remote <R> ttl <t> encap fou|gue
@@ -86,42 +84,40 @@ Phase 2 で同一 Kind を IPIP-over-UDP に拡張：
   GRE `key` で +4。
 - `RouteTarget`: `ipip`、`gre`、`fou`、`gue` → `(device, "")` （`/32` ルートは
   WireGuard と同様にトンネルデバイスを指す）。
-- `EstimateMTU` と PMTU/MSS clamp は自動追従する。
-  `pathMTUResourceMTU` フォールバックに `TunnelInterface` デフォルトを追加（または `spec.mtu` が反映される）。
+- `EstimateMTU` と PMTU/MSS clamp は自動追従。`pathMTUResourceMTU` フォールバックに
+  `TunnelInterface` デフォルトを追加（または `spec.mtu` が反映される）。
 
 ### バリデーション
 
 - `OverlayPeer.Underlay.Type` enum += `ipip`、`gre`、`fou`、`gue`。
-- `TunnelInterface`: `mode ∈ {ipip, gre, fou, gue}`。
-  `local`/`remote` 必須、有効な IP。
+- `TunnelInterface`: `mode ∈ {ipip, gre, fou, gue}`。`local`/`remote` 必須、有効な IP。
   `trustedUnderlay == true` 必須（それ以外は明確なメッセージで拒否）。
   MTU/TTL/key/encap ポートの範囲チェック。
 
 ## 安全性（ハードな不変条件）
 
-`ipip`、`gre`、`fou`、`gue` は**暗号化も認証もされない**。
-WireGuard とは性質が異なり、既に信頼されたアンダーレイ上でのみ安全である。
+`ipip`、`gre`、`fou`、`gue` は**暗号化も認証もされない** — WireGuard とは根本的に異なる。
+既に信頼されたアンダーレイ上でのみ安全である。
 
 - **WireGuard がデフォルトのまま。**
-- `TunnelInterface` は **`trustedUnderlay: true`** を設定しない限り拒否される。
-  アンダーレイが平文であることのオペレーターによる明示的な確認であり、ドキュメント/doctor の警告だけでは弱すぎる。
-  これはバリデーションゲートである。
+- `TunnelInterface` は **`trustedUnderlay: true`** を設定しない限り拒否される —
+  アンダーレイが平文であることのオペレーターによる明示的な確認。ドキュメント/doctor の
+  警告だけでは弱すぎる。これはバリデーションゲート。
 
 ## フェーズ分割
 
 - **Phase 1**: `TunnelInterface` Kind + `tunnel` コントローラー
   （Linux `ipip`/`gre`）+ `trustedUnderlay` ゲート + `RouteTarget`/オーバーヘッド/MTU +
-  バリデーション + ユニット/fixture テスト + サンプル設定。
-  テストには**削除順序**の不変条件を含む：`OverlayPeer`/claim の削除で `/32` ルートが落ち、
-  `TunnelInterface` の削除でデバイス削除プランが出力される。
-  ルートインストールはデバイスが存在しない場合を許容する必要がある。
-- **Phase 2（実装済み）**: `fou` / `gue`（IPIP-over-UDP）。
-  GRE-over-FOU/GUE は意図的に公開しない。
-  inner-mode フィールドまたは複合タイプ文字列が必要になるため。
-  `ip fou add` の encap-port セットアップを追加。
-  最小ヘッダーオーバーヘッドの仮定を既存の明示的 `mtu` エスケープハッチとともにドキュメントする。
-- **Phase 3**: FreeBSD（`gif` for ipip、`gre`）。
-  設定/ステータスの表面が異なるため、Linux コントローラーに詰め込まない。
+  バリデーション + ユニット/fixture テスト + サンプル設定。テストには
+  **削除順序**の不変条件を含む：`OverlayPeer`/claim の削除で `/32` ルートが落ち、
+  `TunnelInterface` の削除でデバイス削除プランが出力される。ルートインストールは
+  デバイスが存在しない場合を許容する必要がある。
+- **Phase 2（実装済み）**: `fou` / `gue`（IPIP-over-UDP）。GRE-over-FOU/GUE は
+  意図的に公開しない。inner-mode フィールドまたは複合タイプ文字列が必要になるため。
+  `ip fou add` の encap-port セットアップを追加。最小ヘッダーオーバーヘッドの仮定を
+  既存の明示的 `mtu` エスケープハッチとともにドキュメントする。
+- **Phase 3**: FreeBSD（`gif` for ipip、`gre`）— 設定/ステータスの表面が異なるため、
+  Linux コントローラーに詰め込まない。
 - **Phase 4**: ファイアウォール自動穴あけ（raw `ipip` = IP proto 4、`gre` = IP proto 47、
   `fou`/`gue` = UDP）+ `doctor hybrid` チェック。
 

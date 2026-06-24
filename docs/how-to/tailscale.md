@@ -35,6 +35,10 @@ spec:
       names:
         - tailscale
         - tailscale-archive-keyring
+    - os: nixos
+      manager: nix
+      names:
+        - tailscale
     - os: freebsd
       manager: pkg
       names:

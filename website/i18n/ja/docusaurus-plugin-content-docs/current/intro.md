@@ -9,13 +9,12 @@ sidebar_label: 概要
 
 ![Diagram showing the routerd documentation map from install and first router goals through concepts, examples, tutorials, how-to guides, operations, API references, platforms, plugins, and schemas](/img/diagrams/intro.png)
 
-routerd は、型付きの YAML で書いた望ましい状態から、Linux / FreeBSD 上で動くルーターを組み立てる宣言型のルーターです。
-設定を手続きで積み上げるのではなく、欲しい状態を宣言すると、routerd が実機をその状態へ近づけます。
+routerd は、型付きの YAML で書いた望ましい状態から、Linux / FreeBSD 上で動くルーターを組み立てる宣言型のルーターです。設定を手続きで積み上げるのではなく、欲しい状態を宣言すると、routerd が実機をその状態へ近づけます。
 
 目的に合うところから読んでください。
 
 :::tip 推奨の安定版
-新規に導入するなら、推奨の安定版マイルストーン **v20260619.1730** から始めてください。詳細は [安定版マイルストーン](./releases/stable.md) を参照してください。
+新規に導入するなら、推奨の安定版マイルストーン **v20260608.2325** から始めてください。詳細は [安定版マイルストーン](./releases/stable.md) を参照してください。
 :::
 
 ## 目的から探す
@@ -39,22 +38,22 @@ routerd は、型付きの YAML で書いた望ましい状態から、Linux / F
 
 ## セクション一覧
 
-- **はじめに**: routerd とは何か、位置づけ、設計思想
-- **導入（クイックスタート）**: インストールとアップグレード、最初のルーター、OS 別の入門（FreeBSD）、ディスクレス mini PC
-- **機能解説（宣言型モデル）**: 用語集、リソースモデル、適用と生成、状態と所有、調整（リコンサイル）、Web 管理画面
-- **設定リファレンス（機能別）**: DNS リゾルバー、ファイアウォール、Egress、マルチ WAN、BGP、Tailscale、OpenTelemetry など、機能ごとの設定方法
-- **設定例集（シナリオ別）**: NAT、LAN の DHCP/DNS、DS-Lite、PPPoE、ポート転送、ゲスト分離、マルチ WAN フェイルオーバーなどの検証済み構成例
-- **How-to ガイド**: フレッツ初期設定、IPv6 デュアルスタック、ゲストモード、OS ブートストラップ、VS Code YAML schema、PVE オーバーレイ、トラブルシューティング
-- **ナレッジベース（実環境知見）**: 実環境で得た現場メモ（DHCPv6-PD クライアント、NTT NGN の PD 取得）
-- **運用**: 状態データベース、インベントリ、USB 永続化、シークレット、観測、冗長化 など
-- **リファレンス（API、プロトコル、対応環境）**: リソース API、制御 API、プラグインプロトコル、対応プラットフォーム、ハードウェア
-- **リリースと安定版**: 安定版マイルストーン、変更履歴、リリース手順
-- **設計ノート**: アーキテクチャー上の論点と設計の根拠
-- **プロジェクト**: 貢献方法、ライセンスと法務
+- **はじめに** — routerd とは何か、位置づけ、設計思想
+- **導入（クイックスタート）** — インストールとアップグレード、最初のルーター、OS 別の入門（FreeBSD）、ディスクレス mini PC
+- **機能解説（宣言型モデル）** — 用語集、リソースモデル、適用と生成、状態と所有、調整（リコンサイル）、Web 管理画面
+- **設定リファレンス（機能別）** — DNS リゾルバー、ファイアウォール、Egress・マルチ WAN、BGP、Tailscale、OpenTelemetry など、機能ごとの設定方法
+- **設定例集（シナリオ別）** — NAT、LAN の DHCP/DNS、DS-Lite、PPPoE、ポート転送、ゲスト分離、マルチ WAN フェイルオーバーなどの検証済み構成例
+- **How-to ガイド** — フレッツ初期設定、IPv6 デュアルスタック、ゲストモード、OS ブートストラップ、VS Code YAML schema、PVE オーバーレイ、トラブルシューティング
+- **ナレッジベース（実環境知見）** — 実環境で得た現場メモ（DHCPv6-PD クライアント、NTT NGN の PD 取得）
+- **運用** — 状態データベース、インベントリ、USB 永続化、シークレット、観測、冗長化 など
+- **リファレンス（API・プロトコル・対応環境）** — リソース API、制御 API、プラグインプロトコル、対応プラットフォーム、ハードウェア
+- **リリースと安定版** — 安定版マイルストーン、変更履歴、リリース手順
+- **設計ノート** — アーキテクチャー上の論点と設計の根拠
+- **プロジェクト** — 貢献方法、ライセンスと法務
 
 ## 次のステップ
 
-- [routerd を導入する](./install-and-upgrade.md): リリースアーカイブを取得し `install.sh` を実行
-- [config wizard](https://routerd.net/wizard): ブラウザーで初期設定を生成
-- [リソースモデル](./concepts/resource-model.md): routerd がルーターの意図をどう整理するかを理解する
-- [クイックスタート](./tutorials/getting-started.md): 安全な最初のループ（validate → plan → dry-run → serve）
+- [routerd を導入する](./install-and-upgrade.md) — リリースアーカイブを取得し `install.sh` を実行
+- [config wizard](https://routerd.net/wizard) — ブラウザーで初期設定を生成
+- [リソースモデル](./concepts/resource-model.md) — routerd がルーターの意図をどう整理するかを理解する
+- [クイックスタート](./tutorials/getting-started.md) — 安全な最初のループ: validate → plan → dry-run → serve

@@ -7,7 +7,8 @@ sidebar_position: 60
 
 ![ClientPolicy が共有 LAN 上のゲストと IoT の MAC アドレスを分類し、LAN や管理網へのアクセスを拒否する構成](/img/diagrams/config-example-guest-isolation.png)
 
-同じ LAN につながった特定の MAC アドレスをゲスト / IoT 端末として扱い、インターネットは許可しつつ、信頼済み LAN や管理網への到達を止める例です。
+同じ LAN につながった特定の MAC アドレスをゲスト / IoT 端末として扱い、
+インターネットは許可しつつ、信頼済み LAN や管理網への到達を止める例です。
 
 完全な YAML は `examples/guest-mode.yaml` にあります。
 

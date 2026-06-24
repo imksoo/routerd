@@ -39,16 +39,15 @@ type bgpDeliveryPlannerInput struct {
 	ObservedStaleSince   map[string]time.Time
 	SuppressDeprovision  bool
 	LivenessMarkers      map[string]string
-	ForceRebalance       bool
 	Now                  time.Time
 }
 
 type bgpDeliveryPlannerResult struct {
-	Paths             []bgpdaemon.AppliedPath
-	ActionPlans       []dynamicconfig.ActionPlan
-	CaptureCandidates map[string]bgpTrapCandidate
-	Placement         PlacementDecision
-	Distribution      *captureDistribution
+	Paths                 []bgpdaemon.AppliedPath
+	ActionPlans           []dynamicconfig.ActionPlan
+	CaptureCandidates     map[string]bgpTrapCandidate
+	Placement             PlacementDecision
+	Distribution          *captureDistribution
 }
 
 func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResult, error) {
@@ -68,17 +67,17 @@ func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResu
 	if len(captureNextHops) == 0 {
 		captureNextHops = in.InstalledNextHops
 	}
-	candidates, dist := planCaptureCandidatesWithDistribution(in.Self, in.Members, decisions, in.Placement, captureNextHops, in.RIBObserved, in.PreviousPlans, in.ObservedSelfCaptures, failedActions, in.LivenessMarkers, in.ForceRebalance, poolPrefix, now)
+	candidates, dist := planCaptureCandidatesWithDistribution(in.Self, in.Members, decisions, in.Placement, captureNextHops, in.RIBObserved, in.PreviousPlans, in.ObservedSelfCaptures, failedActions, in.LivenessMarkers, poolPrefix, now)
 	actionPlans, err := planCaptureActionPlans(in, candidates)
 	if err != nil {
 		return bgpDeliveryPlannerResult{}, err
 	}
 	return bgpDeliveryPlannerResult{
-		Paths:             paths,
-		ActionPlans:       actionPlans,
-		CaptureCandidates: candidates,
-		Placement:         in.Placement,
-		Distribution:      dist,
+		Paths:                 paths,
+		ActionPlans:           actionPlans,
+		CaptureCandidates:     candidates,
+		Placement:             in.Placement,
+		Distribution:          dist,
 	}, nil
 }
 
@@ -128,7 +127,7 @@ func bgpDecisionSourceType(decision ownershipDecision) string {
 	}
 }
 
-func planCaptureCandidatesWithDistribution(self memberPlanInfo, members map[string]memberPlanInfo, decisions map[string]ownershipDecision, placement PlacementDecision, installedNextHops map[string][]string, ribObserved bool, previousPlans []dynamicconfig.ActionPlan, observedSelfIPs map[string]bool, failedActions map[string]routerstate.ActionExecutionRecord, livenessMarkers map[string]string, forceRebalance bool, poolPrefix netip.Prefix, now time.Time) (map[string]bgpTrapCandidate, *captureDistribution) {
+func planCaptureCandidatesWithDistribution(self memberPlanInfo, members map[string]memberPlanInfo, decisions map[string]ownershipDecision, placement PlacementDecision, installedNextHops map[string][]string, ribObserved bool, previousPlans []dynamicconfig.ActionPlan, observedSelfIPs map[string]bool, failedActions map[string]routerstate.ActionExecutionRecord, livenessMarkers map[string]string, poolPrefix netip.Prefix, now time.Time) (map[string]bgpTrapCandidate, *captureDistribution) {
 	out := map[string]bgpTrapCandidate{}
 	if self.Capture.Type != "provider-secondary-ip" {
 		return out, nil
@@ -147,16 +146,10 @@ func planCaptureCandidatesWithDistribution(self memberPlanInfo, members map[stri
 	var dist *captureDistribution
 	if distributed {
 		distributedPlacement := PlacementDecision{Group: group, Active: true, ActiveNode: self.NodeRef}
-		eligibleAddresses := collectDistributedEligibleCaptureAddresses(self, members, decisions, distributedPlacement)
-		var liveNodes map[string]bool
-		if placement.Seize {
-			liveNodes = distributedLiveNodes(self, members, livenessMarkers)
-		}
+		eligibleAddresses := collectEligibleCaptureAddresses(self, members, decisions, distributedPlacement, installedNextHops, previousPlans, failedActions, poolPrefix)
+		liveNodes := distributedLiveNodes(self, members, livenessMarkers)
 		nodes := distributedCaptureNodes(members, group, liveNodes)
-		d := distributeCapturesWithIncumbents(eligibleAddresses, nodes, captureIncumbents(decisions))
-		if forceRebalance {
-			d = distributeCapturesForRebalance(eligibleAddresses, nodes)
-		}
+		d := distributeCaptures(eligibleAddresses, nodes)
 		dist = &d
 		selfAssigned = map[string]bool{}
 		for addr, node := range d.Assignments {
@@ -187,9 +180,6 @@ func planCaptureCandidatesWithDistribution(self memberPlanInfo, members map[stri
 		if !ok {
 			continue
 		}
-		if suppressSameSiteHomeOwnedCaptureCandidate(distributed, decision, self, members, failedActions) {
-			continue
-		}
 		if decision.Class == ownershipClassConfirmedCapture {
 			if providerCaptureObservedOnSelf(decision, self, observedSelfIPs) {
 				out[address] = bgpTrapCandidate{ProtectOnly: true}
@@ -212,9 +202,6 @@ func planCaptureCandidatesWithDistribution(self memberPlanInfo, members map[stri
 	for address, candidate := range previousBGPTrapCandidateAddresses(previousPlans, poolPrefix) {
 		decision, ok := decisions[address]
 		if !ok {
-			continue
-		}
-		if suppressSameSiteHomeOwnedCaptureCandidate(distributed, decision, self, members, failedActions) {
 			continue
 		}
 		if !decisionEligibleForCapture(decision, self, members, placement) {
@@ -252,37 +239,42 @@ func planCaptureCandidatesWithDistribution(self memberPlanInfo, members map[stri
 	return out, dist
 }
 
-func captureIncumbents(decisions map[string]ownershipDecision) map[string]string {
-	out := map[string]string{}
-	for key, decision := range decisions {
-		if decision.CaptureState != captureStateConfirmed {
-			continue
-		}
-		holder := strings.TrimSpace(decision.CaptureHolderNode)
-		if holder == "" {
-			continue
-		}
-		address := normalizeAddressString(decision.Address)
-		if address == "" {
-			address = normalizeAddressString(key)
-		}
-		out[normalizeAddressString(address)] = holder
-	}
-	return out
-}
-
-func collectDistributedEligibleCaptureAddresses(self memberPlanInfo, members map[string]memberPlanInfo, decisions map[string]ownershipDecision, placement PlacementDecision) []string {
+func collectEligibleCaptureAddresses(self memberPlanInfo, members map[string]memberPlanInfo, decisions map[string]ownershipDecision, placement PlacementDecision, installedNextHops map[string][]string, previousPlans []dynamicconfig.ActionPlan, failedActions map[string]routerstate.ActionExecutionRecord, poolPrefix netip.Prefix) []string {
 	eligible := map[string]bool{}
-	for key, decision := range decisions {
-		address := normalizeAddressString(decision.Address)
-		if address == "" {
-			address = normalizeAddressString(key)
-		}
-		decision.Address = address
-		if !decisionEligibleForDistributedCapture(decision) {
+	for rawPrefix, nextHops := range installedNextHops {
+		if len(cleanStrings(nextHops)) == 0 {
 			continue
 		}
-		if decisionHomeOwnerSameSite(decision, self, members) {
+		address, ok := normalizeBGPTrapPrefix(rawPrefix, poolPrefix)
+		if !ok {
+			continue
+		}
+		decision, ok := decisions[address]
+		if !ok {
+			continue
+		}
+		if decision.Class == ownershipClassConfirmedCapture {
+			continue
+		}
+		if !decisionEligibleForCapture(decision, self, members, placement) {
+			if _, failed := failedActions[address]; !failed {
+				continue
+			}
+		}
+		if !routeTableCaptureAllowed(decision, self) {
+			continue
+		}
+		eligible[address] = true
+	}
+	for address := range previousBGPTrapCandidateAddresses(previousPlans, poolPrefix) {
+		decision, ok := decisions[address]
+		if !ok {
+			continue
+		}
+		if decision.Class == ownershipClassConfirmedCapture {
+			continue
+		}
+		if !routeTableCaptureAllowed(decision, self) {
 			continue
 		}
 		eligible[address] = true
@@ -357,58 +349,6 @@ func decisionEligibleForCapture(decision ownershipDecision, self memberPlanInfo,
 		return true
 	}
 	return false
-}
-
-func decisionEligibleForDistributedCapture(decision ownershipDecision) bool {
-	if normalizeAddressString(decision.Address) == "" {
-		return false
-	}
-	if strings.TrimSpace(decision.ConflictReason) != "" {
-		return false
-	}
-	switch decision.Class {
-	case ownershipClassLocalRouterSelf, ownershipClassStaticOwned, ownershipClassStaticHandover:
-		return false
-	case ownershipClassConfirmedCapture:
-		return true
-	case ownershipClassLocalHomeOwned:
-		return decision.Source == providerDiscoverySource && decision.AdvertiseReason == "ownership-event"
-	case ownershipClassStaleCapture:
-		switch strings.TrimSpace(decision.SuppressionReason) {
-		case "capture-not-desired", "local-router-self", "local-home-owner", "self-captured-secondary":
-			return false
-		case "fresh-home-owner":
-			return strings.TrimSpace(decision.HomeOwnerNode) != ""
-		default:
-			return true
-		}
-	case ownershipClassRemoteHomeOwned:
-		return true
-	}
-	return false
-}
-
-func suppressSameSiteHomeOwnedCaptureCandidate(distributed bool, decision ownershipDecision, self memberPlanInfo, members map[string]memberPlanInfo, failedActions map[string]routerstate.ActionExecutionRecord) bool {
-	if !decisionHomeOwnerSameSite(decision, self, members) {
-		return false
-	}
-	if distributed {
-		return true
-	}
-	_, failed := failedActions[normalizeAddressString(decision.Address)]
-	return failed
-}
-
-func decisionHomeOwnerSameSite(decision ownershipDecision, self memberPlanInfo, members map[string]memberPlanInfo) bool {
-	ownerNode := strings.TrimSpace(decision.HomeOwnerNode)
-	if ownerNode == "" {
-		return false
-	}
-	owner, ok := lookupMemberByNodeRef(members, ownerNode)
-	if !ok {
-		return false
-	}
-	return strings.TrimSpace(self.Site) != "" && strings.TrimSpace(self.Site) == strings.TrimSpace(owner.Site)
 }
 
 func decisionIsCaptureNotDesiredStale(decision ownershipDecision) bool {

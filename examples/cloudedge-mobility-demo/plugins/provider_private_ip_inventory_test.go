@@ -33,7 +33,6 @@ type inventoryResult struct {
 			SubnetRef     string            `json:"subnetRef"`
 			ResourceRef   string            `json:"resourceRef"`
 			ResourceType  string            `json:"resourceType"`
-			NodeRef       string            `json:"nodeRef"`
 			Tags          map[string]string `json:"tags"`
 			InstanceState string            `json:"instanceState"`
 		} `json:"ips"`
@@ -43,7 +42,6 @@ type inventoryResult struct {
 			SubnetRef     string            `json:"subnetRef"`
 			ResourceRef   string            `json:"resourceRef"`
 			ResourceType  string            `json:"resourceType"`
-			NodeRef       string            `json:"nodeRef"`
 			Tags          map[string]string `json:"tags"`
 			InstanceState string            `json:"instanceState"`
 		} `json:"localIPs"`
@@ -133,7 +131,7 @@ case "$*" in
     printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router-a","SubnetId":"subnet-a","SourceDestCheck":false,"PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.4","Primary":true}]}]}'
     ;;
   *"describe-instances"*)
-    printf '%s\n' '{"Reservations":[{"Instances":[{"InstanceId":"i-router-a","State":{"Name":"running"},"Tags":[{"Key":"role","Value":"router"},{"Key":"routerd-node","Value":"aws-router-a"}],"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router-a"}]},{"InstanceId":"i-router-b","State":{"Name":"running"},"Tags":[{"Key":"Role","Value":"routerd-cloud"},{"Key":"routerd-node","Value":"aws-router-b"}],"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router-b"}]},{"InstanceId":"i-client","State":{"Name":"running"},"Tags":[{"Key":"role","Value":"cloudedge-client"},{"Key":"Name","Value":"ce-router-client"},{"Key":"routerd-node","Value":"aws-client"}],"NetworkInterfaces":[{"NetworkInterfaceId":"eni-client"}]}]}]}'
+    printf '%s\n' '{"Reservations":[{"Instances":[{"InstanceId":"i-router-a","State":{"Name":"running"},"Tags":[{"Key":"role","Value":"router"}],"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router-a"}]},{"InstanceId":"i-router-b","State":{"Name":"running"},"Tags":[{"Key":"Role","Value":"routerd-cloud"}],"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router-b"}]},{"InstanceId":"i-client","State":{"Name":"running"},"Tags":[{"Key":"role","Value":"cloudedge-client"},{"Key":"Name","Value":"ce-router-client"}],"NetworkInterfaces":[{"NetworkInterfaceId":"eni-client"}]}]}]}'
     ;;
   *"Name=subnet-id,Values=subnet-a"*)
     printf '%s\n' '{"NetworkInterfaces":[{"NetworkInterfaceId":"eni-router-a","SubnetId":"subnet-a","PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.4","Primary":true}]},{"NetworkInterfaceId":"eni-router-b","SubnetId":"subnet-a","SourceDestCheck":true,"PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.5","Primary":true}]},{"NetworkInterfaceId":"eni-client","SubnetId":"subnet-a","SourceDestCheck":true,"PrivateIpAddresses":[{"PrivateIpAddress":"10.77.60.11","Primary":false}]}]}'
@@ -149,7 +147,6 @@ esac
 		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
 	}
 	assertResource(t, res, "10.77.60.5", "i-router-b", "router-nic")
-	assertNodeRef(t, res, "10.77.60.5", "aws-router-b")
 	assertResource(t, res, "10.77.60.11", "i-client", "instance-nic")
 }
 
@@ -300,7 +297,7 @@ case "$*" in
     printf '%s\n' '[{"id":"/nic/router-a","ipConfigurations":[{"privateIPAddress":"10.77.60.4","primary":true,"subnet":{"id":"/subnets/demo"}}]},{"id":"/nic/node-b","enableIPForwarding":true,"ipConfigurations":[{"privateIPAddress":"10.77.60.5","primary":true,"subnet":{"id":"/subnets/demo"}}]},{"id":"/nic/ce-router-client","enableIPForwarding":true,"tags":{"role":"client"},"ipConfigurations":[{"privateIPAddress":"10.77.60.12","primary":false,"subnet":{"id":"/subnets/demo"}}]}]'
     ;;
   *"vm list --resource-group rg-demo"*)
-    printf '%s\n' '[{"id":"/vm/router-a","powerState":"VM running","tags":{"role":"router","routerd-node":"azure-router-a"},"networkProfile":{"networkInterfaces":[{"id":"/NIC/ROUTER-A"}]}},{"id":"/vm/router-b","powerState":"VM running","tags":{"Role":"routerd-cloud","routerd-node":"azure-router-b"},"networkProfile":{"networkInterfaces":[{"id":"/NIC/NODE-B"}]}},{"id":"/vm/client","powerState":"VM running","tags":{"Name":"routerd-cloud-client","routerd-node":"azure-client"},"networkProfile":{"networkInterfaces":[{"id":"/NIC/CE-ROUTER-CLIENT"}]}}]'
+    printf '%s\n' '[{"id":"/vm/router-a","powerState":"VM running","tags":{"role":"router"},"networkProfile":{"networkInterfaces":[{"id":"/NIC/ROUTER-A"}]}},{"id":"/vm/router-b","powerState":"VM running","tags":{"Role":"routerd-cloud"},"networkProfile":{"networkInterfaces":[{"id":"/NIC/NODE-B"}]}},{"id":"/vm/client","powerState":"VM running","tags":{"Name":"routerd-cloud-client"},"networkProfile":{"networkInterfaces":[{"id":"/NIC/CE-ROUTER-CLIENT"}]}}]'
     ;;
   *)
     echo "unexpected az args: $*" >&2
@@ -313,7 +310,6 @@ esac
 		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
 	}
 	assertResource(t, res, "10.77.60.5", "/vm/router-b", "router-nic")
-	assertNodeRef(t, res, "10.77.60.5", "azure-router-b")
 	assertResource(t, res, "10.77.60.12", "/vm/client", "instance-nic")
 }
 
@@ -542,7 +538,7 @@ case "$*" in
     printf '%s\n' '{"data":[{"vnic-id":"vnic-router-a","instance-id":"i-router-a"},{"vnic-id":"vnic-router-b","instance-id":"i-router-b"},{"vnic-id":"vnic-client","instance-id":"i-client"}]}'
     ;;
   *"compute instance list --compartment-id compartment-demo"*)
-    printf '%s\n' '{"data":[{"id":"i-router-a","lifecycle-state":"RUNNING","freeform-tags":{"role":"router","RouterdNode":"oci-router-a"}},{"id":"i-router-b","lifecycle-state":"RUNNING","freeform-tags":{"Role":"routerd-cloud","Name":"routerd-cloud-b-clean","RouterdNode":"oci-router-b"}},{"id":"i-client","lifecycle-state":"RUNNING","freeform-tags":{"Role":"cloudedge-client","Name":"routerd-cloud-client","RouterdNode":"oci-client"}}]}'
+    printf '%s\n' '{"data":[{"id":"i-router-a","lifecycle-state":"RUNNING","freeform-tags":{"role":"router"}},{"id":"i-router-b","lifecycle-state":"RUNNING","freeform-tags":{"Role":"routerd-cloud","Name":"routerd-cloud-b-clean"}},{"id":"i-client","lifecycle-state":"RUNNING","freeform-tags":{"Role":"cloudedge-client","Name":"routerd-cloud-client"}}]}'
     ;;
   *"network private-ip list --subnet-id subnet-oci"*)
     printf '%s\n' '{"data":[{"ip-address":"10.77.60.4","vnic-id":"vnic-router-a","subnet-id":"subnet-oci","is-primary":true},{"ip-address":"10.77.60.5","vnic-id":"vnic-router-b","subnet-id":"subnet-oci","is-primary":true},{"ip-address":"10.77.60.13","vnic-id":"vnic-client","subnet-id":"subnet-oci","is-primary":false}]}'
@@ -558,7 +554,6 @@ esac
 		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
 	}
 	assertResource(t, res, "10.77.60.5", "i-router-b", "router-nic")
-	assertNodeRef(t, res, "10.77.60.5", "oci-router-b")
 	assertResource(t, res, "10.77.60.13", "i-client", "instance-nic")
 }
 
@@ -948,19 +943,6 @@ func assertResource(t *testing.T, res inventoryResult, address, wantRef, wantTyp
 		if ip.Address == address {
 			if ip.ResourceRef != wantRef || ip.ResourceType != wantType {
 				t.Fatalf("resource for %s = %q/%q, want %q/%q", address, ip.ResourceRef, ip.ResourceType, wantRef, wantType)
-			}
-			return
-		}
-	}
-	t.Fatalf("missing address %s in %+v", address, res.Status.IPs)
-}
-
-func assertNodeRef(t *testing.T, res inventoryResult, address, want string) {
-	t.Helper()
-	for _, ip := range res.Status.IPs {
-		if ip.Address == address {
-			if ip.NodeRef != want {
-				t.Fatalf("nodeRef for %s = %q, want %q", address, ip.NodeRef, want)
 			}
 			return
 		}

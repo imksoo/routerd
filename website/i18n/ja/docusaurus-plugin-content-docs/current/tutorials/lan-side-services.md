@@ -8,18 +8,18 @@ sidebar_position: 5
 ![LAN アドレス、DHCPv4/DHCPv6、ルーター広告、ローカル DNS、リースイベント、クライアントオプションを扱う LAN 側 routerd サービス](/img/diagrams/tutorial-lan-side-services.png)
 
 このページでは、ルーターの LAN 側を扱う routerd リソースを紹介します。
-LAN 側のリソースは、内側インターフェースのアドレス割り当て、DHCPv4 と DHCPv6 の配布、IPv6 Router Advertisement、ローカル DNS リゾルバーを担います。
+LAN 側のリソースは、内側インターフェースのアドレス、DHCPv4 / DHCPv6 の配布、IPv6 Router Advertisement、ローカル DNS リゾルバーといった役割を担います。
 
 WAN 側 (上流からのアドレス取得) は [WAN 側サービス](./wan-side-services.md) を参照してください。
 
 ## サービス分担
 
-routerd は LAN 側サービスを 2 つのデーモンに分けます。
+routerd は LAN 側サービスを 2 つのデーモンに明確に分けます。
 
 - **dnsmasq** が DHCPv4、DHCPv6、DHCP relay、IPv6 Router Advertisement を担当します。
 - **`routerd-dns-resolver`** が DNS ゾーン、条件付き転送、キャッシュ、クエリログを担当します。
 
-実績のある dnsmasq をそのまま DHCP に使い、DNS のポリシーは型付き routerd リソース (`DNSResolver` と `DNSZone`) で表現します。
+実績のある dnsmasq をそのまま DHCP に使い、DNS のポリシーは型付き routerd リソース (`DNSResolver`、`DNSZone`) で表現する、という分担です。
 
 ## 一覧
 
@@ -63,11 +63,8 @@ routerd は LAN 側サービスを 2 つのデーモンに分けます。
     stickyHoldDays: 3
 ```
 
-自動割り当てするクライアント用と固定アドレス用で範囲を分けると、運用が把握しやすくなります。
-
-`stickyHoldDays` は任意の項目です。
-0 より大きい値を指定すると、routerd は DHCP リース履歴を短期間保持し、リースの解放または期限切れの後に一時的な dnsmasq の `dhcp-host` hold を生成します。
-同じ MAC は hold 期間内に同じアドレスを再取得でき、そのアドレスはすぐには別のクライアントへ割り当てられません。
+自動割り当てするクライアント用と固定アドレス用で範囲を分けると、運用が読みやすくなります。
+`stickyHoldDays` は任意の項目です。0 より大きい値を指定すると、routerd は DHCP リース履歴を短期間保持し、リースの解放または期限切れの後に一時的な dnsmasq の `dhcp-host` hold を生成します。同じ MAC は hold 期間内に同じアドレスを再取得でき、そのアドレスはすぐには別のクライアントへ割り当てられません。
 
 ## 静的 DHCPv4 予約
 
@@ -84,7 +81,7 @@ routerd は LAN 側サービスを 2 つのデーモンに分けます。
 ```
 
 `DHCPv4Reservation` は dnsmasq のホスト予約エントリに展開されます。
-Web 管理画面とイベントログには、デバイスの現在の IP に依存しない安定したリソース名で表示されます。
+Web 管理画面とイベントログには、デバイスの現在の IP に依存しない安定したリソース名で現れます。
 
 FreeBSD では、dnsmasq のリースファイルを `/var/db/routerd/dnsmasq` 配下に置きます。
 `/var/run` だけに置くと、再起動でリースが失われるためです。
@@ -141,7 +138,7 @@ Router Advertisement には、標準の NTP サーバー広告がありません
 
 DHCPv6 でアドレス自体も配布したい場合は、`mode: stateful` または `mode: both` を使います。
 LAN の DNS suffix を `DNSZone` に合わせたい場合は、`domainFrom`、`dnsslFrom`、`domainSearchFrom` を使います。
-DHCPv4 の domain-name、RA の DNSSL、DHCPv6 の domain-search がいずれも同じローカルゾーンを参照するため、ドメイン文字列を重複して記述する必要がありません。
+DHCPv4 の domain-name、RA の DNSSL、DHCPv6 の domain-search がいずれも同じローカルゾーンを参照するため、ドメイン文字列を重複して書かずに済みます。
 
 ## ローカル DNS ゾーン
 
@@ -228,12 +225,9 @@ dig @<lan-ip> example.com
 
 ## 運用上のヒント
 
-- 最初は `routerctl plan` から始めます。
-本番の LAN 待ち受けを有効化するのは、管理経路と既知のロールバック経路を確保した後にしてください。
-- dnsmasq のリースを手で書き換えた場合は、`routerd-dhcp-event-relay` を再起動してメモリ上の状態を追従させます。
-リースの変更は、できる限り routerd 経由で行ってください。
-- 公共 DNS はフォールバックとして残してください。
-`routerd-dns-resolver` はヘルスチェックに失敗したフォワーダーを降格しますが、健全な代替がある場合に限ります。
+- 最初は `routerctl plan` から始めます。本番の LAN 待ち受けを有効化するのは、管理経路と既知のロールバック経路を確保した後にしてください。
+- dnsmasq のリースを手で書き換えた場合は、`routerd-dhcp-event-relay` を再起動してメモリ上の状態を追従させます。リースの変更は、できる限り routerd 経由で行ってください。
+- 公共 DNS はフォールバックとして残してください。`routerd-dns-resolver` はヘルスチェックに失敗したフォワーダーを降格しますが、これは健全な代替がない場合に限ります。
 
 ## 関連項目
 

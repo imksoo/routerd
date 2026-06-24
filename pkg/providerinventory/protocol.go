@@ -76,7 +76,6 @@ type PrivateIPSelf struct {
 
 type PrivateIPRecord struct {
 	Address       string            `json:"address" yaml:"address"`
-	NodeRef       string            `json:"nodeRef,omitempty" yaml:"nodeRef,omitempty"`
 	NICRef        string            `json:"nicRef,omitempty" yaml:"nicRef,omitempty"`
 	SubnetRef     string            `json:"subnetRef,omitempty" yaml:"subnetRef,omitempty"`
 	VPCRef        string            `json:"vpcRef,omitempty" yaml:"vpcRef,omitempty"`

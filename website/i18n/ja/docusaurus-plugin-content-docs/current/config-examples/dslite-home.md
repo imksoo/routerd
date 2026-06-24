@@ -7,9 +7,8 @@ sidebar_position: 30
 
 ![IPv6 WAN プレフィックス委任、DS-Lite トンネル出口、自動導出 NAT44、LAN IPv4 と委任 IPv6 サービスの構成](/img/diagrams/config-example-dslite-home.png)
 
-IPv6 を主回線として使う回線の例です。
-ルーターは Router Advertisement と DHCPv6-PD で IPv6 を受け取り、LAN プレフィックスを導出します。
-IPv4 のトラフィックは DS-Lite トンネルに通します。
+IPv6 を主回線として使う回線の例です。ルーターは Router Advertisement と DHCPv6-PD で
+IPv6 を受け取り、LAN プレフィックスを導出し、IPv4 のトラフィックは DS-Lite トンネルに通します。
 
 完全な検証済み YAML は `examples/example-dslite-home.yaml` にあります。
 
@@ -53,8 +52,8 @@ flowchart LR
 | IPv4 の出口 | trust/untrust ゾーンから自動導出される NAT44 |
 | MTU/MSS | `DSLiteTunnel/transix` とファイアウォールゾーンから自動導出 |
 
-この例では Transix に近い AFTR 値をプレースホルダーとして使っています。
-実回線に合わせて、AFTR FQDN、DNS サーバー、DHCPv6 クライアントの profile を置き換えてください。
+この例では Transix に近い AFTR 値をプレースホルダーとして使っています。実回線に合わせて、
+AFTR FQDN、DNS サーバー、DHCPv6 クライアントの profile を置き換えてください。
 
 ## 設定の要点
 
@@ -100,7 +99,8 @@ flowchart LR
 ```
 
 この DS-Lite トンネルは、委任された IPv6 アドレスをローカルエンドポイントとして使います。
-回線側が WAN RA アドレスをエンドポイントとして期待する場合は、`localAddressSource` を `interface` に変えてください。
+回線側が WAN RA アドレスをエンドポイントとして期待する場合は、`localAddressSource` を
+`interface` に変えてください。
 
 ## LAN 側サービス
 
@@ -127,8 +127,8 @@ flowchart LR
     mtu: 1454
 ```
 
-`DNSResolver` には、AFTR 名向けの条件付きフォワーダーを入れています。
-AFTR のレコードが回線側のリゾルバーでしか解決できない構成では、この指定が必要です。
+`DNSResolver` には、AFTR 名向けの条件付きフォワーダーを入れています。AFTR のレコードが
+回線側のリゾルバーでだけ意味を持つ構成では、この指定が重要です。
 
 ## 適用手順
 
@@ -177,4 +177,4 @@ dig router.home.example
 - プラットフォームに合わせて `client` と `profile` を変更する。
 - Transix 以外では `gw.transix.jp` と AFTR リゾルバーのアドレスを置き換える。
 - DS-Lite トンネルを WAN RA アドレスから張る必要がある場合は `localAddressSource: interface` を使う。
-- DS-Lite では MSS クランプが必要になりやすい。routerd はトンネルの MTU と LAN/WAN の「ファイアウォールゾーン」から自動導出する。
+- DS-Lite では MSS クランプが必要になりやすい。routerd はトンネルの MTU と LAN/WAN のファイアウォールゾーンから自動導出する。

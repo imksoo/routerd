@@ -15,10 +15,10 @@ VLAN をまだ分けていない構成でも、信頼済みの端末と、イン
 
 代表的な用途は次の通りです。
 
-- 家庭内で、来客のスマートフォンやゲーム機、家電、持ち込み PC を管理網や自宅サーバーへ届かせたくない場合。
+- 家庭内で、来客のスマートフォン、ゲーム機、家電、持ち込み PC を、管理網や自宅サーバーへ届かせたくない場合。
 - 集合住宅や共有住宅で、既定をゲストとし、明示した端末だけを信頼済みにしたい場合。
-- カメラ、HEMS、テレビ、スピーカーなどの IoT 端末を隔離する場合。DNS、DHCP、NTP、インターネットは使わせつつ、横方向の通信は不要です。
-- 小規模オフィスの来客用ネットワークで、物理 LAN は共有しつつ RFC 1918 や ULA 宛ての通信を遮断したい場合。
+- カメラ、HEMS、テレビ、スピーカーなどの IoT 端末を隔離する場合。DNS、DHCP、NTP、インターネットは使わせますが、横方向の通信は不要です。
+- 小規模オフィスの来客用ネットワークで、物理 LAN は共有しつつ、RFC 1918 や ULA 宛ての通信を遮断したい場合。
 
 完全な例は [examples/guest-mode.yaml](https://github.com/imksoo/routerd/blob/main/examples/guest-mode.yaml) を参照してください。
 
@@ -26,14 +26,14 @@ VLAN をまだ分けていない構成でも、信頼済みの端末と、イン
 
 Linux では、routerd は `ClientPolicy` を nftables の `inet routerd_filter` テーブルに生成します。
 
-各方針から次の規則を生成します。
+各方針から、次の規則を生成します。
 
-- `client_policy_guest_devices` のような nftables の `ether_addr` set
-- `mode: include` 用の `ether saddr @set` 照合
-- `mode: exclude` 用の `ether saddr != @set` 照合
-- 選択したルーター内サービスへの self 向け許可規則
-- プライベート IPv4 宛てと ULA IPv6 宛ての転送拒否規則
-- 拒否規則より前に置く任意の許可規則
+- `client_policy_guest_devices` のような nftables の `ether_addr` set。
+- `mode: include` 用の `ether saddr @set` 照合。
+- `mode: exclude` 用の `ether saddr != @set` 照合。
+- 選択したルーター内サービスへの、self 向け許可規則。
+- プライベート IPv4 宛てと ULA IPv6 宛ての転送拒否規則。
+- 拒否規則より前に置く、任意の許可規則。
 
 生成した規則は、`input` チェーンと `forward` チェーンの早い位置に入ります。
 そのため、通常なら `trust -> self` や `trust -> trust` の役割マトリクスで許可される通信でも、ゲスト端末の通信は先に絞り込まれます。
@@ -288,14 +288,14 @@ routerd は、指定した `DHCPv4Reservation` が存在することを確認し
 
 ## 生成規則の確認
 
-設定の生成結果、または稼働中の nftables テーブルを確認します。
+設定を生成するか、稼働中の nftables テーブルを確認します。
 
 ```sh
 routerd render nftables --config /usr/local/etc/routerd/router.yaml
 sudo nft list table inet routerd_filter
 ```
 
-次のような規則が出力されます。
+次のような規則を確認します。
 
 ```nft
 set client_policy_guest_devices {
@@ -319,9 +319,9 @@ curl -4 --connect-timeout 3 http://172.18.0.1:8080/
 
 期待する結果は次の通りです。
 
-- インターネットへの通信は成功する。
-- プライベート宛てはタイムアウトするか失敗する。
-- DNS、DHCP、NTP は動き続ける。
+- インターネットへの通信は成功します。
+- プライベート宛ては、タイムアウトするか失敗します。
+- DNS、DHCP、NTP は動き続けます。
 
 ルーター側では、tcpdump でパケットの経路を確認します。
 
@@ -377,35 +377,35 @@ sudo nft list table ip routerd_nat
 ## セキュリティ上の注意
 
 MAC アドレスによる隔離は実用的ですが、暗号学的な識別ではありません。
-端末を操作できる利用者は信頼済みの MAC アドレスを偽装できます。
+悪意ある利用者は、端末を操作できれば信頼済みの MAC アドレスを偽装できます。
 
-`ClientPolicy` は家庭や小規模オフィス向けの実用的な制御です。
-敵対的な利用者に対する唯一の境界にはできません。
-より強い設計として次の手段があります。
+`ClientPolicy` は、家庭や小規模オフィス向けの実用的な制御として使ってください。
+敵対的な利用者に対する唯一の境界にはしないでください。
+より強い設計には、次があります。
 
-- VLAN または SSID の分離
-- WPA3 Enterprise または 802.1X
-- スイッチのポート分離
-- 端末ごとの資格情報
-- 専用のゲスト bridge または VRF
+- VLAN または SSID の分離。
+- WPA3 Enterprise または 802.1X。
+- スイッチのポート分離。
+- 端末ごとの資格情報。
+- 専用のゲスト bridge または VRF。
 
-これらと組み合わせた場合でも、`ClientPolicy` は端末分類の意図を routerd のリソースモデルに残す手段として有用です。
+これらと組み合わせても、`ClientPolicy` は有用です。
+端末分類の意図を routerd のリソースモデルに残せるためです。
 
 ## OS 対応
 
 Linux の nftables に対応しています。
 
-FreeBSD の pf は、routerd が `FirewallZone` と `FirewallRule` で使うルーティング経路上のフィルタリングに同じ MAC ベースの分類モデルを持ちません。
-そのため routerd は FreeBSD では `ClientPolicy` を明示的に未対応として扱います。
-効果を生まないまま黙って適用する方針はとりません。
+FreeBSD の pf は、routerd が `FirewallZone` と `FirewallRule` で使うルーティング経路上のフィルタリングに、同じ MAC ベースの分類モデルを持ちません。
+そのため routerd は、FreeBSD では `ClientPolicy` を明示的に未対応として扱います。何の効果も生まないまま黙って適用する、という方針はとりません。
 
-将来の FreeBSD 対応としては、ブリッジ階層のフィルターや専用のレイヤー 2 分離リソースが考えられます。
-ただしルーティング層の pf 規則とは等価ではないため、別の設計として扱う必要があります。
+将来の FreeBSD 対応としては、ブリッジ階層のフィルターや、専用のレイヤー 2 分離リソースが考えられます。
+ただし、ルーティング層の pf 規則とは等価ではないため、別の設計として扱うべきです。
 
 ## 関連リソース
 
 - `FirewallZone`: インターフェースを `trust`、`untrust`、`mgmt` へ割り当てます。
 - `FirewallPolicy`: 拒否ログなどの共通動作を有効にします。
 - `FirewallRule`: MAC 分類に紐付かない例外を表します。
-- `DHCPv4Reservation`: 分類済みの端末へ安定した IPv4 アドレスとホスト名を与えます。
+- `DHCPv4Reservation`: 分類済みの端末へ、安定した IPv4 アドレスとホスト名を与えます。
 - トンネルから自動導出される TCP MSS clamp は、ファイアウォールのゾーンとトンネル経路が一致するゲスト転送にも適用されます。ゲスト隔離が MSS clamp を迂回することはありません。

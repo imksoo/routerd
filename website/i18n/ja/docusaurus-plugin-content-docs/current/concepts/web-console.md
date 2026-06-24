@@ -91,9 +91,9 @@ JSON エンドポイントは `/api/v1` 配下にあり、SSE ストリームは
 
 ## シークレットの redaction
 
-config を返すエンドポイント（`/api/v1/config`、
+config を返すエンドポイント — `/api/v1/config`、
 `/api/v1/generations/<id>/config`、
-`/api/v1/generations/<from>/diff/<to>`）は、**シリアライズ前に secrets を
+`/api/v1/generations/<from>/diff/<to>` — は、**シリアライズ前に secrets を
 redact します**。WireGuard `privateKey` / `preSharedKey`、Tailscale
 `authKey`、BGP/PPPoE/IPsec `password`、WebConsole `initialPassword`、
 および bearer / token / API key 系のフィールドは、マーカー値
