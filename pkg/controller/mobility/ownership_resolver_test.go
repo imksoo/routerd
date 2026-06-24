@@ -39,6 +39,37 @@ func TestOwnershipResolverScenario391BaselineSameSubnetHome(t *testing.T) {
 	}
 }
 
+func TestOwnershipResolverIgnoresLocalInventoryOutsideOwnedAddresses(t *testing.T) {
+	now := time.Date(2026, 6, 24, 16, 45, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "aws-router-a",
+		Spec:     spec,
+		Status: map[string]any{
+			"discoveryOwnedAddresses": []string{"10.88.60.11/32"},
+			"discoveryLocalInventory": []map[string]any{
+				{"address": "10.88.60.11/32", "nicRef": "eni-client", "subnetRef": "subnet-a", "providerRef": "aws-provider", "resourceType": "instance-nic", "primary": true},
+				{"address": "10.88.60.16/32", "nicRef": "eni-router-b", "subnetRef": "subnet-a", "providerRef": "aws-provider", "resourceType": "instance-nic"},
+			},
+			"discoverySelfPrivateIPs": []string{"10.88.60.4"},
+		},
+		Now: now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	home := ownershipDecisionByAddress(t, decisions, "10.88.60.11/32")
+	if home.Class != ownershipClassLocalHomeOwned {
+		t.Fatalf("home = %#v, want owned local inventory to remain local home", home)
+	}
+	for _, decision := range decisions {
+		if decision.Address == "10.88.60.16/32" {
+			t.Fatalf("unowned local inventory leaked into ownership decisions: %#v", decision)
+		}
+	}
+}
+
 func TestOwnershipResolverSkipsUnresolvedReturnRoutePeer(t *testing.T) {
 	now := time.Date(2026, 6, 14, 10, 58, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()

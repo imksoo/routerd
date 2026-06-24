@@ -507,9 +507,14 @@ type resolverPrivateIPRecord struct {
 
 func localInventoryRecordsFromStatus(status map[string]any, poolPrefix netip.Prefix) map[string]resolverPrivateIPRecord {
 	out := map[string]resolverPrivateIPRecord{}
+	discoveryOwned := statusStringSet(status["discoveryOwnedAddresses"], poolPrefix)
+	discoveryOwnedObserved := statusHasAny(status, "discoveryOwnedAddresses")
 	for _, raw := range statusMapSlice(status["discoveryLocalInventory"]) {
 		address, ok := normalizeDiscoveredAddress(firstNonEmpty(raw["address"], raw["ip"]), poolPrefix)
 		if !ok {
+			continue
+		}
+		if discoveryOwnedObserved && !discoveryOwned[address] {
 			continue
 		}
 		out[address] = resolverPrivateIPRecord{
