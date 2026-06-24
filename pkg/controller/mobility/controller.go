@@ -1955,7 +1955,7 @@ func statusStringFirst(values ...any) string {
 func observedSelfStaleCaptureStatus(decisions []ownershipDecision, selfNode string, previous map[string]time.Time, now time.Time) map[string]string {
 	out := map[string]string{}
 	for _, decision := range decisions {
-		if decision.Class != ownershipClassStaleCapture || strings.TrimSpace(decision.SuppressionReason) != "self-captured-secondary" {
+		if decision.Class != ownershipClassStaleCapture {
 			continue
 		}
 		if strings.TrimSpace(decision.CaptureHolderNode) != "" && strings.TrimSpace(decision.CaptureHolderNode) != strings.TrimSpace(selfNode) {

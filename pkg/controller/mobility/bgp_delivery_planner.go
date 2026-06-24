@@ -437,7 +437,7 @@ func observedSelfStaleCaptureActionPlans(in bgpDeliveryPlannerInput, candidates 
 			staleSinceByAddress[address] = in.Now.UTC()
 			continue
 		}
-		if decision.Class != ownershipClassStaleCapture || strings.TrimSpace(decision.SuppressionReason) != "self-captured-secondary" {
+		if decision.Class != ownershipClassStaleCapture {
 			continue
 		}
 		if strings.TrimSpace(decision.CaptureHolderNode) != "" && strings.TrimSpace(decision.CaptureHolderNode) != strings.TrimSpace(in.Self.NodeRef) {
