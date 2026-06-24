@@ -62,11 +62,11 @@ type doctorSummary struct {
 }
 
 type doctorReport struct {
-	Summary         doctorSummary              `json:"summary" yaml:"summary"`
-	Checks          []doctorCheck              `json:"checks" yaml:"checks"`
-	Federation      *doctorFederationSummary   `json:"federation,omitempty" yaml:"federation,omitempty"`
-	Incident        *doctorIncidentReport      `json:"incident,omitempty" yaml:"incident,omitempty"`
-	RemediationPlan *doctorRemediationPlan     `json:"remediationPlan,omitempty" yaml:"remediationPlan,omitempty"`
+	Summary         doctorSummary            `json:"summary" yaml:"summary"`
+	Checks          []doctorCheck            `json:"checks" yaml:"checks"`
+	Federation      *doctorFederationSummary `json:"federation,omitempty" yaml:"federation,omitempty"`
+	Incident        *doctorIncidentReport    `json:"incident,omitempty" yaml:"incident,omitempty"`
+	RemediationPlan *doctorRemediationPlan   `json:"remediationPlan,omitempty" yaml:"remediationPlan,omitempty"`
 }
 
 type doctorFederationSummary struct {
@@ -137,7 +137,7 @@ type doctorRemediationPlan struct {
 
 const (
 	remediationRetryFailedDeliveries          = "retry-failed-deliveries"
-	remediationInvestigatePendingDeliveries    = "investigate-pending-deliveries"
+	remediationInvestigatePendingDeliveries   = "investigate-pending-deliveries"
 	remediationForceRepushStaleTTL            = "force-repush-stale-ttl"
 	remediationCheckPeerConnectivity          = "check-peer-connectivity"
 	remediationConfigurePeerEndpoint          = "configure-peer-endpoint"
@@ -527,6 +527,9 @@ func (r doctorRunner) doctorSAMBGPDeliveryChecks(pool api.Resource) []doctorChec
 		case phase == "":
 			check.Status = doctorWarn
 			check.Remedy = "wait for routerd-bgp to publish BGPRouter phase before accepting SAM dataplane readiness"
+		case !strings.EqualFold(phase, "Established") && established > 0 && fibMissing == 0 && fibUnsupported == 0:
+			check.Status = doctorWarn
+			check.Remedy = "inspect non-established BGP peers; SAM dataplane routes are installed"
 		case !strings.EqualFold(phase, "Established"):
 			check.Status = doctorFail
 			check.Remedy = "repair BGP peer establishment before accepting BGP-delivery SAM dataplane readiness"

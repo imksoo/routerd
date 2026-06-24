@@ -251,6 +251,41 @@ func TestDoctorSAMBGPDeliveryFailsWhenFIBMissing(t *testing.T) {
 	}
 }
 
+func TestDoctorSAMBGPDeliveryWarnsWhenDegradedButFIBInstalled(t *testing.T) {
+	configPath, statePath := writeDoctorSAMBGPDeliveryFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"phase":                          "Ready",
+		"plannerPhase":                   "BGPPlanned",
+		"ownershipResolverPhase":         "Resolved",
+		"ownershipResolverConflictCount": 0,
+	}); err != nil {
+		t.Fatalf("save mobility status: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "mobility-bgp", map[string]any{
+		"phase":                "Degraded",
+		"establishedPeers":     8,
+		"fibMissingRoutes":     0,
+		"fibUnsupportedRoutes": 0,
+	}); err != nil {
+		t.Fatalf("save bgp status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "sam", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor sam should warn, not fail, when BGP delivery FIB is installed: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "MobilityPool/cloudedge BGP delivery BGPRouter/mobility-bgp")
+	if check.Status != doctorWarn || !strings.Contains(check.Detail, "phase=Degraded") {
+		t.Fatalf("BGP delivery check = %#v, want warn for degraded peer establishment with installed FIB", check)
+	}
+}
+
 func TestDoctorSAMBGPDeliveryPassesWhenBGPRouterEstablished(t *testing.T) {
 	configPath, statePath := writeDoctorSAMBGPDeliveryFixture(t)
 	store := openDoctorState(t, statePath)
