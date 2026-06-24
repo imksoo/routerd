@@ -48,6 +48,7 @@ type transportDerivation struct {
 	PendingSources   []string
 	Tunnels          int
 	BGPPeers         int
+	BFDs             int
 	EndpointRoutes   int
 }
 
@@ -136,6 +137,7 @@ func (c TransportController) Reconcile(ctx context.Context) error {
 			"innerPrefix":             strings.TrimSpace(spec.InnerPrefix),
 			"generatedTunnels":        derived.Tunnels,
 			"generatedBGPPeers":       derived.BGPPeers,
+			"generatedBFDs":           derived.BFDs,
 			"generatedEndpointRoutes": derived.EndpointRoutes,
 			"pendingSources":          derived.PendingSources,
 			"peers":                   transportPeerStatusMaps(derived.Peers),
@@ -234,6 +236,24 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 		if strings.TrimSpace(timers.Profile) == "" {
 			timers.Profile = strings.TrimSpace(spec.BGP.TimersPreset)
 		}
+		bfdRef := ""
+		if spec.BGP.BFD.Enabled {
+			bfdName := safeName(bgpPeerName + "-bfd")
+			bfdRef = "BFD/" + bfdName
+			out.Resources = append(out.Resources, api.Resource{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BFD"},
+				Metadata: api.ObjectMeta{Name: bfdName, OwnerRefs: ownerRef, Annotations: transportAnnotations(owner.Metadata.Name, self, peerNode)},
+				Spec: api.BFDSpec{
+					Peer:             "BGPPeer/" + bgpPeerName,
+					Interface:        strings.TrimSpace(spec.BGP.BFD.Interface),
+					Profile:          strings.TrimSpace(spec.BGP.BFD.Profile),
+					MinRx:            strings.TrimSpace(spec.BGP.BFD.MinRx),
+					MinTx:            strings.TrimSpace(spec.BGP.BFD.MinTx),
+					DetectMultiplier: spec.BGP.BFD.DetectMultiplier,
+				},
+			})
+			out.BFDs++
+		}
 		out.Resources = append(out.Resources, api.Resource{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
 			Metadata: api.ObjectMeta{Name: bgpPeerName, OwnerRefs: ownerRef, Annotations: transportAnnotations(owner.Metadata.Name, self, peerNode)},
@@ -247,6 +267,7 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 				ImportPolicy:            spec.BGP.ImportPolicy,
 				ExportPolicy:            spec.BGP.ExportPolicy,
 				Timers:                  timers,
+				BFD:                     bfdRef,
 			},
 		})
 		out.BGPPeers++

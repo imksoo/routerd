@@ -752,6 +752,16 @@ type SAMTransportBGPProfileSpec struct {
 	RouteReflectorClusterID string              `yaml:"routeReflectorClusterID,omitempty" json:"routeReflectorClusterID,omitempty"`
 	ImportPolicy            BGPImportPolicySpec `yaml:"importPolicy,omitempty" json:"importPolicy,omitempty"`
 	ExportPolicy            BGPExportPolicySpec `yaml:"exportPolicy,omitempty" json:"exportPolicy,omitempty"`
+	BFD                     SAMTransportBFDSpec `yaml:"bfd,omitempty" json:"bfd,omitempty"`
+}
+
+type SAMTransportBFDSpec struct {
+	Enabled          bool   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Interface        string `yaml:"interface,omitempty" json:"interface,omitempty"`
+	Profile          string `yaml:"profile,omitempty" json:"profile,omitempty" jsonschema:"enum=,enum=fast,enum=normal,enum=slow"`
+	MinRx            string `yaml:"minRx,omitempty" json:"minRx,omitempty"`
+	MinTx            string `yaml:"minTx,omitempty" json:"minTx,omitempty"`
+	DetectMultiplier int    `yaml:"detectMultiplier,omitempty" json:"detectMultiplier,omitempty" jsonschema:"minimum=1,maximum=50"`
 }
 
 type SAMTransportPeerSpec struct {

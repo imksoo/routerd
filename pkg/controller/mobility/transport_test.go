@@ -685,6 +685,53 @@ func TestSAMTransportProfileCopiesRouteReflectorSettings(t *testing.T) {
 	}
 }
 
+func TestSAMTransportProfileGeneratesBFDForBGPPeer(t *testing.T) {
+	now := time.Date(2026, 6, 6, 9, 8, 30, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouter("bfd", "k8s-rt01", []api.SAMTransportPeerSpec{{
+		NodeRef:        "pve-rt06",
+		RemoteEndpoint: "203.0.113.26",
+	}})
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.BGP.BFD = api.SAMTransportBFDSpec{
+		Enabled:          true,
+		Profile:          "fast",
+		MinRx:            "250ms",
+		MinTx:            "250ms",
+		DetectMultiplier: 4,
+	}
+	router.Spec.Resources[0].Spec = spec
+
+	controller := TransportController{
+		Router: router,
+		Store:  store,
+		Now:    func() time.Time { return now },
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("bfd", "k8s-rt01")).ResourcesJSON)
+	peerName, peer := findTransportBGPPeerResourceForPeer(t, resources, "k8s-rt01", "pve-rt06")
+	bfdName, ok := strings.CutPrefix(peer.BFD, "BFD/")
+	if !ok {
+		t.Fatalf("BGPPeer BFD ref = %q, want BFD/<name>", peer.BFD)
+	}
+	bfd := findTransportBFD(t, resources, bfdName)
+	if bfd.Peer != "BGPPeer/"+peerName {
+		t.Fatalf("BFD peer = %q, want BGPPeer/%s", bfd.Peer, peerName)
+	}
+	if bfd.Profile != "fast" || bfd.MinRx != "250ms" || bfd.MinTx != "250ms" || bfd.DetectMultiplier != 4 {
+		t.Fatalf("BFD spec = %#v, want fast 250ms/250ms multiplier 4", bfd)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "bfd")
+	if status["generatedBFDs"] != float64(1) && status["generatedBFDs"] != 1 {
+		t.Fatalf("status = %#v, want generatedBFDs=1", status)
+	}
+}
+
 func TestSAMTransportProfileEndpointRouteUsesUnderlayDevice(t *testing.T) {
 	now := time.Date(2026, 6, 6, 9, 9, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -908,6 +955,12 @@ func findTransportTunnelForPeer(t *testing.T, resources []api.Resource, self, pe
 
 func findTransportBGPPeerForPeer(t *testing.T, resources []api.Resource, self, peer string) api.BGPPeerSpec {
 	t.Helper()
+	_, spec := findTransportBGPPeerResourceForPeer(t, resources, self, peer)
+	return spec
+}
+
+func findTransportBGPPeerResourceForPeer(t *testing.T, resources []api.Resource, self, peer string) (string, api.BGPPeerSpec) {
+	t.Helper()
 	for _, resource := range resources {
 		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPPeer" {
 			continue
@@ -920,8 +973,24 @@ func findTransportBGPPeerForPeer(t *testing.T, resources []api.Resource, self, p
 		if err != nil {
 			t.Fatalf("BGPPeer spec: %v", err)
 		}
-		return spec
+		return resource.Metadata.Name, spec
 	}
 	t.Fatalf("BGPPeer for %s/%s not found in %#v", self, peer, resources)
-	return api.BGPPeerSpec{}
+	return "", api.BGPPeerSpec{}
+}
+
+func findTransportBFD(t *testing.T, resources []api.Resource, name string) api.BFDSpec {
+	t.Helper()
+	for _, resource := range resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BFD" || resource.Metadata.Name != name {
+			continue
+		}
+		spec, err := resource.BFDSpec()
+		if err != nil {
+			t.Fatalf("BFD spec: %v", err)
+		}
+		return spec
+	}
+	t.Fatalf("BFD/%s not found in %#v", name, resources)
+	return api.BFDSpec{}
 }
