@@ -935,6 +935,9 @@ func unassignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mod
 				return failed("unassign-secondary-ip execute: nic show for fallback failed", derr)
 			}
 			if deleted {
+				if err := waitForAddressAbsentFromNIC(ctx, runner, t); err != nil {
+					return failed("unassign-secondary-ip execute: verify fallback delete failed", err)
+				}
 				res.Status.Status = statusSucceeded
 				res.Status.Message = fmt.Sprintf("unassigned ip-config %s from %s", t.ipConfigName, t.nicName)
 				return res
@@ -945,9 +948,31 @@ func unassignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mod
 		}
 		return failed("unassign-secondary-ip execute: ip-config delete failed", err)
 	}
+	if err := waitForAddressAbsentFromNIC(ctx, runner, t); err != nil {
+		return failed("unassign-secondary-ip execute: verify delete failed", err)
+	}
 	res.Status.Status = statusSucceeded
 	res.Status.Message = fmt.Sprintf("unassigned ip-config %s from %s", t.ipConfigName, t.nicName)
 	return res
+}
+
+func waitForAddressAbsentFromNIC(ctx context.Context, runner azRunner, t nicTarget) error {
+	var lastErr error
+	for attempt := 0; attempt < seizeVerifyAttempts; attempt++ {
+		self, err := showNIC(ctx, runner, t.nicID)
+		if err == nil {
+			if _, stillPresent := ipConfigForAddress(self.IPConfigurations, t.address); !stillPresent {
+				return nil
+			}
+			lastErr = fmt.Errorf("NIC %s still holds address %s", t.nicName, bareIP(t.address))
+		} else {
+			lastErr = err
+		}
+		if err := sleepBeforeRetry(ctx, attempt); err != nil {
+			return err
+		}
+	}
+	return lastErr
 }
 
 func unassignIPConfigByAddress(ctx context.Context, runner azRunner, t nicTarget) (bool, error) {

@@ -1069,13 +1069,19 @@ func TestUnassignExecuteDeletesIPConfig(t *testing.T) {
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
-	if len(f.calls) != 1 {
-		t.Fatalf("execute unassign should only delete, got %v", f.calls)
+	if len(f.calls) != 2 {
+		t.Fatalf("execute unassign should delete and verify absence, got %v", f.calls)
 	}
 	gotNoQuery := joinedCallsWithoutQuery(f.calls)
-	want := []string{"network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-mobility"}
+	want := []string{
+		"network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-mobility",
+		"network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
+	}
 	if gotNoQuery[0] != want[0] {
 		t.Fatalf("unassign argv mismatch:\n got: %s\nwant: %s", gotNoQuery[0], want[0])
+	}
+	if gotNoQuery[1] != want[1] {
+		t.Fatalf("unassign verify argv mismatch:\n got: %s\nwant: %s", gotNoQuery[1], want[1])
 	}
 	if strings.Contains(res.Status.Message, "/32") {
 		t.Fatalf("unassign message should not leak CIDR-form address, got %q", res.Status.Message)
@@ -1117,6 +1123,9 @@ func TestUnassignExecuteDeletesWhenDeleteReturnsNotFound(t *testing.T) {
 		case "network nic ip-config delete":
 			return nil, fmt.Errorf("azure CLI failed: ResourceNotFound")
 		case "network nic show":
+			if callCount > 2 {
+				return cannedNICShow(false), nil
+			}
 			return cannedNICShowWithConfig(false, "ipcfg-renamed", "10.88.60.9"), nil
 		default:
 			return nil, fmt.Errorf("unexpected call: %v", argv)
@@ -1126,8 +1135,8 @@ func TestUnassignExecuteDeletesWhenDeleteReturnsNotFound(t *testing.T) {
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
-	if callCount != 3 {
-		t.Fatalf("expected delete+show+delete calls, got %d", callCount)
+	if callCount != 4 {
+		t.Fatalf("expected delete+show+delete+verify calls, got %d", callCount)
 	}
 	if !strings.Contains(res.Status.Message, "unassigned") {
 		t.Fatalf("message = %q, want unassigned", res.Status.Message)
@@ -1149,6 +1158,9 @@ func TestUnassignExecuteFallsBackToDeleteWhenShowContainsAddress(t *testing.T) {
 			}
 			return []byte(`{}`), nil
 		case "network nic show":
+			if callCount > 3 {
+				return cannedNICShow(false), nil
+			}
 			return cannedNICShowWithConfig(false, "ipcfg-renamed", "10.88.60.9"), nil
 		default:
 			return nil, fmt.Errorf("unexpected call: %v", argv)
@@ -1158,13 +1170,14 @@ func TestUnassignExecuteFallsBackToDeleteWhenShowContainsAddress(t *testing.T) {
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
-	if callCount != 3 {
-		t.Fatalf("expected delete + show + delete by discovered ip-config name, got=%d", callCount)
+	if callCount != 4 {
+		t.Fatalf("expected delete + show + delete by discovered ip-config name + verify, got=%d", callCount)
 	}
 	want := []string{
 		"network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-mobility",
 		"network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
 		"network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-renamed",
+		"network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
 	}
 	if len(calls) != len(want) {
 		t.Fatalf("calls = %v, want length %d", calls, len(want))
@@ -1189,6 +1202,27 @@ func TestUnassignExecuteRequiresTargetAddress(t *testing.T) {
 	}
 }
 
+func TestUnassignExecuteFailsWhenAddressStillPresentAfterDelete(t *testing.T) {
+	withNoRetrySleep(t)
+	runner := func(ctx context.Context, argv ...string) ([]byte, error) {
+		switch strings.Join(leadingTokens(argv), " ") {
+		case "network nic ip-config delete":
+			return []byte(`{}`), nil
+		case "network nic show":
+			return cannedNICShowWithConfig(false, "ipcfg-mobility", "10.88.60.9"), nil
+		default:
+			return nil, fmt.Errorf("unexpected call: %v", argv)
+		}
+	}
+	res := dispatchWith(reqSpec(actionUnassignSecondaryIP, modeExecute), runner)
+	if res.Status.Status != statusFailed {
+		t.Fatalf("want failed while address remains present, got %q", res.Status.Status)
+	}
+	if !strings.Contains(res.Status.Error, "still holds address") {
+		t.Fatalf("error = %q, want still holds address", res.Status.Error)
+	}
+}
+
 func TestUnassignExecuteRetriesDeleteWithRetryableError(t *testing.T) {
 	withNoRetrySleep(t)
 	callCount := 0
@@ -1203,6 +1237,8 @@ func TestUnassignExecuteRetriesDeleteWithRetryableError(t *testing.T) {
 				return nil, fmt.Errorf("azure CLI failed: signal: killed")
 			}
 			return []byte(`{}`), nil
+		case "network nic show":
+			return cannedNICShow(false), nil
 		default:
 			return nil, fmt.Errorf("unexpected call: %v", argv)
 		}
@@ -1211,13 +1247,14 @@ func TestUnassignExecuteRetriesDeleteWithRetryableError(t *testing.T) {
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
-	if callCount != 3 {
-		t.Fatalf("delete retryable should attempt 3 calls, got=%d", callCount)
+	if callCount != 4 {
+		t.Fatalf("delete retryable should attempt 3 deletes and one verify, got=%d", callCount)
 	}
 	want := []string{
 		"network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-mobility",
 		"network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-mobility",
 		"network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-mobility",
+		"network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
 	}
 	if len(calls) != len(want) {
 		t.Fatalf("calls = %v, want length %d", calls, len(want))
