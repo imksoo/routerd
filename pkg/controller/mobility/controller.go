@@ -358,6 +358,10 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	for key, value := range bgpSeizeHoldDownStatus(delivery.Placement) {
 		status[key] = value
 	}
+	if status["bgpCapturePending"] == true && status["plannerPhase"] == "BGPPlanned" {
+		status["plannerPhase"] = "Pending"
+		status["plannerReason"] = "BGP capture seize hold-down is active"
+	}
 	if delivery.Distribution != nil {
 		status["captureDistributionMode"] = "distributed"
 		status["captureDistributionNodeCounts"] = delivery.Distribution.NodeCounts

@@ -1328,6 +1328,9 @@ func TestControllerBGPModeStandbySeizesTrapAfterActiveLivenessHoldDown(t *testin
 	if status["bgpCapturePending"] != true || status["bgpCapturePendingReason"] != "seize-hold-down" || status["bgpCapturePendingUntil"] == "" {
 		t.Fatalf("initial status = %#v, want pending capture hold-down status", status)
 	}
+	if status["phase"] != "Pending" || status["plannerPhase"] != "Pending" || status["plannerReason"] != "BGP capture seize hold-down is active" {
+		t.Fatalf("initial status = %#v, want pending planner phase during capture hold-down", status)
+	}
 
 	current = now.Add(bgpSeizeLivenessMissingHold + time.Second)
 	if err := controller.Reconcile(context.Background()); err != nil {

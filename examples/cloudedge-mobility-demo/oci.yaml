@@ -164,6 +164,9 @@ spec:
           routerRef: BGPRouter/mobility-bgp
           peerASN: 64577
           timersPreset: fast
+          bfd:
+            enabled: true
+            profile: fast
           importPolicy:
             allowedPrefixes: [10.77.60.0/24]
             nextHopRewrite: peer-address

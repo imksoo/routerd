@@ -229,6 +229,9 @@ spec:
           routerRef: BGPRouter/mobility-bgp
           peerASN: 64577
           timersPreset: fast
+          bfd:
+            enabled: true
+            profile: fast
           routeReflectorClient: true
           routeReflectorClusterID: 10.99.0.1
         peers:
