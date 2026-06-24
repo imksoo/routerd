@@ -7,7 +7,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
@@ -93,12 +92,8 @@ func TestSAMControllerProviderSecondaryBGPUsesProxyNeighborWithoutProxyARP(t *te
 	if note["address"] != "10.0.1.122/32" || note["reason"] != "bgp-delivery" || note["enforced"] != true {
 		t.Fatalf("OS absence note = %#v", note)
 	}
-	proxy, ok := status["captureProxyNeighbor"].(map[string]any)
-	if !ok || proxy["address"] != "10.0.1.122/32" || proxy["interface"] != "ens3" {
-		t.Fatalf("provider-secondary BGP proxy-neighbor status = %#v", status["captureProxyNeighbor"])
-	}
-	if status["captureType"] != "provider-secondary-ip" || status["deliveryMode"] != "bgp" || status["captureStatus"] != sam.CaptureStatusCaptured {
-		t.Fatalf("provider-secondary BGP capture status = %#v", status)
+	if _, ok := status["captureProxyNeighbor"]; ok {
+		t.Fatalf("provider-secondary BGP status must not be reported as proxy-ARP capture: %#v", status)
 	}
 }
 
@@ -164,127 +159,6 @@ func TestSAMControllerCleansRemovedProxyNeighbor(t *testing.T) {
 	}
 	if !store.deleted[api.HybridAPIVersion+"/RemoteAddressClaim/old"] {
 		t.Fatalf("deleted = %#v", store.deleted)
-	}
-}
-
-func TestSAMControllerRemovedProviderSecondaryCaptureHandoffLeaseExpires(t *testing.T) {
-	now := time.Date(2026, 6, 23, 3, 30, 0, 0, time.UTC)
-	router := &api.Router{}
-	store := &samStore{
-		objects: map[string]map[string]any{},
-		statuses: []routerstate.ObjectStatus{
-			samProviderSecondaryBGPStatus("old", "10.0.1.122/32", "ens3"),
-		},
-	}
-	applier := &fakeSAMApplier{}
-	controller := SAMController{
-		Router:          router,
-		Store:           store,
-		OS:              platform.OSLinux,
-		Applier:         applier,
-		HandoffLeaseTTL: 5 * time.Second,
-		Now:             func() time.Time { return now },
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("first Reconcile: %v", err)
-	}
-	if len(applier.delete) != 0 || store.deleted[api.HybridAPIVersion+"/RemoteAddressClaim/old"] {
-		t.Fatalf("capture released during handoff lease: delete=%#v deleted=%#v", applier.delete, store.deleted)
-	}
-	pending := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "old")
-	if pending["phase"] != "HandoffPending" || pending["handoffPendingSince"] == "" {
-		t.Fatalf("pending status = %#v", pending)
-	}
-
-	now = now.Add(6 * time.Second)
-	store.statuses = []routerstate.ObjectStatus{{
-		APIVersion: api.HybridAPIVersion,
-		Kind:       "RemoteAddressClaim",
-		Name:       "old",
-		Status:     pending,
-	}}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("expired Reconcile: %v", err)
-	}
-	if len(applier.delete) != 1 || applier.delete[0] != "10.0.1.122/32@ens3" {
-		t.Fatalf("delete after expiry = %#v", applier.delete)
-	}
-	if !store.deleted[api.HybridAPIVersion+"/RemoteAddressClaim/old"] {
-		t.Fatalf("deleted = %#v", store.deleted)
-	}
-}
-
-func TestSAMControllerRemovedProviderSecondaryCaptureReleasesWhenDestinationReady(t *testing.T) {
-	now := time.Date(2026, 6, 23, 3, 31, 0, 0, time.UTC)
-	router := &api.Router{}
-	store := &samStore{
-		objects: map[string]map[string]any{},
-		statuses: []routerstate.ObjectStatus{
-			samProviderSecondaryBGPStatus("old", "10.0.1.122/32", "ens3"),
-		},
-	}
-	applier := &fakeSAMApplier{}
-	controller := SAMController{
-		Router:          router,
-		Store:           store,
-		OS:              platform.OSLinux,
-		Applier:         applier,
-		HandoffLeaseTTL: 30 * time.Second,
-		Now:             func() time.Time { return now },
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("first Reconcile: %v", err)
-	}
-	pending := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "old")
-	pending["handoffDestinationReady"] = true
-	now = now.Add(time.Second)
-	store.statuses = []routerstate.ObjectStatus{{
-		APIVersion: api.HybridAPIVersion,
-		Kind:       "RemoteAddressClaim",
-		Name:       "old",
-		Status:     pending,
-	}}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("ready Reconcile: %v", err)
-	}
-	if len(applier.delete) != 1 || applier.delete[0] != "10.0.1.122/32@ens3" {
-		t.Fatalf("delete after destination ready = %#v", applier.delete)
-	}
-	if !store.deleted[api.HybridAPIVersion+"/RemoteAddressClaim/old"] {
-		t.Fatalf("deleted = %#v", store.deleted)
-	}
-}
-
-func TestSAMControllerPeerObservedAddressDoesNotStartHandoffLease(t *testing.T) {
-	router := &api.Router{}
-	store := &samStore{
-		objects: map[string]map[string]any{},
-		statuses: []routerstate.ObjectStatus{{
-			APIVersion: api.HybridAPIVersion,
-			Kind:       "RemoteAddressClaim",
-			Name:       "peer-observed",
-			Status: map[string]any{
-				"phase":         "Ready",
-				"address":       "10.0.1.122/32",
-				"captureType":   "provider-secondary-ip",
-				"deliveryMode":  "bgp",
-				"captureStatus": sam.CaptureStatusCaptured,
-			},
-		}},
-	}
-	applier := &fakeSAMApplier{}
-	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier, HandoffLeaseTTL: 30 * time.Second}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if len(applier.delete) != 0 {
-		t.Fatalf("peer-observed status must not delete a local proxy-neighbor: %#v", applier.delete)
-	}
-	if !store.deleted[api.HybridAPIVersion+"/RemoteAddressClaim/peer-observed"] {
-		t.Fatalf("peer-observed status should be released immediately, deleted=%#v", store.deleted)
-	}
-	if pending := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "peer-observed")["handoffPendingSince"]; pending != nil {
-		t.Fatalf("peer-observed status must not become handoff pending: %#v", store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "peer-observed"))
 	}
 }
 
@@ -846,25 +720,6 @@ func samRemoteAddressClaimStatus(name, address, ifname string) routerstate.Objec
 		Name:       name,
 		Status: map[string]any{
 			"captureProxyNeighbor": map[string]any{"address": address, "interface": ifname},
-		},
-	}
-}
-
-func samProviderSecondaryBGPStatus(name, address, ifname string) routerstate.ObjectStatus {
-	return routerstate.ObjectStatus{
-		APIVersion: api.HybridAPIVersion,
-		Kind:       "RemoteAddressClaim",
-		Name:       name,
-		Status: map[string]any{
-			"phase":         "Ready",
-			"address":       address,
-			"captureType":   "provider-secondary-ip",
-			"deliveryMode":  "bgp",
-			"captureStatus": sam.CaptureStatusCaptured,
-			"captureProxyNeighbor": map[string]any{
-				"address":   address,
-				"interface": ifname,
-			},
 		},
 	}
 }

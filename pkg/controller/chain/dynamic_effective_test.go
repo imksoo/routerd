@@ -312,11 +312,6 @@ func TestDynamicRouteSAMViewDerivesBGPProviderSecondaryForwardPath(t *testing.T)
 			},
 		},
 		api.Resource{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
-			Metadata: api.ObjectMeta{Name: "site-primary"},
-			Spec:     api.IPv4StaticAddressSpec{Interface: "ens3", Address: "10.77.70.51/24"},
-		},
-		api.Resource{
 			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
 			Metadata: api.ObjectMeta{Name: "cloudedge"},
 			Spec: api.MobilityPoolSpec{
@@ -342,7 +337,7 @@ func TestDynamicRouteSAMViewDerivesBGPProviderSecondaryForwardPath(t *testing.T)
 	)
 	store := &dynamicRouteSAMStore{objects: map[string]map[string]any{
 		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
-			"discoverySelfCapturedAddresses": []any{"10.77.70.50/32", "10.77.70.51/32"},
+			"discoverySelfCapturedAddresses": []any{"10.77.70.50/32"},
 		},
 	}}
 	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
@@ -577,67 +572,6 @@ func TestDynamicRouteSAMViewBGPLocalHomeOwnerRouteBeatsRemoteHostRoute(t *testin
 	route := ipv4RouteSpecByName(t, view.RouteRouter, "sam-cloudedge-local-10-0-1-7")
 	if route.Destination != "10.0.1.7/32" || route.Device != "eth0" || route.Metric != 1 {
 		t.Fatalf("local inventory route = %#v, want 10.0.1.7/32 dev eth0 metric 1", route)
-	}
-}
-
-func TestDynamicRouteSAMViewBGPLocalInventorySkipsStaticAddress(t *testing.T) {
-	startup := startupHybridContextRouter()
-	startup.Spec.Resources = append(startup.Spec.Resources,
-		api.Resource{
-			TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
-			Metadata: api.ObjectMeta{Name: "cloudedge"},
-			Spec:     api.EventGroupSpec{NodeName: "azure-router"},
-		},
-		api.Resource{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
-			Metadata: api.ObjectMeta{Name: "site-primary"},
-			Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "10.0.1.7/24"},
-		},
-		api.Resource{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
-			Metadata: api.ObjectMeta{Name: "mobility-bgp"},
-			Spec:     api.BGPRouterSpec{ASN: 64577, RouterID: "10.99.0.3"},
-		},
-		api.Resource{
-			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
-			Metadata: api.ObjectMeta{Name: "cloudedge"},
-			Spec: api.MobilityPoolSpec{
-				Prefix:         "10.0.1.0/24",
-				GroupRef:       "cloudedge",
-				DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
-				Members: []api.MobilityPoolMember{
-					{
-						NodeRef: "azure-router",
-						Site:    "azure",
-						Role:    "cloud",
-						Capture: api.MobilityMemberCapture{
-							Type:      "provider-secondary-ip",
-							Interface: "eth0",
-						},
-					},
-					{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
-				},
-			},
-		},
-	)
-	store := mapStore{
-		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
-			"ownershipResolverFIBVerdicts": []any{
-				map[string]any{
-					"address":   "10.0.1.7/32",
-					"action":    "local-route",
-					"ownerNode": "azure-router",
-					"localNode": "azure-router",
-				},
-			},
-		},
-	}
-	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
-	if err != nil {
-		t.Fatalf("buildDynamicRouteSAMView: %v", err)
-	}
-	if got := countResources(view.RouteRouter, api.NetAPIVersion, "IPv4Route"); got != 0 {
-		t.Fatalf("route IPv4Routes = %d, want none for static local address", got)
 	}
 }
 
@@ -1287,16 +1221,6 @@ func actionTargetJSON(addr string) string {
 	return string(b)
 }
 
-func actionTargetJSONWithNIC(addr, nic string) string {
-	b, _ := json.Marshal(map[string]string{"address": addr, "nicRef": nic})
-	return string(b)
-}
-
-func actionParamsJSON(holder string) string {
-	b, _ := json.Marshal(map[string]string{"mobilityCaptureHolder": holder})
-	return string(b)
-}
-
 func TestActionJournalAssignNotHiddenByEnsureForwarding(t *testing.T) {
 	store := &fakeActionLister{actions: []routerstate.ActionExecutionRecord{
 		{ID: 1, ProviderRef: "p1", Action: "assign-secondary-ip", Status: routerstate.ActionSucceeded, TargetJSON: actionTargetJSON("10.0.0.1")},
@@ -1346,26 +1270,5 @@ func TestActionJournalAssignSurvivesRepeatedCleanupCycles(t *testing.T) {
 		if len(got) != 1 || got[0] != "10.0.0.1" {
 			t.Fatalf("cycle %d: got %v, want [10.0.0.1]; repeated ensure-forwarding must not erode assign", i, got)
 		}
-	}
-}
-
-func TestActionJournalAssignedAddressesForMemberFiltersHolderAndNIC(t *testing.T) {
-	store := &fakeActionLister{actions: []routerstate.ActionExecutionRecord{
-		{ID: 1, ProviderRef: "p1", Action: "assign-secondary-ip", Status: routerstate.ActionSucceeded, TargetJSON: actionTargetJSONWithNIC("10.0.0.1/32", "eth1"), ParametersJSON: actionParamsJSON("self")},
-		{ID: 2, ProviderRef: "p1", Action: "assign-secondary-ip", Status: routerstate.ActionSucceeded, TargetJSON: actionTargetJSONWithNIC("10.0.0.2/32", "eth1"), ParametersJSON: actionParamsJSON("peer")},
-		{ID: 3, ProviderRef: "p1", Action: "assign-secondary-ip", Status: routerstate.ActionSucceeded, TargetJSON: actionTargetJSONWithNIC("10.0.0.3/32", "eth2"), ParametersJSON: actionParamsJSON("self")},
-		{ID: 4, ProviderRef: "p2", Action: "assign-secondary-ip", Status: routerstate.ActionSucceeded, TargetJSON: actionTargetJSONWithNIC("10.0.0.4/32", "eth1"), ParametersJSON: actionParamsJSON("self")},
-	}}
-	member := api.MobilityPoolMember{
-		NodeRef: "self",
-		Capture: api.MobilityMemberCapture{
-			Type:        "provider-secondary-ip",
-			ProviderRef: "p1",
-			NICRef:      "eth1",
-		},
-	}
-	got := actionJournalAssignedAddressesForMember(store, "self", member)
-	if len(got) != 1 || got[0] != "10.0.0.1/32" {
-		t.Fatalf("got %v, want only self holder/provider/nic address", got)
 	}
 }

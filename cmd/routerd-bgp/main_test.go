@@ -14,7 +14,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	gobgpapi "github.com/osrg/gobgp/v4/api"
+	gobgpapi "github.com/osrg/gobgp/v3/api"
 
 	"github.com/imksoo/routerd/pkg/bgpdaemon"
 )
@@ -84,14 +84,14 @@ func TestAppliedPoliciesRestorePeerImportPolicyWithoutGlobalPolicy(t *testing.T)
 	if !action.GetPeerAddress() {
 		t.Fatalf("next-hop action = %#v, want peer-address rewrite", action)
 	}
-	if assignment.GetName() != "global" || assignment.GetDirection() != gobgpapi.PolicyDirection_POLICY_DIRECTION_IMPORT ||
-		assignment.GetDefaultAction() != gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT || len(assignment.GetPolicies()) != 0 {
+	if assignment.GetName() != "global" || assignment.GetDirection() != gobgpapi.PolicyDirection_IMPORT ||
+		assignment.GetDefaultAction() != gobgpapi.RouteAction_ACCEPT || len(assignment.GetPolicies()) != 0 {
 		t.Fatalf("global import policy assignment = %#v, want default accept without peer policy", assignment)
 	}
 	restoredPeer := appliedPeer(peer, bgpdaemon.AppliedGlobal{ASN: 64512})
 	importAssignment := restoredPeer.GetApplyPolicy().GetImportPolicy()
-	if importAssignment.GetDirection() != gobgpapi.PolicyDirection_POLICY_DIRECTION_IMPORT ||
-		importAssignment.GetDefaultAction() != gobgpapi.RouteAction_ROUTE_ACTION_REJECT ||
+	if importAssignment.GetDirection() != gobgpapi.PolicyDirection_IMPORT ||
+		importAssignment.GetDefaultAction() != gobgpapi.RouteAction_REJECT ||
 		len(importAssignment.GetPolicies()) != 1 ||
 		importAssignment.GetPolicies()[0].GetName() != "routerd-lan-import" {
 		t.Fatalf("restored peer import policy = %#v, want per-neighbor import policy", importAssignment)
@@ -137,15 +137,15 @@ func TestAppliedPoliciesRestorePeerExportPolicy(t *testing.T) {
 	}
 	restoredPeer := appliedPeer(peer, bgpdaemon.AppliedGlobal{ASN: 64512})
 	importAssignment := restoredPeer.GetApplyPolicy().GetImportPolicy()
-	if importAssignment.GetDirection() != gobgpapi.PolicyDirection_POLICY_DIRECTION_IMPORT ||
-		importAssignment.GetDefaultAction() != gobgpapi.RouteAction_ROUTE_ACTION_REJECT ||
+	if importAssignment.GetDirection() != gobgpapi.PolicyDirection_IMPORT ||
+		importAssignment.GetDefaultAction() != gobgpapi.RouteAction_REJECT ||
 		len(importAssignment.GetPolicies()) != 1 ||
 		importAssignment.GetPolicies()[0].GetName() != "routerd-lan-import" {
 		t.Fatalf("restored peer import policy = %#v, want import assignment", importAssignment)
 	}
 	exportAssignment := restoredPeer.GetApplyPolicy().GetExportPolicy()
-	if exportAssignment.GetDirection() != gobgpapi.PolicyDirection_POLICY_DIRECTION_EXPORT ||
-		exportAssignment.GetDefaultAction() != gobgpapi.RouteAction_ROUTE_ACTION_REJECT ||
+	if exportAssignment.GetDirection() != gobgpapi.PolicyDirection_EXPORT ||
+		exportAssignment.GetDefaultAction() != gobgpapi.RouteAction_REJECT ||
 		len(exportAssignment.GetPolicies()) != 1 ||
 		exportAssignment.GetPolicies()[0].GetName() != "routerd-lan-export-10-252-0-2" {
 		t.Fatalf("restored peer export policy = %#v, want export assignment", exportAssignment)
@@ -278,7 +278,7 @@ func TestAppliedPeerRestoresInternalRouteReflectorClient(t *testing.T) {
 		RouteReflectorClient:    true,
 		RouteReflectorClusterID: "10.99.0.1",
 	}, bgpdaemon.AppliedGlobal{ASN: 64577})
-	if peer.GetConf().GetType() != gobgpapi.PeerType_PEER_TYPE_INTERNAL {
+	if peer.GetConf().GetType() != gobgpapi.PeerType_INTERNAL {
 		t.Fatalf("peer type = %v, want internal", peer.GetConf().GetType())
 	}
 	rr := peer.GetRouteReflector()
@@ -355,7 +355,7 @@ func TestRestoreAppliedRefreshesDynamicExportPolicy(t *testing.T) {
 		t.Fatalf("ResetPeer calls = %d, want outbound soft reset for restored dynamic export policy", len(server.resetRequests))
 	}
 	reset := server.resetRequests[0]
-	if reset.GetAddress() != "10.252.0.2" || !reset.GetSoft() || reset.GetDirection() != gobgpapi.ResetPeerRequest_DIRECTION_OUT {
+	if reset.GetAddress() != "10.252.0.2" || !reset.GetSoft() || reset.GetDirection() != gobgpapi.ResetPeerRequest_OUT {
 		t.Fatalf("ResetPeer request = %#v, want soft outbound reset for 10.252.0.2", reset)
 	}
 }
@@ -481,7 +481,7 @@ func TestControlPathAPIUpsertRefreshesDynamicExportPolicy(t *testing.T) {
 		t.Fatalf("ResetPeer calls = %d, want one outbound soft reset", len(paths.resetRequests))
 	}
 	reset := paths.resetRequests[0]
-	if reset.GetAddress() != "10.252.0.2" || !reset.GetSoft() || reset.GetDirection() != gobgpapi.ResetPeerRequest_DIRECTION_OUT {
+	if reset.GetAddress() != "10.252.0.2" || !reset.GetSoft() || reset.GetDirection() != gobgpapi.ResetPeerRequest_OUT {
 		t.Fatalf("ResetPeer request = %#v, want soft outbound reset for 10.252.0.2", reset)
 	}
 }

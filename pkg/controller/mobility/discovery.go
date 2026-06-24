@@ -655,9 +655,6 @@ func (c DiscoveryController) recordOnPremObservation(poolName string, spec api.M
 	if !ok {
 		return false, nil
 	}
-	if c.onPremARPAddressClaimedByRemoteNode(poolName, spec, self, poolPrefix, observation, now) {
-		return false, nil
-	}
 	ttl := onPremDiscoveryLeaseTTL(self.OwnershipDiscovery, source, spec)
 	eventTime := now
 	if !observation.ObservedAt.IsZero() {
@@ -680,63 +677,6 @@ func (c DiscoveryController) recordOnPremObservation(poolName string, spec api.M
 		return false, fmt.Errorf("record onprem ownership event %q: %w", ev.ID, err)
 	}
 	return true, nil
-}
-
-// onPremARPAddressClaimedByRemoteNode suppresses ARP-based on-prem
-// discovery when a REMOTE node already has a valid provider-discovery
-// claim for the same address. This prevents proxy-ARP cross-pollution:
-// when a same-L2 peer responds to an ARP request via proxy_arp (because
-// it holds a BGP /32 route), the ARP observer would otherwise record a
-// false LocalHomeOwned claim that conflicts with the real cloud owner.
-func (c DiscoveryController) onPremARPAddressClaimedByRemoteNode(poolName string, spec api.MobilityPoolSpec, self memberPlanInfo, poolPrefix netip.Prefix, observation onPremObservation, now time.Time) bool {
-	if c.Store == nil {
-		return false
-	}
-	sourceType := strings.TrimSpace(observation.SourceType)
-	if sourceType != OnPremSourceARPObserver && sourceType != OnPremSourceOnDemandARP {
-		return false
-	}
-	address, ok := normalizeDiscoveredAddress(observation.Address, poolPrefix)
-	if !ok {
-		return false
-	}
-	group := strings.TrimSpace(spec.GroupRef)
-	if group == "" {
-		return false
-	}
-	events, err := c.Store.ListFederationEvents(group, false, now.Unix())
-	if err != nil {
-		return false
-	}
-	var latest routerstate.EventRecord
-	found := false
-	for _, ev := range events {
-		if ev.Group != group || ev.Type != ObservedEventType {
-			continue
-		}
-		if bgpOwnershipEventSourceType(ev) != providerDiscoverySource {
-			continue
-		}
-		if !strings.EqualFold(strings.TrimSpace(ev.Payload["pool"]), strings.TrimSpace(poolName)) {
-			continue
-		}
-		candidateAddress, addrOK := normalizeDiscoveredAddress(firstNonEmpty(ev.Payload["address"], ev.Subject), poolPrefix)
-		if !addrOK || candidateAddress != address {
-			continue
-		}
-		node := strings.TrimSpace(ev.SourceNode)
-		if node == "" || node == self.NodeRef {
-			continue
-		}
-		if !ev.ExpiresAt.IsZero() && !now.Before(ev.ExpiresAt) {
-			continue
-		}
-		if !found || eventRecordGreater(ev, latest) {
-			latest = ev
-			found = true
-		}
-	}
-	return found
 }
 
 func (c DiscoveryController) onPremObservationAlreadyOwned(poolName, group, nodeRef, address string, poolPrefix netip.Prefix, now time.Time) (bool, error) {

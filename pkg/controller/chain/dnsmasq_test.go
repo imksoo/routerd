@@ -908,7 +908,6 @@ func TestIPv4StaticAddressControllerRemovesStaleMobilityProviderOSAddresses(t *t
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"}, Metadata: api.ObjectMeta{Name: "cloudedge"}, Spec: api.EventGroupSpec{NodeName: "azpair-a"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "azure-nic"}, Spec: api.InterfaceSpec{IfName: "eth0"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "azure-primary"}, Spec: api.IPv4StaticAddressSpec{Interface: "azure-nic", Address: "10.77.60.13/24"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"}, Metadata: api.ObjectMeta{Name: "cloudedge"}, Spec: api.MobilityPoolSpec{
 			Prefix:         "10.77.60.0/24",
 			GroupRef:       "cloudedge",
@@ -958,8 +957,9 @@ func TestIPv4StaticAddressControllerRemovesStaleMobilityProviderOSAddresses(t *t
 		t.Fatal(err)
 	}
 	want := []string{
-		"ip -4 addr replace 10.77.60.13/24 dev eth0",
+		"ip -4 addr del 10.77.60.10/24 dev eth0",
 		"ip -4 addr del 10.77.60.11/24 dev eth0",
+		"ip -4 addr del 10.77.60.13/24 dev eth0",
 	}
 	if !reflect.DeepEqual(commands, want) {
 		t.Fatalf("commands = %#v, want %#v", commands, want)

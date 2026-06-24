@@ -56,7 +56,6 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 	if err := validateMobilityPoolPrefixes(router); err != nil {
 		return err
 	}
-	generatedBGPPeers := samTransportGeneratedBGPPeers(router)
 	for _, res := range router.Spec.Resources {
 		if res.APIVersion != api.NetAPIVersion || res.Kind != "VirtualAddress" {
 			continue
@@ -181,11 +180,8 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				return err
 			}
 			if kind, name, ok := strings.Cut(strings.TrimSpace(spec.Peer), "/"); ok {
-				if kind != "BGPPeer" || (!idx.Seen[api.NetAPIVersion+"/BGPPeer/"+name] && !generatedBGPPeers[name]) {
+				if kind != "BGPPeer" || !idx.Seen[api.NetAPIVersion+"/BGPPeer/"+name] {
 					return fmt.Errorf("%s spec.peer references missing BGPPeer %q", res.ID(), spec.Peer)
-				}
-				if generatedBGPPeers[name] {
-					bfdRefs[res.Metadata.Name]++
 				}
 			}
 			if spec.Interface != "" {
@@ -793,95 +789,6 @@ func bfdSpecMatchesBGPPeer(spec api.BFDSpec, peerName string, peerAddresses []st
 	return false
 }
 
-func samTransportGeneratedBGPPeers(router *api.Router) map[string]bool {
-	out := map[string]bool{}
-	if router == nil {
-		return out
-	}
-	nodeSets := map[string][]string{}
-	for _, res := range router.Spec.Resources {
-		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "SAMNodeSet" {
-			continue
-		}
-		spec, err := res.SAMNodeSetSpec()
-		if err != nil {
-			continue
-		}
-		for _, node := range spec.Nodes {
-			nodeRef := strings.TrimSpace(node.NodeRef)
-			if nodeRef != "" {
-				nodeSets[res.Metadata.Name] = append(nodeSets[res.Metadata.Name], nodeRef)
-			}
-		}
-	}
-	for _, res := range router.Spec.Resources {
-		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "SAMTransportProfile" {
-			continue
-		}
-		spec, err := res.SAMTransportProfileSpec()
-		if err != nil {
-			continue
-		}
-		self := strings.TrimSpace(spec.SelfNodeRef)
-		if self == "" {
-			continue
-		}
-		addPeer := func(peer api.SAMTransportPeerSpec) {
-			peerNode := strings.TrimSpace(peer.NodeRef)
-			if peerNode == "" || peerNode == self {
-				return
-			}
-			name := firstNonEmptyString(strings.TrimSpace(peer.Override.BGPPeer), configSafeName("sam-transport-"+res.Metadata.Name+"-"+self+"-"+peerNode))
-			out[name] = true
-		}
-		for _, source := range spec.PeersFrom {
-			kind, name, ok := strings.Cut(strings.TrimSpace(source.Resource), "/")
-			if !ok || kind != "SAMNodeSet" {
-				continue
-			}
-			for _, nodeRef := range nodeSets[strings.TrimSpace(name)] {
-				addPeer(api.SAMTransportPeerSpec{NodeRef: nodeRef})
-			}
-		}
-		for _, peer := range spec.Peers {
-			addPeer(peer)
-		}
-	}
-	return out
-}
-
-func firstNonEmptyString(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
-}
-
-func configSafeName(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	var b strings.Builder
-	lastDash := false
-	for _, r := range value {
-		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
-		if ok {
-			b.WriteRune(r)
-			lastDash = false
-			continue
-		}
-		if !lastDash {
-			b.WriteByte('-')
-			lastDash = true
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if out == "" {
-		return "mobility"
-	}
-	return out
-}
-
 func validateMobilityPoolPrefixes(router *api.Router) error {
 	type poolPrefix struct {
 		id     string
@@ -916,12 +823,6 @@ func validateApplyPolicy(spec api.ApplyPolicySpec) error {
 	case "", "strict", "progressive":
 	default:
 		return fmt.Errorf("spec.reconcile.mode must be strict or progressive")
-	}
-	if ttl := strings.TrimSpace(spec.SAMHandoffLeaseTTL); ttl != "" {
-		duration, err := time.ParseDuration(ttl)
-		if err != nil || duration <= 0 {
-			return fmt.Errorf("spec.reconcile.samHandoffLeaseTTL must be a positive duration")
-		}
 	}
 	for _, name := range spec.ProtectedInterfaces {
 		if strings.TrimSpace(name) == "" {

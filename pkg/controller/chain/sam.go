@@ -62,13 +62,7 @@ type SAMController struct {
 	Applier     samProxyNeighborApplier
 	GARP        samGratuitousARPAnnouncer
 	ListActions func(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)
-	// HandoffLeaseTTL overrides spec.reconcile.samHandoffLeaseTTL for tests.
-	// The production default is 30s.
-	HandoffLeaseTTL time.Duration
-	Now             func() time.Time
 }
-
-const defaultSAMHandoffLeaseTTL = 30 * time.Second
 
 func (c SAMController) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
@@ -233,53 +227,40 @@ func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults m
 		status := sam.StatusForRemoteAddressClaim(claim, c.Lowerings, c.Store, targetOS)
 		status["dryRun"] = c.DryRun
 		if targetOS == platform.OSLinux {
-			if spec, err := claim.RemoteAddressClaimSpec(); err == nil {
-				if strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
-					if status["captureStatus"] == sam.CaptureStatusCaptured {
-						aliases := sam.CaptureInterfaceAliases(c.Router)
-						status["captureProxyNeighbor"] = map[string]any{
-							"address":   strings.TrimSpace(spec.Address),
-							"interface": sam.ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), aliases),
-						}
-						if garpSent[claim.Metadata.Name] {
-							status["lastGARPSent"] = true
-						}
-						if garpErrors[claim.Metadata.Name] != "" {
-							status["lastGARPError"] = garpErrors[claim.Metadata.Name]
-						}
-					}
-				}
-				if providerSecondaryBGPCapture(spec) {
+			if spec, err := claim.RemoteAddressClaimSpec(); err == nil && strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
+				if status["captureStatus"] == sam.CaptureStatusCaptured {
 					aliases := sam.CaptureInterfaceAliases(c.Router)
-					if iface := sam.ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), aliases); iface != "" {
-						status["captureStatus"] = sam.CaptureStatusCaptured
-						status["captureProxyNeighbor"] = map[string]any{
-							"address":   strings.TrimSpace(spec.Address),
-							"interface": iface,
-						}
+					status["captureProxyNeighbor"] = map[string]any{
+						"address":   strings.TrimSpace(spec.Address),
+						"interface": sam.ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), aliases),
+					}
+					if garpSent[claim.Metadata.Name] {
+						status["lastGARPSent"] = true
+					}
+					if garpErrors[claim.Metadata.Name] != "" {
+						status["lastGARPError"] = garpErrors[claim.Metadata.Name]
 					}
 				}
-				if providerSecondaryEnforcesOSAddressAbsence(spec) {
-					result := deassignResults[claim.Metadata.Name]
-					note := map[string]any{
-						"address": firstNonEmpty(result.address, strings.TrimSpace(spec.Address)),
-						// enforced is an audit flag: routerd is actively enforcing
-						// OS-absence for this provider-captured address.
-						"enforced": true,
-						// lastReconcileRemoved is a per-reconcile action signal. It
-						// is false in steady state when the address was already absent.
-						"lastReconcileRemoved": result.removedThisReconcile,
-					}
-					if result.ifname != "" {
-						note["interface"] = result.ifname
-					}
-					if strings.TrimSpace(spec.Delivery.Mode) == "bgp" {
-						note["reason"] = "bgp-delivery"
-					} else {
-						note["reason"] = "configureOSAddress=false"
-					}
-					status["captureOSAddressAbsence"] = note
+			} else if err == nil && providerSecondaryEnforcesOSAddressAbsence(spec) {
+				result := deassignResults[claim.Metadata.Name]
+				note := map[string]any{
+					"address": firstNonEmpty(result.address, strings.TrimSpace(spec.Address)),
+					// enforced is an audit flag: routerd is actively enforcing
+					// OS-absence for this provider-captured address.
+					"enforced": true,
+					// lastReconcileRemoved is a per-reconcile action signal. It
+					// is false in steady state when the address was already absent.
+					"lastReconcileRemoved": result.removedThisReconcile,
 				}
+				if result.ifname != "" {
+					note["interface"] = result.ifname
+				}
+				if strings.TrimSpace(spec.Delivery.Mode) == "bgp" {
+					note["reason"] = "bgp-delivery"
+				} else {
+					note["reason"] = "configureOSAddress=false"
+				}
+				status["captureOSAddressAbsence"] = note
 			}
 		}
 		if err := c.Store.SaveObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", claim.Metadata.Name, status); err != nil {
@@ -300,10 +281,6 @@ func providerSecondaryEnforcesOSAddressAbsence(spec api.RemoteAddressClaimSpec) 
 		return false
 	}
 	return !spec.Capture.ConfigureOSAddress || strings.TrimSpace(spec.Delivery.Mode) == "bgp"
-}
-
-func providerSecondaryBGPCapture(spec api.RemoteAddressClaimSpec) bool {
-	return strings.TrimSpace(spec.Capture.Type) == "provider-secondary-ip" && strings.TrimSpace(spec.Delivery.Mode) == "bgp"
 }
 
 func (c SAMController) cleanupRemovedCaptures(ctx context.Context, statuses []routerstate.ObjectStatus) error {
@@ -339,118 +316,14 @@ func (c SAMController) cleanupRemovedCaptures(ctx context.Context, statuses []ro
 		if capture, ok := samStoredProxyNeighborFromStatus(status); ok {
 			addr := strings.TrimSuffix(strings.TrimSpace(capture.address), "/32")
 			if recentlyAssigned[addr] {
-				if removedCaptureHandoffEligible(status) {
-					deferred, err := c.deferRemovedHandoffCapture(status)
-					if err != nil {
-						return err
-					}
-					if deferred {
-						continue
-					}
-				} else {
-					continue
-				}
+				continue
 			}
-		}
-		deferred, err := c.deferRemovedHandoffCapture(status)
-		if err != nil {
-			return err
-		}
-		if deferred {
-			continue
 		}
 		if err := c.teardownRemovedCapture(ctx, status, applier, deleter); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func (c SAMController) deferRemovedHandoffCapture(status routerstate.ObjectStatus) (bool, error) {
-	if c.DryRun || c.Store == nil || !removedCaptureHandoffEligible(status) || handoffDestinationReady(status) {
-		return false, nil
-	}
-	now := c.now().UTC()
-	ttl := c.handoffLeaseTTL()
-	since, ok := handoffPendingSince(status)
-	if ok && !now.Before(since.Add(ttl)) {
-		return false, nil
-	}
-	if !ok {
-		since = now
-	}
-	next := copyStatusMap(status.Status)
-	next["phase"] = "HandoffPending"
-	next["reason"] = "SAMHandoffLease"
-	next["message"] = "local SAM capture teardown is delayed briefly while handoff converges; BGP takeover is not dataplane ready"
-	next["handoffPending"] = true
-	next["handoffPendingSince"] = since.Format(time.RFC3339Nano)
-	next["handoffLeaseTTL"] = ttl.String()
-	next["handoffLeaseExpiresAt"] = since.Add(ttl).Format(time.RFC3339Nano)
-	if err := c.Store.SaveObjectStatus(status.APIVersion, status.Kind, status.Name, next); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func removedCaptureHandoffEligible(status routerstate.ObjectStatus) bool {
-	if status.APIVersion != api.HybridAPIVersion || status.Kind != "RemoteAddressClaim" {
-		return false
-	}
-	if strings.TrimSpace(fmt.Sprint(status.Status["captureType"])) != "provider-secondary-ip" {
-		return false
-	}
-	if strings.TrimSpace(fmt.Sprint(status.Status["deliveryMode"])) != "bgp" {
-		return false
-	}
-	if strings.TrimSpace(fmt.Sprint(status.Status["captureStatus"])) != sam.CaptureStatusCaptured {
-		return false
-	}
-	_, ok := samStoredProxyNeighborFromStatus(status)
-	return ok
-}
-
-func handoffDestinationReady(status routerstate.ObjectStatus) bool {
-	if ready, ok := statusBool(status.Status["handoffDestinationReady"]); ok && ready {
-		return true
-	}
-	if ready, ok := statusBool(status.Status["handoffReady"]); ok && ready {
-		return true
-	}
-	return false
-}
-
-func handoffPendingSince(status routerstate.ObjectStatus) (time.Time, bool) {
-	raw := strings.TrimSpace(fmt.Sprint(status.Status["handoffPendingSince"]))
-	if raw == "" || raw == "<nil>" {
-		return time.Time{}, false
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, raw)
-	if err != nil {
-		return time.Time{}, false
-	}
-	return parsed, true
-}
-
-func (c SAMController) now() time.Time {
-	if c.Now != nil {
-		return c.Now()
-	}
-	return time.Now()
-}
-
-func (c SAMController) handoffLeaseTTL() time.Duration {
-	if c.HandoffLeaseTTL > 0 {
-		return c.HandoffLeaseTTL
-	}
-	if c.Router != nil {
-		if value := strings.TrimSpace(c.Router.Spec.Apply.SAMHandoffLeaseTTL); value != "" {
-			if duration, err := time.ParseDuration(value); err == nil && duration > 0 {
-				return duration
-			}
-		}
-	}
-	return defaultSAMHandoffLeaseTTL
 }
 
 func (c SAMController) teardownRemovedCapture(ctx context.Context, status routerstate.ObjectStatus, applier samProxyNeighborApplier, deleter routerstate.ObjectDeleteStore) error {

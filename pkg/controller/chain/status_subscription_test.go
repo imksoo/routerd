@@ -220,6 +220,7 @@ func TestRuntimeWhenControllersSubscribeToStatusRefs(t *testing.T) {
 		{name: "egress-route-policy", subs: statusSubscriptionsWithWhen(router, []string{"EgressRoutePolicy"}, "HealthCheck", "DSLiteTunnel", "Interface", "DHCPv4Client", "PPPoESession")},
 		{name: "ingress-service", subs: statusSubscriptionsWithWhen(router, []string{"IngressService"})},
 		{name: "nat44", subs: statusSubscriptionsWithWhen(router, []string{"NAT44Rule", "LocalServiceRedirect"}, "EgressRoutePolicy", "IngressService")},
+		{name: "bfd", subs: statusSubscriptionsWithWhen(router, []string{"BFD"}, "BGPPeer", "BFD")},
 		{name: "bgp", subs: statusSubscriptionsWithWhen(router, []string{"BGPRouter", "BGPPeer"}, "BFD", "BGPRouter", "BGPPeer")},
 		{name: "vrrp", subs: statusSubscriptionsWithWhen(router, []string{"VirtualAddress"}, "BGPRouter", "BGPPeer", "IngressService")},
 		{name: "ip-address-set", subs: statusSubscriptionsWithWhen(router, []string{"IPAddressSet", "LocalServiceRedirect"}, "IPAddressSet", "LocalServiceRedirect")},

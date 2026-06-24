@@ -29,7 +29,7 @@ BGP advertisement**.
   install delivery routes via the overlay next hop into the FIB.
 - Address movement is expressed as **BGP withdraw / advertise and path
   preference changes**. Operators never hand-author leases or claims.
-- Failure detection is accelerated by **BFD** (GoBGP native BFD); when BFD is unstable,
+- Failure detection is accelerated by **BFD** (FRR `bfdd`); when BFD is unstable,
   BGP hold timers remain the non-destructive authority for route withdrawal.
 
 This is the decision in [ADR 0012](../adr/0012-bgp-address-mobility.md), which
@@ -254,15 +254,6 @@ safety mechanisms:
 SIGTERM/SIGINT, **wait up to this long for the mobility make-before-break
 handover**. `0` disables it. On a planned restart, the new holder establishes its
 advertisement before the old holder steps down, avoiding a dip.
-
-BGP takeover is not dataplane readiness. For provider-secondary BGP captures,
-the old holder keeps the local SAM proxy-neighbor for a short bounded handoff
-lease after the generated claim disappears, because the destination still needs
-its own reconcile to install proxy-neighbor and forwarding state. The lease is
-controlled by `spec.reconcile.samHandoffLeaseTTL` and defaults to `30s`; expiry
-fails open and releases the old capture so stale dual-capture cannot persist.
-The lease is based only on the old node's local SAM capture status, not on
-addresses observed from other nodes.
 
 ## Status fields
 

@@ -12,7 +12,6 @@ cd "$repo_root"
 
 tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/routerd-sandbox.XXXXXX")
 root="${tmpdir}/root"
-routerd_bin="${tmpdir}/routerd"
 stdout_log="${tmpdir}/serve.stdout"
 stderr_log="${tmpdir}/serve.stderr"
 pid=
@@ -27,8 +26,7 @@ cleanup()
 }
 trap cleanup EXIT HUP INT TERM
 
-go build -o "${routerd_bin}" ./cmd/routerd
-"${routerd_bin}" serve --sandbox --root "${root}" >"${stdout_log}" 2>"${stderr_log}" &
+go run ./cmd/routerd serve --sandbox --root "${root}" >"${stdout_log}" 2>"${stderr_log}" &
 pid=$!
 
 status_socket="${root}/run/routerd/routerd-status.sock"

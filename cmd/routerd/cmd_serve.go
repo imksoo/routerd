@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/http/pprof"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -339,7 +338,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	once := fs.Bool("once", false, "converge once and exit without serving control sockets")
 	sandbox := fs.Bool("sandbox", false, "serve control API in a dry-run sandbox with no host mutation")
 	sandboxRoot := fs.String("root", "", "sandbox root directory used with --sandbox")
-	pprofAddr := fs.String("pprof-addr", "", "serve net/http/pprof on this address (e.g. 127.0.0.1:6060); disabled when empty")
 	registerLegacyServeFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -812,22 +810,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}()
 	fmt.Fprintf(stdout, "routerd serving control API on unix://%s\n", *socketPath)
 	fmt.Fprintf(stdout, "routerd serving read-only status API on unix://%s\n", *statusSocketPath)
-	if *pprofAddr != "" {
-		pprofMux := http.NewServeMux()
-		pprofMux.HandleFunc("/debug/pprof/", pprof.Index)
-		pprofMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-		pprofMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-		pprofMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-		pprofMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-		pprofServer := &http.Server{Addr: *pprofAddr, Handler: pprofMux}
-		defer pprofServer.Close()
-		go func() {
-			if serveErr := pprofServer.ListenAndServe(); serveErr != nil && serveErr != http.ErrServerClosed {
-				logger.Emit(eventlog.LevelError, "serve", "pprof server stopped", map[string]string{"error": serveErr.Error()})
-			}
-		}()
-		fmt.Fprintf(stdout, "routerd serving pprof on http://%s/debug/pprof/\n", *pprofAddr)
-	}
 	if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 		return err
 	}
