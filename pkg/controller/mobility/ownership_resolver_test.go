@@ -834,6 +834,47 @@ func TestOwnershipResolverReportsDuplicateProviderHomeOwnerConflict(t *testing.T
 	}
 }
 
+func TestOwnershipResolverCoalescesDuplicateProviderObserversForSameOwner(t *testing.T) {
+	now := time.Date(2026, 6, 24, 17, 30, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	address := "10.88.60.12/32"
+	azureA := providerDiscoveryObservedEvent("cloudedge", "cloudedge", "azure-router", address, "azure", "azure-provider", providerinventory.PrivateIPRecord{
+		Address:      "10.88.60.12",
+		NICRef:       "azure-client-nic",
+		SubnetRef:    "azure-subnet",
+		ResourceRef:  "azure-client-vm",
+		ResourceType: "instance-nic",
+	}, now.Add(-time.Second), time.Hour)
+	azureB := providerDiscoveryObservedEvent("cloudedge", "cloudedge", "azure-router-b", address, "azure", "azure-provider", providerinventory.PrivateIPRecord{
+		Address:      "10.88.60.12",
+		NICRef:       "azure-client-nic",
+		SubnetRef:    "azure-subnet",
+		ResourceRef:  "azure-client-vm",
+		ResourceType: "instance-nic",
+	}, now.Add(-2*time.Second), time.Hour)
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "aws-router-a",
+		Spec:     spec,
+		Events:   []routerstate.EventRecord{azureA, azureB},
+		Now:      now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, address)
+	if decision.ConflictReason != "" || len(decision.ConflictOwners) != 0 {
+		t.Fatalf("decision = %#v, want same provider owner observations coalesced", decision)
+	}
+	if decision.Class != ownershipClassRemoteHomeOwned || decision.HomeOwnerNode != "azure-router" {
+		t.Fatalf("decision = %#v, want latest same-owner observer selected as remote home", decision)
+	}
+	status := ownershipResolverStatus(decisions)
+	if status["ownershipResolverPhase"] == "Conflict" || status["ownershipResolverConflictCount"] != 0 {
+		t.Fatalf("status = %#v, want no duplicate conflict for same provider owner", status)
+	}
+}
+
 func TestOwnershipResolverIgnoresExpiredDuplicateProviderHomeOwner(t *testing.T) {
 	now := time.Date(2026, 6, 10, 16, 5, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()

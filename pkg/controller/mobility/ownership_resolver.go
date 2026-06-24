@@ -455,22 +455,22 @@ func selectedProviderInventoryHomeOwnerFacts(sets map[string][]providerInventory
 func duplicateProviderHomeOwnerFacts(sets map[string][]providerInventoryOwnerFact) map[string][]providerInventoryOwnerFact {
 	out := map[string][]providerInventoryOwnerFact{}
 	for address, facts := range sets {
-		byNode := map[string]providerInventoryOwnerFact{}
+		byOwner := map[string]providerInventoryOwnerFact{}
 		for _, fact := range facts {
-			node := strings.TrimSpace(fact.NodeRef)
-			if node == "" {
+			identity := providerInventoryOwnerIdentity(fact)
+			if identity == "" {
 				continue
 			}
-			current, found := byNode[node]
+			current, found := byOwner[identity]
 			if !found || providerInventoryOwnerFactGreater(fact, current) {
-				byNode[node] = fact
+				byOwner[identity] = fact
 			}
 		}
-		if len(byNode) < 2 {
+		if len(byOwner) < 2 {
 			continue
 		}
-		rows := make([]providerInventoryOwnerFact, 0, len(byNode))
-		for _, fact := range byNode {
+		rows := make([]providerInventoryOwnerFact, 0, len(byOwner))
+		for _, fact := range byOwner {
 			rows = append(rows, fact)
 		}
 		sort.SliceStable(rows, func(i, j int) bool {
@@ -482,6 +482,26 @@ func duplicateProviderHomeOwnerFacts(sets map[string][]providerInventoryOwnerFac
 		out[address] = rows
 	}
 	return out
+}
+
+func providerInventoryOwnerIdentity(fact providerInventoryOwnerFact) string {
+	providerRef := firstNonEmpty(fact.ProviderRef, fact.Provider)
+	if providerRef == "" {
+		return ""
+	}
+	resourceRef := strings.TrimSpace(fact.ResourceRef)
+	if resourceRef != "" {
+		return strings.Join([]string{providerRef, "resource", resourceRef}, "\x00")
+	}
+	nicRef := strings.TrimSpace(fact.NICRef)
+	if nicRef != "" {
+		return strings.Join([]string{providerRef, "nic", nicRef}, "\x00")
+	}
+	subnetRef := strings.TrimSpace(fact.SubnetRef)
+	if subnetRef != "" {
+		return strings.Join([]string{providerRef, "subnet", subnetRef, normalizeAddressString(fact.Address)}, "\x00")
+	}
+	return strings.Join([]string{providerRef, "address", normalizeAddressString(fact.Address)}, "\x00")
 }
 
 func applyProviderHomeOwnerFact(decision *ownershipDecision, fact providerInventoryOwnerFact) {
