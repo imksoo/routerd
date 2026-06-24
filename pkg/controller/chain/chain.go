@@ -28,6 +28,7 @@ import (
 	"github.com/imksoo/routerd/pkg/bgpdaemon"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/conntrack"
+	bfdcontroller "github.com/imksoo/routerd/pkg/controller/bfd"
 	bgpcontroller "github.com/imksoo/routerd/pkg/controller/bgp"
 	"github.com/imksoo/routerd/pkg/controller/conntrackobserver"
 	dhcpv4client "github.com/imksoo/routerd/pkg/controller/dhcpv4client"
@@ -364,8 +365,10 @@ func resourceOwnerController(kind string) string {
 		return "address"
 	case "VirtualAddress":
 		return "vrrp"
-	case "BGPRouter", "BGPPeer", "BFD":
+	case "BGPRouter", "BGPPeer":
 		return "bgp"
+	case "BFD":
+		return "bfd"
 	case "DHCPv4Client":
 		return "dhcpv4client"
 	case "DHCPv4Server", "DHCPv6Server", "DHCPv6Information", "IPv6RouterAdvertisement":
@@ -1387,6 +1390,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	health := healthcheck.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
 	nat := nat44.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNAT, IngressLive: !r.Opts.DryRunIngress, NftablesPath: r.Opts.NftablesPath, NftCommand: r.Opts.NftCommand, Logger: logger}
 	ingressService := ingressservicecontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunIngress, Resolver: ingressServiceDNSResolver(r.Router, store), Logger: logger}
+	bfd := bfdcontroller.Controller{Router: r.Router, Store: store, DryRun: r.Opts.DryRunBGP, RuntimeDir: defaults.RuntimeDir}
 	bgp := bgpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunBGP, Logger: logger, Daemon: bgpDaemon}
 	vrrp := vrrpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunVRRP, Logger: logger}
 	ipAddressSet := IPAddressSetController{Router: r.Router, Store: store, DryRunNAT: r.Opts.DryRunNAT, DryRunRoute: r.Opts.DryRunRoute, DryRunFirewall: r.Opts.DryRunFirewall, NftCommand: r.Opts.NftCommand, RuntimeDir: defaults.RuntimeDir}
@@ -1760,6 +1764,15 @@ func (r *Runner) Start(ctx context.Context) error {
 				return false, err
 			}
 			current := nat
+			current.Router = effective
+			return didWorkError(current.Reconcile(ctx))
+		}},
+		framework.FuncController{ControllerName: "bfd", Every: time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"BFD"}, "BGPPeer", "BFD"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+			effective, err := effectiveForReconcile()
+			if err != nil {
+				return false, err
+			}
+			current := bfd
 			current.Router = effective
 			return didWorkError(current.Reconcile(ctx))
 		}},
@@ -3263,16 +3276,10 @@ func (c IPv4StaticAddressController) cleanupStaleMobilityProviderOSAddresses(ctx
 			continue
 		}
 		privateHosts := map[string]bool{}
-		capturedHosts := map[string]bool{}
 		keepCIDRs := map[string]bool{}
 		for _, value := range statusStringSlice(status["discoverySelfPrivateIPs"]) {
 			if normalized, ok := normalizeIPv4HostPrefixInPool(value, prefix.Masked()); ok {
 				privateHosts[strings.TrimSuffix(normalized, "/32")] = true
-			}
-		}
-		for _, value := range statusStringSlice(status["discoverySelfCapturedAddresses"]) {
-			if normalized, ok := normalizeIPv4HostPrefixInPool(value, prefix.Masked()); ok {
-				capturedHosts[strings.TrimSuffix(normalized, "/32")] = true
 			}
 		}
 		for _, res := range c.Router.Spec.Resources {
@@ -3284,7 +3291,6 @@ func (c IPv4StaticAddressController) cleanupStaleMobilityProviderOSAddresses(ctx
 				continue
 			}
 			if normalized, ok := normalizeIPv4HostPrefixInPool(spec.Address, prefix.Masked()); ok {
-				keepCIDRs[strings.TrimSpace(spec.Address)] = true
 				keepCIDRs[normalized] = true
 			}
 		}
@@ -3303,7 +3309,7 @@ func (c IPv4StaticAddressController) cleanupStaleMobilityProviderOSAddresses(ctx
 				continue
 			}
 			host := strings.TrimSuffix(normalized, "/32")
-			if privateHosts[host] || capturedHosts[host] || actionAssignedHosts[host] || keepCIDRs[strings.TrimSpace(address)] || keepCIDRs[normalized] && strings.TrimSpace(address) == normalized {
+			if privateHosts[host] || actionAssignedHosts[host] || keepCIDRs[strings.TrimSpace(address)] || keepCIDRs[normalized] && strings.TrimSpace(address) == normalized {
 				continue
 			}
 			name, args := ipv4StaticAddressDeleteCommand(platform.CurrentOS(), ifname, address)

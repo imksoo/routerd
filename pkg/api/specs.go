@@ -116,9 +116,6 @@ type ApplyPolicySpec struct {
 	ProtectedInterfaces []string `yaml:"protectedInterfaces,omitempty" json:"protectedInterfaces,omitempty"`
 	ProtectedZones      []string `yaml:"protectedZones,omitempty" json:"protectedZones,omitempty"`
 	AutoTuneConntrack   bool     `yaml:"autoTuneConntrack,omitempty" json:"autoTuneConntrack,omitempty"`
-	// SAMHandoffLeaseTTL keeps a removed local SAM capture briefly during
-	// provider-secondary BGP handoff. It defaults to 30s and fails open.
-	SAMHandoffLeaseTTL string `yaml:"samHandoffLeaseTTL,omitempty" json:"samHandoffLeaseTTL,omitempty"`
 }
 
 type PluginSpec struct {
@@ -1883,7 +1880,7 @@ type MobilityAuthority struct {
 }
 
 type CloudProviderProfileSpec struct {
-	Provider       string       `yaml:"provider" json:"provider" jsonschema:"enum=azure,enum=aws,enum=oci,enum=gcp,enum=netns"`
+	Provider       string       `yaml:"provider" json:"provider" jsonschema:"enum=azure,enum=aws,enum=oci,enum=gcp"`
 	SubscriptionID string       `yaml:"subscriptionID,omitempty" json:"subscriptionID,omitempty"`
 	ResourceGroup  string       `yaml:"resourceGroup,omitempty" json:"resourceGroup,omitempty"`
 	Capabilities   []string     `yaml:"capabilities" json:"capabilities"`

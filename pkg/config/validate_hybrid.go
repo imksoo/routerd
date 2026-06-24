@@ -160,9 +160,9 @@ func validateHybridResource(res api.Resource, _ platform.OS) (bool, error) {
 			return true, err
 		}
 		switch strings.TrimSpace(spec.Provider) {
-		case "azure", "aws", "oci", "gcp", "netns":
+		case "azure", "aws", "oci", "gcp":
 		default:
-			return true, fmt.Errorf("%s spec.provider must be azure, aws, oci, gcp, or netns", res.ID())
+			return true, fmt.Errorf("%s spec.provider must be azure, aws, oci, or gcp", res.ID())
 		}
 		if len(spec.Capabilities) == 0 {
 			return true, fmt.Errorf("%s spec.capabilities is required", res.ID())
@@ -336,7 +336,6 @@ var canonicalProviderActionProviders = map[string]bool{
 	"azure": true,
 	"oci":   true,
 	"gcp":   true,
-	"netns": true,
 }
 
 // canonicalProviderActionVerbs is the canonical action verb set a
@@ -353,7 +352,7 @@ var canonicalProviderActionVerbs = map[string]bool{
 func validateProviderActionPolicy(res api.Resource, spec api.ProviderActionPolicySpec) error {
 	for i, provider := range spec.AllowedProviders {
 		if !canonicalProviderActionProviders[strings.TrimSpace(provider)] {
-			return fmt.Errorf("%s spec.allowedProviders[%d] %q must be one of aws, azure, oci, gcp, netns", res.ID(), i, provider)
+			return fmt.Errorf("%s spec.allowedProviders[%d] %q must be one of aws, azure, oci, gcp", res.ID(), i, provider)
 		}
 	}
 	for i, action := range spec.AllowedActions {

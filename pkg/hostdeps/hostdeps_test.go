@@ -124,6 +124,12 @@ func TestDerivedSysctlResourcesForSAMAreStrictlyGated(t *testing.T) {
 			t.Fatalf("missing SAM sysctl %s in %#v", want, sortedKeys(keys))
 		}
 	}
+	for _, unwanted := range []string{"net.ipv4.conf.all.rp_filter", "net.ipv4.conf.default.rp_filter"} {
+		if keys[unwanted] {
+			t.Fatalf("SAM must not derive rp_filter sysctl %s: %#v", unwanted, sortedKeys(keys))
+		}
+	}
+
 	spec := router.Spec.Resources[0].Spec.(api.RemoteAddressClaimSpec)
 	spec.Capture.ActiveWhen = api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}
 	router.Spec.Resources[0].Spec = spec
@@ -133,57 +139,6 @@ func TestDerivedSysctlResourcesForSAMAreStrictlyGated(t *testing.T) {
 	}
 	if !keys["net.ipv4.ip_forward"] {
 		t.Fatalf("VRRP-gated SAM still needs ip_forward sysctl: %#v", sortedKeys(keys))
-	}
-}
-
-func TestDerivedSysctlResourcesForSAMMobilityPoolDisableRPFilter(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"}, Metadata: api.ObjectMeta{Name: "cloudedge"}, Spec: api.MobilityPoolSpec{
-			Prefix:         "10.77.60.0/24",
-			GroupRef:       "cloudedge",
-			DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
-			Profiles: api.MobilityPoolProfiles{CloudCaptures: map[string]api.MobilityCloudCaptureProfile{
-				"oci-self": {Capture: api.MobilityMemberCapture{
-					Type:      "provider-secondary-ip",
-					Interface: "ens3",
-				}},
-			}},
-			Members: []api.MobilityPoolMember{
-				{
-					NodeRef:    "oci-leaf-a",
-					Site:       "oci",
-					Role:       "cloud",
-					ProfileRef: "oci-self",
-				},
-				{
-					NodeRef: "pve-leaf-a",
-					Site:    "pve",
-					Role:    "onprem",
-					Capture: api.MobilityMemberCapture{
-						Type:      "proxy-arp",
-						Interface: "eth1",
-					},
-				},
-			},
-		}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"}, Metadata: api.ObjectMeta{Name: "samtoci"}, Spec: api.TunnelInterfaceSpec{
-			Mode:   "ipip",
-			Local:  "10.255.0.213",
-			Remote: "10.255.0.201",
-		}},
-	}}}
-
-	keys := derivedSysctlKeys(t, router)
-	for _, want := range []string{
-		"net.ipv4.conf.all.rp_filter",
-		"net.ipv4.conf.default.rp_filter",
-		"net.ipv4.conf.samtoci.rp_filter",
-		"net.ipv4.conf.ens3.rp_filter",
-		"net.ipv4.conf.eth1.rp_filter",
-	} {
-		if !keys[want] {
-			t.Fatalf("missing SAM MobilityPool rp_filter sysctl %s in %#v", want, sortedKeys(keys))
-		}
 	}
 }
 

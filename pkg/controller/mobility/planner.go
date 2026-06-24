@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/captureprovider"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -23,14 +22,14 @@ const (
 	captureParamHolder = "mobilityCaptureHolder"
 
 	captureStrategyProxyARP    = "proxy-arp"
-	captureStrategySecondaryIP = captureprovider.StrategySecondaryIP
-	captureStrategyRouteTable  = captureprovider.StrategyRouteTable
+	captureStrategySecondaryIP = "secondary-ip"
+	captureStrategyRouteTable  = "route-table"
 	captureStrategyAddrAdd     = "addr-add"
 
-	actionAssignSecondaryIP       = captureprovider.ActionAssignSecondaryIP
-	actionUnassignSecondaryIP     = captureprovider.ActionUnassignSecondaryIP
-	actionAssignRouteTableRoute   = captureprovider.ActionAssignRouteTableRoute
-	actionUnassignRouteTableRoute = captureprovider.ActionUnassignRouteTableRoute
+	actionAssignSecondaryIP       = "assign-secondary-ip"
+	actionUnassignSecondaryIP     = "unassign-secondary-ip"
+	actionAssignRouteTableRoute   = "assign-route-table-route"
+	actionUnassignRouteTableRoute = "unassign-route-table-route"
 )
 
 type PlacementDecision struct {
@@ -434,13 +433,15 @@ func providerActionPlans(poolName string, profile api.CloudProviderProfileSpec, 
 	if err := validateProviderCaptureStrategy(provider, strategy); err != nil {
 		return nil, err
 	}
-	target := map[string]string{}
+	target := map[string]string{
+		"provider":        provider,
+		"providerRef":     providerRef,
+		"nicRef":          nicRef,
+		"address":         address,
+		"captureStrategy": strategy,
+	}
 	for key, value := range captureTarget {
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
-		if key != "" && value != "" {
-			target[key] = value
-		}
+		target[strings.TrimSpace(key)] = strings.TrimSpace(value)
 	}
 	addProfileTargetFields(target, provider, profile, poolName, address, nicRef)
 	target["provider"] = provider
@@ -448,21 +449,38 @@ func providerActionPlans(poolName string, profile api.CloudProviderProfileSpec, 
 	target["nicRef"] = nicRef
 	target["address"] = address
 	target["captureStrategy"] = strategy
-
-	facade := captureprovider.NewActionPlanFacade()
-	assign, err := facade.ClaimAddress(captureprovider.AddressClaimRequest{
-		Provider:          provider,
-		ProviderRef:       providerRef,
-		Pool:              poolName,
-		Address:           address,
-		NodeRef:           "",
-		NICRef:            nicRef,
-		Strategy:          strategy,
-		Target:            target,
-		AllowReassignment: seize,
-	})
+	assignAction, unassignAction := providerCaptureActions(strategy)
+	assignDescription, assignEffects, err := providerAssignActionDetails(poolName, provider, nicRef, address, strategy, target)
 	if err != nil {
 		return nil, err
+	}
+	assignRisk := "medium"
+	var assignParams map[string]string
+	if seize {
+		assignDescription = fmt.Sprintf("Seize/reassign %s capture on %s for MobilityPool/%s after capture failover", address, provider, poolName)
+		assignRisk = "high"
+		assignParams = map[string]string{}
+		assignParams["allowReassignment"] = "true"
+		assignEffects = []string{
+			fmt.Sprintf("%s would seize %s from any previous holder", provider, address),
+		}
+	}
+	assign := dynamicconfig.ActionPlan{
+		Name:            safeName("mobility-" + poolName + "-assign-" + address),
+		Provider:        provider,
+		Action:          assignAction,
+		Target:          target,
+		ProviderRef:     providerRef,
+		Mode:            "dry-run",
+		Description:     assignDescription,
+		RiskLevel:       assignRisk,
+		IdempotencyKey:  "mobility:" + poolName + ":" + provider + ":" + providerCaptureTargetRef(strategy, target) + ":" + assignAction + ":" + address,
+		Parameters:      assignParams,
+		ExpectedEffects: assignEffects,
+		Undo: &dynamicconfig.ActionUndo{
+			Action:     unassignAction,
+			Parameters: copyStringMap(target),
+		},
 	}
 	plans := []dynamicconfig.ActionPlan{assign}
 
@@ -474,18 +492,25 @@ func providerActionPlans(poolName string, profile api.CloudProviderProfileSpec, 
 		}
 		fwdTarget := copyStringMap(target)
 		forwardingSeen[forwardingKey] = true
-		forwarding, err := facade.EnsureForwarding(captureprovider.ForwardingRequest{
-			Provider:    provider,
-			ProviderRef: providerRef,
-			Pool:        poolName,
-			NICRef:      nicRef,
-			Target:      fwdTarget,
-			Parameters:  params,
+		plans = append(plans, dynamicconfig.ActionPlan{
+			Name:           safeName("mobility-" + poolName + "-forwarding-" + nicRef),
+			Provider:       provider,
+			Action:         "ensure-forwarding-enabled",
+			Target:         fwdTarget,
+			ProviderRef:    providerRef,
+			Mode:           "dry-run",
+			Description:    fmt.Sprintf("Ensure forwarding is enabled on %s NIC %s for MobilityPool/%s", provider, nicRef, poolName),
+			RiskLevel:      "medium",
+			IdempotencyKey: "mobility:" + poolName + ":" + provider + ":" + nicRef + ":ensure-forwarding-enabled",
+			Parameters:     params,
+			ExpectedEffects: []string{
+				fmt.Sprintf("%s NIC %s would forward traffic for mobility captures", provider, nicRef),
+			},
+			Undo: &dynamicconfig.ActionUndo{
+				Action:     "ensure-forwarding-disabled",
+				Parameters: mergeStringMaps(fwdTarget, params),
+			},
 		})
-		if err != nil {
-			return nil, err
-		}
-		plans = append(plans, forwarding)
 	}
 	return plans, nil
 }
@@ -499,18 +524,69 @@ func providerUnassignActionPlan(poolName string, profile api.CloudProviderProfil
 	if err := validateProviderCaptureStrategy(provider, strategy); err != nil {
 		return dynamicconfig.ActionPlan{}, err
 	}
+	assignAction, unassignAction := providerCaptureActions(strategy)
 	target := providerActionTarget(poolName, profile, capture, captureTarget, address)
 	target["captureStrategy"] = strategy
-	return captureprovider.NewActionPlanFacade().ReleaseAddress(captureprovider.AddressReleaseRequest{
-		Provider:    provider,
-		ProviderRef: providerRef,
-		Pool:        poolName,
-		Address:     address,
-		NICRef:      nicRef,
-		Strategy:    strategy,
-		Target:      target,
-		StaleSince:  since,
-	})
+	description, effects := providerUnassignActionDetails(poolName, provider, nicRef, address, strategy, target)
+	return dynamicconfig.ActionPlan{
+		Name:           safeName("mobility-" + poolName + "-unassign-" + address),
+		Provider:       provider,
+		Action:         unassignAction,
+		Target:         target,
+		ProviderRef:    providerRef,
+		Mode:           "dry-run",
+		Description:    description,
+		RiskLevel:      "medium",
+		IdempotencyKey: "mobility:" + poolName + ":" + provider + ":" + providerCaptureTargetRef(strategy, target) + ":" + unassignAction + ":" + address,
+		Parameters: map[string]string{
+			"deprovisionSince": since.UTC().Format(time.RFC3339Nano),
+		},
+		ExpectedEffects: effects,
+		Undo: &dynamicconfig.ActionUndo{
+			Action:     assignAction,
+			Parameters: copyStringMap(target),
+		},
+	}, nil
+}
+
+func providerAssignActionDetails(poolName, provider, nicRef, address, strategy string, target map[string]string) (string, []string, error) {
+	switch strings.TrimSpace(strategy) {
+	case captureStrategyRouteTable:
+		routeTableRef, err := validateRouteTableCaptureTarget(provider, target)
+		if err != nil {
+			return "", nil, err
+		}
+		return fmt.Sprintf("Route %s in %s route table %s to NIC %s for MobilityPool/%s", address, provider, routeTableRef, nicRef, poolName), []string{
+			fmt.Sprintf("%s route table %s would send %s to NIC %s", provider, routeTableRef, address, nicRef),
+		}, nil
+	default:
+		return fmt.Sprintf("Assign %s as a secondary IP on %s NIC %s for MobilityPool/%s", address, provider, nicRef, poolName), []string{
+			fmt.Sprintf("%s NIC %s would advertise secondary IP %s", provider, nicRef, address),
+		}, nil
+	}
+}
+
+func providerUnassignActionDetails(poolName, provider, nicRef, address, strategy string, target map[string]string) (string, []string) {
+	if strings.TrimSpace(strategy) == captureStrategyRouteTable {
+		routeTableRef := strings.TrimSpace(target["routeTableRef"])
+		return fmt.Sprintf("Remove stale route for %s from %s route table %s for MobilityPool/%s", address, provider, routeTableRef, poolName), []string{
+			fmt.Sprintf("%s route table %s would stop sending stale %s to NIC %s", provider, routeTableRef, address, nicRef),
+		}
+	}
+	return fmt.Sprintf("Unassign stale secondary IP %s from %s NIC %s for MobilityPool/%s", address, provider, nicRef, poolName), []string{
+		fmt.Sprintf("%s NIC %s would stop advertising stale secondary IP %s", provider, nicRef, address),
+	}
+}
+
+func validateRouteTableCaptureTarget(provider string, target map[string]string) (string, error) {
+	routeTableRef := strings.TrimSpace(target["routeTableRef"])
+	if routeTableRef == "" {
+		return "", fmt.Errorf("capture.captureStrategy route-table requires capture.target.routeTableRef")
+	}
+	if (provider == "azure" || provider == "oci") && strings.TrimSpace(target["nextHopIPAddress"]) == "" {
+		return "", fmt.Errorf("provider %s capture.captureStrategy route-table requires capture.target.nextHopIPAddress", provider)
+	}
+	return routeTableRef, nil
 }
 
 func providerActionTarget(poolName string, profile api.CloudProviderProfileSpec, capture api.AddressCapture, captureTarget map[string]string, address string) map[string]string {
@@ -577,7 +653,7 @@ func validateProviderCaptureStrategy(provider, strategy string) error {
 }
 
 func providerCaptureActions(strategy string) (assign, unassign string) {
-	return captureprovider.CaptureActions(strategy)
+	return actionAssignSecondaryIP, actionUnassignSecondaryIP
 }
 
 func isProviderCaptureAssignAction(action string) bool {
@@ -667,8 +743,6 @@ func forwardingParams(provider string) (map[string]string, error) {
 		return map[string]string{"skipSourceDestCheck": "true"}, nil
 	case "gcp":
 		return map[string]string{"canIpForward": "true"}, nil
-	case "netns":
-		return map[string]string{"ipForwarding": "true"}, nil
 	default:
 		return nil, fmt.Errorf("provider %q is not supported for mobility action plans", provider)
 	}

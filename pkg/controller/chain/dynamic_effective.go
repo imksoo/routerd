@@ -144,7 +144,6 @@ func appendBGPMobilityProxyARPClaims(router api.Router, store any) api.Router {
 		return router
 	}
 	selfByGroup := eventGroupSelfNodes(router)
-	staticAddresses := ipv4StaticAddressHostPrefixes(router)
 	var claims []api.Resource
 	for _, resource := range router.Spec.Resources {
 		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "MobilityPool" {
@@ -173,7 +172,7 @@ func appendBGPMobilityProxyARPClaims(router api.Router, store any) api.Router {
 		}
 		owned := mobilityStaticOwnedAddresses(self, prefix)
 		for _, address := range bgpMobilityInstalledAddresses(installed, prefix) {
-			if owned[address] || staticAddresses[normalizeIPv4HostPrefix(address)] {
+			if owned[address] {
 				continue
 			}
 			if sam.CaptureExcludesAddress(addressCaptureFromMobilityCapture(self.Capture), address) {
@@ -196,7 +195,6 @@ func appendBGPMobilityProviderSecondaryClaims(router api.Router, store any) api.
 		return router
 	}
 	selfByGroup := eventGroupSelfNodes(router)
-	staticAddresses := ipv4StaticAddressHostPrefixes(router)
 	var claims []api.Resource
 	for _, resource := range router.Spec.Resources {
 		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "MobilityPool" {
@@ -227,13 +225,13 @@ func appendBGPMobilityProviderSecondaryClaims(router api.Router, store any) api.
 		seen := map[string]bool{}
 		for _, address := range bgpStatusStringSlice(status["discoverySelfCapturedAddresses"]) {
 			normalized, ok := normalizeBGPMobilityHostPrefix(address, prefix)
-			if !ok || staticAddresses[normalizeIPv4HostPrefix(normalized)] || sam.CaptureExcludesAddress(addressCaptureFromMobilityCapture(self.Capture), normalized) {
+			if !ok || sam.CaptureExcludesAddress(addressCaptureFromMobilityCapture(self.Capture), normalized) {
 				continue
 			}
 			seen[normalized] = true
 			claims = append(claims, bgpMobilityProviderSecondaryClaim(resource.Metadata.Name, self, normalized))
 		}
-		for _, address := range actionJournalAssignedAddressesForMember(store, selfNode, self) {
+		for _, address := range actionJournalAssignedAddresses(store) {
 			normalized, ok := normalizeBGPMobilityHostPrefix(address, prefix)
 			if !ok || seen[normalized] || sam.CaptureExcludesAddress(addressCaptureFromMobilityCapture(self.Capture), normalized) {
 				continue
@@ -266,73 +264,6 @@ func actionJournalAssignedAddresses(store any) []string {
 		out = append(out, addr)
 	}
 	sort.Strings(out)
-	return out
-}
-
-func actionJournalAssignedAddressesForMember(store any, selfNode string, self api.MobilityPoolMember) []string {
-	lister, ok := store.(interface {
-		ListActions(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)
-	})
-	if !ok {
-		return nil
-	}
-	actions, err := lister.ListActions(routerstate.ActionExecutionFilter{})
-	if err != nil {
-		return nil
-	}
-	providerRef := strings.TrimSpace(self.Capture.ProviderRef)
-	nicRef := strings.TrimSpace(firstNonEmpty(self.Capture.NICRef, self.Capture.Target["nicRef"]))
-	holder := strings.TrimSpace(selfNode)
-	type actionKey struct {
-		providerRef string
-		nicRef      string
-		address     string
-	}
-	latest := map[actionKey]routerstate.ActionExecutionRecord{}
-	for _, a := range actions {
-		if a.Action != "assign-secondary-ip" && a.Action != "unassign-secondary-ip" {
-			continue
-		}
-		target := actionStringMap(a.TargetJSON)
-		address := strings.TrimSpace(target["address"])
-		if address == "" || strings.TrimSpace(a.ProviderRef) != providerRef {
-			continue
-		}
-		if nicRef != "" && strings.TrimSpace(target["nicRef"]) != nicRef {
-			continue
-		}
-		params := actionStringMap(a.ParametersJSON)
-		if actionHolder := strings.TrimSpace(params[actionParamMobilityCaptureHolder]); actionHolder != "" && actionHolder != holder {
-			continue
-		}
-		key := actionKey{providerRef: strings.TrimSpace(a.ProviderRef), nicRef: strings.TrimSpace(target["nicRef"]), address: address}
-		if prev, ok := latest[key]; !ok || a.ID > prev.ID {
-			latest[key] = a
-		}
-	}
-	var out []string
-	for _, a := range latest {
-		if a.Action != "assign-secondary-ip" || a.Status != routerstate.ActionSucceeded {
-			continue
-		}
-		if addr := actionTargetAddress(a.TargetJSON); addr != "" {
-			out = append(out, addr)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-const actionParamMobilityCaptureHolder = "mobilityCaptureHolder"
-
-func actionStringMap(raw string) map[string]string {
-	if strings.TrimSpace(raw) == "" {
-		return nil
-	}
-	var out map[string]string
-	if err := json.Unmarshal([]byte(raw), &out); err != nil {
-		return nil
-	}
 	return out
 }
 
@@ -484,7 +415,6 @@ func appendBGPMobilityLocalInventoryRoutes(effective, routeRouter api.Router, st
 		return routeRouter
 	}
 	aliases := interfaceIfNames(effective)
-	staticAddresses := ipv4StaticAddressHostPrefixes(effective)
 	reader := statusReaderFromStore(store)
 	if reader == nil {
 		return routeRouter
@@ -516,9 +446,6 @@ func appendBGPMobilityLocalInventoryRoutes(effective, routeRouter api.Router, st
 			continue
 		}
 		for _, verdict := range snapshot.LocalRouteVerdictsForPool(resource.Metadata.Name) {
-			if staticAddresses[normalizeIPv4HostPrefix(verdict.Address)] {
-				continue
-			}
 			resources = append(resources, bgpMobilityLocalInventoryRoute(resource.Metadata.Name, verdict.Address, device, verdict))
 		}
 	}
@@ -528,38 +455,6 @@ func appendBGPMobilityLocalInventoryRoutes(effective, routeRouter api.Router, st
 	out := routeRouter
 	out.Spec.Resources = append(append([]api.Resource(nil), routeRouter.Spec.Resources...), resources...)
 	return out
-}
-
-func ipv4StaticAddressHostPrefixes(router api.Router) map[string]bool {
-	out := map[string]bool{}
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "IPv4StaticAddress" {
-			continue
-		}
-		spec, err := resource.IPv4StaticAddressSpec()
-		if err != nil {
-			continue
-		}
-		if normalized := normalizeIPv4HostPrefix(spec.Address); normalized != "" {
-			out[normalized] = true
-		}
-	}
-	return out
-}
-
-func normalizeIPv4HostPrefix(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	if addr, err := netip.ParseAddr(value); err == nil && addr.Is4() {
-		return netip.PrefixFrom(addr, 32).String()
-	}
-	prefix, err := netip.ParsePrefix(value)
-	if err != nil || !prefix.Addr().Is4() {
-		return ""
-	}
-	return netip.PrefixFrom(prefix.Addr(), 32).String()
 }
 
 func bgpMobilityLocalInventoryRoute(poolName, address, device string, verdict mobilityfib.Verdict) api.Resource {
