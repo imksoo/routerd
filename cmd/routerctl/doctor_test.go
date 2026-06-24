@@ -550,9 +550,9 @@ func TestDoctorSAMOwnerTableReportsUnexpectedRouteResidue(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
 	}
-	check := findDoctorCheck(t, report, "MobilityPool/cloudedge owner-table unexpected route residue 10.77.60.8/32")
-	if check.Status != doctorFail || !strings.Contains(check.Detail, "absent from ownershipResolverOwnerTable") || !strings.Contains(check.Detail, "10.77.60.8 dev ens5") {
-		t.Fatalf("check = %#v, want failing unexpected residue detail", check)
+	check := findDoctorCheck(t, report, "MobilityPool/cloudedge owner-table unexpected reachability route 10.77.60.8/32")
+	if check.Status != doctorWarn || !strings.Contains(check.Detail, "absent from ownershipResolverOwnerTable") || !strings.Contains(check.Detail, "10.77.60.8 dev ens5") {
+		t.Fatalf("check = %#v, want warning unexpected reachability detail", check)
 	}
 	mixed := findDoctorCheck(t, report, "MobilityPool/cloudedge owner-table unexpected route residue 10.77.60.3/32")
 	if mixed.Status != doctorFail || !strings.Contains(mixed.Detail, "proto dhcp scope link") || !strings.Contains(mixed.Detail, "scope link metric 1") {
@@ -614,6 +614,60 @@ func TestDoctorSAMOwnerTableIgnoresObservedBGPReturnRouteResidue(t *testing.T) {
 	var report doctorReport
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	assertDoctorCheckAbsent(t, report, "MobilityPool/cloudedge owner-table unexpected route residue 10.77.60.8/32")
+}
+
+func TestDoctorSAMOwnerTableWarnsOnUnownedBGPRouteResidue(t *testing.T) {
+	oldRun := doctorRunDiagnosticCommand
+	defer func() { doctorRunDiagnosticCommand = oldRun }()
+	doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
+		if label == "ip -4 route show table main" {
+			return diagnoseCommandCheck{
+				Name:   label,
+				OK:     true,
+				Stdout: "10.77.60.7 dev ens5 scope link metric 1\n10.77.60.8 via 10.255.0.28 dev samtc72ffb1610c proto bgp src 10.77.60.4 metric 200\n",
+				Output: "10.77.60.7 dev ens5 scope link metric 1\n10.77.60.8 via 10.255.0.28 dev samtc72ffb1610c proto bgp src 10.77.60.4 metric 200\n",
+			}
+		}
+		return diagnoseCommandCheck{
+			Name:   label,
+			OK:     true,
+			Stdout: "10.77.60.7 dev ens5 src 10.77.60.4 uid 1000",
+			Output: "10.77.60.7 dev ens5 src 10.77.60.4 uid 1000",
+		}
+	}
+
+	configPath, statePath := writeDoctorSAMFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"plannerPhase":                   "BGPPlanned",
+		"ownershipResolverPhase":         "Resolved",
+		"ownershipResolverConflictCount": 0,
+		"ownershipResolverOwnerTable": []map[string]any{{
+			"address":          "10.77.60.7/32",
+			"state":            "OK",
+			"class":            "LocalHomeOwned",
+			"ownerNode":        "azure-router",
+			"localNode":        "azure-router",
+			"localProviderRef": "azure-provider",
+		}},
+	}); err != nil {
+		t.Fatalf("save mobility status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "sam", "--config", configPath, "--state-file", statePath, "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor sam: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "MobilityPool/cloudedge owner-table unexpected reachability route 10.77.60.8/32")
+	if check.Status != doctorWarn || !strings.Contains(check.Detail, "proto bgp") {
+		t.Fatalf("check = %#v, want warning for unowned BGP residue", check)
 	}
 	assertDoctorCheckAbsent(t, report, "MobilityPool/cloudedge owner-table unexpected route residue 10.77.60.8/32")
 }

@@ -951,6 +951,7 @@ func doctorSAMUnexpectedRouteResidueChecks(pool string, poolSpec api.MobilityPoo
 	}
 	prefix = prefix.Masked()
 	var unexpected []string
+	var reachabilityOnly []string
 	for routePrefix, lines := range actual {
 		parsed, err := netip.ParsePrefix(routePrefix)
 		if err != nil || !parsed.Addr().Is4() || parsed.Bits() != 32 {
@@ -964,10 +965,25 @@ func doctorSAMUnexpectedRouteResidueChecks(pool string, poolSpec api.MobilityPoo
 		if doctorSAMRouteResidueIsProviderDHCPLink(lines) {
 			continue
 		}
+		if doctorSAMRouteResidueIsReachabilityOnly(lines) {
+			reachabilityOnly = append(reachabilityOnly, normalized+" actual="+strings.Join(lines, " | "))
+			continue
+		}
 		unexpected = append(unexpected, normalized+" actual="+strings.Join(lines, " | "))
 	}
 	sort.Strings(unexpected)
-	checks := make([]doctorCheck, 0, len(unexpected))
+	sort.Strings(reachabilityOnly)
+	checks := make([]doctorCheck, 0, len(unexpected)+len(reachabilityOnly))
+	for _, detail := range reachabilityOnly {
+		address, _, _ := strings.Cut(detail, " ")
+		checks = append(checks, doctorCheck{
+			Area:   "sam",
+			Name:   "MobilityPool/" + pool + " owner-table unexpected reachability route " + address,
+			Status: doctorWarn,
+			Detail: "route inside MobilityPool prefix is reachable in the host FIB but absent from ownershipResolverOwnerTable; " + detail,
+			Remedy: "inspect provider subnet and BGPRouter advertised prefixes; confirm the route is reachability-only rather than stale captured ownership",
+		})
+	}
 	for _, detail := range unexpected {
 		address, _, _ := strings.Cut(detail, " ")
 		checks = append(checks, doctorCheck{
@@ -981,6 +997,21 @@ func doctorSAMUnexpectedRouteResidueChecks(pool string, poolSpec api.MobilityPoo
 	return checks
 }
 
+func doctorSAMRouteResidueIsReachabilityOnly(lines []string) bool {
+	if len(lines) == 0 {
+		return false
+	}
+	for _, line := range lines {
+		if doctorRouteLineHasToken(line, "proto") && doctorRouteLineHasToken(line, "bgp") {
+			continue
+		}
+		if doctorRouteLineHasToken(line, "proto") || !doctorRouteLineHasTokenPair(line, "scope", "link") {
+			return false
+		}
+	}
+	return true
+}
+
 func doctorSAMRouteResidueIsProviderDHCPLink(lines []string) bool {
 	if len(lines) == 0 {
 		return false
@@ -991,6 +1022,15 @@ func doctorSAMRouteResidueIsProviderDHCPLink(lines []string) bool {
 		}
 	}
 	return true
+}
+
+func doctorRouteLineHasToken(line, token string) bool {
+	for _, field := range strings.Fields(line) {
+		if field == token {
+			return true
+		}
+	}
+	return false
 }
 
 func doctorRouteLineHasTokenPair(line, key, value string) bool {
