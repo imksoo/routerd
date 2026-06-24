@@ -1993,6 +1993,58 @@ func TestControllerBGPModeProviderTrapRecapturesAfterSuccessfulRelease(t *testin
 	}
 }
 
+func TestBGPProviderDeprovisionUnassignDoesNotRecapture(t *testing.T) {
+	now := time.Date(2026, 6, 24, 16, 40, 0, 0, time.UTC)
+	self := memberPlanInfo{
+		NodeRef: "aws-router-a",
+		Capture: api.AddressCapture{
+			ProviderRef: "aws-provider",
+			NICRef:      "eni-a",
+		},
+	}
+	address := "10.88.60.12/32"
+	targetJSON, err := json.Marshal(map[string]string{
+		"address":     address,
+		"nicRef":      "eni-a",
+		"providerRef": "aws-provider",
+	})
+	if err != nil {
+		t.Fatalf("marshal target: %v", err)
+	}
+	paramsJSON, err := json.Marshal(map[string]string{
+		bgpPathSigParam:    "deprovision:" + address + ":observed-self-stale:since=" + now.Add(-time.Minute).Format(time.RFC3339Nano),
+		"deprovisionSince": now.Add(-time.Minute).Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	journal := []routerstate.ActionExecutionRecord{{
+		ID:             42,
+		ProviderRef:    "aws-provider",
+		Action:         "unassign-secondary-ip",
+		TargetJSON:     string(targetJSON),
+		ParametersJSON: string(paramsJSON),
+		Status:         routerstate.ActionSucceeded,
+		ExecutedAt:     now,
+	}}
+	if shouldAllowBGPTrapReassignment(self, address, nil, journal, map[string]bool{address: true}, true, now) {
+		t.Fatal("deprovision unassign must not allow transition recapture")
+	}
+	plans := []dynamicconfig.ActionPlan{{
+		Action:         "assign-secondary-ip",
+		IdempotencyKey: "assign",
+		Target: map[string]string{
+			"address":     address,
+			"nicRef":      "eni-a",
+			"providerRef": "aws-provider",
+		},
+	}}
+	stampBGPProviderTransitionFence(plans, self, address, journal, map[string]bool{address: true}, true, now)
+	if plans[0].Parameters[bgpTrapTransitionParam] != "" || strings.Contains(plans[0].IdempotencyKey, ":transition:") {
+		t.Fatalf("plan = %#v, deprovision unassign must not stamp transition recapture", plans[0])
+	}
+}
+
 func TestControllerBGPModeProviderTrapRecapturesWhenObservedProviderStateLost(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)

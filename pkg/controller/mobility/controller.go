@@ -2117,7 +2117,7 @@ func shouldAllowBGPTrapReassignment(self memberPlanInfo, address string, previou
 	if observedSelfCapturesOK && !observedSelfCaptures[address] {
 		return providerMissingRetryDue(tr, observedSelfAt)
 	}
-	return !tr.assign
+	return !tr.assign && providerCaptureTransitionAllowsRecapture(tr)
 }
 
 func stampBGPPathFenceActionPlans(plans []dynamicconfig.ActionPlan, address, pathSig, holder string, lastSeenAt time.Time) {
@@ -2164,7 +2164,7 @@ func stampBGPProviderTransitionFence(plans []dynamicconfig.ActionPlan, self memb
 	}
 	token := ""
 	switch {
-	case !tr.assign:
+	case !tr.assign && providerCaptureTransitionAllowsRecapture(tr):
 		token = fmt.Sprintf("after-unassign-%d", tr.id)
 	case observedSelfCapturesOK && !observedSelfCaptures[address] && providerMissingRetryDue(tr, observedSelfAt):
 		token = fmt.Sprintf("provider-missing-%d", tr.id)
@@ -2193,6 +2193,17 @@ func providerMissingRetryDue(tr providerCaptureTransition, observedSelfAt time.T
 		return false
 	}
 	return !observedSelfAt.Before(tr.at.Add(bgpProviderMissingRetryHold))
+}
+
+func providerCaptureTransitionAllowsRecapture(tr providerCaptureTransition) bool {
+	params := tr.plan.Parameters
+	if strings.TrimSpace(params["deprovisionSince"]) != "" {
+		return false
+	}
+	if strings.HasPrefix(strings.TrimSpace(params[bgpPathSigParam]), "deprovision:") {
+		return false
+	}
+	return true
 }
 
 func stampForwardingDriftFence(plans []dynamicconfig.ActionPlan, observed, enabled bool, observedAt time.Time) {
