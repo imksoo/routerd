@@ -272,6 +272,17 @@ func TestUnassignExecuteIssuesUnassign(t *testing.T) {
 	}
 }
 
+func TestUnassignExecuteTreatsAlreadyAbsentAsSucceeded(t *testing.T) {
+	f := &fakeAWS{err: fmt.Errorf("aws: [ERROR]: An error occurred (InvalidParameterValue) when calling the UnassignPrivateIpAddresses operation: Some of the specified addresses are not assigned to interface eni-1")}
+	res := dispatchWith(reqSpec(actionUnassignSecondaryIP, modeExecute), f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded for already-absent address, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	if !strings.Contains(res.Status.Message, "already absent") {
+		t.Fatalf("message = %q, want already absent", res.Status.Message)
+	}
+}
+
 func TestAssignRouteTableExecuteCreatesRoute(t *testing.T) {
 	f := &fakeAWS{}
 	res := dispatchWith(routeReqSpec(actionAssignRouteTableRoute, modeExecute), f.run)

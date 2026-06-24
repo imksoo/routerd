@@ -532,6 +532,11 @@ func unassignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mod
 		"--network-interface-id", eni,
 		"--private-ip-addresses", address,
 		"--region", region); err != nil {
+		if isAWSSecondaryIPNotAssignedError(err) {
+			res.Status.Status = statusSucceeded
+			res.Status.Message = fmt.Sprintf("%s was already absent from %s", address, eni)
+			return res
+		}
 		return failed("unassign-secondary-ip execute: unassign failed", err)
 	}
 	res.Status.Status = statusSucceeded
@@ -612,6 +617,15 @@ func isNotFoundError(err error) bool {
 		strings.Contains(msg, "notfound") ||
 		strings.Contains(msg, "could not be found") ||
 		strings.Contains(msg, "invalidroutenotfound")
+}
+
+func isAWSSecondaryIPNotAssignedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unassignprivateipaddresses") &&
+		strings.Contains(msg, "not assigned to interface")
 }
 
 // commandTimeout is the per-aws-invocation timeout.
