@@ -1358,7 +1358,7 @@ func normalizeDiscoveredAddress(value string, poolPrefix netip.Prefix) (string, 
 func mobilityRouterNICRefs(members []api.MobilityPoolMember) map[string]bool {
 	out := map[string]bool{}
 	for _, member := range members {
-		nic := strings.TrimSpace(member.Capture.NICRef)
+		nic := strings.TrimSpace(firstNonEmpty(member.Capture.NICRef, member.Capture.Target["nicRef"]))
 		if member.Capture.Type == "provider-secondary-ip" && nic != "" {
 			out[nic] = true
 		}

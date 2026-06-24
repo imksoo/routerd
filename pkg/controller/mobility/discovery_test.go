@@ -1616,6 +1616,21 @@ func profileDiscoveryPoolSpecForNode(selfNode string) api.MobilityPoolSpec {
 	return spec
 }
 
+func TestMobilityRouterNICRefsIncludesCaptureTargetNIC(t *testing.T) {
+	refs := mobilityRouterNICRefs([]api.MobilityPoolMember{{
+		NodeRef: "azure-leaf-b",
+		Capture: api.MobilityMemberCapture{
+			Type: "provider-secondary-ip",
+			Target: map[string]string{
+				"nicRef": "/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/azure-leaf-bVMNic",
+			},
+		},
+	}})
+	if !refs["/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/azure-leaf-bVMNic"] {
+		t.Fatalf("refs = %#v, want capture.target.nicRef excluded as router NIC", refs)
+	}
+}
+
 func reconcileDiscoveryRequest(t *testing.T, selfNode string, spec api.MobilityPoolSpec, now time.Time) providerinventory.ObservePrivateIPsRequest {
 	t.Helper()
 	store := testStore(t, now)
