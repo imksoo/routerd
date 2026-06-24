@@ -1300,6 +1300,9 @@ func TestControllerBGPModeStandbySeizesTrapAfterActiveLivenessHoldDown(t *testin
 	if election["seize"] != false || election["seizeHoldDown"] != true || election["selfMarkerPresent"] != true || election["activeMarkerPresent"] != false {
 		t.Fatalf("initial bgpCaptureElection = %#v, want self marker present, active marker absent, hold-down", election)
 	}
+	if status["bgpCapturePending"] != true || status["bgpCapturePendingReason"] != "seize-hold-down" || status["bgpCapturePendingUntil"] == "" {
+		t.Fatalf("initial status = %#v, want pending capture hold-down status", status)
+	}
 
 	current = now.Add(bgpSeizeLivenessMissingHold + time.Second)
 	if err := controller.Reconcile(context.Background()); err != nil {
@@ -1328,6 +1331,9 @@ func TestControllerBGPModeStandbySeizesTrapAfterActiveLivenessHoldDown(t *testin
 	}
 	if election["seize"] != true || election["seizeHoldDown"] != false || election["selfMarkerPresent"] != true || election["activeMarkerPresent"] != false {
 		t.Fatalf("bgpCaptureElection = %#v, want self marker present, active marker absent, seize", election)
+	}
+	if status["bgpCapturePending"] != false || status["bgpCapturePendingReason"] != "" || status["bgpCapturePendingUntil"] != "" {
+		t.Fatalf("status = %#v, want pending capture status cleared after hold-down", status)
 	}
 	if election["selfCommunity"] != bgpstate.MobilityNodeIdentityCommunity("aws-router-b") ||
 		election["activeCommunity"] != bgpstate.MobilityNodeIdentityCommunity("aws-router-a") {
@@ -1603,6 +1609,72 @@ func TestControllerBGPModeStandbyKeepsConfirmedCaptureWhileActiveMarkerAbsent(t 
 	}
 }
 
+func TestPlanBGPMobilityDeliverySuppressesDistributedCaptureDuringSeizeHoldDown(t *testing.T) {
+	now := time.Date(2026, 6, 24, 14, 30, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	for i := range spec.Members {
+		if spec.Members[i].Placement.Group == "aws-edge" {
+			spec.Members[i].MaxSecondaryIPs = 128
+		}
+	}
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-b"]
+	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+		PoolName: "cloudedge",
+		Source:   DynamicSource("cloudedge", self.NodeRef),
+		Self:     self,
+		Members:  members,
+		Spec:     spec,
+		Decisions: []ownershipDecision{
+			{
+				Address:       "10.88.60.10/32",
+				Class:         ownershipClassRemoteHomeOwned,
+				HomeOwnerNode: "azure-router",
+			},
+			{
+				Address:            "10.88.60.12/32",
+				Class:              ownershipClassConfirmedCapture,
+				CaptureHolderNode:  self.NodeRef,
+				AdvertiseOwnerNode: self.NodeRef,
+				CaptureState:       captureStateConfirmed,
+			},
+		},
+		Placement: PlacementDecision{
+			Group:              "aws-edge",
+			Active:             false,
+			ActiveNode:         "aws-router-a",
+			Seize:              false,
+			SeizeHoldDown:      true,
+			SeizeHoldDownKey:   "aws-router-a|aws-router-b",
+			SeizeHoldDownSince: now,
+			SeizeHoldDownUntil: now.Add(bgpSeizeLivenessMissingHold),
+		},
+		InstalledNextHops: map[string][]string{
+			"10.88.60.10/32": {"10.99.0.3"},
+		},
+		Profiles: map[string]api.CloudProviderProfileSpec{
+			"aws-provider": {Provider: "aws"},
+		},
+		ObservedSelfCaptures: map[string]bool{"10.88.60.12/32": true},
+		ObservedSelfIPsOK:    true,
+		RIBObserved:          true,
+		Now:                  now,
+	})
+	if err != nil {
+		t.Fatalf("planBGPMobilityDelivery: %v", err)
+	}
+	if candidate, ok := delivery.CaptureCandidates["10.88.60.10/32"]; ok && !candidate.ProtectOnly {
+		t.Fatalf("capture candidates = %#v, hold-down must suppress new distributed captures", delivery.CaptureCandidates)
+	}
+	if len(delivery.CaptureCandidates) != 1 || !delivery.CaptureCandidates["10.88.60.12/32"].ProtectOnly {
+		t.Fatalf("capture candidates = %#v, hold-down must retain only protect-only self captures", delivery.CaptureCandidates)
+	}
+	if assign := findActionPlanByAddress(delivery.ActionPlans, "assign-secondary-ip", "10.88.60.10/32"); assign != nil {
+		t.Fatalf("action plans = %#v, hold-down must not assign new distributed captures", delivery.ActionPlans)
+	}
+}
+
 func TestControllerBGPModeStandbyReleasesConfirmedCaptureWhenActiveMarkerReturns(t *testing.T) {
 	now := time.Date(2026, 6, 13, 22, 5, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()
@@ -1670,17 +1742,17 @@ func TestControllerBGPModeStandbyReleasesObservedSelfCaptureWithoutPriorAction(t
 		Members:  members,
 		Spec:     spec,
 		Decisions: []ownershipDecision{{
-			Address:           address,
-			Class:             ownershipClassRemoteHomeOwned,
-			HomeOwnerNode:     "onprem-router",
+			Address:            address,
+			Class:              ownershipClassRemoteHomeOwned,
+			HomeOwnerNode:      "onprem-router",
 			CaptureHolderNode:  self.NodeRef,
 			CaptureProviderRef: "aws-provider",
 			CaptureTargetRef:   "eni-b",
 			CaptureState:       captureStateConfirmed,
 			CaptureStrategy:    captureStrategySecondaryIP,
 			CaptureSucceeded:   true,
-			Source:            staticOwnedType,
-			SuppressionReason: "static-owned-by-remote",
+			Source:             staticOwnedType,
+			SuppressionReason:  "static-owned-by-remote",
 		}},
 		Placement: PlacementDecision{
 			Group:               "aws-edge",
@@ -1720,17 +1792,17 @@ func TestControllerBGPModeStandbyKeepsObservedSelfCaptureWhileActiveMarkerAbsent
 		Members:  members,
 		Spec:     spec,
 		Decisions: []ownershipDecision{{
-			Address:           address,
-			Class:             ownershipClassRemoteHomeOwned,
-			HomeOwnerNode:     "onprem-router",
+			Address:            address,
+			Class:              ownershipClassRemoteHomeOwned,
+			HomeOwnerNode:      "onprem-router",
 			CaptureHolderNode:  self.NodeRef,
 			CaptureProviderRef: "aws-provider",
 			CaptureTargetRef:   "eni-b",
 			CaptureState:       captureStateConfirmed,
 			CaptureStrategy:    captureStrategySecondaryIP,
 			CaptureSucceeded:   true,
-			Source:            staticOwnedType,
-			SuppressionReason: "static-owned-by-remote",
+			Source:             staticOwnedType,
+			SuppressionReason:  "static-owned-by-remote",
 		}},
 		Placement: PlacementDecision{
 			Group:               "aws-edge",

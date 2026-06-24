@@ -185,7 +185,7 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	if err != nil {
 		return c.savePendingAll("GoBGPPeerConfigInvalid", err)
 	}
-	c.observeBFDPeerStates(desired)
+	bfdDownTransitions := c.observeBFDPeerStates(desired)
 	staticExportPrefixes := mapKeys(advertisedPrefixes(routerSpec))
 	dynamicExportPrefixes := dynamicPathExportPrefixes(applied.Paths)
 	effectiveImportPolicy := effectiveGlobalImportPolicy(routerSpec.ImportPolicy, dynamicExportPrefixes)
@@ -198,6 +198,9 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	changed, err := c.reconcilePeers(ctx, desired)
 	if err != nil {
 		return c.savePendingAll("GoBGPPeerApplyFailed", err)
+	}
+	if err := c.hardResetBFDDownPeers(ctx, bfdDownTransitions); err != nil {
+		return c.savePendingAll("GoBGPBFDResetFailed", err)
 	}
 	if len(exportPolicyRefreshPeers) > 0 {
 		if err := c.softResetExportPolicy(ctx, exportPolicyRefreshPeers); err != nil {
@@ -1218,9 +1221,9 @@ func mergeAllowedPrefixes(groups ...[]string) []string {
 	return out
 }
 
-func (c *Controller) observeBFDPeerStates(desired map[string]desiredPeer) {
+func (c *Controller) observeBFDPeerStates(desired map[string]desiredPeer) []string {
 	if c.Store == nil || len(desired) == 0 {
-		return
+		return nil
 	}
 	if c.bfdPeerSeenUp == nil {
 		c.bfdPeerSeenUp = map[string]bool{}
@@ -1229,6 +1232,7 @@ func (c *Controller) observeBFDPeerStates(desired map[string]desiredPeer) {
 		c.bfdPeerDownSince = map[string]time.Time{}
 	}
 	now := time.Now()
+	var downTransitions []string
 	for address, peer := range desired {
 		state := c.bfdPeerState(peer.BFD, address)
 		key := bfdPeerGateKey(peer.BFD, address)
@@ -1240,11 +1244,32 @@ func (c *Controller) observeBFDPeerStates(desired map[string]desiredPeer) {
 		if strings.EqualFold(state, "Down") && c.bfdPeerSeenUp[key] {
 			if _, ok := c.bfdPeerDownSince[key]; !ok {
 				c.bfdPeerDownSince[key] = now
+				downTransitions = append(downTransitions, address)
 			}
 			continue
 		}
 		delete(c.bfdPeerDownSince, key)
 	}
+	sort.Strings(downTransitions)
+	return downTransitions
+}
+
+func (c *Controller) hardResetBFDDownPeers(ctx context.Context, addresses []string) error {
+	for _, address := range addresses {
+		address = strings.TrimSpace(address)
+		if address == "" {
+			continue
+		}
+		if err := c.Server.ResetPeer(ctx, &gobgpapi.ResetPeerRequest{
+			Address:       address,
+			Soft:          false,
+			Direction:     gobgpapi.ResetPeerRequest_BOTH,
+			Communication: "BFD session down",
+		}); err != nil {
+			return fmt.Errorf("hard reset peer %s after BFD Down: %w", address, err)
+		}
+	}
+	return nil
 }
 
 func bfdPeerGateKey(ref, address string) string {

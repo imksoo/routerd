@@ -77,16 +77,17 @@ func (s *testGoBGPServer) WatchEvent(ctx context.Context, req *gobgpapi.WatchEve
 }
 
 type fakeServer struct {
-	starts    int
-	stops     int
-	adds      int
-	updates   int
-	deletes   int
-	paths     int
-	policies  int
-	assigns   int
-	resets    int
-	outResets int
+	starts     int
+	stops      int
+	adds       int
+	updates    int
+	deletes    int
+	paths      int
+	policies   int
+	assigns    int
+	resets     int
+	outResets  int
+	hardResets int
 
 	global           *gobgpapi.Global
 	peers            map[string]*gobgpapi.Peer
@@ -191,14 +192,16 @@ func (s *fakeServer) UpdatePeer(_ context.Context, req *gobgpapi.UpdatePeerReque
 }
 
 func (s *fakeServer) ResetPeer(_ context.Context, req *gobgpapi.ResetPeerRequest) error {
+	s.resetRequests = append(s.resetRequests, req)
 	if req.GetSoft() {
-		s.resetRequests = append(s.resetRequests, req)
 		switch req.GetDirection() {
 		case gobgpapi.ResetPeerRequest_IN:
 			s.resets++
 		case gobgpapi.ResetPeerRequest_OUT:
 			s.outResets++
 		}
+	} else {
+		s.hardResets++
 	}
 	return nil
 }
@@ -1748,6 +1751,7 @@ func TestReconcileBFDObservationNeverDeconfiguresPeer(t *testing.T) {
 	if server.adds != 1 || server.deletes != 0 {
 		t.Fatalf("after BFD Up counts adds=%d deletes=%d, want no peer churn", server.adds, server.deletes)
 	}
+	server.resetRequests = nil
 	controller.Store.SaveObjectStatus(api.NetAPIVersion, "BFD", "k8s", map[string]any{
 		"phase":      "Down",
 		"peerStates": map[string]any{"10.0.0.21": "Down"},
@@ -1758,8 +1762,14 @@ func TestReconcileBFDObservationNeverDeconfiguresPeer(t *testing.T) {
 	if server.deletes != 0 {
 		t.Fatalf("deletes after transient Up->Down = %d, want 0", server.deletes)
 	}
+	if server.hardResets != 1 {
+		t.Fatalf("hard resets after BFD Up->Down = %d, want 1", server.hardResets)
+	}
+	if len(server.resetRequests) != 1 || server.resetRequests[0].GetSoft() || server.resetRequests[0].GetAddress() != "10.0.0.21" {
+		t.Fatalf("reset requests after BFD Up->Down = %#v, want one hard reset for 10.0.0.21", server.resetRequests)
+	}
 	if _, ok := server.peers["10.0.0.21"]; !ok {
-		t.Fatalf("peer missing after transient BFD Up->Down before sustained gate: %#v", server.peers)
+		t.Fatalf("peer missing after BFD Up->Down: %#v", server.peers)
 	}
 	controller.bfdPeerDownSince[bfdPeerGateKey("BFD/k8s", "10.0.0.21")] = time.Now().Add(-time.Minute)
 	if err := controller.Reconcile(context.Background()); err != nil {
@@ -1767,6 +1777,9 @@ func TestReconcileBFDObservationNeverDeconfiguresPeer(t *testing.T) {
 	}
 	if server.deletes != 0 {
 		t.Fatalf("deletes after sustained Up->Down = %d, want 0", server.deletes)
+	}
+	if server.hardResets != 1 {
+		t.Fatalf("hard resets after sustained Down = %d, want no repeated reset", server.hardResets)
 	}
 	if _, ok := server.peers["10.0.0.21"]; !ok {
 		t.Fatalf("peer missing after sustained BFD Up->Down: %#v", server.peers)

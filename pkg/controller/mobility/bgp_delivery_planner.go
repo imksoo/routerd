@@ -43,11 +43,11 @@ type bgpDeliveryPlannerInput struct {
 }
 
 type bgpDeliveryPlannerResult struct {
-	Paths                 []bgpdaemon.AppliedPath
-	ActionPlans           []dynamicconfig.ActionPlan
-	CaptureCandidates     map[string]bgpTrapCandidate
-	Placement             PlacementDecision
-	Distribution          *captureDistribution
+	Paths             []bgpdaemon.AppliedPath
+	ActionPlans       []dynamicconfig.ActionPlan
+	CaptureCandidates map[string]bgpTrapCandidate
+	Placement         PlacementDecision
+	Distribution      *captureDistribution
 }
 
 func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResult, error) {
@@ -73,11 +73,11 @@ func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResu
 		return bgpDeliveryPlannerResult{}, err
 	}
 	return bgpDeliveryPlannerResult{
-		Paths:                 paths,
-		ActionPlans:           actionPlans,
-		CaptureCandidates:     candidates,
-		Placement:             in.Placement,
-		Distribution:          dist,
+		Paths:             paths,
+		ActionPlans:       actionPlans,
+		CaptureCandidates: candidates,
+		Placement:         in.Placement,
+		Distribution:      dist,
 	}, nil
 }
 
@@ -136,6 +136,9 @@ func planCaptureCandidatesWithDistribution(self memberPlanInfo, members map[stri
 		if desiredCaptureObservedOnSelf(decision, self, members, placement, observedSelfIPs) {
 			out[address] = bgpTrapCandidate{ProtectOnly: true}
 		}
+	}
+	if placement.SeizeHoldDown {
+		return out, nil
 	}
 	group := strings.TrimSpace(self.PlacementGroup)
 	distributed := distributedCaptureEnabled(members, group)

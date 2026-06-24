@@ -1833,18 +1833,28 @@ func bgpCaptureElectionStatus(decision PlacementDecision) map[string]any {
 
 func bgpSeizeHoldDownStatus(decision PlacementDecision) map[string]any {
 	status := map[string]any{
-		"bgpSeizeHoldDownActive": false,
-		"bgpSeizeHoldDownKey":    "",
-		"bgpSeizeHoldDownSince":  "",
-		"bgpSeizeHoldDownUntil":  "",
+		"bgpSeizeHoldDownActive":  false,
+		"bgpSeizeHoldDownKey":     "",
+		"bgpSeizeHoldDownSince":   "",
+		"bgpSeizeHoldDownUntil":   "",
+		"bgpCapturePending":       false,
+		"bgpCapturePendingReason": "",
+		"bgpCapturePendingUntil":  "",
 	}
 	if decision.SeizeHoldDownKey == "" {
 		return status
 	}
+	since := decision.SeizeHoldDownSince.Format(time.RFC3339Nano)
+	until := decision.SeizeHoldDownUntil.Format(time.RFC3339Nano)
 	status["bgpSeizeHoldDownActive"] = decision.SeizeHoldDown
 	status["bgpSeizeHoldDownKey"] = decision.SeizeHoldDownKey
-	status["bgpSeizeHoldDownSince"] = decision.SeizeHoldDownSince.Format(time.RFC3339Nano)
-	status["bgpSeizeHoldDownUntil"] = decision.SeizeHoldDownUntil.Format(time.RFC3339Nano)
+	status["bgpSeizeHoldDownSince"] = since
+	status["bgpSeizeHoldDownUntil"] = until
+	if decision.SeizeHoldDown {
+		status["bgpCapturePending"] = true
+		status["bgpCapturePendingReason"] = "seize-hold-down"
+		status["bgpCapturePendingUntil"] = until
+	}
 	return status
 }
 
