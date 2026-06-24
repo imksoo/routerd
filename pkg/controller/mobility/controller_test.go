@@ -133,6 +133,31 @@ func TestControllerBGPModeAdvertisesSelfOwnedHostRouteAndSuppressesSAMPart(t *te
 	}
 }
 
+func TestControllerBGPModeOnPremL2WaitsForLocalOwnershipObservation(t *testing.T) {
+	now := time.Date(2026, 6, 24, 16, 30, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := plannedPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	spec.Members[0].OwnershipDiscovery = api.MobilityOwnershipDiscovery{
+		Mode: "onprem-l2",
+		Sources: []api.MobilityOwnershipDiscoverySource{
+			{Type: OnPremSourceARPObserver, Interface: "lan"},
+		},
+	}
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: planningRouterForNode("onprem-router", spec), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["phase"] != "Pending" || status["plannerPhase"] != "Pending" || status["ownershipResolverPhase"] != "Pending" {
+		t.Fatalf("status = %#v, want Pending until onprem-l2 observes a local owner", status)
+	}
+	if !strings.Contains(fmt.Sprint(status["plannerReason"]), "onprem-l2 ownership discovery") {
+		t.Fatalf("plannerReason = %#v, want onprem-l2 discovery pending reason", status["plannerReason"])
+	}
+}
+
 func TestControllerBGPModeProfileSpecMatchesInlineSpec(t *testing.T) {
 	now := time.Date(2026, 6, 4, 10, 0, 0, 0, time.UTC)
 	inlineSpec := awsFailoverPoolSpec()

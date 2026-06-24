@@ -425,6 +425,12 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 			status["providerActionPhase"] = "Blocked"
 		}
 	}
+	if pending, reason := onPremL2OwnershipPending(self, delivery.Placement, ownershipDecisions); pending {
+		status["plannerPhase"] = "Pending"
+		status["plannerReason"] = reason
+		status["ownershipResolverPhase"] = "Pending"
+		status["ownershipResolverReason"] = reason
+	}
 	status["phase"] = mobilityPoolResourcePhase(status)
 	return c.savePlannerStatus(res.Metadata.Name, status)
 }
@@ -439,6 +445,8 @@ func mobilityPoolResourcePhase(status map[string]any) string {
 	switch strings.TrimSpace(fmt.Sprint(status["ownershipResolverPhase"])) {
 	case "Conflict":
 		return "Degraded"
+	case "Pending":
+		return "Pending"
 	}
 	switch strings.TrimSpace(fmt.Sprint(status["plannerPhase"])) {
 	case "BGPPlanned":
@@ -451,6 +459,28 @@ func mobilityPoolResourcePhase(status map[string]any) string {
 		return "Failed"
 	}
 	return "Degraded"
+}
+
+func onPremL2OwnershipPending(self memberPlanInfo, placement PlacementDecision, decisions []ownershipDecision) (bool, string) {
+	if strings.TrimSpace(self.Role) != "onprem" || strings.TrimSpace(self.OwnershipDiscovery.Mode) != "onprem-l2" {
+		return false, ""
+	}
+	if !placement.Active {
+		return false, ""
+	}
+	if len(onPremDiscoverySources(self.OwnershipDiscovery)) == 0 {
+		return false, ""
+	}
+	for _, decision := range decisions {
+		if strings.TrimSpace(decision.HomeOwnerNode) != strings.TrimSpace(self.NodeRef) {
+			continue
+		}
+		switch decision.Class {
+		case ownershipClassLocalHomeOwned, ownershipClassStaticOwned, ownershipClassStaticHandover:
+			return false, ""
+		}
+	}
+	return true, "onprem-l2 ownership discovery has not observed any local clients"
 }
 
 func (c Controller) recordBGPStaticHandoverReleaseEvents(poolName, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, now time.Time) ([]routerstate.EventRecord, error) {
