@@ -353,6 +353,8 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		"providerActionSupersededFailureReason":    "",
 		"observedSelfStaleCaptures":                observedSelfStaleCaptureStatus(ownershipDecisions, selfNode, observedStaleSince, now),
 	}
+	pendingActionCount := pendingProviderActionPlanCount(actionPlans, actionJournal)
+	status["providerActionPendingCount"] = pendingActionCount
 	for key, value := range bgpSeizeHoldDownStatus(delivery.Placement) {
 		status[key] = value
 	}
@@ -411,6 +413,11 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 			status["providerActionSupersededFailureAt"] = lastSupersededAt.Format(time.RFC3339)
 		}
 	}
+	if pendingActionCount > 0 && status["providerActionPhase"] == "OK" {
+		status["plannerPhase"] = "Pending"
+		status["plannerReason"] = "provider actions are pending"
+		status["providerActionPhase"] = "Pending"
+	}
 	for key, value := range ownershipResolverStatus(ownershipDecisions) {
 		status[key] = value
 	}
@@ -441,6 +448,8 @@ func mobilityPoolResourcePhase(status map[string]any) string {
 		return "Failed"
 	case "Blocked":
 		return "Degraded"
+	case "Pending":
+		return "Pending"
 	}
 	switch strings.TrimSpace(fmt.Sprint(status["ownershipResolverPhase"])) {
 	case "Conflict":
@@ -459,6 +468,32 @@ func mobilityPoolResourcePhase(status map[string]any) string {
 		return "Failed"
 	}
 	return "Degraded"
+}
+
+func pendingProviderActionPlanCount(plans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord) int {
+	if len(plans) == 0 {
+		return 0
+	}
+	terminal := map[string]bool{}
+	for _, rec := range journal {
+		key := strings.TrimSpace(rec.IdempotencyKey)
+		if key == "" {
+			continue
+		}
+		switch strings.TrimSpace(rec.Status) {
+		case routerstate.ActionSucceeded, routerstate.ActionSkipped:
+			terminal[key] = true
+		}
+	}
+	pending := 0
+	for _, plan := range plans {
+		key := strings.TrimSpace(plan.IdempotencyKey)
+		if key == "" || terminal[key] {
+			continue
+		}
+		pending++
+	}
+	return pending
 }
 
 func onPremL2OwnershipPending(self memberPlanInfo, placement PlacementDecision, decisions []ownershipDecision) (bool, string) {
