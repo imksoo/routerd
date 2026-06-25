@@ -238,6 +238,8 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	forwardingObserved, forwardingEnabled, forwardingObservedAt := c.discoverySelfForwardingState(res.Metadata.Name)
 	poolStatus := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", res.Metadata.Name)
 	captureClaim := bgpCaptureClaimForPlacementWithStatus(res.Metadata.Name, self, members, ownerPlacement, poolStatus, now)
+	previousCaptureAssignments := bgpCaptureAssignmentsFromStatus(poolStatus)
+	previousCaptureAssignmentSeq := bgpCaptureAssignmentSeqFromStatus(poolStatus)
 	observedStaleSince := observedSelfStaleCaptureSinceFromStatus(poolStatus)
 	ownershipDecisions, ownershipErr := resolveAddressOwnership(ownershipResolverInput{
 		PoolName:          res.Metadata.Name,
@@ -277,6 +279,8 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		ForwardingEnabled:    forwardingEnabled,
 		ForwardingObservedAt: forwardingObservedAt,
 		CaptureClaim:         captureClaim,
+		CaptureAssignments:   previousCaptureAssignments,
+		CaptureAssignmentSeq: previousCaptureAssignmentSeq,
 		ObservedStaleSince:   observedStaleSince,
 		SuppressDeprovision:  c.SuppressProviderDeprovision,
 		LivenessMarkers:      livenessMarkers,
@@ -340,6 +344,8 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		"bgpCaptureClaimDesiredHolder":             captureClaim.DesiredHolder,
 		"bgpCaptureClaimPreviousHolder":            captureClaim.PreviousHolder,
 		"bgpCaptureClaimReason":                    captureClaim.Reason,
+		"bgpCaptureAssignments":                    bgpCaptureAssignmentStatusList(delivery.CaptureAssignments),
+		"bgpCaptureAssignmentSeq":                  delivery.CaptureAssignmentSeq,
 		"generatedBGPTraps":                        len(delivery.CaptureCandidates),
 		"generatedClaims":                          0,
 		"generatedActions":                         len(actionPlans),
@@ -2270,6 +2276,20 @@ type bgpCaptureClaim struct {
 	LeaseUntil     time.Time
 }
 
+type bgpCaptureAssignment struct {
+	Address        string
+	Phase          string
+	Generation     string
+	Seq            int64
+	ClaimEpoch     string
+	DesiredHolder  string
+	PreviousHolder string
+	Reason         string
+	IssuedAt       time.Time
+	RenewedAt      time.Time
+	LeaseUntil     time.Time
+}
+
 func bgpCaptureClaimForPlacement(self memberPlanInfo, placement PlacementDecision, now time.Time) bgpCaptureClaim {
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -2500,6 +2520,112 @@ func bgpCaptureClaimStatus(claim bgpCaptureClaim) map[string]any {
 		status["leaseUntil"] = claim.LeaseUntil.UTC().Format(time.RFC3339Nano)
 	}
 	return status
+}
+
+func bgpCaptureAssignmentsFromStatus(status map[string]any) map[string]bgpCaptureAssignment {
+	out := map[string]bgpCaptureAssignment{}
+	raw, ok := status["bgpCaptureAssignments"]
+	if !ok || raw == nil {
+		return out
+	}
+	appendRow := func(row map[string]any) {
+		assignment := bgpCaptureAssignment{
+			Address:        normalizeAddressString(statusString(row["address"])),
+			Phase:          statusString(row["phase"]),
+			Generation:     statusString(row["generation"]),
+			Seq:            statusInt64(row["seq"]),
+			ClaimEpoch:     statusString(row["claimEpoch"]),
+			DesiredHolder:  statusString(row["desiredHolder"]),
+			PreviousHolder: statusString(row["previousHolder"]),
+			Reason:         statusString(row["reason"]),
+			IssuedAt:       statusTime(row["issuedAt"]),
+			RenewedAt:      statusTime(row["renewedAt"]),
+			LeaseUntil:     statusTime(row["leaseUntil"]),
+		}
+		if assignment.Address == "" {
+			return
+		}
+		out[assignment.Address] = assignment
+	}
+	switch typed := raw.(type) {
+	case []any:
+		for _, item := range typed {
+			if row, ok := item.(map[string]any); ok {
+				appendRow(row)
+			}
+		}
+	case []map[string]any:
+		for _, row := range typed {
+			appendRow(row)
+		}
+	case map[string]any:
+		for address, item := range typed {
+			row, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if _, exists := row["address"]; !exists {
+				row = copyAnyMap(row)
+				row["address"] = address
+			}
+			appendRow(row)
+		}
+	}
+	return out
+}
+
+func bgpCaptureAssignmentSeqFromStatus(status map[string]any) int64 {
+	seq := statusInt64(status["bgpCaptureAssignmentSeq"])
+	for _, assignment := range bgpCaptureAssignmentsFromStatus(status) {
+		if assignment.Seq > seq {
+			seq = assignment.Seq
+		}
+	}
+	return seq
+}
+
+func bgpCaptureAssignmentStatusList(assignments map[string]bgpCaptureAssignment) []map[string]any {
+	if len(assignments) == 0 {
+		return nil
+	}
+	addresses := make([]string, 0, len(assignments))
+	for address := range assignments {
+		addresses = append(addresses, address)
+	}
+	sort.Strings(addresses)
+	out := make([]map[string]any, 0, len(addresses))
+	for _, address := range addresses {
+		assignment := assignments[address]
+		row := map[string]any{
+			"address":        assignment.Address,
+			"phase":          assignment.Phase,
+			"generation":     assignment.Generation,
+			"seq":            assignment.Seq,
+			"claimEpoch":     assignment.ClaimEpoch,
+			"desiredHolder":  assignment.DesiredHolder,
+			"previousHolder": assignment.PreviousHolder,
+			"reason":         assignment.Reason,
+		}
+		if !assignment.IssuedAt.IsZero() {
+			row["issuedAt"] = assignment.IssuedAt.UTC().Format(time.RFC3339Nano)
+		}
+		if !assignment.RenewedAt.IsZero() {
+			row["renewedAt"] = assignment.RenewedAt.UTC().Format(time.RFC3339Nano)
+		}
+		if !assignment.LeaseUntil.IsZero() {
+			row["leaseUntil"] = assignment.LeaseUntil.UTC().Format(time.RFC3339Nano)
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+func copyAnyMap(in map[string]any) map[string]any {
+	out := make(map[string]any, len(in)+1)
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
 }
 
 func parseBGPTrapLastSeenAt(value string) time.Time {
@@ -2754,10 +2880,96 @@ func stampBGPClaimFenceActionPlans(plans []dynamicconfig.ActionPlan, claim bgpCa
 		if !claim.LeaseUntil.IsZero() {
 			plan.Parameters[captureClaimLeaseUntilParam] = claim.LeaseUntil.UTC().Format(time.RFC3339Nano)
 		}
-		if strings.TrimSpace(plan.IdempotencyKey) != "" {
-			plan.IdempotencyKey += ":claimgen:" + safeName(claim.Generation)
+	}
+}
+
+func stampBGPAssignmentFenceActionPlans(plans []dynamicconfig.ActionPlan, poolName string, self memberPlanInfo, decisions map[string]ownershipDecision, claim bgpCaptureClaim, previous map[string]bgpCaptureAssignment, seq int64, now time.Time) (map[string]bgpCaptureAssignment, int64) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	now = now.UTC()
+	assignments := make(map[string]bgpCaptureAssignment, len(previous))
+	for address, assignment := range previous {
+		assignments[address] = assignment
+		if assignment.Seq > seq {
+			seq = assignment.Seq
 		}
 	}
+	if claim.Phase != "Active" || strings.TrimSpace(claim.Generation) == "" {
+		return assignments, seq
+	}
+	for i := range plans {
+		plan := &plans[i]
+		if !isProviderCaptureAssignAction(plan.Action) {
+			continue
+		}
+		address := normalizeAddressString(plan.Target["address"])
+		if address == "" {
+			continue
+		}
+		decision := decisions[address]
+		previousHolder := firstNonEmpty(strings.TrimSpace(decision.CaptureHolderNode), strings.TrimSpace(claim.PreviousHolder))
+		assignment := bgpCaptureAssignment{
+			Address:        address,
+			Phase:          "Active",
+			ClaimEpoch:     claim.Generation,
+			DesiredHolder:  strings.TrimSpace(self.NodeRef),
+			PreviousHolder: previousHolder,
+			Reason:         claim.Reason,
+			RenewedAt:      now,
+			LeaseUntil:     claim.LeaseUntil,
+		}
+		if existing, ok := assignments[address]; ok &&
+			existing.Generation != "" &&
+			existing.Phase == assignment.Phase &&
+			existing.DesiredHolder == assignment.DesiredHolder &&
+			existing.PreviousHolder == assignment.PreviousHolder {
+			assignment.Generation = existing.Generation
+			assignment.Seq = existing.Seq
+			assignment.IssuedAt = existing.IssuedAt
+			if assignment.IssuedAt.IsZero() {
+				assignment.IssuedAt = now
+			}
+		} else {
+			seq++
+			if seq <= 0 {
+				seq = 1
+			}
+			assignment.Seq = seq
+			assignment.Generation = bgpCaptureAssignmentGeneration(poolName, claim.Group, address, seq)
+			assignment.IssuedAt = now
+		}
+		assignments[address] = assignment
+		if plan.Parameters == nil {
+			plan.Parameters = map[string]string{}
+		}
+		plan.Parameters[captureAssignmentPhaseParam] = assignment.Phase
+		plan.Parameters[captureAssignmentGenerationParam] = assignment.Generation
+		plan.Parameters[captureAssignmentDesiredHolderParam] = assignment.DesiredHolder
+		if assignment.PreviousHolder != "" {
+			plan.Parameters[captureAssignmentPreviousHolderParam] = assignment.PreviousHolder
+		}
+		plan.Parameters[captureAssignmentClaimEpochParam] = assignment.ClaimEpoch
+		if !assignment.LeaseUntil.IsZero() {
+			plan.Parameters[captureAssignmentLeaseUntilParam] = assignment.LeaseUntil.UTC().Format(time.RFC3339Nano)
+		}
+		if strings.TrimSpace(plan.IdempotencyKey) != "" && strings.TrimSpace(assignment.Generation) != "" {
+			plan.IdempotencyKey += ":assigngen:" + safeName(assignment.Generation)
+		}
+	}
+	return assignments, seq
+}
+
+func bgpCaptureAssignmentGeneration(poolName, group, address string, seq int64) string {
+	scope := strings.TrimSpace(group)
+	if scope == "" {
+		scope = strings.TrimSpace(poolName)
+	}
+	address = normalizeAddressString(address)
+	if scope == "" || address == "" || seq <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s/%s/%d", scope, safeName(address), seq)
 }
 
 func stampBGPProviderTransitionFence(plans []dynamicconfig.ActionPlan, self memberPlanInfo, address string, journal []routerstate.ActionExecutionRecord, observedSelfCaptures map[string]bool, observedSelfCapturesOK bool, observedSelfAt time.Time) {
