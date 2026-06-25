@@ -352,12 +352,25 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		"providerActionSupersededFailureCount":     0,
 		"providerActionSupersededFailureAt":        "",
 		"providerActionSupersededFailureReason":    "",
+		"providerObservationPhase":                 "OK",
+		"providerObservationPendingAddresses":      nil,
+		"providerObservationConfirmedAddresses":    nil,
+		"providerObservationDetails":               nil,
+		"providerObservationPendingCount":          0,
+		"providerObservationConfirmedCount":        0,
 		"observedSelfStaleCaptures":                observedSelfStaleCaptureStatus(ownershipDecisions, selfNode, observedStaleSince, now),
 	}
 	pendingActionCount := pendingProviderActionPlanCount(actionPlans, actionJournal)
 	failedActions := failedProviderActionPlans(actionPlans, actionJournal, discoverySelfCaptures)
 	failedActions = appendProviderCaptureAssignFailures(failedActions, providerFailures.Active)
 	status["providerActionPendingCount"] = pendingActionCount
+	observationStatus := providerCaptureObservationStatus(actionPlans, actionJournal, discoverySelfCaptures, discoverySelfIPsObserved, ownershipDecisions)
+	status["providerObservationPhase"] = observationStatus.Phase
+	status["providerObservationPendingAddresses"] = observationStatus.PendingAddresses
+	status["providerObservationConfirmedAddresses"] = observationStatus.ConfirmedAddresses
+	status["providerObservationDetails"] = observationStatus.Details
+	status["providerObservationPendingCount"] = len(observationStatus.PendingAddresses)
+	status["providerObservationConfirmedCount"] = len(observationStatus.ConfirmedAddresses)
 	for key, value := range bgpSeizeHoldDownStatus(delivery.Placement) {
 		status[key] = value
 	}
@@ -455,6 +468,10 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		status["plannerReason"] = "provider actions are pending"
 		status["providerActionPhase"] = "Pending"
 	}
+	if len(observationStatus.PendingAddresses) > 0 && status["providerActionPhase"] == "OK" {
+		status["plannerPhase"] = "Pending"
+		status["plannerReason"] = "provider observations are pending"
+	}
 	for key, value := range ownershipResolverStatus(ownershipDecisions) {
 		status[key] = value
 	}
@@ -485,6 +502,10 @@ func mobilityPoolResourcePhase(status map[string]any) string {
 		return "Failed"
 	case "Blocked":
 		return "Degraded"
+	case "Pending":
+		return "Pending"
+	}
+	switch strings.TrimSpace(fmt.Sprint(status["providerObservationPhase"])) {
 	case "Pending":
 		return "Pending"
 	}
@@ -531,6 +552,132 @@ func pendingProviderActionPlanCount(plans []dynamicconfig.ActionPlan, journal []
 		pending++
 	}
 	return pending
+}
+
+type providerObservationStatus struct {
+	Phase              string
+	PendingAddresses   []string
+	ConfirmedAddresses []string
+	Details            []map[string]string
+}
+
+func providerCaptureObservationStatus(plans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord, observedSelfCaptures map[string]bool, observedSelfCapturesOK bool, decisions []ownershipDecision) providerObservationStatus {
+	status := providerObservationStatus{Phase: "OK"}
+	pending := map[string]map[string]string{}
+	confirmed := map[string]map[string]string{}
+	for _, decision := range decisions {
+		address := normalizeAddressString(decision.Address)
+		if address == "" || decision.Class != ownershipClassConfirmedCapture {
+			continue
+		}
+		confirmed[address] = map[string]string{
+			"address": address,
+			"phase":   "Confirmed",
+			"source":  "ownership-resolver",
+		}
+		if decision.CaptureProviderRef != "" {
+			confirmed[address]["providerRef"] = decision.CaptureProviderRef
+		}
+		if decision.CaptureTargetRef != "" {
+			confirmed[address]["targetRef"] = decision.CaptureTargetRef
+		}
+		if decision.CaptureHolderNode != "" {
+			confirmed[address]["holderNode"] = decision.CaptureHolderNode
+		}
+	}
+	latest := latestActionRecordsByKey(journal)
+	for _, plan := range plans {
+		if !isProviderCaptureAssignAction(plan.Action) {
+			continue
+		}
+		key := strings.TrimSpace(plan.IdempotencyKey)
+		if key == "" {
+			continue
+		}
+		rec, ok := latest[key]
+		if !ok || strings.TrimSpace(rec.Status) != routerstate.ActionSucceeded {
+			continue
+		}
+		target := plan.Target
+		if len(target) == 0 {
+			target = decodeActionRecordMap(rec.TargetJSON)
+		}
+		address := normalizeAddressString(target["address"])
+		if address == "" {
+			continue
+		}
+		detail := map[string]string{
+			"address":        address,
+			"action":         strings.TrimSpace(firstNonEmpty(plan.Action, rec.Action)),
+			"provider":       strings.TrimSpace(firstNonEmpty(plan.Provider, rec.Provider)),
+			"providerRef":    strings.TrimSpace(firstNonEmpty(plan.ProviderRef, rec.ProviderRef, target["providerRef"])),
+			"idempotencyKey": key,
+			"targetRef":      providerCaptureRefFromTarget(target),
+		}
+		if observedSelfCapturesOK && observedSelfCaptures[address] {
+			detail["phase"] = "Confirmed"
+			detail["source"] = "provider-inventory"
+			confirmed[address] = detail
+			delete(pending, address)
+			continue
+		}
+		detail["phase"] = "Pending"
+		if observedSelfCapturesOK {
+			detail["reason"] = "provider inventory has not observed capture on self"
+		} else {
+			detail["reason"] = "provider inventory has not completed self capture observation"
+		}
+		pending[address] = detail
+		delete(confirmed, address)
+	}
+	if len(pending) > 0 {
+		status.Phase = "Pending"
+	}
+	status.PendingAddresses = sortedStringMapKeys(pending)
+	status.ConfirmedAddresses = sortedStringMapKeys(confirmed)
+	for _, address := range status.PendingAddresses {
+		status.Details = append(status.Details, pending[address])
+	}
+	for _, address := range status.ConfirmedAddresses {
+		status.Details = append(status.Details, confirmed[address])
+	}
+	if len(status.PendingAddresses) == 0 {
+		status.PendingAddresses = nil
+	}
+	if len(status.ConfirmedAddresses) == 0 {
+		status.ConfirmedAddresses = nil
+	}
+	if len(status.Details) == 0 {
+		status.Details = nil
+	}
+	return status
+}
+
+func latestActionRecordsByKey(journal []routerstate.ActionExecutionRecord) map[string]routerstate.ActionExecutionRecord {
+	latest := map[string]routerstate.ActionExecutionRecord{}
+	for _, rec := range journal {
+		key := strings.TrimSpace(rec.IdempotencyKey)
+		if key == "" {
+			continue
+		}
+		prev, found := latest[key]
+		if !found || rec.UpdatedAt.After(prev.UpdatedAt) || (rec.UpdatedAt.Equal(prev.UpdatedAt) && rec.ID > prev.ID) {
+			latest[key] = rec
+		}
+	}
+	return latest
+}
+
+func sortedStringMapKeys[V any](values map[string]V) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for key := range values {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
 }
 
 type providerActionPlanFailure struct {
