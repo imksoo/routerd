@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/netip"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -236,6 +237,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	bgpReturnRoutes := c.bgpReturnRoutes(spec)
 	forwardingObserved, forwardingEnabled, forwardingObservedAt := c.discoverySelfForwardingState(res.Metadata.Name)
 	poolStatus := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", res.Metadata.Name)
+	captureClaim := bgpCaptureClaimForPlacementWithStatus(res.Metadata.Name, self, members, ownerPlacement, poolStatus, now)
 	observedStaleSince := observedSelfStaleCaptureSinceFromStatus(poolStatus)
 	ownershipDecisions, ownershipErr := resolveAddressOwnership(ownershipResolverInput{
 		PoolName:          res.Metadata.Name,
@@ -274,6 +276,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		ForwardingObserved:   forwardingObserved,
 		ForwardingEnabled:    forwardingEnabled,
 		ForwardingObservedAt: forwardingObservedAt,
+		CaptureClaim:         captureClaim,
 		ObservedStaleSince:   observedStaleSince,
 		SuppressDeprovision:  c.SuppressProviderDeprovision,
 		LivenessMarkers:      livenessMarkers,
@@ -296,7 +299,6 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	if len(delivery.CaptureCandidates) > 0 && !selfCaptureResolved {
 		actionPlans = nil
 	}
-	captureClaim := bgpCaptureClaimForPlacement(self, delivery.Placement, now)
 	current, err := c.BGPPaths.ListPaths(ctx, source)
 	if err != nil {
 		return fmt.Errorf("list BGP mobility paths: %w", err)
@@ -334,6 +336,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		"bgpCaptureClaim":                          bgpCaptureClaimStatus(captureClaim),
 		"bgpCaptureClaimPhase":                     captureClaim.Phase,
 		"bgpCaptureClaimGeneration":                captureClaim.Generation,
+		"bgpCaptureClaimEpochSeq":                  captureClaim.EpochSeq,
 		"bgpCaptureClaimDesiredHolder":             captureClaim.DesiredHolder,
 		"bgpCaptureClaimPreviousHolder":            captureClaim.PreviousHolder,
 		"bgpCaptureClaimReason":                    captureClaim.Reason,
@@ -2257,9 +2260,12 @@ type bgpCaptureClaim struct {
 	Group          string
 	Phase          string
 	Generation     string
+	EpochSeq       int64
 	DesiredHolder  string
 	PreviousHolder string
 	Reason         string
+	IssuedAt       time.Time
+	RenewedAt      time.Time
 	PendingUntil   time.Time
 	LeaseUntil     time.Time
 }
@@ -2306,6 +2312,159 @@ func bgpCaptureClaimForPlacement(self memberPlanInfo, placement PlacementDecisio
 	return claim
 }
 
+func bgpCaptureClaimForPlacementWithStatus(poolName string, self memberPlanInfo, members map[string]memberPlanInfo, placement PlacementDecision, status map[string]any, now time.Time) bgpCaptureClaim {
+	claim := bgpCaptureClaimForPlacement(self, placement, now)
+	if claim.Phase != "Active" {
+		claim.EpochSeq = bgpCaptureClaimEpochSeqFromStatus(status)
+		return claim
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	now = now.UTC()
+	previous := bgpCaptureClaimFromStatus(status)
+	claim.Reason = bgpCaptureClaimTransitionReason(claim, previous, placement, members)
+	seq := bgpCaptureClaimEpochSeqFromStatus(status)
+	if previous.Phase == "Active" &&
+		previous.Generation != "" &&
+		previous.Group == claim.Group &&
+		previous.DesiredHolder == claim.DesiredHolder &&
+		previous.PreviousHolder == claim.PreviousHolder {
+		claim.Generation = previous.Generation
+		claim.EpochSeq = firstNonZeroInt64(previous.EpochSeq, seq)
+		claim.IssuedAt = previous.IssuedAt
+		if claim.IssuedAt.IsZero() {
+			claim.IssuedAt = now
+		}
+		claim.RenewedAt = now
+		claim.LeaseUntil = now.Add(DefaultLeaseTTL).UTC()
+		return claim
+	}
+	seq++
+	if seq <= 0 {
+		seq = 1
+	}
+	claim.EpochSeq = seq
+	claim.Generation = bgpCaptureClaimEpoch(poolName, claim.Group, seq)
+	claim.IssuedAt = now
+	claim.RenewedAt = now
+	claim.LeaseUntil = now.Add(DefaultLeaseTTL).UTC()
+	return claim
+}
+
+func bgpCaptureClaimTransitionReason(claim, previous bgpCaptureClaim, placement PlacementDecision, members map[string]memberPlanInfo) string {
+	if reason := strings.TrimSpace(placement.Reason); reason != "" {
+		return reason
+	}
+	if placement.Seize {
+		return "hard-failure"
+	}
+	if previous.Phase == "Active" &&
+		strings.TrimSpace(previous.DesiredHolder) != "" &&
+		strings.TrimSpace(previous.DesiredHolder) != strings.TrimSpace(claim.DesiredHolder) {
+		if previousMember, ok := lookupMemberByNodeRef(members, previous.DesiredHolder); ok && previousMember.MaintenanceDrain {
+			return "graceful-drain"
+		}
+	}
+	return firstNonEmpty(claim.Reason, "placement-election")
+}
+
+func bgpCaptureClaimEpoch(poolName, group string, seq int64) string {
+	scope := strings.TrimSpace(group)
+	if scope == "" {
+		scope = strings.TrimSpace(poolName)
+	}
+	if scope == "" || seq <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s/%d", scope, seq)
+}
+
+func bgpCaptureClaimFromStatus(status map[string]any) bgpCaptureClaim {
+	raw, ok := status["bgpCaptureClaim"]
+	if !ok || raw == nil {
+		return bgpCaptureClaim{}
+	}
+	row, ok := raw.(map[string]any)
+	if !ok {
+		return bgpCaptureClaim{}
+	}
+	return bgpCaptureClaim{
+		Group:          statusString(row["group"]),
+		Phase:          statusString(row["phase"]),
+		Generation:     statusString(row["generation"]),
+		EpochSeq:       statusInt64(row["epochSeq"]),
+		DesiredHolder:  statusString(row["desiredHolder"]),
+		PreviousHolder: statusString(row["previousHolder"]),
+		Reason:         statusString(row["reason"]),
+		IssuedAt:       statusTime(row["issuedAt"]),
+		RenewedAt:      statusTime(row["renewedAt"]),
+		PendingUntil:   statusTime(row["pendingUntil"]),
+		LeaseUntil:     statusTime(row["leaseUntil"]),
+	}
+}
+
+func bgpCaptureClaimEpochSeqFromStatus(status map[string]any) int64 {
+	seq := statusInt64(status["bgpCaptureClaimEpochSeq"])
+	if seq > 0 {
+		return seq
+	}
+	claim := bgpCaptureClaimFromStatus(status)
+	return claim.EpochSeq
+}
+
+func firstNonZeroInt64(values ...int64) int64 {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func statusInt64(value any) int64 {
+	switch typed := value.(type) {
+	case int:
+		return int64(typed)
+	case int64:
+		return typed
+	case int32:
+		return int64(typed)
+	case uint:
+		return int64(typed)
+	case uint64:
+		if typed > uint64(^uint64(0)>>1) {
+			return 0
+		}
+		return int64(typed)
+	case float64:
+		if typed <= 0 {
+			return 0
+		}
+		return int64(typed)
+	case float32:
+		if typed <= 0 {
+			return 0
+		}
+		return int64(typed)
+	case string:
+		parsed, err := strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
+		if err != nil {
+			return 0
+		}
+		return parsed
+	default:
+		return 0
+	}
+}
+
+func statusTime(value any) time.Time {
+	if parsed, ok := statusTimeValue(value); ok {
+		return parsed.UTC()
+	}
+	return time.Time{}
+}
+
 func bgpCaptureClaimGeneration(claim bgpCaptureClaim) string {
 	key := strings.Join([]string{
 		strings.TrimSpace(claim.Group),
@@ -2323,9 +2482,16 @@ func bgpCaptureClaimStatus(claim bgpCaptureClaim) map[string]any {
 		"group":          claim.Group,
 		"phase":          claim.Phase,
 		"generation":     claim.Generation,
+		"epochSeq":       claim.EpochSeq,
 		"desiredHolder":  claim.DesiredHolder,
 		"previousHolder": claim.PreviousHolder,
 		"reason":         claim.Reason,
+	}
+	if !claim.IssuedAt.IsZero() {
+		status["issuedAt"] = claim.IssuedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if !claim.RenewedAt.IsZero() {
+		status["renewedAt"] = claim.RenewedAt.UTC().Format(time.RFC3339Nano)
 	}
 	if !claim.PendingUntil.IsZero() {
 		status["pendingUntil"] = claim.PendingUntil.UTC().Format(time.RFC3339Nano)

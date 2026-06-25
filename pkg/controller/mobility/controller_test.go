@@ -1741,6 +1741,62 @@ func TestControllerBGPModeRestoreKeepsOwnerPreferredOverStandby(t *testing.T) {
 	}
 }
 
+func TestPlanBGPMobilityDeliverySuppressesSameSiteSecondaryIPCapture(t *testing.T) {
+	now := time.Date(2026, 6, 25, 12, 30, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-a"]
+	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+		PoolName: "cloudedge",
+		Source:   DynamicSource("cloudedge", self.NodeRef),
+		Self:     self,
+		Members:  members,
+		Spec:     spec,
+		Decisions: []ownershipDecision{
+			{
+				Address:           "10.88.60.11/32",
+				Class:             ownershipClassRemoteHomeOwned,
+				HomeOwnerNode:     "aws-router-b",
+				Source:            providerDiscoverySource,
+				SuppressionReason: "remote-home-owner",
+			},
+			{
+				Address:           "10.88.60.12/32",
+				Class:             ownershipClassRemoteHomeOwned,
+				HomeOwnerNode:     "azure-router",
+				Source:            providerDiscoverySource,
+				SuppressionReason: "remote-home-owner",
+			},
+		},
+		Placement: PlacementDecision{
+			Group:      "aws-edge",
+			Active:     true,
+			ActiveNode: self.NodeRef,
+		},
+		InstalledNextHops: map[string][]string{
+			"10.88.60.11/32": {"10.99.0.5"},
+			"10.88.60.12/32": {"10.99.0.3"},
+		},
+		Profiles: map[string]api.CloudProviderProfileSpec{
+			"aws-provider": {Provider: "aws"},
+		},
+		ObservedSelfCaptures: map[string]bool{},
+		ObservedSelfIPsOK:    true,
+		RIBObserved:          true,
+		Now:                  now,
+	})
+	if err != nil {
+		t.Fatalf("planBGPMobilityDelivery: %v", err)
+	}
+	if assign := findActionPlanByAddress(delivery.ActionPlans, "assign-secondary-ip", "10.88.60.11/32"); assign != nil {
+		t.Fatalf("action plans = %#v, same-site AWS home address must not be assigned as router secondary IP", delivery.ActionPlans)
+	}
+	if assign := findActionPlanByAddress(delivery.ActionPlans, "assign-secondary-ip", "10.88.60.12/32"); assign == nil {
+		t.Fatalf("action plans = %#v, remote site home address should remain capturable", delivery.ActionPlans)
+	}
+}
+
 func TestControllerBGPCaptureCandidateNextHopsExcludeProviderCapturePaths(t *testing.T) {
 	now := time.Date(2026, 6, 13, 22, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
@@ -1974,6 +2030,132 @@ func TestPlanBGPMobilityDeliveryStampsActiveClaimGenerationOnAssign(t *testing.T
 	}
 	if _, err := time.Parse(time.RFC3339Nano, assign.Parameters[captureClaimLeaseUntilParam]); err != nil {
 		t.Fatalf("assign parameters = %#v, want RFC3339 leaseUntil: %v", assign.Parameters, err)
+	}
+}
+
+func TestBGPCaptureClaimPersistedEpochDoesNotReuseRepeatedTransition(t *testing.T) {
+	now := time.Date(2026, 6, 25, 11, 30, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	members := plannerMembers(spec.Members)
+	nodeA := members["aws-router-a"]
+	nodeB := members["aws-router-b"]
+	status := map[string]any{}
+
+	firstB := bgpCaptureClaimForPlacementWithStatus("cloudedge", nodeB, members, PlacementDecision{
+		Group:                 "aws-edge",
+		Active:                true,
+		ActiveNode:            nodeB.NodeRef,
+		Seize:                 true,
+		ActiveIdentityNodeRef: nodeA.NodeRef,
+	}, status, now)
+	if firstB.Generation != "aws-edge/1" || firstB.EpochSeq != 1 {
+		t.Fatalf("first B claim = %#v, want aws-edge/1 seq=1", firstB)
+	}
+	status = map[string]any{
+		"bgpCaptureClaim":         bgpCaptureClaimStatus(firstB),
+		"bgpCaptureClaimEpochSeq": firstB.EpochSeq,
+	}
+
+	activeA := bgpCaptureClaimForPlacementWithStatus("cloudedge", nodeA, members, PlacementDecision{
+		Group:                 "aws-edge",
+		Active:                true,
+		ActiveNode:            nodeA.NodeRef,
+		Seize:                 true,
+		ActiveIdentityNodeRef: nodeB.NodeRef,
+	}, status, now.Add(time.Minute))
+	if activeA.Generation != "aws-edge/2" || activeA.EpochSeq != 2 {
+		t.Fatalf("active A claim = %#v, want aws-edge/2 seq=2", activeA)
+	}
+	status = map[string]any{
+		"bgpCaptureClaim":         bgpCaptureClaimStatus(activeA),
+		"bgpCaptureClaimEpochSeq": activeA.EpochSeq,
+	}
+
+	secondB := bgpCaptureClaimForPlacementWithStatus("cloudedge", nodeB, members, PlacementDecision{
+		Group:                 "aws-edge",
+		Active:                true,
+		ActiveNode:            nodeB.NodeRef,
+		Seize:                 true,
+		ActiveIdentityNodeRef: nodeA.NodeRef,
+	}, status, now.Add(2*time.Minute))
+	if secondB.Generation != "aws-edge/3" || secondB.EpochSeq != 3 {
+		t.Fatalf("second B claim = %#v, want aws-edge/3 seq=3", secondB)
+	}
+	if secondB.Generation == firstB.Generation {
+		t.Fatalf("repeated A->B reused generation %q", secondB.Generation)
+	}
+}
+
+func TestBGPCaptureClaimRestoresActiveEpochAndRenewsLease(t *testing.T) {
+	now := time.Date(2026, 6, 25, 11, 45, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	members := plannerMembers(spec.Members)
+	nodeA := members["aws-router-a"]
+	nodeB := members["aws-router-b"]
+	placement := PlacementDecision{
+		Group:                 "aws-edge",
+		Active:                true,
+		ActiveNode:            nodeB.NodeRef,
+		Seize:                 true,
+		ActiveIdentityNodeRef: nodeA.NodeRef,
+	}
+	issued := bgpCaptureClaimForPlacementWithStatus("cloudedge", nodeB, members, placement, nil, now)
+	restarted := bgpCaptureClaimForPlacementWithStatus("cloudedge", nodeB, members, placement, map[string]any{
+		"bgpCaptureClaim":         bgpCaptureClaimStatus(issued),
+		"bgpCaptureClaimEpochSeq": issued.EpochSeq,
+	}, now.Add(time.Minute))
+
+	if restarted.Generation != issued.Generation || restarted.EpochSeq != issued.EpochSeq {
+		t.Fatalf("restarted claim = %#v, issued = %#v, want same epoch", restarted, issued)
+	}
+	if !restarted.IssuedAt.Equal(issued.IssuedAt) {
+		t.Fatalf("issuedAt = %s, want %s", restarted.IssuedAt, issued.IssuedAt)
+	}
+	if !restarted.RenewedAt.Equal(now.Add(time.Minute)) {
+		t.Fatalf("renewedAt = %s, want restart reconcile time", restarted.RenewedAt)
+	}
+	if !restarted.LeaseUntil.After(issued.LeaseUntil) {
+		t.Fatalf("leaseUntil = %s, want after initial %s", restarted.LeaseUntil, issued.LeaseUntil)
+	}
+}
+
+func TestBGPCaptureClaimDistinguishesGracefulDrainAndHardFailure(t *testing.T) {
+	now := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	members := plannerMembers(spec.Members)
+	nodeA := members["aws-router-a"]
+	nodeB := members["aws-router-b"]
+
+	hardFailure := bgpCaptureClaimForPlacementWithStatus("cloudedge", nodeB, members, PlacementDecision{
+		Group:                 "aws-edge",
+		Active:                true,
+		ActiveNode:            nodeB.NodeRef,
+		Seize:                 true,
+		ActiveIdentityNodeRef: nodeA.NodeRef,
+	}, nil, now)
+	if hardFailure.Reason != "hard-failure" {
+		t.Fatalf("hard failure reason = %q, want hard-failure", hardFailure.Reason)
+	}
+
+	initialA := bgpCaptureClaimForPlacementWithStatus("cloudedge", nodeA, members, PlacementDecision{
+		Group:      "aws-edge",
+		Active:     true,
+		ActiveNode: nodeA.NodeRef,
+	}, nil, now)
+	drainedMembers := plannerMembers(spec.Members)
+	drainedA := drainedMembers[nodeA.NodeRef]
+	drainedA.MaintenanceDrain = true
+	drainedMembers[nodeA.NodeRef] = drainedA
+	graceful := bgpCaptureClaimForPlacementWithStatus("cloudedge", nodeB, drainedMembers, PlacementDecision{
+		Group:      "aws-edge",
+		Active:     true,
+		ActiveNode: nodeB.NodeRef,
+	}, map[string]any{
+		"bgpCaptureClaim":         bgpCaptureClaimStatus(initialA),
+		"bgpCaptureClaimEpochSeq": initialA.EpochSeq,
+	}, now.Add(time.Minute))
+	if graceful.Reason != "graceful-drain" {
+		t.Fatalf("graceful reason = %q, want graceful-drain", graceful.Reason)
 	}
 }
 
