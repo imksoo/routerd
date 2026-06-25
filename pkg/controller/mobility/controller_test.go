@@ -158,6 +158,67 @@ func TestControllerBGPModeOnPremL2WaitsForLocalOwnershipObservation(t *testing.T
 	}
 }
 
+func TestControllerBGPModeOnPremL2DiscoveryWarmupKeepsPoolPending(t *testing.T) {
+	now := time.Date(2026, 6, 25, 3, 5, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := plannedPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	spec.Members[0].OwnershipDiscovery = api.MobilityOwnershipDiscovery{
+		Mode: "onprem-l2",
+		Sources: []api.MobilityOwnershipDiscoverySource{
+			{Type: OnPremSourceARPObserver, Interface: "lan"},
+		},
+	}
+	observation := onPremObservation{
+		Action:     "observed",
+		Address:    "10.88.60.15",
+		MAC:        "02:00:00:00:00:15",
+		Interface:  "lan",
+		SourceType: OnPremSourceARPObserver,
+		ObservedAt: now.Add(-5 * time.Second),
+	}
+	recordEvent(t, store, onPremDiscoveryObservedEvent("cloudedge", "cloudedge", "onprem-router", "10.88.60.15/32", observation, now.Add(-5*time.Second), 2*time.Minute))
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoveryPhase":    "Observed",
+		"discoveryMode":     "onprem-l2",
+		"discoveryObserved": 1,
+		"discoveryArmedAt":  now.Add(-5 * time.Second).Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: planningRouterForNode("onprem-router", spec), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["phase"] != "Pending" || status["plannerPhase"] != "Pending" || status["ownershipResolverPhase"] != "Pending" {
+		t.Fatalf("status = %#v, want Pending during onprem-l2 discovery warmup", status)
+	}
+	if !strings.Contains(fmt.Sprint(status["plannerReason"]), "warming up") {
+		t.Fatalf("plannerReason = %#v, want warmup reason", status["plannerReason"])
+	}
+
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoveryPhase":    "Observed",
+		"discoveryMode":     "onprem-l2",
+		"discoveryObserved": 1,
+		"discoveryArmedAt":  now.Add(-onPremL2DiscoveryWarmup - time.Second).Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+	bgp = &fakeBGPPaths{}
+	controller = Controller{Router: planningRouterForNode("onprem-router", spec), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile after warmup: %v", err)
+	}
+	status = store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["phase"] != "Ready" || status["plannerPhase"] != "BGPPlanned" {
+		t.Fatalf("status = %#v, want Ready after onprem-l2 discovery warmup", status)
+	}
+}
+
 func TestControllerBGPModeProfileSpecMatchesInlineSpec(t *testing.T) {
 	now := time.Date(2026, 6, 4, 10, 0, 0, 0, time.UTC)
 	inlineSpec := awsFailoverPoolSpec()

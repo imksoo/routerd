@@ -436,7 +436,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 			status["providerActionPhase"] = "Blocked"
 		}
 	}
-	if pending, reason := onPremL2OwnershipPending(self, delivery.Placement, ownershipDecisions); pending {
+	if pending, reason := onPremL2OwnershipPending(self, delivery.Placement, ownershipDecisions, poolStatus, now); pending {
 		status["plannerPhase"] = "Pending"
 		status["plannerReason"] = reason
 		status["ownershipResolverPhase"] = "Pending"
@@ -500,7 +500,9 @@ func pendingProviderActionPlanCount(plans []dynamicconfig.ActionPlan, journal []
 	return pending
 }
 
-func onPremL2OwnershipPending(self memberPlanInfo, placement PlacementDecision, decisions []ownershipDecision) (bool, string) {
+const onPremL2DiscoveryWarmup = 30 * time.Second
+
+func onPremL2OwnershipPending(self memberPlanInfo, placement PlacementDecision, decisions []ownershipDecision, status map[string]any, now time.Time) (bool, string) {
 	if strings.TrimSpace(self.Role) != "onprem" || strings.TrimSpace(self.OwnershipDiscovery.Mode) != "onprem-l2" {
 		return false, ""
 	}
@@ -509,6 +511,13 @@ func onPremL2OwnershipPending(self memberPlanInfo, placement PlacementDecision, 
 	}
 	if len(onPremDiscoverySources(self.OwnershipDiscovery)) == 0 {
 		return false, ""
+	}
+	phase := strings.TrimSpace(fmt.Sprint(status["discoveryPhase"]))
+	if phase != "Observed" && phase != "Complete" {
+		return true, "onprem-l2 ownership discovery has not completed an initial observation"
+	}
+	if armedAt, ok := statusTimeValue(status["discoveryArmedAt"]); ok && now.Sub(armedAt) < onPremL2DiscoveryWarmup {
+		return true, fmt.Sprintf("onprem-l2 ownership discovery is warming up for %s", onPremL2DiscoveryWarmup)
 	}
 	for _, decision := range decisions {
 		if strings.TrimSpace(decision.HomeOwnerNode) != strings.TrimSpace(self.NodeRef) {

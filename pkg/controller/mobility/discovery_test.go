@@ -310,6 +310,16 @@ func TestDiscoveryControllerOnPremL2StatusObservedClientsFeedBGPAdvertisement(t 
 	if fmt.Sprint(status["discoveryObserved"]) != "2" {
 		t.Fatalf("status = %#v, want discoveryObserved=2", status)
 	}
+	if status["discoveryPhase"] != "Observed" || status["discoveryAuthoritative"] != false {
+		t.Fatalf("status = %#v, want non-authoritative observed onprem-l2 discovery", status)
+	}
+	if err := discovery.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second Discovery Reconcile: %v", err)
+	}
+	status = store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if fmt.Sprint(status["discoveryObserved"]) != "2" || status["discoveryPhase"] != "Observed" {
+		t.Fatalf("status = %#v, want unchanged observed clients to keep discovery observed", status)
+	}
 
 	bgp := &fakeBGPPaths{}
 	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
@@ -318,6 +328,47 @@ func TestDiscoveryControllerOnPremL2StatusObservedClientsFeedBGPAdvertisement(t 
 	}
 	if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "pve-rt08"), "192.168.123.132/32"); !ok {
 		t.Fatalf("paths = %#v, want status-observed owner advertised", bgp.paths)
+	}
+}
+
+func TestDiscoveryControllerOnPremL2ArmedUntilClientsObserved(t *testing.T) {
+	now := time.Date(2026, 6, 25, 3, 10, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := api.MobilityPoolSpec{
+		Prefix:         "192.168.123.0/24",
+		GroupRef:       "cloudedge",
+		DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+		Members: []api.MobilityPoolMember{
+			{
+				NodeRef: "pve-rt08",
+				Site:    "pve08",
+				Role:    "onprem",
+				Capture: api.MobilityMemberCapture{
+					Type:       "proxy-arp",
+					Interface:  "svnet1",
+					ActiveWhen: api.CaptureActiveWhen{Type: "single-router"},
+				},
+				OwnershipDiscovery: api.MobilityOwnershipDiscovery{
+					Mode: "onprem-l2",
+					Sources: []api.MobilityOwnershipDiscoverySource{
+						{Type: OnPremSourceARPObserver, Interface: "svnet1"},
+					},
+				},
+			},
+			{NodeRef: "k8s-rt02", Site: "core", Role: "cloud"},
+		},
+	}
+	router := staticRouter("pve-rt08", spec)
+	discovery := DiscoveryController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := discovery.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Discovery Reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["discoveryPhase"] != "Armed" || fmt.Sprint(status["discoveryObserved"]) != "0" {
+		t.Fatalf("status = %#v, want armed onprem-l2 discovery before any client is observed", status)
+	}
+	if _, ok := statusTimeValue(status["discoveryArmedAt"]); !ok {
+		t.Fatalf("status = %#v, want discoveryArmedAt", status)
 	}
 }
 

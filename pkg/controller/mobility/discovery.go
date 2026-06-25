@@ -363,6 +363,11 @@ func (c DiscoveryController) reconcileOnPremL2Discovery(ctx context.Context, poo
 	if err != nil {
 		return err
 	}
+	existingStatus := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName)
+	armedAt := now
+	if parsed, ok := statusTimeValue(existingStatus["discoveryArmedAt"]); ok {
+		armedAt = parsed
+	}
 	sources := onPremDiscoverySources(discovery)
 	statusSources := make([]map[string]string, 0, len(sources))
 	for _, source := range sources {
@@ -381,15 +386,23 @@ func (c DiscoveryController) reconcileOnPremL2Discovery(ctx context.Context, poo
 		}
 		statusSources = append(statusSources, item)
 	}
+	phase := "Armed"
+	reason := "onprem-l2 event sources armed"
+	if observed > 0 {
+		phase = "Observed"
+		reason = "onprem-l2 local clients observed"
+	}
 	c.saveDiscoveryStatus(poolName, map[string]any{
-		"discoveryPhase":       "Ready",
-		"discoveryReason":      "onprem-l2 event sources armed",
-		"discoveryMode":        "onprem-l2",
-		"discoverySources":     statusSources,
-		"discoveryObserved":    observed,
-		"discoveryLastScanAt":  now.Format(time.RFC3339Nano),
-		"discoveryNextScanAt":  "",
-		"discoverySourceCount": len(statusSources),
+		"discoveryPhase":         phase,
+		"discoveryReason":        reason,
+		"discoveryMode":          "onprem-l2",
+		"discoverySources":       statusSources,
+		"discoveryObserved":      observed,
+		"discoveryAuthoritative": false,
+		"discoveryArmedAt":       armedAt.Format(time.RFC3339Nano),
+		"discoveryLastScanAt":    now.Format(time.RFC3339Nano),
+		"discoveryNextScanAt":    "",
+		"discoverySourceCount":   len(statusSources),
 	})
 	return nil
 }
@@ -430,12 +443,19 @@ func (c DiscoveryController) recordOnPremStatusObservations(ctx context.Context,
 				SourceType: firstNonEmpty(client.SourceType, snapshot.SourceType),
 				ObservedAt: now,
 			}
+			address, ok := normalizeDiscoveredAddress(observation.Address, poolPrefix)
+			if !ok || !discoveryScopeAllowsAddress(self.OwnershipDiscovery.Scope, address) {
+				continue
+			}
+			if _, ok := matchingOnPremDiscoverySource(self, observation); !ok {
+				continue
+			}
+			observed++
 			ok, err := c.recordOnPremObservation(poolName, spec, self, poolPrefix, observation, now)
 			if err != nil {
 				return observed, err
 			}
 			if ok {
-				observed++
 				recorded = true
 			}
 		}
@@ -537,6 +557,28 @@ func statusValueString(status map[string]any, key string) string {
 		return ""
 	}
 	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func statusTimeValue(value any) (time.Time, bool) {
+	switch typed := value.(type) {
+	case time.Time:
+		if typed.IsZero() {
+			return time.Time{}, false
+		}
+		return typed.UTC(), true
+	case string:
+		typed = strings.TrimSpace(typed)
+		if typed == "" {
+			return time.Time{}, false
+		}
+		if parsed, err := time.Parse(time.RFC3339Nano, typed); err == nil {
+			return parsed.UTC(), true
+		}
+		if parsed, err := time.Parse(time.RFC3339, typed); err == nil {
+			return parsed.UTC(), true
+		}
+	}
+	return time.Time{}, false
 }
 
 type onPremObservation struct {
