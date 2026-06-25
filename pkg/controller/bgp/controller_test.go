@@ -95,6 +95,7 @@ type fakeServer struct {
 	applied          bgpdaemon.AppliedConfig
 	deletedPathUUIDs [][]byte
 	resetRequests    []*gobgpapi.ResetPeerRequest
+	resetErrors      []error
 	callLog          []string
 
 	policyRequest     *gobgpapi.SetPoliciesRequest
@@ -193,6 +194,13 @@ func (s *fakeServer) UpdatePeer(_ context.Context, req *gobgpapi.UpdatePeerReque
 
 func (s *fakeServer) ResetPeer(_ context.Context, req *gobgpapi.ResetPeerRequest) error {
 	s.resetRequests = append(s.resetRequests, req)
+	if len(s.resetErrors) > 0 {
+		err := s.resetErrors[0]
+		s.resetErrors = s.resetErrors[1:]
+		if err != nil {
+			return err
+		}
+	}
 	if req.GetSoft() {
 		switch req.GetDirection() {
 		case gobgpapi.ResetPeerRequest_IN:
@@ -1796,6 +1804,92 @@ func TestReconcileBFDObservationNeverDeconfiguresPeer(t *testing.T) {
 	}
 	if _, ok := server.peers["10.0.0.21"]; !ok {
 		t.Fatalf("peer was not restored after BFD Up: %#v", server.peers)
+	}
+}
+
+func TestReconcileBFDDownHardResetRetriesAfterFailure(t *testing.T) {
+	router := bgpRouter()
+	peer := router.Spec.Resources[1].Spec.(api.BGPPeerSpec)
+	peer.BFD = "BFD/k8s"
+	router.Spec.Resources[1].Spec = peer
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BFD"},
+		Metadata: api.ObjectMeta{Name: "k8s"},
+		Spec:     api.BFDSpec{Peer: "BGPPeer/k8s"},
+	})
+	server := &fakeServer{}
+	controller := Controller{
+		Router: router,
+		Store: mapStore{
+			api.NetAPIVersion + "/BFD/k8s": {
+				"phase":      "Up",
+				"peerStates": map[string]any{"10.0.0.21": "Up"},
+			},
+		},
+		Server: server,
+		FIB:    &fakeFIB{},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial up reconcile: %v", err)
+	}
+	server.resetErrors = []error{errors.New("temporary reset failure")}
+	controller.Store.SaveObjectStatus(api.NetAPIVersion, "BFD", "k8s", map[string]any{
+		"phase":      "Down",
+		"peerStates": map[string]any{"10.0.0.21": "Down"},
+	})
+	if err := controller.Reconcile(context.Background()); err == nil {
+		t.Fatal("BFD Down reset failure should keep BGPRouter pending")
+	}
+	if len(server.resetRequests) != 1 || server.hardResets != 0 {
+		t.Fatalf("after failed reset requests/hardResets = %d/%d, want 1/0", len(server.resetRequests), server.hardResets)
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("retry reconcile: %v", err)
+	}
+	if len(server.resetRequests) != 2 || server.hardResets != 1 {
+		t.Fatalf("after retry requests/hardResets = %d/%d, want 2/1", len(server.resetRequests), server.hardResets)
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("sustained down after successful reset: %v", err)
+	}
+	if len(server.resetRequests) != 2 || server.hardResets != 1 {
+		t.Fatalf("after successful reset sustained down requests/hardResets = %d/%d, want no repeat", len(server.resetRequests), server.hardResets)
+	}
+}
+
+func TestHardResetBFDDownPeersContinuesAfterPeerFailure(t *testing.T) {
+	server := &fakeServer{resetErrors: []error{errors.New("first reset failed"), nil}}
+	controller := Controller{
+		Server: server,
+		bfdPeerResetPending: map[string]bool{
+			"BFD/a|10.0.0.21": true,
+			"BFD/b|10.0.0.22": true,
+		},
+	}
+	err := controller.hardResetBFDDownPeers(context.Background(), []bfdPeerResetTarget{
+		{Key: "BFD/a|10.0.0.21", Address: "10.0.0.21"},
+		{Key: "BFD/b|10.0.0.22", Address: "10.0.0.22"},
+	})
+	if err == nil {
+		t.Fatal("want aggregate reset error")
+	}
+	if len(server.resetRequests) != 2 || server.hardResets != 1 {
+		t.Fatalf("requests/hardResets = %d/%d, want both attempted and second succeeded", len(server.resetRequests), server.hardResets)
+	}
+	if !controller.bfdPeerResetPending["BFD/a|10.0.0.21"] {
+		t.Fatal("failed peer reset should remain pending")
+	}
+	if controller.bfdPeerResetPending["BFD/b|10.0.0.22"] {
+		t.Fatal("successful peer reset should clear pending")
+	}
+	if err := controller.hardResetBFDDownPeers(context.Background(), []bfdPeerResetTarget{
+		{Key: "BFD/a|10.0.0.21", Address: "10.0.0.21"},
+		{Key: "BFD/b|10.0.0.22", Address: "10.0.0.22"},
+	}); err != nil {
+		t.Fatalf("retry pending peer: %v", err)
+	}
+	if len(server.resetRequests) != 3 || server.hardResets != 2 {
+		t.Fatalf("after retry requests/hardResets = %d/%d, want only failed peer retried", len(server.resetRequests), server.hardResets)
 	}
 }
 
