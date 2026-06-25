@@ -101,7 +101,11 @@ routerd changes behavior based on the priority relationship.
   move one at a time, with **zero dataplane dip**.
 - **When the active dies (regardless of priority)** → **reliable failover**. If
   the holder's VM stops or its OS fails, a standby seizes the secondary IPs,
-  takes over the BGP advertisement, and restores the dataplane automatically.
+  takes over the BGP advertisement, and restores the dataplane automatically for
+  new flows after convergence. Long-lived TCP sessions that were already in
+  flight during an abrupt active loss may reset or stall; applications should
+  retry those sessions, or a future state-sync design must explicitly preserve
+  them.
 
 To reconcile all three, routerd combines the following mechanisms (details in
 [internals](../reference/cloudedge-sam-internals.md)).

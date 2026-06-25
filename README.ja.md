@@ -71,7 +71,9 @@ routerd は、次の独立した特徴を大切にします。
   profile と endpoint 専用 underlay としての WireGuard 暗号化を組み合わせます。
   on-prem/AWS/Azure/OCI をまたいでアドレスが移動し、BGP best-path を真実の源と
   します。同優先度のメンバーは no-preempt で切り替えを最小化し、異優先度では
-  瞬断なしで高優先へ自動復帰し、稼働系の死亡時は必ず standby へ failover します。
+  瞬断なしで高優先へ自動復帰し、稼働系の死亡時は収束後の新規 flow を standby
+  へ failover します。突然の failover では、切り替え前から存在した TCP session
+  が application retry なしで必ず継続することまでは保証しません。
   詳細は [CloudEdge SAM とは](docs/concepts/cloudedge-sam.md) と
   [CloudEdge SAM 内部実装](docs/reference/cloudedge-sam-internals.md) を参照。
 - **作成支援**: 生成済み JSON Schema、VS Code/YAML Language Server の
