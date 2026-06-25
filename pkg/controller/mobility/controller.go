@@ -223,7 +223,6 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		return fmt.Errorf("list action journal: %w", err)
 	}
 	providerFailures := interpretProviderCaptureAssignFailures(actionJournal, discoverySelfCaptures)
-	failedActions := providerFailures.Active
 	previousActionPlans, err := c.previousGeneratedActionPlans(res.Metadata.Name, selfNode)
 	if err != nil {
 		return err
@@ -345,6 +344,8 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		"providerActionPhase":                      "OK",
 		"providerActionError":                      "",
 		"providerActionFailedAddresses":            nil,
+		"providerActionFailedTargets":              nil,
+		"providerActionFailedDetails":              nil,
 		"providerActionFailedCount":                0,
 		"providerActionFailedAt":                   "",
 		"providerActionSupersededFailureAddresses": nil,
@@ -354,6 +355,8 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		"observedSelfStaleCaptures":                observedSelfStaleCaptureStatus(ownershipDecisions, selfNode, observedStaleSince, now),
 	}
 	pendingActionCount := pendingProviderActionPlanCount(actionPlans, actionJournal)
+	failedActions := failedProviderActionPlans(actionPlans, actionJournal, discoverySelfCaptures)
+	failedActions = appendProviderCaptureAssignFailures(failedActions, providerFailures.Active)
 	status["providerActionPendingCount"] = pendingActionCount
 	for key, value := range bgpSeizeHoldDownStatus(delivery.Placement) {
 		status[key] = value
@@ -383,18 +386,48 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	if len(failedActions) > 0 {
 		status["providerActionPhase"] = "Failed"
 		var failedAddrs []string
+		var failedTargets []string
+		var failedDetails []map[string]string
 		var lastError string
 		var lastFailedAt time.Time
-		for addr, rec := range failedActions {
-			failedAddrs = append(failedAddrs, addr)
-			if rec.ExecutedAt.After(lastFailedAt) {
-				lastFailedAt = rec.ExecutedAt
-				lastError = rec.Error
+		for _, failed := range failedActions {
+			if failed.Address != "" {
+				failedAddrs = append(failedAddrs, failed.Address)
+			}
+			target := failed.Target
+			if target == "" {
+				target = failed.IdempotencyKey
+			}
+			if target != "" {
+				failedTargets = append(failedTargets, target)
+			}
+			detail := map[string]string{
+				"action":         failed.Action,
+				"address":        failed.Address,
+				"target":         target,
+				"provider":       failed.Provider,
+				"providerRef":    failed.ProviderRef,
+				"idempotencyKey": failed.IdempotencyKey,
+				"error":          failed.Error,
+			}
+			if !failed.FailedAt.IsZero() {
+				detail["failedAt"] = failed.FailedAt.Format(time.RFC3339)
+			}
+			failedDetails = append(failedDetails, detail)
+			if failed.FailedAt.After(lastFailedAt) {
+				lastFailedAt = failed.FailedAt
+				lastError = failed.Error
 			}
 		}
 		sort.Strings(failedAddrs)
+		sort.Strings(failedTargets)
+		sort.Slice(failedDetails, func(i, j int) bool {
+			return failedDetails[i]["idempotencyKey"] < failedDetails[j]["idempotencyKey"]
+		})
 		status["providerActionError"] = lastError
 		status["providerActionFailedAddresses"] = failedAddrs
+		status["providerActionFailedTargets"] = failedTargets
+		status["providerActionFailedDetails"] = failedDetails
 		status["providerActionFailedCount"] = len(failedActions)
 		if !lastFailedAt.IsZero() {
 			status["providerActionFailedAt"] = lastFailedAt.Format(time.RFC3339)
@@ -436,7 +469,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 			status["providerActionPhase"] = "Blocked"
 		}
 	}
-	if pending, reason := onPremL2OwnershipPending(self, delivery.Placement, ownershipDecisions); pending {
+	if pending, reason := onPremL2OwnershipPending(self, delivery.Placement, ownershipDecisions, poolStatus, now); pending {
 		status["plannerPhase"] = "Pending"
 		status["plannerReason"] = reason
 		status["ownershipResolverPhase"] = "Pending"
@@ -500,7 +533,139 @@ func pendingProviderActionPlanCount(plans []dynamicconfig.ActionPlan, journal []
 	return pending
 }
 
-func onPremL2OwnershipPending(self memberPlanInfo, placement PlacementDecision, decisions []ownershipDecision) (bool, string) {
+type providerActionPlanFailure struct {
+	IdempotencyKey string
+	Action         string
+	Address        string
+	Target         string
+	Provider       string
+	ProviderRef    string
+	Error          string
+	FailedAt       time.Time
+}
+
+func failedProviderActionPlans(plans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord, observedSelfCaptures map[string]bool) []providerActionPlanFailure {
+	if len(plans) == 0 {
+		return nil
+	}
+	latest := map[string]routerstate.ActionExecutionRecord{}
+	for _, rec := range journal {
+		key := strings.TrimSpace(rec.IdempotencyKey)
+		if key == "" {
+			continue
+		}
+		prev, found := latest[key]
+		if !found || rec.UpdatedAt.After(prev.UpdatedAt) {
+			latest[key] = rec
+		}
+	}
+	var failed []providerActionPlanFailure
+	for _, plan := range plans {
+		key := strings.TrimSpace(plan.IdempotencyKey)
+		if key == "" {
+			continue
+		}
+		rec, found := latest[key]
+		if !found || strings.TrimSpace(rec.Status) != routerstate.ActionFailed {
+			continue
+		}
+		target := plan.Target
+		if len(target) == 0 {
+			target = decodeActionRecordMap(rec.TargetJSON)
+		}
+		address := normalizeAddressString(target["address"])
+		if isProviderCaptureAssignAction(plan.Action) && address != "" && observedSelfCaptures[address] {
+			continue
+		}
+		failedAt := rec.ExecutedAt
+		if failedAt.IsZero() {
+			failedAt = rec.UpdatedAt
+		}
+		failed = append(failed, providerActionPlanFailure{
+			IdempotencyKey: key,
+			Action:         strings.TrimSpace(firstNonEmpty(plan.Action, rec.Action)),
+			Address:        address,
+			Target:         providerActionFailureTarget(plan.Action, target),
+			Provider:       strings.TrimSpace(firstNonEmpty(plan.Provider, rec.Provider)),
+			ProviderRef:    strings.TrimSpace(firstNonEmpty(plan.ProviderRef, rec.ProviderRef)),
+			Error:          strings.TrimSpace(firstNonEmpty(rec.Error, rec.ResultMessage)),
+			FailedAt:       failedAt,
+		})
+	}
+	sort.Slice(failed, func(i, j int) bool {
+		return failed[i].IdempotencyKey < failed[j].IdempotencyKey
+	})
+	return failed
+}
+
+func appendProviderCaptureAssignFailures(failed []providerActionPlanFailure, active map[string]routerstate.ActionExecutionRecord) []providerActionPlanFailure {
+	if len(active) == 0 {
+		return failed
+	}
+	seen := map[string]bool{}
+	for _, item := range failed {
+		seen[item.IdempotencyKey] = true
+	}
+	for _, rec := range active {
+		key := strings.TrimSpace(rec.IdempotencyKey)
+		if key == "" || seen[key] {
+			continue
+		}
+		target := decodeActionRecordMap(rec.TargetJSON)
+		failedAt := rec.ExecutedAt
+		if failedAt.IsZero() {
+			failedAt = rec.UpdatedAt
+		}
+		failed = append(failed, providerActionPlanFailure{
+			IdempotencyKey: key,
+			Action:         strings.TrimSpace(rec.Action),
+			Address:        normalizeAddressString(target["address"]),
+			Target:         providerActionFailureTarget(rec.Action, target),
+			Provider:       strings.TrimSpace(rec.Provider),
+			ProviderRef:    strings.TrimSpace(rec.ProviderRef),
+			Error:          strings.TrimSpace(firstNonEmpty(rec.Error, rec.ResultMessage)),
+			FailedAt:       failedAt,
+		})
+	}
+	sort.Slice(failed, func(i, j int) bool {
+		return failed[i].IdempotencyKey < failed[j].IdempotencyKey
+	})
+	return failed
+}
+
+func providerActionFailureTarget(action string, target map[string]string) string {
+	switch strings.TrimSpace(action) {
+	case "ensure-forwarding-enabled", "ensure-forwarding-disabled":
+		if value := strings.TrimSpace(target["nicRef"]); value != "" {
+			return value
+		}
+	}
+	for _, key := range []string{"address", "nicRef", "routeTableRef", "providerRef"} {
+		value := strings.TrimSpace(target[key])
+		if value != "" {
+			return value
+		}
+	}
+	if len(target) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(target))
+	for key := range target {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		value := strings.TrimSpace(target[key])
+		if value != "" {
+			return key + "=" + value
+		}
+	}
+	return ""
+}
+
+const onPremL2DiscoveryWarmup = 30 * time.Second
+
+func onPremL2OwnershipPending(self memberPlanInfo, placement PlacementDecision, decisions []ownershipDecision, status map[string]any, now time.Time) (bool, string) {
 	if strings.TrimSpace(self.Role) != "onprem" || strings.TrimSpace(self.OwnershipDiscovery.Mode) != "onprem-l2" {
 		return false, ""
 	}
@@ -509,6 +674,13 @@ func onPremL2OwnershipPending(self memberPlanInfo, placement PlacementDecision, 
 	}
 	if len(onPremDiscoverySources(self.OwnershipDiscovery)) == 0 {
 		return false, ""
+	}
+	phase := strings.TrimSpace(fmt.Sprint(status["discoveryPhase"]))
+	if phase != "Observed" && phase != "Complete" {
+		return true, "onprem-l2 ownership discovery has not completed an initial observation"
+	}
+	if armedAt, ok := statusTimeValue(status["discoveryArmedAt"]); ok && now.Sub(armedAt) < onPremL2DiscoveryWarmup {
+		return true, fmt.Sprintf("onprem-l2 ownership discovery is warming up for %s", onPremL2DiscoveryWarmup)
 	}
 	for _, decision := range decisions {
 		if strings.TrimSpace(decision.HomeOwnerNode) != strings.TrimSpace(self.NodeRef) {
