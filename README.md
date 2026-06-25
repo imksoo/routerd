@@ -72,8 +72,10 @@ The project focuses on a few independent strengths:
   underlay. Selected addresses move across on-prem/AWS/Azure/OCI with the BGP
   best path as the source of truth: equal-priority members are no-preempt to
   minimize churn, unequal-priority members auto-restore to the higher priority
-  with no dataplane dip, and an active node's death always fails over to a
-  standby. See [CloudEdge SAM とは](docs/concepts/cloudedge-sam.md) and
+  with no dataplane dip, and an active node's death fails over new flows to a
+  standby after convergence. Abrupt failover does not promise that TCP sessions
+  already in flight survive without an application retry. See
+  [CloudEdge SAM とは](docs/concepts/cloudedge-sam.md) and
   [CloudEdge SAM internals](docs/reference/cloudedge-sam-internals.md).
 - **Authoring tools** through generated JSON Schema, VS Code/YAML Language
   Server modelines, and the browser config wizard at `https://routerd.net/wizard`.

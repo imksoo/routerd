@@ -142,6 +142,9 @@ fenced active into standby.
   The fence prevents this.
 - A node past the settle window (a long-running standby) is not fenced, so **real
   failover is not delayed**: it seizes immediately when the active dies.
+  This is a new-flow reachability guarantee after convergence; in-flight TCP
+  sessions can still reset or stall across an abrupt active loss because SAM
+  does not synchronize conntrack or transport state.
 
 ### 2. Holder retention
 
@@ -255,12 +258,17 @@ show`.
 Measured on an unequal-priority pair (priority 10 vs 20, Azure hardware):
 
 - **A1 failover**: stop the high-priority node → the low-priority node seizes all
-  three `/32`s in about 132 seconds → full dataplane recovery.
+  three `/32`s in about 132 seconds → new-flow dataplane recovery.
 - **A2 restore**: bring the high-priority node back → it reclaims the three `/32`s
   one at a time (no flapping). Client ping at 1-second intervals during the
   reclaim had **0% loss**.
 - For an equal-priority pair, no-preempt held for 561 seconds with no holder
   swap, no split, no dip, and no cold-start deadlock.
+- A long-lived throttled HTTP transfer that was already active before an abrupt
+  active leaf stop is tracked separately from the normal failover matrix. It can
+  time out even when post-convergence ping, SSH, tracepath, and fresh HTTP
+  transfers pass through the standby. Treat this as expected reset/retry
+  semantics until a future session-continuity design explicitly changes it.
 
 ## Related
 
