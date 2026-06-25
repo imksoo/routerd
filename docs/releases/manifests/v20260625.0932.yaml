@@ -1,0 +1,123 @@
+release:
+  version: v20260625.0932
+  commit: a9ee2f5e77253357564df6751f8e0c462f8b7ec7
+  baseline: v20260624.2315
+  artifact:
+    path: dist/linux-amd64/routerd-v20260625.0932-linux-amd64.tar.gz
+    sha256: 1fa6731c340aeb3da7562ac32d5b308c380b8295376cc7af38a3986a2f2a17c9
+  checks:
+    cloudProvisioning: PASS
+    cloudDestroy: PASS
+    terraformStateAfterDestroy: empty
+  fullTopology:
+    status: PARTIAL_PASS
+    issue: 654
+    runId: p654-v20260625-0932-run1-20260625T101549Z
+    sourceLabBundle: /home/imksoo/routerd-labs-archive/private/p612-c0d7049f-20260625T065113Z/sam
+    evidence:
+      baseline: /home/imksoo/routerd-labs-archive/evidence/p654-v20260625-0932-run1-20260625T101549Z-attempt2
+      failoverSmoke: /home/imksoo/routerd-labs-archive/evidence/p654-v20260625-0932-run1-20260625T101549Z-attempt3-failover-light
+    baseline:
+      convergence:
+        status: PASS
+        seconds: 25
+      matrix:
+        status: PASS
+        passed: 56
+        total: 56
+      legacyProtocols:
+        status: PASS
+        passed: 56
+        total: 56
+      performanceSmoke:
+        status: PASS
+        passedPairs:
+          - aws-client-a -> aws-client-b
+          - aws-client-a -> azure-client-a
+          - aws-client-a -> azure-client-b
+          - aws-client-a -> oci-client-a
+    failoverSmoke:
+      initialConvergence:
+        status: PASS
+        seconds: 49
+      initialMatrix:
+        status: PASS
+        passed: 56
+        total: 56
+      node: aws-rr-a
+      afterFailoverConvergence:
+        status: PASS
+        seconds: 23
+      afterFailoverMatrix:
+        status: PASS
+        passed: 56
+        total: 56
+      rejoinMatrix:
+        status: NOT_RUN
+        reason: stopped before multi-node failover loop continued, to limit cloud cost
+    attempts:
+      - name: attempt1
+        status: HARNESS_RETRY
+        reason: PVE SSH known_hosts race while VMs were still becoming reachable
+      - name: attempt2
+        status: BASELINE_PASS
+        reason: full baseline deploy, convergence, matrix, legacy protocol matrix passed
+      - name: attempt3-failover-light
+        status: FAILOVER_SMOKE_PASS
+        reason: skip-deploy light failover smoke passed through aws-rr-a failure
+    limitations:
+      - >-
+        Issue #654 asks for repeated fresh cloud/PVE qualification. This
+        manifest records the first fresh deployment only; additional repeated
+        runs remain pending.
+      - >-
+        Full multi-node failover, graceful drain, BFD restart, provider delay,
+        and empty on-prem client scenarios were not completed in this run.
+      - >-
+        Performance validation was intentionally stopped after the first four
+        successful pairs to avoid keeping the full topology up longer than
+        needed for the initial release checkpoint.
+  notes:
+    - >-
+      The cloud/PVE environment was destroyed immediately after collecting the
+      run1 evidence. The OpenTofu state list was empty after destroy.
+    - >-
+      The result is sufficient as a release checkpoint smoke qualification,
+      but not sufficient to close #654 as repeated qualification.
+  knownIssues:
+    - issue: 654
+      title: Qualify v20260625.0932 with repeated fresh cloud/PVE deployments
+      severity: P0
+      status: in-progress
+    - issue: 655
+      title: Replace deterministic SAM claim hash with persisted unique claim epoch
+      severity: P1
+      status: open
+    - issue: 656
+      title: Split group coordinator lease from per-address capture assignment generation
+      severity: P1
+      status: open
+    - issue: 657
+      title: Reject stale provider actions at execution time
+      severity: P1
+      status: open
+    - issue: 658
+      title: Make provider observation generation- and freshness-aware
+      severity: P1
+      status: open
+    - issue: 659
+      title: Complete authoritative on-prem discovery snapshots
+      severity: P1
+      status: open
+    - issue: 660
+      title: Add address-level SAM conditions and routerctl mobility explain
+      severity: P2
+      status: open
+    - issue: 661
+      title: Make BFD Down recovery restart-safe
+      severity: P2
+      status: open
+    - issue: 662
+      title: Add microVM provider-contract integration harness
+      severity: P3
+      status: open
