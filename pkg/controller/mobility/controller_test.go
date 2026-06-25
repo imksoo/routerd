@@ -714,6 +714,79 @@ func TestControllerBGPModeClearsStaleProviderActionFailureStatus(t *testing.T) {
 	}
 }
 
+func TestControllerBGPModeWaitsForProviderObservationAfterAssignSuccess(t *testing.T) {
+	now := time.Date(2026, 6, 25, 5, 10, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := plannedPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	spec.Members[0].StaticOwnedAddresses = []string{"10.88.60.10/32"}
+	source := DynamicSource("cloudedge", "azure-router")
+	address := "10.88.60.10/32"
+	saveBGPInstalledNextHops(t, store, map[string][]string{address: {"10.99.0.1"}})
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoverySelfPrivateIPs":        []string{"10.88.60.11/32"},
+		"discoverySelfCapturedAddresses": []string{},
+		"discoverySelfForwardingEnabled": true,
+		"discoveryLastScanAt":            now.Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+
+	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("azure-router", spec)), Store: store, BGPPaths: &fakeBGPPaths{}, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, source).ActionPlansJSON)
+	assign := findActionPlanByAddress(plans, "assign-secondary-ip", address)
+	if assign == nil {
+		t.Fatalf("plans = %#v, want provider assign", plans)
+	}
+	id, err := importApprovedAction(t, assign, source, store, now)
+	if err != nil {
+		t.Fatalf("import action: %v", err)
+	}
+	if err := store.MarkActionResult(id, routerstate.ActionSucceeded, "ok", "", nil, now.Add(time.Second)); err != nil {
+		t.Fatalf("MarkActionResult: %v", err)
+	}
+
+	controller.Now = func() time.Time { return now.Add(2 * time.Second) }
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("pending observation Reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["phase"] != "Pending" || status["plannerPhase"] != "Pending" || status["providerObservationPhase"] != "Pending" {
+		t.Fatalf("status = %#v, want provider observation pending", status)
+	}
+	if fmt.Sprint(status["providerObservationPendingAddresses"]) != "["+address+"]" || fmt.Sprint(status["providerObservationPendingCount"]) != "1" {
+		t.Fatalf("status = %#v, want pending observation address", status)
+	}
+	details := ownershipStatusDecisions(t, status["providerObservationDetails"])
+	pending := ownershipStatusDecisionByAddress(t, details, address)
+	if pending["phase"] != "Pending" || pending["reason"] == "" {
+		t.Fatalf("providerObservationDetails = %#v, want pending reason", details)
+	}
+
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoverySelfPrivateIPs":        []string{"10.88.60.11/32"},
+		"discoverySelfCapturedAddresses": []string{address},
+		"discoverySelfForwardingEnabled": true,
+		"discoveryLastScanAt":            now.Add(3 * time.Second).Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus observed: %v", err)
+	}
+	controller.Now = func() time.Time { return now.Add(4 * time.Second) }
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("confirmed observation Reconcile: %v", err)
+	}
+	status = store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["providerObservationPhase"] != "OK" || fmt.Sprint(status["providerObservationPendingCount"]) != "0" {
+		t.Fatalf("status = %#v, want confirmed observation", status)
+	}
+	if fmt.Sprint(status["providerObservationConfirmedAddresses"]) != "["+address+"]" || fmt.Sprint(status["providerObservationConfirmedCount"]) != "1" {
+		t.Fatalf("status = %#v, want confirmed observation address", status)
+	}
+}
+
 func TestControllerBGPModeReportsFailedForwardingProviderAction(t *testing.T) {
 	now := time.Date(2026, 6, 25, 4, 30, 0, 0, time.UTC)
 	store := testStore(t, now)
