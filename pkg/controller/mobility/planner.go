@@ -21,6 +21,13 @@ const (
 	dynamicSourceKind  = "MobilityPool"
 	captureParamHolder = "mobilityCaptureHolder"
 
+	captureClaimPhaseParam          = "mobilityClaimPhase"
+	captureClaimGenerationParam     = "mobilityClaimGeneration"
+	captureClaimDesiredHolderParam  = "mobilityClaimDesiredHolder"
+	captureClaimPreviousHolderParam = "mobilityClaimPreviousHolder"
+	captureClaimReasonParam         = "mobilityClaimReason"
+	captureClaimLeaseUntilParam     = "mobilityClaimLeaseUntil"
+
 	captureStrategyProxyARP    = "proxy-arp"
 	captureStrategySecondaryIP = "secondary-ip"
 	captureStrategyRouteTable  = "route-table"

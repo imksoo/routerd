@@ -1901,6 +1901,80 @@ func TestPlanBGPMobilityDeliverySuppressesDistributedCaptureDuringSeizeHoldDown(
 	if assign := findActionPlanByAddress(delivery.ActionPlans, "assign-secondary-ip", "10.88.60.10/32"); assign != nil {
 		t.Fatalf("action plans = %#v, hold-down must not assign new distributed captures", delivery.ActionPlans)
 	}
+	claim := bgpCaptureClaimForPlacement(self, delivery.Placement, now)
+	if claim.Phase != "Pending" || claim.DesiredHolder != self.NodeRef || claim.PreviousHolder != "aws-router-a" {
+		t.Fatalf("claim = %#v, want pending claim for self against previous active", claim)
+	}
+	if claim.Generation == "" || claim.PendingUntil.IsZero() {
+		t.Fatalf("claim = %#v, want generation and pendingUntil", claim)
+	}
+}
+
+func TestPlanBGPMobilityDeliveryStampsActiveClaimGenerationOnAssign(t *testing.T) {
+	now := time.Date(2026, 6, 24, 15, 5, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-b"]
+	address := "10.88.60.10/32"
+	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+		PoolName: "cloudedge",
+		Source:   DynamicSource("cloudedge", self.NodeRef),
+		Self:     self,
+		Members:  members,
+		Spec:     spec,
+		Decisions: []ownershipDecision{{
+			Address:       address,
+			Class:         ownershipClassRemoteHomeOwned,
+			HomeOwnerNode: "azure-router",
+		}},
+		Placement: PlacementDecision{
+			Group:                 "aws-edge",
+			Active:                true,
+			ActiveNode:            self.NodeRef,
+			Seize:                 true,
+			ActiveIdentityNodeRef: "aws-router-a",
+			Reason:                "active BGP liveness marker is absent",
+		},
+		InstalledNextHops: map[string][]string{
+			address: {"10.99.0.3"},
+		},
+		Profiles: map[string]api.CloudProviderProfileSpec{
+			"aws-provider": {Provider: "aws"},
+		},
+		ObservedSelfCaptures: map[string]bool{},
+		ObservedSelfIPsOK:    true,
+		RIBObserved:          true,
+		Now:                  now,
+	})
+	if err != nil {
+		t.Fatalf("planBGPMobilityDelivery: %v", err)
+	}
+	assign := findActionPlanByAddress(delivery.ActionPlans, "assign-secondary-ip", address)
+	if assign == nil {
+		t.Fatalf("action plans = %#v, want assign", delivery.ActionPlans)
+	}
+	if assign.Parameters["allowReassignment"] != "true" {
+		t.Fatalf("assign parameters = %#v, want failover reassignment", assign.Parameters)
+	}
+	if assign.Parameters[captureClaimPhaseParam] != "Active" {
+		t.Fatalf("assign parameters = %#v, want active claim phase", assign.Parameters)
+	}
+	if assign.Parameters[captureClaimGenerationParam] == "" {
+		t.Fatalf("assign parameters = %#v, want claim generation", assign.Parameters)
+	}
+	if !strings.Contains(assign.IdempotencyKey, ":claimgen:"+safeName(assign.Parameters[captureClaimGenerationParam])) {
+		t.Fatalf("assign idempotencyKey = %q, parameters = %#v, want claim generation fence", assign.IdempotencyKey, assign.Parameters)
+	}
+	if assign.Parameters[captureClaimDesiredHolderParam] != self.NodeRef {
+		t.Fatalf("assign parameters = %#v, want desired holder %s", assign.Parameters, self.NodeRef)
+	}
+	if assign.Parameters[captureClaimPreviousHolderParam] != "aws-router-a" {
+		t.Fatalf("assign parameters = %#v, want previous holder", assign.Parameters)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, assign.Parameters[captureClaimLeaseUntilParam]); err != nil {
+		t.Fatalf("assign parameters = %#v, want RFC3339 leaseUntil: %v", assign.Parameters, err)
+	}
 }
 
 func TestControllerBGPModeStandbyReleasesConfirmedCaptureWhenActiveMarkerReturns(t *testing.T) {
