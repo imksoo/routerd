@@ -572,7 +572,7 @@ func assignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mode 
 			return res
 		}
 		if isAddressConflictError(err) {
-			return recoverSecondaryIPConflict(ctx, t, runner, err)
+			return failSecondaryIPConflict(ctx, t, runner, err)
 		}
 		return failed("assign-secondary-ip execute: ip-config create failed", err)
 	}
@@ -582,7 +582,7 @@ func assignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mode 
 	return res
 }
 
-func recoverSecondaryIPConflict(ctx context.Context, t nicTarget, runner azRunner, originalErr error) executeActionResult {
+func failSecondaryIPConflict(ctx context.Context, t nicTarget, runner azRunner, originalErr error) executeActionResult {
 	res := newResult()
 	res.Status.UndoAvailable = true
 
@@ -603,23 +603,16 @@ func recoverSecondaryIPConflict(ctx context.Context, t nicTarget, runner azRunne
 		res.Status.Observed = map[string]string{"assignedAddress": t.address, "ipConfigName": cfg.Name, "assignAlreadyPresent": "true"}
 		return res
 	}
-	if err := deleteIPConfig(ctx, runner, holder); err != nil {
-		return failed("assign-secondary-ip execute: displaced ip-config delete after conflict failed", err)
+	res.Status.Status = statusFailed
+	res.Status.Message = "assign-secondary-ip execute: address held by another target"
+	res.Status.Error = originalErr.Error()
+	res.Status.Observed = map[string]string{
+		"failureClass":                "addressHeldByAnotherTarget",
+		"addressHeldByAnotherTarget":  "true",
+		"observedHolderResourceGroup": holder.resourceGroup,
+		"observedHolderNIC":           holder.nicName,
+		"observedHolderIPConfig":      holder.ipConfigName,
 	}
-	if err := createIPConfig(ctx, runner, t); err != nil {
-		return failed("assign-secondary-ip execute: ip-config create after conflict failed", err)
-	}
-	cfg, err := waitForSelfAddress(ctx, runner, t)
-	if err != nil {
-		return failed("assign-secondary-ip execute: verify self nic after conflict failed", err)
-	}
-	if err := waitForDisplacedRelease(ctx, runner, holder, t.address); err != nil {
-		return failed("assign-secondary-ip execute: verify displaced nic after conflict failed", err)
-	}
-
-	res.Status.Status = statusSucceeded
-	res.Status.Message = fmt.Sprintf("assigned %s to %s after releasing stale Azure holder %s/%s (ip-config %s)", t.address, t.nicName, holder.nicName, holder.ipConfigName, cfg.Name)
-	res.Status.Observed = map[string]string{"assignedAddress": t.address, "ipConfigName": cfg.Name, "conflictRecovered": "true"}
 	return res
 }
 

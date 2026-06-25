@@ -9524,6 +9524,38 @@
                       "bgp": {
                         "additionalProperties": false,
                         "properties": {
+                          "bfd": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "detectMultiplier": {
+                                "maximum": 50,
+                                "minimum": 1,
+                                "type": "integer"
+                              },
+                              "enabled": {
+                                "type": "boolean"
+                              },
+                              "interface": {
+                                "type": "string"
+                              },
+                              "minRx": {
+                                "type": "string"
+                              },
+                              "minTx": {
+                                "type": "string"
+                              },
+                              "profile": {
+                                "enum": [
+                                  "",
+                                  "fast",
+                                  "normal",
+                                  "slow"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "type": "object"
+                          },
                           "ebgpMultihop": {
                             "maximum": 255,
                             "minimum": 0,

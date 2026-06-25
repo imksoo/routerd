@@ -481,7 +481,7 @@ func TestAssignExecuteIssuesIPConfigCreate(t *testing.T) {
 	}
 }
 
-func TestAssignExecuteRecoversAzureAddressConflictWithoutSeizeParameter(t *testing.T) {
+func TestAssignExecuteFailsAzureAddressConflictWithoutSeizeParameter(t *testing.T) {
 	f := newSeizeFakeAz()
 	f.oldHolds = false
 	f.createErr = fmt.Errorf("PrivateIPAddressIsAllocated: private IP address 10.88.60.9 is already allocated to nic-old/ipcfg-mobility")
@@ -489,18 +489,21 @@ func TestAssignExecuteRecoversAzureAddressConflictWithoutSeizeParameter(t *testi
 	f.conflictRevealsOld = true
 
 	res := dispatchWith(reqSpec(actionAssignSecondaryIP, modeExecute), f.run)
-	if res.Status.Status != statusSucceeded {
-		t.Fatalf("normal assign should recover stale Azure holder, got status=%q message=%q err=%q", res.Status.Status, res.Status.Message, res.Status.Error)
+	if res.Status.Status != statusFailed {
+		t.Fatalf("normal assign should not seize stale Azure holder, got status=%q message=%q err=%q", res.Status.Status, res.Status.Message, res.Status.Error)
 	}
-	if res.Status.Observed["conflictRecovered"] != "true" {
-		t.Fatalf("observed = %+v, want conflictRecovered=true", res.Status.Observed)
+	if res.Status.Observed["failureClass"] != "addressHeldByAnotherTarget" {
+		t.Fatalf("observed = %+v, want addressHeldByAnotherTarget failure", res.Status.Observed)
+	}
+	if res.Status.Observed["observedHolderNIC"] != "nic-old" || res.Status.Observed["observedHolderIPConfig"] != "ipcfg-mobility" {
+		t.Fatalf("observed = %+v, want stale holder identity", res.Status.Observed)
 	}
 	got := joinedCalls(f.calls)
 	if !containsCallWithoutQuery(got, "network nic list --resource-group rg1") {
 		t.Fatalf("calls = %v, want holder rediscovery by NIC list", got)
 	}
-	if !containsCallWithoutQuery(got, "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility") {
-		t.Fatalf("calls = %v, want stale holder delete", got)
+	if containsCallWithoutQuery(got, "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility") {
+		t.Fatalf("calls = %v, normal assign must not delete stale holder", got)
 	}
 	createCount := 0
 	for _, call := range got {
@@ -508,8 +511,8 @@ func TestAssignExecuteRecoversAzureAddressConflictWithoutSeizeParameter(t *testi
 			createCount++
 		}
 	}
-	if createCount != 2 {
-		t.Fatalf("calls = %v, want create attempted twice around conflict", got)
+	if createCount != 1 {
+		t.Fatalf("calls = %v, want create attempted once without seize", got)
 	}
 }
 
