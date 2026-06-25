@@ -1,0 +1,47 @@
+release:
+  version: v20260624.2315
+  commit: d34736c0d2090a2c397b6d9d8814d70850e6c4bd
+  baseline: v20260624.2053
+  artifact:
+    path: dist/linux-amd64/routerd-d34736c0-linux-amd64.tar.gz
+    sha256: unknown
+  checks:
+    unitTests: PASS
+    schemaChecks: PASS
+  fullTopology:
+    status: PASS
+    convergenceSeconds: 14
+    matrix: 56/56
+    evidence: /home/imksoo/routerd-labs-archive/evidence/cloud-full-topology-v20260624.2315
+  notes:
+    - >-
+      This tag is the post-revert real-machine baseline after PR #641 restored
+      the implementation to the cloud/PVE model.
+    - >-
+      The tag commit mixed BGP capture hold-down status semantics with demo BFD
+      enablement. Future releases should split those into separate commits.
+  knownIssues:
+    - issue: 643
+      title: Prevent Azure secondary-IP conflict recovery from implicitly seizing another NIC
+      severity: P1
+      status: fixed-after-tag
+    - issue: 644
+      title: Make BFD Down hard ResetPeer retry until acknowledged
+      severity: P1
+      status: fixed-after-tag
+    - issue: 645
+      title: Do not report SAM capture Ready until provider observation confirms mutation
+      severity: P2
+      status: open
+    - issue: 646
+      title: Aggregate provider action failures across assign, unassign, forwarding, and route-table actions
+      severity: P2
+      status: open
+    - issue: 647
+      title: Model on-prem discovery lifecycle separately from observed client count
+      severity: P2
+      status: open
+    - issue: 648
+      title: Split release-manifest and demo BFD enablement from hold-down status commits
+      severity: P3
+      status: open
