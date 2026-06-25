@@ -687,6 +687,8 @@ func TestControllerBGPModeClearsStaleProviderActionFailureStatus(t *testing.T) {
 		"providerActionPhase":           "Failed",
 		"providerActionError":           "provider API unavailable",
 		"providerActionFailedAddresses": []string{"10.88.60.11/32"},
+		"providerActionFailedTargets":   []string{"10.88.60.11/32"},
+		"providerActionFailedDetails":   []map[string]string{{"action": "assign-secondary-ip", "address": "10.88.60.11/32"}},
 		"providerActionFailedCount":     1,
 		"providerActionFailedAt":        now.Add(-time.Minute).Format(time.RFC3339),
 	}); err != nil {
@@ -707,8 +709,72 @@ func TestControllerBGPModeClearsStaleProviderActionFailureStatus(t *testing.T) {
 	if status["providerActionPhase"] != "OK" || status["providerActionError"] != "" || fmt.Sprint(status["providerActionFailedCount"]) != "0" {
 		t.Fatalf("provider action failure status was not cleared: %#v", status)
 	}
-	if status["providerActionFailedAddresses"] != nil || status["providerActionFailedAt"] != "" {
+	if status["providerActionFailedAddresses"] != nil || status["providerActionFailedTargets"] != nil || status["providerActionFailedDetails"] != nil || status["providerActionFailedAt"] != "" {
 		t.Fatalf("provider action failure details were not cleared: %#v", status)
+	}
+}
+
+func TestControllerBGPModeReportsFailedForwardingProviderAction(t *testing.T) {
+	now := time.Date(2026, 6, 25, 4, 30, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	saveBGPStatus(t, store, map[string][]string{
+		"10.88.60.10/32": {"10.99.0.1"},
+		"10.88.60.12/32": {"10.99.0.3"},
+	}, nil, nil)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoverySelfNICRef":            "eni-a",
+		"discoverySelfSubnetRef":         "subnet-a",
+		"discoverySelfPrivateIPs":        []string{"10.88.60.11"},
+		"discoverySelfForwardingEnabled": false,
+		"discoveryLastScanAt":            now.Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+	source := DynamicSource("cloudedge", "aws-router-a")
+	controller := Controller{Router: routerWithBGPRouter(planningRouterForNode("aws-router-a", spec)), Store: store, BGPPaths: &fakeBGPPaths{}, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	plans := decodeActionPlans(t, latestPart(t, store, source).ActionPlansJSON)
+	forwarding := findActionPlan(plans, "ensure-forwarding-enabled")
+	if forwarding == nil {
+		t.Fatalf("plans = %#v, want ensure-forwarding-enabled", plans)
+	}
+	id, err := importApprovedAction(t, forwarding, source, store, now)
+	if err != nil {
+		t.Fatalf("import action: %v", err)
+	}
+	failedAt := now.Add(2 * time.Second)
+	if err := store.MarkActionResult(id, routerstate.ActionFailed, "failed", "source/dest check update denied", nil, failedAt); err != nil {
+		t.Fatalf("MarkActionResult: %v", err)
+	}
+
+	controller.Now = func() time.Time { return now.Add(3 * time.Second) }
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["phase"] != "Failed" || status["providerActionPhase"] != "Failed" {
+		t.Fatalf("status = %#v, want failed provider action phase", status)
+	}
+	if fmt.Sprint(status["providerActionFailedCount"]) != "1" || status["providerActionError"] != "source/dest check update denied" {
+		t.Fatalf("status = %#v, want forwarding failure count/error", status)
+	}
+	if status["providerActionFailedAt"] != failedAt.Format(time.RFC3339) {
+		t.Fatalf("status = %#v, want failedAt %s", status, failedAt.Format(time.RFC3339))
+	}
+	details, ok := status["providerActionFailedDetails"].([]interface{})
+	if !ok || len(details) != 1 {
+		t.Fatalf("providerActionFailedDetails = %#v, want one detail", status["providerActionFailedDetails"])
+	}
+	detail, ok := details[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("providerActionFailedDetails = %#v, want object detail", details)
+	}
+	if detail["action"] != "ensure-forwarding-enabled" || detail["target"] != "eni-a" || detail["idempotencyKey"] != forwarding.IdempotencyKey {
+		t.Fatalf("providerActionFailedDetails = %#v, want forwarding target detail", details)
 	}
 }
 
