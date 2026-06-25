@@ -397,6 +397,7 @@ func planCaptureActionPlans(in bgpDeliveryPlannerInput, candidates map[string]bg
 	if err != nil {
 		return nil, err
 	}
+	stampBGPClaimFenceActionPlans(plans, bgpCaptureClaimForPlacement(in.Self, in.Placement, in.Now))
 	plans = filterRetainedStaleCaptureUnassignPlans(plans, retainedStaleCaptureAddresses(in.Decisions, in.InstalledNextHops))
 	if !in.SuppressDeprovision {
 		observed, err := observedSelfStaleCaptureActionPlans(in, candidates)

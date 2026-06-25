@@ -296,6 +296,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	if len(delivery.CaptureCandidates) > 0 && !selfCaptureResolved {
 		actionPlans = nil
 	}
+	captureClaim := bgpCaptureClaimForPlacement(self, delivery.Placement, now)
 	current, err := c.BGPPaths.ListPaths(ctx, source)
 	if err != nil {
 		return fmt.Errorf("list BGP mobility paths: %w", err)
@@ -330,6 +331,12 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		"observedBGPReturnRoutes":                  mapStringKeysSorted(bgpReturnRoutes),
 		"bgpRIBObserved":                           bgpRIBObserved,
 		"bgpCaptureElection":                       bgpCaptureElectionStatus(delivery.Placement),
+		"bgpCaptureClaim":                          bgpCaptureClaimStatus(captureClaim),
+		"bgpCaptureClaimPhase":                     captureClaim.Phase,
+		"bgpCaptureClaimGeneration":                captureClaim.Generation,
+		"bgpCaptureClaimDesiredHolder":             captureClaim.DesiredHolder,
+		"bgpCaptureClaimPreviousHolder":            captureClaim.PreviousHolder,
+		"bgpCaptureClaimReason":                    captureClaim.Reason,
 		"generatedBGPTraps":                        len(delivery.CaptureCandidates),
 		"generatedClaims":                          0,
 		"generatedActions":                         len(actionPlans),
@@ -2246,6 +2253,89 @@ func bgpSeizeHoldDownStatus(decision PlacementDecision) map[string]any {
 	return status
 }
 
+type bgpCaptureClaim struct {
+	Group          string
+	Phase          string
+	Generation     string
+	DesiredHolder  string
+	PreviousHolder string
+	Reason         string
+	PendingUntil   time.Time
+	LeaseUntil     time.Time
+}
+
+func bgpCaptureClaimForPlacement(self memberPlanInfo, placement PlacementDecision, now time.Time) bgpCaptureClaim {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	now = now.UTC()
+	claim := bgpCaptureClaim{
+		Group:         strings.TrimSpace(placement.Group),
+		DesiredHolder: strings.TrimSpace(placement.ActiveNode),
+		Reason:        strings.TrimSpace(placement.Reason),
+	}
+	selfNode := strings.TrimSpace(self.NodeRef)
+	if placement.SeizeHoldDown {
+		claim.Phase = "Pending"
+		claim.DesiredHolder = selfNode
+		claim.PreviousHolder = firstNonEmpty(placement.ActiveIdentityNodeRef, placement.ActiveNode)
+		claim.Reason = firstNonEmpty(claim.Reason, "seize-hold-down")
+		claim.PendingUntil = placement.SeizeHoldDownUntil.UTC()
+	} else if placement.Active && strings.TrimSpace(placement.ActiveNode) == selfNode {
+		claim.Phase = "Active"
+		claim.DesiredHolder = selfNode
+		claim.PreviousHolder = firstNonEmpty(placement.ActiveIdentityNodeRef, "")
+		claim.LeaseUntil = now.Add(DefaultLeaseTTL).UTC()
+		if placement.Seize {
+			claim.Reason = firstNonEmpty(claim.Reason, "hard-failure")
+		} else {
+			claim.Reason = firstNonEmpty(claim.Reason, "placement-election")
+		}
+	} else if strings.TrimSpace(placement.ActiveNode) != "" {
+		claim.Phase = "Standby"
+		claim.DesiredHolder = strings.TrimSpace(placement.ActiveNode)
+		claim.Reason = firstNonEmpty(claim.Reason, "peer-active")
+	} else if placement.NoCandidate() {
+		claim.Phase = "NoCandidate"
+		claim.Reason = firstNonEmpty(claim.Reason, "no-placement-candidate")
+	} else {
+		claim.Phase = "Inactive"
+		claim.Reason = firstNonEmpty(claim.Reason, "placement-inactive")
+	}
+	claim.Generation = bgpCaptureClaimGeneration(claim)
+	return claim
+}
+
+func bgpCaptureClaimGeneration(claim bgpCaptureClaim) string {
+	key := strings.Join([]string{
+		strings.TrimSpace(claim.Group),
+		strings.TrimSpace(claim.DesiredHolder),
+		strings.TrimSpace(claim.PreviousHolder),
+	}, "\x00")
+	if strings.Trim(key, "\x00") == "" {
+		return ""
+	}
+	return bgpPathSigHash(key)
+}
+
+func bgpCaptureClaimStatus(claim bgpCaptureClaim) map[string]any {
+	status := map[string]any{
+		"group":          claim.Group,
+		"phase":          claim.Phase,
+		"generation":     claim.Generation,
+		"desiredHolder":  claim.DesiredHolder,
+		"previousHolder": claim.PreviousHolder,
+		"reason":         claim.Reason,
+	}
+	if !claim.PendingUntil.IsZero() {
+		status["pendingUntil"] = claim.PendingUntil.UTC().Format(time.RFC3339Nano)
+	}
+	if !claim.LeaseUntil.IsZero() {
+		status["leaseUntil"] = claim.LeaseUntil.UTC().Format(time.RFC3339Nano)
+	}
+	return status
+}
+
 func parseBGPTrapLastSeenAt(value string) time.Time {
 	if strings.TrimSpace(value) == "" {
 		return time.Time{}
@@ -2472,6 +2562,36 @@ func stampSingleBGPPathFence(plan dynamicconfig.ActionPlan, address, pathSig, ho
 	plans := []dynamicconfig.ActionPlan{plan}
 	stampBGPPathFenceActionPlans(plans, address, pathSig, holder, time.Time{})
 	return plans[0]
+}
+
+func stampBGPClaimFenceActionPlans(plans []dynamicconfig.ActionPlan, claim bgpCaptureClaim) {
+	if claim.Phase != "Active" || strings.TrimSpace(claim.Generation) == "" {
+		return
+	}
+	for i := range plans {
+		plan := &plans[i]
+		if !isProviderCaptureAssignAction(plan.Action) {
+			continue
+		}
+		if plan.Parameters == nil {
+			plan.Parameters = map[string]string{}
+		}
+		plan.Parameters[captureClaimPhaseParam] = claim.Phase
+		plan.Parameters[captureClaimGenerationParam] = claim.Generation
+		plan.Parameters[captureClaimDesiredHolderParam] = claim.DesiredHolder
+		if claim.PreviousHolder != "" {
+			plan.Parameters[captureClaimPreviousHolderParam] = claim.PreviousHolder
+		}
+		if claim.Reason != "" {
+			plan.Parameters[captureClaimReasonParam] = claim.Reason
+		}
+		if !claim.LeaseUntil.IsZero() {
+			plan.Parameters[captureClaimLeaseUntilParam] = claim.LeaseUntil.UTC().Format(time.RFC3339Nano)
+		}
+		if strings.TrimSpace(plan.IdempotencyKey) != "" {
+			plan.IdempotencyKey += ":claimgen:" + safeName(claim.Generation)
+		}
+	}
 }
 
 func stampBGPProviderTransitionFence(plans []dynamicconfig.ActionPlan, self memberPlanInfo, address string, journal []routerstate.ActionExecutionRecord, observedSelfCaptures map[string]bool, observedSelfCapturesOK bool, observedSelfAt time.Time) {
