@@ -1044,6 +1044,12 @@ func onPremL2OwnershipPending(self memberPlanInfo, placement PlacementDecision, 
 	if phase != "Observed" && phase != "Complete" {
 		return true, "onprem-l2 ownership discovery has not completed an initial observation"
 	}
+	if phase == "Complete" && discoveryResultCount(status) == 0 {
+		if freshUntil, ok := statusTimeValue(status["discoveryFreshUntil"]); ok && now.Before(freshUntil) {
+			return false, ""
+		}
+		return true, "onprem-l2 empty ownership discovery is not fresh"
+	}
 	if armedAt, ok := statusTimeValue(status["discoveryArmedAt"]); ok && now.Sub(armedAt) < onPremL2DiscoveryWarmup {
 		return true, fmt.Sprintf("onprem-l2 ownership discovery is warming up for %s", onPremL2DiscoveryWarmup)
 	}
@@ -1057,6 +1063,19 @@ func onPremL2OwnershipPending(self memberPlanInfo, placement PlacementDecision, 
 		}
 	}
 	return true, "onprem-l2 ownership discovery has not observed any local clients"
+}
+
+func discoveryResultCount(status map[string]any) int {
+	for _, key := range []string{"discoveryResultCount", "discoveryObserved"} {
+		value, ok := status[key]
+		if !ok {
+			continue
+		}
+		if parsed, err := strconv.Atoi(strings.TrimSpace(fmt.Sprint(value))); err == nil {
+			return parsed
+		}
+	}
+	return 0
 }
 
 func (c Controller) recordBGPStaticHandoverReleaseEvents(poolName, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, now time.Time) ([]routerstate.EventRecord, error) {

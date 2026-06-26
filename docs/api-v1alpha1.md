@@ -252,6 +252,10 @@ planner, so PVE IPAM environments do not have to rely on DHCP lease visibility
 alone. `on-demand-arp` uses source `scanInterval` for a low-rate proactive
 prefix sweep, probing one target per interval so quiet existing clients can be
 discovered without manual owner-side ARP traffic.
+Passive on-prem sources are not authoritative by default. If operations accept
+an empty L2 segment after the sources have been armed, set
+`ownershipDiscovery.allowEmptyAfter`; the pool reports a non-authoritative
+`Complete` discovery snapshot with `discoveryResultCount: 0` while it is fresh.
 `members[].placement` can group same-provider cloud routers into deterministic
 active/standby capture placement; `members[].maintenance.drain` removes that
 member from active selection. All nodes in a mobility demo should receive the

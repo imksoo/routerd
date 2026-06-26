@@ -1751,6 +1751,10 @@ type MobilityOwnershipDiscovery struct {
 	// LeaseTTL controls the emitted observed event expiry. Empty defaults to the
 	// controller default.
 	LeaseTTL string `yaml:"leaseTTL,omitempty" json:"leaseTTL,omitempty"`
+	// AllowEmptyAfter lets passive on-prem discovery declare an empty segment
+	// complete after the sources have been armed for this duration. Empty keeps
+	// zero-client passive discovery pending.
+	AllowEmptyAfter string `yaml:"allowEmptyAfter,omitempty" json:"allowEmptyAfter,omitempty"`
 	// Sources enables one or more on-prem L2 ownership signals. The controller
 	// normalizes DHCP lease hooks, ARP observers, on-demand ARP probes, and
 	// PVE svnet observations into the same observed-client federation fact.

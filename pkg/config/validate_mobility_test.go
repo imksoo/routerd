@@ -1006,6 +1006,15 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 			want: "ownershipDiscovery is supported only for role cloud",
 		},
 		{
+			name: "provider ownership discovery rejects allow empty",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.DeliveryPolicy.Mode = "bgp"
+				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", ProviderMode: "nic-secondary-ip", NICRef: "nic-1"}
+				spec.Members[1].OwnershipDiscovery = api.MobilityOwnershipDiscovery{Mode: "provider-private-ip", AllowEmptyAfter: "30s"}
+			},
+			want: "ownershipDiscovery.allowEmptyAfter is supported only when mode is onprem-l2",
+		},
+		{
 			name: "onprem l2 discovery requires onprem",
 			mut: func(spec *api.MobilityPoolSpec) {
 				spec.DeliveryPolicy.Mode = "bgp"
@@ -1031,6 +1040,21 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 				spec.Members[0].OwnershipDiscovery = api.MobilityOwnershipDiscovery{Mode: "onprem-l2", Sources: []api.MobilityOwnershipDiscoverySource{{Type: "neighbor-cache"}}}
 			},
 			want: "ownershipDiscovery.sources[0].type",
+		},
+		{
+			name: "onprem l2 discovery allow empty duration must be positive",
+			mut: func(spec *api.MobilityPoolSpec) {
+				spec.DeliveryPolicy.Mode = "bgp"
+				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan", ActiveWhen: api.CaptureActiveWhen{Type: "single-router"}}
+				spec.Members[0].OwnershipDiscovery = api.MobilityOwnershipDiscovery{
+					Mode:            "onprem-l2",
+					AllowEmptyAfter: "0s",
+					Sources: []api.MobilityOwnershipDiscoverySource{
+						{Type: "arp-observer", Interface: "lan"},
+					},
+				}
+			},
+			want: "ownershipDiscovery.allowEmptyAfter must be > 0",
 		},
 		{
 			name: "ownership discovery scan interval minimum",

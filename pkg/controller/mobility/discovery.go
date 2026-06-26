@@ -388,23 +388,50 @@ func (c DiscoveryController) reconcileOnPremL2Discovery(ctx context.Context, poo
 	}
 	phase := "Armed"
 	reason := "onprem-l2 event sources armed"
+	completedAt := time.Time{}
+	freshUntil := time.Time{}
 	if observed > 0 {
 		phase = "Observed"
 		reason = "onprem-l2 local clients observed"
+		completedAt = now
+		freshUntil = now.Add(onPremDiscoveryFreshness(discovery, spec))
+	} else if allowEmptyAfter := durationDefault(discovery.AllowEmptyAfter, 0); allowEmptyAfter > 0 && !now.Before(armedAt.Add(allowEmptyAfter)) {
+		phase = "Complete"
+		reason = "onprem-l2 empty discovery accepted by allowEmptyAfter policy"
+		completedAt = now
+		freshUntil = now.Add(onPremDiscoveryFreshness(discovery, spec))
 	}
-	c.saveDiscoveryStatus(poolName, map[string]any{
+	status := map[string]any{
 		"discoveryPhase":         phase,
 		"discoveryReason":        reason,
 		"discoveryMode":          "onprem-l2",
 		"discoverySources":       statusSources,
 		"discoveryObserved":      observed,
+		"discoveryResultCount":   observed,
 		"discoveryAuthoritative": false,
 		"discoveryArmedAt":       armedAt.Format(time.RFC3339Nano),
 		"discoveryLastScanAt":    now.Format(time.RFC3339Nano),
 		"discoveryNextScanAt":    "",
 		"discoverySourceCount":   len(statusSources),
-	})
+	}
+	if allowEmptyAfter := strings.TrimSpace(discovery.AllowEmptyAfter); allowEmptyAfter != "" {
+		status["discoveryAllowEmptyAfter"] = allowEmptyAfter
+	}
+	if !completedAt.IsZero() {
+		status["discoveryCompletedAt"] = completedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if !freshUntil.IsZero() {
+		status["discoveryFreshUntil"] = freshUntil.UTC().Format(time.RFC3339Nano)
+	}
+	c.saveDiscoveryStatus(poolName, status)
 	return nil
+}
+
+func onPremDiscoveryFreshness(discovery api.MobilityOwnershipDiscovery, spec api.MobilityPoolSpec) time.Duration {
+	if ttl := discoveryLeaseTTL(discovery, spec); ttl > 0 {
+		return ttl
+	}
+	return defaultDiscoveryScanInterval
 }
 
 type onPremObservedClientStatus struct {
