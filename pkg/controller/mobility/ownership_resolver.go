@@ -99,8 +99,9 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 	removeSelfResourceLocalInventory(localInventory, statusString(in.Status["discoverySelfResourceRef"]))
 	discoveryOwned := statusStringSet(in.Status["discoveryOwnedAddresses"], prefix)
 	selfIPs, capturedIPs, selfIPsObserved := selfInventoryAddressSetsFromStatus(in.Status, prefix)
+	selfIPsObservedAt := statusTime(in.Status["discoveryLastScanAt"])
 	eventOwned := resolverEventOwnedAddresses(in.PoolName, in.SelfNode, in.Spec, in.Events, in.Status, prefix, now)
-	confirmedCaptures, staleCaptures := captureStatesForSelf(self, in.PreviousPlans, in.ActionJournal, capturedIPs, selfIPsObserved)
+	confirmedCaptures, staleCaptures := captureStatesForSelf(self, in.PreviousPlans, in.ActionJournal, capturedIPs, selfIPsObserved, selfIPsObservedAt)
 	handoverTargets := staticHandoverTargets(in.Spec, prefix)
 	universe := map[string]bool{}
 	for address := range staticOwners {
@@ -717,7 +718,7 @@ type resolverCaptureState struct {
 	Succeeded   bool
 }
 
-func captureStatesForSelf(self memberPlanInfo, previousPlans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord, selfIPs map[string]bool, selfIPsObserved bool) (map[string]resolverCaptureState, map[string]resolverCaptureState) {
+func captureStatesForSelf(self memberPlanInfo, previousPlans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord, selfIPs map[string]bool, selfIPsObserved bool, selfIPsObservedAt time.Time) (map[string]resolverCaptureState, map[string]resolverCaptureState) {
 	confirmed := map[string]resolverCaptureState{}
 	stale := map[string]resolverCaptureState{}
 	latest := latestProviderCaptureTransitions(previousPlans, journal)
@@ -740,7 +741,7 @@ func captureStatesForSelf(self memberPlanInfo, previousPlans []dynamicconfig.Act
 			Strategy:    effectiveCaptureStrategy(tr.plan.Provider, firstNonEmpty(tr.plan.Target["captureStrategy"], captureStrategyValue(self.Capture))),
 			Succeeded:   tr.succeeded,
 		}
-		if tr.assign && tr.succeeded && selfIPs[address] {
+		if tr.assign && tr.succeeded && selfIPs[address] && providerObservationFresh(selfIPsObservedAt, tr.at) {
 			confirmed[address] = state
 			continue
 		}

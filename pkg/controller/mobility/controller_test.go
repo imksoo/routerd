@@ -770,6 +770,28 @@ func TestControllerBGPModeWaitsForProviderObservationAfterAssignSuccess(t *testi
 		"discoverySelfPrivateIPs":        []string{"10.88.60.11/32"},
 		"discoverySelfCapturedAddresses": []string{address},
 		"discoverySelfForwardingEnabled": true,
+		"discoveryLastScanAt":            now.Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus stale observed: %v", err)
+	}
+	controller.Now = func() time.Time { return now.Add(2500 * time.Millisecond) }
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("stale observation Reconcile: %v", err)
+	}
+	status = store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["providerObservationPhase"] != "Pending" || fmt.Sprint(status["providerObservationPendingCount"]) != "1" {
+		t.Fatalf("status = %#v, want stale provider observation to remain pending", status)
+	}
+	details = ownershipStatusDecisions(t, status["providerObservationDetails"])
+	pending = ownershipStatusDecisionByAddress(t, details, address)
+	if pending["reason"] != "provider inventory snapshot predates action completion" || pending["snapshotCompletedAt"] == "" || pending["requiredAfter"] == "" {
+		t.Fatalf("providerObservationDetails = %#v, want stale snapshot reason and timestamps", details)
+	}
+
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoverySelfPrivateIPs":        []string{"10.88.60.11/32"},
+		"discoverySelfCapturedAddresses": []string{address},
+		"discoverySelfForwardingEnabled": true,
 		"discoveryLastScanAt":            now.Add(3 * time.Second).Format(time.RFC3339Nano),
 	}); err != nil {
 		t.Fatalf("SaveObjectStatus observed: %v", err)
@@ -919,7 +941,7 @@ func TestInterpretProviderCaptureAssignFailures(t *testing.T) {
 			UpdatedAt:  now,
 		},
 	}
-	interpreted := interpretProviderCaptureAssignFailures(actions, map[string]bool{"10.88.60.11/32": true})
+	interpreted := interpretProviderCaptureAssignFailures(actions, map[string]bool{"10.88.60.11/32": true}, now.Add(time.Second))
 	if _, ok := interpreted.Active["10.88.60.11/32"]; ok {
 		t.Fatalf("observed self capture failure is still active: %#v", interpreted.Active)
 	}
@@ -928,6 +950,80 @@ func TestInterpretProviderCaptureAssignFailures(t *testing.T) {
 	}
 	if _, ok := interpreted.Active["10.88.60.12/32"]; !ok {
 		t.Fatalf("unobserved failure was not active: %#v", interpreted.Active)
+	}
+	stale := interpretProviderCaptureAssignFailures(actions, map[string]bool{"10.88.60.11/32": true}, now.Add(-time.Second))
+	if _, ok := stale.Active["10.88.60.11/32"]; !ok {
+		t.Fatalf("stale observation should not supersede failed action: %#v", stale)
+	}
+}
+
+func TestProviderObservationRequiresFreshUnassignSnapshot(t *testing.T) {
+	now := time.Date(2026, 6, 26, 3, 10, 0, 0, time.UTC)
+	address := "10.88.60.11/32"
+	target := map[string]string{"address": address, "providerRef": "aws-provider", "nicRef": "eni-a"}
+	targetJSON, err := json.Marshal(target)
+	if err != nil {
+		t.Fatalf("marshal target: %v", err)
+	}
+	previous := []dynamicconfig.ActionPlan{{
+		Provider:       "aws",
+		ProviderRef:    "aws-provider",
+		Action:         actionUnassignSecondaryIP,
+		Target:         target,
+		IdempotencyKey: "unassign-key",
+	}}
+	journal := []routerstate.ActionExecutionRecord{{
+		ID:             1,
+		IdempotencyKey: "unassign-key",
+		Provider:       "aws",
+		ProviderRef:    "aws-provider",
+		Action:         actionUnassignSecondaryIP,
+		TargetJSON:     string(targetJSON),
+		Status:         routerstate.ActionSucceeded,
+		ExecutedAt:     now.Add(time.Second),
+		UpdatedAt:      now.Add(time.Second),
+	}}
+	stale := providerCaptureObservationStatus(nil, previous, journal, map[string]bool{address: false}, true, now, false, false, time.Time{}, nil)
+	if stale.Phase != "Pending" || fmt.Sprint(stale.PendingAddresses) != "["+address+"]" {
+		t.Fatalf("stale = %#v, want unassign observation pending", stale)
+	}
+	fresh := providerCaptureObservationStatus(nil, previous, journal, map[string]bool{address: false}, true, now.Add(2*time.Second), false, false, time.Time{}, nil)
+	if fresh.Phase != "OK" || fmt.Sprint(fresh.ConfirmedAddresses) != "["+address+"]" {
+		t.Fatalf("fresh = %#v, want unassign observation confirmed", fresh)
+	}
+}
+
+func TestProviderObservationRequiresFreshForwardingSnapshot(t *testing.T) {
+	now := time.Date(2026, 6, 26, 3, 15, 0, 0, time.UTC)
+	plan := dynamicconfig.ActionPlan{
+		Provider:       "aws",
+		ProviderRef:    "aws-provider",
+		Action:         "ensure-forwarding-enabled",
+		Target:         map[string]string{"providerRef": "aws-provider", "nicRef": "eni-a"},
+		IdempotencyKey: "forwarding-key",
+	}
+	targetJSON, err := json.Marshal(plan.Target)
+	if err != nil {
+		t.Fatalf("marshal target: %v", err)
+	}
+	journal := []routerstate.ActionExecutionRecord{{
+		ID:             1,
+		IdempotencyKey: plan.IdempotencyKey,
+		Provider:       plan.Provider,
+		ProviderRef:    plan.ProviderRef,
+		Action:         plan.Action,
+		TargetJSON:     string(targetJSON),
+		Status:         routerstate.ActionSucceeded,
+		ExecutedAt:     now.Add(time.Second),
+		UpdatedAt:      now.Add(time.Second),
+	}}
+	stale := providerCaptureObservationStatus([]dynamicconfig.ActionPlan{plan}, nil, journal, nil, true, now, true, true, now, nil)
+	if stale.Phase != "Pending" || fmt.Sprint(stale.PendingTargets) != "[eni-a]" {
+		t.Fatalf("stale = %#v, want forwarding observation pending", stale)
+	}
+	fresh := providerCaptureObservationStatus([]dynamicconfig.ActionPlan{plan}, nil, journal, nil, true, now, true, true, now.Add(2*time.Second), nil)
+	if fresh.Phase != "OK" || fmt.Sprint(fresh.ConfirmedTargets) != "[eni-a]" {
+		t.Fatalf("fresh = %#v, want forwarding observation confirmed", fresh)
 	}
 }
 
