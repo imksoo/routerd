@@ -1063,7 +1063,7 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 	if r.Router == nil {
 		return nil
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := time.Now().UTC()
 	for _, res := range r.Router.Spec.Resources {
 		when := resourcequery.ResourceWhen(res)
 		if !resourcequery.ResourceWhenPresent(when) {
@@ -1079,10 +1079,15 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 			}
 			continue
 		}
+		if preserved, err := r.preserveFreshDaemonStatusWhenFalse(res, apiVersion, store, now); err != nil {
+			return err
+		} else if preserved {
+			continue
+		}
 		if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, map[string]any{
 			"phase":      "Pending",
 			"reason":     "WhenFalse",
-			"observedAt": now,
+			"observedAt": now.Format(time.RFC3339Nano),
 		}); err != nil {
 			return err
 		}
@@ -1096,8 +1101,8 @@ func (r *Runner) clearWhenFalseStatus(apiVersion, kind, name string, store event
 	if reason != "WhenFalse" {
 		return nil
 	}
-	observed, ok := current["observed"].(map[string]any)
-	if !ok || len(observed) == 0 || strings.TrimSpace(fmt.Sprint(observed["phase"])) == "" {
+	observed := statusMap(current["observed"])
+	if len(observed) == 0 || strings.TrimSpace(fmt.Sprint(observed["phase"])) == "" {
 		return nil
 	}
 	next := copyStatusMap(current)
@@ -1107,6 +1112,87 @@ func (r *Runner) clearWhenFalseStatus(apiVersion, kind, name string, store event
 	delete(next, "reason")
 	next["observed"] = observed
 	return store.SaveObjectStatus(apiVersion, kind, name, next)
+}
+
+func (r *Runner) preserveFreshDaemonStatusWhenFalse(res api.Resource, apiVersion string, store eventedStore, now time.Time) (bool, error) {
+	if res.Kind != "HealthCheck" {
+		return false, nil
+	}
+	status := store.ObjectStatus(apiVersion, res.Kind, res.Metadata.Name)
+	observed := statusMap(status["observed"])
+	evidence := status
+	evidenceFromObserved := false
+	if healthCheckStatusHasDaemonEvidence(observed) {
+		evidence = observed
+		evidenceFromObserved = true
+	} else if !healthCheckStatusHasDaemonEvidence(status) {
+		return false, nil
+	}
+	lastCheckedAt, ok := parseStatusTimestamp(evidence["lastCheckedAt"])
+	if !ok {
+		return false, nil
+	}
+	if now.After(lastCheckedAt.Add(healthCheckStatusFreshness(res))) {
+		return false, nil
+	}
+	if evidenceFromObserved && strings.TrimSpace(fmt.Sprint(evidence["phase"])) != "" {
+		next := copyStatusMap(status)
+		for key, value := range evidence {
+			next[key] = value
+		}
+		delete(next, "reason")
+		next["observed"] = observed
+		if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, next); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+func healthCheckStatusHasDaemonEvidence(status map[string]any) bool {
+	if len(status) == 0 {
+		return false
+	}
+	switch fmt.Sprint(status["phase"]) {
+	case healthcheck.PhaseHealthy, healthcheck.PhaseFailing, healthcheck.PhaseUnhealthy:
+		return true
+	}
+	if strings.TrimSpace(fmt.Sprint(status["lastResult"])) != "" {
+		return true
+	}
+	if _, ok := status["consecutiveFailed"]; ok {
+		return true
+	}
+	if _, ok := status["consecutivePassed"]; ok {
+		return true
+	}
+	return false
+}
+
+func healthCheckStatusFreshness(res api.Resource) time.Duration {
+	freshness := 2 * time.Minute
+	spec, err := res.HealthCheckSpec()
+	if err != nil {
+		return freshness
+	}
+	interval := parseDurationOrDefault(spec.Interval, 30*time.Second)
+	timeout := parseDurationOrDefault(spec.Timeout, 3*time.Second)
+	candidate := interval*3 + timeout
+	if candidate > freshness {
+		return candidate
+	}
+	return freshness
+}
+
+func parseDurationOrDefault(value string, fallback time.Duration) time.Duration {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil || duration <= 0 {
+		return fallback
+	}
+	return duration
 }
 
 func (r *Runner) effectiveRouterForReconcile(store eventedStore) (*api.Router, error) {
@@ -2878,6 +2964,17 @@ func daemonObservedOnlyStatus(current, base map[string]any, observed daemonapi.R
 	daemonObserved["phase"] = observed.Phase
 	daemonObserved["health"] = observed.Health
 	next["observed"] = daemonObserved
+	if observed.Resource.Kind == "HealthCheck" && strings.TrimSpace(observed.Phase) != "" {
+		for key, value := range daemonObserved {
+			next[key] = value
+		}
+		for _, key := range []string{"phase", "health", "conditions", "updatedAt"} {
+			if value, ok := base[key]; ok {
+				next[key] = value
+			}
+		}
+		delete(next, "reason")
+	}
 	return next
 }
 
@@ -2951,6 +3048,10 @@ func statusMap(value any) map[string]any {
 	case map[string]map[string]any:
 		for key, item := range typed {
 			out[key] = item
+		}
+	case map[any]any:
+		for key, item := range typed {
+			out[fmt.Sprint(key)] = item
 		}
 	}
 	return out
