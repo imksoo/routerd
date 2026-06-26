@@ -72,6 +72,52 @@ release:
           - legacy protocol matrix
           - full performance matrix
           - leaf failover matrix
+      - id: p654-v20260625-0932-run3-20260626T071349Z
+        evidence: /home/imksoo/routerd-labs-archive/evidence/p654-v20260625-0932-run3-20260626T071349Z
+        cleanup: PASS
+        stateAfterDestroy: 0
+        provisioning:
+          status: FAIL
+          notes:
+            - >-
+              Initial full-topology apply failed on PVE HTTP 596 responses and
+              local-lvm lock timeout while creating pve-client-b.
+            - >-
+              A targeted retry still failed on PVE client creation. No
+              reachability scenario was executed for this run.
+      - id: p654-v20260625-0932-run4-20260626T073205Z
+        evidence: /home/imksoo/routerd-labs-archive/evidence/p654-v20260625-0932-run4-20260626T073205Z
+        cleanup: PASS
+        stateAfterDestroy: 0
+        provisioning:
+          status: PASS
+          notes:
+            - >-
+              Full topology was provisioned successfully with serialized PVE
+              clone/apply using tofu apply -parallelism=1.
+            - >-
+              The first baseline attempt hit transient AWS leaf cloud-init
+              package install failures. After repairing curl, unzip, and AWS
+              CLI on aws-leaf-a/aws-leaf-b, the same generated configs passed.
+        scenarios:
+          - name: baseline
+            convergenceSeconds: 105
+            matrix: 56/56
+            status: PASS
+            evidence: /home/imksoo/routerd-labs-archive/evidence/p654-v20260625-0932-run4-20260626T073205Z/baseline-retry-after-cloud-init-repair
+          - name: leaf-failover-oci-leaf-a
+            initialConvergenceSeconds: 25
+            failoverConvergenceSeconds: 97
+            rejoinConvergenceSeconds: 213
+            initialMatrix: 56/56
+            afterFailoverMatrix: 56/56
+            afterRejoinMatrix: 56/56
+            status: PASS
+            evidence: /home/imksoo/routerd-labs-archive/evidence/p654-v20260625-0932-run4-20260626T073205Z/full-scenarios-ssh-only/leaf-failover-oci-leaf-a
+        skipped:
+          - legacy protocol matrix
+          - full performance matrix
+          - remaining leaf failover matrix
   notes:
     - >-
       v20260625.0932 is a release checkpoint after the SAM claim, provider
@@ -79,8 +125,9 @@ release:
       recovery work from issues #655 through #662.
     - >-
       #654 remains open. The current evidence proves repeated fresh-deploy
-      reachability and RR failover/rejoin, but does not yet prove the full
-      3-5-run acceptance with all leaf failover scenarios.
+      reachability, RR failover/rejoin, and representative OCI leaf
+      failover/rejoin, but does not yet prove the full 3-5-run acceptance with
+      all leaf failover scenarios.
     - >-
       Legacy protocol and performance matrices were intentionally skipped during
       run2 to control cloud cost. They should be rerun when cutting a new
