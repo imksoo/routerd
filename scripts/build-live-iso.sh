@@ -592,6 +592,13 @@ enable_sshd()
     fi
 }
 
+enable_qemu_guest_agent()
+{
+    if systemctl list-unit-files qemu-guest-agent.service >/dev/null 2>&1; then
+        systemctl enable --now qemu-guest-agent.service >/dev/null 2>&1 || true
+    fi
+}
+
 apply_ssh_bootstrap()
 {
     regenerate_ssh_host_keys
@@ -833,6 +840,7 @@ disable_bootstrap_dhcp()
 
 install -d /run/routerd /var/lib/routerd "${config_dir}"
 apply_cloudinit_hostname || true
+enable_qemu_guest_agent
 apply_ssh_bootstrap
 
 if ! restore_config_disk_config && ! restore_cloudinit_configs && ! restore_provider_config; then
