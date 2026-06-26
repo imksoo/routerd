@@ -118,6 +118,39 @@ release:
           - legacy protocol matrix
           - full performance matrix
           - remaining leaf failover matrix
+      - id: p654-v20260625-0932-run5-20260626T085508Z
+        evidence: /home/imksoo/routerd-labs-archive/evidence/p654-v20260625-0932-run5-20260626T085508Z
+        cleanup: PASS
+        stateAfterDestroy: 0
+        provisioning:
+          status: PASS
+          notes:
+            - >-
+              Full topology was provisioned successfully with serialized PVE
+              clone/apply using tofu apply -parallelism=1.
+        scenarios:
+          - name: baseline
+            convergenceSeconds: 625
+            matrix: 32/56
+            status: FAIL
+            evidence: /home/imksoo/routerd-labs-archive/evidence/p654-v20260625-0932-run5-20260626T085508Z/baseline
+            notes:
+              - >-
+                Initial convergence timed out. All AWS cross-site SSH pairs
+                failed while AWS same-subnet client-to-client traffic and
+                Azure/OCI/PVE cross-site traffic passed.
+              - >-
+                AWS leaf ENIs had no secondary private IPs. AWS leaf doctor
+                showed MobilityPool/cloudedge Degraded, no local owner rows,
+                BGP delivery Established, and fibMissingRoutes=0.
+              - >-
+                This indicates AWS provider secondary-IP capture did not
+                materialize even though overlay BGP/FIB state existed on the
+                AWS leaves.
+        skipped:
+          - failover scenarios after baseline failure
+          - legacy protocol matrix
+          - full performance matrix
   notes:
     - >-
       v20260625.0932 is a release checkpoint after the SAM claim, provider
@@ -132,6 +165,11 @@ release:
       Legacy protocol and performance matrices were intentionally skipped during
       run2 to control cloud cost. They should be rerun when cutting a new
       release tag or when specifically qualifying protocol/performance changes.
+    - >-
+      Run5 is negative qualification evidence: provisioning and cleanup passed,
+      but baseline failed because AWS provider capture did not materialize.
+      Investigate the AWS-only capture gap before using this release as a
+      stronger rollback baseline.
   knownIssues:
     - issue: 654
       title: Qualify v20260625.0932 with repeated fresh cloud/PVE deployments
