@@ -2004,6 +2004,182 @@ func TestPlanBGPMobilityDeliverySuppressesSameSiteSecondaryIPCapture(t *testing.
 	}
 }
 
+func TestPlanBGPMobilityDeliveryDoesNotReviveIneligibleCaptureAfterFailedAction(t *testing.T) {
+	now := time.Date(2026, 6, 26, 14, 20, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-b"]
+	address := "10.88.60.11/32"
+
+	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+		PoolName: "cloudedge",
+		Source:   DynamicSource("cloudedge", self.NodeRef),
+		Self:     self,
+		Members:  members,
+		Spec:     spec,
+		Decisions: []ownershipDecision{{
+			Address:       address,
+			Class:         ownershipClassLocalHomeOwned,
+			HomeOwnerNode: self.NodeRef,
+			Source:        providerDiscoverySource,
+		}},
+		Placement: PlacementDecision{
+			Group:      "aws-edge",
+			Active:     true,
+			ActiveNode: self.NodeRef,
+		},
+		InstalledNextHops: map[string][]string{address: {"10.99.0.3"}},
+		Profiles:          map[string]api.CloudProviderProfileSpec{"aws-provider": {Provider: "aws"}},
+		ActionJournal: []routerstate.ActionExecutionRecord{{
+			Action:      "assign-secondary-ip",
+			Provider:    "aws",
+			ProviderRef: "aws-provider",
+			TargetJSON:  `{"address":"10.88.60.11/32","nicRef":"eni-b","providerRef":"aws-provider"}`,
+			Status:      routerstate.ActionFailed,
+			Error:       "provider conflict",
+			UpdatedAt:   now.Add(-time.Second),
+			ExecutedAt:  now.Add(-time.Second),
+		}},
+		ObservedSelfCaptures: map[string]bool{},
+		ObservedSelfIPsOK:    true,
+		RIBObserved:          true,
+		Now:                  now,
+	})
+	if err != nil {
+		t.Fatalf("planBGPMobilityDelivery: %v", err)
+	}
+	if assign := findActionPlanByAddress(delivery.ActionPlans, "assign-secondary-ip", address); assign != nil {
+		t.Fatalf("action plans = %#v, failed action must not revive local-home capture", delivery.ActionPlans)
+	}
+}
+
+func TestPlanBGPMobilityDeliverySuppressesSameSiteFreshHomeStaleCapture(t *testing.T) {
+	now := time.Date(2026, 6, 26, 14, 25, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-b"]
+	address := "10.88.60.11/32"
+
+	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+		PoolName: "cloudedge",
+		Source:   DynamicSource("cloudedge", self.NodeRef),
+		Self:     self,
+		Members:  members,
+		Spec:     spec,
+		Decisions: []ownershipDecision{{
+			Address:           address,
+			Class:             ownershipClassStaleCapture,
+			HomeOwnerNode:     "aws-router-a",
+			SuppressionReason: "fresh-home-owner",
+			Source:            providerDiscoverySource,
+		}},
+		Placement: PlacementDecision{
+			Group:      "aws-edge",
+			Active:     true,
+			ActiveNode: self.NodeRef,
+		},
+		InstalledNextHops:    map[string][]string{address: {"10.99.0.3"}},
+		Profiles:             map[string]api.CloudProviderProfileSpec{"aws-provider": {Provider: "aws"}},
+		ObservedSelfCaptures: map[string]bool{},
+		ObservedSelfIPsOK:    true,
+		RIBObserved:          true,
+		Now:                  now,
+	})
+	if err != nil {
+		t.Fatalf("planBGPMobilityDelivery: %v", err)
+	}
+	if assign := findActionPlanByAddress(delivery.ActionPlans, "assign-secondary-ip", address); assign != nil {
+		t.Fatalf("action plans = %#v, same-site fresh-home stale capture must not be assigned", delivery.ActionPlans)
+	}
+}
+
+func TestPlanBGPMobilityDeliverySuppressesSameSiteRemoteHomeDuringSeize(t *testing.T) {
+	now := time.Date(2026, 6, 26, 15, 40, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-b"]
+	address := "10.88.60.11/32"
+
+	previous, err := providerActionPlans("cloudedge", api.CloudProviderProfileSpec{Provider: "aws"}, self.Capture, self.CaptureTarget, address, map[string]bool{}, true)
+	if err != nil {
+		t.Fatalf("providerActionPlans: %v", err)
+	}
+	for i := range previous {
+		previous[i] = stampSingleBGPPathFence(previous[i], address, "prefix=10.88.60.11/32;nextHops=10.99.0.3", self.NodeRef)
+	}
+
+	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+		PoolName: "cloudedge",
+		Source:   DynamicSource("cloudedge", self.NodeRef),
+		Self:     self,
+		Members:  members,
+		Spec:     spec,
+		Decisions: []ownershipDecision{{
+			Address:           address,
+			Class:             ownershipClassRemoteHomeOwned,
+			HomeOwnerNode:     "aws-router-a",
+			HomeProviderRef:   "aws-provider",
+			Source:            providerDiscoverySource,
+			SuppressionReason: "remote-home-owner",
+		}},
+		Placement: PlacementDecision{
+			Group:                 "aws-edge",
+			Active:                true,
+			ActiveNode:            self.NodeRef,
+			ActiveIdentityNodeRef: self.NodeRef,
+			Seize:                 true,
+		},
+		PreviousPlans:        previous,
+		InstalledNextHops:    map[string][]string{address: {"10.99.0.3"}},
+		Profiles:             map[string]api.CloudProviderProfileSpec{"aws-provider": {Provider: "aws"}},
+		ObservedSelfCaptures: map[string]bool{},
+		ObservedSelfIPsOK:    true,
+		RIBObserved:          true,
+		Now:                  now,
+	})
+	if err != nil {
+		t.Fatalf("planBGPMobilityDelivery: %v", err)
+	}
+	if assign := findActionPlanByAddress(delivery.ActionPlans, "assign-secondary-ip", address); assign != nil {
+		t.Fatalf("action plans = %#v, same-site remote-home primary must not be assigned during seize", delivery.ActionPlans)
+	}
+}
+
+func TestFilterSupersededSameProviderHomeFailures(t *testing.T) {
+	failed := []providerActionPlanFailure{{
+		IdempotencyKey: "stale-same-provider",
+		Action:         "assign-secondary-ip",
+		Address:        "10.88.60.11/32",
+		ProviderRef:    "aws-provider",
+		Error:          "primary address is already allocated",
+	}, {
+		IdempotencyKey: "remote-provider",
+		Action:         "assign-secondary-ip",
+		Address:        "10.88.60.12/32",
+		ProviderRef:    "aws-provider",
+		Error:          "still desired",
+	}}
+	decisions := []ownershipDecision{{
+		Address:         "10.88.60.11/32",
+		Class:           ownershipClassRemoteHomeOwned,
+		HomeOwnerNode:   "aws-router-a",
+		HomeProviderRef: "aws-provider",
+	}, {
+		Address:         "10.88.60.12/32",
+		Class:           ownershipClassRemoteHomeOwned,
+		HomeOwnerNode:   "azure-router",
+		HomeProviderRef: "azure-provider",
+	}}
+
+	got := filterSupersededSameProviderHomeFailures(failed, decisions, "aws-provider")
+	if len(got) != 1 || got[0].IdempotencyKey != "remote-provider" {
+		t.Fatalf("filtered failures = %#v, want only remote provider failure retained", got)
+	}
+}
+
 func TestControllerBGPCaptureCandidateNextHopsExcludeProviderCapturePaths(t *testing.T) {
 	now := time.Date(2026, 6, 13, 22, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
