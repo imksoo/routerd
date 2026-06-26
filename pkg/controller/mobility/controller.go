@@ -512,6 +512,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		status["ownershipResolverPhase"] = "Pending"
 		status["ownershipResolverReason"] = reason
 	}
+	status["addresses"] = samAddressStatuses(ownershipDecisions, actionPlans, actionJournal, failedActions, observationStatus)
 	status["phase"] = mobilityPoolResourcePhase(status)
 	return c.savePlannerStatus(res.Metadata.Name, status)
 }
@@ -546,6 +547,176 @@ func mobilityPoolResourcePhase(status map[string]any) string {
 		return "Failed"
 	}
 	return "Degraded"
+}
+
+func samAddressStatuses(decisions []ownershipDecision, plans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord, failedActions []providerActionPlanFailure, observationStatus providerObservationStatus) map[string]any {
+	addresses := map[string]map[string]any{}
+	ensure := func(address string) map[string]any {
+		address = normalizeAddressString(address)
+		if address == "" {
+			return nil
+		}
+		item, ok := addresses[address]
+		if !ok {
+			item = map[string]any{
+				"conditions":       map[string]string{},
+				"conditionReasons": map[string]string{},
+			}
+			addresses[address] = item
+		}
+		return item
+	}
+	setCondition := func(item map[string]any, name, status, reason string) {
+		if item == nil {
+			return
+		}
+		conditions, _ := item["conditions"].(map[string]string)
+		if conditions == nil {
+			conditions = map[string]string{}
+			item["conditions"] = conditions
+		}
+		reasons, _ := item["conditionReasons"].(map[string]string)
+		if reasons == nil {
+			reasons = map[string]string{}
+			item["conditionReasons"] = reasons
+		}
+		conditions[name] = status
+		if strings.TrimSpace(reason) != "" {
+			reasons[name] = reason
+		}
+	}
+	for _, decision := range decisions {
+		item := ensure(decision.Address)
+		if item == nil {
+			continue
+		}
+		item["class"] = decision.Class
+		item["source"] = decision.Source
+		if decision.HomeOwnerNode != "" {
+			item["ownerNode"] = decision.HomeOwnerNode
+		}
+		if decision.CaptureHolderNode != "" {
+			item["captureHolderNode"] = decision.CaptureHolderNode
+		}
+		if decision.HomeProviderRef != "" {
+			item["ownerProviderRef"] = decision.HomeProviderRef
+		}
+		state := ownershipResolverClaimState(decision)
+		switch state {
+		case "OK":
+			setCondition(item, "OwnershipResolved", "True", firstNonEmpty(decision.SuppressionReason, decision.Class))
+		case "Conflict":
+			setCondition(item, "OwnershipResolved", "False", firstNonEmpty(decision.ConflictReason, "ownership conflict"))
+		case "Stale":
+			setCondition(item, "OwnershipResolved", "False", "stale ownership evidence")
+		default:
+			setCondition(item, "OwnershipResolved", "False", "ownership unknown")
+		}
+		setCondition(item, "FIBInstalled", "Unknown", "verified by routerctl doctor sam")
+		setCondition(item, "ReachabilityProbed", "Unknown", "verified by external dataplane probes")
+	}
+	latest := latestActionRecordsByKey(journal)
+	planSeen := map[string]bool{}
+	for _, plan := range plans {
+		address := normalizeAddressString(plan.Target["address"])
+		if address == "" || !mobilityProviderAddressAction(plan.Action) {
+			continue
+		}
+		item := ensure(address)
+		if item == nil {
+			continue
+		}
+		planSeen[address] = true
+		key := strings.TrimSpace(plan.IdempotencyKey)
+		item["providerAction"] = strings.TrimSpace(plan.Action)
+		item["providerActionKey"] = key
+		if generation := strings.TrimSpace(plan.Parameters[captureAssignmentGenerationParam]); generation != "" {
+			item["assignmentGeneration"] = generation
+		}
+		rec, ok := latest[key]
+		if !ok {
+			setCondition(item, "ProviderActionApplied", "False", "provider action has not executed")
+			continue
+		}
+		switch strings.TrimSpace(rec.Status) {
+		case routerstate.ActionSucceeded, routerstate.ActionSkipped:
+			setCondition(item, "ProviderActionApplied", "True", strings.TrimSpace(rec.Status))
+		case routerstate.ActionFailed:
+			setCondition(item, "ProviderActionApplied", "False", firstNonEmpty(rec.Error, "provider action failed"))
+		default:
+			setCondition(item, "ProviderActionApplied", "False", firstNonEmpty(strings.TrimSpace(rec.Status), "provider action pending"))
+		}
+	}
+	for _, failed := range failedActions {
+		item := ensure(failed.Address)
+		if item == nil {
+			continue
+		}
+		item["providerAction"] = failed.Action
+		item["providerActionKey"] = failed.IdempotencyKey
+		setCondition(item, "ProviderActionApplied", "False", firstNonEmpty(failed.Error, "provider action failed"))
+	}
+	for _, detail := range observationStatus.Details {
+		address := normalizeAddressString(detail["address"])
+		if address == "" {
+			continue
+		}
+		item := ensure(address)
+		if item == nil {
+			continue
+		}
+		item["providerObservation"] = detail
+		if detail["assignmentGeneration"] != "" {
+			item["assignmentGeneration"] = detail["assignmentGeneration"]
+		}
+		if detail["phase"] == "Confirmed" {
+			setCondition(item, "ProviderObserved", "True", firstNonEmpty(detail["source"], "provider observation confirmed"))
+		} else {
+			setCondition(item, "ProviderObserved", "False", firstNonEmpty(detail["reason"], "provider observation pending"))
+		}
+	}
+	for address, item := range addresses {
+		if !planSeen[address] {
+			setCondition(item, "ProviderActionApplied", "True", "no provider action required")
+		}
+		if _, ok := item["providerObservation"]; !ok {
+			setCondition(item, "ProviderObserved", "True", "no provider observation required")
+		}
+		blocking := samAddressBlockingCondition(item)
+		item["blockingCondition"] = blocking
+		item["phase"] = samAddressPhase(blocking)
+	}
+	out := make(map[string]any, len(addresses))
+	for _, address := range sortedStringMapKeys(addresses) {
+		out[address] = addresses[address]
+	}
+	return out
+}
+
+func mobilityProviderAddressAction(action string) bool {
+	switch strings.TrimSpace(action) {
+	case actionAssignSecondaryIP, actionUnassignSecondaryIP, actionAssignRouteTableRoute, actionUnassignRouteTableRoute:
+		return true
+	default:
+		return false
+	}
+}
+
+func samAddressBlockingCondition(item map[string]any) string {
+	conditions, _ := item["conditions"].(map[string]string)
+	for _, name := range []string{"OwnershipResolved", "ProviderActionApplied", "ProviderObserved", "FIBInstalled", "ReachabilityProbed"} {
+		if conditions[name] == "False" {
+			return name
+		}
+	}
+	return ""
+}
+
+func samAddressPhase(blockingCondition string) string {
+	if strings.TrimSpace(blockingCondition) == "" {
+		return "Ready"
+	}
+	return "Pending"
 }
 
 func pendingProviderActionPlanCount(plans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord) int {

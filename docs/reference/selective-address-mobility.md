@@ -617,6 +617,17 @@ routerctl mobility owners
 routerctl mobility owners --pool cloudedge --address 10.77.60.10/32 -o json
 ```
 
+`MobilityPool.status.addresses` is the per-address operational view. It keeps
+the older flat status keys for compatibility, but also records conditions such
+as `OwnershipResolved`, `ProviderActionApplied`, and `ProviderObserved` plus a
+`blockingCondition` when one address is not yet converged. Use
+`routerctl mobility explain` to render that view for one address:
+
+```sh
+routerctl mobility explain --pool cloudedge --address 10.77.60.10/32
+routerctl mobility explain --pool cloudedge --address 10.77.60.10/32 -o json
+```
+
 Rows are sorted by pool and address. When a remote provider owner overlaps local
 evidence, or when two fresh provider owners claim the same `/32`, the row state
 is `Conflict` and `conflictReason` explains the condition. Expired ownership
