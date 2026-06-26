@@ -223,7 +223,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	if err != nil {
 		return fmt.Errorf("list action journal: %w", err)
 	}
-	providerFailures := interpretProviderCaptureAssignFailures(actionJournal, discoverySelfCaptures)
+	providerFailures := interpretProviderCaptureAssignFailures(actionJournal, discoverySelfCaptures, discoverySelfObservedAt)
 	previousActionPlans, err := c.previousGeneratedActionPlans(res.Metadata.Name, selfNode)
 	if err != nil {
 		return err
@@ -371,22 +371,26 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		"providerObservationPhase":                 "OK",
 		"providerObservationPendingAddresses":      nil,
 		"providerObservationConfirmedAddresses":    nil,
+		"providerObservationPendingTargets":        nil,
+		"providerObservationConfirmedTargets":      nil,
 		"providerObservationDetails":               nil,
 		"providerObservationPendingCount":          0,
 		"providerObservationConfirmedCount":        0,
 		"observedSelfStaleCaptures":                observedSelfStaleCaptureStatus(ownershipDecisions, selfNode, observedStaleSince, now),
 	}
 	pendingActionCount := pendingProviderActionPlanCount(actionPlans, actionJournal)
-	failedActions := failedProviderActionPlans(actionPlans, actionJournal, discoverySelfCaptures)
+	failedActions := failedProviderActionPlans(actionPlans, actionJournal, discoverySelfCaptures, discoverySelfObservedAt)
 	failedActions = appendProviderCaptureAssignFailures(failedActions, providerFailures.Active)
 	status["providerActionPendingCount"] = pendingActionCount
-	observationStatus := providerCaptureObservationStatus(actionPlans, actionJournal, discoverySelfCaptures, discoverySelfIPsObserved, ownershipDecisions)
+	observationStatus := providerCaptureObservationStatus(actionPlans, previousActionPlans, actionJournal, discoverySelfCaptures, discoverySelfIPsObserved, discoverySelfObservedAt, forwardingObserved, forwardingEnabled, forwardingObservedAt, ownershipDecisions)
 	status["providerObservationPhase"] = observationStatus.Phase
 	status["providerObservationPendingAddresses"] = observationStatus.PendingAddresses
 	status["providerObservationConfirmedAddresses"] = observationStatus.ConfirmedAddresses
+	status["providerObservationPendingTargets"] = observationStatus.PendingTargets
+	status["providerObservationConfirmedTargets"] = observationStatus.ConfirmedTargets
 	status["providerObservationDetails"] = observationStatus.Details
-	status["providerObservationPendingCount"] = len(observationStatus.PendingAddresses)
-	status["providerObservationConfirmedCount"] = len(observationStatus.ConfirmedAddresses)
+	status["providerObservationPendingCount"] = len(observationStatus.PendingAddresses) + len(observationStatus.PendingTargets)
+	status["providerObservationConfirmedCount"] = len(observationStatus.ConfirmedAddresses) + len(observationStatus.ConfirmedTargets)
 	for key, value := range bgpSeizeHoldDownStatus(delivery.Placement) {
 		status[key] = value
 	}
@@ -484,7 +488,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		status["plannerReason"] = "provider actions are pending"
 		status["providerActionPhase"] = "Pending"
 	}
-	if len(observationStatus.PendingAddresses) > 0 && status["providerActionPhase"] == "OK" {
+	if observationStatus.PendingCount() > 0 && status["providerActionPhase"] == "OK" {
 		status["plannerPhase"] = "Pending"
 		status["plannerReason"] = "provider observations are pending"
 	}
@@ -574,13 +578,21 @@ type providerObservationStatus struct {
 	Phase              string
 	PendingAddresses   []string
 	ConfirmedAddresses []string
+	PendingTargets     []string
+	ConfirmedTargets   []string
 	Details            []map[string]string
 }
 
-func providerCaptureObservationStatus(plans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord, observedSelfCaptures map[string]bool, observedSelfCapturesOK bool, decisions []ownershipDecision) providerObservationStatus {
+func (s providerObservationStatus) PendingCount() int {
+	return len(s.PendingAddresses) + len(s.PendingTargets)
+}
+
+func providerCaptureObservationStatus(plans, previousPlans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord, observedSelfCaptures map[string]bool, observedSelfCapturesOK bool, observedSelfAt time.Time, forwardingObserved, forwardingEnabled bool, forwardingObservedAt time.Time, decisions []ownershipDecision) providerObservationStatus {
 	status := providerObservationStatus{Phase: "OK"}
 	pending := map[string]map[string]string{}
 	confirmed := map[string]map[string]string{}
+	pendingTargets := map[string]map[string]string{}
+	confirmedTargets := map[string]map[string]string{}
 	for _, decision := range decisions {
 		address := normalizeAddressString(decision.Address)
 		if address == "" || decision.Class != ownershipClassConfirmedCapture {
@@ -630,7 +642,17 @@ func providerCaptureObservationStatus(plans []dynamicconfig.ActionPlan, journal 
 			"idempotencyKey": key,
 			"targetRef":      providerCaptureRefFromTarget(target),
 		}
-		if observedSelfCapturesOK && observedSelfCaptures[address] {
+		if generation := strings.TrimSpace(firstNonEmpty(plan.Parameters[captureAssignmentGenerationParam], decodeActionRecordMap(rec.ParametersJSON)[captureAssignmentGenerationParam])); generation != "" {
+			detail["assignmentGeneration"] = generation
+		}
+		requiredAfter := actionRecordCompletedAt(rec)
+		if !requiredAfter.IsZero() {
+			detail["requiredAfter"] = requiredAfter.UTC().Format(time.RFC3339Nano)
+		}
+		if !observedSelfAt.IsZero() {
+			detail["snapshotCompletedAt"] = observedSelfAt.UTC().Format(time.RFC3339Nano)
+		}
+		if observedSelfCapturesOK && observedSelfCaptures[address] && providerObservationFresh(observedSelfAt, requiredAfter) {
 			detail["phase"] = "Confirmed"
 			detail["source"] = "provider-inventory"
 			confirmed[address] = detail
@@ -638,7 +660,9 @@ func providerCaptureObservationStatus(plans []dynamicconfig.ActionPlan, journal 
 			continue
 		}
 		detail["phase"] = "Pending"
-		if observedSelfCapturesOK {
+		if observedSelfCapturesOK && observedSelfCaptures[address] {
+			detail["reason"] = "provider inventory snapshot predates action completion"
+		} else if observedSelfCapturesOK {
 			detail["reason"] = "provider inventory has not observed capture on self"
 		} else {
 			detail["reason"] = "provider inventory has not completed self capture observation"
@@ -646,16 +670,50 @@ func providerCaptureObservationStatus(plans []dynamicconfig.ActionPlan, journal 
 		pending[address] = detail
 		delete(confirmed, address)
 	}
-	if len(pending) > 0 {
+	for _, detail := range providerUnassignObservationDetails(previousPlans, journal, observedSelfCaptures, observedSelfCapturesOK, observedSelfAt) {
+		address := normalizeAddressString(detail["address"])
+		if address == "" {
+			continue
+		}
+		if detail["phase"] == "Confirmed" {
+			confirmed[address] = detail
+			delete(pending, address)
+			continue
+		}
+		pending[address] = detail
+		delete(confirmed, address)
+	}
+	for _, detail := range providerForwardingObservationDetails(plans, journal, forwardingObserved, forwardingEnabled, forwardingObservedAt) {
+		target := strings.TrimSpace(detail["targetRef"])
+		if target == "" {
+			continue
+		}
+		if detail["phase"] == "Confirmed" {
+			confirmedTargets[target] = detail
+			delete(pendingTargets, target)
+			continue
+		}
+		pendingTargets[target] = detail
+		delete(confirmedTargets, target)
+	}
+	if len(pending) > 0 || len(pendingTargets) > 0 {
 		status.Phase = "Pending"
 	}
 	status.PendingAddresses = sortedStringMapKeys(pending)
 	status.ConfirmedAddresses = sortedStringMapKeys(confirmed)
+	status.PendingTargets = sortedStringMapKeys(pendingTargets)
+	status.ConfirmedTargets = sortedStringMapKeys(confirmedTargets)
 	for _, address := range status.PendingAddresses {
 		status.Details = append(status.Details, pending[address])
 	}
+	for _, target := range status.PendingTargets {
+		status.Details = append(status.Details, pendingTargets[target])
+	}
 	for _, address := range status.ConfirmedAddresses {
 		status.Details = append(status.Details, confirmed[address])
+	}
+	for _, target := range status.ConfirmedTargets {
+		status.Details = append(status.Details, confirmedTargets[target])
 	}
 	if len(status.PendingAddresses) == 0 {
 		status.PendingAddresses = nil
@@ -663,10 +721,154 @@ func providerCaptureObservationStatus(plans []dynamicconfig.ActionPlan, journal 
 	if len(status.ConfirmedAddresses) == 0 {
 		status.ConfirmedAddresses = nil
 	}
+	if len(status.PendingTargets) == 0 {
+		status.PendingTargets = nil
+	}
+	if len(status.ConfirmedTargets) == 0 {
+		status.ConfirmedTargets = nil
+	}
 	if len(status.Details) == 0 {
 		status.Details = nil
 	}
 	return status
+}
+
+func providerUnassignObservationDetails(previousPlans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord, observedSelfCaptures map[string]bool, observedSelfCapturesOK bool, observedSelfAt time.Time) []map[string]string {
+	previousKeys := map[string]bool{}
+	for _, plan := range previousPlans {
+		if !isProviderCaptureAssignAction(plan.Action) && !isProviderCaptureUnassignAction(plan.Action) {
+			continue
+		}
+		key := providerCaptureTransitionKey(firstNonEmpty(plan.ProviderRef, plan.Target["providerRef"]), providerCaptureRefFromTarget(plan.Target), plan.Target["address"])
+		if key != "" {
+			previousKeys[key] = true
+		}
+	}
+	if len(previousKeys) == 0 {
+		return nil
+	}
+	var out []map[string]string
+	for key, tr := range latestProviderCaptureTransitions(nil, journal) {
+		if !previousKeys[key] || tr.assign || !tr.succeeded {
+			continue
+		}
+		address := normalizeAddressString(tr.plan.Target["address"])
+		if address == "" {
+			continue
+		}
+		detail := map[string]string{
+			"address":        address,
+			"action":         strings.TrimSpace(tr.plan.Action),
+			"provider":       strings.TrimSpace(tr.plan.Provider),
+			"providerRef":    strings.TrimSpace(tr.plan.ProviderRef),
+			"idempotencyKey": strings.TrimSpace(tr.plan.IdempotencyKey),
+			"targetRef":      providerCaptureRefFromTarget(tr.plan.Target),
+		}
+		if !tr.at.IsZero() {
+			detail["requiredAfter"] = tr.at.UTC().Format(time.RFC3339Nano)
+		}
+		if !observedSelfAt.IsZero() {
+			detail["snapshotCompletedAt"] = observedSelfAt.UTC().Format(time.RFC3339Nano)
+		}
+		if observedSelfCapturesOK && !observedSelfCaptures[address] && providerObservationFresh(observedSelfAt, tr.at) {
+			detail["phase"] = "Confirmed"
+			detail["source"] = "provider-inventory"
+		} else {
+			detail["phase"] = "Pending"
+			switch {
+			case observedSelfCapturesOK && observedSelfCaptures[address]:
+				detail["reason"] = "provider inventory still observes capture on self"
+			case observedSelfCapturesOK:
+				detail["reason"] = "provider inventory snapshot predates action completion"
+			default:
+				detail["reason"] = "provider inventory has not completed self capture observation"
+			}
+		}
+		out = append(out, detail)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i]["idempotencyKey"] < out[j]["idempotencyKey"]
+	})
+	return out
+}
+
+func providerForwardingObservationDetails(plans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord, observed, enabled bool, observedAt time.Time) []map[string]string {
+	latest := latestActionRecordsByKey(journal)
+	var out []map[string]string
+	for _, plan := range plans {
+		if strings.TrimSpace(plan.Action) != "ensure-forwarding-enabled" {
+			continue
+		}
+		key := strings.TrimSpace(plan.IdempotencyKey)
+		if key == "" {
+			continue
+		}
+		rec, ok := latest[key]
+		if !ok || strings.TrimSpace(rec.Status) != routerstate.ActionSucceeded {
+			continue
+		}
+		target := plan.Target
+		if len(target) == 0 {
+			target = decodeActionRecordMap(rec.TargetJSON)
+		}
+		targetRef := strings.TrimSpace(firstNonEmpty(target["nicRef"], target["resourceRef"], target["routeTableRef"], target["providerRef"]))
+		if targetRef == "" {
+			continue
+		}
+		requiredAfter := actionRecordCompletedAt(rec)
+		detail := map[string]string{
+			"action":         strings.TrimSpace(firstNonEmpty(plan.Action, rec.Action)),
+			"provider":       strings.TrimSpace(firstNonEmpty(plan.Provider, rec.Provider)),
+			"providerRef":    strings.TrimSpace(firstNonEmpty(plan.ProviderRef, rec.ProviderRef, target["providerRef"])),
+			"idempotencyKey": key,
+			"targetRef":      targetRef,
+		}
+		if !requiredAfter.IsZero() {
+			detail["requiredAfter"] = requiredAfter.UTC().Format(time.RFC3339Nano)
+		}
+		if !observedAt.IsZero() {
+			detail["snapshotCompletedAt"] = observedAt.UTC().Format(time.RFC3339Nano)
+		}
+		if observed && enabled && providerObservationFresh(observedAt, requiredAfter) {
+			detail["phase"] = "Confirmed"
+			detail["source"] = "provider-inventory"
+		} else {
+			detail["phase"] = "Pending"
+			switch {
+			case observed && !enabled:
+				detail["reason"] = "provider inventory has not observed forwarding enabled"
+			case observed:
+				detail["reason"] = "provider inventory snapshot predates action completion"
+			default:
+				detail["reason"] = "provider inventory has not completed forwarding observation"
+			}
+		}
+		out = append(out, detail)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i]["idempotencyKey"] < out[j]["idempotencyKey"]
+	})
+	return out
+}
+
+func actionRecordCompletedAt(rec routerstate.ActionExecutionRecord) time.Time {
+	if !rec.ExecutedAt.IsZero() {
+		return rec.ExecutedAt.UTC()
+	}
+	if !rec.UpdatedAt.IsZero() {
+		return rec.UpdatedAt.UTC()
+	}
+	return time.Time{}
+}
+
+func providerObservationFresh(observedAt, requiredAfter time.Time) bool {
+	if requiredAfter.IsZero() {
+		return true
+	}
+	if observedAt.IsZero() {
+		return false
+	}
+	return !observedAt.UTC().Before(requiredAfter.UTC())
 }
 
 func latestActionRecordsByKey(journal []routerstate.ActionExecutionRecord) map[string]routerstate.ActionExecutionRecord {
@@ -707,7 +909,7 @@ type providerActionPlanFailure struct {
 	FailedAt       time.Time
 }
 
-func failedProviderActionPlans(plans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord, observedSelfCaptures map[string]bool) []providerActionPlanFailure {
+func failedProviderActionPlans(plans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord, observedSelfCaptures map[string]bool, observedSelfAt time.Time) []providerActionPlanFailure {
 	if len(plans) == 0 {
 		return nil
 	}
@@ -737,7 +939,7 @@ func failedProviderActionPlans(plans []dynamicconfig.ActionPlan, journal []route
 			target = decodeActionRecordMap(rec.TargetJSON)
 		}
 		address := normalizeAddressString(target["address"])
-		if isProviderCaptureAssignAction(plan.Action) && address != "" && observedSelfCaptures[address] {
+		if isProviderCaptureAssignAction(plan.Action) && address != "" && observedSelfCaptures[address] && providerObservationFresh(observedSelfAt, actionRecordCompletedAt(rec)) {
 			continue
 		}
 		failedAt := rec.ExecutedAt
@@ -2888,9 +3090,8 @@ func stampBGPAssignmentFenceActionPlans(plans []dynamicconfig.ActionPlan, poolNa
 		now = time.Now().UTC()
 	}
 	now = now.UTC()
-	assignments := make(map[string]bgpCaptureAssignment, len(previous))
-	for address, assignment := range previous {
-		assignments[address] = assignment
+	assignments := make(map[string]bgpCaptureAssignment)
+	for _, assignment := range previous {
 		if assignment.Seq > seq {
 			seq = assignment.Seq
 		}
@@ -2923,7 +3124,7 @@ func stampBGPAssignmentFenceActionPlans(plans []dynamicconfig.ActionPlan, poolNa
 			RenewedAt:      now,
 			LeaseUntil:     leaseUntil,
 		}
-		if existing, ok := assignments[address]; ok &&
+		if existing, ok := previous[address]; ok &&
 			existing.Generation != "" &&
 			existing.Phase == assignment.Phase &&
 			existing.DesiredHolder == assignment.DesiredHolder &&
@@ -3395,14 +3596,14 @@ type providerCaptureAssignFailureInterpretation struct {
 	Superseded map[string]routerstate.ActionExecutionRecord
 }
 
-func interpretProviderCaptureAssignFailures(actions []routerstate.ActionExecutionRecord, observedSelfCaptures map[string]bool) providerCaptureAssignFailureInterpretation {
+func interpretProviderCaptureAssignFailures(actions []routerstate.ActionExecutionRecord, observedSelfCaptures map[string]bool, observedSelfAt time.Time) providerCaptureAssignFailureInterpretation {
 	latestFailed := latestFailedProviderActions(actions)
 	out := providerCaptureAssignFailureInterpretation{
 		Active:     map[string]routerstate.ActionExecutionRecord{},
 		Superseded: map[string]routerstate.ActionExecutionRecord{},
 	}
 	for addr, rec := range latestFailed {
-		if observedSelfCaptures[normalizeAddressString(addr)] {
+		if observedSelfCaptures[normalizeAddressString(addr)] && providerObservationFresh(observedSelfAt, actionRecordCompletedAt(rec)) {
 			out.Superseded[addr] = rec
 			continue
 		}

@@ -66,7 +66,7 @@ func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResu
 		now = time.Now().UTC()
 	}
 	decisions := decisionsByAddress(in.Decisions)
-	failedActions := interpretProviderCaptureAssignFailures(in.ActionJournal, in.ObservedSelfCaptures).Active
+	failedActions := interpretProviderCaptureAssignFailures(in.ActionJournal, in.ObservedSelfCaptures, in.ObservedSelfAt).Active
 	paths := planBGPAdvertisements(in.Source, in.Self, in.Decisions, in.Placement)
 	captureNextHops := in.CaptureNextHops
 	if len(captureNextHops) == 0 {
