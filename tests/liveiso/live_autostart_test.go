@@ -415,6 +415,31 @@ func TestLiveISOEnablesSSHDFromFirstBoot(t *testing.T) {
 	}
 }
 
+func TestLiveISOEnablesQEMUGuestAgentFromFirstBoot(t *testing.T) {
+	script := liveISOScript(t)
+	for _, needle := range []string{
+		"qemu-guest-agent",
+		"enable_qemu_guest_agent()",
+		"systemctl list-unit-files qemu-guest-agent.service",
+		"systemctl enable --now qemu-guest-agent.service",
+		"enable_qemu_guest_agent",
+	} {
+		if !strings.Contains(script, needle) {
+			t.Fatalf("Ubuntu live ISO qemu guest agent enablement missing %q", needle)
+		}
+	}
+
+	hostnameIdx := strings.Index(script, "apply_cloudinit_hostname || true")
+	qgaIdx := strings.Index(script, "\nenable_qemu_guest_agent\n")
+	sshIdx := strings.Index(script, "\napply_ssh_bootstrap\n")
+	if hostnameIdx < 0 || qgaIdx < 0 || sshIdx < 0 {
+		t.Fatal("missing hostname, qemu guest agent, or SSH bootstrap order marker")
+	}
+	if !(hostnameIdx < qgaIdx && qgaIdx < sshIdx) {
+		t.Fatal("firstboot order must be hostname, qemu guest agent, then SSH bootstrap")
+	}
+}
+
 func TestLiveISOUsesValidatedConfigCache(t *testing.T) {
 	script := liveISOScript(t)
 	for _, needle := range []string{
