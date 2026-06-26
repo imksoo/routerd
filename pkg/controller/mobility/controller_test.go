@@ -2114,6 +2114,65 @@ func TestPlanBGPMobilityDeliveryAssignsPerAddressGenerations(t *testing.T) {
 	}
 }
 
+func TestPlanBGPMobilityDeliveryStampsAssignmentGenerationForStandbyCapture(t *testing.T) {
+	now := time.Date(2026, 6, 26, 1, 35, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-b"]
+	address := "10.88.60.10/32"
+	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+		PoolName: "cloudedge",
+		Source:   DynamicSource("cloudedge", self.NodeRef),
+		Self:     self,
+		Members:  members,
+		Spec:     spec,
+		Decisions: []ownershipDecision{{
+			Address:       address,
+			Class:         ownershipClassRemoteHomeOwned,
+			HomeOwnerNode: "azure-router",
+		}},
+		Placement: PlacementDecision{
+			Group:      "aws-edge",
+			Active:     true,
+			ActiveNode: "aws-router-a",
+			Reason:     "peer-active",
+		},
+		InstalledNextHops:    map[string][]string{address: {"10.99.0.3"}},
+		Profiles:             map[string]api.CloudProviderProfileSpec{"aws-provider": {Provider: "aws"}},
+		ObservedSelfCaptures: map[string]bool{},
+		ObservedSelfIPsOK:    true,
+		RIBObserved:          true,
+		Now:                  now,
+	})
+	if err != nil {
+		t.Fatalf("planBGPMobilityDelivery: %v", err)
+	}
+	assign := findActionPlanByAddress(delivery.ActionPlans, "assign-secondary-ip", address)
+	if assign == nil {
+		t.Fatalf("action plans = %#v, want standby capture assign", delivery.ActionPlans)
+	}
+	if assign.Parameters[captureClaimPhaseParam] != "" {
+		t.Fatalf("assign parameters = %#v, standby group claim should not stamp claim metadata", assign.Parameters)
+	}
+	generation := assign.Parameters[captureAssignmentGenerationParam]
+	if generation == "" {
+		t.Fatalf("assign parameters = %#v, want assignment generation", assign.Parameters)
+	}
+	if !strings.Contains(assign.IdempotencyKey, ":assigngen:"+safeName(generation)) {
+		t.Fatalf("assign idempotencyKey = %q, parameters = %#v, want assignment generation fence", assign.IdempotencyKey, assign.Parameters)
+	}
+	if assign.Parameters[captureAssignmentDesiredHolderParam] != self.NodeRef {
+		t.Fatalf("assign parameters = %#v, want assignment desired holder %s", assign.Parameters, self.NodeRef)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, assign.Parameters[captureAssignmentLeaseUntilParam]); err != nil {
+		t.Fatalf("assign parameters = %#v, want assignment leaseUntil: %v", assign.Parameters, err)
+	}
+	if got := delivery.CaptureAssignments[address].Generation; got != generation {
+		t.Fatalf("delivery assignment generation = %q, want %q", got, generation)
+	}
+}
+
 func TestPlanBGPMobilityDeliveryKeepsAssignmentGenerationAcrossGroupClaimChange(t *testing.T) {
 	now := time.Date(2026, 6, 25, 23, 20, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()

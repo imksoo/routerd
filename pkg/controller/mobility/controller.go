@@ -2895,8 +2895,12 @@ func stampBGPAssignmentFenceActionPlans(plans []dynamicconfig.ActionPlan, poolNa
 			seq = assignment.Seq
 		}
 	}
-	if claim.Phase != "Active" || strings.TrimSpace(claim.Generation) == "" {
+	if strings.TrimSpace(claim.Generation) == "" {
 		return assignments, seq
+	}
+	leaseUntil := claim.LeaseUntil
+	if leaseUntil.IsZero() {
+		leaseUntil = now.Add(DefaultLeaseTTL).UTC()
 	}
 	for i := range plans {
 		plan := &plans[i]
@@ -2917,7 +2921,7 @@ func stampBGPAssignmentFenceActionPlans(plans []dynamicconfig.ActionPlan, poolNa
 			PreviousHolder: previousHolder,
 			Reason:         claim.Reason,
 			RenewedAt:      now,
-			LeaseUntil:     claim.LeaseUntil,
+			LeaseUntil:     leaseUntil,
 		}
 		if existing, ok := assignments[address]; ok &&
 			existing.Generation != "" &&
