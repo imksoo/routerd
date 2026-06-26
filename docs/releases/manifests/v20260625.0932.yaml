@@ -15,7 +15,7 @@ release:
     evidence: /home/imksoo/routerd-labs-archive/evidence/p654-v20260625-0932-run2-20260626T053426Z/baseline
   qualification:
     issue: 654
-    status: partial
+    status: not-qualified
     runs:
       - id: p654-v20260625-0932-run1-20260625T101549Z-attempt3-failover-light
         evidence: /home/imksoo/routerd-labs-archive/evidence/p654-v20260625-0932-run1-20260625T101549Z-attempt3-failover-light
@@ -220,6 +220,89 @@ release:
           - failover scenarios
           - legacy protocol matrix
           - full performance matrix
+      - id: p654-v20260625-0932-run8-20260626T113932Z
+        evidence: /home/imksoo/routerd-labs-archive/evidence/p654-v20260625-0932-run8-20260626T113932Z
+        cleanup: PASS
+        stateAfterDestroy: 0
+        provisioning:
+          status: FAIL
+          notes:
+            - >-
+              Full-topology apply failed before routerd/SAM qualification could
+              start. The proxmox provider reported VM clone failure because
+              VMID 115 already had a config file.
+            - >-
+              Post-destroy audit found no run8 AWS running/stopped instances,
+              no Azure resource group, no run8 OCI running instances, and no
+              run8 PVE VM. A stale stopped PVE VM from run3 was also removed.
+      - id: p654-v20260625-0932-run12-20260626T130545Z
+        evidence: /home/imksoo/routerd-labs-archive/evidence/p654-v20260625-0932-run12-20260626T130545Z
+        cleanup: PASS
+        stateAfterDestroy: 0
+        provisioning:
+          status: PASS
+          notes:
+            - >-
+              Full topology provisioned successfully with the serialized PVE
+              profile and fixed VMID allocation.
+        scenarios:
+          - name: baseline-repair
+            convergenceSeconds: 608
+            convergenceStatus: TIMEOUT
+            matrix: 56/56
+            status: FAIL
+            evidence: /home/imksoo/routerd-labs-archive/evidence/p654-v20260625-0932-run12-20260626T130545Z/baseline-repair
+            notes:
+              - >-
+                Fresh SSH dataplane reachability passed 56/56, but readiness
+                never converged before the 608s timeout.
+              - >-
+                Azure leaf-b retained a failed assign-secondary-ip action for
+                10.77.60.16/32 after Azure reported the address was already on
+                azure-leaf-a. Investigation showed this as stale provider
+                action feedback rather than a PVE dataplane failure.
+        skipped:
+          - failover scenarios after baseline readiness failure
+          - legacy protocol matrix
+          - full performance matrix
+      - id: p654-pr678-run13-20260626T144533Z
+        evidence: /home/imksoo/routerd-labs-archive/evidence/p654-pr678-run13-20260626T144533Z
+        cleanup: PASS
+        stateAfterDestroy: 0
+        artifact:
+          description: PR #678 fix4 artifact, not the v20260625.0932 release artifact
+          path: dist/linux-amd64/routerd-dev-pr678-fix4-linux-amd64.tar.gz
+          sha256: d1242548b4321ca48f93f60dc65f7763638bd3281e9e4fa0ff6295abe1b952d2
+        scenarios:
+          - name: fix4-baseline
+            convergenceSeconds: 138
+            matrix: 56/56
+            status: PASS
+            evidence: /home/imksoo/routerd-labs-archive/evidence/p654-pr678-run13-20260626T144533Z/fix4
+            notes:
+              - >-
+                This run validates the post-v20260625.0932 fix for stale
+                provider action feedback and same-provider home capture
+                suppression. It does not retroactively qualify the
+                v20260625.0932 tag.
+        skipped:
+          - legacy protocol matrix
+          - full performance matrix
+          - failover transfer tests
+    followUpFixes:
+      - issue: 654
+        pullRequest: 678
+        mergeCommit: 8546521842b5f84989fbe7c9a81be13cfefeb303
+        title: Fix stale SAM provider action feedback
+        notes:
+          - >-
+            The fix suppresses unsafe same-provider home secondary-IP capture
+            and ignores superseded failed provider actions once current
+            ownership says no provider action is required.
+          - >-
+            The fix was validated in run13 with convergence PASS in 138s and
+            a 56/56 SSH matrix, then merged to main. Cloud/PVE resources were
+            destroyed and residual checks found no tagged resources.
   notes:
     - >-
       v20260625.0932 is a release checkpoint after the SAM claim, provider
@@ -230,6 +313,12 @@ release:
       reachability, RR failover/rejoin, and representative OCI leaf
       failover/rejoin, but does not yet prove the full 3-5-run acceptance with
       all leaf failover scenarios.
+    - >-
+      Run12 changed the qualification conclusion from merely partial to
+      not-qualified: the v20260625.0932 artifact produced 56/56 SSH reachability
+      but timed out readiness because stale provider action feedback kept the
+      SAM control plane from converging. Therefore v20260625.0932 should not be
+      treated as the strong rollback baseline requested by #654.
     - >-
       Legacy protocol and performance matrices were intentionally skipped during
       run2 to control cloud cost. They should be rerun when cutting a new
@@ -247,6 +336,11 @@ release:
       after which AWS secondary-IP capture materialized and a representative
       AWS-to-Azure ping passed. This evidence is focused and does not replace
       the remaining #654 full qualification work.
+    - >-
+      PR #678 fixed the stale provider action feedback found by run12 and was
+      validated with run13 against a post-tag artifact: convergence PASS in
+      138s and 56/56 SSH matrix. That result is evidence for main after the
+      fix, not for the original v20260625.0932 tag.
   knownIssues:
     - issue: 654
       title: Qualify v20260625.0932 with repeated fresh cloud/PVE deployments
