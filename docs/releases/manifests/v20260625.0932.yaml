@@ -1,0 +1,124 @@
+release:
+  version: v20260625.0932
+  commit: a9ee2f5e77253357564df6751f8e0c462f8b7ec7
+  baseline: v20260624.2315
+  artifact:
+    path: dist/linux-amd64/routerd-v20260625.0932-linux-amd64.tar.gz
+    sha256: 1fa6731c340aeb3da7562ac32d5b308c380b8295376cc7af38a3986a2f2a17c9
+  checks:
+    unitTests: PASS
+    schemaChecks: PASS
+  fullTopology:
+    status: PASS
+    convergenceSeconds: 52
+    matrix: 56/56
+    evidence: /home/imksoo/routerd-labs-archive/evidence/p654-v20260625-0932-run2-20260626T053426Z/baseline
+  qualification:
+    issue: 654
+    status: partial
+    runs:
+      - id: p654-v20260625-0932-run1-20260625T101549Z-attempt3-failover-light
+        evidence: /home/imksoo/routerd-labs-archive/evidence/p654-v20260625-0932-run1-20260625T101549Z-attempt3-failover-light
+        cleanup: confirmed-earlier
+        scenarios:
+          - name: baseline
+            convergenceSeconds: 49
+            matrix: 56/56
+            status: PASS
+          - name: rr-failover-aws-rr-a
+            convergenceSeconds: 23
+            matrix: 56/56
+            status: PASS
+        skipped:
+          - legacy protocol matrix
+          - full leaf failover matrix
+          - full performance matrix
+      - id: p654-v20260625-0932-run2-20260626T053426Z
+        evidence: /home/imksoo/routerd-labs-archive/evidence/p654-v20260625-0932-run2-20260626T053426Z
+        cleanup: PASS
+        stateAfterDestroy: 0
+        provisioning:
+          status: PASS_AFTER_RETRY
+          notes:
+            - >-
+              Initial OpenTofu apply hit PVE HTTP 596 timeouts for router and
+              pve-client-b. Retry apply replaced the tainted PVE VMs
+              successfully.
+        scenarios:
+          - name: baseline
+            convergenceSeconds: 52
+            matrix: 56/56
+            status: PASS
+            evidence: /home/imksoo/routerd-labs-archive/evidence/p654-v20260625-0932-run2-20260626T053426Z/baseline
+          - name: rr-failover-aws-rr-a
+            initialConvergenceSeconds: 24
+            failoverConvergenceSeconds: 23
+            rejoinConvergenceSeconds: 22
+            initialMatrix: 56/56
+            afterFailoverMatrix: 56/56
+            afterRejoinMatrix: 56/56
+            status: PASS
+            evidence: /home/imksoo/routerd-labs-archive/evidence/p654-v20260625-0932-run2-20260626T053426Z/full-scenarios-no-perf-legacy/rr-failover-aws-rr-a
+          - name: rr-failover-aws-rr-b
+            initialConvergenceSeconds: 80
+            failoverConvergenceSeconds: 24
+            rejoinConvergenceSeconds: 49
+            initialMatrix: 56/56
+            afterFailoverMatrix: 56/56
+            afterRejoinMatrix: 56/56
+            status: PASS
+            evidence: /home/imksoo/routerd-labs-archive/evidence/p654-v20260625-0932-run2-20260626T053426Z/full-scenarios-ssh-only/rr-failover-aws-rr-b
+        skipped:
+          - legacy protocol matrix
+          - full performance matrix
+          - leaf failover matrix
+  notes:
+    - >-
+      v20260625.0932 is a release checkpoint after the SAM claim, provider
+      observation, action failure aggregation, on-prem discovery, and BFD reset
+      recovery work from issues #655 through #662.
+    - >-
+      #654 remains open. The current evidence proves repeated fresh-deploy
+      reachability and RR failover/rejoin, but does not yet prove the full
+      3-5-run acceptance with all leaf failover scenarios.
+    - >-
+      Legacy protocol and performance matrices were intentionally skipped during
+      run2 to control cloud cost. They should be rerun when cutting a new
+      release tag or when specifically qualifying protocol/performance changes.
+  knownIssues:
+    - issue: 654
+      title: Qualify v20260625.0932 with repeated fresh cloud/PVE deployments
+      severity: P0
+      status: open
+    - issue: 655
+      title: Replace deterministic SAM claim hash with persisted unique claim epoch
+      severity: P1
+      status: closed
+    - issue: 656
+      title: Split group coordinator lease from per-address capture assignment generation
+      severity: P1
+      status: closed
+    - issue: 657
+      title: Reject stale provider actions at execution time
+      severity: P1
+      status: closed
+    - issue: 658
+      title: Make provider observation generation- and freshness-aware
+      severity: P1
+      status: closed
+    - issue: 659
+      title: Complete authoritative on-prem discovery snapshots
+      severity: P1
+      status: closed
+    - issue: 660
+      title: Add address-level SAM conditions and routerctl mobility explain
+      severity: P2
+      status: closed
+    - issue: 661
+      title: Make BFD Down recovery restart-safe
+      severity: P2
+      status: closed
+    - issue: 662
+      title: Add microVM provider-contract integration harness
+      severity: P3
+      status: closed
