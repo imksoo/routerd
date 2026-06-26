@@ -101,25 +101,26 @@ type Controller struct {
 	MaxPrefixes         int
 	WatchReconnectDelay time.Duration
 
-	mu                  sync.Mutex
-	started             bool
-	globalKey           string
-	desiredPeerKeys     map[string]desiredPeer
-	appliedPeerKeys     map[string]desiredPeer
-	appliedConfig       bgpdaemon.AppliedConfig
-	importPolicyKey     string
-	pathUUIDs           map[string][]byte
-	observed            bool
-	lastState           bgpstate.State
-	peerEvents          map[string]time.Time
-	lastFIBRoutesSig    string
-	lastFIBResult       FIBSyncResult
-	lastFIBValid        bool
-	bfdPeerSeenUp       map[string]bool
-	bfdPeerDownSince    map[string]time.Time
-	bfdPeerResetPending map[string]bool
-	bfdPeerLastResetAt  map[string]time.Time
-	bfdPeerResetError   map[string]string
+	mu                   sync.Mutex
+	started              bool
+	globalKey            string
+	desiredPeerKeys      map[string]desiredPeer
+	appliedPeerKeys      map[string]desiredPeer
+	appliedConfig        bgpdaemon.AppliedConfig
+	importPolicyKey      string
+	pathUUIDs            map[string][]byte
+	observed             bool
+	lastState            bgpstate.State
+	peerEvents           map[string]time.Time
+	lastFIBRoutesSig     string
+	lastFIBResult        FIBSyncResult
+	lastFIBValid         bool
+	bfdPeerSeenUp        map[string]bool
+	bfdPeerDownSince     map[string]time.Time
+	bfdPeerResetPending  map[string]bool
+	bfdPeerLastResetAt   map[string]time.Time
+	bfdPeerResetError    map[string]string
+	bfdPeerResetAttempts map[string]int
 }
 
 type desiredPeer struct {
@@ -144,6 +145,11 @@ type bfdPeerResetTarget struct {
 	Key     string
 	Address string
 }
+
+const (
+	bfdResetBackoffBase = time.Second
+	bfdResetBackoffMax  = 30 * time.Second
+)
 
 func (c *Controller) Reconcile(ctx context.Context) error {
 	c.mu.Lock()
@@ -194,7 +200,11 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	if err != nil {
 		return c.savePendingAll("GoBGPPeerConfigInvalid", err)
 	}
-	bfdDownTransitions := c.observeBFDPeerStates(desired)
+	liveEstablishedPeers, err := c.liveEstablishedPeers(ctx)
+	if err != nil {
+		return c.savePendingAll("GoBGPPeerObserveFailed", err)
+	}
+	bfdDownTransitions := c.observeBFDPeerStates(desired, liveEstablishedPeers)
 	staticExportPrefixes := mapKeys(advertisedPrefixes(routerSpec))
 	dynamicExportPrefixes := dynamicPathExportPrefixes(applied.Paths)
 	effectiveImportPolicy := effectiveGlobalImportPolicy(routerSpec.ImportPolicy, dynamicExportPrefixes)
@@ -1230,7 +1240,7 @@ func mergeAllowedPrefixes(groups ...[]string) []string {
 	return out
 }
 
-func (c *Controller) observeBFDPeerStates(desired map[string]desiredPeer) []bfdPeerResetTarget {
+func (c *Controller) observeBFDPeerStates(desired map[string]desiredPeer, liveEstablished map[string]bool) []bfdPeerResetTarget {
 	if c.Store == nil || len(desired) == 0 {
 		return nil
 	}
@@ -1249,6 +1259,9 @@ func (c *Controller) observeBFDPeerStates(desired map[string]desiredPeer) []bfdP
 	if c.bfdPeerResetError == nil {
 		c.bfdPeerResetError = map[string]string{}
 	}
+	if c.bfdPeerResetAttempts == nil {
+		c.bfdPeerResetAttempts = map[string]int{}
+	}
 	now := time.Now()
 	var resetTargets []bfdPeerResetTarget
 	for address, peer := range desired {
@@ -1259,11 +1272,15 @@ func (c *Controller) observeBFDPeerStates(desired map[string]desiredPeer) []bfdP
 			delete(c.bfdPeerDownSince, key)
 			delete(c.bfdPeerResetPending, key)
 			delete(c.bfdPeerResetError, key)
+			delete(c.bfdPeerResetAttempts, key)
 			continue
 		}
-		if strings.EqualFold(state, "Down") && c.bfdPeerSeenUp[key] {
+		if strings.EqualFold(state, "Down") && (c.bfdPeerSeenUp[key] || liveEstablished[address]) {
 			if _, ok := c.bfdPeerDownSince[key]; !ok {
 				c.bfdPeerDownSince[key] = now
+				c.bfdPeerResetPending[key] = true
+			}
+			if liveEstablished[address] {
 				c.bfdPeerResetPending[key] = true
 			}
 			if c.bfdPeerResetPending[key] {
@@ -1278,6 +1295,7 @@ func (c *Controller) observeBFDPeerStates(desired map[string]desiredPeer) []bfdP
 		delete(c.bfdPeerDownSince, key)
 		delete(c.bfdPeerResetPending, key)
 		delete(c.bfdPeerResetError, key)
+		delete(c.bfdPeerResetAttempts, key)
 	}
 	sort.Slice(resetTargets, func(i, j int) bool {
 		if resetTargets[i].Address == resetTargets[j].Address {
@@ -1286,6 +1304,23 @@ func (c *Controller) observeBFDPeerStates(desired map[string]desiredPeer) []bfdP
 		return resetTargets[i].Address < resetTargets[j].Address
 	})
 	return resetTargets
+}
+
+func (c *Controller) liveEstablishedPeers(ctx context.Context) (map[string]bool, error) {
+	out := map[string]bool{}
+	if c.Server == nil {
+		return out, nil
+	}
+	if err := c.Server.ListPeer(ctx, &gobgpapi.ListPeerRequest{}, func(peer *gobgpapi.Peer) {
+		address := peerAddress(peer)
+		if address == "" {
+			return
+		}
+		out[address] = peer.GetState().GetSessionState() == gobgpapi.PeerState_ESTABLISHED
+	}); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *Controller) hardResetBFDDownPeers(ctx context.Context, targets []bfdPeerResetTarget) error {
@@ -1298,7 +1333,11 @@ func (c *Controller) hardResetBFDDownPeers(ctx context.Context, targets []bfdPee
 	if c.bfdPeerResetError == nil {
 		c.bfdPeerResetError = map[string]string{}
 	}
+	if c.bfdPeerResetAttempts == nil {
+		c.bfdPeerResetAttempts = map[string]int{}
+	}
 	var resetErr error
+	now := time.Now()
 	for _, target := range targets {
 		if !c.bfdPeerResetPending[target.Key] {
 			continue
@@ -1307,6 +1346,11 @@ func (c *Controller) hardResetBFDDownPeers(ctx context.Context, targets []bfdPee
 		if address == "" {
 			continue
 		}
+		if !c.bfdResetDue(target.Key, now) {
+			continue
+		}
+		c.bfdPeerResetAttempts[target.Key]++
+		c.bfdPeerLastResetAt[target.Key] = now
 		if err := c.Server.ResetPeer(ctx, &gobgpapi.ResetPeerRequest{
 			Address:       address,
 			Soft:          false,
@@ -1317,11 +1361,39 @@ func (c *Controller) hardResetBFDDownPeers(ctx context.Context, targets []bfdPee
 			resetErr = errors.Join(resetErr, fmt.Errorf("hard reset peer %s after BFD Down: %w", address, err))
 			continue
 		}
-		c.bfdPeerLastResetAt[target.Key] = time.Now()
 		delete(c.bfdPeerResetPending, target.Key)
 		delete(c.bfdPeerResetError, target.Key)
 	}
 	return resetErr
+}
+
+func (c *Controller) bfdResetDue(key string, now time.Time) bool {
+	attempts := c.bfdPeerResetAttempts[key]
+	if attempts <= 0 {
+		return true
+	}
+	last := c.bfdPeerLastResetAt[key]
+	if last.IsZero() {
+		return true
+	}
+	return !now.Before(last.Add(bfdResetBackoff(attempts)))
+}
+
+func bfdResetBackoff(attempts int) time.Duration {
+	if attempts <= 0 {
+		return 0
+	}
+	backoff := bfdResetBackoffBase
+	for i := 1; i < attempts; i++ {
+		backoff *= 2
+		if backoff >= bfdResetBackoffMax {
+			return bfdResetBackoffMax
+		}
+	}
+	if backoff > bfdResetBackoffMax {
+		return bfdResetBackoffMax
+	}
+	return backoff
 }
 
 func bfdPeerGateKey(ref, address string) string {
@@ -1693,6 +1765,7 @@ func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPR
 				"observedAt":           now,
 				"conditions":           []map[string]any{{"type": "Observed", "status": "True", "reason": "GoBGPStatus"}},
 			}
+			mergeAnyMap(status, c.bfdResetRuntimeStatus())
 			if len(fibResult.PreferredSourceSkipped) > 0 {
 				status["preferredSourceSkipped"] = fibResult.PreferredSourceSkipped
 				status["preferredSourceSkippedReason"] = fibResult.PreferredSourceSkippedReason
@@ -1740,6 +1813,63 @@ func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPR
 		}
 	}
 	return nil
+}
+
+func (c *Controller) bfdResetRuntimeStatus() map[string]any {
+	if len(c.bfdPeerResetPending) == 0 && len(c.bfdPeerResetError) == 0 {
+		return nil
+	}
+	pendingPeers := make([]string, 0, len(c.bfdPeerResetPending))
+	pendingSince := map[string]string{}
+	attempts := map[string]int{}
+	lastResetAt := map[string]string{}
+	lastError := map[string]string{}
+	for key, pending := range c.bfdPeerResetPending {
+		if !pending {
+			continue
+		}
+		pendingPeers = append(pendingPeers, key)
+		if since := c.bfdPeerDownSince[key]; !since.IsZero() {
+			pendingSince[key] = since.UTC().Format(time.RFC3339Nano)
+		}
+		if count := c.bfdPeerResetAttempts[key]; count > 0 {
+			attempts[key] = count
+		}
+		if at := c.bfdPeerLastResetAt[key]; !at.IsZero() {
+			lastResetAt[key] = at.UTC().Format(time.RFC3339Nano)
+		}
+		if err := strings.TrimSpace(c.bfdPeerResetError[key]); err != "" {
+			lastError[key] = err
+		}
+	}
+	sort.Strings(pendingPeers)
+	status := map[string]any{
+		"bfdResetPending":      len(pendingPeers) > 0,
+		"bfdResetPendingPeers": pendingPeers,
+		"bfdResetPendingCount": len(pendingPeers),
+	}
+	if len(pendingSince) > 0 {
+		status["bfdResetPendingSince"] = pendingSince
+	}
+	if len(attempts) > 0 {
+		status["bfdResetAttemptCount"] = attempts
+	}
+	if len(lastResetAt) > 0 {
+		status["bfdResetLastAttemptAt"] = lastResetAt
+	}
+	if len(lastError) > 0 {
+		status["bfdResetLastError"] = lastError
+	}
+	return status
+}
+
+func mergeAnyMap(dst, src map[string]any) {
+	if dst == nil || len(src) == 0 {
+		return
+	}
+	for key, value := range src {
+		dst[key] = value
+	}
 }
 
 func (c *Controller) saveServeManagedStatuses(phase string, changed bool, extra map[string]any) error {
