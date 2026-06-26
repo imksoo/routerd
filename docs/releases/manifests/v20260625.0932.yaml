@@ -151,6 +151,75 @@ release:
           - failover scenarios after baseline failure
           - legacy protocol matrix
           - full performance matrix
+      - id: p654-v20260625-0932-run6-20260626T100324Z
+        evidence: /home/imksoo/routerd-labs-archive/evidence/p654-v20260625-0932-run6-20260626T100324Z
+        cleanup: PASS
+        stateAfterDestroy: 0
+        provisioning:
+          status: PASS
+          notes:
+            - >-
+              Full topology was provisioned successfully with serialized PVE
+              clone/apply using tofu apply -parallelism=1.
+        scenarios:
+          - name: focused-aws-bootstrap-diagnosis
+            status: FAIL
+            evidence: /home/imksoo/routerd-labs-archive/evidence/p654-v20260625-0932-run6-20260626T100324Z/focused-aws-direct
+            notes:
+              - >-
+                The run was stopped before full matrix/failover work and only
+                diagnosed the AWS failure class from run5.
+              - >-
+                AWS leaves had active routerd/routerd-bgp but no aws CLI, while
+                AWS RR nodes had aws CLI installed.
+              - >-
+                AWS leaf cloud-init showed package install failures for curl
+                and unzip. The attempted private repair used IMDSv1 detection
+                and did not trigger on instances requiring IMDSv2.
+              - >-
+                Representative AWS client to Azure client dataplane still
+                failed with Destination Host Unreachable / No route to host.
+        skipped:
+          - full 56/56 matrix
+          - failover scenarios
+          - legacy protocol matrix
+          - full performance matrix
+      - id: p654-v20260625-0932-run7-20260626T104336Z
+        evidence: /home/imksoo/routerd-labs-archive/evidence/p654-v20260625-0932-run7-20260626T104336Z
+        cleanup: PASS
+        stateAfterDestroy: 0
+        provisioning:
+          status: PASS
+          notes:
+            - >-
+              Full topology was provisioned successfully with serialized PVE
+              clone/apply using tofu apply -parallelism=1.
+        scenarios:
+          - name: focused-aws-bootstrap-and-capture
+            status: PASS
+            evidence: /home/imksoo/routerd-labs-archive/evidence/p654-v20260625-0932-run7-20260626T104336Z/focused-direct
+            notes:
+              - >-
+                The private SAM E2E deploy path was hardened to require/repair
+                aws CLI on AWS router nodes without relying on IMDS probing.
+              - >-
+                AWS leaf cloud-init still hit the known curl/unzip package
+                install failure, but the deploy repair installed and verified
+                /usr/local/bin/aws on both AWS leaves.
+              - >-
+                AWS leaf ENIs had secondary private IPs materialized after
+                deploy.
+              - >-
+                Representative AWS client to Azure client ping passed 3/3 with
+                0% packet loss.
+              - >-
+                The sam-e2e process was intentionally interrupted after the
+                focused evidence to avoid broad convergence/matrix runtime.
+        skipped:
+          - full 56/56 matrix
+          - failover scenarios
+          - legacy protocol matrix
+          - full performance matrix
   notes:
     - >-
       v20260625.0932 is a release checkpoint after the SAM claim, provider
@@ -170,6 +239,14 @@ release:
       but baseline failed because AWS provider capture did not materialize.
       Investigate the AWS-only capture gap before using this release as a
       stronger rollback baseline.
+    - >-
+      Run6 and run7 isolated the AWS-only failure to the lab bootstrap/deploy
+      path rather than SAM core behavior: AWS leaf cloud-init can leave aws CLI
+      absent, which prevents provider inventory/executor capture. A private
+      run7 harness repair made aws CLI an explicit AWS-router prerequisite,
+      after which AWS secondary-IP capture materialized and a representative
+      AWS-to-Azure ping passed. This evidence is focused and does not replace
+      the remaining #654 full qualification work.
   knownIssues:
     - issue: 654
       title: Qualify v20260625.0932 with repeated fresh cloud/PVE deployments
