@@ -70,6 +70,11 @@ type Config struct {
 const (
 	pathSigParam = "mobilityPathSig"
 
+	captureAssignmentGenerationParam     = "mobilityAssignmentGeneration"
+	captureAssignmentDesiredHolderParam  = "mobilityAssignmentDesiredHolder"
+	captureAssignmentPreviousHolderParam = "mobilityAssignmentPreviousHolder"
+	captureAssignmentLeaseUntilParam     = "mobilityAssignmentLeaseUntil"
+
 	ProviderCaptureChangedEvent = "routerd.provider.capture.changed"
 
 	DefaultStaleRunningTimeout = 2 * time.Minute
@@ -158,13 +163,13 @@ func (e *Engine) ImportFromDynamicParts() (ImportResult, error) {
 				e.logf("provideraction: skipping plan %q from source %q: missing idempotencyKey", plan.Name, part.Source)
 				continue
 			}
-			stale, err := e.planStaleByCurrentDesired(plan)
+			stale, reason, err := e.planStaleByCurrentDesired(plan)
 			if err != nil {
 				return res, err
 			}
 			if stale {
 				res.Skipped++
-				e.logf("provideraction: skipping stale capture action %q from source %q", plan.IdempotencyKey, part.Source)
+				e.logf("provideraction: skipping stale capture action %q from source %q: %s", plan.IdempotencyKey, part.Source, reason)
 				continue
 			}
 			rec, err := recordFromPlan(part.Source, plan)
@@ -216,35 +221,147 @@ func (e *Engine) fenceStalePendingActions() (int, error) {
 		if err != nil {
 			return count, err
 		}
-		stale, err := e.planStaleByCurrentDesired(plan)
+		stale, reason, err := e.planStaleByCurrentDesired(plan)
 		if err != nil {
 			return count, err
 		}
 		if !stale {
 			continue
 		}
-		if err := e.store.MarkActionSkippedByIdempotencyKey(row.IdempotencyKey, "stale mobility desired path", e.now().UTC()); err != nil {
+		if err := e.store.MarkActionSkippedByIdempotencyKey(row.IdempotencyKey, reason, e.now().UTC()); err != nil {
 			return count, fmt.Errorf("mark stale action %q skipped: %w", row.IdempotencyKey, err)
 		}
 		count++
-		e.logf("provideraction: fenced stale capture action %q", row.IdempotencyKey)
+		e.logf("provideraction: fenced stale capture action %q: %s", row.IdempotencyKey, reason)
 	}
 	return count, nil
 }
 
-func (e *Engine) planStaleByCurrentDesired(plan dynamicconfig.ActionPlan) (bool, error) {
+func (e *Engine) planStaleByCurrentDesired(plan dynamicconfig.ActionPlan) (bool, string, error) {
+	if strings.TrimSpace(plan.Parameters[captureAssignmentGenerationParam]) != "" {
+		return e.assignmentPlanStaleByCurrentDesired(plan)
+	}
 	if strings.TrimSpace(plan.Parameters[pathSigParam]) == "" {
-		return false, nil
+		return false, "", nil
+	}
+	if isCaptureAssignAction(plan.Action) {
+		return true, "stale mobility assignment: missing generation", nil
 	}
 	desired, err := e.currentDesiredPathFenceKeys()
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
-	return !desired[strings.TrimSpace(plan.IdempotencyKey)], nil
+	if desired[strings.TrimSpace(plan.IdempotencyKey)] {
+		return false, "", nil
+	}
+	return true, "stale mobility desired path", nil
 }
 
-func (e *Engine) currentDesiredPathFenceKeys() (map[string]bool, error) {
-	out := map[string]bool{}
+func isCaptureAssignAction(action string) bool {
+	switch strings.TrimSpace(action) {
+	case "assign-secondary-ip", "assign-route-table-route":
+		return true
+	default:
+		return false
+	}
+}
+
+func (e *Engine) assignmentPlanStaleByCurrentDesired(plan dynamicconfig.ActionPlan) (bool, string, error) {
+	generation := strings.TrimSpace(plan.Parameters[captureAssignmentGenerationParam])
+	if generation == "" {
+		return false, "", nil
+	}
+	leaseUntilRaw := strings.TrimSpace(plan.Parameters[captureAssignmentLeaseUntilParam])
+	if leaseUntilRaw == "" {
+		return true, "stale mobility assignment: missing leaseUntil", nil
+	}
+	leaseUntil, err := time.Parse(time.RFC3339Nano, leaseUntilRaw)
+	if err != nil {
+		return true, "stale mobility assignment: invalid leaseUntil", nil
+	}
+	now := e.now().UTC()
+	if !leaseUntil.After(now) {
+		return true, "stale mobility assignment: lease expired", nil
+	}
+	current, err := e.currentFreshDesiredActionPlans()
+	if err != nil {
+		return false, "", err
+	}
+	for _, candidate := range current {
+		if strings.TrimSpace(candidate.Parameters[captureAssignmentGenerationParam]) != generation {
+			continue
+		}
+		if assignmentPlanMatchesCurrent(plan, candidate) {
+			return false, "", nil
+		}
+	}
+	return true, "stale mobility assignment: generation is no longer current desired state", nil
+}
+
+func assignmentPlanMatchesCurrent(plan, current dynamicconfig.ActionPlan) bool {
+	if strings.TrimSpace(plan.IdempotencyKey) != "" && strings.TrimSpace(current.IdempotencyKey) != "" &&
+		strings.TrimSpace(plan.IdempotencyKey) != strings.TrimSpace(current.IdempotencyKey) {
+		return false
+	}
+	if strings.TrimSpace(plan.Provider) != strings.TrimSpace(current.Provider) ||
+		strings.TrimSpace(plan.ProviderRef) != strings.TrimSpace(current.ProviderRef) ||
+		strings.TrimSpace(plan.Action) != strings.TrimSpace(current.Action) {
+		return false
+	}
+	if normalizeCIDRString(plan.Target["address"]) != normalizeCIDRString(current.Target["address"]) {
+		return false
+	}
+	if strings.TrimSpace(plan.Parameters[captureAssignmentDesiredHolderParam]) == "" ||
+		strings.TrimSpace(plan.Parameters[captureAssignmentDesiredHolderParam]) != strings.TrimSpace(current.Parameters[captureAssignmentDesiredHolderParam]) {
+		return false
+	}
+	if previous := strings.TrimSpace(plan.Parameters[captureAssignmentPreviousHolderParam]); previous != "" &&
+		previous != strings.TrimSpace(current.Parameters[captureAssignmentPreviousHolderParam]) {
+		return false
+	}
+	if providerCaptureRef(plan.Target) != providerCaptureRef(current.Target) {
+		return false
+	}
+	for _, key := range []string{"providerRef", "nicRef", "routeTableRef", "captureStrategy", "nextHopIPAddress"} {
+		if strings.TrimSpace(plan.Target[key]) != strings.TrimSpace(current.Target[key]) {
+			return false
+		}
+	}
+	return true
+}
+
+func providerCaptureRef(target map[string]string) string {
+	if strings.TrimSpace(target["captureStrategy"]) == "route-table" {
+		if value := strings.TrimSpace(target["routeTableRef"]); value != "" {
+			return value
+		}
+	}
+	return strings.TrimSpace(target["nicRef"])
+}
+
+func normalizeCIDRString(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if ip, network, err := net.ParseCIDR(value); err == nil {
+		ones, bits := network.Mask.Size()
+		if ones == bits {
+			return ip.String() + fmt.Sprintf("/%d", ones)
+		}
+		return network.String()
+	}
+	if ip := net.ParseIP(value); ip != nil {
+		if ip.To4() != nil {
+			return ip.String() + "/32"
+		}
+		return ip.String() + "/128"
+	}
+	return value
+}
+
+func (e *Engine) currentFreshDesiredActionPlans() ([]dynamicconfig.ActionPlan, error) {
+	var out []dynamicconfig.ActionPlan
 	parts, err := e.store.ListDynamicConfigParts()
 	if err != nil {
 		return nil, fmt.Errorf("list dynamic config parts for provider action fencing: %w", err)
@@ -262,13 +379,23 @@ func (e *Engine) currentDesiredPathFenceKeys() (map[string]bool, error) {
 		if err := json.Unmarshal([]byte(part.ActionPlansJSON), &plans); err != nil {
 			return nil, fmt.Errorf("decode actionPlans for source %q: %w", part.Source, err)
 		}
-		for _, plan := range plans {
-			if strings.TrimSpace(plan.Parameters[pathSigParam]) == "" {
-				continue
-			}
-			if key := strings.TrimSpace(plan.IdempotencyKey); key != "" {
-				out[key] = true
-			}
+		out = append(out, plans...)
+	}
+	return out, nil
+}
+
+func (e *Engine) currentDesiredPathFenceKeys() (map[string]bool, error) {
+	out := map[string]bool{}
+	plans, err := e.currentFreshDesiredActionPlans()
+	if err != nil {
+		return nil, err
+	}
+	for _, plan := range plans {
+		if strings.TrimSpace(plan.Parameters[pathSigParam]) == "" {
+			continue
+		}
+		if key := strings.TrimSpace(plan.IdempotencyKey); key != "" {
+			out[key] = true
 		}
 	}
 	return out, nil
@@ -361,15 +488,15 @@ func (e *Engine) Execute(ctx context.Context, id int64, mode string, policy api.
 	if err != nil {
 		return err
 	}
-	stale, err := e.planStaleByCurrentDesired(plan)
+	stale, reason, err := e.planStaleByCurrentDesired(plan)
 	if err != nil {
 		return err
 	}
 	if stale {
-		if err := e.store.MarkActionSkippedByIdempotencyKey(rec.IdempotencyKey, "stale mobility desired path", e.now().UTC()); err != nil {
+		if err := e.store.MarkActionSkippedByIdempotencyKey(rec.IdempotencyKey, reason, e.now().UTC()); err != nil {
 			return fmt.Errorf("mark stale action %q skipped: %w", rec.IdempotencyKey, err)
 		}
-		e.logf("provideraction: fenced stale capture action %q before execution", rec.IdempotencyKey)
+		e.logf("provideraction: fenced stale capture action %q before execution: %s", rec.IdempotencyKey, reason)
 		return nil
 	}
 

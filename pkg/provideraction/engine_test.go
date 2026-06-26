@@ -107,6 +107,19 @@ func samplePlan(key string) dynamicconfig.ActionPlan {
 	}
 }
 
+func sampleAssignmentPlan(key, generation, desiredHolder, previousHolder, nicRef string, leaseUntil time.Time) dynamicconfig.ActionPlan {
+	plan := samplePlan(key)
+	plan.Target["providerRef"] = plan.ProviderRef
+	plan.Target["nicRef"] = nicRef
+	plan.Parameters = map[string]string{
+		captureAssignmentGenerationParam:     generation,
+		captureAssignmentDesiredHolderParam:  desiredHolder,
+		captureAssignmentPreviousHolderParam: previousHolder,
+		captureAssignmentLeaseUntilParam:     leaseUntil.UTC().Format(time.RFC3339Nano),
+	}
+	return plan
+}
+
 func sampleForwardingPlan(key, address string) dynamicconfig.ActionPlan {
 	return dynamicconfig.ActionPlan{
 		Name:           "forwarding-" + key,
@@ -184,7 +197,7 @@ func TestImportSkipsMissingIdempotencyKey(t *testing.T) {
 func TestImportFencesStaleMobilityPathActions(t *testing.T) {
 	store := mustStore(t)
 	e := newEngine(t, store, (&fakeRunner{result: succeededResult()}).run, nil)
-	oldPlan := samplePlan("old-assign")
+	oldPlan := sampleForwardingPlan("old-forwarding", "10.0.0.5/32")
 	oldPlan.Parameters = map[string]string{
 		pathSigParam: "prefix=10.0.0.5/32;nextHops=10.99.0.1",
 	}
@@ -195,7 +208,7 @@ func TestImportFencesStaleMobilityPathActions(t *testing.T) {
 	if _, err := store.ImportAction(oldRec); err != nil {
 		t.Fatalf("seed stale pending action: %v", err)
 	}
-	currentPlan := samplePlan("current-assign")
+	currentPlan := sampleForwardingPlan("current-forwarding", "10.0.0.5/32")
 	currentPlan.Parameters = map[string]string{
 		pathSigParam: "prefix=10.0.0.5/32;nextHops=10.99.0.2",
 	}
@@ -208,7 +221,7 @@ func TestImportFencesStaleMobilityPathActions(t *testing.T) {
 	if res.Inserted != 1 || res.Skipped != 1 {
 		t.Fatalf("want stale pending skipped and current path inserted, got %+v", res)
 	}
-	rec, ok, err := store.GetActionByIdempotencyKey("old-assign")
+	rec, ok, err := store.GetActionByIdempotencyKey("old-forwarding")
 	if err != nil || !ok {
 		t.Fatalf("lookup stale action: ok=%v err=%v", ok, err)
 	}
@@ -280,7 +293,7 @@ func TestImportAllowsFreshMobilityPathPart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new engine: %v", err)
 	}
-	plan := samplePlan("fresh-path")
+	plan := sampleForwardingPlan("fresh-path", "10.0.0.5/32")
 	plan.Parameters = map[string]string{
 		pathSigParam: "prefix=10.0.0.5/32;nextHops=10.99.0.1",
 	}
@@ -292,6 +305,31 @@ func TestImportAllowsFreshMobilityPathPart(t *testing.T) {
 	}
 	if res.Inserted != 1 || res.Skipped != 0 {
 		t.Fatalf("want fresh path-fenced plan imported, got %+v", res)
+	}
+}
+
+func TestImportSkipsLegacyCaptureAssignWithoutAssignmentGeneration(t *testing.T) {
+	store := mustStore(t)
+	e := newEngine(t, store, (&fakeRunner{result: succeededResult()}).run, nil)
+	plan := samplePlan("legacy-capture-assign")
+	plan.Parameters = map[string]string{
+		pathSigParam: "prefix=10.0.0.5/32;nextHops=10.99.0.1",
+	}
+	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{plan})
+
+	res, err := e.ImportFromDynamicParts()
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if res.Inserted != 0 || res.Skipped != 1 {
+		t.Fatalf("want legacy capture assign skipped, got %+v", res)
+	}
+	rows, err := store.ListActions(state.ActionExecutionFilter{})
+	if err != nil {
+		t.Fatalf("ListActions: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("want no legacy capture assign rows, got %d", len(rows))
 	}
 }
 
@@ -481,7 +519,7 @@ func TestExecutePolicyAutoApprove(t *testing.T) {
 
 func TestExecuteSkipsStaleOwnershipEpochAtExecutionBoundary(t *testing.T) {
 	store := mustStore(t)
-	plan := samplePlan("stale-execute")
+	plan := sampleForwardingPlan("stale-execute", "10.0.0.5/32")
 	plan.Parameters = map[string]string{
 		pathSigParam: "prefix=10.0.0.5/32;nextHops=10.99.0.1",
 	}
@@ -495,12 +533,12 @@ func TestExecuteSkipsStaleOwnershipEpochAtExecutionBoundary(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("lookup stale-execute: ok=%v err=%v", ok, err)
 	}
-	current := samplePlan("current-execute")
+	current := sampleForwardingPlan("current-execute", "10.0.0.5/32")
 	current.Parameters = map[string]string{
 		pathSigParam: "prefix=10.0.0.5/32;nextHops=10.99.0.2",
 	}
 	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{current})
-	pol := allowPolicy()
+	pol := allowForwardingPolicy()
 	pol.RequireApproval = boolPtr(false)
 	if err := e.Execute(context.Background(), rec.ID, ModeExecute, pol); err != nil {
 		t.Fatalf("execute stale: %v", err)
@@ -514,6 +552,180 @@ func TestExecuteSkipsStaleOwnershipEpochAtExecutionBoundary(t *testing.T) {
 	}
 	if rec.Status != state.ActionSkipped {
 		t.Fatalf("stale action status = %q, want skipped", rec.Status)
+	}
+}
+
+func TestExecuteSkipsLegacyCaptureAssignWithoutAssignmentGeneration(t *testing.T) {
+	store := mustStore(t)
+	plan := samplePlan("legacy-execute")
+	plan.Parameters = map[string]string{
+		pathSigParam: "prefix=10.0.0.5/32;nextHops=10.99.0.1",
+	}
+	recSeed, err := recordFromPlan("sub-a", plan)
+	if err != nil {
+		t.Fatalf("recordFromPlan: %v", err)
+	}
+	if _, err := store.ImportAction(recSeed); err != nil {
+		t.Fatalf("ImportAction: %v", err)
+	}
+	runner := &fakeRunner{result: succeededResult()}
+	e := newEngine(t, store, runner.run, []api.Resource{executorPlugin("aws")})
+	rec, ok, err := store.GetActionByIdempotencyKey("legacy-execute")
+	if err != nil || !ok {
+		t.Fatalf("lookup legacy-execute: ok=%v err=%v", ok, err)
+	}
+	pol := allowPolicy()
+	pol.RequireApproval = boolPtr(false)
+	if err := e.Execute(context.Background(), rec.ID, ModeExecute, pol); err != nil {
+		t.Fatalf("execute legacy capture assign: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("legacy capture assign launched executor; calls=%d", runner.calls)
+	}
+	rec, _, err = store.GetActionByIdempotencyKey("legacy-execute")
+	if err != nil {
+		t.Fatalf("reget legacy action: %v", err)
+	}
+	if rec.Status != state.ActionSkipped {
+		t.Fatalf("legacy action status = %q, want skipped", rec.Status)
+	}
+	if rec.ResultMessage != "stale mobility assignment: missing generation" {
+		t.Fatalf("result message = %q, want missing generation", rec.ResultMessage)
+	}
+}
+
+func TestExecuteSkipsStaleAssignmentGenerationAfterDesiredHolderChanges(t *testing.T) {
+	store := mustStore(t)
+	old := sampleAssignmentPlan("old-assign", "cloudedge/aws-10-0-0-5-32/1", "aws-router-a", "aws-router-b", "eni-a", time.Unix(1700000000, 0).Add(time.Hour))
+	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{old})
+	runner := &fakeRunner{result: succeededResult()}
+	e := newEngine(t, store, runner.run, []api.Resource{executorPlugin("aws")})
+	if _, err := e.ImportFromDynamicParts(); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	rec, ok, err := store.GetActionByIdempotencyKey("old-assign")
+	if err != nil || !ok {
+		t.Fatalf("lookup old-assign: ok=%v err=%v", ok, err)
+	}
+
+	current := sampleAssignmentPlan("new-assign", "cloudedge/aws-10-0-0-5-32/2", "aws-router-b", "aws-router-a", "eni-b", time.Unix(1700000000, 0).Add(time.Hour))
+	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{current})
+	pol := allowPolicy()
+	pol.RequireApproval = boolPtr(false)
+	if err := e.Execute(context.Background(), rec.ID, ModeExecute, pol); err != nil {
+		t.Fatalf("execute stale assignment: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("stale assignment launched executor; calls=%d", runner.calls)
+	}
+	rec, _, err = store.GetActionByIdempotencyKey("old-assign")
+	if err != nil {
+		t.Fatalf("reget old assignment: %v", err)
+	}
+	if rec.Status != state.ActionSkipped {
+		t.Fatalf("stale assignment status = %q, want skipped", rec.Status)
+	}
+	if rec.ResultMessage == "" {
+		t.Fatalf("stale assignment result message is empty")
+	}
+}
+
+func TestExecuteCurrentAssignmentGenerationRunsExecutor(t *testing.T) {
+	store := mustStore(t)
+	plan := sampleAssignmentPlan("current-assign", "cloudedge/aws-10-0-0-5-32/1", "aws-router-a", "aws-router-b", "eni-a", time.Unix(1700000000, 0).Add(time.Hour))
+	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{plan})
+	runner := &fakeRunner{result: succeededResult()}
+	e := newEngine(t, store, runner.run, []api.Resource{executorPlugin("aws")})
+	if _, err := e.ImportFromDynamicParts(); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	rec, ok, err := store.GetActionByIdempotencyKey("current-assign")
+	if err != nil || !ok {
+		t.Fatalf("lookup current-assign: ok=%v err=%v", ok, err)
+	}
+	pol := allowPolicy()
+	pol.RequireApproval = boolPtr(false)
+	if err := e.Execute(context.Background(), rec.ID, ModeExecute, pol); err != nil {
+		t.Fatalf("execute current assignment: %v", err)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("current assignment executor calls = %d, want 1", runner.calls)
+	}
+	rec, _, err = store.GetActionByIdempotencyKey("current-assign")
+	if err != nil {
+		t.Fatalf("reget current assignment: %v", err)
+	}
+	if rec.Status != state.ActionSucceeded {
+		t.Fatalf("current assignment status = %q, want succeeded", rec.Status)
+	}
+}
+
+func TestExecuteSkipsExpiredAssignmentLeaseBeforeExecutor(t *testing.T) {
+	store := mustStore(t)
+	expired := sampleAssignmentPlan("expired-assign", "cloudedge/aws-10-0-0-5-32/1", "aws-router-a", "aws-router-b", "eni-a", time.Unix(1700000000, 0).Add(-time.Second))
+	recSeed, err := recordFromPlan("sub-a", expired)
+	if err != nil {
+		t.Fatalf("recordFromPlan: %v", err)
+	}
+	if _, err := store.ImportAction(recSeed); err != nil {
+		t.Fatalf("ImportAction: %v", err)
+	}
+	runner := &fakeRunner{result: succeededResult()}
+	e := newEngine(t, store, runner.run, []api.Resource{executorPlugin("aws")})
+	rec, ok, err := store.GetActionByIdempotencyKey("expired-assign")
+	if err != nil || !ok {
+		t.Fatalf("lookup expired-assign: ok=%v err=%v", ok, err)
+	}
+	pol := allowPolicy()
+	pol.RequireApproval = boolPtr(false)
+	if err := e.Execute(context.Background(), rec.ID, ModeExecute, pol); err != nil {
+		t.Fatalf("execute expired assignment: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expired assignment launched executor; calls=%d", runner.calls)
+	}
+	rec, _, err = store.GetActionByIdempotencyKey("expired-assign")
+	if err != nil {
+		t.Fatalf("reget expired assignment: %v", err)
+	}
+	if rec.Status != state.ActionSkipped {
+		t.Fatalf("expired assignment status = %q, want skipped", rec.Status)
+	}
+	if rec.ResultMessage != "stale mobility assignment: lease expired" {
+		t.Fatalf("result message = %q, want lease expired", rec.ResultMessage)
+	}
+}
+
+func TestExecuteSkipsAssignmentWhenTargetRefChanges(t *testing.T) {
+	store := mustStore(t)
+	plan := sampleAssignmentPlan("target-assign", "cloudedge/aws-10-0-0-5-32/1", "aws-router-a", "aws-router-b", "eni-a", time.Unix(1700000000, 0).Add(time.Hour))
+	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{plan})
+	runner := &fakeRunner{result: succeededResult()}
+	e := newEngine(t, store, runner.run, []api.Resource{executorPlugin("aws")})
+	if _, err := e.ImportFromDynamicParts(); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	rec, ok, err := store.GetActionByIdempotencyKey("target-assign")
+	if err != nil || !ok {
+		t.Fatalf("lookup target-assign: ok=%v err=%v", ok, err)
+	}
+
+	current := sampleAssignmentPlan("target-assign", "cloudedge/aws-10-0-0-5-32/1", "aws-router-a", "aws-router-b", "eni-b", time.Unix(1700000000, 0).Add(time.Hour))
+	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{current})
+	pol := allowPolicy()
+	pol.RequireApproval = boolPtr(false)
+	if err := e.Execute(context.Background(), rec.ID, ModeExecute, pol); err != nil {
+		t.Fatalf("execute target-changed assignment: %v", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("target-changed assignment launched executor; calls=%d", runner.calls)
+	}
+	rec, _, err = store.GetActionByIdempotencyKey("target-assign")
+	if err != nil {
+		t.Fatalf("reget target assignment: %v", err)
+	}
+	if rec.Status != state.ActionSkipped {
+		t.Fatalf("target assignment status = %q, want skipped", rec.Status)
 	}
 }
 
