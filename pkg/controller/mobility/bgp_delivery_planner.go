@@ -37,6 +37,8 @@ type bgpDeliveryPlannerInput struct {
 	ForwardingEnabled    bool
 	ForwardingObservedAt time.Time
 	CaptureClaim         bgpCaptureClaim
+	CaptureAssignments   map[string]bgpCaptureAssignment
+	CaptureAssignmentSeq int64
 	ObservedStaleSince   map[string]time.Time
 	SuppressDeprovision  bool
 	LivenessMarkers      map[string]string
@@ -44,11 +46,13 @@ type bgpDeliveryPlannerInput struct {
 }
 
 type bgpDeliveryPlannerResult struct {
-	Paths             []bgpdaemon.AppliedPath
-	ActionPlans       []dynamicconfig.ActionPlan
-	CaptureCandidates map[string]bgpTrapCandidate
-	Placement         PlacementDecision
-	Distribution      *captureDistribution
+	Paths                []bgpdaemon.AppliedPath
+	ActionPlans          []dynamicconfig.ActionPlan
+	CaptureCandidates    map[string]bgpTrapCandidate
+	Placement            PlacementDecision
+	Distribution         *captureDistribution
+	CaptureAssignments   map[string]bgpCaptureAssignment
+	CaptureAssignmentSeq int64
 }
 
 func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResult, error) {
@@ -69,16 +73,18 @@ func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResu
 		captureNextHops = in.InstalledNextHops
 	}
 	candidates, dist := planCaptureCandidatesWithDistribution(in.Self, in.Members, decisions, in.Placement, captureNextHops, in.RIBObserved, in.PreviousPlans, in.ObservedSelfCaptures, failedActions, in.LivenessMarkers, poolPrefix, now)
-	actionPlans, err := planCaptureActionPlans(in, candidates)
+	actionPlans, assignments, assignmentSeq, err := planCaptureActionPlans(in, candidates)
 	if err != nil {
 		return bgpDeliveryPlannerResult{}, err
 	}
 	return bgpDeliveryPlannerResult{
-		Paths:             paths,
-		ActionPlans:       actionPlans,
-		CaptureCandidates: candidates,
-		Placement:         in.Placement,
-		Distribution:      dist,
+		Paths:                paths,
+		ActionPlans:          actionPlans,
+		CaptureCandidates:    candidates,
+		Placement:            in.Placement,
+		Distribution:         dist,
+		CaptureAssignments:   assignments,
+		CaptureAssignmentSeq: assignmentSeq,
 	}, nil
 }
 
@@ -395,9 +401,9 @@ func decisionHasProviderCaptureState(decision ownershipDecision) bool {
 	return state != "" && state != captureStateNone
 }
 
-func planCaptureActionPlans(in bgpDeliveryPlannerInput, candidates map[string]bgpTrapCandidate) ([]dynamicconfig.ActionPlan, error) {
+func planCaptureActionPlans(in bgpDeliveryPlannerInput, candidates map[string]bgpTrapCandidate) ([]dynamicconfig.ActionPlan, map[string]bgpCaptureAssignment, int64, error) {
 	if in.Self.Capture.Type != "provider-secondary-ip" {
-		return nil, nil
+		return nil, in.CaptureAssignments, in.CaptureAssignmentSeq, nil
 	}
 	claim := in.CaptureClaim
 	if strings.TrimSpace(claim.Generation) == "" {
@@ -406,18 +412,19 @@ func planCaptureActionPlans(in bgpDeliveryPlannerInput, candidates map[string]bg
 	candidates = filterUnsafeSecondaryIPCaptureCandidates(in, candidates, claim)
 	plans, err := bgpProviderActionPlans(in.PoolName, in.Self.NodeRef, in.Spec, candidates, in.PreviousPlans, in.Profiles, in.ActionJournal, in.ObservedSelfCaptures, in.ObservedSelfIPsOK, in.ObservedSelfAt, in.ForwardingObserved, in.ForwardingEnabled, in.ForwardingObservedAt, in.SuppressDeprovision, standbyShouldReleaseCapture(in.Self, in.Placement), in.Now)
 	if err != nil {
-		return nil, err
+		return nil, nil, 0, err
 	}
 	stampBGPClaimFenceActionPlans(plans, claim)
+	assignments, assignmentSeq := stampBGPAssignmentFenceActionPlans(plans, in.PoolName, in.Self, decisionsByAddress(in.Decisions), claim, in.CaptureAssignments, in.CaptureAssignmentSeq, in.Now)
 	plans = filterRetainedStaleCaptureUnassignPlans(plans, retainedStaleCaptureAddresses(in.Decisions, in.InstalledNextHops))
 	if !in.SuppressDeprovision {
 		observed, err := observedSelfStaleCaptureActionPlans(in, candidates)
 		if err != nil {
-			return nil, err
+			return nil, nil, 0, err
 		}
 		plans = append(plans, observed...)
 	}
-	return dedupeActionPlans(plans), nil
+	return dedupeActionPlans(plans), assignments, assignmentSeq, nil
 }
 
 func filterUnsafeSecondaryIPCaptureCandidates(in bgpDeliveryPlannerInput, candidates map[string]bgpTrapCandidate, claim bgpCaptureClaim) map[string]bgpTrapCandidate {

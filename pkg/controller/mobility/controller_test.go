@@ -2019,17 +2019,173 @@ func TestPlanBGPMobilityDeliveryStampsActiveClaimGenerationOnAssign(t *testing.T
 	if assign.Parameters[captureClaimGenerationParam] == "" {
 		t.Fatalf("assign parameters = %#v, want claim generation", assign.Parameters)
 	}
-	if !strings.Contains(assign.IdempotencyKey, ":claimgen:"+safeName(assign.Parameters[captureClaimGenerationParam])) {
-		t.Fatalf("assign idempotencyKey = %q, parameters = %#v, want claim generation fence", assign.IdempotencyKey, assign.Parameters)
+	if assign.Parameters[captureAssignmentGenerationParam] == "" {
+		t.Fatalf("assign parameters = %#v, want assignment generation", assign.Parameters)
+	}
+	if !strings.Contains(assign.IdempotencyKey, ":assigngen:"+safeName(assign.Parameters[captureAssignmentGenerationParam])) {
+		t.Fatalf("assign idempotencyKey = %q, parameters = %#v, want assignment generation fence", assign.IdempotencyKey, assign.Parameters)
+	}
+	if strings.Contains(assign.IdempotencyKey, ":claimgen:") {
+		t.Fatalf("assign idempotencyKey = %q, claim generation must not churn per-address assignment key", assign.IdempotencyKey)
 	}
 	if assign.Parameters[captureClaimDesiredHolderParam] != self.NodeRef {
 		t.Fatalf("assign parameters = %#v, want desired holder %s", assign.Parameters, self.NodeRef)
 	}
+	if assign.Parameters[captureAssignmentDesiredHolderParam] != self.NodeRef {
+		t.Fatalf("assign parameters = %#v, want assignment desired holder %s", assign.Parameters, self.NodeRef)
+	}
 	if assign.Parameters[captureClaimPreviousHolderParam] != "aws-router-a" {
 		t.Fatalf("assign parameters = %#v, want previous holder", assign.Parameters)
 	}
+	if assign.Parameters[captureAssignmentPreviousHolderParam] != "aws-router-a" {
+		t.Fatalf("assign parameters = %#v, want assignment previous holder", assign.Parameters)
+	}
+	if assign.Parameters[captureAssignmentClaimEpochParam] != assign.Parameters[captureClaimGenerationParam] {
+		t.Fatalf("assign parameters = %#v, want assignment claim epoch to reference group claim", assign.Parameters)
+	}
 	if _, err := time.Parse(time.RFC3339Nano, assign.Parameters[captureClaimLeaseUntilParam]); err != nil {
 		t.Fatalf("assign parameters = %#v, want RFC3339 leaseUntil: %v", assign.Parameters, err)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, assign.Parameters[captureAssignmentLeaseUntilParam]); err != nil {
+		t.Fatalf("assign parameters = %#v, want RFC3339 assignment leaseUntil: %v", assign.Parameters, err)
+	}
+}
+
+func TestPlanBGPMobilityDeliveryAssignsPerAddressGenerations(t *testing.T) {
+	now := time.Date(2026, 6, 25, 23, 10, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-b"]
+	addresses := []string{"10.88.60.10/32", "10.88.60.12/32"}
+	decisions := []ownershipDecision{
+		{Address: addresses[0], Class: ownershipClassRemoteHomeOwned, HomeOwnerNode: "azure-router"},
+		{Address: addresses[1], Class: ownershipClassRemoteHomeOwned, HomeOwnerNode: "oci-router"},
+	}
+	installed := map[string][]string{
+		addresses[0]: {"10.99.0.3"},
+		addresses[1]: {"10.99.0.4"},
+	}
+	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+		PoolName:  "cloudedge",
+		Source:    DynamicSource("cloudedge", self.NodeRef),
+		Self:      self,
+		Members:   members,
+		Spec:      spec,
+		Decisions: decisions,
+		Placement: PlacementDecision{
+			Group:                 "aws-edge",
+			Active:                true,
+			ActiveNode:            self.NodeRef,
+			Seize:                 true,
+			ActiveIdentityNodeRef: "aws-router-a",
+			Reason:                "hard-failure",
+		},
+		InstalledNextHops:    installed,
+		Profiles:             map[string]api.CloudProviderProfileSpec{"aws-provider": {Provider: "aws"}},
+		ObservedSelfCaptures: map[string]bool{},
+		ObservedSelfIPsOK:    true,
+		RIBObserved:          true,
+		Now:                  now,
+	})
+	if err != nil {
+		t.Fatalf("planBGPMobilityDelivery: %v", err)
+	}
+	generations := map[string]bool{}
+	for _, address := range addresses {
+		assign := findActionPlanByAddress(delivery.ActionPlans, "assign-secondary-ip", address)
+		if assign == nil {
+			t.Fatalf("action plans = %#v, want assign for %s", delivery.ActionPlans, address)
+		}
+		generation := assign.Parameters[captureAssignmentGenerationParam]
+		if generation == "" {
+			t.Fatalf("assign %s parameters = %#v, want assignment generation", address, assign.Parameters)
+		}
+		if generations[generation] {
+			t.Fatalf("assignment generation %q reused across addresses; plans=%#v", generation, delivery.ActionPlans)
+		}
+		generations[generation] = true
+		if !strings.Contains(assign.IdempotencyKey, ":assigngen:"+safeName(generation)) {
+			t.Fatalf("assign %s key = %q, want assignment generation fence", address, assign.IdempotencyKey)
+		}
+		if got := delivery.CaptureAssignments[address].Generation; got != generation {
+			t.Fatalf("delivery assignment %s generation = %q, want %q", address, got, generation)
+		}
+	}
+}
+
+func TestPlanBGPMobilityDeliveryKeepsAssignmentGenerationAcrossGroupClaimChange(t *testing.T) {
+	now := time.Date(2026, 6, 25, 23, 20, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-b"]
+	address := "10.88.60.10/32"
+	previous := bgpCaptureAssignment{
+		Address:        address,
+		Phase:          "Active",
+		Generation:     "aws-edge/10-88-60-10-32/7",
+		Seq:            7,
+		ClaimEpoch:     "aws-edge/1",
+		DesiredHolder:  self.NodeRef,
+		PreviousHolder: "aws-router-a",
+		IssuedAt:       now.Add(-time.Minute),
+		RenewedAt:      now.Add(-time.Minute),
+		LeaseUntil:     now.Add(DefaultLeaseTTL),
+	}
+	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+		PoolName: "cloudedge",
+		Source:   DynamicSource("cloudedge", self.NodeRef),
+		Self:     self,
+		Members:  members,
+		Spec:     spec,
+		Decisions: []ownershipDecision{{
+			Address:       address,
+			Class:         ownershipClassRemoteHomeOwned,
+			HomeOwnerNode: "azure-router",
+		}},
+		Placement: PlacementDecision{
+			Group:                 "aws-edge",
+			Active:                true,
+			ActiveNode:            self.NodeRef,
+			Seize:                 true,
+			ActiveIdentityNodeRef: "aws-router-a",
+			Reason:                "hard-failure",
+		},
+		InstalledNextHops: map[string][]string{address: {"10.99.0.3"}},
+		Profiles:          map[string]api.CloudProviderProfileSpec{"aws-provider": {Provider: "aws"}},
+		CaptureClaim: bgpCaptureClaim{
+			Group:          "aws-edge",
+			Phase:          "Active",
+			Generation:     "aws-edge/99",
+			EpochSeq:       99,
+			DesiredHolder:  self.NodeRef,
+			PreviousHolder: "aws-router-a",
+			Reason:         "hard-failure",
+			LeaseUntil:     now.Add(DefaultLeaseTTL),
+		},
+		CaptureAssignments:   map[string]bgpCaptureAssignment{address: previous},
+		CaptureAssignmentSeq: 7,
+		ObservedSelfCaptures: map[string]bool{},
+		ObservedSelfIPsOK:    true,
+		RIBObserved:          true,
+		Now:                  now,
+	})
+	if err != nil {
+		t.Fatalf("planBGPMobilityDelivery: %v", err)
+	}
+	assign := findActionPlanByAddress(delivery.ActionPlans, "assign-secondary-ip", address)
+	if assign == nil {
+		t.Fatalf("action plans = %#v, want assign", delivery.ActionPlans)
+	}
+	if got := assign.Parameters[captureAssignmentGenerationParam]; got != previous.Generation {
+		t.Fatalf("assignment generation = %q, want previous %q despite new group claim", got, previous.Generation)
+	}
+	if got := assign.Parameters[captureAssignmentClaimEpochParam]; got != "aws-edge/99" {
+		t.Fatalf("assignment claim epoch = %q, want current group claim", got)
+	}
+	if delivery.CaptureAssignmentSeq != 7 {
+		t.Fatalf("assignment seq = %d, want unchanged 7", delivery.CaptureAssignmentSeq)
 	}
 }
 

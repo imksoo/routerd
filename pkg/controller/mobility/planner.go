@@ -28,6 +28,13 @@ const (
 	captureClaimReasonParam         = "mobilityClaimReason"
 	captureClaimLeaseUntilParam     = "mobilityClaimLeaseUntil"
 
+	captureAssignmentPhaseParam          = "mobilityAssignmentPhase"
+	captureAssignmentGenerationParam     = "mobilityAssignmentGeneration"
+	captureAssignmentDesiredHolderParam  = "mobilityAssignmentDesiredHolder"
+	captureAssignmentPreviousHolderParam = "mobilityAssignmentPreviousHolder"
+	captureAssignmentClaimEpochParam     = "mobilityAssignmentClaimEpoch"
+	captureAssignmentLeaseUntilParam     = "mobilityAssignmentLeaseUntil"
+
 	captureStrategyProxyARP    = "proxy-arp"
 	captureStrategySecondaryIP = "secondary-ip"
 	captureStrategyRouteTable  = "route-table"
