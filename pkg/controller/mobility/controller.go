@@ -381,6 +381,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	pendingActionCount := pendingProviderActionPlanCount(actionPlans, actionJournal)
 	failedActions := failedProviderActionPlans(actionPlans, actionJournal, discoverySelfCaptures, discoverySelfObservedAt)
 	failedActions = appendProviderCaptureAssignFailures(failedActions, providerFailures.Active)
+	failedActions = filterSupersededSameProviderHomeFailures(failedActions, ownershipDecisions, self.Capture.ProviderRef)
 	status["providerActionPendingCount"] = pendingActionCount
 	observationStatus := providerCaptureObservationStatus(actionPlans, previousActionPlans, actionJournal, discoverySelfCaptures, discoverySelfIPsObserved, discoverySelfObservedAt, forwardingObserved, forwardingEnabled, forwardingObservedAt, ownershipDecisions)
 	status["providerObservationPhase"] = observationStatus.Phase
@@ -1167,6 +1168,26 @@ func appendProviderCaptureAssignFailures(failed []providerActionPlanFailure, act
 		return failed[i].IdempotencyKey < failed[j].IdempotencyKey
 	})
 	return failed
+}
+
+func filterSupersededSameProviderHomeFailures(failed []providerActionPlanFailure, decisions []ownershipDecision, selfProviderRef string) []providerActionPlanFailure {
+	if len(failed) == 0 || strings.TrimSpace(selfProviderRef) == "" {
+		return failed
+	}
+	byAddress := decisionsByAddress(decisions)
+	out := failed[:0]
+	for _, item := range failed {
+		decision, ok := byAddress[normalizeAddressString(item.Address)]
+		if ok &&
+			decision.Class == ownershipClassRemoteHomeOwned &&
+			strings.TrimSpace(decision.HomeProviderRef) == strings.TrimSpace(selfProviderRef) &&
+			!decisionHasProviderCaptureState(decision) &&
+			!decision.CaptureSucceeded {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func providerActionFailureTarget(action string, target map[string]string) string {

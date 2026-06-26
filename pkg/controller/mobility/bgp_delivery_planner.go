@@ -409,7 +409,7 @@ func planCaptureActionPlans(in bgpDeliveryPlannerInput, candidates map[string]bg
 	if strings.TrimSpace(claim.Generation) == "" {
 		claim = bgpCaptureClaimForPlacement(in.Self, in.Placement, in.Now)
 	}
-	candidates = filterUnsafeSecondaryIPCaptureCandidates(in, candidates, claim)
+	candidates = filterUnsafeSecondaryIPCaptureCandidates(in, candidates)
 	plans, err := bgpProviderActionPlans(in.PoolName, in.Self.NodeRef, in.Spec, candidates, in.PreviousPlans, in.Profiles, in.ActionJournal, in.ObservedSelfCaptures, in.ObservedSelfIPsOK, in.ObservedSelfAt, in.ForwardingObserved, in.ForwardingEnabled, in.ForwardingObservedAt, in.SuppressDeprovision, standbyShouldReleaseCapture(in.Self, in.Placement), in.Now)
 	if err != nil {
 		return nil, nil, 0, err
@@ -427,7 +427,7 @@ func planCaptureActionPlans(in bgpDeliveryPlannerInput, candidates map[string]bg
 	return dedupeActionPlans(plans), assignments, assignmentSeq, nil
 }
 
-func filterUnsafeSecondaryIPCaptureCandidates(in bgpDeliveryPlannerInput, candidates map[string]bgpTrapCandidate, claim bgpCaptureClaim) map[string]bgpTrapCandidate {
+func filterUnsafeSecondaryIPCaptureCandidates(in bgpDeliveryPlannerInput, candidates map[string]bgpTrapCandidate) map[string]bgpTrapCandidate {
 	if len(candidates) == 0 || effectiveCaptureStrategy("", captureStrategyValue(in.Self.Capture)) != captureStrategySecondaryIP {
 		return candidates
 	}
@@ -435,7 +435,7 @@ func filterUnsafeSecondaryIPCaptureCandidates(in bgpDeliveryPlannerInput, candid
 	out := make(map[string]bgpTrapCandidate, len(candidates))
 	for address, candidate := range candidates {
 		decision, ok := decisions[address]
-		if ok && suppressInitialSameSiteSecondaryIPCapture(decision, in.Self, in.Members, candidate, claim) {
+		if ok && suppressInitialSameSiteSecondaryIPCapture(decision, in.Self, in.Members, candidate) {
 			continue
 		}
 		out[address] = candidate
@@ -443,13 +443,19 @@ func filterUnsafeSecondaryIPCaptureCandidates(in bgpDeliveryPlannerInput, candid
 	return out
 }
 
-func suppressInitialSameSiteSecondaryIPCapture(decision ownershipDecision, self memberPlanInfo, members map[string]memberPlanInfo, candidate bgpTrapCandidate, claim bgpCaptureClaim) bool {
-	if candidate.ProtectOnly || candidate.Seize {
+func suppressInitialSameSiteSecondaryIPCapture(decision ownershipDecision, self memberPlanInfo, members map[string]memberPlanInfo, candidate bgpTrapCandidate) bool {
+	if candidate.ProtectOnly {
 		return false
 	}
+	sameProviderHome := false
 	switch decision.Class {
 	case ownershipClassRemoteHomeOwned:
-		if strings.TrimSpace(decision.Source) != providerDiscoverySource {
+		sameProviderHome = strings.TrimSpace(decision.HomeProviderRef) != "" &&
+			strings.TrimSpace(decision.HomeProviderRef) == strings.TrimSpace(self.Capture.ProviderRef)
+		if !sameProviderHome && candidate.Seize {
+			return false
+		}
+		if !sameProviderHome && strings.TrimSpace(decision.Source) != providerDiscoverySource {
 			return false
 		}
 	case ownershipClassStaleCapture:
@@ -462,14 +468,17 @@ func suppressInitialSameSiteSecondaryIPCapture(decision ownershipDecision, self 
 	default:
 		return false
 	}
+	if decisionHasProviderCaptureState(decision) || decision.CaptureSucceeded {
+		return false
+	}
+	if sameProviderHome {
+		return true
+	}
 	owner, ok := lookupMemberByNodeRef(members, decision.HomeOwnerNode)
 	if !ok || !samePlacementSite(self, owner) {
 		return false
 	}
-	if decisionHasProviderCaptureState(decision) || decision.CaptureSucceeded {
-		return false
-	}
-	return strings.TrimSpace(claim.PreviousHolder) == ""
+	return true
 }
 
 func retainedStaleCaptureAddresses(decisions []ownershipDecision, installedNextHops map[string][]string) map[string]bool {
