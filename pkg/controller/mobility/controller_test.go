@@ -2344,6 +2344,81 @@ func TestPlanBGPMobilityDeliveryKeepsAssignmentGenerationAcrossGroupClaimChange(
 	}
 }
 
+func TestPlanBGPMobilityDeliveryPrunesNonDesiredCaptureAssignment(t *testing.T) {
+	now := time.Date(2026, 6, 26, 2, 58, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-b"]
+	desired := "10.88.60.10/32"
+	stale := "10.88.60.12/32"
+	previousDesired := bgpCaptureAssignment{
+		Address:       desired,
+		Phase:         "Active",
+		Generation:    "aws-edge/10-88-60-10-32/3",
+		Seq:           3,
+		DesiredHolder: self.NodeRef,
+		IssuedAt:      now.Add(-time.Minute),
+		RenewedAt:     now.Add(-time.Minute),
+		LeaseUntil:    now.Add(DefaultLeaseTTL),
+	}
+	previousStale := bgpCaptureAssignment{
+		Address:       stale,
+		Phase:         "Active",
+		Generation:    "aws-edge/10-88-60-12-32/4",
+		Seq:           4,
+		DesiredHolder: self.NodeRef,
+		IssuedAt:      now.Add(-time.Minute),
+		RenewedAt:     now.Add(-time.Minute),
+		LeaseUntil:    now.Add(DefaultLeaseTTL),
+	}
+	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+		PoolName: "cloudedge",
+		Source:   DynamicSource("cloudedge", self.NodeRef),
+		Self:     self,
+		Members:  members,
+		Spec:     spec,
+		Decisions: []ownershipDecision{{
+			Address:       desired,
+			Class:         ownershipClassRemoteHomeOwned,
+			HomeOwnerNode: "azure-router",
+		}, {
+			Address:           stale,
+			Class:             ownershipClassStaleCapture,
+			HomeOwnerNode:     "azure-router",
+			SuppressionReason: "fresh-home-owner",
+		}},
+		Placement: PlacementDecision{
+			Group:      "aws-edge",
+			Active:     true,
+			ActiveNode: self.NodeRef,
+		},
+		InstalledNextHops: map[string][]string{desired: {"10.99.0.3"}},
+		Profiles:          map[string]api.CloudProviderProfileSpec{"aws-provider": {Provider: "aws"}},
+		CaptureAssignments: map[string]bgpCaptureAssignment{
+			desired: previousDesired,
+			stale:   previousStale,
+		},
+		CaptureAssignmentSeq: 4,
+		ObservedSelfCaptures: map[string]bool{},
+		ObservedSelfIPsOK:    true,
+		RIBObserved:          true,
+		Now:                  now,
+	})
+	if err != nil {
+		t.Fatalf("planBGPMobilityDelivery: %v", err)
+	}
+	if got := delivery.CaptureAssignments[desired].Generation; got != previousDesired.Generation {
+		t.Fatalf("desired assignment generation = %q, want previous %q", got, previousDesired.Generation)
+	}
+	if _, ok := delivery.CaptureAssignments[stale]; ok {
+		t.Fatalf("capture assignments = %#v, non-desired assignment %s must be pruned", delivery.CaptureAssignments, stale)
+	}
+	if delivery.CaptureAssignmentSeq != 4 {
+		t.Fatalf("assignment seq = %d, want previous max seq retained", delivery.CaptureAssignmentSeq)
+	}
+}
+
 func TestBGPCaptureClaimPersistedEpochDoesNotReuseRepeatedTransition(t *testing.T) {
 	now := time.Date(2026, 6, 25, 11, 30, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()

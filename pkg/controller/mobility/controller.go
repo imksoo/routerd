@@ -3090,9 +3090,8 @@ func stampBGPAssignmentFenceActionPlans(plans []dynamicconfig.ActionPlan, poolNa
 		now = time.Now().UTC()
 	}
 	now = now.UTC()
-	assignments := make(map[string]bgpCaptureAssignment, len(previous))
-	for address, assignment := range previous {
-		assignments[address] = assignment
+	assignments := make(map[string]bgpCaptureAssignment)
+	for _, assignment := range previous {
 		if assignment.Seq > seq {
 			seq = assignment.Seq
 		}
@@ -3125,7 +3124,7 @@ func stampBGPAssignmentFenceActionPlans(plans []dynamicconfig.ActionPlan, poolNa
 			RenewedAt:      now,
 			LeaseUntil:     leaseUntil,
 		}
-		if existing, ok := assignments[address]; ok &&
+		if existing, ok := previous[address]; ok &&
 			existing.Generation != "" &&
 			existing.Phase == assignment.Phase &&
 			existing.DesiredHolder == assignment.DesiredHolder &&
