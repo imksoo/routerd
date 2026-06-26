@@ -197,9 +197,7 @@ func planCaptureCandidatesWithDistribution(self memberPlanInfo, members map[stri
 			continue
 		}
 		if !decisionEligibleForCapture(decision, self, members, placement) {
-			if _, failed := failedActions[address]; !failed {
-				continue
-			}
+			continue
 		}
 		if !routeTableCaptureAllowed(decision, self) {
 			continue
@@ -215,13 +213,10 @@ func planCaptureCandidatesWithDistribution(self memberPlanInfo, members map[stri
 			continue
 		}
 		if !decisionEligibleForCapture(decision, self, members, placement) {
-			_, failed := failedActions[address]
-			if !failed && (ribObserved || !decisionIsCaptureNotDesiredStale(decision)) {
-				if ribObserved && decisionIsCaptureNotDesiredStale(decision) && !decision.CaptureSucceeded && !installedAddresses[address] && bgpTrapCandidateWithinMissingHold(candidate, now) {
-					out[address] = candidate
-				}
-				continue
+			if ribObserved && decisionIsCaptureNotDesiredStale(decision) && !decision.CaptureSucceeded && !installedAddresses[address] && bgpTrapCandidateWithinMissingHold(candidate, now) {
+				out[address] = candidate
 			}
+			continue
 		}
 		if decision.Class == ownershipClassConfirmedCapture {
 			if providerCaptureObservedOnSelf(decision, self, observedSelfIPs) {
@@ -267,9 +262,7 @@ func collectEligibleCaptureAddresses(self memberPlanInfo, members map[string]mem
 			continue
 		}
 		if !decisionEligibleForCapture(decision, self, members, placement) {
-			if _, failed := failedActions[address]; !failed {
-				continue
-			}
+			continue
 		}
 		if !routeTableCaptureAllowed(decision, self) {
 			continue
@@ -344,6 +337,11 @@ func decisionEligibleForCapture(decision ownershipDecision, self memberPlanInfo,
 		case "capture-not-desired", "local-router-self", "local-home-owner", "self-captured-secondary":
 			return false
 		case "fresh-home-owner":
+			if decision.Source == providerDiscoverySource {
+				if owner, ok := lookupMemberByNodeRef(members, decision.HomeOwnerNode); ok && samePlacementSite(self, owner) && !placement.Seize {
+					return false
+				}
+			}
 			return strings.TrimSpace(decision.HomeOwnerNode) != "" &&
 				strings.TrimSpace(decision.HomeOwnerNode) != strings.TrimSpace(self.NodeRef)
 		default:
@@ -353,8 +351,10 @@ func decisionEligibleForCapture(decision ownershipDecision, self memberPlanInfo,
 		if strings.TrimSpace(decision.AdvertiseOwnerNode) == strings.TrimSpace(self.NodeRef) {
 			return false
 		}
-		if owner, ok := lookupMemberByNodeRef(members, decision.HomeOwnerNode); ok && samePlacementSite(self, owner) && !placement.Active && !placement.Seize {
-			return false
+		if decision.Source == providerDiscoverySource {
+			if owner, ok := lookupMemberByNodeRef(members, decision.HomeOwnerNode); ok && samePlacementSite(self, owner) && !placement.Seize {
+				return false
+			}
 		}
 		return true
 	}
