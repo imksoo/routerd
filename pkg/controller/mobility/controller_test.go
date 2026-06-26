@@ -1087,6 +1087,57 @@ func TestProviderObservationRequiresFreshForwardingSnapshot(t *testing.T) {
 	}
 }
 
+func TestSAMAddressStatusesExposeProviderObservationBlocker(t *testing.T) {
+	now := time.Date(2026, 6, 26, 4, 40, 0, 0, time.UTC)
+	address := "10.88.60.11/32"
+	plan := dynamicconfig.ActionPlan{
+		Provider:       "aws",
+		ProviderRef:    "aws-provider",
+		Action:         actionAssignSecondaryIP,
+		Target:         map[string]string{"address": address, "providerRef": "aws-provider", "nicRef": "eni-a"},
+		Parameters:     map[string]string{captureAssignmentGenerationParam: "gen-42"},
+		IdempotencyKey: "assign-key",
+	}
+	targetJSON, err := json.Marshal(plan.Target)
+	if err != nil {
+		t.Fatalf("marshal target: %v", err)
+	}
+	journal := []routerstate.ActionExecutionRecord{{
+		ID:             1,
+		IdempotencyKey: plan.IdempotencyKey,
+		Provider:       plan.Provider,
+		ProviderRef:    plan.ProviderRef,
+		Action:         plan.Action,
+		TargetJSON:     string(targetJSON),
+		Status:         routerstate.ActionSucceeded,
+		ExecutedAt:     now,
+		UpdatedAt:      now,
+	}}
+	observations := providerCaptureObservationStatus([]dynamicconfig.ActionPlan{plan}, nil, journal, map[string]bool{}, true, now.Add(time.Second), false, false, time.Time{}, []ownershipDecision{{
+		Address:       address,
+		Class:         ownershipClassRemoteHomeOwned,
+		HomeOwnerNode: "aws-router",
+		Source:        "provider-discovery",
+	}})
+	statuses := samAddressStatuses([]ownershipDecision{{
+		Address:       address,
+		Class:         ownershipClassRemoteHomeOwned,
+		HomeOwnerNode: "aws-router",
+		Source:        "provider-discovery",
+	}}, []dynamicconfig.ActionPlan{plan}, journal, nil, observations)
+	item, ok := statuses[address].(map[string]any)
+	if !ok {
+		t.Fatalf("address status = %#v, want map", statuses[address])
+	}
+	if item["phase"] != "Pending" || item["blockingCondition"] != "ProviderObserved" || item["assignmentGeneration"] != "gen-42" {
+		t.Fatalf("address status = %#v, want pending provider observation blocker and generation", item)
+	}
+	conditions := item["conditions"].(map[string]string)
+	if conditions["OwnershipResolved"] != "True" || conditions["ProviderActionApplied"] != "True" || conditions["ProviderObserved"] != "False" {
+		t.Fatalf("conditions = %#v, want resolved/action true and observed false", conditions)
+	}
+}
+
 func TestControllerBGPModeUsesDiscoveredSelfNICForProviderActions(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)

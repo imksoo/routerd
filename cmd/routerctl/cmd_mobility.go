@@ -51,6 +51,23 @@ type mobilityOwnerRow struct {
 	ConflictReason        string `json:"conflictReason,omitempty" yaml:"conflictReason,omitempty"`
 }
 
+type mobilityExplainReport struct {
+	Pool                 string            `json:"pool" yaml:"pool"`
+	Address              string            `json:"address" yaml:"address"`
+	Phase                string            `json:"phase" yaml:"phase"`
+	Health               string            `json:"health,omitempty" yaml:"health,omitempty"`
+	Class                string            `json:"class,omitempty" yaml:"class,omitempty"`
+	OwnerNode            string            `json:"ownerNode,omitempty" yaml:"ownerNode,omitempty"`
+	CaptureHolderNode    string            `json:"captureHolderNode,omitempty" yaml:"captureHolderNode,omitempty"`
+	OwnerProviderRef     string            `json:"ownerProviderRef,omitempty" yaml:"ownerProviderRef,omitempty"`
+	AssignmentGeneration string            `json:"assignmentGeneration,omitempty" yaml:"assignmentGeneration,omitempty"`
+	ProviderAction       string            `json:"providerAction,omitempty" yaml:"providerAction,omitempty"`
+	ProviderActionKey    string            `json:"providerActionKey,omitempty" yaml:"providerActionKey,omitempty"`
+	BlockingCondition    string            `json:"blockingCondition,omitempty" yaml:"blockingCondition,omitempty"`
+	Conditions           map[string]string `json:"conditions" yaml:"conditions"`
+	ConditionReasons     map[string]string `json:"conditionReasons,omitempty" yaml:"conditionReasons,omitempty"`
+}
+
 func mobilityCommand(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		mobilityUsage(stderr)
@@ -63,8 +80,10 @@ func mobilityCommand(args []string, stdout, stderr io.Writer) error {
 		return mobilityTrapsCommand(args[1:], stdout)
 	case "owners":
 		return mobilityOwnersCommand(args[1:], stdout)
+	case "explain":
+		return mobilityExplainCommand(args[1:], stdout)
 	case "leases", "list", "ownership", "show":
-		return fmt.Errorf("mobility %s was removed with BGP mobility; use `routerctl mobility owners`, `routerctl mobility paths`, or `routerctl mobility traps`", args[0])
+		return fmt.Errorf("mobility %s was removed with BGP mobility; use `routerctl mobility owners`, `routerctl mobility paths`, `routerctl mobility traps`, or `routerctl mobility explain`", args[0])
 	case "help", "-h", "--help":
 		mobilityUsage(stdout)
 		return nil
@@ -108,6 +127,52 @@ func mobilityOwnersCommand(args []string, stdout io.Writer) error {
 	}
 	rows := mobilityOwnerRows(statuses, *poolFilter, *addressFilter)
 	return writeMobilityOwners(stdout, rows, output)
+}
+
+func mobilityExplainCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("mobility explain", flag.ContinueOnError)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"Explain one SAM address from MobilityPool address-level conditions.",
+			"routerctl mobility explain --pool cloudedge --address 10.77.60.10/32\n"+
+				"routerctl mobility explain --pool cloudedge --address 10.77.60.10/32 -o json")
+	}
+	statePath := fs.String("state-file", defaultStatePath(), "routerd state database file")
+	pool := fs.String("pool", "", "MobilityPool name")
+	address := fs.String("address", "", "mobility address")
+	output := "table"
+	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
+	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected mobility explain argument %q", fs.Arg(0))
+	}
+	if strings.TrimSpace(*pool) == "" {
+		return errors.New("mobility explain requires --pool")
+	}
+	if strings.TrimSpace(*address) == "" {
+		return errors.New("mobility explain requires --address")
+	}
+	store, err := openLedgerStateReadOnly(*statePath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	statuses, err := store.ListObjectStatuses()
+	if err != nil {
+		return err
+	}
+	report, err := mobilityExplainReportFor(statuses, *pool, *address)
+	if err != nil {
+		return err
+	}
+	return writeMobilityExplain(stdout, report, output)
 }
 
 func mobilityPathsCommand(args []string, stdout io.Writer) error {
@@ -187,6 +252,7 @@ func mobilityUsage(w io.Writer) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "commands:")
 	fmt.Fprintln(w, "  owners [--pool <name>] [--address <ipv4/32>] [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  explain --pool <name> --address <ipv4/32> [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  paths [--prefix <prefix>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  traps [--address <ipv4/32>] [--state-file <path>] [-o table|json|yaml]")
 }
@@ -237,6 +303,41 @@ func mobilityOwnerRows(statuses []routerstate.ObjectStatus, poolFilter, addressF
 		return rows[i].Pool < rows[j].Pool
 	})
 	return rows
+}
+
+func mobilityExplainReportFor(statuses []routerstate.ObjectStatus, pool, address string) (mobilityExplainReport, error) {
+	pool = strings.TrimSpace(pool)
+	address = strings.TrimSpace(address)
+	for _, status := range statuses {
+		if status.APIVersion != api.MobilityAPIVersion || status.Kind != "MobilityPool" || status.Name != pool {
+			continue
+		}
+		addresses := statusMap(status.Status["addresses"])
+		if len(addresses) == 0 {
+			return mobilityExplainReport{}, fmt.Errorf("MobilityPool/%s has no address-level status; reconcile with a routerd version that writes status.addresses", pool)
+		}
+		item := statusMap(addresses[address])
+		if len(item) == 0 {
+			return mobilityExplainReport{}, fmt.Errorf("MobilityPool/%s has no address status for %s", pool, address)
+		}
+		return mobilityExplainReport{
+			Pool:                 pool,
+			Address:              address,
+			Phase:                firstNonEmpty(stringStatus(item, "phase"), stringStatus(status.Status, "phase")),
+			Health:               stringStatus(status.Status, "health"),
+			Class:                stringStatus(item, "class"),
+			OwnerNode:            stringStatus(item, "ownerNode"),
+			CaptureHolderNode:    stringStatus(item, "captureHolderNode"),
+			OwnerProviderRef:     stringStatus(item, "ownerProviderRef"),
+			AssignmentGeneration: stringStatus(item, "assignmentGeneration"),
+			ProviderAction:       stringStatus(item, "providerAction"),
+			ProviderActionKey:    stringStatus(item, "providerActionKey"),
+			BlockingCondition:    stringStatus(item, "blockingCondition"),
+			Conditions:           stringMapStatus(item["conditions"]),
+			ConditionReasons:     stringMapStatus(item["conditionReasons"]),
+		}, nil
+	}
+	return mobilityExplainReport{}, fmt.Errorf("MobilityPool/%s not found", pool)
 }
 
 func mobilityPathRows(statuses []routerstate.ObjectStatus, prefixFilter string) []mobilityPathRow {
@@ -372,6 +473,49 @@ func writeMobilityTraps(stdout io.Writer, rows []mobilityTrapRow, output string)
 	}
 }
 
+func writeMobilityExplain(stdout io.Writer, report mobilityExplainReport, output string) error {
+	switch output {
+	case "", "table":
+		fmt.Fprintf(stdout, "Pool: %s\n", report.Pool)
+		fmt.Fprintf(stdout, "Address: %s\n", report.Address)
+		fmt.Fprintf(stdout, "Phase: %s\n", displayCell(report.Phase))
+		if report.OwnerNode != "" {
+			fmt.Fprintf(stdout, "Owner: %s\n", report.OwnerNode)
+		}
+		if report.Class != "" {
+			fmt.Fprintf(stdout, "Class: %s\n", report.Class)
+		}
+		if report.AssignmentGeneration != "" {
+			fmt.Fprintf(stdout, "Assignment generation: %s\n", report.AssignmentGeneration)
+		}
+		if report.ProviderAction != "" {
+			fmt.Fprintf(stdout, "Provider action: %s", report.ProviderAction)
+			if report.ProviderActionKey != "" {
+				fmt.Fprintf(stdout, " (%s)", report.ProviderActionKey)
+			}
+			fmt.Fprintln(stdout)
+		}
+		if report.BlockingCondition != "" {
+			fmt.Fprintf(stdout, "Blocking condition: %s\n", report.BlockingCondition)
+		} else {
+			fmt.Fprintln(stdout, "Blocking condition: -")
+		}
+		fmt.Fprintln(stdout, "")
+		w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "CONDITION\tSTATUS\tREASON")
+		for _, name := range sortedStringKeys(report.Conditions) {
+			fmt.Fprintf(w, "%s\t%s\t%s\n", name, report.Conditions[name], displayCell(report.ConditionReasons[name]))
+		}
+		return w.Flush()
+	case "json":
+		return writeJSON(stdout, report)
+	case "yaml":
+		return writeYAML(stdout, report)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
 func writeMobilityOwners(stdout io.Writer, rows []mobilityOwnerRow, output string) error {
 	switch output {
 	case "", "table":
@@ -401,6 +545,36 @@ func writeMobilityOwners(stdout io.Writer, rows []mobilityOwnerRow, output strin
 	default:
 		return fmt.Errorf("unsupported output %q", output)
 	}
+}
+
+func stringMapStatus(value any) map[string]string {
+	switch typed := value.(type) {
+	case map[string]string:
+		out := make(map[string]string, len(typed))
+		for k, v := range typed {
+			out[k] = v
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]string, len(typed))
+		for k, v := range typed {
+			if s := strings.TrimSpace(fmt.Sprint(v)); s != "" && s != "<nil>" {
+				out[k] = s
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func sortedStringKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func mobilityStringSlice(value any) []string {

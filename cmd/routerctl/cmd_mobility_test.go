@@ -138,6 +138,60 @@ func TestMobilityOwnersCommand(t *testing.T) {
 	}
 }
 
+func TestMobilityExplainCommand(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routerd.db")
+	store, err := routerstate.OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"phase": "Pending",
+		"addresses": map[string]any{
+			"10.88.60.11/32": map[string]any{
+				"phase":                "Pending",
+				"class":                "RemoteHomeOwned",
+				"ownerNode":            "aws-router",
+				"assignmentGeneration": "gen-42",
+				"providerAction":       "assign-secondary-ip",
+				"providerActionKey":    "assign-key",
+				"blockingCondition":    "ProviderObserved",
+				"conditions": map[string]any{
+					"OwnershipResolved":     "True",
+					"ProviderActionApplied": "True",
+					"ProviderObserved":      "False",
+				},
+				"conditionReasons": map[string]any{
+					"ProviderObserved": "provider inventory has not observed capture on self",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := mobilityCommand([]string{"explain", "--state-file", path, "--pool", "cloudedge", "--address", "10.88.60.11/32"}, &stdout, &stderr); err != nil {
+		t.Fatalf("mobility explain: %v stderr=%s", err, stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{"10.88.60.11/32", "Phase: Pending", "ProviderObserved", "gen-42", "provider inventory has not observed capture on self"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("mobility explain output missing %q:\n%s", want, out)
+		}
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if err := mobilityCommand([]string{"explain", "--state-file", path, "--pool", "cloudedge", "--address", "10.88.60.11/32", "-o", "json"}, &stdout, &stderr); err != nil {
+		t.Fatalf("mobility explain json: %v stderr=%s", err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"phase": "Pending"`) || !strings.Contains(stdout.String(), `"blockingCondition": "ProviderObserved"`) {
+		t.Fatalf("mobility explain json missing phase/blocker:\n%s", stdout.String())
+	}
+}
+
 func TestTopLevelUsageListsCurrentMobilityCommands(t *testing.T) {
 	var stdout bytes.Buffer
 	usage(&stdout)
@@ -145,6 +199,7 @@ func TestTopLevelUsageListsCurrentMobilityCommands(t *testing.T) {
 	out := stdout.String()
 	for _, want := range []string{
 		"mobility owners",
+		"mobility explain",
 		"mobility paths",
 		"mobility traps",
 	} {
