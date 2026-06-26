@@ -219,6 +219,66 @@ func TestControllerBGPModeOnPremL2DiscoveryWarmupKeepsPoolPending(t *testing.T) 
 	}
 }
 
+func TestControllerBGPModeOnPremL2AllowsFreshEmptyCompleteDiscovery(t *testing.T) {
+	now := time.Date(2026, 6, 26, 4, 10, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := plannedPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	spec.Members[0].OwnershipDiscovery = api.MobilityOwnershipDiscovery{
+		Mode:            "onprem-l2",
+		AllowEmptyAfter: "5s",
+		Sources: []api.MobilityOwnershipDiscoverySource{
+			{Type: OnPremSourceARPObserver, Interface: "lan"},
+		},
+	}
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoveryPhase":           "Complete",
+		"discoveryMode":            "onprem-l2",
+		"discoveryObserved":        0,
+		"discoveryResultCount":     0,
+		"discoveryAuthoritative":   false,
+		"discoveryAllowEmptyAfter": "5s",
+		"discoveryArmedAt":         now.Add(-6 * time.Second).Format(time.RFC3339Nano),
+		"discoveryCompletedAt":     now.Add(-time.Second).Format(time.RFC3339Nano),
+		"discoveryFreshUntil":      now.Add(time.Minute).Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: planningRouterForNode("onprem-router", spec), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["phase"] != "Ready" || status["plannerPhase"] != "BGPPlanned" {
+		t.Fatalf("status = %#v, want Ready for fresh empty complete discovery", status)
+	}
+
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoveryPhase":           "Complete",
+		"discoveryMode":            "onprem-l2",
+		"discoveryObserved":        0,
+		"discoveryResultCount":     0,
+		"discoveryAuthoritative":   false,
+		"discoveryAllowEmptyAfter": "5s",
+		"discoveryArmedAt":         now.Add(-time.Minute).Format(time.RFC3339Nano),
+		"discoveryCompletedAt":     now.Add(-time.Minute).Format(time.RFC3339Nano),
+		"discoveryFreshUntil":      now.Add(-time.Second).Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus stale: %v", err)
+	}
+	bgp = &fakeBGPPaths{}
+	controller = Controller{Router: planningRouterForNode("onprem-router", spec), Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile stale: %v", err)
+	}
+	status = store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["phase"] != "Pending" || !strings.Contains(fmt.Sprint(status["plannerReason"]), "empty ownership discovery is not fresh") {
+		t.Fatalf("status = %#v, want Pending for stale empty complete discovery", status)
+	}
+}
+
 func TestControllerBGPModeProfileSpecMatchesInlineSpec(t *testing.T) {
 	now := time.Date(2026, 6, 4, 10, 0, 0, 0, time.UTC)
 	inlineSpec := awsFailoverPoolSpec()

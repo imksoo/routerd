@@ -8231,6 +8231,10 @@
                               "additionalProperties": false,
                               "description": "OwnershipDiscovery optionally lets a cloud member discover locally owned\nprovider private IPs and emit them as observed federation facts.",
                               "properties": {
+                                "allowEmptyAfter": {
+                                  "description": "AllowEmptyAfter lets passive on-prem discovery declare an empty segment\ncomplete after the sources have been armed for this duration. Empty keeps\nzero-client passive discovery pending.",
+                                  "type": "string"
+                                },
                                 "leaseTTL": {
                                   "description": "LeaseTTL controls the emitted observed event expiry. Empty defaults to the\ncontroller default.",
                                   "type": "string"
@@ -8586,6 +8590,10 @@
                                   "additionalProperties": false,
                                   "description": "OwnershipDiscovery defaults for provider private-IP observation.",
                                   "properties": {
+                                    "allowEmptyAfter": {
+                                      "description": "AllowEmptyAfter lets passive on-prem discovery declare an empty segment\ncomplete after the sources have been armed for this duration. Empty keeps\nzero-client passive discovery pending.",
+                                      "type": "string"
+                                    },
                                     "leaseTTL": {
                                       "description": "LeaseTTL controls the emitted observed event expiry. Empty defaults to the\ncontroller default.",
                                       "type": "string"
@@ -9016,6 +9024,10 @@
                             "ownershipDiscovery": {
                               "additionalProperties": false,
                               "properties": {
+                                "allowEmptyAfter": {
+                                  "description": "AllowEmptyAfter lets passive on-prem discovery declare an empty segment\ncomplete after the sources have been armed for this duration. Empty keeps\nzero-client passive discovery pending.",
+                                  "type": "string"
+                                },
                                 "leaseTTL": {
                                   "description": "LeaseTTL controls the emitted observed event expiry. Empty defaults to the\ncontroller default.",
                                   "type": "string"

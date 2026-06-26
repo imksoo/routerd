@@ -372,6 +372,63 @@ func TestDiscoveryControllerOnPremL2ArmedUntilClientsObserved(t *testing.T) {
 	}
 }
 
+func TestDiscoveryControllerOnPremL2CompletesEmptyAfterPolicy(t *testing.T) {
+	now := time.Date(2026, 6, 26, 4, 5, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := api.MobilityPoolSpec{
+		Prefix:         "192.168.123.0/24",
+		GroupRef:       "cloudedge",
+		DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+		Members: []api.MobilityPoolMember{
+			{
+				NodeRef: "pve-rt08",
+				Site:    "pve08",
+				Role:    "onprem",
+				Capture: api.MobilityMemberCapture{
+					Type:       "proxy-arp",
+					Interface:  "svnet1",
+					ActiveWhen: api.CaptureActiveWhen{Type: "single-router"},
+				},
+				OwnershipDiscovery: api.MobilityOwnershipDiscovery{
+					Mode:            "onprem-l2",
+					AllowEmptyAfter: "5s",
+					Sources: []api.MobilityOwnershipDiscoverySource{
+						{Type: OnPremSourceARPObserver, Interface: "svnet1"},
+					},
+				},
+			},
+			{NodeRef: "k8s-rt02", Site: "core", Role: "cloud"},
+		},
+	}
+	router := staticRouter("pve-rt08", spec)
+	discovery := DiscoveryController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := discovery.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial Discovery Reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["discoveryPhase"] != "Armed" || fmt.Sprint(status["discoveryResultCount"]) != "0" {
+		t.Fatalf("status = %#v, want armed before allowEmptyAfter", status)
+	}
+
+	discovery.Now = func() time.Time { return now.Add(6 * time.Second) }
+	if err := discovery.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second Discovery Reconcile: %v", err)
+	}
+	status = store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["discoveryPhase"] != "Complete" || status["discoveryAuthoritative"] != false || fmt.Sprint(status["discoveryResultCount"]) != "0" {
+		t.Fatalf("status = %#v, want non-authoritative empty complete discovery", status)
+	}
+	if status["discoveryAllowEmptyAfter"] != "5s" {
+		t.Fatalf("status = %#v, want allowEmptyAfter in status", status)
+	}
+	if _, ok := statusTimeValue(status["discoveryCompletedAt"]); !ok {
+		t.Fatalf("status = %#v, want discoveryCompletedAt", status)
+	}
+	if _, ok := statusTimeValue(status["discoveryFreshUntil"]); !ok {
+		t.Fatalf("status = %#v, want discoveryFreshUntil", status)
+	}
+}
+
 func TestDiscoveryControllerOnPremL2StatusObservedClientsBySourceSurvivesEmptyOnDemandStatus(t *testing.T) {
 	now := time.Date(2026, 6, 5, 12, 35, 0, 0, time.UTC)
 	store := testStore(t, now)

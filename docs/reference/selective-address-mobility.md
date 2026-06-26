@@ -551,6 +551,13 @@ observations can participate in ownership discovery, but they should be combined
 with `arp-observer`, `on-demand-arp`, or PVE svnet observations when the IPAM
 source is outside routerd.
 
+Passive sources cannot prove that zero clients exist. By default, an on-prem L2
+discovery member with no observed clients remains pending. To make an empty
+segment an explicit operational policy, set `ownershipDiscovery.allowEmptyAfter`
+to a duration such as `2m`; after the sources have been armed for that duration,
+routerd marks discovery `Complete`, keeps `discoveryAuthoritative: false`, and
+publishes `discoveryResultCount: 0` plus freshness timestamps in status.
+
 `on-demand-arp` also performs a conservative proactive sweep of the mobility
 prefix: one ARP target is probed per source `scanInterval`, using the same
 `probeTimeout`, `probeRetries`, `probeCooldown`, and `sourceAddressFrom`

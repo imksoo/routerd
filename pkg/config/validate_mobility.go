@@ -639,6 +639,7 @@ func validateMobilityOwnershipDiscovery(res api.Resource, index int, spec api.Mo
 		strings.TrimSpace(discovery.SubnetRefFrom) != "" ||
 		strings.TrimSpace(discovery.ScanInterval) != "" ||
 		strings.TrimSpace(discovery.LeaseTTL) != "" ||
+		strings.TrimSpace(discovery.AllowEmptyAfter) != "" ||
 		len(discovery.Sources) > 0 ||
 		len(discovery.Scope.IncludeAddresses) > 0 ||
 		len(discovery.Scope.ExcludeAddresses) > 0 ||
@@ -662,6 +663,9 @@ func validateMobilityProviderOwnershipDiscovery(res api.Resource, index int, spe
 	discovery := member.OwnershipDiscovery
 	if len(discovery.Sources) > 0 {
 		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.sources is supported only when mode is onprem-l2", res.ID(), index)
+	}
+	if strings.TrimSpace(discovery.AllowEmptyAfter) != "" {
+		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.allowEmptyAfter is supported only when mode is onprem-l2", res.ID(), index)
 	}
 	if strings.TrimSpace(member.Role) != "cloud" {
 		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery is supported only for role cloud", res.ID(), index)
@@ -729,6 +733,9 @@ func validateMobilityOnPremOwnershipDiscovery(res api.Resource, index int, spec 
 		return err
 	}
 	if err := validateMobilityDiscoveryDuration(res, index, "ownershipDiscovery.leaseTTL", discovery.LeaseTTL, 0, true); err != nil {
+		return err
+	}
+	if err := validateMobilityDiscoveryDuration(res, index, "ownershipDiscovery.allowEmptyAfter", discovery.AllowEmptyAfter, 0, true); err != nil {
 		return err
 	}
 	if err := validateMobilityOwnershipDiscoveryScope(res, index, discovery.Scope, mustParsePrefixForValidation(spec.Prefix)); err != nil {
