@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260627.1107
+
 ### Fixed
 
 - SAM distributed secondary-IP capture planning now uses the full same-site
