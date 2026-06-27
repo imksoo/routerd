@@ -1,0 +1,89 @@
+release:
+  version: v20260627.1107
+  commit: 08b9efd6b844bc0d3dd3f36f2b3b79510945335a
+  baseline: v20260626.2350
+  status: validation-failed
+  recommended: false
+  artifact:
+    path: routerd-v20260627.1107-linux-amd64.tar.gz
+    sha256: 9f99bda98772887ea4d838e46d75fcedcbeca02820a76b7d1d0f4913a329b1c5
+    archivedLocalPath: /home/imksoo/routerd-labs-archive/artifacts/v20260627.1107/routerd-v20260627.1107-linux-amd64.tar.gz
+  qualification:
+    status: failed
+    run: p1107-cleanclients-20260627T111057Z
+    evidence: /home/imksoo/routerd-labs-archive/evidence/p1107-cleanclients-20260627T111057Z
+    purpose: >-
+      Fresh full-topology validation of the post-v20260626.2350 SAM fixes using
+      clean reusable Ubuntu PVE clients, live ISO plus config disk PVE leaves,
+      and AWS/Azure/OCI/PVE cloud/on-prem sites.
+    scenarios:
+      - name: fresh-full-topology-baseline
+        status: FAIL
+        convergence:
+          status: PASS
+          elapsedSeconds: 139
+          evidence: /home/imksoo/routerd-labs-archive/evidence/p1107-cleanclients-20260627T111057Z/baseline-awsprofile/convergence/summary.tsv
+          notes:
+            - all leaf MobilityPools reached Ready
+            - ownership conflicts were zero
+            - PVE leaves reported BGP Degraded with establishedPeers=8 but fibMissingRoutes=0
+        matrix:
+          status: FAIL
+          result: 42/56
+          failureClass: FAIL_HOSTNAME
+          evidence: /home/imksoo/routerd-labs-archive/evidence/p1107-cleanclients-20260627T111057Z/baseline-awsprofile/matrix/initial/summary.tsv
+          failuresEvidence: /home/imksoo/routerd-labs-archive/evidence/p1107-cleanclients-20260627T111057Z/manual-post-matrix-diagnostics-20260627T115256Z/matrix/failures.tsv
+          failedPairs:
+            - aws-client-a -> pve-client-a
+            - aws-client-a -> pve-client-b
+            - azure-client-a -> pve-client-a
+            - azure-client-b -> pve-client-a
+            - azure-client-b -> pve-client-b
+            - oci-client-a -> pve-client-b
+            - oci-client-b -> pve-client-b
+            - pve-client-a -> aws-client-a
+            - pve-client-a -> azure-client-a
+            - pve-client-a -> azure-client-b
+            - pve-client-b -> aws-client-a
+            - pve-client-b -> azure-client-b
+            - pve-client-b -> oci-client-a
+            - pve-client-b -> oci-client-b
+        diagnostics:
+          evidence: /home/imksoo/routerd-labs-archive/evidence/p1107-cleanclients-20260627T111057Z/manual-post-matrix-diagnostics-20260627T115256Z
+          summary:
+            - AWS/Azure/OCI leaf MobilityPools were Ready with zero ownership conflicts.
+            - OCI client/leaf OS diagnostics captured iptables, nftables, ufw, sysctl, routes, and cloud-init state; OCI-specific OS firewall behavior was not the primary blocker.
+            - PVE client neighbor tables showed 10.77.60.x entries pointing at MAC addresses from existing non-test VMs on svnet1.
+            - Existing pve-rt-07 VMID 169 was running on svnet1 with MAC BC:24:11:F7:E3:04 and contaminated the PVE overlay segment during the run.
+            - Existing homert03 VMID 158 was also attached to svnet1 with MAC BC:24:11:C9:33:C2.
+            - PVE leaf ens19 addresses were present during preflight but absent in post-matrix diagnostics; 10.77.60.0/24 routes remained with management-address source selection, indicating PVE dataplane setup requires isolation and another validation run.
+        acceptedAsReleaseEvidence: false
+    cleanup:
+      status: PASS
+      tofuDestroy: PASS
+      tofuDestroyDestroyedResources: 54
+      tofuPlanDestroyAfterDestroyExitCode: 0
+      providerInventory:
+        aws: PASS
+        azure: PASS
+        oci: PASS
+        pveLocalScript: SKIP
+        pveRemote: PASS
+      stateAfterDestroy: 0
+      evidence:
+        destroyLog: /home/imksoo/routerd-labs-archive/evidence/p1107-cleanclients-20260627T111057Z/tofu-destroy.log
+        planAfterDestroy: /home/imksoo/routerd-labs-archive/evidence/p1107-cleanclients-20260627T111057Z/tofu-plan-destroy-after-destroy.log
+        postDestroy: /home/imksoo/routerd-labs-archive/evidence/p1107-cleanclients-20260627T111057Z/post-destroy-awsprofile-summary.txt
+        pveRemote: /home/imksoo/routerd-labs-archive/evidence/p1107-cleanclients-20260627T111057Z/post-destroy-pve-qm-status.txt
+  releaseDecision:
+    stablePromotion: false
+    reason: >-
+      v20260627.1107 converged at the control plane but failed the fresh
+      full-topology dataplane matrix. The immediate blocker was PVE overlay
+      contamination from existing svnet1 VMs, so this run is not accepted as
+      release qualification evidence and must be repeated on an isolated PVE
+      test segment or after excluding non-test VMs from svnet1.
+  nextActions:
+    - Isolate the PVE qualification overlay from existing pve-rt/homert VMs or allocate a dedicated test bridge/VLAN.
+    - Re-run v20260627.1107 fresh full-topology baseline after PVE overlay isolation.
+    - Only after a clean 56/56 baseline, run representative failover/rejoin and BFD restart-safe validation.
