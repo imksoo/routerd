@@ -25,6 +25,21 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   provider-action rows such as `failed`, `succeeded`, `skipped`, and
   `rolledBack` are visibly historical rather than confused with active
   pending/approved/running work.
+- Promoted v20260627.1533 to the production-recommended stable release after
+  `p1533-cloud-20260627T230443Z` passed a fresh cost-bounded
+  AWS/Azure/OCI/PVE single-topology baseline: convergence 136s, matrix 12/12,
+  all leaf MobilityPools Ready, BGP delivery Established, provider
+  pending/failed 0, and cleanup state 0. The accepted run used qnap-backed PVE
+  live ISO/config media, reusable clean Ubuntu PVE clients, DHCP/QGA-only PVE
+  management discovery, and explicit `PVE_CAPTURE_INTERFACE=ens19`.
+
+### Fixed
+
+- The v20260627.1533 qualification notes now record that an earlier PVE baseline
+  attempt was invalid because manually generated configs used the obsolete
+  `eth1` capture interface against the Ubuntu ISO guest's `ens19` capture NIC.
+  The rerun regenerated configs with `PVE_CAPTURE_INTERFACE=ens19`, restoring
+  PVE on-prem L2 ownership discovery and proxy-ARP capture readiness.
 
 ## v20260627.1107
 

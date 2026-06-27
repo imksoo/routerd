@@ -12,9 +12,9 @@ routerd ships frequently using the `vYYYYMMDD.HHmm` scheme. From those builds we
 
 | Item | Value |
 | --- | --- |
-| Version | **v20260619.1730** |
+| Version | **v20260627.1533** |
 | Status | Current production-recommended stable release |
-| Track record | v20260626.2350 promotion was retracted after post-release fresh full-topology validation failed twice on SAM provider-action/capture behavior. v20260627.1107 later passed an isolated-PVE rerun for fresh baseline, representative AWS/Azure/OCI/PVE leaf failover/rejoin, BFD restart-safe regression coverage, and cleanup state 0, but it still has stale capture/provider-action operator residuals and is not promoted to production-recommended stable. v20260627.1533 fixes the operator display noise around those residuals; its first cost-bounded single-topology smoke left AWS/Azure/OCI leaves healthy but exposed that the PVE ISO leaf test substrate was not clean enough for release evidence. |
+| Track record | v20260626.2350 promotion was retracted after post-release fresh full-topology validation failed twice on SAM provider-action/capture behavior. v20260627.1107 later passed an isolated-PVE rerun for fresh baseline, representative AWS/Azure/OCI/PVE leaf failover/rejoin, BFD restart-safe regression coverage, and cleanup state 0, but it still had stale capture/provider-action operator residuals. v20260627.1533 fixes the operator display noise around those residuals and passed a fresh cost-bounded AWS/Azure/OCI/PVE single-topology baseline after the PVE ISO substrate was corrected: convergence 136s, matrix 12/12, all leaf MobilityPools Ready, provider pending/failed 0, cleanup state 0. |
 | Binary | Statically linked (`CGO_ENABLED=0`), passes CI and the Release workflow |
 
 ## v20260626.2350 promotion retracted
@@ -65,9 +65,7 @@ The manifest is recorded in `docs/releases/manifests/v20260627.1107.yaml`.
 
 ## v20260627.1533 operator-surface candidate
 
-v20260627.1533 is tagged and recorded as the current post-1107
-operator-surface hardening candidate, but it is not the production-recommended
-stable release.
+v20260627.1533 is the current production-recommended stable release.
 
 The release adds:
 
@@ -97,8 +95,26 @@ needing a hard reset instead of graceful shutdown, normalizes hostname and
 cloud/PVE smoke is considered valid. That PVE-only run passed and cleaned up
 its disposable leaf VM.
 
-v20260627.1533 still is not promoted because the cloud/PVE baseline has not
-been rerun after the PVE substrate fix.
+The accepted cloud/PVE follow-up, `p1533-cloud-20260627T230443Z`, first ran a
+PVE-only substrate preflight on pve07 using qnap-backed live ISO/config media,
+reusable clean Ubuntu PVE clients, ens18 DHCP/QGA management discovery, and
+ens19 fixed overlay/capture addressing. That preflight passed and cleaned up
+its disposable leaf VM.
+
+The same run then performed a cost-bounded AWS/Azure/OCI/PVE single-topology
+baseline with the v20260627.1533 artifact. An initial attempt was aborted
+because the operator-generated PVE config used the obsolete `eth1` capture
+interface; the accepted attempt regenerated configs with
+`PVE_CAPTURE_INTERFACE=ens19`. It passed convergence in 136s, matrix 12/12,
+all leaf MobilityPools Ready, BGP delivery Established with zero missing FIB
+routes, no ownership conflicts, no stale capture evidence, and provider action
+pending/failed counts at 0. Cleanup destroyed the disposable cloud/PVE
+resources, left OpenTofu `plan -destroy` exit code 0, and retained only the
+intended reusable PVE clients.
+
+Representative leaf failover/rejoin and BFD restart-safe cloud validation are
+still useful follow-up coverage, but they are not blockers for promoting this
+small operator-surface release after the clean baseline.
 
 The manifest is recorded in `docs/releases/manifests/v20260627.1533.yaml`.
 

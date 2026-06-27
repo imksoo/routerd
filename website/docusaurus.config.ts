@@ -90,7 +90,7 @@ const config: Config = {
     announcementBar: {
       id: 'stable-milestone-20260608-2325',
       content:
-        'Stable milestone: <a href="/docs/releases/stable"><b>v20260608.2325</b></a> — peersFrom/membersFrom dynamic distribution for zero-touch leaf config',
+        'Stable milestone: <a href="/docs/releases/stable"><b>v20260627.1533</b></a> — post-1107 SAM baseline with operator-surface cleanup',
       backgroundColor: '#1f6feb',
       textColor: '#ffffff',
       isCloseable: true,

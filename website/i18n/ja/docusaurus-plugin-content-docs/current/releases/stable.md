@@ -13,17 +13,17 @@ routerd は `vYYYYMMDD.HHmm` 形式で頻繁にリリースしますが、その
 
 | 項目 | 内容 |
 | --- | --- |
-| バージョン | **v20260626.2350** |
-| 位置づけ | 推奨安定版（v20260619.1730 を置き換え。post-#678 の SAM baseline と Live ISO QGA firstboot 修正を含む） |
-| 稼働実績 | Release workflow PASS。実 PVE の ISO boot で QGA firstboot を確認済み。SAM baseline は v20260626.1921 の full-topology qualification（196 秒収束、SSH matrix 56/56、cleanup PASS、stateAfterDestroy 0）を継承 |
+| バージョン | **v20260627.1533** |
+| 位置づけ | 推奨安定版（post-1107 SAM baseline に operator 表示の整理を加えた版） |
+| 稼働実績 | AWS/Azure/OCI/PVE single-topology baseline で 136 秒収束、matrix 12/12、全 leaf MobilityPool Ready、provider pending/failed 0、cleanup state 0 |
 | バイナリ | 静的リンク（`CGO_ENABLED=0`）、CI と Release ワークフローをすべて通過 |
 
-## v20260626.2350 を推奨する理由
+## v20260627.1533 を推奨する理由
 
-v20260626.2350 は、post-#678 の SAM rollback baseline と Live ISO の `qemu-guest-agent` firstboot 修正を含む安定版です。
-v20260619.1730 の Ubuntu Live ISO / SAM / federation マイルストーンを継承しつつ、v20260626.1921 の full-topology SAM evidence と、実 PVE での QGA firstboot 確認を固定しています。
+v20260627.1533 は、v20260627.1107 の SAM baseline 上で、`routerctl mobility explain` と `routerctl action list` の operator 表示を整理した安定版です。
+PVE substrate を qnap-backed live ISO/config media、DHCP/QGA 管理、ens19 capture interface に揃えた後、AWS/Azure/OCI/PVE の fresh single-topology baseline が通りました。
 
-release manifest は `docs/releases/manifests/v20260626.2350.yaml` に記録しています。
+release manifest は `docs/releases/manifests/v20260627.1533.yaml` に記録しています。
 
 ### v20260626.2350 qualification
 

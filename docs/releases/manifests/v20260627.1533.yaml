@@ -2,8 +2,8 @@ release:
   version: v20260627.1533
   commit: 0c1ea9a6b255a93e50ccb66abe61fd7d59277caf
   baseline: v20260627.1107
-  status: post-tag-smoke-partial
-  recommended: false
+  status: stable
+  recommended: true
   artifact:
     path: routerd-v20260627.1533-linux-amd64.tar.gz
     sha256: 93a0176dc2d6f6ad8570df59428cab4c7526b00693d5bd7184d440cb83c7b24d
@@ -28,9 +28,9 @@ release:
         repo: /home/imksoo/routerd-labs
         status: PASS
   qualification:
-    status: partial-smoke
+    status: stable-smoke
     acceptedAsReleaseEvidence: true
-    acceptedAsStableEvidence: false
+    acceptedAsStableEvidence: true
     labsCommits:
       - commit: 67a5887e
         summary: Harden SAM PVE qualification path
@@ -226,32 +226,134 @@ release:
             destroyLog: /home/imksoo/routerd-labs-archive/evidence/p1533-resmoke-20260627T160752Z/tofu-pve-only-destroy.log
             planAfterDestroy: /home/imksoo/routerd-labs-archive/evidence/p1533-resmoke-20260627T160752Z/tofu-pve-only-plan-destroy-after-cleanup.log
             pveRemote: /home/imksoo/routerd-labs-archive/evidence/p1533-resmoke-20260627T160752Z/post-pve-only-cleanup-qm-status.txt
+      - id: p1533-cloud-20260627T230443Z
+        status: pass
+        acceptedAsReleaseEvidence: true
+        acceptedAsStableEvidence: true
+        evidence: /home/imksoo/routerd-labs-archive/evidence/p1533-cloud-20260627T230443Z
+        purpose: >-
+          Cost-bounded single-topology cloud/PVE baseline after the PVE-only
+          substrate fix, using the v20260627.1533 artifact, qnap-backed PVE
+          live ISO/config media, reusable clean PVE Ubuntu clients, and
+          management addresses discovered through DHCP plus QGA only.
+        topology:
+          scale: single
+          cloudSites: [aws, azure, oci]
+          pveNode: pve07
+          pveStorage: qnap
+          pveCaptureBridge: rsamclnt
+          pveClientMode: existing
+          pveManagement: DHCP plus QGA discovery only
+          pveStaticMgmtAddressesClaimed: false
+          pveLeafVm: 9439
+          reusableClientVmids: [9142, 9340]
+        executionNotes:
+          - An initial baseline attempt in this run was aborted before
+            qualification because the operator manually generated configs
+            without PVE_CAPTURE_INTERFACE=ens19, producing eth1 in the PVE
+            MobilityPool capture/ownership config while the Ubuntu ISO guest
+            exposes the capture NIC as ens19.
+          - The accepted baseline regenerated configs with
+            PVE_CAPTURE_INTERFACE=ens19; the PVE config evidence shows
+            ownershipDiscovery arp-observer and proxy-arp capture both use
+            ens19.
+          - No unmanaged static 192.168.1.x address was configured. The
+            observed PVE management addresses were discovered from QGA/DHCP.
+        artifact:
+          deployedVersion: v20260627.1533
+          sha256: 93a0176dc2d6f6ad8570df59428cab4c7526b00693d5bd7184d440cb83c7b24d
+        infrastructure:
+          pveOnlyPreflight:
+            status: PASS
+            evidence: /home/imksoo/routerd-labs-archive/evidence/p1533-cloud-20260627T230443Z/pve-only-substrate-pass.txt
+            pveLeafVm: 9440
+            cleanup: PASS
+          tofuApply:
+            status: PASS
+            evidence: /home/imksoo/routerd-labs-archive/evidence/p1533-cloud-20260627T230443Z/tofu-apply.log
+          qga:
+            status: PASS
+            evidence: /home/imksoo/routerd-labs-archive/evidence/p1533-cloud-20260627T230443Z/pve-qga-addresses.txt
+            observedDhcp:
+              pveClientA: 192.168.1.44
+              pveLeafA: 192.168.1.37
+          pveBridgeAudit:
+            status: PASS
+            evidence: /home/imksoo/routerd-labs-archive/evidence/p1533-cloud-20260627T230443Z/pve-bridge-audit.txt
+        scenarios:
+          - name: fresh-single-topology-baseline
+            status: PASS
+            evidence: /home/imksoo/routerd-labs-archive/evidence/p1533-cloud-20260627T230443Z/baseline-ens19
+            convergence:
+              status: PASS
+              elapsedSeconds: 136
+              evidence: /home/imksoo/routerd-labs-archive/evidence/p1533-cloud-20260627T230443Z/baseline-ens19/convergence/summary.tsv
+            matrix:
+              status: PASS
+              passed: 12
+              total: 12
+              evidence: /home/imksoo/routerd-labs-archive/evidence/p1533-cloud-20260627T230443Z/baseline-ens19/matrix/initial/summary.tsv
+            routerReadiness:
+              awsLeafA: Ready
+              azureLeafA: Ready
+              ociLeafA: Ready
+              pveLeafA: Ready
+              awsRrA: no-MobilityPool-configured
+            samDiagnostics:
+              doctorSam: PASS
+              mobilityPool: Ready
+              bgpEstablishedPeers: 4
+              fibMissingRoutes: 0
+              ownershipConflictCount: 0
+              staleCaptureEvidence: none
+              providerActionFailedCount: 0
+              providerActionPendingCount: 0
+              providerObservationPendingCount: 0
+              evidence: /home/imksoo/routerd-labs-archive/evidence/p1533-cloud-20260627T230443Z/baseline-ens19/diagnostics/post-matrix
+            providerEvidence:
+              status: PASS
+              evidence: /home/imksoo/routerd-labs-archive/evidence/p1533-cloud-20260627T230443Z/baseline-ens19/provider/post-matrix
+        cleanup:
+          status: PASS
+          tofuDestroy: PASS
+          tofuPlanDestroyAfterDestroyExitCode: 0
+          stateAfterDestroy: 0
+          evidence:
+            destroyLog: /home/imksoo/routerd-labs-archive/evidence/p1533-cloud-20260627T230443Z/tofu-destroy.log
+            planAfterDestroy: /home/imksoo/routerd-labs-archive/evidence/p1533-cloud-20260627T230443Z/tofu-plan-destroy-after-destroy.log
+            pveRemote: /home/imksoo/routerd-labs-archive/evidence/p1533-cloud-20260627T230443Z/post-destroy-pve-qm-status.txt
+          pve:
+            pveLeafVm9439: absent
+            reusableClientVm9142: retained-running
+            reusableClientVm9340: retained-running
   releaseDecision:
-    stablePromotion: false
+    stablePromotion: true
     reason: >-
-      v20260627.1533 is a small operator-surface hardening tag and its local
-      CLI tests passed. The cost-bounded single-topology smoke did not expose a
-      cloud leaf routerd/SAM regression: AWS, Azure, and OCI leaves were Ready,
-      BGP Established, and had no stale capture evidence. However, the full
-      smoke baseline did not complete because the PVE leaf live ISO path was
-      not yet a clean test substrate. A later PVE-only run fixed and verified
-      the PVE leaf/client substrate, but cloud/PVE baseline was intentionally
-      not rerun until that substrate was clean. Treat this as a
-      release-candidate/operator-surface tag, not a production-recommended
-      stable baseline.
+      v20260627.1533 is a small operator-surface hardening tag on top of the
+      post-1107 SAM behavior. Local CLI tests passed, the PVE-only substrate
+      preflight passed on qnap-backed live ISO/config media, and the accepted
+      cost-bounded cloud/PVE single-topology baseline converged in 136s with
+      matrix 12/12, all leaf MobilityPools Ready, BGP delivery Established,
+      no ownership conflicts, no stale capture evidence, and provider action
+      pending/failed counts at 0. Cleanup completed with OpenTofu
+      plan-destroy exit code 0 and the disposable PVE leaf absent. Promote
+      v20260627.1533 as the production-recommended stable baseline while
+      leaving representative failover/rejoin and BFD restart-safe cloud runs as
+      follow-up validation rather than blockers for this small operator-surface
+      release.
   issuesToTrack:
     - title: Keep cloud/PVE smoke gated on a passing PVE-only substrate preflight
       class: lab-test-discipline
       evidence: /home/imksoo/routerd-labs-archive/evidence/p1533-resmoke-20260627T160752Z/pve-only-leaf-vm9294-module-identity-pass.txt
-    - title: Ensure copied smoke tfvars update provider commit tags to the artifact under test
-      class: lab-metadata
-      evidence: /home/imksoo/routerd-labs-archive/evidence/p1533-smoke-20260627T153752Z/tofu-output.json
+    - title: Keep PVE ISO configs explicit about the Ubuntu capture interface
+      class: lab-test-discipline
+      evidence: /home/imksoo/routerd-labs-archive/evidence/p1533-cloud-20260627T230443Z/pve-config-interface-ens19.txt
     - title: Continue OCI OS/network diagnostics on the next non-cost-sensitive full run
       class: provider-os-diagnostic
       evidence: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/oci-icmp-observation.md
   nextActions:
-    - Rerun only a short single-topology cloud/PVE smoke after the PVE-only
-      substrate preflight passes from a fresh apply; avoid representative
-      failover unless the smoke produces a routerd/SAM symptom.
-    - Keep v20260619.1730 as production-recommended stable until a later
-      candidate completes clean release evidence.
+    - Run representative AWS/Azure/OCI/PVE leaf failover/rejoin on
+      v20260627.1533 when cloud spend is justified by the next SAM functional
+      change.
+    - Run BFD restart-safe cloud validation once on the v20260627.1533 line or
+      its next functional successor.
