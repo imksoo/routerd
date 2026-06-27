@@ -14,7 +14,7 @@ routerd ships frequently using the `vYYYYMMDD.HHmm` scheme. From those builds we
 | --- | --- |
 | Version | **v20260619.1730** |
 | Status | Current production-recommended stable release |
-| Track record | v20260626.2350 promotion was retracted after post-release fresh full-topology validation failed twice on SAM provider-action/capture behavior. v20260627.1107 later passed an isolated-PVE rerun for fresh baseline, representative AWS/Azure/OCI/PVE leaf failover/rejoin, BFD restart-safe regression coverage, and cleanup state 0, but it still has stale capture/provider-action operator residuals and is not promoted to production-recommended stable. |
+| Track record | v20260626.2350 promotion was retracted after post-release fresh full-topology validation failed twice on SAM provider-action/capture behavior. v20260627.1107 later passed an isolated-PVE rerun for fresh baseline, representative AWS/Azure/OCI/PVE leaf failover/rejoin, BFD restart-safe regression coverage, and cleanup state 0, but it still has stale capture/provider-action operator residuals and is not promoted to production-recommended stable. v20260627.1533 fixes the operator display noise around those residuals; its first cost-bounded single-topology smoke left AWS/Azure/OCI leaves healthy but exposed that the PVE ISO leaf test substrate was not clean enough for release evidence. |
 | Binary | Statically linked (`CGO_ENABLED=0`), passes CI and the Release workflow |
 
 ## v20260626.2350 promotion retracted
@@ -62,6 +62,45 @@ block dataplane or readiness in the rerun, but they are too noisy for a strong
 rollback baseline.
 
 The manifest is recorded in `docs/releases/manifests/v20260627.1107.yaml`.
+
+## v20260627.1533 operator-surface candidate
+
+v20260627.1533 is tagged and recorded as the current post-1107
+operator-surface hardening candidate, but it is not the production-recommended
+stable release.
+
+The release adds:
+
+- `routerctl mobility explain` warning/diagnostic classification for
+  Pending/StaleCapture rows whose `blockingCondition` is `OwnershipResolved`
+- `routerctl action list` active/history lifecycle classification for terminal
+  provider actions
+
+Local routerctl regression tests and the linux-amd64 artifact build passed. The
+first single-topology cloud/PVE smoke, `p1533-smoke-20260627T153752Z`, created
+39 OpenTofu resources, used qnap-backed PVE media, kept PVE management on
+DHCP/QGA, and cleaned up successfully with `plan -destroy` exit code 0.
+
+The smoke is partial release evidence only. AWS, Azure, and OCI leaves reported
+`doctor sam` PASS, MobilityPool Ready, BGP Established, and no stale capture
+evidence. The full baseline did not complete because the PVE leaf still used
+stale config media without the `manage_etc_hosts` fix and remained Pending on
+`DeviceNotReady`/guest-state checks. This is tracked as a lab/PVE config-media
+issue to fix before spending more cloud time.
+
+The PVE-only follow-up, `p1533-resmoke-20260627T160752Z`, fixed that substrate
+in routerd-labs. The reusable PVE clients were not the blocker: both retained
+QGA, clean `/etc/hosts`, and fixed ens19 overlay addresses. The PVE ISO leaf
+path now uses run-specific qnap CIDATA/config media, tolerates firstboot QGA
+needing a hard reset instead of graceful shutdown, normalizes hostname and
+`/etc/hosts` through QGA, and asserts the expected capture address before a
+cloud/PVE smoke is considered valid. That PVE-only run passed and cleaned up
+its disposable leaf VM.
+
+v20260627.1533 still is not promoted because the cloud/PVE baseline has not
+been rerun after the PVE substrate fix.
+
+The manifest is recorded in `docs/releases/manifests/v20260627.1533.yaml`.
 
 This release carries forward the prior stable milestone features: **peersFrom**, **membersFrom**, and **peer-group-sync** for zero-touch leaf configuration in SAM fabrics.
 
