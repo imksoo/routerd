@@ -2,88 +2,228 @@ release:
   version: v20260627.1107
   commit: 08b9efd6b844bc0d3dd3f36f2b3b79510945335a
   baseline: v20260626.2350
-  status: validation-failed
+  status: post-release-validation-partial
   recommended: false
   artifact:
     path: routerd-v20260627.1107-linux-amd64.tar.gz
     sha256: 9f99bda98772887ea4d838e46d75fcedcbeca02820a76b7d1d0f4913a329b1c5
     archivedLocalPath: /home/imksoo/routerd-labs-archive/artifacts/v20260627.1107/routerd-v20260627.1107-linux-amd64.tar.gz
   qualification:
-    status: failed
-    run: p1107-cleanclients-20260627T111057Z
-    evidence: /home/imksoo/routerd-labs-archive/evidence/p1107-cleanclients-20260627T111057Z
-    purpose: >-
-      Fresh full-topology validation of the post-v20260626.2350 SAM fixes using
-      clean reusable Ubuntu PVE clients, live ISO plus config disk PVE leaves,
-      and AWS/Azure/OCI/PVE cloud/on-prem sites.
-    scenarios:
-      - name: fresh-full-topology-baseline
-        status: FAIL
-        convergence:
-          status: PASS
-          elapsedSeconds: 139
-          evidence: /home/imksoo/routerd-labs-archive/evidence/p1107-cleanclients-20260627T111057Z/baseline-awsprofile/convergence/summary.tsv
-          notes:
-            - all leaf MobilityPools reached Ready
-            - ownership conflicts were zero
-            - PVE leaves reported BGP Degraded with establishedPeers=8 but fibMissingRoutes=0
-        matrix:
-          status: FAIL
-          result: 42/56
-          failureClass: FAIL_HOSTNAME
-          evidence: /home/imksoo/routerd-labs-archive/evidence/p1107-cleanclients-20260627T111057Z/baseline-awsprofile/matrix/initial/summary.tsv
-          failuresEvidence: /home/imksoo/routerd-labs-archive/evidence/p1107-cleanclients-20260627T111057Z/manual-post-matrix-diagnostics-20260627T115256Z/matrix/failures.tsv
-          failedPairs:
-            - aws-client-a -> pve-client-a
-            - aws-client-a -> pve-client-b
-            - azure-client-a -> pve-client-a
-            - azure-client-b -> pve-client-a
-            - azure-client-b -> pve-client-b
-            - oci-client-a -> pve-client-b
-            - oci-client-b -> pve-client-b
-            - pve-client-a -> aws-client-a
-            - pve-client-a -> azure-client-a
-            - pve-client-a -> azure-client-b
-            - pve-client-b -> aws-client-a
-            - pve-client-b -> azure-client-b
-            - pve-client-b -> oci-client-a
-            - pve-client-b -> oci-client-b
-        diagnostics:
-          evidence: /home/imksoo/routerd-labs-archive/evidence/p1107-cleanclients-20260627T111057Z/manual-post-matrix-diagnostics-20260627T115256Z
-          summary:
-            - AWS/Azure/OCI leaf MobilityPools were Ready with zero ownership conflicts.
-            - OCI client/leaf OS diagnostics captured iptables, nftables, ufw, sysctl, routes, and cloud-init state; OCI-specific OS firewall behavior was not the primary blocker.
-            - PVE client neighbor tables showed 10.77.60.x entries pointing at MAC addresses from existing non-test VMs on svnet1.
-            - Existing pve-rt-07 VMID 169 was running on svnet1 with MAC BC:24:11:F7:E3:04 and contaminated the PVE overlay segment during the run.
-            - Existing homert03 VMID 158 was also attached to svnet1 with MAC BC:24:11:C9:33:C2.
-            - PVE leaf ens19 addresses were present during preflight but absent in post-matrix diagnostics; 10.77.60.0/24 routes remained with management-address source selection, indicating PVE dataplane setup requires isolation and another validation run.
+    status: partial-pass-with-control-plane-residuals
+    acceptedAsStableEvidence: false
+    runs:
+      - id: p1107-cleanclients-20260627T111057Z
+        status: failed
         acceptedAsReleaseEvidence: false
-    cleanup:
-      status: PASS
-      tofuDestroy: PASS
-      tofuDestroyDestroyedResources: 54
-      tofuPlanDestroyAfterDestroyExitCode: 0
-      providerInventory:
-        aws: PASS
-        azure: PASS
-        oci: PASS
-        pveLocalScript: SKIP
-        pveRemote: PASS
-      stateAfterDestroy: 0
-      evidence:
-        destroyLog: /home/imksoo/routerd-labs-archive/evidence/p1107-cleanclients-20260627T111057Z/tofu-destroy.log
-        planAfterDestroy: /home/imksoo/routerd-labs-archive/evidence/p1107-cleanclients-20260627T111057Z/tofu-plan-destroy-after-destroy.log
-        postDestroy: /home/imksoo/routerd-labs-archive/evidence/p1107-cleanclients-20260627T111057Z/post-destroy-awsprofile-summary.txt
-        pveRemote: /home/imksoo/routerd-labs-archive/evidence/p1107-cleanclients-20260627T111057Z/post-destroy-pve-qm-status.txt
+        evidence: /home/imksoo/routerd-labs-archive/evidence/p1107-cleanclients-20260627T111057Z
+        purpose: >-
+          Fresh full-topology validation of v20260627.1107 using clean reusable
+          Ubuntu PVE clients before the PVE overlay was isolated.
+        result:
+          convergence:
+            status: PASS
+            elapsedSeconds: 139
+          matrix:
+            status: FAIL
+            result: 42/56
+            failureClass: FAIL_HOSTNAME
+        diagnostics:
+          - PVE client neighbor tables showed 10.77.60.x entries from existing
+            non-test VMs on svnet1.
+          - Existing pve-rt-07 VMID 169 and homert03 VMID 158 contaminated the
+            shared PVE overlay segment.
+          - This run is discarded as release evidence and replaced by the
+            isolated rsamclnt rerun below.
+      - id: p1107-rsamclnt-20260627T121655Z
+        status: partial-pass-with-control-plane-residuals
+        acceptedAsReleaseEvidence: true
+        acceptedAsStableEvidence: false
+        evidence: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z
+        purpose: >-
+          Fresh full-topology post-release validation on an isolated PVE
+          qualification bridge, using PVE live ISO plus qnap CIDATA/config media
+          for leaves and reusable Ubuntu PVE clients on rsamclnt.
+        pvePath:
+          node: pve07
+          storage: qnap
+          routerBoot: live ISO plus config disk
+          liveIso: qnap:iso/routerd-live-v20260626.2350.iso
+          configMediaEvidence: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/pve-qnap-uploaded-sha256.txt
+          bridgeAudit: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/pve-bridge-audit.txt
+          qgaAddresses: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/pve-qga-addresses.txt
+          notes:
+            - PVE management addressing stayed on DHCP and was discovered
+              through QGA; no 192.168.1.x addresses were statically claimed.
+            - PVE test VMs used qnap-backed ISO/config media.
+            - The isolated rsamclnt bridge contained only VMIDs
+              9142, 9236, 9340, and 9404 during the run.
+        scenarios:
+          - name: fresh-full-topology-baseline
+            status: PASS
+            convergence:
+              status: PASS
+              elapsedSeconds: 110
+              evidence: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/baseline/convergence/summary.tsv
+            matrix:
+              status: PASS
+              result: 56/56
+              evidence: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/baseline/matrix/initial/summary.tsv
+          - name: aws-leaf-a-failover-rejoin
+            status: PASS
+            convergence:
+              initialSeconds: 51
+              afterFailoverSeconds: 72
+              afterRejoinSeconds: 77
+              evidence: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/aws-leaf-a-failover-rejoin/convergence/summary.tsv
+            matrix:
+              phases:
+                initial: 56/56
+                afterFailover: 56/56
+                afterRejoin: 56/56
+          - name: azure-leaf-a-failover-rejoin
+            status: PASS
+            convergence:
+              initialSeconds: 24
+              afterFailoverSeconds: 69
+              afterRejoinSeconds: 161
+              evidence: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/azure-leaf-a-failover-rejoin/convergence/summary.tsv
+            matrix:
+              phases:
+                initial: 56/56
+                afterFailover: 56/56
+                afterRejoin: 56/56
+          - name: oci-leaf-a-failover-rejoin
+            status: PASS
+            convergence:
+              initialSeconds: 102
+              afterFailoverSeconds: 98
+              afterRejoinSeconds: 48
+              evidence: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/oci-leaf-a-failover-rejoin/convergence/summary.tsv
+            matrix:
+              phases:
+                initial: 56/56
+                afterFailover: 56/56
+                afterRejoin: 56/56
+            observations:
+              - Some AWS-to-OCI ICMP probes reported packet loss after rejoin,
+                including ICMP Redirect/Host Unreachable from the AWS-side
+                next hop for aws-client-a. The SSH hostname authority still
+                passed and aws-client-b tracepath reached 10.77.60.13, so this
+                is tracked as OCI-specific ICMP/OS diagnostic evidence rather
+                than a dataplane blocker.
+              - Saved-evidence review recorded in
+                /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/oci-icmp-observation.md.
+          - name: pve-leaf-a-failover-rejoin
+            status: PASS
+            convergence:
+              initialSeconds: 188
+              afterFailoverSeconds: 83
+              afterRejoinSeconds: 177
+              evidence: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/pve-leaf-a-failover-rejoin/convergence/summary.tsv
+            matrix:
+              phases:
+                initial: 56/56
+                afterFailover: 56/56
+                afterRejoin: 56/56
+            observations:
+              - The initial scenario convergence was 188s on an already-live
+                topology, above the 180s target but still PASS in the harness.
+          - name: bfd-restart-safe
+            status: PASS
+            scope: controller-level regression evidence
+            evidence: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/bfd-restart-safe/go-test-controller-bfd-restart-safe.txt
+            tests:
+              - TestReconcileBFDObservationNeverDeconfiguresPeer
+              - TestReconcileBFDDownHardResetRetriesAfterFailure
+              - TestObserveBFDDownRearmsWhenBGPSessionReestablishes
+              - TestReconcileBFDDownHardResetAfterControllerRestart
+            notes:
+              - The restart-safe case validates BFD Down plus live BGP
+                Established after controller restart causing one hard reset.
+        explainEvidence:
+          status: captured
+          evidence: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/mobility-explain
+          summary: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/mobility-explain/summary.tsv
+          totals:
+            addressesExplained: 64
+            readyOrWatchingRows: 52
+            pendingRows: 12
+            staleCaptureRows: 12
+          notes:
+            - All 64 leaf/address explain commands returned JSON.
+            - Twelve rows remained Pending/StaleCapture with
+              blockingCondition=OwnershipResolved even though SSH matrix and
+              MobilityPool readiness passed.
+        finalControlPlaneSnapshot:
+          evidence: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/final-control-plane-snapshot
+          summary: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/final-control-plane-snapshot/summary.tsv
+          pendingProviderActionRows: 0
+          failedProviderActionRows:
+            awsLeafA: 1
+            awsLeafB: 3
+            azureLeafA: 0
+            azureLeafB: 2
+            ociLeafA: 0
+            ociLeafB: 2
+            pveLeafA: 0
+            pveLeafB: 0
+          doctor:
+            failures: 0
+            warnings:
+              - stale capture evidence remains on AWS/Azure/OCI leaves
+              - PVE leaves reported BGP Degraded with establishedPeers=8 and
+                fibMissingRoutes=0 after the representative PVE scenario
+              - PVE live ISO CIDATA did not populate /etc/hosts for hostname
+                resolution; fixed in the lab tooling after this run
+        cleanup:
+          status: PASS
+          tofuDestroy: PASS
+          tofuDestroyDestroyedResources: 54
+          tofuPlanDestroyAfterDestroyExitCode: 0
+          providerInventory:
+            aws: PASS
+            azure: PASS
+            oci: PASS
+            pveLeafVms: PASS
+            pveReusableClients: retained
+          stateAfterDestroy: 0
+          evidence:
+            destroyLog: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/tofu-destroy.log
+            planAfterDestroy: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/tofu-plan-destroy-after-destroy.log
+            cleanupSummary: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/cleanup-summary.txt
+            postDestroyProvider: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/post-destroy-awsprofile-summary.txt
+            pveRemote: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/post-destroy-pve-qm-status.txt
   releaseDecision:
     stablePromotion: false
     reason: >-
-      v20260627.1107 converged at the control plane but failed the fresh
-      full-topology dataplane matrix. The immediate blocker was PVE overlay
-      contamination from existing svnet1 VMs, so this run is not accepted as
-      release qualification evidence and must be repeated on an isolated PVE
-      test segment or after excluding non-test VMs from svnet1.
+      The isolated rerun proves that v20260627.1107 can pass fresh baseline,
+      representative AWS/Azure/OCI/PVE leaf failover/rejoin, BFD restart-safe
+      regression coverage, and cleanup state 0. It does not yet qualify as the
+      production-recommended stable baseline because address-level explain and
+      final control-plane snapshots still show stale capture evidence and
+      historical failed provider-action rows on cloud leaves.
+  issuesToTrack:
+    - title: Clear or explicitly age out stale capture evidence after successful dataplane convergence
+      class: routerd-control-plane-residual
+      evidence: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/mobility-explain/summary.tsv
+    - title: Separate historical failed provider actions from active release-gating failures
+      class: routerd-operator-surface
+      evidence: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/final-control-plane-snapshot/summary.tsv
+    - title: Populate /etc/hosts for PVE live ISO CIDATA hostnames
+      class: lab-liveiso-configdisk
+      evidence: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/final-control-plane-snapshot/pve-leaf-a/doctor-sam.txt
+    - title: Investigate OCI-biased ICMP redirect/loss observations without treating passing SSH matrix as failed
+      class: provider-os-diagnostic
+      evidence: /home/imksoo/routerd-labs-archive/evidence/p1107-rsamclnt-20260627T121655Z/oci-icmp-observation.md
   nextActions:
-    - Isolate the PVE qualification overlay from existing pve-rt/homert VMs or allocate a dedicated test bridge/VLAN.
-    - Re-run v20260627.1107 fresh full-topology baseline after PVE overlay isolation.
-    - Only after a clean 56/56 baseline, run representative failover/rejoin and BFD restart-safe validation.
+    - Fix or intentionally classify stale capture evidence so address-level
+      explain converges with dataplane/readiness.
+    - Make provider action list distinguish historical failed actions from
+      current blocking failed actions.
+    - Rebuild the PVE live ISO CIDATA/config media after the manage_etc_hosts
+      lab tooling fix and confirm sudo hostname warnings disappear.
+    - On the next normal OCI run, capture OCI guest sysctls, firewall rules,
+      neighbor entries, and side-by-side ICMP/TCP probes for the AWS-to-OCI
+      ICMP redirect/loss observation.
+    - Re-run a fresh baseline and representative failover/rejoin after those
+      residuals are closed before promoting a new stable release.

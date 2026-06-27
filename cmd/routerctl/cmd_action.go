@@ -487,19 +487,29 @@ func splitActionID(args []string) (int64, []string, error) {
 
 func writeActionListTable(stdout io.Writer, rows []routerstate.ActionExecutionRecord) error {
 	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tIDEMPOTENCY_KEY\tPROVIDER\tACTION\tSTATUS\tTARGET\tAPPROVED_BY")
+	fmt.Fprintln(w, "ID\tIDEMPOTENCY_KEY\tPROVIDER\tACTION\tSTATUS\tLIFECYCLE\tTARGET\tAPPROVED_BY")
 	for _, rec := range rows {
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			rec.ID,
 			displayCell(rec.IdempotencyKey),
 			displayCell(rec.Provider),
 			displayCell(rec.Action),
 			displayCell(rec.Status),
+			actionLifecycle(rec.Status),
 			displayCell(actionTargetAddress(rec.TargetJSON)),
 			displayCell(rec.ApprovedBy),
 		)
 	}
 	return w.Flush()
+}
+
+func actionLifecycle(status string) string {
+	switch strings.TrimSpace(status) {
+	case routerstate.ActionSucceeded, routerstate.ActionFailed, routerstate.ActionSkipped, routerstate.ActionRolledBack:
+		return "history"
+	default:
+		return "active"
+	}
 }
 
 func writeActionShowTable(stdout io.Writer, rec routerstate.ActionExecutionRecord) error {

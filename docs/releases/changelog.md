@@ -12,7 +12,33 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260627.1533
+
+### Changed
+
+- `routerctl mobility explain` now classifies StaleCapture rows blocked only by
+  `OwnershipResolved` as warning/diagnostic evidence. This keeps the raw
+  address phase visible while making it clear that stale capture evidence should
+  be interpreted with `doctor sam`, provider-action lifecycle, and dataplane
+  matrix evidence before treating it as an active release blocker.
+- `routerctl action list` now includes a `LIFECYCLE` column so terminal
+  provider-action rows such as `failed`, `succeeded`, `skipped`, and
+  `rolledBack` are visibly historical rather than confused with active
+  pending/approved/running work.
+
 ## v20260627.1107
+
+### Changed
+
+- Post-release validation was repeated on an isolated PVE qualification bridge
+  (`rsamclnt`) with qnap-backed live ISO plus config media for PVE leaves and
+  reusable Ubuntu PVE clients. The rerun passed fresh baseline 56/56,
+  representative AWS/Azure/OCI/PVE leaf failover/rejoin 56/56 in every phase,
+  BFD restart-safe controller regression coverage, and cleanup state 0.
+- v20260627.1107 remains a validation candidate rather than the recommended
+  stable release. Address-level `routerctl mobility explain` evidence still
+  showed Pending/StaleCapture rows, and cloud leaves retained historical failed
+  provider-action rows in operator output.
 
 ### Fixed
 

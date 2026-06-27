@@ -90,7 +90,7 @@ func TestActionEndToEnd(t *testing.T) {
 
 	// ---- action list -> shows the pending action ----
 	out = mustRunAction(t, "list", "--state-file", statePath)
-	if !strings.Contains(out, "k1") || !strings.Contains(out, "pending") || !strings.Contains(out, "10.0.0.5/32") {
+	if !strings.Contains(out, "k1") || !strings.Contains(out, "pending") || !strings.Contains(out, "active") || !strings.Contains(out, "10.0.0.5/32") {
 		t.Fatalf("list: want pending k1 with target, got: %s", out)
 	}
 
@@ -171,6 +171,13 @@ func TestActionEndToEnd(t *testing.T) {
 		t.Fatalf("want status failed reported, got: %s", out)
 	}
 	assertStatus(t, statePath, id3, routerstate.ActionFailed)
+
+	out = mustRunAction(t, "list", "--state-file", statePath)
+	for _, want := range []string{"k1", "succeeded", "history", "k2", "approved", "active", "k3", "failed"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("list missing lifecycle marker %q\n%s", want, out)
+		}
+	}
 
 	// ---- show <id> renders the full record incl. result ----
 	out = mustRunAction(t, "show", strID(id1), "--state-file", statePath)

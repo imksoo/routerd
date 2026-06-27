@@ -14,7 +14,7 @@ routerd ships frequently using the `vYYYYMMDD.HHmm` scheme. From those builds we
 | --- | --- |
 | Version | **v20260619.1730** |
 | Status | Current production-recommended stable release |
-| Track record | v20260626.2350 promotion was retracted after post-release fresh full-topology validation failed twice on SAM provider-action/capture behavior. Use v20260626.2350 only for targeted Live ISO/QGA/PVE provisioning validation or as an input to the next SAM fix release, not as the production rollback baseline. |
+| Track record | v20260626.2350 promotion was retracted after post-release fresh full-topology validation failed twice on SAM provider-action/capture behavior. v20260627.1107 later passed an isolated-PVE rerun for fresh baseline, representative AWS/Azure/OCI/PVE leaf failover/rejoin, BFD restart-safe regression coverage, and cleanup state 0, but it still has stale capture/provider-action operator residuals and is not promoted to production-recommended stable. |
 | Binary | Statically linked (`CGO_ENABLED=0`), passes CI and the Release workflow |
 
 ## v20260626.2350 promotion retracted
@@ -37,6 +37,31 @@ The release manifest is recorded in `docs/releases/manifests/v20260626.2350.yaml
 - **Clean-client rerun:** the p2350-cleanclients fresh full-topology run used clean reusable Ubuntu PVE clients and still failed control-plane readiness. `aws-leaf-a` retained one failed AWS `assign-secondary-ip` action for `10.77.60.16/32` and stale capture evidence for remote/provider addresses. OCI leaves were Ready and OCI OS diagnostics did not identify the baseline blocker. Initial matrix reached 50/56, with six hostname-check failures, but readiness timed out at 620s.
 
 ### Inherited from v20260608.2325
+
+## v20260627.1107 post-release validation
+
+v20260627.1107 is the current post-2350 validation candidate, but it is not the
+production-recommended stable release.
+
+The discarded p1107-cleanclients run failed because the PVE overlay still used a
+shared segment contaminated by existing non-test VMs. The rerun
+`p1107-rsamclnt-20260627T121655Z` moved PVE leaves and reusable clients onto the
+dedicated `rsamclnt` bridge, kept PVE management on DHCP/QGA, used qnap-backed
+live ISO plus config media, and passed:
+
+- fresh full-topology baseline: convergence 110s, SSH matrix 56/56
+- representative AWS/Azure/OCI/PVE leaf failover/rejoin: all matrix phases 56/56
+- BFD restart-safe controller regression tests
+- cleanup: OpenTofu destroy 54 resources, plan-destroy exit code 0, cloud
+  provider inventory PASS, PVE leaf VMIDs absent
+
+The release is not promoted because `routerctl mobility explain` still showed
+12 Pending/StaleCapture rows and final `routerctl action list` snapshots still
+contained historical failed provider-action rows on cloud leaves. Those did not
+block dataplane or readiness in the rerun, but they are too noisy for a strong
+rollback baseline.
+
+The manifest is recorded in `docs/releases/manifests/v20260627.1107.yaml`.
 
 This release carries forward the prior stable milestone features: **peersFrom**, **membersFrom**, and **peer-group-sync** for zero-touch leaf configuration in SAM fabrics.
 

@@ -55,6 +55,9 @@ type mobilityExplainReport struct {
 	Pool                 string            `json:"pool" yaml:"pool"`
 	Address              string            `json:"address" yaml:"address"`
 	Phase                string            `json:"phase" yaml:"phase"`
+	Severity             string            `json:"severity,omitempty" yaml:"severity,omitempty"`
+	Diagnostic           bool              `json:"diagnostic,omitempty" yaml:"diagnostic,omitempty"`
+	DiagnosticReason     string            `json:"diagnosticReason,omitempty" yaml:"diagnosticReason,omitempty"`
 	Health               string            `json:"health,omitempty" yaml:"health,omitempty"`
 	Class                string            `json:"class,omitempty" yaml:"class,omitempty"`
 	OwnerNode            string            `json:"ownerNode,omitempty" yaml:"ownerNode,omitempty"`
@@ -320,7 +323,7 @@ func mobilityExplainReportFor(statuses []routerstate.ObjectStatus, pool, address
 		if len(item) == 0 {
 			return mobilityExplainReport{}, fmt.Errorf("MobilityPool/%s has no address status for %s", pool, address)
 		}
-		return mobilityExplainReport{
+		report := mobilityExplainReport{
 			Pool:                 pool,
 			Address:              address,
 			Phase:                firstNonEmpty(stringStatus(item, "phase"), stringStatus(status.Status, "phase")),
@@ -335,9 +338,22 @@ func mobilityExplainReportFor(statuses []routerstate.ObjectStatus, pool, address
 			BlockingCondition:    stringStatus(item, "blockingCondition"),
 			Conditions:           stringMapStatus(item["conditions"]),
 			ConditionReasons:     stringMapStatus(item["conditionReasons"]),
-		}, nil
+		}
+		classifyMobilityExplainDiagnostic(&report)
+		return report, nil
 	}
 	return mobilityExplainReport{}, fmt.Errorf("MobilityPool/%s not found", pool)
+}
+
+func classifyMobilityExplainDiagnostic(report *mobilityExplainReport) {
+	if report == nil {
+		return
+	}
+	if report.Class == "StaleCapture" && report.BlockingCondition == "OwnershipResolved" {
+		report.Severity = "warning"
+		report.Diagnostic = true
+		report.DiagnosticReason = "stale capture evidence remains in status; use doctor-sam, provider action lifecycle, and dataplane matrix to decide whether it is an active blocker"
+	}
 }
 
 func mobilityPathRows(statuses []routerstate.ObjectStatus, prefixFilter string) []mobilityPathRow {
@@ -479,6 +495,12 @@ func writeMobilityExplain(stdout io.Writer, report mobilityExplainReport, output
 		fmt.Fprintf(stdout, "Pool: %s\n", report.Pool)
 		fmt.Fprintf(stdout, "Address: %s\n", report.Address)
 		fmt.Fprintf(stdout, "Phase: %s\n", displayCell(report.Phase))
+		if report.Severity != "" {
+			fmt.Fprintf(stdout, "Severity: %s\n", report.Severity)
+		}
+		if report.DiagnosticReason != "" {
+			fmt.Fprintf(stdout, "Diagnostic: %s\n", report.DiagnosticReason)
+		}
 		if report.OwnerNode != "" {
 			fmt.Fprintf(stdout, "Owner: %s\n", report.OwnerNode)
 		}

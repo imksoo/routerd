@@ -192,6 +192,58 @@ func TestMobilityExplainCommand(t *testing.T) {
 	}
 }
 
+func TestMobilityExplainClassifiesStaleCaptureAsDiagnostic(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routerd.db")
+	store, err := routerstate.OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"phase": "Ready",
+		"addresses": map[string]any{
+			"10.88.60.16/32": map[string]any{
+				"phase":             "Pending",
+				"class":             "StaleCapture",
+				"blockingCondition": "OwnershipResolved",
+				"conditions": map[string]any{
+					"OwnershipResolved": "False",
+					"ProviderObserved":  "True",
+				},
+				"conditionReasons": map[string]any{
+					"OwnershipResolved": "stale capture evidence remains after ownership moved",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := mobilityCommand([]string{"explain", "--state-file", path, "--pool", "cloudedge", "--address", "10.88.60.16/32"}, &stdout, &stderr); err != nil {
+		t.Fatalf("mobility explain: %v stderr=%s", err, stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{"Severity: warning", "Diagnostic:", "stale capture evidence"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("mobility explain diagnostic output missing %q:\n%s", want, out)
+		}
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if err := mobilityCommand([]string{"explain", "--state-file", path, "--pool", "cloudedge", "--address", "10.88.60.16/32", "-o", "json"}, &stdout, &stderr); err != nil {
+		t.Fatalf("mobility explain json: %v stderr=%s", err, stderr.String())
+	}
+	jsonOut := stdout.String()
+	for _, want := range []string{`"severity": "warning"`, `"diagnostic": true`, `"diagnosticReason": "stale capture evidence`} {
+		if !strings.Contains(jsonOut, want) {
+			t.Fatalf("mobility explain json missing %q:\n%s", want, jsonOut)
+		}
+	}
+}
+
 func TestTopLevelUsageListsCurrentMobilityCommands(t *testing.T) {
 	var stdout bytes.Buffer
 	usage(&stdout)
