@@ -6,20 +6,34 @@ sidebar_position: 0
 
 # 安定版マイルストーン
 
-routerd は `vYYYYMMDD.HHmm` 形式で頻繁にリリースしますが、その中から**本番運用に推奨できる版**を「安定版マイルストーン」として節目ごとに選びます。新しく導入するときは、このページで案内する版を使ってください。
+routerd は `vYYYYMMDD.HHmm` 形式で頻繁にリリースしますが、その中から**本番運用に推奨できる版**を「安定版マイルストーン」として節目ごとに選びます。
+新しく導入するときは、このページで案内する版を使ってください。
 
 ## 現在の推奨版
 
 | 項目 | 内容 |
 | --- | --- |
-| バージョン | **v20260608.2325** |
-| 位置づけ | 推奨安定版（v20260608.1354 を置き換え。peersFrom/membersFrom による動的配布でゼロタッチの leaf 設定を実現） |
-| 稼働実績 | k8s クラスター（10 ノード: 2 RR + 8 leaf、peersFrom + membersFrom + peer-group-sync すべて緑、フル verify 通過）、lab 環境（FreeBSD router01/04 アップグレード検証済み）、本番ルーター（homert02、validate pass）で検証済み。不具合 0 件 |
+| バージョン | **v20260626.2350** |
+| 位置づけ | 推奨安定版（v20260619.1730 を置き換え。post-#678 の SAM baseline と Live ISO QGA firstboot 修正を含む） |
+| 稼働実績 | Release workflow PASS。実 PVE の ISO boot で QGA firstboot を確認済み。SAM baseline は v20260626.1921 の full-topology qualification（196 秒収束、SSH matrix 56/56、cleanup PASS、stateAfterDestroy 0）を継承 |
 | バイナリ | 静的リンク（`CGO_ENABLED=0`）、CI と Release ワークフローをすべて通過 |
 
-## v20260608.2325 を推奨する理由
+## v20260626.2350 を推奨する理由
 
-この版は v20260608.1354 のすべての特性を継承した上で、**peersFrom**、**membersFrom**、および **peer-group-sync** を追加し、SAM ファブリックのゼロタッチ leaf 設定を実現しています。
+v20260626.2350 は、post-#678 の SAM rollback baseline と Live ISO の `qemu-guest-agent` firstboot 修正を含む安定版です。
+v20260619.1730 の Ubuntu Live ISO / SAM / federation マイルストーンを継承しつつ、v20260626.1921 の full-topology SAM evidence と、実 PVE での QGA firstboot 確認を固定しています。
+
+release manifest は `docs/releases/manifests/v20260626.2350.yaml` に記録しています。
+
+### v20260626.2350 qualification
+
+- **SAM baseline:** v20260626.1921 から継承。stale provider action feedback 修正後の full-topology run で、196 秒収束、SSH matrix 56/56、cleanup PASS、stateAfterDestroy 0。
+- **v20260626.2050 delta:** PR #665 は HealthCheck WhenFalse の表示/status 修正で、SAM dataplane への影響は観測されていません。2050 fresh run の失敗は古い PVE template-clone lab provisioning path の問題として記録し、routerd/SAM の blocker にはしていません。
+- **v20260626.2350 delta:** PR #681 で Live ISO の `qemu-guest-agent` 自動起動を修正。`go test ./tests/liveiso`、v20260626.2350 Release workflow、pve07 での実 ISO boot と `qm agent ping` を確認済み。
+
+### v20260608.2325 からの継承事項
+
+v20260608.2325 は v20260608.1354 のすべての特性を継承した上で、**peersFrom**、**membersFrom**、および **peer-group-sync** を追加し、SAM ファブリックのゼロタッチ leaf 設定を実現しています。
 
 ### peersFrom + SAMPeerGroup（#332, #333）
 

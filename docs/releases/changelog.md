@@ -12,8 +12,22 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260626.2350
+
 ### Changed
 
+- **Recommended stable milestone.** v20260626.2350 is promoted as the current
+  stable release. It carries forward the post-#678 SAM baseline qualification
+  from v20260626.1921/v20260626.2050 and adds the Live ISO QGA firstboot fix.
+- Release manifest added at
+  `docs/releases/manifests/v20260626.2350.yaml`, including release workflow,
+  artifact sha256, inherited SAM baseline evidence, PVE QGA firstboot evidence,
+  and cleanup state.
+- **Live ISO qemu-guest-agent firstboot activation.** The Ubuntu live ISO now
+  starts `qemu-guest-agent` automatically on first boot, so PVE `qm agent ping`
+  works without manual service intervention (#680, #681). Validated with
+  `go test ./tests/liveiso`, the v20260626.2350 Release workflow, and a real
+  PVE ISO boot on pve07.
 - The Live ISO is now built with Ubuntu `debootstrap` instead of Alpine Linux.
   Network interface names follow the Ubuntu/systemd predictable naming scheme
   (`ens18`, `ens19`, …) instead of the kernel `eth0`/`eth1` convention used by
