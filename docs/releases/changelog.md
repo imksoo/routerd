@@ -21,14 +21,21 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   the v20260626.2350 post-release p2350-dhcpmgmt fresh baseline on OCI, where
   oci-leaf-b attempted to assign secondary private IP `10.77.60.11` after
   oci-leaf-a had already created it.
+- v20260626.2350 stable promotion was retracted after a second post-release
+  fresh full-topology run with clean reusable Ubuntu PVE clients still timed
+  out SAM readiness. The later run isolated the remaining blocker to
+  SAM/provider-action capture behavior on `aws-leaf-a`, not PVE provisioning
+  or OCI guest OS defaults.
 
 ## v20260626.2350
 
 ### Changed
 
-- **Recommended stable milestone.** v20260626.2350 is promoted as the current
-  stable release. It carries forward the post-#678 SAM baseline qualification
-  from v20260626.1921/v20260626.2050 and adds the Live ISO QGA firstboot fix.
+- **Stable promotion retracted after post-release validation.** v20260626.2350
+  carries the post-#678 SAM baseline lineage and adds the Live ISO QGA
+  firstboot fix, but later fresh full-topology validation failed on
+  SAM/provider-action capture behavior. It is not the current
+  production-recommended rollback baseline.
 - Release manifest added at
   `docs/releases/manifests/v20260626.2350.yaml`, including release workflow,
   artifact sha256, inherited SAM baseline evidence, PVE QGA firstboot evidence,

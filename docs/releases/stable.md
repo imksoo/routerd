@@ -12,14 +12,18 @@ routerd ships frequently using the `vYYYYMMDD.HHmm` scheme. From those builds we
 
 | Item | Value |
 | --- | --- |
-| Version | **v20260626.2350** |
-| Status | Recommended stable release (supersedes v20260619.1730; post-#678 SAM baseline plus Live ISO QGA firstboot fix) |
-| Track record | Release workflow PASS; Live ISO QGA firstboot validated on real PVE ISO boot; SAM baseline inherits v20260626.1921 full-topology qualification (196s convergence, SSH matrix 56/56, cleanup PASS, stateAfterDestroy 0). A later post-release fresh baseline exposed an OCI same-site secondary-IP planning bug and is recorded in the manifest as follow-up evidence. PVE router/leaf ISO mechanics and clean reusable Ubuntu workload clients are now separately documented. |
+| Version | **v20260619.1730** |
+| Status | Current production-recommended stable release |
+| Track record | v20260626.2350 promotion was retracted after post-release fresh full-topology validation failed twice on SAM provider-action/capture behavior. Use v20260626.2350 only for targeted Live ISO/QGA/PVE provisioning validation or as an input to the next SAM fix release, not as the production rollback baseline. |
 | Binary | Statically linked (`CGO_ENABLED=0`), passes CI and the Release workflow |
 
-## Why v20260626.2350 is recommended
+## v20260626.2350 promotion retracted
 
-v20260626.2350 is the first stable milestone after the post-#678 SAM rollback baseline and the Live ISO qemu-guest-agent firstboot fix. It keeps the v20260619.1730 Ubuntu Live ISO and SAM/federation milestones, carries forward the v20260626.1921 full-topology SAM evidence, and fixes the PVE guest-agent readiness gap found while testing v20260626.2050.
+v20260626.2350 is still a useful release artifact for the Live ISO
+qemu-guest-agent firstboot fix and for the replacement PVE qualification path,
+but it is no longer recommended as the production SAM rollback baseline.
+Post-release fresh full-topology validation failed after the PVE provisioning
+path and clean Ubuntu workload clients were corrected.
 
 The release manifest is recorded in `docs/releases/manifests/v20260626.2350.yaml`.
 
@@ -30,6 +34,7 @@ The release manifest is recorded in `docs/releases/manifests/v20260626.2350.yaml
 - **v20260626.2350 delta:** PR #681 fixes Live ISO qemu-guest-agent startup. `go test ./tests/liveiso` passed, the v20260626.2350 Release workflow passed, and a real PVE ISO boot on pve07 responded to `qm agent ping` with `qemu-guest-agent` active.
 - **Post-release PVE qualification path:** the PVE live ISO + qnap config media path remains the intended replacement for the obsolete template-clone path for router/leaf VMs. The first 2026-06-27 4VM run is discarded because it used static ens18 management addresses; the later p2350-dhcpmgmt run corrected this by keeping ens18 on DHCP and discovering management addresses from QGA. Clean reusable Ubuntu workload clients were then provisioned separately on pve07 with qnap storage, auto VMIDs, ens18 DHCP, ens19 fixed 10.77 overlay addresses, QGA, and overlay ping verified.
 - **Post-release SAM follow-up:** the p2350-dhcpmgmt fresh full-topology baseline failed before matrix/failover/BFD because OCI attempted a duplicate same-site secondary private IP assignment (`10.77.60.11`). PVE router/leaf DHCP, QGA, qnap media, auto VMID, serial console, and cleanup were verified. The clean Ubuntu client evidence does not change that SAM failure classification; it only removes the PVE client provisioning gap. The OCI failure is tracked as a SAM planner/provider-action follow-up for the next release line.
+- **Clean-client rerun:** the p2350-cleanclients fresh full-topology run used clean reusable Ubuntu PVE clients and still failed control-plane readiness. `aws-leaf-a` retained one failed AWS `assign-secondary-ip` action for `10.77.60.16/32` and stale capture evidence for remote/provider addresses. OCI leaves were Ready and OCI OS diagnostics did not identify the baseline blocker. Initial matrix reached 50/56, with six hostname-check failures, but readiness timed out at 620s.
 
 ### Inherited from v20260608.2325
 

@@ -3,8 +3,8 @@ release:
   commit: 0145a861d801c0789e3e4836c2c126cf2e34ed12
   baseline: v20260626.2050
   releaseUrl: https://github.com/imksoo/routerd/releases/tag/v20260626.2350
-  status: stable
-  recommended: true
+  status: post-release-validation-failed
+  recommended: false
   artifact:
     path: routerd-v20260626.2350-linux-amd64.tar.gz
     sha256: 55269fabf118f960b190529f1c02027294165303085a7880c7479fe3f3114a4b
@@ -17,7 +17,7 @@ release:
       id: 28271636131
       status: PASS
   qualification:
-    status: stable
+    status: post-release-validation-failed
     supersedes:
       - v20260619.1730
       - v20260625.0932
@@ -259,20 +259,77 @@ release:
           visibility and must be fixed in a later release.
         cleanup: PASS
         stateAfterDestroy: 0
+      - name: post-release-cleanclients-full-topology-baseline
+        status: FAIL
+        date: 2026-06-27
+        run: p2350-cleanclients-20260627T095156Z
+        evidence: /home/imksoo/routerd-labs-archive/evidence/p2350-cleanclients-20260627T095156Z
+        scope:
+          - fresh cloud plus PVE full-topology deploy
+          - v20260626.2350 release artifact
+          - PVE live ISO plus qnap config media for leaf routers
+          - reusable clean Ubuntu PVE workload clients on qnap
+          - PVE ens18 DHCP management with QGA discovery
+        result:
+          convergence: TIMEOUT
+          convergenceSeconds: 620
+          matrix: 50/56
+          matrixFailures:
+            FAIL_HOSTNAME: 6
+          cleanup: PASS
+          stateAfterDestroy: 0
+        failure:
+          component: SAM provider action planning
+          provider: AWS
+          failedNode: aws-leaf-a
+          failedAction: assign-secondary-ip
+          failedAddress: 10.77.60.16/32
+          providerError: >-
+            aws ec2 assign-private-ip-addresses failed with
+            InvalidParameterValue: [10.77.60.16] assigned, but move is not
+            allowed.
+          secondaryFindings:
+            - >-
+              aws-leaf-a retained stale capture evidence for remote/provider
+              addresses, including Azure, OCI, and PVE client/router addresses,
+              while other leaves were Ready.
+            - >-
+              OCI leaf nodes were Ready. OCI guest OS diagnostics were captured
+              separately and did not identify the baseline blocker.
+            - >-
+              PVE provisioning path was not the blocker: live ISO leaf VMs used
+              qnap media, ens18 DHCP discovered through QGA, clean reusable
+              Ubuntu clients on ens19 overlay, and cleanup removed the leaf VMs.
+        artifacts:
+          tofuApply: /home/imksoo/routerd-labs-archive/evidence/p2350-cleanclients-20260627T095156Z/tofu-apply.log
+          tofuOutput: /home/imksoo/routerd-labs-archive/evidence/p2350-cleanclients-20260627T095156Z/tofu-output.qga.json
+          convergenceSummary: /home/imksoo/routerd-labs-archive/evidence/p2350-cleanclients-20260627T095156Z/baseline-awsprofile-sudo/convergence/summary.tsv
+          matrixSummary: /home/imksoo/routerd-labs-archive/evidence/p2350-cleanclients-20260627T095156Z/baseline-awsprofile-sudo/matrix/initial/summary.tsv
+          manualDiagnostics: /home/imksoo/routerd-labs-archive/evidence/p2350-cleanclients-20260627T095156Z/baseline-awsprofile-sudo/manual-post-failure-diagnostics-20260627T105132Z
+          destroyLog: /home/imksoo/routerd-labs-archive/evidence/p2350-cleanclients-20260627T095156Z/tofu-destroy-after-failed-baseline.log
+          postDestroyInventory: /home/imksoo/routerd-labs-archive/evidence/p2350-cleanclients-20260627T095156Z/post-destroy-inventory
+          pvePostDestroy: /home/imksoo/routerd-labs-archive/evidence/p2350-cleanclients-20260627T095156Z/post-destroy-pve-qm-status.txt
+        classification: >-
+          This run removes the previous PVE client cleanliness gap and still
+          fails on SAM provider-action/capture behavior. v20260626.2350 must
+          not be treated as a fully re-qualified rollback baseline for fresh
+          full-topology SAM deployments.
     releaseDecision:
-      outcome: stable
+      outcome: retracted
       rationale:
         - >-
-          The SAM dataplane/control-plane baseline is inherited from the
-          post-#678 v20260626.1921 qualification: baseline convergence 196s,
-          SSH matrix 56/56, cleanup PASS, and stateAfterDestroy 0.
+          v20260626.2350 was initially promoted from inherited post-#678
+          v20260626.1921 evidence plus the Live ISO QGA firstboot fix, but
+          post-release fresh full-topology validation failed twice.
         - >-
-          v20260626.2050 and v20260626.2350 only add non-SAM-dataplane deltas
-          on top of that baseline: PR #665 HealthCheck display/status handling
-          and PR #681 Live ISO qemu-guest-agent firstboot activation.
+          The p2350-dhcpmgmt run exposed an OCI duplicate same-site secondary
+          IP planning bug. The later p2350-cleanclients run removed the PVE
+          workload-client cleanliness gap and still timed out due to AWS
+          provider-action/capture failure on aws-leaf-a.
         - >-
-          The 2350 Live ISO was booted on real PVE hardware using the ISO-based
-          VM path and qemu-guest-agent responded successfully after first boot.
+          The Live ISO QGA/PVE provisioning fixes remain valid evidence, but
+          they do not qualify v20260626.2350 as a production-recommended SAM
+          rollback baseline.
   knownResiduals:
     - >-
       Broad representative failover/rejoin and BFD restart-safe coverage remain
@@ -295,3 +352,10 @@ release:
       This is a SAM planner/provider-action issue, not a PVE provisioning
       issue, and should be fixed and released before treating the fresh
       full-topology 2350 lineage as fully re-qualified.
+    - >-
+      The 2026-06-27 p2350-cleanclients post-release full-topology baseline
+      used clean reusable Ubuntu PVE clients and still failed SAM readiness:
+      aws-leaf-a retained one failed AWS assign-secondary-ip action for
+      10.77.60.16/32 and stale capture evidence for remote/provider addresses.
+      This confirms the remaining blocker is routerd SAM/provider-action
+      behavior, not PVE provisioning or OCI guest OS defaults.
