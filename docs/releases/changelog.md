@@ -12,6 +12,16 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- SAM distributed secondary-IP capture planning now uses the full same-site
+  placement group when liveness marker visibility is incomplete, preventing
+  two same-site leaves from independently selecting the same remote-home capture
+  address and issuing duplicate provider assign actions. This was exposed by
+  the v20260626.2350 post-release p2350-dhcpmgmt fresh baseline on OCI, where
+  oci-leaf-b attempted to assign secondary private IP `10.77.60.11` after
+  oci-leaf-a had already created it.
+
 ## v20260626.2350
 
 ### Changed

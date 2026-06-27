@@ -2148,6 +2148,76 @@ func TestPlanBGPMobilityDeliverySuppressesSameSiteRemoteHomeDuringSeize(t *testi
 	}
 }
 
+func TestPlanBGPMobilityDeliveryDistributedPartialLivenessDoesNotDuplicateAssign(t *testing.T) {
+	now := time.Date(2026, 6, 27, 5, 25, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	for i := range spec.Members {
+		if spec.Members[i].Placement.Group == "aws-edge" {
+			spec.Members[i].MaxSecondaryIPs = 128
+		}
+	}
+	members := plannerMembers(spec.Members)
+	address := "10.88.60.12/32"
+	decisions := []ownershipDecision{{
+		Address:           address,
+		Class:             ownershipClassRemoteHomeOwned,
+		HomeOwnerNode:     "azure-router",
+		Source:            providerDiscoverySource,
+		SuppressionReason: "remote-home-owner",
+	}}
+	planFor := func(self memberPlanInfo, markers map[string]string) bgpDeliveryPlannerResult {
+		t.Helper()
+		delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+			PoolName:  "cloudedge",
+			Source:    DynamicSource("cloudedge", self.NodeRef),
+			Self:      self,
+			Members:   members,
+			Spec:      spec,
+			Decisions: decisions,
+			Placement: PlacementDecision{
+				Group:      "aws-edge",
+				Active:     true,
+				ActiveNode: self.NodeRef,
+			},
+			InstalledNextHops: map[string][]string{address: {"10.99.0.3"}},
+			Profiles:          map[string]api.CloudProviderProfileSpec{"aws-provider": {Provider: "aws"}},
+			LivenessMarkers:   markers,
+			RIBObserved:       true,
+			Now:               now,
+		})
+		if err != nil {
+			t.Fatalf("planBGPMobilityDelivery(%s): %v", self.NodeRef, err)
+		}
+		return delivery
+	}
+
+	selfA := members["aws-router-a"]
+	selfB := members["aws-router-b"]
+	deliveryA := planFor(selfA, map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("aws-router-a"): "10.99.0.2/32",
+	})
+	deliveryB := planFor(selfB, map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32",
+	})
+	if deliveryA.Distribution == nil || deliveryB.Distribution == nil {
+		t.Fatalf("distributed capture missing distribution: A=%#v B=%#v", deliveryA.Distribution, deliveryB.Distribution)
+	}
+	holderA := deliveryA.Distribution.Assignments[address]
+	holderB := deliveryB.Distribution.Assignments[address]
+	if holderA == "" || holderA != holderB {
+		t.Fatalf("partial liveness distributions diverged: A=%q B=%q", holderA, holderB)
+	}
+	assignA := findActionPlanByAddress(deliveryA.ActionPlans, "assign-secondary-ip", address)
+	assignB := findActionPlanByAddress(deliveryB.ActionPlans, "assign-secondary-ip", address)
+	if assignA != nil && assignB != nil {
+		t.Fatalf("partial liveness generated duplicate same-site assigns: A=%#v B=%#v", deliveryA.ActionPlans, deliveryB.ActionPlans)
+	}
+	if assignA == nil && assignB == nil {
+		t.Fatalf("partial liveness generated no assign for assigned holder %q: A=%#v B=%#v", holderA, deliveryA.ActionPlans, deliveryB.ActionPlans)
+	}
+}
+
 func TestFilterSupersededSameProviderHomeFailures(t *testing.T) {
 	failed := []providerActionPlanFailure{{
 		IdempotencyKey: "stale-same-provider",

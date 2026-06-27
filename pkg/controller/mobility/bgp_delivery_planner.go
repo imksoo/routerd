@@ -277,6 +277,9 @@ func collectEligibleCaptureAddresses(self memberPlanInfo, members map[string]mem
 		if decision.Class == ownershipClassConfirmedCapture {
 			continue
 		}
+		if !decisionEligibleForCapture(decision, self, members, placement) {
+			continue
+		}
 		if !routeTableCaptureAllowed(decision, self) {
 			continue
 		}

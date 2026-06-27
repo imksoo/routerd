@@ -60,6 +60,136 @@ release:
           - dhcpAddress: 192.168.1.36/24
         cleanup: PASS
         stateAfterDestroy: 0
+      - name: pve-liveiso-qnap-auto-vmid-discarded
+        status: DISCARDED
+        date: 2026-06-27
+        node: pve07
+        purpose: >-
+          Diagnostics-only run that confirmed the PVE live ISO plus qnap media
+          mechanics, but is not accepted as release qualification evidence
+          because management addresses were statically configured on ens18
+          instead of being discovered from DHCP via QGA.
+        evidence: /home/imksoo/routerd-labs-archive/evidence/p2350-pveboot-20260627T022530Z
+        provisioning:
+          storage: qnap
+          vmid: auto-assigned
+          vmidRange: 9000-9999
+          boot: live ISO on ide2
+          cloudInit: per-node CIDATA ISO on sata2
+          config: per-node ROUTERD_CONFIG ISO on sata3
+          managementBridge: vmbr0
+          captureBridge: svnet1
+          qemuGuestAgent: enabled
+        vms:
+          - name: pve-leaf-a
+            vmid: 9763
+            staticManagementAddress: 192.168.1.134/24
+            captureAddress: 10.77.60.34/24
+          - name: pve-client-a
+            vmid: 9804
+            staticManagementAddress: 192.168.1.115/24
+            captureAddress: 10.77.60.15/24
+          - name: pve-leaf-b
+            vmid: 9137
+            staticManagementAddress: 192.168.1.135/24
+            captureAddress: 10.77.60.35/24
+          - name: pve-client-b
+            vmid: 9229
+            staticManagementAddress: 192.168.1.116/24
+            captureAddress: 10.77.60.19/24
+        checks:
+          - Terraform PVE plan/apply with random VMIDs: PASS
+          - qm agent ping: 4/4 PASS
+          - qemu-guest-agent active: 4/4 PASS
+          - routerd active: 4/4 PASS
+          - CIDATA media visible in guest: 4/4 PASS
+          - ROUTERD_CONFIG media visible in guest: 4/4 PASS
+          - hostname matches node name: 4/4 PASS
+          - PVE local 10.77.60 matrix: 16/16 PASS
+          - release qualification acceptance: FAIL, static ens18 management addresses
+        artifacts:
+          matrix: /home/imksoo/routerd-labs-archive/evidence/p2350-pveboot-20260627T022530Z/pve-auto-vmid-qnap-matrix.txt
+          cleanup: /home/imksoo/routerd-labs-archive/evidence/p2350-pveboot-20260627T022530Z/pve-auto-vmid-cleanup-final.txt
+        cleanup: PASS
+        stateAfterDestroy: 0
+      - name: pve-liveiso-qnap-dhcp-qga-path
+        status: PASS
+        date: 2026-06-27
+        node: pve07
+        evidence: /home/imksoo/routerd-labs-archive/evidence/p2350-dhcpmgmt-20260627T052200Z/pve-dhcp
+        purpose: >-
+          Confirm that the replacement PVE qualification path matches the
+          existing pve-rt ISO VM pattern: live ISO plus per-node config media
+          on qnap, Terraform auto-assigned VMIDs, ens18 management through DHCP,
+          QGA address discovery, and serial console enabled.
+        provisioning:
+          storage: qnap
+          vmid: auto-assigned
+          boot: live ISO on ide2
+          cloudInit: per-node CIDATA ISO
+          config: per-node ROUTERD_CONFIG ISO
+          managementInterface: ens18
+          managementAddressing: DHCP via qemu-guest-agent discovery
+          captureInterface: ens19
+          qemuGuestAgent: enabled
+          serialConsole: enabled
+        vms:
+          - name: pve-client-a
+            vmid: 9081
+            dhcpManagementAddress: 192.168.1.72/24
+            captureAddress: 10.77.60.15/24
+            qga: PASS
+          - name: pve-client-b
+            vmid: 9267
+            dhcpManagementAddress: 192.168.1.75/24
+            captureAddress: 10.77.60.19/24
+            qga: PASS
+          - name: pve-leaf-a
+            vmid: 9993
+            dhcpManagementAddress: 192.168.1.73/24
+            captureAddress: 10.77.60.34/24
+            qga: PASS
+          - name: pve-leaf-b
+            vmid: 9331
+            dhcpManagementAddress: 192.168.1.74/24
+            captureAddress: 10.77.60.35/24
+            qga: PASS
+        checks:
+          - ens18 DHCP management address via QGA: 4/4 PASS
+          - static ens18 management address avoided: PASS
+          - pve-rt style qnap ISO/config media: PASS
+          - Terraform auto-assigned VMIDs: PASS
+        cleanup: PASS
+        stateAfterDestroy: 0
+      - name: post-release-full-topology-baseline
+        status: FAIL
+        date: 2026-06-27
+        run: p2350-dhcpmgmt-20260627T052200Z
+        evidence: /home/imksoo/routerd-labs-archive/evidence/p2350-dhcpmgmt-20260627T052200Z
+        scope:
+          - fresh full-topology deploy
+          - PVE live ISO plus qnap config media
+          - PVE ens18 DHCP management with QGA discovery
+        result: >-
+          Deploy reached the cloud and PVE nodes, but baseline convergence did
+          not complete. oci-leaf-b failed MobilityPool readiness after the SAM
+          planner attempted to assign OCI secondary private IP 10.77.60.11 even
+          though oci-leaf-a had already created the same secondary private IP.
+        failure:
+          component: SAM provider action planning
+          provider: OCI
+          failedNode: oci-leaf-b
+          conflictAddress: 10.77.60.11
+          evidence:
+            - /home/imksoo/routerd-labs-archive/evidence/p2350-dhcpmgmt-20260627T052200Z/oci-private-ip-conflict/conflicting-private-ips.txt
+            - /home/imksoo/routerd-labs-archive/evidence/p2350-dhcpmgmt-20260627T052200Z/oci-duplicate-capture/oci-leaf-b.txt
+        classification: >-
+          Not a PVE provisioning blocker. PVE DHCP, QGA, qnap media, auto VMID,
+          and cleanup checks passed. The failure exposes a routerd SAM
+          same-site duplicate secondary-IP capture planning bug under incomplete
+          liveness marker visibility and must be fixed in a later release.
+        cleanup: PASS
+        stateAfterDestroy: 0
     releaseDecision:
       outcome: stable
       rationale:
@@ -81,6 +211,15 @@ release:
       blockers for this stable promotion because the 2350 delta does not alter
       SAM ownership, provider execution, or dataplane behavior.
     - >-
-      The obsolete PVE template-clone lab path should be replaced with the
-      faster live ISO plus config disk path on pve05-pve07 for future fresh
-      topology qualification runs.
+      The faster live ISO plus qnap config media path remains the intended PVE
+      qualification path. The first 2026-06-27 4VM run is discarded as release
+      qualification evidence because it used static ens18 management addresses.
+      The later p2350-dhcpmgmt run corrected that by keeping ens18 on DHCP and
+      copying QGA-discovered addresses into the E2E tofu output. The obsolete
+      PVE template-clone lab path remains deprecated.
+    - >-
+      The 2026-06-27 p2350-dhcpmgmt post-release full-topology baseline failed
+      on an OCI duplicate same-site secondary private IP assignment attempt.
+      This is a SAM planner/provider-action issue, not a PVE provisioning
+      issue, and should be fixed and released before treating the fresh
+      full-topology 2350 lineage as fully re-qualified.

@@ -5,6 +5,8 @@ package mobility
 import (
 	"fmt"
 	"testing"
+
+	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 )
 
 func TestDistributeCaptures_EvenSpread(t *testing.T) {
@@ -189,5 +191,48 @@ func TestDistributedCaptureEnabled(t *testing.T) {
 	}
 	if distributedCaptureEnabled(members2, "grp") {
 		t.Fatal("should not be enabled when no member has MaxSecondaryIPs > 0")
+	}
+}
+
+func TestDistributedLiveNodes_PartialMarkersUseFullGroup(t *testing.T) {
+	members := map[string]memberPlanInfo{
+		"node-a": {NodeRef: "node-a", PlacementGroup: "grp", MaxSecondaryIPs: 10},
+		"node-b": {NodeRef: "node-b", PlacementGroup: "grp", MaxSecondaryIPs: 10},
+	}
+	markers := map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("node-a"): "10.99.0.2/32",
+	}
+
+	live := distributedLiveNodes(members["node-a"], members, markers)
+	if !live["node-a"] || !live["node-b"] || len(live) != 2 {
+		t.Fatalf("partial marker live nodes = %#v, want full group to avoid split-brain capture assignment", live)
+	}
+}
+
+func TestDistributedLiveNodes_NoMarkersUseFullGroup(t *testing.T) {
+	members := map[string]memberPlanInfo{
+		"node-a": {NodeRef: "node-a", PlacementGroup: "grp", MaxSecondaryIPs: 10},
+		"node-b": {NodeRef: "node-b", PlacementGroup: "grp", MaxSecondaryIPs: 10},
+	}
+
+	live := distributedLiveNodes(members["node-a"], members, nil)
+	if !live["node-a"] || !live["node-b"] || len(live) != 2 {
+		t.Fatalf("missing marker live nodes = %#v, want full group to avoid split-brain capture assignment", live)
+	}
+}
+
+func TestDistributedLiveNodes_CompleteMarkersUseObservedLiveSet(t *testing.T) {
+	members := map[string]memberPlanInfo{
+		"node-a": {NodeRef: "node-a", PlacementGroup: "grp", MaxSecondaryIPs: 10},
+		"node-b": {NodeRef: "node-b", PlacementGroup: "grp", MaxSecondaryIPs: 10},
+	}
+	markers := map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("node-a"): "10.99.0.2/32",
+		bgpstate.MobilityNodeIdentityCommunity("node-b"): "10.99.0.3/32",
+	}
+
+	live := distributedLiveNodes(members["node-a"], members, markers)
+	if !live["node-a"] || !live["node-b"] || len(live) != 2 {
+		t.Fatalf("complete marker live nodes = %#v, want both observed nodes", live)
 	}
 }

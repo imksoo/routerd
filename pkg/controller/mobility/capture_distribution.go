@@ -103,15 +103,26 @@ func assignByRendezvous(address string, nodes []captureDistributionNode, counts 
 func distributedLiveNodes(self memberPlanInfo, members map[string]memberPlanInfo, livenessMarkers map[string]string) map[string]bool {
 	group := strings.TrimSpace(self.PlacementGroup)
 	live := map[string]bool{self.NodeRef: true}
+	groupNodes := map[string]bool{}
+	markerPresent := map[string]bool{}
 	for _, m := range members {
 		if strings.TrimSpace(m.PlacementGroup) != group || m.MaintenanceDrain {
 			continue
 		}
-		if m.NodeRef == self.NodeRef {
-			continue
-		}
+		groupNodes[m.NodeRef] = true
 		if _, _, present := livenessMarkerForNode(livenessMarkers, m.NodeRef); present {
-			live[m.NodeRef] = true
+			markerPresent[m.NodeRef] = true
+		}
+	}
+	if len(groupNodes) == 0 {
+		return live
+	}
+	if len(markerPresent) < len(groupNodes) {
+		return groupNodes
+	}
+	for node := range markerPresent {
+		if node != self.NodeRef {
+			live[node] = true
 		}
 	}
 	return live
