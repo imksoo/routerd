@@ -2226,6 +2226,12 @@ func TestFilterSupersededSameProviderHomeFailures(t *testing.T) {
 		ProviderRef:    "aws-provider",
 		Error:          "primary address is already allocated",
 	}, {
+		IdempotencyKey: "stale-local-home",
+		Action:         "assign-secondary-ip",
+		Address:        "10.88.60.16/32",
+		ProviderRef:    "aws-provider",
+		Error:          "assigned, but move is not allowed",
+	}, {
 		IdempotencyKey: "remote-provider",
 		Action:         "assign-secondary-ip",
 		Address:        "10.88.60.12/32",
@@ -2242,6 +2248,11 @@ func TestFilterSupersededSameProviderHomeFailures(t *testing.T) {
 		Class:           ownershipClassRemoteHomeOwned,
 		HomeOwnerNode:   "azure-router",
 		HomeProviderRef: "azure-provider",
+	}, {
+		Address:          "10.88.60.16/32",
+		Class:            ownershipClassLocalHomeOwned,
+		HomeOwnerNode:    "aws-router-a",
+		LocalProviderRef: "aws-provider",
 	}}
 
 	got := filterSupersededSameProviderHomeFailures(failed, decisions, "aws-provider")
