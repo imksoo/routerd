@@ -1,0 +1,86 @@
+release:
+  version: v20260626.2350
+  commit: 0145a861d801c0789e3e4836c2c126cf2e34ed12
+  baseline: v20260626.2050
+  releaseUrl: https://github.com/imksoo/routerd/releases/tag/v20260626.2350
+  status: stable
+  recommended: true
+  artifact:
+    path: routerd-v20260626.2350-linux-amd64.tar.gz
+    sha256: 55269fabf118f960b190529f1c02027294165303085a7880c7479fe3f3114a4b
+  liveIso:
+    path: routerd-live-v20260626.2350.iso
+    sha256: e45772aa834c8bab43fd9a0a82ee7b386fb0f6b2a0a6c763589772e57f401099
+    verifiedLocalPath: /home/imksoo/routerd-labs-archive/artifacts/v20260626.2350-qga/routerd-live-v20260626.2350.iso
+  workflow:
+    release:
+      id: 28271636131
+      status: PASS
+  qualification:
+    status: stable
+    supersedes:
+      - v20260619.1730
+      - v20260625.0932
+      - v20260626.1921
+      - v20260626.2050
+    fixes:
+      - issue: 680
+        pullRequest: 681
+        title: Start qemu guest agent from live ISO firstboot
+    inheritedEvidence:
+      - version: v20260626.1921
+        run: p654-20260626.1921-run1-20260626T192353Z
+        evidence: /home/imksoo/routerd-labs-archive/evidence/p654-20260626.1921-run1-20260626T192353Z
+        scenarios:
+          - name: baseline
+            convergenceSeconds: 196
+            matrix: 56/56
+            status: PASS
+            evidence: /home/imksoo/routerd-labs-archive/evidence/p654-20260626.1921-run1-20260626T192353Z/baseline
+        cleanup: PASS
+        stateAfterDestroy: 0
+    directValidation:
+      - name: liveiso-unit
+        command: go test ./tests/liveiso
+        status: PASS
+      - name: release-workflow
+        status: PASS
+        workflowId: 28271636131
+      - name: pve-qga-firstboot
+        status: PASS
+        node: pve07
+        vmid: 982
+        vmName: routerd-qga-2350-test
+        provisioning: live-iso-plus-config-disk-compatible
+        isoPath: /var/lib/vz/template/iso/routerd-live-v20260626.2350.iso
+        checks:
+          - qm agent 982 ping: PASS
+          - systemctl is-active qemu-guest-agent: active
+          - systemctl is-enabled qemu-guest-agent: static
+          - dhcpAddress: 192.168.1.36/24
+        cleanup: PASS
+        stateAfterDestroy: 0
+    releaseDecision:
+      outcome: stable
+      rationale:
+        - >-
+          The SAM dataplane/control-plane baseline is inherited from the
+          post-#678 v20260626.1921 qualification: baseline convergence 196s,
+          SSH matrix 56/56, cleanup PASS, and stateAfterDestroy 0.
+        - >-
+          v20260626.2050 and v20260626.2350 only add non-SAM-dataplane deltas
+          on top of that baseline: PR #665 HealthCheck display/status handling
+          and PR #681 Live ISO qemu-guest-agent firstboot activation.
+        - >-
+          The 2350 Live ISO was booted on real PVE hardware using the ISO-based
+          VM path and qemu-guest-agent responded successfully after first boot.
+  knownResiduals:
+    - >-
+      Broad representative failover/rejoin and BFD restart-safe coverage remain
+      useful nightly/full-qualification scenarios, but are not treated as
+      blockers for this stable promotion because the 2350 delta does not alter
+      SAM ownership, provider execution, or dataplane behavior.
+    - >-
+      The obsolete PVE template-clone lab path should be replaced with the
+      faster live ISO plus config disk path on pve05-pve07 for future fresh
+      topology qualification runs.

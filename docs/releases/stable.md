@@ -12,14 +12,26 @@ routerd ships frequently using the `vYYYYMMDD.HHmm` scheme. From those builds we
 
 | Item | Value |
 | --- | --- |
-| Version | **v20260608.2325** |
-| Status | Recommended stable release (supersedes v20260608.1354; peersFrom/membersFrom dynamic distribution for zero-touch leaf config) |
-| Track record | Validated on k8s cluster (10 nodes: 2 RR + 8 leaf, peersFrom + membersFrom + peer-group-sync all green, full verify passed), lab (FreeBSD router01/04 upgrade verified), and production router (homert02, validate pass). 0 open issues |
+| Version | **v20260626.2350** |
+| Status | Recommended stable release (supersedes v20260619.1730; post-#678 SAM baseline plus Live ISO QGA firstboot fix) |
+| Track record | Release workflow PASS; Live ISO QGA firstboot validated on real PVE ISO boot; SAM baseline inherits v20260626.1921 full-topology qualification (196s convergence, SSH matrix 56/56, cleanup PASS, stateAfterDestroy 0) |
 | Binary | Statically linked (`CGO_ENABLED=0`), passes CI and the Release workflow |
 
-## Why v20260608.2325 is recommended
+## Why v20260626.2350 is recommended
 
-This release adds **peersFrom**, **membersFrom**, and **peer-group-sync** on top of v20260608.1354, enabling zero-touch leaf configuration for SAM fabrics.
+v20260626.2350 is the first stable milestone after the post-#678 SAM rollback baseline and the Live ISO qemu-guest-agent firstboot fix. It keeps the v20260619.1730 Ubuntu Live ISO and SAM/federation milestones, carries forward the v20260626.1921 full-topology SAM evidence, and fixes the PVE guest-agent readiness gap found while testing v20260626.2050.
+
+The release manifest is recorded in `docs/releases/manifests/v20260626.2350.yaml`.
+
+### v20260626.2350 qualification
+
+- **SAM baseline:** inherited from v20260626.1921, after the stale provider action feedback fix. The recorded full-topology run converged in 196s, passed the SSH matrix 56/56, cleaned up successfully, and left stateAfterDestroy 0.
+- **v20260626.2050 delta:** PR #665 is a HealthCheck WhenFalse status display fix with no observed SAM dataplane impact. The failed 2050 fresh run is documented as an obsolete PVE template-clone lab provisioning problem, not a routerd/SAM blocker.
+- **v20260626.2350 delta:** PR #681 fixes Live ISO qemu-guest-agent startup. `go test ./tests/liveiso` passed, the v20260626.2350 Release workflow passed, and a real PVE ISO boot on pve07 responded to `qm agent ping` with `qemu-guest-agent` active.
+
+### Inherited from v20260608.2325
+
+This release carries forward the prior stable milestone features: **peersFrom**, **membersFrom**, and **peer-group-sync** for zero-touch leaf configuration in SAM fabrics.
 
 ### peersFrom + SAMPeerGroup (#332, #333)
 
