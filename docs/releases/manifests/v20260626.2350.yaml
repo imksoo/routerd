@@ -113,15 +113,18 @@ release:
         cleanup: PASS
         stateAfterDestroy: 0
       - name: pve-liveiso-qnap-dhcp-qga-path
-        status: PASS
+        status: PARTIAL
         date: 2026-06-27
         node: pve07
         evidence: /home/imksoo/routerd-labs-archive/evidence/p2350-dhcpmgmt-20260627T052200Z/pve-dhcp
         purpose: >-
-          Confirm that the replacement PVE qualification path matches the
-          existing pve-rt ISO VM pattern: live ISO plus per-node config media
-          on qnap, Terraform auto-assigned VMIDs, ens18 management through DHCP,
-          QGA address discovery, and serial console enabled.
+          Confirm the router/leaf side of the replacement PVE qualification
+          path matches the existing pve-rt ISO VM pattern: live ISO plus
+          per-node config media on qnap, Terraform auto-assigned VMIDs, ens18
+          management through DHCP, QGA address discovery, and serial console
+          enabled. This is not full PVE workload-client qualification: clean
+          Ubuntu client VMs remain required before using PVE workload evidence
+          for dataplane qualification.
         provisioning:
           storage: qnap
           vmid: auto-assigned
@@ -159,8 +162,71 @@ release:
           - static ens18 management address avoided: PASS
           - pve-rt style qnap ISO/config media: PASS
           - Terraform auto-assigned VMIDs: PASS
+          - clean Ubuntu workload client evidence in this run: NOT APPLICABLE, see pve-clean-ubuntu-workload-clients
+          - dirty/reused client accepted as release evidence: NO
         cleanup: PASS
         stateAfterDestroy: 0
+      - name: pve-clean-ubuntu-workload-clients
+        status: PASS
+        date: 2026-06-27
+        node: pve07
+        evidence: /home/imksoo/routerd-labs-archive/evidence/sam-pve-clients-20260627T070350Z
+        purpose: >-
+          Provision ordinary reusable Ubuntu workload clients for PVE SAM
+          dataplane tests, separate from routerd live ISO router/leaf nodes.
+          This closes the PVE client evidence gap without accepting dirty or
+          routerd-ISO client VMs as substitutes.
+        provisioning:
+          storage: qnap
+          vmid: auto-assigned by PVE provider
+          boot: Ubuntu 24.04 autoinstall ISO on ide2
+          cloudInit: per-client NoCloud CIDATA ISO on sata2
+          managementInterface: ens18
+          managementAddressing: DHCP only
+          overlayInterface: ens19
+          qemuGuestAgent: enabled and active after disk boot
+          serialConsole: enabled
+          autoinstall:
+            proxy: http://cache.lain.local:3142/
+            aptGeoip: false
+            installCompletion: shutdown poweroff
+        vms:
+          - name: pve-client-a
+            vmid: 9142
+            os: Ubuntu 24.04 LTS
+            dhcpManagementAddress: 192.168.1.44/24
+            overlayAddress: 10.77.60.15/24
+            qga: PASS
+            qemuGuestAgentService: active
+          - name: pve-client-b
+            vmid: 9340
+            os: Ubuntu 24.04 LTS
+            dhcpManagementAddress: 192.168.1.45/24
+            overlayAddress: 10.77.60.19/24
+            qga: PASS
+            qemuGuestAgentService: active
+        checks:
+          - official Subiquity autoinstall proxy field used: PASS
+          - apt geoip disabled for proxy-safe install: PASS
+          - qnap storage used for disks and media: PASS
+          - Terraform auto-assigned VMIDs: PASS
+          - ens18 static management address avoided: PASS
+          - ens19 fixed overlay address only: PASS
+          - QGA ping after disk boot: 2/2 PASS
+          - Ubuntu 24.04 identity via QGA exec: 2/2 PASS
+          - qemu-guest-agent service active: 2/2 PASS
+          - client overlay ping: 2/2 PASS
+        artifacts:
+          tofuApply: /home/imksoo/routerd-labs-archive/evidence/sam-pve-clients-20260627T070350Z/tofu-apply-clean-ubuntu-clients-official-fixed.log
+          tofuOutput: /home/imksoo/routerd-labs-archive/evidence/sam-pve-clients-20260627T070350Z/tofu-output-clean-ubuntu-clients-official-fixed.json
+          qgaNetwork: /home/imksoo/routerd-labs-archive/evidence/sam-pve-clients-20260627T070350Z/qga-network-clean-ubuntu-clients-official-fixed.txt
+          qgaExec: /home/imksoo/routerd-labs-archive/evidence/sam-pve-clients-20260627T070350Z/qga-exec-clean-ubuntu-clients-official-fixed.txt
+          overlayPing: /home/imksoo/routerd-labs-archive/evidence/sam-pve-clients-20260627T070350Z/qga-postinstall-clean-ubuntu-clients-official-fixed.txt
+        reusableClientMapping:
+          pve-client-a: 9142
+          pve-client-b: 9340
+        cleanup: DEFERRED
+        stateAfterDestroy: not applicable, reusable clients retained
       - name: post-release-full-topology-baseline
         status: FAIL
         date: 2026-06-27
@@ -184,10 +250,13 @@ release:
             - /home/imksoo/routerd-labs-archive/evidence/p2350-dhcpmgmt-20260627T052200Z/oci-private-ip-conflict/conflicting-private-ips.txt
             - /home/imksoo/routerd-labs-archive/evidence/p2350-dhcpmgmt-20260627T052200Z/oci-duplicate-capture/oci-leaf-b.txt
         classification: >-
-          Not a PVE provisioning blocker. PVE DHCP, QGA, qnap media, auto VMID,
-          and cleanup checks passed. The failure exposes a routerd SAM
-          same-site duplicate secondary-IP capture planning bug under incomplete
-          liveness marker visibility and must be fixed in a later release.
+          Not a router/leaf PVE live ISO provisioning blocker. PVE DHCP, QGA,
+          qnap media, auto VMID, and cleanup checks passed for the router/leaf
+          ISO path. Clean Ubuntu workload clients are still a separate
+          qualification prerequisite and no dirty/reused client evidence is
+          accepted here. The failure exposes a routerd SAM same-site duplicate
+          secondary-IP capture planning bug under incomplete liveness marker
+          visibility and must be fixed in a later release.
         cleanup: PASS
         stateAfterDestroy: 0
     releaseDecision:
@@ -212,11 +281,14 @@ release:
       SAM ownership, provider execution, or dataplane behavior.
     - >-
       The faster live ISO plus qnap config media path remains the intended PVE
-      qualification path. The first 2026-06-27 4VM run is discarded as release
-      qualification evidence because it used static ens18 management addresses.
-      The later p2350-dhcpmgmt run corrected that by keeping ens18 on DHCP and
-      copying QGA-discovered addresses into the E2E tofu output. The obsolete
-      PVE template-clone lab path remains deprecated.
+      router/leaf qualification path. The first 2026-06-27 4VM run is discarded
+      as release qualification evidence because it used static ens18 management
+      addresses. The later p2350-dhcpmgmt run corrected that by keeping ens18
+      on DHCP and copying QGA-discovered addresses into the E2E tofu output.
+      Clean reusable Ubuntu workload clients were then provisioned separately on
+      pve07 using qnap, auto-assigned VMIDs, ens18 DHCP, ens19 fixed overlay
+      addresses, and QGA verification. The obsolete PVE template-clone lab path
+      remains deprecated.
     - >-
       The 2026-06-27 p2350-dhcpmgmt post-release full-topology baseline failed
       on an OCI duplicate same-site secondary private IP assignment attempt.
