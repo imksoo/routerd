@@ -53,11 +53,12 @@ type transportDerivation struct {
 }
 
 type transportPeersFromStatus struct {
-	Resource  string `json:"resource"`
-	Optional  bool   `json:"optional,omitempty"`
-	Phase     string `json:"phase"`
-	PeerCount int    `json:"peerCount,omitempty"`
-	Reason    string `json:"reason,omitempty"`
+	Resource       string   `json:"resource"`
+	Optional       bool     `json:"optional,omitempty"`
+	Phase          string   `json:"phase"`
+	PeerCount      int      `json:"peerCount,omitempty"`
+	SkippedReasons []string `json:"skippedReasons,omitempty"`
+	Reason         string   `json:"reason,omitempty"`
 }
 
 func (c TransportController) Reconcile(ctx context.Context) error {
@@ -367,7 +368,7 @@ func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Re
 			continue
 		}
 		if sourceKind == "SAMEnrollmentPolicy" {
-			nodeSet, found, skipped, err := c.samEnrollmentNodeSet(ref)
+			nodeSet, found, skipped, skippedReasons, err := c.samEnrollmentNodeSet(ref)
 			if err != nil {
 				status.Phase = "Invalid"
 				status.Reason = err.Error()
@@ -387,6 +388,7 @@ func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Re
 			status.PeerCount = len(nodeSet.Nodes)
 			if skipped > 0 {
 				status.Reason = fmt.Sprintf("%d enrollment claims skipped", skipped)
+				status.SkippedReasons = append([]string(nil), skippedReasons...)
 			}
 			for _, node := range nodeSet.Nodes {
 				nodeRef := strings.TrimSpace(node.NodeRef)
@@ -636,13 +638,13 @@ func (c TransportController) samRRSet(ref string) (api.SAMRRSetSpec, bool, error
 	return api.SAMRRSetSpec{}, false, nil
 }
 
-func (c TransportController) samEnrollmentNodeSet(ref string) (api.SAMNodeSetSpec, bool, int, error) {
+func (c TransportController) samEnrollmentNodeSet(ref string) (api.SAMNodeSetSpec, bool, int, []string, error) {
 	kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
 	if !ok || kind != "SAMEnrollmentPolicy" || strings.TrimSpace(name) == "" {
-		return api.SAMNodeSetSpec{}, false, 0, fmt.Errorf("peersFrom resource must reference SAMEnrollmentPolicy/<name>")
+		return api.SAMNodeSetSpec{}, false, 0, nil, fmt.Errorf("peersFrom resource must reference SAMEnrollmentPolicy/<name>")
 	}
 	if c.Router == nil {
-		return api.SAMNodeSetSpec{}, false, 0, nil
+		return api.SAMNodeSetSpec{}, false, 0, nil, nil
 	}
 	var policy api.SAMEnrollmentPolicySpec
 	found := false
@@ -652,16 +654,17 @@ func (c TransportController) samEnrollmentNodeSet(ref string) (api.SAMNodeSetSpe
 		}
 		spec, err := resource.SAMEnrollmentPolicySpec()
 		if err != nil {
-			return api.SAMNodeSetSpec{}, true, 0, fmt.Errorf("%s spec: %w", ref, err)
+			return api.SAMNodeSetSpec{}, true, 0, nil, fmt.Errorf("%s spec: %w", ref, err)
 		}
 		policy = spec
 		found = true
 		break
 	}
 	if !found {
-		return api.SAMNodeSetSpec{}, false, 0, nil
+		return api.SAMNodeSetSpec{}, false, 0, nil, nil
 	}
 	var nodes []api.SAMNodeSpec
+	var skippedReasons []string
 	skipped := 0
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentClaim" {
@@ -669,19 +672,26 @@ func (c TransportController) samEnrollmentNodeSet(ref string) (api.SAMNodeSetSpe
 		}
 		claim, err := resource.SAMEnrollmentClaimSpec()
 		if err != nil {
-			return api.SAMNodeSetSpec{}, true, skipped, err
+			return api.SAMNodeSetSpec{}, true, skipped, skippedReasons, err
 		}
 		_, claimPolicyName, _ := strings.Cut(strings.TrimSpace(claim.PolicyRef), "/")
 		if claimPolicyName != strings.TrimSpace(name) {
 			continue
 		}
-		if claim.Revoked || transportEnrollmentClaimExpired(claim, transportNow(c.Now)) {
+		if claim.Revoked {
 			skipped++
+			skippedReasons = append(skippedReasons, strings.TrimSpace(resource.Metadata.Name)+": revoked")
+			continue
+		}
+		if transportEnrollmentClaimExpired(policy, claim, transportNow(c.Now)) {
+			skipped++
+			skippedReasons = append(skippedReasons, strings.TrimSpace(resource.Metadata.Name)+": expired")
 			continue
 		}
 		tunnel, err := transportEnrollmentTunnelAddress(claim.TunnelAddress)
 		if err != nil || !transportEnrollmentPrefixContains(policy.TunnelAddressPrefixes, tunnel.Addr()) {
 			skipped++
+			skippedReasons = append(skippedReasons, strings.TrimSpace(resource.Metadata.Name)+": unauthorized tunnel address")
 			continue
 		}
 		endpoint := strings.TrimSpace(claim.Endpoint)
@@ -694,21 +704,34 @@ func (c TransportController) samEnrollmentNodeSet(ref string) (api.SAMNodeSetSpe
 			SAMEndpoint: endpoint,
 		})
 	}
-	return api.SAMNodeSetSpec{Nodes: nodes}, true, skipped, nil
+	sort.Strings(skippedReasons)
+	return api.SAMNodeSetSpec{Nodes: nodes}, true, skipped, skippedReasons, nil
 }
 
-func transportEnrollmentClaimExpired(claim api.SAMEnrollmentClaimSpec, now time.Time) bool {
-	if strings.TrimSpace(claim.ExpiresAt) == "" {
-		return false
-	}
-	expiresAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(claim.ExpiresAt))
-	if err != nil {
-		expiresAt, err = time.Parse(time.RFC3339, strings.TrimSpace(claim.ExpiresAt))
-		if err != nil {
+func transportEnrollmentClaimExpired(policy api.SAMEnrollmentPolicySpec, claim api.SAMEnrollmentClaimSpec, now time.Time) bool {
+	if strings.TrimSpace(policy.TTL) != "" && strings.TrimSpace(claim.JoinTimestamp) != "" {
+		ttl, ttlErr := time.ParseDuration(strings.TrimSpace(policy.TTL))
+		joinedAt, timeErr := transportEnrollmentTime(claim.JoinTimestamp)
+		if ttlErr != nil || timeErr != nil || !joinedAt.Add(ttl).After(now) {
 			return true
 		}
 	}
+	if strings.TrimSpace(claim.ExpiresAt) == "" {
+		return false
+	}
+	expiresAt, err := transportEnrollmentTime(claim.ExpiresAt)
+	if err != nil {
+		return true
+	}
 	return !expiresAt.After(now)
+}
+
+func transportEnrollmentTime(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return parsed, nil
+	}
+	return time.Parse(time.RFC3339, value)
 }
 
 func transportEnrollmentTunnelAddress(value string) (netip.Prefix, error) {
@@ -1231,6 +1254,9 @@ func transportPeersFromStatusMaps(statuses []transportPeersFromStatus) []map[str
 		}
 		if strings.TrimSpace(status.Reason) != "" {
 			m["reason"] = status.Reason
+		}
+		if len(status.SkippedReasons) > 0 {
+			m["skippedReasons"] = append([]string(nil), status.SkippedReasons...)
 		}
 		out = append(out, m)
 	}

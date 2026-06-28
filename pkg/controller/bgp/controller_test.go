@@ -178,6 +178,38 @@ func TestReconcileAppliesBGPDynamicPeer(t *testing.T) {
 	}
 }
 
+func TestReconcileDoesNotDeleteLiveDynamicPeerFromStaticReconcile(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPDynamicPeer"},
+		Metadata: api.ObjectMeta{Name: "cloudedge-leaves"},
+		Spec: api.BGPDynamicPeerSpec{
+			RouterRef:    "BGPRouter/lan",
+			PeerASN:      64512,
+			Listen:       api.BGPDynamicPeerListenSpec{SourcePrefixes: []string{"10.255.0.0/20"}},
+			ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}},
+		},
+	})
+	server := &fakeServer{peers: map[string]*gobgpapi.Peer{
+		"10.255.0.21": {
+			Conf:  &gobgpapi.PeerConf{NeighborAddress: "10.255.0.21", PeerAsn: 64512, PeerGroup: "routerd-dynamic-cloudedge-leaves"},
+			State: &gobgpapi.PeerState{NeighborAddress: "10.255.0.21", PeerAsn: 64512, SessionState: gobgpapi.PeerState_ESTABLISHED},
+		},
+	}}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: &fakeFIB{}}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	for _, call := range server.callLog {
+		if call == "DeletePeer:10.255.0.21" {
+			t.Fatalf("static reconcile deleted dynamic peer; call log=%#v", server.callLog)
+		}
+	}
+	if server.peers["10.255.0.21"] == nil {
+		t.Fatalf("dynamic peer removed from fake server; call log=%#v", server.callLog)
+	}
+}
+
 func TestReconcileBGPPeerConsumesSAMRRSet(t *testing.T) {
 	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
 	router.Metadata.Name = "leaf-pve"
@@ -237,6 +269,24 @@ func TestImportAllowedPrefixesIncludesDynamicPeers(t *testing.T) {
 	}
 	if !sameStringSet(values, []string{"10.250.0.0/24", "10.77.60.0/24"}) {
 		t.Fatalf("allowed prefixes = %v", values)
+	}
+}
+
+func TestDynamicImportAllowedPrefixesRejectRouteLeaks(t *testing.T) {
+	allowed := []netip.Prefix{netip.MustParsePrefix("10.77.60.0/24")}
+	for _, dst := range []*gobgpapi.Destination{
+		testDestination("0.0.0.0/0", "10.99.0.11"),
+		testDestination("10.20.0.0/24", "10.99.0.11"),
+		testDestination("10.77.61.11/32", "10.99.0.11"),
+	} {
+		if got := fibRoutesFromDestination(dst, allowed, nil, nil); len(got) != 0 {
+			t.Fatalf("route %s produced FIB routes %#v, want rejected", dst.GetPrefix(), got)
+		}
+	}
+	got := fibRoutesFromDestination(testDestination("10.77.60.11/32", "10.99.0.11"), allowed, nil, nil)
+	want := []FIBRoute{{Prefix: "10.77.60.11/32", NextHops: []string{"10.99.0.11"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("allowed dynamic route = %#v, want %#v", got, want)
 	}
 }
 
@@ -1551,6 +1601,47 @@ func TestWatchEventTriggersImmediateFIBSync(t *testing.T) {
 	}
 	if fib.calls() != 2 {
 		t.Fatalf("FIB calls = %d, want event-triggered second sync", fib.calls())
+	}
+}
+
+func TestWatchEventIncludesDynamicPeerImportAllowlist(t *testing.T) {
+	router := bgpRouterWithImportPrefixes()
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPDynamicPeer"},
+		Metadata: api.ObjectMeta{Name: "cloudedge-leaves"},
+		Spec: api.BGPDynamicPeerSpec{
+			RouterRef:    "BGPRouter/lan",
+			PeerASN:      64512,
+			Listen:       api.BGPDynamicPeerListenSpec{SourcePrefixes: []string{"10.255.0.0/20"}},
+			ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}},
+		},
+	})
+	server := &fakeServer{
+		routes:        []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.11")},
+		watchSessions: make(chan watchSession, 1),
+	}
+	fib := &fakeFIB{}
+	controller := Controller{
+		Router:              router,
+		Store:               mapStore{},
+		Server:              server,
+		FIB:                 fib,
+		WatchReconnectDelay: time.Millisecond,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	if got := fib.lastRoutes(); !reflect.DeepEqual(got, []FIBRoute{{Prefix: "10.77.60.11/32", NextHops: []string{"10.99.0.11"}}}) {
+		t.Fatalf("initial FIB routes = %#v, want dynamic import route", got)
+	}
+	server.routes = []*gobgpapi.Destination{testDestination("10.77.60.12/32", "10.99.0.12")}
+	server.watchSessions <- watchSession{events: []*gobgpapi.WatchEventResponse{watchTableEvent("10.77.60.12/32", "10.99.0.12")}}
+	if err := controller.watchBestPathEvents(context.Background()); err != nil {
+		t.Fatalf("watch events: %v", err)
+	}
+	want := []FIBRoute{{Prefix: "10.77.60.12/32", NextHops: []string{"10.99.0.12"}}}
+	if !reflect.DeepEqual(fib.lastRoutes(), want) {
+		t.Fatalf("FIB routes after watch = %#v, want dynamic import route %#v", fib.lastRoutes(), want)
 	}
 }
 

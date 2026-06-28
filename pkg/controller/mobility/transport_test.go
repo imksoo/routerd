@@ -667,6 +667,7 @@ func TestSAMTransportProfileCanGenerateTunnelWithoutBGPPeerForRRDynamicAdmission
 			Spec: api.SAMEnrollmentPolicySpec{
 				TransportProfileRef:   "SAMTransportProfile/rr-a",
 				TunnelAddressPrefixes: []string{"10.255.0.0/20"},
+				TTL:                   "1h",
 			},
 		},
 		api.Resource{
@@ -719,6 +720,7 @@ func TestSAMTransportProfileSkipsRevokedExpiredAndUnauthorizedEnrollmentClaims(t
 			Spec: api.SAMEnrollmentPolicySpec{
 				TransportProfileRef:   "SAMTransportProfile/rr-a",
 				TunnelAddressPrefixes: []string{"10.255.0.0/20"},
+				TTL:                   "1h",
 			},
 		},
 		api.Resource{
@@ -763,6 +765,17 @@ func TestSAMTransportProfileSkipsRevokedExpiredAndUnauthorizedEnrollmentClaims(t
 				Endpoint:      "10.20.0.24",
 			},
 		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentClaim"},
+			Metadata: api.ObjectMeta{Name: "leaf-ttl-expired"},
+			Spec: api.SAMEnrollmentClaimSpec{
+				PolicyRef:     "SAMEnrollmentPolicy/cloudedge-leaves",
+				LeafID:        "leaf-ttl-expired",
+				TunnelAddress: "10.255.0.25/32",
+				Endpoint:      "10.20.0.25",
+				JoinTimestamp: now.Add(-2 * time.Hour).Format(time.RFC3339),
+			},
+		},
 	)
 
 	controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
@@ -777,7 +790,7 @@ func TestSAMTransportProfileSkipsRevokedExpiredAndUnauthorizedEnrollmentClaims(t
 	if tunnel.Remote != "10.20.0.21" {
 		t.Fatalf("active tunnel remote = %q, want leaf endpoint", tunnel.Remote)
 	}
-	for _, skipped := range []string{"leaf-revoked", "leaf-expired", "leaf-unauthorized"} {
+	for _, skipped := range []string{"leaf-revoked", "leaf-expired", "leaf-unauthorized", "leaf-ttl-expired"} {
 		if hasTransportResourceForPeer(resources, skipped) {
 			t.Fatalf("%s must not be materialized: %#v", skipped, resources)
 		}
@@ -791,8 +804,8 @@ func TestSAMTransportProfileSkipsRevokedExpiredAndUnauthorizedEnrollmentClaims(t
 		t.Fatalf("peersFrom status = %#v, want one source", peersFrom)
 	}
 	sourceStatus := peersFrom[0].(map[string]any)
-	if sourceStatus["peerCount"] != float64(1) || sourceStatus["reason"] != "3 enrollment claims skipped" {
-		t.Fatalf("peersFrom status = %#v, want one accepted and three skipped", peersFrom)
+	if sourceStatus["peerCount"] != float64(1) || sourceStatus["reason"] != "4 enrollment claims skipped" {
+		t.Fatalf("peersFrom status = %#v, want one accepted and four skipped", peersFrom)
 	}
 }
 

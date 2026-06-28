@@ -761,6 +761,7 @@ type SAMEnrollmentLeafIDPolicySpec struct {
 
 type SAMEnrollmentWireGuardSpec struct {
 	Interface              string   `yaml:"interface" json:"interface"`
+	EndpointPrefixes       []string `yaml:"endpointPrefixes,omitempty" json:"endpointPrefixes,omitempty"`
 	AllowedExtraIPPrefixes []string `yaml:"allowedExtraIPPrefixes,omitempty" json:"allowedExtraIPPrefixes,omitempty"`
 	PersistentKeepalive    int      `yaml:"persistentKeepalive,omitempty" json:"persistentKeepalive,omitempty" jsonschema:"minimum=0,maximum=65535"`
 }

@@ -401,10 +401,18 @@ func (c *Controller) observeAndSyncFromWatchLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	desiredDynamic, err := c.desiredDynamicPeers(routerResource.Metadata.Name, routerSpec.ASN)
+	if err != nil {
+		return err
+	}
 	applied := c.appliedConfig
 	dynamicExportPrefixes := dynamicPathExportPrefixes(applied.Paths)
 	desired = applyRouterBGPDefaults(routerResource.Metadata.Name, routerSpec, desired, mapKeys(advertisedPrefixes(routerSpec)), dynamicExportPrefixes)
-	state, routes, livenessMarkers, err := c.observeState(ctx, importAllowedPrefixes(routerSpec, desired), desired)
+	desiredDynamic = applyRouterBGPDynamicDefaults(routerResource.Metadata.Name, routerSpec, desiredDynamic, mapKeys(advertisedPrefixes(routerSpec)), dynamicExportPrefixes)
+	appliedSpec := routerSpec
+	appliedSpec.ImportPolicy = effectiveGlobalImportPolicy(routerSpec.ImportPolicy, dynamicExportPrefixes)
+	allowedImportPrefixes := importAllowedPrefixesFromAppliedAndDynamic(c.buildAppliedConfig(appliedSpec, desired, advertisedPrefixes(routerSpec), applied.Paths), desiredDynamic)
+	state, routes, livenessMarkers, err := c.observeState(ctx, allowedImportPrefixes, desired)
 	if err != nil {
 		return c.savePendingAll("GoBGPWatchObserveFailed", err)
 	}
@@ -1742,6 +1750,9 @@ func (c *Controller) reconcilePeers(ctx context.Context, desired map[string]desi
 	}
 	changed := false
 	for address, current := range live {
+		if isRouterdDynamicPeer(current) {
+			continue
+		}
 		peer, ok := desired[address]
 		if !ok {
 			if err := c.Server.DeletePeer(ctx, &gobgpapi.DeletePeerRequest{Address: address}); err != nil {
@@ -1776,6 +1787,10 @@ func (c *Controller) reconcilePeers(ctx context.Context, desired map[string]desi
 		changed = true
 	}
 	return changed, nil
+}
+
+func isRouterdDynamicPeer(peer *gobgpapi.Peer) bool {
+	return strings.HasPrefix(strings.TrimSpace(peer.GetConf().GetPeerGroup()), "routerd-dynamic-")
 }
 
 func (c *Controller) reconcileDynamicPeers(ctx context.Context, desired map[string]desiredDynamicPeer) error {

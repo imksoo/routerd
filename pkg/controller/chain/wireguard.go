@@ -34,13 +34,14 @@ type WireGuardController struct {
 }
 
 type wireGuardPeersFromStatus struct {
-	Resource  string   `json:"resource"`
-	Optional  bool     `json:"optional,omitempty"`
-	Phase     string   `json:"phase"`
-	PeerCount int      `json:"peerCount,omitempty"`
-	Skipped   int      `json:"skipped,omitempty"`
-	LeafIDs   []string `json:"leafIDs,omitempty"`
-	Reason    string   `json:"reason,omitempty"`
+	Resource       string   `json:"resource"`
+	Optional       bool     `json:"optional,omitempty"`
+	Phase          string   `json:"phase"`
+	PeerCount      int      `json:"peerCount,omitempty"`
+	Skipped        int      `json:"skipped,omitempty"`
+	SkippedReasons []string `json:"skippedReasons,omitempty"`
+	LeafIDs        []string `json:"leafIDs,omitempty"`
+	Reason         string   `json:"reason,omitempty"`
 }
 
 type wireGuardPeerResolution struct {
@@ -213,7 +214,7 @@ func (c WireGuardController) resolvePeersFrom(iface string, spec api.WireGuardIn
 			continue
 		}
 		if sourceOK && sourceKind == "SAMEnrollmentPolicy" {
-			nodeSet, found, skipped, leafIDs, err := c.samEnrollmentNodeSet(ref, iface)
+			nodeSet, found, skipped, skippedReasons, leafIDs, err := c.samEnrollmentNodeSet(ref, iface)
 			if err != nil {
 				status.Phase = "Invalid"
 				status.Reason = err.Error()
@@ -230,6 +231,7 @@ func (c WireGuardController) resolvePeersFrom(iface string, spec api.WireGuardIn
 				continue
 			}
 			status.Skipped = skipped
+			status.SkippedReasons = append([]string(nil), skippedReasons...)
 			status.LeafIDs = append([]string(nil), leafIDs...)
 			for _, node := range nodeSet.Nodes {
 				nodeRef := strings.TrimSpace(node.NodeRef)
@@ -336,19 +338,19 @@ func (c WireGuardController) samRRSet(ref string) (api.SAMRRSetSpec, bool, error
 	return lookupSAMRRSet(c.Router, ref)
 }
 
-func (c WireGuardController) samEnrollmentNodeSet(ref, iface string) (api.SAMNodeSetSpec, bool, int, []string, error) {
+func (c WireGuardController) samEnrollmentNodeSet(ref, iface string) (api.SAMNodeSetSpec, bool, int, []string, []string, error) {
 	if c.Router == nil {
-		return api.SAMNodeSetSpec{}, false, 0, nil, nil
+		return api.SAMNodeSetSpec{}, false, 0, nil, nil, nil
 	}
 	policy, found, err := lookupSAMEnrollmentPolicy(c.Router, ref)
 	if err != nil || !found {
-		return api.SAMNodeSetSpec{}, found, 0, nil, err
+		return api.SAMNodeSetSpec{}, found, 0, nil, nil, err
 	}
 	if want := strings.TrimSpace(policy.WireGuard.Interface); want != "" && want != strings.TrimSpace(iface) {
-		return api.SAMNodeSetSpec{}, true, 0, nil, fmt.Errorf("%s spec.wireGuard.interface %q does not match WireGuardInterface %q", ref, want, iface)
+		return api.SAMNodeSetSpec{}, true, 0, nil, nil, fmt.Errorf("%s spec.wireGuard.interface %q does not match WireGuardInterface %q", ref, want, iface)
 	}
-	nodeSet, skipped, leafIDs, err := enrollmentPolicyNodeSet(c.Router, ref, policy, time.Now().UTC())
-	return nodeSet, true, skipped, leafIDs, err
+	nodeSet, skipped, skippedReasons, leafIDs, err := enrollmentPolicyNodeSet(c.Router, ref, policy, time.Now().UTC())
+	return nodeSet, true, skipped, skippedReasons, leafIDs, err
 }
 
 func (c WireGuardController) saveSAMEnrollmentPolicyStatus(ref string, status wireGuardPeersFromStatus) error {
@@ -363,6 +365,7 @@ func (c WireGuardController) saveSAMEnrollmentPolicyStatus(ref string, status wi
 		"phase":          status.Phase,
 		"acceptedClaims": status.PeerCount,
 		"skippedClaims":  status.Skipped,
+		"skippedReasons": append([]string(nil), status.SkippedReasons...),
 		"leafIDs":        append([]string(nil), status.LeafIDs...),
 		"updatedAt":      time.Now().UTC().Format(time.RFC3339Nano),
 	})
@@ -422,9 +425,10 @@ func lookupSAMRRSet(router *api.Router, ref string) (api.SAMRRSetSpec, bool, err
 	return api.SAMRRSetSpec{}, false, nil
 }
 
-func enrollmentPolicyNodeSet(router *api.Router, ref string, policy api.SAMEnrollmentPolicySpec, now time.Time) (api.SAMNodeSetSpec, int, []string, error) {
+func enrollmentPolicyNodeSet(router *api.Router, ref string, policy api.SAMEnrollmentPolicySpec, now time.Time) (api.SAMNodeSetSpec, int, []string, []string, error) {
 	_, policyName, _ := strings.Cut(strings.TrimSpace(ref), "/")
 	var nodes []api.SAMNodeSpec
+	var skippedReasons []string
 	var leafIDs []string
 	skipped := 0
 	for _, resource := range router.Spec.Resources {
@@ -433,19 +437,26 @@ func enrollmentPolicyNodeSet(router *api.Router, ref string, policy api.SAMEnrol
 		}
 		claim, err := resource.SAMEnrollmentClaimSpec()
 		if err != nil {
-			return api.SAMNodeSetSpec{}, skipped, leafIDs, err
+			return api.SAMNodeSetSpec{}, skipped, skippedReasons, leafIDs, err
 		}
 		_, claimPolicyName, _ := strings.Cut(strings.TrimSpace(claim.PolicyRef), "/")
 		if claimPolicyName != strings.TrimSpace(policyName) {
 			continue
 		}
-		if claim.Revoked || enrollmentClaimExpired(claim, now) {
+		if claim.Revoked {
 			skipped++
+			skippedReasons = append(skippedReasons, strings.TrimSpace(resource.Metadata.Name)+": revoked")
+			continue
+		}
+		if enrollmentClaimExpired(policy, claim, now) {
+			skipped++
+			skippedReasons = append(skippedReasons, strings.TrimSpace(resource.Metadata.Name)+": expired")
 			continue
 		}
 		tunnel, err := parseEnrollmentTunnelAddress(claim.TunnelAddress)
 		if err != nil || !enrollmentPrefixContains(policy.TunnelAddressPrefixes, tunnel.Addr()) {
 			skipped++
+			skippedReasons = append(skippedReasons, strings.TrimSpace(resource.Metadata.Name)+": unauthorized tunnel address")
 			continue
 		}
 		allowed := []string{tunnel.String()}
@@ -468,21 +479,34 @@ func enrollmentPolicyNodeSet(router *api.Router, ref string, policy api.SAMEnrol
 		leafIDs = append(leafIDs, strings.TrimSpace(claim.LeafID))
 	}
 	sort.Strings(leafIDs)
-	return api.SAMNodeSetSpec{Nodes: nodes}, skipped, leafIDs, nil
+	sort.Strings(skippedReasons)
+	return api.SAMNodeSetSpec{Nodes: nodes}, skipped, skippedReasons, leafIDs, nil
 }
 
-func enrollmentClaimExpired(claim api.SAMEnrollmentClaimSpec, now time.Time) bool {
-	if strings.TrimSpace(claim.ExpiresAt) == "" {
-		return false
-	}
-	expiresAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(claim.ExpiresAt))
-	if err != nil {
-		expiresAt, err = time.Parse(time.RFC3339, strings.TrimSpace(claim.ExpiresAt))
-		if err != nil {
+func enrollmentClaimExpired(policy api.SAMEnrollmentPolicySpec, claim api.SAMEnrollmentClaimSpec, now time.Time) bool {
+	if strings.TrimSpace(policy.TTL) != "" && strings.TrimSpace(claim.JoinTimestamp) != "" {
+		ttl, ttlErr := time.ParseDuration(strings.TrimSpace(policy.TTL))
+		joinedAt, timeErr := parseEnrollmentTime(claim.JoinTimestamp)
+		if ttlErr != nil || timeErr != nil || !joinedAt.Add(ttl).After(now) {
 			return true
 		}
 	}
+	if strings.TrimSpace(claim.ExpiresAt) == "" {
+		return false
+	}
+	expiresAt, err := parseEnrollmentTime(claim.ExpiresAt)
+	if err != nil {
+		return true
+	}
 	return !expiresAt.After(now)
+}
+
+func parseEnrollmentTime(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return parsed, nil
+	}
+	return time.Parse(time.RFC3339, value)
 }
 
 func parseEnrollmentTunnelAddress(value string) (netip.Prefix, error) {
@@ -605,7 +629,7 @@ func resolveWireGuardSAMResources(router *api.Router) (*api.Router, error) {
 					}
 					return nil, fmt.Errorf("%s spec.wireGuard.interface %q does not match WireGuardInterface %q", ref, want, iface)
 				}
-				nodeSet, _, _, err := enrollmentPolicyNodeSet(router, ref, policy, time.Now().UTC())
+				nodeSet, _, _, _, err := enrollmentPolicyNodeSet(router, ref, policy, time.Now().UTC())
 				if err != nil {
 					if source.Optional {
 						continue
@@ -1179,6 +1203,12 @@ func wireGuardPeersFromStatusMaps(statuses []wireGuardPeersFromStatus) []map[str
 		}
 		if status.Reason != "" {
 			item["reason"] = status.Reason
+		}
+		if status.Skipped > 0 {
+			item["skipped"] = status.Skipped
+		}
+		if len(status.SkippedReasons) > 0 {
+			item["skippedReasons"] = append([]string(nil), status.SkippedReasons...)
 		}
 		out = append(out, item)
 	}

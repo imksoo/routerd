@@ -9934,6 +9934,12 @@
                             },
                             "type": "array"
                           },
+                          "endpointPrefixes": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
                           "interface": {
                             "type": "string"
                           },

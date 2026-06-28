@@ -29,6 +29,12 @@ is not the default enrollment identity or the default private-underlay model.
 - `BGPDynamicPeer` is only the RR BGP acceptor. It owns listen source-prefix
   admission and BGP policy. It does not own leaf identity, tunnel assignment,
   WireGuard material, or MobilityPool authorization.
+- `BGPDynamicPeer` status is intentionally limited in this branch. It reports
+  readiness, peer-group/source-prefix configuration, and observation time, but
+  does not yet report discovered dynamic peers or rejection counters. Production
+  follow-up should add discovered peer state, accepted/rejected route counters,
+  source-prefix/ASN rejection counters, auth failures, and enrollment
+  correlation where known.
 - `WireGuardInterface` / `WireGuardPeer` are used only when
   `encryption: wireguard` is selected.
 - `MobilityPool` remains the `/32` ownership authority.
@@ -276,8 +282,21 @@ Local tests should cover:
 
 - `BGPDynamicPeer.routeReflectorClient=true` rejects a peer ASN different from
   the referenced `BGPRouter` local ASN.
+- `BGPDynamicPeer` rejects configs without an effective
+  `importPolicy.allowedPrefixes` allowlist.
+- static `BGPPeer` reconcile does not delete live peers from
+  `routerd-dynamic-*` peer groups.
+- watch-triggered BGP observation includes dynamic peer import allowlists.
 - `SAMRRSet` allows members without `wireGuard` blocks.
 - `SAMEnrollmentClaim` is valid without `wireGuard.publicKey`.
+- missing `SAMEnrollmentPolicy` references are validation errors.
+- `policy.ttl` with `claim.joinTimestamp` expires claims during materialization.
+- `claim.expiresAt` must not exceed `claim.joinTimestamp + policy.ttl`.
+- `policy.endpointPrefixes` or `policy.wireGuard.endpointPrefixes` is enforced
+  against `claim.wireGuard.endpoint` host addresses.
+- duplicate `leafID`, `tunnelAddress`, `wireGuard.publicKey`,
+  `mobility.ownedAddresses`, and `bgp.routerID` values are rejected within the
+  same enrollment policy.
 - `SAMTransportProfile mode: fou` requires `encapSport` and `encapDport`.
 - `SAMTransportProfile mode: ipip`/`gre` rejects FOU/GUE encap ports.
 - a configured `joinTokenFrom` requires claim `joinNonce`, `joinTimestamp`, and

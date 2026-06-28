@@ -838,6 +838,7 @@ spec:
       spec:
         transportProfileRef: SAMTransportProfile/aws-rr-a
         tunnelAddressPrefixes: [10.255.0.0/20]
+        ttl: 1h
         wireGuard:
           interface: wg-hybrid
           persistentKeepalive: 25
@@ -861,6 +862,16 @@ spec:
         revoked: true
         wireGuard:
           publicKey: revokedpub
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentClaim
+      metadata: {name: leaf-ttl-expired}
+      spec:
+        policyRef: SAMEnrollmentPolicy/cloudedge-leaves
+        leafID: leaf-ttl-expired
+        joinTimestamp: "2026-06-28T00:00:00Z"
+        tunnelAddress: 10.255.0.23/32
+        wireGuard:
+          publicKey: ttlpub
 `)
 	store := mapStore{}
 	var setconf string
@@ -900,8 +911,11 @@ spec:
 	if strings.Contains(setconf, "revokedpub") {
 		t.Fatalf("revoked claim must not be materialized:\n%s", setconf)
 	}
+	if strings.Contains(setconf, "ttlpub") {
+		t.Fatalf("TTL-expired claim must not be materialized:\n%s", setconf)
+	}
 	policy := store.ObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentPolicy", "cloudedge-leaves")
-	if policy["acceptedClaims"] != 1 || policy["skippedClaims"] != 1 {
+	if policy["acceptedClaims"] != 1 || policy["skippedClaims"] != 2 {
 		t.Fatalf("policy status = %+v", policy)
 	}
 }

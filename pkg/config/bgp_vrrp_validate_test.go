@@ -451,6 +451,7 @@ func TestValidateBGPDynamicPeerRouteReflectorRequiresIBGP(t *testing.T) {
 				Listen:                  api.BGPDynamicPeerListenSpec{SourcePrefixes: []string{"10.255.0.0/20"}},
 				RouteReflectorClient:    true,
 				RouteReflectorClusterID: "10.99.0.1",
+				ImportPolicy:            api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}},
 			}},
 		}},
 	}
@@ -473,6 +474,41 @@ func TestValidateBGPDynamicPeerRouteReflectorRequiresIBGP(t *testing.T) {
 	router.Spec.Resources[1].Spec = peer
 	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.listen.sourcePrefixes[0]") {
 		t.Fatalf("expected sourcePrefixes prefix validation error, got %v", err)
+	}
+}
+
+func TestValidateBGPDynamicPeerRequiresEffectiveImportAllowlist(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+				ASN:      64577,
+				RouterID: "10.99.0.1",
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPDynamicPeer"}, Metadata: api.ObjectMeta{Name: "leaves"}, Spec: api.BGPDynamicPeerSpec{
+				RouterRef: "BGPRouter/lan",
+				PeerASN:   64577,
+				Listen:    api.BGPDynamicPeerListenSpec{SourcePrefixes: []string{"10.255.0.0/20"}},
+			}},
+		}},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.importPolicy.allowedPrefixes is required") {
+		t.Fatalf("expected dynamic import allowlist validation error, got %v", err)
+	}
+	peer := router.Spec.Resources[1].Spec.(api.BGPDynamicPeerSpec)
+	peer.ImportPolicy = api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}}
+	router.Spec.Resources[1].Spec = peer
+	if err := Validate(router); err != nil {
+		t.Fatalf("dynamic peer with import allowlist should validate: %v", err)
+	}
+	peer.ImportPolicy = api.BGPImportPolicySpec{}
+	router.Spec.Resources[1].Spec = peer
+	bgpr := router.Spec.Resources[0].Spec.(api.BGPRouterSpec)
+	bgpr.ImportPolicy = api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}}
+	router.Spec.Resources[0].Spec = bgpr
+	if err := Validate(router); err != nil {
+		t.Fatalf("dynamic peer with router import allowlist should validate: %v", err)
 	}
 }
 

@@ -512,6 +512,132 @@ func TestValidateSAMEnrollmentJoinTokenRejectsDuplicateNonce(t *testing.T) {
 	}
 }
 
+func TestValidateSAMEnrollmentClaimRequiresExistingPolicy(t *testing.T) {
+	router := samEnrollmentRouter()
+	claimIndex := len(router.Spec.Resources) - 1
+	claim := router.Spec.Resources[claimIndex].Spec.(api.SAMEnrollmentClaimSpec)
+	claim.PolicyRef = "SAMEnrollmentPolicy/missing"
+	router.Spec.Resources[claimIndex].Spec = claim
+	err := Validate(router)
+	if err == nil || !strings.Contains(err.Error(), "references missing SAMEnrollmentPolicy") {
+		t.Fatalf("Validate missing enrollment policy = %v, want missing policy error", err)
+	}
+}
+
+func TestValidateSAMEnrollmentClaimRejectsExpiresAtBeyondPolicyTTL(t *testing.T) {
+	router := samEnrollmentRouter()
+	policyIndex := len(router.Spec.Resources) - 2
+	policy := router.Spec.Resources[policyIndex].Spec.(api.SAMEnrollmentPolicySpec)
+	policy.TTL = "1h"
+	router.Spec.Resources[policyIndex].Spec = policy
+	claimIndex := len(router.Spec.Resources) - 1
+	claim := router.Spec.Resources[claimIndex].Spec.(api.SAMEnrollmentClaimSpec)
+	claim.JoinTimestamp = "2026-06-28T00:00:00Z"
+	claim.ExpiresAt = "2026-06-28T02:00:00Z"
+	router.Spec.Resources[claimIndex].Spec = claim
+	err := Validate(router)
+	if err == nil || !strings.Contains(err.Error(), "spec.expiresAt") {
+		t.Fatalf("Validate expiresAt beyond ttl = %v, want expiresAt error", err)
+	}
+}
+
+func TestValidateSAMEnrollmentClaimRejectsWireGuardEndpointOutsidePolicy(t *testing.T) {
+	router := samEnrollmentRouter()
+	policyIndex := len(router.Spec.Resources) - 2
+	policy := router.Spec.Resources[policyIndex].Spec.(api.SAMEnrollmentPolicySpec)
+	policy.EndpointPrefixes = []string{"10.20.0.0/24"}
+	policy.WireGuard.EndpointPrefixes = []string{"198.51.100.0/24"}
+	router.Spec.Resources[policyIndex].Spec = policy
+	claimIndex := len(router.Spec.Resources) - 1
+	claim := router.Spec.Resources[claimIndex].Spec.(api.SAMEnrollmentClaimSpec)
+	claim.Endpoint = "10.20.0.21"
+	claim.WireGuard.Endpoint = "203.0.113.21:51820"
+	router.Spec.Resources[claimIndex].Spec = claim
+	err := Validate(router)
+	if err == nil || !strings.Contains(err.Error(), "spec.wireGuard.endpoint") {
+		t.Fatalf("Validate WG endpoint outside policy = %v, want endpoint prefix error", err)
+	}
+}
+
+func TestValidateSAMEnrollmentClaimRejectsDuplicatePolicyFields(t *testing.T) {
+	base := samEnrollmentRouter()
+	claimIndex := len(base.Spec.Resources) - 1
+	for _, tc := range []struct {
+		name   string
+		mutate func(api.SAMEnrollmentClaimSpec) api.SAMEnrollmentClaimSpec
+		want   string
+	}{
+		{
+			name: "leafID",
+			mutate: func(claim api.SAMEnrollmentClaimSpec) api.SAMEnrollmentClaimSpec {
+				claim.TunnelAddress = "10.255.0.22/32"
+				claim.WireGuard.PublicKey = "leafpub-2"
+				claim.Mobility.OwnedAddresses = []string{"10.77.60.22/32"}
+				claim.BGP.RouterID = "10.255.0.22"
+				return claim
+			},
+			want: "spec.leafID duplicates",
+		},
+		{
+			name: "tunnelAddress",
+			mutate: func(claim api.SAMEnrollmentClaimSpec) api.SAMEnrollmentClaimSpec {
+				claim.LeafID = "leaf-other"
+				claim.WireGuard.PublicKey = "leafpub-2"
+				claim.Mobility.OwnedAddresses = []string{"10.77.60.22/32"}
+				claim.BGP.RouterID = "10.255.0.22"
+				return claim
+			},
+			want: "spec.tunnelAddress duplicates",
+		},
+		{
+			name: "wireGuardPublicKey",
+			mutate: func(claim api.SAMEnrollmentClaimSpec) api.SAMEnrollmentClaimSpec {
+				claim.LeafID = "leaf-other"
+				claim.TunnelAddress = "10.255.0.22/32"
+				claim.Mobility.OwnedAddresses = []string{"10.77.60.22/32"}
+				claim.BGP.RouterID = "10.255.0.22"
+				return claim
+			},
+			want: "spec.wireGuard.publicKey duplicates",
+		},
+		{
+			name: "mobilityOwnedAddress",
+			mutate: func(claim api.SAMEnrollmentClaimSpec) api.SAMEnrollmentClaimSpec {
+				claim.LeafID = "leaf-other"
+				claim.TunnelAddress = "10.255.0.22/32"
+				claim.WireGuard.PublicKey = "leafpub-2"
+				claim.BGP.RouterID = "10.255.0.22"
+				return claim
+			},
+			want: "spec.mobility.ownedAddresses[0] duplicates",
+		},
+		{
+			name: "bgpRouterID",
+			mutate: func(claim api.SAMEnrollmentClaimSpec) api.SAMEnrollmentClaimSpec {
+				claim.LeafID = "leaf-other"
+				claim.TunnelAddress = "10.255.0.22/32"
+				claim.WireGuard.PublicKey = "leafpub-2"
+				claim.Mobility.OwnedAddresses = []string{"10.77.60.22/32"}
+				return claim
+			},
+			want: "spec.bgp.routerID duplicates",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			router := *base
+			router.Spec.Resources = append([]api.Resource(nil), base.Spec.Resources...)
+			duplicate := router.Spec.Resources[claimIndex]
+			duplicate.Metadata.Name = "leaf-other"
+			duplicate.Spec = tc.mutate(duplicate.Spec.(api.SAMEnrollmentClaimSpec))
+			router.Spec.Resources = append(router.Spec.Resources, duplicate)
+			err := Validate(&router)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate duplicate %s = %v, want %q", tc.name, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestValidateSAMEnrollmentRejectsRRSetScopeMismatch(t *testing.T) {
 	router := samEnrollmentRouter()
 	policyIndex := len(router.Spec.Resources) - 2

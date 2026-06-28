@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"encoding/base64"
 	"fmt"
+	"net"
 	"net/netip"
 	"regexp"
 	"strconv"
@@ -178,6 +179,10 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 			if kind != "BGPRouter" || !idx.BGPRouters[name] {
 				return fmt.Errorf("%s spec.routerRef references missing BGPRouter %q", res.ID(), spec.RouterRef)
 			}
+			routerSpec := idx.BGPRouterSpecs[name]
+			if len(compactStrings(spec.ImportPolicy.AllowedPrefixes)) == 0 && len(compactStrings(routerSpec.ImportPolicy.AllowedPrefixes)) == 0 {
+				return fmt.Errorf("%s spec.importPolicy.allowedPrefixes is required unless %s has an import allowlist", res.ID(), spec.RouterRef)
+			}
 			if len(spec.Listen.SourcePrefixes) == 0 {
 				return fmt.Errorf("%s spec.listen.sourcePrefixes is required", res.ID())
 			}
@@ -187,7 +192,6 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				}
 			}
 			if spec.RouteReflectorClient {
-				routerSpec := idx.BGPRouterSpecs[name]
 				if routerSpec.ASN != spec.PeerASN {
 					return fmt.Errorf("%s spec.routeReflectorClient requires iBGP peerASN matching %s spec.asn", res.ID(), spec.RouterRef)
 				}
@@ -880,6 +884,11 @@ func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error
 	policies := map[string]api.SAMEnrollmentPolicySpec{}
 	mobilityPrefixes := map[string]netip.Prefix{}
 	seenJoinNonces := map[string]string{}
+	seenLeafIDs := map[string]string{}
+	seenTunnelAddresses := map[string]string{}
+	seenWireGuardPublicKeys := map[string]string{}
+	seenMobilityOwnedAddresses := map[string]string{}
+	seenBGPRouterIDs := map[string]string{}
 	for _, res := range router.Spec.Resources {
 		if res.APIVersion == api.MobilityAPIVersion && res.Kind == "SAMEnrollmentPolicy" {
 			spec, err := res.SAMEnrollmentPolicySpec()
@@ -926,7 +935,11 @@ func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error
 			return fmt.Errorf("%s spec.policyRef must reference SAMEnrollmentPolicy/<name>", res.ID())
 		}
 		if !exists {
-			continue
+			return fmt.Errorf("%s spec.policyRef references missing SAMEnrollmentPolicy %q", res.ID(), spec.PolicyRef)
+		}
+		policyKey := strings.TrimSpace(spec.PolicyRef)
+		if previous := seenSAMEnrollmentValue(seenLeafIDs, policyKey, spec.LeafID, res.ID()); previous != "" {
+			return fmt.Errorf("%s spec.leafID duplicates %s for %s", res.ID(), previous, spec.PolicyRef)
 		}
 		if pattern := strings.TrimSpace(policy.AllowedLeafIDs.Pattern); pattern != "" {
 			re, err := regexp.Compile(pattern)
@@ -940,6 +953,9 @@ func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error
 		tunnel, err := parseSAMEnrollmentTunnelAddress(spec.TunnelAddress)
 		if err != nil {
 			return fmt.Errorf("%s spec.tunnelAddress is invalid: %w", res.ID(), err)
+		}
+		if previous := seenSAMEnrollmentValue(seenTunnelAddresses, policyKey, tunnel.String(), res.ID()); previous != "" {
+			return fmt.Errorf("%s spec.tunnelAddress duplicates %s for %s", res.ID(), previous, spec.PolicyRef)
 		}
 		if !prefixContainsAny(policy.TunnelAddressPrefixes, tunnel.Addr()) {
 			return fmt.Errorf("%s spec.tunnelAddress %s is outside %s spec.tunnelAddressPrefixes", res.ID(), tunnel, spec.PolicyRef)
@@ -966,6 +982,9 @@ func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error
 				return err
 			}
 		}
+		if err := validateSAMEnrollmentClaimTTL(res.ID(), policy, spec); err != nil {
+			return err
+		}
 		if strings.TrimSpace(policy.RRSetRef) != "" && strings.TrimSpace(spec.RRSetRef) != strings.TrimSpace(policy.RRSetRef) {
 			return fmt.Errorf("%s spec.rrSetRef %q does not match %s spec.rrSetRef", res.ID(), spec.RRSetRef, spec.PolicyRef)
 		}
@@ -977,6 +996,22 @@ func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error
 			if !prefixContainsAny(policy.EndpointPrefixes, endpointAddr) {
 				return fmt.Errorf("%s spec.endpoint %s is outside %s spec.endpointPrefixes", res.ID(), endpointAddr, spec.PolicyRef)
 			}
+		}
+		if strings.TrimSpace(spec.WireGuard.Endpoint) != "" {
+			wgEndpointAddr, err := endpointAddressForValidation(spec.WireGuard.Endpoint)
+			if err != nil {
+				return fmt.Errorf("%s spec.wireGuard.endpoint is invalid: %w", res.ID(), err)
+			}
+			wgEndpointPrefixes := policy.WireGuard.EndpointPrefixes
+			if len(wgEndpointPrefixes) == 0 {
+				wgEndpointPrefixes = policy.EndpointPrefixes
+			}
+			if len(wgEndpointPrefixes) > 0 && !prefixContainsAny(wgEndpointPrefixes, wgEndpointAddr) {
+				return fmt.Errorf("%s spec.wireGuard.endpoint %s is outside %s wireGuard endpoint prefixes", res.ID(), wgEndpointAddr, spec.PolicyRef)
+			}
+		}
+		if previous := seenSAMEnrollmentValue(seenWireGuardPublicKeys, policyKey, spec.WireGuard.PublicKey, res.ID()); previous != "" {
+			return fmt.Errorf("%s spec.wireGuard.publicKey duplicates %s for %s", res.ID(), previous, spec.PolicyRef)
 		}
 		for i, allowed := range spec.WireGuard.AllowedIPs {
 			prefix, err := netip.ParsePrefix(strings.TrimSpace(allowed))
@@ -995,9 +1030,61 @@ func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error
 			if !ownedAddressAuthorizedByMobilityPools(prefix, policy.MobilityPoolRefs, mobilityPrefixes) {
 				return fmt.Errorf("%s spec.mobility.ownedAddresses[%d] %s is outside authorized MobilityPool prefixes", res.ID(), i, prefix)
 			}
+			if previous := seenSAMEnrollmentValue(seenMobilityOwnedAddresses, policyKey, prefix.String(), res.ID()); previous != "" {
+				return fmt.Errorf("%s spec.mobility.ownedAddresses[%d] duplicates %s for %s", res.ID(), i, previous, spec.PolicyRef)
+			}
+		}
+		if previous := seenSAMEnrollmentValue(seenBGPRouterIDs, policyKey, spec.BGP.RouterID, res.ID()); previous != "" {
+			return fmt.Errorf("%s spec.bgp.routerID duplicates %s for %s", res.ID(), previous, spec.PolicyRef)
 		}
 	}
 	return nil
+}
+
+func seenSAMEnrollmentValue(seen map[string]string, policyRef, value, resourceID string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	key := strings.TrimSpace(policyRef) + "\x00" + value
+	if previous := seen[key]; previous != "" {
+		return previous
+	}
+	seen[key] = resourceID
+	return ""
+}
+
+func validateSAMEnrollmentClaimTTL(resourceID string, policy api.SAMEnrollmentPolicySpec, claim api.SAMEnrollmentClaimSpec) error {
+	ttlText := strings.TrimSpace(policy.TTL)
+	expiresText := strings.TrimSpace(claim.ExpiresAt)
+	if ttlText == "" || expiresText == "" {
+		return nil
+	}
+	ttl, err := time.ParseDuration(ttlText)
+	if err != nil {
+		return nil
+	}
+	joinedAt, err := parseSAMEnrollmentTime(claim.JoinTimestamp)
+	if err != nil {
+		return fmt.Errorf("%s spec.joinTimestamp must be an RFC3339 timestamp when spec.expiresAt is set with policy ttl: %w", resourceID, err)
+	}
+	expiresAt, err := parseSAMEnrollmentTime(expiresText)
+	if err != nil {
+		return fmt.Errorf("%s spec.expiresAt must be an RFC3339 timestamp: %w", resourceID, err)
+	}
+	maxExpiresAt := joinedAt.Add(ttl)
+	if expiresAt.After(maxExpiresAt) {
+		return fmt.Errorf("%s spec.expiresAt %s exceeds %s ttl window ending %s", resourceID, expiresAt.Format(time.RFC3339), claim.PolicyRef, maxExpiresAt.Format(time.RFC3339))
+	}
+	return nil
+}
+
+func parseSAMEnrollmentTime(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return parsed, nil
+	}
+	return time.Parse(time.RFC3339, value)
 }
 
 func validateSAMEnrollmentClaimHMAC(resourceID string, policy api.SAMEnrollmentPolicySpec, claim api.SAMEnrollmentClaimSpec) error {
@@ -1033,6 +1120,9 @@ func samEnrollmentJoinSecret(source api.SecretValueSourceSpec) ([]byte, bool, er
 
 func endpointAddressForValidation(value string) (netip.Addr, error) {
 	value = strings.TrimSpace(value)
+	if host, _, err := net.SplitHostPort(value); err == nil {
+		value = strings.Trim(host, "[]")
+	}
 	if strings.Contains(value, "/") {
 		prefix, err := netip.ParsePrefix(value)
 		if err != nil {

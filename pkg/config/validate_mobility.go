@@ -548,6 +548,12 @@ func validateSAMEnrollmentPolicy(res api.Resource, spec api.SAMEnrollmentPolicyS
 			return fmt.Errorf("%s spec.wireGuard.allowedExtraIPPrefixes[%d] must be an IPv4 prefix", res.ID(), i)
 		}
 	}
+	for i, prefix := range spec.WireGuard.EndpointPrefixes {
+		parsed, err := netip.ParsePrefix(strings.TrimSpace(prefix))
+		if err != nil || !parsed.Addr().Is4() {
+			return fmt.Errorf("%s spec.wireGuard.endpointPrefixes[%d] must be an IPv4 prefix", res.ID(), i)
+		}
+	}
 	if spec.WireGuard.PersistentKeepalive < 0 || spec.WireGuard.PersistentKeepalive > 65535 {
 		return fmt.Errorf("%s spec.wireGuard.persistentKeepalive must be within 0-65535", res.ID())
 	}

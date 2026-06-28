@@ -88,6 +88,35 @@ spec:
             allowedPrefixes: [10.77.60.32/32]
 
     - apiVersion: mobility.routerd.net/v1alpha1
+      kind: MobilityPool
+      metadata: { name: cloudedge }
+      spec:
+        prefix: 10.77.60.0/24
+        groupRef: cloudedge
+        mode: selective-address
+        members:
+          - nodeRef: leaf-b
+            site: branch-b
+            role: onprem
+
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentPolicy
+      metadata: { name: cloudedge-private-fou-leaves }
+      spec:
+        transportProfileRef: SAMTransportProfile/leaf-b
+        rrSetRef: SAMRRSet/cloudedge-rrs
+        joinTokenFrom:
+          file: /usr/local/etc/routerd/secrets/cloudedge-join-token
+        joinAudience: cloudedge-private-underlay
+        allowedLeafIDs:
+          pattern: ^leaf-[a-z0-9-]+$
+        tunnelAddressPrefixes: [10.255.0.0/20]
+        endpointPrefixes: [10.20.0.0/24]
+        mobilityPoolRefs: [MobilityPool/cloudedge]
+        ttl: 24h
+        revokeAfterInactive: 168h
+
+    - apiVersion: mobility.routerd.net/v1alpha1
       kind: SAMEnrollmentClaim
       metadata: { name: leaf-b }
       spec:
