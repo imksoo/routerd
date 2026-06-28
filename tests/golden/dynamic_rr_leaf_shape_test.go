@@ -151,6 +151,76 @@ func TestCloudEdgeDynamicRRLeafExamplesUseDualRRShape(t *testing.T) {
 	})
 }
 
+func TestPVEMinimalDynamicRRLeafExamples(t *testing.T) {
+	rr := loadExampleRouter(t, "pve-minimal-rr.yaml")
+	leafA := loadExampleRouter(t, "pve-minimal-leaf-a-wg.yaml")
+	leafB := loadExampleRouter(t, "pve-minimal-leaf-b-fou.yaml")
+
+	assertHasResource(t, rr, api.NetAPIVersion, "BGPDynamicPeer", "pve-leaves")
+	assertHasResource(t, rr, api.MobilityAPIVersion, "SAMEnrollmentPolicy", "pve-wg-leaves")
+	assertHasResource(t, rr, api.MobilityAPIVersion, "SAMEnrollmentPolicy", "pve-fou-leaves")
+	assertHasResource(t, rr, api.MobilityAPIVersion, "SAMEnrollmentClaim", "pve-leaf-a")
+	assertHasResource(t, rr, api.MobilityAPIVersion, "SAMEnrollmentClaim", "pve-leaf-b")
+	assertMissingResource(t, rr, api.NetAPIVersion, "BGPPeer", "pve-leaf-a")
+	assertMissingResource(t, rr, api.NetAPIVersion, "BGPPeer", "pve-leaf-b")
+
+	dynamicPeer := mustResource(t, rr, api.NetAPIVersion, "BGPDynamicPeer", "pve-leaves")
+	dynamicSpec, err := dynamicPeer.BGPDynamicPeerSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertStringSet(t, "pve dynamic source prefixes", dynamicSpec.Listen.SourcePrefixes, []string{"10.255.10.0/24"})
+	assertStringSet(t, "pve dynamic import prefixes", dynamicSpec.ImportPolicy.AllowedPrefixes, []string{"10.77.70.0/24"})
+	if dynamicSpec.ImportPolicy.AllowedPrefixLengthMin != 32 || dynamicSpec.ImportPolicy.AllowedPrefixLengthMax != 32 {
+		t.Fatalf("pve dynamic import prefix lengths = %d/%d, want 32/32", dynamicSpec.ImportPolicy.AllowedPrefixLengthMin, dynamicSpec.ImportPolicy.AllowedPrefixLengthMax)
+	}
+
+	assertRRAdmissionTransport(t, rr, "pve-rr-wg", "ipip", "wireguard", "SAMEnrollmentPolicy/pve-wg-leaves", false)
+	assertRRAdmissionTransport(t, rr, "pve-rr-fou", "fou", "none", "SAMEnrollmentPolicy/pve-fou-leaves", true)
+
+	t.Run("leaf-a wireguard ipip consumes pve rr", func(t *testing.T) {
+		assertHasResource(t, leafA, api.NetAPIVersion, "WireGuardInterface", "wg-pve")
+		assertMissingResource(t, leafA, api.NetAPIVersion, "BGPDynamicPeer", "pve-leaves")
+		assertMissingResource(t, leafA, api.NetAPIVersion, "BGPPeer", "pve-rr")
+		profile := mustResource(t, leafA, api.MobilityAPIVersion, "SAMTransportProfile", "pve-leaf-a")
+		spec, err := profile.SAMTransportProfileSpec()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if spec.Mode != "ipip" || spec.Encryption != "wireguard" {
+			t.Fatalf("pve-leaf-a transport = %s/%s, want ipip/wireguard", spec.Mode, spec.Encryption)
+		}
+		if len(spec.PeersFrom) != 1 || spec.PeersFrom[0].Resource != "SAMRRSet/pve-rrs" {
+			t.Fatalf("pve-leaf-a peersFrom = %#v, want SAMRRSet/pve-rrs", spec.PeersFrom)
+		}
+		assertNamedRRSetMembers(t, leafA, "pve-rrs", "pve-rr")
+		assertLeafBGPRouterPolicy(t, leafA, "pve-leaf-a", "10.77.70.21/32")
+	})
+
+	t.Run("leaf-b fou consumes pve rr without wireguard", func(t *testing.T) {
+		assertMissingResource(t, leafB, api.NetAPIVersion, "WireGuardInterface", "wg-pve")
+		assertMissingResource(t, leafB, api.NetAPIVersion, "WireGuardPeer", "pve-rr")
+		assertMissingResource(t, leafB, api.NetAPIVersion, "BGPDynamicPeer", "pve-leaves")
+		assertMissingResource(t, leafB, api.NetAPIVersion, "BGPPeer", "pve-rr")
+		profile := mustResource(t, leafB, api.MobilityAPIVersion, "SAMTransportProfile", "pve-leaf-b")
+		spec, err := profile.SAMTransportProfileSpec()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if spec.Mode != "fou" || spec.Encryption != "none" {
+			t.Fatalf("pve-leaf-b transport = %s/%s, want fou/none", spec.Mode, spec.Encryption)
+		}
+		if spec.EncapSport != 5555 || spec.EncapDport != 5555 {
+			t.Fatalf("pve-leaf-b encap ports = %d/%d, want 5555/5555", spec.EncapSport, spec.EncapDport)
+		}
+		if len(spec.PeersFrom) != 1 || spec.PeersFrom[0].Resource != "SAMRRSet/pve-rrs" {
+			t.Fatalf("pve-leaf-b peersFrom = %#v, want SAMRRSet/pve-rrs", spec.PeersFrom)
+		}
+		assertNamedRRSetMembers(t, leafB, "pve-rrs", "pve-rr")
+		assertLeafBGPRouterPolicy(t, leafB, "pve-leaf-b", "10.77.70.22/32")
+	})
+}
+
 func loadExampleRouter(t *testing.T, name string) *api.Router {
 	t.Helper()
 	router, err := config.Load(filepath.Join("..", "..", "examples", name))
@@ -231,7 +301,12 @@ func assertEnrollmentPolicy(t *testing.T, router *api.Router, name, profile, aud
 
 func assertRRSetMembers(t *testing.T, router *api.Router, want ...string) {
 	t.Helper()
-	resource := mustResource(t, router, api.MobilityAPIVersion, "SAMRRSet", "cloudedge-rrs")
+	assertNamedRRSetMembers(t, router, "cloudedge-rrs", want...)
+}
+
+func assertNamedRRSetMembers(t *testing.T, router *api.Router, name string, want ...string) {
+	t.Helper()
+	resource := mustResource(t, router, api.MobilityAPIVersion, "SAMRRSet", name)
 	spec, err := resource.SAMRRSetSpec()
 	if err != nil {
 		t.Fatal(err)
@@ -242,11 +317,11 @@ func assertRRSetMembers(t *testing.T, router *api.Router, want ...string) {
 	}
 	for _, nodeRef := range want {
 		if !got[nodeRef] {
-			t.Fatalf("SAMRRSet/cloudedge-rrs missing member %s: %#v", nodeRef, spec.Members)
+			t.Fatalf("SAMRRSet/%s missing member %s: %#v", name, nodeRef, spec.Members)
 		}
 	}
 	if len(got) != len(want) {
-		t.Fatalf("SAMRRSet/cloudedge-rrs member count = %d, want %d: %#v", len(got), len(want), spec.Members)
+		t.Fatalf("SAMRRSet/%s member count = %d, want %d: %#v", name, len(got), len(want), spec.Members)
 	}
 }
 

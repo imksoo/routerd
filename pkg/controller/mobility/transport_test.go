@@ -630,6 +630,146 @@ func TestCloudEdgeDynamicRRExamplesMaterializeMixedAdmissionWithoutBGPPeers(t *t
 	}
 }
 
+func TestPVEMinimalExamplesMaterializeReviewTransports(t *testing.T) {
+	now := time.Date(2026, 6, 28, 9, 7, 0, 0, time.UTC)
+	t.Run("rr admission generates tunnels without static bgp peers", func(t *testing.T) {
+		cases := []struct {
+			name      string
+			profile   string
+			peer      string
+			mode      string
+			remote    string
+			wantEncap bool
+		}{
+			{
+				name:    "wireguard ipip leaf-a admission",
+				profile: "pve-rr-wg",
+				peer:    "pve-leaf-a",
+				mode:    "ipip",
+				remote:  "10.31.0.21",
+			},
+			{
+				name:      "private fou leaf-b admission",
+				profile:   "pve-rr-fou",
+				peer:      "pve-leaf-b",
+				mode:      "fou",
+				remote:    "10.30.0.22",
+				wantEncap: true,
+			},
+		}
+		router, err := config.Load(filepath.Join("..", "..", "..", "examples", "pve-minimal-rr.yaml"))
+		if err != nil {
+			t.Fatalf("load pve-minimal-rr.yaml: %v", err)
+		}
+		if err := config.Validate(router); err != nil {
+			t.Fatalf("validate pve-minimal-rr.yaml: %v", err)
+		}
+		store := testStore(t, now)
+		controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+		if err := controller.Reconcile(context.Background()); err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				profileSpec := exampleSAMTransportProfile(t, router, tc.profile)
+				if profileSpec.BGP.GeneratePeers == nil || *profileSpec.BGP.GeneratePeers {
+					t.Fatalf("SAMTransportProfile/%s generatePeers = %#v, want false", tc.profile, profileSpec.BGP.GeneratePeers)
+				}
+				resources := decodeResources(t, latestPart(t, store, TransportDynamicSource(tc.profile, "pve-rr")).ResourcesJSON)
+				if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 1; got != want {
+					t.Fatalf("TunnelInterface count = %d, want %d resources=%#v", got, want, resources)
+				}
+				if got := countResources(resources, api.NetAPIVersion, "BGPPeer"); got != 0 {
+					t.Fatalf("RR generated BGPPeer count = %d, want 0 resources=%#v", got, resources)
+				}
+				tunnel := findTransportTunnelForPeer(t, resources, "pve-rr", tc.peer)
+				if tunnel.Mode != tc.mode || tunnel.Remote != tc.remote {
+					t.Fatalf("%s tunnel = %#v, want mode %s remote %s", tc.peer, tunnel, tc.mode, tc.remote)
+				}
+				if tc.wantEncap && (tunnel.EncapSport != 5555 || tunnel.EncapDport != 5555) {
+					t.Fatalf("%s tunnel encap ports = %d/%d, want 5555/5555", tc.peer, tunnel.EncapSport, tunnel.EncapDport)
+				}
+			})
+		}
+	})
+
+	t.Run("leaves consume rr set and generate rr-facing bgp peers", func(t *testing.T) {
+		cases := []struct {
+			name        string
+			example     string
+			profile     string
+			mode        string
+			encryption  string
+			remote      string
+			wantEncap   bool
+			wantWGIface bool
+		}{
+			{
+				name:        "leaf-a wireguard ipip",
+				example:     "pve-minimal-leaf-a-wg.yaml",
+				profile:     "pve-leaf-a",
+				mode:        "ipip",
+				encryption:  "wireguard",
+				remote:      "10.31.0.10",
+				wantWGIface: true,
+			},
+			{
+				name:       "leaf-b private fou",
+				example:    "pve-minimal-leaf-b-fou.yaml",
+				profile:    "pve-leaf-b",
+				mode:       "fou",
+				encryption: "none",
+				remote:     "10.30.0.10",
+				wantEncap:  true,
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				router, err := config.Load(filepath.Join("..", "..", "..", "examples", tc.example))
+				if err != nil {
+					t.Fatalf("load %s: %v", tc.example, err)
+				}
+				if err := config.Validate(router); err != nil {
+					t.Fatalf("validate %s: %v", tc.example, err)
+				}
+				profileSpec := exampleSAMTransportProfile(t, router, tc.profile)
+				if profileSpec.Mode != tc.mode || profileSpec.Encryption != tc.encryption {
+					t.Fatalf("SAMTransportProfile/%s mode/encryption = %s/%s, want %s/%s", tc.profile, profileSpec.Mode, profileSpec.Encryption, tc.mode, tc.encryption)
+				}
+				if got := countResources(router.Spec.Resources, api.NetAPIVersion, "WireGuardInterface"); (got > 0) != tc.wantWGIface {
+					t.Fatalf("static WireGuardInterface count = %d, want present=%v", got, tc.wantWGIface)
+				}
+				store := testStore(t, now)
+				controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+				if err := controller.Reconcile(context.Background()); err != nil {
+					t.Fatalf("Reconcile: %v", err)
+				}
+				resources := decodeResources(t, latestPart(t, store, TransportDynamicSource(tc.profile, tc.profile)).ResourcesJSON)
+				if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 1; got != want {
+					t.Fatalf("TunnelInterface count = %d, want %d resources=%#v", got, want, resources)
+				}
+				if got, want := countResources(resources, api.NetAPIVersion, "BGPPeer"), 1; got != want {
+					t.Fatalf("BGPPeer count = %d, want %d resources=%#v", got, want, resources)
+				}
+				if got := countResources(resources, api.NetAPIVersion, "WireGuardPeer"); got != 0 {
+					t.Fatalf("transport-generated WireGuardPeer count = %d, want 0", got)
+				}
+				tunnel := findTransportTunnelForPeer(t, resources, tc.profile, "pve-rr")
+				if tunnel.Mode != tc.mode || tunnel.Remote != tc.remote {
+					t.Fatalf("pve-rr tunnel = %#v, want mode %s remote %s", tunnel, tc.mode, tc.remote)
+				}
+				if tc.wantEncap && (tunnel.EncapSport != 5555 || tunnel.EncapDport != 5555) {
+					t.Fatalf("pve-rr tunnel encap ports = %d/%d, want 5555/5555", tunnel.EncapSport, tunnel.EncapDport)
+				}
+				_, bgpPeer := findTransportBGPPeerResourceForPeer(t, resources, tc.profile, "pve-rr")
+				if len(bgpPeer.Peers) != 1 || strings.TrimSpace(bgpPeer.Peers[0]) == "" {
+					t.Fatalf("pve-rr BGP peer = %#v, want one derived RR tunnel address", bgpPeer)
+				}
+			})
+		}
+	})
+}
+
 func exampleSAMTransportProfile(t *testing.T, router *api.Router, name string) api.SAMTransportProfileSpec {
 	t.Helper()
 	for _, resource := range router.Spec.Resources {
