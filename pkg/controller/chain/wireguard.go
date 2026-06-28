@@ -541,6 +541,53 @@ func resolveWireGuardSAMResources(router *api.Router) (*api.Router, error) {
 		for _, source := range spec.PeersFrom {
 			ref := strings.TrimSpace(source.Resource)
 			sourceKind, _, sourceOK := strings.Cut(ref, "/")
+			if sourceOK && sourceKind == "SAMRRSet" {
+				rrSet, found, err := lookupSAMRRSet(router, ref)
+				if err != nil {
+					if source.Optional {
+						continue
+					}
+					return nil, err
+				}
+				if !found {
+					continue
+				}
+				for _, member := range rrSet.Members {
+					nodeRef := strings.TrimSpace(member.NodeRef)
+					if nodeRef == "" || nodeRef == self {
+						continue
+					}
+					if strings.TrimSpace(member.WireGuard.PublicKey) == "" {
+						continue
+					}
+					tunnel, err := parseEnrollmentTunnelAddress(member.TunnelAddress)
+					if err != nil {
+						if source.Optional {
+							continue
+						}
+						return nil, err
+					}
+					allowedIPs := []string{tunnel.String()}
+					allowedIPs = append(allowedIPs, member.WireGuard.AllowedIPs...)
+					generated = append(generated, api.Resource{
+						TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardPeer"},
+						Metadata: api.ObjectMeta{
+							Name: nodeRef,
+							Annotations: map[string]string{
+								"routerd.net/generated-from": ref,
+							},
+						},
+						Spec: api.WireGuardPeerSpec{
+							Interface:           iface,
+							PublicKey:           strings.TrimSpace(member.WireGuard.PublicKey),
+							AllowedIPs:          allowedIPs,
+							Endpoint:            strings.TrimSpace(member.WireGuard.Endpoint),
+							PersistentKeepalive: member.WireGuard.PersistentKeepalive,
+						},
+					})
+				}
+				continue
+			}
 			if sourceOK && sourceKind == "SAMEnrollmentPolicy" {
 				policy, found, err := lookupSAMEnrollmentPolicy(router, ref)
 				if err != nil {

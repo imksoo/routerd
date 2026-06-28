@@ -4,11 +4,13 @@ package mobility
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/config"
 )
 
 func testStringSlice(value any) []string {
@@ -430,6 +432,103 @@ func TestSAMTransportProfileConsumesSAMRRSetWithFOUWithoutWireGuard(t *testing.T
 		}
 		_ = findTransportBGPPeerForPeer(t, resources, "leaf-b", peer)
 	}
+}
+
+func TestCloudEdgeDynamicLeafExamplesMaterializeDualRRTransports(t *testing.T) {
+	now := time.Date(2026, 6, 28, 9, 4, 0, 0, time.UTC)
+	cases := []struct {
+		name         string
+		example      string
+		profile      string
+		mode         string
+		encryption   string
+		wantWGPeers  int
+		wantEncap    bool
+		wantEndpoint map[string]string
+	}{
+		{
+			name:       "leaf-a wireguard underlay",
+			example:    "cloudedge-dynamic-leaf-a-wg.yaml",
+			profile:    "leaf-a",
+			mode:       "ipip",
+			encryption: "wireguard",
+			wantEndpoint: map[string]string{
+				"rr-a": "10.10.0.2",
+				"rr-b": "10.10.0.3",
+			},
+		},
+		{
+			name:       "leaf-b fou private underlay",
+			example:    "cloudedge-dynamic-leaf-b-fou.yaml",
+			profile:    "leaf-b",
+			mode:       "fou",
+			encryption: "none",
+			wantEncap:  true,
+			wantEndpoint: map[string]string{
+				"rr-a": "10.10.0.2",
+				"rr-b": "10.10.0.3",
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			router, err := config.Load(filepath.Join("..", "..", "..", "examples", tc.example))
+			if err != nil {
+				t.Fatalf("load %s: %v", tc.example, err)
+			}
+			if err := config.Validate(router); err != nil {
+				t.Fatalf("validate %s: %v", tc.example, err)
+			}
+			profileSpec := exampleSAMTransportProfile(t, router, tc.profile)
+			if profileSpec.Mode != tc.mode || profileSpec.Encryption != tc.encryption {
+				t.Fatalf("SAMTransportProfile/%s mode/encryption = %s/%s, want %s/%s", tc.profile, profileSpec.Mode, profileSpec.Encryption, tc.mode, tc.encryption)
+			}
+			store := testStore(t, now)
+			controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+			if err := controller.Reconcile(context.Background()); err != nil {
+				t.Fatalf("Reconcile: %v", err)
+			}
+			resources := decodeResources(t, latestPart(t, store, TransportDynamicSource(tc.profile, tc.profile)).ResourcesJSON)
+			if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 2; got != want {
+				t.Fatalf("TunnelInterface count = %d, want %d resources=%#v", got, want, resources)
+			}
+			if got, want := countResources(resources, api.NetAPIVersion, "BGPPeer"), 2; got != want {
+				t.Fatalf("BGPPeer count = %d, want %d resources=%#v", got, want, resources)
+			}
+			if got := countResources(resources, api.NetAPIVersion, "WireGuardPeer"); got != tc.wantWGPeers {
+				t.Fatalf("WireGuardPeer count = %d, want %d", got, tc.wantWGPeers)
+			}
+			for peer, endpoint := range tc.wantEndpoint {
+				tunnel := findTransportTunnelForPeer(t, resources, tc.profile, peer)
+				if tunnel.Mode != tc.mode || tunnel.Remote != endpoint {
+					t.Fatalf("%s tunnel = %#v, want mode %s remote %s", peer, tunnel, tc.mode, endpoint)
+				}
+				if tc.wantEncap && (tunnel.EncapSport != 5555 || tunnel.EncapDport != 5555) {
+					t.Fatalf("%s tunnel encap ports = %d/%d, want 5555/5555", peer, tunnel.EncapSport, tunnel.EncapDport)
+				}
+				_, bgpPeer := findTransportBGPPeerResourceForPeer(t, resources, tc.profile, peer)
+				if len(bgpPeer.Peers) != 1 || strings.TrimSpace(bgpPeer.Peers[0]) == "" {
+					t.Fatalf("%s BGP peer = %#v, want one derived RR tunnel address", peer, bgpPeer)
+				}
+			}
+		})
+	}
+}
+
+func exampleSAMTransportProfile(t *testing.T, router *api.Router, name string) api.SAMTransportProfileSpec {
+	t.Helper()
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMTransportProfile" || resource.Metadata.Name != name {
+			continue
+		}
+		spec, err := resource.SAMTransportProfileSpec()
+		if err != nil {
+			t.Fatalf("SAMTransportProfile/%s spec: %v", name, err)
+		}
+		return spec
+	}
+	t.Fatalf("SAMTransportProfile/%s not found", name)
+	return api.SAMTransportProfileSpec{}
 }
 
 func TestSAMTransportProfileCanGenerateTunnelWithoutBGPPeerForRRDynamicAdmission(t *testing.T) {

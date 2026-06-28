@@ -120,6 +120,79 @@ spec:
 	}
 }
 
+func TestResolveWireGuardSAMResourcesDerivesPeersFromSAMRRSet(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: leaf-a}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg-cloudedge}
+      spec:
+        selfNodeRef: leaf-a
+        privateKey: priv
+        peersFrom:
+          - resource: SAMRRSet/cloudedge-rrs
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMRRSet
+      metadata: {name: cloudedge-rrs}
+      spec:
+        enrollmentPolicyRef: SAMEnrollmentPolicy/cloudedge-leaves
+        members:
+          - nodeRef: rr-a
+            endpoint: 10.10.0.2
+            tunnelAddress: 10.99.0.2/32
+            wireGuard:
+              publicKey: rrpub-a
+              endpoint: 203.0.113.10:51820
+              allowedIPs: [10.10.0.2/32]
+          - nodeRef: rr-b
+            endpoint: 10.10.0.3
+            tunnelAddress: 10.99.0.3/32
+            wireGuard:
+              publicKey: rrpub-b
+              endpoint: 203.0.113.11:51820
+              allowedIPs: [10.10.0.3/32]
+`)
+	effective, err := resolveWireGuardSAMResources(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := countResources(effective, api.NetAPIVersion, "WireGuardPeer"); got != 2 {
+		t.Fatalf("WireGuardPeer count = %d, want 2 resources=%#v", got, effective.Spec.Resources)
+	}
+	for _, want := range []struct {
+		name       string
+		allowedIPs []string
+	}{
+		{name: "rr-a", allowedIPs: []string{"10.99.0.2/32", "10.10.0.2/32"}},
+		{name: "rr-b", allowedIPs: []string{"10.99.0.3/32", "10.10.0.3/32"}},
+	} {
+		peer := mustWireGuardPeer(t, effective, want.name)
+		if strings.Join(peer.AllowedIPs, ",") != strings.Join(want.allowedIPs, ",") {
+			t.Fatalf("WireGuardPeer/%s allowedIPs = %#v, want %#v", want.name, peer.AllowedIPs, want.allowedIPs)
+		}
+	}
+}
+
+func mustWireGuardPeer(t *testing.T, router *api.Router, name string) api.WireGuardPeerSpec {
+	t.Helper()
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "WireGuardPeer" || resource.Metadata.Name != name {
+			continue
+		}
+		spec, err := resource.WireGuardPeerSpec()
+		if err != nil {
+			t.Fatalf("WireGuardPeer/%s spec: %v", name, err)
+		}
+		return spec
+	}
+	t.Fatalf("WireGuardPeer/%s not found in %#v", name, router.Spec.Resources)
+	return api.WireGuardPeerSpec{}
+}
+
 func TestWireGuardControllerAppliesInterfaceAndPeers(t *testing.T) {
 	router := mustWireGuardRouter(t, `
 apiVersion: routerd.net/v1alpha1

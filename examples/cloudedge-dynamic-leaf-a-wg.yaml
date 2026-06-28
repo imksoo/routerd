@@ -70,6 +70,7 @@ spec:
             wireGuard:
               publicKey: RR_A_WIREGUARD_PUBLIC_KEY
               endpoint: 203.0.113.10:51820
+              allowedIPs: [10.10.0.2/32]
             bgp: { asn: 64577, routerID: 10.99.0.2 }
           - nodeRef: rr-b
             endpoint: 10.10.0.3
@@ -77,6 +78,7 @@ spec:
             wireGuard:
               publicKey: RR_B_WIREGUARD_PUBLIC_KEY
               endpoint: 203.0.113.11:51820
+              allowedIPs: [10.10.0.3/32]
             bgp: { asn: 64577, routerID: 10.99.0.3 }
 
     - apiVersion: mobility.routerd.net/v1alpha1

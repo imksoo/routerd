@@ -170,6 +170,10 @@ Expected local evidence:
 - leaf `SAMTransportProfile/leaf-pve` consumes `SAMRRSet/cloudedge-rrs`.
 - controller tests show leaf-side generated `TunnelInterface` and `BGPPeer`
   resources for rr-a and rr-b.
+- `TestCloudEdgeDynamicLeafExamplesMaterializeDualRRTransports` loads the
+  leaf-a and leaf-b example YAML files and proves that `SAMTransportProfile`
+  generates two RR-facing `TunnelInterface` resources and two `BGPPeer`
+  resources from `SAMRRSet/cloudedge-rrs`.
 - leaf-a shape test shows `SAMRRSet` consumption plus WG-specific
   `WireGuardInterface.peersFrom` toward both RRs.
 - leaf-b controller test shows two generated `TunnelInterface` resources with
@@ -180,6 +184,46 @@ Expected local evidence:
   `generatePeers: false`.
 - WG materialization is covered only by WG-specific tests using optional
   `wireGuard` blocks; non-WG materialization is covered without WG resources.
+
+For manual materialization evidence without touching cloud/PVE, run a sandbox
+controller pass and render the effective config:
+
+```sh
+tmpdir=$(mktemp -d /tmp/routerd-leaf-b.XXXXXX)
+bin/linux/routerd serve \
+  --sandbox \
+  --root "$tmpdir/root" \
+  --config examples/cloudedge-dynamic-leaf-b-fou.yaml \
+  --controllers sam-transport,wireguard \
+  --apply-interval 0 &
+pid=$!
+for _ in $(seq 1 100); do
+  test -S "$tmpdir/root/run/routerd/routerd-status.sock" && break
+  sleep 0.1
+done
+sleep 1
+bin/linux/routerctl dynamic list --state-file "$tmpdir/root/var/lib/routerd/routerd.db" -o yaml
+bin/linux/routerctl dynamic render \
+  --config examples/cloudedge-dynamic-leaf-b-fou.yaml \
+  --state-file "$tmpdir/root/var/lib/routerd/routerd.db" \
+  -o yaml
+kill "$pid"
+```
+
+The dynamic list should include
+`SAMTransportProfile/leaf-b/node/leaf-b` with six resources: two
+`TunnelInterface`, two endpoint `IPv4Route`, and two `BGPPeer` resources. The
+rendered `TunnelInterface` resources should use `mode: fou` and encap ports
+`5555/5555`, and the rendered config should contain no `WireGuardPeer`.
+
+Repeat the same command with `examples/cloudedge-dynamic-leaf-a-wg.yaml` to
+check `SAMTransportProfile/leaf-a/node/leaf-a`. The SAM transport dynamic part
+should again contain two `TunnelInterface`, two endpoint `IPv4Route`, and two
+`BGPPeer` resources, with `mode: ipip`. The WG peer materialization path is
+separate from the generic SAM transport dynamic part; in sandbox dry-run logs
+the `wireguard` controller should report `peers:2` for
+`WireGuardInterface/wg-cloudedge`, and controller tests verify the two
+`WireGuardPeer` resources derived from `SAMRRSet/cloudedge-rrs`.
 
 ## Negative Tests
 
