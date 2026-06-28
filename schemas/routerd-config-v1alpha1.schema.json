@@ -3029,6 +3029,16 @@
                       "importPolicy": {
                         "additionalProperties": false,
                         "properties": {
+                          "allowedPrefixLengthMax": {
+                            "maximum": 128,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "allowedPrefixLengthMin": {
+                            "maximum": 128,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
                           "allowedPrefixes": {
                             "items": {
                               "type": "string"
@@ -3279,6 +3289,16 @@
                       "importPolicy": {
                         "additionalProperties": false,
                         "properties": {
+                          "allowedPrefixLengthMax": {
+                            "maximum": 128,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "allowedPrefixLengthMin": {
+                            "maximum": 128,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
                           "allowedPrefixes": {
                             "items": {
                               "type": "string"
@@ -3476,6 +3496,16 @@
                       "importPolicy": {
                         "additionalProperties": false,
                         "properties": {
+                          "allowedPrefixLengthMax": {
+                            "maximum": 128,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "allowedPrefixLengthMin": {
+                            "maximum": 128,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
                           "allowedPrefixes": {
                             "items": {
                               "type": "string"
@@ -9803,6 +9833,16 @@
                       "routeAdmission": {
                         "additionalProperties": false,
                         "properties": {
+                          "allowedPrefixLengthMax": {
+                            "maximum": 128,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "allowedPrefixLengthMin": {
+                            "maximum": 128,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
                           "allowedPrefixes": {
                             "items": {
                               "type": "string"
@@ -10201,6 +10241,16 @@
                           "importPolicy": {
                             "additionalProperties": false,
                             "properties": {
+                              "allowedPrefixLengthMax": {
+                                "maximum": 128,
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "allowedPrefixLengthMin": {
+                                "maximum": 128,
+                                "minimum": 0,
+                                "type": "integer"
+                              },
                               "allowedPrefixes": {
                                 "items": {
                                   "type": "string"

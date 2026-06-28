@@ -111,6 +111,9 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 		if _, err := validateBGPPrefixList(res.ID(), "spec.importPolicy.allowedPrefixes", spec.ImportPolicy.AllowedPrefixes); err != nil {
 			return true, err
 		}
+		if err := validateBGPImportPrefixLengths(res.ID(), "spec.importPolicy", spec.ImportPolicy); err != nil {
+			return true, err
+		}
 		switch strings.TrimSpace(spec.ImportPolicy.NextHopRewrite) {
 		case "", "peer-address", "unchanged":
 		default:
@@ -159,6 +162,9 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 			return true, err
 		}
 		if _, err := validateBGPPrefixList(res.ID(), "spec.importPolicy.allowedPrefixes", spec.ImportPolicy.AllowedPrefixes); err != nil {
+			return true, err
+		}
+		if err := validateBGPImportPrefixLengths(res.ID(), "spec.importPolicy", spec.ImportPolicy); err != nil {
 			return true, err
 		}
 		switch strings.TrimSpace(spec.ImportPolicy.NextHopRewrite) {

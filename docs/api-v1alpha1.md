@@ -622,7 +622,7 @@ and fields outside the target kind's `provides` set.
 | Kind | Provides |
 | --- | --- |
 | `BFD` | `peer` (string), `phase` (string) |
-| `BGPDynamicPeer` | `observedAt` (timestamp), `phase` (string), `sourcePrefixCount` (int), `sourcePrefixes` (stringList) |
+| `BGPDynamicPeer` | `acceptedRouteCount` (int), `discoveredPeerCount` (int), `discoveredPeers` (objectList), `observedAt` (timestamp), `peerGroup` (string), `phase` (string), `rejectedRouteCount` (int), `rejectedRouteSummary` (object), `sourcePrefixCount` (int), `sourcePrefixes` (stringList) |
 | `BGPPeer` | `acceptedPrefixes` (int), `address` (string), `observedAt` (timestamp), `phase` (string), `state` (string) |
 | `BGPRouter` | `acceptedPrefixes` (int), `establishedPeers` (int), `observedAt` (timestamp), `peers` (objectList), `phase` (string), `prefixes` (int) |
 | `Bridge` | `ifname` (string), `members` (stringList), `phase` (string) |

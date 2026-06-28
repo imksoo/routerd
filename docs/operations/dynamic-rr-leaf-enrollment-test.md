@@ -29,15 +29,24 @@ is not the default enrollment identity or the default private-underlay model.
 - `BGPDynamicPeer` is only the RR BGP acceptor. It owns listen source-prefix
   admission and BGP policy. It does not own leaf identity, tunnel assignment,
   WireGuard material, or MobilityPool authorization.
-- `BGPDynamicPeer` status is intentionally limited in this branch. It reports
-  readiness, peer-group/source-prefix configuration, and observation time, but
-  does not yet report discovered dynamic peers or rejection counters. Production
-  follow-up should add discovered peer state, accepted/rejected route counters,
-  source-prefix/ASN rejection counters, auth failures, and enrollment
-  correlation where known.
+- `BGPDynamicPeer` status reports the configured peer group/source prefixes,
+  discovered dynamic peers, best-effort routerd-side accepted/rejected route
+  counters, and enrollment correlation when the peer address matches an
+  accepted claim tunnel address. The counters are measured while routerd
+  observes GoBGP paths for FIB/admission filtering; they are not GoBGP's own
+  import-policy rejection counters.
 - `WireGuardInterface` / `WireGuardPeer` are used only when
   `encryption: wireguard` is selected.
 - `MobilityPool` remains the `/32` ownership authority.
+- `SAMEnrollmentClaim.spec.mobility.ownedAddresses` is bound to dynamic BGP
+  admission by tunnel next-hop. A dynamic leaf can advertise only its accepted
+  claim-owned `/32`; another leaf's `/32`, an unclaimed pool `/32`, pool
+  aggregate, subprefix, default route, or underlay route is rejected before FIB
+  installation.
+- `SAMEnrollmentClaim.spec.expiresAt` and `spec.revoked` are
+  RR/controller/admin-owned admission state. They are intentionally not part of
+  the leaf-authored join HMAC payload, so an operator can revoke or shorten
+  admission without leaf re-signing; `expiresAt` remains bounded by policy TTL.
 
 ## Example Configs
 
@@ -304,8 +313,14 @@ Local tests should cover:
 - duplicate `joinNonce` values are rejected within the same enrollment policy.
 - unauthorized MobilityPool `/32` claims are rejected.
 - revoked or expired claims are skipped.
-- route/default/underlay prefix rejection is enforced where current BGP and
-  MobilityPool policy machinery supports it.
+- BGP import policy can require exact host routes with
+  `allowedPrefixLengthMin: 32` and `allowedPrefixLengthMax: 32`.
+- dynamic SAM route admission rejects pool aggregates, non-/32 subprefixes,
+  default routes, underlay prefixes, MobilityPool-outside `/32`s, another
+  claim's `/32`, and unclaimed pool `/32`s.
+- `BGPDynamicPeer` status exposes discovered dynamic peers, accepted route
+  count, rejected route count, and rejected route summary from routerd-side
+  observation.
 
 ## Optional WireGuard Path
 
@@ -417,6 +432,9 @@ Full topology pass criteria:
   toward both rr-a and rr-b;
 - both RRs accept BGP sessions through `BGPDynamicPeer/cloudedge-leaves`;
 - each RR learns only the authorized MobilityPool `/32` routes;
+- `routerctl status BGPDynamicPeer/cloudedge-leaves` shows the connected leaf
+  under `discoveredPeers`, maps it to `enrollmentClaimRef`, and reports zero
+  rejected routes for the positive path;
 - default routes, underlay/management prefixes, and unauthorized `/32` claims
   are not accepted;
 - minimal connectivity succeeds over the authorized `/32` between test leaves

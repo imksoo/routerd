@@ -67,6 +67,8 @@ spec:
         routeReflectorClusterID: 10.99.0.254
         importPolicy:
           allowedPrefixes: [10.77.60.0/24]
+          allowedPrefixLengthMin: 32
+          allowedPrefixLengthMax: 32
           nextHopRewrite: peer-address
         exportPolicy:
           allowedPrefixes: [10.77.60.0/24]

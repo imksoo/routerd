@@ -101,3 +101,29 @@ func TestJoinHMACChangesWithReplayFields(t *testing.T) {
 		t.Fatalf("HMAC did not change after timestamp changed: %q", got)
 	}
 }
+
+func TestJoinHMACExcludesAdminOwnedExpiryAndRevocation(t *testing.T) {
+	claim := api.SAMEnrollmentClaimSpec{
+		PolicyRef:     "SAMEnrollmentPolicy/cloudedge-leaves",
+		RRSetRef:      "SAMRRSet/cloudedge-rrs",
+		LeafID:        "leaf-b",
+		JoinAudience:  "cloudedge-private-underlay",
+		JoinNonce:     "nonce-1",
+		JoinTimestamp: "2026-06-28T00:00:00Z",
+		TunnelAddress: "10.255.0.32/32",
+		Endpoint:      "10.20.0.32",
+		Mobility:      api.SAMEnrollmentClaimMobilitySpec{OwnedAddresses: []string{"10.77.60.32/32"}},
+		BGP:           api.SAMEnrollmentClaimBGPSpec{ASN: 64577, RouterID: "10.255.0.32"},
+	}
+	first := JoinHMAC([]byte("test-join-token"), claim)
+
+	claim.ExpiresAt = "2026-06-28T00:10:00Z"
+	claim.Revoked = true
+	if got := JoinHMAC([]byte("test-join-token"), claim); got != first {
+		t.Fatalf("HMAC changed after admin-owned expiresAt/revoked changed: %q != %q", got, first)
+	}
+	payload := JoinCanonicalPayload(claim)
+	if strings.Contains(payload, "expiresAt=") || strings.Contains(payload, "revoked=") {
+		t.Fatalf("canonical payload includes admin-owned expiry/revocation fields:\n%s", payload)
+	}
+}

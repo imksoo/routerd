@@ -51,6 +51,8 @@ spec:
         mobilityPoolRefs: [MobilityPool/cloudedge]
         routeAdmission:
           allowedPrefixes: [10.77.60.0/24]
+          allowedPrefixLengthMin: 32
+          allowedPrefixLengthMax: 32
           nextHopRewrite: peer-address
         members:
           - nodeRef: rr-a
@@ -83,6 +85,8 @@ spec:
           timersPreset: fast
           importPolicy:
             allowedPrefixes: [10.77.60.0/24]
+            allowedPrefixLengthMin: 32
+            allowedPrefixLengthMax: 32
             nextHopRewrite: unchanged
           exportPolicy:
             allowedPrefixes: [10.77.60.32/32]

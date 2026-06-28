@@ -265,7 +265,7 @@ func TestImportAllowedPrefixesIncludesDynamicPeers(t *testing.T) {
 	got := importAllowedPrefixesFromAppliedAndDynamic(applied, dynamic)
 	var values []string
 	for _, prefix := range got {
-		values = append(values, prefix.String())
+		values = append(values, prefix.Prefix.String())
 	}
 	if !sameStringSet(values, []string{"10.250.0.0/24", "10.77.60.0/24"}) {
 		t.Fatalf("allowed prefixes = %v", values)
@@ -273,10 +273,16 @@ func TestImportAllowedPrefixesIncludesDynamicPeers(t *testing.T) {
 }
 
 func TestDynamicImportAllowedPrefixesRejectRouteLeaks(t *testing.T) {
-	allowed := []netip.Prefix{netip.MustParsePrefix("10.77.60.0/24")}
+	allowed := allowedImportPrefixesForTest(api.BGPImportPolicySpec{
+		AllowedPrefixes:        []string{"10.77.60.0/24"},
+		AllowedPrefixLengthMin: 32,
+		AllowedPrefixLengthMax: 32,
+	})
 	for _, dst := range []*gobgpapi.Destination{
 		testDestination("0.0.0.0/0", "10.99.0.11"),
 		testDestination("10.20.0.0/24", "10.99.0.11"),
+		testDestination("10.77.60.0/24", "10.99.0.11"),
+		testDestination("10.77.60.0/25", "10.99.0.11"),
 		testDestination("10.77.61.11/32", "10.99.0.11"),
 	} {
 		if got := fibRoutesFromDestination(dst, allowed, nil, nil); len(got) != 0 {
@@ -287,6 +293,146 @@ func TestDynamicImportAllowedPrefixesRejectRouteLeaks(t *testing.T) {
 	want := []FIBRoute{{Prefix: "10.77.60.11/32", NextHops: []string{"10.99.0.11"}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("allowed dynamic route = %#v, want %#v", got, want)
+	}
+}
+
+func TestSAMDynamicClaimAdmissionBindsOwnedHostRoutesToTunnelAddress(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-transport"},
+			Spec: api.SAMTransportProfileSpec{
+				SelfNodeRef: "SAMNode/rr-a",
+				Mode:        "ipip",
+				Encryption:  "none",
+				InnerPrefix: "10.255.0.1/32",
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+			Metadata: api.ObjectMeta{Name: "clients"},
+			Spec: api.MobilityPoolSpec{
+				Prefix:   "10.77.60.0/24",
+				GroupRef: "EventGroup/cloudedge",
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentPolicy"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-leaves"},
+			Spec: api.SAMEnrollmentPolicySpec{
+				TransportProfileRef:   "SAMTransportProfile/cloudedge-transport",
+				TunnelAddressPrefixes: []string{"10.255.0.0/24"},
+				MobilityPoolRefs:      []string{"MobilityPool/clients"},
+			},
+		},
+		samEnrollmentClaimResourceForTest("leaf-a", "10.255.0.31/32", "10.77.60.31/32"),
+		samEnrollmentClaimResourceForTest("leaf-b", "10.255.0.32/32", "10.77.60.32/32"),
+	)
+	admission := (&Controller{Router: router}).samDynamicClaimAdmission()
+
+	if ok, reason := admission.Admit("10.255.0.31", netip.MustParsePrefix("10.77.60.31/32")); !ok {
+		t.Fatalf("leaf-a own /32 rejected: %s", reason)
+	}
+	for _, tt := range []struct {
+		prefix string
+		reason string
+	}{
+		{prefix: "10.77.60.32/32", reason: "prefix-not-owned-by-claim"},
+		{prefix: "10.77.60.40/32", reason: "prefix-not-owned-by-claim"},
+		{prefix: "10.77.60.0/24", reason: "not-exact-host-prefix"},
+	} {
+		if ok, reason := admission.Admit("10.255.0.31", netip.MustParsePrefix(tt.prefix)); ok || reason != tt.reason {
+			t.Fatalf("leaf-a route %s admission = (%t,%q), want rejected %q", tt.prefix, ok, reason, tt.reason)
+		}
+	}
+	if ok, reason := admission.Admit("10.255.0.99", netip.MustParsePrefix("10.77.60.31/32")); ok || reason != "no-accepted-claim-for-next-hop" {
+		t.Fatalf("unknown next-hop admission = (%t,%q), want no accepted claim", ok, reason)
+	}
+}
+
+func TestBGPDynamicPeerStatusReportsDiscoveredPeersAndAdmissionCounters(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPDynamicPeer"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-leaves"},
+			Spec: api.BGPDynamicPeerSpec{
+				RouterRef: "BGPRouter/lan",
+				PeerASN:   64512,
+				Listen:    api.BGPDynamicPeerListenSpec{SourcePrefixes: []string{"10.255.0.0/24"}},
+				ImportPolicy: api.BGPImportPolicySpec{
+					AllowedPrefixes:        []string{"10.77.60.0/24"},
+					AllowedPrefixLengthMin: 32,
+					AllowedPrefixLengthMax: 32,
+					NextHopRewrite:         "peer-address",
+				},
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-transport"},
+			Spec: api.SAMTransportProfileSpec{
+				SelfNodeRef: "SAMNode/rr-a",
+				Mode:        "ipip",
+				Encryption:  "none",
+				InnerPrefix: "10.255.0.1/32",
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+			Metadata: api.ObjectMeta{Name: "clients"},
+			Spec:     api.MobilityPoolSpec{Prefix: "10.77.60.0/24", GroupRef: "EventGroup/cloudedge"},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentPolicy"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-leaves"},
+			Spec: api.SAMEnrollmentPolicySpec{
+				TransportProfileRef:   "SAMTransportProfile/cloudedge-transport",
+				TunnelAddressPrefixes: []string{"10.255.0.0/24"},
+				MobilityPoolRefs:      []string{"MobilityPool/clients"},
+			},
+		},
+		samEnrollmentClaimResourceForTest("leaf-a", "10.255.0.31/32", "10.77.60.31/32"),
+		samEnrollmentClaimResourceForTest("leaf-b", "10.255.0.32/32", "10.77.60.32/32"),
+	)
+	store := mapStore{}
+	server := &fakeServer{
+		peers: map[string]*gobgpapi.Peer{
+			"10.255.0.31": {
+				Conf: &gobgpapi.PeerConf{NeighborAddress: "10.255.0.31", PeerAsn: 64512, PeerGroup: "routerd-dynamic-cloudedge-leaves"},
+				State: &gobgpapi.PeerState{
+					NeighborAddress: "10.255.0.31",
+					PeerAsn:         64512,
+					SessionState:    gobgpapi.PeerState_ESTABLISHED,
+				},
+				AfiSafis: []*gobgpapi.AfiSafi{{State: &gobgpapi.AfiSafiState{Accepted: 1, Received: 2}}},
+			},
+		},
+		routes: []*gobgpapi.Destination{
+			testDestination("10.77.60.31/32", "10.255.0.31"),
+			testDestination("10.77.60.32/32", "10.255.0.31"),
+		},
+	}
+	controller := Controller{Router: router, Store: store, Server: server, FIB: &fakeFIB{}}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "BGPDynamicPeer", "cloudedge-leaves")
+	if statusInt(status["discoveredPeerCount"]) != 1 || statusInt(status["acceptedRouteCount"]) != 1 || statusInt(status["rejectedRouteCount"]) != 1 {
+		t.Fatalf("dynamic peer status = %#v", status)
+	}
+	peers, ok := status["discoveredPeers"].([]map[string]any)
+	if !ok || len(peers) != 1 {
+		t.Fatalf("discoveredPeers = %#v", status["discoveredPeers"])
+	}
+	peer := peers[0]
+	if statusString(peer["enrollmentClaimRef"]) != "SAMEnrollmentClaim/leaf-a" || statusInt(peer["acceptedRoutes"]) != 1 || statusInt(peer["rejectedRoutes"]) != 1 {
+		t.Fatalf("discovered peer status = %#v", peer)
+	}
+	reasons, ok := status["rejectedRouteSummary"].(map[string]int)
+	if !ok || reasons["prefix-not-owned-by-claim"] != 1 {
+		t.Fatalf("rejectedRouteSummary = %#v", status["rejectedRouteSummary"])
 	}
 }
 
@@ -579,6 +725,10 @@ func policyRequestHasPrefixSet(req *gobgpapi.SetPoliciesRequest, name, prefix st
 		}
 	}
 	return false
+}
+
+func allowedImportPrefixesForTest(spec api.BGPImportPolicySpec) []allowedImportPrefix {
+	return importAllowedPrefixesFromPolicy(spec)
 }
 
 func policyRequestHasPolicy(req *gobgpapi.SetPoliciesRequest, name string) bool {
@@ -1849,6 +1999,25 @@ func TestImportPolicyPrefixesAllowMoreSpecifics(t *testing.T) {
 	}
 }
 
+func TestImportPolicyPrefixesCanRequireExactHostRoutes(t *testing.T) {
+	prefixes := importPolicyPrefixes(api.BGPImportPolicySpec{
+		AllowedPrefixes:        []string{"10.77.60.0/24"},
+		AllowedPrefixLengthMin: 32,
+		AllowedPrefixLengthMax: 32,
+	})
+	if len(prefixes) != 1 || prefixes[0].GetMaskLengthMin() != 32 || prefixes[0].GetMaskLengthMax() != 32 {
+		t.Fatalf("import prefixes = %#v, want exact /32 mask bounds", prefixes)
+	}
+	for _, rejected := range []string{"10.77.60.0/24", "10.77.60.0/25", "0.0.0.0/0", "10.20.0.0/24", "10.77.61.11/32"} {
+		if prefixSetAllows(prefixes, rejected) {
+			t.Fatalf("import prefixes = %#v allowed %s, want rejected", prefixes, rejected)
+		}
+	}
+	if !prefixSetAllows(prefixes, "10.77.60.11/32") {
+		t.Fatalf("import prefixes = %#v rejected authorized host route", prefixes)
+	}
+}
+
 func prefixSetAllows(prefixes []*gobgpapi.Prefix, candidate string) bool {
 	parsed, err := netip.ParsePrefix(candidate)
 	if err != nil {
@@ -2675,7 +2844,7 @@ func TestFIBRoutesFromStatePrefixesBuildsECMPAndSkipsLocalAdvertisements(t *test
 		{Prefix: "10.250.0.0/24", NextHop: "192.168.1.38", Best: true, Valid: true},
 		{Prefix: "10.0.0.0/16", NextHop: "0.0.0.0", Best: true, Valid: true},
 		{Prefix: "10.96.0.0/12", NextHop: "192.168.1.57", Best: true, Valid: true},
-	}, []netip.Prefix{netip.MustParsePrefix("10.250.0.0/16")}, nil)
+	}, allowedImportPrefixesForTest(api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/16"}}), nil)
 	want := []FIBRoute{{Prefix: "10.250.0.0/24", NextHops: []string{"192.168.1.38", "192.168.1.53"}}}
 	if !reflect.DeepEqual(routes, want) {
 		t.Fatalf("routes = %#v, want %#v", routes, want)
@@ -2686,7 +2855,7 @@ func TestFIBRoutesFromDestinationChoosesHigherLocalPref(t *testing.T) {
 	routes := fibRoutesFromDestination(testRankedDestination("10.77.60.12/32",
 		rankedPath{nextHop: "10.99.0.11", localPref: 201, med: 20},
 		rankedPath{nextHop: "10.99.0.12", localPref: 202, med: 10},
-	), []netip.Prefix{netip.MustParsePrefix("10.77.60.0/24")}, nil, nil)
+	), allowedImportPrefixesForTest(api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}}), nil, nil)
 	want := []FIBRoute{{Prefix: "10.77.60.12/32", NextHops: []string{"10.99.0.12"}}}
 	if !reflect.DeepEqual(routes, want) {
 		t.Fatalf("routes = %#v, want %#v", routes, want)
@@ -2697,7 +2866,7 @@ func TestFIBRoutesFromDestinationUsesPeerAddressRewriteFromNeighbor(t *testing.T
 	dst := testDestinationWithNeighbor("192.168.123.112/32", "10.252.0.17", "10.252.0.1")
 	routes := fibRoutesFromDestination(
 		dst,
-		[]netip.Prefix{netip.MustParsePrefix("192.168.123.0/24")},
+		allowedImportPrefixesForTest(api.BGPImportPolicySpec{AllowedPrefixes: []string{"192.168.123.0/24"}}),
 		map[string]bool{"10.252.0.1": true},
 		nil,
 	)
@@ -2716,7 +2885,7 @@ func TestFIBRoutesFromDestinationKeepsPeerAddressRewriteMultipath(t *testing.T) 
 	dst.Paths[1].NeighborIp = "10.252.0.2"
 	routes := fibRoutesFromDestination(
 		dst,
-		[]netip.Prefix{netip.MustParsePrefix("192.168.123.0/24")},
+		allowedImportPrefixesForTest(api.BGPImportPolicySpec{AllowedPrefixes: []string{"192.168.123.0/24"}}),
 		map[string]bool{"10.252.0.1": true, "10.252.0.2": true},
 		nil,
 	)
@@ -2730,7 +2899,7 @@ func TestFIBRoutesFromDestinationCanLeaveReflectedNextHopUnchanged(t *testing.T)
 	dst := testDestinationWithNeighbor("192.168.123.112/32", "10.252.0.17", "10.252.0.1")
 	routes := fibRoutesFromDestination(
 		dst,
-		[]netip.Prefix{netip.MustParsePrefix("192.168.123.0/24")},
+		allowedImportPrefixesForTest(api.BGPImportPolicySpec{AllowedPrefixes: []string{"192.168.123.0/24"}}),
 		nil,
 		nil,
 	)
@@ -2741,7 +2910,7 @@ func TestFIBRoutesFromDestinationCanLeaveReflectedNextHopUnchanged(t *testing.T)
 }
 
 func TestPrefixAllowedRequiresSameFamilyAndCoveredLength(t *testing.T) {
-	allowed := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("2001:db8::/32")}
+	allowed := allowedImportPrefixesForTest(api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.0.0.0/8", "2001:db8::/32"}})
 	tests := []struct {
 		prefix string
 		want   bool
@@ -2848,6 +3017,25 @@ func bgpRouterWithImportPrefixes(prefixes ...string) *api.Router {
 			},
 		},
 	}}}
+}
+
+func samEnrollmentClaimResourceForTest(name, tunnelAddress, ownedAddress string) api.Resource {
+	return api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentClaim"},
+		Metadata: api.ObjectMeta{Name: name},
+		Spec: api.SAMEnrollmentClaimSpec{
+			PolicyRef:     "SAMEnrollmentPolicy/cloudedge-leaves",
+			LeafID:        name,
+			TunnelAddress: tunnelAddress,
+			Mobility: api.SAMEnrollmentClaimMobilitySpec{
+				OwnedAddresses: []string{ownedAddress},
+			},
+			BGP: api.SAMEnrollmentClaimBGPSpec{
+				ASN:      64512,
+				RouterID: strings.TrimSuffix(tunnelAddress, "/32"),
+			},
+		},
+	}
 }
 
 func bgpMobilityPreferredSourceResources(selfNode string) []api.Resource {

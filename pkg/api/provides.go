@@ -94,7 +94,7 @@ func resourceProvidesTable() map[string][]ProvidedFieldSpec {
 
 	return map[string][]ProvidedFieldSpec{
 		"BFD":                             withCommon(s("peer", "Observed or configured peer")),
-		"BGPDynamicPeer":                  withCommon(ss("sourcePrefixes", "Accepted dynamic neighbor source prefixes"), i("sourcePrefixCount", "Configured dynamic neighbor source prefix count"), t("observedAt", "Observation time")),
+		"BGPDynamicPeer":                  withCommon(s("peerGroup", "GoBGP peer group used by dynamic neighbors"), ss("sourcePrefixes", "Accepted dynamic neighbor source prefixes"), i("sourcePrefixCount", "Configured dynamic neighbor source prefix count"), os("discoveredPeers", "Observed dynamic BGP peers with best-effort admission counters"), i("discoveredPeerCount", "Observed dynamic BGP peer count"), i("acceptedRouteCount", "Routerd-side accepted dynamic route count"), i("rejectedRouteCount", "Routerd-side rejected dynamic route count"), o("rejectedRouteSummary", "Routerd-side rejected dynamic route reasons"), t("observedAt", "Observation time")),
 		"BGPPeer":                         withCommon(s("address", "Peer address"), s("state", "Peer session state"), i("acceptedPrefixes", "Accepted prefix count"), t("observedAt", "Observation time")),
 		"BGPRouter":                       withCommon(os("peers", "Observed peers"), i("prefixes", "Observed prefix count"), i("establishedPeers", "Established peer count"), i("acceptedPrefixes", "Accepted prefix count"), t("observedAt", "Observation time")),
 		"Bridge":                          withCommon(s("ifname", "Kernel interface name"), ss("members", "Bridge member interfaces")),

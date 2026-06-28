@@ -581,8 +581,10 @@ type BGPListenSpec struct {
 }
 
 type BGPImportPolicySpec struct {
-	AllowedPrefixes []string `yaml:"allowedPrefixes,omitempty" json:"allowedPrefixes,omitempty"`
-	NextHopRewrite  string   `yaml:"nextHopRewrite,omitempty" json:"nextHopRewrite,omitempty" jsonschema:"enum=,enum=peer-address,enum=unchanged"`
+	AllowedPrefixes        []string `yaml:"allowedPrefixes,omitempty" json:"allowedPrefixes,omitempty"`
+	AllowedPrefixLengthMin int      `yaml:"allowedPrefixLengthMin,omitempty" json:"allowedPrefixLengthMin,omitempty" jsonschema:"minimum=0,maximum=128"`
+	AllowedPrefixLengthMax int      `yaml:"allowedPrefixLengthMax,omitempty" json:"allowedPrefixLengthMax,omitempty" jsonschema:"minimum=0,maximum=128"`
+	NextHopRewrite         string   `yaml:"nextHopRewrite,omitempty" json:"nextHopRewrite,omitempty" jsonschema:"enum=,enum=peer-address,enum=unchanged"`
 }
 
 type BGPExportPolicySpec struct {
@@ -766,7 +768,10 @@ type SAMEnrollmentWireGuardSpec struct {
 	PersistentKeepalive    int      `yaml:"persistentKeepalive,omitempty" json:"persistentKeepalive,omitempty" jsonschema:"minimum=0,maximum=65535"`
 }
 
-// SAMEnrollmentClaim is the leaf identity and enrollment payload.
+// SAMEnrollmentClaim is the leaf identity and enrollment payload. Join HMAC
+// signs leaf-authored identity/tunnel/mobility/transport intent; ExpiresAt and
+// Revoked are RR/controller/admin-owned admission state and are intentionally
+// outside the leaf HMAC payload.
 // It is separate from BGPDynamicPeer so BGP acceptor configuration never owns
 // WireGuard keys, tunnel addresses, claim TTL, revocation, or MobilityPool
 // authorization state.

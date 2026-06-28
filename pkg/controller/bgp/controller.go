@@ -127,6 +127,9 @@ type Controller struct {
 	bfdPeerLastResetAt   map[string]time.Time
 	bfdPeerResetError    map[string]string
 	bfdPeerResetAttempts map[string]int
+
+	lastDynamicPeers     []dynamicPeerObservation
+	lastDynamicAdmission dynamicRouteAdmissionSummary
 }
 
 type desiredPeer struct {
@@ -336,6 +339,8 @@ func (c *Controller) stopServerLocked() {
 	c.lastState = bgpstate.State{}
 	c.lastFIBRoutesSig = ""
 	c.lastFIBValid = false
+	c.lastDynamicPeers = nil
+	c.lastDynamicAdmission = dynamicRouteAdmissionSummary{}
 }
 
 func (c *Controller) Start(ctx context.Context) {
@@ -1383,8 +1388,10 @@ func appliedGlobalFromSpec(spec routerapi.BGPRouterSpec, router *routerapi.Route
 		Families:         []string{"ipv4-unicast"},
 		UseMultiplePaths: true,
 		ImportPolicy: bgpdaemon.AppliedImportPolicy{
-			AllowedPrefixes: cleanStrings(spec.ImportPolicy.AllowedPrefixes),
-			NextHopRewrite:  importNextHopRewrite(spec.ImportPolicy),
+			AllowedPrefixes:        cleanStrings(spec.ImportPolicy.AllowedPrefixes),
+			AllowedPrefixLengthMin: spec.ImportPolicy.AllowedPrefixLengthMin,
+			AllowedPrefixLengthMax: spec.ImportPolicy.AllowedPrefixLengthMax,
+			NextHopRewrite:         importNextHopRewrite(spec.ImportPolicy),
 		},
 	}
 	for _, family := range bgpFamiliesForRouter(router) {
@@ -1411,8 +1418,10 @@ func appliedPeer(peer desiredPeer) bgpdaemon.AppliedPeer {
 		ConvergenceProfile:      peer.ConvergenceProfile,
 		ImportPolicyName:        peer.ImportPolicyName,
 		ImportPolicy: bgpdaemon.AppliedImportPolicy{
-			AllowedPrefixes: cleanStrings(peer.ImportPolicy.AllowedPrefixes),
-			NextHopRewrite:  importNextHopRewrite(peer.ImportPolicy),
+			AllowedPrefixes:        cleanStrings(peer.ImportPolicy.AllowedPrefixes),
+			AllowedPrefixLengthMin: peer.ImportPolicy.AllowedPrefixLengthMin,
+			AllowedPrefixLengthMax: peer.ImportPolicy.AllowedPrefixLengthMax,
+			NextHopRewrite:         importNextHopRewrite(peer.ImportPolicy),
 		},
 		ExportPolicyName: peer.ExportPolicyName,
 		ExportPolicy: bgpdaemon.AppliedExportPolicy{
@@ -2057,14 +2066,20 @@ func stringSliceContains(values []string, want string) bool {
 	return false
 }
 
-func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []netip.Prefix, desired map[string]desiredPeer) (bgpstate.State, []FIBRoute, map[string]string, error) {
+func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []allowedImportPrefix, desired map[string]desiredPeer) (bgpstate.State, []FIBRoute, map[string]string, error) {
 	var state bgpstate.State
 	var routes []FIBRoute
 	livenessMarkers := map[string]string{}
 	fibNextHopRewritePeers := peerAddressFIBRewritePeers(desired)
 	fibPolicy := mobilityfib.NewSnapshot(c.Router, c.Store)
+	claimAdmission := c.samDynamicClaimAdmission()
+	admissionTracker := newDynamicRouteAdmissionTracker(claimAdmission)
+	var dynamicPeers []dynamicPeerObservation
 	if err := c.Server.ListPeer(ctx, &gobgpapi.ListPeerRequest{EnableAdvertised: true}, func(peer *gobgpapi.Peer) {
 		state.Peers = append(state.Peers, statePeer(peer))
+		if observation, ok := dynamicPeerObservationFromPeer(peer, claimAdmission); ok {
+			dynamicPeers = append(dynamicPeers, observation)
+		}
 	}); err != nil {
 		return bgpstate.State{}, nil, nil, err
 	}
@@ -2072,7 +2087,13 @@ func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []n
 		err := c.Server.ListPath(ctx, &gobgpapi.ListPathRequest{TableType: gobgpapi.TableType_GLOBAL, Family: family}, func(dst *gobgpapi.Destination) {
 			state.Prefixes = append(state.Prefixes, statePrefixes(dst)...)
 			mergeStringMap(livenessMarkers, mobilityLivenessMarkersFromDestination(dst))
-			routes = append(routes, fibRoutesFromDestination(dst, allowedImportPrefixes, fibNextHopRewritePeers, fibPolicy.AdmitBGPPath)...)
+			routes = append(routes, fibRoutesFromDestination(dst, allowedImportPrefixes, fibNextHopRewritePeers, func(prefix netip.Prefix, nextHop string, communities []string) bool {
+				if !fibPolicy.AdmitBGPPath(prefix, communities) {
+					admissionTracker.Reject(nextHop, prefix, "mobility-fib-policy")
+					return false
+				}
+				return admissionTracker.Admit(nextHop, prefix)
+			})...)
 		})
 		if err != nil {
 			return bgpstate.State{}, nil, nil, err
@@ -2084,6 +2105,14 @@ func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []n
 	if truncated {
 		limited.Prefixes = append(limited.Prefixes, bgpstate.Prefix{Prefix: "truncated", SelectionReason: "prefix limit reached"})
 	}
+	sort.Slice(dynamicPeers, func(i, j int) bool {
+		if dynamicPeers[i].PeerGroup != dynamicPeers[j].PeerGroup {
+			return dynamicPeers[i].PeerGroup < dynamicPeers[j].PeerGroup
+		}
+		return dynamicPeers[i].RemoteAddress < dynamicPeers[j].RemoteAddress
+	})
+	c.lastDynamicPeers = dynamicPeers
+	c.lastDynamicAdmission = admissionTracker.Summary()
 	return bgpstate.Normalize(limited), routes, livenessMarkers, nil
 }
 
@@ -2179,6 +2208,40 @@ func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPR
 				"observedAt":       now,
 			}
 			if err := c.Store.SaveObjectStatus(routerapi.NetAPIVersion, "BGPPeer", resource.Metadata.Name, status); err != nil {
+				return err
+			}
+		case "BGPDynamicPeer":
+			spec, err := resource.BGPDynamicPeerSpec()
+			if err != nil {
+				return err
+			}
+			groupName := "routerd-dynamic-" + sanitizeBGPPolicyName(resource.Metadata.Name)
+			sourcePrefixes := cleanStrings(spec.Listen.SourcePrefixes)
+			peerStatuses := dynamicPeerStatusMaps(groupName, c.lastDynamicPeers, c.lastDynamicAdmission)
+			accepted, rejected := dynamicPeerAdmissionTotals(peerStatuses)
+			status := map[string]any{
+				"phase":                "Ready",
+				"backend":              "gobgp",
+				"applyWith":            "routerd-bgp gRPC API",
+				"daemon":               c.daemonSpec().Name,
+				"daemonSocket":         c.daemonSpec().SocketPath,
+				"peerGroup":            groupName,
+				"sourcePrefixes":       sourcePrefixes,
+				"sourcePrefixCount":    len(sourcePrefixes),
+				"discoveredPeers":      peerStatuses,
+				"discoveredPeerCount":  len(peerStatuses),
+				"acceptedRouteCount":   accepted,
+				"rejectedRouteCount":   rejected,
+				"rejectedRouteSummary": c.lastDynamicAdmission.ReasonCounts,
+				"observedAt":           now,
+				"conditions": []map[string]any{{
+					"type":    "Observed",
+					"status":  "True",
+					"reason":  "GoBGPDynamicPeerStatus",
+					"message": "Route counters are routerd-side admission/FIB observation counters; GoBGP may not expose exact rejected import-policy counters.",
+				}},
+			}
+			if err := c.Store.SaveObjectStatus(routerapi.NetAPIVersion, "BGPDynamicPeer", resource.Metadata.Name, status); err != nil {
 				return err
 			}
 		}
@@ -2615,7 +2678,13 @@ func statePrefixes(dst *gobgpapi.Destination) []bgpstate.Prefix {
 	return out
 }
 
-func fibRoutesFromStatePrefixes(prefixes []bgpstate.Prefix, allowed []netip.Prefix, admit func(netip.Prefix, []string) bool) []FIBRoute {
+type allowedImportPrefix struct {
+	Prefix netip.Prefix
+	Min    int
+	Max    int
+}
+
+func fibRoutesFromStatePrefixes(prefixes []bgpstate.Prefix, allowed []allowedImportPrefix, admit func(netip.Prefix, string, []string) bool) []FIBRoute {
 	type stateRoute struct {
 		nextHops        map[string]bool
 		retainOnMissing bool
@@ -2637,7 +2706,7 @@ func fibRoutesFromStatePrefixes(prefixes []bgpstate.Prefix, allowed []netip.Pref
 		if len(allowed) > 0 && !prefixAllowed(parsed, allowed) {
 			continue
 		}
-		if admit != nil && !admit(parsed, prefix.Communities) {
+		if admit != nil && !admit(parsed, nextHop, prefix.Communities) {
 			continue
 		}
 		key := parsed.String()
@@ -2668,7 +2737,7 @@ type bgpPathRank struct {
 	MED       uint32
 }
 
-func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix, peerAddressRewrite map[string]bool, admit func(netip.Prefix, []string) bool) []FIBRoute {
+func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []allowedImportPrefix, peerAddressRewrite map[string]bool, admit func(netip.Prefix, string, []string) bool) []FIBRoute {
 	prefix := normalizeRoutePrefix(dst.GetPrefix())
 	var candidates []struct {
 		nextHop string
@@ -2694,12 +2763,12 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix,
 		if len(allowed) > 0 && !prefixAllowed(parsed, allowed) {
 			continue
 		}
-		communities := pathCommunities(path)
-		if admit != nil && !admit(parsed, communities) {
-			continue
-		}
 		nextHop := strings.TrimSpace(pathFIBNextHop(path, peerAddressRewrite))
 		if nextHop == "" || nextHop == "0.0.0.0" || nextHop == "::" {
+			continue
+		}
+		communities := pathCommunities(path)
+		if admit != nil && !admit(parsed, nextHop, communities) {
 			continue
 		}
 		candidates = append(candidates, struct {
@@ -3043,49 +3112,72 @@ func fibUnsupportedCount(result FIBSyncResult) int {
 	return len(result.Unsupported)
 }
 
-func importAllowedPrefixes(spec routerapi.BGPRouterSpec, peers map[string]desiredPeer) []netip.Prefix {
-	var out []netip.Prefix
-	values := append([]string{}, spec.ImportPolicy.AllowedPrefixes...)
+func importAllowedPrefixes(spec routerapi.BGPRouterSpec, peers map[string]desiredPeer) []allowedImportPrefix {
+	out := importAllowedPrefixesFromPolicy(spec.ImportPolicy)
 	for _, peer := range peers {
-		values = append(values, peer.ImportPolicy.AllowedPrefixes...)
-	}
-	for _, prefix := range cleanStrings(values) {
-		if parsed, err := netip.ParsePrefix(strings.TrimSpace(prefix)); err == nil {
-			out = append(out, parsed.Masked())
-		}
+		out = append(out, importAllowedPrefixesFromPolicy(peer.ImportPolicy)...)
 	}
 	return out
 }
 
-func importAllowedPrefixesFromApplied(applied bgpdaemon.AppliedConfig) []netip.Prefix {
-	var out []netip.Prefix
-	values := append([]string{}, applied.Global.ImportPolicy.AllowedPrefixes...)
+func importAllowedPrefixesFromApplied(applied bgpdaemon.AppliedConfig) []allowedImportPrefix {
+	var out []allowedImportPrefix
+	out = append(out, importAllowedPrefixesFromAppliedPolicy(applied.Global.ImportPolicy)...)
 	for _, peer := range applied.Peers {
-		values = append(values, peer.ImportPolicy.AllowedPrefixes...)
-	}
-	for _, prefix := range cleanStrings(values) {
-		if parsed, err := netip.ParsePrefix(strings.TrimSpace(prefix)); err == nil {
-			out = append(out, parsed.Masked())
-		}
+		out = append(out, importAllowedPrefixesFromAppliedPolicy(peer.ImportPolicy)...)
 	}
 	return out
 }
 
-func importAllowedPrefixesFromAppliedAndDynamic(applied bgpdaemon.AppliedConfig, dynamicPeers map[string]desiredDynamicPeer) []netip.Prefix {
-	values := []string{}
-	for _, prefix := range importAllowedPrefixesFromApplied(applied) {
-		values = append(values, prefix.String())
-	}
+func importAllowedPrefixesFromAppliedAndDynamic(applied bgpdaemon.AppliedConfig, dynamicPeers map[string]desiredDynamicPeer) []allowedImportPrefix {
+	out := importAllowedPrefixesFromApplied(applied)
 	for _, peer := range dynamicPeers {
-		values = append(values, peer.ImportPolicy.AllowedPrefixes...)
-	}
-	var out []netip.Prefix
-	for _, prefix := range cleanStrings(values) {
-		if parsed, err := netip.ParsePrefix(strings.TrimSpace(prefix)); err == nil {
-			out = append(out, parsed.Masked())
-		}
+		out = append(out, importAllowedPrefixesFromPolicy(peer.ImportPolicy)...)
 	}
 	return out
+}
+
+func importAllowedPrefixesFromPolicy(spec routerapi.BGPImportPolicySpec) []allowedImportPrefix {
+	var out []allowedImportPrefix
+	for _, value := range cleanStrings(spec.AllowedPrefixes) {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+		if err != nil {
+			continue
+		}
+		prefix = prefix.Masked()
+		minLen, maxLen := importPolicyLengthBounds(spec, prefix)
+		out = append(out, allowedImportPrefix{Prefix: prefix, Min: minLen, Max: maxLen})
+	}
+	return out
+}
+
+func importAllowedPrefixesFromAppliedPolicy(spec bgpdaemon.AppliedImportPolicy) []allowedImportPrefix {
+	var out []allowedImportPrefix
+	for _, value := range cleanStrings(spec.AllowedPrefixes) {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+		if err != nil {
+			continue
+		}
+		prefix = prefix.Masked()
+		minLen, maxLen := importPolicyLengthBounds(routerapi.BGPImportPolicySpec{
+			AllowedPrefixLengthMin: spec.AllowedPrefixLengthMin,
+			AllowedPrefixLengthMax: spec.AllowedPrefixLengthMax,
+		}, prefix)
+		out = append(out, allowedImportPrefix{Prefix: prefix, Min: minLen, Max: maxLen})
+	}
+	return out
+}
+
+func importPolicyLengthBounds(spec routerapi.BGPImportPolicySpec, prefix netip.Prefix) (int, int) {
+	minLen := prefix.Bits()
+	maxLen := int(bgpPrefixMaxLength(prefix))
+	if spec.AllowedPrefixLengthMin > 0 {
+		minLen = spec.AllowedPrefixLengthMin
+	}
+	if spec.AllowedPrefixLengthMax > 0 {
+		maxLen = spec.AllowedPrefixLengthMax
+	}
+	return minLen, maxLen
 }
 
 func importNextHopRewrite(spec routerapi.BGPImportPolicySpec) string {
@@ -3099,8 +3191,10 @@ func importNextHopRewrite(spec routerapi.BGPImportPolicySpec) string {
 
 func importPolicyKey(spec routerapi.BGPImportPolicySpec) string {
 	normalized := routerapi.BGPImportPolicySpec{
-		AllowedPrefixes: cleanStrings(spec.AllowedPrefixes),
-		NextHopRewrite:  importNextHopRewrite(spec),
+		AllowedPrefixes:        cleanStrings(spec.AllowedPrefixes),
+		AllowedPrefixLengthMin: spec.AllowedPrefixLengthMin,
+		AllowedPrefixLengthMax: spec.AllowedPrefixLengthMax,
+		NextHopRewrite:         importNextHopRewrite(spec),
 	}
 	data, err := json.Marshal(normalized)
 	if err != nil {
@@ -3115,6 +3209,8 @@ func bgpPoliciesKey(importSpec routerapi.BGPImportPolicySpec, peers map[string]d
 		Address               string   `json:"address"`
 		ImportPolicyName      string   `json:"importPolicyName,omitempty"`
 		ImportAllowedPrefixes []string `json:"importAllowedPrefixes,omitempty"`
+		ImportLengthMin       int      `json:"importLengthMin,omitempty"`
+		ImportLengthMax       int      `json:"importLengthMax,omitempty"`
 		ImportNextHopRewrite  string   `json:"importNextHopRewrite,omitempty"`
 		ExportPolicyName      string   `json:"exportPolicyName,omitempty"`
 		ExportAllowedPrefixes []string `json:"exportAllowedPrefixes,omitempty"`
@@ -3124,6 +3220,8 @@ func bgpPoliciesKey(importSpec routerapi.BGPImportPolicySpec, peers map[string]d
 		Prefixes              []string `json:"prefixes,omitempty"`
 		ImportPolicyName      string   `json:"importPolicyName,omitempty"`
 		ImportAllowedPrefixes []string `json:"importAllowedPrefixes,omitempty"`
+		ImportLengthMin       int      `json:"importLengthMin,omitempty"`
+		ImportLengthMax       int      `json:"importLengthMax,omitempty"`
 		ImportNextHopRewrite  string   `json:"importNextHopRewrite,omitempty"`
 		ExportPolicyName      string   `json:"exportPolicyName,omitempty"`
 		ExportAllowedPrefixes []string `json:"exportAllowedPrefixes,omitempty"`
@@ -3134,8 +3232,10 @@ func bgpPoliciesKey(importSpec routerapi.BGPImportPolicySpec, peers map[string]d
 		DynamicPeers []dynamicPeerPolicyKey        `json:"dynamicPeers,omitempty"`
 	}{
 		Import: routerapi.BGPImportPolicySpec{
-			AllowedPrefixes: cleanStrings(importSpec.AllowedPrefixes),
-			NextHopRewrite:  importNextHopRewrite(importSpec),
+			AllowedPrefixes:        cleanStrings(importSpec.AllowedPrefixes),
+			AllowedPrefixLengthMin: importSpec.AllowedPrefixLengthMin,
+			AllowedPrefixLengthMax: importSpec.AllowedPrefixLengthMax,
+			NextHopRewrite:         importNextHopRewrite(importSpec),
 		},
 	}
 	for _, peer := range sortedDesiredPeers(peers) {
@@ -3148,6 +3248,8 @@ func bgpPoliciesKey(importSpec routerapi.BGPImportPolicySpec, peers map[string]d
 			Address:               strings.TrimSpace(peer.Address),
 			ImportPolicyName:      strings.TrimSpace(peer.ImportPolicyName),
 			ImportAllowedPrefixes: importPrefixes,
+			ImportLengthMin:       peer.ImportPolicy.AllowedPrefixLengthMin,
+			ImportLengthMax:       peer.ImportPolicy.AllowedPrefixLengthMax,
 			ImportNextHopRewrite:  importNextHopRewrite(peer.ImportPolicy),
 			ExportPolicyName:      strings.TrimSpace(peer.ExportPolicyName),
 			ExportAllowedPrefixes: exportPrefixes,
@@ -3161,6 +3263,8 @@ func bgpPoliciesKey(importSpec routerapi.BGPImportPolicySpec, peers map[string]d
 			Prefixes:              append([]string(nil), peer.Prefixes...),
 			ImportPolicyName:      strings.TrimSpace(peer.ImportPolicyName),
 			ImportAllowedPrefixes: importPrefixes,
+			ImportLengthMin:       peer.ImportPolicy.AllowedPrefixLengthMin,
+			ImportLengthMax:       peer.ImportPolicy.AllowedPrefixLengthMax,
 			ImportNextHopRewrite:  importNextHopRewrite(peer.ImportPolicy),
 			ExportPolicyName:      strings.TrimSpace(peer.ExportPolicyName),
 			ExportAllowedPrefixes: exportPrefixes,
@@ -3201,7 +3305,7 @@ func peerImportPolicyAssignment(policyName string) *gobgpapi.PolicyAssignment {
 }
 
 func importPolicyPrefixes(spec routerapi.BGPImportPolicySpec) []*gobgpapi.Prefix {
-	return bgpPolicyPrefixes(spec.AllowedPrefixes)
+	return bgpImportPolicyPrefixes(spec)
 }
 
 func exportPolicyPrefixes(spec routerapi.BGPExportPolicySpec) []*gobgpapi.Prefix {
@@ -3221,6 +3325,24 @@ func bgpPolicyPrefixes(values []string) []*gobgpapi.Prefix {
 			IpPrefix:      prefix.String(),
 			MaskLengthMin: bits,
 			MaskLengthMax: bgpPrefixMaxLength(prefix),
+		})
+	}
+	return out
+}
+
+func bgpImportPolicyPrefixes(spec routerapi.BGPImportPolicySpec) []*gobgpapi.Prefix {
+	var out []*gobgpapi.Prefix
+	for _, value := range spec.AllowedPrefixes {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+		if err != nil {
+			continue
+		}
+		prefix = prefix.Masked()
+		minLen, maxLen := importPolicyLengthBounds(spec, prefix)
+		out = append(out, &gobgpapi.Prefix{
+			IpPrefix:      prefix.String(),
+			MaskLengthMin: uint32(minLen),
+			MaskLengthMax: uint32(maxLen),
 		})
 	}
 	return out
@@ -3328,16 +3450,375 @@ func installedNextHops(routes []FIBRoute, result FIBSyncResult) map[string][]str
 	return out
 }
 
-func prefixAllowed(candidate netip.Prefix, allowed []netip.Prefix) bool {
+func prefixAllowed(candidate netip.Prefix, allowed []allowedImportPrefix) bool {
 	for _, parent := range allowed {
-		if parent.Addr().Is4() != candidate.Addr().Is4() {
+		if parent.Prefix.Addr().Is4() != candidate.Addr().Is4() {
 			continue
 		}
-		if parent.Contains(candidate.Addr()) && candidate.Bits() >= parent.Bits() {
+		if parent.Prefix.Contains(candidate.Addr()) && candidate.Bits() >= parent.Min && candidate.Bits() <= parent.Max {
 			return true
 		}
 	}
 	return false
+}
+
+type samDynamicClaimAdmission struct {
+	byTunnelAddress map[string]samDynamicClaim
+	claimedPrefixes map[string]samDynamicClaim
+	poolPrefixes    []netip.Prefix
+}
+
+type samDynamicClaim struct {
+	ClaimRef      string
+	LeafID        string
+	TunnelAddress string
+	BGPASN        uint32
+	BGPRouterID   string
+	Owned         map[string]bool
+}
+
+func (c *Controller) samDynamicClaimAdmission() samDynamicClaimAdmission {
+	out := samDynamicClaimAdmission{
+		byTunnelAddress: map[string]samDynamicClaim{},
+		claimedPrefixes: map[string]samDynamicClaim{},
+	}
+	if c.Router == nil {
+		return out
+	}
+	policies := map[string]routerapi.SAMEnrollmentPolicySpec{}
+	poolPrefixes := map[string]netip.Prefix{}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion == routerapi.MobilityAPIVersion && resource.Kind == "SAMEnrollmentPolicy" {
+			spec, err := resource.SAMEnrollmentPolicySpec()
+			if err == nil {
+				policies[resource.Metadata.Name] = spec
+			}
+		}
+		if resource.APIVersion == routerapi.MobilityAPIVersion && resource.Kind == "MobilityPool" {
+			spec, err := resource.MobilityPoolSpec()
+			if err != nil {
+				continue
+			}
+			prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+			if err == nil {
+				poolPrefixes[resource.Metadata.Name] = prefix.Masked()
+			}
+		}
+	}
+	for _, policy := range policies {
+		for _, ref := range policy.MobilityPoolRefs {
+			kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
+			if ok && kind == "MobilityPool" {
+				if prefix, exists := poolPrefixes[name]; exists {
+					out.poolPrefixes = append(out.poolPrefixes, prefix)
+				}
+			}
+		}
+	}
+	out.poolPrefixes = uniquePrefixes(out.poolPrefixes)
+	now := time.Now().UTC()
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != routerapi.MobilityAPIVersion || resource.Kind != "SAMEnrollmentClaim" {
+			continue
+		}
+		claim, err := resource.SAMEnrollmentClaimSpec()
+		if err != nil || claim.Revoked {
+			continue
+		}
+		_, policyName, ok := strings.Cut(strings.TrimSpace(claim.PolicyRef), "/")
+		if !ok {
+			continue
+		}
+		policy, exists := policies[policyName]
+		if !exists || samEnrollmentClaimExpiredForBGP(policy, claim, now) {
+			continue
+		}
+		tunnel, err := parseSAMEnrollmentClaimPrefix(claim.TunnelAddress)
+		if err != nil || tunnel.Bits() != int(bgpPrefixMaxLength(tunnel)) {
+			continue
+		}
+		entry := samDynamicClaim{
+			ClaimRef:      "SAMEnrollmentClaim/" + strings.TrimSpace(resource.Metadata.Name),
+			LeafID:        strings.TrimSpace(claim.LeafID),
+			TunnelAddress: tunnel.Addr().String(),
+			BGPASN:        claim.BGP.ASN,
+			BGPRouterID:   strings.TrimSpace(claim.BGP.RouterID),
+			Owned:         map[string]bool{},
+		}
+		for _, owned := range claim.Mobility.OwnedAddresses {
+			prefix, err := parseSAMEnrollmentClaimPrefix(owned)
+			if err != nil || prefix.Bits() != int(bgpPrefixMaxLength(prefix)) {
+				continue
+			}
+			key := prefix.String()
+			entry.Owned[key] = true
+			out.claimedPrefixes[key] = entry
+		}
+		if len(entry.Owned) > 0 {
+			out.byTunnelAddress[entry.TunnelAddress] = entry
+		}
+	}
+	return out
+}
+
+func (a samDynamicClaimAdmission) Admit(nextHop string, prefix netip.Prefix) (bool, string) {
+	if len(a.byTunnelAddress) == 0 && len(a.claimedPrefixes) == 0 && len(a.poolPrefixes) == 0 {
+		return true, ""
+	}
+	nextHop = normalizeAddressString(nextHop)
+	prefix = prefix.Masked()
+	if !a.prefixInAdmissionPool(prefix) && a.claimedPrefixes[prefix.String()].ClaimRef == "" {
+		return true, ""
+	}
+	if prefix.Bits() != int(bgpPrefixMaxLength(prefix)) {
+		return false, "not-exact-host-prefix"
+	}
+	claim, ok := a.byTunnelAddress[nextHop]
+	if !ok {
+		return false, "no-accepted-claim-for-next-hop"
+	}
+	if !claim.Owned[prefix.String()] {
+		return false, "prefix-not-owned-by-claim"
+	}
+	return true, ""
+}
+
+func (a samDynamicClaimAdmission) ClaimForNextHop(nextHop string) (samDynamicClaim, bool) {
+	claim, ok := a.byTunnelAddress[normalizeAddressString(nextHop)]
+	return claim, ok
+}
+
+func (a samDynamicClaimAdmission) prefixInAdmissionPool(prefix netip.Prefix) bool {
+	for _, pool := range a.poolPrefixes {
+		if pool.Addr().Is4() == prefix.Addr().Is4() && pool.Contains(prefix.Addr()) && prefix.Bits() >= pool.Bits() {
+			return true
+		}
+	}
+	return false
+}
+
+type dynamicRouteAdmissionTracker struct {
+	claimAdmission samDynamicClaimAdmission
+	accepted       map[string]int
+	rejected       map[string]int
+	reasons        map[string]int
+}
+
+type dynamicRouteAdmissionSummary struct {
+	AcceptedByNextHop map[string]int
+	RejectedByNextHop map[string]int
+	ReasonCounts      map[string]int
+}
+
+func newDynamicRouteAdmissionTracker(claimAdmission samDynamicClaimAdmission) *dynamicRouteAdmissionTracker {
+	return &dynamicRouteAdmissionTracker{
+		claimAdmission: claimAdmission,
+		accepted:       map[string]int{},
+		rejected:       map[string]int{},
+		reasons:        map[string]int{},
+	}
+}
+
+func (t *dynamicRouteAdmissionTracker) Admit(nextHop string, prefix netip.Prefix) bool {
+	key := normalizeAddressString(nextHop)
+	ok, reason := t.claimAdmission.Admit(key, prefix)
+	if ok {
+		t.accepted[key]++
+		return true
+	}
+	t.reject(key, reason)
+	return false
+}
+
+func (t *dynamicRouteAdmissionTracker) Reject(nextHop string, _ netip.Prefix, reason string) {
+	t.reject(normalizeAddressString(nextHop), reason)
+}
+
+func (t *dynamicRouteAdmissionTracker) reject(nextHop, reason string) {
+	if reason == "" {
+		reason = "rejected"
+	}
+	t.rejected[nextHop]++
+	t.reasons[reason]++
+}
+
+func (t *dynamicRouteAdmissionTracker) Summary() dynamicRouteAdmissionSummary {
+	return dynamicRouteAdmissionSummary{
+		AcceptedByNextHop: copyStringIntMap(t.accepted),
+		RejectedByNextHop: copyStringIntMap(t.rejected),
+		ReasonCounts:      copyStringIntMap(t.reasons),
+	}
+}
+
+type dynamicPeerObservation struct {
+	RemoteAddress    string
+	PeerGroup        string
+	ASN              uint32
+	State            string
+	Established      bool
+	ReceivedPrefixes int
+	AcceptedPrefixes int
+	EnrollmentClaim  string
+	EnrollmentLeafID string
+	EnrollmentBGPRID string
+	EnrollmentTunnel string
+}
+
+func dynamicPeerObservationFromPeer(peer *gobgpapi.Peer, admission samDynamicClaimAdmission) (dynamicPeerObservation, bool) {
+	group := strings.TrimSpace(peer.GetConf().GetPeerGroup())
+	if !strings.HasPrefix(group, "routerd-dynamic-") {
+		return dynamicPeerObservation{}, false
+	}
+	state := peer.GetState()
+	address := normalizeAddressString(firstNonEmpty(peerAddress(peer), state.GetNeighborAddress()))
+	observation := dynamicPeerObservation{
+		RemoteAddress: address,
+		PeerGroup:     group,
+		ASN:           firstNonZero(state.GetPeerAsn(), peer.GetConf().GetPeerAsn()),
+		State:         state.GetSessionState().String(),
+		Established:   state.GetSessionState() == gobgpapi.PeerState_ESTABLISHED,
+	}
+	for _, af := range peer.GetAfiSafis() {
+		observation.AcceptedPrefixes += int(af.GetState().GetAccepted())
+		observation.ReceivedPrefixes += int(af.GetState().GetReceived())
+	}
+	if claim, ok := admission.ClaimForNextHop(address); ok {
+		observation.EnrollmentClaim = claim.ClaimRef
+		observation.EnrollmentLeafID = claim.LeafID
+		observation.EnrollmentBGPRID = claim.BGPRouterID
+		observation.EnrollmentTunnel = claim.TunnelAddress
+	}
+	return observation, true
+}
+
+func dynamicPeerStatusMaps(groupName string, observations []dynamicPeerObservation, summary dynamicRouteAdmissionSummary) []map[string]any {
+	var out []map[string]any
+	for _, peer := range observations {
+		if peer.PeerGroup != groupName {
+			continue
+		}
+		status := map[string]any{
+			"remoteAddress":    peer.RemoteAddress,
+			"peerGroup":        peer.PeerGroup,
+			"asn":              peer.ASN,
+			"state":            peer.State,
+			"established":      peer.Established,
+			"receivedPrefixes": peer.ReceivedPrefixes,
+			"acceptedPrefixes": peer.AcceptedPrefixes,
+			"acceptedRoutes":   summary.AcceptedByNextHop[peer.RemoteAddress],
+			"rejectedRoutes":   summary.RejectedByNextHop[peer.RemoteAddress],
+		}
+		if peer.EnrollmentClaim != "" {
+			status["enrollmentClaimRef"] = peer.EnrollmentClaim
+			status["leafID"] = peer.EnrollmentLeafID
+			status["bgpRouterID"] = peer.EnrollmentBGPRID
+			status["tunnelAddress"] = peer.EnrollmentTunnel
+		}
+		out = append(out, status)
+	}
+	return out
+}
+
+func dynamicPeerAdmissionTotals(peerStatuses []map[string]any) (int, int) {
+	accepted, rejected := 0, 0
+	for _, status := range peerStatuses {
+		accepted += statusInt(status["acceptedRoutes"])
+		rejected += statusInt(status["rejectedRoutes"])
+	}
+	return accepted, rejected
+}
+
+func samEnrollmentClaimExpiredForBGP(policy routerapi.SAMEnrollmentPolicySpec, claim routerapi.SAMEnrollmentClaimSpec, now time.Time) bool {
+	if expiresAt, ok := parseBGPEnrollmentTime(claim.ExpiresAt); ok {
+		return !expiresAt.After(now)
+	}
+	ttlText := strings.TrimSpace(policy.TTL)
+	if ttlText == "" {
+		return false
+	}
+	ttl, err := time.ParseDuration(ttlText)
+	if err != nil {
+		return false
+	}
+	joinedAt, ok := parseBGPEnrollmentTime(claim.JoinTimestamp)
+	if !ok {
+		return false
+	}
+	return !joinedAt.Add(ttl).After(now)
+}
+
+func parseBGPEnrollmentTime(value string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return parsed, true
+	}
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return parsed, true
+	}
+	return time.Time{}, false
+}
+
+func parseSAMEnrollmentClaimPrefix(value string) (netip.Prefix, error) {
+	value = strings.TrimSpace(value)
+	if strings.Contains(value, "/") {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return netip.Prefix{}, err
+		}
+		return prefix.Masked(), nil
+	}
+	addr, err := netip.ParseAddr(value)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	if addr.Is4() {
+		return netip.PrefixFrom(addr, 32), nil
+	}
+	return netip.PrefixFrom(addr, 128), nil
+}
+
+func normalizeAddressString(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	addr, err := netip.ParseAddr(value)
+	if err != nil {
+		return value
+	}
+	return addr.String()
+}
+
+func uniquePrefixes(values []netip.Prefix) []netip.Prefix {
+	seen := map[string]bool{}
+	var out []netip.Prefix
+	for _, value := range values {
+		key := value.String()
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, value)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
+	return out
+}
+
+func copyStringIntMap(src map[string]int) map[string]int {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string]int, len(src))
+	for key, value := range src {
+		if key == "" {
+			key = "unknown"
+		}
+		out[key] = value
+	}
+	return out
 }
 
 func pathPrefix(path *gobgpapi.Path) string {
