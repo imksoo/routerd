@@ -298,13 +298,90 @@ Do not start the cloud/PVE full topology test until the user reviews:
 - which transport profile is being tested;
 - what remains untested.
 
-Full topology pass criteria should include:
+Concrete host roles for the first reviewed topology:
+
+| Host role | Config | Purpose |
+| --- | --- | --- |
+| rr-a | `examples/cloudedge-dynamic-rr-a-hub.yaml` | First RR admission point. |
+| rr-b | `examples/cloudedge-dynamic-rr-b-hub.yaml` | Second RR admission point. |
+| leaf-b | `examples/cloudedge-dynamic-leaf-b-fou.yaml` | Primary private-underlay non-WG test. |
+| leaf-a | `examples/cloudedge-dynamic-leaf-a-wg.yaml` | Optional encrypted public-underlay test. |
+
+Required live-test artifacts:
+
+- routerd binaries or packages built from this branch, installed on every test
+  host;
+- reviewed configs with example addresses, endpoints, and interface names
+  replaced by the real topology values;
+- shared join token installed on rr-a and rr-b at the `joinTokenFrom` path;
+- real `joinHMAC` values generated with `routerctl mobility enrollment-hmac`
+  after final config edits;
+- firewall/underlay reachability for BGP TCP/179 over the generated tunnel
+  addresses;
+- UDP `5555` permitted between leaf-b and both RRs for the FOU path;
+- for the optional WG path only, leaf-a local WG private key, RR WG public keys,
+  reachable RR WG UDP endpoints, and UDP `51820` permitted;
+- rollback artifacts: previous routerd binary/package, previous config, and
+  service restart commands for each host.
+
+Preflight on each host before enabling the live topology:
+
+```sh
+routerctl validate -f /etc/routerd/routerd.yaml
+routerctl plan -f /etc/routerd/routerd.yaml
+```
+
+On leaf-a and leaf-b, run a local controller materialization check before
+starting live forwarding:
+
+```sh
+routerd serve --sandbox --root /tmp/routerd-sam-preflight \
+  --config /etc/routerd/routerd.yaml \
+  --controllers sam-transport,wireguard \
+  --apply-interval 0
+
+routerctl dynamic list \
+  --state-file /tmp/routerd-sam-preflight/var/lib/routerd/routerd.db -o yaml
+
+routerctl dynamic render \
+  --config /etc/routerd/routerd.yaml \
+  --state-file /tmp/routerd-sam-preflight/var/lib/routerd/routerd.db -o yaml
+```
+
+Expected preflight state:
+
+- rr-a and rr-b configs contain `BGPDynamicPeer/cloudedge-leaves` and no static
+  `BGPPeer/leaf-*`;
+- leaf-b renders two RR-facing `TunnelInterface` resources with `mode: fou`,
+  `encapSport: 5555`, `encapDport: 5555`, and no WireGuard resources;
+- leaf-a renders two RR-facing `TunnelInterface` resources with `mode: ipip`
+  and the WG controller derives two RR `WireGuardPeer` resources;
+- both leaf configs render two generated `BGPPeer` resources, one for rr-a and
+  one for rr-b.
+
+Full topology pass criteria:
 
 - branch binaries installed on rr-a, rr-b, and leaf;
 - no static RR-side `BGPPeer/leaf-*`;
-- leaf establishes transport toward both RRs;
-- WG full-topology runs open/verify UDP 51820 for leaf-a and both RRs;
-- FOU full-topology runs open/verify UDP 5555 for leaf-b and both RRs;
-- RRs accept BGP sessions through `BGPDynamicPeer`;
-- only authorized MobilityPool `/32` routes are propagated;
-- minimal connectivity over the authorized `/32`.
+- leaf-b establishes FOU transport toward both rr-a and rr-b without any
+  WireGuard peer requirement;
+- if the optional WG test is selected, leaf-a establishes WG plus IPIP transport
+  toward both rr-a and rr-b;
+- both RRs accept BGP sessions through `BGPDynamicPeer/cloudedge-leaves`;
+- each RR learns only the authorized MobilityPool `/32` routes;
+- default routes, underlay/management prefixes, and unauthorized `/32` claims
+  are not accepted;
+- minimal connectivity succeeds over the authorized `/32` between test leaves
+  and RR-side test targets;
+- stopping one RR leaves the leaf connected to the other RR, with the expected
+  route-convergence behavior documented.
+
+Items intentionally not covered unless selected for the first live run:
+
+- every supported transport combination; the first required live run should
+  prioritize leaf-b `fou` plus `encryption:none`, while leaf-a WG remains the
+  optional encrypted path;
+- long-running expiry/revocation behavior beyond local validation/controller
+  tests;
+- RR-to-RR peering behavior when a leaf can reach only one RR;
+- provider action side effects outside the chosen test providers/hosts.
