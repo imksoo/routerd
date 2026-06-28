@@ -30,6 +30,8 @@ func TestSpecsSecretFieldsAreReviewedAndRedacted(t *testing.T) {
 	fields := collectSpecsSecretFields(t)
 
 	expected := map[string]specsSecretField{
+		"BGPDynamicPeerSpec.Password":           {Struct: "BGPDynamicPeerSpec", Field: "Password", JSON: "password", YAML: "password"},
+		"BGPDynamicPeerSpec.PasswordFrom":       {Struct: "BGPDynamicPeerSpec", Field: "PasswordFrom", JSON: "passwordFrom", YAML: "passwordFrom"},
 		"BGPPeerSpec.Password":                  {Struct: "BGPPeerSpec", Field: "Password", JSON: "password", YAML: "password"},
 		"BGPPeerSpec.PasswordFrom":              {Struct: "BGPPeerSpec", Field: "PasswordFrom", JSON: "passwordFrom", YAML: "passwordFrom"},
 		"IPsecConnectionSpec.PreSharedKey":      {Struct: "IPsecConnectionSpec", Field: "PreSharedKey", JSON: "preSharedKey", YAML: "preSharedKey"},

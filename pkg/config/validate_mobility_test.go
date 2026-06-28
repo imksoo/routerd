@@ -219,6 +219,17 @@ func TestValidateSAMTransportProfileAllowsSAMNodeSetPeersFromWithoutPeers(t *tes
 	}
 }
 
+func TestValidateSAMTransportProfileAllowsPublishPeerGroupWithoutPeers(t *testing.T) {
+	spec := validSAMTransportProfileSpec()
+	spec.AddressingMode = "pair-stable"
+	spec.Peers = nil
+	spec.PeersFrom = nil
+	spec.PublishPeerGroup = true
+	if err := Validate(samTransportProfileRouter(spec)); err != nil {
+		t.Fatalf("Validate publish-only SAMTransportProfile: %v", err)
+	}
+}
+
 func TestValidateSAMTransportProfileRejectsInvalidPeersFrom(t *testing.T) {
 	spec := validSAMTransportProfileSpec()
 	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "BGPPeer/rr"}}

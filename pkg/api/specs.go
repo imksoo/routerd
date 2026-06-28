@@ -645,6 +645,28 @@ type BGPPeerSpec struct {
 	When                    ResourceWhenSpec      `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
+// BGPDynamicPeer represents an admission/listen rule for dynamic BGP
+// neighbors. It does not represent a single discovered peer instance and does
+// not carry WireGuard, SAM enrollment, or MobilityPool authorization state.
+type BGPDynamicPeerSpec struct {
+	RouterRef               string                   `yaml:"routerRef" json:"routerRef"`
+	PeerASN                 uint32                   `yaml:"peerASN" json:"peerASN" jsonschema:"minimum=1"`
+	Listen                  BGPDynamicPeerListenSpec `yaml:"listen" json:"listen"`
+	Password                string                   `yaml:"password,omitempty" json:"password,omitempty"`
+	PasswordFrom            SecretValueSourceSpec    `yaml:"passwordFrom,omitempty" json:"passwordFrom,omitempty"`
+	EbgpMultihop            int                      `yaml:"ebgpMultihop,omitempty" json:"ebgpMultihop,omitempty" jsonschema:"minimum=0,maximum=255"`
+	RouteReflectorClient    bool                     `yaml:"routeReflectorClient,omitempty" json:"routeReflectorClient,omitempty"`
+	RouteReflectorClusterID string                   `yaml:"routeReflectorClusterID,omitempty" json:"routeReflectorClusterID,omitempty"`
+	ImportPolicy            BGPImportPolicySpec      `yaml:"importPolicy,omitempty" json:"importPolicy,omitempty"`
+	ExportPolicy            BGPExportPolicySpec      `yaml:"exportPolicy,omitempty" json:"exportPolicy,omitempty"`
+	Timers                  BGPTimersSpec            `yaml:"timers,omitempty" json:"timers,omitempty"`
+	When                    ResourceWhenSpec         `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type BGPDynamicPeerListenSpec struct {
+	SourcePrefixes []string `yaml:"sourcePrefixes" json:"sourcePrefixes"`
+}
+
 // SAMTransportProfile derives the underlay tunnels and BGP peer sessions used
 // by selective-address mobility delivery. Each router declares its stable
 // selfNodeRef explicitly; no hostname or router-id inference is used.
@@ -2494,6 +2516,10 @@ func (r Resource) BGPRouterSpec() (BGPRouterSpec, error) {
 
 func (r Resource) BGPPeerSpec() (BGPPeerSpec, error) {
 	return specAs[BGPPeerSpec](r)
+}
+
+func (r Resource) BGPDynamicPeerSpec() (BGPDynamicPeerSpec, error) {
+	return specAs[BGPDynamicPeerSpec](r)
 }
 
 func (r Resource) SAMPeerGroupSpec() (SAMPeerGroupSpec, error) {

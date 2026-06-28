@@ -94,6 +94,7 @@ func resourceProvidesTable() map[string][]ProvidedFieldSpec {
 
 	return map[string][]ProvidedFieldSpec{
 		"BFD":                             withCommon(s("peer", "Observed or configured peer")),
+		"BGPDynamicPeer":                  withCommon(ss("sourcePrefixes", "Accepted dynamic neighbor source prefixes"), i("sourcePrefixCount", "Configured dynamic neighbor source prefix count"), t("observedAt", "Observation time")),
 		"BGPPeer":                         withCommon(s("address", "Peer address"), s("state", "Peer session state"), i("acceptedPrefixes", "Accepted prefix count"), t("observedAt", "Observation time")),
 		"BGPRouter":                       withCommon(os("peers", "Observed peers"), i("prefixes", "Observed prefix count"), i("establishedPeers", "Established peer count"), i("acceptedPrefixes", "Accepted prefix count"), t("observedAt", "Observation time")),
 		"Bridge":                          withCommon(s("ifname", "Kernel interface name"), ss("members", "Bridge member interfaces")),

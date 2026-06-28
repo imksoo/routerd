@@ -179,6 +179,7 @@ var declarations = []Declaration{
 	declare(api.NetAPIVersion, "VirtualAddress", ClassManagedHost, "VRRP/CARP virtual address", resourceLifecycle()),
 	declare(api.NetAPIVersion, "BGPRouter", ClassController, "GoBGP router instance", resourceLifecycle()),
 	declare(api.NetAPIVersion, "BGPPeer", ClassController, "GoBGP peer", resourceLifecycle()),
+	declare(api.NetAPIVersion, "BGPDynamicPeer", ClassController, "GoBGP dynamic neighbor accept range", resourceLifecycle()),
 	declare(api.NetAPIVersion, "BFD", ClassController, "BFD session configuration", resourceLifecycle()),
 	declare(api.NetAPIVersion, "DHCPv4Client", ClassManagedHost, "DHCPv4 client service", resourceLifecycle()),
 	declare(api.NetAPIVersion, "ClusterNetworkRoute", ClassRendererInput, "expands cluster CIDRs into route intents", noHostTeardown("renderer input expands into route resources")),

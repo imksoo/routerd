@@ -200,6 +200,7 @@ resolver addresses for DoH or DoT endpoint name resolution.
 | `ClusterNetworkRoute` | Expands Kubernetes Pod and Service CIDRs into static IPv4 routes through worker next hops. |
 | `BGPRouter` | Declares a local BGP router. The current backend is a long-lived `routerd-bgp` GoBGP daemon with default-deny import policy. |
 | `BGPPeer` | Declares GoBGP-managed BGP peers for a `BGPRouter`, for example Kubernetes BGP speakers. |
+| `BGPDynamicPeer` | Declares a bounded GoBGP dynamic-neighbor accept range for hub/RR fabrics. It lets an RR accept passive BGP sessions from leaf source prefixes without pre-declaring every leaf as a `BGPPeer`. |
 | `BFD` | Declares one BFD session intent. On Linux, routerd renders FRR `bfdd` configuration and records observed BFD state without deconfiguring referenced GoBGP peers. |
 | `NAT44Rule` | Performs IPv4 NAPT in the nftables `routerd_nat` table. |
 | `NAT44SessionSync` | Mirrors selected NAT44 conntrack sessions from an active node to standby nodes over SSH. |
@@ -315,7 +316,8 @@ addresses and restores the parsed tuple and conntrack mark on standby targets.
 It is intended for active-to-standby HA sync and is usually gated with
 `spec.when`.
 
-`BGPRouter` and `BGPPeer` currently use the long-lived `routerd-bgp` daemon.
+`BGPRouter`, `BGPPeer`, and `BGPDynamicPeer` currently use the long-lived
+`routerd-bgp` daemon.
 routerd maps the resource specs directly to typed GoBGP API objects over a
 local gRPC Unix socket and observes status through `ListPeer` and `ListPath`;
 it does not render FRR text config, run `frr-reload.py`, parse `vtysh`, or use
@@ -334,6 +336,14 @@ peer-address ECMP even when the advertised next-hop is a downstream speaker.
 Set `nextHopRewrite: unchanged` only when the advertised next-hop is meant to
 be installed directly. Equal best paths for the same prefix are installed as
 ECMP next hops.
+
+`BGPDynamicPeer` is an RR-side BGP acceptor for GoBGP dynamic neighbors. Its
+`spec.listen.sourcePrefixes` controls which source addresses may open BGP TCP
+sessions. It is not route admission; accepted NLRI is still constrained by
+`spec.importPolicy.allowedPrefixes`, and exported routes by
+`spec.exportPolicy.allowedPrefixes`. `BGPDynamicPeer` does not carry WireGuard
+public keys, allowed IPs, SAM tunnel addresses, leaf identity, TTL/revocation,
+or MobilityPool ownership authorization.
 
 `BGPRouter.spec.convergenceProfile: fast` is intended for Kubernetes/edge
 routers that prefer quick convergence over graceful restart stale-path
@@ -580,6 +590,7 @@ and fields outside the target kind's `provides` set.
 | Kind | Provides |
 | --- | --- |
 | `BFD` | `peer` (string), `phase` (string) |
+| `BGPDynamicPeer` | `observedAt` (timestamp), `phase` (string), `sourcePrefixCount` (int), `sourcePrefixes` (stringList) |
 | `BGPPeer` | `acceptedPrefixes` (int), `address` (string), `observedAt` (timestamp), `phase` (string), `state` (string) |
 | `BGPRouter` | `acceptedPrefixes` (int), `establishedPeers` (int), `observedAt` (timestamp), `peers` (objectList), `phase` (string), `prefixes` (int) |
 | `Bridge` | `ifname` (string), `members` (stringList), `phase` (string) |

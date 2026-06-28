@@ -36,6 +36,7 @@ func ConfigResourceKinds() []ResourceKindSchema {
 		{NetAPIVersion, "VirtualAddress", VirtualAddressSpec{}},
 		{NetAPIVersion, "BGPRouter", BGPRouterSpec{}},
 		{NetAPIVersion, "BGPPeer", BGPPeerSpec{}},
+		{NetAPIVersion, "BGPDynamicPeer", BGPDynamicPeerSpec{}},
 		{NetAPIVersion, "BFD", BFDSpec{}},
 		{NetAPIVersion, "DHCPv4Client", DHCPv4ClientSpec{}},
 		{NetAPIVersion, "ClusterNetworkRoute", ClusterNetworkRouteSpec{}},

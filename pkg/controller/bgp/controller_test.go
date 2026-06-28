@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/netip"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -91,6 +92,8 @@ type fakeServer struct {
 
 	global           *gobgpapi.Global
 	peers            map[string]*gobgpapi.Peer
+	peerGroups       map[string]*gobgpapi.PeerGroup
+	dynamicNeighbors map[string]*gobgpapi.DynamicNeighbor
 	routes           []*gobgpapi.Destination
 	applied          bgpdaemon.AppliedConfig
 	deletedPathUUIDs [][]byte
@@ -132,6 +135,65 @@ func TestReconcileStopsServerWhenBGPRemoved(t *testing.T) {
 	}
 	if controller.Server != nil || controller.started {
 		t.Fatalf("controller did not clear server state: server=%#v started=%t", controller.Server, controller.started)
+	}
+}
+
+func TestReconcileAppliesBGPDynamicPeer(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Spec.Resources = append(router.Spec.Resources[:1], api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPDynamicPeer"},
+		Metadata: api.ObjectMeta{Name: "cloudedge-leaves"},
+		Spec: api.BGPDynamicPeerSpec{
+			RouterRef:               "BGPRouter/lan",
+			PeerASN:                 64512,
+			Listen:                  api.BGPDynamicPeerListenSpec{SourcePrefixes: []string{"10.255.0.0/20"}},
+			RouteReflectorClient:    true,
+			RouteReflectorClusterID: "10.99.0.254",
+			ImportPolicy:            api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}, NextHopRewrite: "peer-address"},
+			ExportPolicy:            api.BGPExportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}},
+			Timers:                  api.BGPTimersSpec{Profile: "fast"},
+		},
+	})
+	server := &fakeServer{}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	group := server.peerGroups["routerd-dynamic-cloudedge-leaves"]
+	if group == nil {
+		t.Fatalf("dynamic peer group not added: %#v", server.peerGroups)
+	}
+	if !group.GetRouteReflector().GetRouteReflectorClient() || group.GetRouteReflector().GetRouteReflectorClusterId() != "10.99.0.254" {
+		t.Fatalf("route reflector = %#v", group.GetRouteReflector())
+	}
+	if got := timersProfile(group.GetTimers().GetConfig()); got != "fast" {
+		t.Fatalf("timers profile = %q, want fast", got)
+	}
+	if group.GetApplyPolicy().GetImportPolicy() == nil || group.GetApplyPolicy().GetExportPolicy() == nil {
+		t.Fatalf("dynamic peer group policy assignments missing: %#v", group.GetApplyPolicy())
+	}
+	neighbor := server.dynamicNeighbors["routerd-dynamic-cloudedge-leaves|10.255.0.0/20"]
+	if neighbor == nil {
+		t.Fatalf("dynamic neighbor not added: %#v", server.dynamicNeighbors)
+	}
+}
+
+func TestImportAllowedPrefixesIncludesDynamicPeers(t *testing.T) {
+	applied := bgpdaemon.AppliedConfig{
+		Global: bgpdaemon.AppliedGlobal{ImportPolicy: bgpdaemon.AppliedImportPolicy{AllowedPrefixes: []string{"10.250.0.0/24"}}},
+	}
+	dynamic := map[string]desiredDynamicPeer{
+		"routerd-dynamic-leaves": {
+			ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}},
+		},
+	}
+	got := importAllowedPrefixesFromAppliedAndDynamic(applied, dynamic)
+	var values []string
+	for _, prefix := range got {
+		values = append(values, prefix.String())
+	}
+	if !sameStringSet(values, []string{"10.250.0.0/24", "10.77.60.0/24"}) {
+		t.Fatalf("allowed prefixes = %v", values)
 	}
 }
 
@@ -243,6 +305,83 @@ func (s *fakeServer) ListPeer(_ context.Context, _ *gobgpapi.ListPeerRequest, fn
 	}
 	for _, key := range keys {
 		fn(s.peers[key])
+	}
+	return nil
+}
+
+func (s *fakeServer) AddPeerGroup(_ context.Context, req *gobgpapi.AddPeerGroupRequest) error {
+	if s.peerGroups == nil {
+		s.peerGroups = map[string]*gobgpapi.PeerGroup{}
+	}
+	group := req.GetPeerGroup()
+	s.peerGroups[group.GetConf().GetPeerGroupName()] = group
+	s.callLog = append(s.callLog, "AddPeerGroup:"+group.GetConf().GetPeerGroupName())
+	return nil
+}
+
+func (s *fakeServer) DeletePeerGroup(_ context.Context, req *gobgpapi.DeletePeerGroupRequest) error {
+	if s.peerGroups != nil {
+		delete(s.peerGroups, req.GetName())
+	}
+	s.callLog = append(s.callLog, "DeletePeerGroup:"+req.GetName())
+	return nil
+}
+
+func (s *fakeServer) ListPeerGroup(_ context.Context, req *gobgpapi.ListPeerGroupRequest, fn func(*gobgpapi.PeerGroup)) error {
+	if s.peerGroups == nil {
+		return nil
+	}
+	if req.GetPeerGroupName() != "" {
+		if group := s.peerGroups[req.GetPeerGroupName()]; group != nil {
+			fn(group)
+		}
+		return nil
+	}
+	var names []string
+	for name := range s.peerGroups {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		fn(s.peerGroups[name])
+	}
+	return nil
+}
+
+func (s *fakeServer) AddDynamicNeighbor(_ context.Context, req *gobgpapi.AddDynamicNeighborRequest) error {
+	if s.dynamicNeighbors == nil {
+		s.dynamicNeighbors = map[string]*gobgpapi.DynamicNeighbor{}
+	}
+	neighbor := req.GetDynamicNeighbor()
+	key := neighbor.GetPeerGroup() + "|" + neighbor.GetPrefix()
+	s.dynamicNeighbors[key] = neighbor
+	s.callLog = append(s.callLog, "AddDynamicNeighbor:"+key)
+	return nil
+}
+
+func (s *fakeServer) DeleteDynamicNeighbor(_ context.Context, req *gobgpapi.DeleteDynamicNeighborRequest) error {
+	key := req.GetPeerGroup() + "|" + req.GetPrefix()
+	if s.dynamicNeighbors != nil {
+		delete(s.dynamicNeighbors, key)
+	}
+	s.callLog = append(s.callLog, "DeleteDynamicNeighbor:"+key)
+	return nil
+}
+
+func (s *fakeServer) ListDynamicNeighbor(_ context.Context, req *gobgpapi.ListDynamicNeighborRequest, fn func(*gobgpapi.DynamicNeighbor)) error {
+	if s.dynamicNeighbors == nil {
+		return nil
+	}
+	var keys []string
+	for key, neighbor := range s.dynamicNeighbors {
+		if req.GetPeerGroup() != "" && neighbor.GetPeerGroup() != req.GetPeerGroup() {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		fn(s.dynamicNeighbors[key])
 	}
 	return nil
 }
@@ -1545,13 +1684,13 @@ func TestAppliedImportPolicyConvergesWithGoBGP(t *testing.T) {
 		},
 	}
 	controller := Controller{Server: server}
-	if err := controller.applyBGPPolicies(ctx, "lan", spec, peers); err != nil {
+	if err := controller.applyBGPPolicies(ctx, "lan", spec, peers, nil); err != nil {
 		t.Fatalf("applyBGPPolicies: %v", err)
 	}
 	if err := server.AddPeer(ctx, &gobgpapi.AddPeerRequest{Peer: goBGPPeer(peers["10.0.0.21"])}); err != nil {
 		t.Fatalf("AddPeer: %v", err)
 	}
-	drift, err := controller.importPolicyDrift(ctx, "lan", spec, peers)
+	drift, err := controller.importPolicyDrift(ctx, "lan", spec, peers, nil)
 	if err != nil {
 		t.Fatalf("importPolicyDrift: %v", err)
 	}

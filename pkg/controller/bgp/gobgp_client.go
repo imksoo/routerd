@@ -296,6 +296,84 @@ func (s *remoteGoBGPServer) ListPolicyAssignment(ctx context.Context, req *gobgp
 	}
 }
 
+func (s *remoteGoBGPServer) AddPeerGroup(ctx context.Context, req *gobgpapi.AddPeerGroupRequest) error {
+	client, err := s.api(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = client.AddPeerGroup(ctx, req)
+	return err
+}
+
+func (s *remoteGoBGPServer) DeletePeerGroup(ctx context.Context, req *gobgpapi.DeletePeerGroupRequest) error {
+	client, err := s.api(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = client.DeletePeerGroup(ctx, req)
+	return err
+}
+
+func (s *remoteGoBGPServer) ListPeerGroup(ctx context.Context, req *gobgpapi.ListPeerGroupRequest, fn func(*gobgpapi.PeerGroup)) error {
+	client, err := s.api(ctx)
+	if err != nil {
+		return err
+	}
+	stream, err := client.ListPeerGroup(ctx, req)
+	if err != nil {
+		return err
+	}
+	for {
+		resp, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		fn(resp.GetPeerGroup())
+	}
+}
+
+func (s *remoteGoBGPServer) AddDynamicNeighbor(ctx context.Context, req *gobgpapi.AddDynamicNeighborRequest) error {
+	client, err := s.api(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = client.AddDynamicNeighbor(ctx, req)
+	return err
+}
+
+func (s *remoteGoBGPServer) DeleteDynamicNeighbor(ctx context.Context, req *gobgpapi.DeleteDynamicNeighborRequest) error {
+	client, err := s.api(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = client.DeleteDynamicNeighbor(ctx, req)
+	return err
+}
+
+func (s *remoteGoBGPServer) ListDynamicNeighbor(ctx context.Context, req *gobgpapi.ListDynamicNeighborRequest, fn func(*gobgpapi.DynamicNeighbor)) error {
+	client, err := s.api(ctx)
+	if err != nil {
+		return err
+	}
+	stream, err := client.ListDynamicNeighbor(ctx, req)
+	if err != nil {
+		return err
+	}
+	for {
+		resp, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		fn(resp.GetDynamicNeighbor())
+	}
+}
+
 func (s *remoteGoBGPServer) AddPath(ctx context.Context, req *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error) {
 	client, err := s.api(ctx)
 	if err != nil {

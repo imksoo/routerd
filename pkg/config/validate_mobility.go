@@ -425,8 +425,8 @@ func validateSAMTransportProfile(res api.Resource, spec api.SAMTransportProfileS
 			return fmt.Errorf("%s spec.bgp.routeReflectorClusterID must be an IPv4 address", res.ID())
 		}
 	}
-	if len(spec.Peers) == 0 && len(spec.PeersFrom) == 0 {
-		return fmt.Errorf("%s spec.peers or spec.peersFrom requires at least one peer source", res.ID())
+	if len(spec.Peers) == 0 && len(spec.PeersFrom) == 0 && !spec.PublishPeerGroup {
+		return fmt.Errorf("%s spec.peers, spec.peersFrom, or spec.publishPeerGroup requires at least one peer source or published endpoint", res.ID())
 	}
 	for i, source := range spec.PeersFrom {
 		if err := validateSAMTransportPeersFrom(res.ID(), i, source); err != nil {

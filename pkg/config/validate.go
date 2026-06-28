@@ -156,6 +156,35 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				bfdRefs[refName]++
 			}
 		}
+		if res.Kind == "BGPDynamicPeer" {
+			spec, err := res.BGPDynamicPeerSpec()
+			if err != nil {
+				return err
+			}
+			kind, name, _ := strings.Cut(strings.TrimSpace(spec.RouterRef), "/")
+			if kind != "BGPRouter" || !idx.BGPRouters[name] {
+				return fmt.Errorf("%s spec.routerRef references missing BGPRouter %q", res.ID(), spec.RouterRef)
+			}
+			if len(spec.Listen.SourcePrefixes) == 0 {
+				return fmt.Errorf("%s spec.listen.sourcePrefixes is required", res.ID())
+			}
+			for i, prefix := range spec.Listen.SourcePrefixes {
+				if _, err := netip.ParsePrefix(strings.TrimSpace(prefix)); err != nil {
+					return fmt.Errorf("%s spec.listen.sourcePrefixes[%d] must be an IP prefix", res.ID(), i)
+				}
+			}
+			if spec.RouteReflectorClient {
+				routerSpec := idx.BGPRouterSpecs[name]
+				if routerSpec.ASN != spec.PeerASN {
+					return fmt.Errorf("%s spec.routeReflectorClient requires iBGP peerASN matching %s spec.asn", res.ID(), spec.RouterRef)
+				}
+			}
+			if clusterID := strings.TrimSpace(spec.RouteReflectorClusterID); clusterID != "" {
+				if addr, err := netip.ParseAddr(clusterID); err != nil || !addr.Is4() {
+					return fmt.Errorf("%s spec.routeReflectorClusterID must be an IPv4 address", res.ID())
+				}
+			}
+		}
 		if res.Kind == "SAMTransportProfile" {
 			spec, err := res.SAMTransportProfileSpec()
 			if err != nil {
@@ -907,6 +936,9 @@ func resourceWhens(res api.Resource) []resourceWhenRef {
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "BGPPeer":
 		spec, _ := res.BGPPeerSpec()
+		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
+	case "BGPDynamicPeer":
+		spec, _ := res.BGPDynamicPeerSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "BFD":
 		spec, _ := res.BFDSpec()

@@ -120,6 +120,53 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 		if err := validateSecretValueSource(res.ID(), "spec.password", spec.Password, "spec.passwordFrom", spec.PasswordFrom); err != nil {
 			return true, err
 		}
+	case "BGPDynamicPeer":
+		if res.APIVersion != api.NetAPIVersion {
+			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
+		}
+		spec, err := res.BGPDynamicPeerSpec()
+		if err != nil {
+			return true, err
+		}
+		kind, name, ok := strings.Cut(strings.TrimSpace(spec.RouterRef), "/")
+		if !ok || kind != "BGPRouter" || strings.TrimSpace(name) == "" {
+			return true, fmt.Errorf("%s spec.routerRef must reference BGPRouter/<name>", res.ID())
+		}
+		if spec.PeerASN == 0 {
+			return true, fmt.Errorf("%s spec.peerASN is required", res.ID())
+		}
+		if len(spec.Listen.SourcePrefixes) == 0 {
+			return true, fmt.Errorf("%s spec.listen.sourcePrefixes is required", res.ID())
+		}
+		if _, err := validateBGPPrefixList(res.ID(), "spec.listen.sourcePrefixes", spec.Listen.SourcePrefixes); err != nil {
+			return true, err
+		}
+		if spec.EbgpMultihop < 0 || spec.EbgpMultihop > 255 {
+			return true, fmt.Errorf("%s spec.ebgpMultihop must be within 0-255", res.ID())
+		}
+		if clusterID := strings.TrimSpace(spec.RouteReflectorClusterID); clusterID != "" {
+			addr, err := netip.ParseAddr(clusterID)
+			if err != nil || !addr.Is4() {
+				return true, fmt.Errorf("%s spec.routeReflectorClusterID must be an IPv4 router ID", res.ID())
+			}
+		}
+		if err := validateBGPTimerProfile(res.ID(), "spec.timers", spec.Timers); err != nil {
+			return true, err
+		}
+		if _, err := validateBGPPrefixList(res.ID(), "spec.importPolicy.allowedPrefixes", spec.ImportPolicy.AllowedPrefixes); err != nil {
+			return true, err
+		}
+		switch strings.TrimSpace(spec.ImportPolicy.NextHopRewrite) {
+		case "", "peer-address", "unchanged":
+		default:
+			return true, fmt.Errorf("%s spec.importPolicy.nextHopRewrite must be peer-address or unchanged", res.ID())
+		}
+		if _, err := validateBGPPrefixList(res.ID(), "spec.exportPolicy.allowedPrefixes", spec.ExportPolicy.AllowedPrefixes); err != nil {
+			return true, err
+		}
+		if err := validateSecretValueSource(res.ID(), "spec.password", spec.Password, "spec.passwordFrom", spec.PasswordFrom); err != nil {
+			return true, err
+		}
 	case "BFD":
 		if res.APIVersion != api.NetAPIVersion {
 			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)

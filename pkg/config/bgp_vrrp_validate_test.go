@@ -436,6 +436,46 @@ func TestValidateBGPPeerRouteReflectorRequiresIBGP(t *testing.T) {
 	}
 }
 
+func TestValidateBGPDynamicPeerRouteReflectorRequiresIBGP(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+				ASN:      64577,
+				RouterID: "10.99.0.1",
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPDynamicPeer"}, Metadata: api.ObjectMeta{Name: "leaves"}, Spec: api.BGPDynamicPeerSpec{
+				RouterRef:               "BGPRouter/lan",
+				PeerASN:                 64577,
+				Listen:                  api.BGPDynamicPeerListenSpec{SourcePrefixes: []string{"10.255.0.0/20"}},
+				RouteReflectorClient:    true,
+				RouteReflectorClusterID: "10.99.0.1",
+			}},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("valid dynamic route reflector client should validate: %v", err)
+	}
+	peer := router.Spec.Resources[1].Spec.(api.BGPDynamicPeerSpec)
+	peer.PeerASN = 64578
+	router.Spec.Resources[1].Spec = peer
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.routeReflectorClient requires iBGP") {
+		t.Fatalf("expected iBGP validation error, got %v", err)
+	}
+	peer.PeerASN = 64577
+	peer.Listen.SourcePrefixes = nil
+	router.Spec.Resources[1].Spec = peer
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.listen.sourcePrefixes is required") {
+		t.Fatalf("expected sourcePrefixes required validation error, got %v", err)
+	}
+	peer.Listen.SourcePrefixes = []string{"not-a-prefix"}
+	router.Spec.Resources[1].Spec = peer
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.listen.sourcePrefixes[0]") {
+		t.Fatalf("expected sourcePrefixes prefix validation error, got %v", err)
+	}
+}
+
 func TestValidateBGPCommunitiesRejectsInvalidCommunity(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
