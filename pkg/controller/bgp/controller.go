@@ -614,7 +614,11 @@ func (c *Controller) desiredPeers(routerName string, localASN uint32) (map[strin
 		if err != nil {
 			return nil, fmt.Errorf("%s/%s passwordFrom: %w", resource.Kind, resource.Metadata.Name, err)
 		}
-		for _, peer := range spec.Peers {
+		peers, err := c.resolveBGPPeerAddresses(spec)
+		if err != nil {
+			return nil, err
+		}
+		for _, peer := range peers {
 			peer = strings.TrimSpace(peer)
 			out[peer] = desiredPeer{
 				Address:                 peer,
@@ -632,6 +636,75 @@ func (c *Controller) desiredPeers(routerName string, localASN uint32) (map[strin
 		}
 	}
 	return out, nil
+}
+
+func (c *Controller) resolveBGPPeerAddresses(spec routerapi.BGPPeerSpec) ([]string, error) {
+	out := append([]string(nil), spec.Peers...)
+	seen := map[string]bool{}
+	for _, peer := range out {
+		seen[strings.TrimSpace(peer)] = true
+	}
+	for _, source := range spec.PeersFrom {
+		ref := strings.TrimSpace(source.Resource)
+		kind, name, ok := strings.Cut(ref, "/")
+		if !ok || kind != "SAMRRSet" || strings.TrimSpace(name) == "" {
+			return nil, fmt.Errorf("BGPPeer peersFrom resource must reference SAMRRSet/<name>")
+		}
+		rrSet, found, err := c.lookupSAMRRSet(name)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			if source.Optional {
+				continue
+			}
+			return nil, fmt.Errorf("SAMRRSet/%s not found", name)
+		}
+		for _, member := range rrSet.Members {
+			addr, err := parseDynamicPeerPrefixAddress(member.TunnelAddress)
+			if err != nil {
+				return nil, fmt.Errorf("SAMRRSet/%s member %s tunnelAddress: %w", name, member.NodeRef, err)
+			}
+			if !seen[addr] {
+				seen[addr] = true
+				out = append(out, addr)
+			}
+		}
+	}
+	return out, nil
+}
+
+func (c *Controller) lookupSAMRRSet(name string) (routerapi.SAMRRSetSpec, bool, error) {
+	if c.Router == nil {
+		return routerapi.SAMRRSetSpec{}, false, nil
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != routerapi.MobilityAPIVersion || resource.Kind != "SAMRRSet" || resource.Metadata.Name != strings.TrimSpace(name) {
+			continue
+		}
+		spec, err := resource.SAMRRSetSpec()
+		if err != nil {
+			return routerapi.SAMRRSetSpec{}, true, err
+		}
+		return spec, true, nil
+	}
+	return routerapi.SAMRRSetSpec{}, false, nil
+}
+
+func parseDynamicPeerPrefixAddress(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if strings.Contains(value, "/") {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return "", err
+		}
+		return prefix.Addr().String(), nil
+	}
+	addr, err := netip.ParseAddr(value)
+	if err != nil {
+		return "", err
+	}
+	return addr.String(), nil
 }
 
 func (c *Controller) desiredDynamicPeers(routerName string, localASN uint32) (map[string]desiredDynamicPeer, error) {

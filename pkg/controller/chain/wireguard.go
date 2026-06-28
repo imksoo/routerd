@@ -34,11 +34,13 @@ type WireGuardController struct {
 }
 
 type wireGuardPeersFromStatus struct {
-	Resource  string `json:"resource"`
-	Optional  bool   `json:"optional,omitempty"`
-	Phase     string `json:"phase"`
-	PeerCount int    `json:"peerCount,omitempty"`
-	Reason    string `json:"reason,omitempty"`
+	Resource  string   `json:"resource"`
+	Optional  bool     `json:"optional,omitempty"`
+	Phase     string   `json:"phase"`
+	PeerCount int      `json:"peerCount,omitempty"`
+	Skipped   int      `json:"skipped,omitempty"`
+	LeafIDs   []string `json:"leafIDs,omitempty"`
+	Reason    string   `json:"reason,omitempty"`
 }
 
 type wireGuardPeerResolution struct {
@@ -154,6 +156,109 @@ func (c WireGuardController) resolvePeersFrom(iface string, spec api.WireGuardIn
 			Optional: source.Optional,
 			Phase:    "Resolved",
 		}
+		sourceKind, _, sourceOK := strings.Cut(ref, "/")
+		if sourceOK && sourceKind == "SAMRRSet" {
+			rrSet, found, err := c.samRRSet(ref)
+			if err != nil {
+				status.Phase = "Invalid"
+				status.Reason = err.Error()
+				statuses = append(statuses, status)
+				return peers, statuses, pending, err
+			}
+			if !found {
+				status.Phase = "Missing"
+				status.Reason = "SAMRRSet not found"
+				statuses = append(statuses, status)
+				if !source.Optional {
+					pending = append(pending, ref)
+				}
+				continue
+			}
+			for _, member := range rrSet.Members {
+				nodeRef := strings.TrimSpace(member.NodeRef)
+				if nodeRef == "" || nodeRef == self {
+					continue
+				}
+				if strings.TrimSpace(member.WireGuard.PublicKey) == "" {
+					continue
+				}
+				tunnel, err := parseEnrollmentTunnelAddress(member.TunnelAddress)
+				if err != nil {
+					status.Phase = "Invalid"
+					status.Reason = err.Error()
+					statuses = append(statuses, status)
+					return peers, statuses, pending, err
+				}
+				allowedIPs := []string{tunnel.String()}
+				allowedIPs = append(allowedIPs, member.WireGuard.AllowedIPs...)
+				peers = append(peers, api.Resource{
+					TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardPeer"},
+					Metadata: api.ObjectMeta{
+						Name: nodeRef,
+						Annotations: map[string]string{
+							"routerd.net/generated-from": ref,
+						},
+					},
+					Spec: api.WireGuardPeerSpec{
+						Interface:           iface,
+						PublicKey:           strings.TrimSpace(member.WireGuard.PublicKey),
+						AllowedIPs:          allowedIPs,
+						Endpoint:            strings.TrimSpace(member.WireGuard.Endpoint),
+						PersistentKeepalive: member.WireGuard.PersistentKeepalive,
+					},
+				})
+				status.PeerCount++
+			}
+			statuses = append(statuses, status)
+			continue
+		}
+		if sourceOK && sourceKind == "SAMEnrollmentPolicy" {
+			nodeSet, found, skipped, leafIDs, err := c.samEnrollmentNodeSet(ref, iface)
+			if err != nil {
+				status.Phase = "Invalid"
+				status.Reason = err.Error()
+				statuses = append(statuses, status)
+				return peers, statuses, pending, err
+			}
+			if !found {
+				status.Phase = "Missing"
+				status.Reason = "SAMEnrollmentPolicy not found"
+				statuses = append(statuses, status)
+				if !source.Optional {
+					pending = append(pending, ref)
+				}
+				continue
+			}
+			status.Skipped = skipped
+			status.LeafIDs = append([]string(nil), leafIDs...)
+			for _, node := range nodeSet.Nodes {
+				nodeRef := strings.TrimSpace(node.NodeRef)
+				wg := node.WireGuard
+				if nodeRef == "" || nodeRef == self || !samNodeWireGuardConfigured(wg) {
+					continue
+				}
+				peers = append(peers, api.Resource{
+					TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardPeer"},
+					Metadata: api.ObjectMeta{
+						Name: nodeRef,
+						Annotations: map[string]string{
+							"routerd.net/generated-from": ref,
+						},
+					},
+					Spec: api.WireGuardPeerSpec{
+						Interface:           iface,
+						PublicKey:           strings.TrimSpace(wg.PublicKey),
+						AllowedIPs:          append([]string(nil), wg.AllowedIPs...),
+						Endpoint:            strings.TrimSpace(wg.Endpoint),
+						PersistentKeepalive: wg.PersistentKeepalive,
+					},
+				})
+				status.PeerCount++
+			}
+			statuses = append(statuses, status)
+			_ = c.saveSAMEnrollmentPolicyStatus(ref, status)
+			continue
+		}
 		nodeSet, found, err := c.samNodeSet(ref)
 		if err != nil {
 			status.Phase = "Invalid"
@@ -224,6 +329,45 @@ func (c WireGuardController) samNodeSet(ref string) (api.SAMNodeSetSpec, bool, e
 	return lookupSAMNodeSet(c.Router, ref)
 }
 
+func (c WireGuardController) samRRSet(ref string) (api.SAMRRSetSpec, bool, error) {
+	if c.Router == nil {
+		return api.SAMRRSetSpec{}, false, nil
+	}
+	return lookupSAMRRSet(c.Router, ref)
+}
+
+func (c WireGuardController) samEnrollmentNodeSet(ref, iface string) (api.SAMNodeSetSpec, bool, int, []string, error) {
+	if c.Router == nil {
+		return api.SAMNodeSetSpec{}, false, 0, nil, nil
+	}
+	policy, found, err := lookupSAMEnrollmentPolicy(c.Router, ref)
+	if err != nil || !found {
+		return api.SAMNodeSetSpec{}, found, 0, nil, err
+	}
+	if want := strings.TrimSpace(policy.WireGuard.Interface); want != "" && want != strings.TrimSpace(iface) {
+		return api.SAMNodeSetSpec{}, true, 0, nil, fmt.Errorf("%s spec.wireGuard.interface %q does not match WireGuardInterface %q", ref, want, iface)
+	}
+	nodeSet, skipped, leafIDs, err := enrollmentPolicyNodeSet(c.Router, ref, policy, time.Now().UTC())
+	return nodeSet, true, skipped, leafIDs, err
+}
+
+func (c WireGuardController) saveSAMEnrollmentPolicyStatus(ref string, status wireGuardPeersFromStatus) error {
+	if c.Store == nil {
+		return nil
+	}
+	kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
+	if !ok || kind != "SAMEnrollmentPolicy" || strings.TrimSpace(name) == "" {
+		return nil
+	}
+	return c.Store.SaveObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentPolicy", strings.TrimSpace(name), map[string]any{
+		"phase":          status.Phase,
+		"acceptedClaims": status.PeerCount,
+		"skippedClaims":  status.Skipped,
+		"leafIDs":        append([]string(nil), status.LeafIDs...),
+		"updatedAt":      time.Now().UTC().Format(time.RFC3339Nano),
+	})
+}
+
 func lookupSAMNodeSet(router *api.Router, ref string) (api.SAMNodeSetSpec, bool, error) {
 	kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
 	if !ok || kind != "SAMNodeSet" || strings.TrimSpace(name) == "" {
@@ -240,6 +384,131 @@ func lookupSAMNodeSet(router *api.Router, ref string) (api.SAMNodeSetSpec, bool,
 		return spec, true, nil
 	}
 	return api.SAMNodeSetSpec{}, false, nil
+}
+
+func lookupSAMEnrollmentPolicy(router *api.Router, ref string) (api.SAMEnrollmentPolicySpec, bool, error) {
+	kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
+	if !ok || kind != "SAMEnrollmentPolicy" || strings.TrimSpace(name) == "" {
+		return api.SAMEnrollmentPolicySpec{}, false, fmt.Errorf("peersFrom resource must reference SAMEnrollmentPolicy/<name>")
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentPolicy" || resource.Metadata.Name != strings.TrimSpace(name) {
+			continue
+		}
+		spec, err := resource.SAMEnrollmentPolicySpec()
+		if err != nil {
+			return api.SAMEnrollmentPolicySpec{}, true, fmt.Errorf("%s spec: %w", ref, err)
+		}
+		return spec, true, nil
+	}
+	return api.SAMEnrollmentPolicySpec{}, false, nil
+}
+
+func lookupSAMRRSet(router *api.Router, ref string) (api.SAMRRSetSpec, bool, error) {
+	kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
+	if !ok || kind != "SAMRRSet" || strings.TrimSpace(name) == "" {
+		return api.SAMRRSetSpec{}, false, fmt.Errorf("peersFrom resource must reference SAMRRSet/<name>")
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMRRSet" || resource.Metadata.Name != strings.TrimSpace(name) {
+			continue
+		}
+		spec, err := resource.SAMRRSetSpec()
+		if err != nil {
+			return api.SAMRRSetSpec{}, true, fmt.Errorf("%s spec: %w", ref, err)
+		}
+		return spec, true, nil
+	}
+	return api.SAMRRSetSpec{}, false, nil
+}
+
+func enrollmentPolicyNodeSet(router *api.Router, ref string, policy api.SAMEnrollmentPolicySpec, now time.Time) (api.SAMNodeSetSpec, int, []string, error) {
+	_, policyName, _ := strings.Cut(strings.TrimSpace(ref), "/")
+	var nodes []api.SAMNodeSpec
+	var leafIDs []string
+	skipped := 0
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentClaim" {
+			continue
+		}
+		claim, err := resource.SAMEnrollmentClaimSpec()
+		if err != nil {
+			return api.SAMNodeSetSpec{}, skipped, leafIDs, err
+		}
+		_, claimPolicyName, _ := strings.Cut(strings.TrimSpace(claim.PolicyRef), "/")
+		if claimPolicyName != strings.TrimSpace(policyName) {
+			continue
+		}
+		if claim.Revoked || enrollmentClaimExpired(claim, now) {
+			skipped++
+			continue
+		}
+		tunnel, err := parseEnrollmentTunnelAddress(claim.TunnelAddress)
+		if err != nil || !enrollmentPrefixContains(policy.TunnelAddressPrefixes, tunnel.Addr()) {
+			skipped++
+			continue
+		}
+		allowed := []string{tunnel.String()}
+		allowed = append(allowed, claim.WireGuard.AllowedIPs...)
+		keepalive := claim.WireGuard.PersistentKeepalive
+		if keepalive == 0 {
+			keepalive = policy.WireGuard.PersistentKeepalive
+		}
+		nodes = append(nodes, api.SAMNodeSpec{
+			NodeRef:     strings.TrimSpace(claim.LeafID),
+			Role:        "cloud",
+			SAMEndpoint: tunnel.Addr().String(),
+			WireGuard: api.SAMNodeWireGuardSpec{
+				PublicKey:           strings.TrimSpace(claim.WireGuard.PublicKey),
+				Endpoint:            strings.TrimSpace(claim.WireGuard.Endpoint),
+				AllowedIPs:          allowed,
+				PersistentKeepalive: keepalive,
+			},
+		})
+		leafIDs = append(leafIDs, strings.TrimSpace(claim.LeafID))
+	}
+	sort.Strings(leafIDs)
+	return api.SAMNodeSetSpec{Nodes: nodes}, skipped, leafIDs, nil
+}
+
+func enrollmentClaimExpired(claim api.SAMEnrollmentClaimSpec, now time.Time) bool {
+	if strings.TrimSpace(claim.ExpiresAt) == "" {
+		return false
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(claim.ExpiresAt))
+	if err != nil {
+		expiresAt, err = time.Parse(time.RFC3339, strings.TrimSpace(claim.ExpiresAt))
+		if err != nil {
+			return true
+		}
+	}
+	return !expiresAt.After(now)
+}
+
+func parseEnrollmentTunnelAddress(value string) (netip.Prefix, error) {
+	value = strings.TrimSpace(value)
+	if strings.Contains(value, "/") {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return netip.Prefix{}, err
+		}
+		return prefix.Masked(), nil
+	}
+	addr, err := netip.ParseAddr(value)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	return netip.PrefixFrom(addr, 32), nil
+}
+
+func enrollmentPrefixContains(prefixes []string, addr netip.Addr) bool {
+	for _, value := range prefixes {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+		if err == nil && prefix.Masked().Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveWireGuardSAMResources resolves peersFrom SAMNodeSet references on
@@ -271,6 +540,76 @@ func resolveWireGuardSAMResources(router *api.Router) (*api.Router, error) {
 		}
 		for _, source := range spec.PeersFrom {
 			ref := strings.TrimSpace(source.Resource)
+			sourceKind, _, sourceOK := strings.Cut(ref, "/")
+			if sourceOK && sourceKind == "SAMEnrollmentPolicy" {
+				policy, found, err := lookupSAMEnrollmentPolicy(router, ref)
+				if err != nil {
+					if source.Optional {
+						continue
+					}
+					return nil, err
+				}
+				if !found {
+					continue
+				}
+				if want := strings.TrimSpace(policy.WireGuard.Interface); want != "" && want != strings.TrimSpace(iface) {
+					if source.Optional {
+						continue
+					}
+					return nil, fmt.Errorf("%s spec.wireGuard.interface %q does not match WireGuardInterface %q", ref, want, iface)
+				}
+				nodeSet, _, _, err := enrollmentPolicyNodeSet(router, ref, policy, time.Now().UTC())
+				if err != nil {
+					if source.Optional {
+						continue
+					}
+					return nil, err
+				}
+				for _, node := range nodeSet.Nodes {
+					nodeRef := strings.TrimSpace(node.NodeRef)
+					if nodeRef == "" || nodeRef == self {
+						continue
+					}
+					wg := node.WireGuard
+					if !samNodeWireGuardConfigured(wg) {
+						continue
+					}
+					generated = append(generated, api.Resource{
+						TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardPeer"},
+						Metadata: api.ObjectMeta{
+							Name: nodeRef,
+							Annotations: map[string]string{
+								"routerd.net/generated-from": ref,
+							},
+						},
+						Spec: api.WireGuardPeerSpec{
+							Interface:           iface,
+							PublicKey:           strings.TrimSpace(wg.PublicKey),
+							AllowedIPs:          append([]string(nil), wg.AllowedIPs...),
+							Endpoint:            strings.TrimSpace(wg.Endpoint),
+							PersistentKeepalive: wg.PersistentKeepalive,
+						},
+					})
+					if ep := strings.TrimSpace(node.SAMEndpoint); ep != "" {
+						if addr, parseErr := netip.ParseAddr(ep); parseErr == nil {
+							generated = append(generated, api.Resource{
+								TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
+								Metadata: api.ObjectMeta{
+									Name: "wg-sam-endpoint-" + nodeRef,
+									Annotations: map[string]string{
+										"routerd.net/generated-from": ref,
+									},
+								},
+								Spec: api.IPv4RouteSpec{
+									Destination: netip.PrefixFrom(addr, 32).String(),
+									Device:      iface,
+								},
+							})
+						}
+					}
+				}
+				continue
+			}
 			nodeSet, found, err := lookupSAMNodeSet(router, ref)
 			if err != nil {
 				if source.Optional {
@@ -320,10 +659,10 @@ func resolveWireGuardSAMResources(router *api.Router) (*api.Router, error) {
 					},
 					Spec: api.WireGuardPeerSpec{
 						Interface:           iface,
-						PublicKey:            strings.TrimSpace(wg.PublicKey),
-						AllowedIPs:           append([]string(nil), wg.AllowedIPs...),
-						Endpoint:             strings.TrimSpace(wg.Endpoint),
-						PersistentKeepalive:  wg.PersistentKeepalive,
+						PublicKey:           strings.TrimSpace(wg.PublicKey),
+						AllowedIPs:          append([]string(nil), wg.AllowedIPs...),
+						Endpoint:            strings.TrimSpace(wg.Endpoint),
+						PersistentKeepalive: wg.PersistentKeepalive,
 					},
 				})
 				if ep := strings.TrimSpace(node.SAMEndpoint); ep != "" {

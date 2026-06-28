@@ -234,8 +234,8 @@ func TestValidateSAMTransportProfileRejectsInvalidPeersFrom(t *testing.T) {
 	spec := validSAMTransportProfileSpec()
 	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "BGPPeer/rr"}}
 	err := Validate(samTransportProfileRouter(spec))
-	if err == nil || !strings.Contains(err.Error(), "spec.peersFrom[0].resource must reference SAMPeerGroup/<name> or SAMNodeSet/<name>") {
-		t.Fatalf("Validate peersFrom error = %v, want SAMPeerGroup/SAMNodeSet ref error", err)
+	if err == nil || !strings.Contains(err.Error(), "spec.peersFrom[0].resource must reference SAMPeerGroup/<name>, SAMNodeSet/<name>, SAMEnrollmentPolicy/<name>, or SAMRRSet/<name>") {
+		t.Fatalf("Validate peersFrom error = %v, want SAMPeerGroup/SAMNodeSet/SAMEnrollmentPolicy ref error", err)
 	}
 }
 
@@ -369,6 +369,125 @@ func TestValidateSAMNodeSetRejectsInvalidFields(t *testing.T) {
 				t.Fatalf("Validate SAMNodeSet error = %v, want %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestValidateSAMEnrollmentPolicyAndClaim(t *testing.T) {
+	router := samEnrollmentRouter()
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate SAMEnrollmentPolicy/SAMEnrollmentClaim: %v", err)
+	}
+
+	claimIndex := len(router.Spec.Resources) - 1
+	claim := router.Spec.Resources[claimIndex].Spec.(api.SAMEnrollmentClaimSpec)
+	claim.LeafID = "bad leaf"
+	router.Spec.Resources[claimIndex].Spec = claim
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.leafID") {
+		t.Fatalf("expected leafID policy error, got %v", err)
+	}
+
+	claim.LeafID = "leaf-pve"
+	claim.TunnelAddress = "10.254.0.21/32"
+	router.Spec.Resources[claimIndex].Spec = claim
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.tunnelAddress") {
+		t.Fatalf("expected tunnelAddress policy error, got %v", err)
+	}
+
+	claim.TunnelAddress = "10.255.0.21/32"
+	claim.Mobility.OwnedAddresses = []string{"10.88.60.21/32"}
+	router.Spec.Resources[claimIndex].Spec = claim
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "outside authorized MobilityPool prefixes") {
+		t.Fatalf("expected MobilityPool authorization error, got %v", err)
+	}
+}
+
+func TestValidateSAMEnrollmentJoinTokenRequiresHMACFields(t *testing.T) {
+	router := samEnrollmentRouter()
+	policyIndex := len(router.Spec.Resources) - 2
+	policy := router.Spec.Resources[policyIndex].Spec.(api.SAMEnrollmentPolicySpec)
+	policy.JoinTokenFrom = api.SecretValueSourceSpec{Env: "ROUTERD_TEST_JOIN_TOKEN"}
+	policy.JoinAudience = "cloudedge"
+	router.Spec.Resources[policyIndex].Spec = policy
+
+	err := Validate(router)
+	if err == nil || !strings.Contains(err.Error(), "spec.joinNonce is required") {
+		t.Fatalf("Validate missing join fields = %v, want joinNonce error", err)
+	}
+
+	claimIndex := len(router.Spec.Resources) - 1
+	claim := router.Spec.Resources[claimIndex].Spec.(api.SAMEnrollmentClaimSpec)
+	claim.JoinAudience = "cloudedge"
+	claim.JoinNonce = "nonce-1"
+	claim.JoinTimestamp = "2026-06-28T00:00:00Z"
+	claim.JoinHMAC = "example-hmac"
+	router.Spec.Resources[claimIndex].Spec = claim
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate join-token enrollment with HMAC fields: %v", err)
+	}
+
+	claim.JoinAudience = "wrong"
+	router.Spec.Resources[claimIndex].Spec = claim
+	err = Validate(router)
+	if err == nil || !strings.Contains(err.Error(), "spec.joinAudience") {
+		t.Fatalf("Validate join audience mismatch = %v, want joinAudience error", err)
+	}
+}
+
+func TestValidateSAMEnrollmentAllowsNonWireGuardClaim(t *testing.T) {
+	router := samEnrollmentRouter()
+	router.Spec.Resources = append(router.Spec.Resources[:0], router.Spec.Resources[1:]...)
+	profileIndex := -1
+	policyIndex := -1
+	claimIndex := -1
+	for i, resource := range router.Spec.Resources {
+		switch resource.Kind {
+		case "SAMTransportProfile":
+			profileIndex = i
+		case "SAMEnrollmentPolicy":
+			policyIndex = i
+		case "SAMEnrollmentClaim":
+			claimIndex = i
+		}
+	}
+	profile := router.Spec.Resources[profileIndex].Spec.(api.SAMTransportProfileSpec)
+	profile.UnderlayInterface = "private-wan"
+	profile.Encryption = "none"
+	router.Spec.Resources[profileIndex].Spec = profile
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+		Metadata: api.ObjectMeta{Name: "private-wan"},
+		Spec:     api.InterfaceSpec{IfName: "private-wan", Managed: false},
+	})
+	policy := router.Spec.Resources[policyIndex].Spec.(api.SAMEnrollmentPolicySpec)
+	policy.WireGuard = api.SAMEnrollmentWireGuardSpec{}
+	policy.EndpointPrefixes = []string{"10.20.0.0/24"}
+	router.Spec.Resources[policyIndex].Spec = policy
+	claim := router.Spec.Resources[claimIndex].Spec.(api.SAMEnrollmentClaimSpec)
+	claim.Endpoint = "10.20.0.21"
+	claim.WireGuard = api.SAMEnrollmentClaimWireGuardSpec{}
+	router.Spec.Resources[claimIndex].Spec = claim
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate non-WireGuard SAM enrollment: %v", err)
+	}
+}
+
+func TestValidateSAMRRSetAllowsPlainIPIPWithoutWireGuard(t *testing.T) {
+	router := samEnrollmentRouter()
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMRRSet"},
+		Metadata: api.ObjectMeta{Name: "cloudedge-rrs"},
+		Spec: api.SAMRRSetSpec{
+			EnrollmentPolicyRef: "SAMEnrollmentPolicy/cloudedge-leaves",
+			MobilityPoolRefs:    []string{"MobilityPool/cloudedge"},
+			RouteAdmission:      api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}},
+			Members: []api.SAMRRSetMember{
+				{NodeRef: "aws-rr-a", Endpoint: "203.0.113.10", TunnelAddress: "10.99.0.2/32"},
+				{NodeRef: "aws-rr-b", Endpoint: "203.0.113.11", TunnelAddress: "10.99.0.3/32"},
+			},
+		},
+	})
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate plain IPIP SAMRRSet without WireGuard: %v", err)
 	}
 }
 
@@ -513,6 +632,46 @@ func samNodeSetRouter(spec api.SAMNodeSetSpec) *api.Router {
 			Metadata: api.ObjectMeta{Name: "svnet1-nodes"},
 			Spec:     spec,
 		}}},
+	}
+}
+
+func samEnrollmentRouter() *api.Router {
+	spec := validSAMTransportProfileSpec()
+	spec.SelfNodeRef = "aws-rr-a"
+	spec.UnderlayInterface = "wg-hybrid"
+	spec.LocalEndpoint = "10.99.0.2"
+	spec.Peers = nil
+	spec.PublishPeerGroup = true
+	return &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "aws-rr-a"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"}, Metadata: api.ObjectMeta{Name: "wg-hybrid"}, Spec: api.WireGuardInterfaceSpec{PrivateKey: "priv", ListenPort: 51820}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "mobility"}, Spec: api.BGPRouterSpec{ASN: 64577, RouterID: "10.99.0.2"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"}, Metadata: api.ObjectMeta{Name: "cloudedge"}, Spec: api.MobilityPoolSpec{
+				Prefix:   "10.77.60.0/24",
+				GroupRef: "cloudedge",
+				Members:  []api.MobilityPoolMember{{NodeRef: "aws-rr-a", Site: "aws", Role: "cloud"}},
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile"}, Metadata: api.ObjectMeta{Name: "aws-rr-a"}, Spec: spec},
+			{TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentPolicy"}, Metadata: api.ObjectMeta{Name: "cloudedge-leaves"}, Spec: api.SAMEnrollmentPolicySpec{
+				TransportProfileRef:   "SAMTransportProfile/aws-rr-a",
+				AllowedLeafIDs:        api.SAMEnrollmentLeafIDPolicySpec{Pattern: `^leaf-[a-z0-9-]+$`},
+				TunnelAddressPrefixes: []string{"10.255.0.0/20"},
+				WireGuard:             api.SAMEnrollmentWireGuardSpec{Interface: "wg-hybrid", AllowedExtraIPPrefixes: []string{"10.255.0.0/20"}, PersistentKeepalive: 25},
+				MobilityPoolRefs:      []string{"MobilityPool/cloudedge"},
+				TTL:                   "24h",
+				RevokeAfterInactive:   "168h",
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentClaim"}, Metadata: api.ObjectMeta{Name: "leaf-pve"}, Spec: api.SAMEnrollmentClaimSpec{
+				PolicyRef:     "SAMEnrollmentPolicy/cloudedge-leaves",
+				LeafID:        "leaf-pve",
+				TunnelAddress: "10.255.0.21/32",
+				WireGuard:     api.SAMEnrollmentClaimWireGuardSpec{PublicKey: "leafpub", Endpoint: "198.51.100.21:51820"},
+				Mobility:      api.SAMEnrollmentClaimMobilitySpec{OwnedAddresses: []string{"10.77.60.21/32"}},
+				BGP:           api.SAMEnrollmentClaimBGPSpec{ASN: 64577, RouterID: "10.255.0.21"},
+			}},
+		}},
 	}
 }
 

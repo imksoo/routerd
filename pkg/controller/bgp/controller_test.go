@@ -178,6 +178,49 @@ func TestReconcileAppliesBGPDynamicPeer(t *testing.T) {
 	}
 }
 
+func TestReconcileBGPPeerConsumesSAMRRSet(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Metadata.Name = "leaf-pve"
+	router.Spec.Resources = append(router.Spec.Resources[:1],
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-rrs"},
+			Spec: api.BGPPeerSpec{
+				RouterRef: "BGPRouter/lan",
+				PeerASN:   64512,
+				PeersFrom: []api.BGPPeersSourceSpec{{Resource: "SAMRRSet/cloudedge-rrs"}},
+				ImportPolicy: api.BGPImportPolicySpec{
+					AllowedPrefixes: []string{"10.77.60.0/24"},
+				},
+				ExportPolicy: api.BGPExportPolicySpec{
+					AllowedPrefixes: []string{"10.77.60.21/32"},
+				},
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMRRSet"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-rrs"},
+			Spec: api.SAMRRSetSpec{
+				EnrollmentPolicyRef: "SAMEnrollmentPolicy/cloudedge-leaves",
+				Members: []api.SAMRRSetMember{
+					{NodeRef: "aws-rr-a", Endpoint: "203.0.113.10", TunnelAddress: "10.99.0.2/32"},
+					{NodeRef: "aws-rr-b", Endpoint: "203.0.113.11", TunnelAddress: "10.99.0.3/32"},
+				},
+			},
+		},
+	)
+	server := &fakeServer{}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	for _, address := range []string{"10.99.0.2", "10.99.0.3"} {
+		if server.peers[address] == nil {
+			t.Fatalf("missing BGP peer %s from SAMRRSet; peers=%v", address, server.peers)
+		}
+	}
+}
+
 func TestImportAllowedPrefixesIncludesDynamicPeers(t *testing.T) {
 	applied := bgpdaemon.AppliedConfig{
 		Global: bgpdaemon.AppliedGlobal{ImportPolicy: bgpdaemon.AppliedImportPolicy{AllowedPrefixes: []string{"10.250.0.0/24"}}},

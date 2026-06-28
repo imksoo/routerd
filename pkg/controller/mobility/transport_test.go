@@ -346,6 +346,101 @@ func TestSAMTransportProfilePeersFromMissingRequiredIsPending(t *testing.T) {
 	}
 }
 
+func TestSAMTransportProfileConsumesSAMRRSetWithoutWireGuard(t *testing.T) {
+	now := time.Date(2026, 6, 28, 9, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouterWithMode("leaf-pve", "leaf-pve", "pair-stable", nil)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.Encryption = "none"
+	spec.LocalEndpoint = "10.20.0.21"
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMRRSet/cloudedge-rrs"}}
+	router.Spec.Resources[0].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources, samRRSetResource("cloudedge-rrs", []api.SAMRRSetMember{
+		{NodeRef: "rr-a", Endpoint: "10.10.0.2", TunnelAddress: "10.99.0.2/32"},
+		{NodeRef: "rr-b", Endpoint: "10.10.0.3", TunnelAddress: "10.99.0.3/32"},
+	}))
+
+	controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("leaf-pve", "leaf-pve")).ResourcesJSON)
+	if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 2; got != want {
+		t.Fatalf("TunnelInterface count = %d, want %d resources=%#v", got, want, resources)
+	}
+	if got, want := countResources(resources, api.NetAPIVersion, "BGPPeer"), 2; got != want {
+		t.Fatalf("BGPPeer count = %d, want %d resources=%#v", got, want, resources)
+	}
+	if got := countResources(resources, api.NetAPIVersion, "WireGuardPeer"); got != 0 {
+		t.Fatalf("WireGuardPeer count = %d, want 0", got)
+	}
+	rrATunnel := findTransportTunnelForPeer(t, resources, "leaf-pve", "rr-a")
+	if rrATunnel.Mode != "ipip" || rrATunnel.Remote != "10.10.0.2" {
+		t.Fatalf("rr-a tunnel = %#v, want ipip remote 10.10.0.2", rrATunnel)
+	}
+	rrBTunnel := findTransportTunnelForPeer(t, resources, "leaf-pve", "rr-b")
+	if rrBTunnel.Mode != "ipip" || rrBTunnel.Remote != "10.10.0.3" {
+		t.Fatalf("rr-b tunnel = %#v, want ipip remote 10.10.0.3", rrBTunnel)
+	}
+	_ = findTransportBGPPeerForPeer(t, resources, "leaf-pve", "rr-a")
+	_ = findTransportBGPPeerForPeer(t, resources, "leaf-pve", "rr-b")
+}
+
+func TestSAMTransportProfileCanGenerateTunnelWithoutBGPPeerForRRDynamicAdmission(t *testing.T) {
+	now := time.Date(2026, 6, 28, 9, 5, 0, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouterWithMode("rr-a", "rr-a", "pair-stable", nil)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.Encryption = "none"
+	spec.LocalEndpoint = "10.10.0.2"
+	generatePeers := false
+	spec.BGP.GeneratePeers = &generatePeers
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMEnrollmentPolicy/cloudedge-leaves"}}
+	router.Spec.Resources[0].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentPolicy"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-leaves"},
+			Spec: api.SAMEnrollmentPolicySpec{
+				TransportProfileRef:   "SAMTransportProfile/rr-a",
+				TunnelAddressPrefixes: []string{"10.255.0.0/20"},
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentClaim"},
+			Metadata: api.ObjectMeta{Name: "leaf-pve"},
+			Spec: api.SAMEnrollmentClaimSpec{
+				PolicyRef:     "SAMEnrollmentPolicy/cloudedge-leaves",
+				LeafID:        "leaf-pve",
+				TunnelAddress: "10.255.0.21/32",
+				Endpoint:      "10.20.0.21",
+			},
+		},
+	)
+
+	controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("rr-a", "rr-a")).ResourcesJSON)
+	if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 1; got != want {
+		t.Fatalf("TunnelInterface count = %d, want %d resources=%#v", got, want, resources)
+	}
+	if got := countResources(resources, api.NetAPIVersion, "BGPPeer"); got != 0 {
+		t.Fatalf("BGPPeer count = %d, want 0 for RR dynamic admission", got)
+	}
+	tunnel := findTransportTunnelForPeer(t, resources, "rr-a", "leaf-pve")
+	if tunnel.Remote != "10.20.0.21" {
+		t.Fatalf("tunnel remote = %q, want leaf endpoint", tunnel.Remote)
+	}
+}
+
 func TestSAMTransportProfilePeersFromUnionStaticOverridesGroupPeer(t *testing.T) {
 	now := time.Date(2026, 6, 6, 9, 5, 30, 0, time.UTC)
 	store := testStore(t, now)
@@ -828,6 +923,27 @@ func TestSAMTransportProfileDeletionUpsertsEmptyPart(t *testing.T) {
 	if resources := decodeResources(t, latestPart(t, store, source).ResourcesJSON); len(resources) != 0 {
 		t.Fatalf("resources after profile deletion = %#v, want empty part", resources)
 	}
+}
+
+func samRRSetResource(name string, members []api.SAMRRSetMember) api.Resource {
+	return api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMRRSet"},
+		Metadata: api.ObjectMeta{Name: name},
+		Spec: api.SAMRRSetSpec{
+			EnrollmentPolicyRef: "SAMEnrollmentPolicy/cloudedge-leaves",
+			Members:             members,
+		},
+	}
+}
+
+func countResources(resources []api.Resource, apiVersion, kind string) int {
+	count := 0
+	for _, resource := range resources {
+		if resource.APIVersion == apiVersion && resource.Kind == kind {
+			count++
+		}
+	}
+	return count
 }
 
 func transportRouter(profile, self string, peers []api.SAMTransportPeerSpec) *api.Router {

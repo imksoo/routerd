@@ -232,12 +232,13 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 			})
 			out.EndpointRoutes++
 		}
+		generateBGPPeers := spec.BGP.GeneratePeers == nil || *spec.BGP.GeneratePeers
 		timers := spec.BGP.Timers
 		if strings.TrimSpace(timers.Profile) == "" {
 			timers.Profile = strings.TrimSpace(spec.BGP.TimersPreset)
 		}
 		bfdRef := ""
-		if spec.BGP.BFD.Enabled {
+		if generateBGPPeers && spec.BGP.BFD.Enabled {
 			bfdName := safeName(bgpPeerName + "-bfd")
 			bfdRef = "BFD/" + bfdName
 			out.Resources = append(out.Resources, api.Resource{
@@ -254,23 +255,25 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 			})
 			out.BFDs++
 		}
-		out.Resources = append(out.Resources, api.Resource{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
-			Metadata: api.ObjectMeta{Name: bgpPeerName, OwnerRefs: ownerRef, Annotations: transportAnnotations(owner.Metadata.Name, self, peerNode)},
-			Spec: api.BGPPeerSpec{
-				RouterRef:               strings.TrimSpace(spec.BGP.RouterRef),
-				PeerASN:                 spec.BGP.PeerASN,
-				Peers:                   []string{remoteAddr.String()},
-				EbgpMultihop:            spec.BGP.EbgpMultihop,
-				RouteReflectorClient:    spec.BGP.RouteReflectorClient,
-				RouteReflectorClusterID: strings.TrimSpace(spec.BGP.RouteReflectorClusterID),
-				ImportPolicy:            spec.BGP.ImportPolicy,
-				ExportPolicy:            spec.BGP.ExportPolicy,
-				Timers:                  timers,
-				BFD:                     bfdRef,
-			},
-		})
-		out.BGPPeers++
+		if generateBGPPeers {
+			out.Resources = append(out.Resources, api.Resource{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
+				Metadata: api.ObjectMeta{Name: bgpPeerName, OwnerRefs: ownerRef, Annotations: transportAnnotations(owner.Metadata.Name, self, peerNode)},
+				Spec: api.BGPPeerSpec{
+					RouterRef:               strings.TrimSpace(spec.BGP.RouterRef),
+					PeerASN:                 spec.BGP.PeerASN,
+					Peers:                   []string{remoteAddr.String()},
+					EbgpMultihop:            spec.BGP.EbgpMultihop,
+					RouteReflectorClient:    spec.BGP.RouteReflectorClient,
+					RouteReflectorClusterID: strings.TrimSpace(spec.BGP.RouteReflectorClusterID),
+					ImportPolicy:            spec.BGP.ImportPolicy,
+					ExportPolicy:            spec.BGP.ExportPolicy,
+					Timers:                  timers,
+					BFD:                     bfdRef,
+				},
+			})
+			out.BGPPeers++
+		}
 		out.Peers = append(out.Peers, transportPeerStatus{
 			NodeRef:            peerNode,
 			TunnelInterface:    tunnelName,
@@ -321,9 +324,107 @@ func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Re
 		sourceKind, _, ok := strings.Cut(ref, "/")
 		if !ok {
 			status.Phase = "Invalid"
-			status.Reason = "peersFrom resource must reference SAMPeerGroup/<name> or SAMNodeSet/<name>"
+			status.Reason = "peersFrom resource must reference SAMPeerGroup/<name>, SAMNodeSet/<name>, SAMEnrollmentPolicy/<name>, or SAMRRSet/<name>"
 			statuses = append(statuses, status)
 			return nil, nil, statuses, pending, fmt.Errorf("%s", status.Reason)
+		}
+		if sourceKind == "SAMRRSet" {
+			rrSet, found, err := c.samRRSet(ref)
+			if err != nil {
+				status.Phase = "Invalid"
+				status.Reason = err.Error()
+				statuses = append(statuses, status)
+				return nil, nil, statuses, pending, err
+			}
+			if !found {
+				status.Phase = "Missing"
+				status.Reason = "SAMRRSet not found"
+				statuses = append(statuses, status)
+				if !source.Optional {
+					pending = append(pending, ref)
+				}
+				continue
+			}
+			self := strings.TrimSpace(spec.SelfNodeRef)
+			for _, member := range rrSet.Members {
+				nodeRef := strings.TrimSpace(member.NodeRef)
+				if nodeRef == "" {
+					continue
+				}
+				addTopology(nodeRef)
+				if nodeRef == self {
+					continue
+				}
+				addPeer(api.SAMTransportPeerSpec{
+					NodeRef:        nodeRef,
+					RemoteEndpoint: strings.TrimSpace(member.Endpoint),
+				})
+				status.PeerCount++
+			}
+			statuses = append(statuses, status)
+			continue
+		}
+		if sourceKind == "SAMEnrollmentPolicy" {
+			nodeSet, found, skipped, err := c.samEnrollmentNodeSet(ref)
+			if err != nil {
+				status.Phase = "Invalid"
+				status.Reason = err.Error()
+				statuses = append(statuses, status)
+				return nil, nil, statuses, pending, err
+			}
+			if !found {
+				status.Phase = "Missing"
+				status.Reason = "SAMEnrollmentPolicy not found"
+				statuses = append(statuses, status)
+				if !source.Optional {
+					pending = append(pending, ref)
+				}
+				continue
+			}
+			self := strings.TrimSpace(spec.SelfNodeRef)
+			status.PeerCount = len(nodeSet.Nodes)
+			if skipped > 0 {
+				status.Reason = fmt.Sprintf("%d enrollment claims skipped", skipped)
+			}
+			for _, node := range nodeSet.Nodes {
+				nodeRef := strings.TrimSpace(node.NodeRef)
+				if nodeRef == "" {
+					continue
+				}
+				addTopology(nodeRef)
+				if nodeRef == self {
+					continue
+				}
+				endpoint, endpointPending, err := c.samNodeEndpoint(node)
+				if err != nil {
+					status.Phase = "Invalid"
+					status.Reason = fmt.Sprintf("%s node %s samEndpoint: %v", ref, nodeRef, err)
+					statuses = append(statuses, status)
+					return nil, nil, statuses, pending, fmt.Errorf("%s", status.Reason)
+				}
+				if endpointPending != "" {
+					status.Phase = "Pending"
+					status.Reason = endpointPending + " not resolved"
+					pending = append(pending, endpointPending)
+					continue
+				}
+				if endpoint == "" {
+					continue
+				}
+				addr, err := endpointAddress(endpoint)
+				if err != nil {
+					status.Phase = "Invalid"
+					status.Reason = fmt.Sprintf("%s node %s samEndpoint %q: %v", ref, nodeRef, endpoint, err)
+					statuses = append(statuses, status)
+					return nil, nil, statuses, pending, fmt.Errorf("%s", status.Reason)
+				}
+				addPeer(api.SAMTransportPeerSpec{
+					NodeRef:        nodeRef,
+					RemoteEndpoint: addr.String(),
+				})
+			}
+			statuses = append(statuses, status)
+			continue
 		}
 		if sourceKind == "SAMNodeSet" {
 			nodeSet, found, err := c.samNodeSet(ref)
@@ -386,7 +487,7 @@ func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Re
 		}
 		if sourceKind != "SAMPeerGroup" {
 			status.Phase = "Invalid"
-			status.Reason = "peersFrom resource must reference SAMPeerGroup/<name> or SAMNodeSet/<name>"
+			status.Reason = "peersFrom resource must reference SAMPeerGroup/<name>, SAMNodeSet/<name>, SAMEnrollmentPolicy/<name>, or SAMRRSet/<name>"
 			statuses = append(statuses, status)
 			return nil, nil, statuses, pending, fmt.Errorf("%s", status.Reason)
 		}
@@ -510,6 +611,128 @@ func (c TransportController) samNodeSet(ref string) (api.SAMNodeSetSpec, bool, e
 		return spec, true, nil
 	}
 	return api.SAMNodeSetSpec{}, false, nil
+}
+
+func (c TransportController) samRRSet(ref string) (api.SAMRRSetSpec, bool, error) {
+	kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
+	if !ok || kind != "SAMRRSet" || strings.TrimSpace(name) == "" {
+		return api.SAMRRSetSpec{}, false, fmt.Errorf("peersFrom resource must reference SAMRRSet/<name>")
+	}
+	if c.Router == nil {
+		return api.SAMRRSetSpec{}, false, nil
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMRRSet" || resource.Metadata.Name != strings.TrimSpace(name) {
+			continue
+		}
+		spec, err := resource.SAMRRSetSpec()
+		if err != nil {
+			return api.SAMRRSetSpec{}, true, fmt.Errorf("%s spec: %w", ref, err)
+		}
+		return spec, true, nil
+	}
+	return api.SAMRRSetSpec{}, false, nil
+}
+
+func (c TransportController) samEnrollmentNodeSet(ref string) (api.SAMNodeSetSpec, bool, int, error) {
+	kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
+	if !ok || kind != "SAMEnrollmentPolicy" || strings.TrimSpace(name) == "" {
+		return api.SAMNodeSetSpec{}, false, 0, fmt.Errorf("peersFrom resource must reference SAMEnrollmentPolicy/<name>")
+	}
+	if c.Router == nil {
+		return api.SAMNodeSetSpec{}, false, 0, nil
+	}
+	var policy api.SAMEnrollmentPolicySpec
+	found := false
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentPolicy" || resource.Metadata.Name != strings.TrimSpace(name) {
+			continue
+		}
+		spec, err := resource.SAMEnrollmentPolicySpec()
+		if err != nil {
+			return api.SAMNodeSetSpec{}, true, 0, fmt.Errorf("%s spec: %w", ref, err)
+		}
+		policy = spec
+		found = true
+		break
+	}
+	if !found {
+		return api.SAMNodeSetSpec{}, false, 0, nil
+	}
+	var nodes []api.SAMNodeSpec
+	skipped := 0
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentClaim" {
+			continue
+		}
+		claim, err := resource.SAMEnrollmentClaimSpec()
+		if err != nil {
+			return api.SAMNodeSetSpec{}, true, skipped, err
+		}
+		_, claimPolicyName, _ := strings.Cut(strings.TrimSpace(claim.PolicyRef), "/")
+		if claimPolicyName != strings.TrimSpace(name) {
+			continue
+		}
+		if claim.Revoked || transportEnrollmentClaimExpired(claim, transportNow(c.Now)) {
+			skipped++
+			continue
+		}
+		tunnel, err := transportEnrollmentTunnelAddress(claim.TunnelAddress)
+		if err != nil || !transportEnrollmentPrefixContains(policy.TunnelAddressPrefixes, tunnel.Addr()) {
+			skipped++
+			continue
+		}
+		endpoint := strings.TrimSpace(claim.Endpoint)
+		if endpoint == "" {
+			endpoint = tunnel.Addr().String()
+		}
+		nodes = append(nodes, api.SAMNodeSpec{
+			NodeRef:     strings.TrimSpace(claim.LeafID),
+			Role:        "cloud",
+			SAMEndpoint: endpoint,
+		})
+	}
+	return api.SAMNodeSetSpec{Nodes: nodes}, true, skipped, nil
+}
+
+func transportEnrollmentClaimExpired(claim api.SAMEnrollmentClaimSpec, now time.Time) bool {
+	if strings.TrimSpace(claim.ExpiresAt) == "" {
+		return false
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(claim.ExpiresAt))
+	if err != nil {
+		expiresAt, err = time.Parse(time.RFC3339, strings.TrimSpace(claim.ExpiresAt))
+		if err != nil {
+			return true
+		}
+	}
+	return !expiresAt.After(now)
+}
+
+func transportEnrollmentTunnelAddress(value string) (netip.Prefix, error) {
+	value = strings.TrimSpace(value)
+	if strings.Contains(value, "/") {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return netip.Prefix{}, err
+		}
+		return prefix.Masked(), nil
+	}
+	addr, err := netip.ParseAddr(value)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	return netip.PrefixFrom(addr, 32), nil
+}
+
+func transportEnrollmentPrefixContains(prefixes []string, addr netip.Addr) bool {
+	for _, value := range prefixes {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+		if err == nil && prefix.Masked().Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 func transportAddressSlots(spec api.SAMTransportProfileSpec, inner netip.Prefix) (map[string]int, error) {

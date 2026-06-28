@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"net/netip"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -54,6 +55,9 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 		return err
 	}
 	if err := validateMobilityPoolPrefixes(router); err != nil {
+		return err
+	}
+	if err := validateSAMEnrollmentReferences(router, idx); err != nil {
 		return err
 	}
 	for _, res := range router.Spec.Resources {
@@ -144,6 +148,12 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 					return fmt.Errorf("%s spec.routeReflectorClient requires iBGP peerASN matching %s spec.asn", res.ID(), spec.RouterRef)
 				}
 			}
+			for i, source := range spec.PeersFrom {
+				kind, name, ok := strings.Cut(strings.TrimSpace(source.Resource), "/")
+				if !ok || kind != "SAMRRSet" || !idx.Seen[api.MobilityAPIVersion+"/SAMRRSet/"+name] {
+					return fmt.Errorf("%s spec.peersFrom[%d].resource references missing SAMRRSet %q", res.ID(), i, source.Resource)
+				}
+			}
 			if strings.TrimSpace(spec.BFD) != "" {
 				refKind, refName, ok := strings.Cut(strings.TrimSpace(spec.BFD), "/")
 				bfdSpec, exists := idx.BFDSpecs[refName]
@@ -200,6 +210,22 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 			for i, peer := range spec.Peers {
 				if override := strings.TrimSpace(peer.Override.UnderlayInterface); override != "" && !idx.Interfaces[override] {
 					return fmt.Errorf("%s spec.peers[%d].override.underlayInterface references missing Interface %q", res.ID(), i, override)
+				}
+			}
+		}
+		if res.Kind == "SAMRRSet" {
+			spec, err := res.SAMRRSetSpec()
+			if err != nil {
+				return err
+			}
+			kind, name, ok := strings.Cut(strings.TrimSpace(spec.EnrollmentPolicyRef), "/")
+			if !ok || kind != "SAMEnrollmentPolicy" || strings.TrimSpace(name) == "" {
+				return fmt.Errorf("%s spec.enrollmentPolicyRef must reference SAMEnrollmentPolicy/<name>", res.ID())
+			}
+			for i, ref := range spec.MobilityPoolRefs {
+				kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
+				if !ok || kind != "MobilityPool" || strings.TrimSpace(name) == "" {
+					return fmt.Errorf("%s spec.mobilityPoolRefs[%d] must reference MobilityPool/<name>", res.ID(), i)
 				}
 			}
 		}
@@ -845,6 +871,185 @@ func validateMobilityPoolPrefixes(router *api.Router) error {
 		pools = append(pools, poolPrefix{id: res.ID(), prefix: prefix})
 	}
 	return nil
+}
+
+func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error {
+	policies := map[string]api.SAMEnrollmentPolicySpec{}
+	mobilityPrefixes := map[string]netip.Prefix{}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion == api.MobilityAPIVersion && res.Kind == "SAMEnrollmentPolicy" {
+			spec, err := res.SAMEnrollmentPolicySpec()
+			if err != nil {
+				return err
+			}
+			policies[res.Metadata.Name] = spec
+			kind, name, ok := strings.Cut(strings.TrimSpace(spec.TransportProfileRef), "/")
+			if !ok || kind != "SAMTransportProfile" || !idx.Seen[api.MobilityAPIVersion+"/SAMTransportProfile/"+name] {
+				return fmt.Errorf("%s spec.transportProfileRef references missing SAMTransportProfile %q", res.ID(), spec.TransportProfileRef)
+			}
+			if strings.TrimSpace(spec.WireGuard.Interface) != "" && !idx.WireGuardInterfaces[strings.TrimSpace(spec.WireGuard.Interface)] {
+				return fmt.Errorf("%s spec.wireGuard.interface references missing WireGuardInterface %q", res.ID(), spec.WireGuard.Interface)
+			}
+			for i, ref := range spec.MobilityPoolRefs {
+				kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
+				if !ok || kind != "MobilityPool" || !idx.Seen[api.MobilityAPIVersion+"/MobilityPool/"+name] {
+					return fmt.Errorf("%s spec.mobilityPoolRefs[%d] references missing MobilityPool %q", res.ID(), i, ref)
+				}
+			}
+		}
+		if res.APIVersion == api.MobilityAPIVersion && res.Kind == "MobilityPool" {
+			spec, err := res.MobilityPoolSpec()
+			if err != nil {
+				return err
+			}
+			prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+			if err == nil {
+				mobilityPrefixes[res.Metadata.Name] = prefix.Masked()
+			}
+		}
+	}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "SAMEnrollmentClaim" {
+			continue
+		}
+		spec, err := res.SAMEnrollmentClaimSpec()
+		if err != nil {
+			return err
+		}
+		kind, name, ok := strings.Cut(strings.TrimSpace(spec.PolicyRef), "/")
+		policy, exists := policies[name]
+		if !ok || kind != "SAMEnrollmentPolicy" {
+			return fmt.Errorf("%s spec.policyRef must reference SAMEnrollmentPolicy/<name>", res.ID())
+		}
+		if !exists {
+			continue
+		}
+		if pattern := strings.TrimSpace(policy.AllowedLeafIDs.Pattern); pattern != "" {
+			re, err := regexp.Compile(pattern)
+			if err != nil {
+				return fmt.Errorf("%s referenced policy %s allowedLeafIDs.pattern is invalid: %w", res.ID(), spec.PolicyRef, err)
+			}
+			if !re.MatchString(strings.TrimSpace(spec.LeafID)) {
+				return fmt.Errorf("%s spec.leafID %q is not allowed by %s spec.allowedLeafIDs.pattern", res.ID(), spec.LeafID, spec.PolicyRef)
+			}
+		}
+		tunnel, err := parseSAMEnrollmentTunnelAddress(spec.TunnelAddress)
+		if err != nil {
+			return fmt.Errorf("%s spec.tunnelAddress is invalid: %w", res.ID(), err)
+		}
+		if !prefixContainsAny(policy.TunnelAddressPrefixes, tunnel.Addr()) {
+			return fmt.Errorf("%s spec.tunnelAddress %s is outside %s spec.tunnelAddressPrefixes", res.ID(), tunnel, spec.PolicyRef)
+		}
+		if strings.TrimSpace(policy.JoinTokenFrom.File) != "" || strings.TrimSpace(policy.JoinTokenFrom.Env) != "" {
+			if strings.TrimSpace(spec.JoinNonce) == "" {
+				return fmt.Errorf("%s spec.joinNonce is required by %s joinTokenFrom", res.ID(), spec.PolicyRef)
+			}
+			if strings.TrimSpace(spec.JoinTimestamp) == "" {
+				return fmt.Errorf("%s spec.joinTimestamp is required by %s joinTokenFrom", res.ID(), spec.PolicyRef)
+			}
+			if strings.TrimSpace(spec.JoinHMAC) == "" {
+				return fmt.Errorf("%s spec.joinHMAC is required by %s joinTokenFrom", res.ID(), spec.PolicyRef)
+			}
+			if strings.TrimSpace(policy.JoinAudience) != "" && strings.TrimSpace(spec.JoinAudience) != strings.TrimSpace(policy.JoinAudience) {
+				return fmt.Errorf("%s spec.joinAudience %q does not match %s spec.joinAudience", res.ID(), spec.JoinAudience, spec.PolicyRef)
+			}
+		}
+		if strings.TrimSpace(spec.Endpoint) != "" && len(policy.EndpointPrefixes) > 0 {
+			endpointAddr, err := endpointAddressForValidation(spec.Endpoint)
+			if err != nil {
+				return fmt.Errorf("%s spec.endpoint is invalid: %w", res.ID(), err)
+			}
+			if !prefixContainsAny(policy.EndpointPrefixes, endpointAddr) {
+				return fmt.Errorf("%s spec.endpoint %s is outside %s spec.endpointPrefixes", res.ID(), endpointAddr, spec.PolicyRef)
+			}
+		}
+		for i, allowed := range spec.WireGuard.AllowedIPs {
+			prefix, err := netip.ParsePrefix(strings.TrimSpace(allowed))
+			if err != nil {
+				return fmt.Errorf("%s spec.wireGuard.allowedIPs[%d] is invalid: %w", res.ID(), i, err)
+			}
+			if !prefixContainedByAny(policy.WireGuard.AllowedExtraIPPrefixes, prefix.Masked()) {
+				return fmt.Errorf("%s spec.wireGuard.allowedIPs[%d] %s is outside %s spec.wireGuard.allowedExtraIPPrefixes", res.ID(), i, prefix.Masked(), spec.PolicyRef)
+			}
+		}
+		for i, owned := range spec.Mobility.OwnedAddresses {
+			prefix, err := parseSAMEnrollmentTunnelAddress(owned)
+			if err != nil {
+				return fmt.Errorf("%s spec.mobility.ownedAddresses[%d] is invalid: %w", res.ID(), i, err)
+			}
+			if !ownedAddressAuthorizedByMobilityPools(prefix, policy.MobilityPoolRefs, mobilityPrefixes) {
+				return fmt.Errorf("%s spec.mobility.ownedAddresses[%d] %s is outside authorized MobilityPool prefixes", res.ID(), i, prefix)
+			}
+		}
+	}
+	return nil
+}
+
+func endpointAddressForValidation(value string) (netip.Addr, error) {
+	value = strings.TrimSpace(value)
+	if strings.Contains(value, "/") {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return netip.Addr{}, err
+		}
+		return prefix.Addr(), nil
+	}
+	addr, err := netip.ParseAddr(value)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	return addr, nil
+}
+
+func prefixContainsAny(prefixes []string, addr netip.Addr) bool {
+	for _, value := range prefixes {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+		if err == nil && prefix.Masked().Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+func prefixContainedByAny(prefixes []string, candidate netip.Prefix) bool {
+	for _, value := range prefixes {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+		if err != nil {
+			continue
+		}
+		prefix = prefix.Masked()
+		if prefix.Contains(candidate.Addr()) && prefix.Contains(prefixLastAddr(candidate)) {
+			return true
+		}
+	}
+	return false
+}
+
+func prefixLastAddr(prefix netip.Prefix) netip.Addr {
+	prefix = prefix.Masked()
+	addr := prefix.Addr()
+	if !addr.Is4() || prefix.Bits() == 32 {
+		return addr
+	}
+	as4 := addr.As4()
+	value := uint32(as4[0])<<24 | uint32(as4[1])<<16 | uint32(as4[2])<<8 | uint32(as4[3])
+	hostBits := uint32(32 - prefix.Bits())
+	value += (uint32(1) << hostBits) - 1
+	return netip.AddrFrom4([4]byte{byte(value >> 24), byte(value >> 16), byte(value >> 8), byte(value)})
+}
+
+func ownedAddressAuthorizedByMobilityPools(address netip.Prefix, refs []string, prefixes map[string]netip.Prefix) bool {
+	for _, ref := range refs {
+		kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
+		if !ok || kind != "MobilityPool" {
+			continue
+		}
+		prefix, ok := prefixes[name]
+		if ok && prefix.Contains(address.Addr()) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateApplyPolicy(spec api.ApplyPolicySpec) error {

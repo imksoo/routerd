@@ -48,6 +48,78 @@ func (s mapStore) DeleteObject(apiVersion, kind, name string) error {
 	return nil
 }
 
+func TestWireGuardControllerDerivesPeersFromSAMRRSet(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: leaf-pve}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg-hybrid}
+      spec:
+        selfNodeRef: leaf-pve
+        privateKey: priv
+        peersFrom:
+          - resource: SAMRRSet/cloudedge-rrs
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMRRSet
+      metadata: {name: cloudedge-rrs}
+      spec:
+        enrollmentPolicyRef: SAMEnrollmentPolicy/cloudedge-leaves
+        members:
+          - nodeRef: aws-rr-a
+            endpoint: 203.0.113.10
+            tunnelAddress: 10.99.0.2/32
+            wireGuard:
+              publicKey: rrpub-a
+              endpoint: 203.0.113.10:51820
+          - nodeRef: aws-rr-b
+            endpoint: 203.0.113.11
+            tunnelAddress: 10.99.0.3/32
+            wireGuard:
+              publicKey: rrpub-b
+              endpoint: 203.0.113.11:51820
+`)
+	var setconf string
+	controller := WireGuardController{
+		Router: router,
+		Store:  mapStore{},
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			switch name + " " + strings.Join(args, " ") {
+			case "ip link show wg-hybrid":
+				return nil, errors.New("missing")
+			case "wg show wg-hybrid dump":
+				return []byte("priv\tifacepub\t51820\toff\n"), nil
+			default:
+				return nil, nil
+			}
+		},
+		CommandStdin: func(_ context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+			if name == "wg" && strings.Join(args, " ") == "setconf wg-hybrid /dev/stdin" {
+				setconf = string(stdin)
+			}
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"PublicKey = rrpub-a",
+		"AllowedIPs = 10.99.0.2/32",
+		"Endpoint = 203.0.113.10:51820",
+		"PublicKey = rrpub-b",
+		"AllowedIPs = 10.99.0.3/32",
+		"Endpoint = 203.0.113.11:51820",
+	} {
+		if !strings.Contains(setconf, want) {
+			t.Fatalf("setconf missing %q:\n%s", want, setconf)
+		}
+	}
+}
+
 func TestWireGuardControllerAppliesInterfaceAndPeers(t *testing.T) {
 	router := mustWireGuardRouter(t, `
 apiVersion: routerd.net/v1alpha1
@@ -651,6 +723,96 @@ spec:
 	peer := store.ObjectStatus(api.NetAPIVersion, "WireGuardPeer", "router-b")
 	if peer["publicKey"] != "peerpub-b" || peer["persistentKeepalive"] != 25 {
 		t.Fatalf("generated peer status = %+v", peer)
+	}
+}
+
+func TestWireGuardControllerDerivesPeersFromSAMEnrollmentPolicy(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: aws-rr-a}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg-hybrid}
+      spec:
+        selfNodeRef: aws-rr-a
+        privateKey: priv
+        listenPort: 51820
+        peersFrom:
+          - resource: SAMEnrollmentPolicy/cloudedge-leaves
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentPolicy
+      metadata: {name: cloudedge-leaves}
+      spec:
+        transportProfileRef: SAMTransportProfile/aws-rr-a
+        tunnelAddressPrefixes: [10.255.0.0/20]
+        wireGuard:
+          interface: wg-hybrid
+          persistentKeepalive: 25
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentClaim
+      metadata: {name: leaf-pve}
+      spec:
+        policyRef: SAMEnrollmentPolicy/cloudedge-leaves
+        leafID: leaf-pve
+        tunnelAddress: 10.255.0.21/32
+        wireGuard:
+          publicKey: leafpub-pve
+          endpoint: 198.51.100.21:51820
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentClaim
+      metadata: {name: leaf-revoked}
+      spec:
+        policyRef: SAMEnrollmentPolicy/cloudedge-leaves
+        leafID: leaf-revoked
+        tunnelAddress: 10.255.0.22/32
+        revoked: true
+        wireGuard:
+          publicKey: revokedpub
+`)
+	store := mapStore{}
+	var setconf string
+	controller := WireGuardController{
+		Router: router,
+		Store:  store,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			switch name + " " + strings.Join(args, " ") {
+			case "ip link show wg-hybrid":
+				return nil, errors.New("missing")
+			case "wg show wg-hybrid dump":
+				return []byte("priv\tifacepub\t51820\toff\nleafpub-pve\tpsk\t198.51.100.21:51820\t10.255.0.21/32\t0\t0\t0\t25\n"), nil
+			default:
+				return nil, nil
+			}
+		},
+		CommandStdin: func(_ context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+			if name == "wg" && strings.Join(args, " ") == "setconf wg-hybrid /dev/stdin" {
+				setconf = string(stdin)
+			}
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"PublicKey = leafpub-pve",
+		"AllowedIPs = 10.255.0.21/32",
+		"Endpoint = 198.51.100.21:51820",
+		"PersistentKeepalive = 25",
+	} {
+		if !strings.Contains(setconf, want) {
+			t.Fatalf("setconf missing %q:\n%s", want, setconf)
+		}
+	}
+	if strings.Contains(setconf, "revokedpub") {
+		t.Fatalf("revoked claim must not be materialized:\n%s", setconf)
+	}
+	policy := store.ObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentPolicy", "cloudedge-leaves")
+	if policy["acceptedClaims"] != 1 || policy["skippedClaims"] != 1 {
+		t.Fatalf("policy status = %+v", policy)
 	}
 }
 

@@ -902,7 +902,7 @@ func TestValidateRejectsInvalidWireGuardInterfacePeersFrom(t *testing.T) {
 		}},
 	}
 	err := Validate(router)
-	if err == nil || !strings.Contains(err.Error(), "spec.peersFrom[0].resource must reference SAMNodeSet/<name>") {
+	if err == nil || !strings.Contains(err.Error(), "spec.peersFrom[0].resource must reference SAMNodeSet/<name>, SAMEnrollmentPolicy/<name>, or SAMRRSet/<name>") {
 		t.Fatalf("Validate WireGuardInterface peersFrom error = %v, want SAMNodeSet ref error", err)
 	}
 }

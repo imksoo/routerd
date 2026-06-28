@@ -328,6 +328,24 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "SAMEnrollmentPolicy":
+		var spec SAMEnrollmentPolicySpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "SAMRRSet":
+		var spec SAMRRSetSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "SAMEnrollmentClaim":
+		var spec SAMEnrollmentClaimSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "BFD":
 		var spec BFDSpec
 		if err := raw.Spec.Decode(&spec); err != nil {

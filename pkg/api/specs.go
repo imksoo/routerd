@@ -631,7 +631,8 @@ type BGPWatcherSpec struct {
 type BGPPeerSpec struct {
 	RouterRef               string                `yaml:"routerRef" json:"routerRef"`
 	PeerASN                 uint32                `yaml:"peerASN" json:"peerASN" jsonschema:"minimum=1"`
-	Peers                   []string              `yaml:"peers" json:"peers"`
+	Peers                   []string              `yaml:"peers,omitempty" json:"peers,omitempty"`
+	PeersFrom               []BGPPeersSourceSpec  `yaml:"peersFrom,omitempty" json:"peersFrom,omitempty"`
 	Password                string                `yaml:"password,omitempty" json:"password,omitempty"`
 	PasswordFrom            SecretValueSourceSpec `yaml:"passwordFrom,omitempty" json:"passwordFrom,omitempty"`
 	EbgpMultihop            int                   `yaml:"ebgpMultihop,omitempty" json:"ebgpMultihop,omitempty" jsonschema:"minimum=0,maximum=255"`
@@ -643,6 +644,11 @@ type BGPPeerSpec struct {
 	Communities             BGPCommunitiesSpec    `yaml:"communities,omitempty" json:"communities,omitempty"`
 	BFD                     string                `yaml:"bfd,omitempty" json:"bfd,omitempty"`
 	When                    ResourceWhenSpec      `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type BGPPeersSourceSpec struct {
+	Resource string `yaml:"resource" json:"resource"`
+	Optional bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
 }
 
 // BGPDynamicPeer represents an admission/listen rule for dynamic BGP
@@ -693,6 +699,105 @@ type SAMTransportPeersSourceSpec struct {
 
 type SAMPeerGroupSpec struct {
 	Peers []SAMTransportPeerSpec `yaml:"peers" json:"peers"`
+}
+
+// SAMRRSet declares the intended hub/RR admission set. It lists RR members and
+// shared admission references, but never lists leaves. Transport credentials
+// are optional and mode-specific; SAMTransportProfile chooses whether the set
+// is consumed as plain IPIP/GRE, WireGuard-underlay transport, or a future mode.
+type SAMRRSetSpec struct {
+	EnrollmentPolicyRef string              `yaml:"enrollmentPolicyRef" json:"enrollmentPolicyRef"`
+	MobilityPoolRefs    []string            `yaml:"mobilityPoolRefs,omitempty" json:"mobilityPoolRefs,omitempty"`
+	RouteAdmission      BGPImportPolicySpec `yaml:"routeAdmission,omitempty" json:"routeAdmission,omitempty"`
+	Members             []SAMRRSetMember    `yaml:"members" json:"members"`
+}
+
+type SAMRRSetMember struct {
+	NodeRef string `yaml:"nodeRef" json:"nodeRef"`
+	// Endpoint is the member's generic underlay endpoint. For
+	// encryption=none this is the remote endpoint used by ipip/gre. For
+	// encryption=wireguard, the WireGuard block carries the UDP endpoint and
+	// this field remains the transport endpoint consumed by SAMTransportProfile.
+	Endpoint      string                      `yaml:"endpoint" json:"endpoint"`
+	TunnelAddress string                      `yaml:"tunnelAddress" json:"tunnelAddress"`
+	WireGuard     SAMRRSetMemberWireGuardSpec `yaml:"wireGuard,omitempty" json:"wireGuard,omitempty"`
+	BGP           SAMRRSetMemberBGPSpec       `yaml:"bgp,omitempty" json:"bgp,omitempty"`
+}
+
+type SAMRRSetMemberWireGuardSpec struct {
+	PublicKey           string   `yaml:"publicKey,omitempty" json:"publicKey,omitempty"`
+	Endpoint            string   `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
+	AllowedIPs          []string `yaml:"allowedIPs,omitempty" json:"allowedIPs,omitempty"`
+	PersistentKeepalive int      `yaml:"persistentKeepalive,omitempty" json:"persistentKeepalive,omitempty" jsonschema:"minimum=0,maximum=65535"`
+}
+
+type SAMRRSetMemberBGPSpec struct {
+	ASN      uint32 `yaml:"asn,omitempty" json:"asn,omitempty" jsonschema:"minimum=1"`
+	RouterID string `yaml:"routerID,omitempty" json:"routerID,omitempty"`
+}
+
+// SAMEnrollmentPolicy authorizes leaf-side enrollment claims for SAM. It is the
+// hub/RR-side boundary for leaf identity, tunnel address ranges, TTL/revocation,
+// MobilityPool ownership references, and optional transport-specific material.
+type SAMEnrollmentPolicySpec struct {
+	TransportProfileRef   string                        `yaml:"transportProfileRef" json:"transportProfileRef"`
+	RRSetRef              string                        `yaml:"rrSetRef,omitempty" json:"rrSetRef,omitempty"`
+	JoinTokenFrom         SecretValueSourceSpec         `yaml:"joinTokenFrom,omitempty" json:"joinTokenFrom,omitempty"`
+	JoinAudience          string                        `yaml:"joinAudience,omitempty" json:"joinAudience,omitempty"`
+	AllowedLeafIDs        SAMEnrollmentLeafIDPolicySpec `yaml:"allowedLeafIDs,omitempty" json:"allowedLeafIDs,omitempty"`
+	TunnelAddressPrefixes []string                      `yaml:"tunnelAddressPrefixes" json:"tunnelAddressPrefixes"`
+	EndpointPrefixes      []string                      `yaml:"endpointPrefixes,omitempty" json:"endpointPrefixes,omitempty"`
+	WireGuard             SAMEnrollmentWireGuardSpec    `yaml:"wireGuard,omitempty" json:"wireGuard,omitempty"`
+	MobilityPoolRefs      []string                      `yaml:"mobilityPoolRefs,omitempty" json:"mobilityPoolRefs,omitempty"`
+	TTL                   string                        `yaml:"ttl,omitempty" json:"ttl,omitempty"`
+	RevokeAfterInactive   string                        `yaml:"revokeAfterInactive,omitempty" json:"revokeAfterInactive,omitempty"`
+}
+
+type SAMEnrollmentLeafIDPolicySpec struct {
+	Pattern string `yaml:"pattern,omitempty" json:"pattern,omitempty"`
+}
+
+type SAMEnrollmentWireGuardSpec struct {
+	Interface              string   `yaml:"interface" json:"interface"`
+	AllowedExtraIPPrefixes []string `yaml:"allowedExtraIPPrefixes,omitempty" json:"allowedExtraIPPrefixes,omitempty"`
+	PersistentKeepalive    int      `yaml:"persistentKeepalive,omitempty" json:"persistentKeepalive,omitempty" jsonschema:"minimum=0,maximum=65535"`
+}
+
+// SAMEnrollmentClaim is the leaf identity and enrollment payload.
+// It is separate from BGPDynamicPeer so BGP acceptor configuration never owns
+// WireGuard keys, tunnel addresses, claim TTL, revocation, or MobilityPool
+// authorization state.
+type SAMEnrollmentClaimSpec struct {
+	PolicyRef     string                          `yaml:"policyRef" json:"policyRef"`
+	RRSetRef      string                          `yaml:"rrSetRef,omitempty" json:"rrSetRef,omitempty"`
+	LeafID        string                          `yaml:"leafID" json:"leafID"`
+	JoinAudience  string                          `yaml:"joinAudience,omitempty" json:"joinAudience,omitempty"`
+	JoinNonce     string                          `yaml:"joinNonce,omitempty" json:"joinNonce,omitempty"`
+	JoinTimestamp string                          `yaml:"joinTimestamp,omitempty" json:"joinTimestamp,omitempty"`
+	JoinHMAC      string                          `yaml:"joinHMAC,omitempty" json:"joinHMAC,omitempty"`
+	TunnelAddress string                          `yaml:"tunnelAddress" json:"tunnelAddress"`
+	Endpoint      string                          `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
+	WireGuard     SAMEnrollmentClaimWireGuardSpec `yaml:"wireGuard,omitempty" json:"wireGuard,omitempty"`
+	Mobility      SAMEnrollmentClaimMobilitySpec  `yaml:"mobility,omitempty" json:"mobility,omitempty"`
+	BGP           SAMEnrollmentClaimBGPSpec       `yaml:"bgp,omitempty" json:"bgp,omitempty"`
+	ExpiresAt     string                          `yaml:"expiresAt,omitempty" json:"expiresAt,omitempty"`
+	Revoked       bool                            `yaml:"revoked,omitempty" json:"revoked,omitempty"`
+}
+
+type SAMEnrollmentClaimWireGuardSpec struct {
+	PublicKey           string   `yaml:"publicKey" json:"publicKey"`
+	Endpoint            string   `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
+	AllowedIPs          []string `yaml:"allowedIPs,omitempty" json:"allowedIPs,omitempty"`
+	PersistentKeepalive int      `yaml:"persistentKeepalive,omitempty" json:"persistentKeepalive,omitempty" jsonschema:"minimum=0,maximum=65535"`
+}
+
+type SAMEnrollmentClaimMobilitySpec struct {
+	OwnedAddresses []string `yaml:"ownedAddresses,omitempty" json:"ownedAddresses,omitempty"`
+}
+
+type SAMEnrollmentClaimBGPSpec struct {
+	ASN      uint32 `yaml:"asn,omitempty" json:"asn,omitempty" jsonschema:"minimum=1"`
+	RouterID string `yaml:"routerID,omitempty" json:"routerID,omitempty"`
 }
 
 // SAMSubnetPolicySpec shards a large on-prem prefix across multiple cloud-edge
@@ -767,6 +872,7 @@ type SAMNodeWireGuardSpec struct {
 type SAMTransportBGPProfileSpec struct {
 	RouterRef               string              `yaml:"routerRef" json:"routerRef"`
 	PeerASN                 uint32              `yaml:"peerASN" json:"peerASN" jsonschema:"minimum=1"`
+	GeneratePeers           *bool               `yaml:"generatePeers,omitempty" json:"generatePeers,omitempty"`
 	Timers                  BGPTimersSpec       `yaml:"timers,omitempty" json:"timers,omitempty"`
 	TimersPreset            string              `yaml:"timersPreset,omitempty" json:"timersPreset,omitempty" jsonschema:"enum=,enum=default,enum=fast,enum=slow"`
 	EbgpMultihop            int                 `yaml:"ebgpMultihop,omitempty" json:"ebgpMultihop,omitempty" jsonschema:"minimum=0,maximum=255"`
@@ -2524,6 +2630,18 @@ func (r Resource) BGPDynamicPeerSpec() (BGPDynamicPeerSpec, error) {
 
 func (r Resource) SAMPeerGroupSpec() (SAMPeerGroupSpec, error) {
 	return specAs[SAMPeerGroupSpec](r)
+}
+
+func (r Resource) SAMRRSetSpec() (SAMRRSetSpec, error) {
+	return specAs[SAMRRSetSpec](r)
+}
+
+func (r Resource) SAMEnrollmentPolicySpec() (SAMEnrollmentPolicySpec, error) {
+	return specAs[SAMEnrollmentPolicySpec](r)
+}
+
+func (r Resource) SAMEnrollmentClaimSpec() (SAMEnrollmentClaimSpec, error) {
+	return specAs[SAMEnrollmentClaimSpec](r)
 }
 
 func (r Resource) SAMSubnetPolicySpec() (SAMSubnetPolicySpec, error) {
