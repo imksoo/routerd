@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
@@ -32,17 +34,43 @@ func TestMobilityEnrollmentHMACCommand(t *testing.T) {
 		t.Fatalf("unexpected hmac output %q", hmacValue)
 	}
 
-	raw, err := os.ReadFile(configPath)
+	router, err := config.Load(configPath)
 	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
+		t.Fatalf("Load example: %v", err)
 	}
-	rendered := strings.ReplaceAll(string(raw), "EXAMPLE_HMAC_SHA256_HEX", hmacValue)
-	rendered = strings.ReplaceAll(rendered, "/usr/local/etc/routerd/secrets/cloudedge-join-token", secretPath)
+	for i := range router.Spec.Resources {
+		resource := &router.Spec.Resources[i]
+		switch resource.Kind {
+		case "SAMEnrollmentPolicy":
+			spec, err := resource.SAMEnrollmentPolicySpec()
+			if err != nil {
+				t.Fatalf("%s spec: %v", resource.ID(), err)
+			}
+			spec.JoinTokenFrom.File = secretPath
+			resource.Spec = spec
+		case "SAMEnrollmentClaim":
+			spec, err := resource.SAMEnrollmentClaimSpec()
+			if err != nil {
+				t.Fatalf("%s spec: %v", resource.ID(), err)
+			}
+			stdout.Reset()
+			stderr.Reset()
+			if err := mobilityCommand([]string{"enrollment-hmac", "--config", configPath, "--claim", resource.Metadata.Name, "--secret-file", secretPath}, &stdout, &stderr); err != nil {
+				t.Fatalf("mobility enrollment-hmac %s: %v stderr=%s", resource.Metadata.Name, err, stderr.String())
+			}
+			spec.JoinHMAC = strings.TrimSpace(stdout.String())
+			resource.Spec = spec
+		}
+	}
+	rendered, err := yaml.Marshal(router)
+	if err != nil {
+		t.Fatalf("Marshal candidate: %v", err)
+	}
 	candidate := filepath.Join(t.TempDir(), "rr-a.yaml")
-	if err := os.WriteFile(candidate, []byte(rendered), 0o600); err != nil {
+	if err := os.WriteFile(candidate, rendered, 0o600); err != nil {
 		t.Fatalf("WriteFile candidate: %v", err)
 	}
-	router, err := config.Load(candidate)
+	router, err = config.Load(candidate)
 	if err != nil {
 		t.Fatalf("Load candidate: %v", err)
 	}

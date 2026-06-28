@@ -28,8 +28,14 @@ func TestCloudEdgeDynamicRRLeafExamplesUseDualRRShape(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assertHasResource(t, tt.router, api.NetAPIVersion, "BGPDynamicPeer", "cloudedge-leaves")
 			assertHasResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentPolicy", "cloudedge-leaves")
+			assertHasResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentPolicy", "cloudedge-public-wg-leaves")
+			assertHasResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentPolicy", "cloudedge-private-fou-leaves")
 			assertHasResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentClaim", "leaf-pve")
+			assertHasResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentClaim", "leaf-a")
+			assertHasResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentClaim", "leaf-b")
 			assertMissingResource(t, tt.router, api.NetAPIVersion, "BGPPeer", "leaf-pve")
+			assertMissingResource(t, tt.router, api.NetAPIVersion, "BGPPeer", "leaf-a")
+			assertMissingResource(t, tt.router, api.NetAPIVersion, "BGPPeer", "leaf-b")
 			assertMissingResource(t, tt.router, api.NetAPIVersion, "BGPPeer", "leaf-azure")
 			assertMissingResource(t, tt.router, api.NetAPIVersion, "WireGuardInterface", "wg-hybrid")
 			dynamicPeer := mustResource(t, tt.router, api.NetAPIVersion, "BGPDynamicPeer", "cloudedge-leaves")
@@ -56,6 +62,10 @@ func TestCloudEdgeDynamicRRLeafExamplesUseDualRRShape(t *testing.T) {
 			if len(spec.PeersFrom) != 1 || spec.PeersFrom[0].Resource != "SAMEnrollmentPolicy/cloudedge-leaves" {
 				t.Fatalf("%s transport peersFrom = %#v, want SAMEnrollmentPolicy/cloudedge-leaves", tt.name, spec.PeersFrom)
 			}
+			assertRRAdmissionTransport(t, tt.router, tt.self+"-wg", "ipip", "wireguard", "SAMEnrollmentPolicy/cloudedge-public-wg-leaves", false)
+			assertRRAdmissionTransport(t, tt.router, tt.self+"-fou", "fou", "none", "SAMEnrollmentPolicy/cloudedge-private-fou-leaves", true)
+			assertEnrollmentPolicy(t, tt.router, "cloudedge-public-wg-leaves", tt.self+"-wg", "cloudedge-public-underlay", true)
+			assertEnrollmentPolicy(t, tt.router, "cloudedge-private-fou-leaves", tt.self+"-fou", "cloudedge-private-underlay", false)
 		})
 	}
 
@@ -176,6 +186,47 @@ func mustResource(t *testing.T, router *api.Router, apiVersion, kind, name strin
 	}
 	t.Fatalf("missing %s/%s in %s", kind, name, router.Metadata.Name)
 	return api.Resource{}
+}
+
+func assertRRAdmissionTransport(t *testing.T, router *api.Router, name, mode, encryption, peersFrom string, wantFOU bool) {
+	t.Helper()
+	resource := mustResource(t, router, api.MobilityAPIVersion, "SAMTransportProfile", name)
+	spec, err := resource.SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Mode != mode || spec.Encryption != encryption {
+		t.Fatalf("SAMTransportProfile/%s transport = %s/%s, want %s/%s", name, spec.Mode, spec.Encryption, mode, encryption)
+	}
+	if len(spec.PeersFrom) != 1 || spec.PeersFrom[0].Resource != peersFrom {
+		t.Fatalf("SAMTransportProfile/%s peersFrom = %#v, want %s", name, spec.PeersFrom, peersFrom)
+	}
+	if spec.BGP.GeneratePeers == nil || *spec.BGP.GeneratePeers {
+		t.Fatalf("SAMTransportProfile/%s generatePeers = %#v, want false for RR dynamic admission", name, spec.BGP.GeneratePeers)
+	}
+	if wantFOU && (spec.EncapSport != 5555 || spec.EncapDport != 5555) {
+		t.Fatalf("SAMTransportProfile/%s encap ports = %d/%d, want 5555/5555", name, spec.EncapSport, spec.EncapDport)
+	}
+}
+
+func assertEnrollmentPolicy(t *testing.T, router *api.Router, name, profile, audience string, wantWireGuard bool) {
+	t.Helper()
+	resource := mustResource(t, router, api.MobilityAPIVersion, "SAMEnrollmentPolicy", name)
+	spec, err := resource.SAMEnrollmentPolicySpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.TransportProfileRef != "SAMTransportProfile/"+profile {
+		t.Fatalf("SAMEnrollmentPolicy/%s transportProfileRef = %q, want SAMTransportProfile/%s", name, spec.TransportProfileRef, profile)
+	}
+	if spec.JoinAudience != audience {
+		t.Fatalf("SAMEnrollmentPolicy/%s joinAudience = %q, want %q", name, spec.JoinAudience, audience)
+	}
+	if (spec.WireGuard.Interface != "") != wantWireGuard {
+		t.Fatalf("SAMEnrollmentPolicy/%s wireGuard = %#v, want present=%v", name, spec.WireGuard, wantWireGuard)
+	}
+	assertStringSet(t, "SAMEnrollmentPolicy/"+name+" endpoint prefixes", spec.EndpointPrefixes, []string{"10.20.0.0/24"})
+	assertStringSet(t, "SAMEnrollmentPolicy/"+name+" tunnel prefixes", spec.TunnelAddressPrefixes, []string{"10.255.0.0/20"})
 }
 
 func assertRRSetMembers(t *testing.T, router *api.Router, want ...string) {

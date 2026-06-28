@@ -52,6 +52,8 @@ These configs model:
 - no static RR-side `BGPPeer/leaf-*`;
 - RR-side `BGPDynamicPeer/cloudedge-leaves`;
 - RR-side `SAMTransportProfile.spec.bgp.generatePeers: false`;
+- RR-side private IPIP, public WG/IPIP, and private FOU enrollment policies
+  for `leaf-pve`, `leaf-a`, and `leaf-b`;
 - leaf-side `SAMTransportProfile/leaf-pve` consuming
   `SAMRRSet/cloudedge-rrs`;
 - generated/effective leaf `TunnelInterface` and `BGPPeer` resources toward
@@ -69,10 +71,13 @@ The mixed examples model:
 - `leaf-b` using `encryption: none`, `encapSport: 5555`, and
   `encapDport: 5555`, with no `WireGuardInterface` or `WireGuardPeer`.
 
-The RR configs include the same example `SAMEnrollmentClaim/leaf-pve` so the
-paired RR flow can be tested without an external enrollment service. In a real
-deployment, the accepted claim should be fanned out to both RRs by the
-enrollment service or config distribution path.
+The RR configs include example claims for `leaf-pve`, `leaf-a`, and `leaf-b` so
+the paired RR admission flow can be tested without an external enrollment
+service. `leaf-a` is admitted through `SAMEnrollmentPolicy/cloudedge-public-wg-leaves`
+and `SAMTransportProfile/rr-*-wg`; `leaf-b` is admitted through
+`SAMEnrollmentPolicy/cloudedge-private-fou-leaves` and
+`SAMTransportProfile/rr-*-fou`. In a real deployment, accepted claims should be
+fanned out to both RRs by the enrollment service or config distribution path.
 
 ## Required Inputs
 
@@ -190,6 +195,14 @@ Expected local evidence:
 - rr-a and rr-b validate without `WireGuardInterface` or `WireGuardPeer`.
 - rr-a and rr-b contain `BGPDynamicPeer/cloudedge-leaves`.
 - rr-a and rr-b contain no static `BGPPeer/leaf-*`.
+- rr-a and rr-b contain `SAMEnrollmentClaim/leaf-a` and
+  `SAMEnrollmentClaim/leaf-b` for reviewed mixed admission.
+- rr-a and rr-b materialize one `TunnelInterface` for `leaf-a` through
+  `SAMTransportProfile/rr-*-wg`, one `TunnelInterface` for `leaf-b` through
+  `SAMTransportProfile/rr-*-fou`, and zero generated RR-side `BGPPeer`
+  resources for those profiles.
+- the RR-side `WireGuardInterface/wg-cloudedge` derives only
+  `WireGuardPeer/leaf-a`; `leaf-b` remains non-WG.
 - leaf contains `SAMRRSet/cloudedge-rrs` and no static `BGPPeer/rr-a` or
   `BGPPeer/rr-b`.
 - leaf `SAMTransportProfile/leaf-pve` consumes `SAMRRSet/cloudedge-rrs`.
@@ -207,6 +220,13 @@ Expected local evidence:
 - controller tests show RR-side generated `TunnelInterface` resources can be
   created without generated per-leaf `BGPPeer` resources when
   `generatePeers: false`.
+- `TestCloudEdgeDynamicRRExamplesMaterializeMixedAdmissionWithoutBGPPeers`
+  loads the rr-a and rr-b examples and proves the private IPIP, public WG/IPIP,
+  and private FOU RR-side admission profiles generate tunnels while keeping RR
+  generated `BGPPeer` count at zero.
+- `TestCloudEdgeRRExamplesDeriveOnlyWGAdmissionPeers` proves the RR-side WG
+  materialization path derives only `WireGuardPeer/leaf-a` and does not turn the
+  non-WG `leaf-b` FOU claim into a WG peer.
 - WG materialization is covered only by WG-specific tests using optional
   `wireGuard` blocks; non-WG materialization is covered without WG resources.
 
@@ -357,6 +377,10 @@ Expected preflight state:
 
 - rr-a and rr-b configs contain `BGPDynamicPeer/cloudedge-leaves` and no static
   `BGPPeer/leaf-*`;
+- rr-a and rr-b render RR-side tunnels for `leaf-a` and `leaf-b` through their
+  respective admission profiles, while RR-side generated `BGPPeer` count
+  remains zero because BGP admission is handled by `BGPDynamicPeer`;
+- rr-a and rr-b derive a WG peer only for `leaf-a`; `leaf-b` has no WG peer;
 - leaf-b renders two RR-facing `TunnelInterface` resources with `mode: fou`,
   `encapSport: 5555`, `encapDport: 5555`, and no WireGuard resources;
 - leaf-a renders two RR-facing `TunnelInterface` resources with `mode: ipip`

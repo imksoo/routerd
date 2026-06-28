@@ -16,6 +16,27 @@ spec:
       spec: { interface: private-wan, address: 10.10.0.2/24 }
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: { name: wg-cloudedge }
+      spec:
+        selfNodeRef: rr-a
+        privateKeyFile: /usr/local/etc/routerd/secrets/wg-cloudedge.key
+        listenPort: 51820
+        mtu: 1420
+        peersFrom:
+          - resource: SAMEnrollmentPolicy/cloudedge-public-wg-leaves
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata: { name: wg-cloudedge }
+      spec: { ifname: wg-cloudedge, managed: false, mtu: 1420 }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata: { name: wg-cloudedge-ipv4 }
+      spec: { interface: wg-cloudedge, address: 10.20.0.2/32 }
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: BGPRouter
       metadata: { name: mobility-bgp }
       spec:
@@ -87,6 +108,46 @@ spec:
           timersPreset: fast
 
     - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMTransportProfile
+      metadata: { name: rr-a-wg }
+      spec:
+        selfNodeRef: rr-a
+        mode: ipip
+        encryption: wireguard
+        addressingMode: pair-stable
+        innerPrefix: 10.255.0.0/20
+        underlayInterface: wg-cloudedge
+        localEndpoint: 10.20.0.2
+        peersFrom:
+          - resource: SAMEnrollmentPolicy/cloudedge-public-wg-leaves
+        bgp:
+          routerRef: BGPRouter/mobility-bgp
+          peerASN: 64577
+          generatePeers: false
+          timersPreset: fast
+
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMTransportProfile
+      metadata: { name: rr-a-fou }
+      spec:
+        selfNodeRef: rr-a
+        mode: fou
+        encryption: none
+        addressingMode: pair-stable
+        innerPrefix: 10.255.0.0/20
+        underlayInterface: private-wan
+        localEndpoint: 10.10.0.2
+        encapSport: 5555
+        encapDport: 5555
+        peersFrom:
+          - resource: SAMEnrollmentPolicy/cloudedge-private-fou-leaves
+        bgp:
+          routerRef: BGPRouter/mobility-bgp
+          peerASN: 64577
+          generatePeers: false
+          timersPreset: fast
+
+    - apiVersion: mobility.routerd.net/v1alpha1
       kind: MobilityPool
       metadata: { name: cloudedge }
       spec:
@@ -133,3 +194,83 @@ spec:
         bgp:
           asn: 64577
           routerID: 10.255.0.21
+
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentPolicy
+      metadata: { name: cloudedge-public-wg-leaves }
+      spec:
+        transportProfileRef: SAMTransportProfile/rr-a-wg
+        rrSetRef: SAMRRSet/cloudedge-rrs
+        joinTokenFrom:
+          file: /usr/local/etc/routerd/secrets/cloudedge-join-token
+        joinAudience: cloudedge-public-underlay
+        allowedLeafIDs:
+          pattern: ^leaf-[a-z0-9-]+$
+        tunnelAddressPrefixes: [10.255.0.0/20]
+        endpointPrefixes: [10.20.0.0/24]
+        wireGuard:
+          interface: wg-cloudedge
+          allowedExtraIPPrefixes: [10.20.0.0/24]
+          persistentKeepalive: 25
+        mobilityPoolRefs: [MobilityPool/cloudedge]
+        ttl: 24h
+        revokeAfterInactive: 168h
+
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentClaim
+      metadata: { name: leaf-a }
+      spec:
+        policyRef: SAMEnrollmentPolicy/cloudedge-public-wg-leaves
+        rrSetRef: SAMRRSet/cloudedge-rrs
+        leafID: leaf-a
+        joinAudience: cloudedge-public-underlay
+        joinNonce: leaf-a-0001
+        joinTimestamp: "2026-06-28T00:00:00Z"
+        joinHMAC: EXAMPLE_HMAC_SHA256_HEX
+        tunnelAddress: 10.255.0.31/32
+        endpoint: 10.20.0.31
+        wireGuard:
+          publicKey: LEAF_A_WIREGUARD_PUBLIC_KEY
+          endpoint: 198.51.100.31:51820
+          allowedIPs: [10.20.0.31/32]
+        mobility:
+          ownedAddresses: [10.77.60.31/32]
+        bgp:
+          asn: 64577
+          routerID: 10.255.0.31
+
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentPolicy
+      metadata: { name: cloudedge-private-fou-leaves }
+      spec:
+        transportProfileRef: SAMTransportProfile/rr-a-fou
+        rrSetRef: SAMRRSet/cloudedge-rrs
+        joinTokenFrom:
+          file: /usr/local/etc/routerd/secrets/cloudedge-join-token
+        joinAudience: cloudedge-private-underlay
+        allowedLeafIDs:
+          pattern: ^leaf-[a-z0-9-]+$
+        tunnelAddressPrefixes: [10.255.0.0/20]
+        endpointPrefixes: [10.20.0.0/24]
+        mobilityPoolRefs: [MobilityPool/cloudedge]
+        ttl: 24h
+        revokeAfterInactive: 168h
+
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentClaim
+      metadata: { name: leaf-b }
+      spec:
+        policyRef: SAMEnrollmentPolicy/cloudedge-private-fou-leaves
+        rrSetRef: SAMRRSet/cloudedge-rrs
+        leafID: leaf-b
+        joinAudience: cloudedge-private-underlay
+        joinNonce: leaf-b-0001
+        joinTimestamp: "2026-06-28T00:00:00Z"
+        joinHMAC: EXAMPLE_HMAC_SHA256_HEX
+        tunnelAddress: 10.255.0.32/32
+        endpoint: 10.20.0.32
+        mobility:
+          ownedAddresses: [10.77.60.32/32]
+        bgp:
+          asn: 64577
+          routerID: 10.255.0.32

@@ -453,8 +453,8 @@ func TestCloudEdgeDynamicLeafExamplesMaterializeDualRRTransports(t *testing.T) {
 			mode:       "ipip",
 			encryption: "wireguard",
 			wantEndpoint: map[string]string{
-				"rr-a": "10.10.0.2",
-				"rr-b": "10.10.0.3",
+				"rr-a": "10.20.0.2",
+				"rr-b": "10.20.0.3",
 			},
 		},
 		{
@@ -510,6 +510,121 @@ func TestCloudEdgeDynamicLeafExamplesMaterializeDualRRTransports(t *testing.T) {
 				if len(bgpPeer.Peers) != 1 || strings.TrimSpace(bgpPeer.Peers[0]) == "" {
 					t.Fatalf("%s BGP peer = %#v, want one derived RR tunnel address", peer, bgpPeer)
 				}
+			}
+		})
+	}
+}
+
+func TestCloudEdgeDynamicRRExamplesMaterializeMixedAdmissionWithoutBGPPeers(t *testing.T) {
+	now := time.Date(2026, 6, 28, 9, 6, 0, 0, time.UTC)
+	cases := []struct {
+		name       string
+		example    string
+		self       string
+		profile    string
+		peer       string
+		mode       string
+		encryption string
+		remote     string
+		wantEncap  bool
+	}{
+		{
+			name:       "rr-a admits leaf-pve private ipip",
+			example:    "cloudedge-dynamic-rr-a-hub.yaml",
+			self:       "rr-a",
+			profile:    "rr-a",
+			peer:       "leaf-pve",
+			mode:       "ipip",
+			encryption: "none",
+			remote:     "10.20.0.21",
+		},
+		{
+			name:       "rr-a admits leaf-a public wireguard ipip",
+			example:    "cloudedge-dynamic-rr-a-hub.yaml",
+			self:       "rr-a",
+			profile:    "rr-a-wg",
+			peer:       "leaf-a",
+			mode:       "ipip",
+			encryption: "wireguard",
+			remote:     "10.20.0.31",
+		},
+		{
+			name:       "rr-a admits leaf-b private fou",
+			example:    "cloudedge-dynamic-rr-a-hub.yaml",
+			self:       "rr-a",
+			profile:    "rr-a-fou",
+			peer:       "leaf-b",
+			mode:       "fou",
+			encryption: "none",
+			remote:     "10.20.0.32",
+			wantEncap:  true,
+		},
+		{
+			name:       "rr-b admits leaf-pve private ipip",
+			example:    "cloudedge-dynamic-rr-b-hub.yaml",
+			self:       "rr-b",
+			profile:    "rr-b",
+			peer:       "leaf-pve",
+			mode:       "ipip",
+			encryption: "none",
+			remote:     "10.20.0.21",
+		},
+		{
+			name:       "rr-b admits leaf-a public wireguard ipip",
+			example:    "cloudedge-dynamic-rr-b-hub.yaml",
+			self:       "rr-b",
+			profile:    "rr-b-wg",
+			peer:       "leaf-a",
+			mode:       "ipip",
+			encryption: "wireguard",
+			remote:     "10.20.0.31",
+		},
+		{
+			name:       "rr-b admits leaf-b private fou",
+			example:    "cloudedge-dynamic-rr-b-hub.yaml",
+			self:       "rr-b",
+			profile:    "rr-b-fou",
+			peer:       "leaf-b",
+			mode:       "fou",
+			encryption: "none",
+			remote:     "10.20.0.32",
+			wantEncap:  true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			router, err := config.Load(filepath.Join("..", "..", "..", "examples", tc.example))
+			if err != nil {
+				t.Fatalf("load %s: %v", tc.example, err)
+			}
+			if err := config.Validate(router); err != nil {
+				t.Fatalf("validate %s: %v", tc.example, err)
+			}
+			profileSpec := exampleSAMTransportProfile(t, router, tc.profile)
+			if profileSpec.Mode != tc.mode || profileSpec.Encryption != tc.encryption {
+				t.Fatalf("SAMTransportProfile/%s mode/encryption = %s/%s, want %s/%s", tc.profile, profileSpec.Mode, profileSpec.Encryption, tc.mode, tc.encryption)
+			}
+			if profileSpec.BGP.GeneratePeers == nil || *profileSpec.BGP.GeneratePeers {
+				t.Fatalf("SAMTransportProfile/%s generatePeers = %#v, want false", tc.profile, profileSpec.BGP.GeneratePeers)
+			}
+			store := testStore(t, now)
+			controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+			if err := controller.Reconcile(context.Background()); err != nil {
+				t.Fatalf("Reconcile: %v", err)
+			}
+			resources := decodeResources(t, latestPart(t, store, TransportDynamicSource(tc.profile, tc.self)).ResourcesJSON)
+			if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 1; got != want {
+				t.Fatalf("TunnelInterface count = %d, want %d resources=%#v", got, want, resources)
+			}
+			if got := countResources(resources, api.NetAPIVersion, "BGPPeer"); got != 0 {
+				t.Fatalf("RR generated BGPPeer count = %d, want 0 resources=%#v", got, resources)
+			}
+			tunnel := findTransportTunnelForPeer(t, resources, tc.self, tc.peer)
+			if tunnel.Mode != tc.mode || tunnel.Remote != tc.remote {
+				t.Fatalf("%s tunnel = %#v, want mode %s remote %s", tc.peer, tunnel, tc.mode, tc.remote)
+			}
+			if tc.wantEncap && (tunnel.EncapSport != 5555 || tunnel.EncapDport != 5555) {
+				t.Fatalf("%s tunnel encap ports = %d/%d, want 5555/5555", tc.peer, tunnel.EncapSport, tunnel.EncapDport)
 			}
 		})
 	}

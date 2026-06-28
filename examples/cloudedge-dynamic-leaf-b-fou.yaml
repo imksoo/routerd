@@ -47,7 +47,7 @@ spec:
       kind: SAMRRSet
       metadata: { name: cloudedge-rrs }
       spec:
-        enrollmentPolicyRef: SAMEnrollmentPolicy/cloudedge-leaves
+        enrollmentPolicyRef: SAMEnrollmentPolicy/cloudedge-private-fou-leaves
         mobilityPoolRefs: [MobilityPool/cloudedge]
         routeAdmission:
           allowedPrefixes: [10.77.60.0/24]
@@ -91,7 +91,7 @@ spec:
       kind: SAMEnrollmentClaim
       metadata: { name: leaf-b }
       spec:
-        policyRef: SAMEnrollmentPolicy/cloudedge-leaves
+        policyRef: SAMEnrollmentPolicy/cloudedge-private-fou-leaves
         rrSetRef: SAMRRSet/cloudedge-rrs
         leafID: leaf-b
         joinAudience: cloudedge-private-underlay

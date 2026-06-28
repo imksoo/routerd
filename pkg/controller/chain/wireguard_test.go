@@ -13,6 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/config"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 	"github.com/imksoo/routerd/pkg/wireguard"
 )
@@ -24,6 +25,22 @@ func mustWireGuardRouter(t *testing.T, body string) *api.Router {
 		t.Fatal(err)
 	}
 	return &router
+}
+
+func assertStringSet(t *testing.T, label string, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s = %#v, want %#v", label, got, want)
+	}
+	seen := map[string]int{}
+	for _, value := range got {
+		seen[value]++
+	}
+	for _, value := range want {
+		if seen[value] != 1 {
+			t.Fatalf("%s = %#v, want %#v", label, got, want)
+		}
+	}
 }
 
 func (s mapStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
@@ -886,6 +903,48 @@ spec:
 	policy := store.ObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentPolicy", "cloudedge-leaves")
 	if policy["acceptedClaims"] != 1 || policy["skippedClaims"] != 1 {
 		t.Fatalf("policy status = %+v", policy)
+	}
+}
+
+func TestCloudEdgeRRExamplesDeriveOnlyWGAdmissionPeers(t *testing.T) {
+	for _, example := range []string{
+		"cloudedge-dynamic-rr-a-hub.yaml",
+		"cloudedge-dynamic-rr-b-hub.yaml",
+	} {
+		t.Run(example, func(t *testing.T) {
+			router, err := config.Load(filepath.Join("..", "..", "..", "examples", example))
+			if err != nil {
+				t.Fatalf("load %s: %v", example, err)
+			}
+			if err := config.Validate(router); err != nil {
+				t.Fatalf("validate %s: %v", example, err)
+			}
+			resolved, err := resolveWireGuardSAMResources(router)
+			if err != nil {
+				t.Fatalf("resolveWireGuardSAMResources: %v", err)
+			}
+			var peers []api.WireGuardPeerSpec
+			var names []string
+			for _, resource := range resolved.Spec.Resources {
+				if resource.APIVersion != api.NetAPIVersion || resource.Kind != "WireGuardPeer" {
+					continue
+				}
+				spec, err := resource.WireGuardPeerSpec()
+				if err != nil {
+					t.Fatalf("WireGuardPeer/%s spec: %v", resource.Metadata.Name, err)
+				}
+				names = append(names, resource.Metadata.Name)
+				peers = append(peers, spec)
+			}
+			if len(peers) != 1 || names[0] != "leaf-a" {
+				t.Fatalf("generated WireGuard peers = %v %#v, want only leaf-a", names, peers)
+			}
+			peer := peers[0]
+			if peer.Interface != "wg-cloudedge" || peer.PublicKey != "LEAF_A_WIREGUARD_PUBLIC_KEY" || peer.Endpoint != "198.51.100.31:51820" {
+				t.Fatalf("leaf-a WireGuard peer = %#v", peer)
+			}
+			assertStringSet(t, "leaf-a allowedIPs", peer.AllowedIPs, []string{"10.255.0.31/32", "10.20.0.31/32"})
+		})
 	}
 }
 
