@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://routerd.net/schemas/release-environment-certification-v1.schema.json",
+  "title": "routerd release environment certification manifest",
+  "description": "Evidence that the PVE/cloud substrate was certified before routerd release qualification.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "manifestId",
+    "environment",
+    "topology",
+    "status",
+    "issuedAt",
+    "expiresAt",
+    "providers",
+    "certifiers",
+    "checks",
+    "repairs"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "release-environment-certification/v1"
+    },
+    "manifestId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "environment": {
+      "type": "string",
+      "minLength": 1
+    },
+    "topology": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pass", "fail", "blocked", "expired"]
+    },
+    "issuedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "routerdCommit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "labsCommit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "providers": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": ["pve", "aws", "azure", "oci"]
+      }
+    },
+    "certifiers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "result"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": [
+              "certify-pve-substrate.sh",
+              "certify-cloud-substrate.sh"
+            ]
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "result": {
+            "type": "string",
+            "enum": ["pass", "fail", "blocked"]
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finishedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "component", "result", "checkedAt"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "component": {
+            "type": "string",
+            "enum": ["pve", "cloud", "cross-substrate", "tooling"]
+          },
+          "provider": {
+            "type": "string",
+            "enum": ["pve", "aws", "azure", "oci"]
+          },
+          "target": {
+            "type": "string",
+            "minLength": 1
+          },
+          "result": {
+            "type": "string",
+            "enum": ["pass", "fail", "blocked", "skipped"]
+          },
+          "checkedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "summary": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "repairs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["component", "action", "result", "verifiedBy"],
+        "properties": {
+          "component": {
+            "type": "string",
+            "enum": ["pve", "cloud", "cross-substrate", "tooling"]
+          },
+          "provider": {
+            "type": "string",
+            "enum": ["pve", "aws", "azure", "oci"]
+          },
+          "target": {
+            "type": "string",
+            "minLength": 1
+          },
+          "action": {
+            "type": "string",
+            "minLength": 1
+          },
+          "result": {
+            "type": "string",
+            "enum": ["pass", "fail", "blocked"]
+          },
+          "verifiedBy": {
+            "type": "string",
+            "minLength": 1
+          },
+          "repairedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "toolVersions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "qualificationPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "noRepairDuringQualification": {
+          "type": "boolean",
+          "const": true
+        },
+        "defaultValidityHours": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 168
+        }
+      }
+    },
+    "notes": {
+      "type": "string"
+    }
+  }
+}
