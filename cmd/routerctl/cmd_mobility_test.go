@@ -5,15 +5,59 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
+
+func TestMobilityEnrollmentHMACCommand(t *testing.T) {
+	secretPath := filepath.Join(t.TempDir(), "join-token")
+	if err := os.WriteFile(secretPath, []byte("test-join-token\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	configPath := filepath.Join("..", "..", "examples", "cloudedge-dynamic-rr-a-hub.yaml")
+	var stdout, stderr bytes.Buffer
+	if err := mobilityCommand([]string{"enrollment-hmac", "--config", configPath, "--claim", "leaf-pve", "--secret-file", secretPath}, &stdout, &stderr); err != nil {
+		t.Fatalf("mobility enrollment-hmac: %v stderr=%s", err, stderr.String())
+	}
+	hmacValue := strings.TrimSpace(stdout.String())
+	if hmacValue == "" || strings.Contains(hmacValue, "EXAMPLE") {
+		t.Fatalf("unexpected hmac output %q", hmacValue)
+	}
+
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	rendered := strings.ReplaceAll(string(raw), "EXAMPLE_HMAC_SHA256_HEX", hmacValue)
+	rendered = strings.ReplaceAll(rendered, "/usr/local/etc/routerd/secrets/cloudedge-join-token", secretPath)
+	candidate := filepath.Join(t.TempDir(), "rr-a.yaml")
+	if err := os.WriteFile(candidate, []byte(rendered), 0o600); err != nil {
+		t.Fatalf("WriteFile candidate: %v", err)
+	}
+	router, err := config.Load(candidate)
+	if err != nil {
+		t.Fatalf("Load candidate: %v", err)
+	}
+	if err := config.Validate(router); err != nil {
+		t.Fatalf("Validate candidate with generated HMAC: %v", err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if err := mobilityCommand([]string{"enrollment-hmac", "--config", configPath, "--claim", "leaf-pve", "--secret-file", secretPath, "--show-payload"}, &stdout, &stderr); err != nil {
+		t.Fatalf("mobility enrollment-hmac --show-payload: %v stderr=%s", err, stderr.String())
+	}
+	if out := stdout.String(); !strings.Contains(out, "leafID=leaf-pve") || !strings.Contains(out, hmacValue) {
+		t.Fatalf("show-payload output missing payload or hmac:\n%s", out)
+	}
+}
 
 func TestMobilityPathsCommand(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routerd.db")

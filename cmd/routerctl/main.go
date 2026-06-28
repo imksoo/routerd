@@ -107,6 +107,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  mobility explain --pool <name> --address <ipv4/32> [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  mobility paths [--prefix <prefix>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  mobility traps [--address <ipv4/32>] [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  mobility enrollment-hmac --config <path> --claim <name> (--secret-file <path>|--secret-env <name>|--secret <value>) [--show-payload]")
 	fmt.Fprintln(w, "  plugin list [--config <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  plugin run <name> [--dry-run] [--config <path>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  action import [--config <path>] [--state-file <path>]")

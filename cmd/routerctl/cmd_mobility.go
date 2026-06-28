@@ -3,17 +3,21 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/samenrollment"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -85,6 +89,8 @@ func mobilityCommand(args []string, stdout, stderr io.Writer) error {
 		return mobilityOwnersCommand(args[1:], stdout)
 	case "explain":
 		return mobilityExplainCommand(args[1:], stdout)
+	case "enrollment-hmac":
+		return mobilityEnrollmentHMACCommand(args[1:], stdout)
 	case "leases", "list", "ownership", "show":
 		return fmt.Errorf("mobility %s was removed with BGP mobility; use `routerctl mobility owners`, `routerctl mobility paths`, `routerctl mobility traps`, or `routerctl mobility explain`", args[0])
 	case "help", "-h", "--help":
@@ -93,6 +99,102 @@ func mobilityCommand(args []string, stdout, stderr io.Writer) error {
 	default:
 		return fmt.Errorf("unknown mobility subcommand %q", args[0])
 	}
+}
+
+func mobilityEnrollmentHMACCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("mobility enrollment-hmac", flag.ContinueOnError)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"Compute a SAMEnrollmentClaim joinHMAC from a router config and join secret.",
+			"routerctl mobility enrollment-hmac --config leaf.yaml --claim leaf-b --secret-file /usr/local/etc/routerd/secrets/cloudedge-join-token\n"+
+				"routerctl mobility enrollment-hmac --config leaf.yaml --claim leaf-a --secret-env ROUTERD_JOIN_TOKEN --show-payload")
+	}
+	configPath := fs.String("config", defaultConfigPath(), "router config containing the SAMEnrollmentClaim")
+	claimName := fs.String("claim", "", "SAMEnrollmentClaim name")
+	secretFile := fs.String("secret-file", "", "join secret file")
+	secretEnv := fs.String("secret-env", "", "environment variable containing the join secret")
+	secretLiteral := fs.String("secret", "", "literal join secret")
+	secretBase64 := fs.Bool("secret-base64", false, "decode the selected secret as base64 before HMAC")
+	showPayload := fs.Bool("show-payload", false, "print the canonical payload before the HMAC")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected mobility enrollment-hmac argument %q", fs.Arg(0))
+	}
+	if strings.TrimSpace(*claimName) == "" {
+		return errors.New("mobility enrollment-hmac requires --claim")
+	}
+	secret, err := mobilityEnrollmentHMACSecret(*secretFile, *secretEnv, *secretLiteral, *secretBase64)
+	if err != nil {
+		return err
+	}
+	router, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	claim, err := mobilityEnrollmentClaim(router, *claimName)
+	if err != nil {
+		return err
+	}
+	if *showPayload {
+		fmt.Fprintln(stdout, samenrollment.JoinCanonicalPayload(claim))
+		fmt.Fprintln(stdout, "---")
+	}
+	fmt.Fprintln(stdout, samenrollment.JoinHMAC(secret, claim))
+	return nil
+}
+
+func mobilityEnrollmentHMACSecret(file, env, literal string, decodeBase64 bool) ([]byte, error) {
+	selected := 0
+	var value string
+	if strings.TrimSpace(file) != "" {
+		selected++
+		data, err := os.ReadFile(strings.TrimSpace(file))
+		if err != nil {
+			return nil, err
+		}
+		value = string(data)
+	}
+	if strings.TrimSpace(env) != "" {
+		selected++
+		envValue, ok := os.LookupEnv(strings.TrimSpace(env))
+		if !ok {
+			return nil, fmt.Errorf("secret environment variable %q is not set", strings.TrimSpace(env))
+		}
+		value = envValue
+	}
+	if literal != "" {
+		selected++
+		value = literal
+	}
+	if selected != 1 {
+		return nil, errors.New("mobility enrollment-hmac requires exactly one of --secret-file, --secret-env, or --secret")
+	}
+	value = strings.TrimSpace(value)
+	if decodeBase64 {
+		decoded, err := base64.StdEncoding.DecodeString(value)
+		if err != nil {
+			return nil, err
+		}
+		return decoded, nil
+	}
+	return []byte(value), nil
+}
+
+func mobilityEnrollmentClaim(router *api.Router, name string) (api.SAMEnrollmentClaimSpec, error) {
+	name = strings.TrimSpace(name)
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentClaim" || resource.Metadata.Name != name {
+			continue
+		}
+		return resource.SAMEnrollmentClaimSpec()
+	}
+	return api.SAMEnrollmentClaimSpec{}, fmt.Errorf("SAMEnrollmentClaim/%s not found", name)
 }
 
 func mobilityOwnersCommand(args []string, stdout io.Writer) error {
@@ -258,6 +360,7 @@ func mobilityUsage(w io.Writer) {
 	fmt.Fprintln(w, "  explain --pool <name> --address <ipv4/32> [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  paths [--prefix <prefix>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  traps [--address <ipv4/32>] [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  enrollment-hmac --config <path> --claim <name> (--secret-file <path>|--secret-env <name>|--secret <value>) [--secret-base64] [--show-payload]")
 }
 
 func mobilityOwnerRows(statuses []routerstate.ObjectStatus, poolFilter, addressFilter string) []mobilityOwnerRow {

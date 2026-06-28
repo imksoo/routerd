@@ -125,6 +125,27 @@ wireGuard.allowedIPs=<sorted comma-separated optional WG allowed IPs>
 wireGuard.persistentKeepalive=<optional WG keepalive seconds>
 ```
 
+Generate real `joinHMAC` values from the reviewed config instead of hand-copying
+the payload:
+
+```sh
+bin/linux/routerctl mobility enrollment-hmac \
+  --config examples/cloudedge-dynamic-rr-a-hub.yaml \
+  --claim leaf-pve \
+  --secret-file /usr/local/etc/routerd/secrets/cloudedge-join-token
+
+bin/linux/routerctl mobility enrollment-hmac \
+  --config examples/cloudedge-dynamic-leaf-b-fou.yaml \
+  --claim leaf-b \
+  --secret-file /usr/local/etc/routerd/secrets/cloudedge-join-token \
+  --show-payload
+```
+
+Use `--secret-env` when the join token is injected by the shell or deployment
+tool. Use `--show-payload` when reviewing exactly what is signed. After
+replacing `EXAMPLE_HMAC_SHA256_HEX`, validation will cryptographically verify
+the claim whenever the configured `joinTokenFrom` source is readable.
+
 ## Local Verification
 
 Run before any cloud/PVE topology test:

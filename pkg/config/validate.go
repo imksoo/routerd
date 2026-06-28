@@ -4,13 +4,10 @@ package config
 
 import (
 	"crypto/hmac"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"net/netip"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +15,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/samenrollment"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -1004,7 +1002,7 @@ func validateSAMEnrollmentClaimHMAC(resourceID string, policy api.SAMEnrollmentP
 	if !ok {
 		return nil
 	}
-	want := samEnrollmentJoinHMAC(secret, claim)
+	want := samenrollment.JoinHMAC(secret, claim)
 	if !hmac.Equal([]byte(want), []byte(strings.TrimSpace(claim.JoinHMAC))) {
 		return fmt.Errorf("%s spec.joinHMAC does not match %s joinTokenFrom", resourceID, claim.PolicyRef)
 	}
@@ -1025,37 +1023,6 @@ func samEnrollmentJoinSecret(source api.SecretValueSourceSpec) ([]byte, bool, er
 		return decoded, true, nil
 	}
 	return []byte(value), true, nil
-}
-
-func samEnrollmentJoinHMAC(secret []byte, claim api.SAMEnrollmentClaimSpec) string {
-	mac := hmac.New(sha256.New, secret)
-	mac.Write([]byte(samEnrollmentJoinCanonicalPayload(claim)))
-	return hex.EncodeToString(mac.Sum(nil))
-}
-
-func samEnrollmentJoinCanonicalPayload(claim api.SAMEnrollmentClaimSpec) string {
-	owned := append([]string(nil), claim.Mobility.OwnedAddresses...)
-	sort.Strings(owned)
-	wgAllowed := append([]string(nil), claim.WireGuard.AllowedIPs...)
-	sort.Strings(wgAllowed)
-	fields := []string{
-		"policyRef=" + strings.TrimSpace(claim.PolicyRef),
-		"rrSetRef=" + strings.TrimSpace(claim.RRSetRef),
-		"leafID=" + strings.TrimSpace(claim.LeafID),
-		"joinAudience=" + strings.TrimSpace(claim.JoinAudience),
-		"joinNonce=" + strings.TrimSpace(claim.JoinNonce),
-		"joinTimestamp=" + strings.TrimSpace(claim.JoinTimestamp),
-		"tunnelAddress=" + strings.TrimSpace(claim.TunnelAddress),
-		"endpoint=" + strings.TrimSpace(claim.Endpoint),
-		"mobility.ownedAddresses=" + strings.Join(owned, ","),
-		"bgp.asn=" + strconv.FormatUint(uint64(claim.BGP.ASN), 10),
-		"bgp.routerID=" + strings.TrimSpace(claim.BGP.RouterID),
-		"wireGuard.publicKey=" + strings.TrimSpace(claim.WireGuard.PublicKey),
-		"wireGuard.endpoint=" + strings.TrimSpace(claim.WireGuard.Endpoint),
-		"wireGuard.allowedIPs=" + strings.Join(wgAllowed, ","),
-		"wireGuard.persistentKeepalive=" + strconv.Itoa(claim.WireGuard.PersistentKeepalive),
-	}
-	return strings.Join(fields, "\n")
 }
 
 func endpointAddressForValidation(value string) (netip.Addr, error) {

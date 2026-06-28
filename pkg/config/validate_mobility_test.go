@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/samenrollment"
 )
 
 func TestValidateMobilityPool(t *testing.T) {
@@ -465,7 +466,7 @@ func TestValidateSAMEnrollmentJoinTokenVerifiesHMACWhenSecretAvailable(t *testin
 	claim.JoinAudience = "cloudedge"
 	claim.JoinNonce = "nonce-1"
 	claim.JoinTimestamp = "2026-06-28T00:00:00Z"
-	claim.JoinHMAC = samEnrollmentJoinHMAC([]byte("test-join-token"), claim)
+	claim.JoinHMAC = samenrollment.JoinHMAC([]byte("test-join-token"), claim)
 	router.Spec.Resources[claimIndex].Spec = claim
 	if err := Validate(router); err != nil {
 		t.Fatalf("Validate join-token enrollment with valid HMAC: %v", err)
