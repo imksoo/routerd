@@ -3,9 +3,14 @@
 package config
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"net/netip"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -953,6 +958,12 @@ func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error
 			if strings.TrimSpace(policy.JoinAudience) != "" && strings.TrimSpace(spec.JoinAudience) != strings.TrimSpace(policy.JoinAudience) {
 				return fmt.Errorf("%s spec.joinAudience %q does not match %s spec.joinAudience", res.ID(), spec.JoinAudience, spec.PolicyRef)
 			}
+			if err := validateSAMEnrollmentClaimHMAC(res.ID(), policy, spec); err != nil {
+				return err
+			}
+		}
+		if strings.TrimSpace(policy.RRSetRef) != "" && strings.TrimSpace(spec.RRSetRef) != strings.TrimSpace(policy.RRSetRef) {
+			return fmt.Errorf("%s spec.rrSetRef %q does not match %s spec.rrSetRef", res.ID(), spec.RRSetRef, spec.PolicyRef)
 		}
 		if strings.TrimSpace(spec.Endpoint) != "" && len(policy.EndpointPrefixes) > 0 {
 			endpointAddr, err := endpointAddressForValidation(spec.Endpoint)
@@ -983,6 +994,68 @@ func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error
 		}
 	}
 	return nil
+}
+
+func validateSAMEnrollmentClaimHMAC(resourceID string, policy api.SAMEnrollmentPolicySpec, claim api.SAMEnrollmentClaimSpec) error {
+	secret, ok, err := samEnrollmentJoinSecret(policy.JoinTokenFrom)
+	if err != nil {
+		return fmt.Errorf("%s spec.policyRef joinTokenFrom: %w", resourceID, err)
+	}
+	if !ok {
+		return nil
+	}
+	want := samEnrollmentJoinHMAC(secret, claim)
+	if !hmac.Equal([]byte(want), []byte(strings.TrimSpace(claim.JoinHMAC))) {
+		return fmt.Errorf("%s spec.joinHMAC does not match %s joinTokenFrom", resourceID, claim.PolicyRef)
+	}
+	return nil
+}
+
+func samEnrollmentJoinSecret(source api.SecretValueSourceSpec) ([]byte, bool, error) {
+	value, ok, err := availableSecretSourceValue(source)
+	if err != nil || !ok {
+		return nil, ok, err
+	}
+	value = strings.TrimSpace(value)
+	if source.Base64 {
+		decoded, err := base64.StdEncoding.DecodeString(value)
+		if err != nil {
+			return nil, true, err
+		}
+		return decoded, true, nil
+	}
+	return []byte(value), true, nil
+}
+
+func samEnrollmentJoinHMAC(secret []byte, claim api.SAMEnrollmentClaimSpec) string {
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(samEnrollmentJoinCanonicalPayload(claim)))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func samEnrollmentJoinCanonicalPayload(claim api.SAMEnrollmentClaimSpec) string {
+	owned := append([]string(nil), claim.Mobility.OwnedAddresses...)
+	sort.Strings(owned)
+	wgAllowed := append([]string(nil), claim.WireGuard.AllowedIPs...)
+	sort.Strings(wgAllowed)
+	fields := []string{
+		"policyRef=" + strings.TrimSpace(claim.PolicyRef),
+		"rrSetRef=" + strings.TrimSpace(claim.RRSetRef),
+		"leafID=" + strings.TrimSpace(claim.LeafID),
+		"joinAudience=" + strings.TrimSpace(claim.JoinAudience),
+		"joinNonce=" + strings.TrimSpace(claim.JoinNonce),
+		"joinTimestamp=" + strings.TrimSpace(claim.JoinTimestamp),
+		"tunnelAddress=" + strings.TrimSpace(claim.TunnelAddress),
+		"endpoint=" + strings.TrimSpace(claim.Endpoint),
+		"mobility.ownedAddresses=" + strings.Join(owned, ","),
+		"bgp.asn=" + strconv.FormatUint(uint64(claim.BGP.ASN), 10),
+		"bgp.routerID=" + strings.TrimSpace(claim.BGP.RouterID),
+		"wireGuard.publicKey=" + strings.TrimSpace(claim.WireGuard.PublicKey),
+		"wireGuard.endpoint=" + strings.TrimSpace(claim.WireGuard.Endpoint),
+		"wireGuard.allowedIPs=" + strings.Join(wgAllowed, ","),
+		"wireGuard.persistentKeepalive=" + strconv.Itoa(claim.WireGuard.PersistentKeepalive),
+	}
+	return strings.Join(fields, "\n")
 }
 
 func endpointAddressForValidation(value string) (netip.Addr, error) {

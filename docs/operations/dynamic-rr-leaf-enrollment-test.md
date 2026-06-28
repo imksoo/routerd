@@ -3,9 +3,15 @@
 This runbook validates the dual-RR `SAMRRSet` enrollment flow before any
 cloud/PVE full-topology test.
 
-Primary target: private-underlay SAM transport with `mode: ipip` and
-`encryption: none`. WireGuard remains an optional transport-specific path for
-public underlay, but it is not the default enrollment model.
+Primary target: private-underlay SAM transport without mandatory WireGuard.
+The review shape also includes one encrypted public-underlay leaf so the same
+dual-RR `SAMRRSet` proves both transport paths:
+
+- `leaf-a`: `mode: ipip`, `encryption: wireguard`, connects to rr-a and rr-b.
+- `leaf-b`: `mode: fou`, `encryption: none`, connects to rr-a and rr-b.
+
+WireGuard remains an optional transport-specific path for public underlay; it
+is not the default enrollment identity or the default private-underlay model.
 
 ## Resource Boundaries
 
@@ -35,6 +41,11 @@ Primary non-WG private-underlay examples:
 - `examples/cloudedge-dynamic-rr-b-hub.yaml`
 - `examples/cloudedge-dynamic-leaf-pve.yaml`
 
+Mixed transport review examples:
+
+- `examples/cloudedge-dynamic-leaf-a-wg.yaml`
+- `examples/cloudedge-dynamic-leaf-b-fou.yaml`
+
 These configs model:
 
 - rr-a and rr-b as members of `SAMRRSet/cloudedge-rrs`;
@@ -46,6 +57,17 @@ These configs model:
 - generated/effective leaf `TunnelInterface` and `BGPPeer` resources toward
   both rr-a and rr-b;
 - no `WireGuardInterface`, `WireGuardPeer`, or WG public key requirement.
+
+The mixed examples model:
+
+- `leaf-a` consuming the same `SAMRRSet/cloudedge-rrs` and deriving both
+  rr-a and rr-b transport/BGP peers through an IPIP-over-WireGuard path;
+- `leaf-a` using `WireGuardInterface.spec.peersFrom:
+  SAMRRSet/cloudedge-rrs`, with WG public keys only in WG-specific blocks;
+- `leaf-b` consuming the same `SAMRRSet/cloudedge-rrs` and deriving both
+  rr-a and rr-b transport/BGP peers through `TunnelInterface mode: fou`;
+- `leaf-b` using `encryption: none`, `encapSport: 5555`, and
+  `encapDport: 5555`, with no `WireGuardInterface` or `WireGuardPeer`.
 
 The RR configs include the same example `SAMEnrollmentClaim/leaf-pve` so the
 paired RR flow can be tested without an external enrollment service. In a real
@@ -59,18 +81,49 @@ Replace example values before live testing:
 | Placeholder | Meaning |
 | --- | --- |
 | `/usr/local/etc/routerd/secrets/cloudedge-join-token` | Shared join token available on each RR. |
-| `EXAMPLE_HMAC_SHA256_HEX` | HMAC over the claim join payload using the join token. |
+| `EXAMPLE_HMAC_SHA256_HEX` | Lowercase hex HMAC-SHA256 over the canonical claim join payload using the join token. |
 | `10.10.0.2` | rr-a private underlay endpoint. |
 | `10.10.0.3` | rr-b private underlay endpoint. |
 | `10.20.0.21` | leaf private underlay endpoint. |
+| `10.20.0.31` | leaf-a WireGuard overlay/local SAM endpoint. |
+| `10.20.0.32` | leaf-b private FOU underlay endpoint. |
 | `10.99.0.2/32` | rr-a SAM/BGP tunnel identity. |
 | `10.99.0.3/32` | rr-b SAM/BGP tunnel identity. |
 | `10.255.0.21/32` | leaf tunnel address, inside policy `tunnelAddressPrefixes`. |
+| `10.255.0.31/32` | leaf-a tunnel address, inside policy `tunnelAddressPrefixes`. |
+| `10.255.0.32/32` | leaf-b tunnel address, inside policy `tunnelAddressPrefixes`. |
 | `10.77.60.21/32` | leaf-owned MobilityPool address. |
+| `10.77.60.31/32` | leaf-a owned MobilityPool address. |
+| `10.77.60.32/32` | leaf-b owned MobilityPool address. |
+| `203.0.113.10:51820` / `203.0.113.11:51820` | rr-a/rr-b WG UDP endpoints for the public-underlay WG example. |
+| UDP `5555` | FOU/GUE encapsulation port used by the leaf-b private-underlay example. |
 
-Current implementation validates presence and scope of join fields when
-`joinTokenFrom` is configured. Full cryptographic HMAC verification is a
-follow-up controller/enrollment-service step before production use.
+When `joinTokenFrom` is configured, routerd requires `joinNonce`,
+`joinTimestamp`, and `joinHMAC`. If the referenced secret is readable during
+validation, routerd verifies the HMAC. If the secret is not present on the
+authoring host, validation still checks field presence and policy scope so
+example configs remain reviewable before secrets are installed.
+
+The HMAC input is UTF-8 text with these newline-separated fields, in this
+order:
+
+```text
+policyRef=<claim policyRef>
+rrSetRef=<claim rrSetRef>
+leafID=<claim leafID>
+joinAudience=<claim joinAudience>
+joinNonce=<claim joinNonce>
+joinTimestamp=<claim joinTimestamp>
+tunnelAddress=<claim tunnelAddress>
+endpoint=<claim endpoint>
+mobility.ownedAddresses=<sorted comma-separated owned /32s>
+bgp.asn=<claim BGP ASN>
+bgp.routerID=<claim BGP router ID>
+wireGuard.publicKey=<optional WG public key>
+wireGuard.endpoint=<optional WG endpoint>
+wireGuard.allowedIPs=<sorted comma-separated optional WG allowed IPs>
+wireGuard.persistentKeepalive=<optional WG keepalive seconds>
+```
 
 ## Local Verification
 
@@ -94,13 +147,17 @@ make build-daemons
 Validate and plan the examples:
 
 ```sh
-bin/linux/routerctl validate -f examples/cloudedge-dynamic-rr-a-hub.yaml --replace
-bin/linux/routerctl validate -f examples/cloudedge-dynamic-rr-b-hub.yaml --replace
-bin/linux/routerctl validate -f examples/cloudedge-dynamic-leaf-pve.yaml --replace
-
-bin/linux/routerctl plan -f examples/cloudedge-dynamic-rr-a-hub.yaml --replace
-bin/linux/routerctl plan -f examples/cloudedge-dynamic-rr-b-hub.yaml --replace
-bin/linux/routerctl plan -f examples/cloudedge-dynamic-leaf-pve.yaml --replace
+scripts/routerd-sandbox-run.sh sh -c '
+  for config do
+    bin/linux/routerctl validate --socket "$ROUTERD_SANDBOX_STATUS_SOCKET" -f "$config" --replace >/dev/null
+    bin/linux/routerctl plan --socket "$ROUTERD_SANDBOX_STATUS_SOCKET" -f "$config" --replace >/dev/null
+  done
+' sh \
+  examples/cloudedge-dynamic-rr-a-hub.yaml \
+  examples/cloudedge-dynamic-rr-b-hub.yaml \
+  examples/cloudedge-dynamic-leaf-pve.yaml \
+  examples/cloudedge-dynamic-leaf-a-wg.yaml \
+  examples/cloudedge-dynamic-leaf-b-fou.yaml
 ```
 
 Expected local evidence:
@@ -113,11 +170,16 @@ Expected local evidence:
 - leaf `SAMTransportProfile/leaf-pve` consumes `SAMRRSet/cloudedge-rrs`.
 - controller tests show leaf-side generated `TunnelInterface` and `BGPPeer`
   resources for rr-a and rr-b.
+- leaf-a shape test shows `SAMRRSet` consumption plus WG-specific
+  `WireGuardInterface.peersFrom` toward both RRs.
+- leaf-b controller test shows two generated `TunnelInterface` resources with
+  `mode: fou` and encap ports `5555/5555`, two generated `BGPPeer` resources,
+  and zero generated `WireGuardPeer` resources.
 - controller tests show RR-side generated `TunnelInterface` resources can be
   created without generated per-leaf `BGPPeer` resources when
   `generatePeers: false`.
 - WG materialization is covered only by WG-specific tests using optional
-  `wireGuard` blocks.
+  `wireGuard` blocks; non-WG materialization is covered without WG resources.
 
 ## Negative Tests
 
@@ -127,6 +189,8 @@ Local tests should cover:
   the referenced `BGPRouter` local ASN.
 - `SAMRRSet` allows members without `wireGuard` blocks.
 - `SAMEnrollmentClaim` is valid without `wireGuard.publicKey`.
+- `SAMTransportProfile mode: fou` requires `encapSport` and `encapDport`.
+- `SAMTransportProfile mode: ipip`/`gre` rejects FOU/GUE encap ports.
 - a configured `joinTokenFrom` requires claim `joinNonce`, `joinTimestamp`, and
   `joinHMAC`.
 - unauthorized MobilityPool `/32` claims are rejected.
@@ -174,6 +238,8 @@ Full topology pass criteria should include:
 - branch binaries installed on rr-a, rr-b, and leaf;
 - no static RR-side `BGPPeer/leaf-*`;
 - leaf establishes transport toward both RRs;
+- WG full-topology runs open/verify UDP 51820 for leaf-a and both RRs;
+- FOU full-topology runs open/verify UDP 5555 for leaf-b and both RRs;
 - RRs accept BGP sessions through `BGPDynamicPeer`;
 - only authorized MobilityPool `/32` routes are propagated;
 - minimal connectivity over the authorized `/32`.

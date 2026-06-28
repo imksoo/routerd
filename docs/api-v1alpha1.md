@@ -198,7 +198,7 @@ resolver addresses for DoH or DoT endpoint name resolution.
 | `SAMRRSet` | Declares a route-reflector set: RR member nodeRefs, generic endpoints, tunnel identities, optional WireGuard identity, and shared enrollment/MobilityPool/route-admission references. It never lists leaves. |
 | `SAMEnrollmentPolicy` | Authorizes SAM transport enrollment claims for a hub/RR. It binds a transport profile, optional RRSet, join-token source, join audience, tunnel and endpoint prefixes, optional leaf ID pattern, TTL/revocation policy, optional WireGuard materialization settings, and authorized MobilityPool references. |
 | `SAMEnrollmentClaim` | Carries one leaf enrollment payload: leaf identity, join nonce/timestamp/HMAC, RRSet reference, tunnel address, endpoint, optional BGP identity, optional MobilityPool-owned `/32`s, optional WireGuard credentials, expiry, and revocation state. |
-| `SAMTransportProfile` | Declares this router's stable `selfNodeRef`, `mode` (`ipip` or `gre`), `encryption` (`none` or `wireguard`), inner tunnel prefix, underlay interface, BGP router, and SAM transport peers. It can import topology and peer endpoints from `SAMNodeSet`, `SAMPeerGroup`, `SAMEnrollmentPolicy`, or `SAMRRSet` with `peersFrom`. routerd derives per-peer `TunnelInterface`, endpoint `/32` `IPv4Route`, and, unless `spec.bgp.generatePeers: false`, `BGPPeer` resources through a replace-on-reconcile `DynamicConfigPart`. |
+| `SAMTransportProfile` | Declares this router's stable `selfNodeRef`, `mode` (`ipip`, `gre`, `fou`, or `gue`), `encryption` (`none` or `wireguard`), inner tunnel prefix, underlay interface, BGP router, and SAM transport peers. `fou`/`gue` use the existing `TunnelInterface` FOU/GUE path and require `encapSport` and `encapDport`. It can import topology and peer endpoints from `SAMNodeSet`, `SAMPeerGroup`, `SAMEnrollmentPolicy`, or `SAMRRSet` with `peersFrom`. routerd derives per-peer `TunnelInterface`, endpoint `/32` `IPv4Route`, and, unless `spec.bgp.generatePeers: false`, `BGPPeer` resources through a replace-on-reconcile `DynamicConfigPart`. |
 | `AddressMobilityDomain` | Low-level compatibility SAM resource that defines an IPv4 prefix for hand-authored selective-address configs; full L2 extension is not supported. |
 | `CloudProviderProfile` | Describes provider capabilities and external-command auth for declarative address capture planning. |
 | `RemoteAddressClaim` | Low-level compatibility SAM resource that declares one mobile IPv4 `/32`, its capture mechanism, and legacy route delivery over an `OverlayPeer`. |
@@ -364,6 +364,10 @@ set `SAMTransportProfile.spec.bgp.generatePeers: false` so SAM creates transport
 tunnels without generated per-leaf BGP peers. Enrollment can be authenticated
 with a policy
 `joinTokenFrom` and claim `joinNonce`, `joinTimestamp`, and `joinHMAC` fields.
+When the referenced secret is readable at validation time, `joinHMAC` is
+verified as lowercase hex HMAC-SHA256 over the canonical claim join payload:
+policy/RRSet refs, leaf ID, audience, nonce, timestamp, tunnel address,
+endpoint, owned `/32`s, BGP identity, and optional WireGuard credentials.
 If `encryption: wireguard` is selected, a hub can also set
 `WireGuardInterface.spec.peersFrom: [{resource: SAMEnrollmentPolicy/<name>}]`;
 routerd then materializes `WireGuardPeer` entries only for non-revoked,

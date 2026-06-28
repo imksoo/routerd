@@ -203,6 +203,8 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 			RemoteFrom:        peer.RemoteEndpointFrom,
 			Address:           localPrefix.String(),
 			UnderlayInterface: underlay,
+			EncapSport:        spec.EncapSport,
+			EncapDport:        spec.EncapDport,
 			TrustedUnderlay:   true,
 		}
 		out.Resources = append(out.Resources, api.Resource{

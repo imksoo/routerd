@@ -678,7 +678,7 @@ type BGPDynamicPeerListenSpec struct {
 // selfNodeRef explicitly; no hostname or router-id inference is used.
 type SAMTransportProfileSpec struct {
 	SelfNodeRef       string                        `yaml:"selfNodeRef" json:"selfNodeRef"`
-	Mode              string                        `yaml:"mode" json:"mode" jsonschema:"enum=ipip,enum=gre"`
+	Mode              string                        `yaml:"mode" json:"mode" jsonschema:"enum=ipip,enum=gre,enum=fou,enum=gue"`
 	Encryption        string                        `yaml:"encryption,omitempty" json:"encryption,omitempty" jsonschema:"enum=,enum=none,enum=wireguard"`
 	InnerPrefix       string                        `yaml:"innerPrefix" json:"innerPrefix"`
 	AddressingMode    string                        `yaml:"addressingMode,omitempty" json:"addressingMode,omitempty" jsonschema:"enum=,enum=edge-index,enum=pair-stable"`
@@ -686,6 +686,8 @@ type SAMTransportProfileSpec struct {
 	UnderlayInterface string                        `yaml:"underlayInterface" json:"underlayInterface"`
 	LocalEndpoint     string                        `yaml:"localEndpoint,omitempty" json:"localEndpoint,omitempty"`
 	LocalEndpointFrom StatusValueSourceSpec         `yaml:"localEndpointFrom,omitempty" json:"localEndpointFrom,omitempty"`
+	EncapSport        int                           `yaml:"encapSport,omitempty" json:"encapSport,omitempty" jsonschema:"minimum=1,maximum=65535"`
+	EncapDport        int                           `yaml:"encapDport,omitempty" json:"encapDport,omitempty" jsonschema:"minimum=1,maximum=65535"`
 	BGP               SAMTransportBGPProfileSpec    `yaml:"bgp" json:"bgp"`
 	PeersFrom         []SAMTransportPeersSourceSpec `yaml:"peersFrom,omitempty" json:"peersFrom,omitempty"`
 	PublishPeerGroup  bool                          `yaml:"publishPeerGroup,omitempty" json:"publishPeerGroup,omitempty"`

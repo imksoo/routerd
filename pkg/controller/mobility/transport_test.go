@@ -389,6 +389,49 @@ func TestSAMTransportProfileConsumesSAMRRSetWithoutWireGuard(t *testing.T) {
 	_ = findTransportBGPPeerForPeer(t, resources, "leaf-pve", "rr-b")
 }
 
+func TestSAMTransportProfileConsumesSAMRRSetWithFOUWithoutWireGuard(t *testing.T) {
+	now := time.Date(2026, 6, 28, 9, 2, 0, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouterWithMode("leaf-b", "leaf-b", "pair-stable", nil)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.Mode = "fou"
+	spec.Encryption = "none"
+	spec.LocalEndpoint = "10.20.0.32"
+	spec.EncapSport = 5555
+	spec.EncapDport = 5555
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMRRSet/cloudedge-rrs"}}
+	router.Spec.Resources[0].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources, samRRSetResource("cloudedge-rrs", []api.SAMRRSetMember{
+		{NodeRef: "rr-a", Endpoint: "10.10.0.2", TunnelAddress: "10.99.0.2/32"},
+		{NodeRef: "rr-b", Endpoint: "10.10.0.3", TunnelAddress: "10.99.0.3/32"},
+	}))
+
+	controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("leaf-b", "leaf-b")).ResourcesJSON)
+	if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 2; got != want {
+		t.Fatalf("TunnelInterface count = %d, want %d resources=%#v", got, want, resources)
+	}
+	if got, want := countResources(resources, api.NetAPIVersion, "BGPPeer"), 2; got != want {
+		t.Fatalf("BGPPeer count = %d, want %d resources=%#v", got, want, resources)
+	}
+	if got := countResources(resources, api.NetAPIVersion, "WireGuardPeer"); got != 0 {
+		t.Fatalf("WireGuardPeer count = %d, want 0", got)
+	}
+	for _, peer := range []string{"rr-a", "rr-b"} {
+		tunnel := findTransportTunnelForPeer(t, resources, "leaf-b", peer)
+		if tunnel.Mode != "fou" || tunnel.EncapSport != 5555 || tunnel.EncapDport != 5555 {
+			t.Fatalf("%s tunnel = %#v, want fou encap ports 5555/5555", peer, tunnel)
+		}
+		_ = findTransportBGPPeerForPeer(t, resources, "leaf-b", peer)
+	}
+}
+
 func TestSAMTransportProfileCanGenerateTunnelWithoutBGPPeerForRRDynamicAdmission(t *testing.T) {
 	now := time.Date(2026, 6, 28, 9, 5, 0, 0, time.UTC)
 	store := testStore(t, now)

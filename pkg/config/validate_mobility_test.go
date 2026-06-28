@@ -174,6 +174,21 @@ func TestValidateSAMTransportProfileRejectsInvalidFields(t *testing.T) {
 			mut:  func(spec *api.SAMTransportProfileSpec) { spec.BGP.RouteReflectorClusterID = "not-an-ip" },
 			want: "spec.bgp.routeReflectorClusterID must be an IPv4 address",
 		},
+		{
+			name: "fou requires encap ports",
+			mut: func(spec *api.SAMTransportProfileSpec) {
+				spec.Mode = "fou"
+			},
+			want: "spec.encapSport is required",
+		},
+		{
+			name: "encap ports require fou or gue",
+			mut: func(spec *api.SAMTransportProfileSpec) {
+				spec.EncapSport = 5555
+				spec.EncapDport = 5555
+			},
+			want: "spec.encapSport/spec.encapDport are only supported when spec.mode is fou or gue",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -430,6 +445,53 @@ func TestValidateSAMEnrollmentJoinTokenRequiresHMACFields(t *testing.T) {
 	err = Validate(router)
 	if err == nil || !strings.Contains(err.Error(), "spec.joinAudience") {
 		t.Fatalf("Validate join audience mismatch = %v, want joinAudience error", err)
+	}
+}
+
+func TestValidateSAMEnrollmentJoinTokenVerifiesHMACWhenSecretAvailable(t *testing.T) {
+	const envName = "ROUTERD_TEST_JOIN_TOKEN_VALUE"
+	t.Setenv(envName, "test-join-token")
+	router := samEnrollmentRouter()
+	policyIndex := len(router.Spec.Resources) - 2
+	policy := router.Spec.Resources[policyIndex].Spec.(api.SAMEnrollmentPolicySpec)
+	policy.JoinTokenFrom = api.SecretValueSourceSpec{Env: envName}
+	policy.JoinAudience = "cloudedge"
+	policy.RRSetRef = "SAMRRSet/cloudedge-rrs"
+	router.Spec.Resources[policyIndex].Spec = policy
+
+	claimIndex := len(router.Spec.Resources) - 1
+	claim := router.Spec.Resources[claimIndex].Spec.(api.SAMEnrollmentClaimSpec)
+	claim.RRSetRef = "SAMRRSet/cloudedge-rrs"
+	claim.JoinAudience = "cloudedge"
+	claim.JoinNonce = "nonce-1"
+	claim.JoinTimestamp = "2026-06-28T00:00:00Z"
+	claim.JoinHMAC = samEnrollmentJoinHMAC([]byte("test-join-token"), claim)
+	router.Spec.Resources[claimIndex].Spec = claim
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate join-token enrollment with valid HMAC: %v", err)
+	}
+
+	claim.JoinHMAC = "bad-hmac"
+	router.Spec.Resources[claimIndex].Spec = claim
+	err := Validate(router)
+	if err == nil || !strings.Contains(err.Error(), "spec.joinHMAC does not match") {
+		t.Fatalf("Validate bad join HMAC = %v, want mismatch error", err)
+	}
+}
+
+func TestValidateSAMEnrollmentRejectsRRSetScopeMismatch(t *testing.T) {
+	router := samEnrollmentRouter()
+	policyIndex := len(router.Spec.Resources) - 2
+	policy := router.Spec.Resources[policyIndex].Spec.(api.SAMEnrollmentPolicySpec)
+	policy.RRSetRef = "SAMRRSet/cloudedge-rrs"
+	router.Spec.Resources[policyIndex].Spec = policy
+	claimIndex := len(router.Spec.Resources) - 1
+	claim := router.Spec.Resources[claimIndex].Spec.(api.SAMEnrollmentClaimSpec)
+	claim.RRSetRef = "SAMRRSet/other"
+	router.Spec.Resources[claimIndex].Spec = claim
+	err := Validate(router)
+	if err == nil || !strings.Contains(err.Error(), "spec.rrSetRef") {
+		t.Fatalf("Validate RRSet scope mismatch = %v, want rrSetRef error", err)
 	}
 }
 

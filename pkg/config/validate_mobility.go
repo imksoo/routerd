@@ -658,9 +658,19 @@ func validateSAMTransportProfile(res api.Resource, spec api.SAMTransportProfileS
 		return fmt.Errorf("%s spec.selfNodeRef is required", res.ID())
 	}
 	switch strings.TrimSpace(spec.Mode) {
-	case "ipip", "gre":
+	case "ipip", "gre", "fou", "gue":
 	default:
-		return fmt.Errorf("%s spec.mode must be ipip or gre", res.ID())
+		return fmt.Errorf("%s spec.mode must be ipip, gre, fou, or gue", res.ID())
+	}
+	if strings.TrimSpace(spec.Mode) == "fou" || strings.TrimSpace(spec.Mode) == "gue" {
+		if spec.EncapSport < 1 || spec.EncapSport > 65535 {
+			return fmt.Errorf("%s spec.encapSport is required and must be within 1-65535 when spec.mode is %s", res.ID(), spec.Mode)
+		}
+		if spec.EncapDport < 1 || spec.EncapDport > 65535 {
+			return fmt.Errorf("%s spec.encapDport is required and must be within 1-65535 when spec.mode is %s", res.ID(), spec.Mode)
+		}
+	} else if spec.EncapSport != 0 || spec.EncapDport != 0 {
+		return fmt.Errorf("%s spec.encapSport/spec.encapDport are only supported when spec.mode is fou or gue", res.ID())
 	}
 	switch strings.TrimSpace(spec.Encryption) {
 	case "", "none", "wireguard":

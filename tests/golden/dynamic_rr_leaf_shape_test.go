@@ -14,6 +14,8 @@ func TestCloudEdgeDynamicRRLeafExamplesUseDualRRShape(t *testing.T) {
 	rrA := loadExampleRouter(t, "cloudedge-dynamic-rr-a-hub.yaml")
 	rrB := loadExampleRouter(t, "cloudedge-dynamic-rr-b-hub.yaml")
 	leaf := loadExampleRouter(t, "cloudedge-dynamic-leaf-pve.yaml")
+	leafA := loadExampleRouter(t, "cloudedge-dynamic-leaf-a-wg.yaml")
+	leafB := loadExampleRouter(t, "cloudedge-dynamic-leaf-b-fou.yaml")
 
 	for _, tt := range []struct {
 		name   string
@@ -66,6 +68,64 @@ func TestCloudEdgeDynamicRRLeafExamplesUseDualRRShape(t *testing.T) {
 		t.Fatalf("leaf transport peersFrom = %#v, want SAMRRSet/cloudedge-rrs", profileSpec.PeersFrom)
 	}
 	assertMissingResource(t, leaf, api.NetAPIVersion, "BGPDynamicPeer", "cloudedge-leaves")
+
+	t.Run("leaf-a wireguard path consumes both RRs", func(t *testing.T) {
+		assertHasResource(t, leafA, api.MobilityAPIVersion, "SAMRRSet", "cloudedge-rrs")
+		assertHasResource(t, leafA, api.MobilityAPIVersion, "SAMEnrollmentClaim", "leaf-a")
+		assertHasResource(t, leafA, api.NetAPIVersion, "WireGuardInterface", "wg-cloudedge")
+		assertMissingResource(t, leafA, api.NetAPIVersion, "BGPPeer", "rr-a")
+		assertMissingResource(t, leafA, api.NetAPIVersion, "BGPPeer", "rr-b")
+		assertMissingResource(t, leafA, api.NetAPIVersion, "BGPDynamicPeer", "cloudedge-leaves")
+
+		wg := mustResource(t, leafA, api.NetAPIVersion, "WireGuardInterface", "wg-cloudedge")
+		wgSpec, err := wg.WireGuardInterfaceSpec()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(wgSpec.PeersFrom) != 1 || wgSpec.PeersFrom[0].Resource != "SAMRRSet/cloudedge-rrs" {
+			t.Fatalf("leaf-a wireguard peersFrom = %#v, want SAMRRSet/cloudedge-rrs", wgSpec.PeersFrom)
+		}
+
+		profile := mustResource(t, leafA, api.MobilityAPIVersion, "SAMTransportProfile", "leaf-a")
+		spec, err := profile.SAMTransportProfileSpec()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if spec.Mode != "ipip" || spec.Encryption != "wireguard" {
+			t.Fatalf("leaf-a transport = %s/%s, want ipip/wireguard", spec.Mode, spec.Encryption)
+		}
+		if len(spec.PeersFrom) != 1 || spec.PeersFrom[0].Resource != "SAMRRSet/cloudedge-rrs" {
+			t.Fatalf("leaf-a transport peersFrom = %#v, want SAMRRSet/cloudedge-rrs", spec.PeersFrom)
+		}
+		assertRRSetMembers(t, leafA, "rr-a", "rr-b")
+	})
+
+	t.Run("leaf-b fou path consumes both RRs without wireguard", func(t *testing.T) {
+		assertHasResource(t, leafB, api.MobilityAPIVersion, "SAMRRSet", "cloudedge-rrs")
+		assertHasResource(t, leafB, api.MobilityAPIVersion, "SAMEnrollmentClaim", "leaf-b")
+		assertMissingResource(t, leafB, api.NetAPIVersion, "WireGuardInterface", "wg-cloudedge")
+		assertMissingResource(t, leafB, api.NetAPIVersion, "WireGuardPeer", "rr-a")
+		assertMissingResource(t, leafB, api.NetAPIVersion, "WireGuardPeer", "rr-b")
+		assertMissingResource(t, leafB, api.NetAPIVersion, "BGPPeer", "rr-a")
+		assertMissingResource(t, leafB, api.NetAPIVersion, "BGPPeer", "rr-b")
+		assertMissingResource(t, leafB, api.NetAPIVersion, "BGPDynamicPeer", "cloudedge-leaves")
+
+		profile := mustResource(t, leafB, api.MobilityAPIVersion, "SAMTransportProfile", "leaf-b")
+		spec, err := profile.SAMTransportProfileSpec()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if spec.Mode != "fou" || spec.Encryption != "none" {
+			t.Fatalf("leaf-b transport = %s/%s, want fou/none", spec.Mode, spec.Encryption)
+		}
+		if spec.EncapSport != 5555 || spec.EncapDport != 5555 {
+			t.Fatalf("leaf-b encap ports = %d/%d, want 5555/5555", spec.EncapSport, spec.EncapDport)
+		}
+		if len(spec.PeersFrom) != 1 || spec.PeersFrom[0].Resource != "SAMRRSet/cloudedge-rrs" {
+			t.Fatalf("leaf-b transport peersFrom = %#v, want SAMRRSet/cloudedge-rrs", spec.PeersFrom)
+		}
+		assertRRSetMembers(t, leafB, "rr-a", "rr-b")
+	})
 }
 
 func loadExampleRouter(t *testing.T, name string) *api.Router {
@@ -103,4 +163,25 @@ func mustResource(t *testing.T, router *api.Router, apiVersion, kind, name strin
 	}
 	t.Fatalf("missing %s/%s in %s", kind, name, router.Metadata.Name)
 	return api.Resource{}
+}
+
+func assertRRSetMembers(t *testing.T, router *api.Router, want ...string) {
+	t.Helper()
+	resource := mustResource(t, router, api.MobilityAPIVersion, "SAMRRSet", "cloudedge-rrs")
+	spec, err := resource.SAMRRSetSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, member := range spec.Members {
+		got[member.NodeRef] = true
+	}
+	for _, nodeRef := range want {
+		if !got[nodeRef] {
+			t.Fatalf("SAMRRSet/cloudedge-rrs missing member %s: %#v", nodeRef, spec.Members)
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("SAMRRSet/cloudedge-rrs member count = %d, want %d: %#v", len(got), len(want), spec.Members)
+	}
 }
