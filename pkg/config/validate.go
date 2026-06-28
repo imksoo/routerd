@@ -879,6 +879,7 @@ func validateMobilityPoolPrefixes(router *api.Router) error {
 func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error {
 	policies := map[string]api.SAMEnrollmentPolicySpec{}
 	mobilityPrefixes := map[string]netip.Prefix{}
+	seenJoinNonces := map[string]string{}
 	for _, res := range router.Spec.Resources {
 		if res.APIVersion == api.MobilityAPIVersion && res.Kind == "SAMEnrollmentPolicy" {
 			spec, err := res.SAMEnrollmentPolicySpec()
@@ -953,6 +954,11 @@ func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error
 			if strings.TrimSpace(spec.JoinHMAC) == "" {
 				return fmt.Errorf("%s spec.joinHMAC is required by %s joinTokenFrom", res.ID(), spec.PolicyRef)
 			}
+			nonceKey := strings.TrimSpace(spec.PolicyRef) + "\x00" + strings.TrimSpace(spec.JoinNonce)
+			if previous := seenJoinNonces[nonceKey]; previous != "" {
+				return fmt.Errorf("%s spec.joinNonce duplicates %s for %s", res.ID(), previous, spec.PolicyRef)
+			}
+			seenJoinNonces[nonceKey] = res.ID()
 			if strings.TrimSpace(policy.JoinAudience) != "" && strings.TrimSpace(spec.JoinAudience) != strings.TrimSpace(policy.JoinAudience) {
 				return fmt.Errorf("%s spec.joinAudience %q does not match %s spec.joinAudience", res.ID(), spec.JoinAudience, spec.PolicyRef)
 			}

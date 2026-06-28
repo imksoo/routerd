@@ -480,6 +480,38 @@ func TestValidateSAMEnrollmentJoinTokenVerifiesHMACWhenSecretAvailable(t *testin
 	}
 }
 
+func TestValidateSAMEnrollmentJoinTokenRejectsDuplicateNonce(t *testing.T) {
+	router := samEnrollmentRouter()
+	policyIndex := len(router.Spec.Resources) - 2
+	policy := router.Spec.Resources[policyIndex].Spec.(api.SAMEnrollmentPolicySpec)
+	policy.JoinTokenFrom = api.SecretValueSourceSpec{Env: "ROUTERD_TEST_JOIN_TOKEN"}
+	policy.JoinAudience = "cloudedge"
+	router.Spec.Resources[policyIndex].Spec = policy
+
+	claimIndex := len(router.Spec.Resources) - 1
+	claim := router.Spec.Resources[claimIndex].Spec.(api.SAMEnrollmentClaimSpec)
+	claim.JoinAudience = "cloudedge"
+	claim.JoinNonce = "nonce-1"
+	claim.JoinTimestamp = "2026-06-28T00:00:00Z"
+	claim.JoinHMAC = "example-hmac"
+	router.Spec.Resources[claimIndex].Spec = claim
+
+	duplicate := router.Spec.Resources[claimIndex]
+	duplicate.Metadata.Name = "leaf-other"
+	duplicateClaim := duplicate.Spec.(api.SAMEnrollmentClaimSpec)
+	duplicateClaim.LeafID = "leaf-other"
+	duplicateClaim.TunnelAddress = "10.255.0.22/32"
+	duplicateClaim.Endpoint = "198.51.100.22"
+	duplicateClaim.Mobility.OwnedAddresses = []string{"10.77.60.22/32"}
+	duplicate.Spec = duplicateClaim
+	router.Spec.Resources = append(router.Spec.Resources, duplicate)
+
+	err := Validate(router)
+	if err == nil || !strings.Contains(err.Error(), "spec.joinNonce duplicates") {
+		t.Fatalf("Validate duplicate join nonce = %v, want duplicate nonce error", err)
+	}
+}
+
 func TestValidateSAMEnrollmentRejectsRRSetScopeMismatch(t *testing.T) {
 	router := samEnrollmentRouter()
 	policyIndex := len(router.Spec.Resources) - 2
