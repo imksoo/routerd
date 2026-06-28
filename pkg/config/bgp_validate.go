@@ -106,6 +106,29 @@ func validateBGPImportPrefixLengths(resourceID, path string, spec api.BGPImportP
 	if minLen > 0 && maxLen > 0 && minLen > maxLen {
 		return fmt.Errorf("%s %s.allowedPrefixLengthMin must be <= allowedPrefixLengthMax", resourceID, path)
 	}
+	for i, value := range spec.AllowedPrefixes {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+		if err != nil {
+			continue
+		}
+		prefix = prefix.Masked()
+		familyMax := 32
+		if prefix.Addr().Is6() {
+			familyMax = 128
+		}
+		if minLen > familyMax {
+			return fmt.Errorf("%s %s.allowedPrefixLengthMin must be <= %d for %s[%d]", resourceID, path, familyMax, path+".allowedPrefixes", i)
+		}
+		if maxLen > familyMax {
+			return fmt.Errorf("%s %s.allowedPrefixLengthMax must be <= %d for %s[%d]", resourceID, path, familyMax, path+".allowedPrefixes", i)
+		}
+		if minLen > 0 && minLen < prefix.Bits() {
+			return fmt.Errorf("%s %s.allowedPrefixLengthMin must be >= prefix length %d for %s[%d]", resourceID, path, prefix.Bits(), path+".allowedPrefixes", i)
+		}
+		if maxLen > 0 && maxLen < prefix.Bits() {
+			return fmt.Errorf("%s %s.allowedPrefixLengthMax must be >= prefix length %d for %s[%d]", resourceID, path, prefix.Bits(), path+".allowedPrefixes", i)
+		}
+	}
 	return nil
 }
 

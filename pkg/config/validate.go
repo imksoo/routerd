@@ -180,8 +180,8 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				return fmt.Errorf("%s spec.routerRef references missing BGPRouter %q", res.ID(), spec.RouterRef)
 			}
 			routerSpec := idx.BGPRouterSpecs[name]
-			if len(compactStrings(spec.ImportPolicy.AllowedPrefixes)) == 0 && len(compactStrings(routerSpec.ImportPolicy.AllowedPrefixes)) == 0 {
-				return fmt.Errorf("%s spec.importPolicy.allowedPrefixes is required unless %s has an import allowlist", res.ID(), spec.RouterRef)
+			if err := validateBGPDynamicEffectiveImportPolicy(res.ID(), spec, routerSpec); err != nil {
+				return err
 			}
 			if len(spec.Listen.SourcePrefixes) == 0 {
 				return fmt.Errorf("%s spec.listen.sourcePrefixes is required", res.ID())
@@ -777,6 +777,32 @@ func validateMobilitySelfMemberCompleteness(res api.Resource, spec api.MobilityP
 			return fmt.Errorf("%s spec.members[%d] is the local cloud member %q and must resolve provider-secondary-ip capture details from capture or profileRef", res.ID(), i, selfNode)
 		}
 		return nil
+	}
+	return nil
+}
+
+func validateBGPDynamicEffectiveImportPolicy(resourceID string, spec api.BGPDynamicPeerSpec, routerSpec api.BGPRouterSpec) error {
+	effective := spec.ImportPolicy
+	sourcePath := "spec.importPolicy"
+	if len(compactStrings(effective.AllowedPrefixes)) == 0 {
+		effective = routerSpec.ImportPolicy
+		sourcePath = "referenced BGPRouter spec.importPolicy"
+	}
+	if len(compactStrings(effective.AllowedPrefixes)) == 0 {
+		return fmt.Errorf("%s spec.importPolicy.allowedPrefixes is required unless referenced BGPRouter has an import allowlist", resourceID)
+	}
+	if effective.AllowedPrefixLengthMin != 32 || effective.AllowedPrefixLengthMax != 32 {
+		return fmt.Errorf("%s effective import policy from %s must set allowedPrefixLengthMin=32 and allowedPrefixLengthMax=32 for dynamic leaf route admission", resourceID, sourcePath)
+	}
+	for i, value := range effective.AllowedPrefixes {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+		if err != nil {
+			continue
+		}
+		if prefix.Addr().Is4() {
+			continue
+		}
+		return fmt.Errorf("%s effective import policy %s.allowedPrefixes[%d] must be an IPv4 MobilityPool prefix for dynamic leaf route admission", resourceID, sourcePath, i)
 	}
 	return nil
 }

@@ -39,10 +39,10 @@ is not the default enrollment identity or the default private-underlay model.
   `encryption: wireguard` is selected.
 - `MobilityPool` remains the `/32` ownership authority.
 - `SAMEnrollmentClaim.spec.mobility.ownedAddresses` is bound to dynamic BGP
-  admission by tunnel next-hop. A dynamic leaf can advertise only its accepted
-  claim-owned `/32`; another leaf's `/32`, an unclaimed pool `/32`, pool
-  aggregate, subprefix, default route, or underlay route is rejected before FIB
-  installation.
+  admission by the BGP neighbor/tunnel address, not by the route's FIB
+  next-hop. A dynamic leaf can advertise only its accepted claim-owned `/32`;
+  another leaf's `/32`, an unclaimed pool `/32`, pool aggregate, subprefix,
+  default route, or underlay route is rejected before FIB installation.
 - `SAMEnrollmentClaim.spec.expiresAt` and `spec.revoked` are
   RR/controller/admin-owned admission state. They are intentionally not part of
   the leaf-authored join HMAC payload, so an operator can revoke or shorten

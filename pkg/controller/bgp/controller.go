@@ -2087,12 +2087,12 @@ func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []a
 		err := c.Server.ListPath(ctx, &gobgpapi.ListPathRequest{TableType: gobgpapi.TableType_GLOBAL, Family: family}, func(dst *gobgpapi.Destination) {
 			state.Prefixes = append(state.Prefixes, statePrefixes(dst)...)
 			mergeStringMap(livenessMarkers, mobilityLivenessMarkersFromDestination(dst))
-			routes = append(routes, fibRoutesFromDestination(dst, allowedImportPrefixes, fibNextHopRewritePeers, func(prefix netip.Prefix, nextHop string, communities []string) bool {
+			routes = append(routes, fibRoutesFromDestination(dst, allowedImportPrefixes, fibNextHopRewritePeers, func(prefix netip.Prefix, identityAddress, _ string, communities []string) bool {
 				if !fibPolicy.AdmitBGPPath(prefix, communities) {
-					admissionTracker.Reject(nextHop, prefix, "mobility-fib-policy")
+					admissionTracker.Reject(identityAddress, prefix, "mobility-fib-policy")
 					return false
 				}
-				return admissionTracker.Admit(nextHop, prefix)
+				return admissionTracker.Admit(identityAddress, prefix)
 			})...)
 		})
 		if err != nil {
@@ -2684,7 +2684,7 @@ type allowedImportPrefix struct {
 	Max    int
 }
 
-func fibRoutesFromStatePrefixes(prefixes []bgpstate.Prefix, allowed []allowedImportPrefix, admit func(netip.Prefix, string, []string) bool) []FIBRoute {
+func fibRoutesFromStatePrefixes(prefixes []bgpstate.Prefix, allowed []allowedImportPrefix, admit func(netip.Prefix, string, string, []string) bool) []FIBRoute {
 	type stateRoute struct {
 		nextHops        map[string]bool
 		retainOnMissing bool
@@ -2706,7 +2706,7 @@ func fibRoutesFromStatePrefixes(prefixes []bgpstate.Prefix, allowed []allowedImp
 		if len(allowed) > 0 && !prefixAllowed(parsed, allowed) {
 			continue
 		}
-		if admit != nil && !admit(parsed, nextHop, prefix.Communities) {
+		if admit != nil && !admit(parsed, nextHop, nextHop, prefix.Communities) {
 			continue
 		}
 		key := parsed.String()
@@ -2737,7 +2737,7 @@ type bgpPathRank struct {
 	MED       uint32
 }
 
-func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []allowedImportPrefix, peerAddressRewrite map[string]bool, admit func(netip.Prefix, string, []string) bool) []FIBRoute {
+func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []allowedImportPrefix, peerAddressRewrite map[string]bool, admit func(netip.Prefix, string, string, []string) bool) []FIBRoute {
 	prefix := normalizeRoutePrefix(dst.GetPrefix())
 	var candidates []struct {
 		nextHop string
@@ -2767,8 +2767,9 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []allowedImport
 		if nextHop == "" || nextHop == "0.0.0.0" || nextHop == "::" {
 			continue
 		}
+		identityAddress := firstNonEmpty(normalizedPathNeighbor(path), nextHop)
 		communities := pathCommunities(path)
-		if admit != nil && !admit(parsed, nextHop, communities) {
+		if admit != nil && !admit(parsed, identityAddress, nextHop, communities) {
 			continue
 		}
 		candidates = append(candidates, struct {

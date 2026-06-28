@@ -351,6 +351,60 @@ func TestSAMDynamicClaimAdmissionBindsOwnedHostRoutesToTunnelAddress(t *testing.
 	}
 }
 
+func TestDynamicClaimAdmissionUsesBGPNeighborAddressInsteadOfFIBNextHop(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-transport"},
+			Spec: api.SAMTransportProfileSpec{
+				SelfNodeRef: "SAMNode/rr-a",
+				Mode:        "ipip",
+				Encryption:  "none",
+				InnerPrefix: "10.255.0.1/32",
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+			Metadata: api.ObjectMeta{Name: "clients"},
+			Spec: api.MobilityPoolSpec{
+				Prefix:   "10.77.60.0/24",
+				GroupRef: "EventGroup/cloudedge",
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentPolicy"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-leaves"},
+			Spec: api.SAMEnrollmentPolicySpec{
+				TransportProfileRef:   "SAMTransportProfile/cloudedge-transport",
+				TunnelAddressPrefixes: []string{"10.255.0.0/24"},
+				MobilityPoolRefs:      []string{"MobilityPool/clients"},
+			},
+		},
+		samEnrollmentClaimResourceForTest("leaf-a", "10.255.0.31/32", "10.77.60.31/32"),
+		samEnrollmentClaimResourceForTest("leaf-b", "10.255.0.32/32", "10.77.60.32/32"),
+	)
+	admission := (&Controller{Router: router}).samDynamicClaimAdmission()
+	allowed := allowedImportPrefixesForTest(api.BGPImportPolicySpec{
+		AllowedPrefixes:        []string{"10.77.60.0/24"},
+		AllowedPrefixLengthMin: 32,
+		AllowedPrefixLengthMax: 32,
+	})
+	admit := func(prefix netip.Prefix, identityAddress, _ string, _ []string) bool {
+		ok, _ := admission.Admit(identityAddress, prefix)
+		return ok
+	}
+
+	got := fibRoutesFromDestination(testDestinationWithNeighbor("10.77.60.31/32", "10.255.0.32", "10.255.0.31"), allowed, nil, admit)
+	want := []FIBRoute{{Prefix: "10.77.60.31/32", NextHops: []string{"10.255.0.32"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("neighbor-authorized route = %#v, want %#v", got, want)
+	}
+	if got := fibRoutesFromDestination(testDestinationWithNeighbor("10.77.60.32/32", "10.255.0.32", "10.255.0.31"), allowed, nil, admit); len(got) != 0 {
+		t.Fatalf("leaf-a neighbor authorized leaf-b route via manipulated next-hop: %#v", got)
+	}
+}
+
 func TestBGPDynamicPeerStatusReportsDiscoveredPeersAndAdmissionCounters(t *testing.T) {
 	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
 	router.Spec.Resources = append(router.Spec.Resources,
