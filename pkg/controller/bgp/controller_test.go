@@ -272,6 +272,62 @@ func TestImportAllowedPrefixesIncludesDynamicPeers(t *testing.T) {
 	}
 }
 
+func TestApplyRouterBGPDynamicDefaultsInheritsExactRouterImportPolicy(t *testing.T) {
+	routerSpec := api.BGPRouterSpec{
+		ConvergenceProfile: "fast",
+		ImportPolicy: api.BGPImportPolicySpec{
+			AllowedPrefixes:        []string{"10.77.60.0/24"},
+			AllowedPrefixLengthMin: 32,
+			AllowedPrefixLengthMax: 32,
+		},
+	}
+	peers := applyRouterBGPDynamicDefaults("lan", routerSpec, map[string]desiredDynamicPeer{
+		"routerd-dynamic-leaves": {
+			PeerGroupName: "routerd-dynamic-leaves",
+		},
+	}, nil, nil)
+	peer := peers["routerd-dynamic-leaves"]
+	if peer.ImportPolicyName != bgpPolicyName("lan", "import") {
+		t.Fatalf("import policy name = %q, want inherited router policy", peer.ImportPolicyName)
+	}
+	if !reflect.DeepEqual(peer.ImportPolicy.AllowedPrefixes, []string{"10.77.60.0/24"}) ||
+		peer.ImportPolicy.AllowedPrefixLengthMin != 32 ||
+		peer.ImportPolicy.AllowedPrefixLengthMax != 32 {
+		t.Fatalf("inherited import policy = %#v", peer.ImportPolicy)
+	}
+}
+
+func TestApplyRouterBGPDynamicDefaultsUsesOwnExactImportPolicyWithNextHopRewrite(t *testing.T) {
+	routerSpec := api.BGPRouterSpec{
+		ImportPolicy: api.BGPImportPolicySpec{
+			AllowedPrefixes:        []string{"10.250.0.0/24"},
+			AllowedPrefixLengthMin: 32,
+			AllowedPrefixLengthMax: 32,
+		},
+	}
+	peers := applyRouterBGPDynamicDefaults("lan", routerSpec, map[string]desiredDynamicPeer{
+		"routerd-dynamic-leaves": {
+			PeerGroupName: "routerd-dynamic-leaves",
+			ImportPolicy: api.BGPImportPolicySpec{
+				AllowedPrefixes:        []string{"10.77.60.0/24"},
+				AllowedPrefixLengthMin: 32,
+				AllowedPrefixLengthMax: 32,
+				NextHopRewrite:         "peer-address",
+			},
+		},
+	}, nil, nil)
+	peer := peers["routerd-dynamic-leaves"]
+	if peer.ImportPolicyName != dynamicPeerImportPolicyName("lan", "routerd-dynamic-leaves") {
+		t.Fatalf("import policy name = %q, want dynamic peer policy", peer.ImportPolicyName)
+	}
+	if !reflect.DeepEqual(peer.ImportPolicy.AllowedPrefixes, []string{"10.77.60.0/24"}) ||
+		peer.ImportPolicy.AllowedPrefixLengthMin != 32 ||
+		peer.ImportPolicy.AllowedPrefixLengthMax != 32 ||
+		importNextHopRewrite(peer.ImportPolicy) != "peer-address" {
+		t.Fatalf("own import policy = %#v", peer.ImportPolicy)
+	}
+}
+
 func TestDynamicImportAllowedPrefixesRejectRouteLeaks(t *testing.T) {
 	allowed := allowedImportPrefixesForTest(api.BGPImportPolicySpec{
 		AllowedPrefixes:        []string{"10.77.60.0/24"},

@@ -785,6 +785,9 @@ func validateBGPDynamicEffectiveImportPolicy(resourceID string, spec api.BGPDyna
 	effective := spec.ImportPolicy
 	sourcePath := "spec.importPolicy"
 	if len(compactStrings(effective.AllowedPrefixes)) == 0 {
+		if strings.TrimSpace(effective.NextHopRewrite) != "" {
+			return fmt.Errorf("%s spec.importPolicy.allowedPrefixes is required when spec.importPolicy.nextHopRewrite is set", resourceID)
+		}
 		effective = routerSpec.ImportPolicy
 		sourcePath = "referenced BGPRouter spec.importPolicy"
 	}
