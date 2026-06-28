@@ -102,7 +102,11 @@ When `joinTokenFrom` is configured, routerd requires `joinNonce`,
 `joinTimestamp`, and `joinHMAC`. If the referenced secret is readable during
 validation, routerd verifies the HMAC. If the secret is not present on the
 authoring host, validation still checks field presence and policy scope so
-example configs remain reviewable before secrets are installed.
+example configs remain reviewable before secrets are installed. A loaded config
+must not contain duplicate `joinNonce` values for the same enrollment policy.
+In a live enrollment service, used nonces should also be persisted outside the
+routerd config so replayed join requests can be rejected across config
+generations.
 
 The HMAC input is UTF-8 text with these newline-separated fields, in this
 order:
@@ -258,6 +262,7 @@ Local tests should cover:
 - `SAMTransportProfile mode: ipip`/`gre` rejects FOU/GUE encap ports.
 - a configured `joinTokenFrom` requires claim `joinNonce`, `joinTimestamp`, and
   `joinHMAC`.
+- duplicate `joinNonce` values are rejected within the same enrollment policy.
 - unauthorized MobilityPool `/32` claims are rejected.
 - revoked or expired claims are skipped.
 - route/default/underlay prefix rejection is enforced where current BGP and
