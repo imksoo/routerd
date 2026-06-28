@@ -32,6 +32,16 @@ func TestCloudEdgeDynamicRRLeafExamplesUseDualRRShape(t *testing.T) {
 			assertMissingResource(t, tt.router, api.NetAPIVersion, "BGPPeer", "leaf-pve")
 			assertMissingResource(t, tt.router, api.NetAPIVersion, "BGPPeer", "leaf-azure")
 			assertMissingResource(t, tt.router, api.NetAPIVersion, "WireGuardInterface", "wg-hybrid")
+			dynamicPeer := mustResource(t, tt.router, api.NetAPIVersion, "BGPDynamicPeer", "cloudedge-leaves")
+			dynamicSpec, err := dynamicPeer.BGPDynamicPeerSpec()
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertStringSet(t, tt.name+" dynamic source prefixes", dynamicSpec.Listen.SourcePrefixes, []string{"10.255.0.0/20"})
+			assertStringSet(t, tt.name+" dynamic import prefixes", dynamicSpec.ImportPolicy.AllowedPrefixes, []string{"10.77.60.0/24"})
+			assertStringSet(t, tt.name+" dynamic export prefixes", dynamicSpec.ExportPolicy.AllowedPrefixes, []string{"10.77.60.0/24"})
+			assertNoPrefixes(t, tt.name+" dynamic import prefixes", dynamicSpec.ImportPolicy.AllowedPrefixes, "0.0.0.0/0", "10.10.0.0/24")
+			assertNoPrefixes(t, tt.name+" dynamic export prefixes", dynamicSpec.ExportPolicy.AllowedPrefixes, "0.0.0.0/0", "10.10.0.0/24")
 			profile := mustResource(t, tt.router, api.MobilityAPIVersion, "SAMTransportProfile", tt.self)
 			spec, err := profile.SAMTransportProfileSpec()
 			if err != nil {
@@ -67,6 +77,7 @@ func TestCloudEdgeDynamicRRLeafExamplesUseDualRRShape(t *testing.T) {
 	if len(profileSpec.PeersFrom) != 1 || profileSpec.PeersFrom[0].Resource != "SAMRRSet/cloudedge-rrs" {
 		t.Fatalf("leaf transport peersFrom = %#v, want SAMRRSet/cloudedge-rrs", profileSpec.PeersFrom)
 	}
+	assertLeafBGPRouterPolicy(t, leaf, "leaf-pve", "10.77.60.21/32")
 	assertMissingResource(t, leaf, api.NetAPIVersion, "BGPDynamicPeer", "cloudedge-leaves")
 
 	t.Run("leaf-a wireguard path consumes both RRs", func(t *testing.T) {
@@ -97,6 +108,7 @@ func TestCloudEdgeDynamicRRLeafExamplesUseDualRRShape(t *testing.T) {
 		if len(spec.PeersFrom) != 1 || spec.PeersFrom[0].Resource != "SAMRRSet/cloudedge-rrs" {
 			t.Fatalf("leaf-a transport peersFrom = %#v, want SAMRRSet/cloudedge-rrs", spec.PeersFrom)
 		}
+		assertLeafBGPRouterPolicy(t, leafA, "leaf-a", "10.77.60.31/32")
 		assertRRSetMembers(t, leafA, "rr-a", "rr-b")
 	})
 
@@ -124,6 +136,7 @@ func TestCloudEdgeDynamicRRLeafExamplesUseDualRRShape(t *testing.T) {
 		if len(spec.PeersFrom) != 1 || spec.PeersFrom[0].Resource != "SAMRRSet/cloudedge-rrs" {
 			t.Fatalf("leaf-b transport peersFrom = %#v, want SAMRRSet/cloudedge-rrs", spec.PeersFrom)
 		}
+		assertLeafBGPRouterPolicy(t, leafB, "leaf-b", "10.77.60.32/32")
 		assertRRSetMembers(t, leafB, "rr-a", "rr-b")
 	})
 }
@@ -183,5 +196,47 @@ func assertRRSetMembers(t *testing.T, router *api.Router, want ...string) {
 	}
 	if len(got) != len(want) {
 		t.Fatalf("SAMRRSet/cloudedge-rrs member count = %d, want %d: %#v", len(got), len(want), spec.Members)
+	}
+}
+
+func assertLeafBGPRouterPolicy(t *testing.T, router *api.Router, leafName, ownedPrefix string) {
+	t.Helper()
+	resource := mustResource(t, router, api.NetAPIVersion, "BGPRouter", "mobility-bgp")
+	spec, err := resource.BGPRouterSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertStringSet(t, leafName+" BGP export prefixes", spec.ExportPolicy.AllowedPrefixes, []string{ownedPrefix})
+	assertStringSet(t, leafName+" BGP connected redistribute prefixes", spec.Redistribute.Connected.AllowedPrefixes, []string{ownedPrefix})
+	assertNoPrefixes(t, leafName+" BGP export prefixes", spec.ExportPolicy.AllowedPrefixes, "0.0.0.0/0", "10.10.0.0/24", "10.20.0.0/24")
+	assertNoPrefixes(t, leafName+" BGP connected redistribute prefixes", spec.Redistribute.Connected.AllowedPrefixes, "0.0.0.0/0", "10.10.0.0/24", "10.20.0.0/24")
+}
+
+func assertStringSet(t *testing.T, label string, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s = %#v, want %#v", label, got, want)
+	}
+	seen := map[string]int{}
+	for _, value := range got {
+		seen[value]++
+	}
+	for _, value := range want {
+		if seen[value] != 1 {
+			t.Fatalf("%s = %#v, want %#v", label, got, want)
+		}
+	}
+}
+
+func assertNoPrefixes(t *testing.T, label string, got []string, forbidden ...string) {
+	t.Helper()
+	seen := map[string]bool{}
+	for _, value := range got {
+		seen[value] = true
+	}
+	for _, value := range forbidden {
+		if seen[value] {
+			t.Fatalf("%s contains forbidden prefix %s: %#v", label, value, got)
+		}
 	}
 }
