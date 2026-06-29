@@ -13,6 +13,9 @@ direct leaf-to-leaf adjacency for every site pair.
 See the detailed runbook in
 `docs/operations/dynamic-rr-leaf-enrollment-test.md` and live evidence in
 `docs/releases/evidence/sam-aws-azure-oci-pve-fullmesh-20260629.md`.
+The PVE dual-RR FOU redundancy gate also passed on 2026-06-29 and is
+evidence-frozen in
+`docs/releases/manifests/v20260629.samred.yaml`.
 
 ## Roles
 

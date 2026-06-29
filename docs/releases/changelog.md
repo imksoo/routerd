@@ -14,6 +14,19 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ### Added
 
+- Cloud-SAM dynamic RR/leaf enrollment has been promoted to mainline and
+  evidence-frozen at commit `4a6dad6b8786ed01e63381dcf77230467b8a5021`.
+  The accepted PVE live redundancy gate used dual RRs (`rr-1`, `rr-2`),
+  four leaves (`leaf-a` through `leaf-d`), `SAMEnrollmentClient` claim
+  submit/RRSet fetch, `BGPDynamicPeer/samred-leaves`, FOU transport, and
+  bidirectional client ping/SSH between `client-999` (`10.99.9.10`) and
+  `client-998` (`10.99.8.10`). The evidence archive is recorded outside the
+  repository at
+  `/home/imksoo/routerd-labs-archive/evidence/samred-20260629T035652Z/`;
+  `routerd-samred-20260629T035652Z.tar.gz` has SHA256
+  `77277d94e9c1b097ff0e9b7158b1cdeed772b27300c3a7c58bc007db9c1c92f4` and
+  passed `sha256sum -c`. Cleanup is deferred until PVE VM/bridge cleanup
+  snapshots are captured.
 - Dynamic SAM RR/leaf enrollment is now documented as the release-candidate
   path for stable hub/RR configs with no static per-leaf inventory. The model
   includes `BGPDynamicPeer` admission, `SAMRRSet`, `SAMEnrollmentPolicy`,

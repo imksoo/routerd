@@ -1,0 +1,80 @@
+version: v20260629.samred
+date: 2026-06-29
+commit: 4a6dad6b8786ed01e63381dcf77230467b8a5021
+title: Cloud-SAM Dynamic RR/Leaf Enrollment live validation
+
+summary:
+  Cloud-SAM dynamic RR/leaf enrollment was merged to main and validated in a
+  PVE live redundant topology with dual RRs, four leaves, dynamic BGP
+  admission, FOU transport, and bidirectional client connectivity.
+
+features:
+  - BGPDynamicPeer dynamic RR BGP admission
+  - SAMEnrollmentPolicy and SAMEnrollmentClaim admission boundary
+  - SAMEnrollmentClient leaf-side claim submit and RRSet fetch
+  - SAMRRSet dynamic state consumption by SAMTransportProfile
+  - Claim-owned /32 route admission
+  - ControlAPI TCP listener with CIDR admission and documented local trust boundary
+
+live_validation:
+  topology: PVE cloud-SAM redundancy
+  status: PASS
+  rrs:
+    - rr-1
+    - rr-2
+  leaves:
+    - leaf-a
+    - leaf-b
+    - leaf-c
+    - leaf-d
+  transport: FOU
+  bgp:
+    rr_admission: BGPDynamicPeer/samred-leaves
+    rr_1_dynamic_peers: 4
+    rr_2_dynamic_peers: 4
+  clients:
+    - name: client-999
+      address: 10.99.9.10
+    - name: client-998
+      address: 10.99.8.10
+  assertions:
+    - RR base configs contain no static leaf claims
+    - RR base configs contain no per-leaf BGPPeer resources
+    - each leaf submitted claims to both RRs
+    - each leaf established FOU tunnel and BGP sessions to both RRs
+    - bidirectional ping passed between client-999 and client-998
+    - bidirectional SSH passed between client-999 and client-998 using temporary test key
+
+evidence:
+  archive_dir: /home/imksoo/routerd-labs-archive/evidence/samred-20260629T035652Z
+  archive_file: routerd-samred-20260629T035652Z.tar.gz
+  sha256: 77277d94e9c1b097ff0e9b7158b1cdeed772b27300c3a7c58bc007db9c1c92f4
+  checksum_verified: true
+  checksum_command: sha256sum -c routerd-samred-20260629T035652Z.tar.gz.sha256
+  repo_state: main...origin/main clean
+  key_files:
+    - SUMMARY.md
+    - routerd-samred-20260629T035652Z.tar.gz
+    - routerd-samred-20260629T035652Z.tar.gz.sha256
+    - evidence/client-ping-ssh-final.txt
+    - evidence/final-routerd-status.txt
+    - configs/
+
+gates:
+  - git diff --check
+  - make check-schema
+  - make check-website-schemas
+  - make validate-example
+  - targeted Go tests
+  - go test ./...
+  - make build-daemons
+
+cleanup:
+  status: deferred
+  reason: PVE VM/bridge retained until cleanup snapshots are captured
+
+notes:
+  - ControlAPI HTTP listener is a mutation/control API.
+  - Default listener is loopback-only.
+  - RR-side SAM enrollment over TCP must use a protected private underlay and narrow allowCIDRs.
+  - Public exposure remains unsupported.

@@ -514,3 +514,52 @@ Items intentionally not covered unless selected for the first live run:
   tests;
 - RR-to-RR peering behavior when a leaf can reach only one RR;
 - provider action side effects outside the chosen test providers/hosts.
+
+## PVE Live Redundancy Evidence - 2026-06-29
+
+The PVE cloud-SAM redundancy topology passed live validation on 2026-06-29.
+
+Freeze commit:
+
+```text
+4a6dad6b8786ed01e63381dcf77230467b8a5021
+```
+
+Evidence archive:
+
+```text
+/home/imksoo/routerd-labs-archive/evidence/samred-20260629T035652Z/
+```
+
+Archive checksum:
+
+```text
+77277d94e9c1b097ff0e9b7158b1cdeed772b27300c3a7c58bc007db9c1c92f4  routerd-samred-20260629T035652Z.tar.gz
+```
+
+Checksum verification:
+
+```text
+sha256sum -c: OK
+repo state: main...origin/main clean
+```
+
+Validated assertions:
+
+- RR base configs contained no static leaf claims.
+- RR base configs contained no per-leaf `BGPPeer` resources.
+- leaf-a, leaf-b, leaf-c, and leaf-d enrolled through `SAMEnrollmentClient`.
+- Each leaf submitted claims to both rr-1 and rr-2.
+- rr-1 and rr-2 each established 4 dynamic peers through `BGPDynamicPeer/samred-leaves`.
+- Each leaf established FOU tunnel and BGP sessions to both RRs.
+- client-999 `10.99.9.10` and client-998 `10.99.8.10` passed bidirectional ping.
+- client-999 and client-998 passed bidirectional SSH using a temporary test key.
+
+Cleanup status:
+
+```text
+deferred
+```
+
+PVE VM and bridge resources were intentionally retained until pre-cleanup and
+post-cleanup snapshots are captured.
