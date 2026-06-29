@@ -194,8 +194,12 @@ Internet-safe listener.
 For RR-side HTTP enrollment, prefer adding `ControlAPI.spec.tokenFrom` and
 configuring each leaf `SAMEnrollmentClient.spec.controlAPITokenFrom` with the
 same secret source so submit/fetch calls require both source-CIDR admission and
-a bearer token. This bearer token is an additional private-underlay control, not
-a substitute for mTLS or a public Internet exposure boundary.
+a bearer token. For stronger RR admission, configure
+`ControlAPI.spec.tls.certFile`, `keyFile`, and `clientCAFile`, then configure
+each leaf `SAMEnrollmentClient.spec.controlAPITLS` with the RR CA and a
+leaf-specific client certificate/key. Source CIDR, bearer token, and mTLS are
+additive controls; public Internet exposure still requires a deliberately
+designed management plane.
 
 The join token authorizes enrollment requests, not long-term route ownership by
 itself. The RR still validates claim TTL, HMAC, tunnel address prefixes,

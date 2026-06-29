@@ -681,6 +681,9 @@ func validateSAMEnrollmentClient(res api.Resource, spec api.SAMEnrollmentClientS
 	if err := validateSecretValueSource(res.ID(), "", "", "spec.controlAPITokenFrom", spec.ControlAPITokenFrom); err != nil {
 		return err
 	}
+	if err := validateControlAPIClientTLS(res.ID(), spec.ControlAPITLS); err != nil {
+		return err
+	}
 	for i, endpoint := range spec.BootstrapEndpoints {
 		parsed, err := url.Parse(strings.TrimSpace(endpoint))
 		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
@@ -714,6 +717,25 @@ func validateSAMEnrollmentClient(res api.Resource, spec api.SAMEnrollmentClientS
 		if max < min {
 			return fmt.Errorf("%s spec.retryBackoff.max must be greater than or equal to spec.retryBackoff.min", res.ID())
 		}
+	}
+	return nil
+}
+
+func validateControlAPIClientTLS(resourceID string, spec api.ControlAPIClientTLSSpec) error {
+	cert := strings.TrimSpace(spec.CertFile)
+	key := strings.TrimSpace(spec.KeyFile)
+	for path, value := range map[string]string{
+		"spec.controlAPITLS.caFile":     strings.TrimSpace(spec.CAFile),
+		"spec.controlAPITLS.certFile":   cert,
+		"spec.controlAPITLS.keyFile":    key,
+		"spec.controlAPITLS.serverName": strings.TrimSpace(spec.ServerName),
+	} {
+		if strings.ContainsAny(value, "\r\n\x00") {
+			return fmt.Errorf("%s %s is invalid", resourceID, path)
+		}
+	}
+	if (cert == "") != (key == "") {
+		return fmt.Errorf("%s spec.controlAPITLS.certFile and spec.controlAPITLS.keyFile must be set together", resourceID)
 	}
 	return nil
 }

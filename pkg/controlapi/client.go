@@ -5,6 +5,8 @@ package controlapi
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"syscall"
@@ -24,6 +27,14 @@ type Client struct {
 	bearerToken   string
 	retryAttempts int
 	retryDelay    time.Duration
+}
+
+type TLSOptions struct {
+	CAFile             string
+	CertFile           string
+	KeyFile            string
+	ServerName         string
+	InsecureSkipVerify bool
 }
 
 func NewUnixClient(socketPath string) *Client {
@@ -62,6 +73,19 @@ func NewHTTPClient(baseURL string) *Client {
 	}
 }
 
+func NewHTTPClientWithTLS(baseURL string, opts TLSOptions) (*Client, error) {
+	client := NewHTTPClient(baseURL)
+	tlsConfig, err := clientTLSConfig(opts)
+	if err != nil {
+		return nil, err
+	}
+	if tlsConfig == nil {
+		return client, nil
+	}
+	client.httpClient = &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConfig}}
+	return client, nil
+}
+
 func (c *Client) WithBearerToken(token string) *Client {
 	if c == nil {
 		return nil
@@ -69,6 +93,45 @@ func (c *Client) WithBearerToken(token string) *Client {
 	next := *c
 	next.bearerToken = strings.TrimSpace(token)
 	return &next
+}
+
+func clientTLSConfig(opts TLSOptions) (*tls.Config, error) {
+	if strings.TrimSpace(opts.CAFile) == "" &&
+		strings.TrimSpace(opts.CertFile) == "" &&
+		strings.TrimSpace(opts.KeyFile) == "" &&
+		strings.TrimSpace(opts.ServerName) == "" &&
+		!opts.InsecureSkipVerify {
+		return nil, nil
+	}
+	cfg := &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		ServerName:         strings.TrimSpace(opts.ServerName),
+		InsecureSkipVerify: opts.InsecureSkipVerify,
+	}
+	if strings.TrimSpace(opts.CAFile) != "" {
+		data, err := os.ReadFile(strings.TrimSpace(opts.CAFile))
+		if err != nil {
+			return nil, fmt.Errorf("read CA file %q: %w", strings.TrimSpace(opts.CAFile), err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(data) {
+			return nil, fmt.Errorf("CA file %q contains no PEM certificates", strings.TrimSpace(opts.CAFile))
+		}
+		cfg.RootCAs = pool
+	}
+	certFile := strings.TrimSpace(opts.CertFile)
+	keyFile := strings.TrimSpace(opts.KeyFile)
+	if (certFile == "") != (keyFile == "") {
+		return nil, errors.New("client cert file and key file must be set together")
+	}
+	if certFile != "" {
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return nil, fmt.Errorf("load client certificate: %w", err)
+		}
+		cfg.Certificates = []tls.Certificate{cert}
+	}
+	return cfg, nil
 }
 
 func (c *Client) Status(ctx context.Context) (*Status, error) {

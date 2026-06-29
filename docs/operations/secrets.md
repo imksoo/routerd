@@ -8,7 +8,8 @@ title: Secret sources
 
 routerd supports file and environment secret sources for BGP peer passwords,
 VRRP/CARP authentication, SAM enrollment join tokens, and ControlAPI HTTP
-bearer tokens. Prefer these fields over inline secret values:
+bearer tokens. It also references TLS certificate/key files for ControlAPI
+HTTPS and mTLS. Prefer secret-source fields over inline secret values:
 
 ```yaml
 passwordFrom:
@@ -24,6 +25,13 @@ authenticationFrom:
 ```yaml
 tokenFrom:
   file: /usr/local/etc/routerd/secrets/control-api-token
+```
+
+```yaml
+tls:
+  certFile: /usr/local/etc/routerd/secrets/rr-control-api.crt
+  keyFile: /usr/local/etc/routerd/secrets/rr-control-api.key
+  clientCAFile: /usr/local/etc/routerd/secrets/leaf-client-ca.pem
 ```
 
 Operational guidance:

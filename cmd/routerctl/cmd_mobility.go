@@ -230,7 +230,7 @@ func mobilityEnrollmentJoinCommand(args []string, stdout io.Writer) error {
 	fs.Usage = func() {
 		printSubcommandHelp(fs,
 			"Submit a leaf SAMEnrollmentClaim, fetch its SAMRRSet, and persist the RRSet into local dynamic state.",
-			"routerctl mobility enrollment-join --config leaf.yaml --claim pve-leaf-b --rr-url http://pve-rr:65432 --rr-token-file /usr/local/etc/routerd/secrets/control-api-token --state-file /var/lib/routerd/routerd.db\n"+
+			"routerctl mobility enrollment-join --config leaf.yaml --claim pve-leaf-b --rr-url https://pve-rr:65432 --rr-token-file /usr/local/etc/routerd/secrets/control-api-token --rr-ca-file /usr/local/etc/routerd/secrets/rr-ca.pem --rr-client-cert-file /usr/local/etc/routerd/secrets/leaf.crt --rr-client-key-file /usr/local/etc/routerd/secrets/leaf.key --state-file /var/lib/routerd/routerd.db\n"+
 				"routerctl mobility enrollment-join --config leaf.yaml --claim pve-leaf-a --rr-socket /run/routerd/routerd.sock")
 	}
 	configPath := fs.String("config", defaultConfigPath(), "leaf config containing the SAMEnrollmentClaim")
@@ -240,6 +240,11 @@ func mobilityEnrollmentJoinCommand(args []string, stdout io.Writer) error {
 	rrTokenFile := fs.String("rr-token-file", "", "file containing bearer token for --rr-url")
 	rrTokenEnv := fs.String("rr-token-env", "", "environment variable containing bearer token for --rr-url")
 	rrTokenBase64 := fs.Bool("rr-token-base64", false, "decode the selected RR bearer token as base64")
+	rrCAFile := fs.String("rr-ca-file", "", "CA bundle for verifying --rr-url TLS")
+	rrClientCertFile := fs.String("rr-client-cert-file", "", "client certificate file for RR mTLS")
+	rrClientKeyFile := fs.String("rr-client-key-file", "", "client private key file for RR mTLS")
+	rrServerName := fs.String("rr-server-name", "", "TLS server name override for --rr-url")
+	rrInsecureSkipVerify := fs.Bool("rr-insecure-skip-verify", false, "skip RR TLS certificate verification")
 	statePath := fs.String("state-file", defaultStatePath(), "local leaf routerd state database file")
 	timeout := fs.Duration("timeout", 10*time.Second, "request timeout")
 	output := "table"
@@ -263,6 +268,9 @@ func mobilityEnrollmentJoinCommand(args []string, stdout io.Writer) error {
 	if strings.TrimSpace(*rrSocketPath) != "" && (strings.TrimSpace(*rrTokenFile) != "" || strings.TrimSpace(*rrTokenEnv) != "") {
 		return errors.New("mobility enrollment-join RR bearer token flags require --rr-url")
 	}
+	if strings.TrimSpace(*rrSocketPath) != "" && (strings.TrimSpace(*rrCAFile) != "" || strings.TrimSpace(*rrClientCertFile) != "" || strings.TrimSpace(*rrClientKeyFile) != "" || strings.TrimSpace(*rrServerName) != "" || *rrInsecureSkipVerify) {
+		return errors.New("mobility enrollment-join RR TLS flags require --rr-url")
+	}
 	router, err := config.Load(*configPath)
 	if err != nil {
 		return err
@@ -283,7 +291,16 @@ func mobilityEnrollmentJoinCommand(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	client := mobilityEnrollmentClient(*rrSocketPath, *rrURL, token)
+	client, err := mobilityEnrollmentClient(*rrSocketPath, *rrURL, token, controlapi.TLSOptions{
+		CAFile:             *rrCAFile,
+		CertFile:           *rrClientCertFile,
+		KeyFile:            *rrClientKeyFile,
+		ServerName:         *rrServerName,
+		InsecureSkipVerify: *rrInsecureSkipVerify,
+	})
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 	submitResult, err := client.SubmitSAMEnrollmentClaim(ctx, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claimResource})
@@ -332,18 +349,21 @@ func mobilityEnrollmentJoinCommand(args []string, stdout io.Writer) error {
 	}
 }
 
-func mobilityEnrollmentClient(socketPath, baseURL, bearerToken string) *controlapi.Client {
+func mobilityEnrollmentClient(socketPath, baseURL, bearerToken string, tlsOptions controlapi.TLSOptions) (*controlapi.Client, error) {
 	if strings.TrimSpace(baseURL) != "" {
-		client := controlapi.NewHTTPClient(baseURL)
+		client, err := controlapi.NewHTTPClientWithTLS(baseURL, tlsOptions)
+		if err != nil {
+			return nil, err
+		}
 		if strings.TrimSpace(bearerToken) != "" {
 			client = client.WithBearerToken(bearerToken)
 		}
-		return client
+		return client, nil
 	}
 	if strings.TrimSpace(socketPath) == "" {
 		socketPath = defaultSocketPath()
 	}
-	return controlapi.NewUnixClient(socketPath)
+	return controlapi.NewUnixClient(socketPath), nil
 }
 
 func mobilityEnrollmentBearerToken(file, env string, base64Encoded bool) (string, error) {
@@ -679,7 +699,7 @@ func mobilityUsage(w io.Writer) {
 	fmt.Fprintln(w, "  traps [--address <ipv4/32>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  enrollment-hmac --config <path> --claim <name> (--secret-file <path>|--secret-env <name>|--secret <value>) [--secret-base64] [--show-payload]")
 	fmt.Fprintln(w, "  enrollment-submit --config <path> --claim <name> [--socket <path>] [-o table|json|yaml]")
-	fmt.Fprintln(w, "  enrollment-join --config <path> --claim <name> [--rr-socket <path>|--rr-url <url>] [--rr-token-file <path>|--rr-token-env <name>] [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  enrollment-join --config <path> --claim <name> [--rr-socket <path>|--rr-url <url>] [--rr-token-file <path>|--rr-token-env <name>] [--rr-ca-file <path>] [--rr-client-cert-file <path> --rr-client-key-file <path>] [--state-file <path>] [-o table|json|yaml]")
 }
 
 func mobilityOwnerRows(statuses []routerstate.ObjectStatus, poolFilter, addressFilter string) []mobilityOwnerRow {

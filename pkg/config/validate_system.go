@@ -401,6 +401,9 @@ func validateSystemResource(res api.Resource, targetOS platform.OS) (bool, error
 		if err := validateSecretValueSource(res.ID(), "", "", "spec.tokenFrom", spec.TokenFrom); err != nil {
 			return true, err
 		}
+		if err := validateControlAPITLS(res.ID(), spec.TLS); err != nil {
+			return true, err
+		}
 	case "Inventory":
 		if res.APIVersion != api.RouterAPIVersion {
 			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.RouterAPIVersion)
@@ -427,6 +430,28 @@ func validateSystemResource(res api.Resource, targetOS platform.OS) (bool, error
 		return false, nil
 	}
 	return true, nil
+}
+
+func validateControlAPITLS(resourceID string, spec api.ControlAPITLSSpec) error {
+	cert := strings.TrimSpace(spec.CertFile)
+	key := strings.TrimSpace(spec.KeyFile)
+	clientCA := strings.TrimSpace(spec.ClientCAFile)
+	for path, value := range map[string]string{
+		"spec.tls.certFile":     cert,
+		"spec.tls.keyFile":      key,
+		"spec.tls.clientCAFile": clientCA,
+	} {
+		if strings.ContainsAny(value, "\r\n\x00") {
+			return fmt.Errorf("%s %s is invalid", resourceID, path)
+		}
+	}
+	if (cert == "") != (key == "") {
+		return fmt.Errorf("%s spec.tls.certFile and spec.tls.keyFile must be set together", resourceID)
+	}
+	if clientCA != "" && cert == "" {
+		return fmt.Errorf("%s spec.tls.clientCAFile requires spec.tls.certFile and spec.tls.keyFile", resourceID)
+	}
+	return nil
 }
 
 func validateControlAPIAllowCIDRs(resourceID string, cidrs []string) error {

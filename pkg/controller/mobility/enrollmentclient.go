@@ -227,7 +227,16 @@ func (c SAMEnrollmentClientController) clients(spec api.SAMEnrollmentClientSpec)
 	}
 	for _, endpoint := range spec.BootstrapEndpoints {
 		if endpoint = strings.TrimSpace(endpoint); endpoint != "" {
-			client := controlapi.NewHTTPClient(endpoint)
+			client, err := controlapi.NewHTTPClientWithTLS(endpoint, controlapi.TLSOptions{
+				CAFile:             spec.ControlAPITLS.CAFile,
+				CertFile:           spec.ControlAPITLS.CertFile,
+				KeyFile:            spec.ControlAPITLS.KeyFile,
+				ServerName:         spec.ControlAPITLS.ServerName,
+				InsecureSkipVerify: spec.ControlAPITLS.InsecureSkipVerify,
+			})
+			if err != nil {
+				return nil, err
+			}
 			if token != "" {
 				client = client.WithBearerToken(token)
 			}

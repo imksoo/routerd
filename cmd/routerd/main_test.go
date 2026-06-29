@@ -775,7 +775,7 @@ func TestServeAcceptsLegacyControllerChainFlags(t *testing.T) {
 }
 
 func TestControlAPIHTTPConfigDefaultsToLoopbackHighPort(t *testing.T) {
-	cfg, err := resolveControlAPIHTTPConfig(testControlAPIRouter("control-defaults"), "", nil, api.SecretValueSourceSpec{}, map[string]bool{})
+	cfg, err := resolveControlAPIHTTPConfig(testControlAPIRouter("control-defaults"), "", nil, api.SecretValueSourceSpec{}, controlAPITLSConfig{}, map[string]bool{})
 	if err != nil {
 		t.Fatalf("resolveControlAPIHTTPConfig: %v", err)
 	}
@@ -807,7 +807,7 @@ func TestControlAPIHTTPConfigAcceptsNarrowCIDR(t *testing.T) {
 			AllowCIDRs:    []string{"10.30.0.0/24"},
 		},
 	})
-	cfg, err := resolveControlAPIHTTPConfig(router, "", nil, api.SecretValueSourceSpec{}, map[string]bool{})
+	cfg, err := resolveControlAPIHTTPConfig(router, "", nil, api.SecretValueSourceSpec{}, controlAPITLSConfig{}, map[string]bool{})
 	if err != nil {
 		t.Fatalf("resolveControlAPIHTTPConfig: %v", err)
 	}
@@ -840,7 +840,7 @@ func TestControlAPIHTTPConfigReadsTokenFromResourceEnv(t *testing.T) {
 			TokenFrom: api.SecretValueSourceSpec{Env: "ROUTERD_TEST_CONTROL_TOKEN"},
 		},
 	})
-	cfg, err := resolveControlAPIHTTPConfig(router, "", nil, api.SecretValueSourceSpec{}, map[string]bool{})
+	cfg, err := resolveControlAPIHTTPConfig(router, "", nil, api.SecretValueSourceSpec{}, controlAPITLSConfig{}, map[string]bool{})
 	if err != nil {
 		t.Fatalf("resolveControlAPIHTTPConfig: %v", err)
 	}
@@ -863,12 +863,41 @@ func TestControlAPIHTTPConfigCLITokenFileOverridesResource(t *testing.T) {
 			TokenFrom: api.SecretValueSourceSpec{Env: "ROUTERD_TEST_CONTROL_TOKEN"},
 		},
 	})
-	cfg, err := resolveControlAPIHTTPConfig(router, "", nil, api.SecretValueSourceSpec{File: tokenFile}, map[string]bool{"http-token-file": true})
+	cfg, err := resolveControlAPIHTTPConfig(router, "", nil, api.SecretValueSourceSpec{File: tokenFile}, controlAPITLSConfig{}, map[string]bool{"http-token-file": true})
 	if err != nil {
 		t.Fatalf("resolveControlAPIHTTPConfig: %v", err)
 	}
 	if cfg.Token != "cli-token" {
 		t.Fatalf("Token = %q, want CLI token", cfg.Token)
+	}
+}
+
+func TestControlAPIHTTPConfigAcceptsTLSResource(t *testing.T) {
+	router := testControlAPIRouter("control-tls")
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "ControlAPI"},
+		Metadata: api.ObjectMeta{Name: "default"},
+		Spec: api.ControlAPISpec{
+			TLS: api.ControlAPITLSSpec{
+				CertFile:     "/etc/routerd/control.crt",
+				KeyFile:      "/etc/routerd/control.key",
+				ClientCAFile: "/etc/routerd/control-client-ca.pem",
+			},
+		},
+	})
+	cfg, err := resolveControlAPIHTTPConfig(router, "", nil, api.SecretValueSourceSpec{}, controlAPITLSConfig{}, map[string]bool{})
+	if err != nil {
+		t.Fatalf("resolveControlAPIHTTPConfig: %v", err)
+	}
+	if cfg.TLS.CertFile != "/etc/routerd/control.crt" || cfg.TLS.KeyFile != "/etc/routerd/control.key" || cfg.TLS.ClientCAFile != "/etc/routerd/control-client-ca.pem" {
+		t.Fatalf("TLS = %#v", cfg.TLS)
+	}
+}
+
+func TestControlAPIHTTPConfigRejectsIncompleteTLS(t *testing.T) {
+	_, err := resolveControlAPIHTTPConfig(testControlAPIRouter("control-tls"), "", nil, api.SecretValueSourceSpec{}, controlAPITLSConfig{CertFile: "/etc/routerd/control.crt"}, map[string]bool{"http-tls-cert-file": true})
+	if err == nil || !strings.Contains(err.Error(), "cert file and key file") {
+		t.Fatalf("resolveControlAPIHTTPConfig err = %v, want incomplete TLS error", err)
 	}
 }
 

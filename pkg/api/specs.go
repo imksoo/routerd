@@ -344,6 +344,13 @@ type ControlAPISpec struct {
 	Port          int                   `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=1,maximum=65535"`
 	AllowCIDRs    []string              `yaml:"allowCIDRs,omitempty" json:"allowCIDRs,omitempty"`
 	TokenFrom     SecretValueSourceSpec `yaml:"tokenFrom,omitempty" json:"tokenFrom,omitempty"`
+	TLS           ControlAPITLSSpec     `yaml:"tls,omitempty" json:"tls,omitempty"`
+}
+
+type ControlAPITLSSpec struct {
+	CertFile     string `yaml:"certFile,omitempty" json:"certFile,omitempty"`
+	KeyFile      string `yaml:"keyFile,omitempty" json:"keyFile,omitempty"`
+	ClientCAFile string `yaml:"clientCAFile,omitempty" json:"clientCAFile,omitempty"`
 }
 
 type WebConsoleLinkSpec struct {
@@ -824,9 +831,18 @@ type SAMEnrollmentClientSpec struct {
 	ClaimRef              string                        `yaml:"claimRef" json:"claimRef"`
 	BootstrapEndpoints    []string                      `yaml:"bootstrapEndpoints,omitempty" json:"bootstrapEndpoints,omitempty"`
 	ControlAPITokenFrom   SecretValueSourceSpec         `yaml:"controlAPITokenFrom,omitempty" json:"controlAPITokenFrom,omitempty"`
+	ControlAPITLS         ControlAPIClientTLSSpec       `yaml:"controlAPITLS,omitempty" json:"controlAPITLS,omitempty"`
 	RRSocket              string                        `yaml:"rrSocket,omitempty" json:"rrSocket,omitempty"`
 	StateTTLRefreshBefore string                        `yaml:"stateTTLRefreshBefore,omitempty" json:"stateTTLRefreshBefore,omitempty"`
 	RetryBackoff          SAMEnrollmentRetryBackoffSpec `yaml:"retryBackoff,omitempty" json:"retryBackoff,omitempty"`
+}
+
+type ControlAPIClientTLSSpec struct {
+	CAFile             string `yaml:"caFile,omitempty" json:"caFile,omitempty"`
+	CertFile           string `yaml:"certFile,omitempty" json:"certFile,omitempty"`
+	KeyFile            string `yaml:"keyFile,omitempty" json:"keyFile,omitempty"`
+	ServerName         string `yaml:"serverName,omitempty" json:"serverName,omitempty"`
+	InsecureSkipVerify bool   `yaml:"insecureSkipVerify,omitempty" json:"insecureSkipVerify,omitempty"`
 }
 
 type SAMEnrollmentRetryBackoffSpec struct {

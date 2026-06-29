@@ -5,6 +5,8 @@ package main
 import (
 	"context"
 	"crypto/subtle"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"errors"
 	"flag"
@@ -309,6 +311,13 @@ type controlAPIHTTPConfig struct {
 	Listen        string
 	AllowPrefixes []netip.Prefix
 	Token         string
+	TLS           controlAPITLSConfig
+}
+
+type controlAPITLSConfig struct {
+	CertFile     string
+	KeyFile      string
+	ClientCAFile string
 }
 
 const (
@@ -361,6 +370,9 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	fs.Var(&httpAllowCIDRs, "http-allow-cidr", "source CIDR allowed to use --http-listen; repeat or comma-separate; defaults to loopback only")
 	httpTokenFile := fs.String("http-token-file", "", "file containing bearer token required by the HTTP mutation/control API")
 	httpTokenEnv := fs.String("http-token-env", "", "environment variable containing bearer token required by the HTTP mutation/control API")
+	httpTLSCertFile := fs.String("http-tls-cert-file", "", "TLS certificate file for the HTTP mutation/control API")
+	httpTLSKeyFile := fs.String("http-tls-key-file", "", "TLS private key file for the HTTP mutation/control API")
+	httpTLSClientCAFile := fs.String("http-tls-client-ca-file", "", "CA bundle for requiring and verifying HTTP ControlAPI client certificates")
 	statePath := fs.String("state-file", defaultStatePath, "routerd state database file")
 	controllerNames := fs.String("controllers", "all", "comma-separated controller names to run; use bgp for isolated BGP labs")
 	applyInterval := fs.Duration("apply-interval", 0, "periodic apply interval; 0 disables scheduled apply")
@@ -422,7 +434,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	if err != nil {
 		return err
 	}
-	httpControl, err := resolveControlAPIHTTPConfig(router, strings.TrimSpace(*httpListen), []string(httpAllowCIDRs), api.SecretValueSourceSpec{File: strings.TrimSpace(*httpTokenFile), Env: strings.TrimSpace(*httpTokenEnv)}, setFlags)
+	httpControl, err := resolveControlAPIHTTPConfig(router, strings.TrimSpace(*httpListen), []string(httpAllowCIDRs), api.SecretValueSourceSpec{File: strings.TrimSpace(*httpTokenFile), Env: strings.TrimSpace(*httpTokenEnv)}, controlAPITLSConfig{CertFile: strings.TrimSpace(*httpTLSCertFile), KeyFile: strings.TrimSpace(*httpTLSKeyFile), ClientCAFile: strings.TrimSpace(*httpTLSClientCAFile)}, setFlags)
 	if err != nil {
 		return err
 	}
@@ -877,6 +889,13 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			return fmt.Errorf("listen control HTTP API: %w", err)
 		}
 		defer httpListener.Close()
+		if httpControl.TLS.CertFile != "" {
+			tlsConfig, err := controlAPIServerTLSConfig(httpControl.TLS)
+			if err != nil {
+				return fmt.Errorf("configure control HTTP API TLS: %w", err)
+			}
+			httpListener = tls.NewListener(httpListener, tlsConfig)
+		}
 		httpServer = &http.Server{
 			Handler:           controlAPIAdmissionHandler(handler, httpControl.AllowPrefixes, httpControl.Token),
 			ReadHeaderTimeout: 5 * time.Second,
@@ -905,7 +924,11 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	fmt.Fprintf(stdout, "routerd serving control API on unix://%s\n", *socketPath)
 	fmt.Fprintf(stdout, "routerd serving read-only status API on unix://%s\n", *statusSocketPath)
 	if httpControl.Enabled {
-		fmt.Fprintf(stdout, "routerd serving control API on http://%s\n", httpControl.Listen)
+		scheme := "http"
+		if httpControl.TLS.CertFile != "" {
+			scheme = "https"
+		}
+		fmt.Fprintf(stdout, "routerd serving control API on %s://%s\n", scheme, httpControl.Listen)
 	}
 	if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 		return err
@@ -1186,7 +1209,7 @@ func defaultControlAPIHTTPConfig() controlAPIHTTPConfig {
 	}
 }
 
-func resolveControlAPIHTTPConfig(router *api.Router, cliListen string, cliAllowCIDRs []string, cliTokenFrom api.SecretValueSourceSpec, setFlags map[string]bool) (controlAPIHTTPConfig, error) {
+func resolveControlAPIHTTPConfig(router *api.Router, cliListen string, cliAllowCIDRs []string, cliTokenFrom api.SecretValueSourceSpec, cliTLS controlAPITLSConfig, setFlags map[string]bool) (controlAPIHTTPConfig, error) {
 	cfg := defaultControlAPIHTTPConfig()
 	if router != nil {
 		var found *api.ControlAPISpec
@@ -1230,6 +1253,11 @@ func resolveControlAPIHTTPConfig(router *api.Router, cliListen string, cliAllowC
 				return controlAPIHTTPConfig{}, fmt.Errorf("ControlAPI tokenFrom: %w", err)
 			}
 			cfg.Token = token
+			cfg.TLS = controlAPITLSConfig{
+				CertFile:     strings.TrimSpace(found.TLS.CertFile),
+				KeyFile:      strings.TrimSpace(found.TLS.KeyFile),
+				ClientCAFile: strings.TrimSpace(found.TLS.ClientCAFile),
+			}
 		}
 	}
 	if setFlags["http-listen"] {
@@ -1253,10 +1281,57 @@ func resolveControlAPIHTTPConfig(router *api.Router, cliListen string, cliAllowC
 		}
 		cfg.Token = token
 	}
+	if setFlags["http-tls-cert-file"] || setFlags["http-tls-key-file"] || setFlags["http-tls-client-ca-file"] {
+		cfg.TLS = controlAPITLSConfig{
+			CertFile:     strings.TrimSpace(cliTLS.CertFile),
+			KeyFile:      strings.TrimSpace(cliTLS.KeyFile),
+			ClientCAFile: strings.TrimSpace(cliTLS.ClientCAFile),
+		}
+	}
 	if cfg.Enabled && len(cfg.AllowPrefixes) == 0 {
 		return controlAPIHTTPConfig{}, errors.New("control HTTP API source allow CIDRs must not be empty")
 	}
+	if err := validateControlAPITLSConfig(cfg.TLS); err != nil {
+		return controlAPIHTTPConfig{}, err
+	}
 	return cfg, nil
+}
+
+func validateControlAPITLSConfig(cfg controlAPITLSConfig) error {
+	cert := strings.TrimSpace(cfg.CertFile)
+	key := strings.TrimSpace(cfg.KeyFile)
+	clientCA := strings.TrimSpace(cfg.ClientCAFile)
+	if (cert == "") != (key == "") {
+		return errors.New("control HTTP API TLS cert file and key file must be set together")
+	}
+	if clientCA != "" && cert == "" {
+		return errors.New("control HTTP API TLS client CA requires cert file and key file")
+	}
+	return nil
+}
+
+func controlAPIServerTLSConfig(cfg controlAPITLSConfig) (*tls.Config, error) {
+	cert, err := tls.LoadX509KeyPair(strings.TrimSpace(cfg.CertFile), strings.TrimSpace(cfg.KeyFile))
+	if err != nil {
+		return nil, fmt.Errorf("load server certificate: %w", err)
+	}
+	tlsConfig := &tls.Config{
+		MinVersion:   tls.VersionTLS12,
+		Certificates: []tls.Certificate{cert},
+	}
+	if strings.TrimSpace(cfg.ClientCAFile) != "" {
+		data, err := os.ReadFile(strings.TrimSpace(cfg.ClientCAFile))
+		if err != nil {
+			return nil, fmt.Errorf("read client CA file %q: %w", strings.TrimSpace(cfg.ClientCAFile), err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(data) {
+			return nil, fmt.Errorf("client CA file %q contains no PEM certificates", strings.TrimSpace(cfg.ClientCAFile))
+		}
+		tlsConfig.ClientCAs = pool
+		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+	return tlsConfig, nil
 }
 
 func controlAPITokenFromSecretSource(source api.SecretValueSourceSpec) (string, error) {

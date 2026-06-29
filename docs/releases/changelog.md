@@ -16,10 +16,15 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 - `ControlAPI` HTTP listeners can now require bearer-token authentication with
   `spec.tokenFrom` or `routerd serve --http-token-file/--http-token-env`.
+  They can also serve HTTPS and require verified client certificates with
+  `spec.tls.certFile`, `spec.tls.keyFile`, and `spec.tls.clientCAFile`, or the
+  matching `routerd serve --http-tls-*` flags.
   `SAMEnrollmentClient.spec.controlAPITokenFrom` and `routerctl mobility
   enrollment-join --rr-token-file/--rr-token-env` send the token on RR
-  submit/fetch requests. Source-CIDR admission remains enforced first; mTLS is
-  still a follow-up hardening item for managed-service or public exposure.
+  submit/fetch requests; `SAMEnrollmentClient.spec.controlAPITLS` and
+  `routerctl mobility enrollment-join --rr-ca-file --rr-client-cert-file
+  --rr-client-key-file` configure RR TLS verification and client certificates.
+  Source-CIDR admission remains enforced first.
 - `routerctl doctor sam-enrollment-client` and `routerctl doctor
   bgp-dynamic-peer` add focused Cloud-SAM enrollment diagnostics for leaf
   RRSet fetch freshness and RR dynamic BGP admission counters.

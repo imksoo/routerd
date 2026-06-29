@@ -95,6 +95,10 @@ spec:
     - 10.30.0.0/24
   tokenFrom:
     file: /usr/local/etc/routerd/secrets/control-api-token
+  tls:
+    certFile: /usr/local/etc/routerd/secrets/rr-control-api.crt
+    keyFile: /usr/local/etc/routerd/secrets/rr-control-api.key
+    clientCAFile: /usr/local/etc/routerd/secrets/leaf-client-ca.pem
 ```
 
 `ControlAPI.spec.allowCIDRs` rejects malformed CIDRs, `0.0.0.0/0`, and `::/0`.
@@ -104,7 +108,9 @@ send the token as an `Authorization: Bearer <token>` header. The token source
 uses the common secret-source shape (`file`, `env`, and optional `base64`) and
 is trimmed before comparison. The Unix socket control API does not use this
 HTTP bearer-token check and should remain the default boundary for local
-multi-user isolation.
+multi-user isolation. When `spec.tls.certFile` and `spec.tls.keyFile` are set,
+the HTTP listener serves HTTPS. When `spec.tls.clientCAFile` is also set, the
+listener requires and verifies client certificates signed by that CA.
 
 ## Observability
 
@@ -284,7 +290,9 @@ intent, federation events
 are observed facts, and BGP best paths are the mobility ownership/delivery view.
 When an RR HTTP `ControlAPI` requires `tokenFrom`, leaf
 `SAMEnrollmentClient.spec.controlAPITokenFrom` carries the same bearer token on
-claim submit and RRSet fetch requests.
+claim submit and RRSet fetch requests. When the RR requires mTLS, leaf
+`SAMEnrollmentClient.spec.controlAPITLS` supplies CA, client certificate, client
+key, and optional server-name settings for those HTTP requests.
 The mobility planner derives BGP `/32` advertisements and provider trap action
 plans; operators should not hand-author per-address paths or capture procedures
 for the mobility control plane. `AddressMobilityDomain` and `RemoteAddressClaim`

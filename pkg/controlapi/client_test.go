@@ -5,10 +5,19 @@ package controlapi
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -90,6 +99,115 @@ func TestHTTPClientWithBearerTokenSetsAuthorizationHeader(t *testing.T) {
 	if gotAuth != "Bearer test-token" {
 		t.Fatalf("Authorization = %q, want bearer token", gotAuth)
 	}
+}
+
+func TestHTTPClientWithTLSPresentsClientCertificate(t *testing.T) {
+	dir := t.TempDir()
+	caCert, caKey, caPEM := testCertificateAuthority(t)
+	serverCertPEM, serverKeyPEM := testSignedCertificate(t, caCert, caKey, "routerd-server", true)
+	clientCertPEM, clientKeyPEM := testSignedCertificate(t, caCert, caKey, "routerd-client", false)
+	caFile := writeTestPEM(t, dir, "ca.pem", caPEM)
+	clientCertFile := writeTestPEM(t, dir, "client.crt", clientCertPEM)
+	clientKeyFile := writeTestPEM(t, dir, "client.key", clientKeyPEM)
+	serverCert, err := tls.X509KeyPair(serverCertPEM, serverKeyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		t.Fatal("append CA")
+	}
+	server := httptest.NewUnstartedServer(Handler{
+		Status: func(r *http.Request) (*Status, error) {
+			if r.TLS == nil || len(r.TLS.PeerCertificates) != 1 {
+				t.Fatalf("peer certificates = %#v", r.TLS)
+			}
+			return &Status{TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "Status"}, Metadata: ObjectMeta{Name: "routerd"}, Status: StatusStatus{Phase: "Healthy"}}, nil
+		},
+	})
+	server.TLS = &tls.Config{
+		Certificates: []tls.Certificate{serverCert},
+		ClientCAs:    pool,
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		MinVersion:   tls.VersionTLS12,
+	}
+	server.StartTLS()
+	defer server.Close()
+
+	client, err := NewHTTPClientWithTLS(server.URL, TLSOptions{
+		CAFile:     caFile,
+		CertFile:   clientCertFile,
+		KeyFile:    clientKeyFile,
+		ServerName: "127.0.0.1",
+	})
+	if err != nil {
+		t.Fatalf("NewHTTPClientWithTLS: %v", err)
+	}
+	status, err := client.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if status.Status.Phase != "Healthy" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
+func testCertificateAuthority(t *testing.T) (*x509.Certificate, *rsa.PrivateKey, []byte) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "routerd-test-ca"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tmpl, key, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
+
+func testSignedCertificate(t *testing.T, ca *x509.Certificate, caKey *rsa.PrivateKey, commonName string, server bool) ([]byte, []byte) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage := []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	if server {
+		usage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      pkix.Name{CommonName: commonName},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  usage,
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca, &key.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER := x509.MarshalPKCS1PrivateKey(key)
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: keyDER})
+}
+
+func writeTestPEM(t *testing.T, dir, name string, data []byte) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestClientRuntimeDecodesResponse(t *testing.T) {
