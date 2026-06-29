@@ -4,11 +4,19 @@ package mobility
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	routerstate "github.com/imksoo/routerd/pkg/state"
+	"gopkg.in/yaml.v3"
 )
 
 func testStringSlice(value any) []string {
@@ -343,6 +351,775 @@ func TestSAMTransportProfilePeersFromMissingRequiredIsPending(t *testing.T) {
 	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "svnet1")
 	if status["phase"] != "Pending" {
 		t.Fatalf("status phase = %#v, want Pending status=%#v", status["phase"], status)
+	}
+}
+
+func TestSAMTransportProfileConsumesSAMRRSetWithoutWireGuard(t *testing.T) {
+	now := time.Date(2026, 6, 28, 9, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouterWithMode("leaf-pve", "leaf-pve", "pair-stable", nil)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.Encryption = "none"
+	spec.LocalEndpoint = "10.20.0.21"
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMRRSet/cloudedge-rrs"}}
+	router.Spec.Resources[0].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources, samRRSetResource("cloudedge-rrs", []api.SAMRRSetMember{
+		{NodeRef: "rr-a", Endpoint: "10.10.0.2", TunnelAddress: "10.99.0.2/32"},
+		{NodeRef: "rr-b", Endpoint: "10.10.0.3", TunnelAddress: "10.99.0.3/32"},
+	}))
+
+	controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("leaf-pve", "leaf-pve")).ResourcesJSON)
+	if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 2; got != want {
+		t.Fatalf("TunnelInterface count = %d, want %d resources=%#v", got, want, resources)
+	}
+	if got, want := countResources(resources, api.NetAPIVersion, "BGPPeer"), 2; got != want {
+		t.Fatalf("BGPPeer count = %d, want %d resources=%#v", got, want, resources)
+	}
+	if got := countResources(resources, api.NetAPIVersion, "WireGuardPeer"); got != 0 {
+		t.Fatalf("WireGuardPeer count = %d, want 0", got)
+	}
+	rrATunnel := findTransportTunnelForPeer(t, resources, "leaf-pve", "rr-a")
+	if rrATunnel.Mode != "ipip" || rrATunnel.Remote != "10.10.0.2" {
+		t.Fatalf("rr-a tunnel = %#v, want ipip remote 10.10.0.2", rrATunnel)
+	}
+	rrBTunnel := findTransportTunnelForPeer(t, resources, "leaf-pve", "rr-b")
+	if rrBTunnel.Mode != "ipip" || rrBTunnel.Remote != "10.10.0.3" {
+		t.Fatalf("rr-b tunnel = %#v, want ipip remote 10.10.0.3", rrBTunnel)
+	}
+	_ = findTransportBGPPeerForPeer(t, resources, "leaf-pve", "rr-a")
+	_ = findTransportBGPPeerForPeer(t, resources, "leaf-pve", "rr-b")
+}
+
+func TestSAMTransportProfileConsumesSAMRRSetWithFOUWithoutWireGuard(t *testing.T) {
+	now := time.Date(2026, 6, 28, 9, 2, 0, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouterWithMode("leaf-b", "leaf-b", "pair-stable", nil)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.Mode = "fou"
+	spec.Encryption = "none"
+	spec.LocalEndpoint = "10.20.0.32"
+	spec.EncapSport = 5555
+	spec.EncapDport = 5555
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMRRSet/cloudedge-rrs"}}
+	router.Spec.Resources[0].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources, samRRSetResource("cloudedge-rrs", []api.SAMRRSetMember{
+		{NodeRef: "rr-a", Endpoint: "10.10.0.2", TunnelAddress: "10.99.0.2/32"},
+		{NodeRef: "rr-b", Endpoint: "10.10.0.3", TunnelAddress: "10.99.0.3/32"},
+	}))
+
+	controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("leaf-b", "leaf-b")).ResourcesJSON)
+	if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 2; got != want {
+		t.Fatalf("TunnelInterface count = %d, want %d resources=%#v", got, want, resources)
+	}
+	if got, want := countResources(resources, api.NetAPIVersion, "BGPPeer"), 2; got != want {
+		t.Fatalf("BGPPeer count = %d, want %d resources=%#v", got, want, resources)
+	}
+	if got := countResources(resources, api.NetAPIVersion, "WireGuardPeer"); got != 0 {
+		t.Fatalf("WireGuardPeer count = %d, want 0", got)
+	}
+	for _, peer := range []string{"rr-a", "rr-b"} {
+		tunnel := findTransportTunnelForPeer(t, resources, "leaf-b", peer)
+		if tunnel.Mode != "fou" || tunnel.EncapSport != 5555 || tunnel.EncapDport != 5555 {
+			t.Fatalf("%s tunnel = %#v, want fou encap ports 5555/5555", peer, tunnel)
+		}
+		_ = findTransportBGPPeerForPeer(t, resources, "leaf-b", peer)
+	}
+}
+
+func TestCloudEdgeDynamicLeafExamplesMaterializeDualRRTransports(t *testing.T) {
+	now := time.Date(2026, 6, 28, 9, 4, 0, 0, time.UTC)
+	cases := []struct {
+		name         string
+		example      string
+		profile      string
+		mode         string
+		encryption   string
+		wantWGPeers  int
+		wantEncap    bool
+		wantEndpoint map[string]string
+	}{
+		{
+			name:       "leaf-a wireguard underlay",
+			example:    "cloudedge-dynamic-leaf-a-wg.yaml",
+			profile:    "leaf-a",
+			mode:       "ipip",
+			encryption: "wireguard",
+			wantEndpoint: map[string]string{
+				"rr-a": "10.20.0.2",
+				"rr-b": "10.20.0.3",
+			},
+		},
+		{
+			name:       "leaf-b fou private underlay",
+			example:    "cloudedge-dynamic-leaf-b-fou.yaml",
+			profile:    "leaf-b",
+			mode:       "fou",
+			encryption: "none",
+			wantEncap:  true,
+			wantEndpoint: map[string]string{
+				"rr-a": "10.10.0.2",
+				"rr-b": "10.10.0.3",
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			router, err := config.Load(filepath.Join("..", "..", "..", "examples", tc.example))
+			if err != nil {
+				t.Fatalf("load %s: %v", tc.example, err)
+			}
+			if err := config.Validate(router); err != nil {
+				t.Fatalf("validate %s: %v", tc.example, err)
+			}
+			profileSpec := exampleSAMTransportProfile(t, router, tc.profile)
+			if profileSpec.Mode != tc.mode || profileSpec.Encryption != tc.encryption {
+				t.Fatalf("SAMTransportProfile/%s mode/encryption = %s/%s, want %s/%s", tc.profile, profileSpec.Mode, profileSpec.Encryption, tc.mode, tc.encryption)
+			}
+			store := testStore(t, now)
+			controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+			if err := controller.Reconcile(context.Background()); err != nil {
+				t.Fatalf("Reconcile: %v", err)
+			}
+			resources := decodeResources(t, latestPart(t, store, TransportDynamicSource(tc.profile, tc.profile)).ResourcesJSON)
+			if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 2; got != want {
+				t.Fatalf("TunnelInterface count = %d, want %d resources=%#v", got, want, resources)
+			}
+			if got, want := countResources(resources, api.NetAPIVersion, "BGPPeer"), 2; got != want {
+				t.Fatalf("BGPPeer count = %d, want %d resources=%#v", got, want, resources)
+			}
+			if got := countResources(resources, api.NetAPIVersion, "WireGuardPeer"); got != tc.wantWGPeers {
+				t.Fatalf("WireGuardPeer count = %d, want %d", got, tc.wantWGPeers)
+			}
+			for peer, endpoint := range tc.wantEndpoint {
+				tunnel := findTransportTunnelForPeer(t, resources, tc.profile, peer)
+				if tunnel.Mode != tc.mode || tunnel.Remote != endpoint {
+					t.Fatalf("%s tunnel = %#v, want mode %s remote %s", peer, tunnel, tc.mode, endpoint)
+				}
+				if tc.wantEncap && (tunnel.EncapSport != 5555 || tunnel.EncapDport != 5555) {
+					t.Fatalf("%s tunnel encap ports = %d/%d, want 5555/5555", peer, tunnel.EncapSport, tunnel.EncapDport)
+				}
+				_, bgpPeer := findTransportBGPPeerResourceForPeer(t, resources, tc.profile, peer)
+				if len(bgpPeer.Peers) != 1 || strings.TrimSpace(bgpPeer.Peers[0]) == "" {
+					t.Fatalf("%s BGP peer = %#v, want one derived RR tunnel address", peer, bgpPeer)
+				}
+			}
+		})
+	}
+}
+
+func TestCloudEdgeDynamicRRExamplesMaterializeMixedAdmissionWithoutBGPPeers(t *testing.T) {
+	now := time.Date(2026, 6, 28, 9, 6, 0, 0, time.UTC)
+	cases := []struct {
+		name       string
+		example    string
+		self       string
+		profile    string
+		peer       string
+		mode       string
+		encryption string
+		remote     string
+		wantEncap  bool
+	}{
+		{
+			name:       "rr-a admits leaf-pve private ipip",
+			example:    "cloudedge-dynamic-rr-a-hub.yaml",
+			self:       "rr-a",
+			profile:    "rr-a",
+			peer:       "leaf-pve",
+			mode:       "ipip",
+			encryption: "none",
+			remote:     "10.20.0.21",
+		},
+		{
+			name:       "rr-a admits leaf-a public wireguard ipip",
+			example:    "cloudedge-dynamic-rr-a-hub.yaml",
+			self:       "rr-a",
+			profile:    "rr-a-wg",
+			peer:       "leaf-a",
+			mode:       "ipip",
+			encryption: "wireguard",
+			remote:     "10.20.0.31",
+		},
+		{
+			name:       "rr-a admits leaf-b private fou",
+			example:    "cloudedge-dynamic-rr-a-hub.yaml",
+			self:       "rr-a",
+			profile:    "rr-a-fou",
+			peer:       "leaf-b",
+			mode:       "fou",
+			encryption: "none",
+			remote:     "10.20.0.32",
+			wantEncap:  true,
+		},
+		{
+			name:       "rr-b admits leaf-pve private ipip",
+			example:    "cloudedge-dynamic-rr-b-hub.yaml",
+			self:       "rr-b",
+			profile:    "rr-b",
+			peer:       "leaf-pve",
+			mode:       "ipip",
+			encryption: "none",
+			remote:     "10.20.0.21",
+		},
+		{
+			name:       "rr-b admits leaf-a public wireguard ipip",
+			example:    "cloudedge-dynamic-rr-b-hub.yaml",
+			self:       "rr-b",
+			profile:    "rr-b-wg",
+			peer:       "leaf-a",
+			mode:       "ipip",
+			encryption: "wireguard",
+			remote:     "10.20.0.31",
+		},
+		{
+			name:       "rr-b admits leaf-b private fou",
+			example:    "cloudedge-dynamic-rr-b-hub.yaml",
+			self:       "rr-b",
+			profile:    "rr-b-fou",
+			peer:       "leaf-b",
+			mode:       "fou",
+			encryption: "none",
+			remote:     "10.20.0.32",
+			wantEncap:  true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			router, err := config.Load(filepath.Join("..", "..", "..", "examples", tc.example))
+			if err != nil {
+				t.Fatalf("load %s: %v", tc.example, err)
+			}
+			if err := config.Validate(router); err != nil {
+				t.Fatalf("validate %s: %v", tc.example, err)
+			}
+			if got := countResources(router.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim"); got != 0 {
+				t.Fatalf("base %s SAMEnrollmentClaim count = %d, want 0", tc.example, got)
+			}
+			store := testStore(t, now)
+			seedSubmittedClaimsFromFixture(t, store, now, "cloudedge-rr-claims-seed.yaml")
+			effective := effectiveWithAdmissionState(t, router, store, now)
+			if got := countResources(effective.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim"); got != 3 {
+				t.Fatalf("effective %s SAMEnrollmentClaim count = %d, want 3 from admission state", tc.example, got)
+			}
+			profileSpec := exampleSAMTransportProfile(t, effective, tc.profile)
+			if profileSpec.Mode != tc.mode || profileSpec.Encryption != tc.encryption {
+				t.Fatalf("SAMTransportProfile/%s mode/encryption = %s/%s, want %s/%s", tc.profile, profileSpec.Mode, profileSpec.Encryption, tc.mode, tc.encryption)
+			}
+			if profileSpec.BGP.GeneratePeers == nil || *profileSpec.BGP.GeneratePeers {
+				t.Fatalf("SAMTransportProfile/%s generatePeers = %#v, want false", tc.profile, profileSpec.BGP.GeneratePeers)
+			}
+			controller := TransportController{Router: effective, Store: store, Now: func() time.Time { return now }}
+			if err := controller.Reconcile(context.Background()); err != nil {
+				t.Fatalf("Reconcile: %v", err)
+			}
+			resources := decodeResources(t, latestPart(t, store, TransportDynamicSource(tc.profile, tc.self)).ResourcesJSON)
+			if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 1; got != want {
+				t.Fatalf("TunnelInterface count = %d, want %d resources=%#v", got, want, resources)
+			}
+			if got := countResources(resources, api.NetAPIVersion, "BGPPeer"); got != 0 {
+				t.Fatalf("RR generated BGPPeer count = %d, want 0 resources=%#v", got, resources)
+			}
+			tunnel := findTransportTunnelForPeer(t, resources, tc.self, tc.peer)
+			if tunnel.Mode != tc.mode || tunnel.Remote != tc.remote {
+				t.Fatalf("%s tunnel = %#v, want mode %s remote %s", tc.peer, tunnel, tc.mode, tc.remote)
+			}
+			if tc.wantEncap && (tunnel.EncapSport != 5555 || tunnel.EncapDport != 5555) {
+				t.Fatalf("%s tunnel encap ports = %d/%d, want 5555/5555", tc.peer, tunnel.EncapSport, tunnel.EncapDport)
+			}
+		})
+	}
+}
+
+func TestPVEMinimalExamplesMaterializeReviewTransports(t *testing.T) {
+	now := time.Date(2026, 6, 28, 9, 7, 0, 0, time.UTC)
+	t.Run("rr admission generates tunnels without static bgp peers", func(t *testing.T) {
+		cases := []struct {
+			name      string
+			profile   string
+			peer      string
+			mode      string
+			remote    string
+			wantEncap bool
+		}{
+			{
+				name:    "wireguard ipip leaf-a admission",
+				profile: "pve-rr-wg",
+				peer:    "pve-leaf-a",
+				mode:    "ipip",
+				remote:  "10.31.0.21",
+			},
+			{
+				name:      "private fou leaf-b admission",
+				profile:   "pve-rr-fou",
+				peer:      "pve-leaf-b",
+				mode:      "fou",
+				remote:    "10.30.0.22",
+				wantEncap: true,
+			},
+		}
+		router, err := config.Load(filepath.Join("..", "..", "..", "examples", "pve-minimal-rr.yaml"))
+		if err != nil {
+			t.Fatalf("load pve-minimal-rr.yaml: %v", err)
+		}
+		if err := config.Validate(router); err != nil {
+			t.Fatalf("validate pve-minimal-rr.yaml: %v", err)
+		}
+		if got := countResources(router.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim"); got != 0 {
+			t.Fatalf("base pve-minimal-rr SAMEnrollmentClaim count = %d, want 0", got)
+		}
+		store := testStore(t, now)
+		seedSubmittedClaimsFromFixture(t, store, now, "pve-minimal-rr-claims-seed.yaml")
+		effective := effectiveWithAdmissionState(t, router, store, now)
+		if got := countResources(effective.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim"); got != 2 {
+			t.Fatalf("effective pve-minimal-rr SAMEnrollmentClaim count = %d, want 2 from admission state", got)
+		}
+		controller := TransportController{Router: effective, Store: store, Now: func() time.Time { return now }}
+		if err := controller.Reconcile(context.Background()); err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				profileSpec := exampleSAMTransportProfile(t, effective, tc.profile)
+				if profileSpec.BGP.GeneratePeers == nil || *profileSpec.BGP.GeneratePeers {
+					t.Fatalf("SAMTransportProfile/%s generatePeers = %#v, want false", tc.profile, profileSpec.BGP.GeneratePeers)
+				}
+				resources := decodeResources(t, latestPart(t, store, TransportDynamicSource(tc.profile, "pve-rr")).ResourcesJSON)
+				if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 1; got != want {
+					t.Fatalf("TunnelInterface count = %d, want %d resources=%#v", got, want, resources)
+				}
+				if got := countResources(resources, api.NetAPIVersion, "BGPPeer"); got != 0 {
+					t.Fatalf("RR generated BGPPeer count = %d, want 0 resources=%#v", got, resources)
+				}
+				tunnel := findTransportTunnelForPeer(t, resources, "pve-rr", tc.peer)
+				if tunnel.Mode != tc.mode || tunnel.Remote != tc.remote {
+					t.Fatalf("%s tunnel = %#v, want mode %s remote %s", tc.peer, tunnel, tc.mode, tc.remote)
+				}
+				if tc.wantEncap && (tunnel.EncapSport != 5555 || tunnel.EncapDport != 5555) {
+					t.Fatalf("%s tunnel encap ports = %d/%d, want 5555/5555", tc.peer, tunnel.EncapSport, tunnel.EncapDport)
+				}
+			})
+		}
+	})
+
+	t.Run("leaves consume rr set and generate rr-facing bgp peers", func(t *testing.T) {
+		cases := []struct {
+			name        string
+			example     string
+			profile     string
+			mode        string
+			encryption  string
+			remote      string
+			wantEncap   bool
+			wantWGIface bool
+		}{
+			{
+				name:        "leaf-a wireguard ipip",
+				example:     "pve-minimal-leaf-a-wg.yaml",
+				profile:     "pve-leaf-a",
+				mode:        "ipip",
+				encryption:  "wireguard",
+				remote:      "10.31.0.10",
+				wantWGIface: true,
+			},
+			{
+				name:       "leaf-b private fou",
+				example:    "pve-minimal-leaf-b-fou.yaml",
+				profile:    "pve-leaf-b",
+				mode:       "fou",
+				encryption: "none",
+				remote:     "10.30.0.10",
+				wantEncap:  true,
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				router, err := config.Load(filepath.Join("..", "..", "..", "examples", tc.example))
+				if err != nil {
+					t.Fatalf("load %s: %v", tc.example, err)
+				}
+				if err := config.Validate(router); err != nil {
+					t.Fatalf("validate %s: %v", tc.example, err)
+				}
+				if got := countResources(router.Spec.Resources, api.MobilityAPIVersion, "SAMRRSet"); got != 0 {
+					t.Fatalf("base %s SAMRRSet count = %d, want 0 before fetched dynamic state", tc.example, got)
+				}
+				profileSpec := exampleSAMTransportProfile(t, router, tc.profile)
+				if profileSpec.Mode != tc.mode || profileSpec.Encryption != tc.encryption {
+					t.Fatalf("SAMTransportProfile/%s mode/encryption = %s/%s, want %s/%s", tc.profile, profileSpec.Mode, profileSpec.Encryption, tc.mode, tc.encryption)
+				}
+				if got := countResources(router.Spec.Resources, api.NetAPIVersion, "WireGuardInterface"); (got > 0) != tc.wantWGIface {
+					t.Fatalf("static WireGuardInterface count = %d, want present=%v", got, tc.wantWGIface)
+				}
+				store := testStore(t, now)
+				seedFetchedRRSetFromFixture(t, store, now, "pve-minimal-leaf-rrset-fetched.yaml")
+				effective := effectiveWithAdmissionState(t, router, store, now)
+				if got := countResources(effective.Spec.Resources, api.MobilityAPIVersion, "SAMRRSet"); got != 1 {
+					t.Fatalf("effective %s SAMRRSet count = %d, want 1 from fetched dynamic state", tc.example, got)
+				}
+				controller := TransportController{Router: effective, Store: store, Now: func() time.Time { return now }}
+				if err := controller.Reconcile(context.Background()); err != nil {
+					t.Fatalf("Reconcile: %v", err)
+				}
+				resources := decodeResources(t, latestPart(t, store, TransportDynamicSource(tc.profile, tc.profile)).ResourcesJSON)
+				if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 1; got != want {
+					t.Fatalf("TunnelInterface count = %d, want %d resources=%#v", got, want, resources)
+				}
+				if got, want := countResources(resources, api.NetAPIVersion, "BGPPeer"), 1; got != want {
+					t.Fatalf("BGPPeer count = %d, want %d resources=%#v", got, want, resources)
+				}
+				if got := countResources(resources, api.NetAPIVersion, "WireGuardPeer"); got != 0 {
+					t.Fatalf("transport-generated WireGuardPeer count = %d, want 0", got)
+				}
+				tunnel := findTransportTunnelForPeer(t, resources, tc.profile, "pve-rr")
+				if tunnel.Mode != tc.mode || tunnel.Remote != tc.remote {
+					t.Fatalf("pve-rr tunnel = %#v, want mode %s remote %s", tunnel, tc.mode, tc.remote)
+				}
+				if tc.wantEncap && (tunnel.EncapSport != 5555 || tunnel.EncapDport != 5555) {
+					t.Fatalf("pve-rr tunnel encap ports = %d/%d, want 5555/5555", tunnel.EncapSport, tunnel.EncapDport)
+				}
+				_, bgpPeer := findTransportBGPPeerResourceForPeer(t, resources, tc.profile, "pve-rr")
+				if len(bgpPeer.Peers) != 1 || strings.TrimSpace(bgpPeer.Peers[0]) == "" {
+					t.Fatalf("pve-rr BGP peer = %#v, want one derived RR tunnel address", bgpPeer)
+				}
+			})
+		}
+	})
+}
+
+func seedFetchedRRSetFromFixture(t *testing.T, store interface {
+	UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord) error
+}, now time.Time, fixture string) {
+	t.Helper()
+	for _, resource := range rrSetSeedResources(t, fixture) {
+		source := "SAMRRSet/" + resource.Metadata.Name
+		part := dynamicconfig.DynamicConfigPart{
+			TypeMeta: api.TypeMeta{APIVersion: dynamicconfig.ConfigAPIVersion, Kind: "DynamicConfigPart"},
+			Metadata: api.ObjectMeta{
+				Name: "fetched-" + resource.Metadata.Name,
+			},
+			Spec: dynamicconfig.DynamicConfigPartSpec{
+				Source:     source,
+				Generation: 1,
+				ObservedAt: now.UTC(),
+				ExpiresAt:  now.Add(5 * time.Minute).UTC(),
+				Resources:  []api.Resource{resource},
+			},
+		}
+		part.Spec.Digest = digestDynamicPart(part)
+		record, err := dynamicPartRecord(part)
+		if err != nil {
+			t.Fatalf("dynamic part record for %s: %v", source, err)
+		}
+		if err := store.UpsertDynamicConfigPart(record); err != nil {
+			t.Fatalf("UpsertDynamicConfigPart(%s): %v", source, err)
+		}
+	}
+}
+
+func seedSubmittedClaimsFromFixture(t *testing.T, store interface {
+	UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord) error
+}, now time.Time, fixture string) {
+	t.Helper()
+	for _, resource := range claimSeedResources(t, fixture) {
+		source := "SAMEnrollmentClaim/" + resource.Metadata.Name
+		part := dynamicconfig.DynamicConfigPart{
+			TypeMeta: api.TypeMeta{APIVersion: dynamicconfig.ConfigAPIVersion, Kind: "DynamicConfigPart"},
+			Metadata: api.ObjectMeta{
+				Name: "submitted-" + resource.Metadata.Name,
+			},
+			Spec: dynamicconfig.DynamicConfigPartSpec{
+				Source:     source,
+				Generation: 1,
+				ObservedAt: now.UTC(),
+				ExpiresAt:  now.Add(5 * time.Minute).UTC(),
+				Resources:  []api.Resource{resource},
+			},
+		}
+		part.Spec.Digest = digestDynamicPart(part)
+		record, err := dynamicPartRecord(part)
+		if err != nil {
+			t.Fatalf("dynamic part record for %s: %v", source, err)
+		}
+		if err := store.UpsertDynamicConfigPart(record); err != nil {
+			t.Fatalf("UpsertDynamicConfigPart(%s): %v", source, err)
+		}
+	}
+}
+
+func effectiveWithAdmissionState(t *testing.T, router *api.Router, store interface {
+	ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error)
+}, now time.Time) *api.Router {
+	t.Helper()
+	records, err := store.ListDynamicConfigParts()
+	if err != nil {
+		t.Fatalf("ListDynamicConfigParts: %v", err)
+	}
+	parts := make([]dynamicconfig.DynamicConfigPart, 0, len(records))
+	for _, record := range records {
+		var resources []api.Resource
+		if strings.TrimSpace(record.ResourcesJSON) != "" {
+			if err := json.Unmarshal([]byte(record.ResourcesJSON), &resources); err != nil {
+				t.Fatalf("decode %s resources: %v", record.Source, err)
+			}
+		}
+		var directives []dynamicconfig.DynamicConfigDirective
+		if strings.TrimSpace(record.DirectivesJSON) != "" {
+			if err := json.Unmarshal([]byte(record.DirectivesJSON), &directives); err != nil {
+				t.Fatalf("decode %s directives: %v", record.Source, err)
+			}
+		}
+		parts = append(parts, dynamicconfig.DynamicConfigPart{
+			TypeMeta: api.TypeMeta{APIVersion: dynamicconfig.ConfigAPIVersion, Kind: "DynamicConfigPart"},
+			Metadata: api.ObjectMeta{
+				Name: fmt.Sprintf("%s-%d", record.Source, record.Generation),
+			},
+			Spec: dynamicconfig.DynamicConfigPartSpec{
+				Source:     record.Source,
+				Generation: record.Generation,
+				ObservedAt: record.ObservedAt,
+				ExpiresAt:  record.ExpiresAt,
+				Digest:     record.Digest,
+				Resources:  resources,
+				Directives: directives,
+			},
+		})
+	}
+	policies, err := dynamicconfig.ExtractDynamicOverridePolicies(*router)
+	if err != nil {
+		t.Fatalf("ExtractDynamicOverridePolicies: %v", err)
+	}
+	effective, _, err := dynamicconfig.BuildEffectiveConfig(*router, parts, policies, now.UTC())
+	if err != nil {
+		t.Fatalf("BuildEffectiveConfig: %v", err)
+	}
+	return &effective
+}
+
+func rrSetSeedResources(t *testing.T, fixture string) []api.Resource {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "tests", "fixtures", fixture))
+	if err != nil {
+		t.Fatalf("read rrset seed %s: %v", fixture, err)
+	}
+	var seed api.Router
+	if err := yaml.Unmarshal(data, &seed); err != nil {
+		t.Fatalf("parse rrset seed %s: %v", fixture, err)
+	}
+	var out []api.Resource
+	for _, resource := range seed.Spec.Resources {
+		if resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "SAMRRSet" {
+			out = append(out, resource)
+		}
+	}
+	if len(out) == 0 {
+		t.Fatalf("rrset seed %s has no SAMRRSet resources", fixture)
+	}
+	return out
+}
+
+func claimSeedResources(t *testing.T, fixture string) []api.Resource {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "tests", "fixtures", fixture))
+	if err != nil {
+		t.Fatalf("read claim seed %s: %v", fixture, err)
+	}
+	var seed api.Router
+	if err := yaml.Unmarshal(data, &seed); err != nil {
+		t.Fatalf("parse claim seed %s: %v", fixture, err)
+	}
+	return append([]api.Resource(nil), seed.Spec.Resources...)
+}
+
+func exampleSAMTransportProfile(t *testing.T, router *api.Router, name string) api.SAMTransportProfileSpec {
+	t.Helper()
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMTransportProfile" || resource.Metadata.Name != name {
+			continue
+		}
+		spec, err := resource.SAMTransportProfileSpec()
+		if err != nil {
+			t.Fatalf("SAMTransportProfile/%s spec: %v", name, err)
+		}
+		return spec
+	}
+	t.Fatalf("SAMTransportProfile/%s not found", name)
+	return api.SAMTransportProfileSpec{}
+}
+
+func TestSAMTransportProfileCanGenerateTunnelWithoutBGPPeerForRRDynamicAdmission(t *testing.T) {
+	now := time.Date(2026, 6, 28, 9, 5, 0, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouterWithMode("rr-a", "rr-a", "pair-stable", nil)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.Encryption = "none"
+	spec.LocalEndpoint = "10.10.0.2"
+	generatePeers := false
+	spec.BGP.GeneratePeers = &generatePeers
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMEnrollmentPolicy/cloudedge-leaves"}}
+	router.Spec.Resources[0].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentPolicy"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-leaves"},
+			Spec: api.SAMEnrollmentPolicySpec{
+				TransportProfileRef:   "SAMTransportProfile/rr-a",
+				TunnelAddressPrefixes: []string{"10.255.0.0/20"},
+				TTL:                   "1h",
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentClaim"},
+			Metadata: api.ObjectMeta{Name: "leaf-pve"},
+			Spec: api.SAMEnrollmentClaimSpec{
+				PolicyRef:     "SAMEnrollmentPolicy/cloudedge-leaves",
+				LeafID:        "leaf-pve",
+				TunnelAddress: "10.255.0.21/32",
+				Endpoint:      "10.20.0.21",
+			},
+		},
+	)
+
+	controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("rr-a", "rr-a")).ResourcesJSON)
+	if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 1; got != want {
+		t.Fatalf("TunnelInterface count = %d, want %d resources=%#v", got, want, resources)
+	}
+	if got := countResources(resources, api.NetAPIVersion, "BGPPeer"); got != 0 {
+		t.Fatalf("BGPPeer count = %d, want 0 for RR dynamic admission", got)
+	}
+	tunnel := findTransportTunnelForPeer(t, resources, "rr-a", "leaf-pve")
+	if tunnel.Remote != "10.20.0.21" {
+		t.Fatalf("tunnel remote = %q, want leaf endpoint", tunnel.Remote)
+	}
+}
+
+func TestSAMTransportProfileSkipsRevokedExpiredAndUnauthorizedEnrollmentClaims(t *testing.T) {
+	now := time.Date(2026, 6, 28, 9, 5, 0, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouterWithMode("rr-a", "rr-a", "pair-stable", nil)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.Encryption = "none"
+	spec.LocalEndpoint = "10.10.0.2"
+	generatePeers := false
+	spec.BGP.GeneratePeers = &generatePeers
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMEnrollmentPolicy/cloudedge-leaves"}}
+	router.Spec.Resources[0].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentPolicy"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-leaves"},
+			Spec: api.SAMEnrollmentPolicySpec{
+				TransportProfileRef:   "SAMTransportProfile/rr-a",
+				TunnelAddressPrefixes: []string{"10.255.0.0/20"},
+				TTL:                   "1h",
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentClaim"},
+			Metadata: api.ObjectMeta{Name: "leaf-active"},
+			Spec: api.SAMEnrollmentClaimSpec{
+				PolicyRef:     "SAMEnrollmentPolicy/cloudedge-leaves",
+				LeafID:        "leaf-active",
+				TunnelAddress: "10.255.0.21/32",
+				Endpoint:      "10.20.0.21",
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentClaim"},
+			Metadata: api.ObjectMeta{Name: "leaf-revoked"},
+			Spec: api.SAMEnrollmentClaimSpec{
+				PolicyRef:     "SAMEnrollmentPolicy/cloudedge-leaves",
+				LeafID:        "leaf-revoked",
+				TunnelAddress: "10.255.0.22/32",
+				Endpoint:      "10.20.0.22",
+				Revoked:       true,
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentClaim"},
+			Metadata: api.ObjectMeta{Name: "leaf-expired"},
+			Spec: api.SAMEnrollmentClaimSpec{
+				PolicyRef:     "SAMEnrollmentPolicy/cloudedge-leaves",
+				LeafID:        "leaf-expired",
+				TunnelAddress: "10.255.0.23/32",
+				Endpoint:      "10.20.0.23",
+				ExpiresAt:     now.Add(-time.Minute).Format(time.RFC3339),
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentClaim"},
+			Metadata: api.ObjectMeta{Name: "leaf-unauthorized"},
+			Spec: api.SAMEnrollmentClaimSpec{
+				PolicyRef:     "SAMEnrollmentPolicy/cloudedge-leaves",
+				LeafID:        "leaf-unauthorized",
+				TunnelAddress: "10.244.0.24/32",
+				Endpoint:      "10.20.0.24",
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentClaim"},
+			Metadata: api.ObjectMeta{Name: "leaf-ttl-expired"},
+			Spec: api.SAMEnrollmentClaimSpec{
+				PolicyRef:     "SAMEnrollmentPolicy/cloudedge-leaves",
+				LeafID:        "leaf-ttl-expired",
+				TunnelAddress: "10.255.0.25/32",
+				Endpoint:      "10.20.0.25",
+				JoinTimestamp: now.Add(-2 * time.Hour).Format(time.RFC3339),
+			},
+		},
+	)
+
+	controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("rr-a", "rr-a")).ResourcesJSON)
+	if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 1; got != want {
+		t.Fatalf("TunnelInterface count = %d, want %d resources=%#v", got, want, resources)
+	}
+	tunnel := findTransportTunnelForPeer(t, resources, "rr-a", "leaf-active")
+	if tunnel.Remote != "10.20.0.21" {
+		t.Fatalf("active tunnel remote = %q, want leaf endpoint", tunnel.Remote)
+	}
+	for _, skipped := range []string{"leaf-revoked", "leaf-expired", "leaf-unauthorized", "leaf-ttl-expired"} {
+		if hasTransportResourceForPeer(resources, skipped) {
+			t.Fatalf("%s must not be materialized: %#v", skipped, resources)
+		}
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "rr-a")
+	if status["phase"] != "Derived" {
+		t.Fatalf("transport status phase = %v, want Derived: %+v", status["phase"], status)
+	}
+	peersFrom := status["peersFrom"].([]any)
+	if len(peersFrom) != 1 {
+		t.Fatalf("peersFrom status = %#v, want one source", peersFrom)
+	}
+	sourceStatus := peersFrom[0].(map[string]any)
+	if sourceStatus["peerCount"] != float64(1) || sourceStatus["reason"] != "4 enrollment claims skipped" {
+		t.Fatalf("peersFrom status = %#v, want one accepted and four skipped", peersFrom)
 	}
 }
 
@@ -828,6 +1605,40 @@ func TestSAMTransportProfileDeletionUpsertsEmptyPart(t *testing.T) {
 	if resources := decodeResources(t, latestPart(t, store, source).ResourcesJSON); len(resources) != 0 {
 		t.Fatalf("resources after profile deletion = %#v, want empty part", resources)
 	}
+}
+
+func samRRSetResource(name string, members []api.SAMRRSetMember) api.Resource {
+	return api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMRRSet"},
+		Metadata: api.ObjectMeta{Name: name},
+		Spec: api.SAMRRSetSpec{
+			EnrollmentPolicyRef: "SAMEnrollmentPolicy/cloudedge-leaves",
+			Members:             members,
+		},
+	}
+}
+
+func countResources(resources []api.Resource, apiVersion, kind string) int {
+	count := 0
+	for _, resource := range resources {
+		if resource.APIVersion == apiVersion && resource.Kind == kind {
+			count++
+		}
+	}
+	return count
+}
+
+func hasTransportResourceForPeer(resources []api.Resource, peer string) bool {
+	for _, resource := range resources {
+		for _, owner := range resource.Metadata.OwnerRefs {
+			if owner.APIVersion == api.MobilityAPIVersion && owner.Kind == "SAMTransportProfile" {
+				if resource.Metadata.Annotations["routerd.net/sam-peer"] == peer {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func transportRouter(profile, self string, peers []api.SAMTransportPeerSpec) *api.Router {

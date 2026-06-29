@@ -162,6 +162,32 @@ type ValidateResult struct {
 	Error    string   `json:"error,omitempty" yaml:"error,omitempty"`
 }
 
+type SAMEnrollmentClaimSubmitRequest struct {
+	TypeMeta `json:",inline" yaml:",inline"`
+	Claim    api.Resource `json:"claim" yaml:"claim"`
+}
+
+type SAMEnrollmentClaimSubmitResult struct {
+	TypeMeta      `json:",inline" yaml:",inline"`
+	Accepted      bool      `json:"accepted" yaml:"accepted"`
+	ClaimRef      string    `json:"claimRef" yaml:"claimRef"`
+	DynamicSource string    `json:"dynamicSource" yaml:"dynamicSource"`
+	Generation    int64     `json:"generation" yaml:"generation"`
+	ObservedAt    time.Time `json:"observedAt" yaml:"observedAt"`
+	ExpiresAt     time.Time `json:"expiresAt" yaml:"expiresAt"`
+}
+
+type SAMRRSetGetRequest struct {
+	Name     string `json:"name" yaml:"name"`
+	ClaimRef string `json:"claimRef" yaml:"claimRef"`
+}
+
+type SAMRRSetGetResult struct {
+	TypeMeta `json:",inline" yaml:",inline"`
+	Metadata ObjectMeta   `json:"metadata" yaml:"metadata"`
+	RRSet    api.Resource `json:"rrSet" yaml:"rrSet"`
+}
+
 type LogLevelRequest struct {
 	TypeMeta `json:",inline" yaml:",inline"`
 	Level    string `json:"level" yaml:"level"`
@@ -537,6 +563,28 @@ func NewValidateResult(valid bool, warnings []string, message string) ValidateRe
 		Valid:    valid,
 		Warnings: warnings,
 		Error:    message,
+	}
+}
+
+func NewSAMEnrollmentClaimSubmitResult(claimRef, source string, generation int64, observedAt, expiresAt time.Time) SAMEnrollmentClaimSubmitResult {
+	return SAMEnrollmentClaimSubmitResult{
+		TypeMeta:      TypeMeta{APIVersion: APIVersion, Kind: "SAMEnrollmentClaimSubmitResult"},
+		Accepted:      true,
+		ClaimRef:      claimRef,
+		DynamicSource: source,
+		Generation:    generation,
+		ObservedAt:    observedAt,
+		ExpiresAt:     expiresAt,
+	}
+}
+
+func NewSAMRRSetGetResult(name string, rrSet api.Resource) SAMRRSetGetResult {
+	return SAMRRSetGetResult{
+		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "SAMRRSetGetResult"},
+		Metadata: ObjectMeta{
+			Name: name,
+		},
+		RRSet: rrSet,
 	}
 }
 

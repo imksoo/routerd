@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
 )
 
@@ -128,5 +129,41 @@ func TestClientDoesNotRetryMutatingRequests(t *testing.T) {
 	}
 	if attempts != 1 {
 		t.Fatalf("attempts = %d, want 1", attempts)
+	}
+}
+
+func TestClientGetSAMRRSet(t *testing.T) {
+	want := NewSAMRRSetGetResult("pve-rrs", api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMRRSet"},
+		Metadata: api.ObjectMeta{Name: "pve-rrs"},
+	})
+	payload, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var gotPath, gotClaim string
+	client := &Client{
+		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			gotPath = req.URL.Path
+			gotClaim = req.URL.Query().Get("claim")
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(string(payload))),
+				Header:     make(http.Header),
+			}, nil
+		})},
+		baseURL:       "http://routerd",
+		retryAttempts: 1,
+		retryDelay:    time.Millisecond,
+	}
+	result, err := client.GetSAMRRSet(context.Background(), SAMRRSetGetRequest{Name: "pve-rrs", ClaimRef: "SAMEnrollmentClaim/pve-leaf-a"})
+	if err != nil {
+		t.Fatalf("GetSAMRRSet: %v", err)
+	}
+	if gotPath != Prefix+"/sam-rrsets/pve-rrs" || gotClaim != "SAMEnrollmentClaim/pve-leaf-a" {
+		t.Fatalf("request path/query = %q claim=%q", gotPath, gotClaim)
+	}
+	if result.RRSet.Kind != "SAMRRSet" || result.RRSet.Metadata.Name != "pve-rrs" {
+		t.Fatalf("result = %#v", result)
 	}
 }

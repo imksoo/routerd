@@ -315,6 +315,43 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "BGPDynamicPeer":
+		if timers := mappingValueNode(&raw.Spec, "timers"); timers != nil {
+			for _, field := range []string{"keepalive", "holdTime", "connectRetry"} {
+				if hasMappingKey(timers, field) {
+					return fmt.Errorf("%s spec.timers.%s is not supported; use spec.timers.profile or routerd BGP defaults", r.ID(), field)
+				}
+			}
+		}
+		var spec BGPDynamicPeerSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "SAMEnrollmentPolicy":
+		var spec SAMEnrollmentPolicySpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "SAMRRSet":
+		var spec SAMRRSetSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "SAMEnrollmentClaim":
+		var spec SAMEnrollmentClaimSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
+	case "SAMEnrollmentClient":
+		var spec SAMEnrollmentClientSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "BFD":
 		var spec BFDSpec
 		if err := raw.Spec.Decode(&spec); err != nil {

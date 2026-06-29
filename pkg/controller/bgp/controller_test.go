@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/netip"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -91,6 +92,8 @@ type fakeServer struct {
 
 	global           *gobgpapi.Global
 	peers            map[string]*gobgpapi.Peer
+	peerGroups       map[string]*gobgpapi.PeerGroup
+	dynamicNeighbors map[string]*gobgpapi.DynamicNeighbor
 	routes           []*gobgpapi.Destination
 	applied          bgpdaemon.AppliedConfig
 	deletedPathUUIDs [][]byte
@@ -132,6 +135,460 @@ func TestReconcileStopsServerWhenBGPRemoved(t *testing.T) {
 	}
 	if controller.Server != nil || controller.started {
 		t.Fatalf("controller did not clear server state: server=%#v started=%t", controller.Server, controller.started)
+	}
+}
+
+func TestReconcileAppliesBGPDynamicPeer(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Spec.Resources = append(router.Spec.Resources[:1], api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPDynamicPeer"},
+		Metadata: api.ObjectMeta{Name: "cloudedge-leaves"},
+		Spec: api.BGPDynamicPeerSpec{
+			RouterRef:               "BGPRouter/lan",
+			PeerASN:                 64512,
+			Listen:                  api.BGPDynamicPeerListenSpec{SourcePrefixes: []string{"10.255.0.0/20"}},
+			RouteReflectorClient:    true,
+			RouteReflectorClusterID: "10.99.0.254",
+			ImportPolicy:            api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}, NextHopRewrite: "peer-address"},
+			ExportPolicy:            api.BGPExportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}},
+			Timers:                  api.BGPTimersSpec{Profile: "fast"},
+		},
+	})
+	server := &fakeServer{}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	group := server.peerGroups["routerd-dynamic-cloudedge-leaves"]
+	if group == nil {
+		t.Fatalf("dynamic peer group not added: %#v", server.peerGroups)
+	}
+	if !group.GetRouteReflector().GetRouteReflectorClient() || group.GetRouteReflector().GetRouteReflectorClusterId() != "10.99.0.254" {
+		t.Fatalf("route reflector = %#v", group.GetRouteReflector())
+	}
+	if got := timersProfile(group.GetTimers().GetConfig()); got != "fast" {
+		t.Fatalf("timers profile = %q, want fast", got)
+	}
+	if group.GetApplyPolicy().GetImportPolicy() == nil || group.GetApplyPolicy().GetExportPolicy() == nil {
+		t.Fatalf("dynamic peer group policy assignments missing: %#v", group.GetApplyPolicy())
+	}
+	neighbor := server.dynamicNeighbors["routerd-dynamic-cloudedge-leaves|10.255.0.0/20"]
+	if neighbor == nil {
+		t.Fatalf("dynamic neighbor not added: %#v", server.dynamicNeighbors)
+	}
+}
+
+func TestReconcileDoesNotDeleteLiveDynamicPeerFromStaticReconcile(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPDynamicPeer"},
+		Metadata: api.ObjectMeta{Name: "cloudedge-leaves"},
+		Spec: api.BGPDynamicPeerSpec{
+			RouterRef:    "BGPRouter/lan",
+			PeerASN:      64512,
+			Listen:       api.BGPDynamicPeerListenSpec{SourcePrefixes: []string{"10.255.0.0/20"}},
+			ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}},
+		},
+	})
+	server := &fakeServer{peers: map[string]*gobgpapi.Peer{
+		"10.255.0.21": {
+			Conf:  &gobgpapi.PeerConf{NeighborAddress: "10.255.0.21", PeerAsn: 64512, PeerGroup: "routerd-dynamic-cloudedge-leaves"},
+			State: &gobgpapi.PeerState{NeighborAddress: "10.255.0.21", PeerAsn: 64512, SessionState: gobgpapi.PeerState_ESTABLISHED},
+		},
+	}}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: &fakeFIB{}}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	for _, call := range server.callLog {
+		if call == "DeletePeer:10.255.0.21" {
+			t.Fatalf("static reconcile deleted dynamic peer; call log=%#v", server.callLog)
+		}
+	}
+	if server.peers["10.255.0.21"] == nil {
+		t.Fatalf("dynamic peer removed from fake server; call log=%#v", server.callLog)
+	}
+}
+
+func TestReconcileBGPPeerConsumesSAMRRSet(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Metadata.Name = "leaf-pve"
+	router.Spec.Resources = append(router.Spec.Resources[:1],
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-rrs"},
+			Spec: api.BGPPeerSpec{
+				RouterRef: "BGPRouter/lan",
+				PeerASN:   64512,
+				PeersFrom: []api.BGPPeersSourceSpec{{Resource: "SAMRRSet/cloudedge-rrs"}},
+				ImportPolicy: api.BGPImportPolicySpec{
+					AllowedPrefixes: []string{"10.77.60.0/24"},
+				},
+				ExportPolicy: api.BGPExportPolicySpec{
+					AllowedPrefixes: []string{"10.77.60.21/32"},
+				},
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMRRSet"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-rrs"},
+			Spec: api.SAMRRSetSpec{
+				EnrollmentPolicyRef: "SAMEnrollmentPolicy/cloudedge-leaves",
+				Members: []api.SAMRRSetMember{
+					{NodeRef: "aws-rr-a", Endpoint: "203.0.113.10", TunnelAddress: "10.99.0.2/32"},
+					{NodeRef: "aws-rr-b", Endpoint: "203.0.113.11", TunnelAddress: "10.99.0.3/32"},
+				},
+			},
+		},
+	)
+	server := &fakeServer{}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	for _, address := range []string{"10.99.0.2", "10.99.0.3"} {
+		if server.peers[address] == nil {
+			t.Fatalf("missing BGP peer %s from SAMRRSet; peers=%v", address, server.peers)
+		}
+	}
+}
+
+func TestImportAllowedPrefixesIncludesDynamicPeers(t *testing.T) {
+	applied := bgpdaemon.AppliedConfig{
+		Global: bgpdaemon.AppliedGlobal{ImportPolicy: bgpdaemon.AppliedImportPolicy{AllowedPrefixes: []string{"10.250.0.0/24"}}},
+	}
+	dynamic := map[string]desiredDynamicPeer{
+		"routerd-dynamic-leaves": {
+			ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}},
+		},
+	}
+	got := importAllowedPrefixesFromAppliedAndDynamic(applied, dynamic)
+	var values []string
+	for _, prefix := range got {
+		values = append(values, prefix.Prefix.String())
+	}
+	if !sameStringSet(values, []string{"10.250.0.0/24", "10.77.60.0/24"}) {
+		t.Fatalf("allowed prefixes = %v", values)
+	}
+}
+
+func TestApplyRouterBGPDynamicDefaultsInheritsExactRouterImportPolicy(t *testing.T) {
+	routerSpec := api.BGPRouterSpec{
+		ConvergenceProfile: "fast",
+		ImportPolicy: api.BGPImportPolicySpec{
+			AllowedPrefixes:        []string{"10.77.60.0/24"},
+			AllowedPrefixLengthMin: 32,
+			AllowedPrefixLengthMax: 32,
+		},
+	}
+	peers := applyRouterBGPDynamicDefaults("lan", routerSpec, map[string]desiredDynamicPeer{
+		"routerd-dynamic-leaves": {
+			PeerGroupName: "routerd-dynamic-leaves",
+		},
+	}, nil, nil)
+	peer := peers["routerd-dynamic-leaves"]
+	if peer.ImportPolicyName != bgpPolicyName("lan", "import") {
+		t.Fatalf("import policy name = %q, want inherited router policy", peer.ImportPolicyName)
+	}
+	if !reflect.DeepEqual(peer.ImportPolicy.AllowedPrefixes, []string{"10.77.60.0/24"}) ||
+		peer.ImportPolicy.AllowedPrefixLengthMin != 32 ||
+		peer.ImportPolicy.AllowedPrefixLengthMax != 32 {
+		t.Fatalf("inherited import policy = %#v", peer.ImportPolicy)
+	}
+}
+
+func TestApplyRouterBGPDynamicDefaultsUsesOwnExactImportPolicyWithNextHopRewrite(t *testing.T) {
+	routerSpec := api.BGPRouterSpec{
+		ImportPolicy: api.BGPImportPolicySpec{
+			AllowedPrefixes:        []string{"10.250.0.0/24"},
+			AllowedPrefixLengthMin: 32,
+			AllowedPrefixLengthMax: 32,
+		},
+	}
+	peers := applyRouterBGPDynamicDefaults("lan", routerSpec, map[string]desiredDynamicPeer{
+		"routerd-dynamic-leaves": {
+			PeerGroupName: "routerd-dynamic-leaves",
+			ImportPolicy: api.BGPImportPolicySpec{
+				AllowedPrefixes:        []string{"10.77.60.0/24"},
+				AllowedPrefixLengthMin: 32,
+				AllowedPrefixLengthMax: 32,
+				NextHopRewrite:         "peer-address",
+			},
+		},
+	}, nil, nil)
+	peer := peers["routerd-dynamic-leaves"]
+	if peer.ImportPolicyName != dynamicPeerImportPolicyName("lan", "routerd-dynamic-leaves") {
+		t.Fatalf("import policy name = %q, want dynamic peer policy", peer.ImportPolicyName)
+	}
+	if !reflect.DeepEqual(peer.ImportPolicy.AllowedPrefixes, []string{"10.77.60.0/24"}) ||
+		peer.ImportPolicy.AllowedPrefixLengthMin != 32 ||
+		peer.ImportPolicy.AllowedPrefixLengthMax != 32 ||
+		importNextHopRewrite(peer.ImportPolicy) != "peer-address" {
+		t.Fatalf("own import policy = %#v", peer.ImportPolicy)
+	}
+}
+
+func TestDynamicImportAllowedPrefixesRejectRouteLeaks(t *testing.T) {
+	allowed := allowedImportPrefixesForTest(api.BGPImportPolicySpec{
+		AllowedPrefixes:        []string{"10.77.60.0/24"},
+		AllowedPrefixLengthMin: 32,
+		AllowedPrefixLengthMax: 32,
+	})
+	for _, dst := range []*gobgpapi.Destination{
+		testDestination("0.0.0.0/0", "10.99.0.11"),
+		testDestination("10.20.0.0/24", "10.99.0.11"),
+		testDestination("10.77.60.0/24", "10.99.0.11"),
+		testDestination("10.77.60.0/25", "10.99.0.11"),
+		testDestination("10.77.61.11/32", "10.99.0.11"),
+	} {
+		if got := fibRoutesFromDestination(dst, allowed, nil, nil); len(got) != 0 {
+			t.Fatalf("route %s produced FIB routes %#v, want rejected", dst.GetPrefix(), got)
+		}
+	}
+	got := fibRoutesFromDestination(testDestination("10.77.60.11/32", "10.99.0.11"), allowed, nil, nil)
+	want := []FIBRoute{{Prefix: "10.77.60.11/32", NextHops: []string{"10.99.0.11"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("allowed dynamic route = %#v, want %#v", got, want)
+	}
+}
+
+func TestSAMDynamicClaimAdmissionBindsOwnedHostRoutesToTunnelAddress(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-transport"},
+			Spec: api.SAMTransportProfileSpec{
+				SelfNodeRef: "SAMNode/rr-a",
+				Mode:        "ipip",
+				Encryption:  "none",
+				InnerPrefix: "10.255.0.1/32",
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+			Metadata: api.ObjectMeta{Name: "clients"},
+			Spec: api.MobilityPoolSpec{
+				Prefix:   "10.77.60.0/24",
+				GroupRef: "EventGroup/cloudedge",
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentPolicy"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-leaves"},
+			Spec: api.SAMEnrollmentPolicySpec{
+				TransportProfileRef:   "SAMTransportProfile/cloudedge-transport",
+				TunnelAddressPrefixes: []string{"10.255.0.0/24"},
+				MobilityPoolRefs:      []string{"MobilityPool/clients"},
+			},
+		},
+		samEnrollmentClaimResourceForTest("leaf-a", "10.255.0.31/32", "10.77.60.31/32"),
+		samEnrollmentClaimResourceForTest("leaf-b", "10.255.0.32/32", "10.77.60.32/32"),
+	)
+	admission := (&Controller{Router: router}).samDynamicClaimAdmission()
+
+	if ok, reason := admission.Admit("10.255.0.31", netip.MustParsePrefix("10.77.60.31/32")); !ok {
+		t.Fatalf("leaf-a own /32 rejected: %s", reason)
+	}
+	for _, tt := range []struct {
+		prefix string
+		reason string
+	}{
+		{prefix: "10.77.60.32/32", reason: "prefix-not-owned-by-claim"},
+		{prefix: "10.77.60.40/32", reason: "prefix-not-owned-by-claim"},
+		{prefix: "10.77.60.0/24", reason: "not-exact-host-prefix"},
+	} {
+		if ok, reason := admission.Admit("10.255.0.31", netip.MustParsePrefix(tt.prefix)); ok || reason != tt.reason {
+			t.Fatalf("leaf-a route %s admission = (%t,%q), want rejected %q", tt.prefix, ok, reason, tt.reason)
+		}
+	}
+	if ok, reason := admission.Admit("10.255.0.99", netip.MustParsePrefix("10.77.60.31/32")); ok || reason != "no-accepted-claim-for-next-hop" {
+		t.Fatalf("unknown next-hop admission = (%t,%q), want no accepted claim", ok, reason)
+	}
+}
+
+func TestDynamicClaimAdmissionUsesBGPNeighborAddressInsteadOfFIBNextHop(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-transport"},
+			Spec: api.SAMTransportProfileSpec{
+				SelfNodeRef: "SAMNode/rr-a",
+				Mode:        "ipip",
+				Encryption:  "none",
+				InnerPrefix: "10.255.0.1/32",
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+			Metadata: api.ObjectMeta{Name: "clients"},
+			Spec: api.MobilityPoolSpec{
+				Prefix:   "10.77.60.0/24",
+				GroupRef: "EventGroup/cloudedge",
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentPolicy"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-leaves"},
+			Spec: api.SAMEnrollmentPolicySpec{
+				TransportProfileRef:   "SAMTransportProfile/cloudedge-transport",
+				TunnelAddressPrefixes: []string{"10.255.0.0/24"},
+				MobilityPoolRefs:      []string{"MobilityPool/clients"},
+			},
+		},
+		samEnrollmentClaimResourceForTest("leaf-a", "10.255.0.31/32", "10.77.60.31/32"),
+		samEnrollmentClaimResourceForTest("leaf-b", "10.255.0.32/32", "10.77.60.32/32"),
+	)
+	admission := (&Controller{Router: router}).samDynamicClaimAdmission()
+	allowed := allowedImportPrefixesForTest(api.BGPImportPolicySpec{
+		AllowedPrefixes:        []string{"10.77.60.0/24"},
+		AllowedPrefixLengthMin: 32,
+		AllowedPrefixLengthMax: 32,
+	})
+	admit := func(prefix netip.Prefix, identityAddress, _ string, _ []string) bool {
+		ok, _ := admission.Admit(identityAddress, prefix)
+		return ok
+	}
+
+	got := fibRoutesFromDestination(testDestinationWithNeighbor("10.77.60.31/32", "10.255.0.32", "10.255.0.31"), allowed, nil, admit)
+	want := []FIBRoute{{Prefix: "10.77.60.31/32", NextHops: []string{"10.255.0.32"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("neighbor-authorized route = %#v, want %#v", got, want)
+	}
+	if got := fibRoutesFromDestination(testDestinationWithNeighbor("10.77.60.32/32", "10.255.0.32", "10.255.0.31"), allowed, nil, admit); len(got) != 0 {
+		t.Fatalf("leaf-a neighbor authorized leaf-b route via manipulated next-hop: %#v", got)
+	}
+}
+
+func TestDynamicClaimAdmissionUsesSAMTransportNeighborAlias(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+			Metadata: api.ObjectMeta{Name: "clients"},
+			Spec: api.MobilityPoolSpec{
+				Prefix:   "10.77.60.0/24",
+				GroupRef: "EventGroup/cloudedge",
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentPolicy"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-leaves"},
+			Spec: api.SAMEnrollmentPolicySpec{
+				TunnelAddressPrefixes: []string{"10.255.0.0/24"},
+				MobilityPoolRefs:      []string{"MobilityPool/clients"},
+			},
+		},
+		samEnrollmentClaimResourceForTest("leaf-a", "10.255.0.99/32", "10.77.60.31/32"),
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{
+				Name: "sam-rr-a-leaf-a",
+				Annotations: map[string]string{
+					"mobility.routerd.net/self-node": "rr-a",
+					"mobility.routerd.net/peer-node": "leaf-a",
+				},
+			},
+			Spec: api.TunnelInterfaceSpec{
+				Mode:    "fou",
+				Local:   "10.30.0.10",
+				Remote:  "10.30.0.31",
+				Address: "10.255.0.30/31",
+			},
+		},
+	)
+	admission := (&Controller{Router: router}).samDynamicClaimAdmission()
+	if ok, reason := admission.Admit("10.255.0.31", netip.MustParsePrefix("10.77.60.31/32")); !ok {
+		t.Fatalf("SAM transport neighbor alias rejected: %s", reason)
+	}
+	if ok, reason := admission.Admit("10.255.0.31", netip.MustParsePrefix("10.77.60.32/32")); ok || reason != "prefix-not-owned-by-claim" {
+		t.Fatalf("SAM transport neighbor alias wrong-prefix admission = (%t,%q)", ok, reason)
+	}
+}
+
+func TestBGPDynamicPeerStatusReportsDiscoveredPeersAndAdmissionCounters(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPDynamicPeer"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-leaves"},
+			Spec: api.BGPDynamicPeerSpec{
+				RouterRef: "BGPRouter/lan",
+				PeerASN:   64512,
+				Listen:    api.BGPDynamicPeerListenSpec{SourcePrefixes: []string{"10.255.0.0/24"}},
+				ImportPolicy: api.BGPImportPolicySpec{
+					AllowedPrefixes:        []string{"10.77.60.0/24"},
+					AllowedPrefixLengthMin: 32,
+					AllowedPrefixLengthMax: 32,
+					NextHopRewrite:         "peer-address",
+				},
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-transport"},
+			Spec: api.SAMTransportProfileSpec{
+				SelfNodeRef: "SAMNode/rr-a",
+				Mode:        "ipip",
+				Encryption:  "none",
+				InnerPrefix: "10.255.0.1/32",
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+			Metadata: api.ObjectMeta{Name: "clients"},
+			Spec:     api.MobilityPoolSpec{Prefix: "10.77.60.0/24", GroupRef: "EventGroup/cloudedge"},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentPolicy"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-leaves"},
+			Spec: api.SAMEnrollmentPolicySpec{
+				TransportProfileRef:   "SAMTransportProfile/cloudedge-transport",
+				TunnelAddressPrefixes: []string{"10.255.0.0/24"},
+				MobilityPoolRefs:      []string{"MobilityPool/clients"},
+			},
+		},
+		samEnrollmentClaimResourceForTest("leaf-a", "10.255.0.31/32", "10.77.60.31/32"),
+		samEnrollmentClaimResourceForTest("leaf-b", "10.255.0.32/32", "10.77.60.32/32"),
+	)
+	store := mapStore{}
+	server := &fakeServer{
+		peers: map[string]*gobgpapi.Peer{
+			"10.255.0.31": {
+				Conf: &gobgpapi.PeerConf{NeighborAddress: "10.255.0.31", PeerAsn: 64512, PeerGroup: "routerd-dynamic-cloudedge-leaves"},
+				State: &gobgpapi.PeerState{
+					NeighborAddress: "10.255.0.31",
+					PeerAsn:         64512,
+					SessionState:    gobgpapi.PeerState_ESTABLISHED,
+				},
+				AfiSafis: []*gobgpapi.AfiSafi{{State: &gobgpapi.AfiSafiState{Accepted: 1, Received: 2}}},
+			},
+		},
+		routes: []*gobgpapi.Destination{
+			testDestination("10.77.60.31/32", "10.255.0.31"),
+			testDestination("10.77.60.32/32", "10.255.0.31"),
+		},
+	}
+	controller := Controller{Router: router, Store: store, Server: server, FIB: &fakeFIB{}}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "BGPDynamicPeer", "cloudedge-leaves")
+	if statusInt(status["discoveredPeerCount"]) != 1 || statusInt(status["acceptedRouteCount"]) != 1 || statusInt(status["rejectedRouteCount"]) != 1 {
+		t.Fatalf("dynamic peer status = %#v", status)
+	}
+	peers, ok := status["discoveredPeers"].([]map[string]any)
+	if !ok || len(peers) != 1 {
+		t.Fatalf("discoveredPeers = %#v", status["discoveredPeers"])
+	}
+	peer := peers[0]
+	if statusString(peer["enrollmentClaimRef"]) != "SAMEnrollmentClaim/leaf-a" || statusInt(peer["acceptedRoutes"]) != 1 || statusInt(peer["rejectedRoutes"]) != 1 {
+		t.Fatalf("discovered peer status = %#v", peer)
+	}
+	reasons, ok := status["rejectedRouteSummary"].(map[string]int)
+	if !ok || reasons["prefix-not-owned-by-claim"] != 1 {
+		t.Fatalf("rejectedRouteSummary = %#v", status["rejectedRouteSummary"])
 	}
 }
 
@@ -247,6 +704,83 @@ func (s *fakeServer) ListPeer(_ context.Context, _ *gobgpapi.ListPeerRequest, fn
 	return nil
 }
 
+func (s *fakeServer) AddPeerGroup(_ context.Context, req *gobgpapi.AddPeerGroupRequest) error {
+	if s.peerGroups == nil {
+		s.peerGroups = map[string]*gobgpapi.PeerGroup{}
+	}
+	group := req.GetPeerGroup()
+	s.peerGroups[group.GetConf().GetPeerGroupName()] = group
+	s.callLog = append(s.callLog, "AddPeerGroup:"+group.GetConf().GetPeerGroupName())
+	return nil
+}
+
+func (s *fakeServer) DeletePeerGroup(_ context.Context, req *gobgpapi.DeletePeerGroupRequest) error {
+	if s.peerGroups != nil {
+		delete(s.peerGroups, req.GetName())
+	}
+	s.callLog = append(s.callLog, "DeletePeerGroup:"+req.GetName())
+	return nil
+}
+
+func (s *fakeServer) ListPeerGroup(_ context.Context, req *gobgpapi.ListPeerGroupRequest, fn func(*gobgpapi.PeerGroup)) error {
+	if s.peerGroups == nil {
+		return nil
+	}
+	if req.GetPeerGroupName() != "" {
+		if group := s.peerGroups[req.GetPeerGroupName()]; group != nil {
+			fn(group)
+		}
+		return nil
+	}
+	var names []string
+	for name := range s.peerGroups {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		fn(s.peerGroups[name])
+	}
+	return nil
+}
+
+func (s *fakeServer) AddDynamicNeighbor(_ context.Context, req *gobgpapi.AddDynamicNeighborRequest) error {
+	if s.dynamicNeighbors == nil {
+		s.dynamicNeighbors = map[string]*gobgpapi.DynamicNeighbor{}
+	}
+	neighbor := req.GetDynamicNeighbor()
+	key := neighbor.GetPeerGroup() + "|" + neighbor.GetPrefix()
+	s.dynamicNeighbors[key] = neighbor
+	s.callLog = append(s.callLog, "AddDynamicNeighbor:"+key)
+	return nil
+}
+
+func (s *fakeServer) DeleteDynamicNeighbor(_ context.Context, req *gobgpapi.DeleteDynamicNeighborRequest) error {
+	key := req.GetPeerGroup() + "|" + req.GetPrefix()
+	if s.dynamicNeighbors != nil {
+		delete(s.dynamicNeighbors, key)
+	}
+	s.callLog = append(s.callLog, "DeleteDynamicNeighbor:"+key)
+	return nil
+}
+
+func (s *fakeServer) ListDynamicNeighbor(_ context.Context, req *gobgpapi.ListDynamicNeighborRequest, fn func(*gobgpapi.DynamicNeighbor)) error {
+	if s.dynamicNeighbors == nil {
+		return nil
+	}
+	var keys []string
+	for key, neighbor := range s.dynamicNeighbors {
+		if req.GetPeerGroup() != "" && neighbor.GetPeerGroup() != req.GetPeerGroup() {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		fn(s.dynamicNeighbors[key])
+	}
+	return nil
+}
+
 func (s *fakeServer) SetPolicies(_ context.Context, req *gobgpapi.SetPoliciesRequest) error {
 	s.policies++
 	s.callLog = append(s.callLog, "SetPolicies")
@@ -347,6 +881,10 @@ func policyRequestHasPrefixSet(req *gobgpapi.SetPoliciesRequest, name, prefix st
 		}
 	}
 	return false
+}
+
+func allowedImportPrefixesForTest(spec api.BGPImportPolicySpec) []allowedImportPrefix {
+	return importAllowedPrefixesFromPolicy(spec)
 }
 
 func policyRequestHasPolicy(req *gobgpapi.SetPoliciesRequest, name string) bool {
@@ -1372,6 +1910,47 @@ func TestWatchEventTriggersImmediateFIBSync(t *testing.T) {
 	}
 }
 
+func TestWatchEventIncludesDynamicPeerImportAllowlist(t *testing.T) {
+	router := bgpRouterWithImportPrefixes()
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPDynamicPeer"},
+		Metadata: api.ObjectMeta{Name: "cloudedge-leaves"},
+		Spec: api.BGPDynamicPeerSpec{
+			RouterRef:    "BGPRouter/lan",
+			PeerASN:      64512,
+			Listen:       api.BGPDynamicPeerListenSpec{SourcePrefixes: []string{"10.255.0.0/20"}},
+			ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}},
+		},
+	})
+	server := &fakeServer{
+		routes:        []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.11")},
+		watchSessions: make(chan watchSession, 1),
+	}
+	fib := &fakeFIB{}
+	controller := Controller{
+		Router:              router,
+		Store:               mapStore{},
+		Server:              server,
+		FIB:                 fib,
+		WatchReconnectDelay: time.Millisecond,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	if got := fib.lastRoutes(); !reflect.DeepEqual(got, []FIBRoute{{Prefix: "10.77.60.11/32", NextHops: []string{"10.99.0.11"}}}) {
+		t.Fatalf("initial FIB routes = %#v, want dynamic import route", got)
+	}
+	server.routes = []*gobgpapi.Destination{testDestination("10.77.60.12/32", "10.99.0.12")}
+	server.watchSessions <- watchSession{events: []*gobgpapi.WatchEventResponse{watchTableEvent("10.77.60.12/32", "10.99.0.12")}}
+	if err := controller.watchBestPathEvents(context.Background()); err != nil {
+		t.Fatalf("watch events: %v", err)
+	}
+	want := []FIBRoute{{Prefix: "10.77.60.12/32", NextHops: []string{"10.99.0.12"}}}
+	if !reflect.DeepEqual(fib.lastRoutes(), want) {
+		t.Fatalf("FIB routes after watch = %#v, want dynamic import route %#v", fib.lastRoutes(), want)
+	}
+}
+
 func TestWatchEventReconnectsAfterStreamError(t *testing.T) {
 	server := &fakeServer{
 		routes:        []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.11")},
@@ -1545,13 +2124,13 @@ func TestAppliedImportPolicyConvergesWithGoBGP(t *testing.T) {
 		},
 	}
 	controller := Controller{Server: server}
-	if err := controller.applyBGPPolicies(ctx, "lan", spec, peers); err != nil {
+	if err := controller.applyBGPPolicies(ctx, "lan", spec, peers, nil); err != nil {
 		t.Fatalf("applyBGPPolicies: %v", err)
 	}
 	if err := server.AddPeer(ctx, &gobgpapi.AddPeerRequest{Peer: goBGPPeer(peers["10.0.0.21"])}); err != nil {
 		t.Fatalf("AddPeer: %v", err)
 	}
-	drift, err := controller.importPolicyDrift(ctx, "lan", spec, peers)
+	drift, err := controller.importPolicyDrift(ctx, "lan", spec, peers, nil)
 	if err != nil {
 		t.Fatalf("importPolicyDrift: %v", err)
 	}
@@ -1573,6 +2152,25 @@ func TestImportPolicyPrefixesAllowMoreSpecifics(t *testing.T) {
 	}
 	if prefixSetAllows(prefixes, "2001:db8:88::1/128") {
 		t.Fatalf("import prefixes = %#v, want unrelated IPv6 rejected", prefixes)
+	}
+}
+
+func TestImportPolicyPrefixesCanRequireExactHostRoutes(t *testing.T) {
+	prefixes := importPolicyPrefixes(api.BGPImportPolicySpec{
+		AllowedPrefixes:        []string{"10.77.60.0/24"},
+		AllowedPrefixLengthMin: 32,
+		AllowedPrefixLengthMax: 32,
+	})
+	if len(prefixes) != 1 || prefixes[0].GetMaskLengthMin() != 32 || prefixes[0].GetMaskLengthMax() != 32 {
+		t.Fatalf("import prefixes = %#v, want exact /32 mask bounds", prefixes)
+	}
+	for _, rejected := range []string{"10.77.60.0/24", "10.77.60.0/25", "0.0.0.0/0", "10.20.0.0/24", "10.77.61.11/32"} {
+		if prefixSetAllows(prefixes, rejected) {
+			t.Fatalf("import prefixes = %#v allowed %s, want rejected", prefixes, rejected)
+		}
+	}
+	if !prefixSetAllows(prefixes, "10.77.60.11/32") {
+		t.Fatalf("import prefixes = %#v rejected authorized host route", prefixes)
 	}
 }
 
@@ -2402,7 +3000,7 @@ func TestFIBRoutesFromStatePrefixesBuildsECMPAndSkipsLocalAdvertisements(t *test
 		{Prefix: "10.250.0.0/24", NextHop: "192.168.1.38", Best: true, Valid: true},
 		{Prefix: "10.0.0.0/16", NextHop: "0.0.0.0", Best: true, Valid: true},
 		{Prefix: "10.96.0.0/12", NextHop: "192.168.1.57", Best: true, Valid: true},
-	}, []netip.Prefix{netip.MustParsePrefix("10.250.0.0/16")}, nil)
+	}, allowedImportPrefixesForTest(api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/16"}}), nil)
 	want := []FIBRoute{{Prefix: "10.250.0.0/24", NextHops: []string{"192.168.1.38", "192.168.1.53"}}}
 	if !reflect.DeepEqual(routes, want) {
 		t.Fatalf("routes = %#v, want %#v", routes, want)
@@ -2413,7 +3011,7 @@ func TestFIBRoutesFromDestinationChoosesHigherLocalPref(t *testing.T) {
 	routes := fibRoutesFromDestination(testRankedDestination("10.77.60.12/32",
 		rankedPath{nextHop: "10.99.0.11", localPref: 201, med: 20},
 		rankedPath{nextHop: "10.99.0.12", localPref: 202, med: 10},
-	), []netip.Prefix{netip.MustParsePrefix("10.77.60.0/24")}, nil, nil)
+	), allowedImportPrefixesForTest(api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}}), nil, nil)
 	want := []FIBRoute{{Prefix: "10.77.60.12/32", NextHops: []string{"10.99.0.12"}}}
 	if !reflect.DeepEqual(routes, want) {
 		t.Fatalf("routes = %#v, want %#v", routes, want)
@@ -2424,7 +3022,7 @@ func TestFIBRoutesFromDestinationUsesPeerAddressRewriteFromNeighbor(t *testing.T
 	dst := testDestinationWithNeighbor("192.168.123.112/32", "10.252.0.17", "10.252.0.1")
 	routes := fibRoutesFromDestination(
 		dst,
-		[]netip.Prefix{netip.MustParsePrefix("192.168.123.0/24")},
+		allowedImportPrefixesForTest(api.BGPImportPolicySpec{AllowedPrefixes: []string{"192.168.123.0/24"}}),
 		map[string]bool{"10.252.0.1": true},
 		nil,
 	)
@@ -2443,7 +3041,7 @@ func TestFIBRoutesFromDestinationKeepsPeerAddressRewriteMultipath(t *testing.T) 
 	dst.Paths[1].NeighborIp = "10.252.0.2"
 	routes := fibRoutesFromDestination(
 		dst,
-		[]netip.Prefix{netip.MustParsePrefix("192.168.123.0/24")},
+		allowedImportPrefixesForTest(api.BGPImportPolicySpec{AllowedPrefixes: []string{"192.168.123.0/24"}}),
 		map[string]bool{"10.252.0.1": true, "10.252.0.2": true},
 		nil,
 	)
@@ -2457,7 +3055,7 @@ func TestFIBRoutesFromDestinationCanLeaveReflectedNextHopUnchanged(t *testing.T)
 	dst := testDestinationWithNeighbor("192.168.123.112/32", "10.252.0.17", "10.252.0.1")
 	routes := fibRoutesFromDestination(
 		dst,
-		[]netip.Prefix{netip.MustParsePrefix("192.168.123.0/24")},
+		allowedImportPrefixesForTest(api.BGPImportPolicySpec{AllowedPrefixes: []string{"192.168.123.0/24"}}),
 		nil,
 		nil,
 	)
@@ -2468,7 +3066,7 @@ func TestFIBRoutesFromDestinationCanLeaveReflectedNextHopUnchanged(t *testing.T)
 }
 
 func TestPrefixAllowedRequiresSameFamilyAndCoveredLength(t *testing.T) {
-	allowed := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("2001:db8::/32")}
+	allowed := allowedImportPrefixesForTest(api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.0.0.0/8", "2001:db8::/32"}})
 	tests := []struct {
 		prefix string
 		want   bool
@@ -2575,6 +3173,25 @@ func bgpRouterWithImportPrefixes(prefixes ...string) *api.Router {
 			},
 		},
 	}}}
+}
+
+func samEnrollmentClaimResourceForTest(name, tunnelAddress, ownedAddress string) api.Resource {
+	return api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentClaim"},
+		Metadata: api.ObjectMeta{Name: name},
+		Spec: api.SAMEnrollmentClaimSpec{
+			PolicyRef:     "SAMEnrollmentPolicy/cloudedge-leaves",
+			LeafID:        name,
+			TunnelAddress: tunnelAddress,
+			Mobility: api.SAMEnrollmentClaimMobilitySpec{
+				OwnedAddresses: []string{ownedAddress},
+			},
+			BGP: api.SAMEnrollmentClaimBGPSpec{
+				ASN:      64512,
+				RouterID: strings.TrimSuffix(tunnelAddress, "/32"),
+			},
+		},
+	}
 }
 
 func bgpMobilityPreferredSourceResources(selfNode string) []api.Resource {

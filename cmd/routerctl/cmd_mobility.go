@@ -3,17 +3,27 @@
 package main
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/samenrollment"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -71,6 +81,17 @@ type mobilityExplainReport struct {
 	ConditionReasons     map[string]string `json:"conditionReasons,omitempty" yaml:"conditionReasons,omitempty"`
 }
 
+type mobilityEnrollmentJoinResult struct {
+	Accepted      bool      `json:"accepted" yaml:"accepted"`
+	ClaimRef      string    `json:"claimRef" yaml:"claimRef"`
+	RRSetRef      string    `json:"rrSetRef" yaml:"rrSetRef"`
+	DynamicSource string    `json:"dynamicSource" yaml:"dynamicSource"`
+	Generation    int64     `json:"generation" yaml:"generation"`
+	ObservedAt    time.Time `json:"observedAt" yaml:"observedAt"`
+	ExpiresAt     time.Time `json:"expiresAt" yaml:"expiresAt"`
+	StateFile     string    `json:"stateFile" yaml:"stateFile"`
+}
+
 func mobilityCommand(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		mobilityUsage(stderr)
@@ -85,6 +106,12 @@ func mobilityCommand(args []string, stdout, stderr io.Writer) error {
 		return mobilityOwnersCommand(args[1:], stdout)
 	case "explain":
 		return mobilityExplainCommand(args[1:], stdout)
+	case "enrollment-hmac":
+		return mobilityEnrollmentHMACCommand(args[1:], stdout)
+	case "enrollment-submit":
+		return mobilityEnrollmentSubmitCommand(args[1:], stdout)
+	case "enrollment-join":
+		return mobilityEnrollmentJoinCommand(args[1:], stdout)
 	case "leases", "list", "ownership", "show":
 		return fmt.Errorf("mobility %s was removed with BGP mobility; use `routerctl mobility owners`, `routerctl mobility paths`, `routerctl mobility traps`, or `routerctl mobility explain`", args[0])
 	case "help", "-h", "--help":
@@ -93,6 +120,344 @@ func mobilityCommand(args []string, stdout, stderr io.Writer) error {
 	default:
 		return fmt.Errorf("unknown mobility subcommand %q", args[0])
 	}
+}
+
+func mobilityEnrollmentHMACCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("mobility enrollment-hmac", flag.ContinueOnError)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"Compute a SAMEnrollmentClaim joinHMAC from a router config and join secret.",
+			"routerctl mobility enrollment-hmac --config leaf.yaml --claim leaf-b --secret-file /usr/local/etc/routerd/secrets/cloudedge-join-token\n"+
+				"routerctl mobility enrollment-hmac --config leaf.yaml --claim leaf-a --secret-env ROUTERD_JOIN_TOKEN --show-payload")
+	}
+	configPath := fs.String("config", defaultConfigPath(), "router config containing the SAMEnrollmentClaim")
+	claimName := fs.String("claim", "", "SAMEnrollmentClaim name")
+	secretFile := fs.String("secret-file", "", "join secret file")
+	secretEnv := fs.String("secret-env", "", "environment variable containing the join secret")
+	secretLiteral := fs.String("secret", "", "literal join secret")
+	secretBase64 := fs.Bool("secret-base64", false, "decode the selected secret as base64 before HMAC")
+	showPayload := fs.Bool("show-payload", false, "print the canonical payload before the HMAC")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected mobility enrollment-hmac argument %q", fs.Arg(0))
+	}
+	if strings.TrimSpace(*claimName) == "" {
+		return errors.New("mobility enrollment-hmac requires --claim")
+	}
+	secret, err := mobilityEnrollmentHMACSecret(*secretFile, *secretEnv, *secretLiteral, *secretBase64)
+	if err != nil {
+		return err
+	}
+	router, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	claim, err := mobilityEnrollmentClaim(router, *claimName)
+	if err != nil {
+		return err
+	}
+	if *showPayload {
+		fmt.Fprintln(stdout, samenrollment.JoinCanonicalPayload(claim))
+		fmt.Fprintln(stdout, "---")
+	}
+	fmt.Fprintln(stdout, samenrollment.JoinHMAC(secret, claim))
+	return nil
+}
+
+func mobilityEnrollmentSubmitCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("mobility enrollment-submit", flag.ContinueOnError)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"Submit a leaf SAMEnrollmentClaim to an RR routerd control API.",
+			"routerctl mobility enrollment-submit --config leaf.yaml --claim pve-leaf-b --socket /run/routerd/routerd.sock")
+	}
+	configPath := fs.String("config", defaultConfigPath(), "leaf config containing the SAMEnrollmentClaim")
+	claimName := fs.String("claim", "", "SAMEnrollmentClaim name")
+	socketPath := fs.String("socket", defaultSocketPath(), "RR routerd Unix domain socket path")
+	timeout := fs.Duration("timeout", 10*time.Second, "request timeout")
+	output := "table"
+	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
+	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected mobility enrollment-submit argument %q", fs.Arg(0))
+	}
+	if strings.TrimSpace(*claimName) == "" {
+		return errors.New("mobility enrollment-submit requires --claim")
+	}
+	router, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	claim, err := mobilityEnrollmentClaimResource(router, *claimName)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	result, err := controlapi.NewUnixClient(*socketPath).SubmitSAMEnrollmentClaim(ctx, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim})
+	if err != nil {
+		return fmt.Errorf("submit SAMEnrollmentClaim to routerd failed: %w", err)
+	}
+	switch output {
+	case "", "table", "text":
+		fmt.Fprintf(stdout, "accepted\t%s\nsource\t%s\ngeneration\t%d\nexpiresAt\t%s\n", result.ClaimRef, result.DynamicSource, result.Generation, result.ExpiresAt.Format(time.RFC3339))
+		return nil
+	case "json":
+		return writeJSON(stdout, result)
+	case "yaml":
+		return writeYAML(stdout, result)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
+func mobilityEnrollmentJoinCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("mobility enrollment-join", flag.ContinueOnError)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"Submit a leaf SAMEnrollmentClaim, fetch its SAMRRSet, and persist the RRSet into local dynamic state.",
+			"routerctl mobility enrollment-join --config leaf.yaml --claim pve-leaf-b --rr-url http://pve-rr:8080 --state-file /var/lib/routerd/routerd.db\n"+
+				"routerctl mobility enrollment-join --config leaf.yaml --claim pve-leaf-a --rr-socket /run/routerd/routerd.sock")
+	}
+	configPath := fs.String("config", defaultConfigPath(), "leaf config containing the SAMEnrollmentClaim")
+	claimName := fs.String("claim", "", "SAMEnrollmentClaim name")
+	rrSocketPath := fs.String("rr-socket", "", "RR routerd Unix domain socket path")
+	rrURL := fs.String("rr-url", "", "RR routerd control API base URL")
+	statePath := fs.String("state-file", defaultStatePath(), "local leaf routerd state database file")
+	timeout := fs.Duration("timeout", 10*time.Second, "request timeout")
+	output := "table"
+	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
+	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected mobility enrollment-join argument %q", fs.Arg(0))
+	}
+	if strings.TrimSpace(*claimName) == "" {
+		return errors.New("mobility enrollment-join requires --claim")
+	}
+	if strings.TrimSpace(*rrSocketPath) != "" && strings.TrimSpace(*rrURL) != "" {
+		return errors.New("mobility enrollment-join accepts only one of --rr-socket or --rr-url")
+	}
+	router, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	claimResource, err := mobilityEnrollmentClaimResource(router, *claimName)
+	if err != nil {
+		return err
+	}
+	claim, err := claimResource.SAMEnrollmentClaimSpec()
+	if err != nil {
+		return err
+	}
+	rrSetName, err := mobilityRRSetNameFromRef(claim.RRSetRef)
+	if err != nil {
+		return err
+	}
+	client := mobilityEnrollmentClient(*rrSocketPath, *rrURL)
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	submitResult, err := client.SubmitSAMEnrollmentClaim(ctx, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claimResource})
+	if err != nil {
+		return fmt.Errorf("submit SAMEnrollmentClaim to routerd failed: %w", err)
+	}
+	rrSetResult, err := client.GetSAMRRSet(ctx, controlapi.SAMRRSetGetRequest{Name: rrSetName, ClaimRef: "SAMEnrollmentClaim/" + claimResource.Metadata.Name})
+	if err != nil {
+		return fmt.Errorf("fetch SAMRRSet from routerd failed: %w", err)
+	}
+	record, err := mobilityFetchedSAMRRSetRecord(rrSetResult.RRSet, submitResult.ObservedAt, submitResult.ExpiresAt)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(strings.TrimSpace(*statePath)), 0755); err != nil {
+		return err
+	}
+	store, err := routerstate.OpenSQLite(*statePath)
+	if err != nil {
+		return fmt.Errorf("open local leaf state database %s: %w", *statePath, err)
+	}
+	defer store.Close()
+	if err := store.UpsertDynamicConfigPart(record); err != nil {
+		return err
+	}
+	result := mobilityEnrollmentJoinResult{
+		Accepted:      submitResult.Accepted,
+		ClaimRef:      submitResult.ClaimRef,
+		RRSetRef:      "SAMRRSet/" + rrSetName,
+		DynamicSource: record.Source,
+		Generation:    record.Generation,
+		ObservedAt:    record.ObservedAt,
+		ExpiresAt:     record.ExpiresAt,
+		StateFile:     *statePath,
+	}
+	switch output {
+	case "", "table", "text":
+		fmt.Fprintf(stdout, "accepted\t%s\nrrSet\t%s\ndynamicSource\t%s\ngeneration\t%d\nexpiresAt\t%s\nstateFile\t%s\n", result.ClaimRef, result.RRSetRef, result.DynamicSource, result.Generation, result.ExpiresAt.Format(time.RFC3339), result.StateFile)
+		return nil
+	case "json":
+		return writeJSON(stdout, result)
+	case "yaml":
+		return writeYAML(stdout, result)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
+func mobilityEnrollmentClient(socketPath, baseURL string) *controlapi.Client {
+	if strings.TrimSpace(baseURL) != "" {
+		return controlapi.NewHTTPClient(baseURL)
+	}
+	if strings.TrimSpace(socketPath) == "" {
+		socketPath = defaultSocketPath()
+	}
+	return controlapi.NewUnixClient(socketPath)
+}
+
+func mobilityRRSetNameFromRef(ref string) (string, error) {
+	kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
+	if !ok || kind != "SAMRRSet" || strings.TrimSpace(name) == "" {
+		return "", fmt.Errorf("rrSetRef must reference SAMRRSet/<name>")
+	}
+	return strings.TrimSpace(name), nil
+}
+
+func mobilityFetchedSAMRRSetRecord(resource api.Resource, observedAt, expiresAt time.Time) (routerstate.DynamicConfigPartRecord, error) {
+	if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMRRSet" || strings.TrimSpace(resource.Metadata.Name) == "" {
+		return routerstate.DynamicConfigPartRecord{}, fmt.Errorf("fetched resource must be %s/SAMRRSet", api.MobilityAPIVersion)
+	}
+	if _, err := resource.SAMRRSetSpec(); err != nil {
+		return routerstate.DynamicConfigPartRecord{}, err
+	}
+	if observedAt.IsZero() {
+		observedAt = time.Now().UTC()
+	}
+	if expiresAt.IsZero() {
+		expiresAt = observedAt.Add(24 * time.Hour)
+	}
+	part := dynamicconfig.DynamicConfigPart{
+		TypeMeta: api.TypeMeta{APIVersion: dynamicconfig.ConfigAPIVersion, Kind: "DynamicConfigPart"},
+		Metadata: api.ObjectMeta{
+			Name: "fetched-sam-rrset-" + resource.Metadata.Name,
+			OwnerRefs: []api.OwnerRef{{
+				APIVersion: api.MobilityAPIVersion,
+				Kind:       "SAMRRSet",
+				Name:       resource.Metadata.Name,
+			}},
+		},
+		Spec: dynamicconfig.DynamicConfigPartSpec{
+			Source:     "SAMRRSet/" + resource.Metadata.Name,
+			Generation: 1,
+			ObservedAt: observedAt.UTC(),
+			ExpiresAt:  expiresAt.UTC(),
+			Resources:  []api.Resource{resource},
+		},
+	}
+	part.Spec.Digest = digestMobilityDynamicPart(part)
+	resources, err := json.Marshal(part.Spec.Resources)
+	if err != nil {
+		return routerstate.DynamicConfigPartRecord{}, err
+	}
+	directives, err := json.Marshal(part.Spec.Directives)
+	if err != nil {
+		return routerstate.DynamicConfigPartRecord{}, err
+	}
+	return routerstate.DynamicConfigPartRecord{
+		Source:         part.Spec.Source,
+		Generation:     part.Spec.Generation,
+		ObservedAt:     part.Spec.ObservedAt,
+		ExpiresAt:      part.Spec.ExpiresAt,
+		Digest:         part.Spec.Digest,
+		ResourcesJSON:  string(resources),
+		DirectivesJSON: string(directives),
+		Status:         "active",
+	}, nil
+}
+
+func digestMobilityDynamicPart(part dynamicconfig.DynamicConfigPart) string {
+	data, err := json.Marshal(part.Spec)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func mobilityEnrollmentHMACSecret(file, env, literal string, decodeBase64 bool) ([]byte, error) {
+	selected := 0
+	var value string
+	if strings.TrimSpace(file) != "" {
+		selected++
+		data, err := os.ReadFile(strings.TrimSpace(file))
+		if err != nil {
+			return nil, err
+		}
+		value = string(data)
+	}
+	if strings.TrimSpace(env) != "" {
+		selected++
+		envValue, ok := os.LookupEnv(strings.TrimSpace(env))
+		if !ok {
+			return nil, fmt.Errorf("secret environment variable %q is not set", strings.TrimSpace(env))
+		}
+		value = envValue
+	}
+	if literal != "" {
+		selected++
+		value = literal
+	}
+	if selected != 1 {
+		return nil, errors.New("mobility enrollment-hmac requires exactly one of --secret-file, --secret-env, or --secret")
+	}
+	value = strings.TrimSpace(value)
+	if decodeBase64 {
+		decoded, err := base64.StdEncoding.DecodeString(value)
+		if err != nil {
+			return nil, err
+		}
+		return decoded, nil
+	}
+	return []byte(value), nil
+}
+
+func mobilityEnrollmentClaim(router *api.Router, name string) (api.SAMEnrollmentClaimSpec, error) {
+	resource, err := mobilityEnrollmentClaimResource(router, name)
+	if err != nil {
+		return api.SAMEnrollmentClaimSpec{}, err
+	}
+	return resource.SAMEnrollmentClaimSpec()
+}
+
+func mobilityEnrollmentClaimResource(router *api.Router, name string) (api.Resource, error) {
+	name = strings.TrimSpace(name)
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentClaim" || resource.Metadata.Name != name {
+			continue
+		}
+		if _, err := resource.SAMEnrollmentClaimSpec(); err != nil {
+			return api.Resource{}, err
+		}
+		return resource, nil
+	}
+	return api.Resource{}, fmt.Errorf("SAMEnrollmentClaim/%s not found", name)
 }
 
 func mobilityOwnersCommand(args []string, stdout io.Writer) error {
@@ -258,6 +623,9 @@ func mobilityUsage(w io.Writer) {
 	fmt.Fprintln(w, "  explain --pool <name> --address <ipv4/32> [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  paths [--prefix <prefix>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  traps [--address <ipv4/32>] [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  enrollment-hmac --config <path> --claim <name> (--secret-file <path>|--secret-env <name>|--secret <value>) [--secret-base64] [--show-payload]")
+	fmt.Fprintln(w, "  enrollment-submit --config <path> --claim <name> [--socket <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  enrollment-join --config <path> --claim <name> [--rr-socket <path>|--rr-url <url>] [--state-file <path>] [-o table|json|yaml]")
 }
 
 func mobilityOwnerRows(statuses []routerstate.ObjectStatus, poolFilter, addressFilter string) []mobilityOwnerRow {

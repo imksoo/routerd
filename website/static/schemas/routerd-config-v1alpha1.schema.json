@@ -3324,6 +3324,212 @@
                         },
                         "type": "array"
                       },
+                      "peersFrom": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "optional": {
+                              "type": "boolean"
+                            },
+                            "resource": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "resource"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "routeReflectorClient": {
+                        "type": "boolean"
+                      },
+                      "routeReflectorClusterID": {
+                        "type": "string"
+                      },
+                      "routerRef": {
+                        "type": "string"
+                      },
+                      "timers": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "profile": {
+                            "enum": [
+                              "",
+                              "default",
+                              "fast",
+                              "slow"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "when": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "state": {
+                            "additionalProperties": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "contains": {
+                                  "type": "string"
+                                },
+                                "equals": {
+                                  "type": "string"
+                                },
+                                "exists": {
+                                  "type": "boolean"
+                                },
+                                "for": {
+                                  "type": "string"
+                                },
+                                "in": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "set",
+                                    "unset",
+                                    "unknown"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "description": "State gates a resource on status fields from other resources.",
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "routerRef",
+                      "peerASN"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "net.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "BGPDynamicPeer",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "description": "BGPDynamicPeer represents an admission/listen rule for dynamic BGP neighbors.",
+                    "properties": {
+                      "ebgpMultihop": {
+                        "maximum": 255,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "exportPolicy": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "allowedPrefixes": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "importPolicy": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "allowedPrefixes": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "nextHopRewrite": {
+                            "enum": [
+                              "",
+                              "peer-address",
+                              "unchanged"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "listen": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "sourcePrefixes": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "required": [
+                          "sourcePrefixes"
+                        ],
+                        "type": "object"
+                      },
+                      "password": {
+                        "type": "string"
+                      },
+                      "passwordFrom": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "base64": {
+                            "type": "boolean"
+                          },
+                          "env": {
+                            "type": "string"
+                          },
+                          "file": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "peerASN": {
+                        "minimum": 1,
+                        "type": "integer"
+                      },
                       "routeReflectorClient": {
                         "type": "boolean"
                       },
@@ -3394,7 +3600,7 @@
                     "required": [
                       "routerRef",
                       "peerASN",
-                      "peers"
+                      "listen"
                     ],
                     "type": "object"
                   },
@@ -9505,6 +9711,404 @@
                     "type": "string"
                   },
                   "kind": {
+                    "const": "SAMRRSet",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "description": "SAMRRSet declares the intended hub/RR admission set.",
+                    "properties": {
+                      "enrollmentPolicyRef": {
+                        "type": "string"
+                      },
+                      "members": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "bgp": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "asn": {
+                                  "minimum": 1,
+                                  "type": "integer"
+                                },
+                                "routerID": {
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "endpoint": {
+                              "description": "Endpoint is the member's generic underlay endpoint. For\nencryption=none this is the remote endpoint used by ipip/gre. For\nencryption=wireguard, the WireGuard block carries the UDP endpoint and\nthis field remains the transport endpoint consumed by SAMTransportProfile.",
+                              "type": "string"
+                            },
+                            "nodeRef": {
+                              "type": "string"
+                            },
+                            "tunnelAddress": {
+                              "type": "string"
+                            },
+                            "wireGuard": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "allowedIPs": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "endpoint": {
+                                  "type": "string"
+                                },
+                                "persistentKeepalive": {
+                                  "maximum": 65535,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "publicKey": {
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "nodeRef",
+                            "endpoint",
+                            "tunnelAddress"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "mobilityPoolRefs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "routeAdmission": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "allowedPrefixes": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "nextHopRewrite": {
+                            "enum": [
+                              "",
+                              "peer-address",
+                              "unchanged"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "enrollmentPolicyRef",
+                      "members"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "mobility.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "SAMEnrollmentPolicy",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "description": "SAMEnrollmentPolicy authorizes leaf-side enrollment claims for SAM.",
+                    "properties": {
+                      "allowedLeafIDs": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "pattern": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "endpointPrefixes": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "joinAudience": {
+                        "type": "string"
+                      },
+                      "joinTokenFrom": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "base64": {
+                            "type": "boolean"
+                          },
+                          "env": {
+                            "type": "string"
+                          },
+                          "file": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "mobilityPoolRefs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "revokeAfterInactive": {
+                        "type": "string"
+                      },
+                      "rrSetRef": {
+                        "type": "string"
+                      },
+                      "transportProfileRef": {
+                        "type": "string"
+                      },
+                      "ttl": {
+                        "type": "string"
+                      },
+                      "tunnelAddressPrefixes": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "wireGuard": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "allowedExtraIPPrefixes": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "interface": {
+                            "type": "string"
+                          },
+                          "persistentKeepalive": {
+                            "maximum": 65535,
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "interface"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "transportProfileRef",
+                      "tunnelAddressPrefixes"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "mobility.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "SAMEnrollmentClaim",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "description": "SAMEnrollmentClaim is the leaf identity and enrollment payload.",
+                    "properties": {
+                      "bgp": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "asn": {
+                            "minimum": 1,
+                            "type": "integer"
+                          },
+                          "routerID": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "endpoint": {
+                        "type": "string"
+                      },
+                      "expiresAt": {
+                        "type": "string"
+                      },
+                      "joinAudience": {
+                        "type": "string"
+                      },
+                      "joinHMAC": {
+                        "type": "string"
+                      },
+                      "joinNonce": {
+                        "type": "string"
+                      },
+                      "joinTimestamp": {
+                        "type": "string"
+                      },
+                      "leafID": {
+                        "type": "string"
+                      },
+                      "mobility": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "ownedAddresses": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "policyRef": {
+                        "type": "string"
+                      },
+                      "revoked": {
+                        "type": "boolean"
+                      },
+                      "rrSetRef": {
+                        "type": "string"
+                      },
+                      "tunnelAddress": {
+                        "type": "string"
+                      },
+                      "wireGuard": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "allowedIPs": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "endpoint": {
+                            "type": "string"
+                          },
+                          "persistentKeepalive": {
+                            "maximum": 65535,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "publicKey": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "publicKey"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "policyRef",
+                      "leafID",
+                      "tunnelAddress"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "mobility.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
                     "const": "SAMTransportProfile",
                     "type": "string"
                   },
@@ -9585,6 +10189,9 @@
                             },
                             "type": "object"
                           },
+                          "generatePeers": {
+                            "type": "boolean"
+                          },
                           "importPolicy": {
                             "additionalProperties": false,
                             "properties": {
@@ -9649,6 +10256,16 @@
                         ],
                         "type": "object"
                       },
+                      "encapDport": {
+                        "maximum": 65535,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "encapSport": {
+                        "maximum": 65535,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
                       "encryption": {
                         "enum": [
                           "",
@@ -9686,7 +10303,9 @@
                       "mode": {
                         "enum": [
                           "ipip",
-                          "gre"
+                          "gre",
+                          "fou",
+                          "gue"
                         ],
                         "type": "string"
                       },

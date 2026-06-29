@@ -48,8 +48,10 @@ type AppliedGlobal struct {
 }
 
 type AppliedImportPolicy struct {
-	AllowedPrefixes []string `json:"allowedPrefixes,omitempty"`
-	NextHopRewrite  string   `json:"nextHopRewrite,omitempty"`
+	AllowedPrefixes        []string `json:"allowedPrefixes,omitempty"`
+	AllowedPrefixLengthMin int      `json:"allowedPrefixLengthMin,omitempty"`
+	AllowedPrefixLengthMax int      `json:"allowedPrefixLengthMax,omitempty"`
+	NextHopRewrite         string   `json:"nextHopRewrite,omitempty"`
 }
 
 type AppliedExportPolicy struct {

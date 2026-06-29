@@ -1,0 +1,157 @@
+# yaml-language-server: $schema=https://routerd.net/schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: pve-leaf-a
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata: { name: private-wan }
+      spec: { ifname: vmbr0, managed: false, mtu: 1500 }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata: { name: private-wan-ipv4 }
+      spec: { interface: private-wan, address: 10.30.0.21/24 }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: { name: wg-pve }
+      spec:
+        selfNodeRef: pve-leaf-a
+        privateKeyFile: /usr/local/etc/routerd/secrets/wg-pve.key
+        listenPort: 51820
+        mtu: 1420
+        peersFrom:
+          - resource: SAMRRSet/pve-rrs
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata: { name: wg-pve }
+      spec: { ifname: wg-pve, managed: false, mtu: 1420 }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata: { name: wg-pve-ipv4 }
+      spec: { interface: wg-pve, address: 10.31.0.21/32 }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata: { name: lo-mobility }
+      spec: { ifname: lo, managed: false }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata: { name: owned-service-ip }
+      spec:
+        interface: lo-mobility
+        address: 10.77.70.21/32
+        allowOverlap: true
+        allowOverlapReason: pve-leaf-a owned mobility /32 advertised to pve-rr
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPRouter
+      metadata: { name: mobility-bgp }
+      spec:
+        asn: 64577
+        routerID: 10.255.10.21
+        exportPolicy:
+          allowedPrefixes: [10.77.70.21/32]
+        redistribute:
+          connected:
+            allowedPrefixes: [10.77.70.21/32]
+        timers: { profile: fast }
+        convergenceProfile: fast
+
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMTransportProfile
+      metadata: { name: pve-leaf-a }
+      spec:
+        selfNodeRef: pve-leaf-a
+        mode: ipip
+        encryption: wireguard
+        addressingMode: pair-stable
+        innerPrefix: 10.255.10.0/24
+        underlayInterface: wg-pve
+        localEndpoint: 10.31.0.21
+        peersFrom:
+          - resource: SAMRRSet/pve-rrs
+        bgp:
+          routerRef: BGPRouter/mobility-bgp
+          peerASN: 64577
+          timersPreset: fast
+          importPolicy:
+            allowedPrefixes: [10.77.70.0/24]
+            allowedPrefixLengthMin: 32
+            allowedPrefixLengthMax: 32
+            nextHopRewrite: unchanged
+          exportPolicy:
+            allowedPrefixes: [10.77.70.21/32]
+
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: MobilityPool
+      metadata: { name: pve-mobility }
+      spec:
+        prefix: 10.77.70.0/24
+        groupRef: pve-lab
+        mode: selective-address
+        members:
+          - nodeRef: pve-leaf-a
+            site: pve-lab
+            role: onprem
+
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentPolicy
+      metadata: { name: pve-wg-leaves }
+      spec:
+        transportProfileRef: SAMTransportProfile/pve-leaf-a
+        rrSetRef: SAMRRSet/pve-rrs
+        joinTokenFrom:
+          file: /usr/local/etc/routerd/secrets/pve-join-token
+        joinAudience: pve-wg-underlay
+        allowedLeafIDs:
+          pattern: ^pve-leaf-[a-z0-9-]+$
+        tunnelAddressPrefixes: [10.255.10.0/24]
+        endpointPrefixes: [10.31.0.0/24]
+        ttl: 24h
+        wireGuard:
+          interface: wg-pve
+          endpointPrefixes: [10.30.0.0/24]
+          allowedExtraIPPrefixes: [10.31.0.0/24]
+          persistentKeepalive: 25
+        mobilityPoolRefs: [MobilityPool/pve-mobility]
+
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentClaim
+      metadata: { name: pve-leaf-a }
+      spec:
+        policyRef: SAMEnrollmentPolicy/pve-wg-leaves
+        rrSetRef: SAMRRSet/pve-rrs
+        leafID: pve-leaf-a
+        joinAudience: pve-wg-underlay
+        joinNonce: pve-leaf-a-0001
+        joinTimestamp: "2026-06-28T00:00:00Z"
+        joinHMAC: EXAMPLE_HMAC_SHA256_HEX
+        tunnelAddress: 10.255.10.21/32
+        endpoint: 10.31.0.21
+        wireGuard:
+          publicKey: PVE_LEAF_A_WIREGUARD_PUBLIC_KEY
+          endpoint: 10.30.0.21:51820
+          allowedIPs: [10.31.0.21/32]
+          persistentKeepalive: 25
+        mobility:
+          ownedAddresses: [10.77.70.21/32]
+        bgp:
+          asn: 64577
+          routerID: 10.255.10.21
+
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentClient
+      metadata: { name: pve-leaf-a }
+      spec:
+        claimRef: SAMEnrollmentClaim/pve-leaf-a
+        bootstrapEndpoints:
+          - http://10.30.0.10:8080
+        stateTTLRefreshBefore: 10m
+        retryBackoff: { min: 10s, max: 15m }

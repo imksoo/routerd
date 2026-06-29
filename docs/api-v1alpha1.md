@@ -44,7 +44,7 @@ spec:
 | `observability.routerd.net/v1alpha1` | `Telemetry` |
 | `plugin.routerd.net/v1alpha1` | plugin manifests |
 | `hybrid.routerd.net/v1alpha1` | `TunnelInterface`, `OverlayPeer`, `HybridRoute`, `AddressMobilityDomain`, `CloudProviderProfile`, `RemoteAddressClaim` |
-| `mobility.routerd.net/v1alpha1` | `MobilityPool`, `MobilityMemberSet`, `SAMNodeSet`, `SAMTransportProfile` |
+| `mobility.routerd.net/v1alpha1` | `MobilityPool`, `MobilityMemberSet`, `SAMNodeSet`, `SAMRRSet`, `SAMEnrollmentPolicy`, `SAMEnrollmentClaim`, `SAMEnrollmentClient`, `SAMTransportProfile` |
 
 ## System Bootstrap
 
@@ -82,7 +82,7 @@ resource instead of duplicating collector endpoints.
 | `ManagementAccess` | Declares management interfaces and apply-time lockout checks. When present, apply fails if declared interfaces are missing, blocked by firewall zoning, or an enabled WebConsole is bound to all addresses unless `--allow-mgmt-lockout` is set. |
 | `PPPoESession` | Defines PPPoE lower-interface settings. |
 | `PPPoESession` | Represents a `routerd-pppoe-client` session. |
-| `WireGuardInterface` | Represents a WireGuard interface. It can import peer definitions from `SAMNodeSet` with `peersFrom`. |
+| `WireGuardInterface` | Represents a WireGuard interface. It can import peer definitions from `SAMNodeSet`, `SAMEnrollmentPolicy`, or `SAMRRSet` with `peersFrom` when WireGuard encryption is selected. |
 | `WireGuardPeer` | Represents a WireGuard peer. |
 | `TailscaleNode` | Configures a local Tailscale node for exit-node and subnet-router advertisement through a managed systemd unit. |
 | `IPsecConnection` | Defines a cloud VPN oriented strongSwan connection. |
@@ -110,9 +110,13 @@ intended for examples and tests. On FreeBSD, routerd renders an rc.d service
 that creates the
 `wg` interface, loads the key from that file, applies peers, and then assigns
 declared static addresses for the WireGuard interface.
-`WireGuardInterface.spec.peersFrom` references `SAMNodeSet/<name>` and derives
-peers from `SAMNodeSet.spec.nodes[].wireGuard`. Static `WireGuardPeer` resources
-with the same `metadata.name` override generated peers.
+`WireGuardInterface.spec.peersFrom` references `SAMNodeSet/<name>`,
+`SAMEnrollmentPolicy/<name>`, or `SAMRRSet/<name>` and derives peers from
+node-set WireGuard identity, accepted enrollment claims, or RRSet member
+WireGuard identity. This is the WireGuard-specific materialization path only;
+plain IPIP/GRE SAM transport uses `SAMTransportProfile` and does not require
+WireGuard peers. Static `WireGuardPeer` resources with the same `metadata.name`
+override generated peers.
 
 Kernel modules and systemd-networkd/resolved adoption drop-ins are derived from
 router resources. If a config still contains the removed `KernelModule`,
@@ -191,7 +195,11 @@ resolver addresses for DoH or DoT endpoint name resolution.
 | `MobilityPool` | Declares the CloudEdge mobility intent: pool prefix, federation group, node-to-site membership or `membersFrom` sources, BGP delivery policy, optional reusable cloud capture profiles, local value expansion, and provider trap placement. routerd derives BGP `/32` advertisements and provider trap action plans from observed facts and BGP best paths. |
 | `MobilityMemberSet` | Groups shared identity-only MobilityPool members (`nodeRef`, `site`, `role`, optional placement/maintenance) so leaves can import them with `MobilityPool.spec.membersFrom` and keep only local capture/discovery details inline. |
 | `SAMNodeSet` | Defines the shared SAM fabric node identity registry: node identity, optional site/role, Event Federation endpoint, SAM transport endpoint, and non-secret WireGuard peer identity. Follow-on controllers use it as the single source for generated EventPeer, WireGuardPeer, SAM transport peers, and MobilityPool members. |
-| `SAMTransportProfile` | Declares this router's stable `selfNodeRef`, inner tunnel prefix, underlay interface, BGP router, and SAM transport peers. It can import topology and peer endpoints from `SAMNodeSet` with `peersFrom`. routerd derives per-peer `TunnelInterface`, endpoint `/32` `IPv4Route`, and `BGPPeer` resources through a replace-on-reconcile `DynamicConfigPart`. |
+| `SAMRRSet` | Declares a route-reflector set: RR member nodeRefs, generic endpoints, tunnel identities, optional WireGuard identity, and shared enrollment/MobilityPool/route-admission references. It never lists leaves. |
+| `SAMEnrollmentPolicy` | Authorizes SAM transport enrollment claims for a hub/RR. It binds a transport profile, optional RRSet, join-token source, join audience, tunnel and endpoint prefixes, optional leaf ID pattern, TTL/revocation policy, optional WireGuard materialization settings, and authorized MobilityPool references. |
+| `SAMEnrollmentClaim` | Carries one leaf enrollment payload: leaf identity, join nonce/timestamp/HMAC, RRSet reference, tunnel address, endpoint, optional BGP identity, optional MobilityPool-owned `/32`s, optional WireGuard credentials, expiry, and revocation state. |
+| `SAMEnrollmentClient` | Runs leaf-side bootstrap/refresh: submits a local `SAMEnrollmentClaim` to bootstrap RR endpoints, fetches the allowed `SAMRRSet`, and persists it as dynamic state only when missing, near expiry, or claim material changes. |
+| `SAMTransportProfile` | Declares this router's stable `selfNodeRef`, `mode` (`ipip`, `gre`, `fou`, or `gue`), `encryption` (`none` or `wireguard`), inner tunnel prefix, underlay interface, BGP router, and SAM transport peers. `fou`/`gue` use the existing `TunnelInterface` FOU/GUE path and require `encapSport` and `encapDport`. It can import topology and peer endpoints from `SAMNodeSet`, `SAMPeerGroup`, `SAMEnrollmentPolicy`, or `SAMRRSet` with `peersFrom`. routerd derives per-peer `TunnelInterface`, endpoint `/32` `IPv4Route`, and, unless `spec.bgp.generatePeers: false`, `BGPPeer` resources through a replace-on-reconcile `DynamicConfigPart`. |
 | `AddressMobilityDomain` | Low-level compatibility SAM resource that defines an IPv4 prefix for hand-authored selective-address configs; full L2 extension is not supported. |
 | `CloudProviderProfile` | Describes provider capabilities and external-command auth for declarative address capture planning. |
 | `RemoteAddressClaim` | Low-level compatibility SAM resource that declares one mobile IPv4 `/32`, its capture mechanism, and legacy route delivery over an `OverlayPeer`. |
@@ -200,6 +208,7 @@ resolver addresses for DoH or DoT endpoint name resolution.
 | `ClusterNetworkRoute` | Expands Kubernetes Pod and Service CIDRs into static IPv4 routes through worker next hops. |
 | `BGPRouter` | Declares a local BGP router. The current backend is a long-lived `routerd-bgp` GoBGP daemon with default-deny import policy. |
 | `BGPPeer` | Declares GoBGP-managed BGP peers for a `BGPRouter`, for example Kubernetes BGP speakers. |
+| `BGPDynamicPeer` | Declares a bounded GoBGP dynamic-neighbor accept range for hub/RR fabrics. It lets an RR accept passive BGP sessions from leaf source prefixes without pre-declaring every leaf as a `BGPPeer`. |
 | `BFD` | Declares one BFD session intent. On Linux, routerd renders FRR `bfdd` configuration and records observed BFD state without deconfiguring referenced GoBGP peers. |
 | `NAT44Rule` | Performs IPv4 NAPT in the nftables `routerd_nat` table. |
 | `NAT44SessionSync` | Mirrors selected NAT44 conntrack sessions from an active node to standby nodes over SSH. |
@@ -223,7 +232,11 @@ CloudEdge Mobility keeps the operator-authored surface declarative:
 `MobilityPool` is the high-level address/capture intent,
 `MobilityMemberSet` is a reusable shared member list,
 `SAMNodeSet` is the write-once node identity registry for generated peers,
-`SAMTransportProfile` is the high-level transport/BGP intent, federation events
+`SAMRRSet` is the shared RR admission-set intent,
+`SAMEnrollmentPolicy`/`SAMEnrollmentClaim` are the generic leaf transport
+enrollment boundary, `SAMEnrollmentClient` is the leaf bootstrap/refresh
+controller, `SAMTransportProfile` is the high-level transport/BGP
+intent, federation events
 are observed facts, and BGP best paths are the mobility ownership/delivery view.
 The mobility planner derives BGP `/32` advertisements and provider trap action
 plans; operators should not hand-author per-address paths or capture procedures
@@ -315,7 +328,8 @@ addresses and restores the parsed tuple and conntrack mark on standby targets.
 It is intended for active-to-standby HA sync and is usually gated with
 `spec.when`.
 
-`BGPRouter` and `BGPPeer` currently use the long-lived `routerd-bgp` daemon.
+`BGPRouter`, `BGPPeer`, and `BGPDynamicPeer` currently use the long-lived
+`routerd-bgp` daemon.
 routerd maps the resource specs directly to typed GoBGP API objects over a
 local gRPC Unix socket and observes status through `ListPeer` and `ListPath`;
 it does not render FRR text config, run `frr-reload.py`, parse `vtysh`, or use
@@ -334,6 +348,36 @@ peer-address ECMP even when the advertised next-hop is a downstream speaker.
 Set `nextHopRewrite: unchanged` only when the advertised next-hop is meant to
 be installed directly. Equal best paths for the same prefix are installed as
 ECMP next hops.
+
+`BGPDynamicPeer` is an RR-side BGP acceptor for GoBGP dynamic neighbors. Its
+`spec.listen.sourcePrefixes` controls which source addresses may open BGP TCP
+sessions. It is not route admission; accepted NLRI is still constrained by
+`spec.importPolicy.allowedPrefixes`, and exported routes by
+`spec.exportPolicy.allowedPrefixes`. `BGPDynamicPeer` does not carry WireGuard
+public keys, allowed IPs, SAM tunnel addresses, leaf identity, TTL/revocation,
+or MobilityPool ownership authorization.
+
+`SAMRRSet`, `SAMEnrollmentPolicy`, and `SAMEnrollmentClaim` are the SAM
+control-plane intent for dynamic hub/leaf fabrics. The primary private-underlay
+path uses `SAMTransportProfile.spec.peersFrom` to consume `SAMRRSet` or
+accepted enrollment claims and generate existing `TunnelInterface` and
+`BGPPeer` resources. On an RR that accepts sessions through `BGPDynamicPeer`,
+set `SAMTransportProfile.spec.bgp.generatePeers: false` so SAM creates transport
+tunnels without generated per-leaf BGP peers. Enrollment can be authenticated
+with a policy
+`joinTokenFrom` and claim `joinNonce`, `joinTimestamp`, and `joinHMAC` fields.
+When the referenced secret is readable at validation time, `joinHMAC` is
+verified as lowercase hex HMAC-SHA256 over the canonical claim join payload:
+policy/RRSet refs, leaf ID, audience, nonce, timestamp, tunnel address,
+endpoint, owned `/32`s, BGP identity, and optional WireGuard credentials.
+If `encryption: wireguard` is selected, a hub can also set
+`WireGuardInterface.spec.peersFrom: [{resource: SAMEnrollmentPolicy/<name>}]`;
+routerd then materializes `WireGuardPeer` entries only for non-revoked,
+non-expired claims whose leaf ID and tunnel address satisfy the policy and that
+carry WireGuard credentials. The claim's `spec.mobility.ownedAddresses` are
+authorization input for `MobilityPool` ownership and must fall within a pool
+referenced by the policy when that policy is present in the same config. BGP
+route admission remains a `BGPDynamicPeer`/BGP policy concern.
 
 `BGPRouter.spec.convergenceProfile: fast` is intended for Kubernetes/edge
 routers that prefer quick convergence over graceful restart stale-path
@@ -580,6 +624,7 @@ and fields outside the target kind's `provides` set.
 | Kind | Provides |
 | --- | --- |
 | `BFD` | `peer` (string), `phase` (string) |
+| `BGPDynamicPeer` | `acceptedRouteCount` (int), `discoveredPeerCount` (int), `discoveredPeers` (objectList), `observedAt` (timestamp), `peerGroup` (string), `phase` (string), `rejectedRouteCount` (int), `rejectedRouteSummary` (object), `sourcePrefixCount` (int), `sourcePrefixes` (stringList) |
 | `BGPPeer` | `acceptedPrefixes` (int), `address` (string), `observedAt` (timestamp), `phase` (string), `state` (string) |
 | `BGPRouter` | `acceptedPrefixes` (int), `establishedPeers` (int), `observedAt` (timestamp), `peers` (objectList), `phase` (string), `prefixes` (int) |
 | `Bridge` | `ifname` (string), `members` (stringList), `phase` (string) |
@@ -634,6 +679,10 @@ and fields outside the target kind's `provides` set.
 | `MobilityMemberSet` | `memberCount` (int) |
 | `MobilityPool` | `addresses` (object), `dynamicSource` (string), `generatedActions` (int), `generatedBGPPaths` (int), `generatedBGPTraps` (int), `groupRef` (string), `memberSet` (object), `membersFrom` (objectList), `pendingSources` (stringList), `placementActive` (bool), `placementActiveNode` (string), `placementGroup` (string), `plannerPhase` (string), `plannerReason` (string), `prefix` (string), `resolvedMemberCount` (int), `deliveryMode` (string), `discoverySelfPrivateIPs` (stringList), `providerActionPhase` (string), `providerActionFailedCount` (int), `providerActionFailedAddresses` (stringList), `providerActionSupersededFailureCount` (int), `providerActionSupersededFailureAddresses` (stringList), `providerActionSupersededFailureReason` (string), `ownershipResolverPhase` (string), `ownershipResolverReason` (string), `ownershipResolverConflictCount` (int), `ownershipResolverConflicts` (objectList), `ownershipResolverOwnerTable` (objectList), `ownershipResolverControlPlaneOwnerTable` (objectList) |
 | `SAMNodeSet` | `nodeCount` (int) |
+| `SAMRRSet` | `enrollmentPolicyRef` (string), `memberCount` (int), `members` (stringList), `phase` (string) |
+| `SAMEnrollmentClaim` | `endpoint` (string), `expiresAt` (timestamp), `leafID` (string), `phase` (string), `revoked` (bool), `rrSetRef` (string), `tunnelAddress` (string) |
+| `SAMEnrollmentClient` | `backoff` (string), `claimRef` (string), `lastAttempt` (timestamp), `lastSuccess` (timestamp), `nextAttempt` (timestamp), `observedRRSet` (string), `phase` (string), `reason` (string) |
+| `SAMEnrollmentPolicy` | `acceptedClaims` (int), `leafIDs` (stringList), `phase` (string), `skippedClaims` (int) |
 | `NAT44Rule` | `dryRun` (bool), `egressInterface` (string), `phase` (string), `snatAddress` (string) |
 | `NAT44SessionSync` | `deleteFailed` (int), `deleteOK` (int), `dryRun` (bool), `insertFailed` (int), `insertOK` (int), `mode` (string), `phase` (string), `sessionCount` (int), `snatAddresses` (stringList), `syncedAt` (timestamp), `targetCount` (int), `targets` (objectList) |
 | `NTPClient` | `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |

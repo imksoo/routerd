@@ -499,6 +499,19 @@ func (s eventedStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
 	return lister.ListObjectStatuses()
 }
 
+func (s eventedStore) ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error) {
+	if s.Store == nil {
+		return nil, nil
+	}
+	lister, ok := s.Store.(interface {
+		ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error)
+	})
+	if !ok {
+		return nil, nil
+	}
+	return lister.ListDynamicConfigParts()
+}
+
 func (s eventedStore) DeleteObject(apiVersion, kind, name string) error {
 	if s.Store == nil {
 		return nil
@@ -1419,6 +1432,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	var mobility mobilitycontroller.Controller
 	var mobilityDiscovery mobilitycontroller.DiscoveryController
 	var mobilityTransport mobilitycontroller.TransportController
+	var mobilityEnrollmentClient mobilitycontroller.SAMEnrollmentClientController
 	var mobilityShard mobilitycontroller.ShardController
 	if rawStore, ok := r.Store.(mobilityDataStore); ok {
 		mobilityData := mobilityStore{evented: store, data: rawStore}
@@ -1448,6 +1462,10 @@ func (r *Runner) Start(ctx context.Context) error {
 			Router:        r.Router,
 			Store:         mobilityData,
 			PeerGroupSync: peerGroupSync,
+		}
+		mobilityEnrollmentClient = mobilitycontroller.SAMEnrollmentClientController{
+			Router: r.Router,
+			Store:  mobilityData,
 		}
 		mobilityShard = mobilitycontroller.ShardController{
 			Router: r.Router,
@@ -1548,7 +1566,15 @@ func (r *Runner) Start(ctx context.Context) error {
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "package", Every: 5 * time.Minute, PeriodicFunc: didWorkPeriodic(packages.Reconcile)},
-		framework.FuncController{ControllerName: "kernel-module", Every: 5 * time.Minute, PeriodicFunc: didWorkPeriodic(kernelModules.Reconcile)},
+		framework.FuncController{ControllerName: "kernel-module", Every: 5 * time.Minute, PeriodicFunc: func(ctx context.Context) (bool, error) {
+			effective, err := effectiveDynamicForReconcile()
+			if err != nil {
+				return false, err
+			}
+			current := kernelModules
+			current.Router = effective
+			return didWorkError(current.Reconcile(ctx))
+		}},
 		framework.FuncController{ControllerName: "sysctl", Every: 30 * time.Second, PeriodicFunc: didWorkPeriodic(sysctl.Reconcile)},
 		framework.FuncController{ControllerName: "network-adoption", Every: 5 * time.Minute, PeriodicFunc: didWorkPeriodic(adoption.Reconcile)},
 		framework.FuncController{ControllerName: "service-unit", Every: 5 * time.Minute, Subs: whenStatusSubscriptions(r.Router, "ServiceUnit", "TailscaleNode", "DHCPv4Client", "DHCPv6PrefixDelegation", "IPv6RouterAdvertisement", "DNSResolver", "EventGroup", "HealthCheck"), PeriodicFunc: func(ctx context.Context) (bool, error) {
@@ -1580,6 +1606,11 @@ func (r *Runner) Start(ctx context.Context) error {
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "link", Every: 30 * time.Second, PeriodicFunc: didWorkPeriodic(link.Reconcile)},
+		framework.FuncController{ControllerName: "sam-enrollment-client", Every: time.Minute, Subs: statusSubscriptions("SAMEnrollmentClient", "SAMEnrollmentClaim"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+			current := mobilityEnrollmentClient
+			current.Router = r.Router
+			return didWorkError(current.Reconcile(ctx))
+		}},
 		framework.FuncController{ControllerName: "sam-transport", Every: 30 * time.Second, Subs: statusSubscriptions("SAMTransportProfile", "SAMPeerGroup", "SAMNodeSet", "MobilityMemberSet", "Interface", "IPv4StaticAddress", "DHCPv4Client", "WireGuardInterface", "WireGuardPeer"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
@@ -1599,7 +1630,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			current.Store = store.withRouter(effective)
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "wireguard", Every: 30 * time.Second, Subs: statusSubscriptions("WireGuardInterface", "WireGuardPeer", "SAMNodeSet", "BGPRouter"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "wireguard", Every: 30 * time.Second, Subs: statusSubscriptions("WireGuardInterface", "WireGuardPeer", "SAMNodeSet", "SAMRRSet", "SAMEnrollmentPolicy", "SAMEnrollmentClaim", "BGPRouter"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return false, err

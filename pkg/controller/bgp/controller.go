@@ -55,6 +55,12 @@ type GoBGPServer interface {
 	ListPolicyAssignment(context.Context, *gobgpapi.ListPolicyAssignmentRequest, func(*gobgpapi.PolicyAssignment)) error
 	SetPolicies(context.Context, *gobgpapi.SetPoliciesRequest) error
 	SetPolicyAssignment(context.Context, *gobgpapi.SetPolicyAssignmentRequest) error
+	AddPeerGroup(context.Context, *gobgpapi.AddPeerGroupRequest) error
+	DeletePeerGroup(context.Context, *gobgpapi.DeletePeerGroupRequest) error
+	ListPeerGroup(context.Context, *gobgpapi.ListPeerGroupRequest, func(*gobgpapi.PeerGroup)) error
+	AddDynamicNeighbor(context.Context, *gobgpapi.AddDynamicNeighborRequest) error
+	DeleteDynamicNeighbor(context.Context, *gobgpapi.DeleteDynamicNeighborRequest) error
+	ListDynamicNeighbor(context.Context, *gobgpapi.ListDynamicNeighborRequest, func(*gobgpapi.DynamicNeighbor)) error
 	AddPath(context.Context, *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error)
 	DeletePath(context.Context, *gobgpapi.DeletePathRequest) error
 	ListPath(context.Context, *gobgpapi.ListPathRequest, func(*gobgpapi.Destination)) error
@@ -121,6 +127,9 @@ type Controller struct {
 	bfdPeerLastResetAt   map[string]time.Time
 	bfdPeerResetError    map[string]string
 	bfdPeerResetAttempts map[string]int
+
+	lastDynamicPeers     []dynamicPeerObservation
+	lastDynamicAdmission dynamicRouteAdmissionSummary
 }
 
 type desiredPeer struct {
@@ -135,6 +144,24 @@ type desiredPeer struct {
 	Timers                  routerapi.BGPTimersSpec
 	GracefulRestart         routerapi.BGPGracefulRestartSpec
 	ConvergenceProfile      string
+	ImportPolicy            routerapi.BGPImportPolicySpec
+	ImportPolicyName        string
+	ExportPolicy            routerapi.BGPExportPolicySpec
+	ExportPolicyName        string
+}
+
+type desiredDynamicPeer struct {
+	Name                    string
+	PeerGroupName           string
+	Prefixes                []string
+	ASN                     uint32
+	LocalASN                uint32
+	Password                string
+	EbgpMultihop            int
+	RouteReflectorClient    bool
+	RouteReflectorClusterID string
+	Timers                  routerapi.BGPTimersSpec
+	GracefulRestart         routerapi.BGPGracefulRestartSpec
 	ImportPolicy            routerapi.BGPImportPolicySpec
 	ImportPolicyName        string
 	ExportPolicy            routerapi.BGPExportPolicySpec
@@ -200,6 +227,10 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	if err != nil {
 		return c.savePendingAll("GoBGPPeerConfigInvalid", err)
 	}
+	desiredDynamic, err := c.desiredDynamicPeers(routerResource.Metadata.Name, routerSpec.ASN)
+	if err != nil {
+		return c.savePendingAll("GoBGPDynamicPeerConfigInvalid", err)
+	}
 	liveEstablishedPeers, err := c.liveEstablishedPeers(ctx)
 	if err != nil {
 		return c.savePendingAll("GoBGPPeerObserveFailed", err)
@@ -209,9 +240,13 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	dynamicExportPrefixes := dynamicPathExportPrefixes(applied.Paths)
 	effectiveImportPolicy := effectiveGlobalImportPolicy(routerSpec.ImportPolicy, dynamicExportPrefixes)
 	desired = applyRouterBGPDefaults(routerResource.Metadata.Name, routerSpec, desired, staticExportPrefixes, dynamicExportPrefixes)
-	adoptedRestoredPolicies, err := c.reconcilePolicies(ctx, routerResource.Metadata.Name, effectiveImportPolicy, desired)
+	desiredDynamic = applyRouterBGPDynamicDefaults(routerResource.Metadata.Name, routerSpec, desiredDynamic, staticExportPrefixes, dynamicExportPrefixes)
+	adoptedRestoredPolicies, err := c.reconcilePolicies(ctx, routerResource.Metadata.Name, effectiveImportPolicy, desired, desiredDynamic)
 	if err != nil {
 		return c.savePendingAll("GoBGPPolicyApplyFailed", err)
+	}
+	if err := c.reconcileDynamicPeers(ctx, desiredDynamic); err != nil {
+		return c.savePendingAll("GoBGPDynamicPeerApplyFailed", err)
 	}
 	exportPolicyRefreshPeers := exportPolicyChangedPeers(c.appliedPeerKeys, desired)
 	changed, err := c.reconcilePeers(ctx, desired)
@@ -236,21 +271,21 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 		return c.savePendingAll("GoBGPAppliedStatePersistFailed", err)
 	}
 	c.appliedConfig = applied
-	allowedImportPrefixes := importAllowedPrefixesFromApplied(applied)
+	allowedImportPrefixes := importAllowedPrefixesFromAppliedAndDynamic(applied, desiredDynamic)
 	state, routes, livenessMarkers, err := c.observeState(ctx, allowedImportPrefixes, desired)
 	if err != nil {
 		return c.savePendingAll("GoBGPObserveFailed", err)
 	}
 	if !adoptedRestoredPolicies {
-		importDrift, err := c.importPolicyDrift(ctx, routerResource.Metadata.Name, effectiveImportPolicy, desired)
+		importDrift, err := c.importPolicyDrift(ctx, routerResource.Metadata.Name, effectiveImportPolicy, desired, desiredDynamic)
 		if err != nil {
 			return c.savePendingAll("GoBGPPolicyObserveFailed", err)
 		}
 		if importDrift.RefreshNeeded() {
-			if err := c.applyBGPPolicies(ctx, routerResource.Metadata.Name, effectiveImportPolicy, desired); err != nil {
+			if err := c.applyBGPPolicies(ctx, routerResource.Metadata.Name, effectiveImportPolicy, desired, desiredDynamic); err != nil {
 				return c.savePendingAll("GoBGPPolicyApplyFailed", err)
 			}
-			c.importPolicyKey = bgpPoliciesKey(effectiveImportPolicy, desired)
+			c.importPolicyKey = bgpPoliciesKey(effectiveImportPolicy, desired, desiredDynamic)
 			if err := c.refreshPeerImportPolicyAssignments(ctx, desired, importDrift.PeerAddresses); err != nil {
 				return c.savePendingAll("GoBGPPeerApplyFailed", err)
 			}
@@ -304,6 +339,8 @@ func (c *Controller) stopServerLocked() {
 	c.lastState = bgpstate.State{}
 	c.lastFIBRoutesSig = ""
 	c.lastFIBValid = false
+	c.lastDynamicPeers = nil
+	c.lastDynamicAdmission = dynamicRouteAdmissionSummary{}
 }
 
 func (c *Controller) Start(ctx context.Context) {
@@ -369,10 +406,18 @@ func (c *Controller) observeAndSyncFromWatchLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	desiredDynamic, err := c.desiredDynamicPeers(routerResource.Metadata.Name, routerSpec.ASN)
+	if err != nil {
+		return err
+	}
 	applied := c.appliedConfig
 	dynamicExportPrefixes := dynamicPathExportPrefixes(applied.Paths)
 	desired = applyRouterBGPDefaults(routerResource.Metadata.Name, routerSpec, desired, mapKeys(advertisedPrefixes(routerSpec)), dynamicExportPrefixes)
-	state, routes, livenessMarkers, err := c.observeState(ctx, importAllowedPrefixes(routerSpec, desired), desired)
+	desiredDynamic = applyRouterBGPDynamicDefaults(routerResource.Metadata.Name, routerSpec, desiredDynamic, mapKeys(advertisedPrefixes(routerSpec)), dynamicExportPrefixes)
+	appliedSpec := routerSpec
+	appliedSpec.ImportPolicy = effectiveGlobalImportPolicy(routerSpec.ImportPolicy, dynamicExportPrefixes)
+	allowedImportPrefixes := importAllowedPrefixesFromAppliedAndDynamic(c.buildAppliedConfig(appliedSpec, desired, advertisedPrefixes(routerSpec), applied.Paths), desiredDynamic)
+	state, routes, livenessMarkers, err := c.observeState(ctx, allowedImportPrefixes, desired)
 	if err != nil {
 		return c.savePendingAll("GoBGPWatchObserveFailed", err)
 	}
@@ -582,7 +627,11 @@ func (c *Controller) desiredPeers(routerName string, localASN uint32) (map[strin
 		if err != nil {
 			return nil, fmt.Errorf("%s/%s passwordFrom: %w", resource.Kind, resource.Metadata.Name, err)
 		}
-		for _, peer := range spec.Peers {
+		peers, err := c.resolveBGPPeerAddresses(spec)
+		if err != nil {
+			return nil, err
+		}
+		for _, peer := range peers {
 			peer = strings.TrimSpace(peer)
 			out[peer] = desiredPeer{
 				Address:                 peer,
@@ -597,6 +646,114 @@ func (c *Controller) desiredPeers(routerName string, localASN uint32) (map[strin
 				ExportPolicy:            spec.ExportPolicy,
 				Timers:                  spec.Timers,
 			}
+		}
+	}
+	return out, nil
+}
+
+func (c *Controller) resolveBGPPeerAddresses(spec routerapi.BGPPeerSpec) ([]string, error) {
+	out := append([]string(nil), spec.Peers...)
+	seen := map[string]bool{}
+	for _, peer := range out {
+		seen[strings.TrimSpace(peer)] = true
+	}
+	for _, source := range spec.PeersFrom {
+		ref := strings.TrimSpace(source.Resource)
+		kind, name, ok := strings.Cut(ref, "/")
+		if !ok || kind != "SAMRRSet" || strings.TrimSpace(name) == "" {
+			return nil, fmt.Errorf("BGPPeer peersFrom resource must reference SAMRRSet/<name>")
+		}
+		rrSet, found, err := c.lookupSAMRRSet(name)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			if source.Optional {
+				continue
+			}
+			return nil, fmt.Errorf("SAMRRSet/%s not found", name)
+		}
+		for _, member := range rrSet.Members {
+			addr, err := parseDynamicPeerPrefixAddress(member.TunnelAddress)
+			if err != nil {
+				return nil, fmt.Errorf("SAMRRSet/%s member %s tunnelAddress: %w", name, member.NodeRef, err)
+			}
+			if !seen[addr] {
+				seen[addr] = true
+				out = append(out, addr)
+			}
+		}
+	}
+	return out, nil
+}
+
+func (c *Controller) lookupSAMRRSet(name string) (routerapi.SAMRRSetSpec, bool, error) {
+	if c.Router == nil {
+		return routerapi.SAMRRSetSpec{}, false, nil
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != routerapi.MobilityAPIVersion || resource.Kind != "SAMRRSet" || resource.Metadata.Name != strings.TrimSpace(name) {
+			continue
+		}
+		spec, err := resource.SAMRRSetSpec()
+		if err != nil {
+			return routerapi.SAMRRSetSpec{}, true, err
+		}
+		return spec, true, nil
+	}
+	return routerapi.SAMRRSetSpec{}, false, nil
+}
+
+func parseDynamicPeerPrefixAddress(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if strings.Contains(value, "/") {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return "", err
+		}
+		return prefix.Addr().String(), nil
+	}
+	addr, err := netip.ParseAddr(value)
+	if err != nil {
+		return "", err
+	}
+	return addr.String(), nil
+}
+
+func (c *Controller) desiredDynamicPeers(routerName string, localASN uint32) (map[string]desiredDynamicPeer, error) {
+	out := map[string]desiredDynamicPeer{}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != routerapi.NetAPIVersion || resource.Kind != "BGPDynamicPeer" {
+			continue
+		}
+		spec, err := resource.BGPDynamicPeerSpec()
+		if err != nil {
+			return nil, err
+		}
+		_, name, ok := strings.Cut(strings.TrimSpace(spec.RouterRef), "/")
+		if !ok || name != routerName {
+			continue
+		}
+		password, err := secretValue(spec.Password, spec.PasswordFrom)
+		if err != nil {
+			return nil, fmt.Errorf("%s/%s passwordFrom: %w", resource.Kind, resource.Metadata.Name, err)
+		}
+		cleanPrefixes := cleanStrings(spec.Listen.SourcePrefixes)
+		sort.Strings(cleanPrefixes)
+		key := "routerd-dynamic-" + sanitizeBGPPolicyName(resource.Metadata.Name)
+		out[key] = desiredDynamicPeer{
+			Name:                    resource.Metadata.Name,
+			PeerGroupName:           key,
+			Prefixes:                cleanPrefixes,
+			ASN:                     spec.PeerASN,
+			LocalASN:                localASN,
+			Password:                password,
+			EbgpMultihop:            spec.EbgpMultihop,
+			RouteReflectorClient:    spec.RouteReflectorClient,
+			RouteReflectorClusterID: strings.TrimSpace(spec.RouteReflectorClusterID),
+			Timers:                  spec.Timers,
+			ImportPolicy:            spec.ImportPolicy,
+			ExportPolicy:            spec.ExportPolicy,
 		}
 	}
 	return out, nil
@@ -621,7 +778,32 @@ func applyRouterBGPDefaults(routerName string, routerSpec routerapi.BGPRouterSpe
 	return peers
 }
 
+func applyRouterBGPDynamicDefaults(routerName string, routerSpec routerapi.BGPRouterSpec, peers map[string]desiredDynamicPeer, staticExportPrefixes, dynamicExportPrefixes []string) map[string]desiredDynamicPeer {
+	globalImportPolicy := effectiveGlobalImportPolicy(routerSpec.ImportPolicy, dynamicExportPrefixes)
+	for key, peer := range peers {
+		peer.GracefulRestart = canonicalGracefulRestartSpec(routerSpec.GracefulRestart, routerSpec.ConvergenceProfile)
+		if peerHasImportPolicy(peer.ImportPolicy) {
+			peer.ImportPolicy.AllowedPrefixes = mergeAllowedPrefixes(peer.ImportPolicy.AllowedPrefixes, dynamicExportPrefixes)
+			peer.ImportPolicyName = dynamicPeerImportPolicyName(routerName, key)
+		} else {
+			peer.ImportPolicy = globalImportPolicy
+			peer.ImportPolicyName = bgpPolicyName(routerName, "import")
+		}
+		peer.ExportPolicyName = dynamicPeerExportPolicyName(routerName, key)
+		peer.ExportPolicy.AllowedPrefixes = mergeAllowedPrefixes(peer.ExportPolicy.AllowedPrefixes, staticExportPrefixes, dynamicExportPrefixes, dynamicRouteReflectorExportPrefixes(peer, globalImportPolicy))
+		peers[key] = peer
+	}
+	return peers
+}
+
 func routeReflectorExportPrefixes(peer desiredPeer, importPolicy routerapi.BGPImportPolicySpec) []string {
+	if !peer.RouteReflectorClient {
+		return nil
+	}
+	return importPolicy.AllowedPrefixes
+}
+
+func dynamicRouteReflectorExportPrefixes(peer desiredDynamicPeer, importPolicy routerapi.BGPImportPolicySpec) []string {
 	if !peer.RouteReflectorClient {
 		return nil
 	}
@@ -640,13 +822,13 @@ func peerHasImportPolicy(spec routerapi.BGPImportPolicySpec) bool {
 	return len(cleanStrings(spec.AllowedPrefixes)) > 0 || strings.TrimSpace(spec.NextHopRewrite) != ""
 }
 
-func (c *Controller) reconcilePolicies(ctx context.Context, routerName string, spec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer) (bool, error) {
-	key := bgpPoliciesKey(spec, peers)
+func (c *Controller) reconcilePolicies(ctx context.Context, routerName string, spec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer, dynamicPeers map[string]desiredDynamicPeer) (bool, error) {
+	key := bgpPoliciesKey(spec, peers, dynamicPeers)
 	if c.importPolicyKey == key {
 		return false, nil
 	}
 	if c.importPolicyKey == "" && len(c.appliedConfig.Peers) > 0 {
-		drift, err := c.importPolicyDrift(ctx, routerName, spec, peers)
+		drift, err := c.importPolicyDrift(ctx, routerName, spec, peers, dynamicPeers)
 		if err != nil {
 			return false, err
 		}
@@ -655,15 +837,15 @@ func (c *Controller) reconcilePolicies(ctx context.Context, routerName string, s
 			return true, nil
 		}
 	}
-	if err := c.applyBGPPolicies(ctx, routerName, spec, peers); err != nil {
+	if err := c.applyBGPPolicies(ctx, routerName, spec, peers, dynamicPeers); err != nil {
 		return false, err
 	}
 	c.importPolicyKey = key
 	return false, nil
 }
 
-func (c *Controller) applyBGPPolicies(ctx context.Context, routerName string, spec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer) error {
-	plan := buildBGPPolicyPlan(routerName, spec, peers)
+func (c *Controller) applyBGPPolicies(ctx context.Context, routerName string, spec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer, dynamicPeers map[string]desiredDynamicPeer) error {
+	plan := buildBGPPolicyPlan(routerName, spec, peers, dynamicPeers)
 	if err := c.Server.SetPolicies(ctx, plan.SetPolicies); err != nil {
 		return err
 	}
@@ -675,7 +857,7 @@ type bgpPolicyPlan struct {
 	GlobalImportAssignment *gobgpapi.PolicyAssignment
 }
 
-func buildBGPPolicyPlan(routerName string, spec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer) bgpPolicyPlan {
+func buildBGPPolicyPlan(routerName string, spec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer, dynamicPeers map[string]desiredDynamicPeer) bgpPolicyPlan {
 	name := bgpPolicyName(routerName, "import")
 	req := &gobgpapi.SetPoliciesRequest{}
 	prefixes := importPolicyPrefixes(spec)
@@ -685,6 +867,34 @@ func buildBGPPolicyPlan(routerName string, spec routerapi.BGPImportPolicySpec, p
 	}
 	importPolicies := map[string]bool{name: true}
 	for _, peer := range sortedDesiredPeers(peers) {
+		importPolicyName := strings.TrimSpace(peer.ImportPolicyName)
+		if importPolicyName != "" && !importPolicies[importPolicyName] && len(importPolicyPrefixes(peer.ImportPolicy)) > 0 {
+			appendImportPolicy(req, importPolicyName, importPolicyName+"-prefixes", peer.ImportPolicy)
+			importPolicies[importPolicyName] = true
+		}
+		prefixes := exportPolicyPrefixes(peer.ExportPolicy)
+		if len(prefixes) == 0 || strings.TrimSpace(peer.ExportPolicyName) == "" {
+			continue
+		}
+		prefixSetName := peer.ExportPolicyName + "-prefixes"
+		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
+			DefinedType: gobgpapi.DefinedType_PREFIX,
+			Name:        prefixSetName,
+			Prefixes:    prefixes,
+		})
+		req.Policies = append(req.Policies, &gobgpapi.Policy{
+			Name: peer.ExportPolicyName,
+			Statements: []*gobgpapi.Statement{{
+				Name: bgpPolicyStatementName(peer.ExportPolicyName, "allow-export"),
+				Conditions: &gobgpapi.Conditions{PrefixSet: &gobgpapi.MatchSet{
+					Type: gobgpapi.MatchSet_ANY,
+					Name: prefixSetName,
+				}},
+				Actions: &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_ACCEPT},
+			}},
+		})
+	}
+	for _, peer := range sortedDesiredDynamicPeers(dynamicPeers) {
 		importPolicyName := strings.TrimSpace(peer.ImportPolicyName)
 		if importPolicyName != "" && !importPolicies[importPolicyName] && len(importPolicyPrefixes(peer.ImportPolicy)) > 0 {
 			appendImportPolicy(req, importPolicyName, importPolicyName+"-prefixes", peer.ImportPolicy)
@@ -789,8 +999,8 @@ type canonicalPolicyAssignment struct {
 	Policies      []string
 }
 
-func (c *Controller) importPolicyDrift(ctx context.Context, routerName string, spec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer) (importPolicyDrift, error) {
-	desired := desiredImportPolicyState(buildBGPPolicyPlan(routerName, spec, peers), peers)
+func (c *Controller) importPolicyDrift(ctx context.Context, routerName string, spec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer, dynamicPeers map[string]desiredDynamicPeer) (importPolicyDrift, error) {
+	desired := desiredImportPolicyState(buildBGPPolicyPlan(routerName, spec, peers, dynamicPeers), peers)
 	actual, err := c.actualImportPolicyState(ctx, desired)
 	if err != nil {
 		return importPolicyDrift{}, err
@@ -1049,6 +1259,19 @@ func sortedDesiredPeers(peers map[string]desiredPeer) []desiredPeer {
 	return out
 }
 
+func sortedDesiredDynamicPeers(peers map[string]desiredDynamicPeer) []desiredDynamicPeer {
+	names := make([]string, 0, len(peers))
+	for name := range peers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]desiredDynamicPeer, 0, len(names))
+	for _, name := range names {
+		out = append(out, peers[name])
+	}
+	return out
+}
+
 func (c *Controller) softResetImportPolicy(ctx context.Context, desired map[string]desiredPeer) error {
 	var addresses []string
 	for address := range desired {
@@ -1165,8 +1388,10 @@ func appliedGlobalFromSpec(spec routerapi.BGPRouterSpec, router *routerapi.Route
 		Families:         []string{"ipv4-unicast"},
 		UseMultiplePaths: true,
 		ImportPolicy: bgpdaemon.AppliedImportPolicy{
-			AllowedPrefixes: cleanStrings(spec.ImportPolicy.AllowedPrefixes),
-			NextHopRewrite:  importNextHopRewrite(spec.ImportPolicy),
+			AllowedPrefixes:        cleanStrings(spec.ImportPolicy.AllowedPrefixes),
+			AllowedPrefixLengthMin: spec.ImportPolicy.AllowedPrefixLengthMin,
+			AllowedPrefixLengthMax: spec.ImportPolicy.AllowedPrefixLengthMax,
+			NextHopRewrite:         importNextHopRewrite(spec.ImportPolicy),
 		},
 	}
 	for _, family := range bgpFamiliesForRouter(router) {
@@ -1193,8 +1418,10 @@ func appliedPeer(peer desiredPeer) bgpdaemon.AppliedPeer {
 		ConvergenceProfile:      peer.ConvergenceProfile,
 		ImportPolicyName:        peer.ImportPolicyName,
 		ImportPolicy: bgpdaemon.AppliedImportPolicy{
-			AllowedPrefixes: cleanStrings(peer.ImportPolicy.AllowedPrefixes),
-			NextHopRewrite:  importNextHopRewrite(peer.ImportPolicy),
+			AllowedPrefixes:        cleanStrings(peer.ImportPolicy.AllowedPrefixes),
+			AllowedPrefixLengthMin: peer.ImportPolicy.AllowedPrefixLengthMin,
+			AllowedPrefixLengthMax: peer.ImportPolicy.AllowedPrefixLengthMax,
+			NextHopRewrite:         importNextHopRewrite(peer.ImportPolicy),
 		},
 		ExportPolicyName: peer.ExportPolicyName,
 		ExportPolicy: bgpdaemon.AppliedExportPolicy{
@@ -1466,6 +1693,57 @@ func desiredPeerHash(peer desiredPeer) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func desiredDynamicPeerGroupHash(peer desiredDynamicPeer) string {
+	return dynamicPeerGroupHash(goBGPDynamicPeerGroup(peer))
+}
+
+func dynamicPeerGroupHash(group *gobgpapi.PeerGroup) string {
+	if group == nil {
+		return ""
+	}
+	normalized := struct {
+		Name                    string
+		PeerASN                 uint32
+		LocalASN                uint32
+		Password                string
+		EbgpMultihop            uint32
+		RouteReflectorClient    bool
+		RouteReflectorClusterID string
+		TimersProfile           string
+		ImportPolicies          []string
+		ExportPolicies          []string
+	}{
+		Name:                    strings.TrimSpace(group.GetConf().GetPeerGroupName()),
+		PeerASN:                 group.GetConf().GetPeerAsn(),
+		LocalASN:                group.GetConf().GetLocalAsn(),
+		Password:                group.GetConf().GetAuthPassword(),
+		RouteReflectorClient:    group.GetRouteReflector().GetRouteReflectorClient(),
+		RouteReflectorClusterID: strings.TrimSpace(group.GetRouteReflector().GetRouteReflectorClusterId()),
+		TimersProfile:           timersProfile(group.GetTimers().GetConfig()),
+	}
+	if mh := group.GetEbgpMultihop(); mh.GetEnabled() {
+		normalized.EbgpMultihop = mh.GetMultihopTtl()
+	}
+	for _, policy := range group.GetApplyPolicy().GetImportPolicy().GetPolicies() {
+		if name := strings.TrimSpace(policy.GetName()); name != "" {
+			normalized.ImportPolicies = append(normalized.ImportPolicies, name)
+		}
+	}
+	for _, policy := range group.GetApplyPolicy().GetExportPolicy().GetPolicies() {
+		if name := strings.TrimSpace(policy.GetName()); name != "" {
+			normalized.ExportPolicies = append(normalized.ExportPolicies, name)
+		}
+	}
+	sort.Strings(normalized.ImportPolicies)
+	sort.Strings(normalized.ExportPolicies)
+	data, err := json.Marshal(normalized)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
 func (c *Controller) reconcilePeers(ctx context.Context, desired map[string]desiredPeer) (bool, error) {
 	if c.desiredPeerKeys == nil {
 		c.desiredPeerKeys = map[string]desiredPeer{}
@@ -1481,6 +1759,9 @@ func (c *Controller) reconcilePeers(ctx context.Context, desired map[string]desi
 	}
 	changed := false
 	for address, current := range live {
+		if isRouterdDynamicPeer(current) {
+			continue
+		}
 		peer, ok := desired[address]
 		if !ok {
 			if err := c.Server.DeletePeer(ctx, &gobgpapi.DeletePeerRequest{Address: address}); err != nil {
@@ -1515,6 +1796,105 @@ func (c *Controller) reconcilePeers(ctx context.Context, desired map[string]desi
 		changed = true
 	}
 	return changed, nil
+}
+
+func isRouterdDynamicPeer(peer *gobgpapi.Peer) bool {
+	return strings.HasPrefix(strings.TrimSpace(peer.GetConf().GetPeerGroup()), "routerd-dynamic-")
+}
+
+func (c *Controller) reconcileDynamicPeers(ctx context.Context, desired map[string]desiredDynamicPeer) error {
+	liveGroups := map[string]*gobgpapi.PeerGroup{}
+	if err := c.Server.ListPeerGroup(ctx, &gobgpapi.ListPeerGroupRequest{}, func(group *gobgpapi.PeerGroup) {
+		name := strings.TrimSpace(group.GetConf().GetPeerGroupName())
+		if strings.HasPrefix(name, "routerd-dynamic-") {
+			liveGroups[name] = group
+		}
+	}); err != nil {
+		return err
+	}
+	liveDynamic := map[string]map[string]bool{}
+	if err := c.Server.ListDynamicNeighbor(ctx, &gobgpapi.ListDynamicNeighborRequest{}, func(neighbor *gobgpapi.DynamicNeighbor) {
+		group := strings.TrimSpace(neighbor.GetPeerGroup())
+		prefix := strings.TrimSpace(neighbor.GetPrefix())
+		if group == "" || prefix == "" {
+			return
+		}
+		if liveDynamic[group] == nil {
+			liveDynamic[group] = map[string]bool{}
+		}
+		liveDynamic[group][prefix] = true
+	}); err != nil {
+		return err
+	}
+	desiredGroups := map[string]bool{}
+	for _, peer := range sortedDesiredDynamicPeers(desired) {
+		groupName := strings.TrimSpace(peer.PeerGroupName)
+		if groupName == "" {
+			continue
+		}
+		desiredGroups[groupName] = true
+		if current := liveGroups[groupName]; current != nil {
+			if dynamicPeerGroupHash(current) != desiredDynamicPeerGroupHash(peer) {
+				if err := c.deleteDynamicPeerGroup(ctx, groupName, liveDynamic[groupName]); err != nil {
+					return err
+				}
+				delete(liveDynamic, groupName)
+				delete(liveGroups, groupName)
+			}
+		}
+		if liveGroups[groupName] == nil {
+			if err := c.Server.AddPeerGroup(ctx, &gobgpapi.AddPeerGroupRequest{PeerGroup: goBGPDynamicPeerGroup(peer)}); err != nil {
+				return err
+			}
+		}
+		wantPrefixes := map[string]bool{}
+		for _, prefix := range peer.Prefixes {
+			prefix = strings.TrimSpace(prefix)
+			if prefix == "" {
+				continue
+			}
+			wantPrefixes[prefix] = true
+			if !liveDynamic[groupName][prefix] {
+				if err := c.Server.AddDynamicNeighbor(ctx, &gobgpapi.AddDynamicNeighborRequest{DynamicNeighbor: &gobgpapi.DynamicNeighbor{Prefix: prefix, PeerGroup: groupName}}); err != nil {
+					return err
+				}
+			}
+		}
+		for prefix := range liveDynamic[groupName] {
+			if !wantPrefixes[prefix] {
+				if err := c.Server.DeleteDynamicNeighbor(ctx, &gobgpapi.DeleteDynamicNeighborRequest{Prefix: prefix, PeerGroup: groupName}); err != nil {
+					return err
+				}
+			}
+		}
+		if strings.TrimSpace(peer.Name) != "" && c.Store != nil {
+			_ = c.Store.SaveObjectStatus(routerapi.NetAPIVersion, "BGPDynamicPeer", peer.Name, map[string]any{
+				"phase":             "Ready",
+				"peerGroup":         groupName,
+				"sourcePrefixes":    append([]string(nil), peer.Prefixes...),
+				"sourcePrefixCount": len(wantPrefixes),
+				"observedAt":        time.Now().UTC().Format(time.RFC3339Nano),
+			})
+		}
+	}
+	for groupName, prefixes := range liveDynamic {
+		if desiredGroups[groupName] {
+			continue
+		}
+		if err := c.deleteDynamicPeerGroup(ctx, groupName, prefixes); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Controller) deleteDynamicPeerGroup(ctx context.Context, groupName string, prefixes map[string]bool) error {
+	for prefix := range prefixes {
+		if err := c.Server.DeleteDynamicNeighbor(ctx, &gobgpapi.DeleteDynamicNeighborRequest{Prefix: prefix, PeerGroup: groupName}); err != nil {
+			return err
+		}
+	}
+	return c.Server.DeletePeerGroup(ctx, &gobgpapi.DeletePeerGroupRequest{Name: groupName})
 }
 
 func (c *Controller) reconcileAdvertisements(ctx context.Context, spec routerapi.BGPRouterSpec, appliedPaths []bgpdaemon.AppliedPath) error {
@@ -1686,14 +2066,23 @@ func stringSliceContains(values []string, want string) bool {
 	return false
 }
 
-func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []netip.Prefix, desired map[string]desiredPeer) (bgpstate.State, []FIBRoute, map[string]string, error) {
+func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []allowedImportPrefix, desired map[string]desiredPeer) (bgpstate.State, []FIBRoute, map[string]string, error) {
 	var state bgpstate.State
 	var routes []FIBRoute
 	livenessMarkers := map[string]string{}
 	fibNextHopRewritePeers := peerAddressFIBRewritePeers(desired)
 	fibPolicy := mobilityfib.NewSnapshot(c.Router, c.Store)
+	claimAdmission := c.samDynamicClaimAdmission()
+	if !routerHasBGPDynamicPeer(c.Router) {
+		claimAdmission = samDynamicClaimAdmission{}
+	}
+	admissionTracker := newDynamicRouteAdmissionTracker(claimAdmission)
+	var dynamicPeers []dynamicPeerObservation
 	if err := c.Server.ListPeer(ctx, &gobgpapi.ListPeerRequest{EnableAdvertised: true}, func(peer *gobgpapi.Peer) {
 		state.Peers = append(state.Peers, statePeer(peer))
+		if observation, ok := dynamicPeerObservationFromPeer(peer, claimAdmission); ok {
+			dynamicPeers = append(dynamicPeers, observation)
+		}
 	}); err != nil {
 		return bgpstate.State{}, nil, nil, err
 	}
@@ -1701,7 +2090,13 @@ func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []n
 		err := c.Server.ListPath(ctx, &gobgpapi.ListPathRequest{TableType: gobgpapi.TableType_GLOBAL, Family: family}, func(dst *gobgpapi.Destination) {
 			state.Prefixes = append(state.Prefixes, statePrefixes(dst)...)
 			mergeStringMap(livenessMarkers, mobilityLivenessMarkersFromDestination(dst))
-			routes = append(routes, fibRoutesFromDestination(dst, allowedImportPrefixes, fibNextHopRewritePeers, fibPolicy.AdmitBGPPath)...)
+			routes = append(routes, fibRoutesFromDestination(dst, allowedImportPrefixes, fibNextHopRewritePeers, func(prefix netip.Prefix, identityAddress, _ string, communities []string) bool {
+				if !fibPolicy.AdmitBGPPath(prefix, communities) {
+					admissionTracker.Reject(identityAddress, prefix, "mobility-fib-policy")
+					return false
+				}
+				return admissionTracker.Admit(identityAddress, prefix)
+			})...)
 		})
 		if err != nil {
 			return bgpstate.State{}, nil, nil, err
@@ -1713,7 +2108,27 @@ func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []n
 	if truncated {
 		limited.Prefixes = append(limited.Prefixes, bgpstate.Prefix{Prefix: "truncated", SelectionReason: "prefix limit reached"})
 	}
+	sort.Slice(dynamicPeers, func(i, j int) bool {
+		if dynamicPeers[i].PeerGroup != dynamicPeers[j].PeerGroup {
+			return dynamicPeers[i].PeerGroup < dynamicPeers[j].PeerGroup
+		}
+		return dynamicPeers[i].RemoteAddress < dynamicPeers[j].RemoteAddress
+	})
+	c.lastDynamicPeers = dynamicPeers
+	c.lastDynamicAdmission = admissionTracker.Summary()
 	return bgpstate.Normalize(limited), routes, livenessMarkers, nil
+}
+
+func routerHasBGPDynamicPeer(router *routerapi.Router) bool {
+	if router == nil {
+		return false
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion == routerapi.NetAPIVersion && resource.Kind == "BGPDynamicPeer" {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPRouterSpec, state bgpstate.State, routes []FIBRoute, changed bool, fibResult FIBSyncResult, livenessMarkers map[string]string) error {
@@ -1808,6 +2223,40 @@ func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPR
 				"observedAt":       now,
 			}
 			if err := c.Store.SaveObjectStatus(routerapi.NetAPIVersion, "BGPPeer", resource.Metadata.Name, status); err != nil {
+				return err
+			}
+		case "BGPDynamicPeer":
+			spec, err := resource.BGPDynamicPeerSpec()
+			if err != nil {
+				return err
+			}
+			groupName := "routerd-dynamic-" + sanitizeBGPPolicyName(resource.Metadata.Name)
+			sourcePrefixes := cleanStrings(spec.Listen.SourcePrefixes)
+			peerStatuses := dynamicPeerStatusMaps(groupName, c.lastDynamicPeers, c.lastDynamicAdmission)
+			accepted, rejected := dynamicPeerAdmissionTotals(peerStatuses)
+			status := map[string]any{
+				"phase":                "Ready",
+				"backend":              "gobgp",
+				"applyWith":            "routerd-bgp gRPC API",
+				"daemon":               c.daemonSpec().Name,
+				"daemonSocket":         c.daemonSpec().SocketPath,
+				"peerGroup":            groupName,
+				"sourcePrefixes":       sourcePrefixes,
+				"sourcePrefixCount":    len(sourcePrefixes),
+				"discoveredPeers":      peerStatuses,
+				"discoveredPeerCount":  len(peerStatuses),
+				"acceptedRouteCount":   accepted,
+				"rejectedRouteCount":   rejected,
+				"rejectedRouteSummary": c.lastDynamicAdmission.ReasonCounts,
+				"observedAt":           now,
+				"conditions": []map[string]any{{
+					"type":    "Observed",
+					"status":  "True",
+					"reason":  "GoBGPDynamicPeerStatus",
+					"message": "Route counters are routerd-side admission/FIB observation counters; GoBGP may not expose exact rejected import-policy counters.",
+				}},
+			}
+			if err := c.Store.SaveObjectStatus(routerapi.NetAPIVersion, "BGPDynamicPeer", resource.Metadata.Name, status); err != nil {
 				return err
 			}
 		}
@@ -2002,6 +2451,51 @@ func goBGPPeer(peer desiredPeer) *gobgpapi.Peer {
 	return out
 }
 
+func goBGPDynamicPeerGroup(peer desiredDynamicPeer) *gobgpapi.PeerGroup {
+	peerType := gobgpapi.PeerType_EXTERNAL
+	if peer.LocalASN != 0 && peer.ASN == peer.LocalASN {
+		peerType = gobgpapi.PeerType_INTERNAL
+	}
+	out := &gobgpapi.PeerGroup{
+		Conf: &gobgpapi.PeerGroupConf{
+			PeerGroupName: strings.TrimSpace(peer.PeerGroupName),
+			PeerAsn:       peer.ASN,
+			LocalAsn:      peer.LocalASN,
+			AuthPassword:  peer.Password,
+			Type:          peerType,
+			SendCommunity: 3,
+		},
+		Timers: &gobgpapi.Timers{Config: goBGPTimers(peer.Timers)},
+		AfiSafis: []*gobgpapi.AfiSafi{
+			goBGPAFISAFI(ipv4Family()),
+			goBGPAFISAFI(ipv6Family()),
+		},
+	}
+	if gr := gobgpDynamicPeerGracefulRestart(peer); gr != nil {
+		out.GracefulRestart = gr
+	}
+	if peer.EbgpMultihop > 1 {
+		out.EbgpMultihop = &gobgpapi.EbgpMultihop{Enabled: true, MultihopTtl: uint32(peer.EbgpMultihop)}
+	}
+	if peer.RouteReflectorClient {
+		out.RouteReflector = &gobgpapi.RouteReflector{
+			RouteReflectorClient:    true,
+			RouteReflectorClusterId: strings.TrimSpace(peer.RouteReflectorClusterID),
+		}
+	}
+	applyPolicy := &gobgpapi.ApplyPolicy{}
+	if len(importPolicyPrefixes(peer.ImportPolicy)) > 0 && strings.TrimSpace(peer.ImportPolicyName) != "" {
+		applyPolicy.ImportPolicy = peerImportPolicyAssignment(peer.ImportPolicyName)
+	}
+	if len(exportPolicyPrefixes(peer.ExportPolicy)) > 0 && strings.TrimSpace(peer.ExportPolicyName) != "" {
+		applyPolicy.ExportPolicy = peerExportPolicyAssignment(peer.ExportPolicyName)
+	}
+	if applyPolicy.ImportPolicy != nil || applyPolicy.ExportPolicy != nil {
+		out.ApplyPolicy = applyPolicy
+	}
+	return out
+}
+
 func goBGPAFISAFI(family *gobgpapi.Family) *gobgpapi.AfiSafi {
 	return &gobgpapi.AfiSafi{
 		Config: &gobgpapi.AfiSafiConfig{Family: family, Enabled: true},
@@ -2020,6 +2514,17 @@ func goBGPTimers(spec routerapi.BGPTimersSpec) *gobgpapi.TimersConfig {
 		return &gobgpapi.TimersConfig{ConnectRetry: 30, HoldTime: 180, KeepaliveInterval: 60, IdleHoldTimeAfterReset: 5}
 	default:
 		return &gobgpapi.TimersConfig{ConnectRetry: 10, HoldTime: 90, KeepaliveInterval: 30, IdleHoldTimeAfterReset: 1}
+	}
+}
+
+func timersProfile(config *gobgpapi.TimersConfig) string {
+	switch {
+	case config.GetConnectRetry() == 1 && config.GetHoldTime() == 9 && config.GetKeepaliveInterval() == 3:
+		return "fast"
+	case config.GetConnectRetry() == 30 && config.GetHoldTime() == 180 && config.GetKeepaliveInterval() == 60:
+		return "slow"
+	default:
+		return "default"
 	}
 }
 
@@ -2042,6 +2547,17 @@ func gobgpPeerGracefulRestart(peer desiredPeer) *gobgpapi.GracefulRestart {
 	if peer.ConvergenceProfile == "fast" {
 		enabled = false
 	}
+	if peer.GracefulRestart.Enabled != nil {
+		enabled = *peer.GracefulRestart.Enabled
+	}
+	if !enabled {
+		return nil
+	}
+	return &gobgpapi.GracefulRestart{Enabled: true, RestartTime: uint32(durationSeconds(peer.GracefulRestart.RestartTime, 120)), StaleRoutesTime: uint32(durationSeconds(peer.GracefulRestart.StalePathTime, 360))}
+}
+
+func gobgpDynamicPeerGracefulRestart(peer desiredDynamicPeer) *gobgpapi.GracefulRestart {
+	enabled := true
 	if peer.GracefulRestart.Enabled != nil {
 		enabled = *peer.GracefulRestart.Enabled
 	}
@@ -2177,7 +2693,13 @@ func statePrefixes(dst *gobgpapi.Destination) []bgpstate.Prefix {
 	return out
 }
 
-func fibRoutesFromStatePrefixes(prefixes []bgpstate.Prefix, allowed []netip.Prefix, admit func(netip.Prefix, []string) bool) []FIBRoute {
+type allowedImportPrefix struct {
+	Prefix netip.Prefix
+	Min    int
+	Max    int
+}
+
+func fibRoutesFromStatePrefixes(prefixes []bgpstate.Prefix, allowed []allowedImportPrefix, admit func(netip.Prefix, string, string, []string) bool) []FIBRoute {
 	type stateRoute struct {
 		nextHops        map[string]bool
 		retainOnMissing bool
@@ -2199,7 +2721,7 @@ func fibRoutesFromStatePrefixes(prefixes []bgpstate.Prefix, allowed []netip.Pref
 		if len(allowed) > 0 && !prefixAllowed(parsed, allowed) {
 			continue
 		}
-		if admit != nil && !admit(parsed, prefix.Communities) {
+		if admit != nil && !admit(parsed, nextHop, nextHop, prefix.Communities) {
 			continue
 		}
 		key := parsed.String()
@@ -2230,7 +2752,7 @@ type bgpPathRank struct {
 	MED       uint32
 }
 
-func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix, peerAddressRewrite map[string]bool, admit func(netip.Prefix, []string) bool) []FIBRoute {
+func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []allowedImportPrefix, peerAddressRewrite map[string]bool, admit func(netip.Prefix, string, string, []string) bool) []FIBRoute {
 	prefix := normalizeRoutePrefix(dst.GetPrefix())
 	var candidates []struct {
 		nextHop string
@@ -2256,12 +2778,13 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []netip.Prefix,
 		if len(allowed) > 0 && !prefixAllowed(parsed, allowed) {
 			continue
 		}
-		communities := pathCommunities(path)
-		if admit != nil && !admit(parsed, communities) {
-			continue
-		}
 		nextHop := strings.TrimSpace(pathFIBNextHop(path, peerAddressRewrite))
 		if nextHop == "" || nextHop == "0.0.0.0" || nextHop == "::" {
+			continue
+		}
+		identityAddress := firstNonEmpty(normalizedPathNeighbor(path), nextHop)
+		communities := pathCommunities(path)
+		if admit != nil && !admit(parsed, identityAddress, nextHop, communities) {
 			continue
 		}
 		candidates = append(candidates, struct {
@@ -2605,32 +3128,72 @@ func fibUnsupportedCount(result FIBSyncResult) int {
 	return len(result.Unsupported)
 }
 
-func importAllowedPrefixes(spec routerapi.BGPRouterSpec, peers map[string]desiredPeer) []netip.Prefix {
-	var out []netip.Prefix
-	values := append([]string{}, spec.ImportPolicy.AllowedPrefixes...)
+func importAllowedPrefixes(spec routerapi.BGPRouterSpec, peers map[string]desiredPeer) []allowedImportPrefix {
+	out := importAllowedPrefixesFromPolicy(spec.ImportPolicy)
 	for _, peer := range peers {
-		values = append(values, peer.ImportPolicy.AllowedPrefixes...)
-	}
-	for _, prefix := range cleanStrings(values) {
-		if parsed, err := netip.ParsePrefix(strings.TrimSpace(prefix)); err == nil {
-			out = append(out, parsed.Masked())
-		}
+		out = append(out, importAllowedPrefixesFromPolicy(peer.ImportPolicy)...)
 	}
 	return out
 }
 
-func importAllowedPrefixesFromApplied(applied bgpdaemon.AppliedConfig) []netip.Prefix {
-	var out []netip.Prefix
-	values := append([]string{}, applied.Global.ImportPolicy.AllowedPrefixes...)
+func importAllowedPrefixesFromApplied(applied bgpdaemon.AppliedConfig) []allowedImportPrefix {
+	var out []allowedImportPrefix
+	out = append(out, importAllowedPrefixesFromAppliedPolicy(applied.Global.ImportPolicy)...)
 	for _, peer := range applied.Peers {
-		values = append(values, peer.ImportPolicy.AllowedPrefixes...)
-	}
-	for _, prefix := range cleanStrings(values) {
-		if parsed, err := netip.ParsePrefix(strings.TrimSpace(prefix)); err == nil {
-			out = append(out, parsed.Masked())
-		}
+		out = append(out, importAllowedPrefixesFromAppliedPolicy(peer.ImportPolicy)...)
 	}
 	return out
+}
+
+func importAllowedPrefixesFromAppliedAndDynamic(applied bgpdaemon.AppliedConfig, dynamicPeers map[string]desiredDynamicPeer) []allowedImportPrefix {
+	out := importAllowedPrefixesFromApplied(applied)
+	for _, peer := range dynamicPeers {
+		out = append(out, importAllowedPrefixesFromPolicy(peer.ImportPolicy)...)
+	}
+	return out
+}
+
+func importAllowedPrefixesFromPolicy(spec routerapi.BGPImportPolicySpec) []allowedImportPrefix {
+	var out []allowedImportPrefix
+	for _, value := range cleanStrings(spec.AllowedPrefixes) {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+		if err != nil {
+			continue
+		}
+		prefix = prefix.Masked()
+		minLen, maxLen := importPolicyLengthBounds(spec, prefix)
+		out = append(out, allowedImportPrefix{Prefix: prefix, Min: minLen, Max: maxLen})
+	}
+	return out
+}
+
+func importAllowedPrefixesFromAppliedPolicy(spec bgpdaemon.AppliedImportPolicy) []allowedImportPrefix {
+	var out []allowedImportPrefix
+	for _, value := range cleanStrings(spec.AllowedPrefixes) {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+		if err != nil {
+			continue
+		}
+		prefix = prefix.Masked()
+		minLen, maxLen := importPolicyLengthBounds(routerapi.BGPImportPolicySpec{
+			AllowedPrefixLengthMin: spec.AllowedPrefixLengthMin,
+			AllowedPrefixLengthMax: spec.AllowedPrefixLengthMax,
+		}, prefix)
+		out = append(out, allowedImportPrefix{Prefix: prefix, Min: minLen, Max: maxLen})
+	}
+	return out
+}
+
+func importPolicyLengthBounds(spec routerapi.BGPImportPolicySpec, prefix netip.Prefix) (int, int) {
+	minLen := prefix.Bits()
+	maxLen := int(bgpPrefixMaxLength(prefix))
+	if spec.AllowedPrefixLengthMin > 0 {
+		minLen = spec.AllowedPrefixLengthMin
+	}
+	if spec.AllowedPrefixLengthMax > 0 {
+		maxLen = spec.AllowedPrefixLengthMax
+	}
+	return minLen, maxLen
 }
 
 func importNextHopRewrite(spec routerapi.BGPImportPolicySpec) string {
@@ -2644,8 +3207,10 @@ func importNextHopRewrite(spec routerapi.BGPImportPolicySpec) string {
 
 func importPolicyKey(spec routerapi.BGPImportPolicySpec) string {
 	normalized := routerapi.BGPImportPolicySpec{
-		AllowedPrefixes: cleanStrings(spec.AllowedPrefixes),
-		NextHopRewrite:  importNextHopRewrite(spec),
+		AllowedPrefixes:        cleanStrings(spec.AllowedPrefixes),
+		AllowedPrefixLengthMin: spec.AllowedPrefixLengthMin,
+		AllowedPrefixLengthMax: spec.AllowedPrefixLengthMax,
+		NextHopRewrite:         importNextHopRewrite(spec),
 	}
 	data, err := json.Marshal(normalized)
 	if err != nil {
@@ -2655,22 +3220,38 @@ func importPolicyKey(spec routerapi.BGPImportPolicySpec) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func bgpPoliciesKey(importSpec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer) string {
+func bgpPoliciesKey(importSpec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer, dynamicPeers map[string]desiredDynamicPeer) string {
 	type peerPolicyKey struct {
 		Address               string   `json:"address"`
 		ImportPolicyName      string   `json:"importPolicyName,omitempty"`
 		ImportAllowedPrefixes []string `json:"importAllowedPrefixes,omitempty"`
+		ImportLengthMin       int      `json:"importLengthMin,omitempty"`
+		ImportLengthMax       int      `json:"importLengthMax,omitempty"`
+		ImportNextHopRewrite  string   `json:"importNextHopRewrite,omitempty"`
+		ExportPolicyName      string   `json:"exportPolicyName,omitempty"`
+		ExportAllowedPrefixes []string `json:"exportAllowedPrefixes,omitempty"`
+	}
+	type dynamicPeerPolicyKey struct {
+		PeerGroupName         string   `json:"peerGroupName"`
+		Prefixes              []string `json:"prefixes,omitempty"`
+		ImportPolicyName      string   `json:"importPolicyName,omitempty"`
+		ImportAllowedPrefixes []string `json:"importAllowedPrefixes,omitempty"`
+		ImportLengthMin       int      `json:"importLengthMin,omitempty"`
+		ImportLengthMax       int      `json:"importLengthMax,omitempty"`
 		ImportNextHopRewrite  string   `json:"importNextHopRewrite,omitempty"`
 		ExportPolicyName      string   `json:"exportPolicyName,omitempty"`
 		ExportAllowedPrefixes []string `json:"exportAllowedPrefixes,omitempty"`
 	}
 	normalized := struct {
-		Import routerapi.BGPImportPolicySpec `json:"import"`
-		Peers  []peerPolicyKey               `json:"peers,omitempty"`
+		Import       routerapi.BGPImportPolicySpec `json:"import"`
+		Peers        []peerPolicyKey               `json:"peers,omitempty"`
+		DynamicPeers []dynamicPeerPolicyKey        `json:"dynamicPeers,omitempty"`
 	}{
 		Import: routerapi.BGPImportPolicySpec{
-			AllowedPrefixes: cleanStrings(importSpec.AllowedPrefixes),
-			NextHopRewrite:  importNextHopRewrite(importSpec),
+			AllowedPrefixes:        cleanStrings(importSpec.AllowedPrefixes),
+			AllowedPrefixLengthMin: importSpec.AllowedPrefixLengthMin,
+			AllowedPrefixLengthMax: importSpec.AllowedPrefixLengthMax,
+			NextHopRewrite:         importNextHopRewrite(importSpec),
 		},
 	}
 	for _, peer := range sortedDesiredPeers(peers) {
@@ -2683,6 +3264,23 @@ func bgpPoliciesKey(importSpec routerapi.BGPImportPolicySpec, peers map[string]d
 			Address:               strings.TrimSpace(peer.Address),
 			ImportPolicyName:      strings.TrimSpace(peer.ImportPolicyName),
 			ImportAllowedPrefixes: importPrefixes,
+			ImportLengthMin:       peer.ImportPolicy.AllowedPrefixLengthMin,
+			ImportLengthMax:       peer.ImportPolicy.AllowedPrefixLengthMax,
+			ImportNextHopRewrite:  importNextHopRewrite(peer.ImportPolicy),
+			ExportPolicyName:      strings.TrimSpace(peer.ExportPolicyName),
+			ExportAllowedPrefixes: exportPrefixes,
+		})
+	}
+	for _, peer := range sortedDesiredDynamicPeers(dynamicPeers) {
+		importPrefixes := cleanStrings(peer.ImportPolicy.AllowedPrefixes)
+		exportPrefixes := cleanStrings(peer.ExportPolicy.AllowedPrefixes)
+		normalized.DynamicPeers = append(normalized.DynamicPeers, dynamicPeerPolicyKey{
+			PeerGroupName:         strings.TrimSpace(peer.PeerGroupName),
+			Prefixes:              append([]string(nil), peer.Prefixes...),
+			ImportPolicyName:      strings.TrimSpace(peer.ImportPolicyName),
+			ImportAllowedPrefixes: importPrefixes,
+			ImportLengthMin:       peer.ImportPolicy.AllowedPrefixLengthMin,
+			ImportLengthMax:       peer.ImportPolicy.AllowedPrefixLengthMax,
 			ImportNextHopRewrite:  importNextHopRewrite(peer.ImportPolicy),
 			ExportPolicyName:      strings.TrimSpace(peer.ExportPolicyName),
 			ExportAllowedPrefixes: exportPrefixes,
@@ -2723,7 +3321,7 @@ func peerImportPolicyAssignment(policyName string) *gobgpapi.PolicyAssignment {
 }
 
 func importPolicyPrefixes(spec routerapi.BGPImportPolicySpec) []*gobgpapi.Prefix {
-	return bgpPolicyPrefixes(spec.AllowedPrefixes)
+	return bgpImportPolicyPrefixes(spec)
 }
 
 func exportPolicyPrefixes(spec routerapi.BGPExportPolicySpec) []*gobgpapi.Prefix {
@@ -2743,6 +3341,24 @@ func bgpPolicyPrefixes(values []string) []*gobgpapi.Prefix {
 			IpPrefix:      prefix.String(),
 			MaskLengthMin: bits,
 			MaskLengthMax: bgpPrefixMaxLength(prefix),
+		})
+	}
+	return out
+}
+
+func bgpImportPolicyPrefixes(spec routerapi.BGPImportPolicySpec) []*gobgpapi.Prefix {
+	var out []*gobgpapi.Prefix
+	for _, value := range spec.AllowedPrefixes {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+		if err != nil {
+			continue
+		}
+		prefix = prefix.Masked()
+		minLen, maxLen := importPolicyLengthBounds(spec, prefix)
+		out = append(out, &gobgpapi.Prefix{
+			IpPrefix:      prefix.String(),
+			MaskLengthMin: uint32(minLen),
+			MaskLengthMax: uint32(maxLen),
 		})
 	}
 	return out
@@ -2776,6 +3392,14 @@ func peerExportPolicyName(routerName, address string) string {
 
 func peerImportPolicyName(routerName, address string) string {
 	return bgpPolicyName(routerName, "import-"+sanitizeBGPPolicyName(address))
+}
+
+func dynamicPeerExportPolicyName(routerName, name string) string {
+	return bgpPolicyName(routerName, "dynamic-export-"+sanitizeBGPPolicyName(name))
+}
+
+func dynamicPeerImportPolicyName(routerName, name string) string {
+	return bgpPolicyName(routerName, "dynamic-import-"+sanitizeBGPPolicyName(name))
 }
 
 func bgpPolicyStatementName(policyName, suffix string) string {
@@ -2842,16 +3466,418 @@ func installedNextHops(routes []FIBRoute, result FIBSyncResult) map[string][]str
 	return out
 }
 
-func prefixAllowed(candidate netip.Prefix, allowed []netip.Prefix) bool {
+func prefixAllowed(candidate netip.Prefix, allowed []allowedImportPrefix) bool {
 	for _, parent := range allowed {
-		if parent.Addr().Is4() != candidate.Addr().Is4() {
+		if parent.Prefix.Addr().Is4() != candidate.Addr().Is4() {
 			continue
 		}
-		if parent.Contains(candidate.Addr()) && candidate.Bits() >= parent.Bits() {
+		if parent.Prefix.Contains(candidate.Addr()) && candidate.Bits() >= parent.Min && candidate.Bits() <= parent.Max {
 			return true
 		}
 	}
 	return false
+}
+
+type samDynamicClaimAdmission struct {
+	byTunnelAddress map[string]samDynamicClaim
+	claimedPrefixes map[string]samDynamicClaim
+	poolPrefixes    []netip.Prefix
+}
+
+type samDynamicClaim struct {
+	ClaimRef      string
+	LeafID        string
+	TunnelAddress string
+	BGPASN        uint32
+	BGPRouterID   string
+	Owned         map[string]bool
+}
+
+func (c *Controller) samDynamicClaimAdmission() samDynamicClaimAdmission {
+	out := samDynamicClaimAdmission{
+		byTunnelAddress: map[string]samDynamicClaim{},
+		claimedPrefixes: map[string]samDynamicClaim{},
+	}
+	if c.Router == nil {
+		return out
+	}
+	policies := map[string]routerapi.SAMEnrollmentPolicySpec{}
+	poolPrefixes := map[string]netip.Prefix{}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion == routerapi.MobilityAPIVersion && resource.Kind == "SAMEnrollmentPolicy" {
+			spec, err := resource.SAMEnrollmentPolicySpec()
+			if err == nil {
+				policies[resource.Metadata.Name] = spec
+			}
+		}
+		if resource.APIVersion == routerapi.MobilityAPIVersion && resource.Kind == "MobilityPool" {
+			spec, err := resource.MobilityPoolSpec()
+			if err != nil {
+				continue
+			}
+			prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
+			if err == nil {
+				poolPrefixes[resource.Metadata.Name] = prefix.Masked()
+			}
+		}
+	}
+	for _, policy := range policies {
+		for _, ref := range policy.MobilityPoolRefs {
+			kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
+			if ok && kind == "MobilityPool" {
+				if prefix, exists := poolPrefixes[name]; exists {
+					out.poolPrefixes = append(out.poolPrefixes, prefix)
+				}
+			}
+		}
+	}
+	out.poolPrefixes = uniquePrefixes(out.poolPrefixes)
+	now := time.Now().UTC()
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != routerapi.MobilityAPIVersion || resource.Kind != "SAMEnrollmentClaim" {
+			continue
+		}
+		claim, err := resource.SAMEnrollmentClaimSpec()
+		if err != nil || claim.Revoked {
+			continue
+		}
+		_, policyName, ok := strings.Cut(strings.TrimSpace(claim.PolicyRef), "/")
+		if !ok {
+			continue
+		}
+		policy, exists := policies[policyName]
+		if !exists || samEnrollmentClaimExpiredForBGP(policy, claim, now) {
+			continue
+		}
+		tunnel, err := parseSAMEnrollmentClaimPrefix(claim.TunnelAddress)
+		if err != nil || tunnel.Bits() != int(bgpPrefixMaxLength(tunnel)) {
+			continue
+		}
+		entry := samDynamicClaim{
+			ClaimRef:      "SAMEnrollmentClaim/" + strings.TrimSpace(resource.Metadata.Name),
+			LeafID:        strings.TrimSpace(claim.LeafID),
+			TunnelAddress: tunnel.Addr().String(),
+			BGPASN:        claim.BGP.ASN,
+			BGPRouterID:   strings.TrimSpace(claim.BGP.RouterID),
+			Owned:         map[string]bool{},
+		}
+		for _, owned := range claim.Mobility.OwnedAddresses {
+			prefix, err := parseSAMEnrollmentClaimPrefix(owned)
+			if err != nil || prefix.Bits() != int(bgpPrefixMaxLength(prefix)) {
+				continue
+			}
+			key := prefix.String()
+			entry.Owned[key] = true
+			out.claimedPrefixes[key] = entry
+		}
+		if len(entry.Owned) > 0 {
+			out.byTunnelAddress[entry.TunnelAddress] = entry
+		}
+	}
+	out.addSAMTransportNeighborAliases(c.Router)
+	return out
+}
+
+func (a samDynamicClaimAdmission) addSAMTransportNeighborAliases(router *routerapi.Router) {
+	claimsByLeafID := map[string]samDynamicClaim{}
+	for _, claim := range a.byTunnelAddress {
+		if strings.TrimSpace(claim.LeafID) != "" {
+			claimsByLeafID[strings.TrimSpace(claim.LeafID)] = claim
+		}
+	}
+	if len(claimsByLeafID) == 0 || router == nil {
+		return
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != routerapi.HybridAPIVersion || resource.Kind != "TunnelInterface" {
+			continue
+		}
+		peerNode := strings.TrimSpace(resource.Metadata.Annotations["mobility.routerd.net/peer-node"])
+		claim, ok := claimsByLeafID[peerNode]
+		if !ok {
+			continue
+		}
+		spec, err := resource.TunnelInterfaceSpec()
+		if err != nil {
+			continue
+		}
+		neighbor, ok := samTransportNeighborAddress(spec.Address)
+		if !ok {
+			continue
+		}
+		a.byTunnelAddress[neighbor.String()] = claim
+	}
+}
+
+func samTransportNeighborAddress(localPrefix string) (netip.Addr, bool) {
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(localPrefix))
+	if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 31 {
+		return netip.Addr{}, false
+	}
+	as4 := prefix.Addr().As4()
+	value := uint32(as4[0])<<24 | uint32(as4[1])<<16 | uint32(as4[2])<<8 | uint32(as4[3])
+	value ^= 1
+	return netip.AddrFrom4([4]byte{byte(value >> 24), byte(value >> 16), byte(value >> 8), byte(value)}), true
+}
+
+func (a samDynamicClaimAdmission) Admit(nextHop string, prefix netip.Prefix) (bool, string) {
+	if len(a.byTunnelAddress) == 0 && len(a.claimedPrefixes) == 0 && len(a.poolPrefixes) == 0 {
+		return true, ""
+	}
+	nextHop = normalizeAddressString(nextHop)
+	prefix = prefix.Masked()
+	if !a.prefixInAdmissionPool(prefix) && a.claimedPrefixes[prefix.String()].ClaimRef == "" {
+		return true, ""
+	}
+	if prefix.Bits() != int(bgpPrefixMaxLength(prefix)) {
+		return false, "not-exact-host-prefix"
+	}
+	claim, ok := a.byTunnelAddress[nextHop]
+	if !ok {
+		return false, "no-accepted-claim-for-next-hop"
+	}
+	if !claim.Owned[prefix.String()] {
+		return false, "prefix-not-owned-by-claim"
+	}
+	return true, ""
+}
+
+func (a samDynamicClaimAdmission) ClaimForNextHop(nextHop string) (samDynamicClaim, bool) {
+	claim, ok := a.byTunnelAddress[normalizeAddressString(nextHop)]
+	return claim, ok
+}
+
+func (a samDynamicClaimAdmission) prefixInAdmissionPool(prefix netip.Prefix) bool {
+	for _, pool := range a.poolPrefixes {
+		if pool.Addr().Is4() == prefix.Addr().Is4() && pool.Contains(prefix.Addr()) && prefix.Bits() >= pool.Bits() {
+			return true
+		}
+	}
+	return false
+}
+
+type dynamicRouteAdmissionTracker struct {
+	claimAdmission samDynamicClaimAdmission
+	accepted       map[string]int
+	rejected       map[string]int
+	reasons        map[string]int
+}
+
+type dynamicRouteAdmissionSummary struct {
+	AcceptedByNextHop map[string]int
+	RejectedByNextHop map[string]int
+	ReasonCounts      map[string]int
+}
+
+func newDynamicRouteAdmissionTracker(claimAdmission samDynamicClaimAdmission) *dynamicRouteAdmissionTracker {
+	return &dynamicRouteAdmissionTracker{
+		claimAdmission: claimAdmission,
+		accepted:       map[string]int{},
+		rejected:       map[string]int{},
+		reasons:        map[string]int{},
+	}
+}
+
+func (t *dynamicRouteAdmissionTracker) Admit(nextHop string, prefix netip.Prefix) bool {
+	key := normalizeAddressString(nextHop)
+	ok, reason := t.claimAdmission.Admit(key, prefix)
+	if ok {
+		t.accepted[key]++
+		return true
+	}
+	t.reject(key, reason)
+	return false
+}
+
+func (t *dynamicRouteAdmissionTracker) Reject(nextHop string, _ netip.Prefix, reason string) {
+	t.reject(normalizeAddressString(nextHop), reason)
+}
+
+func (t *dynamicRouteAdmissionTracker) reject(nextHop, reason string) {
+	if reason == "" {
+		reason = "rejected"
+	}
+	t.rejected[nextHop]++
+	t.reasons[reason]++
+}
+
+func (t *dynamicRouteAdmissionTracker) Summary() dynamicRouteAdmissionSummary {
+	return dynamicRouteAdmissionSummary{
+		AcceptedByNextHop: copyStringIntMap(t.accepted),
+		RejectedByNextHop: copyStringIntMap(t.rejected),
+		ReasonCounts:      copyStringIntMap(t.reasons),
+	}
+}
+
+type dynamicPeerObservation struct {
+	RemoteAddress    string
+	PeerGroup        string
+	ASN              uint32
+	State            string
+	Established      bool
+	ReceivedPrefixes int
+	AcceptedPrefixes int
+	EnrollmentClaim  string
+	EnrollmentLeafID string
+	EnrollmentBGPRID string
+	EnrollmentTunnel string
+}
+
+func dynamicPeerObservationFromPeer(peer *gobgpapi.Peer, admission samDynamicClaimAdmission) (dynamicPeerObservation, bool) {
+	group := strings.TrimSpace(peer.GetConf().GetPeerGroup())
+	if !strings.HasPrefix(group, "routerd-dynamic-") {
+		return dynamicPeerObservation{}, false
+	}
+	state := peer.GetState()
+	address := normalizeAddressString(firstNonEmpty(peerAddress(peer), state.GetNeighborAddress()))
+	observation := dynamicPeerObservation{
+		RemoteAddress: address,
+		PeerGroup:     group,
+		ASN:           firstNonZero(state.GetPeerAsn(), peer.GetConf().GetPeerAsn()),
+		State:         state.GetSessionState().String(),
+		Established:   state.GetSessionState() == gobgpapi.PeerState_ESTABLISHED,
+	}
+	for _, af := range peer.GetAfiSafis() {
+		observation.AcceptedPrefixes += int(af.GetState().GetAccepted())
+		observation.ReceivedPrefixes += int(af.GetState().GetReceived())
+	}
+	if claim, ok := admission.ClaimForNextHop(address); ok {
+		observation.EnrollmentClaim = claim.ClaimRef
+		observation.EnrollmentLeafID = claim.LeafID
+		observation.EnrollmentBGPRID = claim.BGPRouterID
+		observation.EnrollmentTunnel = claim.TunnelAddress
+	}
+	return observation, true
+}
+
+func dynamicPeerStatusMaps(groupName string, observations []dynamicPeerObservation, summary dynamicRouteAdmissionSummary) []map[string]any {
+	var out []map[string]any
+	for _, peer := range observations {
+		if peer.PeerGroup != groupName {
+			continue
+		}
+		status := map[string]any{
+			"remoteAddress":    peer.RemoteAddress,
+			"peerGroup":        peer.PeerGroup,
+			"asn":              peer.ASN,
+			"state":            peer.State,
+			"established":      peer.Established,
+			"receivedPrefixes": peer.ReceivedPrefixes,
+			"acceptedPrefixes": peer.AcceptedPrefixes,
+			"acceptedRoutes":   summary.AcceptedByNextHop[peer.RemoteAddress],
+			"rejectedRoutes":   summary.RejectedByNextHop[peer.RemoteAddress],
+		}
+		if peer.EnrollmentClaim != "" {
+			status["enrollmentClaimRef"] = peer.EnrollmentClaim
+			status["leafID"] = peer.EnrollmentLeafID
+			status["bgpRouterID"] = peer.EnrollmentBGPRID
+			status["tunnelAddress"] = peer.EnrollmentTunnel
+		}
+		out = append(out, status)
+	}
+	return out
+}
+
+func dynamicPeerAdmissionTotals(peerStatuses []map[string]any) (int, int) {
+	accepted, rejected := 0, 0
+	for _, status := range peerStatuses {
+		accepted += statusInt(status["acceptedRoutes"])
+		rejected += statusInt(status["rejectedRoutes"])
+	}
+	return accepted, rejected
+}
+
+func samEnrollmentClaimExpiredForBGP(policy routerapi.SAMEnrollmentPolicySpec, claim routerapi.SAMEnrollmentClaimSpec, now time.Time) bool {
+	if expiresAt, ok := parseBGPEnrollmentTime(claim.ExpiresAt); ok {
+		return !expiresAt.After(now)
+	}
+	ttlText := strings.TrimSpace(policy.TTL)
+	if ttlText == "" {
+		return false
+	}
+	ttl, err := time.ParseDuration(ttlText)
+	if err != nil {
+		return false
+	}
+	joinedAt, ok := parseBGPEnrollmentTime(claim.JoinTimestamp)
+	if !ok {
+		return false
+	}
+	return !joinedAt.Add(ttl).After(now)
+}
+
+func parseBGPEnrollmentTime(value string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return parsed, true
+	}
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return parsed, true
+	}
+	return time.Time{}, false
+}
+
+func parseSAMEnrollmentClaimPrefix(value string) (netip.Prefix, error) {
+	value = strings.TrimSpace(value)
+	if strings.Contains(value, "/") {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return netip.Prefix{}, err
+		}
+		return prefix.Masked(), nil
+	}
+	addr, err := netip.ParseAddr(value)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	if addr.Is4() {
+		return netip.PrefixFrom(addr, 32), nil
+	}
+	return netip.PrefixFrom(addr, 128), nil
+}
+
+func normalizeAddressString(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	addr, err := netip.ParseAddr(value)
+	if err != nil {
+		return value
+	}
+	return addr.String()
+}
+
+func uniquePrefixes(values []netip.Prefix) []netip.Prefix {
+	seen := map[string]bool{}
+	var out []netip.Prefix
+	for _, value := range values {
+		key := value.String()
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, value)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
+	return out
+}
+
+func copyStringIntMap(src map[string]int) map[string]int {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string]int, len(src))
+	for key, value := range src {
+		if key == "" {
+			key = "unknown"
+		}
+		out[key] = value
+	}
+	return out
 }
 
 func pathPrefix(path *gobgpapi.Path) string {

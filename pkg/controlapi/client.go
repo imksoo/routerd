@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -43,6 +44,19 @@ func NewUnixClient(socketPath string) *Client {
 		httpClient:    &http.Client{Transport: transport},
 		baseURL:       "http://routerd",
 		retryAttempts: 10,
+		retryDelay:    300 * time.Millisecond,
+	}
+}
+
+func NewHTTPClient(baseURL string) *Client {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		baseURL = "http://127.0.0.1:8080"
+	}
+	return &Client{
+		httpClient:    http.DefaultClient,
+		baseURL:       baseURL,
+		retryAttempts: 3,
 		retryDelay:    300 * time.Millisecond,
 	}
 }
@@ -222,6 +236,45 @@ func (c *Client) Validate(ctx context.Context, request ValidateRequest) (*Valida
 	}
 	req.Header.Set("Content-Type", "application/json")
 	var result ValidateResult
+	if err := c.do(req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (c *Client) SubmitSAMEnrollmentClaim(ctx context.Context, request SAMEnrollmentClaimSubmitRequest) (*SAMEnrollmentClaimSubmitResult, error) {
+	request.APIVersion = APIVersion
+	request.Kind = "SAMEnrollmentClaimSubmitRequest"
+	data, err := json.Marshal(request)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+Prefix+"/sam-enrollment-claims", bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	var result SAMEnrollmentClaimSubmitResult
+	if err := c.do(req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (c *Client) GetSAMRRSet(ctx context.Context, request SAMRRSetGetRequest) (*SAMRRSetGetResult, error) {
+	values := url.Values{}
+	if strings.TrimSpace(request.ClaimRef) != "" {
+		values.Set("claim", request.ClaimRef)
+	}
+	path := c.baseURL + Prefix + "/sam-rrsets/" + url.PathEscape(strings.TrimSpace(request.Name))
+	if encoded := values.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var result SAMRRSetGetResult
 	if err := c.do(req, &result); err != nil {
 		return nil, err
 	}

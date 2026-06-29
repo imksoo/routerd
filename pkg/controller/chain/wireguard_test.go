@@ -9,10 +9,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 	"github.com/imksoo/routerd/pkg/wireguard"
 )
@@ -24,6 +27,22 @@ func mustWireGuardRouter(t *testing.T, body string) *api.Router {
 		t.Fatal(err)
 	}
 	return &router
+}
+
+func assertStringSet(t *testing.T, label string, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s = %#v, want %#v", label, got, want)
+	}
+	seen := map[string]int{}
+	for _, value := range got {
+		seen[value]++
+	}
+	for _, value := range want {
+		if seen[value] != 1 {
+			t.Fatalf("%s = %#v, want %#v", label, got, want)
+		}
+	}
 }
 
 func (s mapStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
@@ -46,6 +65,151 @@ func (s mapStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
 func (s mapStore) DeleteObject(apiVersion, kind, name string) error {
 	delete(s, apiVersion+"/"+kind+"/"+name)
 	return nil
+}
+
+func TestWireGuardControllerDerivesPeersFromSAMRRSet(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: leaf-pve}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg-hybrid}
+      spec:
+        selfNodeRef: leaf-pve
+        privateKey: priv
+        peersFrom:
+          - resource: SAMRRSet/cloudedge-rrs
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMRRSet
+      metadata: {name: cloudedge-rrs}
+      spec:
+        enrollmentPolicyRef: SAMEnrollmentPolicy/cloudedge-leaves
+        members:
+          - nodeRef: aws-rr-a
+            endpoint: 203.0.113.10
+            tunnelAddress: 10.99.0.2/32
+            wireGuard:
+              publicKey: rrpub-a
+              endpoint: 203.0.113.10:51820
+          - nodeRef: aws-rr-b
+            endpoint: 203.0.113.11
+            tunnelAddress: 10.99.0.3/32
+            wireGuard:
+              publicKey: rrpub-b
+              endpoint: 203.0.113.11:51820
+`)
+	var setconf string
+	controller := WireGuardController{
+		Router: router,
+		Store:  mapStore{},
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			switch name + " " + strings.Join(args, " ") {
+			case "ip link show wg-hybrid":
+				return nil, errors.New("missing")
+			case "wg show wg-hybrid dump":
+				return []byte("priv\tifacepub\t51820\toff\n"), nil
+			default:
+				return nil, nil
+			}
+		},
+		CommandStdin: func(_ context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+			if name == "wg" && strings.Join(args, " ") == "setconf wg-hybrid /dev/stdin" {
+				setconf = string(stdin)
+			}
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"PublicKey = rrpub-a",
+		"AllowedIPs = 10.99.0.2/32",
+		"Endpoint = 203.0.113.10:51820",
+		"PublicKey = rrpub-b",
+		"AllowedIPs = 10.99.0.3/32",
+		"Endpoint = 203.0.113.11:51820",
+	} {
+		if !strings.Contains(setconf, want) {
+			t.Fatalf("setconf missing %q:\n%s", want, setconf)
+		}
+	}
+}
+
+func TestResolveWireGuardSAMResourcesDerivesPeersFromSAMRRSet(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: leaf-a}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg-cloudedge}
+      spec:
+        selfNodeRef: leaf-a
+        privateKey: priv
+        peersFrom:
+          - resource: SAMRRSet/cloudedge-rrs
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMRRSet
+      metadata: {name: cloudedge-rrs}
+      spec:
+        enrollmentPolicyRef: SAMEnrollmentPolicy/cloudedge-leaves
+        members:
+          - nodeRef: rr-a
+            endpoint: 10.10.0.2
+            tunnelAddress: 10.99.0.2/32
+            wireGuard:
+              publicKey: rrpub-a
+              endpoint: 203.0.113.10:51820
+              allowedIPs: [10.10.0.2/32]
+          - nodeRef: rr-b
+            endpoint: 10.10.0.3
+            tunnelAddress: 10.99.0.3/32
+            wireGuard:
+              publicKey: rrpub-b
+              endpoint: 203.0.113.11:51820
+              allowedIPs: [10.10.0.3/32]
+`)
+	effective, err := resolveWireGuardSAMResources(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := countResources(effective, api.NetAPIVersion, "WireGuardPeer"); got != 2 {
+		t.Fatalf("WireGuardPeer count = %d, want 2 resources=%#v", got, effective.Spec.Resources)
+	}
+	for _, want := range []struct {
+		name       string
+		allowedIPs []string
+	}{
+		{name: "rr-a", allowedIPs: []string{"10.99.0.2/32", "10.10.0.2/32"}},
+		{name: "rr-b", allowedIPs: []string{"10.99.0.3/32", "10.10.0.3/32"}},
+	} {
+		peer := mustWireGuardPeer(t, effective, want.name)
+		if strings.Join(peer.AllowedIPs, ",") != strings.Join(want.allowedIPs, ",") {
+			t.Fatalf("WireGuardPeer/%s allowedIPs = %#v, want %#v", want.name, peer.AllowedIPs, want.allowedIPs)
+		}
+	}
+}
+
+func mustWireGuardPeer(t *testing.T, router *api.Router, name string) api.WireGuardPeerSpec {
+	t.Helper()
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "WireGuardPeer" || resource.Metadata.Name != name {
+			continue
+		}
+		spec, err := resource.WireGuardPeerSpec()
+		if err != nil {
+			t.Fatalf("WireGuardPeer/%s spec: %v", name, err)
+		}
+		return spec
+	}
+	t.Fatalf("WireGuardPeer/%s not found in %#v", name, router.Spec.Resources)
+	return api.WireGuardPeerSpec{}
 }
 
 func TestWireGuardControllerAppliesInterfaceAndPeers(t *testing.T) {
@@ -651,6 +815,255 @@ spec:
 	peer := store.ObjectStatus(api.NetAPIVersion, "WireGuardPeer", "router-b")
 	if peer["publicKey"] != "peerpub-b" || peer["persistentKeepalive"] != 25 {
 		t.Fatalf("generated peer status = %+v", peer)
+	}
+}
+
+func TestWireGuardControllerDerivesPeersFromSAMEnrollmentPolicy(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: aws-rr-a}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg-hybrid}
+      spec:
+        selfNodeRef: aws-rr-a
+        privateKey: priv
+        listenPort: 51820
+        peersFrom:
+          - resource: SAMEnrollmentPolicy/cloudedge-leaves
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentPolicy
+      metadata: {name: cloudedge-leaves}
+      spec:
+        transportProfileRef: SAMTransportProfile/aws-rr-a
+        tunnelAddressPrefixes: [10.255.0.0/20]
+        ttl: 1h
+        wireGuard:
+          interface: wg-hybrid
+          persistentKeepalive: 25
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentClaim
+      metadata: {name: leaf-pve}
+      spec:
+        policyRef: SAMEnrollmentPolicy/cloudedge-leaves
+        leafID: leaf-pve
+        tunnelAddress: 10.255.0.21/32
+        wireGuard:
+          publicKey: leafpub-pve
+          endpoint: 198.51.100.21:51820
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentClaim
+      metadata: {name: leaf-revoked}
+      spec:
+        policyRef: SAMEnrollmentPolicy/cloudedge-leaves
+        leafID: leaf-revoked
+        tunnelAddress: 10.255.0.22/32
+        revoked: true
+        wireGuard:
+          publicKey: revokedpub
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentClaim
+      metadata: {name: leaf-ttl-expired}
+      spec:
+        policyRef: SAMEnrollmentPolicy/cloudedge-leaves
+        leafID: leaf-ttl-expired
+        joinTimestamp: "2026-06-28T00:00:00Z"
+        tunnelAddress: 10.255.0.23/32
+        wireGuard:
+          publicKey: ttlpub
+`)
+	store := mapStore{}
+	var setconf string
+	controller := WireGuardController{
+		Router: router,
+		Store:  store,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			switch name + " " + strings.Join(args, " ") {
+			case "ip link show wg-hybrid":
+				return nil, errors.New("missing")
+			case "wg show wg-hybrid dump":
+				return []byte("priv\tifacepub\t51820\toff\nleafpub-pve\tpsk\t198.51.100.21:51820\t10.255.0.21/32\t0\t0\t0\t25\n"), nil
+			default:
+				return nil, nil
+			}
+		},
+		CommandStdin: func(_ context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+			if name == "wg" && strings.Join(args, " ") == "setconf wg-hybrid /dev/stdin" {
+				setconf = string(stdin)
+			}
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"PublicKey = leafpub-pve",
+		"AllowedIPs = 10.255.0.21/32",
+		"Endpoint = 198.51.100.21:51820",
+		"PersistentKeepalive = 25",
+	} {
+		if !strings.Contains(setconf, want) {
+			t.Fatalf("setconf missing %q:\n%s", want, setconf)
+		}
+	}
+	if strings.Contains(setconf, "revokedpub") {
+		t.Fatalf("revoked claim must not be materialized:\n%s", setconf)
+	}
+	if strings.Contains(setconf, "ttlpub") {
+		t.Fatalf("TTL-expired claim must not be materialized:\n%s", setconf)
+	}
+	policy := store.ObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentPolicy", "cloudedge-leaves")
+	if policy["acceptedClaims"] != 1 || policy["skippedClaims"] != 2 {
+		t.Fatalf("policy status = %+v", policy)
+	}
+}
+
+func TestPVEWireGuardPeersFromSubmittedEnrollmentClaimState(t *testing.T) {
+	now := time.Date(2026, 6, 28, 9, 8, 0, 0, time.UTC)
+	router, err := config.Load(filepath.Join("..", "..", "..", "examples", "pve-minimal-rr.yaml"))
+	if err != nil {
+		t.Fatalf("load pve-minimal-rr.yaml: %v", err)
+	}
+	assertResourceCount(t, router.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim", 0)
+	claim := claimWithJoinTimestamp(t, pveMinimalRRSeedClaim(t, "pve-leaf-a"), now)
+	store := &dynamicRouteSAMStore{records: []routerstate.DynamicConfigPartRecord{
+		dynamicPartRecord(t, "SAMEnrollmentClaim/pve-leaf-a", []api.Resource{claim}, now.Add(5*time.Minute)),
+	}}
+	effective, err := BuildDynamicRouteSAMEffectiveRouter(router, store, now, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("BuildDynamicRouteSAMEffectiveRouter: %v", err)
+	}
+	assertResourceCount(t, effective.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim", 1)
+	resolved, err := resolveWireGuardSAMResources(effective)
+	if err != nil {
+		t.Fatalf("resolveWireGuardSAMResources: %v", err)
+	}
+	peer := mustResource(t, resolved, api.NetAPIVersion, "WireGuardPeer", "pve-leaf-a")
+	spec, err := peer.WireGuardPeerSpec()
+	if err != nil {
+		t.Fatalf("WireGuardPeer spec: %v", err)
+	}
+	if spec.Interface != "wg-pve" || spec.PublicKey != "PVE_LEAF_A_WIREGUARD_PUBLIC_KEY" || spec.Endpoint != "10.30.0.21:51820" {
+		t.Fatalf("WireGuardPeer/pve-leaf-a = %#v", spec)
+	}
+	assertStringSet(t, "WireGuardPeer/pve-leaf-a allowedIPs", spec.AllowedIPs, []string{"10.255.10.21/32", "10.31.0.21/32"})
+}
+
+func TestCloudEdgeRRExamplesDeriveOnlyWGAdmissionPeers(t *testing.T) {
+	now := time.Date(2026, 6, 28, 9, 9, 0, 0, time.UTC)
+	for _, example := range []string{
+		"cloudedge-dynamic-rr-a-hub.yaml",
+		"cloudedge-dynamic-rr-b-hub.yaml",
+	} {
+		t.Run(example, func(t *testing.T) {
+			router, err := config.Load(filepath.Join("..", "..", "..", "examples", example))
+			if err != nil {
+				t.Fatalf("load %s: %v", example, err)
+			}
+			if err := config.Validate(router); err != nil {
+				t.Fatalf("validate %s: %v", example, err)
+			}
+			assertResourceCount(t, router.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim", 0)
+			claim := claimWithJoinTimestamp(t, seedClaimFromFixture(t, "cloudedge-rr-claims-seed.yaml", "leaf-a"), now)
+			nonWGClaim := claimWithJoinTimestamp(t, seedClaimFromFixture(t, "cloudedge-rr-claims-seed.yaml", "leaf-b"), now)
+			store := &dynamicRouteSAMStore{records: []routerstate.DynamicConfigPartRecord{
+				dynamicPartRecord(t, "SAMEnrollmentClaim/leaf-a", []api.Resource{claim}, now.Add(5*time.Minute)),
+				dynamicPartRecord(t, "SAMEnrollmentClaim/leaf-b", []api.Resource{nonWGClaim}, now.Add(5*time.Minute)),
+			}}
+			effective, err := BuildDynamicRouteSAMEffectiveRouter(router, store, now, platform.OSLinux)
+			if err != nil {
+				t.Fatalf("BuildDynamicRouteSAMEffectiveRouter: %v", err)
+			}
+			assertResourceCount(t, effective.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim", 2)
+			resolved, err := resolveWireGuardSAMResources(effective)
+			if err != nil {
+				t.Fatalf("resolveWireGuardSAMResources: %v", err)
+			}
+			var peers []api.WireGuardPeerSpec
+			var names []string
+			for _, resource := range resolved.Spec.Resources {
+				if resource.APIVersion != api.NetAPIVersion || resource.Kind != "WireGuardPeer" {
+					continue
+				}
+				spec, err := resource.WireGuardPeerSpec()
+				if err != nil {
+					t.Fatalf("WireGuardPeer/%s spec: %v", resource.Metadata.Name, err)
+				}
+				names = append(names, resource.Metadata.Name)
+				peers = append(peers, spec)
+			}
+			if len(peers) != 1 || names[0] != "leaf-a" {
+				t.Fatalf("generated WireGuard peers = %v %#v, want only leaf-a", names, peers)
+			}
+			peer := peers[0]
+			if peer.Interface != "wg-cloudedge" || peer.PublicKey != "LEAF_A_WIREGUARD_PUBLIC_KEY" || peer.Endpoint != "198.51.100.31:51820" {
+				t.Fatalf("leaf-a WireGuard peer = %#v", peer)
+			}
+			assertStringSet(t, "leaf-a allowedIPs", peer.AllowedIPs, []string{"10.255.0.31/32", "10.20.0.31/32"})
+		})
+	}
+}
+
+func pveMinimalRRSeedClaim(t *testing.T, name string) api.Resource {
+	t.Helper()
+	return seedClaimFromFixture(t, "pve-minimal-rr-claims-seed.yaml", name)
+}
+
+func seedClaimFromFixture(t *testing.T, fixture, name string) api.Resource {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "tests", "fixtures", fixture))
+	if err != nil {
+		t.Fatalf("read claim seed %s: %v", fixture, err)
+	}
+	var seed api.Router
+	if err := yaml.Unmarshal(data, &seed); err != nil {
+		t.Fatalf("parse claim seed %s: %v", fixture, err)
+	}
+	for _, resource := range seed.Spec.Resources {
+		if resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "SAMEnrollmentClaim" && resource.Metadata.Name == name {
+			return resource
+		}
+	}
+	t.Fatalf("missing seed claim %s", name)
+	return api.Resource{}
+}
+
+func claimWithJoinTimestamp(t *testing.T, resource api.Resource, now time.Time) api.Resource {
+	t.Helper()
+	spec, err := resource.SAMEnrollmentClaimSpec()
+	if err != nil {
+		t.Fatalf("SAMEnrollmentClaim/%s spec: %v", resource.Metadata.Name, err)
+	}
+	spec.JoinTimestamp = now.UTC().Format(time.RFC3339)
+	resource.Spec = spec
+	return resource
+}
+
+func mustResource(t *testing.T, router *api.Router, apiVersion, kind, name string) api.Resource {
+	t.Helper()
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion == apiVersion && resource.Kind == kind && resource.Metadata.Name == name {
+			return resource
+		}
+	}
+	t.Fatalf("missing %s/%s", kind, name)
+	return api.Resource{}
+}
+
+func assertResourceCount(t *testing.T, resources []api.Resource, apiVersion, kind string, want int) {
+	t.Helper()
+	got := 0
+	for _, resource := range resources {
+		if resource.APIVersion == apiVersion && resource.Kind == kind {
+			got++
+		}
+	}
+	if got != want {
+		t.Fatalf("%s/%s count = %d, want %d", apiVersion, kind, got, want)
 	}
 }
 

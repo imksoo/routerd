@@ -1,0 +1,138 @@
+# yaml-language-server: $schema=https://routerd.net/schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: leaf-pve
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata: { name: private-wan }
+      spec: { ifname: private-wan, managed: false, mtu: 1500 }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata: { name: private-wan-ipv4 }
+      spec: { interface: private-wan, address: 10.20.0.21/24 }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata: { name: lo-mobility }
+      spec: { ifname: lo, managed: false }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata: { name: owned-service-ip }
+      spec:
+        interface: lo-mobility
+        address: 10.77.60.21/32
+        allowOverlap: true
+        allowOverlapReason: leaf-owned mobility /32 advertised to the RR set
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPRouter
+      metadata: { name: mobility-bgp }
+      spec:
+        asn: 64577
+        routerID: 10.255.0.21
+        exportPolicy:
+          allowedPrefixes: [10.77.60.21/32]
+        redistribute:
+          connected:
+            allowedPrefixes: [10.77.60.21/32]
+        timers: { profile: fast }
+        convergenceProfile: fast
+
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMRRSet
+      metadata: { name: cloudedge-rrs }
+      spec:
+        enrollmentPolicyRef: SAMEnrollmentPolicy/cloudedge-leaves
+        mobilityPoolRefs: [MobilityPool/cloudedge]
+        routeAdmission:
+          allowedPrefixes: [10.77.60.0/24]
+          allowedPrefixLengthMin: 32
+          allowedPrefixLengthMax: 32
+          nextHopRewrite: peer-address
+        members:
+          - nodeRef: rr-a
+            endpoint: 10.10.0.2
+            tunnelAddress: 10.99.0.2/32
+            bgp: { asn: 64577, routerID: 10.99.0.2 }
+          - nodeRef: rr-b
+            endpoint: 10.10.0.3
+            tunnelAddress: 10.99.0.3/32
+            bgp: { asn: 64577, routerID: 10.99.0.3 }
+
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMTransportProfile
+      metadata: { name: leaf-pve }
+      spec:
+        selfNodeRef: leaf-pve
+        mode: ipip
+        encryption: none
+        addressingMode: pair-stable
+        innerPrefix: 10.255.0.0/20
+        underlayInterface: private-wan
+        localEndpoint: 10.20.0.21
+        peersFrom:
+          - resource: SAMRRSet/cloudedge-rrs
+        bgp:
+          routerRef: BGPRouter/mobility-bgp
+          peerASN: 64577
+          timersPreset: fast
+          importPolicy:
+            allowedPrefixes: [10.77.60.0/24]
+            allowedPrefixLengthMin: 32
+            allowedPrefixLengthMax: 32
+            nextHopRewrite: unchanged
+          exportPolicy:
+            allowedPrefixes: [10.77.60.21/32]
+
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: MobilityPool
+      metadata: { name: cloudedge }
+      spec:
+        prefix: 10.77.60.0/24
+        groupRef: cloudedge
+        mode: selective-address
+        members:
+          - nodeRef: leaf-pve
+            site: pve
+            role: onprem
+
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentPolicy
+      metadata: { name: cloudedge-leaves }
+      spec:
+        transportProfileRef: SAMTransportProfile/leaf-pve
+        rrSetRef: SAMRRSet/cloudedge-rrs
+        joinTokenFrom:
+          file: /usr/local/etc/routerd/secrets/cloudedge-join-token
+        joinAudience: cloudedge-private-underlay
+        allowedLeafIDs:
+          pattern: ^leaf-[a-z0-9-]+$
+        tunnelAddressPrefixes: [10.255.0.0/20]
+        endpointPrefixes: [10.20.0.0/24]
+        mobilityPoolRefs: [MobilityPool/cloudedge]
+        ttl: 24h
+        revokeAfterInactive: 168h
+
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentClaim
+      metadata: { name: leaf-pve }
+      spec:
+        policyRef: SAMEnrollmentPolicy/cloudedge-leaves
+        rrSetRef: SAMRRSet/cloudedge-rrs
+        leafID: leaf-pve
+        joinAudience: cloudedge-private-underlay
+        joinNonce: leaf-pve-0001
+        joinTimestamp: "2026-06-28T00:00:00Z"
+        joinHMAC: EXAMPLE_HMAC_SHA256_HEX
+        tunnelAddress: 10.255.0.21/32
+        endpoint: 10.20.0.21
+        mobility:
+          ownedAddresses: [10.77.60.21/32]
+        bgp:
+          asn: 64577
+          routerID: 10.255.0.21

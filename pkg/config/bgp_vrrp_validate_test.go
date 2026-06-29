@@ -436,6 +436,159 @@ func TestValidateBGPPeerRouteReflectorRequiresIBGP(t *testing.T) {
 	}
 }
 
+func TestValidateBGPDynamicPeerRouteReflectorRequiresIBGP(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+				ASN:      64577,
+				RouterID: "10.99.0.1",
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPDynamicPeer"}, Metadata: api.ObjectMeta{Name: "leaves"}, Spec: api.BGPDynamicPeerSpec{
+				RouterRef:               "BGPRouter/lan",
+				PeerASN:                 64577,
+				Listen:                  api.BGPDynamicPeerListenSpec{SourcePrefixes: []string{"10.255.0.0/20"}},
+				RouteReflectorClient:    true,
+				RouteReflectorClusterID: "10.99.0.1",
+				ImportPolicy: api.BGPImportPolicySpec{
+					AllowedPrefixes:        []string{"10.77.60.0/24"},
+					AllowedPrefixLengthMin: 32,
+					AllowedPrefixLengthMax: 32,
+				},
+			}},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("valid dynamic route reflector client should validate: %v", err)
+	}
+	peer := router.Spec.Resources[1].Spec.(api.BGPDynamicPeerSpec)
+	peer.PeerASN = 64578
+	router.Spec.Resources[1].Spec = peer
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.routeReflectorClient requires iBGP") {
+		t.Fatalf("expected iBGP validation error, got %v", err)
+	}
+	peer.PeerASN = 64577
+	peer.Listen.SourcePrefixes = nil
+	router.Spec.Resources[1].Spec = peer
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.listen.sourcePrefixes is required") {
+		t.Fatalf("expected sourcePrefixes required validation error, got %v", err)
+	}
+	peer.Listen.SourcePrefixes = []string{"not-a-prefix"}
+	router.Spec.Resources[1].Spec = peer
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.listen.sourcePrefixes[0]") {
+		t.Fatalf("expected sourcePrefixes prefix validation error, got %v", err)
+	}
+}
+
+func TestValidateBGPDynamicPeerRequiresEffectiveImportAllowlist(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+				ASN:      64577,
+				RouterID: "10.99.0.1",
+			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPDynamicPeer"}, Metadata: api.ObjectMeta{Name: "leaves"}, Spec: api.BGPDynamicPeerSpec{
+				RouterRef: "BGPRouter/lan",
+				PeerASN:   64577,
+				Listen:    api.BGPDynamicPeerListenSpec{SourcePrefixes: []string{"10.255.0.0/20"}},
+			}},
+		}},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.importPolicy.allowedPrefixes is required") {
+		t.Fatalf("expected dynamic import allowlist validation error, got %v", err)
+	}
+	peer := router.Spec.Resources[1].Spec.(api.BGPDynamicPeerSpec)
+	peer.ImportPolicy = api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}}
+	router.Spec.Resources[1].Spec = peer
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "allowedPrefixLengthMin=32") {
+		t.Fatalf("expected broad dynamic import policy validation error, got %v", err)
+	}
+	peer.ImportPolicy = api.BGPImportPolicySpec{
+		AllowedPrefixes:        []string{"10.77.60.0/24"},
+		AllowedPrefixLengthMin: 32,
+		AllowedPrefixLengthMax: 32,
+	}
+	router.Spec.Resources[1].Spec = peer
+	if err := Validate(router); err != nil {
+		t.Fatalf("dynamic peer with exact /32 import allowlist should validate: %v", err)
+	}
+	peer.ImportPolicy = api.BGPImportPolicySpec{}
+	router.Spec.Resources[1].Spec = peer
+	bgpr := router.Spec.Resources[0].Spec.(api.BGPRouterSpec)
+	bgpr.ImportPolicy = api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}}
+	router.Spec.Resources[0].Spec = bgpr
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "allowedPrefixLengthMin=32") {
+		t.Fatalf("expected broad inherited import policy validation error, got %v", err)
+	}
+	bgpr.ImportPolicy = api.BGPImportPolicySpec{
+		AllowedPrefixes:        []string{"10.77.60.0/24"},
+		AllowedPrefixLengthMin: 32,
+		AllowedPrefixLengthMax: 32,
+	}
+	router.Spec.Resources[0].Spec = bgpr
+	if err := Validate(router); err != nil {
+		t.Fatalf("dynamic peer with exact /32 inherited router import allowlist should validate: %v", err)
+	}
+	peer.ImportPolicy = api.BGPImportPolicySpec{NextHopRewrite: "peer-address"}
+	router.Spec.Resources[1].Spec = peer
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "allowedPrefixes is required when spec.importPolicy.nextHopRewrite is set") {
+		t.Fatalf("expected nextHopRewrite-only dynamic import policy validation error, got %v", err)
+	}
+	peer.ImportPolicy = api.BGPImportPolicySpec{
+		AllowedPrefixes:        []string{"10.77.60.0/24"},
+		AllowedPrefixLengthMin: 32,
+		AllowedPrefixLengthMax: 32,
+		NextHopRewrite:         "peer-address",
+	}
+	router.Spec.Resources[1].Spec = peer
+	if err := Validate(router); err != nil {
+		t.Fatalf("dynamic peer with nextHopRewrite and exact /32 own import allowlist should validate: %v", err)
+	}
+}
+
+func TestValidateBGPImportPrefixLengthBoundsMatchPrefixFamilyAndBits(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
+				ASN:      64577,
+				RouterID: "10.99.0.1",
+				ImportPolicy: api.BGPImportPolicySpec{
+					AllowedPrefixes:        []string{"10.77.60.0/24"},
+					AllowedPrefixLengthMin: 16,
+					AllowedPrefixLengthMax: 32,
+				},
+			}},
+		}},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "allowedPrefixLengthMin must be >= prefix length 24") {
+		t.Fatalf("expected min below prefix bits validation error, got %v", err)
+	}
+	bgpr := router.Spec.Resources[0].Spec.(api.BGPRouterSpec)
+	bgpr.ImportPolicy = api.BGPImportPolicySpec{
+		AllowedPrefixes:        []string{"10.77.60.0/24"},
+		AllowedPrefixLengthMin: 24,
+		AllowedPrefixLengthMax: 33,
+	}
+	router.Spec.Resources[0].Spec = bgpr
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "allowedPrefixLengthMax must be <= 32") {
+		t.Fatalf("expected IPv4 max family validation error, got %v", err)
+	}
+	bgpr.ImportPolicy = api.BGPImportPolicySpec{
+		AllowedPrefixes:        []string{"2001:db8::/64"},
+		AllowedPrefixLengthMin: 64,
+		AllowedPrefixLengthMax: 128,
+	}
+	router.Spec.Resources[0].Spec = bgpr
+	if err := Validate(router); err != nil {
+		t.Fatalf("valid IPv6 prefix length bounds should validate: %v", err)
+	}
+}
+
 func TestValidateBGPCommunitiesRejectsInvalidCommunity(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

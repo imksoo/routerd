@@ -323,6 +323,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	statusFile := fs.String("status-file", defaultStatusFile(), "status file")
 	socketPath := fs.String("socket", defaultSocketPath(), "Unix domain socket path")
 	statusSocketPath := fs.String("status-socket", defaultStatusSocketPath(), "read-only status Unix domain socket path")
+	httpListen := fs.String("http-listen", "", "optional TCP listen address for the mutation/control API, for example 10.30.0.10:8080")
 	statePath := fs.String("state-file", defaultStatePath, "routerd state database file")
 	controllerNames := fs.String("controllers", "all", "comma-separated controller names to run; use bgp for isolated BGP labs")
 	applyInterval := fs.Duration("apply-interval", 0, "periodic apply interval; 0 disables scheduled apply")
@@ -703,6 +704,33 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			defer applyMu.Unlock()
 			return mutator.validate(r, req)
 		},
+		SubmitSAMEnrollmentClaim: func(r *http.Request, req controlapi.SAMEnrollmentClaimSubmitRequest) (*controlapi.SAMEnrollmentClaimSubmitResult, error) {
+			applyMu.Lock()
+			defer applyMu.Unlock()
+			result, err := submitSAMEnrollmentClaim(currentRouter(), stateStore, req, time.Now().UTC())
+			if err != nil {
+				return nil, err
+			}
+			if controllerBus != nil {
+				event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd"}, "routerd.resource.status.changed", daemonapi.SeverityInfo)
+				event.Attributes = map[string]string{
+					"resource":      result.ClaimRef,
+					"dynamicSource": result.DynamicSource,
+					"reason":        "sam-enrollment-claim-submitted",
+				}
+				_ = controllerBus.Publish(r.Context(), event)
+			}
+			logger.Emit(eventlog.LevelInfo, "sam-enrollment", "accepted SAMEnrollmentClaim", map[string]string{
+				"claim":         result.ClaimRef,
+				"dynamicSource": result.DynamicSource,
+			})
+			return result, nil
+		},
+		GetSAMRRSet: func(r *http.Request, req controlapi.SAMRRSetGetRequest) (*controlapi.SAMRRSetGetResult, error) {
+			applyMu.Lock()
+			defer applyMu.Unlock()
+			return getSAMRRSetForAcceptedClaim(currentRouter(), stateStore, req, time.Now().UTC())
+		},
 		SetLogLevel: func(r *http.Request, req controlapi.LogLevelRequest) (*controlapi.LogLevelResult, error) {
 			level := strings.TrimSpace(req.Level)
 			effective := "default"
@@ -801,15 +829,43 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		IdleTimeout:       2 * time.Minute,
 	}
 	server.SetKeepAlivesEnabled(false)
+	var httpServer *http.Server
+	if strings.TrimSpace(*httpListen) != "" {
+		httpListener, err := net.Listen("tcp", strings.TrimSpace(*httpListen))
+		if err != nil {
+			return fmt.Errorf("listen control HTTP API: %w", err)
+		}
+		defer httpListener.Close()
+		httpServer = &http.Server{
+			Handler:           handler,
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       30 * time.Second,
+			WriteTimeout:      60 * time.Second,
+			IdleTimeout:       2 * time.Minute,
+		}
+		httpServer.SetKeepAlivesEnabled(false)
+		defer httpServer.Close()
+		go func() {
+			if serveErr := httpServer.Serve(httpListener); serveErr != nil && serveErr != http.ErrServerClosed {
+				logger.Emit(eventlog.LevelError, "serve", "control HTTP API stopped", map[string]string{"error": serveErr.Error(), "listen": strings.TrimSpace(*httpListen)})
+			}
+		}()
+	}
 	go func() {
 		<-signalCtx.Done()
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownCancel()
 		_ = statusServer.Shutdown(shutdownCtx)
 		_ = server.Shutdown(shutdownCtx)
+		if httpServer != nil {
+			_ = httpServer.Shutdown(shutdownCtx)
+		}
 	}()
 	fmt.Fprintf(stdout, "routerd serving control API on unix://%s\n", *socketPath)
 	fmt.Fprintf(stdout, "routerd serving read-only status API on unix://%s\n", *statusSocketPath)
+	if strings.TrimSpace(*httpListen) != "" {
+		fmt.Fprintf(stdout, "routerd serving control API on http://%s\n", strings.TrimSpace(*httpListen))
+	}
 	if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 		return err
 	}

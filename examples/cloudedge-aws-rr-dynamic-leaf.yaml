@@ -1,0 +1,75 @@
+# yaml-language-server: $schema=https://routerd.net/schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: aws-rr-a
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: { name: wg-hybrid }
+      spec:
+        privateKeyFile: /usr/local/etc/routerd/secrets/wg-hybrid.key
+        listenPort: 51820
+        mtu: 1420
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata: { name: wg-hybrid }
+      spec: { ifname: wg-hybrid, managed: false, mtu: 1420 }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata: { name: wg-hybrid-ipv4 }
+      spec: { interface: wg-hybrid, address: 10.99.0.2/32 }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPRouter
+      metadata: { name: mobility-bgp }
+      spec:
+        asn: 64577
+        routerID: 10.99.0.2
+        listen: { port: 179 }
+        importPolicy:
+          allowedPrefixes: [10.77.60.0/24]
+          nextHopRewrite: unchanged
+        timers: { profile: fast }
+        convergenceProfile: fast
+
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMTransportProfile
+      metadata: { name: aws-rr-a }
+      spec:
+        selfNodeRef: aws-rr-a
+        mode: ipip
+        encryption: wireguard
+        addressingMode: pair-stable
+        innerPrefix: 10.255.0.0/20
+        underlayInterface: wg-hybrid
+        localEndpointFrom:
+          resource: IPv4StaticAddress/wg-hybrid-ipv4
+          field: address
+        publishPeerGroup: true
+        bgp:
+          routerRef: BGPRouter/mobility-bgp
+          peerASN: 64577
+          timersPreset: fast
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPDynamicPeer
+      metadata: { name: cloudedge-leaves }
+      spec:
+        routerRef: BGPRouter/mobility-bgp
+        peerASN: 64577
+        listen:
+          sourcePrefixes: [10.255.0.0/20]
+        routeReflectorClient: true
+        routeReflectorClusterID: 10.99.0.254
+        importPolicy:
+          allowedPrefixes: [10.77.60.0/24]
+          allowedPrefixLengthMin: 32
+          allowedPrefixLengthMax: 32
+          nextHopRewrite: peer-address
+        exportPolicy:
+          allowedPrefixes: [10.77.60.0/24]
+        timers: { profile: fast }

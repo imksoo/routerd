@@ -456,6 +456,7 @@ func whenValidationTestResources(when api.ResourceWhenSpec) []whenValidationTest
 		{specName: "VirtualAddressSpec", resource: testResource(api.NetAPIVersion, "VirtualAddress", "vip", api.VirtualAddressSpec{Family: "ipv4", Interface: "lan", Address: "192.0.2.10/32", When: when})},
 		{specName: "BGPRouterSpec", resource: testResource(api.NetAPIVersion, "BGPRouter", "main", api.BGPRouterSpec{ASN: 64500, RouterID: "192.0.2.1", When: when})},
 		{specName: "BGPPeerSpec", resource: testResource(api.NetAPIVersion, "BGPPeer", "k8s-rt", api.BGPPeerSpec{RouterRef: "BGPRouter/main", PeerASN: 64512, Peers: []string{"192.0.2.2"}, When: when})},
+		{specName: "BGPDynamicPeerSpec", resource: testResource(api.NetAPIVersion, "BGPDynamicPeer", "leaves", api.BGPDynamicPeerSpec{RouterRef: "BGPRouter/main", PeerASN: 64500, Listen: api.BGPDynamicPeerListenSpec{SourcePrefixes: []string{"10.255.0.0/20"}}, ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}, AllowedPrefixLengthMin: 32, AllowedPrefixLengthMax: 32}, When: when})},
 		{specName: "BFDSpec", resource: testResource(api.NetAPIVersion, "BFD", "k8s-rt", api.BFDSpec{Peer: "BGPPeer/k8s-rt", When: when})},
 		{specName: "TailscaleNodeSpec", resource: testResource(api.NetAPIVersion, "TailscaleNode", "home", api.TailscaleNodeSpec{Hostname: "router", When: when})},
 		{specName: "NTPClientSpec", resource: testResource(api.SystemAPIVersion, "NTPClient", "system-time", api.NTPClientSpec{Provider: "chrony", Managed: true, Source: "auto", FallbackServers: []string{"192.0.2.123"}, When: when})},
@@ -901,7 +902,7 @@ func TestValidateRejectsInvalidWireGuardInterfacePeersFrom(t *testing.T) {
 		}},
 	}
 	err := Validate(router)
-	if err == nil || !strings.Contains(err.Error(), "spec.peersFrom[0].resource must reference SAMNodeSet/<name>") {
+	if err == nil || !strings.Contains(err.Error(), "spec.peersFrom[0].resource must reference SAMNodeSet/<name>, SAMEnrollmentPolicy/<name>, or SAMRRSet/<name>") {
 		t.Fatalf("Validate WireGuardInterface peersFrom error = %v, want SAMNodeSet ref error", err)
 	}
 }

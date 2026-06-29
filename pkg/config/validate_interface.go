@@ -354,8 +354,13 @@ func validateInterfaceResource(res api.Resource, targetOS platform.OS) (bool, er
 
 func validateWireGuardPeersFrom(resourceID string, index int, source api.WireGuardPeersSourceSpec) error {
 	kind, name, ok := strings.Cut(strings.TrimSpace(source.Resource), "/")
-	if !ok || kind != "SAMNodeSet" || strings.TrimSpace(name) == "" {
-		return fmt.Errorf("%s spec.peersFrom[%d].resource must reference SAMNodeSet/<name>", resourceID, index)
+	if !ok || strings.TrimSpace(name) == "" {
+		return fmt.Errorf("%s spec.peersFrom[%d].resource must reference SAMNodeSet/<name>, SAMEnrollmentPolicy/<name>, or SAMRRSet/<name>", resourceID, index)
+	}
+	switch kind {
+	case "SAMNodeSet", "SAMEnrollmentPolicy", "SAMRRSet":
+	default:
+		return fmt.Errorf("%s spec.peersFrom[%d].resource must reference SAMNodeSet/<name>, SAMEnrollmentPolicy/<name>, or SAMRRSet/<name>", resourceID, index)
 	}
 	return nil
 }

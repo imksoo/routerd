@@ -5,15 +5,146 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
+
+func TestMobilityEnrollmentHMACCommand(t *testing.T) {
+	secretPath := filepath.Join(t.TempDir(), "join-token")
+	if err := os.WriteFile(secretPath, []byte("test-join-token\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	configPath := filepath.Join("..", "..", "examples", "cloudedge-dynamic-leaf-pve.yaml")
+	var stdout, stderr bytes.Buffer
+	if err := mobilityCommand([]string{"enrollment-hmac", "--config", configPath, "--claim", "leaf-pve", "--secret-file", secretPath}, &stdout, &stderr); err != nil {
+		t.Fatalf("mobility enrollment-hmac: %v stderr=%s", err, stderr.String())
+	}
+	hmacValue := strings.TrimSpace(stdout.String())
+	if hmacValue == "" || strings.Contains(hmacValue, "EXAMPLE") {
+		t.Fatalf("unexpected hmac output %q", hmacValue)
+	}
+
+	router, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("Load example: %v", err)
+	}
+	for i := range router.Spec.Resources {
+		resource := &router.Spec.Resources[i]
+		switch resource.Kind {
+		case "SAMEnrollmentPolicy":
+			spec, err := resource.SAMEnrollmentPolicySpec()
+			if err != nil {
+				t.Fatalf("%s spec: %v", resource.ID(), err)
+			}
+			spec.JoinTokenFrom.File = secretPath
+			resource.Spec = spec
+		case "SAMEnrollmentClaim":
+			spec, err := resource.SAMEnrollmentClaimSpec()
+			if err != nil {
+				t.Fatalf("%s spec: %v", resource.ID(), err)
+			}
+			stdout.Reset()
+			stderr.Reset()
+			if err := mobilityCommand([]string{"enrollment-hmac", "--config", configPath, "--claim", resource.Metadata.Name, "--secret-file", secretPath}, &stdout, &stderr); err != nil {
+				t.Fatalf("mobility enrollment-hmac %s: %v stderr=%s", resource.Metadata.Name, err, stderr.String())
+			}
+			spec.JoinHMAC = strings.TrimSpace(stdout.String())
+			resource.Spec = spec
+		}
+	}
+	rendered, err := yaml.Marshal(router)
+	if err != nil {
+		t.Fatalf("Marshal candidate: %v", err)
+	}
+	candidate := filepath.Join(t.TempDir(), "rr-a.yaml")
+	if err := os.WriteFile(candidate, rendered, 0o600); err != nil {
+		t.Fatalf("WriteFile candidate: %v", err)
+	}
+	router, err = config.Load(candidate)
+	if err != nil {
+		t.Fatalf("Load candidate: %v", err)
+	}
+	if err := config.Validate(router); err != nil {
+		t.Fatalf("Validate candidate with generated HMAC: %v", err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if err := mobilityCommand([]string{"enrollment-hmac", "--config", configPath, "--claim", "leaf-pve", "--secret-file", secretPath, "--show-payload"}, &stdout, &stderr); err != nil {
+		t.Fatalf("mobility enrollment-hmac --show-payload: %v stderr=%s", err, stderr.String())
+	}
+	if out := stdout.String(); !strings.Contains(out, "leafID=leaf-pve") || !strings.Contains(out, hmacValue) {
+		t.Fatalf("show-payload output missing payload or hmac:\n%s", out)
+	}
+}
+
+func TestMobilityEnrollmentJoinFetchesRRSetIntoDynamicState(t *testing.T) {
+	rrSet := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMRRSet"},
+		Metadata: api.ObjectMeta{Name: "pve-rrs"},
+		Spec: api.SAMRRSetSpec{
+			EnrollmentPolicyRef: "SAMEnrollmentPolicy/pve-fou-leaves",
+			MobilityPoolRefs:    []string{"MobilityPool/pve-mobility"},
+			Members: []api.SAMRRSetMember{{
+				NodeRef:       "pve-rr",
+				Endpoint:      "10.30.0.10",
+				TunnelAddress: "10.255.10.1/32",
+				BGP:           api.SAMRRSetMemberBGPSpec{ASN: 64577, RouterID: "10.255.10.1"},
+			}},
+		},
+	}
+	now := time.Date(2026, 6, 28, 0, 1, 0, 0, time.UTC)
+	server := httptest.NewServer(controlapi.Handler{
+		SubmitSAMEnrollmentClaim: func(r *http.Request, req controlapi.SAMEnrollmentClaimSubmitRequest) (*controlapi.SAMEnrollmentClaimSubmitResult, error) {
+			if req.Claim.Kind != "SAMEnrollmentClaim" || req.Claim.Metadata.Name != "pve-leaf-b" {
+				t.Fatalf("submitted claim = %#v", req.Claim)
+			}
+			result := controlapi.NewSAMEnrollmentClaimSubmitResult("SAMEnrollmentClaim/pve-leaf-b", "SAMEnrollmentClaim/pve-leaf-b", 1, now, now.Add(time.Hour))
+			return &result, nil
+		},
+		GetSAMRRSet: func(r *http.Request, req controlapi.SAMRRSetGetRequest) (*controlapi.SAMRRSetGetResult, error) {
+			if req.Name != "pve-rrs" || req.ClaimRef != "SAMEnrollmentClaim/pve-leaf-b" {
+				t.Fatalf("rrset request = %#v", req)
+			}
+			result := controlapi.NewSAMRRSetGetResult("pve-rrs", rrSet)
+			return &result, nil
+		},
+	})
+	defer server.Close()
+	statePath := filepath.Join(t.TempDir(), "routerd.db")
+	configPath := filepath.Join("..", "..", "examples", "pve-minimal-leaf-b-fou.yaml")
+	var stdout, stderr bytes.Buffer
+	if err := mobilityCommand([]string{"enrollment-join", "--config", configPath, "--claim", "pve-leaf-b", "--rr-url", server.URL, "--state-file", statePath, "-o", "json"}, &stdout, &stderr); err != nil {
+		t.Fatalf("mobility enrollment-join: %v stderr=%s", err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"rrSetRef": "SAMRRSet/pve-rrs"`) || !strings.Contains(stdout.String(), `"dynamicSource": "SAMRRSet/pve-rrs"`) {
+		t.Fatalf("join output = %s", stdout.String())
+	}
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer store.Close()
+	records, err := store.GetDynamicConfigPartsBySource("SAMRRSet/pve-rrs")
+	if err != nil {
+		t.Fatalf("GetDynamicConfigPartsBySource: %v", err)
+	}
+	if len(records) != 1 || !strings.Contains(records[0].ResourcesJSON, `"pve-rrs"`) || !strings.Contains(records[0].ResourcesJSON, `"pve-rr"`) {
+		t.Fatalf("records = %#v", records)
+	}
+}
 
 func TestMobilityPathsCommand(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routerd.db")

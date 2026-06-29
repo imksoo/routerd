@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -162,6 +163,54 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 			return true, err
 		}
 		if err := validateSAMPeerGroup(res, spec); err != nil {
+			return true, err
+		}
+		return true, nil
+	case "SAMRRSet":
+		if res.APIVersion != api.MobilityAPIVersion {
+			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.MobilityAPIVersion)
+		}
+		spec, err := res.SAMRRSetSpec()
+		if err != nil {
+			return true, err
+		}
+		if err := validateSAMRRSet(res, spec); err != nil {
+			return true, err
+		}
+		return true, nil
+	case "SAMEnrollmentPolicy":
+		if res.APIVersion != api.MobilityAPIVersion {
+			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.MobilityAPIVersion)
+		}
+		spec, err := res.SAMEnrollmentPolicySpec()
+		if err != nil {
+			return true, err
+		}
+		if err := validateSAMEnrollmentPolicy(res, spec); err != nil {
+			return true, err
+		}
+		return true, nil
+	case "SAMEnrollmentClaim":
+		if res.APIVersion != api.MobilityAPIVersion {
+			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.MobilityAPIVersion)
+		}
+		spec, err := res.SAMEnrollmentClaimSpec()
+		if err != nil {
+			return true, err
+		}
+		if err := validateSAMEnrollmentClaimShape(res, spec); err != nil {
+			return true, err
+		}
+		return true, nil
+	case "SAMEnrollmentClient":
+		if res.APIVersion != api.MobilityAPIVersion {
+			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.MobilityAPIVersion)
+		}
+		spec, err := res.SAMEnrollmentClientSpec()
+		if err != nil {
+			return true, err
+		}
+		if err := validateSAMEnrollmentClient(res, spec); err != nil {
 			return true, err
 		}
 		return true, nil
@@ -321,6 +370,22 @@ func validateWireGuardEndpoint(endpoint string) error {
 	return nil
 }
 
+func parseSAMEnrollmentTunnelAddress(value string) (netip.Prefix, error) {
+	value = strings.TrimSpace(value)
+	if strings.Contains(value, "/") {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return netip.Prefix{}, err
+		}
+		return prefix.Masked(), nil
+	}
+	addr, err := netip.ParseAddr(value)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	return netip.PrefixFrom(addr, 32), nil
+}
+
 func validateMobilityMemberSet(res api.Resource, spec api.MobilityMemberSetSpec) error {
 	if len(spec.Members) == 0 {
 		return fmt.Errorf("%s spec.members requires at least one member", res.ID())
@@ -374,14 +439,300 @@ func validateSAMPeerGroup(res api.Resource, spec api.SAMPeerGroupSpec) error {
 	return nil
 }
 
+func validateSAMRRSet(res api.Resource, spec api.SAMRRSetSpec) error {
+	if strings.TrimSpace(spec.EnrollmentPolicyRef) == "" {
+		return fmt.Errorf("%s spec.enrollmentPolicyRef is required", res.ID())
+	}
+	if kind, name, ok := strings.Cut(strings.TrimSpace(spec.EnrollmentPolicyRef), "/"); !ok || kind != "SAMEnrollmentPolicy" || strings.TrimSpace(name) == "" {
+		return fmt.Errorf("%s spec.enrollmentPolicyRef must reference SAMEnrollmentPolicy/<name>", res.ID())
+	}
+	for i, ref := range spec.MobilityPoolRefs {
+		if kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/"); !ok || kind != "MobilityPool" || strings.TrimSpace(name) == "" {
+			return fmt.Errorf("%s spec.mobilityPoolRefs[%d] must reference MobilityPool/<name>", res.ID(), i)
+		}
+	}
+	if _, err := validateBGPPrefixList(res.ID(), "spec.routeAdmission.allowedPrefixes", spec.RouteAdmission.AllowedPrefixes); err != nil {
+		return err
+	}
+	switch strings.TrimSpace(spec.RouteAdmission.NextHopRewrite) {
+	case "", "peer-address", "unchanged":
+	default:
+		return fmt.Errorf("%s spec.routeAdmission.nextHopRewrite must be peer-address or unchanged", res.ID())
+	}
+	if len(spec.Members) == 0 {
+		return fmt.Errorf("%s spec.members requires at least one RR member", res.ID())
+	}
+	seen := map[string]bool{}
+	for i, member := range spec.Members {
+		nodeRef := strings.TrimSpace(member.NodeRef)
+		if nodeRef == "" {
+			return fmt.Errorf("%s spec.members[%d].nodeRef is required", res.ID(), i)
+		}
+		if seen[nodeRef] {
+			return fmt.Errorf("%s spec.members nodeRef %q is duplicated", res.ID(), nodeRef)
+		}
+		seen[nodeRef] = true
+		tunnel, err := parseSAMEnrollmentTunnelAddress(member.TunnelAddress)
+		if err != nil || !tunnel.Addr().Is4() || tunnel.Bits() != 32 {
+			return fmt.Errorf("%s spec.members[%d].tunnelAddress must be an IPv4 /32", res.ID(), i)
+		}
+		if err := validateTunnelEndpointOrSource(res.ID(), fmt.Sprintf("members[%d].endpoint", i), member.Endpoint, api.StatusValueSourceSpec{}); err != nil {
+			return err
+		}
+		wireGuardSet := strings.TrimSpace(member.WireGuard.PublicKey) != "" ||
+			strings.TrimSpace(member.WireGuard.Endpoint) != "" ||
+			len(member.WireGuard.AllowedIPs) > 0 ||
+			member.WireGuard.PersistentKeepalive != 0
+		if wireGuardSet && strings.TrimSpace(member.WireGuard.PublicKey) == "" {
+			return fmt.Errorf("%s spec.members[%d].wireGuard.publicKey is required when wireGuard is set", res.ID(), i)
+		}
+		if wireGuardSet && strings.TrimSpace(member.WireGuard.Endpoint) == "" {
+			return fmt.Errorf("%s spec.members[%d].wireGuard.endpoint is required when wireGuard is set", res.ID(), i)
+		}
+		if endpoint := strings.TrimSpace(member.WireGuard.Endpoint); endpoint != "" {
+			if err := validateWireGuardEndpoint(endpoint); err != nil {
+				return fmt.Errorf("%s spec.members[%d].wireGuard.endpoint: %w", res.ID(), i, err)
+			}
+		}
+		for j, allowed := range member.WireGuard.AllowedIPs {
+			parsed, err := netip.ParsePrefix(strings.TrimSpace(allowed))
+			if err != nil || !parsed.Addr().Is4() {
+				return fmt.Errorf("%s spec.members[%d].wireGuard.allowedIPs[%d] must be an IPv4 prefix", res.ID(), i, j)
+			}
+		}
+		if member.WireGuard.PersistentKeepalive < 0 || member.WireGuard.PersistentKeepalive > 65535 {
+			return fmt.Errorf("%s spec.members[%d].wireGuard.persistentKeepalive must be within 0-65535", res.ID(), i)
+		}
+		if strings.TrimSpace(member.BGP.RouterID) != "" {
+			addr, err := netip.ParseAddr(strings.TrimSpace(member.BGP.RouterID))
+			if err != nil || !addr.Is4() {
+				return fmt.Errorf("%s spec.members[%d].bgp.routerID must be an IPv4 address", res.ID(), i)
+			}
+		}
+	}
+	return nil
+}
+
+func validateSAMEnrollmentPolicy(res api.Resource, spec api.SAMEnrollmentPolicySpec) error {
+	if strings.TrimSpace(spec.TransportProfileRef) == "" {
+		return fmt.Errorf("%s spec.transportProfileRef is required", res.ID())
+	}
+	if kind, name, ok := strings.Cut(strings.TrimSpace(spec.TransportProfileRef), "/"); !ok || kind != "SAMTransportProfile" || strings.TrimSpace(name) == "" {
+		return fmt.Errorf("%s spec.transportProfileRef must reference SAMTransportProfile/<name>", res.ID())
+	}
+	if rrSetRef := strings.TrimSpace(spec.RRSetRef); rrSetRef != "" {
+		if kind, name, ok := strings.Cut(rrSetRef, "/"); !ok || kind != "SAMRRSet" || strings.TrimSpace(name) == "" {
+			return fmt.Errorf("%s spec.rrSetRef must reference SAMRRSet/<name>", res.ID())
+		}
+	}
+	if pattern := strings.TrimSpace(spec.AllowedLeafIDs.Pattern); pattern != "" {
+		if _, err := regexp.Compile(pattern); err != nil {
+			return fmt.Errorf("%s spec.allowedLeafIDs.pattern must be a valid regexp: %w", res.ID(), err)
+		}
+	}
+	if err := validateSecretValueSource(res.ID(), "", "", "spec.joinTokenFrom", spec.JoinTokenFrom); err != nil {
+		return err
+	}
+	if len(spec.TunnelAddressPrefixes) == 0 {
+		return fmt.Errorf("%s spec.tunnelAddressPrefixes requires at least one IPv4 prefix", res.ID())
+	}
+	for i, prefix := range spec.TunnelAddressPrefixes {
+		parsed, err := netip.ParsePrefix(strings.TrimSpace(prefix))
+		if err != nil || !parsed.Addr().Is4() {
+			return fmt.Errorf("%s spec.tunnelAddressPrefixes[%d] must be an IPv4 prefix", res.ID(), i)
+		}
+	}
+	for i, prefix := range spec.EndpointPrefixes {
+		parsed, err := netip.ParsePrefix(strings.TrimSpace(prefix))
+		if err != nil || !parsed.Addr().Is4() {
+			return fmt.Errorf("%s spec.endpointPrefixes[%d] must be an IPv4 prefix", res.ID(), i)
+		}
+	}
+	wireGuardSet := strings.TrimSpace(spec.WireGuard.Interface) != "" ||
+		len(spec.WireGuard.AllowedExtraIPPrefixes) > 0 ||
+		spec.WireGuard.PersistentKeepalive != 0
+	if wireGuardSet && strings.TrimSpace(spec.WireGuard.Interface) == "" {
+		return fmt.Errorf("%s spec.wireGuard.interface is required when wireGuard is set", res.ID())
+	}
+	for i, prefix := range spec.WireGuard.AllowedExtraIPPrefixes {
+		parsed, err := netip.ParsePrefix(strings.TrimSpace(prefix))
+		if err != nil || !parsed.Addr().Is4() {
+			return fmt.Errorf("%s spec.wireGuard.allowedExtraIPPrefixes[%d] must be an IPv4 prefix", res.ID(), i)
+		}
+	}
+	for i, prefix := range spec.WireGuard.EndpointPrefixes {
+		parsed, err := netip.ParsePrefix(strings.TrimSpace(prefix))
+		if err != nil || !parsed.Addr().Is4() {
+			return fmt.Errorf("%s spec.wireGuard.endpointPrefixes[%d] must be an IPv4 prefix", res.ID(), i)
+		}
+	}
+	if spec.WireGuard.PersistentKeepalive < 0 || spec.WireGuard.PersistentKeepalive > 65535 {
+		return fmt.Errorf("%s spec.wireGuard.persistentKeepalive must be within 0-65535", res.ID())
+	}
+	for i, ref := range spec.MobilityPoolRefs {
+		if kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/"); !ok || kind != "MobilityPool" || strings.TrimSpace(name) == "" {
+			return fmt.Errorf("%s spec.mobilityPoolRefs[%d] must reference MobilityPool/<name>", res.ID(), i)
+		}
+	}
+	for _, field := range []struct {
+		path  string
+		value string
+	}{
+		{path: "spec.ttl", value: spec.TTL},
+		{path: "spec.revokeAfterInactive", value: spec.RevokeAfterInactive},
+	} {
+		if strings.TrimSpace(field.value) == "" {
+			continue
+		}
+		if _, err := time.ParseDuration(strings.TrimSpace(field.value)); err != nil {
+			return fmt.Errorf("%s %s must be a duration: %w", res.ID(), field.path, err)
+		}
+	}
+	return nil
+}
+
+func validateSAMEnrollmentClaimShape(res api.Resource, spec api.SAMEnrollmentClaimSpec) error {
+	if strings.TrimSpace(spec.PolicyRef) == "" {
+		return fmt.Errorf("%s spec.policyRef is required", res.ID())
+	}
+	if kind, name, ok := strings.Cut(strings.TrimSpace(spec.PolicyRef), "/"); !ok || kind != "SAMEnrollmentPolicy" || strings.TrimSpace(name) == "" {
+		return fmt.Errorf("%s spec.policyRef must reference SAMEnrollmentPolicy/<name>", res.ID())
+	}
+	if rrSetRef := strings.TrimSpace(spec.RRSetRef); rrSetRef != "" {
+		if kind, name, ok := strings.Cut(rrSetRef, "/"); !ok || kind != "SAMRRSet" || strings.TrimSpace(name) == "" {
+			return fmt.Errorf("%s spec.rrSetRef must reference SAMRRSet/<name>", res.ID())
+		}
+	}
+	if strings.TrimSpace(spec.LeafID) == "" {
+		return fmt.Errorf("%s spec.leafID is required", res.ID())
+	}
+	if strings.TrimSpace(spec.JoinTimestamp) != "" {
+		if _, err := time.Parse(time.RFC3339, strings.TrimSpace(spec.JoinTimestamp)); err != nil {
+			if _, nanoErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(spec.JoinTimestamp)); nanoErr != nil {
+				return fmt.Errorf("%s spec.joinTimestamp must be an RFC3339 timestamp: %w", res.ID(), err)
+			}
+		}
+	}
+	if strings.TrimSpace(spec.JoinHMAC) != "" && strings.TrimSpace(spec.JoinNonce) == "" {
+		return fmt.Errorf("%s spec.joinNonce is required when spec.joinHMAC is set", res.ID())
+	}
+	tunnel, err := parseSAMEnrollmentTunnelAddress(spec.TunnelAddress)
+	if err != nil {
+		return fmt.Errorf("%s spec.tunnelAddress must be an IPv4 address or /32 prefix: %w", res.ID(), err)
+	}
+	if !tunnel.Addr().Is4() || tunnel.Bits() != 32 {
+		return fmt.Errorf("%s spec.tunnelAddress must be an IPv4 /32", res.ID())
+	}
+	if endpoint := strings.TrimSpace(spec.Endpoint); endpoint != "" {
+		if err := validateTunnelEndpointOrSource(res.ID(), "endpoint", endpoint, api.StatusValueSourceSpec{}); err != nil {
+			return err
+		}
+	}
+	wireGuardSet := strings.TrimSpace(spec.WireGuard.PublicKey) != "" ||
+		strings.TrimSpace(spec.WireGuard.Endpoint) != "" ||
+		len(spec.WireGuard.AllowedIPs) > 0 ||
+		spec.WireGuard.PersistentKeepalive != 0
+	if wireGuardSet && strings.TrimSpace(spec.WireGuard.PublicKey) == "" {
+		return fmt.Errorf("%s spec.wireGuard.publicKey is required when wireGuard is set", res.ID())
+	}
+	if endpoint := strings.TrimSpace(spec.WireGuard.Endpoint); endpoint != "" {
+		if err := validateWireGuardEndpoint(endpoint); err != nil {
+			return fmt.Errorf("%s spec.wireGuard.endpoint: %w", res.ID(), err)
+		}
+	}
+	for i, allowed := range spec.WireGuard.AllowedIPs {
+		parsed, err := netip.ParsePrefix(strings.TrimSpace(allowed))
+		if err != nil || !parsed.Addr().Is4() {
+			return fmt.Errorf("%s spec.wireGuard.allowedIPs[%d] must be an IPv4 prefix", res.ID(), i)
+		}
+	}
+	if spec.WireGuard.PersistentKeepalive < 0 || spec.WireGuard.PersistentKeepalive > 65535 {
+		return fmt.Errorf("%s spec.wireGuard.persistentKeepalive must be within 0-65535", res.ID())
+	}
+	for i, owned := range spec.Mobility.OwnedAddresses {
+		parsed, err := parseSAMEnrollmentTunnelAddress(owned)
+		if err != nil || !parsed.Addr().Is4() || parsed.Bits() != 32 {
+			return fmt.Errorf("%s spec.mobility.ownedAddresses[%d] must be an IPv4 /32", res.ID(), i)
+		}
+	}
+	if strings.TrimSpace(spec.BGP.RouterID) != "" {
+		addr, err := netip.ParseAddr(strings.TrimSpace(spec.BGP.RouterID))
+		if err != nil || !addr.Is4() {
+			return fmt.Errorf("%s spec.bgp.routerID must be an IPv4 address", res.ID())
+		}
+	}
+	if strings.TrimSpace(spec.ExpiresAt) != "" {
+		if _, err := time.Parse(time.RFC3339, strings.TrimSpace(spec.ExpiresAt)); err != nil {
+			if _, nanoErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(spec.ExpiresAt)); nanoErr != nil {
+				return fmt.Errorf("%s spec.expiresAt must be an RFC3339 timestamp: %w", res.ID(), err)
+			}
+		}
+	}
+	return nil
+}
+
+func validateSAMEnrollmentClient(res api.Resource, spec api.SAMEnrollmentClientSpec) error {
+	if kind, name, ok := strings.Cut(strings.TrimSpace(spec.ClaimRef), "/"); !ok || kind != "SAMEnrollmentClaim" || strings.TrimSpace(name) == "" {
+		return fmt.Errorf("%s spec.claimRef must reference SAMEnrollmentClaim/<name>", res.ID())
+	}
+	if len(spec.BootstrapEndpoints) == 0 && strings.TrimSpace(spec.RRSocket) == "" {
+		return fmt.Errorf("%s spec.bootstrapEndpoints or spec.rrSocket is required", res.ID())
+	}
+	for i, endpoint := range spec.BootstrapEndpoints {
+		parsed, err := url.Parse(strings.TrimSpace(endpoint))
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return fmt.Errorf("%s spec.bootstrapEndpoints[%d] must be an absolute HTTP(S) URL", res.ID(), i)
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return fmt.Errorf("%s spec.bootstrapEndpoints[%d] scheme must be http or https", res.ID(), i)
+		}
+	}
+	if socket := strings.TrimSpace(spec.RRSocket); socket != "" && !strings.HasPrefix(socket, "/") {
+		return fmt.Errorf("%s spec.rrSocket must be an absolute path", res.ID())
+	}
+	for _, field := range []struct {
+		path  string
+		value string
+	}{
+		{path: "spec.stateTTLRefreshBefore", value: spec.StateTTLRefreshBefore},
+		{path: "spec.retryBackoff.min", value: spec.RetryBackoff.Min},
+		{path: "spec.retryBackoff.max", value: spec.RetryBackoff.Max},
+	} {
+		if strings.TrimSpace(field.value) == "" {
+			continue
+		}
+		if _, err := time.ParseDuration(strings.TrimSpace(field.value)); err != nil {
+			return fmt.Errorf("%s %s must be a duration: %w", res.ID(), field.path, err)
+		}
+	}
+	if strings.TrimSpace(spec.RetryBackoff.Min) != "" && strings.TrimSpace(spec.RetryBackoff.Max) != "" {
+		min, _ := time.ParseDuration(strings.TrimSpace(spec.RetryBackoff.Min))
+		max, _ := time.ParseDuration(strings.TrimSpace(spec.RetryBackoff.Max))
+		if max < min {
+			return fmt.Errorf("%s spec.retryBackoff.max must be greater than or equal to spec.retryBackoff.min", res.ID())
+		}
+	}
+	return nil
+}
+
 func validateSAMTransportProfile(res api.Resource, spec api.SAMTransportProfileSpec) error {
 	if strings.TrimSpace(spec.SelfNodeRef) == "" {
 		return fmt.Errorf("%s spec.selfNodeRef is required", res.ID())
 	}
 	switch strings.TrimSpace(spec.Mode) {
-	case "ipip", "gre":
+	case "ipip", "gre", "fou", "gue":
 	default:
-		return fmt.Errorf("%s spec.mode must be ipip or gre", res.ID())
+		return fmt.Errorf("%s spec.mode must be ipip, gre, fou, or gue", res.ID())
+	}
+	if strings.TrimSpace(spec.Mode) == "fou" || strings.TrimSpace(spec.Mode) == "gue" {
+		if spec.EncapSport < 1 || spec.EncapSport > 65535 {
+			return fmt.Errorf("%s spec.encapSport is required and must be within 1-65535 when spec.mode is %s", res.ID(), spec.Mode)
+		}
+		if spec.EncapDport < 1 || spec.EncapDport > 65535 {
+			return fmt.Errorf("%s spec.encapDport is required and must be within 1-65535 when spec.mode is %s", res.ID(), spec.Mode)
+		}
+	} else if spec.EncapSport != 0 || spec.EncapDport != 0 {
+		return fmt.Errorf("%s spec.encapSport/spec.encapDport are only supported when spec.mode is fou or gue", res.ID())
 	}
 	switch strings.TrimSpace(spec.Encryption) {
 	case "", "none", "wireguard":
@@ -425,8 +776,8 @@ func validateSAMTransportProfile(res api.Resource, spec api.SAMTransportProfileS
 			return fmt.Errorf("%s spec.bgp.routeReflectorClusterID must be an IPv4 address", res.ID())
 		}
 	}
-	if len(spec.Peers) == 0 && len(spec.PeersFrom) == 0 {
-		return fmt.Errorf("%s spec.peers or spec.peersFrom requires at least one peer source", res.ID())
+	if len(spec.Peers) == 0 && len(spec.PeersFrom) == 0 && !spec.PublishPeerGroup {
+		return fmt.Errorf("%s spec.peers, spec.peersFrom, or spec.publishPeerGroup requires at least one peer source or published endpoint", res.ID())
 	}
 	for i, source := range spec.PeersFrom {
 		if err := validateSAMTransportPeersFrom(res.ID(), i, source); err != nil {
@@ -539,12 +890,12 @@ func normalizeSAMTransportTopology(resourceID string, spec api.SAMTransportProfi
 func validateSAMTransportPeersFrom(resourceID string, index int, source api.SAMTransportPeersSourceSpec) error {
 	kind, name, ok := strings.Cut(strings.TrimSpace(source.Resource), "/")
 	if !ok || strings.TrimSpace(name) == "" {
-		return fmt.Errorf("%s spec.peersFrom[%d].resource must reference SAMPeerGroup/<name> or SAMNodeSet/<name>", resourceID, index)
+		return fmt.Errorf("%s spec.peersFrom[%d].resource must reference SAMPeerGroup/<name>, SAMNodeSet/<name>, SAMEnrollmentPolicy/<name>, or SAMRRSet/<name>", resourceID, index)
 	}
 	switch kind {
-	case "SAMPeerGroup", "SAMNodeSet":
+	case "SAMPeerGroup", "SAMNodeSet", "SAMEnrollmentPolicy", "SAMRRSet":
 	default:
-		return fmt.Errorf("%s spec.peersFrom[%d].resource must reference SAMPeerGroup/<name> or SAMNodeSet/<name>", resourceID, index)
+		return fmt.Errorf("%s spec.peersFrom[%d].resource must reference SAMPeerGroup/<name>, SAMNodeSet/<name>, SAMEnrollmentPolicy/<name>, or SAMRRSet/<name>", resourceID, index)
 	}
 	return nil
 }
