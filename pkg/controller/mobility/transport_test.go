@@ -754,6 +754,9 @@ func TestPVEMinimalExamplesMaterializeReviewTransports(t *testing.T) {
 				if err := config.Validate(router); err != nil {
 					t.Fatalf("validate %s: %v", tc.example, err)
 				}
+				if got := countResources(router.Spec.Resources, api.MobilityAPIVersion, "SAMRRSet"); got != 0 {
+					t.Fatalf("base %s SAMRRSet count = %d, want 0 before fetched dynamic state", tc.example, got)
+				}
 				profileSpec := exampleSAMTransportProfile(t, router, tc.profile)
 				if profileSpec.Mode != tc.mode || profileSpec.Encryption != tc.encryption {
 					t.Fatalf("SAMTransportProfile/%s mode/encryption = %s/%s, want %s/%s", tc.profile, profileSpec.Mode, profileSpec.Encryption, tc.mode, tc.encryption)
@@ -762,7 +765,12 @@ func TestPVEMinimalExamplesMaterializeReviewTransports(t *testing.T) {
 					t.Fatalf("static WireGuardInterface count = %d, want present=%v", got, tc.wantWGIface)
 				}
 				store := testStore(t, now)
-				controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+				seedFetchedRRSetFromFixture(t, store, now, "pve-minimal-leaf-rrset-fetched.yaml")
+				effective := effectiveWithAdmissionState(t, router, store, now)
+				if got := countResources(effective.Spec.Resources, api.MobilityAPIVersion, "SAMRRSet"); got != 1 {
+					t.Fatalf("effective %s SAMRRSet count = %d, want 1 from fetched dynamic state", tc.example, got)
+				}
+				controller := TransportController{Router: effective, Store: store, Now: func() time.Time { return now }}
 				if err := controller.Reconcile(context.Background()); err != nil {
 					t.Fatalf("Reconcile: %v", err)
 				}
@@ -790,6 +798,36 @@ func TestPVEMinimalExamplesMaterializeReviewTransports(t *testing.T) {
 			})
 		}
 	})
+}
+
+func seedFetchedRRSetFromFixture(t *testing.T, store interface {
+	UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord) error
+}, now time.Time, fixture string) {
+	t.Helper()
+	for _, resource := range rrSetSeedResources(t, fixture) {
+		source := "SAMRRSet/" + resource.Metadata.Name
+		part := dynamicconfig.DynamicConfigPart{
+			TypeMeta: api.TypeMeta{APIVersion: dynamicconfig.ConfigAPIVersion, Kind: "DynamicConfigPart"},
+			Metadata: api.ObjectMeta{
+				Name: "fetched-" + resource.Metadata.Name,
+			},
+			Spec: dynamicconfig.DynamicConfigPartSpec{
+				Source:     source,
+				Generation: 1,
+				ObservedAt: now.UTC(),
+				ExpiresAt:  now.Add(5 * time.Minute).UTC(),
+				Resources:  []api.Resource{resource},
+			},
+		}
+		part.Spec.Digest = digestDynamicPart(part)
+		record, err := dynamicPartRecord(part)
+		if err != nil {
+			t.Fatalf("dynamic part record for %s: %v", source, err)
+		}
+		if err := store.UpsertDynamicConfigPart(record); err != nil {
+			t.Fatalf("UpsertDynamicConfigPart(%s): %v", source, err)
+		}
+	}
 }
 
 func seedSubmittedClaimsFromFixture(t *testing.T, store interface {
@@ -869,6 +907,28 @@ func effectiveWithAdmissionState(t *testing.T, router *api.Router, store interfa
 		t.Fatalf("BuildEffectiveConfig: %v", err)
 	}
 	return &effective
+}
+
+func rrSetSeedResources(t *testing.T, fixture string) []api.Resource {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "tests", "fixtures", fixture))
+	if err != nil {
+		t.Fatalf("read rrset seed %s: %v", fixture, err)
+	}
+	var seed api.Router
+	if err := yaml.Unmarshal(data, &seed); err != nil {
+		t.Fatalf("parse rrset seed %s: %v", fixture, err)
+	}
+	var out []api.Resource
+	for _, resource := range seed.Spec.Resources {
+		if resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "SAMRRSet" {
+			out = append(out, resource)
+		}
+	}
+	if len(out) == 0 {
+		t.Fatalf("rrset seed %s has no SAMRRSet resources", fixture)
+	}
+	return out
 }
 
 func claimSeedResources(t *testing.T, fixture string) []api.Resource {

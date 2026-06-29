@@ -162,6 +162,7 @@ func TestPVEMinimalDynamicRRLeafExamples(t *testing.T) {
 	rr := loadExampleRouter(t, "pve-minimal-rr.yaml")
 	leafA := loadExampleRouter(t, "pve-minimal-leaf-a-wg.yaml")
 	leafB := loadExampleRouter(t, "pve-minimal-leaf-b-fou.yaml")
+	fetchedRRSet := loadFixtureRouter(t, "pve-minimal-leaf-rrset-fetched.yaml")
 
 	assertHasResource(t, rr, api.NetAPIVersion, "BGPDynamicPeer", "pve-leaves")
 	assertHasResource(t, rr, api.MobilityAPIVersion, "SAMEnrollmentPolicy", "pve-wg-leaves")
@@ -190,6 +191,8 @@ func TestPVEMinimalDynamicRRLeafExamples(t *testing.T) {
 
 	t.Run("leaf-a wireguard ipip consumes pve rr", func(t *testing.T) {
 		assertHasResource(t, leafA, api.NetAPIVersion, "WireGuardInterface", "wg-pve")
+		assertMissingResource(t, leafA, api.MobilityAPIVersion, "SAMRRSet", "pve-rrs")
+		assertHasResource(t, fetchedRRSet, api.MobilityAPIVersion, "SAMRRSet", "pve-rrs")
 		assertMissingResource(t, leafA, api.NetAPIVersion, "BGPDynamicPeer", "pve-leaves")
 		assertMissingResource(t, leafA, api.NetAPIVersion, "BGPPeer", "pve-rr")
 		profile := mustResource(t, leafA, api.MobilityAPIVersion, "SAMTransportProfile", "pve-leaf-a")
@@ -203,11 +206,13 @@ func TestPVEMinimalDynamicRRLeafExamples(t *testing.T) {
 		if len(spec.PeersFrom) != 1 || spec.PeersFrom[0].Resource != "SAMRRSet/pve-rrs" {
 			t.Fatalf("pve-leaf-a peersFrom = %#v, want SAMRRSet/pve-rrs", spec.PeersFrom)
 		}
-		assertNamedRRSetMembers(t, leafA, "pve-rrs", "pve-rr")
+		assertNamedRRSetMembers(t, fetchedRRSet, "pve-rrs", "pve-rr")
 		assertLeafBGPRouterPolicy(t, leafA, "pve-leaf-a", "10.77.70.21/32")
 	})
 
 	t.Run("leaf-b fou consumes pve rr without wireguard", func(t *testing.T) {
+		assertMissingResource(t, leafB, api.MobilityAPIVersion, "SAMRRSet", "pve-rrs")
+		assertHasResource(t, fetchedRRSet, api.MobilityAPIVersion, "SAMRRSet", "pve-rrs")
 		assertMissingResource(t, leafB, api.NetAPIVersion, "WireGuardInterface", "wg-pve")
 		assertMissingResource(t, leafB, api.NetAPIVersion, "WireGuardPeer", "pve-rr")
 		assertMissingResource(t, leafB, api.NetAPIVersion, "BGPDynamicPeer", "pve-leaves")
@@ -226,21 +231,20 @@ func TestPVEMinimalDynamicRRLeafExamples(t *testing.T) {
 		if len(spec.PeersFrom) != 1 || spec.PeersFrom[0].Resource != "SAMRRSet/pve-rrs" {
 			t.Fatalf("pve-leaf-b peersFrom = %#v, want SAMRRSet/pve-rrs", spec.PeersFrom)
 		}
-		assertNamedRRSetMembers(t, leafB, "pve-rrs", "pve-rr")
+		assertNamedRRSetMembers(t, fetchedRRSet, "pve-rrs", "pve-rr")
 		assertLeafBGPRouterPolicy(t, leafB, "pve-leaf-b", "10.77.70.22/32")
 	})
 }
 
-func TestDynamicRRLeafRunbookDocumentsLeafRRSetFetchTODO(t *testing.T) {
+func TestDynamicRRLeafRunbookDocumentsLeafRRSetFetch(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "operations", "dynamic-rr-leaf-enrollment-test.md"))
 	if err != nil {
 		t.Fatalf("read dynamic RR/leaf runbook: %v", err)
 	}
 	doc := string(data)
 	for _, want := range []string{
-		"Leaf-Side RRSet Fetch TODO",
-		"does not yet implement a leaf-side API call that fetches\n" +
-			"the `SAMRRSet`",
+		"Leaf-Side RRSet Fetch",
+		"routerctl mobility enrollment-join",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Fatalf("runbook missing %q", want)

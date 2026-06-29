@@ -201,6 +201,40 @@ func TestSubmitSAMEnrollmentClaimHandler(t *testing.T) {
 	}
 }
 
+func TestGetSAMRRSetHandler(t *testing.T) {
+	handler := Handler{
+		GetSAMRRSet: func(r *http.Request, req SAMRRSetGetRequest) (*SAMRRSetGetResult, error) {
+			if req.Name != "pve-rrs" || req.ClaimRef != "SAMEnrollmentClaim/pve-leaf-a" {
+				t.Fatalf("request = %#v", req)
+			}
+			result := NewSAMRRSetGetResult("pve-rrs", api.Resource{
+				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMRRSet"},
+				Metadata: api.ObjectMeta{Name: "pve-rrs"},
+				Spec: api.SAMRRSetSpec{
+					EnrollmentPolicyRef: "SAMEnrollmentPolicy/pve-leaves",
+					Members: []api.SAMRRSetMember{{
+						NodeRef:       "pve-rr",
+						Endpoint:      "10.30.0.10",
+						TunnelAddress: "10.255.10.1/32",
+					}},
+				},
+			})
+			return &result, nil
+		},
+	}
+	req := httptest.NewRequest(http.MethodGet, Prefix+"/sam-rrsets/pve-rrs?claim=SAMEnrollmentClaim/pve-leaf-a", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"kind": "SAMRRSetGetResult"`) || !strings.Contains(rec.Body.String(), `"name": "pve-rrs"`) {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
 func TestSetLogLevelHandler(t *testing.T) {
 	handler := Handler{
 		SetLogLevel: func(r *http.Request, req LogLevelRequest) (*LogLevelResult, error) {

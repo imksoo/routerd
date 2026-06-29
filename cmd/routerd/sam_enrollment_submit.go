@@ -75,6 +75,80 @@ func submitSAMEnrollmentClaim(router *api.Router, store samEnrollmentClaimStore,
 	return &result, nil
 }
 
+func getSAMRRSetForAcceptedClaim(router *api.Router, store samEnrollmentClaimStore, req controlapi.SAMRRSetGetRequest, now time.Time) (*controlapi.SAMRRSetGetResult, error) {
+	if router == nil {
+		return nil, fmt.Errorf("%w: router config unavailable", controlapi.ErrBadRequest)
+	}
+	if store == nil {
+		return nil, fmt.Errorf("%w: state store unavailable", controlapi.ErrBadRequest)
+	}
+	rrSetName := strings.TrimSpace(req.Name)
+	if rrSetName == "" {
+		return nil, fmt.Errorf("%w: SAMRRSet name is required", controlapi.ErrBadRequest)
+	}
+	claimName, err := samEnrollmentClaimNameFromRef(req.ClaimRef)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", controlapi.ErrBadRequest, err)
+	}
+	claimSource := "SAMEnrollmentClaim/" + claimName
+	records, err := store.ListDynamicConfigParts()
+	if err != nil {
+		return nil, err
+	}
+	if !hasActiveSubmittedSAMEnrollmentClaim(records, claimSource, now.UTC()) {
+		return nil, fmt.Errorf("%w: accepted %s not found", controlapi.ErrBadRequest, claimSource)
+	}
+	parts, err := samEnrollmentDynamicPartsFromRecords(records, "")
+	if err != nil {
+		return nil, err
+	}
+	policies, err := dynamicconfig.ExtractDynamicOverridePolicies(*router)
+	if err != nil {
+		return nil, err
+	}
+	effective, _, err := dynamicconfig.BuildEffectiveConfig(*router, parts, policies, now.UTC())
+	if err != nil {
+		return nil, err
+	}
+	if err := config.Validate(&effective); err != nil {
+		return nil, err
+	}
+	claimResource, claim, ok, err := findSAMEnrollmentClaimResource(&effective, claimName)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("%w: accepted %s not found in effective config", controlapi.ErrBadRequest, claimSource)
+	}
+	wantRRSetRef := "SAMRRSet/" + rrSetName
+	if strings.TrimSpace(claim.RRSetRef) != wantRRSetRef {
+		return nil, fmt.Errorf("%w: %s references %s, not %s", controlapi.ErrBadRequest, claimResource.ID(), claim.RRSetRef, wantRRSetRef)
+	}
+	policyName, err := samEnrollmentPolicyNameFromRef(claim.PolicyRef)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", controlapi.ErrBadRequest, err)
+	}
+	policy, ok, err := findSAMEnrollmentPolicy(&effective, policyName)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("%w: %s not found", controlapi.ErrBadRequest, claim.PolicyRef)
+	}
+	if strings.TrimSpace(policy.RRSetRef) != wantRRSetRef {
+		return nil, fmt.Errorf("%w: %s references %s, not %s", controlapi.ErrBadRequest, claim.PolicyRef, policy.RRSetRef, wantRRSetRef)
+	}
+	rrSetResource, ok, err := findSAMRRSetResource(&effective, rrSetName)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("%w: %s not found", controlapi.ErrBadRequest, wantRRSetRef)
+	}
+	result := controlapi.NewSAMRRSetGetResult(rrSetName, rrSetResource)
+	return &result, nil
+}
+
 func normalizeSubmittedSAMEnrollmentClaim(resource api.Resource) (api.Resource, api.SAMEnrollmentClaimSpec, error) {
 	if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentClaim" {
 		return api.Resource{}, api.SAMEnrollmentClaimSpec{}, fmt.Errorf("claim must be %s/SAMEnrollmentClaim", api.MobilityAPIVersion)
@@ -89,6 +163,94 @@ func normalizeSubmittedSAMEnrollmentClaim(resource api.Resource) (api.Resource, 
 	}
 	resource.Spec = claim
 	return resource, claim, nil
+}
+
+func samEnrollmentClaimNameFromRef(ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", fmt.Errorf("claim query parameter is required")
+	}
+	if !strings.Contains(ref, "/") {
+		if ref == "" {
+			return "", fmt.Errorf("claim query parameter is required")
+		}
+		return ref, nil
+	}
+	kind, name, ok := strings.Cut(ref, "/")
+	if !ok || kind != "SAMEnrollmentClaim" || strings.TrimSpace(name) == "" {
+		return "", fmt.Errorf("claim must reference SAMEnrollmentClaim/<name>")
+	}
+	return strings.TrimSpace(name), nil
+}
+
+func samEnrollmentPolicyNameFromRef(ref string) (string, error) {
+	kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
+	if !ok || kind != "SAMEnrollmentPolicy" || strings.TrimSpace(name) == "" {
+		return "", fmt.Errorf("policyRef must reference SAMEnrollmentPolicy/<name>")
+	}
+	return strings.TrimSpace(name), nil
+}
+
+func hasActiveSubmittedSAMEnrollmentClaim(records []routerstate.DynamicConfigPartRecord, source string, now time.Time) bool {
+	for _, record := range records {
+		if record.Source != source || record.EffectiveStatus(now.UTC()) != "active" {
+			continue
+		}
+		var resources []api.Resource
+		if strings.TrimSpace(record.ResourcesJSON) == "" {
+			continue
+		}
+		if err := json.Unmarshal([]byte(record.ResourcesJSON), &resources); err != nil {
+			continue
+		}
+		for _, resource := range resources {
+			if resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "SAMEnrollmentClaim" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func findSAMEnrollmentClaimResource(router *api.Router, name string) (api.Resource, api.SAMEnrollmentClaimSpec, bool, error) {
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentClaim" || resource.Metadata.Name != name {
+			continue
+		}
+		spec, err := resource.SAMEnrollmentClaimSpec()
+		if err != nil {
+			return api.Resource{}, api.SAMEnrollmentClaimSpec{}, false, err
+		}
+		return resource, spec, true, nil
+	}
+	return api.Resource{}, api.SAMEnrollmentClaimSpec{}, false, nil
+}
+
+func findSAMEnrollmentPolicy(router *api.Router, name string) (api.SAMEnrollmentPolicySpec, bool, error) {
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentPolicy" || resource.Metadata.Name != name {
+			continue
+		}
+		spec, err := resource.SAMEnrollmentPolicySpec()
+		if err != nil {
+			return api.SAMEnrollmentPolicySpec{}, false, err
+		}
+		return spec, true, nil
+	}
+	return api.SAMEnrollmentPolicySpec{}, false, nil
+}
+
+func findSAMRRSetResource(router *api.Router, name string) (api.Resource, bool, error) {
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMRRSet" || resource.Metadata.Name != name {
+			continue
+		}
+		if _, err := resource.SAMRRSetSpec(); err != nil {
+			return api.Resource{}, false, err
+		}
+		return resource, true, nil
+	}
+	return api.Resource{}, false, nil
 }
 
 func submittedSAMEnrollmentClaimExpiresAt(claim api.SAMEnrollmentClaimSpec, now time.Time) time.Time {

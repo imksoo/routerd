@@ -177,6 +177,17 @@ type SAMEnrollmentClaimSubmitResult struct {
 	ExpiresAt     time.Time `json:"expiresAt" yaml:"expiresAt"`
 }
 
+type SAMRRSetGetRequest struct {
+	Name     string `json:"name" yaml:"name"`
+	ClaimRef string `json:"claimRef" yaml:"claimRef"`
+}
+
+type SAMRRSetGetResult struct {
+	TypeMeta `json:",inline" yaml:",inline"`
+	Metadata ObjectMeta   `json:"metadata" yaml:"metadata"`
+	RRSet    api.Resource `json:"rrSet" yaml:"rrSet"`
+}
+
 type LogLevelRequest struct {
 	TypeMeta `json:",inline" yaml:",inline"`
 	Level    string `json:"level" yaml:"level"`
@@ -564,6 +575,16 @@ func NewSAMEnrollmentClaimSubmitResult(claimRef, source string, generation int64
 		Generation:    generation,
 		ObservedAt:    observedAt,
 		ExpiresAt:     expiresAt,
+	}
+}
+
+func NewSAMRRSetGetResult(name string, rrSet api.Resource) SAMRRSetGetResult {
+	return SAMRRSetGetResult{
+		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "SAMRRSetGetResult"},
+		Metadata: ObjectMeta{
+			Name: name,
+		},
+		RRSet: rrSet,
 	}
 }
 

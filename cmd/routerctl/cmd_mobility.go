@@ -4,13 +4,16 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -78,6 +81,17 @@ type mobilityExplainReport struct {
 	ConditionReasons     map[string]string `json:"conditionReasons,omitempty" yaml:"conditionReasons,omitempty"`
 }
 
+type mobilityEnrollmentJoinResult struct {
+	Accepted      bool      `json:"accepted" yaml:"accepted"`
+	ClaimRef      string    `json:"claimRef" yaml:"claimRef"`
+	RRSetRef      string    `json:"rrSetRef" yaml:"rrSetRef"`
+	DynamicSource string    `json:"dynamicSource" yaml:"dynamicSource"`
+	Generation    int64     `json:"generation" yaml:"generation"`
+	ObservedAt    time.Time `json:"observedAt" yaml:"observedAt"`
+	ExpiresAt     time.Time `json:"expiresAt" yaml:"expiresAt"`
+	StateFile     string    `json:"stateFile" yaml:"stateFile"`
+}
+
 func mobilityCommand(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		mobilityUsage(stderr)
@@ -96,6 +110,8 @@ func mobilityCommand(args []string, stdout, stderr io.Writer) error {
 		return mobilityEnrollmentHMACCommand(args[1:], stdout)
 	case "enrollment-submit":
 		return mobilityEnrollmentSubmitCommand(args[1:], stdout)
+	case "enrollment-join":
+		return mobilityEnrollmentJoinCommand(args[1:], stdout)
 	case "leases", "list", "ownership", "show":
 		return fmt.Errorf("mobility %s was removed with BGP mobility; use `routerctl mobility owners`, `routerctl mobility paths`, `routerctl mobility traps`, or `routerctl mobility explain`", args[0])
 	case "help", "-h", "--help":
@@ -206,6 +222,183 @@ func mobilityEnrollmentSubmitCommand(args []string, stdout io.Writer) error {
 	default:
 		return fmt.Errorf("unsupported output %q", output)
 	}
+}
+
+func mobilityEnrollmentJoinCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("mobility enrollment-join", flag.ContinueOnError)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"Submit a leaf SAMEnrollmentClaim, fetch its SAMRRSet, and persist the RRSet into local dynamic state.",
+			"routerctl mobility enrollment-join --config leaf.yaml --claim pve-leaf-b --rr-url http://pve-rr:8080 --state-file /var/lib/routerd/routerd.db\n"+
+				"routerctl mobility enrollment-join --config leaf.yaml --claim pve-leaf-a --rr-socket /run/routerd/routerd.sock")
+	}
+	configPath := fs.String("config", defaultConfigPath(), "leaf config containing the SAMEnrollmentClaim")
+	claimName := fs.String("claim", "", "SAMEnrollmentClaim name")
+	rrSocketPath := fs.String("rr-socket", "", "RR routerd Unix domain socket path")
+	rrURL := fs.String("rr-url", "", "RR routerd control API base URL")
+	statePath := fs.String("state-file", defaultStatePath(), "local leaf routerd state database file")
+	timeout := fs.Duration("timeout", 10*time.Second, "request timeout")
+	output := "table"
+	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
+	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected mobility enrollment-join argument %q", fs.Arg(0))
+	}
+	if strings.TrimSpace(*claimName) == "" {
+		return errors.New("mobility enrollment-join requires --claim")
+	}
+	if strings.TrimSpace(*rrSocketPath) != "" && strings.TrimSpace(*rrURL) != "" {
+		return errors.New("mobility enrollment-join accepts only one of --rr-socket or --rr-url")
+	}
+	router, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	claimResource, err := mobilityEnrollmentClaimResource(router, *claimName)
+	if err != nil {
+		return err
+	}
+	claim, err := claimResource.SAMEnrollmentClaimSpec()
+	if err != nil {
+		return err
+	}
+	rrSetName, err := mobilityRRSetNameFromRef(claim.RRSetRef)
+	if err != nil {
+		return err
+	}
+	client := mobilityEnrollmentClient(*rrSocketPath, *rrURL)
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	submitResult, err := client.SubmitSAMEnrollmentClaim(ctx, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claimResource})
+	if err != nil {
+		return fmt.Errorf("submit SAMEnrollmentClaim to routerd failed: %w", err)
+	}
+	rrSetResult, err := client.GetSAMRRSet(ctx, controlapi.SAMRRSetGetRequest{Name: rrSetName, ClaimRef: "SAMEnrollmentClaim/" + claimResource.Metadata.Name})
+	if err != nil {
+		return fmt.Errorf("fetch SAMRRSet from routerd failed: %w", err)
+	}
+	record, err := mobilityFetchedSAMRRSetRecord(rrSetResult.RRSet, submitResult.ObservedAt, submitResult.ExpiresAt)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(strings.TrimSpace(*statePath)), 0755); err != nil {
+		return err
+	}
+	store, err := routerstate.OpenSQLite(*statePath)
+	if err != nil {
+		return fmt.Errorf("open local leaf state database %s: %w", *statePath, err)
+	}
+	defer store.Close()
+	if err := store.UpsertDynamicConfigPart(record); err != nil {
+		return err
+	}
+	result := mobilityEnrollmentJoinResult{
+		Accepted:      submitResult.Accepted,
+		ClaimRef:      submitResult.ClaimRef,
+		RRSetRef:      "SAMRRSet/" + rrSetName,
+		DynamicSource: record.Source,
+		Generation:    record.Generation,
+		ObservedAt:    record.ObservedAt,
+		ExpiresAt:     record.ExpiresAt,
+		StateFile:     *statePath,
+	}
+	switch output {
+	case "", "table", "text":
+		fmt.Fprintf(stdout, "accepted\t%s\nrrSet\t%s\ndynamicSource\t%s\ngeneration\t%d\nexpiresAt\t%s\nstateFile\t%s\n", result.ClaimRef, result.RRSetRef, result.DynamicSource, result.Generation, result.ExpiresAt.Format(time.RFC3339), result.StateFile)
+		return nil
+	case "json":
+		return writeJSON(stdout, result)
+	case "yaml":
+		return writeYAML(stdout, result)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
+func mobilityEnrollmentClient(socketPath, baseURL string) *controlapi.Client {
+	if strings.TrimSpace(baseURL) != "" {
+		return controlapi.NewHTTPClient(baseURL)
+	}
+	if strings.TrimSpace(socketPath) == "" {
+		socketPath = defaultSocketPath()
+	}
+	return controlapi.NewUnixClient(socketPath)
+}
+
+func mobilityRRSetNameFromRef(ref string) (string, error) {
+	kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
+	if !ok || kind != "SAMRRSet" || strings.TrimSpace(name) == "" {
+		return "", fmt.Errorf("rrSetRef must reference SAMRRSet/<name>")
+	}
+	return strings.TrimSpace(name), nil
+}
+
+func mobilityFetchedSAMRRSetRecord(resource api.Resource, observedAt, expiresAt time.Time) (routerstate.DynamicConfigPartRecord, error) {
+	if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMRRSet" || strings.TrimSpace(resource.Metadata.Name) == "" {
+		return routerstate.DynamicConfigPartRecord{}, fmt.Errorf("fetched resource must be %s/SAMRRSet", api.MobilityAPIVersion)
+	}
+	if _, err := resource.SAMRRSetSpec(); err != nil {
+		return routerstate.DynamicConfigPartRecord{}, err
+	}
+	if observedAt.IsZero() {
+		observedAt = time.Now().UTC()
+	}
+	if expiresAt.IsZero() {
+		expiresAt = observedAt.Add(24 * time.Hour)
+	}
+	part := dynamicconfig.DynamicConfigPart{
+		TypeMeta: api.TypeMeta{APIVersion: dynamicconfig.ConfigAPIVersion, Kind: "DynamicConfigPart"},
+		Metadata: api.ObjectMeta{
+			Name: "fetched-sam-rrset-" + resource.Metadata.Name,
+			OwnerRefs: []api.OwnerRef{{
+				APIVersion: api.MobilityAPIVersion,
+				Kind:       "SAMRRSet",
+				Name:       resource.Metadata.Name,
+			}},
+		},
+		Spec: dynamicconfig.DynamicConfigPartSpec{
+			Source:     "SAMRRSet/" + resource.Metadata.Name,
+			Generation: 1,
+			ObservedAt: observedAt.UTC(),
+			ExpiresAt:  expiresAt.UTC(),
+			Resources:  []api.Resource{resource},
+		},
+	}
+	part.Spec.Digest = digestMobilityDynamicPart(part)
+	resources, err := json.Marshal(part.Spec.Resources)
+	if err != nil {
+		return routerstate.DynamicConfigPartRecord{}, err
+	}
+	directives, err := json.Marshal(part.Spec.Directives)
+	if err != nil {
+		return routerstate.DynamicConfigPartRecord{}, err
+	}
+	return routerstate.DynamicConfigPartRecord{
+		Source:         part.Spec.Source,
+		Generation:     part.Spec.Generation,
+		ObservedAt:     part.Spec.ObservedAt,
+		ExpiresAt:      part.Spec.ExpiresAt,
+		Digest:         part.Spec.Digest,
+		ResourcesJSON:  string(resources),
+		DirectivesJSON: string(directives),
+		Status:         "active",
+	}, nil
+}
+
+func digestMobilityDynamicPart(part dynamicconfig.DynamicConfigPart) string {
+	data, err := json.Marshal(part.Spec)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 func mobilityEnrollmentHMACSecret(file, env, literal string, decodeBase64 bool) ([]byte, error) {
@@ -432,6 +625,7 @@ func mobilityUsage(w io.Writer) {
 	fmt.Fprintln(w, "  traps [--address <ipv4/32>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  enrollment-hmac --config <path> --claim <name> (--secret-file <path>|--secret-env <name>|--secret <value>) [--secret-base64] [--show-payload]")
 	fmt.Fprintln(w, "  enrollment-submit --config <path> --claim <name> [--socket <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  enrollment-join --config <path> --claim <name> [--rr-socket <path>|--rr-url <url>] [--state-file <path>] [-o table|json|yaml]")
 }
 
 func mobilityOwnerRows(statuses []routerstate.ObjectStatus, poolFilter, addressFilter string) []mobilityOwnerRow {

@@ -5,6 +5,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -84,6 +87,62 @@ func TestMobilityEnrollmentHMACCommand(t *testing.T) {
 	}
 	if out := stdout.String(); !strings.Contains(out, "leafID=leaf-pve") || !strings.Contains(out, hmacValue) {
 		t.Fatalf("show-payload output missing payload or hmac:\n%s", out)
+	}
+}
+
+func TestMobilityEnrollmentJoinFetchesRRSetIntoDynamicState(t *testing.T) {
+	rrSet := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMRRSet"},
+		Metadata: api.ObjectMeta{Name: "pve-rrs"},
+		Spec: api.SAMRRSetSpec{
+			EnrollmentPolicyRef: "SAMEnrollmentPolicy/pve-fou-leaves",
+			MobilityPoolRefs:    []string{"MobilityPool/pve-mobility"},
+			Members: []api.SAMRRSetMember{{
+				NodeRef:       "pve-rr",
+				Endpoint:      "10.30.0.10",
+				TunnelAddress: "10.255.10.1/32",
+				BGP:           api.SAMRRSetMemberBGPSpec{ASN: 64577, RouterID: "10.255.10.1"},
+			}},
+		},
+	}
+	now := time.Date(2026, 6, 28, 0, 1, 0, 0, time.UTC)
+	server := httptest.NewServer(controlapi.Handler{
+		SubmitSAMEnrollmentClaim: func(r *http.Request, req controlapi.SAMEnrollmentClaimSubmitRequest) (*controlapi.SAMEnrollmentClaimSubmitResult, error) {
+			if req.Claim.Kind != "SAMEnrollmentClaim" || req.Claim.Metadata.Name != "pve-leaf-b" {
+				t.Fatalf("submitted claim = %#v", req.Claim)
+			}
+			result := controlapi.NewSAMEnrollmentClaimSubmitResult("SAMEnrollmentClaim/pve-leaf-b", "SAMEnrollmentClaim/pve-leaf-b", 1, now, now.Add(time.Hour))
+			return &result, nil
+		},
+		GetSAMRRSet: func(r *http.Request, req controlapi.SAMRRSetGetRequest) (*controlapi.SAMRRSetGetResult, error) {
+			if req.Name != "pve-rrs" || req.ClaimRef != "SAMEnrollmentClaim/pve-leaf-b" {
+				t.Fatalf("rrset request = %#v", req)
+			}
+			result := controlapi.NewSAMRRSetGetResult("pve-rrs", rrSet)
+			return &result, nil
+		},
+	})
+	defer server.Close()
+	statePath := filepath.Join(t.TempDir(), "routerd.db")
+	configPath := filepath.Join("..", "..", "examples", "pve-minimal-leaf-b-fou.yaml")
+	var stdout, stderr bytes.Buffer
+	if err := mobilityCommand([]string{"enrollment-join", "--config", configPath, "--claim", "pve-leaf-b", "--rr-url", server.URL, "--state-file", statePath, "-o", "json"}, &stdout, &stderr); err != nil {
+		t.Fatalf("mobility enrollment-join: %v stderr=%s", err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"rrSetRef": "SAMRRSet/pve-rrs"`) || !strings.Contains(stdout.String(), `"dynamicSource": "SAMRRSet/pve-rrs"`) {
+		t.Fatalf("join output = %s", stdout.String())
+	}
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer store.Close()
+	records, err := store.GetDynamicConfigPartsBySource("SAMRRSet/pve-rrs")
+	if err != nil {
+		t.Fatalf("GetDynamicConfigPartsBySource: %v", err)
+	}
+	if len(records) != 1 || !strings.Contains(records[0].ResourcesJSON, `"pve-rrs"`) || !strings.Contains(records[0].ResourcesJSON, `"pve-rr"`) {
+		t.Fatalf("records = %#v", records)
 	}
 }
 

@@ -65,28 +65,6 @@ spec:
         convergenceProfile: fast
 
     - apiVersion: mobility.routerd.net/v1alpha1
-      kind: SAMRRSet
-      metadata: { name: pve-rrs }
-      spec:
-        enrollmentPolicyRef: SAMEnrollmentPolicy/pve-wg-leaves
-        mobilityPoolRefs: [MobilityPool/pve-mobility]
-        routeAdmission:
-          allowedPrefixes: [10.77.70.0/24]
-          allowedPrefixLengthMin: 32
-          allowedPrefixLengthMax: 32
-          nextHopRewrite: peer-address
-        members:
-          - nodeRef: pve-rr
-            endpoint: 10.31.0.10
-            tunnelAddress: 10.255.10.1/32
-            wireGuard:
-              publicKey: PVE_RR_WIREGUARD_PUBLIC_KEY
-              endpoint: 10.30.0.10:51820
-              allowedIPs: [10.31.0.10/32]
-              persistentKeepalive: 25
-            bgp: { asn: 64577, routerID: 10.255.10.1 }
-
-    - apiVersion: mobility.routerd.net/v1alpha1
       kind: SAMTransportProfile
       metadata: { name: pve-leaf-a }
       spec:

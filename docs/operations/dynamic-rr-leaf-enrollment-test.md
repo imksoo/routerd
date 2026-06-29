@@ -48,16 +48,24 @@ is not the default enrollment identity or the default private-underlay model.
   the leaf-authored join HMAC payload, so an operator can revoke or shorten
   admission without leaf re-signing; `expiresAt` remains bounded by policy TTL.
 
-## Leaf-Side RRSet Fetch TODO
+## Leaf-Side RRSet Fetch
 
-This branch implements RR-side runtime claim submission and admission-state
-materialization. It does not yet implement a leaf-side API call that fetches
-the `SAMRRSet` from the RR enrollment endpoint after a claim is accepted. The
-reviewed leaf examples therefore still carry fixed `SAMRRSet` bootstrap data.
+Leaf-side automatic enrollment uses `routerctl mobility enrollment-join`:
 
-Do not claim full automatic enrollment complete until a leaf can submit a
-claim, learn or refresh the RRSet, and materialize all RR peers without static
-RR inventory beyond the bootstrap enrollment endpoint and policy reference.
+1. read a local `SAMEnrollmentClaim` from the leaf config;
+2. submit it to a bootstrap RR control API endpoint;
+3. fetch the `SAMRRSet` allowed by that accepted claim; and
+4. persist the fetched RRSet into the leaf's local state DB as
+   `DynamicConfigPart` source `SAMRRSet/<name>`.
+
+The leaf startup config can then keep only the bootstrap claim/policy
+reference and `peersFrom: SAMRRSet/<name>`. It does not need the full rr-a/rr-b
+inventory as hand-edited static YAML for the automatic path.
+
+Current limitation: this branch provides the CLI/control-API fetch and refresh
+primitive, but it does not yet run a built-in background leaf enrollment
+controller. Operators should run `routerctl mobility enrollment-join` during
+bootstrap or refresh automation before relying on `SAMRRSet`-derived peers.
 
 ## Example Configs
 
@@ -71,6 +79,13 @@ Mixed transport review examples:
 
 - `examples/cloudedge-dynamic-leaf-a-wg.yaml`
 - `examples/cloudedge-dynamic-leaf-b-fou.yaml`
+
+PVE minimal automatic review examples:
+
+- `examples/pve-minimal-rr.yaml`
+- `examples/pve-minimal-leaf-a-wg.yaml`
+- `examples/pve-minimal-leaf-b-fou.yaml`
+- `tests/fixtures/pve-minimal-leaf-rrset-fetched.yaml`
 
 These configs model:
 
@@ -259,8 +274,36 @@ Expected local evidence:
 - `TestCloudEdgeRRExamplesDeriveOnlyWGAdmissionPeers` proves the RR-side WG
   materialization path derives only `WireGuardPeer/leaf-a` and does not turn the
   non-WG `leaf-b` FOU claim into a WG peer.
+- `examples/pve-minimal-leaf-a-wg.yaml` and
+  `examples/pve-minimal-leaf-b-fou.yaml` contain no static
+  `SAMRRSet/pve-rrs`; tests inject
+  `tests/fixtures/pve-minimal-leaf-rrset-fetched.yaml` as fetched dynamic
+  state and prove the leaf generates RR-facing `TunnelInterface` and `BGPPeer`
+  resources from it.
+- `routerctl mobility enrollment-join` submits the leaf claim, fetches the
+  allowed RRSet, and writes the fetched RRSet to local dynamic state.
 - WG materialization is covered only by WG-specific tests using optional
   `wireGuard` blocks; non-WG materialization is covered without WG resources.
+
+Example leaf bootstrap command:
+
+```sh
+routerctl mobility enrollment-join \
+  --config /usr/local/etc/routerd/router.yaml \
+  --claim pve-leaf-b \
+  --rr-url http://10.30.0.10:8080 \
+  --state-file /var/lib/routerd/routerd.db
+```
+
+For local Unix-socket review against a sandbox RR:
+
+```sh
+routerctl mobility enrollment-join \
+  --config examples/pve-minimal-leaf-b-fou.yaml \
+  --claim pve-leaf-b \
+  --rr-socket /run/routerd/routerd.sock \
+  --state-file /tmp/routerd-leaf/routerd.db
+```
 
 For manual materialization evidence without touching cloud/PVE, run a sandbox
 controller pass and render the effective config:

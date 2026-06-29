@@ -360,7 +360,7 @@ func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Re
 				}
 				addPeer(api.SAMTransportPeerSpec{
 					NodeRef:        nodeRef,
-					RemoteEndpoint: strings.TrimSpace(member.Endpoint),
+					RemoteEndpoint: samRRSetMemberEndpointForTransport(spec, member),
 				})
 				status.PeerCount++
 			}
@@ -547,6 +547,24 @@ func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Re
 	}
 	sort.Strings(pending)
 	return peers, topology, statuses, pending, nil
+}
+
+func samRRSetMemberEndpointForTransport(profile api.SAMTransportProfileSpec, member api.SAMRRSetMember) string {
+	if strings.EqualFold(strings.TrimSpace(profile.Encryption), "wireguard") {
+		for _, allowedIP := range member.WireGuard.AllowedIPs {
+			allowedIP = strings.TrimSpace(allowedIP)
+			if allowedIP == "" {
+				continue
+			}
+			if prefix, err := netip.ParsePrefix(allowedIP); err == nil {
+				return prefix.Addr().String()
+			}
+			if addr, err := netip.ParseAddr(allowedIP); err == nil {
+				return addr.String()
+			}
+		}
+	}
+	return strings.TrimSpace(member.Endpoint)
 }
 
 func (c TransportController) samNodeEndpoint(node api.SAMNodeSpec) (string, string, error) {
