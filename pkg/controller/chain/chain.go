@@ -499,6 +499,19 @@ func (s eventedStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
 	return lister.ListObjectStatuses()
 }
 
+func (s eventedStore) ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error) {
+	if s.Store == nil {
+		return nil, nil
+	}
+	lister, ok := s.Store.(interface {
+		ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error)
+	})
+	if !ok {
+		return nil, nil
+	}
+	return lister.ListDynamicConfigParts()
+}
+
 func (s eventedStore) DeleteObject(apiVersion, kind, name string) error {
 	if s.Store == nil {
 		return nil
@@ -1553,7 +1566,15 @@ func (r *Runner) Start(ctx context.Context) error {
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "package", Every: 5 * time.Minute, PeriodicFunc: didWorkPeriodic(packages.Reconcile)},
-		framework.FuncController{ControllerName: "kernel-module", Every: 5 * time.Minute, PeriodicFunc: didWorkPeriodic(kernelModules.Reconcile)},
+		framework.FuncController{ControllerName: "kernel-module", Every: 5 * time.Minute, PeriodicFunc: func(ctx context.Context) (bool, error) {
+			effective, err := effectiveDynamicForReconcile()
+			if err != nil {
+				return false, err
+			}
+			current := kernelModules
+			current.Router = effective
+			return didWorkError(current.Reconcile(ctx))
+		}},
 		framework.FuncController{ControllerName: "sysctl", Every: 30 * time.Second, PeriodicFunc: didWorkPeriodic(sysctl.Reconcile)},
 		framework.FuncController{ControllerName: "network-adoption", Every: 5 * time.Minute, PeriodicFunc: didWorkPeriodic(adoption.Reconcile)},
 		framework.FuncController{ControllerName: "service-unit", Every: 5 * time.Minute, Subs: whenStatusSubscriptions(r.Router, "ServiceUnit", "TailscaleNode", "DHCPv4Client", "DHCPv6PrefixDelegation", "IPv6RouterAdvertisement", "DNSResolver", "EventGroup", "HealthCheck"), PeriodicFunc: func(ctx context.Context) (bool, error) {

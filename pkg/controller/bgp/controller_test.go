@@ -461,6 +461,52 @@ func TestDynamicClaimAdmissionUsesBGPNeighborAddressInsteadOfFIBNextHop(t *testi
 	}
 }
 
+func TestDynamicClaimAdmissionUsesSAMTransportNeighborAlias(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+			Metadata: api.ObjectMeta{Name: "clients"},
+			Spec: api.MobilityPoolSpec{
+				Prefix:   "10.77.60.0/24",
+				GroupRef: "EventGroup/cloudedge",
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentPolicy"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-leaves"},
+			Spec: api.SAMEnrollmentPolicySpec{
+				TunnelAddressPrefixes: []string{"10.255.0.0/24"},
+				MobilityPoolRefs:      []string{"MobilityPool/clients"},
+			},
+		},
+		samEnrollmentClaimResourceForTest("leaf-a", "10.255.0.99/32", "10.77.60.31/32"),
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{
+				Name: "sam-rr-a-leaf-a",
+				Annotations: map[string]string{
+					"mobility.routerd.net/self-node": "rr-a",
+					"mobility.routerd.net/peer-node": "leaf-a",
+				},
+			},
+			Spec: api.TunnelInterfaceSpec{
+				Mode:    "fou",
+				Local:   "10.30.0.10",
+				Remote:  "10.30.0.31",
+				Address: "10.255.0.30/31",
+			},
+		},
+	)
+	admission := (&Controller{Router: router}).samDynamicClaimAdmission()
+	if ok, reason := admission.Admit("10.255.0.31", netip.MustParsePrefix("10.77.60.31/32")); !ok {
+		t.Fatalf("SAM transport neighbor alias rejected: %s", reason)
+	}
+	if ok, reason := admission.Admit("10.255.0.31", netip.MustParsePrefix("10.77.60.32/32")); ok || reason != "prefix-not-owned-by-claim" {
+		t.Fatalf("SAM transport neighbor alias wrong-prefix admission = (%t,%q)", ok, reason)
+	}
+}
+
 func TestBGPDynamicPeerStatusReportsDiscoveredPeersAndAdmissionCounters(t *testing.T) {
 	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
 	router.Spec.Resources = append(router.Spec.Resources,

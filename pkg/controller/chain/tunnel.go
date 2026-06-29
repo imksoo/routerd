@@ -665,5 +665,5 @@ func tunnelFOUAlreadyExists(out []byte, err error) bool {
 		return false
 	}
 	msg := strings.ToLower(strings.TrimSpace(string(out)) + " " + err.Error())
-	return strings.Contains(msg, "file exists") || strings.Contains(msg, "object already exists") || strings.Contains(msg, "already exists")
+	return strings.Contains(msg, "file exists") || strings.Contains(msg, "object already exists") || strings.Contains(msg, "already exists") || strings.Contains(msg, "address already in use")
 }

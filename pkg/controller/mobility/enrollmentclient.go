@@ -159,22 +159,32 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 
 func (c SAMEnrollmentClientController) joinFetchAndPersist(ctx context.Context, spec api.SAMEnrollmentClientSpec, claim api.Resource, rrSetName string, now time.Time) error {
 	var lastErr error
+	var submitted []struct {
+		client SAMEnrollmentJoinClient
+		result *controlapi.SAMEnrollmentClaimSubmitResult
+	}
 	for _, client := range c.clients(spec) {
 		submit, err := client.SubmitSAMEnrollmentClaim(ctx, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim})
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		rrSet, err := client.GetSAMRRSet(ctx, controlapi.SAMRRSetGetRequest{Name: rrSetName, ClaimRef: "SAMEnrollmentClaim/" + claim.Metadata.Name})
+		submitted = append(submitted, struct {
+			client SAMEnrollmentJoinClient
+			result *controlapi.SAMEnrollmentClaimSubmitResult
+		}{client: client, result: submit})
+	}
+	for _, item := range submitted {
+		rrSet, err := item.client.GetSAMRRSet(ctx, controlapi.SAMRRSetGetRequest{Name: rrSetName, ClaimRef: "SAMEnrollmentClaim/" + claim.Metadata.Name})
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		expiresAt := submit.ExpiresAt
+		expiresAt := item.result.ExpiresAt
 		if expiresAt.IsZero() {
 			expiresAt = now.Add(DefaultLeaseTTL)
 		}
-		record, err := samEnrollmentClientRRSetRecord(rrSet.RRSet, submit.ObservedAt, expiresAt)
+		record, err := samEnrollmentClientRRSetRecord(rrSet.RRSet, item.result.ObservedAt, expiresAt)
 		if err != nil {
 			lastErr = err
 			continue

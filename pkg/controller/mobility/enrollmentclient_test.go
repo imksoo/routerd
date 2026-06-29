@@ -123,6 +123,34 @@ func TestSAMEnrollmentClientRefreshesWhenClaimChanges(t *testing.T) {
 	}
 }
 
+func TestSAMEnrollmentClientSubmitsToAllBootstrapEndpoints(t *testing.T) {
+	now := time.Date(2026, 6, 29, 1, 0, 0, 0, time.UTC)
+	store := newSAMEnrollmentClientTestStore()
+	rr1 := &fakeSAMEnrollmentJoinClient{now: now}
+	rr2 := &fakeSAMEnrollmentJoinClient{now: now}
+	controller := SAMEnrollmentClientController{
+		Router: testSAMEnrollmentClientRouter("nonce-a"),
+		Store:  store,
+		Now:    func() time.Time { return now },
+		ClientFactory: func(api.SAMEnrollmentClientSpec) []SAMEnrollmentJoinClient {
+			return []SAMEnrollmentJoinClient{rr1, rr2}
+		},
+	}
+
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if rr1.submitCount != 1 || rr2.submitCount != 1 {
+		t.Fatalf("submit counts rr1/rr2 = %d/%d, want 1/1", rr1.submitCount, rr2.submitCount)
+	}
+	if rr1.fetchCount+rr2.fetchCount != 1 {
+		t.Fatalf("total fetch count = %d, want 1", rr1.fetchCount+rr2.fetchCount)
+	}
+	if records, err := store.GetDynamicConfigPartsBySource("SAMRRSet/pve-rrs"); err != nil || len(records) != 1 {
+		t.Fatalf("SAMRRSet dynamic records = %#v err=%v, want one", records, err)
+	}
+}
+
 type fakeSAMEnrollmentJoinClient struct {
 	now         time.Time
 	submitErr   error

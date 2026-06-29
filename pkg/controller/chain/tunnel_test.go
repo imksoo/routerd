@@ -416,6 +416,48 @@ func TestTunnelInterfaceControllerAddsFOU(t *testing.T) {
 	}
 }
 
+func TestTunnelInterfaceControllerReusesExistingFOUListener(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+		Metadata: api.ObjectMeta{Name: "tun-fou"},
+		Spec: api.TunnelInterfaceSpec{
+			Mode:            "fou",
+			Local:           "192.0.2.10",
+			Remote:          "192.0.2.20",
+			EncapSport:      5555,
+			EncapDport:      5555,
+			TrustedUnderlay: true,
+		},
+	}}}}
+	var calls [][]string
+	controller := TunnelInterfaceController{
+		Router: router,
+		Store:  mapStore{},
+		OS:     platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			call := append([]string{name}, args...)
+			calls = append(calls, call)
+			switch strings.Join(call, " ") {
+			case "ip -d -o link show dev tun-fou":
+				return []byte("Cannot find device \"tun-fou\""), errors.New("missing")
+			case "ip fou add port 5555 ipproto 4":
+				return []byte("RTNETLINK answers: Address already in use"), errors.New("exit status 2")
+			default:
+				return nil, nil
+			}
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if status := controller.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-fou"); status["phase"] != "Up" {
+		t.Fatalf("status = %#v, want Up", status)
+	}
+	if got, want := strings.Join(calls[2], " "), "ip link add dev tun-fou type ipip local 192.0.2.10 remote 192.0.2.20 ttl 64 encap fou encap-sport 5555 encap-dport 5555"; got != want {
+		t.Fatalf("third call = %q, want %q", got, want)
+	}
+}
+
 func TestTunnelInterfaceControllerSkipsExistingGUE(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
 		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},

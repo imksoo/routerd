@@ -2073,6 +2073,9 @@ func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []a
 	fibNextHopRewritePeers := peerAddressFIBRewritePeers(desired)
 	fibPolicy := mobilityfib.NewSnapshot(c.Router, c.Store)
 	claimAdmission := c.samDynamicClaimAdmission()
+	if !routerHasBGPDynamicPeer(c.Router) {
+		claimAdmission = samDynamicClaimAdmission{}
+	}
 	admissionTracker := newDynamicRouteAdmissionTracker(claimAdmission)
 	var dynamicPeers []dynamicPeerObservation
 	if err := c.Server.ListPeer(ctx, &gobgpapi.ListPeerRequest{EnableAdvertised: true}, func(peer *gobgpapi.Peer) {
@@ -2114,6 +2117,18 @@ func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []a
 	c.lastDynamicPeers = dynamicPeers
 	c.lastDynamicAdmission = admissionTracker.Summary()
 	return bgpstate.Normalize(limited), routes, livenessMarkers, nil
+}
+
+func routerHasBGPDynamicPeer(router *routerapi.Router) bool {
+	if router == nil {
+		return false
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion == routerapi.NetAPIVersion && resource.Kind == "BGPDynamicPeer" {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPRouterSpec, state bgpstate.State, routes []FIBRoute, changed bool, fibResult FIBSyncResult, livenessMarkers map[string]string) error {
@@ -3559,7 +3574,50 @@ func (c *Controller) samDynamicClaimAdmission() samDynamicClaimAdmission {
 			out.byTunnelAddress[entry.TunnelAddress] = entry
 		}
 	}
+	out.addSAMTransportNeighborAliases(c.Router)
 	return out
+}
+
+func (a samDynamicClaimAdmission) addSAMTransportNeighborAliases(router *routerapi.Router) {
+	claimsByLeafID := map[string]samDynamicClaim{}
+	for _, claim := range a.byTunnelAddress {
+		if strings.TrimSpace(claim.LeafID) != "" {
+			claimsByLeafID[strings.TrimSpace(claim.LeafID)] = claim
+		}
+	}
+	if len(claimsByLeafID) == 0 || router == nil {
+		return
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != routerapi.HybridAPIVersion || resource.Kind != "TunnelInterface" {
+			continue
+		}
+		peerNode := strings.TrimSpace(resource.Metadata.Annotations["mobility.routerd.net/peer-node"])
+		claim, ok := claimsByLeafID[peerNode]
+		if !ok {
+			continue
+		}
+		spec, err := resource.TunnelInterfaceSpec()
+		if err != nil {
+			continue
+		}
+		neighbor, ok := samTransportNeighborAddress(spec.Address)
+		if !ok {
+			continue
+		}
+		a.byTunnelAddress[neighbor.String()] = claim
+	}
+}
+
+func samTransportNeighborAddress(localPrefix string) (netip.Addr, bool) {
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(localPrefix))
+	if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 31 {
+		return netip.Addr{}, false
+	}
+	as4 := prefix.Addr().As4()
+	value := uint32(as4[0])<<24 | uint32(as4[1])<<16 | uint32(as4[2])<<8 | uint32(as4[3])
+	value ^= 1
+	return netip.AddrFrom4([4]byte{byte(value >> 24), byte(value >> 16), byte(value >> 8), byte(value)}), true
 }
 
 func (a samDynamicClaimAdmission) Admit(nextHop string, prefix netip.Prefix) (bool, string) {
