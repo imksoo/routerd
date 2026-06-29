@@ -251,6 +251,132 @@ func TestDoctorSAMBGPDeliveryFailsWhenFIBMissing(t *testing.T) {
 	}
 }
 
+func TestDoctorSAMEnrollmentClientPassesWithFetchedRRSet(t *testing.T) {
+	configPath, statePath := writeDoctorSAMEnrollmentClientFixture(t)
+	store := openDoctorState(t, statePath)
+	now := time.Date(2026, 6, 29, 4, 0, 0, 0, time.UTC)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "leaf-a", map[string]any{
+		"phase":         "Ready",
+		"claimRef":      "SAMEnrollmentClaim/leaf-a",
+		"observedRRSet": "SAMRRSet/rrs",
+		"lastSuccess":   now.Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("save client status: %v", err)
+	}
+	if err := store.UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord{
+		Source:        "SAMRRSet/rrs",
+		Generation:    1,
+		ObservedAt:    now,
+		ExpiresAt:     time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC),
+		Digest:        "test",
+		ResourcesJSON: `[]`,
+		Status:        "active",
+	}); err != nil {
+		t.Fatalf("upsert rrset dynamic part: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "sam-enrollment-client", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor sam-enrollment-client: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	if check := findDoctorCheck(t, report, "SAMEnrollmentClient/leaf-a status"); check.Status != doctorPass {
+		t.Fatalf("status check = %#v", check)
+	}
+	if check := findDoctorCheck(t, report, "SAMEnrollmentClient/leaf-a fetched RRSet"); check.Status != doctorPass || !strings.Contains(check.Detail, "active=1") {
+		t.Fatalf("rrset check = %#v", check)
+	}
+}
+
+func TestDoctorSAMEnrollmentClientFailsDegradedStatus(t *testing.T) {
+	configPath, statePath := writeDoctorSAMEnrollmentClientFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "leaf-a", map[string]any{
+		"phase":    "Degraded",
+		"reason":   "unauthorized",
+		"claimRef": "SAMEnrollmentClaim/leaf-a",
+	}); err != nil {
+		t.Fatalf("save client status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	err := run([]string{"doctor", "sam-enrollment-client", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("doctor sam-enrollment-client succeeded with degraded status:\n%s", out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "SAMEnrollmentClient/leaf-a status")
+	if check.Status != doctorFail || !strings.Contains(check.Detail, "unauthorized") {
+		t.Fatalf("status check = %#v", check)
+	}
+}
+
+func TestDoctorBGPDynamicPeerWarnsWhenNoPeersDiscovered(t *testing.T) {
+	configPath, statePath := writeDoctorBGPDynamicPeerFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPDynamicPeer", "samred-leaves", map[string]any{
+		"phase":               "Ready",
+		"discoveredPeerCount": 0,
+		"acceptedRouteCount":  0,
+		"rejectedRouteCount":  0,
+	}); err != nil {
+		t.Fatalf("save dynamic peer status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	if err := run([]string{"doctor", "bgp-dynamic-peer", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+		t.Fatalf("doctor bgp-dynamic-peer should warn, not fail: %v\n%s", err, out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "BGPDynamicPeer/samred-leaves status")
+	if check.Status != doctorWarn || !strings.Contains(check.Remedy, "sourcePrefixes") {
+		t.Fatalf("status check = %#v", check)
+	}
+}
+
+func TestDoctorBGPDynamicPeerFailsWhenAllRoutesRejected(t *testing.T) {
+	configPath, statePath := writeDoctorBGPDynamicPeerFixture(t)
+	store := openDoctorState(t, statePath)
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPDynamicPeer", "samred-leaves", map[string]any{
+		"phase":               "Ready",
+		"discoveredPeerCount": 1,
+		"acceptedRouteCount":  0,
+		"rejectedRouteCount":  2,
+		"rejectedRouteSummary": map[string]any{
+			"not-claim-owned": 2,
+		},
+	}); err != nil {
+		t.Fatalf("save dynamic peer status: %v", err)
+	}
+	closeDoctorState(t, store)
+
+	var out bytes.Buffer
+	err := run([]string{"doctor", "bgp-dynamic-peer", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{})
+	if err == nil {
+		t.Fatalf("doctor bgp-dynamic-peer succeeded with all routes rejected:\n%s", out.String())
+	}
+	var report doctorReport
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
+	}
+	check := findDoctorCheck(t, report, "BGPDynamicPeer/samred-leaves route admission")
+	if check.Status != doctorFail || !strings.Contains(check.Detail, "not-claim-owned=2") {
+		t.Fatalf("admission check = %#v", check)
+	}
+}
+
 func TestDoctorSAMBGPDeliveryWarnsWhenDegradedButFIBInstalled(t *testing.T) {
 	configPath, statePath := writeDoctorSAMBGPDeliveryFixture(t)
 	store := openDoctorState(t, statePath)
@@ -2396,6 +2522,86 @@ spec:
             capture:
               type: proxy-arp
               interface: lan0
+`)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return configPath, filepath.Join(dir, "routerd.db")
+}
+
+func writeDoctorSAMEnrollmentClientFixture(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	data := []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: leaf-a
+spec:
+  resources:
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentClaim
+      metadata:
+        name: leaf-a
+      spec:
+        policyRef: SAMEnrollmentPolicy/samred-leaves
+        rrSetRef: SAMRRSet/rrs
+        leafID: leaf-a
+        tunnelAddress: 10.255.10.21/32
+        bgp:
+          asn: 64577
+          routerID: 10.255.10.21
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentClient
+      metadata:
+        name: leaf-a
+      spec:
+        claimRef: SAMEnrollmentClaim/leaf-a
+        bootstrapEndpoints:
+          - http://10.30.0.10:65432
+        controlAPITokenFrom:
+          env: ROUTERD_TEST_CONTROL_TOKEN
+`)
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return configPath, filepath.Join(dir, "routerd.db")
+}
+
+func writeDoctorBGPDynamicPeerFixture(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	data := []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: rr-1
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPRouter
+      metadata:
+        name: rr
+      spec:
+        asn: 64577
+        routerID: 10.255.10.1
+        listen:
+          address: 10.255.10.1
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: BGPDynamicPeer
+      metadata:
+        name: samred-leaves
+      spec:
+        routerRef: BGPRouter/rr
+        peerASN: 64577
+        listen:
+          sourcePrefixes:
+            - 10.255.10.0/24
+        importPolicy:
+          allowedPrefixes:
+            - 10.99.0.0/16
+          allowedPrefixLengthMin: 32
+          allowedPrefixLengthMax: 32
 `)
 	if err := os.WriteFile(configPath, data, 0644); err != nil {
 		t.Fatalf("write config: %v", err)

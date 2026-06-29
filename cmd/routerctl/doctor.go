@@ -180,7 +180,7 @@ type doctorRunner struct {
 	store  routerstate.Store
 }
 
-var doctorAreas = []string{"wan", "dns", "dslite", "dhcpv6-pd", "nat", "firewall", "rollback", "disk", "mgmt", "reconcile", "runtime", "dynamic", "routes", "plugin", "hybrid", "sam", "federation"}
+var doctorAreas = []string{"wan", "dns", "dslite", "dhcpv6-pd", "nat", "firewall", "rollback", "disk", "mgmt", "reconcile", "runtime", "dynamic", "routes", "plugin", "hybrid", "sam", "sam-enrollment-client", "bgp-dynamic-peer", "federation"}
 
 // doctorReconcileWarnThreshold is the total historical error count (across all
 // controllers) that promotes the reconcile area to warn. Current controller
@@ -350,6 +350,10 @@ func (r doctorRunner) runArea(area string) []doctorCheck {
 		return r.doctorHybrid()
 	case "sam":
 		return r.doctorSAM()
+	case "sam-enrollment-client":
+		return r.doctorSAMEnrollmentClient()
+	case "bgp-dynamic-peer":
+		return r.doctorBGPDynamicPeer()
 	case "federation":
 		return r.doctorFederation()
 	default:
@@ -477,6 +481,235 @@ func (r doctorRunner) doctorSAM() []doctorCheck {
 		}
 	}
 	return checks
+}
+
+func (r doctorRunner) doctorSAMEnrollmentClient() []doctorCheck {
+	if r.router == nil {
+		return []doctorCheck{{Area: "sam-enrollment-client", Name: "startup config", Status: doctorSkip, Detail: "startup config unavailable"}}
+	}
+	clients := selectResources(r.router.Spec.Resources, "SAMEnrollmentClient", "")
+	if len(clients) == 0 {
+		return []doctorCheck{{Area: "sam-enrollment-client", Name: "SAMEnrollmentClient", Status: doctorSkip, Detail: "no SAMEnrollmentClient configured"}}
+	}
+	var checks []doctorCheck
+	for _, res := range clients {
+		spec, err := res.SAMEnrollmentClientSpec()
+		name := "SAMEnrollmentClient/" + res.Metadata.Name
+		if err != nil {
+			checks = append(checks, doctorCheck{Area: "sam-enrollment-client", Name: name + " spec", Status: doctorFail, Detail: err.Error(), Remedy: "fix SAMEnrollmentClient spec"})
+			continue
+		}
+		checks = append(checks, r.doctorSAMEnrollmentClientClaimCheck(name, spec))
+		checks = append(checks, doctorSAMEnrollmentClientEndpointCheck(name, spec))
+		status := objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name)
+		checks = append(checks, doctorSAMEnrollmentClientStatusCheck(name, status))
+		checks = append(checks, r.doctorSAMEnrollmentClientRRSetCheck(name, spec, status))
+	}
+	return checks
+}
+
+func (r doctorRunner) doctorSAMEnrollmentClientClaimCheck(name string, spec api.SAMEnrollmentClientSpec) doctorCheck {
+	ref := strings.TrimSpace(spec.ClaimRef)
+	kind, claimName, ok := strings.Cut(ref, "/")
+	if !ok || kind != "SAMEnrollmentClaim" || strings.TrimSpace(claimName) == "" {
+		return doctorCheck{Area: "sam-enrollment-client", Name: name + " claim", Status: doctorFail, Detail: "claimRef must reference SAMEnrollmentClaim/<name>", Remedy: "set spec.claimRef to the local SAMEnrollmentClaim"}
+	}
+	for _, resource := range r.router.Spec.Resources {
+		if resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "SAMEnrollmentClaim" && resource.Metadata.Name == strings.TrimSpace(claimName) {
+			claim, err := resource.SAMEnrollmentClaimSpec()
+			if err != nil {
+				return doctorCheck{Area: "sam-enrollment-client", Name: name + " claim", Status: doctorFail, Detail: err.Error(), Remedy: "fix the referenced SAMEnrollmentClaim"}
+			}
+			return doctorCheck{Area: "sam-enrollment-client", Name: name + " claim", Status: doctorPass, Detail: fmt.Sprintf("%s rrSetRef=%s leafID=%s", ref, claim.RRSetRef, claim.LeafID)}
+		}
+	}
+	return doctorCheck{Area: "sam-enrollment-client", Name: name + " claim", Status: doctorFail, Detail: ref + " not found", Remedy: "add the referenced local SAMEnrollmentClaim"}
+}
+
+func doctorSAMEnrollmentClientEndpointCheck(name string, spec api.SAMEnrollmentClientSpec) doctorCheck {
+	httpEndpoints := 0
+	for _, endpoint := range spec.BootstrapEndpoints {
+		if strings.TrimSpace(endpoint) != "" {
+			httpEndpoints++
+		}
+	}
+	socket := strings.TrimSpace(spec.RRSocket)
+	switch {
+	case httpEndpoints == 0 && socket == "":
+		return doctorCheck{Area: "sam-enrollment-client", Name: name + " bootstrap endpoints", Status: doctorFail, Detail: "no bootstrapEndpoints or rrSocket configured", Remedy: "configure RR bootstrapEndpoints or rrSocket"}
+	case httpEndpoints > 0 && spec.ControlAPITokenFrom.File == "" && spec.ControlAPITokenFrom.Env == "":
+		return doctorCheck{Area: "sam-enrollment-client", Name: name + " bootstrap endpoints", Status: doctorWarn, Detail: fmt.Sprintf("%d HTTP endpoint(s), no controlAPITokenFrom", httpEndpoints), Remedy: "set spec.controlAPITokenFrom when RR ControlAPI requires bearer-token authentication"}
+	case httpEndpoints > 0:
+		return doctorCheck{Area: "sam-enrollment-client", Name: name + " bootstrap endpoints", Status: doctorPass, Detail: fmt.Sprintf("%d HTTP endpoint(s), token source configured", httpEndpoints)}
+	default:
+		return doctorCheck{Area: "sam-enrollment-client", Name: name + " bootstrap endpoints", Status: doctorPass, Detail: "rrSocket=" + socket}
+	}
+}
+
+func doctorSAMEnrollmentClientStatusCheck(name string, status map[string]any) doctorCheck {
+	if len(status) == 0 {
+		return doctorCheck{Area: "sam-enrollment-client", Name: name + " status", Status: doctorWarn, Detail: "status is missing", Remedy: "wait for routerd sam-enrollment-client controller to reconcile"}
+	}
+	phase := stringStatus(status, "phase")
+	detail := doctorStatusDetail(status)
+	if observed := stringStatus(status, "observedRRSet"); observed != "" {
+		detail = appendDoctorDetail(detail, "observedRRSet="+observed)
+	}
+	if lastSuccess := stringStatus(status, "lastSuccess"); lastSuccess != "" {
+		detail = appendDoctorDetail(detail, "lastSuccess="+lastSuccess)
+	}
+	switch {
+	case strings.EqualFold(phase, "Ready"):
+		return doctorCheck{Area: "sam-enrollment-client", Name: name + " status", Status: doctorPass, Detail: detail}
+	case strings.EqualFold(phase, "Backoff"):
+		return doctorCheck{Area: "sam-enrollment-client", Name: name + " status", Status: doctorWarn, Detail: detail, Remedy: "wait for nextAttempt or inspect RR ControlAPI reachability/authentication"}
+	case strings.EqualFold(phase, "Degraded") || strings.EqualFold(phase, "Failed") || strings.EqualFold(phase, "Error"):
+		return doctorCheck{Area: "sam-enrollment-client", Name: name + " status", Status: doctorFail, Detail: detail, Remedy: "repair SAM enrollment claim, RR endpoint reachability, bearer token, or RR admission policy"}
+	default:
+		return doctorCheck{Area: "sam-enrollment-client", Name: name + " status", Status: doctorWarn, Detail: detail, Remedy: "inspect routerd status and logs for this SAMEnrollmentClient"}
+	}
+}
+
+func (r doctorRunner) doctorSAMEnrollmentClientRRSetCheck(name string, spec api.SAMEnrollmentClientSpec, status map[string]any) doctorCheck {
+	source := stringStatus(status, "observedRRSet")
+	if source == "" {
+		claim, ok := r.samEnrollmentClientClaim(spec)
+		if ok && strings.TrimSpace(claim.RRSetRef) != "" {
+			source = strings.TrimSpace(claim.RRSetRef)
+		}
+	}
+	if source == "" {
+		return doctorCheck{Area: "sam-enrollment-client", Name: name + " fetched RRSet", Status: doctorWarn, Detail: "RRSet source is unknown", Remedy: "wait for enrollment status or set SAMEnrollmentClaim.spec.rrSetRef"}
+	}
+	lister, ok := r.store.(routerstate.DynamicConfigPartLister)
+	if !ok {
+		return doctorCheck{Area: "sam-enrollment-client", Name: name + " fetched RRSet", Status: doctorSkip, Detail: "state store does not expose dynamic config parts"}
+	}
+	records, err := lister.GetDynamicConfigPartsBySource(source)
+	if err != nil {
+		return doctorCheck{Area: "sam-enrollment-client", Name: name + " fetched RRSet", Status: doctorWarn, Detail: "dynamic state unavailable: " + err.Error()}
+	}
+	if len(records) == 0 {
+		return doctorCheck{Area: "sam-enrollment-client", Name: name + " fetched RRSet", Status: doctorWarn, Detail: "no dynamic state for " + source, Remedy: "run enrollment or wait for SAMEnrollmentClient to fetch the RRSet"}
+	}
+	now := doctorNow().UTC()
+	active := 0
+	var latest routerstate.DynamicConfigPartRecord
+	for _, record := range records {
+		if record.Generation > latest.Generation {
+			latest = record
+		}
+		if record.EffectiveStatus(now) == "active" {
+			active++
+		}
+	}
+	detail := fmt.Sprintf("%s records=%d active=%d latestGeneration=%d expiresAt=%s", source, len(records), active, latest.Generation, formatDynamicTime(latest.ExpiresAt))
+	if active == 0 {
+		return doctorCheck{Area: "sam-enrollment-client", Name: name + " fetched RRSet", Status: doctorWarn, Detail: detail, Remedy: "refresh enrollment; all fetched RRSet generations are expired"}
+	}
+	return doctorCheck{Area: "sam-enrollment-client", Name: name + " fetched RRSet", Status: doctorPass, Detail: detail}
+}
+
+func (r doctorRunner) samEnrollmentClientClaim(spec api.SAMEnrollmentClientSpec) (api.SAMEnrollmentClaimSpec, bool) {
+	kind, name, ok := strings.Cut(strings.TrimSpace(spec.ClaimRef), "/")
+	if !ok || kind != "SAMEnrollmentClaim" {
+		return api.SAMEnrollmentClaimSpec{}, false
+	}
+	for _, resource := range r.router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentClaim" || resource.Metadata.Name != strings.TrimSpace(name) {
+			continue
+		}
+		claim, err := resource.SAMEnrollmentClaimSpec()
+		if err != nil {
+			return api.SAMEnrollmentClaimSpec{}, false
+		}
+		return claim, true
+	}
+	return api.SAMEnrollmentClaimSpec{}, false
+}
+
+func (r doctorRunner) doctorBGPDynamicPeer() []doctorCheck {
+	if r.router == nil {
+		return []doctorCheck{{Area: "bgp-dynamic-peer", Name: "startup config", Status: doctorSkip, Detail: "startup config unavailable"}}
+	}
+	peers := selectResources(r.router.Spec.Resources, "BGPDynamicPeer", "")
+	if len(peers) == 0 {
+		return []doctorCheck{{Area: "bgp-dynamic-peer", Name: "BGPDynamicPeer", Status: doctorSkip, Detail: "no BGPDynamicPeer configured"}}
+	}
+	var checks []doctorCheck
+	for _, res := range peers {
+		spec, err := res.BGPDynamicPeerSpec()
+		name := "BGPDynamicPeer/" + res.Metadata.Name
+		if err != nil {
+			checks = append(checks, doctorCheck{Area: "bgp-dynamic-peer", Name: name + " spec", Status: doctorFail, Detail: err.Error(), Remedy: "fix BGPDynamicPeer spec"})
+			continue
+		}
+		checks = append(checks, doctorBGPDynamicPeerSpecCheck(name, spec))
+		status := objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name)
+		checks = append(checks, doctorBGPDynamicPeerStatusCheck(name, status))
+		checks = append(checks, doctorBGPDynamicPeerAdmissionCheck(name, status))
+	}
+	return checks
+}
+
+func doctorBGPDynamicPeerSpecCheck(name string, spec api.BGPDynamicPeerSpec) doctorCheck {
+	sourcePrefixes := len(spec.Listen.SourcePrefixes)
+	allowedPrefixes := len(spec.ImportPolicy.AllowedPrefixes)
+	detail := fmt.Sprintf("routerRef=%s peerASN=%d sourcePrefixes=%d importAllowedPrefixes=%d", spec.RouterRef, spec.PeerASN, sourcePrefixes, allowedPrefixes)
+	switch {
+	case strings.TrimSpace(spec.RouterRef) == "":
+		return doctorCheck{Area: "bgp-dynamic-peer", Name: name + " spec", Status: doctorFail, Detail: detail, Remedy: "set spec.routerRef"}
+	case spec.PeerASN == 0:
+		return doctorCheck{Area: "bgp-dynamic-peer", Name: name + " spec", Status: doctorFail, Detail: detail, Remedy: "set spec.peerASN"}
+	case sourcePrefixes == 0:
+		return doctorCheck{Area: "bgp-dynamic-peer", Name: name + " spec", Status: doctorFail, Detail: detail, Remedy: "set spec.listen.sourcePrefixes"}
+	case allowedPrefixes == 0:
+		return doctorCheck{Area: "bgp-dynamic-peer", Name: name + " spec", Status: doctorWarn, Detail: detail, Remedy: "configure import allowedPrefixes so dynamic leaves cannot advertise arbitrary routes"}
+	default:
+		return doctorCheck{Area: "bgp-dynamic-peer", Name: name + " spec", Status: doctorPass, Detail: detail}
+	}
+}
+
+func doctorBGPDynamicPeerStatusCheck(name string, status map[string]any) doctorCheck {
+	if len(status) == 0 {
+		return doctorCheck{Area: "bgp-dynamic-peer", Name: name + " status", Status: doctorWarn, Detail: "status is missing", Remedy: "wait for routerd-bgp to observe dynamic peer state"}
+	}
+	phase := stringStatus(status, "phase")
+	discovered := statusInt(status["discoveredPeerCount"])
+	accepted := statusInt(status["acceptedRouteCount"])
+	rejected := statusInt(status["rejectedRouteCount"])
+	detail := appendDoctorDetail(doctorStatusDetail(status), fmt.Sprintf("discoveredPeerCount=%d acceptedRouteCount=%d rejectedRouteCount=%d", discovered, accepted, rejected))
+	switch {
+	case strings.EqualFold(phase, "Ready"):
+		if discovered == 0 {
+			return doctorCheck{Area: "bgp-dynamic-peer", Name: name + " status", Status: doctorWarn, Detail: detail, Remedy: "no dynamic BGP peers are established yet; check leaf BGP sessions and sourcePrefixes"}
+		}
+		return doctorCheck{Area: "bgp-dynamic-peer", Name: name + " status", Status: doctorPass, Detail: detail}
+	case strings.EqualFold(phase, "Failed") || strings.EqualFold(phase, "Error"):
+		return doctorCheck{Area: "bgp-dynamic-peer", Name: name + " status", Status: doctorFail, Detail: detail, Remedy: "repair routerd-bgp dynamic peer apply/observe errors"}
+	default:
+		return doctorCheck{Area: "bgp-dynamic-peer", Name: name + " status", Status: doctorWarn, Detail: detail, Remedy: "inspect routerd-bgp status and logs for this BGPDynamicPeer"}
+	}
+}
+
+func doctorBGPDynamicPeerAdmissionCheck(name string, status map[string]any) doctorCheck {
+	if len(status) == 0 {
+		return doctorCheck{Area: "bgp-dynamic-peer", Name: name + " route admission", Status: doctorSkip, Detail: "status is missing"}
+	}
+	accepted := statusInt(status["acceptedRouteCount"])
+	rejected := statusInt(status["rejectedRouteCount"])
+	summary := statusStringMap(status["rejectedRouteSummary"])
+	detail := fmt.Sprintf("acceptedRouteCount=%d rejectedRouteCount=%d", accepted, rejected)
+	if len(summary) > 0 {
+		detail = appendDoctorDetail(detail, "rejectedRouteSummary="+compactStringMap(summary))
+	}
+	if accepted == 0 && rejected > 0 {
+		return doctorCheck{Area: "bgp-dynamic-peer", Name: name + " route admission", Status: doctorFail, Detail: detail, Remedy: "dynamic leaves are connected but all observed routes are rejected; inspect claim-owned prefixes and import policy"}
+	}
+	if rejected > 0 {
+		return doctorCheck{Area: "bgp-dynamic-peer", Name: name + " route admission", Status: doctorWarn, Detail: detail, Remedy: "inspect rejectedRouteSummary for non-owned or non-/32 advertisements"}
+	}
+	return doctorCheck{Area: "bgp-dynamic-peer", Name: name + " route admission", Status: doctorPass, Detail: detail}
 }
 
 func (r doctorRunner) doctorSAMBGPDeliveryChecks(pool api.Resource) []doctorCheck {
@@ -3098,6 +3331,37 @@ func stringStatus(status map[string]any, key string) string {
 		return ""
 	}
 	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func statusStringMap(value any) map[string]string {
+	out := map[string]string{}
+	switch typed := value.(type) {
+	case map[string]any:
+		for k, v := range typed {
+			out[k] = fmt.Sprint(v)
+		}
+	case map[string]string:
+		for k, v := range typed {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func compactStringMap(values map[string]string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, key+"="+values[key])
+	}
+	return strings.Join(parts, ",")
 }
 
 func firstCSV(value string) string {

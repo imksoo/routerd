@@ -425,6 +425,11 @@ carry WireGuard credentials. The claim's `spec.mobility.ownedAddresses` are
 authorization input for `MobilityPool` ownership and must fall within a pool
 referenced by the policy when that policy is present in the same config. BGP
 route admission remains a `BGPDynamicPeer`/BGP policy concern.
+Use `routerctl doctor sam-enrollment-client` on leaves to verify claim
+references, bootstrap endpoint/token configuration, enrollment controller
+status, and fetched RRSet dynamic-state freshness. Use `routerctl doctor
+bgp-dynamic-peer` on RRs to verify dynamic peer discovery and route-admission
+counters.
 
 `BGPRouter.spec.convergenceProfile: fast` is intended for Kubernetes/edge
 routers that prefer quick convergence over graceful restart stale-path
