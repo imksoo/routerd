@@ -564,6 +564,9 @@ complete
 ## Cleanup Evidence - 2026-06-29
 
 Cleanup evidence was captured and archived after the PVE live redundancy test.
+For future redundant Cloud-SAM test cleanup, use the generalized
+[SAM redundancy cleanup runbook](./sam-redundancy-cleanup.md) and keep the
+archive outside the repository.
 
 Archive directory:
 

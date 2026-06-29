@@ -71,6 +71,7 @@ gates:
 
 cleanup:
   status: complete
+  runbook: docs/operations/sam-redundancy-cleanup.md
   archive_dir: /home/imksoo/routerd-labs-archive/evidence/samred-20260629T035652Z
   evidence:
     - pre-cleanup/

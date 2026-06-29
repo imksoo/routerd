@@ -173,12 +173,12 @@ The accepted live gate used these client /32s:
 
 Pass criteria were all 12 directed pairs passing ping and SSH:
 
-- AWS <-> Azure
-- AWS <-> OCI
-- AWS <-> PVE
-- Azure <-> OCI
-- Azure <-> PVE
-- OCI <-> PVE
+- AWS `<->` Azure
+- AWS `<->` OCI
+- AWS `<->` PVE
+- Azure `<->` OCI
+- Azure `<->` PVE
+- OCI `<->` PVE
 
 ## Security Boundary
 

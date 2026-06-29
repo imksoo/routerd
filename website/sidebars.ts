@@ -143,6 +143,7 @@ const sidebars: SidebarsConfig = {
         'operations/otel-dashboards',
         'operations/high-availability',
         'operations/ingress-maintenance',
+        'operations/sam-redundancy-cleanup',
         'operations/development',
         'operations/ndpi-agent-libndpi',
       ],
