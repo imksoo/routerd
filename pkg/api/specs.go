@@ -808,6 +808,23 @@ type SAMEnrollmentClaimBGPSpec struct {
 	RouterID string `yaml:"routerID,omitempty" json:"routerID,omitempty"`
 }
 
+// SAMEnrollmentClient runs leaf-side enrollment bootstrap/refresh. It submits
+// a local SAMEnrollmentClaim to one bootstrap RR endpoint, fetches the allowed
+// SAMRRSet, and stores that set as dynamic config for existing transport/BGP
+// controllers to consume.
+type SAMEnrollmentClientSpec struct {
+	ClaimRef              string                        `yaml:"claimRef" json:"claimRef"`
+	BootstrapEndpoints    []string                      `yaml:"bootstrapEndpoints,omitempty" json:"bootstrapEndpoints,omitempty"`
+	RRSocket              string                        `yaml:"rrSocket,omitempty" json:"rrSocket,omitempty"`
+	StateTTLRefreshBefore string                        `yaml:"stateTTLRefreshBefore,omitempty" json:"stateTTLRefreshBefore,omitempty"`
+	RetryBackoff          SAMEnrollmentRetryBackoffSpec `yaml:"retryBackoff,omitempty" json:"retryBackoff,omitempty"`
+}
+
+type SAMEnrollmentRetryBackoffSpec struct {
+	Min string `yaml:"min,omitempty" json:"min,omitempty"`
+	Max string `yaml:"max,omitempty" json:"max,omitempty"`
+}
+
 // SAMSubnetPolicySpec shards a large on-prem prefix across multiple cloud-edge
 // node groups. The RR emits per-shard federation events; leaf nodes narrow their
 // MobilityPool discovery scope to the assigned shards automatically.
@@ -2650,6 +2667,10 @@ func (r Resource) SAMEnrollmentPolicySpec() (SAMEnrollmentPolicySpec, error) {
 
 func (r Resource) SAMEnrollmentClaimSpec() (SAMEnrollmentClaimSpec, error) {
 	return specAs[SAMEnrollmentClaimSpec](r)
+}
+
+func (r Resource) SAMEnrollmentClientSpec() (SAMEnrollmentClientSpec, error) {
+	return specAs[SAMEnrollmentClientSpec](r)
 }
 
 func (r Resource) SAMSubnetPolicySpec() (SAMSubnetPolicySpec, error) {

@@ -115,3 +115,13 @@ spec:
         bgp:
           asn: 64577
           routerID: 10.255.10.22
+
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentClient
+      metadata: { name: pve-leaf-b }
+      spec:
+        claimRef: SAMEnrollmentClaim/pve-leaf-b
+        bootstrapEndpoints:
+          - http://10.30.0.10:8080
+        stateTTLRefreshBefore: 10m
+        retryBackoff: { min: 10s, max: 15m }

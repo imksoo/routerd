@@ -191,6 +191,7 @@ func TestPVEMinimalDynamicRRLeafExamples(t *testing.T) {
 
 	t.Run("leaf-a wireguard ipip consumes pve rr", func(t *testing.T) {
 		assertHasResource(t, leafA, api.NetAPIVersion, "WireGuardInterface", "wg-pve")
+		assertHasResource(t, leafA, api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-a")
 		assertMissingResource(t, leafA, api.MobilityAPIVersion, "SAMRRSet", "pve-rrs")
 		assertHasResource(t, fetchedRRSet, api.MobilityAPIVersion, "SAMRRSet", "pve-rrs")
 		assertMissingResource(t, leafA, api.NetAPIVersion, "BGPDynamicPeer", "pve-leaves")
@@ -211,6 +212,7 @@ func TestPVEMinimalDynamicRRLeafExamples(t *testing.T) {
 	})
 
 	t.Run("leaf-b fou consumes pve rr without wireguard", func(t *testing.T) {
+		assertHasResource(t, leafB, api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-b")
 		assertMissingResource(t, leafB, api.MobilityAPIVersion, "SAMRRSet", "pve-rrs")
 		assertHasResource(t, fetchedRRSet, api.MobilityAPIVersion, "SAMRRSet", "pve-rrs")
 		assertMissingResource(t, leafB, api.NetAPIVersion, "WireGuardInterface", "wg-pve")

@@ -202,6 +202,18 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 			return true, err
 		}
 		return true, nil
+	case "SAMEnrollmentClient":
+		if res.APIVersion != api.MobilityAPIVersion {
+			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.MobilityAPIVersion)
+		}
+		spec, err := res.SAMEnrollmentClientSpec()
+		if err != nil {
+			return true, err
+		}
+		if err := validateSAMEnrollmentClient(res, spec); err != nil {
+			return true, err
+		}
+		return true, nil
 	case "SAMSubnetPolicy":
 		if res.APIVersion != api.MobilityAPIVersion {
 			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.MobilityAPIVersion)
@@ -654,6 +666,50 @@ func validateSAMEnrollmentClaimShape(res api.Resource, spec api.SAMEnrollmentCla
 			if _, nanoErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(spec.ExpiresAt)); nanoErr != nil {
 				return fmt.Errorf("%s spec.expiresAt must be an RFC3339 timestamp: %w", res.ID(), err)
 			}
+		}
+	}
+	return nil
+}
+
+func validateSAMEnrollmentClient(res api.Resource, spec api.SAMEnrollmentClientSpec) error {
+	if kind, name, ok := strings.Cut(strings.TrimSpace(spec.ClaimRef), "/"); !ok || kind != "SAMEnrollmentClaim" || strings.TrimSpace(name) == "" {
+		return fmt.Errorf("%s spec.claimRef must reference SAMEnrollmentClaim/<name>", res.ID())
+	}
+	if len(spec.BootstrapEndpoints) == 0 && strings.TrimSpace(spec.RRSocket) == "" {
+		return fmt.Errorf("%s spec.bootstrapEndpoints or spec.rrSocket is required", res.ID())
+	}
+	for i, endpoint := range spec.BootstrapEndpoints {
+		parsed, err := url.Parse(strings.TrimSpace(endpoint))
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return fmt.Errorf("%s spec.bootstrapEndpoints[%d] must be an absolute HTTP(S) URL", res.ID(), i)
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return fmt.Errorf("%s spec.bootstrapEndpoints[%d] scheme must be http or https", res.ID(), i)
+		}
+	}
+	if socket := strings.TrimSpace(spec.RRSocket); socket != "" && !strings.HasPrefix(socket, "/") {
+		return fmt.Errorf("%s spec.rrSocket must be an absolute path", res.ID())
+	}
+	for _, field := range []struct {
+		path  string
+		value string
+	}{
+		{path: "spec.stateTTLRefreshBefore", value: spec.StateTTLRefreshBefore},
+		{path: "spec.retryBackoff.min", value: spec.RetryBackoff.Min},
+		{path: "spec.retryBackoff.max", value: spec.RetryBackoff.Max},
+	} {
+		if strings.TrimSpace(field.value) == "" {
+			continue
+		}
+		if _, err := time.ParseDuration(strings.TrimSpace(field.value)); err != nil {
+			return fmt.Errorf("%s %s must be a duration: %w", res.ID(), field.path, err)
+		}
+	}
+	if strings.TrimSpace(spec.RetryBackoff.Min) != "" && strings.TrimSpace(spec.RetryBackoff.Max) != "" {
+		min, _ := time.ParseDuration(strings.TrimSpace(spec.RetryBackoff.Min))
+		max, _ := time.ParseDuration(strings.TrimSpace(spec.RetryBackoff.Max))
+		if max < min {
+			return fmt.Errorf("%s spec.retryBackoff.max must be greater than or equal to spec.retryBackoff.min", res.ID())
 		}
 	}
 	return nil

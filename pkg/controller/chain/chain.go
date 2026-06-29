@@ -1419,6 +1419,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	var mobility mobilitycontroller.Controller
 	var mobilityDiscovery mobilitycontroller.DiscoveryController
 	var mobilityTransport mobilitycontroller.TransportController
+	var mobilityEnrollmentClient mobilitycontroller.SAMEnrollmentClientController
 	var mobilityShard mobilitycontroller.ShardController
 	if rawStore, ok := r.Store.(mobilityDataStore); ok {
 		mobilityData := mobilityStore{evented: store, data: rawStore}
@@ -1448,6 +1449,10 @@ func (r *Runner) Start(ctx context.Context) error {
 			Router:        r.Router,
 			Store:         mobilityData,
 			PeerGroupSync: peerGroupSync,
+		}
+		mobilityEnrollmentClient = mobilitycontroller.SAMEnrollmentClientController{
+			Router: r.Router,
+			Store:  mobilityData,
 		}
 		mobilityShard = mobilitycontroller.ShardController{
 			Router: r.Router,
@@ -1580,6 +1585,11 @@ func (r *Runner) Start(ctx context.Context) error {
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "link", Every: 30 * time.Second, PeriodicFunc: didWorkPeriodic(link.Reconcile)},
+		framework.FuncController{ControllerName: "sam-enrollment-client", Every: time.Minute, Subs: statusSubscriptions("SAMEnrollmentClient", "SAMEnrollmentClaim"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+			current := mobilityEnrollmentClient
+			current.Router = r.Router
+			return didWorkError(current.Reconcile(ctx))
+		}},
 		framework.FuncController{ControllerName: "sam-transport", Every: 30 * time.Second, Subs: statusSubscriptions("SAMTransportProfile", "SAMPeerGroup", "SAMNodeSet", "MobilityMemberSet", "Interface", "IPv4StaticAddress", "DHCPv4Client", "WireGuardInterface", "WireGuardPeer"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveDynamicForReconcile()
 			if err != nil {

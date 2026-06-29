@@ -50,7 +50,7 @@ is not the default enrollment identity or the default private-underlay model.
 
 ## Leaf-Side RRSet Fetch
 
-Leaf-side automatic enrollment uses `routerctl mobility enrollment-join`:
+Leaf-side automatic enrollment uses `SAMEnrollmentClient`:
 
 1. read a local `SAMEnrollmentClaim` from the leaf config;
 2. submit it to a bootstrap RR control API endpoint;
@@ -62,10 +62,11 @@ The leaf startup config can then keep only the bootstrap claim/policy
 reference and `peersFrom: SAMRRSet/<name>`. It does not need the full rr-a/rr-b
 inventory as hand-edited static YAML for the automatic path.
 
-Current limitation: this branch provides the CLI/control-API fetch and refresh
-primitive, but it does not yet run a built-in background leaf enrollment
-controller. Operators should run `routerctl mobility enrollment-join` during
-bootstrap or refresh automation before relying on `SAMRRSet`-derived peers.
+`routerctl mobility enrollment-join` remains available as a manual/script path,
+but it is not the normal every-reconcile operation. `SAMEnrollmentClient`
+refreshes only when the fetched RRSet is missing, near expiry, or the local
+claim material changes. Failed attempts use exponential backoff and transport
+or BGP degradation does not trigger immediate rejoin loops.
 
 ## Example Configs
 
@@ -280,8 +281,10 @@ Expected local evidence:
   `tests/fixtures/pve-minimal-leaf-rrset-fetched.yaml` as fetched dynamic
   state and prove the leaf generates RR-facing `TunnelInterface` and `BGPPeer`
   resources from it.
-- `routerctl mobility enrollment-join` submits the leaf claim, fetches the
-  allowed RRSet, and writes the fetched RRSet to local dynamic state.
+- `SAMEnrollmentClient` submits the leaf claim, fetches the allowed RRSet, and
+  writes the fetched RRSet to local dynamic state only when refresh is needed.
+- `routerctl mobility enrollment-join` performs the same submit/fetch/write
+  path for manual bootstrap and troubleshooting.
 - WG materialization is covered only by WG-specific tests using optional
   `wireGuard` blocks; non-WG materialization is covered without WG resources.
 

@@ -77,6 +77,7 @@ func ConfigResourceKinds() []ResourceKindSchema {
 		{MobilityAPIVersion, "SAMRRSet", SAMRRSetSpec{}},
 		{MobilityAPIVersion, "SAMEnrollmentPolicy", SAMEnrollmentPolicySpec{}},
 		{MobilityAPIVersion, "SAMEnrollmentClaim", SAMEnrollmentClaimSpec{}},
+		{MobilityAPIVersion, "SAMEnrollmentClient", SAMEnrollmentClientSpec{}},
 		{MobilityAPIVersion, "SAMTransportProfile", SAMTransportProfileSpec{}},
 		{MobilityAPIVersion, "SAMSubnetPolicy", SAMSubnetPolicySpec{}},
 		{NetAPIVersion, "IPv4Route", IPv4RouteSpec{}},

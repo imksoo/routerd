@@ -44,7 +44,7 @@ spec:
 | `observability.routerd.net/v1alpha1` | `Telemetry` |
 | `plugin.routerd.net/v1alpha1` | plugin manifests |
 | `hybrid.routerd.net/v1alpha1` | `TunnelInterface`, `OverlayPeer`, `HybridRoute`, `AddressMobilityDomain`, `CloudProviderProfile`, `RemoteAddressClaim` |
-| `mobility.routerd.net/v1alpha1` | `MobilityPool`, `MobilityMemberSet`, `SAMNodeSet`, `SAMRRSet`, `SAMEnrollmentPolicy`, `SAMEnrollmentClaim`, `SAMTransportProfile` |
+| `mobility.routerd.net/v1alpha1` | `MobilityPool`, `MobilityMemberSet`, `SAMNodeSet`, `SAMRRSet`, `SAMEnrollmentPolicy`, `SAMEnrollmentClaim`, `SAMEnrollmentClient`, `SAMTransportProfile` |
 
 ## System Bootstrap
 
@@ -198,6 +198,7 @@ resolver addresses for DoH or DoT endpoint name resolution.
 | `SAMRRSet` | Declares a route-reflector set: RR member nodeRefs, generic endpoints, tunnel identities, optional WireGuard identity, and shared enrollment/MobilityPool/route-admission references. It never lists leaves. |
 | `SAMEnrollmentPolicy` | Authorizes SAM transport enrollment claims for a hub/RR. It binds a transport profile, optional RRSet, join-token source, join audience, tunnel and endpoint prefixes, optional leaf ID pattern, TTL/revocation policy, optional WireGuard materialization settings, and authorized MobilityPool references. |
 | `SAMEnrollmentClaim` | Carries one leaf enrollment payload: leaf identity, join nonce/timestamp/HMAC, RRSet reference, tunnel address, endpoint, optional BGP identity, optional MobilityPool-owned `/32`s, optional WireGuard credentials, expiry, and revocation state. |
+| `SAMEnrollmentClient` | Runs leaf-side bootstrap/refresh: submits a local `SAMEnrollmentClaim` to bootstrap RR endpoints, fetches the allowed `SAMRRSet`, and persists it as dynamic state only when missing, near expiry, or claim material changes. |
 | `SAMTransportProfile` | Declares this router's stable `selfNodeRef`, `mode` (`ipip`, `gre`, `fou`, or `gue`), `encryption` (`none` or `wireguard`), inner tunnel prefix, underlay interface, BGP router, and SAM transport peers. `fou`/`gue` use the existing `TunnelInterface` FOU/GUE path and require `encapSport` and `encapDport`. It can import topology and peer endpoints from `SAMNodeSet`, `SAMPeerGroup`, `SAMEnrollmentPolicy`, or `SAMRRSet` with `peersFrom`. routerd derives per-peer `TunnelInterface`, endpoint `/32` `IPv4Route`, and, unless `spec.bgp.generatePeers: false`, `BGPPeer` resources through a replace-on-reconcile `DynamicConfigPart`. |
 | `AddressMobilityDomain` | Low-level compatibility SAM resource that defines an IPv4 prefix for hand-authored selective-address configs; full L2 extension is not supported. |
 | `CloudProviderProfile` | Describes provider capabilities and external-command auth for declarative address capture planning. |
@@ -233,7 +234,8 @@ CloudEdge Mobility keeps the operator-authored surface declarative:
 `SAMNodeSet` is the write-once node identity registry for generated peers,
 `SAMRRSet` is the shared RR admission-set intent,
 `SAMEnrollmentPolicy`/`SAMEnrollmentClaim` are the generic leaf transport
-enrollment boundary, `SAMTransportProfile` is the high-level transport/BGP
+enrollment boundary, `SAMEnrollmentClient` is the leaf bootstrap/refresh
+controller, `SAMTransportProfile` is the high-level transport/BGP
 intent, federation events
 are observed facts, and BGP best paths are the mobility ownership/delivery view.
 The mobility planner derives BGP `/32` advertisements and provider trap action
@@ -679,6 +681,7 @@ and fields outside the target kind's `provides` set.
 | `SAMNodeSet` | `nodeCount` (int) |
 | `SAMRRSet` | `enrollmentPolicyRef` (string), `memberCount` (int), `members` (stringList), `phase` (string) |
 | `SAMEnrollmentClaim` | `endpoint` (string), `expiresAt` (timestamp), `leafID` (string), `phase` (string), `revoked` (bool), `rrSetRef` (string), `tunnelAddress` (string) |
+| `SAMEnrollmentClient` | `backoff` (string), `claimRef` (string), `lastAttempt` (timestamp), `lastSuccess` (timestamp), `nextAttempt` (timestamp), `observedRRSet` (string), `phase` (string), `reason` (string) |
 | `SAMEnrollmentPolicy` | `acceptedClaims` (int), `leafIDs` (stringList), `phase` (string), `skippedClaims` (int) |
 | `NAT44Rule` | `dryRun` (bool), `egressInterface` (string), `phase` (string), `snatAddress` (string) |
 | `NAT44SessionSync` | `deleteFailed` (int), `deleteOK` (int), `dryRun` (bool), `insertFailed` (int), `insertOK` (int), `mode` (string), `phase` (string), `sessionCount` (int), `snatAddresses` (stringList), `syncedAt` (timestamp), `targetCount` (int), `targets` (objectList) |

@@ -10155,6 +10155,80 @@
                     "type": "string"
                   },
                   "kind": {
+                    "const": "SAMEnrollmentClient",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "description": "SAMEnrollmentClient runs leaf-side enrollment bootstrap/refresh.",
+                    "properties": {
+                      "bootstrapEndpoints": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "claimRef": {
+                        "type": "string"
+                      },
+                      "retryBackoff": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "max": {
+                            "type": "string"
+                          },
+                          "min": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "rrSocket": {
+                        "type": "string"
+                      },
+                      "stateTTLRefreshBefore": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "claimRef"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "mobility.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
                     "const": "SAMTransportProfile",
                     "type": "string"
                   },

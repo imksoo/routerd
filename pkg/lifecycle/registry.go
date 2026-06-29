@@ -220,6 +220,7 @@ var declarations = []Declaration{
 	declare(api.MobilityAPIVersion, "SAMRRSet", ClassRendererInput, "SAM route-reflector set intent", noHostTeardown("RR set intent is consumed by SAM transport, BGP, and optional WireGuard controllers")),
 	declare(api.MobilityAPIVersion, "SAMEnrollmentPolicy", ClassRendererInput, "SAM transport enrollment admission policy", noHostTeardown("enrollment policy authorizes claims consumed by SAM transport and optional WireGuard peersFrom")),
 	declare(api.MobilityAPIVersion, "SAMEnrollmentClaim", ClassRendererInput, "leaf SAM transport enrollment claim", noHostTeardown("enrollment claim is authorized by SAMEnrollmentPolicy and materialized through existing resources")),
+	declare(api.MobilityAPIVersion, "SAMEnrollmentClient", ClassDynamicSource, "leaf SAM enrollment bootstrap/refresh controller", noHostTeardown("fetched RRSet output is represented as DynamicConfigPart and then handled by the effective resource view")),
 	declare(api.MobilityAPIVersion, "SAMTransportProfile", ClassDynamicSource, "generates transport TunnelInterface/BGPPeer resources", noHostTeardown("generated transport resources own teardown through the effective view")),
 	declare(api.MobilityAPIVersion, "SAMSubnetPolicy", ClassController, "shard distribution controller for subnet-level mobility", noHostTeardown("controller emits federation events without owning host artifacts")),
 	declare(api.NetAPIVersion, "IPv4Route", ClassManagedHost, "IPv4 route", resourceLifecycle()),
