@@ -163,6 +163,60 @@ func getSAMRRSetForAcceptedClaim(router *api.Router, store samEnrollmentClaimSto
 	return &result, nil
 }
 
+func revokeSAMEnrollmentClaim(router *api.Router, store samEnrollmentClaimStore, req controlapi.SAMEnrollmentClaimRevokeRequest, now time.Time) (*controlapi.SAMEnrollmentClaimRevokeResult, error) {
+	if router == nil {
+		return nil, fmt.Errorf("%w: router config unavailable", controlapi.ErrBadRequest)
+	}
+	if store == nil {
+		return nil, fmt.Errorf("%w: state store unavailable", controlapi.ErrBadRequest)
+	}
+	claimName, err := samEnrollmentClaimNameFromRef(req.Name)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", controlapi.ErrBadRequest, err)
+	}
+	source := "SAMEnrollmentClaim/" + claimName
+	records, err := store.ListDynamicConfigParts()
+	if err != nil {
+		return nil, err
+	}
+	claimResource, claim, ok := activeSubmittedSAMEnrollmentClaimResource(records, source, now.UTC())
+	if !ok {
+		return nil, fmt.Errorf("%w: active %s not found", controlapi.ErrBadRequest, source)
+	}
+	observedAt := now.UTC()
+	claim.Revoked = true
+	claim.ExpiresAt = observedAt.Format(time.RFC3339)
+	claimResource.Spec = claim
+	part := dynamicconfig.DynamicConfigPart{
+		TypeMeta: api.TypeMeta{APIVersion: dynamicconfig.ConfigAPIVersion, Kind: "DynamicConfigPart"},
+		Metadata: api.ObjectMeta{
+			Name: "sam-enrollment-claim-" + claimResource.Metadata.Name,
+			OwnerRefs: []api.OwnerRef{{
+				APIVersion: api.MobilityAPIVersion,
+				Kind:       "SAMEnrollmentClaim",
+				Name:       claimResource.Metadata.Name,
+			}},
+		},
+		Spec: dynamicconfig.DynamicConfigPartSpec{
+			Source:     source,
+			Generation: samEnrollmentClaimDynamicGeneration,
+			ObservedAt: observedAt,
+			ExpiresAt:  observedAt,
+			Resources:  []api.Resource{claimResource},
+		},
+	}
+	part.Spec.Digest = digestSAMEnrollmentClaimPart(part)
+	record, err := samEnrollmentClaimPartRecord(part)
+	if err != nil {
+		return nil, err
+	}
+	if err := store.UpsertDynamicConfigPart(record); err != nil {
+		return nil, err
+	}
+	result := controlapi.NewSAMEnrollmentClaimRevokeResult(source, source, samEnrollmentClaimDynamicGeneration, observedAt, observedAt, strings.TrimSpace(req.Reason))
+	return &result, nil
+}
+
 func normalizeSubmittedSAMEnrollmentClaim(resource api.Resource) (api.Resource, api.SAMEnrollmentClaimSpec, error) {
 	if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentClaim" {
 		return api.Resource{}, api.SAMEnrollmentClaimSpec{}, fmt.Errorf("claim must be %s/SAMEnrollmentClaim", api.MobilityAPIVersion)
@@ -206,6 +260,11 @@ func samEnrollmentPolicyNameFromRef(ref string) (string, error) {
 }
 
 func hasActiveSubmittedSAMEnrollmentClaim(records []routerstate.DynamicConfigPartRecord, source string, now time.Time) bool {
+	_, _, ok := activeSubmittedSAMEnrollmentClaimResource(records, source, now)
+	return ok
+}
+
+func activeSubmittedSAMEnrollmentClaimResource(records []routerstate.DynamicConfigPartRecord, source string, now time.Time) (api.Resource, api.SAMEnrollmentClaimSpec, bool) {
 	for _, record := range records {
 		if record.Source != source || record.EffectiveStatus(now.UTC()) != "active" {
 			continue
@@ -219,11 +278,15 @@ func hasActiveSubmittedSAMEnrollmentClaim(records []routerstate.DynamicConfigPar
 		}
 		for _, resource := range resources {
 			if resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "SAMEnrollmentClaim" {
-				return true
+				claim, err := resource.SAMEnrollmentClaimSpec()
+				if err != nil || claim.Revoked {
+					continue
+				}
+				return resource, claim, true
 			}
 		}
 	}
-	return false
+	return api.Resource{}, api.SAMEnrollmentClaimSpec{}, false
 }
 
 func findSAMEnrollmentClaimResource(router *api.Router, name string) (api.Resource, api.SAMEnrollmentClaimSpec, bool, error) {

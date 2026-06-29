@@ -201,6 +201,31 @@ func TestSubmitSAMEnrollmentClaimHandler(t *testing.T) {
 	}
 }
 
+func TestRevokeSAMEnrollmentClaimHandler(t *testing.T) {
+	handler := Handler{
+		RevokeSAMEnrollmentClaim: func(r *http.Request, req SAMEnrollmentClaimRevokeRequest) (*SAMEnrollmentClaimRevokeResult, error) {
+			if req.Name != "leaf-a" || req.Reason != "rotate" {
+				t.Fatalf("request = %#v", req)
+			}
+			now := time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC)
+			result := NewSAMEnrollmentClaimRevokeResult("SAMEnrollmentClaim/leaf-a", "SAMEnrollmentClaim/leaf-a", 1, now, now, req.Reason)
+			return &result, nil
+		},
+	}
+	body := `{"apiVersion":"control.routerd.net/v1alpha1","kind":"SAMEnrollmentClaimRevokeRequest","reason":"rotate"}`
+	req := httptest.NewRequest(http.MethodPost, Prefix+"/sam-enrollment-claims/leaf-a/revoke", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"kind": "SAMEnrollmentClaimRevokeResult"`) || !strings.Contains(rec.Body.String(), `"revoked": true`) {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
 func TestGetSAMRRSetHandler(t *testing.T) {
 	handler := Handler{
 		GetSAMRRSet: func(r *http.Request, req SAMRRSetGetRequest) (*SAMRRSetGetResult, error) {

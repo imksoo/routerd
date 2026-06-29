@@ -68,6 +68,43 @@ refreshes only when the fetched RRSet is missing, near expiry, or the local
 claim material changes. Failed attempts use exponential backoff and transport
 or BGP degradation does not trigger immediate rejoin loops.
 
+## Revoke, Rotate, And Re-Enroll
+
+RR-side revocation is an admin operation against accepted dynamic enrollment
+state. It replaces the accepted `SAMEnrollmentClaim/<name>` dynamic part with a
+revoked claim whose `expiresAt` is the revoke time. After that point, RRSet
+fetch for the old claim fails and dynamic BGP admission stops treating the
+claim as active.
+
+```sh
+routerctl mobility enrollment-revoke \
+  --claim pve-leaf-b \
+  --rr-url https://10.30.0.10:65432 \
+  --rr-token-file /usr/local/etc/routerd/secrets/control-api-token \
+  --rr-ca-file /usr/local/etc/routerd/secrets/rr-ca.pem \
+  --rr-client-cert-file /usr/local/etc/routerd/secrets/admin.crt \
+  --rr-client-key-file /usr/local/etc/routerd/secrets/admin.key \
+  --reason rotated
+```
+
+Use `--rr-socket /run/routerd/routerd.sock` for local RR maintenance instead
+of `--rr-url`. The same bearer-token and mTLS hardening used by enrollment
+submit/fetch applies to revoke over TCP.
+
+To rotate and re-enroll a leaf:
+
+1. revoke the old accepted claim on every RR that accepted it;
+2. update the leaf `SAMEnrollmentClaim.spec.joinNonce` and
+   `spec.joinTimestamp`;
+3. recompute `spec.joinHMAC` with `routerctl mobility enrollment-hmac`, or
+   regenerate the leaf config with `routerctl mobility leaf-config` and a join
+   secret source;
+4. let `SAMEnrollmentClient` refresh after the local claim material changes, or
+   run `routerctl mobility enrollment-join` once to force submit/fetch and
+   persist the new `SAMRRSet`; and
+5. check `routerctl doctor sam-enrollment-client` on the leaf and
+   `routerctl doctor bgp-dynamic-peer` on the RR.
+
 Use `routerctl mobility leaf-config` to generate a minimal leaf startup config
 for this automatic path. The generated config contains the local underlay
 interface/address, owned mobility `/32`, `BGPRouter`, `SAMTransportProfile`,

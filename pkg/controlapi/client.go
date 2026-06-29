@@ -334,6 +334,26 @@ func (c *Client) SubmitSAMEnrollmentClaim(ctx context.Context, request SAMEnroll
 	return &result, nil
 }
 
+func (c *Client) RevokeSAMEnrollmentClaim(ctx context.Context, request SAMEnrollmentClaimRevokeRequest) (*SAMEnrollmentClaimRevokeResult, error) {
+	request.APIVersion = APIVersion
+	request.Kind = "SAMEnrollmentClaimRevokeRequest"
+	request.Name = strings.TrimSpace(request.Name)
+	data, err := json.Marshal(request)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+Prefix+"/sam-enrollment-claims/"+url.PathEscape(request.Name)+"/revoke", bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	var result SAMEnrollmentClaimRevokeResult
+	if err := c.do(req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 func (c *Client) GetSAMRRSet(ctx context.Context, request SAMRRSetGetRequest) (*SAMRRSetGetResult, error) {
 	values := url.Values{}
 	if strings.TrimSpace(request.ClaimRef) != "" {

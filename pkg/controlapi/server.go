@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -34,6 +35,7 @@ type Handler struct {
 	Delete                   func(*http.Request, DeleteRequest) (*DeleteResult, error)
 	Validate                 func(*http.Request, ValidateRequest) (*ValidateResult, error)
 	SubmitSAMEnrollmentClaim func(*http.Request, SAMEnrollmentClaimSubmitRequest) (*SAMEnrollmentClaimSubmitResult, error)
+	RevokeSAMEnrollmentClaim func(*http.Request, SAMEnrollmentClaimRevokeRequest) (*SAMEnrollmentClaimRevokeResult, error)
 	GetSAMRRSet              func(*http.Request, SAMRRSetGetRequest) (*SAMRRSetGetResult, error)
 	SetLogLevel              func(*http.Request, LogLevelRequest) (*LogLevelResult, error)
 	DHCPv6Event              func(*http.Request, DHCPv6EventRequest) (*DHCPv6EventResult, error)
@@ -80,6 +82,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleValidate(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/sam-enrollment-claims":
 		h.handleSubmitSAMEnrollmentClaim(w, r)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, Prefix+"/sam-enrollment-claims/") && strings.HasSuffix(r.URL.Path, "/revoke"):
+		h.handleRevokeSAMEnrollmentClaim(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, Prefix+"/sam-rrsets/"):
 		h.handleGetSAMRRSet(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/log-level":
@@ -608,6 +612,52 @@ func (h Handler) handleSubmitSAMEnrollmentClaim(w http.ResponseWriter, r *http.R
 		return
 	}
 	result, err := h.SubmitSAMEnrollmentClaim(r, req)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, ErrBadRequest) {
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h Handler) handleRevokeSAMEnrollmentClaim(w http.ResponseWriter, r *http.Request) {
+	if h.RevokeSAMEnrollmentClaim == nil {
+		writeError(w, http.StatusNotImplemented, "sam enrollment claim revoke handler is not configured")
+		return
+	}
+	name := strings.TrimPrefix(r.URL.Path, Prefix+"/sam-enrollment-claims/")
+	name = strings.TrimSuffix(name, "/revoke")
+	name = strings.Trim(name, "/")
+	decodedName, err := url.PathUnescape(name)
+	if err != nil || strings.TrimSpace(decodedName) == "" || strings.Contains(decodedName, "/") {
+		writeError(w, http.StatusBadRequest, "SAMEnrollmentClaim name is required")
+		return
+	}
+	var req SAMEnrollmentClaimRevokeRequest
+	if r.Body != nil && r.ContentLength != 0 {
+		defer r.Body.Close()
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if req.APIVersion != "" && req.APIVersion != APIVersion {
+		writeError(w, http.StatusBadRequest, "unsupported apiVersion")
+		return
+	}
+	if req.Kind != "" && req.Kind != "SAMEnrollmentClaimRevokeRequest" {
+		writeError(w, http.StatusBadRequest, "unsupported kind")
+		return
+	}
+	if strings.TrimSpace(req.Name) != "" && strings.TrimSpace(req.Name) != decodedName {
+		writeError(w, http.StatusBadRequest, "request name must match URL name")
+		return
+	}
+	req.Name = decodedName
+	result, err := h.RevokeSAMEnrollmentClaim(r, req)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, ErrBadRequest) {

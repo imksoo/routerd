@@ -132,6 +132,8 @@ func mobilityCommand(args []string, stdout, stderr io.Writer) error {
 		return mobilityEnrollmentSubmitCommand(args[1:], stdout)
 	case "enrollment-join":
 		return mobilityEnrollmentJoinCommand(args[1:], stdout)
+	case "enrollment-revoke":
+		return mobilityEnrollmentRevokeCommand(args[1:], stdout)
 	case "leaf-config":
 		return mobilityLeafConfigCommand(args[1:], stdout)
 	case "leases", "list", "ownership", "show":
@@ -361,6 +363,85 @@ func mobilityEnrollmentJoinCommand(args []string, stdout io.Writer) error {
 	switch output {
 	case "", "table", "text":
 		fmt.Fprintf(stdout, "accepted\t%s\nrrSet\t%s\ndynamicSource\t%s\ngeneration\t%d\nexpiresAt\t%s\nstateFile\t%s\n", result.ClaimRef, result.RRSetRef, result.DynamicSource, result.Generation, result.ExpiresAt.Format(time.RFC3339), result.StateFile)
+		return nil
+	case "json":
+		return writeJSON(stdout, result)
+	case "yaml":
+		return writeYAML(stdout, result)
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
+}
+
+func mobilityEnrollmentRevokeCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("mobility enrollment-revoke", flag.ContinueOnError)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"Revoke an accepted SAMEnrollmentClaim on an RR routerd control API.",
+			"routerctl mobility enrollment-revoke --claim pve-leaf-b --rr-url https://pve-rr:65432 --rr-token-file /usr/local/etc/routerd/secrets/control-api-token --rr-ca-file /usr/local/etc/routerd/secrets/rr-ca.pem\n"+
+				"routerctl mobility enrollment-revoke --claim pve-leaf-a --rr-socket /run/routerd/routerd.sock --reason rotated")
+	}
+	claimName := fs.String("claim", "", "SAMEnrollmentClaim name")
+	reason := fs.String("reason", "", "operator reason recorded in the revoke result")
+	rrSocketPath := fs.String("rr-socket", "", "RR routerd Unix domain socket path")
+	rrURL := fs.String("rr-url", "", "RR routerd control API base URL")
+	rrTokenFile := fs.String("rr-token-file", "", "file containing bearer token for --rr-url")
+	rrTokenEnv := fs.String("rr-token-env", "", "environment variable containing bearer token for --rr-url")
+	rrTokenBase64 := fs.Bool("rr-token-base64", false, "decode the selected RR bearer token as base64")
+	rrCAFile := fs.String("rr-ca-file", "", "CA bundle for verifying --rr-url TLS")
+	rrClientCertFile := fs.String("rr-client-cert-file", "", "client certificate file for RR mTLS")
+	rrClientKeyFile := fs.String("rr-client-key-file", "", "client private key file for RR mTLS")
+	rrServerName := fs.String("rr-server-name", "", "TLS server name override for --rr-url")
+	rrInsecureSkipVerify := fs.Bool("rr-insecure-skip-verify", false, "skip RR TLS certificate verification")
+	timeout := fs.Duration("timeout", 10*time.Second, "request timeout")
+	output := "table"
+	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
+	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected mobility enrollment-revoke argument %q", fs.Arg(0))
+	}
+	if strings.TrimSpace(*claimName) == "" {
+		return errors.New("mobility enrollment-revoke requires --claim")
+	}
+	if strings.TrimSpace(*rrSocketPath) != "" && strings.TrimSpace(*rrURL) != "" {
+		return errors.New("mobility enrollment-revoke accepts only one of --rr-socket or --rr-url")
+	}
+	if strings.TrimSpace(*rrSocketPath) != "" && (strings.TrimSpace(*rrTokenFile) != "" || strings.TrimSpace(*rrTokenEnv) != "") {
+		return errors.New("mobility enrollment-revoke RR bearer token flags require --rr-url")
+	}
+	if strings.TrimSpace(*rrSocketPath) != "" && (strings.TrimSpace(*rrCAFile) != "" || strings.TrimSpace(*rrClientCertFile) != "" || strings.TrimSpace(*rrClientKeyFile) != "" || strings.TrimSpace(*rrServerName) != "" || *rrInsecureSkipVerify) {
+		return errors.New("mobility enrollment-revoke RR TLS flags require --rr-url")
+	}
+	token, err := mobilityEnrollmentBearerToken(*rrTokenFile, *rrTokenEnv, *rrTokenBase64)
+	if err != nil {
+		return err
+	}
+	client, err := mobilityEnrollmentClient(*rrSocketPath, *rrURL, token, controlapi.TLSOptions{
+		CAFile:             *rrCAFile,
+		CertFile:           *rrClientCertFile,
+		KeyFile:            *rrClientKeyFile,
+		ServerName:         *rrServerName,
+		InsecureSkipVerify: *rrInsecureSkipVerify,
+	})
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	result, err := client.RevokeSAMEnrollmentClaim(ctx, controlapi.SAMEnrollmentClaimRevokeRequest{Name: *claimName, Reason: *reason})
+	if err != nil {
+		return fmt.Errorf("revoke SAMEnrollmentClaim on routerd failed: %w", err)
+	}
+	switch output {
+	case "", "table", "text":
+		fmt.Fprintf(stdout, "revoked\t%s\nsource\t%s\ngeneration\t%d\nexpiresAt\t%s\n", result.ClaimRef, result.DynamicSource, result.Generation, result.ExpiresAt.Format(time.RFC3339))
 		return nil
 	case "json":
 		return writeJSON(stdout, result)
@@ -1085,6 +1166,7 @@ func mobilityUsage(w io.Writer) {
 	fmt.Fprintln(w, "  enrollment-hmac --config <path> --claim <name> (--secret-file <path>|--secret-env <name>|--secret <value>) [--secret-base64] [--show-payload]")
 	fmt.Fprintln(w, "  enrollment-submit --config <path> --claim <name> [--socket <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  enrollment-join --config <path> --claim <name> [--rr-socket <path>|--rr-url <url>] [--rr-token-file <path>|--rr-token-env <name>] [--rr-ca-file <path>] [--rr-client-cert-file <path> --rr-client-key-file <path>] [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  enrollment-revoke --claim <name> [--rr-socket <path>|--rr-url <url>] [--rr-token-file <path>|--rr-token-env <name>] [--rr-ca-file <path>] [--rr-client-cert-file <path> --rr-client-key-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  leaf-config --leaf-id <name> --underlay-ifname <ifname> --underlay-address <cidr> --local-endpoint <ip> --endpoint-prefix <cidr> --inner-prefix <cidr> --tunnel-address <ipv4/32> --mobility-pool-prefix <cidr> --owned-address <ipv4/32> --rr-set <name> --policy <name> (--join-token-file <path>|--join-token-env <name>) --join-audience <name> --bootstrap-endpoint <url>")
 }
 

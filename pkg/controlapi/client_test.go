@@ -305,3 +305,44 @@ func TestClientGetSAMRRSet(t *testing.T) {
 		t.Fatalf("result = %#v", result)
 	}
 }
+
+func TestClientRevokeSAMEnrollmentClaim(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody SAMEnrollmentClaimRevokeRequest
+	now := time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC)
+	want := NewSAMEnrollmentClaimRevokeResult("SAMEnrollmentClaim/leaf-a", "SAMEnrollmentClaim/leaf-a", 1, now, now, "rotate")
+	payload, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	client := &Client{
+		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			gotPath = req.URL.Path
+			gotMethod = req.Method
+			if err := json.NewDecoder(req.Body).Decode(&gotBody); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(bytes.NewReader(payload)),
+				Header:     make(http.Header),
+			}, nil
+		})},
+		baseURL:       "http://routerd",
+		retryAttempts: 1,
+		retryDelay:    time.Millisecond,
+	}
+	result, err := client.RevokeSAMEnrollmentClaim(context.Background(), SAMEnrollmentClaimRevokeRequest{Name: "leaf-a", Reason: "rotate"})
+	if err != nil {
+		t.Fatalf("RevokeSAMEnrollmentClaim: %v", err)
+	}
+	if gotMethod != http.MethodPost || gotPath != Prefix+"/sam-enrollment-claims/leaf-a/revoke" {
+		t.Fatalf("method/path = %s %s", gotMethod, gotPath)
+	}
+	if gotBody.Kind != "SAMEnrollmentClaimRevokeRequest" || gotBody.Name != "leaf-a" || gotBody.Reason != "rotate" {
+		t.Fatalf("request body = %#v", gotBody)
+	}
+	if !result.Revoked || result.ClaimRef != "SAMEnrollmentClaim/leaf-a" {
+		t.Fatalf("result = %#v", result)
+	}
+}

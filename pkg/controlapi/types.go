@@ -177,6 +177,23 @@ type SAMEnrollmentClaimSubmitResult struct {
 	ExpiresAt     time.Time `json:"expiresAt" yaml:"expiresAt"`
 }
 
+type SAMEnrollmentClaimRevokeRequest struct {
+	TypeMeta `json:",inline" yaml:",inline"`
+	Name     string `json:"name" yaml:"name"`
+	Reason   string `json:"reason,omitempty" yaml:"reason,omitempty"`
+}
+
+type SAMEnrollmentClaimRevokeResult struct {
+	TypeMeta      `json:",inline" yaml:",inline"`
+	Revoked       bool      `json:"revoked" yaml:"revoked"`
+	ClaimRef      string    `json:"claimRef" yaml:"claimRef"`
+	DynamicSource string    `json:"dynamicSource" yaml:"dynamicSource"`
+	Generation    int64     `json:"generation" yaml:"generation"`
+	ObservedAt    time.Time `json:"observedAt" yaml:"observedAt"`
+	ExpiresAt     time.Time `json:"expiresAt" yaml:"expiresAt"`
+	Reason        string    `json:"reason,omitempty" yaml:"reason,omitempty"`
+}
+
 type SAMRRSetGetRequest struct {
 	Name     string `json:"name" yaml:"name"`
 	ClaimRef string `json:"claimRef" yaml:"claimRef"`
@@ -575,6 +592,19 @@ func NewSAMEnrollmentClaimSubmitResult(claimRef, source string, generation int64
 		Generation:    generation,
 		ObservedAt:    observedAt,
 		ExpiresAt:     expiresAt,
+	}
+}
+
+func NewSAMEnrollmentClaimRevokeResult(claimRef, source string, generation int64, observedAt, expiresAt time.Time, reason string) SAMEnrollmentClaimRevokeResult {
+	return SAMEnrollmentClaimRevokeResult{
+		TypeMeta:      TypeMeta{APIVersion: APIVersion, Kind: "SAMEnrollmentClaimRevokeResult"},
+		Revoked:       true,
+		ClaimRef:      claimRef,
+		DynamicSource: source,
+		Generation:    generation,
+		ObservedAt:    observedAt,
+		ExpiresAt:     expiresAt,
+		Reason:        reason,
 	}
 }
 

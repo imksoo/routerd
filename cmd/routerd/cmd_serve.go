@@ -779,6 +779,29 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			})
 			return result, nil
 		},
+		RevokeSAMEnrollmentClaim: func(r *http.Request, req controlapi.SAMEnrollmentClaimRevokeRequest) (*controlapi.SAMEnrollmentClaimRevokeResult, error) {
+			applyMu.Lock()
+			defer applyMu.Unlock()
+			result, err := revokeSAMEnrollmentClaim(currentRouter(), stateStore, req, time.Now().UTC())
+			if err != nil {
+				return nil, err
+			}
+			if controllerBus != nil {
+				event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd"}, "routerd.resource.status.changed", daemonapi.SeverityInfo)
+				event.Attributes = map[string]string{
+					"resource":      result.ClaimRef,
+					"dynamicSource": result.DynamicSource,
+					"reason":        "sam-enrollment-claim-revoked",
+				}
+				_ = controllerBus.Publish(r.Context(), event)
+			}
+			logger.Emit(eventlog.LevelWarning, "sam-enrollment", "revoked SAMEnrollmentClaim", map[string]string{
+				"claim":         result.ClaimRef,
+				"dynamicSource": result.DynamicSource,
+				"reason":        result.Reason,
+			})
+			return result, nil
+		},
 		GetSAMRRSet: func(r *http.Request, req controlapi.SAMRRSetGetRequest) (*controlapi.SAMRRSetGetResult, error) {
 			applyMu.Lock()
 			defer applyMu.Unlock()

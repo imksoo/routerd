@@ -34,6 +34,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   `SAMEnrollmentClient`. The generator supports join-HMAC computation plus RR
   ControlAPI bearer-token and mTLS client settings, and intentionally leaves
   `SAMRRSet` delivery to the enrollment fetch/dynamic-state path.
+- `routerctl mobility enrollment-revoke` and the ControlAPI
+  `POST /sam-enrollment-claims/{name}/revoke` endpoint let operators revoke an
+  accepted dynamic `SAMEnrollmentClaim` on an RR. Revocation writes a revoked,
+  immediately expired dynamic claim so old RRSet fetches and dynamic BGP
+  admission stop using that leaf; rotation and re-enroll then use a refreshed
+  claim nonce/timestamp/HMAC plus `SAMEnrollmentClient` or
+  `routerctl mobility enrollment-join`.
 - Cloud-SAM dynamic RR/leaf enrollment has been promoted to mainline and
   evidence-frozen at commit `4a6dad6b8786ed01e63381dcf77230467b8a5021`.
   The accepted PVE live redundancy gate used dual RRs (`rr-1`, `rr-2`),

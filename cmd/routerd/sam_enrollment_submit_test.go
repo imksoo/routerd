@@ -216,6 +216,50 @@ func TestGetSAMRRSetForAcceptedClaimReturnsOnlyClaimRRSet(t *testing.T) {
 	}
 }
 
+func TestRevokeSAMEnrollmentClaimExpiresAcceptedClaim(t *testing.T) {
+	now := time.Date(2026, 6, 28, 0, 1, 0, 0, time.UTC)
+	router := loadSubmitTestRouter(t)
+	secretFile := filepath.Join(t.TempDir(), "join-token")
+	if err := os.WriteFile(secretFile, []byte("test-join-token\n"), 0o600); err != nil {
+		t.Fatalf("write join token: %v", err)
+	}
+	setSubmitTestJoinToken(t, router, "pve-wg-leaves", secretFile)
+	claim := loadSubmitTestClaim(t, "pve-leaf-a")
+	claimSpec, err := claim.SAMEnrollmentClaimSpec()
+	if err != nil {
+		t.Fatalf("claim spec: %v", err)
+	}
+	claimSpec.JoinHMAC = samenrollment.JoinHMAC([]byte("test-join-token"), claimSpec)
+	claim.Spec = claimSpec
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "routerd.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer store.Close()
+
+	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now); err != nil {
+		t.Fatalf("submitSAMEnrollmentClaim: %v", err)
+	}
+	revokeAt := now.Add(time.Minute)
+	result, err := revokeSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimRevokeRequest{Name: "pve-leaf-a", Reason: "rotate"}, revokeAt)
+	if err != nil {
+		t.Fatalf("revokeSAMEnrollmentClaim: %v", err)
+	}
+	if !result.Revoked || result.ClaimRef != "SAMEnrollmentClaim/pve-leaf-a" || !result.ExpiresAt.Equal(revokeAt) {
+		t.Fatalf("revoke result = %#v", result)
+	}
+	if _, err := getSAMRRSetForAcceptedClaim(router, store, controlapi.SAMRRSetGetRequest{Name: "pve-rrs", ClaimRef: "SAMEnrollmentClaim/pve-leaf-a"}, revokeAt); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a not found") {
+		t.Fatalf("post-revoke getSAMRRSetForAcceptedClaim error = %v, want accepted claim required", err)
+	}
+	records, err := store.GetDynamicConfigPartsBySource("SAMEnrollmentClaim/pve-leaf-a")
+	if err != nil {
+		t.Fatalf("GetDynamicConfigPartsBySource: %v", err)
+	}
+	if len(records) != 1 || records[0].EffectiveStatus(revokeAt) != "expired" || !strings.Contains(records[0].ResourcesJSON, `"revoked":true`) {
+		t.Fatalf("records = %#v", records)
+	}
+}
+
 func loadSubmitTestRouter(t *testing.T) *api.Router {
 	t.Helper()
 	router, err := config.Load(filepath.Join("..", "..", "examples", "pve-minimal-rr.yaml"))
