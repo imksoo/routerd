@@ -58,6 +58,10 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ### Changed
 
+- `ControlAPI` HTTP listener is now disabled by default. It is enabled when a
+  `system.routerd.net/v1alpha1 ControlAPI` resource is present in the config or
+  when `--http-listen` is passed to `routerd serve`. This prevents accidental
+  TCP port binding on hosts that do not use the HTTP control path.
 - Dynamic BGP admission for SAM leaves now requires exact `/32` route admission
   by effective import policy, including inherited `BGPRouter` policy, so pool
   aggregates, defaults, underlay routes, another claim's `/32`, and unclaimed
