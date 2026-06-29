@@ -180,7 +180,10 @@ Pass criteria were all 12 directed pairs passing ping and SSH:
 ## Security Boundary
 
 The TCP control API defaults to `127.0.0.1:65432` and loopback-only source
-admission. RR-side SAM enrollment over a private underlay should declare a
+admission. It is still the mutation/control API and does not preserve Unix
+socket filesystem-permission semantics; on multi-user hosts, disable it with a
+`ControlAPI` resource using `enabled: false` and use the Unix socket instead.
+RR-side SAM enrollment over a private underlay should declare a
 `system.routerd.net/v1alpha1` `ControlAPI` resource with a protected
 `listenAddress`, `port: 65432`, and a narrow `allowCIDRs` list such as the leaf
 management subnet. `0.0.0.0/0` and `::/0` are rejected; this is not an

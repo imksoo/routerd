@@ -40,7 +40,7 @@ spec:
 | `routerd.net/v1alpha1` | `Router` |
 | `net.routerd.net/v1alpha1` | interfaces, `ManagementAccess`, reusable `IPAddressSet` resources, DHCP, DNS, routes, tunnels, VIP, BGP, events, traffic flow logs |
 | `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallEventLog`, `ClientPolicy`, `PortForward`, `IngressService`, `LocalServiceRedirect` |
-| `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `Package`, `NTPClient`, `NTPServer`, `LogSink`, `ObservabilityPipeline`, `RouterdCluster`, `LogRetention`, `WebConsole` |
+| `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `Package`, `NTPClient`, `NTPServer`, `LogSink`, `ObservabilityPipeline`, `RouterdCluster`, `LogRetention`, `WebConsole`, `ControlAPI` |
 | `observability.routerd.net/v1alpha1` | `Telemetry` |
 | `plugin.routerd.net/v1alpha1` | plugin manifests |
 | `hybrid.routerd.net/v1alpha1` | `TunnelInterface`, `OverlayPeer`, `HybridRoute`, `AddressMobilityDomain`, `CloudProviderProfile`, `RemoteAddressClaim` |
@@ -61,6 +61,43 @@ spec:
 | `RouterdCluster` | Uses a file lease so only the leader mutates host configuration while standby nodes observe status. |
 | `LogRetention` | Manages retention for events, DNS queries, traffic flows, and firewall event logs. |
 | `WebConsole` | Enables the read-only management Web Console. |
+| `ControlAPI` | Configures the optional TCP mutation/control API listener used by local automation and SAM enrollment bootstrap. |
+
+`ControlAPI` defaults to `127.0.0.1:65432` with source admission limited to
+`127.0.0.1/32` and `::1/128`. This is intentionally narrow as a network
+exposure, but it is still the mutation/control API and it is restricted by
+source IP, not by Unix socket filesystem permissions. On multi-user hosts, or
+where local process isolation matters, disable the TCP listener and use the
+Unix socket instead:
+
+```yaml
+apiVersion: system.routerd.net/v1alpha1
+kind: ControlAPI
+metadata:
+  name: local
+spec:
+  enabled: false
+```
+
+RR-side SAM enrollment over a protected private underlay can enable TCP
+explicitly with a narrow source allowlist:
+
+```yaml
+apiVersion: system.routerd.net/v1alpha1
+kind: ControlAPI
+metadata:
+  name: sam-enrollment
+spec:
+  enabled: true
+  listenAddress: 10.30.0.10
+  port: 65432
+  allowCIDRs:
+    - 10.30.0.0/24
+```
+
+`ControlAPI.spec.allowCIDRs` rejects malformed CIDRs, `0.0.0.0/0`, and `::/0`.
+The HTTP admission check uses the TCP remote address; forwarded headers are not
+trusted for source admission.
 
 ## Observability
 
