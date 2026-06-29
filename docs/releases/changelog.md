@@ -25,8 +25,10 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   `/home/imksoo/routerd-labs-archive/evidence/samred-20260629T035652Z/`;
   `routerd-samred-20260629T035652Z.tar.gz` has SHA256
   `77277d94e9c1b097ff0e9b7158b1cdeed772b27300c3a7c58bc007db9c1c92f4` and
-  passed `sha256sum -c`. Cleanup is deferred until PVE VM/bridge cleanup
-  snapshots are captured.
+  passed `sha256sum -c`. Cleanup evidence was later captured and verified:
+  `routerd-samred-20260629T035652Z-cleanup-evidence.tar.gz` has SHA256
+  `c760850291690cac94549ec9730af3fa0545c017a3fdde5f0bfc7d7dae9a3591`, and both
+  the cleanup tarball checksum and cleanup file manifest passed `sha256sum -c`.
 - Dynamic SAM RR/leaf enrollment is now documented as the release-candidate
   path for stable hub/RR configs with no static per-leaf inventory. The model
   includes `BGPDynamicPeer` admission, `SAMRRSet`, `SAMEnrollmentPolicy`,

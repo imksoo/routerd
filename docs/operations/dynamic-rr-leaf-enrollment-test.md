@@ -558,8 +558,51 @@ Validated assertions:
 Cleanup status:
 
 ```text
-deferred
+complete
 ```
 
-PVE VM and bridge resources were intentionally retained until pre-cleanup and
-post-cleanup snapshots are captured.
+## Cleanup Evidence - 2026-06-29
+
+Cleanup evidence was captured and archived after the PVE live redundancy test.
+
+Archive directory:
+
+```text
+/home/imksoo/routerd-labs-archive/evidence/samred-20260629T035652Z/
+```
+
+Added cleanup evidence:
+
+```text
+pre-cleanup/
+cleanup/cleanup-session.log
+post-cleanup/
+CLEANUP-EVIDENCE-SHA256SUMS.txt
+routerd-samred-20260629T035652Z-cleanup-evidence.tar.gz
+routerd-samred-20260629T035652Z-cleanup-evidence.tar.gz.sha256
+```
+
+Cleanup evidence tarball checksum:
+
+```text
+c760850291690cac94549ec9730af3fa0545c017a3fdde5f0bfc7d7dae9a3591  routerd-samred-20260629T035652Z-cleanup-evidence.tar.gz
+```
+
+Verification:
+
+```text
+sha256sum -c routerd-samred-20260629T035652Z-cleanup-evidence.tar.gz.sha256: OK
+sha256sum -c CLEANUP-EVIDENCE-SHA256SUMS.txt: OK
+```
+
+Post-cleanup assertions:
+
+- VMID 9601-9608 are absent on pve05, pve06, and pve07.
+- Bridges `rsam999`, `rsam998`, and `rsamclnt` are absent on pve05, pve06, and pve07.
+- `/mnt/pve/qnap/template/iso/routerd-samred-*-cidata.iso` is absent on pve05, pve06, and pve07.
+
+Repository state after cleanup evidence capture:
+
+```text
+main...origin/main clean
+```

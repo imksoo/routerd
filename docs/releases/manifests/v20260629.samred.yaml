@@ -70,8 +70,23 @@ gates:
   - make build-daemons
 
 cleanup:
-  status: deferred
-  reason: PVE VM/bridge retained until cleanup snapshots are captured
+  status: complete
+  archive_dir: /home/imksoo/routerd-labs-archive/evidence/samred-20260629T035652Z
+  evidence:
+    - pre-cleanup/
+    - cleanup/cleanup-session.log
+    - post-cleanup/
+    - CLEANUP-EVIDENCE-SHA256SUMS.txt
+    - routerd-samred-20260629T035652Z-cleanup-evidence.tar.gz
+    - routerd-samred-20260629T035652Z-cleanup-evidence.tar.gz.sha256
+  cleanup_evidence_sha256: c760850291690cac94549ec9730af3fa0545c017a3fdde5f0bfc7d7dae9a3591
+  checksum_verified:
+    cleanup_tarball: true
+    cleanup_file_manifest: true
+  post_cleanup_assertions:
+    - VMID 9601-9608 absent on pve05, pve06, and pve07
+    - bridges rsam999, rsam998, and rsamclnt absent on pve05, pve06, and pve07
+    - /mnt/pve/qnap/template/iso/routerd-samred-*-cidata.iso absent on pve05, pve06, and pve07
 
 notes:
   - ControlAPI HTTP listener is a mutation/control API.
