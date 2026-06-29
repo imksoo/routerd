@@ -21,6 +21,7 @@ import (
 type Client struct {
 	httpClient    *http.Client
 	baseURL       string
+	bearerToken   string
 	retryAttempts int
 	retryDelay    time.Duration
 }
@@ -59,6 +60,15 @@ func NewHTTPClient(baseURL string) *Client {
 		retryAttempts: 3,
 		retryDelay:    300 * time.Millisecond,
 	}
+}
+
+func (c *Client) WithBearerToken(token string) *Client {
+	if c == nil {
+		return nil
+	}
+	next := *c
+	next.bearerToken = strings.TrimSpace(token)
+	return &next
 }
 
 func (c *Client) Status(ctx context.Context) (*Status, error) {
@@ -465,6 +475,9 @@ func (c *Client) doWithRetry(req *http.Request) (*http.Response, error) {
 		nextReq, err := cloneRequestForAttempt(req, attempt)
 		if err != nil {
 			return nil, err
+		}
+		if c.bearerToken != "" {
+			nextReq.Header.Set("Authorization", "Bearer "+c.bearerToken)
 		}
 		resp, err := c.httpClient.Do(nextReq)
 		if err == nil || !isTransientControlConnectError(err) || attempt == attempts-1 {

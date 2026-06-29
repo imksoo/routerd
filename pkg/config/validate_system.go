@@ -398,6 +398,9 @@ func validateSystemResource(res api.Resource, targetOS platform.OS) (bool, error
 		if err := validateControlAPIAllowCIDRs(res.ID(), spec.AllowCIDRs); err != nil {
 			return true, err
 		}
+		if err := validateSecretValueSource(res.ID(), "", "", "spec.tokenFrom", spec.TokenFrom); err != nil {
+			return true, err
+		}
 	case "Inventory":
 		if res.APIVersion != api.RouterAPIVersion {
 			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.RouterAPIVersion)

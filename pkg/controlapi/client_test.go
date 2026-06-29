@@ -72,6 +72,26 @@ func TestUnixClientRetriesTransientStartupErrors(t *testing.T) {
 	}
 }
 
+func TestHTTPClientWithBearerTokenSetsAuthorizationHeader(t *testing.T) {
+	var gotAuth string
+	client := NewHTTPClient("http://routerd.test").WithBearerToken(" test-token \n")
+	client.httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		gotAuth = req.Header.Get("Authorization")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"apiVersion":"control.routerd.net/v1alpha1","kind":"Status","metadata":{"name":"routerd"},"status":{"phase":"Healthy","currentError":false}}`)),
+			Header:     make(http.Header),
+			Request:    req,
+		}, nil
+	})}
+	if _, err := client.Status(context.Background()); err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if gotAuth != "Bearer test-token" {
+		t.Fatalf("Authorization = %q, want bearer token", gotAuth)
+	}
+}
+
 func TestClientRuntimeDecodesResponse(t *testing.T) {
 	want := NewRuntimeStats()
 	want.HeapAllocBytes = 7 * 1024 * 1024

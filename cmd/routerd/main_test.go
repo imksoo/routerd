@@ -775,7 +775,7 @@ func TestServeAcceptsLegacyControllerChainFlags(t *testing.T) {
 }
 
 func TestControlAPIHTTPConfigDefaultsToLoopbackHighPort(t *testing.T) {
-	cfg, err := resolveControlAPIHTTPConfig(testControlAPIRouter("control-defaults"), "", nil, map[string]bool{})
+	cfg, err := resolveControlAPIHTTPConfig(testControlAPIRouter("control-defaults"), "", nil, api.SecretValueSourceSpec{}, map[string]bool{})
 	if err != nil {
 		t.Fatalf("resolveControlAPIHTTPConfig: %v", err)
 	}
@@ -807,7 +807,7 @@ func TestControlAPIHTTPConfigAcceptsNarrowCIDR(t *testing.T) {
 			AllowCIDRs:    []string{"10.30.0.0/24"},
 		},
 	})
-	cfg, err := resolveControlAPIHTTPConfig(router, "", nil, map[string]bool{})
+	cfg, err := resolveControlAPIHTTPConfig(router, "", nil, api.SecretValueSourceSpec{}, map[string]bool{})
 	if err != nil {
 		t.Fatalf("resolveControlAPIHTTPConfig: %v", err)
 	}
@@ -830,6 +830,48 @@ func TestControlAPIHTTPConfigRejectsWideOpenCIDRs(t *testing.T) {
 	}
 }
 
+func TestControlAPIHTTPConfigReadsTokenFromResourceEnv(t *testing.T) {
+	t.Setenv("ROUTERD_TEST_CONTROL_TOKEN", " test-token \n")
+	router := testControlAPIRouter("control-token")
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "ControlAPI"},
+		Metadata: api.ObjectMeta{Name: "default"},
+		Spec: api.ControlAPISpec{
+			TokenFrom: api.SecretValueSourceSpec{Env: "ROUTERD_TEST_CONTROL_TOKEN"},
+		},
+	})
+	cfg, err := resolveControlAPIHTTPConfig(router, "", nil, api.SecretValueSourceSpec{}, map[string]bool{})
+	if err != nil {
+		t.Fatalf("resolveControlAPIHTTPConfig: %v", err)
+	}
+	if cfg.Token != "test-token" {
+		t.Fatalf("Token = %q, want trimmed token", cfg.Token)
+	}
+}
+
+func TestControlAPIHTTPConfigCLITokenFileOverridesResource(t *testing.T) {
+	tokenFile := filepath.Join(t.TempDir(), "control-token")
+	if err := os.WriteFile(tokenFile, []byte("cli-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ROUTERD_TEST_CONTROL_TOKEN", "resource-token")
+	router := testControlAPIRouter("control-token")
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "ControlAPI"},
+		Metadata: api.ObjectMeta{Name: "default"},
+		Spec: api.ControlAPISpec{
+			TokenFrom: api.SecretValueSourceSpec{Env: "ROUTERD_TEST_CONTROL_TOKEN"},
+		},
+	})
+	cfg, err := resolveControlAPIHTTPConfig(router, "", nil, api.SecretValueSourceSpec{File: tokenFile}, map[string]bool{"http-token-file": true})
+	if err != nil {
+		t.Fatalf("resolveControlAPIHTTPConfig: %v", err)
+	}
+	if cfg.Token != "cli-token" {
+		t.Fatalf("Token = %q, want CLI token", cfg.Token)
+	}
+}
+
 func TestControlAPIAdmissionUsesRemoteAddrOnly(t *testing.T) {
 	prefixes, err := parseControlAPIAllowCIDRs([]string{"127.0.0.1/32"})
 	if err != nil {
@@ -839,7 +881,7 @@ func TestControlAPIAdmissionUsesRemoteAddrOnly(t *testing.T) {
 	handler := controlAPIAdmissionHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusNoContent)
-	}), prefixes)
+	}), prefixes, "")
 	req := httptest.NewRequest(http.MethodGet, "http://routerd.test/api/control.routerd.net/v1alpha1/status", nil)
 	req.RemoteAddr = "10.30.0.25:45678"
 	req.Header.Set("X-Forwarded-For", "127.0.0.1")
@@ -850,6 +892,47 @@ func TestControlAPIAdmissionUsesRemoteAddrOnly(t *testing.T) {
 	}
 	if called {
 		t.Fatal("handler was called for rejected source")
+	}
+}
+
+func TestControlAPIAdmissionRequiresBearerTokenWhenConfigured(t *testing.T) {
+	prefixes, err := parseControlAPIAllowCIDRs([]string{"127.0.0.1/32"})
+	if err != nil {
+		t.Fatalf("parseControlAPIAllowCIDRs: %v", err)
+	}
+	var calls int
+	handler := controlAPIAdmissionHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusNoContent)
+	}), prefixes, "secret-token")
+
+	req := httptest.NewRequest(http.MethodGet, "http://routerd.test/api/control.routerd.net/v1alpha1/status", nil)
+	req.RemoteAddr = "127.0.0.1:45678"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("missing token status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "http://routerd.test/api/control.routerd.net/v1alpha1/status", nil)
+	req.RemoteAddr = "127.0.0.1:45678"
+	req.Header.Set("Authorization", "Bearer wrong-token")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong token status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "http://routerd.test/api/control.routerd.net/v1alpha1/status", nil)
+	req.RemoteAddr = "127.0.0.1:45678"
+	req.Header.Set("Authorization", "Bearer secret-token")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("valid token status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	if calls != 1 {
+		t.Fatalf("handler calls = %d, want 1", calls)
 	}
 }
 

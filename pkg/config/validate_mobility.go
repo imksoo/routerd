@@ -678,6 +678,9 @@ func validateSAMEnrollmentClient(res api.Resource, spec api.SAMEnrollmentClientS
 	if len(spec.BootstrapEndpoints) == 0 && strings.TrimSpace(spec.RRSocket) == "" {
 		return fmt.Errorf("%s spec.bootstrapEndpoints or spec.rrSocket is required", res.ID())
 	}
+	if err := validateSecretValueSource(res.ID(), "", "", "spec.controlAPITokenFrom", spec.ControlAPITokenFrom); err != nil {
+		return err
+	}
 	for i, endpoint := range spec.BootstrapEndpoints {
 		parsed, err := url.Parse(strings.TrimSpace(endpoint))
 		if err != nil || parsed.Scheme == "" || parsed.Host == "" {

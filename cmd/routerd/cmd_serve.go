@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
+	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
@@ -306,6 +308,7 @@ type controlAPIHTTPConfig struct {
 	Enabled       bool
 	Listen        string
 	AllowPrefixes []netip.Prefix
+	Token         string
 }
 
 const (
@@ -356,6 +359,8 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	httpListen := fs.String("http-listen", "", "TCP listen address for the mutation/control API; defaults to 127.0.0.1:65432")
 	var httpAllowCIDRs repeatedStringFlag
 	fs.Var(&httpAllowCIDRs, "http-allow-cidr", "source CIDR allowed to use --http-listen; repeat or comma-separate; defaults to loopback only")
+	httpTokenFile := fs.String("http-token-file", "", "file containing bearer token required by the HTTP mutation/control API")
+	httpTokenEnv := fs.String("http-token-env", "", "environment variable containing bearer token required by the HTTP mutation/control API")
 	statePath := fs.String("state-file", defaultStatePath, "routerd state database file")
 	controllerNames := fs.String("controllers", "all", "comma-separated controller names to run; use bgp for isolated BGP labs")
 	applyInterval := fs.Duration("apply-interval", 0, "periodic apply interval; 0 disables scheduled apply")
@@ -417,7 +422,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	if err != nil {
 		return err
 	}
-	httpControl, err := resolveControlAPIHTTPConfig(router, strings.TrimSpace(*httpListen), []string(httpAllowCIDRs), setFlags)
+	httpControl, err := resolveControlAPIHTTPConfig(router, strings.TrimSpace(*httpListen), []string(httpAllowCIDRs), api.SecretValueSourceSpec{File: strings.TrimSpace(*httpTokenFile), Env: strings.TrimSpace(*httpTokenEnv)}, setFlags)
 	if err != nil {
 		return err
 	}
@@ -873,7 +878,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		}
 		defer httpListener.Close()
 		httpServer = &http.Server{
-			Handler:           controlAPIAdmissionHandler(handler, httpControl.AllowPrefixes),
+			Handler:           controlAPIAdmissionHandler(handler, httpControl.AllowPrefixes, httpControl.Token),
 			ReadHeaderTimeout: 5 * time.Second,
 			ReadTimeout:       30 * time.Second,
 			WriteTimeout:      60 * time.Second,
@@ -1181,7 +1186,7 @@ func defaultControlAPIHTTPConfig() controlAPIHTTPConfig {
 	}
 }
 
-func resolveControlAPIHTTPConfig(router *api.Router, cliListen string, cliAllowCIDRs []string, setFlags map[string]bool) (controlAPIHTTPConfig, error) {
+func resolveControlAPIHTTPConfig(router *api.Router, cliListen string, cliAllowCIDRs []string, cliTokenFrom api.SecretValueSourceSpec, setFlags map[string]bool) (controlAPIHTTPConfig, error) {
 	cfg := defaultControlAPIHTTPConfig()
 	if router != nil {
 		var found *api.ControlAPISpec
@@ -1220,6 +1225,11 @@ func resolveControlAPIHTTPConfig(router *api.Router, cliListen string, cliAllowC
 				}
 				cfg.AllowPrefixes = prefixes
 			}
+			token, err := controlAPITokenFromSecretSource(found.TokenFrom)
+			if err != nil {
+				return controlAPIHTTPConfig{}, fmt.Errorf("ControlAPI tokenFrom: %w", err)
+			}
+			cfg.Token = token
 		}
 	}
 	if setFlags["http-listen"] {
@@ -1236,10 +1246,57 @@ func resolveControlAPIHTTPConfig(router *api.Router, cliListen string, cliAllowC
 		}
 		cfg.AllowPrefixes = prefixes
 	}
+	if setFlags["http-token-file"] || setFlags["http-token-env"] {
+		token, err := controlAPITokenFromSecretSource(cliTokenFrom)
+		if err != nil {
+			return controlAPIHTTPConfig{}, fmt.Errorf("HTTP control API token: %w", err)
+		}
+		cfg.Token = token
+	}
 	if cfg.Enabled && len(cfg.AllowPrefixes) == 0 {
 		return controlAPIHTTPConfig{}, errors.New("control HTTP API source allow CIDRs must not be empty")
 	}
 	return cfg, nil
+}
+
+func controlAPITokenFromSecretSource(source api.SecretValueSourceSpec) (string, error) {
+	hasFile := strings.TrimSpace(source.File) != ""
+	hasEnv := strings.TrimSpace(source.Env) != ""
+	if !hasFile && !hasEnv {
+		return "", nil
+	}
+	if hasFile == hasEnv {
+		return "", errors.New("tokenFrom.file or tokenFrom.env must be set, but not both")
+	}
+	var value string
+	switch {
+	case hasFile:
+		path := strings.TrimSpace(source.File)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read token file %q: %w", path, err)
+		}
+		value = string(data)
+	case hasEnv:
+		name := strings.TrimSpace(source.Env)
+		found, ok := os.LookupEnv(name)
+		if !ok {
+			return "", fmt.Errorf("read token env %q: not set", name)
+		}
+		value = found
+	}
+	value = strings.TrimSpace(value)
+	if source.Base64 {
+		decoded, err := base64.StdEncoding.DecodeString(value)
+		if err != nil {
+			return "", fmt.Errorf("decode base64 token: %w", err)
+		}
+		value = strings.TrimSpace(string(decoded))
+	}
+	if value == "" {
+		return "", errors.New("token must not be empty")
+	}
+	return value, nil
 }
 
 func parseControlAPIAllowCIDRs(cidrs []string) ([]netip.Prefix, error) {
@@ -1267,15 +1324,30 @@ func parseControlAPIAllowCIDRs(cidrs []string) ([]netip.Prefix, error) {
 	return prefixes, nil
 }
 
-func controlAPIAdmissionHandler(next http.Handler, allowPrefixes []netip.Prefix) http.Handler {
+func controlAPIAdmissionHandler(next http.Handler, allowPrefixes []netip.Prefix, token string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		addr, err := remoteAddrIP(r.RemoteAddr)
 		if err != nil || !controlAPISourceAllowed(addr, allowPrefixes) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
+		if token != "" && !controlAPITokenAllowed(r, token) {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="routerd-control-api"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func controlAPITokenAllowed(r *http.Request, want string) bool {
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	const prefix = "Bearer "
+	if len(auth) <= len(prefix) || !strings.EqualFold(auth[:len(prefix)], prefix) {
+		return false
+	}
+	got := strings.TrimSpace(auth[len(prefix):])
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
 func remoteAddrIP(remoteAddr string) (netip.Addr, error) {

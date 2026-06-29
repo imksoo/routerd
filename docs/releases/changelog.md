@@ -14,6 +14,12 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ### Added
 
+- `ControlAPI` HTTP listeners can now require bearer-token authentication with
+  `spec.tokenFrom` or `routerd serve --http-token-file/--http-token-env`.
+  `SAMEnrollmentClient.spec.controlAPITokenFrom` and `routerctl mobility
+  enrollment-join --rr-token-file/--rr-token-env` send the token on RR
+  submit/fetch requests. Source-CIDR admission remains enforced first; mTLS is
+  still a follow-up hardening item for managed-service or public exposure.
 - Cloud-SAM dynamic RR/leaf enrollment has been promoted to mainline and
   evidence-frozen at commit `4a6dad6b8786ed01e63381dcf77230467b8a5021`.
   The accepted PVE live redundancy gate used dual RRs (`rr-1`, `rr-2`),

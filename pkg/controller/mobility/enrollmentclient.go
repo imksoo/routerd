@@ -5,9 +5,11 @@ package mobility
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"strings"
 	"time"
 
@@ -163,7 +165,11 @@ func (c SAMEnrollmentClientController) joinFetchAndPersist(ctx context.Context, 
 		client SAMEnrollmentJoinClient
 		result *controlapi.SAMEnrollmentClaimSubmitResult
 	}
-	for _, client := range c.clients(spec) {
+	clients, err := c.clients(spec)
+	if err != nil {
+		return err
+	}
+	for _, client := range clients {
 		submit, err := client.SubmitSAMEnrollmentClaim(ctx, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim})
 		if err != nil {
 			lastErr = err
@@ -197,20 +203,78 @@ func (c SAMEnrollmentClientController) joinFetchAndPersist(ctx context.Context, 
 	return fmt.Errorf("no SAM enrollment bootstrap endpoint configured")
 }
 
-func (c SAMEnrollmentClientController) clients(spec api.SAMEnrollmentClientSpec) []SAMEnrollmentJoinClient {
+func (c SAMEnrollmentClientController) clients(spec api.SAMEnrollmentClientSpec) ([]SAMEnrollmentJoinClient, error) {
 	if c.ClientFactory != nil {
-		return c.ClientFactory(spec)
+		return c.ClientFactory(spec), nil
 	}
 	var out []SAMEnrollmentJoinClient
 	if socket := strings.TrimSpace(spec.RRSocket); socket != "" {
 		out = append(out, controlapi.NewUnixClient(socket))
 	}
+	hasHTTPEndpoint := false
 	for _, endpoint := range spec.BootstrapEndpoints {
-		if endpoint = strings.TrimSpace(endpoint); endpoint != "" {
-			out = append(out, controlapi.NewHTTPClient(endpoint))
+		if strings.TrimSpace(endpoint) != "" {
+			hasHTTPEndpoint = true
+			break
 		}
 	}
-	return out
+	if !hasHTTPEndpoint {
+		return out, nil
+	}
+	token, err := samEnrollmentClientControlAPIToken(spec.ControlAPITokenFrom)
+	if err != nil {
+		return nil, err
+	}
+	for _, endpoint := range spec.BootstrapEndpoints {
+		if endpoint = strings.TrimSpace(endpoint); endpoint != "" {
+			client := controlapi.NewHTTPClient(endpoint)
+			if token != "" {
+				client = client.WithBearerToken(token)
+			}
+			out = append(out, client)
+		}
+	}
+	return out, nil
+}
+
+func samEnrollmentClientControlAPIToken(source api.SecretValueSourceSpec) (string, error) {
+	hasFile := strings.TrimSpace(source.File) != ""
+	hasEnv := strings.TrimSpace(source.Env) != ""
+	if !hasFile && !hasEnv {
+		return "", nil
+	}
+	if hasFile == hasEnv {
+		return "", fmt.Errorf("controlAPITokenFrom.file or controlAPITokenFrom.env must be set, but not both")
+	}
+	var value string
+	switch {
+	case hasFile:
+		path := strings.TrimSpace(source.File)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read control API token file %q: %w", path, err)
+		}
+		value = string(data)
+	case hasEnv:
+		name := strings.TrimSpace(source.Env)
+		found, ok := os.LookupEnv(name)
+		if !ok {
+			return "", fmt.Errorf("read control API token env %q: not set", name)
+		}
+		value = found
+	}
+	value = strings.TrimSpace(value)
+	if source.Base64 {
+		decoded, err := base64.StdEncoding.DecodeString(value)
+		if err != nil {
+			return "", fmt.Errorf("decode base64 control API token: %w", err)
+		}
+		value = strings.TrimSpace(string(decoded))
+	}
+	if value == "" {
+		return "", fmt.Errorf("control API token must not be empty")
+	}
+	return value, nil
 }
 
 type samEnrollmentClientStatus struct {

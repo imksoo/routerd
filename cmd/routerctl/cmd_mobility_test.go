@@ -106,8 +106,14 @@ func TestMobilityEnrollmentJoinFetchesRRSetIntoDynamicState(t *testing.T) {
 		},
 	}
 	now := time.Date(2026, 6, 28, 0, 1, 0, 0, time.UTC)
+	assertAuth := func(r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer rr-token" {
+			t.Fatalf("Authorization = %q, want bearer token", got)
+		}
+	}
 	server := httptest.NewServer(controlapi.Handler{
 		SubmitSAMEnrollmentClaim: func(r *http.Request, req controlapi.SAMEnrollmentClaimSubmitRequest) (*controlapi.SAMEnrollmentClaimSubmitResult, error) {
+			assertAuth(r)
 			if req.Claim.Kind != "SAMEnrollmentClaim" || req.Claim.Metadata.Name != "pve-leaf-b" {
 				t.Fatalf("submitted claim = %#v", req.Claim)
 			}
@@ -115,6 +121,7 @@ func TestMobilityEnrollmentJoinFetchesRRSetIntoDynamicState(t *testing.T) {
 			return &result, nil
 		},
 		GetSAMRRSet: func(r *http.Request, req controlapi.SAMRRSetGetRequest) (*controlapi.SAMRRSetGetResult, error) {
+			assertAuth(r)
 			if req.Name != "pve-rrs" || req.ClaimRef != "SAMEnrollmentClaim/pve-leaf-b" {
 				t.Fatalf("rrset request = %#v", req)
 			}
@@ -124,9 +131,13 @@ func TestMobilityEnrollmentJoinFetchesRRSetIntoDynamicState(t *testing.T) {
 	})
 	defer server.Close()
 	statePath := filepath.Join(t.TempDir(), "routerd.db")
+	tokenPath := filepath.Join(t.TempDir(), "rr-token")
+	if err := os.WriteFile(tokenPath, []byte("rr-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	configPath := filepath.Join("..", "..", "examples", "pve-minimal-leaf-b-fou.yaml")
 	var stdout, stderr bytes.Buffer
-	if err := mobilityCommand([]string{"enrollment-join", "--config", configPath, "--claim", "pve-leaf-b", "--rr-url", server.URL, "--state-file", statePath, "-o", "json"}, &stdout, &stderr); err != nil {
+	if err := mobilityCommand([]string{"enrollment-join", "--config", configPath, "--claim", "pve-leaf-b", "--rr-url", server.URL, "--rr-token-file", tokenPath, "--state-file", statePath, "-o", "json"}, &stdout, &stderr); err != nil {
 		t.Fatalf("mobility enrollment-join: %v stderr=%s", err, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), `"rrSetRef": "SAMRRSet/pve-rrs"`) || !strings.Contains(stdout.String(), `"dynamicSource": "SAMRRSet/pve-rrs"`) {

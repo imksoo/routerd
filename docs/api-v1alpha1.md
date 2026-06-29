@@ -93,11 +93,18 @@ spec:
   port: 65432
   allowCIDRs:
     - 10.30.0.0/24
+  tokenFrom:
+    file: /usr/local/etc/routerd/secrets/control-api-token
 ```
 
 `ControlAPI.spec.allowCIDRs` rejects malformed CIDRs, `0.0.0.0/0`, and `::/0`.
 The HTTP admission check uses the TCP remote address; forwarded headers are not
-trusted for source admission.
+trusted for source admission. When `spec.tokenFrom` is set, HTTP clients must
+send the token as an `Authorization: Bearer <token>` header. The token source
+uses the common secret-source shape (`file`, `env`, and optional `base64`) and
+is trimmed before comparison. The Unix socket control API does not use this
+HTTP bearer-token check and should remain the default boundary for local
+multi-user isolation.
 
 ## Observability
 
@@ -275,6 +282,9 @@ enrollment boundary, `SAMEnrollmentClient` is the leaf bootstrap/refresh
 controller, `SAMTransportProfile` is the high-level transport/BGP
 intent, federation events
 are observed facts, and BGP best paths are the mobility ownership/delivery view.
+When an RR HTTP `ControlAPI` requires `tokenFrom`, leaf
+`SAMEnrollmentClient.spec.controlAPITokenFrom` carries the same bearer token on
+claim submit and RRSet fetch requests.
 The mobility planner derives BGP `/32` advertisements and provider trap action
 plans; operators should not hand-author per-address paths or capture procedures
 for the mobility control plane. `AddressMobilityDomain` and `RemoteAddressClaim`

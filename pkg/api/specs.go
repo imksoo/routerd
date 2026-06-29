@@ -339,10 +339,11 @@ type WebConsoleSpec struct {
 }
 
 type ControlAPISpec struct {
-	Enabled       *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	ListenAddress string   `yaml:"listenAddress,omitempty" json:"listenAddress,omitempty"`
-	Port          int      `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=1,maximum=65535"`
-	AllowCIDRs    []string `yaml:"allowCIDRs,omitempty" json:"allowCIDRs,omitempty"`
+	Enabled       *bool                 `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	ListenAddress string                `yaml:"listenAddress,omitempty" json:"listenAddress,omitempty"`
+	Port          int                   `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=1,maximum=65535"`
+	AllowCIDRs    []string              `yaml:"allowCIDRs,omitempty" json:"allowCIDRs,omitempty"`
+	TokenFrom     SecretValueSourceSpec `yaml:"tokenFrom,omitempty" json:"tokenFrom,omitempty"`
 }
 
 type WebConsoleLinkSpec struct {
@@ -822,6 +823,7 @@ type SAMEnrollmentClaimBGPSpec struct {
 type SAMEnrollmentClientSpec struct {
 	ClaimRef              string                        `yaml:"claimRef" json:"claimRef"`
 	BootstrapEndpoints    []string                      `yaml:"bootstrapEndpoints,omitempty" json:"bootstrapEndpoints,omitempty"`
+	ControlAPITokenFrom   SecretValueSourceSpec         `yaml:"controlAPITokenFrom,omitempty" json:"controlAPITokenFrom,omitempty"`
 	RRSocket              string                        `yaml:"rrSocket,omitempty" json:"rrSocket,omitempty"`
 	StateTTLRefreshBefore string                        `yaml:"stateTTLRefreshBefore,omitempty" json:"stateTTLRefreshBefore,omitempty"`
 	RetryBackoff          SAMEnrollmentRetryBackoffSpec `yaml:"retryBackoff,omitempty" json:"retryBackoff,omitempty"`

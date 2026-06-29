@@ -1775,6 +1775,21 @@
                         "maximum": 65535,
                         "minimum": 1,
                         "type": "integer"
+                      },
+                      "tokenFrom": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "base64": {
+                            "type": "boolean"
+                          },
+                          "env": {
+                            "type": "string"
+                          },
+                          "file": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
                       }
                     },
                     "type": "object"
@@ -10243,6 +10258,21 @@
                       },
                       "claimRef": {
                         "type": "string"
+                      },
+                      "controlAPITokenFrom": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "base64": {
+                            "type": "boolean"
+                          },
+                          "env": {
+                            "type": "string"
+                          },
+                          "file": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
                       },
                       "retryBackoff": {
                         "additionalProperties": false,

@@ -191,6 +191,11 @@ RR-side SAM enrollment over a private underlay should declare a
 `listenAddress`, `port: 65432`, and a narrow `allowCIDRs` list such as the leaf
 management subnet. `0.0.0.0/0` and `::/0` are rejected; this is not an
 Internet-safe listener.
+For RR-side HTTP enrollment, prefer adding `ControlAPI.spec.tokenFrom` and
+configuring each leaf `SAMEnrollmentClient.spec.controlAPITokenFrom` with the
+same secret source so submit/fetch calls require both source-CIDR admission and
+a bearer token. This bearer token is an additional private-underlay control, not
+a substitute for mTLS or a public Internet exposure boundary.
 
 The join token authorizes enrollment requests, not long-term route ownership by
 itself. The RR still validates claim TTL, HMAC, tunnel address prefixes,
