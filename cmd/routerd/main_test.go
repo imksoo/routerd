@@ -774,13 +774,29 @@ func TestServeAcceptsLegacyControllerChainFlags(t *testing.T) {
 	}
 }
 
-func TestControlAPIHTTPConfigDefaultsToLoopbackHighPort(t *testing.T) {
+func TestControlAPIHTTPConfigDefaultsToDisabled(t *testing.T) {
 	cfg, err := resolveControlAPIHTTPConfig(testControlAPIRouter("control-defaults"), "", nil, api.SecretValueSourceSpec{}, controlAPITLSConfig{}, map[string]bool{})
 	if err != nil {
 		t.Fatalf("resolveControlAPIHTTPConfig: %v", err)
 	}
+	if cfg.Enabled {
+		t.Fatal("control HTTP API should be disabled by default when no ControlAPI resource is present")
+	}
+}
+
+func TestControlAPIHTTPConfigEnabledByResource(t *testing.T) {
+	router := testControlAPIRouter("control-resource")
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "ControlAPI"},
+		Metadata: api.ObjectMeta{Name: "default"},
+		Spec:     api.ControlAPISpec{},
+	})
+	cfg, err := resolveControlAPIHTTPConfig(router, "", nil, api.SecretValueSourceSpec{}, controlAPITLSConfig{}, map[string]bool{})
+	if err != nil {
+		t.Fatalf("resolveControlAPIHTTPConfig: %v", err)
+	}
 	if !cfg.Enabled {
-		t.Fatal("control HTTP API should be enabled by default")
+		t.Fatal("control HTTP API should be enabled when ControlAPI resource is present")
 	}
 	if cfg.Listen != "127.0.0.1:65432" {
 		t.Fatalf("Listen = %q, want 127.0.0.1:65432", cfg.Listen)

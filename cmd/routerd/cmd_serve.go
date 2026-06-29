@@ -1203,7 +1203,7 @@ func listenUnixSocket(path string, perm os.FileMode) (net.Listener, error) {
 func defaultControlAPIHTTPConfig() controlAPIHTTPConfig {
 	prefixes, _ := parseControlAPIAllowCIDRs([]string{"127.0.0.1/32", "::1/128"})
 	return controlAPIHTTPConfig{
-		Enabled:       true,
+		Enabled:       false,
 		Listen:        net.JoinHostPort(defaultControlAPIListenAddress, strconv.Itoa(defaultControlAPIPort)),
 		AllowPrefixes: prefixes,
 	}
@@ -1227,6 +1227,7 @@ func resolveControlAPIHTTPConfig(router *api.Router, cliListen string, cliAllowC
 			found = &spec
 		}
 		if found != nil {
+			cfg.Enabled = true
 			if found.Enabled != nil {
 				cfg.Enabled = *found.Enabled
 			}

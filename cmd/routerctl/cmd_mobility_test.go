@@ -157,6 +157,88 @@ func TestMobilityEnrollmentJoinFetchesRRSetIntoDynamicState(t *testing.T) {
 	}
 }
 
+func TestMobilityLeafConfigCommandGeneratesValidConfig(t *testing.T) {
+	secretPath := filepath.Join(t.TempDir(), "join-token")
+	if err := os.WriteFile(secretPath, []byte("test-join-token\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	err := mobilityCommand([]string{
+		"leaf-config",
+		"--leaf-id", "pve-leaf-b",
+		"--underlay-ifname", "vmbr0",
+		"--underlay-address", "10.30.0.22/24",
+		"--local-endpoint", "10.30.0.22",
+		"--endpoint-prefix", "10.30.0.0/24",
+		"--inner-prefix", "10.255.10.0/24",
+		"--tunnel-address", "10.255.10.22/32",
+		"--mobility-pool", "pve-mobility",
+		"--mobility-pool-prefix", "10.77.70.0/24",
+		"--owned-address", "10.77.70.22/32",
+		"--rr-set", "pve-rrs",
+		"--policy", "pve-fou-leaves",
+		"--join-token-file", secretPath,
+		"--join-audience", "pve-private-underlay",
+		"--join-nonce", "pve-leaf-b-0001",
+		"--join-timestamp", "2026-06-28T00:00:00Z",
+		"--bootstrap-endpoint", "https://10.30.0.10:65432",
+		"--bootstrap-endpoint", "https://10.30.0.11:65432",
+		"--control-api-token-file", "/usr/local/etc/routerd/secrets/control-api-token",
+		"--control-api-ca-file", "/usr/local/etc/routerd/secrets/rr-ca.pem",
+		"--control-api-client-cert-file", "/usr/local/etc/routerd/secrets/leaf.crt",
+		"--control-api-client-key-file", "/usr/local/etc/routerd/secrets/leaf.key",
+		"--secret-file", secretPath,
+	}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("mobility leaf-config: %v stderr=%s", err, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "EXAMPLE_HMAC") {
+		t.Fatalf("leaf-config should compute joinHMAC when --secret-file is supplied:\n%s", stdout.String())
+	}
+	router, err := config.LoadBytes(stdout.Bytes(), "generated-leaf.yaml")
+	if err != nil {
+		t.Fatalf("LoadBytes generated config: %v\n%s", err, stdout.String())
+	}
+	if err := config.Validate(router); err != nil {
+		t.Fatalf("Validate generated config: %v\n%s", err, stdout.String())
+	}
+	claim, err := mobilityEnrollmentClaim(router, "pve-leaf-b")
+	if err != nil {
+		t.Fatalf("generated claim: %v", err)
+	}
+	if claim.JoinHMAC == "" || claim.JoinHMAC == "EXAMPLE_HMAC_SHA256_HEX" {
+		t.Fatalf("claim.JoinHMAC = %q", claim.JoinHMAC)
+	}
+	if claim.TunnelAddress != "10.255.10.22/32" || len(claim.Mobility.OwnedAddresses) != 1 || claim.Mobility.OwnedAddresses[0] != "10.77.70.22/32" {
+		t.Fatalf("claim = %#v", claim)
+	}
+	var foundClient bool
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentClient" || resource.Metadata.Name != "pve-leaf-b" {
+			continue
+		}
+		foundClient = true
+		spec, err := resource.SAMEnrollmentClientSpec()
+		if err != nil {
+			t.Fatalf("SAMEnrollmentClientSpec: %v", err)
+		}
+		if len(spec.BootstrapEndpoints) != 2 || spec.ControlAPITokenFrom.File == "" || spec.ControlAPITLS.CAFile == "" || spec.ControlAPITLS.CertFile == "" || spec.ControlAPITLS.KeyFile == "" {
+			t.Fatalf("SAMEnrollmentClient spec = %#v", spec)
+		}
+	}
+	if !foundClient {
+		t.Fatal("generated config missing SAMEnrollmentClient/pve-leaf-b")
+	}
+}
+
+func TestMobilityLeafConfigCommandRejectsMissingRequiredInput(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := mobilityCommand([]string{"leaf-config", "--leaf-id", "leaf-a"}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "mobility leaf-config requires --") {
+		t.Fatalf("leaf-config error = %v stdout=%s stderr=%s", err, stdout.String(), stderr.String())
+	}
+}
+
 func TestMobilityPathsCommand(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routerd.db")
 	store, err := routerstate.OpenSQLite(path)

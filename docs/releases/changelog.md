@@ -28,6 +28,12 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - `routerctl doctor sam-enrollment-client` and `routerctl doctor
   bgp-dynamic-peer` add focused Cloud-SAM enrollment diagnostics for leaf
   RRSet fetch freshness and RR dynamic BGP admission counters.
+- `routerctl mobility leaf-config` generates a minimal automatic-enrollment
+  Cloud-SAM leaf config with local underlay/owned-address resources,
+  `SAMTransportProfile`, `SAMEnrollmentPolicy`, `SAMEnrollmentClaim`, and
+  `SAMEnrollmentClient`. The generator supports join-HMAC computation plus RR
+  ControlAPI bearer-token and mTLS client settings, and intentionally leaves
+  `SAMRRSet` delivery to the enrollment fetch/dynamic-state path.
 - Cloud-SAM dynamic RR/leaf enrollment has been promoted to mainline and
   evidence-frozen at commit `4a6dad6b8786ed01e63381dcf77230467b8a5021`.
   The accepted PVE live redundancy gate used dual RRs (`rr-1`, `rr-2`),
@@ -58,6 +64,10 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ### Changed
 
+- `ControlAPI` TCP listeners are now disabled unless a `ControlAPI` resource is
+  declared or `routerd serve --http-listen` is passed. A declared `ControlAPI`
+  still defaults to loopback `127.0.0.1:65432` with loopback-only CIDR
+  admission unless overridden.
 - Dynamic BGP admission for SAM leaves now requires exact `/32` route admission
   by effective import policy, including inherited `BGPRouter` policy, so pool
   aggregates, defaults, underlay routes, another claim's `/32`, and unclaimed

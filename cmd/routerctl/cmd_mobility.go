@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"sort"
@@ -92,6 +93,25 @@ type mobilityEnrollmentJoinResult struct {
 	StateFile     string    `json:"stateFile" yaml:"stateFile"`
 }
 
+type mobilityRepeatedStringFlag []string
+
+func (f *mobilityRepeatedStringFlag) String() string {
+	if f == nil {
+		return ""
+	}
+	return strings.Join(*f, ",")
+}
+
+func (f *mobilityRepeatedStringFlag) Set(value string) error {
+	for _, part := range strings.Split(value, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			*f = append(*f, part)
+		}
+	}
+	return nil
+}
+
 func mobilityCommand(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		mobilityUsage(stderr)
@@ -112,6 +132,8 @@ func mobilityCommand(args []string, stdout, stderr io.Writer) error {
 		return mobilityEnrollmentSubmitCommand(args[1:], stdout)
 	case "enrollment-join":
 		return mobilityEnrollmentJoinCommand(args[1:], stdout)
+	case "leaf-config":
+		return mobilityLeafConfigCommand(args[1:], stdout)
 	case "leases", "list", "ownership", "show":
 		return fmt.Errorf("mobility %s was removed with BGP mobility; use `routerctl mobility owners`, `routerctl mobility paths`, `routerctl mobility traps`, or `routerctl mobility explain`", args[0])
 	case "help", "-h", "--help":
@@ -364,6 +386,369 @@ func mobilityEnrollmentClient(socketPath, baseURL, bearerToken string, tlsOption
 		socketPath = defaultSocketPath()
 	}
 	return controlapi.NewUnixClient(socketPath), nil
+}
+
+func mobilityLeafConfigCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("mobility leaf-config", flag.ContinueOnError)
+	fs.SetOutput(stdout)
+	fs.Usage = func() {
+		printSubcommandHelp(fs,
+			"Generate a minimal SAM dynamic leaf config with SAMEnrollmentClient bootstrap.",
+			"routerctl mobility leaf-config --leaf-id pve-leaf-b --underlay-ifname vmbr0 --underlay-address 10.30.0.22/24 --local-endpoint 10.30.0.22 --endpoint-prefix 10.30.0.0/24 --inner-prefix 10.255.10.0/24 --tunnel-address 10.255.10.22/32 --mobility-pool-prefix 10.77.70.0/24 --owned-address 10.77.70.22/32 --rr-set pve-rrs --policy pve-fou-leaves --join-token-file /usr/local/etc/routerd/secrets/pve-join-token --join-audience pve-private-underlay --bootstrap-endpoint https://10.30.0.10:65432 --control-api-token-file /usr/local/etc/routerd/secrets/control-api-token --control-api-ca-file /usr/local/etc/routerd/secrets/rr-ca.pem --control-api-client-cert-file /usr/local/etc/routerd/secrets/leaf.crt --control-api-client-key-file /usr/local/etc/routerd/secrets/leaf.key --secret-file /usr/local/etc/routerd/secrets/pve-join-token")
+	}
+	leafID := fs.String("leaf-id", "", "leaf node ID, Router.metadata.name, and claim/client/profile name")
+	underlayName := fs.String("underlay-name", "private-wan", "routerd Interface resource name for the underlay")
+	underlayIfName := fs.String("underlay-ifname", "", "host interface name for the underlay")
+	underlayAddress := fs.String("underlay-address", "", "underlay IPv4 address with prefix length")
+	localEndpoint := fs.String("local-endpoint", "", "leaf underlay endpoint address advertised in the claim")
+	endpointPrefix := fs.String("endpoint-prefix", "", "allowed underlay endpoint prefix for the local policy")
+	innerPrefix := fs.String("inner-prefix", "", "SAM tunnel inner prefix")
+	tunnelAddress := fs.String("tunnel-address", "", "leaf SAM tunnel /32")
+	mobilityPoolName := fs.String("mobility-pool", "mobility", "MobilityPool resource name")
+	mobilityPoolPrefix := fs.String("mobility-pool-prefix", "", "MobilityPool prefix")
+	ownedAddress := fs.String("owned-address", "", "leaf-owned MobilityPool /32")
+	site := fs.String("site", "branch", "MobilityPool member site")
+	role := fs.String("role", "onprem", "MobilityPool member role")
+	rrSet := fs.String("rr-set", "", "SAMRRSet name fetched from the RR")
+	policy := fs.String("policy", "", "SAMEnrollmentPolicy name")
+	joinTokenFile := fs.String("join-token-file", "", "join token file path referenced by SAMEnrollmentPolicy")
+	joinTokenEnv := fs.String("join-token-env", "", "join token environment variable referenced by SAMEnrollmentPolicy")
+	joinAudience := fs.String("join-audience", "", "join audience string")
+	joinNonce := fs.String("join-nonce", "", "claim join nonce; defaults to <leaf-id>-0001")
+	joinTimestamp := fs.String("join-timestamp", "", "claim join timestamp; defaults to current UTC time")
+	joinHMAC := fs.String("join-hmac", "", "precomputed join HMAC; defaults to computed HMAC when a secret source is supplied, otherwise EXAMPLE_HMAC_SHA256_HEX")
+	secretFile := fs.String("secret-file", "", "join secret file used to compute claim joinHMAC")
+	secretEnv := fs.String("secret-env", "", "join secret env var used to compute claim joinHMAC")
+	secretLiteral := fs.String("secret", "", "literal join secret used to compute claim joinHMAC")
+	secretBase64 := fs.Bool("secret-base64", false, "decode selected join secret as base64 before HMAC")
+	bgpASN := fs.Uint("bgp-asn", 64577, "leaf and RR BGP ASN")
+	bgpRouterID := fs.String("bgp-router-id", "", "leaf BGP router ID; defaults to tunnel address host")
+	mode := fs.String("mode", "fou", "SAM transport mode: fou, ipip, gre, or gue")
+	encryption := fs.String("encryption", "none", "SAM transport encryption")
+	encapSport := fs.Int("encap-sport", 5555, "FOU/GUE source port")
+	encapDport := fs.Int("encap-dport", 5555, "FOU/GUE destination port")
+	stateTTLRefreshBefore := fs.String("state-ttl-refresh-before", "10m", "SAMEnrollmentClient refresh-before duration")
+	retryMin := fs.String("retry-min", "10s", "SAMEnrollmentClient minimum retry backoff")
+	retryMax := fs.String("retry-max", "15m", "SAMEnrollmentClient maximum retry backoff")
+	controlAPITokenFile := fs.String("control-api-token-file", "", "bearer token file for SAMEnrollmentClient HTTP bootstrap")
+	controlAPITokenEnv := fs.String("control-api-token-env", "", "bearer token env var for SAMEnrollmentClient HTTP bootstrap")
+	controlAPICAFile := fs.String("control-api-ca-file", "", "CA bundle for SAMEnrollmentClient HTTPS bootstrap")
+	controlAPIClientCertFile := fs.String("control-api-client-cert-file", "", "client certificate for SAMEnrollmentClient mTLS")
+	controlAPIClientKeyFile := fs.String("control-api-client-key-file", "", "client key for SAMEnrollmentClient mTLS")
+	controlAPIServerName := fs.String("control-api-server-name", "", "TLS server name override for SAMEnrollmentClient")
+	controlAPIInsecureSkipVerify := fs.Bool("control-api-insecure-skip-verify", false, "skip SAMEnrollmentClient TLS certificate verification")
+	var bootstrapEndpoints mobilityRepeatedStringFlag
+	fs.Var(&bootstrapEndpoints, "bootstrap-endpoint", "RR ControlAPI bootstrap endpoint; repeat or comma-separate")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected mobility leaf-config argument %q", fs.Arg(0))
+	}
+	if *bgpASN > uint(^uint32(0)) {
+		return errors.New("mobility leaf-config requires --bgp-asn within uint32 range")
+	}
+	router, err := mobilityGeneratedLeafConfig(mobilityLeafConfigOptions{
+		LeafID:                       *leafID,
+		UnderlayName:                 *underlayName,
+		UnderlayIfName:               *underlayIfName,
+		UnderlayAddress:              *underlayAddress,
+		LocalEndpoint:                *localEndpoint,
+		EndpointPrefix:               *endpointPrefix,
+		InnerPrefix:                  *innerPrefix,
+		TunnelAddress:                *tunnelAddress,
+		MobilityPoolName:             *mobilityPoolName,
+		MobilityPoolPrefix:           *mobilityPoolPrefix,
+		OwnedAddress:                 *ownedAddress,
+		Site:                         *site,
+		Role:                         *role,
+		RRSet:                        *rrSet,
+		Policy:                       *policy,
+		JoinTokenFile:                *joinTokenFile,
+		JoinTokenEnv:                 *joinTokenEnv,
+		JoinAudience:                 *joinAudience,
+		JoinNonce:                    *joinNonce,
+		JoinTimestamp:                *joinTimestamp,
+		JoinHMAC:                     *joinHMAC,
+		SecretFile:                   *secretFile,
+		SecretEnv:                    *secretEnv,
+		SecretLiteral:                *secretLiteral,
+		SecretBase64:                 *secretBase64,
+		BGPASN:                       uint32(*bgpASN),
+		BGPRouterID:                  *bgpRouterID,
+		Mode:                         *mode,
+		Encryption:                   *encryption,
+		EncapSport:                   *encapSport,
+		EncapDport:                   *encapDport,
+		BootstrapEndpoints:           []string(bootstrapEndpoints),
+		StateTTLRefreshBefore:        *stateTTLRefreshBefore,
+		RetryMin:                     *retryMin,
+		RetryMax:                     *retryMax,
+		ControlAPITokenFile:          *controlAPITokenFile,
+		ControlAPITokenEnv:           *controlAPITokenEnv,
+		ControlAPICAFile:             *controlAPICAFile,
+		ControlAPIClientCertFile:     *controlAPIClientCertFile,
+		ControlAPIClientKeyFile:      *controlAPIClientKeyFile,
+		ControlAPIServerName:         *controlAPIServerName,
+		ControlAPIInsecureSkipVerify: *controlAPIInsecureSkipVerify,
+	})
+	if err != nil {
+		return err
+	}
+	if err := config.Validate(router); err != nil {
+		return fmt.Errorf("generated leaf config is invalid: %w", err)
+	}
+	return writeYAML(stdout, router)
+}
+
+type mobilityLeafConfigOptions struct {
+	LeafID                       string
+	UnderlayName                 string
+	UnderlayIfName               string
+	UnderlayAddress              string
+	LocalEndpoint                string
+	EndpointPrefix               string
+	InnerPrefix                  string
+	TunnelAddress                string
+	MobilityPoolName             string
+	MobilityPoolPrefix           string
+	OwnedAddress                 string
+	Site                         string
+	Role                         string
+	RRSet                        string
+	Policy                       string
+	JoinTokenFile                string
+	JoinTokenEnv                 string
+	JoinAudience                 string
+	JoinNonce                    string
+	JoinTimestamp                string
+	JoinHMAC                     string
+	SecretFile                   string
+	SecretEnv                    string
+	SecretLiteral                string
+	SecretBase64                 bool
+	BGPASN                       uint32
+	BGPRouterID                  string
+	Mode                         string
+	Encryption                   string
+	EncapSport                   int
+	EncapDport                   int
+	BootstrapEndpoints           []string
+	StateTTLRefreshBefore        string
+	RetryMin                     string
+	RetryMax                     string
+	ControlAPITokenFile          string
+	ControlAPITokenEnv           string
+	ControlAPICAFile             string
+	ControlAPIClientCertFile     string
+	ControlAPIClientKeyFile      string
+	ControlAPIServerName         string
+	ControlAPIInsecureSkipVerify bool
+}
+
+func mobilityGeneratedLeafConfig(opts mobilityLeafConfigOptions) (*api.Router, error) {
+	opts.LeafID = strings.TrimSpace(opts.LeafID)
+	required := map[string]string{
+		"--leaf-id":              opts.LeafID,
+		"--underlay-ifname":      opts.UnderlayIfName,
+		"--underlay-address":     opts.UnderlayAddress,
+		"--local-endpoint":       opts.LocalEndpoint,
+		"--endpoint-prefix":      opts.EndpointPrefix,
+		"--inner-prefix":         opts.InnerPrefix,
+		"--tunnel-address":       opts.TunnelAddress,
+		"--mobility-pool-prefix": opts.MobilityPoolPrefix,
+		"--owned-address":        opts.OwnedAddress,
+		"--rr-set":               opts.RRSet,
+		"--policy":               opts.Policy,
+		"--join-audience":        opts.JoinAudience,
+	}
+	for flagName, value := range required {
+		if strings.TrimSpace(value) == "" {
+			return nil, fmt.Errorf("mobility leaf-config requires %s", flagName)
+		}
+	}
+	if len(opts.BootstrapEndpoints) == 0 {
+		return nil, errors.New("mobility leaf-config requires at least one --bootstrap-endpoint")
+	}
+	if (strings.TrimSpace(opts.JoinTokenFile) == "") == (strings.TrimSpace(opts.JoinTokenEnv) == "") {
+		return nil, errors.New("mobility leaf-config requires exactly one of --join-token-file or --join-token-env")
+	}
+	if opts.BGPASN == 0 {
+		return nil, errors.New("mobility leaf-config requires --bgp-asn greater than zero")
+	}
+	mode := strings.TrimSpace(opts.Mode)
+	if mode == "" {
+		mode = "fou"
+	}
+	encryption := strings.TrimSpace(opts.Encryption)
+	if encryption == "" {
+		encryption = "none"
+	}
+	if mode == "fou" || mode == "gue" {
+		if opts.EncapSport <= 0 || opts.EncapDport <= 0 {
+			return nil, errors.New("mobility leaf-config requires positive --encap-sport and --encap-dport for FOU/GUE")
+		}
+	} else {
+		opts.EncapSport = 0
+		opts.EncapDport = 0
+	}
+	if _, err := netip.ParsePrefix(strings.TrimSpace(opts.UnderlayAddress)); err != nil {
+		return nil, fmt.Errorf("--underlay-address must be an IP prefix: %w", err)
+	}
+	if _, err := netip.ParsePrefix(strings.TrimSpace(opts.EndpointPrefix)); err != nil {
+		return nil, fmt.Errorf("--endpoint-prefix must be an IP prefix: %w", err)
+	}
+	if _, err := netip.ParsePrefix(strings.TrimSpace(opts.InnerPrefix)); err != nil {
+		return nil, fmt.Errorf("--inner-prefix must be an IP prefix: %w", err)
+	}
+	tunnelPrefix, err := netip.ParsePrefix(strings.TrimSpace(opts.TunnelAddress))
+	if err != nil || !tunnelPrefix.Addr().Is4() || tunnelPrefix.Bits() != 32 {
+		return nil, errors.New("--tunnel-address must be an IPv4 /32")
+	}
+	if _, err := netip.ParsePrefix(strings.TrimSpace(opts.MobilityPoolPrefix)); err != nil {
+		return nil, fmt.Errorf("--mobility-pool-prefix must be an IP prefix: %w", err)
+	}
+	ownedPrefix, err := netip.ParsePrefix(strings.TrimSpace(opts.OwnedAddress))
+	if err != nil || !ownedPrefix.Addr().Is4() || ownedPrefix.Bits() != 32 {
+		return nil, errors.New("--owned-address must be an IPv4 /32")
+	}
+	if strings.TrimSpace(opts.BGPRouterID) == "" {
+		opts.BGPRouterID = tunnelPrefix.Addr().String()
+	}
+	if _, err := netip.ParseAddr(strings.TrimSpace(opts.BGPRouterID)); err != nil {
+		return nil, fmt.Errorf("--bgp-router-id must be an IP address: %w", err)
+	}
+	if strings.TrimSpace(opts.JoinNonce) == "" {
+		opts.JoinNonce = opts.LeafID + "-0001"
+	}
+	if strings.TrimSpace(opts.JoinTimestamp) == "" {
+		opts.JoinTimestamp = time.Now().UTC().Format(time.RFC3339)
+	}
+	if _, err := time.Parse(time.RFC3339, strings.TrimSpace(opts.JoinTimestamp)); err != nil {
+		return nil, fmt.Errorf("--join-timestamp must be RFC3339: %w", err)
+	}
+	claim := api.SAMEnrollmentClaimSpec{
+		PolicyRef:     "SAMEnrollmentPolicy/" + strings.TrimSpace(opts.Policy),
+		RRSetRef:      "SAMRRSet/" + strings.TrimSpace(opts.RRSet),
+		LeafID:        opts.LeafID,
+		JoinAudience:  strings.TrimSpace(opts.JoinAudience),
+		JoinNonce:     strings.TrimSpace(opts.JoinNonce),
+		JoinTimestamp: strings.TrimSpace(opts.JoinTimestamp),
+		TunnelAddress: strings.TrimSpace(opts.TunnelAddress),
+		Endpoint:      strings.TrimSpace(opts.LocalEndpoint),
+		Mobility:      api.SAMEnrollmentClaimMobilitySpec{OwnedAddresses: []string{strings.TrimSpace(opts.OwnedAddress)}},
+		BGP:           api.SAMEnrollmentClaimBGPSpec{ASN: opts.BGPASN, RouterID: strings.TrimSpace(opts.BGPRouterID)},
+	}
+	switch {
+	case strings.TrimSpace(opts.JoinHMAC) != "":
+		claim.JoinHMAC = strings.TrimSpace(opts.JoinHMAC)
+	case strings.TrimSpace(opts.SecretFile) != "" || strings.TrimSpace(opts.SecretEnv) != "" || opts.SecretLiteral != "":
+		secret, err := mobilityEnrollmentHMACSecret(opts.SecretFile, opts.SecretEnv, opts.SecretLiteral, opts.SecretBase64)
+		if err != nil {
+			return nil, err
+		}
+		claim.JoinHMAC = samenrollment.JoinHMAC(secret, claim)
+	default:
+		claim.JoinHMAC = "EXAMPLE_HMAC_SHA256_HEX"
+	}
+	tokenFrom := api.SecretValueSourceSpec{File: strings.TrimSpace(opts.JoinTokenFile), Env: strings.TrimSpace(opts.JoinTokenEnv)}
+	controlTokenFrom := api.SecretValueSourceSpec{File: strings.TrimSpace(opts.ControlAPITokenFile), Env: strings.TrimSpace(opts.ControlAPITokenEnv)}
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: opts.LeafID},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			leafResource(api.NetAPIVersion, "Interface", strings.TrimSpace(opts.UnderlayName), api.InterfaceSpec{IfName: strings.TrimSpace(opts.UnderlayIfName), Managed: false, MTU: 1500}),
+			leafResource(api.NetAPIVersion, "IPv4StaticAddress", strings.TrimSpace(opts.UnderlayName)+"-ipv4", api.IPv4StaticAddressSpec{Interface: strings.TrimSpace(opts.UnderlayName), Address: strings.TrimSpace(opts.UnderlayAddress)}),
+			leafResource(api.NetAPIVersion, "Interface", "lo-mobility", api.InterfaceSpec{IfName: "lo", Managed: false}),
+			leafResource(api.NetAPIVersion, "IPv4StaticAddress", "owned-service-ip", api.IPv4StaticAddressSpec{Interface: "lo-mobility", Address: strings.TrimSpace(opts.OwnedAddress), AllowOverlap: true, AllowOverlapReason: opts.LeafID + " owned mobility /32 advertised to the RR set"}),
+			leafResource(api.NetAPIVersion, "BGPRouter", "mobility-bgp", api.BGPRouterSpec{
+				ASN:      opts.BGPASN,
+				RouterID: strings.TrimSpace(opts.BGPRouterID),
+				ExportPolicy: api.BGPExportPolicySpec{
+					AllowedPrefixes: []string{strings.TrimSpace(opts.OwnedAddress)},
+				},
+				Redistribute: api.BGPRedistributeSpec{
+					Connected: api.BGPRedistributeRouteSpec{AllowedPrefixes: []string{strings.TrimSpace(opts.OwnedAddress)}},
+				},
+				Timers:             api.BGPTimersSpec{Profile: "fast"},
+				ConvergenceProfile: "fast",
+			}),
+			leafResource(api.MobilityAPIVersion, "SAMTransportProfile", opts.LeafID, api.SAMTransportProfileSpec{
+				SelfNodeRef:       opts.LeafID,
+				Mode:              mode,
+				Encryption:        encryption,
+				AddressingMode:    "pair-stable",
+				InnerPrefix:       strings.TrimSpace(opts.InnerPrefix),
+				UnderlayInterface: strings.TrimSpace(opts.UnderlayName),
+				LocalEndpoint:     strings.TrimSpace(opts.LocalEndpoint),
+				EncapSport:        opts.EncapSport,
+				EncapDport:        opts.EncapDport,
+				PeersFrom:         []api.SAMTransportPeersSourceSpec{{Resource: "SAMRRSet/" + strings.TrimSpace(opts.RRSet)}},
+				BGP: api.SAMTransportBGPProfileSpec{
+					RouterRef:    "BGPRouter/mobility-bgp",
+					PeerASN:      opts.BGPASN,
+					TimersPreset: "fast",
+					ImportPolicy: api.BGPImportPolicySpec{
+						AllowedPrefixes:        []string{strings.TrimSpace(opts.MobilityPoolPrefix)},
+						AllowedPrefixLengthMin: 32,
+						AllowedPrefixLengthMax: 32,
+						NextHopRewrite:         "unchanged",
+					},
+					ExportPolicy: api.BGPExportPolicySpec{AllowedPrefixes: []string{strings.TrimSpace(opts.OwnedAddress)}},
+				},
+			}),
+			leafResource(api.MobilityAPIVersion, "MobilityPool", strings.TrimSpace(opts.MobilityPoolName), api.MobilityPoolSpec{
+				Prefix:   strings.TrimSpace(opts.MobilityPoolPrefix),
+				GroupRef: strings.TrimSpace(opts.MobilityPoolName),
+				Mode:     "selective-address",
+				Members:  []api.MobilityPoolMember{{NodeRef: opts.LeafID, Site: strings.TrimSpace(opts.Site), Role: strings.TrimSpace(opts.Role)}},
+			}),
+			leafResource(api.MobilityAPIVersion, "SAMEnrollmentPolicy", strings.TrimSpace(opts.Policy), api.SAMEnrollmentPolicySpec{
+				TransportProfileRef:   "SAMTransportProfile/" + opts.LeafID,
+				RRSetRef:              "SAMRRSet/" + strings.TrimSpace(opts.RRSet),
+				JoinTokenFrom:         tokenFrom,
+				JoinAudience:          strings.TrimSpace(opts.JoinAudience),
+				AllowedLeafIDs:        api.SAMEnrollmentLeafIDPolicySpec{Pattern: "^" + regexpQuoteMeta(opts.LeafID) + "$"},
+				TunnelAddressPrefixes: []string{strings.TrimSpace(opts.InnerPrefix)},
+				EndpointPrefixes:      []string{strings.TrimSpace(opts.EndpointPrefix)},
+				MobilityPoolRefs:      []string{"MobilityPool/" + strings.TrimSpace(opts.MobilityPoolName)},
+				TTL:                   "24h",
+				RevokeAfterInactive:   "168h",
+			}),
+			leafResource(api.MobilityAPIVersion, "SAMEnrollmentClaim", opts.LeafID, claim),
+			leafResource(api.MobilityAPIVersion, "SAMEnrollmentClient", opts.LeafID, api.SAMEnrollmentClientSpec{
+				ClaimRef:              "SAMEnrollmentClaim/" + opts.LeafID,
+				BootstrapEndpoints:    trimmedStrings(opts.BootstrapEndpoints),
+				ControlAPITokenFrom:   controlTokenFrom,
+				ControlAPITLS:         api.ControlAPIClientTLSSpec{CAFile: strings.TrimSpace(opts.ControlAPICAFile), CertFile: strings.TrimSpace(opts.ControlAPIClientCertFile), KeyFile: strings.TrimSpace(opts.ControlAPIClientKeyFile), ServerName: strings.TrimSpace(opts.ControlAPIServerName), InsecureSkipVerify: opts.ControlAPIInsecureSkipVerify},
+				StateTTLRefreshBefore: strings.TrimSpace(opts.StateTTLRefreshBefore),
+				RetryBackoff:          api.SAMEnrollmentRetryBackoffSpec{Min: strings.TrimSpace(opts.RetryMin), Max: strings.TrimSpace(opts.RetryMax)},
+			}),
+		}},
+	}
+	return router, nil
+}
+
+func leafResource(apiVersion, kind, name string, spec any) api.Resource {
+	return api.Resource{TypeMeta: api.TypeMeta{APIVersion: apiVersion, Kind: kind}, Metadata: api.ObjectMeta{Name: name}, Spec: spec}
+}
+
+func trimmedStrings(values []string) []string {
+	var out []string
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+func regexpQuoteMeta(value string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, `.`, `\.`, `+`, `\+`, `*`, `\*`, `?`, `\?`, `(`, `\(`, `)`, `\)`, `|`, `\|`, `[`, `\[`, `]`, `\]`, `{`, `\{`, `}`, `\}`, `^`, `\^`, `$`, `\$`)
+	return replacer.Replace(value)
 }
 
 func mobilityEnrollmentBearerToken(file, env string, base64Encoded bool) (string, error) {
@@ -700,6 +1085,7 @@ func mobilityUsage(w io.Writer) {
 	fmt.Fprintln(w, "  enrollment-hmac --config <path> --claim <name> (--secret-file <path>|--secret-env <name>|--secret <value>) [--secret-base64] [--show-payload]")
 	fmt.Fprintln(w, "  enrollment-submit --config <path> --claim <name> [--socket <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  enrollment-join --config <path> --claim <name> [--rr-socket <path>|--rr-url <url>] [--rr-token-file <path>|--rr-token-env <name>] [--rr-ca-file <path>] [--rr-client-cert-file <path> --rr-client-key-file <path>] [--state-file <path>] [-o table|json|yaml]")
+	fmt.Fprintln(w, "  leaf-config --leaf-id <name> --underlay-ifname <ifname> --underlay-address <cidr> --local-endpoint <ip> --endpoint-prefix <cidr> --inner-prefix <cidr> --tunnel-address <ipv4/32> --mobility-pool-prefix <cidr> --owned-address <ipv4/32> --rr-set <name> --policy <name> (--join-token-file <path>|--join-token-env <name>) --join-audience <name> --bootstrap-endpoint <url>")
 }
 
 func mobilityOwnerRows(statuses []routerstate.ObjectStatus, poolFilter, addressFilter string) []mobilityOwnerRow {

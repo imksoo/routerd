@@ -68,6 +68,14 @@ refreshes only when the fetched RRSet is missing, near expiry, or the local
 claim material changes. Failed attempts use exponential backoff and transport
 or BGP degradation does not trigger immediate rejoin loops.
 
+Use `routerctl mobility leaf-config` to generate a minimal leaf startup config
+for this automatic path. The generated config contains the local underlay
+interface/address, owned mobility `/32`, `BGPRouter`, `SAMTransportProfile`,
+`MobilityPool`, `SAMEnrollmentPolicy`, `SAMEnrollmentClaim`, and
+`SAMEnrollmentClient`. It intentionally does not embed the fetched `SAMRRSet`;
+the client submits the claim to one of the configured bootstrap endpoints and
+persists the authorized RRSet as dynamic state.
+
 ## Example Configs
 
 Primary non-WG private-underlay examples:
@@ -289,6 +297,38 @@ Expected local evidence:
   `wireGuard` blocks; non-WG materialization is covered without WG resources.
 
 Example leaf bootstrap command:
+
+```sh
+routerctl mobility leaf-config \
+  --leaf-id pve-leaf-b \
+  --underlay-ifname vmbr0 \
+  --underlay-address 10.30.0.22/24 \
+  --local-endpoint 10.30.0.22 \
+  --endpoint-prefix 10.30.0.0/24 \
+  --inner-prefix 10.255.10.0/24 \
+  --tunnel-address 10.255.10.22/32 \
+  --mobility-pool pve-mobility \
+  --mobility-pool-prefix 10.77.70.0/24 \
+  --owned-address 10.77.70.22/32 \
+  --rr-set pve-rrs \
+  --policy pve-fou-leaves \
+  --join-token-file /usr/local/etc/routerd/secrets/pve-join-token \
+  --join-audience pve-private-underlay \
+  --bootstrap-endpoint https://10.30.0.10:65432 \
+  --bootstrap-endpoint https://10.30.0.11:65432 \
+  --control-api-token-file /usr/local/etc/routerd/secrets/control-api-token \
+  --control-api-ca-file /usr/local/etc/routerd/secrets/rr-ca.pem \
+  --control-api-client-cert-file /usr/local/etc/routerd/secrets/leaf.crt \
+  --control-api-client-key-file /usr/local/etc/routerd/secrets/leaf.key \
+  --secret-file /usr/local/etc/routerd/secrets/pve-join-token \
+  > /usr/local/etc/routerd/router.yaml
+```
+
+When `--secret-file`, `--secret-env`, or `--secret` is supplied, the generator
+computes `SAMEnrollmentClaim.spec.joinHMAC` from the same canonical payload used
+by `routerctl mobility enrollment-hmac`. Without a secret source, it writes the
+placeholder `EXAMPLE_HMAC_SHA256_HEX` so the config can still be reviewed
+before secrets are installed.
 
 ```sh
 routerctl mobility enrollment-join \

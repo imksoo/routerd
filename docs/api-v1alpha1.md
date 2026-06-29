@@ -63,12 +63,14 @@ spec:
 | `WebConsole` | Enables the read-only management Web Console. |
 | `ControlAPI` | Configures the optional TCP mutation/control API listener used by local automation and SAM enrollment bootstrap. |
 
-`ControlAPI` defaults to `127.0.0.1:65432` with source admission limited to
-`127.0.0.1/32` and `::1/128`. This is intentionally narrow as a network
-exposure, but it is still the mutation/control API and it is restricted by
-source IP, not by Unix socket filesystem permissions. On multi-user hosts, or
-where local process isolation matters, disable the TCP listener and use the
-Unix socket instead:
+The TCP `ControlAPI` listener is disabled unless a `ControlAPI` resource is
+declared or `routerd serve --http-listen` is passed. When a `ControlAPI`
+resource enables HTTP without overriding address fields, it listens on
+`127.0.0.1:65432` with source admission limited to `127.0.0.1/32` and
+`::1/128`. This is intentionally narrow as a network exposure, but it is still
+the mutation/control API and it is restricted by source IP, not by Unix socket
+filesystem permissions. On multi-user hosts, or where local process isolation
+matters, keep the TCP listener disabled and use the Unix socket instead:
 
 ```yaml
 apiVersion: system.routerd.net/v1alpha1
@@ -438,6 +440,12 @@ references, bootstrap endpoint/token configuration, enrollment controller
 status, and fetched RRSet dynamic-state freshness. Use `routerctl doctor
 bgp-dynamic-peer` on RRs to verify dynamic peer discovery and route-admission
 counters.
+
+`routerctl mobility leaf-config` can generate the minimal automatic-enrollment
+leaf config for this shape. It emits local leaf resources plus
+`SAMEnrollmentClient`, supports HTTP bearer token and mTLS fields, and leaves
+`SAMRRSet` delivery to the enrollment fetch/dynamic-state path instead of
+embedding static RR inventory in the generated leaf YAML.
 
 `BGPRouter.spec.convergenceProfile: fast` is intended for Kubernetes/edge
 routers that prefer quick convergence over graceful restart stale-path
