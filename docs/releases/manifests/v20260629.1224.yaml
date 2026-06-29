@@ -1,0 +1,88 @@
+release:
+  version: v20260629.1224
+  commit: 7c23a8720fe066645aa8d4c0dc6f1d7fd2d04d22
+  baseline: v20260627.1533
+  status: release-candidate
+  recommended: false
+  artifact:
+    path: pending-release-artifact
+    sha256: pending-release-artifact
+  changes:
+    - Stable RR/hub base configs no longer require static per-leaf
+      SAMEnrollmentClaim resources or per-leaf BGPPeer resources.
+    - SAMEnrollmentClient submits local claims, fetches authorized SAMRRSet
+      data, and refreshes leaf-side dynamic state before expiry.
+    - Live SAM enrollment submit verifies join-token/HMAC material strictly
+      when the RR admits a claim.
+    - BGPDynamicPeer keeps BGP listen/admission policy separate from SAM
+      enrollment identity and MobilityPool ownership.
+    - Dynamic SAM route admission binds accepted MobilityPool /32s to the BGP
+      neighbor identity and enforces exact /32 import bounds.
+    - SAMTransportProfile composes existing TunnelInterface/BGPPeer resources;
+      WireGuard materialization remains optional and transport-specific.
+    - FOU private-underlay and public-underlay WireGuard paths were both
+      exercised during review.
+    - routerd serve --http-listen is documented as a protected management API,
+      not an Internet-safe listener.
+  localValidation:
+    status: PASS
+    checks:
+      - command: git diff --check
+        status: PASS
+      - command: make check-schema
+        status: PASS
+      - command: make validate-example
+        status: PASS
+      - command: go test ./tests/golden ./pkg/config ./pkg/controlapi ./pkg/controller/bgp ./pkg/controller/mobility ./pkg/controller/chain ./cmd/routerd ./cmd/routerctl
+        status: PASS
+      - command: go test ./...
+        status: PASS
+      - command: make build-daemons
+        status: PASS
+  qualification:
+    status: pass
+    acceptedAsReleaseEvidence: true
+    acceptedAsStableEvidence: false
+    evidenceDocs:
+      - path: docs/releases/evidence/sam-pve-redundancy-20260629.md
+        status: PASS
+        branchCommit: 63f0cb53
+        transport: FOU over private underlay, encryption none
+        tarball: /tmp/routerd-samred-20260629T035652Z.tar.gz
+        sha256: 77277d94e9c1b097ff0e9b7158b1cdeed772b27300c3a7c58bc007db9c1c92f4
+      - path: docs/releases/evidence/sam-cloud-onprem-20260629.md
+        status: PASS
+        branchCommit: 63f0cb53
+        topology: Azure RR set plus PVE on-prem leaves and clients
+        transport: IPIP with WireGuard over public underlay
+        tarball: /tmp/routerd-cloudonprem-20260629T050742Z-evidence-no-secrets.tar.gz
+        sha256: 4698a210244a0c00754ab49025474db6ce77c3aab8ab6a5d074e86daa97e8a12
+      - path: docs/releases/evidence/sam-split-underlay-capture-20260629.md
+        status: PASS
+        branchCommit: 3c2cc657
+        topology: Azure public underlay plus private capture subnet and PVE leaf
+        transport: IPIP with WireGuard over public underlay
+        tarball: /tmp/routerd-split-underlay-20260629T072416Z-evidence-no-secrets.tar.gz
+        sha256: b13e9e0efe644059708c8986e3ae265d95abe18d16fca4c1ccffe59e816299e4
+      - path: docs/releases/evidence/sam-aws-azure-oci-pve-fullmesh-20260629.md
+        status: PASS
+        branchCommit: 4bfdeeb1
+        topology: Azure RR hub with AWS, Azure, OCI, and PVE leaf/client sites
+        transport: IPIP with WireGuard over public/NAT-reachable underlay
+        matrix: 12/12 directed client ping and SSH checks
+        tarball: /tmp/routerd-fullmesh-20260629T092330Z-evidence-no-secrets.tar.gz
+        sha256: 7eda955889f642951466fcebe4322404fde006595a6f4370444db505348a1027
+  cleanup:
+    status: PASS
+    evidence: /tmp/routerd-cleanup-20260629T121511Z
+    notes:
+      - Azure target resource groups were already absent.
+      - AWS fullmesh VPC, subnet, route table, Internet gateway, security
+        group, key pair, and instances were removed or terminated.
+      - OCI fullmesh instances were terminated and subnet, route table,
+        Internet gateway, security list, and VCN were removed or absent.
+      - PVE samred/fullmesh VMs and NoCloud ISOs were absent on pve07.
+  knownIssues:
+    - issue: untagged-release-artifact
+      title: Release artifact for v20260629.1224 has not been built/tagged yet.
+      severity: P3

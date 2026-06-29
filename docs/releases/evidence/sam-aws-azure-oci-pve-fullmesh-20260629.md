@@ -92,11 +92,17 @@ transport for this merge gate.
 
 ## Cleanup Status
 
-Live AWS, Azure, OCI, and PVE resources were left running for immediate
-post-merge review. They should be destroyed after review if no further
-debugging is needed. A short direct-adjacency experiment was started after this
-run while interpreting a stricter review note; after the corrected acceptance
-criteria were clarified, that experiment was stopped and the hub-oriented
+Cleanup was verified after review in
+`/tmp/routerd-cleanup-20260629T121511Z`. AWS fullmesh instances were
+terminated and the VPC, subnet, route table, Internet gateway, security group,
+and key pair were removed. OCI fullmesh instances were terminated and the VCN,
+subnet, route table, Internet gateway, and security list were removed or
+reported absent. The Azure resource group was already absent when cleanup ran.
+PVE samred/fullmesh VM and NoCloud ISO absence was verified from `pve07`.
+
+A short direct-adjacency experiment was started after this run while
+interpreting a stricter review note; after the corrected acceptance criteria
+were clarified, that experiment was stopped and the hub-oriented
 `routerd-fullmesh.service` was restored on RR and leaves. The PASS evidence
 above is from `/tmp/routerd-fullmesh-20260629T092330Z`.
 

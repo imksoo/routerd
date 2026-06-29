@@ -12,6 +12,39 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- Dynamic SAM RR/leaf enrollment is now documented as the release-candidate
+  path for stable hub/RR configs with no static per-leaf inventory. The model
+  includes `BGPDynamicPeer` admission, `SAMRRSet`, `SAMEnrollmentPolicy`,
+  `SAMEnrollmentClaim`, `SAMEnrollmentClient`, RRSet fetch/refresh, strict
+  join-token/HMAC verification on live submit, and runtime admission state that
+  feeds existing transport, WireGuard, BGP, and MobilityPool controllers.
+- Release evidence now records PVE redundancy, Azure plus PVE cloud/on-prem,
+  split public-underlay/private-capture, and AWS/Azure/OCI/PVE client matrix
+  live tests for dynamic SAM enrollment.
+- Added AWS/Azure/OCI/PVE hub-leaf architecture guidance for an RR/hub with
+  runtime leaf enrollment, provider route requirements, client route handling,
+  and the security boundary around `routerd serve --http-listen`.
+
+### Changed
+
+- Dynamic BGP admission for SAM leaves now requires exact `/32` route admission
+  by effective import policy, including inherited `BGPRouter` policy, so pool
+  aggregates, defaults, underlay routes, another claim's `/32`, and unclaimed
+  MobilityPool addresses are rejected before FIB installation.
+- SAM transport examples keep `TunnelInterface` as the data-plane primitive:
+  private-underlay FOU/IPIP with `encryption: none` is the primary lightweight
+  path, while WireGuard remains an optional transport-specific encryption path.
+
+### Fixed
+
+- FOU listener reuse and live redundancy issues found during PVE testing were
+  fixed before the full client matrix gate.
+- `routerd serve --http-listen` release notes now explicitly warn that the
+  HTTP mutation/control API must be bound only to protected/private addresses
+  or shielded by equivalent network policy.
+
 ## v20260627.1533
 
 ### Changed

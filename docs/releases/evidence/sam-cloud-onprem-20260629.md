@@ -64,13 +64,9 @@ are behind NAT. The preceding PVE-only test covered private-underlay
 
 ## Cleanup Status
 
-The Azure resource group and PVE test services were left running for immediate
-post-test inspection. Delete the Azure resource group after review if no more
-live debugging is needed:
-
-```sh
-az group delete -n rg-routerd-cloudonprem-20260629T050742Z --yes --no-wait
-```
+Cleanup was verified after review in
+`/tmp/routerd-cleanup-20260629T121511Z`. The Azure resource group was already
+absent when cleanup ran, and PVE VM/ISO absence was verified from `pve07`.
 
 ## HTTP Control API Note
 
