@@ -48,6 +48,17 @@ is not the default enrollment identity or the default private-underlay model.
   the leaf-authored join HMAC payload, so an operator can revoke or shorten
   admission without leaf re-signing; `expiresAt` remains bounded by policy TTL.
 
+## Leaf-Side RRSet Fetch TODO
+
+This branch implements RR-side runtime claim submission and admission-state
+materialization. It does not yet implement a leaf-side API call that fetches
+the `SAMRRSet` from the RR enrollment endpoint after a claim is accepted. The
+reviewed leaf examples therefore still carry fixed `SAMRRSet` bootstrap data.
+
+Do not claim full automatic enrollment complete until a leaf can submit a
+claim, learn or refresh the RRSet, and materialize all RR peers without static
+RR inventory beyond the bootstrap enrollment endpoint and policy reference.
+
 ## Example Configs
 
 Primary non-WG private-underlay examples:
@@ -86,13 +97,16 @@ The mixed examples model:
 - `leaf-b` using `encryption: none`, `encapSport: 5555`, and
   `encapDport: 5555`, with no `WireGuardInterface` or `WireGuardPeer`.
 
-The RR configs include example claims for `leaf-pve`, `leaf-a`, and `leaf-b` so
-the paired RR admission flow can be tested without an external enrollment
-service. `leaf-a` is admitted through `SAMEnrollmentPolicy/cloudedge-public-wg-leaves`
-and `SAMTransportProfile/rr-*-wg`; `leaf-b` is admitted through
+The RR configs do not include example claims for `leaf-pve`, `leaf-a`, or
+`leaf-b`. Review claim fixtures live under `tests/fixtures/` and must be
+submitted through the enrollment API or injected into dynamic admission state
+for local controller tests. `leaf-a` is admitted through
+`SAMEnrollmentPolicy/cloudedge-public-wg-leaves` and
+`SAMTransportProfile/rr-*-wg`; `leaf-b` is admitted through
 `SAMEnrollmentPolicy/cloudedge-private-fou-leaves` and
 `SAMTransportProfile/rr-*-fou`. In a real deployment, accepted claims should be
-fanned out to both RRs by the enrollment service or config distribution path.
+persisted as admission state and fanned out to both RRs by the enrollment
+service or config distribution path.
 
 ## Required Inputs
 
@@ -154,7 +168,7 @@ the payload:
 
 ```sh
 bin/linux/routerctl mobility enrollment-hmac \
-  --config examples/cloudedge-dynamic-rr-a-hub.yaml \
+  --config examples/cloudedge-dynamic-leaf-pve.yaml \
   --claim leaf-pve \
   --secret-file /usr/local/etc/routerd/secrets/cloudedge-join-token
 
@@ -207,11 +221,14 @@ scripts/routerd-sandbox-run.sh sh -c '
 
 Expected local evidence:
 
-- rr-a and rr-b validate without `WireGuardInterface` or `WireGuardPeer`.
+- rr-a and rr-b validate without static `WireGuardPeer`; their
+  `WireGuardInterface` is present only for the optional WG admission path.
 - rr-a and rr-b contain `BGPDynamicPeer/cloudedge-leaves`.
 - rr-a and rr-b contain no static `BGPPeer/leaf-*`.
-- rr-a and rr-b contain `SAMEnrollmentClaim/leaf-a` and
-  `SAMEnrollmentClaim/leaf-b` for reviewed mixed admission.
+- rr-a and rr-b contain no static `SAMEnrollmentClaim/leaf-*`.
+- `tests/fixtures/cloudedge-rr-claims-seed.yaml` and
+  `tests/fixtures/pve-minimal-rr-claims-seed.yaml` contain submitted-claim
+  examples only; controller tests load them as dynamic admission state.
 - rr-a and rr-b materialize one `TunnelInterface` for `leaf-a` through
   `SAMTransportProfile/rr-*-wg`, one `TunnelInterface` for `leaf-b` through
   `SAMTransportProfile/rr-*-fou`, and zero generated RR-side `BGPPeer`

@@ -9,11 +9,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 	"github.com/imksoo/routerd/pkg/wireguard"
 )
@@ -920,7 +922,39 @@ spec:
 	}
 }
 
+func TestPVEWireGuardPeersFromSubmittedEnrollmentClaimState(t *testing.T) {
+	now := time.Date(2026, 6, 28, 9, 8, 0, 0, time.UTC)
+	router, err := config.Load(filepath.Join("..", "..", "..", "examples", "pve-minimal-rr.yaml"))
+	if err != nil {
+		t.Fatalf("load pve-minimal-rr.yaml: %v", err)
+	}
+	assertResourceCount(t, router.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim", 0)
+	claim := claimWithJoinTimestamp(t, pveMinimalRRSeedClaim(t, "pve-leaf-a"), now)
+	store := &dynamicRouteSAMStore{records: []routerstate.DynamicConfigPartRecord{
+		dynamicPartRecord(t, "SAMEnrollmentClaim/pve-leaf-a", []api.Resource{claim}, now.Add(5*time.Minute)),
+	}}
+	effective, err := BuildDynamicRouteSAMEffectiveRouter(router, store, now, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("BuildDynamicRouteSAMEffectiveRouter: %v", err)
+	}
+	assertResourceCount(t, effective.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim", 1)
+	resolved, err := resolveWireGuardSAMResources(effective)
+	if err != nil {
+		t.Fatalf("resolveWireGuardSAMResources: %v", err)
+	}
+	peer := mustResource(t, resolved, api.NetAPIVersion, "WireGuardPeer", "pve-leaf-a")
+	spec, err := peer.WireGuardPeerSpec()
+	if err != nil {
+		t.Fatalf("WireGuardPeer spec: %v", err)
+	}
+	if spec.Interface != "wg-pve" || spec.PublicKey != "PVE_LEAF_A_WIREGUARD_PUBLIC_KEY" || spec.Endpoint != "10.30.0.21:51820" {
+		t.Fatalf("WireGuardPeer/pve-leaf-a = %#v", spec)
+	}
+	assertStringSet(t, "WireGuardPeer/pve-leaf-a allowedIPs", spec.AllowedIPs, []string{"10.255.10.21/32", "10.31.0.21/32"})
+}
+
 func TestCloudEdgeRRExamplesDeriveOnlyWGAdmissionPeers(t *testing.T) {
+	now := time.Date(2026, 6, 28, 9, 9, 0, 0, time.UTC)
 	for _, example := range []string{
 		"cloudedge-dynamic-rr-a-hub.yaml",
 		"cloudedge-dynamic-rr-b-hub.yaml",
@@ -933,7 +967,19 @@ func TestCloudEdgeRRExamplesDeriveOnlyWGAdmissionPeers(t *testing.T) {
 			if err := config.Validate(router); err != nil {
 				t.Fatalf("validate %s: %v", example, err)
 			}
-			resolved, err := resolveWireGuardSAMResources(router)
+			assertResourceCount(t, router.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim", 0)
+			claim := claimWithJoinTimestamp(t, seedClaimFromFixture(t, "cloudedge-rr-claims-seed.yaml", "leaf-a"), now)
+			nonWGClaim := claimWithJoinTimestamp(t, seedClaimFromFixture(t, "cloudedge-rr-claims-seed.yaml", "leaf-b"), now)
+			store := &dynamicRouteSAMStore{records: []routerstate.DynamicConfigPartRecord{
+				dynamicPartRecord(t, "SAMEnrollmentClaim/leaf-a", []api.Resource{claim}, now.Add(5*time.Minute)),
+				dynamicPartRecord(t, "SAMEnrollmentClaim/leaf-b", []api.Resource{nonWGClaim}, now.Add(5*time.Minute)),
+			}}
+			effective, err := BuildDynamicRouteSAMEffectiveRouter(router, store, now, platform.OSLinux)
+			if err != nil {
+				t.Fatalf("BuildDynamicRouteSAMEffectiveRouter: %v", err)
+			}
+			assertResourceCount(t, effective.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim", 2)
+			resolved, err := resolveWireGuardSAMResources(effective)
 			if err != nil {
 				t.Fatalf("resolveWireGuardSAMResources: %v", err)
 			}
@@ -959,6 +1005,65 @@ func TestCloudEdgeRRExamplesDeriveOnlyWGAdmissionPeers(t *testing.T) {
 			}
 			assertStringSet(t, "leaf-a allowedIPs", peer.AllowedIPs, []string{"10.255.0.31/32", "10.20.0.31/32"})
 		})
+	}
+}
+
+func pveMinimalRRSeedClaim(t *testing.T, name string) api.Resource {
+	t.Helper()
+	return seedClaimFromFixture(t, "pve-minimal-rr-claims-seed.yaml", name)
+}
+
+func seedClaimFromFixture(t *testing.T, fixture, name string) api.Resource {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "tests", "fixtures", fixture))
+	if err != nil {
+		t.Fatalf("read claim seed %s: %v", fixture, err)
+	}
+	var seed api.Router
+	if err := yaml.Unmarshal(data, &seed); err != nil {
+		t.Fatalf("parse claim seed %s: %v", fixture, err)
+	}
+	for _, resource := range seed.Spec.Resources {
+		if resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "SAMEnrollmentClaim" && resource.Metadata.Name == name {
+			return resource
+		}
+	}
+	t.Fatalf("missing seed claim %s", name)
+	return api.Resource{}
+}
+
+func claimWithJoinTimestamp(t *testing.T, resource api.Resource, now time.Time) api.Resource {
+	t.Helper()
+	spec, err := resource.SAMEnrollmentClaimSpec()
+	if err != nil {
+		t.Fatalf("SAMEnrollmentClaim/%s spec: %v", resource.Metadata.Name, err)
+	}
+	spec.JoinTimestamp = now.UTC().Format(time.RFC3339)
+	resource.Spec = spec
+	return resource
+}
+
+func mustResource(t *testing.T, router *api.Router, apiVersion, kind, name string) api.Resource {
+	t.Helper()
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion == apiVersion && resource.Kind == kind && resource.Metadata.Name == name {
+			return resource
+		}
+	}
+	t.Fatalf("missing %s/%s", kind, name)
+	return api.Resource{}
+}
+
+func assertResourceCount(t *testing.T, resources []api.Resource, apiVersion, kind string, want int) {
+	t.Helper()
+	got := 0
+	for _, resource := range resources {
+		if resource.APIVersion == apiVersion && resource.Kind == kind {
+			got++
+		}
+	}
+	if got != want {
+		t.Fatalf("%s/%s count = %d, want %d", apiVersion, kind, got, want)
 	}
 }
 

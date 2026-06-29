@@ -4,6 +4,8 @@ package mobility
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +14,8 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 	"gopkg.in/yaml.v3"
 )
 
@@ -602,15 +606,23 @@ func TestCloudEdgeDynamicRRExamplesMaterializeMixedAdmissionWithoutBGPPeers(t *t
 			if err := config.Validate(router); err != nil {
 				t.Fatalf("validate %s: %v", tc.example, err)
 			}
-			profileSpec := exampleSAMTransportProfile(t, router, tc.profile)
+			if got := countResources(router.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim"); got != 0 {
+				t.Fatalf("base %s SAMEnrollmentClaim count = %d, want 0", tc.example, got)
+			}
+			store := testStore(t, now)
+			seedSubmittedClaimsFromFixture(t, store, now, "cloudedge-rr-claims-seed.yaml")
+			effective := effectiveWithAdmissionState(t, router, store, now)
+			if got := countResources(effective.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim"); got != 3 {
+				t.Fatalf("effective %s SAMEnrollmentClaim count = %d, want 3 from admission state", tc.example, got)
+			}
+			profileSpec := exampleSAMTransportProfile(t, effective, tc.profile)
 			if profileSpec.Mode != tc.mode || profileSpec.Encryption != tc.encryption {
 				t.Fatalf("SAMTransportProfile/%s mode/encryption = %s/%s, want %s/%s", tc.profile, profileSpec.Mode, profileSpec.Encryption, tc.mode, tc.encryption)
 			}
 			if profileSpec.BGP.GeneratePeers == nil || *profileSpec.BGP.GeneratePeers {
 				t.Fatalf("SAMTransportProfile/%s generatePeers = %#v, want false", tc.profile, profileSpec.BGP.GeneratePeers)
 			}
-			store := testStore(t, now)
-			controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+			controller := TransportController{Router: effective, Store: store, Now: func() time.Time { return now }}
 			if err := controller.Reconcile(context.Background()); err != nil {
 				t.Fatalf("Reconcile: %v", err)
 			}
@@ -669,18 +681,19 @@ func TestPVEMinimalExamplesMaterializeReviewTransports(t *testing.T) {
 		if got := countResources(router.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim"); got != 0 {
 			t.Fatalf("base pve-minimal-rr SAMEnrollmentClaim count = %d, want 0", got)
 		}
-		router.Spec.Resources = append(router.Spec.Resources, pveMinimalRRClaimSeedResources(t)...)
-		if err := config.Validate(router); err != nil {
-			t.Fatalf("validate pve-minimal-rr.yaml with claim seed: %v", err)
-		}
 		store := testStore(t, now)
-		controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+		seedSubmittedClaimsFromFixture(t, store, now, "pve-minimal-rr-claims-seed.yaml")
+		effective := effectiveWithAdmissionState(t, router, store, now)
+		if got := countResources(effective.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim"); got != 2 {
+			t.Fatalf("effective pve-minimal-rr SAMEnrollmentClaim count = %d, want 2 from admission state", got)
+		}
+		controller := TransportController{Router: effective, Store: store, Now: func() time.Time { return now }}
 		if err := controller.Reconcile(context.Background()); err != nil {
 			t.Fatalf("Reconcile: %v", err)
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
-				profileSpec := exampleSAMTransportProfile(t, router, tc.profile)
+				profileSpec := exampleSAMTransportProfile(t, effective, tc.profile)
 				if profileSpec.BGP.GeneratePeers == nil || *profileSpec.BGP.GeneratePeers {
 					t.Fatalf("SAMTransportProfile/%s generatePeers = %#v, want false", tc.profile, profileSpec.BGP.GeneratePeers)
 				}
@@ -779,15 +792,94 @@ func TestPVEMinimalExamplesMaterializeReviewTransports(t *testing.T) {
 	})
 }
 
-func pveMinimalRRClaimSeedResources(t *testing.T) []api.Resource {
+func seedSubmittedClaimsFromFixture(t *testing.T, store interface {
+	UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord) error
+}, now time.Time, fixture string) {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("..", "..", "..", "tests", "fixtures", "pve-minimal-rr-claims-seed.yaml"))
+	for _, resource := range claimSeedResources(t, fixture) {
+		source := "SAMEnrollmentClaim/" + resource.Metadata.Name
+		part := dynamicconfig.DynamicConfigPart{
+			TypeMeta: api.TypeMeta{APIVersion: dynamicconfig.ConfigAPIVersion, Kind: "DynamicConfigPart"},
+			Metadata: api.ObjectMeta{
+				Name: "submitted-" + resource.Metadata.Name,
+			},
+			Spec: dynamicconfig.DynamicConfigPartSpec{
+				Source:     source,
+				Generation: 1,
+				ObservedAt: now.UTC(),
+				ExpiresAt:  now.Add(5 * time.Minute).UTC(),
+				Resources:  []api.Resource{resource},
+			},
+		}
+		part.Spec.Digest = digestDynamicPart(part)
+		record, err := dynamicPartRecord(part)
+		if err != nil {
+			t.Fatalf("dynamic part record for %s: %v", source, err)
+		}
+		if err := store.UpsertDynamicConfigPart(record); err != nil {
+			t.Fatalf("UpsertDynamicConfigPart(%s): %v", source, err)
+		}
+	}
+}
+
+func effectiveWithAdmissionState(t *testing.T, router *api.Router, store interface {
+	ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error)
+}, now time.Time) *api.Router {
+	t.Helper()
+	records, err := store.ListDynamicConfigParts()
 	if err != nil {
-		t.Fatalf("read pve claim seed: %v", err)
+		t.Fatalf("ListDynamicConfigParts: %v", err)
+	}
+	parts := make([]dynamicconfig.DynamicConfigPart, 0, len(records))
+	for _, record := range records {
+		var resources []api.Resource
+		if strings.TrimSpace(record.ResourcesJSON) != "" {
+			if err := json.Unmarshal([]byte(record.ResourcesJSON), &resources); err != nil {
+				t.Fatalf("decode %s resources: %v", record.Source, err)
+			}
+		}
+		var directives []dynamicconfig.DynamicConfigDirective
+		if strings.TrimSpace(record.DirectivesJSON) != "" {
+			if err := json.Unmarshal([]byte(record.DirectivesJSON), &directives); err != nil {
+				t.Fatalf("decode %s directives: %v", record.Source, err)
+			}
+		}
+		parts = append(parts, dynamicconfig.DynamicConfigPart{
+			TypeMeta: api.TypeMeta{APIVersion: dynamicconfig.ConfigAPIVersion, Kind: "DynamicConfigPart"},
+			Metadata: api.ObjectMeta{
+				Name: fmt.Sprintf("%s-%d", record.Source, record.Generation),
+			},
+			Spec: dynamicconfig.DynamicConfigPartSpec{
+				Source:     record.Source,
+				Generation: record.Generation,
+				ObservedAt: record.ObservedAt,
+				ExpiresAt:  record.ExpiresAt,
+				Digest:     record.Digest,
+				Resources:  resources,
+				Directives: directives,
+			},
+		})
+	}
+	policies, err := dynamicconfig.ExtractDynamicOverridePolicies(*router)
+	if err != nil {
+		t.Fatalf("ExtractDynamicOverridePolicies: %v", err)
+	}
+	effective, _, err := dynamicconfig.BuildEffectiveConfig(*router, parts, policies, now.UTC())
+	if err != nil {
+		t.Fatalf("BuildEffectiveConfig: %v", err)
+	}
+	return &effective
+}
+
+func claimSeedResources(t *testing.T, fixture string) []api.Resource {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "tests", "fixtures", fixture))
+	if err != nil {
+		t.Fatalf("read claim seed %s: %v", fixture, err)
 	}
 	var seed api.Router
 	if err := yaml.Unmarshal(data, &seed); err != nil {
-		t.Fatalf("parse pve claim seed: %v", err)
+		t.Fatalf("parse claim seed %s: %v", fixture, err)
 	}
 	return append([]api.Resource(nil), seed.Spec.Resources...)
 }

@@ -1,0 +1,67 @@
+# yaml-language-server: $schema=https://routerd.net/schemas/routerd-config-v1alpha1.schema.json
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: cloudedge-rr-claims-seed
+spec:
+  resources:
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentClaim
+      metadata: { name: leaf-pve }
+      spec:
+        policyRef: SAMEnrollmentPolicy/cloudedge-leaves
+        rrSetRef: SAMRRSet/cloudedge-rrs
+        leafID: leaf-pve
+        joinAudience: cloudedge-private-underlay
+        joinNonce: leaf-pve-0001
+        joinTimestamp: "2026-06-28T00:00:00Z"
+        joinHMAC: EXAMPLE_HMAC_SHA256_HEX
+        tunnelAddress: 10.255.0.21/32
+        endpoint: 10.20.0.21
+        mobility:
+          ownedAddresses: [10.77.60.21/32]
+        bgp:
+          asn: 64577
+          routerID: 10.255.0.21
+
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentClaim
+      metadata: { name: leaf-a }
+      spec:
+        policyRef: SAMEnrollmentPolicy/cloudedge-public-wg-leaves
+        rrSetRef: SAMRRSet/cloudedge-rrs
+        leafID: leaf-a
+        joinAudience: cloudedge-public-underlay
+        joinNonce: leaf-a-0001
+        joinTimestamp: "2026-06-28T00:00:00Z"
+        joinHMAC: EXAMPLE_HMAC_SHA256_HEX
+        tunnelAddress: 10.255.0.31/32
+        endpoint: 10.20.0.31
+        wireGuard:
+          publicKey: LEAF_A_WIREGUARD_PUBLIC_KEY
+          endpoint: 198.51.100.31:51820
+          allowedIPs: [10.20.0.31/32]
+        mobility:
+          ownedAddresses: [10.77.60.31/32]
+        bgp:
+          asn: 64577
+          routerID: 10.255.0.31
+
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentClaim
+      metadata: { name: leaf-b }
+      spec:
+        policyRef: SAMEnrollmentPolicy/cloudedge-private-fou-leaves
+        rrSetRef: SAMRRSet/cloudedge-rrs
+        leafID: leaf-b
+        joinAudience: cloudedge-private-underlay
+        joinNonce: leaf-b-0001
+        joinTimestamp: "2026-06-28T00:00:00Z"
+        joinHMAC: EXAMPLE_HMAC_SHA256_HEX
+        tunnelAddress: 10.255.0.32/32
+        endpoint: 10.20.0.32
+        mobility:
+          ownedAddresses: [10.77.60.32/32]
+        bgp:
+          asn: 64577
+          routerID: 10.255.0.32

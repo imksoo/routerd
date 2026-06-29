@@ -5,6 +5,7 @@ package golden_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -18,6 +19,7 @@ func TestCloudEdgeDynamicRRLeafExamplesUseDualRRShape(t *testing.T) {
 	leaf := loadExampleRouter(t, "cloudedge-dynamic-leaf-pve.yaml")
 	leafA := loadExampleRouter(t, "cloudedge-dynamic-leaf-a-wg.yaml")
 	leafB := loadExampleRouter(t, "cloudedge-dynamic-leaf-b-fou.yaml")
+	seed := loadFixtureRouter(t, "cloudedge-rr-claims-seed.yaml")
 
 	for _, tt := range []struct {
 		name   string
@@ -32,9 +34,9 @@ func TestCloudEdgeDynamicRRLeafExamplesUseDualRRShape(t *testing.T) {
 			assertHasResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentPolicy", "cloudedge-leaves")
 			assertHasResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentPolicy", "cloudedge-public-wg-leaves")
 			assertHasResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentPolicy", "cloudedge-private-fou-leaves")
-			assertHasResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentClaim", "leaf-pve")
-			assertHasResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentClaim", "leaf-a")
-			assertHasResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentClaim", "leaf-b")
+			assertMissingResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentClaim", "leaf-pve")
+			assertMissingResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentClaim", "leaf-a")
+			assertMissingResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentClaim", "leaf-b")
 			assertMissingResource(t, tt.router, api.NetAPIVersion, "BGPPeer", "leaf-pve")
 			assertMissingResource(t, tt.router, api.NetAPIVersion, "BGPPeer", "leaf-a")
 			assertMissingResource(t, tt.router, api.NetAPIVersion, "BGPPeer", "leaf-b")
@@ -70,6 +72,9 @@ func TestCloudEdgeDynamicRRLeafExamplesUseDualRRShape(t *testing.T) {
 			assertEnrollmentPolicy(t, tt.router, "cloudedge-private-fou-leaves", tt.self+"-fou", "cloudedge-private-underlay", false)
 		})
 	}
+	assertHasResource(t, seed, api.MobilityAPIVersion, "SAMEnrollmentClaim", "leaf-pve")
+	assertHasResource(t, seed, api.MobilityAPIVersion, "SAMEnrollmentClaim", "leaf-a")
+	assertHasResource(t, seed, api.MobilityAPIVersion, "SAMEnrollmentClaim", "leaf-b")
 
 	assertHasResource(t, leaf, api.MobilityAPIVersion, "SAMRRSet", "cloudedge-rrs")
 	assertHasResource(t, leaf, api.MobilityAPIVersion, "SAMEnrollmentClaim", "leaf-pve")
@@ -224,6 +229,23 @@ func TestPVEMinimalDynamicRRLeafExamples(t *testing.T) {
 		assertNamedRRSetMembers(t, leafB, "pve-rrs", "pve-rr")
 		assertLeafBGPRouterPolicy(t, leafB, "pve-leaf-b", "10.77.70.22/32")
 	})
+}
+
+func TestDynamicRRLeafRunbookDocumentsLeafRRSetFetchTODO(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "operations", "dynamic-rr-leaf-enrollment-test.md"))
+	if err != nil {
+		t.Fatalf("read dynamic RR/leaf runbook: %v", err)
+	}
+	doc := string(data)
+	for _, want := range []string{
+		"Leaf-Side RRSet Fetch TODO",
+		"does not yet implement a leaf-side API call that fetches\n" +
+			"the `SAMRRSet`",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Fatalf("runbook missing %q", want)
+		}
+	}
 }
 
 func loadFixtureRouter(t *testing.T, name string) *api.Router {

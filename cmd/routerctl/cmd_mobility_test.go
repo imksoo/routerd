@@ -24,7 +24,7 @@ func TestMobilityEnrollmentHMACCommand(t *testing.T) {
 	if err := os.WriteFile(secretPath, []byte("test-join-token\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	configPath := filepath.Join("..", "..", "examples", "cloudedge-dynamic-rr-a-hub.yaml")
+	configPath := filepath.Join("..", "..", "examples", "cloudedge-dynamic-leaf-pve.yaml")
 	var stdout, stderr bytes.Buffer
 	if err := mobilityCommand([]string{"enrollment-hmac", "--config", configPath, "--claim", "leaf-pve", "--secret-file", secretPath}, &stdout, &stderr); err != nil {
 		t.Fatalf("mobility enrollment-hmac: %v stderr=%s", err, stderr.String())
