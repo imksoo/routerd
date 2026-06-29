@@ -95,6 +95,7 @@ spec:
           pattern: ^pve-leaf-[a-z0-9-]+$
         tunnelAddressPrefixes: [10.255.10.0/24]
         endpointPrefixes: [10.30.0.0/24]
+        ttl: 24h
         mobilityPoolRefs: [MobilityPool/pve-mobility]
 
     - apiVersion: mobility.routerd.net/v1alpha1

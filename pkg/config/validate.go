@@ -911,6 +911,7 @@ func validateMobilityPoolPrefixes(router *api.Router) error {
 
 func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error {
 	policies := map[string]api.SAMEnrollmentPolicySpec{}
+	claims := map[string]bool{}
 	mobilityPrefixes := map[string]netip.Prefix{}
 	seenJoinNonces := map[string]string{}
 	seenLeafIDs := map[string]string{}
@@ -948,6 +949,25 @@ func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error
 			if err == nil {
 				mobilityPrefixes[res.Metadata.Name] = prefix.Masked()
 			}
+		}
+		if res.APIVersion == api.MobilityAPIVersion && res.Kind == "SAMEnrollmentClaim" {
+			claims[res.Metadata.Name] = true
+		}
+	}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "SAMEnrollmentClient" {
+			continue
+		}
+		spec, err := res.SAMEnrollmentClientSpec()
+		if err != nil {
+			return err
+		}
+		kind, name, ok := strings.Cut(strings.TrimSpace(spec.ClaimRef), "/")
+		if !ok || kind != "SAMEnrollmentClaim" || strings.TrimSpace(name) == "" {
+			return fmt.Errorf("%s spec.claimRef must reference SAMEnrollmentClaim/<name>", res.ID())
+		}
+		if !claims[strings.TrimSpace(name)] {
+			return fmt.Errorf("%s spec.claimRef references missing SAMEnrollmentClaim %q", res.ID(), spec.ClaimRef)
 		}
 	}
 	for _, res := range router.Spec.Resources {

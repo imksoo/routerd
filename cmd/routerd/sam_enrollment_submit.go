@@ -3,10 +3,13 @@
 package main
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -15,6 +18,7 @@ import (
 	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/controller/mobility"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/samenrollment"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -41,7 +45,17 @@ func submitSAMEnrollmentClaim(router *api.Router, store samEnrollmentClaimStore,
 	}
 	source := "SAMEnrollmentClaim/" + claimResource.Metadata.Name
 	observedAt := now.UTC()
-	expiresAt := submittedSAMEnrollmentClaimExpiresAt(claim, observedAt)
+	policy, err := submittedSAMEnrollmentClaimPolicy(router, store, source, claim, observedAt)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", controlapi.ErrBadRequest, err)
+	}
+	if err := validateSubmittedSAMEnrollmentClaimJoinToken(claimResource.ID(), policy, claim); err != nil {
+		return nil, fmt.Errorf("%w: %v", controlapi.ErrBadRequest, err)
+	}
+	expiresAt, err := submittedSAMEnrollmentClaimExpiresAt(claim, policy, observedAt)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", controlapi.ErrBadRequest, err)
+	}
 	part := dynamicconfig.DynamicConfigPart{
 		TypeMeta: api.TypeMeta{APIVersion: dynamicconfig.ConfigAPIVersion, Kind: "DynamicConfigPart"},
 		Metadata: api.ObjectMeta{
@@ -253,16 +267,108 @@ func findSAMRRSetResource(router *api.Router, name string) (api.Resource, bool, 
 	return api.Resource{}, false, nil
 }
 
-func submittedSAMEnrollmentClaimExpiresAt(claim api.SAMEnrollmentClaimSpec, now time.Time) time.Time {
+func submittedSAMEnrollmentClaimPolicy(router *api.Router, store samEnrollmentClaimStore, replaceSource string, claim api.SAMEnrollmentClaimSpec, now time.Time) (api.SAMEnrollmentPolicySpec, error) {
+	policyName, err := samEnrollmentPolicyNameFromRef(claim.PolicyRef)
+	if err != nil {
+		return api.SAMEnrollmentPolicySpec{}, err
+	}
+	records, err := store.ListDynamicConfigParts()
+	if err != nil {
+		return api.SAMEnrollmentPolicySpec{}, err
+	}
+	parts, err := samEnrollmentDynamicPartsFromRecords(records, replaceSource)
+	if err != nil {
+		return api.SAMEnrollmentPolicySpec{}, err
+	}
+	policies, err := dynamicconfig.ExtractDynamicOverridePolicies(*router)
+	if err != nil {
+		return api.SAMEnrollmentPolicySpec{}, err
+	}
+	effective, _, err := dynamicconfig.BuildEffectiveConfig(*router, parts, policies, now.UTC())
+	if err != nil {
+		return api.SAMEnrollmentPolicySpec{}, err
+	}
+	policy, ok, err := findSAMEnrollmentPolicy(&effective, policyName)
+	if err != nil {
+		return api.SAMEnrollmentPolicySpec{}, err
+	}
+	if !ok {
+		return api.SAMEnrollmentPolicySpec{}, fmt.Errorf("%s not found", claim.PolicyRef)
+	}
+	return policy, nil
+}
+
+func validateSubmittedSAMEnrollmentClaimJoinToken(resourceID string, policy api.SAMEnrollmentPolicySpec, claim api.SAMEnrollmentClaimSpec) error {
+	if strings.TrimSpace(policy.JoinTokenFrom.File) == "" && strings.TrimSpace(policy.JoinTokenFrom.Env) == "" {
+		return nil
+	}
+	if strings.TrimSpace(claim.JoinNonce) == "" {
+		return fmt.Errorf("%s spec.joinNonce is required by %s joinTokenFrom", resourceID, claim.PolicyRef)
+	}
+	if strings.TrimSpace(claim.JoinTimestamp) == "" {
+		return fmt.Errorf("%s spec.joinTimestamp is required by %s joinTokenFrom", resourceID, claim.PolicyRef)
+	}
+	if strings.TrimSpace(claim.JoinHMAC) == "" {
+		return fmt.Errorf("%s spec.joinHMAC is required by %s joinTokenFrom", resourceID, claim.PolicyRef)
+	}
+	secret, err := readSubmittedSAMEnrollmentJoinSecret(policy.JoinTokenFrom)
+	if err != nil {
+		return fmt.Errorf("%s spec.policyRef joinTokenFrom: %w", resourceID, err)
+	}
+	want := samenrollment.JoinHMAC(secret, claim)
+	if !hmac.Equal([]byte(want), []byte(strings.TrimSpace(claim.JoinHMAC))) {
+		return fmt.Errorf("%s spec.joinHMAC does not match %s joinTokenFrom", resourceID, claim.PolicyRef)
+	}
+	return nil
+}
+
+func readSubmittedSAMEnrollmentJoinSecret(source api.SecretValueSourceSpec) ([]byte, error) {
+	var value string
+	switch {
+	case strings.TrimSpace(source.File) != "":
+		data, err := os.ReadFile(strings.TrimSpace(source.File))
+		if err != nil {
+			return nil, err
+		}
+		value = string(data)
+	case strings.TrimSpace(source.Env) != "":
+		found, ok := os.LookupEnv(strings.TrimSpace(source.Env))
+		if !ok {
+			return nil, fmt.Errorf("environment variable %s is not set", strings.TrimSpace(source.Env))
+		}
+		value = found
+	default:
+		return nil, fmt.Errorf("secret source is not configured")
+	}
+	value = strings.TrimSpace(value)
+	if source.Base64 {
+		decoded, err := base64.StdEncoding.DecodeString(value)
+		if err != nil {
+			return nil, err
+		}
+		return decoded, nil
+	}
+	return []byte(value), nil
+}
+
+func submittedSAMEnrollmentClaimExpiresAt(claim api.SAMEnrollmentClaimSpec, policy api.SAMEnrollmentPolicySpec, now time.Time) (time.Time, error) {
 	if strings.TrimSpace(claim.ExpiresAt) != "" {
 		if expiresAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(claim.ExpiresAt)); err == nil {
-			return expiresAt.UTC()
+			return expiresAt.UTC(), nil
 		}
 		if expiresAt, err := time.Parse(time.RFC3339, strings.TrimSpace(claim.ExpiresAt)); err == nil {
-			return expiresAt.UTC()
+			return expiresAt.UTC(), nil
 		}
+		return time.Time{}, fmt.Errorf("spec.expiresAt must be an RFC3339 timestamp")
 	}
-	return now.UTC().Add(mobility.DefaultLeaseTTL)
+	if strings.TrimSpace(policy.TTL) != "" {
+		ttl, err := time.ParseDuration(strings.TrimSpace(policy.TTL))
+		if err != nil {
+			return time.Time{}, fmt.Errorf("%s spec.ttl must be a duration: %w", claim.PolicyRef, err)
+		}
+		return now.UTC().Add(ttl), nil
+	}
+	return now.UTC().Add(mobility.DefaultLeaseTTL), nil
 }
 
 func validateSubmittedSAMEnrollmentClaim(router *api.Router, store samEnrollmentClaimStore, replaceSource string, part dynamicconfig.DynamicConfigPart, now time.Time) error {

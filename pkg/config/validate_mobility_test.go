@@ -559,6 +559,22 @@ func TestValidateSAMEnrollmentClaimRejectsWireGuardEndpointOutsidePolicy(t *test
 	}
 }
 
+func TestValidateSAMEnrollmentClientRequiresExistingLocalClaim(t *testing.T) {
+	router := samEnrollmentRouter()
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentClient"},
+		Metadata: api.ObjectMeta{Name: "leaf-pve"},
+		Spec: api.SAMEnrollmentClientSpec{
+			ClaimRef:           "SAMEnrollmentClaim/missing-leaf",
+			BootstrapEndpoints: []string{"http://10.30.0.10:8080"},
+		},
+	})
+	err := Validate(router)
+	if err == nil || !strings.Contains(err.Error(), `spec.claimRef references missing SAMEnrollmentClaim "SAMEnrollmentClaim/missing-leaf"`) {
+		t.Fatalf("Validate error = %v, want missing SAMEnrollmentClaim claimRef rejection", err)
+	}
+}
+
 func TestValidateSAMEnrollmentClaimRejectsDuplicatePolicyFields(t *testing.T) {
 	base := samEnrollmentRouter()
 	claimIndex := len(base.Spec.Resources) - 1
