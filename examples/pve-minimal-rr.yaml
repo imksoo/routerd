@@ -15,6 +15,14 @@ spec:
       metadata: { name: private-wan-ipv4 }
       spec: { interface: private-wan, address: 10.30.0.10/24 }
 
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: ControlAPI
+      metadata: { name: default }
+      spec:
+        listenAddress: 10.30.0.10
+        port: 65432
+        allowCIDRs: [10.30.0.0/24]
+
     - apiVersion: net.routerd.net/v1alpha1
       kind: WireGuardInterface
       metadata: { name: wg-pve }

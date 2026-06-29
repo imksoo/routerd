@@ -42,6 +42,36 @@ func TestValidateSysctl(t *testing.T) {
 	}
 }
 
+func TestValidateControlAPIRejectsInvalidAllowCIDRs(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cidr string
+		want string
+	}{
+		{name: "malformed", cidr: "not-a-cidr", want: "must be a valid CIDR prefix"},
+		{name: "ipv4-default", cidr: "0.0.0.0/0", want: "must not be 0.0.0.0/0"},
+		{name: "ipv6-default", cidr: "::/0", want: "must not be ::/0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			router := &api.Router{
+				TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+				Metadata: api.ObjectMeta{Name: "test"},
+				Spec: api.RouterSpec{Resources: []api.Resource{
+					{
+						TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "ControlAPI"},
+						Metadata: api.ObjectMeta{Name: "default"},
+						Spec:     api.ControlAPISpec{AllowCIDRs: []string{tc.cidr}},
+					},
+				}},
+			}
+			err := Validate(router)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestValidateIPv4RoutePreferredSource(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

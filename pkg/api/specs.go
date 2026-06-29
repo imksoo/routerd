@@ -338,6 +338,13 @@ type WebConsoleSpec struct {
 	Links             []WebConsoleLinkSpec  `yaml:"links,omitempty" json:"links,omitempty"`
 }
 
+type ControlAPISpec struct {
+	Enabled       *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	ListenAddress string   `yaml:"listenAddress,omitempty" json:"listenAddress,omitempty"`
+	Port          int      `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=1,maximum=65535"`
+	AllowCIDRs    []string `yaml:"allowCIDRs,omitempty" json:"allowCIDRs,omitempty"`
+}
+
 type WebConsoleLinkSpec struct {
 	Label       string `yaml:"label" json:"label"`
 	URL         string `yaml:"url" json:"url"`
@@ -2575,6 +2582,10 @@ func (r Resource) NTPServerSpec() (NTPServerSpec, error) {
 
 func (r Resource) WebConsoleSpec() (WebConsoleSpec, error) {
 	return specAs[WebConsoleSpec](r)
+}
+
+func (r Resource) ControlAPISpec() (ControlAPISpec, error) {
+	return specAs[ControlAPISpec](r)
 }
 
 func (r Resource) ManagementAccessSpec() (ManagementAccessSpec, error) {

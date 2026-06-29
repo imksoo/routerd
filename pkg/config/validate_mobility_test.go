@@ -566,7 +566,7 @@ func TestValidateSAMEnrollmentClientRequiresExistingLocalClaim(t *testing.T) {
 		Metadata: api.ObjectMeta{Name: "leaf-pve"},
 		Spec: api.SAMEnrollmentClientSpec{
 			ClaimRef:           "SAMEnrollmentClaim/missing-leaf",
-			BootstrapEndpoints: []string{"http://10.30.0.10:8080"},
+			BootstrapEndpoints: []string{"http://10.30.0.10:65432"},
 		},
 	})
 	err := Validate(router)

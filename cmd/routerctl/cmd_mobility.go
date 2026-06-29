@@ -230,7 +230,7 @@ func mobilityEnrollmentJoinCommand(args []string, stdout io.Writer) error {
 	fs.Usage = func() {
 		printSubcommandHelp(fs,
 			"Submit a leaf SAMEnrollmentClaim, fetch its SAMRRSet, and persist the RRSet into local dynamic state.",
-			"routerctl mobility enrollment-join --config leaf.yaml --claim pve-leaf-b --rr-url http://pve-rr:8080 --state-file /var/lib/routerd/routerd.db\n"+
+			"routerctl mobility enrollment-join --config leaf.yaml --claim pve-leaf-b --rr-url http://pve-rr:65432 --state-file /var/lib/routerd/routerd.db\n"+
 				"routerctl mobility enrollment-join --config leaf.yaml --claim pve-leaf-a --rr-socket /run/routerd/routerd.sock")
 	}
 	configPath := fs.String("config", defaultConfigPath(), "leaf config containing the SAMEnrollmentClaim")

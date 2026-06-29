@@ -168,6 +168,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "ControlAPI":
+		var spec ControlAPISpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "ManagementAccess":
 		var spec ManagementAccessSpec
 		if err := raw.Spec.Decode(&spec); err != nil {

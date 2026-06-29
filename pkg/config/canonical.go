@@ -183,6 +183,9 @@ func AtomicWriteFile(path string, data []byte) error {
 	if err := os.Rename(tmpPath, path); err != nil {
 		return err
 	}
+	if err := os.Chmod(path, mode); err != nil {
+		return err
+	}
 	cleanup = false
 	if err := syncDir(dir); err != nil {
 		return err

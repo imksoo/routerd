@@ -379,6 +379,25 @@ func validateSystemResource(res api.Resource, targetOS platform.OS) (bool, error
 				return true, fmt.Errorf("%s spec.basePath must be an absolute HTTP path", res.ID())
 			}
 		}
+	case "ControlAPI":
+		if res.APIVersion != api.SystemAPIVersion {
+			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.SystemAPIVersion)
+		}
+		spec, err := res.ControlAPISpec()
+		if err != nil {
+			return true, err
+		}
+		if strings.TrimSpace(spec.ListenAddress) != "" {
+			if _, err := netip.ParseAddr(spec.ListenAddress); err != nil {
+				return true, fmt.Errorf("%s spec.listenAddress must be an IP address", res.ID())
+			}
+		}
+		if spec.Port < 0 || spec.Port > 65535 {
+			return true, fmt.Errorf("%s spec.port must be omitted or between 1 and 65535", res.ID())
+		}
+		if err := validateControlAPIAllowCIDRs(res.ID(), spec.AllowCIDRs); err != nil {
+			return true, err
+		}
 	case "Inventory":
 		if res.APIVersion != api.RouterAPIVersion {
 			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.RouterAPIVersion)
@@ -405,4 +424,27 @@ func validateSystemResource(res api.Resource, targetOS platform.OS) (bool, error
 		return false, nil
 	}
 	return true, nil
+}
+
+func validateControlAPIAllowCIDRs(resourceID string, cidrs []string) error {
+	for i, cidr := range cidrs {
+		text := strings.TrimSpace(cidr)
+		if text == "" {
+			return fmt.Errorf("%s spec.allowCIDRs[%d] must not be empty", resourceID, i)
+		}
+		prefix, err := netip.ParsePrefix(text)
+		if err != nil {
+			return fmt.Errorf("%s spec.allowCIDRs[%d] must be a valid CIDR prefix: %w", resourceID, i, err)
+		}
+		if prefix.Bits() == 0 {
+			addr := prefix.Addr().Unmap()
+			if addr.Is4() && addr == netip.IPv4Unspecified() {
+				return fmt.Errorf("%s spec.allowCIDRs[%d] must not be 0.0.0.0/0", resourceID, i)
+			}
+			if addr.Is6() && addr == netip.IPv6Unspecified() {
+				return fmt.Errorf("%s spec.allowCIDRs[%d] must not be ::/0", resourceID, i)
+			}
+		}
+	}
+	return nil
 }

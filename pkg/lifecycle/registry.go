@@ -166,6 +166,7 @@ var declarations = []Declaration{
 	declare(api.SystemAPIVersion, "NTPClient", ClassManagedHost, "time sync client configuration", resourceLifecycle()),
 	declare(api.SystemAPIVersion, "NTPServer", ClassManagedHost, "time sync server configuration", resourceLifecycle()),
 	declare(api.SystemAPIVersion, "WebConsole", ClassManagedHost, "web console service and files", resourceLifecycle()),
+	declare(api.SystemAPIVersion, "ControlAPI", ClassController, "routerd HTTP mutation/control listener policy", noHostTeardown("served by the routerd process; listener policy has no standalone host artifacts")),
 	declare(api.SystemAPIVersion, "RouterdCluster", ClassController, "cluster coordination state", noHostTeardown("controller state does not own standalone host artifacts")),
 	declare(api.NetAPIVersion, "Interface", ClassManagedHost, "network interface alias/adoption intent", resourceLifecycle()),
 	declare(api.NetAPIVersion, "PPPoESession", ClassManagedHost, "PPPoE daemon, socket, and interface artifacts", artifacts("systemd.service", "file", "unix.socket", "directory")),

@@ -283,6 +283,36 @@ var legacyServeStringFlags = []string{
 	"controller-chain-dnsmasq-port",
 }
 
+type repeatedStringFlag []string
+
+func (f *repeatedStringFlag) String() string {
+	if f == nil {
+		return ""
+	}
+	return strings.Join(*f, ",")
+}
+
+func (f *repeatedStringFlag) Set(value string) error {
+	for _, part := range strings.Split(value, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			*f = append(*f, part)
+		}
+	}
+	return nil
+}
+
+type controlAPIHTTPConfig struct {
+	Enabled       bool
+	Listen        string
+	AllowPrefixes []netip.Prefix
+}
+
+const (
+	defaultControlAPIListenAddress = "127.0.0.1"
+	defaultControlAPIPort          = 65432
+)
+
 func registerLegacyServeFlags(fs *flag.FlagSet) {
 	for _, name := range legacyServeBoolFlags {
 		fs.Bool(name, false, "ignored legacy controller-chain compatibility flag")
@@ -323,7 +353,9 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	statusFile := fs.String("status-file", defaultStatusFile(), "status file")
 	socketPath := fs.String("socket", defaultSocketPath(), "Unix domain socket path")
 	statusSocketPath := fs.String("status-socket", defaultStatusSocketPath(), "read-only status Unix domain socket path")
-	httpListen := fs.String("http-listen", "", "optional TCP listen address for the mutation/control API, for example 10.30.0.10:8080")
+	httpListen := fs.String("http-listen", "", "TCP listen address for the mutation/control API; defaults to 127.0.0.1:65432")
+	var httpAllowCIDRs repeatedStringFlag
+	fs.Var(&httpAllowCIDRs, "http-allow-cidr", "source CIDR allowed to use --http-listen; repeat or comma-separate; defaults to loopback only")
 	statePath := fs.String("state-file", defaultStatePath, "routerd state database file")
 	controllerNames := fs.String("controllers", "all", "comma-separated controller names to run; use bgp for isolated BGP labs")
 	applyInterval := fs.Duration("apply-interval", 0, "periodic apply interval; 0 disables scheduled apply")
@@ -382,6 +414,10 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}
 	defer stateStore.Close()
 	router, bootFallback, err := loadServeRouter(*configPath, stateStore)
+	if err != nil {
+		return err
+	}
+	httpControl, err := resolveControlAPIHTTPConfig(router, strings.TrimSpace(*httpListen), []string(httpAllowCIDRs), setFlags)
 	if err != nil {
 		return err
 	}
@@ -830,14 +866,14 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}
 	server.SetKeepAlivesEnabled(false)
 	var httpServer *http.Server
-	if strings.TrimSpace(*httpListen) != "" {
-		httpListener, err := net.Listen("tcp", strings.TrimSpace(*httpListen))
+	if httpControl.Enabled {
+		httpListener, err := net.Listen("tcp", httpControl.Listen)
 		if err != nil {
 			return fmt.Errorf("listen control HTTP API: %w", err)
 		}
 		defer httpListener.Close()
 		httpServer = &http.Server{
-			Handler:           handler,
+			Handler:           controlAPIAdmissionHandler(handler, httpControl.AllowPrefixes),
 			ReadHeaderTimeout: 5 * time.Second,
 			ReadTimeout:       30 * time.Second,
 			WriteTimeout:      60 * time.Second,
@@ -847,7 +883,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		defer httpServer.Close()
 		go func() {
 			if serveErr := httpServer.Serve(httpListener); serveErr != nil && serveErr != http.ErrServerClosed {
-				logger.Emit(eventlog.LevelError, "serve", "control HTTP API stopped", map[string]string{"error": serveErr.Error(), "listen": strings.TrimSpace(*httpListen)})
+				logger.Emit(eventlog.LevelError, "serve", "control HTTP API stopped", map[string]string{"error": serveErr.Error(), "listen": httpControl.Listen})
 			}
 		}()
 	}
@@ -863,8 +899,8 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}()
 	fmt.Fprintf(stdout, "routerd serving control API on unix://%s\n", *socketPath)
 	fmt.Fprintf(stdout, "routerd serving read-only status API on unix://%s\n", *statusSocketPath)
-	if strings.TrimSpace(*httpListen) != "" {
-		fmt.Fprintf(stdout, "routerd serving control API on http://%s\n", strings.TrimSpace(*httpListen))
+	if httpControl.Enabled {
+		fmt.Fprintf(stdout, "routerd serving control API on http://%s\n", httpControl.Listen)
 	}
 	if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 		return err
@@ -1134,6 +1170,134 @@ func listenUnixSocket(path string, perm os.FileMode) (net.Listener, error) {
 		return nil, err
 	}
 	return listener, nil
+}
+
+func defaultControlAPIHTTPConfig() controlAPIHTTPConfig {
+	prefixes, _ := parseControlAPIAllowCIDRs([]string{"127.0.0.1/32", "::1/128"})
+	return controlAPIHTTPConfig{
+		Enabled:       true,
+		Listen:        net.JoinHostPort(defaultControlAPIListenAddress, strconv.Itoa(defaultControlAPIPort)),
+		AllowPrefixes: prefixes,
+	}
+}
+
+func resolveControlAPIHTTPConfig(router *api.Router, cliListen string, cliAllowCIDRs []string, setFlags map[string]bool) (controlAPIHTTPConfig, error) {
+	cfg := defaultControlAPIHTTPConfig()
+	if router != nil {
+		var found *api.ControlAPISpec
+		for _, res := range router.Spec.Resources {
+			if res.APIVersion != api.SystemAPIVersion || res.Kind != "ControlAPI" {
+				continue
+			}
+			spec, err := res.ControlAPISpec()
+			if err != nil {
+				return controlAPIHTTPConfig{}, err
+			}
+			if found != nil {
+				return controlAPIHTTPConfig{}, errors.New("only one system.routerd.net/v1alpha1 ControlAPI resource is supported")
+			}
+			found = &spec
+		}
+		if found != nil {
+			if found.Enabled != nil {
+				cfg.Enabled = *found.Enabled
+			}
+			if strings.TrimSpace(found.ListenAddress) != "" || found.Port != 0 {
+				listenAddress := defaultControlAPIListenAddress
+				if strings.TrimSpace(found.ListenAddress) != "" {
+					listenAddress = strings.TrimSpace(found.ListenAddress)
+				}
+				port := defaultControlAPIPort
+				if found.Port != 0 {
+					port = found.Port
+				}
+				cfg.Listen = net.JoinHostPort(listenAddress, strconv.Itoa(port))
+			}
+			if len(found.AllowCIDRs) > 0 {
+				prefixes, err := parseControlAPIAllowCIDRs(found.AllowCIDRs)
+				if err != nil {
+					return controlAPIHTTPConfig{}, err
+				}
+				cfg.AllowPrefixes = prefixes
+			}
+		}
+	}
+	if setFlags["http-listen"] {
+		if cliListen == "" {
+			return controlAPIHTTPConfig{}, errors.New("--http-listen must not be empty")
+		}
+		cfg.Enabled = true
+		cfg.Listen = cliListen
+	}
+	if setFlags["http-allow-cidr"] {
+		prefixes, err := parseControlAPIAllowCIDRs(cliAllowCIDRs)
+		if err != nil {
+			return controlAPIHTTPConfig{}, err
+		}
+		cfg.AllowPrefixes = prefixes
+	}
+	if cfg.Enabled && len(cfg.AllowPrefixes) == 0 {
+		return controlAPIHTTPConfig{}, errors.New("control HTTP API source allow CIDRs must not be empty")
+	}
+	return cfg, nil
+}
+
+func parseControlAPIAllowCIDRs(cidrs []string) ([]netip.Prefix, error) {
+	prefixes := make([]netip.Prefix, 0, len(cidrs))
+	for i, cidr := range cidrs {
+		text := strings.TrimSpace(cidr)
+		if text == "" {
+			return nil, fmt.Errorf("control HTTP API allow CIDR %d must not be empty", i)
+		}
+		prefix, err := netip.ParsePrefix(text)
+		if err != nil {
+			return nil, fmt.Errorf("control HTTP API allow CIDR %d must be valid: %w", i, err)
+		}
+		if prefix.Bits() == 0 {
+			addr := prefix.Addr().Unmap()
+			if addr.Is4() && addr == netip.IPv4Unspecified() {
+				return nil, fmt.Errorf("control HTTP API allow CIDR %d must not be 0.0.0.0/0", i)
+			}
+			if addr.Is6() && addr == netip.IPv6Unspecified() {
+				return nil, fmt.Errorf("control HTTP API allow CIDR %d must not be ::/0", i)
+			}
+		}
+		prefixes = append(prefixes, prefix.Masked())
+	}
+	return prefixes, nil
+}
+
+func controlAPIAdmissionHandler(next http.Handler, allowPrefixes []netip.Prefix) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		addr, err := remoteAddrIP(r.RemoteAddr)
+		if err != nil || !controlAPISourceAllowed(addr, allowPrefixes) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func remoteAddrIP(remoteAddr string) (netip.Addr, error) {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	addr, err := netip.ParseAddr(strings.Trim(host, "[]"))
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	return addr.Unmap(), nil
+}
+
+func controlAPISourceAllowed(addr netip.Addr, allowPrefixes []netip.Prefix) bool {
+	addr = addr.Unmap()
+	for _, prefix := range allowPrefixes {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 func parseControllerNames(value string) []string {

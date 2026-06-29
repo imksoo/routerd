@@ -179,10 +179,12 @@ Pass criteria were all 12 directed pairs passing ping and SSH:
 
 ## Security Boundary
 
-`routerd serve --http-listen` exposes the mutation/control API, including SAM
-enrollment submission. Bind it only to a protected management/private underlay
-address, or shield it with equivalent firewall or security-group policy. It is
-not an Internet-safe listener.
+The TCP control API defaults to `127.0.0.1:65432` and loopback-only source
+admission. RR-side SAM enrollment over a private underlay should declare a
+`system.routerd.net/v1alpha1` `ControlAPI` resource with a protected
+`listenAddress`, `port: 65432`, and a narrow `allowCIDRs` list such as the leaf
+management subnet. `0.0.0.0/0` and `::/0` are rejected; this is not an
+Internet-safe listener.
 
 The join token authorizes enrollment requests, not long-term route ownership by
 itself. The RR still validates claim TTL, HMAC, tunnel address prefixes,

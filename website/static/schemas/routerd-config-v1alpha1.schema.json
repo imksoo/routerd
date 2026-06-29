@@ -1740,6 +1740,66 @@
                     "type": "string"
                   },
                   "kind": {
+                    "const": "ControlAPI",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "allowCIDRs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "listenAddress": {
+                        "type": "string"
+                      },
+                      "port": {
+                        "maximum": 65535,
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "system.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
                     "const": "RouterdCluster",
                     "type": "string"
                   },
@@ -3029,6 +3089,16 @@
                       "importPolicy": {
                         "additionalProperties": false,
                         "properties": {
+                          "allowedPrefixLengthMax": {
+                            "maximum": 128,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "allowedPrefixLengthMin": {
+                            "maximum": 128,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
                           "allowedPrefixes": {
                             "items": {
                               "type": "string"
@@ -3279,6 +3349,16 @@
                       "importPolicy": {
                         "additionalProperties": false,
                         "properties": {
+                          "allowedPrefixLengthMax": {
+                            "maximum": 128,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "allowedPrefixLengthMin": {
+                            "maximum": 128,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
                           "allowedPrefixes": {
                             "items": {
                               "type": "string"
@@ -3476,6 +3556,16 @@
                       "importPolicy": {
                         "additionalProperties": false,
                         "properties": {
+                          "allowedPrefixLengthMax": {
+                            "maximum": 128,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "allowedPrefixLengthMin": {
+                            "maximum": 128,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
                           "allowedPrefixes": {
                             "items": {
                               "type": "string"
@@ -9803,6 +9893,16 @@
                       "routeAdmission": {
                         "additionalProperties": false,
                         "properties": {
+                          "allowedPrefixLengthMax": {
+                            "maximum": 128,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "allowedPrefixLengthMin": {
+                            "maximum": 128,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
                           "allowedPrefixes": {
                             "items": {
                               "type": "string"
@@ -9929,6 +10029,12 @@
                         "additionalProperties": false,
                         "properties": {
                           "allowedExtraIPPrefixes": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "endpointPrefixes": {
                             "items": {
                               "type": "string"
                             },
@@ -10109,6 +10215,80 @@
                     "type": "string"
                   },
                   "kind": {
+                    "const": "SAMEnrollmentClient",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "description": "SAMEnrollmentClient runs leaf-side enrollment bootstrap/refresh.",
+                    "properties": {
+                      "bootstrapEndpoints": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "claimRef": {
+                        "type": "string"
+                      },
+                      "retryBackoff": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "max": {
+                            "type": "string"
+                          },
+                          "min": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "rrSocket": {
+                        "type": "string"
+                      },
+                      "stateTTLRefreshBefore": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "claimRef"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
+                    "const": "mobility.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
                     "const": "SAMTransportProfile",
                     "type": "string"
                   },
@@ -10195,6 +10375,16 @@
                           "importPolicy": {
                             "additionalProperties": false,
                             "properties": {
+                              "allowedPrefixLengthMax": {
+                                "maximum": 128,
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "allowedPrefixLengthMin": {
+                                "maximum": 128,
+                                "minimum": 0,
+                                "type": "integer"
+                              },
                               "allowedPrefixes": {
                                 "items": {
                                   "type": "string"

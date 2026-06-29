@@ -23,6 +23,7 @@ func ConfigResourceKinds() []ResourceKindSchema {
 		{SystemAPIVersion, "NTPClient", NTPClientSpec{}},
 		{SystemAPIVersion, "NTPServer", NTPServerSpec{}},
 		{SystemAPIVersion, "WebConsole", WebConsoleSpec{}},
+		{SystemAPIVersion, "ControlAPI", ControlAPISpec{}},
 		{SystemAPIVersion, "RouterdCluster", RouterdClusterSpec{}},
 		{NetAPIVersion, "Interface", InterfaceSpec{}},
 		{NetAPIVersion, "PPPoESession", PPPoESessionSpec{}},

@@ -294,7 +294,7 @@ Example leaf bootstrap command:
 routerctl mobility enrollment-join \
   --config /usr/local/etc/routerd/router.yaml \
   --claim pve-leaf-b \
-  --rr-url http://10.30.0.10:8080 \
+  --rr-url http://10.30.0.10:65432 \
   --state-file /var/lib/routerd/routerd.db
 ```
 

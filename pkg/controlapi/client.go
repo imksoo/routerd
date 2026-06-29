@@ -51,7 +51,7 @@ func NewUnixClient(socketPath string) *Client {
 func NewHTTPClient(baseURL string) *Client {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" {
-		baseURL = "http://127.0.0.1:8080"
+		baseURL = "http://127.0.0.1:65432"
 	}
 	return &Client{
 		httpClient:    http.DefaultClient,

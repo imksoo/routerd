@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -368,6 +370,9 @@ spec:
 `
 	if err := os.WriteFile(configPath, []byte(input), 0640); err != nil {
 		t.Fatalf("write config: %v", err)
+	}
+	if err := os.Chmod(configPath, 0640); err != nil {
+		t.Fatalf("chmod config: %v", err)
 	}
 	router, err := config.Load(configPath)
 	if err != nil {
@@ -766,6 +771,93 @@ func TestServeAcceptsLegacyControllerChainFlags(t *testing.T) {
 	}
 	if !loopbackEnsured {
 		t.Fatal("serve --once did not ensure loopback is up")
+	}
+}
+
+func TestControlAPIHTTPConfigDefaultsToLoopbackHighPort(t *testing.T) {
+	cfg, err := resolveControlAPIHTTPConfig(testControlAPIRouter("control-defaults"), "", nil, map[string]bool{})
+	if err != nil {
+		t.Fatalf("resolveControlAPIHTTPConfig: %v", err)
+	}
+	if !cfg.Enabled {
+		t.Fatal("control HTTP API should be enabled by default")
+	}
+	if cfg.Listen != "127.0.0.1:65432" {
+		t.Fatalf("Listen = %q, want 127.0.0.1:65432", cfg.Listen)
+	}
+	if !controlAPISourceAllowed(netip.MustParseAddr("127.0.0.1"), cfg.AllowPrefixes) {
+		t.Fatal("default policy should allow IPv4 loopback")
+	}
+	if !controlAPISourceAllowed(netip.MustParseAddr("::1"), cfg.AllowPrefixes) {
+		t.Fatal("default policy should allow IPv6 loopback")
+	}
+	if controlAPISourceAllowed(netip.MustParseAddr("10.30.0.25"), cfg.AllowPrefixes) {
+		t.Fatal("default policy should reject non-loopback source")
+	}
+}
+
+func TestControlAPIHTTPConfigAcceptsNarrowCIDR(t *testing.T) {
+	router := testControlAPIRouter("control-narrow")
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "ControlAPI"},
+		Metadata: api.ObjectMeta{Name: "default"},
+		Spec: api.ControlAPISpec{
+			ListenAddress: "10.30.0.10",
+			Port:          65432,
+			AllowCIDRs:    []string{"10.30.0.0/24"},
+		},
+	})
+	cfg, err := resolveControlAPIHTTPConfig(router, "", nil, map[string]bool{})
+	if err != nil {
+		t.Fatalf("resolveControlAPIHTTPConfig: %v", err)
+	}
+	if cfg.Listen != "10.30.0.10:65432" {
+		t.Fatalf("Listen = %q, want 10.30.0.10:65432", cfg.Listen)
+	}
+	if !controlAPISourceAllowed(netip.MustParseAddr("10.30.0.25"), cfg.AllowPrefixes) {
+		t.Fatal("configured narrow CIDR should allow matching source")
+	}
+	if controlAPISourceAllowed(netip.MustParseAddr("10.31.0.25"), cfg.AllowPrefixes) {
+		t.Fatal("configured narrow CIDR should reject nonmatching source")
+	}
+}
+
+func TestControlAPIHTTPConfigRejectsWideOpenCIDRs(t *testing.T) {
+	for _, cidr := range []string{"0.0.0.0/0", "::/0"} {
+		if _, err := parseControlAPIAllowCIDRs([]string{cidr}); err == nil {
+			t.Fatalf("parseControlAPIAllowCIDRs(%q) succeeded, want error", cidr)
+		}
+	}
+}
+
+func TestControlAPIAdmissionUsesRemoteAddrOnly(t *testing.T) {
+	prefixes, err := parseControlAPIAllowCIDRs([]string{"127.0.0.1/32"})
+	if err != nil {
+		t.Fatalf("parseControlAPIAllowCIDRs: %v", err)
+	}
+	called := false
+	handler := controlAPIAdmissionHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}), prefixes)
+	req := httptest.NewRequest(http.MethodGet, "http://routerd.test/api/control.routerd.net/v1alpha1/status", nil)
+	req.RemoteAddr = "10.30.0.25:45678"
+	req.Header.Set("X-Forwarded-For", "127.0.0.1")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+	if called {
+		t.Fatal("handler was called for rejected source")
+	}
+}
+
+func testControlAPIRouter(name string) *api.Router {
+	return &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: name},
+		Spec:     api.RouterSpec{Resources: []api.Resource{}},
 	}
 }
 

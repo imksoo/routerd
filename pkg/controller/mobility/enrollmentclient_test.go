@@ -199,7 +199,7 @@ func testSAMEnrollmentClientRouter(nonce string) *api.Router {
 				Metadata: api.ObjectMeta{Name: "pve-leaf-a"},
 				Spec: api.SAMEnrollmentClientSpec{
 					ClaimRef:              "SAMEnrollmentClaim/pve-leaf-a",
-					BootstrapEndpoints:    []string{"http://10.30.0.10:8080"},
+					BootstrapEndpoints:    []string{"http://10.30.0.10:65432"},
 					StateTTLRefreshBefore: "10m",
 					RetryBackoff:          api.SAMEnrollmentRetryBackoffSpec{Min: "10s", Max: "15m"},
 				},
