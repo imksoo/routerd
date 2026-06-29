@@ -3,11 +3,13 @@
 package golden_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
+	"gopkg.in/yaml.v3"
 )
 
 func TestCloudEdgeDynamicRRLeafExamplesUseDualRRShape(t *testing.T) {
@@ -159,10 +161,13 @@ func TestPVEMinimalDynamicRRLeafExamples(t *testing.T) {
 	assertHasResource(t, rr, api.NetAPIVersion, "BGPDynamicPeer", "pve-leaves")
 	assertHasResource(t, rr, api.MobilityAPIVersion, "SAMEnrollmentPolicy", "pve-wg-leaves")
 	assertHasResource(t, rr, api.MobilityAPIVersion, "SAMEnrollmentPolicy", "pve-fou-leaves")
-	assertHasResource(t, rr, api.MobilityAPIVersion, "SAMEnrollmentClaim", "pve-leaf-a")
-	assertHasResource(t, rr, api.MobilityAPIVersion, "SAMEnrollmentClaim", "pve-leaf-b")
+	assertMissingResource(t, rr, api.MobilityAPIVersion, "SAMEnrollmentClaim", "pve-leaf-a")
+	assertMissingResource(t, rr, api.MobilityAPIVersion, "SAMEnrollmentClaim", "pve-leaf-b")
 	assertMissingResource(t, rr, api.NetAPIVersion, "BGPPeer", "pve-leaf-a")
 	assertMissingResource(t, rr, api.NetAPIVersion, "BGPPeer", "pve-leaf-b")
+	seed := loadFixtureRouter(t, "pve-minimal-rr-claims-seed.yaml")
+	assertHasResource(t, seed, api.MobilityAPIVersion, "SAMEnrollmentClaim", "pve-leaf-a")
+	assertHasResource(t, seed, api.MobilityAPIVersion, "SAMEnrollmentClaim", "pve-leaf-b")
 
 	dynamicPeer := mustResource(t, rr, api.NetAPIVersion, "BGPDynamicPeer", "pve-leaves")
 	dynamicSpec, err := dynamicPeer.BGPDynamicPeerSpec()
@@ -219,6 +224,19 @@ func TestPVEMinimalDynamicRRLeafExamples(t *testing.T) {
 		assertNamedRRSetMembers(t, leafB, "pve-rrs", "pve-rr")
 		assertLeafBGPRouterPolicy(t, leafB, "pve-leaf-b", "10.77.70.22/32")
 	})
+}
+
+func loadFixtureRouter(t *testing.T, name string) *api.Router {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "fixtures", name))
+	if err != nil {
+		t.Fatalf("read fixture %s: %v", name, err)
+	}
+	var router api.Router
+	if err := yaml.Unmarshal(data, &router); err != nil {
+		t.Fatalf("parse fixture %s: %v", name, err)
+	}
+	return &router
 }
 
 func loadExampleRouter(t *testing.T, name string) *api.Router {

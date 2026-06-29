@@ -228,6 +228,25 @@ func (c *Client) Validate(ctx context.Context, request ValidateRequest) (*Valida
 	return &result, nil
 }
 
+func (c *Client) SubmitSAMEnrollmentClaim(ctx context.Context, request SAMEnrollmentClaimSubmitRequest) (*SAMEnrollmentClaimSubmitResult, error) {
+	request.APIVersion = APIVersion
+	request.Kind = "SAMEnrollmentClaimSubmitRequest"
+	data, err := json.Marshal(request)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+Prefix+"/sam-enrollment-claims", bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	var result SAMEnrollmentClaimSubmitResult
+	if err := c.do(req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 func (c *Client) SetLogLevel(ctx context.Context, request LogLevelRequest) (*LogLevelResult, error) {
 	request.APIVersion = APIVersion
 	request.Kind = "LogLevelRequest"

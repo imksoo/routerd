@@ -4,6 +4,7 @@ package mobility
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
+	"gopkg.in/yaml.v3"
 )
 
 func testStringSlice(value any) []string {
@@ -664,6 +666,13 @@ func TestPVEMinimalExamplesMaterializeReviewTransports(t *testing.T) {
 		if err := config.Validate(router); err != nil {
 			t.Fatalf("validate pve-minimal-rr.yaml: %v", err)
 		}
+		if got := countResources(router.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim"); got != 0 {
+			t.Fatalf("base pve-minimal-rr SAMEnrollmentClaim count = %d, want 0", got)
+		}
+		router.Spec.Resources = append(router.Spec.Resources, pveMinimalRRClaimSeedResources(t)...)
+		if err := config.Validate(router); err != nil {
+			t.Fatalf("validate pve-minimal-rr.yaml with claim seed: %v", err)
+		}
 		store := testStore(t, now)
 		controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
 		if err := controller.Reconcile(context.Background()); err != nil {
@@ -768,6 +777,19 @@ func TestPVEMinimalExamplesMaterializeReviewTransports(t *testing.T) {
 			})
 		}
 	})
+}
+
+func pveMinimalRRClaimSeedResources(t *testing.T) []api.Resource {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "tests", "fixtures", "pve-minimal-rr-claims-seed.yaml"))
+	if err != nil {
+		t.Fatalf("read pve claim seed: %v", err)
+	}
+	var seed api.Router
+	if err := yaml.Unmarshal(data, &seed); err != nil {
+		t.Fatalf("parse pve claim seed: %v", err)
+	}
+	return append([]api.Resource(nil), seed.Spec.Resources...)
 }
 
 func exampleSAMTransportProfile(t *testing.T, router *api.Router, name string) api.SAMTransportProfileSpec {

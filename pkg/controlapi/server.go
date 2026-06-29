@@ -17,25 +17,26 @@ const (
 )
 
 type Handler struct {
-	Status                func(*http.Request) (*Status, error)
-	Controllers           func(*http.Request) (*Controllers, error)
-	Runtime               func(*http.Request) (*RuntimeStats, error)
-	Connections           func(*http.Request, ConnectionsRequest) (*ConnectionTable, error)
-	DNSQueries            func(*http.Request, DNSQueriesRequest) (*DNSQueries, error)
-	DNSQueriesAggregate   func(*http.Request, DNSQueriesRequest) (*DNSQueriesAggregate, error)
-	TrafficFlows          func(*http.Request, TrafficFlowsRequest) (*TrafficFlows, error)
-	TrafficFlowsAggregate func(*http.Request, TrafficFlowsRequest) (*TrafficFlowsAggregate, error)
-	FirewallLogs          func(*http.Request, FirewallLogsRequest) (*FirewallLogs, error)
-	Get                   func(*http.Request, GetRequest) (*GetResult, error)
-	Describe              func(*http.Request, DescribeRequest) (*DescribeResult, error)
-	Probe                 func(*http.Request, ProbeRequest) (*ProbeResult, error)
-	Apply                 func(*http.Request, ApplyRequest) (*ApplyResult, error)
-	Plan                  func(*http.Request, PlanRequest) (*PlanResult, error)
-	Delete                func(*http.Request, DeleteRequest) (*DeleteResult, error)
-	Validate              func(*http.Request, ValidateRequest) (*ValidateResult, error)
-	SetLogLevel           func(*http.Request, LogLevelRequest) (*LogLevelResult, error)
-	DHCPv6Event           func(*http.Request, DHCPv6EventRequest) (*DHCPv6EventResult, error)
-	DHCPLeaseEvent        func(*http.Request, DHCPLeaseEventRequest) (*DHCPLeaseEventResult, error)
+	Status                   func(*http.Request) (*Status, error)
+	Controllers              func(*http.Request) (*Controllers, error)
+	Runtime                  func(*http.Request) (*RuntimeStats, error)
+	Connections              func(*http.Request, ConnectionsRequest) (*ConnectionTable, error)
+	DNSQueries               func(*http.Request, DNSQueriesRequest) (*DNSQueries, error)
+	DNSQueriesAggregate      func(*http.Request, DNSQueriesRequest) (*DNSQueriesAggregate, error)
+	TrafficFlows             func(*http.Request, TrafficFlowsRequest) (*TrafficFlows, error)
+	TrafficFlowsAggregate    func(*http.Request, TrafficFlowsRequest) (*TrafficFlowsAggregate, error)
+	FirewallLogs             func(*http.Request, FirewallLogsRequest) (*FirewallLogs, error)
+	Get                      func(*http.Request, GetRequest) (*GetResult, error)
+	Describe                 func(*http.Request, DescribeRequest) (*DescribeResult, error)
+	Probe                    func(*http.Request, ProbeRequest) (*ProbeResult, error)
+	Apply                    func(*http.Request, ApplyRequest) (*ApplyResult, error)
+	Plan                     func(*http.Request, PlanRequest) (*PlanResult, error)
+	Delete                   func(*http.Request, DeleteRequest) (*DeleteResult, error)
+	Validate                 func(*http.Request, ValidateRequest) (*ValidateResult, error)
+	SubmitSAMEnrollmentClaim func(*http.Request, SAMEnrollmentClaimSubmitRequest) (*SAMEnrollmentClaimSubmitResult, error)
+	SetLogLevel              func(*http.Request, LogLevelRequest) (*LogLevelResult, error)
+	DHCPv6Event              func(*http.Request, DHCPv6EventRequest) (*DHCPv6EventResult, error)
+	DHCPLeaseEvent           func(*http.Request, DHCPLeaseEventRequest) (*DHCPLeaseEventResult, error)
 }
 
 type ConnectionsRequest struct {
@@ -76,6 +77,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleDelete(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/validate":
 		h.handleValidate(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/sam-enrollment-claims":
+		h.handleSubmitSAMEnrollmentClaim(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/log-level":
 		h.handleSetLogLevel(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/dhcpv6-event":
@@ -571,6 +574,37 @@ func (h Handler) handleValidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := h.Validate(r, req)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, ErrBadRequest) {
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h Handler) handleSubmitSAMEnrollmentClaim(w http.ResponseWriter, r *http.Request) {
+	if h.SubmitSAMEnrollmentClaim == nil {
+		writeError(w, http.StatusNotImplemented, "sam enrollment claim submit handler is not configured")
+		return
+	}
+	defer r.Body.Close()
+	var req SAMEnrollmentClaimSubmitRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.APIVersion != "" && req.APIVersion != APIVersion {
+		writeError(w, http.StatusBadRequest, "unsupported apiVersion")
+		return
+	}
+	if req.Kind != "" && req.Kind != "SAMEnrollmentClaimSubmitRequest" {
+		writeError(w, http.StatusBadRequest, "unsupported kind")
+		return
+	}
+	result, err := h.SubmitSAMEnrollmentClaim(r, req)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, ErrBadRequest) {

@@ -162,6 +162,21 @@ type ValidateResult struct {
 	Error    string   `json:"error,omitempty" yaml:"error,omitempty"`
 }
 
+type SAMEnrollmentClaimSubmitRequest struct {
+	TypeMeta `json:",inline" yaml:",inline"`
+	Claim    api.Resource `json:"claim" yaml:"claim"`
+}
+
+type SAMEnrollmentClaimSubmitResult struct {
+	TypeMeta      `json:",inline" yaml:",inline"`
+	Accepted      bool      `json:"accepted" yaml:"accepted"`
+	ClaimRef      string    `json:"claimRef" yaml:"claimRef"`
+	DynamicSource string    `json:"dynamicSource" yaml:"dynamicSource"`
+	Generation    int64     `json:"generation" yaml:"generation"`
+	ObservedAt    time.Time `json:"observedAt" yaml:"observedAt"`
+	ExpiresAt     time.Time `json:"expiresAt" yaml:"expiresAt"`
+}
+
 type LogLevelRequest struct {
 	TypeMeta `json:",inline" yaml:",inline"`
 	Level    string `json:"level" yaml:"level"`
@@ -537,6 +552,18 @@ func NewValidateResult(valid bool, warnings []string, message string) ValidateRe
 		Valid:    valid,
 		Warnings: warnings,
 		Error:    message,
+	}
+}
+
+func NewSAMEnrollmentClaimSubmitResult(claimRef, source string, generation int64, observedAt, expiresAt time.Time) SAMEnrollmentClaimSubmitResult {
+	return SAMEnrollmentClaimSubmitResult{
+		TypeMeta:      TypeMeta{APIVersion: APIVersion, Kind: "SAMEnrollmentClaimSubmitResult"},
+		Accepted:      true,
+		ClaimRef:      claimRef,
+		DynamicSource: source,
+		Generation:    generation,
+		ObservedAt:    observedAt,
+		ExpiresAt:     expiresAt,
 	}
 }
 

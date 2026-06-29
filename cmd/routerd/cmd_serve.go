@@ -703,6 +703,28 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			defer applyMu.Unlock()
 			return mutator.validate(r, req)
 		},
+		SubmitSAMEnrollmentClaim: func(r *http.Request, req controlapi.SAMEnrollmentClaimSubmitRequest) (*controlapi.SAMEnrollmentClaimSubmitResult, error) {
+			applyMu.Lock()
+			defer applyMu.Unlock()
+			result, err := submitSAMEnrollmentClaim(currentRouter(), stateStore, req, time.Now().UTC())
+			if err != nil {
+				return nil, err
+			}
+			if controllerBus != nil {
+				event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd"}, "routerd.resource.status.changed", daemonapi.SeverityInfo)
+				event.Attributes = map[string]string{
+					"resource":      result.ClaimRef,
+					"dynamicSource": result.DynamicSource,
+					"reason":        "sam-enrollment-claim-submitted",
+				}
+				_ = controllerBus.Publish(r.Context(), event)
+			}
+			logger.Emit(eventlog.LevelInfo, "sam-enrollment", "accepted SAMEnrollmentClaim", map[string]string{
+				"claim":         result.ClaimRef,
+				"dynamicSource": result.DynamicSource,
+			})
+			return result, nil
+		},
 		SetLogLevel: func(r *http.Request, req controlapi.LogLevelRequest) (*controlapi.LogLevelResult, error) {
 			level := strings.TrimSpace(req.Level)
 			effective := "default"

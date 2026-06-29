@@ -7,7 +7,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/logstore"
 )
@@ -170,6 +172,31 @@ func TestValidateHandler(t *testing.T) {
 		t.Fatalf("status code = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), `"kind": "ValidateResult"`) || !strings.Contains(rec.Body.String(), `"valid": true`) {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestSubmitSAMEnrollmentClaimHandler(t *testing.T) {
+	handler := Handler{
+		SubmitSAMEnrollmentClaim: func(r *http.Request, req SAMEnrollmentClaimSubmitRequest) (*SAMEnrollmentClaimSubmitResult, error) {
+			if req.Claim.APIVersion != api.MobilityAPIVersion || req.Claim.Kind != "SAMEnrollmentClaim" || req.Claim.Metadata.Name != "leaf-a" {
+				t.Fatalf("claim = %#v", req.Claim)
+			}
+			now := time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC)
+			result := NewSAMEnrollmentClaimSubmitResult("SAMEnrollmentClaim/leaf-a", "SAMEnrollmentClaim/leaf-a", 1, now, now.Add(time.Minute))
+			return &result, nil
+		},
+	}
+	body := `{"apiVersion":"control.routerd.net/v1alpha1","kind":"SAMEnrollmentClaimSubmitRequest","claim":{"apiVersion":"mobility.routerd.net/v1alpha1","kind":"SAMEnrollmentClaim","metadata":{"name":"leaf-a"},"spec":{"policyRef":"SAMEnrollmentPolicy/leaves","leafID":"leaf-a","tunnelAddress":"10.255.0.21/32"}}}`
+	req := httptest.NewRequest(http.MethodPost, Prefix+"/sam-enrollment-claims", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"kind": "SAMEnrollmentClaimSubmitResult"`) || !strings.Contains(rec.Body.String(), `"accepted": true`) {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 }

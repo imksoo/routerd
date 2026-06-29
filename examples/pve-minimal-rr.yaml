@@ -167,30 +167,6 @@ spec:
         mobilityPoolRefs: [MobilityPool/pve-mobility]
 
     - apiVersion: mobility.routerd.net/v1alpha1
-      kind: SAMEnrollmentClaim
-      metadata: { name: pve-leaf-a }
-      spec:
-        policyRef: SAMEnrollmentPolicy/pve-wg-leaves
-        rrSetRef: SAMRRSet/pve-rrs
-        leafID: pve-leaf-a
-        joinAudience: pve-wg-underlay
-        joinNonce: pve-leaf-a-0001
-        joinTimestamp: "2026-06-28T00:00:00Z"
-        joinHMAC: EXAMPLE_HMAC_SHA256_HEX
-        tunnelAddress: 10.255.10.21/32
-        endpoint: 10.31.0.21
-        wireGuard:
-          publicKey: PVE_LEAF_A_WIREGUARD_PUBLIC_KEY
-          endpoint: 10.30.0.21:51820
-          allowedIPs: [10.31.0.21/32]
-          persistentKeepalive: 25
-        mobility:
-          ownedAddresses: [10.77.70.21/32]
-        bgp:
-          asn: 64577
-          routerID: 10.255.10.21
-
-    - apiVersion: mobility.routerd.net/v1alpha1
       kind: SAMEnrollmentPolicy
       metadata: { name: pve-fou-leaves }
       spec:
@@ -204,22 +180,3 @@ spec:
         tunnelAddressPrefixes: [10.255.10.0/24]
         endpointPrefixes: [10.30.0.0/24]
         mobilityPoolRefs: [MobilityPool/pve-mobility]
-
-    - apiVersion: mobility.routerd.net/v1alpha1
-      kind: SAMEnrollmentClaim
-      metadata: { name: pve-leaf-b }
-      spec:
-        policyRef: SAMEnrollmentPolicy/pve-fou-leaves
-        rrSetRef: SAMRRSet/pve-rrs
-        leafID: pve-leaf-b
-        joinAudience: pve-private-underlay
-        joinNonce: pve-leaf-b-0001
-        joinTimestamp: "2026-06-28T00:00:00Z"
-        joinHMAC: EXAMPLE_HMAC_SHA256_HEX
-        tunnelAddress: 10.255.10.22/32
-        endpoint: 10.30.0.22
-        mobility:
-          ownedAddresses: [10.77.70.22/32]
-        bgp:
-          asn: 64577
-          routerID: 10.255.10.22
