@@ -923,7 +923,7 @@ spec:
 }
 
 func TestPVEWireGuardPeersFromSubmittedEnrollmentClaimState(t *testing.T) {
-	now := time.Date(2026, 6, 28, 9, 8, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	router, err := config.Load(filepath.Join("..", "..", "..", "examples", "pve-minimal-rr.yaml"))
 	if err != nil {
 		t.Fatalf("load pve-minimal-rr.yaml: %v", err)
@@ -954,7 +954,7 @@ func TestPVEWireGuardPeersFromSubmittedEnrollmentClaimState(t *testing.T) {
 }
 
 func TestCloudEdgeRRExamplesDeriveOnlyWGAdmissionPeers(t *testing.T) {
-	now := time.Date(2026, 6, 28, 9, 9, 0, 0, time.UTC)
+	now := time.Now().UTC().Truncate(time.Second)
 	for _, example := range []string{
 		"cloudedge-dynamic-rr-a-hub.yaml",
 		"cloudedge-dynamic-rr-b-hub.yaml",
