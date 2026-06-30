@@ -71,6 +71,15 @@ func ValuesFromRouter(router *api.Router, source api.StatusValueSourceSpec) []st
 				return nil
 			}
 			return compact([]string{spec.Zone})
+		case "IPv4StaticAddress":
+			if field != "address" {
+				return nil
+			}
+			spec, err := resource.IPv4StaticAddressSpec()
+			if err != nil {
+				return nil
+			}
+			return compact([]string{spec.Address})
 		default:
 			return nil
 		}

@@ -106,6 +106,20 @@ func TestValuesFromRouterResolvesDNSZone(t *testing.T) {
 	}
 }
 
+func TestValuesFromRouterResolvesIPv4StaticAddress(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-base"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "172.18.0.2/16"}},
+	}}}
+
+	values := ValuesFromRouter(router, api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/lan-base", Field: "address"})
+	if len(values) != 1 || values[0] != "172.18.0.2/16" {
+		t.Fatalf("unexpected values: %#v", values)
+	}
+	if values := ValuesFromRouter(router, api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/lan-base"}); len(values) != 0 {
+		t.Fatalf("expected field to be explicit, got %#v", values)
+	}
+}
+
 func TestSourceReadyUsesKindAPIVersion(t *testing.T) {
 	store := mapStore{
 		api.FirewallAPIVersion + "/FirewallPolicy/default": {
