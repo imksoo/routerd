@@ -19,7 +19,7 @@ spec:
       kind: ControlAPI
       metadata: { name: default }
       spec:
-        listenAddress: 10.30.0.10
+        listenAddress: 0.0.0.0
         port: 65432
         allowCIDRs: [10.30.0.0/24]
 
@@ -164,7 +164,7 @@ spec:
           pattern: ^pve-leaf-[a-z0-9-]+$
         tunnelAddressPrefixes: [10.255.10.0/24]
         endpointPrefixes: [10.31.0.0/24]
-        ttl: 24h
+        ttl: 8760h
         wireGuard:
           interface: wg-pve
           endpointPrefixes: [10.30.0.0/24]
@@ -185,5 +185,5 @@ spec:
           pattern: ^pve-leaf-[a-z0-9-]+$
         tunnelAddressPrefixes: [10.255.10.0/24]
         endpointPrefixes: [10.30.0.0/24]
-        ttl: 24h
+        ttl: 8760h
         mobilityPrefixes: [10.77.70.0/24]

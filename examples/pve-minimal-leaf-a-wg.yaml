@@ -114,7 +114,7 @@ spec:
           pattern: ^pve-leaf-[a-z0-9-]+$
         tunnelAddressPrefixes: [10.255.10.0/24]
         endpointPrefixes: [10.31.0.0/24]
-        ttl: 24h
+        ttl: 8760h
         wireGuard:
           interface: wg-pve
           endpointPrefixes: [10.30.0.0/24]
