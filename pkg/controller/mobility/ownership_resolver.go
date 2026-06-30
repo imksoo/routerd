@@ -280,6 +280,18 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			continue
 		}
 		if eventOwner, ok := eventOwned[address]; ok && strings.TrimSpace(eventOwner.AdvertiseOwnerNode) == self.NodeRef {
+			if owner := strings.TrimSpace(in.BGPHomeOwnerNodes[address]); owner != "" && owner != self.NodeRef {
+				decision.HomeOwnerNode = owner
+				decision.LocalNodeRef = self.NodeRef
+				decision.LocalSource = ownershipEventLocalSource(eventOwner.SourceType)
+				decision.LocalSourceType = eventOwner.SourceType
+				decision.Source = "bgp-owner"
+				decision.Class = ownershipClassRemoteHomeOwned
+				decision.SuppressionReason = "bgp-owner-overlaps-local-ownership-event"
+				decision.Fresh = true
+				out = append(out, decision)
+				continue
+			}
 			if fact, remote := remoteHomeFacts[address]; remote && strings.TrimSpace(fact.NodeRef) != "" && strings.TrimSpace(fact.NodeRef) != self.NodeRef {
 				decision.Class = ownershipClassRemoteHomeOwned
 				applyProviderHomeOwnerFact(&decision, fact)
