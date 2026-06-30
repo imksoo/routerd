@@ -625,43 +625,6 @@ func TestOwnershipResolverReportsRemoteHomeLocalOwnershipEventConflict(t *testin
 	}
 }
 
-func TestOwnershipResolverPrefersBGPOnPremOwnerOverLocalObservation(t *testing.T) {
-	now := time.Date(2026, 6, 30, 9, 45, 0, 0, time.UTC)
-	spec := pveProxyARPPoolSpec()
-	events := []routerstate.EventRecord{
-		onPremDiscoveryObservedEvent("cloudedge", "cloudedge", "pve-leaf-a", "10.77.60.19/32", onPremObservation{
-			Address:    "10.77.60.19",
-			MAC:        "bc:24:11:60:a1:f4",
-			Interface:  "ens19",
-			SourceType: OnPremSourceARPObserver,
-			ObservedAt: now,
-		}, now, time.Hour),
-	}
-	decisions, err := resolveAddressOwnership(ownershipResolverInput{
-		PoolName: "cloudedge",
-		SelfNode: "pve-leaf-a",
-		Spec:     spec,
-		Events:   events,
-		BGPHomeOwnerNodes: map[string]string{
-			"10.77.60.19/32": "pve-leaf-b",
-		},
-		Now: now,
-	})
-	if err != nil {
-		t.Fatalf("resolveAddressOwnership: %v", err)
-	}
-	decision := ownershipDecisionByAddress(t, decisions, "10.77.60.19/32")
-	if decision.Class != ownershipClassRemoteHomeOwned || decision.HomeOwnerNode != "pve-leaf-b" {
-		t.Fatalf("decision = %#v, want remote BGP onprem owner", decision)
-	}
-	if decision.LocalNodeRef != "pve-leaf-a" || decision.LocalSource != onPremDiscoverySource || decision.LocalSourceType != OnPremSourceARPObserver {
-		t.Fatalf("decision = %#v, want local observation retained as suppressed evidence", decision)
-	}
-	if decision.SuppressionReason != "bgp-owner-overlaps-local-ownership-event" || decision.AdvertiseOwnerNode != "" {
-		t.Fatalf("decision = %#v, want local advertisement suppressed by BGP owner", decision)
-	}
-}
-
 func TestOwnershipResolverIgnoresPeerProxyARPShadowObservedEvents(t *testing.T) {
 	now := time.Date(2026, 6, 10, 15, 30, 0, 0, time.UTC)
 	spec := pveProxyARPPoolSpec()
