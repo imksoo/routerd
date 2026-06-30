@@ -16,6 +16,23 @@ spec:
       spec: { interface: private-wan, address: 10.30.0.21/24 }
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata: { name: client-lan }
+      spec: { ifname: vmbr1, managed: false, mtu: 1500 }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata: { name: client-lan-capture-source }
+      spec: { interface: client-lan, address: 10.77.70.34/32 }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata: { name: client-lan-link-route }
+      spec:
+        destination: 10.77.70.0/24
+        deviceFrom: { resource: Interface/client-lan, field: ifname }
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: WireGuardInterface
       metadata: { name: wg-pve }
       spec:
@@ -48,7 +65,7 @@ spec:
         interface: lo-mobility
         address: 10.77.70.21/32
         allowOverlap: true
-        allowOverlapReason: pve-leaf-a owned mobility /32 advertised to pve-rr
+        allowOverlapReason: pve-leaf-a owned mobility /32 advertised to pve RRs
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: BGPRouter
@@ -57,7 +74,7 @@ spec:
         asn: 64577
         routerID: 10.255.10.21
         exportPolicy:
-          allowedPrefixes: [10.77.70.21/32]
+          allowedPrefixes: [10.77.70.21/32, 10.77.70.15/32]
         redistribute:
           connected:
             allowedPrefixes: [10.77.70.21/32]
@@ -85,9 +102,9 @@ spec:
             allowedPrefixes: [10.77.70.0/24]
             allowedPrefixLengthMin: 32
             allowedPrefixLengthMax: 32
-            nextHopRewrite: unchanged
+            nextHopRewrite: peer-address
           exportPolicy:
-            allowedPrefixes: [10.77.70.21/32]
+            allowedPrefixes: [10.77.70.21/32, 10.77.70.15/32]
 
     - apiVersion: mobility.routerd.net/v1alpha1
       kind: MobilityPool
@@ -96,10 +113,18 @@ spec:
         prefix: 10.77.70.0/24
         groupRef: pve-lab
         mode: selective-address
+        capturePolicy: { mode: all-non-owner-sites }
         members:
           - nodeRef: pve-leaf-a
-            site: pve-lab
+            site: pve-lab-a
             role: onprem
+            staticOwnedAddresses: [10.77.70.15/32]
+            capture:
+              type: proxy-arp
+              interface: client-lan
+              sourceAddress: 10.77.70.34/32
+              gratuitousARP: true
+              activeWhen: { type: single-router }
 
     - apiVersion: mobility.routerd.net/v1alpha1
       kind: SAMEnrollmentPolicy
@@ -114,13 +139,43 @@ spec:
           pattern: ^pve-leaf-[a-z0-9-]+$
         tunnelAddressPrefixes: [10.255.10.0/24]
         endpointPrefixes: [10.31.0.0/24]
-        ttl: 24h
+        ttl: 8760h
         wireGuard:
           interface: wg-pve
           endpointPrefixes: [10.30.0.0/24]
           allowedExtraIPPrefixes: [10.31.0.0/24]
           persistentKeepalive: 25
         mobilityPoolRefs: [MobilityPool/pve-mobility]
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: OverlayPeer
+      metadata: { name: pve-rrs }
+      spec:
+        role: onprem
+        nodeID: pve-rrs
+        underlay: { type: route }
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: AddressMobilityDomain
+      metadata: { name: bgp-pve-mobility }
+      spec:
+        prefix: 10.77.70.0/24
+        mode: selective-address
+        peerRef: pve-rrs
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: RemoteAddressClaim
+      metadata: { name: pve-client-b-proxy }
+      spec:
+        domainRef: bgp-pve-mobility
+        address: 10.77.70.19/32
+        ownerSide: onprem
+        capture:
+          type: proxy-arp
+          interface: client-lan
+          gratuitousARP: true
+          activeWhen: { type: single-router }
+        delivery: { mode: bgp, peerRef: pve-rrs }
 
     - apiVersion: mobility.routerd.net/v1alpha1
       kind: SAMEnrollmentClaim
@@ -141,7 +196,7 @@ spec:
           allowedIPs: [10.31.0.21/32]
           persistentKeepalive: 25
         mobility:
-          ownedAddresses: [10.77.70.21/32]
+          ownedAddresses: [10.77.70.21/32, 10.77.70.15/32]
         bgp:
           asn: 64577
           routerID: 10.255.10.21
@@ -153,5 +208,6 @@ spec:
         claimRef: SAMEnrollmentClaim/pve-leaf-a
         bootstrapEndpoints:
           - http://10.30.0.10:65432
+          - http://10.30.0.11:65432
         stateTTLRefreshBefore: 10m
         retryBackoff: { min: 10s, max: 15m }

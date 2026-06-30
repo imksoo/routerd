@@ -46,7 +46,7 @@ func TestSubmitSAMEnrollmentClaimPersistsValidatedDynamicClaim(t *testing.T) {
 	if !result.Accepted || result.DynamicSource != "SAMEnrollmentClaim/pve-leaf-a" || result.ClaimRef != "SAMEnrollmentClaim/pve-leaf-a" {
 		t.Fatalf("result = %#v", result)
 	}
-	if want := now.Add(24 * time.Hour); !result.ExpiresAt.Equal(want) {
+	if want := now.Add(8760 * time.Hour); !result.ExpiresAt.Equal(want) {
 		t.Fatalf("result ExpiresAt = %s, want policy ttl expiry %s", result.ExpiresAt, want)
 	}
 	records, err := store.GetDynamicConfigPartsBySource("SAMEnrollmentClaim/pve-leaf-a")
@@ -151,7 +151,7 @@ func TestSubmitSAMEnrollmentClaimRejectsExpiresAtBeyondPolicyTTL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claim spec: %v", err)
 	}
-	claimSpec.ExpiresAt = "2026-06-29T00:01:00Z"
+	claimSpec.ExpiresAt = "2027-06-29T00:01:00Z"
 	claimSpec.JoinHMAC = samenrollment.JoinHMAC([]byte("test-join-token"), claimSpec)
 	claim.Spec = claimSpec
 	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "routerd.db"))
@@ -211,7 +211,7 @@ func TestGetSAMRRSetForAcceptedClaimReturnsOnlyClaimRRSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rrset spec: %v", err)
 	}
-	if len(spec.Members) != 1 || spec.Members[0].NodeRef != "pve-rr" {
+	if len(spec.Members) != 2 || spec.Members[0].NodeRef != "pve-rr-a" || spec.Members[1].NodeRef != "pve-rr-b" {
 		t.Fatalf("rrset members = %#v", spec.Members)
 	}
 }

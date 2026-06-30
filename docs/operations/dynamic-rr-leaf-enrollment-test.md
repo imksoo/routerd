@@ -138,8 +138,11 @@ Mixed transport review examples:
 PVE minimal automatic review examples:
 
 - `examples/pve-minimal-rr.yaml`
+- `examples/pve-minimal-rr-b.yaml`
 - `examples/pve-minimal-leaf-a-wg.yaml`
 - `examples/pve-minimal-leaf-b-fou.yaml`
+- `examples/pve-minimal-leaf-c-wg.yaml`
+- `examples/pve-minimal-leaf-d-fou.yaml`
 - `tests/fixtures/pve-minimal-leaf-rrset-fetched.yaml`
 
 These configs model:
@@ -162,6 +165,14 @@ The dual-RR CloudEdge examples intentionally model separated RR/leaf roles:
 `MobilityPool`. They use `mobilityPrefixes: [10.77.60.0/24]` on RR-side
 admission resources so local validation catches invalid claim addresses without
 starting mobility planning on the RRs.
+
+The PVE minimal examples use the same separated RR/leaf admission shape, reduced
+to two local RRs and four leaves. `examples/pve-minimal-rr.yaml` models
+`pve-rr-a`, `examples/pve-minimal-rr-b.yaml` models `pve-rr-b`, and both RR
+configs authorize leaf-owned `/32` claims with
+`mobilityPrefixes: [10.77.70.0/24]` instead of declaring a placeholder
+`MobilityPool`. Leaf startup configs bootstrap against both RRs and consume a
+fetched `SAMRRSet/pve-rrs` containing `pve-rr-a` and `pve-rr-b`.
 
 The mixed examples model:
 
@@ -291,6 +302,12 @@ scripts/routerd-sandbox-run.sh sh -c '
 ' sh \
   examples/cloudedge-dynamic-rr-a-hub.yaml \
   examples/cloudedge-dynamic-rr-b-hub.yaml \
+  examples/pve-minimal-rr.yaml \
+  examples/pve-minimal-rr-b.yaml \
+  examples/pve-minimal-leaf-a-wg.yaml \
+  examples/pve-minimal-leaf-b-fou.yaml \
+  examples/pve-minimal-leaf-c-wg.yaml \
+  examples/pve-minimal-leaf-d-fou.yaml \
   examples/cloudedge-dynamic-leaf-pve.yaml \
   examples/cloudedge-dynamic-leaf-a-wg.yaml \
   examples/cloudedge-dynamic-leaf-b-fou.yaml
@@ -336,12 +353,14 @@ Expected local evidence:
 - `TestCloudEdgeRRExamplesDeriveOnlyWGAdmissionPeers` proves the RR-side WG
   materialization path derives only `WireGuardPeer/leaf-a` and does not turn the
   non-WG `leaf-b` FOU claim into a WG peer.
-- `examples/pve-minimal-leaf-a-wg.yaml` and
-  `examples/pve-minimal-leaf-b-fou.yaml` contain no static
+- `examples/pve-minimal-leaf-a-wg.yaml`,
+  `examples/pve-minimal-leaf-b-fou.yaml`,
+  `examples/pve-minimal-leaf-c-wg.yaml`, and
+  `examples/pve-minimal-leaf-d-fou.yaml` contain no static
   `SAMRRSet/pve-rrs`; tests inject
   `tests/fixtures/pve-minimal-leaf-rrset-fetched.yaml` as fetched dynamic
   state and prove the leaf generates RR-facing `TunnelInterface` and `BGPPeer`
-  resources from it.
+  resources toward both `pve-rr-a` and `pve-rr-b`.
 - `SAMEnrollmentClient` submits the leaf claim, fetches the allowed RRSet, and
   writes the fetched RRSet to local dynamic state only when refresh is needed.
 - `routerctl mobility enrollment-join` performs the same submit/fetch/write
@@ -533,8 +552,8 @@ Required live-test artifacts:
   after final config edits;
 - firewall/underlay reachability for BGP TCP/179 over the generated tunnel
   addresses;
-- UDP `5555` permitted between leaf-b and both RRs for the FOU path;
-- for the optional WG path only, leaf-a local WG private key, RR WG public keys,
+- UDP `5555` permitted between leaf-b/leaf-d and both RRs for the FOU path;
+- for the optional WG path only, leaf-a/leaf-c local WG private key, RR WG public keys,
   reachable RR WG UDP endpoints, and UDP `51820` permitted;
 - rollback artifacts: previous routerd binary/package, previous config, and
   service restart commands for each host.
@@ -546,7 +565,7 @@ routerctl validate -f /etc/routerd/routerd.yaml
 routerctl plan -f /etc/routerd/routerd.yaml
 ```
 
-On leaf-a and leaf-b, run a local controller materialization check before
+On each PVE minimal leaf, run a local controller materialization check before
 starting live forwarding:
 
 ```sh
