@@ -714,6 +714,76 @@ func TestOwnershipResolverIgnoresPeerProxyARPShadowObservedStatus(t *testing.T) 
 	}
 }
 
+func TestOwnershipResolverIgnoresPeerProxyARPShadowStatusWithRemoteHomeOwners(t *testing.T) {
+	now := time.Date(2026, 6, 30, 6, 10, 0, 0, time.UTC)
+	spec := pveProxyARPPoolSpec()
+	for i := range spec.Members {
+		if spec.Members[i].NodeRef == "pve-leaf-b" {
+			spec.Members[i].Capture = api.MobilityMemberCapture{}
+		}
+	}
+	clients := []onPremObservedClientStatus{
+		{IP: "10.77.60.13", MAC: "bc:24:11:c8:ad:46", SourceType: OnPremSourceOnDemandARP},
+		{IP: "10.77.60.16", MAC: "bc:24:11:c8:ad:46", SourceType: OnPremSourceOnDemandARP},
+		{IP: "10.77.60.17", MAC: "bc:24:11:c8:ad:46", SourceType: OnPremSourceOnDemandARP},
+		{IP: "10.77.60.35", MAC: "bc:24:11:c8:ad:46", SourceType: OnPremSourceOnDemandARP},
+		{IP: "10.77.60.15", MAC: "bc:24:11:10:00:15", SourceType: OnPremSourceOnDemandARP},
+	}
+	encoded, err := json.Marshal(clients)
+	if err != nil {
+		t.Fatalf("marshal clients: %v", err)
+	}
+	events := []routerstate.EventRecord{
+		providerDiscoveryObservedEvent("cloudedge", "cloudedge", "oci-leaf-a", "10.77.60.13/32", "oci", "oci-provider", providerinventory.PrivateIPRecord{
+			Address:   "10.77.60.13",
+			SubnetRef: "oci-subnet",
+			NICRef:    "oci-client-a-nic",
+			Primary:   true,
+		}, now.Add(-time.Minute), time.Hour),
+		providerDiscoveryObservedEvent("cloudedge", "cloudedge", "aws-leaf-a", "10.77.60.16/32", "aws", "aws-provider", providerinventory.PrivateIPRecord{
+			Address:   "10.77.60.16",
+			SubnetRef: "aws-subnet",
+			NICRef:    "aws-client-b-nic",
+			Primary:   true,
+		}, now.Add(-time.Minute), time.Hour),
+		providerDiscoveryObservedEvent("cloudedge", "cloudedge", "azure-leaf-a", "10.77.60.17/32", "azure", "azure-provider", providerinventory.PrivateIPRecord{
+			Address:   "10.77.60.17",
+			SubnetRef: "azure-subnet",
+			NICRef:    "azure-client-b-nic",
+			Primary:   true,
+		}, now.Add(-time.Minute), time.Hour),
+	}
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "pve-leaf-a",
+		Spec:     spec,
+		Events:   events,
+		Status: map[string]any{
+			"observedClientsBySource": map[string]any{
+				OnPremSourceOnDemandARP: map[string]any{
+					"interface":       "ens19",
+					"sourceType":      OnPremSourceOnDemandARP,
+					"observedClients": string(encoded),
+				},
+			},
+		},
+		Now: now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	status := ownershipResolverStatus(decisions)
+	if status["ownershipResolverPhase"] == "Conflict" || status["ownershipResolverConflictCount"] != 0 {
+		t.Fatalf("status = %#v, want peer proxy-ARP shadows not to conflict with remote home owners", status)
+	}
+	for _, address := range []string{"10.77.60.13/32", "10.77.60.16/32", "10.77.60.17/32"} {
+		decision := ownershipDecisionByAddress(t, decisions, address)
+		if decision.Class != ownershipClassRemoteHomeOwned || decision.LocalNodeRef != "" || decision.LocalSource != "" {
+			t.Fatalf("decision %s = %#v, want remote home owner without local shadow", address, decision)
+		}
+	}
+}
+
 func TestOwnershipResolverTreatsOnPremObservedStatusAsLocalOwner(t *testing.T) {
 	now := time.Date(2026, 6, 18, 6, 40, 0, 0, time.UTC)
 	spec := api.MobilityPoolSpec{

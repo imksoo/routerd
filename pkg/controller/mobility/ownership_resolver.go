@@ -101,7 +101,7 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 	discoveryOwned := statusStringSet(in.Status["discoveryOwnedAddresses"], prefix)
 	selfIPs, capturedIPs, selfIPsObserved := selfInventoryAddressSetsFromStatus(in.Status, prefix)
 	selfIPsObservedAt := statusTime(in.Status["discoveryLastScanAt"])
-	eventOwned := resolverEventOwnedAddresses(in.PoolName, in.SelfNode, in.Spec, in.Events, in.Status, prefix, now)
+	eventOwned := resolverEventOwnedAddresses(in.PoolName, in.SelfNode, in.Spec, in.Events, in.Status, remoteHomeFacts, prefix, now)
 	confirmedCaptures, staleCaptures := captureStatesForSelf(self, in.PreviousPlans, in.ActionJournal, capturedIPs, selfIPsObserved, selfIPsObservedAt)
 	handoverTargets := staticHandoverTargets(in.Spec, prefix)
 	universe := map[string]bool{}
@@ -603,7 +603,7 @@ func ownershipEventLocalSource(sourceType string) string {
 	}
 }
 
-func resolverEventOwnedAddresses(poolName, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, status map[string]any, poolPrefix netip.Prefix, now time.Time) map[string]resolverEventOwnedAddress {
+func resolverEventOwnedAddresses(poolName, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, status map[string]any, remoteHomeFacts map[string]providerInventoryOwnerFact, poolPrefix netip.Prefix, now time.Time) map[string]resolverEventOwnedAddress {
 	discoveryOwnedAddresses := statusStringSet(status["discoveryOwnedAddresses"], poolPrefix)
 	discoveryOwnedObserved := statusHasAny(status, "discoveryOwnedAddresses")
 	discoverySelfIPs, _, discoverySelfIPsObserved := selfInventoryAddressSetsFromStatus(status, poolPrefix)
@@ -611,7 +611,7 @@ func resolverEventOwnedAddresses(poolName, selfNode string, spec api.MobilityPoo
 	self, selfOK := lookupMemberByNodeRef(plannerMembers(spec.Members), selfNode)
 	proxyARPShadows := map[string]bool{}
 	if selfOK && strings.TrimSpace(self.OwnershipDiscovery.Mode) == "onprem-l2" {
-		proxyARPShadows = onPremPeerProxyARPShadowAddresses(poolName, self, spec, events, status, poolPrefix, now)
+		proxyARPShadows = onPremPeerProxyARPShadowAddresses(poolName, self, spec, events, status, remoteHomeFacts, poolPrefix, now)
 	}
 	out := map[string]resolverEventOwnedAddress{}
 	for _, item := range owned {
@@ -654,20 +654,33 @@ func resolverEventOwnedAddresses(poolName, selfNode string, spec api.MobilityPoo
 	return out
 }
 
-func onPremPeerProxyARPShadowAddresses(poolName string, self memberPlanInfo, spec api.MobilityPoolSpec, events []routerstate.EventRecord, status map[string]any, poolPrefix netip.Prefix, now time.Time) map[string]bool {
+func onPremPeerProxyARPShadowAddresses(poolName string, self memberPlanInfo, spec api.MobilityPoolSpec, events []routerstate.EventRecord, status map[string]any, remoteHomeFacts map[string]providerInventoryOwnerFact, poolPrefix netip.Prefix, now time.Time) map[string]bool {
 	peerSources := onPremPeerCaptureSourceAddresses(self, spec, poolPrefix)
-	if len(peerSources) == 0 {
-		return nil
-	}
 	observations := onPremStatusObservations(status)
 	observations = append(observations, onPremEventObservations(poolName, self.NodeRef, spec.GroupRef, events, poolPrefix, now)...)
 	peerMACs := map[string]bool{}
+	remoteHomeMACHits := map[string]map[string]bool{}
 	for _, observation := range observations {
 		address, ok := normalizeDiscoveredAddress(observation.Address, poolPrefix)
-		if !ok || !peerSources[address] {
+		if !ok {
 			continue
 		}
-		if mac := normalizeOnPremMAC(observation.MAC); mac != "" {
+		mac := normalizeOnPremMAC(observation.MAC)
+		if mac == "" {
+			continue
+		}
+		if peerSources[address] {
+			peerMACs[mac] = true
+		}
+		if fact, ok := remoteHomeFacts[address]; ok && strings.TrimSpace(fact.NodeRef) != "" && strings.TrimSpace(fact.NodeRef) != strings.TrimSpace(self.NodeRef) {
+			if remoteHomeMACHits[mac] == nil {
+				remoteHomeMACHits[mac] = map[string]bool{}
+			}
+			remoteHomeMACHits[mac][address] = true
+		}
+	}
+	for mac, addresses := range remoteHomeMACHits {
+		if len(addresses) >= 2 {
 			peerMACs[mac] = true
 		}
 	}
