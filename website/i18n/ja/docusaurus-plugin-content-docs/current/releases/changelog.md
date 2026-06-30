@@ -9,7 +9,7 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 ただし版番号は Semantic Versioning ではなく、日付と時刻に基づく `vYYYYMMDD.HHmm` 形式を使います。
 ソフトウェアは v1alpha1 段階のため、リリース間で破壊的変更を含むことがあります。
 
-## 未リリース
+## Unreleased
 
 ### 追加
 
