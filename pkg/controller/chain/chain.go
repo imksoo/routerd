@@ -2365,10 +2365,6 @@ func (r *Runner) mobilityARPObserverDaemonSpecs() []mobilityARPObserverDaemonSpe
 			if override := strings.TrimSpace(r.Opts.DaemonSockets[resourceName]); override != "" {
 				socket = override
 			}
-			sourceAddress := statusAddressValue(resourcequery.Value(r.Store, source.SourceAddressFrom))
-			if sourceAddress == "" && sourceType == mobilitycontroller.OnPremSourceOnDemandARP {
-				sourceAddress = mobilityARPObserverCaptureSourceAddress(self.Capture.SourceAddress, spec.Prefix)
-			}
 			out = append(out, mobilityARPObserverDaemonSpec{
 				ResourceName:   resourceName,
 				PoolName:       strings.TrimSpace(res.Metadata.Name),
@@ -2380,7 +2376,7 @@ func (r *Runner) mobilityARPObserverDaemonSpecs() []mobilityARPObserverDaemonSpe
 				Bridge:         strings.TrimSpace(source.Bridge),
 				Socket:         socket,
 				EventFile:      filepath.Join(defaults.StateDir, "arp-observer", resourceName, "events.jsonl"),
-				SourceAddress:  sourceAddress,
+				SourceAddress:  statusAddressValue(resourcequery.Value(r.Store, source.SourceAddressFrom)),
 				Observe:        sourceType == mobilitycontroller.OnPremSourceARPObserver || sourceType == mobilitycontroller.OnPremSourcePVESVNet,
 				OnDemand:       sourceType == mobilitycontroller.OnPremSourceOnDemandARP,
 				ProbeTimeout:   strings.TrimSpace(source.ProbeTimeout),
@@ -2390,18 +2386,6 @@ func (r *Runner) mobilityARPObserverDaemonSpecs() []mobilityARPObserverDaemonSpe
 		}
 	}
 	return out
-}
-
-func mobilityARPObserverCaptureSourceAddress(sourceAddress, pool string) string {
-	prefix, err := netip.ParsePrefix(strings.TrimSpace(pool))
-	if err != nil {
-		return ""
-	}
-	_, addr, ok := normalizeBGPMobilityCaptureSourceAddress(sourceAddress, prefix.Masked())
-	if !ok {
-		return ""
-	}
-	return addr
 }
 
 func chainRouterSelfNode(router *api.Router, groupRef string) (string, error) {

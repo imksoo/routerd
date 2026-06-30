@@ -529,12 +529,6 @@ interface otherwise has no IPv4 address: Linux ARP for local same-subnet
 clients then uses an address inside the mobility prefix instead of falling back
 to an unrelated management address.
 
-`on-demand-arp` ownership discovery also uses `capture.sourceAddress` as its
-active ARP probe sender address when the discovery source does not set
-`sourceAddressFrom`. This keeps the on-prem L2 discovery path aligned with the
-proxy-ARP capture source instead of depending on an incidental interface
-address.
-
 If that sender address is owned by another lifecycle manager such as DHCP/IPAM,
 use `members[].capture.sourceAddressFrom` instead. For example,
 `resource: DHCPv4Client/svnet1-source` with `field: currentAddress` uses the
