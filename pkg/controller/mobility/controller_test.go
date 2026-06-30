@@ -2095,6 +2095,56 @@ func TestPlanBGPMobilityDeliverySuppressesSameSiteFreshHomeStaleCapture(t *testi
 	}
 }
 
+func TestPlanBGPMobilityDeliverySuppressesSameProviderFreshHomeStaleCaptureAcrossPlacementGroups(t *testing.T) {
+	now := time.Date(2026, 6, 29, 23, 10, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	for i := range spec.Members {
+		if spec.Members[i].NodeRef == "aws-router-a" {
+			spec.Members[i].Placement.Group = "aws-edge-a"
+		}
+		if spec.Members[i].NodeRef == "aws-router-b" {
+			spec.Members[i].Placement.Group = "aws-edge-b"
+		}
+	}
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-b"]
+	address := "10.88.60.11/32"
+
+	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+		PoolName: "cloudedge",
+		Source:   DynamicSource("cloudedge", self.NodeRef),
+		Self:     self,
+		Members:  members,
+		Spec:     spec,
+		Decisions: []ownershipDecision{{
+			Address:           address,
+			Class:             ownershipClassStaleCapture,
+			HomeOwnerNode:     "aws-router-a",
+			HomeProviderRef:   "aws-provider",
+			SuppressionReason: "fresh-home-owner",
+			Source:            providerDiscoverySource,
+		}},
+		Placement: PlacementDecision{
+			Group:      "aws-edge-b",
+			Active:     true,
+			ActiveNode: self.NodeRef,
+		},
+		InstalledNextHops:    map[string][]string{address: {"10.99.0.3"}},
+		Profiles:             map[string]api.CloudProviderProfileSpec{"aws-provider": {Provider: "aws"}},
+		ObservedSelfCaptures: map[string]bool{},
+		ObservedSelfIPsOK:    true,
+		RIBObserved:          true,
+		Now:                  now,
+	})
+	if err != nil {
+		t.Fatalf("planBGPMobilityDelivery: %v", err)
+	}
+	if assign := findActionPlanByAddress(delivery.ActionPlans, "assign-secondary-ip", address); assign != nil {
+		t.Fatalf("action plans = %#v, same-provider fresh-home stale capture must not be assigned across placement groups", delivery.ActionPlans)
+	}
+}
+
 func TestPlanBGPMobilityDeliverySuppressesSameSiteRemoteHomeDuringSeize(t *testing.T) {
 	now := time.Date(2026, 6, 26, 15, 40, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()
@@ -2232,6 +2282,12 @@ func TestFilterSupersededSameProviderHomeFailures(t *testing.T) {
 		ProviderRef:    "aws-provider",
 		Error:          "assigned, but move is not allowed",
 	}, {
+		IdempotencyKey: "stale-fresh-home",
+		Action:         "assign-secondary-ip",
+		Address:        "10.88.60.17/32",
+		ProviderRef:    "aws-provider",
+		Error:          "private address is already allocated to a provider-discovered home",
+	}, {
 		IdempotencyKey: "remote-provider",
 		Action:         "assign-secondary-ip",
 		Address:        "10.88.60.12/32",
@@ -2253,6 +2309,13 @@ func TestFilterSupersededSameProviderHomeFailures(t *testing.T) {
 		Class:            ownershipClassLocalHomeOwned,
 		HomeOwnerNode:    "aws-router-a",
 		LocalProviderRef: "aws-provider",
+	}, {
+		Address:           "10.88.60.17/32",
+		Class:             ownershipClassStaleCapture,
+		HomeOwnerNode:     "aws-router-b",
+		HomeProviderRef:   "aws-provider",
+		Source:            providerDiscoverySource,
+		SuppressionReason: "fresh-home-owner",
 	}}
 
 	got := filterSupersededSameProviderHomeFailures(failed, decisions, "aws-provider")

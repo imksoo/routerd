@@ -1178,16 +1178,29 @@ func filterSupersededSameProviderHomeFailures(failed []providerActionPlanFailure
 	out := failed[:0]
 	for _, item := range failed {
 		decision, ok := byAddress[normalizeAddressString(item.Address)]
-		if ok &&
-			decisionHomeProviderRefMatches(decision, selfProviderRef) &&
-			!decisionHasProviderCaptureState(decision) &&
-			!decision.CaptureSucceeded &&
-			(decision.Class == ownershipClassRemoteHomeOwned || decision.Class == ownershipClassLocalHomeOwned) {
+		if ok && decisionSupersedesSameProviderHomeFailure(decision, selfProviderRef) {
 			continue
 		}
 		out = append(out, item)
 	}
 	return out
+}
+
+func decisionSupersedesSameProviderHomeFailure(decision ownershipDecision, selfProviderRef string) bool {
+	if !decisionHomeProviderRefMatches(decision, selfProviderRef) ||
+		decisionHasProviderCaptureState(decision) ||
+		decision.CaptureSucceeded {
+		return false
+	}
+	switch decision.Class {
+	case ownershipClassRemoteHomeOwned, ownershipClassLocalHomeOwned:
+		return true
+	case ownershipClassStaleCapture:
+		return strings.TrimSpace(decision.Source) == providerDiscoverySource &&
+			strings.TrimSpace(decision.SuppressionReason) == "fresh-home-owner"
+	default:
+		return false
+	}
 }
 
 func decisionHomeProviderRefMatches(decision ownershipDecision, providerRef string) bool {

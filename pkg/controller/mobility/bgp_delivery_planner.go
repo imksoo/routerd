@@ -468,6 +468,7 @@ func suppressInitialSameSiteSecondaryIPCapture(decision ownershipDecision, self 
 		if strings.TrimSpace(decision.Source) != providerDiscoverySource {
 			return false
 		}
+		sameProviderHome = decisionHomeProviderRefMatches(decision, self.Capture.ProviderRef)
 	default:
 		return false
 	}
