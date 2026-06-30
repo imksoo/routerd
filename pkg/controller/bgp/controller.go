@@ -3530,6 +3530,12 @@ func (c *Controller) samDynamicClaimAdmission() samDynamicClaimAdmission {
 				}
 			}
 		}
+		for _, prefixText := range policy.MobilityPrefixes {
+			prefix, err := netip.ParsePrefix(strings.TrimSpace(prefixText))
+			if err == nil {
+				out.poolPrefixes = append(out.poolPrefixes, prefix.Masked())
+			}
+		}
 	}
 	out.poolPrefixes = uniquePrefixes(out.poolPrefixes)
 	now := time.Now().UTC()
@@ -3626,7 +3632,10 @@ func (a samDynamicClaimAdmission) Admit(nextHop string, prefix netip.Prefix) (bo
 	}
 	nextHop = normalizeAddressString(nextHop)
 	prefix = prefix.Masked()
-	if !a.prefixInAdmissionPool(prefix) && a.claimedPrefixes[prefix.String()].ClaimRef == "" {
+	if !a.prefixInAdmissionPool(prefix) {
+		if a.claimedPrefixes[prefix.String()].ClaimRef != "" {
+			return false, "prefix-outside-authorized-pools"
+		}
 		return true, ""
 	}
 	if prefix.Bits() != int(bgpPrefixMaxLength(prefix)) {

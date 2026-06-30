@@ -287,7 +287,7 @@ func TestValidateHybridFailures(t *testing.T) {
 				spec.Delivery.Mode = "attach"
 				router.Spec.Resources[6].Spec = spec
 			},
-			want: "spec.delivery.mode must be route",
+			want: "spec.delivery.mode must be route or bgp",
 		},
 		{
 			name: "remote claim unresolved domain",

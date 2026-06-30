@@ -727,6 +727,7 @@ type SAMPeerGroupSpec struct {
 type SAMRRSetSpec struct {
 	EnrollmentPolicyRef string              `yaml:"enrollmentPolicyRef" json:"enrollmentPolicyRef"`
 	MobilityPoolRefs    []string            `yaml:"mobilityPoolRefs,omitempty" json:"mobilityPoolRefs,omitempty"`
+	MobilityPrefixes    []string            `yaml:"mobilityPrefixes,omitempty" json:"mobilityPrefixes,omitempty"`
 	RouteAdmission      BGPImportPolicySpec `yaml:"routeAdmission,omitempty" json:"routeAdmission,omitempty"`
 	Members             []SAMRRSetMember    `yaml:"members" json:"members"`
 }
@@ -757,7 +758,7 @@ type SAMRRSetMemberBGPSpec struct {
 
 // SAMEnrollmentPolicy authorizes leaf-side enrollment claims for SAM. It is the
 // hub/RR-side boundary for leaf identity, tunnel address ranges, TTL/revocation,
-// MobilityPool ownership references, and optional transport-specific material.
+// MobilityPool ownership prefixes, and optional transport-specific material.
 type SAMEnrollmentPolicySpec struct {
 	TransportProfileRef   string                        `yaml:"transportProfileRef" json:"transportProfileRef"`
 	RRSetRef              string                        `yaml:"rrSetRef,omitempty" json:"rrSetRef,omitempty"`
@@ -768,6 +769,7 @@ type SAMEnrollmentPolicySpec struct {
 	EndpointPrefixes      []string                      `yaml:"endpointPrefixes,omitempty" json:"endpointPrefixes,omitempty"`
 	WireGuard             SAMEnrollmentWireGuardSpec    `yaml:"wireGuard,omitempty" json:"wireGuard,omitempty"`
 	MobilityPoolRefs      []string                      `yaml:"mobilityPoolRefs,omitempty" json:"mobilityPoolRefs,omitempty"`
+	MobilityPrefixes      []string                      `yaml:"mobilityPrefixes,omitempty" json:"mobilityPrefixes,omitempty"`
 	TTL                   string                        `yaml:"ttl,omitempty" json:"ttl,omitempty"`
 	RevokeAfterInactive   string                        `yaml:"revokeAfterInactive,omitempty" json:"revokeAfterInactive,omitempty"`
 }
@@ -2112,7 +2114,7 @@ type AddressCapture struct {
 
 type AddressDelivery struct {
 	PeerRef         string `yaml:"peerRef" json:"peerRef"`
-	Mode            string `yaml:"mode" json:"mode" jsonschema:"enum=route"`
+	Mode            string `yaml:"mode" json:"mode" jsonschema:"enum=route,enum=bgp"`
 	TunnelInterface string `yaml:"tunnelInterface,omitempty" json:"tunnelInterface,omitempty"`
 }
 

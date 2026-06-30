@@ -451,6 +451,9 @@ func validateSAMRRSet(res api.Resource, spec api.SAMRRSetSpec) error {
 			return fmt.Errorf("%s spec.mobilityPoolRefs[%d] must reference MobilityPool/<name>", res.ID(), i)
 		}
 	}
+	if _, err := validateBGPPrefixList(res.ID(), "spec.mobilityPrefixes", spec.MobilityPrefixes); err != nil {
+		return err
+	}
 	if _, err := validateBGPPrefixList(res.ID(), "spec.routeAdmission.allowedPrefixes", spec.RouteAdmission.AllowedPrefixes); err != nil {
 		return err
 	}
@@ -573,6 +576,9 @@ func validateSAMEnrollmentPolicy(res api.Resource, spec api.SAMEnrollmentPolicyS
 		if kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/"); !ok || kind != "MobilityPool" || strings.TrimSpace(name) == "" {
 			return fmt.Errorf("%s spec.mobilityPoolRefs[%d] must reference MobilityPool/<name>", res.ID(), i)
 		}
+	}
+	if _, err := validateBGPPrefixList(res.ID(), "spec.mobilityPrefixes", spec.MobilityPrefixes); err != nil {
+		return err
 	}
 	for _, field := range []struct {
 		path  string

@@ -242,9 +242,9 @@ func validateHybridResource(res api.Resource, _ platform.OS) (bool, error) {
 			return true, err
 		}
 		switch strings.TrimSpace(spec.Delivery.Mode) {
-		case "route":
+		case "route", "bgp":
 		default:
-			return true, fmt.Errorf("%s spec.delivery.mode must be route", res.ID())
+			return true, fmt.Errorf("%s spec.delivery.mode must be route or bgp", res.ID())
 		}
 		if strings.TrimSpace(spec.Delivery.PeerRef) == "" {
 			return true, fmt.Errorf("%s spec.delivery.peerRef is required", res.ID())

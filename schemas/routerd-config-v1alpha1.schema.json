@@ -7642,7 +7642,8 @@
                         "properties": {
                           "mode": {
                             "enum": [
-                              "route"
+                              "route",
+                              "bgp"
                             ],
                             "type": "string"
                           },
@@ -9920,6 +9921,12 @@
                         },
                         "type": "array"
                       },
+                      "mobilityPrefixes": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
                       "routeAdmission": {
                         "additionalProperties": false,
                         "properties": {
@@ -10032,6 +10039,12 @@
                         "type": "object"
                       },
                       "mobilityPoolRefs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "mobilityPrefixes": {
                         "items": {
                           "type": "string"
                         },

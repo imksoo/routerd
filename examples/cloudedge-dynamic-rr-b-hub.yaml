@@ -75,7 +75,7 @@ spec:
       metadata: { name: cloudedge-rrs }
       spec:
         enrollmentPolicyRef: SAMEnrollmentPolicy/cloudedge-leaves
-        mobilityPoolRefs: [MobilityPool/cloudedge]
+        mobilityPrefixes: [10.77.60.0/24]
         routeAdmission:
           allowedPrefixes: [10.77.60.0/24]
           allowedPrefixLengthMin: 32
@@ -152,18 +152,6 @@ spec:
           timersPreset: fast
 
     - apiVersion: mobility.routerd.net/v1alpha1
-      kind: MobilityPool
-      metadata: { name: cloudedge }
-      spec:
-        prefix: 10.77.60.0/24
-        groupRef: cloudedge
-        mode: selective-address
-        members:
-          - nodeRef: rr-b
-            site: dc-b
-            role: cloud
-
-    - apiVersion: mobility.routerd.net/v1alpha1
       kind: SAMEnrollmentPolicy
       metadata: { name: cloudedge-leaves }
       spec:
@@ -176,7 +164,7 @@ spec:
           pattern: ^leaf-[a-z0-9-]+$
         tunnelAddressPrefixes: [10.255.0.0/20]
         endpointPrefixes: [10.20.0.0/24]
-        mobilityPoolRefs: [MobilityPool/cloudedge]
+        mobilityPrefixes: [10.77.60.0/24]
         ttl: 24h
         revokeAfterInactive: 168h
 
@@ -198,7 +186,7 @@ spec:
           endpointPrefixes: [198.51.100.0/24]
           allowedExtraIPPrefixes: [10.20.0.0/24]
           persistentKeepalive: 25
-        mobilityPoolRefs: [MobilityPool/cloudedge]
+        mobilityPrefixes: [10.77.60.0/24]
         ttl: 24h
         revokeAfterInactive: 168h
 
@@ -215,6 +203,6 @@ spec:
           pattern: ^leaf-[a-z0-9-]+$
         tunnelAddressPrefixes: [10.255.0.0/20]
         endpointPrefixes: [10.20.0.0/24]
-        mobilityPoolRefs: [MobilityPool/cloudedge]
+        mobilityPrefixes: [10.77.60.0/24]
         ttl: 24h
         revokeAfterInactive: 168h

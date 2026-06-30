@@ -10,14 +10,14 @@ spec:
       metadata: { name: pve-rrs }
       spec:
         enrollmentPolicyRef: SAMEnrollmentPolicy/pve-fou-leaves
-        mobilityPoolRefs: [MobilityPool/pve-mobility]
+        mobilityPrefixes: [10.77.70.0/24]
         routeAdmission:
           allowedPrefixes: [10.77.70.0/24]
           allowedPrefixLengthMin: 32
           allowedPrefixLengthMax: 32
           nextHopRewrite: peer-address
         members:
-          - nodeRef: pve-rr
+          - nodeRef: pve-rr-a
             endpoint: 10.30.0.10
             tunnelAddress: 10.255.10.1/32
             wireGuard:
@@ -26,3 +26,12 @@ spec:
               allowedIPs: [10.31.0.10/32]
               persistentKeepalive: 25
             bgp: { asn: 64577, routerID: 10.255.10.1 }
+          - nodeRef: pve-rr-b
+            endpoint: 10.30.0.11
+            tunnelAddress: 10.255.10.2/32
+            wireGuard:
+              publicKey: PVE_RR_B_WIREGUARD_PUBLIC_KEY
+              endpoint: 10.30.0.11:51820
+              allowedIPs: [10.31.0.11/32]
+              persistentKeepalive: 25
+            bgp: { asn: 64577, routerID: 10.255.10.2 }

@@ -2,7 +2,7 @@
 apiVersion: routerd.net/v1alpha1
 kind: Router
 metadata:
-  name: pve-leaf-b
+  name: pve-leaf-d
 spec:
   resources:
     - apiVersion: net.routerd.net/v1alpha1
@@ -13,7 +13,7 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
       metadata: { name: private-wan-ipv4 }
-      spec: { interface: private-wan, address: 10.30.0.22/24 }
+      spec: { interface: private-wan, address: 10.30.0.24/24 }
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
@@ -23,7 +23,7 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
       metadata: { name: client-lan-capture-source }
-      spec: { interface: client-lan, address: 10.77.70.35/32 }
+      spec: { interface: client-lan, address: 10.77.70.37/32 }
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4Route
@@ -42,35 +42,35 @@ spec:
       metadata: { name: owned-service-ip }
       spec:
         interface: lo-mobility
-        address: 10.77.70.22/32
+        address: 10.77.70.24/32
         allowOverlap: true
-        allowOverlapReason: pve-leaf-b owned mobility /32 advertised to pve RRs
+        allowOverlapReason: pve-leaf-d owned mobility /32 advertised to pve RRs
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: BGPRouter
       metadata: { name: mobility-bgp }
       spec:
         asn: 64577
-        routerID: 10.255.10.22
+        routerID: 10.255.10.24
         exportPolicy:
-          allowedPrefixes: [10.77.70.22/32, 10.77.70.15/32]
+          allowedPrefixes: [10.77.70.24/32, 10.77.70.19/32]
         redistribute:
           connected:
-            allowedPrefixes: [10.77.70.22/32]
+            allowedPrefixes: [10.77.70.24/32]
         timers: { profile: fast }
         convergenceProfile: fast
 
     - apiVersion: mobility.routerd.net/v1alpha1
       kind: SAMTransportProfile
-      metadata: { name: pve-leaf-b }
+      metadata: { name: pve-leaf-d }
       spec:
-        selfNodeRef: pve-leaf-b
+        selfNodeRef: pve-leaf-d
         mode: fou
         encryption: none
         addressingMode: pair-stable
         innerPrefix: 10.255.10.0/24
         underlayInterface: private-wan
-        localEndpoint: 10.30.0.22
+        localEndpoint: 10.30.0.24
         encapSport: 5555
         encapDport: 5555
         peersFrom:
@@ -85,7 +85,7 @@ spec:
             allowedPrefixLengthMax: 32
             nextHopRewrite: peer-address
           exportPolicy:
-            allowedPrefixes: [10.77.70.22/32, 10.77.70.15/32]
+            allowedPrefixes: [10.77.70.24/32, 10.77.70.19/32]
 
     - apiVersion: mobility.routerd.net/v1alpha1
       kind: MobilityPool
@@ -96,14 +96,14 @@ spec:
         mode: selective-address
         capturePolicy: { mode: all-non-owner-sites }
         members:
-          - nodeRef: pve-leaf-b
-            site: pve-lab-a
+          - nodeRef: pve-leaf-d
+            site: pve-lab-b
             role: onprem
-            staticOwnedAddresses: [10.77.70.15/32]
+            staticOwnedAddresses: [10.77.70.19/32]
             capture:
               type: proxy-arp
               interface: client-lan
-              sourceAddress: 10.77.70.35/32
+              sourceAddress: 10.77.70.37/32
               gratuitousARP: true
               activeWhen: { type: single-router }
 
@@ -111,7 +111,7 @@ spec:
       kind: SAMEnrollmentPolicy
       metadata: { name: pve-fou-leaves }
       spec:
-        transportProfileRef: SAMTransportProfile/pve-leaf-b
+        transportProfileRef: SAMTransportProfile/pve-leaf-d
         rrSetRef: SAMRRSet/pve-rrs
         joinTokenFrom:
           file: /usr/local/etc/routerd/secrets/pve-join-token
@@ -141,10 +141,10 @@ spec:
 
     - apiVersion: hybrid.routerd.net/v1alpha1
       kind: RemoteAddressClaim
-      metadata: { name: pve-client-b-proxy }
+      metadata: { name: pve-client-a-proxy }
       spec:
         domainRef: bgp-pve-mobility
-        address: 10.77.70.19/32
+        address: 10.77.70.15/32
         ownerSide: onprem
         capture:
           type: proxy-arp
@@ -155,28 +155,28 @@ spec:
 
     - apiVersion: mobility.routerd.net/v1alpha1
       kind: SAMEnrollmentClaim
-      metadata: { name: pve-leaf-b }
+      metadata: { name: pve-leaf-d }
       spec:
         policyRef: SAMEnrollmentPolicy/pve-fou-leaves
         rrSetRef: SAMRRSet/pve-rrs
-        leafID: pve-leaf-b
+        leafID: pve-leaf-d
         joinAudience: pve-private-underlay
-        joinNonce: pve-leaf-b-0001
+        joinNonce: pve-leaf-d-0001
         joinTimestamp: "2026-06-28T00:00:00Z"
         joinHMAC: EXAMPLE_HMAC_SHA256_HEX
-        tunnelAddress: 10.255.10.22/32
-        endpoint: 10.30.0.22
+        tunnelAddress: 10.255.10.24/32
+        endpoint: 10.30.0.24
         mobility:
-          ownedAddresses: [10.77.70.22/32, 10.77.70.15/32]
+          ownedAddresses: [10.77.70.24/32, 10.77.70.19/32]
         bgp:
           asn: 64577
-          routerID: 10.255.10.22
+          routerID: 10.255.10.24
 
     - apiVersion: mobility.routerd.net/v1alpha1
       kind: SAMEnrollmentClient
-      metadata: { name: pve-leaf-b }
+      metadata: { name: pve-leaf-d }
       spec:
-        claimRef: SAMEnrollmentClaim/pve-leaf-b
+        claimRef: SAMEnrollmentClaim/pve-leaf-d
         bootstrapEndpoints:
           - http://10.30.0.10:65432
           - http://10.30.0.11:65432
