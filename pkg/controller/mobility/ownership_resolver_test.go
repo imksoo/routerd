@@ -625,6 +625,95 @@ func TestOwnershipResolverReportsRemoteHomeLocalOwnershipEventConflict(t *testin
 	}
 }
 
+func TestOwnershipResolverIgnoresPeerProxyARPShadowObservedEvents(t *testing.T) {
+	now := time.Date(2026, 6, 10, 15, 30, 0, 0, time.UTC)
+	spec := pveProxyARPPoolSpec()
+	peerMAC := "bc:24:11:c8:ad:46"
+	realMAC := "bc:24:11:10:00:15"
+	events := []routerstate.EventRecord{
+		onPremDiscoveryObservedEvent("cloudedge", "cloudedge", "pve-leaf-a", "10.77.60.11/32", onPremObservation{
+			Address:    "10.77.60.11",
+			MAC:        peerMAC,
+			Interface:  "ens19",
+			SourceType: OnPremSourceOnDemandARP,
+			ObservedAt: now.Add(-20 * time.Second),
+		}, now.Add(-20*time.Second), time.Hour),
+		onPremDiscoveryObservedEvent("cloudedge", "cloudedge", "pve-leaf-a", "10.77.60.35/32", onPremObservation{
+			Address:    "10.77.60.35",
+			MAC:        peerMAC,
+			Interface:  "ens19",
+			SourceType: OnPremSourceOnDemandARP,
+			ObservedAt: now.Add(-10 * time.Second),
+		}, now.Add(-10*time.Second), time.Hour),
+		onPremDiscoveryObservedEvent("cloudedge", "cloudedge", "pve-leaf-a", "10.77.60.15/32", onPremObservation{
+			Address:    "10.77.60.15",
+			MAC:        realMAC,
+			Interface:  "ens19",
+			SourceType: OnPremSourceOnDemandARP,
+			ObservedAt: now.Add(-5 * time.Second),
+		}, now.Add(-5*time.Second), time.Hour),
+	}
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "pve-leaf-a",
+		Spec:     spec,
+		Events:   events,
+		Now:      now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	if decision, ok := ownershipDecisionByAddressOK(decisions, "10.77.60.11/32"); ok {
+		t.Fatalf("cloud proxy-ARP shadow decision = %#v, want ignored", decision)
+	}
+	if decision, ok := ownershipDecisionByAddressOK(decisions, "10.77.60.35/32"); ok {
+		t.Fatalf("peer router source decision = %#v, want ignored as client ownership", decision)
+	}
+	decision, ok := ownershipDecisionByAddressOK(decisions, "10.77.60.15/32")
+	if !ok || decision.Class != ownershipClassLocalHomeOwned || decision.AdvertiseOwnerNode != "pve-leaf-a" {
+		t.Fatalf("real local client decision = %#v ok=%v, want local owner", decision, ok)
+	}
+}
+
+func TestOwnershipResolverIgnoresPeerProxyARPShadowObservedStatus(t *testing.T) {
+	now := time.Date(2026, 6, 10, 15, 35, 0, 0, time.UTC)
+	spec := pveProxyARPPoolSpec()
+	clients := []onPremObservedClientStatus{
+		{IP: "10.77.60.11", MAC: "bc:24:11:c8:ad:46", SourceType: OnPremSourceOnDemandARP},
+		{IP: "10.77.60.35", MAC: "bc:24:11:c8:ad:46", SourceType: OnPremSourceOnDemandARP},
+		{IP: "10.77.60.15", MAC: "bc:24:11:10:00:15", SourceType: OnPremSourceOnDemandARP},
+	}
+	encoded, err := json.Marshal(clients)
+	if err != nil {
+		t.Fatalf("marshal clients: %v", err)
+	}
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "pve-leaf-a",
+		Spec:     spec,
+		Status: map[string]any{
+			"observedClientsBySource": map[string]any{
+				OnPremSourceOnDemandARP: map[string]any{
+					"interface":       "ens19",
+					"sourceType":      OnPremSourceOnDemandARP,
+					"observedClients": string(encoded),
+				},
+			},
+		},
+		Now: now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	if decision, ok := ownershipDecisionByAddressOK(decisions, "10.77.60.11/32"); ok {
+		t.Fatalf("cloud proxy-ARP shadow decision = %#v, want ignored", decision)
+	}
+	decision, ok := ownershipDecisionByAddressOK(decisions, "10.77.60.15/32")
+	if !ok || decision.Class != ownershipClassLocalHomeOwned || decision.AdvertiseOwnerNode != "pve-leaf-a" {
+		t.Fatalf("real local client decision = %#v ok=%v, want local owner", decision, ok)
+	}
+}
+
 func TestOwnershipResolverTreatsOnPremObservedStatusAsLocalOwner(t *testing.T) {
 	now := time.Date(2026, 6, 18, 6, 40, 0, 0, time.UTC)
 	spec := api.MobilityPoolSpec{
@@ -1025,13 +1114,66 @@ func ownershipDecisionContainsNilString(decision ownershipDecision) bool {
 
 func ownershipDecisionByAddress(t *testing.T, decisions []ownershipDecision, address string) ownershipDecision {
 	t.Helper()
-	for _, decision := range decisions {
-		if decision.Address == address {
-			return decision
-		}
+	decision, ok := ownershipDecisionByAddressOK(decisions, address)
+	if ok {
+		return decision
 	}
 	t.Fatalf("address %s not found in %#v", address, decisions)
 	return ownershipDecision{}
+}
+
+func ownershipDecisionByAddressOK(decisions []ownershipDecision, address string) (ownershipDecision, bool) {
+	for _, decision := range decisions {
+		if decision.Address == address {
+			return decision, true
+		}
+	}
+	return ownershipDecision{}, false
+}
+
+func pveProxyARPPoolSpec() api.MobilityPoolSpec {
+	return api.MobilityPoolSpec{
+		Prefix:         "10.77.60.0/24",
+		GroupRef:       "cloudedge",
+		DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+		Members: []api.MobilityPoolMember{
+			{
+				NodeRef: "pve-leaf-a",
+				Site:    "pve",
+				Role:    "onprem",
+				Capture: api.MobilityMemberCapture{
+					Type:          "proxy-arp",
+					Interface:     "ens19",
+					SourceAddress: "10.77.60.34",
+				},
+				OwnershipDiscovery: api.MobilityOwnershipDiscovery{
+					Mode: "onprem-l2",
+					Sources: []api.MobilityOwnershipDiscoverySource{
+						{Type: OnPremSourceARPObserver, Interface: "ens19"},
+						{Type: OnPremSourceOnDemandARP, Interface: "ens19"},
+					},
+				},
+			},
+			{
+				NodeRef: "pve-leaf-b",
+				Site:    "pve",
+				Role:    "onprem",
+				Capture: api.MobilityMemberCapture{
+					Type:          "proxy-arp",
+					Interface:     "ens19",
+					SourceAddress: "10.77.60.35",
+				},
+				OwnershipDiscovery: api.MobilityOwnershipDiscovery{
+					Mode: "onprem-l2",
+					Sources: []api.MobilityOwnershipDiscoverySource{
+						{Type: OnPremSourceARPObserver, Interface: "ens19"},
+						{Type: OnPremSourceOnDemandARP, Interface: "ens19"},
+					},
+				},
+			},
+			{NodeRef: "aws-leaf-a", Site: "aws", Role: "cloud"},
+		},
+	}
 }
 
 func resolverSucceededAction(t *testing.T, providerRef, targetRef, holder, address, action string, at time.Time) routerstate.ActionExecutionRecord {

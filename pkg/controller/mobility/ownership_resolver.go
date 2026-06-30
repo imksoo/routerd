@@ -4,6 +4,7 @@ package mobility
 
 import (
 	"fmt"
+	"net"
 	"net/netip"
 	"sort"
 	"strings"
@@ -607,15 +608,23 @@ func resolverEventOwnedAddresses(poolName, selfNode string, spec api.MobilityPoo
 	discoveryOwnedObserved := statusHasAny(status, "discoveryOwnedAddresses")
 	discoverySelfIPs, _, discoverySelfIPsObserved := selfInventoryAddressSetsFromStatus(status, poolPrefix)
 	owned := bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode, spec, events, discoveryOwnedAddresses, discoveryOwnedObserved, discoverySelfIPs, discoverySelfIPsObserved, poolPrefix, now)
+	self, selfOK := lookupMemberByNodeRef(plannerMembers(spec.Members), selfNode)
+	proxyARPShadows := map[string]bool{}
+	if selfOK && strings.TrimSpace(self.OwnershipDiscovery.Mode) == "onprem-l2" {
+		proxyARPShadows = onPremPeerProxyARPShadowAddresses(poolName, self, spec, events, status, poolPrefix, now)
+	}
 	out := map[string]resolverEventOwnedAddress{}
 	for _, item := range owned {
 		address := normalizeAddressString(item.Address)
 		if address == "" {
 			continue
 		}
+		if proxyARPShadows[address] {
+			continue
+		}
 		out[address] = resolverEventOwnedAddress{AdvertiseOwnerNode: strings.TrimSpace(selfNode), SourceType: item.SourceType}
 	}
-	if self, ok := lookupMemberByNodeRef(plannerMembers(spec.Members), selfNode); ok && strings.TrimSpace(self.OwnershipDiscovery.Mode) == "onprem-l2" {
+	if selfOK && strings.TrimSpace(self.OwnershipDiscovery.Mode) == "onprem-l2" {
 		for _, snapshot := range onPremObservedClientSnapshotsFromStatus(status) {
 			for _, client := range snapshot.Clients {
 				observation := onPremObservation{
@@ -632,6 +641,9 @@ func resolverEventOwnedAddresses(poolName, selfNode string, spec api.MobilityPoo
 				if !ok || !discoveryScopeAllowsAddress(self.OwnershipDiscovery.Scope, address) {
 					continue
 				}
+				if proxyARPShadows[address] {
+					continue
+				}
 				if _, ok := matchingOnPremDiscoverySource(self, observation); !ok {
 					continue
 				}
@@ -640,6 +652,116 @@ func resolverEventOwnedAddresses(poolName, selfNode string, spec api.MobilityPoo
 		}
 	}
 	return out
+}
+
+func onPremPeerProxyARPShadowAddresses(poolName string, self memberPlanInfo, spec api.MobilityPoolSpec, events []routerstate.EventRecord, status map[string]any, poolPrefix netip.Prefix, now time.Time) map[string]bool {
+	peerSources := onPremPeerCaptureSourceAddresses(self, spec, poolPrefix)
+	if len(peerSources) == 0 {
+		return nil
+	}
+	observations := onPremStatusObservations(status)
+	observations = append(observations, onPremEventObservations(poolName, self.NodeRef, spec.GroupRef, events, poolPrefix, now)...)
+	peerMACs := map[string]bool{}
+	for _, observation := range observations {
+		address, ok := normalizeDiscoveredAddress(observation.Address, poolPrefix)
+		if !ok || !peerSources[address] {
+			continue
+		}
+		if mac := normalizeOnPremMAC(observation.MAC); mac != "" {
+			peerMACs[mac] = true
+		}
+	}
+	if len(peerMACs) == 0 {
+		return nil
+	}
+	ignored := map[string]bool{}
+	for _, observation := range observations {
+		address, ok := normalizeDiscoveredAddress(observation.Address, poolPrefix)
+		if !ok || !discoveryScopeAllowsAddress(self.OwnershipDiscovery.Scope, address) {
+			continue
+		}
+		if _, ok := matchingOnPremDiscoverySource(self, observation); !ok {
+			continue
+		}
+		if peerMACs[normalizeOnPremMAC(observation.MAC)] {
+			ignored[address] = true
+		}
+	}
+	return ignored
+}
+
+func onPremPeerCaptureSourceAddresses(self memberPlanInfo, spec api.MobilityPoolSpec, poolPrefix netip.Prefix) map[string]bool {
+	out := map[string]bool{}
+	selfNode := strings.TrimSpace(self.NodeRef)
+	for _, member := range spec.Members {
+		if strings.TrimSpace(member.NodeRef) == "" || strings.TrimSpace(member.NodeRef) == selfNode {
+			continue
+		}
+		if strings.TrimSpace(member.Role) != "onprem" || strings.TrimSpace(member.Capture.Type) != "proxy-arp" {
+			continue
+		}
+		address, ok := normalizeDiscoveredAddress(member.Capture.SourceAddress, poolPrefix)
+		if ok {
+			out[address] = true
+		}
+	}
+	return out
+}
+
+func onPremStatusObservations(status map[string]any) []onPremObservation {
+	var out []onPremObservation
+	for _, snapshot := range onPremObservedClientSnapshotsFromStatus(status) {
+		for _, client := range snapshot.Clients {
+			out = append(out, onPremObservation{
+				Action:     "observed",
+				Address:    firstNonEmpty(client.Address, client.IP),
+				MAC:        client.MAC,
+				Interface:  snapshot.Interface,
+				Network:    snapshot.Network,
+				Bridge:     snapshot.Bridge,
+				SourceType: firstNonEmpty(client.SourceType, snapshot.SourceType),
+			})
+		}
+	}
+	return out
+}
+
+func onPremEventObservations(poolName, selfNode, group string, events []routerstate.EventRecord, poolPrefix netip.Prefix, now time.Time) []onPremObservation {
+	var out []onPremObservation
+	for _, ev := range events {
+		if ev.Group != group || strings.TrimSpace(ev.SourceNode) != strings.TrimSpace(selfNode) {
+			continue
+		}
+		if ev.Type != ObservedEventType || strings.TrimSpace(ev.Payload["source"]) != onPremDiscoverySource || strings.TrimSpace(ev.Payload["pool"]) != strings.TrimSpace(poolName) {
+			continue
+		}
+		if !ev.ExpiresAt.IsZero() && !now.Before(ev.ExpiresAt) {
+			continue
+		}
+		address := firstNonEmpty(ev.Payload["address"], ev.Subject)
+		if _, ok := normalizeDiscoveredAddress(address, poolPrefix); !ok {
+			continue
+		}
+		out = append(out, onPremObservation{
+			Action:     "observed",
+			Address:    address,
+			MAC:        ev.Payload["mac"],
+			Interface:  ev.Payload["interface"],
+			Network:    ev.Payload["network"],
+			Bridge:     ev.Payload["bridge"],
+			SourceType: ev.Payload["sourceType"],
+			ObservedAt: ev.ObservedAt,
+		})
+	}
+	return out
+}
+
+func normalizeOnPremMAC(value string) string {
+	mac, err := net.ParseMAC(strings.TrimSpace(value))
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(mac.String())
 }
 
 func statusStringSet(value any, poolPrefix netip.Prefix) map[string]bool {
