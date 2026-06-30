@@ -663,11 +663,26 @@ func TestPVEMinimalExamplesMaterializeReviewTransports(t *testing.T) {
 				remote:  "10.31.0.21",
 			},
 			{
+				name:    "wireguard ipip leaf-c admission",
+				profile: "pve-rr-a-wg",
+				peer:    "pve-leaf-c",
+				mode:    "ipip",
+				remote:  "10.31.0.23",
+			},
+			{
 				name:      "private fou leaf-b admission",
 				profile:   "pve-rr-a-fou",
 				peer:      "pve-leaf-b",
 				mode:      "fou",
 				remote:    "10.30.0.22",
+				wantEncap: true,
+			},
+			{
+				name:      "private fou leaf-d admission",
+				profile:   "pve-rr-a-fou",
+				peer:      "pve-leaf-d",
+				mode:      "fou",
+				remote:    "10.30.0.24",
 				wantEncap: true,
 			},
 		}
@@ -684,8 +699,8 @@ func TestPVEMinimalExamplesMaterializeReviewTransports(t *testing.T) {
 		store := testStore(t, now)
 		seedSubmittedClaimsFromFixture(t, store, now, "pve-minimal-rr-claims-seed.yaml")
 		effective := effectiveWithAdmissionState(t, router, store, now)
-		if got := countResources(effective.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim"); got != 2 {
-			t.Fatalf("effective pve-minimal-rr SAMEnrollmentClaim count = %d, want 2 from admission state", got)
+		if got := countResources(effective.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim"); got != 4 {
+			t.Fatalf("effective pve-minimal-rr SAMEnrollmentClaim count = %d, want 4 from admission state", got)
 		}
 		controller := TransportController{Router: effective, Store: store, Now: func() time.Time { return now }}
 		if err := controller.Reconcile(context.Background()); err != nil {
@@ -698,7 +713,7 @@ func TestPVEMinimalExamplesMaterializeReviewTransports(t *testing.T) {
 					t.Fatalf("SAMTransportProfile/%s generatePeers = %#v, want false", tc.profile, profileSpec.BGP.GeneratePeers)
 				}
 				resources := decodeResources(t, latestPart(t, store, TransportDynamicSource(tc.profile, "pve-rr-a")).ResourcesJSON)
-				if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 1; got != want {
+				if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 2; got != want {
 					t.Fatalf("TunnelInterface count = %d, want %d resources=%#v", got, want, resources)
 				}
 				if got := countResources(resources, api.NetAPIVersion, "BGPPeer"); got != 0 {

@@ -168,6 +168,8 @@ func TestPVEMinimalDynamicRRLeafExamples(t *testing.T) {
 	rrB := loadExampleRouter(t, "pve-minimal-rr-b.yaml")
 	leafA := loadExampleRouter(t, "pve-minimal-leaf-a-wg.yaml")
 	leafB := loadExampleRouter(t, "pve-minimal-leaf-b-fou.yaml")
+	leafC := loadExampleRouter(t, "pve-minimal-leaf-c-wg.yaml")
+	leafD := loadExampleRouter(t, "pve-minimal-leaf-d-fou.yaml")
 	fetchedRRSet := loadFixtureRouter(t, "pve-minimal-leaf-rrset-fetched.yaml")
 
 	for _, tt := range []struct {
@@ -187,8 +189,12 @@ func TestPVEMinimalDynamicRRLeafExamples(t *testing.T) {
 			assertMissingResource(t, tt.router, api.MobilityAPIVersion, "MobilityPool", "pve-mobility")
 			assertMissingResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentClaim", "pve-leaf-a")
 			assertMissingResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentClaim", "pve-leaf-b")
+			assertMissingResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentClaim", "pve-leaf-c")
+			assertMissingResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentClaim", "pve-leaf-d")
 			assertMissingResource(t, tt.router, api.NetAPIVersion, "BGPPeer", "pve-leaf-a")
 			assertMissingResource(t, tt.router, api.NetAPIVersion, "BGPPeer", "pve-leaf-b")
+			assertMissingResource(t, tt.router, api.NetAPIVersion, "BGPPeer", "pve-leaf-c")
+			assertMissingResource(t, tt.router, api.NetAPIVersion, "BGPPeer", "pve-leaf-d")
 
 			dynamicPeer := mustResource(t, tt.router, api.NetAPIVersion, "BGPDynamicPeer", "pve-leaves")
 			dynamicSpec, err := dynamicPeer.BGPDynamicPeerSpec()
@@ -211,6 +217,8 @@ func TestPVEMinimalDynamicRRLeafExamples(t *testing.T) {
 	seed := loadFixtureRouter(t, "pve-minimal-rr-claims-seed.yaml")
 	assertHasResource(t, seed, api.MobilityAPIVersion, "SAMEnrollmentClaim", "pve-leaf-a")
 	assertHasResource(t, seed, api.MobilityAPIVersion, "SAMEnrollmentClaim", "pve-leaf-b")
+	assertHasResource(t, seed, api.MobilityAPIVersion, "SAMEnrollmentClaim", "pve-leaf-c")
+	assertHasResource(t, seed, api.MobilityAPIVersion, "SAMEnrollmentClaim", "pve-leaf-d")
 
 	t.Run("leaf-a wireguard ipip consumes pve rr", func(t *testing.T) {
 		assertHasResource(t, leafA, api.NetAPIVersion, "WireGuardInterface", "wg-pve")
@@ -261,6 +269,57 @@ func TestPVEMinimalDynamicRRLeafExamples(t *testing.T) {
 		}
 		assertNamedRRSetMembers(t, fetchedRRSet, "pve-rrs", "pve-rr-a", "pve-rr-b")
 		assertLeafBGPRouterPolicy(t, leafB, "pve-leaf-b", "10.77.70.22/32")
+	})
+
+	t.Run("leaf-c wireguard ipip consumes pve rr", func(t *testing.T) {
+		assertHasResource(t, leafC, api.NetAPIVersion, "WireGuardInterface", "wg-pve")
+		assertHasResource(t, leafC, api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-c")
+		assertMissingResource(t, leafC, api.MobilityAPIVersion, "SAMRRSet", "pve-rrs")
+		assertHasResource(t, fetchedRRSet, api.MobilityAPIVersion, "SAMRRSet", "pve-rrs")
+		assertMissingResource(t, leafC, api.NetAPIVersion, "BGPDynamicPeer", "pve-leaves")
+		assertMissingResource(t, leafC, api.NetAPIVersion, "BGPPeer", "pve-rr-a")
+		assertMissingResource(t, leafC, api.NetAPIVersion, "BGPPeer", "pve-rr-b")
+		profile := mustResource(t, leafC, api.MobilityAPIVersion, "SAMTransportProfile", "pve-leaf-c")
+		spec, err := profile.SAMTransportProfileSpec()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if spec.Mode != "ipip" || spec.Encryption != "wireguard" {
+			t.Fatalf("pve-leaf-c transport = %s/%s, want ipip/wireguard", spec.Mode, spec.Encryption)
+		}
+		if len(spec.PeersFrom) != 1 || spec.PeersFrom[0].Resource != "SAMRRSet/pve-rrs" {
+			t.Fatalf("pve-leaf-c peersFrom = %#v, want SAMRRSet/pve-rrs", spec.PeersFrom)
+		}
+		assertNamedRRSetMembers(t, fetchedRRSet, "pve-rrs", "pve-rr-a", "pve-rr-b")
+		assertLeafBGPRouterPolicy(t, leafC, "pve-leaf-c", "10.77.70.23/32")
+	})
+
+	t.Run("leaf-d fou consumes pve rr without wireguard", func(t *testing.T) {
+		assertHasResource(t, leafD, api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-d")
+		assertMissingResource(t, leafD, api.MobilityAPIVersion, "SAMRRSet", "pve-rrs")
+		assertHasResource(t, fetchedRRSet, api.MobilityAPIVersion, "SAMRRSet", "pve-rrs")
+		assertMissingResource(t, leafD, api.NetAPIVersion, "WireGuardInterface", "wg-pve")
+		assertMissingResource(t, leafD, api.NetAPIVersion, "WireGuardPeer", "pve-rr-a")
+		assertMissingResource(t, leafD, api.NetAPIVersion, "WireGuardPeer", "pve-rr-b")
+		assertMissingResource(t, leafD, api.NetAPIVersion, "BGPDynamicPeer", "pve-leaves")
+		assertMissingResource(t, leafD, api.NetAPIVersion, "BGPPeer", "pve-rr-a")
+		assertMissingResource(t, leafD, api.NetAPIVersion, "BGPPeer", "pve-rr-b")
+		profile := mustResource(t, leafD, api.MobilityAPIVersion, "SAMTransportProfile", "pve-leaf-d")
+		spec, err := profile.SAMTransportProfileSpec()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if spec.Mode != "fou" || spec.Encryption != "none" {
+			t.Fatalf("pve-leaf-d transport = %s/%s, want fou/none", spec.Mode, spec.Encryption)
+		}
+		if spec.EncapSport != 5555 || spec.EncapDport != 5555 {
+			t.Fatalf("pve-leaf-d encap ports = %d/%d, want 5555/5555", spec.EncapSport, spec.EncapDport)
+		}
+		if len(spec.PeersFrom) != 1 || spec.PeersFrom[0].Resource != "SAMRRSet/pve-rrs" {
+			t.Fatalf("pve-leaf-d peersFrom = %#v, want SAMRRSet/pve-rrs", spec.PeersFrom)
+		}
+		assertNamedRRSetMembers(t, fetchedRRSet, "pve-rrs", "pve-rr-a", "pve-rr-b")
+		assertLeafBGPRouterPolicy(t, leafD, "pve-leaf-d", "10.77.70.24/32")
 	})
 }
 
