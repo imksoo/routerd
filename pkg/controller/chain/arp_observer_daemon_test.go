@@ -68,34 +68,12 @@ func TestRunnerMobilityARPObserverDaemonSpecsFromOnPremL2Sources(t *testing.T) {
 }
 
 func TestRunnerMobilityARPObserverOnDemandInheritsCaptureSourceAddress(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"}, Metadata: api.ObjectMeta{Name: "home"}, Spec: api.EventGroupSpec{NodeName: "pve-rt08"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "svnet1"}, Spec: api.InterfaceSpec{IfName: "eth1"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"}, Metadata: api.ObjectMeta{Name: "svnet1"}, Spec: api.MobilityPoolSpec{
-			Prefix:         "192.168.123.0/24",
-			GroupRef:       "home",
-			DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
-			Members: []api.MobilityPoolMember{
-				{
-					NodeRef: "pve-rt08",
-					Site:    "pve08",
-					Role:    "onprem",
-					Capture: api.MobilityMemberCapture{
-						Type:          "proxy-arp",
-						Interface:     "svnet1",
-						SourceAddress: "192.168.123.254/24",
-					},
-					OwnershipDiscovery: api.MobilityOwnershipDiscovery{
-						Mode: "onprem-l2",
-						Sources: []api.MobilityOwnershipDiscoverySource{
-							{Type: "on-demand-arp", Interface: "svnet1", ProbeTimeout: "500ms", ProbeRetries: 2, ScanInterval: "1s"},
-						},
-					},
-				},
-			},
-		}},
-	}}}
-	runner := Runner{Router: router}
+	runner := Runner{Router: testARPObserverRouter(
+		api.MobilityMemberCapture{Type: "proxy-arp", Interface: "svnet1", SourceAddress: "192.168.123.254/24"},
+		[]api.MobilityOwnershipDiscoverySource{
+			{Type: "on-demand-arp", Interface: "svnet1", ProbeTimeout: "500ms", ProbeRetries: 2, ScanInterval: "1s"},
+		},
+	)}
 	specs := runner.mobilityARPObserverDaemonSpecs()
 	if len(specs) != 1 {
 		t.Fatalf("daemon specs = %d, want 1: %#v", len(specs), specs)
@@ -107,4 +85,79 @@ func TestRunnerMobilityARPObserverOnDemandInheritsCaptureSourceAddress(t *testin
 	if spec.SourceAddress != "192.168.123.254" {
 		t.Fatalf("source address = %q, want capture.sourceAddress without prefix", spec.SourceAddress)
 	}
+}
+
+func TestRunnerMobilityARPObserverOnDemandPrefersExplicitSourceAddressFrom(t *testing.T) {
+	runner := Runner{
+		Router: testARPObserverRouter(
+			api.MobilityMemberCapture{Type: "proxy-arp", Interface: "svnet1", SourceAddress: "192.168.123.254/24"},
+			[]api.MobilityOwnershipDiscoverySource{
+				{Type: "on-demand-arp", Interface: "svnet1", SourceAddressFrom: api.StatusValueSourceSpec{Resource: "DHCPv4Client/svnet1-source", Field: "currentAddress"}},
+			},
+		),
+		Store: mapStore{api.NetAPIVersion + "/DHCPv4Client/svnet1-source": {"currentAddress": "192.168.123.134/24"}},
+	}
+	specs := runner.mobilityARPObserverDaemonSpecs()
+	if len(specs) != 1 {
+		t.Fatalf("daemon specs = %d, want 1: %#v", len(specs), specs)
+	}
+	if got := specs[0].SourceAddress; got != "192.168.123.134" {
+		t.Fatalf("source address = %q, want sourceAddressFrom value", got)
+	}
+}
+
+func TestRunnerMobilityARPObserverPassiveDoesNotInheritCaptureSourceAddress(t *testing.T) {
+	runner := Runner{Router: testARPObserverRouter(
+		api.MobilityMemberCapture{Type: "proxy-arp", Interface: "svnet1", SourceAddress: "192.168.123.254/24"},
+		[]api.MobilityOwnershipDiscoverySource{
+			{Type: "arp-observer", Interface: "svnet1"},
+		},
+	)}
+	specs := runner.mobilityARPObserverDaemonSpecs()
+	if len(specs) != 1 {
+		t.Fatalf("daemon specs = %d, want 1: %#v", len(specs), specs)
+	}
+	if got := specs[0].SourceAddress; got != "" {
+		t.Fatalf("source address = %q, want empty for passive observer", got)
+	}
+}
+
+func TestRunnerMobilityARPObserverOnDemandRejectsOutOfPoolCaptureSourceAddress(t *testing.T) {
+	runner := Runner{Router: testARPObserverRouter(
+		api.MobilityMemberCapture{Type: "proxy-arp", Interface: "svnet1", SourceAddress: "10.0.0.254/24"},
+		[]api.MobilityOwnershipDiscoverySource{
+			{Type: "on-demand-arp", Interface: "svnet1"},
+		},
+	)}
+	specs := runner.mobilityARPObserverDaemonSpecs()
+	if len(specs) != 1 {
+		t.Fatalf("daemon specs = %d, want 1: %#v", len(specs), specs)
+	}
+	if got := specs[0].SourceAddress; got != "" {
+		t.Fatalf("source address = %q, want empty for out-of-pool capture.sourceAddress", got)
+	}
+}
+
+func testARPObserverRouter(capture api.MobilityMemberCapture, sources []api.MobilityOwnershipDiscoverySource) *api.Router {
+	return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"}, Metadata: api.ObjectMeta{Name: "home"}, Spec: api.EventGroupSpec{NodeName: "pve-rt08"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "svnet1"}, Spec: api.InterfaceSpec{IfName: "eth1"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"}, Metadata: api.ObjectMeta{Name: "svnet1"}, Spec: api.MobilityPoolSpec{
+			Prefix:         "192.168.123.0/24",
+			GroupRef:       "home",
+			DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+			Members: []api.MobilityPoolMember{
+				{
+					NodeRef: "pve-rt08",
+					Site:    "pve08",
+					Role:    "onprem",
+					Capture: capture,
+					OwnershipDiscovery: api.MobilityOwnershipDiscovery{
+						Mode:    "onprem-l2",
+						Sources: sources,
+					},
+				},
+			},
+		}},
+	}}}
 }
