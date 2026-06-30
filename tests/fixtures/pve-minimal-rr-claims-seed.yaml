@@ -24,7 +24,7 @@ spec:
           allowedIPs: [10.31.0.21/32]
           persistentKeepalive: 25
         mobility:
-          ownedAddresses: [10.77.70.21/32]
+          ownedAddresses: [10.77.70.21/32, 10.77.70.15/32]
         bgp:
           asn: 64577
           routerID: 10.255.10.21
@@ -43,7 +43,7 @@ spec:
         tunnelAddress: 10.255.10.22/32
         endpoint: 10.30.0.22
         mobility:
-          ownedAddresses: [10.77.70.22/32]
+          ownedAddresses: [10.77.70.22/32, 10.77.70.15/32]
         bgp:
           asn: 64577
           routerID: 10.255.10.22
@@ -67,7 +67,7 @@ spec:
           allowedIPs: [10.31.0.23/32]
           persistentKeepalive: 25
         mobility:
-          ownedAddresses: [10.77.70.23/32]
+          ownedAddresses: [10.77.70.23/32, 10.77.70.19/32]
         bgp:
           asn: 64577
           routerID: 10.255.10.23
@@ -86,7 +86,7 @@ spec:
         tunnelAddress: 10.255.10.24/32
         endpoint: 10.30.0.24
         mobility:
-          ownedAddresses: [10.77.70.24/32]
+          ownedAddresses: [10.77.70.24/32, 10.77.70.19/32]
         bgp:
           asn: 64577
           routerID: 10.255.10.24

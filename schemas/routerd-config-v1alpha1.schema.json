@@ -7642,7 +7642,8 @@
                         "properties": {
                           "mode": {
                             "enum": [
-                              "route"
+                              "route",
+                              "bgp"
                             ],
                             "type": "string"
                           },

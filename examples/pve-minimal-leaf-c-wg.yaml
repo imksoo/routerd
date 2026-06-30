@@ -16,6 +16,23 @@ spec:
       spec: { interface: private-wan, address: 10.30.0.23/24 }
 
     - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata: { name: client-lan }
+      spec: { ifname: vmbr1, managed: false, mtu: 1500 }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata: { name: client-lan-capture-source }
+      spec: { interface: client-lan, address: 10.77.70.36/32 }
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata: { name: client-lan-link-route }
+      spec:
+        destination: 10.77.70.0/24
+        deviceFrom: { resource: Interface/client-lan, field: ifname }
+
+    - apiVersion: net.routerd.net/v1alpha1
       kind: WireGuardInterface
       metadata: { name: wg-pve }
       spec:
@@ -57,7 +74,7 @@ spec:
         asn: 64577
         routerID: 10.255.10.23
         exportPolicy:
-          allowedPrefixes: [10.77.70.23/32]
+          allowedPrefixes: [10.77.70.23/32, 10.77.70.19/32]
         redistribute:
           connected:
             allowedPrefixes: [10.77.70.23/32]
@@ -85,9 +102,9 @@ spec:
             allowedPrefixes: [10.77.70.0/24]
             allowedPrefixLengthMin: 32
             allowedPrefixLengthMax: 32
-            nextHopRewrite: unchanged
+            nextHopRewrite: peer-address
           exportPolicy:
-            allowedPrefixes: [10.77.70.23/32]
+            allowedPrefixes: [10.77.70.23/32, 10.77.70.19/32]
 
     - apiVersion: mobility.routerd.net/v1alpha1
       kind: MobilityPool
@@ -96,10 +113,18 @@ spec:
         prefix: 10.77.70.0/24
         groupRef: pve-lab
         mode: selective-address
+        capturePolicy: { mode: all-non-owner-sites }
         members:
           - nodeRef: pve-leaf-c
-            site: pve-lab
+            site: pve-lab-b
             role: onprem
+            staticOwnedAddresses: [10.77.70.19/32]
+            capture:
+              type: proxy-arp
+              interface: client-lan
+              sourceAddress: 10.77.70.36/32
+              gratuitousARP: true
+              activeWhen: { type: single-router }
 
     - apiVersion: mobility.routerd.net/v1alpha1
       kind: SAMEnrollmentPolicy
@@ -122,6 +147,36 @@ spec:
           persistentKeepalive: 25
         mobilityPoolRefs: [MobilityPool/pve-mobility]
 
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: OverlayPeer
+      metadata: { name: pve-rrs }
+      spec:
+        role: onprem
+        nodeID: pve-rrs
+        underlay: { type: route }
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: AddressMobilityDomain
+      metadata: { name: bgp-pve-mobility }
+      spec:
+        prefix: 10.77.70.0/24
+        mode: selective-address
+        peerRef: pve-rrs
+
+    - apiVersion: hybrid.routerd.net/v1alpha1
+      kind: RemoteAddressClaim
+      metadata: { name: pve-client-a-proxy }
+      spec:
+        domainRef: bgp-pve-mobility
+        address: 10.77.70.15/32
+        ownerSide: onprem
+        capture:
+          type: proxy-arp
+          interface: client-lan
+          gratuitousARP: true
+          activeWhen: { type: single-router }
+        delivery: { mode: bgp, peerRef: pve-rrs }
+
     - apiVersion: mobility.routerd.net/v1alpha1
       kind: SAMEnrollmentClaim
       metadata: { name: pve-leaf-c }
@@ -141,7 +196,7 @@ spec:
           allowedIPs: [10.31.0.23/32]
           persistentKeepalive: 25
         mobility:
-          ownedAddresses: [10.77.70.23/32]
+          ownedAddresses: [10.77.70.23/32, 10.77.70.19/32]
         bgp:
           asn: 64577
           routerID: 10.255.10.23

@@ -240,7 +240,7 @@ func TestPVEMinimalDynamicRRLeafExamples(t *testing.T) {
 			t.Fatalf("pve-leaf-a peersFrom = %#v, want SAMRRSet/pve-rrs", spec.PeersFrom)
 		}
 		assertNamedRRSetMembers(t, fetchedRRSet, "pve-rrs", "pve-rr-a", "pve-rr-b")
-		assertLeafBGPRouterPolicy(t, leafA, "pve-leaf-a", "10.77.70.21/32")
+		assertLeafBGPRouterPolicy(t, leafA, "pve-leaf-a", "10.77.70.21/32", "10.77.70.15/32")
 	})
 
 	t.Run("leaf-b fou consumes pve rr without wireguard", func(t *testing.T) {
@@ -268,7 +268,7 @@ func TestPVEMinimalDynamicRRLeafExamples(t *testing.T) {
 			t.Fatalf("pve-leaf-b peersFrom = %#v, want SAMRRSet/pve-rrs", spec.PeersFrom)
 		}
 		assertNamedRRSetMembers(t, fetchedRRSet, "pve-rrs", "pve-rr-a", "pve-rr-b")
-		assertLeafBGPRouterPolicy(t, leafB, "pve-leaf-b", "10.77.70.22/32")
+		assertLeafBGPRouterPolicy(t, leafB, "pve-leaf-b", "10.77.70.22/32", "10.77.70.15/32")
 	})
 
 	t.Run("leaf-c wireguard ipip consumes pve rr", func(t *testing.T) {
@@ -291,7 +291,7 @@ func TestPVEMinimalDynamicRRLeafExamples(t *testing.T) {
 			t.Fatalf("pve-leaf-c peersFrom = %#v, want SAMRRSet/pve-rrs", spec.PeersFrom)
 		}
 		assertNamedRRSetMembers(t, fetchedRRSet, "pve-rrs", "pve-rr-a", "pve-rr-b")
-		assertLeafBGPRouterPolicy(t, leafC, "pve-leaf-c", "10.77.70.23/32")
+		assertLeafBGPRouterPolicy(t, leafC, "pve-leaf-c", "10.77.70.23/32", "10.77.70.19/32")
 	})
 
 	t.Run("leaf-d fou consumes pve rr without wireguard", func(t *testing.T) {
@@ -319,7 +319,7 @@ func TestPVEMinimalDynamicRRLeafExamples(t *testing.T) {
 			t.Fatalf("pve-leaf-d peersFrom = %#v, want SAMRRSet/pve-rrs", spec.PeersFrom)
 		}
 		assertNamedRRSetMembers(t, fetchedRRSet, "pve-rrs", "pve-rr-a", "pve-rr-b")
-		assertLeafBGPRouterPolicy(t, leafD, "pve-leaf-d", "10.77.70.24/32")
+		assertLeafBGPRouterPolicy(t, leafD, "pve-leaf-d", "10.77.70.24/32", "10.77.70.19/32")
 	})
 }
 
@@ -469,15 +469,15 @@ func assertNamedRRSetMembers(t *testing.T, router *api.Router, name string, want
 	}
 }
 
-func assertLeafBGPRouterPolicy(t *testing.T, router *api.Router, leafName, ownedPrefix string) {
+func assertLeafBGPRouterPolicy(t *testing.T, router *api.Router, leafName string, ownedPrefixes ...string) {
 	t.Helper()
 	resource := mustResource(t, router, api.NetAPIVersion, "BGPRouter", "mobility-bgp")
 	spec, err := resource.BGPRouterSpec()
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertStringSet(t, leafName+" BGP export prefixes", spec.ExportPolicy.AllowedPrefixes, []string{ownedPrefix})
-	assertStringSet(t, leafName+" BGP connected redistribute prefixes", spec.Redistribute.Connected.AllowedPrefixes, []string{ownedPrefix})
+	assertStringSet(t, leafName+" BGP export prefixes", spec.ExportPolicy.AllowedPrefixes, ownedPrefixes)
+	assertStringSet(t, leafName+" BGP connected redistribute prefixes", spec.Redistribute.Connected.AllowedPrefixes, []string{ownedPrefixes[0]})
 	assertNoPrefixes(t, leafName+" BGP export prefixes", spec.ExportPolicy.AllowedPrefixes, "0.0.0.0/0", "10.10.0.0/24", "10.20.0.0/24")
 	assertNoPrefixes(t, leafName+" BGP connected redistribute prefixes", spec.Redistribute.Connected.AllowedPrefixes, "0.0.0.0/0", "10.10.0.0/24", "10.20.0.0/24")
 }

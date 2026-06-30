@@ -2114,7 +2114,7 @@ type AddressCapture struct {
 
 type AddressDelivery struct {
 	PeerRef         string `yaml:"peerRef" json:"peerRef"`
-	Mode            string `yaml:"mode" json:"mode" jsonschema:"enum=route"`
+	Mode            string `yaml:"mode" json:"mode" jsonschema:"enum=route,enum=bgp"`
 	TunnelInterface string `yaml:"tunnelInterface,omitempty" json:"tunnelInterface,omitempty"`
 }
 
