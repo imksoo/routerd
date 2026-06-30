@@ -2,7 +2,7 @@
 apiVersion: routerd.net/v1alpha1
 kind: Router
 metadata:
-  name: pve-rr-a
+  name: pve-rr-b
 spec:
   resources:
     - apiVersion: net.routerd.net/v1alpha1
@@ -13,13 +13,13 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
       metadata: { name: private-wan-ipv4 }
-      spec: { interface: private-wan, address: 10.30.0.10/24 }
+      spec: { interface: private-wan, address: 10.30.0.11/24 }
 
     - apiVersion: system.routerd.net/v1alpha1
       kind: ControlAPI
       metadata: { name: default }
       spec:
-        listenAddress: 10.30.0.10
+        listenAddress: 10.30.0.11
         port: 65432
         allowCIDRs: [10.30.0.0/24]
 
@@ -27,7 +27,7 @@ spec:
       kind: WireGuardInterface
       metadata: { name: wg-pve }
       spec:
-        selfNodeRef: pve-rr-a
+        selfNodeRef: pve-rr-b
         privateKeyFile: /usr/local/etc/routerd/secrets/wg-pve.key
         listenPort: 51820
         mtu: 1420
@@ -42,14 +42,14 @@ spec:
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress
       metadata: { name: wg-pve-ipv4 }
-      spec: { interface: wg-pve, address: 10.31.0.10/32 }
+      spec: { interface: wg-pve, address: 10.31.0.11/32 }
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: BGPRouter
       metadata: { name: mobility-bgp }
       spec:
         asn: 64577
-        routerID: 10.255.10.1
+        routerID: 10.255.10.2
         listen: { port: 179 }
         importPolicy:
           allowedPrefixes: [10.77.70.0/24]
@@ -113,15 +113,15 @@ spec:
 
     - apiVersion: mobility.routerd.net/v1alpha1
       kind: SAMTransportProfile
-      metadata: { name: pve-rr-a-wg }
+      metadata: { name: pve-rr-b-wg }
       spec:
-        selfNodeRef: pve-rr-a
+        selfNodeRef: pve-rr-b
         mode: ipip
         encryption: wireguard
         addressingMode: pair-stable
         innerPrefix: 10.255.10.0/24
         underlayInterface: wg-pve
-        localEndpoint: 10.31.0.10
+        localEndpoint: 10.31.0.11
         peersFrom:
           - resource: SAMEnrollmentPolicy/pve-wg-leaves
         bgp:
@@ -132,15 +132,15 @@ spec:
 
     - apiVersion: mobility.routerd.net/v1alpha1
       kind: SAMTransportProfile
-      metadata: { name: pve-rr-a-fou }
+      metadata: { name: pve-rr-b-fou }
       spec:
-        selfNodeRef: pve-rr-a
+        selfNodeRef: pve-rr-b
         mode: fou
         encryption: none
         addressingMode: pair-stable
         innerPrefix: 10.255.10.0/24
         underlayInterface: private-wan
-        localEndpoint: 10.30.0.10
+        localEndpoint: 10.30.0.11
         encapSport: 5555
         encapDport: 5555
         peersFrom:
@@ -155,7 +155,7 @@ spec:
       kind: SAMEnrollmentPolicy
       metadata: { name: pve-wg-leaves }
       spec:
-        transportProfileRef: SAMTransportProfile/pve-rr-a-wg
+        transportProfileRef: SAMTransportProfile/pve-rr-b-wg
         rrSetRef: SAMRRSet/pve-rrs
         joinTokenFrom:
           file: /usr/local/etc/routerd/secrets/pve-join-token
@@ -176,7 +176,7 @@ spec:
       kind: SAMEnrollmentPolicy
       metadata: { name: pve-fou-leaves }
       spec:
-        transportProfileRef: SAMTransportProfile/pve-rr-a-fou
+        transportProfileRef: SAMTransportProfile/pve-rr-b-fou
         rrSetRef: SAMRRSet/pve-rrs
         joinTokenFrom:
           file: /usr/local/etc/routerd/secrets/pve-join-token

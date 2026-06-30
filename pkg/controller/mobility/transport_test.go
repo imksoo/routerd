@@ -657,14 +657,14 @@ func TestPVEMinimalExamplesMaterializeReviewTransports(t *testing.T) {
 		}{
 			{
 				name:    "wireguard ipip leaf-a admission",
-				profile: "pve-rr-wg",
+				profile: "pve-rr-a-wg",
 				peer:    "pve-leaf-a",
 				mode:    "ipip",
 				remote:  "10.31.0.21",
 			},
 			{
 				name:      "private fou leaf-b admission",
-				profile:   "pve-rr-fou",
+				profile:   "pve-rr-a-fou",
 				peer:      "pve-leaf-b",
 				mode:      "fou",
 				remote:    "10.30.0.22",
@@ -697,14 +697,14 @@ func TestPVEMinimalExamplesMaterializeReviewTransports(t *testing.T) {
 				if profileSpec.BGP.GeneratePeers == nil || *profileSpec.BGP.GeneratePeers {
 					t.Fatalf("SAMTransportProfile/%s generatePeers = %#v, want false", tc.profile, profileSpec.BGP.GeneratePeers)
 				}
-				resources := decodeResources(t, latestPart(t, store, TransportDynamicSource(tc.profile, "pve-rr")).ResourcesJSON)
+				resources := decodeResources(t, latestPart(t, store, TransportDynamicSource(tc.profile, "pve-rr-a")).ResourcesJSON)
 				if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 1; got != want {
 					t.Fatalf("TunnelInterface count = %d, want %d resources=%#v", got, want, resources)
 				}
 				if got := countResources(resources, api.NetAPIVersion, "BGPPeer"); got != 0 {
 					t.Fatalf("RR generated BGPPeer count = %d, want 0 resources=%#v", got, resources)
 				}
-				tunnel := findTransportTunnelForPeer(t, resources, "pve-rr", tc.peer)
+				tunnel := findTransportTunnelForPeer(t, resources, "pve-rr-a", tc.peer)
 				if tunnel.Mode != tc.mode || tunnel.Remote != tc.remote {
 					t.Fatalf("%s tunnel = %#v, want mode %s remote %s", tc.peer, tunnel, tc.mode, tc.remote)
 				}
@@ -722,7 +722,7 @@ func TestPVEMinimalExamplesMaterializeReviewTransports(t *testing.T) {
 			profile     string
 			mode        string
 			encryption  string
-			remote      string
+			remotes     map[string]string
 			wantEncap   bool
 			wantWGIface bool
 		}{
@@ -732,7 +732,7 @@ func TestPVEMinimalExamplesMaterializeReviewTransports(t *testing.T) {
 				profile:     "pve-leaf-a",
 				mode:        "ipip",
 				encryption:  "wireguard",
-				remote:      "10.31.0.10",
+				remotes:     map[string]string{"pve-rr-a": "10.31.0.10", "pve-rr-b": "10.31.0.11"},
 				wantWGIface: true,
 			},
 			{
@@ -741,7 +741,7 @@ func TestPVEMinimalExamplesMaterializeReviewTransports(t *testing.T) {
 				profile:    "pve-leaf-b",
 				mode:       "fou",
 				encryption: "none",
-				remote:     "10.30.0.10",
+				remotes:    map[string]string{"pve-rr-a": "10.30.0.10", "pve-rr-b": "10.30.0.11"},
 				wantEncap:  true,
 			},
 		}
@@ -775,25 +775,27 @@ func TestPVEMinimalExamplesMaterializeReviewTransports(t *testing.T) {
 					t.Fatalf("Reconcile: %v", err)
 				}
 				resources := decodeResources(t, latestPart(t, store, TransportDynamicSource(tc.profile, tc.profile)).ResourcesJSON)
-				if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 1; got != want {
+				if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 2; got != want {
 					t.Fatalf("TunnelInterface count = %d, want %d resources=%#v", got, want, resources)
 				}
-				if got, want := countResources(resources, api.NetAPIVersion, "BGPPeer"), 1; got != want {
+				if got, want := countResources(resources, api.NetAPIVersion, "BGPPeer"), 2; got != want {
 					t.Fatalf("BGPPeer count = %d, want %d resources=%#v", got, want, resources)
 				}
 				if got := countResources(resources, api.NetAPIVersion, "WireGuardPeer"); got != 0 {
 					t.Fatalf("transport-generated WireGuardPeer count = %d, want 0", got)
 				}
-				tunnel := findTransportTunnelForPeer(t, resources, tc.profile, "pve-rr")
-				if tunnel.Mode != tc.mode || tunnel.Remote != tc.remote {
-					t.Fatalf("pve-rr tunnel = %#v, want mode %s remote %s", tunnel, tc.mode, tc.remote)
-				}
-				if tc.wantEncap && (tunnel.EncapSport != 5555 || tunnel.EncapDport != 5555) {
-					t.Fatalf("pve-rr tunnel encap ports = %d/%d, want 5555/5555", tunnel.EncapSport, tunnel.EncapDport)
-				}
-				_, bgpPeer := findTransportBGPPeerResourceForPeer(t, resources, tc.profile, "pve-rr")
-				if len(bgpPeer.Peers) != 1 || strings.TrimSpace(bgpPeer.Peers[0]) == "" {
-					t.Fatalf("pve-rr BGP peer = %#v, want one derived RR tunnel address", bgpPeer)
+				for peer, remote := range tc.remotes {
+					tunnel := findTransportTunnelForPeer(t, resources, tc.profile, peer)
+					if tunnel.Mode != tc.mode || tunnel.Remote != remote {
+						t.Fatalf("%s tunnel = %#v, want mode %s remote %s", peer, tunnel, tc.mode, remote)
+					}
+					if tc.wantEncap && (tunnel.EncapSport != 5555 || tunnel.EncapDport != 5555) {
+						t.Fatalf("%s tunnel encap ports = %d/%d, want 5555/5555", peer, tunnel.EncapSport, tunnel.EncapDport)
+					}
+					_, bgpPeer := findTransportBGPPeerResourceForPeer(t, resources, tc.profile, peer)
+					if len(bgpPeer.Peers) != 1 || strings.TrimSpace(bgpPeer.Peers[0]) == "" {
+						t.Fatalf("%s BGP peer = %#v, want one derived RR tunnel address", peer, bgpPeer)
+					}
 				}
 			})
 		}

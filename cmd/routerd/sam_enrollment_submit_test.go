@@ -211,7 +211,7 @@ func TestGetSAMRRSetForAcceptedClaimReturnsOnlyClaimRRSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rrset spec: %v", err)
 	}
-	if len(spec.Members) != 1 || spec.Members[0].NodeRef != "pve-rr" {
+	if len(spec.Members) != 2 || spec.Members[0].NodeRef != "pve-rr-a" || spec.Members[1].NodeRef != "pve-rr-b" {
 		t.Fatalf("rrset members = %#v", spec.Members)
 	}
 }

@@ -27,7 +27,7 @@ spec:
         interface: lo-mobility
         address: 10.77.70.22/32
         allowOverlap: true
-        allowOverlapReason: pve-leaf-b owned mobility /32 advertised to pve-rr
+        allowOverlapReason: pve-leaf-b owned mobility /32 advertised to pve RRs
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: BGPRouter
@@ -124,5 +124,6 @@ spec:
         claimRef: SAMEnrollmentClaim/pve-leaf-b
         bootstrapEndpoints:
           - http://10.30.0.10:65432
+          - http://10.30.0.11:65432
         stateTTLRefreshBefore: 10m
         retryBackoff: { min: 10s, max: 15m }
