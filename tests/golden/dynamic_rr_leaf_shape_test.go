@@ -34,6 +34,8 @@ func TestCloudEdgeDynamicRRLeafExamplesUseDualRRShape(t *testing.T) {
 			assertHasResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentPolicy", "cloudedge-leaves")
 			assertHasResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentPolicy", "cloudedge-public-wg-leaves")
 			assertHasResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentPolicy", "cloudedge-private-fou-leaves")
+			assertMissingResource(t, tt.router, api.FederationAPIVersion, "EventGroup", "cloudedge")
+			assertMissingResource(t, tt.router, api.MobilityAPIVersion, "MobilityPool", "cloudedge")
 			assertMissingResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentClaim", "leaf-pve")
 			assertMissingResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentClaim", "leaf-a")
 			assertMissingResource(t, tt.router, api.MobilityAPIVersion, "SAMEnrollmentClaim", "leaf-b")
@@ -70,6 +72,9 @@ func TestCloudEdgeDynamicRRLeafExamplesUseDualRRShape(t *testing.T) {
 			assertRRAdmissionTransport(t, tt.router, tt.self+"-fou", "fou", "none", "SAMEnrollmentPolicy/cloudedge-private-fou-leaves", true)
 			assertEnrollmentPolicy(t, tt.router, "cloudedge-public-wg-leaves", tt.self+"-wg", "cloudedge-public-underlay", true)
 			assertEnrollmentPolicy(t, tt.router, "cloudedge-private-fou-leaves", tt.self+"-fou", "cloudedge-private-underlay", false)
+			assertEnrollmentPolicyMobilityPrefixes(t, tt.router, "cloudedge-leaves", "10.77.60.0/24")
+			assertEnrollmentPolicyMobilityPrefixes(t, tt.router, "cloudedge-public-wg-leaves", "10.77.60.0/24")
+			assertEnrollmentPolicyMobilityPrefixes(t, tt.router, "cloudedge-private-fou-leaves", "10.77.60.0/24")
 		})
 	}
 	assertHasResource(t, seed, api.MobilityAPIVersion, "SAMEnrollmentClaim", "leaf-pve")
@@ -343,6 +348,19 @@ func assertEnrollmentPolicy(t *testing.T, router *api.Router, name, profile, aud
 	}
 	assertStringSet(t, "SAMEnrollmentPolicy/"+name+" endpoint prefixes", spec.EndpointPrefixes, []string{"10.20.0.0/24"})
 	assertStringSet(t, "SAMEnrollmentPolicy/"+name+" tunnel prefixes", spec.TunnelAddressPrefixes, []string{"10.255.0.0/20"})
+}
+
+func assertEnrollmentPolicyMobilityPrefixes(t *testing.T, router *api.Router, name string, want ...string) {
+	t.Helper()
+	resource := mustResource(t, router, api.MobilityAPIVersion, "SAMEnrollmentPolicy", name)
+	spec, err := resource.SAMEnrollmentPolicySpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spec.MobilityPoolRefs) != 0 {
+		t.Fatalf("SAMEnrollmentPolicy/%s mobilityPoolRefs = %#v, want empty for RR admission-only config", name, spec.MobilityPoolRefs)
+	}
+	assertStringSet(t, "SAMEnrollmentPolicy/"+name+" mobility prefixes", spec.MobilityPrefixes, want)
 }
 
 func assertRRSetMembers(t *testing.T, router *api.Router, want ...string) {

@@ -43,6 +43,15 @@ is not the default enrollment identity or the default private-underlay model.
   next-hop. A dynamic leaf can advertise only its accepted claim-owned `/32`;
   another leaf's `/32`, an unclaimed pool `/32`, pool aggregate, subprefix,
   default route, or underlay route is rejected before FIB installation.
+- RR-side enrollment admission supports both deployment shapes:
+  - use `SAMEnrollmentPolicy.spec.mobilityPoolRefs` when the RR also declares a
+    valid local `MobilityPool` member because RR and leaf/capture duties are
+    colocated, or because the RR is an actual mobility-planning participant;
+  - use `SAMEnrollmentPolicy.spec.mobilityPrefixes` and
+    `SAMRRSet.spec.mobilityPrefixes` when the RR is only serving enrollment,
+    RRSet delivery, WireGuard/dynamic peer admission, and BGP route reflection.
+    In this separated shape, the RR must not declare a placeholder
+    `MobilityPool` just to authorize leaf-owned `/32` claims.
 - `SAMEnrollmentClaim.spec.expiresAt` and `spec.revoked` are
   RR/controller/admin-owned admission state. They are intentionally not part of
   the leaf-authored join HMAC payload, so an operator can revoke or shorten
@@ -146,6 +155,13 @@ These configs model:
 - generated/effective leaf `TunnelInterface` and `BGPPeer` resources toward
   both rr-a and rr-b;
 - no `WireGuardInterface`, `WireGuardPeer`, or WG public key requirement.
+
+The dual-RR CloudEdge examples intentionally model separated RR/leaf roles:
+`examples/cloudedge-dynamic-rr-a-hub.yaml` and
+`examples/cloudedge-dynamic-rr-b-hub.yaml` do not declare `EventGroup` or
+`MobilityPool`. They use `mobilityPrefixes: [10.77.60.0/24]` on RR-side
+admission resources so local validation catches invalid claim addresses without
+starting mobility planning on the RRs.
 
 The mixed examples model:
 

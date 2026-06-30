@@ -235,6 +235,9 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 					return fmt.Errorf("%s spec.mobilityPoolRefs[%d] must reference MobilityPool/<name>", res.ID(), i)
 				}
 			}
+			if _, err := validateBGPPrefixList(res.ID(), "spec.mobilityPrefixes", spec.MobilityPrefixes); err != nil {
+				return err
+			}
 		}
 		if res.Kind == "BFD" {
 			spec, err := res.BFDSpec()
@@ -1076,8 +1079,8 @@ func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error
 			if err != nil {
 				return fmt.Errorf("%s spec.mobility.ownedAddresses[%d] is invalid: %w", res.ID(), i, err)
 			}
-			if !ownedAddressAuthorizedByMobilityPools(prefix, policy.MobilityPoolRefs, mobilityPrefixes) {
-				return fmt.Errorf("%s spec.mobility.ownedAddresses[%d] %s is outside authorized MobilityPool prefixes", res.ID(), i, prefix)
+			if !ownedAddressAuthorizedByMobilitySources(prefix, policy, mobilityPrefixes) {
+				return fmt.Errorf("%s spec.mobility.ownedAddresses[%d] %s is outside authorized mobility prefixes", res.ID(), i, prefix)
 			}
 			if previous := seenSAMEnrollmentValue(seenMobilityOwnedAddresses, policyKey, prefix.String(), res.ID()); previous != "" {
 				return fmt.Errorf("%s spec.mobility.ownedAddresses[%d] duplicates %s for %s", res.ID(), i, previous, spec.PolicyRef)
@@ -1221,6 +1224,16 @@ func prefixLastAddr(prefix netip.Prefix) netip.Addr {
 	hostBits := uint32(32 - prefix.Bits())
 	value += (uint32(1) << hostBits) - 1
 	return netip.AddrFrom4([4]byte{byte(value >> 24), byte(value >> 16), byte(value >> 8), byte(value)})
+}
+
+func ownedAddressAuthorizedByMobilitySources(address netip.Prefix, policy api.SAMEnrollmentPolicySpec, prefixes map[string]netip.Prefix) bool {
+	for _, prefixText := range policy.MobilityPrefixes {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(prefixText))
+		if err == nil && prefix.Masked().Contains(address.Addr()) {
+			return true
+		}
+	}
+	return ownedAddressAuthorizedByMobilityPools(address, policy.MobilityPoolRefs, prefixes)
 }
 
 func ownedAddressAuthorizedByMobilityPools(address netip.Prefix, refs []string, prefixes map[string]netip.Prefix) bool {

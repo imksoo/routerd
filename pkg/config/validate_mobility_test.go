@@ -412,8 +412,37 @@ func TestValidateSAMEnrollmentPolicyAndClaim(t *testing.T) {
 	claim.TunnelAddress = "10.255.0.21/32"
 	claim.Mobility.OwnedAddresses = []string{"10.88.60.21/32"}
 	router.Spec.Resources[claimIndex].Spec = claim
-	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "outside authorized MobilityPool prefixes") {
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "outside authorized mobility prefixes") {
 		t.Fatalf("expected MobilityPool authorization error, got %v", err)
+	}
+}
+
+func TestValidateSAMEnrollmentPolicyAllowsDirectMobilityPrefixesWithoutPool(t *testing.T) {
+	router := samEnrollmentRouter()
+	filtered := router.Spec.Resources[:0]
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "MobilityPool" {
+			continue
+		}
+		if resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "SAMEnrollmentPolicy" {
+			policy := resource.Spec.(api.SAMEnrollmentPolicySpec)
+			policy.MobilityPoolRefs = nil
+			policy.MobilityPrefixes = []string{"10.77.60.0/24"}
+			resource.Spec = policy
+		}
+		filtered = append(filtered, resource)
+	}
+	router.Spec.Resources = filtered
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate SAMEnrollmentPolicy with direct mobilityPrefixes: %v", err)
+	}
+
+	claimIndex := len(router.Spec.Resources) - 1
+	claim := router.Spec.Resources[claimIndex].Spec.(api.SAMEnrollmentClaimSpec)
+	claim.Mobility.OwnedAddresses = []string{"10.88.60.21/32"}
+	router.Spec.Resources[claimIndex].Spec = claim
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "outside authorized mobility prefixes") {
+		t.Fatalf("expected direct mobilityPrefixes authorization error, got %v", err)
 	}
 }
 

@@ -407,6 +407,41 @@ func TestSAMDynamicClaimAdmissionBindsOwnedHostRoutesToTunnelAddress(t *testing.
 	}
 }
 
+func TestSAMDynamicClaimAdmissionUsesDirectMobilityPrefixesWithoutPool(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-transport"},
+			Spec: api.SAMTransportProfileSpec{
+				SelfNodeRef: "SAMNode/rr-a",
+				Mode:        "ipip",
+				Encryption:  "none",
+				InnerPrefix: "10.255.0.1/32",
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentPolicy"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-leaves"},
+			Spec: api.SAMEnrollmentPolicySpec{
+				TransportProfileRef:   "SAMTransportProfile/cloudedge-transport",
+				TunnelAddressPrefixes: []string{"10.255.0.0/24"},
+				MobilityPrefixes:      []string{"10.77.60.0/24"},
+			},
+		},
+		samEnrollmentClaimResourceForTest("leaf-a", "10.255.0.31/32", "10.77.60.31/32"),
+		samEnrollmentClaimResourceForTest("leaf-b", "10.255.0.32/32", "10.88.60.32/32"),
+	)
+	admission := (&Controller{Router: router}).samDynamicClaimAdmission()
+
+	if ok, reason := admission.Admit("10.255.0.31", netip.MustParsePrefix("10.77.60.31/32")); !ok {
+		t.Fatalf("leaf-a own /32 rejected: %s", reason)
+	}
+	if ok, reason := admission.Admit("10.255.0.32", netip.MustParsePrefix("10.88.60.32/32")); ok || reason != "prefix-outside-authorized-pools" {
+		t.Fatalf("outside route admission = (%t,%q), want prefix-outside-authorized-pools", ok, reason)
+	}
+}
+
 func TestDynamicClaimAdmissionUsesBGPNeighborAddressInsteadOfFIBNextHop(t *testing.T) {
 	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
 	router.Spec.Resources = append(router.Spec.Resources,
