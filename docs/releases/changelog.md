@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260701.0804
+
 ### Added
 
 - `ControlAPI` HTTP listeners can now require bearer-token authentication with

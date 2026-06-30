@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260701.0804
+
 ### 变更
 
 - Dynamic SAM RR admission 现在支持分离的 RR/leaf topology，不需要在 RR 端声明

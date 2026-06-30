@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260701.0804
+
 ### 追加
 
 - `routerctl doctor routes` を追加しました。Installed な `IPv4Route`
