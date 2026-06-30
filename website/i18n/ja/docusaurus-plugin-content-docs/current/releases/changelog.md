@@ -18,6 +18,24 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
   preferred-source、metric の stale/mismatch を運用者向け証跡として
   報告します（#439）。
 
+### 変更
+
+- Dynamic SAM の RR admission は、RR 側に placeholder の `MobilityPool`
+  を宣言しない分離 RR/leaf 構成をサポートしました。`SAMEnrollmentPolicy`
+  と `SAMRRSet` は直接 `mobilityPrefixes` を持てるようになり、dynamic BGP
+  route admission は許可 prefix 外の claim prefix を拒否します。
+
+### 修正
+
+- PVE minimal dynamic RR example を実機 small-topology test 形状に更新しました。
+  RR x2、leaf a/b と leaf c/d、別 client LAN 上の疑似クライアント、host route
+  なし、明示的な proxy-ARP `RemoteAddressClaim`、BGP delivery、capture source
+  address、client-LAN link route を使います。tofu ベースの PVE VM で
+  `10.77.70.15` と `10.77.70.19` の双方向 ping 10/10 を確認しました。
+- `RemoteAddressClaim.delivery.mode: bgp` を config validation と公開 JSON
+  schema で受理するようにしました。既存の BGP delivery expansion の挙動と
+  一致します。
+
 ## v20260608.2325
 
 ### 追加

@@ -71,6 +71,11 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ### Changed
 
+- Dynamic SAM RR admission now supports separated RR/leaf topologies without
+  declaring a placeholder RR-side `MobilityPool`. `SAMEnrollmentPolicy` and
+  `SAMRRSet` can carry direct `mobilityPrefixes`, and dynamic BGP route
+  admission rejects accepted claimed prefixes outside those authorized
+  prefixes.
 - `ControlAPI` TCP listeners are now disabled unless a `ControlAPI` resource is
   declared or `routerd serve --http-listen` is passed. A declared `ControlAPI`
   still defaults to loopback `127.0.0.1:65432` with loopback-only CIDR
@@ -85,6 +90,15 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ### Fixed
 
+- PVE minimal dynamic RR examples now model the live small-topology test shape:
+  RR x2, leaf a/b plus leaf c/d, pseudo clients on separate client LANs with no
+  host routes, explicit proxy-ARP `RemoteAddressClaim`s, BGP delivery, capture
+  source addresses, and client-LAN link routes. The release gate was validated
+  on tofu-backed PVE VMs with 10/10 bidirectional ping between
+  `10.77.70.15` and `10.77.70.19`.
+- `RemoteAddressClaim.delivery.mode: bgp` is now accepted by config validation
+  and the published JSON schema, matching the existing BGP-delivery expansion
+  behavior.
 - FOU listener reuse and live redundancy issues found during PVE testing were
   fixed before the full client matrix gate.
 - `routerd serve --http-listen` release notes now explicitly warn that the

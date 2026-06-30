@@ -11,7 +11,22 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
-（無未發布的變更。）
+### 變更
+
+- Dynamic SAM RR admission 現在支援分離的 RR/leaf topology，不需要在 RR 端宣告
+  placeholder `MobilityPool`。`SAMEnrollmentPolicy` 與 `SAMRRSet` 可直接攜帶
+  `mobilityPrefixes`，dynamic BGP route admission 會拒絕超出授權 prefix 的
+  claimed prefix。
+
+### 修正
+
+- PVE minimal dynamic RR 範例已更新為實機 small-topology test 形狀：RR x2、
+  leaf a/b 加 leaf c/d、pseudo client 位於不同 client LAN、無 host route、
+  明確的 proxy-ARP `RemoteAddressClaim`、BGP delivery、capture source address，
+  以及 client-LAN link route。已在 tofu-backed PVE VM 上驗證
+  `10.77.70.15` 與 `10.77.70.19` 雙向 ping 10/10。
+- `RemoteAddressClaim.delivery.mode: bgp` 現在會被 config validation 與公開
+  JSON schema 接受，與既有 BGP delivery expansion 行為一致。
 
 ## v20260608.2325
 
