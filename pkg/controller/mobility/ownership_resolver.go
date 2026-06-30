@@ -29,8 +29,6 @@ const (
 	captureStateNone      = "None"
 	captureStateConfirmed = "Confirmed"
 	captureStateStale     = "Stale"
-
-	onPremProxyARPShadowFanoutThreshold = 4
 )
 
 type ownershipResolverInput struct {
@@ -662,7 +660,6 @@ func onPremPeerProxyARPShadowAddresses(poolName string, self memberPlanInfo, spe
 	observations = append(observations, onPremEventObservations(poolName, self.NodeRef, spec.GroupRef, events, poolPrefix, now)...)
 	peerMACs := map[string]bool{}
 	remoteHomeMACHits := map[string]map[string]bool{}
-	fanoutMACHits := map[string]map[string]bool{}
 	for _, observation := range observations {
 		address, ok := normalizeDiscoveredAddress(observation.Address, poolPrefix)
 		if !ok {
@@ -675,14 +672,6 @@ func onPremPeerProxyARPShadowAddresses(poolName string, self memberPlanInfo, spe
 		if peerSources[address] {
 			peerMACs[mac] = true
 		}
-		if discoveryScopeAllowsAddress(self.OwnershipDiscovery.Scope, address) {
-			if _, ok := matchingOnPremDiscoverySource(self, observation); ok {
-				if fanoutMACHits[mac] == nil {
-					fanoutMACHits[mac] = map[string]bool{}
-				}
-				fanoutMACHits[mac][address] = true
-			}
-		}
 		if fact, ok := remoteHomeFacts[address]; ok && strings.TrimSpace(fact.NodeRef) != "" && strings.TrimSpace(fact.NodeRef) != strings.TrimSpace(self.NodeRef) {
 			if remoteHomeMACHits[mac] == nil {
 				remoteHomeMACHits[mac] = map[string]bool{}
@@ -692,11 +681,6 @@ func onPremPeerProxyARPShadowAddresses(poolName string, self memberPlanInfo, spe
 	}
 	for mac, addresses := range remoteHomeMACHits {
 		if len(addresses) >= 2 {
-			peerMACs[mac] = true
-		}
-	}
-	for mac, addresses := range fanoutMACHits {
-		if len(addresses) >= onPremProxyARPShadowFanoutThreshold {
 			peerMACs[mac] = true
 		}
 	}

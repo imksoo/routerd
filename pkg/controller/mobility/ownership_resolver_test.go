@@ -784,56 +784,6 @@ func TestOwnershipResolverIgnoresPeerProxyARPShadowStatusWithRemoteHomeOwners(t 
 	}
 }
 
-func TestOwnershipResolverIgnoresHighFanoutPeerProxyARPShadowStatus(t *testing.T) {
-	now := time.Date(2026, 6, 30, 9, 5, 0, 0, time.UTC)
-	spec := pveProxyARPPoolSpec()
-	for i := range spec.Members {
-		if spec.Members[i].NodeRef == "pve-leaf-b" {
-			spec.Members[i].Capture = api.MobilityMemberCapture{}
-		}
-	}
-	clients := []onPremObservedClientStatus{
-		{IP: "10.77.60.4", MAC: "bc:24:11:c8:ad:46", SourceType: OnPremSourceOnDemandARP},
-		{IP: "10.77.60.5", MAC: "bc:24:11:c8:ad:46", SourceType: OnPremSourceOnDemandARP},
-		{IP: "10.77.60.14", MAC: "bc:24:11:c8:ad:46", SourceType: OnPremSourceOnDemandARP},
-		{IP: "10.77.60.21", MAC: "bc:24:11:c8:ad:46", SourceType: OnPremSourceOnDemandARP},
-		{IP: "10.77.60.24", MAC: "bc:24:11:c8:ad:46", SourceType: OnPremSourceOnDemandARP},
-		{IP: "10.77.60.25", MAC: "bc:24:11:c8:ad:46", SourceType: OnPremSourceOnDemandARP},
-		{IP: "10.77.60.15", MAC: "bc:24:11:10:00:15", SourceType: OnPremSourceOnDemandARP},
-	}
-	encoded, err := json.Marshal(clients)
-	if err != nil {
-		t.Fatalf("marshal clients: %v", err)
-	}
-	decisions, err := resolveAddressOwnership(ownershipResolverInput{
-		PoolName: "cloudedge",
-		SelfNode: "pve-leaf-a",
-		Spec:     spec,
-		Status: map[string]any{
-			"observedClientsBySource": map[string]any{
-				OnPremSourceOnDemandARP: map[string]any{
-					"interface":       "ens19",
-					"sourceType":      OnPremSourceOnDemandARP,
-					"observedClients": string(encoded),
-				},
-			},
-		},
-		Now: now,
-	})
-	if err != nil {
-		t.Fatalf("resolveAddressOwnership: %v", err)
-	}
-	for _, address := range []string{"10.77.60.4/32", "10.77.60.5/32", "10.77.60.14/32", "10.77.60.21/32", "10.77.60.24/32", "10.77.60.25/32"} {
-		if decision, ok := ownershipDecisionByAddressOK(decisions, address); ok {
-			t.Fatalf("proxy-ARP fanout shadow decision %s = %#v, want ignored", address, decision)
-		}
-	}
-	decision, ok := ownershipDecisionByAddressOK(decisions, "10.77.60.15/32")
-	if !ok || decision.Class != ownershipClassLocalHomeOwned || decision.AdvertiseOwnerNode != "pve-leaf-a" {
-		t.Fatalf("real local client decision = %#v ok=%v, want local owner", decision, ok)
-	}
-}
-
 func TestOwnershipResolverTreatsOnPremObservedStatusAsLocalOwner(t *testing.T) {
 	now := time.Date(2026, 6, 18, 6, 40, 0, 0, time.UTC)
 	spec := api.MobilityPoolSpec{
