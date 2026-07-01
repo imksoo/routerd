@@ -3,6 +3,8 @@
 package render
 
 import (
+	"strconv"
+
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
 )
@@ -13,7 +15,11 @@ func FirewallLoggerSystemdSpec(spec api.FirewallLogSpec, dpiSocket string) api.S
 	if path == "" {
 		path = defaults.FirewallLogFile()
 	}
-	exec := []string{"/usr/local/sbin/routerd-firewall-logger", "daemon", "--path", path}
+	group := spec.NFLogGroup
+	if group == 0 {
+		group = 1
+	}
+	exec := []string{"/usr/local/sbin/routerd-firewall-logger", "daemon", "--path", path, "--nflog-group", strconv.Itoa(group)}
 	wants := []string{"network-online.target"}
 	after := []string{"network-online.target"}
 	if dpiSocket != "" {

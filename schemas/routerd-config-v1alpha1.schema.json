@@ -9850,7 +9850,7 @@
                   },
                   "spec": {
                     "additionalProperties": false,
-                    "description": "SAMRRSet declares the intended hub/RR admission set.",
+                    "description": "SAMRRSet declares the intended hub/RR set.",
                     "properties": {
                       "enrollmentPolicyRef": {
                         "type": "string"
