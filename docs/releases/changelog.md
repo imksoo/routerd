@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260702.0753
+
 ### Changed
 
 - Clarified the separated RR/leaf Cloud-SAM admission boundary in API and

@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260702.0753
+
 ### 變更
 
 - 明確了分離 RR/leaf Cloud-SAM admission 的邊界。僅作為 RR 的部署透過

@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260702.0753
+
 ### 変更
 
 - 分離 RR/leaf Cloud-SAM admission の境界を API と runbook の文章で明確化しました。
