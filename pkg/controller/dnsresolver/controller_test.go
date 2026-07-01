@@ -150,6 +150,32 @@ func TestReconcileResolvesListenAddressStatusRef(t *testing.T) {
 	}
 }
 
+func TestReconcileResolvesListenAddressFromIPv4StaticAddressSpec(t *testing.T) {
+	store := mapStore{}
+	router := dnsResolverRouter(nil, []api.StatusValueSourceSpec{{Resource: "IPv4StaticAddress/lan-base", Field: "address"}})
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+		Metadata: api.ObjectMeta{Name: "lan-base"},
+		Spec:     api.IPv4StaticAddressSpec{Interface: "lan", Address: "172.18.0.2/16"},
+	})
+	controller := Controller{
+		Router: router,
+		Store:  store,
+		DryRun: true,
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
+	if status["phase"] != "Applied" {
+		t.Fatalf("status = %#v", status)
+	}
+	resolved, _ := status["listenAddresses"].([]string)
+	if len(resolved) != 1 || resolved[0] != "172.18.0.2" {
+		t.Fatalf("listenAddresses = %#v", status["listenAddresses"])
+	}
+}
+
 func TestReconcilePendingWhenListenAddressUnresolved(t *testing.T) {
 	store := mapStore{}
 	controller := Controller{

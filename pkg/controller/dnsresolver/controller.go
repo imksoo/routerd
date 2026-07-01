@@ -443,7 +443,7 @@ func (c Controller) expandSpec(spec api.DNSResolverSpec) (api.DNSResolverSpec, [
 	var waiting []map[string]string
 	var expandedListen []api.DNSResolverListenSpec
 	for i := range spec.Listen {
-		addresses, listenWaiting, blockReason := expandListenAddresses(c.Store, spec.Listen[i])
+		addresses, listenWaiting, blockReason := expandListenAddresses(c.Store, c.Router, spec.Listen[i])
 		if blockReason != "" {
 			return spec, waiting, blockReason, nil
 		}
@@ -755,7 +755,7 @@ func expandBootstrapResolvers(store Store, sources []api.StatusValueSourceSpec, 
 	return compactStrings(out), waiting
 }
 
-func expandListenAddresses(store Store, listen api.DNSResolverListenSpec) ([]string, []map[string]string, string) {
+func expandListenAddresses(store Store, router *api.Router, listen api.DNSResolverListenSpec) ([]string, []map[string]string, string) {
 	var out []string
 	var waiting []map[string]string
 	for _, value := range listen.Addresses {
@@ -777,7 +777,7 @@ func expandListenAddresses(store Store, listen api.DNSResolverListenSpec) ([]str
 		}
 	}
 	for _, source := range listen.AddressFrom {
-		resolved := strings.Join(resourcequery.Values(store, source), ",")
+		resolved := strings.Join(resourcequery.ValuesFromStoreOrRouter(store, router, source), ",")
 		if strings.TrimSpace(resolved) == "" {
 			if source.Optional {
 				continue
