@@ -720,10 +720,10 @@ type SAMPeerGroupSpec struct {
 	Peers []SAMTransportPeerSpec `yaml:"peers" json:"peers"`
 }
 
-// SAMRRSet declares the intended hub/RR admission set. It lists RR members and
-// shared admission references, but never lists leaves. Transport credentials
-// are optional and mode-specific; SAMTransportProfile chooses whether the set
-// is consumed as plain IPIP/GRE, WireGuard-underlay transport, or a future mode.
+// SAMRRSet declares the intended hub/RR set. It lists RR members and shared
+// delivery metadata, but never lists leaves. Transport credentials are optional
+// and mode-specific; SAMTransportProfile chooses whether the set is consumed as
+// plain IPIP/GRE, WireGuard-underlay transport, or a future mode.
 type SAMRRSetSpec struct {
 	EnrollmentPolicyRef string              `yaml:"enrollmentPolicyRef" json:"enrollmentPolicyRef"`
 	MobilityPoolRefs    []string            `yaml:"mobilityPoolRefs,omitempty" json:"mobilityPoolRefs,omitempty"`
@@ -758,7 +758,8 @@ type SAMRRSetMemberBGPSpec struct {
 
 // SAMEnrollmentPolicy authorizes leaf-side enrollment claims for SAM. It is the
 // hub/RR-side boundary for leaf identity, tunnel address ranges, TTL/revocation,
-// MobilityPool ownership prefixes, and optional transport-specific material.
+// MobilityPool/direct mobility prefixes, and optional transport-specific
+// material.
 type SAMEnrollmentPolicySpec struct {
 	TransportProfileRef   string                        `yaml:"transportProfileRef" json:"transportProfileRef"`
 	RRSetRef              string                        `yaml:"rrSetRef,omitempty" json:"rrSetRef,omitempty"`

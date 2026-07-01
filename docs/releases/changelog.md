@@ -74,10 +74,11 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 ### Changed
 
 - Dynamic SAM RR admission now supports separated RR/leaf topologies without
-  declaring a placeholder RR-side `MobilityPool`. `SAMEnrollmentPolicy` and
-  `SAMRRSet` can carry direct `mobilityPrefixes`, and dynamic BGP route
-  admission rejects accepted claimed prefixes outside those authorized
-  prefixes.
+  declaring a placeholder RR-side `MobilityPool`. `SAMEnrollmentPolicy` can
+  authorize direct `mobilityPrefixes` for RR-side claim and route admission,
+  while `SAMRRSet` can publish matching `mobilityPrefixes` as fetched RRSet
+  metadata for leaf-side consumers. Dynamic BGP route admission rejects accepted
+  claimed prefixes outside the policy-authorized prefixes.
 - `ControlAPI` TCP listeners are now disabled unless a `ControlAPI` resource is
   declared or `routerd serve --http-listen` is passed. A declared `ControlAPI`
   still defaults to loopback `127.0.0.1:65432` with loopback-only CIDR

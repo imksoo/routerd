@@ -47,10 +47,11 @@ is not the default enrollment identity or the default private-underlay model.
   - use `SAMEnrollmentPolicy.spec.mobilityPoolRefs` when the RR also declares a
     valid local `MobilityPool` member because RR and leaf/capture duties are
     colocated, or because the RR is an actual mobility-planning participant;
-  - use `SAMEnrollmentPolicy.spec.mobilityPrefixes` and
-    `SAMRRSet.spec.mobilityPrefixes` when the RR is only serving enrollment,
-    RRSet delivery, WireGuard/dynamic peer admission, and BGP route reflection.
-    In this separated shape, the RR must not declare a placeholder
+  - use `SAMEnrollmentPolicy.spec.mobilityPrefixes` when the RR is only serving
+    enrollment, WireGuard/dynamic peer admission, and BGP route reflection. In
+    this separated shape, the policy is the RR-side admission authority, and
+    `SAMRRSet.spec.mobilityPrefixes` publishes matching fetched RRSet metadata
+    for leaf-side consumers. The RR must not declare a placeholder
     `MobilityPool` just to authorize leaf-owned `/32` claims.
 - `SAMEnrollmentClaim.spec.expiresAt` and `spec.revoked` are
   RR/controller/admin-owned admission state. They are intentionally not part of
@@ -162,17 +163,20 @@ These configs model:
 The dual-RR CloudEdge examples intentionally model separated RR/leaf roles:
 `examples/cloudedge-dynamic-rr-a-hub.yaml` and
 `examples/cloudedge-dynamic-rr-b-hub.yaml` do not declare `EventGroup` or
-`MobilityPool`. They use `mobilityPrefixes: [10.77.60.0/24]` on RR-side
-admission resources so local validation catches invalid claim addresses without
-starting mobility planning on the RRs.
+`MobilityPool`. They use `SAMEnrollmentPolicy.spec.mobilityPrefixes` set to
+`[10.77.60.0/24]` as the RR-side admission authority, with matching
+`SAMRRSet.spec.mobilityPrefixes` metadata for fetched RRSet consumers, so local
+validation catches invalid claim addresses without starting mobility planning on
+the RRs.
 
 The PVE minimal examples use the same separated RR/leaf admission shape, reduced
 to two local RRs and four leaves. `examples/pve-minimal-rr.yaml` models
 `pve-rr-a`, `examples/pve-minimal-rr-b.yaml` models `pve-rr-b`, and both RR
 configs authorize leaf-owned `/32` claims with
-`mobilityPrefixes: [10.77.70.0/24]` instead of declaring a placeholder
-`MobilityPool`. Leaf startup configs bootstrap against both RRs and consume a
-fetched `SAMRRSet/pve-rrs` containing `pve-rr-a` and `pve-rr-b`.
+`SAMEnrollmentPolicy.spec.mobilityPrefixes: [10.77.70.0/24]`, while the fetched
+`SAMRRSet` publishes matching `mobilityPrefixes` metadata, instead of declaring
+a placeholder `MobilityPool`. Leaf startup configs bootstrap against both RRs
+and consume a fetched `SAMRRSet/pve-rrs` containing `pve-rr-a` and `pve-rr-b`.
 
 The mixed examples model:
 
