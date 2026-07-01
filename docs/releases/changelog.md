@@ -12,6 +12,29 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Changed
+
+- Clarified the separated RR/leaf Cloud-SAM admission boundary in API and
+  runbook text: RR-only deployments authorize leaf-owned `/32` claims through
+  `SAMEnrollmentPolicy.spec.mobilityPrefixes`, while
+  `SAMRRSet.spec.mobilityPrefixes` publishes the same prefix metadata to
+  fetched RRSet consumers without requiring a placeholder RR-side
+  `MobilityPool`.
+
+### Fixed
+
+- `DNSResolver.listen.addressFrom` can now resolve an `IPv4StaticAddress`
+  declared in the same router config from the resource spec before status has
+  been published. Initial renders no longer need duplicate literal listen
+  addresses for static LAN resolver bindings.
+- `FirewallEventLog` systemd rendering now passes `--nflog-group` to
+  `routerd-firewall-logger`, using the configured `spec.nflogGroup` or default
+  group `1`. This prevents the logger from starting in stdin mode and exiting
+  cleanly in a restart loop when NFLOG input was intended.
+- The generated config schema and website schema copy were synced after the
+  `SAMRRSet` description wording change, restoring `make check-schema
+  check-website-schemas`.
+
 ## v20260701.0804
 
 ### Added

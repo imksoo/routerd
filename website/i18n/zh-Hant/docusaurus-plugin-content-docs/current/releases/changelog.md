@@ -11,14 +11,74 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 變更
+
+- 明確了分離 RR/leaf Cloud-SAM admission 的邊界。僅作為 RR 的部署透過
+  `SAMEnrollmentPolicy.spec.mobilityPrefixes` 授權 leaf 擁有的 `/32` claim，
+  而 `SAMRRSet.spec.mobilityPrefixes` 將相同的 prefix metadata 發布給已取得
+  RRSet 的 consumer，不再需要在 RR 側宣告 placeholder `MobilityPool`。
+
+### 修正
+
+- `DNSResolver.listen.addressFrom` 現在可以在 status 發布前，從同一 router
+  config 中宣告的 `IPv4StaticAddress` resource spec 解析位址。初始 render
+  不再需要為靜態 LAN resolver 監聽位址重複寫 literal。
+- `FirewallEventLog` 的 systemd rendering 現在會向 `routerd-firewall-logger`
+  傳遞 `--nflog-group`，使用 `spec.nflogGroup` 或預設 group `1`。這避免了原本
+  應使用 NFLOG 輸入時 logger 以 stdin mode 啟動、遇到 EOF 後正常結束並進入重啟循環。
+- `SAMRRSet` description 文案調整後，已同步產生的 config schema 與 website
+  schema copy，恢復 `make check-schema check-website-schemas` 通過。
+
 ## v20260701.0804
+
+### 新增
+
+- `ControlAPI` HTTP listener 現在可以要求 bearer token、HTTPS 與 mTLS client
+  certificate。`SAMEnrollmentClient` 和 `routerctl mobility enrollment-join`
+  在向 RR submit/fetch 時也可使用 token/TLS 設定。source-CIDR admission 仍然最先執行。
+- 新增 `routerctl doctor sam-enrollment-client` 與
+  `routerctl doctor bgp-dynamic-peer`，用於檢查 leaf RRSet fetch freshness
+  和 RR dynamic BGP admission counters。
+- `routerctl mobility leaf-config` 現在可以產生 automatic enrollment 所需的最小
+  Cloud-SAM leaf config，包含 local underlay、owned address、
+  `SAMTransportProfile`、`SAMEnrollmentPolicy`、`SAMEnrollmentClaim` 和
+  `SAMEnrollmentClient`，並支援 join HMAC、RR ControlAPI bearer token 與 mTLS
+  client 設定。
+- 新增 `routerctl mobility enrollment-revoke` 與 ControlAPI
+  `POST /sam-enrollment-claims/{name}/revoke`，可在 RR 上撤銷 accepted dynamic
+  `SAMEnrollmentClaim`，使舊 RRSet fetch 與 dynamic BGP admission 停止使用該 leaf。
+- Cloud-SAM dynamic RR/leaf enrollment 已進入 mainline。PVE live redundancy gate
+  使用 dual RR、leaf-a 到 leaf-d、`SAMEnrollmentClient`、`BGPDynamicPeer/samred-leaves`、
+  FOU transport，以及 client-999 與 client-998 的雙向 ping/SSH 完成驗證。
+  evidence archive 保存在
+  `/home/imksoo/routerd-labs-archive/evidence/samred-20260629T035652Z/`，run tarball
+  與 cleanup tarball 的 SHA256 驗證已記錄。
+- Dynamic SAM RR/leaf enrollment 已記錄為無 static per-leaf inventory 的 stable
+  hub/RR config 的 release-candidate path，包括 `BGPDynamicPeer` admission、
+  `SAMRRSet`、`SAMEnrollmentPolicy`、`SAMEnrollmentClaim`、`SAMEnrollmentClient`、
+  RRSet fetch/refresh、join token/HMAC 驗證和 runtime admission state。
+- release evidence 現在記錄 Dynamic SAM enrollment 的 PVE redundancy、Azure+PVE
+  cloud/on-prem、public underlay/private capture 分離，以及 AWS/Azure/OCI/PVE
+  client matrix live tests。
+- 新增 AWS/Azure/OCI/PVE hub-leaf architecture guidance，涵蓋 runtime leaf
+  enrollment、provider route requirements、client route handling，以及
+  `routerd serve --http-listen` 的 security boundary。
 
 ### 變更
 
 - Dynamic SAM RR admission 現在支援分離的 RR/leaf topology，不需要在 RR 端宣告
-  placeholder `MobilityPool`。`SAMEnrollmentPolicy` 與 `SAMRRSet` 可直接攜帶
-  `mobilityPrefixes`，dynamic BGP route admission 會拒絕超出授權 prefix 的
-  claimed prefix。
+  placeholder `MobilityPool`。`SAMEnrollmentPolicy` 透過 `mobilityPrefixes`
+  授權 RR-side claim/route admission，`SAMRRSet` 向 leaf consumer 發布相同
+  metadata。dynamic BGP route admission 會拒絕 policy 未授權的 accepted claim prefix。
+- `ControlAPI` TCP listener 現在只有在宣告 `ControlAPI` resource 或傳入
+  `routerd serve --http-listen` 時才啟用。宣告的 `ControlAPI` 預設仍為 loopback
+  `127.0.0.1:65432` 和 loopback-only CIDR admission，除非明確覆蓋。
+- SAM leaf 的 dynamic BGP admission 現在要求通過 effective import policy 的嚴格
+  `/32` route admission。pool aggregate、default、underlay route、其他 claim 的
+  `/32`、未 claim 的 MobilityPool address 會在 FIB install 前被拒絕。
+- SAM transport 範例繼續以 `TunnelInterface` 作為 dataplane primitive：
+  private-underlay FOU/IPIP `encryption: none` 是主要輕量路徑，WireGuard 則作為
+  public underlay 等場景的 optional transport-specific encryption path。
 
 ### 修正
 
@@ -29,6 +89,10 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
   `10.77.70.15` 與 `10.77.70.19` 雙向 ping 10/10。
 - `RemoteAddressClaim.delivery.mode: bgp` 現在會被 config validation 與公開
   JSON schema 接受，與既有 BGP delivery expansion 行為一致。
+- 已在 full client matrix gate 前修復 PVE testing 中發現的 FOU listener reuse
+  和 live redundancy 問題。
+- `routerd serve --http-listen` 的 release note 現在明確提醒：HTTP mutation/control
+  API 必須只 bind 到 protected/private address，或由等價的 network policy 保護。
 
 ## v20260608.2325
 

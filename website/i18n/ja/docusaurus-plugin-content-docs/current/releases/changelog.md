@@ -11,21 +11,85 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 変更
+
+- 分離 RR/leaf Cloud-SAM admission の境界を API と runbook の文章で明確化しました。
+  RR 専用構成では、leaf が所有する `/32` claim を
+  `SAMEnrollmentPolicy.spec.mobilityPrefixes` で許可し、
+  `SAMRRSet.spec.mobilityPrefixes` は同じ prefix metadata を取得済み RRSet の
+  consumer に公開します。RR 側に placeholder の `MobilityPool` を置く必要は
+  ありません。
+
+### 修正
+
+- `DNSResolver.listen.addressFrom` が、同じ router config 内で宣言された
+  `IPv4StaticAddress` を status 公開前に resource spec から解決できるように
+  なりました。static LAN resolver binding の初回 render で、同じ listen address
+  を literal として重複記述する必要がなくなります。
+- `FirewallEventLog` の systemd render が `routerd-firewall-logger` に
+  `--nflog-group` を渡すようになりました。`spec.nflogGroup` の指定値、または
+  既定 group `1` を使います。NFLOG 入力を意図しているのに stdin mode で起動し、
+  EOF で正常終了して再起動 loop になる問題を防ぎます。
+- `SAMRRSet` description の文言変更後、生成済み config schema と website schema
+  copy を同期しました。`make check-schema check-website-schemas` が再び通ります。
+
 ## v20260701.0804
 
 ### 追加
 
-- `routerctl doctor routes` を追加しました。Installed な `IPv4Route`
-  status と Linux host FIB を比較し、destination、gateway、device、
-  preferred-source、metric の stale/mismatch を運用者向け証跡として
-  報告します（#439）。
+- `ControlAPI` HTTP listener が bearer token、HTTPS、mTLS client
+  certificate を要求できるようになりました。`SAMEnrollmentClient` と
+  `routerctl mobility enrollment-join` も RR への submit/fetch で token/TLS
+  設定を使えます。source-CIDR admission は引き続き最初に適用されます。
+- `routerctl doctor sam-enrollment-client` と
+  `routerctl doctor bgp-dynamic-peer` を追加しました。leaf 側 RRSet fetch の
+  freshness と RR 側 dynamic BGP admission counter を確認できます。
+- `routerctl mobility leaf-config` が automatic enrollment 用の最小
+  Cloud-SAM leaf config を生成できるようになりました。local underlay、
+  owned address、`SAMTransportProfile`、`SAMEnrollmentPolicy`、
+  `SAMEnrollmentClaim`、`SAMEnrollmentClient` を含み、join HMAC、RR
+  ControlAPI bearer token、mTLS client 設定を扱います。
+- `routerctl mobility enrollment-revoke` と ControlAPI
+  `POST /sam-enrollment-claims/{name}/revoke` を追加しました。RR 上の accepted
+  dynamic `SAMEnrollmentClaim` を revoke し、古い RRSet fetch と dynamic BGP
+  admission を停止できます。
+- Cloud-SAM dynamic RR/leaf enrollment を mainline に昇格しました。PVE live
+  redundancy gate は dual RR、leaf-a から leaf-d、`SAMEnrollmentClient`、
+  `BGPDynamicPeer/samred-leaves`、FOU transport、client-999 と client-998 の
+  双方向 ping/SSH で検証されています。evidence archive は
+  `/home/imksoo/routerd-labs-archive/evidence/samred-20260629T035652Z/` に
+  保存され、run tarball と cleanup tarball の SHA256 検証も記録済みです。
+- Dynamic SAM RR/leaf enrollment を、static per-leaf inventory を持たない
+  stable hub/RR config の release-candidate path として文書化しました。
+  `BGPDynamicPeer` admission、`SAMRRSet`、`SAMEnrollmentPolicy`、
+  `SAMEnrollmentClaim`、`SAMEnrollmentClient`、RRSet fetch/refresh、join
+  token/HMAC 検証、runtime admission state を含みます。
+- Dynamic SAM enrollment の PVE redundancy、Azure+PVE cloud/on-prem、public
+  underlay/private capture 分離、AWS/Azure/OCI/PVE client matrix の live test
+  evidence を release evidence として記録しました。
+- AWS/Azure/OCI/PVE hub-leaf architecture guidance を追加しました。runtime
+  leaf enrollment、provider route requirement、client route handling、
+  `routerd serve --http-listen` の security boundary を扱います。
 
 ### 変更
 
-- Dynamic SAM の RR admission は、RR 側に placeholder の `MobilityPool`
-  を宣言しない分離 RR/leaf 構成をサポートしました。`SAMEnrollmentPolicy`
-  と `SAMRRSet` は直接 `mobilityPrefixes` を持てるようになり、dynamic BGP
-  route admission は許可 prefix 外の claim prefix を拒否します。
+- Dynamic SAM RR admission は、RR 側に placeholder の `MobilityPool` を宣言しない
+  分離 RR/leaf topology をサポートしました。`SAMEnrollmentPolicy` は
+  `mobilityPrefixes` で RR-side claim/route admission を許可し、`SAMRRSet` は
+  leaf consumer 向けに同じ metadata を公開します。dynamic BGP route admission
+  は policy で許可されていない accepted claim prefix を拒否します。
+- `ControlAPI` TCP listener は、`ControlAPI` resource または
+  `routerd serve --http-listen` が指定された場合だけ有効になりました。宣言された
+  `ControlAPI` は、上書きされない限り loopback `127.0.0.1:65432` と
+  loopback-only CIDR admission を既定にします。
+- SAM leaf の dynamic BGP admission は、effective import policy による厳密な
+  `/32` route admission を要求するようになりました。pool aggregate、default、
+  underlay route、別 claim の `/32`、未 claim の MobilityPool address は FIB
+  install 前に拒否されます。
+- SAM transport example は `TunnelInterface` を dataplane primitive として維持し、
+  private-underlay FOU/IPIP `encryption: none` を軽量 path の主経路にしました。
+  WireGuard は public underlay などで使う optional transport-specific encryption
+  path です。
 
 ### 修正
 
@@ -37,6 +101,11 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 - `RemoteAddressClaim.delivery.mode: bgp` を config validation と公開 JSON
   schema で受理するようにしました。既存の BGP delivery expansion の挙動と
   一致します。
+- PVE testing で見つかった FOU listener reuse と live redundancy の問題を、full
+  client matrix gate の前に修正しました。
+- `routerd serve --http-listen` の release note で、HTTP mutation/control API は
+  protected/private address にのみ bind するか、同等の network policy で守る必要が
+  あることを明記しました。
 
 ## v20260608.2325
 
