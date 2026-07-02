@@ -49,6 +49,31 @@ cp scripts/pre-commit.sh .git/hooks/pre-commit
 chmod +x .git/hooks/pre-commit
 ```
 
+## Provider executor changes
+
+Provider executors mutate cloud control planes. Treat them as sharp edges: a
+small command-order or request-body change can pass local compile checks while
+breaking an already-working lab and spending cloud budget during diagnosis.
+
+Follow this order for provider executor changes:
+
+1. Write local ARM/API mock tests first when touching provider mutations. Use
+   `httptest`, SDK fakes, or recorded responses to prove the request body,
+   operation sequence, idempotent no-op behavior, and post-write verify order.
+2. Do not use cloud e2e as a debugging loop. Cloud e2e is a final pass/fail gate
+   after local tests explain the expected provider API behavior. If it fails,
+   stop and bring the failure back to local reproduction.
+3. Keep e2e gate script changes separate from implementation changes. A PR that
+   changes provider executor behavior must not also change the test harness that
+   judges it.
+
+This rule exists because a PR #709 follow-up attempted to coalesce Azure NIC
+secondary-IP assignment and IP forwarding into a direct ARM PUT without first
+pinning the PUT body and verify sequence in local tests. The change regressed an
+executor path that had already worked through the Azure CLI, and cloud e2e became
+the diagnosis loop. Future provider executor work must prove API semantics
+locally before spending a real-cloud validation run.
+
 ## Design expectations
 
 - Keep YAML intuitive and explicit.
