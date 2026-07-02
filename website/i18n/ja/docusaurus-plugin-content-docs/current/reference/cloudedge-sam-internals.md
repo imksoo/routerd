@@ -130,9 +130,9 @@ placementSettleWindow = 120 * time.Second
 初回観測が完了し、provider inventory に基づく capture では provider self-observation
 も完了していることを意味します。`placementSettleWindow` は、readiness signal を渡せない
 caller のための保守的 fallback として残ります。readiness が既知のまま未完了で
-残る場合でも、フェンスは `placementSettleWindow * 3` で上限を持ちます。その後は
-`startupFenceReadiness.degraded: true` を出しつつ active 主張を解放し、provider API
-や観測経路の障害で overlay liveness を永久に止めないようにします。
+残る場合でも、フェンスは `placementSettleWindow * 3`（既定 360 秒）で上限を持ちます。
+その後は `startupFenceReadiness.degraded: true` を出しつつ active 主張を解放し、
+provider API や観測経路の障害で overlay liveness を永久に止めないようにします。
 
 - 復帰直後のノードは、自分の BGP RIB / プロバイダー観測が収束する前に同 priority
   タイブレークを勝ってホルダーを奪い返してしまう。fence はこれを防ぎます。
@@ -228,8 +228,8 @@ provider-discovery fact が食い違う場合、ownership resolver はその add
 resolver は決定的な `conflictWinnerNode` も記録します。
 
 - healed BGP RIB にその `/32` の home-owner path があれば、その BGP owner が勝者です。
-- なければ最も新しい provider 観測を勝者にし、同時刻では `nodeRef` を stable tie-break
-  に使います。
+- なければ provider scan の新しさには依存せず、安定した owner key（`nodeRef`、
+  provider ref、resource ref、NIC ref、subnet ref、address）の辞書順で勝者を選びます。
 
 敗者は新しい provider capture action を生成しません。敗者ノードが競合中の `/32` を自分の
 provider-secondary capture としてまだ保持していることを観測した場合、status には

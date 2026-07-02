@@ -304,7 +304,7 @@ spec:
       remoteEndpoint: 10.252.0.1
 ```
 
-コアルーターでは `spec.bgp.routeReflectorClient` と `spec.bgp.routeReflectorClusterID` を設定できます。これらは生成される各 `BGPPeer` にコピーされます。`routeReflectorClient` が true の場合、routerd はその leaf 向けの generated import policy も強化します。取り込む route は configured `importPolicy.allowedPrefixes`、未指定なら宣言済み `MobilityPool` prefix 配下の `/32` で、その leaf 自身の node-identity community を持ち、他の topology node の node-identity community を持たない必要があります。これにより RR admission boundary は宣言された SAM topology に結び付き、leaf は別ノード identity や広い mobility prefix を generated RR session から主張できません。エッジルーターでは未指定のまま通常の iBGP セッションとして使えます。
+コアルーターでは `spec.bgp.routeReflectorClient` と `spec.bgp.routeReflectorClusterID` を設定できます。これらは生成される各 `BGPPeer` にコピーされます。`routeReflectorClient` が true の場合、routerd はその leaf 向けの generated import policy も強化します。取り込む route は configured `importPolicy.allowedPrefixes`、未指定なら宣言済み `MobilityPool` prefix 配下の `/32` で、その leaf 自身の node-identity community を持ち、他の topology node の node-identity community を持たない必要があります。これにより RR admission boundary は宣言された SAM topology に結び付き、leaf は別ノード identity や広い mobility prefix を generated RR session から主張できません。侵害された leaf が自分の identity のまま pool 内 `/32` を広告するリスクは残り、per-node ownership の制約には route filter とは別の authorization signal が必要です。エッジルーターでは未指定のまま通常の iBGP セッションとして使えます。
 
 ピアをプロファイルから削除すると、そのプロファイルが生成した `DynamicConfigPart` は新しいリソースセットで置き換えられます。プロファイル自体を削除した場合は、古いパートが空のアクティブパートで置き換えられ、実効設定から生成済みのトンネル、BGP ピア、エンドポイント経路が消えます。生成されたリソースの具体的な後片付けは、通常のオーナー参照 GC とリソース固有のティアダウンに委ねます。
 
@@ -408,7 +408,7 @@ routerctl mobility owners
 routerctl mobility owners --pool cloudedge --address 10.77.60.10/32 -o json
 ```
 
-行は pool と address でソートされます。remote provider owner が local evidence と重なる場合や、2 つの fresh provider owner が同じ `/32` を主張する場合、行の state は `Conflict` になり、`conflictReason` が理由を示します。期限切れの所有権イベントはライブな競合としては残しません。duplicate provider-owner conflict では `conflictWinnerNode` と `conflictResolution` も出ます。healed BGP owner があればそれが勝者、なければ最も新しい provider 観測が勝者で、同時刻では `nodeRef` が stable tie-break です。local の provider-secondary capture を観測している敗者は `loser-release-local-capture` を報告し、stale-capture hold-down 後にその local capture だけを release します。`routerctl doctor sam` は同じ所有権状態を競合チェックに使い、ホストチェックが有効な場合は endpoint owner としてローカル所有する行を Linux のメイン FIB と比較します。provider-secondary BGP capture ホルダー行はローカルの endpoint owner ではないため、local/cloud route として解決されることを要求しません。その経路は delivery/forwarding チェックとデータプレーンプローブで確認します。
+行は pool と address でソートされます。remote provider owner が local evidence と重なる場合や、2 つの fresh provider owner が同じ `/32` を主張する場合、行の state は `Conflict` になり、`conflictReason` が理由を示します。期限切れの所有権イベントはライブな競合としては残しません。duplicate provider-owner conflict では `conflictWinnerNode` と `conflictResolution` も出ます。healed BGP owner があればそれが勝者、なければ provider scan の新しさには依存せず、安定した owner key（`nodeRef`、provider ref、resource ref、NIC ref、subnet ref、address）の辞書順で勝者を選びます。local の provider-secondary capture を観測している敗者は `loser-release-local-capture` を報告し、stale-capture hold-down 後にその local capture だけを release します。`routerctl doctor sam` は同じ所有権状態を競合チェックに使い、ホストチェックが有効な場合は endpoint owner としてローカル所有する行を Linux のメイン FIB と比較します。provider-secondary BGP capture ホルダー行はローカルの endpoint owner ではないため、local/cloud route として解決されることを要求しません。その経路は delivery/forwarding チェックとデータプレーンプローブで確認します。
 
 FreeBSD など Linux 以外のホストでは、ライブ SAM 捕捉は未対応です。コントローラーはホストを変更せず、`SAM capture not implemented on this OS` と報告します。
 

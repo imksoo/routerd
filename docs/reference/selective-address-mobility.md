@@ -431,8 +431,10 @@ declared `MobilityPool` prefixes. They must carry that leaf's node-identity
 community and must not carry another topology node's node-identity community.
 This keeps the RR admission boundary tied to the declared SAM topology; a leaf
 cannot claim another node identity or advertise a broader mobility prefix through
-the generated RR session. Edge routers can leave the RR fields unset and use
-ordinary iBGP sessions.
+the generated RR session. A compromised leaf can still advertise a pool-local
+`/32` with its own identity; constraining per-node ownership requires a separate
+authorization signal beyond this route filter. Edge routers can leave the RR
+fields unset and use ordinary iBGP sessions.
 
 Peer removal replaces the profile's generated `DynamicConfigPart` with the new
 resource set. Profile deletion replaces the old part with an empty active part,
@@ -657,8 +659,9 @@ evidence, or when two fresh provider owners claim the same `/32`, the row state
 is `Conflict` and `conflictReason` explains the condition. Expired ownership
 events are not retained as live conflicts. Duplicate provider-owner conflicts
 also include `conflictWinnerNode` and `conflictResolution`: the healed BGP owner
-wins when present; otherwise the freshest provider observation wins with
-`nodeRef` as the stable tie-break. Losing nodes with an observed local
+wins when present; otherwise the lowest stable owner key wins (`nodeRef`,
+provider ref, resource ref, NIC ref, subnet ref, then address), independent of
+provider scan recency. Losing nodes with an observed local
 provider-secondary capture report `loser-release-local-capture` and release only
 that local capture after the stale-capture hold-down. `routerctl doctor sam` consumes the
 same ownership state for conflict checks and, with host checks enabled, compares
