@@ -37,6 +37,10 @@ type peerGroupSyncStore interface {
 	UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord) error
 }
 
+type dynamicConfigSourceStore interface {
+	GetDynamicConfigPartsBySource(string) ([]routerstate.DynamicConfigPartRecord, error)
+}
+
 type PeerGroupSyncResponse struct {
 	PeerGroups []api.Resource `json:"peerGroups"`
 }
@@ -553,4 +557,32 @@ func HasPublishedMemberSets(router *api.Router) bool {
 		}
 	}
 	return false
+}
+
+func latestSyncedMobilityResource(store dynamicConfigSourceStore, source, kind, name string, now time.Time) (api.Resource, string, bool, error) {
+	if store == nil || strings.TrimSpace(source) == "" || strings.TrimSpace(kind) == "" || strings.TrimSpace(name) == "" {
+		return api.Resource{}, "", false, nil
+	}
+	records, err := store.GetDynamicConfigPartsBySource(source)
+	if err != nil {
+		return api.Resource{}, "", false, err
+	}
+	sort.SliceStable(records, func(i, j int) bool {
+		if records[i].ObservedAt.Equal(records[j].ObservedAt) {
+			return records[i].ID > records[j].ID
+		}
+		return records[i].ObservedAt.After(records[j].ObservedAt)
+	})
+	for _, record := range records {
+		var resources []api.Resource
+		if err := json.Unmarshal([]byte(record.ResourcesJSON), &resources); err != nil {
+			return api.Resource{}, "", false, fmt.Errorf("decode last-known-good %s dynamic resources from %s: %w", kind, source, err)
+		}
+		for _, resource := range resources {
+			if resource.APIVersion == api.MobilityAPIVersion && resource.Kind == kind && resource.Metadata.Name == name {
+				return resource, record.EffectiveStatus(now), true, nil
+			}
+		}
+	}
+	return api.Resource{}, "", false, nil
 }

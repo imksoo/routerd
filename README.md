@@ -73,8 +73,11 @@ The project focuses on a few independent strengths:
   best path as the source of truth: equal-priority members are no-preempt to
   minimize churn, unequal-priority members auto-restore to the higher priority
   with no dataplane dip, and an active node's death fails over new flows to a
-  standby after convergence. Abrupt failover does not promise that TCP sessions
-  already in flight survive without an application retry. See
+  standby after convergence. Dynamic RR-published peer groups and member sets
+  are fail-static on leaves: a stale last-known-good sync record keeps generated
+  transport and BGP artifacts in place while status reports the source as stale.
+  Abrupt failover does not promise that TCP sessions already in flight survive
+  without an application retry. See
   [CloudEdge SAM とは](docs/concepts/cloudedge-sam.md) and
   [CloudEdge SAM internals](docs/reference/cloudedge-sam-internals.md).
 - **Authoring tools** through generated JSON Schema, VS Code/YAML Language

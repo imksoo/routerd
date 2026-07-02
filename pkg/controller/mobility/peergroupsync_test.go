@@ -193,6 +193,50 @@ func TestSAMTransportProfilePeersFromSyncResolvesMissingGroup(t *testing.T) {
 	}
 }
 
+func TestSAMTransportProfilePeersFromUsesExpiredLastKnownGoodGroup(t *testing.T) {
+	observedAt := time.Date(2026, 6, 8, 10, 3, 0, 0, time.UTC)
+	now := observedAt.Add(DefaultLeaseTTL + time.Second)
+	store := testStore(t, observedAt)
+	writePeerGroupPart(t, store, PeerGroupSyncDynamicSource("svnet1-rrs"), "svnet1-rrs", []api.SAMTransportPeerSpec{{
+		NodeRef:        "rr-rt01",
+		RemoteEndpoint: "10.252.0.1",
+	}}, observedAt)
+
+	router := transportRouterWithMode("svnet1", "leaf-rt01", "pair-stable", nil)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMPeerGroup/svnet1-rrs"}}
+	router.Spec.Resources[0].Spec = spec
+
+	controller := TransportController{
+		Router: router,
+		Store:  store,
+		Now:    func() time.Time { return now },
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("svnet1", "leaf-rt01")).ResourcesJSON)
+	tunnel := findTransportTunnelForPeer(t, resources, "leaf-rt01", "rr-rt01")
+	if tunnel.Remote != "10.252.0.1" {
+		t.Fatalf("last-known-good tunnel remote = %q, want 10.252.0.1", tunnel.Remote)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "svnet1")
+	if status["phase"] != "Derived" {
+		t.Fatalf("status phase = %#v, want Derived status=%#v", status["phase"], status)
+	}
+	peersFrom, ok := status["peersFrom"].([]any)
+	if !ok || len(peersFrom) != 1 {
+		t.Fatalf("peersFrom status = %#v, want one source", status["peersFrom"])
+	}
+	source, ok := peersFrom[0].(map[string]any)
+	if !ok || source["phase"] != "Stale" {
+		t.Fatalf("peersFrom[0] = %#v, want phase Stale", peersFrom[0])
+	}
+}
+
 func TestFirstAllowedIPAddrsPrefersIPv4ThenIPv6(t *testing.T) {
 	addrs := firstAllowedIPAddrs([]wireguard.PeerStatus{
 		{AllowedIPs: []string{"fd00::2/128"}},

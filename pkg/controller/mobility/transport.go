@@ -522,6 +522,29 @@ func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Re
 					continue
 				}
 			}
+			if !source.Optional {
+				groupName := strings.TrimSpace(nameFromPeerGroupRef(ref))
+				cached, cacheStatus, ok, cacheErr := c.lastKnownSyncedPeerGroup(groupName)
+				if cacheErr != nil {
+					status.Phase = "Invalid"
+					status.Reason = cacheErr.Error()
+					statuses = append(statuses, status)
+					return nil, nil, statuses, pending, cacheErr
+				}
+				if ok {
+					status.Phase = "Cached"
+					if cacheStatus == "expired" {
+						status.Phase = "Stale"
+						status.Reason = "using expired last-known-good peer-group-sync dynamic part"
+					}
+					status.PeerCount = len(cached.Peers)
+					for _, peer := range cached.Peers {
+						addPeer(peer)
+					}
+					statuses = append(statuses, status)
+					continue
+				}
+			}
 			statuses = append(statuses, status)
 			if !source.Optional {
 				pending = append(pending, ref)
@@ -612,6 +635,19 @@ func (c TransportController) samPeerGroup(ref string) (api.SAMPeerGroupSpec, boo
 		return spec, true, nil
 	}
 	return api.SAMPeerGroupSpec{}, false, nil
+}
+
+func (c TransportController) lastKnownSyncedPeerGroup(name string) (api.SAMPeerGroupSpec, string, bool, error) {
+	name = strings.TrimSpace(name)
+	resource, status, found, err := latestSyncedMobilityResource(c.Store, PeerGroupSyncDynamicSource(name), "SAMPeerGroup", name, transportNow(c.Now))
+	if err != nil || !found {
+		return api.SAMPeerGroupSpec{}, status, found, err
+	}
+	spec, err := resource.SAMPeerGroupSpec()
+	if err != nil {
+		return api.SAMPeerGroupSpec{}, status, true, fmt.Errorf("last-known-good SAMPeerGroup/%s spec: %w", name, err)
+	}
+	return spec, status, true, nil
 }
 
 func (c TransportController) samNodeSet(ref string) (api.SAMNodeSetSpec, bool, error) {

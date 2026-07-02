@@ -168,6 +168,40 @@ func TestMobilityPoolMembersFromMissingRequiredIsPending(t *testing.T) {
 	}
 }
 
+func TestMobilityPoolMembersFromUsesExpiredLastKnownGoodMemberSet(t *testing.T) {
+	observedAt := time.Date(2026, 6, 8, 11, 1, 30, 0, time.UTC)
+	now := observedAt.Add(DefaultLeaseTTL + time.Second)
+	store := testStore(t, observedAt)
+	writeMemberSetPart(t, store, MemberSetSyncDynamicSource("cloudedge"), "cloudedge", []api.MobilityMemberSetMember{
+		{NodeRef: "onprem-router", Site: "pve", Role: "onprem"},
+		{NodeRef: "azure-router", Site: "azure", Role: "cloud"},
+	}, observedAt)
+
+	spec := plannedPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	spec.Members = []api.MobilityPoolMember{spec.Members[0]}
+	spec.MembersFrom = []api.MobilityMembersSourceSpec{{Resource: "MobilityMemberSet/cloudedge"}}
+	router := planningRouterForNode("onprem-router", spec)
+
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["plannerPhase"] != "BGPPlanned" {
+		t.Fatalf("plannerPhase = %#v, want BGPPlanned status=%#v", status["plannerPhase"], status)
+	}
+	membersFrom, ok := status["membersFrom"].([]any)
+	if !ok || len(membersFrom) != 1 {
+		t.Fatalf("membersFrom status = %#v, want one source", status["membersFrom"])
+	}
+	source, ok := membersFrom[0].(map[string]any)
+	if !ok || source["phase"] != "Stale" {
+		t.Fatalf("membersFrom[0] = %#v, want phase Stale", membersFrom[0])
+	}
+}
+
 func TestMobilityPoolMembersFromPreservesCaptureFields(t *testing.T) {
 	spec := plannedPoolSpec()
 	spec.Members = nil

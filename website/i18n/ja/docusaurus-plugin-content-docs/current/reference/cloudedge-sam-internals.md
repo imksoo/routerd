@@ -174,6 +174,22 @@ seize（failover 時の奪取）には専用の hold-down があります。
 - `bgpProviderMissingRetryHold = 30s` — プロバイダー観測欠落時の再試行抑止
 - `bgpTrapRIBMissingHold = 2m` — RIB に trap route が無いときの保持
 
+## Dynamic RR sync は fail-static
+
+RR ノードは TCP 19652 の sync endpoint で `SAMPeerGroup` と `MobilityMemberSet`
+を公開でき、leaf は transport peer と共有 member topology を bootstrap できます。
+取得した resource は通常の TTL を持つ DynamicConfigPart として保存されます。
+
+- `peer-group-sync/<name>`: `SAMPeerGroup`
+- `member-set-sync/<name>`: `MobilityMemberSet`
+
+TTL expiry は data plane の撤去を意味しません。leaf が以前に取得した record を持ち
+RR publisher が消えた場合、routerd は期限切れ record を **last-known-good** 入力と
+して扱い、source を `Stale` と表示し、生成済み tunnel、BGP peer、MobilityPool
+planning artifact を維持します。一度も見たことのない source だけが `Pending` のまま
+です。これにより route reflector 障害が leaf transport teardown に波及しません。
+`Stale` marker は topology freshness が更新されていないことを示す operator signal です。
+
 ## capture strategy（クラウド受け口の作り方）
 
 `capture.captureStrategy` でクラウド受け口の作り方を選びます。

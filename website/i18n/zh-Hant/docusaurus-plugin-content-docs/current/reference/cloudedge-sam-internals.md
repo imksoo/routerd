@@ -189,6 +189,24 @@ Seize (the takeover during failover) has dedicated hold-downs:
 - `bgpTrapRIBMissingHold = 2m` — retention when the trap route is absent from the
   RIB
 
+## Dynamic RR sync is fail-static
+
+RR nodes may publish `SAMPeerGroup` and `MobilityMemberSet` resources over the
+TCP 19652 sync endpoint so leaves can bootstrap their transport peers and shared
+member topology. Those fetched resources are saved as dynamic config parts with
+ordinary TTLs:
+
+- `peer-group-sync/<name>` for `SAMPeerGroup`
+- `member-set-sync/<name>` for `MobilityMemberSet`
+
+TTL expiry does not mean the data plane should be dismantled. If a leaf has a
+previously fetched record and the RR publisher disappears, routerd treats the
+expired record as **last-known-good** input, marks the source `Stale`, and keeps
+the generated tunnel, BGP peer, and MobilityPool planning artifacts rendered.
+Only a source that has never been seen remains `Pending`. This keeps a route
+reflector outage from cascading into leaf transport teardown; the stale marker is
+an operator signal that topology freshness is no longer being refreshed.
+
 ## Capture strategies (how cloud ingress is built)
 
 `capture.captureStrategy` selects how the cloud ingress is built.

@@ -32,7 +32,9 @@ type mobilityMembersResolution struct {
 
 type mobilityMemberResolver struct {
 	Router *api.Router
+	Store  dynamicConfigSourceStore
 	Sync   *PeerGroupSyncClient
+	Now    func() time.Time
 }
 
 func (r mobilityMemberResolver) resolve(ctx context.Context, spec api.MobilityPoolSpec) (mobilityMembersResolution, error) {
@@ -85,6 +87,29 @@ func (r mobilityMemberResolver) resolve(ctx context.Context, spec api.MobilityPo
 					continue
 				}
 			}
+			if !source.Optional {
+				setName := strings.TrimSpace(nameFromMemberSetRef(ref))
+				cached, cacheStatus, ok, cacheErr := r.lastKnownSyncedMemberSet(setName)
+				if cacheErr != nil {
+					status.Phase = "Invalid"
+					status.Reason = cacheErr.Error()
+					statuses = append(statuses, status)
+					return mobilityMembersResolution{MembersFrom: statuses, PendingSources: pending}, cacheErr
+				}
+				if ok {
+					status.Phase = "Cached"
+					if cacheStatus == "expired" {
+						status.Phase = "Stale"
+						status.Reason = "using expired last-known-good member-set-sync dynamic part"
+					}
+					status.MemberCount = len(cached.Members)
+					for _, member := range cached.Members {
+						addMember(mobilityPoolMemberFromSetMember(member))
+					}
+					statuses = append(statuses, status)
+					continue
+				}
+			}
 			statuses = append(statuses, status)
 			if !source.Optional {
 				pending = append(pending, ref)
@@ -129,6 +154,19 @@ func (r mobilityMemberResolver) memberSet(ref string) (api.MobilityMemberSetSpec
 		return spec, true, nil
 	}
 	return api.MobilityMemberSetSpec{}, false, nil
+}
+
+func (r mobilityMemberResolver) lastKnownSyncedMemberSet(name string) (api.MobilityMemberSetSpec, string, bool, error) {
+	name = strings.TrimSpace(name)
+	resource, status, found, err := latestSyncedMobilityResource(r.Store, MemberSetSyncDynamicSource(name), "MobilityMemberSet", name, transportNow(r.Now))
+	if err != nil || !found {
+		return api.MobilityMemberSetSpec{}, status, found, err
+	}
+	spec, err := resource.MobilityMemberSetSpec()
+	if err != nil {
+		return api.MobilityMemberSetSpec{}, status, true, fmt.Errorf("last-known-good MobilityMemberSet/%s spec: %w", name, err)
+	}
+	return spec, status, true, nil
 }
 
 func mobilityPoolMemberFromSetMember(member api.MobilityMemberSetMember) api.MobilityPoolMember {

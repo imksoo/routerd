@@ -85,6 +85,10 @@ internals are in [CloudEdge SAM internals](../reference/cloudedge-sam-internals.
   advertising a best path carrying this community is the real holder". It is the
   **authoritative marker** that prevents a standby's weak advertisement or a
   just-booted advertisement from being mistaken for holdership.
+- **dynamic RR sync** — route reflectors can publish shared transport peer
+  groups and member sets to leaves. Leaves keep the last-known-good synced input
+  if the RR publisher disappears, marking it `Stale` instead of tearing down
+  generated transport.
 
 ## The switching behavior (this is the value)
 

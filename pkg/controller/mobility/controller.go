@@ -166,7 +166,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	if err != nil {
 		return err
 	}
-	resolved, err := (mobilityMemberResolver{Router: c.Router, Sync: c.MemberSetSync}).resolve(ctx, spec)
+	resolved, err := (mobilityMemberResolver{Router: c.Router, Store: c.Store, Sync: c.MemberSetSync, Now: c.Now}).resolve(ctx, spec)
 	if err != nil {
 		return err
 	}

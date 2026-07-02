@@ -127,7 +127,12 @@ spec:
 
 If a required `membersFrom` source is not yet present, the pool reports
 `Pending`. Mark the source `optional: true` only when a partial local member list
-is acceptable during bootstrap.
+is acceptable during bootstrap. When that source was previously fetched through
+RR dynamic sync, routerd treats the saved dynamic part as last-known-good input:
+an expired `member-set-sync/<name>` record marks the source `Stale` but keeps the
+existing MobilityPool planning path intact. This is a fail-static guarantee for
+RR outages; loss of the publisher affects freshness, not the already-rendered
+data plane.
 
 WireGuard interfaces can import peers from the same node registry:
 
@@ -332,7 +337,9 @@ first, then overlays the profile's local `spec.peers`. When the same `nodeRef`
 appears in both, the local `spec.peers` entry wins so operators can keep static
 bootstrap or override entries on a leaf. If a required `peersFrom` source is not
 yet present, the profile reports `Pending`; optional sources are ignored until
-they arrive.
+they arrive. If the source was fetched before and only its dynamic-config TTL has
+expired, routerd reports the source as `Stale` and keeps using the
+last-known-good peer group instead of removing generated transport artifacts.
 
 `SAMNodeSet` entries may provide either a static `samEndpoint` or
 `samEndpointFrom`. The latter reads a status field such as
@@ -372,14 +379,19 @@ serves published peer groups over the transport network on TCP port `19652`
 to query WireGuard peers reachable through `spec.underlayInterface`; a matching
 group is stored locally as `peer-group-sync/<group-name>` with the normal
 dynamic-config TTL. If the publisher disappears or the group expires, the leaf
-returns to `Pending`.
+does **not** tear down the generated tunnel or BGP peer. It reuses the expired
+record as last-known-good input, reports the source as `Stale`, and keeps the
+existing transport artifacts rendered. A never-seen required group still reports
+`Pending`.
 
 For MobilityPool membership, an RR can set `spec.publishMemberSet: true` on the
 canonical pool. routerd strips local-only member fields, publishes a
 `MobilityMemberSet` DynamicConfigPart with source `mobility-member-set/<pool>`,
 and serves it on the same TCP port via `GET /v1/member-sets`. Leaves with a
 missing required `membersFrom` source store a fetched set as
-`member-set-sync/<set-name>`.
+`member-set-sync/<set-name>`. Like peer-group sync, an expired fetched member set
+is fail-static: routerd reports `membersFrom.phase: Stale` and continues using
+the last-known-good member list until a fresher publisher response is available.
 
 ```yaml
 apiVersion: mobility.routerd.net/v1alpha1

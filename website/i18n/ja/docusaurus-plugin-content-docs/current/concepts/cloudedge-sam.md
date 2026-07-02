@@ -83,6 +83,9 @@ routerd 特有の用語が出てきます。最初に押さえるべきものだ
   community（`64512:121`）。他ノードは「この community が付いた best-path を出して
   いるノードだけが本当のホルダー」と判断します。スタンバイの弱い広告や起動直後の
   広告をホルダーと誤認しないための、**権威ある目印** です。
+- **dynamic RR sync** — ルートリフレクターは共有 transport peer group と member set
+  を leaf に配布できます。leaf は RR publisher が消えても last-known-good の同期入力を
+  保持し、生成済み transport を tear down せず source を `Stale` と表示します。
 
 ## 切り替えの振る舞い（ここが本機能の価値）
 
