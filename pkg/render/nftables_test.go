@@ -1552,6 +1552,45 @@ func TestNftablesFirewallFlowPinhole(t *testing.T) {
 	}
 }
 
+func TestNftablesFirewallFlowPinholeLocalEndpointCorrelation(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ds-lite-a"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"}, Metadata: api.ObjectMeta{Name: "atomcam-clients"}, Spec: api.IPAddressSetSpec{
+			Addresses: []string{"172.18.1.92"},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallFlowPinhole"}, Metadata: api.ObjectMeta{Name: "atomcam-cloud-udp"}, Spec: api.FirewallFlowPinholeSpec{
+			FromZone: "lan",
+			ToZone:   "wan",
+			Outbound: api.FirewallFlowPinholeOutboundSpec{
+				SourceSetRef:     "IPAddressSet/atomcam-clients",
+				Protocol:         "udp",
+				DestinationPorts: []api.FirewallPort{"32100"},
+				DestinationCIDRs: []string{"3.114.54.243/32"},
+			},
+			Inbound:     api.FirewallFlowPinholeInboundSpec{SourcePorts: []api.FirewallPort{"32099"}},
+			Correlation: api.FirewallFlowPinholeCorrelationSpec{Key: "localEndpoint"},
+			Timeout:     "3m",
+		}},
+	}}}
+	data, err := NftablesNAT44Rule(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`set flow_pinhole_atomcam_cloud_udp { type ipv4_addr . inet_service; flags timeout; }`,
+		`ip saddr @ip_address_set_atomcam_clients_v4 ip daddr 3.114.54.243/32 udp dport 32100 update @flow_pinhole_atomcam_cloud_udp { ip saddr . udp sport timeout 180s } counter comment "routerd FirewallFlowPinhole atomcam-cloud-udp learn"`,
+		`ip saddr 3.114.54.243/32 ip daddr @ip_address_set_atomcam_clients_v4 udp sport 32099 ip daddr . udp dport @flow_pinhole_atomcam_cloud_udp counter accept comment "routerd FirewallFlowPinhole atomcam-cloud-udp allow"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("firewall output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestNftablesFirewallRuleStatefulExpressions(t *testing.T) {
 	router := nftablesStatefulFirewallTestRouter()
 	data, err := NftablesNAT44Rule(router)

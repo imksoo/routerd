@@ -12930,6 +12930,20 @@
                   "spec": {
                     "additionalProperties": false,
                     "properties": {
+                      "correlation": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "key": {
+                            "enum": [
+                              "",
+                              "remoteAddress",
+                              "localEndpoint"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "fromZone": {
                         "type": "string"
                       },
