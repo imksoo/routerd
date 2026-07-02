@@ -89,6 +89,9 @@ internals are in [CloudEdge SAM internals](../reference/cloudedge-sam-internals.
   groups and member sets to leaves. Leaves keep the last-known-good synced input
   if the RR publisher disappears, marking it `Stale` instead of tearing down
   generated transport.
+- **RR admission filter** — generated RR-client BGP peers accept only `/32`
+  mobility routes carrying the advertising leaf's own node-identity community
+  and reject routes carrying another topology node's identity.
 
 ## The switching behavior (this is the value)
 

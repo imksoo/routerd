@@ -51,6 +51,8 @@ type AppliedImportPolicy struct {
 	AllowedPrefixes        []string `json:"allowedPrefixes,omitempty"`
 	AllowedPrefixLengthMin int      `json:"allowedPrefixLengthMin,omitempty"`
 	AllowedPrefixLengthMax int      `json:"allowedPrefixLengthMax,omitempty"`
+	RequiredCommunities    []string `json:"requiredCommunities,omitempty"`
+	ForbiddenCommunities   []string `json:"forbiddenCommunities,omitempty"`
 	NextHopRewrite         string   `json:"nextHopRewrite,omitempty"`
 }
 
@@ -104,6 +106,8 @@ func Normalize(config AppliedConfig) AppliedConfig {
 	config.Global.ListenAddresses = cleanStrings(config.Global.ListenAddresses)
 	config.Global.Families = cleanStrings(config.Global.Families)
 	config.Global.ImportPolicy.AllowedPrefixes = cleanStrings(config.Global.ImportPolicy.AllowedPrefixes)
+	config.Global.ImportPolicy.RequiredCommunities = cleanStrings(config.Global.ImportPolicy.RequiredCommunities)
+	config.Global.ImportPolicy.ForbiddenCommunities = cleanStrings(config.Global.ImportPolicy.ForbiddenCommunities)
 	config.Global.ImportPolicy.NextHopRewrite = strings.TrimSpace(config.Global.ImportPolicy.NextHopRewrite)
 	config.Advertisements = cleanStrings(config.Advertisements)
 	config.Paths = normalizeAppliedPaths(config.Paths, config.Advertisements)
@@ -121,6 +125,8 @@ func Normalize(config AppliedConfig) AppliedConfig {
 			peer.ConvergenceProfile = strings.TrimSpace(peer.ConvergenceProfile)
 			peer.ImportPolicyName = strings.TrimSpace(peer.ImportPolicyName)
 			peer.ImportPolicy.AllowedPrefixes = cleanStrings(peer.ImportPolicy.AllowedPrefixes)
+			peer.ImportPolicy.RequiredCommunities = cleanStrings(peer.ImportPolicy.RequiredCommunities)
+			peer.ImportPolicy.ForbiddenCommunities = cleanStrings(peer.ImportPolicy.ForbiddenCommunities)
 			peer.ImportPolicy.NextHopRewrite = strings.TrimSpace(peer.ImportPolicy.NextHopRewrite)
 			peer.ExportPolicyName = strings.TrimSpace(peer.ExportPolicyName)
 			peer.ExportPolicy.AllowedPrefixes = cleanStrings(peer.ExportPolicy.AllowedPrefixes)

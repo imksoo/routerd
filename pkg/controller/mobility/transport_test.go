@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -34,6 +35,23 @@ func testStringSlice(value any) []string {
 	default:
 		return nil
 	}
+}
+
+func sameStringSetForTest(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := map[string]int{}
+	for _, value := range a {
+		seen[value]++
+	}
+	for _, value := range b {
+		seen[value]--
+		if seen[value] < 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func TestSAMTransportProfileDerivesSymmetricSortedEdge31(t *testing.T) {
@@ -1476,6 +1494,47 @@ func TestSAMTransportProfileCopiesRouteReflectorSettings(t *testing.T) {
 	peer := findTransportBGPPeer(t, resources)
 	if !peer.RouteReflectorClient || peer.RouteReflectorClusterID != "192.168.1.38" {
 		t.Fatalf("BGPPeer RR settings = client:%v cluster:%q, want true/192.168.1.38", peer.RouteReflectorClient, peer.RouteReflectorClusterID)
+	}
+}
+
+func TestSAMTransportProfileRouteReflectorClientImportAdmission(t *testing.T) {
+	now := time.Date(2026, 6, 6, 9, 7, 30, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouter("rr", "rr-a", []api.SAMTransportPeerSpec{
+		{NodeRef: "leaf-a", RemoteEndpoint: "203.0.113.21"},
+		{NodeRef: "leaf-b", RemoteEndpoint: "203.0.113.22"},
+	})
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.TopologyNodeRefs = []string{"rr-a", "leaf-a", "leaf-b"}
+	spec.BGP.RouteReflectorClient = true
+	spec.BGP.ImportPolicy = api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}}
+	router.Spec.Resources[0].Spec = spec
+
+	controller := TransportController{
+		Router: router,
+		Store:  store,
+		Now:    func() time.Time { return now },
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("rr", "rr-a")).ResourcesJSON)
+	peer := findTransportBGPPeerForPeer(t, resources, "rr-a", "leaf-a")
+	if peer.ImportPolicy.AllowedPrefixLengthMin != 32 || peer.ImportPolicy.AllowedPrefixLengthMax != 32 {
+		t.Fatalf("import policy = %#v, want /32 exact admission", peer.ImportPolicy)
+	}
+	if got, want := peer.ImportPolicy.RequiredCommunities, []string{bgpstate.MobilityNodeIdentityCommunity("leaf-a")}; !sameStringSetForTest(got, want) {
+		t.Fatalf("required communities = %#v, want %#v", got, want)
+	}
+	forbidden := []string{
+		bgpstate.MobilityNodeIdentityCommunity("rr-a"),
+		bgpstate.MobilityNodeIdentityCommunity("leaf-b"),
+	}
+	if !sameStringSetForTest(peer.ImportPolicy.ForbiddenCommunities, forbidden) {
+		t.Fatalf("forbidden communities = %#v, want %#v", peer.ImportPolicy.ForbiddenCommunities, forbidden)
 	}
 }
 

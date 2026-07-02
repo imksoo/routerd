@@ -819,7 +819,10 @@ func effectiveGlobalImportPolicy(spec routerapi.BGPImportPolicySpec, dynamicPref
 }
 
 func peerHasImportPolicy(spec routerapi.BGPImportPolicySpec) bool {
-	return len(cleanStrings(spec.AllowedPrefixes)) > 0 || strings.TrimSpace(spec.NextHopRewrite) != ""
+	return len(cleanStrings(spec.AllowedPrefixes)) > 0 ||
+		len(cleanStrings(spec.RequiredCommunities)) > 0 ||
+		len(cleanStrings(spec.ForbiddenCommunities)) > 0 ||
+		strings.TrimSpace(spec.NextHopRewrite) != ""
 }
 
 func (c *Controller) reconcilePolicies(ctx context.Context, routerName string, spec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer, dynamicPeers map[string]desiredDynamicPeer) (bool, error) {
@@ -930,24 +933,63 @@ func appendImportPolicy(req *gobgpapi.SetPoliciesRequest, policyName, prefixSetN
 	if len(prefixes) == 0 || strings.TrimSpace(policyName) == "" || strings.TrimSpace(prefixSetName) == "" {
 		return
 	}
+	policyName = strings.TrimSpace(policyName)
+	prefixSetName = strings.TrimSpace(prefixSetName)
 	req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
 		DefinedType: gobgpapi.DefinedType_PREFIX,
-		Name:        strings.TrimSpace(prefixSetName),
+		Name:        prefixSetName,
 		Prefixes:    prefixes,
 	})
-	req.Policies = append(req.Policies, &gobgpapi.Policy{
-		Name: strings.TrimSpace(policyName),
-		Statements: []*gobgpapi.Statement{{
-			Name: bgpPolicyStatementName(policyName, "allow-import"),
-			Conditions: &gobgpapi.Conditions{PrefixSet: &gobgpapi.MatchSet{
+	requiredSetName := policyName + "-required-communities"
+	requiredCommunities := cleanCommunityPolicyValues(spec.RequiredCommunities)
+	if len(requiredCommunities) > 0 {
+		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
+			DefinedType: gobgpapi.DefinedType_COMMUNITY,
+			Name:        requiredSetName,
+			List:        requiredCommunities,
+		})
+	}
+	forbiddenSetName := policyName + "-forbidden-communities"
+	forbiddenCommunities := cleanCommunityPolicyValues(spec.ForbiddenCommunities)
+	if len(forbiddenCommunities) > 0 {
+		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
+			DefinedType: gobgpapi.DefinedType_COMMUNITY,
+			Name:        forbiddenSetName,
+			List:        forbiddenCommunities,
+		})
+	}
+	statements := []*gobgpapi.Statement{}
+	if len(forbiddenCommunities) > 0 {
+		statements = append(statements, &gobgpapi.Statement{
+			Name: bgpPolicyStatementName(policyName, "reject-forbidden-community"),
+			Conditions: &gobgpapi.Conditions{CommunitySet: &gobgpapi.MatchSet{
 				Type: gobgpapi.MatchSet_ANY,
-				Name: strings.TrimSpace(prefixSetName),
+				Name: forbiddenSetName,
 			}},
-			Actions: &gobgpapi.Actions{
-				RouteAction: gobgpapi.RouteAction_ACCEPT,
-				Nexthop:     nextHopRewriteAction(spec),
-			},
-		}},
+			Actions: &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_REJECT},
+		})
+	}
+	acceptConditions := &gobgpapi.Conditions{PrefixSet: &gobgpapi.MatchSet{
+		Type: gobgpapi.MatchSet_ANY,
+		Name: prefixSetName,
+	}}
+	if len(requiredCommunities) > 0 {
+		acceptConditions.CommunitySet = &gobgpapi.MatchSet{
+			Type: gobgpapi.MatchSet_ALL,
+			Name: requiredSetName,
+		}
+	}
+	statements = append(statements, &gobgpapi.Statement{
+		Name:       bgpPolicyStatementName(policyName, "allow-import"),
+		Conditions: acceptConditions,
+		Actions: &gobgpapi.Actions{
+			RouteAction: gobgpapi.RouteAction_ACCEPT,
+			Nexthop:     nextHopRewriteAction(spec),
+		},
+	})
+	req.Policies = append(req.Policies, &gobgpapi.Policy{
+		Name:       policyName,
+		Statements: statements,
 	})
 }
 
@@ -1391,6 +1433,8 @@ func appliedGlobalFromSpec(spec routerapi.BGPRouterSpec, router *routerapi.Route
 			AllowedPrefixes:        cleanStrings(spec.ImportPolicy.AllowedPrefixes),
 			AllowedPrefixLengthMin: spec.ImportPolicy.AllowedPrefixLengthMin,
 			AllowedPrefixLengthMax: spec.ImportPolicy.AllowedPrefixLengthMax,
+			RequiredCommunities:    cleanStrings(spec.ImportPolicy.RequiredCommunities),
+			ForbiddenCommunities:   cleanStrings(spec.ImportPolicy.ForbiddenCommunities),
 			NextHopRewrite:         importNextHopRewrite(spec.ImportPolicy),
 		},
 	}
@@ -1421,6 +1465,8 @@ func appliedPeer(peer desiredPeer) bgpdaemon.AppliedPeer {
 			AllowedPrefixes:        cleanStrings(peer.ImportPolicy.AllowedPrefixes),
 			AllowedPrefixLengthMin: peer.ImportPolicy.AllowedPrefixLengthMin,
 			AllowedPrefixLengthMax: peer.ImportPolicy.AllowedPrefixLengthMax,
+			RequiredCommunities:    cleanStrings(peer.ImportPolicy.RequiredCommunities),
+			ForbiddenCommunities:   cleanStrings(peer.ImportPolicy.ForbiddenCommunities),
 			NextHopRewrite:         importNextHopRewrite(peer.ImportPolicy),
 		},
 		ExportPolicyName: peer.ExportPolicyName,
@@ -3404,6 +3450,21 @@ func dynamicPeerImportPolicyName(routerName, name string) string {
 
 func bgpPolicyStatementName(policyName, suffix string) string {
 	return strings.TrimSpace(policyName) + "-" + suffix
+}
+
+func cleanCommunityPolicyValues(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func sanitizeBGPPolicyName(value string) string {

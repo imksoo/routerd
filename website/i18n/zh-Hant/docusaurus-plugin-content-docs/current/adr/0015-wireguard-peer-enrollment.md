@@ -83,3 +83,11 @@ WireGuard peer block。kernel peer 數和 identity validation 仍然存在，但
 
 該功能也明確了 bootstrap boundary：topology distribution 繼續使用 `SAMNodeSet` 和 `peersFrom`，
 first-contact trust 則由顯式的 non-WireGuard enrollment surface 處理。
+
+The same boundary extends into RR-side BGP admission. Generated
+route-reflector client peers derive import filters from the SAM topology and
+configured mobility prefix allowlist: each leaf may import only `/32` routes
+under the permitted prefixes, must attach its own node-identity community, and
+is rejected if it attaches another topology node's identity. The holder-beacon
+community is valid only together with the leaf's own identity and an allowed host
+route; it is not a standalone authority.

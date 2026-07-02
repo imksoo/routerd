@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/resourcequery"
@@ -259,6 +260,7 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 			out.BFDs++
 		}
 		if generateBGPPeers {
+			importPolicy := transportBGPImportPolicyForPeer(spec.BGP.ImportPolicy, spec.TopologyNodeRefs, peerNode, spec.BGP.RouteReflectorClient)
 			out.Resources = append(out.Resources, api.Resource{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
 				Metadata: api.ObjectMeta{Name: bgpPeerName, OwnerRefs: ownerRef, Annotations: transportAnnotations(owner.Metadata.Name, self, peerNode)},
@@ -269,7 +271,7 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 					EbgpMultihop:            spec.BGP.EbgpMultihop,
 					RouteReflectorClient:    spec.BGP.RouteReflectorClient,
 					RouteReflectorClusterID: strings.TrimSpace(spec.BGP.RouteReflectorClusterID),
-					ImportPolicy:            spec.BGP.ImportPolicy,
+					ImportPolicy:            importPolicy,
 					ExportPolicy:            spec.BGP.ExportPolicy,
 					Timers:                  timers,
 					BFD:                     bfdRef,
@@ -291,6 +293,44 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 	}
 	sort.Strings(out.PendingSources)
 	return out, nil
+}
+
+func transportBGPImportPolicyForPeer(base api.BGPImportPolicySpec, topologyNodeRefs []string, peerNode string, routeReflectorClient bool) api.BGPImportPolicySpec {
+	if !routeReflectorClient {
+		return base
+	}
+	base.AllowedPrefixLengthMin = 32
+	base.AllowedPrefixLengthMax = 32
+	nodeCommunity := bgpstate.MobilityNodeIdentityCommunity(peerNode)
+	base.RequiredCommunities = mergeTransportPolicyStrings(base.RequiredCommunities, []string{nodeCommunity})
+	var forbidden []string
+	for _, nodeRef := range topologyNodeRefs {
+		nodeRef = strings.TrimSpace(nodeRef)
+		if nodeRef == "" || nodeRef == strings.TrimSpace(peerNode) {
+			continue
+		}
+		if community := bgpstate.MobilityNodeIdentityCommunity(nodeRef); community != "" {
+			forbidden = append(forbidden, community)
+		}
+	}
+	base.ForbiddenCommunities = mergeTransportPolicyStrings(base.ForbiddenCommunities, forbidden)
+	return base
+}
+
+func mergeTransportPolicyStrings(groups ...[]string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, group := range groups {
+		for _, value := range cleanStrings(group) {
+			if seen[value] {
+				continue
+			}
+			seen[value] = true
+			out = append(out, value)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Resource, spec api.SAMTransportProfileSpec) ([]api.SAMTransportPeerSpec, []string, []transportPeersFromStatus, []string, error) {

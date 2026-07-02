@@ -421,7 +421,14 @@ spec:
 
 Core routers can set `spec.bgp.routeReflectorClient` and
 `spec.bgp.routeReflectorClusterID`; those fields are copied to each generated
-`BGPPeer`. Edge routers can leave them unset and use ordinary iBGP sessions.
+`BGPPeer`. When `routeReflectorClient` is true, routerd also hardens the
+generated peer import policy for that leaf: imported routes must be `/32`s under
+the configured `importPolicy.allowedPrefixes`, must carry that leaf's
+node-identity community, and must not carry another topology node's
+node-identity community. This keeps the RR admission boundary tied to the
+declared SAM topology; a leaf cannot claim another node identity or advertise a
+broader mobility prefix through the generated RR session. Edge routers can leave
+the RR fields unset and use ordinary iBGP sessions.
 
 Peer removal replaces the profile's generated `DynamicConfigPart` with the new
 resource set. Profile deletion replaces the old part with an empty active part,

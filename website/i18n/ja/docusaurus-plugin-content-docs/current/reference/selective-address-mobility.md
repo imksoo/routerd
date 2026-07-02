@@ -304,7 +304,7 @@ spec:
       remoteEndpoint: 10.252.0.1
 ```
 
-コアルーターでは `spec.bgp.routeReflectorClient` と `spec.bgp.routeReflectorClusterID` を設定できます。これらは生成される各 `BGPPeer` にコピーされます。エッジルーターでは未指定のまま通常の iBGP セッションとして使えます。
+コアルーターでは `spec.bgp.routeReflectorClient` と `spec.bgp.routeReflectorClusterID` を設定できます。これらは生成される各 `BGPPeer` にコピーされます。`routeReflectorClient` が true の場合、routerd はその leaf 向けの generated import policy も強化します。取り込む route は configured `importPolicy.allowedPrefixes` 配下の `/32` で、その leaf 自身の node-identity community を持ち、他の topology node の node-identity community を持たない必要があります。これにより RR admission boundary は宣言された SAM topology に結び付き、leaf は別ノード identity や広い mobility prefix を generated RR session から主張できません。エッジルーターでは未指定のまま通常の iBGP セッションとして使えます。
 
 ピアをプロファイルから削除すると、そのプロファイルが生成した `DynamicConfigPart` は新しいリソースセットで置き換えられます。プロファイル自体を削除した場合は、古いパートが空のアクティブパートで置き換えられ、実効設定から生成済みのトンネル、BGP ピア、エンドポイント経路が消えます。生成されたリソースの具体的な後片付けは、通常のオーナー参照 GC とリソース固有のティアダウンに委ねます。
 

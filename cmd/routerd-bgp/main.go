@@ -448,25 +448,79 @@ func appendAppliedImportPolicy(req *gobgpapi.SetPoliciesRequest, policyName, pre
 	if len(prefixes) == 0 || strings.TrimSpace(policyName) == "" || strings.TrimSpace(prefixSetName) == "" {
 		return
 	}
+	policyName = strings.TrimSpace(policyName)
+	prefixSetName = strings.TrimSpace(prefixSetName)
 	req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
 		DefinedType: gobgpapi.DefinedType_PREFIX,
-		Name:        strings.TrimSpace(prefixSetName),
+		Name:        prefixSetName,
 		Prefixes:    prefixes,
 	})
-	req.Policies = append(req.Policies, &gobgpapi.Policy{
-		Name: strings.TrimSpace(policyName),
-		Statements: []*gobgpapi.Statement{{
-			Name: appliedPolicyStatementName(policyName, "allow-import"),
-			Conditions: &gobgpapi.Conditions{PrefixSet: &gobgpapi.MatchSet{
+	requiredSetName := policyName + "-required-communities"
+	requiredCommunities := cleanCommunityPolicyValues(spec.RequiredCommunities)
+	if len(requiredCommunities) > 0 {
+		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
+			DefinedType: gobgpapi.DefinedType_COMMUNITY,
+			Name:        requiredSetName,
+			List:        requiredCommunities,
+		})
+	}
+	forbiddenSetName := policyName + "-forbidden-communities"
+	forbiddenCommunities := cleanCommunityPolicyValues(spec.ForbiddenCommunities)
+	if len(forbiddenCommunities) > 0 {
+		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
+			DefinedType: gobgpapi.DefinedType_COMMUNITY,
+			Name:        forbiddenSetName,
+			List:        forbiddenCommunities,
+		})
+	}
+	statements := []*gobgpapi.Statement{}
+	if len(forbiddenCommunities) > 0 {
+		statements = append(statements, &gobgpapi.Statement{
+			Name: appliedPolicyStatementName(policyName, "reject-forbidden-community"),
+			Conditions: &gobgpapi.Conditions{CommunitySet: &gobgpapi.MatchSet{
 				Type: gobgpapi.MatchSet_ANY,
-				Name: strings.TrimSpace(prefixSetName),
+				Name: forbiddenSetName,
 			}},
-			Actions: &gobgpapi.Actions{
-				RouteAction: gobgpapi.RouteAction_ACCEPT,
-				Nexthop:     appliedNextHopAction(spec),
-			},
-		}},
+			Actions: &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_REJECT},
+		})
+	}
+	acceptConditions := &gobgpapi.Conditions{PrefixSet: &gobgpapi.MatchSet{
+		Type: gobgpapi.MatchSet_ANY,
+		Name: prefixSetName,
+	}}
+	if len(requiredCommunities) > 0 {
+		acceptConditions.CommunitySet = &gobgpapi.MatchSet{
+			Type: gobgpapi.MatchSet_ALL,
+			Name: requiredSetName,
+		}
+	}
+	statements = append(statements, &gobgpapi.Statement{
+		Name:       appliedPolicyStatementName(policyName, "allow-import"),
+		Conditions: acceptConditions,
+		Actions: &gobgpapi.Actions{
+			RouteAction: gobgpapi.RouteAction_ACCEPT,
+			Nexthop:     appliedNextHopAction(spec),
+		},
 	})
+	req.Policies = append(req.Policies, &gobgpapi.Policy{
+		Name:       policyName,
+		Statements: statements,
+	})
+}
+
+func cleanCommunityPolicyValues(values []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
 }
 
 type appliedImportPolicy struct {

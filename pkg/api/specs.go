@@ -599,6 +599,8 @@ type BGPImportPolicySpec struct {
 	AllowedPrefixes        []string `yaml:"allowedPrefixes,omitempty" json:"allowedPrefixes,omitempty"`
 	AllowedPrefixLengthMin int      `yaml:"allowedPrefixLengthMin,omitempty" json:"allowedPrefixLengthMin,omitempty" jsonschema:"minimum=0,maximum=128"`
 	AllowedPrefixLengthMax int      `yaml:"allowedPrefixLengthMax,omitempty" json:"allowedPrefixLengthMax,omitempty" jsonschema:"minimum=0,maximum=128"`
+	RequiredCommunities    []string `yaml:"requiredCommunities,omitempty" json:"requiredCommunities,omitempty"`
+	ForbiddenCommunities   []string `yaml:"forbiddenCommunities,omitempty" json:"forbiddenCommunities,omitempty"`
 	NextHopRewrite         string   `yaml:"nextHopRewrite,omitempty" json:"nextHopRewrite,omitempty" jsonschema:"enum=,enum=peer-address,enum=unchanged"`
 }
 

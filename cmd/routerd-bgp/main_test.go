@@ -98,6 +98,42 @@ func TestAppliedPoliciesRestorePeerImportPolicyWithoutGlobalPolicy(t *testing.T)
 	}
 }
 
+func TestAppliedPoliciesRestorePeerImportPolicyWithCommunities(t *testing.T) {
+	peer := bgpdaemon.AppliedPeer{
+		Address:          "10.99.0.2",
+		ASN:              64512,
+		ImportPolicyName: "routerd-sam-import",
+		ImportPolicy: bgpdaemon.AppliedImportPolicy{
+			AllowedPrefixes:      []string{"10.77.60.0/24"},
+			RequiredCommunities:  []string{"64512:301"},
+			ForbiddenCommunities: []string{"64512:302"},
+		},
+	}
+	req, _ := appliedPolicies(bgpdaemon.AppliedConfig{
+		Peers: map[string]bgpdaemon.AppliedPeer{"10.99.0.2": peer},
+	})
+	if !appliedPolicyRequestHasDefinedSet(req, gobgpapi.DefinedType_COMMUNITY, "routerd-sam-import-required-communities", "64512:301") {
+		t.Fatalf("defined sets = %#v, want required community set", req.GetDefinedSets())
+	}
+	if !appliedPolicyRequestHasDefinedSet(req, gobgpapi.DefinedType_COMMUNITY, "routerd-sam-import-forbidden-communities", "64512:302") {
+		t.Fatalf("defined sets = %#v, want forbidden community set", req.GetDefinedSets())
+	}
+	if len(req.GetPolicies()) != 1 || len(req.GetPolicies()[0].GetStatements()) != 2 {
+		t.Fatalf("policies = %#v, want reject-forbidden then allow-import", req.GetPolicies())
+	}
+	reject := req.GetPolicies()[0].GetStatements()[0]
+	if reject.GetActions().GetRouteAction() != gobgpapi.RouteAction_REJECT ||
+		reject.GetConditions().GetCommunitySet().GetType() != gobgpapi.MatchSet_ANY {
+		t.Fatalf("reject statement = %#v, want forbidden community reject", reject)
+	}
+	allow := req.GetPolicies()[0].GetStatements()[1]
+	if allow.GetActions().GetRouteAction() != gobgpapi.RouteAction_ACCEPT ||
+		allow.GetConditions().GetPrefixSet().GetName() == "" ||
+		allow.GetConditions().GetCommunitySet().GetType() != gobgpapi.MatchSet_ALL {
+		t.Fatalf("allow statement = %#v, want prefix and required-community accept", allow)
+	}
+}
+
 func TestAppliedPoliciesRestorePeerExportPolicy(t *testing.T) {
 	peer := bgpdaemon.AppliedPeer{
 		Address:          "10.252.0.18",
@@ -159,6 +195,20 @@ func appliedPolicyRequestHasPrefix(req *gobgpapi.SetPoliciesRequest, setName, pr
 		}
 		for _, got := range set.GetPrefixes() {
 			if got.GetIpPrefix() == prefix {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func appliedPolicyRequestHasDefinedSet(req *gobgpapi.SetPoliciesRequest, typ gobgpapi.DefinedType, setName, value string) bool {
+	for _, set := range req.GetDefinedSets() {
+		if set.GetDefinedType() != typ || set.GetName() != setName {
+			continue
+		}
+		for _, got := range set.GetList() {
+			if got == value {
 				return true
 			}
 		}

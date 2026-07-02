@@ -918,6 +918,20 @@ func policyRequestHasPrefixSet(req *gobgpapi.SetPoliciesRequest, name, prefix st
 	return false
 }
 
+func policyPlanHasDefinedSet(req *gobgpapi.SetPoliciesRequest, typ gobgpapi.DefinedType, name, value string) bool {
+	for _, set := range req.GetDefinedSets() {
+		if set.GetDefinedType() != typ || set.GetName() != name {
+			continue
+		}
+		for _, item := range set.GetList() {
+			if item == value {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func allowedImportPrefixesForTest(spec api.BGPImportPolicySpec) []allowedImportPrefix {
 	return importAllowedPrefixesFromPolicy(spec)
 }
@@ -1238,6 +1252,34 @@ func TestGoBGPPeerImportPolicy(t *testing.T) {
 		len(assignment.GetPolicies()) != 1 ||
 		assignment.GetPolicies()[0].GetName() != "routerd-lan-import-10-99-0-2" {
 		t.Fatalf("peer import policy = %#v, want default reject with named import policy", assignment)
+	}
+}
+
+func TestBuildBGPPolicyPlanImportPolicyWithCommunities(t *testing.T) {
+	peer := desiredPeer{
+		Address:          "10.99.0.2",
+		ASN:              64512,
+		ImportPolicyName: "routerd-mobility-import-10-99-0-2",
+		ImportPolicy: api.BGPImportPolicySpec{
+			AllowedPrefixes:      []string{"10.77.60.0/24"},
+			RequiredCommunities:  []string{"64512:301"},
+			ForbiddenCommunities: []string{"64512:302"},
+		},
+	}
+	plan := buildBGPPolicyPlan("mobility", api.BGPImportPolicySpec{}, map[string]desiredPeer{"10.99.0.2": peer}, nil)
+	if !policyPlanHasDefinedSet(plan.SetPolicies, gobgpapi.DefinedType_COMMUNITY, "routerd-mobility-import-10-99-0-2-required-communities", "64512:301") {
+		t.Fatalf("defined sets = %#v, want required community set", plan.SetPolicies.GetDefinedSets())
+	}
+	if !policyPlanHasDefinedSet(plan.SetPolicies, gobgpapi.DefinedType_COMMUNITY, "routerd-mobility-import-10-99-0-2-forbidden-communities", "64512:302") {
+		t.Fatalf("defined sets = %#v, want forbidden community set", plan.SetPolicies.GetDefinedSets())
+	}
+	if len(plan.SetPolicies.GetPolicies()) != 1 || len(plan.SetPolicies.GetPolicies()[0].GetStatements()) != 2 {
+		t.Fatalf("policies = %#v, want reject and allow statements", plan.SetPolicies.GetPolicies())
+	}
+	allow := plan.SetPolicies.GetPolicies()[0].GetStatements()[1]
+	if allow.GetConditions().GetPrefixSet().GetName() == "" ||
+		allow.GetConditions().GetCommunitySet().GetType() != gobgpapi.MatchSet_ALL {
+		t.Fatalf("allow statement = %#v, want prefix and required-community conditions", allow)
 	}
 }
 

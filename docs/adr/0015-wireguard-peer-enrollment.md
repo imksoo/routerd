@@ -146,3 +146,11 @@ registrations.
 The feature also creates a clear bootstrap boundary: topology distribution can
 continue to use `SAMNodeSet` and `peersFrom`, while first-contact trust is
 handled by an explicit non-WireGuard enrollment surface.
+
+The same boundary now extends into RR-side BGP admission. Generated
+route-reflector client peers derive import filters from the SAM topology and
+configured mobility prefix allowlist: each leaf may import only `/32` routes
+under the permitted prefixes, must attach its own node-identity community, and
+is rejected if it attaches another topology node's identity. The holder-beacon
+community remains valid only in combination with the leaf's own identity and an
+allowed host route; it is not treated as a standalone authority.
