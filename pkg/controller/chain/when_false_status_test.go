@@ -125,6 +125,45 @@ func TestSaveWhenFalseStatusesStillMarksNonDaemonResourceWhenFalse(t *testing.T)
 	}
 }
 
+func TestSaveWhenFalseStatusesPreservesStatusWhenDependencyUnknown(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+			Metadata: api.ObjectMeta{Name: "ds-lite-a-source"},
+			Spec: api.IPv4StaticAddressSpec{
+				Interface: "ds-lite-a",
+				Address:   "192.0.0.2/29",
+				When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+					"VirtualAddress/lan-gw-v4.role": {Equals: "master"},
+				}},
+			},
+		},
+	}}}
+	store := mapStore{
+		api.NetAPIVersion + "/VirtualAddress/lan-gw-v4": {
+			"role": "unknown",
+		},
+		api.NetAPIVersion + "/IPv4StaticAddress/ds-lite-a-source": {
+			"phase":     "Applied",
+			"interface": "ds-lite-a",
+			"ifname":    "ds-lite-a",
+			"address":   "192.0.0.2/29",
+		},
+	}
+
+	if err := (&Runner{Router: router}).saveWhenFalseStatuses(eventedStore{Store: store}); err != nil {
+		t.Fatalf("saveWhenFalseStatuses returned error: %v", err)
+	}
+
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "ds-lite-a-source")
+	if got := status["phase"]; got != "Applied" {
+		t.Fatalf("phase = %v, want Applied", got)
+	}
+	if got := status["reason"]; got == "WhenFalse" {
+		t.Fatalf("reason = %v, want existing status preserved while dependency is unknown", got)
+	}
+}
+
 func TestDaemonObservedOnlyStatusPromotesHealthCheckObservedPhase(t *testing.T) {
 	current := map[string]any{
 		"phase":  "Pending",

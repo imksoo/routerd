@@ -3135,6 +3135,12 @@
                             },
                             "type": "array"
                           },
+                          "forbiddenCommunities": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
                           "nextHopRewrite": {
                             "enum": [
                               "",
@@ -3142,6 +3148,12 @@
                               "unchanged"
                             ],
                             "type": "string"
+                          },
+                          "requiredCommunities": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
                           }
                         },
                         "type": "object"
@@ -3395,6 +3407,12 @@
                             },
                             "type": "array"
                           },
+                          "forbiddenCommunities": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
                           "nextHopRewrite": {
                             "enum": [
                               "",
@@ -3402,6 +3420,12 @@
                               "unchanged"
                             ],
                             "type": "string"
+                          },
+                          "requiredCommunities": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
                           }
                         },
                         "type": "object"
@@ -3602,6 +3626,12 @@
                             },
                             "type": "array"
                           },
+                          "forbiddenCommunities": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
                           "nextHopRewrite": {
                             "enum": [
                               "",
@@ -3609,6 +3639,12 @@
                               "unchanged"
                             ],
                             "type": "string"
+                          },
+                          "requiredCommunities": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
                           }
                         },
                         "type": "object"
@@ -9946,6 +9982,12 @@
                             },
                             "type": "array"
                           },
+                          "forbiddenCommunities": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
                           "nextHopRewrite": {
                             "enum": [
                               "",
@@ -9953,6 +9995,12 @@
                               "unchanged"
                             ],
                             "type": "string"
+                          },
+                          "requiredCommunities": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
                           }
                         },
                         "type": "object"
@@ -10470,6 +10518,12 @@
                                 },
                                 "type": "array"
                               },
+                              "forbiddenCommunities": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
                               "nextHopRewrite": {
                                 "enum": [
                                   "",
@@ -10477,6 +10531,12 @@
                                   "unchanged"
                                 ],
                                 "type": "string"
+                              },
+                              "requiredCommunities": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
                               }
                             },
                             "type": "object"
