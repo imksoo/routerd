@@ -215,9 +215,15 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	discoverySelfCaptures, _ := c.discoverySelfCapturedAddressSet(res.Metadata.Name, spec)
 	discoverySelfObservedAt := c.discoveryLastScanAt(res.Metadata.Name)
 	livenessMarkers, livenessMarkersObserved := c.bgpLivenessMarkers()
+	installedNextHops, bgpRIBObserved := c.bgpInstalledNextHops()
+	captureNextHops, captureRIBObserved := c.bgpCaptureCandidateNextHops(spec)
+	if captureRIBObserved {
+		bgpRIBObserved = true
+	}
+	startupReadiness := placementStartupReadinessForMember(self, livenessMarkersObserved || bgpRIBObserved, discoverySelfIPsObserved)
 	observedHolderNode := bgpObservedGroupHolder(self, members, livenessMarkers, bgpMobilityPrefixCommunitiesFromStatus(c.Router, c.Store, spec))
 	ownerPlacement := c.applyBGPCaptureSeizeHoldDown(res.Metadata.Name, evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved, observedHolderNode), now)
-	ownerPlacement = fencePlacementForStartup(ownerPlacement, observedHolderNode, now)
+	ownerPlacement = fencePlacementForStartupWithReadiness(ownerPlacement, observedHolderNode, now, startupReadiness)
 	ownerPlacement = applyHolderRetention(ownerPlacement, len(discoverySelfCaptures) > 0, higherPriorityHolderActive(self, members, observedHolderNode), now)
 	actionJournal, err := c.Store.ListActions(routerstate.ActionExecutionFilter{})
 	if err != nil {
@@ -227,11 +233,6 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	previousActionPlans, err := c.previousGeneratedActionPlans(res.Metadata.Name, selfNode)
 	if err != nil {
 		return err
-	}
-	installedNextHops, bgpRIBObserved := c.bgpInstalledNextHops()
-	captureNextHops, captureRIBObserved := c.bgpCaptureCandidateNextHops(spec)
-	if captureRIBObserved {
-		bgpRIBObserved = true
 	}
 	bgpHomeOwnerNodes := c.bgpHomeOwnerNodes(spec)
 	bgpReturnRoutes := c.bgpReturnRoutes(spec)
@@ -336,6 +337,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		"generatedBGPReturnRoutes":                 len(returnRoutes),
 		"observedBGPReturnRoutes":                  mapStringKeysSorted(bgpReturnRoutes),
 		"bgpRIBObserved":                           bgpRIBObserved,
+		"startupFenceReadiness":                    placementStartupReadinessStatus(startupReadiness),
 		"bgpCaptureElection":                       bgpCaptureElectionStatus(delivery.Placement),
 		"bgpCaptureClaim":                          bgpCaptureClaimStatus(captureClaim),
 		"bgpCaptureClaimPhase":                     captureClaim.Phase,

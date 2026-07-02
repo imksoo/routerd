@@ -132,16 +132,25 @@ placementSettleStart  = time.Now()        // captured at process start (resets o
 placementSettleWindow = 120 * time.Second
 ```
 
-`placementSettleDefersActive` defers an active assertion only when all three
-hold: **"about to assert active", "no incumbent peer observed yet", and "inside
-the settle window"**. `fencePlacementForStartup` applies this, converting a
-fenced active into standby.
+`fencePlacementForStartupWithReadiness` defers an active assertion when all
+three hold: **"about to assert active", "no incumbent peer observed yet", and
+"startup readiness is not complete"**. Readiness means the local BGP control
+plane has completed an initial observation and, for provider-inventory-backed
+captures, provider self-observation has completed. `placementSettleWindow`
+remains as a conservative fallback for callers that do not provide readiness
+signals.
 
 - A just-returned node would otherwise win the equal-priority tie-break and
   reclaim holdership before its fresh BGP RIB / provider observations converge.
   The fence prevents this.
-- A node past the settle window (a long-running standby) is not fenced, so **real
-  failover is not delayed**: it seizes immediately when the active dies.
+- A node whose BGP/provider observations have completed can leave the fence
+  before the wall-clock window expires, which avoids crash-loop nodes remaining
+  artificially passive after every restart.
+- A node whose observations are still incomplete remains fenced even after the
+  wall-clock window, so a partitioned or blind node does not assert active merely
+  because time elapsed.
+- A node that already observes an incumbent peer is not fenced; the normal
+  no-preempt placement tie-break already defers to that holder.
 
 ### 2. Holder retention
 

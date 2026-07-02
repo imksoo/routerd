@@ -244,11 +244,14 @@ observed incumbent holder over the nodeRef tie-break, so a returning peer does
 not preempt a live holder. A strictly higher-priority member still reclaims.
 
 **Startup fence.** A node anchors a settle window at process start
-(`placementSettleStart`, reset on every VM stop/start or reboot). Inside the
-window, a node that would assert active but has not yet observed an incumbent
-defers, so a returning node cannot reclaim before its fresh BGP RIB / provider
-observations converge. A long-running standby is past its window and seizes
-immediately when the active dies, so genuine failover is not delayed.
+(`placementSettleStart`, reset on every VM stop/start or reboot), but the fence
+is now readiness-first. A node that would assert active and has not yet observed
+an incumbent defers until initial BGP observation has completed and, for
+provider-inventory-backed captures, provider self-observation has completed.
+The wall-clock window remains a conservative fallback when readiness signals are
+unavailable. This lets a crash-looping node leave the fence as soon as its
+observations are actually ready, while a partitioned or blind node does not
+assert active merely because 120 seconds elapsed.
 
 **Holder retention and priority restore.** While a node physically holds its
 group's captures it stays active (it yields only on losing its own holdership,

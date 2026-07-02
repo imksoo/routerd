@@ -250,6 +250,17 @@ var (
 	placementSettleWindow = 120 * time.Second
 )
 
+type placementStartupReadiness struct {
+	Known            bool
+	BGPObserved      bool
+	ProviderRequired bool
+	ProviderObserved bool
+}
+
+func (r placementStartupReadiness) Ready() bool {
+	return r.BGPObserved && (!r.ProviderRequired || r.ProviderObserved)
+}
+
 // placementSettleDefersActive reports whether a node must defer a brand-new active
 // assertion because it is still inside the post-startup settle window and has not
 // yet observed an incumbent. This is the startup fence: a returning node would
@@ -266,6 +277,51 @@ func placementSettleDefersActive(active bool, incumbent string, sinceStart, sett
 		return false
 	}
 	return sinceStart < settle
+}
+
+func placementStartupFenceDefersActive(active bool, incumbent string, sinceStart, settle time.Duration, readiness placementStartupReadiness) bool {
+	if !active || strings.TrimSpace(incumbent) != "" {
+		return false
+	}
+	if !readiness.Known {
+		return sinceStart < settle
+	}
+	if readiness.Ready() {
+		return false
+	}
+	if sinceStart < settle {
+		return true
+	}
+	return true
+}
+
+func placementStartupReadinessForMember(self memberPlanInfo, bgpObserved, providerObserved bool) placementStartupReadiness {
+	return placementStartupReadiness{
+		Known:            true,
+		BGPObserved:      bgpObserved,
+		ProviderRequired: placementStartupProviderObservationRequired(self),
+		ProviderObserved: providerObserved,
+	}
+}
+
+func placementStartupProviderObservationRequired(self memberPlanInfo) bool {
+	if strings.TrimSpace(self.Capture.Type) != "provider-secondary-ip" {
+		return false
+	}
+	if strings.TrimSpace(self.Capture.ProviderRef) == "" {
+		return false
+	}
+	return strings.TrimSpace(self.OwnershipDiscovery.Mode) == "provider-private-ip"
+}
+
+func placementStartupReadinessStatus(readiness placementStartupReadiness) map[string]any {
+	return map[string]any{
+		"known":            readiness.Known,
+		"ready":            readiness.Ready(),
+		"bgpObserved":      readiness.BGPObserved,
+		"providerRequired": readiness.ProviderRequired,
+		"providerObserved": readiness.ProviderObserved,
+	}
 }
 
 // applyHolderRetention keeps a node active while it still physically holds its
@@ -307,12 +363,23 @@ func applyHolderRetention(placement PlacementDecision, selfHolds bool, yieldToHi
 // fencePlacementForStartup applies placementSettleDefersActive to a placement
 // decision, converting a fenced active assertion into a standby decision.
 func fencePlacementForStartup(placement PlacementDecision, incumbent string, now time.Time) PlacementDecision {
-	if !placementSettleDefersActive(placement.Active, incumbent, now.Sub(placementSettleStart), placementSettleWindow) {
+	return fencePlacementForStartupWithReadiness(placement, incumbent, now, placementStartupReadiness{})
+}
+
+func fencePlacementForStartupWithReadiness(placement PlacementDecision, incumbent string, now time.Time, readiness placementStartupReadiness) PlacementDecision {
+	if strings.TrimSpace(placement.Group) == "" {
+		return placement
+	}
+	if !placementStartupFenceDefersActive(placement.Active, incumbent, now.Sub(placementSettleStart), placementSettleWindow, readiness) {
 		return placement
 	}
 	placement.Active = false
 	placement.Seize = false
-	placement.Reason = fmt.Sprintf("startup settle: deferring active assertion in placement group %q until peer-holder state converges", placement.Group)
+	if readiness.Known {
+		placement.Reason = fmt.Sprintf("startup readiness: deferring active assertion in placement group %q until BGP/provider observations converge", placement.Group)
+	} else {
+		placement.Reason = fmt.Sprintf("startup settle: deferring active assertion in placement group %q until peer-holder state converges", placement.Group)
+	}
 	return placement
 }
 
