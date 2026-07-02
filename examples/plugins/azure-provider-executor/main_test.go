@@ -868,10 +868,6 @@ func TestAssignDryRunAllowReassignmentReadsOnly(t *testing.T) {
 
 func TestAssignExecuteAllowReassignmentDeletesOldThenCreatesSelf(t *testing.T) {
 	f := newSeizeFakeAz()
-	f.oldHolds = false
-	f.createErr = fmt.Errorf("PrivateIPAddressIsInUse: private IP address is in use")
-	f.createErrOnce = true
-	f.conflictRevealsOld = true
 	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
 	spec.Parameters = map[string]string{"allowReassignment": "true"}
 	spec.Target["displacedResourceGroup"] = "rg1"
@@ -882,14 +878,24 @@ func TestAssignExecuteAllowReassignmentDeletesOldThenCreatesSelf(t *testing.T) {
 		t.Fatalf("want succeeded, got %q err=%q message=%q", res.Status.Status, res.Status.Error, res.Status.Message)
 	}
 	got := joinedCalls(f.calls)
-	if countLeadingCalls(got, "rest --method put ") != 2 {
-		t.Fatalf("seize calls mismatch:\n got: %v\nwant optimistic PUT plus retry PUT", got)
+	gotNoQuery := joinedCallsWithoutQuery(f.calls)
+	want := []string{
+		"network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
+		"network nic ip-config list --resource-group rg1 --nic-name nic-old",
+		"network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility",
+		"network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
+		"rest --method put --uri /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1?api-version=2023-09-01",
 	}
-	if !containsCallWithoutQuery(got, "network nic ip-config list --resource-group rg1 --nic-name nic-old") {
-		t.Fatalf("calls = %v, want conflict holder discovery", got)
+	if len(gotNoQuery) != len(want) {
+		t.Fatalf("seize calls mismatch:\n got: %v\nwant: %v", got, want)
 	}
-	if !containsCallWithoutQuery(got, "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility") {
-		t.Fatalf("calls = %v, want delete of discovered old holder", got)
+	for i := range want {
+		if !strings.HasPrefix(gotNoQuery[i], want[i]) {
+			t.Fatalf("seize calls mismatch at %d:\n got: %v\nwant: %v", i, got, want)
+		}
+	}
+	if countLeadingCalls(got, "rest --method put ") != 1 {
+		t.Fatalf("seize calls mismatch:\n got: %v\nwant: %v", got, want)
 	}
 	if res.Status.Observed["assignedAddress"] != "10.88.60.9" || res.Status.Observed["ipConfigName"] != "ipcfg-mobility" {
 		t.Fatalf("observed = %+v", res.Status.Observed)
@@ -901,10 +907,6 @@ func TestAssignExecuteAllowReassignmentDeletesOldThenCreatesSelf(t *testing.T) {
 
 func TestAssignExecuteAllowReassignmentFallsBackToInventoryDiscovery(t *testing.T) {
 	f := newSeizeFakeAz()
-	f.oldHolds = false
-	f.createErr = fmt.Errorf("PrivateIPAddressIsInUse: private IP address is in use")
-	f.createErrOnce = true
-	f.conflictRevealsOld = true
 	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
 	spec.Parameters = map[string]string{"allowReassignment": "true"}
 	res := dispatchWith(spec, f.run)
@@ -912,8 +914,8 @@ func TestAssignExecuteAllowReassignmentFallsBackToInventoryDiscovery(t *testing.
 		t.Fatalf("want succeeded, got %q err=%q message=%q", res.Status.Status, res.Status.Error, res.Status.Message)
 	}
 	got := joinedCalls(f.calls)
-	if !containsCallWithoutQuery(got, "network nic list --resource-group rg1") {
-		t.Fatalf("calls = %v, want inventory discovery via nic list after conflict", got)
+	if len(got) < 3 || got[1] != "network nic list --resource-group rg1" {
+		t.Fatalf("calls = %v, want inventory discovery via nic list", got)
 	}
 	if !containsCallWithoutQuery(got, "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility") {
 		t.Fatalf("calls = %v, want delete of discovered old holder", got)
@@ -922,10 +924,6 @@ func TestAssignExecuteAllowReassignmentFallsBackToInventoryDiscovery(t *testing.
 
 func TestAssignExecuteAllowReassignmentParsesNestedPrivateIPAddress(t *testing.T) {
 	f := newSeizeFakeAz()
-	f.oldHolds = false
-	f.createErr = fmt.Errorf("PrivateIPAddressIsInUse: private IP address is in use")
-	f.createErrOnce = true
-	f.conflictRevealsOld = true
 	f.nestedAltIPField = true
 	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
 	spec.Parameters = map[string]string{"allowReassignment": "true"}
@@ -952,8 +950,11 @@ func TestAssignExecuteAllowReassignmentIdempotentWhenSelfAlreadyHolds(t *testing
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
-	if countLeadingCalls(joinedCalls(f.calls), "rest --method put ") != 1 {
-		t.Fatalf("calls = %v, want one PUT to ensure forwarding on already-held self", joinedCalls(f.calls))
+	if len(f.calls) != 1 || strings.Join(f.calls[0], " ") != "network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1" {
+		t.Fatalf("calls = %v, want only self show", f.calls)
+	}
+	if res.Status.Observed["seizeAlreadyPresent"] != "true" {
+		t.Fatalf("observed = %+v, want already-present convergence", res.Status.Observed)
 	}
 }
 
@@ -966,8 +967,8 @@ func TestAssignExecuteAllowReassignmentRetriesAfterRemoveSucceededAddFailed(t *t
 	if res.Status.Status != statusFailed {
 		t.Fatalf("first attempt should fail at create, got %q", res.Status.Status)
 	}
-	if !first.oldHolds {
-		t.Fatal("old holder should remain when optimistic create fails before conflict rediscovery")
+	if first.oldHolds {
+		t.Fatal("old holder should have been removed before create failure")
 	}
 
 	retry := newSeizeFakeAz()
@@ -997,12 +998,12 @@ func TestAssignExecuteAllowReassignmentSkipsSynchronousPostPUTVerify(t *testing.
 	}
 	got := joinedCalls(f.calls)
 	showSelf := "network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1"
-	if countCall(got, showSelf) != 1 {
-		t.Fatalf("calls = %v, want create-body show only", got)
+	if countCall(got, showSelf) != 2 {
+		t.Fatalf("calls = %v, want initial show plus create-body show only", got)
 	}
 	oldList := "network nic ip-config list --resource-group rg1 --nic-name nic-old"
-	if countCallWithoutQuery(got, oldList) != 0 {
-		t.Fatalf("calls = %v, must not discover holder before optimistic PUT", got)
+	if countCallWithoutQuery(got, oldList) != 1 {
+		t.Fatalf("calls = %v, want holder discovery only", got)
 	}
 }
 
@@ -1022,10 +1023,6 @@ func TestAssignExecuteAllowReassignmentDeleteNotFoundIsIdempotent(t *testing.T) 
 
 func TestAssignExecuteAllowReassignmentDeleteFailureIsRetriedLater(t *testing.T) {
 	f := newSeizeFakeAz()
-	f.oldHolds = false
-	f.createErr = fmt.Errorf("PrivateIPAddressIsInUse: private IP address is in use")
-	f.createErrOnce = true
-	f.conflictRevealsOld = true
 	f.deleteErr = fmt.Errorf("AuthorizationFailed: missing write permission on old NIC")
 	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
 	spec.Parameters = map[string]string{"allowReassignment": "true"}
@@ -1039,8 +1036,8 @@ func TestAssignExecuteAllowReassignmentDeleteFailureIsRetriedLater(t *testing.T)
 	if !f.oldHolds {
 		t.Fatal("old holder should remain when delete fails before removal")
 	}
-	if countLeadingCalls(joinedCalls(f.calls), "rest --method put ") != 1 {
-		t.Fatalf("calls = %v, want initial optimistic PUT only before delete failed", joinedCalls(f.calls))
+	if countLeadingCalls(joinedCalls(f.calls), "rest --method put ") != 0 {
+		t.Fatalf("calls = %v, must not PUT self after old delete failed", joinedCalls(f.calls))
 	}
 }
 

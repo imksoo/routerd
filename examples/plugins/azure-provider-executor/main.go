@@ -621,6 +621,27 @@ func seizeSecondaryIP(ctx context.Context, t nicTarget, runner azRunner) execute
 	res := newResult()
 	res.Status.UndoAvailable = true
 
+	self, err := showNIC(ctx, runner, t.nicID)
+	if err != nil {
+		return failed("assign-secondary-ip execute: self nic show failed", err)
+	}
+	if cfg, ok := ipConfigForAddress(self.IPConfigurations, t.address); ok {
+		res.Status.Status = statusSucceeded
+		res.Status.Message = fmt.Sprintf("seized/reassigned %s to %s (already present as ip-config %s)", t.address, t.nicName, cfg.Name)
+		res.Status.Observed = map[string]string{"assignedAddress": t.address, "ipConfigName": cfg.Name, "seizeAlreadyPresent": "true"}
+		return res
+	}
+
+	holder, found, err := discoverCurrentHolder(ctx, runner, t)
+	if err != nil {
+		return failed("assign-secondary-ip execute: holder discovery failed", err)
+	}
+	if found && !holder.sameNIC(t.resourceGroup, t.nicName) {
+		if err := deleteIPConfig(ctx, runner, holder); err != nil {
+			return failed("assign-secondary-ip execute: displaced ip-config delete failed", err)
+		}
+	}
+
 	if err := createIPConfig(ctx, runner, t); err != nil {
 		if isAlreadyExistsError(err) {
 			cfg, serr := waitForSelfAddress(ctx, runner, t)
@@ -644,6 +665,8 @@ func seizeSecondaryIP(ctx context.Context, t nicTarget, runner azRunner) execute
 				if cerr := createIPConfig(ctx, runner, t); cerr != nil {
 					return failed("assign-secondary-ip execute: ip-config create after conflict failed", cerr)
 				}
+				holder = rediscovered
+				found = true
 			} else {
 				return failed("assign-secondary-ip execute: ip-config create conflict but no displaced holder found", err)
 			}
