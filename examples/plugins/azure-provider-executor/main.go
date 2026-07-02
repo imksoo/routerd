@@ -675,9 +675,19 @@ func seizeSecondaryIP(ctx context.Context, t nicTarget, runner azRunner) execute
 		}
 	}
 
+	cfg, err := waitForSelfAddress(ctx, runner, t)
+	if err != nil {
+		return failed("assign-secondary-ip execute: verify self nic failed", err)
+	}
+	if found && !holder.sameNIC(t.resourceGroup, t.nicName) {
+		if err := waitForDisplacedRelease(ctx, runner, holder, t.address); err != nil {
+			return failed("assign-secondary-ip execute: verify displaced nic failed", err)
+		}
+	}
+
 	res.Status.Status = statusSucceeded
-	res.Status.Message = fmt.Sprintf("seized/reassigned %s to %s (ip-config %s)", t.address, t.nicName, t.ipConfigName)
-	res.Status.Observed = map[string]string{"assignedAddress": t.address, "ipConfigName": t.ipConfigName}
+	res.Status.Message = fmt.Sprintf("seized/reassigned %s to %s (ip-config %s)", t.address, t.nicName, cfg.Name)
+	res.Status.Observed = map[string]string{"assignedAddress": t.address, "ipConfigName": cfg.Name}
 	return res
 }
 

@@ -885,6 +885,8 @@ func TestAssignExecuteAllowReassignmentDeletesOldThenCreatesSelf(t *testing.T) {
 		"network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility",
 		"network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
 		"rest --method put --uri /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1?api-version=2023-09-01",
+		"network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
+		"network nic ip-config list --resource-group rg1 --nic-name nic-old",
 	}
 	if len(gotNoQuery) != len(want) {
 		t.Fatalf("seize calls mismatch:\n got: %v\nwant: %v", got, want)
@@ -982,7 +984,30 @@ func TestAssignExecuteAllowReassignmentRetriesAfterRemoveSucceededAddFailed(t *t
 	}
 }
 
-func TestAssignExecuteAllowReassignmentSkipsSynchronousPostPUTVerify(t *testing.T) {
+func TestAssignExecuteAllowReassignmentVerifyFailureRetriesToSelfPresent(t *testing.T) {
+	withNoRetrySleep(t)
+	first := newSeizeFakeAz()
+	first.verifyShowErr = fmt.Errorf("injected verify failure")
+	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
+	spec.Parameters = map[string]string{"allowReassignment": "true"}
+	res := dispatchWith(spec, first.run)
+	if res.Status.Status != statusFailed {
+		t.Fatalf("first attempt should fail at verify, got %q", res.Status.Status)
+	}
+	if !first.selfHolds {
+		t.Fatal("self should hold IP after create even if verify failed")
+	}
+
+	retry := newSeizeFakeAz()
+	retry.oldHolds = false
+	retry.selfHolds = true
+	res = dispatchWith(spec, retry.run)
+	if res.Status.Status != statusSucceeded || res.Status.Observed["seizeAlreadyPresent"] != "true" {
+		t.Fatalf("retry should converge from self-present state, status=%q observed=%+v err=%q", res.Status.Status, res.Status.Observed, res.Status.Error)
+	}
+}
+
+func TestAssignExecuteAllowReassignmentWaitsForEventualSelfAndOldVisibility(t *testing.T) {
 	withNoRetrySleep(t)
 	f := newSeizeFakeAz()
 	f.selfVerifyMisses = 2
@@ -994,16 +1019,16 @@ func TestAssignExecuteAllowReassignmentSkipsSynchronousPostPUTVerify(t *testing.
 	spec.Target["displacedIpConfigName"] = "ipcfg-mobility"
 	res := dispatchWith(spec, f.run)
 	if res.Status.Status != statusSucceeded {
-		t.Fatalf("PUT success should return without synchronous verify, got status=%q message=%q err=%q", res.Status.Status, res.Status.Message, res.Status.Error)
+		t.Fatalf("eventual visibility should converge, got status=%q message=%q err=%q", res.Status.Status, res.Status.Message, res.Status.Error)
 	}
 	got := joinedCalls(f.calls)
 	showSelf := "network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1"
-	if countCall(got, showSelf) != 2 {
-		t.Fatalf("calls = %v, want initial show plus create-body show only", got)
+	if countCall(got, showSelf) < 4 {
+		t.Fatalf("calls = %v, want initial show plus repeated self verify", got)
 	}
 	oldList := "network nic ip-config list --resource-group rg1 --nic-name nic-old"
-	if countCallWithoutQuery(got, oldList) != 1 {
-		t.Fatalf("calls = %v, want holder discovery only", got)
+	if countCallWithoutQuery(got, oldList) < 3 {
+		t.Fatalf("calls = %v, want holder discovery plus repeated old release verify", got)
 	}
 }
 
@@ -1082,8 +1107,8 @@ func TestAssignExecuteAllowReassignmentConflictRediscovery(t *testing.T) {
 	if createCount != 2 {
 		t.Fatalf("calls = %v, want create attempted twice around conflict", got)
 	}
-	if countCallWithoutQuery(got, "network nic ip-config list --resource-group rg1 --nic-name nic-old") != 0 {
-		t.Fatalf("calls = %v, must not perform displaced verify after conflict retry", got)
+	if !containsCallWithoutQuery(got, "network nic ip-config list --resource-group rg1 --nic-name nic-old") {
+		t.Fatalf("calls = %v, want displaced verify after conflict retry", got)
 	}
 }
 
