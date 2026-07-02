@@ -100,7 +100,7 @@ spec:
             bridge: vmbr0
 ```
 
-必須の `membersFrom` ソースがまだ届いていない場合、プールは `Pending` になります。ブートストラップ中に部分的なローカルメンバーリストで動作させてよい場合にのみ `optional: true` を指定してください。RR dynamic sync で以前に取得済みの source については、保存済み DynamicConfigPart を last-known-good 入力として扱います。期限切れの `member-set-sync/<name>` record は source を `Stale` と表示しますが、既存の MobilityPool planning path は維持します。これは RR 障害時の fail-static 保証であり、publisher の喪失は freshness にだけ影響し、既に render 済みの data plane を壊しません。
+必須の `membersFrom` ソースがまだ届いていない場合、プールは `Pending` になります。ブートストラップ中に部分的なローカルメンバーリストで動作させてよい場合にのみ `optional: true` を指定してください。RR dynamic sync で以前に取得済みの source については、保存済み DynamicConfigPart を last-known-good 入力として扱います。期限切れの `member-set-sync/<name>` record は source を `Stale` と表示しますが、既存の MobilityPool planning path は維持します。これは RR 障害時の fail-static 保証であり、publisher の喪失は freshness にだけ影響し、既に render 済みの data plane を壊しません。Stale source には warning field も出るため、運用者は fail-static 状態を fresh topology と区別できます。
 
 WireGuard インターフェースも同じノードレジストリからピアを取り込めます。
 
@@ -248,7 +248,7 @@ routerd はフェデレーションやプロバイダーディスカバリーで
 
 `spec.peersFrom` は `SAMNodeSet/<name>` または `SAMPeerGroup/<name>` を参照できます。`SAMNodeSet` ソースは `spec.nodes[].nodeRef` を解決済みの topology に追加し、自ノード以外で `samEndpoint` を持つノードからピアを生成します。生成されたピアはその `samEndpoint` を `remoteEndpoint` として使います。`SAMPeerGroup` ソースは再利用可能なトランスポートピアだけを追加します。
 
-コントローラーはリコンサイル時にすべての source を解決し、取り込んだ peer を先に追加してから、プロファイル直下の `spec.peers` を重ねます。同じ `nodeRef` が両方にある場合は `spec.peers` が優先されるため、リーフ側に静的なブートストラップ用 peer やローカル override を残せます。必須の `peersFrom` source が未到着の場合、プロファイルは `Pending` になります。`optional: true` の source は到着するまで無視されます。source が以前に取得済みで DynamicConfigPart の TTL だけが切れている場合、routerd は source を `Stale` と表示し、生成済み transport artifact を削除せず last-known-good peer group を使い続けます。
+コントローラーはリコンサイル時にすべての source を解決し、取り込んだ peer を先に追加してから、プロファイル直下の `spec.peers` を重ねます。同じ `nodeRef` が両方にある場合は `spec.peers` が優先されるため、リーフ側に静的なブートストラップ用 peer やローカル override を残せます。必須の `peersFrom` source が未到着の場合、プロファイルは `Pending` になります。`optional: true` の source は到着するまで無視されます。source が以前に取得済みで DynamicConfigPart の TTL だけが切れている場合、routerd は source を `Stale` と warning 付きで表示し、生成済み transport artifact を削除せず last-known-good peer group を使い続けます。
 
 `SAMNodeSet` の各 node は静的な `samEndpoint` か `samEndpointFrom` のどちらかを指定できます。`samEndpointFrom` は `DHCPv4Client/<name>.currentAddress` や `Interface/<name>.primaryIPv4` のような status field を読み、CIDR の prefix 長を取り除いた IPv4 アドレスを生成 peer の `remoteEndpoint` として使います。source が未解決の場合、古い endpoint で tunnel を生成せず、トランスポートプロファイルは `Pending` になります。
 
@@ -274,9 +274,9 @@ spec:
 
 スパイン/ルートリフレクター側のプロファイルでは `spec.publishPeerGroup: true` を指定できます。この場合、routerd はプロファイルの `selfNodeRef` と具体的なローカルエンドポイントから `SAMPeerGroup` を生成し、DynamicConfigPart として公開します。`localEndpointFrom` は公開前に解決されるため、リーフには直接使える `remoteEndpoint` が配布されます。
 
-`publishPeerGroup: true` を持つノードで `routerd serve` が動作している場合、routerd は公開済みピアグループをトランスポートネットワーク上の TCP ポート `19652`（`GET /v1/peer-groups`）でも返します。リーフ側で必須の `peersFrom` グループが見つからない場合、`spec.underlayInterface` から到達できる WireGuard ピアへ問い合わせ、名前が一致するグループを `peer-group-sync/<group-name>` としてローカルに保存します。この DynamicConfigPart は通常の TTL で期限切れになりますが、publisher が消えてもリーフは生成済み tunnel や BGP peer を tear down しません。期限切れ record を last-known-good 入力として再利用し、source を `Stale` と表示し、既存 transport artifact を render し続けます。一度も見たことのない必須 group だけが `Pending` になります。
+`publishPeerGroup: true` を持つノードで `routerd serve` が動作している場合、routerd は公開済みピアグループをトランスポートネットワーク上の TCP ポート `19652`（`GET /v1/peer-groups`）でも返します。リーフ側で必須の `peersFrom` グループが見つからない場合、`spec.underlayInterface` から到達できる WireGuard ピアへ問い合わせ、名前が一致するグループを `peer-group-sync/<group-name>` としてローカルに保存します。この DynamicConfigPart は通常の TTL で期限切れになりますが、publisher が消えてもリーフは生成済み tunnel や BGP peer を tear down しません。期限切れ record を last-known-good 入力として再利用し、source を `Stale` と warning 付きで表示し、既存 transport artifact を render し続けます。一度も見たことのない必須 group だけが `Pending` になります。
 
-MobilityPool のメンバーシップについても同様に、ルートリフレクター側の正規プールに `spec.publishMemberSet: true` を指定できます。routerd はローカル専用のメンバーフィールドを取り除き、ソース `mobility-member-set/<pool>` の `MobilityMemberSet` DynamicConfigPart を公開し、同じ TCP ポートの `GET /v1/member-sets` で返します。リーフ側で必須の `membersFrom` ソースが見つからない場合、取得したセットを `member-set-sync/<set-name>` として保存します。peer-group sync と同じく、期限切れの member set は fail-static です。routerd は `membersFrom.phase: Stale` を表示し、より新しい publisher 応答が得られるまで last-known-good member list を使い続けます。
+MobilityPool のメンバーシップについても同様に、ルートリフレクター側の正規プールに `spec.publishMemberSet: true` を指定できます。routerd はローカル専用のメンバーフィールドを取り除き、ソース `mobility-member-set/<pool>` の `MobilityMemberSet` DynamicConfigPart を公開し、同じ TCP ポートの `GET /v1/member-sets` で返します。リーフ側で必須の `membersFrom` ソースが見つからない場合、取得したセットを `member-set-sync/<set-name>` として保存します。peer-group sync と同じく、期限切れの member set は fail-static です。routerd は `membersFrom.phase: Stale` と warning を表示し、より新しい publisher 応答が得られるまで last-known-good member list を使い続けます。
 
 ```yaml
 apiVersion: mobility.routerd.net/v1alpha1
@@ -304,7 +304,7 @@ spec:
       remoteEndpoint: 10.252.0.1
 ```
 
-コアルーターでは `spec.bgp.routeReflectorClient` と `spec.bgp.routeReflectorClusterID` を設定できます。これらは生成される各 `BGPPeer` にコピーされます。`routeReflectorClient` が true の場合、routerd はその leaf 向けの generated import policy も強化します。取り込む route は configured `importPolicy.allowedPrefixes` 配下の `/32` で、その leaf 自身の node-identity community を持ち、他の topology node の node-identity community を持たない必要があります。これにより RR admission boundary は宣言された SAM topology に結び付き、leaf は別ノード identity や広い mobility prefix を generated RR session から主張できません。エッジルーターでは未指定のまま通常の iBGP セッションとして使えます。
+コアルーターでは `spec.bgp.routeReflectorClient` と `spec.bgp.routeReflectorClusterID` を設定できます。これらは生成される各 `BGPPeer` にコピーされます。`routeReflectorClient` が true の場合、routerd はその leaf 向けの generated import policy も強化します。取り込む route は configured `importPolicy.allowedPrefixes`、未指定なら宣言済み `MobilityPool` prefix 配下の `/32` で、その leaf 自身の node-identity community を持ち、他の topology node の node-identity community を持たない必要があります。これにより RR admission boundary は宣言された SAM topology に結び付き、leaf は別ノード identity や広い mobility prefix を generated RR session から主張できません。侵害された leaf が自分の identity のまま pool 内 `/32` を広告するリスクは残り、per-node ownership の制約には route filter とは別の authorization signal が必要です。エッジルーターでは未指定のまま通常の iBGP セッションとして使えます。
 
 ピアをプロファイルから削除すると、そのプロファイルが生成した `DynamicConfigPart` は新しいリソースセットで置き換えられます。プロファイル自体を削除した場合は、古いパートが空のアクティブパートで置き換えられ、実効設定から生成済みのトンネル、BGP ピア、エンドポイント経路が消えます。生成されたリソースの具体的な後片付けは、通常のオーナー参照 GC とリソース固有のティアダウンに委ねます。
 
@@ -408,7 +408,7 @@ routerctl mobility owners
 routerctl mobility owners --pool cloudedge --address 10.77.60.10/32 -o json
 ```
 
-行は pool と address でソートされます。remote provider owner が local evidence と重なる場合や、2 つの fresh provider owner が同じ `/32` を主張する場合、行の state は `Conflict` になり、`conflictReason` が理由を示します。期限切れの所有権イベントはライブな競合としては残しません。duplicate provider-owner conflict では `conflictWinnerNode` と `conflictResolution` も出ます。healed BGP owner があればそれが勝者、なければ最も新しい provider 観測が勝者で、同時刻では `nodeRef` が stable tie-break です。local の provider-secondary capture を観測している敗者は `loser-release-local-capture` を報告し、stale-capture hold-down 後にその local capture だけを release します。`routerctl doctor sam` は同じ所有権状態を競合チェックに使い、ホストチェックが有効な場合は endpoint owner としてローカル所有する行を Linux のメイン FIB と比較します。provider-secondary BGP capture ホルダー行はローカルの endpoint owner ではないため、local/cloud route として解決されることを要求しません。その経路は delivery/forwarding チェックとデータプレーンプローブで確認します。
+行は pool と address でソートされます。remote provider owner が local evidence と重なる場合や、2 つの fresh provider owner が同じ `/32` を主張する場合、行の state は `Conflict` になり、`conflictReason` が理由を示します。期限切れの所有権イベントはライブな競合としては残しません。duplicate provider-owner conflict では `conflictWinnerNode` と `conflictResolution` も出ます。healed BGP owner があればそれが勝者、なければ provider scan の新しさには依存せず、安定した owner key（`nodeRef`、provider ref、resource ref、NIC ref、subnet ref、address）の辞書順で勝者を選びます。local の provider-secondary capture を観測している敗者は `loser-release-local-capture` を報告し、stale-capture hold-down 後にその local capture だけを release します。`routerctl doctor sam` は同じ所有権状態を競合チェックに使い、ホストチェックが有効な場合は endpoint owner としてローカル所有する行を Linux のメイン FIB と比較します。provider-secondary BGP capture ホルダー行はローカルの endpoint owner ではないため、local/cloud route として解決されることを要求しません。その経路は delivery/forwarding チェックとデータプレーンプローブで確認します。
 
 FreeBSD など Linux 以外のホストでは、ライブ SAM 捕捉は未対応です。コントローラーはホストを変更せず、`SAM capture not implemented on this OS` と報告します。
 

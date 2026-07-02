@@ -21,6 +21,7 @@ type mobilityMembersFromStatus struct {
 	Phase       string `json:"phase"`
 	MemberCount int    `json:"memberCount,omitempty"`
 	Reason      string `json:"reason,omitempty"`
+	Warning     string `json:"warning,omitempty"`
 }
 
 type mobilityMembersResolution struct {
@@ -101,6 +102,7 @@ func (r mobilityMemberResolver) resolve(ctx context.Context, spec api.MobilityPo
 					if cacheStatus == "expired" {
 						status.Phase = "Stale"
 						status.Reason = "using expired last-known-good member-set-sync dynamic part"
+						status.Warning = "publisher TTL expired; MobilityPool membership is fail-static until a fresh MobilityMemberSet is observed"
 					}
 					status.MemberCount = len(cached.Members)
 					for _, member := range cached.Members {
@@ -351,6 +353,9 @@ func mobilityMembersFromStatusMaps(statuses []mobilityMembersFromStatus) []map[s
 		}
 		if status.Reason != "" {
 			item["reason"] = status.Reason
+		}
+		if status.Warning != "" {
+			item["warning"] = status.Warning
 		}
 		out = append(out, item)
 	}

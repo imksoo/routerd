@@ -74,7 +74,10 @@ routerd は、次の独立した特徴を大切にします。
   瞬断なしで高優先へ自動復帰し、稼働系の死亡時は収束後の新規 flow を standby
   へ failover します。RR が公開した peer group / member set は leaf 側で
   fail-static に扱われ、stale な last-known-good sync record がある場合は
-  source を stale と表示しつつ、生成済み transport / BGP artifact を維持します。
+  source を stale と warning 付きで表示しつつ、生成済み transport / BGP artifact
+  を維持します。startup fence は readiness 優先ですが上限付きで、明示的な
+  allowed prefix がない RR-client import admission は宣言済み MobilityPool prefix
+  を既定値にします。
   突然の failover では、切り替え前から存在した TCP session が application retry
   なしで必ず継続することまでは保証しません。
   詳細は [CloudEdge SAM とは](docs/concepts/cloudedge-sam.md) と
