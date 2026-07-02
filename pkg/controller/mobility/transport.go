@@ -60,6 +60,7 @@ type transportPeersFromStatus struct {
 	PeerCount      int      `json:"peerCount,omitempty"`
 	SkippedReasons []string `json:"skippedReasons,omitempty"`
 	Reason         string   `json:"reason,omitempty"`
+	Warning        string   `json:"warning,omitempty"`
 }
 
 func (c TransportController) Reconcile(ctx context.Context) error {
@@ -260,7 +261,7 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 			out.BFDs++
 		}
 		if generateBGPPeers {
-			importPolicy := transportBGPImportPolicyForPeer(spec.BGP.ImportPolicy, spec.TopologyNodeRefs, peerNode, spec.BGP.RouteReflectorClient)
+			importPolicy := transportBGPImportPolicyForPeer(spec.BGP.ImportPolicy, mobilityPoolImportPrefixes(c.Router), spec.TopologyNodeRefs, peerNode, spec.BGP.RouteReflectorClient)
 			out.Resources = append(out.Resources, api.Resource{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
 				Metadata: api.ObjectMeta{Name: bgpPeerName, OwnerRefs: ownerRef, Annotations: transportAnnotations(owner.Metadata.Name, self, peerNode)},
@@ -295,9 +296,12 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 	return out, nil
 }
 
-func transportBGPImportPolicyForPeer(base api.BGPImportPolicySpec, topologyNodeRefs []string, peerNode string, routeReflectorClient bool) api.BGPImportPolicySpec {
+func transportBGPImportPolicyForPeer(base api.BGPImportPolicySpec, defaultAllowedPrefixes []string, topologyNodeRefs []string, peerNode string, routeReflectorClient bool) api.BGPImportPolicySpec {
 	if !routeReflectorClient {
 		return base
+	}
+	if len(cleanStrings(base.AllowedPrefixes)) == 0 {
+		base.AllowedPrefixes = cleanStrings(defaultAllowedPrefixes)
 	}
 	base.AllowedPrefixLengthMin = 32
 	base.AllowedPrefixLengthMax = 32
@@ -576,6 +580,7 @@ func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Re
 					if cacheStatus == "expired" {
 						status.Phase = "Stale"
 						status.Reason = "using expired last-known-good peer-group-sync dynamic part"
+						status.Warning = "publisher TTL expired; generated transport artifacts are fail-static until a fresh SAMPeerGroup is observed"
 					}
 					status.PeerCount = len(cached.Peers)
 					for _, peer := range cached.Peers {
@@ -1349,12 +1354,35 @@ func transportPeersFromStatusMaps(statuses []transportPeersFromStatus) []map[str
 		if strings.TrimSpace(status.Reason) != "" {
 			m["reason"] = status.Reason
 		}
+		if strings.TrimSpace(status.Warning) != "" {
+			m["warning"] = status.Warning
+		}
 		if len(status.SkippedReasons) > 0 {
 			m["skippedReasons"] = append([]string(nil), status.SkippedReasons...)
 		}
 		out = append(out, m)
 	}
 	return out
+}
+
+func mobilityPoolImportPrefixes(router *api.Router) []string {
+	if router == nil {
+		return nil
+	}
+	var prefixes []string
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "MobilityPool" {
+			continue
+		}
+		spec, err := resource.MobilityPoolSpec()
+		if err != nil {
+			continue
+		}
+		if prefix := strings.TrimSpace(spec.Prefix); prefix != "" {
+			prefixes = append(prefixes, prefix)
+		}
+	}
+	return mergeTransportPolicyStrings(prefixes)
 }
 
 func transportNow(fn func() time.Time) time.Time {

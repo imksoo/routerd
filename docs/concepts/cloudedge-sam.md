@@ -88,10 +88,12 @@ internals are in [CloudEdge SAM internals](../reference/cloudedge-sam-internals.
 - **dynamic RR sync** — route reflectors can publish shared transport peer
   groups and member sets to leaves. Leaves keep the last-known-good synced input
   if the RR publisher disappears, marking it `Stale` instead of tearing down
-  generated transport.
+  generated transport and surfacing a warning while freshness is degraded.
 - **RR admission filter** — on generated RR-client BGP peers, routerd accepts
   only `/32` mobility routes that carry the advertising leaf's own node-identity
-  community and rejects routes carrying another topology node's identity.
+  community and rejects routes carrying another topology node's identity. When
+  explicit allowed prefixes are omitted, the generated policy defaults to the
+  declared `MobilityPool` prefixes.
 
 ## The switching behavior (this is the value)
 

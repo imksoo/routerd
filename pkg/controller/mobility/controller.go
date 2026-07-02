@@ -337,7 +337,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		"generatedBGPReturnRoutes":                 len(returnRoutes),
 		"observedBGPReturnRoutes":                  mapStringKeysSorted(bgpReturnRoutes),
 		"bgpRIBObserved":                           bgpRIBObserved,
-		"startupFenceReadiness":                    placementStartupReadinessStatus(startupReadiness),
+		"startupFenceReadiness":                    placementStartupReadinessStatus(startupReadiness, now),
 		"bgpCaptureElection":                       bgpCaptureElectionStatus(delivery.Placement),
 		"bgpCaptureClaim":                          bgpCaptureClaimStatus(captureClaim),
 		"bgpCaptureClaimPhase":                     captureClaim.Phase,
@@ -3658,7 +3658,7 @@ func bgpMobilityPathAttrs(member memberPlanInfo, sourceType string, active bool)
 	if !captureSource {
 		communities = append(communities, bgpMobilityCommunityOwner)
 	}
-	if nodeCommunity := bgpstate.MobilityNodeIdentityCommunity(canonicalNodeIdentity(member.NodeRef)); nodeCommunity != "" && !captureSource {
+	if nodeCommunity := bgpstate.MobilityNodeIdentityCommunity(canonicalNodeIdentity(member.NodeRef)); nodeCommunity != "" {
 		communities = append(communities, nodeCommunity)
 	}
 	switch member.Role {

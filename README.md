@@ -75,7 +75,10 @@ The project focuses on a few independent strengths:
   with no dataplane dip, and an active node's death fails over new flows to a
   standby after convergence. Dynamic RR-published peer groups and member sets
   are fail-static on leaves: a stale last-known-good sync record keeps generated
-  transport and BGP artifacts in place while status reports the source as stale.
+  transport and BGP artifacts in place while status reports the source as stale
+  with an operator warning. Startup fencing is readiness-first but bounded, and
+  generated RR-client import admission defaults to declared MobilityPool prefixes
+  when explicit allowed prefixes are omitted.
   Abrupt failover does not promise that TCP sessions already in flight survive
   without an application retry. See
   [CloudEdge SAM とは](docs/concepts/cloudedge-sam.md) and

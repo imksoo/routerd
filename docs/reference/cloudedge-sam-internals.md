@@ -138,7 +138,10 @@ three hold: **"about to assert active", "no incumbent peer observed yet", and
 plane has completed an initial observation and, for provider-inventory-backed
 captures, provider self-observation has completed. `placementSettleWindow`
 remains as a conservative fallback for callers that do not provide readiness
-signals.
+signals. When readiness is known but remains incomplete, the fence is bounded:
+after `placementSettleWindow * 3` routerd releases the active assertion with
+`startupFenceReadiness.degraded: true` so overlay liveness is not blocked
+forever by a provider API or observation failure.
 
 - A just-returned node would otherwise win the equal-priority tie-break and
   reclaim holdership before its fresh BGP RIB / provider observations converge.
@@ -217,7 +220,9 @@ expired record as **last-known-good** input, marks the source `Stale`, and keeps
 the generated tunnel, BGP peer, and MobilityPool planning artifacts rendered.
 Only a source that has never been seen remains `Pending`. This keeps a route
 reflector outage from cascading into leaf transport teardown; the stale marker is
-an operator signal that topology freshness is no longer being refreshed.
+an operator signal that topology freshness is no longer being refreshed. Status
+also includes a `warning` field on stale sources so long-lived fail-static mode
+is visible without tearing down the working data plane.
 
 ## Capture strategies (how cloud ingress is built)
 

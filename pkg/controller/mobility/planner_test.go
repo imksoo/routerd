@@ -154,7 +154,10 @@ func TestPlacementStartupFenceUsesReadiness(t *testing.T) {
 	settle := 120 * time.Second
 	notReady := placementStartupReadiness{Known: true, BGPObserved: false, ProviderRequired: true, ProviderObserved: false}
 	if !placementStartupFenceDefersActive(true, "", settle+time.Second, settle, notReady) {
-		t.Fatalf("not-ready startup should remain fenced after wall-clock settle")
+		t.Fatalf("not-ready startup should remain fenced before fallback window")
+	}
+	if placementStartupFenceDefersActive(true, "", placementStartupReadinessFallbackWindow(settle)+time.Second, settle, notReady) {
+		t.Fatalf("not-ready startup should release after fallback window")
 	}
 	ready := placementStartupReadiness{Known: true, BGPObserved: true, ProviderRequired: true, ProviderObserved: true}
 	if placementStartupFenceDefersActive(true, "", 10*time.Second, settle, ready) {
@@ -191,8 +194,8 @@ func TestFencePlacementForStartupConvertsActiveToStandby(t *testing.T) {
 func TestFencePlacementForStartupWithReadiness(t *testing.T) {
 	saveStart, saveWindow := placementSettleStart, placementSettleWindow
 	defer func() { placementSettleStart, placementSettleWindow = saveStart, saveWindow }()
-	now := saveStart.Add(300 * time.Second)
-	placementSettleStart = now.Add(-300 * time.Second)
+	now := saveStart.Add(180 * time.Second)
+	placementSettleStart = now.Add(-180 * time.Second)
 	placementSettleWindow = 120 * time.Second
 
 	active := PlacementDecision{Group: "aws-edge", Active: true, ActiveNode: "aws-router-a"}
@@ -201,10 +204,28 @@ func TestFencePlacementForStartupWithReadiness(t *testing.T) {
 	if got.Active || !strings.Contains(got.Reason, "startup readiness") {
 		t.Fatalf("not-ready fenced placement = %+v, want readiness standby", got)
 	}
+	got = fencePlacementForStartupWithReadiness(active, "", now.Add(placementStartupReadinessFallbackWindow(placementSettleWindow)), notReady)
+	if !got.Active {
+		t.Fatalf("not-ready placement should release after fallback window: %+v", got)
+	}
 	ready := placementStartupReadiness{Known: true, BGPObserved: true, ProviderRequired: true, ProviderObserved: true}
 	got = fencePlacementForStartupWithReadiness(active, "", now.Add(-290*time.Second), ready)
 	if !got.Active {
 		t.Fatalf("ready placement should remain active inside settle window: %+v", got)
+	}
+}
+
+func TestPlacementStartupReadinessStatusReportsFallbackDegraded(t *testing.T) {
+	saveStart, saveWindow := placementSettleStart, placementSettleWindow
+	defer func() { placementSettleStart, placementSettleWindow = saveStart, saveWindow }()
+	now := saveStart.Add(400 * time.Second)
+	placementSettleStart = now.Add(-400 * time.Second)
+	placementSettleWindow = 120 * time.Second
+
+	notReady := placementStartupReadiness{Known: true, BGPObserved: true, ProviderRequired: true, ProviderObserved: false}
+	status := placementStartupReadinessStatus(notReady, now)
+	if status["degraded"] != true || status["degradeReason"] == "" {
+		t.Fatalf("status = %#v, want degraded fallback visibility", status)
 	}
 }
 
