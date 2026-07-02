@@ -556,6 +556,11 @@ func validateFirewallResource(res api.Resource, targetOS platform.OS) (bool, err
 		if spec.Outbound.Protocol != "udp" {
 			return true, fmt.Errorf("%s spec.outbound.protocol must be udp", res.ID())
 		}
+		switch spec.Correlation.Key {
+		case "", "remoteAddress", "localEndpoint":
+		default:
+			return true, fmt.Errorf("%s spec.correlation.key must be remoteAddress or localEndpoint", res.ID())
+		}
 		if spec.Outbound.SourceSetRef == "" && len(spec.Outbound.SourceCIDRs) == 0 {
 			return true, fmt.Errorf("%s spec.outbound.sourceSetRef or spec.outbound.sourceCIDRs is required", res.ID())
 		}

@@ -783,6 +783,7 @@ type firewallFlowPinhole struct {
 	DestinationCIDRs         []string
 	OutboundDestinationPorts []api.FirewallPort
 	InboundSourcePorts       []api.FirewallPort
+	CorrelationKey           string
 	Timeout                  time.Duration
 }
 
@@ -804,6 +805,7 @@ func nftFirewallFlowPinholes(resources []api.Resource, addressSets map[string]nf
 			DestinationCIDRs:         append([]string(nil), spec.Outbound.DestinationCIDRs...),
 			OutboundDestinationPorts: append([]api.FirewallPort(nil), spec.Outbound.DestinationPorts...),
 			InboundSourcePorts:       append([]api.FirewallPort(nil), spec.Inbound.SourcePorts...),
+			CorrelationKey:           defaultString(spec.Correlation.Key, "remoteAddress"),
 			Timeout:                  3 * time.Minute,
 		}
 		if strings.TrimSpace(spec.Timeout) != "" {
@@ -840,8 +842,15 @@ func writeFirewallFlowPinholeSetResets(buf *bytes.Buffer, pinholes []firewallFlo
 
 func writeFirewallFlowPinholeSets(buf *bytes.Buffer, pinholes []firewallFlowPinhole) {
 	for _, pinhole := range pinholes {
-		buf.WriteString("  set " + pinhole.SetName + " { type ipv4_addr . ipv4_addr . inet_service; flags timeout; }\n")
+		buf.WriteString("  set " + pinhole.SetName + " { type " + nftFirewallFlowPinholeSetType(pinhole) + "; flags timeout; }\n")
 	}
+}
+
+func nftFirewallFlowPinholeSetType(pinhole firewallFlowPinhole) string {
+	if pinhole.CorrelationKey == "localEndpoint" {
+		return "ipv4_addr . inet_service"
+	}
+	return "ipv4_addr . ipv4_addr . inet_service"
 }
 
 func nftClientPolicies(aliases map[string]string, zoneMap map[string]firewallZone, resources []api.Resource) ([]clientPolicy, error) {
@@ -1152,7 +1161,7 @@ func nftFirewallFlowPinholeLearnExprs(pinhole firewallFlowPinhole) []string {
 		parts := []string{
 			match,
 			nftPortMatch("udp", "dport", pinhole.OutboundDestinationPorts),
-			"update @" + pinhole.SetName + " { ip daddr . ip saddr . udp sport timeout " + timeout + " }",
+			"update @" + pinhole.SetName + " { " + nftFirewallFlowPinholeLearnKey(pinhole) + " timeout " + timeout + " }",
 			"counter",
 			"comment " + nftQuote("routerd FirewallFlowPinhole "+pinhole.Name+" learn"),
 		}
@@ -1167,13 +1176,27 @@ func nftFirewallFlowPinholeAllowExprs(pinhole firewallFlowPinhole) []string {
 		parts := []string{
 			match,
 			nftPortMatch("udp", "sport", pinhole.InboundSourcePorts),
-			"ip saddr . ip daddr . udp dport @" + pinhole.SetName,
+			nftFirewallFlowPinholeAllowKey(pinhole) + " @" + pinhole.SetName,
 			"counter accept",
 			"comment " + nftQuote("routerd FirewallFlowPinhole "+pinhole.Name+" allow"),
 		}
 		out = append(out, strings.Join(strings.Fields(strings.Join(parts, " ")), " "))
 	}
 	return out
+}
+
+func nftFirewallFlowPinholeLearnKey(pinhole firewallFlowPinhole) string {
+	if pinhole.CorrelationKey == "localEndpoint" {
+		return "ip saddr . udp sport"
+	}
+	return "ip daddr . ip saddr . udp sport"
+}
+
+func nftFirewallFlowPinholeAllowKey(pinhole firewallFlowPinhole) string {
+	if pinhole.CorrelationKey == "localEndpoint" {
+		return "ip daddr . udp dport"
+	}
+	return "ip saddr . ip daddr . udp dport"
 }
 
 func nftFirewallFlowPinholeOutboundMatches(pinhole firewallFlowPinhole) []string {

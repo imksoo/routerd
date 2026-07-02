@@ -1736,6 +1736,36 @@ func TestValidateFirewallFlowPinhole(t *testing.T) {
 		FromZone: "lan",
 		ToZone:   "wan",
 		Outbound: api.FirewallFlowPinholeOutboundSpec{
+			SourceSetRef:     "IPAddressSet/atomcam-clients",
+			Protocol:         "udp",
+			DestinationPorts: []api.FirewallPort{"32100"},
+		},
+		Inbound:     api.FirewallFlowPinholeInboundSpec{SourcePorts: []api.FirewallPort{"32099"}},
+		Correlation: api.FirewallFlowPinholeCorrelationSpec{Key: "localEndpoint"},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate FirewallFlowPinhole localEndpoint correlation: %v", err)
+	}
+
+	router.Spec.Resources[5].Spec = api.FirewallFlowPinholeSpec{
+		FromZone: "lan",
+		ToZone:   "wan",
+		Outbound: api.FirewallFlowPinholeOutboundSpec{
+			SourceSetRef:     "IPAddressSet/atomcam-clients",
+			Protocol:         "udp",
+			DestinationPorts: []api.FirewallPort{"32100"},
+		},
+		Inbound:     api.FirewallFlowPinholeInboundSpec{SourcePorts: []api.FirewallPort{"32099"}},
+		Correlation: api.FirewallFlowPinholeCorrelationSpec{Key: "remote-port"},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.correlation.key must be remoteAddress or localEndpoint") {
+		t.Fatalf("expected invalid correlation key error, got %v", err)
+	}
+
+	router.Spec.Resources[5].Spec = api.FirewallFlowPinholeSpec{
+		FromZone: "lan",
+		ToZone:   "wan",
+		Outbound: api.FirewallFlowPinholeOutboundSpec{
 			SourceSetRef:     "IPAddressSet/missing",
 			Protocol:         "udp",
 			DestinationPorts: []api.FirewallPort{"32100"},

@@ -2422,12 +2422,17 @@ type LocalServiceRedirectRuleSpec struct {
 }
 
 type FirewallFlowPinholeSpec struct {
-	FromZone string                          `yaml:"fromZone" json:"fromZone"`
-	ToZone   string                          `yaml:"toZone" json:"toZone"`
-	Outbound FirewallFlowPinholeOutboundSpec `yaml:"outbound" json:"outbound"`
-	Inbound  FirewallFlowPinholeInboundSpec  `yaml:"inbound" json:"inbound"`
-	Timeout  string                          `yaml:"timeout,omitempty" json:"timeout,omitempty"`
-	When     ResourceWhenSpec                `yaml:"when,omitempty" json:"when,omitempty"`
+	FromZone    string                             `yaml:"fromZone" json:"fromZone"`
+	ToZone      string                             `yaml:"toZone" json:"toZone"`
+	Outbound    FirewallFlowPinholeOutboundSpec    `yaml:"outbound" json:"outbound"`
+	Inbound     FirewallFlowPinholeInboundSpec     `yaml:"inbound" json:"inbound"`
+	Correlation FirewallFlowPinholeCorrelationSpec `yaml:"correlation,omitempty" json:"correlation,omitempty"`
+	Timeout     string                             `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	When        ResourceWhenSpec                   `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type FirewallFlowPinholeCorrelationSpec struct {
+	Key string `yaml:"key,omitempty" json:"key,omitempty" jsonschema:"enum=,enum=remoteAddress,enum=localEndpoint"`
 }
 
 type FirewallFlowPinholeOutboundSpec struct {

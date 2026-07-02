@@ -1149,6 +1149,7 @@ func (e *Engine) observeFirewallFlowPinhole(res api.Resource, includePlan bool, 
 	rr.Observed["fromZone"] = spec.FromZone
 	rr.Observed["toZone"] = spec.ToZone
 	rr.Observed["protocol"] = spec.Outbound.Protocol
+	rr.Observed["correlationKey"] = defaultString(spec.Correlation.Key, "remoteAddress")
 	rr.Observed["timeout"] = spec.Timeout
 	if includePlan {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("learn %s outbound flow from %s to %s and allow correlated inbound source ports", defaultString(spec.Outbound.Protocol, "udp"), spec.FromZone, spec.ToZone))
