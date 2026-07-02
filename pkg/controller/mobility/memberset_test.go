@@ -200,6 +200,9 @@ func TestMobilityPoolMembersFromUsesExpiredLastKnownGoodMemberSet(t *testing.T) 
 	if !ok || source["phase"] != "Stale" {
 		t.Fatalf("membersFrom[0] = %#v, want phase Stale", membersFrom[0])
 	}
+	if source["warning"] == "" {
+		t.Fatalf("membersFrom[0] = %#v, want stale warning", membersFrom[0])
+	}
 }
 
 func TestMobilityPoolMembersFromPreservesCaptureFields(t *testing.T) {

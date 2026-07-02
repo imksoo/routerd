@@ -1526,6 +1526,9 @@ func TestSAMTransportProfileRouteReflectorClientImportAdmission(t *testing.T) {
 	if peer.ImportPolicy.AllowedPrefixLengthMin != 32 || peer.ImportPolicy.AllowedPrefixLengthMax != 32 {
 		t.Fatalf("import policy = %#v, want /32 exact admission", peer.ImportPolicy)
 	}
+	if got, want := peer.ImportPolicy.AllowedPrefixes, []string{"10.77.60.0/24"}; !sameStringSetForTest(got, want) {
+		t.Fatalf("allowed prefixes = %#v, want explicit %#v", got, want)
+	}
 	if got, want := peer.ImportPolicy.RequiredCommunities, []string{bgpstate.MobilityNodeIdentityCommunity("leaf-a")}; !sameStringSetForTest(got, want) {
 		t.Fatalf("required communities = %#v, want %#v", got, want)
 	}
@@ -1535,6 +1538,43 @@ func TestSAMTransportProfileRouteReflectorClientImportAdmission(t *testing.T) {
 	}
 	if !sameStringSetForTest(peer.ImportPolicy.ForbiddenCommunities, forbidden) {
 		t.Fatalf("forbidden communities = %#v, want %#v", peer.ImportPolicy.ForbiddenCommunities, forbidden)
+	}
+}
+
+func TestSAMTransportProfileRouteReflectorClientDefaultsImportPrefixesFromMobilityPools(t *testing.T) {
+	now := time.Date(2026, 6, 6, 9, 7, 45, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouter("rr", "rr-a", []api.SAMTransportPeerSpec{
+		{NodeRef: "leaf-a", RemoteEndpoint: "203.0.113.21"},
+	})
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.TopologyNodeRefs = []string{"rr-a", "leaf-a"}
+	spec.BGP.RouteReflectorClient = true
+	router.Spec.Resources[0].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+		Metadata: api.ObjectMeta{Name: "cloudedge"},
+		Spec:     api.MobilityPoolSpec{Prefix: "10.88.60.0/24"},
+	})
+
+	controller := TransportController{
+		Router: router,
+		Store:  store,
+		Now:    func() time.Time { return now },
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("rr", "rr-a")).ResourcesJSON)
+	peer := findTransportBGPPeerForPeer(t, resources, "rr-a", "leaf-a")
+	if got, want := peer.ImportPolicy.AllowedPrefixes, []string{"10.88.60.0/24"}; !sameStringSetForTest(got, want) {
+		t.Fatalf("allowed prefixes = %#v, want MobilityPool prefixes %#v", got, want)
+	}
+	if peer.ImportPolicy.AllowedPrefixLengthMin != 32 || peer.ImportPolicy.AllowedPrefixLengthMax != 32 {
+		t.Fatalf("import policy = %#v, want MobilityPool prefix constrained to /32 routes", peer.ImportPolicy)
 	}
 }
 

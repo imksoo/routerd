@@ -47,7 +47,8 @@ RR 可以发布 `SAMPeerGroup` 和 `MobilityMemberSet`，leaf 通过 TCP 19652
 
 TTL 过期或 RR publisher 消失时，leaf 不会删除已经生成的 tunnel、BGP peer 或
 MobilityPool planning artifact。routerd 会继续使用 last-known-good 记录，并把来源标记为
-`Stale`。只有从未获取过的必需 source 才保持 `Pending`。
+`Stale`，同时在 status 中输出 `warning`。只有从未获取过的必需 source 才保持
+`Pending`。
 
 ## capture and delivery
 
@@ -78,11 +79,14 @@ plugin gate 后才可能执行。
 ## RR admission filters
 
 Generated route-reflector client BGP peers derive an import admission policy from
-the SAM topology and `importPolicy.allowedPrefixes`. Imported routes must be
-`/32`s under the permitted prefixes, must carry the advertising leaf's own
-node-identity community, and must not carry another topology node's identity.
-This prevents a leaf from claiming another node identity or advertising a broad
-mobility prefix through the generated RR session.
+the SAM topology and `importPolicy.allowedPrefixes`; if that prefix list is
+omitted, routerd defaults it from declared `MobilityPool` prefixes. Imported
+routes must be `/32`s under the permitted prefixes, must carry the advertising
+leaf's own node-identity community, and must not carry another topology node's
+identity. This prevents a leaf from claiming another node identity or advertising
+a broad mobility prefix through the generated RR session. A compromised leaf can
+still advertise a pool-local `/32` with its own identity; constraining per-node
+ownership requires a separate authorization signal beyond this route filter.
 
 ## ownership inspection
 
@@ -95,8 +99,9 @@ evidence, capture state, advertise/suppression state, and conflict details.
 When two fresh provider owners claim the same `/32`, the row state is
 `Conflict` with `conflictReason=duplicate-provider-home-owners`. The row also
 includes `conflictWinnerNode` and `conflictResolution`: the healed BGP owner
-wins when present; otherwise the freshest provider observation wins, with
-`nodeRef` as the stable tie-break. A losing node that still observes a local
+wins when present; otherwise the lowest stable owner key wins (`nodeRef`,
+provider ref, resource ref, NIC ref, subnet ref, then address), independent of
+provider scan recency. A losing node that still observes a local
 provider-secondary capture reports `loser-release-local-capture` and releases
 only that local capture after the stale-capture hold-down.
 

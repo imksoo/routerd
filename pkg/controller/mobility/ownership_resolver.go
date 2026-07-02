@@ -507,7 +507,45 @@ func providerInventoryConflictWinner(facts []providerInventoryOwnerFact, bgpOwne
 	if len(facts) == 0 {
 		return providerInventoryOwnerFact{}
 	}
-	return facts[0]
+	winner := facts[0]
+	for _, fact := range facts[1:] {
+		if providerInventoryConflictWinnerLess(fact, winner) {
+			winner = fact
+		}
+	}
+	return winner
+}
+
+func providerInventoryConflictWinnerLess(a, b providerInventoryOwnerFact) bool {
+	aKeys := []string{
+		strings.TrimSpace(a.NodeRef),
+		firstNonEmpty(a.ProviderRef, a.Provider),
+		strings.TrimSpace(a.ResourceRef),
+		strings.TrimSpace(a.NICRef),
+		strings.TrimSpace(a.SubnetRef),
+		normalizeAddressString(a.Address),
+	}
+	bKeys := []string{
+		strings.TrimSpace(b.NodeRef),
+		firstNonEmpty(b.ProviderRef, b.Provider),
+		strings.TrimSpace(b.ResourceRef),
+		strings.TrimSpace(b.NICRef),
+		strings.TrimSpace(b.SubnetRef),
+		normalizeAddressString(b.Address),
+	}
+	for i := range aKeys {
+		if aKeys[i] == bKeys[i] {
+			continue
+		}
+		if aKeys[i] == "" {
+			return false
+		}
+		if bKeys[i] == "" {
+			return true
+		}
+		return aKeys[i] < bKeys[i]
+	}
+	return false
 }
 
 func providerInventoryConflictResolution(decision ownershipDecision, selfNode string, selfCaptured bool) string {

@@ -138,7 +138,10 @@ three hold: **"about to assert active", "no incumbent peer observed yet", and
 plane has completed an initial observation and, for provider-inventory-backed
 captures, provider self-observation has completed. `placementSettleWindow`
 remains as a conservative fallback for callers that do not provide readiness
-signals.
+signals. When readiness is known but remains incomplete, the fence is bounded:
+after `placementSettleWindow * 3` (360 seconds by default) routerd releases the
+active assertion with `startupFenceReadiness.degraded: true` so overlay liveness
+is not blocked forever by a provider API or observation failure.
 
 - A just-returned node would otherwise win the equal-priority tie-break and
   reclaim holdership before its fresh BGP RIB / provider observations converge.
@@ -217,7 +220,9 @@ expired record as **last-known-good** input, marks the source `Stale`, and keeps
 the generated tunnel, BGP peer, and MobilityPool planning artifacts rendered.
 Only a source that has never been seen remains `Pending`. This keeps a route
 reflector outage from cascading into leaf transport teardown; the stale marker is
-an operator signal that topology freshness is no longer being refreshed.
+an operator signal that topology freshness is no longer being refreshed. Status
+also includes a `warning` field on stale sources so long-lived fail-static mode
+is visible without tearing down the working data plane.
 
 ## Capture strategies (how cloud ingress is built)
 
@@ -261,8 +266,8 @@ ownership resolver marks the address `Conflict` with
 The resolver also records a deterministic `conflictWinnerNode`:
 
 - if the healed BGP RIB has a home-owner path for the `/32`, that BGP owner wins;
-- otherwise the freshest provider observation wins, with `nodeRef` as the stable
-  tie-break.
+- otherwise the lowest stable owner key wins (`nodeRef`, provider ref, resource
+  ref, NIC ref, subnet ref, then address), independent of provider scan recency.
 
 Losers do not create new provider capture actions. If the losing node observes
 the conflicting `/32` still attached to its own provider-secondary capture, the
@@ -271,6 +276,13 @@ stale-capture hold-down used for trap cleanup, routerd emits a scoped
 `unassign-secondary-ip` for that local capture. Nodes that do not hold a local
 capture report `loser-withhold-local-capture`. The winner reports
 `winner-retain-local-capture`.
+
+The generated RR-client admission policy is a route-admission boundary, not a
+per-address authorization system. It requires the advertising node's identity,
+forbids other topology node identities, and limits accepted routes to `/32`s
+inside the declared MobilityPool prefixes. A compromised leaf can still advertise
+a pool-local `/32` with its own identity; preventing that requires an additional
+ownership authorization signal outside this BGP filter.
 
 ## On-prem LAN authority is unchanged
 

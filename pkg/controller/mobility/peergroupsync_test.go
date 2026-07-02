@@ -235,6 +235,9 @@ func TestSAMTransportProfilePeersFromUsesExpiredLastKnownGoodGroup(t *testing.T)
 	if !ok || source["phase"] != "Stale" {
 		t.Fatalf("peersFrom[0] = %#v, want phase Stale", peersFrom[0])
 	}
+	if source["warning"] == "" {
+		t.Fatalf("peersFrom[0] = %#v, want stale warning", peersFrom[0])
+	}
 }
 
 func TestFirstAllowedIPAddrsPrefersIPv4ThenIPv6(t *testing.T) {

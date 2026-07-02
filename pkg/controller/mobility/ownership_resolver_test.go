@@ -830,7 +830,7 @@ func TestOwnershipResolverReportsDuplicateProviderHomeOwnerConflict(t *testing.T
 		SubnetRef:    "subnet-oci",
 		ResourceRef:  "ocid1.instance.oc1.test.client",
 		ResourceType: "instance-nic",
-	}, now.Add(-time.Second), time.Hour)
+	}, now, time.Hour)
 	decisions, err := resolveAddressOwnership(ownershipResolverInput{
 		PoolName: "cloudedge",
 		SelfNode: "aws-router-b",

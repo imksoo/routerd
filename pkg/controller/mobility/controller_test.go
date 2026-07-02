@@ -3593,6 +3593,22 @@ func TestControllerBGPModeRouteTableAdvertisesRouterSelfReturnRouteWithoutCaptur
 	pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "azure-router"), "10.88.60.11/32")
 }
 
+func TestBGPMobilityProviderCapturePathCarriesNodeIdentityOnly(t *testing.T) {
+	attrs := bgpMobilityPathAttrs(memberPlanInfo{
+		NodeRef: "aws-router-a",
+		Role:    "cloud",
+	}, "provider-capture", true)
+	if !stringSliceContains(attrs.Communities, bgpstate.MobilityNodeIdentityCommunity("aws-router-a")) {
+		t.Fatalf("communities = %#v, want node identity on provider-capture path", attrs.Communities)
+	}
+	if !stringSliceContains(attrs.Communities, bgpMobilityCommunitySourceCapture) {
+		t.Fatalf("communities = %#v, want provider-capture source community", attrs.Communities)
+	}
+	if stringSliceContains(attrs.Communities, bgpMobilityCommunityOwner) || stringSliceContains(attrs.Communities, bgpMobilityCommunityActiveHolder) {
+		t.Fatalf("communities = %#v, provider-capture path must not advertise ownership or active holdership", attrs.Communities)
+	}
+}
+
 func TestControllerBGPModeProviderTrapRejectsUnknownBGPOnlyAddress(t *testing.T) {
 	now := time.Date(2026, 6, 9, 23, 2, 0, 0, time.UTC)
 	store := testStore(t, now)
