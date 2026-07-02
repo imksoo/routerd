@@ -31,7 +31,7 @@ func FilterRouterByWhen(router *api.Router, store StateStore) *api.Router {
 	filtered.Spec.Resources = nil
 	for _, res := range router.Spec.Resources {
 		when := ResourceWhen(res)
-		if ResourceWhenMatches(when, store) {
+		if ResourceWhenMatches(when, store) || ResourceWhenIndeterminate(when, store) {
 			if res.Kind == "EgressRoutePolicy" {
 				res = filterEgressRoutePolicyCandidatesByWhen(res, store)
 			}
@@ -160,31 +160,68 @@ func ResourceWhen(res api.Resource) api.ResourceWhenSpec {
 }
 
 func ResourceWhenMatches(when api.ResourceWhenSpec, store StateStore) bool {
+	return evalResourceWhen(when, store) == whenTrue
+}
+
+func ResourceWhenIndeterminate(when api.ResourceWhenSpec, store StateStore) bool {
+	return evalResourceWhen(when, store) == whenIndeterminate
+}
+
+type whenResult int
+
+const (
+	whenFalse whenResult = iota
+	whenTrue
+	whenIndeterminate
+)
+
+func evalResourceWhen(when api.ResourceWhenSpec, store StateStore) whenResult {
 	if len(when.All) > 0 {
+		indeterminate := false
 		for _, child := range when.All {
-			if !ResourceWhenMatches(child, store) {
-				return false
+			switch evalResourceWhen(child, store) {
+			case whenFalse:
+				return whenFalse
+			case whenIndeterminate:
+				indeterminate = true
 			}
 		}
-		return true
+		if indeterminate {
+			return whenIndeterminate
+		}
+		return whenTrue
 	}
 	if len(when.Any) > 0 {
+		indeterminate := false
 		for _, child := range when.Any {
-			if ResourceWhenMatches(child, store) {
-				return true
+			switch evalResourceWhen(child, store) {
+			case whenTrue:
+				return whenTrue
+			case whenIndeterminate:
+				indeterminate = true
 			}
 		}
-		return false
+		if indeterminate {
+			return whenIndeterminate
+		}
+		return whenFalse
 	}
 	if len(when.State) == 0 {
-		return true
+		return whenTrue
 	}
+	indeterminate := false
 	for name, match := range when.State {
-		if !StateMatch(store, name, match) {
-			return false
+		switch stateMatchResult(store, name, match) {
+		case whenFalse:
+			return whenFalse
+		case whenIndeterminate:
+			indeterminate = true
 		}
 	}
-	return true
+	if indeterminate {
+		return whenIndeterminate
+	}
+	return whenTrue
 }
 
 func ResourceWhenPresent(when api.ResourceWhenSpec) bool {
@@ -192,10 +229,15 @@ func ResourceWhenPresent(when api.ResourceWhenSpec) bool {
 }
 
 func StateMatch(store StateStore, name string, match api.StateMatchSpec) bool {
+	return stateMatchResult(store, name, match) == whenTrue
+}
+
+func stateMatchResult(store StateStore, name string, match api.StateMatchSpec) whenResult {
 	if store == nil {
-		return false
+		return whenFalse
 	}
 	value, age, hasCustomAge := stateValue(store, name)
+	indeterminate := value.Status == routerstate.StatusSet && strings.EqualFold(strings.TrimSpace(value.Value), "unknown")
 	ok := true
 	if match.Status != "" {
 		ok = ok && value.Status == match.Status
@@ -217,19 +259,28 @@ func StateMatch(store StateStore, name string, match api.StateMatchSpec) bool {
 		ok = ok && value.Status == routerstate.StatusSet && strings.Contains(value.Value, match.Contains)
 	}
 	if !ok {
-		return false
+		if indeterminate && (match.Equals != "" || len(match.In) > 0 || match.Contains != "") {
+			return whenIndeterminate
+		}
+		return whenFalse
 	}
 	if match.For != "" {
 		duration, err := time.ParseDuration(match.For)
 		if err != nil {
-			return false
+			return whenFalse
 		}
 		if hasCustomAge {
-			return age >= duration
+			if age >= duration {
+				return whenTrue
+			}
+			return whenFalse
 		}
-		return store.Age(name) >= duration
+		if store.Age(name) >= duration {
+			return whenTrue
+		}
+		return whenFalse
 	}
-	return true
+	return whenTrue
 }
 
 func filterEgressRoutePolicyCandidatesByWhen(res api.Resource, store StateStore) api.Resource {
@@ -242,7 +293,7 @@ func filterEgressRoutePolicyCandidatesByWhen(res api.Resource, store StateStore)
 		if !api.BoolDefault(candidate.Enabled, true) {
 			continue
 		}
-		if ResourceWhenMatches(candidate.When, store) {
+		if ResourceWhenMatches(candidate.When, store) || ResourceWhenIndeterminate(candidate.When, store) {
 			candidates = append(candidates, candidate)
 		}
 	}

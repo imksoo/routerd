@@ -1092,6 +1092,9 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 			}
 			continue
 		}
+		if resourcequery.ResourceWhenIndeterminate(when, store) {
+			continue
+		}
 		if preserved, err := r.preserveFreshDaemonStatusWhenFalse(res, apiVersion, store, now); err != nil {
 			return err
 		} else if preserved {
