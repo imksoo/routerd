@@ -779,13 +779,11 @@ func buildNICAssignForwardingBody(nic nicShow, t nicTarget) ([]byte, bool, error
 	if nic.Raw == nil {
 		return nil, false, fmt.Errorf("network nic show output missing raw body")
 	}
-	body := cloneJSONMap(nic.Raw)
-	body["enableIPForwarding"] = true
-
-	ipConfigs, err := rawIPConfigurations(body)
+	body, ipConfigs, err := nicPUTBodyAndConfigs(nic)
 	if err != nil {
 		return nil, false, err
 	}
+	setNICPUTForwarding(body, true)
 	hasAddress := false
 	for _, cfg := range ipConfigs {
 		if sameIP(rawIPConfigAddress(cfg), t.address) {
@@ -798,7 +796,7 @@ func buildNICAssignForwardingBody(nic nicShow, t nicTarget) ([]byte, bool, error
 		if !ok {
 			return nil, false, fmt.Errorf("network nic show output missing subnet for new ip-config")
 		}
-		body["ipConfigurations"] = append(ipConfigs, map[string]any{
+		setNICPUTIPConfigurations(body, append(ipConfigs, map[string]any{
 			"name": t.ipConfigName,
 			"properties": map[string]any{
 				"privateIPAddress":          t.address,
@@ -806,7 +804,7 @@ func buildNICAssignForwardingBody(nic nicShow, t nicTarget) ([]byte, bool, error
 				"primary":                   false,
 				"subnet":                    subnet,
 			},
-		})
+		}))
 	}
 
 	changed := !nic.EnableIPForwarding || !hasAddress
@@ -815,6 +813,79 @@ func buildNICAssignForwardingBody(nic nicShow, t nicTarget) ([]byte, bool, error
 		return nil, false, fmt.Errorf("marshal network nic update body: %w", err)
 	}
 	return out, changed, nil
+}
+
+func nicPUTBodyAndConfigs(nic nicShow) (map[string]any, []any, error) {
+	rawConfigs, err := rawIPConfigurations(nic.Raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	configs := make([]any, 0, len(rawConfigs))
+	for _, cfg := range rawConfigs {
+		configs = append(configs, normalizeIPConfigForPUT(cfg))
+	}
+	body := map[string]any{}
+	for _, key := range []string{"location", "tags", "identity", "extendedLocation"} {
+		if v, ok := nic.Raw[key]; ok {
+			body[key] = v
+		}
+	}
+	props := map[string]any{}
+	if rawProps, ok := nic.Raw["properties"].(map[string]any); ok {
+		props = cloneJSONMap(rawProps)
+	}
+	body["properties"] = props
+	setNICPUTIPConfigurations(body, configs)
+	return body, configs, nil
+}
+
+func normalizeIPConfigForPUT(raw any) map[string]any {
+	cfg, _ := raw.(map[string]any)
+	out := map[string]any{}
+	if name, ok := cfg["name"]; ok {
+		out["name"] = name
+	}
+	props := map[string]any{}
+	if rawProps, ok := cfg["properties"].(map[string]any); ok {
+		props = cloneJSONMap(rawProps)
+	}
+	for _, key := range []string{
+		"privateIPAddress",
+		"privateIpAddress",
+		"privateIPAddressVersion",
+		"privateIPAllocationMethod",
+		"primary",
+		"subnet",
+		"publicIPAddress",
+		"applicationSecurityGroups",
+		"loadBalancerBackendAddressPools",
+		"loadBalancerInboundNatRules",
+	} {
+		if v, ok := cfg[key]; ok {
+			props[key] = v
+		}
+	}
+	out["properties"] = props
+	return out
+}
+
+func setNICPUTForwarding(body map[string]any, enabled bool) {
+	props := ensureNICPUTProperties(body)
+	props["enableIPForwarding"] = enabled
+}
+
+func setNICPUTIPConfigurations(body map[string]any, configs []any) {
+	props := ensureNICPUTProperties(body)
+	props["ipConfigurations"] = configs
+}
+
+func ensureNICPUTProperties(body map[string]any) map[string]any {
+	if props, ok := body["properties"].(map[string]any); ok {
+		return props
+	}
+	props := map[string]any{}
+	body["properties"] = props
+	return props
 }
 
 func cloneJSONMap(in map[string]any) map[string]any {
@@ -831,6 +902,11 @@ func cloneJSONMap(in map[string]any) map[string]any {
 
 func rawIPConfigurations(body map[string]any) ([]any, error) {
 	raw, ok := body["ipConfigurations"]
+	if !ok {
+		if props, propsOK := body["properties"].(map[string]any); propsOK {
+			raw, ok = props["ipConfigurations"]
+		}
+	}
 	if !ok {
 		return nil, fmt.Errorf("network nic show output missing ipConfigurations")
 	}
@@ -867,6 +943,9 @@ func subnetForNewIPConfig(configs []any) (any, bool) {
 			continue
 		}
 		props, _ := m["properties"].(map[string]any)
+		if subnet, ok := m["subnet"]; ok {
+			return subnet, true
+		}
 		if subnet, ok := props["subnet"]; ok {
 			return subnet, true
 		}
@@ -1036,8 +1115,11 @@ func buildNICForwardingBody(nic nicShow) ([]byte, error) {
 	if nic.Raw == nil {
 		return nil, fmt.Errorf("network nic show output missing raw body")
 	}
-	body := cloneJSONMap(nic.Raw)
-	body["enableIPForwarding"] = true
+	body, _, err := nicPUTBodyAndConfigs(nic)
+	if err != nil {
+		return nil, err
+	}
+	setNICPUTForwarding(body, true)
 	out, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("marshal network nic update body: %w", err)

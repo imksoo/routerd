@@ -268,6 +268,10 @@ func cannedNICShowWithConfig(ipForwarding bool, name, address string) []byte {
 	return []byte(fmt.Sprintf(`{"id":"/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1","name":"nic1","resourceGroup":"rg1","location":"japaneast","enableIPForwarding":%t,"ipConfigurations":[{"name":"primary","properties":{"primary":true,"privateIPAddress":"10.88.60.4","privateIPAllocationMethod":"Static","subnet":{"id":"/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/vnet1/subnets/default"}}},{"name":%q,"properties":{"primary":false,"privateIPAddress":%q,"privateIPAllocationMethod":"Static","subnet":{"id":"/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/vnet1/subnets/default"}}}]}`, ipForwarding, name, address))
 }
 
+func cannedNICShowFlattened(ipForwarding bool) []byte {
+	return []byte(fmt.Sprintf(`{"id":"/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1","name":"nic1","resourceGroup":"rg1","location":"japaneast","enableIPForwarding":%t,"ipConfigurations":[{"id":"/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1/ipConfigurations/primary","name":"primary","primary":true,"privateIPAddress":"10.88.60.4","privateIPAddressVersion":"IPv4","privateIPAllocationMethod":"Static","provisioningState":"Succeeded","resourceGroup":"rg1","subnet":{"id":"/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/vnet1/subnets/default","resourceGroup":"rg1"},"type":"Microsoft.Network/networkInterfaces/ipConfigurations"}]}`, ipForwarding))
+}
+
 func cannedNICList(resourceGroup, nicName, ipConfigName, address string) []byte {
 	return []byte(fmt.Sprintf(`[{"id":"/subscriptions/s1/resourceGroups/%s/providers/Microsoft.Network/networkInterfaces/%s","name":%q,"resourceGroup":%q,"ipConfigurations":[{"name":%q,"privateIPAddress":%q}]}]`, resourceGroup, nicName, nicName, resourceGroup, ipConfigName, address))
 }
@@ -295,7 +299,7 @@ func bodyContainsIPConfig(t *testing.T, body, name, address string) bool {
 	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
 		t.Fatalf("parse body: %v", err)
 	}
-	configs, ok := parsed["ipConfigurations"].([]any)
+	configs, ok := putBodyIPConfigurations(parsed)
 	if !ok {
 		t.Fatalf("body missing ipConfigurations: %s", body)
 	}
@@ -313,6 +317,15 @@ func bodyContainsIPConfig(t *testing.T, body, name, address string) bool {
 		}
 	}
 	return false
+}
+
+func putBodyIPConfigurations(parsed map[string]any) ([]any, bool) {
+	if configs, ok := parsed["ipConfigurations"].([]any); ok {
+		return configs, true
+	}
+	props, _ := parsed["properties"].(map[string]any)
+	configs, ok := props["ipConfigurations"].([]any)
+	return configs, ok
 }
 
 func countLeadingCalls(calls []string, leading string) int {
@@ -551,7 +564,45 @@ func TestAssignExecuteIssuesIPConfigCreate(t *testing.T) {
 		t.Fatalf("assign PUT body is not JSON: %v", err)
 	}
 	if parsed["enableIPForwarding"] != true {
-		t.Fatalf("assign PUT body must enable forwarding: %s", body)
+		props, _ := parsed["properties"].(map[string]any)
+		if props["enableIPForwarding"] != true {
+			t.Fatalf("assign PUT body must enable forwarding: %s", body)
+		}
+	}
+	if !bodyContainsIPConfig(t, body, "ipcfg-mobility", "10.88.60.9") {
+		t.Fatalf("assign PUT body missing target ip-config: %s", body)
+	}
+}
+
+func TestAssignExecuteNormalizesFlattenedNICShowForSinglePUT(t *testing.T) {
+	f := &fakeAz{showOut: cannedNICShowFlattened(false)}
+	res := dispatchWith(reqSpec(actionAssignSecondaryIP, modeExecute), f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	body := argAfter(f.calls[1], "--body")
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+		t.Fatalf("assign PUT body is not JSON: %v", err)
+	}
+	props, _ := parsed["properties"].(map[string]any)
+	if props["enableIPForwarding"] != true {
+		t.Fatalf("assign PUT body must put enableIPForwarding under properties: %s", body)
+	}
+	configs, ok := props["ipConfigurations"].([]any)
+	if !ok || len(configs) != 2 {
+		t.Fatalf("assign PUT body must put normalized ipConfigurations under properties: %s", body)
+	}
+	primary, _ := configs[0].(map[string]any)
+	if _, leaked := primary["subnet"]; leaked {
+		t.Fatalf("flattened subnet must move under properties in PUT body: %s", body)
+	}
+	primaryProps, _ := primary["properties"].(map[string]any)
+	if primaryProps["privateIPAddress"] != "10.88.60.4" {
+		t.Fatalf("primary private IP not preserved: %s", body)
+	}
+	if _, ok := primaryProps["subnet"].(map[string]any); !ok {
+		t.Fatalf("primary subnet not preserved under properties: %s", body)
 	}
 	if !bodyContainsIPConfig(t, body, "ipcfg-mobility", "10.88.60.9") {
 		t.Fatalf("assign PUT body missing target ip-config: %s", body)
@@ -1107,7 +1158,8 @@ func TestEnsureForwardingEnabledExecuteShowsThenUpdates(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
 		t.Fatalf("forwarding PUT body is not JSON: %v", err)
 	}
-	if parsed["enableIPForwarding"] != true {
+	props, _ := parsed["properties"].(map[string]any)
+	if props["enableIPForwarding"] != true {
 		t.Fatalf("forwarding PUT body must enable forwarding: %s", body)
 	}
 }
@@ -1152,7 +1204,8 @@ func TestBuildNICAssignForwardingBodyAddsIPAndForwarding(t *testing.T) {
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		t.Fatalf("body json: %v", err)
 	}
-	if parsed["enableIPForwarding"] != true {
+	props, _ := parsed["properties"].(map[string]any)
+	if props["enableIPForwarding"] != true {
 		t.Fatalf("body must enable forwarding: %s", body)
 	}
 	if !bodyContainsIPConfig(t, string(body), "ipcfg-mobility", "10.88.60.9") {
