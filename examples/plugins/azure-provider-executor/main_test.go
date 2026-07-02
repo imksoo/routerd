@@ -183,7 +183,7 @@ func (f *seizeFakeAz) run(ctx context.Context, argv ...string) ([]byte, error) {
 	switch toks {
 	case "network nic show":
 		f.showCount++
-		if f.verifyShowErr != nil && f.createCount > 0 {
+		if f.verifyShowErr != nil && f.showCount > 1 {
 			return nil, f.verifyShowErr
 		}
 		if f.selfHolds {
@@ -238,34 +238,17 @@ func (f *seizeFakeAz) run(ctx context.Context, argv ...string) ([]byte, error) {
 		f.selfHolds = true
 		f.createCount++
 		return []byte(`{}`), nil
-	case "rest":
-		if f.createErr != nil {
-			err := f.createErr
-			if f.conflictRevealsOld && isAddressConflictError(err) {
-				f.oldHolds = true
-			}
-			if f.alreadyExistsRevealsSelf && isAlreadyExistsError(err) {
-				f.selfHolds = true
-			}
-			if f.createErrOnce {
-				f.createErr = nil
-			}
-			return nil, err
-		}
-		f.selfHolds = true
-		f.createCount++
-		return []byte(`{}`), nil
 	default:
 		return []byte(`{}`), nil
 	}
 }
 
 func cannedNICShow(ipForwarding bool) []byte {
-	return []byte(fmt.Sprintf(`{"id":"/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1","name":"nic1","resourceGroup":"rg1","location":"japaneast","enableIPForwarding":%t,"ipConfigurations":[{"name":"primary","properties":{"primary":true,"privateIPAddress":"10.88.60.4","privateIPAllocationMethod":"Static","subnet":{"id":"/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/vnet1/subnets/default"}}}]}`, ipForwarding))
+	return []byte(fmt.Sprintf(`{"id":"/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1","name":"nic1","resourceGroup":"rg1","enableIPForwarding":%t,"ipConfigurations":[]}`, ipForwarding))
 }
 
 func cannedNICShowWithConfig(ipForwarding bool, name, address string) []byte {
-	return []byte(fmt.Sprintf(`{"id":"/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1","name":"nic1","resourceGroup":"rg1","location":"japaneast","enableIPForwarding":%t,"ipConfigurations":[{"name":"primary","properties":{"primary":true,"privateIPAddress":"10.88.60.4","privateIPAllocationMethod":"Static","subnet":{"id":"/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/vnet1/subnets/default"}}},{"name":%q,"properties":{"primary":false,"privateIPAddress":%q,"privateIPAllocationMethod":"Static","subnet":{"id":"/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/virtualNetworks/vnet1/subnets/default"}}}]}`, ipForwarding, name, address))
+	return []byte(fmt.Sprintf(`{"id":"/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1","name":"nic1","resourceGroup":"rg1","enableIPForwarding":%t,"ipConfigurations":[{"name":%q,"privateIPAddress":%q}]}`, ipForwarding, name, address))
 }
 
 func cannedNICList(resourceGroup, nicName, ipConfigName, address string) []byte {
@@ -278,51 +261,6 @@ func cannedIPConfigList(ipConfigName, address string) []byte {
 
 func cannedIPConfigListNestedAlt(ipConfigName, address string) []byte {
 	return []byte(fmt.Sprintf(`[{"name":%q,"properties":{"privateIpAddress":%q}}]`, ipConfigName, address))
-}
-
-func argAfter(argv []string, flag string) string {
-	for i := 0; i < len(argv)-1; i++ {
-		if argv[i] == flag {
-			return argv[i+1]
-		}
-	}
-	return ""
-}
-
-func bodyContainsIPConfig(t *testing.T, body, name, address string) bool {
-	t.Helper()
-	var parsed map[string]any
-	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
-		t.Fatalf("parse body: %v", err)
-	}
-	configs, ok := parsed["ipConfigurations"].([]any)
-	if !ok {
-		t.Fatalf("body missing ipConfigurations: %s", body)
-	}
-	for _, raw := range configs {
-		cfg, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		if cfg["name"] != name {
-			continue
-		}
-		props, _ := cfg["properties"].(map[string]any)
-		if props["privateIPAddress"] == address {
-			return true
-		}
-	}
-	return false
-}
-
-func countLeadingCalls(calls []string, leading string) int {
-	count := 0
-	for _, call := range calls {
-		if strings.HasPrefix(call, leading) {
-			count++
-		}
-	}
-	return count
 }
 
 func reqSpec(action, mode string) executeActionRequestSpec {
@@ -533,28 +471,13 @@ func TestAssignExecuteIssuesIPConfigCreate(t *testing.T) {
 	if res.Status.Observed["ipConfigName"] != "ipcfg-mobility" {
 		t.Errorf("want ipConfigName observed, got %+v", res.Status.Observed)
 	}
-	if len(f.calls) != 2 {
-		t.Fatalf("execute assign should show then PUT once, got %v", f.calls)
+	if len(f.calls) != 1 {
+		t.Fatalf("execute assign should issue exactly one call, got %v", f.calls)
 	}
-	if got := strings.Join(f.calls[0], " "); got != "network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1" {
-		t.Fatalf("assign show argv mismatch: %s", got)
-	}
-	if got := strings.Join(leadingTokens(f.calls[1]), " "); got != "rest" {
-		t.Fatalf("assign should use az rest for single NIC PUT, got %v", f.calls[1])
-	}
-	body := argAfter(f.calls[1], "--body")
-	if body == "" {
-		t.Fatalf("assign PUT missing body: %v", f.calls[1])
-	}
-	var parsed map[string]any
-	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
-		t.Fatalf("assign PUT body is not JSON: %v", err)
-	}
-	if parsed["enableIPForwarding"] != true {
-		t.Fatalf("assign PUT body must enable forwarding: %s", body)
-	}
-	if !bodyContainsIPConfig(t, body, "ipcfg-mobility", "10.88.60.9") {
-		t.Fatalf("assign PUT body missing target ip-config: %s", body)
+	got := strings.Join(f.calls[0], " ")
+	want := "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9"
+	if got != want {
+		t.Fatalf("assign argv mismatch:\n got: %s\nwant: %s", got, want)
 	}
 }
 
@@ -584,7 +507,7 @@ func TestAssignExecuteFailsAzureAddressConflictWithoutSeizeParameter(t *testing.
 	}
 	createCount := 0
 	for _, call := range got {
-		if strings.HasPrefix(call, "rest --method put ") {
+		if call == "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9" {
 			createCount++
 		}
 	}
@@ -832,20 +755,11 @@ func TestAssignExecuteAllowReassignmentDeletesOldThenCreatesSelf(t *testing.T) {
 		"network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
 		"network nic ip-config list --resource-group rg1 --nic-name nic-old",
 		"network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility",
-		"network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
-		"rest --method put --uri /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1?api-version=2023-09-01",
+		"network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9",
 		"network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
 		"network nic ip-config list --resource-group rg1 --nic-name nic-old",
 	}
-	if len(gotNoQuery) != len(want) {
-		t.Fatalf("seize calls mismatch:\n got: %v\nwant: %v", got, want)
-	}
-	for i := range want {
-		if !strings.HasPrefix(gotNoQuery[i], want[i]) {
-			t.Fatalf("seize calls mismatch at %d:\n got: %v\nwant: %v", i, got, want)
-		}
-	}
-	if countLeadingCalls(got, "rest --method put ") != 1 {
+	if fmt.Sprint(gotNoQuery) != fmt.Sprint(want) {
 		t.Fatalf("seize calls mismatch:\n got: %v\nwant: %v", got, want)
 	}
 	if res.Status.Observed["assignedAddress"] != "10.88.60.9" || res.Status.Observed["ipConfigName"] != "ipcfg-mobility" {
@@ -928,8 +842,8 @@ func TestAssignExecuteAllowReassignmentRetriesAfterRemoveSucceededAddFailed(t *t
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("retry should add self after old removal, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
-	if countLeadingCalls(joinedCalls(retry.calls), "rest --method put ") != 1 {
-		t.Fatalf("retry calls = %v, want single NIC PUT self", joinedCalls(retry.calls))
+	if !containsCallWithoutQuery(joinedCalls(retry.calls), "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9") {
+		t.Fatalf("retry calls = %v, want create self", joinedCalls(retry.calls))
 	}
 }
 
@@ -1010,8 +924,8 @@ func TestAssignExecuteAllowReassignmentDeleteFailureIsRetriedLater(t *testing.T)
 	if !f.oldHolds {
 		t.Fatal("old holder should remain when delete fails before removal")
 	}
-	if countLeadingCalls(joinedCalls(f.calls), "rest --method put ") != 0 {
-		t.Fatalf("calls = %v, must not PUT self after old delete failed", joinedCalls(f.calls))
+	if containsCallWithoutQuery(joinedCalls(f.calls), "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9") {
+		t.Fatalf("calls = %v, must not create self after old delete failed", joinedCalls(f.calls))
 	}
 }
 
@@ -1049,7 +963,7 @@ func TestAssignExecuteAllowReassignmentConflictRediscovery(t *testing.T) {
 	}
 	createCount := 0
 	for _, call := range got {
-		if strings.HasPrefix(call, "rest --method put ") {
+		if call == "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9" {
 			createCount++
 		}
 	}
@@ -1096,78 +1010,13 @@ func TestEnsureForwardingEnabledExecuteShowsThenUpdates(t *testing.T) {
 	if verbs[0] != "show" {
 		t.Fatalf("first call must be nic show (capture prior), got %q", verbs[0])
 	}
-	if strings.Join(leadingTokens(f.calls[1]), " ") != "rest" {
-		t.Fatalf("second call must be az rest NIC PUT, got %v", f.calls[1])
+	if verbs[1] != "update" {
+		t.Fatalf("second call must be nic update, got %q", verbs[1])
 	}
-	body := argAfter(f.calls[1], "--body")
-	if body == "" {
-		t.Fatalf("forwarding PUT missing body: %v", f.calls[1])
-	}
-	var parsed map[string]any
-	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
-		t.Fatalf("forwarding PUT body is not JSON: %v", err)
-	}
-	if parsed["enableIPForwarding"] != true {
-		t.Fatalf("forwarding PUT body must enable forwarding: %s", body)
-	}
-}
-
-func TestEnsureForwardingEnabledExecuteNoOpWhenAlreadyTrue(t *testing.T) {
-	f := &fakeAz{showOut: cannedNICShow(true)}
-	res := dispatchWith(reqSpec(actionEnsureFwdEnabled, modeExecute), f.run)
-	if res.Status.Status != statusSucceeded {
-		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
-	}
-	if res.Status.Observed["priorIpForwarding"] != "true" {
-		t.Fatalf("want prior captured =true, got %+v", res.Status.Observed)
-	}
-	if len(f.calls) != 1 {
-		t.Fatalf("already-forwarding case should only show, got %v", f.calls)
-	}
-	if got := strings.Join(f.calls[0], " "); got != "network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1" {
-		t.Fatalf("show argv mismatch: %s", got)
-	}
-}
-
-func TestBuildNICAssignForwardingBodyAddsIPAndForwarding(t *testing.T) {
-	var raw map[string]any
-	if err := json.Unmarshal(cannedNICShow(false), &raw); err != nil {
-		t.Fatal(err)
-	}
-	nic, err := showNIC(context.Background(), func(ctx context.Context, argv ...string) ([]byte, error) {
-		return cannedNICShow(false), nil
-	}, "nic1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	nic.Raw = raw
-	body, changed, err := buildNICAssignForwardingBody(nic, nicTarget{ipConfigName: "ipcfg-mobility", address: "10.88.60.9"})
-	if err != nil {
-		t.Fatalf("build body: %v", err)
-	}
-	if !changed {
-		t.Fatalf("expected changed body")
-	}
-	var parsed map[string]any
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		t.Fatalf("body json: %v", err)
-	}
-	if parsed["enableIPForwarding"] != true {
-		t.Fatalf("body must enable forwarding: %s", body)
-	}
-	if !bodyContainsIPConfig(t, string(body), "ipcfg-mobility", "10.88.60.9") {
-		t.Fatalf("body missing secondary ip-config: %s", body)
-	}
-}
-
-func TestAssignExecuteNoOpWhenTargetStateMatches(t *testing.T) {
-	f := &fakeAz{showOut: cannedNICShowWithConfig(true, "ipcfg-mobility", "10.88.60.9")}
-	res := dispatchWith(reqSpec(actionAssignSecondaryIP, modeExecute), f.run)
-	if res.Status.Status != statusSucceeded {
-		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
-	}
-	if len(f.calls) != 1 {
-		t.Fatalf("target-state match should only show, got %v", f.calls)
+	got := strings.Join(f.calls[1], " ")
+	want := "network nic update --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1 --ip-forwarding true"
+	if got != want {
+		t.Fatalf("update argv mismatch:\n got: %s\nwant: %s", got, want)
 	}
 }
 
@@ -1453,17 +1302,15 @@ func TestListIPConfigsUsesQueryAndRetriesTransientFailure(t *testing.T) {
 
 func TestCreateIPConfigRetriesTransientFailure(t *testing.T) {
 	withNoRetrySleep(t)
-	restCount := 0
+	callCount := 0
 	var calls []string
 	runner := func(ctx context.Context, argv ...string) ([]byte, error) {
+		callCount++
 		calls = append(calls, strings.Join(argv, " "))
 		joined := strings.Join(leadingTokens(argv), " ")
 		switch joined {
-		case "network nic show":
-			return cannedNICShow(false), nil
-		case "rest":
-			restCount++
-			if restCount < 3 {
+		case "network nic ip-config create":
+			if callCount < 3 {
 				return nil, fmt.Errorf("azure CLI failed: 429 too many requests")
 			}
 			return []byte(`{}`), nil
@@ -1475,7 +1322,6 @@ func TestCreateIPConfigRetriesTransientFailure(t *testing.T) {
 	config := nicTarget{
 		resourceGroup: "rg1",
 		nicName:       "nic1",
-		nicID:         "/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
 		ipConfigName:  "ipcfg-mobility",
 		address:       "10.88.60.9",
 	}
@@ -1484,8 +1330,8 @@ func TestCreateIPConfigRetriesTransientFailure(t *testing.T) {
 		t.Fatalf("createIPConfig should succeed after retries, got err=%v calls=%v", err, calls)
 	}
 
-	if restCount != 3 {
-		t.Fatalf("nic PUT should retry twice before success, got %d rest calls (%v)", restCount, calls)
+	if callCount != 3 {
+		t.Fatalf("ip-config create should retry twice before success, got %d calls (%v)", callCount, calls)
 	}
 }
 

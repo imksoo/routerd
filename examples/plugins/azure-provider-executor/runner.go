@@ -148,7 +148,6 @@ type nicShow struct {
 	Name               string
 	ResourceGroup      string
 	IPConfigurations   []ipConfig
-	Raw                map[string]any
 }
 
 type ipConfig struct {
@@ -185,10 +184,6 @@ func showNIC(ctx context.Context, runner azRunner, nicID string) (nicShow, error
 	if err != nil {
 		return nicShow{}, err
 	}
-	var raw map[string]any
-	if err := json.Unmarshal(out, &raw); err != nil {
-		return nicShow{}, fmt.Errorf("parse network nic show raw output: %w", err)
-	}
 	var parsed nicShowOutput
 	if err := json.Unmarshal(out, &parsed); err != nil {
 		return nicShow{}, fmt.Errorf("parse network nic show output: %w", err)
@@ -199,7 +194,6 @@ func showNIC(ctx context.Context, runner azRunner, nicID string) (nicShow, error
 		Name:               parsed.Name,
 		ResourceGroup:      parsed.ResourceGroup,
 		IPConfigurations:   normalizeIPConfigs(parsed.IPConfigurations),
-		Raw:                raw,
 	}, nil
 }
 
