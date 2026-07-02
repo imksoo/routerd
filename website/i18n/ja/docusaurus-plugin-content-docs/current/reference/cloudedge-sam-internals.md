@@ -214,6 +214,26 @@ planning artifact を維持します。一度も見たことのない source だ
 各 capture には必ず **forwarding 有効化** アクションが伴い、その NIC が自分宛て
 でないパケットを転送できるようにします。
 
+## provider split-brain の収束
+
+BGP は overlay 到達性の control-plane truth のままですが、分断後には provider inventory
+が同じ `/32` を複数 cloud fabric で owned と報告することがあります。fresh な
+provider-discovery fact が食い違う場合、ownership resolver はその address を `Conflict`
+にし、`conflictReason=duplicate-provider-home-owners` と全 observed owner を status に出します。
+
+resolver は決定的な `conflictWinnerNode` も記録します。
+
+- healed BGP RIB にその `/32` の home-owner path があれば、その BGP owner が勝者です。
+- なければ最も新しい provider 観測を勝者にし、同時刻では `nodeRef` を stable tie-break
+  に使います。
+
+敗者は新しい provider capture action を生成しません。敗者ノードが競合中の `/32` を自分の
+provider-secondary capture としてまだ保持していることを観測した場合、status には
+`conflictResolution=loser-release-local-capture` が出ます。その後、trap cleanup と同じ
+stale-capture hold-down を経て、その local capture だけを対象にした `unassign-secondary-ip`
+を発行します。local capture を保持していない敗者は `loser-withhold-local-capture`、勝者は
+`winner-retain-local-capture` として報告されます。
+
 ## オンプレ LAN の権威は不変
 
 BGP は **remote オーバーレイ到達性** を決めますが、ローカル L2/ARP の権威は置き

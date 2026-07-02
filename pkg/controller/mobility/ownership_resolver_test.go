@@ -845,6 +845,9 @@ func TestOwnershipResolverReportsDuplicateProviderHomeOwnerConflict(t *testing.T
 	if decision.ConflictReason != "duplicate-provider-home-owners" {
 		t.Fatalf("decision = %#v, want duplicate provider home-owner conflict", decision)
 	}
+	if decision.ConflictWinnerNode != "aws-router-a" || decision.ConflictResolution != "loser-withhold-local-capture" {
+		t.Fatalf("decision = %#v, want deterministic conflict winner and loser withhold", decision)
+	}
 	if len(decision.ConflictOwners) != 2 {
 		t.Fatalf("decision = %#v, want both provider owner facts retained", decision)
 	}
@@ -857,8 +860,15 @@ func TestOwnershipResolverReportsDuplicateProviderHomeOwnerConflict(t *testing.T
 	if !ok || len(owners) != 2 {
 		t.Fatalf("conflicts = %#v, want both conflicting owners in status", conflicts)
 	}
+	if conflicts[0]["winnerNode"] != "aws-router-a" || conflicts[0]["resolution"] != "loser-withhold-local-capture" {
+		t.Fatalf("conflicts = %#v, want deterministic winner and resolution", conflicts)
+	}
 	controlTable := status["ownershipResolverControlPlaneOwnerTable"].([]map[string]any)
-	if len(controlTable) != 1 || controlTable[0]["state"] != "Conflict" || controlTable[0]["conflictReason"] != "duplicate-provider-home-owners" {
+	if len(controlTable) != 1 ||
+		controlTable[0]["state"] != "Conflict" ||
+		controlTable[0]["conflictReason"] != "duplicate-provider-home-owners" ||
+		controlTable[0]["conflictWinnerNode"] != "aws-router-a" ||
+		controlTable[0]["conflictResolution"] != "loser-withhold-local-capture" {
 		t.Fatalf("control-plane owner table = %#v, want duplicate conflict row", controlTable)
 	}
 	conflictOwners, ok := controlTable[0]["conflictOwners"].([]map[string]any)
@@ -868,6 +878,59 @@ func TestOwnershipResolverReportsDuplicateProviderHomeOwnerConflict(t *testing.T
 	verdicts := status["ownershipResolverFIBVerdicts"].([]map[string]any)
 	if len(verdicts) != 1 || verdicts[0]["address"] != address || verdicts[0]["action"] != "withhold" {
 		t.Fatalf("fib verdicts = %#v, want withhold for duplicate remote owners", verdicts)
+	}
+}
+
+func TestOwnershipResolverUsesBGPOwnerForDuplicateProviderConflictWinner(t *testing.T) {
+	now := time.Date(2026, 6, 10, 16, 10, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	address := "10.88.60.11/32"
+	awsHome := providerDiscoveryObservedEvent("cloudedge", "cloudedge", "aws-router-a", address, "aws", "aws-provider", providerinventory.PrivateIPRecord{
+		Address:      "10.88.60.11",
+		NICRef:       "eni-client",
+		SubnetRef:    "subnet-aws",
+		ResourceRef:  "i-aws-client",
+		ResourceType: "instance-nic",
+	}, now.Add(-time.Second), time.Hour)
+	ociHome := providerDiscoveryObservedEvent("cloudedge", "cloudedge", "oci-router", address, "oci", "oci-provider", providerinventory.PrivateIPRecord{
+		Address:      "10.88.60.11",
+		NICRef:       "oci-client",
+		SubnetRef:    "subnet-oci",
+		ResourceRef:  "ocid1.instance.oc1.test.client",
+		ResourceType: "instance-nic",
+	}, now.Add(-2*time.Second), time.Hour)
+	action := resolverSucceededAction(t, "oci-provider", "oci-vnic", "oci-router", address, "assign-secondary-ip", now.Add(-time.Second))
+	decisions, err := resolveAddressOwnership(ownershipResolverInput{
+		PoolName: "cloudedge",
+		SelfNode: "oci-router",
+		Spec:     spec,
+		Events:   []routerstate.EventRecord{awsHome, ociHome},
+		Status: map[string]any{
+			"discoverySelfCapturedAddresses": []string{address},
+			"discoveryLastScanAt":            now.Format(time.RFC3339Nano),
+		},
+		ActionJournal: []routerstate.ActionExecutionRecord{action},
+		BGPHomeOwnerNodes: map[string]string{
+			address: "aws-router-a",
+		},
+		Now: now,
+	})
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, address)
+	if decision.ConflictWinnerNode != "aws-router-a" || decision.HomeOwnerNode != "aws-router-a" {
+		t.Fatalf("decision = %#v, want BGP owner selected as conflict winner", decision)
+	}
+	if decision.Class != ownershipClassStaleCapture ||
+		decision.SuppressionReason != "provider-split-brain-loser" ||
+		decision.ConflictResolution != "loser-release-local-capture" {
+		t.Fatalf("decision = %#v, want losing local capture marked for release", decision)
+	}
+	status := ownershipResolverStatus(decisions)
+	conflicts := status["ownershipResolverConflicts"].([]map[string]any)
+	if len(conflicts) != 1 || conflicts[0]["winnerNode"] != "aws-router-a" || conflicts[0]["resolution"] != "loser-release-local-capture" {
+		t.Fatalf("conflicts = %#v, want winner and release resolution", conflicts)
 	}
 }
 
@@ -1013,6 +1076,8 @@ func ownershipDecisionContainsNilString(decision ownershipDecision) bool {
 		decision.AdvertiseReason,
 		decision.SuppressionReason,
 		decision.ConflictReason,
+		decision.ConflictWinnerNode,
+		decision.ConflictResolution,
 		decision.Source,
 	}
 	for _, value := range values {

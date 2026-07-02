@@ -619,7 +619,8 @@ projection.
   control-plane table. It keeps one deterministic row per observed mobility
   address and includes the selected owner node/provider/NIC/subnet/resource,
   local evidence node/provider/NIC/subnet/resource/source, capture state,
-  advertise/suppression state, and conflict reason when present.
+  advertise/suppression state, and conflict reason/winner/resolution when
+  present.
 
 Use `routerctl mobility owners` to inspect the control-plane table without
 pattern-matching raw status JSON:
@@ -643,7 +644,12 @@ routerctl mobility explain --pool cloudedge --address 10.77.60.10/32 -o json
 Rows are sorted by pool and address. When a remote provider owner overlaps local
 evidence, or when two fresh provider owners claim the same `/32`, the row state
 is `Conflict` and `conflictReason` explains the condition. Expired ownership
-events are not retained as live conflicts. `routerctl doctor sam` consumes the
+events are not retained as live conflicts. Duplicate provider-owner conflicts
+also include `conflictWinnerNode` and `conflictResolution`: the healed BGP owner
+wins when present; otherwise the freshest provider observation wins with
+`nodeRef` as the stable tie-break. Losing nodes with an observed local
+provider-secondary capture report `loser-release-local-capture` and release only
+that local capture after the stale-capture hold-down. `routerctl doctor sam` consumes the
 same ownership state for conflict checks and, with host checks enabled, compares
 endpoint-owned local rows with the Linux main FIB. Provider-secondary BGP
 capture-holder rows are not local endpoint owners, so they are not required to

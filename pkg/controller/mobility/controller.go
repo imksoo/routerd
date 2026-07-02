@@ -3136,7 +3136,7 @@ func statusStringFirst(values ...any) string {
 func observedSelfStaleCaptureStatus(decisions []ownershipDecision, selfNode string, previous map[string]time.Time, now time.Time) map[string]string {
 	out := map[string]string{}
 	for _, decision := range decisions {
-		if decision.Class != ownershipClassStaleCapture {
+		if decision.Class != ownershipClassStaleCapture && !providerInventoryConflictReleasesLocalCapture(decision, selfNode) {
 			continue
 		}
 		if strings.TrimSpace(decision.CaptureHolderNode) != "" && strings.TrimSpace(decision.CaptureHolderNode) != strings.TrimSpace(selfNode) {

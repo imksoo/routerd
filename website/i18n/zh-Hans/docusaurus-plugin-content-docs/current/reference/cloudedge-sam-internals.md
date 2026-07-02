@@ -235,6 +235,28 @@ route-table/UDR strategy is tracked in
 Every capture is accompanied by a **forwarding-enable** action so the NIC can
 forward packets that are not addressed to itself.
 
+## Provider split-brain reconciliation
+
+BGP remains the control-plane truth for overlay reachability, but provider
+inventory can temporarily report the same `/32` as owned in more than one cloud
+fabric after a partition. When fresh provider-discovery facts disagree, the
+ownership resolver marks the address `Conflict` with
+`conflictReason=duplicate-provider-home-owners` and includes all observed owners.
+
+The resolver also records a deterministic `conflictWinnerNode`:
+
+- if the healed BGP RIB has a home-owner path for the `/32`, that BGP owner wins;
+- otherwise the freshest provider observation wins, with `nodeRef` as the stable
+  tie-break.
+
+Losers do not create new provider capture actions. If the losing node observes
+the conflicting `/32` still attached to its own provider-secondary capture, the
+status records `conflictResolution=loser-release-local-capture`; after the same
+stale-capture hold-down used for trap cleanup, routerd emits a scoped
+`unassign-secondary-ip` for that local capture. Nodes that do not hold a local
+capture report `loser-withhold-local-capture`. The winner reports
+`winner-retain-local-capture`.
+
 ## On-prem LAN authority is unchanged
 
 BGP decides **remote overlay reachability**, but it does not replace the local

@@ -3079,6 +3079,58 @@ func TestControllerBGPModeStandbyReleasesObservedSelfCaptureWithoutPriorAction(t
 	}
 }
 
+func TestPlanBGPMobilityDeliveryReleasesProviderConflictLoserCapture(t *testing.T) {
+	now := time.Date(2026, 6, 14, 21, 42, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-b"]
+	address := "10.88.60.10/32"
+	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+		PoolName: "cloudedge",
+		Source:   DynamicSource("cloudedge", self.NodeRef),
+		Self:     self,
+		Members:  members,
+		Spec:     spec,
+		Decisions: []ownershipDecision{{
+			Address:            address,
+			Class:              ownershipClassStaleCapture,
+			HomeOwnerNode:      "aws-router-a",
+			CaptureHolderNode:  self.NodeRef,
+			CaptureProviderRef: "aws-provider",
+			CaptureTargetRef:   "eni-b",
+			CaptureState:       captureStateConfirmed,
+			CaptureStrategy:    captureStrategySecondaryIP,
+			CaptureSucceeded:   true,
+			Source:             providerDiscoverySource,
+			SuppressionReason:  "provider-split-brain-loser",
+			ConflictReason:     "duplicate-provider-home-owners",
+			ConflictWinnerNode: "aws-router-a",
+			ConflictResolution: "loser-release-local-capture",
+		}},
+		Placement: PlacementDecision{
+			Group:      "aws-edge",
+			Active:     false,
+			ActiveNode: "aws-router-a",
+		},
+		Profiles:             map[string]api.CloudProviderProfileSpec{"aws-provider": {Provider: "aws"}},
+		ObservedSelfCaptures: map[string]bool{address: true},
+		ObservedSelfIPsOK:    true,
+		ObservedStaleSince:   map[string]time.Time{address: now.Add(-3 * time.Minute)},
+		RIBObserved:          true,
+		Now:                  now,
+	})
+	if err != nil {
+		t.Fatalf("planBGPMobilityDelivery: %v", err)
+	}
+	if unassign := findActionPlanByAddress(delivery.ActionPlans, "unassign-secondary-ip", address); unassign == nil {
+		t.Fatalf("action plans = %#v, conflict loser self-capture must be released after hold-down", delivery.ActionPlans)
+	}
+	if assign := findActionPlanByAddress(delivery.ActionPlans, "assign-secondary-ip", address); assign != nil {
+		t.Fatalf("action plans = %#v, conflict loser must not reassign", delivery.ActionPlans)
+	}
+}
+
 func TestControllerBGPModeStandbyKeepsObservedSelfCaptureWhileActiveMarkerAbsent(t *testing.T) {
 	now := time.Date(2026, 6, 14, 21, 45, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()

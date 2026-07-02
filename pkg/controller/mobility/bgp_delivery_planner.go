@@ -557,6 +557,15 @@ func observedSelfStaleCaptureActionPlans(in bgpDeliveryPlannerInput, candidates 
 			staleSinceByAddress[address] = in.Now.UTC()
 			continue
 		}
+		if providerInventoryConflictReleasesLocalCapture(decision, in.Self.NodeRef) && in.ObservedSelfCaptures[address] {
+			staleSince, ok := in.ObservedStaleSince[address]
+			if !ok || staleSince.IsZero() || in.Now.UTC().Sub(staleSince.UTC()) < bgpTrapRIBMissingHold {
+				continue
+			}
+			staleAddresses = append(staleAddresses, address)
+			staleSinceByAddress[address] = staleSince
+			continue
+		}
 		if decision.Class != ownershipClassStaleCapture {
 			continue
 		}

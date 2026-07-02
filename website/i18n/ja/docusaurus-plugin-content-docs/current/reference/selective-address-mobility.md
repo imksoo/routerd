@@ -399,7 +399,7 @@ Linux での `proxy-arp` 捕捉では、routerd は以下を行います。
 `MobilityPool` status は 2 つの所有権ビューを公開します。
 
 - `ownershipResolverOwnerTable` は、`doctor sam` と FIB ポリシーチェックが使うローカルの resolver テーブルです。
-- `ownershipResolverControlPlaneOwnerTable` は、運用者向けのコントロールプレーンテーブルです。観測されたモビリティアドレスごとに決定的な 1 行を持ち、選択された owner node/provider/NIC/subnet/resource、local evidence node/provider/NIC/subnet/resource/source、捕捉状態、広告/抑制状態、競合理由を含みます。
+- `ownershipResolverControlPlaneOwnerTable` は、運用者向けのコントロールプレーンテーブルです。観測されたモビリティアドレスごとに決定的な 1 行を持ち、選択された owner node/provider/NIC/subnet/resource、local evidence node/provider/NIC/subnet/resource/source、捕捉状態、広告/抑制状態、競合理由/勝者/resolution を含みます。
 
 raw な status JSON に依存せずコントロールプレーンテーブルを確認するには、`routerctl mobility owners` を使います。
 
@@ -408,7 +408,7 @@ routerctl mobility owners
 routerctl mobility owners --pool cloudedge --address 10.77.60.10/32 -o json
 ```
 
-行は pool と address でソートされます。remote provider owner が local evidence と重なる場合や、2 つの fresh provider owner が同じ `/32` を主張する場合、行の state は `Conflict` になり、`conflictReason` が理由を示します。期限切れの所有権イベントはライブな競合としては残しません。`routerctl doctor sam` は同じ所有権状態を競合チェックに使い、ホストチェックが有効な場合は endpoint owner としてローカル所有する行を Linux のメイン FIB と比較します。provider-secondary BGP capture ホルダー行はローカルの endpoint owner ではないため、local/cloud route として解決されることを要求しません。その経路は delivery/forwarding チェックとデータプレーンプローブで確認します。
+行は pool と address でソートされます。remote provider owner が local evidence と重なる場合や、2 つの fresh provider owner が同じ `/32` を主張する場合、行の state は `Conflict` になり、`conflictReason` が理由を示します。期限切れの所有権イベントはライブな競合としては残しません。duplicate provider-owner conflict では `conflictWinnerNode` と `conflictResolution` も出ます。healed BGP owner があればそれが勝者、なければ最も新しい provider 観測が勝者で、同時刻では `nodeRef` が stable tie-break です。local の provider-secondary capture を観測している敗者は `loser-release-local-capture` を報告し、stale-capture hold-down 後にその local capture だけを release します。`routerctl doctor sam` は同じ所有権状態を競合チェックに使い、ホストチェックが有効な場合は endpoint owner としてローカル所有する行を Linux のメイン FIB と比較します。provider-secondary BGP capture ホルダー行はローカルの endpoint owner ではないため、local/cloud route として解決されることを要求しません。その経路は delivery/forwarding チェックとデータプレーンプローブで確認します。
 
 FreeBSD など Linux 以外のホストでは、ライブ SAM 捕捉は未対応です。コントローラーはホストを変更せず、`SAM capture not implemented on this OS` と報告します。
 

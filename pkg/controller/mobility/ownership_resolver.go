@@ -71,6 +71,8 @@ type ownershipDecision struct {
 	AdvertiseReason    string
 	SuppressionReason  string
 	ConflictReason     string
+	ConflictWinnerNode string
+	ConflictResolution string
 	ConflictOwners     []providerInventoryOwnerFact
 	Fresh              bool
 	Source             string
@@ -154,17 +156,6 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			Class:        ownershipClassUnknown,
 			CaptureState: captureStateNone,
 		}
-		if facts := remoteHomeConflicts[address]; len(facts) > 1 {
-			applyProviderHomeOwnerFact(&decision, facts[0])
-			decision.Class = ownershipClassRemoteHomeOwned
-			decision.Source = providerDiscoverySource
-			decision.SuppressionReason = "provider-home-owner-conflict"
-			decision.ConflictReason = "duplicate-provider-home-owners"
-			decision.ConflictOwners = facts
-			decision.Fresh = true
-			out = append(out, decision)
-			continue
-		}
 		if capture, ok := confirmedCaptures[address]; ok {
 			decision.CaptureState = captureStateConfirmed
 			decision.CaptureHolderNode = capture.HolderNode
@@ -180,6 +171,25 @@ func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, er
 			decision.CaptureTargetRef = capture.TargetRef
 			decision.CaptureStrategy = capture.Strategy
 			decision.CaptureSucceeded = capture.Succeeded
+		}
+		if facts := remoteHomeConflicts[address]; len(facts) > 1 {
+			winner := providerInventoryConflictWinner(facts, strings.TrimSpace(in.BGPHomeOwnerNodes[address]))
+			applyProviderHomeOwnerFact(&decision, winner)
+			decision.Source = providerDiscoverySource
+			decision.SuppressionReason = "provider-home-owner-conflict"
+			decision.ConflictReason = "duplicate-provider-home-owners"
+			decision.ConflictWinnerNode = strings.TrimSpace(winner.NodeRef)
+			decision.ConflictResolution = providerInventoryConflictResolution(decision, self.NodeRef, capturedIPs[address])
+			decision.ConflictOwners = facts
+			decision.Fresh = true
+			if providerInventoryConflictReleasesLocalCapture(decision, self.NodeRef) {
+				decision.Class = ownershipClassStaleCapture
+				decision.SuppressionReason = "provider-split-brain-loser"
+			} else {
+				decision.Class = ownershipClassRemoteHomeOwned
+			}
+			out = append(out, decision)
+			continue
 		}
 		if owner := strings.TrimSpace(staticOwners[address]); owner != "" {
 			decision.HomeOwnerNode = owner
@@ -483,6 +493,42 @@ func duplicateProviderHomeOwnerFacts(sets map[string][]providerInventoryOwnerFac
 		out[address] = rows
 	}
 	return out
+}
+
+func providerInventoryConflictWinner(facts []providerInventoryOwnerFact, bgpOwner string) providerInventoryOwnerFact {
+	bgpOwner = strings.TrimSpace(bgpOwner)
+	if bgpOwner != "" {
+		for _, fact := range facts {
+			if strings.TrimSpace(fact.NodeRef) == bgpOwner {
+				return fact
+			}
+		}
+	}
+	if len(facts) == 0 {
+		return providerInventoryOwnerFact{}
+	}
+	return facts[0]
+}
+
+func providerInventoryConflictResolution(decision ownershipDecision, selfNode string, selfCaptured bool) string {
+	winner := strings.TrimSpace(decision.ConflictWinnerNode)
+	selfNode = strings.TrimSpace(selfNode)
+	if winner == "" {
+		return "manual-review"
+	}
+	if winner == selfNode {
+		return "winner-retain-local-capture"
+	}
+	if selfCaptured || strings.TrimSpace(decision.CaptureHolderNode) == selfNode {
+		return "loser-release-local-capture"
+	}
+	return "loser-withhold-local-capture"
+}
+
+func providerInventoryConflictReleasesLocalCapture(decision ownershipDecision, selfNode string) bool {
+	return strings.TrimSpace(decision.ConflictResolution) == "loser-release-local-capture" &&
+		strings.TrimSpace(decision.ConflictWinnerNode) != "" &&
+		strings.TrimSpace(decision.ConflictWinnerNode) != strings.TrimSpace(selfNode)
 }
 
 func providerInventoryOwnerIdentity(fact providerInventoryOwnerFact) string {
@@ -864,6 +910,12 @@ func ownershipResolverStatus(decisions []ownershipDecision) map[string]any {
 		}
 		if d.ConflictReason != "" {
 			item["conflictReason"] = d.ConflictReason
+			if d.ConflictWinnerNode != "" {
+				item["conflictWinnerNode"] = d.ConflictWinnerNode
+			}
+			if d.ConflictResolution != "" {
+				item["conflictResolution"] = d.ConflictResolution
+			}
 			if len(d.ConflictOwners) > 0 {
 				item["conflictOwners"] = providerInventoryOwnerFactStatusRows(d.ConflictOwners)
 			}
@@ -909,6 +961,12 @@ func ownershipResolverStatus(decisions []ownershipDecision) map[string]any {
 			}
 			if len(d.ConflictOwners) > 0 {
 				conflict["owners"] = providerInventoryOwnerFactStatusRows(d.ConflictOwners)
+			}
+			if d.ConflictWinnerNode != "" {
+				conflict["winnerNode"] = d.ConflictWinnerNode
+			}
+			if d.ConflictResolution != "" {
+				conflict["resolution"] = d.ConflictResolution
 			}
 			conflicts = append(conflicts, conflict)
 		}
@@ -1000,6 +1058,12 @@ func ownershipResolverDiagnosticRow(d ownershipDecision, reason string) map[stri
 	}
 	if d.ConflictReason != "" {
 		row["conflictReason"] = d.ConflictReason
+		if d.ConflictWinnerNode != "" {
+			row["conflictWinnerNode"] = d.ConflictWinnerNode
+		}
+		if d.ConflictResolution != "" {
+			row["conflictResolution"] = d.ConflictResolution
+		}
 	}
 	return row
 }
@@ -1054,6 +1118,12 @@ func ownershipResolverFIBVerdicts(decisions []ownershipDecision) []map[string]an
 		}
 		if d.ConflictReason != "" {
 			row["conflictReason"] = d.ConflictReason
+			if d.ConflictWinnerNode != "" {
+				row["conflictWinnerNode"] = d.ConflictWinnerNode
+			}
+			if d.ConflictResolution != "" {
+				row["conflictResolution"] = d.ConflictResolution
+			}
 		}
 		if len(d.ConflictOwners) > 0 {
 			row["conflictOwners"] = providerInventoryOwnerFactStatusRows(d.ConflictOwners)
@@ -1144,6 +1214,12 @@ func ownershipResolverOwnerTable(decisions []ownershipDecision) []map[string]any
 		if d.ConflictReason != "" {
 			row["conflictReason"] = d.ConflictReason
 		}
+		if d.ConflictWinnerNode != "" {
+			row["conflictWinnerNode"] = d.ConflictWinnerNode
+		}
+		if d.ConflictResolution != "" {
+			row["conflictResolution"] = d.ConflictResolution
+		}
 		rows = append(rows, row)
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
@@ -1186,6 +1262,8 @@ func ownershipResolverControlPlaneOwnerTable(decisions []ownershipDecision) []ma
 		putNonEmpty(row, "advertiseReason", d.AdvertiseReason)
 		putNonEmpty(row, "suppressionReason", d.SuppressionReason)
 		putNonEmpty(row, "conflictReason", d.ConflictReason)
+		putNonEmpty(row, "conflictWinnerNode", d.ConflictWinnerNode)
+		putNonEmpty(row, "conflictResolution", d.ConflictResolution)
 		if len(d.ConflictOwners) > 0 {
 			row["conflictOwners"] = providerInventoryOwnerFactStatusRows(d.ConflictOwners)
 		}
