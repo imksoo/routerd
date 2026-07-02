@@ -412,7 +412,7 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		}
 	case "FirewallZone":
 		return []resource.Intent{artifact("routerd.firewall.zone", res.Metadata.Name, resource.ActionEnsure, "nft", nil)}
-	case "FirewallPolicy", "FirewallRule":
+	case "FirewallPolicy", "FirewallRule", "FirewallFlowPinhole":
 		return []resource.Intent{{Artifact: newNftTableArtifact(owner, "inet", "routerd_filter"), Action: resource.ActionEnsure, ApplyWith: "nft"}}
 	case "VXLANSegment":
 		spec, err := res.VXLANSegmentSpec()

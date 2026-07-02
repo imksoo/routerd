@@ -120,7 +120,7 @@ func packageFeatures(router *api.Router) map[string]bool {
 		case "NAT44Rule":
 			features["nat"] = true
 			features["conntrack"] = true
-		case "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallEventLog", "ClientPolicy", "IPAddressSet", "PortForward", "IngressService", "LocalServiceRedirect":
+		case "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallFlowPinhole", "FirewallEventLog", "ClientPolicy", "IPAddressSet", "PortForward", "IngressService", "LocalServiceRedirect":
 			features["nft"] = true
 		case "TrafficFlowLog", "ConntrackObserver":
 			features["conntrack"] = true
@@ -210,7 +210,7 @@ func KernelModules(router *api.Router) []string {
 	needed := map[string]bool{}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "NAT44Rule", "FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy", "ConntrackObserver":
+		case "NAT44Rule", "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallFlowPinhole", "ClientPolicy", "ConntrackObserver":
 			needed["nf_conntrack"] = true
 		case "TrafficFlowLog", "FirewallEventLog":
 			needed["nf_conntrack"] = true

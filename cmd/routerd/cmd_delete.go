@@ -281,7 +281,9 @@ func canonicalResourceKind(kind string) string {
 		"pppoesession":                    "PPPoESession",
 		"pppoeclient":                     "PPPoESession",
 		"fw":                              "FirewallRule",
+		"flowpinhole":                     "FirewallFlowPinhole",
 		"firewall":                        "FirewallPolicy",
+		"firewallflowpinhole":             "FirewallFlowPinhole",
 		"firewallzone":                    "FirewallZone",
 		"firewallpolicy":                  "FirewallPolicy",
 		"firewalleventlog":                "FirewallEventLog",
@@ -314,7 +316,7 @@ func canonicalResourceKind(kind string) string {
 
 func apiVersionForKind(kind string) string {
 	switch kind {
-	case "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallEventLog", "ClientPolicy", "PortForward", "IngressService", "LocalServiceRedirect":
+	case "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallFlowPinhole", "FirewallEventLog", "ClientPolicy", "PortForward", "IngressService", "LocalServiceRedirect":
 		return api.FirewallAPIVersion
 	case "Sysctl", "SysctlProfile", "Package", "NTPClient", "NTPServer", "LogSink", "ObservabilityPipeline", "RouterdCluster", "LogRetention", "WebConsole", "ServiceUnit":
 		return api.SystemAPIVersion

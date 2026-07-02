@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 )
@@ -28,6 +29,7 @@ func NftablesNAT44(router *api.Router) ([]byte, error) {
 	var firewallPolicies []api.Resource
 	var firewallLogs []api.Resource
 	var firewallRules []api.Resource
+	var firewallFlowPinholes []api.Resource
 	var clientPolicies []api.Resource
 	var ingressRules []ingressNATRule
 	var redirectRules []localServiceRedirectRule
@@ -57,6 +59,9 @@ func NftablesNAT44(router *api.Router) ([]byte, error) {
 		}
 		if res.APIVersion == api.FirewallAPIVersion && res.Kind == "FirewallRule" {
 			firewallRules = append(firewallRules, res)
+		}
+		if res.APIVersion == api.FirewallAPIVersion && res.Kind == "FirewallFlowPinhole" {
+			firewallFlowPinholes = append(firewallFlowPinholes, res)
 		}
 		if res.APIVersion == api.FirewallAPIVersion && res.Kind == "ClientPolicy" {
 			clientPolicies = append(clientPolicies, res)
@@ -98,7 +103,7 @@ func NftablesNAT44(router *api.Router) ([]byte, error) {
 			l2FilterVXLANS = append(l2FilterVXLANS, vxlan)
 		}
 	}
-	if len(nat44Rules) == 0 && len(ingressRules) == 0 && len(redirectRules) == 0 && len(egressPolicies) == 0 && len(zones) == 0 && len(firewallPolicies) == 0 && len(firewallLogs) == 0 && len(firewallRules) == 0 && len(clientPolicies) == 0 && len(mssPolicies) == 0 && len(forceFragmentPolicies) == 0 && len(l2FilterVXLANS) == 0 {
+	if len(nat44Rules) == 0 && len(ingressRules) == 0 && len(redirectRules) == 0 && len(egressPolicies) == 0 && len(zones) == 0 && len(firewallPolicies) == 0 && len(firewallLogs) == 0 && len(firewallRules) == 0 && len(firewallFlowPinholes) == 0 && len(clientPolicies) == 0 && len(mssPolicies) == 0 && len(forceFragmentPolicies) == 0 && len(l2FilterVXLANS) == 0 {
 		return nil, nil
 	}
 	sort.Slice(nat44Rules, func(i, j int) bool { return nat44Rules[i].Metadata.Name < nat44Rules[j].Metadata.Name })
@@ -107,6 +112,9 @@ func NftablesNAT44(router *api.Router) ([]byte, error) {
 	sort.Slice(firewallPolicies, func(i, j int) bool { return firewallPolicies[i].Metadata.Name < firewallPolicies[j].Metadata.Name })
 	sort.Slice(firewallLogs, func(i, j int) bool { return firewallLogs[i].Metadata.Name < firewallLogs[j].Metadata.Name })
 	sort.Slice(firewallRules, func(i, j int) bool { return firewallRules[i].Metadata.Name < firewallRules[j].Metadata.Name })
+	sort.Slice(firewallFlowPinholes, func(i, j int) bool {
+		return firewallFlowPinholes[i].Metadata.Name < firewallFlowPinholes[j].Metadata.Name
+	})
 	sort.Slice(clientPolicies, func(i, j int) bool { return clientPolicies[i].Metadata.Name < clientPolicies[j].Metadata.Name })
 
 	var buf bytes.Buffer
@@ -114,8 +122,8 @@ func NftablesNAT44(router *api.Router) ([]byte, error) {
 	if len(l2FilterVXLANS) > 0 {
 		writeBridgeL2FilterTable(&buf, l2FilterVXLANS)
 	}
-	if len(zones) > 0 || len(firewallPolicies) > 0 || len(firewallLogs) > 0 || len(firewallRules) > 0 || len(clientPolicies) > 0 {
-		if err := writeFirewallFilterTable(&buf, aliases, zones, firewallPolicies, firewallLogs, firewallRules, clientPolicies, InternalFirewallHoles(router), ingressRules, addressSets); err != nil {
+	if len(zones) > 0 || len(firewallPolicies) > 0 || len(firewallLogs) > 0 || len(firewallRules) > 0 || len(firewallFlowPinholes) > 0 || len(clientPolicies) > 0 {
+		if err := writeFirewallFilterTable(&buf, aliases, zones, firewallPolicies, firewallLogs, firewallRules, firewallFlowPinholes, clientPolicies, InternalFirewallHoles(router), ingressRules, addressSets); err != nil {
 			return nil, err
 		}
 	}
@@ -584,6 +592,7 @@ func NftablesFirewall(router *api.Router, holes []FirewallHole) ([]byte, error) 
 	var policies []api.Resource
 	var logs []api.Resource
 	var rules []api.Resource
+	var flowPinholes []api.Resource
 	var clientPolicies []api.Resource
 	for _, res := range router.Spec.Resources {
 		if res.APIVersion != api.FirewallAPIVersion {
@@ -598,6 +607,8 @@ func NftablesFirewall(router *api.Router, holes []FirewallHole) ([]byte, error) 
 			logs = append(logs, res)
 		case "FirewallRule":
 			rules = append(rules, res)
+		case "FirewallFlowPinhole":
+			flowPinholes = append(flowPinholes, res)
 		case "ClientPolicy":
 			clientPolicies = append(clientPolicies, res)
 		}
@@ -610,24 +621,29 @@ func NftablesFirewall(router *api.Router, holes []FirewallHole) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
-	if len(zones) == 0 && len(rules) == 0 && len(clientPolicies) == 0 && len(holes) == 0 {
+	if len(zones) == 0 && len(rules) == 0 && len(flowPinholes) == 0 && len(clientPolicies) == 0 && len(holes) == 0 {
 		return nil, nil
 	}
 	sort.Slice(zones, func(i, j int) bool { return zones[i].Metadata.Name < zones[j].Metadata.Name })
 	sort.Slice(policies, func(i, j int) bool { return policies[i].Metadata.Name < policies[j].Metadata.Name })
 	sort.Slice(logs, func(i, j int) bool { return logs[i].Metadata.Name < logs[j].Metadata.Name })
 	sort.Slice(rules, func(i, j int) bool { return rules[i].Metadata.Name < rules[j].Metadata.Name })
+	sort.Slice(flowPinholes, func(i, j int) bool { return flowPinholes[i].Metadata.Name < flowPinholes[j].Metadata.Name })
 	sort.Slice(clientPolicies, func(i, j int) bool { return clientPolicies[i].Metadata.Name < clientPolicies[j].Metadata.Name })
 	var buf bytes.Buffer
 	buf.WriteString("# Generated by routerd. Do not edit by hand.\n")
-	if err := writeFirewallFilterTable(&buf, aliases, zones, policies, logs, rules, clientPolicies, holes, ingressRules, addressSets); err != nil {
+	if err := writeFirewallFilterTable(&buf, aliases, zones, policies, logs, rules, flowPinholes, clientPolicies, holes, ingressRules, addressSets); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
 }
 
-func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zones []api.Resource, policies []api.Resource, logs []api.Resource, rules []api.Resource, clientPolicyResources []api.Resource, holes []FirewallHole, ingressRules []ingressNATRule, addressSetMap map[string]nftIPAddressSet) error {
+func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zones []api.Resource, policies []api.Resource, logs []api.Resource, rules []api.Resource, flowPinholeResources []api.Resource, clientPolicyResources []api.Resource, holes []FirewallHole, ingressRules []ingressNATRule, addressSetMap map[string]nftIPAddressSet) error {
 	zoneMap, err := nftFirewallZones(aliases, zones)
+	if err != nil {
+		return err
+	}
+	flowPinholes, err := nftFirewallFlowPinholes(flowPinholeResources, addressSetMap)
 	if err != nil {
 		return err
 	}
@@ -638,7 +654,7 @@ func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zone
 	policy := firewallPolicyOptions(policies)
 	logging := firewallLogOptions(logs)
 	sortedZones := sortedFirewallZones(zoneMap)
-	firewallAddressSets := referencedFirewallIPAddressSets(rules, addressSetMap)
+	firewallAddressSets := referencedFirewallIPAddressSets(rules, flowPinholes, addressSetMap)
 	writeNftTablePreamble(buf, "inet", "routerd_filter")
 	for _, zone := range sortedZones {
 		if len(zone.IfNames) > 0 {
@@ -651,6 +667,7 @@ func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zone
 			writeNftSetReset(buf, "inet", "routerd_filter", policy.SetName)
 		}
 	}
+	writeFirewallFlowPinholeSetResets(buf, flowPinholes)
 	buf.WriteString("table inet routerd_filter {\n")
 	writeNftTableOwnerMarker(buf)
 	for _, zone := range sortedZones {
@@ -664,6 +681,7 @@ func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zone
 		}
 	}
 	writeFirewallAddressSets(buf, firewallAddressSets)
+	writeFirewallFlowPinholeSets(buf, flowPinholes)
 	buf.WriteString("  chain input {\n")
 	buf.WriteString("    type filter hook input priority filter; policy drop;\n")
 	buf.WriteString("    ct state invalid counter drop\n")
@@ -708,11 +726,11 @@ func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zone
 	}
 	buf.WriteString("  }\n")
 	for _, from := range sortedZones {
-		if err := writeFirewallPairChain(buf, from, firewallZone{Name: "self", Role: "self"}, rules, holes, policy, logging, addressSetMap); err != nil {
+		if err := writeFirewallPairChain(buf, from, firewallZone{Name: "self", Role: "self"}, rules, flowPinholes, holes, policy, logging, addressSetMap); err != nil {
 			return err
 		}
 		for _, to := range sortedZones {
-			if err := writeFirewallPairChain(buf, from, to, rules, holes, policy, logging, addressSetMap); err != nil {
+			if err := writeFirewallPairChain(buf, from, to, rules, flowPinholes, holes, policy, logging, addressSetMap); err != nil {
 				return err
 			}
 		}
@@ -750,6 +768,80 @@ type clientPolicy struct {
 	EgressDeny     []string
 	EgressAllow    []string
 	BlockDiscovery bool
+}
+
+type firewallFlowPinhole struct {
+	Name                     string
+	FromZone                 string
+	ToZone                   string
+	SetName                  string
+	SourceSetRef             string
+	SourceSetName            string
+	SourceCIDRs              []string
+	DestinationSetRefs       []string
+	DestinationSetNames      []string
+	DestinationCIDRs         []string
+	OutboundDestinationPorts []api.FirewallPort
+	InboundSourcePorts       []api.FirewallPort
+	Timeout                  time.Duration
+}
+
+func nftFirewallFlowPinholes(resources []api.Resource, addressSets map[string]nftIPAddressSet) ([]firewallFlowPinhole, error) {
+	var out []firewallFlowPinhole
+	for _, res := range resources {
+		spec, err := res.FirewallFlowPinholeSpec()
+		if err != nil {
+			return nil, err
+		}
+		pinhole := firewallFlowPinhole{
+			Name:                     res.Metadata.Name,
+			FromZone:                 spec.FromZone,
+			ToZone:                   spec.ToZone,
+			SetName:                  nftSetName("flow_pinhole_" + res.Metadata.Name),
+			SourceSetRef:             spec.Outbound.SourceSetRef,
+			SourceCIDRs:              append([]string(nil), spec.Outbound.SourceCIDRs...),
+			DestinationSetRefs:       append([]string(nil), spec.Outbound.DestinationSetRefs...),
+			DestinationCIDRs:         append([]string(nil), spec.Outbound.DestinationCIDRs...),
+			OutboundDestinationPorts: append([]api.FirewallPort(nil), spec.Outbound.DestinationPorts...),
+			InboundSourcePorts:       append([]api.FirewallPort(nil), spec.Inbound.SourcePorts...),
+			Timeout:                  3 * time.Minute,
+		}
+		if strings.TrimSpace(spec.Timeout) != "" {
+			parsed, err := time.ParseDuration(strings.TrimSpace(spec.Timeout))
+			if err != nil {
+				return nil, fmt.Errorf("%s has invalid timeout %q: %w", res.ID(), spec.Timeout, err)
+			}
+			pinhole.Timeout = parsed
+		}
+		if pinhole.SourceSetRef != "" {
+			set, err := nftIPAddressSetRef(res.ID(), pinhole.SourceSetRef, addressSets)
+			if err != nil {
+				return nil, err
+			}
+			pinhole.SourceSetName = NftFirewallIPAddressSetName(set.Name, "ip")
+		}
+		for _, ref := range pinhole.DestinationSetRefs {
+			set, err := nftIPAddressSetRef(res.ID(), ref, addressSets)
+			if err != nil {
+				return nil, err
+			}
+			pinhole.DestinationSetNames = append(pinhole.DestinationSetNames, NftFirewallIPAddressSetName(set.Name, "ip"))
+		}
+		out = append(out, pinhole)
+	}
+	return out, nil
+}
+
+func writeFirewallFlowPinholeSetResets(buf *bytes.Buffer, pinholes []firewallFlowPinhole) {
+	for _, pinhole := range pinholes {
+		writeNftSetReset(buf, "inet", "routerd_filter", pinhole.SetName)
+	}
+}
+
+func writeFirewallFlowPinholeSets(buf *bytes.Buffer, pinholes []firewallFlowPinhole) {
+	for _, pinhole := range pinholes {
+		buf.WriteString("  set " + pinhole.SetName + " { type ipv4_addr . ipv4_addr . inet_service; flags timeout; }\n")
+	}
 }
 
 func nftClientPolicies(aliases map[string]string, zoneMap map[string]firewallZone, resources []api.Resource) ([]clientPolicy, error) {
@@ -997,7 +1089,7 @@ func nftSampledLogExpr(prefix string, sampleRate int, logging firewallLogging) s
 	return "numgen random mod " + strconv.Itoa(sampleRate) + " == 0 " + nftLogExpr(prefix, logging)
 }
 
-func writeFirewallPairChain(buf *bytes.Buffer, from firewallZone, to firewallZone, rules []api.Resource, holes []FirewallHole, policy firewallPolicy, logging firewallLogging, addressSetMap map[string]nftIPAddressSet) error {
+func writeFirewallPairChain(buf *bytes.Buffer, from firewallZone, to firewallZone, rules []api.Resource, flowPinholes []firewallFlowPinhole, holes []FirewallHole, policy firewallPolicy, logging firewallLogging, addressSetMap map[string]nftIPAddressSet) error {
 	chain := nftChainName(from.Name + "-to-" + to.Name)
 	buf.WriteString("  chain " + chain + " {\n")
 	for _, hole := range holes {
@@ -1006,6 +1098,11 @@ func writeFirewallPairChain(buf *bytes.Buffer, from firewallZone, to firewallZon
 				continue
 			}
 			buf.WriteString("    " + nftFirewallHoleExpr(hole) + "\n")
+		}
+	}
+	for _, pinhole := range flowPinholes {
+		for _, expr := range nftFirewallFlowPinholePairExprs(pinhole, from.Name, to.Name) {
+			buf.WriteString("    " + expr + "\n")
 		}
 	}
 	for _, res := range rules {
@@ -1035,6 +1132,121 @@ func writeFirewallPairChain(buf *bytes.Buffer, from firewallZone, to firewallZon
 	}
 	buf.WriteString("  }\n")
 	return nil
+}
+
+func nftFirewallFlowPinholePairExprs(pinhole firewallFlowPinhole, fromZone, toZone string) []string {
+	switch {
+	case pinhole.FromZone == fromZone && pinhole.ToZone == toZone:
+		return nftFirewallFlowPinholeLearnExprs(pinhole)
+	case pinhole.FromZone == toZone && pinhole.ToZone == fromZone:
+		return nftFirewallFlowPinholeAllowExprs(pinhole)
+	default:
+		return nil
+	}
+}
+
+func nftFirewallFlowPinholeLearnExprs(pinhole firewallFlowPinhole) []string {
+	timeout := nftDurationSeconds(pinhole.Timeout)
+	var out []string
+	for _, match := range nftFirewallFlowPinholeOutboundMatches(pinhole) {
+		parts := []string{
+			match,
+			nftPortMatch("udp", "dport", pinhole.OutboundDestinationPorts),
+			"update @" + pinhole.SetName + " { ip daddr . ip saddr . udp sport timeout " + timeout + " }",
+			"counter",
+			"comment " + nftQuote("routerd FirewallFlowPinhole "+pinhole.Name+" learn"),
+		}
+		out = append(out, strings.Join(strings.Fields(strings.Join(parts, " ")), " "))
+	}
+	return out
+}
+
+func nftFirewallFlowPinholeAllowExprs(pinhole firewallFlowPinhole) []string {
+	var out []string
+	for _, match := range nftFirewallFlowPinholeInboundMatches(pinhole) {
+		parts := []string{
+			match,
+			nftPortMatch("udp", "sport", pinhole.InboundSourcePorts),
+			"ip saddr . ip daddr . udp dport @" + pinhole.SetName,
+			"counter accept",
+			"comment " + nftQuote("routerd FirewallFlowPinhole "+pinhole.Name+" allow"),
+		}
+		out = append(out, strings.Join(strings.Fields(strings.Join(parts, " ")), " "))
+	}
+	return out
+}
+
+func nftFirewallFlowPinholeOutboundMatches(pinhole firewallFlowPinhole) []string {
+	return combineNftMatchLists(
+		nftFirewallFlowPinholeSourceMatches(pinhole, "saddr"),
+		nftFirewallFlowPinholeDestinationMatches(pinhole, "daddr"),
+	)
+}
+
+func nftFirewallFlowPinholeInboundMatches(pinhole firewallFlowPinhole) []string {
+	return combineNftMatchLists(
+		nftFirewallFlowPinholeDestinationMatches(pinhole, "saddr"),
+		nftFirewallFlowPinholeSourceMatches(pinhole, "daddr"),
+	)
+}
+
+func nftFirewallFlowPinholeSourceMatches(pinhole firewallFlowPinhole, direction string) []string {
+	var out []string
+	if pinhole.SourceSetName != "" {
+		out = append(out, "ip "+direction+" @"+pinhole.SourceSetName)
+	}
+	for _, cidr := range pinhole.SourceCIDRs {
+		if prefix, err := netip.ParsePrefix(cidr); err == nil && prefix.Addr().Is4() {
+			out = append(out, "ip "+direction+" "+prefix.Masked().String())
+		}
+	}
+	if len(out) == 0 {
+		return []string{""}
+	}
+	return out
+}
+
+func nftFirewallFlowPinholeDestinationMatches(pinhole firewallFlowPinhole, direction string) []string {
+	var out []string
+	for _, setName := range pinhole.DestinationSetNames {
+		out = append(out, "ip "+direction+" @"+setName)
+	}
+	for _, cidr := range pinhole.DestinationCIDRs {
+		if prefix, err := netip.ParsePrefix(cidr); err == nil && prefix.Addr().Is4() {
+			out = append(out, "ip "+direction+" "+prefix.Masked().String())
+		}
+	}
+	if len(out) == 0 {
+		return []string{""}
+	}
+	return out
+}
+
+func combineNftMatchLists(a, b []string) []string {
+	if len(a) == 0 {
+		a = []string{""}
+	}
+	if len(b) == 0 {
+		b = []string{""}
+	}
+	var out []string
+	for _, left := range a {
+		for _, right := range b {
+			out = append(out, strings.Join(strings.Fields(strings.Join([]string{left, right}, " ")), " "))
+		}
+	}
+	return out
+}
+
+func nftDurationSeconds(d time.Duration) string {
+	if d <= 0 {
+		d = 3 * time.Minute
+	}
+	seconds := int64(d.Round(time.Second) / time.Second)
+	if seconds <= 0 {
+		seconds = 1
+	}
+	return strconv.FormatInt(seconds, 10) + "s"
 }
 
 func implicitFirewallAction(fromRole, toRole string, policy firewallPolicy) string {

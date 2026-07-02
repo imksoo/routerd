@@ -12907,6 +12907,164 @@
                 "additionalProperties": false,
                 "properties": {
                   "apiVersion": {
+                    "const": "firewall.routerd.net/v1alpha1",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "FirewallFlowPinhole",
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "spec": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "fromZone": {
+                        "type": "string"
+                      },
+                      "inbound": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "sourcePorts": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "required": [
+                          "sourcePorts"
+                        ],
+                        "type": "object"
+                      },
+                      "outbound": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "destinationCIDRs": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "destinationPorts": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "destinationSetRefs": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "protocol": {
+                            "enum": [
+                              "udp"
+                            ],
+                            "type": "string"
+                          },
+                          "sourceCIDRs": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "sourceSetRef": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "protocol",
+                          "destinationPorts"
+                        ],
+                        "type": "object"
+                      },
+                      "timeout": {
+                        "type": "string"
+                      },
+                      "toZone": {
+                        "type": "string"
+                      },
+                      "when": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "state": {
+                            "additionalProperties": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "contains": {
+                                  "type": "string"
+                                },
+                                "equals": {
+                                  "type": "string"
+                                },
+                                "exists": {
+                                  "type": "boolean"
+                                },
+                                "for": {
+                                  "type": "string"
+                                },
+                                "in": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "set",
+                                    "unset",
+                                    "unknown"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "description": "State gates a resource on status fields from other resources.",
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "fromZone",
+                      "toZone",
+                      "outbound",
+                      "inbound"
+                    ],
+                    "type": "object"
+                  },
+                  "status": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "apiVersion",
+                  "kind",
+                  "metadata",
+                  "spec"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "apiVersion": {
                     "const": "net.routerd.net/v1alpha1",
                     "type": "string"
                   },

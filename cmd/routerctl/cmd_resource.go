@@ -523,7 +523,9 @@ func canonicalShowKind(kind string) string {
 		"pppoesession":                    "PPPoESession",
 		"pppoeclient":                     "PPPoESession",
 		"fw":                              "FirewallRule",
+		"flowpinhole":                     "FirewallFlowPinhole",
 		"firewall":                        "FirewallPolicy",
+		"firewallflowpinhole":             "FirewallFlowPinhole",
 		"firewallzone":                    "FirewallZone",
 		"firewallpolicy":                  "FirewallPolicy",
 		"firewalleventlog":                "FirewallEventLog",
@@ -568,7 +570,7 @@ func showAPIVersionForKnownKind(kind string) string {
 		return api.SystemAPIVersion
 	case "Telemetry":
 		return api.ObservabilityAPIVersion
-	case "FirewallZone", "FirewallPolicy", "FirewallEventLog", "FirewallRule", "ClientPolicy", "PortForward", "IngressService", "LocalServiceRedirect":
+	case "FirewallZone", "FirewallPolicy", "FirewallEventLog", "FirewallRule", "FirewallFlowPinhole", "ClientPolicy", "PortForward", "IngressService", "LocalServiceRedirect":
 		return api.FirewallAPIVersion
 	case "TunnelInterface", "OverlayPeer", "HybridRoute", "AddressMobilityDomain", "CloudProviderProfile", "RemoteAddressClaim", "ProviderActionPolicy":
 		return api.HybridAPIVersion

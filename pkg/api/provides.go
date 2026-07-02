@@ -123,6 +123,7 @@ func resourceProvidesTable() map[string][]ProvidedFieldSpec {
 		"EventGroup":                      withCommon(s("group", "Event federation group name"), s("nodeName", "Local event federation node name"), i("peers", "Resolved event peer count"), os("peersFrom", "Resolved peersFrom source status"), ss("pendingSources", "Status sources that have not resolved yet"), s("listenAddress", "Event receiver listen address"), i("listenPort", "Event receiver listen port")),
 		"EventRule":                       withCommon(s("topic", "Emitted event topic")),
 		"FirewallEventLog":                withCommon(s("path", "Log path"), ss("sinks", "Log sink references")),
+		"FirewallFlowPinhole":             withCommon(),
 		"FirewallPolicy":                  withCommon(),
 		"FirewallRule":                    withCommon(s("action", "Rendered action")),
 		"FirewallZone":                    withCommon(ss("interfaces", "Zone interfaces")),

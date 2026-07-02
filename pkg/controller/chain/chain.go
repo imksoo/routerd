@@ -381,7 +381,7 @@ func resourceOwnerController(kind string) string {
 		return "tunnel"
 	case "WireGuardInterface", "WireGuardPeer":
 		return "wireguard"
-	case "FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy":
+	case "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallFlowPinhole", "ClientPolicy":
 		return "firewall"
 	case "NAT44Rule":
 		return "nat"
@@ -1910,7 +1910,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			vrrp.Router = effective
 			return didWorkError(vrrp.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "ip-address-set", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"IPAddressSet", "LocalServiceRedirect"}, "IPAddressSet", "LocalServiceRedirect"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "ip-address-set", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"}, "IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err

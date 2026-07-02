@@ -518,6 +518,7 @@ func whenValidationTestResources(when api.ResourceWhenSpec) []whenValidationTest
 		{specName: "IngressServiceSpec", resource: testResource(api.FirewallAPIVersion, "IngressService", "web", api.IngressServiceSpec{Listen: api.IngressListenSpec{Interface: "wan", Protocol: "tcp", Port: 443}, Backends: []api.IngressBackendSpec{{Address: "192.0.2.10", Port: 8443}}, When: when})},
 		{specName: "IPAddressSetSpec", resource: testResource(api.NetAPIVersion, "IPAddressSet", "blocked", api.IPAddressSetSpec{Addresses: []string{"192.0.2.10"}, When: when})},
 		{specName: "LocalServiceRedirectSpec", resource: testResource(api.FirewallAPIVersion, "LocalServiceRedirect", "dns", api.LocalServiceRedirectSpec{Interface: "lan", Rules: []api.LocalServiceRedirectRuleSpec{{Protocols: []string{"tcp"}, DestinationSetRef: "dns-servers", DestinationPort: 53, RedirectPort: 5353}}, When: when})},
+		{specName: "FirewallFlowPinholeSpec", resource: testResource(api.FirewallAPIVersion, "FirewallFlowPinhole", "atomcam", api.FirewallFlowPinholeSpec{FromZone: "lan", ToZone: "wan", Outbound: api.FirewallFlowPinholeOutboundSpec{SourceCIDRs: []string{"192.0.2.0/24"}, Protocol: "udp", DestinationPorts: []api.FirewallPort{"32100"}}, Inbound: api.FirewallFlowPinholeInboundSpec{SourcePorts: []api.FirewallPort{"32099"}}, When: when})},
 	}
 }
 
@@ -1698,6 +1699,48 @@ func TestValidateFirewallRuleAddressSetRef(t *testing.T) {
 		ToZone:             "wan",
 		DestinationSetRefs: []string{"IPAddressSet/missing"},
 		Action:             "accept",
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "references missing IPAddressSet") {
+		t.Fatalf("expected missing IPAddressSet error, got %v", err)
+	}
+}
+
+func TestValidateFirewallFlowPinhole(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"}, Metadata: api.ObjectMeta{Name: "atomcam-clients"}, Spec: api.IPAddressSetSpec{Addresses: []string{"172.18.1.92"}}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallFlowPinhole"}, Metadata: api.ObjectMeta{Name: "atomcam-cloud-udp"}, Spec: api.FirewallFlowPinholeSpec{
+				FromZone: "lan",
+				ToZone:   "wan",
+				Outbound: api.FirewallFlowPinholeOutboundSpec{
+					SourceSetRef:     "IPAddressSet/atomcam-clients",
+					Protocol:         "udp",
+					DestinationPorts: []api.FirewallPort{"32100"},
+				},
+				Inbound: api.FirewallFlowPinholeInboundSpec{SourcePorts: []api.FirewallPort{"32099"}},
+				Timeout: "3m",
+			}},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate FirewallFlowPinhole: %v", err)
+	}
+
+	router.Spec.Resources[5].Spec = api.FirewallFlowPinholeSpec{
+		FromZone: "lan",
+		ToZone:   "wan",
+		Outbound: api.FirewallFlowPinholeOutboundSpec{
+			SourceSetRef:     "IPAddressSet/missing",
+			Protocol:         "udp",
+			DestinationPorts: []api.FirewallPort{"32100"},
+		},
+		Inbound: api.FirewallFlowPinholeInboundSpec{SourcePorts: []api.FirewallPort{"32099"}},
 	}
 	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "references missing IPAddressSet") {
 		t.Fatalf("expected missing IPAddressSet error, got %v", err)

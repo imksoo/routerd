@@ -3830,6 +3830,7 @@ func TestResourceWhenCoversResourceLevelWhenSpecs(t *testing.T) {
 		testResourceWithSpecWhen("IngressService", api.IngressServiceSpec{When: want}),
 		testResourceWithSpecWhen("IPAddressSet", api.IPAddressSetSpec{When: want}),
 		testResourceWithSpecWhen("LocalServiceRedirect", api.LocalServiceRedirectSpec{When: want}),
+		testResourceWithSpecWhen("FirewallFlowPinhole", api.FirewallFlowPinholeSpec{When: want}),
 		testResourceWithSpecWhen("EgressRoutePolicy", api.EgressRoutePolicySpec{When: want}),
 	} {
 		t.Run(tc.Kind, func(t *testing.T) {

@@ -200,6 +200,7 @@ func TestRuntimeWhenControllersSubscribeToStatusRefs(t *testing.T) {
 		whenResource(api.NetAPIVersion, "NAT44Rule", "lan-to-wan", api.NAT44RuleSpec{When: when}),
 		whenResource(api.NetAPIVersion, "IPAddressSet", "dns", api.IPAddressSetSpec{When: when}),
 		whenResource(api.FirewallAPIVersion, "LocalServiceRedirect", "dns", api.LocalServiceRedirectSpec{When: when}),
+		whenResource(api.FirewallAPIVersion, "FirewallFlowPinhole", "atomcam", api.FirewallFlowPinholeSpec{When: when}),
 	}}}
 	event := statusChangedEvent("VirtualAddress", "lan-vip")
 
@@ -223,7 +224,7 @@ func TestRuntimeWhenControllersSubscribeToStatusRefs(t *testing.T) {
 		{name: "bfd", subs: statusSubscriptionsWithWhen(router, []string{"BFD"}, "BGPPeer", "BFD")},
 		{name: "bgp", subs: statusSubscriptionsWithWhen(router, []string{"BGPRouter", "BGPPeer"}, "BFD", "BGPRouter", "BGPPeer")},
 		{name: "vrrp", subs: statusSubscriptionsWithWhen(router, []string{"VirtualAddress"}, "BGPRouter", "BGPPeer", "IngressService")},
-		{name: "ip-address-set", subs: statusSubscriptionsWithWhen(router, []string{"IPAddressSet", "LocalServiceRedirect"}, "IPAddressSet", "LocalServiceRedirect")},
+		{name: "ip-address-set", subs: statusSubscriptionsWithWhen(router, []string{"IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"}, "IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole")},
 		{name: "firewall", subs: allStatusChangedSubscriptions()},
 	}
 	for _, tt := range tests {

@@ -151,6 +151,9 @@ func ResourceWhen(res api.Resource) api.ResourceWhenSpec {
 	case "LocalServiceRedirect":
 		spec, _ := res.LocalServiceRedirectSpec()
 		return spec.When
+	case "FirewallFlowPinhole":
+		spec, _ := res.FirewallFlowPinholeSpec()
+		return spec.When
 	case "EgressRoutePolicy":
 		spec, _ := res.EgressRoutePolicySpec()
 		return spec.When

@@ -93,6 +93,7 @@ func ConfigResourceKinds() []ResourceKindSchema {
 		{FirewallAPIVersion, "IngressService", IngressServiceSpec{}},
 		{NetAPIVersion, "IPAddressSet", IPAddressSetSpec{}},
 		{FirewallAPIVersion, "LocalServiceRedirect", LocalServiceRedirectSpec{}},
+		{FirewallAPIVersion, "FirewallFlowPinhole", FirewallFlowPinholeSpec{}},
 		{NetAPIVersion, "TrafficFlowLog", TrafficFlowLogSpec{}},
 		{FirewallAPIVersion, "FirewallZone", FirewallZoneSpec{}},
 		{FirewallAPIVersion, "FirewallPolicy", FirewallPolicySpec{}},
