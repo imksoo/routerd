@@ -262,6 +262,13 @@ stale-capture hold-down used for trap cleanup, routerd emits a scoped
 capture report `loser-withhold-local-capture`. The winner reports
 `winner-retain-local-capture`.
 
+The generated RR-client admission policy is a route-admission boundary, not a
+per-address authorization system. It requires the advertising node's identity,
+forbids other topology node identities, and limits accepted routes to `/32`s
+inside the declared MobilityPool prefixes. A compromised leaf can still advertise
+a pool-local `/32` with its own identity; preventing that requires an additional
+ownership authorization signal outside this BGP filter.
+
 ## On-prem LAN authority is unchanged
 
 BGP decides **remote overlay reachability**, but it does not replace the local
