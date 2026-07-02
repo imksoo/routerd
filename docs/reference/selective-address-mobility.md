@@ -132,7 +132,8 @@ RR dynamic sync, routerd treats the saved dynamic part as last-known-good input:
 an expired `member-set-sync/<name>` record marks the source `Stale` but keeps the
 existing MobilityPool planning path intact. This is a fail-static guarantee for
 RR outages; loss of the publisher affects freshness, not the already-rendered
-data plane.
+data plane. Stale sources also carry a status warning so operators can
+distinguish deliberate fail-static operation from a fresh topology.
 
 WireGuard interfaces can import peers from the same node registry:
 
@@ -381,8 +382,9 @@ group is stored locally as `peer-group-sync/<group-name>` with the normal
 dynamic-config TTL. If the publisher disappears or the group expires, the leaf
 does **not** tear down the generated tunnel or BGP peer. It reuses the expired
 record as last-known-good input, reports the source as `Stale`, and keeps the
-existing transport artifacts rendered. A never-seen required group still reports
-`Pending`.
+existing transport artifacts rendered. Stale peer sources include a status
+warning for long-lived fail-static operation. A never-seen required group still
+reports `Pending`.
 
 For MobilityPool membership, an RR can set `spec.publishMemberSet: true` on the
 canonical pool. routerd strips local-only member fields, publishes a
@@ -391,7 +393,8 @@ and serves it on the same TCP port via `GET /v1/member-sets`. Leaves with a
 missing required `membersFrom` source store a fetched set as
 `member-set-sync/<set-name>`. Like peer-group sync, an expired fetched member set
 is fail-static: routerd reports `membersFrom.phase: Stale` and continues using
-the last-known-good member list until a fresher publisher response is available.
+the last-known-good member list until a fresher publisher response is available;
+the source also carries a warning field while it remains stale.
 
 ```yaml
 apiVersion: mobility.routerd.net/v1alpha1
@@ -423,12 +426,13 @@ Core routers can set `spec.bgp.routeReflectorClient` and
 `spec.bgp.routeReflectorClusterID`; those fields are copied to each generated
 `BGPPeer`. When `routeReflectorClient` is true, routerd also hardens the
 generated peer import policy for that leaf: imported routes must be `/32`s under
-the configured `importPolicy.allowedPrefixes`, must carry that leaf's
-node-identity community, and must not carry another topology node's
-node-identity community. This keeps the RR admission boundary tied to the
-declared SAM topology; a leaf cannot claim another node identity or advertise a
-broader mobility prefix through the generated RR session. Edge routers can leave
-the RR fields unset and use ordinary iBGP sessions.
+the configured `importPolicy.allowedPrefixes` or, when that list is omitted, the
+declared `MobilityPool` prefixes. They must carry that leaf's node-identity
+community and must not carry another topology node's node-identity community.
+This keeps the RR admission boundary tied to the declared SAM topology; a leaf
+cannot claim another node identity or advertise a broader mobility prefix through
+the generated RR session. Edge routers can leave the RR fields unset and use
+ordinary iBGP sessions.
 
 Peer removal replaces the profile's generated `DynamicConfigPart` with the new
 resource set. Profile deletion replaces the old part with an empty active part,

@@ -250,8 +250,10 @@ an incumbent defers until initial BGP observation has completed and, for
 provider-inventory-backed captures, provider self-observation has completed.
 The wall-clock window remains a conservative fallback when readiness signals are
 unavailable. This lets a crash-looping node leave the fence as soon as its
-observations are actually ready, while a partitioned or blind node does not
-assert active merely because 120 seconds elapsed.
+observations are actually ready. When readiness is known but remains incomplete,
+the fence is still bounded: after three settle windows routerd releases the
+assertion with degraded readiness status, preserving overlay liveness while
+making the missing observation path explicit.
 
 **Holder retention and priority restore.** While a node physically holds its
 group's captures it stays active (it yields only on losing its own holdership,

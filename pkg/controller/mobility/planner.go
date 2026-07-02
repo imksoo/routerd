@@ -250,6 +250,8 @@ var (
 	placementSettleWindow = 120 * time.Second
 )
 
+const placementStartupReadinessFallbackMultiplier = 3
+
 type placementStartupReadiness struct {
 	Known            bool
 	BGPObserved      bool
@@ -289,10 +291,14 @@ func placementStartupFenceDefersActive(active bool, incumbent string, sinceStart
 	if readiness.Ready() {
 		return false
 	}
-	if sinceStart < settle {
-		return true
+	return sinceStart < placementStartupReadinessFallbackWindow(settle)
+}
+
+func placementStartupReadinessFallbackWindow(settle time.Duration) time.Duration {
+	if settle <= 0 {
+		return 0
 	}
-	return true
+	return settle * placementStartupReadinessFallbackMultiplier
 }
 
 func placementStartupReadinessForMember(self memberPlanInfo, bgpObserved, providerObserved bool) placementStartupReadiness {
@@ -314,14 +320,23 @@ func placementStartupProviderObservationRequired(self memberPlanInfo) bool {
 	return strings.TrimSpace(self.OwnershipDiscovery.Mode) == "provider-private-ip"
 }
 
-func placementStartupReadinessStatus(readiness placementStartupReadiness) map[string]any {
-	return map[string]any{
+func placementStartupReadinessStatus(readiness placementStartupReadiness, now time.Time) map[string]any {
+	sinceStart := now.Sub(placementSettleStart)
+	fallbackAfter := placementStartupReadinessFallbackWindow(placementSettleWindow)
+	degraded := readiness.Known && !readiness.Ready() && sinceStart >= fallbackAfter
+	status := map[string]any{
 		"known":            readiness.Known,
 		"ready":            readiness.Ready(),
 		"bgpObserved":      readiness.BGPObserved,
 		"providerRequired": readiness.ProviderRequired,
 		"providerObserved": readiness.ProviderObserved,
+		"fallbackAfter":    fallbackAfter.String(),
+		"degraded":         degraded,
 	}
+	if degraded {
+		status["degradeReason"] = "startup readiness incomplete after fallback window; releasing fence to preserve overlay liveness"
+	}
+	return status
 }
 
 // applyHolderRetention keeps a node active while it still physically holds its

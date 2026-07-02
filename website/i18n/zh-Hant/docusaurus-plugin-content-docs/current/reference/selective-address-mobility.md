@@ -47,7 +47,8 @@ RR 可以發布 `SAMPeerGroup` 和 `MobilityMemberSet`，leaf 透過 TCP 19652
 
 TTL 過期或 RR publisher 消失時，leaf 不會刪除已經產生的 tunnel、BGP peer 或
 MobilityPool planning artifact。routerd 會繼續使用 last-known-good record，並把來源標記為
-`Stale`。只有從未取得過的必需 source 才保持 `Pending`。
+`Stale`，同時在 status 中輸出 `warning`。只有從未取得過的必需 source 才保持
+`Pending`。
 
 ## capture and delivery
 
@@ -78,11 +79,12 @@ plugin gate 後才可能執行。
 ## RR admission filters
 
 Generated route-reflector client BGP peers derive an import admission policy from
-the SAM topology and `importPolicy.allowedPrefixes`. Imported routes must be
-`/32`s under the permitted prefixes, must carry the advertising leaf's own
-node-identity community, and must not carry another topology node's identity.
-This prevents a leaf from claiming another node identity or advertising a broad
-mobility prefix through the generated RR session.
+the SAM topology and `importPolicy.allowedPrefixes`; if that prefix list is
+omitted, routerd defaults it from declared `MobilityPool` prefixes. Imported
+routes must be `/32`s under the permitted prefixes, must carry the advertising
+leaf's own node-identity community, and must not carry another topology node's
+identity. This prevents a leaf from claiming another node identity or advertising
+a broad mobility prefix through the generated RR session.
 
 ## ownership inspection
 

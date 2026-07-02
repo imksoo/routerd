@@ -129,7 +129,10 @@ placementSettleWindow = 120 * time.Second
 揃ったときに active 主張を保留します。readiness は、ローカル BGP control plane の
 初回観測が完了し、provider inventory に基づく capture では provider self-observation
 も完了していることを意味します。`placementSettleWindow` は、readiness signal を渡せない
-caller のための保守的 fallback として残ります。
+caller のための保守的 fallback として残ります。readiness が既知のまま未完了で
+残る場合でも、フェンスは `placementSettleWindow * 3` で上限を持ちます。その後は
+`startupFenceReadiness.degraded: true` を出しつつ active 主張を解放し、provider API
+や観測経路の障害で overlay liveness を永久に止めないようにします。
 
 - 復帰直後のノードは、自分の BGP RIB / プロバイダー観測が収束する前に同 priority
   タイブレークを勝ってホルダーを奪い返してしまう。fence はこれを防ぎます。
@@ -194,7 +197,8 @@ RR publisher が消えた場合、routerd は期限切れ record を **last-know
 して扱い、source を `Stale` と表示し、生成済み tunnel、BGP peer、MobilityPool
 planning artifact を維持します。一度も見たことのない source だけが `Pending` のまま
 です。これにより route reflector 障害が leaf transport teardown に波及しません。
-`Stale` marker は topology freshness が更新されていないことを示す operator signal です。
+`Stale` marker と `warning` field は topology freshness が更新されていないことを示す
+operator signal です。
 
 ## capture strategy（クラウド受け口の作り方）
 
