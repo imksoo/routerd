@@ -420,7 +420,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		status["providerActionPhase"] = "Blocked"
 	}
 	if len(failedActions) > 0 {
-		status["providerActionPhase"] = "Failed"
+		status["providerActionPhase"] = "Degraded"
 		var failedAddrs []string
 		var failedTargets []string
 		var failedDetails []map[string]string
@@ -524,6 +524,8 @@ func mobilityPoolResourcePhase(status map[string]any) string {
 	switch strings.TrimSpace(fmt.Sprint(status["providerActionPhase"])) {
 	case "Failed":
 		return "Failed"
+	case "Degraded":
+		return "Degraded"
 	case "Blocked":
 		return "Degraded"
 	case "Pending":

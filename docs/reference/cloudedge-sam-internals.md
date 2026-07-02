@@ -50,6 +50,29 @@ But these are **not the source of truth for reachability**; they are operations
 provider inventory. Even if the provider API lags, overlay reachability recovers
 from BGP convergence alone.
 
+## MobilityPool status phases
+
+`MobilityPool.status.phase` summarizes overlay planning, ownership resolution,
+provider action reconciliation, and provider observation into one operator-facing
+state:
+
+| Phase | Meaning |
+| --- | --- |
+| `Ready` | Overlay planning, ownership resolution, provider actions, and provider observations are all converged. |
+| `Pending` | Convergence is still in progress, for example member discovery, BGP capture hold-down, provider actions, or provider observations are pending. |
+| `Degraded` | Dataplane liveness should continue, but a non-terminal problem needs attention. Examples include ownership conflicts, planner degradation, startup readiness fallback with `startupFenceReadiness.degraded: true`, or provider action failures that may still be retried by later reconciliation. |
+| `Failed` | Terminal failure. This is reserved for conditions where reconciliation has exhausted its retry budget or cannot safely make further progress without operator intervention. Transient provider executor failures should not use this phase while retry/reconciliation can continue. |
+
+Provider action status is also reported separately:
+
+| Field | Meaning |
+| --- | --- |
+| `providerActionPhase=OK` | No pending or failed provider action is currently blocking reconciliation. |
+| `providerActionPhase=Pending` | A desired provider action is not terminal yet. |
+| `providerActionPhase=Blocked` | Provider action execution is intentionally blocked by an upstream degraded condition, such as unresolved self capture or ownership conflict. |
+| `providerActionPhase=Degraded` | One or more provider actions failed, but reconciliation may still retry or supersede them. `providerActionFailedCount`, `providerActionFailedDetails`, and `providerActionFailedAt` carry the evidence. |
+| `providerActionPhase=Failed` | Reserved for retry-exhausted provider action failure. |
+
 ## The BGP community taxonomy
 
 The BGP communities that mobility attaches to `/32` advertisements are the

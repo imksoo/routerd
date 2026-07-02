@@ -465,9 +465,9 @@ func (r doctorRunner) doctorSAM() []doctorCheck {
 		checks = append(checks, r.doctorSAMOwnerTableRouteChecks(res.Metadata.Name, poolSpec, status)...)
 		checks = append(checks, r.doctorSAMBGPDeliveryChecks(res)...)
 		phase := stringStatus(status, "providerActionPhase")
-		if phase == "Failed" {
+		if phase == "Degraded" || phase == "Failed" {
 			errMsg := stringStatus(status, "providerActionError")
-			detail := "provider action failed"
+			detail := "provider action " + strings.ToLower(phase)
 			if errMsg != "" {
 				detail += ": " + errMsg
 			}
