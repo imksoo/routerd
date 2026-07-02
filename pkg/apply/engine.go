@@ -150,6 +150,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeFirewallPolicy(res, includePlan, &rr)
 		case "FirewallRule":
 			e.observeFirewallRule(res, includePlan, &rr)
+		case "FirewallFlowPinhole":
+			e.observeFirewallFlowPinhole(res, includePlan, &rr)
 		case "Hostname":
 			e.observeHostname(res, osNet, includePlan, &rr)
 		}
@@ -1134,6 +1136,22 @@ func (e *Engine) observeFirewallRule(res api.Resource, includePlan bool, rr *Res
 	rr.Observed["srcCIDRs"] = strings.Join(spec.SourceCIDRs, ",")
 	if includePlan {
 		rr.Plan = append(rr.Plan, fmt.Sprintf("%s %s/%d from %s to %s", spec.Action, defaultString(spec.Protocol, "any"), spec.Port, spec.FromZone, spec.ToZone))
+	}
+}
+
+func (e *Engine) observeFirewallFlowPinhole(res api.Resource, includePlan bool, rr *ResourceResult) {
+	spec, err := res.FirewallFlowPinholeSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	rr.Observed["fromZone"] = spec.FromZone
+	rr.Observed["toZone"] = spec.ToZone
+	rr.Observed["protocol"] = spec.Outbound.Protocol
+	rr.Observed["timeout"] = spec.Timeout
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("learn %s outbound flow from %s to %s and allow correlated inbound source ports", defaultString(spec.Outbound.Protocol, "udp"), spec.FromZone, spec.ToZone))
 	}
 }
 

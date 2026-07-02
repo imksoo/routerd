@@ -230,7 +230,7 @@ func referencedIPv4PolicyIPAddressSets(policies []api.Resource, sets map[string]
 	return referencedIPAddressSetsByRefs(refs, sets)
 }
 
-func referencedFirewallIPAddressSets(rules []api.Resource, sets map[string]nftIPAddressSet) []nftIPAddressSet {
+func referencedFirewallIPAddressSets(rules []api.Resource, flowPinholes []firewallFlowPinhole, sets map[string]nftIPAddressSet) []nftIPAddressSet {
 	var refs []string
 	for _, res := range rules {
 		spec, err := res.FirewallRuleSpec()
@@ -239,6 +239,10 @@ func referencedFirewallIPAddressSets(rules []api.Resource, sets map[string]nftIP
 		}
 		refs = append(refs, spec.DestinationSetRefs...)
 		refs = append(refs, spec.ExcludeDestinationSetRefs...)
+	}
+	for _, pinhole := range flowPinholes {
+		refs = append(refs, pinhole.SourceSetRef)
+		refs = append(refs, pinhole.DestinationSetRefs...)
 	}
 	return referencedIPAddressSetsByRefs(refs, sets)
 }

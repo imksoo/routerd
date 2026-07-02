@@ -711,6 +711,27 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				return fmt.Errorf("%s spec.toZone references missing FirewallZone %q", res.ID(), spec.ToZone)
 			}
 		}
+		if res.Kind == "FirewallFlowPinhole" {
+			spec, err := res.FirewallFlowPinholeSpec()
+			if err != nil {
+				return err
+			}
+			if spec.FromZone == "self" || !idx.Zones[spec.FromZone] {
+				return fmt.Errorf("%s spec.fromZone references missing FirewallZone %q", res.ID(), spec.FromZone)
+			}
+			if spec.ToZone == "self" || !idx.Zones[spec.ToZone] {
+				return fmt.Errorf("%s spec.toZone references missing FirewallZone %q", res.ID(), spec.ToZone)
+			}
+			if spec.Outbound.SourceSetRef != "" {
+				kind, name := splitResourceRef(spec.Outbound.SourceSetRef)
+				if kind != "IPAddressSet" || !idx.IPAddressSets[name] {
+					return fmt.Errorf("%s spec.outbound.sourceSetRef references missing IPAddressSet %q", res.ID(), spec.Outbound.SourceSetRef)
+				}
+			}
+			if err := validateIPAddressSetRefsExist(res.ID(), "spec.outbound.destinationSetRefs", spec.Outbound.DestinationSetRefs, idx.IPAddressSets); err != nil {
+				return err
+			}
+		}
 		if res.Kind == "FirewallPolicy" {
 			if _, err := res.FirewallPolicySpec(); err != nil {
 				return err
@@ -1429,6 +1450,9 @@ func resourceWhens(res api.Resource) []resourceWhenRef {
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "LocalServiceRedirect":
 		spec, _ := res.LocalServiceRedirectSpec()
+		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
+	case "FirewallFlowPinhole":
+		spec, _ := res.FirewallFlowPinholeSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "EgressRoutePolicy":
 		spec, _ := res.EgressRoutePolicySpec()

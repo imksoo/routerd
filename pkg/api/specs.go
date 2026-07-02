@@ -2423,6 +2423,28 @@ type LocalServiceRedirectRuleSpec struct {
 	RedirectPort      int      `yaml:"redirectPort" json:"redirectPort" jsonschema:"minimum=1,maximum=65535"`
 }
 
+type FirewallFlowPinholeSpec struct {
+	FromZone string                          `yaml:"fromZone" json:"fromZone"`
+	ToZone   string                          `yaml:"toZone" json:"toZone"`
+	Outbound FirewallFlowPinholeOutboundSpec `yaml:"outbound" json:"outbound"`
+	Inbound  FirewallFlowPinholeInboundSpec  `yaml:"inbound" json:"inbound"`
+	Timeout  string                          `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	When     ResourceWhenSpec                `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type FirewallFlowPinholeOutboundSpec struct {
+	SourceSetRef       string         `yaml:"sourceSetRef,omitempty" json:"sourceSetRef,omitempty"`
+	SourceCIDRs        []string       `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
+	DestinationSetRefs []string       `yaml:"destinationSetRefs,omitempty" json:"destinationSetRefs,omitempty"`
+	DestinationCIDRs   []string       `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
+	Protocol           string         `yaml:"protocol" json:"protocol" jsonschema:"enum=udp"`
+	DestinationPorts   []FirewallPort `yaml:"destinationPorts" json:"destinationPorts"`
+}
+
+type FirewallFlowPinholeInboundSpec struct {
+	SourcePorts []FirewallPort `yaml:"sourcePorts" json:"sourcePorts"`
+}
+
 type IPv4NATTranslationSpec struct {
 	Type        string                 `yaml:"type" json:"type" jsonschema:"enum=interfaceAddress,enum=address,enum=pool"`
 	Address     string                 `yaml:"address,omitempty" json:"address,omitempty"`
@@ -2913,6 +2935,10 @@ func (r Resource) IPAddressSetSpec() (IPAddressSetSpec, error) {
 
 func (r Resource) LocalServiceRedirectSpec() (LocalServiceRedirectSpec, error) {
 	return specAs[LocalServiceRedirectSpec](r)
+}
+
+func (r Resource) FirewallFlowPinholeSpec() (FirewallFlowPinholeSpec, error) {
+	return specAs[FirewallFlowPinholeSpec](r)
 }
 
 func (r Resource) FirewallZoneSpec() (FirewallZoneSpec, error) {

@@ -695,6 +695,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
+	case "FirewallFlowPinhole":
+		var spec FirewallFlowPinholeSpec
+		if err := raw.Spec.Decode(&spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
+		r.Spec = spec
 	case "IPv4PolicyRoute":
 		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "IPv4PolicyRouteSet":

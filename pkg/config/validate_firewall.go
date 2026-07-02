@@ -536,6 +536,72 @@ func validateFirewallResource(res api.Resource, targetOS platform.OS) (bool, err
 		if spec.Log.CopyRange < 0 {
 			return true, fmt.Errorf("%s spec.log.copyRange must be greater than or equal to 0", res.ID())
 		}
+	case "FirewallFlowPinhole":
+		if res.APIVersion != api.FirewallAPIVersion {
+			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.FirewallAPIVersion)
+		}
+		spec, err := res.FirewallFlowPinholeSpec()
+		if err != nil {
+			return true, err
+		}
+		if spec.FromZone == "" {
+			return true, fmt.Errorf("%s spec.fromZone is required", res.ID())
+		}
+		if spec.ToZone == "" {
+			return true, fmt.Errorf("%s spec.toZone is required", res.ID())
+		}
+		if spec.FromZone == spec.ToZone {
+			return true, fmt.Errorf("%s spec.fromZone and spec.toZone must be different", res.ID())
+		}
+		if spec.Outbound.Protocol != "udp" {
+			return true, fmt.Errorf("%s spec.outbound.protocol must be udp", res.ID())
+		}
+		if spec.Outbound.SourceSetRef == "" && len(spec.Outbound.SourceCIDRs) == 0 {
+			return true, fmt.Errorf("%s spec.outbound.sourceSetRef or spec.outbound.sourceCIDRs is required", res.ID())
+		}
+		if spec.Outbound.SourceSetRef != "" {
+			kind, name := splitResourceRef(spec.Outbound.SourceSetRef)
+			if kind != "IPAddressSet" || strings.TrimSpace(name) == "" {
+				return true, fmt.Errorf("%s spec.outbound.sourceSetRef must reference IPAddressSet", res.ID())
+			}
+		}
+		for i, cidr := range spec.Outbound.SourceCIDRs {
+			prefix, err := netip.ParsePrefix(cidr)
+			if err != nil || !prefix.Addr().Is4() {
+				return true, fmt.Errorf("%s spec.outbound.sourceCIDRs[%d] must be an IPv4 prefix", res.ID(), i)
+			}
+		}
+		for i, cidr := range spec.Outbound.DestinationCIDRs {
+			prefix, err := netip.ParsePrefix(cidr)
+			if err != nil || !prefix.Addr().Is4() {
+				return true, fmt.Errorf("%s spec.outbound.destinationCIDRs[%d] must be an IPv4 prefix", res.ID(), i)
+			}
+		}
+		if err := validateIPAddressSetRefs(res.ID(), "spec.outbound.destinationSetRefs", spec.Outbound.DestinationSetRefs); err != nil {
+			return true, err
+		}
+		if len(spec.Outbound.DestinationPorts) == 0 {
+			return true, fmt.Errorf("%s spec.outbound.destinationPorts is required", res.ID())
+		}
+		if err := validateFirewallPortList(res.ID(), "spec.outbound.destinationPorts", spec.Outbound.DestinationPorts); err != nil {
+			return true, err
+		}
+		if len(spec.Inbound.SourcePorts) == 0 {
+			return true, fmt.Errorf("%s spec.inbound.sourcePorts is required", res.ID())
+		}
+		if err := validateFirewallPortList(res.ID(), "spec.inbound.sourcePorts", spec.Inbound.SourcePorts); err != nil {
+			return true, err
+		}
+		timeout := strings.TrimSpace(spec.Timeout)
+		if timeout != "" {
+			d, err := time.ParseDuration(timeout)
+			if err != nil {
+				return true, fmt.Errorf("%s spec.timeout must be a duration: %w", res.ID(), err)
+			}
+			if d <= 0 {
+				return true, fmt.Errorf("%s spec.timeout must be greater than zero", res.ID())
+			}
+		}
 	case "FirewallRule":
 		if res.APIVersion != api.FirewallAPIVersion {
 			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.FirewallAPIVersion)
