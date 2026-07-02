@@ -196,6 +196,36 @@ func TestFilterRouterByWhenUsesObjectStatusField(t *testing.T) {
 	}
 }
 
+func TestFilterRouterByWhenKeepsResourceWhenStatusUnknown(t *testing.T) {
+	address := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+		Metadata: api.ObjectMeta{Name: "ds-lite-a-source"},
+		Spec: api.IPv4StaticAddressSpec{
+			Interface: "ds-lite-a",
+			Address:   "192.0.0.2/29",
+			When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+				"VirtualAddress/lan-gw-v4.role": {Equals: "master"},
+			}},
+		},
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{address}}}
+	store := statefulMapStore{mapStore: mapStore{
+		api.NetAPIVersion + "/VirtualAddress/lan-gw-v4": {"role": "unknown"},
+	}}
+
+	if got := FilterRouterByWhen(router, store); len(got.Spec.Resources) != 1 {
+		t.Fatalf("unknown role resources = %d, want resource preserved", len(got.Spec.Resources))
+	}
+	if !ResourceWhenIndeterminate(ResourceWhen(address), store) {
+		t.Fatal("expected unknown role to make when indeterminate")
+	}
+
+	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-gw-v4"]["role"] = "backup"
+	if got := FilterRouterByWhen(router, store); len(got.Spec.Resources) != 0 {
+		t.Fatalf("backup role resources = %d, want 0", len(got.Spec.Resources))
+	}
+}
+
 func TestFilterRouterByWhenClearsFilteredBFDRef(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
