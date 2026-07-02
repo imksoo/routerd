@@ -744,7 +744,7 @@ func TestControllerBGPModeClearsStaleProviderActionFailureStatus(t *testing.T) {
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
-		"providerActionPhase":           "Failed",
+		"providerActionPhase":           "Degraded",
 		"providerActionError":           "provider API unavailable",
 		"providerActionFailedAddresses": []string{"10.88.60.11/32"},
 		"providerActionFailedTargets":   []string{"10.88.60.11/32"},
@@ -911,8 +911,8 @@ func TestControllerBGPModeReportsFailedForwardingProviderAction(t *testing.T) {
 		t.Fatalf("second Reconcile: %v", err)
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
-	if status["phase"] != "Failed" || status["providerActionPhase"] != "Failed" {
-		t.Fatalf("status = %#v, want failed provider action phase", status)
+	if status["phase"] != "Degraded" || status["providerActionPhase"] != "Degraded" {
+		t.Fatalf("status = %#v, want degraded provider action phase", status)
 	}
 	if fmt.Sprint(status["providerActionFailedCount"]) != "1" || status["providerActionError"] != "source/dest check update denied" {
 		t.Fatalf("status = %#v, want forwarding failure count/error", status)
@@ -930,6 +930,25 @@ func TestControllerBGPModeReportsFailedForwardingProviderAction(t *testing.T) {
 	}
 	if detail["action"] != "ensure-forwarding-enabled" || detail["target"] != "eni-a" || detail["idempotencyKey"] != forwarding.IdempotencyKey {
 		t.Fatalf("providerActionFailedDetails = %#v, want forwarding target detail", details)
+	}
+
+	retryID, err := importApprovedAction(t, forwarding, source, store, failedAt.Add(time.Second))
+	if err != nil {
+		t.Fatalf("reimport failed action: %v", err)
+	}
+	if retryID != id {
+		t.Fatalf("requeued action id = %d, want existing id %d", retryID, id)
+	}
+	if err := store.MarkActionResult(retryID, routerstate.ActionSucceeded, "set source/dest check", "", nil, failedAt.Add(2*time.Second)); err != nil {
+		t.Fatalf("MarkActionResult(success): %v", err)
+	}
+	controller.Now = func() time.Time { return now.Add(5 * time.Second) }
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("third Reconcile: %v", err)
+	}
+	status = store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["providerActionPhase"] == "Degraded" || fmt.Sprint(status["providerActionFailedCount"]) != "0" {
+		t.Fatalf("provider action degraded status did not clear after success: %#v", status)
 	}
 }
 
