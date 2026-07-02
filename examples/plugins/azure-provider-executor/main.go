@@ -99,6 +99,7 @@ const (
 	actionEnsureFwdEnabled        = "ensure-forwarding-enabled"
 	actionEnsureFwdDisabled       = "ensure-forwarding-disabled"
 	captureStrategyRouteTable     = "route-table"
+	networkAPIVersion             = "2023-09-01"
 	defaultAzCommandTimeout       = 60 * time.Second
 	azCommandTimeoutEnv           = "ROUTERD_AZURE_EXECUTOR_COMMAND_TIMEOUT"
 	legacyAzCommandTimeoutMsEnv   = "ROUTERD_AZURE_EXECUTOR_COMMAND_TIMEOUT_MS"
@@ -740,12 +741,137 @@ func sleepBeforeRetry(ctx context.Context, attempt int) error {
 }
 
 func createIPConfig(ctx context.Context, runner azRunner, t nicTarget) error {
-	_, err := callAzWithRetry(ctx, runner, "network", "nic", "ip-config", "create",
-		"--resource-group", t.resourceGroup,
-		"--nic-name", t.nicName,
-		"--name", t.ipConfigName,
-		"--private-ip-address", t.address)
+	_, _, err := ensureNICAssignedAndForwarding(ctx, runner, t)
 	return err
+}
+
+func ensureNICAssignedAndForwarding(ctx context.Context, runner azRunner, t nicTarget) (string, bool, error) {
+	nic, err := showNIC(ctx, runner, t.nicID)
+	if err != nil {
+		return "", false, err
+	}
+	body, changed, err := buildNICAssignForwardingBody(nic, t)
+	if err != nil {
+		return "", false, err
+	}
+	if !changed {
+		return string(body), false, nil
+	}
+	_, err = putNIC(ctx, runner, t.nicID, body)
+	return string(body), true, err
+}
+
+func putNIC(ctx context.Context, runner azRunner, nicID string, body []byte) ([]byte, error) {
+	return callAzWithRetry(ctx, runner, "rest",
+		"--method", "put",
+		"--uri", nicResourceURI(nicID),
+		"--body", string(body))
+}
+
+func nicResourceURI(nicID string) string {
+	if strings.Contains(nicID, "?") {
+		return nicID
+	}
+	return strings.TrimSpace(nicID) + "?api-version=" + networkAPIVersion
+}
+
+func buildNICAssignForwardingBody(nic nicShow, t nicTarget) ([]byte, bool, error) {
+	if nic.Raw == nil {
+		return nil, false, fmt.Errorf("network nic show output missing raw body")
+	}
+	body := cloneJSONMap(nic.Raw)
+	body["enableIPForwarding"] = true
+
+	ipConfigs, err := rawIPConfigurations(body)
+	if err != nil {
+		return nil, false, err
+	}
+	hasAddress := false
+	for _, cfg := range ipConfigs {
+		if sameIP(rawIPConfigAddress(cfg), t.address) {
+			hasAddress = true
+			break
+		}
+	}
+	if !hasAddress {
+		subnet, ok := subnetForNewIPConfig(ipConfigs)
+		if !ok {
+			return nil, false, fmt.Errorf("network nic show output missing subnet for new ip-config")
+		}
+		body["ipConfigurations"] = append(ipConfigs, map[string]any{
+			"name": t.ipConfigName,
+			"properties": map[string]any{
+				"privateIPAddress":          t.address,
+				"privateIPAllocationMethod": "Static",
+				"primary":                   false,
+				"subnet":                    subnet,
+			},
+		})
+	}
+
+	changed := !nic.EnableIPForwarding || !hasAddress
+	out, err := json.Marshal(body)
+	if err != nil {
+		return nil, false, fmt.Errorf("marshal network nic update body: %w", err)
+	}
+	return out, changed, nil
+}
+
+func cloneJSONMap(in map[string]any) map[string]any {
+	var out map[string]any
+	b, err := json.Marshal(in)
+	if err != nil {
+		return map[string]any{}
+	}
+	if err := json.Unmarshal(b, &out); err != nil {
+		return map[string]any{}
+	}
+	return out
+}
+
+func rawIPConfigurations(body map[string]any) ([]any, error) {
+	raw, ok := body["ipConfigurations"]
+	if !ok {
+		return nil, fmt.Errorf("network nic show output missing ipConfigurations")
+	}
+	configs, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("network nic show output has invalid ipConfigurations")
+	}
+	return configs, nil
+}
+
+func rawIPConfigAddress(cfg any) string {
+	m, ok := cfg.(map[string]any)
+	if !ok {
+		return ""
+	}
+	for _, key := range []string{"privateIPAddress", "privateIpAddress"} {
+		if v, ok := m[key].(string); ok && strings.TrimSpace(v) != "" {
+			return bareIP(v)
+		}
+	}
+	props, _ := m["properties"].(map[string]any)
+	for _, key := range []string{"privateIPAddress", "privateIpAddress"} {
+		if v, ok := props[key].(string); ok && strings.TrimSpace(v) != "" {
+			return bareIP(v)
+		}
+	}
+	return ""
+}
+
+func subnetForNewIPConfig(configs []any) (any, bool) {
+	for _, cfg := range configs {
+		m, ok := cfg.(map[string]any)
+		if !ok {
+			continue
+		}
+		props, _ := m["properties"].(map[string]any)
+		if subnet, ok := props["subnet"]; ok {
+			return subnet, true
+		}
+	}
+	return nil, false
 }
 
 func deleteIPConfig(ctx context.Context, runner azRunner, h ipConfigHolder) error {
@@ -889,14 +1015,34 @@ func ensureForwardingEnabled(ctx context.Context, spec executeActionRequestSpec,
 		return res
 	}
 
-	if _, err := runner(ctx, "network", "nic", "update",
-		"--ids", t.nicID,
-		"--ip-forwarding", "true"); err != nil {
-		return failed("ensure-forwarding-enabled execute: nic update failed", err)
+	if nic.EnableIPForwarding {
+		res.Status.Status = statusSucceeded
+		res.Status.Message = fmt.Sprintf("ipForwarding already true on %s (prior=%s)", t.nicID, prior)
+		return res
+	}
+	body, err := buildNICForwardingBody(nic)
+	if err != nil {
+		return failed("ensure-forwarding-enabled execute: build nic update body failed", err)
+	}
+	if _, err := putNIC(ctx, runner, t.nicID, body); err != nil {
+		return failed("ensure-forwarding-enabled execute: nic put failed", err)
 	}
 	res.Status.Status = statusSucceeded
 	res.Status.Message = fmt.Sprintf("set ipForwarding=true on %s (prior=%s)", t.nicID, prior)
 	return res
+}
+
+func buildNICForwardingBody(nic nicShow) ([]byte, error) {
+	if nic.Raw == nil {
+		return nil, fmt.Errorf("network nic show output missing raw body")
+	}
+	body := cloneJSONMap(nic.Raw)
+	body["enableIPForwarding"] = true
+	out, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal network nic update body: %w", err)
+	}
+	return out, nil
 }
 
 // unassignSecondaryIP is the undo of assign-secondary-ip: delete the ip-config.
