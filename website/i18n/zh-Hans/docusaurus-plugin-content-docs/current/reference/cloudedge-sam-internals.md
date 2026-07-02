@@ -139,9 +139,9 @@ plane has completed an initial observation and, for provider-inventory-backed
 captures, provider self-observation has completed. `placementSettleWindow`
 remains as a conservative fallback for callers that do not provide readiness
 signals. When readiness is known but remains incomplete, the fence is bounded:
-after `placementSettleWindow * 3` routerd releases the active assertion with
-`startupFenceReadiness.degraded: true` so overlay liveness is not blocked
-forever by a provider API or observation failure.
+after `placementSettleWindow * 3` (360 seconds by default) routerd releases the
+active assertion with `startupFenceReadiness.degraded: true` so overlay liveness
+is not blocked forever by a provider API or observation failure.
 
 - A just-returned node would otherwise win the equal-priority tie-break and
   reclaim holdership before its fresh BGP RIB / provider observations converge.
@@ -251,8 +251,8 @@ ownership resolver marks the address `Conflict` with
 The resolver also records a deterministic `conflictWinnerNode`:
 
 - if the healed BGP RIB has a home-owner path for the `/32`, that BGP owner wins;
-- otherwise the freshest provider observation wins, with `nodeRef` as the stable
-  tie-break.
+- otherwise the lowest stable owner key wins (`nodeRef`, provider ref, resource
+  ref, NIC ref, subnet ref, then address), independent of provider scan recency.
 
 Losers do not create new provider capture actions. If the losing node observes
 the conflicting `/32` still attached to its own provider-secondary capture, the
