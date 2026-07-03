@@ -222,11 +222,10 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 		if gate := EvaluateCaptureGate(spec.Capture, opts.StatusReader); !gate.Active {
 			continue
 		}
-		bgpDelivery := strings.TrimSpace(spec.Delivery.Mode) == "bgp"
 		addForwarding()
 		switch captureType {
 		case "proxy-arp":
-			proxyActions, err := planProxyARPCapture(resource, spec, address, interfaceAliases, interfaces, bgpDelivery)
+			proxyActions, err := planProxyARPCapture(resource, spec, address, interfaceAliases, interfaces)
 			if err != nil {
 				return nil, err
 			}
@@ -248,7 +247,7 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 	return actions, nil
 }
 
-func planProxyARPCapture(resource api.Resource, spec api.RemoteAddressClaimSpec, address string, interfaceAliases map[string]string, enabled map[string]bool, bgpDelivery bool) ([]CaptureAction, error) {
+func planProxyARPCapture(resource api.Resource, spec api.RemoteAddressClaimSpec, address string, interfaceAliases map[string]string, enabled map[string]bool) ([]CaptureAction, error) {
 	iface := ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), interfaceAliases)
 	if iface == "" {
 		return nil, fmt.Errorf("%s spec.capture.interface is required for proxy-arp", resource.ID())
@@ -258,7 +257,7 @@ func planProxyARPCapture(resource api.Resource, spec api.RemoteAddressClaimSpec,
 		enabled[iface] = true
 		actions = append(actions, CaptureAction{Kind: "sysctl", Key: "net.ipv4.conf." + iface + ".proxy_arp", Value: "1", Interface: iface})
 	}
-	actions = append(actions, CaptureAction{Kind: "proxy-neighbor", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, GratuitousARP: wantsProxyARPTransitionRefresh(spec.Capture, bgpDelivery)})
+	actions = append(actions, CaptureAction{Kind: "proxy-neighbor", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, GratuitousARP: wantsGratuitousARP(spec.Capture)})
 	return actions, nil
 }
 
@@ -559,16 +558,6 @@ func wantsGratuitousARP(capture api.AddressCapture) bool {
 		return true
 	}
 	return strings.TrimSpace(capture.ActiveWhen.Type) == "vrrp-master"
-}
-
-func wantsProxyARPTransitionRefresh(capture api.AddressCapture, bgpDelivery bool) bool {
-	if capture.GratuitousARPRefresh != nil {
-		return *capture.GratuitousARPRefresh
-	}
-	if wantsGratuitousARP(capture) {
-		return true
-	}
-	return bgpDelivery
 }
 
 func ProxyARPInterfaces(router *api.Router) []string {

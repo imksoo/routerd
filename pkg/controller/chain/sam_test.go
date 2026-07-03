@@ -329,51 +329,6 @@ func TestSAMControllerGARPFailureDoesNotFailCapture(t *testing.T) {
 	}
 }
 
-func TestSAMControllerBGPProxyARPSendsGARPOnNewHolderByDefault(t *testing.T) {
-	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "lan0")
-	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
-	spec.Delivery = api.AddressDelivery{PeerRef: "cloud", Mode: "bgp"}
-	router.Spec.Resources[1].Spec = spec
-
-	store := &samStore{objects: map[string]map[string]any{}}
-	applier := &fakeSAMApplier{}
-	garp := &fakeSAMGARP{}
-	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier, GARP: garp}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	assertSAMCalls(t, applier.calls, []string{"proxyarp:lan0=1", "ensure:10.0.1.123/32@lan0"})
-	if len(garp.calls) != 1 || garp.calls[0] != "10.0.1.123/32@lan0" {
-		t.Fatalf("GARP calls = %#v, want new holder refresh", garp.calls)
-	}
-
-	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
-	if status["lastGARPSent"] != true {
-		t.Fatalf("status = %#v, want lastGARPSent", status)
-	}
-}
-
-func TestSAMControllerBGPProxyARPDisableGARPRefresh(t *testing.T) {
-	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "lan0")
-	disable := false
-	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
-	spec.Capture.GratuitousARPRefresh = &disable
-	spec.Delivery = api.AddressDelivery{PeerRef: "cloud", Mode: "bgp"}
-	router.Spec.Resources[1].Spec = spec
-
-	store := &samStore{objects: map[string]map[string]any{}}
-	applier := &fakeSAMApplier{}
-	garp := &fakeSAMGARP{}
-	controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier, GARP: garp}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	assertSAMCalls(t, applier.calls, []string{"proxyarp:lan0=1", "ensure:10.0.1.123/32@lan0"})
-	if len(garp.calls) != 0 {
-		t.Fatalf("GARP calls = %#v, want disabled", garp.calls)
-	}
-}
-
 func TestSAMControllerGatedProxyNeighborCleansOnMasterToBackupWithoutGARP(t *testing.T) {
 	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "lan0")
 	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
