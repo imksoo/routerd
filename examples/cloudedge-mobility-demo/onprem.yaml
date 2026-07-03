@@ -221,7 +221,7 @@ spec:
         selfNodeRef: onprem-router
         mode: ipip
         encryption: wireguard
-        innerPrefix: 10.255.0.0/24
+        innerPrefix: 10.255.0.0/20
         topologyNodeRefs: [onprem-router, aws-router-a, aws-router-b, azure-router, azure-router-b, oci-router, oci-router-b]
         underlayInterface: wg-hybrid
         localEndpointFrom: { resource: IPv4StaticAddress/wg-hybrid-ipv4, field: address }

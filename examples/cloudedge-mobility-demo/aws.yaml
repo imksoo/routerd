@@ -207,7 +207,7 @@ spec:
         selfNodeRef: "${DEMO_SELF_NODE}"
         mode: ipip
         encryption: wireguard
-        innerPrefix: 10.255.0.0/24
+        innerPrefix: 10.255.0.0/20
         topologyNodeRefs:
           - onprem-router
           - "${DEMO_SELF_NODE}"

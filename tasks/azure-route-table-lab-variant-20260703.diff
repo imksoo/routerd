@@ -1,0 +1,113 @@
+# Azure route-table SAM lab variant proposal, 2026-07-03
+#
+# Status: proposal only. Do not apply this file directly.
+# Operator rule for phase 2: copy the relevant hunks into the active
+# routerd-labs OpenTofu/config generator branch, review with a local diff, then
+# run certification. This phase-1 artifact intentionally did not run
+# `tofu plan`, `tofu apply`, cloud CLI commands, lab operations, or sam-e2e.
+#
+# Goal:
+# - create or reuse an Azure UDR route table for the SAM subnet;
+# - associate it with the Azure SAM subnet;
+# - switch only the Azure leaf MobilityPool cloud capture profile from
+#   secondary-ip to route-table;
+# - provide routeTableRef and nextHopIPAddress to the Azure executor/inventory.
+
+diff --git a/cloudedge-mobility/terraform/modules/azure_sam_pair/main.tf b/cloudedge-mobility/terraform/modules/azure_sam_pair/main.tf
+new file mode 100644
+index 00000000..00000000
+--- /dev/null
++++ b/cloudedge-mobility/terraform/modules/azure_sam_pair/main.tf
+@@
++locals {
++  common_tags = {
++    ManagedBy         = "codex"
++    Owner             = "codex"
++    Project           = "routerd-cloudedge-sam"
++    Environment       = "validation"
++    ExpiresAt         = var.expires_at
++    "routerd-purpose" = var.purpose
++    "routerd-commit"  = var.commit
++    "routerd-run-id"  = var.run_id
++  }
++}
++
++resource "azurerm_route_table" "sam_udr" {
++  name                          = "rt-routerd-${var.run_id}"
++  location                      = azurerm_resource_group.lab.location
++  resource_group_name           = azurerm_resource_group.lab.name
++  bgp_route_propagation_enabled = true
++
++  tags = local.common_tags
++}
++
++resource "azurerm_subnet_route_table_association" "sam_udr" {
++  subnet_id      = azurerm_subnet.lab.id
++  route_table_id = azurerm_route_table.sam_udr.id
++}
++
++output "sam_route_table_id" {
++  value = azurerm_route_table.sam_udr.id
++}
++
++output "router_a_next_hop_ip" {
++  value = azurerm_network_interface.node["router_a"].private_ip_address
++}
++
++output "router_b_next_hop_ip" {
++  value = azurerm_network_interface.node["router_b"].private_ip_address
++}
+diff --git a/examples/cloudedge-mobility-demo/azure.yaml b/examples/cloudedge-mobility-demo/azure.yaml
+index 00000000..00000000 100644
+--- a/examples/cloudedge-mobility-demo/azure.yaml
++++ b/examples/cloudedge-mobility-demo/azure.yaml
+@@
+         values:
+           self.region: "${AZURE_REGION}"
+           self.resourceGroup: "${AZURE_RESOURCE_GROUP}"
+           self.subnetRef: "${AZURE_SUBNET_REF}"
++          self.routeTableRef: "${AZURE_ROUTE_TABLE_REF}"
++          self.nextHopIPAddress: "${DEMO_SELF_UNDERLAY_IP}"
+         profiles:
+           cloudCaptures:
+             azure-self:
+               capture:
+                 type: provider-secondary-ip
+                 interface: eth0
+                 providerRef: azure-lab
+-                providerMode: secondary-ip
+-                captureStrategy: secondary-ip
++                providerMode: route-table
++                captureStrategy: route-table
+                 configureOSAddress: false
+                 targetFrom:
+                   region: self.region
+                   resourceGroup: self.resourceGroup
++                  routeTableRef: self.routeTableRef
++                  nextHopIPAddress: self.nextHopIPAddress
+               ownershipDiscovery:
+                 mode: provider-private-ip
+                 subnetRefFrom: self.subnetRef
++                routeTableRefFrom: self.routeTableRef
+                 scanInterval: 60s
+                 leaseTTL: 10m
+@@
+       metadata: { name: azure-live-mutation }
+       spec:
+@@
+-        allowedActions: [assign-secondary-ip, unassign-secondary-ip, ensure-forwarding-enabled, ensure-forwarding-disabled]
++        allowedActions: [assign-secondary-ip, unassign-secondary-ip, assign-route-table-route, unassign-route-table-route, ensure-forwarding-enabled, ensure-forwarding-disabled]
+         allowedCIDRs: [10.77.60.0/24]
+diff --git a/examples/cloudedge-mobility-demo/env.example b/examples/cloudedge-mobility-demo/env.example
+index 00000000..00000000 100644
+--- a/examples/cloudedge-mobility-demo/env.example
++++ b/examples/cloudedge-mobility-demo/env.example
+@@
+ AZURE_SUBSCRIPTION_ID=
+ AZURE_RESOURCE_GROUP=
+ AZURE_REGION=
+ AZURE_SUBNET_REF=
++AZURE_ROUTE_TABLE_REF=
++# Per Azure leaf. Use the leaf NIC primary private IP; Azure UDR next hop must
++# be the holder appliance IP, not the moved /32.
++DEMO_SELF_UNDERLAY_IP=
