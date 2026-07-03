@@ -481,6 +481,69 @@ func TestAssignExecuteIssuesIPConfigCreate(t *testing.T) {
 	}
 }
 
+func TestDispatchRecordsAzCallHistoryOnSuccess(t *testing.T) {
+	f := &fakeAz{}
+	res := dispatchWith(reqSpec(actionEnsureFwdEnabled, modeExecute), f.run)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	if res.Status.Observed["azCallCount"] != "2" {
+		t.Fatalf("observed = %+v, want azCallCount=2", res.Status.Observed)
+	}
+	calls := observedAzCalls(t, res)
+	if len(calls) != 2 {
+		t.Fatalf("azCalls = %+v, want 2 calls", calls)
+	}
+	for i, call := range calls {
+		if call.ExitCode != 0 {
+			t.Fatalf("call %d exitCode = %d, want 0", i, call.ExitCode)
+		}
+		if call.WallTimeMS < 0 {
+			t.Fatalf("call %d wallTimeMs = %d, want non-negative", i, call.WallTimeMS)
+		}
+	}
+	if calls[0].Command != "network nic show" || calls[1].Command != "network nic update" {
+		t.Fatalf("azCalls commands = %+v, want show then update", calls)
+	}
+}
+
+func TestDispatchRecordsAzCallHistoryOnFailureWithoutDebugRateLimit(t *testing.T) {
+	f := &fakeAz{err: fmt.Errorf("exit status 1: stderr first\nstderr last")}
+	res := dispatchWith(reqSpec(actionAssignSecondaryIP, modeExecute), f.run)
+	if res.Status.Status != statusFailed {
+		t.Fatalf("want failed, got %q", res.Status.Status)
+	}
+	if res.Status.Observed["azCallCount"] != "1" {
+		t.Fatalf("observed = %+v, want azCallCount=1", res.Status.Observed)
+	}
+	calls := observedAzCalls(t, res)
+	if len(calls) != 1 {
+		t.Fatalf("azCalls = %+v, want 1 call", calls)
+	}
+	if calls[0].ExitCode != 1 {
+		t.Fatalf("exitCode = %d, want 1", calls[0].ExitCode)
+	}
+	if !strings.Contains(calls[0].StderrTail, "stderr last") {
+		t.Fatalf("stderrTail = %q, want stderr last", calls[0].StderrTail)
+	}
+	if _, ok := res.Status.Observed["azRateLimitRemaining"]; ok {
+		t.Fatalf("azRateLimitRemaining recorded with debug off: %+v", res.Status.Observed)
+	}
+}
+
+func TestExtractAzureRateLimitRemainingHeaders(t *testing.T) {
+	stderr := strings.Join([]string{
+		"cli.azure.cli.core.sdk.policies: Response headers:",
+		"    'x-ms-ratelimit-remaining-subscription-writes': '1199'",
+		"    'x-ms-ratelimit-remaining-subscription-reads': '14999'",
+	}, "\n")
+	got := extractAzureRateLimitRemaining(stderr)
+	if got["x-ms-ratelimit-remaining-subscription-writes"] != "1199" ||
+		got["x-ms-ratelimit-remaining-subscription-reads"] != "14999" {
+		t.Fatalf("rate limits = %+v", got)
+	}
+}
+
 func TestAssignExecuteFailsAzureAddressConflictWithoutSeizeParameter(t *testing.T) {
 	f := newSeizeFakeAz()
 	f.oldHolds = false
