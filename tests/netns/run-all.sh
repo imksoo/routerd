@@ -14,6 +14,7 @@ scripts=(
   ingress-conntrack-survive.sh
   forcefrag-df-forward.sh
   sam-proxy-arp-transition-refresh.sh
+  sam-scoped-conntrack-cleanup.sh
 )
 
 for script in "${scripts[@]}"; do

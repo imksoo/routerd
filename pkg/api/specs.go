@@ -2065,6 +2065,10 @@ type MobilityCapturePolicy struct {
 type MobilityDeliveryPolicy struct {
 	// Mode selects delivery. Empty means bgp delivery.
 	Mode string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=bgp"`
+	// ConntrackCleanupOnSeize removes conntrack entries whose source or
+	// destination is the seized /32 after this node is observed as the BGP
+	// holder. It is opt-in and scoped to the single address.
+	ConntrackCleanupOnSeize *bool `yaml:"conntrackCleanupOnSeize,omitempty" json:"conntrackCleanupOnSeize,omitempty"`
 }
 
 // MobilityAuthority declares who arbitrates address ownership in the pool.

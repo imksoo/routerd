@@ -8348,6 +8348,10 @@
                         "additionalProperties": false,
                         "description": "DeliveryPolicy selects the pool-level delivery control plane. Empty means\nbgp; owned /32s are advertised and remote /32s are learned through BGP.",
                         "properties": {
+                          "conntrackCleanupOnSeize": {
+                            "description": "ConntrackCleanupOnSeize removes conntrack entries whose source or\ndestination is the seized /32 after this node is observed as the BGP\nholder. It is opt-in and scoped to the single address.",
+                            "type": "boolean"
+                          },
                           "mode": {
                             "description": "Mode selects delivery. Empty means bgp delivery.",
                             "enum": [
