@@ -1067,6 +1067,54 @@ func TestLANAddressControllerPopulatesInterfaceBeforeDependencyCheck(t *testing.
 	}
 }
 
+func TestLANAddressControllerUsesObservedPrefixDelegationStatus(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lo", Managed: false}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-base"}, Spec: api.IPv6DelegatedAddressSpec{
+			PrefixDelegation: "wan-pd",
+			Interface:        "lan",
+			SubnetID:         "1",
+			AddressSuffix:    "::1",
+			DependsOn: []api.ResourceDependencySpec{
+				{Resource: "DHCPv6PrefixDelegation/wan-pd", Phase: daemonapi.ResourcePhaseBound},
+				{Resource: "Interface/lan", Phase: "Up"},
+			},
+		}},
+	}}}
+	store := mapStore{}
+	store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{
+		"currentPrefix": "fdc7:d277:3de:b780::/60",
+		"observed": map[string]any{
+			"phase":         daemonapi.ResourcePhaseBound,
+			"currentPrefix": "2409:10:3d60:1220::/60",
+		},
+	})
+	var got []string
+	controller := LANAddressController{
+		Router: router,
+		Store:  store,
+		AddressPresent: func(context.Context, string, string) bool {
+			return false
+		},
+		Command: func(ctx context.Context, name string, args ...string) error {
+			got = append([]string{name}, args...)
+			return nil
+		},
+	}
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"ip", "-6", "addr", "replace", "2409:10:3d60:1221::1/64", "dev", "lo"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("command = %v, want %v", got, want)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base")
+	if status["phase"] != "Applied" || status["address"] != "2409:10:3d60:1221::1/64" {
+		t.Fatalf("delegated address status = %#v", status)
+	}
+}
+
 func TestLANAddressControllerDeletesStaleIPv6BeforeApply(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lo", Managed: false}},
