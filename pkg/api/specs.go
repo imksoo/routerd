@@ -2020,9 +2020,10 @@ type MobilityMemberCapture struct {
 	// CIDRs inside the mobility prefix. Use this for local-only infrastructure
 	// addresses such as a PVE Simple SDN gateway address that must not be
 	// answered across the extended segment.
-	ExcludeAddresses []string          `yaml:"excludeAddresses,omitempty" json:"excludeAddresses,omitempty"`
-	GratuitousARP    bool              `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
-	ActiveWhen       CaptureActiveWhen `yaml:"activeWhen,omitempty" json:"activeWhen,omitempty"`
+	ExcludeAddresses     []string          `yaml:"excludeAddresses,omitempty" json:"excludeAddresses,omitempty"`
+	GratuitousARP        bool              `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
+	GratuitousARPRefresh *bool             `yaml:"gratuitousARPRefresh,omitempty" json:"gratuitousARPRefresh,omitempty"`
+	ActiveWhen           CaptureActiveWhen `yaml:"activeWhen,omitempty" json:"activeWhen,omitempty"`
 	// Target carries non-secret provider target hints such as region,
 	// compartmentId, resourceGroup, nicName, or ipConfigName. It is copied to
 	// provider ActionPlan.target; credentials and tokens do not belong here.
@@ -2114,9 +2115,10 @@ type AddressCapture struct {
 	Interface          string `yaml:"interface,omitempty" json:"interface,omitempty"`
 	// ExcludeAddresses prevents proxy-ARP capture for selected IPv4 addresses
 	// or CIDRs inside the mobility prefix.
-	ExcludeAddresses []string          `yaml:"excludeAddresses,omitempty" json:"excludeAddresses,omitempty"`
-	GratuitousARP    bool              `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
-	ActiveWhen       CaptureActiveWhen `yaml:"activeWhen,omitempty" json:"activeWhen,omitempty"`
+	ExcludeAddresses     []string          `yaml:"excludeAddresses,omitempty" json:"excludeAddresses,omitempty"`
+	GratuitousARP        bool              `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
+	GratuitousARPRefresh *bool             `yaml:"gratuitousARPRefresh,omitempty" json:"gratuitousARPRefresh,omitempty"`
+	ActiveWhen           CaptureActiveWhen `yaml:"activeWhen,omitempty" json:"activeWhen,omitempty"`
 }
 
 type AddressDelivery struct {

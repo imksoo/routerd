@@ -6,6 +6,7 @@ package chain
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"net"
 	"os"
@@ -13,9 +14,11 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/sam"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 )
 
 type netlinkSAMProxyNeighborApplier struct{}
@@ -33,12 +36,10 @@ func defaultSAMProxyNeighborApplier() samProxyNeighborApplier {
 }
 
 func defaultSAMGratuitousARPAnnouncer() samGratuitousARPAnnouncer {
-	return commandSAMGratuitousARPAnnouncer{}
+	return packetSAMGratuitousARPAnnouncer{}
 }
 
-type commandSAMGratuitousARPAnnouncer struct {
-	Command func(context.Context, string, ...string) ([]byte, error)
-}
+type packetSAMGratuitousARPAnnouncer struct{}
 
 func (netlinkSAMProxyNeighborApplier) SetProxyARP(ctx context.Context, ifname string, enabled bool) error {
 	value := "0"
@@ -57,7 +58,7 @@ func samSetSysctl(ctx context.Context, key, value string) error {
 	return nil
 }
 
-func (a commandSAMGratuitousARPAnnouncer) SendGratuitousARP(ctx context.Context, address, ifname string) error {
+func (packetSAMGratuitousARPAnnouncer) SendGratuitousARP(ctx context.Context, address, ifname string) error {
 	ip, _, err := net.ParseCIDR(address)
 	if err != nil {
 		ip = net.ParseIP(address)
@@ -65,16 +66,64 @@ func (a commandSAMGratuitousARPAnnouncer) SendGratuitousARP(ctx context.Context,
 	if ip == nil || ip.To4() == nil {
 		return fmt.Errorf("invalid IPv4 address %q", address)
 	}
-	run := a.Command
-	if run == nil {
-		run = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-			return exec.CommandContext(ctx, name, args...).CombinedOutput()
+	iface, err := net.InterfaceByName(ifname)
+	if err != nil {
+		return fmt.Errorf("lookup interface %s: %w", ifname, err)
+	}
+	if len(iface.HardwareAddr) != 6 {
+		return fmt.Errorf("interface %s has non-ethernet hardware address %q", ifname, iface.HardwareAddr)
+	}
+	frame := buildGratuitousARPFrame(iface.HardwareAddr, ip.To4())
+	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW|unix.SOCK_CLOEXEC, int(htons(unix.ETH_P_ARP)))
+	if err != nil {
+		return fmt.Errorf("open AF_PACKET ARP socket: %w", err)
+	}
+	defer unix.Close(fd)
+	addr := &unix.SockaddrLinklayer{
+		Protocol: htons(unix.ETH_P_ARP),
+		Ifindex:  iface.Index,
+		Halen:    6,
+		Addr:     [8]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+	}
+	for i := 0; i < 3; i++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := unix.Sendto(fd, frame, 0, addr); err != nil {
+			return fmt.Errorf("send gratuitous ARP frame: %w", err)
+		}
+		if i == 2 {
+			break
+		}
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
 		}
 	}
-	if out, err := run(ctx, "arping", "-U", "-c", "3", "-I", ifname, ip.To4().String()); err != nil {
-		return fmt.Errorf("arping gratuitous ARP: %w: %s", err, strings.TrimSpace(string(out)))
-	}
 	return nil
+}
+
+func buildGratuitousARPFrame(mac net.HardwareAddr, ip net.IP) []byte {
+	frame := make([]byte, 42)
+	copy(frame[0:6], []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff})
+	copy(frame[6:12], mac)
+	binary.BigEndian.PutUint16(frame[12:14], unix.ETH_P_ARP)
+	binary.BigEndian.PutUint16(frame[14:16], 1)             // Ethernet
+	binary.BigEndian.PutUint16(frame[16:18], unix.ETH_P_IP) // IPv4
+	frame[18] = 6
+	frame[19] = 4
+	binary.BigEndian.PutUint16(frame[20:22], 1) // ARP request
+	copy(frame[22:28], mac)
+	copy(frame[28:32], ip.To4())
+	copy(frame[38:42], ip.To4())
+	return frame
+}
+
+func htons(value uint16) uint16 {
+	return (value<<8)&0xff00 | value>>8
 }
 
 func (netlinkSAMProxyNeighborApplier) EnsureProxyNeighbor(_ context.Context, address, ifname string) error {
