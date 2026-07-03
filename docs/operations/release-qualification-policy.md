@@ -52,6 +52,26 @@ If any of these fail during qualification, stop the run and return to
 environment certification. The next qualification attempt must reference a new
 passing certification manifest.
 
+## Dirty fabric with a fresh database
+
+Release qualification does not support reusing a dirty lab fabric with a fresh
+routerd state database. The fabric includes provider-owned secondary IPs, PVE
+bridges and guests, guest `/tmp/routerd-*` residue, config media, provider
+action side effects, and any other substrate state that can outlive a routerd
+process or database.
+
+This combination produces ambiguous evidence: routerd sees no prior action or
+ownership rows, while the fabric can still contain old holders, stale local
+artifacts, or provider-side mutations. Treat the result as an unsupported test
+setup, not as a routerd product failure or a valid passing release signal.
+
+Operators must choose one of these supported paths before qualification:
+
+- reuse both the certified fabric and its matching routerd state;
+- clean the fabric and start with a fresh routerd state database;
+- recertify after explicitly repairing and recording every retained substrate
+  artifact that the fresh database will encounter.
+
 ## Product qualification scope
 
 With a certified environment, release qualification may evaluate:
@@ -70,11 +90,17 @@ record whether each failure is `product_failure`, `infra_failure`, or
 ## Operator workflow
 
 1. Run PVE and cloud certification in routerd-labs.
-2. Review any repairs made during certification.
-3. Store or attach the certification manifest.
-4. Run release preflight against that manifest.
-5. Run release qualification smoke on the certified environment.
-6. If qualification finds substrate damage, stop and recertify; do not repair in
+2. Confirm the manifest records the run ID, routerd artifact, routerd-labs
+   revision, provider profiles/regions, OpenTofu state path, PVE management
+   address source, and the selected fresh or retained state mode.
+3. Review any repairs made during certification, including removed guest
+   `/tmp/routerd-*` artifacts, patched topology outputs, refreshed provider
+   inventory, or retained reusable PVE clients.
+4. Store or attach the certification manifest and evidence paths before product
+   qualification begins.
+5. Run release preflight against that manifest.
+6. Run release qualification smoke on the certified environment.
+7. If qualification finds substrate damage, stop and recertify; do not repair in
    place during the product run.
 
 This separation keeps release evidence interpretable: certification proves the
