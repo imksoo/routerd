@@ -3,9 +3,11 @@
 package conntrack
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -63,5 +65,40 @@ func TestReadSnapshotUnavailableWhenCountAndEntriesMissing(t *testing.T) {
 	var pathErr *os.PathError
 	if !errors.As(err, &pathErr) {
 		t.Fatalf("error does not unwrap to path error: %T: %v", err, err)
+	}
+}
+
+func TestCleanupAddressUsesOnlyScopedDeletes(t *testing.T) {
+	var calls [][]string
+	result := CleanupAddressWithRunner(context.Background(), "10.88.60.10/32", func(_ context.Context, args ...string) ([]byte, error) {
+		calls = append(calls, append([]string(nil), args...))
+		return []byte("1 flow entries have been deleted\n"), nil
+	})
+	if len(result.Warnings) != 0 {
+		t.Fatalf("warnings = %#v, want none", result.Warnings)
+	}
+	want := [][]string{
+		{"-D", "-f", "ipv4", "-d", "10.88.60.10"},
+		{"-D", "-f", "ipv4", "-s", "10.88.60.10"},
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+	for _, call := range calls {
+		if len(call) == 0 || call[0] != "-D" {
+			t.Fatalf("unexpected non-delete conntrack call: %#v", call)
+		}
+		if len(call) == 1 {
+			t.Fatalf("unscoped conntrack delete must be impossible: %#v", call)
+		}
+	}
+}
+
+func TestCleanupAddressWarnsInsteadOfFailing(t *testing.T) {
+	result := CleanupAddressWithRunner(context.Background(), "10.88.60.10", func(_ context.Context, args ...string) ([]byte, error) {
+		return []byte("conntrack unavailable"), errors.New("exit status 1")
+	})
+	if len(result.Warnings) != 2 {
+		t.Fatalf("warnings = %#v, want two warning-only failures", result.Warnings)
 	}
 }
