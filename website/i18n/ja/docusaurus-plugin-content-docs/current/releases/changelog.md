@@ -11,6 +11,25 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 追加
+
+- mobility holder transition timing event で、dataplane の
+  `seize-complete` と provider の `capture-confirmed` milestone を
+  露出しました (#719)。
+- Azure provider executor の action history に、az 呼び出し単位の観測情報を
+  記録し、必要時に ARM rate-limit header を取得できるようにしました (#720)。
+- fabric 全域の pair-stable `/31` 衝突検出 warning を追加し、transport
+  address conflict を実行時障害の前に検出できるようにしました (#721)。
+- MobilityPool で seize 時の scoped conntrack cleanup を opt-in できるように
+  しました。既定は off です (#726)。
+- route-table capture strategy の挙動を provider-contract simulator test で
+  カバーしました (#724)。
+
+### 変更
+
+- route-table strategy を uncertified として明記し、release qualification
+  policy と environment certification contract を文書化しました (#717, #723)。
+
 ## v20260702.0753
 
 ### 変更

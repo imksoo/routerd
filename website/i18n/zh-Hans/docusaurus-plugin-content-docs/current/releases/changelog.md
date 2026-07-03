@@ -11,6 +11,24 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 新增
+
+- mobility holder transition timing event 现在公开 dataplane
+  `seize-complete` 与 provider `capture-confirmed` milestone (#719)。
+- Azure provider executor 的 action history 现在记录每次 az 调用的观测信息，
+  并可在启用后采集 ARM rate-limit header (#720)。
+- 新增 fabric-wide pair-stable `/31` 碰撞检测 warning，可在 transport address
+  conflict 变成运行时故障前发现问题 (#721)。
+- MobilityPool 现在可以 opt-in seize 时的 scoped conntrack cleanup；默认关闭
+  (#726)。
+- route-table capture strategy 的行为已由 provider-contract simulator test
+  覆盖 (#724)。
+
+### 变更
+
+- 文档现在将 route-table strategy 标记为 uncertified，并记录 release
+  qualification policy 与 environment certification contract (#717, #723)。
+
 ## v20260702.0753
 
 ### 变更

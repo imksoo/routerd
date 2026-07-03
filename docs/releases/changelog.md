@@ -12,6 +12,25 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- Mobility holder transition timing events now expose dataplane
+  `seize-complete` and provider `capture-confirmed` milestones (#719).
+- Azure provider executor action history now records per-call observability and
+  can capture ARM rate-limit headers when enabled (#720).
+- Fabric-wide pair-stable `/31` collision detection now warns before transport
+  address conflicts become runtime failures (#721).
+- Mobility pools can opt in to scoped conntrack cleanup on seize; the feature is
+  default off (#726).
+- Route-table capture strategy behavior is covered by provider-contract
+  simulator tests (#724).
+
+### Changed
+
+- Documentation now marks the route-table strategy as uncertified, and records
+  the release qualification policy plus environment certification contract
+  (#717, #723).
+
 ## v20260702.0753
 
 ### Changed
