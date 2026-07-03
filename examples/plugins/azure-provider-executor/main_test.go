@@ -380,6 +380,19 @@ func joinedCalls(calls [][]string) []string {
 	return out
 }
 
+func observedAzCalls(t *testing.T, res executeActionResult) []azCallObservation {
+	t.Helper()
+	raw := res.Status.Observed["azCalls"]
+	if raw == "" {
+		t.Fatalf("observed = %+v, want azCalls", res.Status.Observed)
+	}
+	var calls []azCallObservation
+	if err := json.Unmarshal([]byte(raw), &calls); err != nil {
+		t.Fatalf("decode azCalls: %v: %s", err, raw)
+	}
+	return calls
+}
+
 func stripQueryFromCall(call string) string {
 	if i := strings.Index(call, " --query "); i != -1 {
 		return call[:i]
@@ -541,6 +554,52 @@ func TestExtractAzureRateLimitRemainingHeaders(t *testing.T) {
 	if got["x-ms-ratelimit-remaining-subscription-writes"] != "1199" ||
 		got["x-ms-ratelimit-remaining-subscription-reads"] != "14999" {
 		t.Fatalf("rate limits = %+v", got)
+	}
+}
+
+func TestDispatchAggregatesDebugRateLimitObservation(t *testing.T) {
+	runner := func(ctx context.Context, argv ...string) ([]byte, error) {
+		if rec := azCallObservationFromContext(ctx); rec != nil {
+			stderr := "x-ms-ratelimit-remaining-subscription-writes: 1198"
+			rec.StderrTail = stderr
+			rec.RateLimitRemaining = extractAzureRateLimitRemaining(stderr)
+		}
+		switch strings.Join(leadingTokens(argv), " ") {
+		case "network nic show":
+			return cannedNICShow(false), nil
+		default:
+			return []byte(`{}`), nil
+		}
+	}
+	res := dispatchWith(reqSpec(actionEnsureFwdEnabled, modeExecute), runner)
+	if res.Status.Status != statusSucceeded {
+		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
+	}
+	var limits map[string]string
+	if err := json.Unmarshal([]byte(res.Status.Observed["azRateLimitRemaining"]), &limits); err != nil {
+		t.Fatalf("decode azRateLimitRemaining: %v; observed=%+v", err, res.Status.Observed)
+	}
+	if limits["x-ms-ratelimit-remaining-subscription-writes"] != "1198" {
+		t.Fatalf("limits = %+v", limits)
+	}
+}
+
+func TestAzCommandArgsDebugFlagDefaultOff(t *testing.T) {
+	t.Setenv(azDebugEnv, "")
+	got := strings.Join(azCommandArgs("network", "nic", "show"), " ")
+	if strings.Contains(got, "--debug") {
+		t.Fatalf("azCommandArgs = %q, debug must be off by default", got)
+	}
+	if got != "network nic show --only-show-errors --output json" {
+		t.Fatalf("azCommandArgs = %q", got)
+	}
+}
+
+func TestAzCommandArgsDebugFlagOptIn(t *testing.T) {
+	t.Setenv(azDebugEnv, "true")
+	got := strings.Join(azCommandArgs("network", "nic", "show"), " ")
+	if !strings.Contains(got, "--debug") {
+		t.Fatalf("azCommandArgs = %q, want --debug", got)
 	}
 }
 
