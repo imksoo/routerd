@@ -9,10 +9,6 @@ if [[ "${EUID}" -ne 0 ]]; then
   log "SKIP: requires root/CAP_NET_ADMIN"
   exit 0
 fi
-if ! command -v arping >/dev/null 2>&1; then
-  log "SKIP: missing required command: arping"
-  exit 0
-fi
 
 require_common
 
@@ -37,6 +33,9 @@ ip link set "$NEW_PEER" master "$BR"
 ip link set "$NEW_PEER" up
 ip link set "$NEW_IF" up
 ip addr add 192.0.2.30/24 dev "$NEW_IF"
+if ip -o addr show dev "$NEW_IF" | grep -q "$MOBILE"; then
+  fail "test setup assigned mobile address $MOBILE to $NEW_IF"
+fi
 
 OLD_MAC="$(ip -n "$OLD_NS" -o link show "$OLD_IF" | awk '{for (i=1;i<=NF;i++) if ($i=="link/ether") {print $(i+1); exit}}')"
 NEW_MAC="$(ip -o link show "$NEW_IF" | awk '{for (i=1;i<=NF;i++) if ($i=="link/ether") {print $(i+1); exit}}')"
@@ -45,7 +44,35 @@ ip -n "$CLIENT_NS" neigh replace "$MOBILE" lladdr "$OLD_MAC" dev "$CLIENT_IF" nu
 got="$(ip -n "$CLIENT_NS" neigh show "$MOBILE" dev "$CLIENT_IF")"
 [[ "$got" == *"$OLD_MAC"* ]] || fail "client neighbor was not seeded with old holder MAC: $got"
 
-arping -U -c 3 -I "$NEW_IF" "$MOBILE" >/dev/null
+python3 - "$NEW_IF" "$MOBILE" <<'PY'
+import socket
+import struct
+import sys
+import time
+
+ifname = sys.argv[1]
+mobile = socket.inet_aton(sys.argv[2])
+mac_text = open(f"/sys/class/net/{ifname}/address", encoding="utf-8").read().strip()
+src = bytes.fromhex(mac_text.replace(":", ""))
+frame = (
+    b"\xff" * 6 +
+    src +
+    struct.pack("!H", 0x0806) +
+    struct.pack("!HHBBH", 1, 0x0800, 6, 4, 1) +
+    src +
+    mobile +
+    b"\x00" * 6 +
+    mobile
+)
+sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0806))
+sock.bind((ifname, 0))
+try:
+    for _ in range(3):
+        sock.send(frame)
+        time.sleep(0.1)
+finally:
+    sock.close()
+PY
 wait_for 5 bash -c "ip -n '$CLIENT_NS' neigh show '$MOBILE' dev '$CLIENT_IF' | grep -qi '$NEW_MAC'"
 
 ip -n "$OLD_NS" neigh add proxy "$MOBILE" dev "$OLD_IF"
