@@ -77,6 +77,10 @@ type objectStatusMerger interface {
 	MergeObjectStatus(apiVersion, kind, name string, updates map[string]any) error
 }
 
+type mobilityEventRecorder interface {
+	RecordBusEvent(context.Context, daemonapi.DaemonEvent) (string, error)
+}
+
 type BGPPathClient interface {
 	ListPaths(ctx context.Context, source string) ([]bgpdaemon.AppliedPath, error)
 	UpsertPath(ctx context.Context, path bgpdaemon.AppliedPath) (bgpdaemon.AppliedPath, error)
@@ -221,7 +225,8 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		bgpRIBObserved = true
 	}
 	startupReadiness := placementStartupReadinessForMember(self, livenessMarkersObserved || bgpRIBObserved, discoverySelfIPsObserved)
-	observedHolderNode := bgpObservedGroupHolder(self, members, livenessMarkers, bgpMobilityPrefixCommunitiesFromStatus(c.Router, c.Store, spec))
+	mobilityPrefixCommunities := bgpMobilityPrefixCommunitiesFromStatus(c.Router, c.Store, spec)
+	observedHolderNode := bgpObservedGroupHolder(self, members, livenessMarkers, mobilityPrefixCommunities)
 	ownerPlacement := c.applyBGPCaptureSeizeHoldDown(res.Metadata.Name, evaluateBGPCapturePlacement(self, members, livenessMarkers, livenessMarkersObserved, observedHolderNode), now)
 	ownerPlacement = fencePlacementForStartupWithReadiness(ownerPlacement, observedHolderNode, now, startupReadiness)
 	ownerPlacement = applyHolderRetention(ownerPlacement, len(discoverySelfCaptures) > 0, higherPriorityHolderActive(self, members, observedHolderNode), now)
@@ -517,6 +522,9 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	}
 	status["addresses"] = samAddressStatuses(ownershipDecisions, actionPlans, actionJournal, failedActions, observationStatus)
 	status["phase"] = mobilityPoolResourcePhase(status)
+	if err := c.recordBGPCaptureAssignmentTransitions(ctx, res.Metadata.Name, self, previousCaptureAssignments, delivery.CaptureAssignments, append(actionPlans, previousActionPlans...), ownerPlacement, livenessMarkers, mobilityPrefixCommunities, ownershipDecisions, poolStatus, status, now); err != nil {
+		return err
+	}
 	return c.savePlannerStatus(res.Metadata.Name, status)
 }
 
@@ -550,6 +558,355 @@ func mobilityPoolResourcePhase(status map[string]any) string {
 		return "Failed"
 	}
 	return "Degraded"
+}
+
+const (
+	mobilityHolderTransitionTopic      = "routerd.mobility.holder.transition"
+	bgpCaptureTransitionCompletedKey   = "bgpCaptureTransitionCompleted"
+	bgpCaptureTransitionCompletedField = "seizeComplete"
+	bgpCaptureConfirmedField           = "captureConfirmed"
+)
+
+func (c Controller) recordBGPCaptureAssignmentTransitions(ctx context.Context, poolName string, self memberPlanInfo, previous, current map[string]bgpCaptureAssignment, plans []dynamicconfig.ActionPlan, placement PlacementDecision, livenessMarkers map[string]string, mobilityPrefixCommunities map[string][]string, decisions []ownershipDecision, previousStatus, nextStatus map[string]any, now time.Time) error {
+	recorder, ok := c.Store.(mobilityEventRecorder)
+	if !ok || recorder == nil {
+		return nil
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	now = now.UTC()
+	pathSigs := bgpPathSigsByAddress(plans)
+	holdDowns := mobilityHoldDownRemainingSeconds(placement, now)
+	completed := bgpCaptureTransitionCompletedByKindFromStatus(previousStatus)
+	seizeComplete := completed[bgpCaptureTransitionCompletedField]
+	captureConfirmed := completed[bgpCaptureConfirmedField]
+	selfNode := strings.TrimSpace(self.NodeRef)
+	for _, address := range mapStringKeysSorted(current) {
+		next := current[address]
+		if strings.TrimSpace(next.Generation) == "" {
+			continue
+		}
+		prev := previous[address]
+		if bgpCaptureAssignmentTransitionUnchanged(prev, next) {
+			continue
+		}
+		kind := holderTransitionStartKind(prev, next, previousStatus)
+		if _, err := recorder.RecordBusEvent(ctx, mobilityHolderTransitionEvent(poolName, selfNode, now, next, kind, pathSigs[address], holdDowns)); err != nil {
+			return err
+		}
+	}
+	for address := range bgpObservedSelfHolderAddresses(self, livenessMarkers, mobilityPrefixCommunities) {
+		assignment, ok := current[address]
+		if !ok || assignment.Phase != "Active" || strings.TrimSpace(assignment.Generation) == "" {
+			continue
+		}
+		if seizeComplete[address] == assignment.Generation {
+			continue
+		}
+		if _, err := recorder.RecordBusEvent(ctx, mobilityHolderTransitionEvent(poolName, selfNode, now, assignment, "seize-complete", pathSigs[address], holdDowns)); err != nil {
+			return err
+		}
+		seizeComplete[address] = assignment.Generation
+	}
+	for _, decision := range decisions {
+		address := normalizeAddressString(decision.Address)
+		if address == "" || decision.Class != ownershipClassConfirmedCapture || strings.TrimSpace(decision.CaptureHolderNode) != strings.TrimSpace(selfNode) {
+			continue
+		}
+		assignment, ok := current[address]
+		if !ok || assignment.Phase != "Active" || strings.TrimSpace(assignment.Generation) == "" {
+			continue
+		}
+		if captureConfirmed[address] == assignment.Generation {
+			continue
+		}
+		if _, err := recorder.RecordBusEvent(ctx, mobilityHolderTransitionEventWithAttributes(poolName, selfNode, now, assignment, "capture-confirmed", pathSigs[address], holdDowns, map[string]string{
+			"captureStrategy": strings.TrimSpace(decision.CaptureStrategy),
+		})); err != nil {
+			return err
+		}
+		captureConfirmed[address] = assignment.Generation
+	}
+	for address := range seizeComplete {
+		if _, ok := current[address]; !ok {
+			delete(seizeComplete, address)
+		}
+	}
+	for address := range captureConfirmed {
+		if _, ok := current[address]; !ok {
+			delete(captureConfirmed, address)
+		}
+	}
+	completedStatus := map[string]map[string]string{}
+	if len(seizeComplete) > 0 {
+		completedStatus[bgpCaptureTransitionCompletedField] = seizeComplete
+	}
+	if len(captureConfirmed) > 0 {
+		completedStatus[bgpCaptureConfirmedField] = captureConfirmed
+	}
+	if len(completedStatus) > 0 {
+		nextStatus[bgpCaptureTransitionCompletedKey] = completedStatus
+	}
+	for _, address := range mapStringKeysSorted(previous) {
+		if _, ok := current[address]; ok {
+			continue
+		}
+		prev := previous[address]
+		if strings.TrimSpace(prev.Generation) == "" {
+			continue
+		}
+		released := bgpCaptureAssignment{
+			Address:        prev.Address,
+			Phase:          "Released",
+			Generation:     prev.Generation,
+			Seq:            prev.Seq,
+			ClaimEpoch:     prev.ClaimEpoch,
+			DesiredHolder:  "",
+			PreviousHolder: prev.DesiredHolder,
+			Reason:         firstNonEmpty(prev.Reason, "holder-yield"),
+			IssuedAt:       prev.IssuedAt,
+			RenewedAt:      now,
+			LeaseUntil:     prev.LeaseUntil,
+		}
+		if _, err := recorder.RecordBusEvent(ctx, mobilityHolderTransitionEvent(poolName, selfNode, now, released, "yield", pathSigs[address], holdDowns)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func bgpObservedSelfHolderAddresses(self memberPlanInfo, livenessMarkers map[string]string, mobilityPrefixCommunities map[string][]string) map[string]bool {
+	out := map[string]bool{}
+	community, _, present := livenessMarkerForNode(livenessMarkers, self.NodeRef)
+	if !present || strings.TrimSpace(community) == "" {
+		return out
+	}
+	community = strings.TrimSpace(community)
+	for prefix, communities := range mobilityPrefixCommunities {
+		address := normalizeAddressString(prefix)
+		if address == "" {
+			continue
+		}
+		hasActiveHolder := false
+		hasSelfIdentity := false
+		for _, item := range communities {
+			switch strings.TrimSpace(item) {
+			case bgpMobilityCommunityActiveHolder:
+				hasActiveHolder = true
+			case community:
+				hasSelfIdentity = true
+			}
+		}
+		if hasActiveHolder && hasSelfIdentity {
+			out[address] = true
+		}
+	}
+	return out
+}
+
+func bgpCaptureAssignmentTransitionUnchanged(previous, current bgpCaptureAssignment) bool {
+	return previous.Generation == current.Generation &&
+		previous.Phase == current.Phase &&
+		previous.DesiredHolder == current.DesiredHolder &&
+		previous.PreviousHolder == current.PreviousHolder
+}
+
+func mobilityHolderTransitionEvent(poolName, selfNode string, now time.Time, assignment bgpCaptureAssignment, transitionKind, pathSig string, holdDowns map[string]int64) daemonapi.DaemonEvent {
+	return mobilityHolderTransitionEventWithAttributes(poolName, selfNode, now, assignment, transitionKind, pathSig, holdDowns, nil)
+}
+
+func mobilityHolderTransitionEventWithAttributes(poolName, selfNode string, now time.Time, assignment bgpCaptureAssignment, transitionKind, pathSig string, holdDowns map[string]int64, extra map[string]string) daemonapi.DaemonEvent {
+	address := normalizeAddressString(assignment.Address)
+	fromNode := strings.TrimSpace(assignment.PreviousHolder)
+	toNode := strings.TrimSpace(assignment.DesiredHolder)
+	reason := firstNonEmpty(assignment.Reason, transitionKind)
+	attributes := map[string]string{
+		"timestamp":            now.UTC().Format(time.RFC3339Nano),
+		"address":              address,
+		"transitionKind":       transitionKind,
+		"transitionReason":     reason,
+		"fromNode":             fromNode,
+		"toNode":               toNode,
+		"mobilityPathSig":      strings.TrimSpace(pathSig),
+		"assignmentGeneration": assignment.Generation,
+		"assignmentSeq":        strconv.FormatInt(assignment.Seq, 10),
+		"claimEpoch":           assignment.ClaimEpoch,
+	}
+	for name, seconds := range holdDowns {
+		attributes["holdDownRemainingSeconds."+name] = strconv.FormatInt(seconds, 10)
+	}
+	if !assignment.IssuedAt.IsZero() {
+		attributes["issuedAt"] = assignment.IssuedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if !assignment.RenewedAt.IsZero() {
+		attributes["renewedAt"] = assignment.RenewedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if !assignment.LeaseUntil.IsZero() {
+		attributes["leaseUntil"] = assignment.LeaseUntil.UTC().Format(time.RFC3339Nano)
+	}
+	for key, value := range extra {
+		if key = strings.TrimSpace(key); key != "" {
+			attributes[key] = strings.TrimSpace(value)
+		}
+	}
+	message := fmt.Sprintf("%s %s holder %s -> %s", transitionKind, address, firstNonEmpty(fromNode, "<none>"), firstNonEmpty(toNode, "<none>"))
+	return daemonapi.DaemonEvent{
+		Type:     mobilityHolderTransitionTopic,
+		Severity: "Normal",
+		Reason:   "HolderTransition",
+		Message:  message,
+		Daemon: daemonapi.DaemonRef{
+			Kind:     "controller",
+			Name:     "mobility",
+			Instance: strings.TrimSpace(selfNode),
+		},
+		Resource: &daemonapi.ResourceRef{
+			APIVersion: api.MobilityAPIVersion,
+			Kind:       "MobilityPool",
+			Name:       strings.TrimSpace(poolName),
+		},
+		Attributes: attributes,
+	}
+}
+
+func holderTransitionStartKind(previous, current bgpCaptureAssignment, previousStatus map[string]any) string {
+	reason := strings.ToLower(strings.TrimSpace(current.Reason))
+	if current.Phase == "Pending" {
+		return "defer-start"
+	}
+	if previous.Phase == "Pending" && current.Phase != "Pending" {
+		return "defer-release"
+	}
+	if statusBoolValue(previousStatus["bgpCapturePending"]) && current.Phase == "Active" {
+		return "defer-release"
+	}
+	if current.Phase == "Active" && strings.TrimSpace(current.PreviousHolder) != "" && strings.TrimSpace(current.PreviousHolder) != strings.TrimSpace(current.DesiredHolder) {
+		if strings.Contains(reason, "graceful") || strings.Contains(reason, "drain") || strings.Contains(reason, "handover") {
+			return "graceful-handover"
+		}
+		return "seize-start"
+	}
+	if strings.TrimSpace(previous.Generation) == "" && current.Phase == "Active" {
+		return "seize-start"
+	}
+	if strings.TrimSpace(previous.DesiredHolder) != "" && strings.TrimSpace(previous.DesiredHolder) != strings.TrimSpace(current.DesiredHolder) {
+		return "seize-start"
+	}
+	return "holder-renew"
+}
+
+func bgpCaptureTransitionCompletedFromStatus(status map[string]any) map[string]string {
+	return bgpCaptureTransitionCompletedByKindFromStatus(status)[bgpCaptureTransitionCompletedField]
+}
+
+func bgpCaptureTransitionCompletedByKindFromStatus(status map[string]any) map[string]map[string]string {
+	out := map[string]map[string]string{
+		bgpCaptureTransitionCompletedField: {},
+		bgpCaptureConfirmedField:           {},
+	}
+	raw, ok := status[bgpCaptureTransitionCompletedKey]
+	if !ok || raw == nil {
+		return out
+	}
+	add := func(kind, address, generation string) {
+		address = normalizeAddressString(address)
+		generation = strings.TrimSpace(generation)
+		if address != "" && generation != "" {
+			out[kind][address] = generation
+		}
+	}
+	switch typed := raw.(type) {
+	case map[string]string:
+		for address, generation := range typed {
+			add(bgpCaptureTransitionCompletedField, address, generation)
+		}
+	case map[string]map[string]string:
+		for kind, values := range typed {
+			if kind != bgpCaptureTransitionCompletedField && kind != bgpCaptureConfirmedField {
+				continue
+			}
+			for address, generation := range values {
+				add(kind, address, generation)
+			}
+		}
+	case map[string]any:
+		if nested, ok := typed[bgpCaptureTransitionCompletedField]; ok {
+			for address, generation := range statusStringMap(nested) {
+				add(bgpCaptureTransitionCompletedField, address, generation)
+			}
+		}
+		if nested, ok := typed[bgpCaptureConfirmedField]; ok {
+			for address, generation := range statusStringMap(nested) {
+				add(bgpCaptureConfirmedField, address, generation)
+			}
+			return out
+		}
+		for address, generation := range statusStringMap(typed) {
+			add(bgpCaptureTransitionCompletedField, address, generation)
+		}
+	}
+	return out
+}
+
+func statusStringMap(value any) map[string]string {
+	out := map[string]string{}
+	switch typed := value.(type) {
+	case map[string]string:
+		for key, value := range typed {
+			if key = strings.TrimSpace(key); key != "" {
+				out[key] = strings.TrimSpace(value)
+			}
+		}
+	case map[string]any:
+		for key, value := range typed {
+			if key = strings.TrimSpace(key); key != "" {
+				out[key] = strings.TrimSpace(fmt.Sprint(value))
+			}
+		}
+	}
+	return out
+}
+
+func bgpPathSigsByAddress(plans []dynamicconfig.ActionPlan) map[string]string {
+	out := map[string]string{}
+	for _, plan := range plans {
+		if !isProviderCaptureAssignAction(plan.Action) {
+			continue
+		}
+		address := normalizeAddressString(plan.Target["address"])
+		if address == "" {
+			continue
+		}
+		if sig := strings.TrimSpace(plan.Parameters[bgpPathSigParam]); sig != "" {
+			out[address] = sig
+		}
+	}
+	return out
+}
+
+func mobilityHoldDownRemainingSeconds(placement PlacementDecision, now time.Time) map[string]int64 {
+	out := map[string]int64{
+		"seize":         0,
+		"startupSettle": 0,
+	}
+	if placement.SeizeHoldDown && !placement.SeizeHoldDownUntil.IsZero() {
+		out["seize"] = nonNegativeCeilSeconds(placement.SeizeHoldDownUntil.Sub(now))
+	}
+	out["startupSettle"] = nonNegativeCeilSeconds(placementSettleStart.Add(placementSettleWindow).Sub(now))
+	return out
+}
+
+func nonNegativeCeilSeconds(d time.Duration) int64 {
+	if d <= 0 {
+		return 0
+	}
+	return int64((d + time.Second - 1) / time.Second)
+}
+
+func statusBoolValue(value any) bool {
+	parsed, ok := statusBool(value)
+	return ok && parsed
 }
 
 func samAddressStatuses(decisions []ownershipDecision, plans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord, failedActions []providerActionPlanFailure, observationStatus providerObservationStatus) map[string]any {
