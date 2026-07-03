@@ -47,10 +47,17 @@ type transportDerivation struct {
 	PeersFrom        []transportPeersFromStatus
 	TopologyNodeRefs []string
 	PendingSources   []string
+	Collisions       []transportPairStableCollision
 	Tunnels          int
 	BGPPeers         int
 	BFDs             int
 	EndpointRoutes   int
+}
+
+type transportPairStableCollision struct {
+	Slot     int
+	Prefix   string
+	EdgeKeys []string
 }
 
 type transportPeersFromStatus struct {
@@ -132,7 +139,7 @@ func (c TransportController) Reconcile(ctx context.Context) error {
 		if len(derived.PendingSources) > 0 {
 			phase = "Pending"
 		}
-		_ = c.saveTransportStatus(res.Metadata.Name, map[string]any{
+		status := map[string]any{
 			"phase":                   phase,
 			"selfNode":                strings.TrimSpace(spec.SelfNodeRef),
 			"addressingMode":          firstNonEmpty(strings.TrimSpace(spec.AddressingMode), "edge-index"),
@@ -148,7 +155,9 @@ func (c TransportController) Reconcile(ctx context.Context) error {
 			"topologyNodeRefs":        append([]string(nil), derived.TopologyNodeRefs...),
 			"peerGroup":               peerGroupStatus,
 			"updatedAt":               now.Format(time.RFC3339Nano),
-		})
+		}
+		addTransportCollisionStatus(status, derived.Collisions)
+		_ = c.saveTransportStatus(res.Metadata.Name, status)
 	}
 	return c.deprovisionStaleTransportSources(desiredSources, now)
 }
@@ -180,6 +189,7 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 		TopologyNodeRefs: append([]string(nil), spec.TopologyNodeRefs...),
 		PendingSources:   append([]string(nil), pendingSources...),
 	}
+	out.Collisions = detectPairStableFabricCollisions(spec, inner)
 	for _, peer := range spec.Peers {
 		peerNode := strings.TrimSpace(peer.NodeRef)
 		if peerNode == "" || peerNode == self {
@@ -950,6 +960,124 @@ func transportPairStableSlots(spec api.SAMTransportProfileSpec, inner netip.Pref
 		out[edgeKey] = slot
 	}
 	return out, nil
+}
+
+func detectPairStableFabricCollisions(spec api.SAMTransportProfileSpec, inner netip.Prefix) []transportPairStableCollision {
+	mode, err := transportAddressingMode(spec)
+	if err != nil || mode != "pair-stable" {
+		return nil
+	}
+	capacity := 1 << (31 - inner.Bits())
+	if capacity <= 0 {
+		return nil
+	}
+	nodes := normalizeTransportTopology(spec)
+	sort.Strings(nodes)
+	unique := nodes[:0]
+	seenNode := map[string]bool{}
+	for _, node := range nodes {
+		node = strings.TrimSpace(node)
+		if node == "" || seenNode[node] {
+			continue
+		}
+		seenNode[node] = true
+		unique = append(unique, node)
+	}
+	if len(unique) < 2 {
+		return nil
+	}
+	seedPrefix := inner.Masked().String()
+	edgesBySlot := map[int][]string{}
+	for i := 0; i < len(unique); i++ {
+		for j := i + 1; j < len(unique); j++ {
+			left, right := unique[i], unique[j]
+			slot := mobilityconfig.StableSAMTransportSlot(seedPrefix, left, right, capacity)
+			edgesBySlot[slot] = append(edgesBySlot[slot], sortedEdgeKey(left, right))
+		}
+	}
+	var out []transportPairStableCollision
+	for slot, edges := range edgesBySlot {
+		if len(edges) < 2 {
+			continue
+		}
+		slotPrefix, err := mobilityconfig.SAMTransportSlotPrefix(inner, slot)
+		if err != nil {
+			continue
+		}
+		sort.Strings(edges)
+		out = append(out, transportPairStableCollision{
+			Slot:     slot,
+			Prefix:   slotPrefix.String(),
+			EdgeKeys: append([]string(nil), edges...),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Slot == out[j].Slot {
+			return strings.Join(out[i].EdgeKeys, ",") < strings.Join(out[j].EdgeKeys, ",")
+		}
+		return out[i].Slot < out[j].Slot
+	})
+	return out
+}
+
+func addTransportCollisionStatus(status map[string]any, collisions []transportPairStableCollision) {
+	if len(collisions) == 0 {
+		status["health"] = ""
+		status["reason"] = ""
+		status["message"] = ""
+		status["warning"] = ""
+		status["pairStableCollisionCount"] = 0
+		status["pairStableCollisions"] = []map[string]any(nil)
+		status["conditions"] = []map[string]any{{
+			"type":    "PairStableAddressingCollisionFree",
+			"status":  "True",
+			"reason":  "NoPairStableCollision",
+			"message": "pair-stable /31 assignments are unique for the resolved transport topology",
+		}}
+		return
+	}
+	message := transportCollisionMessage(collisions)
+	status["health"] = "Warn"
+	status["reason"] = "PairStableAddressCollision"
+	status["message"] = message
+	status["warning"] = message
+	status["pairStableCollisionCount"] = len(collisions)
+	status["pairStableCollisions"] = transportPairStableCollisionStatus(collisions)
+	status["conditions"] = []map[string]any{{
+		"type":    "PairStableAddressingCollisionFree",
+		"status":  "False",
+		"reason":  "PairStableAddressCollision",
+		"message": message,
+	}}
+}
+
+func transportCollisionMessage(collisions []transportPairStableCollision) string {
+	if len(collisions) == 0 {
+		return ""
+	}
+	first := collisions[0]
+	var edges []string
+	for _, edge := range first.EdgeKeys {
+		edges = append(edges, describeEdgeKey(edge))
+	}
+	return fmt.Sprintf("pair-stable inner /31 collision: %s share %s; expand spec.innerPrefix (for example /20 or larger). routerd will only warn and will not auto-renumber live tunnels",
+		strings.Join(edges, " and "), first.Prefix)
+}
+
+func transportPairStableCollisionStatus(collisions []transportPairStableCollision) []map[string]any {
+	out := make([]map[string]any, 0, len(collisions))
+	for _, collision := range collisions {
+		var edges []string
+		for _, edge := range collision.EdgeKeys {
+			edges = append(edges, describeEdgeKey(edge))
+		}
+		out = append(out, map[string]any{
+			"slot":   collision.Slot,
+			"prefix": collision.Prefix,
+			"edges":  edges,
+		})
+	}
+	return out
 }
 
 func normalizeTransportTopology(spec api.SAMTransportProfileSpec) []string {
