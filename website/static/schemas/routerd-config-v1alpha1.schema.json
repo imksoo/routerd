@@ -7640,9 +7640,6 @@
                           "gratuitousARP": {
                             "type": "boolean"
                           },
-                          "gratuitousARPRefresh": {
-                            "type": "boolean"
-                          },
                           "interface": {
                             "type": "string"
                           },
@@ -8449,9 +8446,6 @@
                                 "gratuitousARP": {
                                   "type": "boolean"
                                 },
-                                "gratuitousARPRefresh": {
-                                  "type": "boolean"
-                                },
                                 "interface": {
                                   "type": "string"
                                 },
@@ -8890,9 +8884,6 @@
                                     "gratuitousARP": {
                                       "type": "boolean"
                                     },
-                                    "gratuitousARPRefresh": {
-                                      "type": "boolean"
-                                    },
                                     "interface": {
                                       "type": "string"
                                     },
@@ -9256,9 +9247,6 @@
                                   "type": "array"
                                 },
                                 "gratuitousARP": {
-                                  "type": "boolean"
-                                },
-                                "gratuitousARPRefresh": {
                                   "type": "boolean"
                                 },
                                 "interface": {
