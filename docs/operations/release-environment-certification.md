@@ -45,6 +45,59 @@ Default validity is 24 hours unless the manifest states a shorter window.
 Release qualification must compare current UTC time with `expiresAt`; stale
 certification is equivalent to no certification.
 
+## Reproducible environment contract
+
+Each release qualification environment must be reproducible from a recorded
+contract, not from operator memory. The certification manifest or attached
+evidence must identify:
+
+- the run ID used to tag cloud resources, PVE VMs, config media, logs, and
+  evidence paths;
+- the exact routerd commit or release artifact and the routerd-labs script
+  commit used to provision and qualify the environment;
+- provider account, subscription, tenancy, profile, region, and CLI/auth mode,
+  using logical profile names and never relying on an implicit default profile;
+- OpenTofu working directory, state path, variables file, provider lock file,
+  and the output JSON consumed by deploy or qualification scripts;
+- PVE node, datastore, boot source, underlay bridge, capture bridge, client mode,
+  reusable client VMIDs when retained, and disposable VMIDs when created;
+- PVE management address source. DHCP/QGA-discovered addresses are allowed; hard
+  coded management IP assumptions are not release evidence unless explicitly
+  certified for that run;
+- whether routerd state databases, provider-side secondary IPs, PVE guests,
+  config media, and guest `/tmp/routerd-*` artifacts are fresh, retained with
+  matching state, or repaired during certification.
+
+The accepted starting modes are:
+
+- **fresh fabric, fresh routerd state**: all disposable cloud/PVE resources are
+  created for the run ID and routerd starts without previous state;
+- **retained fabric, retained matching routerd state**: reusable resources remain
+  in place and the corresponding routerd state is part of the certified input;
+- **retained fabric after certified repair**: retained resources are inspected,
+  cleaned or patched during certification, and every retained artifact is listed
+  in the manifest with post-repair proof.
+
+Do not start qualification from a retained or dirty fabric with a fresh routerd
+database unless the certification manifest records the retained artifacts and
+the repair that makes them compatible. That setup otherwise produces ambiguous
+provider ownership and action-journal evidence.
+
+Before qualification starts, certification must run the reproducibility checks
+that match the selected mode:
+
+- refresh OpenTofu state and verify that planned changes are expected for the
+  run mode;
+- verify provider inventory is scoped by run ID or certified reusable resource
+  identifiers;
+- verify PVE QGA, hostname, config media, and management addresses match the
+  generated topology output;
+- remove or explicitly retain guest temporary routerd artifacts such as
+  `/tmp/routerd-*`;
+- run bridge and route reachability audits for the PVE/cloud fabric;
+- write the certification manifest and evidence paths before product
+  qualification scripts are invoked.
+
 ## Required checks
 
 Certification must cover both local and cloud substrate.
