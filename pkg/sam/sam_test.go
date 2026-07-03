@@ -195,6 +195,55 @@ func TestPlanCaptureProxyARP(t *testing.T) {
 	if !hasAction(actions, "proxy-neighbor", "", "10.0.1.123/32", "lan0") {
 		t.Fatalf("actions missing proxy neighbor: %#v", actions)
 	}
+	for _, action := range actions {
+		if action.Kind == "proxy-neighbor" && action.Address == "10.0.1.123/32" && action.GratuitousARP {
+			t.Fatalf("route-delivery proxy-ARP should not default to GARP refresh: %#v", action)
+		}
+	}
+}
+
+func TestPlanCaptureBGPProxyARPDefaultsGARPRefresh(t *testing.T) {
+	router := testRouter()
+	spec := router.Spec.Resources[4].Spec.(api.RemoteAddressClaimSpec)
+	spec.Delivery = api.AddressDelivery{PeerRef: "cloud-main", Mode: "bgp"}
+	router.Spec.Resources[4].Spec = spec
+
+	actions, err := PlanCapture(router, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("PlanCapture: %v", err)
+	}
+	for _, action := range actions {
+		if action.Kind == "proxy-neighbor" && action.Address == "10.0.1.123/32" {
+			if !action.GratuitousARP {
+				t.Fatalf("BGP proxy-ARP capture should default to GARP refresh: %#v", action)
+			}
+			return
+		}
+	}
+	t.Fatalf("actions missing BGP proxy neighbor: %#v", actions)
+}
+
+func TestPlanCaptureBGPProxyARPCanDisableGARPRefresh(t *testing.T) {
+	router := testRouter()
+	disable := false
+	spec := router.Spec.Resources[4].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.GratuitousARPRefresh = &disable
+	spec.Delivery = api.AddressDelivery{PeerRef: "cloud-main", Mode: "bgp"}
+	router.Spec.Resources[4].Spec = spec
+
+	actions, err := PlanCapture(router, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("PlanCapture: %v", err)
+	}
+	for _, action := range actions {
+		if action.Kind == "proxy-neighbor" && action.Address == "10.0.1.123/32" {
+			if action.GratuitousARP {
+				t.Fatalf("disabled BGP proxy-ARP capture sent GARP refresh: %#v", action)
+			}
+			return
+		}
+	}
+	t.Fatalf("actions missing BGP proxy neighbor: %#v", actions)
 }
 
 func TestCaptureExcludesAddress(t *testing.T) {
