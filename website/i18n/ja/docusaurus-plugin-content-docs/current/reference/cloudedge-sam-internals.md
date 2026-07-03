@@ -207,13 +207,17 @@ operator signal です。
 | strategy | 対応プロバイダー | 動作 |
 | --- | --- | --- |
 | `secondary-ip`（既定） | AWS / Azure / OCI / GCP | NIC に `/32` を secondary IP として割り当てる |
-| `route-table` | AWS / Azure | ルートテーブル/UDR のエントリをホルダーの NIC に向ける |
+| `route-table` | Azure | UDR のエントリをホルダーの NIC に向ける |
 | `proxy-arp` | on-prem | L2 セグメントで proxy-ARP/GARP により capture |
 | `addr-add` | （汎用） | OS アドレス追加 |
 
-`route-table` 戦略は AWS/Azure のみ対応で、Azure では `capture.target.nextHopIPAddress`
-が必須です。route-table/UDR 戦略の実機検証は [#516](https://github.com/imksoo/routerd/issues/516)
-で継続中です。
+現在の release lab 認定は `secondary-ip` 捕捉のみを対象にしています。
+`route-table` 戦略は **未認定 (uncertified)** です。Azure では
+`capture.target.nextHopIPAddress` が必須で、routerd は provider inventory が
+UDR がローカル router を指していることを観測してから、捕捉済み `/32` を
+BGP 広告します。この route-table 固有の結合により、ARM/provider API 遅延が
+overlay 収束に波及します。`secondary-ip` 捕捉は route-table 観測で gate
+されません。
 
 各 capture には必ず **forwarding 有効化** アクションが伴い、その NIC が自分宛て
 でないパケットを転送できるようにします。

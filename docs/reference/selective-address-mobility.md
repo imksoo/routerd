@@ -539,7 +539,16 @@ ipConfig, and OCI VNIC secondary-address behavior. Azure may instead set
 with `NextHopType=VirtualAppliance` and requires
 `capture.target.nextHopIPAddress`. Provider inventory must confirm that
 the route table points at the local router before routerd advertises the captured
-`/32` to BGP.
+`/32` to BGP. This provider-observation gate is specific to the `route-table`
+strategy; `secondary-ip` capture does not use route-table observation to decide
+when to advertise the overlay holder.
+
+The current lab certification covers `secondary-ip` capture only. The
+`route-table` strategy is **uncertified** until provider observation, BGP
+advertisement coupling, and provider API delay behavior have been validated in
+the release lab. Its design intentionally waits for provider route-table
+observation before advertising the captured `/32`, so ARM/API latency can delay
+overlay convergence for this strategy.
 
 **Same-subnet limitation (validated in [#516](https://github.com/imksoo/routerd/issues/516)):**
 AWS rejects VPC-internal `/32` route destinations, and OCI rejects intra-subnet

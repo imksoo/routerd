@@ -63,6 +63,15 @@ non-owner 将 BGP best path import 到 local FIB。旧的 route-lowered delivery
 | `provider-secondary-ip` | cloud fabric 通过 provider secondary address object 或等价机制 capture `/32`。 |
 | `proxy-arp` | site router 在本地对 selected address 回答 ARP。 |
 
+cloud `provider-secondary-ip` capture 可选择 capture strategy。当前 release lab
+认证仅覆盖 `secondary-ip` capture。`route-table` strategy 目前为 **uncertified**：
+在 Azure 上它通过 UDR 指向 holder，并要求 routerd 等待 provider inventory 观测到
+该 UDR 指向本地 router 后，才将已 capture 的 `/32` 广告到 BGP。这个 provider
+观测 gate 是 `route-table` strategy 特有的；`secondary-ip` capture 不使用
+route-table 观测来决定何时广告 overlay holder。由于该设计会把 ARM/provider API
+延迟传递到 overlay 收敛，route-table strategy 需要在 release lab 中完成 provider
+观测、BGP 广告耦合和 provider API 延迟行为验证后才能认证。
+
 on-prem `proxy-arp` capture 可使用 `activeWhen.type: single-router` 作为单 router
 always-active capture，也可使用 `vrrp-master` 由 HA pair 的 VRRP master gate 控制。
 
