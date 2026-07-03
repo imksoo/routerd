@@ -2336,6 +2336,32 @@ type NAT44RuleSpec struct {
 	When              ResourceWhenSpec       `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
+type NAT44FlowDNATPinholeSpec struct {
+	FromInterfaceRefs []string                            `yaml:"fromInterfaceRefs,omitempty" json:"fromInterfaceRefs,omitempty"`
+	Outbound          NAT44FlowDNATPinholeOutboundSpec    `yaml:"outbound" json:"outbound"`
+	Inbound           NAT44FlowDNATPinholeInboundSpec     `yaml:"inbound" json:"inbound"`
+	Correlation       NAT44FlowDNATPinholeCorrelationSpec `yaml:"correlation,omitempty" json:"correlation,omitempty"`
+	Timeout           string                              `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	When              ResourceWhenSpec                    `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type NAT44FlowDNATPinholeOutboundSpec struct {
+	SourceSetRef       string         `yaml:"sourceSetRef,omitempty" json:"sourceSetRef,omitempty"`
+	SourceCIDRs        []string       `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
+	Protocol           string         `yaml:"protocol" json:"protocol" jsonschema:"enum=udp"`
+	DestinationPorts   []FirewallPort `yaml:"destinationPorts" json:"destinationPorts"`
+	DestinationCIDRs   []string       `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
+	DestinationSetRefs []string       `yaml:"destinationSetRefs,omitempty" json:"destinationSetRefs,omitempty"`
+}
+
+type NAT44FlowDNATPinholeInboundSpec struct {
+	SourcePorts []FirewallPort `yaml:"sourcePorts" json:"sourcePorts"`
+}
+
+type NAT44FlowDNATPinholeCorrelationSpec struct {
+	Key string `yaml:"key,omitempty" json:"key,omitempty" jsonschema:"enum=,enum=localPort"`
+}
+
 type IngressListenSpec struct {
 	Interface   string                `yaml:"interface" json:"interface"`
 	Address     string                `yaml:"address,omitempty" json:"address,omitempty"`
@@ -2922,6 +2948,10 @@ func (r Resource) DerivedEventSpec() (DerivedEventSpec, error) {
 
 func (r Resource) NAT44RuleSpec() (NAT44RuleSpec, error) {
 	return specAs[NAT44RuleSpec](r)
+}
+
+func (r Resource) NAT44FlowDNATPinholeSpec() (NAT44FlowDNATPinholeSpec, error) {
+	return specAs[NAT44FlowDNATPinholeSpec](r)
 }
 
 func (r Resource) PortForwardSpec() (PortForwardSpec, error) {

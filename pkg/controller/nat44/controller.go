@@ -388,7 +388,7 @@ func (c Controller) applyRouter(router *api.Router) *api.Router {
 }
 
 func nat44ControllerResource(resource api.Resource) bool {
-	if resource.Kind == "NAT44Rule" {
+	if resource.Kind == "NAT44Rule" || resource.Kind == "NAT44FlowDNATPinhole" {
 		return true
 	}
 	return resource.APIVersion == api.FirewallAPIVersion && resource.Kind == "LocalServiceRedirect"

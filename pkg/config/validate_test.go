@@ -513,6 +513,7 @@ func whenValidationTestResources(when api.ResourceWhenSpec) []whenValidationTest
 		{specName: "EgressRoutePolicySpec", resource: testResource(api.NetAPIVersion, "EgressRoutePolicy", "default-v4", api.EgressRoutePolicySpec{When: when, Candidates: []api.EgressRoutePolicyCandidate{{Interface: "wan", Priority: 1, Table: 100, Mark: 100}}})},
 		{specName: "EgressRoutePolicyCandidate", resource: testResource(api.NetAPIVersion, "EgressRoutePolicy", "default-v4", api.EgressRoutePolicySpec{Candidates: []api.EgressRoutePolicyCandidate{{Interface: "wan", Priority: 1, Table: 100, Mark: 100, When: when}}})},
 		{specName: "NAT44RuleSpec", resource: testResource(api.NetAPIVersion, "NAT44Rule", "lan", api.NAT44RuleSpec{OutboundInterface: "wan", SourceCIDRs: []string{"192.0.2.0/24"}, Translation: api.IPv4NATTranslationSpec{Type: "interfaceAddress"}, When: when})},
+		{specName: "NAT44FlowDNATPinholeSpec", resource: testResource(api.NetAPIVersion, "NAT44FlowDNATPinhole", "atomcam", api.NAT44FlowDNATPinholeSpec{FromInterfaceRefs: []string{"Interface/wan"}, Outbound: api.NAT44FlowDNATPinholeOutboundSpec{SourceCIDRs: []string{"192.0.2.0/24"}, Protocol: "udp", DestinationPorts: []api.FirewallPort{"32100"}}, Inbound: api.NAT44FlowDNATPinholeInboundSpec{SourcePorts: []api.FirewallPort{"32099"}}, When: when})},
 		{specName: "NAT44SessionSyncSpec", resource: testResource(api.NetAPIVersion, "NAT44SessionSync", "dslite-sessions", api.NAT44SessionSyncSpec{SNATAddresses: []string{"192.0.2.2"}, Targets: []api.NAT44SessionSyncTargetSpec{{Host: "router-b"}}, When: when})},
 		{specName: "PortForwardSpec", resource: testResource(api.FirewallAPIVersion, "PortForward", "web", api.PortForwardSpec{Listen: api.IngressListenSpec{Interface: "wan", Protocol: "tcp", Port: 443}, Target: api.IngressTargetSpec{Address: "192.0.2.10", Port: 8443}, When: when})},
 		{specName: "IngressServiceSpec", resource: testResource(api.FirewallAPIVersion, "IngressService", "web", api.IngressServiceSpec{Listen: api.IngressListenSpec{Interface: "wan", Protocol: "tcp", Port: 443}, Backends: []api.IngressBackendSpec{{Address: "192.0.2.10", Port: 8443}}, When: when})},
@@ -1774,6 +1775,56 @@ func TestValidateFirewallFlowPinhole(t *testing.T) {
 	}
 	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "references missing IPAddressSet") {
 		t.Fatalf("expected missing IPAddressSet error, got %v", err)
+	}
+}
+
+func TestValidateNAT44FlowDNATPinhole(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"}, Metadata: api.ObjectMeta{Name: "atomcam-clients"}, Spec: api.IPAddressSetSpec{Addresses: []string{"172.18.1.92"}}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44FlowDNATPinhole"}, Metadata: api.ObjectMeta{Name: "atomcam-cloud-udp"}, Spec: api.NAT44FlowDNATPinholeSpec{
+				FromInterfaceRefs: []string{"Interface/wan"},
+				Outbound: api.NAT44FlowDNATPinholeOutboundSpec{
+					SourceSetRef:     "IPAddressSet/atomcam-clients",
+					Protocol:         "udp",
+					DestinationPorts: []api.FirewallPort{"32100"},
+				},
+				Inbound: api.NAT44FlowDNATPinholeInboundSpec{SourcePorts: []api.FirewallPort{"32099"}},
+				Timeout: "3m",
+			}},
+		}},
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate NAT44FlowDNATPinhole: %v", err)
+	}
+
+	router.Spec.Resources[2].Spec = api.NAT44FlowDNATPinholeSpec{
+		FromInterfaceRefs: []string{"Interface/wan"},
+		Outbound: api.NAT44FlowDNATPinholeOutboundSpec{
+			SourceSetRef:     "IPAddressSet/missing",
+			Protocol:         "udp",
+			DestinationPorts: []api.FirewallPort{"32100"},
+		},
+		Inbound: api.NAT44FlowDNATPinholeInboundSpec{SourcePorts: []api.FirewallPort{"32099"}},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "references missing IPAddressSet") {
+		t.Fatalf("expected missing IPAddressSet error, got %v", err)
+	}
+
+	router.Spec.Resources[2].Spec = api.NAT44FlowDNATPinholeSpec{
+		FromInterfaceRefs: []string{"Interface/missing"},
+		Outbound: api.NAT44FlowDNATPinholeOutboundSpec{
+			SourceSetRef:     "IPAddressSet/atomcam-clients",
+			Protocol:         "udp",
+			DestinationPorts: []api.FirewallPort{"32100"},
+		},
+		Inbound: api.NAT44FlowDNATPinholeInboundSpec{SourcePorts: []api.FirewallPort{"32099"}},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "references missing Interface") {
+		t.Fatalf("expected missing interface error, got %v", err)
 	}
 }
 

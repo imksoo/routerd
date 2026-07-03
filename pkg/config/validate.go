@@ -681,6 +681,32 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				return err
 			}
 		}
+		if res.Kind == "NAT44FlowDNATPinhole" {
+			spec, err := res.NAT44FlowDNATPinholeSpec()
+			if err != nil {
+				return err
+			}
+			for i, ref := range spec.FromInterfaceRefs {
+				kind, name := splitResourceRef(ref)
+				if kind == "" {
+					name = ref
+				}
+				if kind != "" && kind != "Interface" && kind != "PPPoESession" && kind != "DSLiteTunnel" {
+					return fmt.Errorf("%s spec.fromInterfaceRefs[%d] must reference Interface, PPPoESession, or DSLiteTunnel", res.ID(), i)
+				}
+				if !idx.Interfaces[name] && !idx.DSLiteTunnels[name] {
+					return fmt.Errorf("%s spec.fromInterfaceRefs[%d] references missing Interface, PPPoESession, or DSLiteTunnel %q", res.ID(), i, ref)
+				}
+			}
+			if spec.Outbound.SourceSetRef != "" {
+				if err := validateIPAddressSetRefsExist(res.ID(), "spec.outbound.sourceSetRef", []string{spec.Outbound.SourceSetRef}, idx.IPAddressSets); err != nil {
+					return err
+				}
+			}
+			if err := validateIPAddressSetRefsExist(res.ID(), "spec.outbound.destinationSetRefs", spec.Outbound.DestinationSetRefs, idx.IPAddressSets); err != nil {
+				return err
+			}
+		}
 		if res.Kind == "EgressRoutePolicy" {
 			spec, err := res.EgressRoutePolicySpec()
 			if err != nil {
@@ -1435,6 +1461,9 @@ func resourceWhens(res api.Resource) []resourceWhenRef {
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "NAT44Rule":
 		spec, _ := res.NAT44RuleSpec()
+		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
+	case "NAT44FlowDNATPinhole":
+		spec, _ := res.NAT44FlowDNATPinholeSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "NAT44SessionSync":
 		spec, _ := res.NAT44SessionSyncSpec()

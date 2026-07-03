@@ -136,6 +136,9 @@ func ResourceWhen(res api.Resource) api.ResourceWhenSpec {
 	case "NAT44Rule":
 		spec, _ := res.NAT44RuleSpec()
 		return spec.When
+	case "NAT44FlowDNATPinhole":
+		spec, _ := res.NAT44FlowDNATPinholeSpec()
+		return spec.When
 	case "NAT44SessionSync":
 		spec, _ := res.NAT44SessionSyncSpec()
 		return spec.When

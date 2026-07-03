@@ -20,7 +20,7 @@ func NeedsForwarding(router *api.Router) bool {
 	}
 	for _, resource := range router.Spec.Resources {
 		switch resource.Kind {
-		case "IngressService", "PortForward", "NAT44Rule", "BGPRouter", "BGPPeer", "ClusterNetworkRoute", "IPv4StaticRoute", "IPv6StaticRoute", "EgressRoutePolicy", "DSLiteTunnel", "WireGuardInterface", "VXLANTunnel", "VRF":
+		case "IngressService", "PortForward", "NAT44Rule", "NAT44FlowDNATPinhole", "BGPRouter", "BGPPeer", "ClusterNetworkRoute", "IPv4StaticRoute", "IPv6StaticRoute", "EgressRoutePolicy", "DSLiteTunnel", "WireGuardInterface", "VXLANTunnel", "VRF":
 			return true
 		}
 	}

@@ -604,6 +604,18 @@ func referencedIPAddressSetTargets(router *api.Router) map[string][]ipAddressSet
 			for _, ref := range append(append([]string{}, spec.DestinationSetRefs...), spec.ExcludeDestinationSetRefs...) {
 				add(ref, ipAddressSetTarget{TableFamily: "ip", AddressFamily: "ip", Table: "routerd_nat", Controller: "nat"})
 			}
+		case "NAT44FlowDNATPinhole":
+			if resource.APIVersion != api.NetAPIVersion {
+				continue
+			}
+			spec, err := resource.NAT44FlowDNATPinholeSpec()
+			if err != nil {
+				continue
+			}
+			add(spec.Outbound.SourceSetRef, ipAddressSetTarget{TableFamily: "ip", AddressFamily: "ip", Table: "routerd_nat", Controller: "nat"})
+			for _, ref := range spec.Outbound.DestinationSetRefs {
+				add(ref, ipAddressSetTarget{TableFamily: "ip", AddressFamily: "ip", Table: "routerd_nat", Controller: "nat"})
+			}
 		case "EgressRoutePolicy":
 			if resource.APIVersion != api.NetAPIVersion {
 				continue
