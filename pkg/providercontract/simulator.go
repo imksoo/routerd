@@ -50,14 +50,33 @@ type Snapshot struct {
 	ForwardingEnabled map[string]bool
 }
 
+type pendingMutation struct {
+	Due   time.Time
+	Apply func()
+}
+
+type pendingRouteObservation struct {
+	Key    string
+	Route  RouteAssignment
+	Delete bool
+	Due    time.Time
+}
+
 type Simulator struct {
 	mu         sync.Mutex
 	now        func() time.Time
 	generation int64
 
-	addresses  map[string]AddressAssignment
-	routes     map[string]RouteAssignment
-	forwarding map[string]bool
+	actionDelay                time.Duration
+	routeTableObservationDelay time.Duration
+
+	addresses      map[string]AddressAssignment
+	routes         map[string]RouteAssignment
+	observedRoutes map[string]RouteAssignment
+	forwarding     map[string]bool
+
+	pendingMutations         []pendingMutation
+	pendingRouteObservations []pendingRouteObservation
 }
 
 func New(now func() time.Time) *Simulator {
@@ -65,16 +84,30 @@ func New(now func() time.Time) *Simulator {
 		now = time.Now
 	}
 	return &Simulator{
-		now:        now,
-		addresses:  map[string]AddressAssignment{},
-		routes:     map[string]RouteAssignment{},
-		forwarding: map[string]bool{},
+		now:            now,
+		addresses:      map[string]AddressAssignment{},
+		routes:         map[string]RouteAssignment{},
+		observedRoutes: map[string]RouteAssignment{},
+		forwarding:     map[string]bool{},
 	}
+}
+
+func (s *Simulator) SetActionDelay(delay time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.actionDelay = maxDuration(0, delay)
+}
+
+func (s *Simulator) SetRouteTableObservationDelay(delay time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.routeTableObservationDelay = maxDuration(0, delay)
 }
 
 func (s *Simulator) Execute(plan dynamicconfig.ActionPlan) Result {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.applyDueLocked()
 
 	switch strings.TrimSpace(plan.Action) {
 	case ActionAssignSecondaryIP:
@@ -95,7 +128,16 @@ func (s *Simulator) Execute(plan dynamicconfig.ActionPlan) Result {
 func (s *Simulator) Snapshot() Snapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.applyDueLocked()
 	return s.snapshotLocked()
+}
+
+func (s *Simulator) ObserveRouteTableRoute(routeTableRef, prefix string) (RouteAssignment, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.applyDueLocked()
+	route, ok := s.observedRoutes[routeKey(routeTableRef, prefix)]
+	return route, ok
 }
 
 func (s *Simulator) snapshotLocked() Snapshot {
@@ -139,14 +181,18 @@ func (s *Simulator) assignSecondaryIP(plan dynamicconfig.ActionPlan) Result {
 			return failed("ObservedHolderMismatch", fmt.Sprintf("expected holder %s, observed %s", expected, current.TargetRef))
 		}
 	}
-	s.generation++
-	s.addresses[address] = AddressAssignment{
+	assignment := AddressAssignment{
 		Address:       address,
 		TargetRef:     targetRef,
 		Generation:    firstNonEmpty(plan.Parameters["assignmentGeneration"], plan.Parameters["claimGeneration"]),
-		AssignedAt:    s.now().UTC(),
+		AssignedAt:    time.Time{},
 		LastActionKey: clean(plan.IdempotencyKey),
 	}
+	s.scheduleMutationLocked(func() {
+		assignment.AssignedAt = s.now().UTC()
+		s.generation++
+		s.addresses[address] = assignment
+	})
 	return succeeded("Assigned", "address assigned")
 }
 
@@ -163,8 +209,10 @@ func (s *Simulator) unassignSecondaryIP(plan dynamicconfig.ActionPlan) Result {
 	if targetRef != "" && current.TargetRef != targetRef {
 		return failed("AddressHeldByAnotherTarget", fmt.Sprintf("%s is held by %s", address, current.TargetRef))
 	}
-	delete(s.addresses, address)
-	s.generation++
+	s.scheduleMutationLocked(func() {
+		delete(s.addresses, address)
+		s.generation++
+	})
 	return succeeded("Unassigned", "address unassigned")
 }
 
@@ -180,14 +228,19 @@ func (s *Simulator) assignRouteTableRoute(plan dynamicconfig.ActionPlan) Result 
 	if exists && current.NextHopRef != nextHop && !truthy(plan.Parameters["allowReassignment"]) {
 		return failed("RouteHeldByAnotherTarget", fmt.Sprintf("%s points to %s", prefix, current.NextHopRef))
 	}
-	s.generation++
-	s.routes[key] = RouteAssignment{
+	route := RouteAssignment{
 		Prefix:        prefix,
 		RouteTableRef: routeTable,
 		NextHopRef:    nextHop,
 		Generation:    firstNonEmpty(plan.Parameters["assignmentGeneration"], plan.Parameters["claimGeneration"]),
-		UpdatedAt:     s.now().UTC(),
+		UpdatedAt:     time.Time{},
 	}
+	s.scheduleMutationLocked(func() {
+		route.UpdatedAt = s.now().UTC()
+		s.generation++
+		s.routes[key] = route
+		s.scheduleRouteObservationLocked(key, route, false)
+	})
 	return succeeded("RouteAssigned", "route assigned")
 }
 
@@ -201,8 +254,11 @@ func (s *Simulator) unassignRouteTableRoute(plan dynamicconfig.ActionPlan) Resul
 	if _, exists := s.routes[key]; !exists {
 		return succeeded("AlreadyAbsent", "route is already absent")
 	}
-	delete(s.routes, key)
-	s.generation++
+	s.scheduleMutationLocked(func() {
+		delete(s.routes, key)
+		s.generation++
+		s.scheduleRouteObservationLocked(key, RouteAssignment{}, true)
+	})
 	return succeeded("RouteUnassigned", "route unassigned")
 }
 
@@ -214,9 +270,75 @@ func (s *Simulator) ensureForwardingEnabled(plan dynamicconfig.ActionPlan) Resul
 	if s.forwarding[targetRef] {
 		return succeeded("AlreadyEnabled", "forwarding is already enabled")
 	}
-	s.forwarding[targetRef] = true
-	s.generation++
+	s.scheduleMutationLocked(func() {
+		s.forwarding[targetRef] = true
+		s.generation++
+	})
 	return succeeded("ForwardingEnabled", "forwarding enabled")
+}
+
+func (s *Simulator) scheduleMutationLocked(apply func()) {
+	if s.actionDelay == 0 {
+		apply()
+		return
+	}
+	s.pendingMutations = append(s.pendingMutations, pendingMutation{
+		Due:   s.now().UTC().Add(s.actionDelay),
+		Apply: apply,
+	})
+}
+
+func (s *Simulator) scheduleRouteObservationLocked(key string, route RouteAssignment, deleteRoute bool) {
+	if s.routeTableObservationDelay == 0 {
+		if deleteRoute {
+			delete(s.observedRoutes, key)
+		} else {
+			s.observedRoutes[key] = route
+		}
+		return
+	}
+	s.pendingRouteObservations = append(s.pendingRouteObservations, pendingRouteObservation{
+		Key:    key,
+		Route:  route,
+		Delete: deleteRoute,
+		Due:    s.now().UTC().Add(s.routeTableObservationDelay),
+	})
+}
+
+func (s *Simulator) applyDueLocked() {
+	now := s.now().UTC()
+	if len(s.pendingMutations) > 0 {
+		sort.SliceStable(s.pendingMutations, func(i, j int) bool {
+			return s.pendingMutations[i].Due.Before(s.pendingMutations[j].Due)
+		})
+		pending := s.pendingMutations[:0]
+		for _, mutation := range s.pendingMutations {
+			if mutation.Due.After(now) {
+				pending = append(pending, mutation)
+				continue
+			}
+			mutation.Apply()
+		}
+		s.pendingMutations = pending
+	}
+	if len(s.pendingRouteObservations) > 0 {
+		sort.SliceStable(s.pendingRouteObservations, func(i, j int) bool {
+			return s.pendingRouteObservations[i].Due.Before(s.pendingRouteObservations[j].Due)
+		})
+		pending := s.pendingRouteObservations[:0]
+		for _, observation := range s.pendingRouteObservations {
+			if observation.Due.After(now) {
+				pending = append(pending, observation)
+				continue
+			}
+			if observation.Delete {
+				delete(s.observedRoutes, observation.Key)
+			} else {
+				s.observedRoutes[observation.Key] = observation.Route
+			}
+		}
+		s.pendingRouteObservations = pending
+	}
 }
 
 func (s Snapshot) AddressHolder(address string) (AddressAssignment, bool) {
@@ -270,4 +392,11 @@ func firstNonEmpty(values ...string) string {
 
 func clean(value string) string {
 	return strings.TrimSpace(value)
+}
+
+func maxDuration(a, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
 }
