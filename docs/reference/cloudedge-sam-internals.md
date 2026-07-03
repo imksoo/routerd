@@ -235,7 +235,13 @@ is visible without tearing down the working data plane.
 | `proxy-arp` | on-prem | capture on the L2 segment via proxy-ARP/GARP |
 | `addr-add` | (generic) | add the OS address |
 
-The `route-table` strategy requires `capture.target.nextHopIPAddress` on Azure.
+The current release lab certification covers `secondary-ip` capture only. The
+`route-table` strategy is **uncertified**. On Azure it requires
+`capture.target.nextHopIPAddress` and waits for provider inventory to observe
+the UDR pointing at the local router before routerd advertises the captured
+`/32` to BGP. That route-table-specific coupling means ARM/provider API latency
+can delay overlay convergence. `secondary-ip` capture is not gated on
+route-table observation.
 
 **Same-subnet constraint ([#516](https://github.com/imksoo/routerd/issues/516),
 live-validated 2026-06-16):** CloudEdge SAM's primary use case is same-subnet

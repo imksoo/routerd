@@ -228,14 +228,17 @@ is visible without tearing down the working data plane.
 | strategy | providers | behavior |
 | --- | --- | --- |
 | `secondary-ip` (default) | AWS / Azure / OCI / GCP | assign the `/32` to the NIC as a secondary IP |
-| `route-table` | AWS / Azure | point a route-table / UDR entry at the holder's NIC |
+| `route-table` | Azure | point a UDR entry at the holder's NIC |
 | `proxy-arp` | on-prem | capture on the L2 segment via proxy-ARP/GARP |
 | `addr-add` | (generic) | add the OS address |
 
-The `route-table` strategy is AWS/Azure only and requires
-`capture.target.nextHopIPAddress` on Azure. Live validation of the
-route-table/UDR strategy is tracked in
-[#516](https://github.com/imksoo/routerd/issues/516).
+Current release lab certification covers `secondary-ip` capture only. The
+`route-table` strategy is **uncertified**. On Azure it requires
+`capture.target.nextHopIPAddress`, and routerd waits for provider inventory to
+observe the UDR pointing at the local router before advertising the captured
+`/32` to BGP. This coupling is specific to `route-table`; ARM/provider API
+latency can delay overlay convergence for this strategy. `secondary-ip` capture
+is not gated on route-table observation.
 
 Every capture is accompanied by a **forwarding-enable** action so the NIC can
 forward packets that are not addressed to itself.
