@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -314,6 +315,71 @@ func TestSAMTransportProfilePairStableCanonicalInnerPrefixSeed(t *testing.T) {
 
 	if baseTunnel.Address != aliasTunnel.Address {
 		t.Fatalf("pair-stable address differs for equivalent prefixes: base=%s alias=%s", baseTunnel.Address, aliasTunnel.Address)
+	}
+}
+
+func TestSAMTransportProfilePairStableWarnsOnFabricWideCollision(t *testing.T) {
+	now := time.Date(2026, 6, 6, 9, 4, 57, 0, time.UTC)
+	self, nodes := pairStableFabricCollisionNodes(t)
+	store := testStore(t, now)
+	router := transportRouterWithMode("fabric", self, "pair-stable", nil)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.InnerPrefix = "10.255.1.0/24"
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMNodeSet/fabric-nodes"}}
+	router.Spec.Resources[0].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources, samNodeSetResource("fabric-nodes", samNodesForTransportTest(nodes)))
+
+	controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("fabric", self)).ResourcesJSON)
+	if len(resources) == 0 {
+		t.Fatal("resources are empty; collision detection must warn only and must not auto-renumber or block generation")
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "fabric")
+	if status["health"] != "Warn" || status["reason"] != "PairStableAddressCollision" {
+		t.Fatalf("status = %#v, want PairStableAddressCollision warning", status)
+	}
+	if got := statusIntForTest(status["pairStableCollisionCount"]); got == 0 {
+		t.Fatalf("pairStableCollisionCount = %d, want collision details in status=%#v", got, status)
+	}
+	warning := fmt.Sprint(status["warning"])
+	if !strings.Contains(warning, "expand spec.innerPrefix") || !strings.Contains(warning, "will not auto-renumber") {
+		t.Fatalf("warning = %q, want expand/no-auto-renumber guidance", warning)
+	}
+	if !conditionStatusForTest(status, "PairStableAddressingCollisionFree", "False") {
+		t.Fatalf("conditions = %#v, want collision-free condition False", status["conditions"])
+	}
+}
+
+func TestSAMTransportProfilePairStableDoesNotWarnWithLargerPrefix(t *testing.T) {
+	now := time.Date(2026, 6, 6, 9, 4, 59, 0, time.UTC)
+	self, nodes := pairStableCollisionFreeNodes(t)
+	store := testStore(t, now)
+	router := transportRouterWithMode("fabric", self, "pair-stable", nil)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.InnerPrefix = "10.255.0.0/20"
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMNodeSet/fabric-nodes"}}
+	router.Spec.Resources[0].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources, samNodeSetResource("fabric-nodes", samNodesForTransportTest(nodes)))
+
+	controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "fabric")
+	if status["health"] == "Warn" || statusIntForTest(status["pairStableCollisionCount"]) != 0 {
+		t.Fatalf("status = %#v, want no pair-stable collision with /20", status)
+	}
+	if !conditionStatusForTest(status, "PairStableAddressingCollisionFree", "True") {
+		t.Fatalf("conditions = %#v, want collision-free condition True", status["conditions"])
 	}
 }
 
@@ -1809,6 +1875,136 @@ func samNodeSetResource(name string, nodes []api.SAMNodeSpec) api.Resource {
 		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMNodeSet"},
 		Metadata: api.ObjectMeta{Name: name},
 		Spec:     api.SAMNodeSetSpec{Nodes: nodes},
+	}
+}
+
+func pairStableFabricCollisionNodes(t *testing.T) (string, []string) {
+	t.Helper()
+	self := "rr-a"
+	for count := 2; count <= 80; count++ {
+		nodes := []string{self}
+		for i := 0; i < count; i++ {
+			nodes = append(nodes, fmt.Sprintf("leaf-%02d", i))
+		}
+		small := pairStableCollisionSpec(self, nodes, "10.255.1.0/24")
+		smallInner := mustPrefixForTransportTest(t, small.InnerPrefix)
+		if _, err := transportPairStableSlots(small, smallInner); err != nil {
+			continue
+		}
+		collisions := detectPairStableFabricCollisions(small, smallInner)
+		if !hasCollisionWithoutNode(collisions, self) {
+			continue
+		}
+		return self, nodes
+	}
+	t.Fatal("failed to find deterministic pair-stable /24 fabric collision")
+	return "", nil
+}
+
+func pairStableCollisionFreeNodes(t *testing.T) (string, []string) {
+	t.Helper()
+	self := "rr-a"
+	for count := 2; count <= 80; count++ {
+		nodes := []string{self}
+		for i := 0; i < count; i++ {
+			nodes = append(nodes, fmt.Sprintf("leaf-%02d", i))
+		}
+		large := pairStableCollisionSpec(self, nodes, "10.255.0.0/20")
+		if largeCollisions := detectPairStableFabricCollisions(large, mustPrefixForTransportTest(t, large.InnerPrefix)); len(largeCollisions) == 0 {
+			return self, nodes
+		}
+	}
+	t.Fatal("failed to find deterministic pair-stable /20 collision-free topology")
+	return "", nil
+}
+
+func pairStableCollisionSpec(self string, nodes []string, innerPrefix string) api.SAMTransportProfileSpec {
+	var peers []api.SAMTransportPeerSpec
+	for i, node := range nodes {
+		if node == self {
+			continue
+		}
+		peers = append(peers, api.SAMTransportPeerSpec{
+			NodeRef:        node,
+			RemoteEndpoint: fmt.Sprintf("203.0.113.%d", 10+i),
+		})
+	}
+	return api.SAMTransportProfileSpec{
+		SelfNodeRef:      self,
+		InnerPrefix:      innerPrefix,
+		AddressingMode:   "pair-stable",
+		Peers:            peers,
+		TopologyNodeRefs: append([]string(nil), nodes...),
+	}
+}
+
+func samNodesForTransportTest(nodes []string) []api.SAMNodeSpec {
+	out := make([]api.SAMNodeSpec, 0, len(nodes))
+	for i, node := range nodes {
+		out = append(out, api.SAMNodeSpec{
+			NodeRef:     node,
+			SAMEndpoint: fmt.Sprintf("203.0.113.%d", 10+i),
+		})
+	}
+	return out
+}
+
+func mustPrefixForTransportTest(t *testing.T, value string) netip.Prefix {
+	t.Helper()
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil {
+		t.Fatalf("ParsePrefix(%q): %v", value, err)
+	}
+	return prefix.Masked()
+}
+
+func hasCollisionWithoutNode(collisions []transportPairStableCollision, node string) bool {
+	for _, collision := range collisions {
+		for _, edge := range collision.EdgeKeys {
+			if !strings.Contains(describeEdgeKey(edge), node) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func conditionStatusForTest(status map[string]any, conditionType, want string) bool {
+	for _, item := range statusSliceForTest(status["conditions"]) {
+		if fmt.Sprint(item["type"]) == conditionType && fmt.Sprint(item["status"]) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func statusSliceForTest(value any) []map[string]any {
+	switch typed := value.(type) {
+	case []map[string]any:
+		return typed
+	case []any:
+		out := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			if row, ok := item.(map[string]any); ok {
+				out = append(out, row)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func statusIntForTest(value any) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	default:
+		return 0
 	}
 }
 
