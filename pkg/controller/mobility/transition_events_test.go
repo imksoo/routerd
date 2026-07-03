@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -17,6 +18,19 @@ func TestRecordBGPCaptureAssignmentTransitionsEmitsMachineReadableSequence(t *te
 	store := testStore(t, now)
 	controller := Controller{Store: store}
 	address := "10.88.60.10/32"
+	self := memberPlanInfo{
+		NodeRef: "aws-rr-b",
+	}
+	livenessMarkers := map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity("aws-rr-b"): "10.99.0.12/32",
+	}
+	mobilityPrefixCommunities := map[string][]string{
+		address: {
+			bgpMobilityCommunityOwner,
+			bgpMobilityCommunityActiveHolder,
+			bgpstate.MobilityNodeIdentityCommunity("aws-rr-b"),
+		},
+	}
 	assignment := bgpCaptureAssignment{
 		Address:        address,
 		Phase:          "Active",
@@ -45,7 +59,7 @@ func TestRecordBGPCaptureAssignmentTransitionsEmitsMachineReadableSequence(t *te
 	}
 
 	nextStatus := map[string]any{}
-	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", "aws-rr-b", nil, map[string]bgpCaptureAssignment{address: assignment}, plans, placement, nil, nil, nextStatus, now); err != nil {
+	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, nil, map[string]bgpCaptureAssignment{address: assignment}, plans, placement, nil, nil, nil, nil, nextStatus, now); err != nil {
 		t.Fatalf("record start transition: %v", err)
 	}
 	events := listMobilityTransitionEvents(t, store)
@@ -60,44 +74,67 @@ func TestRecordBGPCaptureAssignmentTransitionsEmitsMachineReadableSequence(t *te
 		t.Fatalf("holdDownRemainingSeconds.seize = %q, want 9", got)
 	}
 
-	completeStatus := map[string]any{}
-	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", "aws-rr-b", map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, []ownershipDecision{{
-		Address:           address,
-		Class:             ownershipClassConfirmedCapture,
-		CaptureHolderNode: "aws-rr-b",
-	}}, nextStatus, completeStatus, now.Add(151*time.Second)); err != nil {
-		t.Fatalf("record complete transition: %v", err)
+	seizeCompleteStatus := map[string]any{}
+	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, livenessMarkers, mobilityPrefixCommunities, nil, nextStatus, seizeCompleteStatus, now.Add(151*time.Second)); err != nil {
+		t.Fatalf("record dataplane complete transition: %v", err)
 	}
 	events = listMobilityTransitionEvents(t, store)
 	if len(events) != 2 {
-		t.Fatalf("events after complete = %d, want 2", len(events))
+		t.Fatalf("events after dataplane complete = %d, want 2", len(events))
 	}
 	assertTransitionEvent(t, events[1], "seize-complete", address, "aws-rr-a", "aws-rr-b", assignment.Generation)
-	completed := bgpCaptureTransitionCompletedFromStatus(completeStatus)
-	if got := completed[address]; got != assignment.Generation {
-		t.Fatalf("completion marker = %q, want %q", got, assignment.Generation)
+	assertExtractableTransitionCount(t, events, "seize-complete", 1)
+	assertExtractableTransitionCount(t, events, "capture-confirmed", 0)
+	completed := bgpCaptureTransitionCompletedByKindFromStatus(seizeCompleteStatus)
+	if got := completed[bgpCaptureTransitionCompletedField][address]; got != assignment.Generation {
+		t.Fatalf("seize completion marker = %q, want %q", got, assignment.Generation)
 	}
 
-	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", "aws-rr-b", map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, []ownershipDecision{{
+	captureStatus := map[string]any{}
+	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, livenessMarkers, mobilityPrefixCommunities, []ownershipDecision{{
 		Address:           address,
 		Class:             ownershipClassConfirmedCapture,
 		CaptureHolderNode: "aws-rr-b",
-	}}, completeStatus, map[string]any{}, now.Add(152*time.Second)); err != nil {
-		t.Fatalf("record duplicate complete transition: %v", err)
-	}
-	events = listMobilityTransitionEvents(t, store)
-	if len(events) != 2 {
-		t.Fatalf("events after duplicate complete = %d, want 2", len(events))
-	}
-
-	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", "aws-rr-b", map[string]bgpCaptureAssignment{address: assignment}, nil, plans, PlacementDecision{}, nil, completeStatus, map[string]any{}, now.Add(180*time.Second)); err != nil {
-		t.Fatalf("record yield transition: %v", err)
+		CaptureStrategy:   captureStrategySecondaryIP,
+	}}, seizeCompleteStatus, captureStatus, now.Add(173*time.Second)); err != nil {
+		t.Fatalf("record provider confirmed transition: %v", err)
 	}
 	events = listMobilityTransitionEvents(t, store)
 	if len(events) != 3 {
-		t.Fatalf("events after yield = %d, want 3", len(events))
+		t.Fatalf("events after provider confirmed = %d, want 3", len(events))
 	}
-	assertTransitionEvent(t, events[2], "yield", address, "aws-rr-b", "", assignment.Generation)
+	assertTransitionEvent(t, events[2], "capture-confirmed", address, "aws-rr-a", "aws-rr-b", assignment.Generation)
+	if got := events[2].Attributes["captureStrategy"]; got != captureStrategySecondaryIP {
+		t.Fatalf("captureStrategy = %q, want %q", got, captureStrategySecondaryIP)
+	}
+	assertExtractableTransitionCount(t, events, "seize-complete", 1)
+	assertExtractableTransitionCount(t, events, "capture-confirmed", 1)
+	completed = bgpCaptureTransitionCompletedByKindFromStatus(captureStatus)
+	if got := completed[bgpCaptureConfirmedField][address]; got != assignment.Generation {
+		t.Fatalf("capture confirmation marker = %q, want %q", got, assignment.Generation)
+	}
+
+	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, livenessMarkers, mobilityPrefixCommunities, []ownershipDecision{{
+		Address:           address,
+		Class:             ownershipClassConfirmedCapture,
+		CaptureHolderNode: "aws-rr-b",
+		CaptureStrategy:   captureStrategySecondaryIP,
+	}}, captureStatus, map[string]any{}, now.Add(174*time.Second)); err != nil {
+		t.Fatalf("record duplicate transitions: %v", err)
+	}
+	events = listMobilityTransitionEvents(t, store)
+	if len(events) != 3 {
+		t.Fatalf("events after duplicate transitions = %d, want 3", len(events))
+	}
+
+	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, nil, plans, PlacementDecision{}, nil, nil, nil, captureStatus, map[string]any{}, now.Add(180*time.Second)); err != nil {
+		t.Fatalf("record yield transition: %v", err)
+	}
+	events = listMobilityTransitionEvents(t, store)
+	if len(events) != 4 {
+		t.Fatalf("events after yield = %d, want 4", len(events))
+	}
+	assertTransitionEvent(t, events[3], "yield", address, "aws-rr-b", "", assignment.Generation)
 }
 
 func listMobilityTransitionEvents(t *testing.T, store *routerstate.SQLiteStore) []routerstate.StoredEvent {
@@ -129,5 +166,18 @@ func assertTransitionEvent(t *testing.T, event routerstate.StoredEvent, kind, ad
 	}
 	if attrs["timestamp"] == "" {
 		t.Fatalf("timestamp is empty: %#v", attrs)
+	}
+}
+
+func assertExtractableTransitionCount(t *testing.T, events []routerstate.StoredEvent, kind string, want int) {
+	t.Helper()
+	got := 0
+	for _, event := range events {
+		if event.Attributes["transitionKind"] == kind && event.Attributes["address"] != "" && event.Attributes["timestamp"] != "" {
+			got++
+		}
+	}
+	if got != want {
+		t.Fatalf("extractable %s events = %d, want %d", kind, got, want)
 	}
 }
