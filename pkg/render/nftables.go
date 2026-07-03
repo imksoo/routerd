@@ -24,6 +24,7 @@ func NftablesNAT44(router *api.Router) ([]byte, error) {
 	}
 
 	var nat44Rules []api.Resource
+	var nat44FlowDNATPinholes []api.Resource
 	var egressPolicies []api.Resource
 	var zones []api.Resource
 	var firewallPolicies []api.Resource
@@ -41,6 +42,9 @@ func NftablesNAT44(router *api.Router) ([]byte, error) {
 	for _, res := range router.Spec.Resources {
 		if res.Kind == "NAT44Rule" {
 			nat44Rules = append(nat44Rules, res)
+		}
+		if res.Kind == "NAT44FlowDNATPinhole" {
+			nat44FlowDNATPinholes = append(nat44FlowDNATPinholes, res)
 		}
 		if res.Kind == "EgressRoutePolicy" {
 			spec, err := res.EgressRoutePolicySpec()
@@ -85,6 +89,7 @@ func NftablesNAT44(router *api.Router) ([]byte, error) {
 	referencedAddressSets = mergeIPAddressSets(
 		referencedIPAddressSets(redirectRules, addressSets),
 		referencedNAT44ResourceIPAddressSets(nat44Rules, addressSets),
+		referencedNAT44FlowDNATPinholeIPAddressSets(nat44FlowDNATPinholes, addressSets),
 	)
 	mssPolicies, err = pathMTUMSSPolicies(router)
 	if err != nil {
@@ -103,10 +108,13 @@ func NftablesNAT44(router *api.Router) ([]byte, error) {
 			l2FilterVXLANS = append(l2FilterVXLANS, vxlan)
 		}
 	}
-	if len(nat44Rules) == 0 && len(ingressRules) == 0 && len(redirectRules) == 0 && len(egressPolicies) == 0 && len(zones) == 0 && len(firewallPolicies) == 0 && len(firewallLogs) == 0 && len(firewallRules) == 0 && len(firewallFlowPinholes) == 0 && len(clientPolicies) == 0 && len(mssPolicies) == 0 && len(forceFragmentPolicies) == 0 && len(l2FilterVXLANS) == 0 {
+	if len(nat44Rules) == 0 && len(nat44FlowDNATPinholes) == 0 && len(ingressRules) == 0 && len(redirectRules) == 0 && len(egressPolicies) == 0 && len(zones) == 0 && len(firewallPolicies) == 0 && len(firewallLogs) == 0 && len(firewallRules) == 0 && len(firewallFlowPinholes) == 0 && len(clientPolicies) == 0 && len(mssPolicies) == 0 && len(forceFragmentPolicies) == 0 && len(l2FilterVXLANS) == 0 {
 		return nil, nil
 	}
 	sort.Slice(nat44Rules, func(i, j int) bool { return nat44Rules[i].Metadata.Name < nat44Rules[j].Metadata.Name })
+	sort.Slice(nat44FlowDNATPinholes, func(i, j int) bool {
+		return nat44FlowDNATPinholes[i].Metadata.Name < nat44FlowDNATPinholes[j].Metadata.Name
+	})
 	sort.Slice(egressPolicies, func(i, j int) bool { return egressPolicies[i].Metadata.Name < egressPolicies[j].Metadata.Name })
 	sort.Slice(zones, func(i, j int) bool { return zones[i].Metadata.Name < zones[j].Metadata.Name })
 	sort.Slice(firewallPolicies, func(i, j int) bool { return firewallPolicies[i].Metadata.Name < firewallPolicies[j].Metadata.Name })
@@ -142,8 +150,8 @@ func NftablesNAT44(router *api.Router) ([]byte, error) {
 			return nil, err
 		}
 	}
-	if len(nat44Rules) > 0 || len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
-		if err := writeNAT44Table(&buf, router, aliases, nat44Rules, ingressRules, redirectRules, referencedAddressSets, addressSets); err != nil {
+	if len(nat44Rules) > 0 || len(nat44FlowDNATPinholes) > 0 || len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
+		if err := writeNAT44Table(&buf, router, aliases, nat44Rules, nat44FlowDNATPinholes, ingressRules, redirectRules, referencedAddressSets, addressSets); err != nil {
 			return nil, err
 		}
 	}
@@ -390,11 +398,14 @@ func NftablesNAT44Rules(rules []NAT44RenderRule) ([]byte, error) {
 
 func NftablesNAT44RulesForRouter(router *api.Router, rules []NAT44RenderRule) ([]byte, error) {
 	var ingressRules []ingressNATRule
+	var flowDNATPinholes []api.Resource
 	var redirectRules []localServiceRedirectRule
 	var addressSets []nftIPAddressSet
 	var sets map[string]nftIPAddressSet
+	var aliases map[string]string
 	if router != nil {
-		aliases, err := nftOutboundAliases(router)
+		var err error
+		aliases, err = nftOutboundAliases(router)
 		if err != nil {
 			return nil, err
 		}
@@ -406,29 +417,43 @@ func NftablesNAT44RulesForRouter(router *api.Router, rules []NAT44RenderRule) ([
 		if err != nil {
 			return nil, err
 		}
-		addressSets = mergeIPAddressSets(referencedIPAddressSets(redirectRules, sets), referencedNAT44IPAddressSets(rules, sets))
+		for _, res := range router.Spec.Resources {
+			if res.Kind == "NAT44FlowDNATPinhole" {
+				flowDNATPinholes = append(flowDNATPinholes, res)
+			}
+		}
+		addressSets = mergeIPAddressSets(
+			referencedIPAddressSets(redirectRules, sets),
+			referencedNAT44IPAddressSets(rules, sets),
+			referencedNAT44FlowDNATPinholeIPAddressSets(flowDNATPinholes, sets),
+		)
 		ingressRules, err = ingressNATRules(router, aliases)
 		if err != nil {
 			return nil, err
 		}
 	}
-	if len(rules) == 0 && len(ingressRules) == 0 && !hasIPv4LocalServiceRedirectRules(redirectRules) && !hasIPv6LocalServiceRedirectRules(redirectRules) {
+	if len(rules) == 0 && len(flowDNATPinholes) == 0 && len(ingressRules) == 0 && !hasIPv4LocalServiceRedirectRules(redirectRules) && !hasIPv6LocalServiceRedirectRules(redirectRules) {
 		return nil, nil
 	}
 	rules = append([]NAT44RenderRule(nil), rules...)
 	sort.Slice(rules, func(i, j int) bool { return rules[i].Name < rules[j].Name })
+	sort.Slice(flowDNATPinholes, func(i, j int) bool { return flowDNATPinholes[i].Metadata.Name < flowDNATPinholes[j].Metadata.Name })
 	var buf bytes.Buffer
 	buf.WriteString("# Generated by routerd. Do not edit by hand.\n")
-	if len(rules) > 0 || len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
+	if len(rules) > 0 || len(flowDNATPinholes) > 0 || len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
 		writeNftTablePreamble(&buf, "ip", "routerd_nat")
 		buf.WriteString("table ip routerd_nat {\n")
 		writeNftTableOwnerMarker(&buf)
 		writeIPv4AddressSets(&buf, addressSets)
-		if len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
+		writeNAT44FlowDNATPinholeMaps(&buf, flowDNATPinholes)
+		if len(flowDNATPinholes) > 0 || len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
 			writeIngressDNATChains(&buf, ingressRules)
 			buf.WriteString("  chain prerouting {\n")
 			buf.WriteString("    type nat hook prerouting priority dstnat; policy accept;\n")
 			writeLocalServiceRedirectRules(&buf, redirectRules, "ip")
+			if err := writeNAT44FlowDNATPinholeDNATRules(&buf, flowDNATPinholes, aliases); err != nil {
+				return nil, err
+			}
 			for _, rule := range ingressRules {
 				writeIngressDNATRule(&buf, rule, rule.ListenInterface, "")
 				for _, ifname := range rule.HairpinInterfaces {
@@ -443,6 +468,9 @@ func NftablesNAT44RulesForRouter(router *api.Router, rules []NAT44RenderRule) ([
 		buf.WriteString("  chain postrouting {\n")
 		buf.WriteString("    type nat hook postrouting priority srcnat; policy accept;\n")
 		writeIngressHairpinSNATRules(&buf, ingressRules)
+		if err := writeNAT44FlowDNATPinholeLearnRules(&buf, flowDNATPinholes, aliases, sets); err != nil {
+			return nil, err
+		}
 		for _, rule := range rules {
 			if err := writeNAT44RenderRule(&buf, rule, sets); err != nil {
 				return nil, err
@@ -1844,16 +1872,20 @@ func nftIPv4SourcesMatch(resourceID string, sources []string) (string, error) {
 	return " ip saddr { " + strings.Join(values, ", ") + " }", nil
 }
 
-func writeNAT44Table(buf *bytes.Buffer, router *api.Router, aliases map[string]string, nat44Rules []api.Resource, ingressRules []ingressNATRule, redirectRules []localServiceRedirectRule, addressSets []nftIPAddressSet, addressSetMap map[string]nftIPAddressSet) error {
+func writeNAT44Table(buf *bytes.Buffer, router *api.Router, aliases map[string]string, nat44Rules []api.Resource, flowDNATPinholes []api.Resource, ingressRules []ingressNATRule, redirectRules []localServiceRedirectRule, addressSets []nftIPAddressSet, addressSetMap map[string]nftIPAddressSet) error {
 	writeNftTablePreamble(buf, "ip", "routerd_nat")
 	buf.WriteString("table ip routerd_nat {\n")
 	writeNftTableOwnerMarker(buf)
 	writeIPv4AddressSets(buf, addressSets)
-	if len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
+	writeNAT44FlowDNATPinholeMaps(buf, flowDNATPinholes)
+	if len(flowDNATPinholes) > 0 || len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
 		writeIngressDNATChains(buf, ingressRules)
 		buf.WriteString("  chain prerouting {\n")
 		buf.WriteString("    type nat hook prerouting priority dstnat; policy accept;\n")
 		writeLocalServiceRedirectRules(buf, redirectRules, "ip")
+		if err := writeNAT44FlowDNATPinholeDNATRules(buf, flowDNATPinholes, aliases); err != nil {
+			return err
+		}
 		for _, rule := range ingressRules {
 			writeIngressDNATRule(buf, rule, rule.ListenInterface, "")
 			for _, ifname := range rule.HairpinInterfaces {
@@ -1868,6 +1900,9 @@ func writeNAT44Table(buf *bytes.Buffer, router *api.Router, aliases map[string]s
 	buf.WriteString("  chain postrouting {\n")
 	buf.WriteString("    type nat hook postrouting priority srcnat; policy accept;\n")
 	writeIngressHairpinSNATRules(buf, ingressRules)
+	if err := writeNAT44FlowDNATPinholeLearnRules(buf, flowDNATPinholes, aliases, addressSetMap); err != nil {
+		return err
+	}
 	for _, res := range nat44Rules {
 		spec, err := res.NAT44RuleSpec()
 		if err != nil {
@@ -1929,6 +1964,134 @@ func writeNAT44Table(buf *bytes.Buffer, router *api.Router, aliases map[string]s
 	buf.WriteString("  }\n")
 	buf.WriteString("}\n")
 	return nil
+}
+
+func writeNAT44FlowDNATPinholeMaps(buf *bytes.Buffer, pinholes []api.Resource) {
+	for _, res := range pinholes {
+		buf.WriteString("  map " + nftNAT44FlowDNATPinholeMapName(res.Metadata.Name) + " { type inet_service : ipv4_addr . inet_service; flags dynamic,timeout; }\n")
+	}
+}
+
+func writeNAT44FlowDNATPinholeDNATRules(buf *bytes.Buffer, pinholes []api.Resource, aliases map[string]string) error {
+	for _, res := range pinholes {
+		spec, err := res.NAT44FlowDNATPinholeSpec()
+		if err != nil {
+			return err
+		}
+		ifnames, err := nftNAT44FlowDNATPinholeIfnames(res.ID(), spec.FromInterfaceRefs, aliases)
+		if err != nil {
+			return err
+		}
+		parts := []string{
+			nftIfnameMatch("iifname", ifnames),
+			nftPortMatch("udp", "sport", spec.Inbound.SourcePorts),
+			"dnat ip addr . port to udp dport map @" + nftNAT44FlowDNATPinholeMapName(res.Metadata.Name),
+			"comment " + nftQuote("routerd NAT44FlowDNATPinhole "+res.Metadata.Name+" dnat"),
+		}
+		buf.WriteString("    " + strings.Join(strings.Fields(strings.Join(parts, " ")), " ") + "\n")
+	}
+	return nil
+}
+
+func writeNAT44FlowDNATPinholeLearnRules(buf *bytes.Buffer, pinholes []api.Resource, aliases map[string]string, addressSets map[string]nftIPAddressSet) error {
+	for _, res := range pinholes {
+		spec, err := res.NAT44FlowDNATPinholeSpec()
+		if err != nil {
+			return err
+		}
+		ifnames, err := nftNAT44FlowDNATPinholeIfnames(res.ID(), spec.FromInterfaceRefs, aliases)
+		if err != nil {
+			return err
+		}
+		matches, err := nftNAT44FlowDNATPinholeOutboundMatches(res.ID(), spec, addressSets)
+		if err != nil {
+			return err
+		}
+		timeout := "3m"
+		if strings.TrimSpace(spec.Timeout) != "" {
+			parsed, err := time.ParseDuration(strings.TrimSpace(spec.Timeout))
+			if err != nil {
+				return fmt.Errorf("%s has invalid timeout %q: %w", res.ID(), spec.Timeout, err)
+			}
+			timeout = nftDurationSeconds(parsed)
+		}
+		for _, match := range matches {
+			parts := []string{
+				nftIfnameMatch("oifname", ifnames),
+				match,
+				nftPortMatch("udp", "dport", spec.Outbound.DestinationPorts),
+				"update @" + nftNAT44FlowDNATPinholeMapName(res.Metadata.Name) + " { udp sport timeout " + timeout + " : ip saddr . udp sport }",
+				"counter",
+				"comment " + nftQuote("routerd NAT44FlowDNATPinhole "+res.Metadata.Name+" learn"),
+			}
+			buf.WriteString("    " + strings.Join(strings.Fields(strings.Join(parts, " ")), " ") + "\n")
+		}
+	}
+	return nil
+}
+
+func nftNAT44FlowDNATPinholeOutboundMatches(resourceID string, spec api.NAT44FlowDNATPinholeSpec, addressSets map[string]nftIPAddressSet) ([]string, error) {
+	var sources []string
+	if spec.Outbound.SourceSetRef != "" {
+		setName, err := nftIPAddressSetRefName(resourceID, spec.Outbound.SourceSetRef, addressSets)
+		if err != nil {
+			return nil, err
+		}
+		sources = append(sources, "ip saddr @"+setName)
+	}
+	for _, cidr := range spec.Outbound.SourceCIDRs {
+		prefix, err := netip.ParsePrefix(cidr)
+		if err != nil || !prefix.Addr().Is4() {
+			return nil, fmt.Errorf("%s has invalid IPv4 source CIDR %q", resourceID, cidr)
+		}
+		sources = append(sources, "ip saddr "+prefix.Masked().String())
+	}
+	if len(sources) == 0 {
+		sources = []string{""}
+	}
+	var destinations []string
+	for _, cidr := range spec.Outbound.DestinationCIDRs {
+		prefix, err := netip.ParsePrefix(cidr)
+		if err != nil || !prefix.Addr().Is4() {
+			return nil, fmt.Errorf("%s has invalid IPv4 destination CIDR %q", resourceID, cidr)
+		}
+		destinations = append(destinations, "ip daddr "+prefix.Masked().String())
+	}
+	for _, ref := range spec.Outbound.DestinationSetRefs {
+		setName, err := nftIPAddressSetRefName(resourceID, ref, addressSets)
+		if err != nil {
+			return nil, err
+		}
+		destinations = append(destinations, "ip daddr @"+setName)
+	}
+	if len(destinations) == 0 {
+		destinations = []string{""}
+	}
+	var out []string
+	for _, source := range sources {
+		for _, destination := range destinations {
+			out = append(out, strings.Join(strings.Fields(source+" "+destination), " "))
+		}
+	}
+	return out, nil
+}
+
+func nftNAT44FlowDNATPinholeIfnames(resourceID string, refs []string, aliases map[string]string) ([]string, error) {
+	var ifnames []string
+	for _, ref := range refs {
+		name := refName(ref)
+		ifname := aliases[name]
+		if ifname == "" {
+			return nil, fmt.Errorf("%s references interface with empty ifname %q", resourceID, ref)
+		}
+		ifnames = append(ifnames, ifname)
+	}
+	sort.Strings(ifnames)
+	return compactStrings(ifnames), nil
+}
+
+func nftNAT44FlowDNATPinholeMapName(name string) string {
+	return nftSetName("flow_dnat_" + name)
 }
 
 func writeIngressDNATChains(buf *bytes.Buffer, rules []ingressNATRule) {

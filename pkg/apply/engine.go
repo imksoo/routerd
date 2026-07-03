@@ -140,6 +140,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeEgressRoutePolicy(res, aliases, policies, includePlan, &rr)
 		case "NAT44Rule":
 			e.observeNAT44Rule(res, aliases, policies, includePlan, &rr)
+		case "NAT44FlowDNATPinhole":
+			e.observeNAT44FlowDNATPinhole(res, aliases, includePlan, &rr)
 		case "ManagementAccess":
 			e.observeManagementAccess(res, includePlan, &rr)
 		case "ClusterNetworkRoute":
@@ -977,6 +979,32 @@ func (e *Engine) observeNAT44Rule(res api.Resource, aliases map[string]string, p
 		return
 	}
 	rr.Plan = append(rr.Plan, fmt.Sprintf("ensure NAT44 %s for %s via selected device from EgressRoutePolicy/%s", spec.Type, strings.Join(spec.SourceRanges, ","), spec.EgressPolicyRef))
+}
+
+func (e *Engine) observeNAT44FlowDNATPinhole(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.NAT44FlowDNATPinholeSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	var ifnames []string
+	for _, ref := range spec.FromInterfaceRefs {
+		name := refName(ref)
+		if ifname := aliases[name]; ifname != "" {
+			ifnames = append(ifnames, ifname)
+			continue
+		}
+		ifnames = append(ifnames, name)
+	}
+	rr.Observed["fromInterfaceRefs"] = strings.Join(spec.FromInterfaceRefs, ",")
+	rr.Observed["fromIfnames"] = strings.Join(ifnames, ",")
+	rr.Observed["protocol"] = defaultString(spec.Outbound.Protocol, "udp")
+	rr.Observed["correlationKey"] = defaultString(spec.Correlation.Key, "localPort")
+	rr.Observed["timeout"] = spec.Timeout
+	if includePlan {
+		rr.Plan = append(rr.Plan, fmt.Sprintf("learn udp outbound NAT flow on %s and dynamically DNAT inbound source ports", strings.Join(ifnames, ",")))
+	}
 }
 
 func (e *Engine) observeEgressRoutePolicy(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, includePlan bool, rr *ResourceResult) {
@@ -2200,4 +2228,12 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func refName(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if _, name, ok := strings.Cut(ref, "/"); ok {
+		return strings.TrimSpace(name)
+	}
+	return ref
 }

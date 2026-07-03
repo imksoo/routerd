@@ -402,7 +402,7 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		return []resource.Intent{artifact("routerd.healthCheck", res.Metadata.Name, action, "routerd-scheduler", nil)}
 	case "EgressRoutePolicy":
 		return egressRoutePolicyArtifacts(res, aliases)
-	case "NAT44Rule":
+	case "NAT44Rule", "NAT44FlowDNATPinhole":
 		if _, features := platform.Current(); features.HasPF {
 			return []resource.Intent{artifact("pf.anchor", "routerd_nat", resource.ActionEnsure, "pfctl", nil)}
 		}

@@ -217,6 +217,19 @@ func referencedNAT44ResourceIPAddressSets(resources []api.Resource, sets map[str
 	return referencedIPAddressSetsByRefs(refs, sets)
 }
 
+func referencedNAT44FlowDNATPinholeIPAddressSets(resources []api.Resource, sets map[string]nftIPAddressSet) []nftIPAddressSet {
+	var refs []string
+	for _, res := range resources {
+		spec, err := res.NAT44FlowDNATPinholeSpec()
+		if err != nil {
+			continue
+		}
+		refs = append(refs, spec.Outbound.SourceSetRef)
+		refs = append(refs, spec.Outbound.DestinationSetRefs...)
+	}
+	return referencedIPAddressSetsByRefs(refs, sets)
+}
+
 func referencedIPv4PolicyIPAddressSets(policies []api.Resource, sets map[string]nftIPAddressSet) []nftIPAddressSet {
 	var refs []string
 	for _, res := range policies {

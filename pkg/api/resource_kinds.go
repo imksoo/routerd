@@ -87,6 +87,7 @@ func ConfigResourceKinds() []ResourceKindSchema {
 		{NetAPIVersion, "EventRule", EventRuleSpec{}},
 		{NetAPIVersion, "DerivedEvent", DerivedEventSpec{}},
 		{NetAPIVersion, "NAT44Rule", NAT44RuleSpec{}},
+		{NetAPIVersion, "NAT44FlowDNATPinhole", NAT44FlowDNATPinholeSpec{}},
 		{NetAPIVersion, "NAT44SessionSync", NAT44SessionSyncSpec{}},
 		{NetAPIVersion, "ManagementAccess", ManagementAccessSpec{}},
 		{FirewallAPIVersion, "PortForward", PortForwardSpec{}},
