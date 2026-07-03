@@ -241,6 +241,8 @@ var declarations = []Declaration{
 	declare(api.FirewallAPIVersion, "FirewallPolicy", ClassManagedHost, "firewall ruleset owner", artifacts("nft.table")),
 	declare(api.FirewallAPIVersion, "ClientPolicy", ClassRendererInput, "client firewall rendering input", noHostTeardown("client policy input is rendered into firewall policy tables")),
 	declare(api.FirewallAPIVersion, "FirewallRule", ClassRendererInput, "firewall rule rendered into policy tables", noHostTeardown("rule input is rendered into firewall policy tables")),
+	declare(api.FirewallAPIVersion, "FirewallFlowPinhole", ClassRendererInput, "dynamic firewall pinhole rendered into policy tables", noHostTeardown("pinhole input is rendered into firewall policy tables")),
+	declare(api.NetAPIVersion, "NAT44FlowDNATPinhole", ClassRendererInput, "dynamic NAT44 DNAT pinhole rendered into NAT table", noHostTeardown("pinhole input is rendered into NAT policy tables")),
 	declare(api.FirewallAPIVersion, "FirewallEventLog", ClassManagedHost, "firewall logging table/service artifacts", resourceLifecycle()),
 	declare(api.NetAPIVersion, "Hostname", ClassManagedHost, "host name", resourceLifecycle()),
 }

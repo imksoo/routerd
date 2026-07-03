@@ -171,6 +171,7 @@ func TestPackageFeaturesCoverStandaloneDataplaneResources(t *testing.T) {
 		{kind: "PortForward", want: []string{"nft"}},
 		{kind: "IngressService", want: []string{"nft"}},
 		{kind: "LocalServiceRedirect", want: []string{"nft"}},
+		{kind: "FirewallFlowPinhole", want: []string{"nft"}},
 		{kind: "DSLiteTunnel", want: []string{"base", "nft"}},
 		{kind: "PPPoESession", want: []string{"pppoe", "nft"}},
 		{kind: "WireGuardInterface", want: []string{"wireguard", "kmod", "nft"}},

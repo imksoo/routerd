@@ -2338,6 +2338,32 @@ type NAT44RuleSpec struct {
 	When              ResourceWhenSpec       `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
+type NAT44FlowDNATPinholeSpec struct {
+	FromInterfaceRefs []string                            `yaml:"fromInterfaceRefs,omitempty" json:"fromInterfaceRefs,omitempty"`
+	Outbound          NAT44FlowDNATPinholeOutboundSpec    `yaml:"outbound" json:"outbound"`
+	Inbound           NAT44FlowDNATPinholeInboundSpec     `yaml:"inbound" json:"inbound"`
+	Correlation       NAT44FlowDNATPinholeCorrelationSpec `yaml:"correlation,omitempty" json:"correlation,omitempty"`
+	Timeout           string                              `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	When              ResourceWhenSpec                    `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type NAT44FlowDNATPinholeOutboundSpec struct {
+	SourceSetRef       string         `yaml:"sourceSetRef,omitempty" json:"sourceSetRef,omitempty"`
+	SourceCIDRs        []string       `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
+	Protocol           string         `yaml:"protocol" json:"protocol" jsonschema:"enum=udp"`
+	DestinationPorts   []FirewallPort `yaml:"destinationPorts" json:"destinationPorts"`
+	DestinationCIDRs   []string       `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
+	DestinationSetRefs []string       `yaml:"destinationSetRefs,omitempty" json:"destinationSetRefs,omitempty"`
+}
+
+type NAT44FlowDNATPinholeInboundSpec struct {
+	SourcePorts []FirewallPort `yaml:"sourcePorts" json:"sourcePorts"`
+}
+
+type NAT44FlowDNATPinholeCorrelationSpec struct {
+	Key string `yaml:"key,omitempty" json:"key,omitempty" jsonschema:"enum=,enum=localPort"`
+}
+
 type IngressListenSpec struct {
 	Interface   string                `yaml:"interface" json:"interface"`
 	Address     string                `yaml:"address,omitempty" json:"address,omitempty"`
@@ -2421,6 +2447,33 @@ type LocalServiceRedirectRuleSpec struct {
 	DestinationSetRef string   `yaml:"destinationSetRef" json:"destinationSetRef"`
 	DestinationPort   int      `yaml:"destinationPort" json:"destinationPort" jsonschema:"minimum=1,maximum=65535"`
 	RedirectPort      int      `yaml:"redirectPort" json:"redirectPort" jsonschema:"minimum=1,maximum=65535"`
+}
+
+type FirewallFlowPinholeSpec struct {
+	FromZone    string                             `yaml:"fromZone" json:"fromZone"`
+	ToZone      string                             `yaml:"toZone" json:"toZone"`
+	Outbound    FirewallFlowPinholeOutboundSpec    `yaml:"outbound" json:"outbound"`
+	Inbound     FirewallFlowPinholeInboundSpec     `yaml:"inbound" json:"inbound"`
+	Correlation FirewallFlowPinholeCorrelationSpec `yaml:"correlation,omitempty" json:"correlation,omitempty"`
+	Timeout     string                             `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	When        ResourceWhenSpec                   `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type FirewallFlowPinholeCorrelationSpec struct {
+	Key string `yaml:"key,omitempty" json:"key,omitempty" jsonschema:"enum=,enum=remoteAddress,enum=localEndpoint"`
+}
+
+type FirewallFlowPinholeOutboundSpec struct {
+	SourceSetRef       string         `yaml:"sourceSetRef,omitempty" json:"sourceSetRef,omitempty"`
+	SourceCIDRs        []string       `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
+	DestinationSetRefs []string       `yaml:"destinationSetRefs,omitempty" json:"destinationSetRefs,omitempty"`
+	DestinationCIDRs   []string       `yaml:"destinationCIDRs,omitempty" json:"destinationCIDRs,omitempty"`
+	Protocol           string         `yaml:"protocol" json:"protocol" jsonschema:"enum=udp"`
+	DestinationPorts   []FirewallPort `yaml:"destinationPorts" json:"destinationPorts"`
+}
+
+type FirewallFlowPinholeInboundSpec struct {
+	SourcePorts []FirewallPort `yaml:"sourcePorts" json:"sourcePorts"`
 }
 
 type IPv4NATTranslationSpec struct {
@@ -2899,6 +2952,10 @@ func (r Resource) NAT44RuleSpec() (NAT44RuleSpec, error) {
 	return specAs[NAT44RuleSpec](r)
 }
 
+func (r Resource) NAT44FlowDNATPinholeSpec() (NAT44FlowDNATPinholeSpec, error) {
+	return specAs[NAT44FlowDNATPinholeSpec](r)
+}
+
 func (r Resource) PortForwardSpec() (PortForwardSpec, error) {
 	return specAs[PortForwardSpec](r)
 }
@@ -2913,6 +2970,10 @@ func (r Resource) IPAddressSetSpec() (IPAddressSetSpec, error) {
 
 func (r Resource) LocalServiceRedirectSpec() (LocalServiceRedirectSpec, error) {
 	return specAs[LocalServiceRedirectSpec](r)
+}
+
+func (r Resource) FirewallFlowPinholeSpec() (FirewallFlowPinholeSpec, error) {
+	return specAs[FirewallFlowPinholeSpec](r)
 }
 
 func (r Resource) FirewallZoneSpec() (FirewallZoneSpec, error) {

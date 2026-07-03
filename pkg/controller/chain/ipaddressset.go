@@ -604,6 +604,18 @@ func referencedIPAddressSetTargets(router *api.Router) map[string][]ipAddressSet
 			for _, ref := range append(append([]string{}, spec.DestinationSetRefs...), spec.ExcludeDestinationSetRefs...) {
 				add(ref, ipAddressSetTarget{TableFamily: "ip", AddressFamily: "ip", Table: "routerd_nat", Controller: "nat"})
 			}
+		case "NAT44FlowDNATPinhole":
+			if resource.APIVersion != api.NetAPIVersion {
+				continue
+			}
+			spec, err := resource.NAT44FlowDNATPinholeSpec()
+			if err != nil {
+				continue
+			}
+			add(spec.Outbound.SourceSetRef, ipAddressSetTarget{TableFamily: "ip", AddressFamily: "ip", Table: "routerd_nat", Controller: "nat"})
+			for _, ref := range spec.Outbound.DestinationSetRefs {
+				add(ref, ipAddressSetTarget{TableFamily: "ip", AddressFamily: "ip", Table: "routerd_nat", Controller: "nat"})
+			}
 		case "EgressRoutePolicy":
 			if resource.APIVersion != api.NetAPIVersion {
 				continue
@@ -635,6 +647,28 @@ func referencedIPAddressSetTargets(router *api.Router) map[string][]ipAddressSet
 					ipAddressSetTarget{TableFamily: "inet", AddressFamily: "ip", Table: "routerd_filter", SetName: render.NftFirewallIPAddressSetName(name, "ip"), Controller: "firewall"},
 					ipAddressSetTarget{TableFamily: "inet", AddressFamily: "ip6", Table: "routerd_filter", SetName: render.NftFirewallIPAddressSetName(name, "ip6"), Controller: "firewall"},
 				)
+			}
+		case "FirewallFlowPinhole":
+			if resource.APIVersion != api.FirewallAPIVersion {
+				continue
+			}
+			spec, err := resource.FirewallFlowPinholeSpec()
+			if err != nil {
+				continue
+			}
+			refs := append([]string{}, spec.Outbound.DestinationSetRefs...)
+			if spec.Outbound.SourceSetRef != "" {
+				refs = append(refs, spec.Outbound.SourceSetRef)
+			}
+			for _, ref := range refs {
+				name := strings.TrimSpace(ref)
+				if kind, rest, ok := strings.Cut(name, "/"); ok && kind == "IPAddressSet" {
+					name = rest
+				}
+				if name == "" {
+					continue
+				}
+				add(ref, ipAddressSetTarget{TableFamily: "inet", AddressFamily: "ip", Table: "routerd_filter", SetName: render.NftFirewallIPAddressSetName(name, "ip"), Controller: "firewall"})
 			}
 		}
 	}

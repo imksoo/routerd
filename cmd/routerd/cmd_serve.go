@@ -87,7 +87,7 @@ func controllerResourceKinds(name string) []string {
 	case "dslite":
 		return []string{"DSLiteTunnel"}
 	case "firewall":
-		return []string{"FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy", "PortForward", "IngressService", "IPAddressSet", "LocalServiceRedirect"}
+		return []string{"FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallFlowPinhole", "ClientPolicy", "PortForward", "IngressService", "IPAddressSet", "LocalServiceRedirect"}
 	case "ingress":
 		return []string{"IngressService"}
 	case "bgp":
@@ -95,7 +95,7 @@ func controllerResourceKinds(name string) []string {
 	case "vrrp":
 		return []string{"VirtualAddress"}
 	case "nat":
-		return []string{"NAT44Rule", "PortForward", "IngressService", "IPAddressSet", "LocalServiceRedirect"}
+		return []string{"NAT44Rule", "NAT44FlowDNATPinhole", "PortForward", "IngressService", "IPAddressSet", "LocalServiceRedirect"}
 	case "network-adoption":
 		return []string{"NetworkAdoption"}
 	case "package":

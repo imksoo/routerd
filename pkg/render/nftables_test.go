@@ -174,6 +174,44 @@ func TestNftablesNAT44Rule(t *testing.T) {
 	}
 }
 
+func TestNftablesNAT44FlowDNATPinhole(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-a"}, Spec: api.DSLiteTunnelSpec{TunnelName: "ds-lite-a", Interface: "lan", AFTRIPv6: "2001:db8::1"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"}, Metadata: api.ObjectMeta{Name: "atomcam-clients"}, Spec: api.IPAddressSetSpec{Addresses: []string{"172.18.1.92"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"}, Metadata: api.ObjectMeta{Name: "lan-to-dslite"}, Spec: api.NAT44RuleSpec{
+			Type:            "masquerade",
+			EgressInterface: "ds-lite-a",
+			SourceRanges:    []string{"172.18.0.0/16"},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44FlowDNATPinhole"}, Metadata: api.ObjectMeta{Name: "atomcam-cloud-udp"}, Spec: api.NAT44FlowDNATPinholeSpec{
+			FromInterfaceRefs: []string{"DSLiteTunnel/ds-lite-a"},
+			Outbound: api.NAT44FlowDNATPinholeOutboundSpec{
+				SourceSetRef:     "IPAddressSet/atomcam-clients",
+				Protocol:         "udp",
+				DestinationPorts: []api.FirewallPort{"32100"},
+			},
+			Inbound: api.NAT44FlowDNATPinholeInboundSpec{SourcePorts: []api.FirewallPort{"32099"}},
+			Timeout: "3m",
+		}},
+	}}}
+	data, err := NftablesNAT44Rule(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`map flow_dnat_atomcam_cloud_udp { type inet_service : ipv4_addr . inet_service; flags dynamic,timeout; }`,
+		`iifname "ds-lite-a" udp sport 32099 dnat ip addr . port to udp dport map @flow_dnat_atomcam_cloud_udp comment "routerd NAT44FlowDNATPinhole atomcam-cloud-udp dnat"`,
+		`oifname "ds-lite-a" ip saddr @ip_address_set_atomcam_clients udp dport 32100 update @flow_dnat_atomcam_cloud_udp { udp sport timeout 180s : ip saddr . udp sport } counter comment "routerd NAT44FlowDNATPinhole atomcam-cloud-udp learn"`,
+		`oifname "ds-lite-a" ip saddr 172.18.0.0/16 masquerade`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nat44 output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestNftablesNAT44ResolvedSNATRule(t *testing.T) {
 	data, err := NftablesNAT44Rules([]NAT44RenderRule{{
 		Name:            "lan-to-wan",
@@ -1506,6 +1544,84 @@ func TestNftablesFirewallRuleUsesDestinationAddressSet(t *testing.T) {
 		`set ip_address_set_cloud_service_v6 { type ipv6_addr; }`,
 		`ip daddr @ip_address_set_cloud_service_v4 tcp dport 443 counter accept`,
 		`ip6 daddr @ip_address_set_cloud_service_v6 tcp dport 443 counter accept`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("firewall output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestNftablesFirewallFlowPinhole(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ds-lite-a"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"}, Metadata: api.ObjectMeta{Name: "atomcam-clients"}, Spec: api.IPAddressSetSpec{
+			Addresses: []string{"172.18.1.92"},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallFlowPinhole"}, Metadata: api.ObjectMeta{Name: "atomcam-cloud-udp"}, Spec: api.FirewallFlowPinholeSpec{
+			FromZone: "lan",
+			ToZone:   "wan",
+			Outbound: api.FirewallFlowPinholeOutboundSpec{
+				SourceSetRef:     "IPAddressSet/atomcam-clients",
+				Protocol:         "udp",
+				DestinationPorts: []api.FirewallPort{"32100"},
+				DestinationCIDRs: []string{"3.114.54.243/32"},
+			},
+			Inbound: api.FirewallFlowPinholeInboundSpec{SourcePorts: []api.FirewallPort{"32099"}},
+			Timeout: "3m",
+		}},
+	}}}
+	data, err := NftablesNAT44Rule(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`set flow_pinhole_atomcam_cloud_udp { type ipv4_addr . ipv4_addr . inet_service; flags timeout; }`,
+		`set ip_address_set_atomcam_clients_v4 { type ipv4_addr; elements = { 172.18.1.92 }; }`,
+		`ip saddr @ip_address_set_atomcam_clients_v4 ip daddr 3.114.54.243/32 udp dport 32100 update @flow_pinhole_atomcam_cloud_udp { ip daddr . ip saddr . udp sport timeout 180s } counter comment "routerd FirewallFlowPinhole atomcam-cloud-udp learn"`,
+		`ip saddr 3.114.54.243/32 ip daddr @ip_address_set_atomcam_clients_v4 udp sport 32099 ip saddr . ip daddr . udp dport @flow_pinhole_atomcam_cloud_udp counter accept comment "routerd FirewallFlowPinhole atomcam-cloud-udp allow"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("firewall output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestNftablesFirewallFlowPinholeLocalEndpointCorrelation(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ds-lite-a"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"}, Metadata: api.ObjectMeta{Name: "atomcam-clients"}, Spec: api.IPAddressSetSpec{
+			Addresses: []string{"172.18.1.92"},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallFlowPinhole"}, Metadata: api.ObjectMeta{Name: "atomcam-cloud-udp"}, Spec: api.FirewallFlowPinholeSpec{
+			FromZone: "lan",
+			ToZone:   "wan",
+			Outbound: api.FirewallFlowPinholeOutboundSpec{
+				SourceSetRef:     "IPAddressSet/atomcam-clients",
+				Protocol:         "udp",
+				DestinationPorts: []api.FirewallPort{"32100"},
+				DestinationCIDRs: []string{"3.114.54.243/32"},
+			},
+			Inbound:     api.FirewallFlowPinholeInboundSpec{SourcePorts: []api.FirewallPort{"32099"}},
+			Correlation: api.FirewallFlowPinholeCorrelationSpec{Key: "localEndpoint"},
+			Timeout:     "3m",
+		}},
+	}}}
+	data, err := NftablesNAT44Rule(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		`set flow_pinhole_atomcam_cloud_udp { type ipv4_addr . inet_service; flags timeout; }`,
+		`ip saddr @ip_address_set_atomcam_clients_v4 ip daddr 3.114.54.243/32 udp dport 32100 update @flow_pinhole_atomcam_cloud_udp { ip saddr . udp sport timeout 180s } counter comment "routerd FirewallFlowPinhole atomcam-cloud-udp learn"`,
+		`ip saddr 3.114.54.243/32 ip daddr @ip_address_set_atomcam_clients_v4 udp sport 32099 ip daddr . udp dport @flow_pinhole_atomcam_cloud_udp counter accept comment "routerd FirewallFlowPinhole atomcam-cloud-udp allow"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("firewall output missing %q:\n%s", want, got)

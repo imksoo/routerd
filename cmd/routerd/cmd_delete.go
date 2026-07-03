@@ -254,6 +254,9 @@ func canonicalResourceKind(kind string) string {
 		"snat":                            "NAT44Rule",
 		"nat44":                           "NAT44Rule",
 		"nat44rule":                       "NAT44Rule",
+		"nat44flowdnatpinhole":            "NAT44FlowDNATPinhole",
+		"nat44-flow-dnat-pinhole":         "NAT44FlowDNATPinhole",
+		"flowdnatpinhole":                 "NAT44FlowDNATPinhole",
 		"nat44sessionsync":                "NAT44SessionSync",
 		"nat44-session-sync":              "NAT44SessionSync",
 		"natsessionsync":                  "NAT44SessionSync",
@@ -281,7 +284,9 @@ func canonicalResourceKind(kind string) string {
 		"pppoesession":                    "PPPoESession",
 		"pppoeclient":                     "PPPoESession",
 		"fw":                              "FirewallRule",
+		"flowpinhole":                     "FirewallFlowPinhole",
 		"firewall":                        "FirewallPolicy",
+		"firewallflowpinhole":             "FirewallFlowPinhole",
 		"firewallzone":                    "FirewallZone",
 		"firewallpolicy":                  "FirewallPolicy",
 		"firewalleventlog":                "FirewallEventLog",
@@ -314,7 +319,7 @@ func canonicalResourceKind(kind string) string {
 
 func apiVersionForKind(kind string) string {
 	switch kind {
-	case "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallEventLog", "ClientPolicy", "PortForward", "IngressService", "LocalServiceRedirect":
+	case "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallFlowPinhole", "FirewallEventLog", "ClientPolicy", "PortForward", "IngressService", "LocalServiceRedirect":
 		return api.FirewallAPIVersion
 	case "Sysctl", "SysctlProfile", "Package", "NTPClient", "NTPServer", "LogSink", "ObservabilityPipeline", "RouterdCluster", "LogRetention", "WebConsole", "ServiceUnit":
 		return api.SystemAPIVersion
@@ -322,7 +327,7 @@ func apiVersionForKind(kind string) string {
 		return api.ObservabilityAPIVersion
 	case "Inventory":
 		return api.RouterAPIVersion
-	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoESession", "IPv4StaticAddress", "VirtualAddress", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4ServerLeaseSync", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "DHCPv4Relay", "DNSZone", "DNSResolver", "DNSForwarder", "DNSUpstream", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "HealthCheck", "Hostname", "EgressRoutePolicy", "EventRule", "DerivedEvent", "NAT44Rule", "NAT44SessionSync", "ManagementAccess", "IPAddressSet", "BFD", "TrafficFlowLog":
+	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoESession", "IPv4StaticAddress", "VirtualAddress", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4ServerLeaseSync", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "DHCPv4Relay", "DNSZone", "DNSResolver", "DNSForwarder", "DNSUpstream", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "HealthCheck", "Hostname", "EgressRoutePolicy", "EventRule", "DerivedEvent", "NAT44Rule", "NAT44FlowDNATPinhole", "NAT44SessionSync", "ManagementAccess", "IPAddressSet", "BFD", "TrafficFlowLog":
 		return api.NetAPIVersion
 	default:
 		return ""
