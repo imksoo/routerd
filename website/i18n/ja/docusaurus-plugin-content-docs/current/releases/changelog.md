@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260703.0013
+
 ### 追加
 
 - mobility holder transition timing event で、dataplane の
