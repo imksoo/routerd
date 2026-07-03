@@ -148,3 +148,182 @@ func TestRouteAndForwardingContract(t *testing.T) {
 		t.Fatalf("forwarding snapshot = %#v, want eni-router-a enabled", snapshot.ForwardingEnabled)
 	}
 }
+
+func TestRouteTableObservationGateWaitsForObservedLocalNextHop(t *testing.T) {
+	now := time.Date(2026, 7, 3, 11, 0, 0, 0, time.UTC)
+	sim := New(func() time.Time { return now })
+	sim.SetRouteTableObservationDelay(30 * time.Second)
+
+	res := sim.Execute(routeTableAssignPlan("rtb-capture", "10.88.60.10/32", "nic-self", "gen-1"))
+	if res.Status != "Succeeded" {
+		t.Fatalf("assign route = %#v, want success", res)
+	}
+	if routeTableAdvertisementReady(sim, "rtb-capture", "10.88.60.10/32", "nic-self") {
+		t.Fatalf("route-table capture advertised before provider observation")
+	}
+
+	now = now.Add(29 * time.Second)
+	if routeTableAdvertisementReady(sim, "rtb-capture", "10.88.60.10/32", "nic-self") {
+		t.Fatalf("route-table capture advertised before observation delay elapsed")
+	}
+
+	now = now.Add(time.Second)
+	if !routeTableAdvertisementReady(sim, "rtb-capture", "10.88.60.10/32", "nic-self") {
+		t.Fatalf("route-table capture did not advertise after provider observation")
+	}
+}
+
+func TestRouteTableDelayedExecutionDoesNotExposeWrongRoute(t *testing.T) {
+	now := time.Date(2026, 7, 3, 11, 5, 0, 0, time.UTC)
+	sim := New(func() time.Time { return now })
+	sim.SetActionDelay(10 * time.Second)
+	sim.SetRouteTableObservationDelay(20 * time.Second)
+
+	if res := sim.Execute(routeTableAssignPlan("rtb-capture", "10.88.60.11/32", "nic-self", "gen-1")); res.Status != "Succeeded" {
+		t.Fatalf("assign route = %#v, want success", res)
+	}
+	if _, ok := sim.Snapshot().Route("rtb-capture", "10.88.60.11/32"); ok {
+		t.Fatalf("route mutated before action execution delay elapsed")
+	}
+	if routeTableAdvertisementReady(sim, "rtb-capture", "10.88.60.11/32", "nic-self") {
+		t.Fatalf("route-table capture advertised before delayed action executed")
+	}
+
+	now = now.Add(10 * time.Second)
+	if route, ok := sim.Snapshot().Route("rtb-capture", "10.88.60.11/32"); !ok || route.NextHopRef != "nic-self" {
+		t.Fatalf("route after action delay = %#v ok=%t, want nic-self", route, ok)
+	}
+	if routeTableAdvertisementReady(sim, "rtb-capture", "10.88.60.11/32", "nic-self") {
+		t.Fatalf("route-table capture advertised before delayed observation")
+	}
+
+	now = now.Add(20 * time.Second)
+	if !routeTableAdvertisementReady(sim, "rtb-capture", "10.88.60.11/32", "nic-self") {
+		t.Fatalf("route-table capture did not advertise after action and observation delays")
+	}
+	if routeTableAdvertisementReady(sim, "rtb-capture", "10.88.60.11/32", "nic-other") {
+		t.Fatalf("route-table capture advertised for wrong next hop")
+	}
+}
+
+func TestRouteTableFailoverWaitsForObservedRewrite(t *testing.T) {
+	now := time.Date(2026, 7, 3, 11, 10, 0, 0, time.UTC)
+	sim := New(func() time.Time { return now })
+
+	if res := sim.Execute(routeTableAssignPlan("rtb-capture", "10.88.60.12/32", "nic-old", "gen-old")); res.Status != "Succeeded" {
+		t.Fatalf("seed old route = %#v, want success", res)
+	}
+	if !routeTableAdvertisementReady(sim, "rtb-capture", "10.88.60.12/32", "nic-old") {
+		t.Fatalf("old holder route was not initially observable")
+	}
+
+	sim.SetRouteTableObservationDelay(15 * time.Second)
+	res := sim.Execute(routeTableAssignPlan("rtb-capture", "10.88.60.12/32", "nic-new", "gen-new"))
+	if res.Status != "Succeeded" {
+		t.Fatalf("rewrite route = %#v, want success", res)
+	}
+	if routeTableAdvertisementReady(sim, "rtb-capture", "10.88.60.12/32", "nic-new") {
+		t.Fatalf("new holder advertised before observed route-table rewrite")
+	}
+	if !routeTableAdvertisementReady(sim, "rtb-capture", "10.88.60.12/32", "nic-old") {
+		t.Fatalf("old observed route disappeared before delayed rewrite observation")
+	}
+
+	now = now.Add(15 * time.Second)
+	if !routeTableAdvertisementReady(sim, "rtb-capture", "10.88.60.12/32", "nic-new") {
+		t.Fatalf("new holder did not advertise after route-table rewrite observation")
+	}
+	if routeTableAdvertisementReady(sim, "rtb-capture", "10.88.60.12/32", "nic-old") {
+		t.Fatalf("old holder remained advertised after observed rewrite")
+	}
+}
+
+func TestRouteTableUnassignObservationRemovesAdvertisableRoute(t *testing.T) {
+	now := time.Date(2026, 7, 3, 11, 12, 0, 0, time.UTC)
+	sim := New(func() time.Time { return now })
+
+	if res := sim.Execute(routeTableAssignPlan("rtb-capture", "10.88.60.15/32", "nic-self", "gen-1")); res.Status != "Succeeded" {
+		t.Fatalf("assign route = %#v, want success", res)
+	}
+	if !routeTableAdvertisementReady(sim, "rtb-capture", "10.88.60.15/32", "nic-self") {
+		t.Fatalf("route-table capture was not initially observable")
+	}
+
+	sim.SetRouteTableObservationDelay(10 * time.Second)
+	res := sim.Execute(dynamicconfig.ActionPlan{
+		Action: ActionUnassignRouteTableRoute,
+		Target: map[string]string{
+			"routeTableRef": "rtb-capture",
+			"prefix":        "10.88.60.15/32",
+		},
+	})
+	if res.Status != "Succeeded" {
+		t.Fatalf("unassign route = %#v, want success", res)
+	}
+	if _, ok := sim.Snapshot().Route("rtb-capture", "10.88.60.15/32"); ok {
+		t.Fatalf("route remains in actual provider state after unassign")
+	}
+	if !routeTableAdvertisementReady(sim, "rtb-capture", "10.88.60.15/32", "nic-self") {
+		t.Fatalf("observed route disappeared before delayed unassign observation")
+	}
+
+	now = now.Add(10 * time.Second)
+	if routeTableAdvertisementReady(sim, "rtb-capture", "10.88.60.15/32", "nic-self") {
+		t.Fatalf("route-table capture remained advertisable after unassign observation")
+	}
+	if route, ok := sim.ObserveRouteTableRoute("rtb-capture", "10.88.60.15/32"); ok {
+		t.Fatalf("observed route after unassign = %#v, want absent", route)
+	}
+}
+
+func TestRouteTableGateDoesNotDelaySecondaryIPCapture(t *testing.T) {
+	now := time.Date(2026, 7, 3, 11, 15, 0, 0, time.UTC)
+	sim := New(func() time.Time { return now })
+	sim.SetRouteTableObservationDelay(time.Minute)
+
+	if res := sim.Execute(routeTableAssignPlan("rtb-capture", "10.88.60.13/32", "nic-route", "gen-route")); res.Status != "Succeeded" {
+		t.Fatalf("assign route = %#v, want success", res)
+	}
+	if res := sim.Execute(dynamicconfig.ActionPlan{
+		Action: ActionAssignSecondaryIP,
+		Target: map[string]string{
+			"address":   "10.88.60.14/32",
+			"targetRef": "nic-secondary",
+		},
+		Parameters: map[string]string{"assignmentGeneration": "gen-secondary"},
+	}); res.Status != "Succeeded" {
+		t.Fatalf("assign secondary = %#v, want success", res)
+	}
+
+	if routeTableAdvertisementReady(sim, "rtb-capture", "10.88.60.13/32", "nic-route") {
+		t.Fatalf("route-table capture advertised before route-table observation")
+	}
+	if !secondaryIPCaptureReady(sim, "10.88.60.14/32", "nic-secondary") {
+		t.Fatalf("secondary-ip capture was delayed by route-table observation gate")
+	}
+}
+
+func routeTableAssignPlan(routeTableRef, prefix, nextHopRef, generation string) dynamicconfig.ActionPlan {
+	return dynamicconfig.ActionPlan{
+		Action: ActionAssignRouteTableRoute,
+		Target: map[string]string{
+			"routeTableRef": routeTableRef,
+			"prefix":        prefix,
+			"nextHopRef":    nextHopRef,
+		},
+		Parameters: map[string]string{
+			"allowReassignment":    "true",
+			"assignmentGeneration": generation,
+		},
+	}
+}
+
+func routeTableAdvertisementReady(sim *Simulator, routeTableRef, prefix, selfNextHopRef string) bool {
+	route, ok := sim.ObserveRouteTableRoute(routeTableRef, prefix)
+	return ok && route.NextHopRef == selfNextHopRef
+}
+
+func secondaryIPCaptureReady(sim *Simulator, address, selfTargetRef string) bool {
+	holder, ok := sim.Snapshot().AddressHolder(address)
+	return ok && holder.TargetRef == selfTargetRef
+}
