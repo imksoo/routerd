@@ -6,8 +6,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -88,17 +90,209 @@ func execRunner(ctx context.Context, argv ...string) ([]byte, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		if runCtx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("az %s timed out after %s: %s", strings.Join(full, " "), commandTimeout(), strings.TrimSpace(stderr.String()))
+		exitCode := 1
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			exitCode = exitErr.ExitCode()
 		}
-		return nil, fmt.Errorf("az %s: %w: %s", strings.Join(full, " "), err, strings.TrimSpace(stderr.String()))
+		if rec := azCallObservationFromContext(runCtx); rec != nil {
+			rec.ExitCode = exitCode
+			rec.StderrTail = tailLines(stderr.String(), azStderrTailLines)
+			rec.RateLimitRemaining = extractAzureRateLimitRemaining(stderr.String())
+		}
+		if runCtx.Err() == context.DeadlineExceeded {
+			return nil, &azCommandError{
+				Full:     full,
+				Err:      runCtx.Err(),
+				Stderr:   stderr.String(),
+				Timeout:  true,
+				ExitCode: exitCode,
+			}
+		}
+		return nil, &azCommandError{
+			Full:     full,
+			Err:      err,
+			Stderr:   stderr.String(),
+			ExitCode: exitCode,
+		}
+	}
+	if rec := azCallObservationFromContext(runCtx); rec != nil {
+		rec.ExitCode = 0
+		rec.StderrTail = tailLines(stderr.String(), azStderrTailLines)
+		rec.RateLimitRemaining = extractAzureRateLimitRemaining(stderr.String())
 	}
 	return stdout.Bytes(), nil
 }
 
 func azCommandArgs(argv ...string) []string {
 	full := append([]string(nil), argv...)
+	if azDebugEnabled() {
+		full = append(full, "--debug")
+	}
 	return append(full, "--only-show-errors", "--output", "json")
+}
+
+func azDebugEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(azDebugEnv))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+type azCommandError struct {
+	Full     []string
+	Err      error
+	Stderr   string
+	Timeout  bool
+	ExitCode int
+}
+
+func (e *azCommandError) Error() string {
+	stderr := strings.TrimSpace(e.Stderr)
+	if e.Timeout {
+		return fmt.Sprintf("az %s timed out after %s: %s", strings.Join(e.Full, " "), commandTimeout(), stderr)
+	}
+	return fmt.Sprintf("az %s: %v: %s", strings.Join(e.Full, " "), e.Err, stderr)
+}
+
+func (e *azCommandError) Unwrap() error { return e.Err }
+
+type azCallObservation struct {
+	Command            string            `json:"command"`
+	WallTimeMS         int64             `json:"wallTimeMs"`
+	ExitCode           int               `json:"exitCode"`
+	StderrTail         string            `json:"stderrTail,omitempty"`
+	RateLimitRemaining map[string]string `json:"rateLimitRemaining,omitempty"`
+}
+
+type azCallRecorder struct {
+	mu    sync.Mutex
+	calls []azCallObservation
+}
+
+func newAzCallRecorder() *azCallRecorder { return &azCallRecorder{} }
+
+func (r *azCallRecorder) wrap(inner azRunner) azRunner {
+	return func(ctx context.Context, argv ...string) ([]byte, error) {
+		call := &azCallObservation{
+			Command:  strings.Join(leadingTokens(argv), " "),
+			ExitCode: 0,
+		}
+		start := time.Now()
+		out, err := inner(context.WithValue(ctx, azCallObservationKey{}, call), argv...)
+		call.WallTimeMS = time.Since(start).Milliseconds()
+		if err != nil {
+			call.ExitCode = exitCodeFromError(err)
+			if call.StderrTail == "" {
+				call.StderrTail = tailLines(err.Error(), azStderrTailLines)
+			}
+		}
+		r.mu.Lock()
+		r.calls = append(r.calls, *call)
+		r.mu.Unlock()
+		return out, err
+	}
+}
+
+func (r *azCallRecorder) attach(res *executeActionResult) {
+	r.mu.Lock()
+	calls := append([]azCallObservation(nil), r.calls...)
+	r.mu.Unlock()
+	if len(calls) == 0 {
+		return
+	}
+	if res.Status.Observed == nil {
+		res.Status.Observed = map[string]string{}
+	}
+	res.Status.Observed["azCallCount"] = fmt.Sprintf("%d", len(calls))
+	if raw, err := json.Marshal(calls); err == nil {
+		res.Status.Observed["azCalls"] = string(raw)
+	}
+	mergedRateLimits := map[string]string{}
+	for _, call := range calls {
+		for key, value := range call.RateLimitRemaining {
+			mergedRateLimits[key] = value
+		}
+	}
+	if len(mergedRateLimits) > 0 {
+		if raw, err := json.Marshal(mergedRateLimits); err == nil {
+			res.Status.Observed["azRateLimitRemaining"] = string(raw)
+		}
+	}
+}
+
+type azCallObservationKey struct{}
+
+func azCallObservationFromContext(ctx context.Context) *azCallObservation {
+	rec, _ := ctx.Value(azCallObservationKey{}).(*azCallObservation)
+	return rec
+}
+
+func exitCodeFromError(err error) int {
+	if err == nil {
+		return 0
+	}
+	var azErr *azCommandError
+	if errors.As(err, &azErr) && azErr.ExitCode != 0 {
+		return azErr.ExitCode
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	return 1
+}
+
+func tailLines(value string, maxLines int) string {
+	value = strings.TrimSpace(value)
+	if value == "" || maxLines <= 0 {
+		return ""
+	}
+	lines := strings.Split(value, "\n")
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	for i := range lines {
+		lines[i] = strings.TrimSpace(lines[i])
+	}
+	return strings.Join(lines, "\n")
+}
+
+func extractAzureRateLimitRemaining(stderr string) map[string]string {
+	out := map[string]string{}
+	for _, line := range strings.Split(stderr, "\n") {
+		line = strings.TrimSpace(line)
+		lower := strings.ToLower(line)
+		idx := strings.Index(lower, "x-ms-ratelimit-remaining-")
+		if idx < 0 {
+			continue
+		}
+		rest := line[idx:]
+		keyEnd := len(rest)
+		for i, r := range rest {
+			if r == ':' || r == '=' || r == '\'' || r == '"' || r == ' ' || r == '\t' {
+				keyEnd = i
+				break
+			}
+		}
+		key := strings.ToLower(strings.Trim(rest[:keyEnd], "'\" "))
+		if key == "" {
+			continue
+		}
+		value := ""
+		if colon := strings.Index(rest, ":"); colon >= 0 {
+			value = rest[colon+1:]
+		} else if equals := strings.Index(rest, "="); equals >= 0 {
+			value = rest[equals+1:]
+		}
+		value = strings.Trim(value, "'\" ,")
+		if value != "" {
+			out[key] = value
+		}
+	}
+	return out
 }
 
 // guardedRunner wraps a runner so that ONLY read-only show/list verbs may be

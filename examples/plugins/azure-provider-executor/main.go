@@ -102,6 +102,8 @@ const (
 	defaultAzCommandTimeout       = 60 * time.Second
 	azCommandTimeoutEnv           = "ROUTERD_AZURE_EXECUTOR_COMMAND_TIMEOUT"
 	legacyAzCommandTimeoutMsEnv   = "ROUTERD_AZURE_EXECUTOR_COMMAND_TIMEOUT_MS"
+	azDebugEnv                    = "ROUTERD_AZURE_EXECUTOR_AZ_DEBUG"
+	azStderrTailLines             = 8
 	azCommandRetryAttempts        = 3
 	azCommandRetryDelay           = 250 * time.Millisecond
 	seizeVerifyAttempts           = 5
@@ -341,11 +343,19 @@ func dispatch(ctx context.Context, req executeActionRequest, runner azRunner) ex
 	if mode != modeDryRun && mode != modeExecute {
 		return failed(fmt.Sprintf("invalid mode %q (want dry-run or execute)", mode), nil)
 	}
+	recorder := newAzCallRecorder()
+	runner = recorder.wrap(runner)
 	if mode == modeDryRun {
 		// Dry-run hard guard: only show/list verbs may be issued.
 		runner = guardedRunner(runner)
 	}
 
+	res := dispatchAction(ctx, spec, mode, runner)
+	recorder.attach(&res)
+	return res
+}
+
+func dispatchAction(ctx context.Context, spec executeActionRequestSpec, mode string, runner azRunner) executeActionResult {
 	switch spec.Action {
 	case actionAssignSecondaryIP:
 		if captureStrategy(spec) == captureStrategyRouteTable {
