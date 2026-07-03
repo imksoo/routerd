@@ -200,6 +200,46 @@ func TestDaemonObservedOnlyStatusPromotesHealthCheckObservedPhase(t *testing.T) 
 	}
 }
 
+func TestDaemonObservedOnlyStatusPromotesDHCPv6PrefixDelegationObservedPhase(t *testing.T) {
+	current := map[string]any{
+		"phase":         "Pending",
+		"reason":        "WhenFalse",
+		"currentPrefix": "fdc7:d277:3de:b780::/60",
+	}
+	base := map[string]any{
+		"phase":     daemonapi.ResourcePhaseBound,
+		"health":    "ok",
+		"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+	}
+
+	status := daemonObservedOnlyStatus(current, base, daemonapi.ResourceStatus{
+		Resource: daemonapi.ResourceRef{
+			APIVersion: api.NetAPIVersion,
+			Kind:       "DHCPv6PrefixDelegation",
+			Name:       "wan-pd",
+		},
+		Phase:  daemonapi.ResourcePhaseBound,
+		Health: "ok",
+		Observed: map[string]string{
+			"currentPrefix": "2409:10:3d60:1220::/60",
+			"serverDUID":    "000300011cb17f7376d8",
+		},
+	})
+
+	if got := status["phase"]; got != daemonapi.ResourcePhaseBound {
+		t.Fatalf("phase = %v, want %s", got, daemonapi.ResourcePhaseBound)
+	}
+	if got := status["currentPrefix"]; got != "2409:10:3d60:1220::/60" {
+		t.Fatalf("currentPrefix = %v, want observed prefix", got)
+	}
+	if got := status["reason"]; got == "WhenFalse" {
+		t.Fatalf("reason = %v, want cleared after DHCPv6-PD observation", got)
+	}
+	if observed := statusMap(status["observed"]); observed["phase"] != daemonapi.ResourcePhaseBound || observed["currentPrefix"] != "2409:10:3d60:1220::/60" {
+		t.Fatalf("observed = %#v, want Bound observed prefix", observed)
+	}
+}
+
 func whenFalseHealthCheck(name string) api.Resource {
 	return api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},

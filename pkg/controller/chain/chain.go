@@ -2998,7 +2998,7 @@ func daemonObservedOnlyStatus(current, base map[string]any, observed daemonapi.R
 	daemonObserved["phase"] = observed.Phase
 	daemonObserved["health"] = observed.Health
 	next["observed"] = daemonObserved
-	if observed.Resource.Kind == "HealthCheck" && strings.TrimSpace(observed.Phase) != "" {
+	if daemonObservedPromotesTopLevel(observed.Resource.Kind) && strings.TrimSpace(observed.Phase) != "" {
 		for key, value := range daemonObserved {
 			next[key] = value
 		}
@@ -3010,6 +3010,15 @@ func daemonObservedOnlyStatus(current, base map[string]any, observed daemonapi.R
 		delete(next, "reason")
 	}
 	return next
+}
+
+func daemonObservedPromotesTopLevel(kind string) bool {
+	switch kind {
+	case "DHCPv6PrefixDelegation", "HealthCheck":
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizedDaemonObserved(kind string, observed map[string]string) map[string]any {
@@ -3752,10 +3761,10 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		return err
 	}
 	pdStatus := c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", pdName)
-	if pdStatus["phase"] != daemonapi.ResourcePhaseBound {
+	if statusStringPreferObserved(pdStatus, "phase") != daemonapi.ResourcePhaseBound {
 		return nil
 	}
-	prefix, _ := pdStatus["currentPrefix"].(string)
+	prefix := statusStringPreferObserved(pdStatus, "currentPrefix")
 	if prefix == "" {
 		return nil
 	}
@@ -3860,14 +3869,14 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 			continue
 		}
 		when := resourcequery.ResourceWhen(resource)
-		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, stateStore) {
+		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, stateStore) || resourcequery.ResourceWhenIndeterminate(when, stateStore) {
 			continue
 		}
 		previous := c.Store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name)
 		address := strings.TrimSpace(fmt.Sprint(previous["address"]))
 		if address == "" || address == "<nil>" {
-			if pdStatus := c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", pdName); pdStatus["phase"] == daemonapi.ResourcePhaseBound {
-				if prefix, _ := pdStatus["currentPrefix"].(string); prefix != "" {
+			if pdStatus := c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", pdName); statusStringPreferObserved(pdStatus, "phase") == daemonapi.ResourcePhaseBound {
+				if prefix := statusStringPreferObserved(pdStatus, "currentPrefix"); prefix != "" {
 					if derived, err := DeriveIPv6Address(prefix, spec.SubnetID, spec.AddressSuffix); err == nil {
 						address = derived
 					}
@@ -3904,6 +3913,20 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 		}
 	}
 	return nil
+}
+
+func statusStringPreferObserved(status map[string]any, field string) string {
+	if observed := statusMap(status["observed"]); len(observed) > 0 {
+		text := strings.TrimSpace(fmt.Sprint(observed[field]))
+		if text != "" && text != "<nil>" {
+			return text
+		}
+	}
+	text := strings.TrimSpace(fmt.Sprint(status[field]))
+	if text == "<nil>" {
+		return ""
+	}
+	return text
 }
 
 func (c LANAddressController) linkReady(name string) bool {
