@@ -16,6 +16,7 @@ fi
 
 require_common
 require_cmd nc
+require_cmd nft
 
 CLIENT="${TEST_ID}-client"
 ROUTER="${TEST_ID}-router"
@@ -33,15 +34,26 @@ ip -n "$TARGET" route add default via 10.93.1.1
 ip -n "$OTHER" route add default via 10.93.2.1
 ip netns exec "$ROUTER" sysctl -qw net.ipv4.ip_forward=1
 
-ip netns exec "$TARGET" sh -c "while true; do nc -l -p 8080 >/dev/null; done" &
-TARGET_PID=$!
-add_cleanup "kill '$TARGET_PID'"
-ip netns exec "$OTHER" sh -c "while true; do nc -l -p 8081 >/dev/null; done" &
-OTHER_PID=$!
-add_cleanup "kill '$OTHER_PID'"
+cat >"$WORKDIR/router-filter.nft" <<'EOF'
+flush ruleset
+table ip routerd_filter {
+  chain forward {
+    type filter hook forward priority filter; policy accept;
+    ct state new,established,related accept
+  }
+}
+EOF
+ip netns exec "$ROUTER" nft -f "$WORKDIR/router-filter.nft"
 
-wait_for 5 bash -c "ip netns exec '$CLIENT' nc -z -w 1 10.93.1.2 8080"
-wait_for 5 bash -c "ip netns exec '$CLIENT' nc -z -w 1 10.93.2.2 8081"
+setsid ip netns exec "$TARGET" sh -c "while true; do nc -l -p 8080 >/dev/null 2>&1; done" >/dev/null 2>&1 &
+TARGET_PID=$!
+add_cleanup "kill -- -'$TARGET_PID'"
+setsid ip netns exec "$OTHER" sh -c "while true; do nc -l -p 8081 >/dev/null 2>&1; done" >/dev/null 2>&1 &
+OTHER_PID=$!
+add_cleanup "kill -- -'$OTHER_PID'"
+
+wait_for 5 bash -c "ip netns exec '$CLIENT' nc -z -w 1 10.93.1.2 8080 >/dev/null 2>&1"
+wait_for 5 bash -c "ip netns exec '$CLIENT' nc -z -w 1 10.93.2.2 8081 >/dev/null 2>&1"
 
 wait_for 5 bash -c "ip netns exec '$ROUTER' conntrack -L -f ipv4 2>/dev/null | grep -q '10.93.1.2'"
 wait_for 5 bash -c "ip netns exec '$ROUTER' conntrack -L -f ipv4 2>/dev/null | grep -q '10.93.2.2'"
