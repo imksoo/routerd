@@ -52,6 +52,26 @@ If any of these fail during qualification, stop the run and return to
 environment certification. The next qualification attempt must reference a new
 passing certification manifest.
 
+## Dirty fabric with a fresh database
+
+Release qualification does not support reusing a dirty lab fabric with a fresh
+routerd state database. The fabric includes provider-owned secondary IPs, PVE
+bridges and guests, guest `/tmp/routerd-*` residue, config media, provider
+action side effects, and any other substrate state that can outlive a routerd
+process or database.
+
+This combination produces ambiguous evidence: routerd sees no prior action or
+ownership rows, while the fabric can still contain old holders, stale local
+artifacts, or provider-side mutations. Treat the result as an unsupported test
+setup, not as a routerd product failure or a valid passing release signal.
+
+Operators must choose one of these supported paths before qualification:
+
+- reuse both the certified fabric and its matching routerd state;
+- clean the fabric and start with a fresh routerd state database;
+- recertify after explicitly repairing and recording every retained substrate
+  artifact that the fresh database will encounter.
+
 ## Product qualification scope
 
 With a certified environment, release qualification may evaluate:
