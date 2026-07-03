@@ -7,7 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 
@@ -26,6 +28,12 @@ type Snapshot struct {
 	Count int
 	Max   int
 }
+
+type CleanupResult struct {
+	Warnings []string
+}
+
+type CommandRunner func(context.Context, ...string) ([]byte, error)
 
 type UnavailableError struct {
 	CountPath   string
@@ -118,4 +126,44 @@ func RecordMetrics(ctx context.Context, snapshot Snapshot, createdDelta int64) {
 		created, _ := meter.Int64Counter("routerd.conntrack.entries.created")
 		created.Add(ctx, createdDelta, metric.WithAttributes(attribute.String("routerd.conntrack.source", "procfs")))
 	}
+}
+
+func CleanupAddress(ctx context.Context, address string, command string) CleanupResult {
+	if strings.TrimSpace(command) == "" {
+		command = "conntrack"
+	}
+	return CleanupAddressWithRunner(ctx, address, func(ctx context.Context, args ...string) ([]byte, error) {
+		return exec.CommandContext(ctx, command, args...).CombinedOutput()
+	})
+}
+
+func CleanupAddressWithRunner(ctx context.Context, address string, run CommandRunner) CleanupResult {
+	ip, err := cleanupIPv4Address(address)
+	if err != nil {
+		return CleanupResult{Warnings: []string{err.Error()}}
+	}
+	if run == nil {
+		return CleanupResult{Warnings: []string{"conntrack cleanup runner is unavailable"}}
+	}
+	var warnings []string
+	for _, direction := range []string{"-d", "-s"} {
+		args := []string{"-D", "-f", "ipv4", direction, ip}
+		out, err := run(ctx, args...)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("conntrack %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out))))
+		}
+	}
+	return CleanupResult{Warnings: warnings}
+}
+
+func cleanupIPv4Address(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if prefix, err := netip.ParsePrefix(value); err == nil && prefix.Addr().Is4() {
+		return prefix.Addr().String(), nil
+	}
+	addr, err := netip.ParseAddr(value)
+	if err != nil || !addr.Is4() {
+		return "", fmt.Errorf("conntrack cleanup requires IPv4 address, got %q", value)
+	}
+	return addr.String(), nil
 }

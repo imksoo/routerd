@@ -20,6 +20,7 @@ import (
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/bgpdaemon"
 	"github.com/imksoo/routerd/pkg/bus"
+	"github.com/imksoo/routerd/pkg/conntrack"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
@@ -81,6 +82,16 @@ type mobilityEventRecorder interface {
 	RecordBusEvent(context.Context, daemonapi.DaemonEvent) (string, error)
 }
 
+type mobilityConntrackCleaner interface {
+	CleanupAddress(context.Context, string) []string
+}
+
+type commandConntrackCleaner struct{}
+
+func (commandConntrackCleaner) CleanupAddress(ctx context.Context, address string) []string {
+	return conntrack.CleanupAddress(ctx, address, "").Warnings
+}
+
 type BGPPathClient interface {
 	ListPaths(ctx context.Context, source string) ([]bgpdaemon.AppliedPath, error)
 	UpsertPath(ctx context.Context, path bgpdaemon.AppliedPath) (bgpdaemon.AppliedPath, error)
@@ -98,6 +109,7 @@ type Controller struct {
 	// withdraw liveness and lower local BGP preference first, but do not ask the
 	// local provider to unassign until the caller has observed peer takeover.
 	SuppressProviderDeprovision bool
+	ConntrackCleaner            mobilityConntrackCleaner
 }
 
 func (c Controller) HandleEvent(ctx context.Context, _ daemonapi.DaemonEvent) error {
@@ -522,7 +534,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	}
 	status["addresses"] = samAddressStatuses(ownershipDecisions, actionPlans, actionJournal, failedActions, observationStatus)
 	status["phase"] = mobilityPoolResourcePhase(status)
-	if err := c.recordBGPCaptureAssignmentTransitions(ctx, res.Metadata.Name, self, previousCaptureAssignments, delivery.CaptureAssignments, append(actionPlans, previousActionPlans...), ownerPlacement, livenessMarkers, mobilityPrefixCommunities, ownershipDecisions, poolStatus, status, now); err != nil {
+	if err := c.recordBGPCaptureAssignmentTransitions(ctx, res.Metadata.Name, self, previousCaptureAssignments, delivery.CaptureAssignments, append(actionPlans, previousActionPlans...), ownerPlacement, livenessMarkers, mobilityPrefixCommunities, ownershipDecisions, poolStatus, api.BoolDefault(spec.DeliveryPolicy.ConntrackCleanupOnSeize, false), status, now); err != nil {
 		return err
 	}
 	return c.savePlannerStatus(res.Metadata.Name, status)
@@ -567,11 +579,8 @@ const (
 	bgpCaptureConfirmedField           = "captureConfirmed"
 )
 
-func (c Controller) recordBGPCaptureAssignmentTransitions(ctx context.Context, poolName string, self memberPlanInfo, previous, current map[string]bgpCaptureAssignment, plans []dynamicconfig.ActionPlan, placement PlacementDecision, livenessMarkers map[string]string, mobilityPrefixCommunities map[string][]string, decisions []ownershipDecision, previousStatus, nextStatus map[string]any, now time.Time) error {
-	recorder, ok := c.Store.(mobilityEventRecorder)
-	if !ok || recorder == nil {
-		return nil
-	}
+func (c Controller) recordBGPCaptureAssignmentTransitions(ctx context.Context, poolName string, self memberPlanInfo, previous, current map[string]bgpCaptureAssignment, plans []dynamicconfig.ActionPlan, placement PlacementDecision, livenessMarkers map[string]string, mobilityPrefixCommunities map[string][]string, decisions []ownershipDecision, previousStatus map[string]any, conntrackCleanupOnSeize bool, nextStatus map[string]any, now time.Time) error {
+	recorder, _ := c.Store.(mobilityEventRecorder)
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
@@ -592,8 +601,10 @@ func (c Controller) recordBGPCaptureAssignmentTransitions(ctx context.Context, p
 			continue
 		}
 		kind := holderTransitionStartKind(prev, next, previousStatus)
-		if _, err := recorder.RecordBusEvent(ctx, mobilityHolderTransitionEvent(poolName, selfNode, now, next, kind, pathSigs[address], holdDowns)); err != nil {
-			return err
+		if recorder != nil {
+			if _, err := recorder.RecordBusEvent(ctx, mobilityHolderTransitionEvent(poolName, selfNode, now, next, kind, pathSigs[address], holdDowns)); err != nil {
+				return err
+			}
 		}
 	}
 	for address := range bgpObservedSelfHolderAddresses(self, livenessMarkers, mobilityPrefixCommunities) {
@@ -604,8 +615,13 @@ func (c Controller) recordBGPCaptureAssignmentTransitions(ctx context.Context, p
 		if seizeComplete[address] == assignment.Generation {
 			continue
 		}
-		if _, err := recorder.RecordBusEvent(ctx, mobilityHolderTransitionEvent(poolName, selfNode, now, assignment, "seize-complete", pathSigs[address], holdDowns)); err != nil {
-			return err
+		if recorder != nil {
+			if _, err := recorder.RecordBusEvent(ctx, mobilityHolderTransitionEvent(poolName, selfNode, now, assignment, "seize-complete", pathSigs[address], holdDowns)); err != nil {
+				return err
+			}
+		}
+		if conntrackCleanupOnSeize {
+			c.recordConntrackCleanupWarning(nextStatus, address, c.cleanupConntrackForSeizedAddress(ctx, address)...)
 		}
 		seizeComplete[address] = assignment.Generation
 	}
@@ -621,10 +637,12 @@ func (c Controller) recordBGPCaptureAssignmentTransitions(ctx context.Context, p
 		if captureConfirmed[address] == assignment.Generation {
 			continue
 		}
-		if _, err := recorder.RecordBusEvent(ctx, mobilityHolderTransitionEventWithAttributes(poolName, selfNode, now, assignment, "capture-confirmed", pathSigs[address], holdDowns, map[string]string{
-			"captureStrategy": strings.TrimSpace(decision.CaptureStrategy),
-		})); err != nil {
-			return err
+		if recorder != nil {
+			if _, err := recorder.RecordBusEvent(ctx, mobilityHolderTransitionEventWithAttributes(poolName, selfNode, now, assignment, "capture-confirmed", pathSigs[address], holdDowns, map[string]string{
+				"captureStrategy": strings.TrimSpace(decision.CaptureStrategy),
+			})); err != nil {
+				return err
+			}
 		}
 		captureConfirmed[address] = assignment.Generation
 	}
@@ -669,11 +687,41 @@ func (c Controller) recordBGPCaptureAssignmentTransitions(ctx context.Context, p
 			RenewedAt:      now,
 			LeaseUntil:     prev.LeaseUntil,
 		}
-		if _, err := recorder.RecordBusEvent(ctx, mobilityHolderTransitionEvent(poolName, selfNode, now, released, "yield", pathSigs[address], holdDowns)); err != nil {
-			return err
+		if recorder != nil {
+			if _, err := recorder.RecordBusEvent(ctx, mobilityHolderTransitionEvent(poolName, selfNode, now, released, "yield", pathSigs[address], holdDowns)); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
+}
+
+func (c Controller) cleanupConntrackForSeizedAddress(ctx context.Context, address string) []string {
+	cleaner := c.ConntrackCleaner
+	if cleaner == nil {
+		cleaner = commandConntrackCleaner{}
+	}
+	return cleaner.CleanupAddress(ctx, address)
+}
+
+func (c Controller) recordConntrackCleanupWarning(status map[string]any, address string, warnings ...string) {
+	if status == nil || len(warnings) == 0 {
+		return
+	}
+	var rows []map[string]any
+	if existing, ok := status["conntrackCleanupWarnings"].([]map[string]any); ok {
+		rows = append(rows, existing...)
+	}
+	for _, warning := range warnings {
+		warning = strings.TrimSpace(warning)
+		if warning == "" {
+			continue
+		}
+		rows = append(rows, map[string]any{"address": normalizeAddressString(address), "warning": warning})
+	}
+	if len(rows) > 0 {
+		status["conntrackCleanupWarnings"] = rows
+	}
 }
 
 func bgpObservedSelfHolderAddresses(self memberPlanInfo, livenessMarkers map[string]string, mobilityPrefixCommunities map[string][]string) map[string]bool {
