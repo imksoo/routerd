@@ -88,6 +88,7 @@ type daemon struct {
 	lastEventByKey                   map[string]time.Time
 	clients                          map[string]arpClient
 	proactiveCursor                  uint32
+	ignoredSenderMACsInitialized     bool
 	ignoredSenderMACObservationCount uint64
 
 	socketMu sync.Mutex
@@ -156,7 +157,6 @@ func parseOptions(name string, args []string) (options, error) {
 	prefix := ""
 	sourceAddress := ""
 	selfMAC := ""
-	var ignoredSenderMACs stringListFlag
 	fs.StringVar(&opts.resource, "resource", "arp-observer", "observer resource name")
 	fs.StringVar(&opts.ifname, "interface", "", "kernel interface name to observe")
 	fs.StringVar(&opts.eventInterface, "event-interface", "", "logical interface name written to events")
@@ -176,7 +176,6 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.DurationVar(&opts.scanInterval, "scan-interval", opts.scanInterval, "interval for polling the local ARP table")
 	fs.StringVar(&opts.arpTablePath, "arp-table", opts.arpTablePath, "Linux /proc/net/arp path")
 	fs.StringVar(&selfMAC, "self-mac", "", "local sender MAC for active probes")
-	fs.Var(&ignoredSenderMACs, "ignore-sender-mac", "sender MAC to ignore as a SAM member ownership signal; may be repeated")
 	if err := fs.Parse(args); err != nil {
 		return opts, err
 	}
@@ -227,13 +226,6 @@ func parseOptions(name string, args []string) (options, error) {
 		opts.selfMAC = interfaceMAC(opts.ifname)
 	}
 	opts.ignoredSenderMACs = map[string]bool{}
-	for _, value := range ignoredSenderMACs {
-		mac, err := net.ParseMAC(strings.TrimSpace(value))
-		if err != nil {
-			return opts, fmt.Errorf("--ignore-sender-mac: %w", err)
-		}
-		opts.ignoredSenderMACs[strings.ToLower(mac.String())] = true
-	}
 	defaults, _ := platform.Current()
 	if opts.socketPath == "" {
 		opts.socketPath = filepath.Join(defaults.RuntimeDir, "arp-observer", opts.resource+".sock")
@@ -432,6 +424,10 @@ func (d *daemon) publishObservation(address netip.Addr, mac net.HardwareAddr, to
 	now := time.Now().UTC()
 	macString := strings.ToLower(mac.String())
 	d.mu.Lock()
+	if !d.ignoredSenderMACsInitialized && len(d.opts.ignoredSenderMACs) == 0 {
+		d.mu.Unlock()
+		return
+	}
 	if d.opts.ignoredSenderMACs[macString] {
 		d.ignoredSenderMACObservationCount++
 		d.mu.Unlock()
@@ -565,10 +561,26 @@ func (d *daemon) serve(ctx context.Context) error {
 		}
 		var req daemonapi.CommandRequest
 		_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req)
-		if req.Command == daemonapi.CommandStop {
+		result := daemonapi.CommandResult{TypeMeta: daemonapi.TypeMeta{APIVersion: daemonapi.APIVersion, Kind: daemonapi.KindCommandResult}, Command: req.Command, Accepted: true, Message: "accepted"}
+		switch req.Command {
+		case daemonapi.CommandStop:
 			go d.cancel()
+		case "set-ignored-sender-macs":
+			macs, err := parseIgnoredSenderMACCommand(req.Attributes["macAddresses"])
+			if err != nil {
+				result.Accepted = false
+				result.Message = err.Error()
+				break
+			}
+			d.mu.Lock()
+			d.opts.ignoredSenderMACs = macs
+			d.ignoredSenderMACsInitialized = true
+			d.mu.Unlock()
+		default:
+			result.Accepted = false
+			result.Message = "unknown command"
 		}
-		writeHTTPJSON(w, daemonapi.CommandResult{TypeMeta: daemonapi.TypeMeta{APIVersion: daemonapi.APIVersion, Kind: daemonapi.KindCommandResult}, Command: req.Command, Accepted: true, Message: "accepted"})
+		writeHTTPJSON(w, result)
 	})
 	server := &http.Server{Handler: mux}
 	go func() {
@@ -615,11 +627,10 @@ func (d *daemon) status() daemonapi.DaemonStatus {
 		"observedClients": string(clients),
 	}
 	ignoredSenderMACs := boolMapKeysSorted(d.opts.ignoredSenderMACs)
-	if len(ignoredSenderMACs) > 0 {
-		observed["ignoredSenderMACs"] = strings.Join(ignoredSenderMACs, ",")
-		observed["ignoredSenderMACCount"] = strconv.Itoa(len(ignoredSenderMACs))
-		observed["ignoredSenderMACObservationCount"] = strconv.FormatUint(d.ignoredSenderMACObservationCount, 10)
-	}
+	observed["ignoredSenderMACs"] = strings.Join(ignoredSenderMACs, ",")
+	observed["ignoredSenderMACCount"] = strconv.Itoa(len(ignoredSenderMACs))
+	observed["ignoredSenderMACObservationCount"] = strconv.FormatUint(d.ignoredSenderMACObservationCount, 10)
+	observed["ignoredSenderMACsConfigured"] = strconv.FormatBool(d.ignoredSenderMACsInitialized)
 	if !d.lastPacketAt.IsZero() {
 		observed["lastPacketAt"] = d.lastPacketAt.Format(time.RFC3339Nano)
 	}
@@ -922,20 +933,6 @@ func sameAddr(a, b netip.Addr) bool {
 	return a.IsValid() && b.IsValid() && a == b
 }
 
-type stringListFlag []string
-
-func (f *stringListFlag) String() string {
-	if f == nil {
-		return ""
-	}
-	return strings.Join(*f, ",")
-}
-
-func (f *stringListFlag) Set(value string) error {
-	*f = append(*f, value)
-	return nil
-}
-
 func boolMapKeysSorted(in map[string]bool) []string {
 	var out []string
 	for key, value := range in {
@@ -945,6 +942,22 @@ func boolMapKeysSorted(in map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func parseIgnoredSenderMACCommand(value string) (map[string]bool, error) {
+	out := map[string]bool{}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return out, nil
+	}
+	for _, item := range strings.Split(value, ",") {
+		mac, err := net.ParseMAC(strings.TrimSpace(item))
+		if err != nil {
+			return nil, fmt.Errorf("macAddresses contains invalid MAC %q", strings.TrimSpace(item))
+		}
+		out[strings.ToLower(mac.String())] = true
+	}
+	return out, nil
 }
 
 func conditionStatus(ok bool) string {

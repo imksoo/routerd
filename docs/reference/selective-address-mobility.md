@@ -57,10 +57,10 @@ existing tunnel `/31` assignments.
 `SAMNodeSet.spec.nodes[].macAddresses` can list static member MAC addresses for
 the same fabric. On-prem ARP observers use the union of those MAC addresses as
 an ignore set so ARP frames from routerd members do not become ownership signals
-for mobile `/32` addresses. The ignore set is passed to the supervised observer
-process at startup; after changing member MAC addresses, restart the observer or
-routerd for the new set to take effect. Observer status reports the active
-ignore set and ignored observation count so configuration drift is visible.
+for mobile `/32` addresses. Editing `macAddresses` is declarative intent:
+routerd derives the observer ignore set and reconciles it through the observer
+socket without requiring an observer or routerd restart. Observer status reports
+the active ignore set and ignored observation count so convergence is visible.
 
 ```yaml
 apiVersion: mobility.routerd.net/v1alpha1

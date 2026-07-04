@@ -251,8 +251,9 @@ func TestPublishObservationDemotesKnownSameIPMAC(t *testing.T) {
 			poolName:       "svnet1",
 			prefix:         netip.MustParsePrefix("192.168.123.0/24"),
 		},
-		lastEventByKey: map[string]time.Time{},
-		clients:        map[string]arpClient{},
+		ignoredSenderMACsInitialized: true,
+		lastEventByKey:               map[string]time.Time{},
+		clients:                      map[string]arpClient{},
 	}
 	d.cond = sync.NewCond(&d.mu)
 	address := netip.MustParseAddr("192.168.123.10")
@@ -294,8 +295,9 @@ func TestPublishObservationIgnoresSAMMemberMACAtChokepoint(t *testing.T) {
 				strings.ToLower(memberMAC2.String()): true,
 			},
 		},
-		lastEventByKey: map[string]time.Time{},
-		clients:        map[string]arpClient{},
+		ignoredSenderMACsInitialized: true,
+		lastEventByKey:               map[string]time.Time{},
+		clients:                      map[string]arpClient{},
 	}
 	d.cond = sync.NewCond(&d.mu)
 	address := netip.MustParseAddr("192.168.123.10")
