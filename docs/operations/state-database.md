@@ -48,6 +48,11 @@ time the local process observed the provider capture taking effect. Together,
 `seize-complete` and `capture-confirmed` measure the accepted-to-effective
 interval.
 
+After a node restart or rejoin, reconfirmation events can reuse the original
+journal acceptance time as `issuedAt`. In that case, `timestamp - issuedAt`
+includes the time while the node was stopped or absent. Treat those deltas as
+reconfirmation age, not convergence latency.
+
 For non-capture flows such as static-owned, static-handover, and local-home,
 `seize-complete` still comes from the active-holder plus self-identity BGP
 observation. Lab evidence currently proves the capture flow; static and

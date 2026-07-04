@@ -46,6 +46,10 @@ CloudEdge SAM failover 會發出 `routerd.mobility.holder.transition` 事件，
 `capture-confirmed` 仍然基於 discovery 觀測。`T_confirm` 是本機程序觀測到
 provider capture 生效的時間。兩者共同度量從接受到生效的區間。
 
+節點重啟或 rejoin 後的重新確認事件可能會重用原始 journal 接受時間作為
+`issuedAt`。此時，`timestamp - issuedAt` 會包含節點停止或缺席的時間。
+請將這類差值視為重新確認經過時間，不要解釋為收斂延遲。
+
 對於 static-owned、static-handover、local-home 等非 capture 流程，
 `seize-complete` 仍來自 active-holder 加 self-identity 的 BGP 觀測。目前 lab
 實證僅覆蓋 capture 流程；static/handover completion event 尚未在真實環境中實證。
