@@ -60,7 +60,7 @@ func TestRecordBGPCaptureAssignmentTransitionsEmitsMachineReadableSequence(t *te
 	}
 
 	nextStatus := map[string]any{}
-	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, nil, map[string]bgpCaptureAssignment{address: assignment}, plans, placement, nil, nil, nil, nil, false, nextStatus, now); err != nil {
+	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, nil, map[string]bgpCaptureAssignment{address: assignment}, plans, placement, nil, nil, nil, nil, nil, false, nextStatus, now); err != nil {
 		t.Fatalf("record start transition: %v", err)
 	}
 	events := listMobilityTransitionEvents(t, store)
@@ -76,7 +76,7 @@ func TestRecordBGPCaptureAssignmentTransitionsEmitsMachineReadableSequence(t *te
 	}
 
 	seizeCompleteStatus := map[string]any{}
-	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, livenessMarkers, mobilityPrefixCommunities, nil, nextStatus, true, seizeCompleteStatus, now.Add(151*time.Second)); err != nil {
+	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, livenessMarkers, mobilityPrefixCommunities, nil, nil, nextStatus, true, seizeCompleteStatus, now.Add(151*time.Second)); err != nil {
 		t.Fatalf("record dataplane complete transition: %v", err)
 	}
 	events = listMobilityTransitionEvents(t, store)
@@ -100,7 +100,7 @@ func TestRecordBGPCaptureAssignmentTransitionsEmitsMachineReadableSequence(t *te
 		Class:             ownershipClassConfirmedCapture,
 		CaptureHolderNode: "aws-rr-b",
 		CaptureStrategy:   captureStrategySecondaryIP,
-	}}, seizeCompleteStatus, true, captureStatus, now.Add(173*time.Second)); err != nil {
+	}}, nil, seizeCompleteStatus, true, captureStatus, now.Add(173*time.Second)); err != nil {
 		t.Fatalf("record provider confirmed transition: %v", err)
 	}
 	events = listMobilityTransitionEvents(t, store)
@@ -123,7 +123,7 @@ func TestRecordBGPCaptureAssignmentTransitionsEmitsMachineReadableSequence(t *te
 		Class:             ownershipClassConfirmedCapture,
 		CaptureHolderNode: "aws-rr-b",
 		CaptureStrategy:   captureStrategySecondaryIP,
-	}}, captureStatus, true, map[string]any{}, now.Add(174*time.Second)); err != nil {
+	}}, nil, captureStatus, true, map[string]any{}, now.Add(174*time.Second)); err != nil {
 		t.Fatalf("record duplicate transitions: %v", err)
 	}
 	events = listMobilityTransitionEvents(t, store)
@@ -134,7 +134,7 @@ func TestRecordBGPCaptureAssignmentTransitionsEmitsMachineReadableSequence(t *te
 		t.Fatalf("conntrack cleanup duplicated: %#v", cleaner.addresses)
 	}
 
-	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, nil, plans, PlacementDecision{}, nil, nil, nil, captureStatus, true, map[string]any{}, now.Add(180*time.Second)); err != nil {
+	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, nil, plans, PlacementDecision{}, nil, nil, nil, nil, captureStatus, true, map[string]any{}, now.Add(180*time.Second)); err != nil {
 		t.Fatalf("record yield transition: %v", err)
 	}
 	events = listMobilityTransitionEvents(t, store)
@@ -156,7 +156,7 @@ func TestRecordBGPCaptureAssignmentTransitionsSkipsConntrackCleanupWhenDisabled(
 	communities := map[string][]string{address: {bgpMobilityCommunityActiveHolder, bgpstate.MobilityNodeIdentityCommunity("aws-rr-b")}}
 
 	status := map[string]any{}
-	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, nil, PlacementDecision{}, livenessMarkers, communities, nil, nil, false, status, now); err != nil {
+	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, nil, PlacementDecision{}, livenessMarkers, communities, nil, nil, nil, false, status, now); err != nil {
 		t.Fatalf("record transition: %v", err)
 	}
 	if len(cleaner.addresses) != 0 {

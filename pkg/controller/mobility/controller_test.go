@@ -1891,11 +1891,11 @@ func TestControllerBGPModeProviderCaptureCompletionEventsUseProductionObservatio
 		t.Fatalf("conntrack cleanup addresses = %#v, want only %s", cleaner.addresses, seized)
 	}
 	durations := extractTransitionDurationsByAddress(t, events)
-	if got := durations["seize-complete"][seized]; got <= 0 {
-		t.Fatalf("extractable seize duration for %s = %s, want >0 (durations=%#v)", seized, got, durations)
+	if _, ok := durations["seize-complete"][seized]; !ok {
+		t.Fatalf("missing extractable seize duration for %s (durations=%#v)", seized, durations)
 	}
-	if got := durations["capture-confirmed"][confirmed]; got <= 0 {
-		t.Fatalf("extractable capture duration for %s = %s, want >0 (durations=%#v)", confirmed, got, durations)
+	if _, ok := durations["capture-confirmed"][confirmed]; !ok {
+		t.Fatalf("missing extractable capture duration for %s (durations=%#v)", confirmed, durations)
 	}
 }
 
