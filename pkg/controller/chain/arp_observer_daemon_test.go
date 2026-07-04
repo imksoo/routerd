@@ -156,6 +156,62 @@ func TestRunnerSyncsARPObserverIgnoredSenderMACsOnDriftOnly(t *testing.T) {
 	}
 }
 
+func TestRunnerSyncsARPObserverIgnoredSenderMACsPushesEmptySetBeforeReady(t *testing.T) {
+	spec := mobilityARPObserverDaemonSpec{
+		ResourceName: "mobility-svnet1-pve-arp-observer-eth1",
+		Socket:       "/run/routerd/arp-observer/mobility-svnet1-pve-arp-observer-eth1.sock",
+	}
+	pusher := &fakeARPObserverCommandPusher{
+		statuses: []daemonapi.DaemonStatus{{
+			Observed: map[string]string{"ignoredSenderMACsConfigured": "false"},
+		}, {
+			Observed: map[string]string{"ignoredSenderMACsConfigured": "true"},
+		}},
+	}
+	runner := Runner{ARPObserverCommands: pusher}
+
+	if err := runner.syncARPObserverIgnoredSenderMACs(context.Background(), spec); err != nil {
+		t.Fatalf("initial empty sync: %v", err)
+	}
+	if len(pusher.sets) != 1 || len(pusher.sets[0]) != 0 {
+		t.Fatalf("sets after uninitialized empty sync = %#v, want one empty push", pusher.sets)
+	}
+	if err := runner.syncARPObserverIgnoredSenderMACs(context.Background(), spec); err != nil {
+		t.Fatalf("initialized empty sync: %v", err)
+	}
+	if len(pusher.sets) != 1 {
+		t.Fatalf("sets after initialized no-op sync = %#v, want one push", pusher.sets)
+	}
+}
+
+func TestRunnerSyncsARPObserverIgnoredSenderMACsRepushesAfterObserverReset(t *testing.T) {
+	spec := mobilityARPObserverDaemonSpec{
+		ResourceName: "mobility-svnet1-pve-arp-observer-eth1",
+		Socket:       "/run/routerd/arp-observer/mobility-svnet1-pve-arp-observer-eth1.sock",
+	}
+	pusher := &fakeARPObserverCommandPusher{
+		statuses: []daemonapi.DaemonStatus{{
+			Observed: map[string]string{"ignoredSenderMACsConfigured": "true"},
+		}, {
+			Observed: map[string]string{"ignoredSenderMACsConfigured": "false"},
+		}},
+	}
+	runner := Runner{ARPObserverCommands: pusher}
+
+	if err := runner.syncARPObserverIgnoredSenderMACs(context.Background(), spec); err != nil {
+		t.Fatalf("sync before reset: %v", err)
+	}
+	if len(pusher.sets) != 0 {
+		t.Fatalf("sets before reset = %#v, want no-op", pusher.sets)
+	}
+	if err := runner.syncARPObserverIgnoredSenderMACs(context.Background(), spec); err != nil {
+		t.Fatalf("sync after reset: %v", err)
+	}
+	if len(pusher.sets) != 1 || len(pusher.sets[0]) != 0 {
+		t.Fatalf("sets after reset = %#v, want one empty push", pusher.sets)
+	}
+}
+
 func TestRunnerDoesNotMarkARPObserverReadyBeforeInitialIgnoredSenderMACPush(t *testing.T) {
 	spec := mobilityARPObserverDaemonSpec{
 		ResourceName:      "mobility-svnet1-pve-arp-observer-eth1",

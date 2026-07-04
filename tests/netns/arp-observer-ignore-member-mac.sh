@@ -169,11 +169,22 @@ start_observer() {
     cat "$WORKDIR/$source_type.err" >&2 || true
     fail "observer $source_type did not start"
   }
+}
+
+push_ignored_sender_macs() {
+  local socket="$1"
   python3 "$WORKDIR/set_ignored_sender_macs.py" "$socket" "$MEMBER_MAC"
 }
 
 start_observer "$OBSERVER" "$PASSIVE_SOCKET" "$PASSIVE_EVENTS" "arp-observer"
 
+ip netns exec "$CLIENT" python3 "$WORKDIR/send_garp.py" eth0 "$CLIENT_IP"
+sleep 0.5
+if [[ "$(jsonl_event_count_for_mac "$PASSIVE_EVENTS" "$CLIENT_MAC")" != "0" ]]; then
+  fail "passive ARP path emitted ownership observation before initial ignore-set push opened the gate"
+fi
+
+push_ignored_sender_macs "$PASSIVE_SOCKET"
 ip netns exec "$MEMBER" python3 "$WORKDIR/send_garp.py" eth0 "$MOBILE_IP"
 ip netns exec "$CLIENT" python3 "$WORKDIR/send_garp.py" eth0 "$CLIENT_IP"
 sleep 0.5
@@ -195,10 +206,19 @@ if observed.get("ignoredSenderMACs") != mac:
     raise SystemExit(f"ignoredSenderMACs={observed.get('ignoredSenderMACs')!r}, want {mac!r}")
 if observed.get("ignoredSenderMACCount") != "1":
     raise SystemExit(f"ignoredSenderMACCount={observed.get('ignoredSenderMACCount')!r}, want '1'")
+if observed.get("ignoredSenderMACsConfigured") != "true":
+    raise SystemExit(f"ignoredSenderMACsConfigured={observed.get('ignoredSenderMACsConfigured')!r}, want 'true'")
 PY
 
 start_observer "$OBSERVER_SCAN" "$SCAN_SOCKET" "$SCAN_EVENTS" "pve-svnet"
 
+ip -n "$OBSERVER_SCAN" neigh replace "$CLIENT_IP" lladdr "$CLIENT_MAC" dev eth0 nud reachable
+sleep 0.8
+if [[ "$(jsonl_event_count_for_mac "$SCAN_EVENTS" "$CLIENT_MAC")" != "0" ]]; then
+  fail "ARP table scan path emitted ownership observation before initial ignore-set push opened the gate"
+fi
+
+push_ignored_sender_macs "$SCAN_SOCKET"
 ip -n "$OBSERVER_SCAN" neigh replace "$MOBILE_IP" lladdr "$MEMBER_MAC" dev eth0 nud reachable
 ip -n "$OBSERVER_SCAN" neigh replace "$CLIENT_IP" lladdr "$CLIENT_MAC" dev eth0 nud reachable
 sleep 0.8

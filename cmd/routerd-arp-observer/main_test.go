@@ -132,6 +132,9 @@ func TestSetIgnoredSenderMACsCommandReplacesAndNormalizes(t *testing.T) {
 	if got := status.Observed["ignoredSenderMACCount"]; got != "2" {
 		t.Fatalf("ignoredSenderMACCount = %q, want 2", got)
 	}
+	if got := status.Observed["ignoredSenderMACsConfigured"]; got != "true" {
+		t.Fatalf("ignoredSenderMACsConfigured = %q, want true", got)
+	}
 
 	result = postCommandForTest(t, socket, daemonapi.CommandRequest{
 		Command: "set-ignored-sender-macs",
@@ -159,6 +162,24 @@ func TestSetIgnoredSenderMACsCommandReplacesAndNormalizes(t *testing.T) {
 	status = d.status()
 	if got, want := status.Observed["ignoredSenderMACs"], "02:00:00:00:00:cc"; got != want {
 		t.Fatalf("ignoredSenderMACs changed after rejected command = %q, want %q", got, want)
+	}
+
+	result = postCommandForTest(t, socket, daemonapi.CommandRequest{
+		Command:    "set-ignored-sender-macs",
+		Attributes: map[string]string{"macAddresses": ""},
+	})
+	if !result.Accepted {
+		t.Fatalf("empty replacement command rejected: %#v", result)
+	}
+	status = d.status()
+	if got := status.Observed["ignoredSenderMACs"]; got != "" {
+		t.Fatalf("ignoredSenderMACs after empty replacement = %q, want empty", got)
+	}
+	if got := status.Observed["ignoredSenderMACCount"]; got != "0" {
+		t.Fatalf("ignoredSenderMACCount after empty replacement = %q, want 0", got)
+	}
+	if got := status.Observed["ignoredSenderMACsConfigured"]; got != "true" {
+		t.Fatalf("ignoredSenderMACsConfigured after empty replacement = %q, want true", got)
 	}
 
 	cancel()
