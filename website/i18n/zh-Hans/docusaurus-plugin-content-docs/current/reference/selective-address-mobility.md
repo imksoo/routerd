@@ -126,3 +126,19 @@ only that local capture after the stale-capture hold-down.
 SAM 不包含 `nat`、`preserveSource`、firewall 或 zone 字段。若要 firewall/NAT mobile
 address，请在现有 `FirewallZone`、`FirewallRule`、`NAT44Rule` 中引用 literal `/32`。
 SAM forwarded traffic 仍会经过普通 forwarding/firewall/conntrack path。
+
+### seize 时的 scoped conntrack cleanup
+
+`MobilityPool.spec.deliveryPolicy.conntrackCleanupOnSeize` 是 BGP mode SAM
+failover 的 opt-in 恢复辅助。启用后，routerd 会在本 node 到达与
+`seize-complete` holder transition event 相同的 dataplane milestone 后立即执行
+scoped conntrack delete：也就是本 node 已被观测为该 mobile `/32` 的 active BGP holder。
+
+cleanup 只作用于被 seize 的地址。routerd 删除 destination 为该地址、以及 source 为该地址的
+conntrack entry；不会构造 global flush 路径。其目的是清除可能把 in-flight session 固定在
+failover 前路径上的 stale flow state，同时保留无关 forwarding flow。
+
+该 hook 只绑定本地 holder 获取。node yield/release holder assignment 时不会运行，
+provider `capture-confirmed` 时也不会运行；provider confirmation 是独立的 ingress
+milestone。若 conntrack 命令不可用或 scoped delete 失败，routerd 会在 MobilityPool status
+记录 warning，并继续 capture/delivery reconcile。
