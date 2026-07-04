@@ -556,12 +556,11 @@ validate_generated_configs() {
     "$routerctl_bin" version || true
   } >"$out_dir/binaries.txt" 2>&1
 
-  sandbox_root="$out_dir/sandbox-root"
-  rm -rf "$sandbox_root"
-  mkdir -p "$sandbox_root"
+  sandbox_root="$(mktemp -d "${TMPDIR:-/tmp}/routerd-sam-sandbox.XXXXXX")"
+  echo "$sandbox_root" >"$out_dir/sandbox-root.txt"
   "$routerd_bin" serve --sandbox --root "$sandbox_root" >"$out_dir/sandbox.stdout" 2>"$out_dir/sandbox.stderr" &
   sandbox_pid=$!
-  trap 'kill "$sandbox_pid" >/dev/null 2>&1 || true; trap - RETURN' RETURN
+  trap 'kill "$sandbox_pid" >/dev/null 2>&1 || true; rm -rf "$sandbox_root"; trap - RETURN' RETURN
   status_socket="$sandbox_root/run/routerd/routerd-status.sock"
   wait_for_sandbox_socket "$sandbox_pid" "$status_socket" "$out_dir/sandbox.stdout" "$out_dir/sandbox.stderr"
 
@@ -592,6 +591,7 @@ validate_generated_configs() {
   done
   kill "$sandbox_pid" >/dev/null 2>&1 || true
   wait "$sandbox_pid" >/dev/null 2>&1 || true
+  rm -rf "$sandbox_root"
   trap - RETURN
 }
 
