@@ -240,6 +240,17 @@ observe the UDR pointing at the local router before advertising the captured
 latency can delay overlay convergence for this strategy. `secondary-ip` capture
 is not gated on route-table observation.
 
+认证不会采用 write-accepted gate。route-table write 被接受只证明 provider API
+接受了 mutation；它不能证明实际生效的 route table 已经把该 `/32` steering 到本地
+router。若在 write acceptance 后立即广告 BGP，retry、throttling 或 inventory
+propagation 延迟造成的 write-to-observation window 中可能出现 black-hole。更安全的契约是
+provider 已观测到 ingress 后再发布 overlay advertisement。
+
+本 release 中已认证的 hybrid strategy 仍是 `secondary-ip`。它同样通过 provider self
+inventory 确认，但观测对象是 NIC secondary-address attachment，而不是 route-table entry。
+将来若要认证 `route-table`，在移除 uncertified 标记前必须包含 large-pool behavior、
+failover rewrite ordering、inventory UDR 解析，以及 ARM/provider delay 或 throttling 证据。
+
 Every capture is accompanied by a **forwarding-enable** action so the NIC can
 forward packets that are not addressed to itself.
 

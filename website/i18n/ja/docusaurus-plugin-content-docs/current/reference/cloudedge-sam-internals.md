@@ -219,6 +219,19 @@ BGP 広告します。この route-table 固有の結合により、ARM/provider
 overlay 収束に波及します。`secondary-ip` 捕捉は route-table 観測で gate
 されません。
 
+write-accepted gate は認定条件としては採用しません。route-table write が accepted
+になっても、それは provider API が mutation を受理したことだけを示し、実効 route table
+がその `/32` をローカル router へ steering していることは示しません。write acceptance
+だけで BGP 広告すると、retry、throttling、inventory propagation 遅延のある
+write-to-observation window で traffic が black-hole になる可能性があります。より安全な
+契約は、provider が ingress を観測してから overlay advertisement を出すことです。
+
+この release で認定済みの hybrid strategy は `secondary-ip` のままです。これも provider
+self inventory で確認されますが、観測対象は route-table entry ではなく NIC の secondary
+address attachment です。将来 `route-table` を認定するには、uncertified 表記を外す前に、
+large-pool behavior、failover rewrite ordering、inventory の UDR 読解、ARM/provider
+delay または throttling の証跡を揃える必要があります。
+
 各 capture には必ず **forwarding 有効化** アクションが伴い、その NIC が自分宛て
 でないパケットを転送できるようにします。
 

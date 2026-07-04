@@ -243,6 +243,21 @@ the UDR pointing at the local router before routerd advertises the captured
 can delay overlay convergence. `secondary-ip` capture is not gated on
 route-table observation.
 
+The alternative write-accepted gate is intentionally not used for certification:
+an accepted route-table write only proves that the provider API accepted the
+mutation, not that the effective route table is steering the `/32` at the local
+router. Advertising BGP on write acceptance can black-hole traffic during the
+write-to-observation window, especially after retries, throttling, or delayed
+inventory propagation. The safer contract is provider-observed ingress before
+overlay advertisement.
+
+`secondary-ip` remains the certified hybrid strategy for this release. It is
+still confirmed through provider self inventory, but its observation is the NIC
+secondary-address attachment rather than a route-table entry. Any future
+`route-table` certification must include large-pool behavior, failover rewrite
+ordering, inventory UDR parsing, and ARM/provider delay or throttling evidence
+before the uncertified label can be removed.
+
 **Same-subnet constraint ([#516](https://github.com/imksoo/routerd/issues/516),
 live-validated 2026-06-16):** CloudEdge SAM's primary use case is same-subnet
 lift-and-shift, where the mobility prefix falls inside the VPC/VNet/VCN CIDR.
