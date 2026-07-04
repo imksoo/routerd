@@ -534,7 +534,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	}
 	status["addresses"] = samAddressStatuses(ownershipDecisions, actionPlans, actionJournal, failedActions, observationStatus)
 	status["phase"] = mobilityPoolResourcePhase(status)
-	if err := c.recordBGPCaptureAssignmentTransitions(ctx, res.Metadata.Name, self, previousCaptureAssignments, delivery.CaptureAssignments, append(actionPlans, previousActionPlans...), ownerPlacement, livenessMarkers, mobilityPrefixCommunities, ownershipDecisions, poolStatus, api.BoolDefault(spec.DeliveryPolicy.ConntrackCleanupOnSeize, false), status, now); err != nil {
+	if err := c.recordBGPCaptureAssignmentTransitions(ctx, res.Metadata.Name, self, previousCaptureAssignments, delivery.CaptureAssignments, append(actionPlans, previousActionPlans...), ownerPlacement, livenessMarkers, mobilityPrefixCommunities, ownershipDecisions, actionJournal, poolStatus, api.BoolDefault(spec.DeliveryPolicy.ConntrackCleanupOnSeize, false), status, now); err != nil {
 		return err
 	}
 	return c.savePlannerStatus(res.Metadata.Name, status)
@@ -579,7 +579,7 @@ const (
 	bgpCaptureConfirmedField           = "captureConfirmed"
 )
 
-func (c Controller) recordBGPCaptureAssignmentTransitions(ctx context.Context, poolName string, self memberPlanInfo, previous, current map[string]bgpCaptureAssignment, plans []dynamicconfig.ActionPlan, placement PlacementDecision, livenessMarkers map[string]string, mobilityPrefixCommunities map[string][]string, decisions []ownershipDecision, previousStatus map[string]any, conntrackCleanupOnSeize bool, nextStatus map[string]any, now time.Time) error {
+func (c Controller) recordBGPCaptureAssignmentTransitions(ctx context.Context, poolName string, self memberPlanInfo, previous, current map[string]bgpCaptureAssignment, plans []dynamicconfig.ActionPlan, placement PlacementDecision, livenessMarkers map[string]string, mobilityPrefixCommunities map[string][]string, decisions []ownershipDecision, actionJournal []routerstate.ActionExecutionRecord, previousStatus map[string]any, conntrackCleanupOnSeize bool, nextStatus map[string]any, now time.Time) error {
 	recorder, _ := c.Store.(mobilityEventRecorder)
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -607,7 +607,11 @@ func (c Controller) recordBGPCaptureAssignmentTransitions(ctx context.Context, p
 			}
 		}
 	}
-	for address := range bgpObservedSelfHolderAddresses(self, livenessMarkers, mobilityPrefixCommunities) {
+	observedSelfHolders := bgpObservedSelfHolderAddresses(self, livenessMarkers, mobilityPrefixCommunities)
+	for address := range bgpObservedSelfProviderCaptureAddresses(self, livenessMarkers, mobilityPrefixCommunities) {
+		observedSelfHolders[address] = true
+	}
+	for address := range observedSelfHolders {
 		assignment, ok := current[address]
 		if !ok || assignment.Phase != "Active" || strings.TrimSpace(assignment.Generation) == "" {
 			continue
@@ -625,15 +629,17 @@ func (c Controller) recordBGPCaptureAssignmentTransitions(ctx context.Context, p
 		}
 		seizeComplete[address] = assignment.Generation
 	}
+	confirmedThisReconcile := map[string]bool{}
 	for _, decision := range decisions {
 		address := normalizeAddressString(decision.Address)
 		if address == "" || decision.Class != ownershipClassConfirmedCapture || strings.TrimSpace(decision.CaptureHolderNode) != strings.TrimSpace(selfNode) {
 			continue
 		}
-		assignment, ok := current[address]
-		if !ok || assignment.Phase != "Active" || strings.TrimSpace(assignment.Generation) == "" {
+		assignment, ok := captureConfirmedAssignmentForDecision(self, current, decision, actionJournal, now)
+		if !ok {
 			continue
 		}
+		confirmedThisReconcile[address] = true
 		if captureConfirmed[address] == assignment.Generation {
 			continue
 		}
@@ -652,7 +658,10 @@ func (c Controller) recordBGPCaptureAssignmentTransitions(ctx context.Context, p
 		}
 	}
 	for address := range captureConfirmed {
-		if _, ok := current[address]; !ok {
+		if _, ok := current[address]; ok {
+			continue
+		}
+		if !confirmedThisReconcile[address] {
 			delete(captureConfirmed, address)
 		}
 	}
@@ -751,6 +760,80 @@ func bgpObservedSelfHolderAddresses(self memberPlanInfo, livenessMarkers map[str
 		}
 	}
 	return out
+}
+
+func bgpObservedSelfProviderCaptureAddresses(self memberPlanInfo, livenessMarkers map[string]string, mobilityPrefixCommunities map[string][]string) map[string]bool {
+	out := map[string]bool{}
+	community, _, present := livenessMarkerForNode(livenessMarkers, self.NodeRef)
+	if !present || strings.TrimSpace(community) == "" {
+		return out
+	}
+	community = strings.TrimSpace(community)
+	for prefix, communities := range mobilityPrefixCommunities {
+		address := normalizeAddressString(prefix)
+		if address == "" {
+			continue
+		}
+		hasSourceCapture := false
+		hasSelfIdentity := false
+		for _, item := range communities {
+			switch strings.TrimSpace(item) {
+			case bgpMobilityCommunitySourceCapture:
+				hasSourceCapture = true
+			case community:
+				hasSelfIdentity = true
+			}
+		}
+		if hasSourceCapture && hasSelfIdentity {
+			out[address] = true
+		}
+	}
+	return out
+}
+
+func captureConfirmedAssignmentForDecision(self memberPlanInfo, current map[string]bgpCaptureAssignment, decision ownershipDecision, actionJournal []routerstate.ActionExecutionRecord, now time.Time) (bgpCaptureAssignment, bool) {
+	address := normalizeAddressString(decision.Address)
+	if address == "" {
+		return bgpCaptureAssignment{}, false
+	}
+	if assignment, ok := current[address]; ok && assignment.Phase == "Active" && strings.TrimSpace(assignment.Generation) != "" {
+		return assignment, true
+	}
+	providerRef := strings.TrimSpace(decision.CaptureProviderRef)
+	targetRef := strings.TrimSpace(decision.CaptureTargetRef)
+	latest := latestProviderCaptureTransitions(nil, actionJournal)
+	tr, ok := latest[providerCaptureTransitionKey(providerRef, targetRef, address)]
+	if !ok || !tr.assign || !tr.succeeded {
+		return bgpCaptureAssignment{}, false
+	}
+	issuedAt := tr.at.UTC()
+	if issuedAt.IsZero() {
+		issuedAt = now.UTC()
+	}
+	generation := ""
+	if tr.id > 0 {
+		generation = fmt.Sprintf("provider-capture/%d", tr.id)
+	}
+	if generation == "" {
+		generation = strings.Join([]string{"provider-capture", safeName(providerRef), safeName(targetRef), safeName(address)}, "/")
+	}
+	seq := tr.id
+	if seq < 0 {
+		seq = 0
+	}
+	return bgpCaptureAssignment{
+		Address:        address,
+		Phase:          "Active",
+		Generation:     generation,
+		Seq:            seq,
+		ClaimEpoch:     generation,
+		DesiredHolder:  strings.TrimSpace(decision.CaptureHolderNode),
+		PreviousHolder: strings.TrimSpace(decision.HomeOwnerNode),
+		Reason:         "provider-capture-confirmed",
+		IssuedAt:       issuedAt,
+		RenewedAt:      now.UTC(),
+		LeaseUntil:     now.UTC().Add(DefaultLeaseTTL),
+	}, true
 }
 
 func bgpCaptureAssignmentTransitionUnchanged(previous, current bgpCaptureAssignment) bool {
