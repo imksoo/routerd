@@ -9642,6 +9642,13 @@
                             "eventEndpoint": {
                               "type": "string"
                             },
+                            "macAddresses": {
+                              "items": {
+                                "pattern": "^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$",
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
                             "maintenance": {
                               "additionalProperties": false,
                               "properties": {

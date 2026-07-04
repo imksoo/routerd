@@ -304,6 +304,7 @@ func TestValidateSAMNodeSet(t *testing.T) {
 		Role:           "onprem",
 		EventEndpoint:  "http://10.99.0.11:9443",
 		SAMEndpoint:    "10.99.0.11",
+		MACAddresses:   []string{"02:00:00:00:00:aa", "02:00:00:00:00:bb"},
 		RouteReflector: true,
 		WireGuard: api.SAMNodeWireGuardSpec{
 			PublicKey:           "pubkey",
@@ -344,6 +345,11 @@ func TestValidateSAMNodeSetRejectsInvalidFields(t *testing.T) {
 			name: "invalid sam endpoint",
 			mut:  func(spec *api.SAMNodeSetSpec) { spec.Nodes[0].SAMEndpoint = "fd00::1" },
 			want: "spec.nodes[0].samEndpoint: must be IPv4",
+		},
+		{
+			name: "invalid member mac address",
+			mut:  func(spec *api.SAMNodeSetSpec) { spec.Nodes[0].MACAddresses = []string{"not-a-mac"} },
+			want: "spec.nodes[0].macAddresses[0] must be a MAC address",
 		},
 		{
 			name: "sam endpoint with source",
@@ -881,6 +887,7 @@ func validSAMNodeSetSpec() api.SAMNodeSetSpec {
 		Role:          "onprem",
 		EventEndpoint: "http://10.99.0.11:9443",
 		SAMEndpoint:   "10.99.0.11/32",
+		MACAddresses:  []string{"02:00:00:00:00:aa"},
 		WireGuard: api.SAMNodeWireGuardSpec{
 			PublicKey:  "pubkey",
 			Endpoint:   "pve-rt01.example.net:51820",
