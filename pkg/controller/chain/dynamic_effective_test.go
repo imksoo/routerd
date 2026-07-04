@@ -296,6 +296,14 @@ func TestDynamicRouteSAMViewBGPProxyARPGARPGatedBySeizeComplete(t *testing.T) {
 
 func TestDynamicRouteSAMViewBGPProxyARPGARPDefaultOff(t *testing.T) {
 	startup := bgpProxyARPStartup(false)
+	for i, resource := range startup.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "MobilityPool" {
+			continue
+		}
+		spec := resource.Spec.(api.MobilityPoolSpec)
+		spec.Members[0].Capture.GratuitousARP = true
+		startup.Spec.Resources[i].Spec = spec
+	}
 	store := mapStore{
 		api.NetAPIVersion + "/BGPRouter/mobility-bgp": {
 			"installedNextHops": map[string]any{
