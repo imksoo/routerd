@@ -1306,6 +1306,40 @@ echo "--- journals"
 journalctl -u routerd.service -u routerd-bgp.service --since "30 minutes ago" --no-pager -n 500
 REMOTE_DIAG
 )" >"$dir/${node}.txt" 2>&1 || true
+    ssh_node "$node" 'sudo routerctl get status -o json 2>/dev/null | jq '"'"'
+      [
+        .. | objects
+        | select((.kind? == "BGPRouter") or (.resource.kind? == "BGPRouter") or has("prefixes") or has("livenessMarkers"))
+        | {
+            name: (.metadata.name? // .resource.metadata.name? // .name? // ""),
+            kind: (.kind? // .resource.kind? // "BGPRouter"),
+            prefixes: (.status.prefixes? // .resource.status.prefixes? // .prefixes? // []),
+            livenessMarkers: (.status.livenessMarkers? // .resource.status.livenessMarkers? // .livenessMarkers? // {})
+          }
+      ]
+    '"'"'' >"$dir/${node}.bgp-prefixes-liveness.json" 2>"$dir/${node}.bgp-prefixes-liveness.stderr" || true
+    ssh_node "$node" 'sudo routerctl get status -o json 2>/dev/null | jq -r '"'"'
+      [
+        .. | objects
+        | select((.kind? == "BGPRouter") or (.resource.kind? == "BGPRouter") or has("prefixes") or has("livenessMarkers"))
+        | {
+            name: (.metadata.name? // .resource.metadata.name? // .name? // ""),
+            prefixCount: ((.status.prefixes? // .resource.status.prefixes? // .prefixes? // []) | length),
+            truncated: (((.status.prefixes? // .resource.status.prefixes? // .prefixes? // []) | map((.prefix? // .Prefix? // "") == "truncated") | any) // false),
+            livenessMarkerCount: ((.status.livenessMarkers? // .resource.status.livenessMarkers? // .livenessMarkers? // {}) | length)
+          }
+      ]
+      | .[]
+      | "status_bgp_router name=\(.name) prefixes=\(.prefixCount) truncated=\(.truncated) livenessMarkers=\(.livenessMarkerCount)"
+    '"'"'' >"$dir/${node}.bgp-status-summary.txt" 2>"$dir/${node}.bgp-status-summary.stderr" || true
+    ssh_node "$node" 'if sudo test -S /run/routerd/bgp/control.sock; then sudo curl --silent --show-error --unix-socket /run/routerd/bgp/control.sock http://routerd-bgp/v1/applied | jq .; else echo "routerd_bgp_control_socket_missing"; fi' >"$dir/${node}.bgp-applied.json" 2>"$dir/${node}.bgp-applied.stderr" || true
+    ssh_node "$node" 'if sudo test -S /run/routerd/bgp/control.sock; then sudo curl --silent --show-error --unix-socket /run/routerd/bgp/control.sock http://routerd-bgp/v1/applied | jq -r '"'"'
+      "routerd_bgp_applied paths=\((.paths // []) | length) static=\((.paths // []) | map(select((.source // "") == "static")) | length) mobility=\((.paths // []) | map(select((.source // "") | startswith("MobilityPool/"))) | length)"
+    '"'"'; else echo "routerd_bgp_applied unavailable"; fi' >"$dir/${node}.bgp-applied-summary.txt" 2>"$dir/${node}.bgp-applied-summary.stderr" || true
+    ssh_node "$node" 'if command -v gobgp >/dev/null 2>&1; then sudo gobgp -u /run/routerd/bgp/gobgp.sock global rib -j 2>/dev/null | jq .; else echo "gobgp_cli_unavailable"; fi' >"$dir/${node}.gobgp-global-rib.json" 2>"$dir/${node}.gobgp-global-rib.stderr" || true
+    ssh_node "$node" 'if command -v gobgp >/dev/null 2>&1; then sudo gobgp -u /run/routerd/bgp/gobgp.sock global rib -j 2>/dev/null | jq -r '"'"'
+      if type == "array" then "gobgp_global_rib entries=\(length)" else "gobgp_global_rib entries=unknown" end
+    '"'"'; else echo "gobgp_global_rib unavailable"; fi' >"$dir/${node}.gobgp-global-rib-summary.txt" 2>"$dir/${node}.gobgp-global-rib-summary.stderr" || true
   done
 }
 
