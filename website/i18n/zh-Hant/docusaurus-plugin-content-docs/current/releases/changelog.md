@@ -11,6 +11,14 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 移除
+
+- 移除了 `MobilityPool.spec.deliveryPolicy.conntrackCleanupOnSeize` opt-in
+  欄位和 SAM leaf scoped cleanup hook。已知行為變更：仍設定該欄位的 config
+  會被接受，但該欄位會被忽略。在參考 SAM leaf dataplane 中，routerd 不會讓 delivered
+  overlay flow 進入 conntrack，因此該功能是 no-op。未來如重新引入，應偵測
+  routerd-managed ct-engage dataplane 並自動啟用 cleanup，而不是恢復為手動 opt-in flag。
+
 ## v20260703.0013
 
 ### 新增

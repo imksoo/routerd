@@ -114,7 +114,7 @@ run1_pool_role() {
 run1_delivery_policy() {
   local role="$1"
   if [ "$role" = "verification" ]; then
-    echo "{ mode: bgp, gratuitousARPOnSeize: true, conntrackCleanupOnSeize: true }"
+    echo "{ mode: bgp, gratuitousARPOnSeize: true }"
   else
     echo "{ mode: bgp }"
   fi
@@ -348,7 +348,7 @@ EOF
         name: cloudedge
         annotations:
           routerd-labs/run1-pool-role: "$pool_role"
-          routerd-labs/run1-pool-note: "control keeps gratuitousARPOnSeize and conntrackCleanupOnSeize default-off"
+          routerd-labs/run1-pool-note: "control keeps gratuitousARPOnSeize default-off"
       spec:
         prefix: $mobility_prefix
         groupRef: cloudedge
@@ -484,7 +484,7 @@ EOF
         name: cloudedge
         annotations:
           routerd-labs/run1-pool-role: "$pool_role"
-          routerd-labs/run1-pool-note: "verification enables seize-complete GARP and scoped conntrack cleanup"
+          routerd-labs/run1-pool-note: "verification enables seize-complete GARP"
       spec:
         prefix: $mobility_prefix
         groupRef: cloudedge

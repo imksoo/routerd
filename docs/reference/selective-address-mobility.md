@@ -770,25 +770,21 @@ SAM-forwarded traffic still traverses the existing firewall and conntrack path
 like any other forwarded traffic. Independence means the mobility resources do
 not configure arbitrary firewall or NAT policy; it does not mean bypass.
 
-### Scoped conntrack cleanup on seize
+### Conntrack cleanup design note
 
-`MobilityPool.spec.deliveryPolicy.conntrackCleanupOnSeize` is an opt-in recovery
-aid for BGP-mode SAM failover. When enabled, routerd runs scoped conntrack
-deletes immediately after the local node reaches the same dataplane milestone as
-the `seize-complete` holder transition event: the node is observed as the active
-BGP holder for the mobile `/32`.
+routerd briefly exposed
+`MobilityPool.spec.deliveryPolicy.conntrackCleanupOnSeize` as an opt-in scoped
+conntrack cleanup hook for BGP-mode SAM failover. It has been removed. In the
+reference SAM leaf configuration, routerd does not draw dataplane rules that
+engage conntrack for the delivered overlay flow, so the leaf-side scoped cleanup
+was a no-op and did not address failover flow anomalies.
 
-Cleanup is limited to the seized address. routerd invokes conntrack deletes for
-entries whose destination is the address and entries whose source is the
-address; it does not construct a global flush path. The intent is to clear stale
-flow state that can pin in-flight sessions to the pre-failover path while
-leaving unrelated forwarding flows intact.
-
-The hook is tied to local holder acquisition only. It does not run when the node
-yields or releases a holder assignment, and it does not run on provider
-`capture-confirmed`; provider confirmation is a separate ingress milestone. If
-the conntrack command is unavailable or a scoped delete fails, routerd records a
-warning in MobilityPool status and continues capture/delivery reconciliation.
+The problem statement remains valid for future stateful SAM leaf designs: a
+router that deliberately tracks forwarded mobile `/32` flows may need a scoped
+recovery hook when it becomes holder. Reintroduction should be designed around
+detecting a routerd-managed ct-engage dataplane and enabling cleanup
+automatically for that case. Do not reintroduce the feature as a manual opt-in
+flag.
 
 In particular, the delivered `/32` traffic crosses the Linux firewall
 `FORWARD` chain between the capture interface and the tunnel interface. Permit

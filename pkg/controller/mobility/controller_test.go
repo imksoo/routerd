@@ -1811,8 +1811,6 @@ func TestControllerBGPModeProviderCaptureCompletionEventsUseProductionObservatio
 	store := testStore(t, now)
 	spec := awsFailoverPoolSpec()
 	spec.DeliveryPolicy.Mode = "bgp"
-	conntrackCleanupOnSeize := true
-	spec.DeliveryPolicy.ConntrackCleanupOnSeize = &conntrackCleanupOnSeize
 	selfNode := "aws-router-b"
 	seized := "10.88.60.17/32"
 	confirmed := "10.88.60.34/32"
@@ -1861,13 +1859,11 @@ func TestControllerBGPModeProviderCaptureCompletionEventsUseProductionObservatio
 	seedElapsedBGPSeizeHoldDown(t, store, "cloudedge", selfNode, spec, livenessMarkers, now)
 	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-b", selfNode, confirmed, "assign-secondary-ip", 1, now.Add(-4*time.Second))
 
-	cleaner := &fakeConntrackCleaner{}
 	controller := Controller{
-		Router:           routerWithBGPRouter(planningRouterForNode(selfNode, spec)),
-		Store:            store,
-		BGPPaths:         &fakeBGPPaths{},
-		ConntrackCleaner: cleaner,
-		Now:              func() time.Time { return now },
+		Router:   routerWithBGPRouter(planningRouterForNode(selfNode, spec)),
+		Store:    store,
+		BGPPaths: &fakeBGPPaths{},
+		Now:      func() time.Time { return now },
 	}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -1886,9 +1882,6 @@ func TestControllerBGPModeProviderCaptureCompletionEventsUseProductionObservatio
 	_, hasCaptureConfirmed := confirmEvents[confirmed]
 	if !hasSeizeComplete || !hasCaptureConfirmed {
 		t.Fatalf("completion events: seize-complete=%d capture-confirmed=%d, want one each (seize=%#v confirm=%#v)", len(seizeEvents), len(confirmEvents), seizeEvents, confirmEvents)
-	}
-	if len(cleaner.addresses) != 1 || cleaner.addresses[0] != seized {
-		t.Fatalf("conntrack cleanup addresses = %#v, want only %s", cleaner.addresses, seized)
 	}
 	durations := extractTransitionDurationsByAddress(t, events)
 	if got, ok := durations["seize-complete"][seized]; !ok {

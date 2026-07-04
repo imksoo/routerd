@@ -12,6 +12,16 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Removed
+
+- Removed the `MobilityPool.spec.deliveryPolicy.conntrackCleanupOnSeize`
+  opt-in field and the SAM leaf scoped cleanup hook. Known behavior change:
+  configs that still set the field are accepted but the field is ignored.
+  The feature was a no-op in the reference SAM leaf dataplane because routerd
+  does not engage conntrack for delivered overlay flows there. Future
+  reintroduction should detect a routerd-managed ct-engage dataplane and enable
+  cleanup automatically, not through a manual opt-in flag.
+
 ## v20260703.0013
 
 ### Added
