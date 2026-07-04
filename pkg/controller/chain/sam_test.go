@@ -329,6 +329,91 @@ func TestSAMControllerGARPFailureDoesNotFailCapture(t *testing.T) {
 	}
 }
 
+func TestSAMControllerGARPPolicyCaptureSilentHolderTransitionOnly(t *testing.T) {
+	t.Run("remote capture claim does not send GARP", func(t *testing.T) {
+		router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "lan0")
+		spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+		spec.OwnerSide = "cloud"
+		spec.Delivery = api.AddressDelivery{PeerRef: "cloud", Mode: "bgp"}
+		router.Spec.Resources[1].Spec = spec
+
+		store := &samStore{objects: map[string]map[string]any{}}
+		applier := &fakeSAMApplier{}
+		garp := &fakeSAMGARP{}
+		controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier, GARP: garp}
+		if err := controller.Reconcile(context.Background()); err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		assertSAMCalls(t, applier.calls, []string{"proxyarp:lan0=1", "ensure:10.0.1.123/32@lan0"})
+		if len(garp.calls) != 0 {
+			t.Fatalf("remote capture GARP calls = %#v, want none", garp.calls)
+		}
+	})
+
+	t.Run("holder acquisition sends exactly one GARP", func(t *testing.T) {
+		router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "lan0")
+		spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+		spec.Capture.ActiveWhen = api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}
+		router.Spec.Resources[1].Spec = spec
+
+		store := &samStore{objects: map[string]map[string]any{
+			api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "master"},
+		}}
+		expanded, lowerings, err := sam.ExpandRemoteAddressClaimRoutesWithOptions(*router, sam.PlanOptions{StatusReader: store})
+		if err != nil {
+			t.Fatalf("ExpandRemoteAddressClaimRoutesWithOptions: %v", err)
+		}
+		applier := &fakeSAMApplier{}
+		garp := &fakeSAMGARP{}
+		controller := SAMController{Router: &expanded, Store: store, Lowerings: lowerings, OS: platform.OSLinux, Applier: applier, GARP: garp}
+		if err := controller.Reconcile(context.Background()); err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		assertSAMCalls(t, applier.calls, []string{"proxyarp:lan0=1", "ensure:10.0.1.123/32@lan0"})
+		if len(garp.calls) != 1 || garp.calls[0] != "10.0.1.123/32@lan0" {
+			t.Fatalf("holder transition GARP calls = %#v, want exactly 10.0.1.123/32@lan0", garp.calls)
+		}
+	})
+
+	t.Run("holder loss does not remove capture proxy neighbor", func(t *testing.T) {
+		router := samControllerRouterWithClaim("10.0.1.123/32", "provider-secondary-ip", "lan0")
+		spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+		spec.OwnerSide = "cloud"
+		spec.Capture.ConfigureOSAddress = true
+		spec.Delivery = api.AddressDelivery{PeerRef: "cloud", Mode: "bgp"}
+		router.Spec.Resources[1].Spec = spec
+
+		store := &samStore{
+			objects: map[string]map[string]any{},
+			statuses: []routerstate.ObjectStatus{{
+				APIVersion: api.HybridAPIVersion,
+				Kind:       "RemoteAddressClaim",
+				Name:       "app",
+				Status: map[string]any{
+					"captureProxyNeighbor": map[string]any{"address": "10.0.1.123/32", "interface": "lan0"},
+				},
+			}},
+		}
+		applier := &fakeSAMApplier{}
+		garp := &fakeSAMGARP{}
+		controller := SAMController{Router: router, Store: store, OS: platform.OSLinux, Applier: applier, GARP: garp}
+		if err := controller.Reconcile(context.Background()); err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		assertSAMCalls(t, applier.calls, []string{
+			"proxyarp:lan0=0",
+			"deassign:10.0.1.123/32",
+			"ensure:10.0.1.123/32@lan0",
+		})
+		if len(applier.delete) != 0 {
+			t.Fatalf("holder loss deleted capture proxy neighbor: %#v", applier.delete)
+		}
+		if len(garp.calls) != 0 {
+			t.Fatalf("holder loss GARP calls = %#v, want none", garp.calls)
+		}
+	})
+}
+
 func TestSAMControllerGatedProxyNeighborCleansOnMasterToBackupWithoutGARP(t *testing.T) {
 	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "lan0")
 	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
