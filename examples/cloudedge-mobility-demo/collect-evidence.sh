@@ -33,9 +33,10 @@ collect_events_command() {
   cat <<EOF
 echo "stage=$STAGE"
 echo "captured_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-sudo $ROUTERCTL_BIN events -o json || true
+echo "--- all-events"
+sudo $ROUTERCTL_BIN get events --limit 2000 -o json || true
 echo "--- routerd.mobility.holder.transition"
-sudo $ROUTERCTL_BIN events --topic routerd.mobility.holder.transition -o json || true
+sudo $ROUTERCTL_BIN get events --topic routerd.mobility.holder.transition --limit 2000 -o json || true
 EOF
 }
 
@@ -54,7 +55,7 @@ EOF
 event_retention_command() {
   cat <<EOF
 echo "stage=$STAGE"
-sudo $ROUTERCTL_BIN status -o json 2>/dev/null | grep -Ei '"event|retention|maxAge|maxEvents"' || true
+sudo $ROUTERCTL_BIN get status -o json 2>/dev/null | grep -Ei '"event|retention|maxAge|maxEvents"' || true
 sudo $ROUTERCTL_BIN dynamic render -o json 2>/dev/null | grep -Ei '"EventGroup"|"retention"|"maxAge"|"maxEvents"' || true
 EOF
 }
@@ -116,7 +117,7 @@ Stage: $STAGE
 - Router evidence: onprem, aws-a, aws-b, azure, oci.
 - Provider evidence: AWS ENIs, Azure NIC, OCI VNIC when matching CLIs are available.
 - Inspect BGP mobility paths, provider trap action plans, and action journals to confirm D5 migration.
-- Events: each router file includes all-topic routerctl events, focused
+- Events: each router file includes all-topic routerctl get events, focused
   routerd.mobility.holder.transition events, and state DB events table dump
   when available.
 - Event retention check: verify retained EventGroup/eventd settings cover the
