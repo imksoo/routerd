@@ -1844,19 +1844,10 @@ func TestControllerBGPModeProviderCaptureCompletionEventsUseProductionObservatio
 		confirmed: {"10.99.0.3"},
 	}, []map[string]any{
 		bgpOwnerPrefix(seized, "10.99.0.2", "aws-router-a"),
-		{
-			"prefix":  seized,
-			"nextHop": "10.99.0.5",
-			"best":    true,
-			"valid":   true,
-			"communities": []string{
-				bgpMobilityCommunitySourceCapture,
-				bgpstate.MobilityNodeIdentityCommunity(selfNode),
-			},
-		},
 		bgpOwnerPrefix(confirmed, "10.99.0.3", "azure-router"),
 	}, livenessMarkers)
 	seedElapsedBGPSeizeHoldDown(t, store, "cloudedge", selfNode, spec, livenessMarkers, now)
+	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-b", selfNode, seized, "assign-secondary-ip", 2, now.Add(-5*time.Second))
 	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-b", selfNode, confirmed, "assign-secondary-ip", 1, now.Add(-4*time.Second))
 
 	controller := Controller{
