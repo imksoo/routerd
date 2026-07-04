@@ -580,11 +580,15 @@ validate_generated_configs() {
       cat "$out_dir/$name.routerctl-validate.json" >&2 || true
       return 1
     fi
+    local load_root
+    load_root="$(mktemp -d "${TMPDIR:-/tmp}/routerd-sam-load.XXXXXX")"
+    echo "$load_root" >"$out_dir/$name.routerd-load-root.txt"
     rc=0
-    "$routerd_bin" validate --config "$cfg" >"$out_dir/$name.routerd-validate.txt" 2>"$out_dir/$name.routerd-validate.stderr" || rc=$?
+    "$routerd_bin" serve --sandbox --root "$load_root" --config "$cfg" --once >"$out_dir/$name.routerd-validate.txt" 2>"$out_dir/$name.routerd-validate.stderr" || rc=$?
+    rm -rf "$load_root"
     echo "$rc" >"$out_dir/$name.routerd-validate.rc"
     if [ "$rc" -ne 0 ]; then
-      echo "routerd validate failed for $cfg with rc=$rc" >&2
+      echo "routerd canonical load failed for $cfg with rc=$rc" >&2
       cat "$out_dir/$name.routerd-validate.stderr" >&2 || true
       return 1
     fi
