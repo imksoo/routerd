@@ -2,7 +2,16 @@
 
 package api
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
+
+func TestMobilityDeliveryPolicyDoesNotExposeGratuitousARPOnSeize(t *testing.T) {
+	if _, ok := reflect.TypeOf(MobilityDeliveryPolicy{}).FieldByName("GratuitousARPOnSeize"); ok {
+		t.Fatalf("MobilityDeliveryPolicy exposes unreachable GratuitousARPOnSeize field")
+	}
+}
 
 func TestIPv6PDProfileDefaults(t *testing.T) {
 	tests := []struct {
