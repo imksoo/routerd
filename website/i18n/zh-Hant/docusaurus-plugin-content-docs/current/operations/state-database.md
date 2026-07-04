@@ -31,6 +31,25 @@ routerctl events --topic routerd.resource.status.changed
 routerctl events --resource DNSResolver/lan-resolver -o json
 ```
 
+### Mobility holder transitions
+
+CloudEdge SAM failover 會發出 `routerd.mobility.holder.transition` 事件，
+其中包含 `transitionKind`、`address`、`timestamp`、`issuedAt`、
+`fromNode`、`toNode`、`mobilityPathSig`、`assignmentGeneration` 等機器可讀屬性。
+
+在 provider-secondary-IP capture 流程中，`seize-complete` 表示 active `/32`
+`bgpCaptureAssignment` 對應的 provider capture assign action 已在 action journal
+中記錄為 succeeded。`issuedAt` 使用 journal 的 `ExecutedAt`，因此
+`timestamp - issuedAt` 表示從 provider 接受寫入到事件記錄之間的延遲。
+`T_seize` 是 provider 接受寫入的時間。
+
+`capture-confirmed` 仍然基於 discovery 觀測。`T_confirm` 是本機程序觀測到
+provider capture 生效的時間。兩者共同度量從接受到生效的區間。
+
+對於 static-owned、static-handover、local-home 等非 capture 流程，
+`seize-complete` 仍來自 active-holder 加 self-identity 的 BGP 觀測。目前 lab
+實證僅覆蓋 capture 流程；static/handover completion event 尚未在真實環境中實證。
+
 ## 備份思維
 
 狀態 DB 保存的是**已觀測到**的狀態，無法取代設定。
