@@ -18,6 +18,13 @@ There are a few common operations you will use day to day. This page settles the
 routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
+For scripts, `routerctl validate` exits `0` only when the returned
+`ValidateResult` is valid. It exits `1` when routerd is reachable and the
+candidate is invalid, and `2` for execution or transport errors such as an
+unreadable candidate file or unreachable daemon. The JSON result is still
+written to stdout when routerd returns one; warnings with `valid: true` keep
+exit code `0`.
+
 ## Plan
 
 `routerctl plan` shows what routerd is about to do to the host. Before pointing it at a production router, check the plan for anything that would cut the management connection or change a route unexpectedly.

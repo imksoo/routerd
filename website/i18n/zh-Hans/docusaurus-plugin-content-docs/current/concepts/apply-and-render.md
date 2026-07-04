@@ -20,6 +20,13 @@ routerd 有几个日常运行中常用的操作。
 routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
+在脚本中使用时，只有返回的 `ValidateResult` 为 valid，
+`routerctl validate` 才会以退出码 `0` 结束。能够连接到 routerd
+但候选配置 invalid 时退出码为 `1`；候选文件不可读、daemon 不可达
+等执行或 transport 错误退出码为 `2`。只要 routerd 返回了 JSON
+结果，仍会像以前一样写入 stdout。只有 warning 且 `valid: true`
+时，退出码仍为 `0`。
+
 ## 查看计划
 
 `routerctl plan` 显示准备对主机执行的操作内容。

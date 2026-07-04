@@ -662,35 +662,45 @@ func TestValidateCommandProcessExitCodes(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
 		socket   string
+		file     string
 		result   controlapi.ValidateResult
 		wantExit int
 	}{
 		{
 			name:     "valid",
 			socket:   socketPath,
+			file:     candidatePath,
 			result:   controlapi.NewValidateResult(true, nil, ""),
 			wantExit: 0,
 		},
 		{
 			name:     "invalid",
 			socket:   socketPath,
+			file:     candidatePath,
 			result:   controlapi.NewValidateResult(false, nil, "invalid config"),
 			wantExit: 1,
 		},
 		{
 			name:     "execution-error",
 			socket:   filepath.Join(t.TempDir(), "missing.sock"),
+			file:     candidatePath,
+			wantExit: 2,
+		},
+		{
+			name:     "read-error",
+			socket:   socketPath,
+			file:     filepath.Join(t.TempDir(), "missing.yaml"),
 			wantExit: 2,
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			validateResult = tt.result
-			cmd := exec.Command(bin, "validate", "--socket", tt.socket, "-f", candidatePath, "--replace")
+			cmd := exec.Command(bin, "validate", "--socket", tt.socket, "-f", tt.file, "--replace")
 			out, err := cmd.CombinedOutput()
 			if got := processExitCode(err); got != tt.wantExit {
 				t.Fatalf("exit code = %d, want %d (err=%v output=%s)", got, tt.wantExit, err, out)
 			}
-			if tt.socket == socketPath && !strings.Contains(string(out), `"valid": `) {
+			if tt.socket == socketPath && tt.file == candidatePath && !strings.Contains(string(out), `"valid": `) {
 				t.Fatalf("validate output missing JSON result: %s", out)
 			}
 		})
