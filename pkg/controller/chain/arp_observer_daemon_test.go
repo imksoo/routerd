@@ -66,3 +66,51 @@ func TestRunnerMobilityARPObserverDaemonSpecsFromOnPremL2Sources(t *testing.T) {
 		t.Fatalf("pve-svnet metadata = %#v", byType["pve-svnet"])
 	}
 }
+
+func TestRunnerMobilityARPObserverDaemonSpecsIncludeSAMNodeSetMemberMACs(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"}, Metadata: api.ObjectMeta{Name: "home"}, Spec: api.EventGroupSpec{NodeName: "pve-leaf-a"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "svnet1"}, Spec: api.InterfaceSpec{IfName: "eth1"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMNodeSet"}, Metadata: api.ObjectMeta{Name: "fabric"}, Spec: api.SAMNodeSetSpec{Nodes: []api.SAMNodeSpec{
+			{NodeRef: "pve-leaf-a", Site: "pve", Role: "onprem", MACAddresses: []string{"02:00:00:00:00:aa"}},
+			{NodeRef: "aws-leaf-a", Site: "aws", Role: "cloud", MACAddresses: []string{"02:00:00:00:00:BB", "02:00:00:00:00:cc"}},
+		}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"}, Metadata: api.ObjectMeta{Name: "svnet1"}, Spec: api.MobilityPoolSpec{
+			Prefix:   "192.168.123.0/24",
+			GroupRef: "home",
+			Members: []api.MobilityPoolMember{
+				{
+					NodeRef: "pve-leaf-a",
+					Site:    "pve",
+					Role:    "onprem",
+					Capture: api.MobilityMemberCapture{Type: "proxy-arp", Interface: "svnet1"},
+					OwnershipDiscovery: api.MobilityOwnershipDiscovery{
+						Mode:    "onprem-l2",
+						Sources: []api.MobilityOwnershipDiscoverySource{{Type: "arp-observer", Interface: "svnet1"}},
+					},
+				},
+			},
+		}},
+	}}}
+	runner := Runner{Router: router}
+	specs := runner.mobilityARPObserverDaemonSpecs()
+	if len(specs) != 1 {
+		t.Fatalf("daemon specs = %#v, want one arp-observer spec", specs)
+	}
+	want := []string{"02:00:00:00:00:aa", "02:00:00:00:00:bb", "02:00:00:00:00:cc"}
+	if got := specs[0].IgnoredSenderMACs; !stringSlicesEqual(got, want) {
+		t.Fatalf("IgnoredSenderMACs = %#v, want %#v", got, want)
+	}
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

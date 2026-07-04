@@ -165,6 +165,46 @@ func TestPublishObservationDemotesKnownSameIPMAC(t *testing.T) {
 	}
 }
 
+func TestPublishObservationIgnoresSAMMemberMACAtChokepoint(t *testing.T) {
+	memberMAC := mustMAC(t, "02:00:00:00:00:aa")
+	clientMAC := mustMAC(t, "02:00:00:00:00:bb")
+	d := &daemon{
+		opts: options{
+			resource:          "arp",
+			ifname:            "eth1",
+			eventInterface:    "eth1",
+			eventFile:         filepath.Join(t.TempDir(), "events.jsonl"),
+			poolName:          "svnet1",
+			prefix:            netip.MustParsePrefix("192.168.123.0/24"),
+			ignoredSenderMACs: map[string]bool{strings.ToLower(memberMAC.String()): true},
+		},
+		lastEventByKey: map[string]time.Time{},
+		clients:        map[string]arpClient{},
+	}
+	d.cond = sync.NewCond(&d.mu)
+	address := netip.MustParseAddr("192.168.123.10")
+
+	d.publishObservation(address, memberMAC, eventARPObserved, sourceARPObserver, "ARPObserved", "observed")
+	if len(d.events) != 0 {
+		t.Fatalf("member MAC observation events = %#v, want none", d.events)
+	}
+	if d.observedCount != 0 {
+		t.Fatalf("observedCount = %d, want 0 for ignored member MAC", d.observedCount)
+	}
+	status := d.status()
+	if status.Observed["ignoredSenderMACs"] != "02:00:00:00:00:aa" || status.Observed["ignoredSenderMACCount"] != "1" || status.Observed["ignoredSenderMACObservationCount"] != "1" {
+		t.Fatalf("status ignored sender MAC fields = %#v", status.Observed)
+	}
+
+	d.publishObservation(address, clientMAC, eventARPObserved, sourceARPObserver, "ARPObserved", "observed")
+	if len(d.events) != 1 {
+		t.Fatalf("client MAC observation events = %#v, want one event", d.events)
+	}
+	if got := d.events[0].Attributes["mac"]; got != strings.ToLower(clientMAC.String()) {
+		t.Fatalf("client event mac = %q, want %s", got, clientMAC)
+	}
+}
+
 func buildARPReplyForTest(senderMAC, senderIP, targetMAC, targetIP string) []byte {
 	srcMAC := mustMACForTest(senderMAC)
 	dstMAC := mustMACForTest(targetMAC)
