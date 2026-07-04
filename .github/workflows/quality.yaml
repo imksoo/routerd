@@ -176,6 +176,9 @@ jobs:
       - name: Run CloudEdge PoC evidence offline smoke
         run: make cloudedge-poc-evidence-offline-test
 
+      - name: Run CloudEdge E2E preflight offline smoke
+        run: make cloudedge-e2e-preflight-offline-test
+
   shellcheck:
     name: Shell scripts
     runs-on: ubuntu-latest
