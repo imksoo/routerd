@@ -48,6 +48,11 @@ journal で succeeded になった事実を意味します。`issuedAt` は jour
 `T_confirm` は provider capture がローカルで効いたと観測した時刻です。
 この 2 つで、受理から実効までの区間を測れます。
 
+ノードの再起動や rejoin 後の再確認イベントでは、元の journal 受理時刻が
+`issuedAt` として再利用されることがあります。その場合、
+`timestamp - issuedAt` にはノードが停止または不在だった時間も含まれます。
+この差分は再確認までの経過時間として扱い、収束レイテンシとして解釈しないでください。
+
 static-owned、static-handover、local-home など capture 以外のフローでは、
 `seize-complete` は引き続き active-holder と self-identity の BGP 観測から
 導出します。lab 実証済みなのは capture フローで、static/handover の
