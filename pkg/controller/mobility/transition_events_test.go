@@ -16,8 +16,7 @@ import (
 func TestRecordBGPCaptureAssignmentTransitionsEmitsMachineReadableSequence(t *testing.T) {
 	now := time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
-	cleaner := &fakeConntrackCleaner{}
-	controller := Controller{Store: store, ConntrackCleaner: cleaner}
+	controller := Controller{Store: store}
 	address := "10.88.60.10/32"
 	self := memberPlanInfo{
 		NodeRef: "aws-rr-b",
@@ -60,7 +59,7 @@ func TestRecordBGPCaptureAssignmentTransitionsEmitsMachineReadableSequence(t *te
 	}
 
 	nextStatus := map[string]any{}
-	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, nil, map[string]bgpCaptureAssignment{address: assignment}, plans, placement, nil, nil, nil, nil, nil, false, nextStatus, now); err != nil {
+	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, nil, map[string]bgpCaptureAssignment{address: assignment}, plans, placement, nil, nil, nil, nil, nil, nextStatus, now); err != nil {
 		t.Fatalf("record start transition: %v", err)
 	}
 	events := listMobilityTransitionEvents(t, store)
@@ -76,7 +75,7 @@ func TestRecordBGPCaptureAssignmentTransitionsEmitsMachineReadableSequence(t *te
 	}
 
 	seizeCompleteStatus := map[string]any{}
-	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, livenessMarkers, mobilityPrefixCommunities, nil, nil, nextStatus, true, seizeCompleteStatus, now.Add(151*time.Second)); err != nil {
+	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, livenessMarkers, mobilityPrefixCommunities, nil, nil, nextStatus, seizeCompleteStatus, now.Add(151*time.Second)); err != nil {
 		t.Fatalf("record dataplane complete transition: %v", err)
 	}
 	events = listMobilityTransitionEvents(t, store)
@@ -90,17 +89,13 @@ func TestRecordBGPCaptureAssignmentTransitionsEmitsMachineReadableSequence(t *te
 	if got := completed[bgpCaptureTransitionCompletedField][address]; got != assignment.Generation {
 		t.Fatalf("seize completion marker = %q, want %q", got, assignment.Generation)
 	}
-	if len(cleaner.addresses) != 1 || cleaner.addresses[0] != address {
-		t.Fatalf("conntrack cleanup addresses = %#v, want %s", cleaner.addresses, address)
-	}
-
 	captureStatus := map[string]any{}
 	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, livenessMarkers, mobilityPrefixCommunities, []ownershipDecision{{
 		Address:           address,
 		Class:             ownershipClassConfirmedCapture,
 		CaptureHolderNode: "aws-rr-b",
 		CaptureStrategy:   captureStrategySecondaryIP,
-	}}, nil, seizeCompleteStatus, true, captureStatus, now.Add(173*time.Second)); err != nil {
+	}}, nil, seizeCompleteStatus, captureStatus, now.Add(173*time.Second)); err != nil {
 		t.Fatalf("record provider confirmed transition: %v", err)
 	}
 	events = listMobilityTransitionEvents(t, store)
@@ -123,18 +118,14 @@ func TestRecordBGPCaptureAssignmentTransitionsEmitsMachineReadableSequence(t *te
 		Class:             ownershipClassConfirmedCapture,
 		CaptureHolderNode: "aws-rr-b",
 		CaptureStrategy:   captureStrategySecondaryIP,
-	}}, nil, captureStatus, true, map[string]any{}, now.Add(174*time.Second)); err != nil {
+	}}, nil, captureStatus, map[string]any{}, now.Add(174*time.Second)); err != nil {
 		t.Fatalf("record duplicate transitions: %v", err)
 	}
 	events = listMobilityTransitionEvents(t, store)
 	if len(events) != 3 {
 		t.Fatalf("events after duplicate transitions = %d, want 3", len(events))
 	}
-	if len(cleaner.addresses) != 1 {
-		t.Fatalf("conntrack cleanup duplicated: %#v", cleaner.addresses)
-	}
-
-	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, nil, plans, PlacementDecision{}, nil, nil, nil, nil, captureStatus, true, map[string]any{}, now.Add(180*time.Second)); err != nil {
+	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, nil, plans, PlacementDecision{}, nil, nil, nil, nil, captureStatus, map[string]any{}, now.Add(180*time.Second)); err != nil {
 		t.Fatalf("record yield transition: %v", err)
 	}
 	events = listMobilityTransitionEvents(t, store)
@@ -142,36 +133,6 @@ func TestRecordBGPCaptureAssignmentTransitionsEmitsMachineReadableSequence(t *te
 		t.Fatalf("events after yield = %d, want 4", len(events))
 	}
 	assertTransitionEvent(t, events[3], "yield", address, "aws-rr-b", "", assignment.Generation)
-}
-
-func TestRecordBGPCaptureAssignmentTransitionsSkipsConntrackCleanupWhenDisabled(t *testing.T) {
-	now := time.Date(2026, 7, 3, 12, 20, 0, 0, time.UTC)
-	store := testStore(t, now)
-	cleaner := &fakeConntrackCleaner{}
-	controller := Controller{Store: store, ConntrackCleaner: cleaner}
-	address := "10.88.60.20/32"
-	self := memberPlanInfo{NodeRef: "aws-rr-b"}
-	assignment := bgpCaptureAssignment{Address: address, Phase: "Active", Generation: "group-a/8", DesiredHolder: "aws-rr-b"}
-	livenessMarkers := map[string]string{bgpstate.MobilityNodeIdentityCommunity("aws-rr-b"): "10.99.0.12/32"}
-	communities := map[string][]string{address: {bgpMobilityCommunityActiveHolder, bgpstate.MobilityNodeIdentityCommunity("aws-rr-b")}}
-
-	status := map[string]any{}
-	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, nil, PlacementDecision{}, livenessMarkers, communities, nil, nil, nil, false, status, now); err != nil {
-		t.Fatalf("record transition: %v", err)
-	}
-	if len(cleaner.addresses) != 0 {
-		t.Fatalf("conntrack cleanup addresses = %#v, want none", cleaner.addresses)
-	}
-}
-
-type fakeConntrackCleaner struct {
-	addresses []string
-	warnings  []string
-}
-
-func (f *fakeConntrackCleaner) CleanupAddress(ctx context.Context, address string) []string {
-	f.addresses = append(f.addresses, address)
-	return append([]string(nil), f.warnings...)
 }
 
 func listMobilityTransitionEvents(t *testing.T, store *routerstate.SQLiteStore) []routerstate.StoredEvent {

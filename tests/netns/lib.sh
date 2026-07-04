@@ -64,7 +64,7 @@ create_ns() {
 create_veth_pair() {
  local ns_a="$1" if_a="$2" addr_a="$3" ns_b="$4" if_b="$5" addr_b="$6"
   VETH_COUNTER=$((VETH_COUNTER + 1))
-  local host_a="rdv${VETH_COUNTER}a" host_b="rdv${VETH_COUNTER}b"
+  local host_a="${TEST_IF_ID}v${VETH_COUNTER}a" host_b="${TEST_IF_ID}v${VETH_COUNTER}b"
   ip link add "$host_a" type veth peer name "$host_b"
   ip link set "$host_a" netns "$ns_a"
   ip link set "$host_b" netns "$ns_b"
@@ -86,7 +86,7 @@ create_bridge_segment() {
     local ns="$1" ifname="$2" addr="$3"
     shift 3
     VETH_COUNTER=$((VETH_COUNTER + 1))
-    local host_if="rdb${VETH_COUNTER}a"
+    local host_if="${TEST_IF_ID}b${VETH_COUNTER}a"
     ip link add "$host_if" type veth peer name "${host_if}p"
     ip link set "$host_if" master "$bridge"
     ip link set "$host_if" up

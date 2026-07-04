@@ -127,18 +127,14 @@ SAM 不包含 `nat`、`preserveSource`、firewall 或 zone 欄位。若要 firew
 address，請在現有 `FirewallZone`、`FirewallRule`、`NAT44Rule` 中參照 literal `/32`。
 SAM forwarded traffic 仍會經過普通 forwarding/firewall/conntrack path。
 
-### seize 時的 scoped conntrack cleanup
+### conntrack cleanup design note
 
-`MobilityPool.spec.deliveryPolicy.conntrackCleanupOnSeize` 是 BGP mode SAM
-failover 的 opt-in 恢復輔助。啟用後，routerd 會在本 node 到達與
-`seize-complete` holder transition event 相同的 dataplane milestone 後立即執行
-scoped conntrack delete：也就是本 node 已被觀測為該 mobile `/32` 的 active BGP holder。
+routerd 曾短暫公開 `MobilityPool.spec.deliveryPolicy.conntrackCleanupOnSeize`，
+作為 BGP mode SAM failover 的 opt-in scoped conntrack cleanup hook。該欄位已經移除。
+在參考 SAM leaf 構成中，routerd 不會繪製讓 delivered overlay flow 進入 conntrack 的
+dataplane rule，因此 leaf 側 scoped cleanup 是 no-op，也不能解決 failover flow anomaly。
 
-cleanup 只作用於被 seize 的地址。routerd 刪除 destination 為該地址、以及 source 為該地址的
-conntrack entry；不會構造 global flush 路徑。其目的是清除可能把 in-flight session 固定在
-failover 前路徑上的 stale flow state，同時保留無關 forwarding flow。
-
-該 hook 只綁定本地 holder 取得。node yield/release holder assignment 時不會執行，
-provider `capture-confirmed` 時也不會執行；provider confirmation 是獨立的 ingress
-milestone。若 conntrack 命令不可用或 scoped delete 失敗，routerd 會在 MobilityPool status
-記錄 warning，並繼續 capture/delivery reconcile。
+這個問題陳述對未來 stateful SAM leaf 設計仍然成立：如果某個 router 有意追蹤 forwarded
+mobile `/32` flow，它在成為 holder 時可能需要 scoped recovery hook。重新引入時應偵測
+routerd-managed ct-engage dataplane，並只在該場景自動啟用 cleanup。不要以手動 opt-in flag
+的形式重新引入。
