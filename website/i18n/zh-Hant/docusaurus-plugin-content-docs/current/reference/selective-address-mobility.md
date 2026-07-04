@@ -23,6 +23,13 @@ address 會保留；firewall 與 NAT 是單獨的 routerd layer。
 `nodeRef`、`site`、`role`，以及可選的 `placement` / `maintenance`。所有 node 應取得相同的
 pool identity 與 placement set，以便 deterministic projection。
 
+`SAMNodeSet.spec.nodes[].macAddresses` 可靜態列出同一 fabric 中 member 的 MAC
+地址。on-prem ARP observer 會把所有 member MAC 的聯集作為 ignore set，避免 routerd
+member 發出的 ARP frame 被當作 mobile `/32` 的 ownership signal。該 ignore set 在
+supervised observer process 啟動時作為參數傳入；修改 member MAC 後，需要重啟
+observer 或 routerd 才會生效。observer status 會顯示目前生效的 ignore set 和被忽略的
+observation 計數，便於發現設定 drift。
+
 `AddressMobilityDomain` 與 `RemoteAddressClaim` 是低層相容 resource。pre-release 期間仍支援
 hand-authored config，但新 CloudEdge Mobility config 應優先使用 `MobilityPool` 與
 `SAMTransportProfile`。
