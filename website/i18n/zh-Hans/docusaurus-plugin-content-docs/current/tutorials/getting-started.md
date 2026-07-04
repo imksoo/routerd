@@ -4,7 +4,7 @@ title: 入门指南
 
 # 入门指南
 
-![从 interface discovery 与小型 YAML config 到 validate、plan、dry-run、serve、routerctl status 的安全 first routerd loop](/img/diagrams/tutorial-getting-started.png)
+![从 interface discovery 与小型 YAML config 到 validate、plan、dry-run、serve、routerctl get status 的安全 first routerd loop](/img/diagrams/tutorial-getting-started.png)
 
 本教程首先确认安全的操作流程。
 
@@ -107,9 +107,9 @@ sudo routerd serve --config first-router.yaml
 ## 7. 确认状态
 
 ```bash
-routerctl status
+routerctl get status
 routerctl get events --limit 20
-routerctl connections --limit 50
+routerctl get connections --limit 50
 ```
 
 下一篇教程将添加 LAN 的 DHCP、RA、DNS、路由策略、NAT44 与 DS-Lite。

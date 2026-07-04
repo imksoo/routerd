@@ -4,7 +4,7 @@ title: Getting started
 
 # Getting started
 
-![Diagram showing the safe first routerd loop from interface discovery and a small YAML config to validate, plan, dry-run, serve, and routerctl status](/img/diagrams/tutorial-getting-started.png)
+![Diagram showing the safe first routerd loop from interface discovery and a small YAML config to validate, plan, dry-run, serve, and routerctl get status](/img/diagrams/tutorial-getting-started.png)
 
 This tutorial shows the safest first loop:
 
@@ -110,9 +110,9 @@ In production, install routerd with the packaged service manager files so that
 ## 7. Inspect status
 
 ```bash
-routerctl status
+routerctl get status
 routerctl get events --limit 20
-routerctl connections --limit 50
+routerctl get connections --limit 50
 ```
 
 The next tutorials add LAN DHCP, RA, DNS, route policy, NAT44, and DS-Lite.

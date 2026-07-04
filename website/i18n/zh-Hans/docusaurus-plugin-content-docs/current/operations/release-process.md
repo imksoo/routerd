@@ -102,7 +102,7 @@ make dist-ndpi-agent-libndpi ROUTERD_OS=linux GOARCH=amd64 VERSION="$(git descri
 ```
 
 部署时的冒烟测试使用 `install.sh`。
-安装完成后，若 routerd 的只读 status socket 存在，`install.sh` 会调用 `routerctl status`。
+安装完成后，若 routerd 的只读 status socket 存在，`install.sh` 会调用 `routerctl get status`。
 GitHub 发布工作流程也会展开每个归档，并在系统外的临时 prefix 下执行 `install.sh`。
 此冒烟测试确认归档可在不使用 Makefile 的情况下正常安装与卸载。
 由于安装依赖软件包是目标路由器主机的职责，CI 冒烟测试会传入 `--no-install-deps`。
@@ -130,7 +130,7 @@ sudo ./install.sh
 若要在安装软件包后、复制 routerd 文件前即退出，请传入 `--deps-only`。
 若要加入可选的 Tailscale 软件包与命令检查，请传入 `--with-tailscale`。
 若要在新安装时调用主机的服务管理器，请传入 `--enable-service` 或 `--start-service`。
-安装完成后，若 routerd 的只读 status socket 存在，script 会执行 `routerctl status`。
+安装完成后，若 routerd 的只读 status socket 存在，script 会执行 `routerctl get status`。
 
 安装程序不会对下列运行期与状态路径做任何变更：
 

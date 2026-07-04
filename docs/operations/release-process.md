@@ -121,7 +121,7 @@ make dist-ndpi-agent-libndpi ROUTERD_OS=linux GOARCH=amd64 VERSION="$(git descri
 ```
 
 Deployment smoke checks use `install.sh`.
-After installation, `install.sh` calls `routerctl status` when the routerd
+After installation, `install.sh` calls `routerctl get status` when the routerd
 read-only status socket exists.
 The GitHub release workflow also extracts each archive and runs `install.sh` with a temporary non-system prefix.
 That smoke test verifies that the archive can install and uninstall without using a Makefile.
@@ -150,7 +150,7 @@ Pass `--list-deps` to print the package and command list without changing the ho
 Pass `--deps-only` to install packages and then exit before copying routerd files.
 Pass `--with-tailscale` to include the optional Tailscale package and command check.
 Pass `--enable-service` or `--start-service` when you want a fresh install to call the host service manager.
-After installation, the script runs `routerctl status` when the routerd
+After installation, the script runs `routerctl get status` when the routerd
 read-only status socket exists.
 
 The installer never modifies these runtime or state locations:

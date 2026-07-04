@@ -122,7 +122,7 @@ routerctl apply -f router.yaml --replace
 ## Checks
 
 ```bash
-routerctl status
+routerctl get status
 routerctl describe DHCPv4Client/wan-dhcpv4
 routerctl describe IPv4StaticAddress/lan-base
 routerctl describe NAT44Rule/lan-to-wan

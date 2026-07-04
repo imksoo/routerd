@@ -37,7 +37,7 @@ Linux 封存檔包含靜態連結的 routerd 執行檔
 - 建立 `/usr/local/etc/routerd/router.yaml.sample`。
 - 保留現有的 `/usr/local/etc/routerd/router.yaml`。
 - 保留 `/var/lib/routerd` 或 `/var/db/routerd` 的狀態。
-- 若有唯讀狀態 socket，則執行 `routerctl status`。
+- 若有唯讀狀態 socket，則執行 `routerctl get status`。
 
 常用選項：
 

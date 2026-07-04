@@ -41,8 +41,7 @@ routerd-01/02  VRRP VIP 192.168.70.10
 DHCP のプールは、VIP、control-plane のアドレス、worker のアドレス、LoadBalancer /
 Service の advertisement の範囲と重ならないようにしてください。
 
-運用時は `routerctl show bgp`、`routerctl show vrrp`、
-`routerctl show ingress` を使うと、peer の状態、VIP の役割、backend のヘルスを、
-生の status JSON ではなく表形式で確認できます。dataplane を確認する場合は
-`routerctl show ingress --verbose` を使うと、ランタイムの forwarding sysctl、nftables の
-DNAT/SNAT ルール数、API の ingress に該当する conntrack のフロー数を表示できます。
+運用時は `routerctl get BGPRouter`、`routerctl get VirtualAddress`、
+`routerctl get IngressService` を使うと、peer の状態、VIP の役割、backend のヘルスを、
+生の status JSON ではなく表形式で確認できます。live dataplane のデバッグでは、
+host の `ip`、`nft`、conntrack state を直接確認してください。

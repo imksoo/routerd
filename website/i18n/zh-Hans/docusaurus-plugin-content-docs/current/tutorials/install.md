@@ -37,7 +37,7 @@ Linux 归档文件包含静态链接的 routerd 可执行文件
 - 创建 `/usr/local/etc/routerd/router.yaml.sample`。
 - 保留现有的 `/usr/local/etc/routerd/router.yaml`。
 - 保留 `/var/lib/routerd` 或 `/var/db/routerd` 的状态。
-- 若有只读状态 socket，则执行 `routerctl status`。
+- 若有只读状态 socket，则执行 `routerctl get status`。
 
 常用选项：
 

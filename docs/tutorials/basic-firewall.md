@@ -40,7 +40,7 @@ routerd renders the rule into the `routerd_nat` nftables table. The same shape w
 
 ## Conntrack observation
 
-routerd consumes conntrack so the Web Console and `routerctl connections` can show live flows. Where `/proc/net/nf_conntrack` is missing, routerd falls back to a sysctl-derived summary; it does not stop on this condition, but the per-flow detail will be unavailable.
+routerd consumes conntrack so the Web Console and `routerctl get connections` can show live flows. Where `/proc/net/nf_conntrack` is missing, routerd falls back to a sysctl-derived summary; it does not stop on this condition, but the per-flow detail will be unavailable.
 
 ## Firewall kinds
 

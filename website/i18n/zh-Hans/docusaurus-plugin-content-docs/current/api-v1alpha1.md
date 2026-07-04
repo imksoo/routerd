@@ -249,7 +249,7 @@ routerd 通过本地 gRPC Unix socket 将资源 spec 直接映射为类型化的
 并以 `ListPeer` 与 `ListPath` 观测状态。不使用 FRR 的文本配置、
 `frr-reload.py`、`vtysh` 解析、GoBGP 的文件配置。
 `apply` 仅生成主机 artifact，
-BGP 作为 `routerd serve` 的管理对象显示于 status。`routerctl show bgp` 显示从存储的
+BGP 作为 `routerd serve` 的管理对象显示于 status。`routerctl get BGPRouter` 显示从存储的
 GoBGP 观测数据中，路由器、peer、消息计数器、路由选择状态及最近的错误。
 前缀 status 包含 `best`、`valid`、`installed`、`stale`、`nextHop`、
 observed community。符合 `spec.importPolicy.allowedPrefixes` 的已学习 IPv4 best path，
@@ -278,7 +278,7 @@ IPv6 VIP 在 keepalived 中生成为 VRRPv3 的 `family inet6`，在 FreeBSD 中
 Linux VRRP 使用明确的 unicast peer，默认为 `nopreempt`。
 FreeBSD CARP 使用父接口上的 multicast advertisement，因此 `spec.vrrp.peers` 在 FreeBSD 上会被忽略。`preempt: true` 仅在需要自动 failback 时使用。advertisement 与
 failback 的低级 timing 不通过各资源字段，而是通过 routerd 的 profile 默认值处理。可通过 `track` 根据 `BGPRouter`、`BGPPeer`、`IngressService` 等的状态降低优先级。默认在连续 3 次 unhealthy 时应用惩罚，连续 2 次 healthy 时解除。`spec.hostname` 可让 DNSResolver 自动将 VIP 发布至对应的 `DNSZone`。IPv4 VIP 成为 A 记录，IPv6 VIP 成为 AAAA
-记录。若由外部 AD DNS 等管理名称，请配置 `spec.externalDNS: true`。routerd 仅验证 hostname 语法，不发出 DNSZone coverage 警告也不自动发布。`routerctl show vrrp` 显示角色、
+记录。若由外部 AD DNS 等管理名称，请配置 `spec.externalDNS: true`。routerd 仅验证 hostname 语法，不发出 DNSZone coverage 警告也不自动发布。`routerctl get VirtualAddress` 显示角色、
 优先级、peer，以及自上次切换以来的经过时间。
 
 ### VRRP 正式环境调整
@@ -295,13 +295,11 @@ failback 的低级 timing 不通过各资源字段，而是通过 routerd 的 pr
 
 `IngressService` 支持多个 backend、TCP health check、故障转移 policy。
 runtime 控制器解析 backend 的 FQDN，DNS 失败时以上次解析的 IPv4 作为 fallback。Linux nftables 在下次 NAT 调和（reconcile）时以 status 中的 active backend 作为转发目的地。不清除现有的 conntrack，因此现有流量保留在旧 backend，新流量则导向所选的 backend。`spec.hostname` 可自动反映至 DNSResolver 作为 listen 地址的 A 记录。若由外部 DNS 管理名称，请配置 `spec.externalDNS: true`。
-`routerctl show ingress` 显示 active backend 及各 backend 的健康状态。
-`routerctl show ingress --verbose` 亦显示 live dataplane 的 `ip_forward`、nftables 的
-DNAT/SNAT 规则数、对应的 conntrack 流量数。`DETAIL` 栏显示
-`hairpinMode`、是否需要 hairpin，以及预期的 nftables SNAT 规则是 present 还是 missing。从 Ingress、NAT 系、DS-Lite、IPv6 PD/RA、路由资源导出转发、redirect 抑制、reverse path filter 例外、各接口的 RA 接收等所需的 runtime sysctl。`routerctl apply` 会 plan / render 衍生配置，但主机变更仅限于明确的 `Sysctl` / `SysctlProfile` escape hatch。
+`routerctl get IngressService` 显示 active backend 及各 backend 的健康状态。
+同时显示 `hairpinMode`、是否需要 hairpin，以及预期的 nftables SNAT 规则是 present 还是 missing。调试 live dataplane 时，请直接检查主机的 `ip`、`nft` 和 conntrack state。从 Ingress、NAT 系、DS-Lite、IPv6 PD/RA、路由资源导出转发、redirect 抑制、reverse path filter 例外、各接口的 RA 接收等所需的 runtime sysctl。`routerctl apply` 会 plan / render 衍生配置，但主机变更仅限于明确的 `Sysctl` / `SysctlProfile` escape hatch。
 衍生 runtime 配置的应用由 `routerd serve` 的控制器调和（reconcile）负责。
-维护期间可用 `routerctl drain
-ingress/<service> backend=<name> --duration 10m` 将 backend 设为 drain 状态。控制器在 duration 结束或执行 `routerctl undrain
+维护期间可用 `routerctl ingress drain
+ingress/<service> backend=<name> --duration 10m` 将 backend 设为 drain 状态。控制器在 duration 结束或执行 `routerctl ingress undrain
 ingress/<service> backend=<name>` 解除前，将该 backend 视为以 `Drained` 为原因的 unhealthy。
 
 `LocalServiceRedirect` 在 Linux nftables 的 `prerouting` 生成 `redirect` 规则。

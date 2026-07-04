@@ -231,21 +231,21 @@ func parseDiagnoseOptions(name string, args []string, helpOutput io.Writer) (dia
 			summary = "EgressRoutePolicy + HealthCheck + IPv4Route + NAT44Rule の status を集約し、\n" +
 				"--host が有効なら ip route / nft / conntrack コマンドも実行して結果を表示する。\n" +
 				"位置引数: [policy] (EgressRoutePolicy 名。省略時は全 policy 対象)"
-			examples = "routerctl diagnose egress\n" +
-				"routerctl diagnose egress ipv4-default -o json\n" +
-				"routerctl diagnose egress --no-host -o yaml"
+			examples = "routerctl doctor --probe egress\n" +
+				"routerctl doctor --probe egress ipv4-default -o json\n" +
+				"routerctl doctor --probe egress --no-host -o yaml"
 		case "diagnose dns":
 			summary = "DNSResolver の status を集約し、--host が有効なら dig で実 query を投げて確認する。\n" +
 				"位置引数: [resolver] (DNSResolver 名。省略時は全 resolver 対象)"
-			examples = "routerctl diagnose dns\n" +
-				"routerctl diagnose dns lan --server 127.0.0.1 --name example.com,routerd.io\n" +
-				"routerctl diagnose dns --no-host -o json"
+			examples = "routerctl doctor --probe dns\n" +
+				"routerctl doctor --probe dns lan --server 127.0.0.1 --name example.com,routerd.io\n" +
+				"routerctl doctor --probe dns --no-host -o json"
 		case "diagnose lan-client":
 			summary = "LAN client に対して ping / ip neigh / conntrack で疎通と NAT を確認する。\n" +
 				"位置引数: <ip> (LAN client IP, 必須)"
-			examples = "routerctl diagnose lan-client 192.168.1.10\n" +
-				"routerctl diagnose lan-client 192.168.1.10 --no-host\n" +
-				"routerctl diagnose lan-client 192.168.1.10 -o json"
+			examples = "routerctl doctor --probe lan-client 192.168.1.10\n" +
+				"routerctl doctor --probe lan-client 192.168.1.10 --no-host\n" +
+				"routerctl doctor --probe lan-client 192.168.1.10 -o json"
 		case "doctor":
 			summary = "routerd の各 area (" + strings.Join(doctorAreas, "/") + ") の\n" +
 				"健全性チェックをまとめて実行する。\n" +

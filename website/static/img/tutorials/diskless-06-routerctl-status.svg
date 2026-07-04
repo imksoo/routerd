@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
-  <title id="title">routerctl status placeholder</title>
-  <desc id="desc">Placeholder for routerctl status output.</desc>
+  <title id="title">routerctl get status placeholder</title>
+  <desc id="desc">Placeholder for routerctl get status output.</desc>
   <rect width="1280" height="720" fill="#0d1117"/>
   <text x="48" y="72" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="30" fill="#7ee787">image://routerctl-status</text>
-  <text x="48" y="142" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="28" fill="#c9d1d9">$ routerctl status</text>
+  <text x="48" y="142" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="28" fill="#c9d1d9">$ routerctl get status</text>
   <text x="48" y="210" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="28" fill="#c9d1d9">phase: Healthy</text>
   <text x="48" y="266" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="28" fill="#c9d1d9">resources: Applied</text>
   <text x="48" y="322" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="28" fill="#c9d1d9">dhcp4: Running</text>

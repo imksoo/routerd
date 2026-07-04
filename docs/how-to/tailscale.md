@@ -192,12 +192,12 @@ tailscale debug prefs | jq '.AdvertiseRoutes'
 Check routerd state:
 
 ```sh
-routerctl status --json
+routerctl get status -o json
 routerctl get TailscaleNode/edge -o yaml
-routerctl tailscale peers
+routerctl vpn tailscale peers
 ```
 
-`routerctl tailscale peers -o json` reads `tailscale status --json` and formats
+`routerctl vpn tailscale peers -o json` reads `tailscale status --json` and formats
 the peer list through routerd's CLI. The Web Console also shows the current
 peer list on the `TailscaleNode` resource, including online state, relay, last
 seen time, and allowed routes.

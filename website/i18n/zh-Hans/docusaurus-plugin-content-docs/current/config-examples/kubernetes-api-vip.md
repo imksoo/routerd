@@ -40,7 +40,6 @@ routerd-01/02  VRRP VIP 192.168.70.10
 DHCP 地址池请确保不与 VIP、control-plane 地址、worker 地址及 LoadBalancer /
 Service 广播范围重叠。
 
-运用时可使用 `routerctl show bgp`、`routerctl show vrrp`、
-`routerctl show ingress` 以表格形式（而非原始 status JSON）确认 peer 状态、VIP 角色及 backend 健康状况。
-若需确认 dataplane，使用 `routerctl show ingress --verbose` 可显示运行期的 forwarding sysctl、
-nftables 的 DNAT/SNAT 规则数，以及对应该 API ingress 的 conntrack 流量数。
+运用时可使用 `routerctl get BGPRouter`、`routerctl get VirtualAddress`、
+`routerctl get IngressService` 以表格形式（而非原始 status JSON）确认 peer 状态、VIP 角色及 backend 健康状况。
+若需调试 live dataplane，请直接检查主机的 `ip`、`nft` 和 conntrack state。

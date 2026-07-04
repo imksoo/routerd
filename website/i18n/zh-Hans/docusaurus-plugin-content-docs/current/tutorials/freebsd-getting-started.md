@@ -119,7 +119,7 @@ dnsmasq 也在重新启动前以 `dnsmasq --test` 验证配置。
 确认 routerd 状态。
 
 ```sh
-routerctl status
+routerctl get status
 routerctl get events --limit 20
 ```
 

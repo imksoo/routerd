@@ -358,7 +358,7 @@ sudo tcpdump -eni ens19
 若互联网连接失败，请检查路由策略、NAT44、DS-Lite、DNS 及 IP forwarding：
 
 ```sh
-routerctl status
+routerctl get status
 sysctl net.ipv4.ip_forward
 sudo nft list table ip routerd_nat
 ```

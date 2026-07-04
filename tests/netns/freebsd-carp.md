@@ -18,7 +18,7 @@ management interface is outside the test path before applying the config.
 3. Confirm routerd reports the CARP backend:
 
    ```sh
-   routerctl show vrrp
+   routerctl get VirtualAddress
    ```
 
 4. Remove the temporary VIP if the test was applied directly:

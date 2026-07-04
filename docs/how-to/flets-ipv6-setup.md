@@ -144,7 +144,7 @@ See `examples/dslite-lan-range-snat.yaml` for the optional form.
 
 ```bash
 routerctl plan -f router.yaml --replace
-routerctl status
+routerctl get status
 
 ip -6 tunnel show
 ip route show default

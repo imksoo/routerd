@@ -5,14 +5,14 @@ slug: /how-to/troubleshooting
 
 # トラブルシューティング
 
-![routerctl status と dry-run intent から OS state、daemon socket、event、DHCP/DNS/conntrack check へ進む routerd troubleshooting order](/img/diagrams/how-to-troubleshooting.png)
+![routerctl get status と dry-run intent から OS state、daemon socket、event、DHCP/DNS/conntrack check へ進む routerd troubleshooting order](/img/diagrams/how-to-troubleshooting.png)
 
 routerd の調査では、まず **routerd の意図** と **ホストの実状態** を分けます。
 routerd が何を意図しているかを確認してから、OS の状態と突き合わせてください。
 
 ## 基本順序
 
-1. `routerctl status` — 全体を見る
+1. `routerctl get status` — 全体を見る
 2. `routerctl describe <kind>/<name>` — 対象リソースを掘り下げる
 3. `routerctl plan` — 次の適用で何が変わるか
 4. OS コマンド (`ip`、`nft`、`ss`、`journalctl`) — 実状態
@@ -86,7 +86,7 @@ AFTR の FQDN が解決できない場合は、`DNSResolver` の `forward` sourc
 
 環境によっては、`/proc/net/nf_conntrack` がありません。
 この場合、routerd は sysctl 由来の集計へ縮退します。
-詳細なフロー一覧が空でも、必ずしも NAT が壊れているとは限りません。`routerctl connections` のサマリーを見てください。
+詳細なフロー一覧が空でも、必ずしも NAT が壊れているとは限りません。`routerctl get connections` のサマリーを見てください。
 
 ## 調査時に避けること
 

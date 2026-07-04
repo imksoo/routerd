@@ -141,9 +141,8 @@ OS CLI を呼び出すローカル実行ファイル。SDK を routerd に静的
 - **✅ 完了（lab-smoke PASS）— Phase 2 — オーバーレイ経由のピア配送。** `EventPeer` Kind。
   `routerd-eventd` レシーバーが `wg-hybrid` にバインド。HMAC。push + バックオフ。`event_deliveries`。
   *受け入れ条件:* オンプレミスが `wg-hybrid` 経由でクラウドに push。重複 push は冪等。不正 HMAC は拒否。
-  `routerctl event deliveries`。`routerd-eventd` が `EventGroup` リテンション（`maxAge`/`maxEvents`）に
-  従って `federation_events` を定期的に prune。`routerctl federation event prune --dry-run` が
-  削除対象を報告。
+  `routerctl federation event deliveries`。`routerd-eventd` が `EventGroup` リテンション（`maxAge`/`maxEvents`）に
+  従って `federation_events` を定期的に prune。
 - **✅ 完了（lab-smoke PASS）— Phase 3 — subscription トリガーによるプラグイン → DynamicConfigPart。**
   `EventSubscription` Kind。イベントバッチ → `PluginRequest`。`PluginResult` →
   `DynamicConfigPart`（`routerd.net/dynamic-source`、`event-id`、`event-group`

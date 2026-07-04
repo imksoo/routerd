@@ -119,7 +119,7 @@ dnsmasq も、再起動の前に `dnsmasq --test` で検証します。
 routerd の状態を確認します。
 
 ```sh
-routerctl status
+routerctl get status
 routerctl get events --limit 20
 ```
 

@@ -41,9 +41,7 @@ The important production-oriented settings are:
 Keep the DHCP pool away from the VIP, control-plane addresses, worker
 addresses, and LoadBalancer/Service advertisement ranges.
 
-For operations, `routerctl show bgp`, `routerctl show vrrp`, and
-`routerctl show ingress` provide table views for peer state, VIP role, and
-backend health without dumping raw status JSON. Use
-`routerctl show ingress --verbose` when debugging dataplane state; it reports
-runtime forwarding sysctls, nftables DNAT/SNAT rule counts, and matching
-conntrack flow counts for the API ingress.
+For operations, `routerctl get BGPRouter`, `routerctl get VirtualAddress`, and
+`routerctl get IngressService` provide table views for peer state, VIP role, and
+backend health without dumping raw status JSON. Inspect host `ip`, `nft`, and
+conntrack state directly when debugging live dataplane behavior.

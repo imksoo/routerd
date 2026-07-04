@@ -62,7 +62,7 @@ FreeBSD pf 在 routed filter path 上不具备相同的 MAC 匹配模型，route
 可完整存储 NFLOG 的 prefix、接口、数据包 family、协议、
 地址及端口。
 
-Web 管理界面的 Firewall 标签页与 `routerctl firewall-logs` 会读取此数据库。
+Web 管理界面的 Firewall 标签页与 `routerctl get firewall-logs` 会读取此数据库。
 请以受管理的 `generated service artifacts` 方式启用 logger。
 例如使用 `routerd-firewall-logger daemon --path /var/lib/routerd/firewall-logs.db --nflog-group 1`。
 

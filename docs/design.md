@@ -199,8 +199,9 @@ are applied to that daemon with GoBGP API objects instead of rendering FRR-style
 text config or shelling out to reload tools. `VirtualAddress` and
 `IngressService` hostnames feed
 DNSResolver-served zones as derived A/AAAA records, and BGP/VRRP/Ingress status is
-also surfaced through dedicated `routerctl show` views and low-cardinality OTel
-metrics for transitions and backend health.
+also surfaced through `routerctl get BGPRouter`, `routerctl get VirtualAddress`,
+and `routerctl get IngressService` views plus low-cardinality OTel metrics for
+transitions and backend health.
 
 ### 5.3 Daemon contract
 
@@ -241,7 +242,7 @@ The right response to drift is to express the new desired state in configuration
 
 routerd exposes its operating state through several surfaces.
 
-- `routerctl status` — phase per resource
+- `routerctl get status` — phase per resource
 - `routerctl describe <kind>/<name>` — spec, status, and recent events for one resource
 - `routerctl get events --topic <pattern> --resource <kind>/<name>` — tail the bus
 - `routerctl plan --diff` — preview the diff a future apply would produce

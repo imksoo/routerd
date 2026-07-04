@@ -2536,7 +2536,7 @@ func (r doctorRunner) doctorReconcile() []doctorCheck {
 	}
 	check := doctorCheck{Area: "reconcile", Name: "controllers", Status: status, Detail: detail}
 	if status != doctorPass {
-		check.Remedy = "inspect routerctl status --show-errors and routerd logs for the affected controllers"
+		check.Remedy = "inspect routerctl get status -o json and routerd logs for the affected controllers"
 	}
 	return []doctorCheck{check}
 }

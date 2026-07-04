@@ -22,10 +22,10 @@ func statusCommand(args []string, stdout io.Writer) error {
 	fs.Usage = func() {
 		printSubcommandHelp(fs,
 			"routerd の現在の status (resource phase / conditions など) を読み取り専用 socket 経由で取得する。",
-			"routerctl status -o json\n"+
-				"routerctl status -o yaml\n"+
-				"routerctl status --show-errors\n"+
-				"routerctl status --socket /run/routerd/status.sock")
+			"routerctl get status -o json\n"+
+				"routerctl get status -o yaml\n"+
+				"routerctl get controllers\n"+
+				"routerctl get status --socket /run/routerd/status.sock")
 	}
 	socketPath := fs.String("socket", defaultStatusSocketPath(), "routerd read-only status Unix domain socket path")
 	timeout := fs.Duration("timeout", 5*time.Second, "request timeout")

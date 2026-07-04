@@ -81,7 +81,7 @@ DS-Lite 優先 + PPPoE フォールバック、apply 時のロックアウト防
 routerctl validate -f router.yaml --replace
 routerctl plan -f router.yaml --replace
 routerctl apply -f router.yaml --replace
-routerctl status
+routerctl get status
 ```
 
 ## 関連ページ

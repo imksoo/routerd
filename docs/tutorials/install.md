@@ -36,7 +36,7 @@ The installer:
 - writes `/usr/local/etc/routerd/router.yaml.sample`
 - preserves an existing `/usr/local/etc/routerd/router.yaml`
 - preserves state under `/var/lib/routerd` or `/var/db/routerd`
-- runs `routerctl status` when the read-only status socket exists
+- runs `routerctl get status` when the read-only status socket exists
 
 Common options:
 

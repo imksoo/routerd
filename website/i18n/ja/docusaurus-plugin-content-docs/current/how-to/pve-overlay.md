@@ -4,7 +4,7 @@ title: ハイパーバイザー間のオーバーレイ VPN を置き換える
 
 # ハイパーバイザー間のオーバーレイ VPN を置き換える
 
-![hypervisor overlay VPN を WireGuard underlay、optional VXLAN、health check、MTU verification、routerctl visibility で置き換える流れ](/img/diagrams/how-to-pve-overlay.png)
+![hypervisor overlay VPN を WireGuard underlay、optional VXLAN、health check、MTU verification、CLI visibility で置き換える流れ](/img/diagrams/how-to-pve-overlay.png)
 
 ## 想定するシーン
 
@@ -97,7 +97,7 @@ ip -d link show vx-bridge1
 ping -M do -s 1342 <peer-overlay-host>        # 1370 - 20 IP - 8 ICMP
 ```
 
-`routerctl diagnose egress` も役立ちます (例: 拠点向けのトラフィックを、公衆のデフォルト経路ではなく WireGuard underlay へ流したいとき)。
+`routerctl doctor --probe egress` も役立ちます (例: 拠点向けのトラフィックを、公衆のデフォルト経路ではなく WireGuard underlay へ流したいとき)。
 
 ## 運用上のヒント
 

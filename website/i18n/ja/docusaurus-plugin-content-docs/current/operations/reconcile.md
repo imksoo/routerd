@@ -55,7 +55,7 @@ OS の状態を収束させます。
 DPI helper サービスは、派生したサービスユニットです。生成されたリソースは次で確認できます。
 
 ```bash
-routerctl show derived-resources
+routerctl dynamic list
 ```
 
 既定では、現在の設定から派生するものだけを表示します。

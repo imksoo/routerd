@@ -186,10 +186,10 @@ routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
 状態を確認します。
 
 ```sh
-routerctl status
+routerctl get status
 ```
 
-![初回適用後の routerctl status](/img/iso-boot/iso-boot-07-routerctl-status.png)
+![初回適用後の routerctl get status](/img/iso-boot/iso-boot-07-routerctl-status.png)
 
 phase が `Healthy` になれば成功です。
 シリアルログでは、次のような状態が返ってきます。
@@ -263,7 +263,7 @@ USB メモリーを接続したまま、mini PC を再起動します。
 ログイン後に確認します。
 
 ```sh
-routerctl status
+routerctl get status
 ```
 
 ウィザードを再実行せずに収束すれば成功です。
@@ -342,7 +342,7 @@ ls -l /media/routerd-usb/routerd/router.yaml
 ウィザードで選んだ LAN インターフェースを確認します。
 
 ```sh
-routerctl status --json
+routerctl get status -o json
 ip addr
 ```
 

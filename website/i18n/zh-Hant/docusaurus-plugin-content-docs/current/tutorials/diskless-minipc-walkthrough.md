@@ -183,10 +183,10 @@ routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
 確認狀態。
 
 ```sh
-routerctl status
+routerctl get status
 ```
 
-![routerctl status after first apply](/img/iso-boot/iso-boot-07-routerctl-status.png)
+![routerctl get status after first apply](/img/iso-boot/iso-boot-07-routerctl-status.png)
 
 phase 變為 `Healthy` 即表示成功。
 序列主控台日誌中應出現如下狀態。
@@ -259,7 +259,7 @@ http_code=200 remote_ip=192.168.99.1 time_total=0.000537
 登入後確認。
 
 ```sh
-routerctl status
+routerctl get status
 ```
 
 不重新執行精靈即可收斂則表示成功。
@@ -338,7 +338,7 @@ ls -l /media/routerd-usb/routerd/router.yaml
 確認精靈中選擇的 LAN 介面。
 
 ```sh
-routerctl status --json
+routerctl get status -o json
 ip addr
 ```
 

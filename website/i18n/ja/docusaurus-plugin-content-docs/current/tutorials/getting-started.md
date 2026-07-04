@@ -4,7 +4,7 @@ title: はじめに
 
 # はじめに
 
-![インターフェースの確認と小さな YAML 設定から validate、plan、dry-run、serve、routerctl status へ進む安全な最初の routerd ループ](/img/diagrams/tutorial-getting-started.png)
+![インターフェースの確認と小さな YAML 設定から validate、plan、dry-run、serve、routerctl get status へ進む安全な最初の routerd ループ](/img/diagrams/tutorial-getting-started.png)
 
 このチュートリアルでは、まず安全な進め方を確認します。
 
@@ -108,9 +108,9 @@ sudo routerd serve --config first-router.yaml
 ## 7. 状態の確認
 
 ```bash
-routerctl status
+routerctl get status
 routerctl get events --limit 20
-routerctl connections --limit 50
+routerctl get connections --limit 50
 ```
 
 次のチュートリアルでは、LAN の DHCP、RA、DNS、経路ポリシー、NAT44、DS-Lite を追加します。

@@ -30,7 +30,7 @@ Paste the smallest relevant YAML snippet. Remove secrets.
 ## Logs and status
 
 ```sh
-routerctl status --json
+routerctl get status -o json
 routerctl get events --limit 50
 ```
 

@@ -4,14 +4,14 @@ title: Ingress maintenance
 
 # Ingress maintenance
 
-![Diagram showing ingress maintenance with routerctl drain writing temporary state, reconcile marking a backend drained and unhealthy, existing conntrack preserved, and undrain or expiry restoring service](/img/diagrams/operations-ingress-maintenance.png)
+![Diagram showing ingress maintenance with routerctl ingress drain writing temporary state, reconcile marking a backend drained and unhealthy, existing conntrack preserved, and undrain or expiry restoring service](/img/diagrams/operations-ingress-maintenance.png)
 
-Use `routerctl drain` when an `IngressService` backend needs temporary
+Use `routerctl ingress drain` when an `IngressService` backend needs temporary
 maintenance without editing the router YAML:
 
 ```sh
-routerctl drain ingress/kubernetes-api backend=cp-01 --duration 10m
-routerctl show ingress
+routerctl ingress drain ingress/kubernetes-api backend=cp-01 --duration 10m
+routerctl get IngressService
 ```
 
 The drain state is stored in the routerd state database. During the drain
@@ -24,5 +24,5 @@ The backend is restored automatically when `--duration` expires. To restore it
 immediately:
 
 ```sh
-routerctl undrain ingress/kubernetes-api backend=cp-01
+routerctl ingress undrain ingress/kubernetes-api backend=cp-01
 ```
