@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -635,6 +636,86 @@ func TestConfigLifecycleCommandsUseControlAPI(t *testing.T) {
 	if !deleted.NoReconcile || deleted.Target != "Hostname/appliance" {
 		t.Fatalf("delete request = %+v", deleted)
 	}
+}
+
+func TestValidateCommandProcessExitCodes(t *testing.T) {
+	bin := buildRouterctlBinary(t)
+	candidatePath := filepath.Join(t.TempDir(), "candidate.yaml")
+	if err := os.WriteFile(candidatePath, []byte(testRouterYAML("candidate-router")), 0644); err != nil {
+		t.Fatalf("write candidate: %v", err)
+	}
+	socketPath := filepath.Join(t.TempDir(), "routerd.sock")
+	validateResult := controlapi.NewValidateResult(true, nil, "")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	server := &http.Server{Handler: controlapi.Handler{
+		Validate: func(r *http.Request, req controlapi.ValidateRequest) (*controlapi.ValidateResult, error) {
+			result := validateResult
+			return &result, nil
+		},
+	}}
+	go func() { _ = server.Serve(listener) }()
+	defer server.Close()
+
+	for _, tt := range []struct {
+		name     string
+		socket   string
+		result   controlapi.ValidateResult
+		wantExit int
+	}{
+		{
+			name:     "valid",
+			socket:   socketPath,
+			result:   controlapi.NewValidateResult(true, nil, ""),
+			wantExit: 0,
+		},
+		{
+			name:     "invalid",
+			socket:   socketPath,
+			result:   controlapi.NewValidateResult(false, nil, "invalid config"),
+			wantExit: 1,
+		},
+		{
+			name:     "execution-error",
+			socket:   filepath.Join(t.TempDir(), "missing.sock"),
+			wantExit: 2,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			validateResult = tt.result
+			cmd := exec.Command(bin, "validate", "--socket", tt.socket, "-f", candidatePath, "--replace")
+			out, err := cmd.CombinedOutput()
+			if got := processExitCode(err); got != tt.wantExit {
+				t.Fatalf("exit code = %d, want %d (err=%v output=%s)", got, tt.wantExit, err, out)
+			}
+			if tt.socket == socketPath && !strings.Contains(string(out), `"valid": `) {
+				t.Fatalf("validate output missing JSON result: %s", out)
+			}
+		})
+	}
+}
+
+func buildRouterctlBinary(t *testing.T) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "routerctl")
+	cmd := exec.Command("go", "build", "-o", bin, ".")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("build routerctl: %v\n%s", err, out)
+	}
+	return bin
+}
+
+func processExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return exitErr.ExitCode()
+	}
+	return -1
 }
 
 func TestApplyRequiresInputAndExplainsMissingDaemon(t *testing.T) {
