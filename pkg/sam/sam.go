@@ -41,14 +41,15 @@ type DeliveryLowering struct {
 }
 
 type CaptureAction struct {
-	Kind          string
-	ClaimName     string
-	Address       string
-	Interface     string
-	PeerInterface string
-	Key           string
-	Value         string
-	GratuitousARP bool
+	Kind           string
+	ClaimName      string
+	Address        string
+	Interface      string
+	PeerInterface  string
+	Key            string
+	Value          string
+	GratuitousARP  bool
+	GARPGeneration string
 }
 
 type PlanOptions struct {
@@ -257,7 +258,7 @@ func planProxyARPCapture(resource api.Resource, spec api.RemoteAddressClaimSpec,
 		enabled[iface] = true
 		actions = append(actions, CaptureAction{Kind: "sysctl", Key: "net.ipv4.conf." + iface + ".proxy_arp", Value: "1", Interface: iface})
 	}
-	actions = append(actions, CaptureAction{Kind: "proxy-neighbor", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, GratuitousARP: wantsGratuitousARP(spec.Capture)})
+	actions = append(actions, CaptureAction{Kind: "proxy-neighbor", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, GratuitousARP: wantsGratuitousARP(spec.Capture), GARPGeneration: gratuitousARPGeneration(resource)})
 	return actions, nil
 }
 
@@ -274,7 +275,7 @@ func planProviderSecondaryCapture(router *api.Router, resource api.Resource, spe
 	if iface == "" {
 		return nil, fmt.Errorf("%s spec.capture.interface is required for provider-secondary-ip BGP forwarding", resource.ID())
 	}
-	actions = append(actions, CaptureAction{Kind: "proxy-neighbor", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, GratuitousARP: wantsGratuitousARP(spec.Capture)})
+	actions = append(actions, CaptureAction{Kind: "proxy-neighbor", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, GratuitousARP: wantsGratuitousARP(spec.Capture), GARPGeneration: gratuitousARPGeneration(resource)})
 	for _, tunnelIface := range bgpDeliveryForwardInterfaces(router) {
 		actions = append(actions, CaptureAction{Kind: "forward-path", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, PeerInterface: tunnelIface})
 	}
@@ -558,6 +559,13 @@ func wantsGratuitousARP(capture api.AddressCapture) bool {
 		return true
 	}
 	return strings.TrimSpace(capture.ActiveWhen.Type) == "vrrp-master"
+}
+
+func gratuitousARPGeneration(resource api.Resource) string {
+	if resource.Metadata.Annotations == nil {
+		return ""
+	}
+	return strings.TrimSpace(resource.Metadata.Annotations["mobility.routerd.net/seizeGeneration"])
 }
 
 func ProxyARPInterfaces(router *api.Router) []string {
