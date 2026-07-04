@@ -170,9 +170,9 @@ func appendBGPMobilityProxyARPClaims(router api.Router, store any) api.Router {
 		if !ok || strings.TrimSpace(self.Capture.Type) != "proxy-arp" || strings.TrimSpace(self.Capture.Interface) == "" {
 			continue
 		}
-		seizeComplete := map[string]bool{}
+		seizeComplete := map[string]string{}
 		if api.BoolDefault(spec.DeliveryPolicy.GratuitousARPOnSeize, false) {
-			seizeComplete = bgpMobilitySeizeCompleteAddresses(reader.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", resource.Metadata.Name))
+			seizeComplete = bgpMobilitySeizeCompleteGenerations(reader.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", resource.Metadata.Name))
 		}
 		owned := mobilityStaticOwnedAddresses(self, prefix)
 		for _, address := range bgpMobilityInstalledAddresses(installed, prefix) {
@@ -657,18 +657,19 @@ func bgpMobilityInstalledAddresses(installed map[string][]string, pool netip.Pre
 	return bgpSortedStringKeys(seen)
 }
 
-func bgpMobilitySeizeCompleteAddresses(status map[string]any) map[string]bool {
-	out := map[string]bool{}
+func bgpMobilitySeizeCompleteGenerations(status map[string]any) map[string]string {
+	out := map[string]string{}
 	raw, ok := status["bgpCaptureTransitionCompleted"]
 	if !ok {
 		return out
 	}
 	add := func(address string, generation any) {
 		address = strings.TrimSpace(address)
-		if address == "" || strings.TrimSpace(fmt.Sprint(generation)) == "" {
+		gen := strings.TrimSpace(fmt.Sprint(generation))
+		if address == "" || gen == "" {
 			return
 		}
-		out[address] = true
+		out[address] = gen
 	}
 	switch typed := raw.(type) {
 	case map[string]any:
@@ -704,16 +705,20 @@ func bgpMobilityStatusMap(value any) map[string]any {
 	return out
 }
 
-func bgpMobilityProxyARPClaim(poolName string, member api.MobilityPoolMember, address string, gratuitousARP bool) api.Resource {
+func bgpMobilityProxyARPClaim(poolName string, member api.MobilityPoolMember, address, garpGeneration string) api.Resource {
 	name := "bgp-" + safeResourceName(poolName) + "-" + safeResourceName(strings.TrimSuffix(address, "/32"))
+	annotations := map[string]string{
+		"mobility.routerd.net/pool":   poolName,
+		"mobility.routerd.net/source": "bgp-best-path",
+	}
+	if strings.TrimSpace(garpGeneration) != "" {
+		annotations["mobility.routerd.net/seizeGeneration"] = strings.TrimSpace(garpGeneration)
+	}
 	return api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
 		Metadata: api.ObjectMeta{
-			Name: name,
-			Annotations: map[string]string{
-				"mobility.routerd.net/pool":   poolName,
-				"mobility.routerd.net/source": "bgp-best-path",
-			},
+			Name:        name,
+			Annotations: annotations,
 		},
 		Spec: api.RemoteAddressClaimSpec{
 			DomainRef: "bgp-" + poolName,
@@ -725,7 +730,7 @@ func bgpMobilityProxyARPClaim(poolName string, member api.MobilityPoolMember, ad
 				Strategy:         member.Capture.Strategy,
 				Interface:        member.Capture.Interface,
 				ExcludeAddresses: append([]string(nil), member.Capture.ExcludeAddresses...),
-				GratuitousARP:    gratuitousARP,
+				GratuitousARP:    strings.TrimSpace(garpGeneration) != "",
 				ActiveWhen:       member.Capture.ActiveWhen,
 			},
 			Delivery: api.AddressDelivery{Mode: "bgp"},

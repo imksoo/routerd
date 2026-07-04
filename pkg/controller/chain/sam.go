@@ -30,8 +30,9 @@ type samGratuitousARPAnnouncer interface {
 }
 
 type samStoredProxyNeighbor struct {
-	address string
-	ifname  string
+	address            string
+	ifname             string
+	lastGARPGeneration string
 }
 
 type samOSAddressDeassignResult struct {
@@ -96,7 +97,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	}
 	var failures []string
 	deassignResults := map[string]samOSAddressDeassignResult{}
-	garpSent := map[string]bool{}
+	garpSent := map[string]string{}
 	garpErrors := map[string]string{}
 	priorNeighbors := samStoredProxyNeighbors(statuses)
 	for _, action := range actions {
@@ -114,7 +115,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 				continue
 			}
 			current := samStoredProxyNeighbor{address: strings.TrimSpace(action.Address), ifname: strings.TrimSpace(action.Interface)}
-			if action.GratuitousARP && priorNeighbors[action.ClaimName] != current {
+			if shouldSendSAMGratuitousARP(action, priorNeighbors[action.ClaimName], current) {
 				announcer := c.GARP
 				if announcer == nil {
 					announcer = defaultSAMGratuitousARPAnnouncer()
@@ -122,7 +123,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 				if err := announcer.SendGratuitousARP(ctx, action.Address, action.Interface); err != nil {
 					garpErrors[action.ClaimName] = fmt.Sprintf("gratuitous ARP %s dev %s: %v", action.Address, action.Interface, err)
 				} else {
-					garpSent[action.ClaimName] = true
+					garpSent[action.ClaimName] = strings.TrimSpace(action.GARPGeneration)
 				}
 			}
 		case "deassign-os-address":
@@ -220,7 +221,7 @@ func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []s
 	return nil
 }
 
-func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults map[string]samOSAddressDeassignResult, garpSent map[string]bool, garpErrors map[string]string) error {
+func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults map[string]samOSAddressDeassignResult, garpSent map[string]string, garpErrors map[string]string) error {
 	claims := samSelectResources(c.Router.Spec.Resources, "RemoteAddressClaim")
 	for _, claim := range claims {
 		status := sam.StatusForRemoteAddressClaim(claim, c.Lowerings, c.Store, targetOS)
@@ -233,8 +234,13 @@ func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults m
 						"address":   strings.TrimSpace(spec.Address),
 						"interface": sam.ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), aliases),
 					}
-					if garpSent[claim.Metadata.Name] {
+					if _, ok := garpSent[claim.Metadata.Name]; ok {
 						status["lastGARPSent"] = true
+					}
+					if garpSent[claim.Metadata.Name] != "" {
+						status["captureProxyNeighbor"].(map[string]any)["lastGARPGeneration"] = garpSent[claim.Metadata.Name]
+					} else if existing, ok := samStoredProxyNeighborFromStore(c.Store, claim.Metadata.Name); ok && existing.lastGARPGeneration != "" {
+						status["captureProxyNeighbor"].(map[string]any)["lastGARPGeneration"] = existing.lastGARPGeneration
 					}
 					if garpErrors[claim.Metadata.Name] != "" {
 						status["lastGARPError"] = garpErrors[claim.Metadata.Name]
@@ -372,7 +378,7 @@ func (c SAMController) cleanupChangedCaptures(ctx context.Context, statuses []ro
 		}
 		old.ifname = sam.ResolveCaptureInterface(old.ifname, aliases)
 		next, ok := desiredNeighbors[name]
-		if ok && next == old {
+		if ok && next.sameEndpoint(old) {
 			continue
 		}
 		if err := applier.DeleteProxyNeighbor(ctx, old.address, old.ifname); err != nil {
@@ -395,6 +401,21 @@ func (c SAMController) listObjectStatuses() ([]routerstate.ObjectStatus, error) 
 	return lister.ListObjectStatuses()
 }
 
+func shouldSendSAMGratuitousARP(action sam.CaptureAction, previous, current samStoredProxyNeighbor) bool {
+	if !action.GratuitousARP {
+		return false
+	}
+	generation := strings.TrimSpace(action.GARPGeneration)
+	if generation != "" {
+		return previous.lastGARPGeneration != generation
+	}
+	return !previous.sameEndpoint(current)
+}
+
+func (n samStoredProxyNeighbor) sameEndpoint(other samStoredProxyNeighbor) bool {
+	return n.address == other.address && n.ifname == other.ifname
+}
+
 func samStoredProxyNeighbors(statuses []routerstate.ObjectStatus) map[string]samStoredProxyNeighbor {
 	out := map[string]samStoredProxyNeighbor{}
 	for _, status := range statuses {
@@ -408,6 +429,18 @@ func samStoredProxyNeighbors(statuses []routerstate.ObjectStatus) map[string]sam
 	return out
 }
 
+func samStoredProxyNeighborFromStore(store Store, name string) (samStoredProxyNeighbor, bool) {
+	if store == nil || strings.TrimSpace(name) == "" {
+		return samStoredProxyNeighbor{}, false
+	}
+	return samStoredProxyNeighborFromStatus(routerstate.ObjectStatus{
+		APIVersion: api.HybridAPIVersion,
+		Kind:       "RemoteAddressClaim",
+		Name:       name,
+		Status:     store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", name),
+	})
+}
+
 func samStoredProxyNeighborFromStatus(status routerstate.ObjectStatus) (samStoredProxyNeighbor, bool) {
 	capture, ok := status.Status["captureProxyNeighbor"].(map[string]any)
 	if !ok {
@@ -418,5 +451,13 @@ func samStoredProxyNeighborFromStatus(status routerstate.ObjectStatus) (samStore
 	if address == "" || address == "<nil>" || ifname == "" || ifname == "<nil>" {
 		return samStoredProxyNeighbor{}, false
 	}
-	return samStoredProxyNeighbor{address: address, ifname: ifname}, true
+	return samStoredProxyNeighbor{address: address, ifname: ifname, lastGARPGeneration: samStatusString(capture["lastGARPGeneration"])}, true
+}
+
+func samStatusString(value any) string {
+	out := strings.TrimSpace(fmt.Sprint(value))
+	if out == "<nil>" {
+		return ""
+	}
+	return out
 }
