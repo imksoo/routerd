@@ -20,6 +20,14 @@ Kind 名、必須フィールド、値の範囲、明らかな依存関係の誤
 routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
 ```
 
+スクリプトから使う場合、`routerctl validate` は返された
+`ValidateResult` が valid のときだけ終了コード `0` になります。
+routerd に到達でき、候補 config が invalid の場合は `1`、候補
+ファイルを読めない場合や daemon に接続できない場合などの実行・
+transport エラーでは `2` で終了します。routerd が JSON 結果を
+返した場合、その出力は従来どおり stdout に書かれます。
+`valid: true` の warning だけなら終了コードは `0` のままです。
+
 ## 計画を見る
 
 `routerctl plan` は、ホストに対して何をしようとしているかを表示します。
