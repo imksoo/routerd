@@ -1806,6 +1806,99 @@ func TestControllerBGPModeSeizeSuccessDoesNotAdvertiseTrapAsOwner(t *testing.T) 
 	}
 }
 
+func TestControllerBGPModeProviderCaptureCompletionEventsUseProductionObservations(t *testing.T) {
+	now := time.Date(2026, 7, 4, 9, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	conntrackCleanupOnSeize := true
+	spec.DeliveryPolicy.ConntrackCleanupOnSeize = &conntrackCleanupOnSeize
+	selfNode := "aws-router-b"
+	seized := "10.88.60.17/32"
+	confirmed := "10.88.60.34/32"
+	livenessMarkers := map[string]string{
+		bgpstate.MobilityNodeIdentityCommunity(selfNode): "10.99.0.5/32",
+	}
+	recordEvent(t, store, routerstate.EventRecord{
+		ID:         "evt-aws-a-seized",
+		Group:      "cloudedge",
+		SourceNode: "aws-router-a",
+		Type:       ObservedEventType,
+		Subject:    seized,
+		ObservedAt: now.Add(-time.Minute),
+		ExpiresAt:  now.Add(time.Hour),
+		Payload: map[string]string{
+			"address": seized,
+			"pool":    "cloudedge",
+			"source":  providerDiscoverySource,
+			"nicRef":  "eni-a",
+		},
+	})
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"discoverySelfPrivateIPs":        []string{"10.88.60.4/32"},
+		"discoverySelfCapturedAddresses": []string{confirmed},
+		"discoveryLastScanAt":            now.Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus(MobilityPool/cloudedge): %v", err)
+	}
+	saveBGPStatus(t, store, map[string][]string{
+		seized:    {"10.99.0.2"},
+		confirmed: {"10.99.0.3"},
+	}, []map[string]any{
+		bgpOwnerPrefix(seized, "10.99.0.2", "aws-router-a"),
+		{
+			"prefix":  seized,
+			"nextHop": "10.99.0.5",
+			"best":    true,
+			"valid":   true,
+			"communities": []string{
+				bgpMobilityCommunitySourceCapture,
+				bgpstate.MobilityNodeIdentityCommunity(selfNode),
+			},
+		},
+		bgpOwnerPrefix(confirmed, "10.99.0.3", "azure-router"),
+	}, livenessMarkers)
+	seedElapsedBGPSeizeHoldDown(t, store, "cloudedge", selfNode, spec, livenessMarkers, now)
+	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-b", selfNode, confirmed, "assign-secondary-ip", 1, now.Add(-4*time.Second))
+
+	cleaner := &fakeConntrackCleaner{}
+	controller := Controller{
+		Router:           routerWithBGPRouter(planningRouterForNode(selfNode, spec)),
+		Store:            store,
+		BGPPaths:         &fakeBGPPaths{},
+		ConntrackCleaner: cleaner,
+		Now:              func() time.Time { return now },
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	events := listMobilityTransitionEvents(t, store)
+	seizeEvents := transitionEventsByKindAddress(events, "seize-complete")
+	confirmEvents := transitionEventsByKindAddress(events, "capture-confirmed")
+	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	seizedAssignment, ok := bgpCaptureAssignmentsFromStatus(status)[seized]
+	if !ok || seizedAssignment.Phase != "Active" || seizedAssignment.Generation == "" {
+		plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", selfNode)).ActionPlansJSON)
+		t.Fatalf("bgpCaptureAssignments[%s] = %#v, want active assignment from planning path (plans=%#v status=%#v)", seized, seizedAssignment, plans, status)
+	}
+	_, hasSeizeComplete := seizeEvents[seized]
+	_, hasCaptureConfirmed := confirmEvents[confirmed]
+	if !hasSeizeComplete || !hasCaptureConfirmed {
+		t.Fatalf("completion events: seize-complete=%d capture-confirmed=%d, want one each (seize=%#v confirm=%#v)", len(seizeEvents), len(confirmEvents), seizeEvents, confirmEvents)
+	}
+	if len(cleaner.addresses) != 1 || cleaner.addresses[0] != seized {
+		t.Fatalf("conntrack cleanup addresses = %#v, want only %s", cleaner.addresses, seized)
+	}
+	durations := extractTransitionDurationsByAddress(t, events)
+	if got := durations["seize-complete"][seized]; got <= 0 {
+		t.Fatalf("extractable seize duration for %s = %s, want >0 (durations=%#v)", seized, got, durations)
+	}
+	if got := durations["capture-confirmed"][confirmed]; got <= 0 {
+		t.Fatalf("extractable capture duration for %s = %s, want >0 (durations=%#v)", confirmed, got, durations)
+	}
+}
+
 func TestControllerBGPModeBG24RuntimeSeizesWhenAWSActiveMarkerAbsent(t *testing.T) {
 	now := time.Date(2026, 6, 3, 10, 43, 4, 0, time.UTC)
 	store := testStore(t, now)

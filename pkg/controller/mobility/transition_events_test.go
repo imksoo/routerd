@@ -218,3 +218,45 @@ func assertExtractableTransitionCount(t *testing.T, events []routerstate.StoredE
 		t.Fatalf("extractable %s events = %d, want %d", kind, got, want)
 	}
 }
+
+func transitionEventsByKindAddress(events []routerstate.StoredEvent, kind string) map[string]routerstate.StoredEvent {
+	out := map[string]routerstate.StoredEvent{}
+	for _, event := range events {
+		if statusString(event.Attributes["transitionKind"]) != kind {
+			continue
+		}
+		address := statusString(event.Attributes["address"])
+		if address == "" {
+			continue
+		}
+		out[address] = event
+	}
+	return out
+}
+
+func extractTransitionDurationsByAddress(t *testing.T, events []routerstate.StoredEvent) map[string]map[string]time.Duration {
+	t.Helper()
+	out := map[string]map[string]time.Duration{}
+	for _, event := range events {
+		kind := statusString(event.Attributes["transitionKind"])
+		address := statusString(event.Attributes["address"])
+		timestamp := statusString(event.Attributes["timestamp"])
+		issuedAt := statusString(event.Attributes["issuedAt"])
+		if kind == "" || address == "" || timestamp == "" || issuedAt == "" {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339Nano, timestamp)
+		if err != nil {
+			t.Fatalf("parse timestamp %q: %v", timestamp, err)
+		}
+		issued, err := time.Parse(time.RFC3339Nano, issuedAt)
+		if err != nil {
+			t.Fatalf("parse issuedAt %q: %v", issuedAt, err)
+		}
+		if out[kind] == nil {
+			out[kind] = map[string]time.Duration{}
+		}
+		out[kind][address] = at.Sub(issued)
+	}
+	return out
+}
