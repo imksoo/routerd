@@ -13,6 +13,12 @@ func TestMobilityDeliveryPolicyDoesNotExposeGratuitousARPOnSeize(t *testing.T) {
 	}
 }
 
+func TestMobilityDeliveryPolicyDoesNotExposeConntrackCleanupOnSeize(t *testing.T) {
+	if _, ok := reflect.TypeOf(MobilityDeliveryPolicy{}).FieldByName("ConntrackCleanupOnSeize"); ok {
+		t.Fatalf("MobilityDeliveryPolicy exposes no-op ConntrackCleanupOnSeize field")
+	}
+}
+
 func TestIPv6PDProfileDefaults(t *testing.T) {
 	tests := []struct {
 		name             string
