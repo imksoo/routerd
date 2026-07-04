@@ -609,6 +609,11 @@ For `proxy-arp` capture on Linux, routerd:
   `ip neigh add proxy <address> dev <capture-interface>`, and
 - enables `net.ipv4.ip_forward=1` through the normal sysctl controller.
 
+BGP-mode on-prem proxy-ARP members can opt in to a GARP after the node is
+observed as the `/32` holder. Remote capture remains silent, so an on-prem to
+cloud move can still leave a bounded stale-neighbor window on the old on-prem
+segment until existing neighbor cache entries expire.
+
 For `provider-secondary-ip`, the provider fabric owns address capture. routerd
 does not assign the mobile address to the local OS when
 `configureOSAddress: false`. For BGP delivery, routerd also keeps the mobile
