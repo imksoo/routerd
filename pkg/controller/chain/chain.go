@@ -2704,7 +2704,8 @@ func (r *Runner) syncARPObserverIgnoredSenderMACs(ctx context.Context, spec mobi
 		return err
 	}
 	desired := normalizeMACStringList(spec.IgnoredSenderMACs)
-	if equalStringSlices(observed, desired) {
+	configured := strings.EqualFold(strings.TrimSpace(status.Observed["ignoredSenderMACsConfigured"]), "true")
+	if configured && equalStringSlices(observed, desired) {
 		return nil
 	}
 	return pusher.SetIgnoredSenderMACs(ctx, spec.Socket, desired)

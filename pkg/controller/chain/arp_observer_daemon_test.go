@@ -135,9 +135,9 @@ func TestRunnerSyncsARPObserverIgnoredSenderMACsOnDriftOnly(t *testing.T) {
 	}
 	pusher := &fakeARPObserverCommandPusher{
 		statuses: []daemonapi.DaemonStatus{{
-			Observed: map[string]string{"ignoredSenderMACs": "02:00:00:00:00:aa"},
+			Observed: map[string]string{"ignoredSenderMACsConfigured": "true", "ignoredSenderMACs": "02:00:00:00:00:aa"},
 		}, {
-			Observed: map[string]string{"ignoredSenderMACs": "02:00:00:00:00:aa,02:00:00:00:00:bb"},
+			Observed: map[string]string{"ignoredSenderMACsConfigured": "true", "ignoredSenderMACs": "02:00:00:00:00:aa,02:00:00:00:00:bb"},
 		}},
 	}
 	runner := Runner{ARPObserverCommands: pusher}

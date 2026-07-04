@@ -577,6 +577,8 @@ func (d *daemon) serve(ctx context.Context) error {
 			d.ignoredSenderMACsInitialized = true
 			d.mu.Unlock()
 		default:
+			result.Accepted = false
+			result.Message = "unknown command"
 		}
 		writeHTTPJSON(w, result)
 	})
@@ -625,11 +627,10 @@ func (d *daemon) status() daemonapi.DaemonStatus {
 		"observedClients": string(clients),
 	}
 	ignoredSenderMACs := boolMapKeysSorted(d.opts.ignoredSenderMACs)
-	if len(ignoredSenderMACs) > 0 {
-		observed["ignoredSenderMACs"] = strings.Join(ignoredSenderMACs, ",")
-		observed["ignoredSenderMACCount"] = strconv.Itoa(len(ignoredSenderMACs))
-		observed["ignoredSenderMACObservationCount"] = strconv.FormatUint(d.ignoredSenderMACObservationCount, 10)
-	}
+	observed["ignoredSenderMACs"] = strings.Join(ignoredSenderMACs, ",")
+	observed["ignoredSenderMACCount"] = strconv.Itoa(len(ignoredSenderMACs))
+	observed["ignoredSenderMACObservationCount"] = strconv.FormatUint(d.ignoredSenderMACObservationCount, 10)
+	observed["ignoredSenderMACsConfigured"] = strconv.FormatBool(d.ignoredSenderMACsInitialized)
 	if !d.lastPacketAt.IsZero() {
 		observed["lastPacketAt"] = d.lastPacketAt.Format(time.RFC3339Nano)
 	}
