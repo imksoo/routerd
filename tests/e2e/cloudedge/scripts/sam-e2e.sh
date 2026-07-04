@@ -509,6 +509,90 @@ generate_configs() {
   echo "$gen_dir/configs"
 }
 
+find_artifact_binary() {
+  local root="$1" name="$2" path
+  path="$(find "$root" -type f -name "$name" -perm -111 | sort | head -n 1)"
+  [ -n "$path" ] || { echo "$name not found in artifact $artifact" >&2; return 1; }
+  printf '%s\n' "$path"
+}
+
+wait_for_sandbox_socket() {
+  local pid="$1" socket="$2" stdout_log="$3" stderr_log="$4"
+  local i
+  for i in $(seq 1 300); do
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      echo "routerd sandbox exited before status socket became ready" >&2
+      cat "$stdout_log" >&2 || true
+      cat "$stderr_log" >&2 || true
+      return 1
+    fi
+    [ -S "$socket" ] && return 0
+    sleep 0.1
+  done
+  echo "routerd sandbox status socket did not become ready: $socket" >&2
+  cat "$stdout_log" >&2 || true
+  cat "$stderr_log" >&2 || true
+  return 1
+}
+
+validate_generated_configs() {
+  local cfg_dir="$1"
+  local out_dir="$evidence_dir/config-validate"
+  local artifact_root="$out_dir/artifact"
+  local routerd_bin routerctl_bin sandbox_root status_socket sandbox_pid cfg name rc
+  mkdir -p "$out_dir"
+  rm -rf "$artifact_root"
+  mkdir -p "$artifact_root"
+  tar -xzf "$artifact" -C "$artifact_root"
+  routerd_bin="$(find_artifact_binary "$artifact_root" routerd)"
+  routerctl_bin="$(find_artifact_binary "$artifact_root" routerctl)"
+  {
+    echo "artifact=$artifact"
+    echo "routerd_bin=$routerd_bin"
+    "$routerd_bin" version || true
+    echo "routerctl_bin=$routerctl_bin"
+    "$routerctl_bin" version || true
+  } >"$out_dir/binaries.txt" 2>&1
+
+  sandbox_root="$out_dir/sandbox-root"
+  rm -rf "$sandbox_root"
+  mkdir -p "$sandbox_root"
+  "$routerd_bin" serve --sandbox --root "$sandbox_root" >"$out_dir/sandbox.stdout" 2>"$out_dir/sandbox.stderr" &
+  sandbox_pid=$!
+  trap 'kill "$sandbox_pid" >/dev/null 2>&1 || true; trap - RETURN' RETURN
+  status_socket="$sandbox_root/run/routerd/routerd-status.sock"
+  wait_for_sandbox_socket "$sandbox_pid" "$status_socket" "$out_dir/sandbox.stdout" "$out_dir/sandbox.stderr"
+
+  for cfg in "$cfg_dir"/*.yaml; do
+    [ -f "$cfg" ] || continue
+    name="$(basename "$cfg" .yaml)"
+    rc=0
+    "$routerctl_bin" validate --socket "$status_socket" -f "$cfg" --replace >"$out_dir/$name.routerctl-validate.json" 2>"$out_dir/$name.routerctl-validate.stderr" || rc=$?
+    echo "$rc" >"$out_dir/$name.routerctl-validate.rc"
+    if [ "$rc" -ne 0 ]; then
+      echo "routerctl validate failed for $cfg with rc=$rc" >&2
+      cat "$out_dir/$name.routerctl-validate.stderr" >&2 || true
+      return 1
+    fi
+    if ! jq -e '.valid == true' "$out_dir/$name.routerctl-validate.json" >/dev/null; then
+      echo "routerctl validate returned JSON .valid != true for $cfg" >&2
+      cat "$out_dir/$name.routerctl-validate.json" >&2 || true
+      return 1
+    fi
+    rc=0
+    "$routerd_bin" validate --config "$cfg" >"$out_dir/$name.routerd-validate.txt" 2>"$out_dir/$name.routerd-validate.stderr" || rc=$?
+    echo "$rc" >"$out_dir/$name.routerd-validate.rc"
+    if [ "$rc" -ne 0 ]; then
+      echo "routerd validate failed for $cfg with rc=$rc" >&2
+      cat "$out_dir/$name.routerd-validate.stderr" >&2 || true
+      return 1
+    fi
+  done
+  kill "$sandbox_pid" >/dev/null 2>&1 || true
+  wait "$sandbox_pid" >/dev/null 2>&1 || true
+  trap - RETURN
+}
+
 deploy() {
   [ "$skip_deploy" -eq 0 ] || return 0
   local cfg_dir="$1"
@@ -1473,6 +1557,9 @@ if [ "$overall" -eq 0 ]; then
 fi
 if [ "$overall" -eq 0 ]; then
   cfg_dir="$(generate_configs)" || mark_failed "config generation"
+fi
+if [ "$overall" -eq 0 ]; then
+  validate_generated_configs "$cfg_dir" || mark_failed "config validation"
 fi
 if [ "$overall" -eq 0 ]; then
   deploy "$cfg_dir" || mark_failed "deploy"
