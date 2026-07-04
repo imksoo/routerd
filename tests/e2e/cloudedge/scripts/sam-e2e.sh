@@ -275,6 +275,8 @@ REMOTE_PREPARE
 record_note() {
   {
     date -u '+timestamp=%Y-%m-%dT%H:%M:%SZ'
+    echo "run_id=$(jq -r '.fabric.value.run_id // empty' "$tofu_output")"
+    echo "evidence_dir=$evidence_dir"
     echo "artifact=$artifact"
     sha256sum "$artifact"
     echo "ssh_key=$ssh_key"
