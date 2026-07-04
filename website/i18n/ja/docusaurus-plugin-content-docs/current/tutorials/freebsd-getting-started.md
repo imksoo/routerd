@@ -120,7 +120,7 @@ routerd の状態を確認します。
 
 ```sh
 routerctl status
-routerctl events --limit 20
+routerctl get events --limit 20
 ```
 
 システムログを追います。

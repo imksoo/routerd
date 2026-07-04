@@ -204,7 +204,7 @@ The resolver listens on every address routerd derives from the referenced status
 routerctl describe Interface/lan
 
 # Watch DHCP events live
-routerctl events --topic 'routerd.dhcp.lease.**' --resource DHCPv4Server/lan-dhcpv4
+routerctl get events --topic 'routerd.dhcp.lease.**' --resource DHCPv4Server/lan-dhcpv4
 
 # Resolve a name through the local resolver
 dig @<lan-ip> router.lan.example.org

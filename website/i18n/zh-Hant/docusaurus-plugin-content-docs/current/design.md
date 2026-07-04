@@ -217,7 +217,7 @@ routerd 提供以下方式觀測運轉狀態。
 
 - `routerctl status`：所有資源的 phase 一覽
 - `routerctl describe <kind>/<name>`：單一資源的 spec、status 及近期事件
-- `routerctl events --topic <pattern> --resource <kind>/<name>`：tail bus event
+- `routerctl get events --topic <pattern> --resource <kind>/<name>`：tail bus event
 - `routerctl plan --diff`：apply 前的差異預覽
 - Web 管理介面（預設為 `http://<mgmt-ip>:8080/`）：在瀏覽器中查看 summary、events、connections、clients、firewall、config
 - `journalctl -u routerd.service -f | grep "routerd event"`：以 systemd journal 追蹤 bus event

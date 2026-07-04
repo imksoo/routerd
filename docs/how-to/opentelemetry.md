@@ -9,7 +9,7 @@ slug: /how-to/opentelemetry
 
 ## Scenario
 
-You want to ship the router's logs, metrics, and traces to an OpenTelemetry-compatible backend (Grafana Loki/Tempo/Mimir, Datadog, Honeycomb, a self-hosted `otelcol-contrib`, …) without having to scrape `journalctl` or `routerctl events`.
+You want to ship the router's logs, metrics, and traces to an OpenTelemetry-compatible backend (Grafana Loki/Tempo/Mimir, Datadog, Honeycomb, a self-hosted `otelcol-contrib`, …) without having to scrape `journalctl` or `routerctl get events`.
 
 routerd exposes OpenTelemetry export from every long-running daemon. There is no collector bundled in the router binary — you point routerd at an external OTLP endpoint that you already operate, and routerd sends data over OTLP/gRPC.
 

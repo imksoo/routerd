@@ -121,7 +121,7 @@ Read routerctl get status:
 
 ```sh
 routerctl status
-routerctl events --limit 20
+routerctl get events --limit 20
 ```
 
 Follow the system log:

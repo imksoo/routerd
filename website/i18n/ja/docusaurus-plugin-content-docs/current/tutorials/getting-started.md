@@ -109,7 +109,7 @@ sudo routerd serve --config first-router.yaml
 
 ```bash
 routerctl status
-routerctl events --limit 20
+routerctl get events --limit 20
 routerctl connections --limit 50
 ```
 

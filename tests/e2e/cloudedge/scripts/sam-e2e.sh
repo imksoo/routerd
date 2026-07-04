@@ -1290,11 +1290,11 @@ ip neigh show || true
 sysctl net.ipv4.ip_forward net.ipv4.conf.all.rp_filter net.ipv4.conf.default.rp_filter net.ipv4.conf.all.proxy_arp net.ipv4.conf.all.accept_local 2>/dev/null || true
 echo "--- events"
 # Mirrored from routerd 1f77532a examples/cloudedge-mobility-demo/collect-evidence.sh.
-sudo routerctl events -o json || true
+sudo routerctl get events -o json || true
 echo "--- routerd.mobility.holder.transition"
-sudo routerctl events --topic routerd.mobility.holder.transition -o json || true
+sudo routerctl get events --topic routerd.mobility.holder.transition -o json || true
 echo "--- event-retention"
-sudo routerctl status -o json 2>/dev/null | grep -Ei '"event|retention|maxAge|maxEvents"' || true
+sudo routerctl get status -o json 2>/dev/null | grep -Ei '"event|retention|maxAge|maxEvents"' || true
 sudo routerctl dynamic render -o json 2>/dev/null | grep -Ei '"EventGroup"|"retention"|"maxAge"|"maxEvents"' || true
 echo "--- state-db-events"
 if command -v sqlite3 >/dev/null 2>&1 && sudo test -r /var/lib/routerd/routerd.db; then

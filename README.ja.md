@@ -294,7 +294,7 @@ Makefile は開発用です。
 routerctl validate -f examples/home-router.yaml --replace
 routerctl plan -f examples/home-router.yaml --replace
 routerctl status
-routerctl events --limit 20
+routerctl get events --limit 20
 routerctl connections --limit 50
 routerctl plugin list
 routerctl plugin run <name> --dry-run

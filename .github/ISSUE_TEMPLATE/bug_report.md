@@ -31,7 +31,7 @@ Paste the smallest relevant YAML snippet. Remove secrets.
 
 ```sh
 routerctl status --json
-routerctl events --limit 50
+routerctl get events --limit 50
 ```
 
 ## Reproduction steps
