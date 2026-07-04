@@ -215,7 +215,7 @@ validate-wizard-fixtures: website-deps
 	@configs=$$(find $(WIZARD_FIXTURE_DIR) -type f -name '*.yaml' -print | sort); \
 	scripts/routerd-sandbox-run.sh sh -c 'for config do \
 		echo "validating $$config"; \
-		go run ./cmd/routerctl validate --socket "$$ROUTERD_SANDBOX_STATUS_SOCKET" -f "$$config" --replace >/dev/null; \
+		go run ./cmd/routerctl validate --socket "$$ROUTERD_SANDBOX_STATUS_SOCKET" -f "$$config" --replace >/dev/null || exit 1; \
 	done' sh $$configs
 
 check-examples-line-limits:
@@ -329,7 +329,7 @@ live-iso:
 validate-example:
 	@scripts/routerd-sandbox-run.sh sh -c 'for config do \
 		echo "validating $$config"; \
-		go run ./cmd/routerctl validate --socket "$$ROUTERD_SANDBOX_STATUS_SOCKET" -f "$$config" --replace >/dev/null; \
+		go run ./cmd/routerctl validate --socket "$$ROUTERD_SANDBOX_STATUS_SOCKET" -f "$$config" --replace >/dev/null || exit 1; \
 	done' sh $(EXAMPLE_CONFIGS)
 
 dry-run-example:
