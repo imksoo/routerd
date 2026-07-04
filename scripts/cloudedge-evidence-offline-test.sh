@@ -35,8 +35,8 @@ for node in onprem aws-a aws-b azure oci; do
   file="$out/${node}.txt"
   [[ -f "$file" ]] || die "missing router evidence file: $file"
   grep -q -- "--- events" "$file" || die "$node missing events section"
-  grep -q "routerctl events -o json" "$file" || die "$node missing all-topic events command"
-  grep -q "routerctl events --topic routerd.mobility.holder.transition -o json" "$file" || die "$node missing transition-topic events command"
+  grep -q "routerctl get events --limit 2000 -o json" "$file" || die "$node missing all-topic events command"
+  grep -q "routerctl get events --topic routerd.mobility.holder.transition --limit 2000 -o json" "$file" || die "$node missing transition-topic events command"
   grep -q -- "--- state-db-events" "$file" || die "$node missing state DB events section"
   grep -q "SELECT \\* FROM events" "$file" || die "$node missing events table dump command"
 done
