@@ -9,7 +9,7 @@ slug: /how-to/opentelemetry
 
 ## 场景
 
-当您想把路由器的日志、指标与追踪，送到 OpenTelemetry 兼容的后端（Grafana Loki/Tempo/Mimir、Datadog、Honeycomb、自建的 `otelcol-contrib` 等），不必每次都执行 `journalctl` 或 `routerctl events`，而是从外部仪表板观测状态时，本指南即适用。
+当您想把路由器的日志、指标与追踪，送到 OpenTelemetry 兼容的后端（Grafana Loki/Tempo/Mimir、Datadog、Honeycomb、自建的 `otelcol-contrib` 等），不必每次都执行 `journalctl` 或 `routerctl get events`，而是从外部仪表板观测状态时，本指南即适用。
 
 routerd 的所有守护进程均可通过 OpenTelemetry 导出数据。收集器本体并不内置于 routerd binary 中，请另行准备外部 OTLP 端点，routerd 会以 OTLP/gRPC 传送数据。
 

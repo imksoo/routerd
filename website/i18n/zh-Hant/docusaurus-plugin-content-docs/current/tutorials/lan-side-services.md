@@ -216,7 +216,7 @@ DHCPv4 的 domain-name、RA 的 DNSSL、DHCPv6 的 domain-search 均參照相同
 routerctl describe Interface/lan
 
 # 即時追蹤 DHCP 事件
-routerctl events --topic 'routerd.dhcp.lease.**' --resource DHCPv4Server/lan-dhcpv4
+routerctl get events --topic 'routerd.dhcp.lease.**' --resource DHCPv4Server/lan-dhcpv4
 
 # 以本地解析器進行名稱解析
 dig @<lan-ip> router.lan.example.org

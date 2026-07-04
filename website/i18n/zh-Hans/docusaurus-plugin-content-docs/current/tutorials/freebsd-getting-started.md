@@ -120,7 +120,7 @@ dnsmasq 也在重新启动前以 `dnsmasq --test` 验证配置。
 
 ```sh
 routerctl status
-routerctl events --limit 20
+routerctl get events --limit 20
 ```
 
 追踪系统日志。

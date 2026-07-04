@@ -19,9 +19,9 @@ func eventsCommand(args []string, stdout io.Writer) error {
 	fs.Usage = func() {
 		printSubcommandHelp(fs,
 			"routerd の event ledger (resource phase 遷移 / controller の reason) を表示する。",
-			"routerctl events --limit 200 --resource DSLiteTunnel/home\n"+
-				"routerctl events --topic routerd.controller.reconcile -o json\n"+
-				"routerctl events --kind DSLiteTunnel --limit 50")
+			"routerctl get events --limit 200 --resource DSLiteTunnel/home\n"+
+				"routerctl get events --topic routerd.controller.reconcile -o json\n"+
+				"routerctl get events --kind DSLiteTunnel --limit 50")
 	}
 	statePath := fs.String("state-file", defaultStatePath(), "routerd state database file")
 	output := "table"

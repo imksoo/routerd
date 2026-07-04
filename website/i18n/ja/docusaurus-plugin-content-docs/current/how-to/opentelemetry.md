@@ -9,7 +9,7 @@ slug: /how-to/opentelemetry
 
 ## シナリオ
 
-ルーターのログ・メトリクス・トレースを、OpenTelemetry 互換のバックエンド（Grafana Loki/Tempo/Mimir、Datadog、Honeycomb、自前の `otelcol-contrib` など）へ送りたい場合です。`journalctl` や `routerctl events` を毎回叩かずに、外部のダッシュボードで観測したい状態を想定します。
+ルーターのログ・メトリクス・トレースを、OpenTelemetry 互換のバックエンド（Grafana Loki/Tempo/Mimir、Datadog、Honeycomb、自前の `otelcol-contrib` など）へ送りたい場合です。`journalctl` や `routerctl get events` を毎回叩かずに、外部のダッシュボードで観測したい状態を想定します。
 
 routerd は、すべての常駐デーモンから OpenTelemetry でエクスポートできます。コレクター本体は routerd のバイナリに同梱しません。すでに運用している外部の OTLP エンドポイントを指定してください。routerd は OTLP/gRPC でデータを送ります。
 

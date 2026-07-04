@@ -243,7 +243,7 @@ routerd exposes its operating state through several surfaces.
 
 - `routerctl status` — phase per resource
 - `routerctl describe <kind>/<name>` — spec, status, and recent events for one resource
-- `routerctl events --topic <pattern> --resource <kind>/<name>` — tail the bus
+- `routerctl get events --topic <pattern> --resource <kind>/<name>` — tail the bus
 - `routerctl plan --diff` — preview the diff a future apply would produce
 - Web Console (default `http://<mgmt-ip>:8080/`) — summary, events, connections, clients, firewall, configuration in a browser
 - `journalctl -u routerd.service -f | grep "routerd event"` — bus events through the systemd journal

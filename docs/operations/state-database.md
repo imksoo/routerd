@@ -22,12 +22,12 @@ routerd persists state and events in SQLite. Each managed daemon additionally ke
 
 ## Events table
 
-The bus persists events into SQLite. `EventRule` and `DerivedEvent` consume this stream as input. For day-to-day operations, prefer `routerctl events` over running `sqlite3` against the database directly:
+The bus persists events into SQLite. `EventRule` and `DerivedEvent` consume this stream as input. For day-to-day operations, prefer `routerctl get events` over running `sqlite3` against the database directly:
 
 ```sh
-routerctl events --limit 20
-routerctl events --topic routerd.resource.status.changed
-routerctl events --resource DNSResolver/lan-resolver -o json
+routerctl get events --limit 20
+routerctl get events --topic routerd.resource.status.changed
+routerctl get events --resource DNSResolver/lan-resolver -o json
 ```
 
 ### Mobility holder transitions

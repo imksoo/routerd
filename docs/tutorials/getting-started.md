@@ -111,7 +111,7 @@ In production, install routerd with the packaged service manager files so that
 
 ```bash
 routerctl status
-routerctl events --limit 20
+routerctl get events --limit 20
 routerctl connections --limit 50
 ```
 
