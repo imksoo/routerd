@@ -1056,15 +1056,17 @@ type Options struct {
 }
 
 type Runner struct {
-	Router *api.Router
-	Bus    *bus.Bus
-	Store  Store
-	Opts   Options
+	Router              *api.Router
+	Bus                 *bus.Bus
+	Store               Store
+	Opts                Options
+	ARPObserverCommands arpObserverCommandPusher
 
 	supervisedMu         sync.Mutex
 	supervisedDaemons    map[string]bool
 	clientDaemonStates   map[string]supervisedDaemonState
 	daemonSourcesStarted map[string]bool
+	arpObserverReadySet  map[string]bool
 }
 
 type supervisedDaemonSpec struct {
@@ -1076,6 +1078,11 @@ type supervisedDaemonSpec struct {
 type supervisedDaemonState struct {
 	Spec   supervisedDaemonSpec
 	Cancel context.CancelFunc
+}
+
+type arpObserverCommandPusher interface {
+	Status(context.Context, string) (daemonapi.DaemonStatus, error)
+	SetIgnoredSenderMACs(context.Context, string, []string) error
 }
 
 func (r *Runner) effectiveRouter(store eventedStore) *api.Router {
@@ -2499,6 +2506,9 @@ func (r *Runner) startARPObserverDaemonSources(ctx context.Context, logger *slog
 	r.supervisedMu.Unlock()
 
 	for _, spec := range r.mobilityARPObserverDaemonSpecs() {
+		if !r.arpObserverReady(spec.ResourceName) {
+			continue
+		}
 		r.supervisedMu.Lock()
 		already := r.daemonSourcesStarted[spec.ResourceName]
 		if !already {
@@ -2526,6 +2536,9 @@ func (r *Runner) reconcileARPObserverDaemons(ctx context.Context, logger *slog.L
 	if r.supervisedDaemons == nil {
 		r.supervisedDaemons = make(map[string]bool)
 	}
+	if r.arpObserverReadySet == nil {
+		r.arpObserverReadySet = make(map[string]bool)
+	}
 	r.supervisedMu.Unlock()
 
 	r.startARPObserverDaemonSources(ctx, logger)
@@ -2538,51 +2551,69 @@ func (r *Runner) reconcileARPObserverDaemons(ctx context.Context, logger *slog.L
 		}
 		r.supervisedMu.Unlock()
 		if already {
+			if r.arpObserverReady(spec.ResourceName) {
+				if err := r.syncARPObserverIgnoredSenderMACs(ctx, spec); err != nil && logger != nil {
+					logger.Warn("arp observer ignore set sync failed", "resource", spec.ResourceName, "error", err)
+				}
+			} else {
+				go func(spec mobilityARPObserverDaemonSpec) {
+					if err := r.waitForARPObserverInitialSync(ctx, spec); err != nil && ctx.Err() == nil && logger != nil {
+						logger.Warn("arp observer initial ignore set sync failed", "resource", spec.ResourceName, "error", err)
+					}
+				}(spec)
+			}
 			continue
 		}
-		args := []string{
-			"daemon",
-			"--resource", spec.ResourceName,
-			"--interface", spec.IfName,
-			"--event-interface", spec.EventInterface,
-			"--socket", spec.Socket,
-			"--event-file", spec.EventFile,
-			"--pool", spec.PoolName,
-			"--prefix", spec.Prefix,
-			"--source-type", spec.SourceType,
-		}
-		if spec.Network != "" {
-			args = append(args, "--network", spec.Network)
-		}
-		if spec.Bridge != "" {
-			args = append(args, "--bridge", spec.Bridge)
-		}
-		if spec.SourceAddress != "" {
-			args = append(args, "--source-address", spec.SourceAddress)
-		}
-		if spec.OnDemand {
-			args = append(args, "--on-demand")
-		}
-		if spec.Observe {
-			args = append(args, "--observe")
-		}
-		if spec.ProbeTimeout != "" {
-			args = append(args, "--probe-timeout", spec.ProbeTimeout)
-		}
-		if spec.ProbeRetries != 0 {
-			args = append(args, "--probe-retries", fmt.Sprintf("%d", spec.ProbeRetries))
-		}
-		if spec.ScanInterval != "" {
-			args = append(args, "--scan-interval", spec.ScanInterval)
-		}
-		for _, mac := range spec.IgnoredSenderMACs {
-			args = append(args, "--ignore-sender-mac", mac)
-		}
+		args := arpObserverDaemonArgs(spec)
 		if logger != nil {
 			logger.Info("daemon-supervisor-reconcile: starting new arp-observer", "resource", spec.ResourceName, "interface", spec.IfName)
 		}
 		r.startSupervisedDaemon(ctx, logger, spec.ResourceName, "routerd-arp-observer", args)
+		go func(spec mobilityARPObserverDaemonSpec) {
+			if err := r.waitForARPObserverInitialSync(ctx, spec); err != nil && ctx.Err() == nil && logger != nil {
+				logger.Warn("arp observer initial ignore set sync failed", "resource", spec.ResourceName, "error", err)
+			}
+		}(spec)
 	}
+}
+
+func arpObserverDaemonArgs(spec mobilityARPObserverDaemonSpec) []string {
+	args := []string{
+		"daemon",
+		"--resource", spec.ResourceName,
+		"--interface", spec.IfName,
+		"--event-interface", spec.EventInterface,
+		"--socket", spec.Socket,
+		"--event-file", spec.EventFile,
+		"--pool", spec.PoolName,
+		"--prefix", spec.Prefix,
+		"--source-type", spec.SourceType,
+	}
+	if spec.Network != "" {
+		args = append(args, "--network", spec.Network)
+	}
+	if spec.Bridge != "" {
+		args = append(args, "--bridge", spec.Bridge)
+	}
+	if spec.SourceAddress != "" {
+		args = append(args, "--source-address", spec.SourceAddress)
+	}
+	if spec.OnDemand {
+		args = append(args, "--on-demand")
+	}
+	if spec.Observe {
+		args = append(args, "--observe")
+	}
+	if spec.ProbeTimeout != "" {
+		args = append(args, "--probe-timeout", spec.ProbeTimeout)
+	}
+	if spec.ProbeRetries != 0 {
+		args = append(args, "--probe-retries", fmt.Sprintf("%d", spec.ProbeRetries))
+	}
+	if spec.ScanInterval != "" {
+		args = append(args, "--scan-interval", spec.ScanInterval)
+	}
+	return args
 }
 
 func (r *Runner) startSupervisedDaemon(ctx context.Context, logger *slog.Logger, resourceName, binary string, args []string) {
@@ -2659,6 +2690,149 @@ func clientSocketReady(socket string) bool {
 		return false
 	}
 	_ = conn.Close()
+	return true
+}
+
+func (r *Runner) syncARPObserverIgnoredSenderMACs(ctx context.Context, spec mobilityARPObserverDaemonSpec) error {
+	pusher := r.arpObserverCommandPusher()
+	status, err := pusher.Status(ctx, spec.Socket)
+	if err != nil {
+		return err
+	}
+	observed, err := parseARPObserverIgnoredSenderMACs(status.Observed["ignoredSenderMACs"])
+	if err != nil {
+		return err
+	}
+	desired := normalizeMACStringList(spec.IgnoredSenderMACs)
+	if equalStringSlices(observed, desired) {
+		return nil
+	}
+	return pusher.SetIgnoredSenderMACs(ctx, spec.Socket, desired)
+}
+
+func (r *Runner) waitForARPObserverInitialSync(ctx context.Context, spec mobilityARPObserverDaemonSpec) error {
+	err := r.syncARPObserverIgnoredSenderMACs(ctx, spec)
+	if err != nil {
+		r.setARPObserverReady(spec.ResourceName, false)
+		return err
+	}
+	r.setARPObserverReady(spec.ResourceName, true)
+	return nil
+}
+
+func (r *Runner) arpObserverReady(resourceName string) bool {
+	r.supervisedMu.Lock()
+	defer r.supervisedMu.Unlock()
+	return r.arpObserverReadySet != nil && r.arpObserverReadySet[resourceName]
+}
+
+func (r *Runner) setARPObserverReady(resourceName string, ready bool) {
+	r.supervisedMu.Lock()
+	defer r.supervisedMu.Unlock()
+	if r.arpObserverReadySet == nil {
+		r.arpObserverReadySet = make(map[string]bool)
+	}
+	if ready {
+		r.arpObserverReadySet[resourceName] = true
+		return
+	}
+	delete(r.arpObserverReadySet, resourceName)
+}
+
+func (r *Runner) arpObserverCommandPusher() arpObserverCommandPusher {
+	if r != nil && r.ARPObserverCommands != nil {
+		return r.ARPObserverCommands
+	}
+	return socketARPObserverCommandPusher{}
+}
+
+type socketARPObserverCommandPusher struct{}
+
+func (socketARPObserverCommandPusher) Status(ctx context.Context, socketPath string) (daemonapi.DaemonStatus, error) {
+	return daemonStatus(ctx, socketPath)
+}
+
+func (socketARPObserverCommandPusher) SetIgnoredSenderMACs(ctx context.Context, socketPath string, macs []string) error {
+	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var dialer net.Dialer
+		return dialer.DialContext(ctx, "unix", socketPath)
+	}}}
+	defer client.CloseIdleConnections()
+	reqBody := daemonapi.CommandRequest{
+		TypeMeta: daemonapi.TypeMeta{APIVersion: daemonapi.APIVersion, Kind: daemonapi.KindCommandRequest},
+		Command:  "set-ignored-sender-macs",
+		Attributes: map[string]string{
+			"macAddresses": strings.Join(normalizeMACStringList(macs), ","),
+		},
+	}
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix/v1/commands", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Close = true
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	var result daemonapi.CommandResult
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
+		return err
+	}
+	if !result.Accepted {
+		return fmt.Errorf("arp observer command rejected: %s", result.Message)
+	}
+	return nil
+}
+
+func parseARPObserverIgnoredSenderMACs(value string) ([]string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	return normalizeMACStringListWithError(strings.Split(value, ","))
+}
+
+func normalizeMACStringList(values []string) []string {
+	out, _ := normalizeMACStringListWithError(values)
+	return out
+}
+
+func normalizeMACStringListWithError(values []string) ([]string, error) {
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		mac, err := net.ParseMAC(value)
+		if err != nil {
+			return nil, err
+		}
+		seen[strings.ToLower(mac.String())] = true
+	}
+	out := make([]string, 0, len(seen))
+	for mac := range seen {
+		out = append(out, mac)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
 	return true
 }
 
