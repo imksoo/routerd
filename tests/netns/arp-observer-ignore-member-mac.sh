@@ -2,8 +2,9 @@
 set -euo pipefail
 
 # routerd-arp-observer policy gate for #731. This script runs the real
-# routerd-arp-observer daemon inside netns and verifies that configured SAM
-# member sender MACs are ignored at the observation chokepoint.
+# routerd-arp-observer daemon inside netns, pushes the SAM member sender MAC
+# ignore set through the daemon socket command, and verifies that configured
+# member MACs are ignored at the observation chokepoint.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -93,6 +94,41 @@ body = data.split(b"\r\n\r\n", 1)[1]
 print(json.dumps(json.loads(body), sort_keys=True))
 PY
 
+cat >"$WORKDIR/set_ignored_sender_macs.py" <<'PY'
+import json
+import socket
+import sys
+
+sock_path, macs = sys.argv[1], sys.argv[2]
+body = json.dumps({
+    "apiVersion": "daemon.routerd.net/v1alpha1",
+    "kind": "CommandRequest",
+    "command": "set-ignored-sender-macs",
+    "attributes": {"macAddresses": macs},
+}).encode()
+req = (
+    b"POST /v1/commands HTTP/1.1\r\n"
+    b"Host: routerd-arp-observer\r\n"
+    b"Content-Type: application/json\r\n"
+    b"Connection: close\r\n"
+    b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" +
+    body
+)
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+sock.connect(sock_path)
+sock.sendall(req)
+data = b""
+while True:
+    chunk = sock.recv(65536)
+    if not chunk:
+        break
+    data += chunk
+body = data.split(b"\r\n\r\n", 1)[1]
+result = json.loads(body)
+if not result.get("accepted"):
+    raise SystemExit(f"set-ignored-sender-macs rejected: {result}")
+PY
+
 jsonl_event_count_for_mac() {
   local file="$1" mac="$2"
   python3 - "$file" "$mac" <<'PY'
@@ -126,14 +162,14 @@ start_observer() {
     --prefix 10.95.0.0/24 \
     --source-type "$source_type" \
     --observe \
-    --scan-interval 200ms \
-    --ignore-sender-mac "$MEMBER_MAC" >/dev/null 2>"$WORKDIR/$source_type.err" &
+    --scan-interval 200ms >/dev/null 2>"$WORKDIR/$source_type.err" &
   local pid=$!
   add_cleanup "kill -TERM -$pid"
   wait_for 5 test -S "$socket" || {
     cat "$WORKDIR/$source_type.err" >&2 || true
     fail "observer $source_type did not start"
   }
+  python3 "$WORKDIR/set_ignored_sender_macs.py" "$socket" "$MEMBER_MAC"
 }
 
 start_observer "$OBSERVER" "$PASSIVE_SOCKET" "$PASSIVE_EVENTS" "arp-observer"
