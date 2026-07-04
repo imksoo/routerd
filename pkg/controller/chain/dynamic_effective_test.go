@@ -294,6 +294,89 @@ func TestDynamicRouteSAMViewBGPProxyARPGARPGatedBySeizeComplete(t *testing.T) {
 	}
 }
 
+func TestDynamicRouteSAMViewSendsGARPWhenSeizeMarkerAppearsAfterCapture(t *testing.T) {
+	startup := bgpProxyARPStartup(false)
+	for i, resource := range startup.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "MobilityPool" {
+			continue
+		}
+		spec := resource.Spec.(api.MobilityPoolSpec)
+		enabled := true
+		spec.DeliveryPolicy.GratuitousARPOnSeize = &enabled
+		startup.Spec.Resources[i].Spec = spec
+	}
+	now := time.Now().UTC()
+	baseObjects := map[string]map[string]any{
+		api.NetAPIVersion + "/BGPRouter/mobility-bgp": {
+			"installedNextHops": map[string]any{
+				"10.0.1.11/32": []any{"10.99.0.2"},
+			},
+		},
+		api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "master"},
+	}
+
+	captureStore := mapStore{}
+	for key, status := range baseObjects {
+		captureStore[key] = status
+	}
+	captureView, err := buildDynamicRouteSAMView(startup, captureStore, now, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("capture view: %v", err)
+	}
+	captureSAMStore := &samStore{
+		objects: map[string]map[string]any{
+			api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "master"},
+		},
+		statuses: []routerstate.ObjectStatus{samRemoteAddressClaimStatus("bgp-cloudedge-10-0-1-11", "10.0.1.11/32", "lan0")},
+	}
+	captureApplier := &fakeSAMApplier{}
+	captureGARP := &fakeSAMGARP{}
+	captureSAM := SAMController{Router: captureView.EffectiveRouter, Store: captureSAMStore, Lowerings: captureView.SAMLowerings, OS: platform.OSLinux, Applier: captureApplier, GARP: captureGARP}
+	if err := captureSAM.Reconcile(context.Background()); err != nil {
+		t.Fatalf("capture SAM reconcile: %v", err)
+	}
+	assertSAMCalls(t, captureApplier.calls, []string{"proxyarp:lan0=1", "ensure:10.0.1.11/32@lan0"})
+	if len(captureGARP.calls) != 0 {
+		t.Fatalf("capture GARP calls = %#v, want none", captureGARP.calls)
+	}
+
+	seizeStore := mapStore{}
+	for key, status := range baseObjects {
+		seizeStore[key] = status
+	}
+	seizeStore[api.MobilityAPIVersion+"/MobilityPool/cloudedge"] = map[string]any{
+		"bgpCaptureTransitionCompleted": map[string]any{
+			"seizeComplete": map[string]any{"10.0.1.11/32": "group-a/7"},
+		},
+	}
+	seizeView, err := buildDynamicRouteSAMView(startup, seizeStore, now, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("seize view: %v", err)
+	}
+	previousStatus := captureSAMStore.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "bgp-cloudedge-10-0-1-11")
+	seizeSAMStore := &samStore{
+		objects: map[string]map[string]any{
+			api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "master"},
+		},
+		statuses: []routerstate.ObjectStatus{{
+			APIVersion: api.HybridAPIVersion,
+			Kind:       "RemoteAddressClaim",
+			Name:       "bgp-cloudedge-10-0-1-11",
+			Status:     previousStatus,
+		}},
+	}
+	seizeApplier := &fakeSAMApplier{}
+	seizeGARP := &fakeSAMGARP{}
+	seizeSAM := SAMController{Router: seizeView.EffectiveRouter, Store: seizeSAMStore, Lowerings: seizeView.SAMLowerings, OS: platform.OSLinux, Applier: seizeApplier, GARP: seizeGARP}
+	if err := seizeSAM.Reconcile(context.Background()); err != nil {
+		t.Fatalf("seize SAM reconcile: %v", err)
+	}
+	assertSAMCalls(t, seizeApplier.calls, []string{"proxyarp:lan0=1", "ensure:10.0.1.11/32@lan0"})
+	if !reflect.DeepEqual(seizeGARP.calls, []string{"10.0.1.11/32@lan0"}) {
+		t.Fatalf("seize GARP calls = %#v, want one gratuitous ARP", seizeGARP.calls)
+	}
+}
+
 func TestDynamicRouteSAMViewBGPProxyARPGARPDefaultOff(t *testing.T) {
 	startup := bgpProxyARPStartup(false)
 	for i, resource := range startup.Spec.Resources {
