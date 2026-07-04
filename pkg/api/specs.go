@@ -912,6 +912,7 @@ type SAMNodeSpec struct {
 	EventEndpoint   string                    `yaml:"eventEndpoint,omitempty" json:"eventEndpoint,omitempty"`
 	SAMEndpoint     string                    `yaml:"samEndpoint,omitempty" json:"samEndpoint,omitempty"`
 	SAMEndpointFrom StatusValueSourceSpec     `yaml:"samEndpointFrom,omitempty" json:"samEndpointFrom,omitempty"`
+	MACAddresses    []string                  `yaml:"macAddresses,omitempty" json:"macAddresses,omitempty" jsonschema:"pattern=^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$"`
 	WireGuard       SAMNodeWireGuardSpec      `yaml:"wireGuard,omitempty" json:"wireGuard,omitempty"`
 	Placement       MobilityMemberPlacement   `yaml:"placement,omitempty" json:"placement,omitempty"`
 	Maintenance     MobilityMemberMaintenance `yaml:"maintenance,omitempty" json:"maintenance,omitempty"`

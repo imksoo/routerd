@@ -42,25 +42,26 @@ const (
 )
 
 type options struct {
-	resource       string
-	ifname         string
-	eventInterface string
-	socketPath     string
-	eventFile      string
-	poolName       string
-	prefix         netip.Prefix
-	sourceType     string
-	network        string
-	bridge         string
-	sourceAddress  netip.Addr
-	observe        bool
-	onDemand       bool
-	probeTimeout   time.Duration
-	probeRetries   int
-	probeCooldown  time.Duration
-	scanInterval   time.Duration
-	arpTablePath   string
-	selfMAC        net.HardwareAddr
+	resource          string
+	ifname            string
+	eventInterface    string
+	socketPath        string
+	eventFile         string
+	poolName          string
+	prefix            netip.Prefix
+	sourceType        string
+	network           string
+	bridge            string
+	sourceAddress     netip.Addr
+	observe           bool
+	onDemand          bool
+	probeTimeout      time.Duration
+	probeRetries      int
+	probeCooldown     time.Duration
+	scanInterval      time.Duration
+	arpTablePath      string
+	selfMAC           net.HardwareAddr
+	ignoredSenderMACs map[string]bool
 }
 
 type daemon struct {
@@ -68,25 +69,26 @@ type daemon struct {
 	startedAt time.Time
 	cancel    context.CancelFunc
 
-	mu              sync.Mutex
-	cond            *sync.Cond
-	events          []daemonapi.DaemonEvent
-	nextCursor      uint64
-	observerError   string
-	packetsSeen     uint64
-	observedCount   uint64
-	probeCount      uint64
-	probeHitCount   uint64
-	scanCount       uint64
-	proactiveCount  uint64
-	lastPacketAt    time.Time
-	lastEventAt     time.Time
-	lastScanAt      time.Time
-	lastProbeAt     map[string]time.Time
-	pendingProbe    map[string]time.Time
-	lastEventByKey  map[string]time.Time
-	clients         map[string]arpClient
-	proactiveCursor uint32
+	mu                               sync.Mutex
+	cond                             *sync.Cond
+	events                           []daemonapi.DaemonEvent
+	nextCursor                       uint64
+	observerError                    string
+	packetsSeen                      uint64
+	observedCount                    uint64
+	probeCount                       uint64
+	probeHitCount                    uint64
+	scanCount                        uint64
+	proactiveCount                   uint64
+	lastPacketAt                     time.Time
+	lastEventAt                      time.Time
+	lastScanAt                       time.Time
+	lastProbeAt                      map[string]time.Time
+	pendingProbe                     map[string]time.Time
+	lastEventByKey                   map[string]time.Time
+	clients                          map[string]arpClient
+	proactiveCursor                  uint32
+	ignoredSenderMACObservationCount uint64
 
 	socketMu sync.Mutex
 }
@@ -154,6 +156,7 @@ func parseOptions(name string, args []string) (options, error) {
 	prefix := ""
 	sourceAddress := ""
 	selfMAC := ""
+	var ignoredSenderMACs stringListFlag
 	fs.StringVar(&opts.resource, "resource", "arp-observer", "observer resource name")
 	fs.StringVar(&opts.ifname, "interface", "", "kernel interface name to observe")
 	fs.StringVar(&opts.eventInterface, "event-interface", "", "logical interface name written to events")
@@ -173,6 +176,7 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.DurationVar(&opts.scanInterval, "scan-interval", opts.scanInterval, "interval for polling the local ARP table")
 	fs.StringVar(&opts.arpTablePath, "arp-table", opts.arpTablePath, "Linux /proc/net/arp path")
 	fs.StringVar(&selfMAC, "self-mac", "", "local sender MAC for active probes")
+	fs.Var(&ignoredSenderMACs, "ignore-sender-mac", "sender MAC to ignore as a SAM member ownership signal; may be repeated")
 	if err := fs.Parse(args); err != nil {
 		return opts, err
 	}
@@ -221,6 +225,14 @@ func parseOptions(name string, args []string) (options, error) {
 		opts.selfMAC = mac
 	} else {
 		opts.selfMAC = interfaceMAC(opts.ifname)
+	}
+	opts.ignoredSenderMACs = map[string]bool{}
+	for _, value := range ignoredSenderMACs {
+		mac, err := net.ParseMAC(strings.TrimSpace(value))
+		if err != nil {
+			return opts, fmt.Errorf("--ignore-sender-mac: %w", err)
+		}
+		opts.ignoredSenderMACs[strings.ToLower(mac.String())] = true
 	}
 	defaults, _ := platform.Current()
 	if opts.socketPath == "" {
@@ -418,13 +430,18 @@ func (d *daemon) scanARPTable() {
 
 func (d *daemon) publishObservation(address netip.Addr, mac net.HardwareAddr, topic, sourceType, reason, message string) {
 	now := time.Now().UTC()
-	key := topic + "|" + address.String() + "|" + strings.ToLower(mac.String())
+	macString := strings.ToLower(mac.String())
 	d.mu.Lock()
+	if d.opts.ignoredSenderMACs[macString] {
+		d.ignoredSenderMACObservationCount++
+		d.mu.Unlock()
+		return
+	}
+	key := topic + "|" + address.String() + "|" + macString
 	if last := d.lastEventByKey[key]; !last.IsZero() && now.Sub(last) < 30*time.Second {
 		d.mu.Unlock()
 		return
 	}
-	macString := strings.ToLower(mac.String())
 	severity := daemonapi.SeverityInfo
 	if existing, ok := d.clients[address.String()]; ok && strings.EqualFold(existing.MAC, macString) {
 		severity = daemonapi.SeverityDebug
@@ -596,6 +613,12 @@ func (d *daemon) status() daemonapi.DaemonStatus {
 		"scanCount":       strconv.FormatUint(d.scanCount, 10),
 		"scanInterval":    d.opts.scanInterval.String(),
 		"observedClients": string(clients),
+	}
+	ignoredSenderMACs := boolMapKeysSorted(d.opts.ignoredSenderMACs)
+	if len(ignoredSenderMACs) > 0 {
+		observed["ignoredSenderMACs"] = strings.Join(ignoredSenderMACs, ",")
+		observed["ignoredSenderMACCount"] = strconv.Itoa(len(ignoredSenderMACs))
+		observed["ignoredSenderMACObservationCount"] = strconv.FormatUint(d.ignoredSenderMACObservationCount, 10)
 	}
 	if !d.lastPacketAt.IsZero() {
 		observed["lastPacketAt"] = d.lastPacketAt.Format(time.RFC3339Nano)
@@ -897,6 +920,31 @@ func sameMAC(a, b net.HardwareAddr) bool {
 
 func sameAddr(a, b netip.Addr) bool {
 	return a.IsValid() && b.IsValid() && a == b
+}
+
+type stringListFlag []string
+
+func (f *stringListFlag) String() string {
+	if f == nil {
+		return ""
+	}
+	return strings.Join(*f, ",")
+}
+
+func (f *stringListFlag) Set(value string) error {
+	*f = append(*f, value)
+	return nil
+}
+
+func boolMapKeysSorted(in map[string]bool) []string {
+	var out []string
+	for key, value := range in {
+		if value {
+			out = append(out, key)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func conditionStatus(ok bool) string {

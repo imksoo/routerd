@@ -2308,22 +2308,23 @@ func supervisedDaemonSpecEqual(a, b supervisedDaemonSpec) bool {
 }
 
 type mobilityARPObserverDaemonSpec struct {
-	ResourceName   string
-	PoolName       string
-	Prefix         string
-	SourceType     string
-	IfName         string
-	EventInterface string
-	Network        string
-	Bridge         string
-	Socket         string
-	EventFile      string
-	SourceAddress  string
-	Observe        bool
-	OnDemand       bool
-	ProbeTimeout   string
-	ProbeRetries   int
-	ScanInterval   string
+	ResourceName      string
+	PoolName          string
+	Prefix            string
+	SourceType        string
+	IfName            string
+	EventInterface    string
+	Network           string
+	Bridge            string
+	Socket            string
+	EventFile         string
+	SourceAddress     string
+	Observe           bool
+	OnDemand          bool
+	ProbeTimeout      string
+	ProbeRetries      int
+	ScanInterval      string
+	IgnoredSenderMACs []string
 }
 
 func (r *Runner) mobilityARPObserverDaemonSpecs() []mobilityARPObserverDaemonSpec {
@@ -2332,6 +2333,7 @@ func (r *Runner) mobilityARPObserverDaemonSpecs() []mobilityARPObserverDaemonSpe
 	}
 	defaults, _ := platform.Current()
 	seen := map[string]bool{}
+	ignoredSenderMACs := samNodeSetMACAddresses(r.Router)
 	var out []mobilityARPObserverDaemonSpec
 	for _, res := range r.Router.Spec.Resources {
 		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "MobilityPool" {
@@ -2379,25 +2381,57 @@ func (r *Runner) mobilityARPObserverDaemonSpecs() []mobilityARPObserverDaemonSpe
 				socket = override
 			}
 			out = append(out, mobilityARPObserverDaemonSpec{
-				ResourceName:   resourceName,
-				PoolName:       strings.TrimSpace(res.Metadata.Name),
-				Prefix:         strings.TrimSpace(spec.Prefix),
-				SourceType:     sourceType,
-				IfName:         ifname,
-				EventInterface: eventInterface,
-				Network:        strings.TrimSpace(source.Network),
-				Bridge:         strings.TrimSpace(source.Bridge),
-				Socket:         socket,
-				EventFile:      filepath.Join(defaults.StateDir, "arp-observer", resourceName, "events.jsonl"),
-				SourceAddress:  statusAddressValue(resourcequery.Value(r.Store, source.SourceAddressFrom)),
-				Observe:        sourceType == mobilitycontroller.OnPremSourceARPObserver || sourceType == mobilitycontroller.OnPremSourcePVESVNet,
-				OnDemand:       sourceType == mobilitycontroller.OnPremSourceOnDemandARP,
-				ProbeTimeout:   strings.TrimSpace(source.ProbeTimeout),
-				ProbeRetries:   source.ProbeRetries,
-				ScanInterval:   strings.TrimSpace(source.ScanInterval),
+				ResourceName:      resourceName,
+				PoolName:          strings.TrimSpace(res.Metadata.Name),
+				Prefix:            strings.TrimSpace(spec.Prefix),
+				SourceType:        sourceType,
+				IfName:            ifname,
+				EventInterface:    eventInterface,
+				Network:           strings.TrimSpace(source.Network),
+				Bridge:            strings.TrimSpace(source.Bridge),
+				Socket:            socket,
+				EventFile:         filepath.Join(defaults.StateDir, "arp-observer", resourceName, "events.jsonl"),
+				SourceAddress:     statusAddressValue(resourcequery.Value(r.Store, source.SourceAddressFrom)),
+				Observe:           sourceType == mobilitycontroller.OnPremSourceARPObserver || sourceType == mobilitycontroller.OnPremSourcePVESVNet,
+				OnDemand:          sourceType == mobilitycontroller.OnPremSourceOnDemandARP,
+				ProbeTimeout:      strings.TrimSpace(source.ProbeTimeout),
+				ProbeRetries:      source.ProbeRetries,
+				ScanInterval:      strings.TrimSpace(source.ScanInterval),
+				IgnoredSenderMACs: ignoredSenderMACs,
 			})
 		}
 	}
+	return out
+}
+
+func samNodeSetMACAddresses(router *api.Router) []string {
+	if router == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "SAMNodeSet" {
+			continue
+		}
+		spec, err := res.SAMNodeSetSpec()
+		if err != nil {
+			continue
+		}
+		for _, node := range spec.Nodes {
+			for _, value := range node.MACAddresses {
+				mac, err := net.ParseMAC(strings.TrimSpace(value))
+				if err != nil {
+					continue
+				}
+				seen[strings.ToLower(mac.String())] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for mac := range seen {
+		out = append(out, mac)
+	}
+	sort.Strings(out)
 	return out
 }
 
@@ -2540,6 +2574,9 @@ func (r *Runner) reconcileARPObserverDaemons(ctx context.Context, logger *slog.L
 		}
 		if spec.ScanInterval != "" {
 			args = append(args, "--scan-interval", spec.ScanInterval)
+		}
+		for _, mac := range spec.IgnoredSenderMACs {
+			args = append(args, "--ignore-sender-mac", mac)
 		}
 		if logger != nil {
 			logger.Info("daemon-supervisor-reconcile: starting new arp-observer", "resource", spec.ResourceName, "interface", spec.IfName)
