@@ -3,9 +3,12 @@
 package chain
 
 import (
+	"context"
+	"reflect"
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 )
 
 func TestRunnerMobilityARPObserverDaemonSpecsFromOnPremL2Sources(t *testing.T) {
@@ -101,6 +104,159 @@ func TestRunnerMobilityARPObserverDaemonSpecsIncludeSAMNodeSetMemberMACs(t *test
 	if got := specs[0].IgnoredSenderMACs; !stringSlicesEqual(got, want) {
 		t.Fatalf("IgnoredSenderMACs = %#v, want %#v", got, want)
 	}
+}
+
+func TestARPObserverDaemonArgsDoNotExposeIgnoredSenderMACFlag(t *testing.T) {
+	spec := mobilityARPObserverDaemonSpec{
+		ResourceName:      "mobility-svnet1-pve-arp-observer-eth1",
+		PoolName:          "svnet1",
+		Prefix:            "192.168.123.0/24",
+		SourceType:        "arp-observer",
+		IfName:            "eth1",
+		EventInterface:    "eth1",
+		Socket:            "/run/routerd/arp-observer/mobility-svnet1-pve-arp-observer-eth1.sock",
+		EventFile:         "/var/lib/routerd/arp-observer/mobility-svnet1-pve-arp-observer-eth1/events.jsonl",
+		Observe:           true,
+		IgnoredSenderMACs: []string{"02:00:00:00:00:aa"},
+	}
+	args := arpObserverDaemonArgs(spec)
+	for i, arg := range args {
+		if arg == "--ignore-sender-mac" {
+			t.Fatalf("args[%d] exposed --ignore-sender-mac: %#v", i, args)
+		}
+	}
+}
+
+func TestRunnerSyncsARPObserverIgnoredSenderMACsOnDriftOnly(t *testing.T) {
+	spec := mobilityARPObserverDaemonSpec{
+		ResourceName:      "mobility-svnet1-pve-arp-observer-eth1",
+		Socket:            "/run/routerd/arp-observer/mobility-svnet1-pve-arp-observer-eth1.sock",
+		IgnoredSenderMACs: []string{"02:00:00:00:00:aa", "02:00:00:00:00:bb"},
+	}
+	pusher := &fakeARPObserverCommandPusher{
+		statuses: []daemonapi.DaemonStatus{{
+			Observed: map[string]string{"ignoredSenderMACsConfigured": "true", "ignoredSenderMACs": "02:00:00:00:00:aa"},
+		}, {
+			Observed: map[string]string{"ignoredSenderMACsConfigured": "true", "ignoredSenderMACs": "02:00:00:00:00:aa,02:00:00:00:00:bb"},
+		}},
+	}
+	runner := Runner{ARPObserverCommands: pusher}
+
+	if err := runner.syncARPObserverIgnoredSenderMACs(context.Background(), spec); err != nil {
+		t.Fatalf("first sync: %v", err)
+	}
+	if len(pusher.sets) != 1 || !reflect.DeepEqual(pusher.sets[0], spec.IgnoredSenderMACs) {
+		t.Fatalf("sets after drift = %#v, want %#v", pusher.sets, spec.IgnoredSenderMACs)
+	}
+	if err := runner.syncARPObserverIgnoredSenderMACs(context.Background(), spec); err != nil {
+		t.Fatalf("second sync: %v", err)
+	}
+	if len(pusher.sets) != 1 {
+		t.Fatalf("sets after no-op sync = %#v, want one push", pusher.sets)
+	}
+}
+
+func TestRunnerSyncsARPObserverIgnoredSenderMACsPushesEmptySetBeforeReady(t *testing.T) {
+	spec := mobilityARPObserverDaemonSpec{
+		ResourceName: "mobility-svnet1-pve-arp-observer-eth1",
+		Socket:       "/run/routerd/arp-observer/mobility-svnet1-pve-arp-observer-eth1.sock",
+	}
+	pusher := &fakeARPObserverCommandPusher{
+		statuses: []daemonapi.DaemonStatus{{
+			Observed: map[string]string{"ignoredSenderMACsConfigured": "false"},
+		}, {
+			Observed: map[string]string{"ignoredSenderMACsConfigured": "true"},
+		}},
+	}
+	runner := Runner{ARPObserverCommands: pusher}
+
+	if err := runner.syncARPObserverIgnoredSenderMACs(context.Background(), spec); err != nil {
+		t.Fatalf("initial empty sync: %v", err)
+	}
+	if len(pusher.sets) != 1 || len(pusher.sets[0]) != 0 {
+		t.Fatalf("sets after uninitialized empty sync = %#v, want one empty push", pusher.sets)
+	}
+	if err := runner.syncARPObserverIgnoredSenderMACs(context.Background(), spec); err != nil {
+		t.Fatalf("initialized empty sync: %v", err)
+	}
+	if len(pusher.sets) != 1 {
+		t.Fatalf("sets after initialized no-op sync = %#v, want one push", pusher.sets)
+	}
+}
+
+func TestRunnerSyncsARPObserverIgnoredSenderMACsRepushesAfterObserverReset(t *testing.T) {
+	spec := mobilityARPObserverDaemonSpec{
+		ResourceName: "mobility-svnet1-pve-arp-observer-eth1",
+		Socket:       "/run/routerd/arp-observer/mobility-svnet1-pve-arp-observer-eth1.sock",
+	}
+	pusher := &fakeARPObserverCommandPusher{
+		statuses: []daemonapi.DaemonStatus{{
+			Observed: map[string]string{"ignoredSenderMACsConfigured": "true"},
+		}, {
+			Observed: map[string]string{"ignoredSenderMACsConfigured": "false"},
+		}},
+	}
+	runner := Runner{ARPObserverCommands: pusher}
+
+	if err := runner.syncARPObserverIgnoredSenderMACs(context.Background(), spec); err != nil {
+		t.Fatalf("sync before reset: %v", err)
+	}
+	if len(pusher.sets) != 0 {
+		t.Fatalf("sets before reset = %#v, want no-op", pusher.sets)
+	}
+	if err := runner.syncARPObserverIgnoredSenderMACs(context.Background(), spec); err != nil {
+		t.Fatalf("sync after reset: %v", err)
+	}
+	if len(pusher.sets) != 1 || len(pusher.sets[0]) != 0 {
+		t.Fatalf("sets after reset = %#v, want one empty push", pusher.sets)
+	}
+}
+
+func TestRunnerDoesNotMarkARPObserverReadyBeforeInitialIgnoredSenderMACPush(t *testing.T) {
+	spec := mobilityARPObserverDaemonSpec{
+		ResourceName:      "mobility-svnet1-pve-arp-observer-eth1",
+		Socket:            "/run/routerd/arp-observer/mobility-svnet1-pve-arp-observer-eth1.sock",
+		IgnoredSenderMACs: []string{"02:00:00:00:00:aa"},
+	}
+	pusher := &fakeARPObserverCommandPusher{setErr: context.DeadlineExceeded}
+	runner := Runner{ARPObserverCommands: pusher}
+
+	if err := runner.waitForARPObserverInitialSync(context.Background(), spec); err == nil {
+		t.Fatal("waitForARPObserverInitialSync succeeded before initial ignore-set push completed")
+	}
+	if runner.arpObserverReady(spec.ResourceName) {
+		t.Fatal("observer marked ready before initial ignore-set push completed")
+	}
+	pusher.setErr = nil
+	if err := runner.waitForARPObserverInitialSync(context.Background(), spec); err != nil {
+		t.Fatalf("waitForARPObserverInitialSync after push: %v", err)
+	}
+	if !runner.arpObserverReady(spec.ResourceName) {
+		t.Fatal("observer not marked ready after initial ignore-set push completed")
+	}
+}
+
+type fakeARPObserverCommandPusher struct {
+	statuses []daemonapi.DaemonStatus
+	sets     [][]string
+	setErr   error
+}
+
+func (f *fakeARPObserverCommandPusher) Status(_ context.Context, _ string) (daemonapi.DaemonStatus, error) {
+	if len(f.statuses) == 0 {
+		return daemonapi.DaemonStatus{}, nil
+	}
+	status := f.statuses[0]
+	f.statuses = f.statuses[1:]
+	return status, nil
+}
+
+func (f *fakeARPObserverCommandPusher) SetIgnoredSenderMACs(_ context.Context, _ string, macs []string) error {
+	if f.setErr != nil {
+		return f.setErr
+	}
+	f.sets = append(f.sets, append([]string(nil), macs...))
+	return nil
 }
 
 func stringSlicesEqual(a, b []string) bool {
