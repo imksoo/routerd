@@ -245,6 +245,83 @@ func TestDynamicRouteSAMViewDerivesBGPProxyARPClaimsWithoutRouteLowering(t *test
 	})
 }
 
+func TestDynamicRouteSAMViewBGPProxyARPGARPGatedBySeizeComplete(t *testing.T) {
+	startup := bgpProxyARPStartup(false)
+	for i, resource := range startup.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "MobilityPool" {
+			continue
+		}
+		spec := resource.Spec.(api.MobilityPoolSpec)
+		enabled := true
+		spec.DeliveryPolicy.GratuitousARPOnSeize = &enabled
+		startup.Spec.Resources[i].Spec = spec
+	}
+	store := mapStore{
+		api.NetAPIVersion + "/BGPRouter/mobility-bgp": {
+			"installedNextHops": map[string]any{
+				"10.0.1.11/32": []any{"10.99.0.2"},
+				"10.0.1.12/32": []any{"10.99.0.3"},
+			},
+		},
+		api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "master"},
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
+			"bgpCaptureTransitionCompleted": map[string]any{
+				"seizeComplete": map[string]any{"10.0.1.11/32": "group-a/7"},
+			},
+		},
+	}
+	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView: %v", err)
+	}
+	claims := remoteAddressClaimSpecs(view.EffectiveRouter)
+	if len(claims) != 2 {
+		t.Fatalf("claims = %#v, want 2 BGP proxy claims", claims)
+	}
+	for _, claim := range claims {
+		switch claim.Address {
+		case "10.0.1.11/32":
+			if !claim.Capture.GratuitousARP {
+				t.Fatalf("claim %s GratuitousARP=false, want true after seize-complete", claim.Address)
+			}
+		case "10.0.1.12/32":
+			if claim.Capture.GratuitousARP {
+				t.Fatalf("claim %s GratuitousARP=true without seize-complete", claim.Address)
+			}
+		default:
+			t.Fatalf("unexpected claim = %#v", claim)
+		}
+	}
+}
+
+func TestDynamicRouteSAMViewBGPProxyARPGARPDefaultOff(t *testing.T) {
+	startup := bgpProxyARPStartup(false)
+	store := mapStore{
+		api.NetAPIVersion + "/BGPRouter/mobility-bgp": {
+			"installedNextHops": map[string]any{
+				"10.0.1.11/32": []any{"10.99.0.2"},
+			},
+		},
+		api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "master"},
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
+			"bgpCaptureTransitionCompleted": map[string]any{
+				"seizeComplete": map[string]any{"10.0.1.11/32": "group-a/7"},
+			},
+		},
+	}
+	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView: %v", err)
+	}
+	claims := remoteAddressClaimSpecs(view.EffectiveRouter)
+	if len(claims) != 1 {
+		t.Fatalf("claims = %#v, want 1 BGP proxy claim", claims)
+	}
+	if claims[0].Capture.GratuitousARP {
+		t.Fatalf("claim %s GratuitousARP=true with default policy off", claims[0].Address)
+	}
+}
+
 func TestDynamicRouteSAMViewBGPProxyARPExcludesLocalAddresses(t *testing.T) {
 	startup := bgpProxyARPStartup(false)
 	for i, resource := range startup.Spec.Resources {
