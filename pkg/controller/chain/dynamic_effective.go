@@ -170,6 +170,10 @@ func appendBGPMobilityProxyARPClaims(router api.Router, store any) api.Router {
 		if !ok || strings.TrimSpace(self.Capture.Type) != "proxy-arp" || strings.TrimSpace(self.Capture.Interface) == "" {
 			continue
 		}
+		seizeComplete := map[string]bool{}
+		if api.BoolDefault(spec.DeliveryPolicy.GratuitousARPOnSeize, false) {
+			seizeComplete = bgpMobilitySeizeCompleteAddresses(reader.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", resource.Metadata.Name))
+		}
 		owned := mobilityStaticOwnedAddresses(self, prefix)
 		for _, address := range bgpMobilityInstalledAddresses(installed, prefix) {
 			if owned[address] {
@@ -178,7 +182,7 @@ func appendBGPMobilityProxyARPClaims(router api.Router, store any) api.Router {
 			if sam.CaptureExcludesAddress(addressCaptureFromMobilityCapture(self.Capture), address) {
 				continue
 			}
-			claims = append(claims, bgpMobilityProxyARPClaim(resource.Metadata.Name, self, address))
+			claims = append(claims, bgpMobilityProxyARPClaim(resource.Metadata.Name, self, address, seizeComplete[address]))
 		}
 	}
 	if len(claims) == 0 {
@@ -653,7 +657,54 @@ func bgpMobilityInstalledAddresses(installed map[string][]string, pool netip.Pre
 	return bgpSortedStringKeys(seen)
 }
 
-func bgpMobilityProxyARPClaim(poolName string, member api.MobilityPoolMember, address string) api.Resource {
+func bgpMobilitySeizeCompleteAddresses(status map[string]any) map[string]bool {
+	out := map[string]bool{}
+	raw, ok := status["bgpCaptureTransitionCompleted"]
+	if !ok {
+		return out
+	}
+	add := func(address string, generation any) {
+		address = strings.TrimSpace(address)
+		if address == "" || strings.TrimSpace(fmt.Sprint(generation)) == "" {
+			return
+		}
+		out[address] = true
+	}
+	switch typed := raw.(type) {
+	case map[string]any:
+		if nested, ok := typed["seizeComplete"]; ok {
+			for address, generation := range bgpMobilityStatusMap(nested) {
+				add(address, generation)
+			}
+			return out
+		}
+		for address, generation := range typed {
+			add(address, generation)
+		}
+	case map[string]string:
+		for address, generation := range typed {
+			add(address, generation)
+		}
+	}
+	return out
+}
+
+func bgpMobilityStatusMap(value any) map[string]any {
+	out := map[string]any{}
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, item := range typed {
+			out[key] = item
+		}
+	case map[string]string:
+		for key, item := range typed {
+			out[key] = item
+		}
+	}
+	return out
+}
+
+func bgpMobilityProxyARPClaim(poolName string, member api.MobilityPoolMember, address string, gratuitousARP bool) api.Resource {
 	name := "bgp-" + safeResourceName(poolName) + "-" + safeResourceName(strings.TrimSuffix(address, "/32"))
 	return api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
@@ -674,7 +725,7 @@ func bgpMobilityProxyARPClaim(poolName string, member api.MobilityPoolMember, ad
 				Strategy:         member.Capture.Strategy,
 				Interface:        member.Capture.Interface,
 				ExcludeAddresses: append([]string(nil), member.Capture.ExcludeAddresses...),
-				GratuitousARP:    member.Capture.GratuitousARP,
+				GratuitousARP:    gratuitousARP,
 				ActiveWhen:       member.Capture.ActiveWhen,
 			},
 			Delivery: api.AddressDelivery{Mode: "bgp"},

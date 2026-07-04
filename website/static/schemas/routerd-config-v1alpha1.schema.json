@@ -8349,6 +8349,10 @@
                             "description": "ConntrackCleanupOnSeize removes conntrack entries whose source or\ndestination is the seized /32 after this node is observed as the BGP\nholder. It is opt-in and scoped to the single address.",
                             "type": "boolean"
                           },
+                          "gratuitousARPOnSeize": {
+                            "description": "GratuitousARPOnSeize emits a GARP for BGP-mode on-prem proxy-ARP\ncaptures only after this node is observed as the BGP holder for the\nseized /32. It is opt-in; remote capture claims remain silent.",
+                            "type": "boolean"
+                          },
                           "mode": {
                             "description": "Mode selects delivery. Empty means bgp delivery.",
                             "enum": [
