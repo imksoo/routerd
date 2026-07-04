@@ -114,6 +114,16 @@ func (s mobilityStore) ObjectStatus(apiVersion, kind, name string) map[string]an
 	return s.evented.ObjectStatus(apiVersion, kind, name)
 }
 
+func (s mobilityStore) RecordBusEvent(ctx context.Context, event daemonapi.DaemonEvent) (string, error) {
+	if s.evented.Bus != nil {
+		return "", s.evented.Bus.Publish(ctx, event)
+	}
+	if store, ok := s.data.(bus.EventStore); ok {
+		return store.RecordBusEvent(ctx, event)
+	}
+	return "", nil
+}
+
 func (s mobilityStore) ListFederationEvents(group string, includeExpired bool, now int64) ([]routerstate.EventRecord, error) {
 	return s.data.ListFederationEvents(group, includeExpired, now)
 }
