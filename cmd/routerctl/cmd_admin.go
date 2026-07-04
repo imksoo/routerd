@@ -29,7 +29,8 @@ func validateCommand(args []string, stdout io.Writer, stdin io.Reader) error {
 	fs.SetOutput(stdout)
 	fs.Usage = func() {
 		printSubcommandHelp(fs,
-			"routerd の canonical config、または -f の candidate を静的検証する。host 状態は変更しない。",
+			"routerd の canonical config、または -f の candidate を静的検証する。host 状態は変更しない。\n"+
+				"Exit codes: 0=valid, 1=invalid config, 2=execution or transport error.",
 			"routerctl validate\n"+
 				"routerctl validate -f candidate.yaml\n"+
 				"routerctl validate -f -")
@@ -42,19 +43,25 @@ func validateCommand(args []string, stdout io.Writer, stdin io.Reader) error {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
-		return err
+		return commandExitError{Code: 2, Err: err}
 	}
 	candidate, err := readCandidateYAML(*filePath, stdin)
 	if err != nil {
-		return err
+		return commandExitError{Code: 2, Err: err}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 	result, err := controlapi.NewUnixClient(*socketPath).Validate(ctx, controlapi.ValidateRequest{CandidateYAML: candidate, Replace: *replace})
 	if err != nil {
-		return fmt.Errorf("routerd serve is not reachable for validate; start routerd serve or check --socket: %w", err)
+		return commandExitError{Code: 2, Err: fmt.Errorf("routerd serve is not reachable for validate; start routerd serve or check --socket: %w", err)}
 	}
-	return writeJSON(stdout, result)
+	if err := writeJSON(stdout, result); err != nil {
+		return commandExitError{Code: 2, Err: err}
+	}
+	if !result.Valid {
+		return commandExitError{Code: 1, Err: errors.New("validate failed: config is invalid")}
+	}
+	return nil
 }
 
 func planCommand(args []string, stdout io.Writer, stdin io.Reader) error {

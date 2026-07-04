@@ -19,8 +19,28 @@ var version = routerversion.String()
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		var exitErr commandExitError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.Code)
+		}
 		os.Exit(1)
 	}
+}
+
+type commandExitError struct {
+	Code int
+	Err  error
+}
+
+func (e commandExitError) Error() string {
+	if e.Err == nil {
+		return fmt.Sprintf("exit code %d", e.Code)
+	}
+	return e.Err.Error()
+}
+
+func (e commandExitError) Unwrap() error {
+	return e.Err
 }
 
 func run(args []string, stdout, stderr io.Writer) error {
