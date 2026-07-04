@@ -44,7 +44,6 @@ const (
 	bgpMobilityCommunitySourceObserved = "64512:110"
 	bgpMobilityCommunitySourceStatic   = "64512:111"
 	bgpMobilityCommunitySourceHandover = "64512:112"
-	bgpMobilityCommunitySourceCapture  = "64512:113"
 	bgpMobilityCommunitySourceReturn   = bgpstate.MobilityCommunityReturnRoute
 	bgpMobilityCommunityFailover       = "64512:120"
 	// bgpMobilityCommunityActiveHolder is advertised only by the active capture
@@ -595,13 +594,25 @@ func (c Controller) recordBGPCaptureAssignmentTransitions(ctx context.Context, p
 			}
 		}
 	}
-	observedSelfHolders := bgpObservedSelfHolderAddresses(self, livenessMarkers, mobilityPrefixCommunities)
-	for address := range bgpObservedSelfProviderCaptureAddresses(self, livenessMarkers, mobilityPrefixCommunities) {
-		observedSelfHolders[address] = true
-	}
-	for address := range observedSelfHolders {
+	for address := range bgpObservedSelfHolderAddresses(self, livenessMarkers, mobilityPrefixCommunities) {
 		assignment, ok := current[address]
 		if !ok || assignment.Phase != "Active" || strings.TrimSpace(assignment.Generation) == "" {
+			continue
+		}
+		if seizeComplete[address] == assignment.Generation {
+			continue
+		}
+		if recorder != nil {
+			if _, err := recorder.RecordBusEvent(ctx, mobilityHolderTransitionEvent(poolName, selfNode, now, assignment, "seize-complete", pathSigs[address], holdDowns)); err != nil {
+				return err
+			}
+		}
+		seizeComplete[address] = assignment.Generation
+	}
+	latestProviderCapture := latestProviderCaptureTransitions(nil, actionJournal)
+	for _, address := range mapStringKeysSorted(current) {
+		assignment, ok := providerCaptureSeizeCompleteAssignment(self, current[address], latestProviderCapture, now)
+		if !ok {
 			continue
 		}
 		if seizeComplete[address] == assignment.Generation {
@@ -719,35 +730,6 @@ func bgpObservedSelfHolderAddresses(self memberPlanInfo, livenessMarkers map[str
 	return out
 }
 
-func bgpObservedSelfProviderCaptureAddresses(self memberPlanInfo, livenessMarkers map[string]string, mobilityPrefixCommunities map[string][]string) map[string]bool {
-	out := map[string]bool{}
-	community, _, present := livenessMarkerForNode(livenessMarkers, self.NodeRef)
-	if !present || strings.TrimSpace(community) == "" {
-		return out
-	}
-	community = strings.TrimSpace(community)
-	for prefix, communities := range mobilityPrefixCommunities {
-		address := normalizeAddressString(prefix)
-		if address == "" {
-			continue
-		}
-		hasSourceCapture := false
-		hasSelfIdentity := false
-		for _, item := range communities {
-			switch strings.TrimSpace(item) {
-			case bgpMobilityCommunitySourceCapture:
-				hasSourceCapture = true
-			case community:
-				hasSelfIdentity = true
-			}
-		}
-		if hasSourceCapture && hasSelfIdentity {
-			out[address] = true
-		}
-	}
-	return out
-}
-
 func captureConfirmedAssignmentForDecision(self memberPlanInfo, current map[string]bgpCaptureAssignment, decision ownershipDecision, actionJournal []routerstate.ActionExecutionRecord, now time.Time) (bgpCaptureAssignment, bool) {
 	address := normalizeAddressString(decision.Address)
 	if address == "" {
@@ -763,6 +745,64 @@ func captureConfirmedAssignmentForDecision(self memberPlanInfo, current map[stri
 	if !ok || !tr.assign || !tr.succeeded {
 		return bgpCaptureAssignment{}, false
 	}
+	generation, seq, issuedAt := providerCaptureTransitionIdentity(tr, providerRef, targetRef, address, now)
+	return bgpCaptureAssignment{
+		Address:        address,
+		Phase:          "Active",
+		Generation:     generation,
+		Seq:            seq,
+		ClaimEpoch:     generation,
+		DesiredHolder:  strings.TrimSpace(decision.CaptureHolderNode),
+		PreviousHolder: strings.TrimSpace(decision.HomeOwnerNode),
+		Reason:         "provider-capture-confirmed",
+		IssuedAt:       issuedAt,
+		RenewedAt:      now.UTC(),
+		LeaseUntil:     now.UTC().Add(DefaultLeaseTTL),
+	}, true
+}
+
+func providerCaptureSeizeCompleteAssignment(self memberPlanInfo, assignment bgpCaptureAssignment, latestTransitions map[string]providerCaptureTransition, now time.Time) (bgpCaptureAssignment, bool) {
+	address := normalizeAddressString(assignment.Address)
+	if address == "" || assignment.Phase != "Active" || strings.TrimSpace(assignment.Generation) == "" {
+		return bgpCaptureAssignment{}, false
+	}
+	if strings.TrimSpace(assignment.DesiredHolder) != strings.TrimSpace(self.NodeRef) {
+		return bgpCaptureAssignment{}, false
+	}
+	if strings.TrimSpace(self.Capture.Type) != "provider-secondary-ip" {
+		return bgpCaptureAssignment{}, false
+	}
+	providerRef := strings.TrimSpace(self.Capture.ProviderRef)
+	targetRef := providerCaptureRefFromCapture(self.Capture, self.CaptureTarget)
+	tr, ok := latestTransitions[providerCaptureTransitionKey(providerRef, targetRef, address)]
+	if !ok || !tr.assign || !tr.succeeded {
+		return bgpCaptureAssignment{}, false
+	}
+	if !providerCaptureTransitionMatchesAssignment(tr, assignment) {
+		return bgpCaptureAssignment{}, false
+	}
+	if holder := strings.TrimSpace(tr.plan.Parameters[captureParamHolder]); holder != "" && holder != strings.TrimSpace(self.NodeRef) {
+		return bgpCaptureAssignment{}, false
+	}
+	generation, seq, issuedAt := providerCaptureTransitionIdentity(tr, providerRef, targetRef, address, now)
+	assignment.Generation = generation
+	assignment.Seq = seq
+	assignment.ClaimEpoch = generation
+	assignment.Reason = "provider-capture-accepted"
+	assignment.IssuedAt = issuedAt
+	assignment.RenewedAt = now.UTC()
+	return assignment, true
+}
+
+func providerCaptureTransitionMatchesAssignment(tr providerCaptureTransition, assignment bgpCaptureAssignment) bool {
+	generation := strings.TrimSpace(tr.plan.Parameters[captureAssignmentGenerationParam])
+	if generation == "" {
+		return true
+	}
+	return generation == strings.TrimSpace(assignment.Generation)
+}
+
+func providerCaptureTransitionIdentity(tr providerCaptureTransition, providerRef, targetRef, address string, now time.Time) (string, int64, time.Time) {
 	issuedAt := tr.at.UTC()
 	if issuedAt.IsZero() {
 		issuedAt = now.UTC()
@@ -778,19 +818,7 @@ func captureConfirmedAssignmentForDecision(self memberPlanInfo, current map[stri
 	if seq < 0 {
 		seq = 0
 	}
-	return bgpCaptureAssignment{
-		Address:        address,
-		Phase:          "Active",
-		Generation:     generation,
-		Seq:            seq,
-		ClaimEpoch:     generation,
-		DesiredHolder:  strings.TrimSpace(decision.CaptureHolderNode),
-		PreviousHolder: strings.TrimSpace(decision.HomeOwnerNode),
-		Reason:         "provider-capture-confirmed",
-		IssuedAt:       issuedAt,
-		RenewedAt:      now.UTC(),
-		LeaseUntil:     now.UTC().Add(DefaultLeaseTTL),
-	}, true
+	return generation, seq, issuedAt
 }
 
 func bgpCaptureAssignmentTransitionUnchanged(previous, current bgpCaptureAssignment) bool {
@@ -2575,9 +2603,6 @@ func bgpCaptureCandidateNextHopsFromStatus(router *api.Router, store interface {
 			if bgpstate.HasCommunity(prefix.Communities, bgpstate.MobilityCommunityReturnRoute) {
 				continue
 			}
-			if bgpstate.HasCommunity(prefix.Communities, bgpMobilityCommunitySourceCapture) {
-				continue
-			}
 			address, ok := normalizeBGPTrapPrefix(prefix.Prefix, poolPrefix)
 			if !ok {
 				continue
@@ -4099,10 +4124,7 @@ func bgpCommunityContains(values []string, want string) bool {
 
 func bgpMobilityPathAttrs(member memberPlanInfo, sourceType string, active bool) bgpdaemon.AppliedPathAttrs {
 	communities := []string{}
-	captureSource := strings.TrimSpace(sourceType) == "provider-capture"
-	if !captureSource {
-		communities = append(communities, bgpMobilityCommunityOwner)
-	}
+	communities = append(communities, bgpMobilityCommunityOwner)
 	if nodeCommunity := bgpstate.MobilityNodeIdentityCommunity(canonicalNodeIdentity(member.NodeRef)); nodeCommunity != "" {
 		communities = append(communities, nodeCommunity)
 	}
@@ -4117,17 +4139,13 @@ func bgpMobilityPathAttrs(member memberPlanInfo, sourceType string, active bool)
 		communities = append(communities, bgpMobilityCommunitySourceStatic)
 	case staticHandoverType:
 		communities = append(communities, bgpMobilityCommunitySourceHandover)
-	case "provider-capture":
-		communities = append(communities, bgpMobilityCommunitySourceCapture)
 	default:
 		communities = append(communities, bgpMobilityCommunitySourceObserved)
 	}
 	localPref := bgpMobilityLocalPrefBase
 	if active {
 		localPref = bgpMobilityLocalPref(1)
-		if !captureSource {
-			communities = append(communities, bgpMobilityCommunityActiveHolder)
-		}
+		communities = append(communities, bgpMobilityCommunityActiveHolder)
 	}
 	attrs := bgpdaemon.AppliedPathAttrs{
 		LocalPref:   localPref,

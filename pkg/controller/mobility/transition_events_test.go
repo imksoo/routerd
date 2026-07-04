@@ -155,7 +155,7 @@ func TestRecordBGPCaptureAssignmentTransitionsCompletesProviderCaptureFromSuccee
 	assignment := activeCaptureAssignmentForTransitionTest(address, "aws-rr-b", "aws-rr-a", now)
 	plans := []dynamicconfig.ActionPlan{assignSecondaryIPPlanForTransitionTest(address, "aws-provider", "eni-b", "aws-rr-b")}
 	journal := []routerstate.ActionExecutionRecord{
-		providerCaptureActionRecordForTransitionTest(t, 89, actionAssignSecondaryIP, address, "aws-provider", "eni-b", "aws-rr-b", executedAt),
+		providerCaptureActionRecordForTransitionTest(t, 89, actionAssignSecondaryIP, address, "aws-provider", "eni-b", "aws-rr-b", assignment.Generation, executedAt),
 	}
 
 	nextStatus := map[string]any{}
@@ -197,8 +197,8 @@ func TestRecordBGPCaptureAssignmentTransitionsDoesNotCompleteProviderCaptureAfte
 	assignment := activeCaptureAssignmentForTransitionTest(address, "aws-rr-b", "aws-rr-a", now)
 	plans := []dynamicconfig.ActionPlan{assignSecondaryIPPlanForTransitionTest(address, "aws-provider", "eni-b", "aws-rr-b")}
 	journal := []routerstate.ActionExecutionRecord{
-		providerCaptureActionRecordForTransitionTest(t, 89, actionAssignSecondaryIP, address, "aws-provider", "eni-b", "aws-rr-b", now.Add(-10*time.Second)),
-		providerCaptureActionRecordForTransitionTest(t, 90, actionUnassignSecondaryIP, address, "aws-provider", "eni-b", "aws-rr-b", now.Add(-time.Second)),
+		providerCaptureActionRecordForTransitionTest(t, 89, actionAssignSecondaryIP, address, "aws-provider", "eni-b", "aws-rr-b", assignment.Generation, now.Add(-10*time.Second)),
+		providerCaptureActionRecordForTransitionTest(t, 90, actionUnassignSecondaryIP, address, "aws-provider", "eni-b", "aws-rr-b", assignment.Generation, now.Add(-time.Second)),
 	}
 
 	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, nil, nil, nil, journal, map[string]any{}, map[string]any{}, now); err != nil {
@@ -207,6 +207,31 @@ func TestRecordBGPCaptureAssignmentTransitionsDoesNotCompleteProviderCaptureAfte
 	events := listMobilityTransitionEvents(t, store)
 	if len(events) != 0 {
 		t.Fatalf("events after latest unassign = %d, want 0 (%#v)", len(events), events)
+	}
+}
+
+func TestRecordBGPCaptureAssignmentTransitionsDoesNotCompleteProviderCaptureForStaleAssignmentGeneration(t *testing.T) {
+	now := time.Date(2026, 7, 4, 16, 7, 0, 0, time.UTC)
+	store := testStore(t, now)
+	controller := Controller{Store: store}
+	address := "10.88.60.17/32"
+	self := memberPlanInfo{
+		NodeRef:       "aws-rr-b",
+		Capture:       api.AddressCapture{Type: "provider-secondary-ip", ProviderRef: "aws-provider", NICRef: "eni-b"},
+		CaptureTarget: map[string]string{"nicRef": "eni-b"},
+	}
+	assignment := activeCaptureAssignmentForTransitionTest(address, "aws-rr-b", "aws-rr-a", now)
+	plans := []dynamicconfig.ActionPlan{assignSecondaryIPPlanForTransitionTest(address, "aws-provider", "eni-b", "aws-rr-b")}
+	journal := []routerstate.ActionExecutionRecord{
+		providerCaptureActionRecordForTransitionTest(t, 89, actionAssignSecondaryIP, address, "aws-provider", "eni-b", "aws-rr-b", "stale-generation", now.Add(-time.Second)),
+	}
+
+	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, nil, nil, nil, journal, map[string]any{}, map[string]any{}, now); err != nil {
+		t.Fatalf("record provider accepted transition: %v", err)
+	}
+	events := listMobilityTransitionEvents(t, store)
+	if len(events) != 0 {
+		t.Fatalf("events for stale assignment generation = %d, want 0 (%#v)", len(events), events)
 	}
 }
 
@@ -304,13 +329,13 @@ func assignSecondaryIPPlanForTransitionTest(address, providerRef, targetRef, hol
 	}
 }
 
-func providerCaptureActionRecordForTransitionTest(t *testing.T, id int64, action, address, providerRef, targetRef, holder string, at time.Time) routerstate.ActionExecutionRecord {
+func providerCaptureActionRecordForTransitionTest(t *testing.T, id int64, action, address, providerRef, targetRef, holder, assignmentGeneration string, at time.Time) routerstate.ActionExecutionRecord {
 	t.Helper()
 	target, err := json.Marshal(map[string]string{"address": address, "providerRef": providerRef, "nicRef": targetRef})
 	if err != nil {
 		t.Fatalf("marshal target: %v", err)
 	}
-	params, err := json.Marshal(map[string]string{captureParamHolder: holder, bgpPathSigParam: "prefix=" + address + ";nextHops=10.99.0.3"})
+	params, err := json.Marshal(map[string]string{captureParamHolder: holder, bgpPathSigParam: "prefix=" + address + ";nextHops=10.99.0.3", captureAssignmentGenerationParam: assignmentGeneration})
 	if err != nil {
 		t.Fatalf("marshal params: %v", err)
 	}

@@ -65,7 +65,6 @@ advertisement, and whether it is the holder. They are defined in
 | `64512:110` | `…CommunitySourceObserved` | provenance: observation-derived advertisement |
 | `64512:111` | `…CommunitySourceStatic` | provenance: a static owned-address advertisement |
 | `64512:112` | `…CommunitySourceHandover` | provenance: advertisement during handover |
-| `64512:113` | `…CommunitySourceCapture` | provenance: provider-capture background route |
 | `64512:120` | `…CommunityFailover` | a seize advertisement during failover |
 | **`64512:121`** | **`…CommunityActiveHolder`** | **holder-beacon: attached only by the active holder** |
 | (per node) | node-identity community | identifies which node advertised (derived from nodeRef) |
@@ -77,8 +76,7 @@ advertisement.
 ### The holder-beacon (`64512:121`) is the linchpin
 
 `bgpMobilityPathAttrs` (`controller.go`) attaches `64512:121` only when the
-advertisement is from an **active holder** and is not a provider-capture
-background route.
+advertisement is from an **active holder**.
 
 On the receiving side, `bgpObservedGroupHolder` (`planner.go`) treats a node as
 the group holder only when the best path for a `/32` carries **both the node's

@@ -31,6 +31,28 @@ routerctl events --topic routerd.resource.status.changed
 routerctl events --resource DNSResolver/lan-resolver -o json
 ```
 
+### Mobility holder transitions
+
+CloudEdge SAM の failover は、`transitionKind`、`address`、`timestamp`、
+`issuedAt`、`fromNode`、`toNode`、`mobilityPathSig`、
+`assignmentGeneration` などの機械可読属性を持つ
+`routerd.mobility.holder.transition` イベントを出します。
+
+provider-secondary-IP capture では、`seize-complete` は Active な `/32`
+`bgpCaptureAssignment` に対する provider capture assign action が action
+journal で succeeded になった事実を意味します。`issuedAt` は journal の
+`ExecutedAt` なので、`timestamp - issuedAt` は provider が受理してから
+イベントを記録するまでの遅延です。`T_seize` は provider の受理時刻です。
+
+`capture-confirmed` は従来どおり discovery による観測に基づきます。
+`T_confirm` は provider capture がローカルで効いたと観測した時刻です。
+この 2 つで、受理から実効までの区間を測れます。
+
+static-owned、static-handover、local-home など capture 以外のフローでは、
+`seize-complete` は引き続き active-holder と self-identity の BGP 観測から
+導出します。lab 実証済みなのは capture フローで、static/handover の
+completion event は実環境ではまだ未実証です。
+
 ## バックアップの考え方
 
 状態 DB は**観測した**状態を持つもので、設定の代わりにはなりません。

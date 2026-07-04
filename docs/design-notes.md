@@ -55,13 +55,25 @@ The following kinds work together for higher-level coordination:
 
 `EventRule` consumes one stream of events and produces another. `DerivedEvent` synthesises asserted / retracted virtual events from observed state.
 
-## 6. Tier S building blocks
+## 6. CloudEdge SAM capture completion
+
+Provider-secondary-IP capture completion is derived from provider action journal
+facts, not from a provider-capture BGP advertisement. The #707/#740 work added
+only the observation-side scaffolding for a source-capture path; the production
+advertisement path never existed.
+
+Reintroduce a fabric-advertised capture `/32` only if there is a real need for
+capture routes inside the fabric. Start that design from the reachability
+contract: who originates the route, which RIB observes it, and which condition
+is considered complete.
+
+## 7. Tier S building blocks
 
 WireGuard, Tailscale, IPsec, VRF, and VXLAN are the building blocks for the Tier S (SOHO / branch) capability. WireGuard and VXLAN-over-WireGuard interoperability is verified across the supported operating systems. `TailscaleNode` covers exit-node and subnet-router advertisement without turning every VPN into one abstract shape.
 
 There is no abstract `VPNTunnel` resource. WireGuard, Tailscale, IPsec, and future SoftEther integrations are added as their own kinds. The motivation is that each of these has materially different state machines; collapsing them into one polymorphic kind would lose semantics.
 
-## 7. Open work
+## 8. Open work
 
 - Stateful firewall in production: `FirewallRule` now covers ICMP type matching,
   multiple ports per rule, nftables rate limiting, and per-source connection
