@@ -511,7 +511,7 @@ generate_configs() {
 
 find_artifact_binary() {
   local root="$1" name="$2" path
-  path="$(find "$root" -type f -name "$name" -perm -111 | sort | head -n 1)"
+  path="$(find "$root" -type f -name "$name" -perm -100 | sort | head -n 1)"
   [ -n "$path" ] || { echo "$name not found in artifact $artifact" >&2; return 1; }
   printf '%s\n' "$path"
 }
