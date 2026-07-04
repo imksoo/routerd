@@ -1844,19 +1844,10 @@ func TestControllerBGPModeProviderCaptureCompletionEventsUseProductionObservatio
 		confirmed: {"10.99.0.3"},
 	}, []map[string]any{
 		bgpOwnerPrefix(seized, "10.99.0.2", "aws-router-a"),
-		{
-			"prefix":  seized,
-			"nextHop": "10.99.0.5",
-			"best":    true,
-			"valid":   true,
-			"communities": []string{
-				bgpMobilityCommunitySourceCapture,
-				bgpstate.MobilityNodeIdentityCommunity(selfNode),
-			},
-		},
 		bgpOwnerPrefix(confirmed, "10.99.0.3", "azure-router"),
 	}, livenessMarkers)
 	seedElapsedBGPSeizeHoldDown(t, store, "cloudedge", selfNode, spec, livenessMarkers, now)
+	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-b", selfNode, seized, "assign-secondary-ip", 2, now.Add(-5*time.Second))
 	seedSucceededBGPCaptureAction(t, store, "aws-provider", "eni-b", selfNode, confirmed, "assign-secondary-ip", 1, now.Add(-4*time.Second))
 
 	controller := Controller{
@@ -2414,18 +2405,11 @@ func TestFilterSupersededSameProviderHomeFailures(t *testing.T) {
 	}
 }
 
-func TestControllerBGPCaptureCandidateNextHopsExcludeProviderCapturePaths(t *testing.T) {
+func TestControllerBGPCaptureCandidateNextHopsExcludeReturnRoutes(t *testing.T) {
 	now := time.Date(2026, 6, 13, 22, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := awsFailoverPoolSpec()
 	prefixes := []map[string]any{
-		{
-			"prefix":      "10.88.60.12/32",
-			"nextHop":     "10.99.0.5",
-			"best":        true,
-			"valid":       true,
-			"communities": []string{bgpMobilityCommunitySourceCapture},
-		},
 		{
 			"prefix":      "10.88.60.4/32",
 			"nextHop":     "10.99.0.2",
@@ -2437,7 +2421,6 @@ func TestControllerBGPCaptureCandidateNextHopsExcludeProviderCapturePaths(t *tes
 	}
 	saveBGPStatus(t, store, map[string][]string{
 		"10.88.60.4/32":  {"10.99.0.2"},
-		"10.88.60.12/32": {"10.99.0.5"},
 		"10.88.60.13/32": {"10.99.0.4"},
 	}, prefixes, nil)
 
@@ -2445,9 +2428,6 @@ func TestControllerBGPCaptureCandidateNextHopsExcludeProviderCapturePaths(t *tes
 	got, observed := controller.bgpCaptureCandidateNextHops(spec)
 	if !observed {
 		t.Fatal("bgpCaptureCandidateNextHops observed=false, want prefixes to be authoritative")
-	}
-	if _, ok := got["10.88.60.12/32"]; ok {
-		t.Fatalf("capture candidate next hops = %#v, provider-capture path must not be recaptured", got)
 	}
 	if _, ok := got["10.88.60.4/32"]; ok {
 		t.Fatalf("capture candidate next hops = %#v, router return-route must not be captured", got)
@@ -3681,22 +3661,6 @@ func TestControllerBGPModeRouteTableAdvertisesRouterSelfReturnRouteWithoutCaptur
 		t.Fatalf("self path attrs = %#v, router return-route must not be a mobility owner path", selfPath.Attrs)
 	}
 	pathBySourcePrefix(t, bgp, DynamicSource("cloudedge", "azure-router"), "10.88.60.11/32")
-}
-
-func TestBGPMobilityProviderCapturePathCarriesNodeIdentityOnly(t *testing.T) {
-	attrs := bgpMobilityPathAttrs(memberPlanInfo{
-		NodeRef: "aws-router-a",
-		Role:    "cloud",
-	}, "provider-capture", true)
-	if !stringSliceContains(attrs.Communities, bgpstate.MobilityNodeIdentityCommunity("aws-router-a")) {
-		t.Fatalf("communities = %#v, want node identity on provider-capture path", attrs.Communities)
-	}
-	if !stringSliceContains(attrs.Communities, bgpMobilityCommunitySourceCapture) {
-		t.Fatalf("communities = %#v, want provider-capture source community", attrs.Communities)
-	}
-	if stringSliceContains(attrs.Communities, bgpMobilityCommunityOwner) || stringSliceContains(attrs.Communities, bgpMobilityCommunityActiveHolder) {
-		t.Fatalf("communities = %#v, provider-capture path must not advertise ownership or active holdership", attrs.Communities)
-	}
 }
 
 func TestControllerBGPModeProviderTrapRejectsUnknownBGPOnlyAddress(t *testing.T) {

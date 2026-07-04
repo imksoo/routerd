@@ -60,7 +60,16 @@ routerd 具有程序內事件匯流排。控制器收到事件後，僅重新評
 `EventRule` 以事件串流為輸入，產生另一個事件串流。
 `DerivedEvent` 從觀測到的狀態合成 asserted / retracted 的虛擬事件。
 
-## 6. Tier S 構成要素
+## 6. CloudEdge SAM capture completion
+
+Provider-secondary-IP capture 的 completion 來自 provider action journal 的事實，
+而不是 provider-capture BGP 廣告。#707/#740 只建立了 source-capture path 的觀測側腳手架；
+生產廣告路徑從未存在。
+
+僅當 fabric 內部確有 capture `/32` 路由需求時，才重新引入 fabric 廣告的 capture `/32`。
+屆時應從可達性契約重新設計：誰發出路由、哪個 RIB 觀測它，以及什麼條件算作 complete。
+
+## 7. Tier S 構成要素
 
 WireGuard、Tailscale、IPsec、VRF、VXLAN 是 Tier S（SOHO / 分支機構）的構成要素。
 WireGuard 與 VXLAN-over-WireGuard 已確認可在支援的 OS 之間互通。
@@ -71,7 +80,7 @@ WireGuard 與 VXLAN-over-WireGuard 已確認可在支援的 OS 之間互通。
 WireGuard、Tailscale、IPsec，以及未來的 SoftEther 整合，分別以獨立的 Kind 新增。
 原因是各自的狀態機差異甚大，若強行合併為多態的單一 Kind，將喪失語義清晰性。
 
-## 7. 待解事項
+## 8. 待解事項
 
 - 具狀態防火牆的正式生產運用。`FirewallRule` 支援 ICMP type 比對、
   多個埠、nftables rate limit、每個來源的連線數限制。

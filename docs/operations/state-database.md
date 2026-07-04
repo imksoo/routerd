@@ -35,14 +35,23 @@ routerctl events --resource DNSResolver/lan-resolver -o json
 CloudEdge SAM failover emits `routerd.mobility.holder.transition` events with
 machine-readable attributes such as `transitionKind`, `address`, `timestamp`,
 `issuedAt`, `fromNode`, `toNode`, `mobilityPathSig`, and
-`assignmentGeneration`. The `seize-complete` transition is the dataplane
-milestone for holder seizure. The `capture-confirmed` transition is the
-provider milestone for confirmed capture.
+`assignmentGeneration`.
 
-For `capture-confirmed`, `timestamp - issuedAt` is the interval from successful
-provider action completion to confirmed-capture observation. It includes
-provider/inventory observation delay and does not include retry history or the
-total elapsed time since the first provider action was issued.
+For provider-secondary-IP capture, `seize-complete` means the provider capture
+assign action succeeded in the action journal for an active `/32`
+`bgpCaptureAssignment`. Its `issuedAt` is the journal `ExecutedAt`, so
+`timestamp - issuedAt` measures the delay from provider acceptance to event
+recording. `T_seize` is the provider acceptance time.
+
+`capture-confirmed` is still discovery-observation based. `T_confirm` is the
+time the local process observed the provider capture taking effect. Together,
+`seize-complete` and `capture-confirmed` measure the accepted-to-effective
+interval.
+
+For non-capture flows such as static-owned, static-handover, and local-home,
+`seize-complete` still comes from the active-holder plus self-identity BGP
+observation. Lab evidence currently proves the capture flow; static and
+handover completion events are not yet proven in a real environment.
 
 ## Backup philosophy
 
