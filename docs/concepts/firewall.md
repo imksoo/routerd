@@ -76,7 +76,7 @@ nfnetlink and stores rows in `firewall-logs.db`. This keeps NFLOG prefixes,
 interfaces, packet family, protocol, addresses, and ports without running a
 separate packet capture process.
 
-The Web Console Firewall tab and `routerctl firewall-logs` read from that
+The Web Console Firewall tab and `routerctl get firewall-logs` read from that
 database. When `FirewallEventLog.spec.enabled` is true, routerd derives the
 `routerd-firewall-logger` service artifact and passes the configured database
 path and NFLOG group to it.

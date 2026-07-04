@@ -66,7 +66,7 @@ Linux では、`routerd-firewall-logger` が nfnetlink から直接その group 
 NFLOG の prefix、インターフェース、パケットファミリー、プロトコル、
 アドレス、ポートをそのまま保存できます。
 
-Web 管理画面のファイアウォールタブと `routerctl firewall-logs` は、このデータベースを読みます。
+Web 管理画面のファイアウォールタブと `routerctl get firewall-logs` は、このデータベースを読みます。
 `FirewallEventLog.spec.enabled` が true のとき、routerd は `routerd-firewall-logger` のサービス成果物を導出し、設定済みのデータベースパスと NFLOG グループを渡します。
 
 accept した通信フローを DPI の観測に使う場合は、`FirewallEventLog.spec.log.copyRange`

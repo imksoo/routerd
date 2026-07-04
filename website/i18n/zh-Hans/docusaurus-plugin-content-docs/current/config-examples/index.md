@@ -79,7 +79,7 @@ DS-Lite 优先 + PPPoE 备援、用于 apply 时锁出保护的 `ManagementAcces
 routerctl validate -f router.yaml --replace
 routerctl plan -f router.yaml --replace
 routerctl apply -f router.yaml --replace
-routerctl status
+routerctl get status
 ```
 
 ## 相关页面

@@ -288,7 +288,7 @@ BGP は **remote オーバーレイ到達性** を決めますが、ローカル
 - `placementGroup` — グループ名
 - `livenessMarkers` — 観測された peer の liveness marker（node-identity community）
 
-これらは `routerctl doctor` の SAM 診断や `routerctl show` で確認できます。
+これらは `routerctl doctor` の SAM 診断や `routerctl get MobilityPool/<name>` で確認できます。
 
 ## 実機で観測された振る舞い（参考）
 

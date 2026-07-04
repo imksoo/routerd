@@ -72,7 +72,7 @@ sudo ./install.sh --with-ndpi \
 既存の `/usr/local/etc/routerd/router.yaml` は上書きしません。
 systemd ホストでは、インストーラーがローカルソケットアクセス用の `routerd` グループを
 作成します。`sudo usermod -aG routerd <user>` で運用者を追加すれば、
-`routerctl status` などのローカル制御ソケット操作を sudo なしで実行できます。
+`routerctl get status` などのローカル制御ソケット操作を sudo なしで実行できます。
 
 ## BGP を動かしているルーターのアップグレード
 
@@ -104,7 +104,7 @@ ECMP も回復します。
 ## root 以外の運用者によるローカル制御ソケットアクセス
 
 読み取り専用の状態ソケット (`/run/routerd/routerd-status.sock`) を使えば、
-root 以外の運用者も sudo なしで `routerctl status` を実行できます。
+root 以外の運用者も sudo なしで `routerctl get status` を実行できます。
 `routerd` グループが存在する場合、routerd はこのソケットを
 `root:routerd`、モード `0o660` で作成します。
 Unix ソケットへの接続には書き込み権限が必要なので、グループのメンバーは
@@ -118,13 +118,13 @@ Unix ソケットへの接続には書き込み権限が必要なので、グル
 `delete` で使用) は、`root` 所有の `0o660` のままです。
 ルーターへの変更操作には、引き続き root / sudo が必要です。
 
-sudo なしで `routerctl status` を使えるようにする手順:
+sudo なしで `routerctl get status` を使えるようにする手順:
 
 1. `sudo usermod -aG routerd <user>` (インストーラーがグループを作成済み)。
 2. グループメンバーシップは**新しい**ログインセッションにのみ適用されます。
    反映前に再ログイン (または新しい SSH セッションを開く / `newgrp routerd` を
    実行) してください。フルの再ログインなしで現在のシェルでグループを使うには、
-   コマンドをラップします: `sg routerd -c 'routerctl status'`。
+   コマンドをラップします: `sg routerd -c 'routerctl get status'`。
 
 `ls -l /run/routerd/routerd-status.sock` で確認します (期待値:
 `srw-rw---- root routerd`)。`id <user>` でグループ一覧に `routerd` が含まれる

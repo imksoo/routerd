@@ -183,10 +183,10 @@ routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
 确认状态。
 
 ```sh
-routerctl status
+routerctl get status
 ```
 
-![routerctl status after first apply](/img/iso-boot/iso-boot-07-routerctl-status.png)
+![routerctl get status after first apply](/img/iso-boot/iso-boot-07-routerctl-status.png)
 
 phase 变为 `Healthy` 即表示成功。
 串行控制台日志中应出现如下状态。
@@ -259,7 +259,7 @@ http_code=200 remote_ip=192.168.99.1 time_total=0.000537
 登录后确认。
 
 ```sh
-routerctl status
+routerctl get status
 ```
 
 不重新执行向导即可收敛则表示成功。
@@ -338,7 +338,7 @@ ls -l /media/routerd-usb/routerd/router.yaml
 确认向导中选择的 LAN 接口。
 
 ```sh
-routerctl status --json
+routerctl get status -o json
 ip addr
 ```
 

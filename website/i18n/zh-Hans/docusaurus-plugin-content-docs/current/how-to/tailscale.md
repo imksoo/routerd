@@ -179,12 +179,12 @@ tailscale debug prefs | jq '.AdvertiseRoutes'
 确认 routerd 端的状态。
 
 ```sh
-routerctl status --json
+routerctl get status -o json
 routerctl get TailscaleNode/edge -o yaml
-routerctl tailscale peers
+routerctl vpn tailscale peers
 ```
 
-`routerctl tailscale peers -o json` 会读取 `tailscale status --json`，并以 routerd CLI 格式显示对等节点列表。Web 管理界面的 Resources 页面也会在 `TailscaleNode` 中显示对等节点的在线状态、relay、最后上线时间及允许的路由。
+`routerctl vpn tailscale peers -o json` 会读取 `tailscale status --json`，并以 routerd CLI 格式显示对等节点列表。Web 管理界面的 Resources 页面也会在 `TailscaleNode` 中显示对等节点的在线状态、relay、最后上线时间及允许的路由。
 
 若要通过 Tailscale 访问 Web 管理界面，请使用路由器的 Tailscale 地址或已审批路由上的地址。
 

@@ -4,7 +4,7 @@ title: Replacing a hypervisor-to-hypervisor overlay VPN
 
 # Replacing a hypervisor-to-hypervisor overlay VPN
 
-![Diagram showing replacement of a hypervisor overlay VPN with WireGuard underlay, optional VXLAN, health checks, MTU verification, and routerctl visibility](/img/diagrams/how-to-pve-overlay.png)
+![Diagram showing replacement of a hypervisor overlay VPN with WireGuard underlay, optional VXLAN, health checks, MTU verification, and CLI visibility](/img/diagrams/how-to-pve-overlay.png)
 
 ## Scenario
 
@@ -94,7 +94,7 @@ ip -d link show vx-bridge1
 ping -M do -s 1342 <peer-overlay-host>        # 1370 - 20 IP - 8 ICMP
 ```
 
-`routerctl diagnose egress` is also useful when the underlay is itself a candidate egress (for example, when traffic to a remote office should ride the WireGuard underlay rather than the public default route).
+`routerctl doctor --probe egress` is also useful when the underlay is itself a candidate egress (for example, when traffic to a remote office should ride the WireGuard underlay rather than the public default route).
 
 ## Operational notes
 

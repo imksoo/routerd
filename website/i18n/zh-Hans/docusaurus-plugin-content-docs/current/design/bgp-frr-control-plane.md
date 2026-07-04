@@ -121,13 +121,13 @@ BGPRouter 必须满足以下所有条件，才会进入 `Healthy` 状态：
 - 配置的地址上有 `:179` 在监听（BGP 守护进程正在运行）。
 - 输出包含生成的 `router bgp <our-asn>` 段落。
 
-任一条件不满足，控制器即呈现对应的原因码（详见 status 字段清单），并保持 `Pending` 或 `Error` 状态。FRR 停止期间，status 路径不得崩溃至 `Healthy`。v2007 的回归问题（所有 FRR 守护进程均处于 `FAILED` 状态，但 routerctl status 仍回报 `Healthy`）正是此 AND 条件所要防范的失败模式。
+任一条件不满足，控制器即呈现对应的原因码（详见 status 字段清单），并保持 `Pending` 或 `Error` 状态。FRR 停止期间，status 路径不得崩溃至 `Healthy`。v2007 的回归问题（所有 FRR 守护进程均处于 `FAILED` 状态，但 routerctl get status 仍回报 `Healthy`）正是此 AND 条件所要防范的失败模式。
 
 ## 验收标准
 
 - Live ISO 启动后，恰好只有一个 `routerd serve` 在运行，无需手动执行 `frr-reload.py`，`vtysh -c "show running-config"` 即出现 BGP `router bgp X`，且 `tcp/179` 正在监听。
 - 启动时 FRR 服务处于 `FAILED` 状态，控制器能检测并自行恢复（无需手动执行 `rc-service frr start`）。
-- FRR 停止期间，或 `:179` 未监听期间，`routerctl status` 不回报 `Healthy`。
+- FRR 停止期间，或 `:179` 未监听期间，`routerctl get status` 不回报 `Healthy`。
 - 在启用 TCP VTY 的 Linux 发行版上不产生回归。
 - `runningConfigMatches` 不将 `failed to connect` 视为一致。
 - 上述所有 status 原因码在对应的失败模式下均能产生。

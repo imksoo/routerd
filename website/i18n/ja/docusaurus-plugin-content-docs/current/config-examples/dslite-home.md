@@ -154,7 +154,7 @@ routerctl apply -f router.yaml --replace
 ## 確認
 
 ```bash
-routerctl status
+routerctl get status
 routerctl describe DHCPv6PrefixDelegation/wan-pd
 routerctl describe IPv6DelegatedAddress/lan-ipv6
 routerctl describe DSLiteTunnel/transix

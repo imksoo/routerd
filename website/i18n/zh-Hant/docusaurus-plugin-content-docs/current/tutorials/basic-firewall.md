@@ -42,7 +42,7 @@ routerd 會在 `routerd_nat` nftables 表中產生規則。
 
 ## conntrack 觀測
 
-routerd 讀取 conntrack，並在 Web 管理介面與 `routerctl connections` 中顯示即時流量。
+routerd 讀取 conntrack，並在 Web 管理介面與 `routerctl get connections` 中顯示即時流量。
 若環境中沒有 `/proc/net/nf_conntrack`，則退回為以 sysctl 為基礎的摘要。不會視為失敗，僅顯示可觀測的範圍。
 
 ## Firewall Kind

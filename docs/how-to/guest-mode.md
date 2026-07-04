@@ -380,7 +380,7 @@ Check these points:
 comes from route policy, NAT44, DS-Lite, DNS, or IP forwarding. Check:
 
 ```sh
-routerctl status
+routerctl get status
 sysctl net.ipv4.ip_forward
 sudo nft list table ip routerd_nat
 ```

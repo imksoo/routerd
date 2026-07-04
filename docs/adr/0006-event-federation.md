@@ -165,9 +165,8 @@ acceptance. Implementation delegated to codex; claude orchestrates + reviews.
 - **✅ DONE (lab-smoke PASS) — Phase 2 — Peer delivery over overlay.** `EventPeer` Kind; `routerd-eventd`
   receiver bound to `wg-hybrid`; HMAC; push + backoff; `event_deliveries`.
   *Accept:* onprem pushes to cloud over `wg-hybrid`; dup push idempotent; bad HMAC
-  rejected; `routerctl event deliveries`; `routerd-eventd` periodically prunes
-  `federation_events` per `EventGroup` retention (`maxAge`/`maxEvents`), and
-  `routerctl federation event prune --dry-run` reports what would be removed.
+  rejected; `routerctl federation event deliveries`; `routerd-eventd` periodically prunes
+  `federation_events` per `EventGroup` retention (`maxAge`/`maxEvents`).
 - **✅ DONE (lab-smoke PASS) — Phase 3 — Subscription-triggered plugin → DynamicConfigPart.**
   `EventSubscription` Kind; event batch → `PluginRequest`; `PluginResult` →
   `DynamicConfigPart` (with `routerd.net/dynamic-source`, `event-id`, `event-group`

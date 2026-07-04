@@ -120,7 +120,7 @@ dnsmasq with `dnsmasq --test` before restarting the service.
 Read routerctl get status:
 
 ```sh
-routerctl status
+routerctl get status
 routerctl get events --limit 20
 ```
 

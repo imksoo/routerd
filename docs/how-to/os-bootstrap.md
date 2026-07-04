@@ -146,4 +146,4 @@ For a remote router, keep the operational order conservative:
 3. Run a dry-run apply.
 4. Confirm management interface and SSH are protected.
 5. Apply.
-6. Verify `routerctl status`, forwarding, DNS, and the Web Console.
+6. Verify `routerctl get status`, forwarding, DNS, and the Web Console.

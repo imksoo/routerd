@@ -363,7 +363,7 @@ sudo tcpdump -eni ens19
 インターネットへの疎通が失敗する場合は、経路方針、NAT44、DS-Lite、DNS、IP forwarding を確認します。
 
 ```sh
-routerctl status
+routerctl get status
 sysctl net.ipv4.ip_forward
 sudo nft list table ip routerd_nat
 ```

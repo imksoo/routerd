@@ -64,7 +64,7 @@ written in YAML directly. For example, `routerd.service`,
 are derived service units. Use this view to inspect those generated resources:
 
 ```bash
-routerctl show derived-resources
+routerctl dynamic list
 ```
 
 The default view is derived from the current config. Old status rows that no

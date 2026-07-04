@@ -4,7 +4,7 @@ title: 替换 Hypervisor 间的 Overlay VPN
 
 # 替换 Hypervisor 间的 Overlay VPN
 
-![以 WireGuard underlay、optional VXLAN、health check、MTU verification 与 routerctl visibility 取代 hypervisor overlay VPN 的流程](/img/diagrams/how-to-pve-overlay.png)
+![以 WireGuard underlay、optional VXLAN、health check、MTU verification 与 CLI visibility 取代 hypervisor overlay VPN 的流程](/img/diagrams/how-to-pve-overlay.png)
 
 ## 适用场景
 
@@ -98,7 +98,7 @@ ip -d link show vx-bridge1
 ping -M do -s 1342 <peer-overlay-host>        # 1370 - 20 IP - 8 ICMP
 ```
 
-`routerctl diagnose egress` 在需要将特定目的地的流量导向 WireGuard underlay 而非公共默认路由时也很有用。
+`routerctl doctor --probe egress` 在需要将特定目的地的流量导向 WireGuard underlay 而非公共默认路由时也很有用。
 
 ## 操作建议
 

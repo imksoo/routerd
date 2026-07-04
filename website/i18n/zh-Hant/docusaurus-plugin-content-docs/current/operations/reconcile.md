@@ -60,7 +60,7 @@ DHCPv4 租約位址是否仍存在於介面上，以及受管理的 nftables 資
 DPI 輔助服務都是衍生的服務 unit。產生的資源可透過以下指令確認。
 
 ```bash
-routerctl show derived-resources
+routerctl dynamic list
 ```
 
 預設只顯示從目前設定衍生的資源。

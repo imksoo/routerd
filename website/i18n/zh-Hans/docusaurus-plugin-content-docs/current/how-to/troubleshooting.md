@@ -5,14 +5,14 @@ slug: /how-to/troubleshooting
 
 # 故障排查
 
-![从 routerctl status 和 dry-run intent 到 OS state、daemon socket、event、DHCP/DNS/conntrack check 的 routerd troubleshooting order](/img/diagrams/how-to-troubleshooting.png)
+![从 routerctl get status 和 dry-run intent 到 OS state、daemon socket、event、DHCP/DNS/conntrack check 的 routerd troubleshooting order](/img/diagrams/how-to-troubleshooting.png)
 
 排查 routerd 问题时，请先区分 **routerd 的意图** 与 **主机的实际状态**。
 确认 routerd 意图达成什么之后，再与 OS 的实际状态进行比对。
 
 ## 基本排查顺序
 
-1. `routerctl status` — 总览全局
+1. `routerctl get status` — 总览全局
 2. `routerctl describe <kind>/<name>` — 深入查看目标资源
 3. `routerctl plan` — 确认下次应用将会发生什么变更
 4. OS 命令（`ip`、`nft`、`ss`、`journalctl`）— 确认实际状态
@@ -86,7 +86,7 @@ nft list table ip routerd_nat
 
 依环境不同，`/proc/net/nf_conntrack` 可能不存在。
 此时 routerd 会退回使用 sysctl 来源的汇总统计。
-即使详细流量清单为空，也不一定代表 NAT 已损坏。请查看 `routerctl connections` 的摘要。
+即使详细流量清单为空，也不一定代表 NAT 已损坏。请查看 `routerctl get connections` 的摘要。
 
 ## 排查时应避免的事项
 

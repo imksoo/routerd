@@ -106,4 +106,4 @@ network:
 3. dry-run で適用を試す。
 4. 管理インターフェースと SSH が保護されていることを確認する。
 5. 適用する。
-6. `routerctl status`、転送、DNS、Web 管理画面を確認する。
+6. `routerctl get status`、転送、DNS、Web 管理画面を確認する。

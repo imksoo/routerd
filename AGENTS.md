@@ -98,8 +98,8 @@ go build ./cmd/routerctl
 routerctl validate -f examples/router-lab.yaml --replace
 routerctl plan -f examples/router-lab.yaml --replace
 routerctl apply -f examples/router-lab.yaml --replace --no-reconcile
-routerctl status
-routerctl show napt --limit 20
+routerctl get status
+routerctl get connections --limit 20
 ```
 
 Default source-install paths:

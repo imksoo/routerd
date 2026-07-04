@@ -115,12 +115,12 @@ BGPRouter 必須滿足以下所有條件，才會進入 `Healthy` 狀態：
 - 設定的位址上有 `:179` 在監聽（BGP 常駐程式正在運行）。
 - 輸出包含產生的 `router bgp <our-asn>` 段落。
 
-任一條件不滿足，控制器即呈現對應的原因碼（詳見 status 欄位清單），並保持 `Pending` 或 `Error` 狀態。FRR 停止期間，status 路徑不得崩潰至 `Healthy`。v2007 的迴歸問題（所有 FRR 常駐程式均處於 `FAILED` 狀態，但 routerctl status 仍回報 `Healthy`）正是此 AND 條件所要防範的失敗模式。
+任一條件不滿足，控制器即呈現對應的原因碼（詳見 status 欄位清單），並保持 `Pending` 或 `Error` 狀態。FRR 停止期間，status 路徑不得崩潰至 `Healthy`。v2007 的迴歸問題（所有 FRR 常駐程式均處於 `FAILED` 狀態，但 routerctl get status 仍回報 `Healthy`）正是此 AND 條件所要防範的失敗模式。
 
 ## 驗收標準
 
 - 啟動時 FRR 服務處於 `FAILED` 狀態，控制器能偵測並自行恢復。
-- FRR 停止期間，或 `:179` 未監聽期間，`routerctl status` 不回報 `Healthy`。
+- FRR 停止期間，或 `:179` 未監聽期間，`routerctl get status` 不回報 `Healthy`。
 - 在啟用 TCP VTY 的 Linux 發行版上不產生迴歸。
 - `runningConfigMatches` 不將 `failed to connect` 視為一致。
 - 上述所有 status 原因碼在對應的失敗模式下均能產生。

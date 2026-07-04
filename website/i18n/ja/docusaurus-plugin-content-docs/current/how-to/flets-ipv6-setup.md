@@ -149,7 +149,7 @@ LAN 範囲から切り出したアドレスを使いたい場合は、`IPv4Stati
 
 ```bash
 routerctl plan -f router.yaml --replace
-routerctl status
+routerctl get status
 
 ip -6 tunnel show
 ip route show default

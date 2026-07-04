@@ -815,7 +815,7 @@ EOF
 - protocol_transparency=$protocol_transparency ftp_active_passive=$ftp_active_passive nfs_rpc=$nfs_rpc bulk_transfer_pmtu=$bulk_transfer_pmtu protocol_source_ip_preserved=$protocol_src_pres protocol_no_nat=$protocol_no_nat
 - l2_loop_free=$l2_loop_free broadcast_storm_absent=$broadcast_storm_absent stp_rstp_stable=$stp_rstp_stable mac_flap_absent=$mac_flap_absent failover_ping_stable=$failover_ping_stable l2_suppression_mechanism_recorded=$l2_mechanism_recorded
 
-TODO(lab-operator): fold provider inventory (routerctl status, BGP mobility paths,
+TODO(lab-operator): fold provider inventory (routerctl get status, BGP mobility paths,
 provider trap action plans, action journal, wg show, packet capture) into this
 bundle, and record the seize/fencing assertions from the failover scenario. See
 collect-evidence.sh.

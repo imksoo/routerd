@@ -109,7 +109,7 @@ If `routerctl` can still reach the lab instances, also capture routerd state
 from each RR and leaf:
 
 ```sh
-routerctl status > "$DST/pre-cleanup/routerctl-status.txt" 2>&1 || true
+routerctl get status > "$DST/pre-cleanup/routerctl-status.txt" 2>&1 || true
 routerctl dynamic list -o yaml > "$DST/pre-cleanup/routerctl-dynamic-list.yaml" 2>&1 || true
 routerctl dynamic render -o yaml > "$DST/pre-cleanup/routerctl-dynamic-render.yaml" 2>&1 || true
 ```

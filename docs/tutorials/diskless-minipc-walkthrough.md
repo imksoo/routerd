@@ -184,10 +184,10 @@ routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
 Check status:
 
 ```sh
-routerctl status
+routerctl get status
 ```
 
-![routerctl status after first apply](/img/iso-boot/iso-boot-07-routerctl-status.png)
+![routerctl get status after first apply](/img/iso-boot/iso-boot-07-routerctl-status.png)
 
 The phase should become `Healthy`.
 The serial log should contain a status response like this:
@@ -262,7 +262,7 @@ At boot, the live ISO:
 Log in and run:
 
 ```sh
-routerctl status
+routerctl get status
 ```
 
 The router should converge without rerunning the wizard.
@@ -341,7 +341,7 @@ after a manual flush.
 Check that the LAN interface is the one selected in the wizard:
 
 ```sh
-routerctl status --json
+routerctl get status -o json
 ip addr
 ```
 

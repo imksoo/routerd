@@ -179,7 +179,7 @@ A BGPRouter is `Healthy` only when ALL of the following are observed:
 If any condition fails, the controller surfaces a reason code (per the
 status field list) and remains in `Pending` or `Error`. The status path
 must never collapse to `Healthy` while FRR is down. The v2007 regression
-- routerctl status reported `Healthy` while every FRR daemon was
+- routerctl get status reported `Healthy` while every FRR daemon was
 `FAILED` - is exactly the failure mode this AND gate prevents.
 
 ## Acceptance criteria
@@ -189,7 +189,7 @@ must never collapse to `Healthy` while FRR is down. The v2007 regression
   without manual `frr-reload.py`.
 - FRR service starting in `FAILED` state at boot is detected and
   recovered by the controller (no manual `rc-service frr start`).
-- `routerctl status` never reports `Healthy` while FRR is down or while
+- `routerctl get status` never reports `Healthy` while FRR is down or while
   `:179` is not listening.
 - Linux distro with TCP VTY enabled regresses neither.
 - `runningConfigMatches` never treats `failed to connect` as match.

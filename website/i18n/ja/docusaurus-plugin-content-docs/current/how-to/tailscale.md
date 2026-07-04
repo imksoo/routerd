@@ -181,12 +181,12 @@ tailscale debug prefs | jq '.AdvertiseRoutes'
 routerd 側の状態を確認します。
 
 ```sh
-routerctl status --json
+routerctl get status -o json
 routerctl get TailscaleNode/edge -o yaml
-routerctl tailscale peers
+routerctl vpn tailscale peers
 ```
 
-`routerctl tailscale peers -o json` は `tailscale status --json` を読み、ピア一覧を routerd の CLI 形式で表示します。Web 管理画面のリソース画面でも、`TailscaleNode` にピアのオンライン状態、relay、last seen、許可された経路を表示します。
+`routerctl vpn tailscale peers -o json` は `tailscale status --json` を読み、ピア一覧を routerd の CLI 形式で表示します。Web 管理画面のリソース画面でも、`TailscaleNode` にピアのオンライン状態、relay、last seen、許可された経路を表示します。
 
 Web 管理画面を Tailscale 経由で見たい場合は、ルーターの Tailscale アドレス、または承認済みの経路上のアドレスで確認します。
 

@@ -854,7 +854,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}
 	// The status API is read-only. If a routerd group exists, hand the socket
 	// to it (root:routerd, 0o660) so non-root operators in that group can run
-	// `routerctl status` without sudo. Otherwise fall back to world-accessible
+	// `routerctl get status` without sudo. Otherwise fall back to world-accessible
 	// so non-root tooling keeps working. Done in-process so it does not depend
 	// on the unit's Group= setting.
 	groupOwnStatusSocket(*statusSocketPath)

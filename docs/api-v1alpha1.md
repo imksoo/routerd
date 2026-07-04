@@ -391,7 +391,7 @@ routerd maps the resource specs directly to typed GoBGP API objects over a
 local gRPC Unix socket and observes status through `ListPeer` and `ListPath`;
 it does not render FRR text config, run `frr-reload.py`, parse `vtysh`, or use
 GoBGP's file configuration format. `apply` renders host artifacts only
-and reports BGP as serve-managed. `routerctl show bgp` summarizes routers,
+and reports BGP as serve-managed. `routerctl get BGPRouter` summarizes routers,
 peers, message counters, route selection state, and last errors from stored
 GoBGP observation.
 Prefix status includes `best`, `valid`, `installed`, `stale`, `nextHop`, and
@@ -497,7 +497,7 @@ it. `spec.hostname` can publish VIPs into matching DNSResolver-served `DNSZone`
 records; IPv4 VIPs create A records and IPv6 VIPs create AAAA records. Set
 `spec.externalDNS: true` when the name is owned by an outside DNS system; routerd
 will keep validating the hostname syntax but will not try to publish it or warn
-about missing DNSZone coverage. `routerctl show vrrp` shows role, priority,
+about missing DNSZone coverage. `routerctl get VirtualAddress` shows role, priority,
 peers, and transition age. NixOS remains groundwork until a native
 service-manager module owns the same host artifacts.
 
@@ -556,21 +556,20 @@ listen-port collisions between `IngressService`, `LocalServiceRedirect`, and
 routerd-managed local daemons on the same protocol/interface. `spec.hostname`
 can also publish the listen address into matching DNSResolver-served `DNSZone`
 records. Set `spec.externalDNS: true` when AD DNS or another external DNS system
-owns the name. `routerctl show ingress` shows active backend and per-backend
-health; `routerctl show ingress --verbose` also samples the live dataplane
-(`ip_forward`, nftables DNAT/SNAT rule counts, and matching conntrack flows).
-The `DETAIL` column reports `hairpinMode`, whether hairpin is required, and
-whether the expected nftables SNAT rule is present or missing.
+owns the name. `routerctl get IngressService` shows active backend,
+per-backend health, `hairpinMode`, whether hairpin is required, and whether the
+expected nftables SNAT rule is present or missing. Inspect host `ip`, `nft`, and
+conntrack state directly when debugging live dataplane behavior.
 Ingress, NAT-like resources, DS-Lite, IPv6 PD/RA, and routing resources derive
 the runtime sysctls they need, including forwarding, redirect suppression,
 reverse-path-filter exceptions, and per-interface RA acceptance. `routerd
 apply` plans and renders those derived settings but mutates the host only
 for explicit `Sysctl` / `SysctlProfile` escape hatches; `routerd serve` applies
 the derived runtime settings during controller reconcile. During
-maintenance, `routerctl drain ingress/<service> backend=<name>
+maintenance, `routerctl ingress drain ingress/<service> backend=<name>
 --duration 10m` marks a backend as drained in the runtime state store. The
 controller treats it as unhealthy with reason `Drained` until the duration
-expires or `routerctl undrain ingress/<service> backend=<name>` clears the
+expires or `routerctl ingress undrain ingress/<service> backend=<name>` clears the
 state.
 
 `IPAddressSet` writes literal IPv4/IPv6 addresses into nftables named sets when

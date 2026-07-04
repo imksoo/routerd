@@ -71,7 +71,7 @@ and writes `/usr/local/etc/routerd/router.yaml.sample`.
 It never overwrites an existing `/usr/local/etc/routerd/router.yaml`.
 On systemd hosts, the installer creates the `routerd` group for local socket
 access. Add an operator with `sudo usermod -aG routerd <user>` to allow
-`routerctl status` and other local control socket operations without sudo.
+`routerctl get status` and other local control socket operations without sudo.
 
 ## Upgrading a router that runs BGP
 
@@ -99,7 +99,7 @@ wait it out; the peer establishes and ECMP returns on its own.
 ## Local control socket access for non-root operators
 
 The read-only status socket (`/run/routerd/routerd-status.sock`) lets non-root
-operators run `routerctl status` without sudo. When a `routerd` group exists,
+operators run `routerctl get status` without sudo. When a `routerd` group exists,
 routerd hands that socket to it (`root:routerd`, mode `0o660`); connecting to a
 unix socket needs write access, so members get read+write. routerd sets this
 group ownership itself when it creates the socket, so it does **not** depend on
@@ -110,13 +110,13 @@ The read-write control socket (`/run/routerd/routerd.sock`, used by
 `routerctl apply`/`delete`) stays `root`-owned `0o660`: mutating the router
 still requires root/sudo.
 
-To give an operator sudo-less `routerctl status`:
+To give an operator sudo-less `routerctl get status`:
 
 1. `sudo usermod -aG routerd <user>` (the installer already created the group).
 2. Group membership only applies to **new** login sessions. Re-login (or open a
    new SSH session / run `newgrp routerd`) before it takes effect. To use the
    group in the current shell without a full re-login, wrap the command:
-   `sg routerd -c 'routerctl status'`.
+   `sg routerd -c 'routerctl get status'`.
 
 Verify with `ls -l /run/routerd/routerd-status.sock` (expect
 `srw-rw---- root routerd`) and `id <user>` (expect `routerd` in the group list).

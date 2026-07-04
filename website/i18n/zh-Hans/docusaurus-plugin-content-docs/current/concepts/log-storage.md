@@ -54,7 +54,7 @@ spec:
 确认时使用以下命令：
 
 ```sh
-routerctl dns-queries --since 1h
-routerctl traffic-flows --since 1h
-routerctl firewall-logs --since 24h --action drop
+routerctl get dns-queries --limit 100
+routerctl get traffic-flows --limit 100
+routerctl get firewall-logs --limit 100
 ```

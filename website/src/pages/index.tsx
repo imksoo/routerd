@@ -109,7 +109,7 @@ const copy = {
       'routerd exposes runtime state through multiple interfaces. No guessing.',
     observabilityItems: [
       {
-        title: 'routerctl status / events / doctor',
+        title: 'routerctl get status / get events / doctor',
         description:
           'CLI inspection of resource phases, event history, and automated health diagnostics.',
       },
@@ -215,7 +215,7 @@ const copy = {
       'routerd は複数のインターフェースで実行時状態を公開します。推測は不要です。',
     observabilityItems: [
       {
-        title: 'routerctl status / events / doctor',
+        title: 'routerctl get status / get events / doctor',
         description:
           'リソースフェーズ、イベント履歴、自動ヘルス診断の CLI 確認。',
       },

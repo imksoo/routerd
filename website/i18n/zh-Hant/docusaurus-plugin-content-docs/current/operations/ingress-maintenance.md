@@ -4,14 +4,14 @@ title: Ingress maintenance
 
 # Ingress 維護
 
-![Diagram showing ingress maintenance with routerctl drain writing temporary state, reconcile marking a backend drained and unhealthy, existing conntrack preserved, and undrain or expiry restoring service](/img/diagrams/operations-ingress-maintenance.png)
+![Diagram showing ingress maintenance with routerctl ingress drain writing temporary state, reconcile marking a backend drained and unhealthy, existing conntrack preserved, and undrain or expiry restoring service](/img/diagrams/operations-ingress-maintenance.png)
 
 若想在不編輯路由器 YAML 的情況下，暫時將 `IngressService` 的後端移除，
-請使用 `routerctl drain`。
+請使用 `routerctl ingress drain`。
 
 ```sh
-routerctl drain ingress/kubernetes-api backend=cp-01 --duration 10m
-routerctl show ingress
+routerctl ingress drain ingress/kubernetes-api backend=cp-01 --duration 10m
+routerctl get IngressService
 ```
 
 排液（drain）狀態儲存於 routerd 的狀態資料庫。
@@ -22,5 +22,5 @@ routerctl show ingress
 `--duration` 到期後自動恢復。若要立即恢復，請執行：
 
 ```sh
-routerctl undrain ingress/kubernetes-api backend=cp-01
+routerctl ingress undrain ingress/kubernetes-api backend=cp-01
 ```

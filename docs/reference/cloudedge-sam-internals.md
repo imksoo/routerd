@@ -330,8 +330,8 @@ A `MobilityPool` status surfaces placement-related observations:
 - `placementGroup` — the group name
 - `livenessMarkers` — observed peer liveness markers (node-identity communities)
 
-These are visible via the `routerctl doctor` SAM diagnostics and `routerctl
-show`.
+These are visible via the `routerctl doctor` SAM diagnostics and
+`routerctl get MobilityPool/<name>`.
 
 ## Behavior observed on real hardware (for reference)
 

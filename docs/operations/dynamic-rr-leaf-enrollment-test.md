@@ -611,7 +611,7 @@ Full topology pass criteria:
   toward both rr-a and rr-b;
 - both RRs accept BGP sessions through `BGPDynamicPeer/cloudedge-leaves`;
 - each RR learns only the authorized MobilityPool `/32` routes;
-- `routerctl status BGPDynamicPeer/cloudedge-leaves` shows the connected leaf
+- `routerctl get BGPDynamicPeer/cloudedge-leaves` shows the connected leaf
   under `discoveredPeers`, maps it to `enrollmentClaimRef`, and reports zero
   rejected routes for the positive path;
 - default routes, underlay/management prefixes, and unauthorized `/32` claims

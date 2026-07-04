@@ -5,13 +5,13 @@ slug: /how-to/troubleshooting
 
 # Troubleshooting
 
-![Diagram showing routerd troubleshooting order from routerctl status and plan intent to OS state, daemon sockets, events, and common DHCP, DNS, and conntrack checks](/img/diagrams/how-to-troubleshooting.png)
+![Diagram showing routerd troubleshooting order from routerctl get status and plan intent to OS state, daemon sockets, events, and common DHCP, DNS, and conntrack checks](/img/diagrams/how-to-troubleshooting.png)
 
 When investigating routerd, first separate **what routerd intends** from **what the host actually has**. Verify routerd's view, then compare against the OS state.
 
 ## Triage order
 
-1. `routerctl status` — overall view.
+1. `routerctl get status` — overall view.
 2. `routerctl describe <kind>/<name>` — focus on a specific resource.
 3. `routerctl plan` — what would change next.
 4. OS commands (`ip`, `nft`, `ss`, `journalctl`) — actual host state.
@@ -79,7 +79,7 @@ If the AFTR FQDN does not resolve, check the `DNSResolver` `forward` source for 
 
 ## conntrack
 
-Some environments do not expose `/proc/net/nf_conntrack`. In that case, routerd falls back to sysctl-derived counters. An empty per-flow list does not necessarily mean NAT is broken; check the `routerctl connections` summary instead.
+Some environments do not expose `/proc/net/nf_conntrack`. In that case, routerd falls back to sysctl-derived counters. An empty per-flow list does not necessarily mean NAT is broken; check the `routerctl get connections` summary instead.
 
 ## Things to avoid during diagnosis
 

@@ -5,7 +5,7 @@ slug: /operations/state-database
 
 # 状态数据库
 
-![Diagram showing routerd state database paths, daemon lease and event files, routerctl event access, and backup philosophy where YAML remains authoritative and event databases provide forensic history](/img/diagrams/operations-state-database.png)
+![Diagram showing routerd state database paths, daemon lease and event files, routerctl get events access, and backup philosophy where YAML remains authoritative and event databases provide forensic history](/img/diagrams/operations-state-database.png)
 
 routerd 将状态与事件持久化至 SQLite。每个守护进程除此之外还各自拥有自身的租约或状态文件与事件日志。
 
