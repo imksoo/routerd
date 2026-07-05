@@ -419,6 +419,7 @@ func planCaptureActionPlans(in bgpDeliveryPlannerInput, candidates map[string]bg
 	}
 	stampBGPClaimFenceActionPlans(plans, claim)
 	assignments, assignmentSeq := stampBGPAssignmentFenceActionPlans(plans, in.PoolName, in.Self, decisionsByAddress(in.Decisions), claim, in.CaptureAssignments, in.CaptureAssignmentSeq, in.Now)
+	stampBGPProviderTransitionFences(plans, in.Self, "", in.ActionJournal, in.ObservedSelfCaptures, in.ObservedSelfIPsOK, in.ObservedSelfAt)
 	plans = filterRetainedStaleCaptureUnassignPlans(plans, retainedStaleCaptureAddresses(in.Decisions, in.InstalledNextHops))
 	if !in.SuppressDeprovision {
 		observed, err := observedSelfStaleCaptureActionPlans(in, candidates)
