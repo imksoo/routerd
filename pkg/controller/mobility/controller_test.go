@@ -2845,6 +2845,211 @@ func TestPlanBGPMobilityDeliveryKeepsAssignmentGenerationAcrossGroupClaimChange(
 	}
 }
 
+func TestPlanBGPMobilityDeliveryKeepsAssignmentGenerationAcrossPreviousHolderChange(t *testing.T) {
+	now := time.Date(2026, 7, 5, 12, 20, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-b"]
+	address := "10.88.60.10/32"
+	previous := bgpCaptureAssignment{
+		Address:        address,
+		Phase:          "Active",
+		Generation:     "aws-edge/10-88-60-10-32/7",
+		Seq:            7,
+		ClaimEpoch:     "aws-edge/1",
+		DesiredHolder:  self.NodeRef,
+		PreviousHolder: "",
+		IssuedAt:       now.Add(-time.Minute),
+		RenewedAt:      now.Add(-time.Minute),
+		LeaseUntil:     now.Add(DefaultLeaseTTL),
+	}
+	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+		PoolName: "cloudedge",
+		Source:   DynamicSource("cloudedge", self.NodeRef),
+		Self:     self,
+		Members:  members,
+		Spec:     spec,
+		Decisions: []ownershipDecision{{
+			Address:           address,
+			Class:             ownershipClassRemoteHomeOwned,
+			HomeOwnerNode:     "azure-router",
+			CaptureHolderNode: "aws-router-a",
+		}},
+		Placement: PlacementDecision{
+			Group:                 "aws-edge",
+			Active:                true,
+			ActiveNode:            self.NodeRef,
+			Seize:                 true,
+			ActiveIdentityNodeRef: "aws-router-a",
+			Reason:                "holder-renew",
+		},
+		InstalledNextHops: map[string][]string{address: {"10.99.0.3"}},
+		Profiles:          map[string]api.CloudProviderProfileSpec{"aws-provider": {Provider: "aws"}},
+		CaptureClaim: bgpCaptureClaim{
+			Group:          "aws-edge",
+			Phase:          "Active",
+			Generation:     "aws-edge/1",
+			EpochSeq:       1,
+			DesiredHolder:  self.NodeRef,
+			PreviousHolder: "",
+			Reason:         "holder-renew",
+			LeaseUntil:     now.Add(DefaultLeaseTTL),
+		},
+		CaptureAssignments:   map[string]bgpCaptureAssignment{address: previous},
+		CaptureAssignmentSeq: 7,
+		ObservedSelfCaptures: map[string]bool{},
+		ObservedSelfIPsOK:    true,
+		RIBObserved:          true,
+		Now:                  now,
+	})
+	if err != nil {
+		t.Fatalf("planBGPMobilityDelivery: %v", err)
+	}
+	assign := findActionPlanByAddress(delivery.ActionPlans, actionAssignSecondaryIP, address)
+	if assign == nil {
+		t.Fatalf("action plans = %#v, want assign", delivery.ActionPlans)
+	}
+	if got := assign.Parameters[captureAssignmentGenerationParam]; got != previous.Generation {
+		t.Fatalf("assignment generation = %q, want previous %q when only PreviousHolder changes", got, previous.Generation)
+	}
+	if !strings.Contains(assign.IdempotencyKey, ":assigngen:"+safeName(previous.Generation)) {
+		t.Fatalf("assign key = %q, want previous assignment generation fence", assign.IdempotencyKey)
+	}
+	if got := delivery.CaptureAssignments[address].PreviousHolder; got != "aws-router-a" {
+		t.Fatalf("assignment previousHolder = %q, want metadata updated", got)
+	}
+	if got := assign.Parameters[captureAssignmentPreviousHolderParam]; got != "aws-router-a" {
+		t.Fatalf("assign parameters = %#v, want updated previous holder metadata", assign.Parameters)
+	}
+	if delivery.CaptureAssignmentSeq != 7 {
+		t.Fatalf("assignment seq = %d, want unchanged 7", delivery.CaptureAssignmentSeq)
+	}
+}
+
+func TestPlanBGPMobilityDeliveryCreatesNewAssignmentGenerationWhenDesiredHolderChanges(t *testing.T) {
+	now := time.Date(2026, 7, 5, 12, 25, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-b"]
+	address := "10.88.60.10/32"
+	previous := bgpCaptureAssignment{
+		Address:        address,
+		Phase:          "Active",
+		Generation:     "aws-edge/10-88-60-10-32/7",
+		Seq:            7,
+		ClaimEpoch:     "aws-edge/1",
+		DesiredHolder:  "aws-router-a",
+		PreviousHolder: "azure-router",
+		IssuedAt:       now.Add(-time.Minute),
+		RenewedAt:      now.Add(-time.Minute),
+		LeaseUntil:     now.Add(DefaultLeaseTTL),
+	}
+	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+		PoolName: "cloudedge",
+		Source:   DynamicSource("cloudedge", self.NodeRef),
+		Self:     self,
+		Members:  members,
+		Spec:     spec,
+		Decisions: []ownershipDecision{{
+			Address:       address,
+			Class:         ownershipClassRemoteHomeOwned,
+			HomeOwnerNode: "azure-router",
+		}},
+		Placement: PlacementDecision{
+			Group:                 "aws-edge",
+			Active:                true,
+			ActiveNode:            self.NodeRef,
+			Seize:                 true,
+			ActiveIdentityNodeRef: "aws-router-a",
+			Reason:                "hard-failure",
+		},
+		InstalledNextHops:    map[string][]string{address: {"10.99.0.3"}},
+		Profiles:             map[string]api.CloudProviderProfileSpec{"aws-provider": {Provider: "aws"}},
+		CaptureAssignments:   map[string]bgpCaptureAssignment{address: previous},
+		CaptureAssignmentSeq: 7,
+		ObservedSelfCaptures: map[string]bool{},
+		ObservedSelfIPsOK:    true,
+		RIBObserved:          true,
+		Now:                  now,
+	})
+	if err != nil {
+		t.Fatalf("planBGPMobilityDelivery: %v", err)
+	}
+	assign := findActionPlanByAddress(delivery.ActionPlans, actionAssignSecondaryIP, address)
+	if assign == nil {
+		t.Fatalf("action plans = %#v, want assign", delivery.ActionPlans)
+	}
+	if got := assign.Parameters[captureAssignmentGenerationParam]; got == previous.Generation {
+		t.Fatalf("assignment generation = %q, want new generation when DesiredHolder changes", got)
+	}
+	if delivery.CaptureAssignmentSeq <= previous.Seq {
+		t.Fatalf("assignment seq = %d, want after previous seq %d", delivery.CaptureAssignmentSeq, previous.Seq)
+	}
+}
+
+func TestPlanBGPMobilityDeliveryCreatesNewAssignmentGenerationWhenPhaseChanges(t *testing.T) {
+	now := time.Date(2026, 7, 5, 12, 30, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-b"]
+	address := "10.88.60.10/32"
+	previous := bgpCaptureAssignment{
+		Address:       address,
+		Phase:         "Released",
+		Generation:    "aws-edge/10-88-60-10-32/7",
+		Seq:           7,
+		ClaimEpoch:    "aws-edge/1",
+		DesiredHolder: self.NodeRef,
+		IssuedAt:      now.Add(-time.Minute),
+		RenewedAt:     now.Add(-time.Minute),
+		LeaseUntil:    now.Add(DefaultLeaseTTL),
+	}
+	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+		PoolName: "cloudedge",
+		Source:   DynamicSource("cloudedge", self.NodeRef),
+		Self:     self,
+		Members:  members,
+		Spec:     spec,
+		Decisions: []ownershipDecision{{
+			Address:       address,
+			Class:         ownershipClassRemoteHomeOwned,
+			HomeOwnerNode: "azure-router",
+		}},
+		Placement: PlacementDecision{
+			Group:                 "aws-edge",
+			Active:                true,
+			ActiveNode:            self.NodeRef,
+			Seize:                 true,
+			ActiveIdentityNodeRef: "aws-router-a",
+			Reason:                "hard-failure",
+		},
+		InstalledNextHops:    map[string][]string{address: {"10.99.0.3"}},
+		Profiles:             map[string]api.CloudProviderProfileSpec{"aws-provider": {Provider: "aws"}},
+		CaptureAssignments:   map[string]bgpCaptureAssignment{address: previous},
+		CaptureAssignmentSeq: 7,
+		ObservedSelfCaptures: map[string]bool{},
+		ObservedSelfIPsOK:    true,
+		RIBObserved:          true,
+		Now:                  now,
+	})
+	if err != nil {
+		t.Fatalf("planBGPMobilityDelivery: %v", err)
+	}
+	assign := findActionPlanByAddress(delivery.ActionPlans, actionAssignSecondaryIP, address)
+	if assign == nil {
+		t.Fatalf("action plans = %#v, want assign", delivery.ActionPlans)
+	}
+	if got := assign.Parameters[captureAssignmentGenerationParam]; got == previous.Generation {
+		t.Fatalf("assignment generation = %q, want new generation when Phase changes", got)
+	}
+	if delivery.CaptureAssignmentSeq <= previous.Seq {
+		t.Fatalf("assignment seq = %d, want after previous seq %d", delivery.CaptureAssignmentSeq, previous.Seq)
+	}
+}
+
 func TestPlanBGPMobilityDeliveryPrunesNonDesiredCaptureAssignment(t *testing.T) {
 	now := time.Date(2026, 6, 26, 2, 58, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()
@@ -3440,6 +3645,234 @@ func TestBGPProviderDeprovisionUnassignDoesNotRecapture(t *testing.T) {
 	stampBGPProviderTransitionFence(plans, self, address, journal, map[string]bool{address: true}, true, now)
 	if plans[0].Parameters[bgpTrapTransitionParam] != "" || strings.Contains(plans[0].IdempotencyKey, ":transition:") {
 		t.Fatalf("plan = %#v, deprovision unassign must not stamp transition recapture", plans[0])
+	}
+}
+
+func TestPlanBGPMobilityDeliveryUsesCanonicalAssignKeyBeforeTransitionRetry(t *testing.T) {
+	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-b"]
+	address := "10.88.60.10/32"
+	targetRef := providerCaptureRefFromCapture(self.Capture, self.CaptureTarget)
+	journal := []routerstate.ActionExecutionRecord{
+		providerCaptureActionRecordForPlannerTest(t, 41, actionUnassignSecondaryIP, address, self.Capture.ProviderRef, targetRef, self.NodeRef, now.Add(-10*time.Second), map[string]string{
+			bgpPathSigParam:    "deprovision:" + address + ":observed-self-stale:since=" + now.Add(-time.Minute).Format(time.RFC3339Nano),
+			"deprovisionSince": now.Add(-time.Minute).Format(time.RFC3339Nano),
+		}),
+	}
+
+	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+		PoolName: "cloudedge",
+		Source:   DynamicSource("cloudedge", self.NodeRef),
+		Self:     self,
+		Members:  members,
+		Spec:     spec,
+		Decisions: []ownershipDecision{{
+			Address:       address,
+			Class:         ownershipClassRemoteHomeOwned,
+			HomeOwnerNode: "azure-router",
+		}},
+		Placement: PlacementDecision{
+			Group:                 "aws-edge",
+			Active:                true,
+			ActiveNode:            self.NodeRef,
+			Seize:                 true,
+			ActiveIdentityNodeRef: "aws-router-a",
+			Reason:                "leaf-rejoin",
+		},
+		InstalledNextHops:    map[string][]string{address: {"10.99.0.3"}},
+		Profiles:             map[string]api.CloudProviderProfileSpec{"aws-provider": {Provider: "aws"}},
+		ActionJournal:        journal,
+		ObservedSelfCaptures: map[string]bool{},
+		ObservedSelfIPsOK:    true,
+		ObservedSelfAt:       now,
+		RIBObserved:          true,
+		Now:                  now,
+	})
+	if err != nil {
+		t.Fatalf("planBGPMobilityDelivery: %v", err)
+	}
+	assign := findActionPlanByAddress(delivery.ActionPlans, actionAssignSecondaryIP, address)
+	if assign == nil {
+		t.Fatalf("action plans = %#v, want assign", delivery.ActionPlans)
+	}
+	if assign.Parameters[bgpTrapTransitionParam] != "" || strings.Contains(assign.IdempotencyKey, ":transition:") {
+		t.Fatalf("assign key/parameters = %q %#v, fresh assignment must use canonical key before transition retry", assign.IdempotencyKey, assign.Parameters)
+	}
+}
+
+func TestPlanBGPMobilityDeliverySuppressesProviderMissingRetryBeforeHold(t *testing.T) {
+	now := time.Date(2026, 7, 5, 12, 5, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-a"]
+	address := "10.88.60.10/32"
+	targetRef := providerCaptureRefFromCapture(self.Capture, self.CaptureTarget)
+	journal := []routerstate.ActionExecutionRecord{
+		providerCaptureActionRecordForPlannerTest(t, 51, actionAssignSecondaryIP, address, self.Capture.ProviderRef, targetRef, self.NodeRef, now.Add(-5*time.Second), nil),
+	}
+
+	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+		PoolName: "cloudedge",
+		Source:   DynamicSource("cloudedge", self.NodeRef),
+		Self:     self,
+		Members:  members,
+		Spec:     spec,
+		Decisions: []ownershipDecision{{
+			Address:       address,
+			Class:         ownershipClassRemoteHomeOwned,
+			HomeOwnerNode: "azure-router",
+		}},
+		Placement:            PlacementDecision{Group: "aws-edge", Active: true, ActiveNode: self.NodeRef},
+		InstalledNextHops:    map[string][]string{address: {"10.99.0.3"}},
+		Profiles:             map[string]api.CloudProviderProfileSpec{"aws-provider": {Provider: "aws"}},
+		ActionJournal:        journal,
+		ObservedSelfCaptures: map[string]bool{},
+		ObservedSelfIPsOK:    true,
+		ObservedSelfAt:       now,
+		RIBObserved:          true,
+		Now:                  now,
+	})
+	if err != nil {
+		t.Fatalf("planBGPMobilityDelivery: %v", err)
+	}
+	assign := findActionPlanByAddress(delivery.ActionPlans, actionAssignSecondaryIP, address)
+	if assign == nil {
+		t.Fatalf("action plans = %#v, want retained canonical assign plan", delivery.ActionPlans)
+	}
+	if assign.Parameters[bgpTrapTransitionParam] != "" || strings.Contains(assign.IdempotencyKey, ":transition:provider-missing-") {
+		t.Fatalf("assign key/parameters = %q %#v, provider-missing retry must wait for hold", assign.IdempotencyKey, assign.Parameters)
+	}
+}
+
+func TestPlanBGPMobilityDeliveryRetriesProviderMissingAfterCanonicalSucceededAndHoldElapsed(t *testing.T) {
+	now := time.Date(2026, 7, 5, 12, 10, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-a"]
+	address := "10.88.60.10/32"
+	targetRef := providerCaptureRefFromCapture(self.Capture, self.CaptureTarget)
+	journal := []routerstate.ActionExecutionRecord{
+		providerCaptureActionRecordForPlannerTest(t, 61, actionAssignSecondaryIP, address, self.Capture.ProviderRef, targetRef, self.NodeRef, now.Add(-bgpProviderMissingRetryHold-time.Second), nil),
+	}
+
+	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+		PoolName: "cloudedge",
+		Source:   DynamicSource("cloudedge", self.NodeRef),
+		Self:     self,
+		Members:  members,
+		Spec:     spec,
+		Decisions: []ownershipDecision{{
+			Address:       address,
+			Class:         ownershipClassRemoteHomeOwned,
+			HomeOwnerNode: "azure-router",
+		}},
+		Placement:            PlacementDecision{Group: "aws-edge", Active: true, ActiveNode: self.NodeRef},
+		InstalledNextHops:    map[string][]string{address: {"10.99.0.3"}},
+		Profiles:             map[string]api.CloudProviderProfileSpec{"aws-provider": {Provider: "aws"}},
+		ActionJournal:        journal,
+		ObservedSelfCaptures: map[string]bool{},
+		ObservedSelfIPsOK:    true,
+		ObservedSelfAt:       now,
+		RIBObserved:          true,
+		Now:                  now,
+	})
+	if err != nil {
+		t.Fatalf("planBGPMobilityDelivery: %v", err)
+	}
+	assign := findActionPlanByAddress(delivery.ActionPlans, actionAssignSecondaryIP, address)
+	if assign == nil {
+		t.Fatalf("action plans = %#v, want provider-missing retry assign", delivery.ActionPlans)
+	}
+	if !strings.Contains(assign.IdempotencyKey, ":transition:provider-missing-61") || assign.Parameters[bgpTrapTransitionParam] != "provider-missing-61" {
+		t.Fatalf("assign key/parameters = %q %#v, want provider-missing retry after hold", assign.IdempotencyKey, assign.Parameters)
+	}
+}
+
+func TestPlanBGPMobilityDeliveryAllowsAfterUnassignRecaptureWhenCanonicalSucceeded(t *testing.T) {
+	now := time.Date(2026, 7, 5, 12, 15, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	members := plannerMembers(spec.Members)
+	self := members["aws-router-a"]
+	address := "10.88.60.10/32"
+	targetRef := providerCaptureRefFromCapture(self.Capture, self.CaptureTarget)
+	journal := []routerstate.ActionExecutionRecord{
+		providerCaptureActionRecordForPlannerTest(t, 71, actionAssignSecondaryIP, address, self.Capture.ProviderRef, targetRef, self.NodeRef, now.Add(-time.Minute), nil),
+		providerCaptureActionRecordForPlannerTest(t, 72, actionUnassignSecondaryIP, address, self.Capture.ProviderRef, targetRef, self.NodeRef, now.Add(-time.Second), nil),
+	}
+
+	delivery, err := planBGPMobilityDelivery(bgpDeliveryPlannerInput{
+		PoolName: "cloudedge",
+		Source:   DynamicSource("cloudedge", self.NodeRef),
+		Self:     self,
+		Members:  members,
+		Spec:     spec,
+		Decisions: []ownershipDecision{{
+			Address:       address,
+			Class:         ownershipClassRemoteHomeOwned,
+			HomeOwnerNode: "azure-router",
+		}},
+		Placement:            PlacementDecision{Group: "aws-edge", Active: true, ActiveNode: self.NodeRef},
+		InstalledNextHops:    map[string][]string{address: {"10.99.0.3"}},
+		Profiles:             map[string]api.CloudProviderProfileSpec{"aws-provider": {Provider: "aws"}},
+		ActionJournal:        journal,
+		ObservedSelfCaptures: map[string]bool{},
+		ObservedSelfIPsOK:    true,
+		ObservedSelfAt:       now,
+		RIBObserved:          true,
+		Now:                  now,
+	})
+	if err != nil {
+		t.Fatalf("planBGPMobilityDelivery: %v", err)
+	}
+	assign := findActionPlanByAddress(delivery.ActionPlans, actionAssignSecondaryIP, address)
+	if assign == nil {
+		t.Fatalf("action plans = %#v, want after-unassign recapture assign", delivery.ActionPlans)
+	}
+	if !strings.Contains(assign.IdempotencyKey, ":transition:after-unassign-72") || assign.Parameters[bgpTrapTransitionParam] != "after-unassign-72" {
+		t.Fatalf("assign key/parameters = %q %#v, want after-unassign recapture despite canonical succeeded", assign.IdempotencyKey, assign.Parameters)
+	}
+}
+
+func providerCaptureActionRecordForPlannerTest(t *testing.T, id int64, action, address, providerRef, nicRef, holder string, at time.Time, params map[string]string) routerstate.ActionExecutionRecord {
+	t.Helper()
+	targetJSON, err := json.Marshal(map[string]string{
+		"address":     address,
+		"nicRef":      nicRef,
+		"providerRef": providerRef,
+	})
+	if err != nil {
+		t.Fatalf("marshal target: %v", err)
+	}
+	if params == nil {
+		params = map[string]string{}
+	}
+	if params[bgpPathSigParam] == "" {
+		params[bgpPathSigParam] = "prefix=" + normalizeAddressString(address) + ";nextHops=10.99.0.3"
+	}
+	if params[captureParamHolder] == "" {
+		params[captureParamHolder] = holder
+	}
+	paramsJSON, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	return routerstate.ActionExecutionRecord{
+		ID:             id,
+		IdempotencyKey: strings.Join([]string{"test", providerRef, nicRef, action, address, fmt.Sprint(id)}, ":"),
+		Provider:       strings.TrimSuffix(providerRef, "-provider"),
+		ProviderRef:    providerRef,
+		Action:         action,
+		TargetJSON:     string(targetJSON),
+		ParametersJSON: string(paramsJSON),
+		Status:         routerstate.ActionSucceeded,
+		ExecutedAt:     at.UTC(),
+		UpdatedAt:      at.UTC(),
 	}
 }
 
