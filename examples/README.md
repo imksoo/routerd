@@ -18,6 +18,7 @@ routerctl plan -f examples/<name>.yaml --replace
 | `basic-dhcp.yaml` | You want to see DHCP client and DHCP server resources without WAN policy. |
 | `dns-local-zone.yaml` | You want a local authoritative DNS zone with static records. |
 | `dns-private-upstream.yaml` | You need conditional DNS forwarding or private upstream resolvers. |
+| `firewall-flow-pinhole.yaml` | You need a UDP reverse-flow pinhole after a known outbound client flow. |
 | `guest-mode.yaml` | You want MAC-based guest isolation that keeps DHCP/DNS/NTP local services available while blocking private-address egress. |
 | `dhcp-lease-sync-ha.yaml` | You want active-to-standby DHCP lease sync gated by a VRRP `VirtualAddress` role. |
 | `telemetry-export.yaml` | You want to send routerd telemetry to an OTLP collector. |

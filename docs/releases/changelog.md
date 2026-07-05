@@ -10,7 +10,52 @@ Versions, however, do not follow Semantic Versioning; routerd uses date-and-time
 release versions in `vYYYYMMDD.HHmm` format.
 The software is at the v1alpha1 stage; releases may contain breaking changes.
 
-## Unreleased
+## v20260705.1158
+
+### Added
+
+- Added `FirewallFlowPinhole` for UDP protocols that require a temporary
+  reverse-path opening after an outbound flow. The rule can learn either the
+  remote address or the local endpoint as its correlation key, and
+  `NAT44FlowDNATPinhole` now provides the matching dynamic DNAT pinhole kind.
+- Added `examples/firewall-flow-pinhole.yaml` as a minimal validated example
+  for a LAN client that needs a short-lived inbound UDP pinhole after sending
+  traffic to a known cloud service.
+
+### Changed
+
+- `routerctl validate` now uses distinct exit codes: `0` for a valid
+  `ValidateResult`, `1` for an invalid candidate config returned by routerd,
+  and `2` for execution or transport errors such as unreadable files or an
+  unreachable daemon.
+
+### Fixed
+
+- DS-Lite resources whose `when` condition is not yet known now keep their
+  dependent resources until the condition can be evaluated, avoiding premature
+  tunnel/resource removal during startup or observation gaps.
+- DHCPv6-PD observed state now updates delegated-address resources, so LAN
+  address derivation follows the bound delegated prefix instead of stale or
+  missing status.
+
+### Known behavior change
+
+- Scripts that inspect `routerctl validate` return codes should be reviewed:
+  invalid config is now `rc=1`, while execution or connection errors are
+  `rc=2`.
+
+### Upgrade notes
+
+- Before upgrading, run the new `routerctl validate` against the site config and
+  run `routerctl plan` to confirm there are no unintended changes.
+- This release was qualified with repository-local checks only: build,
+  tests, example validation, schema checks, website build, render regression, and
+  archive audit A with zero client-address contamination. Netns or live router
+  validation is delegated to each administrator.
+- In BGP environments, compare accepted and advertised prefix counts per peer
+  before and after applying the release. Roll back if any unexpected prefix
+  decrease appears.
+- The rollback baseline for this release is `v20260702.0753`.
 
 ## v20260702.0753
 
