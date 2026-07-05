@@ -2436,7 +2436,6 @@ func bgpProviderActionPlans(poolName, selfNode string, spec api.MobilityPoolSpec
 				return nil, err
 			}
 			stampBGPPathFenceActionPlans(generated, address, candidate.PathSig, self.NodeRef, candidate.LastSeenAt)
-			stampBGPProviderTransitionFence(generated, self, address, actionJournal, observedSelfCaptures, observedSelfCapturesOK, observedSelfAt)
 			stampForwardingDriftFence(generated, forwardingObserved, forwardingEnabled, forwardingObservedAt)
 			plans = append(plans, generated...)
 		}
@@ -3731,6 +3730,9 @@ func shouldAllowBGPTrapReassignment(self memberPlanInfo, address string, previou
 		return false
 	}
 	if observedSelfCapturesOK && !observedSelfCaptures[address] {
+		if !tr.assign {
+			return providerCaptureTransitionAllowsRecapture(tr)
+		}
 		return providerMissingRetryDue(tr, observedSelfAt)
 	}
 	return !tr.assign && providerCaptureTransitionAllowsRecapture(tr)
@@ -3836,8 +3838,7 @@ func stampBGPAssignmentFenceActionPlans(plans []dynamicconfig.ActionPlan, poolNa
 		if existing, ok := previous[address]; ok &&
 			existing.Generation != "" &&
 			existing.Phase == assignment.Phase &&
-			existing.DesiredHolder == assignment.DesiredHolder &&
-			existing.PreviousHolder == assignment.PreviousHolder {
+			existing.DesiredHolder == assignment.DesiredHolder {
 			assignment.Generation = existing.Generation
 			assignment.Seq = existing.Seq
 			assignment.IssuedAt = existing.IssuedAt
@@ -3887,29 +3888,38 @@ func bgpCaptureAssignmentGeneration(poolName, group, address string, seq int64) 
 }
 
 func stampBGPProviderTransitionFence(plans []dynamicconfig.ActionPlan, self memberPlanInfo, address string, journal []routerstate.ActionExecutionRecord, observedSelfCaptures map[string]bool, observedSelfCapturesOK bool, observedSelfAt time.Time) {
-	address = normalizeAddressString(address)
-	if address == "" {
-		return
-	}
+	stampBGPProviderTransitionFences(plans, self, address, journal, observedSelfCaptures, observedSelfCapturesOK, observedSelfAt)
+}
+
+func stampBGPProviderTransitionFences(plans []dynamicconfig.ActionPlan, self memberPlanInfo, onlyAddress string, journal []routerstate.ActionExecutionRecord, observedSelfCaptures map[string]bool, observedSelfCapturesOK bool, observedSelfAt time.Time) {
+	onlyAddress = normalizeAddressString(onlyAddress)
 	latest := latestProviderCaptureTransitions(nil, journal)
-	key := providerCaptureTransitionKey(self.Capture.ProviderRef, providerCaptureRefFromCapture(self.Capture, self.CaptureTarget), address)
-	tr, ok := latest[key]
-	if !ok {
-		return
-	}
-	token := ""
-	switch {
-	case !tr.assign && providerCaptureTransitionAllowsRecapture(tr):
-		token = fmt.Sprintf("after-unassign-%d", tr.id)
-	case observedSelfCapturesOK && !observedSelfCaptures[address] && providerMissingRetryDue(tr, observedSelfAt):
-		token = fmt.Sprintf("provider-missing-%d", tr.id)
-	}
-	if token == "" {
-		return
-	}
 	for i := range plans {
 		plan := &plans[i]
 		if !isProviderCaptureAssignAction(plan.Action) || strings.TrimSpace(plan.IdempotencyKey) == "" {
+			continue
+		}
+		address := normalizeAddressString(plan.Target["address"])
+		if address == "" || (onlyAddress != "" && address != onlyAddress) {
+			continue
+		}
+		key := providerCaptureTransitionKey(self.Capture.ProviderRef, providerCaptureRefFromCapture(self.Capture, self.CaptureTarget), address)
+		tr, ok := latest[key]
+		if !ok {
+			continue
+		}
+		token := ""
+		switch {
+		case !tr.assign && providerCaptureTransitionAllowsRecapture(tr):
+			if providerCaptureCanonicalAssignSucceeded(*plan, journal, false) {
+				token = fmt.Sprintf("after-unassign-%d", tr.id)
+			}
+		case tr.assign && observedSelfCapturesOK && !observedSelfCaptures[address] && providerMissingRetryDue(tr, observedSelfAt):
+			if providerCaptureCanonicalAssignSucceeded(*plan, journal, true) {
+				token = fmt.Sprintf("provider-missing-%d", tr.id)
+			}
+		}
+		if token == "" {
 			continue
 		}
 		if plan.Parameters == nil {
@@ -3921,13 +3931,56 @@ func stampBGPProviderTransitionFence(plans []dynamicconfig.ActionPlan, self memb
 }
 
 func providerMissingRetryDue(tr providerCaptureTransition, observedSelfAt time.Time) bool {
-	if !tr.assign {
-		return true
-	}
 	if tr.at.IsZero() || observedSelfAt.IsZero() {
 		return false
 	}
 	return !observedSelfAt.Before(tr.at.Add(bgpProviderMissingRetryHold))
+}
+
+func providerCaptureCanonicalAssignSucceeded(plan dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord, requirePathSig bool) bool {
+	if !isProviderCaptureAssignAction(plan.Action) {
+		return false
+	}
+	canonicalKey := strings.TrimSpace(plan.IdempotencyKey)
+	for _, row := range journal {
+		if row.Status != routerstate.ActionSucceeded || !isProviderCaptureAssignAction(row.Action) {
+			continue
+		}
+		if canonicalKey != "" && strings.TrimSpace(row.IdempotencyKey) == canonicalKey {
+			return true
+		}
+		if providerCaptureAssignRecordMatchesPlan(row, plan, requirePathSig) {
+			return true
+		}
+	}
+	return false
+}
+
+func providerCaptureAssignRecordMatchesPlan(row routerstate.ActionExecutionRecord, plan dynamicconfig.ActionPlan, requirePathSig bool) bool {
+	if strings.TrimSpace(row.ProviderRef) != strings.TrimSpace(plan.ProviderRef) ||
+		strings.TrimSpace(row.Action) != strings.TrimSpace(plan.Action) {
+		return false
+	}
+	target := decodeActionRecordMap(row.TargetJSON)
+	if normalizeAddressString(target["address"]) != normalizeAddressString(plan.Target["address"]) {
+		return false
+	}
+	if providerCaptureRefFromTarget(target) != providerCaptureRefFromTarget(plan.Target) {
+		return false
+	}
+	params := decodeActionRecordMap(row.ParametersJSON)
+	keys := []string{captureParamHolder, captureAssignmentGenerationParam}
+	if requirePathSig {
+		keys = append(keys, bgpPathSigParam)
+	}
+	for _, key := range keys {
+		left := strings.TrimSpace(params[key])
+		right := strings.TrimSpace(plan.Parameters[key])
+		if left != "" && right != "" && left != right {
+			return false
+		}
+	}
+	return true
 }
 
 func providerCaptureTransitionAllowsRecapture(tr providerCaptureTransition) bool {
