@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260705.1222
+
 ### Removed
 
 - Removed the `MobilityPool.spec.deliveryPolicy.conntrackCleanupOnSeize`

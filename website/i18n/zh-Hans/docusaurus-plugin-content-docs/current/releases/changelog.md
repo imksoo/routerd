@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260705.1222
+
 ### 移除
 
 - 移除了 `MobilityPool.spec.deliveryPolicy.conntrackCleanupOnSeize` opt-in

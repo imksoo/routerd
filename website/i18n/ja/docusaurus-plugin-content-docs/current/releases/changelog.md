@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260705.1222
+
 ### 削除
 
 - `MobilityPool.spec.deliveryPolicy.conntrackCleanupOnSeize` opt-in field と、
