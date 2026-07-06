@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -108,7 +109,8 @@ func rollbackToGeneration(statePath string, generation int64, applyFlags applyFl
 		"dryRun":     fmt.Sprintf("%t", *applyFlags.DryRun),
 	})
 	opts := applyFlags.applyOptions(configFile)
-	_, err = runApplyOnce(router, opts, stdout, logger)
+	opts.ConfigYAMLOverride = configYAML
+	_, err = runApplyChainOnce(context.Background(), router, opts, stdout, logger)
 	return err
 }
 

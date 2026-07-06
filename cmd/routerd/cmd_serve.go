@@ -484,10 +484,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		SkipServiceManager: *sandbox,
 		Sandbox:            *sandbox,
 	}
-	if *once {
-		_, err := runApplyOnce(router, applyOpts, stdout, logger)
-		return err
-	}
 	cache := &resultCache{}
 
 	signalCtx, cancelSignalCtx := context.WithCancel(context.Background())
@@ -523,7 +519,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	controllerBus.SetLogger(slog.Default())
 	publishControllerModeEvents(ctx, controllerBus, controllerStatuses)
 	peerGroupSyncClient := mobilitycontroller.NewPeerGroupSyncClient(stateStore)
-	if !*sandbox && (mobilitycontroller.HasPublishedPeerGroups(router) || mobilitycontroller.HasPublishedMemberSets(router)) {
+	if !*once && !*sandbox && (mobilitycontroller.HasPublishedPeerGroups(router) || mobilitycontroller.HasPublishedMemberSets(router)) {
 		if err := startPeerGroupSyncServer(ctx, stateStore, logger); err != nil {
 			return err
 		}
@@ -557,6 +553,10 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		Bus:    controllerBus,
 		Store:  stateStore,
 		Opts:   controllerOpts,
+	}
+	if *once {
+		_, err := runServeChainOnce(ctx, chainRunner, router, applyOpts, stateStore, stdout, logger)
+		return err
 	}
 	if err := chainRunner.Start(ctx); err != nil {
 		return err
@@ -604,7 +604,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}
 	applyMu := &sync.Mutex{}
 	if *applyInterval > 0 {
-		go runApplySchedule(stop, *applyInterval, currentRouter, applyOpts, cache, logger, applyMu)
+		go runApplySchedule(ctx, stop, *applyInterval, currentRouter, func() *controllerchain.Runner { return chainRunner }, applyOpts, stateStore, cache, logger, applyMu)
 	}
 	if webConsoleResourcePresent(router) {
 		var webStore routerstate.Store
@@ -2172,7 +2172,7 @@ func containsString(values []string, needle string) bool {
 	return false
 }
 
-func runApplySchedule(stop <-chan struct{}, interval time.Duration, router func() *api.Router, opts applyOptions, cache *resultCache, logger *eventlog.Logger, applyMu *sync.Mutex) {
+func runApplySchedule(ctx context.Context, stop <-chan struct{}, interval time.Duration, router func() *api.Router, runner func() *controllerchain.Runner, opts applyOptions, store *routerstate.SQLiteStore, cache *resultCache, logger *eventlog.Logger, applyMu *sync.Mutex) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -2181,7 +2181,11 @@ func runApplySchedule(stop <-chan struct{}, interval time.Duration, router func(
 			return
 		case <-ticker.C:
 			applyMu.Lock()
-			result, err := runApplyOnce(router(), opts, io.Discard, logger)
+			chainRunner := runner()
+			if chainRunner != nil {
+				chainRunner.Router = router()
+			}
+			result, err := runServeChainOnce(ctx, chainRunner, router(), opts, store, io.Discard, logger)
 			applyMu.Unlock()
 			if err != nil {
 				logger.Emit(eventlog.LevelError, "serve", "scheduled apply failed", map[string]string{"error": err.Error()})
@@ -2190,6 +2194,57 @@ func runApplySchedule(stop <-chan struct{}, interval time.Duration, router func(
 			cache.Store(result)
 		}
 	}
+}
+
+func runServeChainOnce(ctx context.Context, runner *controllerchain.Runner, router *api.Router, opts applyOptions, store *routerstate.SQLiteStore, stdout io.Writer, logger *eventlog.Logger) (*apply.Result, error) {
+	if runner == nil {
+		return nil, errors.New("controller chain runner is nil")
+	}
+	configYAML := routerConfigYAML(router, opts)
+	var generation int64
+	generationFinished := false
+	if !opts.DryRun && store != nil {
+		var err error
+		generation, err = store.BeginGeneration(routerConfigHash(router))
+		if err != nil {
+			return nil, err
+		}
+		if err := store.RecordGenerationConfig(generation, configYAML); err != nil {
+			return nil, err
+		}
+		defer func() {
+			if generation != 0 && !generationFinished {
+				_ = store.FinishGeneration(generation, "Errored", nil)
+			}
+		}()
+		if err := recordHostInventoryState(store); err != nil {
+			return nil, err
+		}
+	}
+	if err := runner.ReconcileOnce(ctx); err != nil {
+		return nil, err
+	}
+	result, err := apply.New().Observe(router)
+	if err != nil {
+		return nil, err
+	}
+	if generation != 0 {
+		result.Generation = generation
+	}
+	if err := writeResult(stdout, opts.StatusFile, result); err != nil {
+		return nil, err
+	}
+	if !opts.DryRun && store != nil && generation != 0 {
+		_ = store.FinishGeneration(generation, result.Phase, result.Warnings)
+		generationFinished = true
+	}
+	if logger != nil {
+		logger.Emit(eventlog.LevelInfo, "serve", "routerd serve once completed", map[string]string{
+			"phase":      result.Phase,
+			"generation": strconv.FormatInt(result.Generation, 10),
+		})
+	}
+	return result, nil
 }
 
 func observedIPv6PrefixesByInterface(router *api.Router) map[string][]string {

@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -23,15 +24,14 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
+	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/config"
 	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
 	"github.com/imksoo/routerd/pkg/eventlog"
 	"github.com/imksoo/routerd/pkg/ha"
 	"github.com/imksoo/routerd/pkg/inventory"
 	"github.com/imksoo/routerd/pkg/lifecycle"
-	"github.com/imksoo/routerd/pkg/netconfigbackend"
 	"github.com/imksoo/routerd/pkg/platform"
-	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -64,7 +64,7 @@ func applyCommand(args []string, stdout, stderr io.Writer) (err error) {
 	})
 	opts := applyFlags.applyOptions(*applyFlags.ConfigPath)
 	opts.MgmtLockoutWriter = stderr
-	_, err = runApplyOnce(router, opts, stdout, logger)
+	_, err = runApplyChainOnce(context.Background(), router, opts, stdout, logger)
 	return err
 }
 
@@ -476,6 +476,249 @@ func objectStatusID(status routerstate.ObjectStatus) string {
 	return status.APIVersion + "/" + status.Kind + "/" + status.Name
 }
 
+func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOptions, stdout io.Writer, logger *eventlog.Logger) (*apply.Result, error) {
+	var optionWarnings []string
+	effectiveConfig, warnings, err := routerWithIPv6PDClientOptions(router, opts, string(platformDefaults.OS))
+	if err != nil {
+		return nil, err
+	}
+	router = effectiveConfig
+	optionWarnings = append(optionWarnings, warnings...)
+	optionWarnings = append(optionWarnings, config.Warnings(router)...)
+	managementWarnings, err := checkManagementPlaneBeforeApply(router, opts)
+	if err != nil {
+		return nil, err
+	}
+	optionWarnings = append(optionWarnings, managementWarnings...)
+	configYAML := routerConfigYAML(router, opts)
+	if opts.DryRun && !opts.Sandbox {
+		dryRunDir, err := os.MkdirTemp("", "routerd-apply-dryrun-artifacts-*")
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = os.RemoveAll(dryRunDir) }()
+		opts.DnsmasqConfigPath = filepath.Join(dryRunDir, "dnsmasq.conf")
+		opts.NftablesPath = filepath.Join(dryRunDir, "nat44.nft")
+	}
+
+	statePath := defaultString(opts.StatePath, defaultStatePath)
+	stateStore, cleanup, err := openApplyChainStateStore(statePath, opts.DryRun)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+
+	effectiveRouter := filterRouterByWhen(router, stateStore)
+	var generation int64
+	generationFinished := false
+	if !opts.DryRun {
+		generation, err = stateStore.BeginGeneration(routerConfigHash(router))
+		if err != nil {
+			return nil, err
+		}
+		if err := stateStore.RecordGenerationConfig(generation, configYAML); err != nil {
+			return nil, err
+		}
+		defer func() {
+			if generation != 0 && !generationFinished {
+				_ = stateStore.FinishGeneration(generation, "Errored", nil)
+			}
+		}()
+		if err := recordHostInventoryState(stateStore); err != nil {
+			return nil, err
+		}
+	}
+	_, err = recordObservedPrefixDelegationState(router, stateStore)
+	if err != nil {
+		return nil, err
+	}
+	result, err := apply.New().Plan(effectiveRouter)
+	if err != nil {
+		return nil, err
+	}
+	if generation != 0 {
+		result.Generation = generation
+	}
+	result.Warnings = append(result.Warnings, optionWarnings...)
+	appendPrefixDelegationStateWarnings(result, router, stateStore)
+	if err := appendLedgerOwnedOrphans(result, effectiveRouter, opts.LedgerPath, opts.DryRun); err != nil {
+		return nil, err
+	}
+	if !opts.DryRun {
+		decision, clusterName, err := acquireApplyClusterLease(ctx, effectiveRouter, stateStore)
+		if err != nil {
+			return nil, err
+		}
+		if decision.Enabled && decision.Lease != nil {
+			defer decision.Lease.Close()
+		}
+		if decision.Enabled && !decision.Leader {
+			result.Phase = "Standby"
+			result.Warnings = append(result.Warnings, fmt.Sprintf("RouterdCluster/%s lease is held by %s; apply skipped on standby", clusterName, decision.Holder))
+			if err := writeResult(stdout, opts.StatusFile, result); err != nil {
+				return nil, err
+			}
+			if generation != 0 {
+				_ = stateStore.FinishGeneration(generation, result.Phase, result.Warnings)
+				generationFinished = true
+			}
+			if logger != nil {
+				logger.Emit(eventlog.LevelInfo, "apply", "routerd apply skipped on standby", map[string]string{"cluster": clusterName, "holder": decision.Holder})
+			}
+			return result, nil
+		}
+		recordWarningEvents(router, stateStore, result.Warnings)
+		recordKnownNGCombinationEvents(router, stateStore, optionWarnings)
+	}
+
+	eventBus := bus.New()
+	if !opts.DryRun {
+		eventBus = bus.NewWithStore(stateStore)
+	}
+	eventBus.SetLogger(slog.Default())
+	controllerOpts := applyChainControllerOptions(opts)
+	runner := &controllerchain.Runner{
+		Router: router,
+		Bus:    eventBus,
+		Store:  stateStore,
+		Opts:   controllerOpts,
+	}
+	if err := runner.ReconcileOnce(ctx); err != nil {
+		return nil, err
+	}
+	if !opts.DryRun {
+		if err := recordLastAppliedPath(effectiveRouter, stateStore, opts.ConfigPath); err != nil {
+			return nil, err
+		}
+	}
+	applyWarnings := append([]string{}, result.Warnings...)
+	result, err = apply.New().Observe(effectiveRouter)
+	if err != nil {
+		return nil, err
+	}
+	if generation != 0 {
+		result.Generation = generation
+	}
+	result.Warnings = append(result.Warnings, applyWarnings...)
+	if err := appendLedgerOwnedOrphans(result, effectiveRouter, opts.LedgerPath, opts.DryRun); err != nil {
+		return nil, err
+	}
+	if !opts.DryRun && configCommitPhase(result.Phase) {
+		if err := commitConfigAfterSuccessfulApply(opts, configYAML, logger); err != nil {
+			return result, err
+		}
+	}
+	if opts.DryRun && opts.AnnounceDryRunToCLI {
+		fmt.Fprintf(stdout, "dry-run apply plan for %s\n", opts.ConfigPath)
+	}
+	if err := writeResult(stdout, opts.StatusFile, result); err != nil {
+		return nil, err
+	}
+	if !opts.DryRun && generation != 0 {
+		_ = stateStore.FinishGeneration(generation, result.Phase, result.Warnings)
+		generationFinished = true
+	}
+	if logger != nil {
+		logger.Emit(eventlog.LevelInfo, "apply", "routerd apply chain once completed", map[string]string{
+			"phase":      result.Phase,
+			"generation": strconv.FormatInt(result.Generation, 10),
+			"dryRun":     fmt.Sprintf("%t", opts.DryRun),
+		})
+	}
+	return result, nil
+}
+
+func applyChainControllerOptions(opts applyOptions) controllerchain.Options {
+	controllerOpts := controllerchain.Options{
+		SuperviseClientDaemons: false,
+		SuperviseDNSResolvers:  false,
+		DnsmasqCommand:         "dnsmasq",
+		DnsmasqConfig:          defaultString(opts.DnsmasqConfigPath, defaultDnsmasqConfigPath),
+		DnsmasqPID:             filepath.Join(platformDefaults.RuntimeDir, "dnsmasq.pid"),
+		DnsmasqPort:            53,
+		DnsmasqListen:          []string{"127.0.0.1"},
+		NftablesPath:           defaultString(opts.NftablesPath, defaultNftablesPath),
+		FirewallPath:           "/run/routerd/firewall.nft",
+		LedgerPath:             defaultString(opts.LedgerPath, defaultLedgerPath),
+		NftCommand:             "nft",
+		ConntrackInterval:      30 * time.Second,
+	}
+	if opts.DryRun {
+		applySandboxControllerOptions(&controllerOpts, controllerOpts.DnsmasqConfig, controllerOpts.NftablesPath)
+		if !opts.Sandbox {
+			controllerOpts.FirewallPath = filepath.Join(filepath.Dir(controllerOpts.NftablesPath), "firewall.nft")
+		}
+	}
+	if opts.SkipServiceManager {
+		controllerOpts.DryRunServiceUnit = true
+	}
+	return controllerOpts
+}
+
+func openApplyChainStateStore(path string, dryRun bool) (*routerstate.SQLiteStore, func(), error) {
+	path = defaultString(path, defaultStatePath)
+	if !dryRun {
+		store, err := routerstate.OpenSQLite(path)
+		if err != nil {
+			return nil, nil, err
+		}
+		return store, func() { _ = store.Close() }, nil
+	}
+	dir, err := os.MkdirTemp("", "routerd-apply-dryrun-*")
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanupDir := func() { _ = os.RemoveAll(dir) }
+	store, err := routerstate.OpenSQLite(filepath.Join(dir, "routerd.db"))
+	if err != nil {
+		cleanupDir()
+		return nil, nil, err
+	}
+	cleanup := func() {
+		_ = store.Close()
+		cleanupDir()
+	}
+	if err := copyApplyStateSnapshot(path, store); err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	return store, cleanup, nil
+}
+
+func copyApplyStateSnapshot(path string, dst *routerstate.SQLiteStore) error {
+	src, err := routerstate.LoadReadOnly(path)
+	if err != nil {
+		return err
+	}
+	if closer, ok := src.(interface{ Close() error }); ok {
+		defer func() { _ = closer.Close() }()
+	}
+	for key, value := range src.Variables() {
+		switch value.Status {
+		case routerstate.StatusSet:
+			dst.Set(key, value.Value, value.Reason)
+		case routerstate.StatusUnset:
+			dst.Unset(key, value.Reason)
+		default:
+			dst.Forget(key, value.Reason)
+		}
+	}
+	lister, ok := src.(routerstate.ObjectStatusLister)
+	if !ok {
+		return nil
+	}
+	statuses, err := lister.ListObjectStatuses()
+	if err != nil {
+		return err
+	}
+	for _, status := range statuses {
+		if err := dst.SaveObjectStatus(status.APIVersion, status.Kind, status.Name, status.Status); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func inventoryStatusMap(status inventory.Status) map[string]any {
 	data, _ := json.Marshal(status)
 	out := map[string]any{}
@@ -495,465 +738,6 @@ func compactStringList(values []string) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logger *eventlog.Logger) (*apply.Result, error) {
-	var optionWarnings []string
-	effectiveConfig, warnings, err := routerWithIPv6PDClientOptions(router, opts, string(platformDefaults.OS))
-	if err != nil {
-		return nil, err
-	}
-	router = effectiveConfig
-	optionWarnings = append(optionWarnings, warnings...)
-	optionWarnings = append(optionWarnings, config.Warnings(router)...)
-	managementWarnings, err := checkManagementPlaneBeforeApply(router, opts)
-	if err != nil {
-		return nil, err
-	}
-	optionWarnings = append(optionWarnings, managementWarnings...)
-	configYAML := routerConfigYAML(router, opts)
-	stateStore, err := loadApplyStateStore(defaultString(opts.StatePath, defaultStatePath), opts.DryRun)
-	if err != nil {
-		return nil, err
-	}
-	var generation int64
-	generationFinished := false
-	if !opts.DryRun {
-		if store, ok := stateStore.(routerstate.GenerationStore); ok {
-			generation, err = store.BeginGeneration(routerConfigHash(router))
-			if err != nil {
-				return nil, err
-			}
-			if recorder, ok := stateStore.(routerstate.GenerationConfigRecorder); ok {
-				if err := recorder.RecordGenerationConfig(generation, configYAML); err != nil {
-					return nil, err
-				}
-			}
-			defer func() {
-				if generation != 0 && !generationFinished {
-					_ = store.FinishGeneration(generation, "Errored", nil)
-				}
-			}()
-		}
-	}
-	if !opts.DryRun {
-		if err := recordHostInventoryState(stateStore); err != nil {
-			return nil, err
-		}
-	}
-	_, err = recordObservedPrefixDelegationState(router, stateStore)
-	if err != nil {
-		return nil, err
-	}
-	effectiveRouter := filterRouterByWhen(router, stateStore)
-	engine := apply.New()
-	result, err := engine.Plan(effectiveRouter)
-	if err != nil {
-		return nil, err
-	}
-	if generation != 0 {
-		result.Generation = generation
-	}
-	result.Warnings = append(result.Warnings, optionWarnings...)
-	appendPrefixDelegationStateWarnings(result, router, stateStore)
-	if err := appendLedgerOwnedOrphans(result, effectiveRouter, opts.LedgerPath, opts.DryRun); err != nil {
-		return nil, err
-	}
-	if !opts.DryRun {
-		decision, clusterName, err := acquireApplyClusterLease(context.Background(), effectiveRouter, stateStore)
-		if err != nil {
-			return nil, err
-		}
-		if decision.Enabled && decision.Lease != nil {
-			defer decision.Lease.Close()
-		}
-		if decision.Enabled && !decision.Leader {
-			result.Phase = "Standby"
-			result.Warnings = append(result.Warnings, fmt.Sprintf("RouterdCluster/%s lease is held by %s; apply skipped on standby", clusterName, decision.Holder))
-			if err := stateStore.Save(defaultString(opts.StatePath, defaultStatePath)); err != nil {
-				return nil, err
-			}
-			if store, ok := stateStore.(routerstate.GenerationStore); ok && generation != 0 {
-				_ = store.FinishGeneration(generation, result.Phase, result.Warnings)
-				generationFinished = true
-			}
-			logger.Emit(eventlog.LevelInfo, "apply", "routerd apply skipped on standby", map[string]string{"cluster": clusterName, "holder": decision.Holder})
-			return result, nil
-		}
-	}
-	if !opts.DryRun {
-		recordWarningEvents(router, stateStore, result.Warnings)
-		recordKnownNGCombinationEvents(router, stateStore, optionWarnings)
-		if err := os.MkdirAll(filepathDir(defaultString(opts.StatePath, defaultStatePath)), 0755); err != nil {
-			return nil, err
-		}
-		if err := stateStore.Save(defaultString(opts.StatePath, defaultStatePath)); err != nil {
-			return nil, err
-		}
-		logger.Emit(eventlog.LevelInfo, "apply", "routerd plan completed", map[string]string{
-			"phase":     result.Phase,
-			"resources": fmt.Sprintf("%d", len(result.Resources)),
-		})
-		if platformDefaults.OS == platform.OSFreeBSD {
-			next, err := runFreeBSDApplyOnce(effectiveRouter, opts, stdout, logger, engine, result, generation, stateStore)
-			if err == nil && next != nil && configCommitPhase(next.Phase) {
-				if commitErr := commitConfigAfterSuccessfulApply(opts, configYAML, logger); commitErr != nil {
-					return next, commitErr
-				}
-			}
-			if store, ok := stateStore.(routerstate.GenerationStore); ok && generation != 0 && next != nil {
-				_ = store.FinishGeneration(generation, next.Phase, next.Warnings)
-				generationFinished = true
-			}
-			return next, err
-		}
-		policy := effectiveApplyPolicy(effectiveRouter)
-		var applyErrors []string
-		recordStageError := func(stage string, err error) error {
-			if err == nil {
-				return nil
-			}
-			msg := fmt.Sprintf("%s: %v", stage, err)
-			result.Warnings = append(result.Warnings, msg)
-			applyErrors = append(applyErrors, msg)
-			logger.Emit(eventlog.LevelError, "apply", "routerd apply stage failed", map[string]string{"stage": stage, "error": err.Error()})
-			if policy.Mode != "progressive" {
-				return fmt.Errorf("%s: %w", stage, err)
-			}
-			return nil
-		}
-
-		var appliedHostPackages []string
-		if err := recordStageError("packages", func() error {
-			var err error
-			appliedHostPackages, err = applyLinuxPackages(effectiveRouter)
-			return err
-		}()); err != nil {
-			return nil, err
-		}
-
-		var systemdUnitChangedFiles []string
-		if !opts.SkipServiceManager {
-			if err := recordStageError("service-manager", func() error {
-				var err error
-				systemdUnitChangedFiles, err = applySystemdUnitResources(effectiveRouter)
-				return err
-			}()); err != nil {
-				return nil, err
-			}
-		}
-
-		var vrrpChangedFiles []string
-		var vrrpChanged bool
-		if err := recordStageError("vrrp", func() error {
-			var err error
-			vrrpChangedFiles, vrrpChanged, err = applyVRRPArtifactsOnce(effectiveRouter, stateStore)
-			return err
-		}()); err != nil {
-			return nil, err
-		}
-
-		var bgpChangedFiles []string
-		var bgpChanged bool
-		if err := recordStageError("bgp", func() error {
-			var err error
-			bgpChangedFiles, bgpChanged, err = applyBGPArtifactsOnce(effectiveRouter, stateStore)
-			return err
-		}()); err != nil {
-			return nil, err
-		}
-
-		var networkChangedFiles []string
-		if err := recordStageError("network", func() error {
-			if !platformFeatures.HasNetplan && !platformFeatures.HasSystemdNetworkd {
-				var err error
-				networkChangedFiles, err = applyRuntimeLinuxNetworkResources(effectiveRouter)
-				return err
-			}
-			netplanFiles, err := netconfigbackend.Netplan{Path: opts.NetplanPath}.Render(effectiveRouter)
-			if err != nil {
-				return err
-			}
-			var netplanData []byte
-			if len(netplanFiles) > 0 {
-				netplanData = netplanFiles[0].Data
-			}
-			networkdFiles, err := netconfigbackend.Networkd{}.Render(effectiveRouter)
-			if err != nil {
-				return err
-			}
-			networkChangedFiles, err = applyNetworkConfig(opts.NetplanPath, netplanData, networkdFiles)
-			return err
-		}()); err != nil {
-			return nil, err
-		}
-
-		var nftablesChangedFiles []string
-		if err := recordStageError("nftables", func() error {
-			nftablesConfig, err := render.NftablesNAT44(effectiveRouter)
-			if err != nil {
-				return err
-			}
-			nftablesChangedFiles, err = applyNftablesConfig(opts.NftablesPath, nftablesConfig)
-			return err
-		}()); err != nil {
-			return nil, err
-		}
-
-		var appliedIPv6DelegatedAddresses []string
-		if err := recordStageError("ipv6-delegated-address", func() error {
-			var err error
-			appliedIPv6DelegatedAddresses, err = applyIPv6DelegatedAddressesWithState(effectiveRouter, stateStore)
-			return err
-		}()); err != nil {
-			return nil, err
-		}
-
-		var dnsmasqChangedFiles []string
-		if err := recordStageError("dnsmasq", func() error {
-			dnsmasqConfig, dnsmasqWarnings, err := render.DnsmasqConfig(effectiveRouter, render.DnsmasqRuntime{
-				DHCPv4DNSServersByInterface: observedDNSServersByInterface(effectiveRouter),
-				DHCPv6DNSServersByInterface: observedDNSServersByInterface(effectiveRouter),
-				IPv6AddressesByInterface:    observedIPv6AddressesByInterface(effectiveRouter),
-				IPv6PrefixesByInterface:     observedIPv6PrefixesByInterface(effectiveRouter),
-				StickyHosts:                 dhcpStickyHostsFromLog(effectiveRouter, time.Now().UTC()),
-				RuntimeDir:                  platformDefaults.RuntimeDir,
-				LeaseFile:                   dnsmasqLeaseFileForPlatform(),
-			})
-			if err != nil {
-				return err
-			}
-			for _, w := range dnsmasqWarnings {
-				result.Warnings = append(result.Warnings, w)
-				logger.Emit(eventlog.LevelWarning, "apply", w, map[string]string{"stage": "dnsmasq"})
-			}
-			dnsmasqChangedFiles, err = applyDnsmasqConfig(opts.DnsmasqConfigPath, opts.DnsmasqServicePath, dnsmasqConfig)
-			return err
-		}()); err != nil {
-			return nil, err
-		}
-
-		var pppoeChangedFiles []string
-		if err := recordStageError("pppoe", func() error {
-			var err error
-			pppoeChangedFiles, err = applyPPPoEConfig(effectiveRouter)
-			return err
-		}()); err != nil {
-			return nil, err
-		}
-
-		var timesyncdChangedFiles []string
-		if err := recordStageError("timesyncd", func() error {
-			if !platformFeatures.HasSystemdTimesyncd {
-				return nil
-			}
-			timesyncdConfig, err := render.TimesyncdConfig(effectiveRouter)
-			if err != nil {
-				return err
-			}
-			timesyncdChangedFiles, err = applyTimesyncdConfig(defaultTimesyncdPath, timesyncdConfig)
-			return err
-		}()); err != nil {
-			return nil, err
-		}
-
-		var appliedTunnels []string
-		if err := recordStageError("ds-lite", func() error {
-			var err error
-			appliedTunnels, err = applyDSLiteTunnelsWithState(effectiveRouter, stateStore)
-			return err
-		}()); err != nil {
-			return nil, err
-		}
-
-		var cleanedDelegatedIPv6Addresses []string
-
-		var appliedPolicyRoutes []string
-		if err := recordStageError("ipv4-policy-routes", func() error {
-			var err error
-			appliedPolicyRoutes, err = applyIPv4PolicyRoutes(effectiveRouter)
-			return err
-		}()); err != nil {
-			return nil, err
-		}
-
-		var appliedDefaultRoutes []string
-		if err := recordStageError("ipv4-default-route-policy", func() error {
-			var err error
-			appliedDefaultRoutes, err = applyIPv4DefaultRoutePolicies(effectiveRouter)
-			return err
-		}()); err != nil {
-			return nil, err
-		}
-
-		var appliedRuntime []string
-		if err := recordStageError("sysctl", func() error {
-			var err error
-			appliedRuntime, err = applyRuntimeSysctls(effectiveRouter)
-			return err
-		}()); err != nil {
-			return nil, err
-		}
-
-		var appliedHostnames []string
-		if err := recordStageError("hostname", func() error {
-			var err error
-			appliedHostnames, err = applyHostnames(effectiveRouter)
-			return err
-		}()); err != nil {
-			return nil, err
-		}
-
-		var cleanedLedgerOrphans []string
-		var rememberedArtifacts int
-		if len(applyErrors) == 0 {
-			var err error
-			cleanedLedgerOrphans, err = cleanupLedgerOwnedOrphans(effectiveRouter, opts.LedgerPath)
-			if err != nil {
-				return nil, err
-			}
-			rememberedArtifacts, err = rememberAppliedArtifacts(effectiveRouter, opts.LedgerPath, generation)
-			if err != nil {
-				return nil, err
-			}
-			if err := recordLastAppliedPath(effectiveRouter, stateStore, opts.ConfigPath); err != nil {
-				return nil, err
-			}
-		} else {
-			result.Warnings = append(result.Warnings, "skipped ledger orphan cleanup and ownership recording because apply completed with stage errors")
-		}
-		changedFiles := append([]string{}, networkChangedFiles...)
-		changedFiles = append(changedFiles, systemdUnitChangedFiles...)
-		changedFiles = append(changedFiles, vrrpChangedFiles...)
-		changedFiles = append(changedFiles, bgpChangedFiles...)
-		changedFiles = append(changedFiles, dnsmasqChangedFiles...)
-		changedFiles = append(changedFiles, nftablesChangedFiles...)
-		changedFiles = append(changedFiles, pppoeChangedFiles...)
-		changedFiles = append(changedFiles, timesyncdChangedFiles...)
-		if len(changedFiles) == 0 {
-			if len(appliedRuntime) == 0 && !vrrpChanged && !bgpChanged {
-				fmt.Fprintln(stdout, "network configuration already up to date")
-			}
-		} else {
-			for _, path := range changedFiles {
-				fmt.Fprintf(stdout, "wrote %s\n", path)
-			}
-			if len(networkChangedFiles) > 0 {
-				fmt.Fprintln(stdout, "applied network configuration")
-			}
-			if len(dnsmasqChangedFiles) > 0 {
-				fmt.Fprintln(stdout, "applied dnsmasq")
-			}
-			if len(nftablesChangedFiles) > 0 {
-				fmt.Fprintln(stdout, "applied nftables")
-			}
-			if len(pppoeChangedFiles) > 0 {
-				fmt.Fprintln(stdout, "applied PPPoE")
-			}
-			if len(timesyncdChangedFiles) > 0 {
-				fmt.Fprintln(stdout, "applied NTP client")
-			}
-			if len(vrrpChangedFiles) > 0 {
-				fmt.Fprintln(stdout, "rendered VRRP artifacts")
-			}
-			if bgpChanged {
-				fmt.Fprintln(stdout, "rendered BGP artifacts")
-			}
-		}
-		if len(changedFiles) == 0 && vrrpChanged {
-			fmt.Fprintln(stdout, "rendered VRRP artifacts")
-		}
-		if len(changedFiles) == 0 && bgpChanged {
-			fmt.Fprintln(stdout, "rendered BGP artifacts")
-		}
-		for _, key := range appliedRuntime {
-			fmt.Fprintf(stdout, "applied sysctl %s\n", key)
-		}
-		for _, pkg := range appliedHostPackages {
-			fmt.Fprintf(stdout, "applied package %s\n", pkg)
-		}
-		for _, hostname := range appliedHostnames {
-			fmt.Fprintf(stdout, "applied hostname %s\n", hostname)
-		}
-		for _, address := range appliedIPv6DelegatedAddresses {
-			fmt.Fprintf(stdout, "applied IPv6 delegated address %s\n", address)
-		}
-		for _, tunnel := range appliedTunnels {
-			fmt.Fprintf(stdout, "applied DS-Lite tunnel %s\n", tunnel)
-		}
-		for _, address := range cleanedDelegatedIPv6Addresses {
-			fmt.Fprintf(stdout, "removed stale delegated IPv6 address %s\n", address)
-		}
-		for _, route := range appliedDefaultRoutes {
-			fmt.Fprintf(stdout, "applied IPv4 default route %s\n", route)
-		}
-		for _, route := range appliedPolicyRoutes {
-			fmt.Fprintf(stdout, "applied IPv4 policy route %s\n", route)
-		}
-		for _, artifact := range cleanedLedgerOrphans {
-			fmt.Fprintf(stdout, "removed orphaned owned artifact %s\n", artifact)
-		}
-		if rememberedArtifacts > 0 {
-			fmt.Fprintf(stdout, "remembered %d owned artifacts\n", rememberedArtifacts)
-		}
-		logger.Emit(eventlog.LevelInfo, "apply", "routerd changes applied", map[string]string{
-			"changedFiles":        fmt.Sprintf("%d", len(changedFiles)),
-			"runtimeSysctls":      fmt.Sprintf("%d", len(appliedRuntime)),
-			"hostnames":           fmt.Sprintf("%d", len(appliedHostnames)),
-			"ipv6DelegatedAddrs":  fmt.Sprintf("%d", len(appliedIPv6DelegatedAddresses)),
-			"pppoeFiles":          fmt.Sprintf("%d", len(pppoeChangedFiles)),
-			"ntpFiles":            fmt.Sprintf("%d", len(timesyncdChangedFiles)),
-			"dsliteTunnels":       fmt.Sprintf("%d", len(appliedTunnels)),
-			"ipv4DefaultRoutes":   fmt.Sprintf("%d", len(appliedDefaultRoutes)),
-			"egressPolicyRoutes":  fmt.Sprintf("%d", len(appliedPolicyRoutes)),
-			"bgpFiles":            fmt.Sprintf("%d", len(bgpChangedFiles)),
-			"ownedOrphansGone":    fmt.Sprintf("%d", len(cleanedLedgerOrphans)),
-			"rememberedArtifacts": fmt.Sprintf("%d", rememberedArtifacts),
-		})
-		applyWarnings := append([]string{}, result.Warnings...)
-		result, err = engine.Plan(effectiveRouter)
-		if err != nil {
-			return nil, err
-		}
-		if generation != 0 {
-			result.Generation = generation
-		}
-		result.Warnings = append(result.Warnings, applyWarnings...)
-		if len(applyErrors) > 0 {
-			result.Phase = "Degraded"
-		}
-		if err := appendLedgerOwnedOrphans(result, effectiveRouter, opts.LedgerPath, false); err != nil {
-			return nil, err
-		}
-		if configCommitPhase(result.Phase) {
-			if err := commitConfigAfterSuccessfulApply(opts, configYAML, logger); err != nil {
-				return nil, err
-			}
-		}
-		if err := writeResult(stdout, opts.StatusFile, result); err != nil {
-			return nil, err
-		}
-		if store, ok := stateStore.(routerstate.GenerationStore); ok && generation != 0 {
-			_ = store.FinishGeneration(generation, result.Phase, result.Warnings)
-			generationFinished = true
-		}
-		return result, nil
-	}
-	if opts.AnnounceDryRunToCLI {
-		fmt.Fprintf(stdout, "dry-run apply plan for %s\n", opts.ConfigPath)
-	}
-	logger.Emit(eventlog.LevelInfo, "apply", "routerd dry-run completed", map[string]string{
-		"phase":     result.Phase,
-		"resources": fmt.Sprintf("%d", len(result.Resources)),
-	})
-	if err := writeResult(stdout, opts.StatusFile, result); err != nil {
-		return nil, err
-	}
-	if store, ok := stateStore.(routerstate.GenerationStore); ok && generation != 0 {
-		_ = store.FinishGeneration(generation, result.Phase, result.Warnings)
-		generationFinished = true
-	}
-	return result, nil
 }
 
 func acquireApplyClusterLease(ctx context.Context, router *api.Router, store any) (ha.Decision, string, error) {
@@ -1005,13 +789,6 @@ func applyClusterResource(router *api.Router) (api.Resource, api.RouterdClusterS
 		return resource, spec, true, err
 	}
 	return api.Resource{}, api.RouterdClusterSpec{}, false, nil
-}
-
-func loadApplyStateStore(path string, dryRun bool) (routerstate.Store, error) {
-	if dryRun {
-		return loadTransientStateStore(path)
-	}
-	return routerstate.Load(path)
 }
 
 func loadTransientStateStore(path string) (routerstate.Store, error) {

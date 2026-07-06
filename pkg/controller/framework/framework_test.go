@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -102,6 +103,59 @@ func TestRunLockedFallsBackForPlainObserver(t *testing.T) {
 	}
 	if observer.calls[0].resourceKind != "" || observer.calls[0].resourceName != "" {
 		t.Fatalf("plain observer should not receive resource info: %+v", observer.calls[0])
+	}
+}
+
+func TestRunOnceReconcilesControllersInOrder(t *testing.T) {
+	var calls []string
+	observer := &recordingResourceObserver{}
+	runner := Runner{Observer: observer, Interval: time.Second}
+	err := runner.RunOnce(context.Background(),
+		FuncController{ControllerName: "first", PeriodicFunc: func(context.Context) (bool, error) {
+			calls = append(calls, "first")
+			return false, nil
+		}},
+		FuncController{ControllerName: "second", PeriodicFunc: func(context.Context) (bool, error) {
+			calls = append(calls, "second")
+			return true, nil
+		}},
+	)
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if got, want := strings.Join(calls, ","), "first,second"; got != want {
+		t.Fatalf("calls = %s, want %s", got, want)
+	}
+	got := observer.snapshot()
+	if len(got) != 2 {
+		t.Fatalf("observer calls = %d, want 2", len(got))
+	}
+	for i, want := range []string{"first", "second"} {
+		if got[i].name != want || got[i].trigger != "once" || got[i].err != nil {
+			t.Fatalf("observer call %d = %+v", i, got[i])
+		}
+	}
+}
+
+func TestRunOnceAggregatesErrorsAndContinues(t *testing.T) {
+	firstErr := errors.New("first failed")
+	secondErr := errors.New("second failed")
+	var calls []string
+	err := (Runner{}).RunOnce(context.Background(),
+		FuncController{ControllerName: "first", PeriodicFunc: func(context.Context) (bool, error) {
+			calls = append(calls, "first")
+			return false, firstErr
+		}},
+		FuncController{ControllerName: "second", PeriodicFunc: func(context.Context) (bool, error) {
+			calls = append(calls, "second")
+			return false, secondErr
+		}},
+	)
+	if !errors.Is(err, firstErr) || !errors.Is(err, secondErr) {
+		t.Fatalf("RunOnce error = %v, want both errors", err)
+	}
+	if got, want := strings.Join(calls, ","), "first,second"; got != want {
+		t.Fatalf("calls = %s, want %s", got, want)
 	}
 }
 

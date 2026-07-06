@@ -1358,9 +1358,44 @@ func (r *Runner) Start(ctx context.Context) error {
 	}
 	r.startARPObserverDaemonSources(ctx, logger)
 
-	haDecision, err := acquireClusterLease(ctx, r.Router, store)
+	controllers, daemonStatusSync, err := r.frameworkControllers(ctx, logger, store, true)
 	if err != nil {
 		return err
+	}
+
+	if r.controllerEnabled("daemon-status") {
+		r.warmDaemonStatuses(ctx, daemonStatusSync, logger)
+	}
+	go func() {
+		loop := framework.Runner{Bus: r.Bus, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
+		if err := loop.Run(ctx, controllers...); err != nil && ctx.Err() == nil {
+			logger.Warn("controller event loop stopped", "error", err)
+		}
+	}()
+	return nil
+}
+
+func (r *Runner) ReconcileOnce(ctx context.Context) error {
+	if r.Router == nil || r.Bus == nil || r.Store == nil {
+		return fmt.Errorf("router, bus, and store are required")
+	}
+	logger := r.Opts.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	store := eventedStore{Store: r.Store, Bus: r.Bus, Router: r.Router}
+	controllers, _, err := r.frameworkControllers(ctx, logger, store, false)
+	if err != nil {
+		return err
+	}
+	loop := framework.Runner{Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
+	return loop.RunOnce(ctx, controllers...)
+}
+
+func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, store eventedStore, startAuxiliary bool) ([]framework.Controller, DaemonStatusController, error) {
+	haDecision, err := acquireClusterLease(ctx, r.Router, store)
+	if err != nil {
+		return nil, DaemonStatusController{}, err
 	}
 	if haDecision.Enabled && haDecision.Leader && haDecision.Lease != nil {
 		go haDecision.Lease.Heartbeat(ctx, func(err error) {
@@ -1524,30 +1559,32 @@ func (r *Runner) Start(ctx context.Context) error {
 	effectiveDynamicForReconcile := func() (*api.Router, error) {
 		return r.effectiveDynamicRouterForReconcile(store, time.Now().UTC(), platform.CurrentOS())
 	}
-	if r.controllerEnabled("event-rule") {
-		rules.Start(ctx)
-	}
-	if r.controllerEnabled("derived-event") {
-		derivedEvents.Start(ctx)
-	}
-	if r.controllerEnabled("observability-pipeline") {
-		effective, err := effectiveForReconcile()
-		if err != nil {
-			return err
+	if startAuxiliary {
+		if r.controllerEnabled("event-rule") {
+			rules.Start(ctx)
 		}
-		observabilityPipeline.Router = effective
-		if err := observabilityPipeline.Start(ctx); err != nil {
-			return err
+		if r.controllerEnabled("derived-event") {
+			derivedEvents.Start(ctx)
 		}
-	}
-	if r.controllerEnabled("healthcheck") {
-		health.Start(ctx)
-	}
-	if r.controllerEnabled("conntrack-observer") {
-		conntrackObs.Start(ctx)
-	}
-	if r.controllerEnabled("bgp") {
-		bgp.Start(ctx)
+		if r.controllerEnabled("observability-pipeline") {
+			effective, err := effectiveForReconcile()
+			if err != nil {
+				return nil, DaemonStatusController{}, err
+			}
+			observabilityPipeline.Router = effective
+			if err := observabilityPipeline.Start(ctx); err != nil {
+				return nil, DaemonStatusController{}, err
+			}
+		}
+		if r.controllerEnabled("healthcheck") {
+			health.Start(ctx)
+		}
+		if r.controllerEnabled("conntrack-observer") {
+			conntrackObs.Start(ctx)
+		}
+		if r.controllerEnabled("bgp") {
+			bgp.Start(ctx)
+		}
 	}
 	controllers := []framework.Controller{
 		framework.FuncController{ControllerName: "observability-pipeline", Every: 30 * time.Second, Subs: observabilityPipelineStatusSubscriptions(r.Router), PeriodicFunc: func(ctx context.Context) (bool, error) {
@@ -1955,16 +1992,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		}})
 	}
 	controllers = r.filterControllers(controllers)
-	if r.controllerEnabled("daemon-status") {
-		r.warmDaemonStatuses(ctx, daemonStatusSync, logger)
-	}
-	go func() {
-		loop := framework.Runner{Bus: r.Bus, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
-		if err := loop.Run(ctx, controllers...); err != nil && ctx.Err() == nil {
-			logger.Warn("controller event loop stopped", "error", err)
-		}
-	}()
-	return nil
+	return controllers, daemonStatusSync, nil
 }
 
 func didWorkPeriodic(fn func(context.Context) error) func(context.Context) (bool, error) {

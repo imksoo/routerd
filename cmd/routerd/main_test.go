@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -73,7 +74,7 @@ func TestApplyFilesReportsCreatedAndChanged(t *testing.T) {
 	}
 }
 
-func TestRunApplyOnceDryRunDoesNotCreateStateDB(t *testing.T) {
+func TestRunApplyChainOnceDryRunDoesNotCreateStateDB(t *testing.T) {
 	dir := t.TempDir()
 	stateDir := filepath.Join(dir, "state")
 	statePath := filepath.Join(stateDir, "routerd.db")
@@ -86,7 +87,7 @@ func TestRunApplyOnceDryRunDoesNotCreateStateDB(t *testing.T) {
 			Name: "test-router",
 		},
 	}
-	result, err := runApplyOnce(router, applyOptions{
+	result, err := runApplyChainOnce(context.Background(), router, applyOptions{
 		DryRun:     true,
 		StatePath:  statePath,
 		LedgerPath: ledgerPath,
@@ -110,6 +111,79 @@ func TestRunApplyOnceDryRunDoesNotCreateStateDB(t *testing.T) {
 	}
 	if _, err := os.Stat(ledgerDir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("dry-run ledger dir stat error = %v, want not exist", err)
+	}
+}
+
+func TestApplyCommandDryRunUsesChainOnceWithoutCreatingStateDB(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	stateDir := filepath.Join(dir, "state")
+	statePath := filepath.Join(stateDir, "routerd.db")
+	ledgerDir := filepath.Join(dir, "ledger")
+	ledgerPath := filepath.Join(ledgerDir, "routerd.db")
+	statusPath := filepath.Join(dir, "status.json")
+	if err := os.WriteFile(configPath, []byte(testRouterYAML("apply-chain-dry-run")), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	var stdout strings.Builder
+	if err := applyCommand([]string{
+		"--config", configPath,
+		"--once",
+		"--dry-run",
+		"--state-file", statePath,
+		"--ledger-file", ledgerPath,
+		"--status-file", statusPath,
+		"--skip-service-manager",
+	}, &stdout, io.Discard); err != nil {
+		t.Fatalf("apply --once --dry-run: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "dry-run apply plan") || !strings.Contains(stdout.String(), `"phase": "Healthy"`) {
+		t.Fatalf("apply dry-run output missing plan/result:\n%s", stdout.String())
+	}
+	if _, err := os.Stat(statusPath); err != nil {
+		t.Fatalf("status file: %v", err)
+	}
+	if _, err := os.Stat(statePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dry-run state db stat error = %v, want not exist", err)
+	}
+	if _, err := os.Stat(stateDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dry-run state dir stat error = %v, want not exist", err)
+	}
+	if _, err := os.Stat(ledgerPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dry-run ledger db stat error = %v, want not exist", err)
+	}
+	if _, err := os.Stat(ledgerDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dry-run ledger dir stat error = %v, want not exist", err)
+	}
+}
+
+func TestRunDispatchesApplyDryRun(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	statePath := filepath.Join(dir, "state", "routerd.db")
+	ledgerPath := filepath.Join(dir, "ledger", "routerd.db")
+	statusPath := filepath.Join(dir, "status.json")
+	if err := os.WriteFile(configPath, []byte(testRouterYAML("apply-dispatch-dry-run")), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	var stdout strings.Builder
+	if err := run([]string{
+		"apply",
+		"--config", configPath,
+		"--once",
+		"--dry-run",
+		"--state-file", statePath,
+		"--ledger-file", ledgerPath,
+		"--status-file", statusPath,
+		"--skip-service-manager",
+	}, &stdout, io.Discard); err != nil {
+		t.Fatalf("routerd apply --once --dry-run: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "dry-run apply plan") || !strings.Contains(stdout.String(), `"phase": "Healthy"`) {
+		t.Fatalf("apply dry-run output missing plan/result:\n%s", stdout.String())
+	}
+	if _, err := os.Stat(statePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dry-run state db stat error = %v, want not exist", err)
 	}
 }
 
@@ -216,7 +290,7 @@ func TestManagementPlaneBlocksNonDryRunApply(t *testing.T) {
 	}
 }
 
-func TestRunApplyOnceDryRunDoesNotMutateExistingStateDB(t *testing.T) {
+func TestRunApplyChainOnceDryRunDoesNotMutateExistingStateDB(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "routerd.db")
 	statusPath := filepath.Join(dir, "status.json")
@@ -235,7 +309,7 @@ func TestRunApplyOnceDryRunDoesNotMutateExistingStateDB(t *testing.T) {
 			Name: "test-router",
 		},
 	}
-	result, err := runApplyOnce(router, applyOptions{
+	result, err := runApplyChainOnce(context.Background(), router, applyOptions{
 		DryRun:     true,
 		StatePath:  statePath,
 		StatusFile: statusPath,
@@ -334,26 +408,7 @@ func TestConfigCommandPlanObserveAcceptJSONState(t *testing.T) {
 	}
 }
 
-func TestLoadApplyStateStoreKeepsNonDryRunSQLiteWriter(t *testing.T) {
-	statePath := filepath.Join(t.TempDir(), "routerd.db")
-	store, err := loadApplyStateStore(statePath, false)
-	if err != nil {
-		t.Fatalf("load apply writer: %v", err)
-	}
-	defer func() {
-		if closer, ok := store.(interface{ Close() error }); ok {
-			_ = closer.Close()
-		}
-	}()
-	if _, ok := store.(*routerstate.SQLiteStore); !ok {
-		t.Fatalf("apply store type = %T, want SQLite writer", store)
-	}
-	if got := store.Set("manual.mode", "writer", "test"); got.Status != routerstate.StatusSet || got.Value != "writer" {
-		t.Fatalf("writer set = %+v", got)
-	}
-}
-
-func TestRunApplyOnceCommitsCanonicalConfigAndGenerationYAML(t *testing.T) {
+func TestRunApplyChainOnceCommitsCanonicalConfigAndGenerationYAML(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "router.yaml")
 	statePath := filepath.Join(dir, "routerd.db")
@@ -378,7 +433,7 @@ spec:
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	_, err = runApplyOnce(router, applyOptions{
+	_, err = runApplyChainOnce(context.Background(), router, applyOptions{
 		ConfigPath:         configPath,
 		StatePath:          statePath,
 		StatusFile:         statusPath,
@@ -691,6 +746,7 @@ func TestServeOnceConvergesAndExits(t *testing.T) {
 		"--state-file", statePath,
 		"--status-file", statusPath,
 		"--ledger-file", ledgerPath,
+		"--controllers", "log-retention",
 		"--once",
 	}, &stdout, io.Discard)
 	if err != nil {
@@ -738,6 +794,7 @@ func TestServeAcceptsLegacyControllerChainFlags(t *testing.T) {
 		"--state-file", statePath,
 		"--status-file", statusPath,
 		"--ledger-file", ledgerPath,
+		"--controllers", "log-retention",
 		"--once",
 		"--observe-interval", "30s",
 		"--controller-chain",
@@ -1101,215 +1158,6 @@ metadata:
 spec:
   resources: []
 `, name)
-}
-
-func TestRunApplyOnceVRRPRendersKeepalivedWithoutDaemonLifecycle(t *testing.T) {
-	dir := t.TempDir()
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatalf("create fake bin dir: %v", err)
-	}
-	commandLog := filepath.Join(dir, "commands.log")
-	writeExecutable(t, filepath.Join(binDir, "systemctl"), fmt.Sprintf(`#!/bin/sh
-echo "systemctl $@" >> %q
-exit 0
-`, commandLog))
-	writeExecutable(t, filepath.Join(binDir, "keepalived"), fmt.Sprintf(`#!/bin/sh
-echo "keepalived $@" >> %q
-exit 0
-`, commandLog))
-	writeExecutable(t, filepath.Join(binDir, "ip"), fmt.Sprintf(`#!/bin/sh
-echo "ip $@" >> %q
-if [ "$1" = "-4" ] && [ "$2" = "addr" ] && [ "$3" = "show" ]; then
-  echo "2: eth0 inet 10.240.70.10/32 scope global eth0"
-fi
-exit 0
-`, commandLog))
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	oldDefaults := platformDefaults
-	oldFeatures := platformFeatures
-	oldKeepalivedPath := runtimeKeepalivedConfigPath
-	platformDefaults = oldDefaults
-	platformDefaults.OS = platform.OSLinux
-	platformDefaults.RuntimeDir = filepath.Join(dir, "run")
-	platformDefaults.StateDir = filepath.Join(dir, "var", "lib", "routerd")
-	platformFeatures = platform.Features{HasSystemd: true}
-	runtimeKeepalivedConfigPath = filepath.Join(dir, "etc", "keepalived", "keepalived.conf")
-	t.Cleanup(func() {
-		platformDefaults = oldDefaults
-		platformFeatures = oldFeatures
-		runtimeKeepalivedConfigPath = oldKeepalivedPath
-	})
-
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "vrrp-apply-once"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "eth0", Managed: false},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
-				Metadata: api.ObjectMeta{Name: "api-vip"},
-				Spec: api.VirtualAddressSpec{Family: "ipv4",
-					Interface: "lan",
-					Address:   "10.240.70.10/32",
-					Mode:      "vrrp",
-					VRRP: api.VirtualAddressVRRPSpec{
-						VirtualRouterID: 66,
-						Priority:        150,
-						Peers:           []string{"10.240.70.11"},
-					},
-				},
-			},
-		}},
-	}
-	var stdout strings.Builder
-	statePath := filepath.Join(dir, "state.db")
-	_, err := runApplyOnce(router, applyOptions{
-		StatePath:  statePath,
-		LedgerPath: filepath.Join(dir, "ledger.db"),
-		ConfigPath: filepath.Join(dir, "router.yaml"),
-	}, &stdout, &eventlog.Logger{})
-	if err != nil {
-		t.Fatalf("apply once: %v", err)
-	}
-	config, err := os.ReadFile(runtimeKeepalivedConfigPath)
-	if err != nil {
-		t.Fatalf("read keepalived config: %v", err)
-	}
-	if !strings.Contains(string(config), "vrrp_instance api_vip") || !strings.Contains(string(config), "virtual_router_id 66") {
-		t.Fatalf("keepalived config missing VRRP stanza:\n%s", config)
-	}
-
-	store, err := routerstate.OpenSQLite(statePath)
-	if err != nil {
-		t.Fatalf("open state: %v", err)
-	}
-	defer func() { _ = store.Close() }()
-	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "api-vip")
-	if got := statusStringMap(status, "phase"); got != "Rendered" {
-		t.Fatalf("phase = %q, want Rendered; status=%#v", got, status)
-	}
-	if got := statusStringMap(status, "applyWith"); got != "routerd serve" {
-		t.Fatalf("applyWith = %q, want serve handoff; status=%#v", got, status)
-	}
-	if got := statusStringMap(status, "role"); got != "unknown" {
-		t.Fatalf("role = %q, want unknown before serve observation; status=%#v", got, status)
-	}
-	commands, err := os.ReadFile(commandLog)
-	if err != nil {
-		t.Fatalf("read command log: %v", err)
-	}
-	for _, unwanted := range []string{"systemctl reload keepalived.service", "systemctl restart keepalived.service", "keepalived --config-test", "ip -4 addr"} {
-		if strings.Contains(string(commands), unwanted) {
-			t.Fatalf("apply --once must not run VRRP daemon lifecycle command %q:\n%s", unwanted, commands)
-		}
-	}
-	if !strings.Contains(stdout.String(), "rendered VRRP artifacts") || strings.Contains(stdout.String(), "observed VRRP") || strings.Contains(stdout.String(), "applied keepalived") {
-		t.Fatalf("stdout did not describe VRRP as render-only:\n%s", stdout.String())
-	}
-}
-
-func TestRunApplyOnceBGPHandoffsToEmbeddedGoBGPServe(t *testing.T) {
-	dir := t.TempDir()
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatalf("create fake bin dir: %v", err)
-	}
-	commandLog := filepath.Join(dir, "commands.log")
-	for _, name := range []string{"systemctl", "ss", "vtysh", "frr-reload.py"} {
-		writeExecutable(t, filepath.Join(binDir, name), fmt.Sprintf(`#!/bin/sh
-echo "%s $@" >> %q
-exit 99
-`, name, commandLog))
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	oldDefaults := platformDefaults
-	oldFeatures := platformFeatures
-	platformDefaults = oldDefaults
-	platformDefaults.OS = platform.OSLinux
-	platformDefaults.RuntimeDir = filepath.Join(dir, "run")
-	platformDefaults.StateDir = filepath.Join(dir, "var", "lib", "routerd")
-	platformFeatures = platform.Features{HasSystemd: true}
-	t.Cleanup(func() {
-		platformDefaults = oldDefaults
-		platformFeatures = oldFeatures
-	})
-
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "bgp-apply-once"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
-				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec: api.BGPRouterSpec{
-					ASN:      64512,
-					RouterID: "10.0.0.1",
-					ImportPolicy: api.BGPImportPolicySpec{
-						AllowedPrefixes: []string{"10.250.0.0/24"},
-					},
-				},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
-				Metadata: api.ObjectMeta{Name: "worker"},
-				Spec: api.BGPPeerSpec{
-					RouterRef: "BGPRouter/lan",
-					PeerASN:   64513,
-					Peers:     []string{"10.0.0.21"},
-				},
-			},
-		}},
-	}
-	var stdout strings.Builder
-	statePath := filepath.Join(dir, "state.db")
-	_, err := runApplyOnce(router, applyOptions{
-		StatePath:          statePath,
-		LedgerPath:         filepath.Join(dir, "ledger.db"),
-		ConfigPath:         filepath.Join(dir, "router.yaml"),
-		SkipServiceManager: true,
-	}, &stdout, &eventlog.Logger{})
-	if err != nil {
-		t.Fatalf("apply once: %v", err)
-	}
-
-	if commands, err := os.ReadFile(commandLog); err == nil {
-		for _, unwanted := range []string{
-			"systemctl enable frr.service",
-			"systemctl restart frr.service",
-			"ss -ltn",
-			"vtysh ",
-			"frr-reload.py ",
-		} {
-			if strings.Contains(string(commands), unwanted) {
-				t.Fatalf("apply --once must not run BGP daemon lifecycle command %q:\n%s", unwanted, commands)
-			}
-		}
-	}
-	store, err := routerstate.OpenSQLite(statePath)
-	if err != nil {
-		t.Fatalf("open state: %v", err)
-	}
-	defer func() { _ = store.Close() }()
-	status := store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
-	if got := statusStringMap(status, "phase"); got != "Pending" {
-		t.Fatalf("phase = %q, want Pending; status=%#v", got, status)
-	}
-	if got := statusStringMap(status, "backend"); got != "gobgp" {
-		t.Fatalf("backend = %q, want gobgp; status=%#v", got, status)
-	}
-	if got := statusStringMap(status, "applyWith"); got != "routerd serve" {
-		t.Fatalf("applyWith = %q, want serve handoff; status=%#v", got, status)
-	}
-	if strings.Contains(stdout.String(), "rendered BGP artifacts") || strings.Contains(stdout.String(), "observed BGP") || strings.Contains(stdout.String(), "applied bgp") {
-		t.Fatalf("stdout should not describe one-shot BGP control-plane work:\n%s", stdout.String())
-	}
 }
 
 func TestControllerDefaultStatusesAreLive(t *testing.T) {

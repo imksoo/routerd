@@ -4,6 +4,7 @@ package framework
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -124,6 +125,41 @@ func (r Runner) Run(ctx context.Context, controllers ...Controller) error {
 	<-ctx.Done()
 	wg.Wait()
 	return ctx.Err()
+}
+
+func (r Runner) RunOnce(ctx context.Context, controllers ...Controller) error {
+	interval := r.Interval
+	if interval == 0 {
+		interval = 5 * time.Minute
+	}
+	logger := r.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	locker := r.Locker
+	if locker == nil {
+		locker = lock.NewResourceLocker()
+	}
+
+	var errs []error
+	for _, controller := range controllers {
+		interval := controllerInterval(controller, interval)
+		if r.Observer != nil {
+			r.Observer.ControllerStarted(controller.Name(), interval)
+		}
+		err := runLocked(ctx, logger, locker, r.Observer, controller.Name()+":once", controller.Name(), "once", "", "", interval, func(runCtx context.Context) error {
+			_, err := controller.PeriodicReconcile(runCtx)
+			return err
+		})
+		if err != nil {
+			errs = append(errs, err)
+		}
+		if ctx.Err() != nil {
+			errs = append(errs, ctx.Err())
+			break
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func runController(ctx context.Context, logger *slog.Logger, locker *lock.ResourceLocker, observer Observer, interval time.Duration, controller Controller, events <-chan daemonapi.DaemonEvent) {

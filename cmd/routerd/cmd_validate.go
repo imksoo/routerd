@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -68,7 +69,7 @@ func checkCommand(args []string, stdout io.Writer) (err error) {
 		SkipServiceManager:  true,
 		AnnounceDryRunToCLI: false,
 	}
-	result, err := runApplyOnce(router, opts, io.Discard, logger)
+	result, err := runApplyChainOnce(context.Background(), router, opts, io.Discard, logger)
 	if err != nil {
 		return err
 	}

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -200,7 +201,7 @@ func (m serveConfigMutator) planRouter(router *api.Router, configYAML string) (*
 	opts.SkipConfigCommit = true
 	opts.StatusFile = ""
 	opts.ConfigYAMLOverride = configYAML
-	return runApplyOnce(router, opts, io.Discard, m.logger)
+	return runApplyChainOnce(context.Background(), router, opts, io.Discard, m.logger)
 }
 
 func (m serveConfigMutator) reconcile(router *api.Router, configYAML string) (*apply.Result, error) {
@@ -220,7 +221,7 @@ func (m serveConfigMutator) reconcile(router *api.Router, configYAML string) (*a
 	opts.DryRun = false
 	opts.SkipConfigCommit = false
 	opts.ConfigYAMLOverride = configYAML
-	return runApplyOnce(router, opts, io.Discard, m.logger)
+	return runApplyChainOnce(context.Background(), router, opts, io.Discard, m.logger)
 }
 
 func (m serveConfigMutator) commitOnly(router *api.Router, configYAML string) (*apply.Result, error) {
