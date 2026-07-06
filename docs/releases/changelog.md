@@ -12,6 +12,16 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260706.2224
+
+### Changed
+
+- `dns-resolver`, `firewall`, and `log-retention` now subscribe only to the
+  events that can affect them, so BGP status churn no longer wakes unrelated
+  controller-chain work (#781).
+- DNS query logging now applies explicit SQLite WAL checkpoint and journal size
+  limits to keep `dns-queries.db-wal` bounded during steady operation (#781).
+
 ## v20260706.1445
 
 ### Changed
