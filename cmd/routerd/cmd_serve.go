@@ -604,7 +604,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}
 	applyMu := &sync.Mutex{}
 	if *applyInterval > 0 {
-		go runApplySchedule(stop, *applyInterval, currentRouter, applyOpts, cache, logger, applyMu)
+		go runApplySchedule(ctx, stop, *applyInterval, currentRouter, func() *controllerchain.Runner { return chainRunner }, applyOpts, stateStore, cache, logger, applyMu)
 	}
 	if webConsoleResourcePresent(router) {
 		var webStore routerstate.Store
@@ -2172,7 +2172,7 @@ func containsString(values []string, needle string) bool {
 	return false
 }
 
-func runApplySchedule(stop <-chan struct{}, interval time.Duration, router func() *api.Router, opts applyOptions, cache *resultCache, logger *eventlog.Logger, applyMu *sync.Mutex) {
+func runApplySchedule(ctx context.Context, stop <-chan struct{}, interval time.Duration, router func() *api.Router, runner func() *controllerchain.Runner, opts applyOptions, store *routerstate.SQLiteStore, cache *resultCache, logger *eventlog.Logger, applyMu *sync.Mutex) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -2181,7 +2181,11 @@ func runApplySchedule(stop <-chan struct{}, interval time.Duration, router func(
 			return
 		case <-ticker.C:
 			applyMu.Lock()
-			result, err := runApplyOnce(router(), opts, io.Discard, logger)
+			chainRunner := runner()
+			if chainRunner != nil {
+				chainRunner.Router = router()
+			}
+			result, err := runServeChainOnce(ctx, chainRunner, router(), opts, store, io.Discard, logger)
 			applyMu.Unlock()
 			if err != nil {
 				logger.Emit(eventlog.LevelError, "serve", "scheduled apply failed", map[string]string{"error": err.Error()})
