@@ -72,6 +72,14 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return nil
 	case "serve":
 		return serveCommand(args[1:], stdout, stderr)
+	case "apply":
+		return applyCommand(args[1:], stdout, stderr)
+	case "rollback":
+		return rollbackCommand(args[1:], stdout, stderr)
+	case "validate":
+		return validateCommand(args[1:], stdout)
+	case "check":
+		return checkCommand(args[1:], stdout)
 	case "help", "-h", "--help":
 		usage(stdout)
 		return nil
@@ -87,6 +95,10 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "commands:")
 	fmt.Fprintln(w, "  serve --config <path> [options]   run the control loop and serve control sockets")
 	fmt.Fprintln(w, "  serve --config <path> --once      converge once and exit (no control sockets)")
+	fmt.Fprintln(w, "  apply --config <path> --once      apply config once")
+	fmt.Fprintln(w, "  rollback --list|--to <generation> list or re-apply saved config generations")
+	fmt.Fprintln(w, "  validate --config <path>          validate config")
+	fmt.Fprintln(w, "  check --config <path>             run preflight check")
 	fmt.Fprintln(w, "  version                          print the routerd version")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "serve options:")
