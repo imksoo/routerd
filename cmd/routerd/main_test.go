@@ -691,6 +691,7 @@ func TestServeOnceConvergesAndExits(t *testing.T) {
 		"--state-file", statePath,
 		"--status-file", statusPath,
 		"--ledger-file", ledgerPath,
+		"--controllers", "log-retention",
 		"--once",
 	}, &stdout, io.Discard)
 	if err != nil {
@@ -738,6 +739,7 @@ func TestServeAcceptsLegacyControllerChainFlags(t *testing.T) {
 		"--state-file", statePath,
 		"--status-file", statusPath,
 		"--ledger-file", ledgerPath,
+		"--controllers", "log-retention",
 		"--once",
 		"--observe-interval", "30s",
 		"--controller-chain",

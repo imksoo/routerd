@@ -163,6 +163,9 @@ func (c SAMController) reconcileForwardPaths(ctx context.Context, actions []sam.
 			paths = append(paths, action)
 		}
 	}
+	if len(paths) == 0 {
+		return nil
+	}
 	if c.DryRun {
 		return nil
 	}
