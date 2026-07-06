@@ -2578,6 +2578,16 @@ func (r doctorRunner) doctorRuntime() []doctorCheck {
 	}
 	detail := fmt.Sprintf("heapAlloc=%.1fMiB heapObjects=%d numGoroutine=%d numGC=%d openFds=%s",
 		heapMiB, stats.HeapObjects, stats.NumGoroutine, stats.NumGC, fdSummary)
+	if stats.CgroupMemoryCurrentBytes > 0 {
+		detail = appendDoctorDetail(detail, fmt.Sprintf("cgroupCurrent=%.1fMiB cgroupAnon=%.1fMiB cgroupFile=%.1fMiB cgroupInactiveFile=%.1fMiB",
+			bytesToMiB(stats.CgroupMemoryCurrentBytes),
+			bytesToMiB(stats.CgroupAnonBytes),
+			bytesToMiB(stats.CgroupFileBytes),
+			bytesToMiB(stats.CgroupInactiveFileBytes)))
+		if stats.CgroupFileBytes > stats.CgroupAnonBytes*2 && stats.CgroupInactiveFileBytes > stats.CgroupAnonBytes {
+			detail = appendDoctorDetail(detail, "cgroup memory is mostly file cache, not routerd heap")
+		}
+	}
 
 	status := doctorPass
 	remedy := ""
@@ -2592,6 +2602,10 @@ func (r doctorRunner) doctorRuntime() []doctorCheck {
 		remedy = "inspect /proc/<pid>/fd for leaked descriptors or raise RLIMIT_NOFILE"
 	}
 	return []doctorCheck{{Area: "runtime", Name: "process", Status: status, Detail: detail, Remedy: remedy}}
+}
+
+func bytesToMiB(value uint64) float64 {
+	return float64(value) / (1024 * 1024)
 }
 
 func fetchRuntimeStats(socketPath string, timeout time.Duration) (*controlapi.RuntimeStats, error) {

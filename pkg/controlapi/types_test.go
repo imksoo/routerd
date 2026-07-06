@@ -51,6 +51,14 @@ func TestRuntimeStatsJSONRoundTrip(t *testing.T) {
 	in.HeapObjects = 123456
 	in.StackInuseBytes = 2 * 1024 * 1024
 	in.SysBytes = 64 * 1024 * 1024
+	in.CgroupMemoryCurrentBytes = 2 * 1024 * 1024 * 1024
+	in.CgroupMemoryPeakBytes = 3 * 1024 * 1024 * 1024
+	in.CgroupAnonBytes = 32 * 1024 * 1024
+	in.CgroupFileBytes = 1900 * 1024 * 1024
+	in.CgroupActiveFileBytes = 100 * 1024 * 1024
+	in.CgroupInactiveFileBytes = 1800 * 1024 * 1024
+	in.CgroupKernelBytes = 16 * 1024 * 1024
+	in.CgroupSlabBytes = 12 * 1024 * 1024
 	in.NumGoroutine = 42
 	in.NumGC = 7
 	in.GCPauseTotalNs = 5_000_000
@@ -67,6 +75,9 @@ func TestRuntimeStatsJSONRoundTrip(t *testing.T) {
 	for _, field := range []string{
 		`"apiVersion"`, `"kind"`, `"collectedAt"`, `"heapAllocBytes"`,
 		`"heapInuseBytes"`, `"heapObjects"`, `"stackInuseBytes"`, `"sysBytes"`,
+		`"cgroupMemoryCurrentBytes"`, `"cgroupMemoryPeakBytes"`, `"cgroupAnonBytes"`,
+		`"cgroupFileBytes"`, `"cgroupActiveFileBytes"`, `"cgroupInactiveFileBytes"`,
+		`"cgroupKernelBytes"`, `"cgroupSlabBytes"`,
 		`"numGoroutine"`, `"numGC"`, `"gcPauseTotalNs"`, `"lastGC"`,
 		`"openFds"`, `"maxFds"`,
 	} {
@@ -91,6 +102,14 @@ func TestRuntimeStatsJSONRoundTrip(t *testing.T) {
 	if out.HeapAllocBytes != in.HeapAllocBytes || out.HeapInuseBytes != in.HeapInuseBytes ||
 		out.HeapObjects != in.HeapObjects || out.StackInuseBytes != in.StackInuseBytes ||
 		out.SysBytes != in.SysBytes || out.NumGoroutine != in.NumGoroutine ||
+		out.CgroupMemoryCurrentBytes != in.CgroupMemoryCurrentBytes ||
+		out.CgroupMemoryPeakBytes != in.CgroupMemoryPeakBytes ||
+		out.CgroupAnonBytes != in.CgroupAnonBytes ||
+		out.CgroupFileBytes != in.CgroupFileBytes ||
+		out.CgroupActiveFileBytes != in.CgroupActiveFileBytes ||
+		out.CgroupInactiveFileBytes != in.CgroupInactiveFileBytes ||
+		out.CgroupKernelBytes != in.CgroupKernelBytes ||
+		out.CgroupSlabBytes != in.CgroupSlabBytes ||
 		out.NumGC != in.NumGC || out.GCPauseTotalNs != in.GCPauseTotalNs ||
 		out.OpenFDs != in.OpenFDs || out.MaxFDs != in.MaxFDs {
 		t.Fatalf("round-trip mismatch:\n in = %#v\nout = %#v", in, out)

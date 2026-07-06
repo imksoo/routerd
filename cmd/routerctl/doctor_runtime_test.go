@@ -48,6 +48,10 @@ func TestDoctorRuntimePassesAndSummarizesFootprint(t *testing.T) {
 	stats.NumGC = 9
 	stats.OpenFDs = 42
 	stats.MaxFDs = 1024
+	stats.CgroupMemoryCurrentBytes = 2473160704
+	stats.CgroupAnonBytes = 27832320
+	stats.CgroupFileBytes = 2422931456
+	stats.CgroupInactiveFileBytes = 2386235392
 	withRuntimeStub(t, &stats, nil)
 
 	report := runDoctorRuntime(t)
@@ -61,7 +65,7 @@ func TestDoctorRuntimePassesAndSummarizesFootprint(t *testing.T) {
 	if check.Status != doctorPass {
 		t.Fatalf("status = %q, want pass; detail=%q", check.Status, check.Detail)
 	}
-	for _, want := range []string{"heapAlloc=18.0MiB", "heapObjects=123456", "numGoroutine=250", "numGC=9", "openFds=42/1024"} {
+	for _, want := range []string{"heapAlloc=18.0MiB", "heapObjects=123456", "numGoroutine=250", "numGC=9", "openFds=42/1024", "cgroupCurrent=2358.6MiB", "cgroup memory is mostly file cache"} {
 		if !strings.Contains(check.Detail, want) {
 			t.Fatalf("detail missing %q: %q", want, check.Detail)
 		}
