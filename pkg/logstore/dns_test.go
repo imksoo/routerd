@@ -25,6 +25,30 @@ func seedDNSQueryRows(t *testing.T, log *DNSQueryLog, base time.Time) {
 	}
 }
 
+func TestOpenDNSQueryLogConfiguresWALCheckpoint(t *testing.T) {
+	log, err := OpenDNSQueryLog(filepath.Join(t.TempDir(), "dns-queries.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+
+	var autoCheckpoint int
+	if err := log.db.QueryRow(`PRAGMA wal_autocheckpoint`).Scan(&autoCheckpoint); err != nil {
+		t.Fatal(err)
+	}
+	if autoCheckpoint != dnsQueryWALAutoCheckpointPages {
+		t.Fatalf("wal_autocheckpoint = %d, want %d", autoCheckpoint, dnsQueryWALAutoCheckpointPages)
+	}
+
+	var journalSizeLimit int64
+	if err := log.db.QueryRow(`PRAGMA journal_size_limit`).Scan(&journalSizeLimit); err != nil {
+		t.Fatal(err)
+	}
+	if journalSizeLimit != dnsQueryJournalSizeLimitBytes {
+		t.Fatalf("journal_size_limit = %d, want %d", journalSizeLimit, dnsQueryJournalSizeLimitBytes)
+	}
+}
+
 func TestDNSQueryLogFiltersAndAggregate(t *testing.T) {
 	log, err := OpenDNSQueryLog(filepath.Join(t.TempDir(), "dns-queries.db"))
 	if err != nil {
