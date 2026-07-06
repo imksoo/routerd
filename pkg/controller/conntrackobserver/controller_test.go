@@ -144,7 +144,7 @@ func TestControllerRecordsTrafficFlowLog(t *testing.T) {
 	}
 }
 
-func TestControllerMarksApplicationLayerUnavailable(t *testing.T) {
+func TestControllerReportsApplicationLayerUnavailableWithoutBlockingFlowLog(t *testing.T) {
 	dir := t.TempDir()
 	countPath := filepath.Join(dir, "count")
 	maxPath := filepath.Join(dir, "max")
@@ -193,11 +193,11 @@ func TestControllerMarksApplicationLayerUnavailable(t *testing.T) {
 		t.Fatalf("reconcile: %v", err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "TrafficFlowLog", "default")
-	if status["phase"] != "Pending" || status["reason"] != "TrafficFlowApplicationLayerUnavailable" || status["pendingReason"] != "TrafficFlowApplicationLayerUnavailable" {
+	if status["phase"] != "Observed" || status["reason"] != nil || status["pendingReason"] != nil {
 		t.Fatalf("traffic status = %#v", status)
 	}
 	if status["activeFlows"] != 1 || status["count"] != 1 {
-		t.Fatalf("traffic flow counters missing from pending status: %#v", status)
+		t.Fatalf("traffic flow counters missing from status: %#v", status)
 	}
 	app, ok := status["applicationLayer"].(api.TrafficFlowApplicationLayerStatus)
 	if !ok {
