@@ -83,7 +83,7 @@ func (c FuncController) PeriodicReconcile(ctx context.Context) (bool, error) {
 	}
 	if c.ReconcileFunc != nil {
 		err := c.ReconcileFunc(ctx, daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "event-loop"}, "routerd.controller.periodic", daemonapi.SeverityDebug))
-		return true, err
+		return false, err
 	}
 	return false, nil
 }

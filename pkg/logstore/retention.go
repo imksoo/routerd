@@ -20,9 +20,11 @@ type RetentionTarget struct {
 }
 
 type RetentionResult struct {
-	File    string `json:"file"`
-	Deleted int64  `json:"deleted"`
-	Skipped bool   `json:"skipped,omitempty"`
+	File          string `json:"file"`
+	Deleted       int64  `json:"deleted"`
+	Skipped       bool   `json:"skipped,omitempty"`
+	Vacuumed      bool   `json:"vacuumed,omitempty"`
+	FreelistPages int64  `json:"freelistPages,omitempty"`
 }
 
 func ApplyRetention(ctx context.Context, target RetentionTarget, incrementalVacuum bool) (RetentionResult, error) {
@@ -57,9 +59,42 @@ func ApplyRetention(ctx context.Context, target RetentionTarget, incrementalVacu
 	}
 	result.Deleted = deleted
 	if incrementalVacuum {
-		_, _ = db.ExecContext(ctx, `PRAGMA incremental_vacuum;`)
+		vacuumed, freelistPages, err := vacuumAfterRetention(ctx, db)
+		if err != nil {
+			return result, err
+		}
+		result.Vacuumed = vacuumed
+		result.FreelistPages = freelistPages
 	}
 	return result, nil
+}
+
+func vacuumAfterRetention(ctx context.Context, db *sql.DB) (bool, int64, error) {
+	_, _ = db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE);`)
+
+	freelistPages := int64(0)
+	if err := db.QueryRowContext(ctx, `PRAGMA freelist_count;`).Scan(&freelistPages); err != nil {
+		return false, 0, err
+	}
+	if freelistPages == 0 {
+		return false, 0, nil
+	}
+
+	autoVacuum := 0
+	if err := db.QueryRowContext(ctx, `PRAGMA auto_vacuum;`).Scan(&autoVacuum); err != nil {
+		return false, freelistPages, err
+	}
+	if autoVacuum == 0 {
+		if _, err := db.ExecContext(ctx, `VACUUM;`); err != nil {
+			return false, freelistPages, err
+		}
+	} else {
+		if _, err := db.ExecContext(ctx, `PRAGMA incremental_vacuum;`); err != nil {
+			return false, freelistPages, err
+		}
+	}
+	_, _ = db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE);`)
+	return true, freelistPages, nil
 }
 
 func deleteExpired(ctx context.Context, db *sql.DB, cutoff time.Time) (int64, error) {

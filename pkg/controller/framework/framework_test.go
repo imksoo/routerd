@@ -181,6 +181,26 @@ func TestRunOnceAggregatesErrorsAndContinues(t *testing.T) {
 	}
 }
 
+func TestFuncControllerPeriodicReconcileDoesNotAssumeWork(t *testing.T) {
+	called := false
+	worked, err := FuncController{
+		ControllerName: "event-only",
+		ReconcileFunc: func(context.Context, daemonapi.DaemonEvent) error {
+			called = true
+			return nil
+		},
+	}.PeriodicReconcile(context.Background())
+	if err != nil {
+		t.Fatalf("PeriodicReconcile: %v", err)
+	}
+	if !called {
+		t.Fatal("ReconcileFunc was not called")
+	}
+	if worked {
+		t.Fatal("worked = true, want false")
+	}
+}
+
 func TestAdaptiveReconcileIntervals(t *testing.T) {
 	tests := []struct {
 		name string
