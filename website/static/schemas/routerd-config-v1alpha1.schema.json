@@ -12197,7 +12197,8 @@
                       },
                       "mode": {
                         "enum": [
-                          "snapshot"
+                          "snapshot",
+                          "event-stream"
                         ],
                         "type": "string"
                       },

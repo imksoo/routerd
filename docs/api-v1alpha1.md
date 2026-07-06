@@ -382,6 +382,8 @@ while private routed destinations or reusable address sets stay un-NATed.
 
 `NAT44SessionSync` uses `conntrack --dump -o extended` for selected SNAT
 addresses and restores the parsed tuple and conntrack mark on standby targets.
+It also supports `mode: event-stream`, which starts with a snapshot resync and
+then consumes local `conntrack -E -o extended` events for incremental batches.
 It is intended for active-to-standby HA sync and is usually gated with
 `spec.when`.
 
@@ -751,7 +753,7 @@ and fields outside the target kind's `provides` set.
 | `SAMEnrollmentClient` | `backoff` (string), `claimRef` (string), `lastAttempt` (timestamp), `lastSuccess` (timestamp), `nextAttempt` (timestamp), `observedRRSet` (string), `phase` (string), `reason` (string) |
 | `SAMEnrollmentPolicy` | `acceptedClaims` (int), `leafIDs` (stringList), `phase` (string), `skippedClaims` (int) |
 | `NAT44Rule` | `dryRun` (bool), `egressInterface` (string), `phase` (string), `snatAddress` (string) |
-| `NAT44SessionSync` | `deleteFailed` (int), `deleteOK` (int), `dryRun` (bool), `insertFailed` (int), `insertOK` (int), `mode` (string), `phase` (string), `sessionCount` (int), `snatAddresses` (stringList), `syncedAt` (timestamp), `targetCount` (int), `targets` (objectList) |
+| `NAT44SessionSync` | `deleteFailed` (int), `deleteMissing` (int), `deleteOK` (int), `dryRun` (bool), `insertExisting` (int), `insertFailed` (int), `insertOK` (int), `lastBatchAt` (timestamp), `lastBatchEvents` (int), `lastEventAt` (timestamp), `lastResyncAt` (timestamp), `mode` (string), `phase` (string), `queuedEventCount` (int), `resyncCount` (int), `sessionCount` (int), `snatAddresses` (stringList), `streamState` (string), `syncedAt` (timestamp), `targetCount` (int), `targets` (objectList) |
 | `NTPClient` | `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `NTPServer` | `allowCIDRs` (stringList), `listenAddresses` (stringList), `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `ObservabilityPipeline` | `phase` (string), `signals` (stringList) |

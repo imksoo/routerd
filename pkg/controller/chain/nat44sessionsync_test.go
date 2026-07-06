@@ -6,11 +6,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -79,6 +81,37 @@ func TestParseConntrackExtendedLineSkipsSummary(t *testing.T) {
 	}
 }
 
+func TestParseConntrackEventLine(t *testing.T) {
+	line := "[NEW] ipv4 2 tcp 6 86398 ESTABLISHED src=172.18.1.150 dst=20.194.195.242 sport=65190 dport=443 packets=262 bytes=12258 src=20.194.195.242 dst=192.0.0.2 sport=443 dport=65190 packets=260 bytes=66429 [ASSURED] mark=272 use=1"
+	op, ok, err := parseConntrackEventLine(line, []string{"192.0.0.2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || op.DeleteOnly {
+		t.Fatalf("operation = %#v, ok=%v", op, ok)
+	}
+	got := strings.Join(op.Entry.Insert, " ")
+	for _, want := range []string{"-s 172.18.1.150", "-q 192.0.0.2", "--state ESTABLISHED", "-m 272"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("insert = %q, missing %q", got, want)
+		}
+	}
+	if _, ok, err := parseConntrackEventLine(line, []string{"192.0.0.9"}); err != nil || ok {
+		t.Fatalf("filtered operation ok=%v err=%v", ok, err)
+	}
+	destroy, ok, err := parseConntrackEventLine(strings.Replace(line, "[NEW]", "[DESTROY]", 1), []string{"192.0.0.2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || !destroy.DeleteOnly {
+		t.Fatalf("destroy operation = %#v, ok=%v", destroy, ok)
+	}
+	ipv6Line := "[UPDATE] ipv6 10 icmpv6 58 29 src=2001:db8::1 dst=2001:db8::2 type=128 code=0 id=1 src=2001:db8::2 dst=2001:db8::1 type=129 code=0 id=1 mark=0 use=1"
+	if _, ok, err := parseConntrackEventLine(ipv6Line, []string{"192.0.0.2"}); err != nil || ok {
+		t.Fatalf("ipv6 operation ok=%v err=%v", ok, err)
+	}
+}
+
 func TestParseNAT44SessionSyncRestoreOutput(t *testing.T) {
 	result, err := parseNAT44SessionSyncRestoreOutput([]byte("noise\nok_del=1 miss_del=2 ng_del=3 ok_ins=4 dup_ins=5 ng_ins=6\n"))
 	if err != nil {
@@ -104,6 +137,13 @@ func TestParseNAT44SessionSyncRestoreOutput(t *testing.T) {
 	}
 	if phase, reason := nat44SessionSyncRestorePhase(2, nat44SessionSyncRestoreResult{OKIns: 2, NGDel: 1}); phase != "Degraded" || reason != "RestorePartialFailed" {
 		t.Fatalf("delete-failed phase = %s/%s", phase, reason)
+	}
+	deleteOnly := []conntrackRestoreOperation{{DeleteOnly: true}}
+	if phase, reason := nat44SessionSyncRestoreOperationsPhase(deleteOnly, nat44SessionSyncRestoreResult{OKDel: 1}); phase != "Synced" || reason != "" {
+		t.Fatalf("delete-only phase = %s/%s", phase, reason)
+	}
+	if phase, reason := nat44SessionSyncRestoreOperationsPhase(deleteOnly, nat44SessionSyncRestoreResult{NGDel: 1}); phase != "Degraded" || reason != "RestorePartialFailed" {
+		t.Fatalf("delete-only failed phase = %s/%s", phase, reason)
 	}
 }
 
@@ -217,6 +257,77 @@ func TestNAT44SessionSyncRunsSnapshotOverSSH(t *testing.T) {
 	}
 }
 
+func TestNAT44SessionSyncEventStreamStartsWithSnapshotAndConsumesEvents(t *testing.T) {
+	store := newSyncMapStore()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44SessionSync"}, Metadata: api.ObjectMeta{Name: "dslite-abc"}, Spec: api.NAT44SessionSyncSpec{
+			Mode:          "event-stream",
+			SNATAddresses: []string{"192.0.0.2"},
+			Targets:       []api.NAT44SessionSyncTargetSpec{{Name: "standby", Host: "homert03.lain.local"}},
+		}},
+	}}}
+	reader, writer := io.Pipe()
+	defer writer.Close()
+	var mu sync.Mutex
+	var sshScripts []string
+	controller := NAT44SessionSyncController{
+		Router:  router,
+		Store:   store,
+		Workers: newNAT44SessionSyncWorkerManager(),
+		Command: func(_ context.Context, name string, args []string, stdin []byte) ([]byte, error) {
+			switch name {
+			case "conntrack":
+				return []byte("ipv4 2 tcp 6 86400 ESTABLISHED src=172.18.1.73 dst=142.251.23.95 sport=52654 dport=443 src=142.251.23.95 dst=192.0.0.2 sport=443 dport=52654 [ASSURED] mark=272 use=1\n"), nil
+			case "ssh":
+				script := string(stdin)
+				mu.Lock()
+				sshScripts = append(sshScripts, script)
+				mu.Unlock()
+				inserts := strings.Count(script, "'-I'")
+				deletes := strings.Count(script, "'-D'")
+				return []byte(fmt.Sprintf("ok_del=%d miss_del=0 ng_del=0 ok_ins=%d dup_ins=0 ng_ins=0\n", deletes, inserts)), nil
+			default:
+				return nil, fmt.Errorf("unexpected command %q", name)
+			}
+		},
+		EventCommand: func(ctx context.Context, name string, args []string) (io.ReadCloser, func() error, error) {
+			if name != "conntrack" || !reflect.DeepEqual(args, []string{"-E", "-o", "extended"}) {
+				return nil, nil, fmt.Errorf("unexpected event command: %s %#v", name, args)
+			}
+			go func() {
+				<-ctx.Done()
+				writer.Close()
+			}()
+			return reader, func() error { return ctx.Err() }, nil
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := controller.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitForNAT44Status(t, store, controller, ctx, func(status map[string]any) bool {
+		return status["phase"] == "Synced" && status["streamState"] == "running" && status["resyncCount"] == 1
+	})
+	event := "[NEW] ipv4 2 tcp 6 86398 ESTABLISHED src=172.18.1.150 dst=20.194.195.242 sport=65190 dport=443 packets=262 bytes=12258 src=20.194.195.242 dst=192.0.0.2 sport=443 dport=65190 packets=260 bytes=66429 [ASSURED] mark=272 use=1\n"
+	for i := 0; i < defaultNAT44SessionSyncEventBatchMax; i++ {
+		if _, err := io.WriteString(writer, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitForNAT44Status(t, store, controller, ctx, func(status map[string]any) bool {
+		return status["phase"] == "Synced" && status["lastBatchEvents"] == defaultNAT44SessionSyncEventBatchMax && status["insertOK"] == defaultNAT44SessionSyncEventBatchMax
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sshScripts) < 2 {
+		t.Fatalf("ssh scripts = %d", len(sshScripts))
+	}
+	if !strings.Contains(sshScripts[0], "'-I'") || !strings.Contains(sshScripts[1], "'-I'") {
+		t.Fatalf("unexpected restore scripts:\n--- snapshot ---\n%s\n--- event ---\n%s", sshScripts[0], sshScripts[1])
+	}
+}
+
 func TestNAT44SessionSyncReportsRestoreInsertFailures(t *testing.T) {
 	store := mapStore{}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
@@ -261,6 +372,48 @@ func TestNAT44SessionSyncReportsRestoreInsertFailures(t *testing.T) {
 	if !strings.Contains(fmt.Sprint(targets[0]["output"]), "Operation failed") {
 		t.Fatalf("target output = %#v", targets[0]["output"])
 	}
+}
+
+type syncMapStore struct {
+	mu sync.Mutex
+	m  map[string]map[string]any
+}
+
+func newSyncMapStore() *syncMapStore {
+	return &syncMapStore{m: map[string]map[string]any{}}
+}
+
+func (s *syncMapStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.m[apiVersion+"/"+kind+"/"+name] = cloneStatusMap(status)
+	return nil
+}
+
+func (s *syncMapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if status := s.m[apiVersion+"/"+kind+"/"+name]; status != nil {
+		return cloneStatusMap(status)
+	}
+	return map[string]any{}
+}
+
+func waitForNAT44Status(t *testing.T, store *syncMapStore, controller NAT44SessionSyncController, ctx context.Context, match func(map[string]any) bool) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := controller.Reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+		status := store.ObjectStatus(api.NetAPIVersion, "NAT44SessionSync", "dslite-abc")
+		if match(status) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "NAT44SessionSync", "dslite-abc")
+	t.Fatalf("timed out waiting for NAT44SessionSync status: %#v", status)
 }
 
 func TestNAT44SessionSyncPendingWhenRuleSNATUnresolved(t *testing.T) {

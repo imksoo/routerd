@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Context
 
@@ -21,38 +21,40 @@ with repeated `conntrack`, `ssh`, and remote restore command process creation.
 Add an event stream mode for NAT44 session sync while keeping `snapshot` as the
 compatible default.
 
-The event stream mode should use a long-lived local conntrack event reader and
-a long-lived target transport. The local side consumes conntrack create,
-update, and destroy events, filters them to the configured SNAT addresses or
-NAT rules, converts them to restore operations, and sends ordered batches to
-each target. The target side applies batches through a long-lived restore
-worker instead of starting a new SSH and shell process for every interval.
+The event stream mode uses a long-lived local conntrack event reader. The local
+side consumes conntrack create, update, and destroy events, filters them to the
+configured SNAT addresses or NAT rules, converts them to restore operations,
+and sends ordered batches to each target. The first implementation still uses
+the existing SSH restore path for each batch; a long-lived target transport is
+left as a follow-up optimization once local snapshot churn has been removed.
 
 The first implementation must preserve these properties:
 
 - `snapshot` remains supported and keeps the current behavior.
 - `event-stream` starts with a full snapshot resync before accepting live
   events.
-- stream loss, target reconnect, sequence gaps, or queue overflow force a
-  snapshot resync before the target is considered healthy again.
-- target status exposes connection state, last event time, last resync time,
-  resync count, dropped event count, queued event count, and last error.
+- stream loss forces the worker to restart and perform a snapshot resync before
+  returning to healthy status.
+- target status exposes stream state, last event time, last batch time, last
+  resync time, resync count, queued event count, and last error.
 - all restore operations remain idempotent: duplicate inserts and missing
   deletes are not fatal.
 
 ## Transport
 
-The initial transport should reuse SSH because operators already have SSH
+The target transport should reuse SSH because operators already have SSH
 credentials and privilege boundaries for snapshot sync. To avoid per-cycle
 handshake cost, the implementation should use either:
 
 - SSH multiplexing with `ControlMaster=auto` and `ControlPersist`, or
 - one long-lived SSH process running a small remote restore loop.
 
-The long-lived restore loop is preferred for event stream mode because it also
-avoids starting `sh` and `conntrack` for every batch. A later optimization can
-replace per-entry `conntrack` calls with a small installed helper if the shell
-loop becomes the next bottleneck.
+The first implementation reuses the current SSH script path for each event
+batch to keep the runtime change small and preserve the existing idempotent
+restore behavior. A long-lived restore loop remains the preferred follow-up
+because it also avoids starting `sh` and `conntrack` for every batch. A later
+optimization can replace per-entry `conntrack` calls with a small installed
+helper if the shell loop becomes the next bottleneck.
 
 ## Reconciliation Model
 
@@ -86,8 +88,9 @@ events.
 Failure cases:
 
 - local event reader exits: restart reader and resync all targets;
-- target SSH session exits: reconnect target and resync that target;
-- event queue overflows: drop live stream state, resync affected targets;
+- target SSH batch fails: mark the batch result as `Error` or `Degraded` and
+  continue reporting the failing target status;
+- event stream exits: restart the worker and perform a snapshot resync;
 - restore batch has partial failures: keep idempotent duplicate/missing cases
   healthy, mark real restore failures as `Degraded` or `Error`;
 - resource dependencies become pending: stop workers and report `Pending`.
@@ -95,9 +98,8 @@ Failure cases:
 ## Migration Plan
 
 1. Keep the existing snapshot implementation as the default.
-2. Add API and validation for `mode: event-stream`, but gate runtime behavior
-   until the worker implementation is complete.
-3. Add the worker manager, local event reader, target transport, and status
+2. Add API and validation for `mode: event-stream`.
+3. Add the worker manager, local event reader, batch restore path, and status
    reporting behind `event-stream`.
 4. Test on homert02 with both modes available:
    - compare `nat44-session-sync` duration;
