@@ -1163,6 +1163,7 @@ func collectRuntimeStats() controlapi.RuntimeStats {
 	if m.LastGC != 0 {
 		stats.LastGC = time.Unix(0, int64(m.LastGC)).UTC()
 	}
+	applyCgroupMemoryStats(&stats, "/proc/self/cgroup", "/sys/fs/cgroup")
 
 	stats.NumGoroutine = runtime.NumGoroutine()
 
@@ -1171,6 +1172,82 @@ func collectRuntimeStats() controlapi.RuntimeStats {
 	}
 	stats.MaxFDs = softFDLimit()
 	return stats
+}
+
+func applyCgroupMemoryStats(stats *controlapi.RuntimeStats, procCgroupPath, cgroupRoot string) {
+	if stats == nil {
+		return
+	}
+	dir, ok := cgroupV2Dir(procCgroupPath, cgroupRoot)
+	if !ok {
+		return
+	}
+	stats.CgroupMemoryCurrentBytes = readUintFile(filepath.Join(dir, "memory.current"))
+	stats.CgroupMemoryPeakBytes = readUintFile(filepath.Join(dir, "memory.peak"))
+	for key, value := range readMemoryStat(filepath.Join(dir, "memory.stat")) {
+		switch key {
+		case "anon":
+			stats.CgroupAnonBytes = value
+		case "file":
+			stats.CgroupFileBytes = value
+		case "active_file":
+			stats.CgroupActiveFileBytes = value
+		case "inactive_file":
+			stats.CgroupInactiveFileBytes = value
+		case "kernel":
+			stats.CgroupKernelBytes = value
+		case "slab":
+			stats.CgroupSlabBytes = value
+		}
+	}
+}
+
+func cgroupV2Dir(procCgroupPath, cgroupRoot string) (string, bool) {
+	data, err := os.ReadFile(procCgroupPath)
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.SplitN(strings.TrimSpace(line), ":", 3)
+		if len(fields) != 3 || fields[0] != "0" || fields[1] != "" {
+			continue
+		}
+		cgroupPath := strings.TrimPrefix(filepath.Clean("/"+strings.TrimSpace(fields[2])), "/")
+		return filepath.Join(cgroupRoot, cgroupPath), true
+	}
+	return "", false
+}
+
+func readUintFile(path string) uint64 {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	value, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return value
+}
+
+func readMemoryStat(path string) map[string]uint64 {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	out := map[string]uint64{}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		value, err := strconv.ParseUint(fields[1], 10, 64)
+		if err != nil {
+			continue
+		}
+		out[fields[0]] = value
+	}
+	return out
 }
 
 // openFDCount counts entries in /proc/self/fd. It returns (0, false) when the

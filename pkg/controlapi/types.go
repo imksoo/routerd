@@ -398,10 +398,22 @@ type RuntimeStats struct {
 	HeapObjects     uint64    `json:"heapObjects" yaml:"heapObjects"`
 	StackInuseBytes uint64    `json:"stackInuseBytes" yaml:"stackInuseBytes"`
 	SysBytes        uint64    `json:"sysBytes" yaml:"sysBytes"`
-	NumGoroutine    int       `json:"numGoroutine" yaml:"numGoroutine"`
-	NumGC           uint32    `json:"numGC" yaml:"numGC"`
-	GCPauseTotalNs  uint64    `json:"gcPauseTotalNs" yaml:"gcPauseTotalNs"`
-	LastGC          time.Time `json:"lastGC,omitempty" yaml:"lastGC,omitempty"`
+	// CgroupMemory* fields are collected from cgroup v2 when routerd is running
+	// under a Linux service cgroup. They explain why systemd MemoryCurrent can be
+	// much larger than the routerd process heap/RSS: file cache charged to the
+	// service appears here as cgroupFileBytes / cgroupInactiveFileBytes.
+	CgroupMemoryCurrentBytes uint64    `json:"cgroupMemoryCurrentBytes,omitempty" yaml:"cgroupMemoryCurrentBytes,omitempty"`
+	CgroupMemoryPeakBytes    uint64    `json:"cgroupMemoryPeakBytes,omitempty" yaml:"cgroupMemoryPeakBytes,omitempty"`
+	CgroupAnonBytes          uint64    `json:"cgroupAnonBytes,omitempty" yaml:"cgroupAnonBytes,omitempty"`
+	CgroupFileBytes          uint64    `json:"cgroupFileBytes,omitempty" yaml:"cgroupFileBytes,omitempty"`
+	CgroupActiveFileBytes    uint64    `json:"cgroupActiveFileBytes,omitempty" yaml:"cgroupActiveFileBytes,omitempty"`
+	CgroupInactiveFileBytes  uint64    `json:"cgroupInactiveFileBytes,omitempty" yaml:"cgroupInactiveFileBytes,omitempty"`
+	CgroupKernelBytes        uint64    `json:"cgroupKernelBytes,omitempty" yaml:"cgroupKernelBytes,omitempty"`
+	CgroupSlabBytes          uint64    `json:"cgroupSlabBytes,omitempty" yaml:"cgroupSlabBytes,omitempty"`
+	NumGoroutine             int       `json:"numGoroutine" yaml:"numGoroutine"`
+	NumGC                    uint32    `json:"numGC" yaml:"numGC"`
+	GCPauseTotalNs           uint64    `json:"gcPauseTotalNs" yaml:"gcPauseTotalNs"`
+	LastGC                   time.Time `json:"lastGC,omitempty" yaml:"lastGC,omitempty"`
 	// OpenFDs is a sample-time approximate count of open file descriptors from
 	// /proc/self/fd (the transient directory-read fd is excluded). It is 0 when
 	// the count is unavailable (e.g. non-Linux, /proc not mounted). Treat it as
