@@ -212,7 +212,7 @@ func TestRuntimeWhenControllersSubscribeToStatusRefs(t *testing.T) {
 		{name: "service-unit", subs: whenStatusSubscriptions(router, "TailscaleNode", "DHCPv4Client", "DHCPv6PrefixDelegation", "IPv6RouterAdvertisement", "DNSResolver", "EventGroup", "HealthCheck")},
 		{name: "ntp-server", subs: statusSubscriptionsWithWhen(router, []string{"NTPServer"}, "DHCPv4Client", "DHCPv6Information", "IPv4StaticAddress", "IPv6DelegatedAddress")},
 		{name: "dhcpv6-server", subs: allStatusChangedSubscriptions()},
-		{name: "dns-resolver", subs: allStatusChangedSubscriptions()},
+		{name: "dns-resolver", subs: dnsResolverStatusSubscriptions(router)},
 		{name: "dhcp-lease-sync", subs: statusSubscriptionsWithWhen(router, []string{"DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync"}, "DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "VirtualAddress", "RouterdCluster")},
 		{name: "nat44-session-sync", subs: statusSubscriptionsWithWhen(router, []string{"NAT44SessionSync"}, "NAT44SessionSync", "NAT44Rule", "VirtualAddress", "RouterdCluster")},
 		{name: "lan-address", subs: statusSubscriptionsWithWhen(router, []string{"DHCPv6PrefixDelegation", "IPv6DelegatedAddress"}, "DHCPv6PrefixDelegation", "Interface")},
@@ -225,7 +225,7 @@ func TestRuntimeWhenControllersSubscribeToStatusRefs(t *testing.T) {
 		{name: "bgp", subs: statusSubscriptionsWithWhen(router, []string{"BGPRouter", "BGPPeer"}, "BFD", "BGPRouter", "BGPPeer")},
 		{name: "vrrp", subs: statusSubscriptionsWithWhen(router, []string{"VirtualAddress"}, "BGPRouter", "BGPPeer", "IngressService")},
 		{name: "ip-address-set", subs: statusSubscriptionsWithWhen(router, []string{"IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"}, "IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole")},
-		{name: "firewall", subs: allStatusChangedSubscriptions()},
+		{name: "firewall", subs: firewallStatusSubscriptions(router)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -247,6 +247,7 @@ func TestPeriodicOnlyControllersUseBootstrapSubscriptions(t *testing.T) {
 		{name: "kernel-module", subs: bootstrapSubscriptions()},
 		{name: "sysctl", subs: bootstrapSubscriptions()},
 		{name: "network-adoption", subs: bootstrapSubscriptions()},
+		{name: "log-retention", subs: bootstrapSubscriptions()},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if !subscriptionSetAccepts(tt.subs, bootstrap) {
@@ -256,6 +257,59 @@ func TestPeriodicOnlyControllersUseBootstrapSubscriptions(t *testing.T) {
 				t.Fatalf("%s subscriptions accepted unrelated status change", tt.name)
 			}
 		})
+	}
+}
+
+func TestHighChurnStatusDoesNotWakeDNSFirewallOrRetention(t *testing.T) {
+	event := daemonapi.DaemonEvent{
+		Type: "routerd.resource.status.changed",
+		Resource: &daemonapi.ResourceRef{
+			APIVersion: api.NetAPIVersion,
+			Kind:       "BGPRouter",
+			Name:       "lan",
+		},
+		Attributes: map[string]string{"changedFields": "acceptedPrefixes,withdrawnPrefixes,observedAt"},
+	}
+	for _, tt := range []struct {
+		name string
+		subs []bus.Subscription
+	}{
+		{name: "dns-resolver", subs: dnsResolverStatusSubscriptions(&api.Router{})},
+		{name: "firewall", subs: firewallStatusSubscriptions(&api.Router{})},
+		{name: "log-retention", subs: bootstrapSubscriptions()},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if subscriptionSetAccepts(tt.subs, event) {
+				t.Fatalf("%s accepted unrelated BGPRouter status change", tt.name)
+			}
+		})
+	}
+}
+
+func TestDNSResolverSubscriptionsKeepLeaseAndDNSEvents(t *testing.T) {
+	subs := dnsResolverStatusSubscriptions(&api.Router{})
+	if !subscriptionSetAccepts(subs, statusChangedEvent("DNSResolver", "lan-resolver")) {
+		t.Fatal("dns-resolver did not accept DNSResolver status change")
+	}
+	if !subscriptionSetAccepts(subs, daemonapi.DaemonEvent{Type: "routerd.dhcp.lease.add"}) {
+		t.Fatal("dns-resolver did not accept DHCP lease event")
+	}
+}
+
+func TestFirewallSubscriptionsKeepFirewallEvents(t *testing.T) {
+	subs := firewallStatusSubscriptions(&api.Router{})
+	if !subscriptionSetAccepts(subs, daemonapi.DaemonEvent{
+		Type: "routerd.resource.status.changed",
+		Resource: &daemonapi.ResourceRef{
+			APIVersion: api.FirewallAPIVersion,
+			Kind:       "FirewallRule",
+			Name:       "allow-dns",
+		},
+	}) {
+		t.Fatal("firewall did not accept FirewallRule status change")
+	}
+	if !subscriptionSetAccepts(subs, daemonapi.DaemonEvent{Type: "routerd.firewall.rules.applied"}) {
+		t.Fatal("firewall did not accept firewall event")
 	}
 }
 

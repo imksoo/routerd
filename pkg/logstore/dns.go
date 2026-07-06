@@ -19,6 +19,11 @@ import (
 // Issue #36: raised from 1000 to 10000 to support longer-range investigations.
 const DNSQueryFilterLimitMax = 10000
 
+const (
+	dnsQueryWALAutoCheckpointPages = 4096
+	dnsQueryJournalSizeLimitBytes  = 64 * 1024 * 1024
+)
+
 type DNSQuery struct {
 	ID            int64         `json:"id,omitempty"`
 	Timestamp     time.Time     `json:"ts"`
@@ -74,7 +79,12 @@ func OpenDNSQueryLog(path string) (*DNSQueryLog, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(`PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL;`); err != nil {
+	if _, err := db.Exec(`
+PRAGMA busy_timeout = 5000;
+PRAGMA journal_mode = WAL;
+PRAGMA wal_autocheckpoint = 4096;
+PRAGMA journal_size_limit = 67108864;
+`); err != nil {
 		_ = db.Close()
 		return nil, err
 	}

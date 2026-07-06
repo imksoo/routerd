@@ -43,6 +43,30 @@ func TestSQLiteStorePersistsAndSupportsJSON1(t *testing.T) {
 	}
 }
 
+func TestSQLiteStoreConfiguresWALCheckpoint(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "routerd.db"))
+	if err != nil {
+		t.Fatalf("open sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	var autoCheckpoint int
+	if err := store.db.QueryRow(`PRAGMA wal_autocheckpoint`).Scan(&autoCheckpoint); err != nil {
+		t.Fatal(err)
+	}
+	if autoCheckpoint != stateWALAutoCheckpointPages {
+		t.Fatalf("wal_autocheckpoint = %d, want %d", autoCheckpoint, stateWALAutoCheckpointPages)
+	}
+
+	var journalSizeLimit int64
+	if err := store.db.QueryRow(`PRAGMA journal_size_limit`).Scan(&journalSizeLimit); err != nil {
+		t.Fatal(err)
+	}
+	if journalSizeLimit != stateJournalSizeLimitBytes {
+		t.Fatalf("journal_size_limit = %d, want %d", journalSizeLimit, stateJournalSizeLimitBytes)
+	}
+}
+
 func TestSQLiteStoreMigratesLegacyJSONAndRenames(t *testing.T) {
 	dir := t.TempDir()
 	legacy := filepath.Join(dir, "state.json")

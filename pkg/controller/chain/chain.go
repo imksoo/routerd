@@ -1033,6 +1033,22 @@ func bootstrapSubscriptions() []bus.Subscription {
 	return []bus.Subscription{{Topics: []string{"routerd.controller.bootstrap"}}}
 }
 
+func dnsResolverStatusSubscriptions(router *api.Router) []bus.Subscription {
+	subs := statusSubscriptionsWithWhen(router, []string{"DNSResolver", "DNSForwarder", "DNSUpstream", "DNSZone"},
+		"DNSResolver", "DNSForwarder", "DNSUpstream", "DNSZone", "IPv6DelegatedAddress", "DHCPv6Information", "VirtualAddress", "Interface", "IngressService")
+	subs = append(subs, bus.Subscription{Topics: []string{"routerd.dhcp.lease.**"}})
+	return subs
+}
+
+func firewallStatusSubscriptions(router *api.Router) []bus.Subscription {
+	subs := statusSubscriptionsWithWhen(router,
+		[]string{"FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy", "PortForward", "IngressService", "LocalServiceRedirect", "FirewallFlowPinhole"},
+		"FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy", "PortForward", "IngressService", "LocalServiceRedirect", "FirewallFlowPinhole",
+		"IPAddressSet", "Interface", "DSLiteTunnel", "EgressRoutePolicy", "NAT44Rule", "VirtualAddress", "IPv4StaticAddress", "DHCPv4Client")
+	subs = append(subs, bus.Subscription{Topics: []string{"routerd.firewall.**"}})
+	return subs
+}
+
 func ipv4RouteStatusSubscriptions() []bus.Subscription {
 	return statusSubscriptions("DSLiteTunnel", "TunnelInterface", "EgressRoutePolicy", "VirtualAddress", "DHCPv4Client")
 }
@@ -1764,7 +1780,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = effective
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "log-retention", Every: time.Hour, PeriodicFunc: didWorkPeriodic(logRetention.Reconcile)},
+		framework.FuncController{ControllerName: "log-retention", Every: time.Hour, Subs: bootstrapSubscriptions(), PeriodicFunc: didWorkPeriodic(logRetention.Reconcile)},
 		framework.FuncController{ControllerName: "ntp-client", Every: 5 * time.Minute, Subs: statusSubscriptions("DHCPv4Client", "DHCPv6Information"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
@@ -1954,7 +1970,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			return nil
 		}},
-		framework.FuncController{ControllerName: "dns-resolver", Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.**"}}}, ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
+		framework.FuncController{ControllerName: "dns-resolver", Subs: dnsResolverStatusSubscriptions(r.Router), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return err
@@ -2096,7 +2112,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		}},
 	}
 	if !r.Opts.FirewallDisabled {
-		controllers = append(controllers, framework.FuncController{ControllerName: "firewall", Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.firewall.**"}}}, PeriodicFunc: func(ctx context.Context) (bool, error) {
+		controllers = append(controllers, framework.FuncController{ControllerName: "firewall", Subs: firewallStatusSubscriptions(r.Router), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
