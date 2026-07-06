@@ -200,11 +200,6 @@ func (c *Controller) recordTrafficFlows(ctx context.Context, count int) error {
 	if spec.IncludeApplicationLayer {
 		appStatus := c.applicationLayerStatus(ctx, defaultNDPIAgentSocket)
 		status["applicationLayer"] = appStatus
-		if !appStatus.Available {
-			status["phase"] = "Pending"
-			status["reason"] = "TrafficFlowApplicationLayerUnavailable"
-			status["pendingReason"] = "TrafficFlowApplicationLayerUnavailable"
-		}
 	}
 	return c.Store.SaveObjectStatus(resource.APIVersion, "TrafficFlowLog", resource.Metadata.Name, status)
 }

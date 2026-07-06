@@ -10,6 +10,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
+	"github.com/imksoo/routerd/pkg/controller/framework"
 )
 
 type onceObserver struct {
@@ -58,5 +59,26 @@ func TestRunnerReconcileOnceUsesFilteredControllerList(t *testing.T) {
 	}
 	if got := observer.calls[0]; got.name != "log-retention" || got.trigger != "once" || got.err != nil {
 		t.Fatalf("observer call = %+v", got)
+	}
+}
+
+func TestFilterScheduledReconcileControllersSkipsServeLoopControllers(t *testing.T) {
+	controllers := []framework.Controller{
+		framework.FuncController{ControllerName: "link"},
+		framework.FuncController{ControllerName: "ipv4-route"},
+		framework.FuncController{ControllerName: "firewall"},
+		framework.FuncController{ControllerName: "nat44-session-sync"},
+		framework.FuncController{ControllerName: "dhcp-lease-sync"},
+		framework.FuncController{ControllerName: "sysctl"},
+		framework.FuncController{ControllerName: "log-retention"},
+		framework.FuncController{ControllerName: "future-controller"},
+	}
+
+	got := filterScheduledReconcileControllers(controllers)
+	if len(got) != 1 {
+		t.Fatalf("scheduled controllers = %d, want 1", len(got))
+	}
+	if got[0].Name() != "future-controller" {
+		t.Fatalf("scheduled controller = %q, want future-controller", got[0].Name())
 	}
 }

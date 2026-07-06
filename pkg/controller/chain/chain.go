@@ -1496,7 +1496,17 @@ func filterScheduledReconcileControllers(controllers []framework.Controller) []f
 
 func scheduledReconcileSkipsController(name string) bool {
 	switch name {
-	case "package", "kernel-module", "sysctl", "network-adoption", "service-unit", "log-retention", "ntp-client", "ntp-server":
+	case "package", "kernel-module", "sysctl", "network-adoption", "service-unit", "log-retention", "ntp-client", "ntp-server",
+		// These controllers already run from the serve event loop with their own
+		// periodic cadence and status subscriptions. Running them again from
+		// --apply-interval makes the scheduled pass probe or rewrite host state
+		// without adding a stronger convergence signal.
+		"link", "tunnel", "wireguard", "ipv4-static-address", "ipv4-policy-route", "ipv4-route", "hybrid-route",
+		"sam", "sam-enrollment-client", "sam-transport", "path-mtu", "dslite", "dhcpv6-information", "lan-address",
+		"dhcpv6-server", "dhcpv4-lease", "pppoe-session", "dns-resolver", "event-federation", "event-subscription",
+		"mobility-discovery", "mobility", "mobility-shard", "provider-action-execution", "egress-route-policy",
+		"ingress-service", "nat44", "bfd", "bgp", "vrrp", "ip-address-set", "firewall", "observability-pipeline",
+		"daemon-status", "daemon-supervisor", "daemon-supervisor-reconcile", "dhcp-lease-sync", "nat44-session-sync":
 		return true
 	default:
 		return false
@@ -1713,7 +1723,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 				return false, err
 			}
 			r.reconcileSupervisedClientDaemons(ctx, effective, logger)
-			return true, nil
+			return false, nil
 		}},
 		framework.FuncController{ControllerName: "dhcp-lease-sync", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync"}, "DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
@@ -2099,7 +2109,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	if r.Opts.SuperviseClientDaemons && r.controllerEnabled("daemon-supervisor") {
 		controllers = append(controllers, framework.FuncController{ControllerName: "daemon-supervisor-reconcile", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: func(ctx context.Context) (bool, error) {
 			r.reconcileARPObserverDaemons(ctx, logger)
-			return true, nil
+			return false, nil
 		}})
 	}
 	controllers = r.filterControllers(controllers)

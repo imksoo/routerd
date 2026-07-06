@@ -4,6 +4,7 @@ package logstore
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -42,5 +43,44 @@ func TestApplyRetentionDeletesExpiredDNSQueries(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].QuestionName != "new.example" {
 		t.Fatalf("rows = %#v", rows)
+	}
+}
+
+func TestVacuumAfterRetentionShrinksFreelist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "freelist.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`PRAGMA busy_timeout = 5000; CREATE TABLE entries (id INTEGER PRIMARY KEY, payload BLOB);`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 512; i++ {
+		if _, err := db.Exec(`INSERT INTO entries(payload) VALUES(zeroblob(4096));`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`DELETE FROM entries;`); err != nil {
+		t.Fatal(err)
+	}
+
+	vacuumed, freelistPages, err := vacuumAfterRetention(context.Background(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !vacuumed {
+		t.Fatal("vacuumed = false, want true")
+	}
+	if freelistPages == 0 {
+		t.Fatal("freelistPages = 0, want > 0")
+	}
+	var remaining int64
+	if err := db.QueryRow(`PRAGMA freelist_count;`).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatalf("remaining freelist pages = %d, want 0", remaining)
 	}
 }
