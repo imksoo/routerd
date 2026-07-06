@@ -1476,7 +1476,7 @@ type DHCPv6PrefixDelegationLeaseSyncSourceSpec struct {
 }
 
 type NAT44SessionSyncSpec struct {
-	Mode             string                       `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=snapshot"`
+	Mode             string                       `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=snapshot,enum=event-stream"`
 	Interval         string                       `yaml:"interval,omitempty" json:"interval,omitempty"`
 	ConntrackCommand string                       `yaml:"conntrackCommand,omitempty" json:"conntrackCommand,omitempty"`
 	SNATAddresses    []string                     `yaml:"snatAddresses,omitempty" json:"snatAddresses,omitempty"`

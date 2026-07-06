@@ -3,29 +3,37 @@
 package chain
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/netip"
 	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 )
 
 const defaultNAT44SessionSyncCommandTimeout = 2 * time.Minute
+const defaultNAT44SessionSyncEventBatchInterval = 5 * time.Second
+const defaultNAT44SessionSyncEventBatchMax = 512
 
 type sessionSyncCommandFunc func(ctx context.Context, name string, args []string, stdin []byte) ([]byte, error)
+type sessionSyncStreamFunc func(ctx context.Context, name string, args []string) (io.ReadCloser, func() error, error)
 
 type NAT44SessionSyncController struct {
-	Router  *api.Router
-	Store   Store
-	DryRun  bool
-	Command sessionSyncCommandFunc
-	Now     func() time.Time
+	Router       *api.Router
+	Store        Store
+	DryRun       bool
+	Command      sessionSyncCommandFunc
+	EventCommand sessionSyncStreamFunc
+	Workers      *nat44SessionSyncWorkerManager
+	Now          func() time.Time
 }
 
 type nat44SessionSyncJob struct {
@@ -61,16 +69,28 @@ type conntrackRestoreEntry struct {
 	Delete []string
 }
 
+type conntrackRestoreOperation struct {
+	Entry      conntrackRestoreEntry
+	DeleteOnly bool
+}
+
+var defaultNAT44SessionSyncWorkers = newNAT44SessionSyncWorkerManager()
+
 func (c NAT44SessionSyncController) Reconcile(ctx context.Context) error {
+	active := map[string]bool{}
 	for _, resource := range c.resources() {
 		job, pending, err := c.jobFromResource(resource)
+		key := nat44SessionSyncWorkerKey(firstNonEmpty(resource.APIVersion, api.NetAPIVersion), resource.Kind, resource.Metadata.Name)
+		active[key] = true
 		if err != nil {
+			c.workerManager().stop(key)
 			if saveErr := c.save(resource.APIVersion, resource.Kind, resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "InvalidSpec", "error": err.Error(), "dryRun": c.DryRun}); saveErr != nil {
 				return saveErr
 			}
 			continue
 		}
 		if pending != "" {
+			c.workerManager().stop(key)
 			if err := c.save(job.APIVersion, job.Kind, job.Name, map[string]any{"phase": "Pending", "reason": "SNATAddressPending", "pending": pending, "dryRun": c.DryRun}); err != nil {
 				return err
 			}
@@ -80,6 +100,7 @@ func (c NAT44SessionSyncController) Reconcile(ctx context.Context) error {
 			return err
 		}
 	}
+	c.workerManager().stopMissing(active)
 	return nil
 }
 
@@ -207,6 +228,14 @@ func nat44SessionSyncNATRuleName(ref string) string {
 }
 
 func (c NAT44SessionSyncController) reconcileJob(ctx context.Context, job nat44SessionSyncJob) error {
+	if job.Mode == "event-stream" {
+		return c.reconcileEventStreamJob(ctx, job)
+	}
+	c.workerManager().stop(nat44SessionSyncWorkerKey(job.APIVersion, job.Kind, job.Name))
+	return c.reconcileSnapshotJob(ctx, job)
+}
+
+func (c NAT44SessionSyncController) reconcileSnapshotJob(ctx context.Context, job nat44SessionSyncJob) error {
 	now := c.now()
 	if c.shouldSkip(job, now) {
 		return nil
@@ -233,6 +262,72 @@ func (c NAT44SessionSyncController) reconcileJob(ctx context.Context, job nat44S
 		status["reason"] = "DryRun"
 		return c.save(job.APIVersion, job.Kind, job.Name, status)
 	}
+	targetStatuses, total, overallPhase, overallReason := c.restoreEntriesToTargets(ctx, job, entries)
+	status["targets"] = targetStatuses
+	addNAT44SessionSyncRestoreStatus(status, total)
+	status["phase"] = overallPhase
+	if overallReason != "" {
+		status["reason"] = overallReason
+	}
+	status["scriptBytes"] = len(nat44SessionSyncRestoreScript(entries, nil))
+	return c.save(job.APIVersion, job.Kind, job.Name, status)
+}
+
+func (c NAT44SessionSyncController) reconcileEventStreamJob(ctx context.Context, job nat44SessionSyncJob) error {
+	if c.DryRun {
+		return c.save(job.APIVersion, job.Kind, job.Name, map[string]any{
+			"phase":            "Rendered",
+			"reason":           "DryRun",
+			"mode":             job.Mode,
+			"snatAddresses":    job.SNATAddresses,
+			"snatAddressCount": len(job.SNATAddresses),
+			"targetCount":      len(job.Targets),
+			"targets":          nat44SessionSyncTargetStatuses(job.Targets),
+			"dryRun":           true,
+		})
+	}
+	if len(job.SNATAddresses) == 0 {
+		c.workerManager().stop(nat44SessionSyncWorkerKey(job.APIVersion, job.Kind, job.Name))
+		return c.save(job.APIVersion, job.Kind, job.Name, map[string]any{"phase": "Pending", "reason": "NoSNATAddresses", "mode": job.Mode, "dryRun": c.DryRun})
+	}
+	status := c.workerManager().ensure(ctx, c, job)
+	return c.save(job.APIVersion, job.Kind, job.Name, status)
+}
+
+func (c NAT44SessionSyncController) dumpEntries(ctx context.Context, job nat44SessionSyncJob) ([]conntrackRestoreEntry, error) {
+	run := c.Command
+	if run == nil {
+		run = runOutputCommandWithInput
+	}
+	seen := map[string]bool{}
+	var out []conntrackRestoreEntry
+	for _, address := range job.SNATAddresses {
+		runCtx, cancel := nat44SessionSyncCommandContext(ctx)
+		data, err := c.runConntrackDump(runCtx, run, job.ConntrackCommand, address)
+		cancel()
+		if err != nil {
+			return nil, fmt.Errorf("%s --dump -n %s: %w: %s", job.ConntrackCommand, address, err, strings.TrimSpace(string(data)))
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			entry, ok, err := parseConntrackExtendedLine(line)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				continue
+			}
+			key := strings.Join(entry.Insert, "\x00")
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, entry)
+		}
+	}
+	return out, nil
+}
+
+func (c NAT44SessionSyncController) restoreEntriesToTargets(ctx context.Context, job nat44SessionSyncJob, entries []conntrackRestoreEntry) ([]map[string]any, nat44SessionSyncRestoreResult, string, string) {
 	targetStatuses := make([]map[string]any, 0, len(job.Targets))
 	total := nat44SessionSyncRestoreResult{}
 	overallPhase := "Synced"
@@ -287,47 +382,65 @@ func (c NAT44SessionSyncController) reconcileJob(ctx context.Context, job nat44S
 			overallReason = reason
 		}
 	}
-	status["targets"] = targetStatuses
-	addNAT44SessionSyncRestoreStatus(status, total)
-	status["phase"] = overallPhase
-	if overallReason != "" {
-		status["reason"] = overallReason
-	}
-	status["scriptBytes"] = len(nat44SessionSyncRestoreScript(entries, nil))
-	return c.save(job.APIVersion, job.Kind, job.Name, status)
+	return targetStatuses, total, overallPhase, overallReason
 }
 
-func (c NAT44SessionSyncController) dumpEntries(ctx context.Context, job nat44SessionSyncJob) ([]conntrackRestoreEntry, error) {
-	run := c.Command
-	if run == nil {
-		run = runOutputCommandWithInput
-	}
-	seen := map[string]bool{}
-	var out []conntrackRestoreEntry
-	for _, address := range job.SNATAddresses {
-		runCtx, cancel := nat44SessionSyncCommandContext(ctx)
-		data, err := c.runConntrackDump(runCtx, run, job.ConntrackCommand, address)
-		cancel()
+func (c NAT44SessionSyncController) restoreOperationsToTargets(ctx context.Context, job nat44SessionSyncJob, operations []conntrackRestoreOperation) ([]map[string]any, nat44SessionSyncRestoreResult, string, string) {
+	targetStatuses := make([]map[string]any, 0, len(job.Targets))
+	total := nat44SessionSyncRestoreResult{}
+	overallPhase := "Synced"
+	overallReason := ""
+	for _, target := range job.Targets {
+		targetStatus := nat44SessionSyncTargetStatus(target)
+		targetScript := nat44SessionSyncRestoreOperationsScript(operations, target.RestoreCommand)
+		out, err := c.runSSH(ctx, target, targetScript)
 		if err != nil {
-			return nil, fmt.Errorf("%s --dump -n %s: %w: %s", job.ConntrackCommand, address, err, strings.TrimSpace(string(data)))
+			targetStatus["phase"] = "Error"
+			targetStatus["reason"] = "SyncFailed"
+			targetStatus["output"] = strings.TrimSpace(string(out))
+			targetStatus["error"] = err.Error()
+			targetStatuses = append(targetStatuses, targetStatus)
+			overallPhase = "Error"
+			overallReason = "SyncFailed"
+			continue
 		}
-		for _, line := range strings.Split(string(data), "\n") {
-			entry, ok, err := parseConntrackExtendedLine(line)
-			if err != nil {
-				return nil, err
-			}
-			if !ok {
-				continue
-			}
-			key := strings.Join(entry.Insert, "\x00")
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			out = append(out, entry)
+		result, err := parseNAT44SessionSyncRestoreOutput(out)
+		if err != nil {
+			targetStatus["phase"] = "Error"
+			targetStatus["reason"] = "RestoreOutputInvalid"
+			targetStatus["output"] = strings.TrimSpace(string(out))
+			targetStatus["error"] = err.Error()
+			targetStatuses = append(targetStatuses, targetStatus)
+			overallPhase = "Error"
+			overallReason = "RestoreOutputInvalid"
+			continue
+		}
+		addNAT44SessionSyncRestoreStatus(targetStatus, result)
+		total.OKDel += result.OKDel
+		total.MissingDel += result.MissingDel
+		total.NGDel += result.NGDel
+		total.OKIns += result.OKIns
+		total.DuplicateIns += result.DuplicateIns
+		total.NGIns += result.NGIns
+		phase, reason := nat44SessionSyncRestoreOperationsPhase(operations, result)
+		targetStatus["phase"] = phase
+		if reason != "" {
+			targetStatus["reason"] = reason
+		}
+		if phase != "Synced" {
+			targetStatus["output"] = strings.TrimSpace(string(out))
+		}
+		targetStatuses = append(targetStatuses, targetStatus)
+		switch {
+		case phase == "Error":
+			overallPhase = "Error"
+			overallReason = reason
+		case phase == "Degraded" && overallPhase == "Synced":
+			overallPhase = "Degraded"
+			overallReason = reason
 		}
 	}
-	return out, nil
+	return targetStatuses, total, overallPhase, overallReason
 }
 
 func (c NAT44SessionSyncController) runConntrackDump(ctx context.Context, run sessionSyncCommandFunc, command, address string) ([]byte, error) {
@@ -343,6 +456,33 @@ func (c NAT44SessionSyncController) runConntrackDump(ctx context.Context, run se
 		return stderr.Bytes(), err
 	}
 	return stdout.Bytes(), nil
+}
+
+func (c NAT44SessionSyncController) runConntrackEventStream(ctx context.Context, command string) (io.ReadCloser, func() error, error) {
+	args := []string{"-E", "-o", "extended"}
+	if c.EventCommand != nil {
+		return c.EventCommand(ctx, command, args)
+	}
+	cmd := exec.CommandContext(ctx, command, args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, nil, err
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return nil, nil, err
+	}
+	wait := func() error {
+		if err := cmd.Wait(); err != nil {
+			if stderr.Len() > 0 {
+				return fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+			}
+			return err
+		}
+		return nil
+	}
+	return stdout, wait, nil
 }
 
 func (c NAT44SessionSyncController) runSSH(ctx context.Context, target nat44SessionSyncTarget, script []byte) ([]byte, error) {
@@ -378,6 +518,310 @@ func (c NAT44SessionSyncController) save(apiVersion, kind, name string, status m
 		return nil
 	}
 	return c.Store.SaveObjectStatus(apiVersion, kind, name, status)
+}
+
+func (c NAT44SessionSyncController) workerManager() *nat44SessionSyncWorkerManager {
+	if c.Workers != nil {
+		return c.Workers
+	}
+	return defaultNAT44SessionSyncWorkers
+}
+
+type nat44SessionSyncWorkerManager struct {
+	mu      sync.Mutex
+	workers map[string]*nat44SessionSyncWorker
+}
+
+func newNAT44SessionSyncWorkerManager() *nat44SessionSyncWorkerManager {
+	return &nat44SessionSyncWorkerManager{workers: map[string]*nat44SessionSyncWorker{}}
+}
+
+func (m *nat44SessionSyncWorkerManager) ensure(ctx context.Context, controller NAT44SessionSyncController, job nat44SessionSyncJob) map[string]any {
+	key := nat44SessionSyncWorkerKey(job.APIVersion, job.Kind, job.Name)
+	signature := nat44SessionSyncWorkerSignature(job)
+	m.mu.Lock()
+	worker := m.workers[key]
+	if worker == nil || worker.signature != signature {
+		if worker != nil {
+			worker.stop()
+		}
+		worker = newNAT44SessionSyncWorker(ctx, controller, job, signature)
+		m.workers[key] = worker
+		worker.start()
+	}
+	status := worker.status()
+	m.mu.Unlock()
+	return status
+}
+
+func (m *nat44SessionSyncWorkerManager) stop(key string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if worker := m.workers[key]; worker != nil {
+		worker.stop()
+		delete(m.workers, key)
+	}
+}
+
+func (m *nat44SessionSyncWorkerManager) stopMissing(active map[string]bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key, worker := range m.workers {
+		if !active[key] {
+			worker.stop()
+			delete(m.workers, key)
+		}
+	}
+}
+
+func nat44SessionSyncWorkerKey(apiVersion, kind, name string) string {
+	return apiVersion + "/" + kind + "/" + name
+}
+
+func nat44SessionSyncWorkerSignature(job nat44SessionSyncJob) string {
+	var b strings.Builder
+	b.WriteString(job.Mode)
+	b.WriteString("|")
+	b.WriteString(job.ConntrackCommand)
+	b.WriteString("|")
+	b.WriteString(strings.Join(job.SNATAddresses, ","))
+	for _, target := range job.Targets {
+		b.WriteString("|")
+		b.WriteString(target.Name)
+		b.WriteString("@")
+		b.WriteString(nat44SessionSyncDestination(target))
+		b.WriteString("/")
+		b.WriteString(strings.Join(target.SSHOptions, "\x00"))
+		b.WriteString("/")
+		b.WriteString(strings.Join(target.RestoreCommand, "\x00"))
+	}
+	return b.String()
+}
+
+type nat44SessionSyncWorker struct {
+	controller NAT44SessionSyncController
+	job        nat44SessionSyncJob
+	signature  string
+	ctx        context.Context
+	cancel     context.CancelFunc
+	mu         sync.Mutex
+	state      map[string]any
+}
+
+func newNAT44SessionSyncWorker(ctx context.Context, controller NAT44SessionSyncController, job nat44SessionSyncJob, signature string) *nat44SessionSyncWorker {
+	workerCtx, cancel := context.WithCancel(ctx)
+	controller.Workers = nil
+	return &nat44SessionSyncWorker{
+		controller: controller,
+		job:        job,
+		signature:  signature,
+		ctx:        workerCtx,
+		cancel:     cancel,
+		state: map[string]any{
+			"phase":            "Pending",
+			"reason":           "Starting",
+			"mode":             "event-stream",
+			"streamState":      "starting",
+			"snatAddresses":    job.SNATAddresses,
+			"snatAddressCount": len(job.SNATAddresses),
+			"targetCount":      len(job.Targets),
+			"targets":          nat44SessionSyncTargetStatuses(job.Targets),
+			"dryRun":           controller.DryRun,
+		},
+	}
+}
+
+func (w *nat44SessionSyncWorker) start() {
+	go w.run()
+}
+
+func (w *nat44SessionSyncWorker) stop() {
+	w.cancel()
+}
+
+func (w *nat44SessionSyncWorker) status() map[string]any {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return cloneStatusMap(w.state)
+}
+
+func (w *nat44SessionSyncWorker) set(fields map[string]any) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	next := cloneStatusMap(w.state)
+	for key, value := range fields {
+		if value == nil {
+			delete(next, key)
+			continue
+		}
+		next[key] = value
+	}
+	w.state = next
+}
+
+func (w *nat44SessionSyncWorker) run() {
+	for {
+		if err := w.runOnce(); err != nil {
+			if w.ctx.Err() != nil {
+				return
+			}
+			w.set(map[string]any{"phase": "Degraded", "reason": "StreamFailed", "streamState": "restarting", "lastError": err.Error()})
+			select {
+			case <-time.After(5 * time.Second):
+			case <-w.ctx.Done():
+				return
+			}
+			continue
+		}
+		return
+	}
+}
+
+func (w *nat44SessionSyncWorker) runOnce() error {
+	if err := w.resync(); err != nil {
+		return err
+	}
+	reader, wait, err := w.controller.runConntrackEventStream(w.ctx, w.job.ConntrackCommand)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+	w.set(map[string]any{"phase": "Synced", "streamState": "running", "reason": nil, "lastError": nil})
+	lines := make(chan string, 128)
+	readErr := make(chan error, 1)
+	go func() {
+		defer close(lines)
+		scanner := bufio.NewScanner(reader)
+		for scanner.Scan() {
+			select {
+			case lines <- scanner.Text():
+			case <-w.ctx.Done():
+				readErr <- w.ctx.Err()
+				return
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			readErr <- err
+			return
+		}
+		if wait != nil {
+			readErr <- wait()
+			return
+		}
+		readErr <- nil
+	}()
+	var batch []conntrackRestoreOperation
+	ticker := time.NewTicker(defaultNAT44SessionSyncEventBatchInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case line, ok := <-lines:
+			if !ok {
+				lines = nil
+				continue
+			}
+			op, ok, err := parseConntrackEventLine(line, w.job.SNATAddresses)
+			if err != nil {
+				w.set(map[string]any{"phase": "Degraded", "reason": "EventParseFailed", "lastError": err.Error(), "streamState": "running"})
+				continue
+			}
+			if !ok {
+				continue
+			}
+			batch = append(batch, op)
+			w.set(map[string]any{"lastEventAt": time.Now().UTC().Format(time.RFC3339Nano), "queuedEventCount": len(batch)})
+			if len(batch) >= defaultNAT44SessionSyncEventBatchMax {
+				w.flush(batch)
+				batch = nil
+			}
+		case err := <-readErr:
+			if len(batch) > 0 {
+				w.flush(batch)
+			}
+			if err != nil && w.ctx.Err() == nil {
+				return err
+			}
+			if w.ctx.Err() != nil {
+				return w.ctx.Err()
+			}
+			return fmt.Errorf("%s event stream exited", w.job.ConntrackCommand)
+		case <-ticker.C:
+			if len(batch) > 0 {
+				w.flush(batch)
+				batch = nil
+			}
+		case <-w.ctx.Done():
+			return w.ctx.Err()
+		}
+	}
+}
+
+func (w *nat44SessionSyncWorker) resync() error {
+	now := time.Now().UTC()
+	w.set(map[string]any{"phase": "Pending", "reason": "Resyncing", "streamState": "resyncing", "lastResyncStartedAt": now.Format(time.RFC3339Nano)})
+	entries, err := w.controller.dumpEntries(w.ctx, w.job)
+	if err != nil {
+		return err
+	}
+	targetStatuses, total, phase, reason := w.controller.restoreEntriesToTargets(w.ctx, w.job, entries)
+	status := map[string]any{
+		"mode":             "event-stream",
+		"streamState":      "running",
+		"snatAddresses":    w.job.SNATAddresses,
+		"snatAddressCount": len(w.job.SNATAddresses),
+		"sessionCount":     len(entries),
+		"targetCount":      len(w.job.Targets),
+		"targets":          targetStatuses,
+		"syncedAt":         now.Format(time.RFC3339Nano),
+		"lastResyncAt":     now.Format(time.RFC3339Nano),
+		"queuedEventCount": 0,
+		"dryRun":           w.controller.DryRun,
+		"phase":            phase,
+		"scriptBytes":      len(nat44SessionSyncRestoreScript(entries, nil)),
+	}
+	if reason != "" {
+		status["reason"] = reason
+	} else {
+		status["reason"] = nil
+	}
+	status["lastError"] = nil
+	addNAT44SessionSyncRestoreStatus(status, total)
+	current := w.status()
+	resyncCount, _ := statusInt(current["resyncCount"])
+	status["resyncCount"] = resyncCount + 1
+	w.set(status)
+	return nil
+}
+
+func (w *nat44SessionSyncWorker) flush(operations []conntrackRestoreOperation) {
+	if len(operations) == 0 {
+		return
+	}
+	targetStatuses, total, phase, reason := w.controller.restoreOperationsToTargets(w.ctx, w.job, operations)
+	status := map[string]any{
+		"phase":            phase,
+		"streamState":      "running",
+		"targets":          targetStatuses,
+		"lastBatchAt":      time.Now().UTC().Format(time.RFC3339Nano),
+		"lastBatchEvents":  len(operations),
+		"queuedEventCount": 0,
+	}
+	if reason != "" {
+		status["reason"] = reason
+	} else {
+		status["reason"] = nil
+	}
+	status["lastError"] = nil
+	addNAT44SessionSyncRestoreStatus(status, total)
+	w.set(status)
+}
+
+func cloneStatusMap(in map[string]any) map[string]any {
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
 }
 
 func parseConntrackExtendedLine(line string) (conntrackRestoreEntry, bool, error) {
@@ -434,6 +878,67 @@ func parseConntrackExtendedLine(line string) (conntrackRestoreEntry, bool, error
 	}
 	deleteArgs := conntrackDeleteArgs(insert)
 	return conntrackRestoreEntry{Insert: insert, Delete: deleteArgs}, true, nil
+}
+
+func parseConntrackEventLine(line string, snatAddresses []string) (conntrackRestoreOperation, bool, error) {
+	fields := strings.Fields(strings.TrimSpace(line))
+	deleteOnly := false
+	var rest []string
+	for _, field := range fields {
+		trimmed := strings.Trim(field, "[]")
+		switch trimmed {
+		case "NEW", "UPDATE":
+			continue
+		case "DESTROY", "DELETE":
+			deleteOnly = true
+			continue
+		default:
+			rest = append(rest, field)
+		}
+	}
+	if len(rest) == 0 {
+		return conntrackRestoreOperation{}, false, nil
+	}
+	if !conntrackEventFamilyAndProtocolSupported(rest) {
+		return conntrackRestoreOperation{}, false, nil
+	}
+	entry, ok, err := parseConntrackExtendedLine(strings.Join(rest, " "))
+	if err != nil || !ok {
+		return conntrackRestoreOperation{}, ok, err
+	}
+	if !conntrackEntryMatchesSNAT(entry, snatAddresses) {
+		return conntrackRestoreOperation{}, false, nil
+	}
+	return conntrackRestoreOperation{Entry: entry, DeleteOnly: deleteOnly}, true, nil
+}
+
+func conntrackEventFamilyAndProtocolSupported(fields []string) bool {
+	family, proto, _, ok := conntrackExtendedHeader(fields)
+	if !ok || family != "ipv4" {
+		return false
+	}
+	switch proto {
+	case "tcp", "udp", "icmp":
+		return true
+	default:
+		return false
+	}
+}
+
+func conntrackEntryMatchesSNAT(entry conntrackRestoreEntry, snatAddresses []string) bool {
+	if len(snatAddresses) == 0 {
+		return false
+	}
+	want := map[string]bool{}
+	for _, address := range snatAddresses {
+		want[address] = true
+	}
+	for i := 0; i < len(entry.Insert)-1; i++ {
+		if entry.Insert[i] == "-q" && want[entry.Insert[i+1]] {
+			return true
+		}
+	}
+	return false
 }
 
 func conntrackExtendedHeader(fields []string) (family, proto string, index int, ok bool) {
@@ -512,6 +1017,14 @@ func conntrackDeleteArgs(insert []string) []string {
 }
 
 func nat44SessionSyncRestoreScript(entries []conntrackRestoreEntry, command []string) []byte {
+	operations := make([]conntrackRestoreOperation, 0, len(entries))
+	for _, entry := range entries {
+		operations = append(operations, conntrackRestoreOperation{Entry: entry})
+	}
+	return nat44SessionSyncRestoreOperationsScript(operations, command)
+}
+
+func nat44SessionSyncRestoreOperationsScript(operations []conntrackRestoreOperation, command []string) []byte {
 	if len(command) == 0 {
 		command = []string{"conntrack"}
 	}
@@ -523,7 +1036,8 @@ func nat44SessionSyncRestoreScript(entries []conntrackRestoreEntry, command []st
 	buf.WriteString("    err_lines=$((err_lines+1))\n")
 	buf.WriteString("  fi\n")
 	buf.WriteString("}\n")
-	for _, entry := range entries {
+	for _, operation := range operations {
+		entry := operation.Entry
 		buf.WriteString("if out=$(")
 		buf.WriteString(shellCommand(command, entry.Delete))
 		buf.WriteString(" 2>&1); then\n")
@@ -531,6 +1045,9 @@ func nat44SessionSyncRestoreScript(entries []conntrackRestoreEntry, command []st
 		buf.WriteString("else\n")
 		buf.WriteString("  case \"$out\" in *\"0 flow entries\"*|*\"not found\"*|*\"No such file\"*|*\"does not exist\"*) miss_del=$((miss_del+1));; *) ng_del=$((ng_del+1)); record_restore_error \"delete failed: $out\";; esac\n")
 		buf.WriteString("fi\n")
+		if operation.DeleteOnly {
+			continue
+		}
 		buf.WriteString("if out=$(")
 		buf.WriteString(shellCommand(command, entry.Insert))
 		buf.WriteString(" 2>&1); then ok_ins=$((ok_ins+1)); else\n")
@@ -592,6 +1109,22 @@ func nat44SessionSyncRestorePhase(entries int, result nat44SessionSyncRestoreRes
 	default:
 		return "Synced", ""
 	}
+}
+
+func nat44SessionSyncRestoreOperationsPhase(operations []conntrackRestoreOperation, result nat44SessionSyncRestoreResult) (string, string) {
+	insertCount := 0
+	for _, operation := range operations {
+		if !operation.DeleteOnly {
+			insertCount++
+		}
+	}
+	if insertCount > 0 {
+		return nat44SessionSyncRestorePhase(insertCount, result)
+	}
+	if result.NGDel > 0 {
+		return "Degraded", "RestorePartialFailed"
+	}
+	return "Synced", ""
 }
 
 func addNAT44SessionSyncRestoreStatus(status map[string]any, result nat44SessionSyncRestoreResult) {
