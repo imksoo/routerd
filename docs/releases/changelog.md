@@ -12,6 +12,15 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260706.1329
+
+### Changed
+
+- Controller-chain reconciliation now ignores timestamp-only status churn,
+  limits heavyweight bootstrap controllers to scheduled intervals, and caches
+  selected dnsmasq/keepalived service-state probes to avoid unnecessary
+  re-runs during steady-state observation (#777).
+
 ## v20260706.1125
 
 ### Added
