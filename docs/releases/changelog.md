@@ -12,6 +12,22 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260706.1445
+
+### Changed
+
+- Scheduled apply now skips controllers already owned by the long-running
+  serve loop, and periodic controller checks no longer report work when they
+  only confirm steady state (#779).
+
+### Fixed
+
+- `LogRetention.spec.vacuum: true` now checkpoints WAL state, checks freelist
+  pressure, and runs a normal SQLite `VACUUM` when needed so existing log
+  databases can return deleted pages to the filesystem (#779).
+- `TrafficFlowLog` no longer stays pending solely because optional deep packet
+  analysis is unavailable (#779).
+
 ## v20260706.1329
 
 ### Changed
