@@ -236,6 +236,42 @@ func TestRuntimeWhenControllersSubscribeToStatusRefs(t *testing.T) {
 	}
 }
 
+func TestPeriodicOnlyControllersUseBootstrapSubscriptions(t *testing.T) {
+	bootstrap := daemonapi.DaemonEvent{Type: "routerd.controller.bootstrap"}
+	status := statusChangedEvent("HealthCheck", "internet")
+	for _, tt := range []struct {
+		name string
+		subs []bus.Subscription
+	}{
+		{name: "package", subs: bootstrapSubscriptions()},
+		{name: "kernel-module", subs: bootstrapSubscriptions()},
+		{name: "sysctl", subs: bootstrapSubscriptions()},
+		{name: "network-adoption", subs: bootstrapSubscriptions()},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if !subscriptionSetAccepts(tt.subs, bootstrap) {
+				t.Fatalf("%s subscriptions did not accept bootstrap", tt.name)
+			}
+			if subscriptionSetAccepts(tt.subs, status) {
+				t.Fatalf("%s subscriptions accepted unrelated status change", tt.name)
+			}
+		})
+	}
+}
+
+func TestServiceUnitIgnoresHealthCheckTimestampOnlyStatus(t *testing.T) {
+	subs := serviceUnitStatusSubscriptions(&api.Router{})
+	event := statusChangedEvent("HealthCheck", "internet")
+	event.Attributes = map[string]string{"changedFields": "lastSuccessTime"}
+	if subscriptionSetAccepts(subs, event) {
+		t.Fatal("service-unit accepted HealthCheck lastSuccessTime-only status change")
+	}
+	event.Attributes = map[string]string{"changedFields": "phase,lastSuccessTime"}
+	if !subscriptionSetAccepts(subs, event) {
+		t.Fatal("service-unit did not accept HealthCheck phase status change")
+	}
+}
+
 func TestSAMControllerIgnoresBGPRouterPeerOnlyStatus(t *testing.T) {
 	event := daemonapi.DaemonEvent{
 		Type: "routerd.resource.status.changed",
@@ -264,6 +300,18 @@ func statusChangedEvent(kind, name string) daemonapi.DaemonEvent {
 
 func subscriptionSetAccepts(subs []bus.Subscription, event daemonapi.DaemonEvent) bool {
 	for _, sub := range subs {
+		if len(sub.Topics) > 0 {
+			matched := false
+			for _, topic := range sub.Topics {
+				if bus.MatchTopic(topic, event.Type) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
 		if sub.Filter == nil || sub.Filter(event) {
 			return true
 		}

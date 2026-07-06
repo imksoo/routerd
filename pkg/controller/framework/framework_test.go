@@ -26,6 +26,7 @@ type reconcileCall struct {
 	trigger      string
 	resourceKind string
 	resourceName string
+	interval     time.Duration
 	err          error
 }
 
@@ -41,9 +42,9 @@ func (r *recordingResourceObserver) ControllerReconciled(name, trigger string, _
 	r.mu.Unlock()
 }
 
-func (r *recordingResourceObserver) ControllerReconciledResource(name, trigger, resourceKind, resourceName string, _, _ time.Duration, err error) {
+func (r *recordingResourceObserver) ControllerReconciledResource(name, trigger, resourceKind, resourceName string, interval, _ time.Duration, err error) {
 	r.mu.Lock()
-	r.reconcil = append(r.reconcil, reconcileCall{name: name, trigger: trigger, resourceKind: resourceKind, resourceName: resourceName, err: err})
+	r.reconcil = append(r.reconcil, reconcileCall{name: name, trigger: trigger, resourceKind: resourceKind, resourceName: resourceName, interval: interval, err: err})
 	r.mu.Unlock()
 }
 
@@ -74,6 +75,27 @@ func TestRunLockedDispatchesResourceObserver(t *testing.T) {
 	}
 	if got[0].err == nil {
 		t.Fatalf("expected error to be propagated")
+	}
+}
+
+func TestRunLockedObservedIntervalReportsComputedInterval(t *testing.T) {
+	observer := &recordingResourceObserver{}
+	logger := slog.Default()
+	locker := lock.NewResourceLocker()
+	err := runLockedObservedInterval(context.Background(), logger, locker, observer, "key", "sysctl", "periodic", "", "", time.Second, func(error) time.Duration {
+		return 5 * time.Minute
+	}, func(context.Context) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("runLockedObservedInterval: %v", err)
+	}
+	got := observer.snapshot()
+	if len(got) != 1 {
+		t.Fatalf("calls = %d, want 1", len(got))
+	}
+	if got[0].interval != 5*time.Minute {
+		t.Fatalf("interval = %v, want 5m", got[0].interval)
 	}
 }
 
@@ -168,7 +190,7 @@ func TestAdaptiveReconcileIntervals(t *testing.T) {
 		{name: "default", max: 0, want: []time.Duration{time.Second, 3 * time.Second, 7 * time.Second, 15 * time.Second, 31 * time.Second}},
 		{name: "bfd one second", max: time.Second, want: []time.Duration{time.Second}},
 		{name: "thirty second cap", max: 30 * time.Second, want: []time.Duration{time.Second, 3 * time.Second, 7 * time.Second, 15 * time.Second, 30 * time.Second}},
-		{name: "larger than max series", max: 5 * time.Minute, want: []time.Duration{time.Second, 3 * time.Second, 7 * time.Second, 15 * time.Second, 31 * time.Second}},
+		{name: "larger than max series", max: 5 * time.Minute, want: []time.Duration{time.Second, 3 * time.Second, 7 * time.Second, 15 * time.Second, 31 * time.Second, 5 * time.Minute}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

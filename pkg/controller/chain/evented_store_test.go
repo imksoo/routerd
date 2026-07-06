@@ -406,6 +406,67 @@ func TestDaemonStatusControllerKeepsDedicatedControllerStatusFields(t *testing.T
 	}
 }
 
+func TestStatusChangedForEventIgnoresVolatileObservedFields(t *testing.T) {
+	tests := []struct {
+		name       string
+		apiVersion string
+		kind       string
+		current    map[string]any
+		next       map[string]any
+	}{
+		{
+			name:       "healthcheck success timestamp",
+			apiVersion: api.NetAPIVersion,
+			kind:       "HealthCheck",
+			current:    map[string]any{"phase": "Healthy", "lastSuccessTime": "2026-07-06T12:00:00Z"},
+			next:       map[string]any{"phase": "Healthy", "lastSuccessTime": "2026-07-06T12:00:30Z"},
+		},
+		{
+			name:       "lease sync timestamp",
+			apiVersion: api.NetAPIVersion,
+			kind:       "DHCPv4ServerLeaseSync",
+			current:    map[string]any{"phase": "Synced", "syncedAt": "2026-07-06T12:00:00Z"},
+			next:       map[string]any{"phase": "Synced", "syncedAt": "2026-07-06T12:00:30Z"},
+		},
+		{
+			name:       "ip address set refresh timestamp",
+			apiVersion: api.NetAPIVersion,
+			kind:       "IPAddressSet",
+			current:    map[string]any{"phase": "Applied", "addresses": []any{"192.0.2.1"}, "resolvedAt": "2026-07-06T12:00:00Z", "nextRefreshAt": "2026-07-06T12:01:00Z"},
+			next:       map[string]any{"phase": "Applied", "addresses": []any{"192.0.2.1"}, "resolvedAt": "2026-07-06T12:00:30Z", "nextRefreshAt": "2026-07-06T12:01:30Z"},
+		},
+		{
+			name:       "nat session sync counters",
+			apiVersion: api.NetAPIVersion,
+			kind:       "NAT44SessionSync",
+			current:    map[string]any{"phase": "Synced", "sessionCount": 10, "insertOK": 10, "scriptBytes": 100, "syncedAt": "2026-07-06T12:00:00Z"},
+			next:       map[string]any{"phase": "Synced", "sessionCount": 12, "insertOK": 12, "scriptBytes": 120, "syncedAt": "2026-07-06T12:00:30Z"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if statusChangedForEvent(tt.apiVersion, tt.kind, tt.current, tt.next) {
+				t.Fatalf("%s volatile field change produced status event", tt.name)
+			}
+		})
+	}
+}
+
+func TestStatusChangedForEventKeepsOperationalFields(t *testing.T) {
+	if !statusChangedForEvent(api.NetAPIVersion, "HealthCheck",
+		map[string]any{"phase": "Healthy", "lastSuccessTime": "2026-07-06T12:00:00Z"},
+		map[string]any{"phase": "Unhealthy", "lastSuccessTime": "2026-07-06T12:00:30Z"},
+	) {
+		t.Fatal("HealthCheck phase change did not produce status event")
+	}
+	if !statusChangedForEvent(api.NetAPIVersion, "IPAddressSet",
+		map[string]any{"phase": "Applied", "addresses": []any{"192.0.2.1"}, "resolvedAt": "2026-07-06T12:00:00Z"},
+		map[string]any{"phase": "Applied", "addresses": []any{"192.0.2.2"}, "resolvedAt": "2026-07-06T12:00:30Z"},
+	) {
+		t.Fatal("IPAddressSet address change did not produce status event")
+	}
+}
+
 func TestNormalizedDaemonObservedValueCoversDaemonBackedResources(t *testing.T) {
 	if got := normalizedDaemonObservedValue("DNSResolver", "listeners", "2"); got != 2 {
 		t.Fatalf("DNSResolver listeners = %#v, want 2", got)

@@ -183,6 +183,54 @@ func TestDnsmasqLANServiceLinesStripIPv6PrefixLengthFromOptions(t *testing.T) {
 	}
 }
 
+func TestEnsureSystemdDnsmasqServiceCachesStatusChecks(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	logPath := filepath.Join(dir, "systemctl.log")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + shellQuote(logPath) + "\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(binDir, "systemctl"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	dnsmasqSystemdMu.Lock()
+	dnsmasqSystemdCache = map[string]dnsmasqSystemdState{}
+	dnsmasqSystemdMu.Unlock()
+
+	ctx := context.Background()
+	systemdDir := filepath.Join(dir, "systemd")
+	configPath := filepath.Join(dir, "dnsmasq.conf")
+	pidFile := filepath.Join(dir, "dnsmasq.pid")
+	command := "/usr/sbin/dnsmasq"
+	if err := ensureSystemdDnsmasqService(ctx, systemdDir, command, configPath, pidFile, false); err != nil {
+		t.Fatalf("first ensure: %v", err)
+	}
+	if err := ensureSystemdDnsmasqService(ctx, systemdDir, command, configPath, pidFile, false); err != nil {
+		t.Fatalf("second ensure: %v", err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read systemctl log: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	isEnabled := 0
+	isActive := 0
+	for _, line := range lines {
+		switch line {
+		case "is-enabled --quiet routerd-dnsmasq.service":
+			isEnabled++
+		case "is-active --quiet routerd-dnsmasq.service":
+			isActive++
+		}
+	}
+	if isEnabled != 1 || isActive != 1 {
+		t.Fatalf("status checks = is-enabled:%d is-active:%d, want 1 each; log:\n%s", isEnabled, isActive, string(data))
+	}
+}
+
 func TestDHCPv4ServerPendingSourceOmitsScopeUntilResolved(t *testing.T) {
 	dir := t.TempDir()
 	leaseFile := filepath.Join(dir, "state", "dnsmasq", "dnsmasq.leases")

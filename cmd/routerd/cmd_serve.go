@@ -2262,7 +2262,7 @@ func runApplySchedule(ctx context.Context, stop <-chan struct{}, interval time.D
 			if chainRunner != nil {
 				chainRunner.Router = router()
 			}
-			result, err := runServeChainOnce(ctx, chainRunner, router(), opts, store, io.Discard, logger)
+			result, err := runServeChainScheduledOnce(ctx, chainRunner, router(), opts, store, io.Discard, logger)
 			applyMu.Unlock()
 			if err != nil {
 				logger.Emit(eventlog.LevelError, "serve", "scheduled apply failed", map[string]string{"error": err.Error()})
@@ -2274,6 +2274,14 @@ func runApplySchedule(ctx context.Context, stop <-chan struct{}, interval time.D
 }
 
 func runServeChainOnce(ctx context.Context, runner *controllerchain.Runner, router *api.Router, opts applyOptions, store *routerstate.SQLiteStore, stdout io.Writer, logger *eventlog.Logger) (*apply.Result, error) {
+	return runServeChainOnceWith(ctx, runner, router, opts, store, stdout, logger, false)
+}
+
+func runServeChainScheduledOnce(ctx context.Context, runner *controllerchain.Runner, router *api.Router, opts applyOptions, store *routerstate.SQLiteStore, stdout io.Writer, logger *eventlog.Logger) (*apply.Result, error) {
+	return runServeChainOnceWith(ctx, runner, router, opts, store, stdout, logger, true)
+}
+
+func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, router *api.Router, opts applyOptions, store *routerstate.SQLiteStore, stdout io.Writer, logger *eventlog.Logger, scheduled bool) (*apply.Result, error) {
 	if runner == nil {
 		return nil, errors.New("controller chain runner is nil")
 	}
@@ -2298,8 +2306,14 @@ func runServeChainOnce(ctx context.Context, runner *controllerchain.Runner, rout
 			return nil, err
 		}
 	}
-	if err := runner.ReconcileOnce(ctx); err != nil {
-		return nil, err
+	var reconcileErr error
+	if scheduled {
+		reconcileErr = runner.ReconcileScheduled(ctx)
+	} else {
+		reconcileErr = runner.ReconcileOnce(ctx)
+	}
+	if reconcileErr != nil {
+		return nil, reconcileErr
 	}
 	result, err := apply.New().Observe(router)
 	if err != nil {
