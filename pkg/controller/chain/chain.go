@@ -64,6 +64,17 @@ import (
 
 var dnsmasqMu sync.Mutex
 
+var dnsmasqSystemdMu sync.Mutex
+var dnsmasqSystemdCache = map[string]dnsmasqSystemdState{}
+
+const dnsmasqSystemdStatusCacheTTL = 30 * time.Second
+
+type dnsmasqSystemdState struct {
+	checkedAt time.Time
+	enabled   bool
+	active    bool
+}
+
 type Store interface {
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
 	ObjectStatus(apiVersion, kind, name string) map[string]any
@@ -703,6 +714,11 @@ func routinePhaseTransition(kind, previousPhase, phase string) bool {
 
 func statusForEvent(apiVersion, kind string, status map[string]any) map[string]any {
 	stable := stableStatus(status)
+	for key := range stable {
+		if volatileStatusEventField(apiVersion, kind, key) {
+			delete(stable, key)
+		}
+	}
 	if apiVersion != api.MobilityAPIVersion || kind != "MobilityPool" {
 		return stable
 	}
@@ -714,6 +730,28 @@ func statusForEvent(apiVersion, kind string, status map[string]any) map[string]a
 		out[key] = value
 	}
 	return out
+}
+
+func volatileStatusEventField(apiVersion, kind, key string) bool {
+	switch key {
+	case "syncedAt", "resolvedAt", "nextRefreshAt":
+		return true
+	}
+	switch kind {
+	case "HealthCheck":
+		return key == "lastSuccessTime"
+	case "NAT44SessionSync":
+		switch key {
+		case "deleteFailed", "deleteMissing", "deleteOK", "insertExisting", "insertFailed", "insertOK", "scriptBytes", "sessionCount", "syncedAt", "targets":
+			return true
+		}
+	case "DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync":
+		return key == "syncedAt"
+	case "IPAddressSet":
+		return key == "resolvedAt" || key == "nextRefreshAt"
+	}
+	_ = apiVersion
+	return false
 }
 
 func mobilityStatusEventVolatileField(key string) bool {
@@ -887,6 +925,41 @@ func statusSubscriptionsWithWhen(router *api.Router, controlledKinds []string, k
 
 func whenStatusSubscriptions(router *api.Router, controlledKinds ...string) []bus.Subscription {
 	return statusSubscriptionsWithWhen(router, controlledKinds)
+}
+
+func serviceUnitStatusSubscriptions(router *api.Router) []bus.Subscription {
+	allowed := map[string]bool{
+		"ServiceUnit":             true,
+		"TailscaleNode":           true,
+		"DHCPv4Client":            true,
+		"DHCPv6PrefixDelegation":  true,
+		"IPv6RouterAdvertisement": true,
+		"DNSResolver":             true,
+		"EventGroup":              true,
+	}
+	deps := whenStatusDependencyRefs(router, "ServiceUnit", "TailscaleNode", "DHCPv4Client", "DHCPv6PrefixDelegation", "IPv6RouterAdvertisement", "DNSResolver", "EventGroup", "HealthCheck")
+	return []bus.Subscription{{
+		Topics: []string{"routerd.resource.status.changed", "routerd.controller.bootstrap"},
+		Filter: func(event daemonapi.DaemonEvent) bool {
+			if event.Type == "routerd.controller.bootstrap" {
+				return true
+			}
+			if event.Resource == nil {
+				return false
+			}
+			if event.Resource.Kind == "HealthCheck" {
+				return eventChangedField(event, "phase") || eventChangedField(event, "health")
+			}
+			if allowed[event.Resource.Kind] {
+				return true
+			}
+			names := deps[event.Resource.Kind]
+			if len(names) == 0 {
+				return false
+			}
+			return names[""] || names[event.Resource.Name]
+		},
+	}}
 }
 
 func observabilityPipelineStatusSubscriptions(router *api.Router) []bus.Subscription {
@@ -1392,6 +1465,44 @@ func (r *Runner) ReconcileOnce(ctx context.Context) error {
 	return loop.RunOnce(ctx, controllers...)
 }
 
+func (r *Runner) ReconcileScheduled(ctx context.Context) error {
+	if r.Router == nil || r.Bus == nil || r.Store == nil {
+		return fmt.Errorf("router, bus, and store are required")
+	}
+	logger := r.Opts.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	store := eventedStore{Store: r.Store, Bus: r.Bus, Router: r.Router}
+	controllers, _, err := r.frameworkControllers(ctx, logger, store, false)
+	if err != nil {
+		return err
+	}
+	controllers = filterScheduledReconcileControllers(controllers)
+	loop := framework.Runner{Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
+	return loop.RunOnce(ctx, controllers...)
+}
+
+func filterScheduledReconcileControllers(controllers []framework.Controller) []framework.Controller {
+	out := make([]framework.Controller, 0, len(controllers))
+	for _, controller := range controllers {
+		if scheduledReconcileSkipsController(controller.Name()) {
+			continue
+		}
+		out = append(out, controller)
+	}
+	return out
+}
+
+func scheduledReconcileSkipsController(name string) bool {
+	switch name {
+	case "package", "kernel-module", "sysctl", "network-adoption", "service-unit", "log-retention", "ntp-client", "ntp-server":
+		return true
+	default:
+		return false
+	}
+}
+
 func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, store eventedStore, startAuxiliary bool) ([]framework.Controller, DaemonStatusController, error) {
 	haDecision, err := acquireClusterLease(ctx, r.Router, store)
 	if err != nil {
@@ -1622,8 +1733,8 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = effective
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "package", Every: 5 * time.Minute, PeriodicFunc: didWorkPeriodic(packages.Reconcile)},
-		framework.FuncController{ControllerName: "kernel-module", Every: 5 * time.Minute, PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "package", Every: 5 * time.Minute, Subs: bootstrapSubscriptions(), PeriodicFunc: didWorkPeriodic(packages.Reconcile)},
+		framework.FuncController{ControllerName: "kernel-module", Every: 5 * time.Minute, Subs: bootstrapSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return false, err
@@ -1632,9 +1743,9 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = effective
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "sysctl", Every: 30 * time.Second, PeriodicFunc: didWorkPeriodic(sysctl.Reconcile)},
-		framework.FuncController{ControllerName: "network-adoption", Every: 5 * time.Minute, PeriodicFunc: didWorkPeriodic(adoption.Reconcile)},
-		framework.FuncController{ControllerName: "service-unit", Every: 5 * time.Minute, Subs: whenStatusSubscriptions(r.Router, "ServiceUnit", "TailscaleNode", "DHCPv4Client", "DHCPv6PrefixDelegation", "IPv6RouterAdvertisement", "DNSResolver", "EventGroup", "HealthCheck"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "sysctl", Every: 5 * time.Minute, Subs: bootstrapSubscriptions(), PeriodicFunc: didWorkPeriodic(sysctl.Reconcile)},
+		framework.FuncController{ControllerName: "network-adoption", Every: 5 * time.Minute, Subs: bootstrapSubscriptions(), PeriodicFunc: didWorkPeriodic(adoption.Reconcile)},
+		framework.FuncController{ControllerName: "service-unit", Every: 5 * time.Minute, Subs: serviceUnitStatusSubscriptions(r.Router), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
@@ -4972,19 +5083,49 @@ func ensureSystemdDnsmasqService(ctx context.Context, systemdDir, command, confi
 			return err
 		}
 	}
-	if exec.CommandContext(ctx, "systemctl", "is-enabled", "--quiet", service).Run() != nil {
+	state, fresh := cachedDnsmasqSystemdState(servicePath, command, configPath, pidFile)
+	if changed || unitChanged || !fresh {
+		state.enabled = exec.CommandContext(ctx, "systemctl", "is-enabled", "--quiet", service).Run() == nil
+		state.active = exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", service).Run() == nil
+		state.checkedAt = time.Now()
+		storeDnsmasqSystemdState(servicePath, command, configPath, pidFile, state)
+	}
+	if !state.enabled {
 		if err := runSystemctl(ctx, "enable", service); err != nil {
 			return err
 		}
+		state.enabled = true
 	}
-	active := exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", service).Run() == nil
-	if changed || unitChanged || !active || !dnsmasqProcessUsesConfig(pidFile, configPath) {
+	if changed || unitChanged || !state.active || !dnsmasqProcessUsesConfig(pidFile, configPath) {
 		_ = exec.CommandContext(ctx, "systemctl", "reset-failed", service).Run()
 		if err := runSystemctl(ctx, "restart", service); err != nil {
 			return err
 		}
+		state.active = true
 	}
+	state.checkedAt = time.Now()
+	storeDnsmasqSystemdState(servicePath, command, configPath, pidFile, state)
 	return nil
+}
+
+func cachedDnsmasqSystemdState(servicePath, command, configPath, pidFile string) (dnsmasqSystemdState, bool) {
+	dnsmasqSystemdMu.Lock()
+	defer dnsmasqSystemdMu.Unlock()
+	state, ok := dnsmasqSystemdCache[dnsmasqSystemdCacheKey(servicePath, command, configPath, pidFile)]
+	if !ok || time.Since(state.checkedAt) > dnsmasqSystemdStatusCacheTTL {
+		return dnsmasqSystemdState{}, false
+	}
+	return state, true
+}
+
+func storeDnsmasqSystemdState(servicePath, command, configPath, pidFile string, state dnsmasqSystemdState) {
+	dnsmasqSystemdMu.Lock()
+	defer dnsmasqSystemdMu.Unlock()
+	dnsmasqSystemdCache[dnsmasqSystemdCacheKey(servicePath, command, configPath, pidFile)] = state
+}
+
+func dnsmasqSystemdCacheKey(servicePath, command, configPath, pidFile string) string {
+	return strings.Join([]string{servicePath, command, configPath, pidFile}, "\x00")
 }
 
 func testDnsmasqConfig(ctx context.Context, command, configPath string) error {

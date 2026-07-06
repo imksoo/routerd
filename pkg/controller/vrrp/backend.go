@@ -70,7 +70,7 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 		if err != nil {
 			return backendResult{}, err
 		}
-		serviceActive := c.keepalivedServiceActive(ctx)
+		serviceActive := c.refreshKeepalivedServiceActive(ctx)
 		result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRolesAfterChange(ctx, c, aliases), ServiceActive: &serviceActive, LastChangeReason: reason}
 		if action == "reload" {
 			result.LastReloadAt = now
@@ -87,7 +87,7 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 		if err != nil {
 			return backendResult{}, err
 		}
-		serviceActive = c.keepalivedServiceActive(ctx)
+		serviceActive = c.refreshKeepalivedServiceActive(ctx)
 		result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRolesAfterChange(ctx, c, aliases), ServiceActive: &serviceActive, LastChangeReason: reason}
 		if action == "reload" {
 			result.LastReloadAt = now
@@ -182,9 +182,23 @@ func observeKeepalivedRolesWithWait(ctx context.Context, c *Controller, aliases 
 }
 
 func (c *Controller) keepalivedServiceActive(ctx context.Context) bool {
+	ttl := c.KeepalivedActiveTTL
+	if ttl == 0 {
+		ttl = 30 * time.Second
+	}
+	if ttl > 0 && !c.keepalivedActiveCheckedAt.IsZero() && time.Since(c.keepalivedActiveCheckedAt) <= ttl {
+		return c.keepalivedActiveCached
+	}
+	return c.refreshKeepalivedServiceActive(ctx)
+}
+
+func (c *Controller) refreshKeepalivedServiceActive(ctx context.Context) bool {
 	systemctl := firstNonEmpty(c.Systemctl, "systemctl")
 	_, err := c.run(ctx, systemctl, "is-active", "--quiet", "keepalived.service")
-	return err == nil
+	active := err == nil
+	c.keepalivedActiveCached = active
+	c.keepalivedActiveCheckedAt = time.Now()
+	return active
 }
 
 type carpBackend struct{}

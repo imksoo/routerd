@@ -189,12 +189,16 @@ func runController(ctx context.Context, logger *slog.Logger, locker *lock.Resour
 			ticker.Reset(intervals[level])
 		case <-ticker.C:
 			didWork := false
-			err := runLocked(ctx, logger, locker, observer, controller.Name()+":periodic", controller.Name(), "periodic", "", "", intervals[level], func(runCtx context.Context) error {
+			nextLevel := level
+			_ = runLockedObservedInterval(ctx, logger, locker, observer, controller.Name()+":periodic", controller.Name(), "periodic", "", "", intervals[level], func(runErr error) time.Duration {
+				nextLevel = nextAdaptiveReconcileLevel(level, didWork, runErr, len(intervals)-1)
+				return intervals[nextLevel]
+			}, func(runCtx context.Context) error {
 				worked, err := controller.PeriodicReconcile(runCtx)
 				didWork = worked
 				return err
 			})
-			level = nextAdaptiveReconcileLevel(level, didWork, err, len(intervals)-1)
+			level = nextLevel
 			ticker.Reset(intervals[level])
 		case <-ctx.Done():
 			return
@@ -214,6 +218,9 @@ func adaptiveReconcileIntervalsForMax(maxInterval time.Duration) []time.Duration
 			break
 		}
 		intervals = append(intervals, interval)
+	}
+	if maxInterval > base[len(base)-1] {
+		intervals = append(intervals, maxInterval)
 	}
 	if len(intervals) == 0 {
 		return []time.Duration{maxInterval}
@@ -244,6 +251,10 @@ func controllerInterval(controller Controller, fallback time.Duration) time.Dura
 }
 
 func runLocked(ctx context.Context, logger *slog.Logger, locker *lock.ResourceLocker, observer Observer, key, name, trigger, resourceKind, resourceName string, interval time.Duration, fn func(context.Context) error) error {
+	return runLockedObservedInterval(ctx, logger, locker, observer, key, name, trigger, resourceKind, resourceName, interval, nil, fn)
+}
+
+func runLockedObservedInterval(ctx context.Context, logger *slog.Logger, locker *lock.ResourceLocker, observer Observer, key, name, trigger, resourceKind, resourceName string, interval time.Duration, observedInterval func(error) time.Duration, fn func(context.Context) error) error {
 	unlock, err := locker.Lock(ctx, key)
 	if err != nil {
 		logger.Warn("controller lock skipped", "controller", name, "error", err)
@@ -258,14 +269,18 @@ func runLocked(ctx context.Context, logger *slog.Logger, locker *lock.ResourceLo
 	start := time.Now()
 	err = routerotel.Reconcile(ctx, name, trigger, interval, fn)
 	duration := time.Since(start)
+	reportInterval := interval
+	if observedInterval != nil {
+		reportInterval = observedInterval(err)
+	}
 	if observer != nil {
 		if resourceObserver, ok := observer.(ResourceObserver); ok {
-			resourceObserver.ControllerReconciledResource(name, trigger, resourceKind, resourceName, interval, duration, err)
+			resourceObserver.ControllerReconciledResource(name, trigger, resourceKind, resourceName, reportInterval, duration, err)
 		} else {
-			observer.ControllerReconciled(name, trigger, interval, duration, err)
+			observer.ControllerReconciled(name, trigger, reportInterval, duration, err)
 		}
 	}
-	attrs := []any{"controller", name, "trigger", trigger, "duration", duration.String(), "interval", interval.String()}
+	attrs := []any{"controller", name, "trigger", trigger, "duration", duration.String(), "interval", reportInterval.String()}
 	if err != nil {
 		logger.Warn("controller reconcile failed", append(attrs, "error", err)...)
 		return err

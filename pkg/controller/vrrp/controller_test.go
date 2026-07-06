@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
@@ -270,11 +271,12 @@ func TestReconcileRestartsInactiveSystemdKeepalived(t *testing.T) {
 	active := true
 	var calls []string
 	controller := Controller{
-		Router:     vrrpRouter("vrrp"),
-		Store:      store,
-		ConfigPath: t.TempDir() + "/keepalived.conf",
-		Systemctl:  "systemctl",
-		IP:         "ip",
+		Router:              vrrpRouter("vrrp"),
+		Store:               store,
+		ConfigPath:          t.TempDir() + "/keepalived.conf",
+		Systemctl:           "systemctl",
+		IP:                  "ip",
+		KeepalivedActiveTTL: -1,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			calls = append(calls, name+" "+strings.Join(args, " "))
 			if name == "systemctl" && strings.Join(args, " ") == "is-active --quiet keepalived.service" {
@@ -310,6 +312,37 @@ func TestReconcileRestartsInactiveSystemdKeepalived(t *testing.T) {
 	}
 	if statusString(status, "lastRestartAt") == "" || statusString(status, "lastChangeReason") != "keepalived.service inactive" {
 		t.Fatalf("restart metadata missing: %#v", status)
+	}
+}
+
+func TestReconcileCachesKeepalivedActiveStatus(t *testing.T) {
+	activeChecks := 0
+	controller := Controller{
+		Systemctl: "systemctl",
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			line := name + " " + strings.Join(args, " ")
+			if line == "systemctl is-active --quiet keepalived.service" {
+				activeChecks++
+				return []byte("active"), nil
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if !controller.keepalivedServiceActive(context.Background()) {
+		t.Fatalf("initial active check returned false")
+	}
+	if !controller.keepalivedServiceActive(context.Background()) {
+		t.Fatalf("cached active check returned false")
+	}
+	if activeChecks != 1 {
+		t.Fatalf("active checks = %d, want 1", activeChecks)
+	}
+	controller.keepalivedActiveCheckedAt = time.Now().Add(-time.Minute)
+	if !controller.keepalivedServiceActive(context.Background()) {
+		t.Fatalf("expired active check returned false")
+	}
+	if activeChecks != 2 {
+		t.Fatalf("active checks after expiry = %d, want 2", activeChecks)
 	}
 }
 

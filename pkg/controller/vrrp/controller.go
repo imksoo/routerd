@@ -28,21 +28,24 @@ type Store interface {
 type CommandFunc func(context.Context, string, ...string) ([]byte, error)
 
 type Controller struct {
-	Router          *api.Router
-	Bus             *bus.Bus
-	Store           Store
-	DryRun          bool
-	ConfigPath      string
-	Systemctl       string
-	KeepalivedCheck string
-	IP              string
-	Ifconfig        string
-	Sysctl          string
-	Kldload         string
-	OperatingSystem platform.OS
-	Command         CommandFunc
-	Logger          *slog.Logger
-	trackState      map[string]trackDecision
+	Router                    *api.Router
+	Bus                       *bus.Bus
+	Store                     Store
+	DryRun                    bool
+	ConfigPath                string
+	Systemctl                 string
+	KeepalivedCheck           string
+	IP                        string
+	Ifconfig                  string
+	Sysctl                    string
+	Kldload                   string
+	OperatingSystem           platform.OS
+	Command                   CommandFunc
+	Logger                    *slog.Logger
+	KeepalivedActiveTTL       time.Duration
+	trackState                map[string]trackDecision
+	keepalivedActiveCheckedAt time.Time
+	keepalivedActiveCached    bool
 }
 
 func (c *Controller) Reconcile(ctx context.Context) error {
