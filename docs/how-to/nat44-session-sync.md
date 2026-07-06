@@ -70,6 +70,30 @@ the same egress path.
 `restoreCommand` defaults to `[conntrack]`. Use `[sudo, conntrack]` when the
 target user needs privilege elevation.
 
+## Event stream mode plan
+
+The snapshot implementation is intentionally simple and remains the default.
+For routers with high session churn, the next mode is `event-stream`: routerd
+will keep a local conntrack event reader and a target transport alive, then send
+incremental create/update/destroy operations instead of starting a fresh
+snapshot and SSH restore cycle each interval.
+
+The planned `event-stream` design keeps snapshot sync as the safety net. On
+startup, reconnect, queue overflow, or stream loss, the target first receives a
+full snapshot resync. Only after that resync completes should the target be
+reported as `Synced`.
+
+The expected operational differences are:
+
+- lower steady-state `ssh` and `conntrack` process churn;
+- lower failover warm-up delay for active sessions;
+- target status that reports stream connection state, queue depth, last event
+  time, last resync time, and resync count;
+- explicit fallback to snapshot resync when stream integrity is uncertain.
+
+See [ADR 0016](../adr/0016-nat44-session-sync-event-stream.md) for the proposed
+design and migration plan.
+
 ## Check it
 
 ```bash
