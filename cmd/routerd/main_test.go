@@ -113,6 +113,49 @@ func TestRunApplyOnceDryRunDoesNotCreateStateDB(t *testing.T) {
 	}
 }
 
+func TestApplyCommandDryRunUsesChainOnceWithoutCreatingStateDB(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	stateDir := filepath.Join(dir, "state")
+	statePath := filepath.Join(stateDir, "routerd.db")
+	ledgerDir := filepath.Join(dir, "ledger")
+	ledgerPath := filepath.Join(ledgerDir, "routerd.db")
+	statusPath := filepath.Join(dir, "status.json")
+	if err := os.WriteFile(configPath, []byte(testRouterYAML("apply-chain-dry-run")), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	var stdout strings.Builder
+	if err := applyCommand([]string{
+		"--config", configPath,
+		"--once",
+		"--dry-run",
+		"--state-file", statePath,
+		"--ledger-file", ledgerPath,
+		"--status-file", statusPath,
+		"--skip-service-manager",
+	}, &stdout, io.Discard); err != nil {
+		t.Fatalf("apply --once --dry-run: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "dry-run apply plan") || !strings.Contains(stdout.String(), `"phase": "Healthy"`) {
+		t.Fatalf("apply dry-run output missing plan/result:\n%s", stdout.String())
+	}
+	if _, err := os.Stat(statusPath); err != nil {
+		t.Fatalf("status file: %v", err)
+	}
+	if _, err := os.Stat(statePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dry-run state db stat error = %v, want not exist", err)
+	}
+	if _, err := os.Stat(stateDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dry-run state dir stat error = %v, want not exist", err)
+	}
+	if _, err := os.Stat(ledgerPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dry-run ledger db stat error = %v, want not exist", err)
+	}
+	if _, err := os.Stat(ledgerDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dry-run ledger dir stat error = %v, want not exist", err)
+	}
+}
+
 func TestCleanupLedgerOwnedArtifactIPv6AddressLinux(t *testing.T) {
 	oldFeatures := platformFeatures
 	oldRun := runCleanupCommand

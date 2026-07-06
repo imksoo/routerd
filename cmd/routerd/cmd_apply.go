@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
+	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/config"
 	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
 	"github.com/imksoo/routerd/pkg/eventlog"
@@ -64,7 +66,7 @@ func applyCommand(args []string, stdout, stderr io.Writer) (err error) {
 	})
 	opts := applyFlags.applyOptions(*applyFlags.ConfigPath)
 	opts.MgmtLockoutWriter = stderr
-	_, err = runApplyOnce(router, opts, stdout, logger)
+	_, err = runApplyChainOnce(context.Background(), router, opts, stdout, logger)
 	return err
 }
 
@@ -474,6 +476,237 @@ func checkManagementPlaneBeforeApply(router *api.Router, opts applyOptions) ([]s
 
 func objectStatusID(status routerstate.ObjectStatus) string {
 	return status.APIVersion + "/" + status.Kind + "/" + status.Name
+}
+
+func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOptions, stdout io.Writer, logger *eventlog.Logger) (*apply.Result, error) {
+	var optionWarnings []string
+	effectiveConfig, warnings, err := routerWithIPv6PDClientOptions(router, opts, string(platformDefaults.OS))
+	if err != nil {
+		return nil, err
+	}
+	router = effectiveConfig
+	optionWarnings = append(optionWarnings, warnings...)
+	optionWarnings = append(optionWarnings, config.Warnings(router)...)
+	managementWarnings, err := checkManagementPlaneBeforeApply(router, opts)
+	if err != nil {
+		return nil, err
+	}
+	optionWarnings = append(optionWarnings, managementWarnings...)
+	configYAML := routerConfigYAML(router, opts)
+
+	statePath := defaultString(opts.StatePath, defaultStatePath)
+	stateStore, cleanup, err := openApplyChainStateStore(statePath, opts.DryRun)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+
+	effectiveRouter := filterRouterByWhen(router, stateStore)
+	var generation int64
+	generationFinished := false
+	if !opts.DryRun {
+		generation, err = stateStore.BeginGeneration(routerConfigHash(router))
+		if err != nil {
+			return nil, err
+		}
+		if err := stateStore.RecordGenerationConfig(generation, configYAML); err != nil {
+			return nil, err
+		}
+		defer func() {
+			if generation != 0 && !generationFinished {
+				_ = stateStore.FinishGeneration(generation, "Errored", nil)
+			}
+		}()
+		if err := recordHostInventoryState(stateStore); err != nil {
+			return nil, err
+		}
+	}
+	_, err = recordObservedPrefixDelegationState(router, stateStore)
+	if err != nil {
+		return nil, err
+	}
+	result, err := apply.New().Plan(effectiveRouter)
+	if err != nil {
+		return nil, err
+	}
+	if generation != 0 {
+		result.Generation = generation
+	}
+	result.Warnings = append(result.Warnings, optionWarnings...)
+	appendPrefixDelegationStateWarnings(result, router, stateStore)
+	if err := appendLedgerOwnedOrphans(result, effectiveRouter, opts.LedgerPath, opts.DryRun); err != nil {
+		return nil, err
+	}
+	if !opts.DryRun {
+		decision, clusterName, err := acquireApplyClusterLease(ctx, effectiveRouter, stateStore)
+		if err != nil {
+			return nil, err
+		}
+		if decision.Enabled && decision.Lease != nil {
+			defer decision.Lease.Close()
+		}
+		if decision.Enabled && !decision.Leader {
+			result.Phase = "Standby"
+			result.Warnings = append(result.Warnings, fmt.Sprintf("RouterdCluster/%s lease is held by %s; apply skipped on standby", clusterName, decision.Holder))
+			if err := writeResult(stdout, opts.StatusFile, result); err != nil {
+				return nil, err
+			}
+			if generation != 0 {
+				_ = stateStore.FinishGeneration(generation, result.Phase, result.Warnings)
+				generationFinished = true
+			}
+			if logger != nil {
+				logger.Emit(eventlog.LevelInfo, "apply", "routerd apply skipped on standby", map[string]string{"cluster": clusterName, "holder": decision.Holder})
+			}
+			return result, nil
+		}
+		recordWarningEvents(router, stateStore, result.Warnings)
+		recordKnownNGCombinationEvents(router, stateStore, optionWarnings)
+	}
+
+	eventBus := bus.New()
+	if !opts.DryRun {
+		eventBus = bus.NewWithStore(stateStore)
+	}
+	eventBus.SetLogger(slog.Default())
+	controllerOpts := applyChainControllerOptions(opts)
+	runner := &controllerchain.Runner{
+		Router: router,
+		Bus:    eventBus,
+		Store:  stateStore,
+		Opts:   controllerOpts,
+	}
+	if err := runner.ReconcileOnce(ctx); err != nil {
+		return nil, err
+	}
+	if !opts.DryRun {
+		if err := recordLastAppliedPath(effectiveRouter, stateStore, opts.ConfigPath); err != nil {
+			return nil, err
+		}
+	}
+	applyWarnings := append([]string{}, result.Warnings...)
+	result, err = apply.New().Observe(effectiveRouter)
+	if err != nil {
+		return nil, err
+	}
+	if generation != 0 {
+		result.Generation = generation
+	}
+	result.Warnings = append(result.Warnings, applyWarnings...)
+	if err := appendLedgerOwnedOrphans(result, effectiveRouter, opts.LedgerPath, opts.DryRun); err != nil {
+		return nil, err
+	}
+	if !opts.DryRun && configCommitPhase(result.Phase) {
+		if err := commitConfigAfterSuccessfulApply(opts, configYAML, logger); err != nil {
+			return result, err
+		}
+	}
+	if opts.DryRun && opts.AnnounceDryRunToCLI {
+		fmt.Fprintf(stdout, "dry-run apply plan for %s\n", opts.ConfigPath)
+	}
+	if err := writeResult(stdout, opts.StatusFile, result); err != nil {
+		return nil, err
+	}
+	if !opts.DryRun && generation != 0 {
+		_ = stateStore.FinishGeneration(generation, result.Phase, result.Warnings)
+		generationFinished = true
+	}
+	if logger != nil {
+		logger.Emit(eventlog.LevelInfo, "apply", "routerd apply chain once completed", map[string]string{
+			"phase":      result.Phase,
+			"generation": strconv.FormatInt(result.Generation, 10),
+			"dryRun":     fmt.Sprintf("%t", opts.DryRun),
+		})
+	}
+	return result, nil
+}
+
+func applyChainControllerOptions(opts applyOptions) controllerchain.Options {
+	controllerOpts := controllerchain.Options{
+		SuperviseClientDaemons: false,
+		SuperviseDNSResolvers:  false,
+		DnsmasqCommand:         "dnsmasq",
+		DnsmasqConfig:          defaultString(opts.DnsmasqConfigPath, defaultDnsmasqConfigPath),
+		DnsmasqPID:             filepath.Join(platformDefaults.RuntimeDir, "dnsmasq.pid"),
+		DnsmasqPort:            53,
+		DnsmasqListen:          []string{"127.0.0.1"},
+		NftablesPath:           defaultString(opts.NftablesPath, defaultNftablesPath),
+		FirewallPath:           "/run/routerd/firewall.nft",
+		LedgerPath:             defaultString(opts.LedgerPath, defaultLedgerPath),
+		NftCommand:             "nft",
+		ConntrackInterval:      30 * time.Second,
+	}
+	if opts.DryRun {
+		applySandboxControllerOptions(&controllerOpts, controllerOpts.DnsmasqConfig, controllerOpts.NftablesPath)
+	}
+	if opts.SkipServiceManager {
+		controllerOpts.DryRunServiceUnit = true
+	}
+	return controllerOpts
+}
+
+func openApplyChainStateStore(path string, dryRun bool) (*routerstate.SQLiteStore, func(), error) {
+	path = defaultString(path, defaultStatePath)
+	if !dryRun {
+		store, err := routerstate.OpenSQLite(path)
+		if err != nil {
+			return nil, nil, err
+		}
+		return store, func() { _ = store.Close() }, nil
+	}
+	dir, err := os.MkdirTemp("", "routerd-apply-dryrun-*")
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanupDir := func() { _ = os.RemoveAll(dir) }
+	store, err := routerstate.OpenSQLite(filepath.Join(dir, "routerd.db"))
+	if err != nil {
+		cleanupDir()
+		return nil, nil, err
+	}
+	cleanup := func() {
+		_ = store.Close()
+		cleanupDir()
+	}
+	if err := copyApplyStateSnapshot(path, store); err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	return store, cleanup, nil
+}
+
+func copyApplyStateSnapshot(path string, dst *routerstate.SQLiteStore) error {
+	src, err := routerstate.LoadReadOnly(path)
+	if err != nil {
+		return err
+	}
+	if closer, ok := src.(interface{ Close() error }); ok {
+		defer func() { _ = closer.Close() }()
+	}
+	for key, value := range src.Variables() {
+		switch value.Status {
+		case routerstate.StatusSet:
+			dst.Set(key, value.Value, value.Reason)
+		case routerstate.StatusUnset:
+			dst.Unset(key, value.Reason)
+		default:
+			dst.Forget(key, value.Reason)
+		}
+	}
+	lister, ok := src.(routerstate.ObjectStatusLister)
+	if !ok {
+		return nil
+	}
+	statuses, err := lister.ListObjectStatuses()
+	if err != nil {
+		return err
+	}
+	for _, status := range statuses {
+		if err := dst.SaveObjectStatus(status.APIVersion, status.Kind, status.Name, status.Status); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func inventoryStatusMap(status inventory.Status) map[string]any {
