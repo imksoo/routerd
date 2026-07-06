@@ -12,6 +12,24 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260706.1125
+
+### Added
+
+- `routerctl doctor runtime` and the ControlAPI runtime diagnostics now report
+  cgroup memory breakdowns when the host exposes the data (#775).
+
+### Changed
+
+- `routerd apply` and related one-shot mutation paths now execute through the
+  controller-chain once-run path, aligning apply-time behavior with serve-time
+  controller execution (#771).
+
+### Fixed
+
+- `NAT44SessionSync` now treats an already-existing conntrack entry as
+  idempotent instead of failing the sync operation (#774).
+
 ## v20260705.1222
 
 ### Removed
