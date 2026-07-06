@@ -491,6 +491,15 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 	}
 	optionWarnings = append(optionWarnings, managementWarnings...)
 	configYAML := routerConfigYAML(router, opts)
+	if opts.DryRun && !opts.Sandbox {
+		dryRunDir, err := os.MkdirTemp("", "routerd-apply-dryrun-artifacts-*")
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = os.RemoveAll(dryRunDir) }()
+		opts.DnsmasqConfigPath = filepath.Join(dryRunDir, "dnsmasq.conf")
+		opts.NftablesPath = filepath.Join(dryRunDir, "nat44.nft")
+	}
 
 	statePath := defaultString(opts.StatePath, defaultStatePath)
 	stateStore, cleanup, err := openApplyChainStateStore(statePath, opts.DryRun)
@@ -636,6 +645,9 @@ func applyChainControllerOptions(opts applyOptions) controllerchain.Options {
 	}
 	if opts.DryRun {
 		applySandboxControllerOptions(&controllerOpts, controllerOpts.DnsmasqConfig, controllerOpts.NftablesPath)
+		if !opts.Sandbox {
+			controllerOpts.FirewallPath = filepath.Join(filepath.Dir(controllerOpts.NftablesPath), "firewall.nft")
+		}
 	}
 	if opts.SkipServiceManager {
 		controllerOpts.DryRunServiceUnit = true
