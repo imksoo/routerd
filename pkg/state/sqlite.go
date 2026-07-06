@@ -26,6 +26,11 @@ const (
 	stateKind       = "StateVariable"
 )
 
+const (
+	stateWALAutoCheckpointPages = 4096
+	stateJournalSizeLimitBytes  = 64 * 1024 * 1024
+)
+
 type SQLiteStore struct {
 	path       string
 	db         *sql.DB
@@ -53,7 +58,13 @@ func OpenSQLite(path string) (*SQLiteStore, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(`PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL;`); err != nil {
+	if _, err := db.Exec(`
+PRAGMA busy_timeout = 5000;
+PRAGMA journal_mode = WAL;
+PRAGMA wal_autocheckpoint = 4096;
+PRAGMA journal_size_limit = 67108864;
+PRAGMA wal_checkpoint(TRUNCATE);
+`); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
