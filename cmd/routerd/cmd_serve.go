@@ -482,6 +482,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		SkipConfigCommit:   bootFallback.Used,
 		DryRun:             *sandbox,
 		SkipServiceManager: *sandbox,
+		SkipDnsmasq:        !*once,
 		Sandbox:            *sandbox,
 	}
 	if *once {

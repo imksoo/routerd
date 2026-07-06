@@ -84,6 +84,7 @@ type applyOptions struct {
 	AllowMgmtLockout    bool
 	AnnounceDryRunToCLI bool
 	MgmtLockoutWriter   io.Writer
+	SkipDnsmasq         bool
 	SkipConfigCommit    bool
 	ConfigYAMLOverride  string
 	Sandbox             bool
@@ -710,27 +711,29 @@ func runApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer, logge
 		}
 
 		var dnsmasqChangedFiles []string
-		if err := recordStageError("dnsmasq", func() error {
-			dnsmasqConfig, dnsmasqWarnings, err := render.DnsmasqConfig(effectiveRouter, render.DnsmasqRuntime{
-				DHCPv4DNSServersByInterface: observedDNSServersByInterface(effectiveRouter),
-				DHCPv6DNSServersByInterface: observedDNSServersByInterface(effectiveRouter),
-				IPv6AddressesByInterface:    observedIPv6AddressesByInterface(effectiveRouter),
-				IPv6PrefixesByInterface:     observedIPv6PrefixesByInterface(effectiveRouter),
-				StickyHosts:                 dhcpStickyHostsFromLog(effectiveRouter, time.Now().UTC()),
-				RuntimeDir:                  platformDefaults.RuntimeDir,
-				LeaseFile:                   dnsmasqLeaseFileForPlatform(),
-			})
-			if err != nil {
+		if !opts.SkipDnsmasq {
+			if err := recordStageError("dnsmasq", func() error {
+				dnsmasqConfig, dnsmasqWarnings, err := render.DnsmasqConfig(effectiveRouter, render.DnsmasqRuntime{
+					DHCPv4DNSServersByInterface: observedDNSServersByInterface(effectiveRouter),
+					DHCPv6DNSServersByInterface: observedDNSServersByInterface(effectiveRouter),
+					IPv6AddressesByInterface:    observedIPv6AddressesByInterface(effectiveRouter),
+					IPv6PrefixesByInterface:     observedIPv6PrefixesByInterface(effectiveRouter),
+					StickyHosts:                 dhcpStickyHostsFromLog(effectiveRouter, time.Now().UTC()),
+					RuntimeDir:                  platformDefaults.RuntimeDir,
+					LeaseFile:                   dnsmasqLeaseFileForPlatform(),
+				})
+				if err != nil {
+					return err
+				}
+				for _, w := range dnsmasqWarnings {
+					result.Warnings = append(result.Warnings, w)
+					logger.Emit(eventlog.LevelWarning, "apply", w, map[string]string{"stage": "dnsmasq"})
+				}
+				dnsmasqChangedFiles, err = applyDnsmasqConfig(opts.DnsmasqConfigPath, opts.DnsmasqServicePath, dnsmasqConfig)
 				return err
+			}()); err != nil {
+				return nil, err
 			}
-			for _, w := range dnsmasqWarnings {
-				result.Warnings = append(result.Warnings, w)
-				logger.Emit(eventlog.LevelWarning, "apply", w, map[string]string{"stage": "dnsmasq"})
-			}
-			dnsmasqChangedFiles, err = applyDnsmasqConfig(opts.DnsmasqConfigPath, opts.DnsmasqServicePath, dnsmasqConfig)
-			return err
-		}()); err != nil {
-			return nil, err
 		}
 
 		var pppoeChangedFiles []string

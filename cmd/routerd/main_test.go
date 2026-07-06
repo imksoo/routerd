@@ -113,6 +113,62 @@ func TestRunApplyOnceDryRunDoesNotCreateStateDB(t *testing.T) {
 	}
 }
 
+func TestRunApplyOnceSkipDnsmasqDoesNotRequireDnsmasqBinary(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create fake bin dir: %v", err)
+	}
+	t.Setenv("PATH", binDir)
+
+	oldDefaults := platformDefaults
+	oldFeatures := platformFeatures
+	platformDefaults = oldDefaults
+	platformDefaults.OS = platform.OSLinux
+	platformDefaults.RuntimeDir = filepath.Join(dir, "run")
+	platformDefaults.StateDir = filepath.Join(dir, "state")
+	platformFeatures = platform.Features{HasSystemd: true}
+	t.Cleanup(func() {
+		platformDefaults = oldDefaults
+		platformFeatures = oldFeatures
+	})
+
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "skip-dnsmasq"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
+				Metadata: api.ObjectMeta{Name: "lan-dhcpv4"},
+				Spec: api.DHCPv4ServerSpec{
+					Server:      "dnsmasq",
+					Interface:   "lan",
+					AddressPool: api.DHCPAddressPoolSpec{Start: "192.0.2.64", End: "192.0.2.127"},
+				},
+			},
+		}},
+	}
+
+	_, err := runApplyOnce(router, applyOptions{
+		StatePath:          filepath.Join(dir, "routerd.db"),
+		LedgerPath:         filepath.Join(dir, "ledger.db"),
+		ConfigPath:         filepath.Join(dir, "router.yaml"),
+		SkipServiceManager: true,
+		SkipDnsmasq:        true,
+	}, io.Discard, &eventlog.Logger{})
+	if err != nil {
+		t.Fatalf("apply with SkipDnsmasq: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(platformDefaults.RuntimeDir, "dnsmasq.conf")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy dnsmasq config stat error = %v, want not exist", err)
+	}
+}
+
 func TestCleanupLedgerOwnedArtifactIPv6AddressLinux(t *testing.T) {
 	oldFeatures := platformFeatures
 	oldRun := runCleanupCommand
