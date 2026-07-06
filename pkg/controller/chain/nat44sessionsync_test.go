@@ -114,6 +114,7 @@ func TestNAT44SessionSyncRestoreScriptClassifiesIdempotentResults(t *testing.T) 
 case "$1 $2" in
   "-D missing") echo "conntrack v1.4.8: 0 flow entries have been deleted.";;
   "-I existing") echo "conntrack v1.4.8: File exists" >&2; exit 1;;
+  "-I conntrack-exists") echo "conntrack v1.4.8 (conntrack-tools): Operation failed: Such conntrack exists, try -U to update" >&2; exit 1;;
   "-D fail") echo "delete denied" >&2; exit 1;;
   "-I fail") echo "insert denied" >&2; exit 1;;
   *) echo "ok";;
@@ -123,6 +124,7 @@ esac
 	}
 	script := nat44SessionSyncRestoreScript([]conntrackRestoreEntry{
 		{Delete: []string{"-D", "missing"}, Insert: []string{"-I", "existing"}},
+		{Delete: []string{"-D", "ok"}, Insert: []string{"-I", "conntrack-exists"}},
 		{Delete: []string{"-D", "ok"}, Insert: []string{"-I", "ok"}},
 		{Delete: []string{"-D", "fail"}, Insert: []string{"-I", "fail"}},
 	}, []string{fakeConntrack})
@@ -136,7 +138,7 @@ esac
 	if err != nil {
 		t.Fatalf("parse restore output: %v\n%s", err, out)
 	}
-	want := nat44SessionSyncRestoreResult{OKDel: 1, MissingDel: 1, NGDel: 1, OKIns: 1, DuplicateIns: 1, NGIns: 1}
+	want := nat44SessionSyncRestoreResult{OKDel: 2, MissingDel: 1, NGDel: 1, OKIns: 1, DuplicateIns: 2, NGIns: 1}
 	if result != want {
 		t.Fatalf("result = %#v, want %#v\n%s", result, want, out)
 	}

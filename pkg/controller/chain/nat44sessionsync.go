@@ -534,7 +534,7 @@ func nat44SessionSyncRestoreScript(entries []conntrackRestoreEntry, command []st
 		buf.WriteString("if out=$(")
 		buf.WriteString(shellCommand(command, entry.Insert))
 		buf.WriteString(" 2>&1); then ok_ins=$((ok_ins+1)); else\n")
-		buf.WriteString("  case \"$out\" in *\"File exists\"*|*\"already exists\"*) dup_ins=$((dup_ins+1));; *) ng_ins=$((ng_ins+1)); record_restore_error \"insert failed: $out\";; esac\n")
+		buf.WriteString("  case \"$out\" in *\"File exists\"*|*\"already exists\"*|*\"Such conntrack exists\"*|*\"exists, try -U\"*) dup_ins=$((dup_ins+1));; *) ng_ins=$((ng_ins+1)); record_restore_error \"insert failed: $out\";; esac\n")
 		buf.WriteString("fi\n")
 	}
 	buf.WriteString("echo ok_del=$ok_del miss_del=$miss_del ng_del=$ng_del ok_ins=$ok_ins dup_ins=$dup_ins ng_ins=$ng_ins\n")
