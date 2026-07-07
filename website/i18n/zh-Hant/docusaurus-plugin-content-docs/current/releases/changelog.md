@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260707.1514
+
 ### Fixed
 
 - sandbox 驗證現在會將 path-MTU nftables artifact 保留在 sandbox runtime

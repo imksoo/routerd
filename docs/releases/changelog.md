@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260707.1514
+
 ### Fixed
 
 - Sandbox validation now keeps path-MTU nftables artifacts inside the sandbox

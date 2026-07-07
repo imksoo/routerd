@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260707.1514
+
 ### Fixed
 
 - sandbox 検証で path-MTU の nftables artifact を sandbox runtime
