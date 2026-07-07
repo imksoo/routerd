@@ -181,6 +181,59 @@ func TestTrafficFlowLogUpsertAndEndMissing(t *testing.T) {
 	}
 }
 
+func TestTrafficFlowLogSyncActiveBatchesUpsertAndEndMissing(t *testing.T) {
+	log, err := OpenTrafficFlowLog(filepath.Join(t.TempDir(), "traffic-flows.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	now := time.Now().UTC()
+	first := TrafficFlow{
+		StartedAt:     now.Add(-time.Minute),
+		ClientAddress: "172.18.0.10",
+		ClientPort:    12345,
+		PeerAddress:   "1.1.1.1",
+		PeerPort:      443,
+		Protocol:      "tcp",
+		BytesOut:      100,
+	}
+	first.FlowKey = FlowKey(first.Protocol, first.ClientAddress, first.ClientPort, first.PeerAddress, first.PeerPort)
+	second := TrafficFlow{
+		StartedAt:     now.Add(-time.Minute),
+		ClientAddress: "172.18.0.11",
+		ClientPort:    23456,
+		PeerAddress:   "8.8.8.8",
+		PeerPort:      53,
+		Protocol:      "udp",
+		BytesOut:      50,
+	}
+	second.FlowKey = FlowKey(second.Protocol, second.ClientAddress, second.ClientPort, second.PeerAddress, second.PeerPort)
+	if err := log.SyncActive(context.Background(), []TrafficFlow{first, second}, []string{first.FlowKey, second.FlowKey}, now); err != nil {
+		t.Fatal(err)
+	}
+	first.BytesOut = 200
+	if err := log.SyncActive(context.Background(), []TrafficFlow{first}, []string{first.FlowKey}, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := log.List(context.Background(), TrafficFlowFilter{Since: now.Add(-time.Hour), Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d", len(rows))
+	}
+	byKey := map[string]TrafficFlow{}
+	for _, row := range rows {
+		byKey[row.FlowKey] = row
+	}
+	if byKey[first.FlowKey].BytesOut != 200 || !byKey[first.FlowKey].EndedAt.IsZero() {
+		t.Fatalf("first flow = %#v", byKey[first.FlowKey])
+	}
+	if byKey[second.FlowKey].EndedAt.IsZero() {
+		t.Fatalf("second flow should be ended: %#v", byKey[second.FlowKey])
+	}
+}
+
 func TestTrafficFlowLogMigratesSourceColumns(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "traffic-flows.db")
 	db, err := sql.Open("sqlite", path)

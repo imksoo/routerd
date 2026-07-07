@@ -172,6 +172,7 @@ func (c *Controller) recordTrafficFlows(ctx context.Context, count int) error {
 	}
 	now := time.Now().UTC()
 	var active []string
+	var flows []logstore.TrafficFlow
 	for _, entry := range table.Entries {
 		flow := trafficFlowFromConnection(entry, now)
 		if flow.FlowKey == "" {
@@ -181,12 +182,10 @@ func (c *Controller) recordTrafficFlows(ctx context.Context, count int) error {
 			enrichTrafficFlowFromDPIStore(ctx, dpiStore, &flow, now, time.Hour)
 		}
 		active = append(active, flow.FlowKey)
-		if err := log.UpsertActive(ctx, flow); err != nil {
-			return err
-		}
+		flows = append(flows, flow)
 	}
 	c.recordTrafficMetrics(ctx, table.Entries)
-	if err := log.EndMissing(ctx, active, now); err != nil {
+	if err := log.SyncActive(ctx, flows, active, now); err != nil {
 		return err
 	}
 	status := map[string]any{
