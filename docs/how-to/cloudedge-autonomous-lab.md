@@ -20,11 +20,11 @@ The harness is `scripts/cloudedge-labctl.sh`, with two helpers:
 ## Lifecycle
 
 ```sh
-scripts/cloudedge-labctl.sh up        --profile full --provider aws,oci,azure,onprem --ttl 4h
+scripts/cloudedge-labctl.sh up        --profile full --provider aws,oci,azure,onprem --provider-order cost-optimized --ttl 4h
 scripts/cloudedge-labctl.sh deploy    --commit HEAD          # or --build <dist path>
-scripts/cloudedge-labctl.sh smoke     --matrix d3 --out /tmp/matrix.json
+CE_MATRIX_PARALLELISM=8 scripts/cloudedge-labctl.sh smoke --matrix d3 --out /tmp/matrix.json
 scripts/cloudedge-labctl.sh failover  --provider aws --fault stop-active
-scripts/cloudedge-labctl.sh smoke     --matrix d3 --out /tmp/matrix-after.json
+CE_MATRIX_PARALLELISM=8 scripts/cloudedge-labctl.sh smoke --matrix d3 --out /tmp/matrix-after.json
 scripts/cloudedge-labctl.sh evidence  collect --out evidence/<run-id> --matrix-json /tmp/matrix-after.json
 scripts/cloudedge-labctl.sh down      --run-id <run-id> --force
 ```
@@ -72,6 +72,13 @@ Cost guard rules:
 - Always run `down` (or `down --expired` from a janitor) after every run, even on
   failure. Past-TTL labs are cleanable without knowing the run-id.
 
+For release qualification, prefer `--provider-order cost-optimized`. The harness
+starts non-cloud/on-prem resources first and then starts cloud providers as
+`OCI -> AWS -> Azure`, so cheaper OCI capacity is online first and AWS does not
+sit idle behind slower PVE or Azure work. Use `--provider-order declared` to
+preserve an explicit `--provider` order, or `--provider-order fast-first` when
+shortest wall-clock time matters more than idle cloud cost.
+
 ## Fault primitives (`failover --fault`)
 
 | Fault | Meaning | First-pass wiring |
@@ -110,6 +117,30 @@ connectivity matrix JSON. Shape:
     {"name": "old_holder_residue_absent", "result": "pass"},
     {"name": "stale_action_fenced", "result": "pass"}
   ],
+  "qualificationTimings": {
+    "infraProvisionSeconds": null,
+    "deployRouterdReadySeconds": null,
+    "providerConvergenceSeconds": null,
+    "normalMatrix": {
+      "status": "pass",
+      "phase": "normal",
+      "elapsedSeconds": 120,
+      "parallelism": 8,
+      "total": 56,
+      "passed": 56,
+      "failed": 0
+    },
+    "cloudIngressMatrix": {
+      "status": "pass",
+      "phase": "cloud-ingress",
+      "elapsedSeconds": 45,
+      "parallelism": 8,
+      "total": 42,
+      "passed": 42,
+      "failed": 0
+    },
+    "dataplaneProbeSeconds": 165
+  },
   "costGuard": {"ttlHours": 4, "teardown": "completed"}
 }
 ```
@@ -136,6 +167,16 @@ Execution goes through a `MATRIX_RUNNER` indirection so the matrix is
 **unit-runnable offline** (set `MATRIX_RUNNER` to a stub); with a real lab the
 default runner uses `ssh`/`ping` against the demo env. Output is per-flow JSON
 consumable by `evidence collect --matrix-json`.
+
+Set `CE_MATRIX_PARALLELISM` or pass `--parallel <n>` to run directed flows with
+bounded parallelism. The JSON `flows[]` order remains deterministic, and
+`summary.phase`, `summary.parallelism`, and `summary.elapsedSeconds` record the
+probe phase and harness runtime. When cloud-ingress is measured separately, pass
+it to evidence collection with `--cloud-ingress-matrix-json`; result evidence
+then separates `qualificationTimings.normalMatrix`,
+`qualificationTimings.cloudIngressMatrix`, and
+`qualificationTimings.dataplaneProbeSeconds` from VM provisioning and provider
+convergence.
 
 ## Autonomy charter (summary)
 

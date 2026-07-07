@@ -149,6 +149,55 @@ for flow in data.get("flows", []):
             raise SystemExit(f"flow {flow.get('src')}->{flow.get('dst')} {field}={flow.get(field)!r}")
 PY
 
+parallel_matrix_json="$tmp/connectivity-matrix-parallel.json"
+MATRIX_RUNNER="$runner" "$SCRIPT_DIR/cloudedge-connectivity-matrix.sh" \
+  --parallel 3 \
+  --phase normal \
+  --out "$parallel_matrix_json" >/dev/null
+python3 - "$matrix_json" "$parallel_matrix_json" <<'PY'
+import json, sys
+serial = json.load(open(sys.argv[1]))
+parallel = json.load(open(sys.argv[2]))
+if parallel["summary"].get("parallelism") != 3:
+    raise SystemExit(f"parallelism={parallel['summary'].get('parallelism')!r}, want 3")
+if parallel["summary"].get("phase") != "normal":
+    raise SystemExit(f"phase={parallel['summary'].get('phase')!r}, want normal")
+serial_pairs = [(f["src"], f["dst"]) for f in serial["flows"]]
+parallel_pairs = [(f["src"], f["dst"]) for f in parallel["flows"]]
+if parallel_pairs != serial_pairs:
+    raise SystemExit("parallel matrix output order changed")
+if parallel["summary"]["result"] != "pass" or parallel["summary"]["passed"] != 12:
+    raise SystemExit(f"parallel matrix did not pass: {parallel['summary']!r}")
+PY
+
+cloud_ingress_json="$tmp/connectivity-matrix-cloud-ingress.json"
+MATRIX_RUNNER="$runner" "$SCRIPT_DIR/cloudedge-connectivity-matrix.sh" \
+  --parallel 2 \
+  --phase cloud-ingress \
+  --out "$cloud_ingress_json" >/dev/null
+
+order_state="$tmp/state-order"
+run_id_order=$(CE_STATE_DIR="$order_state" CE_DRY_RUN=1 \
+  "$SCRIPT_DIR/cloudedge-labctl.sh" up \
+    --profile full \
+    --provider-order cost-optimized \
+    --ttl 1h 2>/dev/null)
+providers_order=$(sed -n 's/^providers=//p' "$order_state/$run_id_order.manifest")
+provider_order_mode=$(sed -n 's/^provider_order=//p' "$order_state/$run_id_order.manifest")
+if [[ "$providers_order" != "onprem,oci,aws,azure" ]]; then
+  die "cost-optimized provider order = $providers_order, want onprem,oci,aws,azure"
+fi
+if [[ "$provider_order_mode" != "cost-optimized" ]]; then
+  die "provider_order manifest value = $provider_order_mode, want cost-optimized"
+fi
+if CE_STATE_DIR="$order_state" CE_DRY_RUN=1 \
+   "$SCRIPT_DIR/cloudedge-labctl.sh" up \
+     --profile full \
+     --provider-order unknown \
+     --ttl 1h >/dev/null 2>&1; then
+  die "invalid provider-order unexpectedly passed"
+fi
+
 identity_runner="$tmp/identity-matrix-runner"
 cat > "$identity_runner" <<'SH'
 #!/usr/bin/env bash
@@ -257,6 +306,28 @@ for name in (
 ):
     if name not in assertions:
         raise SystemExit(f"missing assertion {name}")
+PY
+
+timing_decomp_out="$tmp/evidence-timing-decomp"
+"$SCRIPT_DIR/cloudedge-labctl.sh" evidence collect \
+  --out "$timing_decomp_out" \
+  --run-id "$run_id" \
+  --scenario d3-4site-directed-matrix \
+  --commit offline \
+  --matrix-json "$parallel_matrix_json" \
+  --cloud-ingress-matrix-json "$cloud_ingress_json" >/dev/null
+python3 - "$timing_decomp_out/result.json" <<'PY'
+import json, sys
+result = json.load(open(sys.argv[1]))
+qt = result.get("qualificationTimings", {})
+normal = qt.get("normalMatrix", {})
+cloud = qt.get("cloudIngressMatrix", {})
+if normal.get("phase") != "normal" or normal.get("parallelism") != 3:
+    raise SystemExit(f"normal matrix timing not preserved: {normal!r}")
+if cloud.get("phase") != "cloud-ingress" or cloud.get("parallelism") != 2:
+    raise SystemExit(f"cloud-ingress timing not preserved: {cloud!r}")
+if not isinstance(qt.get("dataplaneProbeSeconds"), (int, float)):
+    raise SystemExit(f"dataplaneProbeSeconds missing: {qt!r}")
 PY
 
 timing_out="$tmp/evidence-timing"
