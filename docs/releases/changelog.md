@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260707.2301
+
 ### Changed
 
 - Stale state cleanup now writes a JSON snapshot of the object status rows it

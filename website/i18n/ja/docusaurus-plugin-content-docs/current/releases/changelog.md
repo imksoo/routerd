@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260707.2301
+
 ### 変更
 
 - stale state cleanup は、削除前に `routerd.db` 全体をコピーする代わりに、

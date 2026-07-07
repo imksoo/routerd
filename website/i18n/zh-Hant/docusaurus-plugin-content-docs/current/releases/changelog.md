@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260707.2301
+
 ### 變更
 
 - stale state cleanup 現在會在刪除前，只將即將刪除的 object status row 寫成
