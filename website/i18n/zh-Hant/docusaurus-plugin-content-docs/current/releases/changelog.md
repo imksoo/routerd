@@ -11,6 +11,13 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### Fixed
+
+- sandbox 驗證現在會將 path-MTU nftables artifact 保留在 sandbox runtime
+  directory 內，並在 dry-run 驗證期間將缺少的 DHCPv4 client daemon 視為
+  pending。因此 CloudEdge SAM 產生的 config 可以在不觸碰 host
+  `/run/routerd` path 的情況下完成驗證。
+
 ## v20260705.1222
 
 ### 移除

@@ -11,6 +11,13 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### Fixed
+
+- sandbox 検証で path-MTU の nftables artifact を sandbox runtime
+  directory 内に保持し、dry-run 検証中に DHCPv4 client daemon がない場合は
+  pending として扱うようにしました。これにより CloudEdge SAM の生成 config
+  は host の `/run/routerd` path に触れずに検証できます。
+
 ## v20260705.1222
 
 ### 削除
