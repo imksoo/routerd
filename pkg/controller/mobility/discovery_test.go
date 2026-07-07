@@ -226,6 +226,78 @@ func TestDiscoveryControllerOnPremL2RepeatedSameOwnerObservationIsNotOwnershipCh
 	}
 }
 
+func TestDiscoveryControllerOnPremL2RepeatedSameOwnerObservationRefreshesExpiringLease(t *testing.T) {
+	now := time.Date(2026, 6, 5, 12, 20, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := api.MobilityPoolSpec{
+		Prefix:         "192.168.123.0/24",
+		GroupRef:       "cloudedge",
+		DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
+		Members: []api.MobilityPoolMember{
+			{
+				NodeRef: "pve-rt01",
+				Site:    "pve01",
+				Role:    "onprem",
+				Capture: api.MobilityMemberCapture{
+					Type:       "proxy-arp",
+					Interface:  "eth1",
+					ActiveWhen: api.CaptureActiveWhen{Type: "single-router"},
+				},
+				OwnershipDiscovery: api.MobilityOwnershipDiscovery{
+					Mode: "onprem-l2",
+					Sources: []api.MobilityOwnershipDiscoverySource{
+						{Type: OnPremSourceDHCPv4Lease, Interface: "eth1", LeaseTTL: "2m"},
+					},
+				},
+			},
+			{NodeRef: "k8s-rt01", Site: "core", Role: "cloud"},
+		},
+	}
+	poolPrefix := netip.MustParsePrefix("192.168.123.0/24")
+	observation := onPremObservation{
+		Action:     "observed",
+		Address:    "192.168.123.201",
+		MAC:        "02:00:c0:a8:7b:c9",
+		Interface:  "eth1",
+		SourceType: OnPremSourceDHCPv4Lease,
+		ObservedAt: now,
+	}
+	recordEvent(t, store, onPremDiscoveryObservedEvent("cloudedge", "cloudedge", "pve-rt01", "192.168.123.201/32", observation, now.Add(-90*time.Second), 2*time.Minute))
+	members := plannerMembers(spec.Members)
+	self, ok := lookupMemberByNodeRef(members, "pve-rt01")
+	if !ok {
+		t.Fatal("missing self member")
+	}
+	discovery := DiscoveryController{Store: store, Now: func() time.Time { return now }}
+	changed, err := discovery.recordOnPremObservation("cloudedge", spec, self, poolPrefix, observation, now)
+	if err != nil {
+		t.Fatalf("recordOnPremObservation: %v", err)
+	}
+	if changed {
+		t.Fatal("same-owner lease refresh must not be treated as ownership change")
+	}
+	events, err := store.ListFederationEvents("cloudedge", false, now.Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %#v, want compacted refreshed ownership fact", events)
+	}
+	if !events[0].ObservedAt.Equal(now) || !events[0].ExpiresAt.Equal(now.Add(2*time.Minute)) {
+		t.Fatalf("event timestamps = observed %s expires %s, want refreshed lease", events[0].ObservedAt, events[0].ExpiresAt)
+	}
+
+	router := staticRouter("pve-rt01", spec)
+	bgp := &fakeBGPPaths{}
+	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now.Add(90 * time.Second) }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Mobility Reconcile: %v", err)
+	}
+	if _, ok := maybePathBySourcePrefix(bgp, DynamicSource("cloudedge", "pve-rt01"), "192.168.123.201/32"); !ok {
+		t.Fatalf("paths = %#v, want refreshed owner advertised after previous lease would have expired", bgp.paths)
+	}
+}
+
 func TestDiscoveryControllerOnPremL2StatusObservedClientsFeedBGPAdvertisement(t *testing.T) {
 	now := time.Date(2026, 6, 5, 12, 30, 0, 0, time.UTC)
 	store := testStore(t, now)

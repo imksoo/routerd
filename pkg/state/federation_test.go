@@ -139,6 +139,36 @@ func TestRecordFederationProviderDiscoveryObservedCompactsToLatest(t *testing.T)
 	}
 }
 
+func TestRecordFederationOnPremDiscoveryObservedCompactsToLatest(t *testing.T) {
+	store := mustOpenStore(t)
+	defer store.Close()
+
+	base := time.Date(2026, 7, 7, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < 3; i++ {
+		now := base.Add(time.Duration(i) * time.Minute)
+		if err := store.RecordFederationEvent(EventRecord{
+			ID:         fmt.Sprintf("onprem-discovery-%d", i),
+			Group:      "cloudedge",
+			SourceNode: "pve-rt01",
+			Type:       "routerd.client.ipv4.observed",
+			Subject:    "192.168.123.201/32",
+			DedupeKey:  "mobility:onprem-l2-discovery:dhcpv4-lease:cloudedge:pve-rt01:192.168.123.201_32",
+			Payload:    map[string]string{"source": "onprem-l2-discovery", "sourceType": "dhcpv4-lease", "address": "192.168.123.201/32"},
+			ObservedAt: now,
+			ExpiresAt:  now.Add(2 * time.Minute),
+		}); err != nil {
+			t.Fatalf("record onprem discovery %d: %v", i, err)
+		}
+	}
+	events, err := store.ListFederationEvents("cloudedge", true, base.Add(10*time.Minute).Unix())
+	if err != nil {
+		t.Fatalf("ListFederationEvents: %v", err)
+	}
+	if ids := idsOf(events); !equalIDs(ids, []string{"onprem-discovery-2"}) {
+		t.Fatalf("ids = %v, want latest onprem discovery", ids)
+	}
+}
+
 func idsOf(recs []EventRecord) []string {
 	out := make([]string, 0, len(recs))
 	for _, r := range recs {
