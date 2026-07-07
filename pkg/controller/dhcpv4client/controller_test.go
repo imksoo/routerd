@@ -211,6 +211,27 @@ func TestControllerReconcilesDaemonStatus(t *testing.T) {
 	}
 }
 
+func TestControllerDryRunMissingDaemonSocketIsPending(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), "missing.sock")
+	store := mapStore{}
+	controller := Controller{
+		Router:        &api.Router{},
+		Store:         store,
+		DaemonSockets: map[string]string{"wan": socket},
+		DryRun:        true,
+	}
+	if err := controller.Reconcile(context.Background(), "wan"); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "DHCPv4Client", "wan")
+	if status["phase"] != daemonapi.ResourcePhasePending || status["reason"] != "DaemonUnavailable" {
+		t.Fatalf("status = %#v", status)
+	}
+	if status["socket"] != socket || status["dryRun"] != true {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
 func TestControllerAppliesLeaseAddressAndRoute(t *testing.T) {
 	socket := filepath.Join(t.TempDir(), "wan.sock")
 	listener, err := net.Listen("unix", socket)

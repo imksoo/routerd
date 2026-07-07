@@ -22,6 +22,7 @@ import (
 	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
+	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
 	"github.com/imksoo/routerd/pkg/eventlog"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
@@ -828,6 +829,23 @@ func TestServeAcceptsLegacyControllerChainFlags(t *testing.T) {
 	}
 	if !loopbackEnsured {
 		t.Fatal("serve --once did not ensure loopback is up")
+	}
+}
+
+func TestSandboxControllerOptionsRoutePathMTUArtifactsIntoRuntimeDir(t *testing.T) {
+	oldDefaults := platformDefaults
+	dir := t.TempDir()
+	platformDefaults.RuntimeDir = filepath.Join(dir, "run", "routerd")
+	t.Cleanup(func() { platformDefaults = oldDefaults })
+
+	var opts controllerchain.Options
+	applySandboxControllerOptions(&opts, "", "")
+
+	if got, want := opts.PathMTUPath, filepath.Join(platformDefaults.RuntimeDir, "mss.nft"); got != want {
+		t.Fatalf("PathMTUPath = %q, want %q", got, want)
+	}
+	if got, want := opts.ForceFragmentPath, filepath.Join(platformDefaults.RuntimeDir, "forcefrag.nft"); got != want {
+		t.Fatalf("ForceFragmentPath = %q, want %q", got, want)
 	}
 }
 
