@@ -87,7 +87,7 @@ EOF
 run_manifest_path() { printf '%s/%s.manifest' "$CE_STATE_DIR" "$1"; }
 
 write_manifest() {
-  local run_id=$1 ttl=$2 ttl_expires=$3 profile=$4 providers=$5
+  local run_id=$1 ttl=$2 ttl_expires=$3 profile=$4 providers=$5 provider_order=${6:-declared}
   mkdir -p "$CE_STATE_DIR"
   cat > "$(run_manifest_path "$run_id")" <<EOF
 run_id=${run_id}
@@ -95,6 +95,7 @@ owner=${CE_OWNER}
 purpose=${CE_PURPOSE}
 profile=${profile}
 providers=${providers}
+provider_order=${provider_order}
 ttl=${ttl}
 ttl_expires_at=${ttl_expires}
 created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -128,6 +129,49 @@ validate_providers() {
   done
 }
 
+normalize_provider_csv() {
+  local spec=$1 p out=""
+  IFS=',' read -ra _ps <<<"$spec"
+  for p in "${_ps[@]}"; do
+    p=$(printf '%s' "$p" | tr -d '[:space:]')
+    [[ -z "$p" ]] && continue
+    [[ -n "$out" ]] && out+=","
+    out+="$p"
+  done
+  printf '%s\n' "$out"
+}
+
+order_providers() {
+  local providers=$1 order=$2 p out="" wanted
+  providers=$(normalize_provider_csv "$providers")
+  validate_providers "$providers"
+  case "$order" in
+    declared|"")
+      printf '%s\n' "$providers"
+      ;;
+    cost-optimized|slow-first)
+      # Start non-billable/on-prem and historically slower providers first so
+      # faster clouds do not idle while PVE catches up. Among cloud providers,
+      # prefer the cheaper OCI capacity before AWS, then Azure.
+      wanted="onprem,oci,aws,azure"
+      ;;
+    fast-first)
+      wanted="aws,azure,oci,onprem"
+      ;;
+    *)
+      die "unknown provider order: $order (want declared|cost-optimized|slow-first|fast-first)"
+      ;;
+  esac
+  IFS=',' read -ra _wanted <<<"$wanted"
+  for p in "${_wanted[@]}"; do
+    if [[ ",$providers," == *",$p,"* ]]; then
+      [[ -n "$out" ]] && out+=","
+      out+="$p"
+    fi
+  done
+  printf '%s\n' "$out"
+}
+
 # =============================================================================
 # up
 # =============================================================================
@@ -137,7 +181,7 @@ $SELF up - allocate/start a CloudEdge lab and stamp run-id + cost tags
 
 USAGE:
   $SELF up --profile minimal|provider|full [--provider aws,oci,azure,onprem]
-           [--ttl <dur>] [--scenario <name>] [--keep]
+           [--ttl <dur>] [--scenario <name>] [--provider-order <mode>] [--keep]
 
   --profile   minimal  : onprem + 1 cloud, smoke only (cheapest).
               provider : single named provider A/B routers + client (provider parity).
@@ -146,6 +190,10 @@ USAGE:
   --provider  Comma list to bring up (default depends on profile).
   --ttl       Lab lifetime, e.g. 90m, 4h, 2d (default 4h). Stamped as ttl_expires_at.
   --scenario  Scenario label used in the run-id (default derived from profile).
+  --provider-order
+              declared       Use --provider order as given (default).
+              cost-optimized Start onprem/OCI/Azure before AWS when present.
+              fast-first     Start AWS first for shortest possible wall clock.
   --keep      Do NOT arm the in-progress EXIT teardown trap; leave a partially
               brought-up lab in place for inspection (default: a failed/interrupted
               'up' auto-tears-down; a clean 'up' always persists until 'down'/TTL).
@@ -187,13 +235,14 @@ provider_start() {
 }
 
 cmd_up() {
-  local profile="" providers="" ttl="4h" scenario="" keep="0"
+  local profile="" providers="" ttl="4h" scenario="" keep="0" provider_order="${CE_PROVIDER_ORDER:-declared}"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --profile) profile="${2:-}"; shift 2 ;;
       --provider) providers="${2:-}"; shift 2 ;;
       --ttl) ttl="${2:-}"; shift 2 ;;
       --scenario) scenario="${2:-}"; shift 2 ;;
+      --provider-order) provider_order="${2:-}"; shift 2 ;;
       --keep) keep="1"; shift ;;
       -h|--help) up_usage; exit 0 ;;
       *) die "up: unknown argument: $1" ;;
@@ -207,6 +256,7 @@ cmd_up() {
     *) die "up: unknown profile: $profile (want minimal|provider|full)" ;;
   esac
   validate_providers "$providers"
+  providers=$(order_providers "$providers" "$provider_order")
   [[ -n "$scenario" ]] || scenario="$profile"
 
   # Validate --ttl up-front and hard-fail before any provider_start. duration_to_secs
@@ -224,8 +274,8 @@ cmd_up() {
   run_id=$(cloudedge_run_id "$scenario")
   ttl_expires=$(cloudedge_ttl_expires_at "$ttl")
 
-  log "up: run_id=$run_id profile=$profile providers=$providers ttl=$ttl (expires $ttl_expires)"
-  write_manifest "$run_id" "$ttl" "$ttl_expires" "$profile" "$providers"
+  log "up: run_id=$run_id profile=$profile providers=$providers provider_order=$provider_order ttl=$ttl (expires $ttl_expires)"
+  write_manifest "$run_id" "$ttl" "$ttl_expires" "$profile" "$providers" "$provider_order"
 
   ACTIVE_RUN_ID="$run_id"
   # Arm the EXIT teardown trap for the in-progress bring-up window: if a
@@ -428,6 +478,7 @@ $SELF evidence - assemble an evidence bundle and emit result JSON
 USAGE:
   $SELF evidence collect --out <dir> [--run-id <id>] [--scenario <name>]
                          [--commit <ref>] [--matrix-json <file>]
+                         [--cloud-ingress-matrix-json <file>]
                          [--provider-state-json <file>] [--timing-json <file>]
                          [--protocol-json <file>] [--l2-loop-json <file>]
                          [--result pass|fail]
@@ -436,7 +487,10 @@ USAGE:
   --run-id ID      Run id (default: latest manifest). Sets runId in the JSON.
   --scenario NAME  Scenario label (default: from run-id).
   --commit REF     Commit under test (default: HEAD sha).
-  --matrix-json F  Connectivity-matrix JSON to fold into providers/assertions.
+  --matrix-json F  Normal connectivity-matrix JSON to fold into providers/assertions.
+  --cloud-ingress-matrix-json F
+                  Optional cloud-ingress matrix JSON. Used only for timing
+                  decomposition and copied into the evidence bundle.
   --provider-state-json F
                   Optional provider inventory check states. Accepted shapes:
                   {"aws":"pass"} or {"aws":{"providerState":"pass"}}.
@@ -646,11 +700,83 @@ print(result if result in ("pass", "fail", "skip", "na") else "na")
 PY
 }
 
+matrix_timing_object() {
+  local matrix_json=$1 default_phase=$2
+  if [[ -z "$matrix_json" || ! -f "$matrix_json" ]]; then
+    printf '{"status":"na","phase":"%s","elapsedSeconds":null,"parallelism":null,"total":0,"passed":0,"failed":0}\n' "$default_phase"
+    return
+  fi
+  python3 - "$matrix_json" "$default_phase" <<'PY'
+import json
+import sys
+path, default_phase = sys.argv[1], sys.argv[2]
+data = json.load(open(path))
+summary = data.get("summary", {})
+status = summary.get("result", "na")
+if status not in ("pass", "fail", "skip", "na"):
+    status = "na"
+out = {
+    "status": status,
+    "phase": summary.get("phase") or default_phase,
+    "elapsedSeconds": summary.get("elapsedSeconds"),
+    "parallelism": summary.get("parallelism"),
+    "total": summary.get("total", 0),
+    "passed": summary.get("passed", 0),
+    "failed": summary.get("failed", 0),
+}
+print(json.dumps(out, separators=(",", ":")))
+PY
+}
+
+qualification_timing_object() {
+  local matrix_json=$1 cloud_ingress_matrix_json=$2 timing_json=$3
+  local normal cloud provider_elapsed total_elapsed
+  normal=$(matrix_timing_object "$matrix_json" normal)
+  cloud=$(matrix_timing_object "$cloud_ingress_matrix_json" cloud-ingress)
+  provider_elapsed=$(python3 - "$timing_json" <<'PY'
+import json
+import sys
+path = sys.argv[1]
+if not path:
+    print("null")
+    raise SystemExit
+try:
+    data = json.load(open(path))
+except Exception:
+    print("null")
+    raise SystemExit
+for key in ("providerElapsedSeconds", "elapsedSeconds"):
+    value = data.get(key)
+    if isinstance(value, (int, float)):
+        print(value)
+        break
+else:
+    print("null")
+PY
+)
+  total_elapsed=$(python3 - "$normal" "$cloud" <<'PY'
+import json
+import sys
+total = 0
+seen = False
+for raw in sys.argv[1:]:
+    value = json.loads(raw).get("elapsedSeconds")
+    if isinstance(value, (int, float)):
+        total += value
+        seen = True
+print(total if seen else "null")
+PY
+)
+  cat <<EOF
+{"infraProvisionSeconds":null,"deployRouterdReadySeconds":null,"providerConvergenceSeconds":$provider_elapsed,"normalMatrix":$normal,"cloudIngressMatrix":$cloud,"dataplaneProbeSeconds":$total_elapsed}
+EOF
+}
+
 cmd_evidence() {
   local sub="${1:-}"; [[ "$sub" == "-h" || "$sub" == "--help" ]] && { evidence_usage; exit 0; }
   [[ "$sub" == "collect" ]] || { evidence_usage >&2; die "evidence: expected subcommand 'collect'"; }
   shift
-  local out="" run_id="" scenario="" commit="" matrix_json="" provider_state_json="" timing_json="" protocol_json="" l2_loop_json="" forced_result=""
+  local out="" run_id="" scenario="" commit="" matrix_json="" cloud_ingress_matrix_json="" provider_state_json="" timing_json="" protocol_json="" l2_loop_json="" forced_result=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --out) out="${2:-}"; shift 2 ;;
@@ -658,6 +784,7 @@ cmd_evidence() {
       --scenario) scenario="${2:-}"; shift 2 ;;
       --commit) commit="${2:-}"; shift 2 ;;
       --matrix-json) matrix_json="${2:-}"; shift 2 ;;
+      --cloud-ingress-matrix-json) cloud_ingress_matrix_json="${2:-}"; shift 2 ;;
       --provider-state-json) provider_state_json="${2:-}"; shift 2 ;;
       --timing-json) timing_json="${2:-}"; shift 2 ;;
       --protocol-json) protocol_json="${2:-}"; shift 2 ;;
@@ -706,10 +833,11 @@ cmd_evidence() {
   no_nat=$(matrix_assertion "$matrix_json" noNat)
   matrix_overall=$(matrix_summary_result "$matrix_json")
 
-  local timings_obj protocols_obj l2_loop_obj
+  local timings_obj protocols_obj l2_loop_obj qualification_timings_obj
   timings_obj=$(json_object_or_default "$timing_json" '{"status":"na","thresholdSeconds":60,"events":[]}')
   protocols_obj=$(json_object_or_default "$protocol_json" '{"status":"na","pairs":[],"summary":{"total":0,"passed":0,"failed":0,"checks":{}}}')
   l2_loop_obj=$(json_object_or_default "$l2_loop_json" '{"status":"na","mechanism":"","phases":[],"summary":{}}')
+  qualification_timings_obj=$(qualification_timing_object "$matrix_json" "$cloud_ingress_matrix_json" "$timing_json")
 
   local failover_recovery protocol_transparency ftp_active_passive nfs_rpc bulk_transfer_pmtu protocol_src_pres protocol_no_nat
   failover_recovery=$(timing_recovery_check "$timing_json")
@@ -780,6 +908,7 @@ cmd_evidence() {
     { "name": "stale_action_fenced", "result": "$a_stale" }
   ],
   "timings": $timings_obj,
+  "qualificationTimings": $qualification_timings_obj,
   "protocols": $protocols_obj,
   "l2Loop": $l2_loop_obj,
   "costGuard": {
@@ -794,6 +923,9 @@ EOF
   fi
   if [[ -n "$timing_json" && -f "$timing_json" ]]; then
     cp "$timing_json" "$out/failover-timing.json" 2>/dev/null || true
+  fi
+  if [[ -n "$cloud_ingress_matrix_json" && -f "$cloud_ingress_matrix_json" ]]; then
+    cp "$cloud_ingress_matrix_json" "$out/cloud-ingress-matrix.json" 2>/dev/null || true
   fi
   if [[ -n "$protocol_json" && -f "$protocol_json" ]]; then
     cp "$protocol_json" "$out/protocol-probe.json" 2>/dev/null || true
@@ -811,6 +943,7 @@ EOF
 - dataplane (matrix): aws=$aws_dp oci=$oci_dp azure=$az_dp onprem=$onprem_dp
 - provider state: aws=$aws_ps oci=$oci_ps azure=$az_ps onprem=$onprem_ps
 - directed_ping_ssh_matrix=$directed_matrix source_ip_preserved=$src_pres default_gateway_unchanged=$gw_ok no_nat=$no_nat
+- qualification timings: $qualification_timings_obj
 - failover_recovery_under_60s=$failover_recovery
 - protocol_transparency=$protocol_transparency ftp_active_passive=$ftp_active_passive nfs_rpc=$nfs_rpc bulk_transfer_pmtu=$bulk_transfer_pmtu protocol_source_ip_preserved=$protocol_src_pres protocol_no_nat=$protocol_no_nat
 - l2_loop_free=$l2_loop_free broadcast_storm_absent=$broadcast_storm_absent stp_rstp_stable=$stp_rstp_stable mac_flap_absent=$mac_flap_absent failover_ping_stable=$failover_ping_stable l2_suppression_mechanism_recorded=$l2_mechanism_recorded

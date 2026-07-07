@@ -91,6 +91,20 @@
         }
       }
     },
+    "qualificationTimings": {
+      "type": "object",
+      "description": "Release-qualification timing decomposition. This keeps VM/provisioning, routerd readiness, provider convergence, and dataplane probe runtime separate so slow harness probes are not reported as product convergence.",
+      "additionalProperties": false,
+      "required": ["normalMatrix", "cloudIngressMatrix", "dataplaneProbeSeconds"],
+      "properties": {
+        "infraProvisionSeconds": { "type": ["number", "null"], "minimum": 0 },
+        "deployRouterdReadySeconds": { "type": ["number", "null"], "minimum": 0 },
+        "providerConvergenceSeconds": { "type": ["number", "null"], "minimum": 0 },
+        "dataplaneProbeSeconds": { "type": ["number", "null"], "minimum": 0 },
+        "normalMatrix": { "$ref": "#/definitions/matrixTiming" },
+        "cloudIngressMatrix": { "$ref": "#/definitions/matrixTiming" }
+      }
+    },
     "protocols": {
       "type": "object",
       "description": "Optional FTP/NFS/RPC/bulk/PMTU transparency probe results.",
@@ -132,6 +146,20 @@
         "name": { "type": "string", "minLength": 1 },
         "result": { "$ref": "#/definitions/checkState" },
         "detail": { "type": "string" }
+      }
+    },
+    "matrixTiming": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "phase", "total", "passed", "failed"],
+      "properties": {
+        "status": { "$ref": "#/definitions/checkState" },
+        "phase": { "type": "string" },
+        "elapsedSeconds": { "type": ["number", "null"], "minimum": 0 },
+        "parallelism": { "type": ["number", "null"], "minimum": 1 },
+        "total": { "type": "number", "minimum": 0 },
+        "passed": { "type": "number", "minimum": 0 },
+        "failed": { "type": "number", "minimum": 0 }
       }
     },
     "checkState": {
