@@ -694,6 +694,13 @@ func (c SystemdUnitController) reconcileEventFederationUnits(ctx context.Context
 		if resource.Kind != "EventGroup" {
 			continue
 		}
+		spec, err := resource.EventGroupSpec()
+		if err != nil {
+			return err
+		}
+		if !eventGroupRunsEventd(spec) {
+			continue
+		}
 		group := resource.Metadata.Name
 		unitName := eventFederationUnitName(group)
 		configPath := filepath.Join(stateDir, "eventd", group, "config.json")
@@ -706,6 +713,10 @@ func (c SystemdUnitController) reconcileEventFederationUnits(ctx context.Context
 
 func eventFederationUnitName(group string) string {
 	return "routerd-eventd@" + group + ".service"
+}
+
+func eventGroupRunsEventd(spec api.EventGroupSpec) bool {
+	return strings.TrimSpace(spec.Auth.SecretFile) != ""
 }
 
 func (c SystemdUnitController) reconcileSyntheticSystemdUnit(ctx context.Context, apiVersion, kind, resourceName, unitName string, spec api.SystemdUnitSpec, command outputCommandFunc) error {
@@ -1349,8 +1360,12 @@ func (c SystemdUnitController) cleanupStaleEventFederationUnits(ctx context.Cont
 		if resource.Kind != "EventGroup" {
 			continue
 		}
-		if _, err := resource.EventGroupSpec(); err != nil {
+		spec, err := resource.EventGroupSpec()
+		if err != nil {
 			return err
+		}
+		if !eventGroupRunsEventd(spec) {
+			continue
 		}
 		desired[eventFederationUnitName(resource.Metadata.Name)] = true
 	}

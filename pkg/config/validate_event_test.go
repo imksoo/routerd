@@ -41,9 +41,76 @@ func TestValidateEventGroupPeersFromOK(t *testing.T) {
 	router := eventGroupRouter(api.EventGroupSpec{
 		NodeName:  "router-a",
 		PeersFrom: []api.EventPeersSourceSpec{{Resource: "SAMNodeSet/svnet1-nodes"}},
+		Auth:      api.EventGroupAuth{SecretFile: "/run/routerd/eventd.key"},
 	})
 	if err := Validate(router); err != nil {
 		t.Fatalf("validate EventGroup peersFrom: %v", err)
+	}
+}
+
+func TestValidateIdentityOnlyEventGroupAllowsNoSecretFile(t *testing.T) {
+	router := eventGroupRouter(api.EventGroupSpec{
+		NodeName: "router-a",
+	})
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate identity-only EventGroup: %v", err)
+	}
+}
+
+func TestValidateEventGroupRuntimeRequiresSecretFile(t *testing.T) {
+	tests := []struct {
+		name   string
+		router *api.Router
+		want   string
+	}{
+		{
+			name: "listen",
+			router: eventGroupRouter(api.EventGroupSpec{
+				NodeName: "router-a",
+				Listen:   api.EventGroupListen{Address: "10.99.0.7", Port: 8787},
+			}),
+			want: "spec.auth.secretFile is required when spec.listen.address is set",
+		},
+		{
+			name: "peersFrom",
+			router: eventGroupRouter(api.EventGroupSpec{
+				NodeName:  "router-a",
+				PeersFrom: []api.EventPeersSourceSpec{{Resource: "SAMNodeSet/svnet1-nodes"}},
+			}),
+			want: "spec.auth.secretFile is required when spec.peersFrom is set",
+		},
+		{
+			name: "eventPeer",
+			router: &api.Router{
+				TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+				Metadata: api.ObjectMeta{Name: "test"},
+				Spec: api.RouterSpec{Resources: []api.Resource{
+					{
+						TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
+						Metadata: api.ObjectMeta{Name: "edge"},
+						Spec:     api.EventGroupSpec{NodeName: "router-a"},
+					},
+					{
+						TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventPeer"},
+						Metadata: api.ObjectMeta{Name: "cloud"},
+						Spec: api.EventPeerSpec{
+							GroupRef: "edge",
+							NodeName: "cloud",
+							Endpoint: "http://10.99.0.8:8787",
+						},
+					},
+				}},
+			},
+			want: "spec.auth.secretFile is required because federation.routerd.net/v1alpha1/EventPeer/cloud references this EventGroup",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := Validate(tc.router)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate error = %v, want containing %q", err, tc.want)
+			}
+		})
 	}
 }
 

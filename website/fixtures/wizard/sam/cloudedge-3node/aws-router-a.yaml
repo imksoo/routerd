@@ -11,6 +11,8 @@ spec:
         name: "cloudedge"
       spec:
         nodeName: "aws-router-a"
+        auth:
+          secretFile: "/usr/local/etc/routerd/secrets/eventd.key"
         retention:
           maxEvents: 1000
           maxAge: "24h"

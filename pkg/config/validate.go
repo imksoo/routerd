@@ -806,6 +806,9 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 	if err := validateFederationSLOCrossRefs(router); err != nil {
 		return err
 	}
+	if err := validateEventGroupRuntimeAuth(router); err != nil {
+		return err
+	}
 	return nil
 }
 

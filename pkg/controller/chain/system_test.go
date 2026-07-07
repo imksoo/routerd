@@ -958,7 +958,10 @@ func TestSystemdUnitControllerRemovesStaleEventFederationUnits(t *testing.T) {
 	}
 	kept := filepath.Join(dir, "routerd-eventd@current.service")
 	router := &api.Router{Metadata: api.ObjectMeta{Name: "home"}, Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"}, Metadata: api.ObjectMeta{Name: "current"}, Spec: api.EventGroupSpec{NodeName: "home"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"}, Metadata: api.ObjectMeta{Name: "current"}, Spec: api.EventGroupSpec{
+			NodeName: "home",
+			Auth:     api.EventGroupAuth{SecretFile: "/run/routerd/eventd.key"},
+		}},
 	}}}
 	var commands []string
 	controller := SystemdUnitController{
@@ -1001,6 +1004,52 @@ func TestSystemdUnitControllerRemovesStaleEventFederationUnits(t *testing.T) {
 	// The live EventGroup unit must never be disabled/removed.
 	if strings.Contains(gotCommands, "systemctl disable --now routerd-eventd@current.service") {
 		t.Fatalf("live event federation unit was disabled:\n%s", gotCommands)
+	}
+}
+
+func TestSystemdUnitControllerRemovesIdentityOnlyEventFederationUnit(t *testing.T) {
+	dir := t.TempDir()
+	stale := filepath.Join(dir, "routerd-eventd@identity.service")
+	if err := os.WriteFile(stale, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-eventd\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	router := &api.Router{Metadata: api.ObjectMeta{Name: "home"}, Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"}, Metadata: api.ObjectMeta{Name: "identity"}, Spec: api.EventGroupSpec{
+			NodeName: "home",
+		}},
+	}}}
+	var commands []string
+	controller := SystemdUnitController{
+		Router:           router,
+		Store:            mapStore{},
+		SystemdSystemDir: dir,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			if name == "systemctl" && len(args) >= 2 && args[0] == "is-active" {
+				return nil, errors.New("inactive")
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("identity-only unit still exists: %v", err)
+	}
+	gotCommands := strings.Join(commands, "\n")
+	for _, want := range []string{
+		"systemctl disable --now routerd-eventd@identity.service",
+		"systemctl reset-failed routerd-eventd@identity.service",
+		"systemctl daemon-reload",
+	} {
+		if !strings.Contains(gotCommands, want) {
+			t.Fatalf("commands missing %q:\n%s", want, gotCommands)
+		}
+	}
+	if strings.Contains(gotCommands, "systemctl enable --now routerd-eventd@identity.service") {
+		t.Fatalf("identity-only event federation unit was enabled:\n%s", gotCommands)
 	}
 }
 

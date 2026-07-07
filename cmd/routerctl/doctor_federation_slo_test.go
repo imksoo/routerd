@@ -69,6 +69,8 @@ spec:
         name: cloudedge
       spec:
         nodeName: ` + selfNode + `
+        auth:
+          secretFile: /run/routerd/eventd.key
 ` + peerYAML + sloYAML)
 	if err := os.WriteFile(configPath, data, 0644); err != nil {
 		t.Fatalf("write config: %v", err)
