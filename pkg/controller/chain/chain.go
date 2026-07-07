@@ -204,7 +204,7 @@ func (s eventedStore) SaveObjectStatus(apiVersion, kind, name string, status map
 	if newerStatus(current, status) {
 		return nil
 	}
-	publishChanged := statusChangedForEvent(apiVersion, kind, current, status)
+	publishChanged := shouldPublishStatusChangedEvent(apiVersion, kind, current, status)
 	if err := s.Store.SaveObjectStatus(apiVersion, kind, name, status); err != nil {
 		return err
 	}
@@ -235,7 +235,7 @@ func (s eventedStore) MergeObjectStatus(apiVersion, kind, name string, updates m
 	if newerStatus(current, next) {
 		return nil
 	}
-	publishChanged := statusChangedForEvent(apiVersion, kind, current, next)
+	publishChanged := shouldPublishStatusChangedEvent(apiVersion, kind, current, next)
 	if store, ok := s.Store.(objectStatusMerger); ok {
 		if err := store.MergeObjectStatus(apiVersion, kind, name, status); err != nil {
 			return err
@@ -628,6 +628,72 @@ func statusChangedFieldsForEvent(apiVersion, kind string, current, next map[stri
 	return changedFields(statusForEvent(apiVersion, kind, current), statusForEvent(apiVersion, kind, next))
 }
 
+func shouldPublishStatusChangedEvent(apiVersion, kind string, current, next map[string]any) bool {
+	if !statusChangedForEvent(apiVersion, kind, current, next) {
+		return false
+	}
+	fields := statusChangedFieldsForEvent(apiVersion, kind, current, next)
+	return !suppressStatusChangedEvent(apiVersion, kind, current, next, fields)
+}
+
+func suppressStatusChangedEvent(apiVersion, kind string, current, next map[string]any, fields []string) bool {
+	if apiVersion != api.MobilityAPIVersion || kind != "MobilityPool" {
+		return false
+	}
+	return mobilityPoolObservationRefreshOnly(current, next, fields)
+}
+
+func mobilityPoolObservationRefreshOnly(current, next map[string]any, fields []string) bool {
+	if len(fields) == 0 {
+		return false
+	}
+	allowed := mobilityPoolObservationRefreshFields()
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field == "phase" {
+			if !mobilityPoolRoutineObservationPhaseTransition(fmt.Sprint(current["phase"]), fmt.Sprint(next["phase"])) {
+				return false
+			}
+			continue
+		}
+		if !allowed[field] {
+			return false
+		}
+	}
+	return true
+}
+
+func mobilityPoolRoutineObservationPhaseTransition(previousPhase, phase string) bool {
+	if routinePhaseTransition("MobilityPool", previousPhase, phase) {
+		return true
+	}
+	return (previousPhase == "Pending" && phase == "Watching") || (previousPhase == "Watching" && phase == "Pending")
+}
+
+func mobilityPoolObservationRefreshFields() map[string]bool {
+	fields := map[string]bool{
+		"observedClients":         true,
+		"observedClientsBySource": true,
+		"sourceType":              true,
+		"observe":                 true,
+		"onDemand":                true,
+	}
+	for _, field := range []string{
+		"bgpCaptureObserveAt",
+		"bgpCaptureObservedAt",
+		"discoveryCompletedAt",
+		"discoveryFreshUntil",
+		"discoveryLastScanAt",
+		"discoveryNextScanAt",
+		"discoveryObserved",
+		"discoveryResultCount",
+		"observedCount",
+	} {
+		fields[field] = true
+	}
+	return fields
+}
+
 func statusChangedEventSeverity(apiVersion, kind string, current, next map[string]any, fields []string) string {
 	if eventStateAbnormal(fmt.Sprint(next["phase"])) || eventStateAbnormal(fmt.Sprint(next["health"])) {
 		return daemonapi.SeverityInfo
@@ -848,6 +914,15 @@ func stableStatusValue(value any) any {
 			out[key] = stableStatusValue(item)
 		}
 		return out
+	case map[string]string:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			if volatileNestedStatusField(key) {
+				continue
+			}
+			out[key] = item
+		}
+		return out
 	default:
 		if normalized, ok := stableJSONValue(value); ok {
 			return stableStatusValue(normalized)
@@ -859,6 +934,8 @@ func stableStatusValue(value any) any {
 func volatileNestedStatusField(key string) bool {
 	switch key {
 	case "healthyCount", "unhealthyCount", "observedAt", "updatedAt", "lastCheckedAt", "lastTransitionAt", "lastHealthyAt", "lastUnhealthyAt":
+		return true
+	case "renewedAt", "leaseUntil", "pendingUntil":
 		return true
 	default:
 		return false
