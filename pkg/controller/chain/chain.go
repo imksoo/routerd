@@ -279,6 +279,22 @@ func copyStatusMap(status map[string]any) map[string]any {
 	return out
 }
 
+func preserveStatusFields(status, current map[string]any, fields ...string) map[string]any {
+	if len(current) == 0 || len(fields) == 0 {
+		return status
+	}
+	out := copyStatusMap(status)
+	for _, field := range fields {
+		if _, exists := out[field]; exists {
+			continue
+		}
+		if value, ok := current[field]; ok {
+			out[field] = value
+		}
+	}
+	return out
+}
+
 func statusWithLifecycle(apiVersion, kind, name string, resource api.Resource, found bool, status map[string]any) map[string]any {
 	out := make(map[string]any, len(status)+8)
 	for key, value := range status {
@@ -1285,6 +1301,9 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 		} else if preserved {
 			continue
 		}
+		if current := store.ObjectStatus(apiVersion, res.Kind, res.Metadata.Name); statusIsPendingWhenFalse(current) {
+			continue
+		}
 		if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, map[string]any{
 			"phase":      "Pending",
 			"reason":     "WhenFalse",
@@ -1368,6 +1387,10 @@ func healthCheckStatusHasDaemonEvidence(status map[string]any) bool {
 		return true
 	}
 	return false
+}
+
+func statusIsPendingWhenFalse(status map[string]any) bool {
+	return strings.TrimSpace(fmt.Sprint(status["phase"])) == "Pending" && strings.TrimSpace(fmt.Sprint(status["reason"])) == "WhenFalse"
 }
 
 func healthCheckStatusFreshness(res api.Resource) time.Duration {
@@ -1656,7 +1679,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	link := LinkController{Router: r.Router, Store: store, Logger: logger}
 	tunnel := TunnelInterfaceController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, OS: platform.CurrentOS(), Logger: logger}
 	wireGuard := WireGuardController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, Logger: logger}
-	ipv4Static := IPv4StaticAddressController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunAddress, Logger: logger}
+	ipv4Static := IPv4StaticAddressController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunAddress, Logger: logger}
 	lan := LANAddressController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunAddress, Logger: logger}
 	dslite := DSLiteTunnelController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDSLite, ResolverPort: r.Opts.DnsmasqPort, Logger: logger}
 	route := IPv4RouteController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, Logger: logger}
@@ -1878,7 +1901,16 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = effective
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "link", Every: 30 * time.Second, PeriodicFunc: didWorkPeriodic(link.Reconcile)},
+		framework.FuncController{ControllerName: "link", Every: 30 * time.Second, PeriodicFunc: func(ctx context.Context) (bool, error) {
+			effective, err := effectiveForReconcile()
+			if err != nil {
+				return false, err
+			}
+			current := link
+			current.Router = effective
+			current.Store = store.withRouter(effective)
+			return didWorkError(current.Reconcile(ctx))
+		}},
 		framework.FuncController{ControllerName: "sam-enrollment-client", Every: time.Minute, Subs: statusSubscriptions("SAMEnrollmentClient", "SAMEnrollmentClaim"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			current := mobilityEnrollmentClient
 			current.Router = r.Router
@@ -3350,6 +3382,7 @@ func interfaceStatusAddresses(ifi *net.Interface) ([]string, []string, []string)
 
 type IPv4StaticAddressController struct {
 	Router         *api.Router
+	DeclaredRouter *api.Router
 	Bus            *bus.Bus
 	Store          Store
 	DryRun         bool
@@ -3788,9 +3821,17 @@ func (c IPv4StaticAddressController) cleanupRemovedIPv4StaticAddresses(ctx conte
 		return err
 	}
 	desired := map[string]bool{}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion == api.NetAPIVersion && resource.Kind == "IPv4StaticAddress" {
-			desired[lifecycle.OwnerKey(resource.APIVersion, resource.Kind, resource.Metadata.Name)] = true
+	declared := c.DeclaredRouter
+	if declared == nil {
+		declared = c.Router
+	}
+	for _, resource := range declared.Spec.Resources {
+		apiVersion := resource.APIVersion
+		if apiVersion == "" {
+			apiVersion = resourcequery.APIVersionForKind(resource.Kind)
+		}
+		if apiVersion == api.NetAPIVersion && resource.Kind == "IPv4StaticAddress" {
+			desired[lifecycle.OwnerKey(apiVersion, resource.Kind, resource.Metadata.Name)] = true
 		}
 	}
 	plan := lifecycle.PlanResourceTeardownGC(desired, statuses)
@@ -3810,6 +3851,7 @@ func (c IPv4StaticAddressController) cleanupRemovedIPv4StaticAddresses(ctx conte
 }
 
 func (c IPv4StaticAddressController) teardownRemovedIPv4StaticAddress(ctx context.Context, status routerstate.ObjectStatus, deleter routerstate.ObjectDeleteStore) error {
+	removedAddress := false
 	if !c.DryRun {
 		ifname := cleanStatusString(status.Status["ifname"])
 		address := cleanStatusString(status.Status["address"])
@@ -3827,13 +3869,14 @@ func (c IPv4StaticAddressController) teardownRemovedIPv4StaticAddress(ctx contex
 				if err := command(ctx, name, args...); err != nil {
 					return fmt.Errorf("delete removed IPv4StaticAddress %s %s dev %s: %w", status.Name, address, ifname, err)
 				}
+				removedAddress = true
 			}
 		}
 	}
 	if err := deleter.DeleteObject(api.NetAPIVersion, "IPv4StaticAddress", status.Name); err != nil {
 		return err
 	}
-	if c.Bus != nil {
+	if removedAddress && c.Bus != nil {
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.lan.ipv4_address.removed", daemonapi.SeverityInfo)
 		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress", Name: status.Name}
 		event.Attributes = map[string]string{"address": fmt.Sprint(status.Status["address"]), "ifname": fmt.Sprint(status.Status["ifname"])}

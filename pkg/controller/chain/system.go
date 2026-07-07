@@ -753,13 +753,15 @@ func (c SystemdUnitController) reconcileSyntheticSystemdUnit(ctx context.Context
 	if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
 		return err
 	}
-	if err := c.Store.SaveObjectStatus(apiVersion, kind, resourceName, map[string]any{
+	resourceStatus := map[string]any{
 		"phase":     phase,
 		"unitName":  unitName,
 		"managedBy": "systemd",
 		"dryRun":    c.DryRun,
 		"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
-	}); err != nil {
+	}
+	resourceStatus = preserveSystemdAnnotatedResourceStatus(kind, resourceStatus, c.Store.ObjectStatus(apiVersion, kind, resourceName))
+	if err := c.Store.SaveObjectStatus(apiVersion, kind, resourceName, resourceStatus); err != nil {
 		return err
 	}
 	if changed && !c.DryRun && c.Bus != nil {
@@ -988,14 +990,16 @@ func (c SystemdUnitController) cleanupWhenFalseSystemdUnit(ctx context.Context, 
 		return err
 	}
 	if ref.APIVersion != "" && ref.Kind != "" && ref.Name != "" {
-		if err := c.Store.SaveObjectStatus(ref.APIVersion, ref.Kind, ref.Name, map[string]any{
+		resourceStatus := map[string]any{
 			"phase":     "Pending",
 			"reason":    "WhenFalse",
 			"unitName":  ref.UnitName,
 			"managedBy": "systemd",
 			"dryRun":    c.DryRun,
 			"updatedAt": now,
-		}); err != nil {
+		}
+		resourceStatus = preserveSystemdAnnotatedResourceStatus(ref.Kind, resourceStatus, c.Store.ObjectStatus(ref.APIVersion, ref.Kind, ref.Name))
+		if err := c.Store.SaveObjectStatus(ref.APIVersion, ref.Kind, ref.Name, resourceStatus); err != nil {
 			return err
 		}
 	}
@@ -1007,6 +1011,15 @@ func (c SystemdUnitController) cleanupWhenFalseSystemdUnit(ctx context.Context, 
 		return c.Bus.Publish(ctx, event)
 	}
 	return nil
+}
+
+func preserveSystemdAnnotatedResourceStatus(kind string, status, current map[string]any) map[string]any {
+	switch kind {
+	case "IPv6RouterAdvertisement":
+		return preserveStatusFields(status, current, "interface", "configPath", "pidFile", "renderer")
+	default:
+		return status
+	}
 }
 
 func interfaceAliases(router *api.Router) map[string]string {

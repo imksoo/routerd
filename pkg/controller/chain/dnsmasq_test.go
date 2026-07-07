@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -624,12 +625,21 @@ func TestIPv6RouterAdvertisementWhenFalseRemovesDnsmasqRA(t *testing.T) {
 	if strings.Contains(string(data), "enable-ra") || strings.Contains(string(data), "constructor:ens19") {
 		t.Fatalf("backup config still contains RA lines:\n%s", data)
 	}
+	store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", "lan-ra", map[string]any{
+		"phase":     "Pending",
+		"reason":    "WhenFalse",
+		"managedBy": "systemd",
+		"unitName":  "routerd-ra-observer@lan-ra.service",
+	})
 	if err := controller.reconcileRouterAdvertisements(context.Background(), configPath, pidFile, true); err != nil {
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", "lan-ra")
 	if status["phase"] != "Pending" || status["reason"] != "WhenFalse" {
 		t.Fatalf("backup status = %#v", status)
+	}
+	if status["managedBy"] != "systemd" || status["unitName"] != "routerd-ra-observer@lan-ra.service" {
+		t.Fatalf("backup status = %#v, want systemd fields preserved", status)
 	}
 
 	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "master"
@@ -740,6 +750,124 @@ func TestIPv4StaticAddressControllerKeepsWhenFalseOutOfInterfaceChecks(t *testin
 	status := store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "ds-lite-a-source")
 	if status["phase"] != "Pending" || status["reason"] != "WhenFalse" {
 		t.Fatalf("status = %#v, want Pending/WhenFalse", status)
+	}
+}
+
+func TestIPv4StaticAddressControllerKeepsDeclaredWhenFalseOutOfRemovedCleanup(t *testing.T) {
+	declared := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "ds-lite-a-source"}, Spec: api.IPv4StaticAddressSpec{Interface: "ds-lite-a", Address: "192.0.0.2/29"}},
+	}}}
+	effective := &api.Router{Spec: api.RouterSpec{}}
+	store := mapStore{}
+	store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "ds-lite-a-source", map[string]any{
+		"phase":      "Pending",
+		"reason":     "WhenFalse",
+		"observedAt": time.Now().UTC().Format(time.RFC3339Nano),
+	})
+	eventBus := bus.New()
+	removedCh, cancel := eventBus.Subscribe(context.Background(), bus.Subscription{Topics: []string{"routerd.lan.ipv4_address.removed"}}, 1)
+	defer cancel()
+
+	controller := IPv4StaticAddressController{
+		Router:         effective,
+		DeclaredRouter: declared,
+		Store:          store,
+		Bus:            eventBus,
+		Command: func(context.Context, string, ...string) error {
+			t.Fatal("unexpected address command for declared when-false IPv4StaticAddress")
+			return nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "ds-lite-a-source")
+	if status["phase"] != "Pending" || status["reason"] != "WhenFalse" {
+		t.Fatalf("status = %#v, want Pending/WhenFalse to be retained", status)
+	}
+	select {
+	case event := <-removedCh:
+		t.Fatalf("declared when-false address should not publish removed event: %#v", event)
+	case <-time.After(40 * time.Millisecond):
+	}
+}
+
+func TestIPv4StaticAddressControllerSuppressesRemovedEventForMissingStaleAddress(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{}}
+	store := mapStore{}
+	store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "ds-lite-a-source", map[string]any{
+		"phase":  "Pending",
+		"reason": "WhenFalse",
+	})
+	eventBus := bus.New()
+	removedCh, cancel := eventBus.Subscribe(context.Background(), bus.Subscription{Topics: []string{"routerd.lan.ipv4_address.removed"}}, 1)
+	defer cancel()
+
+	controller := IPv4StaticAddressController{
+		Router: router,
+		Store:  store,
+		Bus:    eventBus,
+		AddressPresent: func(context.Context, string, string) bool {
+			t.Fatal("address presence should not be checked without a concrete ifname/address")
+			return false
+		},
+		Command: func(context.Context, string, ...string) error {
+			t.Fatal("unexpected address command for missing stale IPv4StaticAddress")
+			return nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if status := store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "ds-lite-a-source"); len(status) != 0 {
+		t.Fatalf("status = %#v, want stale status deleted", status)
+	}
+	select {
+	case event := <-removedCh:
+		t.Fatalf("missing stale address should not publish removed event: %#v", event)
+	case <-time.After(40 * time.Millisecond):
+	}
+}
+
+func TestIPv4StaticAddressControllerPublishesRemovedEventAfterDeletingPresentAddress(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{}}
+	store := mapStore{}
+	store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "old-source", map[string]any{
+		"phase":   "Applied",
+		"ifname":  "ens19",
+		"address": "192.0.2.10/32",
+	})
+	eventBus := bus.New()
+	removedCh, cancel := eventBus.Subscribe(context.Background(), bus.Subscription{Topics: []string{"routerd.lan.ipv4_address.removed"}}, 1)
+	defer cancel()
+	var commands []string
+
+	controller := IPv4StaticAddressController{
+		Router: router,
+		Store:  store,
+		Bus:    eventBus,
+		AddressPresent: func(_ context.Context, ifname, address string) bool {
+			return ifname == "ens19" && address == "192.0.2.10/32"
+		},
+		Command: func(ctx context.Context, name string, args ...string) error {
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	wantCommands := []string{"ip -4 addr del 192.0.2.10/32 dev ens19"}
+	if !reflect.DeepEqual(commands, wantCommands) {
+		t.Fatalf("commands = %#v, want %#v", commands, wantCommands)
+	}
+	select {
+	case event := <-removedCh:
+		if event.Resource == nil || event.Resource.Name != "old-source" {
+			t.Fatalf("removed event = %#v, want old-source", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected removed event after deleting present address")
 	}
 }
 
