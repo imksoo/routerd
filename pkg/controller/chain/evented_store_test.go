@@ -899,6 +899,250 @@ func TestMobilityStatusEventComparisonKeepsBehavioralFields(t *testing.T) {
 	}
 }
 
+func TestMobilityPoolObservationRefreshDoesNotPublishStatusEvent(t *testing.T) {
+	base := mapStore{
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": statusWithOwnership(api.MobilityAPIVersion, "MobilityPool", map[string]any{
+			"phase":                         "Ready",
+			"observedClients":               `[{"ip":"192.168.123.129","mac":"02:00:00:00:01:29"}]`,
+			"observedClientsBySource":       map[string]any{"pve-svnet": map[string]any{"observedClients": `[{"ip":"192.168.123.129"}]`}},
+			"ownershipResolverAddressCount": 1,
+			"ownershipResolverDecisions":    []map[string]any{{"address": "192.168.123.129/32", "owner": "pve-rt08"}},
+			"bgpCaptureObservedAt":          "2026-07-07T00:48:00Z",
+		}),
+	}
+	eventBus := bus.New()
+	resource := daemonapi.ResourceRef{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool", Name: "cloudedge"}
+	ch, cancel := eventBus.Subscribe(context.Background(), bus.Subscription{
+		Topics:   []string{"routerd.resource.status.changed"},
+		Resource: &resource,
+	}, 1)
+	defer cancel()
+
+	store := eventedStore{Store: base, Bus: eventBus}
+	if err := store.MergeObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"phase":                   "Watching",
+		"observedClients":         `[{"ip":"192.168.123.129","mac":"02:00:00:00:01:29"},{"ip":"192.168.123.132","mac":"02:00:00:00:01:32"}]`,
+		"observedClientsBySource": map[string]any{"pve-svnet": map[string]any{"observedClients": `[{"ip":"192.168.123.129"},{"ip":"192.168.123.132"}]`}},
+		"bgpCaptureObservedAt":    "2026-07-07T00:49:00Z",
+	}); err != nil {
+		t.Fatalf("merge observation refresh: %v", err)
+	}
+
+	select {
+	case event := <-ch:
+		t.Fatalf("unexpected observation refresh event: %#v", event)
+	case <-time.After(20 * time.Millisecond):
+	}
+	status := base.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if status["phase"] != "Watching" || !strings.Contains(fmt.Sprint(status["observedClients"]), "192.168.123.132") {
+		t.Fatalf("status was not persisted: %#v", status)
+	}
+}
+
+func TestMobilityPoolPendingWatchingObservationRefreshDoesNotPublishStatusEvent(t *testing.T) {
+	base := mapStore{
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": statusWithOwnership(api.MobilityAPIVersion, "MobilityPool", map[string]any{
+			"phase":                         "Pending",
+			"observedClients":               `[]`,
+			"observedClientsBySource":       map[string]any{},
+			"sourceType":                    "onprem-l2",
+			"ownershipResolverAddressCount": 1,
+		}),
+	}
+	eventBus := bus.New()
+	resource := daemonapi.ResourceRef{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool", Name: "cloudedge"}
+	ch, cancel := eventBus.Subscribe(context.Background(), bus.Subscription{
+		Topics:   []string{"routerd.resource.status.changed"},
+		Resource: &resource,
+	}, 1)
+	defer cancel()
+
+	store := eventedStore{Store: base, Bus: eventBus}
+	if err := store.MergeObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"phase":                   "Watching",
+		"observedClients":         `[{"ip":"192.168.123.1","mac":"02:00:00:00:00:01"}]`,
+		"observedClientsBySource": map[string]string{"pve-svnet": `[{"ip":"192.168.123.1"}]`},
+		"sourceType":              "pve-svnet",
+	}); err != nil {
+		t.Fatalf("merge pending/watching observation refresh: %v", err)
+	}
+
+	select {
+	case event := <-ch:
+		t.Fatalf("unexpected pending/watching observation refresh event: %#v", event)
+	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+func TestMobilityPoolOwnershipResolverChangePublishesStatusEvent(t *testing.T) {
+	base := mapStore{
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": statusWithOwnership(api.MobilityAPIVersion, "MobilityPool", map[string]any{
+			"phase":                         "Ready",
+			"ownershipResolverAddressCount": 1,
+			"ownershipResolverDecisions":    []map[string]any{{"address": "192.168.123.129/32", "owner": "pve-rt08"}},
+		}),
+	}
+	eventBus := bus.New()
+	resource := daemonapi.ResourceRef{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool", Name: "cloudedge"}
+	ch, cancel := eventBus.Subscribe(context.Background(), bus.Subscription{
+		Topics:   []string{"routerd.resource.status.changed"},
+		Resource: &resource,
+	}, 1)
+	defer cancel()
+
+	store := eventedStore{Store: base, Bus: eventBus}
+	if err := store.MergeObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"phase":                         "Ready",
+		"ownershipResolverAddressCount": 2,
+		"ownershipResolverDecisions": []map[string]any{
+			{"address": "192.168.123.129/32", "owner": "pve-rt08"},
+			{"address": "192.168.123.132/32", "owner": "pve-rt07"},
+		},
+	}); err != nil {
+		t.Fatalf("merge ownership resolver status: %v", err)
+	}
+
+	select {
+	case event := <-ch:
+		fields := event.Attributes["changedFields"]
+		if !strings.Contains(fields, "ownershipResolverAddressCount") || !strings.Contains(fields, "ownershipResolverDecisions") {
+			t.Fatalf("changedFields = %q, want ownership resolver fields", fields)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for ownership resolver status event")
+	}
+}
+
+func TestMobilityPoolPendingWatchingSemanticStatusPublishesEvent(t *testing.T) {
+	base := mapStore{
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": statusWithOwnership(api.MobilityAPIVersion, "MobilityPool", map[string]any{
+			"phase":        "Pending",
+			"plannerPhase": "Planned",
+		}),
+	}
+	eventBus := bus.New()
+	resource := daemonapi.ResourceRef{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool", Name: "cloudedge"}
+	ch, cancel := eventBus.Subscribe(context.Background(), bus.Subscription{
+		Topics:   []string{"routerd.resource.status.changed"},
+		Resource: &resource,
+	}, 1)
+	defer cancel()
+
+	store := eventedStore{Store: base, Bus: eventBus}
+	if err := store.MergeObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"phase":         "Watching",
+		"plannerPhase":  "Degraded",
+		"plannerReason": "ownership resolver conflict",
+	}); err != nil {
+		t.Fatalf("merge pending/watching semantic status: %v", err)
+	}
+
+	select {
+	case event := <-ch:
+		fields := event.Attributes["changedFields"]
+		if !strings.Contains(fields, "plannerReason") {
+			t.Fatalf("changedFields = %q, want plannerReason", fields)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for pending/watching semantic status event")
+	}
+}
+
+func TestMobilityPoolLeaseRefreshAndNestedMapTypesDoNotPublishStatusEvent(t *testing.T) {
+	base := mapStore{
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": statusWithOwnership(api.MobilityAPIVersion, "MobilityPool", map[string]any{
+			"phase": "Ready",
+			"addresses": map[string]any{
+				"192.168.123.129/32": map[string]any{
+					"phase":            "Ready",
+					"conditions":       map[string]string{"OwnershipResolved": "True"},
+					"conditionReasons": map[string]string{"OwnershipResolved": "LocalHomeOwned"},
+				},
+			},
+			"bgpCaptureClaim": map[string]any{
+				"phase":         "Active",
+				"generation":    "cloudedge/1",
+				"desiredHolder": "pve-rt08",
+				"renewedAt":     "2026-07-07T01:13:07Z",
+				"leaseUntil":    "2026-07-07T01:18:07Z",
+			},
+			"observedSelfStaleCaptures": map[string]string{},
+		}),
+	}
+	eventBus := bus.New()
+	resource := daemonapi.ResourceRef{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool", Name: "cloudedge"}
+	ch, cancel := eventBus.Subscribe(context.Background(), bus.Subscription{
+		Topics:   []string{"routerd.resource.status.changed"},
+		Resource: &resource,
+	}, 1)
+	defer cancel()
+
+	store := eventedStore{Store: base, Bus: eventBus}
+	if err := store.MergeObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"phase": "Ready",
+		"addresses": map[string]any{
+			"192.168.123.129/32": map[string]any{
+				"phase":            "Ready",
+				"conditions":       map[string]any{"OwnershipResolved": "True"},
+				"conditionReasons": map[string]any{"OwnershipResolved": "LocalHomeOwned"},
+			},
+		},
+		"bgpCaptureClaim": map[string]any{
+			"phase":         "Active",
+			"generation":    "cloudedge/1",
+			"desiredHolder": "pve-rt08",
+			"renewedAt":     "2026-07-07T01:13:09Z",
+			"leaseUntil":    "2026-07-07T01:18:09Z",
+		},
+		"observedSelfStaleCaptures": map[string]any{},
+	}); err != nil {
+		t.Fatalf("merge lease refresh status: %v", err)
+	}
+
+	select {
+	case event := <-ch:
+		t.Fatalf("unexpected lease refresh event: %#v", event)
+	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+func TestMobilityPoolSemanticStatusStillPublishesEvent(t *testing.T) {
+	base := mapStore{
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": statusWithOwnership(api.MobilityAPIVersion, "MobilityPool", map[string]any{
+			"phase":                         "Ready",
+			"plannerPhase":                  "Planned",
+			"ownershipResolverAddressCount": 1,
+		}),
+	}
+	eventBus := bus.New()
+	resource := daemonapi.ResourceRef{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool", Name: "cloudedge"}
+	ch, cancel := eventBus.Subscribe(context.Background(), bus.Subscription{
+		Topics:   []string{"routerd.resource.status.changed"},
+		Resource: &resource,
+	}, 1)
+	defer cancel()
+
+	store := eventedStore{Store: base, Bus: eventBus}
+	if err := store.MergeObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
+		"phase":                         "Degraded",
+		"plannerPhase":                  "Degraded",
+		"plannerReason":                 "ownership resolver conflict",
+		"ownershipResolverAddressCount": 1,
+	}); err != nil {
+		t.Fatalf("merge semantic status: %v", err)
+	}
+
+	select {
+	case event := <-ch:
+		fields := event.Attributes["changedFields"]
+		if !strings.Contains(fields, "plannerPhase") || !strings.Contains(fields, "plannerReason") {
+			t.Fatalf("changedFields = %q, want planner semantic fields", fields)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for semantic status event")
+	}
+}
+
 func changedMobilityStatusValue(value any) any {
 	switch typed := value.(type) {
 	case bool:
