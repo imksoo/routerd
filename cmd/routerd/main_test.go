@@ -1481,8 +1481,22 @@ func TestCleanupUnsupportedLegacyObjectStatusesRemovesLegacyAndDeletedResourceRo
 	if got := staleObjectStatusIDs(result.Removed); got != "net.routerd.net/v1alpha1/PPPoEInterface/wan,net.routerd.net/v1alpha1/TailscaleNode/old" {
 		t.Fatalf("removed = %s", got)
 	}
-	if _, err := os.Stat(result.BackupPath); err != nil {
-		t.Fatalf("backup stat: %v", err)
+	if _, err := os.Stat(result.SnapshotPath); err != nil {
+		t.Fatalf("snapshot stat: %v", err)
+	}
+	if !strings.HasSuffix(result.SnapshotPath, ".json") {
+		t.Fatalf("snapshot path = %q, want JSON snapshot", result.SnapshotPath)
+	}
+	var snapshot staleStateCleanupSnapshot
+	data, err := os.ReadFile(result.SnapshotPath)
+	if err != nil {
+		t.Fatalf("read snapshot: %v", err)
+	}
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		t.Fatalf("decode snapshot: %v", err)
+	}
+	if got := staleObjectStatusIDs(snapshot.Resources); got != "net.routerd.net/v1alpha1/PPPoEInterface/wan,net.routerd.net/v1alpha1/TailscaleNode/old" {
+		t.Fatalf("snapshot resources = %s", got)
 	}
 	if status := store.ObjectStatus(api.NetAPIVersion, "PPPoEInterface", "wan"); len(status) != 0 {
 		t.Fatalf("legacy status after cleanup = %+v, want none", status)
@@ -1642,13 +1656,17 @@ func dynamicConfigPartRecordForCleanupTest(t *testing.T, source string, resource
 	}
 }
 
-func TestCleanupUnsupportedLegacyObjectStatusesSkipsWhenBackupFails(t *testing.T) {
+func TestCleanupUnsupportedLegacyObjectStatusesSkipsWhenSnapshotFails(t *testing.T) {
+	dir := t.TempDir()
+	notDir := filepath.Join(dir, "not-a-dir")
+	if err := os.WriteFile(notDir, []byte("not a dir"), 0644); err != nil {
+		t.Fatalf("write blocker: %v", err)
+	}
 	store := &fakeStaleCleanupStore{
 		statuses: []routerstate.ObjectStatus{
 			{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface", Name: "wan", Status: map[string]any{"phase": "Applied"}},
 			{APIVersion: api.NetAPIVersion, Kind: "Interface", Name: "wan", Status: map[string]any{"phase": "Applied"}},
 		},
-		backupErr: errors.New("disk full"),
 	}
 	router := &api.Router{
 		Metadata: api.ObjectMeta{Name: "test-router"},
@@ -1659,7 +1677,7 @@ func TestCleanupUnsupportedLegacyObjectStatusesSkipsWhenBackupFails(t *testing.T
 		}}},
 	}
 
-	result, err := cleanupUnsupportedLegacyObjectStatuses(router, store, filepath.Join(t.TempDir(), "routerd.db"), time.Now(), nil)
+	result, err := cleanupUnsupportedLegacyObjectStatuses(router, store, filepath.Join(notDir, "routerd.db"), time.Now(), nil)
 	if err != nil {
 		t.Fatalf("cleanup returned error: %v", err)
 	}
@@ -1667,7 +1685,7 @@ func TestCleanupUnsupportedLegacyObjectStatusesSkipsWhenBackupFails(t *testing.T
 		t.Fatalf("cleanup result = %+v, want skipped with one candidate", result)
 	}
 	if len(store.deleted) != 0 {
-		t.Fatalf("deleted = %v, want none when backup fails", store.deleted)
+		t.Fatalf("deleted = %v, want none when snapshot fails", store.deleted)
 	}
 	if len(store.events) != 1 || store.events[0].Reason != "StaleStateCleanupSkipped" {
 		t.Fatalf("events = %+v, want skipped audit event", store.events)
@@ -1702,13 +1720,12 @@ spec:
 }
 
 type fakeStaleCleanupStore struct {
-	statuses  []routerstate.ObjectStatus
-	deleted   []string
-	events    []routerstate.Event
-	backupErr error
-	values    map[string]routerstate.Value
-	now       time.Time
-	parts     []routerstate.DynamicConfigPartRecord
+	statuses []routerstate.ObjectStatus
+	deleted  []string
+	events   []routerstate.Event
+	values   map[string]routerstate.Value
+	now      time.Time
+	parts    []routerstate.DynamicConfigPartRecord
 }
 
 func (s *fakeStaleCleanupStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
@@ -1718,10 +1735,6 @@ func (s *fakeStaleCleanupStore) ListObjectStatuses() ([]routerstate.ObjectStatus
 func (s *fakeStaleCleanupStore) DeleteObject(apiVersion, kind, name string) error {
 	s.deleted = append(s.deleted, apiVersion+"/"+kind+"/"+name)
 	return nil
-}
-
-func (s *fakeStaleCleanupStore) Backup(string) error {
-	return s.backupErr
 }
 
 func (s *fakeStaleCleanupStore) RecordEvent(apiVersion, kind, name, eventType, reason, message string) error {
