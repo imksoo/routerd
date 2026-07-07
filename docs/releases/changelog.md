@@ -12,6 +12,25 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260707.0222
+
+### Added
+
+- `NAT44SessionSync` now supports event-stream synchronization mode for
+  controller-chain driven session sync, with API/schema documentation and an
+  ADR covering the design (#788).
+
+### Changed
+
+- `MobilityPool` observed lease refreshes no longer emit high-frequency status
+  events when the effective observation has not changed (#788).
+
+### Fixed
+
+- On-prem L2 discovery lease refreshes now keep SAM mobility `/32` convergence
+  stable across rolling updates by preserving active observations instead of
+  letting unchanged refreshes age out unnecessarily (#788).
+
 ## v20260706.2224
 
 ### Changed
