@@ -199,8 +199,8 @@ func validateFirewallResource(res api.Resource, targetOS platform.OS) (bool, err
 		if err != nil {
 			return true, err
 		}
-		if spec.Mode != "" && spec.Mode != "snapshot" {
-			return true, fmt.Errorf("%s spec.mode must be snapshot", res.ID())
+		if spec.Mode != "" && spec.Mode != "snapshot" && spec.Mode != "event-stream" {
+			return true, fmt.Errorf("%s spec.mode must be snapshot or event-stream", res.ID())
 		}
 		if strings.TrimSpace(spec.Interval) != "" {
 			if _, err := time.ParseDuration(strings.TrimSpace(spec.Interval)); err != nil {

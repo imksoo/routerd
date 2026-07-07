@@ -36,6 +36,8 @@ const (
 	OwnershipChangedEvent        = "routerd.mobility.ownership.changed"
 	defaultDiscoveryScanInterval = 60 * time.Second
 	minDiscoveryScanInterval     = 30 * time.Second
+	onPremLeaseRefreshMinBefore  = 30 * time.Second
+	onPremLeaseRefreshMaxBefore  = time.Minute
 )
 
 type DiscoveryStore interface {
@@ -733,11 +735,18 @@ func (c DiscoveryController) recordOnPremObservation(poolName string, spec api.M
 	if observation.Action == "expired" {
 		ev = onPremDiscoveryExpiredEvent(poolName, spec.GroupRef, self.NodeRef, address, observation, eventTime, ttl)
 	} else {
-		unchanged, err := c.onPremObservationAlreadyOwned(poolName, spec.GroupRef, self.NodeRef, address, poolPrefix, now)
+		ownership, err := c.latestOnPremObservationOwnership(poolName, spec.GroupRef, self.NodeRef, address, poolPrefix, now)
 		if err != nil {
 			return false, err
 		}
-		if unchanged {
+		if ownership.Owned {
+			if !onPremObservationRefreshDue(ownership.Event, now, ttl) {
+				return false, nil
+			}
+			ev = onPremDiscoveryObservedEvent(poolName, spec.GroupRef, self.NodeRef, address, observation, eventTime, ttl)
+			if err := c.Store.RecordFederationEvent(ev); err != nil {
+				return false, fmt.Errorf("refresh onprem ownership event %q: %w", ev.ID, err)
+			}
 			return false, nil
 		}
 		ev = onPremDiscoveryObservedEvent(poolName, spec.GroupRef, self.NodeRef, address, observation, eventTime, ttl)
@@ -748,10 +757,15 @@ func (c DiscoveryController) recordOnPremObservation(poolName string, spec api.M
 	return true, nil
 }
 
-func (c DiscoveryController) onPremObservationAlreadyOwned(poolName, group, nodeRef, address string, poolPrefix netip.Prefix, now time.Time) (bool, error) {
+type onPremOwnershipObservation struct {
+	Owned bool
+	Event routerstate.EventRecord
+}
+
+func (c DiscoveryController) latestOnPremObservationOwnership(poolName, group, nodeRef, address string, poolPrefix netip.Prefix, now time.Time) (onPremOwnershipObservation, error) {
 	events, err := c.Store.ListFederationEvents(group, false, now.Unix())
 	if err != nil {
-		return false, fmt.Errorf("list onprem ownership federation events: %w", err)
+		return onPremOwnershipObservation{}, fmt.Errorf("list onprem ownership federation events: %w", err)
 	}
 	var latest routerstate.EventRecord
 	found := false
@@ -782,12 +796,43 @@ func (c DiscoveryController) onPremObservationAlreadyOwned(poolName, group, node
 		}
 	}
 	if !found || latest.Type != ObservedEventType {
-		return false, nil
+		return onPremOwnershipObservation{}, nil
 	}
 	if strings.TrimSpace(latest.SourceNode) != strings.TrimSpace(nodeRef) {
-		return false, nil
+		return onPremOwnershipObservation{}, nil
 	}
-	return latest.ExpiresAt.IsZero() || now.Before(latest.ExpiresAt), nil
+	if !latest.ExpiresAt.IsZero() && !now.Before(latest.ExpiresAt) {
+		return onPremOwnershipObservation{}, nil
+	}
+	return onPremOwnershipObservation{Owned: true, Event: latest}, nil
+}
+
+func onPremObservationRefreshDue(ev routerstate.EventRecord, now time.Time, ttl time.Duration) bool {
+	if ev.ExpiresAt.IsZero() {
+		return false
+	}
+	refreshBefore := onPremObservationRefreshBefore(ttl)
+	if refreshBefore <= 0 {
+		return true
+	}
+	return !now.UTC().Add(refreshBefore).Before(ev.ExpiresAt.UTC())
+}
+
+func onPremObservationRefreshBefore(ttl time.Duration) time.Duration {
+	if ttl <= 0 {
+		ttl = DefaultLeaseTTL
+	}
+	refreshBefore := ttl / 2
+	if refreshBefore > onPremLeaseRefreshMaxBefore {
+		refreshBefore = onPremLeaseRefreshMaxBefore
+	}
+	if refreshBefore < onPremLeaseRefreshMinBefore {
+		if ttl <= onPremLeaseRefreshMinBefore {
+			return ttl / 2
+		}
+		refreshBefore = onPremLeaseRefreshMinBefore
+	}
+	return refreshBefore
 }
 
 func onPremObservationFromDaemonEvent(event daemonapi.DaemonEvent) (onPremObservation, bool) {

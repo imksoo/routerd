@@ -9,9 +9,10 @@ slug: /how-to/nat44-session-sync
 
 Use `NAT44SessionSync` when two routerd nodes share a LAN gateway role and the
 active node should keep selected NAT44 conntrack sessions warm on a standby
-node. The first implementation is snapshot-based: routerd periodically dumps
-the local conntrack table for selected SNAT addresses and restores matching
-entries on each target.
+node. The default `snapshot` mode periodically dumps the local conntrack table
+for selected SNAT addresses and restores matching entries on each target.
+`event-stream` mode starts with the same snapshot safety net, then keeps a
+local conntrack event reader running and sends incremental batches.
 
 Gate the resource with `spec.when` so only the active node exports sessions.
 For VRRP-based failover, the usual gate is the local `VirtualAddress` role.
@@ -69,6 +70,45 @@ the same egress path.
 
 `restoreCommand` defaults to `[conntrack]`. Use `[sudo, conntrack]` when the
 target user needs privilege elevation.
+
+## Event stream mode
+
+The snapshot implementation is intentionally simple and remains the default.
+For routers with high session churn, set `mode: event-stream`: routerd keeps a
+local `conntrack -E -o extended` reader alive and sends incremental
+create/update/destroy batches instead of starting a fresh snapshot cycle each
+interval.
+
+`event-stream` keeps snapshot sync as the safety net. On startup and after
+local stream loss, the target first receives a full snapshot resync. Only after
+that resync completes is the resource reported as `Synced`.
+
+```yaml
+spec:
+  mode: event-stream
+  natRules:
+    - NAT44Rule/lan-to-dslite-a
+  targets:
+    - name: standby
+      host: routerd-standby.lan.example
+      user: routerd
+      restoreCommand: [sudo, conntrack]
+```
+
+The operational differences are:
+
+- lower steady-state `ssh` and `conntrack` process churn;
+- lower failover warm-up delay for active sessions;
+- status that reports stream state, queue depth, last event time, last batch
+  time, last resync time, and resync count;
+- explicit fallback to snapshot resync when stream integrity is uncertain.
+
+The first event stream implementation still uses the existing SSH restore path
+for each event batch. Long-lived target restore sessions can be added later if
+the batch restore path becomes the next bottleneck.
+
+See [ADR 0016](../adr/0016-nat44-session-sync-event-stream.md) for the design
+and migration plan.
 
 ## Check it
 

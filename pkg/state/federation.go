@@ -18,6 +18,7 @@ var errStoreClosed = errors.New("state store is closed")
 const (
 	mobilityObservedEventType       = "routerd.client.ipv4.observed"
 	mobilityProviderDiscoverySource = "provider-discovery"
+	mobilityOnPremDiscoverySource   = "onprem-l2-discovery"
 )
 
 // EventRecord is a persisted CloudEdge Event Federation event (ADR 0006). It is
@@ -88,7 +89,7 @@ func (s *SQLiteStore) RecordFederationEvent(rec EventRecord) error {
 	if err != nil {
 		return fmt.Errorf("record federation event: %w", err)
 	}
-	if isCompactableProviderDiscoveryObserved(rec) {
+	if isCompactableMobilityObserved(rec) {
 		if _, err := s.compactFederationEventsByTypeAndDedupeLocked(rec.Type, rec.Group, rec.DedupeKey); err != nil {
 			return err
 		}
@@ -119,10 +120,16 @@ func (s *SQLiteStore) compactFederationEventsByTypeAndDedupeLocked(eventType, gr
 	return n, nil
 }
 
-func isCompactableProviderDiscoveryObserved(rec EventRecord) bool {
-	return rec.Type == mobilityObservedEventType &&
-		strings.TrimSpace(rec.DedupeKey) != "" &&
-		strings.TrimSpace(rec.Payload["source"]) == mobilityProviderDiscoverySource
+func isCompactableMobilityObserved(rec EventRecord) bool {
+	if rec.Type != mobilityObservedEventType || strings.TrimSpace(rec.DedupeKey) == "" {
+		return false
+	}
+	switch strings.TrimSpace(rec.Payload["source"]) {
+	case mobilityProviderDiscoverySource, mobilityOnPremDiscoverySource:
+		return true
+	default:
+		return false
+	}
 }
 
 // ListFederationEvents returns federation events ordered by observed_at. When
