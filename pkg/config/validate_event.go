@@ -40,7 +40,8 @@ func validateEventResource(res api.Resource, _ platform.OS) (bool, error) {
 				return true, fmt.Errorf("%s spec.retention.maxAge must be a Go duration: %w", res.ID(), err)
 			}
 		}
-		// Auth is reserved for Phase 2 peer delivery; validate leniently.
+		// Identity-only EventGroup resources may omit auth. Runtime eventd
+		// delivery/receive config is checked after all resources are indexed.
 		switch strings.TrimSpace(spec.Auth.Mode) {
 		case "", "hmac":
 		default:
@@ -211,6 +212,48 @@ func validateFederationSLOCrossRefs(router *api.Router) error {
 		sloGroupRefs[groupRef] = res.ID()
 		if !eventGroups[groupRef] {
 			return fmt.Errorf("%s spec.groupRef %q does not reference an existing EventGroup resource", res.ID(), groupRef)
+		}
+	}
+	return nil
+}
+
+func validateEventGroupRuntimeAuth(router *api.Router) error {
+	type groupInfo struct {
+		id   string
+		spec api.EventGroupSpec
+	}
+	groups := map[string]groupInfo{}
+	peerRefs := map[string]string{}
+	for _, res := range router.Spec.Resources {
+		switch res.Kind {
+		case "EventGroup":
+			spec, err := res.EventGroupSpec()
+			if err != nil {
+				continue
+			}
+			groups[res.Metadata.Name] = groupInfo{id: res.ID(), spec: spec}
+		case "EventPeer":
+			spec, err := res.EventPeerSpec()
+			if err != nil {
+				continue
+			}
+			groupRef := strings.TrimSpace(spec.GroupRef)
+			if groupRef != "" {
+				peerRefs[groupRef] = res.ID()
+			}
+		}
+	}
+	for name, group := range groups {
+		if strings.TrimSpace(group.spec.Auth.SecretFile) != "" {
+			continue
+		}
+		switch {
+		case strings.TrimSpace(group.spec.Listen.Address) != "":
+			return fmt.Errorf("%s spec.auth.secretFile is required when spec.listen.address is set", group.id)
+		case len(group.spec.PeersFrom) > 0:
+			return fmt.Errorf("%s spec.auth.secretFile is required when spec.peersFrom is set", group.id)
+		case peerRefs[name] != "":
+			return fmt.Errorf("%s spec.auth.secretFile is required because %s references this EventGroup", group.id, peerRefs[name])
 		}
 	}
 	return nil
