@@ -11,6 +11,18 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 变更
+
+- stale state cleanup 现在会在删除前，只将即将删除的 object status row 写成
+  JSON snapshot，而不是复制整个 `routerd.db`。在 state database 很大的系统上，
+  这可避免 restart 时产生巨大的 backup write (#795)。
+
+### 修复
+
+- 待机系 router 对已经 inactive 的 active-only resource，不再反复改写
+  `WhenFalse` status detail，也不再反复送出 no-op 的 IPv4 static address
+  removal event (#794)。
+
 ## v20260707.1514
 
 ### 变更

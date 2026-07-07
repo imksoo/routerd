@@ -11,6 +11,19 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 変更
+
+- stale state cleanup は、削除前に `routerd.db` 全体をコピーする代わりに、
+  削除対象の object status row だけを JSON snapshot として保存するように
+  なりました。大きな state database を持つ環境で、restart 時の巨大な backup
+  write を避けられます (#795)。
+
+### 修正
+
+- 待機系 router で、すでに inactive な active-only resource に対して
+  `WhenFalse` status detail を繰り返し書き換えたり、no-op の IPv4 static
+  address removal event を繰り返し出したりしないようにしました (#794)。
+
 ## v20260707.1514
 
 ### 変更

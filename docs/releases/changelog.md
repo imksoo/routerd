@@ -12,6 +12,18 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Changed
+
+- Stale state cleanup now writes a JSON snapshot of the object status rows it
+  is about to delete instead of copying the entire `routerd.db`, avoiding large
+  restart-time backup writes on systems with big state databases (#795).
+
+### Fixed
+
+- Standby routers no longer churn `WhenFalse` status details or emit repeated
+  no-op IPv4 static address removal events for active-only resources that are
+  already inactive on the standby node (#794).
+
 ## v20260707.1514
 
 ### Changed
