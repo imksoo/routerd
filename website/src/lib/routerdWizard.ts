@@ -423,6 +423,9 @@ export function buildSAMRouterConfig(state: SAMWizardState, selfNodeRef: string)
 
   resources.push(resource(FEDERATION_API, "EventGroup", "cloudedge", {
     nodeName: self.nodeRef,
+    auth: {
+      secretFile: "/usr/local/etc/routerd/secrets/eventd.key",
+    },
     retention: {
       maxEvents: 1000,
       maxAge: "24h",
