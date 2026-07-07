@@ -7,7 +7,7 @@ import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import styles from './index.module.css';
 
-const STABLE_VERSION = 'v20260627.1533';
+const STABLE_VERSION = 'v20260707.1514';
 
 interface ScenarioCard {
   title: string;
@@ -351,8 +351,8 @@ function Quickstart({siteCopy}: {siteCopy: typeof copy.en}) {
       <div className="container">
         <Heading as="h2">{siteCopy.quickstartTitle}</Heading>
         <p>{siteCopy.quickstartBody}</p>
-        <pre className="terminal"><code>{`curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz.sha256
+        <pre className="terminal"><code>{`curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-linux-amd64.tar.gz.sha256
 tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh

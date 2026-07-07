@@ -6,77 +6,59 @@ sidebar_position: 0
 
 # 安定版マイルストーン
 
-routerd は `vYYYYMMDD.HHmm` 形式で頻繁にリリースしますが、その中から**本番運用に推奨できる版**を「安定版マイルストーン」として節目ごとに選びます。
-新しく導入するときは、このページで案内する版を使ってください。
+routerd は `vYYYYMMDD.HHmm` 形式で頻繁にリリースします。その中から、節目ごとに**本番運用に推奨できる版**を安定版マイルストーンとして選びます。新規導入では、このページの版を使い、automation では release tag を固定してください。
 
 ## 現在の推奨版
 
 | 項目 | 内容 |
 | --- | --- |
-| バージョン | **v20260627.1533** |
-| 位置づけ | 推奨安定版（post-1107 SAM baseline に operator 表示の整理を加えた版） |
-| 稼働実績 | AWS/Azure/OCI/PVE single-topology baseline で 136 秒収束、matrix 12/12、全 leaf MobilityPool Ready、provider pending/failed 0、cleanup state 0 |
-| バイナリ | 静的リンク（`CGO_ENABLED=0`）、CI と Release ワークフローをすべて通過 |
+| バージョン | **v20260707.1514** |
+| 位置づけ | 現在の推奨安定版 |
+| Release page | [v20260707.1514](https://github.com/imksoo/routerd/releases/tag/v20260707.1514) |
+| 稼働実績 | Release workflow 通過、生成 config/control schema と website copy の一致確認、AWS/Azure/OCI/PVE の冗長化込み full topology 実機試験で 8 clients、8 leaves、AWS RR 2、matrix 56/56、provider 収束 4s、dataplane 収束 567s、cleanup state 0 |
+| バイナリ | 静的リンク（`CGO_ENABLED=0`）。固定名 archive と版番号付き archive を公開 |
 
-## v20260627.1533 を推奨する理由
+## v20260707.1514 を推奨する理由
 
-v20260627.1533 は、v20260627.1107 の SAM baseline 上で、`routerctl mobility explain` と `routerctl action list` の operator 表示を整理した安定版です。
-PVE substrate を qnap-backed live ISO/config media、DHCP/QGA 管理、ens19 capture interface に揃えた後、AWS/Azure/OCI/PVE の fresh single-topology baseline が通りました。
+v20260707.1514 は、直近の steady-state runtime 修正を含み、実機 CloudEdge SAM qualification を通過したため、現在の安定版マイルストーンです。受理した run は AWS、Azure、OCI、PVE に冗長 leaf と AWS route reflector 2 台を置いた構成で、directed client matrix は `56/56` PASS でした。試験後の cleanup では OpenTofu resource 53 個を destroy し、state は 0 になっています。
 
-release manifest は `docs/releases/manifests/v20260627.1533.yaml` に記録しています。
+schema についても repository と website の整合を確認済みです。
 
-### v20260626.2350 qualification
+- `make check-schema` PASS。
+- `make check-website-schemas` PASS。
+- `schemas/routerd-config-v1alpha1.schema.json` と `website/static/schemas/routerd-config-v1alpha1.schema.json` は byte 一致。
+- Control schema と Control OpenAPI の website copy も canonical file と byte 一致。
 
-- **SAM baseline:** v20260626.1921 から継承。stale provider action feedback 修正後の full-topology run で、196 秒収束、SSH matrix 56/56、cleanup PASS、stateAfterDestroy 0。
-- **v20260626.2050 delta:** PR #665 は HealthCheck WhenFalse の表示/status 修正で、SAM dataplane への影響は観測されていません。2050 fresh run の失敗は古い PVE template-clone lab provisioning path の問題として記録し、routerd/SAM の blocker にはしていません。
-- **v20260626.2350 delta:** PR #681 で Live ISO の `qemu-guest-agent` 自動起動を修正。`go test ./tests/liveiso`、v20260626.2350 Release workflow、pve07 での実 ISO boot と `qm agent ping` を確認済み。
+受理した full run の evidence summary は repository 外の次の場所に保存しています。
 
-### v20260608.2325 からの継承事項
+```text
+/home/imksoo/routerd-labs-archive/evidence/rv202607071514-full-20260707T100026Z/e2e-baseline-awsprofile-retry1/summary.txt
+```
 
-v20260608.2325 は v20260608.1354 のすべての特性を継承した上で、**peersFrom**、**membersFrom**、および **peer-group-sync** を追加し、SAM ファブリックのゼロタッチ leaf 設定を実現しています。
+## 安定版をインストールする
 
-### peersFrom + SAMPeerGroup（#332, #333）
+推奨安定版を使う場合は、固定 tag の URL を使います。
 
-`SAMTransportProfile` に `spec.peersFrom` が追加され、`SAMPeerGroup` リソースを参照できるようになりました。union セマンティクス: `peersFrom` のメンバーを先に読み込み、静的な `peers` が `nodeRef` 単位で上書きします。RR ノードで `publishPeerGroup: true` を設定すると、`SAMPeerGroup` の `DynamicConfigPart` を自動生成します。
+```sh
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
+sha256sum -c routerd-linux-amd64.tar.gz.sha256
+tar -xzf routerd-linux-amd64.tar.gz
+sudo ./install.sh
+```
 
-### ピアグループ同期（#334, #336）
+同じ release page には `routerd-v20260707.1514-linux-amd64.tar.gz` のような版番号付き archive もあります。
 
-WireGuard 内部ネットワーク上のポート 19652 で動作する軽量 HTTP サービスです。RR が `GET /v1/peer-groups` を提供し、leaf は WireGuard ピアを検出して一致するグループを自動取得します。手動で `SAMPeerGroup` を配布する必要はありません。
+## 以前の安定版
 
-### MobilityMemberSet + membersFrom（#339, #340）
+v20260627.1533 は以前の推奨安定版です。PVE ISO substrate 修正後の cost-bounded AWS/Azure/OCI/PVE single-topology baseline で、136 秒収束、matrix 12/12、全 leaf MobilityPool Ready、provider pending/failed 0、cleanup state 0 を確認しています。その時点に固定したい operator の rollback 候補としては有効ですが、新規導入は v20260707.1514 から始めてください。
 
-`MobilityMemberSet` Kind は、共有の識別情報のみのプールメンバー（`nodeRef`、`site`、`role`）を保持します。`MobilityPool.spec.membersFrom` でこれらを取り込むことで、leaf は自身の捕捉/検出の詳細だけをインラインに残し、O(N^2) の設定重複を削減します。`publishMemberSet: true` を設定すると、`GET /v1/member-sets` 経由でメンバーセットを生成・配布します。svnet1 設定で 78 行削減（2624 → 2546）。
+## 既知の観測
 
-### FreeBSD 旧フラグ互換（#337, #338）
+- **API はまだ v1alpha1 です。** 安定版マイルストーンは、この build が本番運用品質であることを示しますが、resource schema の後方互換は約束しません。
+- **設定は新しい schema に合わせて確認してください。** migration shim に頼らず、[変更履歴](./changelog.md) の各 release delta を確認してください。
+- **`ManagementAccess` 未宣言の構成では `routerctl doctor mgmt` が SKIP になります。** これは稼働中 config の選択であり、release defect ではありません。
 
-廃止された `routerd serve` フラグ（`--observe-interval`、`--controller-chain*`）が `/etc/rc.conf` に残っていても、警告付きで受理・無視されるようになり、アップグレード失敗を防ぎます。
+## インストールとアップグレード
 
-### v20260608.1354 からの継承事項
-
-v20260608.1354 の全特性を継承: pair-stable アドレッシング、ADR 0014 CLI 再設計、およびそれ以前の全本番安全修正。
-
-## 既知の観測（リリースを止めない事項）
-
-- **`install.sh` 後に `routerd-bgp` が旧実行ファイルの inode のままで動く場合がある。** これは意図どおりです。`install.sh` はアップグレード時に `routerd-bgp` を自動再起動しないので、確立済みの BGP セッションと ECMP が routerd バイナリの更新をまたいで残ります。
-- **`ManagementAccess` 未宣言の構成では `routerctl doctor mgmt` が SKIP になる。** これは稼働中の設定側の選択であり、リリースの欠陥ではありません。
-
-:::warning アップグレード時の注意
-- **v20260528.2308 から上げる場合:** ADR 0014 により CLI の verb 体系が変わりました。`routerd apply` → `routerctl apply`、`routerd validate` → `routerctl validate` など。サービスユニットやスクリプトで旧コマンドを使っている場合は書き直してください。`install.sh` が新しいサービスユニットを自動配置するため、systemd 管理下のユニットは自動で更新されます。
-- **`install.sh` は必ず展開したリリースディレクトリに `cd` してから実行してください。**
-- **v20260523.1542 以前から上げる場合:** `disabled:` フィールド（`enabled: false` を使用してください）と `--controller-chain*` / `--observe-interval` フラグは削除済みです。
-- **DNS リゾルバーのサービスユニット化:** リゾルバーは `routerd-dns-resolver@<name>.service` として動きます。初回アップグレード時だけ短い DNS 瞬断が出ます。
-:::
-
-## 「安定版」の意味と注意点
-
-:::warning API はまだ v1alpha1 です
-「安定版マイルストーン」は、**この版が本番運用に堪える品質である**ことを示すもので、**API（リソーススキーマ）の後方互換を約束するものではありません**。
-:::
-
-- routerd のリソース API は現在 **v1alpha1** です。リリース間で**破壊的変更が入ることがあります**。
-- バージョンを上げるときは、後方互換に頼らず、**新しいスキーマに合わせて設定（YAML）を書き直す**前提で進めてください。
-- 移行用の互換コードは持たない方針です。各版の変更点は [変更履歴](./changelog.md) を確認してください。
-
-## 導入とアップグレード
-
-導入手順は [導入とアップグレード](../install-and-upgrade.md) を参照してください。アップグレードは、推奨マイルストーン版を起点に行うことを勧めます。
+手順は [インストールとアップグレード](../install-and-upgrade.md) を参照してください。

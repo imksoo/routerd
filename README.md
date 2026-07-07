@@ -199,18 +199,18 @@ spec:
 Install from a release archive on the router host:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-linux-amd64.tar.gz.sha256
 tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
-For FreeBSD, download `routerd-freebsd-amd64.tar.gz` from the latest release and
-run the same `./install.sh`.
+For FreeBSD, download `routerd-freebsd-amd64.tar.gz` from the stable release tag
+and run the same `./install.sh`.
 Use `routerd-linux-arm64.tar.gz` or `routerd-freebsd-arm64.tar.gz` on arm64 hosts.
-Versioned archives remain available on each release page when you need an exact
-release.
+Versioned archives such as `routerd-v20260707.1514-linux-amd64.tar.gz` are also
+available on the same release page when you need an explicitly named artifact.
 
 Linux release archives contain statically linked routerd binaries
 (`CGO_ENABLED=0`). They do not depend on the target host's glibc version.

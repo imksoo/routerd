@@ -88,9 +88,9 @@ const config: Config = {
   themeConfig: {
     image: 'img/routerd-social-card.svg',
     announcementBar: {
-      id: 'stable-milestone-20260608-2325',
+      id: 'stable-milestone-20260707-1514',
       content:
-        'Stable milestone: <a href="/docs/releases/stable"><b>v20260627.1533</b></a> — post-1107 SAM baseline with operator-surface cleanup',
+        'Stable milestone: <a href="/docs/releases/stable"><b>v20260707.1514</b></a> — AWS/Azure/OCI/PVE redundant full topology 56/56',
       backgroundColor: '#1f6feb',
       textColor: '#ffffff',
       isCloseable: true,

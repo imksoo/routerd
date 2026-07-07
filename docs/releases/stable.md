@@ -6,162 +6,78 @@ sidebar_position: 0
 
 # Stable milestone
 
-routerd ships frequently using the `vYYYYMMDD.HHmm` scheme. From those builds we pick a **production-recommended** release at each milestone. When you start a new deployment, use the version listed here.
+routerd ships frequently using the `vYYYYMMDD.HHmm` scheme. From those builds we
+pick a **production-recommended** release at each milestone. For a new
+deployment, start with the version listed here and pin the release tag in
+automation.
 
 ## Current recommended release
 
 | Item | Value |
 | --- | --- |
-| Version | **v20260627.1533** |
+| Version | **v20260707.1514** |
 | Status | Current production-recommended stable release |
-| Track record | v20260626.2350 promotion was retracted after post-release fresh full-topology validation failed twice on SAM provider-action/capture behavior. v20260627.1107 later passed an isolated-PVE rerun for fresh baseline, representative AWS/Azure/OCI/PVE leaf failover/rejoin, BFD restart-safe regression coverage, and cleanup state 0, but it still had stale capture/provider-action operator residuals. v20260627.1533 fixes the operator display noise around those residuals and passed a fresh cost-bounded AWS/Azure/OCI/PVE single-topology baseline after the PVE ISO substrate was corrected: convergence 136s, matrix 12/12, all leaf MobilityPools Ready, provider pending/failed 0, cleanup state 0. |
-| Binary | Statically linked (`CGO_ENABLED=0`), passes CI and the Release workflow |
+| Release page | [v20260707.1514](https://github.com/imksoo/routerd/releases/tag/v20260707.1514) |
+| Track record | Release workflow passed, generated config/control schemas match the website copies, and the tag passed a fresh AWS/Azure/OCI/PVE full topology with redundancy: 8 clients, 8 leaves, 2 AWS route reflectors, matrix 56/56, provider convergence 4s, dataplane convergence 567s, cleanup state 0. |
+| Binary | Statically linked (`CGO_ENABLED=0`), published as fixed-name and versioned archives |
 
-## v20260626.2350 promotion retracted
+## Why v20260707.1514 is recommended
 
-v20260626.2350 is still a useful release artifact for the Live ISO
-qemu-guest-agent firstboot fix and for the replacement PVE qualification path,
-but it is no longer recommended as the production SAM rollback baseline.
-Post-release fresh full-topology validation failed after the PVE provisioning
-path and clean Ubuntu workload clients were corrected.
+v20260707.1514 is the current stable milestone because it combines the recent
+runtime steady-state fixes with a fresh real-machine CloudEdge SAM qualification
+run. The accepted run used AWS, Azure, OCI, and PVE with redundant leaves and two
+AWS route reflectors. The directed client matrix passed `56/56`, and the
+post-run cleanup destroyed all 53 OpenTofu resources with no residual state.
 
-The release manifest is recorded in `docs/releases/manifests/v20260626.2350.yaml`.
+The release is also consistent across repository and website schemas:
 
-### v20260626.2350 qualification
+- `make check-schema` passed.
+- `make check-website-schemas` passed.
+- `schemas/routerd-config-v1alpha1.schema.json` is byte-identical to
+  `website/static/schemas/routerd-config-v1alpha1.schema.json`.
+- Control schema and Control OpenAPI website copies are also byte-identical to
+  their canonical repository files.
 
-- **SAM baseline:** inherited from v20260626.1921, after the stale provider action feedback fix. The recorded full-topology run converged in 196s, passed the SSH matrix 56/56, cleaned up successfully, and left stateAfterDestroy 0.
-- **v20260626.2050 delta:** PR #665 is a HealthCheck WhenFalse status display fix with no observed SAM dataplane impact. The failed 2050 fresh run is documented as an obsolete PVE template-clone lab provisioning problem, not a routerd/SAM blocker.
-- **v20260626.2350 delta:** PR #681 fixes Live ISO qemu-guest-agent startup. `go test ./tests/liveiso` passed, the v20260626.2350 Release workflow passed, and a real PVE ISO boot on pve07 responded to `qm agent ping` with `qemu-guest-agent` active.
-- **Post-release PVE qualification path:** the PVE live ISO + qnap config media path remains the intended replacement for the obsolete template-clone path for router/leaf VMs. The first 2026-06-27 4VM run is discarded because it used static ens18 management addresses; the later p2350-dhcpmgmt run corrected this by keeping ens18 on DHCP and discovering management addresses from QGA. Clean reusable Ubuntu workload clients were then provisioned separately on pve07 with qnap storage, auto VMIDs, ens18 DHCP, ens19 fixed 10.77 overlay addresses, QGA, and overlay ping verified.
-- **Post-release SAM follow-up:** the p2350-dhcpmgmt fresh full-topology baseline failed before matrix/failover/BFD because OCI attempted a duplicate same-site secondary private IP assignment (`10.77.60.11`). PVE router/leaf DHCP, QGA, qnap media, auto VMID, serial console, and cleanup were verified. The clean Ubuntu client evidence does not change that SAM failure classification; it only removes the PVE client provisioning gap. The OCI failure is tracked as a SAM planner/provider-action follow-up for the next release line.
-- **Clean-client rerun:** the p2350-cleanclients fresh full-topology run used clean reusable Ubuntu PVE clients and still failed control-plane readiness. `aws-leaf-a` retained one failed AWS `assign-secondary-ip` action for `10.77.60.16/32` and stale capture evidence for remote/provider addresses. OCI leaves were Ready and OCI OS diagnostics did not identify the baseline blocker. Initial matrix reached 50/56, with six hostname-check failures, but readiness timed out at 620s.
+The evidence archive for the accepted full run is stored outside the repository
+at:
 
-### Inherited from v20260608.2325
+```text
+/home/imksoo/routerd-labs-archive/evidence/rv202607071514-full-20260707T100026Z/e2e-baseline-awsprofile-retry1/summary.txt
+```
 
-## v20260627.1107 post-release validation
+## Install the stable release
 
-v20260627.1107 is the current post-2350 validation candidate, but it is not the
-production-recommended stable release.
+Use the fixed tag URL when you want the recommended stable build:
 
-The discarded p1107-cleanclients run failed because the PVE overlay still used a
-shared segment contaminated by existing non-test VMs. The rerun
-`p1107-rsamclnt-20260627T121655Z` moved PVE leaves and reusable clients onto the
-dedicated `rsamclnt` bridge, kept PVE management on DHCP/QGA, used qnap-backed
-live ISO plus config media, and passed:
+```sh
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
+sha256sum -c routerd-linux-amd64.tar.gz.sha256
+tar -xzf routerd-linux-amd64.tar.gz
+sudo ./install.sh
+```
 
-- fresh full-topology baseline: convergence 110s, SSH matrix 56/56
-- representative AWS/Azure/OCI/PVE leaf failover/rejoin: all matrix phases 56/56
-- BFD restart-safe controller regression tests
-- cleanup: OpenTofu destroy 54 resources, plan-destroy exit code 0, cloud
-  provider inventory PASS, PVE leaf VMIDs absent
+Versioned archives are also published on the same release page, for example
+`routerd-v20260707.1514-linux-amd64.tar.gz`.
 
-The release is not promoted because `routerctl mobility explain` still showed
-12 Pending/StaleCapture rows and final `routerctl action list` snapshots still
-contained historical failed provider-action rows on cloud leaves. Those did not
-block dataplane or readiness in the rerun, but they are too noisy for a strong
-rollback baseline.
+## Previous stable milestone
 
-The manifest is recorded in `docs/releases/manifests/v20260627.1107.yaml`.
+v20260627.1533 was the prior production-recommended stable release. It passed a
+cost-bounded AWS/Azure/OCI/PVE single-topology baseline after the PVE ISO
+substrate was corrected: convergence 136s, matrix 12/12, all leaf
+MobilityPools Ready, provider pending/failed 0, cleanup state 0. It remains a
+valid rollback candidate for operators who need that exact milestone, but new
+deployments should start with v20260707.1514.
 
-## v20260627.1533 operator-surface candidate
+## Known observations
 
-v20260627.1533 is the current production-recommended stable release.
-
-The release adds:
-
-- `routerctl mobility explain` warning/diagnostic classification for
-  Pending/StaleCapture rows whose `blockingCondition` is `OwnershipResolved`
-- `routerctl action list` active/history lifecycle classification for terminal
-  provider actions
-
-Local routerctl regression tests and the linux-amd64 artifact build passed. The
-first single-topology cloud/PVE smoke, `p1533-smoke-20260627T153752Z`, created
-39 OpenTofu resources, used qnap-backed PVE media, kept PVE management on
-DHCP/QGA, and cleaned up successfully with `plan -destroy` exit code 0.
-
-The smoke is partial release evidence only. AWS, Azure, and OCI leaves reported
-`doctor sam` PASS, MobilityPool Ready, BGP Established, and no stale capture
-evidence. The full baseline did not complete because the PVE leaf still used
-stale config media without the `manage_etc_hosts` fix and remained Pending on
-`DeviceNotReady`/guest-state checks. This is tracked as a lab/PVE config-media
-issue to fix before spending more cloud time.
-
-The PVE-only follow-up, `p1533-resmoke-20260627T160752Z`, fixed that substrate
-in routerd-labs. The reusable PVE clients were not the blocker: both retained
-QGA, clean `/etc/hosts`, and fixed ens19 overlay addresses. The PVE ISO leaf
-path now uses run-specific qnap CIDATA/config media, tolerates firstboot QGA
-needing a hard reset instead of graceful shutdown, normalizes hostname and
-`/etc/hosts` through QGA, and asserts the expected capture address before a
-cloud/PVE smoke is considered valid. That PVE-only run passed and cleaned up
-its disposable leaf VM.
-
-The accepted cloud/PVE follow-up, `p1533-cloud-20260627T230443Z`, first ran a
-PVE-only substrate preflight on pve07 using qnap-backed live ISO/config media,
-reusable clean Ubuntu PVE clients, ens18 DHCP/QGA management discovery, and
-ens19 fixed overlay/capture addressing. That preflight passed and cleaned up
-its disposable leaf VM.
-
-The same run then performed a cost-bounded AWS/Azure/OCI/PVE single-topology
-baseline with the v20260627.1533 artifact. An initial attempt was aborted
-because the operator-generated PVE config used the obsolete `eth1` capture
-interface; the accepted attempt regenerated configs with
-`PVE_CAPTURE_INTERFACE=ens19`. It passed convergence in 136s, matrix 12/12,
-all leaf MobilityPools Ready, BGP delivery Established with zero missing FIB
-routes, no ownership conflicts, no stale capture evidence, and provider action
-pending/failed counts at 0. Cleanup destroyed the disposable cloud/PVE
-resources, left OpenTofu `plan -destroy` exit code 0, and retained only the
-intended reusable PVE clients.
-
-Representative leaf failover/rejoin and BFD restart-safe cloud validation are
-still useful follow-up coverage, but they are not blockers for promoting this
-small operator-surface release after the clean baseline.
-
-The manifest is recorded in `docs/releases/manifests/v20260627.1533.yaml`.
-
-This release carries forward the prior stable milestone features: **peersFrom**, **membersFrom**, and **peer-group-sync** for zero-touch leaf configuration in SAM fabrics.
-
-### peersFrom + SAMPeerGroup (#332, #333)
-
-`SAMTransportProfile` gains `spec.peersFrom` referencing `SAMPeerGroup` resources. Union semantics: imported peers load first, static `peers` override by `nodeRef`. `publishPeerGroup: true` on RR generates a `SAMPeerGroup` `DynamicConfigPart` automatically.
-
-### Peer group sync (#334, #336)
-
-Lightweight HTTP service on port 19652 over WireGuard inner network. RR serves `GET /v1/peer-groups`; leaf discovers WireGuard peers and fetches matching groups automatically. No manual `SAMPeerGroup` distribution needed.
-
-### MobilityMemberSet + membersFrom (#339, #340)
-
-`MobilityMemberSet` Kind carries shared identity-only pool members (`nodeRef`, `site`, `role`). `MobilityPool.spec.membersFrom` imports them; leaves keep only their own capture/discovery details inline. `publishMemberSet: true` generates and distributes the member set via `GET /v1/member-sets`. Reduces O(N²) config duplication — svnet1 configs reduced by 78 lines (2624 → 2546).
-
-### FreeBSD legacy flag compatibility (#337, #338)
-
-Removed `routerd serve` flags (`--observe-interval`, `--controller-chain*`) are now accepted and ignored with a warning, preventing upgrade failures when `/etc/rc.conf` retains stale entries.
-
-### Inherited from v20260608.1354
-
-All properties from v20260608.1354 are carried forward: pair-stable addressing, ADR 0014 CLI redesign, and all prior production-safe fixes.
-
-## Known observations (not release blockers)
-
-- **`routerd-bgp` may keep running with the old executable inode after `install.sh`.** This is intentional: `install.sh` does not restart `routerd-bgp` on upgrade so established BGP sessions and ECMP survive the routerd binary update.
-- **`routerctl doctor mgmt` SKIPs when no `ManagementAccess` is declared.** This is a live-config choice, not a release defect.
-
-:::warning Upgrading
-- **From v20260528.2308:** ADR 0014 changed the CLI verb surface. `routerd apply` → `routerctl apply`, `routerd validate` → `routerctl validate`, etc. Rewrite service units or scripts that use old commands. `install.sh` auto-deploys new service units, so systemd-managed units update automatically.
-- **Always `cd` into the extracted release directory before running `install.sh`.**
-- **From v20260523.1542 or earlier:** the `disabled:` field was removed (use `enabled: false`) along with `--controller-chain*` / `--observe-interval` flags.
-- **DNS resolver service unit:** the resolver runs as `routerd-dns-resolver@<name>.service`. The first upgrade performs a one-time cutover with a brief DNS blip.
-:::
-
-## What "stable" means here
-
-:::warning The API is still v1alpha1
-A "stable milestone" means **this build is production-quality**. It does **not** promise backward compatibility of the API (resource schema).
-:::
-
-- The routerd resource API is currently **v1alpha1**. **Breaking changes can land between releases.**
-- When upgrading, do not rely on backward compatibility. Plan to **rewrite your configuration (YAML) against the new schema**.
-- There is no migration shim by policy. Review the per-release deltas in the [changelog](./changelog.md).
+- **The API is still v1alpha1.** A stable milestone means this build is
+  production-quality; it does not promise backward-compatible resource schemas.
+- **Upgrade configs against the new schema.** Do not rely on migration shims.
+  Review the per-release deltas in the [changelog](./changelog.md).
+- **`routerctl doctor mgmt` SKIPs when no `ManagementAccess` is declared.**
+  This is a live-config choice, not a release defect.
 
 ## Install and upgrade
 
-See [Install and upgrade](../install-and-upgrade.md) for the procedure. Start upgrades from a recommended milestone release.
+See [Install and upgrade](../install-and-upgrade.md) for the full procedure.

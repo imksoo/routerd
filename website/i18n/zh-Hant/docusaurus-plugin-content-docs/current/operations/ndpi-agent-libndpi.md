@@ -22,10 +22,10 @@ routerd 的一般 Linux 發布封存檔以 `CGO_ENABLED=0` 建置，確保封存
 同時下載一般 routerd 發布封存檔與對應的原生代理程式封存檔，並讓安裝程式以單一交易方式套用。
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz.sha256
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
 tar -xzf routerd-linux-amd64.tar.gz

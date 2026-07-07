@@ -13,14 +13,14 @@ You do not need a Go toolchain or the Makefile on the router host.
 
 ## Quick install
 
-Download the archive for your OS and architecture from the
-[GitHub Releases page](https://github.com/imksoo/routerd/releases).
+Download the archive for your OS and architecture from the stable release tag,
+[v20260707.1514](https://github.com/imksoo/routerd/releases/tag/v20260707.1514).
 
 Linux amd64:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-linux-amd64.tar.gz.sha256
 tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
@@ -31,8 +31,8 @@ For Linux arm64, use the `linux-arm64` archive.
 FreeBSD amd64:
 
 ```sh
-fetch https://github.com/imksoo/routerd/releases/latest/download/routerd-freebsd-amd64.tar.gz
-fetch https://github.com/imksoo/routerd/releases/latest/download/routerd-freebsd-amd64.tar.gz.sha256
+fetch https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-freebsd-amd64.tar.gz
+fetch https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-freebsd-amd64.tar.gz.sha256
 cat routerd-freebsd-amd64.tar.gz.sha256
 sha256 routerd-freebsd-amd64.tar.gz
 tar -xzf routerd-freebsd-amd64.tar.gz
@@ -40,9 +40,9 @@ sudo ./install.sh
 ```
 
 For FreeBSD arm64, use the `freebsd-arm64` archive.
-The latest release also includes versioned archives such as
-`routerd-vYYYYMMDD.HHmm-linux-amd64.tar.gz`.
-Use those when you need to pin a specific release.
+The same release also includes versioned archives such as
+`routerd-v20260707.1514-linux-amd64.tar.gz`.
+Use those when you need an explicitly named artifact.
 
 Linux archives are built with `CGO_ENABLED=0` and contain statically linked
 routerd binaries. They do not require the router host to have the same glibc
@@ -54,8 +54,8 @@ the matching `routerd-ndpi-agent-libndpi-linux-amd64.tar.gz` archive and install
 it explicitly with the normal archive:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
 sudo ./install.sh --with-ndpi \
   --with-ndpi-archive ./routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
@@ -125,11 +125,11 @@ hardening, not a regression. No service-unit change is required.
 
 ## Try the live ISO
 
-The release page also publishes a bootable Ubuntu-based live ISO:
+The stable release page also publishes a bootable Ubuntu-based live ISO:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-live.iso
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-live.iso.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-live.iso
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-live.iso.sha256
 sha256sum -c routerd-live.iso.sha256
 ```
 

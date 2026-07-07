@@ -13,7 +13,17 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## v20260707.1514
 
-### Fixed
+### 變更
+
+- v20260707.1514 已提升為 production-recommended stable release。面向新部署的
+  stable milestone 現在指向固定 release tag，而不是會移動的 `latest` URL。
+- release qualification 現在記錄已接受的 AWS/Azure/OCI/PVE 冗餘 full
+  topology 結果：8 clients、8 leaves、2 個 AWS route reflector、matrix
+  56/56、provider 收斂 4s、dataplane 收斂 567s、cleanup state 0。同一次
+  qualification 還確認產生的 config/control schema 與 website schema copy byte
+  一致，並且 `make check-schema check-website-schemas` PASS。
+
+### 修正
 
 - sandbox 驗證現在會將 path-MTU nftables artifact 保留在 sandbox runtime
   directory 內，並在 dry-run 驗證期間將缺少的 DHCPv4 client daemon 視為

@@ -46,8 +46,8 @@ sudo mkfs.ext4 -L ROUTERD /dev/sdX1
 固定 URL から取得します。
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-live.iso
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-live.iso.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-live.iso
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-live.iso.sha256
 sha256sum -c routerd-live.iso.sha256
 ```
 

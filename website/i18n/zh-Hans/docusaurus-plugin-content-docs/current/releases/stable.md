@@ -6,58 +6,59 @@ sidebar_position: 0
 
 # 稳定版里程碑
 
-routerd 以 `vYYYYMMDD.HHmm` 格式频繁发布版本，其中经过评估**可供正式环境使用**的版本，会在每个里程碑时选定为「稳定版里程碑」。初次部署时，请使用本页所列的版本。
+routerd 以 `vYYYYMMDD.HHmm` 格式频繁发布版本。其中经过评估**可供正式环境使用**的版本，会在每个里程碑时选定为稳定版里程碑。新部署请使用本页所列版本，并在自动化中固定 release tag。
 
 ## 当前推荐版本
 
 | 项目 | 内容 |
 | --- | --- |
-| 版本 | **v20260627.1533** |
-| 定位 | 推荐稳定版（post-1107 SAM baseline 加上 operator 输出整理） |
-| 运行实绩 | AWS/Azure/OCI/PVE single-topology baseline 136 秒收敛，matrix 12/12，全部 leaf MobilityPool Ready，provider pending/failed 0，cleanup state 0 |
-| 二进制 | 静态链接（`CGO_ENABLED=0`），通过 CI 和 Release 工作流 |
+| 版本 | **v20260707.1514** |
+| 定位 | 当前推荐稳定版 |
+| Release page | [v20260707.1514](https://github.com/imksoo/routerd/releases/tag/v20260707.1514) |
+| 运行实绩 | Release workflow 通过；生成的 config/control schema 与 website copy 一致；AWS/Azure/OCI/PVE 冗余 full topology 实机测试通过：8 clients、8 leaves、2 个 AWS RR、matrix 56/56、provider 收敛 4s、dataplane 收敛 567s、cleanup state 0 |
+| 二进制 | 静态链接（`CGO_ENABLED=0`），同时发布固定名称和带版本号的 archive |
 
-## 推荐 v20260627.1533 的理由
+## 推荐 v20260707.1514 的理由
 
-v20260627.1533 在 v20260627.1107 的 SAM baseline 上整理了 `routerctl mobility explain` 与 `routerctl action list` 的 operator 输出。PVE substrate 采用 qnap-backed live ISO/config media、DHCP/QGA 管理与 ens19 capture interface 后，AWS/Azure/OCI/PVE fresh single-topology baseline 已通过。
+v20260707.1514 包含近期 steady-state runtime 修复，并通过了新的真实机器 CloudEdge SAM qualification，因此是当前稳定版里程碑。接受的 run 在 AWS、Azure、OCI 和 PVE 上使用冗余 leaf 与两个 AWS route reflector，directed client matrix 为 `56/56` PASS。测试后的 cleanup 销毁了 53 个 OpenTofu resource，state 为 0。
 
-release manifest 记录在 `docs/releases/manifests/v20260627.1533.yaml`。
+schema 也已确认与发布网站一致：
 
-### Pair-stable addressing（#330, #331）
+- `make check-schema` PASS。
+- `make check-website-schemas` PASS。
+- `schemas/routerd-config-v1alpha1.schema.json` 与 `website/static/schemas/routerd-config-v1alpha1.schema.json` byte 一致。
+- Control schema 与 Control OpenAPI 的 website copy 也与 canonical file byte 一致。
 
-`SAMTransportProfile` 新增 `spec.addressingMode: pair-stable`，使用 inner prefix 和 canonical peer key 的 fnv64a 哈希实现确定性的 /31 slot 分配。
+接受的 full run evidence summary 保存在 repository 外：
 
-- **紧凑配置编写。** leaf 节点不再需要 `topologyNodeRefs`，消除了逐节点重复的拓扑声明。svnet1 配置减少约 100 行。
-- **拓扑变更稳定性。** 添加或删除节点不会重新分配现有 peer 的地址（与依赖排序顺序的 `edge-index` 不同）。
-- **向后兼容。** 现有的 `edge-index`（默认）配置不受影响。
-- **碰撞检测。** `routerd validate` / `routerctl validate` 在配置时检测 /31 slot 哈希碰撞。
+```text
+/home/imksoo/routerd-labs-archive/evidence/rv202607071514-full-20260707T100026Z/e2e-baseline-awsprofile-retry1/summary.txt
+```
 
-### 从 v20260608.0642 继承的事项
+## 安装稳定版
 
-继承 v20260608.0642 的全部特性：ADR 0014 CLI 重新设计、DNS VRRP VIP 支持、forcefrag prerouting 修复、BGP peer watch 稳定化及所有先前的生产安全修复。
+使用推荐稳定版时，请使用固定 tag URL：
 
-## 已知观测（非发布阻塞项）
+```sh
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
+sha256sum -c routerd-linux-amd64.tar.gz.sha256
+tar -xzf routerd-linux-amd64.tar.gz
+sudo ./install.sh
+```
 
-- **`install.sh` 后 `routerd-bgp` 可能仍以旧 inode 运行。** 这是设计如此。`install.sh` 在升级时不自动重启 `routerd-bgp`，以便已建立的 BGP 会话和 ECMP 在 routerd 二进制更新后存活。
-- **未声明 `ManagementAccess` 的配置中 `routerctl doctor mgmt` 显示 SKIP。** 这是运行配置的选择，非发布缺陷。
+同一 release page 也发布带版本号的 archive，例如 `routerd-v20260707.1514-linux-amd64.tar.gz`。
 
-:::warning 升级注意
-- **从 v20260528.2308 升级时：** ADR 0014 变更了 CLI verb 体系。`routerd apply` → `routerctl apply`、`routerd validate` → `routerctl validate` 等。如果服务单元或脚本中使用了旧命令，请重写。`install.sh` 会自动部署新的服务单元，因此 systemd 管理的单元会自动更新。
-- **务必先 `cd` 到解压后的发布目录再执行 `install.sh`。**
-- **从 v20260523.1542 及更早版本升级时：** `disabled:` 字段（请用 `enabled: false`）和 `--controller-chain*` / `--observe-interval` 标志已删除。
-- **DNS 解析器服务单元化：** 解析器以 `routerd-dns-resolver@<name>.service` 运行。首次升级时会有短暂的 DNS 中断。
-:::
+## 上一个稳定版
 
-## 「稳定版」的含义与注意
+v20260627.1533 是上一个推荐稳定版。它在修正 PVE ISO substrate 后通过了 cost-bounded AWS/Azure/OCI/PVE single-topology baseline：136 秒收敛、matrix 12/12、全部 leaf MobilityPool Ready、provider pending/failed 0、cleanup state 0。需要固定到该里程碑的 operator 仍可将它作为 rollback 候选，但新部署应从 v20260707.1514 开始。
 
-:::warning API 仍为 v1alpha1
-「稳定版里程碑」表示**该版本的质量达到了生产可用的水准**，但**不承诺 API（资源 schema）的向后兼容**。
-:::
+## 已知观测
 
-- routerd 的资源 API 目前为 **v1alpha1**。版本间**可能出现破坏性变更**。
-- 升级时请勿依赖向后兼容。请以**按照新 schema 重写配置（YAML）**为前提进行。
-- 策略上不提供迁移兼容层。各版本的变更请查阅[变更日志](./changelog.md)。
+- **API 仍为 v1alpha1。** 稳定版里程碑表示该 build 达到生产可用品质，但不承诺 resource schema 向后兼容。
+- **请按新 schema 检查配置。** 不要依赖 migration shim；请查看[变更记录](./changelog.md)中的每个 release delta。
+- **未声明 `ManagementAccess` 的配置中 `routerctl doctor mgmt` 会显示 SKIP。** 这是运行配置的选择，不是 release defect。
 
 ## 安装与升级
 
-安装步骤请参阅[安装与升级](../install-and-upgrade.md)。建议以推荐的里程碑版本为升级起点。
+完整步骤请参阅[安装与升级](../install-and-upgrade.md)。

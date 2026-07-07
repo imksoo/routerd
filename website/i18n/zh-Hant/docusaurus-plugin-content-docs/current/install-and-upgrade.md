@@ -17,8 +17,8 @@ title: 安裝與升級
 Linux amd64：
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-linux-amd64.tar.gz.sha256
 tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
@@ -29,8 +29,8 @@ Linux arm64 請使用 `linux-arm64` 封存檔。
 FreeBSD amd64：
 
 ```sh
-fetch https://github.com/imksoo/routerd/releases/latest/download/routerd-freebsd-amd64.tar.gz
-fetch https://github.com/imksoo/routerd/releases/latest/download/routerd-freebsd-amd64.tar.gz.sha256
+fetch https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-freebsd-amd64.tar.gz
+fetch https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-freebsd-amd64.tar.gz.sha256
 cat routerd-freebsd-amd64.tar.gz.sha256
 sha256 routerd-freebsd-amd64.tar.gz
 tar -xzf routerd-freebsd-amd64.tar.gz
@@ -50,8 +50,8 @@ Linux 封存檔包含以 `CGO_ENABLED=0` 靜態連結的 routerd 二進位檔，
 `routerd-ndpi-agent-libndpi-linux-amd64.tar.gz`，並在一般封存檔的安裝流程中明確套用。
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
 sudo ./install.sh --with-ndpi \
   --with-ndpi-archive ./routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
@@ -70,8 +70,8 @@ sudo ./install.sh --with-ndpi \
 發布頁面也提供以 Ubuntu 為基礎的可開機 Live ISO。
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-live.iso
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-live.iso.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-live.iso
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-live.iso.sha256
 sha256sum -c routerd-live.iso.sha256
 ```
 

@@ -21,8 +21,8 @@ dnsmasq 設定、`mpd5.conf`、そして DS-Lite 用の動的な `ifconfig gif` 
 アーカイブを取得し、ルーター上で同梱のインストーラーを実行します。
 
 ```sh
-fetch https://github.com/imksoo/routerd/releases/latest/download/routerd-freebsd-amd64.tar.gz
-fetch https://github.com/imksoo/routerd/releases/latest/download/routerd-freebsd-amd64.tar.gz.sha256
+fetch https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-freebsd-amd64.tar.gz
+fetch https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-freebsd-amd64.tar.gz.sha256
 cat routerd-freebsd-amd64.tar.gz.sha256
 sha256 routerd-freebsd-amd64.tar.gz
 tar -xzf routerd-freebsd-amd64.tar.gz

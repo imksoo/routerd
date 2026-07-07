@@ -199,18 +199,19 @@ spec:
 ルーターホスト上でリリースアーカイブを展開し、同梱のインストーラーを実行します。
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/latest/download/routerd-linux-amd64.tar.gz.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-linux-amd64.tar.gz.sha256
 tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
-FreeBSD では latest release の `routerd-freebsd-amd64.tar.gz` を取得し、
+FreeBSD では stable release tag の `routerd-freebsd-amd64.tar.gz` を取得し、
 同じ `./install.sh` を実行します。
 arm64 ホストでは `routerd-linux-arm64.tar.gz` または
 `routerd-freebsd-arm64.tar.gz` を使います。
-特定の版を固定したい場合は、各 release ページの版番号付きアーカイブを使います。
+同じ release page には `routerd-v20260707.1514-linux-amd64.tar.gz` のような
+版番号付きアーカイブもあります。
 
 Linux 用の release archive には、静的リンクした routerd バイナリを含めます
 (`CGO_ENABLED=0`)。

@@ -14,6 +14,18 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## v20260707.1514
 
+### Changed
+
+- Promoted v20260707.1514 to the production-recommended stable release. The
+  stable milestone now points operators at the fixed release tag instead of a
+  moving `latest` URL for new deployments.
+- Release qualification now records the accepted AWS/Azure/OCI/PVE full
+  topology with redundancy: 8 clients, 8 leaves, 2 AWS route reflectors, matrix
+  56/56, provider convergence 4s, dataplane convergence 567s, and cleanup state
+  0. The same qualification confirmed that generated config/control schemas and
+  website schema copies are byte-identical and that `make check-schema
+  check-website-schemas` passes.
+
 ### Fixed
 
 - Sandbox validation now keeps path-MTU nftables artifacts inside the sandbox

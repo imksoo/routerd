@@ -13,7 +13,19 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## v20260707.1514
 
-### Fixed
+### 変更
+
+- v20260707.1514 を production-recommended stable release に昇格しました。
+  新規導入向けの stable milestone は、移動する `latest` URL ではなく固定
+  release tag を案内します。
+- release qualification に、冗長化込み AWS/Azure/OCI/PVE full topology の
+  受理結果を記録しました: 8 clients、8 leaves、AWS route reflector 2 台、
+  matrix 56/56、provider 収束 4s、dataplane 収束 567s、cleanup state 0。
+  同じ qualification で、生成済み config/control schema と website schema
+  copy の byte 一致、および `make check-schema check-website-schemas` PASS
+  も確認しました。
+
+### 修正
 
 - sandbox 検証で path-MTU の nftables artifact を sandbox runtime
   directory 内に保持し、dry-run 検証中に DHCPv4 client daemon がない場合は
