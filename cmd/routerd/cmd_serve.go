@@ -1109,6 +1109,8 @@ func applySandboxControllerOptions(opts *controllerchain.Options, dnsmasqConfigP
 		opts.NftablesPath = nftablesPath
 	}
 	opts.FirewallPath = filepath.Join(platformDefaults.RuntimeDir, "firewall.nft")
+	opts.PathMTUPath = filepath.Join(platformDefaults.RuntimeDir, "mss.nft")
+	opts.ForceFragmentPath = filepath.Join(platformDefaults.RuntimeDir, "forcefrag.nft")
 }
 
 // groupOwnStatusSocket makes the read-only status socket reachable by members

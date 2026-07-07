@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
@@ -90,8 +91,12 @@ func (c Controller) ReconcileAll(ctx context.Context) error {
 }
 
 func (c Controller) reconcile(ctx context.Context, name string) error {
-	status, err := daemonStatus(ctx, c.socketFor(name))
+	socket := c.socketFor(name)
+	status, err := daemonStatus(ctx, socket)
 	if err != nil {
+		if c.DryRun {
+			return c.savePendingDaemonStatus(name, socket, err)
+		}
 		return err
 	}
 	for _, resource := range status.Resources {
@@ -155,6 +160,22 @@ func (c Controller) reconcile(ctx context.Context, name string) error {
 		return c.Bus.Publish(ctx, event)
 	}
 	return fmt.Errorf("daemon status did not include DHCPv4Client/%s", name)
+}
+
+func (c Controller) savePendingDaemonStatus(name, socket string, cause error) error {
+	if c.Store == nil {
+		return nil
+	}
+	status := map[string]any{
+		"phase":     daemonapi.ResourcePhasePending,
+		"reason":    "DaemonUnavailable",
+		"socket":    socket,
+		"message":   fmt.Sprintf("waiting for DHCPv4 client socket %s", socket),
+		"error":     cause.Error(),
+		"dryRun":    true,
+		"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	return c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Client", name, status)
 }
 
 func leaseEventChanged(current, next map[string]any) bool {

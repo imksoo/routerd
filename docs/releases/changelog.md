@@ -12,6 +12,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Sandbox validation now keeps path-MTU nftables artifacts inside the sandbox
+  runtime directory and treats missing DHCPv4 client daemons as pending during
+  dry-run validation, so CloudEdge SAM generated configs validate without
+  touching host `/run/routerd` paths.
+
 ## v20260707.0222
 
 ### Added
