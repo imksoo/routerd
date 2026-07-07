@@ -291,7 +291,14 @@ func (c NAT44SessionSyncController) reconcileEventStreamJob(ctx context.Context,
 		return c.save(job.APIVersion, job.Kind, job.Name, map[string]any{"phase": "Pending", "reason": "NoSNATAddresses", "mode": job.Mode, "dryRun": c.DryRun})
 	}
 	status := c.workerManager().ensure(ctx, c, job)
+	if !nat44SessionSyncPersistentStatusChanged(c.Store.ObjectStatus(job.APIVersion, job.Kind, job.Name), status) {
+		return nil
+	}
 	return c.save(job.APIVersion, job.Kind, job.Name, status)
+}
+
+func nat44SessionSyncPersistentStatusChanged(current, next map[string]any) bool {
+	return statusChangedForEvent(api.NetAPIVersion, "NAT44SessionSync", current, next)
 }
 
 func (c NAT44SessionSyncController) dumpEntries(ctx context.Context, job nat44SessionSyncJob) ([]conntrackRestoreEntry, error) {

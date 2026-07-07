@@ -425,8 +425,8 @@ func TestStatusChangedForEventIgnoresVolatileObservedFields(t *testing.T) {
 			name:       "lease sync timestamp",
 			apiVersion: api.NetAPIVersion,
 			kind:       "DHCPv4ServerLeaseSync",
-			current:    map[string]any{"phase": "Synced", "syncedAt": "2026-07-06T12:00:00Z"},
-			next:       map[string]any{"phase": "Synced", "syncedAt": "2026-07-06T12:00:30Z"},
+			current:    map[string]any{"phase": "Synced", "sources": []map[string]any{{"path": "/run/routerd/dnsmasq.leases", "size": 10}}, "targets": []map[string]any{{"host": "standby", "phase": "Synced"}}, "syncedAt": "2026-07-06T12:00:00Z"},
+			next:       map[string]any{"phase": "Synced", "sources": []map[string]any{{"path": "/run/routerd/dnsmasq.leases", "size": 20}}, "targets": []map[string]any{{"host": "standby", "phase": "Synced"}}, "syncedAt": "2026-07-06T12:00:30Z"},
 		},
 		{
 			name:       "ip address set refresh timestamp",

@@ -325,6 +325,9 @@ func TestWriteDnsmasqConfigDisablesDNSPort(t *testing.T) {
 	if strings.Contains(string(data), "listen-address=") {
 		t.Fatalf("dnsmasq config should not own DNS listen addresses:\n%s", data)
 	}
+	if !strings.Contains(string(data), "bind-dynamic\n") || strings.Contains(string(data), "bind-interfaces\n") {
+		t.Fatalf("dnsmasq config should use bind-dynamic to avoid interface alias warnings:\n%s", data)
+	}
 }
 
 func TestWriteDnsmasqConfigUsesDeclaredLeaseFile(t *testing.T) {

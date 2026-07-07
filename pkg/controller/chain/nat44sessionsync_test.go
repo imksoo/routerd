@@ -309,15 +309,23 @@ func TestNAT44SessionSyncEventStreamStartsWithSnapshotAndConsumesEvents(t *testi
 	waitForNAT44Status(t, store, controller, ctx, func(status map[string]any) bool {
 		return status["phase"] == "Synced" && status["streamState"] == "running" && status["resyncCount"] == 1
 	})
+	savesAfterResync := store.SaveCount()
 	event := "[NEW] ipv4 2 tcp 6 86398 ESTABLISHED src=172.18.1.150 dst=20.194.195.242 sport=65190 dport=443 packets=262 bytes=12258 src=20.194.195.242 dst=192.0.0.2 sport=443 dport=65190 packets=260 bytes=66429 [ASSURED] mark=272 use=1\n"
 	for i := 0; i < defaultNAT44SessionSyncEventBatchMax; i++ {
 		if _, err := io.WriteString(writer, event); err != nil {
 			t.Fatal(err)
 		}
 	}
-	waitForNAT44Status(t, store, controller, ctx, func(status map[string]any) bool {
-		return status["phase"] == "Synced" && status["lastBatchEvents"] == defaultNAT44SessionSyncEventBatchMax && status["insertOK"] == defaultNAT44SessionSyncEventBatchMax
-	})
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		scripts := len(sshScripts)
+		mu.Unlock()
+		if scripts >= 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if len(sshScripts) < 2 {
@@ -325,6 +333,9 @@ func TestNAT44SessionSyncEventStreamStartsWithSnapshotAndConsumesEvents(t *testi
 	}
 	if !strings.Contains(sshScripts[0], "'-I'") || !strings.Contains(sshScripts[1], "'-I'") {
 		t.Fatalf("unexpected restore scripts:\n--- snapshot ---\n%s\n--- event ---\n%s", sshScripts[0], sshScripts[1])
+	}
+	if saves := store.SaveCount(); saves != savesAfterResync {
+		t.Fatalf("event batch should not persist transient-only status: saves before=%d after=%d", savesAfterResync, saves)
 	}
 }
 
@@ -375,8 +386,9 @@ func TestNAT44SessionSyncReportsRestoreInsertFailures(t *testing.T) {
 }
 
 type syncMapStore struct {
-	mu sync.Mutex
-	m  map[string]map[string]any
+	mu    sync.Mutex
+	m     map[string]map[string]any
+	saves int
 }
 
 func newSyncMapStore() *syncMapStore {
@@ -386,6 +398,7 @@ func newSyncMapStore() *syncMapStore {
 func (s *syncMapStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.saves++
 	s.m[apiVersion+"/"+kind+"/"+name] = cloneStatusMap(status)
 	return nil
 }
@@ -397,6 +410,12 @@ func (s *syncMapStore) ObjectStatus(apiVersion, kind, name string) map[string]an
 		return cloneStatusMap(status)
 	}
 	return map[string]any{}
+}
+
+func (s *syncMapStore) SaveCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saves
 }
 
 func waitForNAT44Status(t *testing.T, store *syncMapStore, controller NAT44SessionSyncController, ctx context.Context, match func(map[string]any) bool) {
@@ -414,6 +433,35 @@ func waitForNAT44Status(t *testing.T, store *syncMapStore, controller NAT44Sessi
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "NAT44SessionSync", "dslite-abc")
 	t.Fatalf("timed out waiting for NAT44SessionSync status: %#v", status)
+}
+
+func TestNAT44SessionSyncEventStreamSkipsTransientOnlyStatusSave(t *testing.T) {
+	current := map[string]any{
+		"phase":            "Synced",
+		"mode":             "event-stream",
+		"streamState":      "running",
+		"snatAddresses":    []string{"192.0.2.10"},
+		"snatAddressCount": 1,
+		"targetCount":      1,
+		"dryRun":           false,
+	}
+	next := cloneStatusMap(current)
+	next["lastEventAt"] = "2026-07-07T14:25:36Z"
+	next["queuedEventCount"] = 7
+	next["lastBatchAt"] = "2026-07-07T14:25:40Z"
+	next["lastBatchEvents"] = 7
+	next["insertOK"] = 7
+	next["targets"] = []map[string]any{{"host": "standby", "phase": "Synced", "insertOK": 7}}
+
+	if nat44SessionSyncPersistentStatusChanged(current, next) {
+		t.Fatalf("transient event-stream status should not require a DB save: %#v", statusChangedFieldsForEvent(api.NetAPIVersion, "NAT44SessionSync", current, next))
+	}
+
+	next["phase"] = "Degraded"
+	next["reason"] = "RestoreFailed"
+	if !nat44SessionSyncPersistentStatusChanged(current, next) {
+		t.Fatal("phase/reason change should still require a DB save")
+	}
 }
 
 func TestNAT44SessionSyncPendingWhenRuleSNATUnresolved(t *testing.T) {

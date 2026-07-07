@@ -83,6 +83,10 @@ type TrafficFlowLog struct {
 	db *sql.DB
 }
 
+type trafficFlowExec interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
 func OpenTrafficFlowLog(path string) (*TrafficFlowLog, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
@@ -204,6 +208,39 @@ func (l *TrafficFlowLog) UpsertActive(ctx context.Context, flow TrafficFlow) err
 	if l == nil || l.db == nil {
 		return nil
 	}
+	return upsertActiveTrafficFlow(ctx, l.db, flow)
+}
+
+func (l *TrafficFlowLog) SyncActive(ctx context.Context, flows []TrafficFlow, activeKeys []string, endedAt time.Time) error {
+	if l == nil || l.db == nil {
+		return nil
+	}
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	for _, flow := range flows {
+		if err := upsertActiveTrafficFlow(ctx, tx, flow); err != nil {
+			return err
+		}
+	}
+	if err := endMissingTrafficFlows(ctx, tx, activeKeys, endedAt); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+func upsertActiveTrafficFlow(ctx context.Context, exec trafficFlowExec, flow TrafficFlow) error {
 	if flow.StartedAt.IsZero() {
 		flow.StartedAt = time.Now().UTC()
 	}
@@ -218,7 +255,7 @@ func (l *TrafficFlowLog) UpsertActive(ctx context.Context, flow TrafficFlow) err
 	flow.Category = strings.ToLower(strings.TrimSpace(flow.Category))
 	riskJSON := jsonString(flow.Risk)
 	metadataJSON := jsonString(flow.Metadata)
-	_, err := l.db.ExecContext(ctx, `INSERT INTO flows(flow_key,ts_started,client_address,client_port,peer_address,peer_port,protocol,nat_translated_address,accounting,bytes_out,bytes_in,packets_out,packets_in,app_name,app_category,app_confidence,detected_protocol,master_protocol,application_protocol,category,risk,confidence,metadata_json,engine,source,tls_sni,http_host,dns_query,resolved_hostname)
+	_, err := exec.ExecContext(ctx, `INSERT INTO flows(flow_key,ts_started,client_address,client_port,peer_address,peer_port,protocol,nat_translated_address,accounting,bytes_out,bytes_in,packets_out,packets_in,app_name,app_category,app_confidence,detected_protocol,master_protocol,application_protocol,category,risk,confidence,metadata_json,engine,source,tls_sni,http_host,dns_query,resolved_hostname)
 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(flow_key) DO UPDATE SET
   ts_ended = NULL,
@@ -286,11 +323,15 @@ func (l *TrafficFlowLog) EndMissing(ctx context.Context, activeKeys []string, en
 	if l == nil || l.db == nil {
 		return nil
 	}
+	return endMissingTrafficFlows(ctx, l.db, activeKeys, endedAt)
+}
+
+func endMissingTrafficFlows(ctx context.Context, exec trafficFlowExec, activeKeys []string, endedAt time.Time) error {
 	if endedAt.IsZero() {
 		endedAt = time.Now().UTC()
 	}
 	if len(activeKeys) == 0 {
-		_, err := l.db.ExecContext(ctx, `UPDATE flows SET ts_ended = ? WHERE ts_ended IS NULL`, endedAt.UnixNano())
+		_, err := exec.ExecContext(ctx, `UPDATE flows SET ts_ended = ? WHERE ts_ended IS NULL`, endedAt.UnixNano())
 		return err
 	}
 	quoted := make([]string, len(activeKeys))
@@ -299,7 +340,7 @@ func (l *TrafficFlowLog) EndMissing(ctx context.Context, activeKeys []string, en
 		quoted[i] = "?"
 		args = append(args, key)
 	}
-	_, err := l.db.ExecContext(ctx, `UPDATE flows SET ts_ended = ? WHERE ts_ended IS NULL AND flow_key NOT IN (`+strings.Join(quoted, ",")+`)`, args...)
+	_, err := exec.ExecContext(ctx, `UPDATE flows SET ts_ended = ? WHERE ts_ended IS NULL AND flow_key NOT IN (`+strings.Join(quoted, ",")+`)`, args...)
 	return err
 }
 

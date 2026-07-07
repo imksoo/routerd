@@ -824,11 +824,14 @@ func volatileStatusEventField(apiVersion, kind, key string) bool {
 		return key == "lastSuccessTime"
 	case "NAT44SessionSync":
 		switch key {
-		case "deleteFailed", "deleteMissing", "deleteOK", "insertExisting", "insertFailed", "insertOK", "scriptBytes", "sessionCount", "syncedAt", "targets":
+		case "deleteFailed", "deleteMissing", "deleteOK", "insertExisting", "insertFailed", "insertOK", "lastBatchAt", "lastBatchEvents", "lastEventAt", "queuedEventCount", "scriptBytes", "sessionCount", "syncedAt", "targets":
 			return true
 		}
 	case "DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync":
-		return key == "syncedAt"
+		switch key {
+		case "sources", "syncedAt", "targets":
+			return true
+		}
 	case "IPAddressSet":
 		return key == "resolvedAt" || key == "nextRefreshAt"
 	}
@@ -4567,7 +4570,7 @@ func writeDnsmasqConfig(router *api.Router, store Store, path, pidFile string, p
 		return false, false, err
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "port=0\nno-resolv\nno-hosts\nbind-interfaces\npid-file=%s\ndhcp-leasefile=%s\n", pidFile, leaseFile)
+	fmt.Fprintf(&b, "port=0\nno-resolv\nno-hosts\nbind-dynamic\npid-file=%s\ndhcp-leasefile=%s\n", pidFile, leaseFile)
 	hostsFile := dnsmasqHostsFile(path)
 	hostsChanged, err := writeDnsmasqHostsFile(router, hostsFile)
 	if err != nil {
