@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -127,7 +128,7 @@ func selftestTLSPacket(host string) []byte {
 	return packet
 }
 
-func daemon(args []string, stdin io.Reader) error {
+func daemon(args []string, stdin io.Reader) (err error) {
 	opts, err := parseOptions("daemon", args)
 	if err != nil {
 		return err
@@ -143,12 +144,18 @@ func daemon(args []string, stdin io.Reader) error {
 		return err
 	}
 	defer telemetry.ShutdownGracefully()
+	writer := newFirewallLogWriter(log, 128, 500*time.Millisecond)
+	defer func() {
+		if closeErr := writer.Close(); err == nil {
+			err = closeErr
+		}
+	}()
 	startExpiredFlowWatchers(ctx, opts, log)
 	if opts.group > 0 && opts.inputFile == "" && opts.pflogInterface == "" {
-		return runNFLogDaemon(ctx, opts, log, telemetry)
+		return runNFLogDaemon(ctx, opts, log, writer, telemetry)
 	}
 	if opts.pflogInterface != "" && opts.inputFile == "" {
-		return runPflogDaemon(ctx, opts, log, telemetry)
+		return runPflogDaemon(ctx, opts, log, writer, telemetry)
 	}
 	reader := stdin
 	if opts.inputFile != "" {
@@ -165,7 +172,7 @@ func daemon(args []string, stdin io.Reader) error {
 		if !ok {
 			continue
 		}
-		if err := recordFirewallEntry(ctx, log, entry, telemetry, opts); err != nil {
+		if err := recordFirewallEntryWithRecorder(ctx, writer, log, entry, telemetry, opts); err != nil {
 			return err
 		}
 	}
@@ -175,7 +182,7 @@ func daemon(args []string, stdin io.Reader) error {
 	return nil
 }
 
-func runNFLogDaemon(ctx context.Context, opts options, log *logstore.FirewallLog, telemetry *routerotel.Runtime) error {
+func runNFLogDaemon(ctx context.Context, opts options, log *logstore.FirewallLog, recorder firewallEntryRecorder, telemetry *routerotel.Runtime) error {
 	reader, err := nflog.Open(opts.group)
 	if err != nil {
 		return err
@@ -193,13 +200,21 @@ func runNFLogDaemon(ctx context.Context, opts options, log *logstore.FirewallLog
 		if entry.SrcAddress == "" || entry.DstAddress == "" || entry.Protocol == "" {
 			continue
 		}
-		if err := recordFirewallEntry(ctx, log, entry, telemetry, opts); err != nil {
+		if err := recordFirewallEntryWithRecorder(ctx, recorder, log, entry, telemetry, opts); err != nil {
 			return err
 		}
 	}
 }
 
 func recordFirewallEntry(ctx context.Context, log *logstore.FirewallLog, entry logstore.FirewallLogEntry, telemetry *routerotel.Runtime, opts options) error {
+	return recordFirewallEntryWithRecorder(ctx, log, log, entry, telemetry, opts)
+}
+
+type firewallEntryRecorder interface {
+	Record(context.Context, logstore.FirewallLogEntry) error
+}
+
+func recordFirewallEntryWithRecorder(ctx context.Context, recorder firewallEntryRecorder, log *logstore.FirewallLog, entry logstore.FirewallLogEntry, telemetry *routerotel.Runtime, opts options) error {
 	if isAcceptAction(entry.Action) {
 		if err := recordDPIFlowFromEntry(ctx, log, entry, opts); err != nil {
 			return err
@@ -209,10 +224,103 @@ func recordFirewallEntry(ctx context.Context, log *logstore.FirewallLog, entry l
 	}
 	entry = enrichEntryWithDPIFlow(ctx, log, entry, opts, time.Now().UTC())
 	entry = correlateExpiredReturn(ctx, log, entry, time.Now().UTC())
-	if err := log.Record(ctx, entry); err != nil {
+	if err := recorder.Record(ctx, entry); err != nil {
 		return err
 	}
 	recordDenyMetric(ctx, telemetry, entry)
+	return nil
+}
+
+type firewallLogWriter struct {
+	log     *logstore.FirewallLog
+	max     int
+	mu      sync.Mutex
+	entries []logstore.FirewallLogEntry
+	err     error
+	stop    chan struct{}
+	done    chan struct{}
+}
+
+func newFirewallLogWriter(log *logstore.FirewallLog, max int, interval time.Duration) *firewallLogWriter {
+	if max <= 0 {
+		max = 128
+	}
+	if interval <= 0 {
+		interval = 500 * time.Millisecond
+	}
+	w := &firewallLogWriter{
+		log:  log,
+		max:  max,
+		stop: make(chan struct{}),
+		done: make(chan struct{}),
+	}
+	go w.run(interval)
+	return w
+}
+
+func (w *firewallLogWriter) run(interval time.Duration) {
+	defer close(w.done)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			w.flush(context.Background())
+		case <-w.stop:
+			w.flush(context.Background())
+			return
+		}
+	}
+}
+
+func (w *firewallLogWriter) Record(ctx context.Context, entry logstore.FirewallLogEntry) error {
+	if w == nil || w.log == nil {
+		return nil
+	}
+	w.mu.Lock()
+	if w.err != nil {
+		err := w.err
+		w.mu.Unlock()
+		return err
+	}
+	w.entries = append(w.entries, entry)
+	shouldFlush := len(w.entries) >= w.max
+	w.mu.Unlock()
+	if shouldFlush {
+		return w.flush(ctx)
+	}
+	return nil
+}
+
+func (w *firewallLogWriter) Close() error {
+	if w == nil {
+		return nil
+	}
+	close(w.stop)
+	<-w.done
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.err
+}
+
+func (w *firewallLogWriter) flush(ctx context.Context) error {
+	w.mu.Lock()
+	if len(w.entries) == 0 {
+		err := w.err
+		w.mu.Unlock()
+		return err
+	}
+	entries := append([]logstore.FirewallLogEntry(nil), w.entries...)
+	w.entries = w.entries[:0]
+	w.mu.Unlock()
+	if err := w.log.RecordBatch(ctx, entries); err != nil {
+		w.mu.Lock()
+		if w.err == nil {
+			w.err = err
+		}
+		w.mu.Unlock()
+		return err
+	}
 	return nil
 }
 
