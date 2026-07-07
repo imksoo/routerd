@@ -1059,7 +1059,9 @@ func (c DHCPv6ServerController) reconcileRouterAdvertisements(ctx context.Contex
 			return err
 		}
 		if !c.resourceWhenMatches(resource) {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "WhenFalse", "interface": spec.Interface, "configPath": configPath, "pidFile": pidFile, "renderer": "dnsmasq", "dryRun": c.DryRun})
+			status := map[string]any{"phase": "Pending", "reason": "WhenFalse", "interface": spec.Interface, "configPath": configPath, "pidFile": pidFile, "renderer": "dnsmasq", "dryRun": c.DryRun}
+			status = preserveStatusFields(status, c.Store.ObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name), "managedBy", "unitName")
+			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, status)
 			continue
 		}
 		if !resourcequery.DependenciesReady(c.Store, spec.DependsOn) {
@@ -1083,6 +1085,7 @@ func (c DHCPv6ServerController) reconcileRouterAdvertisements(ctx context.Contex
 			"renderer":   "dnsmasq",
 			"dryRun":     c.DryRun,
 		}
+		status = preserveStatusFields(status, c.Store.ObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name), "managedBy", "unitName")
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, status); err != nil {
 			return err
 		}

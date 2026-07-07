@@ -1178,6 +1178,41 @@ func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
 	}
 }
 
+func TestSystemdUnitControllerWhenFalseRAPreservesRendererStatus(t *testing.T) {
+	dir := t.TempDir()
+	store := mapStore{
+		api.NetAPIVersion + "/IPv6RouterAdvertisement/lan-ra": {
+			"phase":      "Pending",
+			"interface":  "lan",
+			"configPath": "/run/routerd/dnsmasq.conf",
+			"pidFile":    "/run/routerd/dnsmasq.pid",
+			"renderer":   "dnsmasq",
+		},
+	}
+	controller := SystemdUnitController{Store: store, SystemdSystemDir: dir, DryRun: true}
+	ref := synthesizedUnitRef{
+		APIVersion: api.NetAPIVersion,
+		Kind:       "IPv6RouterAdvertisement",
+		Name:       "lan-ra",
+		Source:     "IPv6RouterAdvertisement/lan-ra",
+		UnitName:   "routerd-ra-observer@lan-ra.service",
+	}
+
+	if err := controller.cleanupWhenFalseSystemdUnit(t.Context(), ref, func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("ok"), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", "lan-ra")
+	if status["unitName"] != "routerd-ra-observer@lan-ra.service" || status["managedBy"] != "systemd" {
+		t.Fatalf("RA status = %#v, want systemd fields", status)
+	}
+	if status["configPath"] != "/run/routerd/dnsmasq.conf" || status["pidFile"] != "/run/routerd/dnsmasq.pid" || status["renderer"] != "dnsmasq" {
+		t.Fatalf("RA status = %#v, want renderer fields preserved", status)
+	}
+}
+
 func TestSystemdUnitControllerDisablesHealthCheckDaemonUnit(t *testing.T) {
 	dir := t.TempDir()
 	enabled := false

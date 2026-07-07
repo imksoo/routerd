@@ -125,6 +125,44 @@ func TestSaveWhenFalseStatusesStillMarksNonDaemonResourceWhenFalse(t *testing.T)
 	}
 }
 
+func TestSaveWhenFalseStatusesPreservesExistingWhenFalseDetails(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
+			Metadata: api.ObjectMeta{Name: "lan-resolver"},
+			Spec: api.DNSResolverSpec{
+				When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+					"VirtualAddress/lan-gw-v4.role": {Equals: "master"},
+				}},
+			},
+		},
+	}}}
+	store := mapStore{
+		api.NetAPIVersion + "/VirtualAddress/lan-gw-v4": {
+			"role": "backup",
+		},
+		api.NetAPIVersion + "/DNSResolver/lan-resolver": {
+			"phase":     "Pending",
+			"reason":    "WhenFalse",
+			"dryRun":    true,
+			"managedBy": "systemd",
+			"unitName":  "routerd-dns-resolver@lan-resolver.service",
+		},
+	}
+
+	if err := (&Runner{Router: router}).saveWhenFalseStatuses(eventedStore{Store: store}); err != nil {
+		t.Fatalf("saveWhenFalseStatuses returned error: %v", err)
+	}
+
+	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
+	if status["dryRun"] != true || status["managedBy"] != "systemd" || status["unitName"] != "routerd-dns-resolver@lan-resolver.service" {
+		t.Fatalf("status = %#v, want existing WhenFalse details preserved", status)
+	}
+	if _, ok := status["observedAt"]; ok {
+		t.Fatalf("status = %#v, want no generic observedAt rewrite", status)
+	}
+}
+
 func TestSaveWhenFalseStatusesPreservesStatusWhenDependencyUnknown(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
