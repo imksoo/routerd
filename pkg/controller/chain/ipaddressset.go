@@ -32,6 +32,8 @@ type IPAddressSetController struct {
 	Now            func() time.Time
 }
 
+const ipAddressSetNftVerifyInterval = 2 * time.Minute
+
 type ipAddressSetResolver interface {
 	ResolveIP(context.Context, string) ([]ipAddressSetRecord, error)
 }
@@ -79,6 +81,12 @@ resources:
 			}
 			continue
 		}
+		current := c.Store.ObjectStatus(api.NetAPIVersion, "IPAddressSet", resource.Metadata.Name)
+		if len(activeTargets) > 0 && !ipAddressSetRefreshDue(current, now) {
+			if _, ok := cachedIPAddressSetResult(current); ok && ipAddressSetStatusTargetsCover(current, activeTargets) && !ipAddressSetNftVerifyDue(current, now) {
+				continue
+			}
+		}
 		existingTargets := map[string]ipAddressSetTarget{}
 		existingOutputs := map[string]string{}
 		if len(activeTargets) > 0 {
@@ -90,9 +98,13 @@ resources:
 				}
 			}
 		}
-		current := c.Store.ObjectStatus(api.NetAPIVersion, "IPAddressSet", resource.Metadata.Name)
 		if len(activeTargets) > 0 && len(existingTargets) > 0 && !ipAddressSetRefreshDue(current, now) {
 			if cached, ok := cachedIPAddressSetResult(current); ok && ipAddressSetTargetsCurrent(cached, activeTargets, existingOutputs) {
+				next := copyStatusMap(current)
+				next["nftVerifiedAt"] = now.Format(time.RFC3339Nano)
+				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPAddressSet", resource.Metadata.Name, next); err != nil {
+					return err
+				}
 				continue
 			}
 		}
@@ -165,7 +177,7 @@ resources:
 				continue
 			}
 		}
-		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPAddressSet", resource.Metadata.Name, map[string]any{
+		status := map[string]any{
 			"phase":             "Applied",
 			"referenced":        true,
 			"setName":           setName,
@@ -182,7 +194,11 @@ resources:
 			"resolvedAt":        now.Format(time.RFC3339Nano),
 			"dryRun":            len(activeTargets) == 0,
 			"runtimeController": len(activeTargets) > 0,
-		}); err != nil {
+		}
+		if len(activeTargets) > 0 {
+			status["nftVerifiedAt"] = now.Format(time.RFC3339Nano)
+		}
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPAddressSet", resource.Metadata.Name, status); err != nil {
 			return err
 		}
 	}
@@ -313,6 +329,40 @@ func ipAddressSetRefreshDue(status map[string]any, now time.Time) bool {
 		return true
 	}
 	return !now.Before(t)
+}
+
+func ipAddressSetNftVerifyDue(status map[string]any, now time.Time) bool {
+	if len(status) == 0 {
+		return true
+	}
+	verified, ok := status["nftVerifiedAt"].(string)
+	if !ok || strings.TrimSpace(verified) == "" {
+		return true
+	}
+	t, err := time.Parse(time.RFC3339Nano, verified)
+	if err != nil {
+		return true
+	}
+	return !now.Before(t.Add(ipAddressSetNftVerifyInterval))
+}
+
+func ipAddressSetStatusTargetsCover(status map[string]any, targets []ipAddressSetTarget) bool {
+	if len(targets) == 0 {
+		return true
+	}
+	current := map[string]bool{}
+	for _, target := range statusStringSlice(status["targets"]) {
+		current[target] = true
+	}
+	if len(current) == 0 {
+		return false
+	}
+	for _, target := range targets {
+		if !current[target.String()] {
+			return false
+		}
+	}
+	return true
 }
 
 func (c IPAddressSetController) applyNftSet(ctx context.Context, command outputCommandFunc, family, table, setName string, addresses []string, currentOutput string) error {

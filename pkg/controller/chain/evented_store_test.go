@@ -846,6 +846,7 @@ func TestEventedStoreDoesNotPublishIPAddressSetTTLOnlyStatusRefresh(t *testing.T
 			"addresses":     []any{"1.1.1.1", "8.8.8.8"},
 			"minTTLSeconds": 300,
 			"nextRefreshAt": "2026-07-08T00:05:00Z",
+			"nftVerifiedAt": "2026-07-08T00:00:00Z",
 			"resolvedAt":    "2026-07-08T00:00:00Z",
 		}),
 	}
@@ -863,6 +864,7 @@ func TestEventedStoreDoesNotPublishIPAddressSetTTLOnlyStatusRefresh(t *testing.T
 		"addresses":     []any{"1.1.1.1", "8.8.8.8"},
 		"minTTLSeconds": 120,
 		"nextRefreshAt": "2026-07-08T00:06:00Z",
+		"nftVerifiedAt": "2026-07-08T00:01:00Z",
 		"resolvedAt":    "2026-07-08T00:01:00Z",
 	}); err != nil {
 		t.Fatalf("save ttl-only ip address set status: %v", err)
@@ -882,6 +884,7 @@ func TestEventedStoreDoesNotPublishIPAddressSetTTLOnlyStatusRefresh(t *testing.T
 		"addresses":     []any{"1.1.1.1", "8.8.8.8", "9.9.9.9"},
 		"minTTLSeconds": 120,
 		"nextRefreshAt": "2026-07-08T00:07:00Z",
+		"nftVerifiedAt": "2026-07-08T00:02:00Z",
 		"resolvedAt":    "2026-07-08T00:02:00Z",
 	}); err != nil {
 		t.Fatalf("save address change: %v", err)
@@ -893,7 +896,7 @@ func TestEventedStoreDoesNotPublishIPAddressSetTTLOnlyStatusRefresh(t *testing.T
 		if !strings.Contains(fields, "addresses") {
 			t.Fatalf("changedFields = %q, want addresses", fields)
 		}
-		if strings.Contains(fields, "minTTLSeconds") || strings.Contains(fields, "nextRefreshAt") || strings.Contains(fields, "resolvedAt") {
+		if strings.Contains(fields, "minTTLSeconds") || strings.Contains(fields, "nextRefreshAt") || strings.Contains(fields, "nftVerifiedAt") || strings.Contains(fields, "resolvedAt") {
 			t.Fatalf("changedFields = %q, should omit volatile TTL fields", fields)
 		}
 	case <-time.After(time.Second):

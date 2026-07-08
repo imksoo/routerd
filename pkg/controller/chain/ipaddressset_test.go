@@ -377,6 +377,8 @@ func TestIPAddressSetControllerSkipsBeforeDueWhenNftSetContainsCachedElements(t 
 		"addresses":     []any{"8.8.8.8"},
 		"ipv4Addresses": []any{"8.8.8.8"},
 		"nextRefreshAt": now.Add(time.Hour).Format(time.RFC3339Nano),
+		"nftVerifiedAt": now.Add(-time.Minute).Format(time.RFC3339Nano),
+		"targets":       []any{"ip/routerd_nat/ip_address_set_dns_google", "ip6/routerd_nat/ip_address_set_dns_google"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -391,10 +393,61 @@ func TestIPAddressSetControllerSkipsBeforeDueWhenNftSetContainsCachedElements(t 
 		}),
 		Now: func() time.Time { return now },
 		Command: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			t.Fatalf("nft should not be checked before nextRefreshAt when recent verification is cached: %v", args)
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+}
+
+func TestIPAddressSetControllerVerifiesNftSetAfterVerifyInterval(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"}, Metadata: api.ObjectMeta{Name: "dns-google"}, Spec: api.IPAddressSetSpec{
+			Names: []string{"dns.google"},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "LocalServiceRedirect"}, Metadata: api.ObjectMeta{Name: "lan-local-services"}, Spec: api.LocalServiceRedirectSpec{
+			Interface: "lan",
+			Rules: []api.LocalServiceRedirectRuleSpec{{
+				Name:              "dns-google",
+				Protocols:         []string{"udp"},
+				DestinationSetRef: "IPAddressSet/dns-google",
+				DestinationPort:   53,
+				RedirectPort:      53,
+			}},
+		}},
+	}}}
+	now := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+	store := mapStore{}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "IPAddressSet", "dns-google", map[string]any{
+		"phase":         "Applied",
+		"addresses":     []any{"8.8.8.8"},
+		"ipv4Addresses": []any{"8.8.8.8"},
+		"nextRefreshAt": now.Add(time.Hour).Format(time.RFC3339Nano),
+		"nftVerifiedAt": now.Add(-3 * time.Minute).Format(time.RFC3339Nano),
+		"targets":       []any{"ip/routerd_nat/ip_address_set_dns_google", "ip6/routerd_nat/ip_address_set_dns_google"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var listCalls int
+	controller := IPAddressSetController{
+		Router:     router,
+		Store:      store,
+		RuntimeDir: t.TempDir(),
+		NftCommand: "nft-test",
+		Resolver: ipAddressSetResolverFunc(func(context.Context, string) ([]ipAddressSetRecord, error) {
+			t.Fatal("resolver should not be called before nextRefreshAt when nft set is current")
+			return nil, nil
+		}),
+		Now: func() time.Time { return now },
+		Command: func(_ context.Context, _ string, args ...string) ([]byte, error) {
 			switch strings.Join(args, " ") {
 			case "list set ip routerd_nat ip_address_set_dns_google":
+				listCalls++
 				return []byte("set ip_address_set_dns_google { type ipv4_addr; elements = { 8.8.8.8 } }"), nil
 			case "list set ip6 routerd_nat ip_address_set_dns_google":
+				listCalls++
 				return []byte("set ip_address_set_dns_google { type ipv6_addr; }"), nil
 			}
 			t.Fatalf("unexpected nft args: %v", args)
@@ -403,6 +456,13 @@ func TestIPAddressSetControllerSkipsBeforeDueWhenNftSetContainsCachedElements(t 
 	}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
+	}
+	if listCalls != 2 {
+		t.Fatalf("nft list calls = %d, want 2", listCalls)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPAddressSet", "dns-google")
+	if status["nftVerifiedAt"] != now.Format(time.RFC3339Nano) {
+		t.Fatalf("nftVerifiedAt = %#v, want %s", status["nftVerifiedAt"], now.Format(time.RFC3339Nano))
 	}
 }
 
