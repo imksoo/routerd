@@ -788,6 +788,20 @@ func (d *daemon) observedStatus() map[string]string {
 	sources := append([]runtimeSource(nil), d.sources...)
 	d.stateMu.RUnlock()
 	observed := map[string]string{"listeners": fmt.Sprintf("%d", listenerCount), "zones": fmt.Sprintf("%d", zones.ZoneCount())}
+	if d.queryLog != nil {
+		stats := d.queryLog.Stats()
+		observed["queryLogEnabled"] = "true"
+		observed["queryLogPath"] = stats.Path
+		observed["queryLogRecords"] = fmt.Sprintf("%d", stats.Records)
+		observed["queryLogRecordErrors"] = fmt.Sprintf("%d", stats.RecordErrors)
+		observed["queryLogDBBytes"] = fmt.Sprintf("%d", stats.DBBytes)
+		observed["queryLogWALBytes"] = fmt.Sprintf("%d", stats.WALBytes)
+		if !stats.LastRecordTime.IsZero() {
+			observed["queryLogLastRecordAt"] = stats.LastRecordTime.Format(time.RFC3339Nano)
+		}
+	} else {
+		observed["queryLogEnabled"] = "false"
+	}
 	var parts []string
 	for _, source := range sources {
 		if source.Pool != nil {

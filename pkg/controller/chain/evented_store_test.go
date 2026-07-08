@@ -263,8 +263,14 @@ func TestDaemonStatusControllerKeepsDedicatedControllerStatusFields(t *testing.T
 				Phase:    "Running",
 				Health:   daemonapi.HealthOK,
 				Observed: map[string]string{
-					"listeners": "2",
-					"zones":     "3",
+					"listeners":            "2",
+					"zones":                "3",
+					"queryLogEnabled":      "true",
+					"queryLogRecords":      "123",
+					"queryLogRecordErrors": "1",
+					"queryLogDBBytes":      "4096",
+					"queryLogWALBytes":     "8192",
+					"queryLogLastRecordAt": "2026-07-08T01:02:03Z",
 				},
 			},
 			{
@@ -392,7 +398,9 @@ func TestDaemonStatusControllerKeepsDedicatedControllerStatusFields(t *testing.T
 		t.Fatalf("DNSResolver controller fields were not preserved: %#v", dns)
 	}
 	dnsObserved, ok := dns["observed"].(map[string]any)
-	if !ok || dnsObserved["phase"] != "Running" || dnsObserved["health"] != daemonapi.HealthOK || dnsObserved["listeners"] != 2 || dnsObserved["zones"] != 3 {
+	if !ok || dnsObserved["phase"] != "Running" || dnsObserved["health"] != daemonapi.HealthOK || dnsObserved["listeners"] != 2 || dnsObserved["zones"] != 3 ||
+		dnsObserved["queryLogRecords"] != int64(123) || dnsObserved["queryLogRecordErrors"] != int64(1) ||
+		dnsObserved["queryLogDBBytes"] != int64(4096) || dnsObserved["queryLogWALBytes"] != int64(8192) {
 		t.Fatalf("DNSResolver normalized observed = %#v", dns["observed"])
 	}
 

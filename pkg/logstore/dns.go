@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -67,7 +68,22 @@ type DNSQueryAggregate struct {
 }
 
 type DNSQueryLog struct {
-	db *sql.DB
+	db   *sql.DB
+	path string
+
+	statsMu        sync.RWMutex
+	recordCount    uint64
+	recordErrors   uint64
+	lastRecordTime time.Time
+}
+
+type DNSQueryLogStats struct {
+	Path           string    `json:"path" yaml:"path"`
+	Records        uint64    `json:"records" yaml:"records"`
+	RecordErrors   uint64    `json:"recordErrors" yaml:"recordErrors"`
+	LastRecordTime time.Time `json:"lastRecordTime,omitempty" yaml:"lastRecordTime,omitempty"`
+	DBBytes        int64     `json:"dbBytes" yaml:"dbBytes"`
+	WALBytes       int64     `json:"walBytes" yaml:"walBytes"`
 }
 
 func OpenDNSQueryLog(path string) (*DNSQueryLog, error) {
@@ -89,7 +105,7 @@ PRAGMA journal_size_limit = 33554432;
 		_ = db.Close()
 		return nil, err
 	}
-	log := &DNSQueryLog{db: db}
+	log := &DNSQueryLog{db: db, path: path}
 	if err := log.Init(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -102,7 +118,7 @@ func OpenDNSQueryLogReadOnly(path string) (*DNSQueryLog, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &DNSQueryLog{db: db}, nil
+	return &DNSQueryLog{db: db, path: path}, nil
 }
 
 func (l *DNSQueryLog) Init(ctx context.Context) error {
@@ -152,7 +168,41 @@ VALUES(?,?,?,?,?,?,?,?,?)`,
 		boolInt(q.CacheHit),
 		q.Duration.Microseconds(),
 	)
+	l.recordStats(err, q.Timestamp)
 	return err
+}
+
+func (l *DNSQueryLog) Stats() DNSQueryLogStats {
+	if l == nil {
+		return DNSQueryLogStats{}
+	}
+	l.statsMu.RLock()
+	stats := DNSQueryLogStats{
+		Path:           l.path,
+		Records:        l.recordCount,
+		RecordErrors:   l.recordErrors,
+		LastRecordTime: l.lastRecordTime,
+	}
+	l.statsMu.RUnlock()
+	if l.path != "" {
+		stats.DBBytes = fileSize(l.path)
+		stats.WALBytes = fileSize(l.path + "-wal")
+	}
+	return stats
+}
+
+func (l *DNSQueryLog) recordStats(err error, ts time.Time) {
+	if l == nil {
+		return
+	}
+	l.statsMu.Lock()
+	defer l.statsMu.Unlock()
+	if err != nil {
+		l.recordErrors++
+		return
+	}
+	l.recordCount++
+	l.lastRecordTime = ts.UTC()
 }
 
 func (l *DNSQueryLog) buildDNSQuery(filter DNSQueryFilter) (string, []any) {
@@ -385,4 +435,12 @@ func boolInt(v bool) int {
 		return 1
 	}
 	return 0
+}
+
+func fileSize(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
 }
