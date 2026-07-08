@@ -80,6 +80,11 @@ func buildDynamicRouteSAMView(startup *api.Router, store any, now time.Time, tar
 			effective = merged
 		}
 	}
+	resolved, err := resolveWireGuardSAMResources(&effective)
+	if err != nil {
+		return dynamicRouteSAMView{}, err
+	}
+	effective = *resolved
 
 	effective = appendBGPMobilityProviderSecondaryClaims(effective, store)
 	effective = appendBGPMobilityProxyARPClaims(effective, store)

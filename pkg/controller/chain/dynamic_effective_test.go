@@ -58,6 +58,59 @@ func TestDynamicRouteSAMViewIncludesDynamicRemoteAddressClaim(t *testing.T) {
 	}
 }
 
+func TestDynamicRouteSAMViewPreservesWireGuardSAMSelfAddress(t *testing.T) {
+	startup := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "router-a"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
+				Metadata: api.ObjectMeta{Name: "wg-sam"},
+				Spec: api.WireGuardInterfaceSpec{
+					SelfNodeRef: "router-a",
+					PrivateKey:  "priv",
+					PeersFrom:   []api.WireGuardPeersSourceSpec{{Resource: "SAMNodeSet/fabric"}},
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMNodeSet"},
+				Metadata: api.ObjectMeta{Name: "fabric"},
+				Spec: api.SAMNodeSetSpec{Nodes: []api.SAMNodeSpec{
+					{
+						NodeRef:     "router-a",
+						SAMEndpoint: "10.99.70.1",
+						WireGuard:   api.SAMNodeWireGuardSpec{PublicKey: "selfpub", AllowedIPs: []string{"10.99.70.1/32"}},
+					},
+					{
+						NodeRef:     "router-b",
+						SAMEndpoint: "10.99.70.2",
+						WireGuard: api.SAMNodeWireGuardSpec{
+							PublicKey:  "peerpub-b",
+							Endpoint:   "198.51.100.2:51820",
+							AllowedIPs: []string{"10.99.70.2/32"},
+						},
+					},
+				}},
+			},
+		}},
+	}
+	store := &dynamicRouteSAMStore{objects: map[string]map[string]any{}}
+	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView: %v", err)
+	}
+	self := resourceByName(t, view.RouteRouter, api.NetAPIVersion, "IPv4StaticAddress", "wg-sam-addr-wg-sam")
+	selfSpec, err := self.IPv4StaticAddressSpec()
+	if err != nil {
+		t.Fatalf("IPv4StaticAddress spec: %v", err)
+	}
+	if selfSpec.Interface != "wg-sam" || selfSpec.Address != "10.99.70.1/32" {
+		t.Fatalf("self address spec = %#v, want wg-sam 10.99.70.1/32", selfSpec)
+	}
+	resourceByName(t, view.RouteRouter, api.NetAPIVersion, "IPv4Route", "wg-sam-endpoint-router-b")
+	resourceByName(t, view.RouteRouter, api.NetAPIVersion, "WireGuardPeer", "router-b")
+}
+
 func TestDynamicControllerRouterIncludesDynamicTunnelAndBGPPeer(t *testing.T) {
 	now := time.Now().UTC()
 	startup := startupHybridContextRouter()

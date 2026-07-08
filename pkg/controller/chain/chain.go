@@ -1955,6 +1955,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			current := ipv4Static
 			current.Router = view.RouteRouter
+			current.DeclaredRouter = view.RouteRouter
 			current.Store = store.withRouter(view.RouteRouter)
 			return didWorkError(current.Reconcile(ctx))
 		}},
