@@ -1505,6 +1505,66 @@ func TestReconcileDoesNotRefreshUnchangedImportPolicy(t *testing.T) {
 	}
 }
 
+func TestReconcileReportsReconvergingDuringGracefulRestartWindow(t *testing.T) {
+	router := bgpRouterWithImportPrefixes("10.250.0.0/24")
+	peerResource := router.Spec.Resources[1]
+	peerSpec := peerResource.Spec.(api.BGPPeerSpec)
+	peerSpec.Peers = []string{"192.168.1.38", "192.168.1.53"}
+	peerResource.Spec = peerSpec
+	router.Spec.Resources[1] = peerResource
+
+	server := &fakeServer{}
+	controller := Controller{
+		Router: router,
+		Store:  mapStore{},
+		Server: server,
+		FIB:    &fakeFIB{},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	server.peers["192.168.1.53"].State.SessionState = gobgpapi.PeerState_IDLE
+
+	controller.startedAt = time.Time{}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile during graceful restart window: %v", err)
+	}
+	routerStatus := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
+	if routerStatus["phase"] != "Reconverging" || routerStatus["reason"] != "GoBGPReconverging" {
+		t.Fatalf("router status = %#v, want reconverging", routerStatus)
+	}
+	peerStatus := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPPeer", "k8s")
+	if peerStatus["phase"] != "Reconverging" || peerStatus["pendingReason"] != "GoBGPReconverging" {
+		t.Fatalf("peer status = %#v, want reconverging", peerStatus)
+	}
+	if peerStatus["reconvergingUntil"] == "" || peerStatus["reconvergingSince"] == "" {
+		t.Fatalf("peer status missing reconverging timestamps: %#v", peerStatus)
+	}
+
+	oldErrorAt := time.Now().Add(-7 * time.Minute).UTC().Format(time.RFC3339Nano)
+	if err := controller.Store.SaveObjectStatus(api.NetAPIVersion, "BGPPeer", "k8s", map[string]any{
+		"phase": "Reconverging",
+		"peers": []bgpstate.Peer{{
+			Address:           "192.168.1.53",
+			ASN:               64513,
+			State:             gobgpapi.PeerState_IDLE.String(),
+			Established:       false,
+			LastEstablishedAt: statusString(peerStatus["reconvergingSince"]),
+			LastErrorAt:       oldErrorAt,
+			LastErrorReason:   gobgpapi.PeerState_IDLE.String(),
+		}},
+	}); err != nil {
+		t.Fatalf("seed old peer error status: %v", err)
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile after graceful restart window: %v", err)
+	}
+	peerStatus = controller.Store.ObjectStatus(api.NetAPIVersion, "BGPPeer", "k8s")
+	if peerStatus["phase"] != "Degraded" {
+		t.Fatalf("peer status = %#v, want degraded after grace window", peerStatus)
+	}
+}
+
 func TestReconcileAdoptsRestoredPoliciesAfterControllerRestart(t *testing.T) {
 	router := bgpRouterWithImportPrefixes("10.250.0.0/24")
 	peerResource := router.Spec.Resources[1]

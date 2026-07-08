@@ -1228,6 +1228,12 @@ func TestOverallStatusPhaseUsesResourceStatuses(t *testing.T) {
 	if got := overallStatusPhase("Healthy", store); got != "Pending" {
 		t.Fatalf("phase = %q, want Pending", got)
 	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "lan", map[string]any{"phase": "Reconverging", "reason": "GoBGPReconverging"}); err != nil {
+		t.Fatalf("save reconverging status: %v", err)
+	}
+	if got := overallStatusPhase("Healthy", store); got != "Pending" {
+		t.Fatalf("phase = %q, want Pending for reconverging", got)
+	}
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPPeer", "worker", map[string]any{"phase": "Error"}); err != nil {
 		t.Fatalf("save error status: %v", err)
 	}

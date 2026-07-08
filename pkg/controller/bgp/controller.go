@@ -109,6 +109,7 @@ type Controller struct {
 
 	mu                   sync.Mutex
 	started              bool
+	startedAt            time.Time
 	globalKey            string
 	desiredPeerKeys      map[string]desiredPeer
 	appliedPeerKeys      map[string]desiredPeer
@@ -329,6 +330,7 @@ func (c *Controller) stopServerLocked() {
 		c.Server = nil
 	}
 	c.started = false
+	c.startedAt = time.Time{}
 	c.globalKey = ""
 	c.desiredPeerKeys = nil
 	c.appliedPeerKeys = nil
@@ -541,6 +543,7 @@ func (c *Controller) ensureServer(ctx context.Context, spec routerapi.BGPRouterS
 		return err
 	}
 	c.started = true
+	c.startedAt = time.Now().UTC()
 	c.globalKey = key
 	c.desiredPeerKeys = nil
 	c.pathUUIDs = map[string][]byte{}
@@ -2178,10 +2181,12 @@ func routerHasBGPDynamicPeer(router *routerapi.Router) bool {
 }
 
 func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPRouterSpec, state bgpstate.State, routes []FIBRoute, changed bool, fibResult FIBSyncResult, livenessMarkers map[string]string) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	observedAt := time.Now().UTC()
+	now := observedAt.Format(time.RFC3339Nano)
 	peersByResource := c.peersByResource(state)
 	fibRoutes := fibInstalledCount(fibResult)
 	fibUnsupported := fibUnsupportedCount(fibResult)
+	reconverging := c.bgpReconvergingStatus(observedAt, spec, state.Peers)
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.APIVersion != routerapi.NetAPIVersion {
 			continue
@@ -2202,6 +2207,9 @@ func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPR
 			}
 			if fibUnsupported > 0 && phase == "Established" {
 				phase = "Degraded"
+			}
+			if phase != "Established" && len(state.Peers) > 0 && fibUnsupported == 0 && reconverging.Active {
+				phase = "Reconverging"
 			}
 			status := map[string]any{
 				"phase":                phase,
@@ -2240,6 +2248,8 @@ func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPR
 					"reason":  "GoBGPFIBPartial",
 					"message": fmt.Sprintf("%d imported BGP prefix(es) could not be installed into the kernel FIB", fibUnsupported),
 				})
+			} else if phase == "Reconverging" {
+				applyBGPReconvergingStatus(status, reconverging)
 			}
 			if err := c.Store.SaveObjectStatus(routerapi.NetAPIVersion, "BGPRouter", resource.Metadata.Name, status); err != nil {
 				return err
@@ -2255,6 +2265,9 @@ func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPR
 			} else if len(peers) > 0 {
 				phase = "Down"
 			}
+			if phase != "Established" && len(peers) > 0 && reconverging.Active {
+				phase = "Reconverging"
+			}
 			status := map[string]any{
 				"phase":            phase,
 				"backend":          "gobgp",
@@ -2267,6 +2280,9 @@ func (c *Controller) saveObservedStatuses(routerName string, spec routerapi.BGPR
 				"peers":            peers,
 				"establishedPeers": established,
 				"observedAt":       now,
+			}
+			if phase == "Reconverging" {
+				applyBGPReconvergingStatus(status, reconverging)
 			}
 			if err := c.Store.SaveObjectStatus(routerapi.NetAPIVersion, "BGPPeer", resource.Metadata.Name, status); err != nil {
 				return err
@@ -2356,6 +2372,75 @@ func (c *Controller) bfdResetRuntimeStatus() map[string]any {
 		status["bfdResetLastError"] = lastError
 	}
 	return status
+}
+
+type bgpReconvergingStatus struct {
+	Active    bool
+	StartedAt time.Time
+	Until     time.Time
+}
+
+func (c *Controller) bgpReconvergingStatus(now time.Time, spec routerapi.BGPRouterSpec, peers []bgpstate.Peer) bgpReconvergingStatus {
+	gr := gobgpGracefulRestart(spec)
+	if gr == nil {
+		return bgpReconvergingStatus{}
+	}
+	window := time.Duration(gr.GetStaleRoutesTime()) * time.Second
+	if window <= 0 {
+		return bgpReconvergingStatus{}
+	}
+	if c != nil && !c.startedAt.IsZero() {
+		startedAt := c.startedAt.UTC()
+		until := startedAt.Add(window)
+		if now.Before(until) {
+			return bgpReconvergingStatus{
+				Active:    true,
+				StartedAt: startedAt,
+				Until:     until,
+			}
+		}
+	}
+	for _, peer := range peers {
+		if peer.Established || strings.TrimSpace(peer.LastErrorAt) == "" {
+			continue
+		}
+		errorAt, err := time.Parse(time.RFC3339Nano, peer.LastErrorAt)
+		if err != nil {
+			continue
+		}
+		errorAt = errorAt.UTC()
+		until := errorAt.Add(window)
+		if now.Before(until) {
+			return bgpReconvergingStatus{
+				Active:    true,
+				StartedAt: errorAt,
+				Until:     until,
+			}
+		}
+	}
+	return bgpReconvergingStatus{}
+}
+
+func applyBGPReconvergingStatus(status map[string]any, reconverging bgpReconvergingStatus) {
+	if status == nil || !reconverging.Active {
+		return
+	}
+	status["reason"] = "GoBGPReconverging"
+	status["pendingReason"] = "GoBGPReconverging"
+	status["message"] = "routerd-bgp restarted recently; BGP peers are still within the graceful-restart reconvergence window"
+	status["reconvergingSince"] = reconverging.StartedAt.Format(time.RFC3339Nano)
+	status["reconvergingUntil"] = reconverging.Until.Format(time.RFC3339Nano)
+	condition := map[string]any{
+		"type":    "Reconverging",
+		"status":  "True",
+		"reason":  "GoBGPReconverging",
+		"message": "routerd-bgp restarted recently; wait for peers to re-establish before treating reduced ECMP width as a persistent fault",
+	}
+	if existing, ok := status["conditions"].([]map[string]any); ok {
+		status["conditions"] = append(existing, condition)
+	} else {
+		status["conditions"] = []map[string]any{condition}
+	}
 }
 
 func mergeAnyMap(dst, src map[string]any) {
