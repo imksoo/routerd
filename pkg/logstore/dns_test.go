@@ -40,6 +40,14 @@ func TestOpenDNSQueryLogConfiguresWALCheckpoint(t *testing.T) {
 		t.Fatalf("wal_autocheckpoint = %d, want %d", autoCheckpoint, dnsQueryWALAutoCheckpointPages)
 	}
 
+	var synchronous int
+	if err := log.db.QueryRow(`PRAGMA synchronous`).Scan(&synchronous); err != nil {
+		t.Fatal(err)
+	}
+	if synchronous != 1 {
+		t.Fatalf("synchronous = %d, want NORMAL", synchronous)
+	}
+
 	var journalSizeLimit int64
 	if err := log.db.QueryRow(`PRAGMA journal_size_limit`).Scan(&journalSizeLimit); err != nil {
 		t.Fatal(err)
