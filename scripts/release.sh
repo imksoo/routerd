@@ -18,11 +18,11 @@ Options:
 
 Environment:
   ROUTERD_RELEASE_DATE  Same as --date.
-  ROUTERD_RELEASE_TZ    Same as --timezone. Default: Asia/Tokyo.
+  ROUTERD_RELEASE_TZ    Same as --timezone. Default: UTC.
 EOF
 }
 
-timezone=${ROUTERD_RELEASE_TZ:-Asia/Tokyo}
+timezone=${ROUTERD_RELEASE_TZ:-UTC}
 release_date=${ROUTERD_RELEASE_DATE:-}
 skip_checks=0
 no_push=0

@@ -12,6 +12,28 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Changed
+
+- Release tags now use UTC by default when `scripts/release.sh` computes the
+  `vYYYYMMDD.HHmm` timestamp, and the release process documentation now states
+  UTC as the standard tag clock.
+- CloudEdge qualification evidence collection now has a success-minimal mode
+  that keeps failure diagnostics intact while skipping expensive success-only
+  provider and convergence snapshots.
+- CloudEdge E2E runs now pass Terraform provider profiles into provider
+  inventory collection, retry transient preflight SSH probes, and report the
+  provisioning, dataplane convergence, provider convergence, and teardown
+  phases separately.
+- Runtime churn and write pressure were reduced across status persistence,
+  flow/DNS SQLite logging, nftables steady-state checks, and BGP reconvergence
+  visibility.
+
+### Fixed
+
+- CloudEdge SAM convergence now avoids the route and ownership drift observed
+  during the full topology qualification run, including restored policy-route
+  nftables tables.
+
 ## v20260707.2301
 
 ### Changed

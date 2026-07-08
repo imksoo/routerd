@@ -8,7 +8,7 @@ title: Release process
 
 routerd 采用以日期为基础的版本号。
 可执行文件版本号、发布标签与发布归档名称均使用 `vYYYYMMDD.HHmm` 格式。
-日期与时间默认以 `Asia/Tokyo` 为基准计算。
+日期与时间默认以 `UTC` 为基准计算。
 
 ## 自动发布
 
@@ -18,9 +18,9 @@ routerd 采用以日期为基础的版本号。
 make release
 ```
 
-辅助程序会使用 `Asia/Tokyo` 的当前日期与起始时间，更新可执行文件的版本号字符串，将当前 `Unreleased` 的 changelog 条目升格至新的发布标签，并保留一个新的空 `Unreleased` 标题。然后重新生成（render）仓库管理的 schema，提交变更，创建标签，并同时将 `main` 与标签推送至远端。
+辅助程序会使用 `UTC` 的当前日期与起始时间，更新可执行文件的版本号字符串，将当前 `Unreleased` 的 changelog 条目升格至新的发布标签，并保留一个新的空 `Unreleased` 标题。然后重新生成（render）仓库管理的 schema，提交变更，创建标签，并同时将 `main` 与标签推送至远端。
 
-例如，在 JST 15:30 开始的发布会使用 `.1530` 后缀。
+例如，在 UTC 15:30 开始的发布会使用 `.1530` 后缀。
 
 常用选项如下：
 

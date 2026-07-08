@@ -11,6 +11,23 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 變更
+
+- `scripts/release.sh` 計算 `vYYYYMMDD.HHmm` 時間戳時，發布標籤現在預設使用
+  UTC；發布流程文件也明確 UTC 是標準的 tag clock。
+- CloudEdge qualification evidence collection 新增 success-minimal mode：保留失敗時
+  的 diagnostics，但跳過僅在成功時收集的高成本 provider/convergence snapshot。
+- CloudEdge E2E 現在會把 Terraform provider profile 傳給 provider inventory
+  collection，重試暫時性的 preflight SSH probe 失敗，並分別報告 provisioning、
+  dataplane convergence、provider convergence 與 teardown 階段。
+- 在 status persistence、flow/DNS SQLite logging、nftables steady-state check
+  與 BGP reconvergence visibility 等路徑上降低了 runtime churn 與 write pressure。
+
+### 修正
+
+- CloudEdge SAM convergence 現在避免 full topology qualification run 中觀察到的
+  route 與 ownership drift，並恢復了 drift 的 policy-route nftables table。
+
 ## v20260707.2301
 
 ### 變更

@@ -11,6 +11,27 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 変更
+
+- `scripts/release.sh` が `vYYYYMMDD.HHmm` の timestamp を計算するとき、
+  release tag は既定で UTC を使うようになりました。release process の文書も、
+  標準の tag clock が UTC であることを明記しました。
+- CloudEdge qualification の evidence collection に success-minimal mode を
+  追加しました。失敗時の diagnostics は維持しつつ、成功時だけの高コストな
+  provider/convergence snapshot を省略できます。
+- CloudEdge E2E は Terraform provider profile を provider inventory collection
+  に渡し、preflight SSH probe の一時失敗を retry し、provisioning、dataplane
+  convergence、provider convergence、teardown の各 phase を分けて報告します。
+- status persistence、flow/DNS SQLite logging、nftables steady-state check、
+  BGP reconvergence visibility まわりで、runtime churn と write pressure を
+  低減しました。
+
+### 修正
+
+- full topology qualification run で観測された route と ownership の drift を避けるよう、
+  CloudEdge SAM convergence を修正しました。drift していた policy-route nftables
+  table も復元しています。
+
 ## v20260707.2301
 
 ### 変更

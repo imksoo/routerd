@@ -9,7 +9,7 @@ title: Release process
 routerd uses date-based release versions.
 The executable version, release tag, and release archive name use
 `vYYYYMMDD.HHmm` format.
-The date and time are calculated in `Asia/Tokyo` by default.
+The date and time are calculated in `UTC` by default.
 
 ## Automated release
 
@@ -19,13 +19,13 @@ Use the release helper from a clean working tree:
 make release
 ```
 
-The helper uses the current date and start time in `Asia/Tokyo`, updates the
+The helper uses the current date and start time in `UTC`, updates the
 executable version strings, promotes the current `Unreleased` changelog entries
 to the new release tag while leaving a fresh empty `Unreleased` heading,
 regenerates the checked-in schemas, commits the change, creates the tag, and
 pushes both `main` and the tag.
 
-For example, a release started at 15:30 JST uses the `.1530` suffix.
+For example, a release started at 15:30 UTC uses the `.1530` suffix.
 
 Useful options:
 
