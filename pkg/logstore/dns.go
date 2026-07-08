@@ -20,8 +20,8 @@ import (
 const DNSQueryFilterLimitMax = 10000
 
 const (
-	dnsQueryWALAutoCheckpointPages = 4096
-	dnsQueryJournalSizeLimitBytes  = 64 * 1024 * 1024
+	dnsQueryWALAutoCheckpointPages = 1000
+	dnsQueryJournalSizeLimitBytes  = 32 * 1024 * 1024
 )
 
 type DNSQuery struct {
@@ -82,8 +82,9 @@ func OpenDNSQueryLog(path string) (*DNSQueryLog, error) {
 	if _, err := db.Exec(`
 PRAGMA busy_timeout = 5000;
 PRAGMA journal_mode = WAL;
-PRAGMA wal_autocheckpoint = 4096;
-PRAGMA journal_size_limit = 67108864;
+PRAGMA synchronous = NORMAL;
+PRAGMA wal_autocheckpoint = 1000;
+PRAGMA journal_size_limit = 33554432;
 `); err != nil {
 		_ = db.Close()
 		return nil, err
