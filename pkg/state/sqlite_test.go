@@ -725,12 +725,20 @@ func TestSQLiteStoreSaveObjectStatusSkipsIdenticalStatusInSameGeneration(t *test
 	if got := objectResourceVersion(t, store, "net.routerd.net/v1alpha1", "Interface", "wan"); got != version {
 		t.Fatalf("resource_version after identical save = %d, want %d", got, version)
 	}
+	writes, skips := store.StatusWriteStats()
+	if writes != 1 || skips != 1 {
+		t.Fatalf("status write stats after identical save = writes:%d skips:%d, want 1/1", writes, skips)
+	}
 
 	if err := store.SaveObjectStatus("net.routerd.net/v1alpha1", "Interface", "wan", map[string]any{"phase": "Down", "ifname": "ens18"}); err != nil {
 		t.Fatalf("save changed object status: %v", err)
 	}
 	if got := objectResourceVersion(t, store, "net.routerd.net/v1alpha1", "Interface", "wan"); got != version+1 {
 		t.Fatalf("resource_version after changed save = %d, want %d", got, version+1)
+	}
+	writes, skips = store.StatusWriteStats()
+	if writes != 2 || skips != 1 {
+		t.Fatalf("status write stats after changed save = writes:%d skips:%d, want 2/1", writes, skips)
 	}
 }
 

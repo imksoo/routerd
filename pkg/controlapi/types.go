@@ -414,6 +414,8 @@ type RuntimeStats struct {
 	NumGC                    uint32    `json:"numGC" yaml:"numGC"`
 	GCPauseTotalNs           uint64    `json:"gcPauseTotalNs" yaml:"gcPauseTotalNs"`
 	LastGC                   time.Time `json:"lastGC,omitempty" yaml:"lastGC,omitempty"`
+	StateStatusWriteCount    uint64    `json:"stateStatusWriteCount,omitempty" yaml:"stateStatusWriteCount,omitempty"`
+	StateStatusSkipCount     uint64    `json:"stateStatusSkipCount,omitempty" yaml:"stateStatusSkipCount,omitempty"`
 	// OpenFDs is a sample-time approximate count of open file descriptors from
 	// /proc/self/fd (the transient directory-read fd is excluded). It is 0 when
 	// the count is unavailable (e.g. non-Linux, /proc not mounted). Treat it as
