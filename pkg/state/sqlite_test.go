@@ -702,3 +702,78 @@ func TestSQLiteStoreMergeObjectStatusPreservesExistingFields(t *testing.T) {
 		t.Fatalf("discoverySelfPrivateIPs = %#v", status["discoverySelfPrivateIPs"])
 	}
 }
+
+func TestSQLiteStoreSaveObjectStatusSkipsIdenticalStatusInSameGeneration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routerd.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("open sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.SaveObjectStatus("net.routerd.net/v1alpha1", "Interface", "wan", map[string]any{"phase": "Up", "ifname": "ens18"}); err != nil {
+		t.Fatalf("save object status: %v", err)
+	}
+	version := objectResourceVersion(t, store, "net.routerd.net/v1alpha1", "Interface", "wan")
+	if version != 1 {
+		t.Fatalf("initial resource_version = %d, want 1", version)
+	}
+
+	if err := store.SaveObjectStatus("net.routerd.net/v1alpha1", "Interface", "wan", map[string]any{"ifname": "ens18", "phase": "Up"}); err != nil {
+		t.Fatalf("save identical object status: %v", err)
+	}
+	if got := objectResourceVersion(t, store, "net.routerd.net/v1alpha1", "Interface", "wan"); got != version {
+		t.Fatalf("resource_version after identical save = %d, want %d", got, version)
+	}
+
+	if err := store.SaveObjectStatus("net.routerd.net/v1alpha1", "Interface", "wan", map[string]any{"phase": "Down", "ifname": "ens18"}); err != nil {
+		t.Fatalf("save changed object status: %v", err)
+	}
+	if got := objectResourceVersion(t, store, "net.routerd.net/v1alpha1", "Interface", "wan"); got != version+1 {
+		t.Fatalf("resource_version after changed save = %d, want %d", got, version+1)
+	}
+}
+
+func TestSQLiteStoreSaveObjectStatusKeepsObservedGenerationFresh(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routerd.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("open sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	first, err := store.BeginGeneration("first")
+	if err != nil {
+		t.Fatalf("begin first generation: %v", err)
+	}
+	if err := store.SaveObjectStatus("net.routerd.net/v1alpha1", "Interface", "wan", map[string]any{"phase": "Up"}); err != nil {
+		t.Fatalf("save first status: %v", err)
+	}
+	version := objectResourceVersion(t, store, "net.routerd.net/v1alpha1", "Interface", "wan")
+	if got := store.ObjectGeneration("net.routerd.net/v1alpha1", "Interface", "wan"); got != first {
+		t.Fatalf("first observed generation = %d, want %d", got, first)
+	}
+
+	second, err := store.BeginGeneration("second")
+	if err != nil {
+		t.Fatalf("begin second generation: %v", err)
+	}
+	if err := store.SaveObjectStatus("net.routerd.net/v1alpha1", "Interface", "wan", map[string]any{"phase": "Up"}); err != nil {
+		t.Fatalf("save identical status in new generation: %v", err)
+	}
+	if got := store.ObjectGeneration("net.routerd.net/v1alpha1", "Interface", "wan"); got != second {
+		t.Fatalf("second observed generation = %d, want %d", got, second)
+	}
+	if got := objectResourceVersion(t, store, "net.routerd.net/v1alpha1", "Interface", "wan"); got != version+1 {
+		t.Fatalf("resource_version after generation refresh = %d, want %d", got, version+1)
+	}
+}
+
+func objectResourceVersion(t *testing.T, store *SQLiteStore, apiVersion, kind, name string) int64 {
+	t.Helper()
+	var version int64
+	if err := store.db.QueryRow(`SELECT resource_version FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, apiVersion, kind, name).Scan(&version); err != nil {
+		t.Fatalf("resource version: %v", err)
+	}
+	return version
+}
