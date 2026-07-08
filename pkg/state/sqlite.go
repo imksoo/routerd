@@ -654,12 +654,43 @@ func (s *SQLiteStore) loadStatus(apiVersion, kind, name string) (objectStatus, i
 func (s *SQLiteStore) saveStatus(ref objectRef, status objectStatus) error {
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	data, _ := json.Marshal(status)
+	if same, err := s.objectStatusUnchanged(ref, data); err != nil {
+		return err
+	} else if same {
+		return nil
+	}
 	uid := ref.APIVersion + "/" + ref.Kind + "/" + ref.Name
 	_, err := s.db.Exec(`INSERT INTO objects(api_version,kind,name,uid,resource_version,observed_generation,status,created_at,modified_at)
 VALUES(?,?,?,?,1,?,?,?,?)
 ON CONFLICT(api_version,kind,name) DO UPDATE SET resource_version=resource_version+1,observed_generation=excluded.observed_generation,status=excluded.status,modified_at=excluded.modified_at`,
 		ref.APIVersion, ref.Kind, ref.Name, uid, nullGeneration(s.generation), string(data), now, now)
 	return err
+}
+
+func (s *SQLiteStore) objectStatusUnchanged(ref objectRef, next []byte) (bool, error) {
+	var raw string
+	var generation sql.NullInt64
+	err := s.db.QueryRow(`SELECT coalesce(status,'{}'), observed_generation FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, ref.APIVersion, ref.Kind, ref.Name).Scan(&raw, &generation)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	current := objectStatus{}
+	if strings.TrimSpace(raw) != "" {
+		if err := json.Unmarshal([]byte(raw), &current); err != nil {
+			return false, nil
+		}
+	}
+	currentData, _ := json.Marshal(current)
+	if string(currentData) != string(next) {
+		return false, nil
+	}
+	if s.generation == 0 {
+		return !generation.Valid, nil
+	}
+	return generation.Valid && generation.Int64 == s.generation, nil
 }
 
 func nullGeneration(generation int64) any {
