@@ -14,6 +14,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/nftstate"
 	"github.com/imksoo/routerd/pkg/render"
 )
 
@@ -87,7 +88,11 @@ func (c PathMTUController) Reconcile(ctx context.Context) error {
 func (c PathMTUController) applyTable(ctx context.Context, nft, path, family, table string, data []byte) (bool, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		if !c.DryRun {
+			if nftstate.RecentlyVerified(path, time.Now().UTC()) {
+				return false, nil
+			}
 			_ = exec.CommandContext(ctx, nft, "delete", "table", family, table).Run()
+			_ = nftstate.MarkVerified(path, time.Now().UTC())
 		}
 		return false, nil
 	}
@@ -101,15 +106,20 @@ func (c PathMTUController) applyTable(ctx context.Context, nft, path, family, ta
 	if c.DryRun {
 		return changed, nil
 	}
-	if out, err := exec.CommandContext(ctx, nft, "-c", "-f", path).CombinedOutput(); err != nil {
-		return changed, fmt.Errorf("%s -c -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
+	if !changed && nftstate.RecentlyVerified(path, time.Now().UTC()) {
+		return false, nil
 	}
 	missing := exec.CommandContext(ctx, nft, "list", "table", family, table).Run() != nil
 	if !changed && !missing {
+		_ = nftstate.MarkVerified(path, time.Now().UTC())
 		return false, nil
+	}
+	if out, err := exec.CommandContext(ctx, nft, "-c", "-f", path).CombinedOutput(); err != nil {
+		return changed, fmt.Errorf("%s -c -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
 	if out, err := exec.CommandContext(ctx, nft, "-f", path).CombinedOutput(); err != nil {
 		return changed, fmt.Errorf("%s -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
+	_ = nftstate.MarkVerified(path, time.Now().UTC())
 	return changed || missing, nil
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/nftstate"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resourcequery"
@@ -172,9 +173,13 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		return c.saveRuleStatuses(ctx, rules, path, changed, false)
 	}
 	nft := firstNonEmpty(c.NftCommand, "nft")
+	if !changed && nftstate.RecentlyVerified(path, time.Now().UTC()) {
+		return c.saveRuleStatuses(ctx, rules, path, false, false)
+	}
 	missing := (strings.Contains(string(data), "table ip routerd_nat") && !nftTableExists(ctx, nft, "ip", "routerd_nat")) ||
 		(strings.Contains(string(data), "table ip6 routerd_nat") && !nftTableExists(ctx, nft, "ip6", "routerd_nat"))
 	if !changed && !missing {
+		_ = nftstate.MarkVerified(path, time.Now().UTC())
 		return c.saveRuleStatuses(ctx, rules, path, false, false)
 	}
 	if err := checkNftablesRuleset(ctx, nft, path); err != nil {
@@ -185,6 +190,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("nft -f %s: %w: %s", path, err, strings.TrimSpace(string(out)))
 	}
+	_ = nftstate.MarkVerified(path, time.Now().UTC())
 	return c.saveRuleStatuses(ctx, rules, path, changed, missing)
 }
 

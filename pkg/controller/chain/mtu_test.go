@@ -103,7 +103,7 @@ func TestPathMTUControllerSkipsUnchangedLiveReload(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"ds-lite-a"}}},
 	}}}
-	controller := PathMTUController{Router: router, Store: mapStore{}, NftCommand: nftPath, Path: filepath.Join(dir, "mss.nft")}
+	controller := PathMTUController{Router: router, Store: mapStore{}, NftCommand: nftPath, Path: filepath.Join(dir, "mss.nft"), ForceFragmentPath: filepath.Join(dir, "forcefrag.nft")}
 	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -118,8 +118,8 @@ func TestPathMTUControllerSkipsUnchangedLiveReload(t *testing.T) {
 	if count := countLogLine(got, "-f "+controller.Path); count != 1 {
 		t.Fatalf("nft -f count = %d, want 1:\n%s", count, got)
 	}
-	if count := countLogLine(got, "-c -f "+controller.Path); count != 2 {
-		t.Fatalf("nft -c -f count = %d, want 2:\n%s", count, got)
+	if count := countLogLine(got, "-c -f "+controller.Path); count != 1 {
+		t.Fatalf("nft -c -f count = %d, want 1:\n%s", count, got)
 	}
 }
 
