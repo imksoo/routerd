@@ -2121,7 +2121,7 @@ func statusPhaseRank(phase, reason string) int {
 	switch strings.ToLower(strings.TrimSpace(phase)) {
 	case "error", "blocked", "failed", "unhealthy":
 		return 4
-	case "pending", "starting", "acquiring", "refreshing", "rebinding", "rendered":
+	case "pending", "starting", "acquiring", "refreshing", "rebinding", "rendered", "reconverging":
 		return 3
 	case "degraded", "down", "lost", "expired", "nohealthybackends":
 		return 2
@@ -2141,7 +2141,7 @@ func canonicalOverallPhase(phase, reason string) string {
 	switch strings.ToLower(strings.TrimSpace(phase)) {
 	case "error", "blocked", "failed", "unhealthy":
 		return "Error"
-	case "pending", "starting", "acquiring", "refreshing", "rebinding", "rendered":
+	case "pending", "starting", "acquiring", "refreshing", "rebinding", "rendered", "reconverging":
 		return "Pending"
 	case "degraded", "down", "lost", "expired", "nohealthybackends":
 		return "Degraded"
