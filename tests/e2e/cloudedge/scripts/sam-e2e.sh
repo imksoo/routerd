@@ -7,6 +7,7 @@ Usage:
   scripts/sam-e2e.sh --tofu-output tofu-output.json --artifact routerd.tar.gz --evidence-dir DIR [options]
 
 Options:
+  --tfvars FILE           Optional OpenTofu tfvars file; used for provider CLI profiles during inventory
   --ssh-key FILE          Fixed lab SSH key (default: ~/.ssh/routerd-cloudedge-lab-20260529)
   --configs-dir DIR       Use existing generated configs instead of generating into evidence/config-gen
   --skip-deploy           Do not install routerd/configs; useful for diagnostics-only reruns
@@ -29,6 +30,7 @@ USAGE
 tofu_output=
 artifact=
 evidence_dir=
+tfvars=
 ssh_key="${HOME}/.ssh/routerd-cloudedge-lab-20260529"
 configs_dir=
 skip_deploy=0
@@ -51,6 +53,7 @@ while [ "$#" -gt 0 ]; do
     --tofu-output) tofu_output="$2"; shift 2 ;;
     --artifact) artifact="$2"; shift 2 ;;
     --evidence-dir) evidence_dir="$2"; shift 2 ;;
+    --tfvars) tfvars="$2"; shift 2 ;;
     --ssh-key) ssh_key="$2"; shift 2 ;;
     --configs-dir) configs_dir="$2"; shift 2 ;;
     --skip-deploy) skip_deploy=1; shift ;;
@@ -74,6 +77,7 @@ done
 [ -n "$evidence_dir" ] || { echo "--evidence-dir is required" >&2; exit 2; }
 [ -f "$tofu_output" ] || { echo "tofu output not found: $tofu_output" >&2; exit 2; }
 [ -f "$artifact" ] || { echo "artifact not found: $artifact" >&2; exit 2; }
+[ -z "$tfvars" ] || [ -f "$tfvars" ] || { echo "tfvars not found: $tfvars" >&2; exit 2; }
 [ -f "$ssh_key" ] || { echo "ssh key not found: $ssh_key" >&2; exit 2; }
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }
 
@@ -95,6 +99,8 @@ mapfile -t clients < <(jq -r 'to_entries[] | select(.value.role == "client") | .
 mapfile -t pve_dataplane_nodes < <(jq -r 'to_entries[] | select(.value.site == "pve" and (.value.role == "leaf" or .value.role == "client")) | .key' "$nodes_json" | sort)
 pve_boot_source="$(jq -r '.pve.boot_source // "template"' "$fabric_json")"
 pve_capture_interface="${PVE_CAPTURE_INTERFACE:-$([ "$pve_boot_source" = "iso" ] && printf ens19 || printf eth1)}"
+aws_profile="${AWS_PROFILE:-}"
+oci_profile="${OCI_PROFILE:-}"
 
 [ "${#routers[@]}" -gt 0 ] || { echo "no router nodes found in $nodes_json" >&2; exit 2; }
 [ "${#leaf_routers[@]}" -gt 0 ] || { echo "no leaf router nodes found in $nodes_json" >&2; exit 2; }
@@ -102,6 +108,51 @@ pve_capture_interface="${PVE_CAPTURE_INTERFACE:-$([ "$pve_boot_source" = "iso" ]
 
 known_hosts="$evidence_dir/ssh/known_hosts"
 : >"$known_hosts"
+
+extract_tfvars_string() {
+  local key="$1"
+  [ -n "$tfvars" ] || return 0
+  awk -v key="$key" '
+    $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+      sub(/#.*/, "")
+      sub("^[^=]*=", "")
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "")
+      if ($0 ~ /^".*"$/) {
+        sub(/^"/, "")
+        sub(/"$/, "")
+      }
+      print
+      exit
+    }
+  ' "$tfvars"
+}
+
+if [ -n "$tfvars" ]; then
+  aws_profile="${aws_profile:-$(extract_tfvars_string aws_profile)}"
+  oci_profile="${oci_profile:-$(extract_tfvars_string oci_profile)}"
+fi
+
+{
+  echo "tfvars=${tfvars:-}"
+  echo "aws_profile=${aws_profile:-}"
+  echo "oci_profile=${oci_profile:-}"
+} >"$evidence_dir/provider/profiles.txt"
+
+aws_cli() {
+  if [ -n "$aws_profile" ]; then
+    AWS_PROFILE="$aws_profile" aws "$@"
+  else
+    aws "$@"
+  fi
+}
+
+oci_cli() {
+  if [ -n "$oci_profile" ]; then
+    OCI_PROFILE="$oci_profile" oci "$@"
+  else
+    oci "$@"
+  fi
+}
 
 node_field() {
   local node="$1" field="$2"
@@ -390,14 +441,14 @@ collect_provider_inventory() {
     else
     {
       echo "## aws caller identity"
-      if ! aws sts get-caller-identity; then
+      if ! aws_cli sts get-caller-identity; then
         echo "FAIL: aws CLI authentication failed; check AWS_PROFILE/credentials"
         status=1
       fi
       echo "## aws instances"
       mapfile -t ids < <(jq -r 'to_entries[] | select(.value.site == "aws") | .value.instance_id // empty' "$nodes_json" | sort -u)
       if [ "${#ids[@]}" -gt 0 ]; then
-        if ! aws ec2 describe-instances --region "$aws_region" --instance-ids "${ids[@]}"; then
+        if ! aws_cli ec2 describe-instances --region "$aws_region" --instance-ids "${ids[@]}"; then
           echo "FAIL: aws EC2 instance inventory failed"
           status=1
         fi
@@ -405,13 +456,13 @@ collect_provider_inventory() {
       echo "## aws network interfaces"
       mapfile -t ifaces < <(jq -r 'to_entries[] | select(.value.site == "aws") | .value.interface_id // empty' "$nodes_json" | sort -u)
       if [ "${#ifaces[@]}" -gt 0 ]; then
-        if ! aws ec2 describe-network-interfaces --region "$aws_region" --network-interface-ids "${ifaces[@]}"; then
+        if ! aws_cli ec2 describe-network-interfaces --region "$aws_region" --network-interface-ids "${ifaces[@]}"; then
           echo "FAIL: aws EC2 network-interface inventory failed"
           status=1
         fi
       fi
       echo "## aws route tables"
-      if ! aws ec2 describe-route-tables --region "$aws_region" --route-table-ids \
+      if ! aws_cli ec2 describe-route-tables --region "$aws_region" --route-table-ids \
         "$(jq -r '.aws.rr_route_table // empty' "$fabric_json")" \
         "$(jq -r '.aws.leaf_route_table_id // empty' "$fabric_json")"; then
         echo "FAIL: aws EC2 route-table inventory failed"
@@ -470,11 +521,11 @@ collect_provider_inventory() {
     else
     {
       echo "## oci compartment"
-      if ! oci iam compartment get --region "$oci_region" --compartment-id "$oci_compartment_id"; then
+      if ! oci_cli iam compartment get --region "$oci_region" --compartment-id "$oci_compartment_id"; then
         echo "FAIL: oci CLI authentication or compartment lookup failed"
         status=1
       fi
-      oci_compartment_name="$(oci iam compartment get --region "$oci_region" --compartment-id "$oci_compartment_id" --query 'data.name' --raw-output 2>/dev/null || true)"
+      oci_compartment_name="$(oci_cli iam compartment get --region "$oci_region" --compartment-id "$oci_compartment_id" --query 'data.name' --raw-output 2>/dev/null || true)"
       echo "oci_compartment_name=$oci_compartment_name"
       if [ "$oci_compartment_name" = "ManagedCompartmentForPaaS" ]; then
         echo "FAIL: OCI compartment must not be ManagedCompartmentForPaaS"
@@ -487,7 +538,7 @@ collect_provider_inventory() {
       while read -r node id; do
         [ -n "$id" ] || continue
         echo "### $node $id"
-        if ! oci compute instance get --region "$oci_region" --instance-id "$id"; then
+        if ! oci_cli compute instance get --region "$oci_region" --instance-id "$id"; then
           echo "FAIL: oci instance inventory failed for $node"
           status=1
         fi
@@ -496,14 +547,14 @@ collect_provider_inventory() {
       while read -r node iface; do
         [ -n "$iface" ] || continue
         echo "### $node $iface"
-        if ! oci network vnic get --region "$oci_region" --vnic-id "$iface"; then
+        if ! oci_cli network vnic get --region "$oci_region" --vnic-id "$iface"; then
           echo "FAIL: oci VNIC inventory failed for $node"
           status=1
         fi
       done < <(jq -r 'to_entries[] | select(.value.site == "oci") | [.key, (.value.interface_id // "")] | @tsv' "$nodes_json")
       echo "## oci route table"
       if [ -n "$oci_route_table_id" ]; then
-        if ! oci network route-table get --region "$oci_region" --rt-id "$oci_route_table_id"; then
+        if ! oci_cli network route-table get --region "$oci_region" --rt-id "$oci_route_table_id"; then
           echo "FAIL: oci route-table inventory failed"
           status=1
         fi
