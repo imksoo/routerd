@@ -53,6 +53,11 @@ type TrafficFlow struct {
 // Issue #36: raised from 1000 to 10000.
 const TrafficFlowFilterLimitMax = 10000
 
+const (
+	trafficFlowWALAutoCheckpointPages = 1000
+	trafficFlowJournalSizeLimitBytes  = 32 * 1024 * 1024
+)
+
 // TrafficFlowFilter selects rows from the traffic flow log.
 //
 // Issue #36: added Until / PeerSuffix / Protocol / Asymmetric.
@@ -96,7 +101,13 @@ func OpenTrafficFlowLog(path string) (*TrafficFlowLog, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(`PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL;`); err != nil {
+	if _, err := db.Exec(`
+PRAGMA busy_timeout = 5000;
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+PRAGMA wal_autocheckpoint = 1000;
+PRAGMA journal_size_limit = 33554432;
+`); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
