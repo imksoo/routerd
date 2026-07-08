@@ -791,17 +791,19 @@ func egressCandidateName(candidate api.EgressRoutePolicyCandidate) string {
 }
 
 func (c IPv4PolicyRouteController) applyNftTable(ctx context.Context, nft, path, family, table string, data []byte) error {
+	now := time.Now().UTC()
 	if len(data) == 0 {
 		if c.DryRun {
 			return nil
 		}
-		if nftstate.RecentlyVerified(path, time.Now().UTC()) {
+		exists := exec.CommandContext(ctx, nft, "list", "table", family, table).Run() == nil
+		if !exists && nftstate.RecentlyVerified(path, now) {
 			return nil
 		}
-		if exec.CommandContext(ctx, nft, "list", "table", family, table).Run() == nil {
+		if exists {
 			_ = exec.CommandContext(ctx, nft, "delete", "table", family, table).Run()
 		}
-		_ = nftstate.MarkVerified(path, time.Now().UTC())
+		_ = nftstate.MarkVerified(path, now)
 		return nil
 	}
 	if c.DryRun {
@@ -814,12 +816,9 @@ func (c IPv4PolicyRouteController) applyNftTable(ctx context.Context, nft, path,
 	if err != nil {
 		return err
 	}
-	if !changed && nftstate.RecentlyVerified(path, time.Now().UTC()) {
-		return nil
-	}
 	missing := exec.CommandContext(ctx, nft, "list", "table", family, table).Run() != nil
-	if !changed && !missing {
-		_ = nftstate.MarkVerified(path, time.Now().UTC())
+	if !changed && !missing && nftstate.RecentlyVerified(path, now) {
+		_ = nftstate.MarkVerified(path, now)
 		return nil
 	}
 	if out, err := exec.CommandContext(ctx, nft, "-c", "-f", path).CombinedOutput(); err != nil {

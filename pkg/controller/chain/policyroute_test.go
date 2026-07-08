@@ -15,6 +15,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/nftstate"
 	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resource"
 )
@@ -543,7 +544,7 @@ func TestIPv4PolicyRouteHealthCheckRequiresFreshStatus(t *testing.T) {
 	}
 }
 
-func TestIPv4PolicyRouteApplyNftTableSkipsUnchangedExistingTable(t *testing.T) {
+func TestIPv4PolicyRouteApplyNftTableReloadsUnchangedStaleTable(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "nft.log")
 	nftPath := filepath.Join(dir, "nft")
@@ -569,17 +570,124 @@ func TestIPv4PolicyRouteApplyNftTableSkipsUnchangedExistingTable(t *testing.T) {
 	got := string(logData)
 	for _, want := range []string{
 		"list table ip routerd_policy",
+		"-c -f " + tablePath,
+		"-f " + tablePath,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("nft command log missing %q:\n%s", want, got)
 		}
 	}
-	for _, unwanted := range []string{
+}
+
+func TestIPv4PolicyRouteApplyNftTableSkipsRecentlyVerifiedUnchangedTable(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "nft.log")
+	nftPath := filepath.Join(dir, "nft")
+	tablePath := filepath.Join(dir, "policy.nft")
+	data := []byte("table ip routerd_policy {}\n")
+	if err := os.WriteFile(tablePath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := nftstate.MarkVerified(tablePath, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\n" +
+		"echo \"$@\" >> " + testShellQuote(logPath) + "\n" +
+		"exit 0\n"
+	if err := os.WriteFile(nftPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	controller := IPv4PolicyRouteController{}
+	if err := controller.applyNftTable(context.Background(), nftPath, tablePath, "ip", "routerd_policy", data); err != nil {
+		t.Fatal(err)
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(logData)
+	if !strings.Contains(got, "list table ip routerd_policy") {
+		t.Fatalf("recently verified unchanged table should still check live table presence:\n%s", got)
+	}
+	for _, unexpected := range []string{
+		"-c -f " + tablePath,
+		"-f " + tablePath,
+		"delete table ip routerd_policy",
+	} {
+		if strings.Contains(got, unexpected) {
+			t.Fatalf("recently verified unchanged existing table should not mutate nft, found %q:\n%s", unexpected, got)
+		}
+	}
+}
+
+func TestIPv4PolicyRouteApplyNftTableReloadsMissingRecentlyVerifiedTable(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "nft.log")
+	nftPath := filepath.Join(dir, "nft")
+	tablePath := filepath.Join(dir, "policy.nft")
+	data := []byte("table ip routerd_policy {}\n")
+	if err := os.WriteFile(tablePath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := nftstate.MarkVerified(tablePath, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\n" +
+		"echo \"$@\" >> " + testShellQuote(logPath) + "\n" +
+		"if [ \"$1 $2 $3 $4\" = \"list table ip routerd_policy\" ]; then exit 1; fi\n" +
+		"exit 0\n"
+	if err := os.WriteFile(nftPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	controller := IPv4PolicyRouteController{}
+	if err := controller.applyNftTable(context.Background(), nftPath, tablePath, "ip", "routerd_policy", data); err != nil {
+		t.Fatal(err)
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(logData)
+	for _, want := range []string{
+		"list table ip routerd_policy",
 		"-c -f " + tablePath,
 		"-f " + tablePath,
 	} {
-		if strings.Contains(got, unwanted) {
-			t.Fatalf("unchanged existing table should not run %q:\n%s", unwanted, got)
+		if !strings.Contains(got, want) {
+			t.Fatalf("nft command log missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestIPv4PolicyRouteApplyNftTableDeletesExistingRecentlyVerifiedEmptyTable(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "nft.log")
+	nftPath := filepath.Join(dir, "nft")
+	tablePath := filepath.Join(dir, "policy.nft")
+	if err := nftstate.MarkVerified(tablePath, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\n" +
+		"echo \"$@\" >> " + testShellQuote(logPath) + "\n" +
+		"exit 0\n"
+	if err := os.WriteFile(nftPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	controller := IPv4PolicyRouteController{}
+	if err := controller.applyNftTable(context.Background(), nftPath, tablePath, "ip", "routerd_policy", nil); err != nil {
+		t.Fatal(err)
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(logData)
+	for _, want := range []string{
+		"list table ip routerd_policy",
+		"delete table ip routerd_policy",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nft command log missing %q:\n%s", want, got)
 		}
 	}
 }
