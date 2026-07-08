@@ -22,6 +22,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	resolvercfg "github.com/imksoo/routerd/pkg/dnsresolver"
+	"github.com/imksoo/routerd/pkg/logstore"
 )
 
 func TestSelftest(t *testing.T) {
@@ -228,6 +229,43 @@ func TestReloadHandlerStatusCodes(t *testing.T) {
 	d.reloadHandler(failResp, failReq)
 	if failResp.Code != http.StatusBadRequest {
 		t.Fatalf("failure status = %d body=%s", failResp.Code, failResp.Body.String())
+	}
+}
+
+func TestObservedStatusIncludesQueryLogStats(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "resolver.json")
+	config := testResolverConfig([]int{5053})
+	writeRuntimeConfig(t, configPath, config)
+	d := newTestDaemon(t, configPath, config, true)
+	queryLog, err := logstore.OpenDNSQueryLog(filepath.Join(t.TempDir(), "dns-queries.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer queryLog.Close()
+	d.queryLog = queryLog
+	now := time.Date(2026, 7, 8, 1, 2, 3, 0, time.UTC)
+	if err := queryLog.Record(context.Background(), logstore.DNSQuery{
+		Timestamp:     now,
+		ClientAddress: "192.0.2.10",
+		QuestionName:  "observed.example.",
+		QuestionType:  "A",
+		ResponseCode:  "NOERROR",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	observed := d.observedStatus()
+	if observed["queryLogEnabled"] != "true" {
+		t.Fatalf("queryLogEnabled = %q", observed["queryLogEnabled"])
+	}
+	if observed["queryLogRecords"] != "1" || observed["queryLogRecordErrors"] != "0" {
+		t.Fatalf("query log counts = %#v", observed)
+	}
+	if observed["queryLogDBBytes"] == "" || observed["queryLogWALBytes"] == "" {
+		t.Fatalf("query log sizes missing: %#v", observed)
+	}
+	if observed["queryLogLastRecordAt"] != now.Format(time.RFC3339Nano) {
+		t.Fatalf("queryLogLastRecordAt = %q", observed["queryLogLastRecordAt"])
 	}
 }
 

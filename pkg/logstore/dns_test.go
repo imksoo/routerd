@@ -200,3 +200,40 @@ func TestDNSQueryLogRecordAndList(t *testing.T) {
 		t.Fatalf("answers = %#v", got[0].Answers)
 	}
 }
+
+func TestDNSQueryLogStats(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dns-queries.db")
+	log, err := OpenDNSQueryLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+
+	now := time.Date(2026, 7, 8, 1, 2, 3, 0, time.UTC)
+	if err := log.Record(context.Background(), DNSQuery{
+		Timestamp:     now,
+		ClientAddress: "192.0.2.10",
+		QuestionName:  "stats.example.",
+		QuestionType:  "A",
+		ResponseCode:  "NOERROR",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	stats := log.Stats()
+	if stats.Path != path {
+		t.Fatalf("path = %q, want %q", stats.Path, path)
+	}
+	if stats.Records != 1 || stats.RecordErrors != 0 {
+		t.Fatalf("stats counts = %#v", stats)
+	}
+	if !stats.LastRecordTime.Equal(now) {
+		t.Fatalf("last record time = %s, want %s", stats.LastRecordTime, now)
+	}
+	if stats.DBBytes <= 0 {
+		t.Fatalf("DBBytes = %d, want > 0", stats.DBBytes)
+	}
+	if stats.WALBytes < 0 {
+		t.Fatalf("WALBytes = %d, want >= 0", stats.WALBytes)
+	}
+}

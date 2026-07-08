@@ -3561,6 +3561,12 @@ func normalizedDaemonObservedValue(kind, key, value string) any {
 				return parsed
 			}
 		}
+	case "queryLogRecords", "queryLogRecordErrors", "queryLogDBBytes", "queryLogWALBytes":
+		if kind == "DNSResolver" {
+			if parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err == nil {
+				return parsed
+			}
+		}
 	}
 	return value
 }
