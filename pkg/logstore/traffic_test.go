@@ -12,6 +12,38 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func TestOpenTrafficFlowLogConfiguresWALCheckpoint(t *testing.T) {
+	log, err := OpenTrafficFlowLog(filepath.Join(t.TempDir(), "traffic-flows.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+
+	var autoCheckpoint int
+	if err := log.db.QueryRow(`PRAGMA wal_autocheckpoint`).Scan(&autoCheckpoint); err != nil {
+		t.Fatal(err)
+	}
+	if autoCheckpoint != trafficFlowWALAutoCheckpointPages {
+		t.Fatalf("wal_autocheckpoint = %d, want %d", autoCheckpoint, trafficFlowWALAutoCheckpointPages)
+	}
+
+	var synchronous int
+	if err := log.db.QueryRow(`PRAGMA synchronous`).Scan(&synchronous); err != nil {
+		t.Fatal(err)
+	}
+	if synchronous != 1 {
+		t.Fatalf("synchronous = %d, want NORMAL", synchronous)
+	}
+
+	var journalSizeLimit int64
+	if err := log.db.QueryRow(`PRAGMA journal_size_limit`).Scan(&journalSizeLimit); err != nil {
+		t.Fatal(err)
+	}
+	if journalSizeLimit != trafficFlowJournalSizeLimitBytes {
+		t.Fatalf("journal_size_limit = %d, want %d", journalSizeLimit, trafficFlowJournalSizeLimitBytes)
+	}
+}
+
 func TestTrafficFlowLogFiltersAndAggregate(t *testing.T) {
 	log, err := OpenTrafficFlowLog(filepath.Join(t.TempDir(), "traffic-flows.db"))
 	if err != nil {
