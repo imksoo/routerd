@@ -131,7 +131,7 @@ func expiredFlowKey(flow logstore.ExpiredFlowEntry) string {
 	return fmt.Sprintf("%s|%s|%s|%d|%s|%d", flow.L3Proto, flow.Protocol, flow.OrigSrc, flow.OrigSrcPort, flow.OrigDst, flow.OrigDstPort)
 }
 
-func runPflogDaemon(ctx context.Context, opts options, log *logstore.FirewallLog, telemetry *routerotel.Runtime) error {
+func runPflogDaemon(ctx context.Context, opts options, log *logstore.FirewallLog, recorder firewallEntryRecorder, telemetry *routerotel.Runtime) error {
 	fd, err := openBPF()
 	if err != nil {
 		return err
@@ -167,7 +167,7 @@ func runPflogDaemon(ctx context.Context, opts options, log *logstore.FirewallLog
 			if opts.dpiSocket != "" && len(payload) > 0 {
 				entry = enrichEntryWithDPI(ctx, opts, entry, payload)
 			}
-			if err := recordFirewallEntry(ctx, log, entry, telemetry, opts); err != nil {
+			if err := recordFirewallEntryWithRecorder(ctx, recorder, log, entry, telemetry, opts); err != nil {
 				return err
 			}
 		}

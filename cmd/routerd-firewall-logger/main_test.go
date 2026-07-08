@@ -90,6 +90,18 @@ func TestDaemonReadsKeyValueLines(t *testing.T) {
 	if err := run([]string{"daemon", "--path", path}, &bytes.Buffer{}, input); err != nil {
 		t.Fatal(err)
 	}
+	log, err := logstore.OpenFirewallLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	rows, err := log.List(context.Background(), logstore.FirewallLogFilter{Action: "drop", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].RuleName != "test" {
+		t.Fatalf("rows = %#v", rows)
+	}
 }
 
 func TestDaemonReadsPflogTCPDumpLines(t *testing.T) {

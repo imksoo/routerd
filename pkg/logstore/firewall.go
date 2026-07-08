@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -127,8 +128,13 @@ type ExpiredFlowFilter struct {
 }
 
 type FirewallLog struct {
-	db *sql.DB
+	db                    *sql.DB
+	mu                    sync.Mutex
+	lastExpiredFlowsPrune time.Time
+	lastDPIFlowsPrune     time.Time
 }
+
+const firewallFlowPruneInterval = 30 * time.Second
 
 func OpenFirewallLog(path string) (*FirewallLog, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -139,7 +145,13 @@ func OpenFirewallLog(path string) (*FirewallLog, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(`PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL;`); err != nil {
+	if _, err := db.Exec(`
+PRAGMA busy_timeout = 5000;
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+PRAGMA wal_autocheckpoint = 1000;
+PRAGMA journal_size_limit = 33554432;
+`); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -257,16 +269,39 @@ func (l *FirewallLog) Close() error {
 }
 
 func (l *FirewallLog) Record(ctx context.Context, entry FirewallLogEntry) error {
+	return l.RecordBatch(ctx, []FirewallLogEntry{entry})
+}
+
+func (l *FirewallLog) RecordBatch(ctx context.Context, entries []FirewallLogEntry) error {
 	if l == nil || l.db == nil {
 		return nil
 	}
-	if entry.Timestamp.IsZero() {
-		entry.Timestamp = time.Now().UTC()
+	if len(entries) == 0 {
+		return nil
 	}
-	_, err := l.db.ExecContext(ctx, `INSERT INTO firewall_logs(ts,zone_from,zone_to,rule_name,action,src_address,src_port,dst_address,dst_port,protocol,tcp_flags,l3_proto,in_iface,out_iface,packet_bytes,hint,dpi_app,dpi_category,dpi_tls_sni,dpi_http_host,dpi_dns_query,dpi_confidence,correlation,correlation_detail,expired_age_seconds,expired_bytes)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		entry.Timestamp.UnixNano(), entry.ZoneFrom, entry.ZoneTo, entry.RuleName, entry.Action, entry.SrcAddress, entry.SrcPort, entry.DstAddress, entry.DstPort, entry.Protocol, entry.TCPFlags, entry.L3Proto, entry.InIface, entry.OutIface, entry.PacketBytes, entry.Hint, entry.DPIApp, entry.DPICategory, entry.DPITLSSNI, entry.DPIHTTPHost, entry.DPIDNSQuery, entry.DPIConfidence, entry.Correlation, entry.CorrelationDetail, entry.ExpiredAgeSeconds, entry.ExpiredBytes)
-	return err
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO firewall_logs(ts,zone_from,zone_to,rule_name,action,src_address,src_port,dst_address,dst_port,protocol,tcp_flags,l3_proto,in_iface,out_iface,packet_bytes,hint,dpi_app,dpi_category,dpi_tls_sni,dpi_http_host,dpi_dns_query,dpi_confidence,correlation,correlation_detail,expired_age_seconds,expired_bytes)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	defer stmt.Close()
+	now := time.Now().UTC()
+	for _, entry := range entries {
+		if entry.Timestamp.IsZero() {
+			entry.Timestamp = now
+		}
+		if _, err := stmt.ExecContext(ctx,
+			entry.Timestamp.UnixNano(), entry.ZoneFrom, entry.ZoneTo, entry.RuleName, entry.Action, entry.SrcAddress, entry.SrcPort, entry.DstAddress, entry.DstPort, entry.Protocol, entry.TCPFlags, entry.L3Proto, entry.InIface, entry.OutIface, entry.PacketBytes, entry.Hint, entry.DPIApp, entry.DPICategory, entry.DPITLSSNI, entry.DPIHTTPHost, entry.DPIDNSQuery, entry.DPIConfidence, entry.Correlation, entry.CorrelationDetail, entry.ExpiredAgeSeconds, entry.ExpiredBytes); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (l *FirewallLog) List(ctx context.Context, filter FirewallLogFilter) ([]FirewallLogEntry, error) {
@@ -476,91 +511,107 @@ func (l *FirewallLog) ensureDPIFlowColumns(ctx context.Context) error {
 }
 
 func (l *FirewallLog) RecordExpiredFlow(ctx context.Context, flow ExpiredFlowEntry, ttl time.Duration, limit int) error {
+	return l.RecordExpiredFlows(ctx, []ExpiredFlowEntry{flow}, ttl, limit)
+}
+
+func (l *FirewallLog) RecordExpiredFlows(ctx context.Context, flows []ExpiredFlowEntry, ttl time.Duration, limit int) error {
 	if l == nil || l.db == nil {
 		return nil
 	}
-	if flow.Timestamp.IsZero() {
-		flow.Timestamp = time.Now().UTC()
-	}
-	flow.Protocol = strings.ToLower(strings.TrimSpace(flow.Protocol))
-	flow.L3Proto = strings.ToLower(strings.TrimSpace(flow.L3Proto))
-	if flow.Protocol == "" || flow.OrigSrc == "" || flow.OrigDst == "" {
+	if len(flows) == 0 {
 		return nil
 	}
-	if flow.ReplySrc == "" {
-		flow.ReplySrc = flow.OrigDst
-		flow.ReplySrcPort = flow.OrigDstPort
-	}
-	if flow.ReplyDst == "" {
-		flow.ReplyDst = flow.OrigSrc
-		flow.ReplyDstPort = flow.OrigSrcPort
-	}
-	if _, err := l.db.ExecContext(ctx, `INSERT INTO expired_flows(ts,l3_proto,protocol,orig_src,orig_src_port,orig_dst,orig_dst_port,reply_src,reply_src_port,reply_dst,reply_dst_port,packets,bytes,raw)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		flow.Timestamp.UnixNano(), flow.L3Proto, flow.Protocol, flow.OrigSrc, flow.OrigSrcPort, flow.OrigDst, flow.OrigDstPort, flow.ReplySrc, flow.ReplySrcPort, flow.ReplyDst, flow.ReplyDstPort, flow.Packets, flow.Bytes, flow.Raw); err != nil {
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
 		return err
 	}
-	return l.PruneExpiredFlows(ctx, time.Now().UTC(), ttl, limit)
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO expired_flows(ts,l3_proto,protocol,orig_src,orig_src_port,orig_dst,orig_dst_port,reply_src,reply_src_port,reply_dst,reply_dst_port,packets,bytes,raw)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	defer stmt.Close()
+	now := time.Now().UTC()
+	for _, flow := range flows {
+		if flow.Timestamp.IsZero() {
+			flow.Timestamp = now
+		}
+		flow.Protocol = strings.ToLower(strings.TrimSpace(flow.Protocol))
+		flow.L3Proto = strings.ToLower(strings.TrimSpace(flow.L3Proto))
+		if flow.Protocol == "" || flow.OrigSrc == "" || flow.OrigDst == "" {
+			continue
+		}
+		if flow.ReplySrc == "" {
+			flow.ReplySrc = flow.OrigDst
+			flow.ReplySrcPort = flow.OrigDstPort
+		}
+		if flow.ReplyDst == "" {
+			flow.ReplyDst = flow.OrigSrc
+			flow.ReplyDstPort = flow.OrigSrcPort
+		}
+		if _, err := stmt.ExecContext(ctx,
+			flow.Timestamp.UnixNano(), flow.L3Proto, flow.Protocol, flow.OrigSrc, flow.OrigSrcPort, flow.OrigDst, flow.OrigDstPort, flow.ReplySrc, flow.ReplySrcPort, flow.ReplyDst, flow.ReplyDstPort, flow.Packets, flow.Bytes, flow.Raw); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	if l.shouldPruneExpiredFlows(now) {
+		if err := pruneExpiredFlowsTx(ctx, tx, now, ttl, limit); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (l *FirewallLog) PruneExpiredFlows(ctx context.Context, now time.Time, ttl time.Duration, limit int) error {
 	if l == nil || l.db == nil {
 		return nil
 	}
+	return pruneExpiredFlowsExec(ctx, l.db, now, ttl, limit)
+}
+
+type sqlExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func pruneExpiredFlowsExec(ctx context.Context, execer sqlExecer, now time.Time, ttl time.Duration, limit int) error {
 	if ttl <= 0 {
 		ttl = time.Hour
 	}
 	if limit <= 0 {
 		limit = 100000
 	}
-	if _, err := l.db.ExecContext(ctx, `DELETE FROM expired_flows WHERE ts < ?`, now.Add(-ttl).UnixNano()); err != nil {
+	if _, err := execer.ExecContext(ctx, `DELETE FROM expired_flows WHERE ts < ?`, now.Add(-ttl).UnixNano()); err != nil {
 		return err
 	}
-	_, err := l.db.ExecContext(ctx, `DELETE FROM expired_flows WHERE id IN (
+	_, err := execer.ExecContext(ctx, `DELETE FROM expired_flows WHERE id IN (
 SELECT id FROM expired_flows ORDER BY ts DESC, id DESC LIMIT -1 OFFSET ?
 )`, limit)
 	return err
 }
 
+func pruneExpiredFlowsTx(ctx context.Context, tx *sql.Tx, now time.Time, ttl time.Duration, limit int) error {
+	return pruneExpiredFlowsExec(ctx, tx, now, ttl, limit)
+}
+
 func (l *FirewallLog) RecordDPIFlow(ctx context.Context, flow DPIFlowEntry, ttl time.Duration, limit int) error {
+	return l.RecordDPIFlows(ctx, []DPIFlowEntry{flow}, ttl, limit)
+}
+
+func (l *FirewallLog) RecordDPIFlows(ctx context.Context, flows []DPIFlowEntry, ttl time.Duration, limit int) error {
 	if l == nil || l.db == nil {
 		return nil
 	}
-	flow.Protocol = strings.ToLower(strings.TrimSpace(flow.Protocol))
-	flow.L3Proto = strings.ToLower(strings.TrimSpace(flow.L3Proto))
-	flow.Engine = strings.ToLower(strings.TrimSpace(flow.Engine))
-	flow.Source = strings.ToLower(strings.TrimSpace(flow.Source))
-	flow.DetectedProtocol = strings.ToLower(strings.TrimSpace(flow.DetectedProtocol))
-	flow.MasterProtocol = strings.ToLower(strings.TrimSpace(flow.MasterProtocol))
-	flow.ApplicationProtocol = strings.ToLower(strings.TrimSpace(flow.ApplicationProtocol))
-	flow.Category = strings.ToLower(strings.TrimSpace(flow.Category))
-	if flow.Protocol == "" || flow.SrcAddress == "" || flow.DstAddress == "" {
+	if len(flows) == 0 {
 		return nil
 	}
-	flow.AppName = strings.ToLower(strings.TrimSpace(flow.AppName))
-	flow.AppCategory = strings.ToLower(strings.TrimSpace(flow.AppCategory))
-	if flow.AppName == "" {
-		return nil
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
 	}
-	now := time.Now().UTC()
-	if flow.FirstSeen.IsZero() {
-		flow.FirstSeen = now
-	}
-	if flow.LastSeen.IsZero() {
-		flow.LastSeen = flow.FirstSeen
-	}
-	if flow.ClassifiedAt.IsZero() && flow.AppName != "unknown" {
-		flow.ClassifiedAt = flow.LastSeen
-	}
-	if flow.FlowID == "" {
-		flow.FlowID = FlowKey(flow.Protocol, flow.SrcAddress, flow.SrcPort, flow.DstAddress, flow.DstPort)
-	}
-	if flow.PacketCount <= 0 {
-		flow.PacketCount = 1
-	}
-	riskJSON := jsonString(flow.Risk)
-	metadataJSON := jsonString(flow.Metadata)
-	if _, err := l.db.ExecContext(ctx, `INSERT INTO dpi_flow(flow_id,ts_first,ts_last,l3_proto,protocol,src_address,src_port,dst_address,dst_port,app_name,app_category,app_confidence,detected_protocol,master_protocol,application_protocol,category,risk,confidence,metadata_json,engine,source,tls_sni,http_host,dns_query,classified_at,packet_count)
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO dpi_flow(flow_id,ts_first,ts_last,l3_proto,protocol,src_address,src_port,dst_address,dst_port,app_name,app_category,app_confidence,detected_protocol,master_protocol,application_protocol,category,risk,confidence,metadata_json,engine,source,tls_sni,http_host,dns_query,classified_at,packet_count)
 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(flow_id) DO UPDATE SET
   ts_last = excluded.ts_last,
@@ -581,30 +632,107 @@ ON CONFLICT(flow_id) DO UPDATE SET
   http_host = excluded.http_host,
   dns_query = excluded.dns_query,
   classified_at = excluded.classified_at,
-  packet_count = coalesce(dpi_flow.packet_count, 0) + excluded.packet_count`,
-		flow.FlowID, flow.FirstSeen.UnixNano(), flow.LastSeen.UnixNano(), flow.L3Proto, flow.Protocol, flow.SrcAddress, flow.SrcPort, flow.DstAddress, flow.DstPort, flow.AppName, flow.AppCategory, flow.AppConfidence, flow.DetectedProtocol, flow.MasterProtocol, flow.ApplicationProtocol, flow.Category, riskJSON, flow.Confidence, metadataJSON, flow.Engine, flow.Source, flow.TLSSNI, flow.HTTPHost, flow.DNSQuery, flow.ClassifiedAt.UnixNano(), flow.PacketCount); err != nil {
+  packet_count = coalesce(dpi_flow.packet_count, 0) + excluded.packet_count`)
+	if err != nil {
+		_ = tx.Rollback()
 		return err
 	}
-	return l.PruneDPIFlows(ctx, now, ttl, limit)
+	defer stmt.Close()
+	now := time.Now().UTC()
+	for _, flow := range flows {
+		flow.Protocol = strings.ToLower(strings.TrimSpace(flow.Protocol))
+		flow.L3Proto = strings.ToLower(strings.TrimSpace(flow.L3Proto))
+		flow.Engine = strings.ToLower(strings.TrimSpace(flow.Engine))
+		flow.Source = strings.ToLower(strings.TrimSpace(flow.Source))
+		flow.DetectedProtocol = strings.ToLower(strings.TrimSpace(flow.DetectedProtocol))
+		flow.MasterProtocol = strings.ToLower(strings.TrimSpace(flow.MasterProtocol))
+		flow.ApplicationProtocol = strings.ToLower(strings.TrimSpace(flow.ApplicationProtocol))
+		flow.Category = strings.ToLower(strings.TrimSpace(flow.Category))
+		if flow.Protocol == "" || flow.SrcAddress == "" || flow.DstAddress == "" {
+			continue
+		}
+		flow.AppName = strings.ToLower(strings.TrimSpace(flow.AppName))
+		flow.AppCategory = strings.ToLower(strings.TrimSpace(flow.AppCategory))
+		if flow.AppName == "" {
+			continue
+		}
+		if flow.FirstSeen.IsZero() {
+			flow.FirstSeen = now
+		}
+		if flow.LastSeen.IsZero() {
+			flow.LastSeen = flow.FirstSeen
+		}
+		if flow.ClassifiedAt.IsZero() && flow.AppName != "unknown" {
+			flow.ClassifiedAt = flow.LastSeen
+		}
+		if flow.FlowID == "" {
+			flow.FlowID = FlowKey(flow.Protocol, flow.SrcAddress, flow.SrcPort, flow.DstAddress, flow.DstPort)
+		}
+		if flow.PacketCount <= 0 {
+			flow.PacketCount = 1
+		}
+		riskJSON := jsonString(flow.Risk)
+		metadataJSON := jsonString(flow.Metadata)
+		if _, err := stmt.ExecContext(ctx,
+			flow.FlowID, flow.FirstSeen.UnixNano(), flow.LastSeen.UnixNano(), flow.L3Proto, flow.Protocol, flow.SrcAddress, flow.SrcPort, flow.DstAddress, flow.DstPort, flow.AppName, flow.AppCategory, flow.AppConfidence, flow.DetectedProtocol, flow.MasterProtocol, flow.ApplicationProtocol, flow.Category, riskJSON, flow.Confidence, metadataJSON, flow.Engine, flow.Source, flow.TLSSNI, flow.HTTPHost, flow.DNSQuery, flow.ClassifiedAt.UnixNano(), flow.PacketCount); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	if l.shouldPruneDPIFlows(now) {
+		if err := pruneDPIFlowsTx(ctx, tx, now, ttl, limit); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (l *FirewallLog) PruneDPIFlows(ctx context.Context, now time.Time, ttl time.Duration, limit int) error {
 	if l == nil || l.db == nil {
 		return nil
 	}
+	return pruneDPIFlowsExec(ctx, l.db, now, ttl, limit)
+}
+
+func pruneDPIFlowsExec(ctx context.Context, execer sqlExecer, now time.Time, ttl time.Duration, limit int) error {
 	if ttl <= 0 {
 		ttl = time.Hour
 	}
 	if limit <= 0 {
 		limit = 100000
 	}
-	if _, err := l.db.ExecContext(ctx, `DELETE FROM dpi_flow WHERE ts_last < ?`, now.Add(-ttl).UnixNano()); err != nil {
+	if _, err := execer.ExecContext(ctx, `DELETE FROM dpi_flow WHERE ts_last < ?`, now.Add(-ttl).UnixNano()); err != nil {
 		return err
 	}
-	_, err := l.db.ExecContext(ctx, `DELETE FROM dpi_flow WHERE flow_id IN (
+	_, err := execer.ExecContext(ctx, `DELETE FROM dpi_flow WHERE flow_id IN (
 SELECT flow_id FROM dpi_flow ORDER BY ts_last DESC LIMIT -1 OFFSET ?
 )`, limit)
 	return err
+}
+
+func pruneDPIFlowsTx(ctx context.Context, tx *sql.Tx, now time.Time, ttl time.Duration, limit int) error {
+	return pruneDPIFlowsExec(ctx, tx, now, ttl, limit)
+}
+
+func (l *FirewallLog) shouldPruneExpiredFlows(now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.lastExpiredFlowsPrune.IsZero() || now.Sub(l.lastExpiredFlowsPrune) >= firewallFlowPruneInterval {
+		l.lastExpiredFlowsPrune = now
+		return true
+	}
+	return false
+}
+
+func (l *FirewallLog) shouldPruneDPIFlows(now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.lastDPIFlowsPrune.IsZero() || now.Sub(l.lastDPIFlowsPrune) >= firewallFlowPruneInterval {
+		l.lastDPIFlowsPrune = now
+		return true
+	}
+	return false
 }
 
 func (l *FirewallLog) ListDPIFlows(ctx context.Context, filter DPIFlowFilter) ([]DPIFlowEntry, error) {

@@ -43,6 +43,66 @@ func TestFirewallLogRecordAndList(t *testing.T) {
 	}
 }
 
+func TestFirewallLogRecordBatch(t *testing.T) {
+	log, err := OpenFirewallLog(filepath.Join(t.TempDir(), "firewall-logs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	now := time.Now().UTC()
+	if err := log.RecordBatch(context.Background(), []FirewallLogEntry{
+		{
+			Timestamp:  now,
+			Action:     "drop",
+			SrcAddress: "172.18.0.10",
+			DstAddress: "198.51.100.1",
+			Protocol:   "tcp",
+			L3Proto:    "ipv4",
+			RuleName:   "deny-one",
+		},
+		{
+			Timestamp:  now.Add(time.Second),
+			Action:     "drop",
+			SrcAddress: "172.18.0.11",
+			DstAddress: "198.51.100.2",
+			Protocol:   "udp",
+			L3Proto:    "ipv4",
+			RuleName:   "deny-two",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := log.List(context.Background(), FirewallLogFilter{Action: "drop", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %#v", rows)
+	}
+}
+
+func TestFirewallLogOpenSetsWALPragmas(t *testing.T) {
+	log, err := OpenFirewallLog(filepath.Join(t.TempDir(), "firewall-logs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	var synchronous int
+	if err := log.db.QueryRowContext(context.Background(), `PRAGMA synchronous`).Scan(&synchronous); err != nil {
+		t.Fatal(err)
+	}
+	if synchronous != 1 {
+		t.Fatalf("synchronous = %d, want NORMAL(1)", synchronous)
+	}
+	var journalSizeLimit int64
+	if err := log.db.QueryRowContext(context.Background(), `PRAGMA journal_size_limit`).Scan(&journalSizeLimit); err != nil {
+		t.Fatal(err)
+	}
+	if journalSizeLimit != 33554432 {
+		t.Fatalf("journal_size_limit = %d", journalSizeLimit)
+	}
+}
+
 func TestFirewallLogRecordAndListDPIFields(t *testing.T) {
 	log, err := OpenFirewallLog(filepath.Join(t.TempDir(), "firewall-logs.db"))
 	if err != nil {
