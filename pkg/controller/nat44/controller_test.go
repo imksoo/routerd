@@ -414,8 +414,8 @@ func TestControllerSkipsUnchangedExistingNftablesTable(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(logData)
-	if !strings.Contains(got, "list table ip routerd_nat") {
-		t.Fatalf("nft command log missing table check:\n%s", got)
+	if strings.Contains(got, "list table ip routerd_nat") {
+		t.Fatalf("recently verified unchanged table should not be checked:\n%s", got)
 	}
 	if strings.Contains(got, "-f "+path) {
 		t.Fatalf("unchanged existing table should not be reapplied:\n%s", got)

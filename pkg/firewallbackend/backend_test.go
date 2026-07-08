@@ -101,9 +101,8 @@ func TestNftablesBackendSkipsUnchangedLiveReloadWhenTableExists(t *testing.T) {
 	if changed {
 		t.Fatal("unchanged live apply should not report changed")
 	}
-	want := []string{"nft list table inet routerd_filter"}
-	if !reflect.DeepEqual(calls, want) {
-		t.Fatalf("calls = %#v, want %#v", calls, want)
+	if len(calls) != 0 {
+		t.Fatalf("recently verified unchanged live apply should not call nft: %#v", calls)
 	}
 }
 

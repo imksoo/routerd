@@ -21,6 +21,7 @@ import (
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/egressroute"
 	"github.com/imksoo/routerd/pkg/healthcheck"
+	"github.com/imksoo/routerd/pkg/nftstate"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resource"
@@ -794,9 +795,13 @@ func (c IPv4PolicyRouteController) applyNftTable(ctx context.Context, nft, path,
 		if c.DryRun {
 			return nil
 		}
+		if nftstate.RecentlyVerified(path, time.Now().UTC()) {
+			return nil
+		}
 		if exec.CommandContext(ctx, nft, "list", "table", family, table).Run() == nil {
 			_ = exec.CommandContext(ctx, nft, "delete", "table", family, table).Run()
 		}
+		_ = nftstate.MarkVerified(path, time.Now().UTC())
 		return nil
 	}
 	if c.DryRun {
@@ -809,8 +814,12 @@ func (c IPv4PolicyRouteController) applyNftTable(ctx context.Context, nft, path,
 	if err != nil {
 		return err
 	}
+	if !changed && nftstate.RecentlyVerified(path, time.Now().UTC()) {
+		return nil
+	}
 	missing := exec.CommandContext(ctx, nft, "list", "table", family, table).Run() != nil
 	if !changed && !missing {
+		_ = nftstate.MarkVerified(path, time.Now().UTC())
 		return nil
 	}
 	if out, err := exec.CommandContext(ctx, nft, "-c", "-f", path).CombinedOutput(); err != nil {
@@ -819,6 +828,7 @@ func (c IPv4PolicyRouteController) applyNftTable(ctx context.Context, nft, path,
 	if out, err := exec.CommandContext(ctx, nft, "-f", path).CombinedOutput(); err != nil {
 		return fmt.Errorf("%s -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
+	_ = nftstate.MarkVerified(path, time.Now().UTC())
 	if (changed || missing) && c.Bus != nil {
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.ipv4.policy_route.applied", daemonapi.SeverityInfo)
 		event.Attributes = map[string]string{"table": table, "path": path}

@@ -10,8 +10,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/nftstate"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 )
@@ -74,12 +76,17 @@ func (b Nftables) Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool
 	if dryRun {
 		return changed, nil
 	}
+	if !changed && nftstate.RecentlyVerified(ruleset.Path, time.Now().UTC()) {
+		return false, nil
+	}
 	if !changed && b.rulesetTablesPresent(ctx, ruleset) {
+		_ = nftstate.MarkVerified(ruleset.Path, time.Now().UTC())
 		return false, nil
 	}
 	if err := b.Reload(ctx, ruleset); err != nil {
 		return false, err
 	}
+	_ = nftstate.MarkVerified(ruleset.Path, time.Now().UTC())
 	return changed, nil
 }
 
