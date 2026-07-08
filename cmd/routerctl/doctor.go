@@ -2918,10 +2918,105 @@ func (r doctorRunner) doctorFirewall() []doctorCheck {
 			checks = append(checks, check)
 		}
 		checks = append(checks, r.doctorStaleNftTablesCheck(ctx))
+		checks = append(checks, r.doctorFirewallLoggerRuntimeCheck(ctx))
 	} else {
 		checks = append(checks, doctorHostSkipped("firewall", "nft routerd_filter"))
+		checks = append(checks, doctorHostSkipped("firewall", "routerd-firewall-logger runtime"))
 	}
 	return checks
+}
+
+func (r doctorRunner) doctorFirewallLoggerRuntimeCheck(ctx context.Context) doctorCheck {
+	name := "routerd-firewall-logger runtime"
+	if doctorCurrentOS() != platform.OSLinux {
+		return doctorCheck{Area: "firewall", Name: name, Status: doctorSkip, Detail: "firewall logger process I/O check is Linux-only"}
+	}
+	command := runDiagnosticCommand(ctx, "systemctl show routerd-firewall-logger", "systemctl", "show", "routerd-firewall-logger.service", "--property=ActiveState", "--property=MainPID")
+	if !command.OK {
+		return doctorCheck{Area: "firewall", Name: name, Status: doctorSkip, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "routerd-firewall-logger.service unavailable")}
+	}
+	active, pid := parseSystemctlActiveStateMainPID(command.Stdout)
+	path := doctorFirewallLogPath(r.router)
+	dbBytes := doctorFileSize(path)
+	walBytes := doctorFileSize(path + "-wal")
+	detail := fmt.Sprintf("activeState=%s mainPID=%d dbBytes=%d walBytes=%d path=%s", firstNonEmpty(active, "unknown"), pid, dbBytes, walBytes, path)
+	if pid > 0 {
+		if writeBytes, ok := doctorProcWriteBytes(pid); ok {
+			detail = appendDoctorDetail(detail, fmt.Sprintf("writeBytes=%d", writeBytes))
+		} else {
+			detail = appendDoctorDetail(detail, "writeBytes=unavailable")
+		}
+	}
+	if active != "active" || pid <= 0 {
+		return doctorCheck{Area: "firewall", Name: name, Status: doctorWarn, Detail: detail, Remedy: "check routerd-firewall-logger.service and FirewallEventLog configuration"}
+	}
+	return doctorCheck{Area: "firewall", Name: name, Status: doctorPass, Detail: detail}
+}
+
+func doctorFirewallLogPath(router *api.Router) string {
+	defaults, _ := platform.Current()
+	fallback := defaults.FirewallLogFile()
+	if router == nil {
+		return fallback
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.FirewallAPIVersion || resource.Kind != "FirewallEventLog" {
+			continue
+		}
+		spec, err := resource.FirewallEventLogSpec()
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(spec.Path) != "" {
+			return strings.TrimSpace(spec.Path)
+		}
+	}
+	return fallback
+}
+
+func parseSystemctlActiveStateMainPID(output string) (string, int) {
+	var active string
+	var pid int
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(key) {
+		case "ActiveState":
+			active = strings.TrimSpace(value)
+		case "MainPID":
+			pid, _ = strconv.Atoi(strings.TrimSpace(value))
+		}
+	}
+	return active, pid
+}
+
+func doctorFileSize(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+func doctorProcWriteBytes(pid int) (uint64, bool) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/io", pid))
+	if err != nil {
+		return 0, false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if !ok || strings.TrimSpace(key) != "write_bytes" {
+			continue
+		}
+		parsed, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return parsed, true
+	}
+	return 0, false
 }
 
 func (r doctorRunner) doctorStaleNftTablesCheck(ctx context.Context) doctorCheck {

@@ -41,6 +41,34 @@ func TestDoctorDNSPassNoHost(t *testing.T) {
 	}
 }
 
+func TestDoctorFirewallLoggerRuntimeHelpers(t *testing.T) {
+	active, pid := parseSystemctlActiveStateMainPID("ActiveState=active\nMainPID=1234\n")
+	if active != "active" || pid != 1234 {
+		t.Fatalf("parsed active=%q pid=%d", active, pid)
+	}
+	active, pid = parseSystemctlActiveStateMainPID("MainPID=0\nActiveState=inactive\n")
+	if active != "inactive" || pid != 0 {
+		t.Fatalf("parsed inactive active=%q pid=%d", active, pid)
+	}
+
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallEventLog"},
+		Metadata: api.ObjectMeta{Name: "default"},
+		Spec:     api.FirewallEventLogSpec{Enabled: true, Path: "/var/lib/routerd/custom-firewall.db"},
+	}}}}
+	if got := doctorFirewallLogPath(router); got != "/var/lib/routerd/custom-firewall.db" {
+		t.Fatalf("firewall log path = %q", got)
+	}
+
+	path := filepath.Join(t.TempDir(), "firewall-logs.db")
+	if err := os.WriteFile(path, []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got := doctorFileSize(path); got != 5 {
+		t.Fatalf("doctorFileSize = %d, want 5", got)
+	}
+}
+
 func TestDoctorDHCPv6PDWarnDoesNotFail(t *testing.T) {
 	configPath, statePath := writeDoctorFixture(t)
 	store := openDoctorState(t, statePath)
