@@ -16,6 +16,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -792,6 +793,71 @@ func TestIPv4StaticAddressControllerKeepsDeclaredWhenFalseOutOfRemovedCleanup(t 
 	case event := <-removedCh:
 		t.Fatalf("declared when-false address should not publish removed event: %#v", event)
 	case <-time.After(40 * time.Millisecond):
+	}
+}
+
+func TestIPv4StaticAddressControllerKeepsGeneratedWireGuardSAMAddress(t *testing.T) {
+	startup := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "router-a"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
+				Metadata: api.ObjectMeta{Name: "wg-sam"},
+				Spec: api.WireGuardInterfaceSpec{
+					SelfNodeRef: "router-a",
+					PrivateKey:  "priv",
+					PeersFrom:   []api.WireGuardPeersSourceSpec{{Resource: "SAMNodeSet/fabric"}},
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wg-sam"},
+				Spec:     api.InterfaceSpec{IfName: "wg-sam", Managed: false},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMNodeSet"},
+				Metadata: api.ObjectMeta{Name: "fabric"},
+				Spec: api.SAMNodeSetSpec{Nodes: []api.SAMNodeSpec{
+					{NodeRef: "router-a", SAMEndpoint: "10.99.70.1", WireGuard: api.SAMNodeWireGuardSpec{PublicKey: "selfpub", AllowedIPs: []string{"10.99.70.1/32"}}},
+				}},
+			},
+		}},
+	}
+	store := mapStore{}
+	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatalf("buildDynamicRouteSAMView: %v", err)
+	}
+	resourceByName(t, view.RouteRouter, api.NetAPIVersion, "IPv4StaticAddress", "wg-sam-addr-wg-sam")
+	store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "wg-sam-addr-wg-sam", map[string]any{
+		"phase":     "Applied",
+		"interface": "wg-sam",
+		"ifname":    "wg-sam",
+		"address":   "10.99.70.1/32",
+		"dryRun":    true,
+	})
+	controller := IPv4StaticAddressController{
+		Router:         view.RouteRouter,
+		DeclaredRouter: view.RouteRouter,
+		Store:          store,
+		DryRun:         true,
+		DevicePresent: func(context.Context, string) bool {
+			return true
+		},
+		AddressPresent: func(context.Context, string, string) bool {
+			return true
+		},
+		Command: func(context.Context, string, ...string) error {
+			t.Fatal("unexpected address command for retained generated IPv4StaticAddress")
+			return nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if status := store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "wg-sam-addr-wg-sam"); status["phase"] != "Applied" {
+		t.Fatalf("generated IPv4StaticAddress status = %#v, want retained Applied status", status)
 	}
 }
 

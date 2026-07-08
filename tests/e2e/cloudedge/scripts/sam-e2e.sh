@@ -307,6 +307,23 @@ merge_validation_status() {
   fi
 }
 
+scan_host_key() {
+  local node="$1" host="$2"
+  local attempt keys
+  : >"$evidence_dir/ssh/${node}.keyscan.err"
+  for attempt in $(seq 1 30); do
+    keys="$(ssh-keyscan -H -T 10 "$host" 2>>"$evidence_dir/ssh/${node}.keyscan.err" || true)"
+    if [ -n "$keys" ]; then
+      printf '%s\n' "$keys" >>"$known_hosts"
+      printf '%s\n' "$keys" >"$evidence_dir/ssh/${node}.keyscan"
+      return 0
+    fi
+    sleep 2
+  done
+  echo "ssh-keyscan did not return a host key for $node host=$host" >>"$evidence_dir/ssh/${node}.keyscan.err"
+  return 1
+}
+
 preflight() {
   echo "== preflight =="
   local node host
@@ -318,7 +335,7 @@ preflight() {
   for node in "${routers[@]}" "${clients[@]}"; do
     host="$(node_field "$node" public_ip)"
     [ -n "$host" ] && [ "$host" != "null" ] || continue
-    ssh-keyscan -H "$host" >>"$known_hosts" 2>"$evidence_dir/ssh/${node}.keyscan.err" || true
+    scan_host_key "$node" "$host" || return 1
   done
   for node in "${routers[@]}" "${clients[@]}"; do
     {
@@ -602,22 +619,29 @@ validate_generated_configs() {
 deploy() {
   [ "$skip_deploy" -eq 0 ] || return 0
   local cfg_dir="$1"
-  local node cfg require_aws_cli
+  local node
   for node in "${routers[@]}"; do
+    deploy_one_router "$cfg_dir" "$node" || return 1
+  done
+}
+
+deploy_one_router() {
+  local cfg_dir="$1" node="$2"
+  local cfg require_aws_cli
+  {
     cfg="$cfg_dir/$node.yaml"
     [ -f "$cfg" ] || { echo "missing config for $node: $cfg" >&2; return 1; }
     require_aws_cli=0
     case "$node" in
       aws-*) require_aws_cli=1 ;;
     esac
-    {
-      echo "## install $node"
-      scp_node "$artifact" "$node" /tmp/routerd-sam-e2e.tar.gz
-      scp_node "$cfg" "$node" /tmp/router.yaml
-      if [ -f "$evidence_dir/config-gen/secrets/eventd-cloudedge.key" ]; then
-        scp_node "$evidence_dir/config-gen/secrets/eventd-cloudedge.key" "$node" /tmp/eventd-cloudedge.key
-      fi
-      ssh_node "$node" "$(printf 'export ROUTERD_E2E_REQUIRE_AWS_CLI=%q\n' "$require_aws_cli"; remote_prepare_script; cat <<'REMOTE_DEPLOY'
+    echo "## install $node"
+    scp_node "$artifact" "$node" /tmp/routerd-sam-e2e.tar.gz
+    scp_node "$cfg" "$node" /tmp/router.yaml
+    if [ -f "$evidence_dir/config-gen/secrets/eventd-cloudedge.key" ]; then
+      scp_node "$evidence_dir/config-gen/secrets/eventd-cloudedge.key" "$node" /tmp/eventd-cloudedge.key
+    fi
+    ssh_node "$node" "$(printf 'export ROUTERD_E2E_REQUIRE_AWS_CLI=%q\n' "$require_aws_cli"; remote_prepare_script; cat <<'REMOTE_DEPLOY'
 set -e
 rm -rf /tmp/routerd-sam-e2e
 mkdir -p /tmp/routerd-sam-e2e
@@ -658,8 +682,7 @@ if [ "$ready" -ne 1 ]; then
 fi
 REMOTE_DEPLOY
 )"
-    } >"$evidence_dir/deploy/${node}.txt" 2>&1 || return 1
-  done
+  } >"$evidence_dir/deploy/${node}.txt" 2>&1
 }
 
 setup_pve_dataplane() {
@@ -693,7 +716,7 @@ wait_dataplane_control_gate() {
   local label="$1"
   local deadline=$((SECONDS + 300))
   local ok=0
-  local client_ips_text node
+  local client_ips_text local_client_ips_text remote_client_ips_text node node_site
   client_ips_text="$(jq -r 'to_entries[] | select(.value.role == "client") | .value.private_ip' "$nodes_json")"
   warm_onprem_discovery "$label"
   while [ "$SECONDS" -lt "$deadline" ]; do
@@ -704,6 +727,9 @@ wait_dataplane_control_gate() {
     done
     for node in "${leaf_routers[@]}"; do
       node_is_stopped "$node" && continue
+      node_site="$(node_field "$node" site)"
+      local_client_ips_text="$(jq -r --arg site "$node_site" 'to_entries[] | select(.value.role == "client" and .value.site == $site) | .value.private_ip' "$nodes_json")"
+      remote_client_ips_text="$(jq -r --arg site "$node_site" 'to_entries[] | select(.value.role == "client" and .value.site != $site) | .value.private_ip' "$nodes_json")"
       if ! ssh_node "$node" "set -e
 command -v routerctl >/dev/null
 sudo routerctl get status -o json >/dev/null
@@ -712,6 +738,12 @@ while read -r ip; do
   ip route get \"\$ip\" >/dev/null
 done <<'IPS'
 $client_ips_text
+IPS
+while read -r ip; do
+  [ -n \"\$ip\" ] || continue
+  ip route get \"\$ip\" | grep -q ' dev samt'
+done <<'IPS'
+$remote_client_ips_text
 IPS"; then
         ok=0
       fi
@@ -723,7 +755,7 @@ while read -r ip; do
     any(.resource.status.ownershipResolverOwnerTable[]?; .address == \$addr)
   ' >/dev/null
 done <<'IPS'
-$client_ips_text
+$local_client_ips_text
 IPS"; then
         ok=0
       fi
@@ -875,7 +907,7 @@ cloud_ingress_matrix() {
 
 setup_client_ssh() {
   local client_known_hosts="$evidence_dir/ssh/client_known_hosts"
-  local dst dst_ip dst_public client client_name
+  local dst dst_ip dst_public client client_name client_site remote_client_ips_text local_leaf_ips_text
   : >"$client_known_hosts"
   for dst in "${clients[@]}"; do
     dst_ip="$(node_field "$dst" private_ip)"
@@ -890,9 +922,31 @@ setup_client_ssh() {
   done
   for client in "${clients[@]}"; do
     client_name="$(node_field "$client" name)"
+    client_site="$(node_field "$client" site)"
+    remote_client_ips_text="$(jq -r --arg site "$client_site" 'to_entries[] | select(.value.role == "client" and .value.site != $site) | .value.private_ip' "$nodes_json")"
+    local_leaf_ips_text="$(jq -r --arg site "$client_site" 'to_entries[] | select(.value.role == "leaf" and .value.site == $site) | .value.private_ip' "$nodes_json")"
     scp_node "$ssh_key" "$client" /tmp/routerd-cloudedge-lab-20260529
     scp_node "$client_known_hosts" "$client" /tmp/routerd-e2e-known_hosts
-    ssh_node "$client" "set -e; sudo hostnamectl set-hostname '$client_name'; mkdir -p ~/.ssh; install -m 0600 /tmp/routerd-cloudedge-lab-20260529 ~/.ssh/routerd-cloudedge-lab-20260529; install -m 0644 /tmp/routerd-e2e-known_hosts ~/.ssh/routerd-e2e-known_hosts"
+    ssh_node "$client" "set -e
+sudo hostnamectl set-hostname '$client_name'
+mkdir -p ~/.ssh
+install -m 0600 /tmp/routerd-cloudedge-lab-20260529 ~/.ssh/routerd-cloudedge-lab-20260529
+install -m 0644 /tmp/routerd-e2e-known_hosts ~/.ssh/routerd-e2e-known_hosts
+leaf_nexthops=
+while read -r gw; do
+  [ -n \"\$gw\" ] || continue
+  leaf_nexthops=\"\$leaf_nexthops nexthop via \$gw weight 1\"
+done <<'LEAFS'
+$local_leaf_ips_text
+LEAFS
+[ -n \"\$leaf_nexthops\" ]
+while read -r ip; do
+  [ -n \"\$ip\" ] || continue
+  sudo ip route replace \"\$ip/32\" \$leaf_nexthops
+done <<'IPS'
+$remote_client_ips_text
+IPS
+ip route" >"$evidence_dir/preflight/${client}-client-routes.txt" 2>&1
   done
 }
 

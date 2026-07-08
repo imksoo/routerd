@@ -1481,6 +1481,69 @@ spec:
 	t.Fatal("IPv4StaticAddress not found")
 }
 
+func TestResolveWireGuardSAMResourcesIsIdempotent(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: router-a}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg-sam}
+      spec:
+        selfNodeRef: router-a
+        privateKey: priv
+        peersFrom:
+          - resource: SAMNodeSet/fabric
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMNodeSet
+      metadata: {name: fabric}
+      spec:
+        nodes:
+          - nodeRef: router-a
+            samEndpoint: 10.99.70.1
+            wireGuard:
+              publicKey: selfpub
+              allowedIPs: [10.99.70.1/32]
+          - nodeRef: router-b
+            samEndpoint: 10.99.70.2
+            wireGuard:
+              publicKey: peerpub-b
+              endpoint: 198.51.100.2:51820
+              allowedIPs: [10.99.70.2/32]
+`)
+	first, err := resolveWireGuardSAMResources(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := resolveWireGuardSAMResources(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := func(kind, name string) int {
+		total := 0
+		for _, r := range second.Spec.Resources {
+			if r.APIVersion == api.NetAPIVersion && r.Kind == kind && r.Metadata.Name == name {
+				total++
+			}
+		}
+		return total
+	}
+	for _, want := range []struct {
+		kind string
+		name string
+	}{
+		{"IPv4StaticAddress", "wg-sam-addr-wg-sam"},
+		{"IPv4Route", "wg-sam-endpoint-router-b"},
+		{"WireGuardPeer", "router-b"},
+	} {
+		if got := count(want.kind, want.name); got != 1 {
+			t.Fatalf("%s/%s count = %d, want 1", want.kind, want.name, got)
+		}
+	}
+}
+
 func TestResolveWireGuardSAMResourcesNilRouter(t *testing.T) {
 	resolved, err := resolveWireGuardSAMResources(nil)
 	if err != nil {
