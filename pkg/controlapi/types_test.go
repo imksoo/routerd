@@ -63,6 +63,8 @@ func TestRuntimeStatsJSONRoundTrip(t *testing.T) {
 	in.NumGC = 7
 	in.GCPauseTotalNs = 5_000_000
 	in.LastGC = lastGC
+	in.StateStatusWriteCount = 123
+	in.StateStatusSkipCount = 45
 	in.OpenFDs = 18
 	in.MaxFDs = 1024
 
@@ -79,6 +81,7 @@ func TestRuntimeStatsJSONRoundTrip(t *testing.T) {
 		`"cgroupFileBytes"`, `"cgroupActiveFileBytes"`, `"cgroupInactiveFileBytes"`,
 		`"cgroupKernelBytes"`, `"cgroupSlabBytes"`,
 		`"numGoroutine"`, `"numGC"`, `"gcPauseTotalNs"`, `"lastGC"`,
+		`"stateStatusWriteCount"`, `"stateStatusSkipCount"`,
 		`"openFds"`, `"maxFds"`,
 	} {
 		if !strings.Contains(string(data), field) {

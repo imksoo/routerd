@@ -2578,6 +2578,11 @@ func (r doctorRunner) doctorRuntime() []doctorCheck {
 	}
 	detail := fmt.Sprintf("heapAlloc=%.1fMiB heapObjects=%d numGoroutine=%d numGC=%d openFds=%s",
 		heapMiB, stats.HeapObjects, stats.NumGoroutine, stats.NumGC, fdSummary)
+	if stats.StateStatusWriteCount > 0 || stats.StateStatusSkipCount > 0 {
+		detail = appendDoctorDetail(detail, fmt.Sprintf("stateStatusWrites=%d stateStatusSkips=%d",
+			stats.StateStatusWriteCount,
+			stats.StateStatusSkipCount))
+	}
 	if stats.CgroupMemoryCurrentBytes > 0 {
 		detail = appendDoctorDetail(detail, fmt.Sprintf("cgroupCurrent=%.1fMiB cgroupAnon=%.1fMiB cgroupFile=%.1fMiB cgroupInactiveFile=%.1fMiB",
 			bytesToMiB(stats.CgroupMemoryCurrentBytes),

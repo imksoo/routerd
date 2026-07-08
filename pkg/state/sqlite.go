@@ -32,12 +32,14 @@ const (
 )
 
 type SQLiteStore struct {
-	path       string
-	db         *sql.DB
-	now        func() time.Time
-	generation int64
-	closed     bool
-	mu         sync.RWMutex
+	path             string
+	db               *sql.DB
+	now              func() time.Time
+	generation       int64
+	statusWriteCount uint64
+	statusSkipCount  uint64
+	closed           bool
+	mu               sync.RWMutex
 }
 
 type objectRef struct {
@@ -657,6 +659,7 @@ func (s *SQLiteStore) saveStatus(ref objectRef, status objectStatus) error {
 	if same, err := s.objectStatusUnchanged(ref, data); err != nil {
 		return err
 	} else if same {
+		s.statusSkipCount++
 		return nil
 	}
 	uid := ref.APIVersion + "/" + ref.Kind + "/" + ref.Name
@@ -664,7 +667,20 @@ func (s *SQLiteStore) saveStatus(ref objectRef, status objectStatus) error {
 VALUES(?,?,?,?,1,?,?,?,?)
 ON CONFLICT(api_version,kind,name) DO UPDATE SET resource_version=resource_version+1,observed_generation=excluded.observed_generation,status=excluded.status,modified_at=excluded.modified_at`,
 		ref.APIVersion, ref.Kind, ref.Name, uid, nullGeneration(s.generation), string(data), now, now)
-	return err
+	if err != nil {
+		return err
+	}
+	s.statusWriteCount++
+	return nil
+}
+
+func (s *SQLiteStore) StatusWriteStats() (writes, skips uint64) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return 0, 0
+	}
+	return s.statusWriteCount, s.statusSkipCount
 }
 
 func (s *SQLiteStore) objectStatusUnchanged(ref objectRef, next []byte) (bool, error) {

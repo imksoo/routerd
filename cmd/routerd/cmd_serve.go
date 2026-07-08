@@ -660,6 +660,9 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}
 	runtimeHandler := func(r *http.Request) (*controlapi.RuntimeStats, error) {
 		stats := collectRuntimeStats()
+		if stateStore != nil {
+			stats.StateStatusWriteCount, stats.StateStatusSkipCount = stateStore.StatusWriteStats()
+		}
 		return &stats, nil
 	}
 	handler := controlapi.Handler{
