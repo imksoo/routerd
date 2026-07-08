@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260708.1609
+
 ### Changed
 
 - Release tags now use UTC by default when `scripts/release.sh` computes the

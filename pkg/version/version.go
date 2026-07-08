@@ -2,7 +2,7 @@
 
 package version
 
-var Version = "v20260707.2301"
+var Version = "v20260708.1609"
 
 var Commit = ""
 

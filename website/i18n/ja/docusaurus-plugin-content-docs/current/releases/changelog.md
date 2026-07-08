@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260708.1609
+
 ### 変更
 
 - `scripts/release.sh` が `vYYYYMMDD.HHmm` の timestamp を計算するとき、

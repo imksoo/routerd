@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260708.1609
+
 ### 变更
 
 - `scripts/release.sh` 计算 `vYYYYMMDD.HHmm` 时间戳时，发布标签现在默认使用
