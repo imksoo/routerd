@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 func TestControllerModeReasonValues(t *testing.T) {
@@ -65,6 +67,9 @@ func TestRuntimeStatsJSONRoundTrip(t *testing.T) {
 	in.LastGC = lastGC
 	in.StateStatusWriteCount = 123
 	in.StateStatusSkipCount = 45
+	in.StateStatusKindStats = map[string]routerstate.StatusKindWriteStats{
+		"BGPPeer": {Writes: 12, Skips: 34},
+	}
 	in.OpenFDs = 18
 	in.MaxFDs = 1024
 
@@ -81,7 +86,7 @@ func TestRuntimeStatsJSONRoundTrip(t *testing.T) {
 		`"cgroupFileBytes"`, `"cgroupActiveFileBytes"`, `"cgroupInactiveFileBytes"`,
 		`"cgroupKernelBytes"`, `"cgroupSlabBytes"`,
 		`"numGoroutine"`, `"numGC"`, `"gcPauseTotalNs"`, `"lastGC"`,
-		`"stateStatusWriteCount"`, `"stateStatusSkipCount"`,
+		`"stateStatusWriteCount"`, `"stateStatusSkipCount"`, `"stateStatusKindStats"`,
 		`"openFds"`, `"maxFds"`,
 	} {
 		if !strings.Contains(string(data), field) {

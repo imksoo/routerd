@@ -2583,6 +2583,9 @@ func (r doctorRunner) doctorRuntime() []doctorCheck {
 			stats.StateStatusWriteCount,
 			stats.StateStatusSkipCount))
 	}
+	if summary := summarizeStateStatusKindStats(stats.StateStatusKindStats, 5); summary != "" {
+		detail = appendDoctorDetail(detail, "stateStatusTopKinds="+summary)
+	}
 	if stats.CgroupMemoryCurrentBytes > 0 {
 		detail = appendDoctorDetail(detail, fmt.Sprintf("cgroupCurrent=%.1fMiB cgroupAnon=%.1fMiB cgroupFile=%.1fMiB cgroupInactiveFile=%.1fMiB",
 			bytesToMiB(stats.CgroupMemoryCurrentBytes),
@@ -2611,6 +2614,41 @@ func (r doctorRunner) doctorRuntime() []doctorCheck {
 
 func bytesToMiB(value uint64) float64 {
 	return float64(value) / (1024 * 1024)
+}
+
+func summarizeStateStatusKindStats(stats map[string]routerstate.StatusKindWriteStats, limit int) string {
+	if len(stats) == 0 || limit <= 0 {
+		return ""
+	}
+	type row struct {
+		kind   string
+		writes uint64
+		skips  uint64
+	}
+	rows := make([]row, 0, len(stats))
+	for kind, value := range stats {
+		if value.Writes == 0 && value.Skips == 0 {
+			continue
+		}
+		rows = append(rows, row{kind: kind, writes: value.Writes, skips: value.Skips})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].writes != rows[j].writes {
+			return rows[i].writes > rows[j].writes
+		}
+		if rows[i].skips != rows[j].skips {
+			return rows[i].skips > rows[j].skips
+		}
+		return rows[i].kind < rows[j].kind
+	})
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	parts := make([]string, 0, len(rows))
+	for _, row := range rows {
+		parts = append(parts, fmt.Sprintf("%s:%d/%d", row.kind, row.writes, row.skips))
+	}
+	return strings.Join(parts, ",")
 }
 
 func fetchRuntimeStats(socketPath string, timeout time.Duration) (*controlapi.RuntimeStats, error) {

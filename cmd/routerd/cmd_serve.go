@@ -662,6 +662,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		stats := collectRuntimeStats()
 		if stateStore != nil {
 			stats.StateStatusWriteCount, stats.StateStatusSkipCount = stateStore.StatusWriteStats()
+			stats.StateStatusKindStats = stateStore.StatusKindWriteStats()
 		}
 		return &stats, nil
 	}
