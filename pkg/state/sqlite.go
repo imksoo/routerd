@@ -32,14 +32,20 @@ const (
 )
 
 type SQLiteStore struct {
-	path             string
-	db               *sql.DB
-	now              func() time.Time
-	generation       int64
-	statusWriteCount uint64
-	statusSkipCount  uint64
-	closed           bool
-	mu               sync.RWMutex
+	path              string
+	db                *sql.DB
+	now               func() time.Time
+	generation        int64
+	statusWriteCount  uint64
+	statusSkipCount   uint64
+	statusKindCounter map[string]StatusKindWriteStats
+	closed            bool
+	mu                sync.RWMutex
+}
+
+type StatusKindWriteStats struct {
+	Writes uint64 `json:"writes" yaml:"writes"`
+	Skips  uint64 `json:"skips" yaml:"skips"`
 }
 
 type objectRef struct {
@@ -660,6 +666,7 @@ func (s *SQLiteStore) saveStatus(ref objectRef, status objectStatus) error {
 		return err
 	} else if same {
 		s.statusSkipCount++
+		s.incrementStatusKindSkipLocked(ref.Kind)
 		return nil
 	}
 	uid := ref.APIVersion + "/" + ref.Kind + "/" + ref.Name
@@ -671,6 +678,7 @@ ON CONFLICT(api_version,kind,name) DO UPDATE SET resource_version=resource_versi
 		return err
 	}
 	s.statusWriteCount++
+	s.incrementStatusKindWriteLocked(ref.Kind)
 	return nil
 }
 
@@ -681,6 +689,37 @@ func (s *SQLiteStore) StatusWriteStats() (writes, skips uint64) {
 		return 0, 0
 	}
 	return s.statusWriteCount, s.statusSkipCount
+}
+
+func (s *SQLiteStore) StatusKindWriteStats() map[string]StatusKindWriteStats {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed || len(s.statusKindCounter) == 0 {
+		return nil
+	}
+	out := make(map[string]StatusKindWriteStats, len(s.statusKindCounter))
+	for kind, stats := range s.statusKindCounter {
+		out[kind] = stats
+	}
+	return out
+}
+
+func (s *SQLiteStore) incrementStatusKindWriteLocked(kind string) {
+	if s.statusKindCounter == nil {
+		s.statusKindCounter = map[string]StatusKindWriteStats{}
+	}
+	stats := s.statusKindCounter[kind]
+	stats.Writes++
+	s.statusKindCounter[kind] = stats
+}
+
+func (s *SQLiteStore) incrementStatusKindSkipLocked(kind string) {
+	if s.statusKindCounter == nil {
+		s.statusKindCounter = map[string]StatusKindWriteStats{}
+	}
+	stats := s.statusKindCounter[kind]
+	stats.Skips++
+	s.statusKindCounter[kind] = stats
 }
 
 func (s *SQLiteStore) objectStatusUnchanged(ref objectRef, next []byte) (bool, error) {

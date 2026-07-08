@@ -729,6 +729,9 @@ func TestSQLiteStoreSaveObjectStatusSkipsIdenticalStatusInSameGeneration(t *test
 	if writes != 1 || skips != 1 {
 		t.Fatalf("status write stats after identical save = writes:%d skips:%d, want 1/1", writes, skips)
 	}
+	if got := store.StatusKindWriteStats()["Interface"]; got.Writes != 1 || got.Skips != 1 {
+		t.Fatalf("Interface status kind stats after identical save = %#v, want 1/1", got)
+	}
 
 	if err := store.SaveObjectStatus("net.routerd.net/v1alpha1", "Interface", "wan", map[string]any{"phase": "Down", "ifname": "ens18"}); err != nil {
 		t.Fatalf("save changed object status: %v", err)
@@ -739,6 +742,9 @@ func TestSQLiteStoreSaveObjectStatusSkipsIdenticalStatusInSameGeneration(t *test
 	writes, skips = store.StatusWriteStats()
 	if writes != 2 || skips != 1 {
 		t.Fatalf("status write stats after changed save = writes:%d skips:%d, want 2/1", writes, skips)
+	}
+	if got := store.StatusKindWriteStats()["Interface"]; got.Writes != 2 || got.Skips != 1 {
+		t.Fatalf("Interface status kind stats after changed save = %#v, want 2/1", got)
 	}
 }
 
