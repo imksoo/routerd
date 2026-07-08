@@ -795,10 +795,11 @@ func (c IPv4PolicyRouteController) applyNftTable(ctx context.Context, nft, path,
 		if c.DryRun {
 			return nil
 		}
-		if nftstate.RecentlyVerified(path, time.Now().UTC()) {
+		exists := exec.CommandContext(ctx, nft, "list", "table", family, table).Run() == nil
+		if !exists && nftstate.RecentlyVerified(path, time.Now().UTC()) {
 			return nil
 		}
-		if exec.CommandContext(ctx, nft, "list", "table", family, table).Run() == nil {
+		if exists {
 			_ = exec.CommandContext(ctx, nft, "delete", "table", family, table).Run()
 		}
 		_ = nftstate.MarkVerified(path, time.Now().UTC())
@@ -814,11 +815,8 @@ func (c IPv4PolicyRouteController) applyNftTable(ctx context.Context, nft, path,
 	if err != nil {
 		return err
 	}
-	if !changed && nftstate.RecentlyVerified(path, time.Now().UTC()) {
-		return nil
-	}
 	missing := exec.CommandContext(ctx, nft, "list", "table", family, table).Run() != nil
-	if !changed && !missing {
+	if !changed && !missing && nftstate.RecentlyVerified(path, time.Now().UTC()) {
 		_ = nftstate.MarkVerified(path, time.Now().UTC())
 		return nil
 	}
