@@ -20,6 +20,7 @@ Options:
   --failover-transfer-tests Run a required throttled client-to-client HTTP transfer during each failover stop
   --failover-transfer-observe Run the failover transfer probe but do not fail the scenario when it stalls
   --failover-transfer-smoke Run a throttled client-to-client HTTP transfer without stopping routers
+  --success-evidence-minimal Skip expensive diagnostics/provider snapshots after successful checks
   --destroy-cmd CMD       Optional teardown command, for example: 'tofu destroy -auto-approve'
 
 This harness consumes `tofu output -json` from the SAM E2E OpenTofu environment.
@@ -44,6 +45,7 @@ performance_tests=0
 failover_transfer_tests=0
 failover_transfer_required=0
 failover_transfer_smoke=0
+success_evidence_minimal=0
 destroy_cmd=
 overall=0
 validation_started=0
@@ -66,6 +68,7 @@ while [ "$#" -gt 0 ]; do
     --failover-transfer-tests) failover_transfer_tests=1; failover_transfer_required=1; shift ;;
     --failover-transfer-observe) failover_transfer_tests=1; failover_transfer_required=0; shift ;;
     --failover-transfer-smoke) failover_transfer_tests=1; failover_transfer_required=1; failover_transfer_smoke=1; shift ;;
+    --success-evidence-minimal) success_evidence_minimal=1; shift ;;
     --destroy-cmd) destroy_cmd="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -87,6 +90,8 @@ config_generator="$(cd "$script_dir/.." && pwd)/configs/sam-e2e-generate.sh"
 
 mkdir -p "$evidence_dir"/{preflight,deploy,convergence,matrix,legacy,performance,failover-transfer,provider,diagnostics,cleanup,ssh}
 cp "$tofu_output" "$evidence_dir/tofu-output.json"
+timing_file="$evidence_dir/timing.tsv"
+printf 'label\tphase\telapsed_seconds\n' >"$timing_file"
 nodes_json="$evidence_dir/nodes.json"
 fabric_json="$evidence_dir/fabric.json"
 jq '.nodes.value' "$tofu_output" >"$nodes_json"
@@ -217,6 +222,22 @@ node_is_stopped() {
   return 1
 }
 
+record_timing() {
+  local label="$1" phase="$2" started="$3"
+  printf '%s\t%s\t%s\n' "$label" "$phase" "$((SECONDS - started))" >>"$timing_file"
+}
+
+record_skipped_success_evidence() {
+  local kind="$1" label="$2" dir
+  dir="$evidence_dir/$kind/$label"
+  mkdir -p "$dir"
+  {
+    echo "skipped=success-evidence-minimal"
+    echo "label=$label"
+    date -u '+timestamp=%Y-%m-%dT%H:%M:%SZ'
+  } >"$dir/SKIPPED.txt"
+}
+
 mark_node_running() {
   local want="$1" node
   local next=()
@@ -338,6 +359,7 @@ record_note() {
     echo "failover_transfer_required=$failover_transfer_required"
     echo "failover_transfer_smoke=$failover_transfer_smoke"
     echo "rejoin_after_failover=$rejoin_after_failover"
+    echo "success_evidence_minimal=$success_evidence_minimal"
     echo "policy_read=cloudedge-mobility/LAB_POLICY.md and ~/routerd-orchestration.md must be reread before real-machine validation"
   } >"$evidence_dir/run-note.txt"
 }
@@ -1355,33 +1377,67 @@ performance_matrix() {
 run_validation_set() {
   local label="$1"
   local status=0 provider_status=0 dataplane_status=PASS dataplane_started="$SECONDS"
+  local phase_started
 
+  phase_started="$SECONDS"
   if ! wait_dataplane_control_gate "$label"; then
     dataplane_status=TIMEOUT
+    record_timing "$label" dataplane-control-gate "$phase_started"
   elif [ "$skip_matrix" -eq 1 ]; then
     dataplane_status=PASS
+    record_timing "$label" dataplane-control-gate "$phase_started"
   elif ! client_matrix "$label"; then
     dataplane_status=FAIL_MATRIX
+    record_timing "$label" dataplane-control-and-client-matrix "$phase_started"
   elif ! cloud_ingress_matrix "$label"; then
     dataplane_status=FAIL_CLOUD_INGRESS
+    record_timing "$label" dataplane-control-client-matrix-cloud-ingress "$phase_started"
+  else
+    record_timing "$label" dataplane-control-client-matrix-cloud-ingress "$phase_started"
   fi
 
   printf '%s\t%s\t%s\n' "${label}-dataplane" "$dataplane_status" "$((SECONDS - dataplane_started))" >>"$evidence_dir/convergence/summary.tsv"
-  collect_convergence_snapshot "$label"
   if [ "$dataplane_status" != "PASS" ]; then
+    phase_started="$SECONDS"
+    collect_convergence_snapshot "$label"
+    record_timing "$label" convergence-snapshot-after-dataplane-fail "$phase_started"
     echo "DATAPLANE-CONVERGENCE-FAIL: $label $dataplane_status" >&2
     return 1
+  elif [ "$success_evidence_minimal" -eq 1 ]; then
+    record_skipped_success_evidence convergence "$label"
+  else
+    phase_started="$SECONDS"
+    collect_convergence_snapshot "$label"
+    record_timing "$label" convergence-snapshot "$phase_started"
   fi
 
+  phase_started="$SECONDS"
   if ! wait_provider_gate "$label"; then
     provider_status=2
     echo "PROVIDER-CONVERGENCE-FAIL: $label" >&2
   fi
-  collect_convergence_snapshot "${label}-provider"
+  record_timing "$label" provider-gate "$phase_started"
+  if [ "$provider_status" -ne 0 ]; then
+    phase_started="$SECONDS"
+    collect_convergence_snapshot "${label}-provider"
+    record_timing "$label" convergence-snapshot-after-provider-fail "$phase_started"
+  elif [ "$success_evidence_minimal" -eq 1 ]; then
+    record_skipped_success_evidence convergence "${label}-provider"
+  else
+    phase_started="$SECONDS"
+    collect_convergence_snapshot "${label}-provider"
+    record_timing "$label" convergence-snapshot-provider "$phase_started"
+  fi
 
+  phase_started="$SECONDS"
   legacy_protocol_matrix "$label" || status=1
+  record_timing "$label" legacy-protocol-matrix "$phase_started"
+  phase_started="$SECONDS"
   performance_matrix "$label" || status=1
+  record_timing "$label" performance-matrix "$phase_started"
+  phase_started="$SECONDS"
   collect_load_balance_report "$label"
+  record_timing "$label" load-balance-report "$phase_started"
   [ "$status" -eq 0 ] || return "$status"
   return "$provider_status"
 }
@@ -1458,6 +1514,30 @@ REMOTE_DIAG
       if type == "array" then "gobgp_global_rib entries=\(length)" else "gobgp_global_rib entries=unknown" end
     '"'"'; else echo "gobgp_global_rib unavailable"; fi' >"$dir/${node}.gobgp-global-rib-summary.txt" 2>"$dir/${node}.gobgp-global-rib-summary.stderr" || true
   done
+}
+
+collect_success_optional_diagnostics() {
+  local label="$1" phase_started
+  if [ "$success_evidence_minimal" -eq 1 ]; then
+    record_skipped_success_evidence diagnostics "$label"
+    return 0
+  fi
+  phase_started="$SECONDS"
+  collect_diagnostics "$label"
+  record_timing "$label" diagnostics "$phase_started"
+}
+
+collect_success_optional_provider_inventory() {
+  local label="$1" phase_started rc
+  if [ "$success_evidence_minimal" -eq 1 ]; then
+    record_skipped_success_evidence provider "$label"
+    return 0
+  fi
+  phase_started="$SECONDS"
+  collect_provider_inventory "$label" || rc=$?
+  rc="${rc:-0}"
+  record_timing "$label" provider-inventory "$phase_started"
+  return "$rc"
 }
 
 collect_load_balance_report() {
@@ -1653,8 +1733,8 @@ run_failover() {
   local failover_node transfer_src transfer_pid validation_rc
   [ "${#failover_nodes[@]}" -gt 0 ] || return 0
   for failover_node in "${failover_nodes[@]}"; do
-    collect_diagnostics "before-failover-${failover_node}"
-    collect_provider_inventory "before-failover-${failover_node}" || status=1
+    collect_success_optional_diagnostics "before-failover-${failover_node}"
+    collect_success_optional_provider_inventory "before-failover-${failover_node}" || status=1
     transfer_src=
     transfer_pid=
     if [ "$failover_transfer_tests" -eq 1 ]; then
@@ -1674,8 +1754,13 @@ run_failover() {
         [ "$failover_transfer_required" -eq 0 ] || status=1
       fi
     fi
-    collect_diagnostics "after-failover-${failover_node}"
-    collect_provider_inventory "after-failover-${failover_node}" || status=1
+    if [ "$validation_rc" -eq 0 ]; then
+      collect_success_optional_diagnostics "after-failover-${failover_node}"
+      collect_success_optional_provider_inventory "after-failover-${failover_node}" || status=1
+    else
+      collect_diagnostics "after-failover-${failover_node}"
+      collect_provider_inventory "after-failover-${failover_node}" || status=1
+    fi
   done
   return "$status"
 }
@@ -1685,15 +1770,20 @@ run_rejoin() {
   [ "$rejoin_after_failover" -eq 1 ] || return 0
   [ "${#failover_nodes[@]}" -gt 0 ] || return 0
   for failover_node in "${failover_nodes[@]}"; do
-    collect_diagnostics "before-rejoin-${failover_node}"
-    collect_provider_inventory "before-rejoin-${failover_node}" || status=1
+    collect_success_optional_diagnostics "before-rejoin-${failover_node}"
+    collect_success_optional_provider_inventory "before-rejoin-${failover_node}" || status=1
     ssh_node "$failover_node" 'if systemctl list-unit-files routerd-bgp.service --no-legend 2>/dev/null | grep -q "^routerd-bgp\\.service"; then sudo systemctl start routerd-bgp.service; sudo systemctl is-active routerd-bgp.service; fi; sudo systemctl start routerd.service; sudo systemctl is-active routerd.service' >"$evidence_dir/convergence/rejoin-start-${failover_node}.txt" 2>&1 || status=1
     mark_node_running "$failover_node"
     validation_rc=0
     run_validation_set "after-rejoin-${failover_node}" || validation_rc=$?
     status="$(merge_validation_status "$status" "$validation_rc")"
-    collect_diagnostics "after-rejoin-${failover_node}"
-    collect_provider_inventory "after-rejoin-${failover_node}" || status=1
+    if [ "$validation_rc" -eq 0 ]; then
+      collect_success_optional_diagnostics "after-rejoin-${failover_node}"
+      collect_success_optional_provider_inventory "after-rejoin-${failover_node}" || status=1
+    else
+      collect_diagnostics "after-rejoin-${failover_node}"
+      collect_provider_inventory "after-rejoin-${failover_node}" || status=1
+    fi
   done
   return "$status"
 }
@@ -1747,8 +1837,13 @@ if [ "$overall" -eq 0 ]; then
   fi
 fi
 if [ "$validation_started" -eq 1 ]; then
-  collect_diagnostics "post-matrix"
-  collect_provider_inventory "post-matrix" || mark_failed "provider inventory post-matrix"
+  if [ "$overall" -eq 0 ]; then
+    collect_success_optional_diagnostics "post-matrix"
+    collect_success_optional_provider_inventory "post-matrix" || mark_failed "provider inventory post-matrix"
+  else
+    collect_diagnostics "post-matrix"
+    collect_provider_inventory "post-matrix" || mark_failed "provider inventory post-matrix"
+  fi
 fi
 if [ "$overall" -eq 0 ]; then
   failover_status=0
