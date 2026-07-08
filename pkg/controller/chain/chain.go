@@ -833,7 +833,7 @@ func volatileStatusEventField(apiVersion, kind, key string) bool {
 			return true
 		}
 	case "IPAddressSet":
-		return key == "resolvedAt" || key == "nextRefreshAt"
+		return key == "minTTLSeconds" || key == "resolvedAt" || key == "nextRefreshAt"
 	}
 	_ = apiVersion
 	return false

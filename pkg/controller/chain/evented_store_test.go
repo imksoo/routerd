@@ -839,6 +839,68 @@ func TestEventedStoreDoesNotPublishMobilityTimestampOnlyStatusRefresh(t *testing
 	}
 }
 
+func TestEventedStoreDoesNotPublishIPAddressSetTTLOnlyStatusRefresh(t *testing.T) {
+	base := mapStore{
+		api.NetAPIVersion + "/IPAddressSet/public-dns": statusWithOwnership(api.NetAPIVersion, "IPAddressSet", map[string]any{
+			"phase":         "Applied",
+			"addresses":     []any{"1.1.1.1", "8.8.8.8"},
+			"minTTLSeconds": 300,
+			"nextRefreshAt": "2026-07-08T00:05:00Z",
+			"resolvedAt":    "2026-07-08T00:00:00Z",
+		}),
+	}
+	eventBus := bus.New()
+	resource := daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet", Name: "public-dns"}
+	ch, cancel := eventBus.Subscribe(context.Background(), bus.Subscription{
+		Topics:   []string{"routerd.resource.status.changed"},
+		Resource: &resource,
+	}, 1)
+	defer cancel()
+
+	store := eventedStore{Store: base, Bus: eventBus}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "IPAddressSet", "public-dns", map[string]any{
+		"phase":         "Applied",
+		"addresses":     []any{"1.1.1.1", "8.8.8.8"},
+		"minTTLSeconds": 120,
+		"nextRefreshAt": "2026-07-08T00:06:00Z",
+		"resolvedAt":    "2026-07-08T00:01:00Z",
+	}); err != nil {
+		t.Fatalf("save ttl-only ip address set status: %v", err)
+	}
+
+	select {
+	case event := <-ch:
+		t.Fatalf("unexpected IPAddressSet TTL-only event: %#v", event)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if got := base.ObjectStatus(api.NetAPIVersion, "IPAddressSet", "public-dns")["minTTLSeconds"]; got != 120 {
+		t.Fatalf("minTTLSeconds was not persisted: %v", got)
+	}
+
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "IPAddressSet", "public-dns", map[string]any{
+		"phase":         "Applied",
+		"addresses":     []any{"1.1.1.1", "8.8.8.8", "9.9.9.9"},
+		"minTTLSeconds": 120,
+		"nextRefreshAt": "2026-07-08T00:07:00Z",
+		"resolvedAt":    "2026-07-08T00:02:00Z",
+	}); err != nil {
+		t.Fatalf("save address change: %v", err)
+	}
+
+	select {
+	case event := <-ch:
+		fields := event.Attributes["changedFields"]
+		if !strings.Contains(fields, "addresses") {
+			t.Fatalf("changedFields = %q, want addresses", fields)
+		}
+		if strings.Contains(fields, "minTTLSeconds") || strings.Contains(fields, "nextRefreshAt") || strings.Contains(fields, "resolvedAt") {
+			t.Fatalf("changedFields = %q, should omit volatile TTL fields", fields)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for IPAddressSet address change event")
+	}
+}
+
 func TestMobilityStatusEventComparisonKeepsBehavioralFields(t *testing.T) {
 	current := map[string]any{
 		"phase":               "Projected",
