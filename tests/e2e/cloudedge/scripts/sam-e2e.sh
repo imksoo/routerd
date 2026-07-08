@@ -324,6 +324,21 @@ scan_host_key() {
   return 1
 }
 
+run_preflight_probe() {
+  local node="$1"
+  local attempt
+  for attempt in $(seq 1 12); do
+    {
+      echo "## $node"
+      echo "attempt=$attempt"
+      ssh_node "$node" 'hostname; id; ip -br addr; ip route; pgrep -a routerd || true; command -v routerd || true'
+    } >"$evidence_dir/preflight/${node}.txt" 2>"$evidence_dir/preflight/${node}.attempt-${attempt}.stderr" && return 0
+    cp "$evidence_dir/preflight/${node}.txt" "$evidence_dir/preflight/${node}.attempt-${attempt}.txt"
+    sleep 5
+  done
+  return 1
+}
+
 preflight() {
   echo "== preflight =="
   local node host
@@ -338,10 +353,7 @@ preflight() {
     scan_host_key "$node" "$host" || return 1
   done
   for node in "${routers[@]}" "${clients[@]}"; do
-    {
-      echo "## $node"
-      ssh_node "$node" 'hostname; id; ip -br addr; ip route; pgrep -a routerd || true; command -v routerd || true'
-    } >"$evidence_dir/preflight/${node}.txt" 2>&1 || {
+    run_preflight_probe "$node" || {
       echo "$node preflight failed" >&2
       return 1
     }
