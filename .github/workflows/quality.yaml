@@ -32,19 +32,52 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: ${{ inputs.checkout-ref || github.ref }}
+          fetch-depth: 2
 
       - name: Detect docs and website changes
         id: filter
-        uses: dorny/paths-filter@v4.0.1
-        with:
-          predicate-quantifier: every
-          filters: |
-            docs:
-              - 'docs/**'
-              - '!docs/releases/changelog.md'
-            website:
-              - 'website/**'
-              - '!website/i18n/**/releases/changelog.md'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          base_ref=""
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            base_ref="${{ github.event.pull_request.base.sha }}"
+          elif [[ -n "${{ github.event.before }}" && "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
+            base_ref="${{ github.event.before }}"
+          fi
+
+          if [[ -n "${base_ref}" ]] && ! git cat-file -e "${base_ref}^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth=1 origin "${base_ref}"
+          fi
+
+          if [[ -n "${base_ref}" ]]; then
+            mapfile -t changed_files < <(git diff --name-only "${base_ref}"...HEAD)
+          else
+            mapfile -t changed_files < <(git diff-tree --no-commit-id --name-only -r HEAD)
+          fi
+
+          docs=false
+          website=false
+          for path in "${changed_files[@]}"; do
+            case "${path}" in
+              docs/releases/changelog.md)
+                ;;
+              docs/*)
+                docs=true
+                ;;
+              website/i18n/*/releases/changelog.md)
+                ;;
+              website/*)
+                website=true
+                ;;
+            esac
+          done
+
+          {
+            echo "docs=${docs}"
+            echo "website=${website}"
+          } >> "${GITHUB_OUTPUT}"
 
   go-test:
     name: Go tests

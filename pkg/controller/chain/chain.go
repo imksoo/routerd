@@ -824,7 +824,7 @@ func volatileStatusEventField(apiVersion, kind, key string) bool {
 		return key == "lastSuccessTime"
 	case "NAT44SessionSync":
 		switch key {
-		case "deleteFailed", "deleteMissing", "deleteOK", "insertExisting", "insertFailed", "insertOK", "lastBatchAt", "lastBatchEvents", "lastEventAt", "queuedEventCount", "scriptBytes", "sessionCount", "syncedAt", "targets":
+		case "deleteFailed", "deleteMissing", "deleteOK", "insertExisting", "insertFailed", "insertOK", "lastBatchAt", "lastBatchEvents", "lastEventAt", "pruneCandidateCount", "pruneFailed", "pruneMissing", "pruneOK", "queuedEventCount", "remoteSessionCount", "scriptBytes", "sessionCount", "syncedAt", "targets":
 			return true
 		}
 	case "DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync":

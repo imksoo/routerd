@@ -594,7 +594,7 @@ validator がエラーにします。
 | `SAMNodeSet` | `nodeCount` (int) |
 | `SAMTransportProfile` | `dynamicSource` (string), `generatedBGPPeers` (int), `generatedEndpointRoutes` (int), `generatedTunnels` (int), `innerPrefix` (string), `peers` (objectList), `peersFrom` (objectList), `pendingSources` (stringList), `phase` (string), `selfNode` (string), `topologyNodeRefs` (stringList) |
 | `NAT44Rule` | `dryRun` (bool), `egressInterface` (string), `phase` (string), `snatAddress` (string) |
-| `NAT44SessionSync` | `deleteFailed` (int), `deleteOK` (int), `dryRun` (bool), `insertFailed` (int), `insertOK` (int), `mode` (string), `phase` (string), `sessionCount` (int), `snatAddresses` (stringList), `syncedAt` (timestamp), `targetCount` (int), `targets` (objectList) |
+| `NAT44SessionSync` | `deleteFailed` (int), `deleteMissing` (int), `deleteOK` (int), `dryRun` (bool), `insertExisting` (int), `insertFailed` (int), `insertOK` (int), `lastBatchAt` (timestamp), `lastBatchEvents` (int), `lastEventAt` (timestamp), `lastResyncAt` (timestamp), `mode` (string), `phase` (string), `pruneCandidateCount` (int), `pruneFailed` (int), `pruneMissing` (int), `pruneOK` (int), `queuedEventCount` (int), `remoteSessionCount` (int), `resyncCount` (int), `sessionCount` (int), `snatAddresses` (stringList), `streamState` (string), `syncedAt` (timestamp), `targetCount` (int), `targets` (objectList) |
 | `NTPClient` | `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `NTPServer` | `allowCIDRs` (stringList), `listenAddresses` (stringList), `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `ObservabilityPipeline` | `phase` (string), `signals` (stringList) |
