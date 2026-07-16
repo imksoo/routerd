@@ -496,7 +496,7 @@ func (c NAT44SessionSyncController) dumpTargetEntries(ctx context.Context, targe
 	if len(job.SNATAddresses) == 0 {
 		return nil, nil
 	}
-	script := nat44SessionSyncDumpScript(nil, target.RestoreCommand)
+	script := nat44SessionSyncDumpScript(job.SNATAddresses, target.RestoreCommand)
 	out, err := c.runSSH(ctx, target, script)
 	if err != nil {
 		return nil, fmt.Errorf("remote conntrack dump: %w: %s", err, strings.TrimSpace(string(out)))

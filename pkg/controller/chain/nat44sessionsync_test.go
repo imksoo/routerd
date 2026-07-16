@@ -232,6 +232,7 @@ func TestNAT44SessionSyncRunsSnapshotOverSSH(t *testing.T) {
 		"192.0.0.3": "ipv4 2 udp 17 171 src=172.18.1.78 dst=35.72.114.176 sport=18535 dport=32100 src=35.72.114.176 dst=192.0.0.3 sport=32100 dport=18535 [ASSURED] mark=273 use=1\n",
 	}
 	var sshArgs []string
+	var dumpScript string
 	var restoreScript string
 	sshCalls := 0
 	controller := NAT44SessionSyncController{
@@ -250,6 +251,7 @@ func TestNAT44SessionSyncRunsSnapshotOverSSH(t *testing.T) {
 				sshArgs = append([]string(nil), args...)
 				script := string(stdin)
 				if strings.Contains(script, "--dump") {
+					dumpScript = script
 					return []byte(strings.Join([]string{
 						dumps["192.0.0.2"],
 						"ipv4 2 tcp 6 86400 ESTABLISHED src=172.18.1.99 dst=203.0.113.99 sport=40000 dport=443 src=203.0.113.99 dst=192.0.0.2 sport=443 dport=40000 [ASSURED] mark=272 use=1\n",
@@ -271,6 +273,11 @@ func TestNAT44SessionSyncRunsSnapshotOverSSH(t *testing.T) {
 	}
 	if sshCalls != 2 {
 		t.Fatalf("ssh calls = %d, want 2", sshCalls)
+	}
+	for _, want := range []string{"'sudo' 'conntrack' '--dump' '-o' 'extended' '-n' '192.0.0.2'", "'sudo' 'conntrack' '--dump' '-o' 'extended' '-n' '192.0.0.3'"} {
+		if !strings.Contains(dumpScript, want) {
+			t.Fatalf("dump script missing %q:\n%s", want, dumpScript)
+		}
 	}
 	for _, want := range []string{"'sudo' 'conntrack' '-I'", "'-m' '272'", "'-m' '273'", "'-D'"} {
 		if !strings.Contains(restoreScript, want) {
