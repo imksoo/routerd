@@ -81,6 +81,17 @@ func TestParseConntrackExtendedLineSkipsSummary(t *testing.T) {
 	}
 }
 
+func TestParseConntrackExtendedLinesSkipsSSHNoise(t *testing.T) {
+	lines := []byte("Could not create directory '/root/.ssh' (Read-only file system).\r\nipv4 2 unknown 112 599 src=172.18.0.2 dst=172.18.0.3 packets=1 bytes=40 [UNREPLIED] src=172.18.0.3 dst=172.18.0.2 packets=0 bytes=0 mark=0 use=1\nipv4 2 tcp 6 86400 ESTABLISHED src=172.18.1.73 dst=142.251.23.95 sport=52654 dport=443 src=142.251.23.95 dst=192.0.0.2 sport=443 dport=52654 [ASSURED] mark=272 use=1\n")
+	entries, err := parseConntrackExtendedLines(lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+}
+
 func TestParseConntrackEventLine(t *testing.T) {
 	line := "[NEW] ipv4 2 tcp 6 86398 ESTABLISHED src=172.18.1.150 dst=20.194.195.242 sport=65190 dport=443 packets=262 bytes=12258 src=20.194.195.242 dst=192.0.0.2 sport=443 dport=65190 packets=260 bytes=66429 [ASSURED] mark=272 use=1"
 	op, ok, err := parseConntrackEventLine(line, []string{"192.0.0.2"})
@@ -113,14 +124,14 @@ func TestParseConntrackEventLine(t *testing.T) {
 }
 
 func TestParseNAT44SessionSyncRestoreOutput(t *testing.T) {
-	result, err := parseNAT44SessionSyncRestoreOutput([]byte("noise\nok_del=1 miss_del=2 ng_del=3 ok_ins=4 dup_ins=5 ng_ins=6\n"))
+	result, err := parseNAT44SessionSyncRestoreOutput([]byte("noise\nok_del=1 miss_del=2 ng_del=3 ok_prune=4 miss_prune=5 ng_prune=6 ok_ins=7 dup_ins=8 ng_ins=9\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result != (nat44SessionSyncRestoreResult{OKDel: 1, MissingDel: 2, NGDel: 3, OKIns: 4, DuplicateIns: 5, NGIns: 6}) {
+	if result != (nat44SessionSyncRestoreResult{OKDel: 1, MissingDel: 2, NGDel: 3, OKPrune: 4, MissingPrune: 5, NGPrune: 6, OKIns: 7, DuplicateIns: 8, NGIns: 9}) {
 		t.Fatalf("result = %#v", result)
 	}
-	if _, err := parseNAT44SessionSyncRestoreOutput([]byte("ok_del=1 miss_del=2 ng_del=3 ok_ins=4 dup_ins=5\n")); err == nil {
+	if _, err := parseNAT44SessionSyncRestoreOutput([]byte("ok_del=1 miss_del=2 ng_del=3 ok_prune=4 miss_prune=5 ng_prune=6 ok_ins=7 dup_ins=8\n")); err == nil {
 		t.Fatal("expected missing ng_ins to fail")
 	}
 	if phase, reason := nat44SessionSyncRestorePhase(2, nat44SessionSyncRestoreResult{OKIns: 0, NGIns: 2}); phase != "Error" || reason != "RestoreFailed" {
@@ -138,12 +149,18 @@ func TestParseNAT44SessionSyncRestoreOutput(t *testing.T) {
 	if phase, reason := nat44SessionSyncRestorePhase(2, nat44SessionSyncRestoreResult{OKIns: 2, NGDel: 1}); phase != "Degraded" || reason != "RestorePartialFailed" {
 		t.Fatalf("delete-failed phase = %s/%s", phase, reason)
 	}
+	if phase, reason := nat44SessionSyncRestorePhase(2, nat44SessionSyncRestoreResult{OKIns: 2, NGPrune: 1}); phase != "Degraded" || reason != "RestorePartialFailed" {
+		t.Fatalf("prune-failed phase = %s/%s", phase, reason)
+	}
 	deleteOnly := []conntrackRestoreOperation{{DeleteOnly: true}}
 	if phase, reason := nat44SessionSyncRestoreOperationsPhase(deleteOnly, nat44SessionSyncRestoreResult{OKDel: 1}); phase != "Synced" || reason != "" {
 		t.Fatalf("delete-only phase = %s/%s", phase, reason)
 	}
 	if phase, reason := nat44SessionSyncRestoreOperationsPhase(deleteOnly, nat44SessionSyncRestoreResult{NGDel: 1}); phase != "Degraded" || reason != "RestorePartialFailed" {
 		t.Fatalf("delete-only failed phase = %s/%s", phase, reason)
+	}
+	if phase, reason := nat44SessionSyncRestoreOperationsPhase(deleteOnly, nat44SessionSyncRestoreResult{NGPrune: 1}); phase != "Degraded" || reason != "RestorePartialFailed" {
+		t.Fatalf("prune-only failed phase = %s/%s", phase, reason)
 	}
 }
 
@@ -162,12 +179,16 @@ esac
 `), 0755); err != nil {
 		t.Fatalf("write fake conntrack: %v", err)
 	}
-	script := nat44SessionSyncRestoreScript([]conntrackRestoreEntry{
+	script := nat44SessionSyncRestoreOperationsScript(nat44SessionSyncSnapshotRestoreOperations([]conntrackRestoreEntry{
 		{Delete: []string{"-D", "missing"}, Insert: []string{"-I", "existing"}},
 		{Delete: []string{"-D", "ok"}, Insert: []string{"-I", "conntrack-exists"}},
 		{Delete: []string{"-D", "ok"}, Insert: []string{"-I", "ok"}},
 		{Delete: []string{"-D", "fail"}, Insert: []string{"-I", "fail"}},
-	}, []string{fakeConntrack})
+	}, []conntrackRestoreEntry{
+		{Delete: []string{"-D", "ok"}},
+		{Delete: []string{"-D", "missing"}},
+		{Delete: []string{"-D", "fail"}},
+	}), []string{fakeConntrack})
 	cmd := exec.Command("sh")
 	cmd.Stdin = bytes.NewReader(script)
 	out, err := cmd.CombinedOutput()
@@ -178,11 +199,11 @@ esac
 	if err != nil {
 		t.Fatalf("parse restore output: %v\n%s", err, out)
 	}
-	want := nat44SessionSyncRestoreResult{OKDel: 2, MissingDel: 1, NGDel: 1, OKIns: 1, DuplicateIns: 2, NGIns: 1}
+	want := nat44SessionSyncRestoreResult{OKDel: 2, MissingDel: 1, NGDel: 1, OKPrune: 1, MissingPrune: 1, NGPrune: 1, OKIns: 1, DuplicateIns: 2, NGIns: 1}
 	if result != want {
 		t.Fatalf("result = %#v, want %#v\n%s", result, want, out)
 	}
-	if !strings.Contains(string(out), "delete failed: delete denied") || !strings.Contains(string(out), "insert failed: insert denied") {
+	if !strings.Contains(string(out), "prune failed: delete denied") || !strings.Contains(string(out), "delete failed: delete denied") || !strings.Contains(string(out), "insert failed: insert denied") {
 		t.Fatalf("restore output missing representative errors:\n%s", out)
 	}
 }
@@ -211,7 +232,8 @@ func TestNAT44SessionSyncRunsSnapshotOverSSH(t *testing.T) {
 		"192.0.0.3": "ipv4 2 udp 17 171 src=172.18.1.78 dst=35.72.114.176 sport=18535 dport=32100 src=35.72.114.176 dst=192.0.0.3 sport=32100 dport=18535 [ASSURED] mark=273 use=1\n",
 	}
 	var sshArgs []string
-	var sshScript string
+	var restoreScript string
+	sshCalls := 0
 	controller := NAT44SessionSyncController{
 		Router: router,
 		Store:  store,
@@ -224,9 +246,17 @@ func TestNAT44SessionSyncRunsSnapshotOverSSH(t *testing.T) {
 				}
 				t.Fatalf("unexpected conntrack args: %#v", args)
 			case "ssh":
+				sshCalls++
 				sshArgs = append([]string(nil), args...)
-				sshScript = string(stdin)
-				return []byte("ok_del=0 miss_del=2 ng_del=0 ok_ins=2 dup_ins=0 ng_ins=0\n"), nil
+				script := string(stdin)
+				if strings.Contains(script, "--dump") {
+					return []byte(strings.Join([]string{
+						dumps["192.0.0.2"],
+						"ipv4 2 tcp 6 86400 ESTABLISHED src=172.18.1.99 dst=203.0.113.99 sport=40000 dport=443 src=203.0.113.99 dst=192.0.0.2 sport=443 dport=40000 [ASSURED] mark=272 use=1\n",
+					}, "")), nil
+				}
+				restoreScript = script
+				return []byte("ok_del=0 miss_del=2 ng_del=0 ok_prune=1 miss_prune=0 ng_prune=0 ok_ins=2 dup_ins=0 ng_ins=0\n"), nil
 			default:
 				t.Fatalf("unexpected command %q", name)
 			}
@@ -239,20 +269,26 @@ func TestNAT44SessionSyncRunsSnapshotOverSSH(t *testing.T) {
 	if !reflect.DeepEqual(sshArgs, []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "routerd@homert03.lain.local", "sh", "-s"}) {
 		t.Fatalf("ssh args = %#v", sshArgs)
 	}
+	if sshCalls != 2 {
+		t.Fatalf("ssh calls = %d, want 2", sshCalls)
+	}
 	for _, want := range []string{"'sudo' 'conntrack' '-I'", "'-m' '272'", "'-m' '273'", "'-D'"} {
-		if !strings.Contains(sshScript, want) {
-			t.Fatalf("restore script missing %q:\n%s", want, sshScript)
+		if !strings.Contains(restoreScript, want) {
+			t.Fatalf("restore script missing %q:\n%s", want, restoreScript)
 		}
 	}
+	if !strings.Contains(restoreScript, "203.0.113.99") || !strings.Contains(restoreScript, "ok_prune") {
+		t.Fatalf("restore script missing stale prune:\n%s", restoreScript)
+	}
 	status := store.ObjectStatus(api.NetAPIVersion, "NAT44SessionSync", "dslite-abc")
-	if status["phase"] != "Synced" || status["sessionCount"] != 2 || status["targetCount"] != 1 || status["deleteMissing"] != 2 || status["insertOK"] != 2 || status["insertFailed"] != 0 {
+	if status["phase"] != "Synced" || status["sessionCount"] != 2 || status["targetCount"] != 1 || status["deleteMissing"] != 2 || status["pruneOK"] != 1 || status["insertOK"] != 2 || status["insertFailed"] != 0 {
 		t.Fatalf("status = %#v", status)
 	}
 	if !reflect.DeepEqual(status["snatAddresses"], []string{"192.0.0.2", "192.0.0.3"}) {
 		t.Fatalf("snatAddresses = %#v", status["snatAddresses"])
 	}
 	targets, ok := status["targets"].([]map[string]any)
-	if !ok || len(targets) != 1 || targets[0]["phase"] != "Synced" || targets[0]["deleteMissing"] != 2 || targets[0]["insertOK"] != 2 || targets[0]["insertFailed"] != 0 {
+	if !ok || len(targets) != 1 || targets[0]["phase"] != "Synced" || targets[0]["deleteMissing"] != 2 || targets[0]["pruneOK"] != 1 || targets[0]["insertOK"] != 2 || targets[0]["insertFailed"] != 0 || targets[0]["remoteSessionCount"] != 2 || targets[0]["pruneCandidateCount"] != 1 {
 		t.Fatalf("targets = %#v", status["targets"])
 	}
 }
@@ -280,12 +316,15 @@ func TestNAT44SessionSyncEventStreamStartsWithSnapshotAndConsumesEvents(t *testi
 				return []byte("ipv4 2 tcp 6 86400 ESTABLISHED src=172.18.1.73 dst=142.251.23.95 sport=52654 dport=443 src=142.251.23.95 dst=192.0.0.2 sport=443 dport=52654 [ASSURED] mark=272 use=1\n"), nil
 			case "ssh":
 				script := string(stdin)
+				if strings.Contains(script, "--dump") {
+					return []byte("ipv4 2 tcp 6 86400 ESTABLISHED src=172.18.1.73 dst=142.251.23.95 sport=52654 dport=443 src=142.251.23.95 dst=192.0.0.2 sport=443 dport=52654 [ASSURED] mark=272 use=1\n"), nil
+				}
 				mu.Lock()
 				sshScripts = append(sshScripts, script)
 				mu.Unlock()
 				inserts := strings.Count(script, "'-I'")
 				deletes := strings.Count(script, "'-D'")
-				return []byte(fmt.Sprintf("ok_del=%d miss_del=0 ng_del=0 ok_ins=%d dup_ins=0 ng_ins=0\n", deletes, inserts)), nil
+				return []byte(fmt.Sprintf("ok_del=%d miss_del=0 ng_del=0 ok_prune=0 miss_prune=0 ng_prune=0 ok_ins=%d dup_ins=0 ng_ins=0\n", deletes, inserts)), nil
 			default:
 				return nil, fmt.Errorf("unexpected command %q", name)
 			}
@@ -356,10 +395,13 @@ func TestNAT44SessionSyncReportsRestoreInsertFailures(t *testing.T) {
 			case "conntrack":
 				return []byte("ipv4 2 tcp 6 86400 ESTABLISHED src=172.18.1.73 dst=142.251.23.95 sport=52654 dport=443 src=142.251.23.95 dst=192.0.0.2 sport=443 dport=52654 [ASSURED] mark=272 use=1\n"), nil
 			case "ssh":
+				if strings.Contains(string(stdin), "--dump") {
+					return []byte("ipv4 2 tcp 6 86400 ESTABLISHED src=172.18.1.73 dst=142.251.23.95 sport=52654 dport=443 src=142.251.23.95 dst=192.0.0.2 sport=443 dport=52654 [ASSURED] mark=272 use=1\n"), nil
+				}
 				if !strings.Contains(string(stdin), "ok_ins") {
 					t.Fatalf("restore script missing counters:\n%s", stdin)
 				}
-				return []byte("insert failed: conntrack v1.4.8: Operation failed\nok_del=0 miss_del=0 ng_del=1 ok_ins=0 dup_ins=0 ng_ins=1\n"), nil
+				return []byte("insert failed: conntrack v1.4.8: Operation failed\nok_del=0 miss_del=0 ng_del=1 ok_prune=0 miss_prune=0 ng_prune=0 ok_ins=0 dup_ins=0 ng_ins=1\n"), nil
 			default:
 				t.Fatalf("unexpected command %q", name)
 			}

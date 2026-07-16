@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/netip"
@@ -22,6 +23,8 @@ import (
 const defaultNAT44SessionSyncCommandTimeout = 2 * time.Minute
 const defaultNAT44SessionSyncEventBatchInterval = 5 * time.Second
 const defaultNAT44SessionSyncEventBatchMax = 512
+
+var errUnsupportedConntrackProtocol = errors.New("unsupported conntrack protocol")
 
 type sessionSyncCommandFunc func(ctx context.Context, name string, args []string, stdin []byte) ([]byte, error)
 type sessionSyncStreamFunc func(ctx context.Context, name string, args []string) (io.ReadCloser, func() error, error)
@@ -59,6 +62,9 @@ type nat44SessionSyncRestoreResult struct {
 	OKDel        int
 	MissingDel   int
 	NGDel        int
+	OKPrune      int
+	MissingPrune int
+	NGPrune      int
 	OKIns        int
 	DuplicateIns int
 	NGIns        int
@@ -72,6 +78,7 @@ type conntrackRestoreEntry struct {
 type conntrackRestoreOperation struct {
 	Entry      conntrackRestoreEntry
 	DeleteOnly bool
+	PruneOnly  bool
 }
 
 var defaultNAT44SessionSyncWorkers = newNAT44SessionSyncWorkerManager()
@@ -339,9 +346,23 @@ func (c NAT44SessionSyncController) restoreEntriesToTargets(ctx context.Context,
 	total := nat44SessionSyncRestoreResult{}
 	overallPhase := "Synced"
 	overallReason := ""
+	desired := conntrackRestoreEntryDeleteSet(entries)
 	for _, target := range job.Targets {
 		targetStatus := nat44SessionSyncTargetStatus(target)
-		targetScript := nat44SessionSyncRestoreScript(entries, target.RestoreCommand)
+		targetEntries, err := c.dumpTargetEntries(ctx, target, job)
+		if err != nil {
+			targetStatus["phase"] = "Error"
+			targetStatus["reason"] = "RemoteDumpFailed"
+			targetStatus["error"] = err.Error()
+			targetStatuses = append(targetStatuses, targetStatus)
+			overallPhase = "Error"
+			overallReason = "RemoteDumpFailed"
+			continue
+		}
+		pruneEntries := staleConntrackRestoreEntries(targetEntries, desired)
+		targetStatus["remoteSessionCount"] = len(targetEntries)
+		targetStatus["pruneCandidateCount"] = len(pruneEntries)
+		targetScript := nat44SessionSyncRestoreOperationsScript(nat44SessionSyncSnapshotRestoreOperations(entries, pruneEntries), target.RestoreCommand)
 		out, err := c.runSSH(ctx, target, targetScript)
 		if err != nil {
 			targetStatus["phase"] = "Error"
@@ -368,6 +389,9 @@ func (c NAT44SessionSyncController) restoreEntriesToTargets(ctx context.Context,
 		total.OKDel += result.OKDel
 		total.MissingDel += result.MissingDel
 		total.NGDel += result.NGDel
+		total.OKPrune += result.OKPrune
+		total.MissingPrune += result.MissingPrune
+		total.NGPrune += result.NGPrune
 		total.OKIns += result.OKIns
 		total.DuplicateIns += result.DuplicateIns
 		total.NGIns += result.NGIns
@@ -426,6 +450,9 @@ func (c NAT44SessionSyncController) restoreOperationsToTargets(ctx context.Conte
 		total.OKDel += result.OKDel
 		total.MissingDel += result.MissingDel
 		total.NGDel += result.NGDel
+		total.OKPrune += result.OKPrune
+		total.MissingPrune += result.MissingPrune
+		total.NGPrune += result.NGPrune
 		total.OKIns += result.OKIns
 		total.DuplicateIns += result.DuplicateIns
 		total.NGIns += result.NGIns
@@ -463,6 +490,22 @@ func (c NAT44SessionSyncController) runConntrackDump(ctx context.Context, run se
 		return stderr.Bytes(), err
 	}
 	return stdout.Bytes(), nil
+}
+
+func (c NAT44SessionSyncController) dumpTargetEntries(ctx context.Context, target nat44SessionSyncTarget, job nat44SessionSyncJob) ([]conntrackRestoreEntry, error) {
+	if len(job.SNATAddresses) == 0 {
+		return nil, nil
+	}
+	script := nat44SessionSyncDumpScript(nil, target.RestoreCommand)
+	out, err := c.runSSH(ctx, target, script)
+	if err != nil {
+		return nil, fmt.Errorf("remote conntrack dump: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	entries, err := parseConntrackExtendedLines(out)
+	if err != nil {
+		return nil, err
+	}
+	return conntrackRestoreEntriesForSNATAddresses(entries, job.SNATAddresses), nil
 }
 
 func (c NAT44SessionSyncController) runConntrackEventStream(ctx context.Context, command string) (io.ReadCloser, func() error, error) {
@@ -823,6 +866,85 @@ func (w *nat44SessionSyncWorker) flush(operations []conntrackRestoreOperation) {
 	w.set(status)
 }
 
+func parseConntrackExtendedLines(data []byte) ([]conntrackRestoreEntry, error) {
+	seen := map[string]bool{}
+	var out []conntrackRestoreEntry
+	for _, line := range strings.Split(string(data), "\n") {
+		if isIgnorableConntrackDumpNoise(line) {
+			continue
+		}
+		entry, ok, err := parseConntrackExtendedLine(line)
+		if err != nil {
+			if errors.Is(err, errUnsupportedConntrackProtocol) || strings.Contains(err.Error(), errUnsupportedConntrackProtocol.Error()) {
+				continue
+			}
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		key := strings.Join(entry.Delete, "\x00")
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, entry)
+	}
+	return out, nil
+}
+
+func isIgnorableConntrackDumpNoise(line string) bool {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return true
+	}
+	return strings.HasPrefix(line, "Could not create directory ") ||
+		strings.HasPrefix(line, "Warning: Permanently added ") ||
+		strings.Contains(line, "Permanently added ") ||
+		strings.Contains(line, "known hosts")
+}
+
+func conntrackRestoreEntryDeleteSet(entries []conntrackRestoreEntry) map[string]bool {
+	out := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		out[strings.Join(entry.Delete, "\x00")] = true
+	}
+	return out
+}
+
+func conntrackRestoreEntriesForSNATAddresses(entries []conntrackRestoreEntry, addresses []string) []conntrackRestoreEntry {
+	wanted := make(map[string]bool, len(addresses))
+	for _, address := range addresses {
+		wanted[address] = true
+	}
+	var out []conntrackRestoreEntry
+	for _, entry := range entries {
+		if wanted[conntrackRestoreEntryReplyDestination(entry)] {
+			out = append(out, entry)
+		}
+	}
+	return out
+}
+
+func conntrackRestoreEntryReplyDestination(entry conntrackRestoreEntry) string {
+	for i := 0; i+1 < len(entry.Delete); i++ {
+		if entry.Delete[i] == "-q" {
+			return entry.Delete[i+1]
+		}
+	}
+	return ""
+}
+
+func staleConntrackRestoreEntries(targetEntries []conntrackRestoreEntry, desired map[string]bool) []conntrackRestoreEntry {
+	var out []conntrackRestoreEntry
+	for _, entry := range targetEntries {
+		if !desired[strings.Join(entry.Delete, "\x00")] {
+			out = append(out, entry)
+		}
+	}
+	return out
+}
+
 func cloneStatusMap(in map[string]any) map[string]any {
 	out := make(map[string]any, len(in))
 	for key, value := range in {
@@ -872,7 +994,7 @@ func parseConntrackExtendedLine(line string) (conntrackRestoreEntry, bool, error
 	case "icmp":
 		insert = append(insert, "--icmp-type", orig["type"], "--icmp-code", orig["code"], "--icmp-id", orig["id"])
 	default:
-		return conntrackRestoreEntry{}, false, fmt.Errorf("unsupported conntrack protocol %q", proto)
+		return conntrackRestoreEntry{}, false, fmt.Errorf("%w %q", errUnsupportedConntrackProtocol, proto)
 	}
 	if proto == "tcp" && state != "" {
 		insert = append(insert, "--state", state)
@@ -1023,12 +1145,37 @@ func conntrackDeleteArgs(insert []string) []string {
 	return deleteArgs
 }
 
+func nat44SessionSyncDumpScript(addresses []string, command []string) []byte {
+	if len(command) == 0 {
+		command = []string{"conntrack"}
+	}
+	var buf bytes.Buffer
+	buf.WriteString("#!/bin/sh\nset -eu\n")
+	if len(addresses) == 0 {
+		buf.WriteString(shellCommand(command, []string{"--dump", "-o", "extended"}))
+		buf.WriteString("\n")
+		return buf.Bytes()
+	}
+	for _, address := range addresses {
+		buf.WriteString(shellCommand(command, []string{"--dump", "-o", "extended", "-n", address}))
+		buf.WriteString("\n")
+	}
+	return buf.Bytes()
+}
+
 func nat44SessionSyncRestoreScript(entries []conntrackRestoreEntry, command []string) []byte {
-	operations := make([]conntrackRestoreOperation, 0, len(entries))
+	return nat44SessionSyncRestoreOperationsScript(nat44SessionSyncSnapshotRestoreOperations(entries, nil), command)
+}
+
+func nat44SessionSyncSnapshotRestoreOperations(entries, pruneEntries []conntrackRestoreEntry) []conntrackRestoreOperation {
+	operations := make([]conntrackRestoreOperation, 0, len(entries)+len(pruneEntries))
+	for _, entry := range pruneEntries {
+		operations = append(operations, conntrackRestoreOperation{Entry: entry, DeleteOnly: true, PruneOnly: true})
+	}
 	for _, entry := range entries {
 		operations = append(operations, conntrackRestoreOperation{Entry: entry})
 	}
-	return nat44SessionSyncRestoreOperationsScript(operations, command)
+	return operations
 }
 
 func nat44SessionSyncRestoreOperationsScript(operations []conntrackRestoreOperation, command []string) []byte {
@@ -1036,7 +1183,7 @@ func nat44SessionSyncRestoreOperationsScript(operations []conntrackRestoreOperat
 		command = []string{"conntrack"}
 	}
 	var buf bytes.Buffer
-	buf.WriteString("#!/bin/sh\nset -eu\nok_del=0; miss_del=0; ng_del=0; ok_ins=0; dup_ins=0; ng_ins=0; err_lines=0\n")
+	buf.WriteString("#!/bin/sh\nset -eu\nok_del=0; miss_del=0; ng_del=0; ok_prune=0; miss_prune=0; ng_prune=0; ok_ins=0; dup_ins=0; ng_ins=0; err_lines=0\n")
 	buf.WriteString("record_restore_error() {\n")
 	buf.WriteString("  if [ \"$err_lines\" -lt 3 ]; then\n")
 	buf.WriteString("    printf '%s\\n' \"$1\"\n")
@@ -1045,12 +1192,16 @@ func nat44SessionSyncRestoreOperationsScript(operations []conntrackRestoreOperat
 	buf.WriteString("}\n")
 	for _, operation := range operations {
 		entry := operation.Entry
+		okDel, missDel, ngDel, failedPrefix := "ok_del", "miss_del", "ng_del", "delete"
+		if operation.PruneOnly {
+			okDel, missDel, ngDel, failedPrefix = "ok_prune", "miss_prune", "ng_prune", "prune"
+		}
 		buf.WriteString("if out=$(")
 		buf.WriteString(shellCommand(command, entry.Delete))
 		buf.WriteString(" 2>&1); then\n")
-		buf.WriteString("  case \"$out\" in *\"0 flow entries\"*|*\"not found\"*|*\"No such file\"*|*\"does not exist\"*) miss_del=$((miss_del+1));; *) ok_del=$((ok_del+1));; esac\n")
+		buf.WriteString(fmt.Sprintf("  case \"$out\" in *\"0 flow entries\"*|*\"not found\"*|*\"No such file\"*|*\"does not exist\"*) %s=$((%s+1));; *) %s=$((%s+1));; esac\n", missDel, missDel, okDel, okDel))
 		buf.WriteString("else\n")
-		buf.WriteString("  case \"$out\" in *\"0 flow entries\"*|*\"not found\"*|*\"No such file\"*|*\"does not exist\"*) miss_del=$((miss_del+1));; *) ng_del=$((ng_del+1)); record_restore_error \"delete failed: $out\";; esac\n")
+		buf.WriteString(fmt.Sprintf("  case \"$out\" in *\"0 flow entries\"*|*\"not found\"*|*\"No such file\"*|*\"does not exist\"*) %s=$((%s+1));; *) %s=$((%s+1)); record_restore_error \"%s failed: $out\";; esac\n", missDel, missDel, ngDel, ngDel, failedPrefix))
 		buf.WriteString("fi\n")
 		if operation.DeleteOnly {
 			continue
@@ -1061,7 +1212,7 @@ func nat44SessionSyncRestoreOperationsScript(operations []conntrackRestoreOperat
 		buf.WriteString("  case \"$out\" in *\"File exists\"*|*\"already exists\"*|*\"Such conntrack exists\"*|*\"exists, try -U\"*) dup_ins=$((dup_ins+1));; *) ng_ins=$((ng_ins+1)); record_restore_error \"insert failed: $out\";; esac\n")
 		buf.WriteString("fi\n")
 	}
-	buf.WriteString("echo ok_del=$ok_del miss_del=$miss_del ng_del=$ng_del ok_ins=$ok_ins dup_ins=$dup_ins ng_ins=$ng_ins\n")
+	buf.WriteString("echo ok_del=$ok_del miss_del=$miss_del ng_del=$ng_del ok_prune=$ok_prune miss_prune=$miss_prune ng_prune=$ng_prune ok_ins=$ok_ins dup_ins=$dup_ins ng_ins=$ng_ins\n")
 	return buf.Bytes()
 }
 
@@ -1078,7 +1229,7 @@ func parseNAT44SessionSyncRestoreOutput(output []byte) (nat44SessionSyncRestoreR
 				continue
 			}
 			switch key {
-			case "ok_del", "miss_del", "ng_del", "ok_ins", "dup_ins", "ng_ins":
+			case "ok_del", "miss_del", "ng_del", "ok_prune", "miss_prune", "ng_prune", "ok_ins", "dup_ins", "ng_ins":
 				value, err := strconv.Atoi(raw)
 				if err != nil {
 					return nat44SessionSyncRestoreResult{}, fmt.Errorf("%s must be an integer: %w", key, err)
@@ -1089,7 +1240,7 @@ func parseNAT44SessionSyncRestoreOutput(output []byte) (nat44SessionSyncRestoreR
 		if len(values) == 0 {
 			continue
 		}
-		for _, key := range []string{"ok_del", "miss_del", "ng_del", "ok_ins", "dup_ins", "ng_ins"} {
+		for _, key := range []string{"ok_del", "miss_del", "ng_del", "ok_prune", "miss_prune", "ng_prune", "ok_ins", "dup_ins", "ng_ins"} {
 			if _, ok := values[key]; !ok {
 				return nat44SessionSyncRestoreResult{}, fmt.Errorf("restore output missing %s", key)
 			}
@@ -1098,6 +1249,9 @@ func parseNAT44SessionSyncRestoreOutput(output []byte) (nat44SessionSyncRestoreR
 			OKDel:        values["ok_del"],
 			MissingDel:   values["miss_del"],
 			NGDel:        values["ng_del"],
+			OKPrune:      values["ok_prune"],
+			MissingPrune: values["miss_prune"],
+			NGPrune:      values["ng_prune"],
 			OKIns:        values["ok_ins"],
 			DuplicateIns: values["dup_ins"],
 			NGIns:        values["ng_ins"],
@@ -1111,7 +1265,7 @@ func nat44SessionSyncRestorePhase(entries int, result nat44SessionSyncRestoreRes
 	switch {
 	case entries > 0 && insertConverged == 0:
 		return "Error", "RestoreFailed"
-	case result.NGDel > 0 || result.NGIns > 0:
+	case result.NGDel > 0 || result.NGPrune > 0 || result.NGIns > 0:
 		return "Degraded", "RestorePartialFailed"
 	default:
 		return "Synced", ""
@@ -1128,7 +1282,7 @@ func nat44SessionSyncRestoreOperationsPhase(operations []conntrackRestoreOperati
 	if insertCount > 0 {
 		return nat44SessionSyncRestorePhase(insertCount, result)
 	}
-	if result.NGDel > 0 {
+	if result.NGDel > 0 || result.NGPrune > 0 {
 		return "Degraded", "RestorePartialFailed"
 	}
 	return "Synced", ""
@@ -1138,6 +1292,9 @@ func addNAT44SessionSyncRestoreStatus(status map[string]any, result nat44Session
 	status["deleteOK"] = result.OKDel
 	status["deleteMissing"] = result.MissingDel
 	status["deleteFailed"] = result.NGDel
+	status["pruneOK"] = result.OKPrune
+	status["pruneMissing"] = result.MissingPrune
+	status["pruneFailed"] = result.NGPrune
 	status["insertOK"] = result.OKIns
 	status["insertExisting"] = result.DuplicateIns
 	status["insertFailed"] = result.NGIns
