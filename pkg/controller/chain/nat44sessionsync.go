@@ -1051,7 +1051,28 @@ func parseConntrackEventLine(line string, snatAddresses []string) (conntrackRest
 	if !conntrackEntryMatchesSNAT(entry, snatAddresses) {
 		return conntrackRestoreOperation{}, false, nil
 	}
+	// conntrack-tools rejects a TCP insert without --state. DESTROY events are
+	// delete-only and remain safe to relay even when their state is omitted.
+	if !deleteOnly && conntrackRestoreEntryIsTCPWithoutState(entry) {
+		return conntrackRestoreOperation{}, false, nil
+	}
 	return conntrackRestoreOperation{Entry: entry, DeleteOnly: deleteOnly}, true, nil
+}
+
+func conntrackRestoreEntryIsTCPWithoutState(entry conntrackRestoreEntry) bool {
+	isTCP := false
+	hasState := false
+	for i := 0; i < len(entry.Insert); i++ {
+		switch entry.Insert[i] {
+		case "-p":
+			if i+1 < len(entry.Insert) && entry.Insert[i+1] == "tcp" {
+				isTCP = true
+			}
+		case "--state":
+			hasState = true
+		}
+	}
+	return isTCP && !hasState
 }
 
 func conntrackEventFamilyAndProtocolSupported(fields []string) bool {
