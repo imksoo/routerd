@@ -117,6 +117,17 @@ func TestParseConntrackEventLine(t *testing.T) {
 	if !ok || !destroy.DeleteOnly {
 		t.Fatalf("destroy operation = %#v, ok=%v", destroy, ok)
 	}
+	stateLessTCP := strings.Replace(line, " ESTABLISHED", "", 1)
+	if _, ok, err := parseConntrackEventLine(strings.Replace(stateLessTCP, "[NEW]", "[UPDATE]", 1), []string{"192.0.0.2"}); err != nil || ok {
+		t.Fatalf("state-less TCP update operation ok=%v err=%v", ok, err)
+	}
+	stateLessDestroy, ok, err := parseConntrackEventLine(strings.Replace(stateLessTCP, "[NEW]", "[DESTROY]", 1), []string{"192.0.0.2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || !stateLessDestroy.DeleteOnly || strings.Contains(strings.Join(stateLessDestroy.Entry.Insert, " "), "--state") {
+		t.Fatalf("state-less destroy operation = %#v, ok=%v", stateLessDestroy, ok)
+	}
 	ipv6Line := "[UPDATE] ipv6 10 icmpv6 58 29 src=2001:db8::1 dst=2001:db8::2 type=128 code=0 id=1 src=2001:db8::2 dst=2001:db8::1 type=129 code=0 id=1 mark=0 use=1"
 	if _, ok, err := parseConntrackEventLine(ipv6Line, []string{"192.0.0.2"}); err != nil || ok {
 		t.Fatalf("ipv6 operation ok=%v err=%v", ok, err)
