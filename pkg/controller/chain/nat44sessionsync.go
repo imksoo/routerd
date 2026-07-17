@@ -666,6 +666,18 @@ func (w *nat44SessionSyncWorker) set(fields map[string]any) {
 	w.state = next
 }
 
+func (w *nat44SessionSyncWorker) savePersistentStatus() {
+	if w.controller.Store == nil {
+		return
+	}
+	status := w.status()
+	current := w.controller.Store.ObjectStatus(w.job.APIVersion, w.job.Kind, w.job.Name)
+	if !nat44SessionSyncPersistentStatusChanged(current, status) {
+		return
+	}
+	_ = w.controller.save(w.job.APIVersion, w.job.Kind, w.job.Name, status)
+}
+
 func (w *nat44SessionSyncWorker) run() {
 	for {
 		if err := w.runOnce(); err != nil {
@@ -673,6 +685,7 @@ func (w *nat44SessionSyncWorker) run() {
 				return
 			}
 			w.set(map[string]any{"phase": "Degraded", "reason": "StreamFailed", "streamState": "restarting", "lastError": err.Error()})
+			w.savePersistentStatus()
 			select {
 			case <-time.After(5 * time.Second):
 			case <-w.ctx.Done():
@@ -694,6 +707,7 @@ func (w *nat44SessionSyncWorker) runOnce() error {
 	}
 	defer reader.Close()
 	w.set(map[string]any{"phase": "Synced", "streamState": "running", "reason": nil, "lastError": nil})
+	w.savePersistentStatus()
 	lines := make(chan string, 128)
 	readErr := make(chan error, 1)
 	go func() {
@@ -730,6 +744,7 @@ func (w *nat44SessionSyncWorker) runOnce() error {
 			op, ok, err := parseConntrackEventLine(line, w.job.SNATAddresses)
 			if err != nil {
 				w.set(map[string]any{"phase": "Degraded", "reason": "EventParseFailed", "lastError": err.Error(), "streamState": "running"})
+				w.savePersistentStatus()
 				continue
 			}
 			if !ok {
@@ -797,6 +812,7 @@ func (w *nat44SessionSyncWorker) resync() error {
 	resyncCount, _ := statusInt(current["resyncCount"])
 	status["resyncCount"] = resyncCount + 1
 	w.set(status)
+	w.savePersistentStatus()
 	return nil
 }
 
@@ -821,6 +837,7 @@ func (w *nat44SessionSyncWorker) flush(operations []conntrackRestoreOperation) {
 	status["lastError"] = nil
 	addNAT44SessionSyncRestoreStatus(status, total)
 	w.set(status)
+	w.savePersistentStatus()
 }
 
 func cloneStatusMap(in map[string]any) map[string]any {
