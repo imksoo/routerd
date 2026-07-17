@@ -290,11 +290,8 @@ func (c NAT44SessionSyncController) reconcileEventStreamJob(ctx context.Context,
 		c.workerManager().stop(nat44SessionSyncWorkerKey(job.APIVersion, job.Kind, job.Name))
 		return c.save(job.APIVersion, job.Kind, job.Name, map[string]any{"phase": "Pending", "reason": "NoSNATAddresses", "mode": job.Mode, "dryRun": c.DryRun})
 	}
-	status := c.workerManager().ensure(ctx, c, job)
-	if !nat44SessionSyncPersistentStatusChanged(c.Store.ObjectStatus(job.APIVersion, job.Kind, job.Name), status) {
-		return nil
-	}
-	return c.save(job.APIVersion, job.Kind, job.Name, status)
+	c.workerManager().ensure(ctx, c, job)
+	return nil
 }
 
 func nat44SessionSyncPersistentStatusChanged(current, next map[string]any) bool {
@@ -543,7 +540,7 @@ func newNAT44SessionSyncWorkerManager() *nat44SessionSyncWorkerManager {
 	return &nat44SessionSyncWorkerManager{workers: map[string]*nat44SessionSyncWorker{}}
 }
 
-func (m *nat44SessionSyncWorkerManager) ensure(ctx context.Context, controller NAT44SessionSyncController, job nat44SessionSyncJob) map[string]any {
+func (m *nat44SessionSyncWorkerManager) ensure(ctx context.Context, controller NAT44SessionSyncController, job nat44SessionSyncJob) {
 	key := nat44SessionSyncWorkerKey(job.APIVersion, job.Kind, job.Name)
 	signature := nat44SessionSyncWorkerSignature(job)
 	m.mu.Lock()
@@ -556,9 +553,7 @@ func (m *nat44SessionSyncWorkerManager) ensure(ctx context.Context, controller N
 		m.workers[key] = worker
 		worker.start()
 	}
-	status := worker.status()
 	m.mu.Unlock()
-	return status
 }
 
 func (m *nat44SessionSyncWorkerManager) stop(key string) {
@@ -679,6 +674,7 @@ func (w *nat44SessionSyncWorker) savePersistentStatus() {
 }
 
 func (w *nat44SessionSyncWorker) run() {
+	w.savePersistentStatus()
 	for {
 		if err := w.runOnce(); err != nil {
 			if w.ctx.Err() != nil {
