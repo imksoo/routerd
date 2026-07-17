@@ -9,9 +9,8 @@ slug: /how-to/nat44-session-sync
 
 `NAT44SessionSync` は、LAN 側ゲートウェイの役割を共有する 2 台の
 routerd ノードで、active ノードの NAT44 conntrack セッションを standby
-ノードへ同期するためのリソースです。初期実装は snapshot 方式です。
-routerd は選択した SNAT アドレスごとにローカル conntrack テーブルを取得し、
-一致するエントリを各ターゲットに復元します。
+ノードへ同期するためのリソースです。`snapshot` 方式では、選択した SNAT
+アドレスごとにローカル conntrack テーブルを取得し、一致するエントリを各ターゲットに復元します。
 
 通常は `spec.when` で active ノードだけが動くようにします。VRRP 構成では
 ローカル `VirtualAddress` の role を条件にするのが基本です。
@@ -67,6 +66,38 @@ delete-then-insert の復元スクリプトへ変換し、SSH 経由でターゲ
 既存フローを同じ出口経路に残すには `ct mark` の維持が重要です。
 
 `restoreCommand` の既定値は `[conntrack]` です。ターゲット側のユーザーに権限昇格が必要な場合は `[sudo, conntrack]` を指定します。
+
+## イベントストリーム方式
+
+`spec.mode: event-stream` は、開始時に 1 回だけ snapshot を復元した後、
+`conntrack -E -o extended` で受け取る `NEW`、`UPDATE`、`DESTROY` を差分として
+standby へ反映します。イベントは最大 5 秒または 512 件でバッチ化されます。
+ストリームまたは接続が切れた場合は、再接続前に再度 snapshot を復元します。
+
+SSH の接続確立を再利用するには、target の `sshOptions` に OpenSSH の
+`ControlMaster`、`ControlPersist`、`ControlPath` を指定します。
+
+```yaml
+spec:
+  mode: event-stream
+  natRules:
+    - NAT44Rule/lan-to-dslite-a
+  targets:
+    - name: standby
+      host: routerd-standby.lan.example
+      user: root
+      sshOptions:
+        - -o
+        - ControlMaster=auto
+        - -o
+        - ControlPersist=yes
+        - -o
+        - ControlPath=/run/routerd/nat44-session-sync-%C
+```
+
+`routerctl describe NAT44SessionSync/<name>` の `streamState: running`、
+`lastResyncAt`、`lastEventAt`、`lastBatchAt` を確認します。`resyncCount` は
+開始時およびストリームの再接続後に増加します。
 
 ## 確認する
 
