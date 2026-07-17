@@ -680,7 +680,9 @@ func (w *nat44SessionSyncWorker) runOnce() error {
 		return err
 	}
 	defer reader.Close()
-	w.set(map[string]any{"phase": "Synced", "streamState": "running", "reason": nil, "lastError": nil})
+	// resync records restore failures in its status. Starting the event reader
+	// must not overwrite that failure as Synced.
+	w.set(map[string]any{"streamState": "running"})
 	w.savePersistentStatus()
 	lines := make(chan string, 128)
 	readErr := make(chan error, 1)
