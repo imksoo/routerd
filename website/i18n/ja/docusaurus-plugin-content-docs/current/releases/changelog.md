@@ -11,6 +11,21 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 変更
+
+- `NAT44SessionSync` の event-stream mode は、初回 snapshot 時に standby 側の
+  一致する stale conntrack entry を削除し、worker lifecycle と sync counter を
+  永続化するようになりました。追加の reconcile を待たずに `routerctl describe` が
+  稼働中 stream の状態を表示します。
+
+### 修正
+
+- 有効な state を持たない TCP conntrack event を NAT44 event replay から除外し、
+  不正な restore operation を防ぎます。両ルーターで snapshot、standby 昇格、
+  フェールバックを確認し、`RestoreFailed` と `insertFailed` はいずれも 0 でした。
+  このリリースは CloudEdge transport、BGP、provider action、cloud/on-prem topology を
+  変更しないため、新しい full-mesh topology qualification は不要です。
+
 ## v20260708.1609
 
 ### 変更

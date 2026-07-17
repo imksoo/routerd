@@ -11,6 +11,19 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 变更
+
+- `NAT44SessionSync` 的 event-stream mode 现在会在初始 snapshot 时移除 standby
+  端匹配的 stale conntrack entry，并持久化 worker lifecycle 与 sync counter，使
+  `routerctl describe` 无需等待下一次 reconcile 即可显示运行中的 stream 状态。
+
+### 修复
+
+- NAT44 event replay 现在会忽略没有有效 state 的 TCP conntrack event，以避免错误的
+  restore operation。已在两台 router 上验证 snapshot、standby 提升和 fallback，
+  `RestoreFailed` 与 `insertFailed` 均为 0。本版本未更改 CloudEdge transport、BGP、
+  provider action 或 cloud/on-prem topology，因此不需要新的 full-mesh topology qualification。
+
 ## v20260708.1609
 
 ### 变更

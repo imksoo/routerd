@@ -12,6 +12,22 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Changed
+
+- `NAT44SessionSync` event-stream mode now prunes stale matching conntrack
+  entries on the standby during its initial snapshot, then persists the worker
+  lifecycle and sync counters so `routerctl describe` reflects the active
+  stream without another reconcile.
+
+### Fixed
+
+- NAT44 event replay now ignores TCP conntrack events that have no valid state,
+  preventing malformed restore operations. The snapshot, standby promotion,
+  and fallback paths were verified on both routers with zero `RestoreFailed`
+  and `insertFailed` results. This release does not change CloudEdge transport,
+  BGP, provider actions, or cloud/on-prem topology behavior, so a new
+  full-mesh topology qualification is not required.
+
 ## v20260708.1609
 
 ### Changed
