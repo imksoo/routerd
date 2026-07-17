@@ -43,8 +43,6 @@ type nat44SessionSyncJob struct {
 	APIVersion       string
 	Kind             string
 	Name             string
-	Mode             string
-	Interval         time.Duration
 	ConntrackCommand string
 	SNATAddresses    []string
 	Targets          []nat44SessionSyncTarget
@@ -129,21 +127,11 @@ func (c NAT44SessionSyncController) jobFromResource(resource api.Resource) (nat4
 	if err != nil {
 		return nat44SessionSyncJob{}, "", err
 	}
-	interval := 30 * time.Second
-	if strings.TrimSpace(spec.Interval) != "" {
-		parsed, err := time.ParseDuration(strings.TrimSpace(spec.Interval))
-		if err != nil {
-			return nat44SessionSyncJob{}, "", err
-		}
-		interval = parsed
-	}
 	addresses, pending := c.resolveSNATAddresses(spec)
 	job := nat44SessionSyncJob{
 		APIVersion:       firstNonEmpty(resource.APIVersion, api.NetAPIVersion),
 		Kind:             resource.Kind,
 		Name:             resource.Metadata.Name,
-		Mode:             firstNonEmpty(strings.TrimSpace(spec.Mode), "snapshot"),
-		Interval:         interval,
 		ConntrackCommand: firstNonEmpty(strings.TrimSpace(spec.ConntrackCommand), "conntrack"),
 		SNATAddresses:    addresses,
 	}
@@ -235,49 +223,7 @@ func nat44SessionSyncNATRuleName(ref string) string {
 }
 
 func (c NAT44SessionSyncController) reconcileJob(ctx context.Context, job nat44SessionSyncJob) error {
-	if job.Mode == "event-stream" {
-		return c.reconcileEventStreamJob(ctx, job)
-	}
-	c.workerManager().stop(nat44SessionSyncWorkerKey(job.APIVersion, job.Kind, job.Name))
-	return c.reconcileSnapshotJob(ctx, job)
-}
-
-func (c NAT44SessionSyncController) reconcileSnapshotJob(ctx context.Context, job nat44SessionSyncJob) error {
-	now := c.now()
-	if c.shouldSkip(job, now) {
-		return nil
-	}
-	if len(job.SNATAddresses) == 0 {
-		return c.save(job.APIVersion, job.Kind, job.Name, map[string]any{"phase": "Pending", "reason": "NoSNATAddresses", "dryRun": c.DryRun})
-	}
-	entries, err := c.dumpEntries(ctx, job)
-	if err != nil {
-		return c.save(job.APIVersion, job.Kind, job.Name, map[string]any{"phase": "Error", "reason": "DumpFailed", "error": err.Error(), "dryRun": c.DryRun})
-	}
-	status := map[string]any{
-		"mode":             job.Mode,
-		"snatAddresses":    job.SNATAddresses,
-		"snatAddressCount": len(job.SNATAddresses),
-		"sessionCount":     len(entries),
-		"targetCount":      len(job.Targets),
-		"syncedAt":         now.Format(time.RFC3339Nano),
-		"dryRun":           c.DryRun,
-	}
-	if c.DryRun {
-		status["targets"] = nat44SessionSyncTargetStatuses(job.Targets)
-		status["phase"] = "Rendered"
-		status["reason"] = "DryRun"
-		return c.save(job.APIVersion, job.Kind, job.Name, status)
-	}
-	targetStatuses, total, overallPhase, overallReason := c.restoreEntriesToTargets(ctx, job, entries)
-	status["targets"] = targetStatuses
-	addNAT44SessionSyncRestoreStatus(status, total)
-	status["phase"] = overallPhase
-	if overallReason != "" {
-		status["reason"] = overallReason
-	}
-	status["scriptBytes"] = len(nat44SessionSyncRestoreScript(entries, nil))
-	return c.save(job.APIVersion, job.Kind, job.Name, status)
+	return c.reconcileEventStreamJob(ctx, job)
 }
 
 func (c NAT44SessionSyncController) reconcileEventStreamJob(ctx context.Context, job nat44SessionSyncJob) error {
@@ -285,7 +231,7 @@ func (c NAT44SessionSyncController) reconcileEventStreamJob(ctx context.Context,
 		return c.save(job.APIVersion, job.Kind, job.Name, map[string]any{
 			"phase":            "Rendered",
 			"reason":           "DryRun",
-			"mode":             job.Mode,
+			"mode":             "event-stream",
 			"snatAddresses":    job.SNATAddresses,
 			"snatAddressCount": len(job.SNATAddresses),
 			"targetCount":      len(job.Targets),
@@ -295,7 +241,7 @@ func (c NAT44SessionSyncController) reconcileEventStreamJob(ctx context.Context,
 	}
 	if len(job.SNATAddresses) == 0 {
 		c.workerManager().stop(nat44SessionSyncWorkerKey(job.APIVersion, job.Kind, job.Name))
-		return c.save(job.APIVersion, job.Kind, job.Name, map[string]any{"phase": "Pending", "reason": "NoSNATAddresses", "mode": job.Mode, "dryRun": c.DryRun})
+		return c.save(job.APIVersion, job.Kind, job.Name, map[string]any{"phase": "Pending", "reason": "NoSNATAddresses", "mode": "event-stream", "dryRun": c.DryRun})
 	}
 	c.workerManager().ensure(ctx, c, job)
 	return nil
@@ -544,15 +490,6 @@ func (c NAT44SessionSyncController) runSSH(ctx context.Context, target nat44Sess
 	return run(runCtx, "ssh", args, script)
 }
 
-func (c NAT44SessionSyncController) shouldSkip(job nat44SessionSyncJob, now time.Time) bool {
-	if job.Interval <= 0 || c.Store == nil {
-		return false
-	}
-	status := c.Store.ObjectStatus(job.APIVersion, job.Kind, job.Name)
-	last, _ := time.Parse(time.RFC3339Nano, fmt.Sprint(status["syncedAt"]))
-	return !last.IsZero() && now.Sub(last) < job.Interval
-}
-
 func (c NAT44SessionSyncController) now() time.Time {
 	if c.Now != nil {
 		return c.Now()
@@ -625,8 +562,6 @@ func nat44SessionSyncWorkerKey(apiVersion, kind, name string) string {
 
 func nat44SessionSyncWorkerSignature(job nat44SessionSyncJob) string {
 	var b strings.Builder
-	b.WriteString(job.Mode)
-	b.WriteString("|")
 	b.WriteString(job.ConntrackCommand)
 	b.WriteString("|")
 	b.WriteString(strings.Join(job.SNATAddresses, ","))

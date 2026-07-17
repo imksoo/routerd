@@ -9,8 +9,8 @@ slug: /how-to/nat44-session-sync
 
 `NAT44SessionSync` は、LAN 側ゲートウェイの役割を共有する 2 台の
 routerd ノードで、active ノードの NAT44 conntrack セッションを standby
-ノードへ同期するためのリソースです。`snapshot` 方式では、選択した SNAT
-アドレスごとにローカル conntrack テーブルを取得し、一致するエントリを各ターゲットに復元します。
+ノードへ同期するためのリソースです。開始時に一度だけ snapshot を復元し、その後は
+conntrack イベントを差分として各ターゲットに反映します。
 
 通常は `spec.when` で active ノードだけが動くようにします。VRRP 構成では
 ローカル `VirtualAddress` の role を条件にするのが基本です。
@@ -27,8 +27,7 @@ routerd ノードで、active ノードの NAT44 conntrack セッションを st
   metadata:
     name: dslite-abc-sessions
   spec:
-    mode: snapshot
-    interval: 2s
+    mode: event-stream
     natRules:
       - NAT44Rule/lan-to-dslite-a
       - NAT44Rule/lan-to-dslite-b

@@ -9,8 +9,8 @@ slug: /how-to/nat44-session-sync
 
 `NAT44SessionSync` 是一个资源，用于在共享 LAN 侧网关角色的 2 台
 routerd 节点间，将 active 节点的 NAT44 conntrack 会话同步到 standby
-节点。初始实现为快照方式。routerd 按选定的 SNAT 地址获取本地
-conntrack 表，并将匹配的条目恢复到各 target。
+节点。启动时 routerd 会执行一次快照恢复，随后持续处理 conntrack
+事件并向各 target 发送增量更新。
 
 通常通过 `spec.when` 确保仅 active 节点运行。在 VRRP 构成中，
 以本地 `VirtualAddress` 的 role 作为条件是基本做法。
@@ -27,8 +27,7 @@ NAT44 controller 需要已解析 `snatAddress`。
   metadata:
     name: dslite-abc-sessions
   spec:
-    mode: snapshot
-    interval: 2s
+    mode: event-stream
     natRules:
       - NAT44Rule/lan-to-dslite-a
       - NAT44Rule/lan-to-dslite-b
