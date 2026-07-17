@@ -414,6 +414,7 @@ func TestNAT44SessionSyncEventStreamPersistsRunningStatusWithoutAnotherReconcile
 	}}}
 	reader, writer := io.Pipe()
 	defer writer.Close()
+	sshCalls := 0
 	controller := NAT44SessionSyncController{
 		Router:  router,
 		Store:   store,
@@ -423,7 +424,11 @@ func TestNAT44SessionSyncEventStreamPersistsRunningStatusWithoutAnotherReconcile
 			case "conntrack":
 				return []byte("ipv4 2 tcp 6 86400 ESTABLISHED src=172.18.1.73 dst=142.251.23.95 sport=52654 dport=443 src=142.251.23.95 dst=192.0.0.2 sport=443 dport=52654 [ASSURED] mark=272 use=1\n"), nil
 			case "ssh":
-				return []byte("ok_del=0 miss_del=1 ng_del=0 ok_ins=1 dup_ins=0 ng_ins=0\n"), nil
+				sshCalls++
+				if sshCalls == 1 {
+					return nil, nil
+				}
+				return []byte("ok_del=0 miss_del=1 ng_del=0 ok_prune=0 miss_prune=0 ng_prune=0 ok_ins=1 dup_ins=0 ng_ins=0\n"), nil
 			default:
 				return nil, fmt.Errorf("unexpected command %q", name)
 			}
@@ -463,6 +468,7 @@ func TestNAT44SessionSyncEventStreamDoesNotLetReconcileOverwriteWorkerStatus(t *
 	}}}
 	reader, writer := io.Pipe()
 	defer writer.Close()
+	sshCalls := 0
 	controller := NAT44SessionSyncController{
 		Router:  router,
 		Store:   store,
@@ -472,7 +478,11 @@ func TestNAT44SessionSyncEventStreamDoesNotLetReconcileOverwriteWorkerStatus(t *
 			case "conntrack":
 				return []byte("ipv4 2 tcp 6 86400 ESTABLISHED src=172.18.1.73 dst=142.251.23.95 sport=52654 dport=443 src=142.251.23.95 dst=192.0.0.2 sport=443 dport=52654 [ASSURED] mark=272 use=1\n"), nil
 			case "ssh":
-				return []byte("ok_del=0 miss_del=1 ng_del=0 ok_ins=1 dup_ins=0 ng_ins=0\n"), nil
+				sshCalls++
+				if sshCalls == 1 {
+					return nil, nil
+				}
+				return []byte("ok_del=0 miss_del=1 ng_del=0 ok_prune=0 miss_prune=0 ng_prune=0 ok_ins=1 dup_ins=0 ng_ins=0\n"), nil
 			default:
 				return nil, fmt.Errorf("unexpected command %q", name)
 			}
