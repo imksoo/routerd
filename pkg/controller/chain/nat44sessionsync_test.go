@@ -219,10 +219,9 @@ esac
 	}
 }
 
-func TestNAT44SessionSyncRunsSnapshotOverSSH(t *testing.T) {
-	store := mapStore{
-		api.NetAPIVersion + "/NAT44Rule/lan-to-dslite-b": {"snatAddress": "192.0.0.3"},
-	}
+func TestNAT44SessionSyncEventStreamInitialSyncRunsOverSSH(t *testing.T) {
+	store := newSyncMapStore()
+	store.m[api.NetAPIVersion+"/NAT44Rule/lan-to-dslite-b"] = map[string]any{"snatAddress": "192.0.0.3"}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"}, Metadata: api.ObjectMeta{Name: "lan-to-dslite-a"}, Spec: api.NAT44RuleSpec{Type: "snat", SNATAddress: "192.0.0.2"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"}, Metadata: api.ObjectMeta{Name: "lan-to-dslite-b"}, Spec: api.NAT44RuleSpec{Type: "snat", SNATAddressFrom: api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/ds-lite-b-source", Field: "address"}}},
@@ -245,10 +244,13 @@ func TestNAT44SessionSyncRunsSnapshotOverSSH(t *testing.T) {
 	var sshArgs []string
 	var restoreScript string
 	sshCalls := 0
+	reader, writer := io.Pipe()
+	defer writer.Close()
 	controller := NAT44SessionSyncController{
-		Router: router,
-		Store:  store,
-		Now:    func() time.Time { return time.Date(2026, 6, 4, 23, 0, 0, 0, time.UTC) },
+		Router:  router,
+		Store:   store,
+		Workers: newNAT44SessionSyncWorkerManager(),
+		Now:     func() time.Time { return time.Date(2026, 6, 4, 23, 0, 0, 0, time.UTC) },
 		Command: func(_ context.Context, name string, args []string, stdin []byte) ([]byte, error) {
 			switch name {
 			case "conntrack":
@@ -273,10 +275,22 @@ func TestNAT44SessionSyncRunsSnapshotOverSSH(t *testing.T) {
 			}
 			return nil, nil
 		},
+		EventCommand: func(ctx context.Context, _ string, _ []string) (io.ReadCloser, func() error, error) {
+			go func() {
+				<-ctx.Done()
+				_ = writer.Close()
+			}()
+			return reader, func() error { return ctx.Err() }, nil
+		},
 	}
-	if err := controller.Reconcile(context.Background()); err != nil {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := controller.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
+	waitForNAT44Status(t, store, controller, ctx, func(status map[string]any) bool {
+		return status["phase"] == "Synced" && status["streamState"] == "running" && status["resyncCount"] == 1
+	})
 	if !reflect.DeepEqual(sshArgs, []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "routerd@homert03.lain.local", "sh", "-s"}) {
 		t.Fatalf("ssh args = %#v", sshArgs)
 	}
@@ -400,6 +414,7 @@ func TestNAT44SessionSyncEventStreamPersistsRunningStatusWithoutAnotherReconcile
 	}}}
 	reader, writer := io.Pipe()
 	defer writer.Close()
+	sshCalls := 0
 	controller := NAT44SessionSyncController{
 		Router:  router,
 		Store:   store,
@@ -409,7 +424,11 @@ func TestNAT44SessionSyncEventStreamPersistsRunningStatusWithoutAnotherReconcile
 			case "conntrack":
 				return []byte("ipv4 2 tcp 6 86400 ESTABLISHED src=172.18.1.73 dst=142.251.23.95 sport=52654 dport=443 src=142.251.23.95 dst=192.0.0.2 sport=443 dport=52654 [ASSURED] mark=272 use=1\n"), nil
 			case "ssh":
-				return []byte("ok_del=0 miss_del=1 ng_del=0 ok_ins=1 dup_ins=0 ng_ins=0\n"), nil
+				sshCalls++
+				if sshCalls == 1 {
+					return nil, nil
+				}
+				return []byte("ok_del=0 miss_del=1 ng_del=0 ok_prune=0 miss_prune=0 ng_prune=0 ok_ins=1 dup_ins=0 ng_ins=0\n"), nil
 			default:
 				return nil, fmt.Errorf("unexpected command %q", name)
 			}
@@ -449,6 +468,7 @@ func TestNAT44SessionSyncEventStreamDoesNotLetReconcileOverwriteWorkerStatus(t *
 	}}}
 	reader, writer := io.Pipe()
 	defer writer.Close()
+	sshCalls := 0
 	controller := NAT44SessionSyncController{
 		Router:  router,
 		Store:   store,
@@ -458,7 +478,11 @@ func TestNAT44SessionSyncEventStreamDoesNotLetReconcileOverwriteWorkerStatus(t *
 			case "conntrack":
 				return []byte("ipv4 2 tcp 6 86400 ESTABLISHED src=172.18.1.73 dst=142.251.23.95 sport=52654 dport=443 src=142.251.23.95 dst=192.0.0.2 sport=443 dport=52654 [ASSURED] mark=272 use=1\n"), nil
 			case "ssh":
-				return []byte("ok_del=0 miss_del=1 ng_del=0 ok_ins=1 dup_ins=0 ng_ins=0\n"), nil
+				sshCalls++
+				if sshCalls == 1 {
+					return nil, nil
+				}
+				return []byte("ok_del=0 miss_del=1 ng_del=0 ok_prune=0 miss_prune=0 ng_prune=0 ok_ins=1 dup_ins=0 ng_ins=0\n"), nil
 			default:
 				return nil, fmt.Errorf("unexpected command %q", name)
 			}
@@ -501,7 +525,7 @@ func TestNAT44SessionSyncEventStreamDoesNotLetReconcileOverwriteWorkerStatus(t *
 }
 
 func TestNAT44SessionSyncReportsRestoreInsertFailures(t *testing.T) {
-	store := mapStore{}
+	store := newSyncMapStore()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44SessionSync"}, Metadata: api.ObjectMeta{Name: "dslite-abc"}, Spec: api.NAT44SessionSyncSpec{
 			SNATAddresses: []string{"192.0.0.2"},
@@ -509,9 +533,10 @@ func TestNAT44SessionSyncReportsRestoreInsertFailures(t *testing.T) {
 		}},
 	}}}
 	controller := NAT44SessionSyncController{
-		Router: router,
-		Store:  store,
-		Now:    func() time.Time { return time.Date(2026, 6, 4, 23, 10, 0, 0, time.UTC) },
+		Router:  router,
+		Store:   store,
+		Workers: newNAT44SessionSyncWorkerManager(),
+		Now:     func() time.Time { return time.Date(2026, 6, 4, 23, 10, 0, 0, time.UTC) },
 		Command: func(_ context.Context, name string, args []string, stdin []byte) ([]byte, error) {
 			switch name {
 			case "conntrack":
@@ -529,10 +554,23 @@ func TestNAT44SessionSyncReportsRestoreInsertFailures(t *testing.T) {
 			}
 			return nil, nil
 		},
+		EventCommand: func(ctx context.Context, _ string, _ []string) (io.ReadCloser, func() error, error) {
+			reader, writer := io.Pipe()
+			go func() {
+				<-ctx.Done()
+				_ = writer.Close()
+			}()
+			return reader, func() error { return ctx.Err() }, nil
+		},
 	}
-	if err := controller.Reconcile(context.Background()); err != nil {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := controller.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
+	waitForNAT44Status(t, store, controller, ctx, func(status map[string]any) bool {
+		return status["phase"] == "Error" && status["reason"] == "RestoreFailed" && status["streamState"] == "running"
+	})
 	status := store.ObjectStatus(api.NetAPIVersion, "NAT44SessionSync", "dslite-abc")
 	if status["phase"] != "Error" || status["reason"] != "RestoreFailed" || status["insertOK"] != 0 || status["insertFailed"] != 1 {
 		t.Fatalf("status = %#v", status)

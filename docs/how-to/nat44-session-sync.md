@@ -9,9 +9,7 @@ slug: /how-to/nat44-session-sync
 
 Use `NAT44SessionSync` when two routerd nodes share a LAN gateway role and the
 active node should keep selected NAT44 conntrack sessions warm on a standby
-node. The default `snapshot` mode periodically dumps the local conntrack table
-for selected SNAT addresses and restores matching entries on each target.
-`event-stream` mode starts with the same snapshot safety net, then keeps a
+node. It starts with a one-time conntrack snapshot safety net, then keeps a
 local conntrack event reader running and sends incremental batches.
 
 Gate the resource with `spec.when` so only the active node exports sessions.
@@ -29,8 +27,7 @@ expecting session sync to become active.
   metadata:
     name: dslite-abc-sessions
   spec:
-    mode: snapshot
-    interval: 2s
+    mode: event-stream
     natRules:
       - NAT44Rule/lan-to-dslite-a
       - NAT44Rule/lan-to-dslite-b
@@ -71,15 +68,12 @@ the same egress path.
 `restoreCommand` defaults to `[conntrack]`. Use `[sudo, conntrack]` when the
 target user needs privilege elevation.
 
-## Event stream mode
+## Event stream operation
 
-The snapshot implementation is intentionally simple and remains the default.
-For routers with high session churn, set `mode: event-stream`: routerd keeps a
-local `conntrack -E -o extended` reader alive and sends incremental
-create/update/destroy batches instead of starting a fresh snapshot cycle each
-interval.
+`NAT44SessionSync` always keeps a local `conntrack -E -o extended` reader
+alive and sends incremental create/update/destroy batches.
 
-`event-stream` keeps snapshot sync as the safety net. On startup and after
+On startup and after
 local stream loss, the target first receives a full snapshot resync. Only after
 that resync completes is the resource reported as `Synced`.
 

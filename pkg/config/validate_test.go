@@ -1430,6 +1430,33 @@ func TestValidateRejectsExternalPDClientAndNetworkdDHCPv6OnSameInterface(t *test
 	}
 }
 
+func TestValidateNAT44SessionSyncRequiresEventStream(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44SessionSync"},
+			Metadata: api.ObjectMeta{Name: "sessions"},
+			Spec: api.NAT44SessionSyncSpec{
+				Mode:          "snapshot",
+				SNATAddresses: []string{"192.0.2.2"},
+				Targets:       []api.NAT44SessionSyncTargetSpec{{Host: "router-b"}},
+			},
+		}}},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.mode must be event-stream") {
+		t.Fatalf("Validate(snapshot) error = %v", err)
+	}
+
+	spec := router.Spec.Resources[0].Spec.(api.NAT44SessionSyncSpec)
+	spec.Mode = "event-stream"
+	spec.Interval = "2s"
+	router.Spec.Resources[0].Spec = spec
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.interval is not supported") {
+		t.Fatalf("Validate(interval) error = %v", err)
+	}
+}
+
 func TestValidateNAT44RuleRequiresValidCIDR(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

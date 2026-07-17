@@ -199,13 +199,11 @@ func validateFirewallResource(res api.Resource, targetOS platform.OS) (bool, err
 		if err != nil {
 			return true, err
 		}
-		if spec.Mode != "" && spec.Mode != "snapshot" && spec.Mode != "event-stream" {
-			return true, fmt.Errorf("%s spec.mode must be snapshot or event-stream", res.ID())
+		if spec.Mode != "" && spec.Mode != "event-stream" {
+			return true, fmt.Errorf("%s spec.mode must be event-stream", res.ID())
 		}
 		if strings.TrimSpace(spec.Interval) != "" {
-			if _, err := time.ParseDuration(strings.TrimSpace(spec.Interval)); err != nil {
-				return true, fmt.Errorf("%s spec.interval must be a duration: %w", res.ID(), err)
-			}
+			return true, fmt.Errorf("%s spec.interval is not supported; NAT44SessionSync always uses event-stream", res.ID())
 		}
 		if strings.ContainsAny(spec.ConntrackCommand, "\n\r") {
 			return true, fmt.Errorf("%s spec.conntrackCommand must not contain newline", res.ID())

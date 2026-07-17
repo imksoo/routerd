@@ -12196,8 +12196,8 @@
                         "type": "string"
                       },
                       "mode": {
+                        "description": "Mode accepts only event-stream. It remains to reject legacy snapshot\nconfigurations with a clear validation error.",
                         "enum": [
-                          "snapshot",
                           "event-stream"
                         ],
                         "type": "string"
