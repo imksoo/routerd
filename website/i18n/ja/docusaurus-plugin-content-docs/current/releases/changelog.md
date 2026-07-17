@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260717.1557
+
 ### 変更
 
 - `NAT44SessionSync` の event-stream mode は、初回 snapshot 時に standby 側の

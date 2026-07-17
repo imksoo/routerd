@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260717.1557
+
 ### 變更
 
 - `NAT44SessionSync` 的 event-stream mode 現在會在初始 snapshot 時移除 standby

@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260717.1557
+
 ### Changed
 
 - `NAT44SessionSync` event-stream mode now prunes stale matching conntrack
