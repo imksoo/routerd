@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 func TestValidateRouterLabExample(t *testing.T) {
@@ -1118,6 +1119,54 @@ func TestValidateEgressRoutePolicyTargetCandidate(t *testing.T) {
 
 	if err := Validate(router); err != nil {
 		t.Fatalf("target default route candidate should be valid: %v", err)
+	}
+}
+
+func TestValidateFreeBSDEgressRoutePolicyRejectsPolicyRouting(t *testing.T) {
+	base := func(spec api.EgressRoutePolicySpec) *api.Router {
+		return &api.Router{
+			TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+			Metadata: api.ObjectMeta{Name: "test"},
+			Spec: api.RouterSpec{Resources: []api.Resource{
+				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true}},
+				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "policy"}, Spec: spec},
+			}},
+		}
+	}
+	tests := []struct {
+		name string
+		spec api.EgressRoutePolicySpec
+	}{
+		{
+			name: "marked route table",
+			spec: api.EgressRoutePolicySpec{Mode: "mark", Candidates: []api.EgressRoutePolicyCandidate{{Name: "wan", Interface: "wan", Table: 100, Priority: 10000, Mark: 256}}},
+		},
+		{
+			name: "hash targets",
+			spec: api.EgressRoutePolicySpec{Mode: "hash", HashFields: []string{"sourceAddress"}, Candidates: []api.EgressRoutePolicyCandidate{{Name: "balanced", Targets: []api.EgressRoutePolicyTarget{{Interface: "wan", Table: 100, Priority: 10000, Mark: 256}}}}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateForOS(base(tt.spec), platform.OSFreeBSD)
+			if err == nil || !strings.Contains(err.Error(), "FreeBSD") || !strings.Contains(err.Error(), "policy routing") {
+				t.Fatalf("ValidateForOS() error = %v, want explicit FreeBSD policy routing rejection", err)
+			}
+		})
+	}
+}
+
+func TestValidateFreeBSDIPv4PolicyRouteSetIsRejected(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRouteSet"}, Metadata: api.ObjectMeta{Name: "legacy-policy"}, Spec: map[string]any{}},
+		}},
+	}
+	err := ValidateForOS(router, platform.OSFreeBSD)
+	if err == nil || !strings.Contains(err.Error(), "IPv4PolicyRouteSet") || !strings.Contains(err.Error(), "not supported") {
+		t.Fatalf("ValidateForOS() error = %v, want IPv4PolicyRouteSet rejection", err)
 	}
 }
 
