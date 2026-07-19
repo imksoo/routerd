@@ -12,6 +12,12 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- DNS query logging now reopens its SQLite connection and retries the record
+  once after a write failure, so transient or stale log connections do not
+  disable resolver observability until restart (#857).
+
 ## v20260717.1557
 
 ### Changed
