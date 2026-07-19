@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260719.1121
+
 ### 修正
 
 - DNS クエリログの SQLite 書き込みに失敗した場合、接続を再オープンして一度だけ

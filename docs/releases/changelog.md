@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260719.1121
+
 ### Fixed
 
 - DNS query logging now reopens its SQLite connection and retries the record
