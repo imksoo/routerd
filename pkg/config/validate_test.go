@@ -1156,6 +1156,38 @@ func TestValidateFreeBSDEgressRoutePolicyRejectsPolicyRouting(t *testing.T) {
 	}
 }
 
+func TestValidateEgressRoutePolicySimpleFailoverRemainsSupportedOnFreeBSD(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-a"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "vtnet1", Managed: true}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "failover"}, Spec: api.EgressRoutePolicySpec{Mode: "priority", Candidates: []api.EgressRoutePolicyCandidate{
+				{Name: "primary", Interface: "wan-a"},
+				{Name: "fallback", Interface: "wan-b"},
+			}}},
+		}},
+	}
+	if err := ValidateForOS(router, platform.OSFreeBSD); err != nil {
+		t.Fatalf("simple FreeBSD failover must remain supported: %v", err)
+	}
+}
+
+func TestValidateLinuxEgressRoutePolicyAllowsPolicyRouting(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18", Managed: true}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "marked"}, Spec: api.EgressRoutePolicySpec{Mode: "mark", Candidates: []api.EgressRoutePolicyCandidate{{Name: "wan", Interface: "wan", Table: 100, Priority: 10000, Mark: 256}}}},
+		}},
+	}
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
+		t.Fatalf("Linux policy routing validation changed: %v", err)
+	}
+}
+
 func TestValidateFreeBSDIPv4PolicyRouteSetIsRejected(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
