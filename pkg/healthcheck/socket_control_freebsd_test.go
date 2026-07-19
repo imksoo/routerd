@@ -9,9 +9,9 @@ import (
 	"testing"
 )
 
-func TestBindDialerToDeviceFreeBSDInvalidInterface(t *testing.T) {
+func TestConfigureDialerSocketFreeBSDInvalidInterface(t *testing.T) {
 	var dialer net.Dialer
-	err := bindDialerToDevice(&dialer, "routerd-no-such-interface", "tcp4", "127.0.0.1:443", "", false)
+	err := configureDialerSocket(&dialer, "routerd-no-such-interface", 0, "tcp4", "127.0.0.1:443", "", false)
 	if err == nil {
 		t.Fatal("expected invalid interface error")
 	}
