@@ -120,10 +120,15 @@ Implemented:
 - Static DS-Lite gif tunnel rendering
 - Dynamic DS-Lite apply from static AFTR IPv6, AFTR FQDN, or delegated-address local source
 
-`ClientPolicy` is the one firewall feature that is intentionally Linux-only
-for now. It depends on nftables Ethernet source address sets for MAC-based
-guest isolation. The FreeBSD pf renderer rejects the resource with an explicit
-error instead of applying a weaker no-op policy.
+`ClientPolicy` is supported on FreeBSD with an IPv4 reservation-backed pf
+approximation. Each guest or isolated classification must reference a
+`DHCPv4Reservation`; routerd renders pf rules for that reserved IPv4 address.
+This is not Linux-equivalent MAC-based isolation: pf cannot match the Ethernet
+source selector used by nftables, and routerd does not render IPv6 guest-egress
+deny rules from an IPv4 reservation. Configure explicit IPv6 policy separately
+when that traffic needs isolation. This behavior was validated on the router04
+FreeBSD lab on 2026-05-11. Potential dual-stack guest-deny support is tracked
+in [#849](https://github.com/imksoo/routerd/issues/849).
 
 FreeBSD does not use Linux-specific nftables, conntrack, or iproute2. The
 `Package` examples declare FreeBSD-native replacements: `pf` and `pflog0` from
@@ -155,7 +160,7 @@ and FreeBSD:
 | Area | Current gap | Backlog |
 | --- | --- | --- |
 | CI/runtime coverage | CI runs unit tests and Linux static checks on Ubuntu. FreeBSD is cross-built in release. | Add FreeBSD VM smoke jobs that run validate, plan, real package-manager checks, service activation, and renderer syntax checks. |
-| FreeBSD feature exceptions | `ClientPolicy` remains Linux-only because it depends on nftables Ethernet source address sets. | Keep rejecting it explicitly, and only add pf support after a design that preserves the same isolation semantics. |
+| FreeBSD feature limitations | `ClientPolicy` uses DHCPv4 reservation-backed IPv4 pf rules; it cannot match MAC addresses and does not render IPv6 guest-egress deny rules from an IPv4 reservation. | Keep the limitation explicit; evaluate a dual-stack identity model before adding IPv6 guest-deny rendering ([#849](https://github.com/imksoo/routerd/issues/849)). |
 | Package bootstrap | Ubuntu and FreeBSD can install packages imperatively. | Keep schema, validation, installer package lists, examples, and generated docs in sync for `apt` and `pkg`. |
 
 ## Implementation guideline for OS abstraction

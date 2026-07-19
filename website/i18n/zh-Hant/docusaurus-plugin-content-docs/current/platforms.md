@@ -112,9 +112,11 @@ routerd 不使用 Linux 用的機制，而是將資源對應至 FreeBSD 的 `rc.
 - `routerd-healthcheck` 的 rc.d script 產生
 - `routerd-firewall-logger` 的 rc.d script 產生，並直接讀取 `pflog0`
 
-`ClientPolicy` 目前為 Linux 專用的防火牆功能。
-使用 nftables 的 Ethernet 來源位址 set 隔離訪客裝置。
-FreeBSD pf 無法在 routed filter 路徑以相同模型處理，因此 routerd 明確將此資源標示為不支援。
+FreeBSD 也支援 `ClientPolicy`，但它是以 DHCPv4 reservation 為基礎的 IPv4 pf 近似實作。
+guest 或 isolated classification 必須參照 `DHCPv4Reservation`；routerd 會為該保留 IPv4 位址產生 pf 規則。
+這不等同於 Linux 的 MAC 位址隔離：pf 無法比對 nftables 所用的 Ethernet 來源 selector，而且 routerd 不會從 IPv4 reservation 產生 IPv6 guest egress deny 規則。
+若需要隔離 IPv6 流量，請另行設定明確的 IPv6 policy。此行為已於 2026-05-11 在 router04 FreeBSD lab 驗證。
+dual-stack guest deny 的後續工作由 [#849](https://github.com/imksoo/routerd/issues/849) 追蹤。
 - `TailscaleNode` 的 rc.d script 產生
 - 靜態 DS-Lite gif tunnel 的產生（render）
 - 從靜態 AFTR IPv6、AFTR FQDN、委派位址衍生的本地來源動態套用 DS-Lite
@@ -154,7 +156,7 @@ Ubuntu 和 FreeBSD 相互比較時的已知差異。
 | 領域 | 目前差異 | 待辦事項 |
 | --- | --- | --- |
 | CI / runtime coverage | CI 在 Ubuntu 上執行 unit test 與 Linux static check。FreeBSD 在發布時進行 cross build。 | 新增 FreeBSD VM 的 smoke 工作，涵蓋 validate、plan、實際 package-manager 確認、服務啟用、renderer 語法確認。 |
-| FreeBSD 的功能例外 | `ClientPolicy` 依賴 nftables 的 Ethernet 來源位址 set，為 Linux 專用。 | 在找到可保留相同隔離語義的設計之前，明確拒絕。 |
+| FreeBSD 的功能限制 | `ClientPolicy` 使用以 DHCPv4 reservation 為基礎的 IPv4 pf 規則；無法比對 MAC 位址，也不會從 IPv4 reservation 產生 IPv6 guest egress deny。 | 明確保留此限制；在新增 IPv6 guest deny 前先評估 dual-stack identity 模型（[#849](https://github.com/imksoo/routerd/issues/849)）。 |
 | 套件 bootstrap | Ubuntu 和 FreeBSD 可命令式安裝套件。 | 對 `apt`、`pkg` 的 schema、validation、安裝程式套件清單、範例、產生文件保持同步。 |
 
 ## OS 抽象化的實作方針
