@@ -58,6 +58,7 @@ type daemon struct {
 	listeners    map[string]*boundListener
 	sourceCancel context.CancelFunc
 	cache        map[string]cacheEntry
+	queryLogMu   sync.Mutex
 	queryLog     *logstore.DNSQueryLog
 }
 
@@ -309,8 +310,10 @@ func (d *daemon) Run(ctx context.Context) error {
 				d.publish(daemonapi.EventDaemonCrashed, daemonapi.SeverityError, "QueryLogOpenFailed", err.Error(), nil)
 				return err
 			}
+			d.queryLogMu.Lock()
 			d.queryLog = queryLog
-			defer queryLog.Close()
+			d.queryLogMu.Unlock()
+			defer d.closeQueryLog()
 		}
 		sourceCtx, sourceCancel := context.WithCancel(ctx)
 		d.stateMu.Lock()
@@ -503,7 +506,7 @@ func (d *daemon) listenerCount() int {
 }
 
 func (d *daemon) recordQuery(remoteAddr string, req *dns.Msg, result resolveResult, duration time.Duration) {
-	if d.queryLog == nil || len(req.Question) == 0 {
+	if len(req.Question) == 0 {
 		return
 	}
 	client := remoteAddr
@@ -525,7 +528,36 @@ func (d *daemon) recordQuery(remoteAddr string, req *dns.Msg, result resolveResu
 	if entry.ResponseCode == "" && result.Response != nil {
 		entry.ResponseCode = dns.RcodeToString[result.Response.Rcode]
 	}
+	d.queryLogMu.Lock()
+	defer d.queryLogMu.Unlock()
+	if d.queryLog == nil {
+		return
+	}
+	if err := d.queryLog.Record(context.Background(), entry); err == nil {
+		return
+	}
+
+	// A resolver must continue serving DNS even if its query log becomes
+	// unavailable. Reopen the log after a failed write so a transient or stale
+	// SQLite connection does not leave observability disabled until a restart.
+	path := d.queryLog.Stats().Path
+	_ = d.queryLog.Close()
+	queryLog, err := logstore.OpenDNSQueryLog(path)
+	if err != nil {
+		return
+	}
+	d.queryLog = queryLog
 	_ = d.queryLog.Record(context.Background(), entry)
+}
+
+func (d *daemon) closeQueryLog() {
+	d.queryLogMu.Lock()
+	defer d.queryLogMu.Unlock()
+	if d.queryLog == nil {
+		return
+	}
+	_ = d.queryLog.Close()
+	d.queryLog = nil
 }
 
 func sourceName(source api.DNSResolverSourceSpec) string {
@@ -788,8 +820,11 @@ func (d *daemon) observedStatus() map[string]string {
 	sources := append([]runtimeSource(nil), d.sources...)
 	d.stateMu.RUnlock()
 	observed := map[string]string{"listeners": fmt.Sprintf("%d", listenerCount), "zones": fmt.Sprintf("%d", zones.ZoneCount())}
-	if d.queryLog != nil {
-		stats := d.queryLog.Stats()
+	d.queryLogMu.Lock()
+	queryLog := d.queryLog
+	d.queryLogMu.Unlock()
+	if queryLog != nil {
+		stats := queryLog.Stats()
 		observed["queryLogEnabled"] = "true"
 		observed["queryLogPath"] = stats.Path
 		observed["queryLogRecords"] = fmt.Sprintf("%d", stats.Records)
