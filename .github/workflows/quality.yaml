@@ -118,6 +118,24 @@ jobs:
           make build-provider-executors ROUTERD_OS=linux GOARCH=amd64
           make check-linux-static ROUTERD_OS=linux GOARCH=amd64
 
+  freebsd-cross-compile:
+    name: FreeBSD cross-compile
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout-ref || github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Compile FreeBSD binaries and test packages
+        run: make check-freebsd-cross-compile
+
   schema:
     name: Generated schemas
     runs-on: ubuntu-latest
