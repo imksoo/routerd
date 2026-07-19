@@ -382,6 +382,9 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 				return true, fmt.Errorf("%s spec.candidates[%d].gatewaySource must be static, dhcpv4, dhcpv6, or none", res.ID(), i)
 			}
 		}
+		if targetOS == platform.OSFreeBSD && egressRoutePolicyRequiresLinuxPolicyRouting(spec) {
+			return true, fmt.Errorf("%s uses mark/table/hash policy routing, which is not supported on FreeBSD; pf route-to parity is not implemented", res.ID())
+		}
 	case "EventRule":
 		if res.APIVersion != api.NetAPIVersion {
 			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
@@ -512,6 +515,18 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 		return false, nil
 	}
 	return true, nil
+}
+
+func egressRoutePolicyRequiresLinuxPolicyRouting(spec api.EgressRoutePolicySpec) bool {
+	if spec.Mode == "mark" || spec.Mode == "hash" || len(spec.HashFields) > 0 {
+		return true
+	}
+	for _, candidate := range spec.Candidates {
+		if candidate.Mark != 0 || candidate.EffectiveTable() != 0 || len(candidate.Targets) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func validateBGPPeersFrom(resourceID string, index int, source api.BGPPeersSourceSpec) error {
