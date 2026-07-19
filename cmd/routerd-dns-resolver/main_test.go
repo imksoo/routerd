@@ -269,6 +269,43 @@ func TestObservedStatusIncludesQueryLogStats(t *testing.T) {
 	}
 }
 
+func TestRecordQueryReopensClosedQueryLog(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "resolver.json")
+	config := testResolverConfig([]int{5053})
+	writeRuntimeConfig(t, configPath, config)
+	d := newTestDaemon(t, configPath, config, true)
+	path := filepath.Join(t.TempDir(), "dns-queries.db")
+	queryLog, err := logstore.OpenDNSQueryLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.queryLog = queryLog
+	if err := queryLog.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	req := new(dns.Msg)
+	req.SetQuestion("reopen.example.", dns.TypeA)
+	resp := new(dns.Msg)
+	resp.SetReply(req)
+	d.recordQuery("192.0.2.10:12345", req, resolveResult{Response: resp, ResponseCode: dns.RcodeToString[resp.Rcode]}, time.Millisecond)
+
+	d.queryLogMu.Lock()
+	reopened := d.queryLog
+	d.queryLogMu.Unlock()
+	defer d.closeQueryLog()
+	if reopened == nil || reopened == queryLog {
+		t.Fatal("query log was not reopened")
+	}
+	rows, err := reopened.List(context.Background(), logstore.DNSQueryFilter{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].QuestionName != "reopen.example" {
+		t.Fatalf("unexpected query rows: %#v", rows)
+	}
+}
+
 func testResolverConfig(ports []int) resolvercfg.RuntimeConfig {
 	listen := make([]api.DNSResolverListenSpec, 0, len(ports))
 	for _, port := range ports {
