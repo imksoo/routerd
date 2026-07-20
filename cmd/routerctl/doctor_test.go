@@ -41,6 +41,57 @@ func TestDoctorDNSPassNoHost(t *testing.T) {
 	}
 }
 
+func TestDoctorDefaultRouteCommandFreeBSD(t *testing.T) {
+	oldOS := doctorCurrentOS
+	t.Cleanup(func() { doctorCurrentOS = oldOS })
+	doctorCurrentOS = func() platform.OS { return platform.OSFreeBSD }
+
+	for _, tc := range []struct {
+		family string
+		want   []string
+	}{
+		{family: "ipv4", want: []string{"route", "-n", "get", "-inet", "default"}},
+		{family: "ipv6", want: []string{"route", "-n", "get", "-inet6", "default"}},
+	} {
+		_, command, args := doctorDefaultRouteCommand(tc.family)
+		got := append([]string{command}, args...)
+		if strings.Join(got, " ") != strings.Join(tc.want, " ") {
+			t.Fatalf("doctorDefaultRouteCommand(%q) = %q, want %q", tc.family, got, tc.want)
+		}
+	}
+}
+
+func TestDoctorFreeBSDPFStatusWarnsWhenDisabled(t *testing.T) {
+	oldRun := doctorRunDiagnosticCommand
+	t.Cleanup(func() { doctorRunDiagnosticCommand = oldRun })
+	doctorRunDiagnosticCommand = func(_ context.Context, label, _ string, _ ...string) diagnoseCommandCheck {
+		return diagnoseCommandCheck{Name: label, OK: true, Stdout: "Status: Disabled", Output: "Status: Disabled"}
+	}
+	check := doctorFreeBSDPFStatus(context.Background(), "nat")
+	if check.Area != "nat" || check.Status != doctorWarn {
+		t.Fatalf("disabled PF check = %#v, want nat warn", check)
+	}
+}
+
+func TestDoctorFreeBSDLoggerWarnsWhenMissing(t *testing.T) {
+	oldOS, oldRun := doctorCurrentOS, doctorRunDiagnosticCommand
+	t.Cleanup(func() {
+		doctorCurrentOS = oldOS
+		doctorRunDiagnosticCommand = oldRun
+	})
+	doctorCurrentOS = func() platform.OS { return platform.OSFreeBSD }
+	doctorRunDiagnosticCommand = func(_ context.Context, label, _ string, _ ...string) diagnoseCommandCheck {
+		if label != "pgrep routerd-firewall-logger" {
+			t.Fatalf("unexpected command %q", label)
+		}
+		return diagnoseCommandCheck{Name: label, Error: "exit status 1", ExitCode: 1}
+	}
+	check := (doctorRunner{}).doctorFirewallLoggerRuntimeCheck(context.Background())
+	if check.Status != doctorWarn || !strings.Contains(check.Detail, "exit status 1") {
+		t.Fatalf("missing logger check = %#v, want actionable warn", check)
+	}
+}
+
 func TestDoctorFirewallLoggerRuntimeHelpers(t *testing.T) {
 	active, pid := parseSystemctlActiveStateMainPID("ActiveState=active\nMainPID=1234\n")
 	if active != "active" || pid != 1234 {

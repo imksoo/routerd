@@ -410,6 +410,29 @@ func (r doctorRunner) doctorIncidentDump() doctorIncidentReport {
 }
 
 func collectDoctorIncidentCommands(r doctorRunner) []diagnoseCommandCheck {
+	if doctorCurrentOS() == platform.OSFreeBSD {
+		ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
+		defer cancel()
+		commands := []struct {
+			label string
+			cmd   string
+			args  []string
+		}{
+			{label: "netstat route table ipv4", cmd: "netstat", args: []string{"-rn", "-f", "inet"}},
+			{label: "netstat route table ipv6", cmd: "netstat", args: []string{"-rn", "-f", "inet6"}},
+			{label: "ifconfig all", cmd: "ifconfig", args: []string{"-a"}},
+			{label: "sysctl net.inet.ip.forwarding", cmd: "sysctl", args: []string{"net.inet.ip.forwarding"}},
+			{label: "pfctl status", cmd: "pfctl", args: []string{"-s", "info"}},
+			{label: "pfctl rules", cmd: "pfctl", args: []string{"-sr"}},
+			{label: "sockstat listeners", cmd: "sockstat", args: []string{"-4", "-6", "-l"}},
+			{label: "procstat files", cmd: "procstat", args: []string{"-f", strconv.Itoa(os.Getpid())}},
+		}
+		out := make([]diagnoseCommandCheck, 0, len(commands))
+		for _, command := range commands {
+			out = append(out, doctorRunDiagnosticCommand(ctx, command.label, command.cmd, command.args...))
+		}
+		return out
+	}
 	if doctorCurrentOS() != platform.OSLinux {
 		return []diagnoseCommandCheck{{
 			Name:  "host command snapshots",
@@ -2681,14 +2704,31 @@ func (r doctorRunner) doctorWAN() []doctorCheck {
 	if r.opts.Host {
 		ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
 		defer cancel()
+		ipv4Label, ipv4Command, ipv4Args := doctorDefaultRouteCommand("ipv4")
+		ipv6Label, ipv6Command, ipv6Args := doctorDefaultRouteCommand("ipv6")
 		checks = append(checks,
-			doctorCommandStatus("wan", runDiagnosticCommand(ctx, "default route ipv4", "ip", "-4", "route", "show", "default"), doctorFail, "install or repair the IPv4 default route"),
-			doctorCommandStatus("wan", runDiagnosticCommand(ctx, "default route ipv6", "ip", "-6", "route", "show", "default"), doctorWarn, "install IPv6 default routing if this router should provide IPv6"),
+			doctorCommandStatus("wan", runDiagnosticCommand(ctx, ipv4Label, ipv4Command, ipv4Args...), doctorFail, "install or repair the IPv4 default route"),
+			doctorCommandStatus("wan", runDiagnosticCommand(ctx, ipv6Label, ipv6Command, ipv6Args...), doctorWarn, "install IPv6 default routing if this router should provide IPv6"),
 		)
 	} else {
 		checks = append(checks, doctorHostSkipped("wan", "default routes"))
 	}
 	return checks
+}
+
+// doctorDefaultRouteCommand selects a read-only route-table query for the
+// current host. FreeBSD route(8) is used instead of the Linux-only ip tool.
+func doctorDefaultRouteCommand(family string) (label, command string, args []string) {
+	if doctorCurrentOS() == platform.OSFreeBSD {
+		if family == "ipv6" {
+			return "default route ipv6", "route", []string{"-n", "get", "-inet6", "default"}
+		}
+		return "default route ipv4", "route", []string{"-n", "get", "-inet", "default"}
+	}
+	if family == "ipv6" {
+		return "default route ipv6", "ip", []string{"-6", "route", "show", "default"}
+	}
+	return "default route ipv4", "ip", []string{"-4", "route", "show", "default"}
 }
 
 func (r doctorRunner) doctorDNS() []doctorCheck {
@@ -2877,6 +2917,10 @@ func (r doctorRunner) doctorNAT() []doctorCheck {
 	if r.opts.Host {
 		ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
 		defer cancel()
+		if doctorCurrentOS() == platform.OSFreeBSD {
+			checks = append(checks, doctorFreeBSDPFStatus(ctx, "nat"))
+			return checks
+		}
 		command := runDiagnosticCommand(ctx, "nft list table ip routerd_nat", "nft", "list", "table", "ip", "routerd_nat")
 		extra := fmt.Sprintf("NAT44Rule active=%d pending=%d", natCounts.Active, natCounts.Pending)
 		checks = append(checks, doctorNftCheckStatus("nat", command, "ip", "routerd_nat", doctorFail, "apply NAT44Rule resources or inspect nftables errors", extra))
@@ -2905,6 +2949,14 @@ func (r doctorRunner) doctorFirewall() []doctorCheck {
 	if r.opts.Host {
 		ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
 		defer cancel()
+		if doctorCurrentOS() == platform.OSFreeBSD {
+			checks = append(checks,
+				doctorFreeBSDPFStatus(ctx, "firewall"),
+				doctorCommandStatus("firewall", runDiagnosticCommand(ctx, "pfctl rules", "pfctl", "-sr"), doctorWarn, "inspect read-only PF rules"),
+				r.doctorFirewallLoggerRuntimeCheck(ctx),
+			)
+			return checks
+		}
 		if len(firewallResources) > 0 {
 			command := runDiagnosticCommand(ctx, "nft list table inet routerd_filter", "nft", "list", "table", "inet", "routerd_filter")
 			extra := fmt.Sprintf("FirewallZone active=%d", zoneCounts.Active)
@@ -2928,6 +2980,25 @@ func (r doctorRunner) doctorFirewall() []doctorCheck {
 
 func (r doctorRunner) doctorFirewallLoggerRuntimeCheck(ctx context.Context) doctorCheck {
 	name := "routerd-firewall-logger runtime"
+	if doctorCurrentOS() == platform.OSFreeBSD {
+		process := runDiagnosticCommand(ctx, "pgrep routerd-firewall-logger", "pgrep", "-f", "routerd-firewall-logger")
+		if !process.OK {
+			return doctorCheck{Area: "firewall", Name: name, Status: doctorWarn, Detail: firstNonEmpty(process.Error, oneLine(process.Output), "routerd-firewall-logger process is not running"), Remedy: "inspect routerd_firewall_logger rc.d service and pflog configuration"}
+		}
+		fields := strings.Fields(process.Stdout)
+		pid := ""
+		if len(fields) > 0 {
+			pid = fields[0]
+		}
+		if pid == "" {
+			return doctorCheck{Area: "firewall", Name: name, Status: doctorWarn, Detail: "pgrep returned no logger pid", Remedy: "inspect routerd_firewall_logger rc.d service"}
+		}
+		files := runDiagnosticCommand(ctx, "procstat logger files", "procstat", "-f", pid)
+		if !files.OK {
+			return doctorCheck{Area: "firewall", Name: name, Status: doctorWarn, Detail: firstNonEmpty(files.Error, oneLine(files.Output), "procstat could not inspect logger"), Remedy: "inspect logger process permissions and open files"}
+		}
+		return doctorCheck{Area: "firewall", Name: name, Status: doctorPass, Detail: "pid=" + pid + "; " + oneLine(files.Output)}
+	}
 	if doctorCurrentOS() != platform.OSLinux {
 		return doctorCheck{Area: "firewall", Name: name, Status: doctorSkip, Detail: "firewall logger process I/O check is Linux-only"}
 	}
@@ -2951,6 +3022,20 @@ func (r doctorRunner) doctorFirewallLoggerRuntimeCheck(ctx context.Context) doct
 		return doctorCheck{Area: "firewall", Name: name, Status: doctorWarn, Detail: detail, Remedy: "check routerd-firewall-logger.service and FirewallEventLog configuration"}
 	}
 	return doctorCheck{Area: "firewall", Name: name, Status: doctorPass, Detail: detail}
+}
+
+// doctorFreeBSDPFStatus keeps PF inspection observational. A disabled or
+// inaccessible PF instance is actionable but must not be reported healthy.
+func doctorFreeBSDPFStatus(ctx context.Context, area string) doctorCheck {
+	command := runDiagnosticCommand(ctx, "pfctl status", "pfctl", "-s", "info")
+	if !command.OK {
+		return doctorCheck{Area: area, Name: command.Name, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "pfctl unavailable"), Remedy: "enable or grant read-only access to PF before relying on firewall diagnostics"}
+	}
+	detail := oneLine(firstNonEmpty(command.Stdout, command.Output, "pfctl returned no status"))
+	if !strings.Contains(strings.ToLower(command.Stdout), "status: enabled") {
+		return doctorCheck{Area: area, Name: command.Name, Status: doctorWarn, Detail: detail, Remedy: "enable PF or verify the intended firewall backend"}
+	}
+	return doctorCheck{Area: area, Name: command.Name, Status: doctorPass, Detail: detail}
 }
 
 func doctorFirewallLogPath(router *api.Router) string {
