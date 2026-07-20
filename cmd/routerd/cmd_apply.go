@@ -706,7 +706,7 @@ func openApplyChainStateStore(path string, dryRun bool) (*routerstate.SQLiteStor
 }
 
 func copyApplyStateSnapshot(path string, dst *routerstate.SQLiteStore) error {
-	src, err := routerstate.LoadReadOnly(path)
+	src, err := routerstate.LoadReadOnlyLive(path)
 	if err != nil {
 		return err
 	}

@@ -216,6 +216,25 @@ func LoadReadOnly(path string) (Store, error) {
 	return OpenSQLiteReadOnlyImmutable(path)
 }
 
+// LoadReadOnlyLive opens SQLite read-only without immutable=1 so a live WAL
+// is visible. Callers snapshotting an active routerd state database use this;
+// LoadReadOnly retains immutable semantics for quiescent artifact directories.
+func LoadReadOnlyLive(path string) (Store, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return NewJSON(), nil
+	}
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return NewJSON(), nil
+	} else if err != nil {
+		return nil, err
+	}
+	if filepath.Ext(path) == ".json" {
+		return LoadJSON(path)
+	}
+	return OpenSQLiteReadOnly(path)
+}
+
 func LoadJSON(path string) (*JSONStore, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
