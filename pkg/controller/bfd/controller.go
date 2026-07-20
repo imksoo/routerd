@@ -60,11 +60,11 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	if c.OS == "" {
 		c.OS = platform.CurrentOS()
 	}
-	if c.OS != platform.OSLinux {
+	if !supportsFRRBFD(c.OS) {
 		for name, sessions := range byBFD {
 			if err := c.saveStatus(name, "Unsupported", sessions, nil, map[string]any{
-				"reason": "BFDLinuxOnly",
-				"error":  "FRR bfdd bridge is currently Linux-only",
+				"reason": "BFDUnsupportedOS",
+				"error":  "FRR bfdd bridge is supported only on Linux and FreeBSD",
 			}); err != nil {
 				return err
 			}
@@ -499,7 +499,14 @@ func (c Controller) vtysh() string {
 	if strings.TrimSpace(c.VtyshCommand) != "" {
 		return strings.TrimSpace(c.VtyshCommand)
 	}
+	if c.OS == platform.OSFreeBSD {
+		return "/usr/local/bin/vtysh"
+	}
 	return "vtysh"
+}
+
+func supportsFRRBFD(osName platform.OS) bool {
+	return osName == platform.OSLinux || osName == platform.OSFreeBSD
 }
 
 func (c Controller) runner() CommandRunner {

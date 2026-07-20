@@ -178,14 +178,42 @@ func TestReconcileAppliesFRRAndSavesPeerStates(t *testing.T) {
 	}
 }
 
-func TestReconcileLinuxOnlyStatus(t *testing.T) {
+func TestReconcileFreeBSDAppliesFRRWithFreeBSDVtysh(t *testing.T) {
 	store := testStore{}
-	controller := Controller{Router: bfdRouter(), Store: store, OS: platform.OSFreeBSD}
+	var commands []string
+	controller := Controller{
+		Router:     bfdRouter(),
+		Store:      store,
+		OS:         platform.OSFreeBSD,
+		RuntimeDir: t.TempDir(),
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			commands = append(commands, name+" "+strings.Join(args, " "))
+			if len(args) == 2 && args[0] == "-c" && args[1] == "show bfd peers json" {
+				return []byte(`{"10.99.0.2":{"state":"up"},"10.99.0.3":{"state":"up"}}`), nil
+			}
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if len(commands) != 2 || !strings.HasPrefix(commands[0], "/usr/local/bin/vtysh -f ") || commands[1] != "/usr/local/bin/vtysh -c show bfd peers json" {
+		t.Fatalf("commands = %#v", commands)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "BFD", "fabric")
+	if status["phase"] != "Up" {
+		t.Fatalf("status = %#v, want Up", status)
+	}
+}
+
+func TestReconcileUnsupportedOSStatus(t *testing.T) {
+	store := testStore{}
+	controller := Controller{Router: bfdRouter(), Store: store, OS: platform.OSOther}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "BFD", "fabric")
-	if status["phase"] != "Unsupported" || status["reason"] != "BFDLinuxOnly" {
+	if status["phase"] != "Unsupported" || status["reason"] != "BFDUnsupportedOS" {
 		t.Fatalf("status = %#v", status)
 	}
 }
