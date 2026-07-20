@@ -422,7 +422,7 @@ func writePFFilter(buf *bytes.Buffer, zones map[string]firewallZone, rules []api
 		}
 		selfAccepted := implicitFirewallAction(zone.Role, "self", policy) == "accept"
 		if selfAccepted {
-			buf.WriteString("pass in quick on $" + pfZoneMacro(zone) + " to self keep state\n")
+			buf.WriteString("pass in quick on $" + pfZoneMacro(zone) + " to " + pfZoneSelfExpr(zone) + " keep state\n")
 		}
 		for _, hole := range holes {
 			if hole.FromZone == zone.Name && hole.ToZone == "self" {
@@ -523,23 +523,24 @@ func pfClientPolicyInputExprs(zone firewallZone, policy pfClientPolicy, logging 
 	var exprs []string
 	for _, ifname := range policy.IfNames {
 		onExpr := ifname
+		selfExpr := "(" + ifname + ")"
 		if stringInSlice("dns", policy.GuestServices) {
-			exprs = append(exprs, pfClientPolicyServiceExpr(onExpr, policy.Name, match, "udp", 53, "dns", logging))
-			exprs = append(exprs, pfClientPolicyServiceExpr(onExpr, policy.Name, match, "tcp", 53, "dns", logging))
+			exprs = append(exprs, pfClientPolicyServiceExpr(onExpr, selfExpr, policy.Name, match, "udp", 53, "dns", logging))
+			exprs = append(exprs, pfClientPolicyServiceExpr(onExpr, selfExpr, policy.Name, match, "tcp", 53, "dns", logging))
 		}
 		if stringInSlice("dhcp", policy.GuestServices) {
-			exprs = append(exprs, pfClientPolicyServiceExpr(onExpr, policy.Name, match, "udp", 67, "dhcp", logging))
+			exprs = append(exprs, pfClientPolicyServiceExpr(onExpr, selfExpr, policy.Name, match, "udp", 67, "dhcp", logging))
 		}
 		if stringInSlice("ntp", policy.GuestServices) {
-			exprs = append(exprs, pfClientPolicyServiceExpr(onExpr, policy.Name, match, "udp", 123, "ntp", logging))
+			exprs = append(exprs, pfClientPolicyServiceExpr(onExpr, selfExpr, policy.Name, match, "udp", 123, "ntp", logging))
 		}
 		if stringInSlice("mdns", policy.GuestServices) {
-			exprs = append(exprs, pfClientPolicyServiceExpr(onExpr, policy.Name, match, "udp", 5353, "mdns", logging))
+			exprs = append(exprs, pfClientPolicyServiceExpr(onExpr, selfExpr, policy.Name, match, "udp", 5353, "mdns", logging))
 		}
 		if stringInSlice("ssdp", policy.GuestServices) {
-			exprs = append(exprs, pfClientPolicyServiceExpr(onExpr, policy.Name, match, "udp", 1900, "ssdp", logging))
+			exprs = append(exprs, pfClientPolicyServiceExpr(onExpr, selfExpr, policy.Name, match, "udp", 1900, "ssdp", logging))
 		}
-		exprs = append(exprs, "block drop in "+pfLogExpr(logging)+" quick on "+onExpr+" from "+match+" to self label "+pfQuote("routerd:client-policy:"+policy.Name+":self-deny"))
+		exprs = append(exprs, "block drop in "+pfLogExpr(logging)+" quick on "+onExpr+" from "+match+" to "+selfExpr+" label "+pfQuote("routerd:client-policy:"+policy.Name+":self-deny"))
 	}
 	return exprs
 }
@@ -607,8 +608,8 @@ func pfIPv4ClientPolicyCIDRs(values []string) []string {
 	return out
 }
 
-func pfClientPolicyServiceExpr(onExpr, name, source, proto string, port int, service string, logging firewallLogging) string {
-	return "pass in quick on " + onExpr + " proto " + proto + " from " + source + " to self port " + strconv.Itoa(port) + " keep state label " + pfQuote("routerd:client-policy:"+name+":"+service)
+func pfClientPolicyServiceExpr(onExpr, selfExpr, name, source, proto string, port int, service string, logging firewallLogging) string {
+	return "pass in quick on " + onExpr + " proto " + proto + " from " + source + " to " + selfExpr + " port " + strconv.Itoa(port) + " keep state label " + pfQuote("routerd:client-policy:"+name+":"+service)
 }
 
 func pfCanRenderBroadForwardPass(from, to firewallZone) bool {
@@ -633,7 +634,20 @@ func pfNATTarget(spec api.IPv4NATTranslationSpec, ifname string) (string, error)
 }
 
 func pfFirewallRuleExpr(zone firewallZone, name string, spec api.FirewallRuleSpec, logging firewallLogging) string {
-	return pfFirewallRuleExprOn("$"+pfZoneMacro(zone), name, spec, logging)
+	return pfFirewallRuleExprOnSelf("$"+pfZoneMacro(zone), pfZoneSelfExpr(zone), name, spec, logging)
+}
+
+func pfZoneSelfExpr(zone firewallZone) string {
+	ifnames := compactStrings(zone.IfNames)
+	sort.Strings(ifnames)
+	if len(ifnames) == 1 {
+		return "(" + ifnames[0] + ")"
+	}
+	parts := make([]string, 0, len(ifnames))
+	for _, ifname := range ifnames {
+		parts = append(parts, "("+ifname+")")
+	}
+	return "{ " + strings.Join(parts, ", ") + " }"
 }
 
 func pfFirewallRuleExprOn(onExpr, name string, spec api.FirewallRuleSpec, logging firewallLogging) string {
