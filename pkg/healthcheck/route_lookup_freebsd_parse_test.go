@@ -35,3 +35,14 @@ func TestParseFreeBSDRouteGetRejectsMissingInterface(t *testing.T) {
 		t.Fatal("expected missing-interface error")
 	}
 }
+
+func TestNormalizeFreeBSDRouteFamily(t *testing.T) {
+	for _, family := range []string{"", "ipv4", "IPv6"} {
+		if _, err := normalizeFreeBSDRouteFamily(family); err != nil {
+			t.Fatalf("normalizeFreeBSDRouteFamily(%q): %v", family, err)
+		}
+	}
+	if _, err := normalizeFreeBSDRouteFamily("ip4"); err == nil {
+		t.Fatal("expected unsupported family error")
+	}
+}

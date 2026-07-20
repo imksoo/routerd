@@ -21,6 +21,10 @@ func lookupRoute(ctx context.Context, target, family string) (RouteInfo, error) 
 	if target == "" {
 		return RouteInfo{}, errors.New("target is required")
 	}
+	family, err := normalizeFreeBSDRouteFamily(family)
+	if err != nil {
+		return RouteInfo{}, err
+	}
 	if net.ParseIP(target) == nil {
 		ip, err := resolveFreeBSDTargetIP(ctx, target, family)
 		if err != nil {
@@ -30,7 +34,7 @@ func lookupRoute(ctx context.Context, target, family string) (RouteInfo, error) 
 	}
 
 	args := []string{"-n", "get"}
-	switch strings.ToLower(strings.TrimSpace(family)) {
+	switch family {
 	case "ipv4":
 		args = append(args, "-inet")
 	case "ipv6":
@@ -51,7 +55,7 @@ func resolveFreeBSDTargetIP(ctx context.Context, host, family string) (string, e
 	}
 	for _, addr := range addrs {
 		isV4 := addr.IP.To4() != nil
-		switch strings.ToLower(strings.TrimSpace(family)) {
+		switch family {
 		case "ipv4":
 			if isV4 {
 				return addr.IP.String(), nil
