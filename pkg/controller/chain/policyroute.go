@@ -119,7 +119,8 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 		if !c.shouldInstallPolicyRouteForHealthCheck(target.HealthCheck, target.Mark) {
 			return
 		}
-		c.applyRouteTarget(ctx, aliases, owner, target.Name, target.EffectiveInterface(), target.EffectiveTable(), target.Priority, target.Mark, target.EffectiveMetric(), "none", "", skipMissing, &failures)
+		gateway := firstNonEmpty(resourcequery.Value(c.Store, target.GatewayFrom), strings.TrimSpace(target.Gateway))
+		c.applyRouteTarget(ctx, aliases, owner, target.Name, target.EffectiveInterface(), target.EffectiveTable(), target.Priority, target.Mark, target.EffectiveMetric(), firstNonEmpty(target.GatewaySource, "none"), gateway, skipMissing, &failures)
 	}
 	applyCandidate := func(owner string, candidate api.EgressRoutePolicyCandidate) {
 		if egressRoutePolicyCandidateDisabled(candidate) {

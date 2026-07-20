@@ -11316,6 +11316,40 @@
                               "items": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "gateway": {
+                                    "description": "Gateway is a static next hop for Linux policy routing and FreeBSD pf\nroute-to rendering. Dynamic gateway sources remain unsupported by the\nFreeBSD renderer.",
+                                    "type": "string"
+                                  },
+                                  "gatewayFrom": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "field": {
+                                        "description": "Field defaults to phase when omitted.",
+                                        "type": "string"
+                                      },
+                                      "optional": {
+                                        "type": "boolean"
+                                      },
+                                      "resource": {
+                                        "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "resource"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  "gatewaySource": {
+                                    "enum": [
+                                      "",
+                                      "static",
+                                      "dhcpv4",
+                                      "dhcpv6",
+                                      "none"
+                                    ],
+                                    "type": "string"
+                                  },
                                   "healthCheck": {
                                     "type": "string"
                                   },
