@@ -1149,10 +1149,68 @@ func TestValidateFreeBSDEgressRoutePolicyRejectsPolicyRouting(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := ValidateForOS(base(tt.spec), platform.OSFreeBSD)
-			if err == nil || !strings.Contains(err.Error(), "FreeBSD") || !strings.Contains(err.Error(), "policy routing") {
+			if err == nil || !strings.Contains(err.Error(), "FreeBSD") {
 				t.Fatalf("ValidateForOS() error = %v, want explicit FreeBSD policy routing rejection", err)
 			}
 		})
+	}
+}
+
+func TestValidateFreeBSDEgressRoutePolicyHashRouteToShape(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-a"}, Spec: api.InterfaceSpec{IfName: "vtnet0"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "vtnet1"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "balanced"}, Spec: api.EgressRoutePolicySpec{
+				Mode: "hash", HashFields: []string{"sourceAddress"}, SourceCIDRs: []string{"192.0.2.0/24"}, ExcludeDestinationCIDRs: []string{"198.51.100.0/24"},
+				Candidates: []api.EgressRoutePolicyCandidate{{Targets: []api.EgressRoutePolicyTarget{
+					{Interface: "wan-a", GatewaySource: "static", Gateway: "192.0.2.254"},
+					{Interface: "wan-b", GatewaySource: "static", Gateway: "198.51.100.254"},
+				}}},
+			}},
+		}},
+	}
+	if err := ValidateForOS(router, platform.OSFreeBSD); err != nil {
+		t.Fatalf("FreeBSD route-to shape rejected: %v", err)
+	}
+}
+
+func TestValidateFreeBSDEgressRoutePolicyHashRejectsAmbiguousTargetInterface(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-a"}, Spec: api.InterfaceSpec{IfName: "vtnet0"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "vtnet1"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "balanced"}, Spec: api.EgressRoutePolicySpec{
+				Mode: "hash", HashFields: []string{"sourceAddress"}, SourceCIDRs: []string{"192.0.2.0/24"},
+				Candidates: []api.EgressRoutePolicyCandidate{{Targets: []api.EgressRoutePolicyTarget{
+					{Interface: "wan-a", OutboundInterface: "wan-b", GatewaySource: "static", Gateway: "192.0.2.254"},
+					{Interface: "wan-b", GatewaySource: "static", Gateway: "198.51.100.254"},
+				}}},
+			}},
+		}},
+	}
+	err := ValidateForOS(router, platform.OSFreeBSD)
+	if err == nil || !strings.Contains(err.Error(), "both interface and outboundInterface") {
+		t.Fatalf("ValidateForOS() error = %v, want ambiguous target interface rejection", err)
+	}
+}
+
+func TestValidateLinuxEgressRoutePolicyTargetStillRequiresRouteTableMark(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-a"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "balanced"}, Spec: api.EgressRoutePolicySpec{Mode: "hash", HashFields: []string{"sourceAddress"}, SourceCIDRs: []string{"192.0.2.0/24"}, Candidates: []api.EgressRoutePolicyCandidate{{Targets: []api.EgressRoutePolicyTarget{{Interface: "wan-a", GatewaySource: "static", Gateway: "192.0.2.254"}}}}}},
+		}},
+	}
+	err := ValidateForOS(router, platform.OSLinux)
+	if err == nil || !strings.Contains(err.Error(), ".table must be greater than 0") {
+		t.Fatalf("Linux target table/priority/mark contract changed: %v", err)
 	}
 }
 

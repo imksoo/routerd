@@ -2235,13 +2235,19 @@ type EgressRoutePolicyTarget struct {
 	Name              string `yaml:"name,omitempty" json:"name,omitempty"`
 	Interface         string `yaml:"interface,omitempty" json:"interface,omitempty"`
 	OutboundInterface string `yaml:"outboundInterface,omitempty" json:"outboundInterface,omitempty"`
-	Table             int    `yaml:"table,omitempty" json:"table,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
-	RouteTable        int    `yaml:"routeTable,omitempty" json:"routeTable,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
-	Priority          int    `yaml:"priority,omitempty" json:"priority,omitempty" jsonschema:"minimum=0,maximum=32765"`
-	Mark              int    `yaml:"mark,omitempty" json:"mark,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
-	RouteMetric       int    `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
-	Metric            int    `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
-	HealthCheck       string `yaml:"healthCheck,omitempty" json:"healthCheck,omitempty"`
+	// Gateway is a static next hop for Linux policy routing and FreeBSD pf
+	// route-to rendering. Dynamic gateway sources remain unsupported by the
+	// FreeBSD renderer.
+	Gateway       string                `yaml:"gateway,omitempty" json:"gateway,omitempty"`
+	GatewayFrom   StatusValueSourceSpec `yaml:"gatewayFrom,omitempty" json:"gatewayFrom,omitempty"`
+	GatewaySource string                `yaml:"gatewaySource,omitempty" json:"gatewaySource,omitempty" jsonschema:"enum=,enum=static,enum=dhcpv4,enum=dhcpv6,enum=none"`
+	Table         int                   `yaml:"table,omitempty" json:"table,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
+	RouteTable    int                   `yaml:"routeTable,omitempty" json:"routeTable,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
+	Priority      int                   `yaml:"priority,omitempty" json:"priority,omitempty" jsonschema:"minimum=0,maximum=32765"`
+	Mark          int                   `yaml:"mark,omitempty" json:"mark,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
+	RouteMetric   int                   `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
+	Metric        int                   `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
+	HealthCheck   string                `yaml:"healthCheck,omitempty" json:"healthCheck,omitempty"`
 }
 
 func (c EgressRoutePolicyCandidate) EffectiveInterface() string {
