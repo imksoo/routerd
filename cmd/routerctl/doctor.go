@@ -2981,7 +2981,7 @@ func (r doctorRunner) doctorFirewall() []doctorCheck {
 func (r doctorRunner) doctorFirewallLoggerRuntimeCheck(ctx context.Context) doctorCheck {
 	name := "routerd-firewall-logger runtime"
 	if doctorCurrentOS() == platform.OSFreeBSD {
-		process := runDiagnosticCommand(ctx, "pgrep routerd-firewall-logger", "pgrep", "-f", "routerd-firewall-logger")
+		process := doctorRunDiagnosticCommand(ctx, "pgrep routerd-firewall-logger", "pgrep", "-f", "routerd-firewall-logger")
 		if !process.OK {
 			return doctorCheck{Area: "firewall", Name: name, Status: doctorWarn, Detail: firstNonEmpty(process.Error, oneLine(process.Output), "routerd-firewall-logger process is not running"), Remedy: "inspect routerd_firewall_logger rc.d service and pflog configuration"}
 		}
@@ -2993,7 +2993,7 @@ func (r doctorRunner) doctorFirewallLoggerRuntimeCheck(ctx context.Context) doct
 		if pid == "" {
 			return doctorCheck{Area: "firewall", Name: name, Status: doctorWarn, Detail: "pgrep returned no logger pid", Remedy: "inspect routerd_firewall_logger rc.d service"}
 		}
-		files := runDiagnosticCommand(ctx, "procstat logger files", "procstat", "-f", pid)
+		files := doctorRunDiagnosticCommand(ctx, "procstat logger files", "procstat", "-f", pid)
 		if !files.OK {
 			return doctorCheck{Area: "firewall", Name: name, Status: doctorWarn, Detail: firstNonEmpty(files.Error, oneLine(files.Output), "procstat could not inspect logger"), Remedy: "inspect logger process permissions and open files"}
 		}
