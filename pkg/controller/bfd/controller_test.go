@@ -37,8 +37,8 @@ func TestRenderFRRConfigUsesBGPPeerAddresses(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"peer 10.99.0.2 interface wg-hybrid",
-		"peer 10.99.0.3 interface wg-hybrid",
+		"peer 10.99.0.2 interface wg0",
+		"peer 10.99.0.3 interface wg0",
 		"receive-interval 300",
 		"transmit-interval 300",
 		"detect-multiplier 3",
@@ -122,6 +122,31 @@ func TestSessionsRejectMissingBGPPeerReference(t *testing.T) {
 	_, _, err := controller.sessions()
 	if err == nil || !strings.Contains(err.Error(), "missing BGPPeer") {
 		t.Fatalf("sessions err = %v, want missing BGPPeer error", err)
+	}
+}
+
+func TestSessionsResolveInterfaceResourceToKernelIfName(t *testing.T) {
+	router := bfdRouter()
+	controller := Controller{Router: router, Store: testStore{}}
+	sessions, _, err := controller.sessions()
+	if err != nil {
+		t.Fatalf("sessions: %v", err)
+	}
+	if len(sessions) != 2 || sessions[0].Interface != "wg0" || sessions[1].Interface != "wg0" {
+		t.Fatalf("sessions = %#v, want Interface/wg-hybrid resolved to wg0", sessions)
+	}
+}
+
+func TestSessionsRejectUnknownInterfaceResource(t *testing.T) {
+	router := bfdRouter()
+	iface := router.Spec.Resources[3]
+	spec := iface.Spec.(api.InterfaceSpec)
+	spec.IfName = ""
+	iface.Spec = spec
+	router.Spec.Resources[3] = iface
+	controller := Controller{Router: router, Store: testStore{}}
+	if _, _, err := controller.sessions(); err == nil || !strings.Contains(err.Error(), "missing or empty Interface/wg-hybrid") {
+		t.Fatalf("sessions error = %v, want missing Interface resource", err)
 	}
 }
 
@@ -246,6 +271,11 @@ func bfdRouter() *api.Router {
 				Interface: "Interface/wg-hybrid",
 				Profile:   "fast",
 			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wg-hybrid"},
+			Spec:     api.InterfaceSpec{IfName: "wg0", Managed: false, Owner: "external"},
 		},
 	}}}
 }

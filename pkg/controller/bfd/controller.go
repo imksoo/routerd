@@ -127,11 +127,18 @@ func (c Controller) sessions() ([]session, map[string][]session, error) {
 	bgpPeers := map[string]api.BGPPeerSpec{}
 	bgpRouters := map[string]api.BGPRouterSpec{}
 	bfdSpecs := map[string]api.BFDSpec{}
+	interfaces := map[string]string{}
 	for _, res := range c.Router.Spec.Resources {
 		if res.APIVersion != api.NetAPIVersion {
 			continue
 		}
 		switch res.Kind {
+		case "Interface":
+			spec, err := res.InterfaceSpec()
+			if err != nil {
+				return nil, nil, err
+			}
+			interfaces[res.Metadata.Name] = strings.TrimSpace(spec.IfName)
 		case "BGPRouter":
 			spec, err := res.BGPRouterSpec()
 			if err != nil {
@@ -163,12 +170,16 @@ func (c Controller) sessions() ([]session, map[string][]session, error) {
 		if len(endpoints) == 0 {
 			return fmt.Errorf("BFD/%s resolved no peer endpoints from spec.peer %q", name, spec.Peer)
 		}
+		ifName, err := resolveBFDInterface(spec.Interface, interfaces)
+		if err != nil {
+			return fmt.Errorf("BFD/%s interface: %w", name, err)
+		}
 		for _, endpoint := range endpoints {
 			s := session{
 				BFDName:    name,
 				Address:    endpoint.Address,
 				LocalAddr:  endpoint.LocalAddr,
-				Interface:  strings.TrimSpace(spec.Interface),
+				Interface:  ifName,
 				MinRxMS:    bfdDurationMS(spec.MinRx, spec.Profile, true),
 				MinTxMS:    bfdDurationMS(spec.MinTx, spec.Profile, false),
 				Multiplier: bfdMultiplier(spec),
@@ -217,6 +228,25 @@ func (c Controller) sessions() ([]session, map[string][]session, error) {
 		sort.SliceStable(byBFD[name], func(i, j int) bool { return byBFD[name][i].Address < byBFD[name][j].Address })
 	}
 	return out, byBFD, nil
+}
+
+func resolveBFDInterface(ref string, interfaces map[string]string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", nil
+	}
+	kind, name, isRef := strings.Cut(ref, "/")
+	if !isRef {
+		return ref, nil
+	}
+	if kind != "Interface" || strings.TrimSpace(name) == "" {
+		return "", fmt.Errorf("must be an interface name or Interface/<name>, got %q", ref)
+	}
+	ifName := strings.TrimSpace(interfaces[name])
+	if ifName == "" {
+		return "", fmt.Errorf("references missing or empty Interface/%s", name)
+	}
+	return ifName, nil
 }
 
 type bfdPeerEndpoint struct {

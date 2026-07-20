@@ -49,7 +49,7 @@ the same distinction as the apply path.
 | `NAT44Rule` | nftables `routerd_nat` table |
 | `PortForward` / `IngressService` | Linux nftables `routerd_nat` / `routerd_filter` DNAT, optional hairpin SNAT, or FreeBSD `pf.conf` `rdr pass` / optional NAT reflection rules |
 | `BGPRouter` / `BGPPeer` | Long-lived `routerd-bgp` daemon state controlled through local GoBGP gRPC; learned IPv4 best paths installed into the kernel FIB with routerd-owned protocol/metric values |
-| `BFD` | Linux FRR `bfdd` session configuration and observed status for referenced GoBGP peers |
+| `BFD` | Linux or FreeBSD FRR `bfdd` session configuration and observed status for referenced GoBGP peers |
 | `VirtualAddress` | Static VIP through `ip addr` or `ifconfig`; VRRP/VRRPv3 VIP ownership through keepalived on Linux or CARP on FreeBSD |
 | `ObservabilityPipeline` | In-process routerd event exporter and generated OpenTelemetry environment for managed units |
 | `RouterdCluster` | File lease under `spec.leasePath`; leader-only apply/controller mutation gate |

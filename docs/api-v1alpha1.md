@@ -261,7 +261,7 @@ resolver addresses for DoH or DoT endpoint name resolution.
 | `BGPRouter` | Declares a local BGP router. The current backend is a long-lived `routerd-bgp` GoBGP daemon with default-deny import policy. |
 | `BGPPeer` | Declares GoBGP-managed BGP peers for a `BGPRouter`, for example Kubernetes BGP speakers. |
 | `BGPDynamicPeer` | Declares a bounded GoBGP dynamic-neighbor accept range for hub/RR fabrics. It lets an RR accept passive BGP sessions from leaf source prefixes without pre-declaring every leaf as a `BGPPeer`. |
-| `BFD` | Declares one BFD session intent. On Linux, routerd renders FRR `bfdd` configuration and records observed BFD state without deconfiguring referenced GoBGP peers. |
+| `BFD` | Declares one BFD session intent. On Linux and FreeBSD, routerd renders FRR `bfdd` configuration and records observed BFD state without deconfiguring referenced GoBGP peers. |
 | `NAT44Rule` | Performs IPv4 NAPT in the nftables `routerd_nat` table. |
 | `NAT44SessionSync` | Mirrors selected NAT44 conntrack sessions from an active node to standby nodes over SSH. |
 | `PortForward` | Publishes one WAN-side IPv4 TCP/UDP port to one internal IPv4 target with DNAT. |
