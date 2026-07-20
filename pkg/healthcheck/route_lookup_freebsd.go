@@ -41,9 +41,9 @@ func lookupRoute(ctx context.Context, target, family string) (RouteInfo, error) 
 		args = append(args, "-inet6")
 	}
 	args = append(args, target)
-	out, err := exec.CommandContext(ctx, "route", args...).CombinedOutput()
+	out, err := exec.CommandContext(ctx, "route", args...).Output()
 	if err != nil {
-		return RouteInfo{}, fmt.Errorf("route -n get: %w: %s", err, strings.TrimSpace(string(out)))
+		return RouteInfo{}, fmt.Errorf("route -n get: %w", err)
 	}
 	return parseFreeBSDRouteGet(string(out))
 }
