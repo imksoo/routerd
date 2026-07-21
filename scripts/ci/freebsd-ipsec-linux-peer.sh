@@ -45,7 +45,6 @@ charon {
 EOF
   sudo tee "$dir/swanctl.conf" >/dev/null <<'EOF'
 connections {
-  foreign-sentinel { version = 2 local_addrs = %any remote_addrs = %any local { auth = psk } remote { auth = psk } }
   native-tunnel {
     version = 2
     local_addrs = %any
@@ -65,8 +64,8 @@ EOF
   sudo /usr/sbin/swanctl --uri "unix://$dir/charon.vici" --load-all --file "$dir/swanctl.conf"
   sudo env PEER_DIR="$dir" bash -c '
     set -eu
-    for phase_port in initial:19091 rekey:19092 restart:19093; do
-      phase=${phase_port%:*}; port=${phase_port#*:}
+    for phase_port in initial:19091:19191 rekey:19092:19192 restart:19093:19193; do
+      phase=${phase_port%%:*}; rest=${phase_port#*:}; port=${rest%%:*}; ack=${rest#*:}
       timeout 120 nc -l -p "$port" >/dev/null
       for _ in $(seq 1 30); do
         if /usr/sbin/swanctl --uri "unix://$PEER_DIR/charon.vici" --list-sas | grep -q ESTABLISHED; then
@@ -74,6 +73,7 @@ EOF
           ping -n -I 10.250.2.1 -c 2 10.250.1.1 >>"$PEER_DIR/reverse-verifier.log" 2>&1
           ip -s xfrm state >>"$PEER_DIR/reverse-verifier.log" 2>&1 || true
           ip -s xfrm policy >>"$PEER_DIR/reverse-verifier.log" 2>&1 || true
+          printf ok | nc -l -p "$ack" >>"$PEER_DIR/reverse-verifier.log" 2>&1
           break
         fi
         sleep 1
@@ -83,11 +83,14 @@ EOF
   trap - ERR INT TERM
   ;;
 stop)
-  for phase in initial rekey restart; do sudo grep -F "phase=$phase" "$dir/reverse-verifier.log"; done
-  [ "$(sudo grep -c '2 received' "$dir/reverse-verifier.log")" -eq 3 ]
-  sudo grep -Eq 'src |dir (in|out)' "$dir/reverse-verifier.log"
-  cat "$dir/reverse-verifier.log"
+  trap cleanup EXIT
+  rc=0
+  for phase in initial rekey restart; do sudo grep -F "phase=$phase" "$dir/reverse-verifier.log" || rc=1; done
+  [ "$(sudo grep -c '2 received' "$dir/reverse-verifier.log")" -eq 3 ] || rc=1
+  sudo grep -Eq 'src |dir (in|out)' "$dir/reverse-verifier.log" || rc=1
+  sudo cat "$dir/reverse-verifier.log" || rc=1
   cleanup
+  exit "$rc"
   ;;
 *) exit 2;;
 esac

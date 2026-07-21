@@ -13,6 +13,8 @@ host_addr=$(ifconfig "$host_if" inet | awk '/inet /{print $2;exit}')
 [ -n "$host_addr" ] && [ "$peer_addr" = "$(route -n get default | awk '/gateway:/{print $2;exit}')" ]
 host_ts=10.250.1.1 peer_ts=10.250.2.1 psk=routerd-native-linux-peer-disposable-psk
 state=$work/state.db ledger=$work/ledger.db
+sentinel=/usr/local/etc/routerd/swanctl/operator-sentinel.conf
+sentinel_created=0
 service_before=0 enable_before=1 cleanup_started=0
 emit_failure() { for f in "$evidence"/*.log; do [ -f "$f" ] && { echo "--- ${f#"$evidence"/}" >&3; sed "s/$psk/[REDACTED]/g" "$f" >&3; }; done; }
 cleanup() {
@@ -22,7 +24,8 @@ cleanup() {
   service strongswan onestop >>"$evidence/cleanup.log" 2>&1 || true
   if [ "$service_before" -eq 1 ]; then service strongswan onestart >>"$evidence/cleanup.log" 2>&1 || true; fi
   if [ "$enable_before" -eq 0 ]; then sysrc "strongswan_enable=$(cat "$work/enable.before")" >>"$evidence/cleanup.log" 2>&1 || true; else sysrc -x strongswan_enable >>"$evidence/cleanup.log" 2>&1 || true; fi
-  rm -f /usr/local/etc/routerd/swanctl/routerd-*.conf /usr/local/etc/routerd/swanctl/routerd.conf /usr/local/etc/routerd/swanctl/.routerd-pending-load /usr/local/etc/routerd/swanctl/operator-sentinel.conf
+  rm -f /usr/local/etc/routerd/swanctl/routerd-*.conf /usr/local/etc/routerd/swanctl/routerd.conf /usr/local/etc/routerd/swanctl/.routerd-pending-load
+  [ "$sentinel_created" -eq 1 ] && rm -f "$sentinel"
   ifconfig lo0 inet "$host_ts" -alias >/dev/null 2>&1 || true
   printf 'cleanup=complete rc=%s\n' "$rc" >>"$evidence/cleanup.log"; return "$rc"
 }
@@ -30,10 +33,13 @@ trap cleanup EXIT HUP INT TERM
 if service strongswan status >"$evidence/service.before.log" 2>&1; then service_before=1; fi
 if sysrc -n strongswan_enable >"$work/enable.before" 2>"$evidence/enable.before.log"; then enable_before=0; fi
 ifconfig lo0 inet "$host_ts/32" alias
-cat >/usr/local/etc/routerd/swanctl/operator-sentinel.conf <<'EOF'
+install -d -m 0700 /usr/local/etc/routerd/swanctl
+test ! -e "$sentinel"
+cat >"$sentinel" <<'EOF'
 # fixture-owned operator sentinel: routerd must not mutate this file
 connections {}
 EOF
+sentinel_created=1
 cat >"$work/router.yaml" <<EOF
 apiVersion: routerd.net/v1alpha1
 kind: Router
@@ -65,11 +71,13 @@ timeout -k 2 45 "$routerd" apply --once --config "$work/router.yaml" --state-fil
 for _ in $(jot 30); do /usr/local/sbin/swanctl --list-sas --ike native-tunnel >"$evidence/sa.initial.log" && grep -q ESTABLISHED "$evidence/sa.initial.log" && break; sleep 1; done
 grep -q ESTABLISHED "$evidence/sa.initial.log"
 nc -z -w 5 "$peer_addr" 19091
+nc -w 15 "$peer_addr" 19191 | grep -Fx ok
 ping -n -S "$host_ts" -c 2 "$peer_ts" >"$evidence/traffic.host-to-peer.log" 2>&1
 /usr/local/sbin/swanctl --rekey --ike native-tunnel >"$evidence/rekey.log" 2>&1
 for _ in $(jot 30); do /usr/local/sbin/swanctl --list-sas --ike native-tunnel >"$evidence/sa.rekey.log" && grep -q ESTABLISHED "$evidence/sa.rekey.log" && break; sleep 1; done
 grep -q ESTABLISHED "$evidence/sa.rekey.log"
 nc -z -w 5 "$peer_addr" 19092
+nc -w 15 "$peer_addr" 19192 | grep -Fx ok
 ping -n -S "$host_ts" -c 2 "$peer_ts" >"$evidence/traffic.rekey.log" 2>&1
 service strongswan onestop >"$evidence/restart.stop.log" 2>&1
 timeout -k 2 45 "$routerd" apply --once --config "$work/router.yaml" --state-file "$state" --ledger-file "$ledger" >"$evidence/restart.log" 2>&1
@@ -77,6 +85,7 @@ timeout -k 2 45 "$routerd" apply --once --config "$work/router.yaml" --state-fil
 for _ in $(jot 30); do /usr/local/sbin/swanctl --list-sas --ike native-tunnel >"$evidence/sa.restart.log" && grep -q ESTABLISHED "$evidence/sa.restart.log" && break; sleep 1; done
 grep -q ESTABLISHED "$evidence/sa.restart.log"
 nc -z -w 5 "$peer_addr" 19093
+nc -w 15 "$peer_addr" 19193 | grep -Fx ok
 ping -n -S "$host_ts" -c 2 "$peer_ts" >"$evidence/traffic.restart.log" 2>&1
 cat >"$work/empty.yaml" <<'EOF'
 apiVersion: routerd.net/v1alpha1
@@ -87,7 +96,7 @@ EOF
 timeout -k 2 45 "$routerd" apply --once --config "$work/empty.yaml" --state-file "$state" --ledger-file "$ledger" >"$evidence/teardown.log" 2>&1
 test ! -e /usr/local/etc/routerd/swanctl/routerd.conf
 test ! -e /usr/local/etc/routerd/swanctl/.routerd-pending-load
-grep -Fx '# fixture-owned operator sentinel: routerd must not mutate this file' /usr/local/etc/routerd/swanctl/operator-sentinel.conf
+grep -Fx '# fixture-owned operator sentinel: routerd must not mutate this file' "$sentinel"
 if /usr/local/sbin/swanctl --list-conns | grep -F native-tunnel >/dev/null; then
   echo 'routerd-owned native-tunnel remained after teardown' >&2
   exit 1
