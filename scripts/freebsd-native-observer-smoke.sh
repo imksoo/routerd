@@ -12,70 +12,36 @@ FreeBSD) ;;
 esac
 
 work=$(mktemp -d /tmp/routerd-freebsd-observer-smoke.XXXXXX)
-jail_name="routerd-observer-$$"
-epair_host=""
-epair_bridge_peer=""
-bridge=""
+tap=""
 arp_pid=""
 ra_pid=""
-rtadvd_pid=""
-own_epair_module=0
-own_bridge_module=0
-restart_devd=0
+own_tuntap_module=0
 
 cleanup() {
-  for pid in "$rtadvd_pid" "$ra_pid" "$arp_pid"; do
+  for pid in "$ra_pid" "$arp_pid"; do
     if [ -n "$pid" ]; then
       kill -TERM "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
     fi
   done
-  if jls -j "$jail_name" >/dev/null 2>&1; then
-    jail -r "$jail_name" || true
+  if [ -n "$tap" ] && ifconfig "$tap" >/dev/null 2>&1; then
+    ifconfig "$tap" destroy || true
   fi
-  if [ -n "$bridge" ] && ifconfig "$bridge" >/dev/null 2>&1; then
-    ifconfig "$bridge" destroy || true
-  fi
-  if [ -n "$epair_host" ] && ifconfig "$epair_host" >/dev/null 2>&1; then
-    ifconfig "$epair_host" destroy || true
-  fi
-  if [ -n "$epair_bridge_peer" ] && ifconfig "$epair_bridge_peer" >/dev/null 2>&1; then
-    ifconfig "$epair_bridge_peer" destroy || true
-  fi
-  if [ "$own_epair_module" -eq 1 ]; then
-    kldunload if_epair || true
-  fi
-  if [ "$own_bridge_module" -eq 1 ]; then
-    kldunload if_bridge || true
-  fi
-  if [ "$restart_devd" -eq 1 ]; then
-    service devd start >/dev/null 2>&1 || true
+  if [ "$own_tuntap_module" -eq 1 ]; then
+    kldunload if_tuntap || true
   fi
   rm -rf "$work"
 }
 trap cleanup EXIT HUP INT TERM
 
-if ! kldstat -q -m if_epair; then
-  kldload if_epair
-  own_epair_module=1
-fi
-if ! kldstat -q -m if_bridge; then
-  kldload if_bridge
-  own_bridge_module=1
-fi
-
-# The CI image has ifconfig_DEFAULT=DHCP, so devd starts dhclient each time an
-# epair appears and can reconfigure the disposable interface after observers
-# attach.  Pause it for the lifetime of this isolated fixture and restore it in
-# cleanup; the VM itself is discarded after the job.
-if service devd onestatus >/dev/null 2>&1; then
-  service devd stop >/dev/null
-  restart_devd=1
+if ! kldstat -q -m if_tuntap; then
+  kldload if_tuntap
+  own_tuntap_module=1
 fi
 
 arp_observer="$work/routerd-arp-observer"
 ra_observer="$work/routerd-ra-observer"
-injector="$work/freebsd-bpf-feedback-injector"
+injector="$work/freebsd-tap-frame-injector"
 arp_socket="$work/arp.sock"
 ra_socket="$work/ra.sock"
 arp_events="$work/arp-events.jsonl"
@@ -83,33 +49,19 @@ ra_events="$work/ra-events.jsonl"
 
 go build -o "$arp_observer" ./cmd/routerd-arp-observer
 go build -o "$ra_observer" ./cmd/routerd-ra-observer
-go build -o "$injector" ./scripts/freebsd-bpf-feedback-injector
+go build -o "$injector" ./scripts/freebsd-tap-frame-injector
 
-epair_host=$(ifconfig epair create)
-epair_peer="${epair_host%a}b"
-epair_bridge_peer=$(ifconfig epair create)
-epair_local="${epair_bridge_peer%a}b"
-bridge=$(ifconfig bridge create)
-ifconfig "$epair_host" up
-ifconfig "$epair_bridge_peer" up
-ifconfig "$bridge" addm "$epair_host" addm "$epair_bridge_peer" up
-ifconfig "$epair_local" inet 192.0.2.1/24 up
-ifconfig "$epair_local" inet6 2001:db8:846::1/64
-jail -c name="$jail_name" path=/ host.hostname="$jail_name" \
-  persist vnet vnet.interface="$epair_peer" allow.raw_sockets
-jexec "$jail_name" ifconfig lo0 up
-jexec "$jail_name" ifconfig "$epair_peer" inet 192.0.2.2/24 up
-jexec "$jail_name" ifconfig "$epair_peer" inet6 2001:db8:846::2/64 up
-jexec "$jail_name" sysctl net.inet6.ip6.forwarding=1 >/dev/null
+tap=$(ifconfig tap create)
+ifconfig "$tap" inet 192.0.2.1/24 up
 "$arp_observer" daemon \
-  --resource native-ci-arp --interface "$bridge" --event-interface native-ci \
+  --resource native-ci-arp --interface "$tap" --event-interface native-ci \
   --socket "$arp_socket" --event-file "$arp_events" --pool native-ci-pool \
   --prefix 192.0.2.0/24 --source-type arp-observer --observe \
   >"$work/arp.log" 2>&1 &
 arp_pid=$!
 
 "$ra_observer" daemon \
-  --resource native-ci-ra --interface "$bridge" \
+  --resource native-ci-ra --interface "$tap" \
   --socket "$ra_socket" --event-file "$ra_events" \
   >"$work/ra.log" 2>&1 &
 ra_pid=$!
@@ -136,30 +88,10 @@ done
   exit 1
 }
 
-# Feed known Ethernet frames back through the FreeBSD kernel input path. This
-# exercises the production BPF readers while avoiding epair's lack of a peer
-# receive tap; the production parsers/status/event files remain the oracle.
-"$injector" "$bridge"
-
-# Generate packets through the guest kernel, not through a parser-only helper.
-sleep 1
-for _ in $(jot 3); do
-  jexec "$jail_name" arp -d 192.0.2.1 >/dev/null 2>&1 || true
-  jexec "$jail_name" ping -n -c 1 192.0.2.1 >/dev/null
-  arp -d 192.0.2.2 >/dev/null 2>&1 || true
-  ping -n -c 1 192.0.2.2 >/dev/null
-done
-
-rtadvd_conf="$work/rtadvd.conf"
-{
-  printf '%s:\\\n' "$epair_peer"
-  printf '\t:addr="2001:db8:846::":prefixlen#64:rltime#0:maxinterval#4:mininterval#3:\n'
-} >"$rtadvd_conf"
-jexec "$jail_name" rtadvd -d -f -s -c "$rtadvd_conf" \
-  -p "$work/rtadvd.pid" "$epair_peer" >"$work/rtadvd.log" 2>&1 &
-rtadvd_pid=$!
-sleep 1
-rtsol -d "$epair_local" >"$work/rtsol.log" 2>&1 || true
+# FreeBSD tap(4) defines each control-device write as one Ethernet frame
+# received by the kernel. The production BPF readers, parsers, status, and
+# event files remain the acceptance oracle.
+"$injector" "$tap"
 
 observed=0
 for _ in $(jot 20); do
@@ -183,10 +115,7 @@ if [ "$observed" -ne 1 ]; then
   cat "$work/ra-status.json" >&2
   cat "$work/arp.log" >&2
   cat "$work/ra.log" >&2
-  cat "$work/rtadvd.log" >&2
-  cat "$work/rtsol.log" >&2
-  ifconfig "$bridge" >&2
-  ifconfig "$epair_local" >&2
+  ifconfig "$tap" >&2
   procstat -f "$arp_pid" >&2 || true
   procstat -f "$ra_pid" >&2 || true
   netstat -B >&2 || true

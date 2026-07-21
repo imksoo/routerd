@@ -8,30 +8,21 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
-	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
 
 func main() {
 	if len(os.Args) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: freebsd-bpf-feedback-injector INTERFACE")
+		fmt.Fprintln(os.Stderr, "usage: freebsd-tap-frame-injector INTERFACE")
 		os.Exit(2)
 	}
-	fd, err := openBPF()
+	device := "/dev/" + os.Args[1]
+	fd, err := unix.Open(device, unix.O_RDWR, 0)
 	if err != nil {
-		panic(err)
+		panic(fmt.Errorf("open %s: %w", device, err))
 	}
 	defer unix.Close(fd)
-	if err := attach(fd, os.Args[1]); err != nil {
-		panic(err)
-	}
-	if err := setInt(fd, unix.BIOCSHDRCMPLT, 1); err != nil {
-		panic(fmt.Errorf("BIOCSHDRCMPLT: %w", err))
-	}
-	if err := setInt(fd, unix.BIOCFEEDBACK, 1); err != nil {
-		panic(fmt.Errorf("BIOCFEEDBACK: %w", err))
-	}
 
 	frames := [][]byte{arpRequest(), routerAdvertisement()}
 	for i := 0; i < 4; i++ {
@@ -41,41 +32,6 @@ func main() {
 			}
 		}
 	}
-}
-
-func openBPF() (int, error) {
-	if fd, err := unix.Open("/dev/bpf", unix.O_RDWR, 0); err == nil {
-		return fd, nil
-	}
-	for i := 0; i < 256; i++ {
-		fd, err := unix.Open(fmt.Sprintf("/dev/bpf%d", i), unix.O_RDWR, 0)
-		if err == nil {
-			return fd, nil
-		}
-	}
-	return -1, fmt.Errorf("no BPF device available")
-}
-
-func attach(fd int, ifname string) error {
-	var ifreq [32]byte
-	if len(ifname) >= len(ifreq) {
-		return fmt.Errorf("interface name too long: %s", ifname)
-	}
-	copy(ifreq[:], ifname)
-	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), uintptr(unix.BIOCSETIF), uintptr(unsafe.Pointer(&ifreq[0])))
-	if errno != 0 {
-		return errno
-	}
-	return nil
-}
-
-func setInt(fd int, request uint, value int) error {
-	raw := int32(value)
-	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), uintptr(request), uintptr(unsafe.Pointer(&raw)))
-	if errno != 0 {
-		return errno
-	}
-	return nil
 }
 
 func arpRequest() []byte {
