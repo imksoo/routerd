@@ -126,7 +126,15 @@ cleanup() {
   else
     sudo ip addr del 10.250.2.1/32 dev lo 2>/dev/null || true
   fi
-  if sudo test -s "$dir/verifier.pid"; then sudo kill -TERM "$(sudo cat "$dir/verifier.pid")" 2>/dev/null || true; fi
+  if is_owned verifier && sudo test -s "$dir/verifier.pid"; then
+    verifier_pid=$(sudo cat "$dir/verifier.pid")
+    if sudo ip netns pids "$netns" | grep -Fxq "$verifier_pid"; then
+      sudo kill -TERM "$verifier_pid" 2>/dev/null || true
+    else
+      return 1
+    fi
+    clear_owned verifier
+  fi
   if is_owned peer-config; then sudo rm -f -- "$peer_config"; clear_owned peer-config; fi
   cleanup_tap_topology || cleanup_rc=1
   # Markers stay available until both config and topology cleanup complete.
@@ -219,7 +227,7 @@ EOF
   fi
   if [[ "$topology" == tap ]]; then verifier_prefix=(sudo ip netns exec "$netns" env); else verifier_prefix=(sudo env); fi
   # shellcheck disable=SC2016 # expanded by the peer-side bash, not this shell
-  "${verifier_prefix[@]}" PEER_DIR="$dir" bash -c '
+  "${verifier_prefix[@]}" PEER_DIR="$dir" RUNNER_TRACKING_ID= nohup bash -c '
     set -eu
     for phase_port in initial:19091:19191 rekey:19092:19192 restart:19093:19193; do
       phase=${phase_port%%:*}; rest=${phase_port#*:}; port=${rest%%:*}; ack=${rest#*:}
@@ -239,7 +247,16 @@ EOF
       done
       test "$established" -eq 1
     done
-  ' & echo $! | sudo tee "$dir/verifier.pid" >/dev/null
+  ' >"$dir/reverse-verifier.stdout.log" 2>&1 < /dev/null & echo $! | sudo tee "$dir/verifier.pid" >/dev/null
+  mark_owned verifier
+  verifier_pid=$(sudo cat "$dir/verifier.pid")
+  sudo ip netns pids "$netns" | grep -Fxq "$verifier_pid"
+  ready=0
+  for _ in $(seq 1 30); do
+    if sudo ip netns exec "$netns" ss -ltn | grep -Eq '[:.]19091[[:space:]]'; then ready=1; break; fi
+    sleep 1
+  done
+  [ "$ready" -eq 1 ] || { echo 'peer-start: reverse verifier did not listen on 19091' >&2; exit 1; }
   trap - ERR INT TERM
   ;;
 stop)
