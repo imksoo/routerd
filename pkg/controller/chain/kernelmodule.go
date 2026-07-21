@@ -15,6 +15,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/hostdeps"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 type KernelModuleController struct {
@@ -34,16 +35,16 @@ func (c KernelModuleController) Reconcile(ctx context.Context) error {
 	if c.Router == nil {
 		return nil
 	}
-	for _, resource := range kernelModuleControllerResources(c.Router) {
+	osName := c.OSName
+	if osName == "" {
+		osName = packageOSName(runtime.GOOS)
+	}
+	for _, resource := range kernelModuleControllerResources(c.Router, osName) {
 		spec, err := resource.KernelModuleSpec()
 		if err != nil {
 			return err
 		}
-		osName := c.OSName
-		if osName == "" {
-			osName = packageOSName(runtime.GOOS)
-		}
-		if runtime.GOOS != "linux" && osName != "linux" && osName != "ubuntu" && osName != "debian" {
+		if !kernelModuleSupportedOS(osName) {
 			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "KernelModule", resource.Metadata.Name, map[string]any{
 				"phase":     "Pending",
 				"reason":    "UnsupportedOS",
@@ -55,7 +56,7 @@ func (c KernelModuleController) Reconcile(ctx context.Context) error {
 			}
 			continue
 		}
-		changed, loaded, skipped, err := c.applyKernelModules(ctx, resource.Metadata.Name, spec)
+		changed, loaded, skipped, err := c.applyKernelModules(ctx, resource.Metadata.Name, spec, osName)
 		if err != nil {
 			if spec.Optional {
 				skipped = append(skipped, err.Error())
@@ -103,11 +104,23 @@ func (c KernelModuleController) Reconcile(ctx context.Context) error {
 	return nil
 }
 
-func kernelModuleControllerResources(router *api.Router) []api.Resource {
+func kernelModuleControllerResources(router *api.Router, osName string) []api.Resource {
+	if osName == "freebsd" {
+		return hostdeps.KernelModuleResourcesForOS(router, platform.OSFreeBSD)
+	}
 	return hostdeps.KernelModuleResources(router)
 }
 
-func (c KernelModuleController) applyKernelModules(ctx context.Context, name string, spec api.KernelModuleSpec) (bool, []string, []string, error) {
+func kernelModuleSupportedOS(osName string) bool {
+	switch osName {
+	case "linux", "ubuntu", "debian", "freebsd":
+		return true
+	default:
+		return false
+	}
+}
+
+func (c KernelModuleController) applyKernelModules(ctx context.Context, name string, spec api.KernelModuleSpec, osName string) (bool, []string, []string, error) {
 	modules := compactStringList(append([]string(nil), spec.Modules...))
 	sort.Strings(modules)
 	changed := false
@@ -116,8 +129,11 @@ func (c KernelModuleController) applyKernelModules(ctx context.Context, name str
 	if command == nil {
 		command = runOutputCommandContext
 	}
+	if osName == "freebsd" && spec.Persistent {
+		return false, nil, nil, fmt.Errorf("persistent KernelModule is not supported on FreeBSD")
+	}
 	if api.BoolDefault(spec.Runtime, true) {
-		loadedModules := c.loadedKernelModules()
+		loadedModules := c.loadedKernelModules(ctx, command, osName, modules)
 		for _, module := range modules {
 			if loadedModules[module] {
 				loaded = append(loaded, module)
@@ -127,13 +143,21 @@ func (c KernelModuleController) applyKernelModules(ctx context.Context, name str
 				changed = true
 				continue
 			}
-			out, err := command(ctx, "modprobe", module)
+			commandName := "modprobe"
+			if osName == "freebsd" {
+				commandName = "kldload"
+			}
+			out, err := command(ctx, commandName, module)
 			if err != nil {
+				if osName == "freebsd" && freeBSDModuleAlreadyLoaded(out) {
+					loaded = append(loaded, module)
+					continue
+				}
 				if spec.Optional {
 					skipped = append(skipped, module)
 					continue
 				}
-				return changed, loaded, skipped, fmt.Errorf("modprobe %s: %w: %s", module, err, strings.TrimSpace(string(out)))
+				return changed, loaded, skipped, fmt.Errorf("%s %s: %w: %s", commandName, module, err, strings.TrimSpace(string(out)))
 			}
 			loaded = append(loaded, module)
 			changed = true
@@ -159,7 +183,16 @@ func (c KernelModuleController) applyKernelModules(ctx context.Context, name str
 	return changed, loaded, skipped, nil
 }
 
-func (c KernelModuleController) loadedKernelModules() map[string]bool {
+func (c KernelModuleController) loadedKernelModules(ctx context.Context, command outputCommandFunc, osName string, modules []string) map[string]bool {
+	if osName == "freebsd" {
+		out := map[string]bool{}
+		for _, module := range modules {
+			if _, err := command(ctx, "kldstat", "-q", "-m", module); err == nil {
+				out[module] = true
+			}
+		}
+		return out
+	}
 	path := c.ProcModulesPath
 	if path == "" {
 		path = "/proc/modules"
@@ -176,6 +209,11 @@ func (c KernelModuleController) loadedKernelModules() map[string]bool {
 		}
 	}
 	return out
+}
+
+func freeBSDModuleAlreadyLoaded(out []byte) bool {
+	text := strings.ToLower(string(out))
+	return strings.Contains(text, "file exists") || strings.Contains(text, "already loaded")
 }
 
 func removeKernelModuleFile(path string, dryRun bool) (bool, error) {

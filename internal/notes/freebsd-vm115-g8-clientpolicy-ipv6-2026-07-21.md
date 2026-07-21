@@ -33,7 +33,8 @@ Persisted original-resolution console frames prove:
 - the allowed sink captured three echo requests from `fd00:1::10`;
 - the denied sink captured no packets from `fd00:1::10` (only local NDP
   traffic); the source's denied ping had zero replies;
-- PF state output contains the source and the generated deny label; and
+- PF rules contain the generated deny label, and PF state output contains the
+  allowed source flow; and
 - post-cleanup PF rule/state observations are empty and `pfctl` reports
   `pf disabled`.
 
