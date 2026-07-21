@@ -7,10 +7,10 @@ block drop all
 pass quick on lo0 all
 pass out quick all keep state
 pass quick inet6 proto icmp6 all keep state
-pass in quick on $lan_if to self keep state
-block return in quick on $wan_if proto tcp to self port 22 keep state label "routerd:ssh-bruteforce-over-limit"
-pass in quick on $wan_if inet proto icmp icmp-type echoreq to self keep state label "routerd:wan-icmp-echo"
-pass in quick on $wan_if proto tcp to self port { 80 443 } keep state label "routerd:wan-web"
+pass in quick on $lan_if to (ens19) keep state
+block return in quick on $wan_if proto tcp to (ens18) port 22 keep state label "routerd:ssh-bruteforce-over-limit"
+pass in quick on $wan_if inet proto icmp icmp-type echoreq to (ens18) keep state label "routerd:wan-icmp-echo"
+pass in quick on $wan_if proto tcp to (ens18) port { 80 443 } keep state label "routerd:wan-web"
 pass in quick on $lan_if keep state label "routerd:lan-to-lan"
 pass in quick on $lan_if keep state label "routerd:lan-to-wan"
 ### rc.conf.d-routerd

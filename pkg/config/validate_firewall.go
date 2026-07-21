@@ -497,6 +497,7 @@ func validateFirewallResource(res api.Resource, targetOS platform.OS) (bool, err
 			}
 			seenMACs[normalizedMAC] = true
 		}
+		seenIPv6Addresses := map[string]bool{}
 		for i, entry := range spec.Classification {
 			switch entry.Mode {
 			case "trusted", "guest", "isolated":
@@ -549,6 +550,17 @@ func validateFirewallResource(res api.Resource, targetOS platform.OS) (bool, err
 			}
 			if strings.Contains(entry.IPv4Reservation, "/") {
 				return true, fmt.Errorf("%s spec.classification[%d].ipv4Reservation must be a DHCPv4Reservation name, not Kind/name", res.ID(), i)
+			}
+			for j, value := range entry.IPv6Addresses {
+				address, err := netip.ParseAddr(strings.TrimSpace(value))
+				if err != nil || !address.Is6() || address.Is4In6() {
+					return true, fmt.Errorf("%s spec.classification[%d].ipv6Addresses[%d] must be an IPv6 address", res.ID(), i, j)
+				}
+				normalized := address.String()
+				if seenIPv6Addresses[normalized] {
+					return true, fmt.Errorf("%s spec.classification[%d].ipv6Addresses[%d] duplicates %q", res.ID(), i, j, normalized)
+				}
+				seenIPv6Addresses[normalized] = true
 			}
 		}
 		for i, service := range spec.GuestServices {

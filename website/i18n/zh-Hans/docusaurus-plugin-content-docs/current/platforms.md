@@ -112,13 +112,18 @@ routerd 不使用 Linux 用的机制，而是将资源对应至 FreeBSD 的 `rc.
 - `routerd-healthcheck` 的 rc.d script 生成
 - `routerd-firewall-logger` 的 rc.d script 生成，并直接读取 `pflog0`
 
-`ClientPolicy` 目前为 Linux 专用的防火墙功能。
-使用 nftables 的 Ethernet 来源地址 set 隔离访客设备。
-FreeBSD pf 无法在 routed filter 路径以相同模型处理，因此 routerd 明确将此资源标示为不支持。
+FreeBSD 也支持 `ClientPolicy`。IPv4 使用基于 `DHCPv4Reservation` 的 pf 近似；IPv6 guest identity 必须在 `classification[].ipv6Addresses` 中显式声明。routerd 不会从 IPv4 reservation、MAC、hostname、OUI 或 DHCP fingerprint 推断 IPv6 identity；显式 IPv6 地址会生成 `inet6` guest-egress deny 规则。
+这不等同于 Linux 的 MAC 地址隔离：pf 在 routed filter path 中无法匹配 nftables 使用的 Ethernet 来源 selector；privacy 或未列出的 IPv6 地址不在该 slice 内，需要独立网络隔离（[#849](https://github.com/imksoo/routerd/issues/849)）。
 - `TailscaleNode` 的 rc.d script 生成
 - 静态 DS-Lite gif tunnel 的生成（render）
 - 从静态 AFTR IPv6、AFTR FQDN、委派地址衍生的本地来源动态应用 DS-Lite
 - 云端 VPN 用 `IPsecConnection` 的验证，以及 strongSwan `swanctl` 连接定义的生成。与云端网关的实际连通性确认依环境单独进行
+- 用于 healthcheck 的原生 `route -n get`，以及通过 `RTF_PROTO1` 标识 BGP FIB 所有权（包括 replace、withdraw 和保留 foreign route）
+- FreeBSD peer 上的 FRR `bfdd` reconcile，以及实机观测到的 Up → Down → Up 恢复
+- FreeBSD native doctor、KernelModule `kldload` reconcile 和 BGP 专用 `routerd_bgp` rc.d 生成
+- FreeBSD 没有 Linux `IP_FREEBIND` 等价物，因此显式拒绝 non-local DNS resolver bind
+
+ARP/RA observer 守护进程通过 FreeBSD base system 的 tcpdump/libpcap BPF 路径捕获数据；proactive ARP write 保留独立的 direct-BPF descriptor。provisioned native CI 在 disposable VNET 中运行两个守护进程，并要求生成预期的 ARP observation event 与 rogue-RA event。带 tag 的 native DPI backend 支持 FreeBSD ports `ndpi` 5.0 ABI，并由同一 native gate 的 TLS/SNI classification self-test 验证。
 
 FreeBSD 不使用 Linux 专用的 nftables / conntrack / iproute2。
 `Package` 的示例声明 FreeBSD 侧的替代品。
@@ -128,7 +133,8 @@ LAN 的 DHCP/RA 使用 dnsmasq，WireGuard、Tailscale、strongSwan 使用 ports
 | 分类 | 软件包 |
 | --- | --- |
 | Runtime | `dnsmasq`, `wireguard-tools`, `tailscale`, `strongswan`, `mpd5` |
-| Diagnostics | `bind-tools`, `tcpdump` |
+| 可选 native DPI | `ndpi` |
+| Diagnostics | `bind-tools` |
 | Base system | `ifconfig`, `sysctl`, `service`, `sysrc`, `netstat`, `sockstat`, `tcpdump`, `ping`, `traceroute` |
 
 `routerd render freebsd --out-dir <dir>` 输出以下内容。
@@ -153,8 +159,8 @@ Ubuntu、FreeBSD 相互比较时的已知差异。
 
 | 领域 | 当前差异 | 待办事项 |
 | --- | --- | --- |
-| CI / runtime coverage | CI 在 Ubuntu 上执行 unit test 与 Linux static check。FreeBSD 在发布时进行 cross build。 | 新增 FreeBSD VM 的 smoke 任务，涵盖 validate、plan、实际 package-manager 确认、服务启用、renderer 语法确认。 |
-| FreeBSD 的功能例外 | `ClientPolicy` 依赖 nftables 的 Ethernet 来源地址 set，为 Linux 专用。 | 在找到可保留相同隔离语义的设计之前，明确拒绝。 |
+| CI / runtime coverage | PR CI 会编译 FreeBSD amd64/arm64 binary，并在 provisioned FreeBSD 14.3 amd64 VM 中运行完整且不省略的 `go test ./...`、live routerd smoke、ARP/RA observer 与 native nDPI。保留的 VM115 evidence 还覆盖 route lookup、BFD 与已支持的 PF dataplane slice。 | PR 的 native runtime certification 目前覆盖 amd64；arm64 在 PR CI 中仍为 compile-only。 |
+| FreeBSD 的功能限制 | `ClientPolicy` 对 IPv4 使用 DHCPv4 reservation，对 IPv6 使用显式 `classification[].ipv6Addresses` 的 pf 规则；不支持 MAC/L2 匹配，也不从 IPv4 reservation 推断 IPv6。 | 保持明确地址和 MAC/L2 限制；未列出或 privacy IPv6 地址需独立网络隔离（[#849](https://github.com/imksoo/routerd/issues/849)）。 |
 | 软件包 bootstrap | Ubuntu、FreeBSD 可命令式安装软件包。 | 对 `apt`、`pkg` 的 schema、validation、安装程序软件包清单、示例、生成文档保持同步。 |
 
 ## OS 抽象化的实现方针

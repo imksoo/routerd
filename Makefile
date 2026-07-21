@@ -1,4 +1,4 @@
-VERSION ?= v20260719.1121
+VERSION ?= v20260721.1054
 DISTBASE ?= dist
 DISTARCH ?= $(if $(GOARCH),$(GOARCH),$(shell go env GOARCH))
 DISTPLATFORM ?= $(ROUTERD_OS)-$(DISTARCH)
@@ -112,12 +112,11 @@ build-daemons-freebsd:
 
 # Cross-compilation cannot execute FreeBSD test binaries on a Linux runner.
 # -exec /bin/true compiles FreeBSD test binaries; native test execution is
-# covered by the VM smoke job. pkg/controller/chain remains excluded until
-# #851 separates its Linux-only SAM test helpers.
+# covered by the VM smoke job.
 check-freebsd-cross-compile:
 	$(MAKE) build-daemons ROUTERD_OS=freebsd GOARCH=amd64
 	$(MAKE) build-provider-executors ROUTERD_OS=freebsd GOARCH=amd64
-	CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 go test -exec /bin/true $$(go list ./... | grep -v '^github.com/imksoo/routerd/pkg/controller/chain$$')
+	CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 go test -exec /bin/true ./...
 
 check-linux-static:
 	@if [ "$(ROUTERD_OS)" != "linux" ]; then exit 0; fi; \

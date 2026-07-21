@@ -10,6 +10,13 @@ import (
 	"github.com/imksoo/routerd/pkg/resource"
 )
 
+func requireLinuxArtifactFixture(t *testing.T) {
+	t.Helper()
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		t.Skip("Linux nft/netplan artifact fixture")
+	}
+}
+
 func TestKnownResourceKindsDeclareArtifactIntents(t *testing.T) {
 	aliases := map[string]string{
 		"wan":       "ens18",
@@ -194,6 +201,7 @@ func TestDeletedPPPoESessionLedgerOrphansIncludeGeneratedFilesAndRuntime(t *test
 }
 
 func TestMSSClampNftTableIsRouterOwnedNotOrphan(t *testing.T) {
+	requireLinuxArtifactFixture(t)
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -222,6 +230,7 @@ func TestMSSClampNftTableIsRouterOwnedNotOrphan(t *testing.T) {
 }
 
 func TestForceFragmentNftTableIsRouterOwnedNotOrphan(t *testing.T) {
+	requireLinuxArtifactFixture(t)
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},

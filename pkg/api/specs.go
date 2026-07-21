@@ -216,7 +216,7 @@ type SysctlSpec struct {
 }
 
 type SysctlProfileSpec struct {
-	Profile    string            `yaml:"profile" json:"profile" jsonschema:"enum=router-linux"`
+	Profile    string            `yaml:"profile" json:"profile" jsonschema:"enum=router-linux,enum=router-freebsd"`
 	Runtime    *bool             `yaml:"runtime,omitempty" json:"runtime,omitempty"`
 	Persistent bool              `yaml:"persistent,omitempty" json:"persistent,omitempty"`
 	Overrides  map[string]string `yaml:"overrides,omitempty" json:"overrides,omitempty"`
@@ -2235,13 +2235,19 @@ type EgressRoutePolicyTarget struct {
 	Name              string `yaml:"name,omitempty" json:"name,omitempty"`
 	Interface         string `yaml:"interface,omitempty" json:"interface,omitempty"`
 	OutboundInterface string `yaml:"outboundInterface,omitempty" json:"outboundInterface,omitempty"`
-	Table             int    `yaml:"table,omitempty" json:"table,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
-	RouteTable        int    `yaml:"routeTable,omitempty" json:"routeTable,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
-	Priority          int    `yaml:"priority,omitempty" json:"priority,omitempty" jsonschema:"minimum=0,maximum=32765"`
-	Mark              int    `yaml:"mark,omitempty" json:"mark,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
-	RouteMetric       int    `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
-	Metric            int    `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
-	HealthCheck       string `yaml:"healthCheck,omitempty" json:"healthCheck,omitempty"`
+	// Gateway is a static next hop for Linux policy routing and FreeBSD pf
+	// route-to rendering. Dynamic gateway sources remain unsupported by the
+	// FreeBSD renderer.
+	Gateway       string                `yaml:"gateway,omitempty" json:"gateway,omitempty"`
+	GatewayFrom   StatusValueSourceSpec `yaml:"gatewayFrom,omitempty" json:"gatewayFrom,omitempty"`
+	GatewaySource string                `yaml:"gatewaySource,omitempty" json:"gatewaySource,omitempty" jsonschema:"enum=,enum=static,enum=dhcpv4,enum=dhcpv6,enum=none"`
+	Table         int                   `yaml:"table,omitempty" json:"table,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
+	RouteTable    int                   `yaml:"routeTable,omitempty" json:"routeTable,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
+	Priority      int                   `yaml:"priority,omitempty" json:"priority,omitempty" jsonschema:"minimum=0,maximum=32765"`
+	Mark          int                   `yaml:"mark,omitempty" json:"mark,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
+	RouteMetric   int                   `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
+	Metric        int                   `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
+	HealthCheck   string                `yaml:"healthCheck,omitempty" json:"healthCheck,omitempty"`
 }
 
 func (c EgressRoutePolicyCandidate) EffectiveInterface() string {
@@ -2548,6 +2554,9 @@ type ClientPolicyClassSpec struct {
 	Mode            string                     `yaml:"mode" json:"mode" jsonschema:"enum=trusted,enum=guest,enum=isolated"`
 	Match           ClientPolicyClassMatchSpec `yaml:"match" json:"match"`
 	IPv4Reservation string                     `yaml:"ipv4Reservation,omitempty" json:"ipv4Reservation,omitempty"`
+	// IPv6Addresses are explicit IPv6 identities for FreeBSD pf ClientPolicy
+	// rendering. They are never inferred from IPv4 reservations or MAC selectors.
+	IPv6Addresses []string `yaml:"ipv6Addresses,omitempty" json:"ipv6Addresses,omitempty"`
 }
 
 type ClientPolicyClassMatchSpec struct {

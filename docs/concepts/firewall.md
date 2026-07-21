@@ -62,10 +62,14 @@ default they cannot forward traffic to `10.0.0.0/8`, `172.16.0.0/12`,
 `192.168.0.0/16`, or `fc00::/7`. Global internet egress still follows the
 normal zone matrix and route policy.
 
-`ClientPolicy` is currently implemented by the Linux nftables renderer with
-Ethernet source address sets. FreeBSD pf does not expose the same MAC matching
-model in the routed filter path, so the FreeBSD renderer reports the resource
-as unsupported instead of silently applying a weaker policy.
+`ClientPolicy` is implemented by the Linux nftables renderer with Ethernet
+source address sets. FreeBSD pf cannot provide that MAC/L2 matching model in
+the routed filter path. On FreeBSD, routerd instead renders IPv4 rules from a
+`DHCPv4Reservation` and IPv6 rules only from explicit
+`classification[].ipv6Addresses`. It never derives IPv6 identity from a MAC or
+IPv4 reservation. This preserves a safe, address-based guest-deny model but
+does not cover privacy or otherwise unlisted IPv6 addresses; use separate
+network segmentation when that is required.
 
 ## Logging
 

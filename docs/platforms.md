@@ -119,11 +119,32 @@ Implemented:
 - dnsmasq rc.d ordering after `mpd5` for PPPoE coexistence
 - Static DS-Lite gif tunnel rendering
 - Dynamic DS-Lite apply from static AFTR IPv6, AFTR FQDN, or delegated-address local source
+- native `route -n get` evidence for health checks and BGP FIB ownership through
+  `RTF_PROTO1`, including replace/withdraw/foreign-route preservation
+- FRR `bfdd` reconciliation and observed Up → Down → Up recovery on a native
+  FreeBSD peer
+- FreeBSD-native doctor checks, KernelModule `kldload` reconciliation, and
+  BGP-specific `routerd_bgp` rc.d generation
+- explicit rejection of non-local DNS resolver binds because FreeBSD has no
+  Linux `IP_FREEBIND` equivalent
 
-`ClientPolicy` is the one firewall feature that is intentionally Linux-only
-for now. It depends on nftables Ethernet source address sets for MAC-based
-guest isolation. The FreeBSD pf renderer rejects the resource with an explicit
-error instead of applying a weaker no-op policy.
+The ARP and RA observer daemons capture through the FreeBSD base-system
+tcpdump/libpcap BPF path; proactive ARP writes retain a separate direct-BPF
+descriptor. The provisioned native CI exercises both daemons in a disposable
+VNET and requires the expected ARP observation and rogue-RA events. The tagged
+native DPI backend supports the FreeBSD ports `ndpi` 5.0 ABI and is verified by
+the same native gate with a TLS/SNI classification self-test.
+
+`ClientPolicy` is supported on FreeBSD with an address-backed pf
+approximation. Each IPv4 guest or isolated classification references a
+`DHCPv4Reservation`; an IPv6 guest identity must instead be declared explicitly
+as `classification[].ipv6Addresses`. routerd never infers an IPv6 identity from
+an IPv4 reservation, MAC address, hostname, OUI, or DHCP fingerprint. The
+FreeBSD renderer uses those literal IPv6 addresses for family-safe `inet6`
+guest-egress deny rules. This is not Linux-equivalent MAC-based isolation: pf
+does not provide the Ethernet-source matching model used by nftables in the
+routed filter path. Privacy or unlisted IPv6 addresses are therefore outside
+this FreeBSD ClientPolicy slice and need separate network segmentation.
 
 FreeBSD does not use Linux-specific nftables, conntrack, or iproute2. The
 `Package` examples declare FreeBSD-native replacements: `pf` and `pflog0` from
@@ -133,8 +154,9 @@ DHCP/RA service, and ports packages for WireGuard, Tailscale, and strongSwan.
 | Category | Packages |
 | --- | --- |
 | Runtime | `dnsmasq`, `wireguard-tools`, `tailscale`, `strongswan`, `mpd5` |
-| Diagnostics | `bind-tools`, `tcpdump` |
-| Base system | `ifconfig`, `sysctl`, `service`, `sysrc`, `netstat`, `sockstat`, `ping`, `traceroute` |
+| Optional native DPI | `ndpi` |
+| Diagnostics | `bind-tools` |
+| Base system | `ifconfig`, `sysctl`, `service`, `sysrc`, `netstat`, `sockstat`, `tcpdump`, `ping`, `traceroute` |
 
 `routerd render freebsd --out-dir <dir>` produces:
 
@@ -154,8 +176,8 @@ and FreeBSD:
 
 | Area | Current gap | Backlog |
 | --- | --- | --- |
-| CI/runtime coverage | CI runs unit tests and Linux static checks on Ubuntu. FreeBSD is cross-built in release. | Add FreeBSD VM smoke jobs that run validate, plan, real package-manager checks, service activation, and renderer syntax checks. |
-| FreeBSD feature exceptions | `ClientPolicy` remains Linux-only because it depends on nftables Ethernet source address sets. | Keep rejecting it explicitly, and only add pf support after a design that preserves the same isolation semantics. |
+| CI/runtime coverage | Pull requests compile FreeBSD amd64/arm64 binaries and run a provisioned FreeBSD 14.3 amd64 VM with the full unfiltered `go test ./...`, live routerd smoke, ARP/RA observers, and native nDPI. Retained VM115 evidence additionally covers route lookup, BFD, and supported PF dataplane slices. | Native PR runtime certification is currently amd64; arm64 remains compile-only in PR CI. |
+| FreeBSD feature limitations | `ClientPolicy` uses DHCPv4 reservations for IPv4 and explicit `classification[].ipv6Addresses` for IPv6 pf rules. It cannot match MAC addresses or infer IPv6 identity from DHCPv4. | Keep the explicit-address and MAC/L2 limitation visible; require separate segmentation for unlisted or privacy IPv6 addresses ([#849](https://github.com/imksoo/routerd/issues/849)). |
 | Package bootstrap | Ubuntu and FreeBSD can install packages imperatively. | Keep schema, validation, installer package lists, examples, and generated docs in sync for `apt` and `pkg`. |
 
 ## Implementation guideline for OS abstraction

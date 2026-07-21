@@ -415,9 +415,13 @@ firewall rendering.
 Linux nftables is supported.
 
 FreeBSD pf does not provide the same MAC-based routed filtering model in the
-path routerd uses for `FirewallZone` and `FirewallRule`. routerd therefore
-returns an explicit unsupported error for `ClientPolicy` on FreeBSD instead of
-silently applying a weaker policy.
+path routerd uses for `FirewallZone` and `FirewallRule`. FreeBSD ClientPolicy
+therefore uses an address-backed approximation: an IPv4 class needs a
+`DHCPv4Reservation`, and an IPv6 class needs explicit
+`classification[].ipv6Addresses`. routerd does not infer an IPv6 identity from
+a MAC or IPv4 reservation. The generated IPv6 rules are limited to those
+literal addresses, so privacy or unlisted IPv6 clients require separate
+network segmentation.
 
 Possible future FreeBSD designs include bridge-level filtering or a dedicated
 layer-2 segmentation resource, but those should be designed separately because

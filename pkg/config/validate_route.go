@@ -275,6 +275,9 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 		if len(spec.Candidates) == 0 {
 			return true, fmt.Errorf("%s spec.candidates is required", res.ID())
 		}
+		if targetOS == platform.OSFreeBSD && spec.Mode == "hash" {
+			return true, validateFreeBSDEgressRoutePolicyHash(res.ID(), spec)
+		}
 		for i, candidate := range spec.Candidates {
 			if candidate.Name == "" && candidate.Source == "" && candidate.EffectiveInterface() == "" && len(candidate.Targets) == 0 {
 				return true, fmt.Errorf("%s spec.candidates[%d] requires name or source", res.ID(), i)
@@ -313,6 +316,42 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 				}
 				if target.EffectiveInterface() == "" {
 					return true, fmt.Errorf("%s spec.candidates[%d].targets[%d].interface is required", res.ID(), i, j)
+				}
+				if target.GatewayFrom.Resource != "" && target.GatewayFrom.Field == "" {
+					return true, fmt.Errorf("%s spec.candidates[%d].targets[%d].gatewayFrom.field is required", res.ID(), i, j)
+				}
+				targetGatewaySource := defaultString(target.GatewaySource, "none")
+				switch targetGatewaySource {
+				case "none":
+					if target.Gateway != "" || target.GatewayFrom.Resource != "" {
+						return true, fmt.Errorf("%s spec.candidates[%d].targets[%d].gateway and gatewayFrom require gatewaySource static, dhcpv4, or dhcpv6", res.ID(), i, j)
+					}
+				case "static":
+					if (target.Gateway == "") == (target.GatewayFrom.Resource == "") {
+						return true, fmt.Errorf("%s spec.candidates[%d].targets[%d] must set exactly one of gateway or gatewayFrom when gatewaySource is static", res.ID(), i, j)
+					}
+					if target.Gateway != "" {
+						addr, err := netip.ParseAddr(target.Gateway)
+						if err != nil {
+							return true, fmt.Errorf("%s spec.candidates[%d].targets[%d].gateway must be an IP address", res.ID(), i, j)
+						}
+						if defaultString(spec.Family, "ipv4") == "ipv4" && !addr.Is4() {
+							return true, fmt.Errorf("%s spec.candidates[%d].targets[%d].gateway must be IPv4 when family is ipv4", res.ID(), i, j)
+						}
+						if defaultString(spec.Family, "ipv4") == "ipv6" && !addr.Is6() {
+							return true, fmt.Errorf("%s spec.candidates[%d].targets[%d].gateway must be IPv6 when family is ipv6", res.ID(), i, j)
+						}
+					}
+				case "dhcpv4":
+					if defaultString(spec.Family, "ipv4") != "ipv4" || target.Gateway != "" {
+						return true, fmt.Errorf("%s spec.candidates[%d].targets[%d].gatewaySource dhcpv4 requires IPv4 and no literal gateway", res.ID(), i, j)
+					}
+				case "dhcpv6":
+					if defaultString(spec.Family, "ipv4") != "ipv6" || target.Gateway != "" {
+						return true, fmt.Errorf("%s spec.candidates[%d].targets[%d].gatewaySource dhcpv6 requires IPv6 and no literal gateway", res.ID(), i, j)
+					}
+				default:
+					return true, fmt.Errorf("%s spec.candidates[%d].targets[%d].gatewaySource must be static, dhcpv4, dhcpv6, or none", res.ID(), i, j)
 				}
 				if target.EffectiveTable() < 1 {
 					return true, fmt.Errorf("%s spec.candidates[%d].targets[%d].table must be greater than 0", res.ID(), i, j)
@@ -381,6 +420,9 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 			default:
 				return true, fmt.Errorf("%s spec.candidates[%d].gatewaySource must be static, dhcpv4, dhcpv6, or none", res.ID(), i)
 			}
+		}
+		if targetOS == platform.OSFreeBSD && egressRoutePolicyRequiresLinuxPolicyRouting(spec) {
+			return true, fmt.Errorf("%s uses mark/table/hash policy routing, which is not supported on FreeBSD; pf route-to parity is not implemented", res.ID())
 		}
 	case "EventRule":
 		if res.APIVersion != api.NetAPIVersion {
@@ -512,6 +554,68 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 		return false, nil
 	}
 	return true, nil
+}
+
+func egressRoutePolicyRequiresLinuxPolicyRouting(spec api.EgressRoutePolicySpec) bool {
+	if spec.Mode == "mark" || spec.Mode == "hash" || len(spec.HashFields) > 0 {
+		return true
+	}
+	for _, candidate := range spec.Candidates {
+		if candidate.Mark != 0 || candidate.EffectiveTable() != 0 || len(candidate.Targets) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// validateFreeBSDEgressRoutePolicyHash accepts only the PF route-to subset.
+// A multi-routehost PF pool can use round-robin sticky-address, not source-hash,
+// so every Linux-only or runtime-resolved knob must fail at validation.
+func validateFreeBSDEgressRoutePolicyHash(resourceID string, spec api.EgressRoutePolicySpec) error {
+	if defaultString(spec.Family, "ipv4") != "ipv4" {
+		return fmt.Errorf("%s FreeBSD route-to requires family ipv4", resourceID)
+	}
+	if len(spec.HashFields) != 1 || spec.HashFields[0] != "sourceAddress" {
+		return fmt.Errorf("%s FreeBSD route-to requires spec.hashFields: [sourceAddress]", resourceID)
+	}
+	if len(spec.SourceCIDRs) == 0 {
+		return fmt.Errorf("%s FreeBSD route-to requires spec.sourceCIDRs", resourceID)
+	}
+	if len(spec.DestinationSetRefs) != 0 || len(spec.ExcludeDestinationSetRefs) != 0 {
+		return fmt.Errorf("%s FreeBSD route-to does not support destination address-set references", resourceID)
+	}
+	if len(spec.ExcludeDestinationCIDRs) > 1 {
+		return fmt.Errorf("%s FreeBSD route-to supports at most one excluded destination CIDR", resourceID)
+	}
+	if len(spec.DestinationCIDRs) != 0 && len(spec.ExcludeDestinationCIDRs) != 0 {
+		return fmt.Errorf("%s FreeBSD route-to does not support combined destinationCIDRs and excludeDestinationCIDRs", resourceID)
+	}
+	if spec.Selection != "" || spec.Hysteresis != "" {
+		return fmt.Errorf("%s FreeBSD route-to does not support selection or hysteresis", resourceID)
+	}
+	if len(spec.Candidates) != 1 {
+		return fmt.Errorf("%s FreeBSD route-to requires exactly one candidate", resourceID)
+	}
+	candidate := spec.Candidates[0]
+	if !api.BoolDefault(candidate.Enabled, true) || candidate.Source != "" || candidate.EffectiveInterface() != "" || candidate.DeviceFrom.Resource != "" || candidate.Gateway != "" || candidate.GatewayFrom.Resource != "" || candidate.GatewaySource != "" || candidate.EffectiveTable() != 0 || candidate.Priority != 0 || candidate.Mark != 0 || candidate.EffectiveMetric() != 0 || candidate.Weight != 0 || candidate.HealthCheck != "" || len(candidate.DependsOn) != 0 || len(candidate.ReadyWhen) != 0 || len(candidate.When.State) != 0 || len(candidate.When.All) != 0 || len(candidate.When.Any) != 0 {
+		return fmt.Errorf("%s FreeBSD route-to candidate contains unsupported direct or dynamic fields", resourceID)
+	}
+	if len(candidate.Targets) < 2 {
+		return fmt.Errorf("%s FreeBSD route-to requires at least two static targets", resourceID)
+	}
+	for i, target := range candidate.Targets {
+		if target.Interface != "" && target.OutboundInterface != "" {
+			return fmt.Errorf("%s FreeBSD route-to target[%d] must not set both interface and outboundInterface", resourceID, i)
+		}
+		if target.EffectiveInterface() == "" || target.GatewaySource != "static" || target.GatewayFrom.Resource != "" || target.Gateway == "" || target.EffectiveTable() != 0 || target.Priority != 0 || target.Mark != 0 || target.EffectiveMetric() != 0 || target.HealthCheck != "" {
+			return fmt.Errorf("%s FreeBSD route-to target[%d] must contain only interface and static gateway", resourceID, i)
+		}
+		addr, err := netip.ParseAddr(target.Gateway)
+		if err != nil || !addr.Is4() {
+			return fmt.Errorf("%s FreeBSD route-to target[%d].gateway must be IPv4", resourceID, i)
+		}
+	}
+	return nil
 }
 
 func validateBGPPeersFrom(resourceID string, index int, source api.BGPPeersSourceSpec) error {

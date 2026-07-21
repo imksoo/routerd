@@ -176,6 +176,13 @@ func packageNamesForOS(features map[string]bool, byFeature map[string][]string) 
 }
 
 func KernelModuleResources(router *api.Router) []api.Resource {
+	return KernelModuleResourcesForOS(router, platform.CurrentOS())
+}
+
+// KernelModuleResourcesForOS derives only runtime modules that the selected
+// host platform can actually load.  FreeBSD modules are intentionally not
+// persisted: loader.conf ownership is outside routerd's runtime contract.
+func KernelModuleResourcesForOS(router *api.Router, osName platform.OS) []api.Resource {
 	if router == nil {
 		return nil
 	}
@@ -185,7 +192,7 @@ func KernelModuleResources(router *api.Router) []api.Resource {
 			out = append(out, resource)
 		}
 	}
-	modules := KernelModules(router)
+	modules := KernelModulesForOS(router, osName)
 	if len(modules) == 0 {
 		return out
 	}
@@ -196,7 +203,7 @@ func KernelModuleResources(router *api.Router) []api.Resource {
 			State:      "present",
 			Modules:    modules,
 			Runtime:    boolPtr(true),
-			Persistent: true,
+			Persistent: osName != platform.OSFreeBSD,
 			Optional:   true,
 		},
 	})
@@ -204,11 +211,25 @@ func KernelModuleResources(router *api.Router) []api.Resource {
 }
 
 func KernelModules(router *api.Router) []string {
+	return KernelModulesForOS(router, platform.CurrentOS())
+}
+
+func KernelModulesForOS(router *api.Router, osName platform.OS) []string {
 	if router == nil {
 		return nil
 	}
 	needed := map[string]bool{}
 	for _, res := range router.Spec.Resources {
+		if osName == platform.OSFreeBSD {
+			switch res.Kind {
+			case "NAT44Rule", "NAT44FlowDNATPinhole", "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallFlowPinhole", "ClientPolicy", "PortForward", "IngressService", "LocalServiceRedirect":
+				needed["pf"] = true
+			case "TrafficFlowLog", "FirewallEventLog":
+				needed["pf"] = true
+				needed["pflog"] = true
+			}
+			continue
+		}
 		switch res.Kind {
 		case "NAT44Rule", "NAT44FlowDNATPinhole", "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallFlowPinhole", "ClientPolicy", "ConntrackObserver":
 			needed["nf_conntrack"] = true
@@ -252,10 +273,17 @@ func SysctlResources(router *api.Router) []api.Resource {
 }
 
 func DerivedSysctlResources(router *api.Router) []api.Resource {
+	return DerivedSysctlResourcesForOS(router, platform.CurrentOS())
+}
+
+// DerivedSysctlResourcesForOS derives sysctls for an explicit target. This is
+// used by render/test callers that describe a target OS different from the OS
+// running the process.
+func DerivedSysctlResourcesForOS(router *api.Router, osName platform.OS) []api.Resource {
 	if router == nil {
 		return nil
 	}
-	if platform.CurrentOS() != platform.OSLinux {
+	if osName != platform.OSLinux {
 		return nil
 	}
 	explicit := explicitSysctlKeys(router)

@@ -80,16 +80,102 @@ func TestPFRenderFirewallAndNAT(t *testing.T) {
 		`block drop all`,
 		`pass out quick all keep state`,
 		`pass quick inet6 proto icmp6 all keep state`,
-		`pass in quick on $lan_if to self keep state`,
-		`pass in quick on $mgmt_if to self keep state`,
+		`pass in quick on $lan_if to (em1) keep state`,
+		`pass in quick on $mgmt_if to (em2) keep state`,
 		`block drop in quick on $lan_if to (em2:network) label "routerd:lan-to-mgmt-deny"`,
 		`pass in quick on $lan_if keep state label "routerd:lan-to-wan"`,
-		`pass in quick on $wan_if proto udp to self port 546 keep state label "routerd:dhcpv6-client"`,
+		`pass in quick on $wan_if proto udp to (em0) port 546 keep state label "routerd:dhcpv6-client"`,
 		`pass in log quick on $wan_if proto tcp from 192.0.2.0/24 to 198.51.100.10/32 port 22 keep state label "routerd:wan-ssh"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("pf output missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestPFEgressRouteHashUsesRoundRobinStickyAddress(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "em0"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-a"}, Spec: api.InterfaceSpec{IfName: "em1"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "em2"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "lan-balance"}, Spec: api.EgressRoutePolicySpec{
+			Mode:                    "hash",
+			HashFields:              []string{"sourceAddress"},
+			SourceCIDRs:             []string{"192.0.2.0/24"},
+			ExcludeDestinationCIDRs: []string{"198.51.100.0/24"},
+			Candidates: []api.EgressRoutePolicyCandidate{{Name: "pool", Targets: []api.EgressRoutePolicyTarget{
+				{Name: "a", Interface: "wan-a", Gateway: "203.0.113.1", GatewaySource: "static"},
+				{Name: "b", Interface: "wan-b", Gateway: "198.51.100.1", GatewaySource: "static"},
+			}}},
+		}},
+	}}}
+
+	data, err := PF(router, nil)
+	if err != nil {
+		t.Fatalf("render PF: %v", err)
+	}
+	got := string(data)
+	want := "pass in quick route-to { (em1 203.0.113.1), (em2 198.51.100.1) } round-robin sticky-address inet from 192.0.2.0/24 to ! 198.51.100.0/24 keep state label \"routerd:egress-route:lan-balance\""
+	if !strings.Contains(got, want) {
+		t.Fatalf("PF route-to rule missing %q:\\n%s", want, got)
+	}
+	if !strings.Contains(got, "pass all keep state") {
+		t.Fatalf("expected pass-all fallback after route-to:\\n%s", got)
+	}
+}
+
+func TestPFEgressRouteHashRejectsUnsafeOrUnsupportedShapes(t *testing.T) {
+	base := func() *api.Router {
+		return &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-a"}, Spec: api.InterfaceSpec{IfName: "em1"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "em2"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "balanced"}, Spec: api.EgressRoutePolicySpec{
+				Mode: "hash", HashFields: []string{"sourceAddress"}, SourceCIDRs: []string{"192.0.2.0/24"},
+				Candidates: []api.EgressRoutePolicyCandidate{{Targets: []api.EgressRoutePolicyTarget{
+					{Interface: "wan-a", Gateway: "203.0.113.1", GatewaySource: "static"},
+					{Interface: "wan-b", Gateway: "198.51.100.1", GatewaySource: "static"},
+				}}},
+			}},
+		}}}
+	}
+	tests := []struct {
+		name string
+		edit func(*api.Router)
+		want string
+	}{
+		{name: "destination-hash", edit: func(r *api.Router) {
+			s := r.Spec.Resources[2].Spec.(api.EgressRoutePolicySpec)
+			s.HashFields = []string{"destinationAddress"}
+			r.Spec.Resources[2].Spec = s
+		}, want: "hashFields"},
+		{name: "missing-gateway", edit: func(r *api.Router) {
+			s := r.Spec.Resources[2].Spec.(api.EgressRoutePolicySpec)
+			s.Candidates[0].Targets[0].Gateway = ""
+			r.Spec.Resources[2].Spec = s
+		}, want: "static gateway"},
+		{name: "dynamic-gateway", edit: func(r *api.Router) {
+			s := r.Spec.Resources[2].Spec.(api.EgressRoutePolicySpec)
+			s.Candidates[0].Targets[0].GatewaySource = "dhcpv4"
+			r.Spec.Resources[2].Spec = s
+		}, want: "static gateway"},
+		{name: "ambiguous-target-interface", edit: func(r *api.Router) {
+			s := r.Spec.Resources[2].Spec.(api.EgressRoutePolicySpec)
+			s.Candidates[0].Targets[0].OutboundInterface = "wan-b"
+			r.Spec.Resources[2].Spec = s
+		}, want: "both interface and outboundInterface"},
+		{name: "firewall-filtering", edit: func(r *api.Router) {
+			r.Spec.Resources = append(r.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"wan-a"}}})
+		}, want: "cannot coexist"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			router := base()
+			tc.edit(router)
+			_, err := PF(router, nil)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("PF error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
@@ -170,7 +256,7 @@ func TestPFSkipsRedundantSelfHolesWhenZoneAlreadyAcceptsSelf(t *testing.T) {
 		t.Fatalf("render pf: %v", err)
 	}
 	got := string(data)
-	if !strings.Contains(got, `pass in quick on $lan_if to self keep state`) {
+	if !strings.Contains(got, `pass in quick on $lan_if to (em1) keep state`) {
 		t.Fatalf("pf output missing broad trust-to-self rule:\n%s", got)
 	}
 	for _, redundant := range []string{
@@ -228,8 +314,8 @@ func TestPFClientPolicyUsesIPv4Reservations(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
-		`pass in quick on vtnet1 proto udp from 192.168.160.184 to self port 53 keep state label "routerd:client-policy:guest-devices:dns"`,
-		`pass in quick on vtnet1 proto udp from 192.168.160.184 to self port 67 keep state label "routerd:client-policy:guest-devices:dhcp"`,
+		`pass in quick on vtnet1 proto udp from 192.168.160.184 to (vtnet1) port 53 keep state label "routerd:client-policy:guest-devices:dns"`,
+		`pass in quick on vtnet1 proto udp from 192.168.160.184 to (vtnet1) port 67 keep state label "routerd:client-policy:guest-devices:dhcp"`,
 		`block drop in log quick on vtnet1 from 192.168.160.184 to 192.168.0.0/16 label "routerd:client-policy:guest-devices:deny"`,
 	} {
 		if !strings.Contains(got, want) {
@@ -241,6 +327,93 @@ func TestPFClientPolicyUsesIPv4Reservations(t *testing.T) {
 	}
 	if strings.Contains(got, `dhcpv6-server`) {
 		t.Fatalf("pf output must not render DHCPv6 service holes for IPv4-only ClientPolicy reservations:\n%s", got)
+	}
+}
+
+func TestPFClientPolicyRendersExplicitIPv6GuestDenyBeforeICMPv6Pass(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.InterfaceSpec{IfName: "vtnet1"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "ClientPolicy"},
+			Metadata: api.ObjectMeta{Name: "guest-devices"},
+			Spec: api.ClientPolicySpec{
+				Mode:             "include",
+				Interfaces:       []string{"lan"},
+				GuestEgressDeny:  []string{"fd00:2::/64"},
+				GuestEgressAllow: []string{"2001:db8:3::/64"},
+				Classification: []api.ClientPolicyClassSpec{{
+					Mode:          "guest",
+					Match:         api.ClientPolicyClassMatchSpec{MACs: []string{"02:00:00:00:00:44"}},
+					IPv6Addresses: []string{"fd00:1::10"},
+				}},
+			},
+		},
+	}}}
+	data, err := PF(router, nil)
+	if err != nil {
+		t.Fatalf("render pf: %v", err)
+	}
+	got := string(data)
+	deny := `block drop in log quick on vtnet1 inet6 from fd00:1::10 to fd00:2::/64 label "routerd:client-policy:guest-devices:deny"`
+	allow := `pass in quick on vtnet1 inet6 from fd00:1::10 to 2001:db8:3::/64 keep state label "routerd:client-policy:guest-devices:allow"`
+	if !strings.Contains(got, deny) || !strings.Contains(got, allow) {
+		t.Fatalf("pf output missing explicit IPv6 ClientPolicy rules:\n%s", got)
+	}
+	if strings.Index(got, deny) > strings.Index(got, `pass quick inet6 proto icmp6 all keep state`) {
+		t.Fatalf("IPv6 guest deny must precede broad ICMPv6 pass:\n%s", got)
+	}
+	if strings.Contains(got, "ether ") || strings.Contains(got, "fd00:1::10 to 192.168.0.0/16") {
+		t.Fatalf("pf output must use only explicit IPv6 identity and family-safe destinations:\n%s", got)
+	}
+}
+
+func TestPFClientPolicyDoesNotInferIPv6Identity(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.InterfaceSpec{IfName: "vtnet1"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"},
+			Metadata: api.ObjectMeta{Name: "guest-phone"},
+			Spec:     api.DHCPv4ReservationSpec{MACAddress: "02:00:00:00:00:44", IPAddress: "192.168.160.184"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "ClientPolicy"},
+			Metadata: api.ObjectMeta{Name: "guest-devices"},
+			Spec: api.ClientPolicySpec{
+				Mode:            "include",
+				Interfaces:      []string{"lan"},
+				GuestEgressDeny: []string{"fd00:2::/64"},
+				Classification: []api.ClientPolicyClassSpec{{
+					Mode:            "guest",
+					Match:           api.ClientPolicyClassMatchSpec{MACs: []string{"02:00:00:00:00:44"}},
+					IPv4Reservation: "guest-phone",
+				}},
+			},
+		},
+	}}}
+	data, err := PF(router, nil)
+	if err != nil {
+		t.Fatalf("render pf: %v", err)
+	}
+	if strings.Contains(string(data), "inet6 from") {
+		t.Fatalf("IPv4 reservation must not infer an IPv6 ClientPolicy identity:\n%s", data)
 	}
 }
 

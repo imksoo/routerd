@@ -252,7 +252,9 @@ func (a *agent) Status() statusResponse {
 	backend := a.backend.Status()
 	stats := a.snapshotStats(time.Now().UTC())
 	return statusResponse{
-		OK:             true,
+		// A reachable agent without its classifier must not report a healthy DPI
+		// capability.  FreeBSD currently uses the explicit unavailable backend.
+		OK:             backend.Loaded,
 		Name:           a.opts.name,
 		Version:        version.Version,
 		Engine:         "ndpi-agent",

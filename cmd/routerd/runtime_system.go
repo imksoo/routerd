@@ -39,6 +39,12 @@ func applyRuntimeSysctls(router *api.Router) ([]string, error) {
 			if !api.BoolDefault(spec.Runtime, true) {
 				continue
 			}
+			if platformDefaults.OS == platform.OSFreeBSD && spec.Profile == "router-linux" {
+				return nil, fmt.Errorf("%s profile router-linux is not supported on FreeBSD; use router-freebsd", res.ID())
+			}
+			if platformDefaults.OS == platform.OSLinux && spec.Profile == "router-freebsd" {
+				return nil, fmt.Errorf("%s profile router-freebsd is not supported on Linux; use router-linux", res.ID())
+			}
 			entries, err := sysctlprofile.Entries(spec.Profile, spec.Overrides)
 			if err != nil {
 				return nil, err

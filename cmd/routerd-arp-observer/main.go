@@ -258,6 +258,7 @@ func daemonCommand(args []string) error {
 		opts:           opts,
 		startedAt:      time.Now().UTC(),
 		cancel:         cancel,
+		observerError:  "packet observer is starting",
 		lastProbeAt:    map[string]time.Time{},
 		pendingProbe:   map[string]time.Time{},
 		lastEventByKey: map[string]time.Time{},

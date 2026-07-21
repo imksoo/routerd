@@ -689,6 +689,7 @@ func containsLine(lines []string, want string) bool {
 }
 
 func TestIPv4StaticAddressControllerAppliesAddressOnAliasedInterface(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: false}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-base"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "172.18.0.1/16"}},
@@ -899,6 +900,7 @@ func TestIPv4StaticAddressControllerSuppressesRemovedEventForMissingStaleAddress
 }
 
 func TestIPv4StaticAddressControllerPublishesRemovedEventAfterDeletingPresentAddress(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{}}
 	store := mapStore{}
 	store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "old-source", map[string]any{
@@ -1114,6 +1116,7 @@ func TestIPv4StaticAddressControllerRestoresMissingAddressWithUnchangedStatus(t 
 }
 
 func TestIPv4StaticAddressControllerDeletesPreviousAddressWhenChanged(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-base"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "172.18.0.2/16"}},
@@ -1150,6 +1153,7 @@ func TestIPv4StaticAddressControllerDeletesPreviousAddressWhenChanged(t *testing
 }
 
 func TestIPv4StaticAddressControllerRemovesStaleMobilityProviderOSAddresses(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"}, Metadata: api.ObjectMeta{Name: "cloudedge"}, Spec: api.EventGroupSpec{NodeName: "azpair-a"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "azure-nic"}, Spec: api.InterfaceSpec{IfName: "eth0"}},
@@ -1212,6 +1216,7 @@ func TestIPv4StaticAddressControllerRemovesStaleMobilityProviderOSAddresses(t *t
 }
 
 func TestIPv4StaticAddressControllerRemovesStaleMobilityProviderOSAddressesWhenStandby(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"}, Metadata: api.ObjectMeta{Name: "cloudedge"}, Spec: api.EventGroupSpec{NodeName: "azpair-b"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "azure-nic"}, Spec: api.InterfaceSpec{IfName: "eth0"}},
@@ -1264,6 +1269,7 @@ func TestIPv4StaticAddressControllerRemovesStaleMobilityProviderOSAddressesWhenS
 }
 
 func TestLANAddressControllerPopulatesInterfaceBeforeDependencyCheck(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lo", Managed: false}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
@@ -1313,6 +1319,7 @@ func TestLANAddressControllerPopulatesInterfaceBeforeDependencyCheck(t *testing.
 }
 
 func TestLANAddressControllerUsesObservedPrefixDelegationStatus(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lo", Managed: false}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
@@ -1361,6 +1368,7 @@ func TestLANAddressControllerUsesObservedPrefixDelegationStatus(t *testing.T) {
 }
 
 func TestLANAddressControllerDeletesStaleIPv6BeforeApply(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lo", Managed: false}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
@@ -1439,6 +1447,7 @@ func TestLANAddressControllerRestoresMissingAddressWithUnchangedStatus(t *testin
 }
 
 func TestLANAddressControllerRemovesWhenFalseDelegatedAddress(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lo"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},

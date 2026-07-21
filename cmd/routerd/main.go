@@ -80,6 +80,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return validateCommand(args[1:], stdout)
 	case "check":
 		return checkCommand(args[1:], stdout)
+	case "render":
+		return renderCommand(args[1:], stdout)
 	case "help", "-h", "--help":
 		usage(stdout)
 		return nil
@@ -99,6 +101,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  rollback --list|--to <generation> list or re-apply saved config generations")
 	fmt.Fprintln(w, "  validate --config <path>          validate config")
 	fmt.Fprintln(w, "  check --config <path>             run preflight check")
+	fmt.Fprintln(w, "  render freebsd --config <path> [--out-dir <dir>]  render FreeBSD config files")
 	fmt.Fprintln(w, "  version                          print the routerd version")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "serve options:")

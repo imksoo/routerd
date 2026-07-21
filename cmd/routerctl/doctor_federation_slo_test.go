@@ -953,7 +953,10 @@ func TestDoctorFederationRemediationPlanDeterministicOrdering(t *testing.T) {
 		})
 	store := openDoctorState(t, statePath)
 
-	now := time.Now().UTC()
+	now := time.Date(2026, 7, 21, 8, 0, 0, 0, time.UTC)
+	oldNow := doctorNow
+	doctorNow = func() time.Time { return now }
+	defer func() { doctorNow = oldNow }()
 	ev := routerstate.EventRecord{
 		ID: "evt-1", Group: "cloudedge", Type: "t", SourceNode: "self-node",
 		ObservedAt: now.Add(-200 * time.Second), ExpiresAt: now.Add(10 * time.Minute),

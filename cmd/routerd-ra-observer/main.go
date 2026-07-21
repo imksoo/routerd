@@ -116,10 +116,11 @@ func daemonCommand(args []string) error {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	d := &daemon{
-		opts:      opts,
-		startedAt: time.Now().UTC(),
-		cancel:    cancel,
-		routers:   map[string]raobserver.RouterObservation{},
+		opts:          opts,
+		startedAt:     time.Now().UTC(),
+		cancel:        cancel,
+		observerError: "packet observer is starting",
+		routers:       map[string]raobserver.RouterObservation{},
 	}
 	d.cond = sync.NewCond(&d.mu)
 	d.selfMAC = firstNonEmpty(opts.selfMAC, interfaceMAC(opts.ifname))
