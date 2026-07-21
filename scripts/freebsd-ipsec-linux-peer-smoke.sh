@@ -9,11 +9,18 @@ while [ "$#" -gt 0 ]; do case "$1" in --routerd) routerd=$2; shift 2;; --evidenc
 mkdir -p "$evidence"; work=$evidence/work; mkdir -p "$work"
 peer_addr=${ROUTERD_IPSEC_PEER_ADDR:?ROUTERD_IPSEC_PEER_ADDR is required}
 guest_addr=${ROUTERD_IPSEC_GUEST_ADDR:?ROUTERD_IPSEC_GUEST_ADDR is required}
-host_if=$(route -n get default | awk '/interface:/{print $2;exit}')
+underlay_if=${ROUTERD_IPSEC_UNDERLAY_IF:-}
+if [ -z "$underlay_if" ]; then
+  underlay_if=$(route -n get default | awk '/interface:/{print $2;exit}')
+fi
+host_if=$underlay_if
+if [ "${ROUTERD_IPSEC_TOPOLOGY:-slirp}" = tap ]; then
+  ifconfig "$host_if" inet "$guest_addr/24" up
+fi
 host_addr=$(ifconfig "$host_if" inet | awk '/inet /{print $2;exit}')
-default_gateway=$(route -n get default | awk '/gateway:/{print $2;exit}')
-printf 'ipsec-linux-peer preflight peer=%s guest=%s host=%s default_gateway=%s\n' "$peer_addr" "$guest_addr" "$host_addr" "$default_gateway" >&3
-[ -n "$host_addr" ] && [ "$host_addr" = "$guest_addr" ] && [ "$peer_addr" = "$default_gateway" ]
+underlay_route_if=$(route -n get "$peer_addr" | awk '/interface:/{print $2;exit}')
+printf 'ipsec-linux-peer preflight topology=%s peer=%s guest=%s host=%s underlay_if=%s route_if=%s\n' "${ROUTERD_IPSEC_TOPOLOGY:-slirp}" "$peer_addr" "$guest_addr" "$host_addr" "$host_if" "$underlay_route_if" >&3
+[ -n "$host_addr" ] && [ "$host_addr" = "$guest_addr" ] && [ "$underlay_route_if" = "$host_if" ]
 host_ts=10.250.1.1 peer_ts=10.250.2.1 psk=routerd-native-linux-peer-disposable-psk
 state=$work/state.db ledger=$work/ledger.db
 sentinel=/usr/local/etc/routerd/swanctl/operator-sentinel.conf

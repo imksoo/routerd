@@ -4,6 +4,12 @@ set -euo pipefail
 action=${1:?usage: $0 start|stop}
 peer_addr=${ROUTERD_IPSEC_PEER_ADDR:?ROUTERD_IPSEC_PEER_ADDR is required}
 guest_addr=${ROUTERD_IPSEC_GUEST_ADDR:?ROUTERD_IPSEC_GUEST_ADDR is required}
+topology=${ROUTERD_IPSEC_TOPOLOGY:-slirp}
+bridge=${ROUTERD_IPSEC_BRIDGE:-routerd-ipsec-br}
+tap=${ROUTERD_IPSEC_TAP:-routerd-ipsec-tap}
+netns=${ROUTERD_IPSEC_NETNS:-routerd-ipsec-peer}
+veth_host=${ROUTERD_IPSEC_VETH_HOST:-routerd-ipsec-veth}
+veth_peer=${ROUTERD_IPSEC_VETH_PEER:-routerd-ipsec-peer0}
 psk=routerd-native-linux-peer-disposable-psk
 run_id=${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}
 attempt=${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT is required}
@@ -11,10 +17,68 @@ attempt=${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT is required}
 dir="/tmp/routerd-ipsec-peer-${run_id}-${attempt}"
 case "$dir" in /tmp/routerd-ipsec-peer-"$run_id"-"$attempt") ;; *) exit 2;; esac
 peer_config=/etc/swanctl/conf.d/routerd-native-tunnel.conf
-peer_config_created=0
+mark_owned() { sudo touch "$dir/owner.$1"; }
+is_owned() { sudo test -f "$dir/owner.$1"; }
+clear_owned() { sudo rm -f "$dir/owner.$1"; }
+peer_exec() {
+  if [[ "$topology" == tap ]]; then
+    sudo ip netns exec "$netns" "$@"
+  else
+    sudo "$@"
+  fi
+}
+setup_tap_topology() {
+  [[ "$topology" == tap ]] || return 0
+  [[ "$bridge" =~ ^[a-zA-Z0-9_.-]+$ && "$tap" =~ ^[a-zA-Z0-9_.-]+$ && "$netns" =~ ^[a-zA-Z0-9_.-]+$ && "$veth_host" =~ ^[a-zA-Z0-9_.-]+$ && "$veth_peer" =~ ^[a-zA-Z0-9_.-]+$ ]] || return 2
+  for link in "$bridge" "$tap" "$veth_host"; do
+    if sudo ip link show dev "$link" >/dev/null 2>&1; then
+      echo "tap topology refuses pre-existing link: $link" >&2
+      return 1
+    fi
+  done
+  if sudo ip netns list | awk -v want="$netns" '$1 == want { found=1 } END { exit !found }'; then
+    echo "tap topology refuses pre-existing namespace: $netns" >&2
+    return 1
+  fi
+  sudo ip link add name "$bridge" type bridge
+  mark_owned bridge
+  sudo ip link set "$bridge" up
+  sudo ip tuntap add dev "$tap" mode tap user "$(id -un)"
+  mark_owned tap
+  sudo ip link set "$tap" master "$bridge"
+  sudo ip link set "$tap" up
+  sudo ip netns add "$netns"
+  mark_owned netns
+  sudo ip link add "$veth_host" type veth peer name "$veth_peer"
+  mark_owned veth
+  sudo ip link set "$veth_host" master "$bridge"
+  sudo ip link set "$veth_host" up
+  sudo ip link set "$veth_peer" netns "$netns"
+  sudo ip netns exec "$netns" ip link set lo up
+  sudo ip netns exec "$netns" ip link set "$veth_peer" up
+  sudo ip netns exec "$netns" ip addr add "$peer_addr/24" dev "$veth_peer"
+}
+cleanup_tap_topology() {
+  # This namespace is fixture-owned.  Do not delete it while its verifier or
+  # charon remains live: report and terminate only its own namespace PIDs.
+  if is_owned netns && sudo ip netns pids "$netns" | grep -Eq '[0-9]'; then
+    sudo ip netns pids "$netns" | xargs -r sudo kill -TERM
+    sleep 1
+  fi
+  if is_owned netns && sudo ip netns pids "$netns" | grep -Eq '[0-9]'; then
+    return 1
+  fi
+  if is_owned netns; then sudo ip netns del "$netns"; clear_owned netns; fi
+  if is_owned veth && sudo ip link show dev "$veth_host" >/dev/null 2>&1; then sudo ip link del "$veth_host"; fi
+  if is_owned veth; then clear_owned veth; fi
+  if is_owned tap && sudo ip link show dev "$tap" >/dev/null 2>&1; then sudo ip link del "$tap"; fi
+  if is_owned tap; then clear_owned tap; fi
+  if is_owned bridge && sudo ip link show dev "$bridge" >/dev/null 2>&1; then sudo ip link del "$bridge"; fi
+  if is_owned bridge; then clear_owned bridge; fi
+}
 wait_for_swanctl() {
   for _ in $(seq 1 30); do
-    if sudo /usr/sbin/swanctl --stats >/dev/null 2>&1; then return 0; fi
+    if peer_exec /usr/sbin/swanctl --stats >/dev/null 2>&1; then return 0; fi
     sleep 1
   done
   echo 'peer-start: package swanctl did not become ready' >&2
@@ -33,9 +97,13 @@ emit_failure() {
   sudo journalctl --no-pager -t charon -n 200 2>&1 | sed "s/$psk/[REDACTED]/g" >&2 || true
 }
 stop_peer_service() {
-  sudo systemctl stop strongswan-starter
-  if sudo systemctl is-active --quiet strongswan-starter; then return 1; fi
-  if sudo timeout 5 /usr/sbin/swanctl --stats >/dev/null 2>&1; then return 1; fi
+  if [[ "$topology" == tap ]]; then
+    peer_exec /usr/sbin/ipsec stop
+  else
+    sudo systemctl stop strongswan-starter
+    if sudo systemctl is-active --quiet strongswan-starter; then return 1; fi
+  fi
+  if peer_exec timeout 5 /usr/sbin/swanctl --stats >/dev/null 2>&1; then return 1; fi
   return 0
 }
 cleanup() {
@@ -45,9 +113,15 @@ cleanup() {
   cleanup_started=1
   if [[ "$rc" -ne 0 ]]; then emit_failure; fi
   if ! stop_peer_service; then cleanup_rc=1; fi
-  sudo ip addr del 10.250.2.1/32 dev lo 2>/dev/null || true
+  if [[ "$topology" == tap ]]; then
+    peer_exec ip addr del 10.250.2.1/32 dev lo 2>/dev/null || true
+  else
+    sudo ip addr del 10.250.2.1/32 dev lo 2>/dev/null || true
+  fi
   if sudo test -s "$dir/verifier.pid"; then sudo kill -TERM "$(sudo cat "$dir/verifier.pid")" 2>/dev/null || true; fi
-  if [[ "$peer_config_created" -eq 1 ]]; then sudo rm -f -- "$peer_config"; fi
+  if is_owned peer-config; then sudo rm -f -- "$peer_config"; clear_owned peer-config; fi
+  cleanup_tap_topology || cleanup_rc=1
+  # Markers stay available until both config and topology cleanup complete.
   sudo rm -rf -- "$dir"
   if [[ "$rc" -eq 0 && "$cleanup_rc" -ne 0 ]]; then return "$cleanup_rc"; fi
   return "$rc"
@@ -57,17 +131,30 @@ start)
   trap 'cleanup "$?"' ERR INT TERM
   sudo apt-get update -qq
   sudo apt-get install -y -qq strongswan-swanctl strongswan-charon netcat-openbsd
+  # A package post-install may have started the host service.  The TAP peer
+  # owns only the namespace process and must not share that daemon or PID file.
   sudo systemctl stop strongswan-starter strongswan 2>/dev/null || true
   if sudo systemctl is-active --quiet strongswan-starter; then exit 1; fi
-  sudo rm -rf -- "$dir"; sudo install -d -m 0700 "$dir"
+  sudo test ! -e "$dir"
+  sudo install -d -m 0700 "$dir"
+  if [[ "$topology" == tap ]]; then
+    setup_tap_topology
+  else
+    sudo systemctl stop strongswan-starter strongswan 2>/dev/null || true
+    if sudo systemctl is-active --quiet strongswan-starter; then exit 1; fi
+  fi
   sudo install -d -m 0755 /etc/swanctl/conf.d
   sudo test ! -e "$peer_config"
-  sudo ip addr add 10.250.2.1/32 dev lo
+  if [[ "$topology" == tap ]]; then
+    peer_exec ip addr add 10.250.2.1/32 dev lo
+  else
+    sudo ip addr add 10.250.2.1/32 dev lo
+  fi
   sudo tee "$peer_config" >/dev/null <<EOF
 connections {
   native-tunnel {
     version = 2
-    local_addrs = %any
+    local_addrs = $peer_addr
     remote_addrs = %any
     proposals = aes256-sha256-modp2048
     local {
@@ -96,19 +183,35 @@ secrets {
   }
 }
 EOF
-  peer_config_created=1
-  sudo systemctl start strongswan-starter
-  sudo systemctl is-active --quiet strongswan-starter
+  mark_owned peer-config
+  if [[ "$topology" == tap ]]; then
+    peer_exec /usr/sbin/ipsec start
+  else
+    sudo systemctl start strongswan-starter
+    sudo systemctl is-active --quiet strongswan-starter
+  fi
   wait_for_swanctl
-  if ! sudo sh -c '/usr/sbin/swanctl --load-all --file "$1" >"$2" 2>&1' sh "$peer_config" "$dir/peer-load.log"; then
+  if [[ "$topology" == tap ]]; then
+    if sudo sh -c 'ip netns exec "$1" /usr/sbin/swanctl --load-all --file "$2" >"$3" 2>&1' sh "$netns" "$peer_config" "$dir/peer-load.log"; then load_rc=0; else load_rc=$?; fi
+  else
+    if sudo sh -c '/usr/sbin/swanctl --load-all --file "$1" >"$2" 2>&1' sh "$peer_config" "$dir/peer-load.log"; then load_rc=0; else load_rc=$?; fi
+  fi
+  if [[ "$load_rc" -ne 0 ]]; then
     echo 'peer-start: swanctl load failed' >&2
     exit 1
   fi
-  if ! sudo sh -c '/usr/sbin/swanctl --list-conns >"$1" 2>&1' sh "$dir/peer-list-conns.log" || ! sudo grep -Fq native-tunnel "$dir/peer-list-conns.log"; then
+  if [[ "$topology" == tap ]]; then
+    if sudo sh -c 'ip netns exec "$1" /usr/sbin/swanctl --list-conns >"$2" 2>&1' sh "$netns" "$dir/peer-list-conns.log"; then list_rc=0; else list_rc=$?; fi
+  else
+    if sudo sh -c '/usr/sbin/swanctl --list-conns >"$1" 2>&1' sh "$dir/peer-list-conns.log"; then list_rc=0; else list_rc=$?; fi
+  fi
+  if [[ "$list_rc" -ne 0 ]] || ! sudo grep -Fq native-tunnel "$dir/peer-list-conns.log"; then
     echo 'peer-start: native-tunnel missing after swanctl load' >&2
     exit 1
   fi
-  sudo env PEER_DIR="$dir" bash -c '
+  if [[ "$topology" == tap ]]; then verifier_prefix=(sudo ip netns exec "$netns" env); else verifier_prefix=(sudo env); fi
+  # shellcheck disable=SC2016 # expanded by the peer-side bash, not this shell
+  "${verifier_prefix[@]}" PEER_DIR="$dir" bash -c '
     set -eu
     for phase_port in initial:19091:19191 rekey:19092:19192 restart:19093:19193; do
       phase=${phase_port%%:*}; rest=${phase_port#*:}; port=${rest%%:*}; ack=${rest#*:}
