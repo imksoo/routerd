@@ -26,6 +26,8 @@ const (
 	stateKind       = "StateVariable"
 )
 
+var ErrSchemaNotInitialized = errors.New("routerd state database schema is not initialized")
+
 const (
 	stateWALAutoCheckpointPages = 4096
 	stateJournalSizeLimitBytes  = 64 * 1024 * 1024
@@ -1187,6 +1189,13 @@ func (s *SQLiteStore) ListObjectStatuses() ([]ObjectStatus, error) {
 	defer s.mu.RUnlock()
 	if s.closed {
 		return []ObjectStatus{}, nil
+	}
+	exists, err := s.tableExists("objects")
+	if err != nil {
+		return nil, fmt.Errorf("inspect routerd state database schema: %w", err)
+	}
+	if !exists {
+		return nil, fmt.Errorf("%w: required objects table is missing", ErrSchemaNotInitialized)
 	}
 	rows, err := s.db.Query(`SELECT api_version,kind,name,coalesce(status,'{}') FROM objects ORDER BY api_version,kind,name`)
 	if err != nil {

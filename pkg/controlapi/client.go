@@ -535,11 +535,25 @@ func (c *Client) do(req *http.Request, value any) error {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var apiErr Error
 		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&apiErr); err == nil && apiErr.Error.Message != "" {
-			return fmt.Errorf("%s", apiErr.Error.Message)
+			return &APIError{StatusCode: resp.StatusCode, Message: apiErr.Error.Message}
 		}
-		return fmt.Errorf("routerd API returned HTTP %d", resp.StatusCode)
+		return &APIError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("routerd API returned HTTP %d", resp.StatusCode)}
 	}
 	return json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(value)
+}
+
+// APIError reports a response returned by a reachable routerd API endpoint.
+// Callers can distinguish it from transport failures without inspecting text.
+type APIError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *APIError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.Message
 }
 
 func (c *Client) doWithRetry(req *http.Request) (*http.Response, error) {

@@ -92,6 +92,10 @@ func planCommand(args []string, stdout io.Writer, stdin io.Reader) error {
 	defer cancel()
 	result, err := controlapi.NewUnixClient(*socketPath).Plan(ctx, controlapi.PlanRequest{CandidateYAML: candidate, Replace: *replace})
 	if err != nil {
+		var apiErr *controlapi.APIError
+		if errors.As(err, &apiErr) {
+			return fmt.Errorf("routerd plan failed: %w", apiErr)
+		}
 		return fmt.Errorf("routerd serve is not reachable for plan; start routerd serve or check --socket: %w", err)
 	}
 	return writeJSON(stdout, result)

@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,6 +30,44 @@ import (
 	"github.com/imksoo/routerd/pkg/resource"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
+
+func TestServeConfigMutatorPlanSanitizesUninitializedStateSchema(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "uninitialized.db")
+	db, err := sql.Open("sqlite", statePath)
+	if err != nil {
+		t.Fatalf("open sqlite directly: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE placeholder (id INTEGER)`); err != nil {
+		t.Fatalf("create placeholder table: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close sqlite: %v", err)
+	}
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+	}
+	mutator := serveConfigMutator{
+		statePath: statePath,
+		baseOpts: applyOptions{
+			StatePath:          statePath,
+			LedgerPath:         filepath.Join(dir, "ledger.db"),
+			SkipServiceManager: true,
+		},
+		logger: &eventlog.Logger{},
+	}
+	_, err = mutator.planRouter(router, "")
+	if err == nil {
+		t.Fatal("planRouter succeeded with uninitialized state schema")
+	}
+	if !strings.Contains(err.Error(), "state database is not initialized") {
+		t.Fatalf("planRouter error is not actionable: %v", err)
+	}
+	if strings.Contains(err.Error(), "SQL logic error") || strings.Contains(err.Error(), "no such table") || strings.Contains(err.Error(), "objects") {
+		t.Fatalf("planRouter leaked internal schema details: %v", err)
+	}
+}
 
 func TestApplyFilesReportsCreatedAndChanged(t *testing.T) {
 	dir := t.TempDir()
