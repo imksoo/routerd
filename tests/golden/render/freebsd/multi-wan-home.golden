@@ -29,8 +29,8 @@ nat-anchor "routerd_nat"
 block drop all
 pass quick on lo0 all
 pass out quick all keep state
-pass in quick on $lan_if inet6 proto icmp6 icmp6-type { routersol, routeradv, neighbrsol, neighbradv } to { (ens19), ff02::1, ff02::2, ff02::1:ff00:0/104 } keep state label "routerd:lan:ipv6-control"
-pass in quick on $wan_if inet6 proto icmp6 icmp6-type { routersol, routeradv, neighbrsol, neighbradv } to { (ds-lite-a), (ds-lite-b), (ens18), ff02::1, ff02::2, ff02::1:ff00:0/104 } keep state label "routerd:wan:ipv6-control"
+pass in quick on $lan_if inet6 proto icmp6 to { (ens19), ff02::1, ff02::2, ff02::1:ff00:0/104 } icmp6-type { routersol, routeradv, neighbrsol, neighbradv } keep state label "routerd:lan:ipv6-control"
+pass in quick on $wan_if inet6 proto icmp6 to { (ds-lite-a), (ds-lite-b), (ens18), ff02::1, ff02::2, ff02::1:ff00:0/104 } icmp6-type { routersol, routeradv, neighbrsol, neighbradv } keep state label "routerd:wan:ipv6-control"
 pass in quick on $lan_if to (ens19) keep state
 pass in quick on ens18 proto udp to (ens18) port 68 keep state label "routerd:wan-dhcpv4-dhcpv4-client"
 pass in quick on ens18 proto udp to (ens18) port 546 keep state label "routerd:wan-pd-dhcpv6-client"

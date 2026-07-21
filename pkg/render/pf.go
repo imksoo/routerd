@@ -755,7 +755,7 @@ func pfIPv6ControlExpr(zone firewallZone) string {
 		values = append(values, "("+ifname+")")
 	}
 	values = append(values, "ff02::1", "ff02::2", "ff02::1:ff00:0/104")
-	return "pass in quick on $" + pfZoneMacro(zone) + " inet6 proto icmp6 icmp6-type { routersol, routeradv, neighbrsol, neighbradv } to " + pfAddressSet(values) + " keep state label " + pfQuote("routerd:"+zone.Name+":ipv6-control")
+	return "pass in quick on $" + pfZoneMacro(zone) + " inet6 proto icmp6 to " + pfAddressSet(values) + " icmp6-type { routersol, routeradv, neighbrsol, neighbradv } keep state label " + pfQuote("routerd:"+zone.Name+":ipv6-control")
 }
 
 func pfClientPolicyInputExprs(zone firewallZone, policy pfClientPolicy, logging firewallLogging) []string {

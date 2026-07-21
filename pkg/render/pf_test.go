@@ -80,7 +80,7 @@ func TestPFRenderFirewallAndNAT(t *testing.T) {
 		`nat on em0 from 172.18.0.0/16 to any -> (em0)`,
 		`block drop all`,
 		`pass out quick all keep state`,
-		`pass in quick on $lan_if inet6 proto icmp6 icmp6-type { routersol, routeradv, neighbrsol, neighbradv } to { (em1), ff02::1, ff02::2, ff02::1:ff00:0/104 } keep state label "routerd:lan:ipv6-control"`,
+		`pass in quick on $lan_if inet6 proto icmp6 to { (em1), ff02::1, ff02::2, ff02::1:ff00:0/104 } icmp6-type { routersol, routeradv, neighbrsol, neighbradv } keep state label "routerd:lan:ipv6-control"`,
 		`pass in quick on $lan_if to (em1) keep state`,
 		`pass in quick on $mgmt_if to (em2) keep state`,
 		`block drop in quick on $lan_if to (em2:network) label "routerd:lan-to-mgmt-deny"`,
@@ -500,7 +500,7 @@ func TestPFClientPolicyRendersExplicitIPv6GuestDenyBeforeICMPv6Pass(t *testing.T
 	if !strings.Contains(got, deny) || !strings.Contains(got, allow) {
 		t.Fatalf("pf output missing explicit IPv6 ClientPolicy rules:\n%s", got)
 	}
-	control := `pass in quick on $lan_if inet6 proto icmp6 icmp6-type { routersol, routeradv, neighbrsol, neighbradv }`
+	control := `pass in quick on $lan_if inet6 proto icmp6 to { (vtnet1), ff02::1, ff02::2, ff02::1:ff00:0/104 } icmp6-type { routersol, routeradv, neighbrsol, neighbradv }`
 	if strings.Index(got, deny) > strings.Index(got, control) {
 		t.Fatalf("IPv6 guest deny must precede local IPv6 control pass:\n%s", got)
 	}

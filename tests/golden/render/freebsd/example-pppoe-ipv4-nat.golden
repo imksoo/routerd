@@ -66,8 +66,8 @@ nat on ppp-home from 192.168.40.0/24 to any -> (ppp-home)
 block drop all
 pass quick on lo0 all
 pass out quick all keep state
-pass in quick on $lan_if inet6 proto icmp6 icmp6-type { routersol, routeradv, neighbrsol, neighbradv } to { (ens19), ff02::1, ff02::2, ff02::1:ff00:0/104 } keep state label "routerd:lan:ipv6-control"
-pass in quick on $wan_if inet6 proto icmp6 icmp6-type { routersol, routeradv, neighbrsol, neighbradv } to { (ens18), (ppp-home), ff02::1, ff02::2, ff02::1:ff00:0/104 } keep state label "routerd:wan:ipv6-control"
+pass in quick on $lan_if inet6 proto icmp6 to { (ens19), ff02::1, ff02::2, ff02::1:ff00:0/104 } icmp6-type { routersol, routeradv, neighbrsol, neighbradv } keep state label "routerd:lan:ipv6-control"
+pass in quick on $wan_if inet6 proto icmp6 to { (ens18), (ppp-home), ff02::1, ff02::2, ff02::1:ff00:0/104 } icmp6-type { routersol, routeradv, neighbrsol, neighbradv } keep state label "routerd:wan:ipv6-control"
 pass in quick on $lan_if to (ens19) keep state
 pass in quick on $lan_if keep state label "routerd:lan-to-lan"
 pass in quick on $lan_if keep state label "routerd:lan-to-wan"

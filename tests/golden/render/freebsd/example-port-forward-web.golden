@@ -11,8 +11,8 @@ nat on ens19 inet proto tcp from (ens19:network) to 192.168.10.20 port 443 -> (e
 block drop all
 pass quick on lo0 all
 pass out quick all keep state
-pass in quick on $lan_if inet6 proto icmp6 icmp6-type { routersol, routeradv, neighbrsol, neighbradv } to { (ens19), ff02::1, ff02::2, ff02::1:ff00:0/104 } keep state label "routerd:lan:ipv6-control"
-pass in quick on $wan_if inet6 proto icmp6 icmp6-type { routersol, routeradv, neighbrsol, neighbradv } to { (ens18), ff02::1, ff02::2, ff02::1:ff00:0/104 } keep state label "routerd:wan:ipv6-control"
+pass in quick on $lan_if inet6 proto icmp6 to { (ens19), ff02::1, ff02::2, ff02::1:ff00:0/104 } icmp6-type { routersol, routeradv, neighbrsol, neighbradv } keep state label "routerd:lan:ipv6-control"
+pass in quick on $wan_if inet6 proto icmp6 to { (ens18), ff02::1, ff02::2, ff02::1:ff00:0/104 } icmp6-type { routersol, routeradv, neighbrsol, neighbradv } keep state label "routerd:wan:ipv6-control"
 pass in quick on $lan_if to (ens19) keep state
 pass in quick on ens18 proto udp to (ens18) port 68 keep state label "routerd:wan-dhcpv4-dhcpv4-client"
 pass in quick on $lan_if keep state label "routerd:lan-to-lan"
