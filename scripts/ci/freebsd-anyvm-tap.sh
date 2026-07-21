@@ -73,7 +73,18 @@ replacement = '''            "-device", "{},netdev=net0".format(net_card),
             "-device", "virtio-balloon-pci",'''
 if source.count(needle) != 1:
     raise SystemExit("pinned anyvm x86 NIC anchor mismatch")
-path.write_text(source.replace(needle, replacement, 1))
+source = source.replace(needle, replacement, 1)
+
+# Pinned anyvm logs the final SSH status but otherwise exits zero.  CI must
+# fail when the guest smoke command fails, so preserve that remote status.
+needle = '                    debuglog(config[\'debug\'], "[trace] final-SSH returned rc={}".format(rc))'
+replacement = '''                    debuglog(config['debug'], "[trace] final-SSH returned rc={}".format(rc))
+                    if rc != 0:
+                        raise SystemExit(rc)'''
+if source.count(needle) != 1:
+    raise SystemExit("pinned anyvm final-SSH anchor mismatch")
+source = source.replace(needle, replacement, 1)
+path.write_text(source)
 PY
 python3 -m py_compile "$work/anyvm.py"
 
