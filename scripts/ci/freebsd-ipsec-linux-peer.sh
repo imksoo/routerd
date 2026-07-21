@@ -8,9 +8,11 @@ case "$dir" in "$base"/routerd-ipsec-peer) ;; *) exit 2;; esac
 log="$dir/peer.log"
 cleanup() {
   rc=$?
+  if [[ ${cleanup_started:-0} -eq 1 ]]; then return "$rc"; fi
+  cleanup_started=1
   if [[ -s "$dir/charon.pid" ]]; then sudo kill -TERM "$(sudo cat "$dir/charon.pid")" 2>/dev/null || true; fi
   sudo ip addr del 10.250.2.1/32 dev lo 2>/dev/null || true
-  if [[ -s "$dir/verifier.pid" ]]; then sudo kill -TERM "$(sudo cat "$dir/verifier.pid")" 2>/dev/null || true; fi
+  if sudo test -s "$dir/verifier.pid"; then sudo kill -TERM "$(sudo cat "$dir/verifier.pid")" 2>/dev/null || true; fi
   sudo rm -rf -- "$dir"
   return "$rc"
 }
@@ -67,17 +69,20 @@ EOF
     for phase_port in initial:19091:19191 rekey:19092:19192 restart:19093:19193; do
       phase=${phase_port%%:*}; rest=${phase_port#*:}; port=${rest%%:*}; ack=${rest#*:}
       timeout 120 nc -l -p "$port" >/dev/null
+      established=0
       for _ in $(seq 1 30); do
         if /usr/sbin/swanctl --uri "unix://$PEER_DIR/charon.vici" --list-sas | grep -q ESTABLISHED; then
+          established=1
           echo "phase=$phase" >>"$PEER_DIR/reverse-verifier.log"
           ping -n -I 10.250.2.1 -c 2 10.250.1.1 >>"$PEER_DIR/reverse-verifier.log" 2>&1
           ip -s xfrm state >>"$PEER_DIR/reverse-verifier.log" 2>&1 || true
           ip -s xfrm policy >>"$PEER_DIR/reverse-verifier.log" 2>&1 || true
-          printf ok | nc -l -p "$ack" >>"$PEER_DIR/reverse-verifier.log" 2>&1
+          printf ok | timeout 120 nc -l -p "$ack" >>"$PEER_DIR/reverse-verifier.log" 2>&1
           break
         fi
         sleep 1
       done
+      test "$established" -eq 1
     done
   ' & echo $! | sudo tee "$dir/verifier.pid" >/dev/null
   trap - ERR INT TERM

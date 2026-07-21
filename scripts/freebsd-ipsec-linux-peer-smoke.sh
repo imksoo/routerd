@@ -16,13 +16,53 @@ state=$work/state.db ledger=$work/ledger.db
 sentinel=/usr/local/etc/routerd/swanctl/operator-sentinel.conf
 sentinel_created=0
 service_before=0 enable_before=1 cleanup_started=0
+run_bounded() {
+  limit=$1 label=$2 log=$3; shift 3
+  printf 'step=%s begin\n' "$label" >&3
+  (
+    elapsed=0
+    while :; do
+      sleep 5
+      elapsed=$((elapsed + 5))
+      printf 'step=%s waiting=%ss\n' "$label" "$elapsed" >&3
+    done
+  ) & heartbeat=$!
+  if timeout -k 2 "$limit" "$@" >"$log" 2>&1; then rc=0; else rc=$?; fi
+  kill "$heartbeat" 2>/dev/null || true
+  wait "$heartbeat" 2>/dev/null || true
+  printf 'step=%s rc=%s\n' "$label" "$rc" >&3
+  return "$rc"
+}
+wait_established() {
+  label=$1 log=$2
+  for _ in $(jot 30); do
+    if run_bounded 5 "${label}-status" "$log" /usr/local/sbin/swanctl --list-sas --ike native-tunnel && grep -q ESTABLISHED "$log"; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+ack_phase() {
+  phase=$1 marker=$2 ack=$3
+  run_bounded 10 "$phase-marker" "$evidence/$phase.marker.log" nc -z -w 5 "$peer_addr" "$marker"
+  deadline=$(( $(date +%s) + 30 ))
+  : >"$evidence/$phase.ack.log"
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    if timeout -k 2 5 nc -w 5 "$peer_addr" "$ack" >>"$evidence/$phase.ack.log" 2>&1 && [ "$(tail -n 1 "$evidence/$phase.ack.log")" = ok ]; then
+      printf 'step=%s-ack rc=0\n' "$phase" >&3
+      return 0
+    fi
+    sleep 1
+  done
+  printf 'step=%s-ack rc=1\n' "$phase" >&3
+  return 1
+}
 emit_failure() { for f in "$evidence"/*.log; do [ -f "$f" ] && { echo "--- ${f#"$evidence"/}" >&3; sed "s/$psk/[REDACTED]/g" "$f" >&3; }; done; }
 cleanup() {
   rc=$?; [ "$cleanup_started" -eq 0 ] || return "$rc"; cleanup_started=1
   [ "$rc" -eq 0 ] || emit_failure
   trap - EXIT HUP INT TERM
-  service strongswan onestop >>"$evidence/cleanup.log" 2>&1 || true
-  if [ "$service_before" -eq 1 ]; then service strongswan onestart >>"$evidence/cleanup.log" 2>&1 || true; fi
+  if ! run_bounded 20 cleanup-service-stop "$evidence/cleanup.service-stop.log" service strongswan onestop; then :; fi
+  if [ "$service_before" -eq 1 ]; then if ! run_bounded 20 cleanup-service-start "$evidence/cleanup.service-start.log" service strongswan onestart; then :; fi; fi
   if [ "$enable_before" -eq 0 ]; then sysrc "strongswan_enable=$(cat "$work/enable.before")" >>"$evidence/cleanup.log" 2>&1 || true; else sysrc -x strongswan_enable >>"$evidence/cleanup.log" 2>&1 || true; fi
   rm -f /usr/local/etc/routerd/swanctl/routerd-*.conf /usr/local/etc/routerd/swanctl/routerd.conf /usr/local/etc/routerd/swanctl/.routerd-pending-load
   [ "$sentinel_created" -eq 1 ] && rm -f "$sentinel"
@@ -62,38 +102,30 @@ spec:
     metadata: {name: native-tunnel}
     spec: {localAddress: $host_addr, remoteAddress: $peer_addr, preSharedKey: $psk, phase1Proposals: [invalid-proposal], leftSubnet: $host_ts/32, rightSubnet: $peer_ts/32}
 EOF
-set +e
-timeout -k 2 45 "$routerd" apply --once --config "$work/invalid.yaml" --state-file "$state" --ledger-file "$ledger" >"$evidence/invalid.log" 2>&1; invalid_rc=$?
-set -e
+if run_bounded 45 invalid-apply "$evidence/invalid.log" "$routerd" apply --once --config "$work/invalid.yaml" --state-file "$state" --ledger-file "$ledger"; then invalid_rc=0; else invalid_rc=$?; fi
 [ "$invalid_rc" -ne 0 ] && [ "$invalid_rc" -ne 124 ]; grep -Eiq 'swanctl|proposal|load' "$evidence/invalid.log"; if grep -F "$psk" "$evidence/invalid.log" >/dev/null; then exit 1; fi
-timeout -k 2 45 "$routerd" apply --once --config "$work/router.yaml" --state-file "$state" --ledger-file "$ledger" >"$evidence/apply.log" 2>&1
-/usr/local/sbin/swanctl --initiate --ike native-tunnel --child net >"$evidence/initiate.log" 2>&1
-for _ in $(jot 30); do /usr/local/sbin/swanctl --list-sas --ike native-tunnel >"$evidence/sa.initial.log" && grep -q ESTABLISHED "$evidence/sa.initial.log" && break; sleep 1; done
-grep -q ESTABLISHED "$evidence/sa.initial.log"
-nc -z -w 5 "$peer_addr" 19091
-nc -w 15 "$peer_addr" 19191 | grep -Fx ok
-ping -n -S "$host_ts" -c 2 "$peer_ts" >"$evidence/traffic.host-to-peer.log" 2>&1
-/usr/local/sbin/swanctl --rekey --ike native-tunnel >"$evidence/rekey.log" 2>&1
-for _ in $(jot 30); do /usr/local/sbin/swanctl --list-sas --ike native-tunnel >"$evidence/sa.rekey.log" && grep -q ESTABLISHED "$evidence/sa.rekey.log" && break; sleep 1; done
-grep -q ESTABLISHED "$evidence/sa.rekey.log"
-nc -z -w 5 "$peer_addr" 19092
-nc -w 15 "$peer_addr" 19192 | grep -Fx ok
-ping -n -S "$host_ts" -c 2 "$peer_ts" >"$evidence/traffic.rekey.log" 2>&1
-service strongswan onestop >"$evidence/restart.stop.log" 2>&1
-timeout -k 2 45 "$routerd" apply --once --config "$work/router.yaml" --state-file "$state" --ledger-file "$ledger" >"$evidence/restart.log" 2>&1
-/usr/local/sbin/swanctl --initiate --ike native-tunnel --child net >"$evidence/restart.initiate.log" 2>&1
-for _ in $(jot 30); do /usr/local/sbin/swanctl --list-sas --ike native-tunnel >"$evidence/sa.restart.log" && grep -q ESTABLISHED "$evidence/sa.restart.log" && break; sleep 1; done
-grep -q ESTABLISHED "$evidence/sa.restart.log"
-nc -z -w 5 "$peer_addr" 19093
-nc -w 15 "$peer_addr" 19193 | grep -Fx ok
-ping -n -S "$host_ts" -c 2 "$peer_ts" >"$evidence/traffic.restart.log" 2>&1
+run_bounded 45 valid-apply "$evidence/apply.log" "$routerd" apply --once --config "$work/router.yaml" --state-file "$state" --ledger-file "$ledger"
+run_bounded 20 initiate "$evidence/initiate.log" /usr/local/sbin/swanctl --initiate --ike native-tunnel --child net
+wait_established initial "$evidence/sa.initial.log"
+ack_phase initial 19091 19191
+run_bounded 20 initial-host-to-peer "$evidence/traffic.host-to-peer.log" ping -n -S "$host_ts" -c 2 "$peer_ts"
+run_bounded 20 rekey "$evidence/rekey.log" /usr/local/sbin/swanctl --rekey --ike native-tunnel
+wait_established rekey "$evidence/sa.rekey.log"
+ack_phase rekey 19092 19192
+run_bounded 20 rekey-host-to-peer "$evidence/traffic.rekey.log" ping -n -S "$host_ts" -c 2 "$peer_ts"
+run_bounded 20 restart-service-stop "$evidence/restart.stop.log" service strongswan onestop
+run_bounded 45 restart-apply "$evidence/restart.log" "$routerd" apply --once --config "$work/router.yaml" --state-file "$state" --ledger-file "$ledger"
+run_bounded 20 restart-initiate "$evidence/restart.initiate.log" /usr/local/sbin/swanctl --initiate --ike native-tunnel --child net
+wait_established restart "$evidence/sa.restart.log"
+ack_phase restart 19093 19193
+run_bounded 20 restart-host-to-peer "$evidence/traffic.restart.log" ping -n -S "$host_ts" -c 2 "$peer_ts"
 cat >"$work/empty.yaml" <<'EOF'
 apiVersion: routerd.net/v1alpha1
 kind: Router
 metadata: {name: empty}
 spec: {}
 EOF
-timeout -k 2 45 "$routerd" apply --once --config "$work/empty.yaml" --state-file "$state" --ledger-file "$ledger" >"$evidence/teardown.log" 2>&1
+run_bounded 45 teardown-apply "$evidence/teardown.log" "$routerd" apply --once --config "$work/empty.yaml" --state-file "$state" --ledger-file "$ledger"
 test ! -e /usr/local/etc/routerd/swanctl/routerd.conf
 test ! -e /usr/local/etc/routerd/swanctl/.routerd-pending-load
 grep -Fx '# fixture-owned operator sentinel: routerd must not mutate this file' "$sentinel"
