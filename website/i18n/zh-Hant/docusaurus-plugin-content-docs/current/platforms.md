@@ -123,7 +123,7 @@ FreeBSD 也支援 `ClientPolicy`。IPv4 使用基於 `DHCPv4Reservation` 的 pf 
 - FreeBSD native doctor、KernelModule `kldload` reconcile 與 BGP 專用 `routerd_bgp` rc.d 產生
 - FreeBSD 沒有 Linux `IP_FREEBIND` 等價物，因此明確拒絕 non-local DNS resolver bind
 
-direct BPF ARP/RA observer 與 libndpi/DPI 的實際傳遞仍未完成。已有 native build 與 capability status，但尚無已接受的 FreeBSD packet delivery 端到端觀測。
+ARP/RA observer 常駐程式透過 FreeBSD base system 的 tcpdump/libpcap BPF 路徑擷取資料；proactive ARP write 保留獨立的 direct-BPF descriptor。provisioned native CI 在 disposable VNET 中執行兩個常駐程式，並要求產生預期的 ARP observation event 與 rogue-RA event。帶 tag 的 native DPI backend 支援 FreeBSD ports `ndpi` 5.0 ABI，並由相同 native gate 的 TLS/SNI classification self-test 驗證。
 
 FreeBSD 不使用 Linux 專用的 nftables / conntrack / iproute2。
 `Package` 的範例宣告 FreeBSD 側的替代品。
@@ -133,7 +133,8 @@ LAN 的 DHCP/RA 使用 dnsmasq，WireGuard、Tailscale、strongSwan 使用 ports
 | 分類 | 套件 |
 | --- | --- |
 | Runtime | `dnsmasq`, `wireguard-tools`, `tailscale`, `strongswan`, `mpd5` |
-| Diagnostics | `bind-tools`, `tcpdump` |
+| 選用 native DPI | `ndpi` |
+| Diagnostics | `bind-tools` |
 | Base system | `ifconfig`, `sysctl`, `service`, `sysrc`, `netstat`, `sockstat`, `tcpdump`, `ping`, `traceroute` |
 
 `routerd render freebsd --out-dir <dir>` 輸出以下內容。
@@ -158,7 +159,7 @@ Ubuntu 和 FreeBSD 相互比較時的已知差異。
 
 | 領域 | 目前差異 | 待辦事項 |
 | --- | --- | --- |
-| CI / runtime coverage | PR CI 會編譯 FreeBSD amd64/arm64 binary 與 test package；release automation 建立 FreeBSD archive。VM115 的 native evidence 涵蓋 validate/render、pf/dnsmasq 語法、rc.d status、route lookup、BFD 與已支援的 PF dataplane slice。 | 保留的 VM evidence 是 lab acceptance，尚非自動 CI VM job。宣稱自動 runtime coverage 前需增加 provisioned FreeBSD VM smoke workflow。 |
+| CI / runtime coverage | PR CI 會編譯 FreeBSD amd64/arm64 binary，並在 provisioned FreeBSD 14.3 amd64 VM 中執行完整且不省略的 `go test ./...`、live routerd smoke、ARP/RA observer 與 native nDPI。保留的 VM115 evidence 另涵蓋 route lookup、BFD 與已支援的 PF dataplane slice。 | PR 的 native runtime certification 目前涵蓋 amd64；arm64 在 PR CI 中仍為 compile-only。 |
 | FreeBSD 的功能限制 | `ClientPolicy` 對 IPv4 使用 DHCPv4 reservation，對 IPv6 使用明確 `classification[].ipv6Addresses` 的 pf 規則；不支援 MAC/L2 比對，也不從 IPv4 reservation 推斷 IPv6。 | 保持明確 address 與 MAC/L2 限制；未列出或 privacy IPv6 位址需獨立網路隔離（[#849](https://github.com/imksoo/routerd/issues/849)）。 |
 | 套件 bootstrap | Ubuntu 和 FreeBSD 可命令式安裝套件。 | 對 `apt`、`pkg` 的 schema、validation、安裝程式套件清單、範例、產生文件保持同步。 |
 
