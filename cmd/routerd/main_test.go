@@ -394,6 +394,66 @@ func TestIPsecRuntimePathsArePlatformSpecific(t *testing.T) {
 	}
 }
 
+func TestEnsureFreeBSDStrongSwanLoadsIPsecBeforeService(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create fake bin dir: %v", err)
+	}
+	logPath := filepath.Join(dir, "calls.log")
+	for _, command := range []string{"kldload", "sysrc", "service"} {
+		body := fmt.Sprintf("#!/bin/sh\necho %s \"$@\" >> %q\n", command, logPath)
+		switch command {
+		case "service":
+			body += "[ \"$2\" = status ] && exit 0\nexit 1\n"
+		default:
+			body += "exit 0\n"
+		}
+		writeExecutable(t, filepath.Join(binDir, command), body)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	oldDefaults := platformDefaults
+	platformDefaults.OS = platform.OSFreeBSD
+	t.Cleanup(func() { platformDefaults = oldDefaults })
+
+	if err := ensureFreeBSDStrongSwan(context.Background()); err != nil {
+		t.Fatalf("ensure FreeBSD strongSwan: %v", err)
+	}
+	got, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read call log: %v", err)
+	}
+	calls := string(got)
+	kernel := strings.Index(calls, "kldload -n ipsec")
+	sysrc := strings.Index(calls, "sysrc strongswan_enable=YES")
+	if kernel < 0 || sysrc < 0 || kernel > sysrc {
+		t.Fatalf("kernel module must load before service enablement:\n%s", calls)
+	}
+}
+
+func TestEnsureFreeBSDStrongSwanFailsClosedWhenIPsecModuleLoadFails(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create fake bin dir: %v", err)
+	}
+	sysrcPath := filepath.Join(dir, "sysrc-called")
+	writeExecutable(t, filepath.Join(binDir, "kldload"), "#!/bin/sh\necho 'ipsec unavailable' >&2\nexit 23\n")
+	writeExecutable(t, filepath.Join(binDir, "sysrc"), fmt.Sprintf("#!/bin/sh\ntouch %q\n", sysrcPath))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	oldDefaults := platformDefaults
+	platformDefaults.OS = platform.OSFreeBSD
+	t.Cleanup(func() { platformDefaults = oldDefaults })
+
+	err := ensureFreeBSDStrongSwan(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "load FreeBSD IPsec kernel module") || !strings.Contains(err.Error(), "ipsec unavailable") {
+		t.Fatalf("module-load failure = %v", err)
+	}
+	if _, statErr := os.Stat(sysrcPath); !os.IsNotExist(statErr) {
+		t.Fatalf("service enablement ran after module failure: %v", statErr)
+	}
+}
+
 func TestRunApplyChainOnceDryRunDoesNotCreateStateDB(t *testing.T) {
 	dir := t.TempDir()
 	stateDir := filepath.Join(dir, "state")

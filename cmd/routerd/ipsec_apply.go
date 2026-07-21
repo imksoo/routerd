@@ -62,6 +62,11 @@ func ensureFreeBSDStrongSwan(ctx context.Context) error {
 	if platformDefaults.OS != platform.OSFreeBSD {
 		return nil
 	}
+	moduleCtx, cancelModule := context.WithTimeout(ctx, freeBSDStrongSwanStartupTimeout)
+	defer cancelModule()
+	if err := ensureFreeBSDIPsecKernel(moduleCtx); err != nil {
+		return err
+	}
 	serviceCtx, cancel := context.WithTimeout(ctx, freeBSDStrongSwanStartupTimeout)
 	defer cancel()
 	if out, err := exec.CommandContext(serviceCtx, "sysrc", "strongswan_enable=YES").CombinedOutput(); err != nil {
@@ -85,6 +90,14 @@ func ensureFreeBSDStrongSwan(ctx context.Context) error {
 		return fmt.Errorf("start strongswan service: %w: startup=%s cleanup=%v", err, strings.TrimSpace(startupText), stopErr)
 	}
 	_ = os.Remove(startupOutput)
+	return nil
+}
+
+func ensureFreeBSDIPsecKernel(ctx context.Context) error {
+	out, err := exec.CommandContext(ctx, "kldload", "-n", "ipsec").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("load FreeBSD IPsec kernel module: %w: %s", err, strings.TrimSpace(string(out)))
+	}
 	return nil
 }
 

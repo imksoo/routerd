@@ -147,6 +147,7 @@ EOF
 if run_invalid_apply_diagnostic "$evidence/invalid.log" "$routerd" apply --once --config "$work/invalid.yaml" --state-file "$state" --ledger-file "$ledger"; then invalid_rc=0; else invalid_rc=$?; fi
 [ "$invalid_rc" -ne 0 ] && [ "$invalid_rc" -ne 124 ]; grep -Eiq 'swanctl|proposal|load' "$evidence/invalid.log"; if grep -F "$psk" "$evidence/invalid.log" >/dev/null; then exit 1; fi
 run_bounded 45 valid-apply "$evidence/apply.log" "$routerd" apply --once --config "$work/router.yaml" --state-file "$state" --ledger-file "$ledger"
+run_bounded 5 ipsec-module-loaded "$evidence/ipsec-module.log" kldstat -m ipsec
 run_bounded 20 initiate "$evidence/initiate.log" /usr/local/sbin/swanctl --initiate --ike native-tunnel --child net
 wait_established initial "$evidence/sa.initial.log"
 ack_phase initial 19091 19191
