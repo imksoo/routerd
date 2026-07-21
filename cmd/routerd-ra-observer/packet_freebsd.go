@@ -90,6 +90,12 @@ func (s *packetSocket) read(frame []byte) (int, error) {
 		if err != nil {
 			return 0, err
 		}
+		// A BPF read timeout is reported as a successful zero-byte read.
+		// Keep the attached descriptor instead of treating idle periods as a
+		// fatal short record and reopening it between advertisements.
+		if n == 0 {
+			continue
+		}
 		if n < unix.SizeofBpfHdr {
 			return 0, fmt.Errorf("short BPF read: %d bytes", n)
 		}
