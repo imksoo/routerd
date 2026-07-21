@@ -52,6 +52,9 @@ func TestSelftestReportsBackendStatus(t *testing.T) {
 	if resp.Engine != "ndpi-agent" || resp.LibNDPILoaded != backendExpectedLoaded() {
 		t.Fatalf("response = %+v", resp)
 	}
+	if resp.OK != backendExpectedLoaded() {
+		t.Fatalf("status OK = %v, want backend loaded = %v", resp.OK, backendExpectedLoaded())
+	}
 	if resp.Selftest == nil || resp.Selftest.Engine != "ndpi-agent" {
 		t.Fatalf("selftest = %+v", resp.Selftest)
 	}

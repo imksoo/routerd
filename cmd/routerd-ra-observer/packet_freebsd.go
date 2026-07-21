@@ -13,8 +13,9 @@ import (
 )
 
 type packetSocket struct {
-	fd  int
-	buf []byte
+	fd      int
+	buf     []byte
+	pending []byte
 }
 
 func openPacketSocket(ifname string) (*packetSocket, error) {
@@ -38,19 +39,33 @@ func openPacketSocket(ifname string) (*packetSocket, error) {
 }
 
 func (s *packetSocket) read(frame []byte) (int, error) {
-	n, err := unix.Read(s.fd, s.buf)
-	if err != nil {
-		return 0, err
+	for {
+		if len(s.pending) >= unix.SizeofBpfHdr {
+			hdr := (*unix.BpfHdr)(unsafe.Pointer(&s.pending[0]))
+			hdrLen, capLen, dataLen := int(hdr.Hdrlen), int(hdr.Caplen), int(hdr.Datalen)
+			if hdrLen < unix.SizeofBpfHdr || capLen < 0 || dataLen < 0 || capLen > dataLen {
+				return 0, fmt.Errorf("invalid BPF record header")
+			}
+			recordLen := bpfWordAlign(hdrLen + capLen)
+			if recordLen < hdrLen || recordLen > len(s.pending) {
+				return 0, fmt.Errorf("truncated BPF record")
+			}
+			if capLen > len(frame) {
+				return 0, fmt.Errorf("BPF frame exceeds receive buffer: %d bytes", capLen)
+			}
+			n := copy(frame, s.pending[hdrLen:hdrLen+capLen])
+			s.pending = s.pending[recordLen:]
+			return n, nil
+		}
+		n, err := unix.Read(s.fd, s.buf)
+		if err != nil {
+			return 0, err
+		}
+		if n < unix.SizeofBpfHdr {
+			return 0, fmt.Errorf("short BPF read: %d bytes", n)
+		}
+		s.pending = append(s.pending[:0], s.buf[:n]...)
 	}
-	if n < unix.SizeofBpfHdr {
-		return 0, fmt.Errorf("short BPF record: %d bytes", n)
-	}
-	hdr := (*unix.BpfHdr)(unsafe.Pointer(&s.buf[0]))
-	start, length := int(hdr.Hdrlen), int(hdr.Caplen)
-	if start <= 0 || length < 0 || start+length > n {
-		return 0, fmt.Errorf("invalid BPF record header")
-	}
-	return copy(frame, s.buf[start:start+length]), nil
 }
 
 func (s *packetSocket) close() error { return unix.Close(s.fd) }
@@ -81,4 +96,11 @@ func attachRABPF(fd int, ifname string) error {
 		return os.NewSyscallError("BIOCSETIF", errno)
 	}
 	return nil
+}
+
+// BPF_WORDALIGN is ABI-sized, rather than a fixed four-byte alignment.  In
+// particular, FreeBSD/amd64 BPF records are eight-byte aligned.
+func bpfWordAlign(n int) int {
+	alignment := int(unsafe.Sizeof(uintptr(0)))
+	return (n + alignment - 1) &^ (alignment - 1)
 }
