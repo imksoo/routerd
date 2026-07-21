@@ -4,7 +4,6 @@ set -euo pipefail
 action=${1:?usage: $0 start|stop}
 base=${RUNNER_TEMP:?RUNNER_TEMP is required}
 dir="$base/routerd-ipsec-peer"
-phase_dir=${GITHUB_WORKSPACE:?GITHUB_WORKSPACE is required}/.ci-ipsec-phase
 case "$dir" in "$base"/routerd-ipsec-peer) ;; *) exit 2;; esac
 log="$dir/peer.log"
 cleanup() {
@@ -19,11 +18,10 @@ case "$action" in
 start)
   trap cleanup ERR INT TERM
   sudo apt-get update -qq
-  sudo apt-get install -y -qq strongswan-swanctl strongswan-charon
+  sudo apt-get install -y -qq strongswan-swanctl strongswan-charon netcat-openbsd
   sudo systemctl stop strongswan-starter strongswan 2>/dev/null || true
   sudo rm -rf -- "$dir"; sudo install -d -m 0700 "$dir"
   sudo ip addr add 10.250.2.1/32 dev lo
-  rm -rf -- "$phase_dir"; mkdir -p "$phase_dir"
   sudo tee "$dir/strongswan.conf" >/dev/null <<EOF
 charon {
   load_modular = yes
@@ -65,27 +63,26 @@ EOF
   for _ in $(seq 1 30); do sudo test -S "$dir/charon.vici" && break; sleep 1; done
   sudo test -S "$dir/charon.vici"
   sudo /usr/sbin/swanctl --uri "unix://$dir/charon.vici" --load-all --file "$dir/swanctl.conf"
-  sudo env PEER_DIR="$dir" PHASE_DIR="$phase_dir" bash -c '
+  sudo env PEER_DIR="$dir" bash -c '
     set -eu
-    last=""
-    for _ in $(seq 1 180); do
-      phase=$(cat "$PHASE_DIR/phase" 2>/dev/null || true)
-      if [ -n "$phase" ] && [ "$phase" != "$last" ]; then
+    for phase_port in initial:19091 rekey:19092 restart:19093; do
+      phase=${phase_port%:*}; port=${phase_port#*:}
+      timeout 120 nc -l -p "$port" >/dev/null
+      for _ in $(seq 1 30); do
         if /usr/sbin/swanctl --uri "unix://$PEER_DIR/charon.vici" --list-sas | grep -q ESTABLISHED; then
           echo "phase=$phase" >>"$PEER_DIR/reverse-verifier.log"
           ping -n -I 10.250.2.1 -c 2 10.250.1.1 >>"$PEER_DIR/reverse-verifier.log" 2>&1
           ip -s xfrm state >>"$PEER_DIR/reverse-verifier.log" 2>&1 || true
           ip -s xfrm policy >>"$PEER_DIR/reverse-verifier.log" 2>&1 || true
-          last=$phase
+          break
         fi
-      fi
-      sleep 1
+        sleep 1
+      done
     done
   ' & echo $! | sudo tee "$dir/verifier.pid" >/dev/null
   trap - ERR INT TERM
   ;;
 stop)
-  sudo /usr/sbin/swanctl --uri "unix://$dir/charon.vici" --list-conns | grep -F foreign-sentinel
   for phase in initial rekey restart; do sudo grep -F "phase=$phase" "$dir/reverse-verifier.log"; done
   [ "$(sudo grep -c '2 received' "$dir/reverse-verifier.log")" -eq 3 ]
   sudo grep -Eq 'src |dir (in|out)' "$dir/reverse-verifier.log"
