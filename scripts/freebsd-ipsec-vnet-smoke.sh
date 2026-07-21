@@ -35,6 +35,7 @@ own_epair_module=0
 host_service_touched=0
 strongswan_was_running=0
 strongswan_enable_rc=0
+peer_pid_relocated=0
 
 host_addr=198.18.10.1
 peer_addr=198.18.10.2
@@ -60,9 +61,16 @@ cleanup() {
   rm -f /usr/local/etc/swanctl/conf.d/routerd-*.conf \
     /usr/local/etc/swanctl/conf.d/routerd.conf \
     /usr/local/etc/swanctl/conf.d/.routerd-pending-load >>"$evidence/cleanup.log" 2>&1 || true
+  peer_safe_to_stop=1
+  if [ "$host_service_touched" -eq 1 ] && service strongswan status >/dev/null 2>&1; then
+    peer_safe_to_stop=0
+    echo 'refusing peer teardown while host charon remains live' >>"$evidence/cleanup.log"
+  fi
   if jls -j "$jail_name" >/dev/null 2>&1; then
-    jexec "$jail_name" pkill -TERM charon >>"$evidence/cleanup.log" 2>&1 || true
-    jail -r "$jail_name" >>"$evidence/cleanup.log" 2>&1 || true
+    if [ "$peer_safe_to_stop" -eq 1 ]; then
+      jexec "$jail_name" pkill -TERM charon >>"$evidence/cleanup.log" 2>&1 || true
+      jail -r "$jail_name" >>"$evidence/cleanup.log" 2>&1 || true
+    fi
   fi
   if [ -n "$epair_host" ] && ifconfig "$epair_host" >/dev/null 2>&1; then
     ifconfig "$epair_host" destroy >>"$evidence/cleanup.log" 2>&1 || true
@@ -71,7 +79,7 @@ cleanup() {
     kldunload if_epair >>"$evidence/cleanup.log" 2>&1 || true
   fi
   ifconfig lo0 inet "$host_ts" -alias >/dev/null 2>&1 || true
-  printf 'cleanup=complete rc=%s\n' "$rc" >>"$evidence/cleanup.log"
+  printf 'cleanup=complete rc=%s peer_pid_relocated=%s\n' "$rc" "$peer_pid_relocated" >>"$evidence/cleanup.log"
 	if [ "$rc" -ne 0 ]; then
 		echo "freebsd-ipsec-vnet failed; redacted diagnostics follow" >&2
 		for log in \
@@ -120,6 +128,10 @@ strongswan_enable_rc=$?
 set -e
 printf 'strongswan_running_before=%s\nstrongswan_enable_rc_before=%s\n' \
   "$strongswan_was_running" "$strongswan_enable_rc" >"$evidence/strongswan-before.log"
+if [ "$strongswan_was_running" -eq 1 ]; then
+  echo 'native IPsec VNET lab requires no pre-existing host charon PID owner' >&2
+  exit 1
+fi
 epair_host=$(ifconfig epair create)
 epair_peer="${epair_host%a}b"
 ifconfig "$epair_host" inet "$host_addr/30" up
@@ -180,6 +192,14 @@ EOF
 jexec "$jail_name" daemon -p "$peer/charon.pid" -o "$peer/peer-charon.log" \
   env STRONGSWAN_CONF="$peer/strongswan.conf" /usr/local/libexec/ipsec/charon --use-syslog
 wait_for 'peer VICI socket' test -S "$peer/charon.vici"
+# charon uses the compile-time /var/run/charon.pid even inside a path=/ VNET
+# jail. Relocate that peer-owned file before the host rc.d service starts its
+# own charon, otherwise the host daemon refuses the second live PID.
+[ -f /var/run/charon.pid ] || { echo 'peer charon did not create /var/run/charon.pid' >&2; exit 1; }
+mv /var/run/charon.pid "$peer/peer-charon.pid"
+peer_pid_relocated=1
+printf 'peer_pid_relocated=%s\n' "$(cat "$peer/peer-charon.pid")" >"$evidence/peer-pid.log"
+[ ! -e /var/run/charon.pid ] || { echo 'peer charon PID relocation did not clear host path' >&2; exit 1; }
 jexec "$jail_name" /usr/local/sbin/swanctl --uri "unix://$peer/charon.vici" --load-all --file "$peer/swanctl.conf" \
   >"$evidence/peer-load.log" 2>&1
 
