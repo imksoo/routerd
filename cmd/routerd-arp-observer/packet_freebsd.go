@@ -13,10 +13,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// FreeBSD's enum bpf_direction values are IN=0, INOUT=1, OUT=2. x/sys
-// exposes BIOCSDIRECTION but not the enum values.
-const bpfDirectionInOut = 1
-
 // packetSocket uses a native BPF device.  BPF returns one or more records per
 // read; this observer consumes the first complete Ethernet frame and the
 // daemon's normal ARP parser filters non-ARP traffic.
@@ -42,14 +38,6 @@ func openPacketSocket(ifname string) (*packetSocket, error) {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("BIOCPROMISC: %w", err)
 	}
-	if err := observerIoctlSetInt(fd, unix.BIOCSDIRECTION, bpfDirectionInOut); err != nil {
-		_ = unix.Close(fd)
-		return nil, fmt.Errorf("BIOCSDIRECTION: %w", err)
-	}
-	if err := installObserverFilter(fd); err != nil {
-		_ = unix.Close(fd)
-		return nil, err
-	}
 	if err := observerIoctlSetInt(fd, unix.BIOCIMMEDIATE, 1); err != nil {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("BIOCIMMEDIATE: %w", err)
@@ -67,20 +55,6 @@ func openPacketSocket(ifname string) (*packetSocket, error) {
 		size = 4096
 	}
 	return &packetSocket{fd: fd, buf: make([]byte, size)}, nil
-}
-
-// Install a real program so descriptor activation does not depend on an empty
-// filter. Protocol and frame validation remain in the observer's ARP parser.
-func installObserverFilter(fd int) error {
-	insns := []unix.BpfInsn{
-		{Code: unix.BPF_RET | unix.BPF_K, K: 0xffff},
-	}
-	program := unix.BpfProgram{Len: uint32(len(insns)), Insns: &insns[0]}
-	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), uintptr(unix.BIOCSETF), uintptr(unsafe.Pointer(&program)))
-	if errno != 0 {
-		return fmt.Errorf("BIOCSETF: %w", errno)
-	}
-	return nil
 }
 
 func (s *packetSocket) read(frame []byte) (int, error) {
