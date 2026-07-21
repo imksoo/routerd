@@ -241,6 +241,7 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 
 type freeBSDConfigApplyOptions struct {
 	ManageServices bool
+	PFEnabled      func() bool
 }
 
 func applyFreeBSDConfigWithOptions(router *api.Router, stateStore routerstate.Store, dhclientPath, mpd5Path, pfPath, rcScriptDir string, opts freeBSDConfigApplyOptions) ([]string, []string, error) {
@@ -314,7 +315,10 @@ func applyFreeBSDConfigWithOptions(router *api.Router, stateStore routerstate.St
 		}
 	}
 	if len(data.PF) > 0 && pfPath != "" {
-		applied, err := applyFreeBSDPFConfigWithOptions(data.PF, pfPath, freeBSDPFApplyOptions{ManageServices: opts.ManageServices})
+		applied, err := applyFreeBSDPFConfigWithOptions(data.PF, pfPath, freeBSDPFApplyOptions{
+			ManageServices: opts.ManageServices,
+			PFEnabled:      opts.PFEnabled,
+		})
 		if err != nil {
 			return changed, warnings, err
 		}
@@ -402,6 +406,7 @@ func applyFreeBSDPackages(router *api.Router) ([]string, error) {
 
 type freeBSDPFApplyOptions struct {
 	ManageServices bool
+	PFEnabled      func() bool
 }
 
 func applyFreeBSDPFConfigWithOptions(data []byte, pfPath string, opts freeBSDPFApplyOptions) ([]string, error) {
@@ -430,7 +435,11 @@ func applyFreeBSDPFConfigWithOptions(data []byte, pfPath string, opts freeBSDPFA
 		}
 		changed = append(changed, pfPath)
 	}
-	if !freeBSDPFEnabled() {
+	pfEnabled := opts.PFEnabled
+	if pfEnabled == nil {
+		pfEnabled = freeBSDPFEnabled
+	}
+	if !pfEnabled() {
 		if err := runLogged("pfctl", "-e"); err != nil {
 			return changed, err
 		}

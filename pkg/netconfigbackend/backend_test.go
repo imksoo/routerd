@@ -60,7 +60,7 @@ func TestBackendDeclarationsMatchAcrossOSBackends(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, backend := range []Backend{Netplan{}, Networkd{}, RCConf{}} {
+	for _, backend := range []Backend{Netplan{Path: "/etc/netplan/90-routerd.yaml"}, Networkd{}, RCConf{}} {
 		got, err := backend.Declarations(router)
 		if err != nil {
 			t.Fatalf("%s declarations: %v", backend.Name(), err)
@@ -119,7 +119,7 @@ func TestNetworkConfigSemanticEquivalenceAcrossBackends(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, backend := range []Backend{Netplan{}, Networkd{}, RCConf{}} {
+	for _, backend := range []Backend{Netplan{Path: "/etc/netplan/90-routerd.yaml"}, Networkd{}, RCConf{}} {
 		t.Run(backend.Name(), func(t *testing.T) {
 			got, err := backend.Declarations(router)
 			if err != nil {

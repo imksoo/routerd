@@ -824,6 +824,7 @@ func TestDynamicRouteSAMViewBGPStaleCaptureDoesNotCreateLocalRoute(t *testing.T)
 }
 
 func TestDynamicRouteSAMClaimRemovalTriggersRouteAndSAMCleanup(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	startup := startupHybridContextRouter()
 	now := time.Now().UTC()
 	activeStore := &dynamicRouteSAMStore{
@@ -903,6 +904,7 @@ func TestDynamicRouteSAMClaimRemovalTriggersRouteAndSAMCleanup(t *testing.T) {
 }
 
 func TestDynamicRouteSAMViewGatesRouteAndSAMCleanupOnVRRPBackup(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	startup := startupHybridContextRouter()
 	startup.Spec.Resources = append(startup.Spec.Resources,
 		api.Resource{

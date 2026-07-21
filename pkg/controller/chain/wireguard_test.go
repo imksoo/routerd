@@ -213,6 +213,7 @@ func mustWireGuardPeer(t *testing.T, router *api.Router, name string) api.WireGu
 }
 
 func TestWireGuardControllerAppliesInterfaceAndPeers(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := mustWireGuardRouter(t, `
 apiVersion: routerd.net/v1alpha1
 kind: Router
@@ -294,6 +295,7 @@ spec:
 }
 
 func TestWireGuardControllerOpensHostFirewallForListenPort(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := mustWireGuardRouter(t, `
 apiVersion: routerd.net/v1alpha1
 kind: Router
@@ -351,6 +353,7 @@ spec:
 }
 
 func TestWireGuardControllerRemovesStaleHostFirewallListenPort(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := mustWireGuardRouter(t, `
 apiVersion: routerd.net/v1alpha1
 kind: Router
@@ -398,6 +401,7 @@ spec:
 }
 
 func TestWireGuardControllerUsesInterfaceIfName(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := mustWireGuardRouter(t, `
 apiVersion: routerd.net/v1alpha1
 kind: Router

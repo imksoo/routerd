@@ -13,6 +13,7 @@ import (
 )
 
 func TestPlanUsesNetplanForManagedInterfaceWhenAvailable(t *testing.T) {
+	requireLinuxArtifactFixture(t)
 	router, err := config.Load("../../examples/router-lab.yaml")
 	if err != nil {
 		t.Fatalf("load example: %v", err)
@@ -59,6 +60,7 @@ func TestPlanUsesNetplanForManagedInterfaceWhenAvailable(t *testing.T) {
 }
 
 func TestPlanBlocksManagedInterfaceWhenCloudInitOwnsNetworking(t *testing.T) {
+	requireLinuxArtifactFixture(t)
 	router, err := config.Load("../../examples/router-lab.yaml")
 	if err != nil {
 		t.Fatalf("load example: %v", err)
@@ -90,6 +92,7 @@ func TestPlanBlocksManagedInterfaceWhenCloudInitOwnsNetworking(t *testing.T) {
 }
 
 func TestPlanKeepsExternalWANObserveOnly(t *testing.T) {
+	requireLinuxArtifactFixture(t)
 	router, err := config.Load("../../examples/router-lab.yaml")
 	if err != nil {
 		t.Fatalf("load example: %v", err)
@@ -122,6 +125,7 @@ func TestPlanKeepsExternalWANObserveOnly(t *testing.T) {
 }
 
 func TestPlanEgressRoutePolicyDefaultRoute(t *testing.T) {
+	requireLinuxArtifactFixture(t)
 	router, err := config.Load("../../examples/router-lab.yaml")
 	if err != nil {
 		t.Fatalf("load example: %v", err)
@@ -161,6 +165,7 @@ func TestPlanEgressRoutePolicyDefaultRoute(t *testing.T) {
 }
 
 func TestPlanNAT44Rule(t *testing.T) {
+	requireLinuxArtifactFixture(t)
 	router, err := config.Load("../../examples/router-lab.yaml")
 	if err != nil {
 		t.Fatalf("load example: %v", err)
@@ -202,6 +207,7 @@ func TestPlanNAT44Rule(t *testing.T) {
 }
 
 func TestPlanStaticDefaultRoutePolicy(t *testing.T) {
+	requireLinuxArtifactFixture(t)
 	router := staticDefaultRouteRouter()
 	engine := &Engine{
 		Command: fakeCommand(map[string]string{
@@ -226,6 +232,7 @@ func TestPlanStaticDefaultRoutePolicy(t *testing.T) {
 }
 
 func TestPlanAllowsDHCPServerPoolWhenNetplanCanManageInterface(t *testing.T) {
+	requireLinuxArtifactFixture(t)
 	router, err := config.Load("../../examples/router-lab.yaml")
 	if err != nil {
 		t.Fatalf("load example: %v", err)
@@ -405,6 +412,7 @@ func TestPlanAllowsDocumentedOverlapWithWarning(t *testing.T) {
 }
 
 func TestAdoptionCandidates(t *testing.T) {
+	requireLinuxArtifactFixture(t)
 	router := staticDefaultRouteRouter()
 	engine := &Engine{
 		Command: fakeCommand(map[string]string{

@@ -144,6 +144,7 @@ func TestIPv4RouteControllerDoesNotRefreshInstalledAtWhenUnchanged(t *testing.T)
 }
 
 func TestIPv4RouteControllerSkipsUnchangedKernelRoute(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
@@ -204,6 +205,7 @@ func TestIPv4RouteControllerSkipsUnchangedKernelRoute(t *testing.T) {
 }
 
 func TestIPv4RouteControllerInstallsPreferredSource(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
@@ -269,6 +271,7 @@ func TestIPv4RouteControllerInstallsPreferredSource(t *testing.T) {
 }
 
 func TestIPv4RouteControllerSkipsNonLocalPreferredSource(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
@@ -354,6 +357,7 @@ func TestIPv4RouteControllerWaitsForDeviceBeforeApply(t *testing.T) {
 }
 
 func TestIPv4RouteControllerDeletesRemovedRoute(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	store := &routeCleanupStore{statuses: []routerstate.ObjectStatus{
 		{
 			APIVersion: api.NetAPIVersion,
@@ -395,6 +399,7 @@ func TestIPv4RouteControllerDeletesRemovedRoute(t *testing.T) {
 }
 
 func TestIPv4RouteControllerDoesNotDeleteRemovedRouteWhenKernelRouteIsBGP(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	store := &routeCleanupStore{statuses: []routerstate.ObjectStatus{
 		{
 			APIVersion: api.NetAPIVersion,
@@ -436,6 +441,7 @@ func TestIPv4RouteControllerDoesNotDeleteRemovedRouteWhenKernelRouteIsBGP(t *tes
 }
 
 func TestIPv4RouteControllerDeletesRemovedLinkRouteWhenBGPRouteSharesDestination(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	store := &routeCleanupStore{statuses: []routerstate.ObjectStatus{
 		{
 			APIVersion: api.NetAPIVersion,

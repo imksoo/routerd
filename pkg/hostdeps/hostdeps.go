@@ -273,10 +273,17 @@ func SysctlResources(router *api.Router) []api.Resource {
 }
 
 func DerivedSysctlResources(router *api.Router) []api.Resource {
+	return DerivedSysctlResourcesForOS(router, platform.CurrentOS())
+}
+
+// DerivedSysctlResourcesForOS derives sysctls for an explicit target. This is
+// used by render/test callers that describe a target OS different from the OS
+// running the process.
+func DerivedSysctlResourcesForOS(router *api.Router, osName platform.OS) []api.Resource {
 	if router == nil {
 		return nil
 	}
-	if platform.CurrentOS() != platform.OSLinux {
+	if osName != platform.OSLinux {
 		return nil
 	}
 	explicit := explicitSysctlKeys(router)

@@ -16,6 +16,7 @@ import (
 )
 
 func TestNTPClientControllerUsesDHCPv6SNTPServers(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	store := mapStore{
 		api.NetAPIVersion + "/DHCPv6Information/wan-info": {
 			"sntpServers": []any{"2001:db8::123", "2001:db8::124"},
@@ -62,6 +63,7 @@ func TestNTPClientControllerUsesDHCPv6SNTPServers(t *testing.T) {
 }
 
 func TestNTPClientControllerFallsBackWhenDynamicSourceMissing(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	store := mapStore{}
 	configPath := filepath.Join(t.TempDir(), "routerd.conf")
 	controller := NTPClientController{

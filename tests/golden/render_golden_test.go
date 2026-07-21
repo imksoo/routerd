@@ -43,7 +43,10 @@ func TestRenderGoldenExamples(t *testing.T) {
 			if err != nil {
 				t.Fatalf("load %s: %v", example, err)
 			}
-			if err := config.Validate(router); err != nil {
+			// Golden inputs are Linux-valid source fixtures.  Each target renderer
+			// below independently records its own platform result, including the
+			// FreeBSD rejection snapshots where applicable.
+			if err := config.ValidateForOS(router, platform.OSLinux); err != nil {
 				t.Fatalf("validate %s: %v", example, err)
 			}
 			for _, target := range targets {
@@ -76,7 +79,7 @@ func exampleConfigPath(t *testing.T, path string) string {
 				t.Fatal(writeErr)
 			}
 			router, loadErr := config.Load(tmp)
-			if loadErr != nil || config.Validate(router) != nil {
+			if loadErr != nil || config.ValidateForOS(router, platform.OSLinux) != nil {
 				return path
 			}
 			return tmp

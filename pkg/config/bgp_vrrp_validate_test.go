@@ -705,7 +705,7 @@ func TestValidateVirtualAddressIPv4VRRPRequiresPeers(t *testing.T) {
 			}},
 		}},
 	}
-	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.vrrp.peers is required") {
+	if err := ValidateForOS(router, platform.OSLinux); err == nil || !strings.Contains(err.Error(), "spec.vrrp.peers is required") {
 		t.Fatalf("expected vrrp peers error, got %v", err)
 	}
 }

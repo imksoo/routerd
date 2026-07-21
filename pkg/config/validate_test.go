@@ -20,7 +20,7 @@ func TestValidateRouterLabExample(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load router-lab example: %v", err)
 	}
-	if err := Validate(router); err != nil {
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
 		t.Fatalf("validate router-lab example: %v", err)
 	}
 }
@@ -65,7 +65,7 @@ func TestValidateControlAPIRejectsInvalidAllowCIDRs(t *testing.T) {
 					},
 				}},
 			}
-			err := Validate(router)
+			err := ValidateForOS(router, platform.OSLinux)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Validate error = %v, want %q", err, tc.want)
 			}
@@ -145,7 +145,7 @@ func TestValidateManagementAccessRejectsInvalidSpec(t *testing.T) {
 				Metadata: api.ObjectMeta{Name: "main"},
 				Spec:     tc.spec,
 			})
-			err := Validate(router)
+			err := ValidateForOS(router, platform.OSLinux)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Validate error = %v, want %q", err, tc.want)
 			}
@@ -294,7 +294,9 @@ func TestValidateResourceWhenRejectsMixedFormsForEveryWhenField(t *testing.T) {
 				Metadata: api.ObjectMeta{Name: "test"},
 				Spec:     api.RouterSpec{Resources: []api.Resource{tc.resource}},
 			}
-			err := Validate(router)
+			// These invalid-shape fixtures include Linux policy-routing fields.
+			// Validate the intended fixture OS before asserting the per-field error.
+			err := ValidateForOS(router, platform.OSLinux)
 			if err == nil || !strings.Contains(err.Error(), "exactly one of state, all, or any") {
 				t.Fatalf("Validate(%s) error = %v", tc.specName, err)
 			}
@@ -426,7 +428,7 @@ func TestValidateExampleStatusReferencesAgainstProvides(t *testing.T) {
 			if err != nil {
 				t.Fatalf("load example: %v", err)
 			}
-			if err := Validate(router); err != nil {
+			if err := ValidateForOS(router, platform.OSLinux); err != nil {
 				t.Fatalf("validate example: %v", err)
 			}
 		})
@@ -1117,7 +1119,7 @@ func TestValidateEgressRoutePolicyTargetCandidate(t *testing.T) {
 		}},
 	}
 
-	if err := Validate(router); err != nil {
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
 		t.Fatalf("target default route candidate should be valid: %v", err)
 	}
 }
