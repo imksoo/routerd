@@ -147,7 +147,6 @@ cat "$policyroute_evidence/summary.log"
 cat "$policyroute_evidence/result"
 
 ipsec_evidence="$work/ipsec-linux-peer"
-export ROUTERD_IPSEC_PEER_ADDR=10.0.2.2
 sh scripts/freebsd-ipsec-linux-peer-smoke.sh --routerd "$routerd" --evidence-dir "$ipsec_evidence"
 cat "$ipsec_evidence/summary.log"
 cat "$ipsec_evidence/result"
