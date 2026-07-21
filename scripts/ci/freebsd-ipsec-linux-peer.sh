@@ -241,7 +241,9 @@ EOF
     printf "%s\n" "$$" >"$PEER_DIR/verifier.pid"
     for phase_port in initial:19091:19191 rekey:19092:19192 restart:19093:19193; do
       phase=${phase_port%%:*}; rest=${phase_port#*:}; port=${rest%%:*}; ack=${rest#*:}
-      timeout 120 nc -l -p "$port" >/dev/null
+      listen_timeout=120
+      [ "$phase" != initial ] || listen_timeout=900
+      timeout "$listen_timeout" nc -l -p "$port" >/dev/null
       established=0
       for _ in $(seq 1 30); do
         if /usr/sbin/swanctl --list-sas | grep -q ESTABLISHED; then
