@@ -30,6 +30,13 @@ func openPacketSocket(ifname string) (*packetSocket, error) {
 		_ = unix.Close(fd)
 		return nil, err
 	}
+	// Passive ARP observation must include frames that are not addressed to
+	// the router itself. Attaching a BPF descriptor alone only guarantees the
+	// host's normal receive path; promiscuous mode provides observer parity.
+	if err := unix.IoctlSetInt(fd, unix.BIOCPROMISC, 0); err != nil {
+		_ = unix.Close(fd)
+		return nil, fmt.Errorf("BIOCPROMISC: %w", err)
+	}
 	if err := unix.IoctlSetPointerInt(fd, unix.BIOCIMMEDIATE, 1); err != nil {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("BIOCIMMEDIATE: %w", err)

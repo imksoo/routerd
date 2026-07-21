@@ -27,6 +27,12 @@ func openPacketSocket(ifname string) (*packetSocket, error) {
 		_ = unix.Close(fd)
 		return nil, err
 	}
+	// Rogue RA detection must observe advertisements independently of the
+	// host's multicast memberships and normal receive filtering.
+	if err := unix.IoctlSetInt(fd, unix.BIOCPROMISC, 0); err != nil {
+		_ = unix.Close(fd)
+		return nil, fmt.Errorf("BIOCPROMISC: %w", err)
+	}
 	if err := unix.IoctlSetPointerInt(fd, unix.BIOCIMMEDIATE, 1); err != nil {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("BIOCIMMEDIATE: %w", err)

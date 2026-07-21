@@ -94,14 +94,18 @@ done
 }
 
 # Generate packets through the guest kernel, not through a parser-only helper.
-jexec "$jail_name" ping -n -c 3 192.0.2.1 >/dev/null
+sleep 1
+for _ in $(jot 3); do
+  jexec "$jail_name" arp -d 192.0.2.1 >/dev/null 2>&1 || true
+  jexec "$jail_name" ping -n -c 1 192.0.2.1 >/dev/null
+done
 
 rtadvd_conf="$work/rtadvd.conf"
 {
   printf '%s:\\\n' "$epair_peer"
   printf '\t:addr="2001:db8:846::":prefixlen#64:rltime#0:maxinterval#4:mininterval#3:\n'
 } >"$rtadvd_conf"
-jexec "$jail_name" rtadvd -f -s -c "$rtadvd_conf" \
+jexec "$jail_name" rtadvd -d -f -s -c "$rtadvd_conf" \
   -p "$work/rtadvd.pid" "$epair_peer" >"$work/rtadvd.log" 2>&1 &
 rtadvd_pid=$!
 
