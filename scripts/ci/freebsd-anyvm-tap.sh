@@ -11,15 +11,20 @@ guest_addr=${ROUTERD_IPSEC_GUEST_ADDR:?ROUTERD_IPSEC_GUEST_ADDR is required}
 workspace=${GITHUB_WORKSPACE:?GITHUB_WORKSPACE is required}
 run_id=${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}
 attempt=${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT is required}
+ipv6_candidate=${ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE:-false}
 
 [[ "$tap" =~ ^[A-Za-z0-9_.-]+$ ]] || exit 2
 [[ "$peer_addr" =~ ^198\.18\.[0-9]{1,3}\.[0-9]{1,3}$ && "$guest_addr" =~ ^198\.18\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || exit 2
 work="/tmp/routerd-anyvm-tap-${run_id}-${attempt}"
 case "$work" in /tmp/routerd-anyvm-tap-"$run_id"-"$attempt") ;; *) exit 2;; esac
+artifact_dir="$workspace/.freebsd-native-artifacts/anyvm-${run_id}-${attempt}"
 kvm_mode=
 kvm_changed=0
 cleanup() {
   local rc=$?
+  install -d -m 0700 "$artifact_dir"
+  find "$work" -type f -name '*.serial.log' -exec cp {} "$artifact_dir/" \; 2>/dev/null || true
+  printf 'anyvm-exit=%s\n' "$rc" >"$artifact_dir/anyvm-exit.log"
   if (( kvm_changed )); then
     if ! sudo chmod "$kvm_mode" /dev/kvm; then
       echo "anyvm-tap: failed to restore /dev/kvm mode" >&2
@@ -30,7 +35,7 @@ cleanup() {
   exit "$rc"
 }
 trap cleanup EXIT
-install -d -m 0700 "$work"
+install -d -m 0700 "$work" "$artifact_dir"
 sudo apt-get update -qq
 sudo apt-get install -y -qq qemu-utils qemu-system-x86 ovmf python3 rsync
 
@@ -91,4 +96,4 @@ python3 -m py_compile "$work/anyvm.py"
 python3 "$work/anyvm.py" \
   --os freebsd --release 14.3 --arch x86_64 --mem 6144 --snapshot \
   --sync rsync -v "$workspace:/home/runner/work/routerd/routerd" \
-  -- "cd /home/runner/work/routerd/routerd && pkg install -y go dnsmasq git hs-ShellCheck curl jq ndpi pkgconf strongswan && ROUTERD_IPSEC_TOPOLOGY=tap ROUTERD_IPSEC_UNDERLAY_IF=vtnet1 ROUTERD_IPSEC_PEER_ADDR=$peer_addr ROUTERD_IPSEC_GUEST_ADDR=$guest_addr sh scripts/freebsd-native-vm-smoke.sh"
+  -- "cd /home/runner/work/routerd/routerd && pkg install -y go dnsmasq git hs-ShellCheck curl jq ndpi pkgconf strongswan && ROUTERD_IPSEC_TOPOLOGY=tap ROUTERD_IPSEC_UNDERLAY_IF=vtnet1 ROUTERD_IPSEC_PEER_ADDR=$peer_addr ROUTERD_IPSEC_GUEST_ADDR=$guest_addr ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE=$ipv6_candidate sh scripts/freebsd-native-vm-smoke.sh"

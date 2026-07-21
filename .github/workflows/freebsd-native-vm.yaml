@@ -8,6 +8,12 @@ on:
     branches:
       - freebsd-parity
   workflow_dispatch:
+    inputs:
+      ipv6_route_to_console_candidate:
+        description: Run the isolated historical IPv6 PF route-to candidate with serial markers
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -29,9 +35,12 @@ jobs:
       ROUTERD_IPSEC_NETNS: rd-ipsec-ns
       ROUTERD_IPSEC_VETH_HOST: rd-ipsec-vh
       ROUTERD_IPSEC_VETH_PEER: rd-ipsec-vp
+      ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE: ${{ inputs.ipv6_route_to_console_candidate || 'false' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Start Linux strongSwan peer
         run: scripts/ci/freebsd-ipsec-linux-peer.sh start
@@ -42,3 +51,11 @@ jobs:
       - name: Stop Linux strongSwan peer
         if: always()
         run: scripts/ci/freebsd-ipsec-linux-peer.sh stop
+
+      - name: Upload native console evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: freebsd-native-console-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .freebsd-native-artifacts/
+          if-no-files-found: warn
