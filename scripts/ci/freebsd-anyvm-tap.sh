@@ -80,4 +80,4 @@ python3 -m py_compile "$work/anyvm.py"
 python3 "$work/anyvm.py" \
   --os freebsd --release 14.3 --arch x86_64 --mem 6144 --snapshot \
   --sync rsync -v "$workspace:/home/runner/work/routerd/routerd" \
-  -- sh -lc "cd /home/runner/work/routerd/routerd && pkg install -y go dnsmasq git hs-ShellCheck curl jq ndpi pkgconf strongswan && ROUTERD_IPSEC_TOPOLOGY=tap ROUTERD_IPSEC_UNDERLAY_IF=vtnet1 ROUTERD_IPSEC_PEER_ADDR=$peer_addr ROUTERD_IPSEC_GUEST_ADDR=$guest_addr sh scripts/freebsd-native-vm-smoke.sh"
+  -- "cd /home/runner/work/routerd/routerd && pkg install -y go dnsmasq git hs-ShellCheck curl jq ndpi pkgconf strongswan && ROUTERD_IPSEC_TOPOLOGY=tap ROUTERD_IPSEC_UNDERLAY_IF=vtnet1 ROUTERD_IPSEC_PEER_ADDR=$peer_addr ROUTERD_IPSEC_GUEST_ADDR=$guest_addr sh scripts/freebsd-native-vm-smoke.sh"
