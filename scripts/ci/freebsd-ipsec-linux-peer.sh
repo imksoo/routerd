@@ -4,8 +4,11 @@ set -euo pipefail
 action=${1:?usage: $0 start|stop}
 peer_addr=${ROUTERD_IPSEC_PEER_ADDR:?ROUTERD_IPSEC_PEER_ADDR is required}
 psk=routerd-native-linux-peer-disposable-psk
-dir=/tmp/routerd-ipsec-peer
-case "$dir" in /tmp/routerd-ipsec-peer) ;; *) exit 2;; esac
+run_id=${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}
+attempt=${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT is required}
+[[ "$run_id" =~ ^[1-9][0-9]*$ && "$attempt" =~ ^[1-9][0-9]*$ ]] || exit 2
+dir="/tmp/routerd-ipsec-peer-${run_id}-${attempt}"
+case "$dir" in /tmp/routerd-ipsec-peer-"$run_id"-"$attempt") ;; *) exit 2;; esac
 wait_for_swanctl() {
   for _ in $(seq 1 30); do
     if sudo /usr/sbin/swanctl --stats >/dev/null 2>&1; then return 0; fi
@@ -120,10 +123,15 @@ EOF
 stop)
   trap 'cleanup "$?"' EXIT
   rc=0
-  for phase in initial rekey restart; do sudo grep -F "phase=$phase" "$dir/reverse-verifier.log" || rc=1; done
-  [ "$(sudo grep -c '2 received' "$dir/reverse-verifier.log")" -eq 3 ] || rc=1
-  sudo grep -Eq 'src |dir (in|out)' "$dir/reverse-verifier.log" || rc=1
-  sudo cat "$dir/reverse-verifier.log" || rc=1
+  if ! sudo test -f "$dir/reverse-verifier.log"; then
+    echo 'peer-stop: reverse verifier did not run' >&2
+    rc=1
+  else
+    for phase in initial rekey restart; do sudo grep -F "phase=$phase" "$dir/reverse-verifier.log" || rc=1; done
+    [ "$(sudo grep -c '2 received' "$dir/reverse-verifier.log")" -eq 3 ] || rc=1
+    sudo grep -Eq 'src |dir (in|out)' "$dir/reverse-verifier.log" || rc=1
+    sudo cat "$dir/reverse-verifier.log" || rc=1
+  fi
   emit_failure
   if cleanup "$rc"; then cleanup_rc=0; else cleanup_rc=$?; fi
   trap - EXIT
