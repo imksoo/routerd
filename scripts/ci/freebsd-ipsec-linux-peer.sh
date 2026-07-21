@@ -19,12 +19,27 @@ emit_failure() {
   echo '--- charon-journal' >&2
   sudo journalctl --no-pager -t charon -n 200 2>&1 | sed "s/$psk/[REDACTED]/g" >&2 || true
 }
+stop_owned_charon() {
+  sudo test -s "$dir/charon.pid" || return 0
+  pid=$(sudo cat "$dir/charon.pid")
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  sudo kill -0 "$pid" 2>/dev/null || return 0
+  exe=$(sudo readlink -f "/proc/$pid/exe")
+  [[ "$exe" = /usr/lib/ipsec/charon ]] || return 1
+  sudo kill -TERM "$pid"
+  for _ in $(seq 1 20); do sudo kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+  if sudo kill -0 "$pid" 2>/dev/null; then sudo kill -KILL "$pid"; fi
+  for _ in $(seq 1 5); do sudo kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+  if sudo kill -0 "$pid" 2>/dev/null; then return 1; fi
+  if sudo test -e /var/run/charon.pid; then return 1; fi
+  if sudo test -S /var/run/charon.vici; then return 1; fi
+}
 cleanup() {
   rc=$?
   if [[ ${cleanup_started:-0} -eq 1 ]]; then return "$rc"; fi
   cleanup_started=1
   if [[ "$rc" -ne 0 ]]; then emit_failure; fi
-  if [[ -s "$dir/charon.pid" ]]; then sudo kill -TERM "$(sudo cat "$dir/charon.pid")" 2>/dev/null || true; fi
+  stop_owned_charon || true
   sudo ip addr del 10.250.2.1/32 dev lo 2>/dev/null || true
   if sudo test -s "$dir/verifier.pid"; then sudo kill -TERM "$(sudo cat "$dir/verifier.pid")" 2>/dev/null || true; fi
   sudo rm -rf -- "$dir"
@@ -74,9 +89,14 @@ EOF
   sudo test ! -e /var/run/charon.pid
   sudo test ! -S /var/run/charon.vici
   sudo sh -c "exec /usr/lib/ipsec/charon --use-syslog >>'$log' 2>&1" &
-  echo $! | sudo tee "$dir/charon.pid" >/dev/null
-  for _ in $(seq 1 30); do sudo test -S /var/run/charon.vici && break; sleep 1; done
+  for _ in $(seq 1 30); do sudo test -s /var/run/charon.pid && sudo test -S /var/run/charon.vici && break; sleep 1; done
+  sudo test -s /var/run/charon.pid
   sudo test -S /var/run/charon.vici
+  charon_pid=$(sudo cat /var/run/charon.pid)
+  [[ "$charon_pid" =~ ^[1-9][0-9]*$ ]]
+  sudo kill -0 "$charon_pid"
+  [[ "$(sudo readlink -f "/proc/$charon_pid/exe")" = /usr/lib/ipsec/charon ]]
+  printf '%s\n' "$charon_pid" | sudo tee "$dir/charon.pid" >/dev/null
   sudo /usr/sbin/swanctl --uri "$vici_uri" --load-all --file "$dir/swanctl.conf"
   sudo env PEER_DIR="$dir" VICI_URI="$vici_uri" bash -c '
     set -eu
