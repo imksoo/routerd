@@ -31,6 +31,7 @@ emit_failure() {
 stop_peer_service() {
   sudo systemctl stop strongswan-starter
   if sudo systemctl is-active --quiet strongswan-starter; then return 1; fi
+  sudo rm -f -- /var/run/charon.vici
   for _ in $(seq 1 30); do
     if ! sudo test -S /var/run/charon.vici; then return 0; fi
     sleep 1
@@ -56,6 +57,8 @@ start)
   sudo apt-get update -qq
   sudo apt-get install -y -qq strongswan-swanctl strongswan-charon netcat-openbsd
   sudo systemctl stop strongswan-starter strongswan 2>/dev/null || true
+  if sudo systemctl is-active --quiet strongswan-starter; then exit 1; fi
+  sudo rm -f -- /var/run/charon.vici
   for _ in $(seq 1 30); do
     if ! sudo test -S /var/run/charon.vici; then break; fi
     sleep 1
