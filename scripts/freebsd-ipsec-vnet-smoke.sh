@@ -42,6 +42,7 @@ strongswan_was_running=0
 strongswan_enable_rc=0
 peer_pid_relocated=0
 host_pid_relocated=0
+cleanup_started=0
 
 host_addr=198.18.10.1
 peer_addr=198.18.10.2
@@ -50,8 +51,40 @@ peer_ts=10.250.2.1
 connection=native-tunnel
 psk='routerd-native-vnet-disposable-psk'
 
+emit_failure_diagnostics() {
+  echo 'freebsd-ipsec-vnet failed; redacted diagnostics follow' >&3
+  for log in \
+    "$evidence/strongswan-before.log" \
+    "$evidence/strongswan-status.before" \
+    "$evidence/strongswan-enable.before.stderr" \
+    "$peer/peer-charon.log" \
+    "$evidence/peer-load.log" \
+    "$evidence/apply-invalid.log" \
+    "$evidence/apply-1.log" \
+    "$evidence/initiate-1.log" \
+    "$evidence/rekey.log" \
+    "$evidence/host-stop.log" \
+    "$evidence/apply-restart.log" \
+    "$evidence/initiate-restart.log" \
+    "$evidence/apply-teardown.log"; do
+    if [ -f "$log" ]; then
+      echo "--- ${log#"$evidence"/}" >&3
+      sed "s/$psk/[REDACTED]/g" "$log" >&3
+    fi
+  done
+}
+
 cleanup() {
   rc=$?
+  if [ "$cleanup_started" -eq 1 ]; then
+    return "$rc"
+  fi
+  cleanup_started=1
+  # Print before any recovery operation can block, mutate, or remove evidence.
+  if [ "$rc" -ne 0 ]; then
+    emit_failure_diagnostics
+  fi
+  trap - EXIT HUP INT TERM
   if [ "$host_pid_relocated" -eq 1 ] && [ -f "$work/host-charon.pid" ] && [ ! -e /var/run/charon.pid ]; then
     mv "$work/host-charon.pid" /var/run/charon.pid >>"$evidence/cleanup.log" 2>&1 || true
     host_pid_relocated=0
@@ -93,24 +126,6 @@ cleanup() {
   fi
   ifconfig lo0 inet "$host_ts" -alias >/dev/null 2>&1 || true
   printf 'cleanup=complete rc=%s host_pid_relocated=%s peer_pid_relocated=%s\n' "$rc" "$host_pid_relocated" "$peer_pid_relocated" >>"$evidence/cleanup.log"
-	if [ "$rc" -ne 0 ]; then
-		echo "freebsd-ipsec-vnet failed; redacted diagnostics follow" >&2
-		for log in \
-			"$evidence/strongswan-before.log" \
-			"$evidence/strongswan-status.before" \
-			"$evidence/strongswan-enable.before.stderr" \
-			"$peer/peer-charon.log" \
-			"$evidence/peer-load.log" \
-			"$evidence/apply-invalid.log" \
-			"$evidence/apply-1.log" \
-			"$evidence/initiate-1.log" \
-			"$evidence/cleanup.log"; do
-			if [ -f "$log" ]; then
-				echo "--- ${log#"$evidence"/}" >&2
-				sed "s/$psk/[REDACTED]/g" "$log" >&2
-			fi
-		done
-	fi
   return "$rc"
 }
 trap cleanup EXIT HUP INT TERM
@@ -394,16 +409,7 @@ echo 'ipsec-vnet step=peer-load' >&2
 run_bounded 30 peer-load jexec "$jail_name" /usr/local/sbin/swanctl --uri "unix://$peer/charon.vici" --load-all --file "$peer/swanctl.conf" \
   >"$evidence/peer-load.log" 2>&1
 echo 'ipsec-vnet step=initial-initiate' >&2
-if run_bounded 30 initial-initiate /usr/local/sbin/swanctl --initiate --ike "$connection" --child net >"$evidence/initiate-1.log" 2>&1; then
-  initial_initiate_rc=0
-else
-  initial_initiate_rc=$?
-fi
-if [ "$initial_initiate_rc" -ne 0 ]; then
-  echo "ipsec-vnet initial-initiate rc=$initial_initiate_rc; redacted diagnostic follows" >&3
-  sed "s/$psk/[REDACTED]/g" "$evidence/initiate-1.log" >&3
-  exit "$initial_initiate_rc"
-fi
+run_bounded 30 initial-initiate /usr/local/sbin/swanctl --initiate --ike "$connection" --child net >"$evidence/initiate-1.log" 2>&1
 echo 'ipsec-vnet step=initial-sa-wait' >&2
 wait_for 'initial IKE SA' sh -c "/usr/local/sbin/swanctl --list-sas --ike '$connection' | grep -q ESTABLISHED"
 echo 'ipsec-vnet step=initial-host-to-peer-ping' >&2
