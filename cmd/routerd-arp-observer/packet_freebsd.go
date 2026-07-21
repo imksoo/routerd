@@ -46,7 +46,7 @@ func openPacketSocket(ifname string) (*packetSocket, error) {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("BIOCSDIRECTION: %w", err)
 	}
-	if err := installARPFilter(fd); err != nil {
+	if err := installObserverFilter(fd); err != nil {
 		_ = unix.Close(fd)
 		return nil, err
 	}
@@ -69,17 +69,17 @@ func openPacketSocket(ifname string) (*packetSocket, error) {
 	return &packetSocket{fd: fd, buf: make([]byte, size)}, nil
 }
 
-func installARPFilter(fd int) error {
+// Installing a non-empty program activates capture reliably on FreeBSD.  Keep
+// the kernel program deliberately permissive: the observer's ARP parser is the
+// protocol boundary and also handles link-layer validation in one place.
+func installObserverFilter(fd int) error {
 	insns := []unix.BpfInsn{
-		{Code: unix.BPF_LD | unix.BPF_H | unix.BPF_ABS, K: 12},
-		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jf: 1, K: 0x0806},
 		{Code: unix.BPF_RET | unix.BPF_K, K: 0xffff},
-		{Code: unix.BPF_RET | unix.BPF_K, K: 0},
 	}
 	program := unix.BpfProgram{Len: uint32(len(insns)), Insns: &insns[0]}
 	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), uintptr(unix.BIOCSETF), uintptr(unsafe.Pointer(&program)))
 	if errno != 0 {
-		return fmt.Errorf("BIOCSETF ARP: %w", errno)
+		return fmt.Errorf("BIOCSETF: %w", errno)
 	}
 	return nil
 }
