@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/ipsec"
@@ -51,34 +50,9 @@ func ensureFreeBSDStrongSwan(ctx context.Context) error {
 		return nil
 	}
 	if out, err := exec.CommandContext(ctx, "service", "strongswan", "onestart").CombinedOutput(); err != nil {
-		// FreeBSD's vici rc.d script starts charon and then invokes swanctl
-		// against the package-default swanctl.conf.  routerd intentionally
-		// supplies its own aggregate with --file, so that post-start default
-		// load may fail even though charon is usable.  Accept that rc.d result
-		// only after VICI itself becomes reachable; the caller's LoadAll then
-		// performs the authoritative routerd-owned synchronization.
-		if probeErr := waitForFreeBSDStrongSwan(ctx); probeErr != nil {
-			return fmt.Errorf("start strongswan service: %w: %s; VICI probe: %v", err, strings.TrimSpace(string(out)), probeErr)
-		}
+		return fmt.Errorf("start strongswan service: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
-}
-
-func waitForFreeBSDStrongSwan(ctx context.Context) error {
-	var lastErr error
-	for attempt := 0; attempt < 20; attempt++ {
-		if err := exec.CommandContext(ctx, ipsecSwanctlPath(), "--stats").Run(); err == nil {
-			return nil
-		} else {
-			lastErr = err
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(250 * time.Millisecond):
-		}
-	}
-	return lastErr
 }
 
 func applyIPsecConnectionsWithOptions(ctx context.Context, router *api.Router, opts ipsecRuntimeApplyOptions) ([]string, error) {
