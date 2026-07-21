@@ -114,6 +114,160 @@ func TestApplyFilesReportsCreatedAndChanged(t *testing.T) {
 	}
 }
 
+func TestApplyIPsecConnectionsSynchronizesWholeOwnedDirectory(t *testing.T) {
+	dir := t.TempDir()
+	stale := filepath.Join(dir, "routerd-stale.conf")
+	if err := os.WriteFile(stale, []byte("stale\n"), 0600); err != nil {
+		t.Fatalf("write stale configuration: %v", err)
+	}
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "ipsec-test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"},
+			Metadata: api.ObjectMeta{Name: "site-a"},
+			Spec: api.IPsecConnectionSpec{
+				LocalAddress: "198.51.100.10", RemoteAddress: "203.0.113.20", PreSharedKey: "secret",
+				LeftSubnet: "10.0.0.0/24", RightSubnet: "10.10.0.0/24",
+			},
+		}}},
+	}
+	loads := 0
+	changed, err := applyIPsecConnectionsWithOptions(context.Background(), router, ipsecRuntimeApplyOptions{
+		ConfigDir: dir,
+		Load: func(context.Context) error {
+			loads++
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("apply IPsec connections: %v", err)
+	}
+	if loads != 1 {
+		t.Fatalf("load count = %d, want 1", loads)
+	}
+	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale configuration stat = %v, want not exist", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "routerd-site-a.conf"))
+	if err != nil || !strings.Contains(string(data), "secrets {") {
+		t.Fatalf("managed configuration = %q, err=%v", data, err)
+	}
+	if len(changed) != 2 {
+		t.Fatalf("changed = %v, want managed write and stale removal", changed)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ipsecPendingLoadMarker)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("pending marker stat = %v, want removed after successful load", err)
+	}
+
+	changed, err = applyIPsecConnectionsWithOptions(context.Background(), router, ipsecRuntimeApplyOptions{
+		ConfigDir: dir,
+		Load: func(context.Context) error {
+			loads++
+			return nil
+		},
+	})
+	if err != nil || len(changed) != 0 || loads != 2 {
+		t.Fatalf("unchanged reload changed=%v loads=%d err=%v", changed, loads, err)
+	}
+
+	changed, err = applyIPsecConnectionsWithOptions(context.Background(), &api.Router{}, ipsecRuntimeApplyOptions{
+		ConfigDir: dir,
+		Load: func(context.Context) error {
+			loads++
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("remove managed IPsec connection: %v", err)
+	}
+	if loads != 3 || len(changed) != 1 || !strings.HasPrefix(changed[0], "removed:") {
+		t.Fatalf("removal changed=%v loads=%d", changed, loads)
+	}
+}
+
+func TestApplyIPsecConnectionsRetriesPendingLoad(t *testing.T) {
+	dir := t.TempDir()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"},
+		Metadata: api.ObjectMeta{Name: "site-a"},
+		Spec: api.IPsecConnectionSpec{
+			LocalAddress: "198.51.100.10", RemoteAddress: "203.0.113.20", PreSharedKey: "secret",
+			LeftSubnet: "10.0.0.0/24", RightSubnet: "10.10.0.0/16",
+		},
+	}}}}
+	loadErr := errors.New("charon unavailable")
+	_, err := applyIPsecConnectionsWithOptions(context.Background(), router, ipsecRuntimeApplyOptions{
+		ConfigDir: dir,
+		Load:      func(context.Context) error { return loadErr },
+	})
+	if !errors.Is(err, loadErr) {
+		t.Fatalf("first load error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ipsecPendingLoadMarker)); err != nil {
+		t.Fatalf("pending marker after failed load: %v", err)
+	}
+	loads := 0
+	changed, err := applyIPsecConnectionsWithOptions(context.Background(), router, ipsecRuntimeApplyOptions{
+		ConfigDir: dir,
+		Load: func(context.Context) error {
+			loads++
+			return nil
+		},
+	})
+	if err != nil || loads != 1 || len(changed) != 0 {
+		t.Fatalf("retry changed=%v loads=%d err=%v", changed, loads, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ipsecPendingLoadMarker)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("pending marker after retry = %v, want removed", err)
+	}
+}
+
+func TestApplyIPsecConnectionsPassesCallerContextToLoad(t *testing.T) {
+	type contextKey string
+	ctx := context.WithValue(context.Background(), contextKey("request"), "apply-ctx")
+	dir := t.TempDir()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"},
+		Metadata: api.ObjectMeta{Name: "site-a"},
+		Spec: api.IPsecConnectionSpec{
+			LocalAddress: "198.51.100.10", RemoteAddress: "203.0.113.20", PreSharedKey: "secret",
+			LeftSubnet: "10.0.0.0/24", RightSubnet: "10.10.0.0/16",
+		},
+	}}}}
+	_, err := applyIPsecConnectionsWithOptions(ctx, router, ipsecRuntimeApplyOptions{
+		ConfigDir: dir,
+		Load: func(got context.Context) error {
+			if got.Value(contextKey("request")) != "apply-ctx" {
+				t.Fatalf("load context value = %v", got.Value(contextKey("request")))
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("apply IPsec connections: %v", err)
+	}
+}
+
+func TestIPsecRuntimePathsArePlatformSpecific(t *testing.T) {
+	oldDefaults := platformDefaults
+	t.Cleanup(func() { platformDefaults = oldDefaults })
+	platformDefaults.OS = platform.OSLinux
+	if got := ipsecConfigDir(); got != "/etc/swanctl/conf.d" {
+		t.Fatalf("Linux config dir = %q", got)
+	}
+	if got := ipsecSwanctlPath(); got != "swanctl" {
+		t.Fatalf("Linux swanctl path = %q", got)
+	}
+	platformDefaults.OS = platform.OSFreeBSD
+	if got := ipsecConfigDir(); got != "/usr/local/etc/swanctl/conf.d" {
+		t.Fatalf("FreeBSD config dir = %q", got)
+	}
+	if got := ipsecSwanctlPath(); got != "/usr/local/sbin/swanctl" {
+		t.Fatalf("FreeBSD swanctl path = %q", got)
+	}
+}
+
 func TestRunApplyChainOnceDryRunDoesNotCreateStateDB(t *testing.T) {
 	dir := t.TempDir()
 	stateDir := filepath.Join(dir, "state")

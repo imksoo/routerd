@@ -21,6 +21,10 @@ type CommandRunner func(ctx context.Context, name string, args ...string) ([]byt
 type Controller struct {
 	Command CommandRunner
 	DryRun  bool
+	// Binary optionally overrides the swanctl executable. FreeBSD packages
+	// install it under /usr/local/sbin while Linux normally resolves swanctl
+	// from PATH.
+	Binary string
 }
 
 func RenderSwanctl(name string, spec api.IPsecConnectionSpec) ([]byte, error) {
@@ -61,14 +65,19 @@ func RenderSwanctl(name string, spec api.IPsecConnectionSpec) ([]byte, error) {
 	if spec.PreSharedKey != "" {
 		fmt.Fprintf(&out, "secrets {\n")
 		fmt.Fprintf(&out, "  ike-%s {\n", name)
-		fmt.Fprintf(&out, "    secret = %s\n", spec.PreSharedKey)
+		fmt.Fprintf(&out, "    id-1 = %s\n", quoteSwanctl(spec.LocalAddress))
+		fmt.Fprintf(&out, "    id-2 = %s\n", quoteSwanctl(spec.RemoteAddress))
+		fmt.Fprintf(&out, "    secret = %s\n", quoteSwanctl(spec.PreSharedKey))
 		fmt.Fprintf(&out, "  }\n")
 		fmt.Fprintf(&out, "}\n")
 	}
 	return out.Bytes(), nil
 }
 
-func (c Controller) Load(ctx context.Context, path string) error {
+// LoadAll synchronizes the complete swanctl configuration, including secrets.
+// Loading one routerd-owned file at a time is unsafe: swanctl synchronizes the
+// connection set and may unload connections defined by a prior file.
+func (c Controller) LoadAll(ctx context.Context) error {
 	if c.DryRun {
 		return nil
 	}
@@ -76,12 +85,23 @@ func (c Controller) Load(ctx context.Context, path string) error {
 	if run == nil {
 		run = runCommand
 	}
-	args := []string{"--load-conns"}
-	if path != "" {
-		args = append(args, "--file", path)
+	binary := strings.TrimSpace(c.Binary)
+	if binary == "" {
+		binary = "swanctl"
 	}
-	_, err := run(ctx, "swanctl", args...)
-	return err
+	args := []string{"--load-all"}
+	out, err := run(ctx, binary, args...)
+	if err != nil {
+		return fmt.Errorf("swanctl %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// Load is retained for callers compiled against the previous API. The path is
+// intentionally not used: safe reconciliation always loads the complete
+// swanctl configuration and credentials set.
+func (c Controller) Load(ctx context.Context, _ string) error {
+	return c.LoadAll(ctx)
 }
 
 func RecordMetrics(ctx context.Context, connection string, established int64, bytes int64) {
@@ -109,6 +129,17 @@ func authMode(spec api.IPsecConnectionSpec) string {
 		return "pubkey"
 	}
 	return "psk"
+}
+
+func quoteSwanctl(value string) string {
+	replacer := strings.NewReplacer(
+		`\`, `\\`,
+		`"`, `\"`,
+		"\n", `\n`,
+		"\r", `\r`,
+		"\t", `\t`,
+	)
+	return `"` + replacer.Replace(value) + `"`
 }
 
 func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
