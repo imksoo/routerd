@@ -117,6 +117,8 @@ rtadvd_conf="$work/rtadvd.conf"
 jexec "$jail_name" rtadvd -d -f -s -c "$rtadvd_conf" \
   -p "$work/rtadvd.pid" "$epair_peer" >"$work/rtadvd.log" 2>&1 &
 rtadvd_pid=$!
+sleep 1
+rtsol -d "$epair_host" >"$work/rtsol.log" 2>&1 || true
 
 observed=0
 for _ in $(jot 15); do
@@ -141,8 +143,12 @@ if [ "$observed" -ne 1 ]; then
   cat "$work/arp.log" >&2
   cat "$work/ra.log" >&2
   cat "$work/rtadvd.log" >&2
+  cat "$work/rtsol.log" >&2
   cat "$work/tcpdump.log" >&2
   ifconfig "$epair_host" >&2
+  procstat -f "$arp_pid" >&2 || true
+  procstat -f "$ra_pid" >&2 || true
+  netstat -B >&2 || true
   [ ! -f "$arp_events" ] || cat "$arp_events" >&2
   [ ! -f "$ra_events" ] || cat "$ra_events" >&2
   exit 1
