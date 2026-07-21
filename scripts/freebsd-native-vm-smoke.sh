@@ -21,6 +21,7 @@ esac
 pkg info -e go
 pkg info -e dnsmasq
 pkg info -e git
+pkg info -e hs-ShellCheck
 git config --global --add safe.directory "$(pwd)"
 # The action shares a checkout into the guest. Test fixtures build temporary
 # helper binaries, so suppress VCS stamping there without narrowing the gate.
