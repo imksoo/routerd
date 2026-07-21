@@ -159,6 +159,12 @@ func TestApplyIPsecConnectionsSynchronizesWholeOwnedDirectory(t *testing.T) {
 	if err != nil || !strings.Contains(string(aggregate), "include "+filepath.Join(dir, "routerd-site-a.conf")) {
 		t.Fatalf("aggregate configuration = %q, err=%v", aggregate, err)
 	}
+	for _, name := range ipsecSwanctlCredentialDirectories {
+		info, err := os.Stat(filepath.Join(dir, name))
+		if err != nil || !info.IsDir() {
+			t.Fatalf("swanctl credential directory %s: info=%v err=%v", name, info, err)
+		}
+	}
 	if len(changed) != 3 {
 		t.Fatalf("changed = %v, want managed write, aggregate, and stale removal", changed)
 	}

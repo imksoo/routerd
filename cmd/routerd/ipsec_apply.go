@@ -26,6 +26,15 @@ type ipsecRuntimeApplyOptions struct {
 
 const ipsecPendingLoadMarker = ".routerd-pending-load"
 
+// swanctl resolves its credential stores relative to --file's directory. The
+// routerd-owned runtime aggregate deliberately lives outside the package
+// conf.d tree, so provision the standard empty stores before LoadAll on every
+// OS rather than relying on a distro-owned swanctl.conf layout.
+var ipsecSwanctlCredentialDirectories = []string{
+	"x509", "x509ca", "x509ocsp", "x509aa", "x509ac", "x509crl",
+	"pubkey", "private", "rsa", "ecdsa", "pkcs8", "pkcs12",
+}
+
 const freeBSDStrongSwanStartupTimeout = 15 * time.Second
 const freeBSDStrongSwanLoadTimeout = 20 * time.Second
 const freeBSDStrongSwanStopTimeout = 8 * time.Second
@@ -246,6 +255,9 @@ func applyIPsecConnectionsWithOptions(ctx context.Context, router *api.Router, o
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			return nil, fmt.Errorf("create IPsec swanctl directory %s: %w", dir, err)
 		}
+		if err := ensureIPsecSwanctlCredentialDirectories(dir); err != nil {
+			return nil, err
+		}
 		if err := writeIPsecPendingLoadMarker(dir); err != nil {
 			return nil, err
 		}
@@ -325,6 +337,16 @@ func applyIPsecConnectionsWithOptions(ctx context.Context, router *api.Router, o
 		return changed, fmt.Errorf("remove IPsec pending load marker: %w", err)
 	}
 	return changed, nil
+}
+
+func ensureIPsecSwanctlCredentialDirectories(dir string) error {
+	for _, name := range ipsecSwanctlCredentialDirectories {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(path, 0700); err != nil {
+			return fmt.Errorf("create IPsec swanctl credential directory %s: %w", path, err)
+		}
+	}
+	return nil
 }
 
 func isManagedIPsecConnectionConfig(name string) bool {
