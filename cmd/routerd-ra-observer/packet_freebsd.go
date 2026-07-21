@@ -34,6 +34,10 @@ func openPacketSocket(ifname string) (*packetSocket, error) {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("BIOCPROMISC: %w", err)
 	}
+	if err := installRAObserverFilter(fd); err != nil {
+		_ = unix.Close(fd)
+		return nil, err
+	}
 	if err := observerIoctlSetInt(fd, unix.BIOCIMMEDIATE, 1); err != nil {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("BIOCIMMEDIATE: %w", err)
@@ -47,6 +51,18 @@ func openPacketSocket(ifname string) (*packetSocket, error) {
 		size = 4096
 	}
 	return &packetSocket{fd: fd, buf: make([]byte, size)}, nil
+}
+
+// Install an explicit accept program so capture activation does not depend on
+// an implicit descriptor filter. The RA parser remains the protocol boundary.
+func installRAObserverFilter(fd int) error {
+	insns := []unix.BpfInsn{{Code: unix.BPF_RET | unix.BPF_K, K: 0xffff}}
+	program := unix.BpfProgram{Len: uint32(len(insns)), Insns: &insns[0]}
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), uintptr(unix.BIOCSETF), uintptr(unsafe.Pointer(&program)))
+	if errno != 0 {
+		return fmt.Errorf("BIOCSETF: %w", errno)
+	}
+	return nil
 }
 
 func (s *packetSocket) read(frame []byte) (int, error) {
