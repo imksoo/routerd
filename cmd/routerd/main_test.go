@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -4144,4 +4145,35 @@ func TestConfiguredDHCPLeasePathsPreferControllerDnsmasqConfig(t *testing.T) {
 		}
 		seen[path] = true
 	}
+}
+
+func TestRunCommandWithFileOutputDoesNotWaitForInheritedOutputFD(t *testing.T) {
+	pidPath := filepath.Join(t.TempDir(), "child.pid")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	started := time.Now()
+	out, err := runCommandWithFileOutput(ctx, "sh", "-c", `sleep 5 & printf '%s\n' "$!" > "$1"; printf 'parent exited\n'`, "sh", pidPath)
+	if err != nil {
+		t.Fatalf("run command: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed >= time.Second {
+		t.Fatalf("run waited %s for child that inherited regular output fd", elapsed)
+	}
+	if !strings.Contains(string(out), "parent exited") {
+		t.Fatalf("output = %q, want parent output", out)
+	}
+	pidText, err := os.ReadFile(pidPath)
+	if err != nil {
+		t.Fatalf("read child PID: %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(pidText)))
+	if err != nil {
+		t.Fatalf("parse child PID %q: %v", pidText, err)
+	}
+	child, err := os.FindProcess(pid)
+	if err != nil {
+		t.Fatalf("find child process: %v", err)
+	}
+	_ = child.Kill()
+	_, _ = child.Wait()
 }

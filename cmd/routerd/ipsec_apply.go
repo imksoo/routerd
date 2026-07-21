@@ -54,10 +54,40 @@ func ensureFreeBSDStrongSwan(ctx context.Context) error {
 	if err := exec.CommandContext(serviceCtx, "service", "strongswan", "status").Run(); err == nil {
 		return nil
 	}
-	if out, err := exec.CommandContext(serviceCtx, "service", "strongswan", "onestart").CombinedOutput(); err != nil {
+	if out, err := runCommandWithFileOutput(serviceCtx, "service", "strongswan", "onestart"); err != nil {
 		return fmt.Errorf("start strongswan service: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// runCommandWithFileOutput avoids exec.Cmd's pipe-drain wait when an rc.d
+// script launches a daemon that inherits stdout or stderr. A regular file can
+// remain open in that daemon without preventing Run from observing the rc.d
+// process exit.
+func runCommandWithFileOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
+	output, err := os.CreateTemp("", "routerd-command-*.log")
+	if err != nil {
+		return nil, fmt.Errorf("create command output file: %w", err)
+	}
+	path := output.Name()
+	defer os.Remove(path)
+
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stdout = output
+	cmd.Stderr = output
+	runErr := cmd.Run()
+	closeErr := output.Close()
+	data, readErr := os.ReadFile(path)
+	if readErr != nil {
+		return nil, fmt.Errorf("read command output: %w", readErr)
+	}
+	if runErr != nil {
+		return data, runErr
+	}
+	if closeErr != nil {
+		return data, fmt.Errorf("close command output: %w", closeErr)
+	}
+	return data, nil
 }
 
 func applyIPsecConnectionsWithOptions(ctx context.Context, router *api.Router, opts ipsecRuntimeApplyOptions) ([]string, error) {
