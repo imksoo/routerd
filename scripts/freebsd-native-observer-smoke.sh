@@ -89,8 +89,15 @@ ready=0
 for _ in $(jot 20); do
   if [ -S "$arp_socket" ] && [ -S "$ra_socket" ] && \
      kill -0 "$arp_pid" 2>/dev/null && kill -0 "$ra_pid" 2>/dev/null; then
-    ready=1
-    break
+    curl --fail --silent --unix-socket "$arp_socket" \
+      http://localhost/v1/status >"$work/arp-status.json"
+    curl --fail --silent --unix-socket "$ra_socket" \
+      http://localhost/v1/status >"$work/ra-status.json"
+    if jq -e '.health == "ok"' "$work/arp-status.json" >/dev/null && \
+       jq -e '.health == "ok"' "$work/ra-status.json" >/dev/null; then
+      ready=1
+      break
+    fi
   fi
   sleep 1
 done
