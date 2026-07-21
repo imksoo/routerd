@@ -16,6 +16,7 @@ ra_pid=""
 rtadvd_pid=""
 own_epair_module=0
 restart_devd=0
+ipv6_forwarding=""
 
 cleanup() {
   for pid in "$rtadvd_pid" "$ra_pid" "$arp_pid"; do
@@ -35,6 +36,9 @@ cleanup() {
   fi
   if [ "$restart_devd" -eq 1 ]; then
     service devd start >/dev/null 2>&1 || true
+  fi
+  if [ -n "$ipv6_forwarding" ]; then
+    sysctl "net.inet6.ip6.forwarding=$ipv6_forwarding" >/dev/null || true
   fi
   rm -rf "$work"
 }
@@ -68,6 +72,8 @@ jail -c name="$jail_name" path=/ host.hostname="$jail_name" \
 jexec "$jail_name" ifconfig lo0 up
 jexec "$jail_name" ifconfig "$epair_peer" inet 192.0.2.2/24 up
 jexec "$jail_name" ifconfig "$epair_peer" inet6 2001:db8:846::2/64 up
+ipv6_forwarding=$(sysctl -n net.inet6.ip6.forwarding)
+sysctl net.inet6.ip6.forwarding=1 >/dev/null
 
 # Observe the transmitting epair endpoint. FreeBSD if_epair taps BPF before it
 # enqueues a frame to the peer; observing the receiving peer is not equivalent.

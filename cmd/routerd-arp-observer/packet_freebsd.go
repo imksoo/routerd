@@ -13,6 +13,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// FreeBSD's enum bpf_direction values are IN=0, INOUT=1, OUT=2.
+const bpfDirectionInOut = 1
+
 // packetSocket uses a native BPF device.  BPF returns one or more records per
 // read; this observer consumes the first complete Ethernet frame and the
 // daemon's normal ARP parser filters non-ARP traffic.
@@ -37,6 +40,10 @@ func openPacketSocket(ifname string) (*packetSocket, error) {
 	if err := unix.IoctlSetInt(fd, unix.BIOCPROMISC, 0); err != nil {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("BIOCPROMISC: %w", err)
+	}
+	if err := observerIoctlSetInt(fd, unix.BIOCSDIRECTION, bpfDirectionInOut); err != nil {
+		_ = unix.Close(fd)
+		return nil, fmt.Errorf("BIOCSDIRECTION: %w", err)
 	}
 	if err := installObserverFilter(fd); err != nil {
 		_ = unix.Close(fd)
