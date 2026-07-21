@@ -30,6 +30,17 @@ remote BFD peer reached `Up`.
 Evidence owner: `/tmp/vm115-stage66-g5.cGgzKu`; console-frame collection:
 `/tmp/vm115-stage66-g5-frames.khUG0j`.
 
+Stage68--75 were VNET-jail fixture failures retained as history: peer option
+usage, jailed PID/VTY runtime paths, and then peer-zebra topology were fixed
+without changing production BFD behavior.  Stage76 (`/tmp/vm115-stage76-g5.nDujNo`)
+used a VNET jail with a host `g5host` epair end, a jailed `g5peer` end, and a
+separate peer zebra/bfdd pair on an explicit peer ZAPI socket.  It reported
+`runner.rc=0` and `g5-bfdd-apply-observe=ok`. Host FRR JSON visibly recorded
+the configured BFD session `up`, then `down` with `control detection time
+expired` after peer bfdd stopped, then `up` after restart. The run removed the
+jail/epair and offline closure packages before halting. PVE postflight was
+stopped/no args/retained v4 ISO/`vmbr404 NO-CARRIER`/unchanged snapshots.
+
 Scope conclusion: FreeBSD can apply and observe a referenced BFD session
-through installed FRR `bfdd` and `/usr/local/bin/vtysh`.  A two-node BFD
-Up/Down/recovery acceptance remains outside this isolated fixture.
+through installed FRR `bfdd` and `/usr/local/bin/vtysh`, including the isolated
+one-hop Up/Down/recovery acceptance required by G5.
