@@ -14,11 +14,12 @@ epair_host=""
 arp_pid=""
 ra_pid=""
 rtadvd_pid=""
+tcpdump_pid=""
 own_epair_module=0
 restart_devd=0
 
 cleanup() {
-  for pid in "$rtadvd_pid" "$ra_pid" "$arp_pid"; do
+  for pid in "$rtadvd_pid" "$tcpdump_pid" "$ra_pid" "$arp_pid"; do
     if [ -n "$pid" ]; then
       kill -TERM "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
@@ -107,6 +108,13 @@ done
   exit 1
 }
 
+# One independent base-system capture distinguishes fixture delivery from the
+# production BPF reader without changing the production acceptance oracle.
+jexec "$jail_name" tcpdump -ln -e -i "$epair_peer" -c 20 \
+  >"$work/tcpdump.log" 2>&1 &
+tcpdump_pid=$!
+sleep 1
+
 # Generate both protocols from the same kernel interface the observers capture.
 for _ in $(jot 4); do
   jexec "$jail_name" arp -d 192.0.2.1 >/dev/null 2>&1 || true
@@ -146,6 +154,7 @@ if [ "$observed" -ne 1 ]; then
   cat "$work/arp.log" >&2
   cat "$work/ra.log" >&2
   cat "$work/rtadvd.log" >&2
+  cat "$work/tcpdump.log" >&2
   jexec "$jail_name" ifconfig "$epair_peer" >&2
   procstat -f "$arp_pid" >&2 || true
   procstat -f "$ra_pid" >&2 || true
