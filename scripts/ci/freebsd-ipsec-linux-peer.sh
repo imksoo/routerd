@@ -93,7 +93,7 @@ wait_for_swanctl() {
   return 1
 }
 emit_failure() {
-  for f in "$dir/peer-load.log" "$dir/peer-list-conns.log" "$dir/reverse-verifier.log"; do
+  for f in "$dir/peer-load.log" "$dir/peer-list-conns.log" "$dir/reverse-verifier.log" "$dir/reverse-verifier.stdout.log"; do
     if sudo test -f "$f"; then
       echo "--- ${f##*/}" >&2
       sudo sed "s/$psk/[REDACTED]/g" "$f" >&2
@@ -229,6 +229,7 @@ EOF
   # shellcheck disable=SC2016 # expanded by the peer-side bash, not this shell
   "${verifier_prefix[@]}" PEER_DIR="$dir" nohup bash -c '
     set -eu
+    exec >"$PEER_DIR/reverse-verifier.stdout.log" 2>&1 < /dev/null
     printf "%s\n" "$$" >"$PEER_DIR/verifier.pid"
     for phase_port in initial:19091:19191 rekey:19092:19192 restart:19093:19193; do
       phase=${phase_port%%:*}; rest=${phase_port#*:}; port=${rest%%:*}; ack=${rest#*:}
@@ -255,7 +256,11 @@ EOF
     sleep 1
   done
   [ -n "$verifier_pid" ] || { echo 'peer-start: reverse verifier did not record PID' >&2; exit 1; }
-  sudo ip netns pids "$netns" | grep -Fxq "$verifier_pid"
+  if [[ "$topology" == tap ]]; then
+    sudo ip netns pids "$netns" | grep -Fxq "$verifier_pid"
+  else
+    sudo kill -0 "$verifier_pid"
+  fi
   mark_owned verifier
   ready=0
   for _ in $(seq 1 30); do
