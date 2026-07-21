@@ -252,7 +252,7 @@ EOF
           ping -n -I 10.250.2.1 -c 2 10.250.1.1 >>"$PEER_DIR/reverse-verifier.log" 2>&1
           ip -s xfrm state >>"$PEER_DIR/reverse-verifier.log" 2>&1 || true
           ip -s xfrm policy >>"$PEER_DIR/reverse-verifier.log" 2>&1 || true
-          printf ok | timeout 120 nc -l -p "$ack" >>"$PEER_DIR/reverse-verifier.log" 2>&1
+          printf "%s\\n" ok | timeout 120 nc -N -l -p "$ack" >>"$PEER_DIR/reverse-verifier.log" 2>&1
           break
         fi
         sleep 1
