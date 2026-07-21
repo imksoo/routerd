@@ -29,6 +29,6 @@ jobs:
           usesh: true
           copyback: false
           prepare: |
-            pkg install -y go dnsmasq git shellcheck
+            pkg install -y go dnsmasq git
           run: |
             sh scripts/freebsd-native-vm-smoke.sh
