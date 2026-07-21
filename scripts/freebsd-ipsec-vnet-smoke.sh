@@ -29,6 +29,8 @@ mkdir -p "$evidence"
 work="$evidence/work"
 mkdir -p "$work"
 peer="$work/peer"
+apply_state="$work/routerd-apply-state.db"
+apply_ledger="$work/routerd-apply-ledger.db"
 jail_name="routerd-ipsec-vnet-$$"
 epair_host=
 own_epair_module=0
@@ -250,7 +252,8 @@ EOF
 
 host_service_touched=1
 echo 'ipsec-vnet step=invalid-production-apply' >&2
-if run_bounded 30 invalid-production-apply "$routerd" apply --once --config "$work/invalid-router.yaml" >"$evidence/apply-invalid.log" 2>&1; then
+if run_bounded 30 invalid-production-apply "$routerd" apply --once --config "$work/invalid-router.yaml" \
+  --state-file "$apply_state" --ledger-file "$apply_ledger" --status-file "$evidence/apply-invalid.status.json" >"$evidence/apply-invalid.log" 2>&1; then
   echo 'invalid IKE proposal unexpectedly loaded' >&2
   exit 1
 fi
@@ -260,7 +263,8 @@ if grep -F "$psk" "$evidence/apply-invalid.log" >/dev/null; then
   exit 1
 fi
 echo 'ipsec-vnet step=valid-production-apply' >&2
-run_bounded 30 valid-production-apply "$routerd" apply --once --config "$work/router.yaml" >"$evidence/apply-1.log" 2>&1
+run_bounded 30 valid-production-apply "$routerd" apply --once --config "$work/router.yaml" \
+  --state-file "$apply_state" --ledger-file "$apply_ledger" --status-file "$evidence/apply-valid.status.json" >"$evidence/apply-1.log" 2>&1
 
 # path=/ VNET jails share charon's compile-time PID file. Qualify routerd's
 # host service/load first, then temporarily relocate its live PID while the
@@ -304,7 +308,8 @@ run_bounded 15 rekey-peer-to-host-ping jexec "$jail_name" ping -n -S "$peer_ts" 
 echo 'ipsec-vnet step=host-service-stop' >&2
 run_bounded 30 host-service-stop service strongswan onestop >"$evidence/host-stop.log" 2>&1
 echo 'ipsec-vnet step=restart-production-apply' >&2
-run_bounded 30 restart-production-apply "$routerd" apply --once --config "$work/router.yaml" >"$evidence/apply-restart.log" 2>&1
+run_bounded 30 restart-production-apply "$routerd" apply --once --config "$work/router.yaml" \
+  --state-file "$apply_state" --ledger-file "$apply_ledger" --status-file "$evidence/apply-restart.status.json" >"$evidence/apply-restart.log" 2>&1
 echo 'ipsec-vnet step=restart-initiate' >&2
 run_bounded 30 restart-initiate /usr/local/sbin/swanctl --initiate --ike "$connection" --child net >"$evidence/initiate-restart.log" 2>&1
 echo 'ipsec-vnet step=restart-sa-wait' >&2
