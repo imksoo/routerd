@@ -129,10 +129,25 @@ run_bounded() {
   limit=$1
   label=$2
   shift 2
+  # vmactions terminates an otherwise healthy SSH command after roughly 30
+  # seconds without output. This is only a progress emitter: timeout(1)
+  # remains the sole command deadline/kill mechanism.
+  (
+    while :; do
+      sleep 5
+      echo "ipsec-vnet waiting=$label" >&2
+    done
+  ) &
+  heartbeat_pid=$!
   set +e
   timeout -k 2 "$limit" "$@"
   command_rc=$?
+  kill "$heartbeat_pid" >/dev/null 2>&1
+  heartbeat_kill_rc=$?
+  wait "$heartbeat_pid" >/dev/null 2>&1
+  heartbeat_wait_rc=$?
   set -e
+  : "$heartbeat_kill_rc" "$heartbeat_wait_rc"
   if [ "$command_rc" -eq 124 ]; then
     echo "timed out: $label after ${limit}s" >&2
   fi
