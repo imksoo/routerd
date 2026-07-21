@@ -125,7 +125,7 @@ func TestPFEgressRouteHashUsesRoundRobinStickyAddress(t *testing.T) {
 	}
 }
 
-func TestPFEgressRouteHashUsesIPv6StaticRoutehosts(t *testing.T) {
+func TestPFEgressRouteHashRejectsIPv6StaticRoutehosts(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-a"}, Spec: api.InterfaceSpec{IfName: "em1"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "em2"}},
@@ -142,13 +142,9 @@ func TestPFEgressRouteHashUsesIPv6StaticRoutehosts(t *testing.T) {
 		}},
 	}}}
 
-	data, err := PF(router, nil)
-	if err != nil {
-		t.Fatalf("render PF: %v", err)
-	}
-	want := "pass in quick route-to { (em1 2001:db8:100::1), (em2 2001:db8:200::1) } round-robin sticky-address inet6 from 2001:db8:10::/64 to 2001:db8:ffff::/48 keep state label \"routerd:egress-route:lan6-balance\""
-	if !strings.Contains(string(data), want) {
-		t.Fatalf("PF IPv6 route-to rule missing %q:\n%s", want, data)
+	_, err := PF(router, nil)
+	if err == nil || !strings.Contains(err.Error(), "supports only family ipv4") {
+		t.Fatalf("PF IPv6 route-to error = %v", err)
 	}
 }
 
@@ -186,14 +182,14 @@ func TestPFEgressRouteHashRejectsUnsafeOrUnsupportedShapes(t *testing.T) {
 			s.Candidates[0].Targets[0].GatewaySource = "dhcpv4"
 			r.Spec.Resources[2].Spec = s
 		}, want: "static gateway"},
-		{name: "ipv6-link-local-gateway", edit: func(r *api.Router) {
+		{name: "ipv6-route-to", edit: func(r *api.Router) {
 			s := r.Spec.Resources[2].Spec.(api.EgressRoutePolicySpec)
 			s.Family = "ipv6"
 			s.SourceCIDRs = []string{"2001:db8:10::/64"}
 			s.Candidates[0].Targets[0].Gateway = "fe80::1"
 			s.Candidates[0].Targets[1].Gateway = "2001:db8:2::1"
 			r.Spec.Resources[2].Spec = s
-		}, want: "non-link-local ipv6"},
+		}, want: "supports only family ipv4"},
 		{name: "ambiguous-target-interface", edit: func(r *api.Router) {
 			s := r.Spec.Resources[2].Spec.(api.EgressRoutePolicySpec)
 			s.Candidates[0].Targets[0].OutboundInterface = "wan-b"

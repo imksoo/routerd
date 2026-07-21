@@ -187,23 +187,18 @@ func pfEgressRouteToRules(resources []api.Resource, aliases map[string]string) (
 			return nil, fmt.Errorf("%s FreeBSD route-to requires at least two targets", res.ID())
 		}
 		family := defaultString(spec.Family, "ipv4")
-		if family != "ipv4" && family != "ipv6" {
-			return nil, fmt.Errorf("%s FreeBSD route-to requires family ipv4 or ipv6", res.ID())
+		if family != "ipv4" {
+			return nil, fmt.Errorf("%s FreeBSD route-to supports only family ipv4", res.ID())
 		}
-		wantIPv6 := family == "ipv6"
-		pfFamily := "inet"
-		if wantIPv6 {
-			pfFamily = "inet6"
-		}
-		source, err := pfAddressSetForFamily(res.ID(), "source", spec.SourceCIDRs, wantIPv6)
+		source, err := pfAddressSetForFamily(res.ID(), "source", spec.SourceCIDRs, false)
 		if err != nil {
 			return nil, err
 		}
-		destination, err := pfAddressSetForFamily(res.ID(), "destination", spec.DestinationCIDRs, wantIPv6)
+		destination, err := pfAddressSetForFamily(res.ID(), "destination", spec.DestinationCIDRs, false)
 		if err != nil {
 			return nil, err
 		}
-		exclude, err := pfAddressSetForFamily(res.ID(), "excluded destination", spec.ExcludeDestinationCIDRs, wantIPv6)
+		exclude, err := pfAddressSetForFamily(res.ID(), "excluded destination", spec.ExcludeDestinationCIDRs, false)
 		if err != nil {
 			return nil, err
 		}
@@ -226,8 +221,8 @@ func pfEgressRouteToRules(resources []api.Resource, aliases map[string]string) (
 				return nil, fmt.Errorf("%s FreeBSD route-to target %q has an unresolved interface", res.ID(), target.Name)
 			}
 			gateway, err := netip.ParseAddr(target.Gateway)
-			if err != nil || gateway.Is4() == wantIPv6 || (wantIPv6 && gateway.IsLinkLocalUnicast()) {
-				return nil, fmt.Errorf("%s FreeBSD route-to target %q requires a non-link-local %s static gateway", res.ID(), target.Name, family)
+			if err != nil || !gateway.Is4() {
+				return nil, fmt.Errorf("%s FreeBSD route-to target %q requires an ipv4 static gateway", res.ID(), target.Name)
 			}
 			hosts = append(hosts, "("+ifname+" "+gateway.String()+")")
 		}
@@ -236,7 +231,7 @@ func pfEgressRouteToRules(resources []api.Resource, aliases map[string]string) (
 		if len(hosts) < 2 {
 			return nil, fmt.Errorf("%s FreeBSD route-to requires two distinct static routehosts", res.ID())
 		}
-		rules = append(rules, pfEgressRouteToRule{name: res.Metadata.Name, hosts: hosts, family: pfFamily, source: source, destination: destination})
+		rules = append(rules, pfEgressRouteToRule{name: res.Metadata.Name, hosts: hosts, family: "inet", source: source, destination: destination})
 	}
 	return rules, nil
 }

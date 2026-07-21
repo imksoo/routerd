@@ -1179,7 +1179,7 @@ func TestValidateFreeBSDEgressRoutePolicyHashRouteToShape(t *testing.T) {
 	}
 }
 
-func TestValidateFreeBSDEgressRoutePolicyHashIPv6StaticRoutehosts(t *testing.T) {
+func TestValidateFreeBSDEgressRoutePolicyHashRejectsIPv6Routehosts(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -1195,19 +1195,8 @@ func TestValidateFreeBSDEgressRoutePolicyHashIPv6StaticRoutehosts(t *testing.T) 
 			}},
 		}},
 	}
-	if err := ValidateForOS(router, platform.OSFreeBSD); err != nil {
-		t.Fatalf("FreeBSD IPv6 route-to shape rejected: %v", err)
-	}
-
-	router.Spec.Resources[2].Spec = api.EgressRoutePolicySpec{
-		Family: "ipv6", Mode: "hash", HashFields: []string{"sourceAddress"}, SourceCIDRs: []string{"2001:db8:10::/64"},
-		Candidates: []api.EgressRoutePolicyCandidate{{Targets: []api.EgressRoutePolicyTarget{
-			{Interface: "wan-a", GatewaySource: "static", Gateway: "fe80::1"},
-			{Interface: "wan-b", GatewaySource: "static", Gateway: "2001:db8:200::1"},
-		}}},
-	}
-	if err := ValidateForOS(router, platform.OSFreeBSD); err == nil || !strings.Contains(err.Error(), "non-link-local ipv6") {
-		t.Fatalf("FreeBSD scoped/link-local gateway error = %v", err)
+	if err := ValidateForOS(router, platform.OSFreeBSD); err == nil || !strings.Contains(err.Error(), "supports only family ipv4") {
+		t.Fatalf("FreeBSD IPv6 route-to error = %v", err)
 	}
 }
 

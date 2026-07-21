@@ -576,8 +576,8 @@ func egressRoutePolicyRequiresLinuxPolicyRouting(spec api.EgressRoutePolicySpec)
 // so every Linux-only or runtime-resolved knob must fail at validation.
 func validateFreeBSDEgressRoutePolicyHash(resourceID string, spec api.EgressRoutePolicySpec) error {
 	family := defaultString(spec.Family, "ipv4")
-	if family != "ipv4" && family != "ipv6" {
-		return fmt.Errorf("%s FreeBSD route-to requires family ipv4 or ipv6", resourceID)
+	if family != "ipv4" {
+		return fmt.Errorf("%s FreeBSD route-to supports only family ipv4", resourceID)
 	}
 	if len(spec.HashFields) != 1 || spec.HashFields[0] != "sourceAddress" {
 		return fmt.Errorf("%s FreeBSD route-to requires spec.hashFields: [sourceAddress]", resourceID)
@@ -615,8 +615,8 @@ func validateFreeBSDEgressRoutePolicyHash(resourceID string, spec api.EgressRout
 			return fmt.Errorf("%s FreeBSD route-to target[%d] must contain only interface and static gateway", resourceID, i)
 		}
 		addr, err := netip.ParseAddr(target.Gateway)
-		if err != nil || (family == "ipv4" && !addr.Is4()) || (family == "ipv6" && (!addr.Is6() || addr.IsLinkLocalUnicast())) {
-			return fmt.Errorf("%s FreeBSD route-to target[%d].gateway must be a non-link-local %s address", resourceID, i, family)
+		if err != nil || !addr.Is4() {
+			return fmt.Errorf("%s FreeBSD route-to target[%d].gateway must be an ipv4 address", resourceID, i)
 		}
 	}
 	return nil
