@@ -8,11 +8,12 @@ while [ "$#" -gt 0 ]; do case "$1" in --routerd) routerd=$2; shift 2;; --evidenc
 [ "$(uname -s)" = FreeBSD ] && [ -x "$routerd" ] && [ -n "$evidence" ]
 mkdir -p "$evidence"; work=$evidence/work; mkdir -p "$work"
 peer_addr=${ROUTERD_IPSEC_PEER_ADDR:?ROUTERD_IPSEC_PEER_ADDR is required}
+guest_addr=${ROUTERD_IPSEC_GUEST_ADDR:?ROUTERD_IPSEC_GUEST_ADDR is required}
 host_if=$(route -n get default | awk '/interface:/{print $2;exit}')
 host_addr=$(ifconfig "$host_if" inet | awk '/inet /{print $2;exit}')
 default_gateway=$(route -n get default | awk '/gateway:/{print $2;exit}')
-printf 'ipsec-linux-peer preflight peer=%s default_gateway=%s\n' "$peer_addr" "$default_gateway" >&3
-[ -n "$host_addr" ] && [ "$peer_addr" = "$default_gateway" ]
+printf 'ipsec-linux-peer preflight peer=%s guest=%s host=%s default_gateway=%s\n' "$peer_addr" "$guest_addr" "$host_addr" "$default_gateway" >&3
+[ -n "$host_addr" ] && [ "$host_addr" = "$guest_addr" ] && [ "$peer_addr" = "$default_gateway" ]
 host_ts=10.250.1.1 peer_ts=10.250.2.1 psk=routerd-native-linux-peer-disposable-psk
 state=$work/state.db ledger=$work/ledger.db
 sentinel=/usr/local/etc/routerd/swanctl/operator-sentinel.conf

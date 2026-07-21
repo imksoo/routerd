@@ -3,6 +3,7 @@
 set -euo pipefail
 action=${1:?usage: $0 start|stop}
 peer_addr=${ROUTERD_IPSEC_PEER_ADDR:?ROUTERD_IPSEC_PEER_ADDR is required}
+guest_addr=${ROUTERD_IPSEC_GUEST_ADDR:?ROUTERD_IPSEC_GUEST_ADDR is required}
 psk=routerd-native-linux-peer-disposable-psk
 run_id=${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}
 attempt=${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT is required}
@@ -75,7 +76,7 @@ connections {
     }
     remote {
       auth = psk
-      id = %any
+      id = $guest_addr
     }
     children {
       net {
@@ -90,7 +91,7 @@ connections {
 secrets {
   peer {
     id-1 = $peer_addr
-    id-2 = %any
+    id-2 = $guest_addr
     secret = "$psk"
   }
 }

@@ -20,6 +20,8 @@ jobs:
     env:
       # anyvm v0.5.1 serves host services at this SLIRP address.
       ROUTERD_IPSEC_PEER_ADDR: 192.168.122.2
+      # anyvm v0.5.1 assigns the FreeBSD guest this address.
+      ROUTERD_IPSEC_GUEST_ADDR: 192.168.122.10
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -34,7 +36,7 @@ jobs:
           arch: x86_64
           usesh: true
           copyback: false
-          envs: ROUTERD_IPSEC_PEER_ADDR
+          envs: ROUTERD_IPSEC_PEER_ADDR,ROUTERD_IPSEC_GUEST_ADDR
           prepare: |
             pkg install -y go dnsmasq git hs-ShellCheck curl jq ndpi pkgconf strongswan
           run: |
