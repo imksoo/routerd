@@ -62,7 +62,7 @@ func (s *freeBSDFIBSyncer) SyncBGP(ctx context.Context, routes []FIBRoute) (FIBS
 		installed[prefix] = observed
 	}
 	s.installed = installed
-	localAddresses, err := s.localIPv4Addresses(ctx)
+	localAddresses, err := s.localAddresses(ctx)
 	if err != nil {
 		return result, err
 	}
@@ -75,8 +75,8 @@ func (s *freeBSDFIBSyncer) SyncBGP(ctx context.Context, routes []FIBRoute) (FIBS
 			continue
 		}
 		prefix, err := netip.ParsePrefix(route.Prefix)
-		if err != nil || !prefix.Addr().Is4() {
-			result.Unsupported[route.Prefix] = "GoBGPIPv6FIBUnsupported"
+		if err != nil || (!prefix.Addr().Is4() && !prefix.Addr().Is6()) {
+			result.Unsupported[route.Prefix] = "GoBGPFIBRouteUnsupported"
 			continue
 		}
 		if len(route.NextHops) == 0 {
@@ -168,38 +168,35 @@ func newFreeBSDFIBSyncResult() FIBSyncResult {
 	}
 }
 
-type freeBSDLocalIPv4Address struct {
-	Address netip.Addr
-	Prefix  netip.Prefix
-}
-
-func (s *freeBSDFIBSyncer) localIPv4Addresses(ctx context.Context) ([]freeBSDLocalIPv4Address, error) {
+func (s *freeBSDFIBSyncer) localAddresses(ctx context.Context) ([]freeBSDLocalAddress, error) {
 	out, err := s.run(ctx, freeBSDIfconfigPath, "-a")
 	if err != nil {
-		return nil, fmt.Errorf("list FreeBSD local IPv4 addresses: %w: %s", err, strings.TrimSpace(string(out)))
+		return nil, fmt.Errorf("list FreeBSD local addresses: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	return parseFreeBSDLocalIPv4Addresses(string(out)), nil
+	return parseFreeBSDLocalAddresses(string(out)), nil
 }
 
-func freeBSDLocalHostPrefixes(addresses []freeBSDLocalIPv4Address) map[string]bool {
+func freeBSDLocalHostPrefixes(addresses []freeBSDLocalAddress) map[string]bool {
 	out := map[string]bool{}
 	for _, local := range addresses {
+		bits := 128
 		if local.Address.Is4() {
-			out[netip.PrefixFrom(local.Address, 32).String()] = true
+			bits = 32
 		}
+		out[netip.PrefixFrom(local.Address, bits).String()] = true
 	}
 	return out
 }
 
-func inferFreeBSDPreferredSource(routePrefix string, addresses []freeBSDLocalIPv4Address) string {
+func inferFreeBSDPreferredSource(routePrefix string, addresses []freeBSDLocalAddress) string {
 	prefix, err := netip.ParsePrefix(routePrefix)
-	if err != nil || !prefix.Addr().Is4() {
+	if err != nil || (!prefix.Addr().Is4() && !prefix.Addr().Is6()) {
 		return ""
 	}
-	var best freeBSDLocalIPv4Address
+	var best freeBSDLocalAddress
 	bestBits := -1
 	for _, local := range addresses {
-		if !local.Address.Is4() || local.Address == prefix.Addr() || !local.Prefix.Contains(prefix.Addr()) {
+		if local.Address.Is4() != prefix.Addr().Is4() || local.Address == prefix.Addr() || !local.Prefix.Contains(prefix.Addr()) {
 			continue
 		}
 		if bits := local.Prefix.Bits(); bits > bestBits {
@@ -213,9 +210,9 @@ func inferFreeBSDPreferredSource(routePrefix string, addresses []freeBSDLocalIPv
 	return best.Address.String()
 }
 
-func freeBSDPreferredSourceIsLocal(value string, addresses []freeBSDLocalIPv4Address) bool {
+func freeBSDPreferredSourceIsLocal(value string, addresses []freeBSDLocalAddress) bool {
 	addr, err := netip.ParseAddr(strings.TrimSpace(value))
-	if err != nil || !addr.Is4() {
+	if err != nil || (!addr.Is4() && !addr.Is6()) {
 		return false
 	}
 	for _, local := range addresses {
@@ -227,11 +224,20 @@ func freeBSDPreferredSourceIsLocal(value string, addresses []freeBSDLocalIPv4Add
 }
 
 func (s *freeBSDFIBSyncer) kernelBGPRoutes(ctx context.Context) (map[string]FIBRoute, error) {
-	out, err := s.run(ctx, freeBSDNetstatPath, "-rn", "-f", "inet")
-	if err != nil {
-		return nil, fmt.Errorf("list FreeBSD RTF_PROTO1 routes: %w: %s", err, strings.TrimSpace(string(out)))
+	owned := map[string]FIBRoute{}
+	for _, family := range []struct {
+		name string
+		ipv4 bool
+	}{{name: "inet", ipv4: true}, {name: "inet6", ipv4: false}} {
+		out, err := s.run(ctx, freeBSDNetstatPath, "-rn", "-f", family.name)
+		if err != nil {
+			return nil, fmt.Errorf("list FreeBSD RTF_PROTO1 %s routes: %w: %s", family.name, err, strings.TrimSpace(string(out)))
+		}
+		for prefix, route := range parseFreeBSDOwnedBGPRoutesForFamily(string(out), family.ipv4) {
+			owned[prefix] = route
+		}
 	}
-	return parseFreeBSDOwnedBGPRoutes(string(out)), nil
+	return owned, nil
 }
 
 func (s *freeBSDFIBSyncer) replaceRoute(ctx context.Context, current FIBRoute, found, forceRecreate bool, desired FIBRoute) error {
@@ -255,7 +261,11 @@ func (s *freeBSDFIBSyncer) replaceRoute(ctx context.Context, current FIBRoute, f
 }
 
 func (s *freeBSDFIBSyncer) deleteRoute(ctx context.Context, route FIBRoute) error {
-	for _, nextHop := range normalizeFreeBSDNextHops(route.NextHops) {
+	prefix, err := netip.ParsePrefix(route.Prefix)
+	if err != nil {
+		return fmt.Errorf("parse route prefix %q: %w", route.Prefix, err)
+	}
+	for _, nextHop := range normalizeFreeBSDNextHopsForFamily(route.NextHops, prefix.Addr().Is4()) {
 		if err := s.runRoute(ctx, "delete", route, nextHop); err != nil {
 			return err
 		}
@@ -265,6 +275,9 @@ func (s *freeBSDFIBSyncer) deleteRoute(ctx context.Context, route FIBRoute) erro
 
 func (s *freeBSDFIBSyncer) runRoute(ctx context.Context, action string, route FIBRoute, nextHop string) error {
 	args := []string{"-n", action, "-proto1", "-net", route.Prefix}
+	if prefix, err := netip.ParsePrefix(route.Prefix); err == nil && prefix.Addr().Is6() {
+		args = []string{"-n", action, "-inet6", "-proto1", "-net", route.Prefix}
+	}
 	if route.PreferredSource != "" {
 		args = append(args, "-ifa", route.PreferredSource)
 	}
@@ -278,8 +291,16 @@ func (s *freeBSDFIBSyncer) runRoute(ctx context.Context, action string, route FI
 
 func normalizeFreeBSDFIBRoute(route FIBRoute) FIBRoute {
 	route.Prefix = normalizeRoutePrefix(route.Prefix)
-	route.NextHops = normalizeFreeBSDNextHops(route.NextHops)
-	if source, err := netip.ParseAddr(strings.TrimSpace(route.PreferredSource)); err == nil && source.Is4() {
+	prefix, err := netip.ParsePrefix(route.Prefix)
+	if err != nil || (!prefix.Addr().Is4() && !prefix.Addr().Is6()) {
+		route.Prefix = ""
+		route.NextHops = nil
+		route.PreferredSource = ""
+		return route
+	}
+	wantIPv4 := prefix.Addr().Is4()
+	route.NextHops = normalizeFreeBSDNextHopsForFamily(route.NextHops, wantIPv4)
+	if source, err := netip.ParseAddr(strings.TrimSpace(route.PreferredSource)); err == nil && source.Zone() == "" && source.Is4() == wantIPv4 {
 		route.PreferredSource = source.String()
 	} else {
 		route.PreferredSource = ""
@@ -288,11 +309,15 @@ func normalizeFreeBSDFIBRoute(route FIBRoute) FIBRoute {
 }
 
 func normalizeFreeBSDNextHops(values []string) []string {
+	return normalizeFreeBSDNextHopsForFamily(values, true)
+}
+
+func normalizeFreeBSDNextHopsForFamily(values []string, wantIPv4 bool) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, value := range values {
 		addr, err := netip.ParseAddr(strings.TrimSpace(value))
-		if err != nil || !addr.Is4() {
+		if err != nil || addr.Zone() != "" || addr.Is4() != wantIPv4 {
 			continue
 		}
 		key := addr.String()

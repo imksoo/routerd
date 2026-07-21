@@ -134,3 +134,4 @@ jq -e '.ok == true and .libndpiLoaded == true and (.libndpiVersion | length > 0)
 echo "freebsd-native-libndpi=ok"
 
 sh scripts/freebsd-native-observer-smoke.sh
+sh scripts/freebsd-bgp-ipv6-fib-smoke.sh
