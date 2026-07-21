@@ -109,6 +109,9 @@ run_bounded 20 initiate "$evidence/initiate.log" /usr/local/sbin/swanctl --initi
 wait_established initial "$evidence/sa.initial.log"
 ack_phase initial 19091 19191
 run_bounded 20 initial-host-to-peer "$evidence/traffic.host-to-peer.log" ping -n -S "$host_ts" -c 2 "$peer_ts"
+run_bounded 45 idempotent-apply "$evidence/idempotent-apply.log" "$routerd" apply --once --config "$work/router.yaml" --state-file "$state" --ledger-file "$ledger"
+wait_established idempotent "$evidence/sa.idempotent.log"
+run_bounded 20 idempotent-host-to-peer "$evidence/traffic.idempotent.log" ping -n -S "$host_ts" -c 2 "$peer_ts"
 run_bounded 20 rekey "$evidence/rekey.log" /usr/local/sbin/swanctl --rekey --ike native-tunnel
 wait_established rekey "$evidence/sa.rekey.log"
 ack_phase rekey 19092 19192
@@ -129,7 +132,8 @@ run_bounded 45 teardown-apply "$evidence/teardown.log" "$routerd" apply --once -
 test ! -e /usr/local/etc/routerd/swanctl/routerd.conf
 test ! -e /usr/local/etc/routerd/swanctl/.routerd-pending-load
 grep -Fx '# fixture-owned operator sentinel: routerd must not mutate this file' "$sentinel"
-if /usr/local/sbin/swanctl --list-conns | grep -F native-tunnel >/dev/null; then
+run_bounded 20 teardown-list-conns "$evidence/teardown.list-conns.log" /usr/local/sbin/swanctl --list-conns
+if grep -F native-tunnel "$evidence/teardown.list-conns.log" >/dev/null; then
   echo 'routerd-owned native-tunnel remained after teardown' >&2
   exit 1
 fi
