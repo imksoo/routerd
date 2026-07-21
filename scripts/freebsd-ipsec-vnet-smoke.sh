@@ -27,11 +27,11 @@ pkg info -e strongswan || { echo 'strongswan package is required' >&2; exit 2; }
 
 mkdir -p "$evidence"
 work="$evidence/work"
+mkdir -p "$work"
 peer="$work/peer"
 jail_name="routerd-ipsec-vnet-$$"
 epair_host=
 own_epair_module=0
-host_service_started=0
 host_service_touched=0
 strongswan_was_running=0
 strongswan_enable_rc=0
@@ -106,7 +106,7 @@ epair_host=$(ifconfig epair create)
 epair_peer="${epair_host%a}b"
 ifconfig "$epair_host" inet "$host_addr/30" up
 ifconfig lo0 inet "$host_ts/32" alias
-jail -c name="$jail_name" path=/ host.hostname="$jail_name" persist vnet \
+jail -c name="$jail_name" path=/ host.hostname="$jail_name" persist vnet allow.raw_sockets=1 \
   vnet.interface="$epair_peer"
 jexec "$jail_name" ifconfig lo0 up
 jexec "$jail_name" ifconfig "$epair_peer" inet "$peer_addr/30" up
@@ -195,7 +195,7 @@ spec:
       localAddress: $host_addr
       remoteAddress: $peer_addr
       preSharedKey: $psk
-      psPhase1Proposals: [definitely-invalid-ike-proposal]
+      phase1Proposals: [definitely-invalid-ike-proposal]
       leftSubnet: $host_ts/32
       rightSubnet: $peer_ts/32
 EOF
@@ -211,7 +211,6 @@ if grep -F "$psk" "$evidence/apply-invalid.log" >/dev/null; then
   exit 1
 fi
 "$routerd" apply --once --config "$work/router.yaml" >"$evidence/apply-1.log" 2>&1
-host_service_started=1
 /usr/local/sbin/swanctl --initiate --ike "$connection" --child net >"$evidence/initiate-1.log" 2>&1
 wait_for 'initial IKE SA' sh -c "/usr/local/sbin/swanctl --list-sas --ike '$connection' | grep -q ESTABLISHED"
 ping -n -S "$host_ts" -c 2 "$peer_ts" >"$evidence/traffic-1.log"

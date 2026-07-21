@@ -482,8 +482,8 @@ type IPsecConnectionSpec struct {
 	RemoteAddress     string   `yaml:"remoteAddress" json:"remoteAddress"`
 	PreSharedKey      string   `yaml:"preSharedKey,omitempty" json:"preSharedKey,omitempty"`
 	CertificateRef    string   `yaml:"certificateRef,omitempty" json:"certificateRef,omitempty"`
-	Phase1Proposals   []string `yaml:"psPhase1Proposals,omitempty" json:"psPhase1Proposals,omitempty"`
-	Phase2Proposals   []string `yaml:"psPhase2Proposals,omitempty" json:"psPhase2Proposals,omitempty"`
+	Phase1Proposals   []string `yaml:"phase1Proposals,omitempty" json:"phase1Proposals,omitempty"`
+	Phase2Proposals   []string `yaml:"phase2Proposals,omitempty" json:"phase2Proposals,omitempty"`
 	LeftSubnet        string   `yaml:"leftSubnet" json:"leftSubnet"`
 	RightSubnet       string   `yaml:"rightSubnet" json:"rightSubnet"`
 	CloudProviderHint string   `yaml:"cloudProviderHint,omitempty" json:"cloudProviderHint,omitempty" jsonschema:"enum=,enum=aws,enum=azure,enum=gcp"`

@@ -2502,20 +2502,20 @@
                       "localAddress": {
                         "type": "string"
                       },
+                      "phase1Proposals": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "phase2Proposals": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
                       "preSharedKey": {
                         "type": "string"
-                      },
-                      "psPhase1Proposals": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "psPhase2Proposals": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
                       },
                       "remoteAddress": {
                         "type": "string"
