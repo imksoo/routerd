@@ -216,7 +216,7 @@ type SysctlSpec struct {
 }
 
 type SysctlProfileSpec struct {
-	Profile    string            `yaml:"profile" json:"profile" jsonschema:"enum=router-linux"`
+	Profile    string            `yaml:"profile" json:"profile" jsonschema:"enum=router-linux,enum=router-freebsd"`
 	Runtime    *bool             `yaml:"runtime,omitempty" json:"runtime,omitempty"`
 	Persistent bool              `yaml:"persistent,omitempty" json:"persistent,omitempty"`
 	Overrides  map[string]string `yaml:"overrides,omitempty" json:"overrides,omitempty"`

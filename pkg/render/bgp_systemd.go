@@ -25,3 +25,17 @@ func BGPSystemdSpec(socketPath string) api.SystemdUnitSpec {
 		NoNewPrivileges:          &noNewPrivileges,
 	}
 }
+
+// FreeBSDBGPSystemdSpec supplies FreeBSD's native runtime and state paths to
+// the generic rc.d renderer.  The renderer consumes SystemdUnitSpec as a
+// portable process description; it does not require systemd at runtime.
+func FreeBSDBGPSystemdSpec() api.SystemdUnitSpec {
+	unit := BGPSystemdSpec("/var/run/routerd/bgp/gobgp.sock")
+	unit.ExecStart = []string{
+		"/usr/local/sbin/routerd-bgp", "daemon",
+		"--socket", "/var/run/routerd/bgp/gobgp.sock",
+		"--control-socket", "/var/run/routerd/bgp/control.sock",
+		"--state-file", "/var/db/routerd/bgp/applied.json",
+	}
+	return unit
+}

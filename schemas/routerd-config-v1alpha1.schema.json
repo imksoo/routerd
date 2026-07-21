@@ -1168,7 +1168,8 @@
                       },
                       "profile": {
                         "enum": [
-                          "router-linux"
+                          "router-linux",
+                          "router-freebsd"
                         ],
                         "type": "string"
                       },

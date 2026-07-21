@@ -135,9 +135,9 @@ func validateSystemResource(res api.Resource, targetOS platform.OS) (bool, error
 			return true, err
 		}
 		switch spec.Profile {
-		case "router-linux":
+		case "router-linux", "router-freebsd":
 		default:
-			return true, fmt.Errorf("%s spec.profile must be router-linux", res.ID())
+			return true, fmt.Errorf("%s spec.profile must be router-linux or router-freebsd", res.ID())
 		}
 		for key, value := range spec.Overrides {
 			if strings.TrimSpace(key) == "" || strings.ContainsAny(key, " \t\n/") {
