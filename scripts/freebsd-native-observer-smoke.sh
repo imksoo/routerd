@@ -75,6 +75,7 @@ fi
 
 arp_observer="$work/routerd-arp-observer"
 ra_observer="$work/routerd-ra-observer"
+injector="$work/freebsd-bpf-feedback-injector"
 arp_socket="$work/arp.sock"
 ra_socket="$work/ra.sock"
 arp_events="$work/arp-events.jsonl"
@@ -82,6 +83,7 @@ ra_events="$work/ra-events.jsonl"
 
 go build -o "$arp_observer" ./cmd/routerd-arp-observer
 go build -o "$ra_observer" ./cmd/routerd-ra-observer
+go build -o "$injector" ./scripts/freebsd-bpf-feedback-injector
 
 epair_host=$(ifconfig epair create)
 epair_peer="${epair_host%a}b"
@@ -133,6 +135,11 @@ done
   cat "$work/ra.log" >&2
   exit 1
 }
+
+# Feed known Ethernet frames back through the FreeBSD kernel input path. This
+# exercises the production BPF readers while avoiding epair's lack of a peer
+# receive tap; the production parsers/status/event files remain the oracle.
+"$injector" "$epair_host"
 
 # Generate packets through the guest kernel, not through a parser-only helper.
 sleep 1
