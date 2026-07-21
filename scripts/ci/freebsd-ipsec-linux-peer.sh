@@ -129,9 +129,9 @@ cleanup() {
   if is_owned verifier && sudo test -s "$dir/verifier.pid"; then
     verifier_pid=$(sudo cat "$dir/verifier.pid")
     verifier_owned=0
-    if [[ "$topology" == tap ]]; then
-      sudo ip netns pids "$netns" | grep -Fxq "$verifier_pid" && verifier_owned=1
-    elif sudo kill -0 "$verifier_pid" 2>/dev/null && sudo sh -c 'tr "\0" "\n" <"$1" | grep -Fxq "$2"' sh "/proc/$verifier_pid/environ" "PEER_DIR=$dir"; then
+    if [[ "$topology" == tap ]] && sudo ip netns pids "$netns" | grep -Fxq "$verifier_pid" && sudo sh -c 'tr "\0" "\n" <"$1" | grep -Fxq "$2"' sh "/proc/$verifier_pid/environ" "PEER_DIR=$dir"; then
+      verifier_owned=1
+    elif [[ "$topology" != tap ]] && sudo kill -0 "$verifier_pid" 2>/dev/null && sudo sh -c 'tr "\0" "\n" <"$1" | grep -Fxq "$2"' sh "/proc/$verifier_pid/environ" "PEER_DIR=$dir"; then
       verifier_owned=1
     fi
     if [[ "$verifier_owned" -eq 1 ]]; then
@@ -264,13 +264,19 @@ EOF
   [ -n "$verifier_pid" ] || { echo 'peer-start: reverse verifier did not record PID' >&2; exit 1; }
   if [[ "$topology" == tap ]]; then
     sudo ip netns pids "$netns" | grep -Fxq "$verifier_pid"
+    sudo sh -c 'tr "\0" "\n" <"$1" | grep -Fxq "$2"' sh "/proc/$verifier_pid/environ" "PEER_DIR=$dir"
   else
     sudo kill -0 "$verifier_pid"
+    sudo sh -c 'tr "\0" "\n" <"$1" | grep -Fxq "$2"' sh "/proc/$verifier_pid/environ" "PEER_DIR=$dir"
   fi
   mark_owned verifier
   ready=0
   for _ in $(seq 1 30); do
-    if sudo ip netns exec "$netns" ss -ltn | grep -Eq '[:.]19091[[:space:]]'; then ready=1; break; fi
+    if [[ "$topology" == tap ]]; then
+      sudo ip netns exec "$netns" ss -ltn | grep -Eq '[:.]19091[[:space:]]' && { ready=1; break; }
+    else
+      sudo ss -ltn | grep -Eq '[:.]19091[[:space:]]' && { ready=1; break; }
+    fi
     sleep 1
   done
   [ "$ready" -eq 1 ] || { echo 'peer-start: reverse verifier did not listen on 19091' >&2; exit 1; }
