@@ -16,7 +16,6 @@ ra_pid=""
 rtadvd_pid=""
 own_epair_module=0
 restart_devd=0
-ipv6_forwarding=""
 
 cleanup() {
   for pid in "$rtadvd_pid" "$ra_pid" "$arp_pid"; do
@@ -36,9 +35,6 @@ cleanup() {
   fi
   if [ "$restart_devd" -eq 1 ]; then
     service devd start >/dev/null 2>&1 || true
-  fi
-  if [ -n "$ipv6_forwarding" ]; then
-    sysctl "net.inet6.ip6.forwarding=$ipv6_forwarding" >/dev/null || true
   fi
   rm -rf "$work"
 }
@@ -72,20 +68,19 @@ jail -c name="$jail_name" path=/ host.hostname="$jail_name" \
 jexec "$jail_name" ifconfig lo0 up
 jexec "$jail_name" ifconfig "$epair_peer" inet 192.0.2.2/24 up
 jexec "$jail_name" ifconfig "$epair_peer" inet6 2001:db8:846::2/64 up
-ipv6_forwarding=$(sysctl -n net.inet6.ip6.forwarding)
-sysctl net.inet6.ip6.forwarding=1 >/dev/null
+jexec "$jail_name" sysctl net.inet6.ip6.forwarding=1 >/dev/null
 
-# Observe the transmitting epair endpoint. FreeBSD if_epair taps BPF before it
-# enqueues a frame to the peer; observing the receiving peer is not equivalent.
-"$arp_observer" daemon \
-  --resource native-ci-arp --interface "$epair_host" --event-interface native-ci \
+# Run each production observer in the sender's VNET and bind it to the exact
+# transmitting epair endpoint where FreeBSD invokes BPF_MTAP.
+jexec "$jail_name" "$arp_observer" daemon \
+  --resource native-ci-arp --interface "$epair_peer" --event-interface native-ci \
   --socket "$arp_socket" --event-file "$arp_events" --pool native-ci-pool \
   --prefix 192.0.2.0/24 --source-type arp-observer --observe \
   --self-mac 02:00:00:00:00:99 >"$work/arp.log" 2>&1 &
 arp_pid=$!
 
-"$ra_observer" daemon \
-  --resource native-ci-ra --interface "$epair_host" \
+jexec "$jail_name" "$ra_observer" daemon \
+  --resource native-ci-ra --interface "$epair_peer" \
   --socket "$ra_socket" --event-file "$ra_events" \
   --self-mac 02:00:00:00:00:99 >"$work/ra.log" 2>&1 &
 ra_pid=$!
@@ -114,16 +109,17 @@ done
 
 # Generate both protocols from the same kernel interface the observers capture.
 for _ in $(jot 4); do
-  arp -d 192.0.2.2 >/dev/null 2>&1 || true
-  ping -n -c 1 192.0.2.2 >/dev/null
+  jexec "$jail_name" arp -d 192.0.2.1 >/dev/null 2>&1 || true
+  jexec "$jail_name" ping -n -c 1 192.0.2.1 >/dev/null
 done
 
 rtadvd_conf="$work/rtadvd.conf"
 {
-  printf '%s:\\\n' "$epair_host"
+  printf '%s:\\\n' "$epair_peer"
   printf '\t:addr="2001:db8:846::":prefixlen#64:rltime#180:maxinterval#4:mininterval#3:\n'
 } >"$rtadvd_conf"
-rtadvd -d -f -s -c "$rtadvd_conf" -p "$work/rtadvd.pid" "$epair_host" \
+jexec "$jail_name" rtadvd -d -f -s -c "$rtadvd_conf" \
+  -p "$work/rtadvd.pid" "$epair_peer" \
   >"$work/rtadvd.log" 2>&1 &
 rtadvd_pid=$!
 
@@ -136,7 +132,7 @@ for _ in $(jot 20); do
   if jq -e '.observed.packetsSeen | tonumber > 0' "$work/arp-status.json" >/dev/null && \
      jq -e '.observed.packetsSeen | tonumber > 0' "$work/ra-status.json" >/dev/null && \
      grep -q 'routerd.mobility.arp.observed' "$arp_events" 2>/dev/null && \
-     grep -q '192.0.2.1' "$arp_events" 2>/dev/null && \
+     grep -q '192.0.2.2' "$arp_events" 2>/dev/null && \
      grep -q 'routerd.ipv6.ra.rogue_detected' "$ra_events" 2>/dev/null; then
     observed=1
     break
@@ -150,7 +146,7 @@ if [ "$observed" -ne 1 ]; then
   cat "$work/arp.log" >&2
   cat "$work/ra.log" >&2
   cat "$work/rtadvd.log" >&2
-  ifconfig "$epair_host" >&2
+  jexec "$jail_name" ifconfig "$epair_peer" >&2
   procstat -f "$arp_pid" >&2 || true
   procstat -f "$ra_pid" >&2 || true
   netstat -B >&2 || true
