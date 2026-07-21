@@ -7,7 +7,7 @@ lan_if = "vtnet1"
 block drop all
 pass quick on lo0 all
 pass out quick all keep state
-pass quick inet6 proto icmp6 all keep state
+pass in quick on $lan_if inet6 proto icmp6 icmp6-type { routersol, routeradv, neighbrsol, neighbradv } to { (vtnet1), ff02::1, ff02::2, ff02::1:ff00:0/104 } keep state label "routerd:lan:ipv6-control"
 pass in quick on $lan_if to (vtnet1) keep state
 pass in quick on $lan_if keep state label "routerd:lan-to-lan"
 ### rc.conf.d-routerd

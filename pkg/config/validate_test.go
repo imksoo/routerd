@@ -1179,6 +1179,38 @@ func TestValidateFreeBSDEgressRoutePolicyHashRouteToShape(t *testing.T) {
 	}
 }
 
+func TestValidateFreeBSDEgressRoutePolicyHashIPv6StaticRoutehosts(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-a"}, Spec: api.InterfaceSpec{IfName: "vtnet0"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "vtnet1"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "balanced6"}, Spec: api.EgressRoutePolicySpec{
+				Family: "ipv6", Mode: "hash", HashFields: []string{"sourceAddress"}, SourceCIDRs: []string{"2001:db8:10::/64"},
+				Candidates: []api.EgressRoutePolicyCandidate{{Targets: []api.EgressRoutePolicyTarget{
+					{Interface: "wan-a", GatewaySource: "static", Gateway: "2001:db8:100::1"},
+					{Interface: "wan-b", GatewaySource: "static", Gateway: "2001:db8:200::1"},
+				}}},
+			}},
+		}},
+	}
+	if err := ValidateForOS(router, platform.OSFreeBSD); err != nil {
+		t.Fatalf("FreeBSD IPv6 route-to shape rejected: %v", err)
+	}
+
+	router.Spec.Resources[2].Spec = api.EgressRoutePolicySpec{
+		Family: "ipv6", Mode: "hash", HashFields: []string{"sourceAddress"}, SourceCIDRs: []string{"2001:db8:10::/64"},
+		Candidates: []api.EgressRoutePolicyCandidate{{Targets: []api.EgressRoutePolicyTarget{
+			{Interface: "wan-a", GatewaySource: "static", Gateway: "fe80::1"},
+			{Interface: "wan-b", GatewaySource: "static", Gateway: "2001:db8:200::1"},
+		}}},
+	}
+	if err := ValidateForOS(router, platform.OSFreeBSD); err == nil || !strings.Contains(err.Error(), "non-link-local ipv6") {
+		t.Fatalf("FreeBSD scoped/link-local gateway error = %v", err)
+	}
+}
+
 func TestValidateFreeBSDEgressRoutePolicyHashRejectsAmbiguousTargetInterface(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
@@ -1216,7 +1248,7 @@ func TestValidateLinuxEgressRoutePolicyTargetStillRequiresRouteTableMark(t *test
 	}
 }
 
-func TestValidateEgressRoutePolicySimpleFailoverRemainsSupportedOnFreeBSD(t *testing.T) {
+func TestValidateFreeBSDEgressRoutePolicyRejectsUnrenderedPriorityFailover(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -1229,8 +1261,8 @@ func TestValidateEgressRoutePolicySimpleFailoverRemainsSupportedOnFreeBSD(t *tes
 			}}},
 		}},
 	}
-	if err := ValidateForOS(router, platform.OSFreeBSD); err != nil {
-		t.Fatalf("simple FreeBSD failover must remain supported: %v", err)
+	if err := ValidateForOS(router, platform.OSFreeBSD); err == nil || !strings.Contains(err.Error(), "supports only the static sourceAddress hash PF route-to shape") {
+		t.Fatalf("FreeBSD priority policy error = %v, want explicit unsupported rejection", err)
 	}
 }
 
