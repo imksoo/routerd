@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
 
@@ -101,6 +102,27 @@ func TestKernelModulesForTunnelInterfaceModes(t *testing.T) {
 				t.Fatalf("KernelModules(%s) = %#v, want %#v", tt.mode, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestKernelModulesForFreeBSDUsePFRuntimeModules(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "ClientPolicy"}, Metadata: api.ObjectMeta{Name: "lan-policy"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.ObservabilityAPIVersion, Kind: "FirewallEventLog"}, Metadata: api.ObjectMeta{Name: "firewall-log"}},
+	}}}
+	if got, want := KernelModulesForOS(router, platform.OSFreeBSD), []string{"pf", "pflog"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("KernelModulesForOS(freebsd) = %#v, want %#v", got, want)
+	}
+	resources := KernelModuleResourcesForOS(router, platform.OSFreeBSD)
+	if len(resources) != 1 {
+		t.Fatalf("resources = %#v", resources)
+	}
+	spec, err := resources[0].KernelModuleSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Persistent || !reflect.DeepEqual(spec.Modules, []string{"pf", "pflog"}) {
+		t.Fatalf("FreeBSD kernel module spec = %#v", spec)
 	}
 }
 
