@@ -128,9 +128,12 @@ Implemented:
 - explicit rejection of non-local DNS resolver binds because FreeBSD has no
   Linux `IP_FREEBIND` equivalent
 
-The direct-BPF ARP/RA observer and libndpi/DPI delivery work remains open:
-native build and capability reporting exist, but no accepted FreeBSD packet
-delivery observation has proved the observer path end-to-end.
+The ARP and RA observer daemons capture through the FreeBSD base-system
+tcpdump/libpcap BPF path; proactive ARP writes retain a separate direct-BPF
+descriptor. The provisioned native CI exercises both daemons in a disposable
+VNET and requires the expected ARP observation and rogue-RA events. The tagged
+native DPI backend supports the FreeBSD ports `ndpi` 5.0 ABI and is verified by
+the same native gate with a TLS/SNI classification self-test.
 
 `ClientPolicy` is supported on FreeBSD with an address-backed pf
 approximation. Each IPv4 guest or isolated classification references a
@@ -151,8 +154,9 @@ DHCP/RA service, and ports packages for WireGuard, Tailscale, and strongSwan.
 | Category | Packages |
 | --- | --- |
 | Runtime | `dnsmasq`, `wireguard-tools`, `tailscale`, `strongswan`, `mpd5` |
-| Diagnostics | `bind-tools`, `tcpdump` |
-| Base system | `ifconfig`, `sysctl`, `service`, `sysrc`, `netstat`, `sockstat`, `ping`, `traceroute` |
+| Optional native DPI | `ndpi` |
+| Diagnostics | `bind-tools` |
+| Base system | `ifconfig`, `sysctl`, `service`, `sysrc`, `netstat`, `sockstat`, `tcpdump`, `ping`, `traceroute` |
 
 `routerd render freebsd --out-dir <dir>` produces:
 
@@ -172,7 +176,7 @@ and FreeBSD:
 
 | Area | Current gap | Backlog |
 | --- | --- | --- |
-| CI/runtime coverage | Pull requests compile FreeBSD amd64/arm64 binaries and test packages; release automation builds FreeBSD archives. Native VM115 evidence covers validate/render, pf and dnsmasq syntax, rc.d status, route lookup, BFD, and the supported PF dataplane slices. | The retained VM evidence is lab acceptance, not yet an automated CI VM job. Add a provisioned FreeBSD VM smoke workflow before claiming automated runtime coverage. |
+| CI/runtime coverage | Pull requests compile FreeBSD amd64/arm64 binaries and run a provisioned FreeBSD 14.3 amd64 VM with the full unfiltered `go test ./...`, live routerd smoke, ARP/RA observers, and native nDPI. Retained VM115 evidence additionally covers route lookup, BFD, and supported PF dataplane slices. | Native PR runtime certification is currently amd64; arm64 remains compile-only in PR CI. |
 | FreeBSD feature limitations | `ClientPolicy` uses DHCPv4 reservations for IPv4 and explicit `classification[].ipv6Addresses` for IPv6 pf rules. It cannot match MAC addresses or infer IPv6 identity from DHCPv4. | Keep the explicit-address and MAC/L2 limitation visible; require separate segmentation for unlisted or privacy IPv6 addresses ([#849](https://github.com/imksoo/routerd/issues/849)). |
 | Package bootstrap | Ubuntu and FreeBSD can install packages imperatively. | Keep schema, validation, installer package lists, examples, and generated docs in sync for `apt` and `pkg`. |
 
