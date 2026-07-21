@@ -11,6 +11,32 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260721.1054
+
+### 追加
+
+- FreeBSD 14.3 amd64 を provisioned native PR gate に追加しました。省略なしの
+  `go test ./...`、current binary と live `routerd` smoke、render/apply 検証、
+  PF、dnsmasq、rc.d、ARP/RA observer、native nDPI を実行します。FreeBSD arm64 は
+  cross-compile 認定です。
+- FreeBSD の ARP/rogue-RA 観測を base-system tcpdump/libpcap BPF capture で実装し、
+  proactive ARP write には direct BPF を維持しました。native DPI backend は ports の
+  nDPI 5.0 ABI と TLS/SNI classification に対応します。
+
+### 変更
+
+- FreeBSD parity に native doctor、healthcheck route lookup、runtime kernel module、
+  BGP IPv4 FIB ownership、FRR BFD、BGP/DPI rc.d、address-backed IPv6 ClientPolicy、
+  対応範囲内の PF `route-to` source affinity を追加しました。
+- FreeBSD では fwmark healthcheck と non-local resolver bind を明示拒否し、
+  ClientPolicy は MAC/L2 ではなく IP identity を使います。認定済み policy routing は
+  IPv4 static routehost に限定され、SAM dataplane は設計上 Linux-only のままです。
+
+### 修正
+
+- federation doctor の deterministic-ordering test で clock を固定し、低速な native
+  runner で秒境界を越えても TTL text が変化しないようにしました。
+
 ## v20260719.1121
 
 ### 修正

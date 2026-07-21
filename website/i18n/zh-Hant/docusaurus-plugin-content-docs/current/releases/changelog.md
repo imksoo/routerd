@@ -11,6 +11,32 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260721.1054
+
+### 新增
+
+- FreeBSD 14.3 amd64 現已成為 provisioned native PR gate，執行完整且不省略的
+  `go test ./...`、current binary 與 live `routerd` smoke、render/apply 驗證、PF、
+  dnsmasq、rc.d、ARP/RA observer 和 native nDPI 檢查。FreeBSD arm64 維持
+  cross-compile 認證。
+- FreeBSD ARP 與 rogue-RA 觀測現使用 base-system tcpdump/libpcap BPF capture；
+  proactive ARP write 繼續使用 direct BPF。native DPI backend 支援 ports nDPI 5.0
+  ABI，並驗證 TLS/SNI classification。
+
+### 變更
+
+- FreeBSD parity 現涵蓋 native doctor、healthcheck route lookup、runtime kernel
+  module、BGP IPv4 FIB ownership、FRR BFD、BGP/DPI rc.d、以位址為基礎的 IPv6
+  ClientPolicy，以及支援範圍內的 PF `route-to` source affinity。
+- FreeBSD 會明確拒絕 fwmark healthcheck 與 non-local resolver bind；ClientPolicy
+  使用 IP 而非 MAC/L2 identity。已認證的 policy routing 限於 IPv4 static
+  routehost，SAM dataplane 依設計仍僅支援 Linux。
+
+### 修正
+
+- federation doctor 的 deterministic-ordering test 現在固定 clock，避免較慢的
+  native runner 跨越秒邊界時 TTL text 在重複比較中發生變化。
+
 ## v20260719.1121
 
 ### 修正

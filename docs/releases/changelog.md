@@ -12,6 +12,36 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260721.1054
+
+### Added
+
+- FreeBSD 14.3 amd64 is now a provisioned native pull-request gate running the
+  full unfiltered `go test ./...` suite, current binary and live `routerd`
+  smoke, render/apply validation, PF, dnsmasq, rc.d, ARP/RA observer, and native
+  nDPI checks. FreeBSD arm64 remains cross-compile certified.
+- FreeBSD ARP and rogue-RA observation now use the base-system
+  tcpdump/libpcap BPF capture path, with direct BPF retained for proactive ARP
+  writes. The native DPI backend supports the ports nDPI 5.0 ABI and verifies
+  TLS/SNI classification.
+
+### Changed
+
+- FreeBSD parity now covers native doctor diagnostics, healthcheck route
+  lookup, runtime kernel-module reconciliation, BGP IPv4 FIB ownership, FRR
+  BFD, generated BGP/DPI rc.d services, address-backed IPv6 ClientPolicy rules,
+  and the supported PF `route-to` source-affinity slice.
+- Platform-specific boundaries are explicit: FreeBSD rejects fwmark health
+  checks and non-local resolver binds, uses IP rather than MAC/L2 ClientPolicy
+  identity, and limits the certified policy-routing slice to IPv4 static
+  routehosts. SAM dataplane remains Linux-only by design.
+
+### Fixed
+
+- The federation doctor deterministic-ordering test now freezes its clock, so
+  crossing a wall-clock second cannot change TTL text during repeated output
+  comparisons on slower native runners.
+
 ## v20260719.1121
 
 ### Fixed
