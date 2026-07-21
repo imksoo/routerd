@@ -14,6 +14,7 @@ esac
 work=$(mktemp -d /tmp/routerd-freebsd-observer-smoke.XXXXXX)
 jail_name="routerd-observer-$$"
 epair_host=""
+epair_bridge_peer=""
 bridge=""
 arp_pid=""
 ra_pid=""
@@ -37,6 +38,9 @@ cleanup() {
   fi
   if [ -n "$epair_host" ] && ifconfig "$epair_host" >/dev/null 2>&1; then
     ifconfig "$epair_host" destroy || true
+  fi
+  if [ -n "$epair_bridge_peer" ] && ifconfig "$epair_bridge_peer" >/dev/null 2>&1; then
+    ifconfig "$epair_bridge_peer" destroy || true
   fi
   if [ "$own_epair_module" -eq 1 ]; then
     kldunload if_epair || true
@@ -81,11 +85,14 @@ go build -o "$ra_observer" ./cmd/routerd-ra-observer
 
 epair_host=$(ifconfig epair create)
 epair_peer="${epair_host%a}b"
+epair_bridge_peer=$(ifconfig epair create)
+epair_local="${epair_bridge_peer%a}b"
 bridge=$(ifconfig bridge create)
 ifconfig "$epair_host" up
-ifconfig "$bridge" addm "$epair_host" up
-ifconfig "$bridge" inet 192.0.2.1/24
-ifconfig "$bridge" inet6 2001:db8:846::1/64
+ifconfig "$epair_bridge_peer" up
+ifconfig "$bridge" addm "$epair_host" addm "$epair_bridge_peer" up
+ifconfig "$epair_local" inet 192.0.2.1/24 up
+ifconfig "$epair_local" inet6 2001:db8:846::1/64
 jail -c name="$jail_name" path=/ host.hostname="$jail_name" \
   persist vnet vnet.interface="$epair_peer" allow.raw_sockets
 jexec "$jail_name" ifconfig lo0 up
@@ -145,7 +152,7 @@ jexec "$jail_name" rtadvd -d -f -s -c "$rtadvd_conf" \
   -p "$work/rtadvd.pid" "$epair_peer" >"$work/rtadvd.log" 2>&1 &
 rtadvd_pid=$!
 sleep 1
-rtsol -d "$bridge" >"$work/rtsol.log" 2>&1 || true
+rtsol -d "$epair_local" >"$work/rtsol.log" 2>&1 || true
 
 observed=0
 for _ in $(jot 20); do
@@ -172,6 +179,7 @@ if [ "$observed" -ne 1 ]; then
   cat "$work/rtadvd.log" >&2
   cat "$work/rtsol.log" >&2
   ifconfig "$bridge" >&2
+  ifconfig "$epair_local" >&2
   procstat -f "$arp_pid" >&2 || true
   procstat -f "$ra_pid" >&2 || true
   netstat -B >&2 || true
