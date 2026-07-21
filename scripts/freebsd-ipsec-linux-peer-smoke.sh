@@ -83,6 +83,31 @@ run_invalid_apply_diagnostic() {
   printf 'step=invalid-apply rc=%s elapsed=%ss\n' "$apply_rc" "$elapsed" >&3
   return "$apply_rc"
 }
+run_restart_apply_diagnostic() {
+  log=$1
+  shift
+  printf 'step=restart-apply begin\n' >&3
+  "$@" >"$log" 2>&1 &
+  apply_pid=$!
+  elapsed=0
+  diagnostic=0
+  while kill -0 "$apply_pid" 2>/dev/null; do
+    sleep 1; elapsed=$((elapsed + 1))
+    if [ "$elapsed" -eq 10 ] && kill -0 "$apply_pid" 2>/dev/null; then
+      diagnostic=1
+      ps -axo pid,ppid,pgid,sid,stat,command >"$evidence/restart-apply.process-tree.log" 2>&1 || true
+      procstat -kk "$apply_pid" >"$evidence/restart-apply.procstat.log" 2>&1 || true
+      kill -QUIT "$apply_pid" 2>/dev/null || true
+      sleep 2
+      if kill -0 "$apply_pid" 2>/dev/null; then kill -TERM "$apply_pid" 2>/dev/null || true; fi
+      sleep 1
+      if kill -0 "$apply_pid" 2>/dev/null; then kill -KILL "$apply_pid" 2>/dev/null || true; fi
+    fi
+  done
+  if wait "$apply_pid"; then apply_rc=0; else apply_rc=$?; fi
+  if [ "$diagnostic" -eq 1 ]; then return 124; fi
+  return "$apply_rc"
+}
 wait_established() {
   label=$1 log=$2
   for _ in $(jot 30); do
@@ -179,7 +204,7 @@ wait_established rekey "$evidence/sa.rekey.log"
 ack_phase rekey 19092 19192
 run_bounded 20 rekey-host-to-peer "$evidence/traffic.rekey.log" ping -n -S "$host_ts" -c 2 "$peer_ts"
 run_bounded 20 restart-service-stop "$evidence/restart.stop.log" service strongswan onestop
-run_bounded 45 restart-apply "$evidence/restart.log" "$routerd" apply --once --config "$work/router.yaml" --state-file "$state" --ledger-file "$ledger"
+run_restart_apply_diagnostic "$evidence/restart.log" "$routerd" apply --once --config "$work/router.yaml" --state-file "$state" --ledger-file "$ledger"
 run_bounded 20 restart-initiate "$evidence/restart.initiate.log" /usr/local/sbin/swanctl --initiate --ike native-tunnel --child net
 wait_established restart "$evidence/sa.restart.log"
 ack_phase restart 19093 19193
