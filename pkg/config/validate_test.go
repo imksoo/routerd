@@ -2207,6 +2207,39 @@ func TestValidateClientPolicy(t *testing.T) {
 	}
 }
 
+func TestValidateClientPolicyIPv6Addresses(t *testing.T) {
+	base := func(addresses []string) *api.Router {
+		return &api.Router{
+			TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+			Metadata: api.ObjectMeta{Name: "test"},
+			Spec: api.RouterSpec{Resources: []api.Resource{
+				{
+					TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+					Metadata: api.ObjectMeta{Name: "lan"},
+					Spec:     api.InterfaceSpec{IfName: "vtnet0", Managed: false, Owner: "external"},
+				},
+				{
+					TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "ClientPolicy"},
+					Metadata: api.ObjectMeta{Name: "guest"},
+					Spec: api.ClientPolicySpec{Mode: "include", Interfaces: []string{"lan"}, Classification: []api.ClientPolicyClassSpec{{
+						Mode:          "guest",
+						Match:         api.ClientPolicyClassMatchSpec{MACs: []string{"02:00:00:00:00:44"}},
+						IPv6Addresses: addresses,
+					}}},
+				},
+			}},
+		}
+	}
+	if err := Validate(base([]string{"fd00:1::10"})); err != nil {
+		t.Fatalf("validate explicit IPv6 ClientPolicy identity: %v", err)
+	}
+	for _, addresses := range [][]string{{"192.0.2.10"}, {"fd00:1::10", "fd00:1::10"}} {
+		if err := Validate(base(addresses)); err == nil {
+			t.Fatalf("Validate(%v) succeeded, want invalid IPv6 ClientPolicy identity rejection", addresses)
+		}
+	}
+}
+
 func TestValidateRejectsMissingInterfaceReference(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

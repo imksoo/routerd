@@ -2554,6 +2554,9 @@ type ClientPolicyClassSpec struct {
 	Mode            string                     `yaml:"mode" json:"mode" jsonschema:"enum=trusted,enum=guest,enum=isolated"`
 	Match           ClientPolicyClassMatchSpec `yaml:"match" json:"match"`
 	IPv4Reservation string                     `yaml:"ipv4Reservation,omitempty" json:"ipv4Reservation,omitempty"`
+	// IPv6Addresses are explicit IPv6 identities for FreeBSD pf ClientPolicy
+	// rendering. They are never inferred from IPv4 reservations or MAC selectors.
+	IPv6Addresses []string `yaml:"ipv6Addresses,omitempty" json:"ipv6Addresses,omitempty"`
 }
 
 type ClientPolicyClassMatchSpec struct {
