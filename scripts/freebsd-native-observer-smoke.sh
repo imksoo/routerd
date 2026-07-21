@@ -139,7 +139,7 @@ done
 # Feed known Ethernet frames back through the FreeBSD kernel input path. This
 # exercises the production BPF readers while avoiding epair's lack of a peer
 # receive tap; the production parsers/status/event files remain the oracle.
-"$injector" "$epair_host"
+"$injector" "$bridge"
 
 # Generate packets through the guest kernel, not through a parser-only helper.
 sleep 1
