@@ -35,6 +35,45 @@ run_bounded() {
   printf 'step=%s rc=%s\n' "$label" "$rc" >&3
   return "$rc"
 }
+run_invalid_apply_diagnostic() {
+  log=$1
+  shift
+  printf 'step=invalid-apply begin\n' >&3
+  "$@" >"$log" 2>&1 &
+  apply_pid=$!
+  elapsed=0
+  diagnostic=0
+  while kill -0 "$apply_pid" 2>/dev/null; do
+    sleep 1
+    elapsed=$((elapsed + 1))
+    if [ "$elapsed" -eq 25 ] && kill -0 "$apply_pid" 2>/dev/null; then
+      diagnostic=1
+      printf 'step=invalid-apply diagnostic=still-live elapsed=25s signal=QUIT\n' >&3
+      ps -axo pid,ppid,pgid,sid,stat,command >"$evidence/invalid-apply.process-tree.log" 2>&1 || true
+      kill -QUIT "$apply_pid" 2>/dev/null || true
+      printf '%s\n' '--- invalid-apply process tree' >&3
+      cat "$evidence/invalid-apply.process-tree.log" >&3 || true
+      printf '%s\n' '--- invalid-apply Go stack/output' >&3
+      sed "s/$psk/[REDACTED]/g" "$log" >&3 || true
+    fi
+    if [ "$elapsed" -ge 45 ] && kill -0 "$apply_pid" 2>/dev/null; then
+      printf 'step=invalid-apply timeout=45s signal=TERM\n' >&3
+      kill -TERM "$apply_pid" 2>/dev/null || true
+      sleep 2
+      if kill -0 "$apply_pid" 2>/dev/null; then
+        printf 'step=invalid-apply timeout=45s signal=KILL\n' >&3
+        kill -KILL "$apply_pid" 2>/dev/null || true
+      fi
+    fi
+  done
+  if wait "$apply_pid"; then apply_rc=0; else apply_rc=$?; fi
+  if [ "$diagnostic" -eq 1 ]; then
+    printf 'step=invalid-apply rc=124 diagnostic=stack-captured\n' >&3
+    return 124
+  fi
+  printf 'step=invalid-apply rc=%s elapsed=%ss\n' "$apply_rc" "$elapsed" >&3
+  return "$apply_rc"
+}
 wait_established() {
   label=$1 log=$2
   for _ in $(jot 30); do
@@ -104,7 +143,7 @@ spec:
     metadata: {name: native-tunnel}
     spec: {localAddress: $host_addr, remoteAddress: $peer_addr, preSharedKey: $psk, phase1Proposals: [invalid-proposal], leftSubnet: $host_ts/32, rightSubnet: $peer_ts/32}
 EOF
-if run_bounded 45 invalid-apply "$evidence/invalid.log" "$routerd" apply --once --config "$work/invalid.yaml" --state-file "$state" --ledger-file "$ledger"; then invalid_rc=0; else invalid_rc=$?; fi
+if run_invalid_apply_diagnostic "$evidence/invalid.log" "$routerd" apply --once --config "$work/invalid.yaml" --state-file "$state" --ledger-file "$ledger"; then invalid_rc=0; else invalid_rc=$?; fi
 [ "$invalid_rc" -ne 0 ] && [ "$invalid_rc" -ne 124 ]; grep -Eiq 'swanctl|proposal|load' "$evidence/invalid.log"; if grep -F "$psk" "$evidence/invalid.log" >/dev/null; then exit 1; fi
 run_bounded 45 valid-apply "$evidence/apply.log" "$routerd" apply --once --config "$work/router.yaml" --state-file "$state" --ledger-file "$ledger"
 run_bounded 20 initiate "$evidence/initiate.log" /usr/local/sbin/swanctl --initiate --ike native-tunnel --child net
