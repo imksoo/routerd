@@ -72,6 +72,24 @@ cleanup() {
   fi
   ifconfig lo0 inet "$host_ts" -alias >/dev/null 2>&1 || true
   printf 'cleanup=complete rc=%s\n' "$rc" >>"$evidence/cleanup.log"
+	if [ "$rc" -ne 0 ]; then
+		echo "freebsd-ipsec-vnet failed; redacted diagnostics follow" >&2
+		for log in \
+			"$evidence/strongswan-before.log" \
+			"$evidence/strongswan-status.before" \
+			"$evidence/strongswan-enable.before.stderr" \
+			"$peer/peer-charon.log" \
+			"$evidence/peer-load.log" \
+			"$evidence/apply-invalid.log" \
+			"$evidence/apply-1.log" \
+			"$evidence/initiate-1.log" \
+			"$evidence/cleanup.log"; do
+			if [ -f "$log" ]; then
+				echo "--- ${log#$evidence/}" >&2
+				sed "s/$psk/[REDACTED]/g" "$log" >&2
+			fi
+		done
+	fi
   return "$rc"
 }
 trap cleanup EXIT HUP INT TERM
