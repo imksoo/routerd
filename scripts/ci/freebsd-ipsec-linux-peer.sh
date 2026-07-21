@@ -23,7 +23,10 @@ stop_owned_charon() {
   sudo test -s "$dir/charon.pid" || return 0
   pid=$(sudo cat "$dir/charon.pid")
   [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
-  sudo kill -0 "$pid" 2>/dev/null || return 0
+  if ! sudo kill -0 "$pid" 2>/dev/null; then
+    if sudo test -e /var/run/charon.pid || sudo test -S /var/run/charon.vici; then return 1; fi
+    return 0
+  fi
   exe=$(sudo readlink -f "/proc/$pid/exe")
   [[ "$exe" = /usr/lib/ipsec/charon ]] || return 1
   sudo kill -TERM "$pid"
@@ -35,19 +38,21 @@ stop_owned_charon() {
   if sudo test -S /var/run/charon.vici; then return 1; fi
 }
 cleanup() {
-  rc=$?
+  rc=${1:-$?}
+  cleanup_rc=0
   if [[ ${cleanup_started:-0} -eq 1 ]]; then return "$rc"; fi
   cleanup_started=1
   if [[ "$rc" -ne 0 ]]; then emit_failure; fi
-  stop_owned_charon || true
+  if ! stop_owned_charon; then cleanup_rc=1; fi
   sudo ip addr del 10.250.2.1/32 dev lo 2>/dev/null || true
   if sudo test -s "$dir/verifier.pid"; then sudo kill -TERM "$(sudo cat "$dir/verifier.pid")" 2>/dev/null || true; fi
   sudo rm -rf -- "$dir"
+  if [[ "$rc" -eq 0 && "$cleanup_rc" -ne 0 ]]; then return "$cleanup_rc"; fi
   return "$rc"
 }
 case "$action" in
 start)
-  trap cleanup ERR INT TERM
+  trap 'cleanup "$?"' ERR INT TERM
   sudo apt-get update -qq
   sudo apt-get install -y -qq strongswan-swanctl strongswan-charon netcat-openbsd
   sudo systemctl stop strongswan-starter strongswan 2>/dev/null || true
@@ -89,14 +94,15 @@ EOF
   sudo test ! -e /var/run/charon.pid
   sudo test ! -S /var/run/charon.vici
   sudo sh -c "exec /usr/lib/ipsec/charon --use-syslog >>'$log' 2>&1" &
-  for _ in $(seq 1 30); do sudo test -s /var/run/charon.pid && sudo test -S /var/run/charon.vici && break; sleep 1; done
+  for _ in $(seq 1 30); do sudo test -s /var/run/charon.pid && break; sleep 1; done
   sudo test -s /var/run/charon.pid
-  sudo test -S /var/run/charon.vici
   charon_pid=$(sudo cat /var/run/charon.pid)
   [[ "$charon_pid" =~ ^[1-9][0-9]*$ ]]
   sudo kill -0 "$charon_pid"
   [[ "$(sudo readlink -f "/proc/$charon_pid/exe")" = /usr/lib/ipsec/charon ]]
   printf '%s\n' "$charon_pid" | sudo tee "$dir/charon.pid" >/dev/null
+  for _ in $(seq 1 30); do sudo test -S /var/run/charon.vici && break; sleep 1; done
+  sudo test -S /var/run/charon.vici
   sudo /usr/sbin/swanctl --uri "$vici_uri" --load-all --file "$dir/swanctl.conf"
   sudo env PEER_DIR="$dir" VICI_URI="$vici_uri" bash -c '
     set -eu
@@ -122,14 +128,16 @@ EOF
   trap - ERR INT TERM
   ;;
 stop)
-  trap cleanup EXIT
+  trap 'cleanup "$?"' EXIT
   rc=0
   for phase in initial rekey restart; do sudo grep -F "phase=$phase" "$dir/reverse-verifier.log" || rc=1; done
   [ "$(sudo grep -c '2 received' "$dir/reverse-verifier.log")" -eq 3 ] || rc=1
   sudo grep -Eq 'src |dir (in|out)' "$dir/reverse-verifier.log" || rc=1
   sudo cat "$dir/reverse-verifier.log" || rc=1
   emit_failure
-  cleanup
+  if cleanup "$rc"; then cleanup_rc=0; else cleanup_rc=$?; fi
+  trap - EXIT
+  if [[ "$rc" -eq 0 ]]; then exit "$cleanup_rc"; fi
   exit "$rc"
   ;;
 *) exit 2;;
