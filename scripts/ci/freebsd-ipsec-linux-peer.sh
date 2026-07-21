@@ -4,9 +4,8 @@ set -euo pipefail
 action=${1:?usage: $0 start|stop}
 peer_addr=${ROUTERD_IPSEC_PEER_ADDR:?ROUTERD_IPSEC_PEER_ADDR is required}
 psk=routerd-native-linux-peer-disposable-psk
-base=${RUNNER_TEMP:?RUNNER_TEMP is required}
-dir="$base/routerd-ipsec-peer"
-case "$dir" in "$base"/routerd-ipsec-peer) ;; *) exit 2;; esac
+dir=/tmp/routerd-ipsec-peer
+case "$dir" in /tmp/routerd-ipsec-peer) ;; *) exit 2;; esac
 wait_for_swanctl() {
   for _ in $(seq 1 30); do
     if sudo /usr/sbin/swanctl --stats >/dev/null 2>&1; then return 0; fi
