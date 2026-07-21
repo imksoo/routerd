@@ -128,7 +128,7 @@ sleep 1
 rtsol -d "$epair_host" >"$work/rtsol.log" 2>&1 || true
 
 observed=0
-for _ in $(jot 15); do
+for _ in $(jot 20); do
   curl --fail --silent --unix-socket "$arp_socket" \
     http://localhost/v1/status >"$work/arp-status.json"
   curl --fail --silent --unix-socket "$ra_socket" \
