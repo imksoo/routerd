@@ -16,10 +16,36 @@ attempt=${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT is required}
 [[ "$peer_addr" =~ ^198\.18\.[0-9]{1,3}\.[0-9]{1,3}$ && "$guest_addr" =~ ^198\.18\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || exit 2
 work="/tmp/routerd-anyvm-tap-${run_id}-${attempt}"
 case "$work" in /tmp/routerd-anyvm-tap-"$run_id"-"$attempt") ;; *) exit 2;; esac
-trap 'rm -rf -- "$work"' EXIT
+kvm_mode=
+kvm_changed=0
+cleanup() {
+  local rc=$?
+  if (( kvm_changed )); then
+    if ! sudo chmod "$kvm_mode" /dev/kvm; then
+      echo "anyvm-tap: failed to restore /dev/kvm mode" >&2
+      rc=1
+    fi
+  fi
+  rm -rf -- "$work"
+  exit "$rc"
+}
+trap cleanup EXIT
 install -d -m 0700 "$work"
 sudo apt-get update -qq
 sudo apt-get install -y -qq qemu-utils qemu-system-x86 ovmf python3 rsync
+
+# The pinned vmactions action makes KVM writable before invoking anyvm.  Keep
+# the same prerequisite bounded to this fixture and restore the exact mode on
+# exit; TCG fallback makes the FreeBSD boot timeout rather than qualifying it.
+[[ -c /dev/kvm ]] || { echo 'anyvm-tap: /dev/kvm is absent' >&2; exit 1; }
+kvm_mode=$(stat -c '%a' /dev/kvm)
+[[ "$kvm_mode" =~ ^[0-7]{3,4}$ ]] || { echo 'anyvm-tap: invalid /dev/kvm mode' >&2; exit 1; }
+if [[ ! -w /dev/kvm ]]; then
+  sudo chmod 666 /dev/kvm
+  kvm_changed=1
+fi
+[[ -w /dev/kvm ]] || { echo 'anyvm-tap: /dev/kvm is not writable after chmod' >&2; exit 1; }
+
 curl -fsSL https://raw.githubusercontent.com/anyvm-org/anyvm/v0.5.1/anyvm.py >"$work/anyvm.py"
 printf '%s  %s\n' \
   '0b2e5b20879d83ff7d07fc09649e9b3576825b35c8106e2354e5cf3d0d78be06' \
