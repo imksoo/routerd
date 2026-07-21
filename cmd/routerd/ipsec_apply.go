@@ -26,7 +26,9 @@ type ipsecRuntimeApplyOptions struct {
 
 const ipsecPendingLoadMarker = ".routerd-pending-load"
 
-const freeBSDStrongSwanServiceTimeout = 30 * time.Second
+const freeBSDStrongSwanStartupTimeout = 15 * time.Second
+const freeBSDStrongSwanLoadTimeout = 20 * time.Second
+const freeBSDStrongSwanStopTimeout = 8 * time.Second
 const freeBSDStrongSwanProbeTimeout = 2 * time.Second
 
 func applyIPsecConnections(ctx context.Context, router *api.Router) ([]string, error) {
@@ -40,7 +42,7 @@ func applyIPsecConnections(ctx context.Context, router *api.Router) ([]string, e
 			if err := ensureFreeBSDStrongSwan(ctx); err != nil {
 				return err
 			}
-			loadCtx, cancel := context.WithTimeout(ctx, freeBSDStrongSwanServiceTimeout)
+			loadCtx, cancel := context.WithTimeout(ctx, freeBSDStrongSwanLoadTimeout)
 			defer cancel()
 			return (ipsec.Controller{Binary: ipsecSwanctlPath(), ConfigFile: configFile}).LoadAll(loadCtx)
 		},
@@ -51,7 +53,7 @@ func ensureFreeBSDStrongSwan(ctx context.Context) error {
 	if platformDefaults.OS != platform.OSFreeBSD {
 		return nil
 	}
-	serviceCtx, cancel := context.WithTimeout(ctx, freeBSDStrongSwanServiceTimeout)
+	serviceCtx, cancel := context.WithTimeout(ctx, freeBSDStrongSwanStartupTimeout)
 	defer cancel()
 	if out, err := exec.CommandContext(serviceCtx, "sysrc", "strongswan_enable=YES").CombinedOutput(); err != nil {
 		return fmt.Errorf("enable strongswan service: %w: %s", err, strings.TrimSpace(string(out)))
@@ -96,7 +98,7 @@ func waitForFreeBSDStrongSwanVICI(ctx context.Context) error {
 }
 
 func stopFreeBSDStrongSwanSupervisor() error {
-	ctx, cancel := context.WithTimeout(context.Background(), freeBSDStrongSwanServiceTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), freeBSDStrongSwanStopTimeout)
 	defer cancel()
 	out, err := runCommandWithFileOutput(ctx, "service", "strongswan", "onestop")
 	if err != nil {
