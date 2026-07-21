@@ -5,7 +5,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"unsafe"
@@ -57,10 +56,6 @@ func openPacketSocket(ifname string) (*packetSocket, error) {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("BIOCSHDRCMPLT: %w", err)
 	}
-	if err := unix.SetNonblock(fd, true); err != nil {
-		_ = unix.Close(fd)
-		return nil, fmt.Errorf("set BPF nonblocking: %w", err)
-	}
 	size, err := observerIoctlGetInt(fd, unix.BIOCGBLEN)
 	if err != nil || size <= 0 {
 		size = 4096
@@ -101,12 +96,6 @@ func (s *packetSocket) read(frame []byte) (int, error) {
 		}
 		n, err := unix.Read(s.fd, s.buf)
 		if err != nil {
-			if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EWOULDBLOCK) {
-				if _, pollErr := unix.Poll([]unix.PollFd{{Fd: int32(s.fd), Events: unix.POLLIN}}, -1); pollErr != nil {
-					return 0, pollErr
-				}
-				continue
-			}
 			return 0, err
 		}
 		if n < unix.SizeofBpfHdr {
