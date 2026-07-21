@@ -153,8 +153,12 @@ func TestApplyIPsecConnectionsSynchronizesWholeOwnedDirectory(t *testing.T) {
 	if err != nil || !strings.Contains(string(data), "secrets {") {
 		t.Fatalf("managed configuration = %q, err=%v", data, err)
 	}
-	if len(changed) != 2 {
-		t.Fatalf("changed = %v, want managed write and stale removal", changed)
+	aggregate, err := os.ReadFile(filepath.Join(dir, "routerd.conf"))
+	if err != nil || !strings.Contains(string(aggregate), "include "+filepath.Join(dir, "routerd-site-a.conf")) {
+		t.Fatalf("aggregate configuration = %q, err=%v", aggregate, err)
+	}
+	if len(changed) != 3 {
+		t.Fatalf("changed = %v, want managed write, aggregate, and stale removal", changed)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ipsecPendingLoadMarker)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("pending marker stat = %v, want removed after successful load", err)
@@ -181,8 +185,11 @@ func TestApplyIPsecConnectionsSynchronizesWholeOwnedDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("remove managed IPsec connection: %v", err)
 	}
-	if loads != 3 || len(changed) != 1 || !strings.HasPrefix(changed[0], "removed:") {
+	if loads != 3 || len(changed) != 2 || !strings.HasPrefix(changed[0], "removed:") {
 		t.Fatalf("removal changed=%v loads=%d", changed, loads)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "routerd.conf")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("empty aggregate stat = %v, want removed", err)
 	}
 }
 
@@ -220,6 +227,43 @@ func TestApplyIPsecConnectionsRetriesPendingLoad(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, ipsecPendingLoadMarker)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("pending marker after retry = %v, want removed", err)
+	}
+}
+
+func TestApplyIPsecConnectionsKeepsPendingMarkerWhenEmptyAggregateRemovalFails(t *testing.T) {
+	dir := t.TempDir()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"},
+		Metadata: api.ObjectMeta{Name: "site-a"},
+		Spec: api.IPsecConnectionSpec{
+			LocalAddress: "198.51.100.10", RemoteAddress: "203.0.113.20", PreSharedKey: "secret",
+			LeftSubnet: "10.0.0.0/24", RightSubnet: "10.10.0.0/16",
+		},
+	}}}}
+	if _, err := applyIPsecConnectionsWithOptions(context.Background(), router, ipsecRuntimeApplyOptions{
+		ConfigDir: dir,
+		Load:      func(context.Context) error { return nil },
+	}); err != nil {
+		t.Fatalf("seed managed IPsec configuration: %v", err)
+	}
+	aggregate := filepath.Join(dir, "routerd.conf")
+	_, err := applyIPsecConnectionsWithOptions(context.Background(), &api.Router{}, ipsecRuntimeApplyOptions{
+		ConfigDir: dir,
+		Load: func(context.Context) error {
+			if err := os.Remove(aggregate); err != nil {
+				return err
+			}
+			if err := os.Mkdir(aggregate, 0700); err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(aggregate, "keep"), []byte("x"), 0600)
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "remove empty IPsec swanctl aggregate") {
+		t.Fatalf("empty aggregate teardown error = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ipsecPendingLoadMarker)); statErr != nil {
+		t.Fatalf("pending marker after aggregate removal failure: %v", statErr)
 	}
 }
 

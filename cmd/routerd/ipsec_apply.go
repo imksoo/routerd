@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -16,19 +17,42 @@ import (
 )
 
 type ipsecRuntimeApplyOptions struct {
-	ConfigDir string
-	Load      func(context.Context) error
+	ConfigDir  string
+	ConfigFile string
+	Load       func(context.Context) error
 }
 
 const ipsecPendingLoadMarker = ".routerd-pending-load"
 
 func applyIPsecConnections(ctx context.Context, router *api.Router) ([]string, error) {
+	configDir := ipsecConfigDir()
+	configFile := filepath.Join(configDir, "routerd.conf")
 	return applyIPsecConnectionsWithOptions(ctx, router, ipsecRuntimeApplyOptions{
-		ConfigDir: ipsecConfigDir(),
+		ConfigDir:  configDir,
+		ConfigFile: configFile,
 		Load: func(ctx context.Context) error {
-			return (ipsec.Controller{Binary: ipsecSwanctlPath()}).LoadAll(ctx)
+			if err := ensureFreeBSDStrongSwan(ctx); err != nil {
+				return err
+			}
+			return (ipsec.Controller{Binary: ipsecSwanctlPath(), ConfigFile: configFile}).LoadAll(ctx)
 		},
 	})
+}
+
+func ensureFreeBSDStrongSwan(ctx context.Context) error {
+	if platformDefaults.OS != platform.OSFreeBSD {
+		return nil
+	}
+	if out, err := exec.CommandContext(ctx, "sysrc", "strongswan_enable=YES").CombinedOutput(); err != nil {
+		return fmt.Errorf("enable strongswan service: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	if err := exec.CommandContext(ctx, "service", "strongswan", "status").Run(); err == nil {
+		return nil
+	}
+	if out, err := exec.CommandContext(ctx, "service", "strongswan", "onestart").CombinedOutput(); err != nil {
+		return fmt.Errorf("start strongswan service: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func applyIPsecConnectionsWithOptions(ctx context.Context, router *api.Router, opts ipsecRuntimeApplyOptions) ([]string, error) {
@@ -38,6 +62,13 @@ func applyIPsecConnectionsWithOptions(ctx context.Context, router *api.Router, o
 	dir := strings.TrimSpace(opts.ConfigDir)
 	if dir == "" {
 		return nil, fmt.Errorf("IPsec swanctl configuration directory is required")
+	}
+	configFile := strings.TrimSpace(opts.ConfigFile)
+	if configFile == "" {
+		configFile = filepath.Join(dir, "routerd.conf")
+	}
+	if filepath.Dir(configFile) != dir || filepath.Base(configFile) != "routerd.conf" {
+		return nil, fmt.Errorf("IPsec swanctl aggregate configuration must be %s", filepath.Join(dir, "routerd.conf"))
 	}
 	desired := map[string][]byte{}
 	for _, resource := range router.Spec.Resources {
@@ -69,7 +100,7 @@ func applyIPsecConnectionsWithOptions(ctx context.Context, router *api.Router, o
 	}
 	hasManaged := false
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), "routerd-") && strings.HasSuffix(entry.Name(), ".conf") {
+		if isManagedIPsecConnectionConfig(entry.Name()) {
 			hasManaged = true
 			break
 		}
@@ -97,7 +128,7 @@ func applyIPsecConnectionsWithOptions(ctx context.Context, router *api.Router, o
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if !strings.HasPrefix(name, "routerd-") || !strings.HasSuffix(name, ".conf") || desired[name] != nil {
+		if !isManagedIPsecConnectionConfig(name) || desired[name] != nil {
 			continue
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
@@ -119,16 +150,49 @@ func applyIPsecConnectionsWithOptions(ctx context.Context, router *api.Router, o
 	if !shouldLoad {
 		return nil, nil
 	}
+	aggregate, err := renderIPsecAggregate(sortedIPsecConfigNames(desired), dir)
+	if err != nil {
+		return changed, err
+	}
+	if fileChanged, err := writeFileIfChanged(configFile, aggregate, 0600); err != nil {
+		return changed, fmt.Errorf("write IPsec swanctl aggregate configuration %s: %w", configFile, err)
+	} else if fileChanged {
+		changed = append(changed, configFile)
+	}
 	if opts.Load == nil {
 		return changed, fmt.Errorf("load IPsec swanctl configuration: no loader configured")
 	}
 	if err := opts.Load(ctx); err != nil {
 		return changed, fmt.Errorf("load IPsec swanctl configuration: %w", err)
 	}
+	if len(desired) == 0 {
+		if err := os.Remove(configFile); err != nil && !os.IsNotExist(err) {
+			return changed, fmt.Errorf("remove empty IPsec swanctl aggregate configuration %s: %w", configFile, err)
+		}
+	}
+	// Keep the durable pending marker until teardown has removed the temporary
+	// empty aggregate.  A failed removal or crash must force the next apply to
+	// rerun the complete load/cleanup transaction instead of stranding a stale
+	// routerd.conf with no retry signal.
 	if err := os.Remove(filepath.Join(dir, ipsecPendingLoadMarker)); err != nil && !os.IsNotExist(err) {
 		return changed, fmt.Errorf("remove IPsec pending load marker: %w", err)
 	}
 	return changed, nil
+}
+
+func isManagedIPsecConnectionConfig(name string) bool {
+	return strings.HasPrefix(name, "routerd-") && strings.HasSuffix(name, ".conf")
+}
+
+func renderIPsecAggregate(names []string, dir string) ([]byte, error) {
+	var b strings.Builder
+	for _, name := range names {
+		if !isManagedIPsecConnectionConfig(name) {
+			return nil, fmt.Errorf("invalid managed IPsec swanctl configuration name %q", name)
+		}
+		fmt.Fprintf(&b, "include %s\n", filepath.Join(dir, name))
+	}
+	return []byte(b.String()), nil
 }
 
 func ipsecPendingLoad(dir string) (bool, error) {
