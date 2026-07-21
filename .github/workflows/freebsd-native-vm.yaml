@@ -57,5 +57,5 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: freebsd-native-console-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .freebsd-native-artifacts/
-          if-no-files-found: warn
+          path: ${{ runner.temp }}/routerd-anyvm-console-*
+          if-no-files-found: error

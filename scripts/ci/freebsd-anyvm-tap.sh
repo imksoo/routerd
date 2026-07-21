@@ -17,7 +17,7 @@ ipv6_candidate=${ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE:-false}
 [[ "$peer_addr" =~ ^198\.18\.[0-9]{1,3}\.[0-9]{1,3}$ && "$guest_addr" =~ ^198\.18\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || exit 2
 work="/tmp/routerd-anyvm-tap-${run_id}-${attempt}"
 case "$work" in /tmp/routerd-anyvm-tap-"$run_id"-"$attempt") ;; *) exit 2;; esac
-artifact_dir="$workspace/.freebsd-native-artifacts/anyvm-${run_id}-${attempt}"
+artifact_dir="${RUNNER_TEMP:-/tmp}/routerd-anyvm-console-${run_id}-${attempt}"
 kvm_mode=
 kvm_changed=0
 cleanup() {
