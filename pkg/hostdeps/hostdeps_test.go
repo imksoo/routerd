@@ -12,9 +12,6 @@ import (
 )
 
 func TestDerivedSysctlResourcesForRouterHost(t *testing.T) {
-	if platform.CurrentOS() == platform.OSFreeBSD {
-		t.Skip("Linux sysctl fixture; FreeBSD runtime modules are tested below")
-	}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
@@ -53,7 +50,7 @@ func TestExplicitSysctlSuppressesDerivedDuplicate(t *testing.T) {
 	}}}
 
 	count := 0
-	for _, res := range DerivedSysctlResources(router) {
+	for _, res := range DerivedSysctlResourcesForOS(router, platform.OSLinux) {
 		switch res.Kind {
 		case "Sysctl":
 			spec, err := res.SysctlSpec()
@@ -85,9 +82,6 @@ func TestExplicitSysctlSuppressesDerivedDuplicate(t *testing.T) {
 }
 
 func TestKernelModulesForTunnelInterfaceModes(t *testing.T) {
-	if platform.CurrentOS() == platform.OSFreeBSD {
-		t.Skip("Linux tunnel-module fixture")
-	}
 	tests := []struct {
 		mode string
 		want []string
@@ -104,7 +98,7 @@ func TestKernelModulesForTunnelInterfaceModes(t *testing.T) {
 				Metadata: api.ObjectMeta{Name: "tun0"},
 				Spec:     api.TunnelInterfaceSpec{Mode: tt.mode},
 			}}}}
-			if got := KernelModules(router); !reflect.DeepEqual(got, tt.want) {
+			if got := KernelModulesForOS(router, platform.OSLinux); !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("KernelModules(%s) = %#v, want %#v", tt.mode, got, tt.want)
 			}
 		})
@@ -133,9 +127,6 @@ func TestKernelModulesForFreeBSDUsePFRuntimeModules(t *testing.T) {
 }
 
 func TestDerivedSysctlResourcesForSAMAreStrictlyGated(t *testing.T) {
-	if platform.CurrentOS() == platform.OSFreeBSD {
-		t.Skip("Linux sysctl fixture")
-	}
 	empty := &api.Router{}
 	if keys := derivedSysctlKeys(t, empty); len(keys) != 0 {
 		t.Fatalf("empty router derived sysctls = %#v, want none", keys)
@@ -263,7 +254,7 @@ func routerWithSingleKind(kind string) *api.Router {
 func derivedSysctlKeys(t *testing.T, router *api.Router) map[string]bool {
 	t.Helper()
 	keys := map[string]bool{}
-	for _, res := range DerivedSysctlResources(router) {
+	for _, res := range DerivedSysctlResourcesForOS(router, platform.OSLinux) {
 		switch res.Kind {
 		case "Sysctl":
 			spec, err := res.SysctlSpec()

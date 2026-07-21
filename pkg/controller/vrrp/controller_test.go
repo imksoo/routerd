@@ -138,9 +138,10 @@ func TestReconcileAppliesStaticVirtualAddressIPv4(t *testing.T) {
 	store := mapStore{}
 	var calls []string
 	controller := Controller{
-		Router: vrrpRouter("static"),
-		Store:  store,
-		IP:     "ip",
+		Router:          vrrpRouter("static"),
+		Store:           store,
+		IP:              "ip",
+		OperatingSystem: platform.OSLinux,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			calls = append(calls, name+" "+strings.Join(args, " "))
 			return []byte("ok"), nil
@@ -202,9 +203,10 @@ func TestReconcileIsolatesUnresolvedStaticVirtualAddress(t *testing.T) {
 		},
 	}}}
 	controller := Controller{
-		Router: router,
-		Store:  store,
-		IP:     "ip",
+		Router:          router,
+		Store:           store,
+		IP:              "ip",
+		OperatingSystem: platform.OSLinux,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			calls = append(calls, name+" "+strings.Join(args, " "))
 			return []byte("ok"), nil
@@ -234,11 +236,12 @@ func TestReconcileIsolatesUnresolvedStaticVirtualAddress(t *testing.T) {
 func TestReconcileObservesVRRPRoleFromVIPAddress(t *testing.T) {
 	store := mapStore{}
 	controller := Controller{
-		Router:     vrrpRouter("vrrp"),
-		Store:      store,
-		ConfigPath: t.TempDir() + "/keepalived.conf",
-		Systemctl:  "systemctl",
-		IP:         "ip",
+		Router:          vrrpRouter("vrrp"),
+		Store:           store,
+		ConfigPath:      t.TempDir() + "/keepalived.conf",
+		Systemctl:       "systemctl",
+		IP:              "ip",
+		OperatingSystem: platform.OSLinux,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			if name == "ip" && strings.Join(args, " ") == "-4 addr show dev ens18" {
 				return []byte("2: ens18 inet 10.240.70.10/32 scope global ens18\n"), nil
@@ -276,6 +279,7 @@ func TestReconcileRestartsInactiveSystemdKeepalived(t *testing.T) {
 		ConfigPath:          t.TempDir() + "/keepalived.conf",
 		Systemctl:           "systemctl",
 		IP:                  "ip",
+		OperatingSystem:     platform.OSLinux,
 		KeepalivedActiveTTL: -1,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			calls = append(calls, name+" "+strings.Join(args, " "))
@@ -386,11 +390,12 @@ func TestReconcileSkipsNoopKeepalivedReloadWithSystemd(t *testing.T) {
 	store := mapStore{}
 	var calls []string
 	controller := Controller{
-		Router:     vrrpRouter("vrrp"),
-		Store:      store,
-		ConfigPath: t.TempDir() + "/keepalived.conf",
-		Systemctl:  "systemctl",
-		IP:         "ip",
+		Router:          vrrpRouter("vrrp"),
+		Store:           store,
+		ConfigPath:      t.TempDir() + "/keepalived.conf",
+		Systemctl:       "systemctl",
+		IP:              "ip",
+		OperatingSystem: platform.OSLinux,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			calls = append(calls, name+" "+strings.Join(args, " "))
 			if name == "ip" && strings.Join(args, " ") == "-4 addr show dev ens18" {
@@ -433,8 +438,9 @@ func TestReconcileCleansRemovedStaticVirtualAddressIPv4(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens18"},
 			},
 		}}},
-		Store: store,
-		IP:    "ip",
+		Store:           store,
+		IP:              "ip",
+		OperatingSystem: platform.OSLinux,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			calls = append(calls, name+" "+strings.Join(args, " "))
 			return []byte("ok"), nil
