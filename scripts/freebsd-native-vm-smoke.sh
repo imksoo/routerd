@@ -125,8 +125,6 @@ for script in "$@"; do
   [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ] || exit "$rc"
 done
 
-sh scripts/freebsd-native-observer-smoke.sh
-
 ndpi_agent="$work/routerd-ndpi-agent-libndpi"
 CGO_ENABLED=1 go test -tags libndpi ./cmd/routerd-ndpi-agent
 CGO_ENABLED=1 go build -tags libndpi -o "$ndpi_agent" ./cmd/routerd-ndpi-agent
@@ -134,3 +132,5 @@ CGO_ENABLED=1 go build -tags libndpi -o "$ndpi_agent" ./cmd/routerd-ndpi-agent
 jq -e '.ok == true and .libndpiLoaded == true and (.libndpiVersion | length > 0)' \
   "$work/ndpi-selftest.json" >/dev/null
 echo "freebsd-native-libndpi=ok"
+
+sh scripts/freebsd-native-observer-smoke.sh
