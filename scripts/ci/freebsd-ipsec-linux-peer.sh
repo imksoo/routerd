@@ -8,6 +8,7 @@ base=${RUNNER_TEMP:?RUNNER_TEMP is required}
 dir="$base/routerd-ipsec-peer"
 case "$dir" in "$base"/routerd-ipsec-peer) ;; *) exit 2;; esac
 log="$dir/peer.log"
+vici_uri=unix:///var/run/charon.vici
 emit_failure() {
   for f in "$dir/peer.log" "$dir/reverse-verifier.log"; do
     if sudo test -f "$f"; then
@@ -15,6 +16,8 @@ emit_failure() {
       sudo sed "s/$psk/[REDACTED]/g" "$f" >&2
     fi
   done
+  echo '--- charon-journal' >&2
+  sudo journalctl --no-pager -t charon -n 200 2>&1 | sed "s/$psk/[REDACTED]/g" >&2 || true
 }
 cleanup() {
   rc=$?
@@ -35,29 +38,6 @@ start)
   sudo systemctl stop strongswan-starter strongswan 2>/dev/null || true
   sudo rm -rf -- "$dir"; sudo install -d -m 0700 "$dir"
   sudo ip addr add 10.250.2.1/32 dev lo
-  sudo tee "$dir/strongswan.conf" >/dev/null <<EOF
-charon {
-  load_modular = yes
-  filelog {
-    peer-log {
-      path = $log
-      append = no
-      flush_line = yes
-      default = 2
-      cfg = 2
-      enc = 2
-      ike = 2
-      net = 2
-    }
-  }
-  plugins {
-    include /etc/strongswan.d/charon/*.conf
-    vici {
-      socket = unix://$dir/charon.vici
-    }
-  }
-}
-EOF
   sudo tee "$dir/swanctl.conf" >/dev/null <<EOF
 connections {
   native-tunnel {
@@ -91,19 +71,21 @@ secrets {
   }
 }
 EOF
-  sudo sh -c "exec env STRONGSWAN_CONF='$dir/strongswan.conf' /usr/lib/ipsec/charon --use-syslog >>'$log' 2>&1" &
+  sudo test ! -e /var/run/charon.pid
+  sudo test ! -S /var/run/charon.vici
+  sudo sh -c "exec /usr/lib/ipsec/charon --use-syslog >>'$log' 2>&1" &
   echo $! | sudo tee "$dir/charon.pid" >/dev/null
-  for _ in $(seq 1 30); do sudo test -S "$dir/charon.vici" && break; sleep 1; done
-  sudo test -S "$dir/charon.vici"
-  sudo /usr/sbin/swanctl --uri "unix://$dir/charon.vici" --load-all --file "$dir/swanctl.conf"
-  sudo env PEER_DIR="$dir" bash -c '
+  for _ in $(seq 1 30); do sudo test -S /var/run/charon.vici && break; sleep 1; done
+  sudo test -S /var/run/charon.vici
+  sudo /usr/sbin/swanctl --uri "$vici_uri" --load-all --file "$dir/swanctl.conf"
+  sudo env PEER_DIR="$dir" VICI_URI="$vici_uri" bash -c '
     set -eu
     for phase_port in initial:19091:19191 rekey:19092:19192 restart:19093:19193; do
       phase=${phase_port%%:*}; rest=${phase_port#*:}; port=${rest%%:*}; ack=${rest#*:}
       timeout 120 nc -l -p "$port" >/dev/null
       established=0
       for _ in $(seq 1 30); do
-        if /usr/sbin/swanctl --uri "unix://$PEER_DIR/charon.vici" --list-sas | grep -q ESTABLISHED; then
+        if /usr/sbin/swanctl --uri "$VICI_URI" --list-sas | grep -q ESTABLISHED; then
           established=1
           echo "phase=$phase" >>"$PEER_DIR/reverse-verifier.log"
           ping -n -I 10.250.2.1 -c 2 10.250.1.1 >>"$PEER_DIR/reverse-verifier.log" 2>&1
@@ -126,6 +108,7 @@ stop)
   [ "$(sudo grep -c '2 received' "$dir/reverse-verifier.log")" -eq 3 ] || rc=1
   sudo grep -Eq 'src |dir (in|out)' "$dir/reverse-verifier.log" || rc=1
   sudo cat "$dir/reverse-verifier.log" || rc=1
+  emit_failure
   cleanup
   exit "$rc"
   ;;
