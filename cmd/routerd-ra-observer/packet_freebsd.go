@@ -42,7 +42,7 @@ func openPacketSocket(ifname string) (*packetSocket, error) {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("BIOCSDIRECTION: %w", err)
 	}
-	if err := installRAFilter(fd); err != nil {
+	if err := installObserverFilter(fd); err != nil {
 		_ = unix.Close(fd)
 		return nil, err
 	}
@@ -61,21 +61,16 @@ func openPacketSocket(ifname string) (*packetSocket, error) {
 	return &packetSocket{fd: fd, buf: make([]byte, size)}, nil
 }
 
-func installRAFilter(fd int) error {
+// Install a real program so descriptor activation does not depend on an empty
+// filter. Protocol and frame validation remain in the observer's RA parser.
+func installObserverFilter(fd int) error {
 	insns := []unix.BpfInsn{
-		{Code: unix.BPF_LD | unix.BPF_H | unix.BPF_ABS, K: 12},
-		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jf: 5, K: 0x86dd},
-		{Code: unix.BPF_LD | unix.BPF_B | unix.BPF_ABS, K: 20},
-		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jf: 3, K: unix.IPPROTO_ICMPV6},
-		{Code: unix.BPF_LD | unix.BPF_B | unix.BPF_ABS, K: 54},
-		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jf: 1, K: 134},
 		{Code: unix.BPF_RET | unix.BPF_K, K: 0xffff},
-		{Code: unix.BPF_RET | unix.BPF_K, K: 0},
 	}
 	program := unix.BpfProgram{Len: uint32(len(insns)), Insns: &insns[0]}
 	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), uintptr(unix.BIOCSETF), uintptr(unsafe.Pointer(&program)))
 	if errno != 0 {
-		return fmt.Errorf("BIOCSETF RA: %w", errno)
+		return fmt.Errorf("BIOCSETF: %w", errno)
 	}
 	return nil
 }
