@@ -126,9 +126,15 @@ cleanup() {
   else
     sudo ip addr del 10.250.2.1/32 dev lo 2>/dev/null || true
   fi
-  if [[ "$topology" == tap ]] && is_owned verifier && sudo test -s "$dir/verifier.pid"; then
+  if is_owned verifier && sudo test -s "$dir/verifier.pid"; then
     verifier_pid=$(sudo cat "$dir/verifier.pid")
-    if sudo ip netns pids "$netns" | grep -Fxq "$verifier_pid"; then
+    verifier_owned=0
+    if [[ "$topology" == tap ]]; then
+      sudo ip netns pids "$netns" | grep -Fxq "$verifier_pid" && verifier_owned=1
+    elif sudo kill -0 "$verifier_pid" 2>/dev/null && sudo sh -c 'tr "\0" "\n" <"$1" | grep -Fxq "$2"' sh "/proc/$verifier_pid/environ" "PEER_DIR=$dir"; then
+      verifier_owned=1
+    fi
+    if [[ "$verifier_owned" -eq 1 ]]; then
       sudo kill -TERM "$verifier_pid" 2>/dev/null || true
     else
       cleanup_rc=1
