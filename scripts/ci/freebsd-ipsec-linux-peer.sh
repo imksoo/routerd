@@ -7,13 +7,12 @@ psk=routerd-native-linux-peer-disposable-psk
 base=${RUNNER_TEMP:?RUNNER_TEMP is required}
 dir="$base/routerd-ipsec-peer"
 case "$dir" in "$base"/routerd-ipsec-peer) ;; *) exit 2;; esac
-vici_uri=unix:///var/run/charon.vici
-wait_for_vici() {
+wait_for_swanctl() {
   for _ in $(seq 1 30); do
-    if sudo test -S /var/run/charon.vici; then return 0; fi
+    if sudo /usr/sbin/swanctl --stats >/dev/null 2>&1; then return 0; fi
     sleep 1
   done
-  echo 'peer-start: standard VICI socket did not become ready' >&2
+  echo 'peer-start: package swanctl did not become ready' >&2
   return 1
 }
 emit_failure() {
@@ -31,12 +30,8 @@ emit_failure() {
 stop_peer_service() {
   sudo systemctl stop strongswan-starter
   if sudo systemctl is-active --quiet strongswan-starter; then return 1; fi
-  sudo rm -f -- /var/run/charon.vici
-  for _ in $(seq 1 30); do
-    if ! sudo test -S /var/run/charon.vici; then return 0; fi
-    sleep 1
-  done
-  return 1
+  if sudo timeout 5 /usr/sbin/swanctl --stats >/dev/null 2>&1; then return 1; fi
+  return 0
 }
 cleanup() {
   rc=${1:-$?}
@@ -58,12 +53,6 @@ start)
   sudo apt-get install -y -qq strongswan-swanctl strongswan-charon netcat-openbsd
   sudo systemctl stop strongswan-starter strongswan 2>/dev/null || true
   if sudo systemctl is-active --quiet strongswan-starter; then exit 1; fi
-  sudo rm -f -- /var/run/charon.vici
-  for _ in $(seq 1 30); do
-    if ! sudo test -S /var/run/charon.vici; then break; fi
-    sleep 1
-  done
-  sudo test ! -S /var/run/charon.vici
   sudo rm -rf -- "$dir"; sudo install -d -m 0700 "$dir"
   sudo ip addr add 10.250.2.1/32 dev lo
   sudo tee "$dir/swanctl.conf" >/dev/null <<EOF
@@ -101,19 +90,19 @@ secrets {
 EOF
   sudo systemctl start strongswan-starter
   sudo systemctl is-active --quiet strongswan-starter
-  wait_for_vici
-  if ! sudo sh -c '/usr/sbin/swanctl --uri "$1" --load-all --file "$2" >"$3" 2>&1' sh "$vici_uri" "$dir/swanctl.conf" "$dir/peer-load.log"; then
+  wait_for_swanctl
+  if ! sudo sh -c '/usr/sbin/swanctl --load-all --file "$1" >"$2" 2>&1' sh "$dir/swanctl.conf" "$dir/peer-load.log"; then
     echo 'peer-start: swanctl load failed' >&2
     exit 1
   fi
-  sudo env PEER_DIR="$dir" VICI_URI="$vici_uri" bash -c '
+  sudo env PEER_DIR="$dir" bash -c '
     set -eu
     for phase_port in initial:19091:19191 rekey:19092:19192 restart:19093:19193; do
       phase=${phase_port%%:*}; rest=${phase_port#*:}; port=${rest%%:*}; ack=${rest#*:}
       timeout 120 nc -l -p "$port" >/dev/null
       established=0
       for _ in $(seq 1 30); do
-        if /usr/sbin/swanctl --uri "$VICI_URI" --list-sas | grep -q ESTABLISHED; then
+        if /usr/sbin/swanctl --list-sas | grep -q ESTABLISHED; then
           established=1
           echo "phase=$phase" >>"$PEER_DIR/reverse-verifier.log"
           ping -n -I 10.250.2.1 -c 2 10.250.1.1 >>"$PEER_DIR/reverse-verifier.log" 2>&1
