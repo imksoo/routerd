@@ -12,6 +12,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"io"
 	"math/big"
 	"net"
@@ -27,6 +28,28 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
 )
+
+func TestClientReturnsTypedAPIErrorForReachedServer(t *testing.T) {
+	client := &Client{
+		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusInternalServerError,
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"routerd state database is not initialized"}}`)),
+				Header:     make(http.Header),
+			}, nil
+		})},
+		baseURL:       "http://routerd",
+		retryAttempts: 1,
+	}
+	_, err := client.Plan(context.Background(), PlanRequest{})
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("Plan error = %T %v, want *APIError", err, err)
+	}
+	if apiErr.StatusCode != http.StatusInternalServerError || apiErr.Message != "routerd state database is not initialized" {
+		t.Fatalf("APIError = %+v", apiErr)
+	}
+}
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 

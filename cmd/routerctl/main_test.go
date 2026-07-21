@@ -7,7 +7,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -635,6 +637,33 @@ func TestConfigLifecycleCommandsUseControlAPI(t *testing.T) {
 	}
 	if !deleted.NoReconcile || deleted.Target != "Hostname/appliance" {
 		t.Fatalf("delete request = %+v", deleted)
+	}
+}
+
+func TestPlanCommandReportsReachedAPIErrorWithoutReachabilityClaim(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "routerd.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	defer listener.Close()
+	server := &http.Server{Handler: controlapi.Handler{
+		Plan: func(r *http.Request, req controlapi.PlanRequest) (*controlapi.PlanResult, error) {
+			return nil, errors.New("routerd state database is not initialized; restart routerd serve and verify its --state path")
+		},
+	}}
+	go func() { _ = server.Serve(listener) }()
+	defer server.Close()
+
+	err = planCommand([]string{"--socket", socketPath}, io.Discard, strings.NewReader(""))
+	if err == nil {
+		t.Fatal("planCommand succeeded, want API error")
+	}
+	if !strings.Contains(err.Error(), "routerd plan failed: routerd state database is not initialized") {
+		t.Fatalf("planCommand error is not actionable: %v", err)
+	}
+	if strings.Contains(err.Error(), "not reachable") {
+		t.Fatalf("planCommand mislabeled reached API error: %v", err)
 	}
 }
 

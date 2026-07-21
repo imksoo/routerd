@@ -4,6 +4,7 @@ package state
 
 import (
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,33 @@ import (
 
 	_ "modernc.org/sqlite"
 )
+
+func TestListObjectStatusesReportsUninitializedSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "uninitialized.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open sqlite directly: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE placeholder (id INTEGER)`); err != nil {
+		t.Fatalf("create placeholder table: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close sqlite: %v", err)
+	}
+
+	store, err := OpenSQLiteReadOnly(path)
+	if err != nil {
+		t.Fatalf("open read-only sqlite: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	_, err = store.ListObjectStatuses()
+	if !errors.Is(err, ErrSchemaNotInitialized) {
+		t.Fatalf("ListObjectStatuses error = %v, want ErrSchemaNotInitialized", err)
+	}
+	if strings.Contains(err.Error(), "SQL logic error") || strings.Contains(err.Error(), "no such table") {
+		t.Fatalf("ListObjectStatuses leaked raw SQLite error: %v", err)
+	}
+}
 
 func TestSQLiteStorePersistsAndSupportsJSON1(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routerd.db")

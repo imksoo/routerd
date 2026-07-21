@@ -201,7 +201,20 @@ func (m serveConfigMutator) planRouter(router *api.Router, configYAML string) (*
 	opts.SkipConfigCommit = true
 	opts.StatusFile = ""
 	opts.ConfigYAMLOverride = configYAML
-	return runApplyChainOnce(context.Background(), router, opts, io.Discard, m.logger)
+	result, err := runApplyChainOnce(context.Background(), router, opts, io.Discard, m.logger)
+	if err == nil {
+		return result, nil
+	}
+	if errors.Is(err, routerstate.ErrSchemaNotInitialized) {
+		if m.logger != nil {
+			m.logger.Emit(eventlog.LevelError, "plan", "routerd plan could not read state database", map[string]string{
+				"error":     err.Error(),
+				"statePath": m.statePath,
+			})
+		}
+		return nil, errors.New("routerd state database is not initialized; restart routerd serve and verify its --state path")
+	}
+	return nil, err
 }
 
 func (m serveConfigMutator) reconcile(router *api.Router, configYAML string) (*apply.Result, error) {
