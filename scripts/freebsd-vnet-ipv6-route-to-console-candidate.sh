@@ -55,6 +55,24 @@ fi
 exec /usr/sbin/jexec "$@"
 EOF
 chmod 0700 "$shim/jexec"
+cat >"$shim/pfctl" <<'EOF'
+#!/bin/sh
+# The historical candidate predates the anyvm control interface.  Preserve the
+# guest's TCP/22 control state only; the candidate's generated route-to rules
+# and all VNET data traffic remain unchanged.
+evidence=${ROUTERD_IPV6_CANDIDATE_EVIDENCE:?}
+if [ "$#" -eq 2 ] && [ "$1" = -f ] && [ "${2##*/}" = pf.conf ]; then
+  guarded="$2.console-control"
+  {
+    printf '%s\n' 'pass in quick on vtnet0 proto tcp from any to (vtnet0) port 22 keep state label "routerd:ipv6-candidate:ssh-control"'
+    cat "$2"
+  } >"$guarded"
+  printf 'routerd-ipv6-candidate fixture=ssh-control-pass\n' >"$evidence/control-rule.log"
+  exec /sbin/pfctl -f "$guarded"
+fi
+exec /sbin/pfctl "$@"
+EOF
+chmod 0700 "$shim/pfctl"
 printf 'routerd-ipv6-candidate marker=fixture-ready\n' | tee "$evidence/fixture-ready.marker" >/dev/console
 PATH="$shim:$PATH" ROUTERD_IPV6_CANDIDATE_MARKER="$marker" ROUTERD_IPV6_CANDIDATE_EVIDENCE="$evidence" \
   "$work/candidate-smoke.sh" --routerd "$work/routerd-ipv6-candidate" --evidence-dir "$evidence"
