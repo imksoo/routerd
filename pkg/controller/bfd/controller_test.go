@@ -37,8 +37,8 @@ func TestRenderFRRConfigUsesBGPPeerAddresses(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"peer 10.99.0.2 interface wg-hybrid",
-		"peer 10.99.0.3 interface wg-hybrid",
+		"peer 10.99.0.2 interface wg0",
+		"peer 10.99.0.3 interface wg0",
 		"receive-interval 300",
 		"transmit-interval 300",
 		"detect-multiplier 3",
@@ -125,6 +125,31 @@ func TestSessionsRejectMissingBGPPeerReference(t *testing.T) {
 	}
 }
 
+func TestSessionsResolveInterfaceResourceToKernelIfName(t *testing.T) {
+	router := bfdRouter()
+	controller := Controller{Router: router, Store: testStore{}}
+	sessions, _, err := controller.sessions()
+	if err != nil {
+		t.Fatalf("sessions: %v", err)
+	}
+	if len(sessions) != 2 || sessions[0].Interface != "wg0" || sessions[1].Interface != "wg0" {
+		t.Fatalf("sessions = %#v, want Interface/wg-hybrid resolved to wg0", sessions)
+	}
+}
+
+func TestSessionsRejectUnknownInterfaceResource(t *testing.T) {
+	router := bfdRouter()
+	iface := router.Spec.Resources[3]
+	spec := iface.Spec.(api.InterfaceSpec)
+	spec.IfName = ""
+	iface.Spec = spec
+	router.Spec.Resources[3] = iface
+	controller := Controller{Router: router, Store: testStore{}}
+	if _, _, err := controller.sessions(); err == nil || !strings.Contains(err.Error(), "missing or empty Interface/wg-hybrid") {
+		t.Fatalf("sessions error = %v, want missing Interface resource", err)
+	}
+}
+
 func TestParseFRRBFDPeersJSON(t *testing.T) {
 	got := ParseFRRBFDPeersJSON([]byte(`{
 		"10.99.0.2": {"status": "up"},
@@ -178,14 +203,42 @@ func TestReconcileAppliesFRRAndSavesPeerStates(t *testing.T) {
 	}
 }
 
-func TestReconcileLinuxOnlyStatus(t *testing.T) {
+func TestReconcileFreeBSDAppliesFRRWithFreeBSDVtysh(t *testing.T) {
 	store := testStore{}
-	controller := Controller{Router: bfdRouter(), Store: store, OS: platform.OSFreeBSD}
+	var commands []string
+	controller := Controller{
+		Router:     bfdRouter(),
+		Store:      store,
+		OS:         platform.OSFreeBSD,
+		RuntimeDir: t.TempDir(),
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			commands = append(commands, name+" "+strings.Join(args, " "))
+			if len(args) == 2 && args[0] == "-c" && args[1] == "show bfd peers json" {
+				return []byte(`{"10.99.0.2":{"state":"up"},"10.99.0.3":{"state":"up"}}`), nil
+			}
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if len(commands) != 2 || !strings.HasPrefix(commands[0], "/usr/local/bin/vtysh -f ") || commands[1] != "/usr/local/bin/vtysh -c show bfd peers json" {
+		t.Fatalf("commands = %#v", commands)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "BFD", "fabric")
+	if status["phase"] != "Up" {
+		t.Fatalf("status = %#v, want Up", status)
+	}
+}
+
+func TestReconcileUnsupportedOSStatus(t *testing.T) {
+	store := testStore{}
+	controller := Controller{Router: bfdRouter(), Store: store, OS: platform.OSOther}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "BFD", "fabric")
-	if status["phase"] != "Unsupported" || status["reason"] != "BFDLinuxOnly" {
+	if status["phase"] != "Unsupported" || status["reason"] != "BFDUnsupportedOS" {
 		t.Fatalf("status = %#v", status)
 	}
 }
@@ -218,6 +271,11 @@ func bfdRouter() *api.Router {
 				Interface: "Interface/wg-hybrid",
 				Profile:   "fast",
 			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wg-hybrid"},
+			Spec:     api.InterfaceSpec{IfName: "wg0", Managed: false, Owner: "external"},
 		},
 	}}}
 }
