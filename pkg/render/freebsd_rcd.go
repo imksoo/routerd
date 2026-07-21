@@ -27,6 +27,14 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 	}
 	out["routerd"] = routerdData
 	explicit["routerd"] = true
+	if freeBSDRouterHasBGP(router) {
+		name := freeBSDServiceName(BGPUnitName)
+		data, err := FreeBSDRCDScript(name, FreeBSDBGPSystemdSpec())
+		if err != nil {
+			return nil, err
+		}
+		out[name] = data
+	}
 	dpiSocket := ""
 	if RouterWantsDPIClassifier(router) {
 		dpiSocket = "/var/run/routerd/dpi-classifier/default.sock"
@@ -245,6 +253,18 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 		out[name] = data
 	}
 	return out, nil
+}
+
+func freeBSDRouterHasBGP(router *api.Router) bool {
+	if router == nil {
+		return false
+	}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion == api.NetAPIVersion && (res.Kind == "BGPRouter" || res.Kind == "BGPPeer") {
+			return true
+		}
+	}
+	return false
 }
 
 func freeBSDDNSResolverSystemdSpec(name string, spec api.DNSResolverSpec) api.SystemdUnitSpec {

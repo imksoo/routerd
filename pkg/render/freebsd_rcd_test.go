@@ -109,6 +109,34 @@ func TestFreeBSDRCDPgrepPatternIncludesResourceName(t *testing.T) {
 	}
 }
 
+func TestFreeBSDRendersBGPRCDScript(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
+			Metadata: api.ObjectMeta{Name: "edge"},
+			Spec:     api.BGPRouterSpec{ASN: 64512, RouterID: "192.0.2.1"},
+		},
+	}}}
+	cfg, err := FreeBSD(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script, ok := cfg.RCDScripts["routerd_bgp"]
+	if !ok {
+		t.Fatalf("BGPRouter did not render routerd_bgp: %#v", cfg.RCDScripts)
+	}
+	for _, want := range []string{
+		`'/usr/local/sbin/routerd-bgp' 'daemon'`,
+		`'--socket' '/var/run/routerd/bgp/gobgp.sock'`,
+		`'--control-socket' '/var/run/routerd/bgp/control.sock'`,
+		`'--state-file' '/var/db/routerd/bgp/applied.json'`,
+	} {
+		if !strings.Contains(string(script), want) {
+			t.Fatalf("routerd_bgp missing %q:\n%s", want, script)
+		}
+	}
+}
+
 func TestFreeBSDRenderRoutesDHCPv4ClientThroughRouterd(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

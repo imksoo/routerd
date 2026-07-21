@@ -58,9 +58,13 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 			osName = networkAdoptionOSName(runtime.GOOS)
 		}
 		if !features.HasSystemd {
+			phase, reason := "Pending", "SystemdUnsupported"
+			if osName == "freebsd" {
+				phase, reason = "Unsupported", "FreeBSDNetworkAdoptionUnsupported"
+			}
 			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NetworkAdoption", resource.Metadata.Name, map[string]any{
-				"phase":     "Pending",
-				"reason":    "SystemdUnsupported",
+				"phase":     phase,
+				"reason":    reason,
 				"os":        osName,
 				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
 			}); err != nil {
