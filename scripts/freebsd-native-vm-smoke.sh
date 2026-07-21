@@ -136,6 +136,11 @@ echo "freebsd-native-libndpi=ok"
 sh scripts/freebsd-native-observer-smoke.sh
 sh scripts/freebsd-bgp-ipv6-fib-smoke.sh
 
+firewall_evidence="$work/firewall-vnet"
+sh scripts/freebsd-vnet-firewall-dataplane-smoke.sh --routerd "$routerd" --evidence-dir "$firewall_evidence"
+cat "$firewall_evidence/summary.log"
+cat "$firewall_evidence/result"
+
 policyroute_evidence="$work/policyroute-vnet"
 sh scripts/freebsd-vnet-policyroute-smoke.sh --routerd "$routerd" --evidence-dir "$policyroute_evidence"
 cat "$policyroute_evidence/summary.log"

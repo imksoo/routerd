@@ -45,6 +45,7 @@ src_jail="${tag}-src"; sink_a_jail="${tag}-sinka"; sink_b_jail="${tag}-sinkb"
 in_a=''; in_b=''; out_a=''; out_b=''; out2_a=''; out2_b=''
 capture_a=''; capture_b=''; blocked_capture=''
 forwarding4=''; forwarding6=''
+failed_if=''
 pf_enabled=0; pf_loaded_by_runner=0
 src_created=0; sink_a_created=0; sink_b_created=0
 
@@ -184,6 +185,7 @@ pfctl -f "$work/render/pf.conf" >"$evidence/pf-load.log" 2>&1
 pfctl -sr >"$evidence/pf-rules.log" 2>&1
 grep -F 'inet6' "$evidence/pf-rules.log"
 grep -F 'round-robin sticky-address' "$evidence/pf-rules.log"
+grep -F 'routerd:egress-route:source-affinity-v6' "$evidence/pf-rules.log"
 
 jexec "$sink_a_jail" tcpdump -n -l -i "$out_b" 'ip6 and icmp6' >"$evidence/sink-a.packets.log" 2>&1 & capture_a=$!
 jexec "$sink_b_jail" tcpdump -n -l -i "$out2_b" 'ip6 and icmp6' >"$evidence/sink-b.packets.log" 2>&1 & capture_b=$!
@@ -193,15 +195,43 @@ jexec "$src_jail" ping6 -n -S 2001:db8:10::11 -c 3 -W 1 2001:db8:ffff::1 >"$evid
 jexec "$src_jail" ping6 -n -S 2001:db8:10::10 -c 3 -W 1 2001:db8:ffff::1 >"$evidence/source-10.repeat.log" 2>&1 || true
 jexec "$src_jail" ping6 -n -S 2001:db8:10::11 -c 3 -W 1 2001:db8:ffff::1 >"$evidence/source-11.repeat.log" 2>&1 || true
 pfctl -ss -v >"$evidence/pf-states.log" 2>&1
-kill "$capture_a" "$capture_b"; wait "$capture_a" || true; capture_a=; wait "$capture_b" || true; capture_b=
 
-sed -i '' 's/^/sink-a /' "$evidence/sink-a.packets.log"; sed -i '' 's/^/sink-b /' "$evidence/sink-b.packets.log"
-s10a=$(grep -c '^sink-a .*2001:db8:10::10' "$evidence/sink-a.packets.log" || true); s10b=$(grep -c '^sink-b .*2001:db8:10::10' "$evidence/sink-b.packets.log" || true)
-s11a=$(grep -c '^sink-a .*2001:db8:10::11' "$evidence/sink-a.packets.log" || true); s11b=$(grep -c '^sink-b .*2001:db8:10::11' "$evidence/sink-b.packets.log" || true)
+s10a=$(grep -c '2001:db8:10::10' "$evidence/sink-a.packets.log" || true); s10b=$(grep -c '2001:db8:10::10' "$evidence/sink-b.packets.log" || true)
+s11a=$(grep -c '2001:db8:10::11' "$evidence/sink-a.packets.log" || true); s11b=$(grep -c '2001:db8:10::11' "$evidence/sink-b.packets.log" || true)
 test $((s10a + s10b)) -ge 6; test $((s11a + s11b)) -ge 6
 test "$s10a" -eq 0 -o "$s10b" -eq 0; test "$s11a" -eq 0 -o "$s11b" -eq 0
-grep -q '^sink-a .*2001:db8:10::' "$evidence/sink-a.packets.log"; grep -q '^sink-b .*2001:db8:10::' "$evidence/sink-b.packets.log"
-grep -F '2001:db8:10::10' "$evidence/pf-states.log"; grep -F '2001:db8:10::11' "$evidence/pf-states.log"; grep -F 'rule 1' "$evidence/pf-states.log"
+grep -q '2001:db8:10::' "$evidence/sink-a.packets.log"; grep -q '2001:db8:10::' "$evidence/sink-b.packets.log"
+grep -F '2001:db8:10::10' "$evidence/pf-states.log"; grep -F '2001:db8:10::11' "$evidence/pf-states.log"
+grep -F 'routerd:egress-route:source-affinity-v6' "$evidence/pf-states.log"
+
+# Sticky-address is an affinity mechanism, not health failover.  Expire one
+# source's state while preserving its PF source-node, take down its selected
+# routehost interface, then prove that a new packet does not migrate to the
+# healthy routehost and that the generated static rule remains installed.
+if [ "$s10a" -gt 0 ]; then
+  failed_if=$out_a
+  healthy_log="$evidence/sink-b.packets.log"
+else
+  failed_if=$out2_a
+  healthy_log="$evidence/sink-a.packets.log"
+fi
+healthy_before=$(grep -c '2001:db8:10::10' "$healthy_log" || true)
+pfctl -k 2001:db8:10::10 >"$evidence/failure-expire-state.log" 2>&1
+pfctl -s Sources -v >"$evidence/failure-source-nodes.log" 2>&1
+grep -F '2001:db8:10::10' "$evidence/failure-source-nodes.log"
+ifconfig "$failed_if" down >"$evidence/failure-routehost-down.log" 2>&1
+pfctl -sr -v >"$evidence/failure-rules.log" 2>&1
+grep -F 'routerd:egress-route:source-affinity-v6' "$evidence/failure-rules.log"
+jexec "$src_jail" ping6 -n -S 2001:db8:10::10 -c 1 -W 1 2001:db8:ffff::1 >"$evidence/failure-source-10.log" 2>&1 || true
+sleep 1
+healthy_after=$(grep -c '2001:db8:10::10' "$healthy_log" || true)
+test "$healthy_after" -eq "$healthy_before"
+ifconfig "$failed_if" up >"$evidence/failure-routehost-restore.log" 2>&1
+failed_if=''
+
+kill "$capture_a" "$capture_b"; wait "$capture_a" || true; capture_a=''; wait "$capture_b" || true; capture_b=''
+sed -i '' 's/^/sink-a /' "$evidence/sink-a.packets.log"
+sed -i '' 's/^/sink-b /' "$evidence/sink-b.packets.log"
 
 # The untrust sink must not reach the trust connected network.  This proves
 # the connected-zone deny precedes the broad forward/route-to pass.
@@ -217,7 +247,8 @@ fi
   printf 'source10 sink-a=%s sink-b=%s\n' "$s10a" "$s10b"
   printf 'source11 sink-a=%s sink-b=%s\n' "$s11a" "$s11b"
   printf 'both-routehosts=1\n'
-  printf 'pf-states-source10-source11-rule1=1\n'
+  printf 'pf-states-source10-source11-egress-route-label=1\n'
+  printf 'static-target-no-implicit-failover=1\n'
   printf 'untrust-to-lan-blocked=1\n'
 } >"$evidence/summary.log"
 printf 'freebsd-vnet-policyroute=ok\n' >"$evidence/result"
