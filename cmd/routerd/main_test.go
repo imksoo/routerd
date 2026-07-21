@@ -231,6 +231,54 @@ func TestApplyIPsecConnectionsRetriesPendingLoad(t *testing.T) {
 	}
 }
 
+func TestApplyIPsecConnectionsMigratesOnlyRouterdLegacyConfigs(t *testing.T) {
+	dir := t.TempDir()
+	legacy := t.TempDir()
+	for name, data := range map[string]string{
+		"routerd-site-a.conf":        "legacy connection\n",
+		"routerd.conf":               "legacy aggregate\n",
+		ipsecPendingLoadMarker:       "pending\n",
+		"operator-managed-site.conf": "operator config\n",
+	} {
+		if err := os.WriteFile(filepath.Join(legacy, name), []byte(data), 0600); err != nil {
+			t.Fatalf("write legacy %s: %v", name, err)
+		}
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"},
+		Metadata: api.ObjectMeta{Name: "site-b"},
+		Spec: api.IPsecConnectionSpec{
+			LocalAddress: "198.51.100.10", RemoteAddress: "203.0.113.20", PreSharedKey: "secret",
+			LeftSubnet: "10.0.0.0/24", RightSubnet: "10.10.0.0/16",
+		},
+	}}}}
+	loads := 0
+	if _, err := applyIPsecConnectionsWithOptions(context.Background(), router, ipsecRuntimeApplyOptions{
+		ConfigDir:       dir,
+		LegacyConfigDir: legacy,
+		Load: func(context.Context) error {
+			loads++
+			return nil
+		},
+	}); err != nil {
+		t.Fatalf("migrate legacy configurations: %v", err)
+	}
+	if loads != 1 {
+		t.Fatalf("load count = %d, want 1", loads)
+	}
+	for _, name := range []string{"routerd-site-a.conf", "routerd.conf", ipsecPendingLoadMarker} {
+		if _, err := os.Lstat(filepath.Join(legacy, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("legacy %s stat = %v, want removed", name, err)
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(legacy, "operator-managed-site.conf")); err != nil || string(data) != "operator config\n" {
+		t.Fatalf("operator config = %q, err=%v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "routerd-site-b.conf")); err != nil {
+		t.Fatalf("new runtime configuration missing: %v", err)
+	}
+}
+
 func TestApplyIPsecConnectionsKeepsPendingMarkerWhenEmptyAggregateRemovalFails(t *testing.T) {
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
@@ -298,15 +346,21 @@ func TestIPsecRuntimePathsArePlatformSpecific(t *testing.T) {
 	oldDefaults := platformDefaults
 	t.Cleanup(func() { platformDefaults = oldDefaults })
 	platformDefaults.OS = platform.OSLinux
-	if got := ipsecConfigDir(); got != "/etc/swanctl/conf.d" {
+	if got := ipsecConfigDir(); got != "/etc/routerd/swanctl" {
 		t.Fatalf("Linux config dir = %q", got)
+	}
+	if got := ipsecLegacyConfigDir(); got != "/etc/swanctl/conf.d" {
+		t.Fatalf("Linux legacy config dir = %q", got)
 	}
 	if got := ipsecSwanctlPath(); got != "swanctl" {
 		t.Fatalf("Linux swanctl path = %q", got)
 	}
 	platformDefaults.OS = platform.OSFreeBSD
-	if got := ipsecConfigDir(); got != "/usr/local/etc/swanctl/conf.d" {
+	if got := ipsecConfigDir(); got != "/usr/local/etc/routerd/swanctl" {
 		t.Fatalf("FreeBSD config dir = %q", got)
+	}
+	if got := ipsecLegacyConfigDir(); got != "/usr/local/etc/swanctl/conf.d" {
+		t.Fatalf("FreeBSD legacy config dir = %q", got)
 	}
 	if got := ipsecSwanctlPath(); got != "/usr/local/sbin/swanctl" {
 		t.Fatalf("FreeBSD swanctl path = %q", got)

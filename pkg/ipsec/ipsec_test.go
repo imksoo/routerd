@@ -47,7 +47,7 @@ func TestControllerLoadAllUsesCompleteConfigurationAndReportsOutput(t *testing.T
 	var gotArgs []string
 	controller := Controller{
 		Binary:     "/usr/local/sbin/swanctl",
-		ConfigFile: "/usr/local/etc/swanctl/conf.d/routerd.conf",
+		ConfigFile: "/usr/local/etc/routerd/swanctl/routerd.conf",
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			gotName = name
 			gotArgs = append([]string(nil), args...)
@@ -58,7 +58,7 @@ func TestControllerLoadAllUsesCompleteConfigurationAndReportsOutput(t *testing.T
 	if err == nil || !strings.Contains(err.Error(), "--load-all") || !strings.Contains(err.Error(), "vici unavailable") {
 		t.Fatalf("LoadAll error = %v", err)
 	}
-	if gotName != "/usr/local/sbin/swanctl" || strings.Join(gotArgs, " ") != "--load-all --file /usr/local/etc/swanctl/conf.d/routerd.conf" {
+	if gotName != "/usr/local/sbin/swanctl" || strings.Join(gotArgs, " ") != "--load-all --file /usr/local/etc/routerd/swanctl/routerd.conf" {
 		t.Fatalf("swanctl invocation = %q %v", gotName, gotArgs)
 	}
 }

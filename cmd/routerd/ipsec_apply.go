@@ -18,9 +18,10 @@ import (
 )
 
 type ipsecRuntimeApplyOptions struct {
-	ConfigDir  string
-	ConfigFile string
-	Load       func(context.Context) error
+	ConfigDir       string
+	ConfigFile      string
+	LegacyConfigDir string
+	Load            func(context.Context) error
 }
 
 const ipsecPendingLoadMarker = ".routerd-pending-load"
@@ -31,8 +32,9 @@ func applyIPsecConnections(ctx context.Context, router *api.Router) ([]string, e
 	configDir := ipsecConfigDir()
 	configFile := filepath.Join(configDir, "routerd.conf")
 	return applyIPsecConnectionsWithOptions(ctx, router, ipsecRuntimeApplyOptions{
-		ConfigDir:  configDir,
-		ConfigFile: configFile,
+		ConfigDir:       configDir,
+		ConfigFile:      configFile,
+		LegacyConfigDir: ipsecLegacyConfigDir(),
 		Load: func(ctx context.Context) error {
 			if err := ensureFreeBSDStrongSwan(ctx); err != nil {
 				return err
@@ -105,6 +107,10 @@ func applyIPsecConnectionsWithOptions(ctx context.Context, router *api.Router, o
 	if filepath.Dir(configFile) != dir || filepath.Base(configFile) != "routerd.conf" {
 		return nil, fmt.Errorf("IPsec swanctl aggregate configuration must be %s", filepath.Join(dir, "routerd.conf"))
 	}
+	legacyDir := strings.TrimSpace(opts.LegacyConfigDir)
+	if legacyDir != "" && filepath.Clean(legacyDir) == filepath.Clean(dir) {
+		legacyDir = ""
+	}
 	desired := map[string][]byte{}
 	for _, resource := range router.Spec.Resources {
 		if resource.Kind != "IPsecConnection" {
@@ -129,18 +135,32 @@ func applyIPsecConnectionsWithOptions(ctx context.Context, router *api.Router, o
 	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("read IPsec swanctl directory %s: %w", dir, err)
 	}
+	var legacyEntries []os.DirEntry
+	if legacyDir != "" {
+		legacyEntries, err = os.ReadDir(legacyDir)
+		if err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("read legacy IPsec swanctl directory %s: %w", legacyDir, err)
+		}
+	}
 	pending, err := ipsecPendingLoad(dir)
 	if err != nil {
 		return nil, err
 	}
 	hasManaged := false
 	for _, entry := range entries {
-		if isManagedIPsecConnectionConfig(entry.Name()) {
+		if isRouterdIPsecRuntimeFile(entry.Name()) {
 			hasManaged = true
 			break
 		}
 	}
-	shouldLoad := len(desired) > 0 || pending || hasManaged
+	hasLegacyManaged := false
+	for _, entry := range legacyEntries {
+		if isLegacyRouterdIPsecRuntimeFile(entry.Name()) {
+			hasLegacyManaged = true
+			break
+		}
+	}
+	shouldLoad := len(desired) > 0 || pending || hasManaged || hasLegacyManaged
 	if shouldLoad {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			return nil, fmt.Errorf("create IPsec swanctl directory %s: %w", dir, err)
@@ -182,6 +202,17 @@ func applyIPsecConnectionsWithOptions(ctx context.Context, router *api.Router, o
 		}
 		changed = append(changed, "removed:"+path)
 	}
+	for _, entry := range legacyEntries {
+		name := entry.Name()
+		if !isLegacyRouterdIPsecRuntimeFile(name) {
+			continue
+		}
+		path := filepath.Join(legacyDir, name)
+		if err := removeRouterdIPsecRuntimeFile(path); err != nil {
+			return changed, fmt.Errorf("remove legacy IPsec swanctl configuration %s: %w", path, err)
+		}
+		changed = append(changed, "removed:"+path)
+	}
 	if !shouldLoad {
 		return nil, nil
 	}
@@ -217,6 +248,25 @@ func applyIPsecConnectionsWithOptions(ctx context.Context, router *api.Router, o
 
 func isManagedIPsecConnectionConfig(name string) bool {
 	return strings.HasPrefix(name, "routerd-") && strings.HasSuffix(name, ".conf")
+}
+
+func isRouterdIPsecRuntimeFile(name string) bool {
+	return isManagedIPsecConnectionConfig(name) || name == "routerd.conf" || name == ipsecPendingLoadMarker
+}
+
+func isLegacyRouterdIPsecRuntimeFile(name string) bool {
+	return isRouterdIPsecRuntimeFile(name)
+}
+
+func removeRouterdIPsecRuntimeFile(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("refuse to remove non-regular routerd IPsec runtime file")
+	}
+	return os.Remove(path)
 }
 
 func renderIPsecAggregate(names []string, dir string) ([]byte, error) {
@@ -271,6 +321,13 @@ func sortedIPsecConfigNames(values map[string][]byte) []string {
 }
 
 func ipsecConfigDir() string {
+	if platformDefaults.OS == platform.OSFreeBSD {
+		return "/usr/local/etc/routerd/swanctl"
+	}
+	return "/etc/routerd/swanctl"
+}
+
+func ipsecLegacyConfigDir() string {
 	if platformDefaults.OS == platform.OSFreeBSD {
 		return "/usr/local/etc/swanctl/conf.d"
 	}

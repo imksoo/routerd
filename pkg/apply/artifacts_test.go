@@ -92,6 +92,28 @@ func TestKnownResourceKindsDeclareArtifactIntents(t *testing.T) {
 	}
 }
 
+func TestIPsecArtifactUsesRouterdRuntimeDirectoryPerPlatform(t *testing.T) {
+	resource := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"},
+		Metadata: api.ObjectMeta{Name: "site-a"},
+	}
+	for _, test := range []struct {
+		name string
+		os   platform.OS
+		path string
+	}{
+		{name: "linux", os: platform.OSLinux, path: "/etc/routerd/swanctl/routerd-site-a.conf"},
+		{name: "freebsd", os: platform.OSFreeBSD, path: "/usr/local/etc/routerd/swanctl/routerd-site-a.conf"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			intents := resourceArtifactIntentsForPlatform(resource, nil, test.os, platform.Features{})
+			if len(intents) != 2 || intents[1].Artifact.Name != test.path {
+				t.Fatalf("IPsec artifact intents = %+v, want runtime path %q", intents, test.path)
+			}
+		})
+	}
+}
+
 func TestVirtualAddressIPv4ArtifactIntentsUseFreeBSDCARP(t *testing.T) {
 	res := api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},

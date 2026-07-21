@@ -58,7 +58,10 @@ cleanup() {
       sysrc -x strongswan_enable >>"$evidence/cleanup.log" 2>&1 || true
     fi
   fi
-  rm -f /usr/local/etc/swanctl/conf.d/routerd-*.conf \
+  rm -f /usr/local/etc/routerd/swanctl/routerd-*.conf \
+    /usr/local/etc/routerd/swanctl/routerd.conf \
+    /usr/local/etc/routerd/swanctl/.routerd-pending-load \
+    /usr/local/etc/swanctl/conf.d/routerd-*.conf \
     /usr/local/etc/swanctl/conf.d/routerd.conf \
     /usr/local/etc/swanctl/conf.d/.routerd-pending-load >>"$evidence/cleanup.log" 2>&1 || true
   peer_safe_to_stop=1
