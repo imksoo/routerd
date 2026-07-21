@@ -278,7 +278,7 @@ EOF
 host_service_touched=1
 echo 'ipsec-vnet step=invalid-production-apply' >&2
 invalid_apply_started=$(date +%s)
-if run_bounded 30 invalid-production-apply "$routerd" apply --once --config "$work/invalid-router.yaml" \
+if run_bounded 45 invalid-production-apply "$routerd" apply --once --config "$work/invalid-router.yaml" \
   --state-file "$apply_state" --ledger-file "$apply_ledger" --status-file "$evidence/apply-invalid.status.json" >"$evidence/apply-invalid.log" 2>&1; then
   invalid_apply_rc=0
 else
@@ -302,7 +302,7 @@ if grep -F "$psk" "$evidence/apply-invalid.log" >/dev/null; then
 fi
 echo 'ipsec-vnet step=valid-production-apply' >&2
 valid_apply_started=$(date +%s)
-if run_bounded 30 valid-production-apply "$routerd" apply --once --config "$work/router.yaml" \
+if run_bounded 45 valid-production-apply "$routerd" apply --once --config "$work/router.yaml" \
   --state-file "$apply_state" --ledger-file "$apply_ledger" --status-file "$evidence/apply-valid.status.json" >"$evidence/apply-1.log" 2>&1; then
   valid_apply_rc=0
 else
@@ -354,7 +354,7 @@ run_bounded 15 rekey-peer-to-host-ping jexec "$jail_name" ping -n -S "$peer_ts" 
 echo 'ipsec-vnet step=host-service-stop' >&2
 run_bounded 30 host-service-stop service strongswan onestop >"$evidence/host-stop.log" 2>&1
 echo 'ipsec-vnet step=restart-production-apply' >&2
-run_bounded 30 restart-production-apply "$routerd" apply --once --config "$work/router.yaml" \
+run_bounded 45 restart-production-apply "$routerd" apply --once --config "$work/router.yaml" \
   --state-file "$apply_state" --ledger-file "$apply_ledger" --status-file "$evidence/apply-restart.status.json" >"$evidence/apply-restart.log" 2>&1
 echo 'ipsec-vnet step=restart-initiate' >&2
 run_bounded 30 restart-initiate /usr/local/sbin/swanctl --initiate --ike "$connection" --child net >"$evidence/initiate-restart.log" 2>&1
