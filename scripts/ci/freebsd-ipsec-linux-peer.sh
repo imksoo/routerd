@@ -10,7 +10,7 @@ case "$dir" in "$base"/routerd-ipsec-peer) ;; *) exit 2;; esac
 log="$dir/peer.log"
 vici_uri=unix:///var/run/charon.vici
 emit_failure() {
-  for f in "$dir/peer.log" "$dir/reverse-verifier.log"; do
+  for f in "$dir/peer.log" "$dir/peer-load.log" "$dir/reverse-verifier.log"; do
     if sudo test -f "$f"; then
       echo "--- ${f##*/}" >&2
       sudo sed "s/$psk/[REDACTED]/g" "$f" >&2
@@ -103,7 +103,7 @@ EOF
   printf '%s\n' "$charon_pid" | sudo tee "$dir/charon.pid" >/dev/null
   for _ in $(seq 1 30); do sudo test -S /var/run/charon.vici && break; sleep 1; done
   sudo test -S /var/run/charon.vici
-  sudo /usr/sbin/swanctl --uri "$vici_uri" --load-all --file "$dir/swanctl.conf"
+  sudo sh -c '/usr/sbin/swanctl --uri "$1" --load-all --file "$2" >"$3" 2>&1' sh "$vici_uri" "$dir/swanctl.conf" "$dir/peer-load.log"
   sudo env PEER_DIR="$dir" VICI_URI="$vici_uri" bash -c '
     set -eu
     for phase_port in initial:19091:19191 rekey:19092:19192 restart:19093:19193; do
