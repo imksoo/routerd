@@ -13,6 +13,7 @@ host_addr=$(ifconfig "$host_if" inet | awk '/inet /{print $2;exit}')
 [ -n "$host_addr" ] && [ "$peer_addr" = "$(route -n get default | awk '/gateway:/{print $2;exit}')" ]
 host_ts=10.250.1.1 peer_ts=10.250.2.1 psk=routerd-native-linux-peer-disposable-psk
 state=$work/state.db ledger=$work/ledger.db
+phase_dir=${GITHUB_WORKSPACE:?GITHUB_WORKSPACE is required}/.ci-ipsec-phase
 service_before=0 enable_before=1 cleanup_started=0
 emit_failure() { for f in "$evidence"/*.log; do [ -f "$f" ] && { echo "--- ${f#"$evidence"/}" >&3; sed "s/$psk/[REDACTED]/g" "$f" >&3; }; done; }
 cleanup() {
@@ -28,7 +29,7 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 if service strongswan status >"$evidence/service.before.log" 2>&1; then service_before=1; fi
-sysrc -n strongswan_enable >"$work/enable.before" 2>"$evidence/enable.before.log" || enable_before=1
+if sysrc -n strongswan_enable >"$work/enable.before" 2>"$evidence/enable.before.log"; then enable_before=0; fi
 ifconfig lo0 inet "$host_ts/32" alias
 cat >"$work/router.yaml" <<EOF
 apiVersion: routerd.net/v1alpha1
@@ -60,15 +61,23 @@ timeout -k 2 45 "$routerd" apply --once --config "$work/router.yaml" --state-fil
 /usr/local/sbin/swanctl --initiate --ike native-tunnel --child net >"$evidence/initiate.log" 2>&1
 for _ in $(jot 30); do /usr/local/sbin/swanctl --list-sas --ike native-tunnel >"$evidence/sa.initial.log" && grep -q ESTABLISHED "$evidence/sa.initial.log" && break; sleep 1; done
 grep -q ESTABLISHED "$evidence/sa.initial.log"
+printf 'initial\n' >"$phase_dir/phase"
+sleep 3
 ping -n -S "$host_ts" -c 2 "$peer_ts" >"$evidence/traffic.host-to-peer.log" 2>&1
 /usr/local/sbin/swanctl --rekey --ike native-tunnel >"$evidence/rekey.log" 2>&1
 for _ in $(jot 30); do /usr/local/sbin/swanctl --list-sas --ike native-tunnel >"$evidence/sa.rekey.log" && grep -q ESTABLISHED "$evidence/sa.rekey.log" && break; sleep 1; done
 grep -q ESTABLISHED "$evidence/sa.rekey.log"
+printf 'rekey\n' >"$phase_dir/phase"
+sleep 3
+ping -n -S "$host_ts" -c 2 "$peer_ts" >"$evidence/traffic.rekey.log" 2>&1
 service strongswan onestop >"$evidence/restart.stop.log" 2>&1
 timeout -k 2 45 "$routerd" apply --once --config "$work/router.yaml" --state-file "$state" --ledger-file "$ledger" >"$evidence/restart.log" 2>&1
 /usr/local/sbin/swanctl --initiate --ike native-tunnel --child net >"$evidence/restart.initiate.log" 2>&1
 for _ in $(jot 30); do /usr/local/sbin/swanctl --list-sas --ike native-tunnel >"$evidence/sa.restart.log" && grep -q ESTABLISHED "$evidence/sa.restart.log" && break; sleep 1; done
 grep -q ESTABLISHED "$evidence/sa.restart.log"
+printf 'restart\n' >"$phase_dir/phase"
+sleep 3
+ping -n -S "$host_ts" -c 2 "$peer_ts" >"$evidence/traffic.restart.log" 2>&1
 cat >"$work/empty.yaml" <<'EOF'
 apiVersion: routerd.net/v1alpha1
 kind: Router
@@ -78,4 +87,16 @@ EOF
 timeout -k 2 45 "$routerd" apply --once --config "$work/empty.yaml" --state-file "$state" --ledger-file "$ledger" >"$evidence/teardown.log" 2>&1
 test ! -e /usr/local/etc/routerd/swanctl/routerd.conf
 test ! -e /usr/local/etc/routerd/swanctl/.routerd-pending-load
+if /usr/local/sbin/swanctl --list-conns | grep -F native-tunnel >/dev/null; then
+  echo 'routerd-owned native-tunnel remained after teardown' >&2
+  exit 1
+fi
+printf '%s\n' \
+  'ipsec-invalid-load=actionable-no-secret-leak' \
+  'ipsec-apply=ok' \
+  'ipsec-psk-auth=ok' \
+  'ipsec-bidirectional-traffic=ok' \
+  'ipsec-rekey=ok' \
+  'ipsec-restart-recovery=ok' \
+  'ipsec-teardown=ok' >"$evidence/summary.log"
 printf 'freebsd-ipsec-linux-peer=ok\n' >"$evidence/result"
