@@ -275,8 +275,11 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 		if len(spec.Candidates) == 0 {
 			return true, fmt.Errorf("%s spec.candidates is required", res.ID())
 		}
-		if targetOS == platform.OSFreeBSD && spec.Mode == "hash" {
-			return true, validateFreeBSDEgressRoutePolicyHash(res.ID(), spec)
+		if targetOS == platform.OSFreeBSD {
+			if spec.Mode == "hash" {
+				return true, validateFreeBSDEgressRoutePolicyHash(res.ID(), spec)
+			}
+			return true, fmt.Errorf("%s FreeBSD supports only the static sourceAddress hash PF route-to shape; mode %q is not supported", res.ID(), defaultString(spec.Mode, ""))
 		}
 		for i, candidate := range spec.Candidates {
 			if candidate.Name == "" && candidate.Source == "" && candidate.EffectiveInterface() == "" && len(candidate.Targets) == 0 {
@@ -572,8 +575,9 @@ func egressRoutePolicyRequiresLinuxPolicyRouting(spec api.EgressRoutePolicySpec)
 // A multi-routehost PF pool can use round-robin sticky-address, not source-hash,
 // so every Linux-only or runtime-resolved knob must fail at validation.
 func validateFreeBSDEgressRoutePolicyHash(resourceID string, spec api.EgressRoutePolicySpec) error {
-	if defaultString(spec.Family, "ipv4") != "ipv4" {
-		return fmt.Errorf("%s FreeBSD route-to requires family ipv4", resourceID)
+	family := defaultString(spec.Family, "ipv4")
+	if family != "ipv4" {
+		return fmt.Errorf("%s FreeBSD route-to supports only family ipv4", resourceID)
 	}
 	if len(spec.HashFields) != 1 || spec.HashFields[0] != "sourceAddress" {
 		return fmt.Errorf("%s FreeBSD route-to requires spec.hashFields: [sourceAddress]", resourceID)
@@ -612,7 +616,7 @@ func validateFreeBSDEgressRoutePolicyHash(resourceID string, spec api.EgressRout
 		}
 		addr, err := netip.ParseAddr(target.Gateway)
 		if err != nil || !addr.Is4() {
-			return fmt.Errorf("%s FreeBSD route-to target[%d].gateway must be IPv4", resourceID, i)
+			return fmt.Errorf("%s FreeBSD route-to target[%d].gateway must be an ipv4 address", resourceID, i)
 		}
 	}
 	return nil
