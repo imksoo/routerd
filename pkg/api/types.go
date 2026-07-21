@@ -245,6 +245,9 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		}
 		r.Spec = spec
 	case "IPsecConnection":
+		if err := normalizeIPsecProposalFields(&raw.Spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
 		var spec IPsecConnectionSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
@@ -790,6 +793,31 @@ func mappingValueNode(node *yaml.Node, key string) *yaml.Node {
 	for i := 0; i+1 < len(node.Content); i += 2 {
 		if node.Content[i].Value == key {
 			return node.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// normalizeIPsecProposalFields accepts the historical psPhase* spelling while
+// publishing the canonical phase* API names.  Renaming the YAML node before
+// decoding keeps existing Linux and FreeBSD configurations usable without
+// letting both spellings silently choose one value.
+func normalizeIPsecProposalFields(node *yaml.Node) error {
+	for legacy, canonical := range map[string]string{
+		"psPhase1Proposals": "phase1Proposals",
+		"psPhase2Proposals": "phase2Proposals",
+	} {
+		if !hasMappingKey(node, legacy) {
+			continue
+		}
+		if hasMappingKey(node, canonical) {
+			return fmt.Errorf("%s and deprecated %s cannot both be set", canonical, legacy)
+		}
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			if node.Content[i].Value == legacy {
+				node.Content[i].Value = canonical
+				break
+			}
 		}
 	}
 	return nil

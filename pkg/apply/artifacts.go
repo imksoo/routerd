@@ -323,7 +323,7 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 	case "IPsecConnection":
 		return []resource.Intent{
 			artifact("ipsec.swanctl.connection", res.Metadata.Name, resource.ActionEnsure, "swanctl", nil),
-			artifact("file", "/usr/local/etc/swanctl/conf.d/routerd-"+res.Metadata.Name+".conf", resource.ActionEnsure, "file", nil),
+			artifact("file", ipsecRuntimeArtifactPath(targetOS, res.Metadata.Name), resource.ActionEnsure, "file", nil),
 		}
 	case "VRF":
 		spec, err := res.VRFSpec()
@@ -461,6 +461,14 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 	default:
 		return nil
 	}
+}
+
+func ipsecRuntimeArtifactPath(targetOS platform.OS, name string) string {
+	root := "/etc/routerd/swanctl"
+	if targetOS == platform.OSFreeBSD {
+		root = "/usr/local/etc/routerd/swanctl"
+	}
+	return root + "/routerd-" + name + ".conf"
 }
 
 func routerArtifactIntents(router *api.Router, aliases map[string]string) []resource.Intent {

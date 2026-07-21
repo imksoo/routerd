@@ -1,0 +1,235 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-3-Clause
+# FreeBSD production endpoint; its Linux peer is managed by the workflow.
+set -eu
+exec 3>&2
+routerd='' evidence=''
+while [ "$#" -gt 0 ]; do case "$1" in --routerd) routerd=$2; shift 2;; --evidence-dir) evidence=$2; shift 2;; *) exit 2;; esac; done
+[ "$(uname -s)" = FreeBSD ] && [ -x "$routerd" ] && [ -n "$evidence" ]
+mkdir -p "$evidence"; work=$evidence/work; mkdir -p "$work"
+peer_addr=${ROUTERD_IPSEC_PEER_ADDR:?ROUTERD_IPSEC_PEER_ADDR is required}
+guest_addr=${ROUTERD_IPSEC_GUEST_ADDR:?ROUTERD_IPSEC_GUEST_ADDR is required}
+underlay_if=${ROUTERD_IPSEC_UNDERLAY_IF:-}
+if [ -z "$underlay_if" ]; then
+  underlay_if=$(route -n get default | awk '/interface:/{print $2;exit}')
+fi
+host_if=$underlay_if
+if [ "${ROUTERD_IPSEC_TOPOLOGY:-slirp}" = tap ]; then
+  ifconfig "$host_if" inet "$guest_addr/24" up
+fi
+host_addr=$(ifconfig "$host_if" inet | awk '/inet /{print $2;exit}')
+underlay_route_if=$(route -n get "$peer_addr" | awk '/interface:/{print $2;exit}')
+printf 'ipsec-linux-peer preflight topology=%s peer=%s guest=%s host=%s underlay_if=%s route_if=%s\n' "${ROUTERD_IPSEC_TOPOLOGY:-slirp}" "$peer_addr" "$guest_addr" "$host_addr" "$host_if" "$underlay_route_if" >&3
+[ -n "$host_addr" ] && [ "$host_addr" = "$guest_addr" ] && [ "$underlay_route_if" = "$host_if" ]
+host_ts=10.250.1.1 peer_ts=10.250.2.1 psk=routerd-native-linux-peer-disposable-psk
+peer_selector_route_added=0
+state=$work/state.db ledger=$work/ledger.db
+sentinel=/usr/local/etc/routerd/swanctl/operator-sentinel.conf
+sentinel_created=0
+service_before=0 enable_before=1 cleanup_started=0
+run_bounded() {
+  limit=$1 label=$2 log=$3; shift 3
+  printf 'step=%s begin\n' "$label" >&3
+  (
+    elapsed=0
+    while :; do
+      sleep 5
+      elapsed=$((elapsed + 5))
+      printf 'step=%s waiting=%ss\n' "$label" "$elapsed" >&3
+    done
+  ) & heartbeat=$!
+  if timeout -k 2 "$limit" "$@" >"$log" 2>&1; then rc=0; else rc=$?; fi
+  kill "$heartbeat" 2>/dev/null || true
+  wait "$heartbeat" 2>/dev/null || true
+  printf 'step=%s rc=%s\n' "$label" "$rc" >&3
+  return "$rc"
+}
+run_invalid_apply_diagnostic() {
+  log=$1
+  shift
+  printf 'step=invalid-apply begin\n' >&3
+  "$@" >"$log" 2>&1 &
+  apply_pid=$!
+  elapsed=0
+  diagnostic=0
+  while kill -0 "$apply_pid" 2>/dev/null; do
+    sleep 1
+    elapsed=$((elapsed + 1))
+    if [ "$elapsed" -eq 25 ] && kill -0 "$apply_pid" 2>/dev/null; then
+      diagnostic=1
+      printf 'step=invalid-apply diagnostic=still-live elapsed=25s signal=QUIT\n' >&3
+      ps -axo pid,ppid,pgid,sid,stat,command >"$evidence/invalid-apply.process-tree.log" 2>&1 || true
+      kill -QUIT "$apply_pid" 2>/dev/null || true
+      printf '%s\n' '--- invalid-apply process tree' >&3
+      cat "$evidence/invalid-apply.process-tree.log" >&3 || true
+      printf '%s\n' '--- invalid-apply Go stack/output' >&3
+      sed "s/$psk/[REDACTED]/g" "$log" >&3 || true
+    fi
+    if [ "$elapsed" -ge 45 ] && kill -0 "$apply_pid" 2>/dev/null; then
+      printf 'step=invalid-apply timeout=45s signal=TERM\n' >&3
+      kill -TERM "$apply_pid" 2>/dev/null || true
+      sleep 2
+      if kill -0 "$apply_pid" 2>/dev/null; then
+        printf 'step=invalid-apply timeout=45s signal=KILL\n' >&3
+        kill -KILL "$apply_pid" 2>/dev/null || true
+      fi
+    fi
+  done
+  if wait "$apply_pid"; then apply_rc=0; else apply_rc=$?; fi
+  if [ "$diagnostic" -eq 1 ]; then
+    printf 'step=invalid-apply rc=124 diagnostic=stack-captured\n' >&3
+    return 124
+  fi
+  printf 'step=invalid-apply rc=%s elapsed=%ss\n' "$apply_rc" "$elapsed" >&3
+  return "$apply_rc"
+}
+run_restart_apply_diagnostic() {
+  log=$1
+  shift
+  printf 'step=restart-apply begin\n' >&3
+  "$@" >"$log" 2>&1 &
+  apply_pid=$!
+  elapsed=0
+  diagnostic=0
+  while kill -0 "$apply_pid" 2>/dev/null; do
+    sleep 1; elapsed=$((elapsed + 1))
+    if [ "$elapsed" -eq 10 ] && kill -0 "$apply_pid" 2>/dev/null; then
+      diagnostic=1
+      ps -axo pid,ppid,pgid,sid,stat,command >"$evidence/restart-apply.process-tree.log" 2>&1 || true
+      procstat -kk "$apply_pid" >"$evidence/restart-apply.procstat.log" 2>&1 || true
+      kill -QUIT "$apply_pid" 2>/dev/null || true
+      sleep 2
+      if kill -0 "$apply_pid" 2>/dev/null; then kill -TERM "$apply_pid" 2>/dev/null || true; fi
+      sleep 1
+      if kill -0 "$apply_pid" 2>/dev/null; then kill -KILL "$apply_pid" 2>/dev/null || true; fi
+    fi
+  done
+  if wait "$apply_pid"; then apply_rc=0; else apply_rc=$?; fi
+  if [ "$diagnostic" -eq 1 ]; then return 124; fi
+  return "$apply_rc"
+}
+wait_established() {
+  label=$1 log=$2
+  for _ in $(jot 30); do
+    if run_bounded 5 "${label}-status" "$log" /usr/local/sbin/swanctl --list-sas --ike native-tunnel && grep -q ESTABLISHED "$log"; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+ack_phase() {
+  phase=$1 marker=$2 ack=$3
+  run_bounded 10 "$phase-marker" "$evidence/$phase.marker.log" nc -s "$host_ts" -z -w 5 "$peer_ts" "$marker"
+  deadline=$(( $(date +%s) + 30 ))
+  : >"$evidence/$phase.ack.log"
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    if timeout -k 2 5 nc -s "$host_ts" -w 5 "$peer_ts" "$ack" >>"$evidence/$phase.ack.log" 2>&1 && [ "$(tail -n 1 "$evidence/$phase.ack.log")" = ok ]; then
+      printf 'step=%s-ack rc=0\n' "$phase" >&3
+      return 0
+    fi
+    sleep 1
+  done
+  printf 'step=%s-ack rc=1\n' "$phase" >&3
+  return 1
+}
+emit_failure() { for f in "$evidence"/*.log; do [ -f "$f" ] && { echo "--- ${f#"$evidence"/}" >&3; sed "s/$psk/[REDACTED]/g" "$f" >&3; }; done; }
+cleanup() {
+  rc=$?; [ "$cleanup_started" -eq 0 ] || return "$rc"; cleanup_started=1
+  [ "$rc" -eq 0 ] || emit_failure
+  trap - EXIT HUP INT TERM
+  if ! run_bounded 20 cleanup-service-stop "$evidence/cleanup.service-stop.log" service strongswan onestop; then :; fi
+  if [ "$service_before" -eq 1 ]; then if ! run_bounded 20 cleanup-service-start "$evidence/cleanup.service-start.log" service strongswan onestart; then :; fi; fi
+  if [ "$enable_before" -eq 0 ]; then sysrc "strongswan_enable=$(cat "$work/enable.before")" >>"$evidence/cleanup.log" 2>&1 || true; else sysrc -x strongswan_enable >>"$evidence/cleanup.log" 2>&1 || true; fi
+  if [ "$peer_selector_route_added" -eq 1 ]; then
+    if ! route delete -host "$peer_ts" "$peer_addr" >>"$evidence/cleanup.log" 2>&1; then
+      printf 'cleanup=selector-route-delete-failed\n' >>"$evidence/cleanup.log"
+      [ "$rc" -ne 0 ] || rc=1
+    fi
+  fi
+  rm -f /usr/local/etc/routerd/swanctl/routerd-*.conf /usr/local/etc/routerd/swanctl/routerd.conf /usr/local/etc/routerd/swanctl/.routerd-pending-load
+  [ "$sentinel_created" -eq 1 ] && rm -f "$sentinel"
+  ifconfig lo0 inet "$host_ts" -alias >/dev/null 2>&1 || true
+  printf 'cleanup=complete rc=%s\n' "$rc" >>"$evidence/cleanup.log"; return "$rc"
+}
+trap cleanup EXIT HUP INT TERM
+route add -host "$peer_ts" "$peer_addr"
+peer_selector_route_added=1
+peer_selector_route_if=$(route -n get "$peer_ts" | awk '/interface:/{print $2;exit}')
+printf 'ipsec-linux-peer selector-route peer_ts=%s route_if=%s\n' "$peer_ts" "$peer_selector_route_if" >&3
+[ "$peer_selector_route_if" = "$host_if" ]
+if service strongswan status >"$evidence/service.before.log" 2>&1; then service_before=1; fi
+if sysrc -n strongswan_enable >"$work/enable.before" 2>"$evidence/enable.before.log"; then enable_before=0; fi
+ifconfig lo0 inet "$host_ts/32" alias
+install -d -m 0700 /usr/local/etc/routerd/swanctl
+test ! -e "$sentinel"
+cat >"$sentinel" <<'EOF'
+# fixture-owned operator sentinel: routerd must not mutate this file
+connections {}
+EOF
+sentinel_created=1
+cat >"$work/router.yaml" <<EOF
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: native-ipsec-linux-peer}
+spec:
+  resources:
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: IPsecConnection
+    metadata: {name: native-tunnel}
+    spec: {localAddress: $host_addr, remoteAddress: $peer_addr, preSharedKey: $psk, leftSubnet: $host_ts/32, rightSubnet: $peer_ts/32}
+EOF
+cat >"$work/invalid.yaml" <<EOF
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: invalid}
+spec:
+  resources:
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: IPsecConnection
+    metadata: {name: native-tunnel}
+    spec: {localAddress: $host_addr, remoteAddress: $peer_addr, preSharedKey: $psk, phase1Proposals: [invalid-proposal], leftSubnet: $host_ts/32, rightSubnet: $peer_ts/32}
+EOF
+if run_invalid_apply_diagnostic "$evidence/invalid.log" "$routerd" apply --once --config "$work/invalid.yaml" --state-file "$state" --ledger-file "$ledger"; then invalid_rc=0; else invalid_rc=$?; fi
+[ "$invalid_rc" -ne 0 ] && [ "$invalid_rc" -ne 124 ]; grep -Eiq 'swanctl|proposal|load' "$evidence/invalid.log"; if grep -F "$psk" "$evidence/invalid.log" >/dev/null; then exit 1; fi
+run_bounded 45 valid-apply "$evidence/apply.log" "$routerd" apply --once --config "$work/router.yaml" --state-file "$state" --ledger-file "$ledger"
+run_bounded 5 ipsec-module-loaded "$evidence/ipsec-module.log" kldstat -m ipsec
+run_bounded 20 initiate "$evidence/initiate.log" /usr/local/sbin/swanctl --initiate --ike native-tunnel --child net
+wait_established initial "$evidence/sa.initial.log"
+ack_phase initial 19091 19191
+run_bounded 20 initial-host-to-peer "$evidence/traffic.host-to-peer.log" ping -n -S "$host_ts" -c 2 "$peer_ts"
+run_bounded 45 idempotent-apply "$evidence/idempotent-apply.log" "$routerd" apply --once --config "$work/router.yaml" --state-file "$state" --ledger-file "$ledger"
+wait_established idempotent "$evidence/sa.idempotent.log"
+run_bounded 20 idempotent-host-to-peer "$evidence/traffic.idempotent.log" ping -n -S "$host_ts" -c 2 "$peer_ts"
+run_bounded 20 rekey "$evidence/rekey.log" /usr/local/sbin/swanctl --rekey --ike native-tunnel
+wait_established rekey "$evidence/sa.rekey.log"
+ack_phase rekey 19092 19192
+run_bounded 20 rekey-host-to-peer "$evidence/traffic.rekey.log" ping -n -S "$host_ts" -c 2 "$peer_ts"
+run_bounded 20 restart-service-stop "$evidence/restart.stop.log" service strongswan onestop
+run_restart_apply_diagnostic "$evidence/restart.log" "$routerd" apply --once --config "$work/router.yaml" --state-file "$state" --ledger-file "$ledger"
+run_bounded 20 restart-initiate "$evidence/restart.initiate.log" /usr/local/sbin/swanctl --initiate --ike native-tunnel --child net
+wait_established restart "$evidence/sa.restart.log"
+ack_phase restart 19093 19193
+run_bounded 20 restart-host-to-peer "$evidence/traffic.restart.log" ping -n -S "$host_ts" -c 2 "$peer_ts"
+cat >"$work/empty.yaml" <<'EOF'
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: empty}
+spec: {}
+EOF
+run_bounded 45 teardown-apply "$evidence/teardown.log" "$routerd" apply --once --config "$work/empty.yaml" --state-file "$state" --ledger-file "$ledger"
+test ! -e /usr/local/etc/routerd/swanctl/routerd.conf
+test ! -e /usr/local/etc/routerd/swanctl/.routerd-pending-load
+grep -Fx '# fixture-owned operator sentinel: routerd must not mutate this file' "$sentinel"
+run_bounded 20 teardown-list-conns "$evidence/teardown.list-conns.log" /usr/local/sbin/swanctl --list-conns
+if grep -F native-tunnel "$evidence/teardown.list-conns.log" >/dev/null; then
+  echo 'routerd-owned native-tunnel remained after teardown' >&2
+  exit 1
+fi
+printf '%s\n' \
+  'ipsec-invalid-load=actionable-no-secret-leak' \
+  'ipsec-apply=ok' \
+  'ipsec-psk-auth=ok' \
+  'ipsec-bidirectional-traffic=ok' \
+  'ipsec-rekey=ok' \
+  'ipsec-restart-recovery=ok' \
+  'ipsec-teardown=ok' >"$evidence/summary.log"
+printf 'freebsd-ipsec-linux-peer=ok\n' >"$evidence/result"

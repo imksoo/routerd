@@ -17,18 +17,28 @@ jobs:
     name: FreeBSD 14.3 native VM smoke
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    env:
+      # net0 remains anyvm SLIRP for SSH/rsync.  The pinned-source wrapper
+      # adds net1 on this private host bridge for live IPsec data traffic.
+      ROUTERD_IPSEC_TOPOLOGY: tap
+      ROUTERD_IPSEC_PEER_ADDR: 198.18.200.1
+      ROUTERD_IPSEC_GUEST_ADDR: 198.18.200.10
+      # Linux interface names are limited to IFNAMSIZ-1 (15 bytes).
+      ROUTERD_IPSEC_TAP: rd-ipsec-tap
+      ROUTERD_IPSEC_BRIDGE: rd-ipsec-br
+      ROUTERD_IPSEC_NETNS: rd-ipsec-ns
+      ROUTERD_IPSEC_VETH_HOST: rd-ipsec-vh
+      ROUTERD_IPSEC_VETH_PEER: rd-ipsec-vp
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Run native smoke in FreeBSD 14.3 amd64
-        uses: vmactions/freebsd-vm@77ed28d336d03fe19a3f4f7266c1d2c4714dd79d # v1.5.2
-        with:
-          release: "14.3"
-          arch: x86_64
-          usesh: true
-          copyback: false
-          prepare: |
-            pkg install -y go dnsmasq git hs-ShellCheck curl jq ndpi pkgconf
-          run: |
-            sh scripts/freebsd-native-vm-smoke.sh
+      - name: Start Linux strongSwan peer
+        run: scripts/ci/freebsd-ipsec-linux-peer.sh start
+
+      - name: Run native smoke with TAP IPsec underlay
+        run: scripts/ci/freebsd-anyvm-tap.sh
+
+      - name: Stop Linux strongSwan peer
+        if: always()
+        run: scripts/ci/freebsd-ipsec-linux-peer.sh stop

@@ -145,3 +145,8 @@ policyroute_evidence="$work/policyroute-vnet"
 sh scripts/freebsd-vnet-policyroute-smoke.sh --routerd "$routerd" --evidence-dir "$policyroute_evidence"
 cat "$policyroute_evidence/summary.log"
 cat "$policyroute_evidence/result"
+
+ipsec_evidence="$work/ipsec-linux-peer"
+sh scripts/freebsd-ipsec-linux-peer-smoke.sh --routerd "$routerd" --evidence-dir "$ipsec_evidence"
+cat "$ipsec_evidence/summary.log"
+cat "$ipsec_evidence/result"

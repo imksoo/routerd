@@ -5,7 +5,28 @@ package api
 import (
 	"reflect"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
+
+func TestIPsecConnectionUsesCanonicalPhaseProposalFieldsAndAcceptsLegacyAlias(t *testing.T) {
+	for name, field := range map[string]string{
+		"canonical": "phase1Proposals",
+		"legacy":    "psPhase1Proposals",
+	} {
+		t.Run(name, func(t *testing.T) {
+			var resource Resource
+			err := yaml.Unmarshal([]byte("apiVersion: net.routerd.net/v1alpha1\nkind: IPsecConnection\nmetadata: {name: ipsec}\nspec:\n  localAddress: 198.18.10.1\n  remoteAddress: 198.18.10.2\n  preSharedKey: disposable\n  "+field+": [invalid-proposal]\n  leftSubnet: 10.0.0.0/24\n  rightSubnet: 10.1.0.0/24\n"), &resource)
+			if err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			spec, err := resource.IPsecConnectionSpec()
+			if err != nil || len(spec.Phase1Proposals) != 1 || spec.Phase1Proposals[0] != "invalid-proposal" {
+				t.Fatalf("proposal decode = %#v, err=%v", spec.Phase1Proposals, err)
+			}
+		})
+	}
+}
 
 func TestMobilityDeliveryPolicyDoesNotExposeGratuitousARPOnSeize(t *testing.T) {
 	if _, ok := reflect.TypeOf(MobilityDeliveryPolicy{}).FieldByName("GratuitousARPOnSeize"); ok {

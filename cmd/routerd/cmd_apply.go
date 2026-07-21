@@ -607,6 +607,11 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 		return nil, err
 	}
 	if !opts.DryRun {
+		if _, err := applyIPsecConnections(ctx, effectiveRouter); err != nil {
+			return nil, err
+		}
+	}
+	if !opts.DryRun {
 		if err := recordLastAppliedPath(effectiveRouter, stateStore, opts.ConfigPath); err != nil {
 			return nil, err
 		}
