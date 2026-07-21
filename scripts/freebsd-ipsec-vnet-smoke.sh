@@ -270,10 +270,22 @@ echo 'ipsec-vnet step=underlay-ping' >&2
 run_bounded 15 underlay-ping ping -n -c 1 "$peer_addr" >"$evidence/underlay-ping.log" 2>&1
 
 mkdir -p "$peer/vty"
+mkdir -p "$peer/x509" "$peer/x509ca" "$peer/x509ocsp" "$peer/x509aa" \
+  "$peer/x509ac" "$peer/x509crl" "$peer/pubkey" "$peer/private" \
+  "$peer/rsa" "$peer/ecdsa" "$peer/pkcs8" "$peer/pkcs12"
 chmod 700 "$peer" "$peer/vty"
 cat >"$peer/strongswan.conf" <<EOF
 charon {
   load_modular = yes
+  filelog {
+    $peer/peer-charon.log {
+      default = 2
+      cfg = 2
+      enc = 2
+      ike = 2
+      net = 2
+    }
+  }
   plugins {
     include /usr/local/etc/strongswan.d/charon/*.conf
     vici {
