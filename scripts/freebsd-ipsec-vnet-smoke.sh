@@ -115,11 +115,26 @@ wait_for() {
   return 1
 }
 
+run_bounded() {
+  limit=$1
+  label=$2
+  shift 2
+  set +e
+  timeout -k 2 "$limit" "$@"
+  command_rc=$?
+  set -e
+  if [ "$command_rc" -eq 124 ]; then
+    echo "timed out: $label after ${limit}s" >&2
+  fi
+  return "$command_rc"
+}
+
 if ! kldstat -q -m if_epair; then
   kldload if_epair
   own_epair_module=1
 fi
-if service strongswan status >"$evidence/strongswan-status.before" 2>&1; then
+echo 'ipsec-vnet step=host-service-status' >&2
+if run_bounded 10 host-service-status service strongswan status >"$evidence/strongswan-status.before" 2>&1; then
   strongswan_was_running=1
 fi
 set +e
@@ -141,7 +156,8 @@ jail -c name="$jail_name" path=/ host.hostname="$jail_name" persist vnet allow.r
 jexec "$jail_name" ifconfig lo0 up
 jexec "$jail_name" ifconfig "$epair_peer" inet "$peer_addr/30" up
 jexec "$jail_name" ifconfig lo0 inet "$peer_ts/32" alias
-ping -n -c 1 "$peer_addr" >"$evidence/underlay-ping.log"
+echo 'ipsec-vnet step=underlay-ping' >&2
+run_bounded 15 underlay-ping ping -n -c 1 "$peer_addr" >"$evidence/underlay-ping.log" 2>&1
 
 mkdir -p "$peer/vty"
 chmod 700 "$peer" "$peer/vty"
@@ -191,6 +207,7 @@ EOF
 
 jexec "$jail_name" daemon -p "$peer/charon.pid" -o "$peer/peer-charon.log" \
   env STRONGSWAN_CONF="$peer/strongswan.conf" /usr/local/libexec/ipsec/charon --use-syslog
+echo 'ipsec-vnet step=peer-vici-wait' >&2
 wait_for 'peer VICI socket' test -S "$peer/charon.vici"
 # charon uses the compile-time /var/run/charon.pid even inside a path=/ VNET
 # jail. Relocate that peer-owned file before the host rc.d service starts its
@@ -200,7 +217,8 @@ mv /var/run/charon.pid "$peer/peer-charon.pid"
 peer_pid_relocated=1
 printf 'peer_pid_relocated=%s\n' "$(cat "$peer/peer-charon.pid")" >"$evidence/peer-pid.log"
 [ ! -e /var/run/charon.pid ] || { echo 'peer charon PID relocation did not clear host path' >&2; exit 1; }
-jexec "$jail_name" /usr/local/sbin/swanctl --uri "unix://$peer/charon.vici" --load-all --file "$peer/swanctl.conf" \
+echo 'ipsec-vnet step=peer-load' >&2
+run_bounded 30 peer-load jexec "$jail_name" /usr/local/sbin/swanctl --uri "unix://$peer/charon.vici" --load-all --file "$peer/swanctl.conf" \
   >"$evidence/peer-load.log" 2>&1
 
 cat >"$work/router.yaml" <<EOF
@@ -239,7 +257,8 @@ spec:
 EOF
 
 host_service_touched=1
-if "$routerd" apply --once --config "$work/invalid-router.yaml" >"$evidence/apply-invalid.log" 2>&1; then
+echo 'ipsec-vnet step=invalid-production-apply' >&2
+if run_bounded 30 invalid-production-apply "$routerd" apply --once --config "$work/invalid-router.yaml" >"$evidence/apply-invalid.log" 2>&1; then
   echo 'invalid IKE proposal unexpectedly loaded' >&2
   exit 1
 fi
@@ -248,23 +267,38 @@ if grep -F "$psk" "$evidence/apply-invalid.log" >/dev/null; then
   echo 'invalid load diagnostic leaked the disposable PSK' >&2
   exit 1
 fi
-"$routerd" apply --once --config "$work/router.yaml" >"$evidence/apply-1.log" 2>&1
-/usr/local/sbin/swanctl --initiate --ike "$connection" --child net >"$evidence/initiate-1.log" 2>&1
+echo 'ipsec-vnet step=valid-production-apply' >&2
+run_bounded 30 valid-production-apply "$routerd" apply --once --config "$work/router.yaml" >"$evidence/apply-1.log" 2>&1
+echo 'ipsec-vnet step=initial-initiate' >&2
+run_bounded 30 initial-initiate /usr/local/sbin/swanctl --initiate --ike "$connection" --child net >"$evidence/initiate-1.log" 2>&1
+echo 'ipsec-vnet step=initial-sa-wait' >&2
 wait_for 'initial IKE SA' sh -c "/usr/local/sbin/swanctl --list-sas --ike '$connection' | grep -q ESTABLISHED"
-ping -n -S "$host_ts" -c 2 "$peer_ts" >"$evidence/traffic-1.log"
-jexec "$jail_name" ping -n -S "$peer_ts" -c 2 "$host_ts" >"$evidence/traffic-peer-1.log"
+echo 'ipsec-vnet step=initial-host-to-peer-ping' >&2
+run_bounded 15 initial-host-to-peer-ping ping -n -S "$host_ts" -c 2 "$peer_ts" >"$evidence/traffic-1.log" 2>&1
+echo 'ipsec-vnet step=initial-peer-to-host-ping' >&2
+run_bounded 15 initial-peer-to-host-ping jexec "$jail_name" ping -n -S "$peer_ts" -c 2 "$host_ts" >"$evidence/traffic-peer-1.log" 2>&1
 
-/usr/local/sbin/swanctl --rekey --ike "$connection" >"$evidence/rekey.log" 2>&1
+echo 'ipsec-vnet step=rekey' >&2
+run_bounded 30 rekey /usr/local/sbin/swanctl --rekey --ike "$connection" >"$evidence/rekey.log" 2>&1
+echo 'ipsec-vnet step=rekey-sa-wait' >&2
 wait_for 'rekeyed IKE SA' sh -c "/usr/local/sbin/swanctl --list-sas --ike '$connection' | grep -q ESTABLISHED"
-ping -n -S "$host_ts" -c 2 "$peer_ts" >"$evidence/traffic-rekey.log"
-jexec "$jail_name" ping -n -S "$peer_ts" -c 2 "$host_ts" >"$evidence/traffic-peer-rekey.log"
+echo 'ipsec-vnet step=rekey-host-to-peer-ping' >&2
+run_bounded 15 rekey-host-to-peer-ping ping -n -S "$host_ts" -c 2 "$peer_ts" >"$evidence/traffic-rekey.log" 2>&1
+echo 'ipsec-vnet step=rekey-peer-to-host-ping' >&2
+run_bounded 15 rekey-peer-to-host-ping jexec "$jail_name" ping -n -S "$peer_ts" -c 2 "$host_ts" >"$evidence/traffic-peer-rekey.log" 2>&1
 
-service strongswan onestop >"$evidence/host-stop.log" 2>&1
-"$routerd" apply --once --config "$work/router.yaml" >"$evidence/apply-restart.log" 2>&1
-/usr/local/sbin/swanctl --initiate --ike "$connection" --child net >"$evidence/initiate-restart.log" 2>&1
+echo 'ipsec-vnet step=host-service-stop' >&2
+run_bounded 30 host-service-stop service strongswan onestop >"$evidence/host-stop.log" 2>&1
+echo 'ipsec-vnet step=restart-production-apply' >&2
+run_bounded 30 restart-production-apply "$routerd" apply --once --config "$work/router.yaml" >"$evidence/apply-restart.log" 2>&1
+echo 'ipsec-vnet step=restart-initiate' >&2
+run_bounded 30 restart-initiate /usr/local/sbin/swanctl --initiate --ike "$connection" --child net >"$evidence/initiate-restart.log" 2>&1
+echo 'ipsec-vnet step=restart-sa-wait' >&2
 wait_for 'restarted IKE SA' sh -c "/usr/local/sbin/swanctl --list-sas --ike '$connection' | grep -q ESTABLISHED"
-ping -n -S "$host_ts" -c 2 "$peer_ts" >"$evidence/traffic-restart.log"
-jexec "$jail_name" ping -n -S "$peer_ts" -c 2 "$host_ts" >"$evidence/traffic-peer-restart.log"
+echo 'ipsec-vnet step=restart-host-to-peer-ping' >&2
+run_bounded 15 restart-host-to-peer-ping ping -n -S "$host_ts" -c 2 "$peer_ts" >"$evidence/traffic-restart.log" 2>&1
+echo 'ipsec-vnet step=restart-peer-to-host-ping' >&2
+run_bounded 15 restart-peer-to-host-ping jexec "$jail_name" ping -n -S "$peer_ts" -c 2 "$host_ts" >"$evidence/traffic-peer-restart.log" 2>&1
 
 cat >"$work/empty-router.yaml" <<'EOF'
 apiVersion: routerd.net/v1alpha1
@@ -272,7 +306,8 @@ kind: Router
 metadata: {name: native-ipsec-vnet-teardown}
 spec: {}
 EOF
-"$routerd" apply --once --config "$work/empty-router.yaml" >"$evidence/apply-teardown.log" 2>&1
+echo 'ipsec-vnet step=teardown-production-apply' >&2
+run_bounded 30 teardown-production-apply "$routerd" apply --once --config "$work/empty-router.yaml" >"$evidence/apply-teardown.log" 2>&1
 if /usr/local/sbin/swanctl --list-conns | grep -F "$connection" >/dev/null; then
   echo 'routerd-owned IPsec connection remained after teardown' >&2
   exit 1
