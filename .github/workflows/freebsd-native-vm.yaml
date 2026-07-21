@@ -36,7 +36,7 @@ jobs:
           arch: x86_64
           usesh: true
           copyback: false
-          envs: ROUTERD_IPSEC_PEER_ADDR,ROUTERD_IPSEC_GUEST_ADDR
+          envs: ROUTERD_IPSEC_PEER_ADDR ROUTERD_IPSEC_GUEST_ADDR
           prepare: |
             pkg install -y go dnsmasq git hs-ShellCheck curl jq ndpi pkgconf strongswan
           run: |

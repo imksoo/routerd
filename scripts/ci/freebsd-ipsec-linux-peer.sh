@@ -89,7 +89,7 @@ connections {
   }
 }
 secrets {
-  peer {
+  ike-peer {
     id-1 = $peer_addr
     id-2 = $guest_addr
     secret = "$psk"
