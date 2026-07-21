@@ -294,7 +294,9 @@ func TestValidateResourceWhenRejectsMixedFormsForEveryWhenField(t *testing.T) {
 				Metadata: api.ObjectMeta{Name: "test"},
 				Spec:     api.RouterSpec{Resources: []api.Resource{tc.resource}},
 			}
-			err := Validate(router)
+			// These invalid-shape fixtures include Linux policy-routing fields.
+			// Validate the intended fixture OS before asserting the per-field error.
+			err := ValidateForOS(router, platform.OSLinux)
 			if err == nil || !strings.Contains(err.Error(), "exactly one of state, all, or any") {
 				t.Fatalf("Validate(%s) error = %v", tc.specName, err)
 			}
