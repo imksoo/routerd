@@ -126,18 +126,20 @@ cleanup() {
   else
     sudo ip addr del 10.250.2.1/32 dev lo 2>/dev/null || true
   fi
-  if is_owned verifier && sudo test -s "$dir/verifier.pid"; then
-    verifier_pid=$(sudo cat "$dir/verifier.pid")
-    verifier_owned=0
-    if [[ "$topology" == tap ]] && sudo ip netns pids "$netns" | grep -Fxq "$verifier_pid" && sudo sh -c 'tr "\0" "\n" <"$1" | grep -Fxq "$2"' sh "/proc/$verifier_pid/environ" "PEER_DIR=$dir"; then
-      verifier_owned=1
-    elif [[ "$topology" != tap ]] && sudo kill -0 "$verifier_pid" 2>/dev/null && sudo sh -c 'tr "\0" "\n" <"$1" | grep -Fxq "$2"' sh "/proc/$verifier_pid/environ" "PEER_DIR=$dir"; then
-      verifier_owned=1
-    fi
-    if [[ "$verifier_owned" -eq 1 ]]; then
-      sudo kill -TERM "$verifier_pid" 2>/dev/null || true
-    else
+  if is_owned verifier; then
+    if ! sudo test -s "$dir/verifier.pid"; then
       cleanup_rc=1
+    else
+      verifier_pid=$(sudo cat "$dir/verifier.pid")
+      if ! sudo kill -0 "$verifier_pid" 2>/dev/null; then
+        : # The verifier completed all phases before stop; this is success.
+      elif [[ "$topology" == tap ]] && sudo ip netns pids "$netns" | grep -Fxq "$verifier_pid" && sudo sh -c 'tr "\0" "\n" <"$1" | grep -Fxq "$2"' sh "/proc/$verifier_pid/environ" "PEER_DIR=$dir"; then
+        sudo kill -TERM "$verifier_pid" 2>/dev/null || true
+      elif [[ "$topology" != tap ]] && sudo sh -c 'tr "\0" "\n" <"$1" | grep -Fxq "$2"' sh "/proc/$verifier_pid/environ" "PEER_DIR=$dir"; then
+        sudo kill -TERM "$verifier_pid" 2>/dev/null || true
+      else
+        cleanup_rc=1
+      fi
     fi
     clear_owned verifier
   fi
