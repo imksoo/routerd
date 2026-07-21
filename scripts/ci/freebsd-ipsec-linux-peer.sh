@@ -52,7 +52,9 @@ charon {
   }
   plugins {
     include /etc/strongswan.d/charon/*.conf
-    vici { socket = unix://$dir/charon.vici }
+    vici {
+      socket = unix://$dir/charon.vici
+    }
   }
 }
 EOF
@@ -63,12 +65,31 @@ connections {
     local_addrs = %any
     remote_addrs = %any
     proposals = aes256-sha256-modp2048
-    local { auth = psk id = $peer_addr }
-    remote { auth = psk id = %any }
-    children { net { local_ts = 10.250.2.1/32 remote_ts = 10.250.1.1/32 esp_proposals = aes256-sha256 start_action = trap } }
+    local {
+      auth = psk
+      id = $peer_addr
+    }
+    remote {
+      auth = psk
+      id = %any
+    }
+    children {
+      net {
+        local_ts = 10.250.2.1/32
+        remote_ts = 10.250.1.1/32
+        esp_proposals = aes256-sha256
+        start_action = trap
+      }
+    }
   }
 }
-secrets { peer { id-1 = $peer_addr id-2 = %any secret = "$psk" } }
+secrets {
+  peer {
+    id-1 = $peer_addr
+    id-2 = %any
+    secret = "$psk"
+  }
+}
 EOF
   sudo sh -c "exec env STRONGSWAN_CONF='$dir/strongswan.conf' /usr/lib/ipsec/charon --use-syslog >>'$log' 2>&1" &
   echo $! | sudo tee "$dir/charon.pid" >/dev/null
