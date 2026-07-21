@@ -1347,8 +1347,11 @@ func TestValidateEgressRoutePolicyDynamicGatewayAllowsAutoDerivation(t *testing.
 		}},
 	}
 
-	if err := Validate(router); err != nil {
-		t.Fatalf("Validate with dynamic gateway auto-derivation: %v", err)
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
+		t.Fatalf("ValidateForOS(linux) with dynamic gateway auto-derivation: %v", err)
+	}
+	if err := ValidateForOS(router, platform.OSFreeBSD); err == nil || !strings.Contains(err.Error(), "static sourceAddress hash PF route-to shape") {
+		t.Fatalf("ValidateForOS(freebsd) = %v, want static-only route-to rejection", err)
 	}
 }
 
