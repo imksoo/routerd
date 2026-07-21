@@ -222,7 +222,8 @@ func bpfPackets(buf []byte) [][]byte {
 }
 
 func bpfWordAlign(n int) int {
-	return (n + 3) &^ 3
+	alignment := int(unsafe.Sizeof(uintptr(0)))
+	return (n + alignment - 1) &^ (alignment - 1)
 }
 
 func firewallLogEntryFromPflogPacket(packet []byte) (logstore.FirewallLogEntry, bool) {
