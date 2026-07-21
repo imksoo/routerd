@@ -10,7 +10,7 @@ case "$dir" in "$base"/routerd-ipsec-peer) ;; *) exit 2;; esac
 log="$dir/peer.log"
 vici_uri=unix:///var/run/charon.vici
 emit_failure() {
-  for f in "$dir/peer.log" "$dir/peer-load.log" "$dir/reverse-verifier.log"; do
+  for f in "$dir/peer.log" "$dir/peer-load.log" "$dir/charon.runtime.log" "$dir/reverse-verifier.log"; do
     if sudo test -f "$f"; then
       echo "--- ${f##*/}" >&2
       sudo sed "s/$psk/[REDACTED]/g" "$f" >&2
@@ -23,12 +23,13 @@ stop_owned_charon() {
   sudo test -s "$dir/charon.pid" || return 0
   pid=$(sudo cat "$dir/charon.pid")
   [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  expected_exe=$(sudo cat "$dir/charon.exe")
   if ! sudo kill -0 "$pid" 2>/dev/null; then
     if sudo test -e /var/run/charon.pid || sudo test -S /var/run/charon.vici; then return 1; fi
     return 0
   fi
   exe=$(sudo readlink -f "/proc/$pid/exe")
-  [[ "$exe" = /usr/lib/ipsec/charon ]] || return 1
+  [[ "$exe" = "$expected_exe" ]] || return 1
   sudo kill -TERM "$pid"
   for _ in $(seq 1 20); do sudo kill -0 "$pid" 2>/dev/null || break; sleep 1; done
   if sudo kill -0 "$pid" 2>/dev/null; then sudo kill -KILL "$pid"; fi
@@ -93,13 +94,18 @@ secrets {
 EOF
   sudo test ! -e /var/run/charon.pid
   sudo test ! -S /var/run/charon.vici
+  charon_exe=$(sudo readlink -f /usr/lib/ipsec/charon)
+  sudo test -x "$charon_exe"
+  printf '%s\n' "$charon_exe" | sudo tee "$dir/charon.exe" >/dev/null
   sudo sh -c "exec /usr/lib/ipsec/charon --use-syslog >>'$log' 2>&1" &
   for _ in $(seq 1 30); do sudo test -s /var/run/charon.pid && break; sleep 1; done
   sudo test -s /var/run/charon.pid
   charon_pid=$(sudo cat /var/run/charon.pid)
   [[ "$charon_pid" =~ ^[1-9][0-9]*$ ]]
   sudo kill -0 "$charon_pid"
-  [[ "$(sudo readlink -f "/proc/$charon_pid/exe")" = /usr/lib/ipsec/charon ]]
+  runtime_exe=$(sudo readlink -f "/proc/$charon_pid/exe")
+  printf 'pid=%s exe=%s expected=%s\n' "$charon_pid" "$runtime_exe" "$charon_exe" | sudo tee "$dir/charon.runtime.log" >/dev/null
+  [[ "$runtime_exe" = "$charon_exe" ]]
   printf '%s\n' "$charon_pid" | sudo tee "$dir/charon.pid" >/dev/null
   for _ in $(seq 1 30); do sudo test -S /var/run/charon.vici && break; sleep 1; done
   sudo test -S /var/run/charon.vici
