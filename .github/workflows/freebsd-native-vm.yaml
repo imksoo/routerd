@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Run native smoke in FreeBSD 14.3 amd64
-        uses: vmactions/freebsd-vm@77ed28d336d03fe19a3f4f7266c1d2c4714dd79 # v1.5.2
+        uses: vmactions/freebsd-vm@77ed28d336d03fe19a3f4f7266c1d2c4714dd79d # v1.5.2
         with:
           release: "14.3"
           arch: x86_64
