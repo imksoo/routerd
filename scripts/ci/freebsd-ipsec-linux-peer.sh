@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 set -euo pipefail
 action=${1:?usage: $0 start|stop}
+peer_addr=${ROUTERD_IPSEC_PEER_ADDR:?ROUTERD_IPSEC_PEER_ADDR is required}
 base=${RUNNER_TEMP:?RUNNER_TEMP is required}
 dir="$base/routerd-ipsec-peer"
 case "$dir" in "$base"/routerd-ipsec-peer) ;; *) exit 2;; esac
@@ -45,19 +46,19 @@ charon {
   }
 }
 EOF
-  sudo tee "$dir/swanctl.conf" >/dev/null <<'EOF'
+  sudo tee "$dir/swanctl.conf" >/dev/null <<EOF
 connections {
   native-tunnel {
     version = 2
     local_addrs = %any
     remote_addrs = %any
     proposals = aes256-sha256-modp2048
-    local { auth = psk id = 10.0.2.2 }
+    local { auth = psk id = $peer_addr }
     remote { auth = psk id = %any }
     children { net { local_ts = 10.250.2.1/32 remote_ts = 10.250.1.1/32 esp_proposals = aes256-sha256 start_action = trap } }
   }
 }
-secrets { peer { id-1 = 10.0.2.2 id-2 = %any secret = "routerd-native-linux-peer-disposable-psk" } }
+secrets { peer { id-1 = $peer_addr id-2 = %any secret = "routerd-native-linux-peer-disposable-psk" } }
 EOF
   sudo sh -c "exec env STRONGSWAN_CONF='$dir/strongswan.conf' /usr/lib/ipsec/charon --use-syslog >>'$log' 2>&1" &
   echo $! | sudo tee "$dir/charon.pid" >/dev/null

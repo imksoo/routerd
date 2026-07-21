@@ -7,7 +7,7 @@ routerd='' evidence=''
 while [ "$#" -gt 0 ]; do case "$1" in --routerd) routerd=$2; shift 2;; --evidence-dir) evidence=$2; shift 2;; *) exit 2;; esac; done
 [ "$(uname -s)" = FreeBSD ] && [ -x "$routerd" ] && [ -n "$evidence" ]
 mkdir -p "$evidence"; work=$evidence/work; mkdir -p "$work"
-peer_addr=${ROUTERD_IPSEC_PEER_ADDR:-10.0.2.2}
+peer_addr=${ROUTERD_IPSEC_PEER_ADDR:?ROUTERD_IPSEC_PEER_ADDR is required}
 host_if=$(route -n get default | awk '/interface:/{print $2;exit}')
 host_addr=$(ifconfig "$host_if" inet | awk '/inet /{print $2;exit}')
 [ -n "$host_addr" ] && [ "$peer_addr" = "$(route -n get default | awk '/gateway:/{print $2;exit}')" ]

@@ -17,6 +17,9 @@ jobs:
     name: FreeBSD 14.3 native VM smoke
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    env:
+      # anyvm v0.5.1 serves host services at this SLIRP address.
+      ROUTERD_IPSEC_PEER_ADDR: 192.168.122.2
     steps:
       - name: Checkout
         uses: actions/checkout@v6
