@@ -59,6 +59,8 @@ setup_tap_topology() {
   sudo ip netns exec "$netns" ip link set lo up
   sudo ip netns exec "$netns" ip link set "$veth_peer" up
   sudo ip netns exec "$netns" ip addr add "$peer_addr/24" dev "$veth_peer"
+  sudo ip netns exec "$netns" ip route add 10.250.1.1/32 via "$guest_addr" dev "$veth_peer"
+  mark_owned peer-selector-route
 }
 cleanup_tap_topology() {
   # This namespace is fixture-owned.  Do not delete it while its verifier or
@@ -69,6 +71,10 @@ cleanup_tap_topology() {
   fi
   if is_owned netns && sudo ip netns pids "$netns" | grep -Eq '[0-9]'; then
     return 1
+  fi
+  if is_owned peer-selector-route; then
+    sudo ip netns exec "$netns" ip route del 10.250.1.1/32 via "$guest_addr" dev "$veth_peer"
+    clear_owned peer-selector-route
   fi
   if is_owned netns; then sudo ip netns del "$netns"; clear_owned netns; fi
   if is_owned veth && sudo ip link show dev "$veth_host" >/dev/null 2>&1; then sudo ip link del "$veth_host"; fi

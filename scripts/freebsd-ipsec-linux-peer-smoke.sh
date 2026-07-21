@@ -22,6 +22,12 @@ underlay_route_if=$(route -n get "$peer_addr" | awk '/interface:/{print $2;exit}
 printf 'ipsec-linux-peer preflight topology=%s peer=%s guest=%s host=%s underlay_if=%s route_if=%s\n' "${ROUTERD_IPSEC_TOPOLOGY:-slirp}" "$peer_addr" "$guest_addr" "$host_addr" "$host_if" "$underlay_route_if" >&3
 [ -n "$host_addr" ] && [ "$host_addr" = "$guest_addr" ] && [ "$underlay_route_if" = "$host_if" ]
 host_ts=10.250.1.1 peer_ts=10.250.2.1 psk=routerd-native-linux-peer-disposable-psk
+peer_selector_route_added=0
+route add -host "$peer_ts" "$peer_addr"
+peer_selector_route_added=1
+peer_selector_route_if=$(route -n get "$peer_ts" | awk '/interface:/{print $2;exit}')
+printf 'ipsec-linux-peer selector-route peer_ts=%s route_if=%s\n' "$peer_ts" "$peer_selector_route_if" >&3
+[ "$peer_selector_route_if" = "$host_if" ]
 state=$work/state.db ledger=$work/ledger.db
 sentinel=/usr/local/etc/routerd/swanctl/operator-sentinel.conf
 sentinel_created=0
@@ -113,6 +119,7 @@ cleanup() {
   if ! run_bounded 20 cleanup-service-stop "$evidence/cleanup.service-stop.log" service strongswan onestop; then :; fi
   if [ "$service_before" -eq 1 ]; then if ! run_bounded 20 cleanup-service-start "$evidence/cleanup.service-start.log" service strongswan onestart; then :; fi; fi
   if [ "$enable_before" -eq 0 ]; then sysrc "strongswan_enable=$(cat "$work/enable.before")" >>"$evidence/cleanup.log" 2>&1 || true; else sysrc -x strongswan_enable >>"$evidence/cleanup.log" 2>&1 || true; fi
+  if [ "$peer_selector_route_added" -eq 1 ]; then route delete -host "$peer_ts" "$peer_addr" >>"$evidence/cleanup.log" 2>&1 || true; fi
   rm -f /usr/local/etc/routerd/swanctl/routerd-*.conf /usr/local/etc/routerd/swanctl/routerd.conf /usr/local/etc/routerd/swanctl/.routerd-pending-load
   [ "$sentinel_created" -eq 1 ] && rm -f "$sentinel"
   ifconfig lo0 inet "$host_ts" -alias >/dev/null 2>&1 || true
