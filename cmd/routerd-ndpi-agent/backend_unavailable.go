@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-//go:build !linux || !cgo || !libndpi
+//go:build (!linux && !freebsd) || (linux && (!cgo || !libndpi))
 
 package main
 

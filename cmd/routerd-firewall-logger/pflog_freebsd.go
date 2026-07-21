@@ -140,7 +140,9 @@ func runPflogDaemon(ctx context.Context, opts options, log *logstore.FirewallLog
 	if err := attachBPFInterface(fd, opts.pflogInterface); err != nil {
 		return err
 	}
-	_ = unix.IoctlSetInt(fd, unix.BIOCIMMEDIATE, 1)
+	if err := unix.IoctlSetPointerInt(fd, unix.BIOCIMMEDIATE, 1); err != nil {
+		return fmt.Errorf("BIOCIMMEDIATE: %w", err)
+	}
 	bufLen, err := unix.IoctlGetInt(fd, unix.BIOCGBLEN)
 	if err != nil || bufLen <= 0 {
 		bufLen = 4096
@@ -222,7 +224,8 @@ func bpfPackets(buf []byte) [][]byte {
 }
 
 func bpfWordAlign(n int) int {
-	return (n + 3) &^ 3
+	alignment := int(unsafe.Sizeof(uintptr(0)))
+	return (n + alignment - 1) &^ (alignment - 1)
 }
 
 func firewallLogEntryFromPflogPacket(packet []byte) (logstore.FirewallLogEntry, bool) {

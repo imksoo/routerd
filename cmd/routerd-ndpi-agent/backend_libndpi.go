@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-//go:build linux && cgo && libndpi
+//go:build (linux || freebsd) && cgo && libndpi
 
 package main
 
@@ -10,11 +10,17 @@ package main
 #include <ndpi_api.h>
 
 static struct ndpi_detection_module_struct* routerd_ndpi_init(void) {
+#if defined(NDPI_MAJOR) && NDPI_MAJOR >= 5
+	struct ndpi_detection_module_struct *mod = ndpi_init_detection_module(NULL);
+#else
 	NDPI_PROTOCOL_BITMASK all;
 	struct ndpi_detection_module_struct *mod = ndpi_init_detection_module(ndpi_no_prefs);
+#endif
 	if(mod == NULL) return NULL;
+#if !defined(NDPI_MAJOR) || NDPI_MAJOR < 5
 	NDPI_BITMASK_SET_ALL(all);
 	ndpi_set_protocol_detection_bitmask2(mod, &all);
+#endif
 	ndpi_finalize_initialization(mod);
 	return mod;
 }
@@ -28,13 +34,37 @@ static ndpi_protocol routerd_ndpi_process(struct ndpi_detection_module_struct *m
 					  const unsigned char *packet,
 					  unsigned short packetlen,
 					  unsigned long long now_ms) {
+#if defined(NDPI_MAJOR) && NDPI_MAJOR >= 5
+	return ndpi_detection_process_packet(mod, flow, packet, packetlen, now_ms, NULL);
+#else
 	return ndpi_detection_process_packet(mod, flow, packet, packetlen, now_ms);
+#endif
 }
 
 static ndpi_protocol routerd_ndpi_giveup(struct ndpi_detection_module_struct *mod,
 					 struct ndpi_flow_struct *flow) {
+#if defined(NDPI_MAJOR) && NDPI_MAJOR >= 5
+	return ndpi_detection_giveup(mod, flow);
+#else
 	u_int8_t guessed = 0;
 	return ndpi_detection_giveup(mod, flow, 1, &guessed);
+#endif
+}
+
+static u_int16_t routerd_ndpi_master_protocol(ndpi_protocol proto) {
+#if defined(NDPI_MAJOR) && NDPI_MAJOR >= 5
+	return proto.proto.master_protocol;
+#else
+	return proto.master_protocol;
+#endif
+}
+
+static u_int16_t routerd_ndpi_app_protocol(ndpi_protocol proto) {
+#if defined(NDPI_MAJOR) && NDPI_MAJOR >= 5
+	return proto.proto.app_protocol;
+#else
+	return proto.app_protocol;
+#endif
 }
 
 static int routerd_ndpi_confidence(struct ndpi_flow_struct *flow) {
@@ -144,7 +174,7 @@ func (b *libndpiBackend) Classify(_ context.Context, key string, req dpi.Classif
 		b.flows[key] = flow
 	}
 	proto := C.routerd_ndpi_process(b.mod, flow, (*C.uchar)(cpacket), C.ushort(len(packet)), C.ulonglong(nowMS))
-	if state != nil && state.packets >= b.firstPayloadPackets && proto.app_protocol == C.NDPI_PROTOCOL_UNKNOWN && proto.master_protocol == C.NDPI_PROTOCOL_UNKNOWN {
+	if state != nil && state.packets >= b.firstPayloadPackets && C.routerd_ndpi_app_protocol(proto) == C.NDPI_PROTOCOL_UNKNOWN && C.routerd_ndpi_master_protocol(proto) == C.NDPI_PROTOCOL_UNKNOWN {
 		proto = C.routerd_ndpi_giveup(b.mod, flow)
 	}
 	return b.resultFromProtocol(req, flow, proto), nil
@@ -178,8 +208,8 @@ func (b *libndpiBackend) resultFromProtocol(req dpi.ClassifyRequest, flow *C.str
 	result := metadataOnlyResult(req)
 	result.Engine = "ndpi-agent"
 	result.Source = "ndpi-agent"
-	masterProto := proto.master_protocol
-	appProto := proto.app_protocol
+	masterProto := C.routerd_ndpi_master_protocol(proto)
+	appProto := C.routerd_ndpi_app_protocol(proto)
 	if masterProto != C.NDPI_PROTOCOL_UNKNOWN {
 		result.MasterProtocol = strings.ToLower(C.GoString(C.ndpi_get_proto_name(b.mod, C.u_int16_t(masterProto))))
 	}

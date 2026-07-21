@@ -22,6 +22,8 @@ pkg info -e go
 pkg info -e dnsmasq
 pkg info -e git
 pkg info -e hs-ShellCheck
+pkg info -e curl
+pkg info -e jq
 git config --global --add safe.directory "$(pwd)"
 # The action shares a checkout into the guest. Test fixtures build temporary
 # helper binaries, so suppress VCS stamping there without narrowing the gate.
@@ -122,3 +124,13 @@ for script in "$@"; do
   set -e
   [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ] || exit "$rc"
 done
+
+ndpi_agent="$work/routerd-ndpi-agent-libndpi"
+CGO_ENABLED=1 go test -tags libndpi ./cmd/routerd-ndpi-agent
+CGO_ENABLED=1 go build -tags libndpi -o "$ndpi_agent" ./cmd/routerd-ndpi-agent
+"$ndpi_agent" selftest | tee "$work/ndpi-selftest.json"
+jq -e '.ok == true and .libndpiLoaded == true and (.libndpiVersion | length > 0)' \
+  "$work/ndpi-selftest.json" >/dev/null
+echo "freebsd-native-libndpi=ok"
+
+sh scripts/freebsd-native-observer-smoke.sh
