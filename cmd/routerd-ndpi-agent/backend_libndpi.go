@@ -51,6 +51,22 @@ static ndpi_protocol routerd_ndpi_giveup(struct ndpi_detection_module_struct *mo
 #endif
 }
 
+static u_int16_t routerd_ndpi_master_protocol(ndpi_protocol proto) {
+#if defined(NDPI_MAJOR) && NDPI_MAJOR >= 5
+	return proto.proto.master_protocol;
+#else
+	return proto.master_protocol;
+#endif
+}
+
+static u_int16_t routerd_ndpi_app_protocol(ndpi_protocol proto) {
+#if defined(NDPI_MAJOR) && NDPI_MAJOR >= 5
+	return proto.proto.app_protocol;
+#else
+	return proto.app_protocol;
+#endif
+}
+
 static int routerd_ndpi_confidence(struct ndpi_flow_struct *flow) {
 	return (int)flow->confidence;
 }
@@ -158,7 +174,7 @@ func (b *libndpiBackend) Classify(_ context.Context, key string, req dpi.Classif
 		b.flows[key] = flow
 	}
 	proto := C.routerd_ndpi_process(b.mod, flow, (*C.uchar)(cpacket), C.ushort(len(packet)), C.ulonglong(nowMS))
-	if state != nil && state.packets >= b.firstPayloadPackets && proto.app_protocol == C.NDPI_PROTOCOL_UNKNOWN && proto.master_protocol == C.NDPI_PROTOCOL_UNKNOWN {
+	if state != nil && state.packets >= b.firstPayloadPackets && C.routerd_ndpi_app_protocol(proto) == C.NDPI_PROTOCOL_UNKNOWN && C.routerd_ndpi_master_protocol(proto) == C.NDPI_PROTOCOL_UNKNOWN {
 		proto = C.routerd_ndpi_giveup(b.mod, flow)
 	}
 	return b.resultFromProtocol(req, flow, proto), nil
@@ -192,8 +208,8 @@ func (b *libndpiBackend) resultFromProtocol(req dpi.ClassifyRequest, flow *C.str
 	result := metadataOnlyResult(req)
 	result.Engine = "ndpi-agent"
 	result.Source = "ndpi-agent"
-	masterProto := proto.master_protocol
-	appProto := proto.app_protocol
+	masterProto := C.routerd_ndpi_master_protocol(proto)
+	appProto := C.routerd_ndpi_app_protocol(proto)
 	if masterProto != C.NDPI_PROTOCOL_UNKNOWN {
 		result.MasterProtocol = strings.ToLower(C.GoString(C.ndpi_get_proto_name(b.mod, C.u_int16_t(masterProto))))
 	}
