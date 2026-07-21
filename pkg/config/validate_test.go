@@ -145,7 +145,7 @@ func TestValidateManagementAccessRejectsInvalidSpec(t *testing.T) {
 				Metadata: api.ObjectMeta{Name: "main"},
 				Spec:     tc.spec,
 			})
-			err := Validate(router)
+			err := ValidateForOS(router, platform.OSLinux)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Validate error = %v, want %q", err, tc.want)
 			}

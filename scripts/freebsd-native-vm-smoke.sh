@@ -20,6 +20,12 @@ esac
 [ "$(go env GOOS)" = "freebsd" ]
 pkg info -e go
 pkg info -e dnsmasq
+pkg info -e git
+pkg info -e shellcheck
+git config --global --add safe.directory "$(pwd)"
+# The action shares a checkout into the guest. Test fixtures build temporary
+# helper binaries, so suppress VCS stamping there without narrowing the gate.
+export GOFLAGS="${GOFLAGS:+$GOFLAGS }-buildvcs=false"
 
 # This is the native package gate. Do not narrow it to selected packages: a
 # FreeBSD-only build or runtime dependency failure must be visible in CI.

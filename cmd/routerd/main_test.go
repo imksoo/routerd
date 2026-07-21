@@ -2029,6 +2029,9 @@ exit 0
 `, serviceLog))
 	writeExecutable(t, filepath.Join(binDir, "pfctl"), fmt.Sprintf(`#!/bin/sh
 echo "$@" >> %q
+if [ "$1" = "-s" ]; then
+  echo "Status: Disabled"
+fi
 exit 0
 `, pfctlLog))
 	writeExecutable(t, filepath.Join(binDir, "kldstat"), `#!/bin/sh
@@ -2114,6 +2117,9 @@ exit 1
 `, serviceLog))
 	writeExecutable(t, filepath.Join(binDir, "pfctl"), fmt.Sprintf(`#!/bin/sh
 echo "$@" >> %q
+if [ "$1" = "-s" ]; then
+  echo "Status: Disabled"
+fi
 exit 0
 `, pfctlLog))
 	writeExecutable(t, filepath.Join(binDir, "kldstat"), `#!/bin/sh
