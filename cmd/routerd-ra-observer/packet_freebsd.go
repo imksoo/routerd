@@ -44,9 +44,9 @@ func openPacketSocket(ifname string) (*packetSocket, error) {
 		_ = unix.Close(fd)
 		return nil, err
 	}
-	if err := observerIoctlSetInt(fd, unix.BIOCIMMEDIATE, 1); err != nil {
+	if err := observerIoctlSetTimeval(fd, unix.BIOCSRTIMEOUT, unix.Timeval{Sec: 1}); err != nil {
 		_ = unix.Close(fd)
-		return nil, fmt.Errorf("BIOCIMMEDIATE: %w", err)
+		return nil, fmt.Errorf("BIOCSRTIMEOUT: %w", err)
 	}
 	size, err := observerIoctlGetInt(fd, unix.BIOCGBLEN)
 	if err != nil || size <= 0 {
@@ -109,6 +109,14 @@ func observerIoctlGetInt(fd int, req uint) (int, error) {
 func observerIoctlSetInt(fd int, req uint, value int) error {
 	raw := int32(value)
 	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), uintptr(req), uintptr(unsafe.Pointer(&raw)))
+	if errno != 0 {
+		return errno
+	}
+	return nil
+}
+
+func observerIoctlSetTimeval(fd int, req uint, value unix.Timeval) error {
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), uintptr(req), uintptr(unsafe.Pointer(&value)))
 	if errno != 0 {
 		return errno
 	}
