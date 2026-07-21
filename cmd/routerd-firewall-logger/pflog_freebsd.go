@@ -140,7 +140,9 @@ func runPflogDaemon(ctx context.Context, opts options, log *logstore.FirewallLog
 	if err := attachBPFInterface(fd, opts.pflogInterface); err != nil {
 		return err
 	}
-	_ = unix.IoctlSetInt(fd, unix.BIOCIMMEDIATE, 1)
+	if err := unix.IoctlSetPointerInt(fd, unix.BIOCIMMEDIATE, 1); err != nil {
+		return fmt.Errorf("BIOCIMMEDIATE: %w", err)
+	}
 	bufLen, err := unix.IoctlGetInt(fd, unix.BIOCGBLEN)
 	if err != nil || bufLen <= 0 {
 		bufLen = 4096

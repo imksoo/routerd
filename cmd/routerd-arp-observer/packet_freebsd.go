@@ -30,11 +30,11 @@ func openPacketSocket(ifname string) (*packetSocket, error) {
 		_ = unix.Close(fd)
 		return nil, err
 	}
-	if err := unix.IoctlSetInt(fd, unix.BIOCIMMEDIATE, 1); err != nil {
+	if err := unix.IoctlSetPointerInt(fd, unix.BIOCIMMEDIATE, 1); err != nil {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("BIOCIMMEDIATE: %w", err)
 	}
-	if err := unix.IoctlSetInt(fd, unix.BIOCSHDRCMPLT, 1); err != nil {
+	if err := unix.IoctlSetPointerInt(fd, unix.BIOCSHDRCMPLT, 1); err != nil {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("BIOCSHDRCMPLT: %w", err)
 	}
