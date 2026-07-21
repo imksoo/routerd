@@ -164,6 +164,66 @@ run_bounded() {
   return "$command_rc"
 }
 
+# This is deliberately a one-shot diagnostic for a production apply that has
+# written its actionable swanctl error but is still alive.  It does not retry
+# the apply: at 35 seconds it captures the Go stacks and exact process/PID-file
+# ownership, then terminates only the routerd process it started.
+run_invalid_apply_diagnostic() {
+  log=$1
+  shift
+  "$@" >"$log" 2>&1 &
+  apply_pid=$!
+  printf 'invalid_apply_pid=%s\n' "$apply_pid" >"$evidence/invalid-apply-process.meta"
+  elapsed=0
+  while [ "$elapsed" -lt 35 ]; do
+    if ! kill -0 "$apply_pid" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 5
+    elapsed=$((elapsed + 5))
+    echo "ipsec-vnet waiting=invalid-production-apply elapsed=${elapsed}s" >&3
+  done
+  if kill -0 "$apply_pid" >/dev/null 2>&1; then
+    echo 'ipsec-vnet diagnostic=invalid-apply-still-live signal=QUIT' >&3
+    ps -axo pid,ppid,pgid,sid,stat,command >"$evidence/invalid-apply-processes.before" 2>&1 || true
+    {
+      printf '%s\n' '--- invalid apply process tree before QUIT'
+      grep -E "^[[:space:]]*${apply_pid}[[:space:]]|[[:space:]](charon|daemon)[[:space:]]" "$evidence/invalid-apply-processes.before" || true
+      for pidfile in /var/run/daemon-charon.pid /var/run/charon.pid; do
+        if [ -f "$pidfile" ]; then
+          printf '%s=' "$pidfile"
+          cat "$pidfile"
+        else
+          printf '%s=absent\n' "$pidfile"
+        fi
+      done
+    } >"$evidence/invalid-apply-pids.before" 2>&1
+    cat "$evidence/invalid-apply-pids.before" >&3
+    kill -QUIT "$apply_pid" || true
+    sleep 3
+    # Go writes SIGQUIT goroutine stacks to stderr; stderr is the evidence log
+    # above, so relay the redacted completed stack to the workflow progress FD.
+    echo '--- invalid apply Go stack/output after QUIT' >&3
+    sed "s/$psk/[REDACTED]/g" "$log" >&3
+    ps -axo pid,ppid,pgid,sid,stat,command >"$evidence/invalid-apply-processes.after-quit" 2>&1 || true
+    if kill -0 "$apply_pid" >/dev/null 2>&1; then
+      echo 'ipsec-vnet diagnostic=invalid-apply-still-live signal=TERM' >&3
+      kill -TERM "$apply_pid" || true
+      sleep 3
+    fi
+    if kill -0 "$apply_pid" >/dev/null 2>&1; then
+      echo 'ipsec-vnet diagnostic=invalid-apply-still-live signal=KILL' >&3
+      kill -KILL "$apply_pid" || true
+    fi
+  fi
+  if wait "$apply_pid"; then
+    apply_rc=0
+  else
+    apply_rc=$?
+  fi
+  return "$apply_rc"
+}
+
 if ! kldstat -q -m if_epair; then
   kldload if_epair
   own_epair_module=1
@@ -278,8 +338,8 @@ EOF
 host_service_touched=1
 echo 'ipsec-vnet step=invalid-production-apply' >&2
 invalid_apply_started=$(date +%s)
-if run_bounded 45 invalid-production-apply "$routerd" apply --once --config "$work/invalid-router.yaml" \
-  --state-file "$apply_state" --ledger-file "$apply_ledger" --status-file "$evidence/apply-invalid.status.json" >"$evidence/apply-invalid.log" 2>&1; then
+if run_invalid_apply_diagnostic "$evidence/apply-invalid.log" "$routerd" apply --once --config "$work/invalid-router.yaml" \
+  --state-file "$apply_state" --ledger-file "$apply_ledger" --status-file "$evidence/apply-invalid.status.json"; then
   invalid_apply_rc=0
 else
   invalid_apply_rc=$?
