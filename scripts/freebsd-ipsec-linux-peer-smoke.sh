@@ -85,11 +85,11 @@ wait_established() {
 }
 ack_phase() {
   phase=$1 marker=$2 ack=$3
-  run_bounded 10 "$phase-marker" "$evidence/$phase.marker.log" nc -z -w 5 "$peer_addr" "$marker"
+  run_bounded 10 "$phase-marker" "$evidence/$phase.marker.log" nc -s "$host_ts" -z -w 5 "$peer_ts" "$marker"
   deadline=$(( $(date +%s) + 30 ))
   : >"$evidence/$phase.ack.log"
   while [ "$(date +%s)" -lt "$deadline" ]; do
-    if timeout -k 2 5 nc -w 5 "$peer_addr" "$ack" >>"$evidence/$phase.ack.log" 2>&1 && [ "$(tail -n 1 "$evidence/$phase.ack.log")" = ok ]; then
+    if timeout -k 2 5 nc -s "$host_ts" -w 5 "$peer_ts" "$ack" >>"$evidence/$phase.ack.log" 2>&1 && [ "$(tail -n 1 "$evidence/$phase.ack.log")" = ok ]; then
       printf 'step=%s-ack rc=0\n' "$phase" >&3
       return 0
     fi
