@@ -10,11 +10,17 @@ package main
 #include <ndpi_api.h>
 
 static struct ndpi_detection_module_struct* routerd_ndpi_init(void) {
+#if defined(NDPI_MAJOR) && NDPI_MAJOR >= 5
+	struct ndpi_detection_module_struct *mod = ndpi_init_detection_module(NULL);
+#else
 	NDPI_PROTOCOL_BITMASK all;
 	struct ndpi_detection_module_struct *mod = ndpi_init_detection_module(ndpi_no_prefs);
+#endif
 	if(mod == NULL) return NULL;
+#if !defined(NDPI_MAJOR) || NDPI_MAJOR < 5
 	NDPI_BITMASK_SET_ALL(all);
 	ndpi_set_protocol_detection_bitmask2(mod, &all);
+#endif
 	ndpi_finalize_initialization(mod);
 	return mod;
 }
@@ -28,13 +34,21 @@ static ndpi_protocol routerd_ndpi_process(struct ndpi_detection_module_struct *m
 					  const unsigned char *packet,
 					  unsigned short packetlen,
 					  unsigned long long now_ms) {
+#if defined(NDPI_MAJOR) && NDPI_MAJOR >= 5
+	return ndpi_detection_process_packet(mod, flow, packet, packetlen, now_ms, NULL);
+#else
 	return ndpi_detection_process_packet(mod, flow, packet, packetlen, now_ms);
+#endif
 }
 
 static ndpi_protocol routerd_ndpi_giveup(struct ndpi_detection_module_struct *mod,
 					 struct ndpi_flow_struct *flow) {
+#if defined(NDPI_MAJOR) && NDPI_MAJOR >= 5
+	return ndpi_detection_giveup(mod, flow);
+#else
 	u_int8_t guessed = 0;
 	return ndpi_detection_giveup(mod, flow, 1, &guessed);
+#endif
 }
 
 static int routerd_ndpi_confidence(struct ndpi_flow_struct *flow) {
