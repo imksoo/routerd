@@ -278,12 +278,15 @@ cat >"$peer/strongswan.conf" <<EOF
 charon {
   load_modular = yes
   filelog {
-    $peer/peer-charon.log {
+    peer-debug {
+      path = $peer/peer-charon.log
+      append = no
       default = 2
       cfg = 2
       enc = 2
       ike = 2
       net = 2
+      flush_line = yes
     }
   }
   plugins {
