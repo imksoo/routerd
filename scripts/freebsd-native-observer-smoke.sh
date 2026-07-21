@@ -14,10 +14,12 @@ esac
 work=$(mktemp -d /tmp/routerd-freebsd-observer-smoke.XXXXXX)
 jail_name="routerd-observer-$$"
 epair_host=""
+bridge=""
 arp_pid=""
 ra_pid=""
 rtadvd_pid=""
 own_epair_module=0
+own_bridge_module=0
 restart_devd=0
 
 cleanup() {
@@ -30,11 +32,17 @@ cleanup() {
   if jls -j "$jail_name" >/dev/null 2>&1; then
     jail -r "$jail_name" || true
   fi
+  if [ -n "$bridge" ] && ifconfig "$bridge" >/dev/null 2>&1; then
+    ifconfig "$bridge" destroy || true
+  fi
   if [ -n "$epair_host" ] && ifconfig "$epair_host" >/dev/null 2>&1; then
     ifconfig "$epair_host" destroy || true
   fi
   if [ "$own_epair_module" -eq 1 ]; then
     kldunload if_epair || true
+  fi
+  if [ "$own_bridge_module" -eq 1 ]; then
+    kldunload if_bridge || true
   fi
   if [ "$restart_devd" -eq 1 ]; then
     service devd start >/dev/null 2>&1 || true
@@ -46,6 +54,10 @@ trap cleanup EXIT HUP INT TERM
 if ! kldstat -q -m if_epair; then
   kldload if_epair
   own_epair_module=1
+fi
+if ! kldstat -q -m if_bridge; then
+  kldload if_bridge
+  own_bridge_module=1
 fi
 
 # The CI image has ifconfig_DEFAULT=DHCP, so devd starts dhclient each time an
@@ -69,8 +81,11 @@ go build -o "$ra_observer" ./cmd/routerd-ra-observer
 
 epair_host=$(ifconfig epair create)
 epair_peer="${epair_host%a}b"
-ifconfig "$epair_host" inet 192.0.2.1/24 up
-ifconfig "$epair_host" inet6 2001:db8:846::1/64 up
+bridge=$(ifconfig bridge create)
+ifconfig "$epair_host" up
+ifconfig "$bridge" addm "$epair_host" up
+ifconfig "$bridge" inet 192.0.2.1/24
+ifconfig "$bridge" inet6 2001:db8:846::1/64
 jail -c name="$jail_name" path=/ host.hostname="$jail_name" \
   persist vnet vnet.interface="$epair_peer" allow.raw_sockets
 jexec "$jail_name" ifconfig lo0 up
@@ -78,14 +93,14 @@ jexec "$jail_name" ifconfig "$epair_peer" inet 192.0.2.2/24 up
 jexec "$jail_name" ifconfig "$epair_peer" inet6 2001:db8:846::2/64 up
 jexec "$jail_name" sysctl net.inet6.ip6.forwarding=1 >/dev/null
 "$arp_observer" daemon \
-  --resource native-ci-arp --interface "$epair_host" --event-interface native-ci \
+  --resource native-ci-arp --interface "$bridge" --event-interface native-ci \
   --socket "$arp_socket" --event-file "$arp_events" --pool native-ci-pool \
   --prefix 192.0.2.0/24 --source-type arp-observer --observe \
   >"$work/arp.log" 2>&1 &
 arp_pid=$!
 
 "$ra_observer" daemon \
-  --resource native-ci-ra --interface "$epair_host" \
+  --resource native-ci-ra --interface "$bridge" \
   --socket "$ra_socket" --event-file "$ra_events" \
   >"$work/ra.log" 2>&1 &
 ra_pid=$!
@@ -130,7 +145,7 @@ jexec "$jail_name" rtadvd -d -f -s -c "$rtadvd_conf" \
   -p "$work/rtadvd.pid" "$epair_peer" >"$work/rtadvd.log" 2>&1 &
 rtadvd_pid=$!
 sleep 1
-rtsol -d "$epair_host" >"$work/rtsol.log" 2>&1 || true
+rtsol -d "$bridge" >"$work/rtsol.log" 2>&1 || true
 
 observed=0
 for _ in $(jot 20); do
@@ -156,7 +171,7 @@ if [ "$observed" -ne 1 ]; then
   cat "$work/ra.log" >&2
   cat "$work/rtadvd.log" >&2
   cat "$work/rtsol.log" >&2
-  ifconfig "$epair_host" >&2
+  ifconfig "$bridge" >&2
   procstat -f "$arp_pid" >&2 || true
   procstat -f "$ra_pid" >&2 || true
   netstat -B >&2 || true
