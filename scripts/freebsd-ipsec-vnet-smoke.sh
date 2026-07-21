@@ -252,8 +252,17 @@ EOF
 
 host_service_touched=1
 echo 'ipsec-vnet step=invalid-production-apply' >&2
-if run_bounded 30 invalid-production-apply "$routerd" apply --once --config "$work/invalid-router.yaml" \
-  --state-file "$apply_state" --ledger-file "$apply_ledger" --status-file "$evidence/apply-invalid.status.json" >"$evidence/apply-invalid.log" 2>&1; then
+set +e
+run_bounded 30 invalid-production-apply "$routerd" apply --once --config "$work/invalid-router.yaml" \
+  --state-file "$apply_state" --ledger-file "$apply_ledger" --status-file "$evidence/apply-invalid.status.json" >"$evidence/apply-invalid.log" 2>&1
+invalid_apply_rc=$?
+set -e
+if [ "$invalid_apply_rc" -eq 124 ]; then
+  echo 'invalid production apply timed out; redacted diagnostic follows' >&2
+  sed "s/$psk/[REDACTED]/g" "$evidence/apply-invalid.log" >&2
+  exit 1
+fi
+if [ "$invalid_apply_rc" -eq 0 ]; then
   echo 'invalid IKE proposal unexpectedly loaded' >&2
   exit 1
 fi
