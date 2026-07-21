@@ -119,6 +119,18 @@ Implemented:
 - dnsmasq rc.d ordering after `mpd5` for PPPoE coexistence
 - Static DS-Lite gif tunnel rendering
 - Dynamic DS-Lite apply from static AFTR IPv6, AFTR FQDN, or delegated-address local source
+- native `route -n get` evidence for health checks and BGP FIB ownership through
+  `RTF_PROTO1`, including replace/withdraw/foreign-route preservation
+- FRR `bfdd` reconciliation and observed Up → Down → Up recovery on a native
+  FreeBSD peer
+- FreeBSD-native doctor checks, KernelModule `kldload` reconciliation, and
+  BGP-specific `routerd_bgp` rc.d generation
+- explicit rejection of non-local DNS resolver binds because FreeBSD has no
+  Linux `IP_FREEBIND` equivalent
+
+The direct-BPF ARP/RA observer and libndpi/DPI delivery work remains open:
+native build and capability reporting exist, but no accepted FreeBSD packet
+delivery observation has proved the observer path end-to-end.
 
 `ClientPolicy` is supported on FreeBSD with an address-backed pf
 approximation. Each IPv4 guest or isolated classification references a
@@ -160,7 +172,7 @@ and FreeBSD:
 
 | Area | Current gap | Backlog |
 | --- | --- | --- |
-| CI/runtime coverage | CI runs unit tests and Linux static checks on Ubuntu. FreeBSD is cross-built in release. | Add FreeBSD VM smoke jobs that run validate, plan, real package-manager checks, service activation, and renderer syntax checks. |
+| CI/runtime coverage | Pull requests compile FreeBSD amd64/arm64 binaries and test packages; release automation builds FreeBSD archives. Native VM115 evidence covers validate/render, pf and dnsmasq syntax, rc.d status, route lookup, BFD, and the supported PF dataplane slices. | The retained VM evidence is lab acceptance, not yet an automated CI VM job. Add a provisioned FreeBSD VM smoke workflow before claiming automated runtime coverage. |
 | FreeBSD feature limitations | `ClientPolicy` uses DHCPv4 reservations for IPv4 and explicit `classification[].ipv6Addresses` for IPv6 pf rules. It cannot match MAC addresses or infer IPv6 identity from DHCPv4. | Keep the explicit-address and MAC/L2 limitation visible; require separate segmentation for unlisted or privacy IPv6 addresses ([#849](https://github.com/imksoo/routerd/issues/849)). |
 | Package bootstrap | Ubuntu and FreeBSD can install packages imperatively. | Keep schema, validation, installer package lists, examples, and generated docs in sync for `apt` and `pkg`. |
 
