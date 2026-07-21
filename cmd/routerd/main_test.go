@@ -279,6 +279,26 @@ func TestApplyIPsecConnectionsMigratesOnlyRouterdLegacyConfigs(t *testing.T) {
 	}
 }
 
+func TestApplyIPsecConnectionsRefusesLegacyRouterdSymlink(t *testing.T) {
+	dir := t.TempDir()
+	legacy := t.TempDir()
+	link := filepath.Join(legacy, "routerd.conf")
+	if err := os.Symlink(filepath.Join(legacy, "operator.conf"), link); err != nil {
+		t.Fatalf("create legacy symlink: %v", err)
+	}
+	_, err := applyIPsecConnectionsWithOptions(context.Background(), &api.Router{}, ipsecRuntimeApplyOptions{
+		ConfigDir:       dir,
+		LegacyConfigDir: legacy,
+		Load:            func(context.Context) error { return nil },
+	})
+	if err == nil || !strings.Contains(err.Error(), "non-regular") {
+		t.Fatalf("legacy symlink error = %v", err)
+	}
+	if info, statErr := os.Lstat(link); statErr != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("legacy symlink changed: info=%v err=%v", info, statErr)
+	}
+}
+
 func TestApplyIPsecConnectionsKeepsPendingMarkerWhenEmptyAggregateRemovalFails(t *testing.T) {
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
@@ -4201,20 +4221,23 @@ func TestConfiguredDHCPLeasePathsPreferControllerDnsmasqConfig(t *testing.T) {
 	}
 }
 
-func TestRunCommandWithFileOutputDoesNotWaitForInheritedOutputFD(t *testing.T) {
+func TestStartCommandWithFileOutputReleasesLongLivedSupervisor(t *testing.T) {
 	pidPath := filepath.Join(t.TempDir(), "child.pid")
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
 	started := time.Now()
-	out, err := runCommandWithFileOutput(ctx, "sh", "-c", `sleep 5 & printf '%s\n' "$!" > "$1"; printf 'parent exited\n'`, "sh", pidPath)
+	outputPath, err := startCommandWithFileOutput("sh", "-c", `sleep 5 & printf '%s\n' "$!" > "$1"; printf 'parent exited\n'`, "sh", pidPath)
 	if err != nil {
-		t.Fatalf("run command: %v", err)
+		t.Fatalf("start command: %v", err)
 	}
+	defer os.Remove(outputPath)
 	if elapsed := time.Since(started); elapsed >= time.Second {
-		t.Fatalf("run waited %s for child that inherited regular output fd", elapsed)
+		t.Fatalf("start/release waited %s for long-lived child", elapsed)
 	}
-	if !strings.Contains(string(out), "parent exited") {
-		t.Fatalf("output = %q, want parent output", out)
+	if err := waitForFile(pidPath, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	out, err := os.ReadFile(outputPath)
+	if err != nil || !strings.Contains(string(out), "parent exited") {
+		t.Fatalf("output = %q, err=%v, want parent output", out, err)
 	}
 	pidText, err := os.ReadFile(pidPath)
 	if err != nil {
@@ -4230,4 +4253,15 @@ func TestRunCommandWithFileOutputDoesNotWaitForInheritedOutputFD(t *testing.T) {
 	}
 	_ = child.Kill()
 	_, _ = child.Wait()
+}
+
+func waitForFile(path string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return nil
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return fmt.Errorf("timed out waiting for %s", path)
 }

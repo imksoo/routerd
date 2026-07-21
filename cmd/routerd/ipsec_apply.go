@@ -27,6 +27,7 @@ type ipsecRuntimeApplyOptions struct {
 const ipsecPendingLoadMarker = ".routerd-pending-load"
 
 const freeBSDStrongSwanServiceTimeout = 30 * time.Second
+const freeBSDStrongSwanProbeTimeout = 2 * time.Second
 
 func applyIPsecConnections(ctx context.Context, router *api.Router) ([]string, error) {
 	configDir := ipsecConfigDir()
@@ -39,7 +40,9 @@ func applyIPsecConnections(ctx context.Context, router *api.Router) ([]string, e
 			if err := ensureFreeBSDStrongSwan(ctx); err != nil {
 				return err
 			}
-			return (ipsec.Controller{Binary: ipsecSwanctlPath(), ConfigFile: configFile}).LoadAll(ctx)
+			loadCtx, cancel := context.WithTimeout(ctx, freeBSDStrongSwanServiceTimeout)
+			defer cancel()
+			return (ipsec.Controller{Binary: ipsecSwanctlPath(), ConfigFile: configFile}).LoadAll(loadCtx)
 		},
 	})
 }
@@ -56,8 +59,48 @@ func ensureFreeBSDStrongSwan(ctx context.Context) error {
 	if err := exec.CommandContext(serviceCtx, "service", "strongswan", "status").Run(); err == nil {
 		return nil
 	}
-	if out, err := runCommandWithFileOutput(serviceCtx, "service", "strongswan", "onestart"); err != nil {
-		return fmt.Errorf("start strongswan service: %w: %s", err, strings.TrimSpace(string(out)))
+	// The packaged rc.d vici start hook unconditionally runs its own
+	// package-default swanctl --load-all. routerd owns a separate aggregate,
+	// so launch the same daemon supervisor directly and wait for VICI before
+	// routerd performs its authoritative --load-all --file transaction. daemon
+	// is itself long-lived, so Start+Release is required instead of Run.
+	startupOutput, err := startCommandWithFileOutput("/usr/sbin/daemon", "-S", "-P", "/var/run/daemon-charon.pid", "/usr/local/libexec/ipsec/charon", "--use-syslog")
+	if err != nil {
+		return fmt.Errorf("start strongswan supervisor: %w", err)
+	}
+	if err := waitForFreeBSDStrongSwanVICI(serviceCtx); err != nil {
+		startupText := readAndRemoveCommandOutput(startupOutput)
+		stopErr := stopFreeBSDStrongSwanSupervisor()
+		return fmt.Errorf("start strongswan service: %w: startup=%s cleanup=%v", err, strings.TrimSpace(startupText), stopErr)
+	}
+	_ = os.Remove(startupOutput)
+	return nil
+}
+
+func waitForFreeBSDStrongSwanVICI(ctx context.Context) error {
+	var lastErr error
+	for {
+		probeCtx, cancel := context.WithTimeout(ctx, freeBSDStrongSwanProbeTimeout)
+		err := exec.CommandContext(probeCtx, ipsecSwanctlPath(), "--stats").Run()
+		cancel()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("wait for strongswan VICI: %w: %v", ctx.Err(), lastErr)
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
+func stopFreeBSDStrongSwanSupervisor() error {
+	ctx, cancel := context.WithTimeout(context.Background(), freeBSDStrongSwanServiceTimeout)
+	defer cancel()
+	out, err := runCommandWithFileOutput(ctx, "service", "strongswan", "onestop")
+	if err != nil {
+		return fmt.Errorf("stop strongswan supervisor: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
@@ -90,6 +133,42 @@ func runCommandWithFileOutput(ctx context.Context, name string, args ...string) 
 		return data, fmt.Errorf("close command output: %w", closeErr)
 	}
 	return data, nil
+}
+
+// startCommandWithFileOutput starts a long-lived supervisor without binding
+// its lifetime to an apply request. Its regular output file is safe for a
+// daemon child to inherit; the returned path is removed by the caller.
+func startCommandWithFileOutput(name string, args ...string) (string, error) {
+	output, err := os.CreateTemp("", "routerd-command-*.log")
+	if err != nil {
+		return "", fmt.Errorf("create command output file: %w", err)
+	}
+	path := output.Name()
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = output
+	cmd.Stderr = output
+	if err := cmd.Start(); err != nil {
+		_ = output.Close()
+		_ = os.Remove(path)
+		return "", err
+	}
+	if err := output.Close(); err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		_ = os.Remove(path)
+		return "", fmt.Errorf("close command output: %w", err)
+	}
+	if err := cmd.Process.Release(); err != nil {
+		_ = os.Remove(path)
+		return "", fmt.Errorf("release command process: %w", err)
+	}
+	return path, nil
+}
+
+func readAndRemoveCommandOutput(path string) string {
+	data, _ := os.ReadFile(path)
+	_ = os.Remove(path)
+	return string(data)
 }
 
 func applyIPsecConnectionsWithOptions(ctx context.Context, router *api.Router, opts ipsecRuntimeApplyOptions) ([]string, error) {
