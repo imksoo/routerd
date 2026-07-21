@@ -116,6 +116,7 @@ func TestIPv4PolicyRouteUsesObservedHealthCheckStatus(t *testing.T) {
 }
 
 func TestIPv4PolicyRouteInstallsFwmarkBootstrapRouteForHealthCheck(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	store := mapStore{
 		api.NetAPIVersion + "/HealthCheck/internet-via-hgw": {
 			"phase":         "Unhealthy",
@@ -222,6 +223,7 @@ func TestIPv4PolicyRouteSkipsSelectionOnlyPolicy(t *testing.T) {
 }
 
 func TestIPv4PolicyRouteOwnsPriorityPolicyWithoutChurn(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	base := mapStore{
 		api.NetAPIVersion + "/HealthCheck/internet-a": {"phase": "Healthy", "lastCheckedAt": now},
@@ -277,6 +279,7 @@ func TestIPv4PolicyRouteOwnsPriorityPolicyWithoutChurn(t *testing.T) {
 }
 
 func TestIPv4PolicyRoutePriorityDryRunDoesNotChurnUnchangedFallback(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	eventBus := bus.New()
 	base := mapStore{
 		api.NetAPIVersion + "/Interface/ix2215": {"phase": "Up", "ifname": "lo"},
@@ -331,6 +334,7 @@ func TestIPv4PolicyRoutePriorityDryRunDoesNotChurnUnchangedFallback(t *testing.T
 }
 
 func TestIPv4PolicyRoutePrioritySelectionUsesWeightThenPriority(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	store := mapStore{
 		api.NetAPIVersion + "/HealthCheck/primary":  {"phase": "Healthy", "lastCheckedAt": now},
@@ -360,6 +364,7 @@ func TestIPv4PolicyRoutePrioritySelectionUsesWeightThenPriority(t *testing.T) {
 }
 
 func TestIPv4PolicyRoutePrioritySelectionSkipsDisabled(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	enabled := false
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-a"}, Spec: api.InterfaceSpec{IfName: "lo"}},

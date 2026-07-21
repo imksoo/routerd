@@ -11,6 +11,7 @@ import (
 )
 
 func TestPackageControllerInstallsMissingUbuntuPackages(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Package"}, Metadata: api.ObjectMeta{Name: "service-deps"}, Spec: api.PackageSpec{
 			Packages: []api.OSPackageSetSpec{{
@@ -48,6 +49,7 @@ func TestPackageControllerInstallsMissingUbuntuPackages(t *testing.T) {
 }
 
 func TestPackageControllerDryRunReportsMissingPackages(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Package"}, Metadata: api.ObjectMeta{Name: "service-deps"}, Spec: api.PackageSpec{
 			Packages: []api.OSPackageSetSpec{{
@@ -86,6 +88,7 @@ func TestPackageControllerDryRunReportsMissingPackages(t *testing.T) {
 }
 
 func TestPackageControllerDoesNotInstallWhenPackagesPresent(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Package"}, Metadata: api.ObjectMeta{Name: "service-deps"}, Spec: api.PackageSpec{
 			Packages: []api.OSPackageSetSpec{{

@@ -21,6 +21,13 @@ import (
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
+func requireLinuxDoctorFixture(t *testing.T) {
+	t.Helper()
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		t.Skip("Linux iproute2/nft diagnostic fixture")
+	}
+}
+
 func TestDoctorDNSPassNoHost(t *testing.T) {
 	configPath, statePath := writeDoctorFixture(t)
 	store := openDoctorState(t, statePath)
@@ -1268,6 +1275,7 @@ func TestDoctorDynamicMaskWithoutPolicyFailsEffectiveBuild(t *testing.T) {
 }
 
 func TestDoctorRoutesDetectsIPv4RouteDeviceMetricDrift(t *testing.T) {
+	requireLinuxDoctorFixture(t)
 	oldRun := doctorRunDiagnosticCommand
 	defer func() { doctorRunDiagnosticCommand = oldRun }()
 	doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
@@ -1310,6 +1318,7 @@ func TestDoctorRoutesDetectsIPv4RouteDeviceMetricDrift(t *testing.T) {
 }
 
 func TestDoctorRoutesPassesMatchingIPv4Route(t *testing.T) {
+	requireLinuxDoctorFixture(t)
 	oldRun := doctorRunDiagnosticCommand
 	defer func() { doctorRunDiagnosticCommand = oldRun }()
 	doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
@@ -1352,6 +1361,7 @@ func TestDoctorRoutesPassesMatchingIPv4Route(t *testing.T) {
 }
 
 func TestDoctorRoutesHonorsPreferredSourceSkipped(t *testing.T) {
+	requireLinuxDoctorFixture(t)
 	oldRun := doctorRunDiagnosticCommand
 	defer func() { doctorRunDiagnosticCommand = oldRun }()
 	doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
@@ -2162,6 +2172,7 @@ func TestDoctorHybridFailsUnresolvedPeerRef(t *testing.T) {
 }
 
 func TestDoctorFirewallWarnsAboutStaleRouterdNftTables(t *testing.T) {
+	requireLinuxDoctorFixture(t)
 	configPath, statePath := writeDoctorFirewallFixture(t)
 	installDoctorFirewallNftTablesCommand(t, map[string]bool{
 		"inet/routerd_filter":       true,
@@ -2186,6 +2197,7 @@ func TestDoctorFirewallWarnsAboutStaleRouterdNftTables(t *testing.T) {
 }
 
 func TestDoctorFirewallPassesWhenRouterdNftTablesMatchExpected(t *testing.T) {
+	requireLinuxDoctorFixture(t)
 	configPath, statePath := writeDoctorFirewallFixture(t)
 	installDoctorFirewallNftTablesCommand(t, map[string]bool{
 		"inet/routerd_filter": true,
@@ -2206,6 +2218,7 @@ func TestDoctorFirewallPassesWhenRouterdNftTablesMatchExpected(t *testing.T) {
 }
 
 func TestDoctorFirewallIgnoresUnmarkedRouterdPrefixedNftTables(t *testing.T) {
+	requireLinuxDoctorFixture(t)
 	configPath, statePath := writeDoctorFirewallFixture(t)
 	installDoctorFirewallNftTablesCommand(t, map[string]bool{
 		"inet/routerd_filter":       true,
@@ -3138,6 +3151,7 @@ func TestDoctorNftCheckStatusPassesWithStdout(t *testing.T) {
 }
 
 func TestDoctorNATEmitsExitAndStderrOnNftFailure(t *testing.T) {
+	requireLinuxDoctorFixture(t)
 	configPath, statePath := writeDoctorNATFixture(t)
 	store := openDoctorState(t, statePath)
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "NAT44Rule", "wan-masq", map[string]any{"phase": "Applied"}); err != nil {
@@ -3173,6 +3187,7 @@ func TestDoctorNATEmitsExitAndStderrOnNftFailure(t *testing.T) {
 }
 
 func TestDoctorNATWarnsWhenNftListingPresentDespiteExit(t *testing.T) {
+	requireLinuxDoctorFixture(t)
 	configPath, statePath := writeDoctorNATFixture(t)
 	store := openDoctorState(t, statePath)
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "NAT44Rule", "wan-masq", map[string]any{"phase": "Applied"}); err != nil {
@@ -3207,6 +3222,7 @@ func TestDoctorNATWarnsWhenNftListingPresentDespiteExit(t *testing.T) {
 }
 
 func TestDoctorNATPassesWhenNftSucceeds(t *testing.T) {
+	requireLinuxDoctorFixture(t)
 	configPath, statePath := writeDoctorNATFixture(t)
 	store := openDoctorState(t, statePath)
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "NAT44Rule", "wan-masq", map[string]any{"phase": "Applied"}); err != nil {

@@ -20,7 +20,7 @@ func TestValidateRouterLabExample(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load router-lab example: %v", err)
 	}
-	if err := Validate(router); err != nil {
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
 		t.Fatalf("validate router-lab example: %v", err)
 	}
 }
@@ -65,7 +65,7 @@ func TestValidateControlAPIRejectsInvalidAllowCIDRs(t *testing.T) {
 					},
 				}},
 			}
-			err := Validate(router)
+			err := ValidateForOS(router, platform.OSLinux)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Validate error = %v, want %q", err, tc.want)
 			}
@@ -426,7 +426,7 @@ func TestValidateExampleStatusReferencesAgainstProvides(t *testing.T) {
 			if err != nil {
 				t.Fatalf("load example: %v", err)
 			}
-			if err := Validate(router); err != nil {
+			if err := ValidateForOS(router, platform.OSLinux); err != nil {
 				t.Fatalf("validate example: %v", err)
 			}
 		})
@@ -1117,7 +1117,7 @@ func TestValidateEgressRoutePolicyTargetCandidate(t *testing.T) {
 		}},
 	}
 
-	if err := Validate(router); err != nil {
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
 		t.Fatalf("target default route candidate should be valid: %v", err)
 	}
 }

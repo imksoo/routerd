@@ -14,6 +14,7 @@ import (
 )
 
 func TestSuperviseClientDaemonsStartsDNSResolverWhenEnabled(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")
 	logPath := filepath.Join(dir, "dns.args")

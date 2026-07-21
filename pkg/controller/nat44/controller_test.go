@@ -11,7 +11,15 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
+	"github.com/imksoo/routerd/pkg/platform"
 )
+
+func requireLinuxRuntimeFixture(t *testing.T) {
+	t.Helper()
+	if platform.CurrentOS() != platform.OSLinux {
+		t.Skip("Linux nftables fixture")
+	}
+}
 
 type testStore struct {
 	status map[string]map[string]any
@@ -36,6 +44,7 @@ func (s *testStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 }
 
 func TestControllerRendersDryRunNAT44FromEgressRoutePolicy(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "ipv4-default"}, Spec: api.EgressRoutePolicySpec{}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"}, Metadata: api.ObjectMeta{Name: "lan-to-wan"}, Spec: api.NAT44RuleSpec{
@@ -67,6 +76,7 @@ func TestControllerRendersDryRunNAT44FromEgressRoutePolicy(t *testing.T) {
 }
 
 func TestControllerRendersIngressServiceActiveBackendFromStatus(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"}, Metadata: api.ObjectMeta{Name: "api"}, Spec: api.IngressServiceSpec{
@@ -95,6 +105,7 @@ func TestControllerRendersIngressServiceActiveBackendFromStatus(t *testing.T) {
 }
 
 func TestControllerRendersIngressServiceDistributedBackendsFromStatus(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"}, Metadata: api.ObjectMeta{Name: "api"}, Spec: api.IngressServiceSpec{
@@ -131,6 +142,7 @@ func TestControllerRendersIngressServiceDistributedBackendsFromStatus(t *testing
 }
 
 func TestControllerAppliesIngressRulesWhenNAT44IsDryRun(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "nft.log")
 	nftPath := filepath.Join(dir, "nft")
@@ -188,6 +200,7 @@ func TestControllerAppliesIngressRulesWhenNAT44IsDryRun(t *testing.T) {
 }
 
 func TestControllerOmitsIngressRulesWhenIngressIsDryRun(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "nft.log")
 	nftPath := filepath.Join(dir, "nft")
@@ -234,6 +247,7 @@ func TestControllerOmitsIngressRulesWhenIngressIsDryRun(t *testing.T) {
 }
 
 func TestControllerResolvesSNATAddressFromStaticAddress(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "ds-lite-source"}, Spec: api.IPv4StaticAddressSpec{Interface: "ds-lite", Address: "192.168.160.250/32"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"}, Metadata: api.ObjectMeta{Name: "lan-to-dslite"}, Spec: api.NAT44RuleSpec{
@@ -263,6 +277,7 @@ func TestControllerResolvesSNATAddressFromStaticAddress(t *testing.T) {
 }
 
 func TestControllerRendersLocalServiceRedirectWithoutNAT44(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"}, Metadata: api.ObjectMeta{Name: "dns-google"}, Spec: api.IPAddressSetSpec{
@@ -303,6 +318,7 @@ func TestControllerRendersLocalServiceRedirectWithoutNAT44(t *testing.T) {
 }
 
 func TestControllerRendersFQDNAddressSetsWithoutResolvingNames(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"}, Metadata: api.ObjectMeta{Name: "dns-google"}, Spec: api.IPAddressSetSpec{
@@ -348,6 +364,7 @@ func TestControllerRendersFQDNAddressSetsWithoutResolvingNames(t *testing.T) {
 }
 
 func TestControllerRendersNAT44DestinationAddressSet(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"}, Metadata: api.ObjectMeta{Name: "cloud-service"}, Spec: api.IPAddressSetSpec{
 			Names: []string{"service.example.test"},
@@ -423,6 +440,7 @@ func TestControllerSkipsUnchangedExistingNftablesTable(t *testing.T) {
 }
 
 func TestControllerResolvesPPPoEEgressInterface(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"}, Metadata: api.ObjectMeta{Name: "pppoe-flets"}, Spec: api.PPPoESessionSpec{Interface: "wan", IfName: "ppp-flets", Username: "open@open.ad.jp"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"}, Metadata: api.ObjectMeta{Name: "lan-to-pppoe"}, Spec: api.NAT44RuleSpec{
@@ -451,6 +469,7 @@ func TestControllerResolvesPPPoEEgressInterface(t *testing.T) {
 }
 
 func TestControllerDoesNotClearNAT44TableWhenRuleHasNoActiveEgress(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "nft.log")
 	nftPath := filepath.Join(dir, "nft")

@@ -12,6 +12,9 @@ import (
 )
 
 func TestDerivedSysctlResourcesForRouterHost(t *testing.T) {
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		t.Skip("Linux sysctl fixture; FreeBSD runtime modules are tested below")
+	}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
@@ -82,6 +85,9 @@ func TestExplicitSysctlSuppressesDerivedDuplicate(t *testing.T) {
 }
 
 func TestKernelModulesForTunnelInterfaceModes(t *testing.T) {
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		t.Skip("Linux tunnel-module fixture")
+	}
 	tests := []struct {
 		mode string
 		want []string
@@ -127,6 +133,9 @@ func TestKernelModulesForFreeBSDUsePFRuntimeModules(t *testing.T) {
 }
 
 func TestDerivedSysctlResourcesForSAMAreStrictlyGated(t *testing.T) {
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		t.Skip("Linux sysctl fixture")
+	}
 	empty := &api.Router{}
 	if keys := derivedSysctlKeys(t, empty); len(keys) != 0 {
 		t.Fatalf("empty router derived sysctls = %#v, want none", keys)

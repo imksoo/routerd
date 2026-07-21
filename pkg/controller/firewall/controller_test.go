@@ -4,6 +4,7 @@ package firewall
 
 import (
 	"context"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -75,6 +76,9 @@ func TestWireGuardListenPortOpensUntrustToSelfHole(t *testing.T) {
 }
 
 func TestFirewallControllerPropagatesBackendApplyErrorToStatusAndBus(t *testing.T) {
+	if runtime.GOOS == "freebsd" {
+		t.Skip("Linux nft backend fixture; native PF behavior is covered separately")
+	}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
