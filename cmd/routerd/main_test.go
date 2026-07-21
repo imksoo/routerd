@@ -17,6 +17,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -4235,6 +4236,9 @@ func TestStartCommandWithFileOutputReleasesLongLivedSupervisor(t *testing.T) {
 	if err := waitForFile(pidPath, time.Second); err != nil {
 		t.Fatal(err)
 	}
+	if err := waitForFileText(outputPath, "parent exited", time.Second); err != nil {
+		t.Fatal(err)
+	}
 	out, err := os.ReadFile(outputPath)
 	if err != nil || !strings.Contains(string(out), "parent exited") {
 		t.Fatalf("output = %q, err=%v, want parent output", out, err)
@@ -4251,6 +4255,9 @@ func TestStartCommandWithFileOutputReleasesLongLivedSupervisor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find child process: %v", err)
 	}
+	if err := child.Signal(syscall.Signal(0)); err != nil {
+		t.Fatalf("child process is not live after Start/Release: %v", err)
+	}
 	_ = child.Kill()
 	_, _ = child.Wait()
 }
@@ -4264,4 +4271,15 @@ func waitForFile(path string, timeout time.Duration) error {
 		time.Sleep(10 * time.Millisecond)
 	}
 	return fmt.Errorf("timed out waiting for %s", path)
+}
+
+func waitForFileText(path, want string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if data, err := os.ReadFile(path); err == nil && strings.Contains(string(data), want) {
+			return nil
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return fmt.Errorf("timed out waiting for %q in %s", want, path)
 }

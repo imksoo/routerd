@@ -36,6 +36,7 @@ host_service_touched=0
 strongswan_was_running=0
 strongswan_enable_rc=0
 peer_pid_relocated=0
+host_pid_relocated=0
 
 host_addr=198.18.10.1
 peer_addr=198.18.10.2
@@ -46,6 +47,10 @@ psk='routerd-native-vnet-disposable-psk'
 
 cleanup() {
   rc=$?
+  if [ "$host_pid_relocated" -eq 1 ] && [ -f "$work/host-charon.pid" ] && [ ! -e /var/run/charon.pid ]; then
+    mv "$work/host-charon.pid" /var/run/charon.pid >>"$evidence/cleanup.log" 2>&1 || true
+    host_pid_relocated=0
+  fi
   if [ "$host_service_touched" -eq 1 ]; then
     if [ "$strongswan_was_running" -eq 1 ]; then
       service strongswan onestart >>"$evidence/cleanup.log" 2>&1 || true
@@ -82,7 +87,7 @@ cleanup() {
     kldunload if_epair >>"$evidence/cleanup.log" 2>&1 || true
   fi
   ifconfig lo0 inet "$host_ts" -alias >/dev/null 2>&1 || true
-  printf 'cleanup=complete rc=%s peer_pid_relocated=%s\n' "$rc" "$peer_pid_relocated" >>"$evidence/cleanup.log"
+  printf 'cleanup=complete rc=%s host_pid_relocated=%s peer_pid_relocated=%s\n' "$rc" "$host_pid_relocated" "$peer_pid_relocated" >>"$evidence/cleanup.log"
 	if [ "$rc" -ne 0 ]; then
 		echo "freebsd-ipsec-vnet failed; redacted diagnostics follow" >&2
 		for log in \
@@ -208,22 +213,6 @@ secrets {
 }
 EOF
 
-jexec "$jail_name" daemon -p "$peer/charon.pid" -o "$peer/peer-charon.log" \
-  env STRONGSWAN_CONF="$peer/strongswan.conf" /usr/local/libexec/ipsec/charon --use-syslog
-echo 'ipsec-vnet step=peer-vici-wait' >&2
-wait_for 'peer VICI socket' test -S "$peer/charon.vici"
-# charon uses the compile-time /var/run/charon.pid even inside a path=/ VNET
-# jail. Relocate that peer-owned file before the host rc.d service starts its
-# own charon, otherwise the host daemon refuses the second live PID.
-[ -f /var/run/charon.pid ] || { echo 'peer charon did not create /var/run/charon.pid' >&2; exit 1; }
-mv /var/run/charon.pid "$peer/peer-charon.pid"
-peer_pid_relocated=1
-printf 'peer_pid_relocated=%s\n' "$(cat "$peer/peer-charon.pid")" >"$evidence/peer-pid.log"
-[ ! -e /var/run/charon.pid ] || { echo 'peer charon PID relocation did not clear host path' >&2; exit 1; }
-echo 'ipsec-vnet step=peer-load' >&2
-run_bounded 30 peer-load jexec "$jail_name" /usr/local/sbin/swanctl --uri "unix://$peer/charon.vici" --load-all --file "$peer/swanctl.conf" \
-  >"$evidence/peer-load.log" 2>&1
-
 cat >"$work/router.yaml" <<EOF
 apiVersion: routerd.net/v1alpha1
 kind: Router
@@ -272,6 +261,28 @@ if grep -F "$psk" "$evidence/apply-invalid.log" >/dev/null; then
 fi
 echo 'ipsec-vnet step=valid-production-apply' >&2
 run_bounded 30 valid-production-apply "$routerd" apply --once --config "$work/router.yaml" >"$evidence/apply-1.log" 2>&1
+
+# path=/ VNET jails share charon's compile-time PID file. Qualify routerd's
+# host service/load first, then temporarily relocate its live PID while the
+# isolated peer starts and restore it once the peer PID is private.
+[ -f /var/run/charon.pid ] || { echo 'host charon did not create /var/run/charon.pid' >&2; exit 1; }
+mv /var/run/charon.pid "$work/host-charon.pid"
+host_pid_relocated=1
+printf 'host_pid_relocated=%s\n' "$(cat "$work/host-charon.pid")" >"$evidence/host-pid.log"
+
+jexec "$jail_name" daemon -p "$peer/charon.pid" -o "$peer/peer-charon.log" \
+  env STRONGSWAN_CONF="$peer/strongswan.conf" /usr/local/libexec/ipsec/charon --use-syslog
+echo 'ipsec-vnet step=peer-vici-wait' >&2
+wait_for 'peer VICI socket' test -S "$peer/charon.vici"
+[ -f /var/run/charon.pid ] || { echo 'peer charon did not create /var/run/charon.pid' >&2; exit 1; }
+mv /var/run/charon.pid "$peer/peer-charon.pid"
+peer_pid_relocated=1
+printf 'peer_pid_relocated=%s\n' "$(cat "$peer/peer-charon.pid")" >"$evidence/peer-pid.log"
+mv "$work/host-charon.pid" /var/run/charon.pid
+host_pid_relocated=0
+echo 'ipsec-vnet step=peer-load' >&2
+run_bounded 30 peer-load jexec "$jail_name" /usr/local/sbin/swanctl --uri "unix://$peer/charon.vici" --load-all --file "$peer/swanctl.conf" \
+  >"$evidence/peer-load.log" 2>&1
 echo 'ipsec-vnet step=initial-initiate' >&2
 run_bounded 30 initial-initiate /usr/local/sbin/swanctl --initiate --ike "$connection" --child net >"$evidence/initiate-1.log" 2>&1
 echo 'ipsec-vnet step=initial-sa-wait' >&2
