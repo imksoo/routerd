@@ -126,12 +126,12 @@ cleanup() {
   else
     sudo ip addr del 10.250.2.1/32 dev lo 2>/dev/null || true
   fi
-  if is_owned verifier && sudo test -s "$dir/verifier.pid"; then
+  if [[ "$topology" == tap ]] && is_owned verifier && sudo test -s "$dir/verifier.pid"; then
     verifier_pid=$(sudo cat "$dir/verifier.pid")
     if sudo ip netns pids "$netns" | grep -Fxq "$verifier_pid"; then
       sudo kill -TERM "$verifier_pid" 2>/dev/null || true
     else
-      return 1
+      cleanup_rc=1
     fi
     clear_owned verifier
   fi
@@ -225,10 +225,11 @@ EOF
     echo 'peer-start: native-tunnel missing after swanctl load' >&2
     exit 1
   fi
-  if [[ "$topology" == tap ]]; then verifier_prefix=(sudo ip netns exec "$netns" env); else verifier_prefix=(sudo env); fi
+  if [[ "$topology" == tap ]]; then verifier_prefix=(sudo ip netns exec "$netns" env -u RUNNER_TRACKING_ID); else verifier_prefix=(sudo env -u RUNNER_TRACKING_ID); fi
   # shellcheck disable=SC2016 # expanded by the peer-side bash, not this shell
-  "${verifier_prefix[@]}" PEER_DIR="$dir" RUNNER_TRACKING_ID= nohup bash -c '
+  "${verifier_prefix[@]}" PEER_DIR="$dir" nohup bash -c '
     set -eu
+    printf "%s\n" "$$" >"$PEER_DIR/verifier.pid"
     for phase_port in initial:19091:19191 rekey:19092:19192 restart:19093:19193; do
       phase=${phase_port%%:*}; rest=${phase_port#*:}; port=${rest%%:*}; ack=${rest#*:}
       timeout 120 nc -l -p "$port" >/dev/null
@@ -247,10 +248,15 @@ EOF
       done
       test "$established" -eq 1
     done
-  ' >"$dir/reverse-verifier.stdout.log" 2>&1 < /dev/null & echo $! | sudo tee "$dir/verifier.pid" >/dev/null
-  mark_owned verifier
-  verifier_pid=$(sudo cat "$dir/verifier.pid")
+  ' >/dev/null 2>&1 < /dev/null &
+  verifier_pid=
+  for _ in $(seq 1 30); do
+    if sudo test -s "$dir/verifier.pid"; then verifier_pid=$(sudo cat "$dir/verifier.pid"); break; fi
+    sleep 1
+  done
+  [ -n "$verifier_pid" ] || { echo 'peer-start: reverse verifier did not record PID' >&2; exit 1; }
   sudo ip netns pids "$netns" | grep -Fxq "$verifier_pid"
+  mark_owned verifier
   ready=0
   for _ in $(seq 1 30); do
     if sudo ip netns exec "$netns" ss -ltn | grep -Eq '[:.]19091[[:space:]]'; then ready=1; break; fi
