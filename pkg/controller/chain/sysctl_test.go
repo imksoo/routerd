@@ -57,6 +57,7 @@ func TestSysctlControllerAppliesRuntimeValue(t *testing.T) {
 }
 
 func TestSysctlControllerAutoEnablesForwardingForIngress(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"}, Metadata: api.ObjectMeta{Name: "kubernetes-api"}, Spec: api.IngressServiceSpec{
 			Listen:   api.IngressListenSpec{Interface: "lan", Address: "192.168.1.248", Protocol: "tcp", Port: 6443},

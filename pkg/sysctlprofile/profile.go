@@ -19,6 +19,8 @@ func Entries(profile string, overrides map[string]string) ([]Entry, error) {
 	switch profile {
 	case "router-linux":
 		entries = routerLinux()
+	case "router-freebsd":
+		entries = routerFreeBSD()
 	default:
 		return nil, fmt.Errorf("unknown sysctl profile %q", profile)
 	}
@@ -37,6 +39,13 @@ func Entries(profile string, overrides map[string]string) ([]Entry, error) {
 	}
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].Key < entries[j].Key })
 	return entries, nil
+}
+
+func routerFreeBSD() []Entry {
+	return []Entry{
+		{Key: "net.inet.ip.forwarding", Value: "1"},
+		{Key: "net.inet6.ip6.forwarding", Value: "1"},
+	}
 }
 
 func routerLinux() []Entry {

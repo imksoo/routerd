@@ -50,7 +50,7 @@ func TestExplicitSysctlSuppressesDerivedDuplicate(t *testing.T) {
 	}}}
 
 	count := 0
-	for _, res := range DerivedSysctlResources(router) {
+	for _, res := range DerivedSysctlResourcesForOS(router, platform.OSLinux) {
 		switch res.Kind {
 		case "Sysctl":
 			spec, err := res.SysctlSpec()
@@ -98,7 +98,7 @@ func TestKernelModulesForTunnelInterfaceModes(t *testing.T) {
 				Metadata: api.ObjectMeta{Name: "tun0"},
 				Spec:     api.TunnelInterfaceSpec{Mode: tt.mode},
 			}}}}
-			if got := KernelModules(router); !reflect.DeepEqual(got, tt.want) {
+			if got := KernelModulesForOS(router, platform.OSLinux); !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("KernelModules(%s) = %#v, want %#v", tt.mode, got, tt.want)
 			}
 		})
@@ -254,7 +254,7 @@ func routerWithSingleKind(kind string) *api.Router {
 func derivedSysctlKeys(t *testing.T, router *api.Router) map[string]bool {
 	t.Helper()
 	keys := map[string]bool{}
-	for _, res := range DerivedSysctlResources(router) {
+	for _, res := range DerivedSysctlResourcesForOS(router, platform.OSLinux) {
 		switch res.Kind {
 		case "Sysctl":
 			spec, err := res.SysctlSpec()

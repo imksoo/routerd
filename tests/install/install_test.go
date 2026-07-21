@@ -10,10 +10,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
+
+func requireLinuxSystemdFixture(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux systemd installer fixture")
+	}
+}
 
 func TestInstallPreservesNativeNDPIAgent(t *testing.T) {
 	dir := t.TempDir()
@@ -309,6 +317,7 @@ spec:
 }
 
 func TestInstallReplacesLegacyRouterdServiceBeforeRestart(t *testing.T) {
+	requireLinuxSystemdFixture(t)
 	dir := t.TempDir()
 	pkg := filepath.Join(dir, "package")
 	prefix := filepath.Join(dir, "prefix")
@@ -369,6 +378,7 @@ ExecStart=/usr/local/sbin/routerd serve --controller-chain --controller-chain-dr
 }
 
 func TestInstallDryRunCreatesRouterdGroupBeforeSystemdUnit(t *testing.T) {
+	requireLinuxSystemdFixture(t)
 	dir := t.TempDir()
 	pkg := filepath.Join(dir, "package")
 	binDir := filepath.Join(dir, "bin")

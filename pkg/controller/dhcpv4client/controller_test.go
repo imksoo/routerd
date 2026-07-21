@@ -16,7 +16,15 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/platform"
 )
+
+func requireLinuxRuntimeFixture(t *testing.T) {
+	t.Helper()
+	if platform.CurrentOS() != platform.OSLinux {
+		t.Skip("Linux iproute2/systemd-resolved fixture")
+	}
+}
 
 type mapStore map[string]map[string]any
 
@@ -89,6 +97,7 @@ func TestControllerAppliesLeaseDNS(t *testing.T) {
 }
 
 func TestControllerAppliesLeaseDNSWithSystemdResolved(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	socket := filepath.Join(t.TempDir(), "wan.sock")
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
@@ -233,6 +242,7 @@ func TestControllerDryRunMissingDaemonSocketIsPending(t *testing.T) {
 }
 
 func TestControllerAppliesLeaseAddressAndRoute(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	socket := filepath.Join(t.TempDir(), "wan.sock")
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
@@ -291,6 +301,7 @@ func TestControllerAppliesLeaseAddressAndRoute(t *testing.T) {
 }
 
 func TestControllerSkipsUnchangedDefaultRoute(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	socket := filepath.Join(t.TempDir(), "wan.sock")
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
@@ -427,6 +438,7 @@ func TestLeaseEventChangedNilVsEmptyString(t *testing.T) {
 }
 
 func TestControllerRepairsMissingLeaseAddressWithStaleStatus(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	socket := filepath.Join(t.TempDir(), "wan.sock")
 	listener, err := net.Listen("unix", socket)
 	if err != nil {

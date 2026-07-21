@@ -610,6 +610,7 @@ func TestTunnelInterfaceControllerDeletesStaleManagedInterface(t *testing.T) {
 }
 
 func TestTunnelUnderlayRemovalOrderFixture(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	startup := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},

@@ -112,15 +112,18 @@ routerd 不使用 Linux 用的機制，而是將資源對應至 FreeBSD 的 `rc.
 - `routerd-healthcheck` 的 rc.d script 產生
 - `routerd-firewall-logger` 的 rc.d script 產生，並直接讀取 `pflog0`
 
-FreeBSD 也支援 `ClientPolicy`，但它是以 DHCPv4 reservation 為基礎的 IPv4 pf 近似實作。
-guest 或 isolated classification 必須參照 `DHCPv4Reservation`；routerd 會為該保留 IPv4 位址產生 pf 規則。
-這不等同於 Linux 的 MAC 位址隔離：pf 無法比對 nftables 所用的 Ethernet 來源 selector，而且 routerd 不會從 IPv4 reservation 產生 IPv6 guest egress deny 規則。
-若需要隔離 IPv6 流量，請另行設定明確的 IPv6 policy。此行為已於 2026-05-11 在 router04 FreeBSD lab 驗證。
-dual-stack guest deny 的後續工作由 [#849](https://github.com/imksoo/routerd/issues/849) 追蹤。
+FreeBSD 也支援 `ClientPolicy`。IPv4 使用基於 `DHCPv4Reservation` 的 pf 近似；IPv6 guest identity 必須在 `classification[].ipv6Addresses` 明確宣告。routerd 不會從 IPv4 reservation、MAC、hostname、OUI 或 DHCP fingerprint 推斷 IPv6 identity；明確 IPv6 位址會產生 `inet6` guest-egress deny 規則。
+這不等同於 Linux 的 MAC 位址隔離：pf 在 routed filter path 中無法比對 nftables 使用的 Ethernet 來源 selector；privacy 或未列出的 IPv6 位址不在此 slice 內，需要獨立網路隔離（[#849](https://github.com/imksoo/routerd/issues/849)）。
 - `TailscaleNode` 的 rc.d script 產生
 - 靜態 DS-Lite gif tunnel 的產生（render）
 - 從靜態 AFTR IPv6、AFTR FQDN、委派位址衍生的本地來源動態套用 DS-Lite
 - 雲端 VPN 用 `IPsecConnection` 的驗證，以及 strongSwan `swanctl` 連線定義的產生。與雲端閘道的實際連通性確認依環境個別進行
+- healthcheck 使用原生 `route -n get`，並以 `RTF_PROTO1` 標識 BGP FIB 所有權（包括 replace、withdraw 與保留 foreign route）
+- FreeBSD peer 上的 FRR `bfdd` reconcile，以及實機觀測的 Up → Down → Up 回復
+- FreeBSD native doctor、KernelModule `kldload` reconcile 與 BGP 專用 `routerd_bgp` rc.d 產生
+- FreeBSD 沒有 Linux `IP_FREEBIND` 等價物，因此明確拒絕 non-local DNS resolver bind
+
+direct BPF ARP/RA observer 與 libndpi/DPI 的實際傳遞仍未完成。已有 native build 與 capability status，但尚無已接受的 FreeBSD packet delivery 端到端觀測。
 
 FreeBSD 不使用 Linux 專用的 nftables / conntrack / iproute2。
 `Package` 的範例宣告 FreeBSD 側的替代品。
@@ -155,8 +158,8 @@ Ubuntu 和 FreeBSD 相互比較時的已知差異。
 
 | 領域 | 目前差異 | 待辦事項 |
 | --- | --- | --- |
-| CI / runtime coverage | CI 在 Ubuntu 上執行 unit test 與 Linux static check。FreeBSD 在發布時進行 cross build。 | 新增 FreeBSD VM 的 smoke 工作，涵蓋 validate、plan、實際 package-manager 確認、服務啟用、renderer 語法確認。 |
-| FreeBSD 的功能限制 | `ClientPolicy` 使用以 DHCPv4 reservation 為基礎的 IPv4 pf 規則；無法比對 MAC 位址，也不會從 IPv4 reservation 產生 IPv6 guest egress deny。 | 明確保留此限制；在新增 IPv6 guest deny 前先評估 dual-stack identity 模型（[#849](https://github.com/imksoo/routerd/issues/849)）。 |
+| CI / runtime coverage | PR CI 會編譯 FreeBSD amd64/arm64 binary 與 test package；release automation 建立 FreeBSD archive。VM115 的 native evidence 涵蓋 validate/render、pf/dnsmasq 語法、rc.d status、route lookup、BFD 與已支援的 PF dataplane slice。 | 保留的 VM evidence 是 lab acceptance，尚非自動 CI VM job。宣稱自動 runtime coverage 前需增加 provisioned FreeBSD VM smoke workflow。 |
+| FreeBSD 的功能限制 | `ClientPolicy` 對 IPv4 使用 DHCPv4 reservation，對 IPv6 使用明確 `classification[].ipv6Addresses` 的 pf 規則；不支援 MAC/L2 比對，也不從 IPv4 reservation 推斷 IPv6。 | 保持明確 address 與 MAC/L2 限制；未列出或 privacy IPv6 位址需獨立網路隔離（[#849](https://github.com/imksoo/routerd/issues/849)）。 |
 | 套件 bootstrap | Ubuntu 和 FreeBSD 可命令式安裝套件。 | 對 `apt`、`pkg` 的 schema、validation、安裝程式套件清單、範例、產生文件保持同步。 |
 
 ## OS 抽象化的實作方針

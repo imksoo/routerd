@@ -16,6 +16,7 @@ import (
 )
 
 func TestNetworkAdoptionControllerWritesNetworkdAndResolvedDropins(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	legacyPath := filepath.Join(dir, "network", "10-netplan-ens18.network.d", "50-routerd-no-dhcpv6.conf")
 	if err := os.MkdirAll(filepath.Dir(legacyPath), 0755); err != nil {
@@ -96,6 +97,7 @@ func TestNetworkAdoptionControllerWritesNetworkdAndResolvedDropins(t *testing.T)
 }
 
 func TestNetworkAdoptionControllerCanKeepDHCPv4ClientWithoutRoutes(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	disabled := false
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
@@ -135,6 +137,7 @@ func TestNetworkAdoptionControllerCanKeepDHCPv4ClientWithoutRoutes(t *testing.T)
 }
 
 func TestSystemdUnitControllerRendersAndEnablesUnit(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	router := &api.Router{Metadata: api.ObjectMeta{Name: "home"}, Spec: api.RouterSpec{}}
 	store := mapStore{}
@@ -194,6 +197,7 @@ func TestSystemdUnitControllerRendersAndEnablesUnit(t *testing.T) {
 }
 
 func TestSystemdUnitControllerAugmentsRouterdServiceForBGPVRRPIngress(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
@@ -269,6 +273,7 @@ func TestSystemdUnitControllerAugmentsRouterdServiceForBGPVRRPIngress(t *testing
 }
 
 func TestSystemdUnitControllerDoesNotRestartActiveBGPDaemonOnUnitChange(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	router := &api.Router{Metadata: api.ObjectMeta{Name: "home"}, Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.BGPRouterSpec{
@@ -301,6 +306,7 @@ func TestSystemdUnitControllerDoesNotRestartActiveBGPDaemonOnUnitChange(t *testi
 }
 
 func TestSystemdUnitControllerDoesNotRestartUnchangedActiveUnit(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallEventLog"}, Metadata: api.ObjectMeta{Name: "default"}, Spec: api.FirewallLogSpec{
@@ -337,6 +343,7 @@ func TestSystemdUnitControllerDoesNotRestartUnchangedActiveUnit(t *testing.T) {
 }
 
 func TestSystemdUnitControllerSynthesizesNDPIAgentForAutoClassifier(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallEventLog"}, Metadata: api.ObjectMeta{Name: "default"}, Spec: api.FirewallLogSpec{Enabled: true}},
@@ -414,6 +421,7 @@ func TestSystemdUnitControllerDoesNotReloadForAlreadyAbsentUnit(t *testing.T) {
 }
 
 func TestSystemdUnitControllerDefersActiveStaleClientDaemonCleanup(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	unitName := "routerd-dhcpv4-client@wan.service"
 	unitPath := filepath.Join(dir, unitName)
@@ -471,6 +479,7 @@ func TestSystemdUnitControllerDefersActiveStaleClientDaemonCleanup(t *testing.T)
 }
 
 func TestSystemdUnitControllerReportsInactiveStaleClientDaemonCleanup(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	unitName := "routerd-dhcpv4-client@wan.service"
 	unitPath := filepath.Join(dir, unitName)
@@ -527,6 +536,7 @@ func TestSystemdUnitControllerReportsInactiveStaleClientDaemonCleanup(t *testing
 }
 
 func TestSystemdUnitControllerSchedulesOwnUnitRestart(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{}}
 	var commands []string
@@ -554,6 +564,7 @@ func TestSystemdUnitControllerSchedulesOwnUnitRestart(t *testing.T) {
 }
 
 func TestSystemdUnitControllerRemovesWhenFalseTailscaleUnitAndRecreatesWhenTrue(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	unitPath := filepath.Join(dir, "routerd-tailscale-home.service")
 	if err := os.WriteFile(unitPath, []byte("[Unit]\nDescription=old tailscale\n"), 0644); err != nil {
@@ -649,6 +660,7 @@ func TestSystemdUnitControllerRemovesWhenFalseTailscaleUnitAndRecreatesWhenTrue(
 }
 
 func TestSystemdUnitControllerSynthesizesTailscaleUnits(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "TailscaleNode"}, Metadata: api.ObjectMeta{Name: "home"}, Spec: api.TailscaleNodeSpec{
@@ -711,6 +723,7 @@ func commandLineContains(commands []string, want string) bool {
 }
 
 func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-a"}, Spec: api.DSLiteTunnelSpec{TunnelName: "ds-lite-a"}},
@@ -789,6 +802,7 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 }
 
 func TestSystemdUnitControllerRemovesStaleHealthCheckDaemonUnits(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	stale := filepath.Join(dir, "routerd-healthcheck@stale.service")
 	if err := os.WriteFile(stale, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-healthcheck\n"), 0644); err != nil {
@@ -837,6 +851,7 @@ func TestSystemdUnitControllerRemovesStaleHealthCheckDaemonUnits(t *testing.T) {
 }
 
 func TestSystemdUnitControllerReconcilesDNSResolverLongLivedUnit(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	router := &api.Router{Metadata: api.ObjectMeta{Name: "home"}, Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"}, Metadata: api.ObjectMeta{Name: "lan-resolver"}, Spec: api.DNSResolverSpec{
@@ -900,6 +915,7 @@ func TestSystemdUnitControllerReconcilesDNSResolverLongLivedUnit(t *testing.T) {
 }
 
 func TestSystemdUnitControllerRemovesStaleDNSResolverUnits(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	stale := filepath.Join(dir, "routerd-dns-resolver@old.service")
 	if err := os.WriteFile(stale, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-dns-resolver\n"), 0644); err != nil {
@@ -947,6 +963,7 @@ func TestSystemdUnitControllerRemovesStaleDNSResolverUnits(t *testing.T) {
 }
 
 func TestSystemdUnitControllerRemovesStaleEventFederationUnits(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	stale := filepath.Join(dir, "routerd-eventd@old.service")
 	if err := os.WriteFile(stale, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-eventd\n"), 0644); err != nil {
@@ -1008,6 +1025,7 @@ func TestSystemdUnitControllerRemovesStaleEventFederationUnits(t *testing.T) {
 }
 
 func TestSystemdUnitControllerRemovesIdentityOnlyEventFederationUnit(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	stale := filepath.Join(dir, "routerd-eventd@identity.service")
 	if err := os.WriteFile(stale, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-eventd\n"), 0644); err != nil {
@@ -1085,6 +1103,7 @@ func TestSystemdUnitControllerNoEventFederationNoAction(t *testing.T) {
 }
 
 func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
@@ -1214,6 +1233,7 @@ func TestSystemdUnitControllerWhenFalseRAPreservesRendererStatus(t *testing.T) {
 }
 
 func TestSystemdUnitControllerDisablesHealthCheckDaemonUnit(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	enabled := false
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{

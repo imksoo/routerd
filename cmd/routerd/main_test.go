@@ -2028,7 +2028,10 @@ fi
 exit 0
 `, serviceLog))
 	writeExecutable(t, filepath.Join(binDir, "pfctl"), fmt.Sprintf(`#!/bin/sh
-echo "$@" >> %q
+printf '%%s\n' "$*" >> %q
+if [ "$1" = "-s" ]; then
+  echo "Status: Disabled"
+fi
 exit 0
 `, pfctlLog))
 	writeExecutable(t, filepath.Join(binDir, "kldstat"), `#!/bin/sh
@@ -2059,7 +2062,10 @@ exit 0
 
 	pfPath := filepath.Join(dir, "etc", "pf.conf")
 	rcDir := filepath.Join(dir, "rc.d")
-	changed, warnings, err := applyFreeBSDConfigWithOptions(router, routerstate.New(), "", "", pfPath, rcDir, freeBSDConfigApplyOptions{ManageServices: true})
+	changed, warnings, err := applyFreeBSDConfigWithOptions(router, routerstate.New(), "", "", pfPath, rcDir, freeBSDConfigApplyOptions{
+		ManageServices: true,
+		PFEnabled:      func() bool { return false },
+	})
 	if err != nil {
 		t.Fatalf("apply FreeBSD config: %v", err)
 	}
@@ -2113,7 +2119,10 @@ echo "$@" >> %q
 exit 1
 `, serviceLog))
 	writeExecutable(t, filepath.Join(binDir, "pfctl"), fmt.Sprintf(`#!/bin/sh
-echo "$@" >> %q
+printf '%%s\n' "$*" >> %q
+if [ "$1" = "-s" ]; then
+  echo "Status: Disabled"
+fi
 exit 0
 `, pfctlLog))
 	writeExecutable(t, filepath.Join(binDir, "kldstat"), `#!/bin/sh
@@ -2125,7 +2134,10 @@ exit 0
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	pfPath := filepath.Join(dir, "etc", "pf.conf")
-	changed, err := applyFreeBSDPFConfigWithOptions([]byte("pass\n"), pfPath, freeBSDPFApplyOptions{ManageServices: false})
+	changed, err := applyFreeBSDPFConfigWithOptions([]byte("pass\n"), pfPath, freeBSDPFApplyOptions{
+		ManageServices: false,
+		PFEnabled:      func() bool { return false },
+	})
 	if err != nil {
 		t.Fatalf("apply FreeBSD pf config: %v", err)
 	}
