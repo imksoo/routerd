@@ -11,6 +11,13 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260719.1121
+
+### 修正
+
+- DNS 查詢記錄的 SQLite 寫入失敗時，現在會重新開啟連線並重試一次記錄，避免暫時性
+  或過時的記錄連線讓 resolver 的可觀測性停用至重新啟動為止（#857）。
+
 ## v20260717.1557
 
 ### 變更

@@ -11,6 +11,13 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260719.1121
+
+### 修复
+
+- DNS 查询日志的 SQLite 写入失败时，现在会重新打开连接并重试一次记录，避免临时或
+  失效的日志连接让 resolver 的可观测性在重启前停止（#857）。
+
 ## v20260717.1557
 
 ### 变更
