@@ -277,11 +277,15 @@ EOF
 
 host_service_touched=1
 echo 'ipsec-vnet step=invalid-production-apply' >&2
-set +e
-run_bounded 30 invalid-production-apply "$routerd" apply --once --config "$work/invalid-router.yaml" \
-  --state-file "$apply_state" --ledger-file "$apply_ledger" --status-file "$evidence/apply-invalid.status.json" >"$evidence/apply-invalid.log" 2>&1
-invalid_apply_rc=$?
-set -e
+invalid_apply_started=$(date +%s)
+if run_bounded 30 invalid-production-apply "$routerd" apply --once --config "$work/invalid-router.yaml" \
+  --state-file "$apply_state" --ledger-file "$apply_ledger" --status-file "$evidence/apply-invalid.status.json" >"$evidence/apply-invalid.log" 2>&1; then
+  invalid_apply_rc=0
+else
+  invalid_apply_rc=$?
+fi
+invalid_apply_finished=$(date +%s)
+printf 'ipsec-vnet invalid-production-apply rc=%s elapsed=%ss\n' "$invalid_apply_rc" "$((invalid_apply_finished - invalid_apply_started))" >&3
 if [ "$invalid_apply_rc" -eq 124 ]; then
   echo 'invalid production apply timed out; redacted diagnostic follows' >&3
   sed "s/$psk/[REDACTED]/g" "$evidence/apply-invalid.log" >&3
@@ -297,8 +301,16 @@ if grep -F "$psk" "$evidence/apply-invalid.log" >/dev/null; then
   exit 1
 fi
 echo 'ipsec-vnet step=valid-production-apply' >&2
-run_bounded 30 valid-production-apply "$routerd" apply --once --config "$work/router.yaml" \
-  --state-file "$apply_state" --ledger-file "$apply_ledger" --status-file "$evidence/apply-valid.status.json" >"$evidence/apply-1.log" 2>&1
+valid_apply_started=$(date +%s)
+if run_bounded 30 valid-production-apply "$routerd" apply --once --config "$work/router.yaml" \
+  --state-file "$apply_state" --ledger-file "$apply_ledger" --status-file "$evidence/apply-valid.status.json" >"$evidence/apply-1.log" 2>&1; then
+  valid_apply_rc=0
+else
+  valid_apply_rc=$?
+fi
+valid_apply_finished=$(date +%s)
+printf 'ipsec-vnet valid-production-apply rc=%s elapsed=%ss\n' "$valid_apply_rc" "$((valid_apply_finished - valid_apply_started))" >&3
+[ "$valid_apply_rc" -eq 0 ]
 
 # path=/ VNET jails share charon's compile-time PID file. Qualify routerd's
 # host service/load first, then temporarily relocate its live PID while the
