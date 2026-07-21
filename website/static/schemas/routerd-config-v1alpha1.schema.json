@@ -13492,6 +13492,13 @@
                             "ipv4Reservation": {
                               "type": "string"
                             },
+                            "ipv6Addresses": {
+                              "description": "IPv6Addresses are explicit IPv6 identities for FreeBSD pf ClientPolicy\nrendering. They are never inferred from IPv4 reservations or MAC selectors.",
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
                             "match": {
                               "additionalProperties": false,
                               "properties": {
