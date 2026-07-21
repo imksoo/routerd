@@ -394,7 +394,16 @@ echo 'ipsec-vnet step=peer-load' >&2
 run_bounded 30 peer-load jexec "$jail_name" /usr/local/sbin/swanctl --uri "unix://$peer/charon.vici" --load-all --file "$peer/swanctl.conf" \
   >"$evidence/peer-load.log" 2>&1
 echo 'ipsec-vnet step=initial-initiate' >&2
-run_bounded 30 initial-initiate /usr/local/sbin/swanctl --initiate --ike "$connection" --child net >"$evidence/initiate-1.log" 2>&1
+if run_bounded 30 initial-initiate /usr/local/sbin/swanctl --initiate --ike "$connection" --child net >"$evidence/initiate-1.log" 2>&1; then
+  initial_initiate_rc=0
+else
+  initial_initiate_rc=$?
+fi
+if [ "$initial_initiate_rc" -ne 0 ]; then
+  echo "ipsec-vnet initial-initiate rc=$initial_initiate_rc; redacted diagnostic follows" >&3
+  sed "s/$psk/[REDACTED]/g" "$evidence/initiate-1.log" >&3
+  exit "$initial_initiate_rc"
+fi
 echo 'ipsec-vnet step=initial-sa-wait' >&2
 wait_for 'initial IKE SA' sh -c "/usr/local/sbin/swanctl --list-sas --ike '$connection' | grep -q ESTABLISHED"
 echo 'ipsec-vnet step=initial-host-to-peer-ping' >&2
