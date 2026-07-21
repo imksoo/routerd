@@ -17,11 +17,10 @@ epair_host=""
 arp_pid=""
 ra_pid=""
 rtadvd_pid=""
-tcpdump_pid=""
 own_epair_module=0
 
 cleanup() {
-  for pid in "$rtadvd_pid" "$tcpdump_pid" "$ra_pid" "$arp_pid"; do
+  for pid in "$rtadvd_pid" "$ra_pid" "$arp_pid"; do
     if [ -n "$pid" ]; then
       kill -TERM "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
@@ -65,12 +64,11 @@ jexec "$jail_name" ifconfig lo0 up
 jexec "$jail_name" ifconfig "$epair_peer" inet 192.0.2.2/24 up
 jexec "$jail_name" ifconfig "$epair_peer" inet6 2001:db8:846::2/64 up
 jexec "$jail_name" sysctl net.inet6.ip6.forwarding=1 >/dev/null
-
-# Keep an independent kernel-capture trace so a failure distinguishes the
-# VNET transport from the production BPF readers in the same native run.
-command -v tcpdump >/dev/null
-tcpdump -neli "$epair_host" -l >"$work/tcpdump.log" 2>&1 &
-tcpdump_pid=$!
+# The CI guest has ifconfig_DEFAULT=DHCP, which causes devd to attach base
+# dhclient BPF consumers to newly created epairs. Production owns this
+# fixture interface, so stop those automatic consumers before observing it.
+service dhclient stop "$epair_host" >/dev/null 2>&1 || true
+jexec "$jail_name" service dhclient stop "$epair_peer" >/dev/null 2>&1 || true
 
 "$arp_observer" daemon \
   --resource native-ci-arp --interface "$epair_host" --event-interface native-ci \
@@ -151,7 +149,6 @@ if [ "$observed" -ne 1 ]; then
   cat "$work/ra.log" >&2
   cat "$work/rtadvd.log" >&2
   cat "$work/rtsol.log" >&2
-  cat "$work/tcpdump.log" >&2
   ifconfig "$epair_host" >&2
   procstat -f "$arp_pid" >&2 || true
   procstat -f "$ra_pid" >&2 || true
