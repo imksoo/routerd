@@ -21,6 +21,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Start Linux strongSwan peer
+        run: scripts/ci/freebsd-ipsec-linux-peer.sh start
+
       - name: Run native smoke in FreeBSD 14.3 amd64
         uses: vmactions/freebsd-vm@77ed28d336d03fe19a3f4f7266c1d2c4714dd79d # v1.5.2
         with:
@@ -28,7 +31,12 @@ jobs:
           arch: x86_64
           usesh: true
           copyback: false
+          envs: ROUTERD_IPSEC_PEER_ADDR
           prepare: |
             pkg install -y go dnsmasq git hs-ShellCheck curl jq ndpi pkgconf strongswan
           run: |
             sh scripts/freebsd-native-vm-smoke.sh
+
+      - name: Stop Linux strongSwan peer
+        if: always()
+        run: scripts/ci/freebsd-ipsec-linux-peer.sh stop
