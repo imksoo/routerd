@@ -3,14 +3,24 @@
 set -euo pipefail
 action=${1:?usage: $0 start|stop}
 peer_addr=${ROUTERD_IPSEC_PEER_ADDR:?ROUTERD_IPSEC_PEER_ADDR is required}
+psk=routerd-native-linux-peer-disposable-psk
 base=${RUNNER_TEMP:?RUNNER_TEMP is required}
 dir="$base/routerd-ipsec-peer"
 case "$dir" in "$base"/routerd-ipsec-peer) ;; *) exit 2;; esac
 log="$dir/peer.log"
+emit_failure() {
+  for f in "$dir/peer.log" "$dir/reverse-verifier.log"; do
+    if sudo test -f "$f"; then
+      echo "--- ${f##*/}" >&2
+      sudo sed "s/$psk/[REDACTED]/g" "$f" >&2
+    fi
+  done
+}
 cleanup() {
   rc=$?
   if [[ ${cleanup_started:-0} -eq 1 ]]; then return "$rc"; fi
   cleanup_started=1
+  if [[ "$rc" -ne 0 ]]; then emit_failure; fi
   if [[ -s "$dir/charon.pid" ]]; then sudo kill -TERM "$(sudo cat "$dir/charon.pid")" 2>/dev/null || true; fi
   sudo ip addr del 10.250.2.1/32 dev lo 2>/dev/null || true
   if sudo test -s "$dir/verifier.pid"; then sudo kill -TERM "$(sudo cat "$dir/verifier.pid")" 2>/dev/null || true; fi
@@ -58,7 +68,7 @@ connections {
     children { net { local_ts = 10.250.2.1/32 remote_ts = 10.250.1.1/32 esp_proposals = aes256-sha256 start_action = trap } }
   }
 }
-secrets { peer { id-1 = $peer_addr id-2 = %any secret = "routerd-native-linux-peer-disposable-psk" } }
+secrets { peer { id-1 = $peer_addr id-2 = %any secret = "$psk" } }
 EOF
   sudo sh -c "exec env STRONGSWAN_CONF='$dir/strongswan.conf' /usr/lib/ipsec/charon --use-syslog >>'$log' 2>&1" &
   echo $! | sudo tee "$dir/charon.pid" >/dev/null
