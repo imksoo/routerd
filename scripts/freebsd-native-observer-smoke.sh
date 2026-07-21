@@ -18,6 +18,7 @@ arp_pid=""
 ra_pid=""
 rtadvd_pid=""
 own_epair_module=0
+restart_devd=0
 
 cleanup() {
   for pid in "$rtadvd_pid" "$ra_pid" "$arp_pid"; do
@@ -35,6 +36,9 @@ cleanup() {
   if [ "$own_epair_module" -eq 1 ]; then
     kldunload if_epair || true
   fi
+  if [ "$restart_devd" -eq 1 ]; then
+    service devd start >/dev/null 2>&1 || true
+  fi
   rm -rf "$work"
 }
 trap cleanup EXIT HUP INT TERM
@@ -42,6 +46,15 @@ trap cleanup EXIT HUP INT TERM
 if ! kldstat -q -m if_epair; then
   kldload if_epair
   own_epair_module=1
+fi
+
+# The CI image has ifconfig_DEFAULT=DHCP, so devd starts dhclient each time an
+# epair appears and can reconfigure the disposable interface after observers
+# attach.  Pause it for the lifetime of this isolated fixture and restore it in
+# cleanup; the VM itself is discarded after the job.
+if service devd onestatus >/dev/null 2>&1; then
+  service devd stop >/dev/null
+  restart_devd=1
 fi
 
 arp_observer="$work/routerd-arp-observer"
@@ -64,12 +77,6 @@ jexec "$jail_name" ifconfig lo0 up
 jexec "$jail_name" ifconfig "$epair_peer" inet 192.0.2.2/24 up
 jexec "$jail_name" ifconfig "$epair_peer" inet6 2001:db8:846::2/64 up
 jexec "$jail_name" sysctl net.inet6.ip6.forwarding=1 >/dev/null
-# The CI guest has ifconfig_DEFAULT=DHCP, which causes devd to attach base
-# dhclient BPF consumers to newly created epairs. Production owns this
-# fixture interface, so stop those automatic consumers before observing it.
-service dhclient stop "$epair_host" >/dev/null 2>&1 || true
-jexec "$jail_name" service dhclient stop "$epair_peer" >/dev/null 2>&1 || true
-
 "$arp_observer" daemon \
   --resource native-ci-arp --interface "$epair_host" --event-interface native-ci \
   --socket "$arp_socket" --event-file "$arp_events" --pool native-ci-pool \
