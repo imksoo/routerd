@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/ipsec"
@@ -23,6 +24,8 @@ type ipsecRuntimeApplyOptions struct {
 }
 
 const ipsecPendingLoadMarker = ".routerd-pending-load"
+
+const freeBSDStrongSwanServiceTimeout = 30 * time.Second
 
 func applyIPsecConnections(ctx context.Context, router *api.Router) ([]string, error) {
 	configDir := ipsecConfigDir()
@@ -43,13 +46,15 @@ func ensureFreeBSDStrongSwan(ctx context.Context) error {
 	if platformDefaults.OS != platform.OSFreeBSD {
 		return nil
 	}
-	if out, err := exec.CommandContext(ctx, "sysrc", "strongswan_enable=YES").CombinedOutput(); err != nil {
+	serviceCtx, cancel := context.WithTimeout(ctx, freeBSDStrongSwanServiceTimeout)
+	defer cancel()
+	if out, err := exec.CommandContext(serviceCtx, "sysrc", "strongswan_enable=YES").CombinedOutput(); err != nil {
 		return fmt.Errorf("enable strongswan service: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	if err := exec.CommandContext(ctx, "service", "strongswan", "status").Run(); err == nil {
+	if err := exec.CommandContext(serviceCtx, "service", "strongswan", "status").Run(); err == nil {
 		return nil
 	}
-	if out, err := exec.CommandContext(ctx, "service", "strongswan", "onestart").CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(serviceCtx, "service", "strongswan", "onestart").CombinedOutput(); err != nil {
 		return fmt.Errorf("start strongswan service: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
