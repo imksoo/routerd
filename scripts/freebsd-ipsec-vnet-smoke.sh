@@ -32,6 +32,9 @@ jail_name="routerd-ipsec-vnet-$$"
 epair_host=
 own_epair_module=0
 host_service_started=0
+host_service_touched=0
+strongswan_was_running=0
+strongswan_enable_rc=0
 
 host_addr=198.18.10.1
 peer_addr=198.18.10.2
@@ -42,8 +45,17 @@ psk='routerd-native-vnet-disposable-psk'
 
 cleanup() {
   rc=$?
-  if [ "$host_service_started" -eq 1 ]; then
-    service strongswan onestop >>"$evidence/cleanup.log" 2>&1 || true
+  if [ "$host_service_touched" -eq 1 ]; then
+    if [ "$strongswan_was_running" -eq 1 ]; then
+      service strongswan onestart >>"$evidence/cleanup.log" 2>&1 || true
+    else
+      service strongswan onestop >>"$evidence/cleanup.log" 2>&1 || true
+    fi
+    if [ "$strongswan_enable_rc" -eq 0 ]; then
+      sysrc "strongswan_enable=$(cat "$work/strongswan-enable.before")" >>"$evidence/cleanup.log" 2>&1 || true
+    else
+      sysrc -x strongswan_enable >>"$evidence/cleanup.log" 2>&1 || true
+    fi
   fi
   rm -f /usr/local/etc/swanctl/conf.d/routerd-*.conf \
     /usr/local/etc/swanctl/conf.d/routerd.conf \
@@ -81,6 +93,15 @@ if ! kldstat -q -m if_epair; then
   kldload if_epair
   own_epair_module=1
 fi
+if service strongswan status >"$evidence/strongswan-status.before" 2>&1; then
+  strongswan_was_running=1
+fi
+set +e
+sysrc -n strongswan_enable >"$work/strongswan-enable.before" 2>"$evidence/strongswan-enable.before.stderr"
+strongswan_enable_rc=$?
+set -e
+printf 'strongswan_running_before=%s\nstrongswan_enable_rc_before=%s\n' \
+  "$strongswan_was_running" "$strongswan_enable_rc" >"$evidence/strongswan-before.log"
 epair_host=$(ifconfig epair create)
 epair_peer="${epair_host%a}b"
 ifconfig "$epair_host" inet "$host_addr/30" up
@@ -161,21 +182,52 @@ spec:
       rightSubnet: $peer_ts/32
 EOF
 
+cat >"$work/invalid-router.yaml" <<EOF
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: native-ipsec-vnet-invalid-load}
+spec:
+  resources:
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: IPsecConnection
+    metadata: {name: $connection}
+    spec:
+      localAddress: $host_addr
+      remoteAddress: $peer_addr
+      preSharedKey: $psk
+      psPhase1Proposals: [definitely-invalid-ike-proposal]
+      leftSubnet: $host_ts/32
+      rightSubnet: $peer_ts/32
+EOF
+
+host_service_touched=1
+if "$routerd" apply --once --config "$work/invalid-router.yaml" >"$evidence/apply-invalid.log" 2>&1; then
+  echo 'invalid IKE proposal unexpectedly loaded' >&2
+  exit 1
+fi
+grep -Eiq 'swanctl|proposal|load' "$evidence/apply-invalid.log"
+if grep -F "$psk" "$evidence/apply-invalid.log" >/dev/null; then
+  echo 'invalid load diagnostic leaked the disposable PSK' >&2
+  exit 1
+fi
 "$routerd" apply --once --config "$work/router.yaml" >"$evidence/apply-1.log" 2>&1
 host_service_started=1
 /usr/local/sbin/swanctl --initiate --ike "$connection" --child net >"$evidence/initiate-1.log" 2>&1
 wait_for 'initial IKE SA' sh -c "/usr/local/sbin/swanctl --list-sas --ike '$connection' | grep -q ESTABLISHED"
 ping -n -S "$host_ts" -c 2 "$peer_ts" >"$evidence/traffic-1.log"
+jexec "$jail_name" ping -n -S "$peer_ts" -c 2 "$host_ts" >"$evidence/traffic-peer-1.log"
 
 /usr/local/sbin/swanctl --rekey --ike "$connection" >"$evidence/rekey.log" 2>&1
 wait_for 'rekeyed IKE SA' sh -c "/usr/local/sbin/swanctl --list-sas --ike '$connection' | grep -q ESTABLISHED"
 ping -n -S "$host_ts" -c 2 "$peer_ts" >"$evidence/traffic-rekey.log"
+jexec "$jail_name" ping -n -S "$peer_ts" -c 2 "$host_ts" >"$evidence/traffic-peer-rekey.log"
 
 service strongswan onestop >"$evidence/host-stop.log" 2>&1
 "$routerd" apply --once --config "$work/router.yaml" >"$evidence/apply-restart.log" 2>&1
 /usr/local/sbin/swanctl --initiate --ike "$connection" --child net >"$evidence/initiate-restart.log" 2>&1
 wait_for 'restarted IKE SA' sh -c "/usr/local/sbin/swanctl --list-sas --ike '$connection' | grep -q ESTABLISHED"
 ping -n -S "$host_ts" -c 2 "$peer_ts" >"$evidence/traffic-restart.log"
+jexec "$jail_name" ping -n -S "$peer_ts" -c 2 "$host_ts" >"$evidence/traffic-peer-restart.log"
 
 cat >"$work/empty-router.yaml" <<'EOF'
 apiVersion: routerd.net/v1alpha1
@@ -189,5 +241,5 @@ if /usr/local/sbin/swanctl --list-conns | grep -F "$connection" >/dev/null; then
   exit 1
 fi
 
-printf 'ipsec-apply=ok\nipsec-psk-auth=ok\nipsec-traffic=ok\nipsec-rekey=ok\nipsec-restart-recovery=ok\nipsec-teardown=ok\n' >"$evidence/summary.log"
+printf 'ipsec-invalid-load=actionable-no-secret-leak\nipsec-apply=ok\nipsec-psk-auth=ok\nipsec-bidirectional-traffic=ok\nipsec-rekey=ok\nipsec-restart-recovery=ok\nipsec-teardown=ok\n' >"$evidence/summary.log"
 printf 'freebsd-ipsec-vnet=ok\n' >"$evidence/result"
