@@ -46,6 +46,10 @@ func openPacketSocket(ifname string) (*packetSocket, error) {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("BIOCSDIRECTION: %w", err)
 	}
+	if err := installARPFilter(fd); err != nil {
+		_ = unix.Close(fd)
+		return nil, err
+	}
 	if err := observerIoctlSetInt(fd, unix.BIOCIMMEDIATE, 1); err != nil {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("BIOCIMMEDIATE: %w", err)
@@ -63,6 +67,21 @@ func openPacketSocket(ifname string) (*packetSocket, error) {
 		size = 4096
 	}
 	return &packetSocket{fd: fd, buf: make([]byte, size)}, nil
+}
+
+func installARPFilter(fd int) error {
+	insns := []unix.BpfInsn{
+		{Code: unix.BPF_LD | unix.BPF_H | unix.BPF_ABS, K: 12},
+		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jf: 1, K: 0x0806},
+		{Code: unix.BPF_RET | unix.BPF_K, K: 0xffff},
+		{Code: unix.BPF_RET | unix.BPF_K, K: 0},
+	}
+	program := unix.BpfProgram{Len: uint32(len(insns)), Insns: &insns[0]}
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), uintptr(unix.BIOCSETF), uintptr(unsafe.Pointer(&program)))
+	if errno != 0 {
+		return fmt.Errorf("BIOCSETF ARP: %w", errno)
+	}
+	return nil
 }
 
 func (s *packetSocket) read(frame []byte) (int, error) {
