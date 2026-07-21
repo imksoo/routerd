@@ -429,13 +429,16 @@ func pfIPv4AddressSet(resourceID, label string, cidrs []string) (string, error) 
 }
 
 type pfClientPolicy struct {
-	Name          string
-	Mode          string
-	IfNames       []string
-	Addresses     []string
-	GuestServices []string
-	EgressDeny    []string
-	EgressAllow   []string
+	Name            string
+	Mode            string
+	IfNames         []string
+	IPv4Addresses   []string
+	IPv6Addresses   []string
+	GuestServices   []string
+	IPv4EgressDeny  []string
+	IPv6EgressDeny  []string
+	IPv4EgressAllow []string
+	IPv6EgressAllow []string
 }
 
 func pfClientPolicies(router *api.Router, aliases map[string]string, resources []api.Resource) ([]pfClientPolicy, error) {
@@ -473,52 +476,78 @@ func pfClientPolicies(router *api.Router, aliases map[string]string, resources [
 			ifnames = append(ifnames, ifname)
 		}
 		sort.Strings(ifnames)
+		egressDeny := clientPolicyEgressCIDRs(spec.GuestEgressDeny, []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"})
+		egressAllow := clientPolicyEgressCIDRs(spec.GuestEgressAllow, nil)
 		policy := pfClientPolicy{
-			Name:          res.Metadata.Name,
-			Mode:          spec.Mode,
-			IfNames:       compactStrings(ifnames),
-			GuestServices: clientPolicyGuestServices(spec.GuestServices),
-			EgressDeny:    pfIPv4ClientPolicyCIDRs(clientPolicyEgressCIDRs(spec.GuestEgressDeny, []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"})),
-			EgressAllow:   clientPolicyEgressCIDRs(spec.GuestEgressAllow, nil),
+			Name:            res.Metadata.Name,
+			Mode:            spec.Mode,
+			IfNames:         compactStrings(ifnames),
+			GuestServices:   clientPolicyGuestServices(spec.GuestServices),
+			IPv4EgressDeny:  pfClientPolicyCIDRs(egressDeny, false),
+			IPv6EgressDeny:  pfClientPolicyCIDRs(egressDeny, true),
+			IPv4EgressAllow: pfClientPolicyCIDRs(egressAllow, false),
+			IPv6EgressAllow: pfClientPolicyCIDRs(egressAllow, true),
 		}
 		for _, entry := range spec.Classification {
-			if entry.IPv4Reservation == "" {
-				if spec.Mode == "include" && (entry.Mode == "guest" || entry.Mode == "isolated") {
-					return nil, fmt.Errorf("%s classification %q needs ipv4Reservation on FreeBSD because pf cannot match client selectors", res.ID(), entry.Name)
-				}
-				continue
-			}
-			reservation, ok := reservations[entry.IPv4Reservation]
-			if !ok {
-				return nil, fmt.Errorf("%s references unknown DHCPv4 reservation %q", res.ID(), entry.IPv4Reservation)
-			}
-			if reservation.IPAddress == "" {
-				return nil, fmt.Errorf("%s references DHCPv4 reservation %q with empty ipAddress", res.ID(), entry.IPv4Reservation)
+			if entry.IPv4Reservation == "" && len(entry.IPv6Addresses) == 0 && spec.Mode == "include" && (entry.Mode == "guest" || entry.Mode == "isolated") {
+				return nil, fmt.Errorf("%s classification %q needs ipv4Reservation or ipv6Addresses on FreeBSD because pf cannot match client selectors", res.ID(), entry.Name)
 			}
 			switch spec.Mode {
 			case "include":
 				if entry.Mode == "guest" || entry.Mode == "isolated" {
-					policy.Addresses = append(policy.Addresses, reservation.IPAddress)
+					if entry.IPv4Reservation != "" {
+						reservation, err := pfClientPolicyReservation(res, entry.IPv4Reservation, reservations)
+						if err != nil {
+							return nil, err
+						}
+						policy.IPv4Addresses = append(policy.IPv4Addresses, reservation.IPAddress)
+					}
+					policy.IPv6Addresses = append(policy.IPv6Addresses, entry.IPv6Addresses...)
 				}
 			case "exclude":
 				if entry.Mode == "trusted" {
-					policy.Addresses = append(policy.Addresses, reservation.IPAddress)
+					if entry.IPv4Reservation != "" {
+						reservation, err := pfClientPolicyReservation(res, entry.IPv4Reservation, reservations)
+						if err != nil {
+							return nil, err
+						}
+						policy.IPv4Addresses = append(policy.IPv4Addresses, reservation.IPAddress)
+					}
+					policy.IPv6Addresses = append(policy.IPv6Addresses, entry.IPv6Addresses...)
 				}
 			default:
 				return nil, fmt.Errorf("%s has unsupported client policy mode %q", res.ID(), spec.Mode)
 			}
 		}
-		sort.Strings(policy.Addresses)
-		policy.Addresses = compactStrings(policy.Addresses)
+		policy.IPv4Addresses = pfCompactAddresses(policy.IPv4Addresses)
+		policy.IPv6Addresses = pfCompactAddresses(policy.IPv6Addresses)
 		out = append(out, policy)
 	}
 	return out, nil
+}
+
+func pfClientPolicyReservation(res api.Resource, name string, reservations map[string]api.DHCPv4ReservationSpec) (api.DHCPv4ReservationSpec, error) {
+	reservation, ok := reservations[name]
+	if !ok {
+		return api.DHCPv4ReservationSpec{}, fmt.Errorf("%s references unknown DHCPv4 reservation %q", res.ID(), name)
+	}
+	if reservation.IPAddress == "" {
+		return api.DHCPv4ReservationSpec{}, fmt.Errorf("%s references DHCPv4 reservation %q with empty ipAddress", res.ID(), name)
+	}
+	return reservation, nil
 }
 
 func writePFFilter(buf *bytes.Buffer, zones map[string]firewallZone, rules []api.Resource, holes []FirewallHole, clientPolicies []pfClientPolicy, policy firewallPolicy, logging firewallLogging) error {
 	buf.WriteString("block drop all\n")
 	buf.WriteString("pass quick on lo0 all\n")
 	buf.WriteString("pass out quick all keep state\n")
+	for _, zone := range sortedFirewallZones(zones) {
+		for _, clientPolicy := range clientPolicies {
+			for _, expr := range pfClientPolicyIPv6DenyExprs(zone, clientPolicy, logging) {
+				buf.WriteString(expr + "\n")
+			}
+		}
+	}
 	buf.WriteString("pass quick inet6 proto icmp6 all keep state\n")
 	for _, zone := range sortedFirewallZones(zones) {
 		if len(zone.IfNames) == 0 {
@@ -617,10 +646,10 @@ func writePFDisallowedForwardDestinations(buf *bytes.Buffer, from firewallZone, 
 }
 
 func pfClientPolicyInputExprs(zone firewallZone, policy pfClientPolicy, logging firewallLogging) []string {
-	if len(policy.Addresses) == 0 || !pfClientPolicyAppliesToZone(zone, policy) {
+	if len(policy.IPv4Addresses) == 0 || !pfClientPolicyAppliesToZone(zone, policy) {
 		return nil
 	}
-	match := pfClientPolicySourceMatch(policy)
+	match := pfClientPolicySourceMatch(policy.Mode, policy.IPv4Addresses)
 	if match == "" {
 		return nil
 	}
@@ -650,21 +679,35 @@ func pfClientPolicyInputExprs(zone firewallZone, policy pfClientPolicy, logging 
 }
 
 func pfClientPolicyForwardExprs(zone firewallZone, policy pfClientPolicy, logging firewallLogging) []string {
-	if len(policy.Addresses) == 0 || !pfClientPolicyAppliesToZone(zone, policy) {
+	var exprs []string
+	exprs = append(exprs, pfClientPolicyForwardFamilyExprs(zone, policy, false, policy.IPv4Addresses, policy.IPv4EgressAllow, policy.IPv4EgressDeny, logging)...)
+	exprs = append(exprs, pfClientPolicyForwardFamilyExprs(zone, policy, true, policy.IPv6Addresses, policy.IPv6EgressAllow, nil, logging)...)
+	return exprs
+}
+
+func pfClientPolicyIPv6DenyExprs(zone firewallZone, policy pfClientPolicy, logging firewallLogging) []string {
+	return pfClientPolicyForwardFamilyExprs(zone, policy, true, policy.IPv6Addresses, nil, policy.IPv6EgressDeny, logging)
+}
+
+func pfClientPolicyForwardFamilyExprs(zone firewallZone, policy pfClientPolicy, ipv6 bool, addresses, allow, deny []string, logging firewallLogging) []string {
+	if len(addresses) == 0 || !pfClientPolicyAppliesToZone(zone, policy) {
 		return nil
 	}
-	match := pfClientPolicySourceMatch(policy)
+	match := pfClientPolicySourceMatch(policy.Mode, addresses)
 	if match == "" {
 		return nil
 	}
+	family := ""
+	if ipv6 {
+		family = " inet6"
+	}
 	var exprs []string
 	for _, ifname := range policy.IfNames {
-		onExpr := ifname
-		for _, cidr := range policy.EgressAllow {
-			exprs = append(exprs, "pass in quick on "+onExpr+" from "+match+" to "+cidr+" keep state label "+pfQuote("routerd:client-policy:"+policy.Name+":allow"))
+		for _, cidr := range allow {
+			exprs = append(exprs, "pass in quick on "+ifname+family+" from "+match+" to "+cidr+" keep state label "+pfQuote("routerd:client-policy:"+policy.Name+":allow"))
 		}
-		for _, cidr := range policy.EgressDeny {
-			exprs = append(exprs, "block drop in "+pfLogExpr(logging)+" quick on "+onExpr+" from "+match+" to "+cidr+" label "+pfQuote("routerd:client-policy:"+policy.Name+":deny"))
+		for _, cidr := range deny {
+			exprs = append(exprs, "block drop in "+pfLogExpr(logging)+" quick on "+ifname+family+" from "+match+" to "+cidr+" label "+pfQuote("routerd:client-policy:"+policy.Name+":deny"))
 		}
 	}
 	return exprs
@@ -679,10 +722,10 @@ func pfClientPolicyAppliesToZone(zone firewallZone, policy pfClientPolicy) bool 
 	return false
 }
 
-func pfClientPolicySourceMatch(policy pfClientPolicy) string {
-	addresses := append([]string(nil), policy.Addresses...)
+func pfClientPolicySourceMatch(mode string, values []string) string {
+	addresses := append([]string(nil), values...)
 	sort.Strings(addresses)
-	if policy.Mode == "exclude" {
+	if mode == "exclude" {
 		if len(addresses) == 0 {
 			return "any"
 		}
@@ -701,15 +744,21 @@ func pfAddressSet(values []string) string {
 	return "{ " + strings.Join(values, ", ") + " }"
 }
 
-func pfIPv4ClientPolicyCIDRs(values []string) []string {
+func pfClientPolicyCIDRs(values []string, ipv6 bool) []string {
 	out := make([]string, 0, len(values))
 	for _, value := range values {
-		if strings.Contains(value, ":") {
+		isIPv6 := strings.Contains(value, ":")
+		if isIPv6 != ipv6 {
 			continue
 		}
 		out = append(out, value)
 	}
 	return out
+}
+
+func pfCompactAddresses(values []string) []string {
+	sort.Strings(values)
+	return compactStrings(values)
 }
 
 func pfClientPolicyServiceExpr(onExpr, selfExpr, name, source, proto string, port int, service string, logging firewallLogging) string {

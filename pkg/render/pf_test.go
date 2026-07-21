@@ -330,6 +330,93 @@ func TestPFClientPolicyUsesIPv4Reservations(t *testing.T) {
 	}
 }
 
+func TestPFClientPolicyRendersExplicitIPv6GuestDenyBeforeICMPv6Pass(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.InterfaceSpec{IfName: "vtnet1"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "ClientPolicy"},
+			Metadata: api.ObjectMeta{Name: "guest-devices"},
+			Spec: api.ClientPolicySpec{
+				Mode:             "include",
+				Interfaces:       []string{"lan"},
+				GuestEgressDeny:  []string{"fd00:2::/64"},
+				GuestEgressAllow: []string{"2001:db8:3::/64"},
+				Classification: []api.ClientPolicyClassSpec{{
+					Mode:          "guest",
+					Match:         api.ClientPolicyClassMatchSpec{MACs: []string{"02:00:00:00:00:44"}},
+					IPv6Addresses: []string{"fd00:1::10"},
+				}},
+			},
+		},
+	}}}
+	data, err := PF(router, nil)
+	if err != nil {
+		t.Fatalf("render pf: %v", err)
+	}
+	got := string(data)
+	deny := `block drop in log quick on vtnet1 inet6 from fd00:1::10 to fd00:2::/64 label "routerd:client-policy:guest-devices:deny"`
+	allow := `pass in quick on vtnet1 inet6 from fd00:1::10 to 2001:db8:3::/64 keep state label "routerd:client-policy:guest-devices:allow"`
+	if !strings.Contains(got, deny) || !strings.Contains(got, allow) {
+		t.Fatalf("pf output missing explicit IPv6 ClientPolicy rules:\n%s", got)
+	}
+	if strings.Index(got, deny) > strings.Index(got, `pass quick inet6 proto icmp6 all keep state`) {
+		t.Fatalf("IPv6 guest deny must precede broad ICMPv6 pass:\n%s", got)
+	}
+	if strings.Contains(got, "ether ") || strings.Contains(got, "fd00:1::10 to 192.168.0.0/16") {
+		t.Fatalf("pf output must use only explicit IPv6 identity and family-safe destinations:\n%s", got)
+	}
+}
+
+func TestPFClientPolicyDoesNotInferIPv6Identity(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.InterfaceSpec{IfName: "vtnet1"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"},
+			Metadata: api.ObjectMeta{Name: "guest-phone"},
+			Spec:     api.DHCPv4ReservationSpec{MACAddress: "02:00:00:00:00:44", IPAddress: "192.168.160.184"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "ClientPolicy"},
+			Metadata: api.ObjectMeta{Name: "guest-devices"},
+			Spec: api.ClientPolicySpec{
+				Mode:            "include",
+				Interfaces:      []string{"lan"},
+				GuestEgressDeny: []string{"fd00:2::/64"},
+				Classification: []api.ClientPolicyClassSpec{{
+					Mode:            "guest",
+					Match:           api.ClientPolicyClassMatchSpec{MACs: []string{"02:00:00:00:00:44"}},
+					IPv4Reservation: "guest-phone",
+				}},
+			},
+		},
+	}}}
+	data, err := PF(router, nil)
+	if err != nil {
+		t.Fatalf("render pf: %v", err)
+	}
+	if strings.Contains(string(data), "inet6 from") {
+		t.Fatalf("IPv4 reservation must not infer an IPv6 ClientPolicy identity:\n%s", data)
+	}
+}
+
 func TestPFClientPolicyRequiresReservation(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

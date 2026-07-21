@@ -120,15 +120,16 @@ Implemented:
 - Static DS-Lite gif tunnel rendering
 - Dynamic DS-Lite apply from static AFTR IPv6, AFTR FQDN, or delegated-address local source
 
-`ClientPolicy` is supported on FreeBSD with an IPv4 reservation-backed pf
-approximation. Each guest or isolated classification must reference a
-`DHCPv4Reservation`; routerd renders pf rules for that reserved IPv4 address.
-This is not Linux-equivalent MAC-based isolation: pf cannot match the Ethernet
-source selector used by nftables, and routerd does not render IPv6 guest-egress
-deny rules from an IPv4 reservation. Configure explicit IPv6 policy separately
-when that traffic needs isolation. This behavior was validated on the router04
-FreeBSD lab on 2026-05-11. Potential dual-stack guest-deny support is tracked
-in [#849](https://github.com/imksoo/routerd/issues/849).
+`ClientPolicy` is supported on FreeBSD with an address-backed pf
+approximation. Each IPv4 guest or isolated classification references a
+`DHCPv4Reservation`; an IPv6 guest identity must instead be declared explicitly
+as `classification[].ipv6Addresses`. routerd never infers an IPv6 identity from
+an IPv4 reservation, MAC address, hostname, OUI, or DHCP fingerprint. The
+FreeBSD renderer uses those literal IPv6 addresses for family-safe `inet6`
+guest-egress deny rules. This is not Linux-equivalent MAC-based isolation: pf
+does not provide the Ethernet-source matching model used by nftables in the
+routed filter path. Privacy or unlisted IPv6 addresses are therefore outside
+this FreeBSD ClientPolicy slice and need separate network segmentation.
 
 FreeBSD does not use Linux-specific nftables, conntrack, or iproute2. The
 `Package` examples declare FreeBSD-native replacements: `pf` and `pflog0` from
@@ -160,7 +161,7 @@ and FreeBSD:
 | Area | Current gap | Backlog |
 | --- | --- | --- |
 | CI/runtime coverage | CI runs unit tests and Linux static checks on Ubuntu. FreeBSD is cross-built in release. | Add FreeBSD VM smoke jobs that run validate, plan, real package-manager checks, service activation, and renderer syntax checks. |
-| FreeBSD feature limitations | `ClientPolicy` uses DHCPv4 reservation-backed IPv4 pf rules; it cannot match MAC addresses and does not render IPv6 guest-egress deny rules from an IPv4 reservation. | Keep the limitation explicit; evaluate a dual-stack identity model before adding IPv6 guest-deny rendering ([#849](https://github.com/imksoo/routerd/issues/849)). |
+| FreeBSD feature limitations | `ClientPolicy` uses DHCPv4 reservations for IPv4 and explicit `classification[].ipv6Addresses` for IPv6 pf rules. It cannot match MAC addresses or infer IPv6 identity from DHCPv4. | Keep the explicit-address and MAC/L2 limitation visible; require separate segmentation for unlisted or privacy IPv6 addresses ([#849](https://github.com/imksoo/routerd/issues/849)). |
 | Package bootstrap | Ubuntu and FreeBSD can install packages imperatively. | Keep schema, validation, installer package lists, examples, and generated docs in sync for `apt` and `pkg`. |
 
 ## Implementation guideline for OS abstraction
