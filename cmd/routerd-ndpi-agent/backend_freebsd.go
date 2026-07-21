@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-//go:build freebsd
+//go:build freebsd && (!cgo || !libndpi)
 
 package main
 
@@ -10,9 +10,8 @@ import (
 	"github.com/imksoo/routerd/pkg/dpi"
 )
 
-// FreeBSD packages may provide command-line nDPI tools, but routerd's native
-// libndpi agent ABI is currently Linux-only.  Keep that capability explicit so
-// a FreeBSD build cannot be mistaken for a loaded native classifier.
+// Keep the optional capability explicit in default FreeBSD builds. Builds made
+// with CGO and the libndpi tag use the native backend instead.
 func newBackend(options) ndpiBackend { return freeBSDUnavailableBackend{} }
 
 func backendExpectedLoaded() bool { return false }
@@ -20,7 +19,7 @@ func backendExpectedLoaded() bool { return false }
 type freeBSDUnavailableBackend struct{}
 
 func (freeBSDUnavailableBackend) Status() backendStatus {
-	return backendStatus{Reason: "libndpi backend is not supported on FreeBSD builds"}
+	return backendStatus{Reason: "libndpi backend is not enabled in this FreeBSD build"}
 }
 
 func (freeBSDUnavailableBackend) Classify(_ context.Context, _ string, req dpi.ClassifyRequest, _ *flowState) (dpi.ClassifyResult, error) {
