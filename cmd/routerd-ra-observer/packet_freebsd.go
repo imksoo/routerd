@@ -5,6 +5,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"unsafe"
@@ -37,15 +38,19 @@ func openPacketSocket(ifname string) (*packetSocket, error) {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("BIOCPROMISC: %w", err)
 	}
-	if err := unix.IoctlSetPointerInt(fd, unix.BIOCSDIRECTION, bpfDirectionInOut); err != nil {
+	if err := observerIoctlSetInt(fd, unix.BIOCSDIRECTION, bpfDirectionInOut); err != nil {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("BIOCSDIRECTION: %w", err)
 	}
-	if err := unix.IoctlSetPointerInt(fd, unix.BIOCIMMEDIATE, 1); err != nil {
+	if err := observerIoctlSetInt(fd, unix.BIOCIMMEDIATE, 1); err != nil {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("BIOCIMMEDIATE: %w", err)
 	}
-	size, err := unix.IoctlGetInt(fd, unix.BIOCGBLEN)
+	if err := unix.SetNonblock(fd, true); err != nil {
+		_ = unix.Close(fd)
+		return nil, fmt.Errorf("set BPF nonblocking: %w", err)
+	}
+	size, err := observerIoctlGetInt(fd, unix.BIOCGBLEN)
 	if err != nil || size <= 0 {
 		size = 4096
 	}
@@ -73,6 +78,12 @@ func (s *packetSocket) read(frame []byte) (int, error) {
 		}
 		n, err := unix.Read(s.fd, s.buf)
 		if err != nil {
+			if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EWOULDBLOCK) {
+				if _, pollErr := unix.Poll([]unix.PollFd{{Fd: int32(s.fd), Events: unix.POLLIN}}, -1); pollErr != nil {
+					return 0, pollErr
+				}
+				continue
+			}
 			return 0, err
 		}
 		if n < unix.SizeofBpfHdr {
@@ -80,6 +91,24 @@ func (s *packetSocket) read(frame []byte) (int, error) {
 		}
 		s.pending = append(s.pending[:0], s.buf[:n]...)
 	}
+}
+
+func observerIoctlGetInt(fd int, req uint) (int, error) {
+	var value int32
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), uintptr(req), uintptr(unsafe.Pointer(&value)))
+	if errno != 0 {
+		return 0, errno
+	}
+	return int(value), nil
+}
+
+func observerIoctlSetInt(fd int, req uint, value int) error {
+	raw := int32(value)
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), uintptr(req), uintptr(unsafe.Pointer(&raw)))
+	if errno != 0 {
+		return errno
+	}
+	return nil
 }
 
 func (s *packetSocket) close() error { return unix.Close(s.fd) }
