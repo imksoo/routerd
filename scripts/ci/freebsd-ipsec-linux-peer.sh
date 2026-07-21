@@ -5,11 +5,13 @@ action=${1:?usage: $0 start|stop}
 peer_addr=${ROUTERD_IPSEC_PEER_ADDR:?ROUTERD_IPSEC_PEER_ADDR is required}
 guest_addr=${ROUTERD_IPSEC_GUEST_ADDR:?ROUTERD_IPSEC_GUEST_ADDR is required}
 topology=${ROUTERD_IPSEC_TOPOLOGY:-slirp}
-bridge=${ROUTERD_IPSEC_BRIDGE:-routerd-ipsec-br}
-tap=${ROUTERD_IPSEC_TAP:-routerd-ipsec-tap}
-netns=${ROUTERD_IPSEC_NETNS:-routerd-ipsec-peer}
-veth_host=${ROUTERD_IPSEC_VETH_HOST:-routerd-ipsec-veth}
-veth_peer=${ROUTERD_IPSEC_VETH_PEER:-routerd-ipsec-peer0}
+# Linux interface names are limited to IFNAMSIZ-1 (15 bytes).  Keep the
+# defaults aligned with the workflow so standalone fixture use is valid too.
+bridge=${ROUTERD_IPSEC_BRIDGE:-rd-ipsec-br}
+tap=${ROUTERD_IPSEC_TAP:-rd-ipsec-tap}
+netns=${ROUTERD_IPSEC_NETNS:-rd-ipsec-ns}
+veth_host=${ROUTERD_IPSEC_VETH_HOST:-rd-ipsec-vh}
+veth_peer=${ROUTERD_IPSEC_VETH_PEER:-rd-ipsec-vp}
 psk=routerd-native-linux-peer-disposable-psk
 run_id=${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}
 attempt=${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT is required}
@@ -40,7 +42,7 @@ setup_tap_topology() {
     echo "tap topology refuses pre-existing namespace: $netns" >&2
     return 1
   fi
-  sudo ip link add name "$bridge" type bridge
+  sudo ip link add "$bridge" type bridge
   mark_owned bridge
   sudo ip link set "$bridge" up
   sudo ip tuntap add dev "$tap" mode tap user "$(id -un)"
