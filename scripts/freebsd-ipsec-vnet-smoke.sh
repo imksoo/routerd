@@ -5,6 +5,9 @@
 # isolated VNET jail.  The host daemon is started and loaded only by routerd;
 # the peer has private strongSwan, VICI, PID, and swanctl configuration paths.
 set -eu
+# Preserve the native workflow's stderr even when a bounded command call is
+# redirected into a disposable evidence log.
+exec 3>&2
 
 usage() {
   echo 'usage: freebsd-ipsec-vnet-smoke.sh --routerd /absolute/routerd --evidence-dir /absolute/dir' >&2
@@ -103,7 +106,7 @@ cleanup() {
 			"$evidence/initiate-1.log" \
 			"$evidence/cleanup.log"; do
 			if [ -f "$log" ]; then
-				echo "--- ${log#$evidence/}" >&2
+				echo "--- ${log#"$evidence"/}" >&2
 				sed "s/$psk/[REDACTED]/g" "$log" >&2
 			fi
 		done
@@ -135,21 +138,28 @@ run_bounded() {
   (
     while :; do
       sleep 5
-      echo "ipsec-vnet waiting=$label" >&2
+      echo "ipsec-vnet waiting=$label" >&3
     done
   ) &
   heartbeat_pid=$!
-  set +e
-  timeout -k 2 "$limit" "$@"
-  command_rc=$?
-  kill "$heartbeat_pid" >/dev/null 2>&1
-  heartbeat_kill_rc=$?
-  wait "$heartbeat_pid" >/dev/null 2>&1
-  heartbeat_wait_rc=$?
-  set -e
+  if timeout -k 2 "$limit" "$@"; then
+    command_rc=0
+  else
+    command_rc=$?
+  fi
+  if kill "$heartbeat_pid" >/dev/null 2>&1; then
+    heartbeat_kill_rc=0
+  else
+    heartbeat_kill_rc=$?
+  fi
+  if wait "$heartbeat_pid" >/dev/null 2>&1; then
+    heartbeat_wait_rc=0
+  else
+    heartbeat_wait_rc=$?
+  fi
   : "$heartbeat_kill_rc" "$heartbeat_wait_rc"
   if [ "$command_rc" -eq 124 ]; then
-    echo "timed out: $label after ${limit}s" >&2
+    echo "timed out: $label after ${limit}s" >&3
   fi
   return "$command_rc"
 }
@@ -273,8 +283,8 @@ run_bounded 30 invalid-production-apply "$routerd" apply --once --config "$work/
 invalid_apply_rc=$?
 set -e
 if [ "$invalid_apply_rc" -eq 124 ]; then
-  echo 'invalid production apply timed out; redacted diagnostic follows' >&2
-  sed "s/$psk/[REDACTED]/g" "$evidence/apply-invalid.log" >&2
+  echo 'invalid production apply timed out; redacted diagnostic follows' >&3
+  sed "s/$psk/[REDACTED]/g" "$evidence/apply-invalid.log" >&3
   exit 1
 fi
 if [ "$invalid_apply_rc" -eq 0 ]; then
