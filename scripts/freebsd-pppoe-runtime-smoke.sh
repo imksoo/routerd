@@ -82,9 +82,9 @@ routerd_pppoe_server:
   set link max-children 1
   set link enable incoming
 EOF
-# mpd5 internal authentication uses whitespace-delimited credentials. Quoting
-# here is literal input, not shell syntax.
-printf '%s\n' 'routerd pppoe-secret' >"$work/mpd.secret"
+# The optional third mpd.secret field pins the address assigned to this
+# disposable authenticated peer. Quotes are valid mpd.secret field syntax.
+printf '%s\n' 'routerd "pppoe-secret" 198.18.10.2' >"$work/mpd.secret"
 chmod 0600 "$work/mpd.secret"
 mpd5 -b -d "$work" -f mpd.conf -p "$work/mpd.pid" routerd_pppoe_server >"$evidence_dir/mpd5.log" 2>&1
 for _ in $(jot 30); do
