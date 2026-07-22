@@ -42,6 +42,8 @@ epair_b=
 rcd_script=/usr/local/etc/rc.d/routerd_dnsmasq
 rcd_config=/usr/local/etc/routerd/dnsmasq.conf
 rcd_installed=0
+foreign_dnsmasq_pair=0
+foreign_dnsmasq_hosts=/usr/local/etc/routerd/dnsmasq-hosts.hosts
 
 # Each of these is a fixture-owned foreground daemon.  FreeBSD reports the
 # deliberate SIGTERM through wait(1) as 128+SIGTERM; after its live status was
@@ -110,6 +112,9 @@ cleanup() {
   if [ "$rcd_installed" -eq 1 ]; then
     env routerd_dnsmasq_enable=YES "$rcd_script" onestop >>"$evidence_dir/dnsmasq-rcd-stop.log" 2>&1 || rc=1
     rm -f "$rcd_script" "$rcd_config"
+  fi
+  if [ "$foreign_dnsmasq_pair" -eq 1 ]; then
+    rm -f "$rcd_script" "$rcd_config" "$foreign_dnsmasq_hosts"
   fi
   if [ -n "$epair_a" ] && ifconfig "$epair_a" >/dev/null 2>&1; then
     ifconfig "$epair_a" destroy >>"$evidence_dir/cleanup.log" 2>&1 || rc=1
@@ -216,6 +221,37 @@ env routerd_dnsmasq_enable=YES "$rcd_script" onestatus >>"$evidence_dir/dnsmasq-
 env routerd_dnsmasq_enable=YES "$rcd_script" onestop >"$evidence_dir/dnsmasq-rcd-stop.log" 2>&1
 rcd_installed=0
 rm -f "$rcd_script" "$rcd_config"
+
+# This is the live-chain ownership contract, not a rendered-file precheck.
+# The pair is markerless and fixture-owned: production apply must persist an
+# actionable Error before it writes either file or touches any service action.
+command -v sqlite3 >/dev/null
+printf '%s\n' '# fixture foreign dnsmasq config' 'port=53' >"$rcd_config"
+printf '%s\n' '# fixture foreign dnsmasq hosts sidecar' '192.0.2.55 foreign.example' >"$foreign_dnsmasq_hosts"
+printf '%s\n' '#!/bin/sh' '# fixture foreign dnsmasq rc.d service' >"$rcd_script"
+chmod 0555 "$rcd_script"
+foreign_dnsmasq_pair=1
+cp "$rcd_config" "$evidence_dir/dnsmasq-foreign-config.before"
+cp "$foreign_dnsmasq_hosts" "$evidence_dir/dnsmasq-foreign-hosts.before"
+cp "$rcd_script" "$evidence_dir/dnsmasq-foreign-service.before"
+set +e
+"$routerd" apply --once --config "$work/routerd-dnsmasq.yaml" \
+  --state-file "$work/dnsmasq-foreign-state.db" --ledger-file "$work/dnsmasq-foreign-ledger.json" \
+  >"$evidence_dir/dnsmasq-foreign-apply.log" 2>&1
+foreign_apply_rc=$?
+set -e
+[ "$foreign_apply_rc" -ne 0 ]
+cmp "$evidence_dir/dnsmasq-foreign-config.before" "$rcd_config"
+cmp "$evidence_dir/dnsmasq-foreign-hosts.before" "$foreign_dnsmasq_hosts"
+cmp "$evidence_dir/dnsmasq-foreign-service.before" "$rcd_script"
+sqlite3 "$work/dnsmasq-foreign-state.db" \
+  "SELECT status FROM objects WHERE api_version='net.routerd.net/v1alpha1' AND kind='DHCPv4Server' AND name='lan-dhcp';" \
+  >"$evidence_dir/dnsmasq-foreign-status.json"
+jq -e '.phase == "Error" and .reason == "ForeignDnsmasqArtifact"' \
+  "$evidence_dir/dnsmasq-foreign-status.json" >/dev/null
+echo "dnsmasq-foreign-live-chain-preservation=ok" >>"$evidence_dir/summary.log"
+rm -f "$rcd_script" "$rcd_config" "$foreign_dnsmasq_hosts"
+foreign_dnsmasq_pair=0
 
 # DHCPv6-PD uses the real FreeBSD Kea server on the peer half of the disposable
 # epair.  This is an actual multicast Solicit/Advertise/Request/Reply exchange,

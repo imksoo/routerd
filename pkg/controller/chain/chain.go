@@ -4577,6 +4577,7 @@ func writeDnsmasqConfig(router *api.Router, store Store, path, pidFile string, p
 		return false, false, err
 	}
 	var b strings.Builder
+	b.WriteString(routerdGeneratedDNSMasqMarker)
 	fmt.Fprintf(&b, "port=0\nno-resolv\nno-hosts\nbind-dynamic\npid-file=%s\ndhcp-leasefile=%s\n", pidFile, leaseFile)
 	hostsFile := dnsmasqHostsFile(path)
 	hostsChanged, err := writeDnsmasqHostsFile(router, hostsFile)
@@ -4959,7 +4960,7 @@ func writeDnsmasqHostsFile(router *api.Router, path string) (bool, error) {
 		lines = append(lines, dnsmasqHostFileLines(dnsmasqStickyHostLines("ipv6", "12h"))...)
 	}
 	sort.Strings(lines)
-	data := []byte(strings.Join(lines, "\n"))
+	data := []byte(routerdGeneratedDNSMasqMarker + strings.Join(lines, "\n"))
 	if len(data) > 0 {
 		data = append(data, '\n')
 	}

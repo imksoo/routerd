@@ -233,6 +233,60 @@ func TestEnsureSystemdDnsmasqServiceCachesStatusChecks(t *testing.T) {
 	}
 }
 
+func TestValidateDnsmasqArtifactsRefusesForeignPairBeforeLiveMutation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		os   platform.OS
+	}{
+		{name: "linux", os: platform.OSLinux},
+		{name: "freebsd", os: platform.OSFreeBSD},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "dnsmasq.conf")
+			hostsPath := filepath.Join(dir, "dnsmasq-hosts.hosts")
+			servicePath := filepath.Join(dir, "routerd-dnsmasq.service")
+			foreignConfig := []byte("# administrator dnsmasq configuration\n")
+			foreignHosts := []byte("192.0.2.10 foreign.example\n")
+			foreignService := []byte("# administrator service\n")
+			for path, data := range map[string][]byte{configPath: foreignConfig, hostsPath: foreignHosts, servicePath: foreignService} {
+				if err := os.WriteFile(path, data, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := validateDnsmasqArtifacts(configPath, hostsPath, servicePath, tc.os)
+			if err == nil || !strings.Contains(err.Error(), "foreign") {
+				t.Fatalf("expected actionable foreign-artifact rejection, got %v", err)
+			}
+			for path, want := range map[string][]byte{configPath: foreignConfig, hostsPath: foreignHosts, servicePath: foreignService} {
+				got, readErr := os.ReadFile(path)
+				if readErr != nil || string(got) != string(want) {
+					t.Fatalf("foreign artifact %s mutated: got %q err=%v", path, got, readErr)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateDnsmasqArtifactsAcceptsOwnedPair(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "dnsmasq.conf")
+	hostsPath := filepath.Join(dir, "dnsmasq-hosts.hosts")
+	servicePath := filepath.Join(dir, "routerd-dnsmasq.service")
+	for path, data := range map[string]string{
+		configPath:  routerdGeneratedDNSMasqMarker + "port=0\n",
+		hostsPath:   routerdGeneratedDNSMasqMarker,
+		servicePath: "[Unit]\nDescription=routerd managed dnsmasq DHCP service\n",
+	} {
+		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := validateDnsmasqArtifacts(configPath, hostsPath, servicePath, platform.OSLinux); err != nil {
+		t.Fatalf("owned live artifacts rejected: %v", err)
+	}
+}
+
 func TestDHCPv4ServerPendingSourceOmitsScopeUntilResolved(t *testing.T) {
 	dir := t.TempDir()
 	leaseFile := filepath.Join(dir, "state", "dnsmasq", "dnsmasq.leases")
