@@ -291,3 +291,164 @@ func TestFreeBSDPPPoEInterfaceObservationPersistsKernelState(t *testing.T) {
 		t.Fatalf("kernel observation was not persisted: state=%s events=%s", state, events)
 	}
 }
+
+func TestPPPoEStopWaitsForChildBeforeRapidRestartOnBothBackends(t *testing.T) {
+	for name, osName := range map[string]platform.OS{"linux": platform.OSLinux, "freebsd": platform.OSFreeBSD} {
+		t.Run(name, func(t *testing.T) {
+			previousOS := currentPPPoEOS
+			previousModules := ensureFreeBSDPPPoEModule
+			previousExists := freeBSDPPPoEInterfaceExists
+			previousObserve := observeFreeBSDPPPoEInterface
+			previousCommand := pppoeSessionCommand
+			previousGrace := pppoeStopGracePeriod
+			t.Cleanup(func() {
+				currentPPPoEOS = previousOS
+				ensureFreeBSDPPPoEModule = previousModules
+				freeBSDPPPoEInterfaceExists = previousExists
+				observeFreeBSDPPPoEInterface = previousObserve
+				pppoeSessionCommand = previousCommand
+				pppoeStopGracePeriod = previousGrace
+			})
+			currentPPPoEOS = func() platform.OS { return osName }
+			ensureFreeBSDPPPoEModule = func(context.Context) error { return nil }
+			freeBSDPPPoEInterfaceExists = func(context.Context, string) (bool, error) { return false, nil }
+			observeFreeBSDPPPoEInterface = func(context.Context, string) (freeBSDPPPoEObservation, error) {
+				return freeBSDPPPoEObservation{}, errors.New("not configured in unit test")
+			}
+			pppoeSessionCommand = func(pppoeclient.Config) (string, []string) { return "sleep", []string{"30"} }
+			pppoeStopGracePeriod = 10 * time.Millisecond
+
+			dir := t.TempDir()
+			d := newDaemon(options{resource: "wan", ifname: "vtnet0", username: "user", password: "secret", runtimeDir: dir, stateFile: filepath.Join(dir, "state.json"), eventFile: filepath.Join(dir, "events.jsonl")}, nil)
+			if err := d.startSession(t.Context()); err != nil {
+				t.Fatalf("start first session: %v", err)
+			}
+			d.mu.Lock()
+			firstDone := d.cmdDone
+			d.snapshot.Phase = pppoeclient.PhaseConnected
+			d.snapshot.CurrentAddress = "198.18.10.2"
+			d.snapshot.PeerAddress = "198.18.10.1"
+			d.mu.Unlock()
+			if err := d.startSession(t.Context()); err == nil || !strings.Contains(err.Error(), "already active") {
+				t.Fatalf("overlapping start error = %v, want active-session refusal", err)
+			}
+			d.stopSession()
+			select {
+			case <-firstDone:
+			default:
+				t.Fatal("stopSession returned before the managed child completion")
+			}
+			d.mu.Lock()
+			if d.cmd != nil || d.cmdDone != nil || d.snapshot.Phase != pppoeclient.PhaseIdle {
+				t.Fatalf("stop state = cmd=%v done=%v phase=%q", d.cmd, d.cmdDone, d.snapshot.Phase)
+			}
+			d.mu.Unlock()
+			if err := d.startSession(t.Context()); err != nil {
+				t.Fatalf("rapid restart after child completion: %v", err)
+			}
+			d.mu.Lock()
+			if d.snapshot.CurrentAddress != "" || d.snapshot.PeerAddress != "" || !d.snapshot.ConnectedAt.IsZero() {
+				t.Fatalf("restart retained stale observation: %#v", d.snapshot)
+			}
+			d.mu.Unlock()
+			d.stopSession()
+		})
+	}
+}
+
+func TestPPPoEStopForceKillsAndWaitsForManagedChild(t *testing.T) {
+	previousCommand := pppoeSessionCommand
+	previousGrace := pppoeStopGracePeriod
+	t.Cleanup(func() {
+		pppoeSessionCommand = previousCommand
+		pppoeStopGracePeriod = previousGrace
+	})
+	pppoeSessionCommand = func(pppoeclient.Config) (string, []string) {
+		return "sh", []string{"-c", "trap '' INT; exec sleep 30"}
+	}
+	pppoeStopGracePeriod = 10 * time.Millisecond
+	dir := t.TempDir()
+	d := newDaemon(options{resource: "forced", ifname: "vtnet0", username: "user", password: "secret", runtimeDir: dir, stateFile: filepath.Join(dir, "state.json")}, nil)
+	if err := d.startSession(t.Context()); err != nil {
+		t.Fatalf("start forced session: %v", err)
+	}
+	d.mu.Lock()
+	done := d.cmdDone
+	d.mu.Unlock()
+	d.stopSession()
+	select {
+	case <-done:
+	default:
+		t.Fatal("forced stop returned before completion")
+	}
+}
+
+func TestPPPoEStaleCompletionCannotOverwriteNewGeneration(t *testing.T) {
+	current := &exec.Cmd{}
+	currentDone := make(chan struct{})
+	staleDone := make(chan struct{})
+	d := &daemon{
+		snapshot: pppoeclient.Snapshot{Phase: pppoeclient.PhaseConnecting},
+		cmd:      current,
+		cmdDone:  currentDone,
+	}
+	d.finishSession(&exec.Cmd{}, staleDone, nil)
+	select {
+	case <-staleDone:
+	default:
+		t.Fatal("stale completion was not released")
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.cmd != current || d.cmdDone != currentDone || d.snapshot.Phase != pppoeclient.PhaseConnecting {
+		t.Fatalf("stale completion overwrote current generation: cmd=%v done=%v phase=%q", d.cmd, d.cmdDone, d.snapshot.Phase)
+	}
+}
+
+func TestPPPoEManagedChildUsesDaemonLifetimeRatherThanRequestContext(t *testing.T) {
+	previousCommand := pppoeSessionCommand
+	t.Cleanup(func() { pppoeSessionCommand = previousCommand })
+	pppoeSessionCommand = func(pppoeclient.Config) (string, []string) { return "sleep", []string{"30"} }
+	dir := t.TempDir()
+	d := newDaemon(options{resource: "lifetime", ifname: "vtnet0", username: "user", password: "secret", runtimeDir: dir, stateFile: filepath.Join(dir, "state.json")}, nil)
+	d.lifetimeCtx = context.Background()
+	requestCtx, cancel := context.WithCancel(context.Background())
+	if err := d.startSession(requestCtx); err != nil {
+		cancel()
+		t.Fatalf("start session: %v", err)
+	}
+	cancel()
+	time.Sleep(20 * time.Millisecond)
+	d.mu.Lock()
+	stillRunning := d.cmd != nil
+	d.mu.Unlock()
+	if !stillRunning {
+		t.Fatal("request context cancellation terminated the managed PPPoE child")
+	}
+	d.stopSession()
+}
+
+func TestPPPoEStopWaitsForInFlightStartReservation(t *testing.T) {
+	startDone := make(chan struct{})
+	d := &daemon{sessionStarting: true, startDone: startDone}
+	stopped := make(chan struct{})
+	go func() {
+		d.stopSession()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+		t.Fatal("stopSession returned while start reservation was in flight")
+	case <-time.After(20 * time.Millisecond):
+	}
+	d.mu.Lock()
+	d.sessionStarting = false
+	d.startDone = nil
+	close(startDone)
+	d.mu.Unlock()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("stopSession did not converge after start reservation completed")
+	}
+}

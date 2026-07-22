@@ -61,12 +61,16 @@ type daemon struct {
 	spec      api.PPPoESessionSpec
 	startedAt time.Time
 
-	mu             sync.Mutex
-	snapshot       pppoeclient.Snapshot
-	events         []daemonapi.DaemonEvent
-	nextCursor     uint64
-	cmd            *exec.Cmd
-	lastDiagnostic string
+	mu              sync.Mutex
+	snapshot        pppoeclient.Snapshot
+	events          []daemonapi.DaemonEvent
+	nextCursor      uint64
+	cmd             *exec.Cmd
+	cmdDone         chan struct{}
+	sessionStarting bool
+	startDone       chan struct{}
+	lifetimeCtx     context.Context
+	lastDiagnostic  string
 
 	telemetry     *routerotel.Runtime
 	phaseGauge    metric.Int64Gauge
@@ -108,6 +112,10 @@ var ensureFreeBSDPPPoEModule = func(ctx context.Context) error {
 }
 
 var currentPPPoEOS = platform.CurrentOS
+
+var pppoeSessionCommand = pppoeclient.Command
+
+var pppoeStopGracePeriod = time.Second
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout); err != nil {
@@ -279,6 +287,9 @@ func mustHistogram(telemetry *routerotel.Runtime) metric.Float64Histogram {
 }
 
 func (d *daemon) Run(ctx context.Context) error {
+	d.mu.Lock()
+	d.lifetimeCtx = ctx
+	d.mu.Unlock()
 	if err := d.prepareFilesystem(); err != nil {
 		return err
 	}
@@ -306,6 +317,33 @@ func (d *daemon) Run(ctx context.Context) error {
 }
 
 func (d *daemon) startSession(ctx context.Context) error {
+	d.mu.Lock()
+	if d.cmd != nil || d.sessionStarting {
+		d.mu.Unlock()
+		return errors.New("PPPoE session start is already active or stopping")
+	}
+	d.sessionStarting = true
+	startDone := make(chan struct{})
+	d.startDone = startDone
+	managedCtx := d.lifetimeCtx
+	d.mu.Unlock()
+	if managedCtx == nil {
+		managedCtx = ctx
+	}
+	started := false
+	defer func() {
+		if started {
+			return
+		}
+		d.mu.Lock()
+		if d.startDone == startDone {
+			d.sessionStarting = false
+			d.startDone = nil
+			close(startDone)
+		}
+		d.mu.Unlock()
+	}()
+
 	if err := d.renderRuntimeConfig(); err != nil {
 		return err
 	}
@@ -319,8 +357,8 @@ func (d *daemon) startSession(ctx context.Context) error {
 			return err
 		}
 	}
-	name, argv := pppoeclient.Command(d.config())
-	cmd := exec.CommandContext(ctx, name, argv...)
+	name, argv := pppoeSessionCommand(d.config())
+	cmd := exec.CommandContext(managedCtx, name, argv...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -329,17 +367,29 @@ func (d *daemon) startSession(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	d.mu.Lock()
-	d.snapshot.Phase = pppoeclient.PhaseConnecting
-	d.snapshot.UpdatedAt = time.Now().UTC()
-	d.cmd = cmd
-	freeBSDIfName := d.snapshot.IfName
-	d.mu.Unlock()
-	d.recordPhase()
 	if err := cmd.Start(); err != nil {
 		d.markFailed(err.Error())
 		return err
 	}
+	completion := make(chan struct{})
+	d.mu.Lock()
+	d.snapshot.Phase = pppoeclient.PhaseConnecting
+	d.snapshot.CurrentAddress = ""
+	d.snapshot.PeerAddress = ""
+	d.snapshot.BytesIn = 0
+	d.snapshot.BytesOut = 0
+	d.snapshot.ConnectedAt = time.Time{}
+	d.snapshot.LastError = ""
+	d.snapshot.UpdatedAt = time.Now().UTC()
+	d.cmd = cmd
+	d.cmdDone = completion
+	d.sessionStarting = false
+	d.startDone = nil
+	close(startDone)
+	freeBSDIfName := d.snapshot.IfName
+	d.mu.Unlock()
+	started = true
+	d.recordPhase()
 	d.publish("routerd.pppoe.client.session.connecting", daemonapi.SeverityInfo, "Connecting", "PPPoE session command started", map[string]string{"command": name})
 	go d.watchDiscoveryTimeout(cmd)
 	if currentPPPoEOS() == platform.OSFreeBSD {
@@ -349,28 +399,75 @@ func (d *daemon) startSession(ctx context.Context) error {
 	go d.scanLog(stderr)
 	go func() {
 		err := cmd.Wait()
-		d.mu.Lock()
-		defer d.mu.Unlock()
-		if d.cmd == cmd {
-			d.cmd = nil
-		}
+		d.finishSession(cmd, completion, err)
+	}()
+	return nil
+}
+
+// finishSession is the sole completion owner for a managed child. The command
+// identity and immutable completion channel protect a newer session from stale
+// completion work before the old waiter releases stop/start serialization.
+func (d *daemon) finishSession(cmd *exec.Cmd, completion chan struct{}, err error) {
+	d.mu.Lock()
+	if d.cmd == cmd && d.cmdDone == completion {
+		d.cmd = nil
+		d.cmdDone = nil
 		if err != nil && d.snapshot.Phase != pppoeclient.PhaseDisconnecting && d.snapshot.ConnectedAt.IsZero() {
 			d.snapshot.Phase = pppoeclient.PhaseFailed
 			d.snapshot.LastError = d.exitDiagnosticLocked(err)
 			d.snapshot.UpdatedAt = time.Now().UTC()
 			_ = d.saveStateLocked()
 			d.publishLocked("routerd.pppoe.client.session.failed", daemonapi.SeverityWarning, "Exited", d.snapshot.LastError, nil)
+		} else {
+			d.snapshot.Phase = pppoeclient.PhaseIdle
+			if !d.snapshot.ConnectedAt.IsZero() {
+				d.snapshot.LastError = ""
+			}
+			d.snapshot.UpdatedAt = time.Now().UTC()
+			_ = d.saveStateLocked()
+			d.publishLocked("routerd.pppoe.client.session.disconnected", daemonapi.SeverityInfo, "Exited", "PPPoE session command exited", nil)
+		}
+	}
+	close(completion)
+	d.mu.Unlock()
+}
+
+func (d *daemon) stopSession() {
+	for {
+		d.mu.Lock()
+		if d.sessionStarting {
+			startDone := d.startDone
+			d.mu.Unlock()
+			if startDone != nil {
+				<-startDone
+			}
+			continue
+		}
+		cmd := d.cmd
+		completion := d.cmdDone
+		if cmd == nil || completion == nil {
+			d.mu.Unlock()
 			return
 		}
-		d.snapshot.Phase = pppoeclient.PhaseIdle
-		if !d.snapshot.ConnectedAt.IsZero() {
-			d.snapshot.LastError = ""
-		}
+		d.snapshot.Phase = pppoeclient.PhaseDisconnecting
 		d.snapshot.UpdatedAt = time.Now().UTC()
 		_ = d.saveStateLocked()
-		d.publishLocked("routerd.pppoe.client.session.disconnected", daemonapi.SeverityInfo, "Exited", "PPPoE session command exited", nil)
-	}()
-	return nil
+		d.mu.Unlock()
+
+		if cmd.Process != nil {
+			_ = cmd.Process.Signal(os.Interrupt)
+			timer := time.NewTimer(pppoeStopGracePeriod)
+			select {
+			case <-completion:
+				timer.Stop()
+				return
+			case <-timer.C:
+				_ = cmd.Process.Kill()
+			}
+		}
+		<-completion
+		return
+	}
 }
 
 func (d *daemon) watchDiscoveryTimeout(cmd *exec.Cmd) {
@@ -424,20 +521,6 @@ func redactPPPoEDiagnostic(line, password string) string {
 		return line
 	}
 	return strings.ReplaceAll(line, password, "[REDACTED]")
-}
-
-func (d *daemon) stopSession() {
-	d.mu.Lock()
-	cmd := d.cmd
-	d.snapshot.Phase = pppoeclient.PhaseDisconnecting
-	d.snapshot.UpdatedAt = time.Now().UTC()
-	_ = d.saveStateLocked()
-	d.mu.Unlock()
-	if cmd != nil && cmd.Process != nil {
-		_ = cmd.Process.Signal(os.Interrupt)
-		time.Sleep(time.Second)
-		_ = cmd.Process.Kill()
-	}
 }
 
 func (d *daemon) markFailed(message string) {
