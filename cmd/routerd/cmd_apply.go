@@ -249,6 +249,10 @@ type staleObjectStatusCleanupResult struct {
 }
 
 func cleanupUnsupportedLegacyObjectStatuses(router *api.Router, store staleObjectStatusCleanupStore, statePath string, now time.Time, logger *eventlog.Logger) (staleObjectStatusCleanupResult, error) {
+	return cleanupUnsupportedLegacyObjectStatusesForOS(router, store, statePath, now, logger, platform.CurrentOS())
+}
+
+func cleanupUnsupportedLegacyObjectStatusesForOS(router *api.Router, store staleObjectStatusCleanupStore, statePath string, now time.Time, logger *eventlog.Logger, targetOS platform.OS) (staleObjectStatusCleanupResult, error) {
 	if store == nil {
 		return staleObjectStatusCleanupResult{}, nil
 	}
@@ -258,7 +262,7 @@ func cleanupUnsupportedLegacyObjectStatuses(router *api.Router, store staleObjec
 		recordStateCleanupEvent(router, store, "StaleStateCleanupSkipped", "stale state cleanup skipped: "+err.Error())
 		return staleObjectStatusCleanupResult{Skipped: true}, err
 	}
-	desired, err := desiredObjectStatusKeys(router, store, now)
+	desired, err := desiredObjectStatusKeysForOS(router, store, now, targetOS)
 	if err != nil {
 		emitStateCleanupWarning(logger, "stale state cleanup skipped: build effective resource view failed", map[string]string{"error": err.Error()})
 		recordStateCleanupEvent(router, store, "StaleStateCleanupSkipped", "stale state cleanup skipped: "+err.Error())
@@ -304,12 +308,16 @@ func syntheticObjectStatus(status routerstate.ObjectStatus) bool {
 }
 
 func desiredObjectStatusKeys(router *api.Router, store resourcequery.StateStore, now time.Time) (map[string]bool, error) {
+	return desiredObjectStatusKeysForOS(router, store, now, platform.CurrentOS())
+}
+
+func desiredObjectStatusKeysForOS(router *api.Router, store resourcequery.StateStore, now time.Time, targetOS platform.OS) (map[string]bool, error) {
 	out := map[string]bool{}
 	if router == nil {
 		return out, nil
 	}
 	effective := resourcequery.FilterRouterByWhen(router, store)
-	routers, err := controllerchain.BuildDynamicRouteSAMObjectStatusRouters(effective, store, now.UTC(), platform.CurrentOS())
+	routers, err := controllerchain.BuildDynamicRouteSAMObjectStatusRouters(effective, store, now.UTC(), targetOS)
 	if err != nil {
 		return nil, err
 	}

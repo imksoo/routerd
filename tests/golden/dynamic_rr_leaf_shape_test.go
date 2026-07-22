@@ -10,6 +10,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/platform"
 	"gopkg.in/yaml.v3"
 )
 
@@ -358,7 +359,7 @@ func loadExampleRouter(t *testing.T, name string) *api.Router {
 	if err != nil {
 		t.Fatalf("load %s: %v", name, err)
 	}
-	if err := config.Validate(router); err != nil {
+	if err := config.ValidateForOS(router, platform.OSLinux); err != nil {
 		t.Fatalf("validate %s: %v", name, err)
 	}
 	return router

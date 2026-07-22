@@ -73,7 +73,7 @@ func buildDynamicRouteSAMView(startup *api.Router, store any, now time.Time, tar
 			if err != nil {
 				return dynamicRouteSAMView{}, err
 			}
-			merged, _, err := dynamicconfig.BuildEffectiveConfig(*startup, parts, policies, now.UTC())
+			merged, _, err := dynamicconfig.BuildEffectiveConfigForOS(*startup, parts, policies, now.UTC(), targetOS)
 			if err != nil {
 				return dynamicRouteSAMView{}, err
 			}

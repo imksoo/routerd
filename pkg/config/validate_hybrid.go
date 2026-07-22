@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"net/netip"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -12,7 +13,8 @@ import (
 	"github.com/imksoo/routerd/pkg/platform"
 )
 
-func validateHybridResource(res api.Resource, _ platform.OS) (bool, error) {
+var freeBSDTunnelInterfaceName = regexp.MustCompile(`^(gif|gre)[0-9]+$`)
+func validateHybridResource(res api.Resource, targetOS platform.OS) (bool, error) {
 	switch res.Kind {
 	case "OverlayPeer":
 		if res.APIVersion != api.HybridAPIVersion {
@@ -106,6 +108,22 @@ func validateHybridResource(res api.Resource, _ platform.OS) (bool, error) {
 		if !spec.TrustedUnderlay {
 			return true, fmt.Errorf("%s spec.trustedUnderlay must be true; ipip/gre/fou/gue tunnels are unencrypted and unauthenticated and require a trusted underlay", res.ID())
 		}
+		if targetOS == platform.OSFreeBSD {
+			if mode != "ipip" && mode != "gre" {
+				return true, fmt.Errorf("%s spec.mode %q is unsupported on FreeBSD; only ipip (gif) and gre have equivalent ifconfig semantics", res.ID(), mode)
+			}
+			if spec.TTL != 0 {
+				return true, fmt.Errorf("%s spec.ttl is unsupported on FreeBSD TunnelInterface; ifconfig has no equivalent per-tunnel TTL control", res.ID())
+			}
+			name := strings.TrimSpace(res.Metadata.Name)
+			if !freeBSDTunnelInterfaceName.MatchString(name) {
+				return true, fmt.Errorf("%s metadata.name must be a FreeBSD cloned interface name (%sN for mode %s)", res.ID(), map[string]string{"ipip": "gif", "gre": "gre"}[mode], mode)
+			}
+			wantPrefix := map[string]string{"ipip": "gif", "gre": "gre"}[mode]
+			if !strings.HasPrefix(name, wantPrefix) {
+				return true, fmt.Errorf("%s metadata.name %q must use %sN for FreeBSD mode %s", res.ID(), name, wantPrefix, mode)
+			}
+		}
 	case "HybridRoute":
 		if res.APIVersion != api.HybridAPIVersion {
 			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.HybridAPIVersion)
@@ -187,6 +205,9 @@ func validateHybridResource(res api.Resource, _ platform.OS) (bool, error) {
 		spec, err := res.RemoteAddressClaimSpec()
 		if err != nil {
 			return true, err
+		}
+		if targetOS == platform.OSFreeBSD && strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
+			return true, fmt.Errorf("%s FreeBSD does not support SAM proxy-ARP local capture: proxy-neighbor ownership, GARP, and the routerd-owned forwarding path require the Linux dataplane", res.ID())
 		}
 		if strings.TrimSpace(spec.DomainRef) == "" {
 			return true, fmt.Errorf("%s spec.domainRef is required", res.ID())

@@ -68,7 +68,7 @@ func (c TunnelInterfaceController) Reconcile(ctx context.Context) error {
 	if targetOS == "" {
 		targetOS = platform.CurrentOS()
 	}
-	if targetOS == platform.OSLinux {
+	if targetOS == platform.OSLinux || targetOS == platform.OSFreeBSD {
 		if err := c.cleanupStaleResources(ctx); err != nil {
 			return err
 		}
@@ -77,7 +77,7 @@ func (c TunnelInterfaceController) Reconcile(ctx context.Context) error {
 		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "TunnelInterface" {
 			continue
 		}
-		if targetOS != platform.OSLinux {
+		if targetOS != platform.OSLinux && targetOS != platform.OSFreeBSD {
 			if err := c.saveUnsupportedStatus(resource, targetOS); err != nil {
 				return err
 			}
@@ -119,6 +119,15 @@ func (c TunnelInterfaceController) cleanupStaleResources(ctx context.Context) er
 		ifname := firstNonEmpty(statusString(item.Status, "ifname"), statusString(item.Status, "interface"), item.Name)
 		if ifname != "" && !c.DryRun {
 			if err := c.deleteTunnelInterface(ctx, ifname); err != nil {
+				return err
+			}
+		}
+		if listener, ok := fouListenerFromStatus(item.Status); ok && !c.DryRun {
+			if c.desiredUsesFOUListener(listener, "") {
+				if err := c.transferFOUOwnership(listener, item.Name); err != nil {
+					return err
+				}
+			} else if err := c.deleteFOUListener(ctx, listener); err != nil {
 				return err
 			}
 		}
@@ -168,7 +177,9 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		status["error"] = err.Error()
 		return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status)
 	}
-	if err := c.ensureFOUListener(ctx, desired); err != nil {
+	previous := c.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name)
+	listenerCreated, err := c.ensureFOUListener(ctx, desired)
+	if err != nil {
 		return c.saveApplyError(resource, desired, err)
 	}
 	applied := false
@@ -189,6 +200,9 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		applied = true
 		created = true
 	} else if !tunnelLinkMatches(observed, desired) {
+		if c.targetOS() == platform.OSFreeBSD && desired.Mode == "gre" && desired.Key == 0 && observed.Key != 0 {
+			return c.saveApplyError(resource, desired, fmt.Errorf("clear FreeBSD GRE key on %s is not yet native-verified; refusing to retain the old key", desired.Name))
+		}
 		if err := c.changeTunnelInterface(ctx, desired); err != nil {
 			return c.saveApplyError(resource, desired, err)
 		}
@@ -205,7 +219,7 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		}
 		applied = true
 	}
-	if desired.Address != "" {
+	if desired.Address != "" || statusString(previous, "address") != "" {
 		addressChanged, err := c.reconcileTunnelAddress(ctx, desired)
 		if err != nil {
 			return c.saveApplyError(resource, desired, err)
@@ -213,6 +227,20 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		applied = applied || addressChanged
 	}
 	status = tunnelStatus(desired, c.DryRun, map[string]any{"phase": "Up"})
+	if listener, ok := fouListenerForDesired(desired); ok {
+		if listenerCreated || fouListenerMatchesStatus(listener, previous) || c.routerdOwnsFOUListener(listener, resource.Metadata.Name) {
+			status["fouListenerOwned"] = true
+		}
+	}
+	if previousListener, ok := fouListenerFromStatus(previous); ok && !c.DryRun && !fouListenerMatchesStatus(previousListener, status) {
+		if c.desiredUsesFOUListener(previousListener, resource.Metadata.Name) {
+			if err := c.transferFOUOwnership(previousListener, resource.Metadata.Name); err != nil {
+				return c.saveApplyError(resource, desired, err)
+			}
+		} else if err := c.deleteFOUListener(ctx, previousListener); err != nil {
+			return c.saveApplyError(resource, desired, err)
+		}
+	}
 	if !applied {
 		status["reason"] = "AlreadyConfigured"
 	}
@@ -416,7 +444,7 @@ func tunnelLinkMatches(observed tunnelObserved, desired tunnelDesired) bool {
 	if observed.TTL != 0 && observed.TTL != desired.TTL {
 		return false
 	}
-	if desired.Key != 0 && observed.Key != desired.Key {
+	if desired.Mode == "gre" && observed.Key != desired.Key {
 		return false
 	}
 	if (desired.Mode == "fou" || desired.Mode == "gue") && observed.EncapSport != desired.EncapSport {
@@ -429,6 +457,16 @@ func tunnelLinkMatches(observed tunnelObserved, desired tunnelDesired) bool {
 }
 
 func (c TunnelInterfaceController) observeTunnel(ctx context.Context, ifname string) (tunnelObserved, error) {
+	if c.targetOS() == platform.OSFreeBSD {
+		out, err := c.run(ctx, "ifconfig", ifname)
+		if err != nil {
+			if tunnelMissingLink(out, err) {
+				return tunnelObserved{}, nil
+			}
+			return tunnelObserved{}, fmt.Errorf("observe FreeBSD tunnel interface %s: %w: %s", ifname, err, strings.TrimSpace(string(out)))
+		}
+		return parseFreeBSDTunnelStatus(ifname, out), nil
+	}
 	out, err := c.run(ctx, "ip", "-d", "-o", "link", "show", "dev", ifname)
 	if err != nil {
 		if tunnelMissingLink(out, err) {
@@ -482,17 +520,117 @@ func parseTunnelLinkStatus(out []byte) tunnelObserved {
 	return observed
 }
 
+func parseFreeBSDTunnelStatus(ifname string, out []byte) tunnelObserved {
+	text := string(out)
+	observed := tunnelObserved{Exists: strings.TrimSpace(text) != ""}
+	if strings.Contains(text, "<") && strings.Contains(text, "UP") {
+		observed.Up = true
+	}
+	if strings.HasPrefix(ifname, "gif") {
+		observed.Mode = "ipip"
+	} else if strings.HasPrefix(ifname, "gre") {
+		observed.Mode = "gre"
+	}
+	fields := strings.Fields(text)
+	for i, field := range fields {
+		switch {
+		case field == "mtu" && i+1 < len(fields):
+			observed.MTU, _ = strconv.Atoi(fields[i+1])
+		case field == "grekey:" && i+1 < len(fields):
+			observed.Key, _ = strconv.Atoi(fields[i+1])
+		case field == "tunnel" && i+3 < len(fields) && fields[i+1] == "inet" && fields[i+3] == "-->":
+			observed.Local = fields[i+2]
+			if i+4 < len(fields) {
+				observed.Remote = fields[i+4]
+			}
+		}
+	}
+	return observed
+}
+
+func parseFreeBSDIPv4AddressPrefixes(out []byte) []string {
+	seen := map[string]bool{}
+	var addresses []string
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "inet" {
+			continue
+		}
+		addr, err := netip.ParseAddr(fields[1])
+		if err != nil || !addr.Is4() {
+			continue
+		}
+		bits := 32
+		for j := 2; j+1 < len(fields); j++ {
+			if fields[j] == "netmask" {
+				bits = freeBSDNetmaskBits(fields[j+1])
+				break
+			}
+		}
+		prefix := netip.PrefixFrom(addr, bits).String()
+		if !seen[prefix] {
+			seen[prefix] = true
+			addresses = append(addresses, prefix)
+		}
+	}
+	return addresses
+}
+
+func freeBSDNetmaskBits(value string) int {
+	value = strings.TrimPrefix(strings.TrimSpace(value), "0x")
+	if len(value) != 8 {
+		return 32
+	}
+	n, err := strconv.ParseUint(value, 16, 32)
+	if err != nil {
+		return 32
+	}
+	bits := 0
+	for n&0x80000000 != 0 {
+		bits++
+		n <<= 1
+	}
+	if bits == 0 && n != 0 {
+		return 32
+	}
+	return bits
+}
+
 func (c TunnelInterfaceController) addTunnelInterface(ctx context.Context, desired tunnelDesired) error {
+	if c.targetOS() == platform.OSFreeBSD {
+		if _, err := c.run(ctx, "ifconfig", desired.Name, "create"); err != nil {
+			return commandError("create FreeBSD tunnel interface "+desired.Name, err)
+		}
+		return c.changeTunnelInterface(ctx, desired)
+	}
 	_, err := c.run(ctx, "ip", tunnelAddArgs(desired)...)
 	return commandError("add tunnel interface "+desired.Name, err)
 }
 
 func (c TunnelInterfaceController) changeTunnelInterface(ctx context.Context, desired tunnelDesired) error {
+	if c.targetOS() == platform.OSFreeBSD {
+		if _, err := c.run(ctx, "ifconfig", desired.Name, "tunnel", desired.Local, desired.Remote); err != nil {
+			return commandError("configure FreeBSD tunnel endpoints "+desired.Name, err)
+		}
+		if desired.Mode == "gre" && desired.Key != 0 {
+			if _, err := c.run(ctx, "ifconfig", desired.Name, "grekey", strconv.Itoa(desired.Key)); err != nil {
+				return commandError("configure FreeBSD GRE key "+desired.Name, err)
+			}
+		}
+		return nil
+	}
 	_, err := c.run(ctx, "ip", tunnelChangeArgs(desired)...)
 	return commandError("change tunnel interface "+desired.Name, err)
 }
 
 func (c TunnelInterfaceController) deleteTunnelInterface(ctx context.Context, ifname string) error {
+	if c.targetOS() == platform.OSFreeBSD {
+		out, err := c.run(ctx, "ifconfig", ifname, "destroy")
+		if err == nil || tunnelMissingLink(out, err) {
+			return nil
+		}
+		return fmt.Errorf("delete FreeBSD tunnel interface %s: %w: %s", ifname, err, strings.TrimSpace(string(out)))
+	}
 	out, err := c.run(ctx, "ip", "link", "del", "dev", ifname)
 	if err == nil || tunnelMissingLink(out, err) {
 		return nil
@@ -501,6 +639,15 @@ func (c TunnelInterfaceController) deleteTunnelInterface(ctx context.Context, if
 }
 
 func (c TunnelInterfaceController) setTunnelLink(ctx context.Context, desired tunnelDesired) error {
+	if c.targetOS() == platform.OSFreeBSD {
+		args := []string{desired.Name}
+		if desired.MTU > 0 {
+			args = append(args, "mtu", strconv.Itoa(desired.MTU))
+		}
+		args = append(args, "up")
+		_, err := c.run(ctx, "ifconfig", args...)
+		return commandError("set FreeBSD tunnel interface "+desired.Name, err)
+	}
 	args := []string{"link", "set", "dev", desired.Name}
 	if desired.MTU > 0 {
 		args = append(args, "mtu", strconv.Itoa(desired.MTU))
@@ -511,6 +658,10 @@ func (c TunnelInterfaceController) setTunnelLink(ctx context.Context, desired tu
 }
 
 func (c TunnelInterfaceController) setTunnelLinkUp(ctx context.Context, ifname string) error {
+	if c.targetOS() == platform.OSFreeBSD {
+		_, err := c.run(ctx, "ifconfig", ifname, "up")
+		return commandError("bring FreeBSD tunnel interface "+ifname+" up", err)
+	}
 	_, err := c.run(ctx, "ip", "link", "set", "dev", ifname, "up")
 	return commandError("bring tunnel interface "+ifname+" up", err)
 }
@@ -532,7 +683,7 @@ func (c TunnelInterfaceController) reconcileTunnelAddress(ctx context.Context, d
 		}
 		changed = true
 	}
-	if hasDesired {
+	if hasDesired || desired.Address == "" {
 		return changed, nil
 	}
 	if err := c.setTunnelAddress(ctx, desired); err != nil {
@@ -542,6 +693,13 @@ func (c TunnelInterfaceController) reconcileTunnelAddress(ctx context.Context, d
 }
 
 func (c TunnelInterfaceController) tunnelIPv4Addresses(ctx context.Context, ifname string) ([]string, error) {
+	if c.targetOS() == platform.OSFreeBSD {
+		out, err := c.run(ctx, "ifconfig", ifname)
+		if err != nil {
+			return nil, fmt.Errorf("list FreeBSD tunnel interface %s addresses: %w: %s", ifname, err, strings.TrimSpace(string(out)))
+		}
+		return parseFreeBSDIPv4AddressPrefixes(out), nil
+	}
 	out, err := c.run(ctx, "ip", "-o", "-4", "addr", "show", "dev", ifname)
 	if err != nil {
 		return nil, fmt.Errorf("list tunnel interface %s addresses: %w: %s", ifname, err, strings.TrimSpace(string(out)))
@@ -571,18 +729,125 @@ func parseIPv4AddressPrefixes(out []byte) []string {
 }
 
 func (c TunnelInterfaceController) deleteTunnelAddress(ctx context.Context, ifname, address string) error {
+	if c.targetOS() == platform.OSFreeBSD {
+		_, err := c.run(ctx, "ifconfig", ifname, "inet", address, "-alias")
+		return commandError("delete FreeBSD tunnel interface "+ifname+" address "+address, err)
+	}
 	_, err := c.run(ctx, "ip", "addr", "del", address, "dev", ifname)
 	return commandError("delete tunnel interface "+ifname+" address "+address, err)
 }
 
 func (c TunnelInterfaceController) setTunnelAddress(ctx context.Context, desired tunnelDesired) error {
+	if c.targetOS() == platform.OSFreeBSD {
+		_, err := c.run(ctx, "ifconfig", desired.Name, "inet", desired.Address)
+		return commandError("set FreeBSD tunnel interface "+desired.Name+" address", err)
+	}
 	_, err := c.run(ctx, "ip", "addr", "replace", desired.Address, "dev", desired.Name)
 	return commandError("set tunnel interface "+desired.Name+" address", err)
 }
 
-func (c TunnelInterfaceController) ensureFOUListener(ctx context.Context, desired tunnelDesired) error {
+type fouListener struct {
+	Mode string
+	Port int
+}
+
+func fouListenerForDesired(desired tunnelDesired) (fouListener, bool) {
 	if desired.Mode != "fou" && desired.Mode != "gue" {
+		return fouListener{}, false
+	}
+	return fouListener{Mode: desired.Mode, Port: desired.EncapSport}, true
+}
+
+func fouListenerFromStatus(status map[string]any) (fouListener, bool) {
+	owned, ok := statusBool(status["fouListenerOwned"])
+	if !ok || !owned {
+		return fouListener{}, false
+	}
+	mode := statusString(status, "mode")
+	port, ok := statusInt(status["encapSport"])
+	if (mode != "fou" && mode != "gue") || !ok || port < 1 || port > 65535 {
+		return fouListener{}, false
+	}
+	return fouListener{Mode: mode, Port: port}, true
+}
+
+func fouListenerMatchesStatus(listener fouListener, status map[string]any) bool {
+	previous, ok := fouListenerFromStatus(status)
+	return ok && previous == listener
+}
+
+func (c TunnelInterfaceController) desiredUsesFOUListener(listener fouListener, exceptName string) bool {
+	if c.Router == nil {
+		return false
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "TunnelInterface" || resource.Metadata.Name == exceptName {
+			continue
+		}
+		spec, err := resource.TunnelInterfaceSpec()
+		if err != nil {
+			continue
+		}
+		if candidate, ok := fouListenerForDesired(tunnelDesiredFromSpec(*c.Router, resource.Metadata.Name, spec)); ok && candidate == listener {
+			return true
+		}
+	}
+	return false
+}
+
+func (c TunnelInterfaceController) routerdOwnsFOUListener(listener fouListener, exceptName string) bool {
+	lister, ok := c.Store.(routerstate.ObjectStatusLister)
+	if !ok {
+		return false
+	}
+	statuses, err := lister.ListObjectStatuses()
+	if err != nil {
+		return false
+	}
+	for _, item := range statuses {
+		if item.APIVersion == api.HybridAPIVersion && item.Kind == "TunnelInterface" && item.Name != exceptName && routerdManagedObjectStatus(item) {
+			if owned, ok := fouListenerFromStatus(item.Status); ok && owned == listener {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (c TunnelInterfaceController) transferFOUOwnership(listener fouListener, exceptName string) error {
+	if c.Router == nil || c.Store == nil {
 		return nil
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "TunnelInterface" || resource.Metadata.Name == exceptName {
+			continue
+		}
+		spec, err := resource.TunnelInterfaceSpec()
+		if err != nil {
+			continue
+		}
+		candidate, ok := fouListenerForDesired(tunnelDesiredFromSpec(*c.Router, resource.Metadata.Name, spec))
+		if !ok || candidate != listener {
+			continue
+		}
+		status := c.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name)
+		if status == nil {
+			status = map[string]any{}
+		}
+		status["fouListenerOwned"] = true
+		status["encapSport"] = listener.Port
+		status["mode"] = listener.Mode
+		return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status)
+	}
+	return fmt.Errorf("no desired TunnelInterface can assume routerd-owned %s listener port %d", listener.Mode, listener.Port)
+}
+
+func (c TunnelInterfaceController) ensureFOUListener(ctx context.Context, desired tunnelDesired) (bool, error) {
+	if c.targetOS() == platform.OSFreeBSD && (desired.Mode == "fou" || desired.Mode == "gue") {
+		return false, fmt.Errorf("FreeBSD TunnelInterface mode %s has no equivalent FOU/GUE listener", desired.Mode)
+	}
+	if desired.Mode != "fou" && desired.Mode != "gue" {
+		return false, nil
 	}
 	args := []string{"fou", "add", "port", strconv.Itoa(desired.EncapSport)}
 	if desired.Mode == "gue" {
@@ -591,10 +856,45 @@ func (c TunnelInterfaceController) ensureFOUListener(ctx context.Context, desire
 		args = append(args, "ipproto", "4")
 	}
 	out, err := c.run(ctx, "ip", args...)
-	if err == nil || tunnelFOUAlreadyExists(out, err) {
+	if err == nil {
+		return true, nil
+	}
+	if tunnelFOUAlreadyExists(out, err) {
+		if err := c.verifyFOUListener(ctx, fouListener{Mode: desired.Mode, Port: desired.EncapSport}); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	return false, fmt.Errorf("ensure %s listener port %d: %w: %s", desired.Mode, desired.EncapSport, err, strings.TrimSpace(string(out)))
+}
+
+func (c TunnelInterfaceController) verifyFOUListener(ctx context.Context, listener fouListener) error {
+	out, err := c.run(ctx, "ip", "fou", "show")
+	if err != nil {
+		return fmt.Errorf("inspect existing %s listener port %d: %w: %s", listener.Mode, listener.Port, err, strings.TrimSpace(string(out)))
+	}
+	needle := "port " + strconv.Itoa(listener.Port)
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.Contains(line, needle) {
+			continue
+		}
+		if listener.Mode == "gue" && strings.Contains(line, "gue") {
+			return nil
+		}
+		if listener.Mode == "fou" && strings.Contains(line, "ipproto 4") && !strings.Contains(line, "gue") {
+			return nil
+		}
+	}
+	return fmt.Errorf("existing FOU listener port %d does not match routerd %s listener shape", listener.Port, listener.Mode)
+}
+
+func (c TunnelInterfaceController) deleteFOUListener(ctx context.Context, listener fouListener) error {
+	out, err := c.run(ctx, "ip", "fou", "del", "port", strconv.Itoa(listener.Port))
+	if err == nil || tunnelFOUMissing(out, err) {
 		return nil
 	}
-	return fmt.Errorf("ensure %s listener port %d: %w: %s", desired.Mode, desired.EncapSport, err, strings.TrimSpace(string(out)))
+	return fmt.Errorf("delete %s listener port %d: %w: %s", listener.Mode, listener.Port, err, strings.TrimSpace(string(out)))
 }
 
 func tunnelAddArgs(desired tunnelDesired) []string {
@@ -618,8 +918,12 @@ func tunnelChangeArgs(desired tunnelDesired) []string {
 		linkMode = "ipip"
 	}
 	args := []string{"link", "set", "dev", desired.Name, "type", linkMode, "local", desired.Local, "remote", desired.Remote, "ttl", strconv.Itoa(desired.TTL)}
-	if desired.Mode == "gre" && desired.Key != 0 {
-		args = append(args, "key", strconv.Itoa(desired.Key))
+	if desired.Mode == "gre" {
+		if desired.Key == 0 {
+			args = append(args, "nokey")
+		} else {
+			args = append(args, "key", strconv.Itoa(desired.Key))
+		}
 	}
 	if desired.Mode == "fou" || desired.Mode == "gue" {
 		args = append(args, "encap", desired.Mode, "encap-sport", strconv.Itoa(desired.EncapSport), "encap-dport", strconv.Itoa(desired.EncapDport))
@@ -633,6 +937,13 @@ func (c TunnelInterfaceController) run(ctx context.Context, name string, args ..
 		run = defaultTunnelCommandRunner
 	}
 	return run(ctx, name, args...)
+}
+
+func (c TunnelInterfaceController) targetOS() platform.OS {
+	if c.OS != "" {
+		return c.OS
+	}
+	return platform.CurrentOS()
 }
 
 func defaultTunnelCommandRunner(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -666,4 +977,12 @@ func tunnelFOUAlreadyExists(out []byte, err error) bool {
 	}
 	msg := strings.ToLower(strings.TrimSpace(string(out)) + " " + err.Error())
 	return strings.Contains(msg, "file exists") || strings.Contains(msg, "object already exists") || strings.Contains(msg, "already exists") || strings.Contains(msg, "address already in use")
+}
+
+func tunnelFOUMissing(out []byte, err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(string(out) + " " + err.Error())
+	return strings.Contains(msg, "not found") || strings.Contains(msg, "no such") || strings.Contains(msg, "does not exist")
 }
