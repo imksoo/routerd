@@ -126,8 +126,13 @@ Implemented:
 - FreeBSD-native doctor checks, KernelModule `kldload` reconciliation with
   routerd-owned `/boot/loader.conf.d` boot persistence, and BGP-specific
   `routerd_bgp` rc.d generation
+- explicit rejection of Linux `SO_MARK` health-check steering: FreeBSD does
+  not map a probe mark to a request-scoped policy route; use an unmarked route
+  with `sourceInterface`/`sourceAddress` instead
 - explicit rejection of non-local DNS resolver binds because FreeBSD has no
-  Linux `IP_FREEBIND` equivalent
+  Linux `IP_FREEBIND` equivalent; assign the address before starting the
+  resolver. `DNSUpstream.spec.sourceInterface: fib:<n>` remains the separate,
+  explicit FreeBSD FIB mechanism for outbound upstream queries
 
 The ARP and RA observer daemons capture through the FreeBSD base-system
 tcpdump/libpcap BPF path; proactive ARP writes retain a separate direct-BPF

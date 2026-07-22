@@ -13,7 +13,7 @@ import (
 
 func configureDialerSocket(dialer *net.Dialer, ifname string, fwmark int, network, address, addressFamily string, hasSourceAddress bool) error {
 	if fwmark != 0 {
-		return fmt.Errorf("fwmark is not supported on FreeBSD")
+		return fmt.Errorf("FreeBSD does not support Linux SO_MARK fwmark steering; use an unmarked route with sourceInterface/sourceAddress instead")
 	}
 	iface, err := net.InterfaceByName(ifname)
 	if err != nil {
