@@ -297,10 +297,9 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	for _, name := range sortedByteMapKeys(rcdScripts) {
 		rc.WriteString(name + "_enable=\"YES\"\n")
 	}
-	writeFreeBSDClonedInterfaces(&rc, bridges, vxlans, dslites)
+	writeFreeBSDClonedInterfaces(&rc, bridges, dslites)
 	writeFreeBSDDSLites(&rc, dslites)
-	writeFreeBSDVXLANS(&rc, vxlans)
-	writeFreeBSDBridges(&rc, bridges)
+	writeFreeBSDBridges(&rc, bridges, freeBSDVXLANIfNames(vxlans))
 	writeFreeBSDBridgeAliases(&rc, staticBridgeV4)
 	writeFreeBSDStaticRoutes(&rc, staticV4Routes, false)
 	writeFreeBSDStaticRoutes(&rc, staticV6Routes, true)
@@ -475,13 +474,16 @@ func writeFreeBSDDSLites(buf *bytes.Buffer, dslites []freeBSDDSLite) {
 	}
 }
 
-func writeFreeBSDBridges(buf *bytes.Buffer, bridges []bridgeConfig) {
+func writeFreeBSDBridges(buf *bytes.Buffer, bridges []bridgeConfig, deferredMembers map[string]bool) {
 	if len(bridges) == 0 {
 		return
 	}
 	for _, bridge := range bridges {
 		var args []string
 		for _, member := range bridge.Members {
+			if deferredMembers[member] {
+				continue
+			}
 			args = append(args, "addm "+member)
 			if bridge.STP {
 				args = append(args, "stp "+member)
@@ -496,6 +498,14 @@ func writeFreeBSDBridges(buf *bytes.Buffer, bridges []bridgeConfig) {
 		args = append(args, "up")
 		buf.WriteString(fmt.Sprintf("ifconfig_%s=\"%s\"\n", bridge.IfName, strings.Join(args, " ")))
 	}
+}
+
+func freeBSDVXLANIfNames(vxlans []vxlanConfig) map[string]bool {
+	out := make(map[string]bool, len(vxlans))
+	for _, vxlan := range vxlans {
+		out[vxlan.IfName] = true
+	}
+	return out
 }
 
 func writeFreeBSDBridgeAliases(buf *bytes.Buffer, addresses map[string][]string) {
@@ -546,11 +556,8 @@ func resourceKind(router *api.Router, name string) string {
 	return ""
 }
 
-func writeFreeBSDClonedInterfaces(buf *bytes.Buffer, bridges []bridgeConfig, vxlans []vxlanConfig, dslites []freeBSDDSLite) {
+func writeFreeBSDClonedInterfaces(buf *bytes.Buffer, bridges []bridgeConfig, dslites []freeBSDDSLite) {
 	var names []string
-	for _, vxlan := range vxlans {
-		names = append(names, vxlan.IfName)
-	}
 	for _, tunnel := range dslites {
 		names = append(names, tunnel.IfName)
 	}

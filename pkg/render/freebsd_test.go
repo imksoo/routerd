@@ -42,9 +42,9 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 		`ifconfig_vtnet2="up"`,
 		`mpd_enable="YES"`,
 		`mpd_flags="-b"`,
-		`cloned_interfaces="vxlan100 bridge0"`,
-		`ifconfig_vxlan100="vxlanid 100 vxlanlocal 192.0.2.10 vxlanremote 192.0.2.20 vxlandev vtnet0 vxlanport 4789 mtu 1450 up"`,
-		`ifconfig_bridge0="addm vtnet1 stp vtnet1 addm vxlan100 stp vxlan100 up"`,
+		`cloned_interfaces="bridge0"`,
+		`routerd_vxlan_home_vxlan_enable="YES"`,
+		`ifconfig_bridge0="addm vtnet1 stp vtnet1 up"`,
 		`ifconfig_bridge0_alias0="inet 192.0.2.1/24"`,
 		`static_routes="lab_v4"`,
 		`route_lab_v4="-net 192.0.2.0/24 192.168.10.254"`,
@@ -55,6 +55,12 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 	} {
 		if !strings.Contains(rc, want) {
 			t.Fatalf("rc.conf output missing %q:\n%s", want, rc)
+		}
+	}
+	vxlanScript := string(got.RCDScripts["routerd_vxlan_home_vxlan"])
+	for _, want := range []string{`/sbin/ifconfig "${ifname}" create`, `vxlanid' '100'`, `vxlanremote' '192.0.2.20'`, `vxlandev' 'vtnet0'`, `ifconfig 'bridge0' addm "${ifname}"`, `ifconfig 'bridge0' deletem "${ifname}"`, `routerd ownership marker`} {
+		if !strings.Contains(vxlanScript, want) {
+			t.Fatalf("VXLAN rc.d output missing %q:\n%s", want, vxlanScript)
 		}
 	}
 	pf := string(got.PF)
@@ -136,6 +142,9 @@ func TestFreeBSDRendersCARPRCDScript(t *testing.T) {
 	script := string(got.RCDScripts["routerd_carp"])
 	for _, want := range []string{
 		`kldload carp >/dev/null 2>&1 || true`,
+		`foreign CARP state is already present; refusing mutation`,
+		`foreign CARP ownership is unknown; refusing mutation`,
+		`${ROUTERD_RUNTIME_DIR:-/var/run/routerd}/carp`,
 		`sysctl net.inet.carp.preempt='0'`,
 		`ifconfig 'vtnet1' 'inet' 'vhid' '50' 'advbase' '2' 'advskew' '104' 'pass' 'secret' 'alias' '10.240.70.10/32'`,
 		`ifconfig 'vtnet1' 'inet' '10.240.70.10/32' -alias`,
@@ -275,7 +284,10 @@ func TestFreeBSDRendersTailscaleAndFirewallLoggerRCDScripts(t *testing.T) {
 	tailscale := string(got.RCDScripts["routerd_tailscale_home"])
 	for _, want := range []string{
 		`PROVIDE: routerd_tailscale_home`,
-		`'service' 'tailscaled' 'onestart'`,
+		`foreign tailscaled service is already running; refusing mutation`,
+		`service tailscaled onestart`,
+		`service tailscaled onestop`,
+		`routerd ownership marker mismatch`,
 		`/usr/local/bin/tailscale`,
 		`up`,
 		`--hostname=router01`,
@@ -431,11 +443,12 @@ func TestFreeBSDVXLANMultipleRemotesEmitsWarningAndUsesSeed(t *testing.T) {
 	if !strings.Contains(got.Warnings[0], want) {
 		t.Fatalf("warning %q does not mention single-remote limitation", got.Warnings[0])
 	}
-	if !strings.Contains(string(got.RCConf), "vxlanremote 192.0.2.20") {
-		t.Fatalf("FreeBSD rc.conf must use the first remote as seed:\n%s", got.RCConf)
+	script := string(got.RCDScripts["routerd_vxlan_lab"])
+	if !strings.Contains(script, "vxlanremote' '192.0.2.20'") {
+		t.Fatalf("FreeBSD VXLAN rc.d script must use the first remote as seed:\n%s", script)
 	}
-	if strings.Contains(string(got.RCConf), "vxlanremote 192.0.2.30") || strings.Contains(string(got.RCConf), "vxlanremote 192.0.2.40") {
-		t.Fatalf("FreeBSD rc.conf must not emit additional remotes:\n%s", got.RCConf)
+	if strings.Contains(script, "vxlanremote' '192.0.2.30'") || strings.Contains(script, "vxlanremote' '192.0.2.40'") {
+		t.Fatalf("FreeBSD VXLAN rc.d script must not emit additional remotes:\n%s", script)
 	}
 }
 

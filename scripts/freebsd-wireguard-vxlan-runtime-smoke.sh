@@ -29,7 +29,9 @@ peer_vx=rdvx1
 client_script=
 client_started=0
 peer_created=0
-vx_created=0
+vx_script=
+vx_started=0
+peer_vx_created=0
 
 cleanup() {
   rc=$?
@@ -41,8 +43,10 @@ cleanup() {
       cat "$log" >&2 || true
     done
   fi
-  if [ "$vx_created" -eq 1 ]; then
-    ifconfig "$client_vx" destroy >>"$evidence_dir/cleanup.log" 2>&1 || rc=1
+  if [ "$vx_started" -eq 1 ]; then
+    "$vx_script" onestop >>"$evidence_dir/cleanup.log" 2>&1 || rc=1
+  fi
+  if [ "$peer_vx_created" -eq 1 ]; then
     ifconfig "$peer_vx" destroy >>"$evidence_dir/cleanup.log" 2>&1 || rc=1
   fi
   if [ "$client_started" -eq 1 ]; then
@@ -129,7 +133,11 @@ EOF
 client_script="$work/rendered/rc.d-routerd_wireguard_$client_if"
 test -x "$client_script"
 grep -F "kldload if_wg" "$client_script" >"$evidence_dir/render-wireguard.log"
-grep -F "ifconfig_${client_vx}=\"vxlanid 899 vxlanlocal 10.250.89.1 vxlanremote 10.250.89.2 vxlandev $client_if vxlanport 4789 up\"" "$work/rendered/rc.conf.d-routerd" >"$evidence_dir/render-vxlan.log"
+vx_script="$work/rendered/rc.d-routerd_vxlan_$client_vx"
+test -x "$vx_script"
+grep -F "vxlanid' '899'" "$vx_script" >"$evidence_dir/render-vxlan.log"
+grep -F "vxlanremote' '10.250.89.2'" "$vx_script" >>"$evidence_dir/render-vxlan.log"
+grep -F "vxlandev' '$client_if'" "$vx_script" >>"$evidence_dir/render-vxlan.log"
 
 "$client_script" onestart >"$evidence_dir/wireguard-start.log" 2>&1
 client_started=1
@@ -138,14 +146,35 @@ ping -S 10.250.89.1 -c 3 10.250.89.2 >"$evidence_dir/wireguard-ping-initial.log"
 wg show "$client_if" dump >"$evidence_dir/wireguard-dump-initial.log"
 awk -F '\t' 'NR == 2 && $5 > 0 && ($6 + $7) > 0 { ok=1 } END { exit ok ? 0 : 1 }' "$evidence_dir/wireguard-dump-initial.log"
 
-ifconfig "$client_vx" create >"$evidence_dir/vxlan-create.log" 2>&1
 ifconfig "$peer_vx" create >>"$evidence_dir/vxlan-create.log" 2>&1
-vx_created=1
-ifconfig "$client_vx" vxlanid 899 vxlanlocal 10.250.89.1 vxlanremote 10.250.89.2 vxlandev "$client_if" vxlanport 4789 up >>"$evidence_dir/vxlan-create.log" 2>&1
+peer_vx_created=1
 ifconfig "$peer_vx" vxlanid 899 vxlanlocal 10.250.89.2 vxlanremote 10.250.89.1 vxlandev "$peer_if" vxlanport 4789 up >>"$evidence_dir/vxlan-create.log" 2>&1
+"$vx_script" onestart >"$evidence_dir/vxlan-start.log" 2>&1
+vx_started=1
+"$vx_script" onestatus >"$evidence_dir/vxlan-status-initial.log" 2>&1
 ifconfig "$client_vx" inet 198.19.89.1/24 alias
 ifconfig "$peer_vx" inet 198.19.89.2/24 alias
 ping -S 198.19.89.1 -c 3 198.19.89.2 >"$evidence_dir/vxlan-over-wireguard-ping.log"
+
+"$vx_script" onerestart >"$evidence_dir/vxlan-restart.log" 2>&1
+"$vx_script" onestatus >"$evidence_dir/vxlan-status-restart.log" 2>&1
+ifconfig "$client_vx" inet 198.19.89.1/24 alias
+ping -S 198.19.89.1 -c 3 198.19.89.2 >"$evidence_dir/vxlan-over-wireguard-ping-restart.log"
+"$vx_script" onestop >"$evidence_dir/vxlan-stop.log" 2>&1
+vx_started=0
+if ifconfig "$client_vx" >"$evidence_dir/vxlan-after-stop.log" 2>&1; then
+  echo "routerd-owned VXLAN interface survived stop" >&2
+  exit 1
+fi
+
+# Exercise the generated artifact's real foreign-interface refusal path.
+ifconfig "$client_vx" create >"$evidence_dir/vxlan-foreign-create.log" 2>&1
+if "$vx_script" onestart >"$evidence_dir/vxlan-foreign-refusal.log" 2>&1; then
+  echo "generated VXLAN service adopted a foreign interface" >&2
+  exit 1
+fi
+ifconfig "$client_vx" >"$evidence_dir/vxlan-foreign-preserved.log"
+ifconfig "$client_vx" destroy >>"$evidence_dir/vxlan-foreign-preserved.log" 2>&1
 
 "$client_script" onerestart >"$evidence_dir/wireguard-restart.log" 2>&1
 ping -S 10.250.89.1 -c 3 10.250.89.2 >"$evidence_dir/wireguard-ping-restart.log"
@@ -159,7 +188,7 @@ if ifconfig "$client_if" >/dev/null 2>&1; then
 fi
 printf '%s\n' \
   'wireguard-render-configure-handshake-observe-restart-stop=ok' \
-  'vxlan-over-wireguard-render-configure-packet=ok' \
-  'foreign-interface-collision=refuse-before-mutation' \
+  'vxlan-generated-configure-packet-restart-stop=ok' \
+  'vxlan-foreign-interface=generated-refusal-preserved' \
   'owned-interface-cleanup=pending-exit-trap' >"$evidence_dir/summary.log"
 printf 'freebsd-wireguard-vxlan-runtime=ok\n' >"$evidence_dir/result"

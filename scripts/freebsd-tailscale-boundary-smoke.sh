@@ -26,10 +26,15 @@ service tailscaled onestatus >/dev/null 2>&1 && {
 
 mkdir -p "$evidence_dir"
 work=$(mktemp -d /var/tmp/routerd-tailscale-boundary.XXXXXX)
-started=0
+script=
+script_started=0
+foreign_started=0
 cleanup() {
   rc=$?
-  if [ "$started" -eq 1 ]; then
+  if [ "$script_started" -eq 1 ] && [ -n "$script" ]; then
+    "$script" onestop >>"$evidence_dir/tailscale-owned-stop.log" 2>&1 || rc=1
+  fi
+  if [ "$foreign_started" -eq 1 ]; then
     service tailscaled onestop >>"$evidence_dir/tailscaled-stop.log" 2>&1 || rc=1
     if service tailscaled onestatus >>"$evidence_dir/tailscaled-status-after-stop.log" 2>&1; then
       rc=1
@@ -58,22 +63,39 @@ EOF
 "$routerd" render freebsd --config "$work/router.yaml" --out-dir "$work/rendered" >"$evidence_dir/render.log"
 script="$work/rendered/rc.d-routerd_tailscale_lifecycle"
 test -x "$script"
-grep -F "'service' 'tailscaled' 'onestart'" "$script" >"$evidence_dir/render-service.log"
+grep -F 'foreign tailscaled service is already running; refusing mutation' "$script" >"$evidence_dir/render-service.log"
+grep -F 'service tailscaled onestart' "$script" >>"$evidence_dir/render-service.log"
 grep -F '/usr/local/bin/tailscale' "$script" >>"$evidence_dir/render-service.log"
 
-service tailscaled onestart >"$evidence_dir/tailscaled-start.log" 2>&1
-started=1
-service tailscaled onestatus >"$evidence_dir/tailscaled-status.log" 2>&1
+# The generated lifecycle owns the start attempt. Credential-free enrollment
+# must fail actionably and unwind its service ownership.
 if "$script" onestart >"$evidence_dir/tailscale-up.log" 2>&1; then
   echo "unexpected authenticated Tailscale enrollment in credential-free CI" >&2
+  exit 1
+fi
+if service tailscaled onestatus >"$evidence_dir/tailscaled-status-after-owned-failure.log" 2>&1; then
+  echo "generated Tailscale lifecycle left tailscaled running after failed enrollment" >&2
   exit 1
 fi
 if tailscale status --json >"$evidence_dir/tailscale-status.json" 2>"$evidence_dir/tailscale-status.stderr"; then
   echo "unexpected enrolled Tailscale status in credential-free CI" >&2
   exit 1
 fi
+
+# A service started outside routerd is foreign. The generated artifact must
+# reject it and leave it running for the fixture owner to stop.
+service tailscaled onestart >"$evidence_dir/tailscaled-foreign-start.log" 2>&1
+foreign_started=1
+service tailscaled onestatus >"$evidence_dir/tailscaled-foreign-status.log" 2>&1
+if "$script" onestart >"$evidence_dir/tailscale-foreign-refusal.log" 2>&1; then
+  echo "generated Tailscale lifecycle adopted foreign tailscaled" >&2
+  exit 1
+fi
+service tailscaled onestatus >"$evidence_dir/tailscaled-foreign-preserved.log" 2>&1
+service tailscaled onestop >"$evidence_dir/tailscaled-foreign-stop.log" 2>&1
+foreign_started=0
 printf '%s\n' \
-  'tailscale-render-service-start-observe-stop=ok' \
+  'tailscale-generated-start-failure-unwinds-owned-service=ok' \
   'tailscale-enrollment=external-auth-required-actionable-nonzero' \
-  'foreign-running-tailscaled=refuse-before-mutation' >"$evidence_dir/summary.log"
+  'foreign-running-tailscaled=generated-refusal-preserved' >"$evidence_dir/summary.log"
 printf 'freebsd-tailscale-boundary=ok\n' >"$evidence_dir/result"
