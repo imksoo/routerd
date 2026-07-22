@@ -2254,8 +2254,8 @@ func TestValidateClientPolicy(t *testing.T) {
 		}},
 	}
 
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate client policy: %v", err)
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
+		t.Fatalf("validate Linux client policy: %v", err)
 	}
 }
 
@@ -2282,12 +2282,12 @@ func TestValidateClientPolicyIPv6Addresses(t *testing.T) {
 			}},
 		}
 	}
-	if err := Validate(base([]string{"fd00:1::10"})); err != nil {
-		t.Fatalf("validate explicit IPv6 ClientPolicy identity: %v", err)
+	if err := ValidateForOS(base([]string{"fd00:1::10"}), platform.OSLinux); err != nil {
+		t.Fatalf("validate Linux explicit IPv6 ClientPolicy identity: %v", err)
 	}
 	for _, addresses := range [][]string{{"192.0.2.10"}, {"fd00:1::10", "fd00:1::10"}} {
-		if err := Validate(base(addresses)); err == nil {
-			t.Fatalf("Validate(%v) succeeded, want invalid IPv6 ClientPolicy identity rejection", addresses)
+		if err := ValidateForOS(base(addresses), platform.OSLinux); err == nil {
+			t.Fatalf("ValidateForOS(Linux, %v) succeeded, want invalid IPv6 ClientPolicy identity rejection", addresses)
 		}
 	}
 }
