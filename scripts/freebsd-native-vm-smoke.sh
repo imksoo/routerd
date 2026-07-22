@@ -223,3 +223,10 @@ if [ "${ROUTERD_FREEBSD_WIREGUARD_VXLAN_RUNTIME:-false}" = true ]; then
   cat "$wireguard_vxlan_evidence/summary.log"
   cat "$wireguard_vxlan_evidence/result"
 fi
+
+if [ "${ROUTERD_FREEBSD_TAILSCALE_BOUNDARY_RUNTIME:-false}" = true ]; then
+  tailscale_evidence="$work/tailscale-boundary"
+  sh scripts/freebsd-tailscale-boundary-smoke.sh --routerd "$routerd" --evidence-dir "$tailscale_evidence"
+  cat "$tailscale_evidence/summary.log"
+  cat "$tailscale_evidence/result"
+fi
