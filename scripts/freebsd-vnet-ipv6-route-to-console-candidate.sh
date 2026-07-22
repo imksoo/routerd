@@ -57,17 +57,17 @@ EOF
 chmod 0700 "$shim/jexec"
 cat >"$shim/pfctl" <<'EOF'
 #!/bin/sh
-# The historical candidate predates the anyvm control interface.  Preserve the
-# guest's TCP/22 control state only; the candidate's generated route-to rules
-# and all VNET data traffic remain unchanged.
+# The historical candidate predates the anyvm control interface.  Exclude only
+# the anyvm control NIC from PF so the candidate's generated route-to rules
+# remain evaluated on its disposable epair topology.
 evidence=${ROUTERD_IPV6_CANDIDATE_EVIDENCE:?}
 if [ "$#" -eq 2 ] && [ "$1" = -f ] && [ "${2##*/}" = pf.conf ]; then
   guarded="$2.console-control"
   {
-    printf '%s\n' 'pass in quick on vtnet0 proto tcp from any to (vtnet0) port 22 keep state label "routerd:ipv6-candidate:ssh-control"'
+    printf '%s\n' 'set skip on vtnet0'
     cat "$2"
   } >"$guarded"
-  printf 'routerd-ipv6-candidate fixture=ssh-control-pass\n' >"$evidence/control-rule.log"
+  printf 'routerd-ipv6-candidate fixture=control-interface-skipped\n' >"$evidence/control-rule.log"
   exec /sbin/pfctl -f "$guarded"
 fi
 exec /sbin/pfctl "$@"
