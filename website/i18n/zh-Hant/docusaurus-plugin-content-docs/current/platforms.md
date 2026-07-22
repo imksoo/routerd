@@ -154,7 +154,7 @@ dnsmasq 也會以 `dnsmasq --test` 確認設定後重新啟動。
 靜態 `rc.conf` 產生不足以描述的 DS-Lite tunnel 以 `ifconfig gif` 動態套用。
 正式投入生產前，請先以 `routerd render freebsd` 確認輸出。
 
-目前的發布認證刻意比可產生的功能清單更窄。FreeBSD IPv6 `EgressRoutePolicy` 會被明確拒絕，因為已認證的 PF `route-to` 僅涵蓋 IPv4 static routehost。`TunnelInterface` 的 gif/GRE 與發布 package 的 install/upgrade/uninstall 仍在完成 native 認證。已產生的 Tailscale 與 CARP rc.d artifact 可以使用，但其 lifecycle/failover 尚非發布宣告。
+目前的發布認證刻意比可產生的功能清單更窄。FreeBSD 會明確拒絕 `spec.family: ipv6` 的 `EgressRoutePolicy` resource，因為已認證的 PF `route-to` 僅涵蓋 IPv4 static routehost。`TunnelInterface` 的 gif/GRE 與發布 package 的 install/upgrade/uninstall 仍在完成 native 認證。已產生的 Tailscale 與 CARP rc.d artifact 可以使用，但其 lifecycle/failover 尚非發布宣告。
 
 ## Platform parity backlog
 
@@ -164,7 +164,7 @@ Ubuntu 和 FreeBSD 相互比較時的已知差異。
 | --- | --- | --- |
 | CI / runtime coverage | PR CI 會編譯 FreeBSD amd64/arm64 binary。provisioned FreeBSD 14.3 native evidence 涵蓋完整且不省略的 `go test ./...`、live routerd smoke、ARP/RA observer、native nDPI，以及 amd64 與 arm64 的 runtime certification。保留的 VM115 evidence 另涵蓋 route lookup、BFD 與已支援的 PF dataplane slice。 | 目前 release package lifecycle 仍等待專用 amd64 與 arm64 native install/upgrade/uninstall evidence。 |
 | FreeBSD 的功能限制 | `ClientPolicy` 對 IPv4 使用 DHCPv4 reservation，對 IPv6 使用明確 `classification[].ipv6Addresses` 的 pf 規則；不支援 MAC/L2 比對，也不從 IPv4 reservation 推斷 IPv6。 | 保持明確 address 與 MAC/L2 限制；未列出或 privacy IPv6 位址需獨立網路隔離（[#849](https://github.com/imksoo/routerd/issues/849)）。 |
-| IPv6 policy routing | 已認證的 PF `route-to` 僅為 IPv4 static routehost source affinity。 | FreeBSD IPv6 `EgressRoutePolicy` 被明確拒絕；這是經核准的 product boundary，而非已實作的 parity（[#904](https://github.com/imksoo/routerd/issues/904)）。 |
+| IPv6 policy routing | 已認證的 PF `route-to` 僅為 IPv4 static routehost source affinity。 | FreeBSD 明確拒絕 `spec.family: ipv6` 的 `EgressRoutePolicy`；這是經核准的 product boundary，而非已實作的 parity（[#904](https://github.com/imksoo/routerd/issues/904)）。 |
 | 套件 bootstrap | Ubuntu 和 FreeBSD 可命令式安裝套件。 | 對 `apt`、`pkg` 的 schema、validation、安裝程式套件清單、範例、產生文件保持同步。 |
 
 ## OS 抽象化的實作方針
