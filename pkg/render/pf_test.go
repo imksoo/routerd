@@ -430,7 +430,6 @@ func TestPFClientPolicyUsesIPv4Reservations(t *testing.T) {
 				GuestServices: []string{"dns", "dhcp", "ntp"},
 				Classification: []api.ClientPolicyClassSpec{{
 					Mode:            "guest",
-					Match:           api.ClientPolicyClassMatchSpec{MACs: []string{"02:00:00:00:00:44"}},
 					IPv4Reservation: "guest-phone",
 				}},
 			},
@@ -480,7 +479,6 @@ func TestPFClientPolicyRendersExplicitIPv6GuestDenyBeforeICMPv6Pass(t *testing.T
 				GuestEgressAllow: []string{"2001:db8:3::/64"},
 				Classification: []api.ClientPolicyClassSpec{{
 					Mode:          "guest",
-					Match:         api.ClientPolicyClassMatchSpec{MACs: []string{"02:00:00:00:00:44"}},
 					IPv6Addresses: []string{"fd00:1::10"},
 				}},
 			},
@@ -502,6 +500,15 @@ func TestPFClientPolicyRendersExplicitIPv6GuestDenyBeforeICMPv6Pass(t *testing.T
 	}
 	if strings.Contains(got, "ether ") || strings.Contains(got, "fd00:1::10 to 192.168.0.0/16") {
 		t.Fatalf("pf output must use only explicit IPv6 identity and family-safe destinations:\n%s", got)
+	}
+	spec, err := router.Spec.Resources[2].ClientPolicySpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.Classification[0].Match.MACs = []string{"02:00:00:00:00:44"}
+	router.Spec.Resources[2].Spec = spec
+	if _, err := PF(router, nil); err == nil || !strings.Contains(err.Error(), "cannot enforce") {
+		t.Fatalf("PF selector-backed explicit IPv6 identity error = %v", err)
 	}
 }
 
@@ -531,7 +538,6 @@ func TestPFClientPolicyDoesNotInferIPv6Identity(t *testing.T) {
 				GuestEgressDeny: []string{"fd00:2::/64"},
 				Classification: []api.ClientPolicyClassSpec{{
 					Mode:            "guest",
-					Match:           api.ClientPolicyClassMatchSpec{MACs: []string{"02:00:00:00:00:44"}},
 					IPv4Reservation: "guest-phone",
 				}},
 			},
@@ -572,8 +578,8 @@ func TestPFClientPolicyRequiresReservation(t *testing.T) {
 		},
 	}}}
 	_, err := PF(router, nil)
-	if err == nil || !strings.Contains(err.Error(), "needs ipv4Reservation") {
-		t.Fatalf("expected ipv4Reservation error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "cannot enforce") {
+		t.Fatalf("expected explicit FreeBSD selector rejection, got %v", err)
 	}
 }
 
