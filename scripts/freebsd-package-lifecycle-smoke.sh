@@ -55,8 +55,9 @@ release_target=freebsd-$release_arch
 # The checked-in release Makefile uses GNU make syntax. Keep this prerequisite
 # inside the opt-in package lifecycle runner rather than changing the baseline
 # native package set.
-pkg install -y gmake >/dev/null
+pkg install -y gmake sqlite3 >/dev/null
 command -v gmake >/dev/null
+command -v sqlite3 >/dev/null
 
 work=$(mktemp -d /var/tmp/routerd-package-lifecycle.XXXXXX)
 prior_dir=$work/prior
@@ -145,6 +146,12 @@ wait_routerd() {
   return 1
 }
 
+conntrack_status() {
+  target=$1
+  sqlite3 /var/db/routerd/state.db "SELECT status FROM objects WHERE api_version='net.routerd.net/v1alpha1' AND kind='ConntrackObserver' AND name='default';" >"$target"
+  jq -e '.phase == "Observed" and .source == "pf" and (.count | type == "number") and (.max | type == "number") and .max > 0' "$target" >/dev/null
+}
+
 mkdir -p /usr/local/etc/routerd
 cat >/usr/local/etc/routerd/router.yaml <<'EOF'
 apiVersion: routerd.net/v1alpha1
@@ -168,6 +175,7 @@ printf '%s\n' 'routerd_apply_interval="1s"' >"$rc_config"
 rc_config_created=1
 service routerd start >"$work/prior-service-start.log" 2>&1
 wait_routerd "$work/prior-status.json"
+conntrack_status "$work/prior-conntrack-status.json"
 grep -Fqx '# routerd-managed-service: v1' /usr/local/etc/rc.d/routerd
 [ -s /var/db/routerd/state.db ]
 printf 'freebsd-package-prior-install-start-observe=ok\n'
@@ -177,6 +185,7 @@ printf 'freebsd-package-prior-install-start-observe=ok\n'
   ROUTERD_INSTALL_PACKAGE_MANAGER=none ./install.sh --prefix /usr/local --no-install-deps --no-config-update
 ) >"$work/current-upgrade.log" 2>&1
 wait_routerd "$work/current-status.json"
+conntrack_status "$work/current-conntrack-status.json"
 [ -s /var/db/routerd/state.db ]
 [ "$(/usr/local/sbin/routerd --version)" = "$(./bin/routerd --version)" ]
 printf 'freebsd-package-upgrade-restart-observe=ok\n'

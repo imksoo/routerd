@@ -109,6 +109,42 @@ func PFStates(limit int) (*ConnectionTable, error) {
 	}, nil
 }
 
+// PFStateSnapshot returns the PF state count and its configured hard limit.
+// PF exposes the count through the state table and the capacity through the
+// memory limits, unlike Linux conntrack's procfs counters.
+func PFStateSnapshot() (*ConnectionTable, error) {
+	table, err := PFStates(0)
+	if err != nil {
+		return nil, err
+	}
+	limitOut, err := exec.Command("pfctl", "-sm").CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("pfctl -sm: %w: %s", err, strings.TrimSpace(string(limitOut)))
+	}
+	limit, err := parsePFStateLimit(string(limitOut))
+	if err != nil {
+		return nil, fmt.Errorf("pfctl -sm: %w", err)
+	}
+	table.Max = limit
+	return table, nil
+}
+
+func parsePFStateLimit(output string) (int, error) {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "states" {
+			continue
+		}
+		for index := len(fields) - 1; index > 0; index-- {
+			limit, err := strconv.Atoi(fields[index])
+			if err == nil && limit >= 0 {
+				return limit, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("states hard limit not found")
+}
+
 func selectConnectionEntries(entries []ConnectionEntry, limit int) []ConnectionEntry {
 	if limit == 0 {
 		return nil

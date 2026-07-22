@@ -105,6 +105,22 @@ func TestParsePFStateEntriesLimit(t *testing.T) {
 	}
 }
 
+func TestParsePFStateLimit(t *testing.T) {
+	limit, err := parsePFStateLimit("states        hard limit 10000\nsrc-nodes     hard limit 10000\n")
+	if err != nil {
+		t.Fatalf("parsePFStateLimit: %v", err)
+	}
+	if limit != 10000 {
+		t.Fatalf("limit = %d, want 10000", limit)
+	}
+}
+
+func TestParsePFStateLimitRejectsMissingStates(t *testing.T) {
+	if _, err := parsePFStateLimit("src-nodes hard limit 10000\n"); err == nil {
+		t.Fatal("parsePFStateLimit succeeded without states limit")
+	}
+}
+
 func TestParseConntrackEntriesZeroLimitMeansAllForParser(t *testing.T) {
 	output := `ipv4 2 udp 17 20 src=192.0.2.1 dst=198.51.100.1 sport=12345 dport=53 src=198.51.100.1 dst=192.0.2.1 sport=53 dport=12345 mark=0 use=1
 ipv4 2 tcp 6 30 SYN_SENT src=192.0.2.2 dst=198.51.100.2 sport=23456 dport=443 src=198.51.100.2 dst=192.0.2.2 sport=443 dport=23456 mark=257 use=1

@@ -115,6 +115,14 @@ func readInt(path string) (int, error) {
 }
 
 func RecordMetrics(ctx context.Context, snapshot Snapshot, createdDelta int64) {
+	RecordMetricsWithSource(ctx, snapshot, createdDelta, "procfs")
+}
+
+func RecordMetricsWithSource(ctx context.Context, snapshot Snapshot, createdDelta int64, source string) {
+	if strings.TrimSpace(source) == "" {
+		source = "procfs"
+	}
+	attributes := metric.WithAttributes(attribute.String("routerd.conntrack.source", source))
 	meter := otel.Meter("routerd.conntrack")
 	countGauge, _ := meter.Int64Gauge("routerd.conntrack.entries.count")
 	countGauge.Record(ctx, int64(snapshot.Count))
@@ -124,7 +132,7 @@ func RecordMetrics(ctx context.Context, snapshot Snapshot, createdDelta int64) {
 	}
 	if createdDelta > 0 {
 		created, _ := meter.Int64Counter("routerd.conntrack.entries.created")
-		created.Add(ctx, createdDelta, metric.WithAttributes(attribute.String("routerd.conntrack.source", "procfs")))
+		created.Add(ctx, createdDelta, attributes)
 	}
 }
 

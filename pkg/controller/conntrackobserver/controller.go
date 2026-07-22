@@ -41,6 +41,8 @@ type Controller struct {
 	Interval               time.Duration
 	ThresholdRatio         float64
 	Logger                 *slog.Logger
+	Snapshot               func() (conntrack.Snapshot, error)
+	SnapshotSource         string
 	Connections            func(limit int) (*observe.ConnectionTable, error)
 	ApplicationLayerStatus func(context.Context, string) api.TrafficFlowApplicationLayerStatus
 	lastCount              int
@@ -79,7 +81,7 @@ func (c *Controller) reconcileLogged(ctx context.Context) {
 }
 
 func (c *Controller) Reconcile(ctx context.Context) error {
-	snapshot, err := conntrack.ReadSnapshot(c.Paths)
+	snapshot, err := c.readSnapshot()
 	if err != nil {
 		if conntrack.IsUnavailable(err) {
 			return c.recordUnavailable(err)
@@ -92,7 +94,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	}
 	c.seen = true
 	c.lastCount = snapshot.Count
-	conntrack.RecordMetrics(ctx, snapshot, created)
+	conntrack.RecordMetricsWithSource(ctx, snapshot, created, c.snapshotSource())
 	ratio := 0.0
 	if snapshot.Max > 0 {
 		ratio = float64(snapshot.Count) / float64(snapshot.Max)
@@ -102,6 +104,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		"count":       snapshot.Count,
 		"max":         snapshot.Max,
 		"usageRatio":  ratio,
+		"source":      c.snapshotSource(),
 		"observedAt":  time.Now().UTC().Format(time.RFC3339Nano),
 		"createdHint": created,
 	}
@@ -127,6 +130,20 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		c.aboveThreshold = false
 	}
 	return nil
+}
+
+func (c *Controller) readSnapshot() (conntrack.Snapshot, error) {
+	if c.Snapshot != nil {
+		return c.Snapshot()
+	}
+	return conntrack.ReadSnapshot(c.Paths)
+}
+
+func (c *Controller) snapshotSource() string {
+	if source := strings.TrimSpace(c.SnapshotSource); source != "" {
+		return source
+	}
+	return "procfs"
 }
 
 func (c *Controller) recordUnavailable(snapshotErr error) error {
