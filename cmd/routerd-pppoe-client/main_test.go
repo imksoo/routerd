@@ -37,7 +37,7 @@ func TestStartSessionFailsClosedWhenFreeBSDPPPoEModuleLoadFails(t *testing.T) {
 	}
 }
 
-func TestEnsureFreeBSDPPPoEModulesLoadsTCPMSSAndLeavesLinuxUntouched(t *testing.T) {
+func TestEnsureFreeBSDPPPoEModulesLoadsIPCPInterfaceModulesAndLeavesLinuxUntouched(t *testing.T) {
 	previous := loadFreeBSDPPPoEModule
 	t.Cleanup(func() { loadFreeBSDPPPoEModule = previous })
 	var loaded []string
@@ -48,7 +48,7 @@ func TestEnsureFreeBSDPPPoEModulesLoadsTCPMSSAndLeavesLinuxUntouched(t *testing.
 	if err := ensureFreeBSDPPPoEModules(t.Context(), platform.OSFreeBSD); err != nil {
 		t.Fatalf("ensure FreeBSD modules: %v", err)
 	}
-	if got, want := strings.Join(loaded, ","), "ng_pppoe,ng_tcpmss"; got != want {
+	if got, want := strings.Join(loaded, ","), "ng_pppoe,ng_tcpmss,ng_iface"; got != want {
 		t.Fatalf("loaded modules = %q, want %q", got, want)
 	}
 	loaded = nil
@@ -60,19 +60,19 @@ func TestEnsureFreeBSDPPPoEModulesLoadsTCPMSSAndLeavesLinuxUntouched(t *testing.
 	}
 }
 
-func TestEnsureFreeBSDPPPoEModulesFailsClosedWhenTCPMSSLoadFails(t *testing.T) {
+func TestEnsureFreeBSDPPPoEModulesFailsClosedWhenIPCPInterfaceLoadFails(t *testing.T) {
 	previous := loadFreeBSDPPPoEModule
 	t.Cleanup(func() { loadFreeBSDPPPoEModule = previous })
-	want := errors.New("ng_tcpmss unavailable")
+	want := errors.New("ng_iface unavailable")
 	loadFreeBSDPPPoEModule = func(_ context.Context, module string) error {
-		if module == "ng_tcpmss" {
+		if module == "ng_iface" {
 			return want
 		}
 		return nil
 	}
 	err := ensureFreeBSDPPPoEModules(t.Context(), platform.OSFreeBSD)
 	if !errors.Is(err, want) {
-		t.Fatalf("ensure FreeBSD modules error = %v, want ng_tcpmss failure", err)
+		t.Fatalf("ensure FreeBSD modules error = %v, want ng_iface failure", err)
 	}
 }
 
