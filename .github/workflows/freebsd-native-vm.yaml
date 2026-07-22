@@ -14,12 +14,18 @@ on:
         required: false
         default: false
         type: boolean
+      arm64_runtime:
+        description: Run the FreeBSD 14.3 arm64 QEMU/TCG current-binary runtime smoke
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 jobs:
   native-smoke:
+    if: ${{ inputs.arm64_runtime != true }}
     name: FreeBSD 14.3 native VM smoke
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -57,5 +63,52 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: freebsd-native-console-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/routerd-anyvm-console-*
+          if-no-files-found: error
+
+  arm64-runtime:
+    if: ${{ inputs.arm64_runtime == true }}
+    name: FreeBSD 14.3 arm64 emulated runtime smoke
+    runs-on: ubuntu-latest
+    # GitHub hosted runners provide x86_64 KVM, not arm64 KVM.  This job runs
+    # real FreeBSD/aarch64 binaries under explicitly labelled QEMU TCG.
+    timeout-minutes: 90
+    env:
+      ROUTERD_ANYVM_ARCH: aarch64
+      ROUTERD_IPSEC_TOPOLOGY: tap
+      ROUTERD_IPSEC_PEER_ADDR: 198.18.200.1
+      ROUTERD_IPSEC_GUEST_ADDR: 198.18.200.10
+      ROUTERD_IPSEC_TAP: rd-ipsec-tap
+      ROUTERD_IPSEC_BRIDGE: rd-ipsec-br
+      ROUTERD_IPSEC_NETNS: rd-ipsec-ns
+      ROUTERD_IPSEC_VETH_HOST: rd-ipsec-vh
+      ROUTERD_IPSEC_VETH_PEER: rd-ipsec-vp
+      ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Record arm64 emulation provenance
+        run: |
+          printf 'runner_arch=%s\n' "$(uname -m)"
+          printf 'guest_arch=aarch64 acceleration=tcg anyvm=v0.5.1\n'
+
+      - name: Start Linux strongSwan peer
+        run: scripts/ci/freebsd-ipsec-linux-peer.sh start
+
+      - name: Run FreeBSD arm64 runtime smoke
+        run: scripts/ci/freebsd-anyvm-tap.sh
+
+      - name: Stop Linux strongSwan peer
+        if: always()
+        run: scripts/ci/freebsd-ipsec-linux-peer.sh stop
+
+      - name: Upload arm64 console evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: freebsd-arm64-tcg-console-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/routerd-anyvm-console-*
           if-no-files-found: error

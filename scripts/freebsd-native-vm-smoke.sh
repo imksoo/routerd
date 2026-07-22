@@ -3,6 +3,7 @@
 
 set -eu
 
+expected_arch=${ROUTERD_FREEBSD_EXPECTED_ARCH:-x86_64}
 case "$(uname -s)" in
 FreeBSD) ;;
 *)
@@ -18,12 +19,28 @@ case "$(freebsd-version -u)" in
   ;;
 esac
 [ "$(go env GOOS)" = "freebsd" ]
+case "$expected_arch" in
+x86_64)
+  [ "$(uname -m)" = amd64 ]
+  [ "$(go env GOARCH)" = amd64 ]
+  ;;
+aarch64)
+  case "$(uname -m)" in arm64|aarch64) ;; *) exit 1 ;; esac
+  [ "$(go env GOARCH)" = arm64 ]
+  ;;
+*)
+  echo "unsupported expected FreeBSD architecture: $expected_arch" >&2
+  exit 1
+  ;;
+esac
 pkg info -e go
 pkg info -e dnsmasq
 pkg info -e git
 pkg info -e hs-ShellCheck
 pkg info -e curl
 pkg info -e jq
+printf 'freebsd-native-runtime expected=%s arch=%s release=%s goarch=%s\n' \
+  "$expected_arch" "$(uname -m)" "$(freebsd-version -u)" "$(go env GOARCH)"
 git config --global --add safe.directory "$(pwd)"
 # The action shares a checkout into the guest. Test fixtures build temporary
 # helper binaries, so suppress VCS stamping there without narrowing the gate.
