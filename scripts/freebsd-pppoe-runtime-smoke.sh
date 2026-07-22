@@ -105,6 +105,10 @@ routerd_pppoe_server:
   set link disable chap eap
   set link enable pap
   set auth enable internal
+  # This isolated peer intentionally has no accounting backend. mpd5 defaults
+  # accounting-start to mandatory, which closes an otherwise authenticated
+  # link when no backend can accept the start record.
+  set auth disable acct-mandatory
   set pppoe service "routerd-lifecycle"
   create link template $epair_b L_routerd
   set pppoe iface $epair_b
