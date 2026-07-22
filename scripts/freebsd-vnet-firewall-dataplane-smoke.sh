@@ -230,18 +230,10 @@ wait "$capture_b" || true; capture_b=
 
 sed -i '' 's/^/sink-a /' "$evidence/sink-a.packets.log"
 sed -i '' 's/^/sink-b /' "$evidence/sink-b.packets.log"
-s10a=$(grep -c '^sink-a .*192\.0\.2\.10' "$evidence/sink-a.packets.log" || true)
-s10b=$(grep -c '^sink-b .*192\.0\.2\.10' "$evidence/sink-b.packets.log" || true)
-s11a=$(grep -c '^sink-a .*192\.0\.2\.11' "$evidence/sink-a.packets.log" || true)
-s11b=$(grep -c '^sink-b .*192\.0\.2\.11' "$evidence/sink-b.packets.log" || true)
-test $((s10a + s10b)) -ge 6
-test $((s11a + s11b)) -ge 6
-test "$s10a" -eq 0 -o "$s10b" -eq 0
-test "$s11a" -eq 0 -o "$s11b" -eq 0
-grep -q '^sink-a .*192\.0\.2\.' "$evidence/sink-a.packets.log"
-grep -q '^sink-b .*192\.0\.2\.' "$evidence/sink-b.packets.log"
-grep -q '^sink-a .*198\.51\.100\.1' "$evidence/sink-a.packets.log"
-grep -q '^sink-b .*203\.0\.113\.1' "$evidence/sink-b.packets.log"
+nat_a=$(grep -c '^sink-a .*198\.51\.100\.1' "$evidence/sink-a.packets.log" || true)
+nat_b=$(grep -c '^sink-b .*203\.0\.113\.1' "$evidence/sink-b.packets.log" || true)
+test "$nat_a" -ge 6
+test "$nat_b" -ge 6
 if grep -q '^sink-[ab] .*192\.0\.2\.' "$evidence/sink-a.packets.log" "$evidence/sink-b.packets.log"; then
   echo 'NAT44 source address leaked to egress sink' >&2
   exit 1
@@ -250,8 +242,8 @@ grep -F '192.0.2.10' "$evidence/pf-states.log"
 grep -F '192.0.2.11' "$evidence/pf-states.log"
 grep -F 'rule 1' "$evidence/pf-states.log"
 {
-  printf 'source10 sink-a=%s sink-b=%s\n' "$s10a" "$s10b"
-  printf 'source11 sink-a=%s sink-b=%s\n' "$s11a" "$s11b"
+  printf 'sink-a translated-source=%s\n' "$nat_a"
+  printf 'sink-b translated-source=%s\n' "$nat_b"
   printf 'both-routehosts=1\n'
   printf 'nat44-egress-source-translation=1\n'
   printf 'pf-states-source10-source11-rule1=1\n'
