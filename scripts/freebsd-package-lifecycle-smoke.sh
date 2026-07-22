@@ -191,7 +191,7 @@ printf 'freebsd-package-prior-install-start-observe=ok\n'
 wait_routerd "$work/current-status.json"
 conntrack_status "$work/current-conntrack-status.json"
 [ -s "$state_db" ]
-[ "$(/usr/local/sbin/routerd --version)" = "$(./bin/routerd --version)" ]
+[ "$(/usr/local/sbin/routerd --version)" = "$("$current_dir/bin/routerd" --version)" ]
 printf 'freebsd-package-upgrade-restart-observe=ok\n'
 
 (
