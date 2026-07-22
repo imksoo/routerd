@@ -8,10 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/pppoeclient"
 )
 
@@ -87,6 +90,52 @@ func TestPPPoEDiagnosticRedactsPassword(t *testing.T) {
 				if strings.Contains(got, "secret value") || !strings.Contains(got, "[REDACTED]") {
 					t.Fatalf("persisted diagnostic %s = %q", path, got)
 				}
+			}
+		})
+	}
+}
+
+func TestDiscoveryTimeoutPersistsActionableFailureForBothBackends(t *testing.T) {
+	for osName, wantCommand := range map[string]string{"linux": "pppd", "freebsd": "mpd5"} {
+		t.Run(osName, func(t *testing.T) {
+			cfg := pppoeclient.Config{Resource: "wan", Interface: "vtnet0", Spec: api.PPPoESessionSpec{Username: "user"}}
+			gotCommand, _ := pppoeclient.CommandForOS(osName, cfg)
+			if gotCommand != wantCommand {
+				t.Fatalf("command = %q, want %q", gotCommand, wantCommand)
+			}
+
+			dir := t.TempDir()
+			stateFile := filepath.Join(dir, "state.json")
+			eventFile := filepath.Join(dir, "events.jsonl")
+			cmd := &exec.Cmd{}
+			d := &daemon{
+				opts:     options{resource: "wan", password: "secret value", stateFile: stateFile, eventFile: eventFile, discoveryTimeout: time.Millisecond},
+				snapshot: pppoeclient.Snapshot{Resource: "wan", Phase: pppoeclient.PhaseConnecting},
+				cmd:      cmd,
+			}
+			d.watchDiscoveryTimeout(cmd)
+
+			state, err := os.ReadFile(stateFile)
+			if err != nil {
+				t.Fatalf("read state: %v", err)
+			}
+			if strings.Contains(string(state), "secret value") || !strings.Contains(string(state), pppoeclient.PhaseFailed) || !strings.Contains(string(state), "discovery timed out") {
+				t.Fatalf("state = %s", state)
+			}
+			events, err := os.ReadFile(eventFile)
+			if err != nil {
+				t.Fatalf("read events: %v", err)
+			}
+			if strings.Contains(string(events), "secret value") || !strings.Contains(string(events), "DiscoveryTimeout") {
+				t.Fatalf("events = %s", events)
+			}
+
+			d.scanLog(strings.NewReader("local  IP address 198.51.100.2"))
+			d.mu.Lock()
+			phase := d.snapshot.Phase
+			d.mu.Unlock()
+			if phase != pppoeclient.PhaseConnected {
+				t.Fatalf("late address did not recover session: phase=%q", phase)
 			}
 		})
 	}

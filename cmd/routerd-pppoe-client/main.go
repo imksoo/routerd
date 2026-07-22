@@ -33,24 +33,27 @@ import (
 
 const daemonKind = pppoeclient.DaemonKind
 
+const defaultDiscoveryTimeout = 30 * time.Second
+
 type options struct {
-	resource        string
-	ifname          string
-	username        string
-	password        string
-	passwordFile    string
-	authMethod      string
-	mtu             int
-	mru             int
-	serviceName     string
-	acName          string
-	lcpEchoInterval int
-	lcpEchoFailure  int
-	runtimeDir      string
-	socketPath      string
-	stateFile       string
-	eventFile       string
-	connect         bool
+	resource         string
+	ifname           string
+	username         string
+	password         string
+	passwordFile     string
+	authMethod       string
+	mtu              int
+	mru              int
+	serviceName      string
+	acName           string
+	lcpEchoInterval  int
+	lcpEchoFailure   int
+	runtimeDir       string
+	socketPath       string
+	stateFile        string
+	eventFile        string
+	connect          bool
+	discoveryTimeout time.Duration
 }
 
 type daemon struct {
@@ -312,6 +315,7 @@ func (d *daemon) startSession(ctx context.Context) error {
 		return err
 	}
 	d.publish("routerd.pppoe.client.session.connecting", daemonapi.SeverityInfo, "Connecting", "PPPoE session command started", map[string]string{"command": name})
+	go d.watchDiscoveryTimeout(cmd)
 	go d.scanLog(stdout)
 	go d.scanLog(stderr)
 	go func() {
@@ -338,6 +342,28 @@ func (d *daemon) startSession(ctx context.Context) error {
 		d.publishLocked("routerd.pppoe.client.session.disconnected", daemonapi.SeverityInfo, "Exited", "PPPoE session command exited", nil)
 	}()
 	return nil
+}
+
+func (d *daemon) watchDiscoveryTimeout(cmd *exec.Cmd) {
+	timeout := d.opts.discoveryTimeout
+	if timeout <= 0 {
+		timeout = defaultDiscoveryTimeout
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	<-timer.C
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.cmd != cmd || d.snapshot.Phase != pppoeclient.PhaseConnecting || !d.snapshot.ConnectedAt.IsZero() {
+		return
+	}
+	d.snapshot.Phase = pppoeclient.PhaseFailed
+	d.snapshot.LastError = fmt.Sprintf("PPPoE discovery timed out after %s without an assigned address", timeout)
+	d.snapshot.UpdatedAt = time.Now().UTC()
+	_ = d.saveStateLocked()
+	d.recordPhaseLocked()
+	d.publishLocked("routerd.pppoe.client.session.failed", daemonapi.SeverityWarning, "DiscoveryTimeout", d.snapshot.LastError, nil)
 }
 
 func (d *daemon) scanLog(r io.Reader) {
