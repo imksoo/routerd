@@ -32,7 +32,7 @@ func TestValidateHybridRemoteClaimConfigureOSAddress(t *testing.T) {
 
 func TestValidateTunnelInterfaceResources(t *testing.T) {
 	router := validTunnelHybridRouter()
-	if err := Validate(router); err != nil {
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 }
@@ -100,7 +100,7 @@ func TestValidateTunnelInterfaceEndpointSources(t *testing.T) {
 	}), testResource(api.NetAPIVersion, "Interface", "eth0", api.InterfaceSpec{
 		IfName: "eth0",
 	}))
-	if err := Validate(router); err != nil {
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 }
@@ -386,7 +386,7 @@ func TestValidateHybridFailures(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			router := validHybridRouter()
 			tt.mutate(router)
-			err := Validate(router)
+			err := ValidateForOS(router, platform.OSLinux)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Validate error = %v, want %q", err, tt.want)
 			}
@@ -501,7 +501,7 @@ func TestValidateTunnelInterfaceFailures(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			router := validTunnelHybridRouter()
 			tt.mutate(router)
-			err := Validate(router)
+			err := ValidateForOS(router, platform.OSLinux)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Validate error = %v, want %q", err, tt.want)
 			}

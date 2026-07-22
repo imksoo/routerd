@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 func TestBuildEffectiveConfigExpiredExcludedActiveIncluded(t *testing.T) {
@@ -35,6 +36,23 @@ func TestBuildEffectiveConfigExpiredExcludedActiveIncluded(t *testing.T) {
 	}
 	if !reflect.DeepEqual(result.ExpiredParts, []string{"cloudedge"}) {
 		t.Fatalf("expired parts = %#v", result.ExpiredParts)
+	}
+}
+
+func TestBuildEffectiveConfigForOSUsesRequestedTarget(t *testing.T) {
+	now := testNow()
+	part := testPart("sam", 1, now.Add(time.Hour), []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+		Metadata: api.ObjectMeta{Name: "sam-core-a"},
+		Spec: api.TunnelInterfaceSpec{
+			Mode: "ipip", Local: "192.0.2.10", Remote: "192.0.2.20", TrustedUnderlay: true,
+		},
+	}}, nil)
+	if _, _, err := BuildEffectiveConfigForOS(testRouter(), []DynamicConfigPart{part}, nil, now, platform.OSLinux); err != nil {
+		t.Fatalf("Linux dynamic tunnel validation: %v", err)
+	}
+	if _, _, err := BuildEffectiveConfigForOS(testRouter(), []DynamicConfigPart{part}, nil, now, platform.OSFreeBSD); err == nil || !strings.Contains(err.Error(), "FreeBSD cloned interface name") {
+		t.Fatalf("FreeBSD dynamic tunnel validation = %v, want cloned-interface rejection", err)
 	}
 }
 
