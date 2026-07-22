@@ -69,7 +69,7 @@ grep -F '/usr/local/bin/tailscale' "$script" >>"$evidence_dir/render-service.log
 
 # The generated lifecycle owns the start attempt. Credential-free enrollment
 # must fail actionably and unwind its service ownership.
-if "$script" onestart >"$evidence_dir/tailscale-up.log" 2>&1; then
+if "$script" start >"$evidence_dir/tailscale-up.log" 2>&1; then
   echo "unexpected authenticated Tailscale enrollment in credential-free CI" >&2
   exit 1
 fi
@@ -87,7 +87,7 @@ fi
 service tailscaled onestart >"$evidence_dir/tailscaled-foreign-start.log" 2>&1
 foreign_started=1
 service tailscaled onestatus >"$evidence_dir/tailscaled-foreign-status.log" 2>&1
-if "$script" onestart >"$evidence_dir/tailscale-foreign-refusal.log" 2>&1; then
+if "$script" start >"$evidence_dir/tailscale-foreign-refusal.log" 2>&1; then
   echo "generated Tailscale lifecycle adopted foreign tailscaled" >&2
   exit 1
 fi

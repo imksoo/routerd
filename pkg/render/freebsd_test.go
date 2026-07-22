@@ -58,7 +58,7 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 		}
 	}
 	vxlanScript := string(got.RCDScripts["routerd_vxlan_home_vxlan"])
-	for _, want := range []string{`/sbin/ifconfig "${ifname}" create`, `vxlanid' '100'`, `vxlanremote' '192.0.2.20'`, `vxlandev' 'vtnet0'`, `ifconfig 'bridge0' addm "${ifname}"`, `ifconfig 'bridge0' deletem "${ifname}"`, `routerd ownership marker`} {
+	for _, want := range []string{`/sbin/ifconfig "${ifname}" create`, `vxlanid' '100'`, `vxlanremote' '192.0.2.20'`, `vxlandev' 'vtnet0'`, `ifconfig 'bridge0' addm "${ifname}"`, `ifconfig 'bridge0' deletem "${ifname}"`, `unable to publish routerd VXLAN ownership marker`, `load_rc_config $name`, `routerd ownership marker`} {
 		if !strings.Contains(vxlanScript, want) {
 			t.Fatalf("VXLAN rc.d output missing %q:\n%s", want, vxlanScript)
 		}
@@ -142,9 +142,25 @@ func TestFreeBSDRendersCARPRCDScript(t *testing.T) {
 	script := string(got.RCDScripts["routerd_carp"])
 	for _, want := range []string{
 		`kldload carp >/dev/null 2>&1 || true`,
-		`foreign CARP state is already present; refusing mutation`,
+		`foreign CARP address is already present; refusing mutation`,
+		`foreign CARP VHID is already present; refusing mutation`,
 		`foreign CARP ownership is unknown; refusing mutation`,
 		`${ROUTERD_RUNTIME_DIR:-/var/run/routerd}/carp`,
+		`unable to publish routerd CARP ownership marker`,
+		`grep -Fq '10.240.70.10/32'`,
+		`grep -Fq 'vhid 50'`,
+		`kldload carp >/dev/null 2>&1 || true`,
+		`preempt_before=$(sysctl -n net.inet.carp.preempt) || { echo "unable to read CARP preempt" >&2; return 1; }`,
+		`unable to configure CARP preempt`,
+		`unable to configure routerd CARP address`,
+		`applied_0=1`,
+		`${applied_0:-0}`,
+		`printf '%s\n%s\n' "${name}" "${preempt_before}"`,
+		`{ read owned; read preempt_before; } < "${marker}"`,
+		`routerd CARP cleanup incomplete; retaining ownership marker`,
+		`if routerd_carp_status; then return 0; fi`,
+		`routerd_carp_stop || return 1`,
+		`if ifconfig 'vtnet1' | grep -Fq '10.240.70.10/32'; then`,
 		`sysctl net.inet.carp.preempt='0'`,
 		`ifconfig 'vtnet1' 'inet' 'vhid' '50' 'advbase' '2' 'advskew' '104' 'pass' 'secret' 'alias' '10.240.70.10/32'`,
 		`ifconfig 'vtnet1' 'inet' '10.240.70.10/32' -alias`,
@@ -288,6 +304,8 @@ func TestFreeBSDRendersTailscaleAndFirewallLoggerRCDScripts(t *testing.T) {
 		`service tailscaled onestart`,
 		`service tailscaled onestop`,
 		`routerd ownership marker mismatch`,
+		`unable to publish routerd tailscaled ownership marker`,
+		`load_rc_config $name`,
 		`/usr/local/bin/tailscale`,
 		`up`,
 		`--hostname=router01`,
@@ -416,6 +434,9 @@ func TestFreeBSDRendersWireGuardRCDScript(t *testing.T) {
 		`wg set 'wg0' listen-port '51824' private-key '/usr/local/etc/routerd/secrets/wg0.key'`,
 		`wg set 'wg0' peer 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' allowed-ips '10.44.4.2/32' endpoint '192.0.2.2:51824' persistent-keepalive '25'`,
 		`ifconfig 'wg0' inet '10.44.4.4/24' alias`,
+		`foreign WireGuard interface is already present; refusing mutation`,
+		`unable to publish routerd WireGuard ownership marker`,
+		`routerd_wireguard_wg0_rollback`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("wireguard rc.d script missing %q:\n%s", want, script)

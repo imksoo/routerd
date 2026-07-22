@@ -289,18 +289,19 @@ func FreeBSDTailscaleRCDScript(name string, spec api.TailscaleNodeSpec) []byte {
 	b.WriteString("#!/bin/sh\n# Managed by routerd.\n")
 	b.WriteString("# PROVIDE: " + name + "\n# REQUIRE: NETWORKING\n# KEYWORD: shutdown\n\n. /etc/rc.subr\n\n")
 	b.WriteString("name=" + shellSingleQuote(name) + "\nrcvar=\"${name}_enable\"\n")
-	b.WriteString("marker=" + shellSingleQuote("/var/run/routerd/tailscale/"+name+".owner") + "\n")
+	b.WriteString("marker_dir=" + shellSingleQuote("/var/run/routerd/tailscale") + "\nmarker=\"${marker_dir}/" + name + ".owner\"\n")
 	b.WriteString("start_cmd=\"${name}_start\"\nstop_cmd=\"${name}_stop\"\nstatus_cmd=\"${name}_status\"\n\n")
-	b.WriteString(name + "_start() {\n  if service tailscaled onestatus >/dev/null 2>&1; then\n    if [ ! -r \"${marker}\" ]; then\n      echo \"foreign tailscaled service is already running; refusing mutation\" >&2\n      return 1\n    fi\n  else\n    service tailscaled onestart || return 1\n    mkdir -p /var/run/routerd/tailscale\n    printf '%s\\n' \"${name}\" > \"${marker}\"\n  fi\n  ")
+	b.WriteString(name + "_rollback() {\n  [ \"${started_here:-0}\" = 1 ] || return 0\n  service tailscaled onestop >/dev/null 2>&1 || true\n  rm -f \"${marker}\" \"${marker}.$$\"\n}\n\n")
+	b.WriteString(name + "_start() {\n  started_here=0\n  if service tailscaled onestatus >/dev/null 2>&1; then\n    [ -r \"${marker}\" ] || { echo \"foreign tailscaled service is already running; refusing mutation\" >&2; return 1; }\n    read owned < \"${marker}\"\n    [ \"${owned}\" = \"${name}\" ] || { echo \"routerd ownership marker mismatch\" >&2; return 1; }\n  else\n    service tailscaled onestart || return 1\n    started_here=1\n    if ! mkdir -p \"${marker_dir}\" || ! printf '%s\\n' \"${name}\" > \"${marker}.$$\" || ! mv -f \"${marker}.$$\" \"${marker}\"; then\n      echo \"unable to publish routerd tailscaled ownership marker\" >&2\n      " + name + "_rollback\n      return 1\n    fi\n  fi\n  ")
 	for i, arg := range args {
 		if i > 0 {
 			b.WriteByte(' ')
 		}
 		b.WriteString(shellSingleQuote(arg))
 	}
-	b.WriteString(" || {\n    if [ -r \"${marker}\" ]; then\n      read owned < \"${marker}\"\n      if [ \"${owned}\" = \"${name}\" ]; then\n        service tailscaled onestop >/dev/null 2>&1 || true\n        rm -f \"${marker}\"\n      fi\n    fi\n    return 1\n  }\n}\n\n")
+	b.WriteString(" || { " + name + "_rollback; return 1; }\n}\n\n")
 	b.WriteString(name + "_stop() {\n  [ -r \"${marker}\" ] || { echo \"foreign tailscaled service ownership is unknown; refusing mutation\" >&2; return 1; }\n  read owned < \"${marker}\"\n  [ \"${owned}\" = \"${name}\" ] || { echo \"routerd ownership marker mismatch\" >&2; return 1; }\n  " + shellSingleQuote(args[0]) + " down || return 1\n  service tailscaled onestop || return 1\n  rm -f \"${marker}\"\n}\n\n")
-	b.WriteString(name + "_status() {\n  [ -r \"${marker}\" ] && service tailscaled onestatus\n}\n\nrun_rc_command \"$1\"\n")
+	b.WriteString(name + "_status() {\n  [ -r \"${marker}\" ] && service tailscaled onestatus\n}\n\nload_rc_config $name\n: ${" + name + "_enable:=\"YES\"}\nrun_rc_command \"$1\"\n")
 	return b.Bytes()
 }
 
@@ -328,7 +329,7 @@ func FreeBSDVXLANRCDScript(name string, vxlan vxlanConfig, bridges []string) []b
 	b.WriteString("# PROVIDE: " + name + "\n# REQUIRE: NETWORKING\n# KEYWORD: shutdown\n\n. /etc/rc.subr\n\n")
 	b.WriteString("name=" + shellSingleQuote(name) + "\nrcvar=\"${name}_enable\"\n")
 	b.WriteString("ifname=" + shellSingleQuote(vxlan.IfName) + "\n")
-	b.WriteString("marker=" + shellSingleQuote("/var/run/routerd/vxlan/"+name+".owner") + "\n")
+	b.WriteString("marker_dir=" + shellSingleQuote("/var/run/routerd/vxlan") + "\nmarker=\"${marker_dir}/" + name + ".owner\"\n")
 	b.WriteString("start_cmd=\"${name}_start\"\nstop_cmd=\"${name}_stop\"\nstatus_cmd=\"${name}_status\"\n\n")
 	b.WriteString(name + "_start() {\n  if /sbin/ifconfig \"${ifname}\" >/dev/null 2>&1; then\n    echo \"foreign interface collision: ${ifname}\" >&2\n    return 1\n  fi\n  /sbin/ifconfig \"${ifname}\" create || return 1\n  if ! /sbin/ifconfig \"${ifname}\"")
 	for _, arg := range args {
@@ -338,13 +339,17 @@ func FreeBSDVXLANRCDScript(name string, vxlan vxlanConfig, bridges []string) []b
 	for _, bridge := range bridges {
 		b.WriteString("  if ! /sbin/ifconfig " + shellSingleQuote(bridge) + " addm \"${ifname}\"; then\n    /sbin/ifconfig \"${ifname}\" destroy || true\n    return 1\n  fi\n")
 	}
-	b.WriteString("  mkdir -p /var/run/routerd/vxlan\n  printf '%s\\n' \"${ifname}\" > \"${marker}\"\n}\n\n")
+	b.WriteString("  if ! mkdir -p \"${marker_dir}\" || ! printf '%s\\n' \"${ifname}\" > \"${marker}.$$\" || ! mv -f \"${marker}.$$\" \"${marker}\"; then\n    echo \"unable to publish routerd VXLAN ownership marker\" >&2\n")
+	for _, bridge := range bridges {
+		b.WriteString("    /sbin/ifconfig " + shellSingleQuote(bridge) + " deletem \"${ifname}\" >/dev/null 2>&1 || true\n")
+	}
+	b.WriteString("    /sbin/ifconfig \"${ifname}\" destroy || true\n    return 1\n  fi\n}\n\n")
 	b.WriteString(name + "_stop() {\n  [ -r \"${marker}\" ] || return 0\n  read owned < \"${marker}\"\n  if [ \"${owned}\" != \"${ifname}\" ]; then\n    echo \"routerd ownership marker mismatch for ${ifname}\" >&2\n    return 1\n  fi\n")
 	for _, bridge := range bridges {
 		b.WriteString("  /sbin/ifconfig " + shellSingleQuote(bridge) + " deletem \"${ifname}\" >/dev/null 2>&1 || true\n")
 	}
 	b.WriteString("  if /sbin/ifconfig \"${ifname}\" >/dev/null 2>&1; then\n    /sbin/ifconfig \"${ifname}\" destroy || return 1\n  fi\n  rm -f \"${marker}\"\n}\n\n")
-	b.WriteString(name + "_status() {\n  /sbin/ifconfig \"${ifname}\" >/dev/null 2>&1\n}\n\nrun_rc_command \"$1\"\n")
+	b.WriteString(name + "_status() {\n  [ -r \"${marker}\" ] && /sbin/ifconfig \"${ifname}\" >/dev/null 2>&1\n}\n\nload_rc_config $name\n: ${" + name + "_enable:=\"YES\"}\nrun_rc_command \"$1\"\n")
 	return b.Bytes()
 }
 
@@ -396,30 +401,43 @@ func FreeBSDCARPRCDScript(config CARPConfigData) []byte {
 	buf.WriteString("stop_cmd=\"routerd_carp_stop\"\n")
 	buf.WriteString("status_cmd=\"routerd_carp_status\"\n\n")
 	buf.WriteString("routerd_carp_start() {\n")
+	buf.WriteString("  if [ -r \"${marker}\" ]; then\n    read owned < \"${marker}\"\n    [ \"${owned}\" = \"${name}\" ] || { echo \"routerd CARP ownership marker mismatch\" >&2; return 1; }\n    if routerd_carp_status; then return 0; fi\n    routerd_carp_stop || return 1\n  fi\n")
 	for _, iface := range config.Interfaces {
-		buf.WriteString("  if ifconfig " + shellSingleQuote(iface.Interface) + " | grep -q " + shellSingleQuote("vhid "+fmt.Sprintf("%d", iface.VirtualHostID)) + "; then\n")
-		buf.WriteString("    if [ ! -r \"${marker}\" ]; then\n")
-		buf.WriteString("      echo \"foreign CARP state is already present; refusing mutation\" >&2\n      return 1\n    fi\n")
+		buf.WriteString("  if ifconfig " + shellSingleQuote(iface.Interface) + " | grep -Fq " + shellSingleQuote(iface.Address) + "; then\n")
+		buf.WriteString("    echo \"foreign CARP address is already present; refusing mutation\" >&2\n    return 1\n")
 		buf.WriteString("  fi\n")
+		buf.WriteString("  if ifconfig " + shellSingleQuote(iface.Interface) + " | grep -Fq " + shellSingleQuote("vhid "+fmt.Sprintf("%d", iface.VirtualHostID)) + "; then\n")
+		buf.WriteString("    echo \"foreign CARP VHID is already present; refusing mutation\" >&2\n    return 1\n  fi\n")
+	}
+	for index := range config.Interfaces {
+		buf.WriteString("  applied_" + strconv.Itoa(index) + "=0\n")
 	}
 	buf.WriteString("  kldload carp >/dev/null 2>&1 || true\n")
-	buf.WriteString("  sysctl net.inet.carp.preempt=" + shellSingleQuote(config.PreemptSysctlValue()) + " >/dev/null\n")
-	for _, command := range config.IfconfigCommands() {
+	buf.WriteString("  preempt_before=$(sysctl -n net.inet.carp.preempt) || { echo \"unable to read CARP preempt\" >&2; return 1; }\n  preempt_changed=0\n")
+	buf.WriteString("  sysctl net.inet.carp.preempt=" + shellSingleQuote(config.PreemptSysctlValue()) + " >/dev/null || { echo \"unable to configure CARP preempt\" >&2; return 1; }\n  preempt_changed=1\n")
+	for index, command := range config.IfconfigCommands() {
 		buf.WriteString("  ifconfig")
 		for _, arg := range command {
 			buf.WriteString(" " + shellSingleQuote(arg))
 		}
-		buf.WriteString("\n")
+		buf.WriteString(" || { echo \"unable to configure routerd CARP address\" >&2; routerd_carp_rollback; return 1; }\n")
+		buf.WriteString("  applied_" + strconv.Itoa(index) + "=1\n")
 	}
-	buf.WriteString("  mkdir -p \"${marker_dir}\"\n  printf '%s\\n' \"${name}\" > \"${marker}\"\n")
+	buf.WriteString("  if ! mkdir -p \"${marker_dir}\" || ! printf '%s\\n%s\\n' \"${name}\" \"${preempt_before}\" > \"${marker}.$$\" || ! mv -f \"${marker}.$$\" \"${marker}\"; then\n    echo \"unable to publish routerd CARP ownership marker\" >&2\n    routerd_carp_rollback\n    return 1\n  fi\n")
 	buf.WriteString("}\n\n")
+	buf.WriteString("routerd_carp_rollback() {\n")
+	for index, iface := range config.Interfaces {
+		buf.WriteString("  if [ \"${applied_" + strconv.Itoa(index) + ":-0}\" = 1 ]; then ifconfig " + shellSingleQuote(iface.Interface) + " " + shellSingleQuote(carpAddressFamily(iface.Family)) + " " + shellSingleQuote(iface.Address) + " -alias >/dev/null 2>&1 || true; fi\n")
+	}
+	buf.WriteString("  if [ \"${preempt_changed:-0}\" = 1 ]; then sysctl net.inet.carp.preempt=\"${preempt_before}\" >/dev/null 2>&1 || true; fi\n  rm -f \"${marker}\" \"${marker}.$$\"\n}\n\n")
 	buf.WriteString("routerd_carp_stop() {\n")
 	buf.WriteString("  [ -r \"${marker}\" ] || { echo \"foreign CARP ownership is unknown; refusing mutation\" >&2; return 1; }\n")
-	buf.WriteString("  read owned < \"${marker}\"\n  [ \"${owned}\" = \"${name}\" ] || { echo \"routerd CARP ownership marker mismatch\" >&2; return 1; }\n")
+	buf.WriteString("  { read owned; read preempt_before; } < \"${marker}\"\n  [ \"${owned}\" = \"${name}\" ] || { echo \"routerd CARP ownership marker mismatch\" >&2; return 1; }\n  case \"${preempt_before}\" in 0|1) ;; *) echo \"routerd CARP marker lacks preempt state\" >&2; return 1;; esac\n  cleanup_failed=0\n")
 	for _, iface := range config.Interfaces {
-		buf.WriteString("  ifconfig " + shellSingleQuote(iface.Interface) + " " + shellSingleQuote(carpAddressFamily(iface.Family)) + " " + shellSingleQuote(iface.Address) + " -alias >/dev/null 2>&1 || true\n")
+		buf.WriteString("  if ifconfig " + shellSingleQuote(iface.Interface) + " | grep -Fq " + shellSingleQuote(iface.Address) + "; then\n")
+		buf.WriteString("    if ! ifconfig " + shellSingleQuote(iface.Interface) + " " + shellSingleQuote(carpAddressFamily(iface.Family)) + " " + shellSingleQuote(iface.Address) + " -alias >/dev/null 2>&1; then cleanup_failed=1; fi\n  fi\n")
 	}
-	buf.WriteString("  rm -f \"${marker}\"\n")
+	buf.WriteString("  if ! sysctl net.inet.carp.preempt=\"${preempt_before}\" >/dev/null; then cleanup_failed=1; fi\n  [ \"${cleanup_failed}\" = 0 ] || { echo \"routerd CARP cleanup incomplete; retaining ownership marker\" >&2; return 1; }\n  rm -f \"${marker}\" || return 1\n")
 	buf.WriteString("}\n\n")
 	buf.WriteString("routerd_carp_status() {\n")
 	if len(config.Interfaces) == 0 {
@@ -536,23 +554,31 @@ func FreeBSDWireGuardRCDScript(ifname string, spec api.WireGuardInterfaceSpec, p
 	buf.WriteString(". /etc/rc.subr\n\n")
 	buf.WriteString("name=" + shellSingleQuote(name) + "\n")
 	buf.WriteString("rcvar=\"${name}_enable\"\n")
+	buf.WriteString("marker_dir=" + shellSingleQuote("/var/run/routerd/wireguard") + "\n")
+	buf.WriteString("marker=\"${marker_dir}/" + name + ".owner\"\n")
 	buf.WriteString("start_cmd=\"${name}_start\"\n")
 	buf.WriteString("stop_cmd=\"${name}_stop\"\n")
 	buf.WriteString("status_cmd=\"${name}_status\"\n\n")
-	buf.WriteString(name + "_start() {\n")
+	buf.WriteString(name + "_rollback() {\n  [ \"${created_here:-0}\" = 1 ] || return 0\n  /sbin/ifconfig " + shellSingleQuote(ifname) + " destroy >/dev/null 2>&1 || true\n  rm -f \"${marker}\" \"${marker}.$$\"\n}\n\n")
+	buf.WriteString(name + "_start() {\n  created_here=0\n")
 	buf.WriteString("  kldload if_wg >/dev/null 2>&1 || true\n")
-	buf.WriteString("  if ! ifconfig " + shellSingleQuote(ifname) + " >/dev/null 2>&1; then\n")
-	buf.WriteString("    ifconfig " + shellSingleQuote(ifname) + " create >/dev/null 2>&1 || ifconfig wg create name " + shellSingleQuote(ifname) + "\n")
+	buf.WriteString("  if ifconfig " + shellSingleQuote(ifname) + " >/dev/null 2>&1; then\n")
+	buf.WriteString("    [ -r \"${marker}\" ] || { echo \"foreign WireGuard interface is already present; refusing mutation\" >&2; return 1; }\n")
+	buf.WriteString("    read owned < \"${marker}\"\n    [ \"${owned}\" = " + shellSingleQuote(ifname) + " ] || { echo \"routerd WireGuard ownership marker mismatch\" >&2; return 1; }\n")
+	buf.WriteString("  else\n")
+	buf.WriteString("    ifconfig " + shellSingleQuote(ifname) + " create >/dev/null 2>&1 || ifconfig wg create name " + shellSingleQuote(ifname) + " || return 1\n")
+	buf.WriteString("    created_here=1\n")
+	buf.WriteString("    if ! mkdir -p \"${marker_dir}\" || ! printf '%s\\n' " + shellSingleQuote(ifname) + " > \"${marker}.$$\" || ! mv -f \"${marker}.$$\" \"${marker}\"; then\n      echo \"unable to publish routerd WireGuard ownership marker\" >&2\n      " + name + "_rollback\n      return 1\n    fi\n")
 	buf.WriteString("  fi\n")
 	if spec.MTU != 0 {
-		buf.WriteString("  ifconfig " + shellSingleQuote(ifname) + " mtu " + shellSingleQuote(fmt.Sprintf("%d", spec.MTU)) + "\n")
+		buf.WriteString("  ifconfig " + shellSingleQuote(ifname) + " mtu " + shellSingleQuote(fmt.Sprintf("%d", spec.MTU)) + " || { " + name + "_rollback; return 1; }\n")
 	}
 	if strings.TrimSpace(spec.PrivateKeyFile) != "" {
 		buf.WriteString("  wg set " + shellSingleQuote(ifname))
 		if spec.ListenPort != 0 {
 			buf.WriteString(" listen-port " + shellSingleQuote(fmt.Sprintf("%d", spec.ListenPort)))
 		}
-		buf.WriteString(" private-key " + shellSingleQuote(spec.PrivateKeyFile) + "\n")
+		buf.WriteString(" private-key " + shellSingleQuote(spec.PrivateKeyFile) + " || { " + name + "_rollback; return 1; }\n")
 	} else {
 		keyFile := "/var/run/routerd/wireguard-" + ifname + ".key"
 		buf.WriteString("  install -d -m 0700 /var/run/routerd\n")
@@ -561,7 +587,7 @@ func FreeBSDWireGuardRCDScript(ifname string, spec api.WireGuardInterfaceSpec, p
 		if spec.ListenPort != 0 {
 			buf.WriteString(" listen-port " + shellSingleQuote(fmt.Sprintf("%d", spec.ListenPort)))
 		}
-		buf.WriteString(" private-key " + shellSingleQuote(keyFile) + "\n")
+		buf.WriteString(" private-key " + shellSingleQuote(keyFile) + " || { " + name + "_rollback; return 1; }\n")
 	}
 	for _, peer := range peers {
 		if strings.TrimSpace(peer.PublicKey) == "" {
@@ -587,18 +613,20 @@ func FreeBSDWireGuardRCDScript(ifname string, spec api.WireGuardInterfaceSpec, p
 			buf.WriteString("  umask 077; printf '%s\\n' " + shellSingleQuote(peer.PresharedKey) + " > " + shellSingleQuote(keyFile) + "\n")
 			buf.WriteString("  wg set " + shellSingleQuote(ifname) + " peer " + shellSingleQuote(peer.PublicKey) + " preshared-key " + shellSingleQuote(keyFile))
 		}
-		buf.WriteString("\n")
+		buf.WriteString(" || { " + name + "_rollback; return 1; }\n")
 	}
 	for _, address := range addresses {
-		buf.WriteString("  ifconfig " + shellSingleQuote(ifname) + " inet " + shellSingleQuote(address) + " alias >/dev/null 2>&1 || true\n")
+		buf.WriteString("  ifconfig " + shellSingleQuote(ifname) + " inet " + shellSingleQuote(address) + " alias >/dev/null 2>&1 || { " + name + "_rollback; return 1; }\n")
 	}
-	buf.WriteString("  ifconfig " + shellSingleQuote(ifname) + " up\n")
+	buf.WriteString("  ifconfig " + shellSingleQuote(ifname) + " up || { " + name + "_rollback; return 1; }\n")
 	buf.WriteString("}\n\n")
 	buf.WriteString(name + "_stop() {\n")
-	buf.WriteString("  ifconfig " + shellSingleQuote(ifname) + " destroy >/dev/null 2>&1 || true\n")
+	buf.WriteString("  [ -r \"${marker}\" ] || { echo \"foreign WireGuard ownership is unknown; refusing mutation\" >&2; return 1; }\n")
+	buf.WriteString("  read owned < \"${marker}\"\n  [ \"${owned}\" = " + shellSingleQuote(ifname) + " ] || { echo \"routerd WireGuard ownership marker mismatch\" >&2; return 1; }\n")
+	buf.WriteString("  ifconfig " + shellSingleQuote(ifname) + " destroy >/dev/null 2>&1 || return 1\n  rm -f \"${marker}\"\n")
 	buf.WriteString("}\n\n")
 	buf.WriteString(name + "_status() {\n")
-	buf.WriteString("  ifconfig " + shellSingleQuote(ifname) + " >/dev/null 2>&1 && wg show " + shellSingleQuote(ifname) + " >/dev/null 2>&1\n")
+	buf.WriteString("  [ -r \"${marker}\" ] && ifconfig " + shellSingleQuote(ifname) + " >/dev/null 2>&1 && wg show " + shellSingleQuote(ifname) + " >/dev/null 2>&1\n")
 	buf.WriteString("}\n\n")
 	buf.WriteString("load_rc_config $name\n")
 	buf.WriteString(": ${" + name + "_enable:=\"YES\"}\n")

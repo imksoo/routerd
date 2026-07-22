@@ -119,9 +119,9 @@ chmod 0555 "$work/routerd-carp-a" "$work/routerd-carp-b"
 grep -F 'foreign CARP state is already present; refusing mutation' "$work/routerd-carp-a" >"$evidence_dir/render-carp.log"
 grep -F 'vhid' "$work/routerd-carp-a" >>"$evidence_dir/render-carp.log"
 
-run_a onestart >"$evidence_dir/carp-a-start.log" 2>&1
+run_a start >"$evidence_dir/carp-a-start.log" 2>&1
 a_started=1
-run_b onestart >"$evidence_dir/carp-b-start.log" 2>&1
+run_b start >"$evidence_dir/carp-b-start.log" 2>&1
 b_started=1
 
 wait_role() {
@@ -143,7 +143,7 @@ a_started=0
 wait_role "$jail_b" "$b_if" MASTER "$evidence_dir/carp-b-master-after-failover.log"
 jexec "$jail_a" ping -S 198.18.232.1 -c 3 198.18.232.100 >"$evidence_dir/carp-failover-vip-ping.log"
 
-run_a onestart >"$evidence_dir/carp-a-restart.log" 2>&1
+run_a start >"$evidence_dir/carp-a-restart.log" 2>&1
 a_started=1
 run_a onestatus >"$evidence_dir/carp-a-status-restart.log" 2>&1
 run_b onestatus >"$evidence_dir/carp-b-status-restart.log" 2>&1
@@ -156,19 +156,26 @@ if jexec "$jail_a" ifconfig "$a_if" >"$evidence_dir/carp-a-after-stop.log" 2>&1 
   echo "routerd-owned CARP state survived stop" >&2; exit 1
 fi
 
-# A manually created CARP VIP is foreign. The generated artifact must refuse
-# it rather than deleting or rewriting it.
-jexec "$jail_a" ifconfig "$a_if" inet vhid 232 advbase 1 advskew 100 pass lifecycle-carp-secret alias 198.18.232.100/24
-if run_a onestart >"$evidence_dir/carp-foreign-refusal.log" 2>&1; then
-  echo "generated CARP service adopted foreign CARP state" >&2; exit 1
+# Exercise both foreign collision predicates independently: desired address
+# under another VHID, then the desired VHID with another address.
+jexec "$jail_a" ifconfig "$a_if" inet vhid 233 advbase 1 advskew 100 pass lifecycle-carp-secret alias 198.18.232.100/24
+if run_a start >"$evidence_dir/carp-foreign-address-refusal.log" 2>&1; then
+  echo "generated CARP service adopted a foreign desired address" >&2; exit 1
 fi
-jexec "$jail_a" ifconfig "$a_if" >"$evidence_dir/carp-foreign-preserved.log"
-grep -F 'vhid 232' "$evidence_dir/carp-foreign-preserved.log"
+jexec "$jail_a" ifconfig "$a_if" >"$evidence_dir/carp-foreign-address-preserved.log"
+grep -F 'vhid 233' "$evidence_dir/carp-foreign-address-preserved.log"
 jexec "$jail_a" ifconfig "$a_if" inet 198.18.232.100/24 -alias
+jexec "$jail_a" ifconfig "$a_if" inet vhid 232 advbase 1 advskew 100 pass lifecycle-carp-secret alias 198.18.232.101/24
+if run_a start >"$evidence_dir/carp-foreign-vhid-refusal.log" 2>&1; then
+  echo "generated CARP service adopted a foreign matching VHID" >&2; exit 1
+fi
+jexec "$jail_a" ifconfig "$a_if" >"$evidence_dir/carp-foreign-vhid-preserved.log"
+grep -F 'vhid 232' "$evidence_dir/carp-foreign-vhid-preserved.log"
+jexec "$jail_a" ifconfig "$a_if" inet 198.18.232.101/24 -alias
 
 printf '%s\n' \
   'carp-generated-vnet-master-backup-failover-restart-stop=ok' \
   'carp-vip-ping-before-after-failover=ok' \
-  'carp-foreign-state=generated-refusal-preserved' \
+  'carp-foreign-address-and-vhid=generated-refusal-preserved' \
   'carp-owned-cleanup=ok' >"$evidence_dir/summary.log"
 printf 'freebsd-carp-runtime=ok\n' >"$evidence_dir/result"
