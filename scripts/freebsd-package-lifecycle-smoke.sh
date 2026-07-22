@@ -47,6 +47,15 @@ owned_live=0
 
 cleanup() {
   rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "freebsd-package-lifecycle failure rc=$rc" >&2
+    for log in prior-install current-upgrade owned-uninstall foreign-install foreign-uninstall cleanup; do
+      if [ -f "$work/$log.log" ]; then
+        echo "--- $log.log" >&2
+        tail -120 "$work/$log.log" >&2 || true
+      fi
+    done
+  fi
   if [ "$owned_live" -eq 1 ]; then
     if [ -x "$current_dir/uninstall.sh" ]; then
       (cd "$current_dir" && ./uninstall.sh --prefix /usr/local --all --yes) >>"$work/cleanup.log" 2>&1 || true
@@ -83,11 +92,12 @@ stage_release() {
 }
 
 wait_routerd() {
+  status=$1
   for _ in $(jot 30); do
     if service routerd onestatus >/dev/null 2>&1 && \
       [ -S /var/run/routerd/routerd-status.sock ] && \
-      /usr/local/sbin/routerctl get status --socket /var/run/routerd/routerd-status.sock >/dev/null 2>&1; then
-      return 0
+      /usr/local/sbin/routerctl get status --socket /var/run/routerd/routerd-status.sock -o json >"$status" 2>/dev/null; then
+      jq -e '.phase == "Healthy"' "$status" >/dev/null && return 0
     fi
     sleep 1
   done
@@ -116,15 +126,17 @@ stage_release 0.0.0-package-current "$current_dir"
   ROUTERD_INSTALL_PACKAGE_MANAGER=none ./install.sh --prefix /usr/local --no-install-deps --no-config-update --enable-service --start-service
 ) >"$work/prior-install.log" 2>&1
 owned_live=1
-wait_routerd
+wait_routerd "$work/prior-status.json"
 grep -Fqx '# routerd-managed-service: v1' /usr/local/etc/rc.d/routerd
+[ -s /var/db/routerd/state.db ]
 printf 'freebsd-package-prior-install-start-observe=ok\n'
 
 (
   cd "$current_dir"
   ROUTERD_INSTALL_PACKAGE_MANAGER=none ./install.sh --prefix /usr/local --no-install-deps --no-config-update
 ) >"$work/current-upgrade.log" 2>&1
-wait_routerd
+wait_routerd "$work/current-status.json"
+[ -s /var/db/routerd/state.db ]
 [ "$(/usr/local/sbin/routerd --version)" = "$(./bin/routerd --version)" ]
 printf 'freebsd-package-upgrade-restart-observe=ok\n'
 
