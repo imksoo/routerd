@@ -200,6 +200,7 @@ if [ "${ROUTERD_FREEBSD_LIFECYCLE_RUNTIME:-false}" = true ]; then
   go build -o "$dns_resolver" ./cmd/routerd-dns-resolver
   sh scripts/freebsd-lifecycle-runtime-smoke.sh \
     --dhcpv4-client "$dhcpv4_client" --dns-resolver "$dns_resolver" \
+    --routerd "$routerd" \
     --evidence-dir "$lifecycle_evidence"
   cat "$lifecycle_evidence/summary.log"
   cat "$lifecycle_evidence/result"

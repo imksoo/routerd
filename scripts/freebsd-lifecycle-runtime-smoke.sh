@@ -9,19 +9,22 @@ set -eu
 
 dhcpv4_client=
 dns_resolver=
+routerd=
 evidence_dir=
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
   --dhcpv4-client) dhcpv4_client=$2; shift 2 ;;
   --dns-resolver) dns_resolver=$2; shift 2 ;;
+  --routerd) routerd=$2; shift 2 ;;
   --evidence-dir) evidence_dir=$2; shift 2 ;;
-  *) echo "usage: $0 --dhcpv4-client PATH --dns-resolver PATH --evidence-dir DIR" >&2; exit 2 ;;
+  *) echo "usage: $0 --dhcpv4-client PATH --dns-resolver PATH --routerd PATH --evidence-dir DIR" >&2; exit 2 ;;
   esac
 done
 
 [ -x "$dhcpv4_client" ]
 [ -x "$dns_resolver" ]
+[ -x "$routerd" ]
 [ -n "$evidence_dir" ]
 
 case "$(uname -s)" in FreeBSD) ;; *) exit 1 ;; esac
@@ -31,6 +34,9 @@ dnsmasq_pid=
 resolver_pid=
 epair_a=
 epair_b=
+rcd_script=/usr/local/etc/rc.d/routerd_dnsmasq
+rcd_config=/usr/local/etc/routerd/dnsmasq.conf
+rcd_installed=0
 
 cleanup() {
   rc=$?
@@ -49,6 +55,10 @@ cleanup() {
   if [ -n "$dnsmasq_pid" ]; then
     kill -TERM "$dnsmasq_pid" 2>/dev/null || true
     wait "$dnsmasq_pid" 2>/dev/null || true
+  fi
+  if [ "$rcd_installed" -eq 1 ]; then
+    env routerd_dnsmasq_enable=YES "$rcd_script" onestop >>"$evidence_dir/dnsmasq-rcd-stop.log" 2>&1 || rc=1
+    rm -f "$rcd_script" "$rcd_config"
   fi
   if [ -n "$epair_a" ] && ifconfig "$epair_a" >/dev/null 2>&1; then
     ifconfig "$epair_a" destroy >>"$evidence_dir/cleanup.log" 2>&1 || rc=1
@@ -85,6 +95,71 @@ kill -0 "$dnsmasq_pid"
 jq -e '.state == "Bound" and .currentAddress == "192.0.2.10"' "$evidence_dir/dhcpv4-result.json" >/dev/null
 jq -e 'select(.reason == "DiscoverSent")' "$evidence_dir/dhcpv4-events.jsonl" >/dev/null
 jq -e 'select(.reason == "LeaseBound")' "$evidence_dir/dhcpv4-events.jsonl" >/dev/null
+
+# Exercise the actual current routerd FreeBSD render artifact.  The native
+# guest must not overwrite an operator-owned rc.d/config collision.
+if [ -e "$rcd_script" ] || [ -e "$rcd_config" ]; then
+  echo "routerd dnsmasq rc.d fixture collision" >&2
+  exit 1
+fi
+kill -TERM "$dnsmasq_pid"
+wait "$dnsmasq_pid"
+dnsmasq_pid=
+cat >"$work/routerd-dnsmasq.yaml" <<EOF
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: lifecycle-dnsmasq
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lan
+      spec:
+        ifname: $epair_b
+        adminUp: true
+        managed: false
+        owner: external
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata:
+        name: lan-address
+      spec:
+        interface: lan
+        address: 192.0.2.1/24
+        exclusive: false
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Server
+      metadata:
+        name: lan-dhcp
+      spec:
+        interface: lan
+        addressPool:
+          start: 192.0.2.10
+          end: 192.0.2.20
+          leaseTime: 1h
+        gatewayFrom:
+          resource: IPv4StaticAddress/lan-address
+          field: address
+        dnsServerFrom:
+          - resource: IPv4StaticAddress/lan-address
+            field: address
+EOF
+"$routerd" render freebsd --config "$work/routerd-dnsmasq.yaml" --out-dir "$work/rendered" >"$evidence_dir/dnsmasq-render.log"
+test -s "$work/rendered/dnsmasq.conf"
+test -x "$work/rendered/rc.d-routerd_dnsmasq"
+install -d -m 0755 /usr/local/etc/routerd /usr/local/etc/rc.d
+install -m 0644 "$work/rendered/dnsmasq.conf" "$rcd_config"
+install -m 0555 "$work/rendered/rc.d-routerd_dnsmasq" "$rcd_script"
+rcd_installed=1
+env routerd_dnsmasq_enable=YES "$rcd_script" onestart >"$evidence_dir/dnsmasq-rcd-start.log" 2>&1
+env routerd_dnsmasq_enable=YES "$rcd_script" onestatus >"$evidence_dir/dnsmasq-rcd-status.log" 2>&1
+env routerd_dnsmasq_enable=YES "$rcd_script" onerestart >"$evidence_dir/dnsmasq-rcd-restart.log" 2>&1
+env routerd_dnsmasq_enable=YES "$rcd_script" onestatus >>"$evidence_dir/dnsmasq-rcd-status.log" 2>&1
+env routerd_dnsmasq_enable=YES "$rcd_script" onestop >"$evidence_dir/dnsmasq-rcd-stop.log" 2>&1
+rcd_installed=0
+rm -f "$rcd_script" "$rcd_config"
 
 cat >"$work/resolver.json" <<'EOF'
 {"resource":"lifecycle-resolver","spec":{"listen":[{"addresses":["127.0.0.1"],"port":10553}]}}
@@ -130,6 +205,7 @@ resolver_pid=
 
 printf '%s\n' \
   'dhcpv4-bpf-lease=Bound' \
+  'dnsmasq-rcd-render-start-observe-restart-stop=ok' \
   'dns-resolver-start-observe-reload-restart-stop=ok' \
   'owned-epair-cleanup=pending-exit-trap' >"$evidence_dir/summary.log"
 printf 'freebsd-lifecycle-runtime=ok\n' >"$evidence_dir/result"
