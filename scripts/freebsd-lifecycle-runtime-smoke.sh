@@ -67,6 +67,9 @@ cleanup() {
   fi
   if [ -n "$dnsmasq_pid" ]; then
     kill -TERM "$dnsmasq_pid" 2>/dev/null || true
+    # dnsmasq can report a signal-derived nonzero status after the owned
+    # fixture sends TERM.  Process termination, not that status, is the
+    # cleanup contract here.
     wait "$dnsmasq_pid" 2>/dev/null || true
   fi
   if [ "$rcd_installed" -eq 1 ]; then
@@ -116,7 +119,7 @@ if [ -e "$rcd_script" ] || [ -e "$rcd_config" ]; then
   exit 1
 fi
 kill -TERM "$dnsmasq_pid"
-wait "$dnsmasq_pid"
+wait "$dnsmasq_pid" || true
 dnsmasq_pid=
 cat >"$work/routerd-dnsmasq.yaml" <<EOF
 apiVersion: routerd.net/v1alpha1
