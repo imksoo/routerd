@@ -141,8 +141,8 @@ EOF
 find "$work/render" -maxdepth 1 -type f -exec basename {} \; | sort >"$evidence/render-files.log"
 awk -v control_if="$control_if" -v control_gateway="$control_gateway" -v control_address="$control_address" '
   $0 == "block drop all" && !inserted {
-    print "pass in quick on " control_if " inet proto tcp from " control_gateway " to " control_address " port 22 keep state label \"routerd:fixture-control-ssh\""
-    print "pass out quick on " control_if " inet proto tcp from " control_address " to " control_gateway " port 22 keep state label \"routerd:fixture-control-ssh\""
+    print "pass in quick on " control_if " inet proto tcp from " control_gateway " to " control_address " port 22 flags any keep state label \"routerd:fixture-control-ssh\""
+    print "pass out quick on " control_if " inet proto tcp from " control_address " to " control_gateway " port 22 flags any keep state label \"routerd:fixture-control-ssh\""
     inserted = 1
   }
   { print }
