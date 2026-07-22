@@ -24,6 +24,11 @@ on:
         required: false
         default: false
         type: boolean
+      clientpolicy_identity_runtime:
+        description: Run isolated FreeBSD ClientPolicy explicit-IP identity smoke
+        required: false
+        default: false
+        type: boolean
       kernelmodule_persistence_runtime:
         description: Run isolated FreeBSD KernelModule loader persistence and reboot smoke
         required: false
@@ -53,6 +58,7 @@ jobs:
       ROUTERD_IPSEC_VETH_PEER: rd-ipsec-vp
       ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE: ${{ inputs.ipv6_route_to_console_candidate || 'false' }}
       ROUTERD_FREEBSD_TUNNELINTERFACE_RUNTIME: ${{ inputs.tunnelinterface_runtime || 'false' }}
+      ROUTERD_FREEBSD_CLIENTPOLICY_IDENTITY_RUNTIME: ${{ inputs.clientpolicy_identity_runtime || 'false' }}
       ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME: ${{ inputs.kernelmodule_persistence_runtime || 'false' }}
     steps:
       - name: Checkout

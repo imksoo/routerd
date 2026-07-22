@@ -6,6 +6,7 @@ package healthcheck
 
 import (
 	"net"
+	"strings"
 	"testing"
 )
 
@@ -14,6 +15,14 @@ func TestConfigureDialerSocketFreeBSDInvalidInterface(t *testing.T) {
 	err := configureDialerSocket(&dialer, "routerd-no-such-interface", 0, "tcp4", "127.0.0.1:443", "", false)
 	if err == nil {
 		t.Fatal("expected invalid interface error")
+	}
+}
+
+func TestConfigureDialerSocketFreeBSDRejectsLinuxFwmarkSteering(t *testing.T) {
+	var dialer net.Dialer
+	err := configureDialerSocket(&dialer, "", 0x100, "tcp4", "192.0.2.1:443", "", false)
+	if err == nil || !strings.Contains(err.Error(), "Linux SO_MARK fwmark steering") {
+		t.Fatalf("configureDialerSocket() error = %v, want explicit SO_MARK boundary", err)
 	}
 }
 

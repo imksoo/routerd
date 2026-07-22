@@ -112,7 +112,7 @@ routerd 不使用 Linux 用的机制，而是将资源对应至 FreeBSD 的 `rc.
 - `routerd-healthcheck` 的 rc.d script 生成
 - `routerd-firewall-logger` 的 rc.d script 生成，并直接读取 `pflog0`
 
-FreeBSD 也支持 `ClientPolicy`。IPv4 使用基于 `DHCPv4Reservation` 的 pf 近似；IPv6 guest identity 必须在 `classification[].ipv6Addresses` 中显式声明。routerd 不会从 IPv4 reservation、MAC、hostname、OUI 或 DHCP fingerprint 推断 IPv6 identity；显式 IPv6 地址会生成 `inet6` guest-egress deny 规则。
+FreeBSD 也支持 `ClientPolicy`。IPv4 使用基于 `DHCPv4Reservation` 的 pf 近似；IPv6 guest identity 必须在 `classification[].ipv6Addresses` 中显式声明。对 FreeBSD 目标，这些稳定地址字段就是 identity 合约；MAC、OUI、hostname 和 DHCP fingerprint 的 match selector 会被显式拒绝，而不会被静默忽略。routerd 不会从 IPv4 reservation、MAC、hostname、OUI 或 DHCP fingerprint 推断 IPv6 identity；显式 IPv6 地址会生成 `inet6` guest-egress deny 规则。
 这不等同于 Linux 的 MAC 地址隔离：pf 在 routed filter path 中无法匹配 nftables 使用的 Ethernet 来源 selector；privacy 或未列出的 IPv6 地址不在该 slice 内，需要独立网络隔离（[#849](https://github.com/imksoo/routerd/issues/849)）。
 - `TailscaleNode` 的 rc.d script 生成
 - 静态 DS-Lite gif tunnel 的生成（render）
@@ -121,7 +121,8 @@ FreeBSD 也支持 `ClientPolicy`。IPv4 使用基于 `DHCPv4Reservation` 的 pf 
 - 用于 healthcheck 的原生 `route -n get`，以及通过 `RTF_PROTO1` 标识 BGP FIB 所有权（包括 replace、withdraw 和保留 foreign route）
 - FreeBSD peer 上的 FRR `bfdd` reconcile，以及实机观测到的 Up → Down → Up 恢复
 - FreeBSD native doctor、KernelModule `kldload` reconcile 和 BGP 专用 `routerd_bgp` rc.d 生成
-- FreeBSD 没有 Linux `IP_FREEBIND` 等价物，因此显式拒绝 non-local DNS resolver bind
+- FreeBSD 没有把 probe mark 映射为 request-scoped policy route 的 Linux `SO_MARK` 等价物，因此显式拒绝 fwmark healthcheck（请使用 unmarked route 与 `sourceInterface`/`sourceAddress`）
+- FreeBSD 没有 Linux `IP_FREEBIND` 等价物，因此显式拒绝 non-local DNS resolver bind（须先分配地址再启动 resolver）；outbound DNS 仍可使用独立的 `sourceInterface: fib:<n>` 机制
 
 ARP/RA observer 守护进程通过 FreeBSD base system 的 tcpdump/libpcap BPF 路径捕获数据；proactive ARP write 保留独立的 direct-BPF descriptor。provisioned native CI 在 disposable VNET 中运行两个守护进程，并要求生成预期的 ARP observation event 与 rogue-RA event。带 tag 的 native DPI backend 支持 FreeBSD ports `ndpi` 5.0 ABI，并由同一 native gate 的 TLS/SNI classification self-test 验证。
 
