@@ -3007,6 +3007,194 @@ exit 1
 	}
 }
 
+func TestApplyDnsmasqConfigRemovesOwnedLinuxArtifactsWhenDesiredIsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	oldDefaults, oldFeatures := platformDefaults, platformFeatures
+	platformDefaults = platform.Defaults{OS: platform.OSLinux}
+	platformFeatures = platform.Features{HasSystemd: true}
+	t.Cleanup(func() {
+		platformDefaults, platformFeatures = oldDefaults, oldFeatures
+	})
+
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(dir, "systemctl.log")
+	writeExecutable(t, filepath.Join(binDir, "systemctl"), fmt.Sprintf("#!/bin/sh\necho \"$@\" >> %q\n", logPath))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	configPath := filepath.Join(dir, "etc", "routerd", "dnsmasq.conf")
+	servicePath := filepath.Join(dir, "etc", "systemd", "routerd-dnsmasq.service")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(servicePath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(routerdGeneratedConfigMarker+"port=0\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(servicePath, render.DnsmasqServiceUnit(configPath, "/usr/sbin/dnsmasq"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := applyDnsmasqConfig(configPath, servicePath, nil)
+	if err != nil {
+		t.Fatalf("remove managed dnsmasq: %v", err)
+	}
+	if !containsString(changed, configPath) || !containsString(changed, servicePath) {
+		t.Fatalf("changed = %v", changed)
+	}
+	for _, path := range []string{configPath, servicePath} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("%s remains after desired removal: %v", path, err)
+		}
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil || !strings.Contains(string(data), "disable --now "+routerdDnsmasqService) {
+		t.Fatalf("systemctl calls = %q, want owned disable/stop", data)
+	}
+}
+
+func TestApplyDnsmasqConfigRemovesOwnedFreeBSDArtifactsWhenDesiredIsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	oldDefaults, oldFeatures := platformDefaults, platformFeatures
+	platformDefaults = platform.Defaults{OS: platform.OSFreeBSD}
+	platformFeatures = platform.Features{}
+	t.Cleanup(func() {
+		platformDefaults, platformFeatures = oldDefaults, oldFeatures
+	})
+
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(dir, "rc.log")
+	for _, name := range []string{"service", "sysrc"} {
+		writeExecutable(t, filepath.Join(binDir, name), fmt.Sprintf("#!/bin/sh\necho %s:\"$@\" >> %q\n", name, logPath))
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	configPath := filepath.Join(dir, "usr", "local", "etc", "routerd", "dnsmasq.conf")
+	servicePath := filepath.Join(dir, "usr", "local", "etc", "rc.d", "routerd_dnsmasq")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(servicePath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(routerdGeneratedConfigMarker+"port=0\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(servicePath, render.DnsmasqRCScript(configPath, filepath.Join(dir, "run"), filepath.Join(dir, "lease"), "/usr/local/sbin/dnsmasq"), 0555); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := applyDnsmasqConfig(configPath, servicePath, nil); err != nil {
+		t.Fatalf("remove managed dnsmasq: %v", err)
+	}
+	for _, path := range []string{configPath, servicePath} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("%s remains after desired removal: %v", path, err)
+		}
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil || !strings.Contains(string(data), "service:routerd_dnsmasq onestop") || !strings.Contains(string(data), "sysrc:routerd_dnsmasq_enable=NO") {
+		t.Fatalf("FreeBSD lifecycle calls = %q", data)
+	}
+}
+
+func TestApplyDnsmasqConfigPreservesForeignArtifactsWhenDesiredIsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	oldDefaults, oldFeatures := platformDefaults, platformFeatures
+	platformDefaults = platform.Defaults{OS: platform.OSLinux}
+	platformFeatures = platform.Features{HasSystemd: true}
+	t.Cleanup(func() {
+		platformDefaults, platformFeatures = oldDefaults, oldFeatures
+	})
+	configPath := filepath.Join(dir, "dnsmasq.conf")
+	servicePath := filepath.Join(dir, "routerd-dnsmasq.service")
+	if err := os.WriteFile(configPath, []byte("# administrator owned\nport=0\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(servicePath, []byte("# administrator owned\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := applyDnsmasqConfig(configPath, servicePath, nil)
+	if err != nil {
+		t.Fatalf("preserve foreign dnsmasq: %v", err)
+	}
+	if len(changed) != 0 {
+		t.Fatalf("changed = %v, want no foreign mutation", changed)
+	}
+	for _, path := range []string{configPath, servicePath} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("foreign %s was removed: %v", path, err)
+		}
+	}
+}
+
+func TestApplyDnsmasqConfigPreservesOwnedConfigWithForeignLinuxServiceWhenDesiredIsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	oldDefaults, oldFeatures := platformDefaults, platformFeatures
+	platformDefaults = platform.Defaults{OS: platform.OSLinux}
+	platformFeatures = platform.Features{HasSystemd: true}
+	t.Cleanup(func() {
+		platformDefaults, platformFeatures = oldDefaults, oldFeatures
+	})
+	configPath := filepath.Join(dir, "dnsmasq.conf")
+	servicePath := filepath.Join(dir, "routerd-dnsmasq.service")
+	if err := os.WriteFile(configPath, []byte(routerdGeneratedConfigMarker+"port=0\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(servicePath, []byte("[Unit]\nDescription=administrator managed dnsmasq\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := applyDnsmasqConfig(configPath, servicePath, nil)
+	if err != nil {
+		t.Fatalf("preserve ownership collision: %v", err)
+	}
+	if len(changed) != 0 {
+		t.Fatalf("changed = %v, want no collision mutation", changed)
+	}
+	for _, path := range []string{configPath, servicePath} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("collision path %s was removed: %v", path, err)
+		}
+	}
+}
+
+func TestApplyDnsmasqConfigPreservesOwnedConfigWithForeignFreeBSDServiceWhenDesiredIsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	oldDefaults, oldFeatures := platformDefaults, platformFeatures
+	platformDefaults = platform.Defaults{OS: platform.OSFreeBSD}
+	platformFeatures = platform.Features{}
+	t.Cleanup(func() {
+		platformDefaults, platformFeatures = oldDefaults, oldFeatures
+	})
+	configPath := filepath.Join(dir, "dnsmasq.conf")
+	servicePath := filepath.Join(dir, "routerd_dnsmasq")
+	if err := os.WriteFile(configPath, []byte(routerdGeneratedConfigMarker+"port=0\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(servicePath, []byte("#!/bin/sh\n# administrator-owned rc.d service\n"), 0555); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := applyDnsmasqConfig(configPath, servicePath, nil)
+	if err != nil {
+		t.Fatalf("preserve ownership collision: %v", err)
+	}
+	if len(changed) != 0 {
+		t.Fatalf("changed = %v, want no collision mutation", changed)
+	}
+	for _, path := range []string{configPath, servicePath} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("collision path %s was removed: %v", path, err)
+		}
+	}
+}
+
 func TestApplyFreeBSDDSLiteSupportsDynamicDelegatedAddress(t *testing.T) {
 	dir := t.TempDir()
 	oldDefaults := platformDefaults
