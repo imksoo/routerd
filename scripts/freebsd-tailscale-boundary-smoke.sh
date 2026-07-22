@@ -58,7 +58,6 @@ spec:
         name: lifecycle
       spec:
         hostname: routerd-lifecycle
-        binaryPath: /usr/local/bin/tailscale
 EOF
 "$routerd" render freebsd --config "$work/router.yaml" --out-dir "$work/rendered" >"$evidence_dir/render.log"
 script="$work/rendered/rc.d-routerd_tailscale_lifecycle"
