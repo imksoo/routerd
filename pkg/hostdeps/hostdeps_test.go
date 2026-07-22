@@ -121,7 +121,7 @@ func TestKernelModulesForFreeBSDUsePFRuntimeModules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spec.Persistent || !reflect.DeepEqual(spec.Modules, []string{"pf", "pflog"}) {
+	if !spec.Persistent || !reflect.DeepEqual(spec.Modules, []string{"pf", "pflog"}) {
 		t.Fatalf("FreeBSD kernel module spec = %#v", spec)
 	}
 }

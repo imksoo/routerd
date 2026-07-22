@@ -180,3 +180,7 @@ ipsec_evidence="$work/ipsec-linux-peer"
 sh scripts/freebsd-ipsec-linux-peer-smoke.sh --routerd "$routerd" --evidence-dir "$ipsec_evidence"
 cat "$ipsec_evidence/summary.log"
 cat "$ipsec_evidence/result"
+
+if [ "${ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME:-false}" = true ]; then
+  sh scripts/freebsd-kernelmodule-persistence-smoke.sh --routerd "$routerd"
+fi

@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"net/netip"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
 )
+
+var freeBSDLoaderModuleIdentifier = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_-]*$`)
 
 func validateSystemResource(res api.Resource, targetOS platform.OS) (bool, error) {
 	switch res.Kind {
@@ -171,6 +174,9 @@ func validateSystemResource(res api.Resource, targetOS platform.OS) (bool, error
 			}
 			if strings.ContainsAny(module, "/ \t\n") {
 				return true, fmt.Errorf("%s spec.modules[%d] must be a module name, not a path or command", res.ID(), i)
+			}
+			if targetOS == platform.OSFreeBSD && !freeBSDLoaderModuleIdentifier.MatchString(module) {
+				return true, fmt.Errorf("%s spec.modules[%d] must be a FreeBSD loader variable identifier", res.ID(), i)
 			}
 			if seen[module] {
 				return true, fmt.Errorf("%s spec.modules[%d] duplicates %q", res.ID(), i, module)
