@@ -58,7 +58,7 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 		}
 	}
 	vxlanScript := string(got.RCDScripts["routerd_vxlan_home_vxlan"])
-	for _, want := range []string{`/sbin/ifconfig "${ifname}" create`, `vxlanid' '100'`, `vxlanremote' '192.0.2.20'`, `vxlandev' 'vtnet0'`, `ifconfig 'bridge0' addm "${ifname}"`, `ifconfig 'bridge0' deletem "${ifname}"`, `unable to publish routerd VXLAN ownership marker`, `load_rc_config $name`, `routerd ownership marker`} {
+	for _, want := range []string{`/sbin/ifconfig "${ifname}" create || /sbin/ifconfig vxlan create name "${ifname}" || return 1`, `vxlanid' '100'`, `vxlanremote' '192.0.2.20'`, `vxlandev' 'vtnet0'`, `ifconfig 'bridge0' addm "${ifname}"`, `ifconfig 'bridge0' deletem "${ifname}"`, `unable to publish routerd VXLAN ownership marker`, `load_rc_config $name`, `routerd ownership marker`} {
 		if !strings.Contains(vxlanScript, want) {
 			t.Fatalf("VXLAN rc.d output missing %q:\n%s", want, vxlanScript)
 		}

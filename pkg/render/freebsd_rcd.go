@@ -331,7 +331,7 @@ func FreeBSDVXLANRCDScript(name string, vxlan vxlanConfig, bridges []string) []b
 	b.WriteString("ifname=" + shellSingleQuote(vxlan.IfName) + "\n")
 	b.WriteString("marker_dir=" + shellSingleQuote("/var/run/routerd/vxlan") + "\nmarker=\"${marker_dir}/" + name + ".owner\"\n")
 	b.WriteString("start_cmd=\"${name}_start\"\nstop_cmd=\"${name}_stop\"\nstatus_cmd=\"${name}_status\"\n\n")
-	b.WriteString(name + "_start() {\n  if /sbin/ifconfig \"${ifname}\" >/dev/null 2>&1; then\n    echo \"foreign interface collision: ${ifname}\" >&2\n    return 1\n  fi\n  /sbin/ifconfig \"${ifname}\" create || return 1\n  if ! /sbin/ifconfig \"${ifname}\"")
+	b.WriteString(name + "_start() {\n  if /sbin/ifconfig \"${ifname}\" >/dev/null 2>&1; then\n    echo \"foreign interface collision: ${ifname}\" >&2\n    return 1\n  fi\n  /sbin/ifconfig \"${ifname}\" create || /sbin/ifconfig vxlan create name \"${ifname}\" || return 1\n  if ! /sbin/ifconfig \"${ifname}\"")
 	for _, arg := range args {
 		b.WriteString(" " + shellSingleQuote(arg))
 	}

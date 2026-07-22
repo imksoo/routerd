@@ -162,9 +162,11 @@ ping -S 10.250.89.1 -c 3 10.250.89.2 >"$evidence_dir/wireguard-ping-initial.log"
 wg show "$client_if" dump >"$evidence_dir/wireguard-dump-initial.log"
 awk -F '\t' 'NR == 2 && $5 > 0 && ($6 + $7) > 0 { ok=1 } END { exit ok ? 0 : 1 }' "$evidence_dir/wireguard-dump-initial.log"
 
-ifconfig "$peer_vx" create >>"$evidence_dir/vxlan-create.log" 2>&1
+ifconfig "$peer_vx" create >>"$evidence_dir/vxlan-create.log" 2>&1 || \
+  ifconfig vxlan create name "$peer_vx" >>"$evidence_dir/vxlan-create.log" 2>&1
 peer_vx_created=1
-ifconfig "$client_bridge" create >>"$evidence_dir/vxlan-create.log" 2>&1
+ifconfig "$client_bridge" create >>"$evidence_dir/vxlan-create.log" 2>&1 || \
+  ifconfig bridge create name "$client_bridge" >>"$evidence_dir/vxlan-create.log" 2>&1
 ifconfig "$client_bridge" up >>"$evidence_dir/vxlan-create.log" 2>&1
 bridge_created=1
 ifconfig "$peer_vx" vxlanid 899 vxlanlocal 10.250.89.2 vxlanremote 10.250.89.1 vxlandev "$peer_if" vxlanport 4789 up >>"$evidence_dir/vxlan-create.log" 2>&1
@@ -189,7 +191,8 @@ if ifconfig "$client_vx" >"$evidence_dir/vxlan-after-stop.log" 2>&1; then
 fi
 
 # Exercise the generated artifact's real foreign-interface refusal path.
-ifconfig "$client_vx" create >"$evidence_dir/vxlan-foreign-create.log" 2>&1
+ifconfig "$client_vx" create >"$evidence_dir/vxlan-foreign-create.log" 2>&1 || \
+  ifconfig vxlan create name "$client_vx" >>"$evidence_dir/vxlan-foreign-create.log" 2>&1
 if "$vx_script" onestart >"$evidence_dir/vxlan-foreign-refusal.log" 2>&1; then
   echo "generated VXLAN service adopted a foreign interface" >&2
   exit 1
@@ -209,7 +212,8 @@ if ifconfig "$client_if" >/dev/null 2>&1; then
 fi
 # A manually created same-name interface is foreign. The generated service
 # must reject it and leave it for the fixture owner to remove.
-ifconfig "$client_if" create >"$evidence_dir/wireguard-foreign-create.log" 2>&1
+ifconfig "$client_if" create >"$evidence_dir/wireguard-foreign-create.log" 2>&1 || \
+  ifconfig wg create name "$client_if" >>"$evidence_dir/wireguard-foreign-create.log" 2>&1
 if "$client_script" start >"$evidence_dir/wireguard-foreign-refusal.log" 2>&1; then
   echo "generated WireGuard service adopted a foreign interface" >&2
   exit 1
