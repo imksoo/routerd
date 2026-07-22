@@ -67,6 +67,7 @@ type daemon struct {
 	nextCursor      uint64
 	cmd             *exec.Cmd
 	cmdDone         chan struct{}
+	teardownFailed  bool
 	sessionStarting bool
 	startDone       chan struct{}
 	lifetimeCtx     context.Context
@@ -318,6 +319,10 @@ func (d *daemon) Run(ctx context.Context) error {
 
 func (d *daemon) startSession(ctx context.Context) error {
 	d.mu.Lock()
+	if d.teardownFailed {
+		d.mu.Unlock()
+		return errors.New("PPPoE session start is blocked: prior routerd-owned interface cleanup is unresolved")
+	}
 	if d.cmd != nil || d.sessionStarting {
 		d.mu.Unlock()
 		return errors.New("PPPoE session start is already active or stopping")
@@ -351,7 +356,8 @@ func (d *daemon) startSession(ctx context.Context) error {
 		d.markFailed(err.Error())
 		return err
 	}
-	if currentPPPoEOS() == platform.OSFreeBSD {
+	osName := currentPPPoEOS()
+	if osName == platform.OSFreeBSD {
 		if err := ensureFreeBSDPPPoEInterfaceAbsent(ctx, d.config().IfName); err != nil {
 			d.markFailed(err.Error())
 			return err
@@ -392,14 +398,15 @@ func (d *daemon) startSession(ctx context.Context) error {
 	d.recordPhase()
 	d.publish("routerd.pppoe.client.session.connecting", daemonapi.SeverityInfo, "Connecting", "PPPoE session command started", map[string]string{"command": name})
 	go d.watchDiscoveryTimeout(cmd)
-	if currentPPPoEOS() == platform.OSFreeBSD {
+	if osName == platform.OSFreeBSD {
 		go d.watchFreeBSDPPPoEInterface(cmd, freeBSDIfName)
 	}
 	go d.scanLog(stdout)
 	go d.scanLog(stderr)
 	go func() {
-		err := cmd.Wait()
-		d.finishSession(cmd, completion, err)
+		childErr := cmd.Wait()
+		teardownErr := waitForOwnedPPPoEInterfaceTeardown(osName, freeBSDIfName)
+		d.finishSession(cmd, completion, childErr, teardownErr)
 	}()
 	return nil
 }
@@ -407,18 +414,30 @@ func (d *daemon) startSession(ctx context.Context) error {
 // finishSession is the sole completion owner for a managed child. The command
 // identity and immutable completion channel protect a newer session from stale
 // completion work before the old waiter releases stop/start serialization.
-func (d *daemon) finishSession(cmd *exec.Cmd, completion chan struct{}, err error) {
+func (d *daemon) finishSession(cmd *exec.Cmd, completion chan struct{}, childErr, teardownErr error) {
 	d.mu.Lock()
 	if d.cmd == cmd && d.cmdDone == completion {
-		d.cmd = nil
-		d.cmdDone = nil
-		if err != nil && d.snapshot.Phase != pppoeclient.PhaseDisconnecting && d.snapshot.ConnectedAt.IsZero() {
+		if teardownErr != nil {
+			// Keep the generation reserved: a replacement could otherwise adopt or
+			// collide with a kernel interface which is still being torn down.
+			d.teardownFailed = true
 			d.snapshot.Phase = pppoeclient.PhaseFailed
-			d.snapshot.LastError = d.exitDiagnosticLocked(err)
+			d.snapshot.LastError = teardownErr.Error()
+			d.snapshot.UpdatedAt = time.Now().UTC()
+			_ = d.saveStateLocked()
+			d.publishLocked("routerd.pppoe.client.session.failed", daemonapi.SeverityWarning, "TeardownFailed", d.snapshot.LastError, nil)
+		} else if childErr != nil && d.snapshot.Phase != pppoeclient.PhaseDisconnecting && d.snapshot.ConnectedAt.IsZero() {
+			d.cmd = nil
+			d.cmdDone = nil
+			d.snapshot.Phase = pppoeclient.PhaseFailed
+			d.snapshot.LastError = d.exitDiagnosticLocked(childErr)
 			d.snapshot.UpdatedAt = time.Now().UTC()
 			_ = d.saveStateLocked()
 			d.publishLocked("routerd.pppoe.client.session.failed", daemonapi.SeverityWarning, "Exited", d.snapshot.LastError, nil)
 		} else {
+			d.cmd = nil
+			d.cmdDone = nil
+			d.teardownFailed = false
 			d.snapshot.Phase = pppoeclient.PhaseIdle
 			if !d.snapshot.ConnectedAt.IsZero() {
 				d.snapshot.LastError = ""

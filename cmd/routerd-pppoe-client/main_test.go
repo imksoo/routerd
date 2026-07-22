@@ -298,25 +298,46 @@ func TestPPPoEStopWaitsForChildBeforeRapidRestartOnBothBackends(t *testing.T) {
 			previousOS := currentPPPoEOS
 			previousModules := ensureFreeBSDPPPoEModule
 			previousExists := freeBSDPPPoEInterfaceExists
+			previousLinuxExists := linuxPPPoEInterfaceExists
 			previousObserve := observeFreeBSDPPPoEInterface
 			previousCommand := pppoeSessionCommand
 			previousGrace := pppoeStopGracePeriod
+			previousTeardownTimeout := pppoeInterfaceTeardownTimeout
+			previousProbeInterval := pppoeInterfaceProbeInterval
 			t.Cleanup(func() {
 				currentPPPoEOS = previousOS
 				ensureFreeBSDPPPoEModule = previousModules
 				freeBSDPPPoEInterfaceExists = previousExists
+				linuxPPPoEInterfaceExists = previousLinuxExists
 				observeFreeBSDPPPoEInterface = previousObserve
 				pppoeSessionCommand = previousCommand
 				pppoeStopGracePeriod = previousGrace
+				pppoeInterfaceTeardownTimeout = previousTeardownTimeout
+				pppoeInterfaceProbeInterval = previousProbeInterval
 			})
 			currentPPPoEOS = func() platform.OS { return osName }
 			ensureFreeBSDPPPoEModule = func(context.Context) error { return nil }
-			freeBSDPPPoEInterfaceExists = func(context.Context, string) (bool, error) { return false, nil }
+			probes := 0
+			linuxExists := func(context.Context, string) (bool, error) {
+				probes++
+				return probes < 3, nil
+			}
+			freeBSDProbes := 0
+			freeBSDPPPoEInterfaceExists = func(context.Context, string) (bool, error) {
+				freeBSDProbes++
+				if freeBSDProbes == 1 { // start preflight
+					return false, nil
+				}
+				return freeBSDProbes < 4, nil
+			}
+			linuxPPPoEInterfaceExists = linuxExists
 			observeFreeBSDPPPoEInterface = func(context.Context, string) (freeBSDPPPoEObservation, error) {
 				return freeBSDPPPoEObservation{}, errors.New("not configured in unit test")
 			}
 			pppoeSessionCommand = func(pppoeclient.Config) (string, []string) { return "sleep", []string{"30"} }
 			pppoeStopGracePeriod = 10 * time.Millisecond
+			pppoeInterfaceTeardownTimeout = time.Second
+			pppoeInterfaceProbeInterval = time.Millisecond
 
 			dir := t.TempDir()
 			d := newDaemon(options{resource: "wan", ifname: "vtnet0", username: "user", password: "secret", runtimeDir: dir, stateFile: filepath.Join(dir, "state.json"), eventFile: filepath.Join(dir, "events.jsonl")}, nil)
@@ -337,6 +358,9 @@ func TestPPPoEStopWaitsForChildBeforeRapidRestartOnBothBackends(t *testing.T) {
 			case <-firstDone:
 			default:
 				t.Fatal("stopSession returned before the managed child completion")
+			}
+			if (osName == platform.OSLinux && probes < 3) || (osName == platform.OSFreeBSD && freeBSDProbes < 4) {
+				t.Fatalf("completion did not wait for owned interface disappearance: linux=%d freebsd=%d", probes, freeBSDProbes)
 			}
 			d.mu.Lock()
 			if d.cmd != nil || d.cmdDone != nil || d.snapshot.Phase != pppoeclient.PhaseIdle {
@@ -359,14 +383,23 @@ func TestPPPoEStopWaitsForChildBeforeRapidRestartOnBothBackends(t *testing.T) {
 func TestPPPoEStopForceKillsAndWaitsForManagedChild(t *testing.T) {
 	previousCommand := pppoeSessionCommand
 	previousGrace := pppoeStopGracePeriod
+	previousLinuxExists := linuxPPPoEInterfaceExists
+	previousTeardownTimeout := pppoeInterfaceTeardownTimeout
+	previousProbeInterval := pppoeInterfaceProbeInterval
 	t.Cleanup(func() {
 		pppoeSessionCommand = previousCommand
 		pppoeStopGracePeriod = previousGrace
+		linuxPPPoEInterfaceExists = previousLinuxExists
+		pppoeInterfaceTeardownTimeout = previousTeardownTimeout
+		pppoeInterfaceProbeInterval = previousProbeInterval
 	})
 	pppoeSessionCommand = func(pppoeclient.Config) (string, []string) {
 		return "sh", []string{"-c", "trap '' INT; exec sleep 30"}
 	}
 	pppoeStopGracePeriod = 10 * time.Millisecond
+	linuxPPPoEInterfaceExists = func(context.Context, string) (bool, error) { return false, nil }
+	pppoeInterfaceTeardownTimeout = time.Second
+	pppoeInterfaceProbeInterval = time.Millisecond
 	dir := t.TempDir()
 	d := newDaemon(options{resource: "forced", ifname: "vtnet0", username: "user", password: "secret", runtimeDir: dir, stateFile: filepath.Join(dir, "state.json")}, nil)
 	if err := d.startSession(t.Context()); err != nil {
@@ -392,7 +425,7 @@ func TestPPPoEStaleCompletionCannotOverwriteNewGeneration(t *testing.T) {
 		cmd:      current,
 		cmdDone:  currentDone,
 	}
-	d.finishSession(&exec.Cmd{}, staleDone, nil)
+	d.finishSession(&exec.Cmd{}, staleDone, nil, nil)
 	select {
 	case <-staleDone:
 	default:
@@ -407,8 +440,13 @@ func TestPPPoEStaleCompletionCannotOverwriteNewGeneration(t *testing.T) {
 
 func TestPPPoEManagedChildUsesDaemonLifetimeRatherThanRequestContext(t *testing.T) {
 	previousCommand := pppoeSessionCommand
-	t.Cleanup(func() { pppoeSessionCommand = previousCommand })
+	previousLinuxExists := linuxPPPoEInterfaceExists
+	t.Cleanup(func() {
+		pppoeSessionCommand = previousCommand
+		linuxPPPoEInterfaceExists = previousLinuxExists
+	})
 	pppoeSessionCommand = func(pppoeclient.Config) (string, []string) { return "sleep", []string{"30"} }
+	linuxPPPoEInterfaceExists = func(context.Context, string) (bool, error) { return false, nil }
 	dir := t.TempDir()
 	d := newDaemon(options{resource: "lifetime", ifname: "vtnet0", username: "user", password: "secret", runtimeDir: dir, stateFile: filepath.Join(dir, "state.json")}, nil)
 	d.lifetimeCtx = context.Background()
@@ -426,6 +464,62 @@ func TestPPPoEManagedChildUsesDaemonLifetimeRatherThanRequestContext(t *testing.
 		t.Fatal("request context cancellation terminated the managed PPPoE child")
 	}
 	d.stopSession()
+}
+
+func TestPPPoEInterfaceTeardownTimeoutFailsClosedOnBothBackends(t *testing.T) {
+	for name, osName := range map[string]platform.OS{"linux": platform.OSLinux, "freebsd": platform.OSFreeBSD} {
+		t.Run(name, func(t *testing.T) {
+			previousOS := currentPPPoEOS
+			previousModules := ensureFreeBSDPPPoEModule
+			previousFreeBSDExists := freeBSDPPPoEInterfaceExists
+			previousLinuxExists := linuxPPPoEInterfaceExists
+			previousCommand := pppoeSessionCommand
+			previousGrace := pppoeStopGracePeriod
+			previousTeardownTimeout := pppoeInterfaceTeardownTimeout
+			previousProbeInterval := pppoeInterfaceProbeInterval
+			t.Cleanup(func() {
+				currentPPPoEOS = previousOS
+				ensureFreeBSDPPPoEModule = previousModules
+				freeBSDPPPoEInterfaceExists = previousFreeBSDExists
+				linuxPPPoEInterfaceExists = previousLinuxExists
+				pppoeSessionCommand = previousCommand
+				pppoeStopGracePeriod = previousGrace
+				pppoeInterfaceTeardownTimeout = previousTeardownTimeout
+				pppoeInterfaceProbeInterval = previousProbeInterval
+			})
+			currentPPPoEOS = func() platform.OS { return osName }
+			ensureFreeBSDPPPoEModule = func(context.Context) error { return nil }
+			freeBSDCalls := 0
+			freeBSDPPPoEInterfaceExists = func(context.Context, string) (bool, error) {
+				freeBSDCalls++
+				if freeBSDCalls == 1 { // start preflight
+					return false, nil
+				}
+				return true, nil
+			}
+			linuxPPPoEInterfaceExists = func(context.Context, string) (bool, error) { return true, nil }
+			pppoeSessionCommand = func(pppoeclient.Config) (string, []string) { return "sleep", []string{"30"} }
+			pppoeStopGracePeriod = time.Millisecond
+			pppoeInterfaceTeardownTimeout = 10 * time.Millisecond
+			pppoeInterfaceProbeInterval = time.Millisecond
+
+			dir := t.TempDir()
+			d := newDaemon(options{resource: "wan", ifname: "vtnet0", username: "user", password: "secret", runtimeDir: dir, stateFile: filepath.Join(dir, "state.json"), eventFile: filepath.Join(dir, "events.jsonl")}, nil)
+			if err := d.startSession(t.Context()); err != nil {
+				t.Fatalf("start session: %v", err)
+			}
+			d.stopSession()
+			d.mu.Lock()
+			phase, diagnostic, reserved := d.snapshot.Phase, d.snapshot.LastError, d.cmd != nil && d.teardownFailed
+			d.mu.Unlock()
+			if phase != pppoeclient.PhaseFailed || !strings.Contains(diagnostic, "did not disappear") || !reserved {
+				t.Fatalf("teardown timeout did not fail closed: phase=%q diagnostic=%q reserved=%t", phase, diagnostic, reserved)
+			}
+			if err := d.startSession(t.Context()); err == nil || !strings.Contains(err.Error(), "cleanup is unresolved") {
+				t.Fatalf("replacement start error = %v, want unresolved-cleanup refusal", err)
+			}
+		})
+	}
 }
 
 func TestPPPoEStopWaitsForInFlightStartReservation(t *testing.T) {
