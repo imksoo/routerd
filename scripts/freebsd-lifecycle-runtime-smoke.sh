@@ -108,7 +108,10 @@ kill -0 "$dnsmasq_pid"
 "$dhcpv4_client" once --resource lifecycle-dhcpv4 --interface "$epair_a" \
   --timeout 25s --socket "$work/dhcpv4.sock" --lease-file "$evidence_dir/dhcpv4-lease.json" \
   --event-file "$evidence_dir/dhcpv4-events.jsonl" >"$evidence_dir/dhcpv4-result.json"
-jq -e '.state == "Bound" and .currentAddress == "192.0.2.10"' "$evidence_dir/dhcpv4-result.json" >/dev/null
+# dnsmasq legitimately chooses any address in the configured disposable pool;
+# require a real Bound lease in that pool rather than a non-protocol-specific
+# first-address assumption.
+jq -e '.state == "Bound" and (.currentAddress | test("^192\\.0\\.2\\.(1[0-9]|20)$"))' "$evidence_dir/dhcpv4-result.json" >/dev/null
 jq -e 'select(.reason == "DiscoverSent")' "$evidence_dir/dhcpv4-events.jsonl" >/dev/null
 jq -e 'select(.reason == "LeaseBound")' "$evidence_dir/dhcpv4-events.jsonl" >/dev/null
 
