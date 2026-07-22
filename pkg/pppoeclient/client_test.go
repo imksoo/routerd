@@ -58,7 +58,7 @@ func TestFreeBSDMPDConfigUsesPrivateRuntimeBackend(t *testing.T) {
 	if name != "mpd5" {
 		t.Fatalf("FreeBSD command = %q, want mpd5", name)
 	}
-	wantArgv := []string{"-d", cfg.RuntimeDir, "-f", "mpd.conf", "wan-pppoe"}
+	wantArgv := []string{"-d", cfg.RuntimeDir, "-f", "mpd.conf", "-p", cfg.RuntimeDir + "/mpd.pid", "wan-pppoe"}
 	if strings.Join(argv, "\x00") != strings.Join(wantArgv, "\x00") {
 		t.Fatalf("FreeBSD argv = %#v, want %#v", argv, wantArgv)
 	}

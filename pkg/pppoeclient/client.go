@@ -152,7 +152,7 @@ func Command(cfg Config) (string, []string) {
 // the runtime-selected behavior.
 func CommandForOS(osName string, cfg Config) (string, []string) {
 	if osName == "freebsd" {
-		return "mpd5", []string{"-d", cfg.RuntimeDir, "-f", "mpd.conf", SafeName(cfg.Resource)}
+		return "mpd5", []string{"-d", cfg.RuntimeDir, "-f", "mpd.conf", "-p", cfg.RuntimeDir + "/mpd.pid", SafeName(cfg.Resource)}
 	}
 	return "pppd", []string{"file", cfg.RuntimeDir + "/peer.conf"}
 }
