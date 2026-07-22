@@ -76,8 +76,10 @@ epair_a=$(ifconfig epair create)
 case "$epair_a" in epair*a) ;; *) echo "unexpected epair name: $epair_a" >&2; exit 1 ;; esac
 epair_b=${epair_a%a}b
 ifconfig "$epair_a" up
+# mpd5 creates a PF_NETGRAPH ng_socket control node.  The VNET jail needs both
+# raw-socket and non-default address-family permission for that disposable peer.
 jail -c name="$jail_name" path=/ host.hostname="$jail_name" persist vnet \
-  allow.raw_sockets=1 vnet.interface="$epair_b"
+  allow.raw_sockets=1 allow.socket_af=1 vnet.interface="$epair_b"
 jail_created=1
 jexec "$jail_name" ifconfig lo0 up
 jexec "$jail_name" ifconfig "$epair_b" up
