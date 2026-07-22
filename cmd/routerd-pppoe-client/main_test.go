@@ -15,24 +15,64 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/pppoeclient"
 )
 
 func TestStartSessionFailsClosedWhenFreeBSDPPPoEModuleLoadFails(t *testing.T) {
 	previous := ensureFreeBSDPPPoEModule
 	t.Cleanup(func() { ensureFreeBSDPPPoEModule = previous })
-	want := errors.New("ng_pppoe unavailable")
+	want := errors.New("ng_tcpmss unavailable")
 	ensureFreeBSDPPPoEModule = func(context.Context) error { return want }
 	dir := t.TempDir()
 	d := newDaemon(options{resource: "wan", ifname: "vtnet0", username: "user", password: "secret", runtimeDir: dir, stateFile: filepath.Join(dir, "state.json")}, nil)
 	err := d.startSession(context.Background())
-	if !errors.Is(err, want) {
+	if !errors.Is(err, want) || !strings.Contains(err.Error(), "ng_tcpmss") {
 		t.Fatalf("startSession error = %v, want module-load failure", err)
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.cmd != nil || d.snapshot.Phase != pppoeclient.PhaseFailed {
 		t.Fatalf("module failure did not fail closed: cmd=%v phase=%q", d.cmd, d.snapshot.Phase)
+	}
+}
+
+func TestEnsureFreeBSDPPPoEModulesLoadsTCPMSSAndLeavesLinuxUntouched(t *testing.T) {
+	previous := loadFreeBSDPPPoEModule
+	t.Cleanup(func() { loadFreeBSDPPPoEModule = previous })
+	var loaded []string
+	loadFreeBSDPPPoEModule = func(_ context.Context, module string) error {
+		loaded = append(loaded, module)
+		return nil
+	}
+	if err := ensureFreeBSDPPPoEModules(t.Context(), platform.OSFreeBSD); err != nil {
+		t.Fatalf("ensure FreeBSD modules: %v", err)
+	}
+	if got, want := strings.Join(loaded, ","), "ng_pppoe,ng_tcpmss"; got != want {
+		t.Fatalf("loaded modules = %q, want %q", got, want)
+	}
+	loaded = nil
+	if err := ensureFreeBSDPPPoEModules(t.Context(), platform.OSLinux); err != nil {
+		t.Fatalf("ensure Linux modules: %v", err)
+	}
+	if len(loaded) != 0 {
+		t.Fatalf("Linux loaded FreeBSD modules: %#v", loaded)
+	}
+}
+
+func TestEnsureFreeBSDPPPoEModulesFailsClosedWhenTCPMSSLoadFails(t *testing.T) {
+	previous := loadFreeBSDPPPoEModule
+	t.Cleanup(func() { loadFreeBSDPPPoEModule = previous })
+	want := errors.New("ng_tcpmss unavailable")
+	loadFreeBSDPPPoEModule = func(_ context.Context, module string) error {
+		if module == "ng_tcpmss" {
+			return want
+		}
+		return nil
+	}
+	err := ensureFreeBSDPPPoEModules(t.Context(), platform.OSFreeBSD)
+	if !errors.Is(err, want) {
+		t.Fatalf("ensure FreeBSD modules error = %v, want ng_tcpmss failure", err)
 	}
 }
 
