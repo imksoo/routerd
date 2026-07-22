@@ -135,3 +135,25 @@ func TestParseLogLineExtractsIPCPState(t *testing.T) {
 		t.Fatalf("dns servers = %#v", s.DNSServers)
 	}
 }
+
+func TestParseLogLineDoesNotTreatGenericIPCPAsNegotiated(t *testing.T) {
+	now := time.Unix(100, 0)
+	for name, line := range map[string]string{
+		"freebsd-mpd5": "[B39362e66] IPCP: Open event",
+		"linux-pppd":   "sent [IPCP ConfReq id=0x1 <addr 0.0.0.0>]",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := ParseLogLine(Snapshot{Phase: PhaseConnecting}, line, now)
+			if got.Phase != PhaseConnecting || got.CurrentAddress != "" || got.PeerAddress != "" {
+				t.Fatalf("generic IPCP log advanced session: %#v", got)
+			}
+		})
+	}
+}
+
+func TestParseLogLineAuthenticationStartsIPCP(t *testing.T) {
+	got := ParseLogLine(Snapshot{Phase: PhaseConnecting}, "PAP authentication succeeded", time.Unix(100, 0))
+	if got.Phase != PhaseIPCP {
+		t.Fatalf("phase = %q, want %q", got.Phase, PhaseIPCP)
+	}
+}

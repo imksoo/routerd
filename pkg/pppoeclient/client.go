@@ -199,10 +199,6 @@ func ParseLogLine(snapshot Snapshot, line string, now time.Time) Snapshot {
 	switch {
 	case strings.Contains(lower, "chap authentication succeeded"), strings.Contains(lower, "pap authentication succeeded"):
 		snapshot.Phase = PhaseIPCP
-	case strings.Contains(lower, "ipcp"):
-		if snapshot.Phase != PhaseConnected {
-			snapshot.Phase = PhaseIPCP
-		}
 	case strings.Contains(lower, "local  ip address"):
 		snapshot.CurrentAddress = lastIPv4(line)
 		if snapshot.CurrentAddress != "" {
