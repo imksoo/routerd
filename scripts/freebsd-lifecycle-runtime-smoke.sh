@@ -72,6 +72,19 @@ wait_resolver_healthy() {
   jq -e '.health == "ok" and .phase == "Running"' "$status_file" >/dev/null
 }
 
+wait_linklocal_ready() {
+  iface=$1
+  dump=$2
+  for _ in $(jot 30); do
+    ifconfig "$iface" >"$dump" 2>&1 || return 1
+    if awk '/inet6 fe80:/{ if ($0 !~ /tentative/) ready=1 } END { exit !ready }' "$dump"; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 cleanup() {
   rc=$?
   if [ "$rc" -ne 0 ]; then
@@ -210,6 +223,19 @@ rm -f "$rcd_script" "$rcd_config"
 command -v kea-dhcp6 >/dev/null
 ifconfig "$epair_a" inet6 2001:db8:927::10/64 up
 ifconfig "$epair_b" inet6 2001:db8:927::1/64 up
+# Kea replies to the client link-local address.  FreeBSD creates that address
+# asynchronously after interface configuration, so make DAD completion a
+# protocol precondition rather than depending on a timing sleep.
+wait_linklocal_ready "$epair_a" "$evidence_dir/dhcpv6-client-linklocal.log" || {
+  ifconfig "$epair_a" >"$evidence_dir/dhcpv6-client-linklocal.failure.log" 2>&1 || true
+  ifconfig "$epair_b" >"$evidence_dir/dhcpv6-server-linklocal.failure.log" 2>&1 || true
+  exit 1
+}
+wait_linklocal_ready "$epair_b" "$evidence_dir/dhcpv6-server-linklocal.log" || {
+  ifconfig "$epair_a" >"$evidence_dir/dhcpv6-client-linklocal.failure.log" 2>&1 || true
+  ifconfig "$epair_b" >"$evidence_dir/dhcpv6-server-linklocal.failure.log" 2>&1 || true
+  exit 1
+}
 cat >"$work/kea-dhcp6.json" <<EOF
 {
   "Dhcp6": {
