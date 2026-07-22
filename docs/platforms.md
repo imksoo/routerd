@@ -181,7 +181,7 @@ DHCP/RA service, and ports packages for WireGuard, Tailscale, and strongSwan.
 Current release qualification is deliberately narrower than the rendered feature
 list. FreeBSD explicitly rejects an `EgressRoutePolicy` resource whose
 `spec.family` is `ipv6`, because the
-certified PF `route-to` slice is IPv4 static-routehost only. `TunnelInterface`
+certified PF `route-to` slice is IPv4 static route host only. `TunnelInterface`
 gif/GRE and release-package install/upgrade/uninstall are still completing
 their current native qualification. Generated Tailscale and CARP rc.d artifacts
 are available, but their current native lifecycle/failover qualification is
@@ -196,7 +196,7 @@ and FreeBSD:
 | --- | --- | --- |
 | CI/runtime coverage | Pull requests compile FreeBSD amd64/arm64 binaries. Provisioned FreeBSD 14.3 native evidence covers the full unfiltered `go test ./...`, live routerd smoke, ARP/RA observers, native nDPI, and both amd64 and arm64 runtime certification. Retained VM115 evidence additionally covers route lookup, BFD, and supported PF dataplane slices. | The current release-package lifecycle qualification is still pending its dedicated amd64 and arm64 native install/upgrade/uninstall evidence. |
 | FreeBSD feature limitations | `ClientPolicy` uses DHCPv4 reservations for IPv4 and explicit `classification[].ipv6Addresses` for IPv6 pf rules. It cannot match MAC addresses or infer IPv6 identity from DHCPv4. | Keep the explicit-address and MAC/L2 limitation visible; require separate segmentation for unlisted or privacy IPv6 addresses ([#849](https://github.com/imksoo/routerd/issues/849)). |
-| IPv6 policy routing | The certified PF `route-to` slice is IPv4 static-routehost source affinity only. | An `EgressRoutePolicy` with `spec.family: ipv6` is explicitly rejected on FreeBSD; it is an approved product boundary, not implemented parity ([#904](https://github.com/imksoo/routerd/issues/904)). |
+| IPv6 policy routing | The certified PF `route-to` slice is IPv4 static route host source affinity only. | An `EgressRoutePolicy` with `spec.family: ipv6` is explicitly rejected on FreeBSD; it is an approved product boundary, not implemented parity ([#904](https://github.com/imksoo/routerd/issues/904)). |
 | Package bootstrap | Ubuntu and FreeBSD can install packages imperatively. | Keep schema, validation, installer package lists, examples, and generated docs in sync for `apt` and `pkg`. |
 
 ## Implementation guideline for OS abstraction

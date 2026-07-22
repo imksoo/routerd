@@ -14,7 +14,7 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 ### 変更
 
 - 現在の FreeBSD certification は、arm64 を compile-only とせず amd64 と arm64 の native runtime evidence を記録します。一方で、専用の release package lifecycle qualification はまだ完了していません。
-- FreeBSD の support boundary を明示します。`spec.family: ipv6` の `EgressRoutePolicy` は拒否され、`ClientPolicy` は MAC/L2 ではなく明示 address identity を使います。TunnelInterface、Tailscale、CARP の現在の lifecycle qualification はまだ release claim ではありません。
+- FreeBSD の support boundary を明示します。`spec.family: ipv6` の `EgressRoutePolicy` は拒否され、認定済み slice は IPv4 static route host の source affinity に限られます。`ClientPolicy` は MAC/L2 ではなく明示 address identity を使います。TunnelInterface、Tailscale、CARP の現在の lifecycle qualification はまだ release claim ではありません。
 
 ## v20260721.1054
 
@@ -35,7 +35,7 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
   対応範囲内の PF `route-to` source affinity を追加しました。
 - FreeBSD では fwmark healthcheck と non-local resolver bind を明示拒否し、
   ClientPolicy は MAC/L2 ではなく IP identity を使います。認定済み policy routing は
-  IPv4 static routehost に限定され、SAM dataplane は設計上 Linux-only のままです。
+  IPv4 static route host に限定され、SAM dataplane は設計上 Linux-only のままです。
 
 ### 修正
 

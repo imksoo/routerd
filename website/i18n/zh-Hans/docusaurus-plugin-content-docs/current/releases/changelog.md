@@ -14,7 +14,7 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 ### 变更
 
 - 当前 FreeBSD certification 记录 amd64 与 arm64 的 native runtime evidence，不再将 arm64 描述为 compile-only；专用 release package lifecycle qualification 仍在进行。
-- FreeBSD support boundary 已明确：`spec.family: ipv6` 的 `EgressRoutePolicy` 被拒绝，`ClientPolicy` 使用显式 address identity 而非 MAC/L2；TunnelInterface、Tailscale 和 CARP 的当前 lifecycle qualification 尚不是 release claim。
+- FreeBSD support boundary 已明确：`spec.family: ipv6` 的 `EgressRoutePolicy` 被拒绝；已认证的 slice 仅为 IPv4 static route host source affinity。`ClientPolicy` 使用显式 address identity 而非 MAC/L2；TunnelInterface、Tailscale 和 CARP 的当前 lifecycle qualification 尚不是 release claim。
 
 ## v20260721.1054
 

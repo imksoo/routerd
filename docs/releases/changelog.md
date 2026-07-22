@@ -19,7 +19,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   distinguish this certified runtime slice from pending dedicated release
   package-lifecycle qualification.
 - The FreeBSD support boundary is explicit: an `EgressRoutePolicy` with
-  `spec.family: ipv6` is rejected, while `ClientPolicy` uses explicit address identity rather than MAC/L2
+  `spec.family: ipv6` is rejected; the certified slice is IPv4 static route
+  host source affinity. `ClientPolicy` uses explicit address identity rather than MAC/L2
   matching, and current TunnelInterface, Tailscale, and CARP lifecycle
   qualification is not yet a release claim.
 
