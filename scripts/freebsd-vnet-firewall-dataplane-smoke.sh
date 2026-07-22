@@ -188,6 +188,20 @@ spec:
         - interface: wan-b
           gatewaySource: static
           gateway: 203.0.113.2
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: NAT44Rule
+    metadata: {name: source-nat-wan-a}
+    spec:
+      outboundInterface: wan-a
+      sourceCIDRs: [192.0.2.0/24]
+      translation: {type: interfaceAddress}
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: NAT44Rule
+    metadata: {name: source-nat-wan-b}
+    spec:
+      outboundInterface: wan-b
+      sourceCIDRs: [192.0.2.0/24]
+      translation: {type: interfaceAddress}
 EOF_CONFIG
 
 "$routerd" validate --config "$work/router.yaml" >"$evidence/validate.log" 2>&1
@@ -198,6 +212,8 @@ pfctl -f "$work/render/pf.conf" >"$evidence/pf-load.log" 2>&1
 pfctl -sr >"$evidence/pf-rules.log" 2>&1
 grep -F 'route-to {' "$evidence/pf-rules.log"
 grep -F 'round-robin sticky-address' "$evidence/pf-rules.log"
+grep -F "nat on $out_a from 192.0.2.0/24 to any -> ($out_a)" "$evidence/pf-rules.log"
+grep -F "nat on $out2_a from 192.0.2.0/24 to any -> ($out2_a)" "$evidence/pf-rules.log"
 
 jexec "$sink_a_jail" tcpdump -n -l -i "$out_b" icmp >"$evidence/sink-a.packets.log" 2>&1 & capture_a=$!
 jexec "$sink_b_jail" tcpdump -n -l -i "$out2_b" icmp >"$evidence/sink-b.packets.log" 2>&1 & capture_b=$!
@@ -223,6 +239,12 @@ test "$s10a" -eq 0 -o "$s10b" -eq 0
 test "$s11a" -eq 0 -o "$s11b" -eq 0
 grep -q '^sink-a .*192\.0\.2\.' "$evidence/sink-a.packets.log"
 grep -q '^sink-b .*192\.0\.2\.' "$evidence/sink-b.packets.log"
+grep -q '^sink-a .*198\.51\.100\.1' "$evidence/sink-a.packets.log"
+grep -q '^sink-b .*203\.0\.113\.1' "$evidence/sink-b.packets.log"
+if grep -q '^sink-[ab] .*192\.0\.2\.' "$evidence/sink-a.packets.log" "$evidence/sink-b.packets.log"; then
+  echo 'NAT44 source address leaked to egress sink' >&2
+  exit 1
+fi
 grep -F '192.0.2.10' "$evidence/pf-states.log"
 grep -F '192.0.2.11' "$evidence/pf-states.log"
 grep -F 'rule 1' "$evidence/pf-states.log"
@@ -230,6 +252,7 @@ grep -F 'rule 1' "$evidence/pf-states.log"
   printf 'source10 sink-a=%s sink-b=%s\n' "$s10a" "$s10b"
   printf 'source11 sink-a=%s sink-b=%s\n' "$s11a" "$s11b"
   printf 'both-routehosts=1\n'
+  printf 'nat44-egress-source-translation=1\n'
   printf 'pf-states-source10-source11-rule1=1\n'
 } >"$evidence/summary.log"
 printf 'freebsd-vnet-firewall-dataplane=ok\n' >"$evidence/result"
