@@ -43,6 +43,32 @@ func TestValidateSysctl(t *testing.T) {
 	}
 }
 
+func TestValidateSystemKernelModuleRejectsUnsafeFreeBSDLoaderIdentifier(t *testing.T) {
+	for _, module := range []string{"pf#comment", "pf=YES", `pf"bad`, "pf module", "pf/module"} {
+		t.Run(module, func(t *testing.T) {
+			resource := api.Resource{
+				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "KernelModule"},
+				Metadata: api.ObjectMeta{Name: "kernel"},
+				Spec:     api.KernelModuleSpec{Modules: []string{module}},
+			}
+			if _, err := validateSystemResource(resource, platform.OSFreeBSD); err == nil || (!strings.Contains(err.Error(), "loader variable identifier") && !strings.Contains(err.Error(), "module name")) {
+				t.Fatalf("FreeBSD validation error = %v", err)
+			}
+		})
+	}
+	resource := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "KernelModule"},
+		Metadata: api.ObjectMeta{Name: "kernel"},
+		Spec:     api.KernelModuleSpec{Modules: []string{"nvidia-modeset"}},
+	}
+	if _, err := validateSystemResource(resource, platform.OSFreeBSD); err != nil {
+		t.Fatalf("FreeBSD hyphenated module validation: %v", err)
+	}
+	if _, err := validateSystemResource(resource, platform.OSLinux); err != nil {
+		t.Fatalf("Linux validation must retain its existing module-name contract: %v", err)
+	}
+}
+
 func TestValidateControlAPIRejectsInvalidAllowCIDRs(t *testing.T) {
 	for _, tc := range []struct {
 		name string

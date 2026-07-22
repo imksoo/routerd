@@ -647,8 +647,12 @@ func (s *syncMapStore) SaveCount() int {
 
 func waitForNAT44Status(t *testing.T, store *syncMapStore, controller NAT44SessionSyncController, ctx context.Context, match func(map[string]any) bool) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
+	waitForNAT44StatusUntil(t, store, controller, ctx, match, time.Now().Add(3*time.Second))
+}
+
+func waitForNAT44StatusUntil(t *testing.T, store *syncMapStore, controller NAT44SessionSyncController, ctx context.Context, match func(map[string]any) bool, deadline time.Time) {
+	t.Helper()
+	for {
 		if err := controller.Reconcile(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -656,10 +660,31 @@ func waitForNAT44Status(t *testing.T, store *syncMapStore, controller NAT44Sessi
 		if match(status) {
 			return
 		}
+		if !time.Now().Before(deadline) {
+			break
+		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "NAT44SessionSync", "dslite-abc")
 	t.Fatalf("timed out waiting for NAT44SessionSync status: %#v", status)
+}
+
+func TestWaitForNAT44StatusAcceptsDesiredStatusAfterDeadline(t *testing.T) {
+	store := newSyncMapStore()
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "NAT44SessionSync", "dslite-abc", map[string]any{
+		"phase":       "Synced",
+		"streamState": "running",
+		"resyncCount": 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	controller := NAT44SessionSyncController{Router: &api.Router{}, Store: store, Workers: newNAT44SessionSyncWorkerManager()}
+	waitForNAT44StatusUntil(t, store, controller, context.Background(), func(status map[string]any) bool {
+		phase, phaseOK := status["phase"].(string)
+		streamState, streamOK := status["streamState"].(string)
+		resyncCount, countOK := status["resyncCount"].(int)
+		return phaseOK && streamOK && countOK && phase == "Synced" && streamState == "running" && resyncCount == 1
+	}, time.Now().Add(-time.Second))
 }
 
 func TestNAT44SessionSyncEventStreamSkipsTransientOnlyStatusSave(t *testing.T) {

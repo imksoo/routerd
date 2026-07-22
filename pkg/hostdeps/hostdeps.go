@@ -203,7 +203,7 @@ func KernelModuleResourcesForOS(router *api.Router, osName platform.OS) []api.Re
 			State:      "present",
 			Modules:    modules,
 			Runtime:    boolPtr(true),
-			Persistent: osName != platform.OSFreeBSD,
+			Persistent: true,
 			Optional:   true,
 		},
 	})

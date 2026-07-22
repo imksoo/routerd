@@ -5,6 +5,7 @@ action=${1:?usage: $0 start|stop}
 peer_addr=${ROUTERD_IPSEC_PEER_ADDR:?ROUTERD_IPSEC_PEER_ADDR is required}
 guest_addr=${ROUTERD_IPSEC_GUEST_ADDR:?ROUTERD_IPSEC_GUEST_ADDR is required}
 topology=${ROUTERD_IPSEC_TOPOLOGY:-slirp}
+initial_listener_seconds=${ROUTERD_IPSEC_INITIAL_LISTENER_SECONDS:-900}
 # Linux interface names are limited to IFNAMSIZ-1 (15 bytes).  Keep the
 # defaults aligned with the workflow so standalone fixture use is valid too.
 bridge=${ROUTERD_IPSEC_BRIDGE:-rd-ipsec-br}
@@ -12,6 +13,17 @@ tap=${ROUTERD_IPSEC_TAP:-rd-ipsec-tap}
 netns=${ROUTERD_IPSEC_NETNS:-rd-ipsec-ns}
 veth_host=${ROUTERD_IPSEC_VETH_HOST:-rd-ipsec-vh}
 veth_peer=${ROUTERD_IPSEC_VETH_PEER:-rd-ipsec-vp}
+
+case "$initial_listener_seconds" in
+*[!0-9]* | '')
+  echo "ROUTERD_IPSEC_INITIAL_LISTENER_SECONDS must be a positive integer" >&2
+  exit 64
+  ;;
+esac
+[ "$initial_listener_seconds" -gt 0 ] || {
+  echo "ROUTERD_IPSEC_INITIAL_LISTENER_SECONDS must be positive" >&2
+  exit 64
+}
 psk=routerd-native-linux-peer-disposable-psk
 run_id=${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}
 attempt=${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT is required}
@@ -235,14 +247,14 @@ EOF
   fi
   if [[ "$topology" == tap ]]; then verifier_prefix=(sudo ip netns exec "$netns" env -u RUNNER_TRACKING_ID); else verifier_prefix=(sudo env -u RUNNER_TRACKING_ID); fi
   # shellcheck disable=SC2016 # expanded by the peer-side bash, not this shell
-  "${verifier_prefix[@]}" PEER_DIR="$dir" nohup bash -c '
+  "${verifier_prefix[@]}" PEER_DIR="$dir" INITIAL_LISTENER_SECONDS="$initial_listener_seconds" nohup bash -c '
     set -eu
     exec >"$PEER_DIR/reverse-verifier.stdout.log" 2>&1 < /dev/null
     printf "%s\n" "$$" >"$PEER_DIR/verifier.pid"
     for phase_port in initial:19091:19191 rekey:19092:19192 restart:19093:19193; do
       phase=${phase_port%%:*}; rest=${phase_port#*:}; port=${rest%%:*}; ack=${rest#*:}
       listen_timeout=120
-      [ "$phase" != initial ] || listen_timeout=900
+      [ "$phase" != initial ] || listen_timeout="$INITIAL_LISTENER_SECONDS"
       timeout "$listen_timeout" nc -l -p "$port" >/dev/null
       established=0
       for _ in $(seq 1 30); do
