@@ -34,6 +34,24 @@ fi
   exit 1
 }
 
+# The same artifact contract is certified in the amd64 VM and the explicit
+# arm64/TCG job.  Keep the release target coupled to the guest provenance
+# asserted by freebsd-native-vm-smoke.sh, rather than assuming the runner's
+# architecture.
+case "${ROUTERD_FREEBSD_EXPECTED_ARCH:-x86_64}" in
+x86_64)
+  release_arch=amd64
+  ;;
+aarch64)
+  release_arch=arm64
+  ;;
+*)
+  echo "unsupported package lifecycle FreeBSD architecture: ${ROUTERD_FREEBSD_EXPECTED_ARCH:-}" >&2
+  exit 1
+  ;;
+esac
+release_target=freebsd-$release_arch
+
 work=$(mktemp -d /var/tmp/routerd-package-lifecycle.XXXXXX)
 prior_dir=$work/prior
 current_dir=$work/current
@@ -78,17 +96,17 @@ done
 stage_release() {
   version=$1
   destination=$2
-  archive=$work/routerd-${version}-freebsd-amd64.tar.gz
+  archive=$work/routerd-${version}-${release_target}.tar.gz
   (
     cd "$source"
-    make dist ROUTERD_OS=freebsd GOARCH=amd64 VERSION="$version"
-    cp "dist/routerd-${version}-freebsd-amd64.tar.gz" "$archive"
+    make dist ROUTERD_OS=freebsd GOARCH="$release_arch" VERSION="$version"
+    cp "dist/routerd-${version}-${release_target}.tar.gz" "$archive"
   )
   mkdir -p "$destination"
   tar -C "$destination" -xzf "$archive"
   [ -x "$destination/install.sh" ]
   [ -x "$destination/uninstall.sh" ]
-  [ "$(sed -n '1p' "$destination/share/doc/TARGET")" = freebsd-amd64 ]
+  [ "$(sed -n '1p' "$destination/share/doc/TARGET")" = "$release_target" ]
 }
 
 wait_routerd() {

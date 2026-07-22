@@ -111,6 +111,7 @@ jobs:
       # keep the initial phase bounded by this job's 90-minute wall clock.
       ROUTERD_IPSEC_INITIAL_LISTENER_SECONDS: 5400
       ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE: false
+      ROUTERD_FREEBSD_PACKAGE_LIFECYCLE_RUNTIME: ${{ inputs.package_lifecycle_runtime || 'false' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
