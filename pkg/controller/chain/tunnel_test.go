@@ -743,6 +743,13 @@ func TestTunnelInterfaceControllerPreservesOwnedProvenanceAcrossFreeBSDGREBounda
 	}
 }
 
+func TestParseFreeBSDTunnelStatusParsesHexGREKey(t *testing.T) {
+	observed := parseFreeBSDTunnelStatus("gre0", []byte("gre0: flags=8011<UP,POINTOPOINT,MULTICAST> metric 0 mtu 1472\n\ttunnel inet 192.0.2.10 --> 192.0.2.20\n\tgrekey: 0x2a (42)\n"))
+	if observed.Key != 42 {
+		t.Fatalf("GRE key = %d, want 42", observed.Key)
+	}
+}
+
 func TestTunnelInterfaceControllerRemovesAddressWhenSpecCleared(t *testing.T) {
 	resource := api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},

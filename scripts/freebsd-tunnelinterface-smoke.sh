@@ -106,7 +106,9 @@ apply_once initial
 ifconfig gif0 >"$work/gif0.add"
 ifconfig gre0 >"$work/gre0.add"
 grep -F "tunnel inet $outer_a --> $outer_b" "$work/gif0.add"
-grep -F 'grekey: 42' "$work/gre0.add"
+# FreeBSD 14.3 ifconfig prints a configured key as `grekey: 0x2a (42)`.
+# Assert the native semantic value rather than the stale decimal-only form.
+grep -E 'grekey:[[:space:]]+0x2a[[:space:]]+\(42\)' "$work/gre0.add"
 ping -n -c 3 -S 10.253.89.1 10.253.89.2 >"$work/gif.ping"
 grep -F '3 packets transmitted, 3 packets received' "$work/gif.ping"
 

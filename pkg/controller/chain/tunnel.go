@@ -570,7 +570,12 @@ func parseFreeBSDTunnelStatus(ifname string, out []byte) tunnelObserved {
 		case field == "mtu" && i+1 < len(fields):
 			observed.MTU, _ = strconv.Atoi(fields[i+1])
 		case field == "grekey:" && i+1 < len(fields):
-			observed.Key, _ = strconv.Atoi(fields[i+1])
+			// FreeBSD ifconfig prints GRE keys as both hexadecimal and decimal,
+			// for example: "grekey: 0x2a (42)". Parse with base zero so
+			// reconciliation does not mistake a configured native key for zero.
+			if key, err := strconv.ParseUint(fields[i+1], 0, 32); err == nil {
+				observed.Key = int(key)
+			}
 		case field == "tunnel" && i+3 < len(fields) && fields[i+1] == "inet" && fields[i+3] == "-->":
 			observed.Local = fields[i+2]
 			if i+4 < len(fields) {
