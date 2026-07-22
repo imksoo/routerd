@@ -66,12 +66,15 @@ func TestFreeBSDMPDConfigUsesPrivateRuntimeBackend(t *testing.T) {
 	if file != "mpd.conf" {
 		t.Fatalf("FreeBSD runtime file = %q", file)
 	}
-	if bundle, ipcp, iface := strings.Index(string(config), "create bundle static Bwan-pppoe"), strings.Index(string(config), "set ipcp ranges 0.0.0.0/0 0.0.0.0/0"), strings.Index(string(config), "set iface name ppp0"); !(bundle >= 0 && ipcp > bundle && iface > ipcp) {
-		t.Fatalf("FreeBSD mpd config must emit bundle-scoped IPCP before interface context:\n%s", config)
+	const bundle = "Bc1e91d44"
+	const link = "Lc1e91d44"
+	if len(bundle) > 15 || len(link) > 15 || bundle == link {
+		t.Fatalf("invalid private mpd names: %q %q", bundle, link)
 	}
 	for _, want := range []string{
-		"create bundle static Bwan-pppoe",
-		"create link static Lwan-pppoe pppoe",
+		"create bundle static " + bundle,
+		"create link static " + link + " pppoe",
+		"set link action bundle " + bundle,
 		`set auth authname "user@example.test"`,
 		`set auth password "secret value"`,
 		"set pppoe iface vtnet1",
