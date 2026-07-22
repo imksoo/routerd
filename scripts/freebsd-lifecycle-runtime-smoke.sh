@@ -43,6 +43,19 @@ rcd_script=/usr/local/etc/rc.d/routerd_dnsmasq
 rcd_config=/usr/local/etc/routerd/dnsmasq.conf
 rcd_installed=0
 
+# Each of these is a fixture-owned foreground daemon.  FreeBSD reports the
+# deliberate SIGTERM through wait(1) as 128+SIGTERM; after its live status was
+# already asserted, that is cleanup bookkeeping rather than a lifecycle
+# failure.  Keep the caller's assertion result while reaping it.
+stop_owned_pid() {
+  pid=$1
+  [ -n "$pid" ] || return 0
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -TERM "$pid" 2>/dev/null || true
+  fi
+  wait "$pid" 2>/dev/null || true
+}
+
 cleanup() {
   rc=$?
   if [ "$rc" -ne 0 ]; then
@@ -54,23 +67,16 @@ cleanup() {
     done
   fi
   if [ -n "$resolver_pid" ]; then
-    kill -TERM "$resolver_pid" 2>/dev/null || true
-    wait "$resolver_pid" 2>/dev/null || true
+    stop_owned_pid "$resolver_pid"
   fi
   if [ -n "$dhcpv6_pid" ]; then
-    kill -TERM "$dhcpv6_pid" 2>/dev/null || true
-    wait "$dhcpv6_pid" 2>/dev/null || true
+    stop_owned_pid "$dhcpv6_pid"
   fi
   if [ -n "$kea_pid" ]; then
-    kill -TERM "$kea_pid" 2>/dev/null || true
-    wait "$kea_pid" 2>/dev/null || true
+    stop_owned_pid "$kea_pid"
   fi
   if [ -n "$dnsmasq_pid" ]; then
-    kill -TERM "$dnsmasq_pid" 2>/dev/null || true
-    # dnsmasq can report a signal-derived nonzero status after the owned
-    # fixture sends TERM.  Process termination, not that status, is the
-    # cleanup contract here.
-    wait "$dnsmasq_pid" 2>/dev/null || true
+    stop_owned_pid "$dnsmasq_pid"
   fi
   if [ "$rcd_installed" -eq 1 ]; then
     env routerd_dnsmasq_enable=YES "$rcd_script" onestop >>"$evidence_dir/dnsmasq-rcd-stop.log" 2>&1 || rc=1
@@ -124,10 +130,7 @@ fi
 # The DHCPv4 client has already completed. If the disposable peer exited in
 # the interval, its absence is not a production failure and must not trip
 # `set -e` before the generated rc.d lifecycle is reached.
-if kill -0 "$dnsmasq_pid" 2>/dev/null; then
-  kill -TERM "$dnsmasq_pid" 2>/dev/null || true
-fi
-wait "$dnsmasq_pid" || true
+stop_owned_pid "$dnsmasq_pid"
 dnsmasq_pid=
 cat >"$work/routerd-dnsmasq.yaml" <<EOF
 apiVersion: routerd.net/v1alpha1
@@ -245,8 +248,7 @@ done
 jq -e '.phase == "Running" and .resources[0].phase == "Bound" and (.resources[0].observed.currentPrefix | startswith("2001:db8:928:"))' "$evidence_dir/dhcpv6-status-before.json" >/dev/null
 jq -e 'select(.reason == "PrefixBound")' "$evidence_dir/dhcpv6-events.jsonl" >"$evidence_dir/dhcpv6-bound-event.json"
 test -s "$evidence_dir/dhcpv6-lease.json"
-kill -TERM "$dhcpv6_pid"
-wait "$dhcpv6_pid"
+stop_owned_pid "$dhcpv6_pid"
 dhcpv6_pid=
 [ ! -S "$work/dhcpv6.sock" ]
 # A restart must acquire again from Kea rather than merely restore its first
@@ -271,12 +273,10 @@ for _ in $(jot 30); do
   sleep 1
 done
 jq -e '.phase == "Running" and .resources[0].phase == "Bound" and (.resources[0].observed.currentPrefix | startswith("2001:db8:928:"))' "$evidence_dir/dhcpv6-status-restart.json" >/dev/null
-kill -TERM "$dhcpv6_pid"
-wait "$dhcpv6_pid"
+stop_owned_pid "$dhcpv6_pid"
 dhcpv6_pid=
 [ ! -S "$work/dhcpv6.sock" ]
-kill -TERM "$kea_pid"
-wait "$kea_pid"
+stop_owned_pid "$kea_pid"
 kea_pid=
 
 cat >"$work/resolver.json" <<'EOF'
@@ -298,8 +298,7 @@ jq -e '.health == "Healthy" and .phase == "Running"' "$evidence_dir/resolver-sta
 curl --fail --silent --show-error --unix-socket "$work/resolver.sock" -X POST \
   http://localhost/v1/reload >"$evidence_dir/resolver-reload.json"
 jq -e '.reloaded == true and .listeners == 1' "$evidence_dir/resolver-reload.json" >/dev/null
-kill -TERM "$resolver_pid"
-wait "$resolver_pid"
+stop_owned_pid "$resolver_pid"
 resolver_pid=
 [ ! -S "$work/resolver.sock" ]
 
@@ -316,8 +315,7 @@ done
 curl --fail --silent --show-error --unix-socket "$work/resolver.sock" \
   http://localhost/v1/status >"$evidence_dir/resolver-status-restart.json"
 jq -e '.health == "Healthy" and .phase == "Running"' "$evidence_dir/resolver-status-restart.json" >/dev/null
-kill -TERM "$resolver_pid"
-wait "$resolver_pid"
+stop_owned_pid "$resolver_pid"
 resolver_pid=
 [ ! -S "$work/resolver.sock" ]
 
