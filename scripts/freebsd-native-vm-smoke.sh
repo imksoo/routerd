@@ -146,6 +146,14 @@ sh scripts/freebsd-vnet-policyroute-smoke.sh --routerd "$routerd" --evidence-dir
 cat "$policyroute_evidence/summary.log"
 cat "$policyroute_evidence/result"
 
+if [ "${ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE:-false}" = true ]; then
+  candidate_evidence="$work/ipv6-route-to-console-candidate"
+  sh scripts/freebsd-vnet-ipv6-route-to-console-candidate.sh \
+    --source "$(pwd)" --evidence-dir "$candidate_evidence"
+  cat "$candidate_evidence/summary.log"
+  cat "$candidate_evidence/result"
+fi
+
 ipsec_evidence="$work/ipsec-linux-peer"
 sh scripts/freebsd-ipsec-linux-peer-smoke.sh --routerd "$routerd" --evidence-dir "$ipsec_evidence"
 cat "$ipsec_evidence/summary.log"
