@@ -299,7 +299,7 @@ stop_owned_pid "$kea_pid"
 kea_pid=
 
 cat >"$work/resolver.json" <<'EOF'
-{"resource":"lifecycle-resolver","spec":{"listen":[{"addresses":["127.0.0.1"],"port":10553}]}}
+{"resource":"lifecycle-resolver","spec":{"listen":[{"addresses":["127.0.0.1"],"port":10553}],"sources":[{"name":"fixture-upstream","kind":"upstream","match":["."],"upstreams":["udp://127.0.0.1:5300"]}]}}
 EOF
 "$dns_resolver" daemon --resource lifecycle-resolver --config-file "$work/resolver.json" \
   --socket "$work/resolver.sock" --state-file "$evidence_dir/resolver-state.json" \
