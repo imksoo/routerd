@@ -22,6 +22,7 @@ done
 command -v mpd5 >/dev/null
 command -v jq >/dev/null
 command -v curl >/dev/null
+command -v tcpdump >/dev/null
 
 mkdir -p "$evidence_dir"
 work=$(mktemp -d /var/tmp/routerd-pppoe-runtime.XXXXXX)
@@ -29,6 +30,8 @@ epair_a=
 epair_b=
 mpd_pid=
 client_pid=
+discovery_capture_pid=
+session_capture_pid=
 
 cleanup() {
   rc=$?
@@ -44,6 +47,14 @@ cleanup() {
   if [ -n "$client_pid" ]; then
     kill -TERM "$client_pid" 2>/dev/null || true
     wait "$client_pid" 2>/dev/null || true
+  fi
+  if [ -n "$discovery_capture_pid" ]; then
+    kill -TERM "$discovery_capture_pid" 2>/dev/null || true
+    wait "$discovery_capture_pid" 2>/dev/null || true
+  fi
+  if [ -n "$session_capture_pid" ]; then
+    kill -TERM "$session_capture_pid" 2>/dev/null || true
+    wait "$session_capture_pid" 2>/dev/null || true
   fi
   if [ -n "$mpd_pid" ] && kill -0 "$mpd_pid" 2>/dev/null; then
     kill -TERM "$mpd_pid" 2>/dev/null || true
@@ -62,6 +73,16 @@ case "$epair_a" in epair*a) ;; *) echo "unexpected epair name: $epair_a" >&2; ex
 epair_b=${epair_a%a}b
 ifconfig "$epair_a" up
 ifconfig "$epair_b" up
+# Preserve the PPPoE discovery exchange without exposing PAP/CHAP payloads.
+# The session capture is truncated at the Ethernet header, so it only proves
+# that PPPoE session traffic existed and cannot write credentials to evidence.
+tcpdump -n -e -l -s 128 -i "$epair_b" 'ether proto 0x8863' >"$evidence_dir/pppoe-discovery.log" 2>&1 &
+discovery_capture_pid=$!
+tcpdump -n -e -l -s 14 -i "$epair_b" 'ether proto 0x8864' >"$evidence_dir/pppoe-session-headers.log" 2>&1 &
+session_capture_pid=$!
+sleep 1
+kill -0 "$discovery_capture_pid"
+kill -0 "$session_capture_pid"
 # ng_pppoe is a FreeBSD KMOD. Load it before the disposable access
 # concentrator starts; routerd performs the same idempotent load before its
 # own mpd5 client command.
