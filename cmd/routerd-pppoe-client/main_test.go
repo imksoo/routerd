@@ -380,6 +380,18 @@ func TestPPPoEStopWaitsForChildBeforeRapidRestartOnBothBackends(t *testing.T) {
 	}
 }
 
+func TestPPPoEStopGracePeriodUsesNativeTeardownContract(t *testing.T) {
+	previousGrace := pppoeStopGracePeriod
+	t.Cleanup(func() { pppoeStopGracePeriod = previousGrace })
+	pppoeStopGracePeriod = time.Second
+	if got, want := pppoeStopGraceForOS(platform.OSLinux), time.Second; got != want {
+		t.Fatalf("Linux stop grace = %s, want %s", got, want)
+	}
+	if got, want := pppoeStopGraceForOS(platform.OSFreeBSD), 3*time.Second; got != want {
+		t.Fatalf("FreeBSD stop grace = %s, want %s", got, want)
+	}
+}
+
 func TestPPPoEStopForceKillsAndWaitsForManagedChild(t *testing.T) {
 	previousCommand := pppoeSessionCommand
 	previousGrace := pppoeStopGracePeriod

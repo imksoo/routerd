@@ -118,6 +118,17 @@ var pppoeSessionCommand = pppoeclient.Command
 
 var pppoeStopGracePeriod = time.Second
 
+// pppoeStopGraceForOS keeps Linux's existing one-second stop behavior while
+// allowing FreeBSD mpd5 to complete its documented two-second termination
+// path and destroy its ng_iface-owned point-to-point interface before the
+// common ownership barrier evaluates it.
+var pppoeStopGraceForOS = func(osName platform.OS) time.Duration {
+	if osName == platform.OSFreeBSD {
+		return 3 * time.Second
+	}
+	return pppoeStopGracePeriod
+}
+
 func main() {
 	if err := run(os.Args[1:], os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -475,7 +486,7 @@ func (d *daemon) stopSession() {
 
 		if cmd.Process != nil {
 			_ = cmd.Process.Signal(os.Interrupt)
-			timer := time.NewTimer(pppoeStopGracePeriod)
+			timer := time.NewTimer(pppoeStopGraceForOS(currentPPPoEOS()))
 			select {
 			case <-completion:
 				timer.Stop()
