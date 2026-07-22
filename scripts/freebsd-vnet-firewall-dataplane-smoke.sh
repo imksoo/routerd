@@ -213,8 +213,34 @@ pfctl -sr >"$evidence/pf-rules.log" 2>&1
 pfctl -sn >"$evidence/pf-nat-rules.log" 2>&1
 grep -F 'route-to {' "$evidence/pf-rules.log"
 grep -F 'round-robin sticky-address' "$evidence/pf-rules.log"
-grep -F "nat on $out_a from 192.0.2.0/24 to any -> ($out_a)" "$evidence/pf-nat-rules.log"
-grep -F "nat on $out2_a from 192.0.2.0/24 to any -> ($out2_a)" "$evidence/pf-nat-rules.log"
+cat "$evidence/pf-nat-rules.log"
+require_nat44_interface_translation() {
+  interface=$1
+  awk -v interface="$interface" '
+    $1 == "nat" && $2 == "on" && $3 == interface {
+      source = 0
+      target = 0
+      for (i = 4; i <= NF; i++) {
+        if ($i == "from" && i < NF && $(i + 1) == "192.0.2.0/24") {
+          source = 1
+        }
+        if ($i == "->") {
+          for (j = i + 1; j <= NF; j++) {
+            if (index($j, interface) != 0) {
+              target = 1
+            }
+          }
+        }
+      }
+      if (source && target) {
+        found = 1
+      }
+    }
+    END { exit(found ? 0 : 1) }
+  ' "$evidence/pf-nat-rules.log"
+}
+require_nat44_interface_translation "$out_a"
+require_nat44_interface_translation "$out2_a"
 
 jexec "$sink_a_jail" tcpdump -n -l -i "$out_b" icmp >"$evidence/sink-a.packets.log" 2>&1 & capture_a=$!
 jexec "$sink_b_jail" tcpdump -n -l -i "$out2_b" icmp >"$evidence/sink-b.packets.log" 2>&1 & capture_b=$!
