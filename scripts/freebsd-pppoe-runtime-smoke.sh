@@ -94,11 +94,13 @@ session_capture_pid=$!
 sleep 1
 kill -0 "$discovery_capture_pid"
 kill -0 "$session_capture_pid"
-# ng_pppoe is a FreeBSD KMOD. Load it before the disposable access
-# concentrator starts; routerd performs the same idempotent load before its
-# own mpd5 client command.
-kldload -n ng_pppoe
-kldstat -q -m ng_pppoe
+# The VNET AC cannot autoload host KLDs.  These are mpd5's PPPoE peer-side
+# netgraph node types; routerd separately owns the client-side ng_pppoe and
+# ng_iface preflight below.
+for module in ng_socket ng_ppp ng_ether ng_pppoe; do
+  kldload -n "$module"
+  kldstat -q -m "$module"
+done
 
 cat >"$work/mpd.conf" <<EOF
 default:
