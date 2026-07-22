@@ -174,24 +174,56 @@ load_rc_config $name
 run_rc_command "$1"
 ### rc.d-routerd_tailscale_home
 #!/bin/sh
-#
 # Managed by routerd.
-#
 # PROVIDE: routerd_tailscale_home
-# REQUIRE: NETWORKING tailscaled
+# REQUIRE: NETWORKING
 # KEYWORD: shutdown
 
 . /etc/rc.subr
 
 name='routerd_tailscale_home'
 rcvar="${name}_enable"
-command='/usr/local/bin/tailscale'
-command_args=" 'up' '--hostname=edge-router' '--auth-key=${TS_AUTHKEY}' '--advertise-exit-node' '--advertise-routes=172.18.0.0/16,192.168.20.0/24' '--accept-dns=false'"
-start_precmd="${name}_prestart"
+marker_dir='/var/run/routerd/tailscale'
+marker="${marker_dir}/routerd_tailscale_home.owner"
+start_cmd="${name}_start"
+stop_cmd="${name}_stop"
+status_cmd="${name}_status"
 
-routerd_tailscale_home_prestart() {
-  mkdir -p '/var/run/routerd'
-  'service' 'tailscaled' 'onestart'
+routerd_tailscale_home_rollback() {
+  [ "${started_here:-0}" = 1 ] || return 0
+  service tailscaled onestop >/dev/null 2>&1 || true
+  rm -f "${marker}" "${marker}.$$"
+}
+
+routerd_tailscale_home_start() {
+  started_here=0
+  if service tailscaled onestatus >/dev/null 2>&1; then
+    [ -r "${marker}" ] || { echo "foreign tailscaled service is already running; refusing mutation" >&2; return 1; }
+    read owned < "${marker}"
+    [ "${owned}" = "${name}" ] || { echo "routerd ownership marker mismatch" >&2; return 1; }
+  else
+    service tailscaled onestart || return 1
+    started_here=1
+    if ! mkdir -p "${marker_dir}" || ! printf '%s\n' "${name}" > "${marker}.$$" || ! mv -f "${marker}.$$" "${marker}"; then
+      echo "unable to publish routerd tailscaled ownership marker" >&2
+      routerd_tailscale_home_rollback
+      return 1
+    fi
+  fi
+  '/usr/local/bin/tailscale' 'up' '--hostname=edge-router' '--auth-key=${TS_AUTHKEY}' '--advertise-exit-node' '--advertise-routes=172.18.0.0/16,192.168.20.0/24' '--accept-dns=false' || { routerd_tailscale_home_rollback; return 1; }
+}
+
+routerd_tailscale_home_stop() {
+  [ -r "${marker}" ] || { echo "foreign tailscaled service ownership is unknown; refusing mutation" >&2; return 1; }
+  read owned < "${marker}"
+  [ "${owned}" = "${name}" ] || { echo "routerd ownership marker mismatch" >&2; return 1; }
+  '/usr/local/bin/tailscale' down || return 1
+  service tailscaled onestop || return 1
+  rm -f "${marker}"
+}
+
+routerd_tailscale_home_status() {
+  [ -r "${marker}" ] && service tailscaled onestatus
 }
 
 load_rc_config $name

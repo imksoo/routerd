@@ -184,27 +184,50 @@ run_rc_command "$1"
 
 name='routerd_wireguard_wg_hybrid'
 rcvar="${name}_enable"
+marker_dir='/var/run/routerd/wireguard'
+marker="${marker_dir}/routerd_wireguard_wg_hybrid.owner"
 start_cmd="${name}_start"
 stop_cmd="${name}_stop"
 status_cmd="${name}_status"
 
+routerd_wireguard_wg_hybrid_rollback() {
+  [ "${created_here:-0}" = 1 ] || return 0
+  /sbin/ifconfig 'wg-hybrid' destroy >/dev/null 2>&1 || true
+  rm -f "${marker}" "${marker}.$$"
+}
+
 routerd_wireguard_wg_hybrid_start() {
+  created_here=0
   kldload if_wg >/dev/null 2>&1 || true
-  if ! ifconfig 'wg-hybrid' >/dev/null 2>&1; then
-    ifconfig 'wg-hybrid' create >/dev/null 2>&1 || ifconfig wg create name 'wg-hybrid'
+  if ifconfig 'wg-hybrid' >/dev/null 2>&1; then
+    [ -r "${marker}" ] || { echo "foreign WireGuard interface is already present; refusing mutation" >&2; return 1; }
+    read owned < "${marker}"
+    [ "${owned}" = 'wg-hybrid' ] || { echo "routerd WireGuard ownership marker mismatch" >&2; return 1; }
+  else
+    ifconfig 'wg-hybrid' create >/dev/null 2>&1 || ifconfig wg create name 'wg-hybrid' || return 1
+    created_here=1
+    if ! mkdir -p "${marker_dir}" || ! printf '%s\n' 'wg-hybrid' > "${marker}.$$" || ! mv -f "${marker}.$$" "${marker}"; then
+      echo "unable to publish routerd WireGuard ownership marker" >&2
+      routerd_wireguard_wg_hybrid_rollback
+      return 1
+    fi
   fi
-  ifconfig 'wg-hybrid' mtu '1420'
-  wg set 'wg-hybrid' listen-port '51820' private-key '/usr/local/etc/routerd/secrets/wg-hybrid.key'
-  wg set 'wg-hybrid' peer 'ONPREM_PEER_PUBLIC_KEY_REPLACE_ME' allowed-ips '169.254.110.2/32,10.0.0.9/32' endpoint '198.51.100.20:51820' persistent-keepalive '25'
-  ifconfig 'wg-hybrid' up
+  ifconfig 'wg-hybrid' mtu '1420' || { routerd_wireguard_wg_hybrid_rollback; return 1; }
+  wg set 'wg-hybrid' listen-port '51820' private-key '/usr/local/etc/routerd/secrets/wg-hybrid.key' || { routerd_wireguard_wg_hybrid_rollback; return 1; }
+  wg set 'wg-hybrid' peer 'ONPREM_PEER_PUBLIC_KEY_REPLACE_ME' allowed-ips '169.254.110.2/32,10.0.0.9/32' endpoint '198.51.100.20:51820' persistent-keepalive '25' || { routerd_wireguard_wg_hybrid_rollback; return 1; }
+  ifconfig 'wg-hybrid' up || { routerd_wireguard_wg_hybrid_rollback; return 1; }
 }
 
 routerd_wireguard_wg_hybrid_stop() {
-  ifconfig 'wg-hybrid' destroy >/dev/null 2>&1 || true
+  [ -r "${marker}" ] || { echo "foreign WireGuard ownership is unknown; refusing mutation" >&2; return 1; }
+  read owned < "${marker}"
+  [ "${owned}" = 'wg-hybrid' ] || { echo "routerd WireGuard ownership marker mismatch" >&2; return 1; }
+  ifconfig 'wg-hybrid' destroy >/dev/null 2>&1 || return 1
+  rm -f "${marker}"
 }
 
 routerd_wireguard_wg_hybrid_status() {
-  ifconfig 'wg-hybrid' >/dev/null 2>&1 && wg show 'wg-hybrid' >/dev/null 2>&1
+  [ -r "${marker}" ] && ifconfig 'wg-hybrid' >/dev/null 2>&1 && wg show 'wg-hybrid' >/dev/null 2>&1
 }
 
 load_rc_config $name

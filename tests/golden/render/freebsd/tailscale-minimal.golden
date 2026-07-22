@@ -174,24 +174,56 @@ load_rc_config $name
 run_rc_command "$1"
 ### rc.d-routerd_tailscale_mesh
 #!/bin/sh
-#
 # Managed by routerd.
-#
 # PROVIDE: routerd_tailscale_mesh
-# REQUIRE: NETWORKING tailscaled
+# REQUIRE: NETWORKING
 # KEYWORD: shutdown
 
 . /etc/rc.subr
 
 name='routerd_tailscale_mesh'
 rcvar="${name}_enable"
-command='/usr/local/bin/tailscale'
-command_args=" 'up' '--hostname=routerd-mesh' '--auth-key=${TS_AUTHKEY}' '--accept-routes=true' '--accept-dns=false'"
-start_precmd="${name}_prestart"
+marker_dir='/var/run/routerd/tailscale'
+marker="${marker_dir}/routerd_tailscale_mesh.owner"
+start_cmd="${name}_start"
+stop_cmd="${name}_stop"
+status_cmd="${name}_status"
 
-routerd_tailscale_mesh_prestart() {
-  mkdir -p '/var/run/routerd'
-  'service' 'tailscaled' 'onestart'
+routerd_tailscale_mesh_rollback() {
+  [ "${started_here:-0}" = 1 ] || return 0
+  service tailscaled onestop >/dev/null 2>&1 || true
+  rm -f "${marker}" "${marker}.$$"
+}
+
+routerd_tailscale_mesh_start() {
+  started_here=0
+  if service tailscaled onestatus >/dev/null 2>&1; then
+    [ -r "${marker}" ] || { echo "foreign tailscaled service is already running; refusing mutation" >&2; return 1; }
+    read owned < "${marker}"
+    [ "${owned}" = "${name}" ] || { echo "routerd ownership marker mismatch" >&2; return 1; }
+  else
+    service tailscaled onestart || return 1
+    started_here=1
+    if ! mkdir -p "${marker_dir}" || ! printf '%s\n' "${name}" > "${marker}.$$" || ! mv -f "${marker}.$$" "${marker}"; then
+      echo "unable to publish routerd tailscaled ownership marker" >&2
+      routerd_tailscale_mesh_rollback
+      return 1
+    fi
+  fi
+  '/usr/local/bin/tailscale' 'up' '--hostname=routerd-mesh' '--auth-key=${TS_AUTHKEY}' '--accept-routes=true' '--accept-dns=false' || { routerd_tailscale_mesh_rollback; return 1; }
+}
+
+routerd_tailscale_mesh_stop() {
+  [ -r "${marker}" ] || { echo "foreign tailscaled service ownership is unknown; refusing mutation" >&2; return 1; }
+  read owned < "${marker}"
+  [ "${owned}" = "${name}" ] || { echo "routerd ownership marker mismatch" >&2; return 1; }
+  '/usr/local/bin/tailscale' down || return 1
+  service tailscaled onestop || return 1
+  rm -f "${marker}"
+}
+
+routerd_tailscale_mesh_status() {
+  [ -r "${marker}" ] && service tailscaled onestatus
 }
 
 load_rc_config $name
