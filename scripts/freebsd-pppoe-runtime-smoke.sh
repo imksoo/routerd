@@ -81,7 +81,8 @@ ifconfig "$epair_a" up
 jail -c name="$jail_name" path=/ host.hostname="$jail_name" persist vnet \
   allow.raw_sockets=1 allow.socket_af=1 vnet.interface="$epair_b"
 jail_created=1
-jexec "$jail_name" ifconfig lo0 up
+jexec "$jail_name" ifconfig lo0 inet 127.0.0.1/8 up
+jexec "$jail_name" ifconfig lo0 inet | grep -F 'inet 127.0.0.1 netmask 0xff000000'
 jexec "$jail_name" ifconfig "$epair_b" up
 # The AC endpoint is VNET-owned after jail creation, so capture both traffic
 # directions from the host-owned endpoint. Preserve PPPoE discovery without
