@@ -163,14 +163,18 @@ dnsmasq も `dnsmasq --test` で設定を確認してから再起動します。
 静的な `rc.conf` の生成だけでは足りない DS-Lite tunnel は、`ifconfig gif` で動的に適用します。
 本番運用の前には、`routerd render freebsd` で出力を確認してください。
 
+現在のリリース認定は、生成できる機能の一覧より意図的に狭くなっています。FreeBSD の IPv6
+`EgressRoutePolicy` は、認定済みの PF `route-to` が IPv4 static routehost に限られるため明示的に拒否されます。`TunnelInterface` の gif/GRE とリリース package の install/upgrade/uninstall は現在も native 認定中です。生成済みの Tailscale と CARP の rc.d artifact は利用できますが、その lifecycle/failover はまだリリース認定として主張しません。
+
 ## プラットフォーム差分の残課題
 
 Ubuntu と FreeBSD を比較したときの既知の差分です。
 
 | 領域 | 現在の差分 | 残課題 |
 | --- | --- | --- |
-| CI と実機検証の網羅 | PR CI は FreeBSD amd64/arm64 binary を compile し、provisioned FreeBSD 14.3 amd64 VM で省略なし `go test ./...`、live routerd smoke、ARP/RA observer、native nDPI を実行します。保持済み VM115 evidence は route lookup、BFD、対応 PF dataplane slice も対象にします。 | PR の native runtime certification は現在 amd64 が対象です。arm64 は PR CI では compile-only です。 |
+| CI と実機検証の網羅 | PR CI は FreeBSD amd64/arm64 binary を compile します。provisioned FreeBSD 14.3 の native evidence は、省略なし `go test ./...`、live routerd smoke、ARP/RA observer、native nDPI と amd64/arm64 両方の runtime certification を対象にします。保持済み VM115 evidence は route lookup、BFD、対応 PF dataplane slice も対象にします。 | 現在の release package lifecycle は、amd64/arm64 ごとの native install/upgrade/uninstall evidence を認定中です。 |
 | FreeBSD の機能制約 | `ClientPolicy` は DHCPv4 reservation による IPv4 と明示 `classification[].ipv6Addresses` による IPv6 pf rule を使います。MAC/L2 照合と IPv4 reservation からの IPv6 推測はできません。 | 明示 address と MAC/L2 制約を維持し、unlisted/privacy IPv6 address は別 segmentation を要求します（[#849](https://github.com/imksoo/routerd/issues/849)）。 |
+| IPv6 policy routing | 認定済み PF `route-to` は IPv4 static routehost の source affinity に限られます。 | FreeBSD の IPv6 `EgressRoutePolicy` は明示的に拒否されます。これは実装済み parity ではなく承認済みの product boundary です（[#904](https://github.com/imksoo/routerd/issues/904)）。 |
 | パッケージのブートストラップ | Ubuntu、FreeBSD はパッケージを命令的に導入できます。 | `apt`、`pkg` について、スキーマ、検証、インストーラーのパッケージ一覧、設定例、生成ドキュメントの同期を保ちます。 |
 
 ## OS 抽象化の実装方針

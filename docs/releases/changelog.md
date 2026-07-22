@@ -12,6 +12,17 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Changed
+
+- Current FreeBSD certification records native runtime evidence for both amd64
+  and arm64 rather than describing arm64 as compile-only. It continues to
+  distinguish this certified runtime slice from pending dedicated release
+  package-lifecycle qualification.
+- The FreeBSD support boundary is explicit: IPv6 `EgressRoutePolicy` is
+  rejected, `ClientPolicy` uses explicit address identity rather than MAC/L2
+  matching, and current TunnelInterface, Tailscale, and CARP lifecycle
+  qualification is not yet a release claim.
+
 ## v20260721.1054
 
 ### Added

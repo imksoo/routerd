@@ -11,6 +11,11 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 變更
+
+- 目前 FreeBSD certification 記錄 amd64 與 arm64 的 native runtime evidence，不再將 arm64 描述為 compile-only；專用 release package lifecycle qualification 仍在進行。
+- FreeBSD support boundary 已明確：IPv6 `EgressRoutePolicy` 被拒絕，`ClientPolicy` 使用明確 address identity 而非 MAC/L2；TunnelInterface、Tailscale 與 CARP 的目前 lifecycle qualification 尚不是 release claim。
+
 ## v20260721.1054
 
 ### 新增

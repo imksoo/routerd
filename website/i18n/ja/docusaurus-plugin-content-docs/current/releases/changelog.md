@@ -11,6 +11,11 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 変更
+
+- 現在の FreeBSD certification は、arm64 を compile-only とせず amd64 と arm64 の native runtime evidence を記録します。一方で、専用の release package lifecycle qualification はまだ完了していません。
+- FreeBSD の support boundary を明示します。IPv6 `EgressRoutePolicy` は拒否され、`ClientPolicy` は MAC/L2 ではなく明示 address identity を使います。TunnelInterface、Tailscale、CARP の現在の lifecycle qualification はまだ release claim ではありません。
+
 ## v20260721.1054
 
 ### 追加
