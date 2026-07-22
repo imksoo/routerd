@@ -942,24 +942,19 @@ func validateDnsmasqArtifactOwnership(configPath string) error {
 }
 
 func validateDnsmasqArtifacts(configPath, hostsPath, servicePath string, osName platform.OS) error {
-	for _, artifact := range []struct {
-		path  string
-		owned func([]byte) bool
-		kind  string
-	}{
-		{configPath, func(data []byte) bool { return strings.HasPrefix(string(data), routerdGeneratedDNSMasqMarker) }, "config"},
-		{hostsPath, func(data []byte) bool { return strings.HasPrefix(string(data), routerdGeneratedDNSMasqMarker) }, "hosts sidecar"},
-	} {
-		data, err := os.ReadFile(artifact.path)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("read dnsmasq canonical %s %s: %w", artifact.kind, artifact.path, err)
-		}
-		if !artifact.owned(data) {
-			return fmt.Errorf("refusing dnsmasq reconcile: foreign %s %s", artifact.kind, artifact.path)
-		}
+	configData, err := os.ReadFile(configPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read dnsmasq canonical config %s: %w", configPath, err)
+	}
+	if err == nil && !dnsmasqConfigOwned(configData) {
+		return fmt.Errorf("refusing dnsmasq reconcile: foreign config %s", configPath)
+	}
+	hostsData, err := os.ReadFile(hostsPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read dnsmasq canonical hosts sidecar %s: %w", hostsPath, err)
+	}
+	if err == nil && !dnsmasqHostsOwned(hostsData, configData, hostsPath) {
+		return fmt.Errorf("refusing dnsmasq reconcile: foreign hosts sidecar %s", hostsPath)
 	}
 	if servicePath == "" {
 		return nil
@@ -971,14 +966,42 @@ func validateDnsmasqArtifacts(configPath, hostsPath, servicePath string, osName 
 	if err != nil {
 		return fmt.Errorf("read dnsmasq service %s: %w", servicePath, err)
 	}
-	owned := strings.Contains(string(data), "# PROVIDE: routerd_dnsmasq") && strings.Contains(string(data), `name="routerd_dnsmasq"`)
-	if osName != platform.OSFreeBSD {
-		owned = strings.Contains(string(data), "Description=routerd managed dnsmasq DHCP service")
-	}
+	owned := dnsmasqServiceOwned(data, configPath, osName)
 	if !owned {
 		return fmt.Errorf("refusing dnsmasq reconcile: foreign service %s", servicePath)
 	}
 	return nil
+}
+
+func dnsmasqConfigOwned(data []byte) bool {
+	if strings.HasPrefix(string(data), routerdGeneratedDNSMasqMarker) {
+		return true
+	}
+	// Releases before #946 did not prepend an ownership marker. Recognize only
+	// their complete dnsmasq skeleton so a normal reconcile can migrate it.
+	legacyPrefix := "port=0\nno-resolv\nno-hosts\nbind-dynamic\npid-file="
+	return strings.HasPrefix(string(data), legacyPrefix) && strings.Contains(string(data), "\ndhcp-leasefile=")
+}
+
+func dnsmasqHostsOwned(data, configData []byte, hostsPath string) bool {
+	if strings.HasPrefix(string(data), routerdGeneratedDNSMasqMarker) {
+		return true
+	}
+	// The pre-marker hosts sidecar has no independent header. Its only safe
+	// migration provenance is a recognized legacy routerd config that names
+	// this exact sidecar.
+	return dnsmasqConfigOwned(configData) && strings.Contains(string(configData), "dhcp-hostsfile="+hostsPath+"\n")
+}
+
+func dnsmasqServiceOwned(data []byte, configPath string, osName platform.OS) bool {
+	text := string(data)
+	if osName == platform.OSFreeBSD {
+		return strings.Contains(text, "# PROVIDE: routerd_dnsmasq") && strings.Contains(text, `name="routerd_dnsmasq"`)
+	}
+	// Linux units emitted before #946 lack the new marker. Keep accepting the
+	// prior routerd signature only when it names this exact config path.
+	return strings.Contains(text, "Description=routerd managed dnsmasq DHCP service") &&
+		strings.Contains(text, "--conf-file="+configPath)
 }
 
 func (c DHCPv6ServerController) saveDnsmasqOwnershipError(reconcileErr error) error {

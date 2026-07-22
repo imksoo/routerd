@@ -228,7 +228,8 @@ rm -f "$rcd_script" "$rcd_config"
 command -v sqlite3 >/dev/null
 printf '%s\n' '# fixture foreign dnsmasq config' 'port=53' >"$rcd_config"
 printf '%s\n' '# fixture foreign dnsmasq hosts sidecar' '192.0.2.55 foreign.example' >"$foreign_dnsmasq_hosts"
-printf '%s\n' '#!/bin/sh' '# fixture foreign dnsmasq rc.d service' >"$rcd_script"
+foreign_rcd_sentinel="$evidence_dir/dnsmasq-foreign-rcd-ran"
+printf '#!/bin/sh\n: > %s\n' "$foreign_rcd_sentinel" >"$rcd_script"
 chmod 0555 "$rcd_script"
 foreign_dnsmasq_pair=1
 cp "$rcd_config" "$evidence_dir/dnsmasq-foreign-config.before"
@@ -244,6 +245,7 @@ set -e
 cmp "$evidence_dir/dnsmasq-foreign-config.before" "$rcd_config"
 cmp "$evidence_dir/dnsmasq-foreign-hosts.before" "$foreign_dnsmasq_hosts"
 cmp "$evidence_dir/dnsmasq-foreign-service.before" "$rcd_script"
+[ ! -e "$foreign_rcd_sentinel" ]
 sqlite3 "$work/dnsmasq-foreign-state.db" \
   "SELECT status FROM objects WHERE api_version='net.routerd.net/v1alpha1' AND kind='DHCPv4Server' AND name='lan-dhcp';" \
   >"$evidence_dir/dnsmasq-foreign-status.json"
@@ -400,6 +402,8 @@ resolver_pid=
 printf '%s\n' \
   'dhcpv4-bpf-lease=Bound' \
   'dnsmasq-rcd-render-start-observe-restart-stop=ok' \
+  'dnsmasq-foreign-live-chain-preservation=ok' \
+  'dnsmasq-foreign-rcd-sentinel-not-run=ok' \
   'dhcpv6-pd-kea-delegated-prefix-Bound-restart-stop=ok' \
   'dns-resolver-start-observe-reload-restart-stop=ok' \
   'owned-epair-cleanup=pending-exit-trap' >"$evidence_dir/summary.log"
