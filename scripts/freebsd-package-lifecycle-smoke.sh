@@ -106,7 +106,7 @@ stage_release() {
   (
     cd "$source"
     gmake dist ROUTERD_OS=freebsd GOARCH="$release_arch" VERSION="$version"
-    cp "dist/routerd-${version}-${release_target}.tar.gz" "$archive"
+    cp "dist/${release_target}/routerd-${version}-${release_target}.tar.gz" "$archive"
   )
   mkdir -p "$destination"
   tar -C "$destination" -xzf "$archive"
