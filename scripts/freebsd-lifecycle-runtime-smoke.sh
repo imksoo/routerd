@@ -102,8 +102,26 @@ wait "$resolver_pid"
 resolver_pid=
 [ ! -S "$work/resolver.sock" ]
 
+"$dns_resolver" daemon --resource lifecycle-resolver --config-file "$work/resolver.json" \
+  --socket "$work/resolver.sock" --state-file "$evidence_dir/resolver-state.json" \
+  --event-file "$evidence_dir/resolver-events.jsonl" >>"$evidence_dir/resolver.stdout.log" 2>>"$evidence_dir/resolver.stderr.log" &
+resolver_pid=$!
+for _ in $(jot 30); do
+  [ -S "$work/resolver.sock" ] && break
+  kill -0 "$resolver_pid" 2>/dev/null || break
+  sleep 1
+done
+[ -S "$work/resolver.sock" ]
+curl --fail --silent --show-error --unix-socket "$work/resolver.sock" \
+  http://localhost/v1/status >"$evidence_dir/resolver-status-restart.json"
+jq -e '.health == "Healthy" and .phase == "Running"' "$evidence_dir/resolver-status-restart.json" >/dev/null
+kill -TERM "$resolver_pid"
+wait "$resolver_pid"
+resolver_pid=
+[ ! -S "$work/resolver.sock" ]
+
 printf '%s\n' \
   'dhcpv4-bpf-lease=Bound' \
-  'dns-resolver-start-observe-reload-stop=ok' \
+  'dns-resolver-start-observe-reload-restart-stop=ok' \
   'owned-epair-cleanup=pending-exit-trap' >"$evidence_dir/summary.log"
 printf 'freebsd-lifecycle-runtime=ok\n' >"$evidence_dir/result"
