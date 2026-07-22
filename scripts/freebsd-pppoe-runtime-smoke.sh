@@ -74,11 +74,12 @@ epair_b=${epair_a%a}b
 ifconfig "$epair_a" up
 ifconfig "$epair_b" up
 # Preserve the PPPoE discovery exchange without exposing PAP/CHAP payloads.
-# The session capture is truncated at the Ethernet header, so it only proves
-# that PPPoE session traffic existed and cannot write credentials to evidence.
+# Capture the PPP protocol/FSM header (Ethernet + PPPoE + PPP header), but no
+# PAP payload. This preserves credential safety while identifying whether LCP,
+# PAP, or IPCP originates the terminal close.
 tcpdump -n -e -l -s 128 -i "$epair_b" 'ether proto 0x8863' >"$evidence_dir/pppoe-discovery.log" 2>&1 &
 discovery_capture_pid=$!
-tcpdump -n -e -l -s 14 -i "$epair_b" 'ether proto 0x8864' >"$evidence_dir/pppoe-session-headers.log" 2>&1 &
+tcpdump -n -e -vv -l -s 26 -i "$epair_b" 'ether proto 0x8864' >"$evidence_dir/pppoe-session-headers.log" 2>&1 &
 session_capture_pid=$!
 sleep 1
 kill -0 "$discovery_capture_pid"
