@@ -80,7 +80,10 @@ wg genkey >"$peer_key"
 client_pub=$(wg pubkey <"$client_key")
 peer_pub=$(wg pubkey <"$peer_key")
 
-ifconfig "$peer_if" create >"$evidence_dir/peer-create.log" 2>&1
+# if_wg only accepts its native clone prefix for a direct create. Match the
+# generated routerd rc.d fallback for this disposable custom peer name.
+ifconfig "$peer_if" create >"$evidence_dir/peer-create.log" 2>&1 || \
+  ifconfig wg create name "$peer_if" >>"$evidence_dir/peer-create.log" 2>&1
 peer_created=1
 wg set "$peer_if" listen-port 51891 private-key "$peer_key" peer "$client_pub" \
   allowed-ips 10.250.89.1/32 endpoint 127.0.0.1:51890 persistent-keepalive 1 >>"$evidence_dir/peer-create.log" 2>&1
