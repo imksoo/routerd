@@ -16,6 +16,7 @@ clientpolicy_identity=${ROUTERD_FREEBSD_CLIENTPOLICY_IDENTITY_RUNTIME:-false}
 kernelmodule_persistence=${ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME:-false}
 lifecycle_runtime=${ROUTERD_FREEBSD_LIFECYCLE_RUNTIME:-false}
 pppoe_runtime=${ROUTERD_FREEBSD_PPPOE_RUNTIME:-false}
+wireguard_vxlan_runtime=${ROUTERD_FREEBSD_WIREGUARD_VXLAN_RUNTIME:-false}
 arch=${ROUTERD_ANYVM_ARCH:-x86_64}
 qemu_binary=
 tcg_args=()
@@ -146,4 +147,4 @@ fi
 ROUTERD_ANYVM_REBOOT_MARKER="$reboot_marker" python3 "$work/anyvm.py" \
   --os freebsd --release 14.3 --arch "$arch" "${tcg_args[@]}" --mem 6144 --snapshot \
   --sync rsync -v "$workspace:/home/runner/work/routerd/routerd" \
-  -- "cd /home/runner/work/routerd/routerd && pkg install -y go dnsmasq git hs-ShellCheck curl jq ndpi pkgconf strongswan mpd5 && ROUTERD_FREEBSD_EXPECTED_ARCH=$arch ROUTERD_IPSEC_TOPOLOGY=tap ROUTERD_IPSEC_UNDERLAY_IF=vtnet1 ROUTERD_IPSEC_PEER_ADDR=$peer_addr ROUTERD_IPSEC_GUEST_ADDR=$guest_addr ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE=$ipv6_candidate ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME=$kernelmodule_persistence ROUTERD_FREEBSD_CLIENTPOLICY_IDENTITY_RUNTIME=$clientpolicy_identity ROUTERD_FREEBSD_LIFECYCLE_RUNTIME=$lifecycle_runtime ROUTERD_FREEBSD_PPPOE_RUNTIME=$pppoe_runtime sh scripts/freebsd-native-vm-smoke.sh"
+  -- "cd /home/runner/work/routerd/routerd && pkg install -y go dnsmasq git hs-ShellCheck curl jq ndpi pkgconf strongswan mpd5 wireguard-tools && ROUTERD_FREEBSD_EXPECTED_ARCH=$arch ROUTERD_IPSEC_TOPOLOGY=tap ROUTERD_IPSEC_UNDERLAY_IF=vtnet1 ROUTERD_IPSEC_PEER_ADDR=$peer_addr ROUTERD_IPSEC_GUEST_ADDR=$guest_addr ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE=$ipv6_candidate ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME=$kernelmodule_persistence ROUTERD_FREEBSD_CLIENTPOLICY_IDENTITY_RUNTIME=$clientpolicy_identity ROUTERD_FREEBSD_LIFECYCLE_RUNTIME=$lifecycle_runtime ROUTERD_FREEBSD_PPPOE_RUNTIME=$pppoe_runtime ROUTERD_FREEBSD_WIREGUARD_VXLAN_RUNTIME=$wireguard_vxlan_runtime sh scripts/freebsd-native-vm-smoke.sh"

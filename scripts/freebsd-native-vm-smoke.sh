@@ -216,3 +216,10 @@ if [ "${ROUTERD_FREEBSD_PPPOE_RUNTIME:-false}" = true ]; then
   cat "$pppoe_evidence/summary.log"
   cat "$pppoe_evidence/result"
 fi
+
+if [ "${ROUTERD_FREEBSD_WIREGUARD_VXLAN_RUNTIME:-false}" = true ]; then
+  wireguard_vxlan_evidence="$work/wireguard-vxlan-runtime"
+  sh scripts/freebsd-wireguard-vxlan-runtime-smoke.sh --routerd "$routerd" --evidence-dir "$wireguard_vxlan_evidence"
+  cat "$wireguard_vxlan_evidence/summary.log"
+  cat "$wireguard_vxlan_evidence/result"
+fi

@@ -44,6 +44,11 @@ on:
         required: false
         default: false
         type: boolean
+      wireguard_vxlan_runtime:
+        description: Run isolated FreeBSD if_wg and VXLAN-over-WireGuard lifecycle smoke
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -72,6 +77,7 @@ jobs:
       ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME: ${{ inputs.kernelmodule_persistence_runtime || 'false' }}
       ROUTERD_FREEBSD_LIFECYCLE_RUNTIME: ${{ inputs.lifecycle_runtime || 'false' }}
       ROUTERD_FREEBSD_PPPOE_RUNTIME: ${{ inputs.pppoe_runtime || 'false' }}
+      ROUTERD_FREEBSD_WIREGUARD_VXLAN_RUNTIME: ${{ inputs.wireguard_vxlan_runtime || 'false' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
