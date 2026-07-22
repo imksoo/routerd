@@ -65,12 +65,13 @@ ifconfig "$epair_b" up
 
 cat >"$work/mpd.conf" <<EOF
 default:
-  set log +all
-  set console self 127.0.0.1 5005
-  set console open
   load routerd_pppoe_server
 
 routerd_pppoe_server:
+  set log +all
+  set console self 127.0.0.1 5005
+  set console disable auth
+  set console open
   create bundle template B_routerd
   set ipcp ranges 198.18.10.1/32 198.18.10.2/32
   create link template L_routerd pppoe
@@ -114,7 +115,7 @@ for _ in $(jot 30); do
   sleep 1
 done
 {
-  printf '%s\n' 'help' 'show links' 'show bundles'
+  printf '%s\n' 'help' 'show sessions' 'bundle' 'show bundle' 'link' 'show link'
 } | nc -N -w 2 127.0.0.1 5005 >"$evidence_dir/mpd5-console.log" 2>&1 || true
 jq -e '.resources[0].phase == "Connected" and .resources[0].observed.currentAddress == "198.18.10.2" and .resources[0].observed.peerAddress == "198.18.10.1"' "$evidence_dir/pppoe-status-initial.json" >/dev/null
 
