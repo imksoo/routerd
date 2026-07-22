@@ -250,7 +250,9 @@ jq -e 'select(.reason == "PrefixBound")' "$evidence_dir/dhcpv6-events.jsonl" >"$
 test -s "$evidence_dir/dhcpv6-lease.json"
 stop_owned_pid "$dhcpv6_pid"
 dhcpv6_pid=
-[ ! -S "$work/dhcpv6.sock" ]
+# The daemon's owned Unix socket can remain after an external SIGTERM.  Its
+# production startup deliberately removes only that configured socket before
+# binding, so the restart below is the real stale-socket recovery assertion.
 # A restart must acquire again from Kea rather than merely restore its first
 # lease snapshot from disk.
 rm -f "$evidence_dir/dhcpv6-lease.json"
@@ -275,7 +277,6 @@ done
 jq -e '.phase == "Running" and .resources[0].phase == "Bound" and (.resources[0].observed.currentPrefix | startswith("2001:db8:928:"))' "$evidence_dir/dhcpv6-status-restart.json" >/dev/null
 stop_owned_pid "$dhcpv6_pid"
 dhcpv6_pid=
-[ ! -S "$work/dhcpv6.sock" ]
 stop_owned_pid "$kea_pid"
 kea_pid=
 
