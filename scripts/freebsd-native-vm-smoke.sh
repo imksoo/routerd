@@ -230,3 +230,10 @@ if [ "${ROUTERD_FREEBSD_TAILSCALE_BOUNDARY_RUNTIME:-false}" = true ]; then
   cat "$tailscale_evidence/summary.log"
   cat "$tailscale_evidence/result"
 fi
+
+if [ "${ROUTERD_FREEBSD_CARP_RUNTIME:-false}" = true ]; then
+  carp_evidence="$work/carp-runtime"
+  sh scripts/freebsd-carp-runtime-smoke.sh --routerd "$routerd" --evidence-dir "$carp_evidence"
+  cat "$carp_evidence/summary.log"
+  cat "$carp_evidence/result"
+fi

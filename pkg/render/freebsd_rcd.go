@@ -313,7 +313,7 @@ func FreeBSDCARPRCDScript(config CARPConfigData) []byte {
 	buf.WriteString("}\n\n")
 	buf.WriteString("routerd_carp_stop() {\n")
 	for _, iface := range config.Interfaces {
-		buf.WriteString("  ifconfig " + shellSingleQuote(iface.Interface) + " inet " + shellSingleQuote(iface.Address) + " -alias >/dev/null 2>&1 || true\n")
+		buf.WriteString("  ifconfig " + shellSingleQuote(iface.Interface) + " " + shellSingleQuote(carpAddressFamily(iface.Family)) + " " + shellSingleQuote(iface.Address) + " -alias >/dev/null 2>&1 || true\n")
 	}
 	buf.WriteString("}\n\n")
 	buf.WriteString("routerd_carp_status() {\n")

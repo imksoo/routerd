@@ -138,12 +138,29 @@ func TestFreeBSDRendersCARPRCDScript(t *testing.T) {
 		`kldload carp >/dev/null 2>&1 || true`,
 		`sysctl net.inet.carp.preempt='0'`,
 		`ifconfig 'vtnet1' 'inet' 'vhid' '50' 'advbase' '2' 'advskew' '104' 'pass' 'secret' 'alias' '10.240.70.10/32'`,
-		`ifconfig 'vtnet1' inet '10.240.70.10/32' -alias`,
+		`ifconfig 'vtnet1' 'inet' '10.240.70.10/32' -alias`,
 		`grep -q 'vhid 50'`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("routerd_carp script missing %q:\n%s", want, script)
 		}
+	}
+}
+
+func TestFreeBSDCARPRCDScriptStopsIPv6WithInet6(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "vtnet1", Managed: true, Owner: "routerd"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "api-vip-v6"}, Spec: api.VirtualAddressSpec{
+			Family: "ipv6", Interface: "lan", Address: "fd00:1234::10/128", Mode: "vrrp",
+			VRRP: api.VirtualAddressVRRPSpec{VirtualRouterID: 51, Priority: 150},
+		}},
+	}}}
+	got, err := FreeBSD(router)
+	if err != nil {
+		t.Fatalf("render FreeBSD: %v", err)
+	}
+	if script := string(got.RCDScripts["routerd_carp"]); !strings.Contains(script, `ifconfig 'vtnet1' 'inet6' 'fd00:1234::10/128' -alias`) {
+		t.Fatalf("routerd_carp IPv6 stop is not family-correct:\n%s", script)
 	}
 }
 
