@@ -8,6 +8,7 @@
 set -eu
 
 dhcpv4_client=
+dhcpv6_client=
 dns_resolver=
 routerd=
 evidence_dir=
@@ -15,14 +16,16 @@ evidence_dir=
 while [ "$#" -gt 0 ]; do
   case "$1" in
   --dhcpv4-client) dhcpv4_client=$2; shift 2 ;;
+  --dhcpv6-client) dhcpv6_client=$2; shift 2 ;;
   --dns-resolver) dns_resolver=$2; shift 2 ;;
   --routerd) routerd=$2; shift 2 ;;
   --evidence-dir) evidence_dir=$2; shift 2 ;;
-  *) echo "usage: $0 --dhcpv4-client PATH --dns-resolver PATH --routerd PATH --evidence-dir DIR" >&2; exit 2 ;;
+  *) echo "usage: $0 --dhcpv4-client PATH --dhcpv6-client PATH --dns-resolver PATH --routerd PATH --evidence-dir DIR" >&2; exit 2 ;;
   esac
 done
 
 [ -x "$dhcpv4_client" ]
+[ -x "$dhcpv6_client" ]
 [ -x "$dns_resolver" ]
 [ -x "$routerd" ]
 [ -n "$evidence_dir" ]
@@ -32,6 +35,7 @@ mkdir -p "$evidence_dir"
 work=$(mktemp -d /var/tmp/routerd-lifecycle-runtime.XXXXXX)
 dnsmasq_pid=
 resolver_pid=
+dhcpv6_pid=
 epair_a=
 epair_b=
 rcd_script=/usr/local/etc/rc.d/routerd_dnsmasq
@@ -51,6 +55,10 @@ cleanup() {
   if [ -n "$resolver_pid" ]; then
     kill -TERM "$resolver_pid" 2>/dev/null || true
     wait "$resolver_pid" 2>/dev/null || true
+  fi
+  if [ -n "$dhcpv6_pid" ]; then
+    kill -TERM "$dhcpv6_pid" 2>/dev/null || true
+    wait "$dhcpv6_pid" 2>/dev/null || true
   fi
   if [ -n "$dnsmasq_pid" ]; then
     kill -TERM "$dnsmasq_pid" 2>/dev/null || true
@@ -161,6 +169,44 @@ env routerd_dnsmasq_enable=YES "$rcd_script" onestop >"$evidence_dir/dnsmasq-rcd
 rcd_installed=0
 rm -f "$rcd_script" "$rcd_config"
 
+# DHCPv6-PD is a routerd-supervised UDP/546 daemon on FreeBSD. No PD server is
+# invented here: this proves real start/observe/restart/stop and reports its
+# honest Soliciting state. #927 owns the separate live delegated-prefix peer.
+"$dhcpv6_client" daemon --resource lifecycle-pd --interface "$epair_a" \
+  --socket "$work/dhcpv6.sock" --lease-file "$evidence_dir/dhcpv6-lease.json" \
+  --event-file "$evidence_dir/dhcpv6-events.jsonl" >"$evidence_dir/dhcpv6.stdout.log" 2>"$evidence_dir/dhcpv6.stderr.log" &
+dhcpv6_pid=$!
+for _ in $(jot 30); do
+  [ -S "$work/dhcpv6.sock" ] && break
+  kill -0 "$dhcpv6_pid" 2>/dev/null || break
+  sleep 1
+done
+[ -S "$work/dhcpv6.sock" ]
+curl --fail --silent --show-error --unix-socket "$work/dhcpv6.sock" \
+  http://localhost/v1/status >"$evidence_dir/dhcpv6-status-before.json"
+jq -e '.phase == "Running" and .resources[0].phase == "Acquiring" and .resources[0].conditions[0].reason == "Soliciting"' "$evidence_dir/dhcpv6-status-before.json" >/dev/null
+kill -TERM "$dhcpv6_pid"
+wait "$dhcpv6_pid"
+dhcpv6_pid=
+[ ! -S "$work/dhcpv6.sock" ]
+"$dhcpv6_client" daemon --resource lifecycle-pd --interface "$epair_a" \
+  --socket "$work/dhcpv6.sock" --lease-file "$evidence_dir/dhcpv6-lease.json" \
+  --event-file "$evidence_dir/dhcpv6-events.jsonl" >>"$evidence_dir/dhcpv6.stdout.log" 2>>"$evidence_dir/dhcpv6.stderr.log" &
+dhcpv6_pid=$!
+for _ in $(jot 30); do
+  [ -S "$work/dhcpv6.sock" ] && break
+  kill -0 "$dhcpv6_pid" 2>/dev/null || break
+  sleep 1
+done
+[ -S "$work/dhcpv6.sock" ]
+curl --fail --silent --show-error --unix-socket "$work/dhcpv6.sock" \
+  http://localhost/v1/status >"$evidence_dir/dhcpv6-status-restart.json"
+jq -e '.phase == "Running" and .resources[0].phase == "Acquiring"' "$evidence_dir/dhcpv6-status-restart.json" >/dev/null
+kill -TERM "$dhcpv6_pid"
+wait "$dhcpv6_pid"
+dhcpv6_pid=
+[ ! -S "$work/dhcpv6.sock" ]
+
 cat >"$work/resolver.json" <<'EOF'
 {"resource":"lifecycle-resolver","spec":{"listen":[{"addresses":["127.0.0.1"],"port":10553}]}}
 EOF
@@ -206,6 +252,7 @@ resolver_pid=
 printf '%s\n' \
   'dhcpv4-bpf-lease=Bound' \
   'dnsmasq-rcd-render-start-observe-restart-stop=ok' \
+  'dhcpv6-pd-daemon-start-observe-restart-stop=Soliciting-no-server' \
   'dns-resolver-start-observe-reload-restart-stop=ok' \
   'owned-epair-cleanup=pending-exit-trap' >"$evidence_dir/summary.log"
 printf 'freebsd-lifecycle-runtime=ok\n' >"$evidence_dir/result"

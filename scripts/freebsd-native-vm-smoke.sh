@@ -195,11 +195,13 @@ fi
 if [ "${ROUTERD_FREEBSD_LIFECYCLE_RUNTIME:-false}" = true ]; then
   lifecycle_evidence="$work/lifecycle-runtime"
   dhcpv4_client="$work/routerd-dhcpv4-client"
+  dhcpv6_client="$work/routerd-dhcpv6-client"
   dns_resolver="$work/routerd-dns-resolver"
   go build -o "$dhcpv4_client" ./cmd/routerd-dhcpv4-client
+  go build -o "$dhcpv6_client" ./cmd/routerd-dhcpv6-client
   go build -o "$dns_resolver" ./cmd/routerd-dns-resolver
   sh scripts/freebsd-lifecycle-runtime-smoke.sh \
-    --dhcpv4-client "$dhcpv4_client" --dns-resolver "$dns_resolver" \
+    --dhcpv4-client "$dhcpv4_client" --dhcpv6-client "$dhcpv6_client" --dns-resolver "$dns_resolver" \
     --routerd "$routerd" \
     --evidence-dir "$lifecycle_evidence"
   cat "$lifecycle_evidence/summary.log"
