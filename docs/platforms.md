@@ -123,8 +123,9 @@ Implemented:
   `RTF_PROTO1`, including replace/withdraw/foreign-route preservation
 - FRR `bfdd` reconciliation and observed Up → Down → Up recovery on a native
   FreeBSD peer
-- FreeBSD-native doctor checks, KernelModule `kldload` reconciliation, and
-  BGP-specific `routerd_bgp` rc.d generation
+- FreeBSD-native doctor checks, KernelModule `kldload` reconciliation with
+  routerd-owned `/boot/loader.conf.d` boot persistence, and BGP-specific
+  `routerd_bgp` rc.d generation
 - explicit rejection of Linux `SO_MARK` health-check steering: FreeBSD does
   not map a probe mark to a request-scoped policy route; use an unmarked route
   with `sourceInterface`/`sourceAddress` instead
@@ -143,8 +144,11 @@ the same native gate with a TLS/SNI classification self-test.
 `ClientPolicy` is supported on FreeBSD with an address-backed pf
 approximation. Each IPv4 guest or isolated classification references a
 `DHCPv4Reservation`; an IPv6 guest identity must instead be declared explicitly
-as `classification[].ipv6Addresses`. routerd never infers an IPv6 identity from
-an IPv4 reservation, MAC address, hostname, OUI, or DHCP fingerprint. The
+as `classification[].ipv6Addresses`. For a FreeBSD-targeted policy, those
+stable address fields are the identity contract: MAC, OUI, hostname, and DHCP
+fingerprint match selectors are rejected instead of being silently ignored.
+routerd never infers an IPv6 identity from an IPv4 reservation, MAC address,
+hostname, OUI, or DHCP fingerprint. The
 FreeBSD renderer uses those literal IPv6 addresses for family-safe `inet6`
 guest-egress deny rules. This is not Linux-equivalent MAC-based isolation: pf
 does not provide the Ethernet-source matching model used by nftables in the

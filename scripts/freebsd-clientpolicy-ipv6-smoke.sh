@@ -5,7 +5,8 @@
 # and forwarding change before returning.
 set -eu
 
-routerd= evidence=
+routerd=''
+evidence=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --routerd) routerd=${2:?}; shift 2 ;;
@@ -19,8 +20,20 @@ mkdir -p "$evidence"
 
 tag="g8-$$"; work=$(mktemp -d /tmp/routerd-g8.XXXXXX)
 src="${tag}-src"; denied="${tag}-deny"; allowed="${tag}-allow"
-in_a= in_b= deny_a= deny_b= allow_a= allow_b=
-cap_deny= cap_allow= forwarding= pf_enabled=0 pf_loaded=0
+in_a=''
+in_b=''
+deny_a=''
+deny_b=''
+allow_a=''
+allow_b=''
+cap_deny=''
+cap_allow=''
+forwarding=''
+control_if=''
+control_gateway=''
+control_address=''
+pf_enabled=0
+pf_loaded=0
 src_created=0; denied_created=0; allowed_created=0
 
 cleanup() {
@@ -47,7 +60,9 @@ cleanup() {
   [ -n "$deny_a" ] && ifconfig "$deny_a" destroy >>"$evidence/interface-cleanup.log" 2>&1
   [ -n "$allow_a" ] && ifconfig "$allow_a" destroy >>"$evidence/interface-cleanup.log" 2>&1
   [ -n "$forwarding" ] && sysctl net.inet6.ip6.forwarding="$forwarding" >>"$evidence/forwarding-restore.log" 2>&1
-  [ "$pf_loaded" -eq 1 ] && kldunload pf >>"$evidence/pf-kldunload.log" 2>&1 || true
+  if [ "$pf_loaded" -eq 1 ]; then
+    kldunload pf >>"$evidence/pf-kldunload.log" 2>&1 || true
+  fi
   rm -rf "$work"
   [ "$rc" -ne 0 ] || [ "$cleanup_rc" -eq 0 ] || rc=$cleanup_rc
   exit "$rc"
@@ -59,6 +74,17 @@ test -c /dev/pf
 [ "$(pfctl -s info 2>/dev/null | awk '/^Status:/ {print $2; exit}')" != Enabled ]
 pfctl -sr >"$evidence/pf-rules-before.log" 2>&1; pfctl -ss >"$evidence/pf-states-before.log" 2>&1
 [ ! -s "$evidence/pf-rules-before.log" ] && [ ! -s "$evidence/pf-states-before.log" ]
+
+# The generated ClientPolicy ruleset deliberately starts with `block drop all`.
+# ClientPolicy traffic in this fixture uses only disposable epairs, so extend
+# the fixture-only skip set to the anyvm control interface.  This preserves
+# the SSH transport without changing the production-rendered PF file.
+control_if=$(route -n get -inet default 2>/dev/null | awk '$1 == "interface:" { print $2; exit }')
+control_gateway=$(route -n get -inet default 2>/dev/null | awk '$1 == "gateway:" { print $2; exit }')
+[ -n "$control_if" ] && [ -n "$control_gateway" ]
+control_address=$(ifconfig "$control_if" inet | awk '$1 == "inet" { print $2; exit }')
+[ -n "$control_address" ]
+printf 'control-if=%s gateway=%s address=%s\n' "$control_if" "$control_gateway" "$control_address" >"$evidence/control-preflight.log"
 
 forwarding=$(sysctl -n net.inet6.ip6.forwarding); sysctl net.inet6.ip6.forwarding=1 >"$evidence/forwarding-enable.log"
 jail -c name="$src" vnet persist; src_created=1
@@ -108,16 +134,25 @@ spec:
       classification:
       - name: explicit-dual-stack-guest
         mode: guest
-        match: {macs: ['02:00:00:00:00:08']}
         ipv6Addresses: [fd00:1::10]
 EOF
 
 "$routerd" validate --config "$work/router.yaml" >"$evidence/validate.log" 2>&1
 "$routerd" render freebsd --config "$work/router.yaml" --out-dir "$work/render" >"$evidence/render.log" 2>&1
 find "$work/render" -maxdepth 1 -type f -exec basename {} \; | sort >"$evidence/render-files.log"
-pfctl -nf "$work/render/pf.conf" >"$evidence/pf-nf.log" 2>&1
+awk -v control_if="$control_if" '
+  $0 == "set skip on lo0" && !replaced {
+    print "set skip on { lo0 " control_if " }"
+    replaced = 1
+    next
+  }
+  { print }
+  END { if (!replaced) exit 1 }
+' "$work/render/pf.conf" >"$work/pf-with-control.conf"
+grep -Fx "set skip on { lo0 $control_if }" "$work/pf-with-control.conf" >"$evidence/control-skip.log"
+pfctl -nf "$work/pf-with-control.conf" >"$evidence/pf-nf.log" 2>&1
 pfctl -e >"$evidence/pf-enable.log" 2>&1; pf_enabled=1
-pfctl -f "$work/render/pf.conf" >"$evidence/pf-load.log" 2>&1
+pfctl -f "$work/pf-with-control.conf" >"$evidence/pf-load.log" 2>&1
 pfctl -sr -v >"$evidence/pf-rules.log" 2>&1
 grep -F 'fd00:1::10' "$evidence/pf-rules.log"
 grep -F 'fd00:2::/64' "$evidence/pf-rules.log"

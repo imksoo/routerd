@@ -112,7 +112,7 @@ routerd 不使用 Linux 用的機制，而是將資源對應至 FreeBSD 的 `rc.
 - `routerd-healthcheck` 的 rc.d script 產生
 - `routerd-firewall-logger` 的 rc.d script 產生，並直接讀取 `pflog0`
 
-FreeBSD 也支援 `ClientPolicy`。IPv4 使用基於 `DHCPv4Reservation` 的 pf 近似；IPv6 guest identity 必須在 `classification[].ipv6Addresses` 明確宣告。routerd 不會從 IPv4 reservation、MAC、hostname、OUI 或 DHCP fingerprint 推斷 IPv6 identity；明確 IPv6 位址會產生 `inet6` guest-egress deny 規則。
+FreeBSD 也支援 `ClientPolicy`。IPv4 使用基於 `DHCPv4Reservation` 的 pf 近似；IPv6 guest identity 必須在 `classification[].ipv6Addresses` 明確宣告。對 FreeBSD 目標，這些穩定位址欄位就是 identity 契約；MAC、OUI、hostname 與 DHCP fingerprint 的 match selector 會被明確拒絕，而不會被靜默忽略。routerd 不會從 IPv4 reservation、MAC、hostname、OUI 或 DHCP fingerprint 推斷 IPv6 identity；明確 IPv6 位址會產生 `inet6` guest-egress deny 規則。
 這不等同於 Linux 的 MAC 位址隔離：pf 在 routed filter path 中無法比對 nftables 使用的 Ethernet 來源 selector；privacy 或未列出的 IPv6 位址不在此 slice 內，需要獨立網路隔離（[#849](https://github.com/imksoo/routerd/issues/849)）。
 - `TailscaleNode` 的 rc.d script 產生
 - 靜態 DS-Lite gif tunnel 的產生（render）

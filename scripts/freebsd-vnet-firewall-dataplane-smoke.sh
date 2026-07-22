@@ -188,6 +188,20 @@ spec:
         - interface: wan-b
           gatewaySource: static
           gateway: 203.0.113.2
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: NAT44Rule
+    metadata: {name: source-nat-wan-a}
+    spec:
+      outboundInterface: wan-a
+      sourceCIDRs: [192.0.2.0/24]
+      translation: {type: interfaceAddress}
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: NAT44Rule
+    metadata: {name: source-nat-wan-b}
+    spec:
+      outboundInterface: wan-b
+      sourceCIDRs: [192.0.2.0/24]
+      translation: {type: interfaceAddress}
 EOF_CONFIG
 
 "$routerd" validate --config "$work/router.yaml" >"$evidence/validate.log" 2>&1
@@ -196,8 +210,37 @@ pfctl -nf "$work/render/pf.conf" >"$evidence/pf-nf.log" 2>&1
 pfctl -e >"$evidence/pf-enable.log" 2>&1; pf_enabled=1
 pfctl -f "$work/render/pf.conf" >"$evidence/pf-load.log" 2>&1
 pfctl -sr >"$evidence/pf-rules.log" 2>&1
+pfctl -sn >"$evidence/pf-nat-rules.log" 2>&1
 grep -F 'route-to {' "$evidence/pf-rules.log"
 grep -F 'round-robin sticky-address' "$evidence/pf-rules.log"
+cat "$evidence/pf-nat-rules.log"
+require_nat44_interface_translation() {
+  interface=$1
+  awk -v interface="$interface" '
+    $1 == "nat" && $2 == "on" && $3 == interface {
+      source = 0
+      target = 0
+      for (i = 4; i <= NF; i++) {
+        if ($i == "from" && i < NF && $(i + 1) == "192.0.2.0/24") {
+          source = 1
+        }
+        if ($i == "->") {
+          for (j = i + 1; j <= NF; j++) {
+            if (index($j, interface) != 0) {
+              target = 1
+            }
+          }
+        }
+      }
+      if (source && target) {
+        found = 1
+      }
+    }
+    END { exit(found ? 0 : 1) }
+  ' "$evidence/pf-nat-rules.log"
+}
+require_nat44_interface_translation "$out_a"
+require_nat44_interface_translation "$out2_a"
 
 jexec "$sink_a_jail" tcpdump -n -l -i "$out_b" icmp >"$evidence/sink-a.packets.log" 2>&1 & capture_a=$!
 jexec "$sink_b_jail" tcpdump -n -l -i "$out2_b" icmp >"$evidence/sink-b.packets.log" 2>&1 & capture_b=$!
@@ -213,23 +256,22 @@ wait "$capture_b" || true; capture_b=
 
 sed -i '' 's/^/sink-a /' "$evidence/sink-a.packets.log"
 sed -i '' 's/^/sink-b /' "$evidence/sink-b.packets.log"
-s10a=$(grep -c '^sink-a .*192\.0\.2\.10' "$evidence/sink-a.packets.log" || true)
-s10b=$(grep -c '^sink-b .*192\.0\.2\.10' "$evidence/sink-b.packets.log" || true)
-s11a=$(grep -c '^sink-a .*192\.0\.2\.11' "$evidence/sink-a.packets.log" || true)
-s11b=$(grep -c '^sink-b .*192\.0\.2\.11' "$evidence/sink-b.packets.log" || true)
-test $((s10a + s10b)) -ge 6
-test $((s11a + s11b)) -ge 6
-test "$s10a" -eq 0 -o "$s10b" -eq 0
-test "$s11a" -eq 0 -o "$s11b" -eq 0
-grep -q '^sink-a .*192\.0\.2\.' "$evidence/sink-a.packets.log"
-grep -q '^sink-b .*192\.0\.2\.' "$evidence/sink-b.packets.log"
+nat_a=$(grep -c '^sink-a .*198\.51\.100\.1' "$evidence/sink-a.packets.log" || true)
+nat_b=$(grep -c '^sink-b .*203\.0\.113\.1' "$evidence/sink-b.packets.log" || true)
+test "$nat_a" -ge 6
+test "$nat_b" -ge 6
+if grep -q '^sink-[ab] .*192\.0\.2\.' "$evidence/sink-a.packets.log" "$evidence/sink-b.packets.log"; then
+  echo 'NAT44 source address leaked to egress sink' >&2
+  exit 1
+fi
 grep -F '192.0.2.10' "$evidence/pf-states.log"
 grep -F '192.0.2.11' "$evidence/pf-states.log"
 grep -F 'rule 1' "$evidence/pf-states.log"
 {
-  printf 'source10 sink-a=%s sink-b=%s\n' "$s10a" "$s10b"
-  printf 'source11 sink-a=%s sink-b=%s\n' "$s11a" "$s11b"
+  printf 'sink-a translated-source=%s\n' "$nat_a"
+  printf 'sink-b translated-source=%s\n' "$nat_b"
   printf 'both-routehosts=1\n'
+  printf 'nat44-egress-source-translation=1\n'
   printf 'pf-states-source10-source11-rule1=1\n'
 } >"$evidence/summary.log"
 printf 'freebsd-vnet-firewall-dataplane=ok\n' >"$evidence/result"
