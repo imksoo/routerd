@@ -29,6 +29,9 @@ allow_b=''
 cap_deny=''
 cap_allow=''
 forwarding=''
+control_if=''
+control_gateway=''
+control_address=''
 pf_enabled=0
 pf_loaded=0
 src_created=0; denied_created=0; allowed_created=0
@@ -71,6 +74,16 @@ test -c /dev/pf
 [ "$(pfctl -s info 2>/dev/null | awk '/^Status:/ {print $2; exit}')" != Enabled ]
 pfctl -sr >"$evidence/pf-rules-before.log" 2>&1; pfctl -ss >"$evidence/pf-states-before.log" 2>&1
 [ ! -s "$evidence/pf-rules-before.log" ] && [ ! -s "$evidence/pf-states-before.log" ]
+
+# The generated ClientPolicy ruleset deliberately starts with `block drop all`.
+# Preserve the anyvm SSH control connection with an explicit fixture-only pass;
+# it is inserted before that first filter rule and is not production rendering.
+control_if=$(route -n get -inet default 2>/dev/null | awk '$1 == "interface:" { print $2; exit }')
+control_gateway=$(route -n get -inet default 2>/dev/null | awk '$1 == "gateway:" { print $2; exit }')
+[ -n "$control_if" ] && [ -n "$control_gateway" ]
+control_address=$(ifconfig "$control_if" inet | awk '$1 == "inet" { print $2; exit }')
+[ -n "$control_address" ]
+printf 'control-if=%s gateway=%s address=%s\n' "$control_if" "$control_gateway" "$control_address" >"$evidence/control-preflight.log"
 
 forwarding=$(sysctl -n net.inet6.ip6.forwarding); sysctl net.inet6.ip6.forwarding=1 >"$evidence/forwarding-enable.log"
 jail -c name="$src" vnet persist; src_created=1
@@ -126,10 +139,20 @@ EOF
 "$routerd" validate --config "$work/router.yaml" >"$evidence/validate.log" 2>&1
 "$routerd" render freebsd --config "$work/router.yaml" --out-dir "$work/render" >"$evidence/render.log" 2>&1
 find "$work/render" -maxdepth 1 -type f -exec basename {} \; | sort >"$evidence/render-files.log"
-pfctl -nf "$work/render/pf.conf" >"$evidence/pf-nf.log" 2>&1
+awk -v control_if="$control_if" -v control_gateway="$control_gateway" -v control_address="$control_address" '
+  $0 == "block drop all" && !inserted {
+    print "pass in quick on " control_if " inet proto tcp from " control_gateway " to " control_address " port 22 keep state label \"routerd:fixture-control-ssh\""
+    print "pass out quick on " control_if " inet proto tcp from " control_address " to " control_gateway " port 22 keep state label \"routerd:fixture-control-ssh\""
+    inserted = 1
+  }
+  { print }
+  END { if (!inserted) exit 1 }
+' "$work/render/pf.conf" >"$work/pf-with-control.conf"
+pfctl -nf "$work/pf-with-control.conf" >"$evidence/pf-nf.log" 2>&1
 pfctl -e >"$evidence/pf-enable.log" 2>&1; pf_enabled=1
-pfctl -f "$work/render/pf.conf" >"$evidence/pf-load.log" 2>&1
+pfctl -f "$work/pf-with-control.conf" >"$evidence/pf-load.log" 2>&1
 pfctl -sr -v >"$evidence/pf-rules.log" 2>&1
+grep -F 'routerd:fixture-control-ssh' "$evidence/pf-rules.log"
 grep -F 'fd00:1::10' "$evidence/pf-rules.log"
 grep -F 'fd00:2::/64' "$evidence/pf-rules.log"
 
