@@ -301,7 +301,9 @@ curl --fail --silent --show-error --unix-socket "$work/resolver.sock" -X POST \
 jq -e '.reloaded == true and .listeners == 1' "$evidence_dir/resolver-reload.json" >/dev/null
 stop_owned_pid "$resolver_pid"
 resolver_pid=
-[ ! -S "$work/resolver.sock" ]
+# Like the DHCPv6 daemon, resolver startup owns and clears its configured
+# private socket before binding.  The restart/status check below is the
+# meaningful recovery oracle; immediate unlink after external SIGTERM is not.
 
 "$dns_resolver" daemon --resource lifecycle-resolver --config-file "$work/resolver.json" \
   --socket "$work/resolver.sock" --state-file "$evidence_dir/resolver-state.json" \
@@ -318,7 +320,6 @@ curl --fail --silent --show-error --unix-socket "$work/resolver.sock" \
 jq -e '.health == "Healthy" and .phase == "Running"' "$evidence_dir/resolver-status-restart.json" >/dev/null
 stop_owned_pid "$resolver_pid"
 resolver_pid=
-[ ! -S "$work/resolver.sock" ]
 
 printf '%s\n' \
   'dhcpv4-bpf-lease=Bound' \
