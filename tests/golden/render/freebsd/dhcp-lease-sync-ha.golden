@@ -211,7 +211,7 @@ routerd_carp_start() {
 }
 
 routerd_carp_stop() {
-  ifconfig 'ens19' inet '192.168.30.254/32' -alias >/dev/null 2>&1 || true
+  ifconfig 'ens19' 'inet' '192.168.30.254/32' -alias >/dev/null 2>&1 || true
 }
 
 routerd_carp_status() {

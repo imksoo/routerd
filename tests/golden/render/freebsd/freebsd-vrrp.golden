@@ -197,7 +197,7 @@ routerd_carp_start() {
 }
 
 routerd_carp_stop() {
-  ifconfig 'vtnet1' inet '192.168.70.10/32' -alias >/dev/null 2>&1 || true
+  ifconfig 'vtnet1' 'inet' '192.168.70.10/32' -alias >/dev/null 2>&1 || true
 }
 
 routerd_carp_status() {

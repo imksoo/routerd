@@ -182,7 +182,7 @@ routerd_carp_start() {
 }
 
 routerd_carp_stop() {
-  ifconfig 'ens20' inet '192.168.70.10/32' -alias >/dev/null 2>&1 || true
+  ifconfig 'ens20' 'inet' '192.168.70.10/32' -alias >/dev/null 2>&1 || true
 }
 
 routerd_carp_status() {

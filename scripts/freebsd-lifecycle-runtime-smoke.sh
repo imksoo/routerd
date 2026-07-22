@@ -36,6 +36,7 @@ work=$(mktemp -d /var/tmp/routerd-lifecycle-runtime.XXXXXX)
 dnsmasq_pid=
 resolver_pid=
 dhcpv6_pid=
+kea_pid=
 epair_a=
 epair_b=
 rcd_script=/usr/local/etc/rc.d/routerd_dnsmasq
@@ -59,6 +60,10 @@ cleanup() {
   if [ -n "$dhcpv6_pid" ]; then
     kill -TERM "$dhcpv6_pid" 2>/dev/null || true
     wait "$dhcpv6_pid" 2>/dev/null || true
+  fi
+  if [ -n "$kea_pid" ]; then
+    kill -TERM "$kea_pid" 2>/dev/null || true
+    wait "$kea_pid" 2>/dev/null || true
   fi
   if [ -n "$dnsmasq_pid" ]; then
     kill -TERM "$dnsmasq_pid" 2>/dev/null || true
@@ -169,9 +174,45 @@ env routerd_dnsmasq_enable=YES "$rcd_script" onestop >"$evidence_dir/dnsmasq-rcd
 rcd_installed=0
 rm -f "$rcd_script" "$rcd_config"
 
-# DHCPv6-PD is a routerd-supervised UDP/546 daemon on FreeBSD. No PD server is
-# invented here: this proves real start/observe/restart/stop and reports its
-# honest Soliciting state. #927 owns the separate live delegated-prefix peer.
+# DHCPv6-PD uses the real FreeBSD Kea server on the peer half of the disposable
+# epair.  This is an actual multicast Solicit/Advertise/Request/Reply exchange,
+# not the in-process selftest or a synthetic lease injection.
+command -v kea-dhcp6 >/dev/null
+ifconfig "$epair_a" inet6 2001:db8:927::10/64 up
+ifconfig "$epair_b" inet6 2001:db8:927::1/64 up
+cat >"$work/kea-dhcp6.json" <<EOF
+{
+  "Dhcp6": {
+    "interfaces-config": { "interfaces": [ "$epair_b" ] },
+    "lease-database": { "type": "memfile", "persist": false, "name": "$work/kea-leases.csv" },
+    "renew-timer": 900,
+    "rebind-timer": 1800,
+    "valid-lifetime": 3600,
+    "subnet6": [
+      {
+        "id": 927,
+        "subnet": "2001:db8:927::/64",
+        "interface": "$epair_b",
+        "pools": [],
+        "pd-pools": [
+          { "prefix": "2001:db8:928::", "prefix-len": 56, "delegated-len": 60 }
+        ]
+      }
+    ]
+  }
+}
+EOF
+kea-dhcp6 -t "$work/kea-dhcp6.json" >"$evidence_dir/kea-dhcp6-configtest.log" 2>&1
+kea-dhcp6 -d -c "$work/kea-dhcp6.json" >"$evidence_dir/kea-dhcp6.log" 2>&1 &
+kea_pid=$!
+for _ in $(jot 30); do
+  kill -0 "$kea_pid" 2>/dev/null || break
+  sockstat -46 -l | grep -E '[.:]547[[:space:]]' >"$evidence_dir/kea-dhcp6-listener.log" && break
+  sleep 1
+done
+kill -0 "$kea_pid"
+test -s "$evidence_dir/kea-dhcp6-listener.log"
+
 "$dhcpv6_client" daemon --resource lifecycle-pd --interface "$epair_a" \
   --socket "$work/dhcpv6.sock" --lease-file "$evidence_dir/dhcpv6-lease.json" \
   --event-file "$evidence_dir/dhcpv6-events.jsonl" >"$evidence_dir/dhcpv6.stdout.log" 2>"$evidence_dir/dhcpv6.stderr.log" &
@@ -184,11 +225,22 @@ done
 [ -S "$work/dhcpv6.sock" ]
 curl --fail --silent --show-error --unix-socket "$work/dhcpv6.sock" \
   http://localhost/v1/status >"$evidence_dir/dhcpv6-status-before.json"
-jq -e '.phase == "Running" and .resources[0].phase == "Acquiring" and .resources[0].conditions[0].reason == "Soliciting"' "$evidence_dir/dhcpv6-status-before.json" >/dev/null
+for _ in $(jot 30); do
+  curl --fail --silent --show-error --unix-socket "$work/dhcpv6.sock" \
+    http://localhost/v1/status >"$evidence_dir/dhcpv6-status-before.json"
+  jq -e '.phase == "Running" and .resources[0].phase == "Bound" and .resources[0].conditions[0].reason == "Bound" and (.resources[0].observed.currentPrefix | startswith("2001:db8:928:"))' "$evidence_dir/dhcpv6-status-before.json" >/dev/null && break
+  sleep 1
+done
+jq -e '.phase == "Running" and .resources[0].phase == "Bound" and (.resources[0].observed.currentPrefix | startswith("2001:db8:928:"))' "$evidence_dir/dhcpv6-status-before.json" >/dev/null
+jq -e 'select(.reason == "PrefixBound")' "$evidence_dir/dhcpv6-events.jsonl" >"$evidence_dir/dhcpv6-bound-event.json"
+test -s "$evidence_dir/dhcpv6-lease.json"
 kill -TERM "$dhcpv6_pid"
 wait "$dhcpv6_pid"
 dhcpv6_pid=
 [ ! -S "$work/dhcpv6.sock" ]
+# A restart must acquire again from Kea rather than merely restore its first
+# lease snapshot from disk.
+rm -f "$evidence_dir/dhcpv6-lease.json"
 "$dhcpv6_client" daemon --resource lifecycle-pd --interface "$epair_a" \
   --socket "$work/dhcpv6.sock" --lease-file "$evidence_dir/dhcpv6-lease.json" \
   --event-file "$evidence_dir/dhcpv6-events.jsonl" >>"$evidence_dir/dhcpv6.stdout.log" 2>>"$evidence_dir/dhcpv6.stderr.log" &
@@ -201,11 +253,20 @@ done
 [ -S "$work/dhcpv6.sock" ]
 curl --fail --silent --show-error --unix-socket "$work/dhcpv6.sock" \
   http://localhost/v1/status >"$evidence_dir/dhcpv6-status-restart.json"
-jq -e '.phase == "Running" and .resources[0].phase == "Acquiring"' "$evidence_dir/dhcpv6-status-restart.json" >/dev/null
+for _ in $(jot 30); do
+  curl --fail --silent --show-error --unix-socket "$work/dhcpv6.sock" \
+    http://localhost/v1/status >"$evidence_dir/dhcpv6-status-restart.json"
+  jq -e '.phase == "Running" and .resources[0].phase == "Bound" and (.resources[0].observed.currentPrefix | startswith("2001:db8:928:"))' "$evidence_dir/dhcpv6-status-restart.json" >/dev/null && break
+  sleep 1
+done
+jq -e '.phase == "Running" and .resources[0].phase == "Bound" and (.resources[0].observed.currentPrefix | startswith("2001:db8:928:"))' "$evidence_dir/dhcpv6-status-restart.json" >/dev/null
 kill -TERM "$dhcpv6_pid"
 wait "$dhcpv6_pid"
 dhcpv6_pid=
 [ ! -S "$work/dhcpv6.sock" ]
+kill -TERM "$kea_pid"
+wait "$kea_pid"
+kea_pid=
 
 cat >"$work/resolver.json" <<'EOF'
 {"resource":"lifecycle-resolver","spec":{"listen":[{"addresses":["127.0.0.1"],"port":10553}]}}
@@ -252,7 +313,7 @@ resolver_pid=
 printf '%s\n' \
   'dhcpv4-bpf-lease=Bound' \
   'dnsmasq-rcd-render-start-observe-restart-stop=ok' \
-  'dhcpv6-pd-daemon-start-observe-restart-stop=Soliciting-no-server' \
+  'dhcpv6-pd-kea-delegated-prefix-Bound-restart-stop=ok' \
   'dns-resolver-start-observe-reload-restart-stop=ok' \
   'owned-epair-cleanup=pending-exit-trap' >"$evidence_dir/summary.log"
 printf 'freebsd-lifecycle-runtime=ok\n' >"$evidence_dir/result"
