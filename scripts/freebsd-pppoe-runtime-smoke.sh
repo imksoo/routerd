@@ -77,7 +77,7 @@ case "$epair_a" in epair*a) ;; *) echo "unexpected epair name: $epair_a" >&2; ex
 epair_b=${epair_a%a}b
 ifconfig "$epair_a" up
 jail -c name="$jail_name" path=/ host.hostname="$jail_name" persist vnet \
-  vnet.interface="$epair_b"
+  allow.raw_sockets=1 vnet.interface="$epair_b"
 jail_created=1
 jexec "$jail_name" ifconfig lo0 up
 jexec "$jail_name" ifconfig "$epair_b" up
