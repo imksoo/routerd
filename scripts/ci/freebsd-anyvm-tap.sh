@@ -77,12 +77,13 @@ printf '%s  %s\n' \
 
 # Keep the pinned net0 string untouched.  This is the smallest source patch:
 # append a net1 TAP netdev and the matching architecture virtio device.
-python3 - "$work/anyvm.py" "$tap" <<'PY'
+python3 - "$work/anyvm.py" "$tap" "$arch" <<'PY'
 import pathlib
 import sys
 
 path = pathlib.Path(sys.argv[1])
 tap = sys.argv[2]
+arch = sys.argv[3]
 source = path.read_text()
 needle = '        "-netdev", netdev_args,\n    ])'
 replacement = '''        "-netdev", netdev_args,
@@ -91,12 +92,19 @@ replacement = '''        "-netdev", netdev_args,
 if source.count(needle) != 1:
     raise SystemExit("pinned anyvm netdev anchor mismatch")
 source = source.replace(needle, replacement, 1)
-needle = '            "-device", "{},netdev=net0".format(net_card),\n            "-device", "virtio-balloon-pci",'
-replacement = '''            "-device", "{},netdev=net0".format(net_card),
+if arch == "aarch64":
+    needle = '            "-device", "qemu-xhci",\n            "-device", "{},netdev=net0".format(net_card),\n            "-drive", "if=pflash,format=raw,readonly=on,file={}".format(efi_path),'
+    replacement = '''            "-device", "qemu-xhci",
+            "-device", "{},netdev=net0".format(net_card),
+            "-device", "{},netdev=net1".format(net_card),
+            "-drive", "if=pflash,format=raw,readonly=on,file={}".format(efi_path),'''
+else:
+    needle = '            "-device", "{},netdev=net0".format(net_card),\n            "-device", "virtio-balloon-pci",'
+    replacement = '''            "-device", "{},netdev=net0".format(net_card),
             "-device", "{},netdev=net1".format(net_card),
             "-device", "virtio-balloon-pci",'''
 if source.count(needle) != 1:
-    raise SystemExit("pinned anyvm x86 NIC anchor mismatch")
+    raise SystemExit("pinned anyvm {} NIC anchor mismatch".format(arch))
 source = source.replace(needle, replacement, 1)
 
 # Pinned anyvm logs the final SSH status but otherwise exits zero.  CI must
