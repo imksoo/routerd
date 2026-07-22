@@ -604,7 +604,7 @@ func StatusForRemoteAddressClaim(resource api.Resource, lowerings []DeliveryLowe
 	if targetOS != platform.OSLinux {
 		status["phase"] = "Degraded"
 		status["reason"] = "CaptureUnsupported"
-		status["message"] = "SAM capture not implemented on this OS"
+		status["message"] = "SAM local capture is not implemented on this OS; FreeBSD rejects proxy-ARP capture because proxy-neighbor ownership, GARP, and routerd-owned forwarding are Linux-only"
 		status["captureStatus"] = CaptureStatusBlocked
 		return status
 	}
