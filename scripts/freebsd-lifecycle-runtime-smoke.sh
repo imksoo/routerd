@@ -34,6 +34,14 @@ epair_b=
 
 cleanup() {
   rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "freebsd-lifecycle-runtime failure evidence:" >&2
+    for log in "$evidence_dir"/*; do
+      [ -f "$log" ] || continue
+      echo "--- $log" >&2
+      cat "$log" >&2 || true
+    done
+  fi
   if [ -n "$resolver_pid" ]; then
     kill -TERM "$resolver_pid" 2>/dev/null || true
     wait "$resolver_pid" 2>/dev/null || true
