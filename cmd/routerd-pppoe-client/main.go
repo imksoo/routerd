@@ -76,6 +76,17 @@ type eventsResponse struct {
 	Events []daemonapi.DaemonEvent `json:"events"`
 }
 
+var ensureFreeBSDPPPoEModule = func(ctx context.Context) error {
+	if platform.CurrentOS() != platform.OSFreeBSD {
+		return nil
+	}
+	out, err := exec.CommandContext(ctx, "kldload", "-n", "ng_pppoe").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("load FreeBSD ng_pppoe kernel module: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func main() {
 	if err := run(os.Args[1:], os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -274,6 +285,10 @@ func (d *daemon) Run(ctx context.Context) error {
 
 func (d *daemon) startSession(ctx context.Context) error {
 	if err := d.renderRuntimeConfig(); err != nil {
+		return err
+	}
+	if err := ensureFreeBSDPPPoEModule(ctx); err != nil {
+		d.markFailed(err.Error())
 		return err
 	}
 	name, argv := pppoeclient.Command(d.config())

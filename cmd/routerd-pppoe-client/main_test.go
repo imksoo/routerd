@@ -4,12 +4,34 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/imksoo/routerd/pkg/pppoeclient"
 )
+
+func TestStartSessionFailsClosedWhenFreeBSDPPPoEModuleLoadFails(t *testing.T) {
+	previous := ensureFreeBSDPPPoEModule
+	t.Cleanup(func() { ensureFreeBSDPPPoEModule = previous })
+	want := errors.New("ng_pppoe unavailable")
+	ensureFreeBSDPPPoEModule = func(context.Context) error { return want }
+	dir := t.TempDir()
+	d := newDaemon(options{resource: "wan", ifname: "vtnet0", username: "user", password: "secret", runtimeDir: dir, stateFile: filepath.Join(dir, "state.json")}, nil)
+	err := d.startSession(context.Background())
+	if !errors.Is(err, want) {
+		t.Fatalf("startSession error = %v, want module-load failure", err)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.cmd != nil || d.snapshot.Phase != pppoeclient.PhaseFailed {
+		t.Fatalf("module failure did not fail closed: cmd=%v phase=%q", d.cmd, d.snapshot.Phase)
+	}
+}
 
 func TestRestoreStateIgnoresEmptyFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")

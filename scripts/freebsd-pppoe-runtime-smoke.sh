@@ -62,6 +62,11 @@ case "$epair_a" in epair*a) ;; *) echo "unexpected epair name: $epair_a" >&2; ex
 epair_b=${epair_a%a}b
 ifconfig "$epair_a" up
 ifconfig "$epair_b" up
+# ng_pppoe is a FreeBSD KMOD. Load it before the disposable access
+# concentrator starts; routerd performs the same idempotent load before its
+# own mpd5 client command.
+kldload -n ng_pppoe
+kldstat -q -m ng_pppoe
 
 cat >"$work/mpd.conf" <<EOF
 default:

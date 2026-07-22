@@ -179,9 +179,8 @@ func KernelModuleResources(router *api.Router) []api.Resource {
 	return KernelModuleResourcesForOS(router, platform.CurrentOS())
 }
 
-// KernelModuleResourcesForOS derives only runtime modules that the selected
-// host platform can actually load.  FreeBSD modules are intentionally not
-// persisted: loader.conf ownership is outside routerd's runtime contract.
+// KernelModuleResourcesForOS derives runtime modules that the selected host
+// platform can load and persists routerd-owned declarations where supported.
 func KernelModuleResourcesForOS(router *api.Router, osName platform.OS) []api.Resource {
 	if router == nil {
 		return nil
@@ -222,6 +221,8 @@ func KernelModulesForOS(router *api.Router, osName platform.OS) []string {
 	for _, res := range router.Spec.Resources {
 		if osName == platform.OSFreeBSD {
 			switch res.Kind {
+			case "PPPoESession":
+				needed["ng_pppoe"] = true
 			case "NAT44Rule", "NAT44FlowDNATPinhole", "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallFlowPinhole", "ClientPolicy", "PortForward", "IngressService", "LocalServiceRedirect":
 				needed["pf"] = true
 			case "TrafficFlowLog", "FirewallEventLog":
