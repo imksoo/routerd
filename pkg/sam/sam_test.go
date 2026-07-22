@@ -549,7 +549,7 @@ func TestHybridAzurePVESameSubnetExamplesLowerDeliveryRoutes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("load example: %v", err)
 			}
-			if err := config.Validate(router); err != nil {
+			if err := config.ValidateForOS(router, platform.OSLinux); err != nil {
 				t.Fatalf("validate example: %v", err)
 			}
 			expanded, lowerings, err := ExpandRemoteAddressClaimRoutes(*router)

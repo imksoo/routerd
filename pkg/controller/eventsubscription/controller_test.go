@@ -16,6 +16,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/platform"
 	routerplugin "github.com/imksoo/routerd/pkg/plugin"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -306,7 +307,7 @@ func TestReconcileTwoDistinctEventsCoexistInEffectiveConfig(t *testing.T) {
 	}}}
 	parts := loadParts(t, store)
 	now := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
-	effective, result, err := dynamicconfig.BuildEffectiveConfig(startup, parts, nil, now)
+	effective, result, err := dynamicconfig.BuildEffectiveConfigForOS(startup, parts, nil, now, platform.OSLinux)
 	if err != nil {
 		t.Fatalf("build effective: %v", err)
 	}

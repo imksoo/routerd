@@ -14,7 +14,7 @@ import (
 
 func TestValidateHybridResources(t *testing.T) {
 	router := validHybridRouter()
-	if err := Validate(router); err != nil {
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 }
@@ -25,7 +25,7 @@ func TestValidateHybridRemoteClaimConfigureOSAddress(t *testing.T) {
 	spec.Capture.ConfigureOSAddress = true
 	spec.Capture.Interface = "ens5"
 	router.Spec.Resources[6].Spec = spec
-	if err := Validate(router); err != nil {
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 }
@@ -550,7 +550,7 @@ func TestValidateHybridWarnsForProviderModeNotDeclared(t *testing.T) {
 	spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
 	spec.Capture.ProviderMode = "floating-private-ip"
 	router.Spec.Resources[6].Spec = spec
-	if err := Validate(router); err != nil {
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 	warnings := Warnings(router)
@@ -564,7 +564,7 @@ func TestValidateHybridWarnsForExternalProxyARPInterface(t *testing.T) {
 	spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
 	spec.Capture = api.AddressCapture{Type: "proxy-arp", Interface: "br-lan", ActiveWhen: api.CaptureActiveWhen{Type: "single-router"}}
 	router.Spec.Resources[6].Spec = spec
-	if err := Validate(router); err != nil {
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 	warnings := Warnings(router)
@@ -579,7 +579,7 @@ func TestValidateHybridProxyARPInterfaceWarningAcceptsInterfaceIfName(t *testing
 	spec.Capture = api.AddressCapture{Type: "proxy-arp", Interface: "br-lan"}
 	router.Spec.Resources[6].Spec = spec
 	router.Spec.Resources = append(router.Spec.Resources, testResource(api.NetAPIVersion, "Interface", "lan", api.InterfaceSpec{IfName: "br-lan"}))
-	if err := Validate(router); err != nil {
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 	if warnings := Warnings(router); len(warnings) != 0 {
@@ -629,7 +629,7 @@ func TestHybridAzurePVESameSubnetExamplesValidate(t *testing.T) {
 			if err != nil {
 				t.Fatalf("load example: %v", err)
 			}
-			if err := Validate(router); err != nil {
+			if err := ValidateForOS(router, platform.OSLinux); err != nil {
 				t.Fatalf("validate example: %v", err)
 			}
 		})
