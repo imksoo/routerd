@@ -52,6 +52,12 @@ aarch64)
 esac
 release_target=freebsd-$release_arch
 
+# The checked-in release Makefile uses GNU make syntax. Keep this prerequisite
+# inside the opt-in package lifecycle runner rather than changing the baseline
+# native package set.
+pkg install -y gmake >/dev/null
+command -v gmake >/dev/null
+
 work=$(mktemp -d /var/tmp/routerd-package-lifecycle.XXXXXX)
 prior_dir=$work/prior
 current_dir=$work/current
@@ -99,7 +105,7 @@ stage_release() {
   archive=$work/routerd-${version}-${release_target}.tar.gz
   (
     cd "$source"
-    make dist ROUTERD_OS=freebsd GOARCH="$release_arch" VERSION="$version"
+    gmake dist ROUTERD_OS=freebsd GOARCH="$release_arch" VERSION="$version"
     cp "dist/routerd-${version}-${release_target}.tar.gz" "$archive"
   )
   mkdir -p "$destination"
