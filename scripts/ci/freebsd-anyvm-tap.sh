@@ -13,9 +13,22 @@ run_id=${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}
 attempt=${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT is required}
 ipv6_candidate=${ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE:-false}
 kernelmodule_persistence=${ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME:-false}
+arch=${ROUTERD_ANYVM_ARCH:-x86_64}
+qemu_binary=
+tcg_args=()
 
 [[ "$tap" =~ ^[A-Za-z0-9_.-]+$ ]] || exit 2
 [[ "$peer_addr" =~ ^198\.18\.[0-9]{1,3}\.[0-9]{1,3}$ && "$guest_addr" =~ ^198\.18\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || exit 2
+case "$arch" in
+x86_64) qemu_binary=qemu-system-x86_64 ;;
+aarch64) qemu_binary=qemu-system-aarch64 ;;
+*) echo "unsupported anyvm architecture: $arch" >&2; exit 2 ;;
+esac
+if [[ "$arch" == aarch64 ]]; then
+  # anyvm v0.5.1 uses TCG for an aarch64 guest on the x86_64 hosted runner.
+  # Keep that runtime boundary explicit in both the invocation and evidence.
+  tcg_args=(--tcg)
+fi
 work="/tmp/routerd-anyvm-tap-${run_id}-${attempt}"
 case "$work" in /tmp/routerd-anyvm-tap-"$run_id"-"$attempt") ;; *) exit 2;; esac
 artifact_dir="${RUNNER_TEMP:-/tmp}/routerd-anyvm-console-${run_id}-${attempt}"
@@ -38,19 +51,25 @@ cleanup() {
 trap cleanup EXIT
 install -d -m 0700 "$work" "$artifact_dir"
 sudo apt-get update -qq
-sudo apt-get install -y -qq qemu-utils qemu-system-x86 ovmf python3 rsync
+sudo apt-get install -y -qq qemu-utils qemu-system-x86 qemu-system-arm qemu-efi-aarch64 ovmf python3 rsync
+command -v "$qemu_binary" >/dev/null
+printf 'anyvm-tap: qemu=%s version=%s\n' "$qemu_binary" "$("$qemu_binary" --version | head -1)"
 
-# The pinned vmactions action makes KVM writable before invoking anyvm.  Keep
-# the same prerequisite bounded to this fixture and restore the exact mode on
-# exit; TCG fallback makes the FreeBSD boot timeout rather than qualifying it.
-[[ -c /dev/kvm ]] || { echo 'anyvm-tap: /dev/kvm is absent' >&2; exit 1; }
-kvm_mode=$(stat -c '%a' /dev/kvm)
-[[ "$kvm_mode" =~ ^[0-7]{3,4}$ ]] || { echo 'anyvm-tap: invalid /dev/kvm mode' >&2; exit 1; }
-if [[ ! -w /dev/kvm ]]; then
-  sudo chmod 666 /dev/kvm
-  kvm_changed=1
+if [[ "$arch" == x86_64 ]]; then
+  # The pinned vmactions action makes KVM writable before invoking anyvm. Keep
+  # the same prerequisite bounded to the accelerated amd64 fixture; arm64 runs
+  # under explicit QEMU TCG emulation and must never claim KVM acceleration.
+  [[ -c /dev/kvm ]] || { echo 'anyvm-tap: /dev/kvm is absent' >&2; exit 1; }
+  kvm_mode=$(stat -c '%a' /dev/kvm)
+  [[ "$kvm_mode" =~ ^[0-7]{3,4}$ ]] || { echo 'anyvm-tap: invalid /dev/kvm mode' >&2; exit 1; }
+  if [[ ! -w /dev/kvm ]]; then
+    sudo chmod 666 /dev/kvm
+    kvm_changed=1
+  fi
+  [[ -w /dev/kvm ]] || { echo 'anyvm-tap: /dev/kvm is not writable after chmod' >&2; exit 1; }
+else
+  printf 'anyvm-tap: architecture=%s acceleration=tcg explicit_tcg=true\n' "$arch"
 fi
-[[ -w /dev/kvm ]] || { echo 'anyvm-tap: /dev/kvm is not writable after chmod' >&2; exit 1; }
 
 curl -fsSL https://raw.githubusercontent.com/anyvm-org/anyvm/v0.5.1/anyvm.py >"$work/anyvm.py"
 printf '%s  %s\n' \
@@ -58,13 +77,14 @@ printf '%s  %s\n' \
   "$work/anyvm.py" | sha256sum -c -
 
 # Keep the pinned net0 string untouched.  This is the smallest source patch:
-# append a net1 TAP netdev and the matching x86 virtio device.
-python3 - "$work/anyvm.py" "$tap" <<'PY'
+# append a net1 TAP netdev and the matching architecture virtio device.
+python3 - "$work/anyvm.py" "$tap" "$arch" <<'PY'
 import pathlib
 import sys
 
 path = pathlib.Path(sys.argv[1])
 tap = sys.argv[2]
+arch = sys.argv[3]
 source = path.read_text()
 needle = '        "-netdev", netdev_args,\n    ])'
 replacement = '''        "-netdev", netdev_args,
@@ -73,12 +93,19 @@ replacement = '''        "-netdev", netdev_args,
 if source.count(needle) != 1:
     raise SystemExit("pinned anyvm netdev anchor mismatch")
 source = source.replace(needle, replacement, 1)
-needle = '            "-device", "{},netdev=net0".format(net_card),\n            "-device", "virtio-balloon-pci",'
-replacement = '''            "-device", "{},netdev=net0".format(net_card),
-            "-device", "virtio-net-pci,netdev=net1",
+if arch == "aarch64":
+    needle = '            "-device", "qemu-xhci",\n            "-device", "{},netdev=net0".format(net_card),\n            "-drive", "if=pflash,format=raw,readonly=on,file={}".format(efi_path),'
+    replacement = '''            "-device", "qemu-xhci",
+            "-device", "{},netdev=net0".format(net_card),
+            "-device", "{},netdev=net1".format(net_card),
+            "-drive", "if=pflash,format=raw,readonly=on,file={}".format(efi_path),'''
+else:
+    needle = '            "-device", "{},netdev=net0".format(net_card),\n            "-device", "virtio-balloon-pci",'
+    replacement = '''            "-device", "{},netdev=net0".format(net_card),
+            "-device", "{},netdev=net1".format(net_card),
             "-device", "virtio-balloon-pci",'''
 if source.count(needle) != 1:
-    raise SystemExit("pinned anyvm x86 NIC anchor mismatch")
+    raise SystemExit("pinned anyvm {} NIC anchor mismatch".format(arch))
 source = source.replace(needle, replacement, 1)
 
 # Pinned anyvm logs the final SSH status but otherwise exits zero.  CI must
@@ -114,6 +141,6 @@ if [[ "$kernelmodule_persistence" == true ]]; then
   reboot_marker=/var/tmp/routerd-kernelmodule-persistence/reboot.complete
 fi
 ROUTERD_ANYVM_REBOOT_MARKER="$reboot_marker" python3 "$work/anyvm.py" \
-  --os freebsd --release 14.3 --arch x86_64 --mem 6144 --snapshot \
+  --os freebsd --release 14.3 --arch "$arch" "${tcg_args[@]}" --mem 6144 --snapshot \
   --sync rsync -v "$workspace:/home/runner/work/routerd/routerd" \
-  -- "cd /home/runner/work/routerd/routerd && pkg install -y go dnsmasq git hs-ShellCheck curl jq ndpi pkgconf strongswan && ROUTERD_IPSEC_TOPOLOGY=tap ROUTERD_IPSEC_UNDERLAY_IF=vtnet1 ROUTERD_IPSEC_PEER_ADDR=$peer_addr ROUTERD_IPSEC_GUEST_ADDR=$guest_addr ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE=$ipv6_candidate ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME=$kernelmodule_persistence sh scripts/freebsd-native-vm-smoke.sh"
+  -- "cd /home/runner/work/routerd/routerd && pkg install -y go dnsmasq git hs-ShellCheck curl jq ndpi pkgconf strongswan && ROUTERD_FREEBSD_EXPECTED_ARCH=$arch ROUTERD_IPSEC_TOPOLOGY=tap ROUTERD_IPSEC_UNDERLAY_IF=vtnet1 ROUTERD_IPSEC_PEER_ADDR=$peer_addr ROUTERD_IPSEC_GUEST_ADDR=$guest_addr ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE=$ipv6_candidate ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME=$kernelmodule_persistence sh scripts/freebsd-native-vm-smoke.sh"
