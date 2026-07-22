@@ -118,7 +118,12 @@ if [ -e "$rcd_script" ] || [ -e "$rcd_config" ]; then
   echo "routerd dnsmasq rc.d fixture collision" >&2
   exit 1
 fi
-kill -TERM "$dnsmasq_pid"
+# The DHCPv4 client has already completed. If the disposable peer exited in
+# the interval, its absence is not a production failure and must not trip
+# `set -e` before the generated rc.d lifecycle is reached.
+if kill -0 "$dnsmasq_pid" 2>/dev/null; then
+  kill -TERM "$dnsmasq_pid" 2>/dev/null || true
+fi
 wait "$dnsmasq_pid" || true
 dnsmasq_pid=
 cat >"$work/routerd-dnsmasq.yaml" <<EOF
