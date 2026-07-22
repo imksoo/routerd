@@ -26,10 +26,11 @@ func TestTunnelInterfaceControllerAddsIPIP(t *testing.T) {
 			TrustedUnderlay: true,
 		},
 	}}}}
+	store := mapStore{}
 	var calls [][]string
 	controller := TunnelInterfaceController{
 		Router: router,
-		Store:  mapStore{},
+		Store:  store,
 		OS:     platform.OSLinux,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			calls = append(calls, append([]string{name}, args...))
@@ -51,8 +52,57 @@ func TestTunnelInterfaceControllerAddsIPIP(t *testing.T) {
 		t.Fatalf("calls = %#v, want %#v", calls, want)
 	}
 	status := controller.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip")
-	if status["phase"] != "Up" || status["mode"] != "ipip" || status["mtu"] != 1480 {
+	if status["phase"] != "Up" || status["mode"] != "ipip" || status["mtu"] != 1480 || !statusBoolOrFalse(status["interfaceOwned"]) {
 		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestTunnelInterfaceControllerRefusesForeignExistingInterfaceOnBothOS(t *testing.T) {
+	for name, tt := range map[string]struct {
+		os      platform.OS
+		ifname  string
+		observe []byte
+		command []string
+	}{
+		"linux": {
+			os:      platform.OSLinux,
+			ifname:  "tun-foreign",
+			observe: []byte("7: tun-foreign@NONE: <POINTOPOINT,UP> mtu 1480 link/ipip 192.0.2.10 peer 192.0.2.20 ttl 64"),
+			command: []string{"ip", "-d", "-o", "link", "show", "dev", "tun-foreign"},
+		},
+		"freebsd": {
+			os:      platform.OSFreeBSD,
+			ifname:  "gif0",
+			observe: []byte("gif0: flags=8011<UP,POINTOPOINT,MULTICAST> metric 0 mtu 1480\n\ttunnel inet 192.0.2.10 --> 192.0.2.20\n"),
+			command: []string{"ifconfig", "gif0"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+				Metadata: api.ObjectMeta{Name: tt.ifname},
+				Spec:     api.TunnelInterfaceSpec{Mode: "ipip", Local: "192.0.2.10", Remote: "192.0.2.20", TrustedUnderlay: true},
+			}}}}
+			var calls [][]string
+			store := mapStore{}
+			controller := TunnelInterfaceController{
+				Router: router, Store: store, OS: tt.os,
+				Command: func(_ context.Context, command string, args ...string) ([]byte, error) {
+					calls = append(calls, append([]string{command}, args...))
+					return tt.observe, nil
+				},
+			}
+			if err := controller.Reconcile(context.Background()); err != nil {
+				t.Fatalf("Reconcile error = %v, want persisted foreign-interface status", err)
+			}
+			if !reflect.DeepEqual(calls, [][]string{tt.command}) {
+				t.Fatalf("foreign interface mutation calls = %#v, want only observe %#v", calls, tt.command)
+			}
+			status := store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", tt.ifname)
+			if status["reason"] != "ForeignInterface" || statusBoolOrFalse(status["interfaceOwned"]) {
+				t.Fatalf("foreign status = %#v", status)
+			}
+		})
 	}
 }
 
@@ -68,10 +118,11 @@ func TestTunnelInterfaceControllerChangesExistingIPIPRemoteWithoutAdd(t *testing
 			TrustedUnderlay: true,
 		},
 	}}}}
+	store := mapStore{api.HybridAPIVersion + "/TunnelInterface/tun-ipip": {"interfaceOwned": true}}
 	var calls [][]string
 	controller := TunnelInterfaceController{
 		Router: router,
-		Store:  mapStore{},
+		Store:  store,
 		OS:     platform.OSLinux,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			calls = append(calls, append([]string{name}, args...))
@@ -207,10 +258,11 @@ func TestTunnelInterfaceControllerDerivesIPIPMTUFromUnderlay(t *testing.T) {
 			},
 		},
 	}}}
+	store := mapStore{api.HybridAPIVersion + "/TunnelInterface/tun-ipip": {"interfaceOwned": true}}
 	var calls [][]string
 	controller := TunnelInterfaceController{
 		Router: router,
-		Store:  mapStore{},
+		Store:  store,
 		OS:     platform.OSLinux,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			calls = append(calls, append([]string{name}, args...))
@@ -249,10 +301,11 @@ func TestTunnelInterfaceControllerAppliesTunnelAddress(t *testing.T) {
 			TrustedUnderlay: true,
 		},
 	}}}}
+	store := mapStore{api.HybridAPIVersion + "/TunnelInterface/tun-ipip": {"interfaceOwned": true}}
 	var calls [][]string
 	controller := TunnelInterfaceController{
 		Router: router,
-		Store:  mapStore{},
+		Store:  store,
 		OS:     platform.OSLinux,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			calls = append(calls, append([]string{name}, args...))
@@ -293,10 +346,11 @@ func TestTunnelInterfaceControllerChangesTunnelAddress(t *testing.T) {
 			TrustedUnderlay: true,
 		},
 	}}}}
+	store := mapStore{api.HybridAPIVersion + "/TunnelInterface/tun-ipip": {"interfaceOwned": true}}
 	var calls [][]string
 	controller := TunnelInterfaceController{
 		Router: router,
-		Store:  mapStore{},
+		Store:  store,
 		OS:     platform.OSLinux,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			call := append([]string{name}, args...)
@@ -341,10 +395,11 @@ func TestTunnelInterfaceControllerRemovesStaleTunnelAddress(t *testing.T) {
 			TrustedUnderlay: true,
 		},
 	}}}}
+	store := mapStore{api.HybridAPIVersion + "/TunnelInterface/tun-ipip": {"interfaceOwned": true}}
 	var calls [][]string
 	controller := TunnelInterfaceController{
 		Router: router,
-		Store:  mapStore{},
+		Store:  store,
 		OS:     platform.OSLinux,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			call := append([]string{name}, args...)
@@ -385,10 +440,11 @@ func TestTunnelInterfaceControllerAddsFOU(t *testing.T) {
 			TrustedUnderlay: true,
 		},
 	}}}}
+	store := mapStore{}
 	var calls [][]string
 	controller := TunnelInterfaceController{
 		Router: router,
-		Store:  mapStore{},
+		Store:  store,
 		OS:     platform.OSLinux,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			calls = append(calls, append([]string{name}, args...))
@@ -512,10 +568,11 @@ func TestTunnelInterfaceControllerSkipsExistingGUE(t *testing.T) {
 			TrustedUnderlay: true,
 		},
 	}}}}
+	store := mapStore{api.HybridAPIVersion + "/TunnelInterface/tun-gue": {"interfaceOwned": true}}
 	var calls [][]string
 	controller := TunnelInterfaceController{
 		Router: router,
-		Store:  mapStore{},
+		Store:  store,
 		OS:     platform.OSLinux,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			calls = append(calls, append([]string{name}, args...))
@@ -559,10 +616,11 @@ func TestTunnelInterfaceControllerSkipsExistingGRE(t *testing.T) {
 			TrustedUnderlay: true,
 		},
 	}}}}
+	store := mapStore{api.HybridAPIVersion + "/TunnelInterface/tun-gre": {"interfaceOwned": true}}
 	var calls [][]string
 	controller := TunnelInterfaceController{
 		Router: router,
-		Store:  mapStore{},
+		Store:  store,
 		OS:     platform.OSLinux,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			calls = append(calls, append([]string{name}, args...))
@@ -596,10 +654,11 @@ func TestTunnelInterfaceControllerChangesExistingGREWithoutAdd(t *testing.T) {
 			TrustedUnderlay: true,
 		},
 	}}}}
+	store := mapStore{api.HybridAPIVersion + "/TunnelInterface/tun-gre": {"interfaceOwned": true}}
 	var calls [][]string
 	controller := TunnelInterfaceController{
 		Router: router,
-		Store:  mapStore{},
+		Store:  store,
 		OS:     platform.OSLinux,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			calls = append(calls, append([]string{name}, args...))
@@ -632,8 +691,9 @@ func TestTunnelInterfaceControllerClearsLinuxGREKeyWithNoKey(t *testing.T) {
 		},
 	}
 	var calls [][]string
+	store := mapStore{api.HybridAPIVersion + "/TunnelInterface/tun-gre": {"interfaceOwned": true}}
 	controller := TunnelInterfaceController{
-		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{resource}}}, Store: mapStore{}, OS: platform.OSLinux,
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{resource}}}, Store: store, OS: platform.OSLinux,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			call := append([]string{name}, args...)
 			calls = append(calls, call)
@@ -652,6 +712,37 @@ func TestTunnelInterfaceControllerClearsLinuxGREKeyWithNoKey(t *testing.T) {
 	}
 }
 
+func TestTunnelInterfaceControllerPreservesOwnedProvenanceAcrossFreeBSDGREBoundaryError(t *testing.T) {
+	owned := mapStore{api.HybridAPIVersion + "/TunnelInterface/gre0": {"interfaceOwned": true}}
+	zeroKey := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+		Metadata: api.ObjectMeta{Name: "gre0"},
+		Spec:     api.TunnelInterfaceSpec{Mode: "gre", Local: "192.0.2.10", Remote: "192.0.2.20", MTU: 1472, TrustedUnderlay: true},
+	}
+	observed := []byte("gre0: flags=8011<UP,POINTOPOINT,MULTICAST> metric 0 mtu 1472\n\ttunnel inet 192.0.2.10 --> 192.0.2.20\n\tgrekey: 42\n")
+	controller := TunnelInterfaceController{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{zeroKey}}}, Store: owned, OS: platform.OSFreeBSD,
+		Command: func(_ context.Context, _ string, _ ...string) ([]byte, error) { return observed, nil },
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("boundary reconcile error = %v, want persisted status", err)
+	}
+	status := owned.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "gre0")
+	if status["phase"] != "Error" || !strings.Contains(statusString(status, "error"), "clear FreeBSD GRE key") || !statusBoolOrFalse(status["interfaceOwned"]) {
+		t.Fatalf("boundary status lost ownership: %#v", status)
+	}
+	configured := zeroKey
+	configured.Spec = api.TunnelInterfaceSpec{Mode: "gre", Local: "192.0.2.10", Remote: "192.0.2.20", MTU: 1472, Key: 42, TrustedUnderlay: true}
+	controller.Router = &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{configured}}}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("owned restart reconcile error = %v", err)
+	}
+	status = owned.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "gre0")
+	if status["phase"] != "Up" || status["reason"] != "AlreadyConfigured" || !statusBoolOrFalse(status["interfaceOwned"]) {
+		t.Fatalf("owned restart status = %#v", status)
+	}
+}
+
 func TestTunnelInterfaceControllerRemovesAddressWhenSpecCleared(t *testing.T) {
 	resource := api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
@@ -662,7 +753,7 @@ func TestTunnelInterfaceControllerRemovesAddressWhenSpecCleared(t *testing.T) {
 	}
 	store := mapStore{}
 	if err := store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip", map[string]any{
-		"phase": "Up", "managedBy": "routerd", "address": "10.255.1.1/30",
+		"phase": "Up", "managedBy": "routerd", "address": "10.255.1.1/30", "interfaceOwned": true,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -777,9 +868,10 @@ func TestTunnelInterfaceControllerDeletesStaleManagedInterface(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: nil}}
 	store := mapStore{}
 	store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", "old", map[string]any{
-		"phase":     "Up",
-		"ifname":    "tun-old",
-		"managedBy": "routerd",
+		"phase":          "Up",
+		"ifname":         "tun-old",
+		"managedBy":      "routerd",
+		"interfaceOwned": true,
 	})
 	var calls [][]string
 	controller := TunnelInterfaceController{
@@ -800,6 +892,31 @@ func TestTunnelInterfaceControllerDeletesStaleManagedInterface(t *testing.T) {
 	}
 	if _, ok := store[api.HybridAPIVersion+"/TunnelInterface/old"]; ok {
 		t.Fatalf("stale status was not deleted: %#v", store)
+	}
+}
+
+func TestTunnelInterfaceControllerPreservesStaleUnownedStatus(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: nil}}
+	store := mapStore{}
+	store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", "old", map[string]any{
+		"phase": "Pending", "ifname": "tun-foreign", "managedBy": "routerd",
+	})
+	var calls [][]string
+	controller := TunnelInterfaceController{
+		Router: router, Store: store, OS: platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, append([]string{name}, args...))
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("unowned stale interface was mutated: %#v", calls)
+	}
+	if status := store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "old"); status["ifname"] != "tun-foreign" {
+		t.Fatalf("unowned stale status was removed: %#v", status)
 	}
 }
 
@@ -872,9 +989,10 @@ func TestTunnelUnderlayRemovalOrderFixture(t *testing.T) {
 
 	tunnelStore := mapStore{}
 	tunnelStore.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip", map[string]any{
-		"phase":     "Up",
-		"ifname":    "tun-ipip",
-		"managedBy": "routerd",
+		"phase":          "Up",
+		"ifname":         "tun-ipip",
+		"managedBy":      "routerd",
+		"interfaceOwned": true,
 	})
 	var tunnelCommands [][]string
 	tunnelController := TunnelInterfaceController{
@@ -969,7 +1087,7 @@ func TestTunnelInterfaceControllerFreeBSDGIFLifecycle(t *testing.T) {
 func TestTunnelInterfaceControllerFreeBSDStaleCleanup(t *testing.T) {
 	store := mapStore{}
 	if err := store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", "old-gif", map[string]any{
-		"phase": "Up", "managedBy": "routerd", "ifname": "gif3",
+		"phase": "Up", "managedBy": "routerd", "ifname": "gif3", "interfaceOwned": true,
 	}); err != nil {
 		t.Fatal(err)
 	}
