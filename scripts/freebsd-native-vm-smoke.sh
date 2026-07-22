@@ -4,6 +4,7 @@
 set -eu
 
 expected_arch=${ROUTERD_FREEBSD_EXPECTED_ARCH:-x86_64}
+freebsd_release=$(freebsd-version -u)
 case "$(uname -s)" in
 FreeBSD) ;;
 *)
@@ -11,10 +12,10 @@ FreeBSD) ;;
   exit 1
   ;;
 esac
-case "$(freebsd-version -u)" in
+case "$freebsd_release" in
 14.3-*) ;;
 *)
-  echo "expected FreeBSD 14.3, got $(freebsd-version -u)" >&2
+  echo "expected FreeBSD 14.3, got $freebsd_release" >&2
   exit 1
   ;;
 esac
@@ -40,7 +41,7 @@ pkg info -e hs-ShellCheck
 pkg info -e curl
 pkg info -e jq
 printf 'freebsd-native-runtime expected=%s arch=%s release=%s goarch=%s\n' \
-  "$expected_arch" "$(uname -m)" "$(freebsd-version -u)" "$(go env GOARCH)"
+  "$expected_arch" "$(uname -m)" "$freebsd_release" "$(go env GOARCH)"
 git config --global --add safe.directory "$(pwd)"
 # The action shares a checkout into the guest. Test fixtures build temporary
 # helper binaries, so suppress VCS stamping there without narrowing the gate.

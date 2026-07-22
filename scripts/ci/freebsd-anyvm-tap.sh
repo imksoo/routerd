@@ -14,6 +14,7 @@ attempt=${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT is required}
 ipv6_candidate=${ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE:-false}
 arch=${ROUTERD_ANYVM_ARCH:-x86_64}
 qemu_binary=
+tcg_args=()
 
 [[ "$tap" =~ ^[A-Za-z0-9_.-]+$ ]] || exit 2
 [[ "$peer_addr" =~ ^198\.18\.[0-9]{1,3}\.[0-9]{1,3}$ && "$guest_addr" =~ ^198\.18\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || exit 2
@@ -22,6 +23,11 @@ x86_64) qemu_binary=qemu-system-x86_64 ;;
 aarch64) qemu_binary=qemu-system-aarch64 ;;
 *) echo "unsupported anyvm architecture: $arch" >&2; exit 2 ;;
 esac
+if [[ "$arch" == aarch64 ]]; then
+  # anyvm v0.5.1 uses TCG for an aarch64 guest on the x86_64 hosted runner.
+  # Keep that runtime boundary explicit in both the invocation and evidence.
+  tcg_args=(--tcg)
+fi
 work="/tmp/routerd-anyvm-tap-${run_id}-${attempt}"
 case "$work" in /tmp/routerd-anyvm-tap-"$run_id"-"$attempt") ;; *) exit 2;; esac
 artifact_dir="${RUNNER_TEMP:-/tmp}/routerd-anyvm-console-${run_id}-${attempt}"
@@ -61,7 +67,7 @@ if [[ "$arch" == x86_64 ]]; then
   fi
   [[ -w /dev/kvm ]] || { echo 'anyvm-tap: /dev/kvm is not writable after chmod' >&2; exit 1; }
 else
-  printf 'anyvm-tap: architecture=%s acceleration=tcg\n' "$arch"
+  printf 'anyvm-tap: architecture=%s acceleration=tcg explicit_tcg=true\n' "$arch"
 fi
 
 curl -fsSL https://raw.githubusercontent.com/anyvm-org/anyvm/v0.5.1/anyvm.py >"$work/anyvm.py"
@@ -107,6 +113,6 @@ PY
 python3 -m py_compile "$work/anyvm.py"
 
 python3 "$work/anyvm.py" \
-  --os freebsd --release 14.3 --arch "$arch" --mem 6144 --snapshot \
+  --os freebsd --release 14.3 --arch "$arch" "${tcg_args[@]}" --mem 6144 --snapshot \
   --sync rsync -v "$workspace:/home/runner/work/routerd/routerd" \
   -- "cd /home/runner/work/routerd/routerd && pkg install -y go dnsmasq git hs-ShellCheck curl jq ndpi pkgconf strongswan && ROUTERD_FREEBSD_EXPECTED_ARCH=$arch ROUTERD_IPSEC_TOPOLOGY=tap ROUTERD_IPSEC_UNDERLAY_IF=vtnet1 ROUTERD_IPSEC_PEER_ADDR=$peer_addr ROUTERD_IPSEC_GUEST_ADDR=$guest_addr ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE=$ipv6_candidate sh scripts/freebsd-native-vm-smoke.sh"
