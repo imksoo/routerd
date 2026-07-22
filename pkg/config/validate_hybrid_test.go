@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 func TestValidateHybridResources(t *testing.T) {
@@ -26,6 +27,24 @@ func TestValidateHybridRemoteClaimConfigureOSAddress(t *testing.T) {
 	router.Spec.Resources[6].Spec = spec
 	if err := Validate(router); err != nil {
 		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestValidateHybridRemoteClaimRejectsFreeBSDProxyARPCapture(t *testing.T) {
+	router := validHybridRouter()
+	spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture = api.AddressCapture{Type: "proxy-arp", Interface: "ens5"}
+	router.Spec.Resources[6].Spec = spec
+	err := ValidateForOS(router, platform.OSFreeBSD)
+	if err == nil || !strings.Contains(err.Error(), "FreeBSD does not support SAM proxy-ARP local capture") {
+		t.Fatalf("ValidateForOS(FreeBSD) error = %v, want explicit proxy-ARP rejection", err)
+	}
+}
+
+func TestValidateHybridRemoteClaimAllowsFreeBSDProviderCaptureControlPlane(t *testing.T) {
+	router := validHybridRouter()
+	if err := ValidateForOS(router, platform.OSFreeBSD); err != nil {
+		t.Fatalf("ValidateForOS(FreeBSD) provider-secondary control-plane = %v", err)
 	}
 }
 
