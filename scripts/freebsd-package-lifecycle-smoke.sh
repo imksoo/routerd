@@ -121,7 +121,7 @@ wait_routerd() {
     if service routerd onestatus >/dev/null 2>&1 && \
       [ -S /var/run/routerd/routerd-status.sock ] && \
       /usr/local/sbin/routerctl get status --socket /var/run/routerd/routerd-status.sock -o json >"$status" 2>/dev/null; then
-      jq -e '.phase == "Healthy"' "$status" >/dev/null && return 0
+      jq -e '.status.phase == "Healthy"' "$status" >/dev/null && return 0
     fi
     sleep 1
   done
