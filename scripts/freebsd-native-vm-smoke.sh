@@ -191,3 +191,7 @@ cat "$ipsec_evidence/result"
 if [ "${ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME:-false}" = true ]; then
   sh scripts/freebsd-kernelmodule-persistence-smoke.sh --routerd "$routerd"
 fi
+
+if [ "${ROUTERD_FREEBSD_PACKAGE_LIFECYCLE_RUNTIME:-false}" = true ]; then
+  sh scripts/freebsd-package-lifecycle-smoke.sh --source "$(pwd)"
+fi

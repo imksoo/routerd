@@ -34,6 +34,11 @@ on:
         required: false
         default: false
         type: boolean
+      package_lifecycle_runtime:
+        description: Run isolated FreeBSD release install, upgrade, uninstall, and foreign-service preservation smoke
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -60,6 +65,7 @@ jobs:
       ROUTERD_FREEBSD_TUNNELINTERFACE_RUNTIME: ${{ inputs.tunnelinterface_runtime || 'false' }}
       ROUTERD_FREEBSD_CLIENTPOLICY_IDENTITY_RUNTIME: ${{ inputs.clientpolicy_identity_runtime || 'false' }}
       ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME: ${{ inputs.kernelmodule_persistence_runtime || 'false' }}
+      ROUTERD_FREEBSD_PACKAGE_LIFECYCLE_RUNTIME: ${{ inputs.package_lifecycle_runtime || 'false' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
