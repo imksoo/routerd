@@ -106,17 +106,47 @@ fi
 
 os=$(uname -s)
 manage_host_service=1
+systemd_system_dir=${ROUTERD_UNINSTALL_SYSTEMD_SYSTEM_DIR:-/etc/systemd/system}
+rcd_dir=${ROUTERD_UNINSTALL_RCD_DIR:-${prefix}/etc/rc.d}
+
+routerd_service_has_ownership_marker()
+{
+    service_path=$1
+    [ -f "${service_path}" ] || return 1
+    grep -Fqx '# routerd-managed-service: v1' "${service_path}"
+}
+
+manage_owned_service_artifact()
+{
+    service_path=$1
+    service_kind=$2
+    if [ ! -e "${service_path}" ] && [ ! -L "${service_path}" ]; then
+        return 0
+    fi
+    if routerd_service_has_ownership_marker "${service_path}"; then
+        return 0
+    fi
+    echo "preserving foreign ${service_kind}: ${service_path}" >&2
+    return 1
+}
 if [ "${prefix}" != "/usr/local" ]; then
     manage_host_service=0
     echo "non-default prefix ${prefix}; skipping host service manager and global runtime removal"
 fi
+if [ "${ROUTERD_UNINSTALL_FORCE_SERVICE_MANAGER:-0}" = "1" ]; then
+    manage_host_service=1
+    echo "test override: forcing host service manager"
+fi
 case "${os}" in
     Linux)
+        if [ "${manage_host_service}" -eq 1 ] && ! manage_owned_service_artifact "${systemd_system_dir}/routerd.service" "systemd service"; then
+            manage_host_service=0
+        fi
         if [ "${manage_host_service}" -eq 1 ] && command -v systemctl >/dev/null 2>&1; then
             run systemctl disable --now routerd.service || true
         fi
         if [ "${manage_host_service}" -eq 1 ]; then
-            rm_path /etc/systemd/system/routerd.service
+            rm_path "${systemd_system_dir}/routerd.service"
             if command -v systemctl >/dev/null 2>&1; then
                 run systemctl daemon-reload || true
             fi
@@ -124,13 +154,18 @@ case "${os}" in
         fi
         ;;
     FreeBSD)
+        if [ "${manage_host_service}" -eq 1 ] && ! manage_owned_service_artifact "${rcd_dir}/routerd" "rc.d service"; then
+            manage_host_service=0
+        fi
         if [ "${manage_host_service}" -eq 1 ] && command -v service >/dev/null 2>&1; then
             run service routerd stop || true
         fi
         if [ "${manage_host_service}" -eq 1 ] && command -v sysrc >/dev/null 2>&1; then
             run sysrc -x routerd_enable || true
         fi
-        rm_path "${prefix}/etc/rc.d/routerd"
+        if [ "${manage_host_service}" -eq 1 ]; then
+            rm_path "${rcd_dir}/routerd"
+        fi
         if [ "${manage_host_service}" -eq 1 ]; then
             rm_path /var/run/routerd
         fi

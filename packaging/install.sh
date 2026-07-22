@@ -1874,6 +1874,33 @@ bindir="${prefix}/sbin"
 sysconfdir="${prefix}/etc/routerd"
 systemd_system_dir=${ROUTERD_INSTALL_SYSTEMD_SYSTEM_DIR:-/etc/systemd/system}
 rcd_dir=${ROUTERD_INSTALL_RCD_DIR:-${prefix}/etc/rc.d}
+
+routerd_service_has_ownership_marker()
+{
+    service_path=$1
+    [ -f "${service_path}" ] || return 1
+    grep -Fqx '# routerd-managed-service: v1' "${service_path}"
+}
+
+routerd_service_artifact_is_manageable()
+{
+    service_path=$1
+    [ ! -e "${service_path}" ] && [ ! -L "${service_path}" ] && return 0
+    routerd_service_has_ownership_marker "${service_path}" && return 0
+    routerd_service_has_legacy_config "${service_path}" && return 0
+    return 1
+}
+
+check_service_artifact_ownership()
+{
+    service_path=$1
+    service_kind=$2
+    if routerd_service_artifact_is_manageable "${service_path}"; then
+        return 0
+    fi
+    echo "refusing to mutate foreign ${service_kind}: ${service_path}" >&2
+    return 1
+}
 if [ "${prefix}" != "/usr/local" ]; then
     manage_host_service=0
     echo "non-default prefix ${prefix}; skipping host service manager"
@@ -1935,11 +1962,17 @@ ensure_install_capacity
 
 case "${os}" in
     Linux)
+        if [ "${manage_host_service}" -eq 1 ] && [ -d systemd ]; then
+            check_service_artifact_ownership "${systemd_system_dir}/routerd.service" "systemd service" || manage_host_service=0
+        fi
         if [ "${manage_host_service}" -eq 1 ] && command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet routerd.service; then
             service_active=1
         fi
         ;;
     FreeBSD)
+        if [ "${manage_host_service}" -eq 1 ] && [ -d rc.d ]; then
+            check_service_artifact_ownership "${rcd_dir}/routerd" "rc.d service" || manage_host_service=0
+        fi
         if [ "${manage_host_service}" -eq 1 ] && command -v service >/dev/null 2>&1 && service routerd status >/dev/null 2>&1; then
             service_active=1
         fi
