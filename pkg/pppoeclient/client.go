@@ -129,6 +129,23 @@ func FreeBSDMPDConf(cfg Config) []byte {
 	b.WriteString(" set ipcp ranges 0.0.0.0/0 0.0.0.0/0\n")
 	b.WriteString(" create link static " + link + " pppoe\n")
 	b.WriteString(" set link action bundle " + bundle + "\n")
+	// mpd5's documented client examples make the accepted peer-auth
+	// protocols explicit.  Its defaults happen to accept PAP, but relying on
+	// that leaves the configured authMethod unrepresented in the FreeBSD
+	// runtime artifact and permits protocols the spec did not select.
+	auth := strings.ToLower(strings.TrimSpace(spec.AuthMethod))
+	if auth == "" {
+		auth = "chap"
+	}
+	b.WriteString(" set link disable pap chap eap\n")
+	switch auth {
+	case "pap":
+		b.WriteString(" set link accept pap\n")
+	case "chap":
+		b.WriteString(" set link accept chap\n")
+	case "both":
+		b.WriteString(" set link accept pap chap\n")
+	}
 	b.WriteString(" set auth authname " + strconv.Quote(spec.Username) + "\n")
 	b.WriteString(" set auth password " + strconv.Quote(cfg.Password) + "\n")
 	b.WriteString(" set link max-redial 0\n")

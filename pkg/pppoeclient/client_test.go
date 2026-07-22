@@ -75,6 +75,8 @@ func TestFreeBSDMPDConfigUsesPrivateRuntimeBackend(t *testing.T) {
 		"create bundle static " + bundle,
 		"create link static " + link + " pppoe",
 		"set link action bundle " + bundle,
+		"set link disable pap chap eap",
+		"set link accept pap",
 		`set auth authname "user@example.test"`,
 		`set auth password "secret value"`,
 		"set pppoe iface vtnet1",
@@ -87,6 +89,26 @@ func TestFreeBSDMPDConfigUsesPrivateRuntimeBackend(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(argv, " "), "-ddial") {
 		t.Fatalf("FreeBSD argv must not use ppp(8) dial mode: %#v", argv)
+	}
+}
+
+func TestFreeBSDMPDConfigSelectsConfiguredAuthentication(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		auth string
+		want string
+	}{
+		{name: "pap", auth: "pap", want: "set link accept pap"},
+		{name: "chap", auth: "chap", want: "set link accept chap"},
+		{name: "both", auth: "both", want: "set link accept pap chap"},
+		{name: "default-chap", want: "set link accept chap"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config := string(FreeBSDMPDConf(Config{Resource: "wan", Interface: "vtnet0", IfName: "ppp0", Spec: api.PPPoESessionSpec{AuthMethod: tc.auth}}))
+			if !strings.Contains(config, "set link disable pap chap eap") || !strings.Contains(config, tc.want) {
+				t.Fatalf("FreeBSD mpd authentication config missing %q:\n%s", tc.want, config)
+			}
+		})
 	}
 }
 
