@@ -2012,7 +2012,7 @@ func TestCleanupUnsupportedLegacyObjectStatusesUsesDynamicEffectiveView(t *testi
 		}},
 	}
 
-	result, err := cleanupUnsupportedLegacyObjectStatuses(router, store, filepath.Join(t.TempDir(), "routerd.db"), now, nil)
+	result, err := cleanupUnsupportedLegacyObjectStatusesForOS(router, store, filepath.Join(t.TempDir(), "routerd.db"), now, nil, platform.OSLinux)
 	if err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}

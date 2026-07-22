@@ -14,7 +14,7 @@ import (
 
 func TestValidateHybridResources(t *testing.T) {
 	router := validHybridRouter()
-	if err := Validate(router); err != nil {
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 }
@@ -25,7 +25,7 @@ func TestValidateHybridRemoteClaimConfigureOSAddress(t *testing.T) {
 	spec.Capture.ConfigureOSAddress = true
 	spec.Capture.Interface = "ens5"
 	router.Spec.Resources[6].Spec = spec
-	if err := Validate(router); err != nil {
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 }
@@ -50,8 +50,54 @@ func TestValidateHybridRemoteClaimAllowsFreeBSDProviderCaptureControlPlane(t *te
 
 func TestValidateTunnelInterfaceResources(t *testing.T) {
 	router := validTunnelHybridRouter()
-	if err := Validate(router); err != nil {
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
 		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestValidateTunnelInterfaceForFreeBSD(t *testing.T) {
+	base := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+		Metadata: api.ObjectMeta{Name: "gif0"},
+		Spec: api.TunnelInterfaceSpec{
+			Mode: "ipip", Local: "192.0.2.10", Remote: "192.0.2.20", TrustedUnderlay: true,
+		},
+	}
+	validateForFreeBSD := func(resource api.Resource) error {
+		return ValidateForOS(&api.Router{
+			TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+			Metadata: api.ObjectMeta{Name: "freebsd-tunnel"},
+			Spec:     api.RouterSpec{Resources: []api.Resource{resource}},
+		}, platform.OSFreeBSD)
+	}
+	if err := validateForFreeBSD(base); err != nil {
+		t.Fatalf("ValidateForOS(FreeBSD gif): %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		edit func(*api.Resource)
+		want string
+	}{
+		{
+			name: "fou is rejected", edit: func(r *api.Resource) {
+				r.Spec = api.TunnelInterfaceSpec{Mode: "fou", Local: "192.0.2.10", Remote: "192.0.2.20", TrustedUnderlay: true, EncapSport: 5555, EncapDport: 5555}
+			}, want: "only ipip (gif) and gre",
+		},
+		{
+			name: "mode name mismatch", edit: func(r *api.Resource) { r.Metadata.Name = "gre0" }, want: "must use gifN",
+		},
+		{
+			name: "ttl is rejected", edit: func(r *api.Resource) { spec := r.Spec.(api.TunnelInterfaceSpec); spec.TTL = 64; r.Spec = spec }, want: "spec.ttl is unsupported",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resource := base
+			tc.edit(&resource)
+			err := validateForFreeBSD(resource)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
@@ -72,7 +118,7 @@ func TestValidateTunnelInterfaceEndpointSources(t *testing.T) {
 	}), testResource(api.NetAPIVersion, "Interface", "eth0", api.InterfaceSpec{
 		IfName: "eth0",
 	}))
-	if err := Validate(router); err != nil {
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 }
@@ -358,7 +404,7 @@ func TestValidateHybridFailures(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			router := validHybridRouter()
 			tt.mutate(router)
-			err := Validate(router)
+			err := ValidateForOS(router, platform.OSLinux)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Validate error = %v, want %q", err, tt.want)
 			}
@@ -473,7 +519,7 @@ func TestValidateTunnelInterfaceFailures(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			router := validTunnelHybridRouter()
 			tt.mutate(router)
-			err := Validate(router)
+			err := ValidateForOS(router, platform.OSLinux)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Validate error = %v, want %q", err, tt.want)
 			}
@@ -504,7 +550,7 @@ func TestValidateHybridWarnsForProviderModeNotDeclared(t *testing.T) {
 	spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
 	spec.Capture.ProviderMode = "floating-private-ip"
 	router.Spec.Resources[6].Spec = spec
-	if err := Validate(router); err != nil {
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 	warnings := Warnings(router)
@@ -518,7 +564,7 @@ func TestValidateHybridWarnsForExternalProxyARPInterface(t *testing.T) {
 	spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
 	spec.Capture = api.AddressCapture{Type: "proxy-arp", Interface: "br-lan", ActiveWhen: api.CaptureActiveWhen{Type: "single-router"}}
 	router.Spec.Resources[6].Spec = spec
-	if err := Validate(router); err != nil {
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 	warnings := Warnings(router)
@@ -533,7 +579,7 @@ func TestValidateHybridProxyARPInterfaceWarningAcceptsInterfaceIfName(t *testing
 	spec.Capture = api.AddressCapture{Type: "proxy-arp", Interface: "br-lan"}
 	router.Spec.Resources[6].Spec = spec
 	router.Spec.Resources = append(router.Spec.Resources, testResource(api.NetAPIVersion, "Interface", "lan", api.InterfaceSpec{IfName: "br-lan"}))
-	if err := Validate(router); err != nil {
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 	if warnings := Warnings(router); len(warnings) != 0 {
@@ -583,7 +629,7 @@ func TestHybridAzurePVESameSubnetExamplesValidate(t *testing.T) {
 			if err != nil {
 				t.Fatalf("load example: %v", err)
 			}
-			if err := Validate(router); err != nil {
+			if err := ValidateForOS(router, platform.OSLinux); err != nil {
 				t.Fatalf("validate example: %v", err)
 			}
 		})

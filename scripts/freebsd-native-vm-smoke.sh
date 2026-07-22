@@ -154,6 +154,10 @@ if [ "${ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE:-false}" = true ]; then
   cat "$candidate_evidence/result"
 fi
 
+if [ "${ROUTERD_FREEBSD_TUNNELINTERFACE_RUNTIME:-false}" = true ]; then
+  sh scripts/freebsd-tunnelinterface-smoke.sh --routerd "$routerd"
+fi
+
 ipsec_evidence="$work/ipsec-linux-peer"
 sh scripts/freebsd-ipsec-linux-peer-smoke.sh --routerd "$routerd" --evidence-dir "$ipsec_evidence"
 cat "$ipsec_evidence/summary.log"

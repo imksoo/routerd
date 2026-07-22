@@ -17,6 +17,7 @@ import (
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 	"gopkg.in/yaml.v3"
 )
@@ -566,7 +567,7 @@ func TestCloudEdgeDynamicLeafExamplesMaterializeDualRRTransports(t *testing.T) {
 			if err != nil {
 				t.Fatalf("load %s: %v", tc.example, err)
 			}
-			if err := config.Validate(router); err != nil {
+			if err := config.ValidateForOS(router, platform.OSLinux); err != nil {
 				t.Fatalf("validate %s: %v", tc.example, err)
 			}
 			profileSpec := exampleSAMTransportProfile(t, router, tc.profile)
@@ -687,7 +688,7 @@ func TestCloudEdgeDynamicRRExamplesMaterializeMixedAdmissionWithoutBGPPeers(t *t
 			if err != nil {
 				t.Fatalf("load %s: %v", tc.example, err)
 			}
-			if err := config.Validate(router); err != nil {
+			if err := config.ValidateForOS(router, platform.OSLinux); err != nil {
 				t.Fatalf("validate %s: %v", tc.example, err)
 			}
 			if got := countResources(router.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim"); got != 0 {
@@ -774,7 +775,7 @@ func TestPVEMinimalExamplesMaterializeReviewTransports(t *testing.T) {
 		if err != nil {
 			t.Fatalf("load pve-minimal-rr.yaml: %v", err)
 		}
-		if err := config.Validate(router); err != nil {
+		if err := config.ValidateForOS(router, platform.OSLinux); err != nil {
 			t.Fatalf("validate pve-minimal-rr.yaml: %v", err)
 		}
 		if got := countResources(router.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim"); got != 0 {
@@ -850,7 +851,7 @@ func TestPVEMinimalExamplesMaterializeReviewTransports(t *testing.T) {
 				if err != nil {
 					t.Fatalf("load %s: %v", tc.example, err)
 				}
-				if err := config.Validate(router); err != nil {
+				if err := config.ValidateForOS(router, platform.OSLinux); err != nil {
 					t.Fatalf("validate %s: %v", tc.example, err)
 				}
 				if got := countResources(router.Spec.Resources, api.MobilityAPIVersion, "SAMRRSet"); got != 0 {
@@ -1003,7 +1004,7 @@ func effectiveWithAdmissionState(t *testing.T, router *api.Router, store interfa
 	if err != nil {
 		t.Fatalf("ExtractDynamicOverridePolicies: %v", err)
 	}
-	effective, _, err := dynamicconfig.BuildEffectiveConfig(*router, parts, policies, now.UTC())
+	effective, _, err := dynamicconfig.BuildEffectiveConfigForOS(*router, parts, policies, now.UTC(), platform.OSLinux)
 	if err != nil {
 		t.Fatalf("BuildEffectiveConfig: %v", err)
 	}

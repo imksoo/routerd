@@ -10,6 +10,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/platform"
 	"gopkg.in/yaml.v3"
 )
 
@@ -62,6 +63,13 @@ type suppressionAccumulator struct {
 // dynamic ownership in EffectiveResult.AddedResources instead of extending
 // api.ObjectMeta annotations for the MVP.
 func BuildEffectiveConfig(startup api.Router, parts []DynamicConfigPart, policies []DynamicOverridePolicy, now time.Time) (api.Router, EffectiveResult, error) {
+	return BuildEffectiveConfigForOS(startup, parts, policies, now, platform.CurrentOS())
+}
+
+// BuildEffectiveConfigForOS merges dynamic config and validates the resulting
+// router for targetOS. Cross-platform callers must use this form rather than
+// letting validation inherit the host running the caller.
+func BuildEffectiveConfigForOS(startup api.Router, parts []DynamicConfigPart, policies []DynamicOverridePolicy, now time.Time, targetOS platform.OS) (api.Router, EffectiveResult, error) {
 	effective, err := cloneRouter(startup)
 	if err != nil {
 		return api.Router{}, EffectiveResult{}, err
@@ -179,7 +187,7 @@ func BuildEffectiveConfig(startup api.Router, parts []DynamicConfigPart, policie
 		}
 	}
 
-	if err := config.Validate(&effective); err != nil {
+	if err := config.ValidateForOS(&effective, targetOS); err != nil {
 		return api.Router{}, result, err
 	}
 	return effective, result, nil

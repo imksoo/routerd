@@ -14,6 +14,11 @@ on:
         required: false
         default: false
         type: boolean
+      tunnelinterface_runtime:
+        description: Run isolated production gif/gre TunnelInterface lifecycle smoke
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -36,6 +41,7 @@ jobs:
       ROUTERD_IPSEC_VETH_HOST: rd-ipsec-vh
       ROUTERD_IPSEC_VETH_PEER: rd-ipsec-vp
       ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE: ${{ inputs.ipv6_route_to_console_candidate || 'false' }}
+      ROUTERD_FREEBSD_TUNNELINTERFACE_RUNTIME: ${{ inputs.tunnelinterface_runtime || 'false' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
