@@ -56,6 +56,22 @@ stop_owned_pid() {
   wait "$pid" 2>/dev/null || true
 }
 
+wait_resolver_healthy() {
+  pid=$1
+  socket=$2
+  status_file=$3
+  for _ in $(jot 30); do
+    kill -0 "$pid" 2>/dev/null || break
+    if curl --fail --silent --show-error --unix-socket "$socket" \
+      http://localhost/v1/status >"$status_file" 2>/dev/null && \
+      jq -e '.health == "Healthy" and .phase == "Running"' "$status_file" >/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+  jq -e '.health == "Healthy" and .phase == "Running"' "$status_file" >/dev/null
+}
+
 cleanup() {
   rc=$?
   if [ "$rc" -ne 0 ]; then
@@ -237,12 +253,13 @@ for _ in $(jot 30); do
   sleep 1
 done
 [ -S "$work/dhcpv6.sock" ]
-curl --fail --silent --show-error --unix-socket "$work/dhcpv6.sock" \
-  http://localhost/v1/status >"$evidence_dir/dhcpv6-status-before.json"
 for _ in $(jot 30); do
-  curl --fail --silent --show-error --unix-socket "$work/dhcpv6.sock" \
-    http://localhost/v1/status >"$evidence_dir/dhcpv6-status-before.json"
-  jq -e '.phase == "Running" and .resources[0].phase == "Bound" and .resources[0].conditions[0].reason == "Bound" and (.resources[0].observed.currentPrefix | startswith("2001:db8:928:"))' "$evidence_dir/dhcpv6-status-before.json" >/dev/null && break
+  kill -0 "$dhcpv6_pid" 2>/dev/null || break
+  if curl --fail --silent --show-error --unix-socket "$work/dhcpv6.sock" \
+    http://localhost/v1/status >"$evidence_dir/dhcpv6-status-before.json" 2>/dev/null && \
+    jq -e '.phase == "Running" and .resources[0].phase == "Bound" and .resources[0].conditions[0].reason == "Bound" and (.resources[0].observed.currentPrefix | startswith("2001:db8:928:"))' "$evidence_dir/dhcpv6-status-before.json" >/dev/null; then
+    break
+  fi
   sleep 1
 done
 jq -e '.phase == "Running" and .resources[0].phase == "Bound" and (.resources[0].observed.currentPrefix | startswith("2001:db8:928:"))' "$evidence_dir/dhcpv6-status-before.json" >/dev/null
@@ -266,12 +283,13 @@ for _ in $(jot 30); do
   sleep 1
 done
 [ -S "$work/dhcpv6.sock" ]
-curl --fail --silent --show-error --unix-socket "$work/dhcpv6.sock" \
-  http://localhost/v1/status >"$evidence_dir/dhcpv6-status-restart.json"
 for _ in $(jot 30); do
-  curl --fail --silent --show-error --unix-socket "$work/dhcpv6.sock" \
-    http://localhost/v1/status >"$evidence_dir/dhcpv6-status-restart.json"
-  jq -e '.phase == "Running" and .resources[0].phase == "Bound" and (.resources[0].observed.currentPrefix | startswith("2001:db8:928:"))' "$evidence_dir/dhcpv6-status-restart.json" >/dev/null && break
+  kill -0 "$dhcpv6_pid" 2>/dev/null || break
+  if curl --fail --silent --show-error --unix-socket "$work/dhcpv6.sock" \
+    http://localhost/v1/status >"$evidence_dir/dhcpv6-status-restart.json" 2>/dev/null && \
+    jq -e '.phase == "Running" and .resources[0].phase == "Bound" and (.resources[0].observed.currentPrefix | startswith("2001:db8:928:"))' "$evidence_dir/dhcpv6-status-restart.json" >/dev/null; then
+    break
+  fi
   sleep 1
 done
 jq -e '.phase == "Running" and .resources[0].phase == "Bound" and (.resources[0].observed.currentPrefix | startswith("2001:db8:928:"))' "$evidence_dir/dhcpv6-status-restart.json" >/dev/null
@@ -293,9 +311,7 @@ for _ in $(jot 30); do
   sleep 1
 done
 [ -S "$work/resolver.sock" ]
-curl --fail --silent --show-error --unix-socket "$work/resolver.sock" \
-  http://localhost/v1/status >"$evidence_dir/resolver-status-before.json"
-jq -e '.health == "Healthy" and .phase == "Running"' "$evidence_dir/resolver-status-before.json" >/dev/null
+wait_resolver_healthy "$resolver_pid" "$work/resolver.sock" "$evidence_dir/resolver-status-before.json"
 curl --fail --silent --show-error --unix-socket "$work/resolver.sock" -X POST \
   http://localhost/v1/reload >"$evidence_dir/resolver-reload.json"
 jq -e '.reloaded == true and .listeners == 1' "$evidence_dir/resolver-reload.json" >/dev/null
@@ -315,9 +331,7 @@ for _ in $(jot 30); do
   sleep 1
 done
 [ -S "$work/resolver.sock" ]
-curl --fail --silent --show-error --unix-socket "$work/resolver.sock" \
-  http://localhost/v1/status >"$evidence_dir/resolver-status-restart.json"
-jq -e '.health == "Healthy" and .phase == "Running"' "$evidence_dir/resolver-status-restart.json" >/dev/null
+wait_resolver_healthy "$resolver_pid" "$work/resolver.sock" "$evidence_dir/resolver-status-restart.json"
 stop_owned_pid "$resolver_pid"
 resolver_pid=
 
