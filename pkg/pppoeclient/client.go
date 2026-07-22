@@ -125,7 +125,6 @@ func FreeBSDMPDConf(cfg Config) []byte {
 	b.WriteString(label + ":\n")
 	b.WriteString(" create bundle static " + bundle + "\n")
 	b.WriteString(" set iface name " + cfg.IfName + "\n")
-	b.WriteString(" set iface enable tcpmssfix\n")
 	b.WriteString(" set ipcp ranges 0.0.0.0/0 0.0.0.0/0\n")
 	b.WriteString(" create link static " + link + " pppoe\n")
 	b.WriteString(" set link action bundle " + bundle + "\n")

@@ -87,6 +87,9 @@ func TestFreeBSDMPDConfigUsesPrivateRuntimeBackend(t *testing.T) {
 			t.Fatalf("FreeBSD mpd config missing %q:\n%s", want, config)
 		}
 	}
+	if strings.Contains(string(config), "set iface enable tcpmssfix") {
+		t.Fatalf("FreeBSD mpd config enabled unrequested tcpmssfix:\n%s", config)
+	}
 	if strings.Contains(strings.Join(argv, " "), "-ddial") {
 		t.Fatalf("FreeBSD argv must not use ppp(8) dial mode: %#v", argv)
 	}

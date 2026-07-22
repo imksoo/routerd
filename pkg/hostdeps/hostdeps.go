@@ -223,7 +223,6 @@ func KernelModulesForOS(router *api.Router, osName platform.OS) []string {
 			switch res.Kind {
 			case "PPPoESession":
 				needed["ng_pppoe"] = true
-				needed["ng_tcpmss"] = true
 				needed["ng_iface"] = true
 			case "NAT44Rule", "NAT44FlowDNATPinhole", "FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallFlowPinhole", "ClientPolicy", "PortForward", "IngressService", "LocalServiceRedirect":
 				needed["pf"] = true

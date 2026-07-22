@@ -93,9 +93,9 @@ func ensureFreeBSDPPPoEModules(ctx context.Context, osName platform.OS) error {
 	}
 	// ng_ppp is already active once LCP/PAP are exchanging and mpd obtains its
 	// netgraph sockets before dialing. ng_iface is first required when IPCP
-	// brings the negotiated interface up, so load it before mpd5 can reach that
-	// otherwise late, opaque failure point.
-	for _, module := range []string{"ng_pppoe", "ng_tcpmss", "ng_iface"} {
+	// brings the negotiated interface up. The renderer does not request optional
+	// MSS clamping, so it must not load ng_tcpmss.
+	for _, module := range []string{"ng_pppoe", "ng_iface"} {
 		if err := loadFreeBSDPPPoEModule(ctx, module); err != nil {
 			return err
 		}

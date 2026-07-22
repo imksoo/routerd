@@ -22,12 +22,12 @@ import (
 func TestStartSessionFailsClosedWhenFreeBSDPPPoEModuleLoadFails(t *testing.T) {
 	previous := ensureFreeBSDPPPoEModule
 	t.Cleanup(func() { ensureFreeBSDPPPoEModule = previous })
-	want := errors.New("ng_tcpmss unavailable")
+	want := errors.New("ng_iface unavailable")
 	ensureFreeBSDPPPoEModule = func(context.Context) error { return want }
 	dir := t.TempDir()
 	d := newDaemon(options{resource: "wan", ifname: "vtnet0", username: "user", password: "secret", runtimeDir: dir, stateFile: filepath.Join(dir, "state.json")}, nil)
 	err := d.startSession(context.Background())
-	if !errors.Is(err, want) || !strings.Contains(err.Error(), "ng_tcpmss") {
+	if !errors.Is(err, want) || !strings.Contains(err.Error(), "ng_iface") {
 		t.Fatalf("startSession error = %v, want module-load failure", err)
 	}
 	d.mu.Lock()
@@ -48,7 +48,7 @@ func TestEnsureFreeBSDPPPoEModulesLoadsIPCPInterfaceModulesAndLeavesLinuxUntouch
 	if err := ensureFreeBSDPPPoEModules(t.Context(), platform.OSFreeBSD); err != nil {
 		t.Fatalf("ensure FreeBSD modules: %v", err)
 	}
-	if got, want := strings.Join(loaded, ","), "ng_pppoe,ng_tcpmss,ng_iface"; got != want {
+	if got, want := strings.Join(loaded, ","), "ng_pppoe,ng_iface"; got != want {
 		t.Fatalf("loaded modules = %q, want %q", got, want)
 	}
 	loaded = nil

@@ -160,9 +160,6 @@ for _ in $(jot 30); do
   sleep 1
 done
 [ -S "$work/pppoe.sock" ]
-# routerd's FreeBSD mpd5 preflight owns this module load because its generated
-# client configuration always enables tcpmssfix. Do not pre-load it here.
-kldstat -q -m ng_tcpmss
 # IPCP succeeds only after mpd5 attaches the negotiated bundle to ng_iface.
 # routerd must own this preflight rather than relying on an ambient module.
 kldstat -q -m ng_iface
