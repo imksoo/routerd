@@ -39,6 +39,11 @@ on:
         required: false
         default: false
         type: boolean
+      pppoe_runtime:
+        description: Run isolated FreeBSD PPPoE client against an mpd5 peer
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -66,6 +71,7 @@ jobs:
       ROUTERD_FREEBSD_CLIENTPOLICY_IDENTITY_RUNTIME: ${{ inputs.clientpolicy_identity_runtime || 'false' }}
       ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME: ${{ inputs.kernelmodule_persistence_runtime || 'false' }}
       ROUTERD_FREEBSD_LIFECYCLE_RUNTIME: ${{ inputs.lifecycle_runtime || 'false' }}
+      ROUTERD_FREEBSD_PPPOE_RUNTIME: ${{ inputs.pppoe_runtime || 'false' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6

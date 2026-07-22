@@ -207,3 +207,12 @@ if [ "${ROUTERD_FREEBSD_LIFECYCLE_RUNTIME:-false}" = true ]; then
   cat "$lifecycle_evidence/summary.log"
   cat "$lifecycle_evidence/result"
 fi
+
+if [ "${ROUTERD_FREEBSD_PPPOE_RUNTIME:-false}" = true ]; then
+  pppoe_evidence="$work/pppoe-runtime"
+  pppoe_client="$work/routerd-pppoe-client"
+  go build -o "$pppoe_client" ./cmd/routerd-pppoe-client
+  sh scripts/freebsd-pppoe-runtime-smoke.sh --pppoe-client "$pppoe_client" --evidence-dir "$pppoe_evidence"
+  cat "$pppoe_evidence/summary.log"
+  cat "$pppoe_evidence/result"
+fi
