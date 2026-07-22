@@ -210,10 +210,11 @@ pfctl -nf "$work/render/pf.conf" >"$evidence/pf-nf.log" 2>&1
 pfctl -e >"$evidence/pf-enable.log" 2>&1; pf_enabled=1
 pfctl -f "$work/render/pf.conf" >"$evidence/pf-load.log" 2>&1
 pfctl -sr >"$evidence/pf-rules.log" 2>&1
+pfctl -sn >"$evidence/pf-nat-rules.log" 2>&1
 grep -F 'route-to {' "$evidence/pf-rules.log"
 grep -F 'round-robin sticky-address' "$evidence/pf-rules.log"
-grep -F "nat on $out_a from 192.0.2.0/24 to any -> ($out_a)" "$evidence/pf-rules.log"
-grep -F "nat on $out2_a from 192.0.2.0/24 to any -> ($out2_a)" "$evidence/pf-rules.log"
+grep -F "nat on $out_a from 192.0.2.0/24 to any -> ($out_a)" "$evidence/pf-nat-rules.log"
+grep -F "nat on $out2_a from 192.0.2.0/24 to any -> ($out2_a)" "$evidence/pf-nat-rules.log"
 
 jexec "$sink_a_jail" tcpdump -n -l -i "$out_b" icmp >"$evidence/sink-a.packets.log" 2>&1 & capture_a=$!
 jexec "$sink_b_jail" tcpdump -n -l -i "$out2_b" icmp >"$evidence/sink-b.packets.log" 2>&1 & capture_b=$!
