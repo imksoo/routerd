@@ -12,6 +12,7 @@ workspace=${GITHUB_WORKSPACE:?GITHUB_WORKSPACE is required}
 run_id=${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}
 attempt=${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT is required}
 ipv6_candidate=${ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE:-false}
+kernelmodule_persistence=${ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME:-false}
 
 [[ "$tap" =~ ^[A-Za-z0-9_.-]+$ ]] || exit 2
 [[ "$peer_addr" =~ ^198\.18\.[0-9]{1,3}\.[0-9]{1,3}$ && "$guest_addr" =~ ^198\.18\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || exit 2
@@ -81,11 +82,26 @@ if source.count(needle) != 1:
 source = source.replace(needle, replacement, 1)
 
 # Pinned anyvm logs the final SSH status but otherwise exits zero.  CI must
-# fail when the guest smoke command fails, so preserve that remote status.
+# fail when the guest smoke command fails.  The optional KernelModule smoke
+# schedules one in-guest reboot, so keep QEMU alive long enough to observe its
+# post-boot owned marker through the same SSH channel.
 needle = '                    debuglog(config[\'debug\'], "[trace] final-SSH returned rc={}".format(rc))'
 replacement = '''                    debuglog(config['debug'], "[trace] final-SSH returned rc={}".format(rc))
                     if rc != 0:
-                        raise SystemExit(rc)'''
+                        raise SystemExit(rc)
+                    reboot_marker = os.environ.get("ROUTERD_ANYVM_REBOOT_MARKER")
+                    if reboot_marker:
+                        deadline = time.time() + 180
+                        while time.time() < deadline:
+                            marker_rc = subprocess.call(ssh_base_cmd + ["test", "-s", reboot_marker], stdout=DEVNULL, stderr=DEVNULL)
+                            if marker_rc == 0:
+                                rc = subprocess.call(ssh_base_cmd + ["cat", reboot_marker])
+                                if rc != 0:
+                                    raise SystemExit(rc)
+                                break
+                            time.sleep(2)
+                        else:
+                            raise SystemExit("routerd KernelModule reboot marker was not observed")'''
 if source.count(needle) != 1:
     raise SystemExit("pinned anyvm final-SSH anchor mismatch")
 source = source.replace(needle, replacement, 1)
@@ -93,7 +109,11 @@ path.write_text(source)
 PY
 python3 -m py_compile "$work/anyvm.py"
 
-python3 "$work/anyvm.py" \
+reboot_marker=
+if [[ "$kernelmodule_persistence" == true ]]; then
+  reboot_marker=/var/tmp/routerd-kernelmodule-persistence/reboot.complete
+fi
+ROUTERD_ANYVM_REBOOT_MARKER="$reboot_marker" python3 "$work/anyvm.py" \
   --os freebsd --release 14.3 --arch x86_64 --mem 6144 --snapshot \
   --sync rsync -v "$workspace:/home/runner/work/routerd/routerd" \
-  -- "cd /home/runner/work/routerd/routerd && pkg install -y go dnsmasq git hs-ShellCheck curl jq ndpi pkgconf strongswan && ROUTERD_IPSEC_TOPOLOGY=tap ROUTERD_IPSEC_UNDERLAY_IF=vtnet1 ROUTERD_IPSEC_PEER_ADDR=$peer_addr ROUTERD_IPSEC_GUEST_ADDR=$guest_addr ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE=$ipv6_candidate sh scripts/freebsd-native-vm-smoke.sh"
+  -- "cd /home/runner/work/routerd/routerd && pkg install -y go dnsmasq git hs-ShellCheck curl jq ndpi pkgconf strongswan && ROUTERD_IPSEC_TOPOLOGY=tap ROUTERD_IPSEC_UNDERLAY_IF=vtnet1 ROUTERD_IPSEC_PEER_ADDR=$peer_addr ROUTERD_IPSEC_GUEST_ADDR=$guest_addr ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE=$ipv6_candidate ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME=$kernelmodule_persistence sh scripts/freebsd-native-vm-smoke.sh"

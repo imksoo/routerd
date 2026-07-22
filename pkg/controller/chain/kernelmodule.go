@@ -3,6 +3,7 @@
 package chain
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -16,6 +17,11 @@ import (
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/hostdeps"
 	"github.com/imksoo/routerd/pkg/platform"
+)
+
+const (
+	freeBSDKernelModuleBaseDir  = "/boot/loader.conf.d"
+	kernelModuleOwnershipHeader = "# Managed by routerd. Do not edit by hand.\n"
 )
 
 type KernelModuleController struct {
@@ -39,7 +45,9 @@ func (c KernelModuleController) Reconcile(ctx context.Context) error {
 	if osName == "" {
 		osName = packageOSName(runtime.GOOS)
 	}
-	for _, resource := range kernelModuleControllerResources(c.Router, osName) {
+	resources := kernelModuleControllerResources(c.Router, osName)
+	activePersistentFiles := map[string]bool{}
+	for _, resource := range resources {
 		spec, err := resource.KernelModuleSpec()
 		if err != nil {
 			return err
@@ -55,6 +63,9 @@ func (c KernelModuleController) Reconcile(ctx context.Context) error {
 				return err
 			}
 			continue
+		}
+		if osName == "freebsd" && spec.Persistent {
+			activePersistentFiles[c.kernelModulePersistencePath(resource.Metadata.Name, osName)] = true
 		}
 		changed, loaded, skipped, err := c.applyKernelModules(ctx, resource.Metadata.Name, spec, osName)
 		if err != nil {
@@ -101,6 +112,11 @@ func (c KernelModuleController) Reconcile(ctx context.Context) error {
 			}
 		}
 	}
+	if osName == "freebsd" {
+		if _, err := c.removeStaleFreeBSDKernelModuleFiles(activePersistentFiles); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -123,14 +139,18 @@ func kernelModuleSupportedOS(osName string) bool {
 func (c KernelModuleController) applyKernelModules(ctx context.Context, name string, spec api.KernelModuleSpec, osName string) (bool, []string, []string, error) {
 	modules := compactStringList(append([]string(nil), spec.Modules...))
 	sort.Strings(modules)
+	if osName == "freebsd" && spec.Persistent {
+		for _, module := range modules {
+			if !isFreeBSDLoaderModuleIdentifier(module) {
+				return false, nil, nil, fmt.Errorf("FreeBSD KernelModule %q is not a loader variable identifier", module)
+			}
+		}
+	}
 	changed := false
 	var loaded, skipped []string
 	command := c.Command
 	if command == nil {
 		command = runOutputCommandContext
-	}
-	if osName == "freebsd" && spec.Persistent {
-		return false, nil, nil, fmt.Errorf("persistent KernelModule is not supported on FreeBSD")
 	}
 	if api.BoolDefault(spec.Runtime, true) {
 		loadedModules := c.loadedKernelModules(ctx, command, osName, modules)
@@ -164,13 +184,9 @@ func (c KernelModuleController) applyKernelModules(ctx context.Context, name str
 		}
 	}
 	if spec.Persistent {
-		baseDir := c.BaseDir
-		if baseDir == "" {
-			baseDir = "/etc/modules-load.d"
-		}
-		path := filepath.Join(baseDir, "90-routerd-"+safeSysctlName(name)+".conf")
-		data := []byte("# Managed by routerd. Do not edit by hand.\n" + strings.Join(modules, "\n") + "\n")
-		fileChanged, err := writeFileIfChanged(path, data, 0644, c.DryRun)
+		path := c.kernelModulePersistencePath(name, osName)
+		data := renderKernelModulePersistence(modules, osName)
+		fileChanged, err := c.writeKernelModulePersistence(path, data)
 		if err != nil {
 			if spec.Optional {
 				skipped = append(skipped, path)
@@ -181,6 +197,145 @@ func (c KernelModuleController) applyKernelModules(ctx context.Context, name str
 		changed = changed || fileChanged
 	}
 	return changed, loaded, skipped, nil
+}
+
+func isFreeBSDLoaderModuleIdentifier(module string) bool {
+	if module == "" || !isFreeBSDLoaderModuleInitial(module[0]) {
+		return false
+	}
+	for _, r := range module[1:] {
+		if r != '_' && r != '-' && !(r >= 'A' && r <= 'Z') && !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func isFreeBSDLoaderModuleInitial(value byte) bool {
+	return value == '_' || value >= 'A' && value <= 'Z' || value >= 'a' && value <= 'z' || value >= '0' && value <= '9'
+}
+
+func (c KernelModuleController) kernelModulePersistencePath(name, osName string) string {
+	baseDir := c.BaseDir
+	if baseDir == "" {
+		if osName == "freebsd" {
+			baseDir = freeBSDKernelModuleBaseDir
+		} else {
+			baseDir = "/etc/modules-load.d"
+		}
+	}
+	return filepath.Join(baseDir, "90-routerd-"+safeSysctlName(name)+".conf")
+}
+
+func renderKernelModulePersistence(modules []string, osName string) []byte {
+	if osName == "freebsd" {
+		var out strings.Builder
+		out.WriteString(kernelModuleOwnershipHeader)
+		for _, module := range modules {
+			fmt.Fprintf(&out, "%s_load=\"YES\"\n", module)
+		}
+		return []byte(out.String())
+	}
+	return []byte(kernelModuleOwnershipHeader + strings.Join(modules, "\n") + "\n")
+}
+
+func (c KernelModuleController) writeKernelModulePersistence(path string, data []byte) (bool, error) {
+	info, err := os.Lstat(path)
+	if err == nil {
+		if !info.Mode().IsRegular() {
+			return false, fmt.Errorf("refuse non-regular routerd KernelModule persistence file %s", path)
+		}
+		current, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return false, readErr
+		}
+		if bytes.Equal(current, data) {
+			return false, nil
+		}
+		if !bytes.HasPrefix(current, []byte(kernelModuleOwnershipHeader)) {
+			return false, fmt.Errorf("refuse to replace non-routerd KernelModule persistence file %s", path)
+		}
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+	if c.DryRun {
+		return true, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return false, err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".routerd-kernelmodule-*")
+	if err != nil {
+		return false, err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0644); err != nil {
+		temporary.Close()
+		return false, err
+	}
+	if _, err := temporary.Write(data); err != nil {
+		temporary.Close()
+		return false, err
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return false, err
+	}
+	if err := temporary.Close(); err != nil {
+		return false, err
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (c KernelModuleController) removeStaleFreeBSDKernelModuleFiles(active map[string]bool) (bool, error) {
+	baseDir := c.BaseDir
+	if baseDir == "" {
+		baseDir = freeBSDKernelModuleBaseDir
+	}
+	entries, err := os.ReadDir(baseDir)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	changed := false
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "90-routerd-") || !strings.HasSuffix(entry.Name(), ".conf") {
+			continue
+		}
+		path := filepath.Join(baseDir, entry.Name())
+		if active[path] {
+			continue
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			return changed, err
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return changed, err
+		}
+		if !bytes.HasPrefix(data, []byte(kernelModuleOwnershipHeader)) {
+			continue
+		}
+		if c.DryRun {
+			changed = true
+			continue
+		}
+		if err := os.Remove(path); err != nil {
+			return changed, err
+		}
+		changed = true
+	}
+	return changed, nil
 }
 
 func (c KernelModuleController) loadedKernelModules(ctx context.Context, command outputCommandFunc, osName string, modules []string) map[string]bool {

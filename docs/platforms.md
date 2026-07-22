@@ -123,8 +123,9 @@ Implemented:
   `RTF_PROTO1`, including replace/withdraw/foreign-route preservation
 - FRR `bfdd` reconciliation and observed Up → Down → Up recovery on a native
   FreeBSD peer
-- FreeBSD-native doctor checks, KernelModule `kldload` reconciliation, and
-  BGP-specific `routerd_bgp` rc.d generation
+- FreeBSD-native doctor checks, KernelModule `kldload` reconciliation with
+  routerd-owned `/boot/loader.conf.d` boot persistence, and BGP-specific
+  `routerd_bgp` rc.d generation
 - explicit rejection of non-local DNS resolver binds because FreeBSD has no
   Linux `IP_FREEBIND` equivalent
 
