@@ -14,7 +14,6 @@ import (
 )
 
 var freeBSDTunnelInterfaceName = regexp.MustCompile(`^(gif|gre)[0-9]+$`)
-
 func validateHybridResource(res api.Resource, targetOS platform.OS) (bool, error) {
 	switch res.Kind {
 	case "OverlayPeer":
@@ -206,6 +205,9 @@ func validateHybridResource(res api.Resource, targetOS platform.OS) (bool, error
 		spec, err := res.RemoteAddressClaimSpec()
 		if err != nil {
 			return true, err
+		}
+		if targetOS == platform.OSFreeBSD && strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
+			return true, fmt.Errorf("%s FreeBSD does not support SAM proxy-ARP local capture: proxy-neighbor ownership, GARP, and the routerd-owned forwarding path require the Linux dataplane", res.ID())
 		}
 		if strings.TrimSpace(spec.DomainRef) == "" {
 			return true, fmt.Errorf("%s spec.domainRef is required", res.ID())

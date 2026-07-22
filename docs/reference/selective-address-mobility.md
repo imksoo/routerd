@@ -692,8 +692,13 @@ capture-holder rows are not local endpoint owners, so they are not required to
 resolve as local/cloud routes; delivery/forwarding checks and dataplane probes
 prove that path.
 
-FreeBSD and other non-Linux hosts do not have live SAM capture yet. The
-controller no-ops and reports `SAM capture not implemented on this OS`.
+FreeBSD and other non-Linux hosts do not have live SAM local capture. On
+FreeBSD, validation rejects `RemoteAddressClaim.capture.type: proxy-arp` rather
+than accepting a configuration that cannot safely provide the Linux contract:
+owned proxy-neighbor capture, gratuitous ARP, and the narrow routerd-owned
+forwarding path. Provider-secondary capture configuration and the surrounding
+SAM/BGP control plane remain portable, but their local capture status stays
+`CaptureUnsupported` until an equivalently owned FreeBSD dataplane is approved.
 
 The live Linux dataplane has been smoke-tested in an Azure + PVE same-subnet
 lab. Treat it as pre-release behavior and validate the exact provider and
