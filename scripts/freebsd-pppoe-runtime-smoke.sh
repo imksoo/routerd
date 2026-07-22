@@ -28,6 +28,8 @@ mkdir -p "$evidence_dir"
 work=$(mktemp -d /var/tmp/routerd-pppoe-runtime.XXXXXX)
 epair_a=
 epair_b=
+jail_name="routerd-pppoe-vnet-$$"
+jail_created=0
 mpd_pid=
 client_pid=
 discovery_capture_pid=
@@ -56,9 +58,11 @@ cleanup() {
     kill -TERM "$session_capture_pid" 2>/dev/null || true
     wait "$session_capture_pid" 2>/dev/null || true
   fi
-  if [ -n "$mpd_pid" ] && kill -0 "$mpd_pid" 2>/dev/null; then
-    kill -TERM "$mpd_pid" 2>/dev/null || true
-    wait "$mpd_pid" 2>/dev/null || true
+  if [ "$jail_created" -eq 1 ]; then
+    if [ -n "$mpd_pid" ]; then
+      jexec "$jail_name" kill -TERM "$mpd_pid" 2>/dev/null || true
+    fi
+    jail -r "$jail_name" >>"$evidence_dir/cleanup.log" 2>&1 || rc=1
   fi
   if [ -n "$epair_a" ] && ifconfig "$epair_a" >/dev/null 2>&1; then
     ifconfig "$epair_a" destroy >>"$evidence_dir/cleanup.log" 2>&1 || rc=1
@@ -72,14 +76,18 @@ epair_a=$(ifconfig epair create)
 case "$epair_a" in epair*a) ;; *) echo "unexpected epair name: $epair_a" >&2; exit 1 ;; esac
 epair_b=${epair_a%a}b
 ifconfig "$epair_a" up
-ifconfig "$epair_b" up
-# Preserve the PPPoE discovery exchange without exposing PAP/CHAP payloads.
-# Capture the PPP protocol/FSM header (Ethernet + PPPoE + PPP header), but no
-# PAP payload. This preserves credential safety while identifying whether LCP,
-# PAP, or IPCP originates the terminal close.
-tcpdump -n -e -l -s 128 -i "$epair_b" 'ether proto 0x8863' >"$evidence_dir/pppoe-discovery.log" 2>&1 &
+jail -c name="$jail_name" path=/ host.hostname="$jail_name" persist vnet \
+  vnet.interface="$epair_b"
+jail_created=1
+jexec "$jail_name" ifconfig lo0 up
+jexec "$jail_name" ifconfig "$epair_b" up
+# The AC endpoint is VNET-owned after jail creation, so capture both traffic
+# directions from the host-owned endpoint. Preserve PPPoE discovery without
+# exposing PAP/CHAP payloads; the session capture includes only Ethernet,
+# PPPoE, and the PPP FSM header.
+tcpdump -n -e -l -s 128 -i "$epair_a" 'ether proto 0x8863' >"$evidence_dir/pppoe-discovery.log" 2>&1 &
 discovery_capture_pid=$!
-tcpdump -n -e -vv -l -s 26 -i "$epair_b" 'ether proto 0x8864' >"$evidence_dir/pppoe-session-headers.log" 2>&1 &
+tcpdump -n -e -vv -l -s 26 -i "$epair_a" 'ether proto 0x8864' >"$evidence_dir/pppoe-session-headers.log" 2>&1 &
 session_capture_pid=$!
 sleep 1
 kill -0 "$discovery_capture_pid"
@@ -120,14 +128,14 @@ EOF
 # disposable authenticated peer. Quotes are valid mpd.secret field syntax.
 printf '%s\n' 'routerd "pppoe-secret" 198.18.10.2' >"$work/mpd.secret"
 chmod 0600 "$work/mpd.secret"
-mpd5 -b -d "$work" -f mpd.conf -p "$work/mpd.pid" routerd_pppoe_server >"$evidence_dir/mpd5.log" 2>&1
+jexec "$jail_name" mpd5 -b -d "$work" -f mpd.conf -p "$work/mpd.pid" routerd_pppoe_server >"$evidence_dir/mpd5.log" 2>&1
 for _ in $(jot 30); do
   [ -s "$work/mpd.pid" ] && break
   sleep 1
 done
 [ -s "$work/mpd.pid" ]
 mpd_pid=$(cat "$work/mpd.pid")
-kill -0 "$mpd_pid"
+jexec "$jail_name" kill -0 "$mpd_pid"
 
 # mpd5 writes its PID before it has necessarily read the selected label and
 # registered the ng_pppoe listener.  Its client opens a PPPoE connection once
@@ -138,12 +146,12 @@ for _ in $(jot 30); do
   {
     printf 'link %s\n' "$epair_b"
     printf '%s\n' 'show link' 'show device'
-  } | nc -N -w 2 127.0.0.1 5005 >"$evidence_dir/mpd5-ready.log" 2>&1 || true
+  } | jexec "$jail_name" nc -N -w 2 127.0.0.1 5005 >"$evidence_dir/mpd5-ready.log" 2>&1 || true
   if awk '{ gsub(/\r/, "") } $1 == "incoming" && $2 == "enable" { found=1 } END { exit !found }' "$evidence_dir/mpd5-ready.log" && \
     awk -v want="$epair_b:" '{ gsub(/\r/, "") } $1 == "Iface" && $2 == "Node" && $4 == want { found=1 } END { exit !found }' "$evidence_dir/mpd5-ready.log"; then
     break
   fi
-  kill -0 "$mpd_pid" 2>/dev/null || break
+  jexec "$jail_name" kill -0 "$mpd_pid" 2>/dev/null || break
   sleep 1
 done
 awk '{ gsub(/\r/, "") } $1 == "incoming" && $2 == "enable" { found=1 } END { exit !found }' "$evidence_dir/mpd5-ready.log"
@@ -178,7 +186,7 @@ done
     'show device' \
     'show lcp' \
     'show auth'
-} | nc -N -w 2 127.0.0.1 5005 >"$evidence_dir/mpd5-console.log" 2>&1 || true
+} | jexec "$jail_name" nc -N -w 2 127.0.0.1 5005 >"$evidence_dir/mpd5-console.log" 2>&1 || true
 jq -e '.resources[0].phase == "Connected" and .resources[0].observed.currentAddress == "198.18.10.2" and .resources[0].observed.peerAddress == "198.18.10.1"' "$evidence_dir/pppoe-status-initial.json" >/dev/null
 
 curl --fail --silent --show-error --unix-socket "$work/pppoe.sock" -X POST http://localhost/v1/commands/stop >"$evidence_dir/pppoe-stop.json"
