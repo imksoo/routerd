@@ -121,7 +121,8 @@ FreeBSD 也支援 `ClientPolicy`。IPv4 使用基於 `DHCPv4Reservation` 的 pf 
 - healthcheck 使用原生 `route -n get`，並以 `RTF_PROTO1` 標識 BGP FIB 所有權（包括 replace、withdraw 與保留 foreign route）
 - FreeBSD peer 上的 FRR `bfdd` reconcile，以及實機觀測的 Up → Down → Up 回復
 - FreeBSD native doctor、KernelModule `kldload` reconcile 與 BGP 專用 `routerd_bgp` rc.d 產生
-- FreeBSD 沒有 Linux `IP_FREEBIND` 等價物，因此明確拒絕 non-local DNS resolver bind
+- FreeBSD 沒有將 probe mark 對應至 request-scoped policy route 的 Linux `SO_MARK` 等價物，因此明確拒絕 fwmark healthcheck（請使用 unmarked route 與 `sourceInterface`/`sourceAddress`）
+- FreeBSD 沒有 Linux `IP_FREEBIND` 等價物，因此明確拒絕 non-local DNS resolver bind（必須先指派 address 再啟動 resolver）；outbound DNS 仍可使用獨立的 `sourceInterface: fib:<n>` 機制
 
 ARP/RA observer 常駐程式透過 FreeBSD base system 的 tcpdump/libpcap BPF 路徑擷取資料；proactive ARP write 保留獨立的 direct-BPF descriptor。provisioned native CI 在 disposable VNET 中執行兩個常駐程式，並要求產生預期的 ARP observation event 與 rogue-RA event。帶 tag 的 native DPI backend 支援 FreeBSD ports `ndpi` 5.0 ABI，並由相同 native gate 的 TLS/SNI classification self-test 驗證。
 
