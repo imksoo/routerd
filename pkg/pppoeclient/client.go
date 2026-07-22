@@ -122,9 +122,11 @@ func FreeBSDMPDConf(cfg Config) []byte {
 	b.WriteString(" load " + label + "\n\n")
 	b.WriteString(label + ":\n")
 	b.WriteString(" create bundle static B" + label + "\n")
+	// mpd5 applies IPCP settings to the current bundle. Keep this before the
+	// interface directives, which change the active configuration context.
+	b.WriteString(" set ipcp ranges 0.0.0.0/0 0.0.0.0/0\n")
 	b.WriteString(" set iface name " + cfg.IfName + "\n")
 	b.WriteString(" set iface enable tcpmssfix\n")
-	b.WriteString(" set ipcp ranges 0.0.0.0/0 0.0.0.0/0\n")
 	b.WriteString(" create link static L" + label + " pppoe\n")
 	b.WriteString(" set link action bundle B" + label + "\n")
 	b.WriteString(" set auth authname " + strconv.Quote(spec.Username) + "\n")

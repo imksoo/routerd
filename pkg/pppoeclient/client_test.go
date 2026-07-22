@@ -66,6 +66,9 @@ func TestFreeBSDMPDConfigUsesPrivateRuntimeBackend(t *testing.T) {
 	if file != "mpd.conf" {
 		t.Fatalf("FreeBSD runtime file = %q", file)
 	}
+	if bundle, ipcp, iface := strings.Index(string(config), "create bundle static Bwan-pppoe"), strings.Index(string(config), "set ipcp ranges 0.0.0.0/0 0.0.0.0/0"), strings.Index(string(config), "set iface name ppp0"); !(bundle >= 0 && ipcp > bundle && iface > ipcp) {
+		t.Fatalf("FreeBSD mpd config must emit bundle-scoped IPCP before interface context:\n%s", config)
+	}
 	for _, want := range []string{
 		"create bundle static Bwan-pppoe",
 		"create link static Lwan-pppoe pppoe",
