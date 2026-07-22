@@ -103,6 +103,26 @@ done
 mpd_pid=$(cat "$work/mpd.pid")
 kill -0 "$mpd_pid"
 
+# mpd5 writes its PID before it has necessarily read the selected label and
+# registered the ng_pppoe listener.  Its client opens a PPPoE connection once
+# and then waits on the connect timer, so starting routerd from the PID alone
+# can lose that initial PADI.  Prove the selected template has both an
+# incoming action and its netgraph interface node before starting the client.
+for _ in $(jot 30); do
+  {
+    printf 'link %s\n' "$epair_b"
+    printf '%s\n' 'show link' 'show device'
+  } | nc -N -w 2 127.0.0.1 5005 >"$evidence_dir/mpd5-ready.log" 2>&1 || true
+  if grep -F 'incoming   enable' "$evidence_dir/mpd5-ready.log" >/dev/null && \
+    grep -F "Iface Node   : $epair_b:" "$evidence_dir/mpd5-ready.log" >/dev/null; then
+    break
+  fi
+  kill -0 "$mpd_pid" 2>/dev/null || break
+  sleep 1
+done
+grep -F 'incoming   enable' "$evidence_dir/mpd5-ready.log" >/dev/null
+grep -F "Iface Node   : $epair_b:" "$evidence_dir/mpd5-ready.log" >/dev/null
+
 "$pppoe_client" daemon --resource lifecycle-pppoe --interface "$epair_a" \
   --username routerd --password pppoe-secret --auth-method pap --service-name routerd-lifecycle \
   --socket "$work/pppoe.sock" --state-file "$evidence_dir/pppoe-state.json" \
