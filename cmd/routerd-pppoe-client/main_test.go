@@ -202,6 +202,33 @@ ppp39362e66 1454 <Link#9>    00:00:00:00:00:00       7     0     0   4567       
 	}
 }
 
+func TestObserveFreeBSDPPPoEInterfaceUsesInjectedBaseCommands(t *testing.T) {
+	previous := runFreeBSDPPPoEObserverCommand
+	t.Cleanup(func() { runFreeBSDPPPoEObserverCommand = previous })
+	var commands []string
+	runFreeBSDPPPoEObserverCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+		switch name {
+		case "ifconfig":
+			return []byte("pppwan: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> metric 0 mtu 1454\n\tinet 198.18.10.2 --> 198.18.10.1 netmask 0xffffffff\n"), nil
+		case "netstat":
+			return []byte("Name    Mtu Network       Address              Ipkts Ierrs Idrop Ibytes    Opkts Oerrs  Obytes Coll\npppwan 1454 <Link#9>    00:00:00:00:00:00       7     0     0   4567       9     0    6789    0\n"), nil
+		default:
+			return nil, errors.New("unexpected command")
+		}
+	}
+	got, err := observeFreeBSDPPPoEInterface(t.Context(), "pppwan")
+	if err != nil {
+		t.Fatalf("observe interface: %v", err)
+	}
+	if got.CurrentAddress != "198.18.10.2" || got.PeerAddress != "198.18.10.1" || got.BytesIn != 4567 || got.BytesOut != 6789 {
+		t.Fatalf("observation = %#v", got)
+	}
+	if strings.Join(commands, ",") != "ifconfig pppwan,netstat -I pppwan -b" {
+		t.Fatalf("commands = %#v", commands)
+	}
+}
+
 func TestFreeBSDPPPoEInterfaceObservationPersistsKernelState(t *testing.T) {
 	dir := t.TempDir()
 	cmd := &exec.Cmd{}

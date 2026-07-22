@@ -195,6 +195,13 @@ done
     'show auth'
 } | jexec "$jail_name" nc -N -w 2 127.0.0.1 5005 >"$evidence_dir/mpd5-console.log" 2>&1 || true
 jq -e '.resources[0].phase == "Connected" and .resources[0].observed.currentAddress == "198.18.10.2" and .resources[0].observed.peerAddress == "198.18.10.1"' "$evidence_dir/pppoe-status-initial.json" >/dev/null
+owned_ppp_ifname=$(jq -r '.resources[0].observed.ifname' "$evidence_dir/pppoe-status-initial.json")
+case "$owned_ppp_ifname" in
+"" | null | *[!A-Za-z0-9_.-]*) echo "invalid owned PPPoE interface name: $owned_ppp_ifname" >&2; exit 1 ;;
+esac
+[ "$owned_ppp_ifname" != "$epair_a" ]
+[ "$owned_ppp_ifname" != "$epair_b" ]
+ifconfig "$owned_ppp_ifname" >"$evidence_dir/pppoe-owned-interface-connected.ifconfig"
 ping -n -c 3 198.18.10.1 >"$evidence_dir/pppoe-initial-client-to-ac.ping" 2>&1
 jexec "$jail_name" ping -n -c 3 198.18.10.2 >"$evidence_dir/pppoe-initial-ac-to-client.ping" 2>&1
 curl --fail --silent --show-error --unix-socket "$work/pppoe.sock" http://localhost/v1/status >"$evidence_dir/pppoe-status-initial-traffic.json"
@@ -225,6 +232,16 @@ for _ in $(jot 30); do
   sleep 1
 done
 jq -e '.resources[0].phase == "Idle"' "$evidence_dir/pppoe-status-finally-stopped.json" >/dev/null
+for _ in $(jot 30); do
+  if ! ifconfig "$owned_ppp_ifname" >"$evidence_dir/pppoe-owned-interface-after-stop.ifconfig" 2>&1; then
+    break
+  fi
+  sleep 1
+done
+if ifconfig "$owned_ppp_ifname" >"$evidence_dir/pppoe-owned-interface-after-stop.ifconfig" 2>&1; then
+  echo "routerd-owned PPPoE interface still exists after stop: $owned_ppp_ifname" >&2
+  exit 1
+fi
 
 printf '%s\n' \
   'pppoe-mpd5-peer-configure-start-observe-bidirectional-stop-restart-cleanup=ok' \
