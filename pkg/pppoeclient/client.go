@@ -129,6 +129,21 @@ func FreeBSDMPDConf(cfg Config) []byte {
 	b.WriteString(" set ipcp ranges 0.0.0.0/0 0.0.0.0/0\n")
 	b.WriteString(" create link static " + link + " pppoe\n")
 	b.WriteString(" set link action bundle " + bundle + "\n")
+	auth := spec.AuthMethod
+	if auth == "" {
+		auth = "chap"
+	}
+	switch auth {
+	case "pap":
+		b.WriteString(" set link disable chap eap\n")
+		b.WriteString(" set link accept pap\n")
+	case "chap":
+		b.WriteString(" set link disable pap eap\n")
+		b.WriteString(" set link accept chap\n")
+	case "both":
+		b.WriteString(" set link disable eap\n")
+		b.WriteString(" set link accept pap chap\n")
+	}
 	b.WriteString(" set auth authname " + strconv.Quote(spec.Username) + "\n")
 	b.WriteString(" set auth password " + strconv.Quote(cfg.Password) + "\n")
 	b.WriteString(" set link max-redial 0\n")
