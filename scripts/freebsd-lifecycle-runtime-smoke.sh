@@ -64,12 +64,12 @@ wait_resolver_healthy() {
     kill -0 "$pid" 2>/dev/null || break
     if curl --fail --silent --show-error --unix-socket "$socket" \
       http://localhost/v1/status >"$status_file" 2>/dev/null && \
-      jq -e '.health == "Healthy" and .phase == "Running"' "$status_file" >/dev/null; then
+      jq -e '.health == "ok" and .phase == "Running"' "$status_file" >/dev/null; then
       return 0
     fi
     sleep 1
   done
-  jq -e '.health == "Healthy" and .phase == "Running"' "$status_file" >/dev/null
+  jq -e '.health == "ok" and .phase == "Running"' "$status_file" >/dev/null
 }
 
 cleanup() {
