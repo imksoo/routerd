@@ -31,9 +31,21 @@ ledger="$work/ledger.json"
 outer_a=198.18.89.1
 outer_b=198.18.89.2
 
+emit_initial_failure() {
+	for evidence in apply-initial.log gre0.add gre0.initial.status; do
+		path="$work/$evidence"
+		[ -f "$path" ] || continue
+		echo "--- tunnelinterface $evidence" >&2
+		sed -n '1,160p' "$path" >&2
+	done
+}
+
 cleanup() {
-  rc=$?
-  ifconfig gif0 destroy >/dev/null 2>&1 || true
+	rc=$?
+	if [ "$rc" -ne 0 ]; then
+		emit_initial_failure
+	fi
+	ifconfig gif0 destroy >/dev/null 2>&1 || true
   ifconfig gif1 destroy >/dev/null 2>&1 || true
   ifconfig gre0 destroy >/dev/null 2>&1 || true
   ifconfig gre1 destroy >/dev/null 2>&1 || true
@@ -105,10 +117,12 @@ write_config 1400
 apply_once initial
 ifconfig gif0 >"$work/gif0.add"
 ifconfig gre0 >"$work/gre0.add"
+status_row gre0 "$work/gre0.initial.status"
 grep -F "tunnel inet $outer_a --> $outer_b" "$work/gif0.add"
 # FreeBSD 14.3 ifconfig prints a configured key as `grekey: 0x2a (42)`.
 # Assert the native semantic value rather than the stale decimal-only form.
 grep -E 'grekey:[[:space:]]+0x2a[[:space:]]+\(42\)' "$work/gre0.add"
+jq -e '.phase == "Up" and .key == 42 and .interfaceOwned == true' "$work/gre0.initial.status" >/dev/null
 ping -n -c 3 -S 10.253.89.1 10.253.89.2 >"$work/gif.ping"
 grep -F '3 packets transmitted, 3 packets received' "$work/gif.ping"
 
