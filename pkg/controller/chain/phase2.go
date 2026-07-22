@@ -977,6 +977,10 @@ func dnsmasqConfigOwned(data []byte) bool {
 	if strings.HasPrefix(string(data), routerdGeneratedDNSMasqMarker) {
 		return true
 	}
+	return dnsmasqLegacyConfigOwned(data)
+}
+
+func dnsmasqLegacyConfigOwned(data []byte) bool {
 	// Releases before #946 did not prepend an ownership marker. Recognize only
 	// their complete dnsmasq skeleton so a normal reconcile can migrate it.
 	legacyPrefix := "port=0\nno-resolv\nno-hosts\nbind-dynamic\npid-file="
@@ -990,7 +994,7 @@ func dnsmasqHostsOwned(data, configData []byte, hostsPath string) bool {
 	// The pre-marker hosts sidecar has no independent header. Its only safe
 	// migration provenance is a recognized legacy routerd config that names
 	// this exact sidecar.
-	return dnsmasqConfigOwned(configData) && strings.Contains(string(configData), "dhcp-hostsfile="+hostsPath+"\n")
+	return dnsmasqLegacyConfigOwned(configData) && strings.Contains(string(configData), "dhcp-hostsfile="+hostsPath+"\n")
 }
 
 func dnsmasqServiceOwned(data []byte, configPath string, osName platform.OS) bool {

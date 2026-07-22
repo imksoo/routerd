@@ -296,6 +296,31 @@ func TestValidateDnsmasqArtifactsAcceptsOwnedPair(t *testing.T) {
 	}
 }
 
+func TestValidateDnsmasqArtifactsRejectsMarkerConfigWithLegacyHosts(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "dnsmasq.conf")
+	hostsPath := filepath.Join(dir, "dnsmasq-hosts.hosts")
+	servicePath := filepath.Join(dir, "routerd-dnsmasq.service")
+	config := []byte(routerdGeneratedDNSMasqMarker + "port=0\ndhcp-hostsfile=" + hostsPath + "\n")
+	legacyHosts := []byte("02:00:00:00:00:01,192.0.2.10\n")
+	service := ownedDnsmasqService(platform.OSLinux, configPath)
+	for path, data := range map[string][]byte{configPath: config, hostsPath: legacyHosts, servicePath: service} {
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err := validateDnsmasqArtifacts(configPath, hostsPath, servicePath, platform.OSLinux)
+	if err == nil || !strings.Contains(err.Error(), "foreign hosts sidecar") {
+		t.Fatalf("marker config must not adopt markerless hosts: %v", err)
+	}
+	for path, want := range map[string][]byte{configPath: config, hostsPath: legacyHosts, servicePath: service} {
+		got, readErr := os.ReadFile(path)
+		if readErr != nil || string(got) != string(want) {
+			t.Fatalf("artifact %s mutated: got %q err=%v", path, got, readErr)
+		}
+	}
+}
+
 func TestValidateDnsmasqArtifactsAcceptsLegacyRouterdArtifactsForMigration(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
