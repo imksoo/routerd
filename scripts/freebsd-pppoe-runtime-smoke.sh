@@ -195,6 +195,10 @@ done
     'show auth'
 } | jexec "$jail_name" nc -N -w 2 127.0.0.1 5005 >"$evidence_dir/mpd5-console.log" 2>&1 || true
 jq -e '.resources[0].phase == "Connected" and .resources[0].observed.currentAddress == "198.18.10.2" and .resources[0].observed.peerAddress == "198.18.10.1"' "$evidence_dir/pppoe-status-initial.json" >/dev/null
+ping -n -c 3 198.18.10.1 >"$evidence_dir/pppoe-initial-client-to-ac.ping" 2>&1
+jexec "$jail_name" ping -n -c 3 198.18.10.2 >"$evidence_dir/pppoe-initial-ac-to-client.ping" 2>&1
+curl --fail --silent --show-error --unix-socket "$work/pppoe.sock" http://localhost/v1/status >"$evidence_dir/pppoe-status-initial-traffic.json"
+jq -e '.resources[0].phase == "Connected" and .resources[0].observed.currentAddress == "198.18.10.2" and .resources[0].observed.peerAddress == "198.18.10.1" and (.resources[0].observed.bytesIn | tonumber) > 0 and (.resources[0].observed.bytesOut | tonumber) > 0' "$evidence_dir/pppoe-status-initial-traffic.json" >/dev/null
 
 curl --fail --silent --show-error --unix-socket "$work/pppoe.sock" -X POST http://localhost/v1/commands/stop >"$evidence_dir/pppoe-stop.json"
 for _ in $(jot 30); do
@@ -206,12 +210,23 @@ jq -e '.resources[0].phase == "Idle"' "$evidence_dir/pppoe-status-stopped.json" 
 curl --fail --silent --show-error --unix-socket "$work/pppoe.sock" -X POST http://localhost/v1/commands/start >"$evidence_dir/pppoe-restart.json"
 for _ in $(jot 30); do
   curl --fail --silent --show-error --unix-socket "$work/pppoe.sock" http://localhost/v1/status >"$evidence_dir/pppoe-status-restarted.json" || true
-  jq -e '.resources[0].phase == "Connected"' "$evidence_dir/pppoe-status-restarted.json" >/dev/null 2>&1 && break
+  jq -e '.resources[0].phase == "Connected" and .resources[0].observed.currentAddress == "198.18.10.2" and .resources[0].observed.peerAddress == "198.18.10.1"' "$evidence_dir/pppoe-status-restarted.json" >/dev/null 2>&1 && break
   sleep 1
 done
-jq -e '.resources[0].phase == "Connected"' "$evidence_dir/pppoe-status-restarted.json" >/dev/null
+jq -e '.resources[0].phase == "Connected" and .resources[0].observed.currentAddress == "198.18.10.2" and .resources[0].observed.peerAddress == "198.18.10.1"' "$evidence_dir/pppoe-status-restarted.json" >/dev/null
+ping -n -c 3 198.18.10.1 >"$evidence_dir/pppoe-restart-client-to-ac.ping" 2>&1
+jexec "$jail_name" ping -n -c 3 198.18.10.2 >"$evidence_dir/pppoe-restart-ac-to-client.ping" 2>&1
+curl --fail --silent --show-error --unix-socket "$work/pppoe.sock" http://localhost/v1/status >"$evidence_dir/pppoe-status-restart-traffic.json"
+jq -e '.resources[0].phase == "Connected" and (.resources[0].observed.bytesIn | tonumber) > 0 and (.resources[0].observed.bytesOut | tonumber) > 0' "$evidence_dir/pppoe-status-restart-traffic.json" >/dev/null
+curl --fail --silent --show-error --unix-socket "$work/pppoe.sock" -X POST http://localhost/v1/commands/stop >"$evidence_dir/pppoe-stop-final.json"
+for _ in $(jot 30); do
+  curl --fail --silent --show-error --unix-socket "$work/pppoe.sock" http://localhost/v1/status >"$evidence_dir/pppoe-status-finally-stopped.json" || true
+  jq -e '.resources[0].phase == "Idle"' "$evidence_dir/pppoe-status-finally-stopped.json" >/dev/null 2>&1 && break
+  sleep 1
+done
+jq -e '.resources[0].phase == "Idle"' "$evidence_dir/pppoe-status-finally-stopped.json" >/dev/null
 
 printf '%s\n' \
-  'pppoe-mpd5-peer-configure-start-observe-stop-restart=ok' \
+  'pppoe-mpd5-peer-configure-start-observe-bidirectional-stop-restart-cleanup=ok' \
   'pppoe-owned-epair-and-process-cleanup=pending-exit-trap' >"$evidence_dir/summary.log"
 printf 'freebsd-pppoe-runtime=ok\n' >"$evidence_dir/result"

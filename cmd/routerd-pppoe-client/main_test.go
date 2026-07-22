@@ -180,3 +180,57 @@ func TestDiscoveryTimeoutPersistsActionableFailureForBothBackends(t *testing.T) 
 		})
 	}
 }
+
+func TestParseFreeBSDPPPoEInterfaceObservation(t *testing.T) {
+	addresses, err := parseFreeBSDPPPoEAddresses(`ppp39362e66: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> metric 0 mtu 1454
+		inet 198.18.10.2 --> 198.18.10.1 netmask 0xffffffff
+`)
+	if err != nil {
+		t.Fatalf("parse FreeBSD PPPoE addresses: %v", err)
+	}
+	if addresses.CurrentAddress != "198.18.10.2" || addresses.PeerAddress != "198.18.10.1" {
+		t.Fatalf("addresses = %#v", addresses)
+	}
+	bytesIn, bytesOut, err := parseFreeBSDPPPoECounters(`Name    Mtu Network       Address              Ipkts Ierrs Idrop Ibytes    Opkts Oerrs  Obytes Coll
+ppp39362e66 1454 <Link#9>    00:00:00:00:00:00       7     0     0   4567       9     0    6789    0
+`, "ppp39362e66")
+	if err != nil {
+		t.Fatalf("parse FreeBSD PPPoE counters: %v", err)
+	}
+	if bytesIn != 4567 || bytesOut != 6789 {
+		t.Fatalf("counters = (%d, %d), want (4567, 6789)", bytesIn, bytesOut)
+	}
+}
+
+func TestFreeBSDPPPoEInterfaceObservationPersistsKernelState(t *testing.T) {
+	dir := t.TempDir()
+	cmd := &exec.Cmd{}
+	d := &daemon{
+		opts:     options{resource: "wan", stateFile: filepath.Join(dir, "state.json"), eventFile: filepath.Join(dir, "events.jsonl")},
+		snapshot: pppoeclient.Snapshot{Resource: "wan", IfName: "pppwan", Phase: pppoeclient.PhaseConnecting},
+		cmd:      cmd,
+	}
+	d.recordFreeBSDPPPoEObservation(cmd, freeBSDPPPoEObservation{
+		CurrentAddress: "198.18.10.2",
+		PeerAddress:    "198.18.10.1",
+		BytesIn:        12,
+		BytesOut:       34,
+	})
+	d.mu.Lock()
+	snapshot := d.snapshot
+	d.mu.Unlock()
+	if snapshot.Phase != pppoeclient.PhaseConnected || snapshot.CurrentAddress != "198.18.10.2" || snapshot.PeerAddress != "198.18.10.1" || snapshot.BytesIn != 12 || snapshot.BytesOut != 34 {
+		t.Fatalf("snapshot = %#v", snapshot)
+	}
+	state, err := os.ReadFile(d.opts.stateFile)
+	if err != nil {
+		t.Fatalf("read state: %v", err)
+	}
+	events, err := os.ReadFile(d.opts.eventFile)
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if !strings.Contains(string(state), "198.18.10.2") || !strings.Contains(string(events), "FreeBSD PPPoE interface has assigned") {
+		t.Fatalf("kernel observation was not persisted: state=%s events=%s", state, events)
+	}
+}

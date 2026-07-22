@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,6 +35,10 @@ import (
 const daemonKind = pppoeclient.DaemonKind
 
 const defaultDiscoveryTimeout = 30 * time.Second
+
+const freeBSDPPPoEObserveTimeout = time.Second
+
+var freeBSDPPPoEObserveInterval = 500 * time.Millisecond
 
 type options struct {
 	resource         string
@@ -105,6 +110,35 @@ func ensureFreeBSDPPPoEModules(ctx context.Context, osName platform.OS) error {
 
 var ensureFreeBSDPPPoEModule = func(ctx context.Context) error {
 	return ensureFreeBSDPPPoEModules(ctx, platform.CurrentOS())
+}
+
+type freeBSDPPPoEObservation struct {
+	CurrentAddress string
+	PeerAddress    string
+	BytesIn        uint64
+	BytesOut       uint64
+}
+
+var observeFreeBSDPPPoEInterface = func(ctx context.Context, ifname string) (freeBSDPPPoEObservation, error) {
+	ifconfigOutput, err := exec.CommandContext(ctx, "ifconfig", ifname).Output()
+	if err != nil {
+		return freeBSDPPPoEObservation{}, fmt.Errorf("observe FreeBSD PPPoE interface %q addresses: %w", ifname, err)
+	}
+	observation, err := parseFreeBSDPPPoEAddresses(string(ifconfigOutput))
+	if err != nil {
+		return freeBSDPPPoEObservation{}, err
+	}
+	netstatOutput, err := exec.CommandContext(ctx, "netstat", "-I", ifname, "-b").Output()
+	if err != nil {
+		return freeBSDPPPoEObservation{}, fmt.Errorf("observe FreeBSD PPPoE interface %q counters: %w", ifname, err)
+	}
+	bytesIn, bytesOut, err := parseFreeBSDPPPoECounters(string(netstatOutput), ifname)
+	if err != nil {
+		return freeBSDPPPoEObservation{}, err
+	}
+	observation.BytesIn = bytesIn
+	observation.BytesOut = bytesOut
+	return observation, nil
 }
 
 func main() {
@@ -325,6 +359,7 @@ func (d *daemon) startSession(ctx context.Context) error {
 	d.snapshot.Phase = pppoeclient.PhaseConnecting
 	d.snapshot.UpdatedAt = time.Now().UTC()
 	d.cmd = cmd
+	freeBSDIfName := d.snapshot.IfName
 	d.mu.Unlock()
 	d.recordPhase()
 	if err := cmd.Start(); err != nil {
@@ -333,6 +368,9 @@ func (d *daemon) startSession(ctx context.Context) error {
 	}
 	d.publish("routerd.pppoe.client.session.connecting", daemonapi.SeverityInfo, "Connecting", "PPPoE session command started", map[string]string{"command": name})
 	go d.watchDiscoveryTimeout(cmd)
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		go d.watchFreeBSDPPPoEInterface(cmd, freeBSDIfName)
+	}
 	go d.scanLog(stdout)
 	go d.scanLog(stderr)
 	go func() {
@@ -381,6 +419,101 @@ func (d *daemon) watchDiscoveryTimeout(cmd *exec.Cmd) {
 	_ = d.saveStateLocked()
 	d.recordPhaseLocked()
 	d.publishLocked("routerd.pppoe.client.session.failed", daemonapi.SeverityWarning, "DiscoveryTimeout", d.snapshot.LastError, nil)
+}
+
+// watchFreeBSDPPPoEInterface observes the kernel-owned point-to-point interface
+// because mpd5 emits its runtime diagnostics through syslog rather than the
+// daemon's stdout/stderr pipes. It deliberately does not interpret PPP control
+// messages as proof that IPCP installed the interface.
+func (d *daemon) watchFreeBSDPPPoEInterface(cmd *exec.Cmd, ifname string) {
+	ticker := time.NewTicker(freeBSDPPPoEObserveInterval)
+	defer ticker.Stop()
+	for {
+		d.mu.Lock()
+		active := d.cmd == cmd && d.snapshot.Phase != pppoeclient.PhaseFailed && d.snapshot.Phase != pppoeclient.PhaseDisconnecting
+		d.mu.Unlock()
+		if !active {
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), freeBSDPPPoEObserveTimeout)
+		observation, err := observeFreeBSDPPPoEInterface(ctx, ifname)
+		cancel()
+		if err == nil {
+			d.recordFreeBSDPPPoEObservation(cmd, observation)
+		}
+
+		<-ticker.C
+	}
+}
+
+func (d *daemon) recordFreeBSDPPPoEObservation(cmd *exec.Cmd, observation freeBSDPPPoEObservation) {
+	if observation.CurrentAddress == "" || observation.PeerAddress == "" {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.cmd != cmd || d.snapshot.Phase == pppoeclient.PhaseFailed || d.snapshot.Phase == pppoeclient.PhaseDisconnecting {
+		return
+	}
+	previous := d.snapshot.Phase
+	d.snapshot.CurrentAddress = observation.CurrentAddress
+	d.snapshot.PeerAddress = observation.PeerAddress
+	d.snapshot.BytesIn = observation.BytesIn
+	d.snapshot.BytesOut = observation.BytesOut
+	d.snapshot.Phase = pppoeclient.PhaseConnected
+	d.snapshot.LastError = ""
+	d.snapshot.UpdatedAt = time.Now().UTC()
+	if d.snapshot.ConnectedAt.IsZero() {
+		d.snapshot.ConnectedAt = d.snapshot.UpdatedAt
+	}
+	_ = d.saveStateLocked()
+	if previous != d.snapshot.Phase {
+		d.recordPhaseLocked()
+		d.publishLocked("routerd.pppoe.client.session.connected", daemonapi.SeverityInfo, pppoeclient.PhaseConnected, "FreeBSD PPPoE interface has assigned local and peer addresses", d.eventAttrsLocked())
+	}
+}
+
+func parseFreeBSDPPPoEAddresses(output string) (freeBSDPPPoEObservation, error) {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 4 || fields[0] != "inet" || fields[2] != "-->" {
+			continue
+		}
+		local, localErr := netip.ParseAddr(fields[1])
+		peer, peerErr := netip.ParseAddr(fields[3])
+		if localErr == nil && peerErr == nil && local.Is4() && peer.Is4() {
+			return freeBSDPPPoEObservation{CurrentAddress: local.String(), PeerAddress: peer.String()}, nil
+		}
+	}
+	return freeBSDPPPoEObservation{}, errors.New("FreeBSD PPPoE interface has no assigned IPv4 point-to-point addresses")
+}
+
+func parseFreeBSDPPPoECounters(output, ifname string) (uint64, uint64, error) {
+	var inputIndex, outputIndex = -1, -1
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		for index, field := range fields {
+			switch field {
+			case "Ibytes":
+				inputIndex = index
+			case "Obytes":
+				outputIndex = index
+			}
+		}
+		if inputIndex < 0 || outputIndex < 0 || fields[0] != ifname || len(fields) <= inputIndex || len(fields) <= outputIndex {
+			continue
+		}
+		bytesIn, inputErr := strconv.ParseUint(fields[inputIndex], 10, 64)
+		bytesOut, outputErr := strconv.ParseUint(fields[outputIndex], 10, 64)
+		if inputErr == nil && outputErr == nil {
+			return bytesIn, bytesOut, nil
+		}
+	}
+	return 0, 0, fmt.Errorf("FreeBSD PPPoE interface %q has no parseable byte counters", ifname)
 }
 
 func (d *daemon) scanLog(r io.Reader) {
