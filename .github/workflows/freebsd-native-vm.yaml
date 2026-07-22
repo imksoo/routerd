@@ -34,6 +34,11 @@ on:
         required: false
         default: false
         type: boolean
+      lifecycle_runtime:
+        description: Run isolated FreeBSD DHCPv4 BPF and DNS resolver lifecycle smoke
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -60,6 +65,7 @@ jobs:
       ROUTERD_FREEBSD_TUNNELINTERFACE_RUNTIME: ${{ inputs.tunnelinterface_runtime || 'false' }}
       ROUTERD_FREEBSD_CLIENTPOLICY_IDENTITY_RUNTIME: ${{ inputs.clientpolicy_identity_runtime || 'false' }}
       ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME: ${{ inputs.kernelmodule_persistence_runtime || 'false' }}
+      ROUTERD_FREEBSD_LIFECYCLE_RUNTIME: ${{ inputs.lifecycle_runtime || 'false' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6

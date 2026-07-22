@@ -191,3 +191,16 @@ cat "$ipsec_evidence/result"
 if [ "${ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME:-false}" = true ]; then
   sh scripts/freebsd-kernelmodule-persistence-smoke.sh --routerd "$routerd"
 fi
+
+if [ "${ROUTERD_FREEBSD_LIFECYCLE_RUNTIME:-false}" = true ]; then
+  lifecycle_evidence="$work/lifecycle-runtime"
+  dhcpv4_client="$work/routerd-dhcpv4-client"
+  dns_resolver="$work/routerd-dns-resolver"
+  go build -o "$dhcpv4_client" ./cmd/routerd-dhcpv4-client
+  go build -o "$dns_resolver" ./cmd/routerd-dns-resolver
+  sh scripts/freebsd-lifecycle-runtime-smoke.sh \
+    --dhcpv4-client "$dhcpv4_client" --dns-resolver "$dns_resolver" \
+    --evidence-dir "$lifecycle_evidence"
+  cat "$lifecycle_evidence/summary.log"
+  cat "$lifecycle_evidence/result"
+fi
