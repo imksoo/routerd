@@ -103,14 +103,16 @@ for module in ng_socket ng_ppp ng_ether ng_pppoe; do
 done
 
 cat >"$work/mpd.conf" <<EOF
+startup:
+  set console self 127.0.0.1 5005
+  set console disable auth
+  set console open
+
 default:
   load routerd_pppoe_server
 
 routerd_pppoe_server:
   set log +all
-  set console self 127.0.0.1 5005
-  set console disable auth
-  set console open
   create bundle template B_routerd
   set ipcp ranges 198.18.10.1/32 198.18.10.2/32
   create link template L_routerd pppoe
