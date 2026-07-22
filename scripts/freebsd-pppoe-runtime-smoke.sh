@@ -72,7 +72,7 @@ routerd_pppoe_server:
   create link template L_routerd pppoe
   set link action bundle B_routerd
   set link disable chap eap
-  set link enable pap
+  set link accept pap
   set pppoe service "routerd-lifecycle"
   create link template $epair_b L_routerd
   set pppoe iface $epair_b
