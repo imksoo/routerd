@@ -2266,6 +2266,65 @@ func TestValidateClientPolicyIPv6Addresses(t *testing.T) {
 	}
 }
 
+func TestValidateClientPolicyFreeBSDRequiresExplicitIdentity(t *testing.T) {
+	base := func() *api.Router {
+		return &api.Router{
+			TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+			Metadata: api.ObjectMeta{Name: "test"},
+			Spec: api.RouterSpec{Resources: []api.Resource{
+				{
+					TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+					Metadata: api.ObjectMeta{Name: "lan"},
+					Spec:     api.InterfaceSpec{IfName: "vtnet0", Managed: false, Owner: "external"},
+				},
+				{
+					TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "ClientPolicy"},
+					Metadata: api.ObjectMeta{Name: "guest"},
+					Spec: api.ClientPolicySpec{Mode: "include", Interfaces: []string{"lan"}, Classification: []api.ClientPolicyClassSpec{{
+						Mode:          "guest",
+						IPv6Addresses: []string{"fd00:1::10"},
+					}}},
+				},
+			}},
+		}
+	}
+	if err := ValidateForOS(base(), platform.OSFreeBSD); err != nil {
+		t.Fatalf("ValidateForOS(FreeBSD) explicit IP identity: %v", err)
+	}
+	for name, addSelector := range map[string]func(*api.ClientPolicySpec){
+		"mac":         func(spec *api.ClientPolicySpec) { spec.Classification[0].Match.MACs = []string{"02:00:00:00:00:44"} },
+		"oui":         func(spec *api.ClientPolicySpec) { spec.Classification[0].Match.OUIPrefixes = []string{"02:00:00"} },
+		"hostname":    func(spec *api.ClientPolicySpec) { spec.Classification[0].Match.HostnamePatterns = []string{"guest-*"} },
+		"fingerprint": func(spec *api.ClientPolicySpec) { spec.Classification[0].Match.DHCPFingerprints = []string{"android"} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			router := base()
+			spec, err := router.Spec.Resources[1].ClientPolicySpec()
+			if err != nil {
+				t.Fatal(err)
+			}
+			addSelector(&spec)
+			router.Spec.Resources[1].Spec = spec
+			if err := ValidateForOS(router, platform.OSFreeBSD); err == nil || !strings.Contains(err.Error(), "cannot enforce") {
+				t.Fatalf("ValidateForOS(FreeBSD) selector error = %v", err)
+			}
+			if err := ValidateForOS(router, platform.OSLinux); err != nil {
+				t.Fatalf("ValidateForOS(Linux) selector = %v", err)
+			}
+		})
+	}
+	router := base()
+	spec, err := router.Spec.Resources[1].ClientPolicySpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.MACs = []string{"02:00:00:00:00:44"}
+	router.Spec.Resources[1].Spec = spec
+	if err := ValidateForOS(router, platform.OSFreeBSD); err == nil || !strings.Contains(err.Error(), "spec.macs is not supported") {
+		t.Fatalf("ValidateForOS(FreeBSD) short MAC error = %v", err)
+	}
+}
+
 func TestValidateRejectsMissingInterfaceReference(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

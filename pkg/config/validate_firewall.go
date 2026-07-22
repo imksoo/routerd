@@ -504,7 +504,9 @@ func validateFirewallResource(res api.Resource, targetOS platform.OS) (bool, err
 			default:
 				return true, fmt.Errorf("%s spec.classification[%d].mode must be trusted, guest, or isolated", res.ID(), i)
 			}
-			if len(entry.Match.MACs) == 0 && len(entry.Match.OUIPrefixes) == 0 && len(entry.Match.HostnamePatterns) == 0 && len(entry.Match.DHCPFingerprints) == 0 {
+			hasSelector := len(entry.Match.MACs) > 0 || len(entry.Match.OUIPrefixes) > 0 || len(entry.Match.HostnamePatterns) > 0 || len(entry.Match.DHCPFingerprints) > 0
+			hasStableIdentity := entry.IPv4Reservation != "" || len(entry.IPv6Addresses) > 0
+			if !hasSelector && !(targetOS == platform.OSFreeBSD && hasStableIdentity) {
 				return true, fmt.Errorf("%s spec.classification[%d].match must contain at least one selector", res.ID(), i)
 			}
 			for j, value := range entry.Match.MACs {
@@ -562,6 +564,17 @@ func validateFirewallResource(res api.Resource, targetOS platform.OS) (bool, err
 				}
 				seenIPv6Addresses[normalized] = true
 			}
+			if targetOS == platform.OSFreeBSD {
+				if hasSelector {
+					return true, fmt.Errorf("%s spec.classification[%d] uses client selectors that FreeBSD pf cannot enforce; use ipv4Reservation and/or explicit ipv6Addresses without match selectors", res.ID(), i)
+				}
+				if !hasStableIdentity {
+					return true, fmt.Errorf("%s spec.classification[%d] needs ipv4Reservation or explicit ipv6Addresses on FreeBSD", res.ID(), i)
+				}
+			}
+		}
+		if targetOS == platform.OSFreeBSD && len(spec.MACs) > 0 {
+			return true, fmt.Errorf("%s spec.macs is not supported on FreeBSD because pf cannot enforce MAC/L2 identity; use explicit classification IP identities", res.ID())
 		}
 		for i, service := range spec.GuestServices {
 			switch service {

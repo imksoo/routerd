@@ -488,6 +488,9 @@ func pfClientPolicies(router *api.Router, aliases map[string]string, resources [
 		if err != nil {
 			return nil, err
 		}
+		if err := validatePFClientPolicyIdentity(res, spec); err != nil {
+			return nil, err
+		}
 		var ifnames []string
 		for _, iface := range spec.Interfaces {
 			ref := iface
@@ -552,6 +555,22 @@ func pfClientPolicies(router *api.Router, aliases map[string]string, resources [
 		out = append(out, policy)
 	}
 	return out, nil
+}
+
+func validatePFClientPolicyIdentity(res api.Resource, spec api.ClientPolicySpec) error {
+	if len(spec.MACs) > 0 {
+		return fmt.Errorf("%s spec.macs is not supported on FreeBSD because pf cannot enforce MAC/L2 identity; use explicit classification IP identities", res.ID())
+	}
+	for _, entry := range spec.Classification {
+		hasSelector := len(entry.Match.MACs) > 0 || len(entry.Match.OUIPrefixes) > 0 || len(entry.Match.HostnamePatterns) > 0 || len(entry.Match.DHCPFingerprints) > 0
+		if hasSelector {
+			return fmt.Errorf("%s classification %q uses client selectors that FreeBSD pf cannot enforce; use ipv4Reservation and/or explicit ipv6Addresses without match selectors", res.ID(), entry.Name)
+		}
+		if entry.IPv4Reservation == "" && len(entry.IPv6Addresses) == 0 {
+			return fmt.Errorf("%s classification %q needs ipv4Reservation or explicit ipv6Addresses on FreeBSD", res.ID(), entry.Name)
+		}
+	}
+	return nil
 }
 
 func pfClientPolicyReservation(res api.Resource, name string, reservations map[string]api.DHCPv4ReservationSpec) (api.DHCPv4ReservationSpec, error) {

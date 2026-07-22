@@ -5,7 +5,8 @@
 # and forwarding change before returning.
 set -eu
 
-routerd= evidence=
+routerd=''
+evidence=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --routerd) routerd=${2:?}; shift 2 ;;
@@ -19,8 +20,17 @@ mkdir -p "$evidence"
 
 tag="g8-$$"; work=$(mktemp -d /tmp/routerd-g8.XXXXXX)
 src="${tag}-src"; denied="${tag}-deny"; allowed="${tag}-allow"
-in_a= in_b= deny_a= deny_b= allow_a= allow_b=
-cap_deny= cap_allow= forwarding= pf_enabled=0 pf_loaded=0
+in_a=''
+in_b=''
+deny_a=''
+deny_b=''
+allow_a=''
+allow_b=''
+cap_deny=''
+cap_allow=''
+forwarding=''
+pf_enabled=0
+pf_loaded=0
 src_created=0; denied_created=0; allowed_created=0
 
 cleanup() {
@@ -47,7 +57,9 @@ cleanup() {
   [ -n "$deny_a" ] && ifconfig "$deny_a" destroy >>"$evidence/interface-cleanup.log" 2>&1
   [ -n "$allow_a" ] && ifconfig "$allow_a" destroy >>"$evidence/interface-cleanup.log" 2>&1
   [ -n "$forwarding" ] && sysctl net.inet6.ip6.forwarding="$forwarding" >>"$evidence/forwarding-restore.log" 2>&1
-  [ "$pf_loaded" -eq 1 ] && kldunload pf >>"$evidence/pf-kldunload.log" 2>&1 || true
+  if [ "$pf_loaded" -eq 1 ]; then
+    kldunload pf >>"$evidence/pf-kldunload.log" 2>&1 || true
+  fi
   rm -rf "$work"
   [ "$rc" -ne 0 ] || [ "$cleanup_rc" -eq 0 ] || rc=$cleanup_rc
   exit "$rc"
@@ -108,7 +120,6 @@ spec:
       classification:
       - name: explicit-dual-stack-guest
         mode: guest
-        match: {macs: ['02:00:00:00:00:08']}
         ipv6Addresses: [fd00:1::10]
 EOF
 
