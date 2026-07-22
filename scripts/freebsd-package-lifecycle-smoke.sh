@@ -71,6 +71,10 @@ foreign_manager_log=$work/foreign-service-manager.log
 owned_live=0
 rc_config=/etc/rc.conf.d/routerd
 rc_config_created=0
+# contrib/freebsd/routerd relies on platform defaults rather than passing
+# --state-file. Keep this fixture coupled to that production default; querying
+# a different SQLite path creates an empty database and can hide the real row.
+state_db=/var/db/routerd/routerd.db
 
 cleanup() {
   rc=$?
@@ -148,7 +152,7 @@ wait_routerd() {
 
 conntrack_status() {
   target=$1
-  sqlite3 /var/db/routerd/state.db "SELECT status FROM objects WHERE api_version='net.routerd.net/v1alpha1' AND kind='ConntrackObserver' AND name='default';" >"$target"
+  sqlite3 "$state_db" "SELECT status FROM objects WHERE api_version='net.routerd.net/v1alpha1' AND kind='ConntrackObserver' AND name='default';" >"$target"
   jq -e '.phase == "Observed" and .source == "pf" and (.count | type == "number") and (.max | type == "number") and .max > 0' "$target" >/dev/null
 }
 
@@ -177,7 +181,7 @@ service routerd start >"$work/prior-service-start.log" 2>&1
 wait_routerd "$work/prior-status.json"
 conntrack_status "$work/prior-conntrack-status.json"
 grep -Fqx '# routerd-managed-service: v1' /usr/local/etc/rc.d/routerd
-[ -s /var/db/routerd/state.db ]
+[ -s "$state_db" ]
 printf 'freebsd-package-prior-install-start-observe=ok\n'
 
 (
@@ -186,7 +190,7 @@ printf 'freebsd-package-prior-install-start-observe=ok\n'
 ) >"$work/current-upgrade.log" 2>&1
 wait_routerd "$work/current-status.json"
 conntrack_status "$work/current-conntrack-status.json"
-[ -s /var/db/routerd/state.db ]
+[ -s "$state_db" ]
 [ "$(/usr/local/sbin/routerd --version)" = "$(./bin/routerd --version)" ]
 printf 'freebsd-package-upgrade-restart-observe=ok\n'
 
