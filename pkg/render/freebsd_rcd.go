@@ -320,7 +320,8 @@ func FreeBSDVXLANRCDScript(name string, vxlan vxlanConfig, bridges []string) []b
 	if vxlan.UnderlayIfName != "" {
 		args = append(args, "vxlandev", vxlan.UnderlayIfName)
 	}
-	args = append(args, "vxlanport", strconv.Itoa(vxlan.UDPPort))
+	args = append(args, "vxlanlocalport", strconv.Itoa(vxlan.UDPPort))
+	args = append(args, "vxlanremoteport", strconv.Itoa(vxlan.UDPPort))
 	if vxlan.MTU != 0 {
 		args = append(args, "mtu", strconv.Itoa(vxlan.MTU))
 	}

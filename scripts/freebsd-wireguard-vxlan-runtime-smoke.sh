@@ -169,7 +169,7 @@ ifconfig "$client_bridge" create >>"$evidence_dir/vxlan-create.log" 2>&1 || \
   ifconfig bridge create name "$client_bridge" >>"$evidence_dir/vxlan-create.log" 2>&1
 ifconfig "$client_bridge" up >>"$evidence_dir/vxlan-create.log" 2>&1
 bridge_created=1
-ifconfig "$peer_vx" vxlanid 899 vxlanlocal 10.250.89.2 vxlanremote 10.250.89.1 vxlandev "$peer_if" vxlanport 4789 up >>"$evidence_dir/vxlan-create.log" 2>&1
+ifconfig "$peer_vx" vxlanid 899 vxlanlocal 10.250.89.2 vxlanremote 10.250.89.1 vxlandev "$peer_if" vxlanlocalport 4789 vxlanremoteport 4789 up >>"$evidence_dir/vxlan-create.log" 2>&1
 "$vx_script" start >"$evidence_dir/vxlan-start.log" 2>&1
 vx_started=1
 "$vx_script" onestatus >"$evidence_dir/vxlan-status-initial.log" 2>&1
