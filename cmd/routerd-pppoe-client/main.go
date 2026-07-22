@@ -58,11 +58,12 @@ type daemon struct {
 	spec      api.PPPoESessionSpec
 	startedAt time.Time
 
-	mu         sync.Mutex
-	snapshot   pppoeclient.Snapshot
-	events     []daemonapi.DaemonEvent
-	nextCursor uint64
-	cmd        *exec.Cmd
+	mu             sync.Mutex
+	snapshot       pppoeclient.Snapshot
+	events         []daemonapi.DaemonEvent
+	nextCursor     uint64
+	cmd            *exec.Cmd
+	lastDiagnostic string
 
 	telemetry     *routerotel.Runtime
 	phaseGauge    metric.Int64Gauge
@@ -171,8 +172,8 @@ func selftestCommand(args []string, stdout io.Writer) error {
 			"resource": opts.resource,
 			"phase":    "Rendered",
 			"command":  append([]string{name}, argv...),
-			"peer":     string(pppoeclient.LinuxPeer(d.config())),
-			"freebsd":  string(pppoeclient.FreeBSDPPPConf(d.config())),
+			"peer":     string(pppoeclient.RedactedRuntimeConfigForOS("linux", d.config())),
+			"freebsd":  string(pppoeclient.RedactedRuntimeConfigForOS("freebsd", d.config())),
 		})
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -307,10 +308,10 @@ func (d *daemon) startSession(ctx context.Context) error {
 		}
 		if err != nil && d.snapshot.Phase != pppoeclient.PhaseDisconnecting && d.snapshot.ConnectedAt.IsZero() {
 			d.snapshot.Phase = pppoeclient.PhaseFailed
-			d.snapshot.LastError = err.Error()
+			d.snapshot.LastError = d.exitDiagnosticLocked(err)
 			d.snapshot.UpdatedAt = time.Now().UTC()
 			_ = d.saveStateLocked()
-			d.publishLocked("routerd.pppoe.client.session.failed", daemonapi.SeverityWarning, "Exited", err.Error(), nil)
+			d.publishLocked("routerd.pppoe.client.session.failed", daemonapi.SeverityWarning, "Exited", d.snapshot.LastError, nil)
 			return
 		}
 		d.snapshot.Phase = pppoeclient.PhaseIdle
@@ -329,6 +330,7 @@ func (d *daemon) scanLog(r io.Reader) {
 	for scanner.Scan() {
 		line := scanner.Text()
 		d.mu.Lock()
+		d.lastDiagnostic = redactPPPoEDiagnostic(line, d.opts.password)
 		prev := d.snapshot.Phase
 		d.snapshot = pppoeclient.ParseLogLine(d.snapshot, line, time.Now())
 		_ = d.saveStateLocked()
@@ -338,6 +340,20 @@ func (d *daemon) scanLog(r io.Reader) {
 		}
 		d.mu.Unlock()
 	}
+}
+
+func (d *daemon) exitDiagnosticLocked(err error) string {
+	if d.lastDiagnostic == "" {
+		return err.Error()
+	}
+	return err.Error() + ": " + d.lastDiagnostic
+}
+
+func redactPPPoEDiagnostic(line, password string) string {
+	if password == "" {
+		return line
+	}
+	return strings.ReplaceAll(line, password, "[REDACTED]")
 }
 
 func (d *daemon) stopSession() {
@@ -368,11 +384,12 @@ func (d *daemon) renderRuntimeConfig() error {
 		return err
 	}
 	cfg := d.config()
+	name := "peer.conf"
 	peer := pppoeclient.LinuxPeer(cfg)
 	if platform.CurrentOS() == platform.OSFreeBSD {
-		peer = pppoeclient.FreeBSDPPPConf(cfg)
+		name, peer = pppoeclient.RuntimeConfigForOS("freebsd", cfg)
 	}
-	return os.WriteFile(filepath.Join(d.opts.runtimeDir, "peer.conf"), peer, 0600)
+	return os.WriteFile(filepath.Join(d.opts.runtimeDir, name), peer, 0600)
 }
 
 func (d *daemon) config() pppoeclient.Config {

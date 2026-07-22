@@ -41,6 +41,59 @@ func TestLinuxPeerRendersSoftEtherCredential(t *testing.T) {
 	}
 }
 
+func TestFreeBSDMPDConfigUsesPrivateRuntimeBackend(t *testing.T) {
+	cfg := Config{
+		Resource:   "wan-pppoe",
+		Interface:  "vtnet1",
+		IfName:     "ppp0",
+		Password:   "secret value",
+		RuntimeDir: "/var/run/routerd/pppoe-client/wan-pppoe",
+		Spec: api.PPPoESessionSpec{
+			Username:    "user@example.test",
+			ServiceName: "isp",
+			AuthMethod:  "pap",
+		},
+	}
+	name, argv := CommandForOS("freebsd", cfg)
+	if name != "mpd5" {
+		t.Fatalf("FreeBSD command = %q, want mpd5", name)
+	}
+	wantArgv := []string{"-d", cfg.RuntimeDir, "-f", "mpd.conf", "wan-pppoe"}
+	if strings.Join(argv, "\x00") != strings.Join(wantArgv, "\x00") {
+		t.Fatalf("FreeBSD argv = %#v, want %#v", argv, wantArgv)
+	}
+	file, config := RuntimeConfigForOS("freebsd", cfg)
+	if file != "mpd.conf" {
+		t.Fatalf("FreeBSD runtime file = %q", file)
+	}
+	for _, want := range []string{
+		"create bundle static Bwan-pppoe",
+		"create link static Lwan-pppoe pppoe",
+		`set auth authname "user@example.test"`,
+		`set auth password "secret value"`,
+		"set pppoe iface vtnet1",
+		`set pppoe service "isp"`,
+		"open",
+	} {
+		if !strings.Contains(string(config), want) {
+			t.Fatalf("FreeBSD mpd config missing %q:\n%s", want, config)
+		}
+	}
+	if strings.Contains(strings.Join(argv, " "), "-ddial") {
+		t.Fatalf("FreeBSD argv must not use ppp(8) dial mode: %#v", argv)
+	}
+}
+
+func TestRedactedRuntimeConfigNeverReturnsPassword(t *testing.T) {
+	cfg := Config{Resource: "wan", Interface: "vtnet0", Password: "secret value", Spec: api.PPPoESessionSpec{Username: "user"}}
+	for _, osName := range []string{"linux", "freebsd"} {
+		got := string(RedactedRuntimeConfigForOS(osName, cfg))
+		if strings.Contains(got, cfg.Password) || !strings.Contains(got, "[REDACTED]") {
+			t.Fatalf("%s redacted config = %q", osName, got)
+		}
+	}
+}
+
 func TestParseLogLineExtractsIPCPState(t *testing.T) {
 	now := time.Unix(100, 0)
 	s := Snapshot{Phase: PhaseConnecting}
