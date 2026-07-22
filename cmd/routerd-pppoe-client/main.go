@@ -328,9 +328,9 @@ func (d *daemon) startSession(ctx context.Context) error {
 func (d *daemon) scanLog(r io.Reader) {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
-		line := scanner.Text()
+		line := redactPPPoEDiagnostic(scanner.Text(), d.opts.password)
 		d.mu.Lock()
-		d.lastDiagnostic = redactPPPoEDiagnostic(line, d.opts.password)
+		d.lastDiagnostic = line
 		prev := d.snapshot.Phase
 		d.snapshot = pppoeclient.ParseLogLine(d.snapshot, line, time.Now())
 		_ = d.saveStateLocked()

@@ -40,11 +40,32 @@ func TestSelftestRedactsSharedRuntimeConfig(t *testing.T) {
 }
 
 func TestPPPoEDiagnosticRedactsPassword(t *testing.T) {
-	d := &daemon{opts: options{password: "secret value", stateFile: filepath.Join(t.TempDir(), "state.json")}}
-	d.scanLog(strings.NewReader("mpd: authentication failed for secret value"))
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if got := d.exitDiagnosticLocked(os.ErrInvalid); strings.Contains(got, "secret value") || !strings.Contains(got, "[REDACTED]") {
-		t.Fatalf("diagnostic = %q", got)
+	for name, line := range map[string]string{
+		"linux-pppd":   "pppd: authentication failed for secret value",
+		"freebsd-mpd5": "mpd: authentication failed for secret value",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			stateFile := filepath.Join(dir, "state.json")
+			eventFile := filepath.Join(dir, "events.jsonl")
+			d := &daemon{opts: options{resource: "wan", password: "secret value", stateFile: stateFile, eventFile: eventFile}}
+			d.scanLog(strings.NewReader(line))
+			d.mu.Lock()
+			gotDiagnostic := d.exitDiagnosticLocked(os.ErrInvalid)
+			d.mu.Unlock()
+			if strings.Contains(gotDiagnostic, "secret value") || !strings.Contains(gotDiagnostic, "[REDACTED]") {
+				t.Fatalf("diagnostic = %q", gotDiagnostic)
+			}
+			for _, path := range []string{stateFile, eventFile} {
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatalf("read %s: %v", path, err)
+				}
+				got := string(data)
+				if strings.Contains(got, "secret value") || !strings.Contains(got, "[REDACTED]") {
+					t.Fatalf("persisted diagnostic %s = %q", path, got)
+				}
+			}
+		})
 	}
 }
