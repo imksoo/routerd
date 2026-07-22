@@ -442,6 +442,8 @@ func TestTunnelInterfaceControllerReusesExistingFOUListener(t *testing.T) {
 				return []byte("Cannot find device \"tun-fou\""), errors.New("missing")
 			case "ip fou add port 5555 ipproto 4":
 				return []byte("RTNETLINK answers: Address already in use"), errors.New("exit status 2")
+			case "ip fou show":
+				return []byte("port 5555 ipproto 4\n"), nil
 			default:
 				return nil, nil
 			}
@@ -453,8 +455,46 @@ func TestTunnelInterfaceControllerReusesExistingFOUListener(t *testing.T) {
 	if status := controller.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-fou"); status["phase"] != "Up" {
 		t.Fatalf("status = %#v, want Up", status)
 	}
-	if got, want := strings.Join(calls[2], " "), "ip link add dev tun-fou type ipip local 192.0.2.10 remote 192.0.2.20 ttl 64 encap fou encap-sport 5555 encap-dport 5555"; got != want {
-		t.Fatalf("third call = %q, want %q", got, want)
+	if got, want := strings.Join(calls[3], " "), "ip link add dev tun-fou type ipip local 192.0.2.10 remote 192.0.2.20 ttl 64 encap fou encap-sport 5555 encap-dport 5555"; got != want {
+		t.Fatalf("fourth call = %q, want %q", got, want)
+	}
+}
+
+func TestTunnelInterfaceControllerRejectsWrongExistingFOUListenerShape(t *testing.T) {
+	resource := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+		Metadata: api.ObjectMeta{Name: "tun-fou"},
+		Spec:     api.TunnelInterfaceSpec{Mode: "fou", Local: "192.0.2.10", Remote: "192.0.2.20", EncapSport: 5555, EncapDport: 5555, TrustedUnderlay: true},
+	}
+	var calls [][]string
+	store := mapStore{}
+	controller := TunnelInterfaceController{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{resource}}}, Store: store, OS: platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			call := append([]string{name}, args...)
+			calls = append(calls, call)
+			switch strings.Join(call, " ") {
+			case "ip -d -o link show dev tun-fou":
+				return []byte("Cannot find device \"tun-fou\""), errors.New("missing")
+			case "ip fou add port 5555 ipproto 4":
+				return []byte("RTNETLINK answers: File exists"), errors.New("exists")
+			case "ip fou show":
+				return []byte("port 5555 gue\n"), nil
+			}
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-fou")
+	if status["phase"] != "Error" || status["reason"] != "ApplyFailed" || !strings.Contains(statusString(status, "error"), "does not match") {
+		t.Fatalf("status = %#v, want fail-closed listener-shape error", status)
+	}
+	for _, call := range calls {
+		if strings.Join(call, " ") == "ip link add dev tun-fou type ipip local 192.0.2.10 remote 192.0.2.20 ttl 64 encap fou encap-sport 5555 encap-dport 5555" {
+			t.Fatalf("wrong listener shape must not create tunnel: %#v", calls)
+		}
 	}
 }
 
@@ -482,6 +522,9 @@ func TestTunnelInterfaceControllerSkipsExistingGUE(t *testing.T) {
 			if reflect.DeepEqual(append([]string{name}, args...), []string{"ip", "fou", "add", "port", "6080", "gue"}) {
 				return []byte("RTNETLINK answers: File exists"), errors.New("exists")
 			}
+			if reflect.DeepEqual(append([]string{name}, args...), []string{"ip", "fou", "show"}) {
+				return []byte("port 6080 gue\n"), nil
+			}
 			return []byte(`7: tun-gue@NONE: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1468 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000 link/ipip 192.0.2.10 peer 192.0.2.20 ttl 64 encap gue encap-sport 6080 encap-dport 6081`), nil
 		},
 	}
@@ -491,6 +534,7 @@ func TestTunnelInterfaceControllerSkipsExistingGUE(t *testing.T) {
 	want := [][]string{
 		{"ip", "-d", "-o", "link", "show", "dev", "tun-gue"},
 		{"ip", "fou", "add", "port", "6080", "gue"},
+		{"ip", "fou", "show"},
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %#v, want only observe/listener ensure", calls)
@@ -577,6 +621,156 @@ func TestTunnelInterfaceControllerChangesExistingGREWithoutAdd(t *testing.T) {
 			t.Fatalf("existing tunnel must not be added again: %#v", calls)
 		}
 	}
+}
+
+func TestTunnelInterfaceControllerClearsLinuxGREKeyWithNoKey(t *testing.T) {
+	resource := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+		Metadata: api.ObjectMeta{Name: "tun-gre"},
+		Spec: api.TunnelInterfaceSpec{
+			Mode: "gre", Local: "192.0.2.10", Remote: "192.0.2.20", TTL: 64, TrustedUnderlay: true,
+		},
+	}
+	var calls [][]string
+	controller := TunnelInterfaceController{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{resource}}}, Store: mapStore{}, OS: platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			call := append([]string{name}, args...)
+			calls = append(calls, call)
+			if strings.Join(call, " ") == "ip -d -o link show dev tun-gre" {
+				return []byte(`7: tun-gre@NONE: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1476 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000 link/gre 192.0.2.10 peer 192.0.2.20 ttl 64 key 42`), nil
+			}
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"ip", "link", "set", "dev", "tun-gre", "type", "gre", "local", "192.0.2.10", "remote", "192.0.2.20", "ttl", "64", "nokey"}
+	if len(calls) != 2 || !reflect.DeepEqual(calls[1], want) {
+		t.Fatalf("calls = %#v, want GRE change %#v", calls, want)
+	}
+}
+
+func TestTunnelInterfaceControllerRemovesAddressWhenSpecCleared(t *testing.T) {
+	resource := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+		Metadata: api.ObjectMeta{Name: "tun-ipip"},
+		Spec: api.TunnelInterfaceSpec{
+			Mode: "ipip", Local: "192.0.2.10", Remote: "192.0.2.20", TrustedUnderlay: true,
+		},
+	}
+	store := mapStore{}
+	if err := store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip", map[string]any{
+		"phase": "Up", "managedBy": "routerd", "address": "10.255.1.1/30",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var calls [][]string
+	controller := TunnelInterfaceController{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{resource}}}, Store: store, OS: platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			call := append([]string{name}, args...)
+			calls = append(calls, call)
+			switch strings.Join(call, " ") {
+			case "ip -d -o link show dev tun-ipip":
+				return []byte(`7: tun-ipip@NONE: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1480 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000 link/ipip 192.0.2.10 peer 192.0.2.20 ttl 64`), nil
+			case "ip -o -4 addr show dev tun-ipip":
+				return []byte("7: tun-ipip    inet 10.255.1.1/30 scope global tun-ipip\n"), nil
+			}
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"ip", "addr", "del", "10.255.1.1/30", "dev", "tun-ipip"}
+	if len(calls) != 3 || !reflect.DeepEqual(calls[2], want) {
+		t.Fatalf("calls = %#v, want address removal %#v", calls, want)
+	}
+}
+
+func TestTunnelInterfaceControllerTransfersSharedFOUListenerOwnership(t *testing.T) {
+	resource := func(name string) api.Resource {
+		return api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{Name: name},
+			Spec:     api.TunnelInterfaceSpec{Mode: "fou", Local: "192.0.2.10", Remote: "192.0.2.20", EncapSport: 5555, EncapDport: 5555, TrustedUnderlay: true},
+		}
+	}
+	store := mapStore{}
+	var calls [][]string
+	created := map[string]bool{}
+	controller := TunnelInterfaceController{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{resource("tun-a"), resource("tun-b")}}}, Store: store, OS: platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			call := append([]string{name}, args...)
+			calls = append(calls, call)
+			switch strings.Join(call, " ") {
+			case "ip -d -o link show dev tun-a":
+				if created["tun-a"] {
+					return []byte(`7: tun-a@NONE: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1472 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000 link/ipip 192.0.2.10 peer 192.0.2.20 ttl 64 encap fou encap-sport 5555 encap-dport 5555`), nil
+				}
+				return []byte("Cannot find device"), errors.New("missing")
+			case "ip -d -o link show dev tun-b":
+				if created["tun-b"] {
+					return []byte(`7: tun-b@NONE: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1472 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000 link/ipip 192.0.2.10 peer 192.0.2.20 ttl 64 encap fou encap-sport 5555 encap-dport 5555`), nil
+				}
+				return []byte("Cannot find device"), errors.New("missing")
+			case "ip fou add port 5555 ipproto 4":
+				for _, existing := range calls[:len(calls)-1] {
+					if strings.Join(existing, " ") == "ip fou add port 5555 ipproto 4" {
+						return []byte("RTNETLINK answers: File exists"), errors.New("exists")
+					}
+				}
+			case "ip fou show":
+				return []byte("port 5555 ipproto 4\n"), nil
+			}
+			if len(call) >= 5 && call[0] == "ip" && call[1] == "link" && call[2] == "add" && call[3] == "dev" {
+				created[call[4]] = true
+			}
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"tun-a", "tun-b"} {
+		status := store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", name)
+		if owned, _ := statusBool(status["fouListenerOwned"]); !owned {
+			t.Fatalf("%s did not inherit routerd FOU ownership: %#v", name, status)
+		}
+	}
+	controller.Router = &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{resource("tun-b")}}}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range calls {
+		if strings.Join(call, " ") == "ip fou del port 5555" {
+			t.Fatalf("shared listener was deleted while tun-b still desired: %#v", calls)
+		}
+	}
+	if status := store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-b"); !statusBoolOrFalse(status["fouListenerOwned"]) {
+		t.Fatalf("tun-b lost transferred ownership: %#v", status)
+	}
+	controller.Router = &api.Router{}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	deletes := 0
+	for _, call := range calls {
+		if strings.Join(call, " ") == "ip fou del port 5555" {
+			deletes++
+		}
+	}
+	if deletes != 1 {
+		t.Fatalf("listener delete calls = %d, want exactly one; calls=%#v", deletes, calls)
+	}
+}
+
+func statusBoolOrFalse(value any) bool {
+	ok, _ := statusBool(value)
+	return ok
 }
 
 func TestTunnelInterfaceControllerDeletesStaleManagedInterface(t *testing.T) {
@@ -715,7 +909,7 @@ func TestTunnelInterfaceControllerUnsupportedPlatform(t *testing.T) {
 	controller := TunnelInterfaceController{
 		Router: router,
 		Store:  store,
-		OS:     platform.OSFreeBSD,
+		OS:     platform.OSOther,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			t.Fatalf("unsupported platform must not run commands, got %s %v", name, args)
 			return nil, nil
@@ -727,6 +921,74 @@ func TestTunnelInterfaceControllerUnsupportedPlatform(t *testing.T) {
 	status := store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip")
 	if status["phase"] != "Unsupported" || status["reason"] != "PlatformUnsupported" {
 		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestTunnelInterfaceControllerFreeBSDGIFLifecycle(t *testing.T) {
+	resource := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+		Metadata: api.ObjectMeta{Name: "gif0"},
+		Spec: api.TunnelInterfaceSpec{
+			Mode: "ipip", Local: "192.0.2.10", Remote: "192.0.2.20", Address: "10.99.0.1/30", MTU: 1400, TrustedUnderlay: true,
+		},
+	}
+	var calls [][]string
+	lookups := 0
+	controller := TunnelInterfaceController{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{resource}}},
+		Store:  mapStore{},
+		OS:     platform.OSFreeBSD,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, append([]string{name}, args...))
+			if reflect.DeepEqual(append([]string{name}, args...), []string{"ifconfig", "gif0"}) {
+				lookups++
+				if lookups == 1 {
+					return []byte("ifconfig: interface gif0 does not exist"), errors.New("exit status 1")
+				}
+				return []byte("gif0: flags=8843<UP,RUNNING> metric 0 mtu 1400\n\ttunnel inet 192.0.2.10 --> 192.0.2.20\n"), nil
+			}
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"ifconfig", "gif0"},
+		{"ifconfig", "gif0", "create"},
+		{"ifconfig", "gif0", "tunnel", "192.0.2.10", "192.0.2.20"},
+		{"ifconfig", "gif0", "mtu", "1400", "up"},
+		{"ifconfig", "gif0"},
+		{"ifconfig", "gif0", "inet", "10.99.0.1/30"},
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+}
+
+func TestTunnelInterfaceControllerFreeBSDStaleCleanup(t *testing.T) {
+	store := mapStore{}
+	if err := store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", "old-gif", map[string]any{
+		"phase": "Up", "managedBy": "routerd", "ifname": "gif3",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var calls [][]string
+	controller := TunnelInterfaceController{
+		Router: &api.Router{}, Store: store, OS: platform.OSFreeBSD,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, append([]string{name}, args...))
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(calls, [][]string{{"ifconfig", "gif3", "destroy"}}) {
+		t.Fatalf("calls = %#v", calls)
+	}
+	if _, ok := store[api.HybridAPIVersion+"/TunnelInterface/old-gif"]; ok {
+		t.Fatal("stale FreeBSD tunnel status was not removed")
 	}
 }
 

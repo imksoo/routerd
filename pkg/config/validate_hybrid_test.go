@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 func TestValidateHybridResources(t *testing.T) {
@@ -33,6 +34,52 @@ func TestValidateTunnelInterfaceResources(t *testing.T) {
 	router := validTunnelHybridRouter()
 	if err := Validate(router); err != nil {
 		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestValidateTunnelInterfaceForFreeBSD(t *testing.T) {
+	base := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+		Metadata: api.ObjectMeta{Name: "gif0"},
+		Spec: api.TunnelInterfaceSpec{
+			Mode: "ipip", Local: "192.0.2.10", Remote: "192.0.2.20", TrustedUnderlay: true,
+		},
+	}
+	validateForFreeBSD := func(resource api.Resource) error {
+		return ValidateForOS(&api.Router{
+			TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+			Metadata: api.ObjectMeta{Name: "freebsd-tunnel"},
+			Spec:     api.RouterSpec{Resources: []api.Resource{resource}},
+		}, platform.OSFreeBSD)
+	}
+	if err := validateForFreeBSD(base); err != nil {
+		t.Fatalf("ValidateForOS(FreeBSD gif): %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		edit func(*api.Resource)
+		want string
+	}{
+		{
+			name: "fou is rejected", edit: func(r *api.Resource) {
+				r.Spec = api.TunnelInterfaceSpec{Mode: "fou", Local: "192.0.2.10", Remote: "192.0.2.20", TrustedUnderlay: true, EncapSport: 5555, EncapDport: 5555}
+			}, want: "only ipip (gif) and gre",
+		},
+		{
+			name: "mode name mismatch", edit: func(r *api.Resource) { r.Metadata.Name = "gre0" }, want: "must use gifN",
+		},
+		{
+			name: "ttl is rejected", edit: func(r *api.Resource) { spec := r.Spec.(api.TunnelInterfaceSpec); spec.TTL = 64; r.Spec = spec }, want: "spec.ttl is unsupported",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resource := base
+			tc.edit(&resource)
+			err := validateForFreeBSD(resource)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
