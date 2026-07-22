@@ -83,6 +83,9 @@ jobs:
       ROUTERD_IPSEC_NETNS: rd-ipsec-ns
       ROUTERD_IPSEC_VETH_HOST: rd-ipsec-vh
       ROUTERD_IPSEC_VETH_PEER: rd-ipsec-vp
+      # The peer starts before an emulated guest's package install/full suite;
+      # keep the initial phase bounded by this job's 90-minute wall clock.
+      ROUTERD_IPSEC_INITIAL_LISTENER_SECONDS: 5400
       ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE: false
     steps:
       - name: Checkout
