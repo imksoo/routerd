@@ -115,7 +115,15 @@ for _ in $(jot 30); do
   sleep 1
 done
 {
-  printf '%s\n' 'help' 'show sessions' 'bundle' 'show bundle' 'link' 'show link'
+  printf '%s\n' \
+    'show summary' \
+    'bundle B_routerd' \
+    'show bundle' \
+    "link $epair_b" \
+    'show link' \
+    'show device' \
+    'show lcp' \
+    'show auth'
 } | nc -N -w 2 127.0.0.1 5005 >"$evidence_dir/mpd5-console.log" 2>&1 || true
 jq -e '.resources[0].phase == "Connected" and .resources[0].observed.currentAddress == "198.18.10.2" and .resources[0].observed.peerAddress == "198.18.10.1"' "$evidence_dir/pppoe-status-initial.json" >/dev/null
 
