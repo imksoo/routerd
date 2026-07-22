@@ -107,6 +107,8 @@ var ensureFreeBSDPPPoEModule = func(ctx context.Context) error {
 	return ensureFreeBSDPPPoEModules(ctx, platform.CurrentOS())
 }
 
+var currentPPPoEOS = platform.CurrentOS
+
 func main() {
 	if err := run(os.Args[1:], os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -311,6 +313,12 @@ func (d *daemon) startSession(ctx context.Context) error {
 		d.markFailed(err.Error())
 		return err
 	}
+	if currentPPPoEOS() == platform.OSFreeBSD {
+		if err := ensureFreeBSDPPPoEInterfaceAbsent(ctx, d.config().IfName); err != nil {
+			d.markFailed(err.Error())
+			return err
+		}
+	}
 	name, argv := pppoeclient.Command(d.config())
 	cmd := exec.CommandContext(ctx, name, argv...)
 	stdout, err := cmd.StdoutPipe()
@@ -334,7 +342,7 @@ func (d *daemon) startSession(ctx context.Context) error {
 	}
 	d.publish("routerd.pppoe.client.session.connecting", daemonapi.SeverityInfo, "Connecting", "PPPoE session command started", map[string]string{"command": name})
 	go d.watchDiscoveryTimeout(cmd)
-	if platform.CurrentOS() == platform.OSFreeBSD {
+	if currentPPPoEOS() == platform.OSFreeBSD {
 		go d.watchFreeBSDPPPoEInterface(cmd, freeBSDIfName)
 	}
 	go d.scanLog(stdout)

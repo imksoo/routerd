@@ -33,6 +33,29 @@ var runFreeBSDPPPoEObserverCommand = func(ctx context.Context, name string, args
 	return exec.CommandContext(ctx, name, args...).Output()
 }
 
+var freeBSDPPPoEInterfaceExists = func(ctx context.Context, ifname string) (bool, error) {
+	_, err := runFreeBSDPPPoEObserverCommand(ctx, "ifconfig", ifname)
+	if err == nil {
+		return true, nil
+	}
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) && exitError.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, fmt.Errorf("inspect FreeBSD PPPoE interface %q ownership: %w", ifname, err)
+}
+
+func ensureFreeBSDPPPoEInterfaceAbsent(ctx context.Context, ifname string) error {
+	exists, err := freeBSDPPPoEInterfaceExists(ctx, ifname)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return fmt.Errorf("refuse to start FreeBSD PPPoE session: target interface %q already exists and is not routerd-owned", ifname)
+	}
+	return nil
+}
+
 var observeFreeBSDPPPoEInterface = func(ctx context.Context, ifname string) (freeBSDPPPoEObservation, error) {
 	ifconfigOutput, err := runFreeBSDPPPoEObserverCommand(ctx, "ifconfig", ifname)
 	if err != nil {

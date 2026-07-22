@@ -34,6 +34,7 @@ mpd_pid=
 client_pid=
 discovery_capture_pid=
 session_capture_pid=
+foreign_ppp_ifname=
 
 cleanup() {
   rc=$?
@@ -66,6 +67,9 @@ cleanup() {
   fi
   if [ -n "$epair_a" ] && ifconfig "$epair_a" >/dev/null 2>&1; then
     ifconfig "$epair_a" destroy >>"$evidence_dir/cleanup.log" 2>&1 || rc=1
+  fi
+  if [ -n "$foreign_ppp_ifname" ] && ifconfig "$foreign_ppp_ifname" >/dev/null 2>&1; then
+    ifconfig "$foreign_ppp_ifname" destroy >>"$evidence_dir/cleanup.log" 2>&1 || rc=1
   fi
   rm -rf "$work"
   exit "$rc"
@@ -242,8 +246,19 @@ if ifconfig "$owned_ppp_ifname" >"$evidence_dir/pppoe-owned-interface-after-stop
   echo "routerd-owned PPPoE interface still exists after stop: $owned_ppp_ifname" >&2
   exit 1
 fi
+foreign_epair=$(ifconfig epair create)
+ifconfig "$foreign_epair" name "$owned_ppp_ifname"
+foreign_ppp_ifname=$owned_ppp_ifname
+ifconfig "$foreign_ppp_ifname" up
+ifconfig "$foreign_ppp_ifname" >"$evidence_dir/pppoe-foreign-interface-before-start.ifconfig"
+curl --fail --silent --show-error --unix-socket "$work/pppoe.sock" -X POST http://localhost/v1/commands/start >"$evidence_dir/pppoe-foreign-start.json"
+jq -e '.accepted == false and (.message | contains("already exists"))' "$evidence_dir/pppoe-foreign-start.json" >/dev/null
+ifconfig "$foreign_ppp_ifname" >"$evidence_dir/pppoe-foreign-interface-after-start.ifconfig"
+cmp "$evidence_dir/pppoe-foreign-interface-before-start.ifconfig" "$evidence_dir/pppoe-foreign-interface-after-start.ifconfig"
+ifconfig "$foreign_ppp_ifname" destroy
+foreign_ppp_ifname=
 
 printf '%s\n' \
-  'pppoe-mpd5-peer-configure-start-observe-bidirectional-stop-restart-cleanup=ok' \
+  'pppoe-mpd5-peer-configure-start-observe-bidirectional-stop-restart-cleanup-foreign-preservation=ok' \
   'pppoe-owned-epair-and-process-cleanup=pending-exit-trap' >"$evidence_dir/summary.log"
 printf 'freebsd-pppoe-runtime=ok\n' >"$evidence_dir/result"

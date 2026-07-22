@@ -37,6 +37,36 @@ func TestStartSessionFailsClosedWhenFreeBSDPPPoEModuleLoadFails(t *testing.T) {
 	}
 }
 
+func TestStartSessionRefusesPreexistingFreeBSDPPPoEInterface(t *testing.T) {
+	previousOS := currentPPPoEOS
+	previousModules := ensureFreeBSDPPPoEModule
+	previousExists := freeBSDPPPoEInterfaceExists
+	t.Cleanup(func() {
+		currentPPPoEOS = previousOS
+		ensureFreeBSDPPPoEModule = previousModules
+		freeBSDPPPoEInterfaceExists = previousExists
+	})
+	currentPPPoEOS = func() platform.OS { return platform.OSFreeBSD }
+	ensureFreeBSDPPPoEModule = func(context.Context) error { return nil }
+	freeBSDPPPoEInterfaceExists = func(_ context.Context, ifname string) (bool, error) {
+		if ifname != pppoeclient.DefaultIfName("wan") {
+			t.Fatalf("checked interface = %q", ifname)
+		}
+		return true, nil
+	}
+	dir := t.TempDir()
+	d := newDaemon(options{resource: "wan", ifname: "vtnet0", username: "user", password: "secret", runtimeDir: dir, stateFile: filepath.Join(dir, "state.json")}, nil)
+	err := d.startSession(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "already exists") || !strings.Contains(err.Error(), pppoeclient.DefaultIfName("wan")) {
+		t.Fatalf("startSession error = %v, want foreign-interface refusal", err)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.cmd != nil || d.snapshot.Phase != pppoeclient.PhaseFailed {
+		t.Fatalf("foreign interface did not fail closed: cmd=%v phase=%q", d.cmd, d.snapshot.Phase)
+	}
+}
+
 func TestEnsureFreeBSDPPPoEModulesLoadsIPCPInterfaceModulesAndLeavesLinuxUntouched(t *testing.T) {
 	previous := loadFreeBSDPPPoEModule
 	t.Cleanup(func() { loadFreeBSDPPPoEModule = previous })
