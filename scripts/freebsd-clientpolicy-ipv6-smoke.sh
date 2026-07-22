@@ -76,8 +76,9 @@ pfctl -sr >"$evidence/pf-rules-before.log" 2>&1; pfctl -ss >"$evidence/pf-states
 [ ! -s "$evidence/pf-rules-before.log" ] && [ ! -s "$evidence/pf-states-before.log" ]
 
 # The generated ClientPolicy ruleset deliberately starts with `block drop all`.
-# Preserve the anyvm SSH control connection with an explicit fixture-only pass;
-# it is inserted before that first filter rule and is not production rendering.
+# ClientPolicy traffic in this fixture uses only disposable epairs, so extend
+# the fixture-only skip set to the anyvm control interface.  This preserves
+# the SSH transport without changing the production-rendered PF file.
 control_if=$(route -n get -inet default 2>/dev/null | awk '$1 == "interface:" { print $2; exit }')
 control_gateway=$(route -n get -inet default 2>/dev/null | awk '$1 == "gateway:" { print $2; exit }')
 [ -n "$control_if" ] && [ -n "$control_gateway" ]
@@ -139,20 +140,20 @@ EOF
 "$routerd" validate --config "$work/router.yaml" >"$evidence/validate.log" 2>&1
 "$routerd" render freebsd --config "$work/router.yaml" --out-dir "$work/render" >"$evidence/render.log" 2>&1
 find "$work/render" -maxdepth 1 -type f -exec basename {} \; | sort >"$evidence/render-files.log"
-awk -v control_if="$control_if" -v control_gateway="$control_gateway" -v control_address="$control_address" '
-  $0 == "block drop all" && !inserted {
-    print "pass in quick on " control_if " inet proto tcp from " control_gateway " to " control_address " port 22 flags any keep state label \"routerd:fixture-control-ssh\""
-    print "pass out quick on " control_if " inet proto tcp from " control_address " to " control_gateway " port 22 flags any keep state label \"routerd:fixture-control-ssh\""
-    inserted = 1
+awk -v control_if="$control_if" '
+  $0 == "set skip on lo0" && !replaced {
+    print "set skip on { lo0 " control_if " }"
+    replaced = 1
+    next
   }
   { print }
-  END { if (!inserted) exit 1 }
+  END { if (!replaced) exit 1 }
 ' "$work/render/pf.conf" >"$work/pf-with-control.conf"
+grep -Fx "set skip on { lo0 $control_if }" "$work/pf-with-control.conf" >"$evidence/control-skip.log"
 pfctl -nf "$work/pf-with-control.conf" >"$evidence/pf-nf.log" 2>&1
 pfctl -e >"$evidence/pf-enable.log" 2>&1; pf_enabled=1
 pfctl -f "$work/pf-with-control.conf" >"$evidence/pf-load.log" 2>&1
 pfctl -sr -v >"$evidence/pf-rules.log" 2>&1
-grep -F 'routerd:fixture-control-ssh' "$evidence/pf-rules.log"
 grep -F 'fd00:1::10' "$evidence/pf-rules.log"
 grep -F 'fd00:2::/64' "$evidence/pf-rules.log"
 
