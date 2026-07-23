@@ -11,6 +11,12 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 变更
+
+- `TunnelInterface.spec.peerAddress` 明确表示 FreeBSD 点对点 IPIP/GRE interface 的 IPv4 inner destination。在 FreeBSD 使用 `spec.address` 时必填，在 Linux 上会被拒绝，且绝不从配置 CIDR 推断。
+- FreeBSD package 的 install/upgrade/uninstall、owned cleanup 与 foreign service preservation 已有 native amd64 和 arm64 evidence。TunnelInterface gif/GRE dataplane/lifecycle 与 owned/foreign preservation、credential-free Tailscale external-auth rollback/foreign preservation、CARP 三 VM failover/recovery/cleanup/foreign preservation 仅有 amd64 evidence；不声称 Tailscale authenticated enrollment。
+- FreeBSD support boundary 已明确：`spec.family: ipv6` 的 `EgressRoutePolicy` 被拒绝；已认证的 slice 仅为 IPv4 static route host source affinity。`ClientPolicy` 使用显式 address identity 而非 MAC/L2。FreeBSD 14.3 GRE key 仅用于 outbound，kernel 不强制 inbound key matching。
+
 ## v20260721.1054
 
 ### 新增

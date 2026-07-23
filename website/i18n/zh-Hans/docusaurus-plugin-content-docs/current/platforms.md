@@ -154,14 +154,17 @@ dnsmasq 也会以 `dnsmasq --test` 确认配置后重新启动。
 静态 `rc.conf` 生成不足以描述的 DS-Lite tunnel 以 `ifconfig gif` 动态应用。
 正式投入生产前，请先以 `routerd render freebsd` 确认输出。
 
+当前发布认证有意比可生成的功能列表更窄。FreeBSD 会明确拒绝 `spec.family: ipv6` 的 `EgressRoutePolicy` resource，因为已认证的 PF `route-to` 仅覆盖 IPv4 static route host。package 的 install/upgrade/uninstall、owned cleanup 与 foreign service preservation 已在 native amd64 和 arm64 上认证。`TunnelInterface` 的 gif/GRE dataplane/lifecycle、owned cleanup、foreign interface preservation，credential-free Tailscale external-auth boundary/rollback/foreign preservation，以及 CARP 在三个独立 FreeBSD VM 上的 failover/recovery/cleanup/foreign preservation，仅有 amd64 native evidence。不会声称 Tailscale authenticated enrollment。FreeBSD 14.3 的 GRE key 只控制 outbound encapsulation，kernel 不强制 inbound key matching。
+
 ## Platform parity backlog
 
 Ubuntu、FreeBSD 相互比较时的已知差异。
 
 | 领域 | 当前差异 | 待办事项 |
 | --- | --- | --- |
-| CI / runtime coverage | PR CI 会编译 FreeBSD amd64/arm64 binary，并在 provisioned FreeBSD 14.3 amd64 VM 中运行完整且不省略的 `go test ./...`、live routerd smoke、ARP/RA observer 与 native nDPI。保留的 VM115 evidence 还覆盖 route lookup、BFD 与已支持的 PF dataplane slice。 | PR 的 native runtime certification 目前覆盖 amd64；arm64 在 PR CI 中仍为 compile-only。 |
+| CI / runtime coverage | PR CI 会编译 FreeBSD amd64/arm64 binary。provisioned FreeBSD 14.3 native evidence 覆盖不省略的 `go test ./...`、live routerd smoke、ARP/RA observer、native nDPI、amd64/arm64 package lifecycle，以及上述 amd64 TunnelInterface/Tailscale/CARP slice。保留的 VM115 evidence 还覆盖 route lookup、BFD 与已支持的 PF dataplane slice。 | 不得将 amd64 的 TunnelInterface、Tailscale 或 CARP evidence 泛化到 arm64；authenticated Tailscale enrollment 不属于 release claim。 |
 | FreeBSD 的功能限制 | `ClientPolicy` 对 IPv4 使用 DHCPv4 reservation，对 IPv6 使用显式 `classification[].ipv6Addresses` 的 pf 规则；不支持 MAC/L2 匹配，也不从 IPv4 reservation 推断 IPv6。 | 保持明确地址和 MAC/L2 限制；未列出或 privacy IPv6 地址需独立网络隔离（[#849](https://github.com/imksoo/routerd/issues/849)）。 |
+| IPv6 policy routing | 已认证的 PF `route-to` 仅为 IPv4 static route host source affinity。 | FreeBSD 明确拒绝 `spec.family: ipv6` 的 `EgressRoutePolicy`；这是经批准的 product boundary，而非已实现的 parity（[#904](https://github.com/imksoo/routerd/issues/904)）。 |
 | 软件包 bootstrap | Ubuntu、FreeBSD 可命令式安装软件包。 | 对 `apt`、`pkg` 的 schema、validation、安装程序软件包清单、示例、生成文档保持同步。 |
 
 ## OS 抽象化的实现方针
