@@ -127,7 +127,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Run three-VM CARP acceptance
-        run: scripts/ci/freebsd-carp-multivm.sh
+        run: bash scripts/ci/freebsd-carp-multivm.sh
       - name: Upload CARP multi-VM evidence
         if: always()
         uses: actions/upload-artifact@v6
