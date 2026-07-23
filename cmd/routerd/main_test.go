@@ -1958,6 +1958,73 @@ func TestCleanupUnsupportedLegacyObjectStatusesKeepsWhenFalseStatus(t *testing.T
 	}
 }
 
+func TestCleanupUnsupportedLegacyObjectStatusesDefersOwnedTunnelInterfaceTeardown(t *testing.T) {
+	for _, targetOS := range []platform.OS{platform.OSLinux, platform.OSFreeBSD} {
+		t.Run(string(targetOS), func(t *testing.T) {
+			store := &fakeStaleCleanupStore{statuses: []routerstate.ObjectStatus{
+				{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface", Name: "old-gif", Status: map[string]any{"interfaceOwned": true, "managedBy": "routerd"}},
+				{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface", Name: "foreign-gif", Status: map[string]any{"interfaceOwned": false}},
+				{APIVersion: api.NetAPIVersion, Kind: "TailscaleNode", Name: "old", Status: map[string]any{"phase": "Error"}},
+			}}
+			result, err := cleanupUnsupportedLegacyObjectStatusesForOS(&api.Router{}, store, filepath.Join(t.TempDir(), "routerd.db"), time.Now().UTC(), nil, targetOS)
+			if err != nil {
+				t.Fatalf("cleanup: %v", err)
+			}
+			if result.Skipped || len(result.Removed) != 2 {
+				t.Fatalf("cleanup result = %+v, want foreign TunnelInterface and TailscaleNode only", result)
+			}
+			if got := strings.Join(store.deleted, ","); got != api.HybridAPIVersion+"/TunnelInterface/foreign-gif,"+api.NetAPIVersion+"/TailscaleNode/old" {
+				t.Fatalf("deleted = %s, want only non-owned stale rows", got)
+			}
+		})
+	}
+}
+
+func TestServePreGCLeavesOwnedTunnelInterfaceForControllerTeardown(t *testing.T) {
+	for _, targetOS := range []platform.OS{platform.OSLinux, platform.OSFreeBSD} {
+		t.Run(string(targetOS), func(t *testing.T) {
+			statePath := filepath.Join(t.TempDir(), "routerd.db")
+			store, err := routerstate.OpenSQLite(statePath)
+			if err != nil {
+				t.Fatalf("open state: %v", err)
+			}
+			defer store.Close()
+			if err := store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", "old", map[string]any{
+				"managedBy": "routerd", "interfaceOwned": true, "ifname": "old-tun",
+			}); err != nil {
+				t.Fatalf("save owned tunnel status: %v", err)
+			}
+			if _, err := cleanupUnsupportedLegacyObjectStatusesForOS(&api.Router{}, store, statePath, time.Now().UTC(), nil, targetOS); err != nil {
+				t.Fatalf("pre-controller cleanup: %v", err)
+			}
+			if status := store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "old"); !status["interfaceOwned"].(bool) {
+				t.Fatalf("owned tunnel status removed before controller: %#v", status)
+			}
+			var calls [][]string
+			controller := controllerchain.TunnelInterfaceController{
+				Router: &api.Router{}, Store: store, OS: targetOS,
+				Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+					calls = append(calls, append([]string{name}, args...))
+					return nil, nil
+				},
+			}
+			if err := controller.Reconcile(context.Background()); err != nil {
+				t.Fatalf("controller teardown: %v", err)
+			}
+			want := []string{"ip", "link", "del", "dev", "old-tun"}
+			if targetOS == platform.OSFreeBSD {
+				want = []string{"ifconfig", "old-tun", "destroy"}
+			}
+			if len(calls) != 1 || !reflect.DeepEqual(calls[0], want) {
+				t.Fatalf("calls = %#v, want %#v", calls, want)
+			}
+			if status := store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "old"); len(status) != 0 {
+				t.Fatalf("status after controller teardown = %#v, want none", status)
+			}
+		})
+	}
+}
+
 func TestCleanupUnsupportedLegacyObjectStatusesUsesDynamicEffectiveView(t *testing.T) {
 	now := time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)
 	owner := []api.OwnerRef{{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile", Name: "fabric"}}

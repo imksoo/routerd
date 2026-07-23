@@ -1236,5 +1236,31 @@ func TestTunnelInterfaceControllerFreeBSDStaleCleanup(t *testing.T) {
 	}
 }
 
+func TestTunnelInterfaceControllerLinuxStaleCleanup(t *testing.T) {
+	store := mapStore{}
+	if err := store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", "old-gre", map[string]any{
+		"phase": "Up", "managedBy": "routerd", "ifname": "gre7", "interfaceOwned": true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var calls [][]string
+	controller := TunnelInterfaceController{
+		Router: &api.Router{}, Store: store, OS: platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, append([]string{name}, args...))
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(calls, [][]string{{"ip", "link", "del", "dev", "gre7"}}) {
+		t.Fatalf("calls = %#v", calls)
+	}
+	if _, ok := store[api.HybridAPIVersion+"/TunnelInterface/old-gre"]; ok {
+		t.Fatal("stale Linux tunnel status was not removed")
+	}
+}
+
 var _ routerstate.ObjectStatusLister = mapStore{}
 var _ routerstate.ObjectDeleteStore = mapStore{}
