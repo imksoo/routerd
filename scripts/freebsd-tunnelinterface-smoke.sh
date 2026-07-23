@@ -46,7 +46,7 @@ emit_initial_failure() {
 		apply-initial.log gif0.add gif0.initial.status gif.ping gif.proto4 gif.outer.before gif.outer.after gre0.add gre0.initial.status gre.ping gre.proto47 \
 		apply-second.log gif0.second.status gre0.second.status \
 		apply-change.log gif0.change gre0.change \
-		apply-gre-key-zero.log gre0.key-zero.status gre.key-zero.ping \
+		apply-gre-key-zero.log gre0.key-zero.status gre.key-zero.ping gre.key-zero.proto47 \
 		apply-restart.log gif0.restart.status gre0.restart.status gre.rekey.ping gre.rekey.proto47 \
 		apply-remove.log \
 		apply-foreign.log gif0.foreign.before gif0.foreign.status gif0.foreign.after \
@@ -209,7 +209,7 @@ else
   fi
 fi
 capture_pid=
-r1cmd tcpdump -n -v -c 1 -i "$epair_a" 'ip proto 47' >"$work/gre.proto47" 2>&1 &
+timeout 10 jexec "$r1" tcpdump -n -v -c 1 -i "$epair_a" "ip proto 47 and src host $outer_a" >"$work/gre.proto47" 2>&1 &
 capture_pid=$!
 sleep 1
 if ! r1cmd ping -n -c 3 -S 10.253.90.1 10.253.90.2 >"$work/gre.ping" 2>&1; then
@@ -220,6 +220,7 @@ grep -F '3 packets transmitted, 3 packets received' "$work/gre.ping"
 wait "$capture_pid"
 capture_pid=
 # releng/14.3 contrib/tcpdump/print-gre.c prints this when GRE_KP is set.
+grep -F "$outer_a > $outer_b: GREv0" "$work/gre.proto47"
 grep -F 'key=0x2a' "$work/gre.proto47"
 echo 'freebsd-tunnelinterface-stage=initial-dataplane=ok'
 
@@ -240,14 +241,23 @@ grep -F 'mtu 1300' "$work/gif0.change"
 grep -F 'mtu 1300' "$work/gre0.change"
 echo 'freebsd-tunnelinterface-stage=change=ok'
 
-# FreeBSD gre(4) defines key zero as disabling the key option. The controller
-# must apply that supported clear instead of retaining key 42.
+# FreeBSD gre(4) defines key zero as disabling the outgoing key option. The
+# releng/14.3 receive path does not enforce incoming keys, so verify the
+# emitted r1 GRE header instead of treating peer reply delivery as a reject.
 write_config 1300 0
 apply_once gre-key-zero
 status_row gre0 "$work/gre0.key-zero.status"
 jq -e '.phase == "Up" and (.key | not) and .interfaceOwned == true' "$work/gre0.key-zero.status" >/dev/null
-if r1cmd ping -n -c 1 -S 10.253.90.1 10.253.90.2 >"$work/gre.key-zero.ping" 2>&1; then
-	echo 'GRE peer still accepted traffic after grekey 0' >&2
+capture_pid=
+timeout 10 jexec "$r1" tcpdump -n -v -c 1 -i "$epair_a" "ip proto 47 and src host $outer_a" >"$work/gre.key-zero.proto47" 2>&1 &
+capture_pid=$!
+sleep 1
+r1cmd ping -n -c 1 -S 10.253.90.1 10.253.90.2 >"$work/gre.key-zero.ping" 2>&1
+wait "$capture_pid"
+capture_pid=
+grep -F "$outer_a > $outer_b: GREv0" "$work/gre.key-zero.proto47"
+if grep -F 'key=' "$work/gre.key-zero.proto47" >/dev/null; then
+	echo 'GRE key remained present after grekey 0' >&2
 	exit 1
 fi
 echo 'freebsd-tunnelinterface-stage=gre-key-zero=ok'
@@ -261,7 +271,7 @@ status_row gre0 "$work/gre0.restart.status"
 jq -e '.phase == "Up" and .reason == "AlreadyConfigured" and .interfaceOwned == true' "$work/gif0.restart.status" >/dev/null
 jq -e '.phase == "Up" and .key == 42 and .interfaceOwned == true' "$work/gre0.restart.status" >/dev/null
 capture_pid=
-r1cmd tcpdump -n -v -c 1 -i "$epair_a" 'ip proto 47' >"$work/gre.rekey.proto47" 2>&1 &
+timeout 10 jexec "$r1" tcpdump -n -v -c 1 -i "$epair_a" "ip proto 47 and src host $outer_a" >"$work/gre.rekey.proto47" 2>&1 &
 capture_pid=$!
 sleep 1
 if ! r1cmd ping -n -c 3 -S 10.253.90.1 10.253.90.2 >"$work/gre.rekey.ping" 2>&1; then
@@ -271,6 +281,7 @@ fi
 grep -F '3 packets transmitted, 3 packets received' "$work/gre.rekey.ping"
 wait "$capture_pid"
 capture_pid=
+grep -F "$outer_a > $outer_b: GREv0" "$work/gre.rekey.proto47"
 grep -F 'key=0x2a' "$work/gre.rekey.proto47"
 echo 'freebsd-tunnelinterface-stage=restart=ok'
 
