@@ -226,7 +226,7 @@ fi
 
 if [ "${ROUTERD_FREEBSD_TAILSCALE_BOUNDARY_RUNTIME:-false}" = true ]; then
   tailscale_evidence="$work/tailscale-boundary"
-  sh scripts/freebsd-tailscale-boundary-smoke.sh --routerd "$routerd" --evidence-dir "$tailscale_evidence"
+  /usr/bin/timeout -k 2 180 sh scripts/freebsd-tailscale-boundary-smoke.sh --routerd "$routerd" --evidence-dir "$tailscale_evidence"
   cat "$tailscale_evidence/summary.log"
   cat "$tailscale_evidence/result"
 fi

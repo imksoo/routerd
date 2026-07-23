@@ -5,6 +5,7 @@
 # production-generated FreeBSD rc.d lifecycle up to that boundary and refuses
 # to touch a pre-existing tailscaled service.
 set -eu
+exec 3>&2
 
 routerd=
 evidence_dir=
@@ -37,6 +38,7 @@ run_bounded() {
   shift 3
   started=$(date +%s)
   printf 'step=%s begin\n' "$label" >>"$evidence_dir/timing.log"
+  printf 'step=%s begin\n' "$label" >&3
   if timeout -k 2 "$seconds" "$@" >"$log" 2>&1; then
     command_rc=0
   else
@@ -44,6 +46,10 @@ run_bounded() {
   fi
   ended=$(date +%s)
   printf 'step=%s rc=%s elapsed=%ss\n' "$label" "$command_rc" "$((ended - started))" >>"$evidence_dir/timing.log"
+  printf 'step=%s rc=%s elapsed=%ss\n' "$label" "$command_rc" "$((ended - started))" >&3
+  if [ "$command_rc" -eq 124 ]; then
+    printf 'step=%s timed-out\n' "$label" >&3
+  fi
   return "$command_rc"
 }
 
@@ -57,6 +63,17 @@ cleanup() {
     if run_bounded tailscaled-status-after-stop 15 "$evidence_dir/tailscaled-status-after-stop.log" service tailscaled onestatus; then
       rc=1
     fi
+  fi
+  if [ "$rc" -ne 0 ]; then
+    printf 'tailscale-boundary failure timing\n' >&3
+    if [ -r "$evidence_dir/timing.log" ]; then
+      cat "$evidence_dir/timing.log" >&3 || true
+    fi
+    for log in "$evidence_dir"/*.log; do
+      [ -r "$log" ] || continue
+      printf 'tailscale-boundary failure log=%s\n' "$log" >&3
+      cat "$log" >&3 || true
+    done
   fi
   rm -rf "$work"
   exit "$rc"
@@ -86,7 +103,9 @@ grep -F '/usr/local/bin/tailscale' "$script" >>"$evidence_dir/render-service.log
 
 # The generated lifecycle owns the start attempt. Credential-free enrollment
 # must fail actionably and unwind its service ownership.
-if run_bounded tailscale-owned-start 45 "$evidence_dir/tailscale-up.log" "$script" start; then
+# Production's bounded start can consume up to 75 seconds including rollback;
+# keep this fixture ceiling above it so it remains an outer safety guard.
+if run_bounded tailscale-owned-start 100 "$evidence_dir/tailscale-up.log" "$script" start; then
   echo "unexpected authenticated Tailscale enrollment in credential-free CI" >&2
   exit 1
 fi

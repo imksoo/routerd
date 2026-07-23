@@ -105,7 +105,6 @@ spec:
         vrrp:
           virtualRouterID: 232
           priority: $priority
-          advertInterval: 1s
           authentication: lifecycle-carp-secret
 EOF
 }

@@ -296,12 +296,12 @@ func FreeBSDTailscaleRCDScript(name string, spec api.TailscaleNodeSpec) []byte {
 		b.WriteString(name + "_load_auth_key() {\n  auth_key=\n  if [ -n \"${auth_key_file}\" ]; then\n    [ -r \"${auth_key_file}\" ] || { echo \"tailscale auth-key file is unreadable\" >&2; return 1; }\n    auth_key_found=0\n    while IFS= read -r line || [ -n \"${line}\" ]; do\n      case \"${line}\" in\n        \"${auth_key_env}\"=*)\n          [ \"${auth_key_found}\" -eq 0 ] || { echo \"tailscale auth-key file has duplicate selected variable\" >&2; return 1; }\n          auth_key=${line#*=}\n          auth_key_found=1\n          ;;\n      esac\n    done < \"${auth_key_file}\"\n    [ \"${auth_key_found}\" -eq 1 ] || { echo \"tailscale auth-key variable is missing\" >&2; return 1; }\n  else\n    auth_key=$(/usr/bin/printenv \"${auth_key_env}\") || { echo \"tailscale auth-key environment variable is missing\" >&2; return 1; }\n  fi\n  [ -n \"${auth_key}\" ] || { echo \"tailscale auth-key is empty\" >&2; return 1; }\n}\n\n")
 	}
 	b.WriteString("start_cmd=\"${name}_start\"\nstop_cmd=\"${name}_stop\"\nstatus_cmd=\"${name}_status\"\n\n")
-	b.WriteString(name + "_rollback() {\n  [ \"${started_here:-0}\" = 1 ] || return 0\n  service tailscaled onestop >/dev/null 2>&1 || true\n  rm -f \"${marker}\" \"${marker}.$$\"\n}\n\n")
+	b.WriteString(name + "_rollback() {\n  [ \"${started_here:-0}\" = 1 ] || return 0\n  /usr/bin/timeout -k 2 15 service tailscaled onestop >/dev/null 2>&1\n  stop_rc=$?\n  if [ \"${stop_rc}\" -ne 0 ]; then\n    /usr/bin/timeout -k 2 15 service tailscaled onestatus >/dev/null 2>&1\n    status_rc=$?\n    if [ \"${status_rc}\" -ne 1 ]; then\n      echo \"tailscaled service stop failed; retaining ownership marker\" >&2\n      return \"${stop_rc}\"\n    fi\n  fi\n  rm -f \"${marker}\" \"${marker}.$$\"\n}\n\n")
 	b.WriteString(name + "_start() {\n  started_here=0\n")
 	if authKeyEnv != "" {
 		b.WriteString("  " + name + "_load_auth_key || return 1\n")
 	}
-	b.WriteString("  if service tailscaled onestatus >/dev/null 2>&1; then\n    [ -r \"${marker}\" ] || { echo \"foreign tailscaled service is already running; refusing mutation\" >&2; return 1; }\n    read owned < \"${marker}\"\n    [ \"${owned}\" = \"${name}\" ] || { echo \"routerd ownership marker mismatch\" >&2; return 1; }\n  else\n    service tailscaled onestart || return 1\n    started_here=1\n    if ! mkdir -p \"${marker_dir}\" || ! printf '%s\\n' \"${name}\" > \"${marker}.$$\" || ! mv -f \"${marker}.$$\" \"${marker}\"; then\n      echo \"unable to publish routerd tailscaled ownership marker\" >&2\n      " + name + "_rollback\n      return 1\n    fi\n  fi\n  ")
+	b.WriteString("  /usr/bin/timeout -k 2 15 service tailscaled onestatus >/dev/null 2>&1\n  status_rc=$?\n  if [ \"${status_rc}\" -eq 0 ]; then\n    [ -r \"${marker}\" ] || { echo \"foreign tailscaled service is already running; refusing mutation\" >&2; return 1; }\n    read owned < \"${marker}\"\n    [ \"${owned}\" = \"${name}\" ] || { echo \"routerd ownership marker mismatch\" >&2; return 1; }\n  elif [ \"${status_rc}\" -eq 1 ]; then\n    if ! mkdir -p \"${marker_dir}\" || ! printf '%s\\n' \"${name}\" > \"${marker}.$$\" || ! mv -f \"${marker}.$$\" \"${marker}\"; then\n      echo \"unable to publish routerd tailscaled ownership marker\" >&2\n      return 1\n    fi\n    started_here=1\n    /usr/bin/timeout -k 2 15 service tailscaled onestart >/dev/null 2>&1\n    rc=$?\n    if [ \"${rc}\" -ne 0 ]; then\n      " + name + "_rollback || true\n      echo \"tailscaled service start failed\" >&2\n      return \"${rc}\"\n    fi\n  else\n    echo \"tailscaled service status check failed\" >&2\n    return \"${status_rc}\"\n  fi\n  /usr/bin/timeout -k 2 45 ")
 	for i, arg := range args {
 		if i > 0 {
 			b.WriteByte(' ')
@@ -312,9 +312,11 @@ func FreeBSDTailscaleRCDScript(name string, spec api.TailscaleNodeSpec) []byte {
 			b.WriteString(shellSingleQuote(arg))
 		}
 	}
-	b.WriteString(" >/dev/null 2>&1\n  rc=$?\n  if [ \"${rc}\" -ne 0 ]; then\n    " + name + "_rollback\n    echo \"tailscale enrollment failed\" >&2\n    return \"${rc}\"\n  fi\n}\n\n")
-	b.WriteString(name + "_stop() {\n  [ -r \"${marker}\" ] || { echo \"foreign tailscaled service ownership is unknown; refusing mutation\" >&2; return 1; }\n  read owned < \"${marker}\"\n  [ \"${owned}\" = \"${name}\" ] || { echo \"routerd ownership marker mismatch\" >&2; return 1; }\n  " + shellSingleQuote(args[0]) + " down || return 1\n  service tailscaled onestop || return 1\n  rm -f \"${marker}\"\n}\n\n")
-	b.WriteString(name + "_status() {\n  [ -r \"${marker}\" ] && service tailscaled onestatus\n}\n\nload_rc_config $name\n: ${" + name + "_enable:=\"YES\"}\nrun_rc_command \"$1\"\n")
+	b.WriteString(" >/dev/null 2>&1\n  rc=$?\n  if [ \"${rc}\" -ne 0 ]; then\n    " + name + "_rollback || true\n    echo \"tailscale enrollment failed\" >&2\n    return \"${rc}\"\n  fi\n}\n\n")
+	// tailscale up has a CLI-native timeout, while the service lifecycle needs
+	// a separate FreeBSD base timeout bound.
+	b.WriteString(name + "_stop() {\n  [ -r \"${marker}\" ] || { echo \"foreign tailscaled service ownership is unknown; refusing mutation\" >&2; return 1; }\n  read owned < \"${marker}\"\n  [ \"${owned}\" = \"${name}\" ] || { echo \"routerd ownership marker mismatch\" >&2; return 1; }\n  /usr/bin/timeout -k 2 45 " + shellSingleQuote(args[0]) + " down >/dev/null 2>&1\n  rc=$?\n  if [ \"${rc}\" -ne 0 ]; then\n    started_here=1\n    " + name + "_rollback || true\n    echo \"tailscale shutdown failed\" >&2\n    return \"${rc}\"\n  fi\n  started_here=1\n  " + name + "_rollback\n}\n\n")
+	b.WriteString(name + "_status() {\n  [ -r \"${marker}\" ] && /usr/bin/timeout -k 2 15 service tailscaled onestatus\n}\n\nload_rc_config $name\n: ${" + name + "_enable:=\"YES\"}\nrun_rc_command \"$1\"\n")
 	return b.Bytes()
 }
 
