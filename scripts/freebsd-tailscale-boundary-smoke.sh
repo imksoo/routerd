@@ -21,15 +21,21 @@ done
 [ "$(uname -s)" = FreeBSD ]
 command -v tailscale >/dev/null
 pidfile=/var/run/tailscaled.pid
-procstat_bin=/usr/bin/procstat
 tailscaled_running() {
   [ -r "$pidfile" ] || return 1
-  IFS= read -r tailscaled_pid <"$pidfile" || return 1
+  tailscaled_pid=
+  IFS= read -r tailscaled_pid <"$pidfile" || [ -n "$tailscaled_pid" ] || return 1
   case "$tailscaled_pid" in ''|*[!0-9]*) return 1 ;; esac
-  kill -0 "$tailscaled_pid" 2>/dev/null || return 1
-  tailscaled_path=$($procstat_bin -b "$tailscaled_pid" 2>/dev/null | awk 'NR > 1 { print $NF; exit }') || return 1
-  [ "$tailscaled_path" = /usr/local/bin/tailscaled ]
+  kill -0 "$tailscaled_pid" 2>/dev/null
 }
+clear_stale_tailscaled_pidfile() {
+  test -e "$pidfile" || return 0
+  tailscaled_pid=
+  IFS= read -r tailscaled_pid <"$pidfile" || [ -n "$tailscaled_pid" ] || tailscaled_pid=
+  case "$tailscaled_pid" in ''|*[!0-9]*) rm -f "$pidfile"; return 0 ;; esac
+  kill -0 "$tailscaled_pid" 2>/dev/null || rm -f "$pidfile"
+}
+clear_stale_tailscaled_pidfile
 tailscaled_running && {
   echo "foreign tailscaled service is already running; refusing mutation" >&2
   exit 1

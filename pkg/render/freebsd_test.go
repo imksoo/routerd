@@ -328,7 +328,7 @@ func TestFreeBSDRendersTailscaleAndFirewallLoggerRCDScripts(t *testing.T) {
 	if count := strings.Count(tailscale, "--timeout=30s"); count != 1 {
 		t.Fatalf("tailscale timeout argument count = %d, want 1:\n%s", count, tailscale)
 	}
-	if !strings.Contains(tailscale, "service tailscaled onestart >/dev/null 2>&1 &") || !strings.Contains(tailscale, "pidfile=\"${TAILSCALED_PIDFILE:-/var/run/tailscaled.pid}\"") || !strings.Contains(tailscale, "procstat_bin=\"${PROCSTAT_BIN:-/usr/bin/procstat}\"") || !strings.Contains(tailscale, "tailscaled_running") || !strings.Contains(tailscale, "\"${procstat_bin}\" -b \"${tailscaled_pid}\"") || !strings.Contains(tailscale, "/usr/bin/timeout -k 2 15 service tailscaled onestop") {
+	if !strings.Contains(tailscale, "service tailscaled onestart >/dev/null 2>&1 &") || !strings.Contains(tailscale, "pidfile=\"${TAILSCALED_PIDFILE:-/var/run/tailscaled.pid}\"") || !strings.Contains(tailscale, "tailscaled_running") || !strings.Contains(tailscale, "clear_stale_tailscaled_pidfile") || !strings.Contains(tailscale, "/usr/bin/timeout -k 2 15 service tailscaled onestop") {
 		t.Fatalf("production rc.d script must asynchronously start and bounded-poll the canonical tailscaled pidfile:\n%s", tailscale)
 	}
 	if !strings.Contains(tailscale, "/usr/bin/timeout -k 2 45 '/usr/local/bin/tailscale' 'up'") {
@@ -554,7 +554,7 @@ exit 0
 	}
 }
 
-func TestFreeBSDTailscaleRCDPidfileRequiresLiveTailscaledProcess(t *testing.T) {
+func TestFreeBSDTailscaleRCDPidfileOwnershipIsFailClosed(t *testing.T) {
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")
 	if err := os.Mkdir(binDir, 0o755); err != nil {
@@ -569,7 +569,7 @@ func TestFreeBSDTailscaleRCDPidfileRequiresLiveTailscaledProcess(t *testing.T) {
 		_ = proc.Wait()
 	})
 	pidfile := filepath.Join(dir, "tailscaled.pid")
-	if err := os.WriteFile(pidfile, []byte(strconv.Itoa(proc.Process.Pid)+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(pidfile, []byte(strconv.Itoa(proc.Process.Pid)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	serviceLog := filepath.Join(dir, "service.log")
@@ -582,40 +582,41 @@ func TestFreeBSDTailscaleRCDPidfileRequiresLiveTailscaledProcess(t *testing.T) {
 	if end < 0 {
 		t.Fatalf("generated rc.d script lacks load_rc_config:\n%s", base)
 	}
-	run := func(t *testing.T, binaryPath, command string) error {
+	run := func(t *testing.T, command string) error {
 		t.Helper()
 		service := "#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$2\" >> \"$SERVICE_LOG\"\ncase \"$2\" in onestart) exit 9;; onestop) exit 0;; esac\n"
 		if err := os.WriteFile(filepath.Join(binDir, "service"), []byte(service), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		procstat := "#!/bin/sh\nprintf 'PID COMM OSREL PATH\\n%s tailscaled 1400000 %s\\n' \"$2\" \"$PROCSTAT_PATH\"\n"
-		if err := os.WriteFile(filepath.Join(binDir, "procstat"), []byte(procstat), 0o755); err != nil {
-			t.Fatal(err)
-		}
 		cmd := exec.Command("sh", "-c", base[:end]+command+"\nexit $?\n")
-		cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"), "SERVICE_LOG="+serviceLog, "TAILSCALED_PIDFILE="+pidfile, "PROCSTAT_BIN="+filepath.Join(binDir, "procstat"), "PROCSTAT_PATH="+binaryPath)
+		cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"), "SERVICE_LOG="+serviceLog, "TAILSCALED_PIDFILE="+pidfile)
 		return cmd.Run()
 	}
-	if err := run(t, "/usr/local/bin/other-daemon", name+"_status"); err == nil {
-		t.Fatal("reused wrong-process pidfile was treated as live tailscaled status")
+	if err := run(t, name+"_status"); err == nil {
+		t.Fatal("live pidfile without ownership marker was treated as managed status")
 	}
-	err := run(t, "/usr/local/bin/other-daemon", name+"_start")
+	err := run(t, name+"_start")
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
+		t.Fatalf("live foreign pidfile start = %v, want refusal exit 1", err)
+	}
+	if _, err := os.Stat(serviceLog); !os.IsNotExist(err) {
+		t.Fatalf("live foreign pidfile invoked onestart: %v", err)
+	}
+	_ = proc.Process.Kill()
+	_ = proc.Wait()
+	if err := os.WriteFile(pidfile, []byte("999999"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = run(t, name+"_start")
 	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 9 {
-		t.Fatalf("reused wrong-process pidfile start = %v, want service start exit 9", err)
+		t.Fatalf("dead stale pidfile start = %v, want owned service start exit 9", err)
 	}
 	data, err := os.ReadFile(serviceLog)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(data), "tailscaled onestart") {
-		t.Fatalf("reused wrong-process pidfile prevented owned start: %s", data)
-	}
-	if err := run(t, "/usr/local/bin/tailscaled", name+"_status"); err == nil {
-		t.Fatal("live tailscaled pidfile without ownership marker was treated as managed status")
-	}
-	err = run(t, "/usr/local/bin/tailscaled", name+"_start")
-	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
-		t.Fatalf("live foreign tailscaled start = %v, want refusal exit 1", err)
+		t.Fatalf("dead stale pidfile did not permit owned start: %s", data)
 	}
 }
 
