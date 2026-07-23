@@ -105,7 +105,7 @@ grep -F '/usr/local/bin/tailscale' "$script" >>"$evidence_dir/render-service.log
 # must fail actionably and unwind its service ownership.
 # Production's bounded start can consume up to 75 seconds including rollback;
 # keep this fixture ceiling above it so it remains an outer safety guard.
-if run_bounded tailscale-owned-start 100 "$evidence_dir/tailscale-up.log" "$script" start; then
+if run_bounded tailscale-owned-start 130 "$evidence_dir/tailscale-up.log" "$script" start; then
   echo "unexpected authenticated Tailscale enrollment in credential-free CI" >&2
   exit 1
 fi

@@ -327,8 +327,8 @@ func TestFreeBSDRendersTailscaleAndFirewallLoggerRCDScripts(t *testing.T) {
 	if count := strings.Count(tailscale, "--timeout=30s"); count != 1 {
 		t.Fatalf("tailscale timeout argument count = %d, want 1:\n%s", count, tailscale)
 	}
-	if !strings.Contains(tailscale, "/usr/bin/timeout -k 2 15 service tailscaled onestart") || !strings.Contains(tailscale, "/usr/bin/timeout -k 2 15 service tailscaled onestop") {
-		t.Fatalf("production rc.d script must bound tailscaled service lifecycle:\n%s", tailscale)
+	if !strings.Contains(tailscale, "service tailscaled onestart >/dev/null 2>&1 &") || !strings.Contains(tailscale, "/usr/bin/timeout -k 2 2 service tailscaled onestatus") || !strings.Contains(tailscale, "/usr/bin/timeout -k 2 15 service tailscaled onestop") {
+		t.Fatalf("production rc.d script must asynchronously start and bounded-poll tailscaled readiness:\n%s", tailscale)
 	}
 	if !strings.Contains(tailscale, "/usr/bin/timeout -k 2 45 '/usr/local/bin/tailscale' 'up'") {
 		t.Fatalf("production rc.d must bound tailscale up as well as use the shared CLI timeout:\n%s", tailscale)
@@ -359,7 +359,7 @@ func TestFreeBSDTailscaleRCDStartPropagatesFailureAndRollsBackOwnedService(t *te
 	}
 	serviceLog := filepath.Join(dir, "service.log")
 	service := filepath.Join(binDir, "service")
-	if err := os.WriteFile(service, []byte("#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$2\" >> \"$SERVICE_LOG\"\ncase \"$2\" in onestatus) exit 1;; *) exit 0;; esac\n"), 0o755); err != nil {
+	if err := os.WriteFile(service, []byte("#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$2\" >> \"$SERVICE_LOG\"\ncase \"$2\" in onestatus) test -e \"$SERVICE_STATE\";; onestart) : >\"$SERVICE_STATE\"; sleep 1;; onestop) rm -f \"$SERVICE_STATE\";; *) exit 0;; esac\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	tailscale := filepath.Join(binDir, "tailscale")
@@ -377,7 +377,7 @@ func TestFreeBSDTailscaleRCDStartPropagatesFailureAndRollsBackOwnedService(t *te
 	}
 	harness := script[:end] + name + "_start\nexit $?\n"
 	cmd := exec.Command("sh", "-c", harness)
-	cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"), "SERVICE_LOG="+serviceLog)
+	cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"), "SERVICE_LOG="+serviceLog, "SERVICE_STATE="+filepath.Join(dir, "service.state"))
 	err := cmd.Run()
 	if err == nil {
 		t.Fatal("start unexpectedly succeeded after tailscale up failure")
@@ -437,6 +437,37 @@ func TestFreeBSDTailscaleRCDServiceStartFailurePropagatesAndRollsBack(t *testing
 	}
 }
 
+func TestFreeBSDTailscaleRCDEarlyZeroExitFailsReadiness(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(dir, "service.log")
+	service := "#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$2\" >> \"$SERVICE_LOG\"\ncase \"$2\" in onestatus) exit 1;; onestart) exit 0;; onestop) exit 0;; esac\n"
+	if err := os.WriteFile(filepath.Join(binDir, "service"), []byte(service), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	name := "routerd_tailscale_early_zero"
+	script := string(FreeBSDTailscaleRCDScript(name, api.TailscaleNodeSpec{}))
+	script = strings.Replace(script, "/var/run/routerd/tailscale", filepath.Join(dir, "markers"), 1)
+	script = strings.Replace(script, ". /etc/rc.subr\n", "", 1)
+	end := strings.Index(script, "load_rc_config $name")
+	cmd := exec.Command("sh", "-c", script[:end]+name+"_start\nexit $?\n")
+	cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"), "SERVICE_LOG="+log)
+	err := cmd.Run()
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
+		t.Fatalf("early-zero start exit = %v, want 1", err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "tailscaled onestop") {
+		t.Fatalf("early-zero did not roll back: %s", data)
+	}
+}
+
 func TestFreeBSDTailscaleRCDTimeoutsWholeStartAndRollsBack(t *testing.T) {
 	run := func(t *testing.T, serviceBody, tailscaleBody string) {
 		t.Helper()
@@ -458,6 +489,7 @@ func TestFreeBSDTailscaleRCDTimeoutsWholeStartAndRollsBack(t *testing.T) {
 		script := string(FreeBSDTailscaleRCDScript(name, api.TailscaleNodeSpec{BinaryPath: tailscale}))
 		script = strings.Replace(script, "/var/run/routerd/tailscale", markerDir, 1)
 		script = strings.Replace(script, ". /etc/rc.subr\n", "", 1)
+		script = strings.Replace(script, "$(date +%s) + 15", "$(date +%s) + 1", 1)
 		script = strings.ReplaceAll(script, "/usr/bin/timeout -k 2 15", "timeout -k 1 1")
 		script = strings.ReplaceAll(script, "/usr/bin/timeout -k 2 45", "timeout -k 1 1")
 		end := strings.Index(script, "load_rc_config $name")
@@ -465,7 +497,7 @@ func TestFreeBSDTailscaleRCDTimeoutsWholeStartAndRollsBack(t *testing.T) {
 			t.Fatalf("generated rc.d script lacks load_rc_config:\n%s", script)
 		}
 		cmd := exec.Command("sh", "-c", script[:end]+name+"_start\nexit $?\n")
-		cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"), "SERVICE_LOG="+serviceLog)
+		cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"), "SERVICE_LOG="+serviceLog, "SERVICE_STATE="+filepath.Join(dir, "service.state"))
 		err := cmd.Run()
 		if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 124 {
 			t.Fatalf("timeout start exit = %v, want 124", err)
@@ -482,10 +514,10 @@ func TestFreeBSDTailscaleRCDTimeoutsWholeStartAndRollsBack(t *testing.T) {
 		}
 	}
 	t.Run("service-start", func(t *testing.T) {
-		run(t, "case \"$2\" in onestatus) exit 1;; onestart) sleep 5;; onestop) exit 0;; *) exit 0;; esac\n", "exit 0\n")
+		run(t, "case \"$2\" in onestatus) exit 1;; onestart) sleep 5;; onestop) rm -f \"$SERVICE_STATE\";; *) exit 0;; esac\n", "exit 0\n")
 	})
 	t.Run("tailscale-up", func(t *testing.T) {
-		run(t, "case \"$2\" in onestatus) exit 1;; onestart|onestop) exit 0;; *) exit 0;; esac\n", "sleep 5\n")
+		run(t, "case \"$2\" in onestatus) test -e \"$SERVICE_STATE\";; onestart) : >\"$SERVICE_STATE\"; sleep 5;; onestop) rm -f \"$SERVICE_STATE\";; *) exit 0;; esac\n", "sleep 5\n")
 	})
 }
 
@@ -496,7 +528,7 @@ func TestFreeBSDTailscaleRCDLoadsSelectedAuthKeyFileWithoutShellEvaluation(t *te
 		t.Fatal(err)
 	}
 	service := filepath.Join(binDir, "service")
-	if err := os.WriteFile(service, []byte("#!/bin/sh\ncase \"$2\" in onestatus) exit 1;; *) exit 0;; esac\n"), 0o755); err != nil {
+	if err := os.WriteFile(service, []byte("#!/bin/sh\ncase \"$2\" in onestatus) test -e \"$SERVICE_STATE\";; onestart) : >\"$SERVICE_STATE\"; sleep 1;; onestop) rm -f \"$SERVICE_STATE\";; *) exit 0;; esac\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	tailscale := filepath.Join(binDir, "tailscale")
@@ -518,7 +550,7 @@ func TestFreeBSDTailscaleRCDLoadsSelectedAuthKeyFileWithoutShellEvaluation(t *te
 	argsFile := filepath.Join(dir, "tailscale.args")
 	injected := filepath.Join(dir, "injected")
 	cmd := exec.Command("sh", "-c", script[:end]+name+"_start\n")
-	cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"), "TAILSCALE_ARGS="+argsFile, "INJECTED="+injected)
+	cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"), "TAILSCALE_ARGS="+argsFile, "INJECTED="+injected, "SERVICE_STATE="+filepath.Join(dir, "service.state"))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("start failed: %v\n%s", err, output)
@@ -550,7 +582,7 @@ func TestFreeBSDTailscaleRCDLoadsAuthKeyEnvAndFailsBeforeServiceMutation(t *test
 	}
 	serviceLog := filepath.Join(dir, "service.log")
 	service := filepath.Join(binDir, "service")
-	if err := os.WriteFile(service, []byte("#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$2\" >> \"$SERVICE_LOG\"\ncase \"$2\" in onestatus) exit 1;; *) exit 0;; esac\n"), 0o755); err != nil {
+	if err := os.WriteFile(service, []byte("#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$2\" >> \"$SERVICE_LOG\"\ncase \"$2\" in onestatus) test -e \"$SERVICE_STATE\";; onestart) : >\"$SERVICE_STATE\"; sleep 1;; onestop) rm -f \"$SERVICE_STATE\";; *) exit 0;; esac\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	tailscale := filepath.Join(binDir, "tailscale")
@@ -567,7 +599,7 @@ func TestFreeBSDTailscaleRCDLoadsAuthKeyEnvAndFailsBeforeServiceMutation(t *test
 			t.Fatalf("generated rc.d script lacks load_rc_config:\n%s", script)
 		}
 		cmd := exec.Command("sh", "-c", script[:end]+name+"_start\n")
-		cmd.Env = append(os.Environ(), append([]string{"PATH=" + binDir + ":" + os.Getenv("PATH"), "SERVICE_LOG=" + serviceLog}, env...)...)
+		cmd.Env = append(os.Environ(), append([]string{"PATH=" + binDir + ":" + os.Getenv("PATH"), "SERVICE_LOG=" + serviceLog, "SERVICE_STATE=" + filepath.Join(dir, "service.state")}, env...)...)
 		return cmd.CombinedOutput()
 	}
 

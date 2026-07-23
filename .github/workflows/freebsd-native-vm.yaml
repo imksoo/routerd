@@ -59,13 +59,18 @@ on:
         required: false
         default: false
         type: boolean
+      carp_multivm_runtime:
+        description: Run three-VM FreeBSD CARP acceptance on an isolated L2
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 jobs:
   native-smoke:
-    if: ${{ inputs.arm64_runtime != true }}
+    if: ${{ inputs.arm64_runtime != true && inputs.carp_multivm_runtime != true }}
     name: FreeBSD 14.3 native VM smoke
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -112,6 +117,23 @@ jobs:
         with:
           name: freebsd-native-console-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/routerd-anyvm-console-*
+          if-no-files-found: error
+
+  carp-multivm:
+    if: ${{ inputs.carp_multivm_runtime == true }}
+    name: FreeBSD 14.3 three-VM CARP acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run three-VM CARP acceptance
+        run: scripts/ci/freebsd-carp-multivm.sh
+      - name: Upload CARP multi-VM evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: freebsd-carp-multivm-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/routerd-carp-multivm-*
           if-no-files-found: error
 
   arm64-runtime:

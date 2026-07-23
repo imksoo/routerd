@@ -100,7 +100,7 @@ spec:
       spec:
         family: ipv4
         interface: lifecycle-lan
-        address: 198.18.232.100/24
+        address: 198.18.232.100/32
         mode: vrrp
         vrrp:
           virtualRouterID: 232
@@ -157,20 +157,20 @@ fi
 
 # Exercise both foreign collision predicates independently: desired address
 # under another VHID, then the desired VHID with another address.
-jexec "$jail_a" ifconfig "$a_if" inet vhid 233 advbase 1 advskew 100 pass lifecycle-carp-secret alias 198.18.232.100/24
+jexec "$jail_a" ifconfig "$a_if" inet vhid 233 advbase 1 advskew 100 pass lifecycle-carp-secret alias 198.18.232.100/32
 if run_a start >"$evidence_dir/carp-foreign-address-refusal.log" 2>&1; then
   echo "generated CARP service adopted a foreign desired address" >&2; exit 1
 fi
 jexec "$jail_a" ifconfig "$a_if" >"$evidence_dir/carp-foreign-address-preserved.log"
 grep -F 'vhid 233' "$evidence_dir/carp-foreign-address-preserved.log"
-jexec "$jail_a" ifconfig "$a_if" inet 198.18.232.100/24 -alias
-jexec "$jail_a" ifconfig "$a_if" inet vhid 232 advbase 1 advskew 100 pass lifecycle-carp-secret alias 198.18.232.101/24
+jexec "$jail_a" ifconfig "$a_if" inet 198.18.232.100/32 -alias
+jexec "$jail_a" ifconfig "$a_if" inet vhid 232 advbase 1 advskew 100 pass lifecycle-carp-secret alias 198.18.232.101/32
 if run_a start >"$evidence_dir/carp-foreign-vhid-refusal.log" 2>&1; then
   echo "generated CARP service adopted a foreign matching VHID" >&2; exit 1
 fi
 jexec "$jail_a" ifconfig "$a_if" >"$evidence_dir/carp-foreign-vhid-preserved.log"
 grep -F 'vhid 232' "$evidence_dir/carp-foreign-vhid-preserved.log"
-jexec "$jail_a" ifconfig "$a_if" inet 198.18.232.101/24 -alias
+jexec "$jail_a" ifconfig "$a_if" inet 198.18.232.101/32 -alias
 
 printf '%s\n' \
   'carp-generated-vnet-master-backup-failover-restart-stop=ok' \
