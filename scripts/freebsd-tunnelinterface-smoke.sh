@@ -32,7 +32,7 @@ outer_a=198.18.89.1
 outer_b=198.18.89.2
 
 emit_initial_failure() {
-	for evidence in apply-initial.log gif0.add gif0.initial.status gre0.add gre0.initial.status; do
+	for evidence in apply-initial.log gif0.add gif0.initial.status gif.ping gre0.add gre0.initial.status; do
 		path="$work/$evidence"
 		[ -f "$path" ] || continue
 		echo "--- tunnelinterface $evidence" >&2
@@ -126,7 +126,10 @@ grep -F "tunnel inet $outer_a --> $outer_b" "$work/gif0.add"
 # oracle and must fail if a later reconcile cannot observe key 42.
 jq -e '.phase == "Up" and .key == 42 and .interfaceOwned == true' "$work/gre0.initial.status" >/dev/null
 jq -e '.phase == "Up" and .address == "10.253.89.1/30" and .peerAddress == "10.253.89.2" and .observedAddress == "10.253.89.1/30" and .observedPeerAddress == "10.253.89.2" and .interfaceOwned == true' "$work/gif0.initial.status" >/dev/null
-ping -n -c 3 -S 10.253.89.1 10.253.89.2 >"$work/gif.ping"
+if ! ping -n -c 3 -S 10.253.89.1 10.253.89.2 >"$work/gif.ping" 2>&1; then
+	cat "$work/gif.ping" >&2
+	exit 1
+fi
 grep -F '3 packets transmitted, 3 packets received' "$work/gif.ping"
 
 # A new serve --once process using the persisted state is a controller restart;
