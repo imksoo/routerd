@@ -185,6 +185,7 @@ name='routerd_tailscale_home'
 rcvar="${name}_enable"
 marker_dir='/var/run/routerd/tailscale'
 marker="${marker_dir}/routerd_tailscale_home.owner"
+pidfile="${TAILSCALED_PIDFILE:-/var/run/tailscaled.pid}"
 auth_key_env='TS_AUTHKEY'
 auth_key_file='/usr/local/etc/routerd/secrets/tailscale.env'
 routerd_tailscale_home_load_auth_key() {
@@ -212,17 +213,23 @@ start_cmd="${name}_start"
 stop_cmd="${name}_stop"
 status_cmd="${name}_status"
 
+routerd_tailscale_home_tailscaled_running() {
+  [ -r "${pidfile}" ] || return 1
+  IFS= read -r tailscaled_pid < "${pidfile}" || return 1
+  case "${tailscaled_pid}" in ''|*[!0-9]*) return 1 ;; esac
+  kill -0 "${tailscaled_pid}" 2>/dev/null || return 1
+  tailscaled_comm=$(ps -p "${tailscaled_pid}" -o comm= 2>/dev/null) || return 1
+  case "${tailscaled_comm##*/}" in tailscaled) return 0 ;; *) return 1 ;; esac
+}
+
 routerd_tailscale_home_rollback() {
   [ "${started_here:-0}" = 1 ] || return 0
   /usr/bin/timeout -k 2 15 service tailscaled onestop >/dev/null 2>&1
   stop_rc=$?
-  if [ "${stop_rc}" -ne 0 ]; then
-    /usr/bin/timeout -k 2 15 service tailscaled onestatus >/dev/null 2>&1
-    status_rc=$?
-    if [ "${status_rc}" -ne 1 ]; then
-      echo "tailscaled service stop failed; retaining ownership marker" >&2
-      return "${stop_rc}"
-    fi
+  if routerd_tailscale_home_tailscaled_running; then
+    echo "tailscaled service stop failed; retaining ownership marker" >&2
+    [ "${stop_rc}" -ne 0 ] || stop_rc=1
+    return "${stop_rc}"
   fi
   rm -f "${marker}" "${marker}.$$"
 }
@@ -230,13 +237,11 @@ routerd_tailscale_home_rollback() {
 routerd_tailscale_home_start() {
   started_here=0
   routerd_tailscale_home_load_auth_key || return 1
-  /usr/bin/timeout -k 2 15 service tailscaled onestatus >/dev/null 2>&1
-  status_rc=$?
-  if [ "${status_rc}" -eq 0 ]; then
+  if routerd_tailscale_home_tailscaled_running; then
     [ -r "${marker}" ] || { echo "foreign tailscaled service is already running; refusing mutation" >&2; return 1; }
     read owned < "${marker}"
     [ "${owned}" = "${name}" ] || { echo "routerd ownership marker mismatch" >&2; return 1; }
-  elif [ "${status_rc}" -eq 1 ]; then
+  else
     if ! mkdir -p "${marker_dir}" || ! printf '%s\n' "${name}" > "${marker}.$$" || ! mv -f "${marker}.$$" "${marker}"; then
       echo "unable to publish routerd tailscaled ownership marker" >&2
       return 1
@@ -247,9 +252,7 @@ routerd_tailscale_home_start() {
     deadline=$(( $(date +%s) + 15 ))
     ready=0
     while [ "$(date +%s)" -lt "${deadline}" ]; do
-      /usr/bin/timeout -k 2 2 service tailscaled onestatus >/dev/null 2>&1
-      status_rc=$?
-      [ "${status_rc}" -eq 0 ] && { ready=1; break; }
+      if routerd_tailscale_home_tailscaled_running; then ready=1; break; fi
       if ! kill -0 "${launcher_pid}" 2>/dev/null; then
         wait "${launcher_pid}"; rc=$?
         routerd_tailscale_home_rollback || true
@@ -266,9 +269,6 @@ routerd_tailscale_home_start() {
       echo "tailscaled service readiness timed out" >&2
       return 124
     fi
-  else
-    echo "tailscaled service status check failed" >&2
-    return "${status_rc}"
   fi
   /usr/bin/timeout -k 2 45 '/usr/local/bin/tailscale' 'up' '--timeout=30s' '--hostname=edge-router' "--auth-key=${auth_key}" '--advertise-exit-node' '--advertise-routes=172.18.0.0/16,192.168.20.0/24' '--accept-dns=false' >/dev/null 2>&1
   rc=$?
@@ -296,7 +296,7 @@ routerd_tailscale_home_stop() {
 }
 
 routerd_tailscale_home_status() {
-  [ -r "${marker}" ] && /usr/bin/timeout -k 2 15 service tailscaled onestatus
+  [ -r "${marker}" ] && routerd_tailscale_home_tailscaled_running
 }
 
 load_rc_config $name

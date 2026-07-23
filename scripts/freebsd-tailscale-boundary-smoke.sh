@@ -20,7 +20,16 @@ done
 [ -n "$evidence_dir" ]
 [ "$(uname -s)" = FreeBSD ]
 command -v tailscale >/dev/null
-service tailscaled onestatus >/dev/null 2>&1 && {
+pidfile=/var/run/tailscaled.pid
+tailscaled_running() {
+  [ -r "$pidfile" ] || return 1
+  IFS= read -r tailscaled_pid <"$pidfile" || return 1
+  case "$tailscaled_pid" in ''|*[!0-9]*) return 1 ;; esac
+  kill -0 "$tailscaled_pid" 2>/dev/null || return 1
+  tailscaled_comm=$(ps -p "$tailscaled_pid" -o comm= 2>/dev/null) || return 1
+  case "${tailscaled_comm##*/}" in tailscaled) return 0 ;; *) return 1 ;; esac
+}
+tailscaled_running && {
   echo "foreign tailscaled service is already running; refusing mutation" >&2
   exit 1
 }
@@ -30,6 +39,7 @@ work=$(mktemp -d /var/tmp/routerd-tailscale-boundary.XXXXXX)
 script=
 script_started=0
 foreign_started=0
+foreign_launcher=
 
 run_bounded() {
   label=$1
@@ -53,6 +63,26 @@ run_bounded() {
   return "$command_rc"
 }
 
+wait_tailscaled_running() {
+  seconds=$1
+  log=$2
+  started=$(date +%s)
+  while [ "$(( $(date +%s) - started ))" -lt "$seconds" ]; do
+    if tailscaled_running; then
+      printf 'tailscaled pid=%s ready\n' "$(cat "$pidfile")" >"$log"
+      return 0
+    fi
+    if [ -n "$foreign_launcher" ] && ! kill -0 "$foreign_launcher" 2>/dev/null; then
+      wait "$foreign_launcher" || true
+      printf 'tailscaled launcher exited before pidfile readiness\n' >"$log"
+      return 1
+    fi
+    sleep 1
+  done
+  printf 'tailscaled pidfile readiness timed out\n' >"$log"
+  return 124
+}
+
 cleanup() {
   rc=$?
   if [ "$script_started" -eq 1 ] && [ -n "$script" ]; then
@@ -60,8 +90,13 @@ cleanup() {
   fi
   if [ "$foreign_started" -eq 1 ]; then
     run_bounded tailscaled-foreign-stop 45 "$evidence_dir/tailscaled-stop.log" service tailscaled onestop || rc=1
-    if run_bounded tailscaled-status-after-stop 15 "$evidence_dir/tailscaled-status-after-stop.log" service tailscaled onestatus; then
+    if tailscaled_running; then
+      printf 'tailscaled remains live after foreign stop\n' >"$evidence_dir/tailscaled-status-after-stop.log"
       rc=1
+    fi
+    if [ -n "$foreign_launcher" ] && kill -0 "$foreign_launcher" 2>/dev/null; then
+      kill "$foreign_launcher" 2>/dev/null || true
+      wait "$foreign_launcher" 2>/dev/null || true
     fi
   fi
   if [ "$rc" -ne 0 ]; then
@@ -109,7 +144,8 @@ if run_bounded tailscale-owned-start 130 "$evidence_dir/tailscale-up.log" "$scri
   echo "unexpected authenticated Tailscale enrollment in credential-free CI" >&2
   exit 1
 fi
-if run_bounded tailscaled-status-after-owned-failure 15 "$evidence_dir/tailscaled-status-after-owned-failure.log" service tailscaled onestatus; then
+if tailscaled_running; then
+  printf 'tailscaled still live after owned rollback\n' >"$evidence_dir/tailscaled-status-after-owned-failure.log"
   echo "generated Tailscale lifecycle left tailscaled running after failed enrollment" >&2
   exit 1
 fi
@@ -120,14 +156,16 @@ fi
 
 # A service started outside routerd is foreign. The generated artifact must
 # reject it and leave it running for the fixture owner to stop.
-run_bounded tailscaled-foreign-start 45 "$evidence_dir/tailscaled-foreign-start.log" service tailscaled onestart
+service tailscaled onestart >"$evidence_dir/tailscaled-foreign-start.log" 2>&1 &
+foreign_launcher=$!
 foreign_started=1
-run_bounded tailscaled-foreign-status 15 "$evidence_dir/tailscaled-foreign-status.log" service tailscaled onestatus
+wait_tailscaled_running 15 "$evidence_dir/tailscaled-foreign-status.log"
 if run_bounded tailscale-foreign-refusal 45 "$evidence_dir/tailscale-foreign-refusal.log" "$script" start; then
   echo "generated Tailscale lifecycle adopted foreign tailscaled" >&2
   exit 1
 fi
-run_bounded tailscaled-foreign-preserved 15 "$evidence_dir/tailscaled-foreign-preserved.log" service tailscaled onestatus
+tailscaled_running || { echo "generated Tailscale lifecycle did not preserve foreign tailscaled" >&2; exit 1; }
+printf 'tailscaled pid=%s preserved\n' "$(cat "$pidfile")" >"$evidence_dir/tailscaled-foreign-preserved.log"
 run_bounded tailscaled-foreign-stop 45 "$evidence_dir/tailscaled-foreign-stop.log" service tailscaled onestop
 foreign_started=0
 printf '%s\n' \
