@@ -303,7 +303,7 @@ echo 'freebsd-tunnelinterface-stage=owned-cleanup=ok'
 # A pre-existing administrator gif must be rejected and remain unchanged; the
 # fixture alone destroys this disposable foreign interface afterward.
 r1cmd ifconfig gif0 create
-r1cmd ifconfig gif0 mtu 1234
+r1cmd ifconfig gif0 mtu 1401
 r1cmd ifconfig gif0 >"$work/gif0.foreign.before"
 write_config 1300
 apply_once foreign
