@@ -423,10 +423,12 @@ func FreeBSDCARPRCDScript(config CARPConfigData) []byte {
 	buf.WriteString("routerd_carp_start() {\n")
 	buf.WriteString("  if [ -r \"${marker}\" ]; then\n    read owned < \"${marker}\"\n    [ \"${owned}\" = \"${name}\" ] || { echo \"routerd CARP ownership marker mismatch\" >&2; return 1; }\n    if routerd_carp_status; then return 0; fi\n    routerd_carp_stop || return 1\n  fi\n")
 	for _, iface := range config.Interfaces {
-		buf.WriteString("  if ifconfig " + shellSingleQuote(iface.Interface) + " | grep -Fq " + shellSingleQuote(iface.Address) + "; then\n")
+		addressToken := carpIfconfigAddressToken(iface)
+		vhidPattern := "vhid " + fmt.Sprintf("%d", iface.VirtualHostID) + "([[:space:]]|$)"
+		buf.WriteString("  if ifconfig " + shellSingleQuote(iface.Interface) + " | grep -Fq " + shellSingleQuote(addressToken) + "; then\n")
 		buf.WriteString("    echo \"foreign CARP address is already present; refusing mutation\" >&2\n    return 1\n")
 		buf.WriteString("  fi\n")
-		buf.WriteString("  if ifconfig " + shellSingleQuote(iface.Interface) + " | grep -Fq " + shellSingleQuote("vhid "+fmt.Sprintf("%d", iface.VirtualHostID)) + "; then\n")
+		buf.WriteString("  if ifconfig " + shellSingleQuote(iface.Interface) + " | grep -Eq " + shellSingleQuote(vhidPattern) + "; then\n")
 		buf.WriteString("    echo \"foreign CARP VHID is already present; refusing mutation\" >&2\n    return 1\n  fi\n")
 	}
 	for index := range config.Interfaces {
@@ -454,7 +456,7 @@ func FreeBSDCARPRCDScript(config CARPConfigData) []byte {
 	buf.WriteString("  [ -r \"${marker}\" ] || { echo \"foreign CARP ownership is unknown; refusing mutation\" >&2; return 1; }\n")
 	buf.WriteString("  { read owned; read preempt_before; } < \"${marker}\"\n  [ \"${owned}\" = \"${name}\" ] || { echo \"routerd CARP ownership marker mismatch\" >&2; return 1; }\n  case \"${preempt_before}\" in 0|1) ;; *) echo \"routerd CARP marker lacks preempt state\" >&2; return 1;; esac\n  cleanup_failed=0\n")
 	for _, iface := range config.Interfaces {
-		buf.WriteString("  if ifconfig " + shellSingleQuote(iface.Interface) + " | grep -Fq " + shellSingleQuote(iface.Address) + "; then\n")
+		buf.WriteString("  if ifconfig " + shellSingleQuote(iface.Interface) + " | grep -Fq " + shellSingleQuote(carpIfconfigAddressToken(iface)) + "; then\n")
 		buf.WriteString("    if ! ifconfig " + shellSingleQuote(iface.Interface) + " " + shellSingleQuote(carpAddressFamily(iface.Family)) + " " + shellSingleQuote(iface.Address) + " -alias >/dev/null 2>&1; then cleanup_failed=1; fi\n  fi\n")
 	}
 	buf.WriteString("  if ! sysctl net.inet.carp.preempt=\"${preempt_before}\" >/dev/null; then cleanup_failed=1; fi\n  [ \"${cleanup_failed}\" = 0 ] || { echo \"routerd CARP cleanup incomplete; retaining ownership marker\" >&2; return 1; }\n  rm -f \"${marker}\" || return 1\n")
@@ -465,7 +467,7 @@ func FreeBSDCARPRCDScript(config CARPConfigData) []byte {
 	} else {
 		buf.WriteString("  true")
 		for _, iface := range config.Interfaces {
-			buf.WriteString(" && ifconfig " + shellSingleQuote(iface.Interface) + " | grep -q " + shellSingleQuote("vhid "+fmt.Sprintf("%d", iface.VirtualHostID)))
+			buf.WriteString(" && ifconfig " + shellSingleQuote(iface.Interface) + " | grep -Eq " + shellSingleQuote("vhid "+fmt.Sprintf("%d", iface.VirtualHostID)+"([[:space:]]|$)"))
 		}
 		buf.WriteString("\n")
 	}
@@ -474,6 +476,14 @@ func FreeBSDCARPRCDScript(config CARPConfigData) []byte {
 	buf.WriteString(": ${routerd_carp_enable:=\"YES\"}\n")
 	buf.WriteString("run_rc_command \"$1\"\n")
 	return buf.Bytes()
+}
+
+func carpIfconfigAddressToken(iface CARPInterface) string {
+	address := strings.SplitN(iface.Address, "/", 2)[0]
+	if carpAddressFamily(iface.Family) == "inet6" {
+		return "inet6 " + address + " "
+	}
+	return "inet " + address + " "
 }
 
 func freeBSDRouterdSupervisesClientDaemons(router *api.Router) bool {

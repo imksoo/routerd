@@ -154,8 +154,8 @@ func TestFreeBSDRendersCARPRCDScript(t *testing.T) {
 		`foreign CARP ownership is unknown; refusing mutation`,
 		`${ROUTERD_RUNTIME_DIR:-/var/run/routerd}/carp`,
 		`unable to publish routerd CARP ownership marker`,
-		`grep -Fq '10.240.70.10/32'`,
-		`grep -Fq 'vhid 50'`,
+		`grep -Fq 'inet 10.240.70.10 '`,
+		`grep -Eq 'vhid 50([[:space:]]|$)'`,
 		`kldload carp >/dev/null 2>&1 || true`,
 		`preempt_before=$(sysctl -n net.inet.carp.preempt) || { echo "unable to read CARP preempt" >&2; return 1; }`,
 		`unable to configure CARP preempt`,
@@ -167,15 +167,18 @@ func TestFreeBSDRendersCARPRCDScript(t *testing.T) {
 		`routerd CARP cleanup incomplete; retaining ownership marker`,
 		`if routerd_carp_status; then return 0; fi`,
 		`routerd_carp_stop || return 1`,
-		`if ifconfig 'vtnet1' | grep -Fq '10.240.70.10/32'; then`,
+		`if ifconfig 'vtnet1' | grep -Fq 'inet 10.240.70.10 '; then`,
 		`sysctl net.inet.carp.preempt='0'`,
 		`ifconfig 'vtnet1' 'inet' 'vhid' '50' 'advbase' '2' 'advskew' '104' 'pass' 'secret' 'alias' '10.240.70.10/32'`,
 		`ifconfig 'vtnet1' 'inet' '10.240.70.10/32' -alias`,
-		`grep -q 'vhid 50'`,
+		`grep -Eq 'vhid 50([[:space:]]|$)'`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("routerd_carp script missing %q:\n%s", want, script)
 		}
+	}
+	if strings.Contains(script, "grep -Fq '10.240.70.10/32'") {
+		t.Fatalf("CARP ownership probes must not grep CIDR-form addresses:\n%s", script)
 	}
 }
 

@@ -199,11 +199,11 @@ routerd_carp_start() {
     if routerd_carp_status; then return 0; fi
     routerd_carp_stop || return 1
   fi
-  if ifconfig 'vtnet1' | grep -Fq '192.168.70.10/32'; then
+  if ifconfig 'vtnet1' | grep -Fq 'inet 192.168.70.10 '; then
     echo "foreign CARP address is already present; refusing mutation" >&2
     return 1
   fi
-  if ifconfig 'vtnet1' | grep -Fq 'vhid 70'; then
+  if ifconfig 'vtnet1' | grep -Eq 'vhid 70([[:space:]]|$)'; then
     echo "foreign CARP VHID is already present; refusing mutation" >&2
     return 1
   fi
@@ -234,7 +234,7 @@ routerd_carp_stop() {
   [ "${owned}" = "${name}" ] || { echo "routerd CARP ownership marker mismatch" >&2; return 1; }
   case "${preempt_before}" in 0|1) ;; *) echo "routerd CARP marker lacks preempt state" >&2; return 1;; esac
   cleanup_failed=0
-  if ifconfig 'vtnet1' | grep -Fq '192.168.70.10/32'; then
+  if ifconfig 'vtnet1' | grep -Fq 'inet 192.168.70.10 '; then
     if ! ifconfig 'vtnet1' 'inet' '192.168.70.10/32' -alias >/dev/null 2>&1; then cleanup_failed=1; fi
   fi
   if ! sysctl net.inet.carp.preempt="${preempt_before}" >/dev/null; then cleanup_failed=1; fi
@@ -243,7 +243,7 @@ routerd_carp_stop() {
 }
 
 routerd_carp_status() {
-  true && ifconfig 'vtnet1' | grep -q 'vhid 70'
+  true && ifconfig 'vtnet1' | grep -Eq 'vhid 70([[:space:]]|$)'
 }
 
 load_rc_config $name
