@@ -456,12 +456,13 @@ func TestFreeBSDTailscaleRCDEarlyZeroExitFailsReadiness(t *testing.T) {
 	script := string(FreeBSDTailscaleRCDScript(name, api.TailscaleNodeSpec{}))
 	script = strings.Replace(script, "/var/run/routerd/tailscale", filepath.Join(dir, "markers"), 1)
 	script = strings.Replace(script, ". /etc/rc.subr\n", "", 1)
+	script = strings.Replace(script, "$(date +%s) + 15", "$(date +%s) + 1", 1)
 	end := strings.Index(script, "load_rc_config $name")
 	cmd := exec.Command("sh", "-c", script[:end]+name+"_start\nexit $?\n")
 	cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"), "SERVICE_LOG="+log)
 	err := cmd.Run()
-	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
-		t.Fatalf("early-zero start exit = %v, want 1", err)
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 124 {
+		t.Fatalf("early-zero start exit = %v, want readiness timeout 124", err)
 	}
 	data, err := os.ReadFile(log)
 	if err != nil {
@@ -469,6 +470,86 @@ func TestFreeBSDTailscaleRCDEarlyZeroExitFailsReadiness(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "tailscaled onestop") {
 		t.Fatalf("early-zero did not roll back: %s", data)
+	}
+}
+
+func TestFreeBSDTailscaleRCDContinuesAfterZeroLauncherExitUntilPidfileReady(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pidfile := filepath.Join(dir, "tailscaled.pid")
+	serviceLog := filepath.Join(dir, "service.log")
+	reached := filepath.Join(dir, "tailscale-reached")
+	service := `#!/bin/sh
+printf '%s %s\n' "$1" "$2" >> "$SERVICE_LOG"
+case "$2" in
+onestatus)
+  if [ -r "$TAILSCALED_PIDFILE" ]; then
+    IFS= read -r pid < "$TAILSCALED_PIDFILE"
+    kill -0 "$pid" 2>/dev/null && exit 0
+  fi
+  exit 1
+  ;;
+onestart)
+  (
+    sleep 1
+    sleep 5 &
+    child=$!
+    printf '%s\n' "$child" > "$TAILSCALED_PIDFILE"
+  ) &
+  exit 0
+  ;;
+onestop)
+  if [ -r "$TAILSCALED_PIDFILE" ]; then
+    IFS= read -r pid < "$TAILSCALED_PIDFILE"
+    kill "$pid" 2>/dev/null || true
+  fi
+  rm -f "$TAILSCALED_PIDFILE"
+  exit 0
+  ;;
+esac
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(binDir, "service"), []byte(service), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "ps"), []byte("#!/bin/sh\necho tailscaled\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "tailscale"), []byte("#!/bin/sh\nprintf reached > \"$TAILSCALE_REACHED\"\nexit 7\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	name := "routerd_tailscale_zero_launcher_delayed_pid"
+	markerDir := filepath.Join(dir, "markers")
+	script := string(FreeBSDTailscaleRCDScript(name, api.TailscaleNodeSpec{BinaryPath: filepath.Join(binDir, "tailscale")}))
+	script = strings.Replace(script, "/var/run/routerd/tailscale", markerDir, 1)
+	script = strings.Replace(script, ". /etc/rc.subr\n", "", 1)
+	end := strings.Index(script, "load_rc_config $name")
+	if end < 0 {
+		t.Fatalf("generated rc.d script lacks load_rc_config:\n%s", script)
+	}
+	cmd := exec.Command("sh", "-c", script[:end]+name+"_start\nexit $?\n")
+	cmd.Env = append(os.Environ(),
+		"PATH="+binDir+":"+os.Getenv("PATH"),
+		"SERVICE_LOG="+serviceLog,
+		"TAILSCALED_PIDFILE="+pidfile,
+		"TAILSCALE_REACHED="+reached,
+	)
+	err := cmd.Run()
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 7 {
+		t.Fatalf("delayed pidfile start exit = %v, want tailscale exit 7", err)
+	}
+	if _, err := os.Stat(reached); err != nil {
+		t.Fatalf("tailscale was not invoked after zero-exit launcher: %v", err)
+	}
+	data, err := os.ReadFile(serviceLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "tailscaled onestop") {
+		t.Fatalf("tailscale failure did not roll back the delayed daemon:\n%s", data)
 	}
 }
 

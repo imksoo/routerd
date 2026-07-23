@@ -40,6 +40,7 @@ script=
 script_started=0
 foreign_started=0
 foreign_launcher=
+foreign_launcher_done=0
 
 run_bounded() {
   label=$1
@@ -72,10 +73,14 @@ wait_tailscaled_running() {
       printf 'tailscaled pid=%s ready\n' "$(cat "$pidfile")" >"$log"
       return 0
     fi
-    if [ -n "$foreign_launcher" ] && ! kill -0 "$foreign_launcher" 2>/dev/null; then
-      wait "$foreign_launcher" || true
-      printf 'tailscaled launcher exited before pidfile readiness\n' >"$log"
-      return 1
+    if [ "$foreign_launcher_done" -eq 0 ] && [ -n "$foreign_launcher" ] && ! kill -0 "$foreign_launcher" 2>/dev/null; then
+      if wait "$foreign_launcher"; then
+        foreign_launcher_done=1
+        foreign_launcher=
+      else
+        printf 'tailscaled launcher exited nonzero before pidfile readiness\n' >"$log"
+        return 1
+      fi
     fi
     sleep 1
   done
