@@ -44,7 +44,7 @@ emit_initial_failure() {
 	for evidence in \
 		underlay.ping \
 		apply-initial.log gif0.add gif0.initial.status gif.ping gif.proto4 gif.outer.before gif.outer.after gre0.add gre0.initial.status \
-		apply-second.log gif0.second.status \
+		apply-second.log gif0.second.status gre0.second.status \
 		apply-change.log gif0.change gre0.change \
 		apply-gre-key-zero.log gre0.key-zero.status \
 		apply-restart.log gif0.restart.status \
@@ -209,7 +209,9 @@ echo 'freebsd-tunnelinterface-stage=initial-dataplane=ok'
 # it must be a no-op, not an adoption of a different kernel object.
 apply_once second
 status_row gif0 "$work/gif0.second.status"
+status_row gre0 "$work/gre0.second.status"
 jq -e '.phase == "Up" and .reason == "AlreadyConfigured" and .interfaceOwned == true' "$work/gif0.second.status" >/dev/null
+jq -e '.phase == "Up" and .reason == "AlreadyConfigured" and .key == 42 and .interfaceOwned == true' "$work/gre0.second.status" >/dev/null
 echo 'freebsd-tunnelinterface-stage=second-noop=ok'
 
 write_config 1300

@@ -713,13 +713,15 @@ func TestTunnelInterfaceControllerClearsLinuxGREKeyWithNoKey(t *testing.T) {
 }
 
 func TestTunnelInterfaceControllerPreservesOwnedProvenanceAcrossFreeBSDGREBoundaryError(t *testing.T) {
-	owned := mapStore{api.HybridAPIVersion + "/TunnelInterface/gre0": {"interfaceOwned": true}}
+	owned := mapStore{api.HybridAPIVersion + "/TunnelInterface/gre0": {"interfaceOwned": true, "key": 42}}
 	zeroKey := api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
 		Metadata: api.ObjectMeta{Name: "gre0"},
 		Spec:     api.TunnelInterfaceSpec{Mode: "gre", Local: "192.0.2.10", Remote: "192.0.2.20", MTU: 1472, TrustedUnderlay: true},
 	}
-	observed := []byte("gre0: flags=8011<UP,POINTOPOINT,MULTICAST> metric 0 mtu 1472\n\ttunnel inet 192.0.2.10 --> 192.0.2.20\n\tgrekey: 42\n")
+	// This is the native FreeBSD ifconfig shape captured by the VNET smoke:
+	// it omits grekey even though routerd's owned prior status recorded key 42.
+	observed := []byte("gre0: flags=8011<UP,POINTOPOINT,MULTICAST> metric 0 mtu 1472\n\ttunnel inet 192.0.2.10 --> 192.0.2.20\n")
 	controller := TunnelInterfaceController{
 		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{zeroKey}}}, Store: owned, OS: platform.OSFreeBSD,
 		Command: func(_ context.Context, _ string, _ ...string) ([]byte, error) { return observed, nil },
@@ -740,6 +742,28 @@ func TestTunnelInterfaceControllerPreservesOwnedProvenanceAcrossFreeBSDGREBounda
 	status = owned.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "gre0")
 	if status["phase"] != "Up" || status["reason"] != "AlreadyConfigured" || !statusBoolOrFalse(status["interfaceOwned"]) {
 		t.Fatalf("owned restart status = %#v", status)
+	}
+}
+
+func TestTunnelInterfaceControllerRejectsParseableFreeBSDGREKeyClear(t *testing.T) {
+	zeroKey := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+		Metadata: api.ObjectMeta{Name: "gre0"},
+		Spec:     api.TunnelInterfaceSpec{Mode: "gre", Local: "192.0.2.10", Remote: "192.0.2.20", MTU: 1472, TrustedUnderlay: true},
+	}
+	owned := mapStore{api.HybridAPIVersion + "/TunnelInterface/gre0": {"interfaceOwned": true}}
+	controller := TunnelInterfaceController{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{zeroKey}}}, Store: owned, OS: platform.OSFreeBSD,
+		Command: func(_ context.Context, _ string, _ ...string) ([]byte, error) {
+			return []byte("gre0: flags=8011<UP,POINTOPOINT,MULTICAST> metric 0 mtu 1472\n\ttunnel inet 192.0.2.10 --> 192.0.2.20\n\tgrekey: 42\n"), nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("boundary reconcile error = %v, want persisted status", err)
+	}
+	status := owned.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "gre0")
+	if status["phase"] != "Error" || !strings.Contains(statusString(status, "error"), "clear FreeBSD GRE key") || !statusBoolOrFalse(status["interfaceOwned"]) {
+		t.Fatalf("parseable key boundary status = %#v", status)
 	}
 }
 
