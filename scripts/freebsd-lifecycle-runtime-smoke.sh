@@ -280,7 +280,7 @@ start_supervised_routerd restart-same
 wait_marker "$evidence_dir/supervised-restart-marker.json"
 jq -e --argjson pid "$owned_pid" --arg token "$owned_token" \
   '.pid == $pid and .ownerToken == $token' "$evidence_dir/supervised-restart-marker.json" >/dev/null
-ps -axww -o pid=,command= >"$evidence_dir/supervised-restart-ps.log"
+ps -axww -o pid= -o command= >"$evidence_dir/supervised-restart-ps.log"
 owned_count=$(grep -F -- "--resource $supervised_resource" "$evidence_dir/supervised-restart-ps.log" | grep -F -c -- "--supervisor-owner $owned_token" || true)
 [ "$owned_count" -eq 1 ]
 kill -KILL "$routerd_pid"
