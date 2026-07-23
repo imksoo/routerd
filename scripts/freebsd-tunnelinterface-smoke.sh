@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 # Opt-in native acceptance for the production TunnelInterface controller.
-# It owns only the listed loopback aliases and cloned gif/gre interfaces.
+# The production endpoint runs in r1; r2 is a separate VNET peer connected by
+# one epair. Reciprocal GIF endpoints in one kernel stack are not a valid
+# dataplane oracle because inner and outer routes collide locally.
 set -eu
 
 routerd=
@@ -30,9 +32,15 @@ state="$work/state.db"
 ledger="$work/ledger.json"
 outer_a=198.18.89.1
 outer_b=198.18.89.2
+r1="routerd-tunnel-r1-$$"
+r2="routerd-tunnel-r2-$$"
+epair_a=
+epair_b=
+own_epair_module=0
+capture_pid=
 
 emit_initial_failure() {
-	for evidence in apply-initial.log gif0.add gif0.initial.status gif.ping gre0.add gre0.initial.status; do
+	for evidence in underlay.ping apply-initial.log gif0.add gif0.initial.status gif.ping gif.proto4 gif.outer.before gif.outer.after gre0.add gre0.initial.status; do
 		path="$work/$evidence"
 		[ -f "$path" ] || continue
 		echo "--- tunnelinterface $evidence" >&2
@@ -42,29 +50,59 @@ emit_initial_failure() {
 
 cleanup() {
 	rc=$?
+	if [ -n "$capture_pid" ]; then
+		kill "$capture_pid" >/dev/null 2>&1 || true
+		wait "$capture_pid" >/dev/null 2>&1 || true
+	fi
 	if [ "$rc" -ne 0 ]; then
 		emit_initial_failure
 	fi
-	ifconfig gif0 destroy >/dev/null 2>&1 || true
-  ifconfig gif1 destroy >/dev/null 2>&1 || true
-  ifconfig gre0 destroy >/dev/null 2>&1 || true
-  ifconfig gre1 destroy >/dev/null 2>&1 || true
-  ifconfig lo0 inet "$outer_a" -alias >/dev/null 2>&1 || true
-  ifconfig lo0 inet "$outer_b" -alias >/dev/null 2>&1 || true
+	if jls -j "$r1" >/dev/null 2>&1; then
+		jail -r "$r1" >/dev/null 2>&1 || true
+	fi
+	if jls -j "$r2" >/dev/null 2>&1; then
+		jail -r "$r2" >/dev/null 2>&1 || true
+	fi
+	if [ -n "$epair_a" ] && ifconfig "$epair_a" >/dev/null 2>&1; then
+		ifconfig "$epair_a" destroy >/dev/null 2>&1 || true
+	fi
+	if [ "$own_epair_module" -eq 1 ]; then
+		kldunload if_epair >/dev/null 2>&1 || true
+	fi
   rm -rf "$work"
   exit "$rc"
 }
 trap cleanup EXIT HUP INT TERM
 
-for ifname in gif0 gif1 gre0 gre1; do
-  if ifconfig "$ifname" >/dev/null 2>&1; then
-    echo "fixture requires absent $ifname" >&2
-    exit 75
-  fi
-done
+r1cmd() { jexec "$r1" "$@"; }
+r2cmd() { jexec "$r2" "$@"; }
 
-ifconfig lo0 inet "$outer_a"/32 alias
-ifconfig lo0 inet "$outer_b"/32 alias
+if ! kldstat -q -m if_epair; then
+	kldload if_epair
+	own_epair_module=1
+fi
+epair_a=$(ifconfig epair create)
+epair_b="${epair_a%a}b"
+jail -c name="$r1" path=/ host.hostname="$r1" persist vnet allow.raw_sockets=1 \
+	vnet.interface="$epair_a"
+jail -c name="$r2" path=/ host.hostname="$r2" persist vnet allow.raw_sockets=1 \
+	vnet.interface="$epair_b"
+r1cmd ifconfig lo0 up
+r2cmd ifconfig lo0 up
+r1cmd ifconfig "$epair_a" inet "$outer_a/30" up
+r2cmd ifconfig "$epair_b" inet "$outer_b/30" up
+r1cmd ping -n -c 1 "$outer_b" >"$work/underlay.ping" 2>&1
+
+for ifname in gif0 gre0; do
+	if r1cmd ifconfig "$ifname" >/dev/null 2>&1; then
+		echo "fixture requires absent r1 $ifname" >&2
+		exit 75
+	fi
+done
+r2cmd ifconfig gif0 create
+r2cmd ifconfig gif0 tunnel "$outer_b" "$outer_a"
+r2cmd ifconfig gif0 inet 10.253.89.2/30 10.253.89.1
+r2cmd ifconfig gif0 up
 
 write_config() {
   mtu=$1
@@ -81,22 +119,14 @@ spec:
     spec: {mode: ipip, local: $outer_a, remote: $outer_b, address: 10.253.89.1/30, peerAddress: 10.253.89.2, mtu: $mtu, trustedUnderlay: true}
   - apiVersion: hybrid.routerd.net/v1alpha1
     kind: TunnelInterface
-    metadata: {name: gif1}
-    spec: {mode: ipip, local: $outer_b, remote: $outer_a, address: 10.253.89.2/30, peerAddress: 10.253.89.1, mtu: $mtu, trustedUnderlay: true}
-  - apiVersion: hybrid.routerd.net/v1alpha1
-    kind: TunnelInterface
     metadata: {name: gre0}
     spec: {mode: gre, local: $outer_a, remote: $outer_b, mtu: $mtu, key: $key, trustedUnderlay: true}
-  - apiVersion: hybrid.routerd.net/v1alpha1
-    kind: TunnelInterface
-    metadata: {name: gre1}
-    spec: {mode: gre, local: $outer_b, remote: $outer_a, mtu: $mtu, key: $key, trustedUnderlay: true}
 EOF
 }
 
 apply_once() {
 	label=$1
-  "$routerd" serve --once --controllers tunnel --config "$work/router.yaml" \
+  r1cmd "$routerd" serve --once --controllers tunnel --config "$work/router.yaml" \
     --state-file "$state" --ledger-file "$ledger" \
     --status-file "$work/status-$label.json" --socket "$work/api-$label.sock" \
     --status-socket "$work/status-$label.sock" >"$work/apply-$label.log" 2>&1
@@ -115,8 +145,8 @@ status_row() {
 
 write_config 1400
 apply_once initial
-ifconfig gif0 >"$work/gif0.add"
-ifconfig gre0 >"$work/gre0.add"
+r1cmd ifconfig gif0 >"$work/gif0.add"
+r1cmd ifconfig gre0 >"$work/gre0.add"
 status_row gre0 "$work/gre0.initial.status"
 status_row gif0 "$work/gif0.initial.status"
 grep -F "tunnel inet $outer_a --> $outer_b" "$work/gif0.add"
@@ -126,11 +156,33 @@ grep -F "tunnel inet $outer_a --> $outer_b" "$work/gif0.add"
 # oracle and must fail if a later reconcile cannot observe key 42.
 jq -e '.phase == "Up" and .key == 42 and .interfaceOwned == true' "$work/gre0.initial.status" >/dev/null
 jq -e '.phase == "Up" and .address == "10.253.89.1/30" and .peerAddress == "10.253.89.2" and .observedAddress == "10.253.89.1/30" and .observedPeerAddress == "10.253.89.2" and .interfaceOwned == true' "$work/gif0.initial.status" >/dev/null
-if ! ping -n -c 3 -S 10.253.89.1 10.253.89.2 >"$work/gif.ping" 2>&1; then
+if command -v tcpdump >/dev/null 2>&1; then
+  # epair_a is r1's outer interface, so its VNET sees the IPIP frames emitted
+  # by production gif0 before they cross to r2.
+  timeout 10 jexec "$r1" tcpdump -n -c 1 -i "$epair_a" 'ip proto 4' >"$work/gif.proto4" 2>&1 &
+  capture_pid=$!
+  sleep 1
+else
+  # tcpdump is optional in the native image. epair byte counters are the
+  # bounded fallback proof that the GIF ping emitted outer traffic.
+  r1cmd netstat -I "$epair_a" -b >"$work/gif.outer.before"
+fi
+if ! r1cmd ping -n -c 3 -S 10.253.89.1 10.253.89.2 >"$work/gif.ping" 2>&1; then
 	cat "$work/gif.ping" >&2
 	exit 1
 fi
 grep -F '3 packets transmitted, 3 packets received' "$work/gif.ping"
+if [ -n "$capture_pid" ]; then
+  wait "$capture_pid"
+  capture_pid=
+  grep -Eq 'IP .* > .*: IP ' "$work/gif.proto4"
+else
+  r1cmd netstat -I "$epair_a" -b >"$work/gif.outer.after"
+  if cmp -s "$work/gif.outer.before" "$work/gif.outer.after"; then
+    echo 'GIF ping did not advance epair outer counters' >&2
+    exit 1
+  fi
+fi
 
 # A new serve --once process using the persisted state is a controller restart;
 # it must be a no-op, not an adoption of a different kernel object.
@@ -140,8 +192,8 @@ jq -e '.phase == "Up" and .reason == "AlreadyConfigured" and .interfaceOwned == 
 
 write_config 1300
 apply_once change
-ifconfig gif0 >"$work/gif0.change"
-ifconfig gre0 >"$work/gre0.change"
+r1cmd ifconfig gif0 >"$work/gif0.change"
+r1cmd ifconfig gre0 >"$work/gre0.change"
 grep -F 'mtu 1300' "$work/gif0.change"
 grep -F 'mtu 1300' "$work/gre0.change"
 
@@ -164,8 +216,8 @@ metadata: {name: freebsd-tunnelinterface-smoke}
 spec: {resources: []}
 EOF
 apply_once remove
-for ifname in gif0 gif1 gre0 gre1; do
-  if ifconfig "$ifname" >/dev/null 2>&1; then
+for ifname in gif0 gre0; do
+  if r1cmd ifconfig "$ifname" >/dev/null 2>&1; then
     echo "stale tunnel interface remains: $ifname" >&2
     exit 1
   fi
@@ -173,14 +225,14 @@ done
 
 # A pre-existing administrator gif must be rejected and remain unchanged; the
 # fixture alone destroys this disposable foreign interface afterward.
-ifconfig gif0 create
-ifconfig gif0 mtu 1234
-ifconfig gif0 >"$work/gif0.foreign.before"
+r1cmd ifconfig gif0 create
+r1cmd ifconfig gif0 mtu 1234
+r1cmd ifconfig gif0 >"$work/gif0.foreign.before"
 write_config 1300
 apply_once foreign
 status_row gif0 "$work/gif0.foreign.status"
 jq -e '.phase == "Error" and .reason == "ForeignInterface" and (.interfaceOwned != true)' "$work/gif0.foreign.status" >/dev/null
-ifconfig gif0 >"$work/gif0.foreign.after"
+r1cmd ifconfig gif0 >"$work/gif0.foreign.after"
 cmp "$work/gif0.foreign.before" "$work/gif0.foreign.after"
 
 cat >"$work/router.yaml" <<'EOF'
@@ -190,7 +242,7 @@ metadata: {name: freebsd-tunnelinterface-smoke}
 spec: {resources: []}
 EOF
 apply_once foreign-stale
-ifconfig gif0 >"$work/gif0.foreign.stale.after"
+r1cmd ifconfig gif0 >"$work/gif0.foreign.stale.after"
 cmp "$work/gif0.foreign.before" "$work/gif0.foreign.stale.after"
-ifconfig gif0 destroy
+r1cmd ifconfig gif0 destroy
 echo "freebsd-tunnelinterface=ok"
