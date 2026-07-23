@@ -291,13 +291,13 @@ func FreeBSDTailscaleRCDScript(name string, spec api.TailscaleNodeSpec) []byte {
 	b.WriteString("# PROVIDE: " + name + "\n# REQUIRE: NETWORKING\n# KEYWORD: shutdown\n\n. /etc/rc.subr\n\n")
 	b.WriteString("name=" + shellSingleQuote(name) + "\nrcvar=\"${name}_enable\"\n")
 	b.WriteString("marker_dir=" + shellSingleQuote("/var/run/routerd/tailscale") + "\nmarker=\"${marker_dir}/" + name + ".owner\"\n")
-	b.WriteString("pidfile=\"${TAILSCALED_PIDFILE:-/var/run/tailscaled.pid}\"\n")
+	b.WriteString("pidfile=\"${TAILSCALED_PIDFILE:-/var/run/tailscaled.pid}\"\nprocstat_bin=\"${PROCSTAT_BIN:-/usr/bin/procstat}\"\n")
 	if authKeyEnv != "" {
 		b.WriteString("auth_key_env=" + shellSingleQuote(authKeyEnv) + "\nauth_key_file=" + shellSingleQuote(spec.AuthKeyFile) + "\n")
 		b.WriteString(name + "_load_auth_key() {\n  auth_key=\n  if [ -n \"${auth_key_file}\" ]; then\n    [ -r \"${auth_key_file}\" ] || { echo \"tailscale auth-key file is unreadable\" >&2; return 1; }\n    auth_key_found=0\n    while IFS= read -r line || [ -n \"${line}\" ]; do\n      case \"${line}\" in\n        \"${auth_key_env}\"=*)\n          [ \"${auth_key_found}\" -eq 0 ] || { echo \"tailscale auth-key file has duplicate selected variable\" >&2; return 1; }\n          auth_key=${line#*=}\n          auth_key_found=1\n          ;;\n      esac\n    done < \"${auth_key_file}\"\n    [ \"${auth_key_found}\" -eq 1 ] || { echo \"tailscale auth-key variable is missing\" >&2; return 1; }\n  else\n    auth_key=$(/usr/bin/printenv \"${auth_key_env}\") || { echo \"tailscale auth-key environment variable is missing\" >&2; return 1; }\n  fi\n  [ -n \"${auth_key}\" ] || { echo \"tailscale auth-key is empty\" >&2; return 1; }\n}\n\n")
 	}
 	b.WriteString("start_cmd=\"${name}_start\"\nstop_cmd=\"${name}_stop\"\nstatus_cmd=\"${name}_status\"\n\n")
-	b.WriteString(name + "_tailscaled_running() {\n  [ -r \"${pidfile}\" ] || return 1\n  IFS= read -r tailscaled_pid < \"${pidfile}\" || return 1\n  case \"${tailscaled_pid}\" in ''|*[!0-9]*) return 1 ;; esac\n  kill -0 \"${tailscaled_pid}\" 2>/dev/null || return 1\n  /usr/bin/timeout -k 2 2 service tailscaled onestatus >/dev/null 2>&1\n}\n\n")
+	b.WriteString(name + "_tailscaled_running() {\n  [ -r \"${pidfile}\" ] || return 1\n  IFS= read -r tailscaled_pid < \"${pidfile}\" || return 1\n  case \"${tailscaled_pid}\" in ''|*[!0-9]*) return 1 ;; esac\n  kill -0 \"${tailscaled_pid}\" 2>/dev/null || return 1\n  tailscaled_path=$(\"${procstat_bin}\" -b \"${tailscaled_pid}\" 2>/dev/null | awk 'NR > 1 { print $NF; exit }') || return 1\n  [ \"${tailscaled_path}\" = /usr/local/bin/tailscaled ]\n}\n\n")
 	b.WriteString(name + "_rollback() {\n  [ \"${started_here:-0}\" = 1 ] || return 0\n  /usr/bin/timeout -k 2 15 service tailscaled onestop >/dev/null 2>&1\n  stop_rc=$?\n  if " + name + "_tailscaled_running; then\n    echo \"tailscaled service stop failed; retaining ownership marker\" >&2\n    [ \"${stop_rc}\" -ne 0 ] || stop_rc=1\n    return \"${stop_rc}\"\n  fi\n  rm -f \"${marker}\" \"${marker}.$$\"\n}\n\n")
 	b.WriteString(name + "_start() {\n  started_here=0\n")
 	if authKeyEnv != "" {

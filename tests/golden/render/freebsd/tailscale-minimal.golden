@@ -186,6 +186,7 @@ rcvar="${name}_enable"
 marker_dir='/var/run/routerd/tailscale'
 marker="${marker_dir}/routerd_tailscale_mesh.owner"
 pidfile="${TAILSCALED_PIDFILE:-/var/run/tailscaled.pid}"
+procstat_bin="${PROCSTAT_BIN:-/usr/bin/procstat}"
 auth_key_env='TS_AUTHKEY'
 auth_key_file=''
 routerd_tailscale_mesh_load_auth_key() {
@@ -218,7 +219,8 @@ routerd_tailscale_mesh_tailscaled_running() {
   IFS= read -r tailscaled_pid < "${pidfile}" || return 1
   case "${tailscaled_pid}" in ''|*[!0-9]*) return 1 ;; esac
   kill -0 "${tailscaled_pid}" 2>/dev/null || return 1
-  /usr/bin/timeout -k 2 2 service tailscaled onestatus >/dev/null 2>&1
+  tailscaled_path=$("${procstat_bin}" -b "${tailscaled_pid}" 2>/dev/null | awk 'NR > 1 { print $NF; exit }') || return 1
+  [ "${tailscaled_path}" = /usr/local/bin/tailscaled ]
 }
 
 routerd_tailscale_mesh_rollback() {
