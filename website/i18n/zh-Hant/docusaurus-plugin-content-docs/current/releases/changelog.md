@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260723.1609
+
 ### 變更
 
 - `TunnelInterface.spec.peerAddress` 明確表示 FreeBSD 點對點 IPIP/GRE interface 的 IPv4 inner destination。在 FreeBSD 使用 `spec.address` 時必填，在 Linux 上會被拒絕，且絕不從設定 CIDR 推論。

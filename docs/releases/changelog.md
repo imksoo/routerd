@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260723.1609
+
 ### Changed
 
 - `TunnelInterface.spec.peerAddress` now explicitly represents the IPv4 inner
