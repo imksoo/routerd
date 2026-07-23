@@ -37,6 +37,7 @@ r2="routerd-tunnel-r2-$$"
 epair_a=
 epair_b=
 own_epair_module=0
+own_gre_module=0
 capture_pid=
 
 emit_initial_failure() {
@@ -69,6 +70,9 @@ cleanup() {
 	if [ "$own_epair_module" -eq 1 ]; then
 		kldunload if_epair >/dev/null 2>&1 || true
 	fi
+	if [ "$own_gre_module" -eq 1 ]; then
+		kldunload if_gre >/dev/null 2>&1 || true
+	fi
   rm -rf "$work"
   exit "$rc"
 }
@@ -92,6 +96,13 @@ r2cmd ifconfig lo0 up
 r1cmd ifconfig "$epair_a" inet "$outer_a/30" up
 r2cmd ifconfig "$epair_b" inet "$outer_b/30" up
 r1cmd ping -n -c 1 "$outer_b" >"$work/underlay.ping" 2>&1
+
+# VNET jails cannot autoload if_gre. Load it after both VNETs exist so its
+# VNET constructor attaches to r1, and unload only when this fixture owns it.
+if ! kldstat -q -m if_gre; then
+	kldload if_gre
+	own_gre_module=1
+fi
 
 for ifname in gif0 gre0; do
 	if r1cmd ifconfig "$ifname" >/dev/null 2>&1; then
