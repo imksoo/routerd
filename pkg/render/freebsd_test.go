@@ -194,8 +194,14 @@ func TestFreeBSDCARPRCDScriptStopsIPv6WithInet6(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render FreeBSD: %v", err)
 	}
-	if script := string(got.RCDScripts["routerd_carp"]); !strings.Contains(script, `ifconfig 'vtnet1' 'inet6' 'fd00:1234::10/128' -alias`) {
-		t.Fatalf("routerd_carp IPv6 stop is not family-correct:\n%s", script)
+	script := string(got.RCDScripts["routerd_carp"])
+	for _, want := range []string{`grep -Fq 'inet6 fd00:1234::10 '`, `ifconfig 'vtnet1' 'inet6' 'fd00:1234::10/128' -alias`} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("routerd_carp IPv6 script missing %q:\n%s", want, script)
+		}
+	}
+	if strings.Contains(script, "grep -Fq 'fd00:1234::10/128'") {
+		t.Fatalf("routerd_carp IPv6 ownership probes must not grep CIDR-form addresses:\n%s", script)
 	}
 }
 
