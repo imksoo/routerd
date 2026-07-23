@@ -80,6 +80,7 @@ type options struct {
 
 func bindOptions(fs *flag.FlagSet, opts *options) {
 	fs.StringVar(&opts.resource, "resource", "wan-pd", "resource name")
+	_ = fs.String("supervisor-owner", "", "internal routerd supervisor ownership token")
 	fs.StringVar(&opts.ifname, "interface", "", "uplink interface name")
 	fs.StringVar(&opts.clientDUID, "client-duid", "", "client DUID hex; default derives DUID-LL from interface MAC")
 	fs.UintVar(&opts.iaid, "iaid", 1, "IA_PD IAID")
@@ -234,6 +235,16 @@ func newDHCPv6Daemon(opts options) (*dhcpv6Daemon, error) {
 			return nil, fmt.Errorf("client DUID: %w", err)
 		}
 	}
+	// Bind every DHCPv6 client to its selected interface's link-local address.
+	// Config permits UDP/546 per interface; a wildcard socket either prevents
+	// a second resource from binding or can receive its reply under the wrong
+	// resource. An explicit --src-ll remains the operator override.
+	if opts.srcLL == "" {
+		opts.srcLL, err = interfaceLinkLocalIPv6(ifi)
+		if err != nil {
+			return nil, fmt.Errorf("DHCPv6 link-local source on %s: %w", opts.ifname, err)
+		}
+	}
 	conn, err := listenDHCPv6(opts.srcLL, opts.ifname, opts.listenPort)
 	if err != nil {
 		return nil, err
@@ -263,6 +274,24 @@ func newDHCPv6Daemon(opts options) (*dhcpv6Daemon, error) {
 	d.cond = sync.NewCond(&d.mu)
 	d.initTelemetry()
 	return d, nil
+}
+
+func interfaceLinkLocalIPv6(ifi *net.Interface) (string, error) {
+	addrs, err := ifi.Addrs()
+	if err != nil {
+		return "", err
+	}
+	return selectLinkLocalIPv6(addrs)
+}
+
+func selectLinkLocalIPv6(addrs []net.Addr) (string, error) {
+	for _, addr := range addrs {
+		ip, _, err := net.ParseCIDR(addr.String())
+		if err == nil && ip.To4() == nil && ip.IsLinkLocalUnicast() {
+			return ip.String(), nil
+		}
+	}
+	return "", errors.New("no IPv6 link-local address")
 }
 
 func (d *dhcpv6Daemon) initTelemetry() {
@@ -839,6 +868,14 @@ func sendDHCPv6Multicast(conn *net.UDPConn, ifindex, hopLimit int, payload []byt
 }
 
 func listenDHCPv6(srcLL, ifname string, port int) (*net.UDPConn, error) {
+	addr, err := dhcpv6ListenAddr(srcLL, ifname, port)
+	if err != nil {
+		return nil, err
+	}
+	return net.ListenUDP("udp6", addr)
+}
+
+func dhcpv6ListenAddr(srcLL, ifname string, port int) (*net.UDPAddr, error) {
 	addr := &net.UDPAddr{IP: net.IPv6unspecified, Port: port}
 	if srcLL != "" {
 		ip := net.ParseIP(srcLL)
@@ -847,7 +884,7 @@ func listenDHCPv6(srcLL, ifname string, port int) (*net.UDPConn, error) {
 		}
 		addr = &net.UDPAddr{IP: ip, Port: port, Zone: ifname}
 	}
-	return net.ListenUDP("udp6", addr)
+	return addr, nil
 }
 
 func nextReadDeadline(ctx context.Context, interval time.Duration) time.Time {

@@ -171,22 +171,64 @@ run_rc_command "$1"
 
 name="routerd_carp"
 rcvar="routerd_carp_enable"
+marker_dir="${ROUTERD_RUNTIME_DIR:-/var/run/routerd}/carp"
+marker="${marker_dir}/${name}.owner"
 start_cmd="routerd_carp_start"
 stop_cmd="routerd_carp_stop"
 status_cmd="routerd_carp_status"
 
 routerd_carp_start() {
+  if [ -r "${marker}" ]; then
+    read owned < "${marker}"
+    [ "${owned}" = "${name}" ] || { echo "routerd CARP ownership marker mismatch" >&2; return 1; }
+    if routerd_carp_status; then return 0; fi
+    routerd_carp_stop || return 1
+  fi
+  if ifconfig 'ens20' | grep -Fq 'inet 192.168.70.10 '; then
+    echo "foreign CARP address is already present; refusing mutation" >&2
+    return 1
+  fi
+  if ifconfig 'ens20' | grep -Eq 'vhid 70([[:space:]]|$)'; then
+    echo "foreign CARP VHID is already present; refusing mutation" >&2
+    return 1
+  fi
+  applied_0=0
   kldload carp >/dev/null 2>&1 || true
-  sysctl net.inet.carp.preempt='0' >/dev/null
-  ifconfig 'ens20' 'inet' 'vhid' '70' 'advbase' '1' 'advskew' '104' 'alias' '192.168.70.10/32'
+  preempt_before=$(sysctl -n net.inet.carp.preempt) || { echo "unable to read CARP preempt" >&2; return 1; }
+  preempt_changed=0
+  sysctl net.inet.carp.preempt='0' >/dev/null || { echo "unable to configure CARP preempt" >&2; return 1; }
+  preempt_changed=1
+  ifconfig 'ens20' 'inet' 'vhid' '70' 'advbase' '1' 'advskew' '104' 'alias' '192.168.70.10/32' || { echo "unable to configure routerd CARP address" >&2; routerd_carp_rollback; return 1; }
+  applied_0=1
+  if ! mkdir -p "${marker_dir}" || ! printf '%s\n%s\n' "${name}" "${preempt_before}" > "${marker}.$$" || ! mv -f "${marker}.$$" "${marker}"; then
+    echo "unable to publish routerd CARP ownership marker" >&2
+    routerd_carp_rollback
+    return 1
+  fi
+}
+
+routerd_carp_rollback() {
+  if [ "${applied_0:-0}" = 1 ]; then ifconfig 'ens20' 'inet' '192.168.70.10/32' -alias >/dev/null 2>&1 || true; fi
+  if [ "${preempt_changed:-0}" = 1 ]; then sysctl net.inet.carp.preempt="${preempt_before}" >/dev/null 2>&1 || true; fi
+  rm -f "${marker}" "${marker}.$$"
 }
 
 routerd_carp_stop() {
-  ifconfig 'ens20' inet '192.168.70.10/32' -alias >/dev/null 2>&1 || true
+  [ -r "${marker}" ] || { echo "foreign CARP ownership is unknown; refusing mutation" >&2; return 1; }
+  { read owned; read preempt_before; } < "${marker}"
+  [ "${owned}" = "${name}" ] || { echo "routerd CARP ownership marker mismatch" >&2; return 1; }
+  case "${preempt_before}" in 0|1) ;; *) echo "routerd CARP marker lacks preempt state" >&2; return 1;; esac
+  cleanup_failed=0
+  if ifconfig 'ens20' | grep -Fq 'inet 192.168.70.10 '; then
+    if ! ifconfig 'ens20' 'inet' '192.168.70.10/32' -alias >/dev/null 2>&1; then cleanup_failed=1; fi
+  fi
+  if ! sysctl net.inet.carp.preempt="${preempt_before}" >/dev/null; then cleanup_failed=1; fi
+  [ "${cleanup_failed}" = 0 ] || { echo "routerd CARP cleanup incomplete; retaining ownership marker" >&2; return 1; }
+  rm -f "${marker}" || return 1
 }
 
 routerd_carp_status() {
-  true && ifconfig 'ens20' | grep -q 'vhid 70'
+  true && ifconfig 'ens20' | grep -Eq 'vhid 70([[:space:]]|$)'
 }
 
 load_rc_config $name

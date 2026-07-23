@@ -4,8 +4,10 @@ package conntrackobserver
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -344,7 +346,7 @@ func TestControllerRecordsStatusWithoutSnapshotEvent(t *testing.T) {
 		t.Fatalf("reconcile: %v", err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "ConntrackObserver", "default")
-	if status["phase"] != "Observed" || status["count"] != 8 || status["max"] != 10 {
+	if status["phase"] != "Observed" || status["count"] != 8 || status["max"] != 10 || status["source"] != "procfs" {
 		t.Fatalf("status = %#v", status)
 	}
 	if events := eventBus.Recent("routerd.conntrack.snapshot"); len(events) != 0 {
@@ -373,5 +375,48 @@ func TestControllerRecordsUnavailableWhenConntrackProcfsMissing(t *testing.T) {
 	}
 	if status["message"] == "" {
 		t.Fatalf("missing unavailable message: %#v", status)
+	}
+}
+
+func TestControllerUsesPFConnectionsForFreeBSDSnapshot(t *testing.T) {
+	store := &testStore{}
+	controller := &Controller{
+		Bus:            bus.New(),
+		Store:          store,
+		SnapshotSource: "pf",
+		Snapshot: func() (conntrack.Snapshot, error) {
+			return conntrack.Snapshot{Count: 7, Max: 100}, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "ConntrackObserver", "default")
+	if status["phase"] != "Observed" || status["count"] != 7 || status["max"] != 100 || status["source"] != "pf" || status["usageRatio"] != 0.07 {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestControllerRecordsUnavailableWhenFreeBSDPFConnectionsFail(t *testing.T) {
+	store := &testStore{}
+	controller := &Controller{
+		Bus:   bus.New(),
+		Store: store,
+		Snapshot: func() (conntrack.Snapshot, error) {
+			err := errors.New("pfctl: device not configured")
+			return conntrack.Snapshot{}, conntrack.UnavailableError{
+				CountPath: "pfctl -ss -v", EntriesPath: "pfctl -sm", CountErr: err, EntriesErr: err,
+			}
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "ConntrackObserver", "default")
+	if status["phase"] != "Unavailable" || status["reason"] != "ConntrackUnavailable" {
+		t.Fatalf("status = %#v", status)
+	}
+	if got, _ := status["message"].(string); got == "" || !strings.Contains(got, "pfctl -ss -v") {
+		t.Fatalf("message = %q, want PF diagnostic", got)
 	}
 }

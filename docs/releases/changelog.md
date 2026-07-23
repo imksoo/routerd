@@ -12,6 +12,24 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Changed
+
+- `TunnelInterface.spec.peerAddress` now explicitly represents the IPv4 inner
+  destination of a FreeBSD point-to-point IPIP/GRE interface. It is required
+  when `spec.address` is used on FreeBSD, rejected on Linux so Linux address
+  semantics do not change, and is never inferred from the configured CIDR.
+- FreeBSD package install/upgrade/uninstall, owned cleanup, and foreign-service
+  preservation now have native amd64 and arm64 evidence. TunnelInterface
+  gif/GRE dataplane/lifecycle and owned/foreign preservation, credential-free
+  Tailscale external-auth rollback/foreign preservation, and CARP three-VM
+  failover/recovery/cleanup/foreign preservation are amd64 evidence only.
+  Tailscale authenticated enrollment is not claimed.
+- The FreeBSD support boundary is explicit: an `EgressRoutePolicy` with
+  `spec.family: ipv6` is rejected; the certified slice is IPv4 static route
+  host source affinity. `ClientPolicy` uses explicit address identity rather
+  than MAC/L2 matching. FreeBSD 14.3 GRE key handling is outbound-only; it
+  does not enforce inbound key matching.
+
 ## v20260721.1054
 
 ### Added

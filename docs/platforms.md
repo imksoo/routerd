@@ -178,6 +178,19 @@ DHCP/RA service, and ports packages for WireGuard, Tailscale, and strongSwan.
 
 `routerctl apply` installs the generated `pf.conf`, validates it with `pfctl -nf`, applies it with `pfctl -f`, validates dnsmasq with `dnsmasq --test`, starts generated rc.d scripts with `service <name> onestart`, and applies dynamic DS-Lite tunnels with `ifconfig gif` when static `rc.conf` rendering is not enough. Use `routerd render freebsd` for review and offline validation before pointing real traffic at a FreeBSD host.
 
+Current release qualification is deliberately narrower than the rendered feature
+list. FreeBSD explicitly rejects an `EgressRoutePolicy` resource whose
+`spec.family` is `ipv6`, because the certified PF `route-to` slice is IPv4
+static route host only. Package install/upgrade/uninstall, owned cleanup, and
+foreign-service preservation are certified on native amd64 and arm64. The
+following additional slices have amd64-only native evidence: `TunnelInterface`
+gif/GRE dataplane and lifecycle, owned cleanup, and foreign-interface
+preservation; credential-free Tailscale external-auth boundary, rollback, and
+foreign preservation; and CARP failover/recovery, owned cleanup, and foreign
+preservation across three independent FreeBSD VMs. Tailscale authenticated
+enrollment is not claimed. FreeBSD 14.3 GRE keys control outbound encapsulation;
+the kernel does not enforce inbound key matching.
+
 ## Platform parity backlog
 
 These are the current known level differences to track when comparing Ubuntu
@@ -185,8 +198,9 @@ and FreeBSD:
 
 | Area | Current gap | Backlog |
 | --- | --- | --- |
-| CI/runtime coverage | Pull requests compile FreeBSD amd64/arm64 binaries and run a provisioned FreeBSD 14.3 amd64 VM with the full unfiltered `go test ./...`, live routerd smoke, ARP/RA observers, and native nDPI. Retained VM115 evidence additionally covers route lookup, BFD, and supported PF dataplane slices. | Native PR runtime certification is currently amd64; arm64 remains compile-only in PR CI. |
+| CI/runtime coverage | Pull requests compile FreeBSD amd64/arm64 binaries. Provisioned FreeBSD 14.3 native evidence covers the full unfiltered `go test ./...`, live routerd smoke, ARP/RA observers, native nDPI, amd64/arm64 package lifecycle, and amd64 TunnelInterface/Tailscale/CARP slices described above. Retained VM115 evidence additionally covers route lookup, BFD, and supported PF dataplane slices. | Do not generalize the amd64 TunnelInterface, Tailscale, or CARP evidence to arm64; authenticated Tailscale enrollment remains outside this release claim. |
 | FreeBSD feature limitations | `ClientPolicy` uses DHCPv4 reservations for IPv4 and explicit `classification[].ipv6Addresses` for IPv6 pf rules. It cannot match MAC addresses or infer IPv6 identity from DHCPv4. | Keep the explicit-address and MAC/L2 limitation visible; require separate segmentation for unlisted or privacy IPv6 addresses ([#849](https://github.com/imksoo/routerd/issues/849)). |
+| IPv6 policy routing | The certified PF `route-to` slice is IPv4 static route host source affinity only. | An `EgressRoutePolicy` with `spec.family: ipv6` is explicitly rejected on FreeBSD; it is an approved product boundary, not implemented parity ([#904](https://github.com/imksoo/routerd/issues/904)). |
 | Package bootstrap | Ubuntu and FreeBSD can install packages imperatively. | Keep schema, validation, installer package lists, examples, and generated docs in sync for `apt` and `pkg`. |
 
 ## Implementation guideline for OS abstraction

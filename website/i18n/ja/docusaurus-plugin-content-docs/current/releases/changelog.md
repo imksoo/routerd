@@ -11,6 +11,12 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 変更
+
+- `TunnelInterface.spec.peerAddress` は FreeBSD の point-to-point IPIP/GRE interface の IPv4 inner destination を明示します。FreeBSD で `spec.address` を使う場合は必須で、Linux では拒否され、設定 CIDR から推測されません。
+- FreeBSD package の install/upgrade/uninstall、owned cleanup、foreign service preservation は native amd64 と arm64 の evidence を得ました。TunnelInterface の gif/GRE dataplane/lifecycle と owned/foreign preservation、credential-free Tailscale external-auth の rollback/foreign preservation、CARP の 3 VM failover/recovery/cleanup/foreign preservation は amd64 evidence のみです。Tailscale authenticated enrollment は主張しません。
+- FreeBSD の support boundary を明示します。`spec.family: ipv6` の `EgressRoutePolicy` は拒否され、認定済み slice は IPv4 static route host の source affinity に限られます。`ClientPolicy` は MAC/L2 ではなく明示 address identity を使います。FreeBSD 14.3 の GRE key は outbound-only で、inbound key matching は kernel が強制しません。
+
 ## v20260721.1054
 
 ### 追加
@@ -30,7 +36,7 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
   対応範囲内の PF `route-to` source affinity を追加しました。
 - FreeBSD では fwmark healthcheck と non-local resolver bind を明示拒否し、
   ClientPolicy は MAC/L2 ではなく IP identity を使います。認定済み policy routing は
-  IPv4 static routehost に限定され、SAM dataplane は設計上 Linux-only のままです。
+  IPv4 static route host に限定され、SAM dataplane は設計上 Linux-only のままです。
 
 ### 修正
 

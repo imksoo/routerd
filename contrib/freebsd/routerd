@@ -1,5 +1,6 @@
 #!/bin/sh
 # shellcheck shell=sh disable=SC1091,SC2034
+# routerd-managed-service: v1
 #
 # routerd rc.d script for FreeBSD.
 #

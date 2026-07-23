@@ -42,6 +42,7 @@ type tunnelDesired struct {
 	EncapSport        int
 	EncapDport        int
 	Address           string
+	PeerAddress       string
 	UnderlayInterface string
 	UnderlayMTU       int
 	Overhead          int
@@ -113,7 +114,7 @@ func (c TunnelInterfaceController) cleanupStaleResources(ctx context.Context) er
 		if item.APIVersion != api.HybridAPIVersion || item.Kind != "TunnelInterface" {
 			continue
 		}
-		if _, ok := desired[item.Name]; ok || !routerdManagedObjectStatus(item) {
+		if _, ok := desired[item.Name]; ok || !routerdManagedObjectStatus(item) || !tunnelInterfaceOwned(item.Status) {
 			continue
 		}
 		ifname := firstNonEmpty(statusString(item.Status, "ifname"), statusString(item.Status, "interface"), item.Name)
@@ -144,11 +145,13 @@ func (c TunnelInterfaceController) saveUnsupportedStatus(resource api.Resource, 
 		return err
 	}
 	desired := tunnelDesiredFromSpec(*c.Router, resource.Metadata.Name, spec)
-	return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, tunnelStatus(desired, c.DryRun, map[string]any{
+	status := tunnelStatus(desired, c.DryRun, map[string]any{
 		"phase":  "Unsupported",
 		"reason": "PlatformUnsupported",
 		"os":     string(targetOS),
-	}))
+	})
+	preserveTunnelInterfaceOwnership(status, c.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name))
+	return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status)
 }
 
 func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resource api.Resource) error {
@@ -156,11 +159,13 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 	if err != nil {
 		return err
 	}
+	previous := c.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name)
 	desired, pending, pendingReason, err := c.resolveTunnelDesired(resource.Metadata.Name, spec)
 	if err != nil {
 		return c.saveResolveError(resource, tunnelDesiredFromSpec(*c.Router, resource.Metadata.Name, spec), err)
 	}
 	status := tunnelStatus(desired, c.DryRun, map[string]any{"phase": "Pending"})
+	preserveTunnelInterfaceOwnership(status, previous)
 	if pending {
 		status["reason"] = "EndpointSourcePending"
 		status["pendingSource"] = pendingReason
@@ -177,7 +182,9 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		status["error"] = err.Error()
 		return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status)
 	}
-	previous := c.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name)
+	if observed.Exists && !tunnelInterfaceOwned(previous) {
+		return c.saveForeignInterfaceStatus(resource, desired)
+	}
 	listenerCreated, err := c.ensureFOUListener(ctx, desired)
 	if err != nil {
 		return c.saveApplyError(resource, desired, err)
@@ -199,14 +206,23 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		}
 		applied = true
 		created = true
-	} else if !tunnelLinkMatches(observed, desired) {
-		if c.targetOS() == platform.OSFreeBSD && desired.Mode == "gre" && desired.Key == 0 && observed.Key != 0 {
-			return c.saveApplyError(resource, desired, fmt.Errorf("clear FreeBSD GRE key on %s is not yet native-verified; refusing to retain the old key", desired.Name))
+	} else {
+		if c.targetOS() == platform.OSFreeBSD && desired.Mode == "gre" {
+			// FreeBSD ifconfig does not reliably render a configured GRE key.
+			// For an owned interface, retained provenance is the only safe
+			// observation fallback: it preserves a supported same-key no-op and
+			// lets key changes, including explicit key zero, reconcile normally.
+			previousKey := tunnelStatusKey(previous)
+			if observed.Key == 0 && previousKey != 0 {
+				observed.Key = previousKey
+			}
 		}
-		if err := c.changeTunnelInterface(ctx, desired); err != nil {
-			return c.saveApplyError(resource, desired, err)
+		if !tunnelLinkMatches(observed, desired) {
+			if err := c.changeTunnelInterface(ctx, desired); err != nil {
+				return c.saveApplyError(resource, desired, err)
+			}
+			applied = true
 		}
-		applied = true
 	}
 	if desired.MTU > 0 && (observed.MTU != desired.MTU || !observed.Up || created) {
 		if err := c.setTunnelLink(ctx, desired); err != nil {
@@ -227,6 +243,23 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		applied = applied || addressChanged
 	}
 	status = tunnelStatus(desired, c.DryRun, map[string]any{"phase": "Up"})
+	if c.targetOS() == platform.OSFreeBSD && desired.Address != "" {
+		out, err := c.run(ctx, "ifconfig", desired.Name)
+		if err != nil {
+			return c.saveApplyError(resource, desired, fmt.Errorf("read FreeBSD tunnel interface %s point-to-point address: %w: %s", desired.Name, err, strings.TrimSpace(string(out))))
+		}
+		observedPeer := freeBSDTunnelPeerAddress(out, desired.Address)
+		if observedPeer != desired.PeerAddress {
+			return c.saveApplyError(resource, desired, fmt.Errorf("observe FreeBSD tunnel interface %s point-to-point peer: got %q, want %q", desired.Name, observedPeer, desired.PeerAddress))
+		}
+		status["observedAddress"] = desired.Address
+		status["observedPeerAddress"] = observedPeer
+	}
+	if created {
+		status["interfaceOwned"] = true
+	} else {
+		preserveTunnelInterfaceOwnership(status, previous)
+	}
 	if listener, ok := fouListenerForDesired(desired); ok {
 		if listenerCreated || fouListenerMatchesStatus(listener, previous) || c.routerdOwnsFOUListener(listener, resource.Metadata.Name) {
 			status["fouListenerOwned"] = true
@@ -260,12 +293,22 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 	return nil
 }
 
+func (c TunnelInterfaceController) saveForeignInterfaceStatus(resource api.Resource, desired tunnelDesired) error {
+	message := fmt.Sprintf("refuse to adopt existing tunnel interface %q without routerd ownership status", desired.Name)
+	status := tunnelStatus(desired, c.DryRun, map[string]any{
+		"phase":  "Error",
+		"reason": "ForeignInterface",
+		"error":  message,
+	})
+	return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status)
+}
 func (c TunnelInterfaceController) saveResolveError(resource api.Resource, desired tunnelDesired, err error) error {
 	status := tunnelStatus(desired, c.DryRun, map[string]any{
 		"phase":  "Error",
 		"reason": "EndpointResolveFailed",
 		"error":  err.Error(),
 	})
+	preserveTunnelInterfaceOwnership(status, c.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name))
 	return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status)
 }
 
@@ -275,7 +318,28 @@ func (c TunnelInterfaceController) saveApplyError(resource api.Resource, desired
 		"reason": "ApplyFailed",
 		"error":  applyErr.Error(),
 	})
+	previous := c.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name)
+	preserveTunnelInterfaceOwnership(status, previous)
 	return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status)
+}
+
+func tunnelInterfaceOwned(status map[string]any) bool {
+	owned, ok := statusBool(status["interfaceOwned"])
+	return ok && owned
+}
+
+func preserveTunnelInterfaceOwnership(status, previous map[string]any) {
+	if tunnelInterfaceOwned(previous) {
+		status["interfaceOwned"] = true
+	}
+}
+
+func tunnelStatusKey(status map[string]any) int {
+	key, ok := statusInt(status["key"])
+	if !ok {
+		return 0
+	}
+	return key
 }
 
 func tunnelDesiredFromSpec(router api.Router, name string, spec api.TunnelInterfaceSpec) tunnelDesired {
@@ -296,6 +360,7 @@ func tunnelDesiredFromSpec(router api.Router, name string, spec api.TunnelInterf
 		EncapSport:        spec.EncapSport,
 		EncapDport:        spec.EncapDport,
 		Address:           strings.TrimSpace(spec.Address),
+		PeerAddress:       strings.TrimSpace(spec.PeerAddress),
 		UnderlayInterface: strings.TrimSpace(spec.UnderlayInterface),
 		UnderlayMTU:       estimate.UnderlayMTU,
 		Overhead:          estimate.Overhead,
@@ -412,6 +477,9 @@ func tunnelStatus(desired tunnelDesired, dryRun bool, extra map[string]any) map[
 	}
 	if desired.Address != "" {
 		status["address"] = desired.Address
+	}
+	if desired.PeerAddress != "" {
+		status["peerAddress"] = desired.PeerAddress
 	}
 	if desired.UnderlayInterface != "" {
 		status["underlayInterface"] = desired.UnderlayInterface
@@ -537,7 +605,12 @@ func parseFreeBSDTunnelStatus(ifname string, out []byte) tunnelObserved {
 		case field == "mtu" && i+1 < len(fields):
 			observed.MTU, _ = strconv.Atoi(fields[i+1])
 		case field == "grekey:" && i+1 < len(fields):
-			observed.Key, _ = strconv.Atoi(fields[i+1])
+			// FreeBSD ifconfig prints GRE keys as both hexadecimal and decimal,
+			// for example: "grekey: 0x2a (42)". Parse with base zero so
+			// reconciliation does not mistake a configured native key for zero.
+			if key, err := strconv.ParseUint(fields[i+1], 0, 32); err == nil {
+				observed.Key = int(key)
+			}
 		case field == "tunnel" && i+3 < len(fields) && fields[i+1] == "inet" && fields[i+3] == "-->":
 			observed.Local = fields[i+2]
 			if i+4 < len(fields) {
@@ -576,6 +649,33 @@ func parseFreeBSDIPv4AddressPrefixes(out []byte) []string {
 	return addresses
 }
 
+// freeBSDTunnelPeerAddress returns the destination address paired with the
+// requested local IPv4 prefix in FreeBSD ifconfig output. Point-to-point
+// interfaces render this as "inet LOCAL --> PEER netmask ...".
+func freeBSDTunnelPeerAddress(out []byte, wanted string) string {
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 4 || fields[0] != "inet" || fields[2] != "-->" {
+			continue
+		}
+		local, err := netip.ParseAddr(fields[1])
+		if err != nil || !local.Is4() {
+			continue
+		}
+		bits := 32
+		for j := 4; j+1 < len(fields); j++ {
+			if fields[j] == "netmask" {
+				bits = freeBSDNetmaskBits(fields[j+1])
+				break
+			}
+		}
+		if netip.PrefixFrom(local, bits).String() == wanted {
+			return fields[3]
+		}
+	}
+	return ""
+}
+
 func freeBSDNetmaskBits(value string) int {
 	value = strings.TrimPrefix(strings.TrimSpace(value), "0x")
 	if len(value) != 8 {
@@ -612,7 +712,7 @@ func (c TunnelInterfaceController) changeTunnelInterface(ctx context.Context, de
 		if _, err := c.run(ctx, "ifconfig", desired.Name, "tunnel", desired.Local, desired.Remote); err != nil {
 			return commandError("configure FreeBSD tunnel endpoints "+desired.Name, err)
 		}
-		if desired.Mode == "gre" && desired.Key != 0 {
+		if desired.Mode == "gre" {
 			if _, err := c.run(ctx, "ifconfig", desired.Name, "grekey", strconv.Itoa(desired.Key)); err != nil {
 				return commandError("configure FreeBSD GRE key "+desired.Name, err)
 			}
@@ -683,7 +783,22 @@ func (c TunnelInterfaceController) reconcileTunnelAddress(ctx context.Context, d
 		}
 		changed = true
 	}
-	if hasDesired || desired.Address == "" {
+	if hasDesired {
+		if c.targetOS() == platform.OSFreeBSD && desired.PeerAddress != "" {
+			out, err := c.run(ctx, "ifconfig", desired.Name)
+			if err != nil {
+				return changed, fmt.Errorf("read FreeBSD tunnel interface %s peer address: %w: %s", desired.Name, err, strings.TrimSpace(string(out)))
+			}
+			if freeBSDTunnelPeerAddress(out, desired.Address) != desired.PeerAddress {
+				if err := c.setTunnelAddress(ctx, desired); err != nil {
+					return changed, err
+				}
+				return true, nil
+			}
+		}
+		return changed, nil
+	}
+	if desired.Address == "" {
 		return changed, nil
 	}
 	if err := c.setTunnelAddress(ctx, desired); err != nil {
@@ -739,7 +854,7 @@ func (c TunnelInterfaceController) deleteTunnelAddress(ctx context.Context, ifna
 
 func (c TunnelInterfaceController) setTunnelAddress(ctx context.Context, desired tunnelDesired) error {
 	if c.targetOS() == platform.OSFreeBSD {
-		_, err := c.run(ctx, "ifconfig", desired.Name, "inet", desired.Address)
+		_, err := c.run(ctx, "ifconfig", desired.Name, "inet", desired.Address, desired.PeerAddress)
 		return commandError("set FreeBSD tunnel interface "+desired.Name+" address", err)
 	}
 	_, err := c.run(ctx, "ip", "addr", "replace", desired.Address, "dev", desired.Name)

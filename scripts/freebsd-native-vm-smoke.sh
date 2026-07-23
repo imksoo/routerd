@@ -191,3 +191,55 @@ cat "$ipsec_evidence/result"
 if [ "${ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME:-false}" = true ]; then
   sh scripts/freebsd-kernelmodule-persistence-smoke.sh --routerd "$routerd"
 fi
+
+if [ "${ROUTERD_FREEBSD_LIFECYCLE_RUNTIME:-false}" = true ]; then
+  lifecycle_evidence="$work/lifecycle-runtime"
+  dhcpv4_client="$work/routerd-dhcpv4-client"
+  dhcpv6_client="$work/routerd-dhcpv6-client"
+  dns_resolver="$work/routerd-dns-resolver"
+  go build -o "$dhcpv4_client" ./cmd/routerd-dhcpv4-client
+  go build -o "$dhcpv6_client" ./cmd/routerd-dhcpv6-client
+  go build -o "$dns_resolver" ./cmd/routerd-dns-resolver
+  sh scripts/freebsd-lifecycle-runtime-smoke.sh \
+    --dhcpv4-client "$dhcpv4_client" --dhcpv6-client "$dhcpv6_client" --dns-resolver "$dns_resolver" \
+    --routerd "$routerd" \
+    --evidence-dir "$lifecycle_evidence"
+  cat "$lifecycle_evidence/summary.log"
+  cat "$lifecycle_evidence/result"
+fi
+
+if [ "${ROUTERD_FREEBSD_PPPOE_RUNTIME:-false}" = true ]; then
+  pppoe_evidence="$work/pppoe-runtime"
+  pppoe_client="$work/routerd-pppoe-client"
+  go build -o "$pppoe_client" ./cmd/routerd-pppoe-client
+  sh scripts/freebsd-pppoe-runtime-smoke.sh --pppoe-client "$pppoe_client" --evidence-dir "$pppoe_evidence"
+  cat "$pppoe_evidence/summary.log"
+  cat "$pppoe_evidence/result"
+fi
+
+if [ "${ROUTERD_FREEBSD_WIREGUARD_VXLAN_RUNTIME:-false}" = true ]; then
+  wireguard_vxlan_evidence="$work/wireguard-vxlan-runtime"
+  sh scripts/freebsd-wireguard-vxlan-runtime-smoke.sh --routerd "$routerd" --evidence-dir "$wireguard_vxlan_evidence"
+  cat "$wireguard_vxlan_evidence/summary.log"
+  cat "$wireguard_vxlan_evidence/result"
+fi
+
+if [ "${ROUTERD_FREEBSD_TAILSCALE_BOUNDARY_RUNTIME:-false}" = true ]; then
+  tailscale_evidence="$work/tailscale-boundary"
+  /usr/bin/timeout -k 2 180 sh scripts/freebsd-tailscale-boundary-smoke.sh --routerd "$routerd" --evidence-dir "$tailscale_evidence"
+  cat "$tailscale_evidence/summary.log"
+  cat "$tailscale_evidence/result"
+fi
+
+if [ "${ROUTERD_FREEBSD_CARP_RUNTIME:-false}" = true ]; then
+  carp_evidence="$work/carp-runtime"
+  sh scripts/freebsd-carp-runtime-smoke.sh --routerd "$routerd" --evidence-dir "$carp_evidence"
+  cat "$carp_evidence/summary.log"
+  cat "$carp_evidence/result"
+fi
+
+# Package lifecycle replaces binaries/services; run it last and never combine
+# this opt-in input with the mutable lifecycle inputs in one native dispatch.
+if [ "${ROUTERD_FREEBSD_PACKAGE_LIFECYCLE_RUNTIME:-false}" = true ]; then
+  sh scripts/freebsd-package-lifecycle-smoke.sh --source "$(pwd)"
+fi

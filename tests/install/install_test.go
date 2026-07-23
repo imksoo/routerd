@@ -377,6 +377,198 @@ ExecStart=/usr/local/sbin/routerd serve --controller-chain --controller-chain-dr
 	}
 }
 
+func TestInstallPreservesForeignCanonicalServiceArtifacts(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		osName   string
+		payload  string
+		target   string
+		envKey   string
+		fakeTool string
+	}{
+		{
+			name:     "linux-systemd",
+			osName:   "Linux",
+			payload:  "systemd/routerd.service",
+			target:   "routerd.service",
+			envKey:   "ROUTERD_INSTALL_SYSTEMD_SYSTEM_DIR",
+			fakeTool: "systemctl",
+		},
+		{
+			name:     "freebsd-rcd",
+			osName:   "FreeBSD",
+			payload:  "rc.d/routerd",
+			target:   "routerd",
+			envKey:   "ROUTERD_INSTALL_RCD_DIR",
+			fakeTool: "service",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			pkg := filepath.Join(dir, "package")
+			prefix := filepath.Join(dir, "prefix")
+			serviceDir := filepath.Join(dir, "service")
+			binDir := filepath.Join(dir, "bin")
+			commandLog := filepath.Join(dir, "service-manager.log")
+			writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo routerd-test; fi\n")
+			if err := os.MkdirAll(filepath.Join(pkg, filepath.Dir(tc.payload)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(pkg, tc.payload), []byte("# routerd-managed-service: v1\nrouterd-owned\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Join(serviceDir, filepath.Dir(tc.target)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			foreignPath := filepath.Join(serviceDir, tc.target)
+			foreign := "# administrator-owned canonical service\nforeign-content\n"
+			if err := os.WriteFile(foreignPath, []byte(foreign), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeExecutable(t, filepath.Join(binDir, "uname"), fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = \"-s\" ]; then echo %s; else echo x86_64; fi\n", tc.osName))
+			writeExecutable(t, filepath.Join(binDir, tc.fakeTool), fmt.Sprintf("#!/bin/sh\necho %s \"$@\" >> %q\nexit 0\n", tc.fakeTool, commandLog))
+			if tc.osName == "FreeBSD" {
+				writeExecutable(t, filepath.Join(binDir, "sysrc"), fmt.Sprintf("#!/bin/sh\necho sysrc \"$@\" >> %q\nexit 0\n", commandLog))
+			}
+
+			out, err := runInstallWithEnv(t, pkg, prefix, []string{
+				"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+				"ROUTERD_INSTALL_FORCE_SERVICE_MANAGER=1",
+				tc.envKey + "=" + serviceDir,
+			}, "--no-install-deps", "--no-config-update", "--no-restart")
+			if err != nil {
+				t.Fatalf("install failed: %v\n%s", err, out)
+			}
+			if !strings.Contains(out, "refusing to mutate foreign") {
+				t.Fatalf("missing foreign-service refusal:\n%s", out)
+			}
+			got, err := os.ReadFile(foreignPath)
+			if err != nil || string(got) != foreign {
+				t.Fatalf("foreign service mutated: %q, err=%v", got, err)
+			}
+			if data, err := os.ReadFile(commandLog); err == nil && len(data) != 0 {
+				t.Fatalf("foreign service invoked service manager:\n%s", data)
+			}
+		})
+	}
+}
+
+func TestUninstallPreservesForeignCanonicalServiceArtifacts(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		osName     string
+		serviceRel string
+		envKey     string
+		fakeTools  []string
+	}{
+		{name: "linux-systemd", osName: "Linux", serviceRel: "routerd.service", envKey: "ROUTERD_UNINSTALL_SYSTEMD_SYSTEM_DIR", fakeTools: []string{"systemctl"}},
+		{name: "freebsd-rcd", osName: "FreeBSD", serviceRel: "routerd", envKey: "ROUTERD_UNINSTALL_RCD_DIR", fakeTools: []string{"service", "sysrc"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			prefix := filepath.Join(dir, "prefix")
+			serviceDir := filepath.Join(dir, "service")
+			binDir := filepath.Join(dir, "bin")
+			commandLog := filepath.Join(dir, "service-manager.log")
+			if err := os.MkdirAll(filepath.Join(serviceDir, filepath.Dir(tc.serviceRel)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			foreignPath := filepath.Join(serviceDir, tc.serviceRel)
+			foreign := "# administrator-owned canonical service\nforeign-content\n"
+			if err := os.WriteFile(foreignPath, []byte(foreign), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeExecutable(t, filepath.Join(binDir, "uname"), fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = \"-s\" ]; then echo %s; else echo x86_64; fi\n", tc.osName))
+			for _, tool := range tc.fakeTools {
+				writeExecutable(t, filepath.Join(binDir, tool), fmt.Sprintf("#!/bin/sh\necho %s \"$@\" >> %q\nexit 0\n", tool, commandLog))
+			}
+			writeExecutable(t, filepath.Join(binDir, "rm"), `#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in /run/routerd|/var/run/routerd) exit 0 ;; esac
+done
+exec /bin/rm "$@"
+`)
+			script := filepath.Join(repoRoot(t), "packaging", "uninstall.sh")
+			cmd := exec.Command(script, "--prefix", prefix, "--yes")
+			cmd.Env = append(os.Environ(),
+				"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"ROUTERD_UNINSTALL_FORCE_SERVICE_MANAGER=1",
+				tc.envKey+"="+serviceDir,
+			)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("uninstall failed: %v\n%s", err, out)
+			}
+			if !strings.Contains(string(out), "preserving foreign") {
+				t.Fatalf("missing foreign-service preservation:\n%s", out)
+			}
+			got, err := os.ReadFile(foreignPath)
+			if err != nil || string(got) != foreign {
+				t.Fatalf("foreign service mutated: %q, err=%v", got, err)
+			}
+			if data, err := os.ReadFile(commandLog); err == nil && len(data) != 0 {
+				t.Fatalf("foreign service invoked service manager:\n%s", data)
+			}
+		})
+	}
+}
+
+func TestUninstallRemovesOwnedCanonicalServiceArtifacts(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		osName     string
+		serviceRel string
+		envKey     string
+		fakeTools  []string
+	}{
+		{name: "linux-systemd", osName: "Linux", serviceRel: "routerd.service", envKey: "ROUTERD_UNINSTALL_SYSTEMD_SYSTEM_DIR", fakeTools: []string{"systemctl"}},
+		{name: "freebsd-rcd", osName: "FreeBSD", serviceRel: "routerd", envKey: "ROUTERD_UNINSTALL_RCD_DIR", fakeTools: []string{"service", "sysrc"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			prefix := filepath.Join(dir, "prefix")
+			serviceDir := filepath.Join(dir, "service")
+			binDir := filepath.Join(dir, "bin")
+			commandLog := filepath.Join(dir, "service-manager.log")
+			if err := os.MkdirAll(serviceDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			ownedPath := filepath.Join(serviceDir, tc.serviceRel)
+			if err := os.WriteFile(ownedPath, []byte("# routerd-managed-service: v1\nrouterd-owned\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeExecutable(t, filepath.Join(binDir, "uname"), fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = \"-s\" ]; then echo %s; else echo x86_64; fi\n", tc.osName))
+			for _, tool := range tc.fakeTools {
+				writeExecutable(t, filepath.Join(binDir, tool), fmt.Sprintf("#!/bin/sh\necho %s \"$@\" >> %q\nexit 0\n", tool, commandLog))
+			}
+			writeExecutable(t, filepath.Join(binDir, "rm"), `#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in /run/routerd|/var/run/routerd) exit 0 ;; esac
+done
+exec /bin/rm "$@"
+`)
+			script := filepath.Join(repoRoot(t), "packaging", "uninstall.sh")
+			cmd := exec.Command(script, "--prefix", prefix, "--yes")
+			cmd.Env = append(os.Environ(),
+				"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"ROUTERD_UNINSTALL_FORCE_SERVICE_MANAGER=1",
+				tc.envKey+"="+serviceDir,
+			)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("uninstall failed: %v\n%s", err, out)
+			}
+			if _, err := os.Stat(ownedPath); !os.IsNotExist(err) {
+				t.Fatalf("owned service artifact remains, stat err=%v", err)
+			}
+			data, err := os.ReadFile(commandLog)
+			if err != nil || len(data) == 0 {
+				t.Fatalf("owned service did not use service manager: %q, err=%v", data, err)
+			}
+		})
+	}
+}
+
 func TestInstallDryRunCreatesRouterdGroupBeforeSystemdUnit(t *testing.T) {
 	requireLinuxSystemdFixture(t)
 	dir := t.TempDir()

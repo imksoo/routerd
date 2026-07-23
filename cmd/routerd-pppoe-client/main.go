@@ -33,24 +33,27 @@ import (
 
 const daemonKind = pppoeclient.DaemonKind
 
+const defaultDiscoveryTimeout = 30 * time.Second
+
 type options struct {
-	resource        string
-	ifname          string
-	username        string
-	password        string
-	passwordFile    string
-	authMethod      string
-	mtu             int
-	mru             int
-	serviceName     string
-	acName          string
-	lcpEchoInterval int
-	lcpEchoFailure  int
-	runtimeDir      string
-	socketPath      string
-	stateFile       string
-	eventFile       string
-	connect         bool
+	resource         string
+	ifname           string
+	username         string
+	password         string
+	passwordFile     string
+	authMethod       string
+	mtu              int
+	mru              int
+	serviceName      string
+	acName           string
+	lcpEchoInterval  int
+	lcpEchoFailure   int
+	runtimeDir       string
+	socketPath       string
+	stateFile        string
+	eventFile        string
+	connect          bool
+	discoveryTimeout time.Duration
 }
 
 type daemon struct {
@@ -58,11 +61,17 @@ type daemon struct {
 	spec      api.PPPoESessionSpec
 	startedAt time.Time
 
-	mu         sync.Mutex
-	snapshot   pppoeclient.Snapshot
-	events     []daemonapi.DaemonEvent
-	nextCursor uint64
-	cmd        *exec.Cmd
+	mu              sync.Mutex
+	snapshot        pppoeclient.Snapshot
+	events          []daemonapi.DaemonEvent
+	nextCursor      uint64
+	cmd             *exec.Cmd
+	cmdDone         chan struct{}
+	teardownFailed  bool
+	sessionStarting bool
+	startDone       chan struct{}
+	lifetimeCtx     context.Context
+	lastDiagnostic  string
 
 	telemetry     *routerotel.Runtime
 	phaseGauge    metric.Int64Gauge
@@ -73,6 +82,51 @@ type daemon struct {
 type eventsResponse struct {
 	Cursor string                  `json:"cursor,omitempty"`
 	Events []daemonapi.DaemonEvent `json:"events"`
+}
+
+var loadFreeBSDPPPoEModule = func(ctx context.Context, module string) error {
+	out, err := exec.CommandContext(ctx, "kldload", "-n", module).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("load FreeBSD %s kernel module: %w: %s", module, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func ensureFreeBSDPPPoEModules(ctx context.Context, osName platform.OS) error {
+	if osName != platform.OSFreeBSD {
+		return nil
+	}
+	// ng_ppp is already active once LCP/PAP are exchanging and mpd obtains its
+	// netgraph sockets before dialing. ng_iface is first required when IPCP
+	// brings the negotiated interface up. The renderer does not request optional
+	// MSS clamping, so it must not load ng_tcpmss.
+	for _, module := range []string{"ng_pppoe", "ng_iface"} {
+		if err := loadFreeBSDPPPoEModule(ctx, module); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+var ensureFreeBSDPPPoEModule = func(ctx context.Context) error {
+	return ensureFreeBSDPPPoEModules(ctx, platform.CurrentOS())
+}
+
+var currentPPPoEOS = platform.CurrentOS
+
+var pppoeSessionCommand = pppoeclient.Command
+
+var pppoeStopGracePeriod = time.Second
+
+// pppoeStopGraceForOS keeps Linux's existing one-second stop behavior while
+// allowing FreeBSD mpd5 to complete its documented two-second termination
+// path and destroy its ng_iface-owned point-to-point interface before the
+// common ownership barrier evaluates it.
+var pppoeStopGraceForOS = func(osName platform.OS) time.Duration {
+	if osName == platform.OSFreeBSD {
+		return 3 * time.Second
+	}
+	return pppoeStopGracePeriod
 }
 
 func main() {
@@ -103,6 +157,7 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.SetOutput(io.Discard)
 	opts := options{}
 	fs.StringVar(&opts.resource, "resource", "wan-pppoe", "resource name")
+	_ = fs.String("supervisor-owner", "", "internal routerd supervisor ownership token")
 	fs.StringVar(&opts.ifname, "interface", "", "underlying Ethernet interface name")
 	fs.StringVar(&opts.username, "username", "", "PPPoE username")
 	fs.StringVar(&opts.password, "password", "", "PPPoE password")
@@ -171,8 +226,8 @@ func selftestCommand(args []string, stdout io.Writer) error {
 			"resource": opts.resource,
 			"phase":    "Rendered",
 			"command":  append([]string{name}, argv...),
-			"peer":     string(pppoeclient.LinuxPeer(d.config())),
-			"freebsd":  string(pppoeclient.FreeBSDPPPConf(d.config())),
+			"peer":     string(pppoeclient.RedactedRuntimeConfigForOS("linux", d.config())),
+			"freebsd":  string(pppoeclient.RedactedRuntimeConfigForOS("freebsd", d.config())),
 		})
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -245,6 +300,9 @@ func mustHistogram(telemetry *routerotel.Runtime) metric.Float64Histogram {
 }
 
 func (d *daemon) Run(ctx context.Context) error {
+	d.mu.Lock()
+	d.lifetimeCtx = ctx
+	d.mu.Unlock()
 	if err := d.prepareFilesystem(); err != nil {
 		return err
 	}
@@ -272,11 +330,53 @@ func (d *daemon) Run(ctx context.Context) error {
 }
 
 func (d *daemon) startSession(ctx context.Context) error {
+	d.mu.Lock()
+	if d.teardownFailed {
+		d.mu.Unlock()
+		return errors.New("PPPoE session start is blocked: prior routerd-owned interface cleanup is unresolved")
+	}
+	if d.cmd != nil || d.sessionStarting {
+		d.mu.Unlock()
+		return errors.New("PPPoE session start is already active or stopping")
+	}
+	d.sessionStarting = true
+	startDone := make(chan struct{})
+	d.startDone = startDone
+	managedCtx := d.lifetimeCtx
+	d.mu.Unlock()
+	if managedCtx == nil {
+		managedCtx = ctx
+	}
+	started := false
+	defer func() {
+		if started {
+			return
+		}
+		d.mu.Lock()
+		if d.startDone == startDone {
+			d.sessionStarting = false
+			d.startDone = nil
+			close(startDone)
+		}
+		d.mu.Unlock()
+	}()
+
 	if err := d.renderRuntimeConfig(); err != nil {
 		return err
 	}
-	name, argv := pppoeclient.Command(d.config())
-	cmd := exec.CommandContext(ctx, name, argv...)
+	if err := ensureFreeBSDPPPoEModule(ctx); err != nil {
+		d.markFailed(err.Error())
+		return err
+	}
+	osName := currentPPPoEOS()
+	if osName == platform.OSFreeBSD {
+		if err := ensureFreeBSDPPPoEInterfaceAbsent(ctx, d.config().IfName); err != nil {
+			d.markFailed(err.Error())
+			return err
+		}
+	}
+	name, argv := pppoeSessionCommand(d.config())
+	cmd := exec.CommandContext(managedCtx, name, argv...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -285,50 +385,150 @@ func (d *daemon) startSession(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	d.mu.Lock()
-	d.snapshot.Phase = pppoeclient.PhaseConnecting
-	d.snapshot.UpdatedAt = time.Now().UTC()
-	d.cmd = cmd
-	d.mu.Unlock()
-	d.recordPhase()
 	if err := cmd.Start(); err != nil {
 		d.markFailed(err.Error())
 		return err
 	}
+	completion := make(chan struct{})
+	d.mu.Lock()
+	d.snapshot.Phase = pppoeclient.PhaseConnecting
+	d.snapshot.CurrentAddress = ""
+	d.snapshot.PeerAddress = ""
+	d.snapshot.BytesIn = 0
+	d.snapshot.BytesOut = 0
+	d.snapshot.ConnectedAt = time.Time{}
+	d.snapshot.LastError = ""
+	d.snapshot.UpdatedAt = time.Now().UTC()
+	d.cmd = cmd
+	d.cmdDone = completion
+	d.sessionStarting = false
+	d.startDone = nil
+	close(startDone)
+	freeBSDIfName := d.snapshot.IfName
+	d.mu.Unlock()
+	started = true
+	d.recordPhase()
 	d.publish("routerd.pppoe.client.session.connecting", daemonapi.SeverityInfo, "Connecting", "PPPoE session command started", map[string]string{"command": name})
+	go d.watchDiscoveryTimeout(cmd)
+	if osName == platform.OSFreeBSD {
+		go d.watchFreeBSDPPPoEInterface(cmd, freeBSDIfName)
+	}
 	go d.scanLog(stdout)
 	go d.scanLog(stderr)
 	go func() {
-		err := cmd.Wait()
-		d.mu.Lock()
-		defer d.mu.Unlock()
-		if d.cmd == cmd {
-			d.cmd = nil
-		}
-		if err != nil && d.snapshot.Phase != pppoeclient.PhaseDisconnecting && d.snapshot.ConnectedAt.IsZero() {
-			d.snapshot.Phase = pppoeclient.PhaseFailed
-			d.snapshot.LastError = err.Error()
-			d.snapshot.UpdatedAt = time.Now().UTC()
-			_ = d.saveStateLocked()
-			d.publishLocked("routerd.pppoe.client.session.failed", daemonapi.SeverityWarning, "Exited", err.Error(), nil)
-			return
-		}
-		d.snapshot.Phase = pppoeclient.PhaseIdle
-		if !d.snapshot.ConnectedAt.IsZero() {
-			d.snapshot.LastError = ""
-		}
-		d.snapshot.UpdatedAt = time.Now().UTC()
-		_ = d.saveStateLocked()
-		d.publishLocked("routerd.pppoe.client.session.disconnected", daemonapi.SeverityInfo, "Exited", "PPPoE session command exited", nil)
+		childErr := cmd.Wait()
+		teardownErr := waitForOwnedPPPoEInterfaceTeardown(osName, freeBSDIfName)
+		d.finishSession(cmd, completion, childErr, teardownErr)
 	}()
 	return nil
+}
+
+// finishSession is the sole completion owner for a managed child. The command
+// identity and immutable completion channel protect a newer session from stale
+// completion work before the old waiter releases stop/start serialization.
+func (d *daemon) finishSession(cmd *exec.Cmd, completion chan struct{}, childErr, teardownErr error) {
+	d.mu.Lock()
+	if d.cmd == cmd && d.cmdDone == completion {
+		if teardownErr != nil {
+			// Keep the generation reserved: a replacement could otherwise adopt or
+			// collide with a kernel interface which is still being torn down.
+			d.teardownFailed = true
+			d.snapshot.Phase = pppoeclient.PhaseFailed
+			d.snapshot.LastError = teardownErr.Error()
+			d.snapshot.UpdatedAt = time.Now().UTC()
+			_ = d.saveStateLocked()
+			d.publishLocked("routerd.pppoe.client.session.failed", daemonapi.SeverityWarning, "TeardownFailed", d.snapshot.LastError, nil)
+		} else if childErr != nil && d.snapshot.Phase != pppoeclient.PhaseDisconnecting && d.snapshot.ConnectedAt.IsZero() {
+			d.cmd = nil
+			d.cmdDone = nil
+			d.snapshot.Phase = pppoeclient.PhaseFailed
+			d.snapshot.LastError = d.exitDiagnosticLocked(childErr)
+			d.snapshot.UpdatedAt = time.Now().UTC()
+			_ = d.saveStateLocked()
+			d.publishLocked("routerd.pppoe.client.session.failed", daemonapi.SeverityWarning, "Exited", d.snapshot.LastError, nil)
+		} else {
+			d.cmd = nil
+			d.cmdDone = nil
+			d.teardownFailed = false
+			d.snapshot.Phase = pppoeclient.PhaseIdle
+			if !d.snapshot.ConnectedAt.IsZero() {
+				d.snapshot.LastError = ""
+			}
+			d.snapshot.UpdatedAt = time.Now().UTC()
+			_ = d.saveStateLocked()
+			d.publishLocked("routerd.pppoe.client.session.disconnected", daemonapi.SeverityInfo, "Exited", "PPPoE session command exited", nil)
+		}
+	}
+	close(completion)
+	d.mu.Unlock()
+}
+
+func (d *daemon) stopSession() {
+	for {
+		d.mu.Lock()
+		if d.sessionStarting {
+			startDone := d.startDone
+			d.mu.Unlock()
+			if startDone != nil {
+				<-startDone
+			}
+			continue
+		}
+		cmd := d.cmd
+		completion := d.cmdDone
+		if cmd == nil || completion == nil {
+			d.mu.Unlock()
+			return
+		}
+		d.snapshot.Phase = pppoeclient.PhaseDisconnecting
+		d.snapshot.UpdatedAt = time.Now().UTC()
+		_ = d.saveStateLocked()
+		d.mu.Unlock()
+
+		if cmd.Process != nil {
+			_ = cmd.Process.Signal(os.Interrupt)
+			timer := time.NewTimer(pppoeStopGraceForOS(currentPPPoEOS()))
+			select {
+			case <-completion:
+				timer.Stop()
+				return
+			case <-timer.C:
+				_ = cmd.Process.Kill()
+			}
+		}
+		<-completion
+		return
+	}
+}
+
+func (d *daemon) watchDiscoveryTimeout(cmd *exec.Cmd) {
+	timeout := d.opts.discoveryTimeout
+	if timeout <= 0 {
+		timeout = defaultDiscoveryTimeout
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	<-timer.C
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.cmd != cmd || d.snapshot.Phase != pppoeclient.PhaseConnecting || !d.snapshot.ConnectedAt.IsZero() {
+		return
+	}
+	d.snapshot.Phase = pppoeclient.PhaseFailed
+	d.snapshot.LastError = fmt.Sprintf("PPPoE discovery timed out after %s without an assigned address", timeout)
+	d.snapshot.UpdatedAt = time.Now().UTC()
+	_ = d.saveStateLocked()
+	d.recordPhaseLocked()
+	d.publishLocked("routerd.pppoe.client.session.failed", daemonapi.SeverityWarning, "DiscoveryTimeout", d.snapshot.LastError, nil)
 }
 
 func (d *daemon) scanLog(r io.Reader) {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
-		line := scanner.Text()
+		line := redactPPPoEDiagnostic(scanner.Text(), d.opts.password)
 		d.mu.Lock()
+		d.lastDiagnostic = line
 		prev := d.snapshot.Phase
 		d.snapshot = pppoeclient.ParseLogLine(d.snapshot, line, time.Now())
 		_ = d.saveStateLocked()
@@ -340,18 +540,18 @@ func (d *daemon) scanLog(r io.Reader) {
 	}
 }
 
-func (d *daemon) stopSession() {
-	d.mu.Lock()
-	cmd := d.cmd
-	d.snapshot.Phase = pppoeclient.PhaseDisconnecting
-	d.snapshot.UpdatedAt = time.Now().UTC()
-	_ = d.saveStateLocked()
-	d.mu.Unlock()
-	if cmd != nil && cmd.Process != nil {
-		_ = cmd.Process.Signal(os.Interrupt)
-		time.Sleep(time.Second)
-		_ = cmd.Process.Kill()
+func (d *daemon) exitDiagnosticLocked(err error) string {
+	if d.lastDiagnostic == "" {
+		return err.Error()
 	}
+	return err.Error() + ": " + d.lastDiagnostic
+}
+
+func redactPPPoEDiagnostic(line, password string) string {
+	if password == "" {
+		return line
+	}
+	return strings.ReplaceAll(line, password, "[REDACTED]")
 }
 
 func (d *daemon) markFailed(message string) {
@@ -368,11 +568,12 @@ func (d *daemon) renderRuntimeConfig() error {
 		return err
 	}
 	cfg := d.config()
+	name := "peer.conf"
 	peer := pppoeclient.LinuxPeer(cfg)
 	if platform.CurrentOS() == platform.OSFreeBSD {
-		peer = pppoeclient.FreeBSDPPPConf(cfg)
+		name, peer = pppoeclient.RuntimeConfigForOS("freebsd", cfg)
 	}
-	return os.WriteFile(filepath.Join(d.opts.runtimeDir, "peer.conf"), peer, 0600)
+	return os.WriteFile(filepath.Join(d.opts.runtimeDir, name), peer, 0600)
 }
 
 func (d *daemon) config() pppoeclient.Config {

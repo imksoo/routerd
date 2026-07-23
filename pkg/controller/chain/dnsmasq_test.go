@@ -233,6 +233,153 @@ func TestEnsureSystemdDnsmasqServiceCachesStatusChecks(t *testing.T) {
 	}
 }
 
+func TestValidateDnsmasqArtifactsRefusesEachForeignArtifactBeforeLiveMutation(t *testing.T) {
+	for _, osCase := range []struct {
+		name string
+		os   platform.OS
+	}{{"linux", platform.OSLinux}, {"freebsd", platform.OSFreeBSD}} {
+		for _, foreign := range []string{"config", "hosts", "service"} {
+			t.Run(osCase.name+"-"+foreign, func(t *testing.T) {
+				dir := t.TempDir()
+				configPath := filepath.Join(dir, "dnsmasq.conf")
+				hostsPath := filepath.Join(dir, "dnsmasq-hosts.hosts")
+				servicePath := filepath.Join(dir, "routerd-dnsmasq.service")
+				artifacts := map[string][]byte{
+					"config":  []byte(routerdGeneratedDNSMasqMarker + "port=0\n"),
+					"hosts":   []byte(routerdGeneratedDNSMasqMarker),
+					"service": ownedDnsmasqService(osCase.os, configPath),
+				}
+				artifacts[foreign] = []byte("# administrator-owned " + foreign + "\n")
+				for name, path := range map[string]string{"config": configPath, "hosts": hostsPath, "service": servicePath} {
+					if err := os.WriteFile(path, artifacts[name], 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
+				err := validateDnsmasqArtifacts(configPath, hostsPath, servicePath, osCase.os)
+				if err == nil || !strings.Contains(err.Error(), "foreign "+foreign) {
+					t.Fatalf("expected foreign %s rejection, got %v", foreign, err)
+				}
+				for name, path := range map[string]string{"config": configPath, "hosts": hostsPath, "service": servicePath} {
+					got, readErr := os.ReadFile(path)
+					if readErr != nil || string(got) != string(artifacts[name]) {
+						t.Fatalf("artifact %s mutated: got %q err=%v", name, got, readErr)
+					}
+				}
+			})
+		}
+	}
+}
+
+func ownedDnsmasqService(osName platform.OS, configPath string) []byte {
+	if osName == platform.OSFreeBSD {
+		return []byte("#!/bin/sh\n" + routerdGeneratedDNSMasqMarker + "# PROVIDE: routerd_dnsmasq\nname=\"routerd_dnsmasq\"\n")
+	}
+	return []byte(routerdGeneratedDNSMasqMarker + "[Unit]\nDescription=routerd managed dnsmasq DHCP service\nExecStart=/usr/sbin/dnsmasq --conf-file=" + configPath + "\n")
+}
+
+func TestValidateDnsmasqArtifactsAcceptsOwnedPair(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "dnsmasq.conf")
+	hostsPath := filepath.Join(dir, "dnsmasq-hosts.hosts")
+	servicePath := filepath.Join(dir, "routerd-dnsmasq.service")
+	for path, data := range map[string]string{
+		configPath:  routerdGeneratedDNSMasqMarker + "port=0\n",
+		hostsPath:   routerdGeneratedDNSMasqMarker,
+		servicePath: routerdGeneratedDNSMasqMarker + "[Unit]\nDescription=routerd managed dnsmasq DHCP service\nExecStart=/usr/sbin/dnsmasq --conf-file=" + configPath + "\n",
+	} {
+		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := validateDnsmasqArtifacts(configPath, hostsPath, servicePath, platform.OSLinux); err != nil {
+		t.Fatalf("owned live artifacts rejected: %v", err)
+	}
+}
+
+func TestValidateDnsmasqArtifactsRejectsMarkerConfigWithLegacyHosts(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "dnsmasq.conf")
+	hostsPath := filepath.Join(dir, "dnsmasq-hosts.hosts")
+	servicePath := filepath.Join(dir, "routerd-dnsmasq.service")
+	config := []byte(routerdGeneratedDNSMasqMarker + "port=0\ndhcp-hostsfile=" + hostsPath + "\n")
+	legacyHosts := []byte("02:00:00:00:00:01,192.0.2.10\n")
+	service := ownedDnsmasqService(platform.OSLinux, configPath)
+	for path, data := range map[string][]byte{configPath: config, hostsPath: legacyHosts, servicePath: service} {
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err := validateDnsmasqArtifacts(configPath, hostsPath, servicePath, platform.OSLinux)
+	if err == nil || !strings.Contains(err.Error(), "foreign hosts sidecar") {
+		t.Fatalf("marker config must not adopt markerless hosts: %v", err)
+	}
+	for path, want := range map[string][]byte{configPath: config, hostsPath: legacyHosts, servicePath: service} {
+		got, readErr := os.ReadFile(path)
+		if readErr != nil || string(got) != string(want) {
+			t.Fatalf("artifact %s mutated: got %q err=%v", path, got, readErr)
+		}
+	}
+}
+
+func TestValidateDnsmasqArtifactsAcceptsLegacyRouterdArtifactsForMigration(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		os      platform.OS
+		service string
+	}{
+		{
+			name: "linux",
+			os:   platform.OSLinux,
+			service: "[Unit]\nDescription=routerd managed dnsmasq DHCP service\n" +
+				"ExecStart=/usr/sbin/dnsmasq --conf-file=%s\n",
+		},
+		{
+			name:    "freebsd",
+			os:      platform.OSFreeBSD,
+			service: "#!/bin/sh\n# PROVIDE: routerd_dnsmasq\nname=\"routerd_dnsmasq\"\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "dnsmasq.conf")
+			hostsPath := filepath.Join(dir, "dnsmasq-hosts.hosts")
+			servicePath := filepath.Join(dir, "routerd-dnsmasq.service")
+			legacyConfig := "port=0\nno-resolv\nno-hosts\nbind-dynamic\npid-file=/run/routerd/dnsmasq.pid\n" +
+				"dhcp-leasefile=/var/db/routerd/dnsmasq.leases\ndhcp-hostsfile=" + hostsPath + "\n"
+			if err := os.WriteFile(configPath, []byte(legacyConfig), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(hostsPath, []byte("02:00:00:00:00:01,192.0.2.10\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			service := tc.service
+			if tc.os == platform.OSLinux {
+				service = fmt.Sprintf(service, configPath)
+			}
+			if err := os.WriteFile(servicePath, []byte(service), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := validateDnsmasqArtifacts(configPath, hostsPath, servicePath, tc.os); err != nil {
+				t.Fatalf("legacy routerd artifacts rejected: %v", err)
+			}
+			router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lan0"}},
+				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{Interface: "lan", AddressPool: api.DHCPAddressPoolSpec{Start: "192.0.2.10", End: "192.0.2.20", LeaseTime: "1h"}, LeaseFile: filepath.Join(dir, "dnsmasq.leases")}},
+				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"}, Metadata: api.ObjectMeta{Name: "legacy-host"}, Spec: api.DHCPv4ReservationSpec{Server: "lan-v4", MACAddress: "02:00:00:00:00:01", IPAddress: "192.0.2.10"}},
+			}}}
+			if _, _, err := writeDnsmasqConfig(router, mapStore{}, configPath, filepath.Join(dir, "dnsmasq.pid"), 53, nil); err != nil {
+				t.Fatalf("migrate legacy config/hosts: %v", err)
+			}
+			for _, path := range []string{configPath, hostsPath} {
+				data, err := os.ReadFile(path)
+				if err != nil || !strings.HasPrefix(string(data), routerdGeneratedDNSMasqMarker) {
+					t.Fatalf("legacy artifact %s was not migrated to marker ownership: %q err=%v", path, data, err)
+				}
+			}
+		})
+	}
+}
+
 func TestDHCPv4ServerPendingSourceOmitsScopeUntilResolved(t *testing.T) {
 	dir := t.TempDir()
 	leaseFile := filepath.Join(dir, "state", "dnsmasq", "dnsmasq.leases")

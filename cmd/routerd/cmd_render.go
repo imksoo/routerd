@@ -39,7 +39,7 @@ func renderFreeBSDCommand(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := config.Validate(router); err != nil {
+	if err := config.ValidateForOS(router, platform.OSFreeBSD); err != nil {
 		return err
 	}
 	data, err := render.FreeBSDWithPPPoEPasswords(router, pppoePassword)
