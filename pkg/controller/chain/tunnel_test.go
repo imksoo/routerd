@@ -1084,7 +1084,7 @@ func TestTunnelInterfaceControllerFreeBSDGIFLifecycle(t *testing.T) {
 		{"ifconfig", "gif0", "tunnel", "192.0.2.10", "192.0.2.20"},
 		{"ifconfig", "gif0", "mtu", "1400", "up"},
 		{"ifconfig", "gif0"},
-		{"ifconfig", "gif0", "inet", "10.99.0.1/30"},
+		{"ifconfig", "gif0", "inet", "10.99.0.1/30", "alias"},
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %#v, want %#v", calls, want)

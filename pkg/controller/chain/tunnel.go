@@ -777,7 +777,11 @@ func (c TunnelInterfaceController) deleteTunnelAddress(ctx context.Context, ifna
 
 func (c TunnelInterfaceController) setTunnelAddress(ctx context.Context, desired tunnelDesired) error {
 	if c.targetOS() == platform.OSFreeBSD {
-		_, err := c.run(ctx, "ifconfig", desired.Name, "inet", desired.Address)
+		// Tunnel interfaces are point-to-point devices.  Add the configured
+		// inner address explicitly as an alias so FreeBSD does not treat the
+		// single address as an incomplete primary point-to-point configuration.
+		// deleteTunnelAddress already uses the matching -alias operation.
+		_, err := c.run(ctx, "ifconfig", desired.Name, "inet", desired.Address, "alias")
 		return commandError("set FreeBSD tunnel interface "+desired.Name+" address", err)
 	}
 	_, err := c.run(ctx, "ip", "addr", "replace", desired.Address, "dev", desired.Name)
