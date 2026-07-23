@@ -83,7 +83,7 @@ wait_marker() {
   output=$1
   for _ in $(jot 30); do
     if marker=$(marker_file); then
-      if jq -e '.pid > 0 and (.ownerToken | type == "string" and length > 0)' "$marker" >"$output"; then
+      if jq -e 'select(.pid > 0 and (.ownerToken | type == "string" and length > 0))' "$marker" >"$output"; then
         return 0
       fi
     fi
