@@ -363,7 +363,7 @@ func TestFreeBSDTailscaleRCDStartPropagatesFailureAndRollsBackOwnedService(t *te
 	if err := os.WriteFile(service, []byte("#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$2\" >> \"$SERVICE_LOG\"\ncase \"$2\" in onestatus) test -e \"$SERVICE_STATE\";; onestart) sleep 5 & child=$!; printf '%s\\n' \"$child\" >\"$TAILSCALED_PIDFILE\"; : >\"$SERVICE_STATE\"; wait \"$child\";; onestop) [ ! -r \"$TAILSCALED_PIDFILE\" ] || { read child <\"$TAILSCALED_PIDFILE\"; kill \"$child\" 2>/dev/null || true; }; rm -f \"$SERVICE_STATE\" \"$TAILSCALED_PIDFILE\";; *) exit 0;; esac\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(binDir, "ps"), []byte("#!/bin/sh\necho tailscaled\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(binDir, "ps"), []byte("#!/bin/sh\nprintf '  /usr/local/bin/tailscaled  \\n'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	tailscale := filepath.Join(binDir, "tailscale")
@@ -515,7 +515,7 @@ exit 0
 	if err := os.WriteFile(filepath.Join(binDir, "service"), []byte(service), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(binDir, "ps"), []byte("#!/bin/sh\necho tailscaled\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(binDir, "ps"), []byte("#!/bin/sh\n[ \"$4\" = ucomm= ] || exit 2\nprintf '  /usr/local/bin/tailscaled  \\n'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(binDir, "tailscale"), []byte("#!/bin/sh\nprintf reached > \"$TAILSCALE_REACHED\"\nexit 7\n"), 0o755); err != nil {
