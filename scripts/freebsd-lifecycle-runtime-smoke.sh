@@ -30,6 +30,9 @@ done
 [ -x "$routerd" ]
 [ -n "$evidence_dir" ]
 
+PATH=$(dirname "$dhcpv4_client"):$PATH
+export PATH
+
 case "$(uname -s)" in FreeBSD) ;; *) exit 1 ;; esac
 mkdir -p "$evidence_dir"
 work=$(mktemp -d /var/tmp/routerd-lifecycle-runtime.XXXXXX)
@@ -37,6 +40,8 @@ dnsmasq_pid=
 resolver_pid=
 dhcpv6_pid=
 kea_pid=
+routerd_pid=
+foreign_dhcpv4_pid=
 epair_a=
 epair_b=
 rcd_script=/usr/local/etc/rc.d/routerd_dnsmasq
@@ -44,6 +49,9 @@ rcd_config=/usr/local/etc/routerd/dnsmasq.conf
 rcd_installed=0
 foreign_dnsmasq_pair=0
 foreign_dnsmasq_hosts=/usr/local/etc/routerd/dnsmasq-hosts.hosts
+supervised_resource=lifecycle-supervised-dhcpv4
+supervised_socket=/var/run/routerd/dhcpv4-client/$supervised_resource.sock
+supervised_marker_dir=/var/run/routerd/supervised-daemons
 
 # Each of these is a fixture-owned foreground daemon.  FreeBSD reports the
 # deliberate SIGTERM through wait(1) as 128+SIGTERM; after its live status was
@@ -56,6 +64,69 @@ stop_owned_pid() {
     kill -TERM "$pid" 2>/dev/null || true
   fi
   wait "$pid" 2>/dev/null || true
+}
+
+marker_file() {
+  [ -d "$supervised_marker_dir" ] || return 1
+  for candidate in "$supervised_marker_dir"/*.json; do
+    [ -f "$candidate" ] || continue
+    if jq -e --arg resource "$supervised_resource" \
+      '.binary == "routerd-dhcpv4-client" and .resource == $resource' "$candidate" >/dev/null; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+wait_marker() {
+  output=$1
+  for _ in $(jot 30); do
+    if marker=$(marker_file); then
+      if jq -e '.pid > 0 and (.ownerToken | type == "string" and length > 0)' "$marker" >"$output"; then
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+wait_no_marker() {
+  for _ in $(jot 30); do
+    marker_file >/dev/null 2>&1 || return 0
+    sleep 1
+  done
+  return 1
+}
+
+wait_socket() {
+  socket=$1
+  for _ in $(jot 30); do
+    [ -S "$socket" ] && return 0
+    sleep 1
+  done
+  return 1
+}
+
+wait_pid_gone() {
+  pid=$1
+  for _ in $(jot 30); do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 1
+  done
+  return 1
+}
+
+start_supervised_routerd() {
+  label=$1
+  "$routerd" serve --config "$work/supervised-router.yaml" \
+    --controllers daemon-supervisor \
+    --state-file "$work/supervised-state.db" --ledger-file "$work/supervised-ledger.json" \
+    --status-file "$evidence_dir/supervised-$label.status.json" \
+    --socket "$work/supervised-$label.sock" --status-socket "$work/supervised-$label-status.sock" \
+    --apply-interval 1s >"$evidence_dir/supervised-$label.log" 2>&1 &
+  routerd_pid=$!
 }
 
 wait_resolver_healthy() {
@@ -100,6 +171,12 @@ cleanup() {
   if [ -n "$resolver_pid" ]; then
     stop_owned_pid "$resolver_pid"
   fi
+  if [ -n "$routerd_pid" ]; then
+    stop_owned_pid "$routerd_pid"
+  fi
+  if [ -n "$foreign_dhcpv4_pid" ]; then
+    stop_owned_pid "$foreign_dhcpv4_pid"
+  fi
   if [ -n "$dhcpv6_pid" ]; then
     stop_owned_pid "$dhcpv6_pid"
   fi
@@ -119,6 +196,9 @@ cleanup() {
   if [ -n "$epair_a" ] && ifconfig "$epair_a" >/dev/null 2>&1; then
     ifconfig "$epair_a" destroy >>"$evidence_dir/cleanup.log" 2>&1 || rc=1
   fi
+  rm -f "$supervised_socket"
+  marker=$(marker_file 2>/dev/null || true)
+  [ -z "$marker" ] || rm -f "$marker"
   rm -rf "$work"
   exit "$rc"
 }
@@ -154,6 +234,115 @@ kill -0 "$dnsmasq_pid"
 jq -e '.state == "Bound" and (.currentAddress | test("^192\\.0\\.2\\.(1[0-9]|20)$"))' "$evidence_dir/dhcpv4-result.json" >/dev/null
 jq -e 'select(.reason == "DiscoverSent")' "$evidence_dir/dhcpv4-events.jsonl" >/dev/null
 jq -e 'select(.reason == "LeaseBound")' "$evidence_dir/dhcpv4-events.jsonl" >/dev/null
+
+# #959: routerd owns this long-running DHCPv4 daemon through a runtime marker.
+# A controller SIGKILL must neither duplicate the exact owned child on the same
+# desired config nor strand it when the desired resource is removed. A ready
+# markerless socket is foreign and must remain untouched.
+rm -f "$supervised_socket"
+marker=$(marker_file 2>/dev/null || true)
+[ -z "$marker" ] || rm -f "$marker"
+cat >"$work/supervised-router.yaml" <<EOF
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: lifecycle-supervised-dhcpv4
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lifecycle-wan
+      spec:
+        ifname: $epair_a
+        managed: false
+        owner: external
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Client
+      metadata:
+        name: $supervised_resource
+      spec:
+        interface: lifecycle-wan
+        useRoutes: false
+        useDNS: false
+EOF
+start_supervised_routerd initial
+wait_marker "$evidence_dir/supervised-initial-marker.json"
+marker=$(marker_file)
+owned_pid=$(jq -r '.pid' "$marker")
+owned_token=$(jq -r '.ownerToken' "$marker")
+kill -0 "$owned_pid"
+kill -KILL "$routerd_pid"
+wait "$routerd_pid" 2>/dev/null || true
+routerd_pid=
+kill -0 "$owned_pid"
+start_supervised_routerd restart-same
+wait_marker "$evidence_dir/supervised-restart-marker.json"
+jq -e --argjson pid "$owned_pid" --arg token "$owned_token" \
+  '.pid == $pid and .ownerToken == $token' "$evidence_dir/supervised-restart-marker.json" >/dev/null
+ps -axww -o pid=,command= >"$evidence_dir/supervised-restart-ps.log"
+owned_count=$(grep -F -- "--resource $supervised_resource" "$evidence_dir/supervised-restart-ps.log" | grep -F -c -- "--supervisor-owner $owned_token" || true)
+[ "$owned_count" -eq 1 ]
+kill -KILL "$routerd_pid"
+wait "$routerd_pid" 2>/dev/null || true
+routerd_pid=
+cat >"$work/supervised-router.yaml" <<'EOF'
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: lifecycle-supervised-dhcpv4-deleted
+spec:
+  resources: []
+EOF
+start_supervised_routerd delete
+wait_pid_gone "$owned_pid"
+wait_no_marker
+echo 'supervised-dhcpv4-crash-restart-delete=ok' >>"$evidence_dir/summary.log"
+kill -TERM "$routerd_pid" 2>/dev/null || true
+wait "$routerd_pid" 2>/dev/null || true
+routerd_pid=
+
+"$dhcpv4_client" daemon --resource "$supervised_resource" --interface "$epair_a" \
+  --socket "$supervised_socket" --lease-file "$work/foreign-dhcpv4-lease.json" \
+  --event-file "$work/foreign-dhcpv4-events.jsonl" >"$evidence_dir/supervised-foreign.log" 2>&1 &
+foreign_dhcpv4_pid=$!
+wait_socket "$supervised_socket"
+kill -0 "$foreign_dhcpv4_pid"
+cat >"$work/supervised-router.yaml" <<EOF
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: lifecycle-supervised-dhcpv4-foreign
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata:
+        name: lifecycle-wan
+      spec:
+        ifname: $epair_a
+        managed: false
+        owner: external
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Client
+      metadata:
+        name: $supervised_resource
+      spec:
+        interface: lifecycle-wan
+        useRoutes: false
+        useDNS: false
+EOF
+start_supervised_routerd foreign
+sleep 3
+kill -0 "$foreign_dhcpv4_pid"
+marker_file >/dev/null 2>&1 && exit 1
+echo 'supervised-dhcpv4-markerless-foreign-preservation=ok' >>"$evidence_dir/summary.log"
+kill -TERM "$routerd_pid" 2>/dev/null || true
+wait "$routerd_pid" 2>/dev/null || true
+routerd_pid=
+stop_owned_pid "$foreign_dhcpv4_pid"
+foreign_dhcpv4_pid=
+rm -f "$supervised_socket"
 
 # Exercise the actual current routerd FreeBSD render artifact.  The native
 # guest must not overwrite an operator-owned rc.d/config collision.
@@ -401,6 +590,8 @@ resolver_pid=
 
 printf '%s\n' \
   'dhcpv4-bpf-lease=Bound' \
+  'supervised-dhcpv4-crash-restart-delete=ok' \
+  'supervised-dhcpv4-markerless-foreign-preservation=ok' \
   'dnsmasq-rcd-render-start-observe-restart-stop=ok' \
   'dnsmasq-foreign-live-chain-preservation=ok' \
   'dnsmasq-foreign-rcd-sentinel-not-run=ok' \
