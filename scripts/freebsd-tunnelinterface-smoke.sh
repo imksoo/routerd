@@ -105,11 +105,11 @@ apply_once() {
 status_row() {
 	name=$1
 	target=$2
-	if command -v sqlite3 >/dev/null 2>&1; then
-		sqlite3 "$state" "SELECT status FROM objects WHERE api_version='hybrid.routerd.net/v1alpha1' AND kind='TunnelInterface' AND name='$name';" >"$target"
-	else
-		strings "$state" | grep -F "\"interface\":\"$name\"" >"$target"
-	fi
+	command -v sqlite3 >/dev/null 2>&1 || {
+		echo "sqlite3 is required for TunnelInterface status evidence" >&2
+		return 127
+	}
+	sqlite3 "$state" "SELECT status FROM objects WHERE api_version='hybrid.routerd.net/v1alpha1' AND kind='TunnelInterface' AND name='$name';" >"$target"
 	[ -s "$target" ]
 }
 
