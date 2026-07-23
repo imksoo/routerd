@@ -360,7 +360,7 @@ func TestFreeBSDTailscaleRCDStartPropagatesFailureAndRollsBackOwnedService(t *te
 	}
 	serviceLog := filepath.Join(dir, "service.log")
 	service := filepath.Join(binDir, "service")
-	if err := os.WriteFile(service, []byte("#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$2\" >> \"$SERVICE_LOG\"\ncase \"$2\" in onestatus) test -e \"$SERVICE_STATE\";; onestart) printf '%s\\n' \"$$\" >\"$TAILSCALED_PIDFILE\"; : >\"$SERVICE_STATE\"; sleep 1;; onestop) rm -f \"$SERVICE_STATE\" \"$TAILSCALED_PIDFILE\";; *) exit 0;; esac\n"), 0o755); err != nil {
+	if err := os.WriteFile(service, []byte("#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$2\" >> \"$SERVICE_LOG\"\ncase \"$2\" in onestatus) test -e \"$SERVICE_STATE\";; onestart) sleep 5 & child=$!; printf '%s\\n' \"$child\" >\"$TAILSCALED_PIDFILE\"; : >\"$SERVICE_STATE\"; wait \"$child\";; onestop) [ ! -r \"$TAILSCALED_PIDFILE\" ] || { read child <\"$TAILSCALED_PIDFILE\"; kill \"$child\" 2>/dev/null || true; }; rm -f \"$SERVICE_STATE\" \"$TAILSCALED_PIDFILE\";; *) exit 0;; esac\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(binDir, "ps"), []byte("#!/bin/sh\necho tailscaled\n"), 0o755); err != nil {
@@ -595,7 +595,7 @@ func TestFreeBSDTailscaleRCDLoadsSelectedAuthKeyFileWithoutShellEvaluation(t *te
 		t.Fatal(err)
 	}
 	service := filepath.Join(binDir, "service")
-	if err := os.WriteFile(service, []byte("#!/bin/sh\ncase \"$2\" in onestatus) test -e \"$SERVICE_STATE\";; onestart) printf '%s\\n' \"$$\" >\"$TAILSCALED_PIDFILE\"; : >\"$SERVICE_STATE\"; sleep 1;; onestop) rm -f \"$SERVICE_STATE\" \"$TAILSCALED_PIDFILE\";; *) exit 0;; esac\n"), 0o755); err != nil {
+	if err := os.WriteFile(service, []byte("#!/bin/sh\ncase \"$2\" in onestatus) test -e \"$SERVICE_STATE\";; onestart) sleep 5 & child=$!; printf '%s\\n' \"$child\" >\"$TAILSCALED_PIDFILE\"; : >\"$SERVICE_STATE\"; wait \"$child\";; onestop) [ ! -r \"$TAILSCALED_PIDFILE\" ] || { read child <\"$TAILSCALED_PIDFILE\"; kill \"$child\" 2>/dev/null || true; }; rm -f \"$SERVICE_STATE\" \"$TAILSCALED_PIDFILE\";; *) exit 0;; esac\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(binDir, "ps"), []byte("#!/bin/sh\necho tailscaled\n"), 0o755); err != nil {
@@ -652,7 +652,7 @@ func TestFreeBSDTailscaleRCDLoadsAuthKeyEnvAndFailsBeforeServiceMutation(t *test
 	}
 	serviceLog := filepath.Join(dir, "service.log")
 	service := filepath.Join(binDir, "service")
-	if err := os.WriteFile(service, []byte("#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$2\" >> \"$SERVICE_LOG\"\ncase \"$2\" in onestatus) test -e \"$SERVICE_STATE\";; onestart) printf '%s\\n' \"$$\" >\"$TAILSCALED_PIDFILE\"; : >\"$SERVICE_STATE\"; sleep 1;; onestop) rm -f \"$SERVICE_STATE\" \"$TAILSCALED_PIDFILE\";; *) exit 0;; esac\n"), 0o755); err != nil {
+	if err := os.WriteFile(service, []byte("#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$2\" >> \"$SERVICE_LOG\"\ncase \"$2\" in onestatus) test -e \"$SERVICE_STATE\";; onestart) sleep 5 & child=$!; printf '%s\\n' \"$child\" >\"$TAILSCALED_PIDFILE\"; : >\"$SERVICE_STATE\"; wait \"$child\";; onestop) [ ! -r \"$TAILSCALED_PIDFILE\" ] || { read child <\"$TAILSCALED_PIDFILE\"; kill \"$child\" 2>/dev/null || true; }; rm -f \"$SERVICE_STATE\" \"$TAILSCALED_PIDFILE\";; *) exit 0;; esac\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(binDir, "ps"), []byte("#!/bin/sh\necho tailscaled\n"), 0o755); err != nil {
