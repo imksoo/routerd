@@ -66,11 +66,13 @@ launch() {
 launch router-a rd-carp-ta 52:54:00:c8:00:0a 2222 7101 7201 2048
 launch router-b rd-carp-tb 52:54:00:c8:00:0b 2223 7102 7202 2048
 launch client rd-carp-tc 52:54:00:c8:00:0c 2224 7103 7203 1024
+key_for() { find "$work/$1" -type f -name 'freebsd-14.3-host.id_rsa' -print -quit; }
 for role in router-a router-b client; do
-  for n in $(seq 1 60); do test -r "$work/$role/freebsd-14.3-host.id_rsa" && break; sleep 1; done
+  for n in $(seq 1 60); do test -n "$(key_for "$role")" && break; sleep 1; done
+  test -n "$(key_for "$role")" || exit 1
 done
-sshvm() { local role=$1 port=$2; shift 2; timeout -k 2 30 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$work/$role/freebsd-14.3-host.id_rsa" -p "$port" runner@127.0.0.1 "$@"; }
-scpvm() { local role=$1 port=$2 source=$3 target=$4; timeout -k 2 30 scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$work/$role/freebsd-14.3-host.id_rsa" -P "$port" "$source" "runner@127.0.0.1:$target"; }
+sshvm() { local role=$1 port=$2 key; shift 2; key=$(key_for "$role"); test -n "$key"; timeout -k 2 30 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$key" -p "$port" runner@127.0.0.1 "$@"; }
+scpvm() { local role=$1 port=$2 source=$3 target=$4 key; key=$(key_for "$role"); test -n "$key"; timeout -k 2 30 scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$key" -P "$port" "$source" "runner@127.0.0.1:$target"; }
 sshvm router-a 2222 'ifconfig vtnet1 inet 198.18.232.11/24 up'
 sshvm router-b 2223 'ifconfig vtnet1 inet 198.18.232.12/24 up'
 sshvm client 2224 'ifconfig vtnet1 inet 198.18.232.20/24 up'
