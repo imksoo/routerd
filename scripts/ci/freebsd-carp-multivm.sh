@@ -78,9 +78,9 @@ for role in router-a router-b client; do
 done
 sshvm() { local role=$1 port=$2 key; shift 2; key=$(key_for "$role"); test -n "$key"; timeout -k 2 30 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$key" -p "$port" root@127.0.0.1 "$@"; }
 scpvm() { local role=$1 port=$2 source=$3 target=$4 key; key=$(key_for "$role"); test -n "$key"; timeout -k 2 30 scp -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$key" -P "$port" "$source" "root@127.0.0.1:$target"; }
-sshvm router-a 2222 'ifconfig vtnet1 inet 198.18.232.11/24 up'
-sshvm router-b 2223 'ifconfig vtnet1 inet 198.18.232.12/24 up'
-sshvm client 2224 'ifconfig vtnet1 inet 198.18.232.20/24 up'
+sshvm router-a 2222 'ifconfig vtnet0 inet 198.18.232.11/24 up'
+sshvm router-b 2223 'ifconfig vtnet0 inet 198.18.232.12/24 up'
+sshvm client 2224 'ifconfig vtnet0 inet 198.18.232.20/24 up'
 printf 'step=vm-management-ready\n' >>"$evidence/steps.log"
 cat >"$work/a.yaml" <<'EOF'
 apiVersion: routerd.net/v1alpha1
@@ -91,7 +91,7 @@ spec:
   - apiVersion: net.routerd.net/v1alpha1
     kind: Interface
     metadata: {name: lan}
-    spec: {ifname: vtnet1, managed: false, owner: external}
+    spec: {ifname: vtnet0, managed: false, owner: external}
   - apiVersion: net.routerd.net/v1alpha1
     kind: VirtualAddress
     metadata: {name: vip}
@@ -100,22 +100,22 @@ EOF
 sed 's/carp-a/carp-b/; s/priority: 150/priority: 100/' "$work/a.yaml" >"$work/b.yaml"
 rcenv='env ROUTERD_RUNTIME_DIR=/var/tmp/routerd-carp-runtime routerd_carp_enable=YES'
 for spec in a b; do role=router-$spec; port=$([ "$spec" = a ] && echo 2222 || echo 2223); scpvm "$role" "$port" "$work/routerd" /var/tmp/routerd; scpvm "$role" "$port" "$work/$spec.yaml" /var/tmp/router.yaml; sshvm "$role" "$port" "kldload carp || true; kldstat -m carp; chmod 755 /var/tmp/routerd; /var/tmp/routerd render freebsd --config /var/tmp/router.yaml --out-dir /var/tmp/carp; $rcenv sh /var/tmp/carp/rc.d-routerd_carp onestart" >"$evidence/$role-start.log"; done
-wait_role() { local role=$1 port=$2 want=$3; for n in $(seq 1 30); do sshvm "$role" "$port" "ifconfig vtnet1 | grep -q 'carp:.*${want}'" && return 0; sleep 1; done; return 1; }
+wait_role() { local role=$1 port=$2 want=$3; for n in $(seq 1 30); do sshvm "$role" "$port" "ifconfig vtnet0 | grep -q 'carp:.*${want}'" && return 0; sleep 1; done; return 1; }
 ping_vip() { sshvm client 2224 'ping -c 3 198.18.232.100'; }
-exactly_one_master() { local n=0; if sshvm router-a 2222 'ifconfig vtnet1' | grep -q 'carp:.*MASTER'; then n=$((n+1)); fi; if sshvm router-b 2223 'ifconfig vtnet1' | grep -q 'carp:.*MASTER'; then n=$((n+1)); fi; [ "$n" -eq 1 ]; }
-wait_role router-a 2222 MASTER; sshvm router-a 2222 'ifconfig vtnet1' >"$evidence/router-a-initial-role.log"
-wait_role router-b 2223 BACKUP; sshvm router-b 2223 'ifconfig vtnet1' >"$evidence/router-b-initial-role.log"
+exactly_one_master() { local n=0; if sshvm router-a 2222 'ifconfig vtnet0' | grep -q 'carp:.*MASTER'; then n=$((n+1)); fi; if sshvm router-b 2223 'ifconfig vtnet0' | grep -q 'carp:.*MASTER'; then n=$((n+1)); fi; [ "$n" -eq 1 ]; }
+wait_role router-a 2222 MASTER; sshvm router-a 2222 'ifconfig vtnet0' >"$evidence/router-a-initial-role.log"
+wait_role router-b 2223 BACKUP; sshvm router-b 2223 'ifconfig vtnet0' >"$evidence/router-b-initial-role.log"
 ping_vip >"$evidence/vip-initial.log"
-sudo ip link set rd-carp-ta down; sshvm router-a 2222 true >"$evidence/router-a-management-after-tap-down.log"; wait_role router-b 2223 MASTER; sshvm router-b 2223 'ifconfig vtnet1' >"$evidence/router-b-takeover-role.log"; ping_vip >"$evidence/vip-after-takeover.log"
-sudo ip link set rd-carp-ta up; converged=0; for n in $(seq 1 30); do if exactly_one_master; then converged=1; break; fi; sleep 1; done; [ "$converged" -eq 1 ]; sshvm router-a 2222 'ifconfig vtnet1' >"$evidence/router-a-restored-role.log"; sshvm router-b 2223 'ifconfig vtnet1' >"$evidence/router-b-restored-role.log"; sshvm router-a 2222 "$rcenv sh /var/tmp/carp/rc.d-routerd_carp onestop; $rcenv sh /var/tmp/carp/rc.d-routerd_carp onestart" >"$evidence/router-a-restart.log"; converged=0; for n in $(seq 1 30); do if exactly_one_master; then converged=1; break; fi; sleep 1; done; [ "$converged" -eq 1 ]; sshvm router-a 2222 'ifconfig vtnet1' >"$evidence/router-a-restarted-role.log"; sshvm router-b 2223 'ifconfig vtnet1' >"$evidence/router-b-restarted-role.log"; ping_vip >"$evidence/vip-after-restart.log"
-for pair in 'router-a 2222' 'router-b 2223'; do read -r role port <<<"$pair"; sshvm "$role" "$port" "$rcenv sh /var/tmp/carp/rc.d-routerd_carp onestop; ! ifconfig vtnet1 | grep -q 'vhid 232'" >"$evidence/$role-cleanup.log"; done
-sshvm router-a 2222 'ifconfig vtnet1 inet vhid 233 advbase 1 pass foreign alias 198.18.232.100/32; ifconfig vtnet1' >"$evidence/foreign-address-before.log"
+sudo ip link set rd-carp-ta down; sshvm router-a 2222 true >"$evidence/router-a-management-after-tap-down.log"; wait_role router-b 2223 MASTER; sshvm router-b 2223 'ifconfig vtnet0' >"$evidence/router-b-takeover-role.log"; ping_vip >"$evidence/vip-after-takeover.log"
+sudo ip link set rd-carp-ta up; converged=0; for n in $(seq 1 30); do if exactly_one_master; then converged=1; break; fi; sleep 1; done; [ "$converged" -eq 1 ]; sshvm router-a 2222 'ifconfig vtnet0' >"$evidence/router-a-restored-role.log"; sshvm router-b 2223 'ifconfig vtnet0' >"$evidence/router-b-restored-role.log"; sshvm router-a 2222 "$rcenv sh /var/tmp/carp/rc.d-routerd_carp onestop; $rcenv sh /var/tmp/carp/rc.d-routerd_carp onestart" >"$evidence/router-a-restart.log"; converged=0; for n in $(seq 1 30); do if exactly_one_master; then converged=1; break; fi; sleep 1; done; [ "$converged" -eq 1 ]; sshvm router-a 2222 'ifconfig vtnet0' >"$evidence/router-a-restarted-role.log"; sshvm router-b 2223 'ifconfig vtnet0' >"$evidence/router-b-restarted-role.log"; ping_vip >"$evidence/vip-after-restart.log"
+for pair in 'router-a 2222' 'router-b 2223'; do read -r role port <<<"$pair"; sshvm "$role" "$port" "$rcenv sh /var/tmp/carp/rc.d-routerd_carp onestop; ! ifconfig vtnet0 | grep -q 'vhid 232'" >"$evidence/$role-cleanup.log"; done
+sshvm router-a 2222 'ifconfig vtnet0 inet vhid 233 advbase 1 pass foreign alias 198.18.232.100/32; ifconfig vtnet0' >"$evidence/foreign-address-before.log"
 if sshvm router-a 2222 "$rcenv sh /var/tmp/carp/rc.d-routerd_carp onestart" >"$evidence/foreign-address-refusal.log" 2>&1; then exit 1; fi
-sshvm router-a 2222 'ifconfig vtnet1' >"$evidence/foreign-address-after.log"; cmp "$evidence/foreign-address-before.log" "$evidence/foreign-address-after.log"
-sshvm router-a 2222 'ifconfig vtnet1 inet 198.18.232.100/32 -alias'
-sshvm router-a 2222 'ifconfig vtnet1 inet vhid 232 advbase 1 pass foreign alias 198.18.232.101/32; ifconfig vtnet1' >"$evidence/foreign-vhid-before.log"
+sshvm router-a 2222 'ifconfig vtnet0' >"$evidence/foreign-address-after.log"; cmp "$evidence/foreign-address-before.log" "$evidence/foreign-address-after.log"
+sshvm router-a 2222 'ifconfig vtnet0 inet 198.18.232.100/32 -alias'
+sshvm router-a 2222 'ifconfig vtnet0 inet vhid 232 advbase 1 pass foreign alias 198.18.232.101/32; ifconfig vtnet0' >"$evidence/foreign-vhid-before.log"
 if sshvm router-a 2222 "$rcenv sh /var/tmp/carp/rc.d-routerd_carp onestart" >"$evidence/foreign-vhid-refusal.log" 2>&1; then exit 1; fi
-sshvm router-a 2222 'ifconfig vtnet1' >"$evidence/foreign-vhid-after.log"; cmp "$evidence/foreign-vhid-before.log" "$evidence/foreign-vhid-after.log"
-sshvm router-a 2222 'ifconfig vtnet1 inet 198.18.232.101/32 -alias'
+sshvm router-a 2222 'ifconfig vtnet0' >"$evidence/foreign-vhid-after.log"; cmp "$evidence/foreign-vhid-before.log" "$evidence/foreign-vhid-after.log"
+sshvm router-a 2222 'ifconfig vtnet0 inet 198.18.232.101/32 -alias'
 printf '%s\n' 'carp-three-vm-master-backup=ok' 'carp-three-vm-vip-failover-recovery=ok' 'carp-three-vm-owned-cleanup=ok' 'carp-three-vm-foreign-preservation=ok' >"$evidence/summary.log"
 printf 'freebsd-carp-multivm=ok\n' >"$evidence/result"
