@@ -101,8 +101,7 @@ cleanup() {
     run_bounded tailscale-owned-stop 45 "$evidence_dir/tailscale-owned-stop.log" "$script" onestop || rc=1
   fi
   if [ "$foreign_started" -eq 1 ]; then
-    run_bounded tailscaled-foreign-stop 45 "$evidence_dir/tailscaled-stop.log" service tailscaled onestop || rc=1
-    if tailscaled_running; then
+    if ! run_bounded tailscaled-foreign-stop 45 "$evidence_dir/tailscaled-stop.log" service tailscaled onestop && tailscaled_running; then
       printf 'tailscaled remains live after foreign stop\n' >"$evidence_dir/tailscaled-status-after-stop.log"
       rc=1
     fi
@@ -178,7 +177,10 @@ if run_bounded tailscale-foreign-refusal 45 "$evidence_dir/tailscale-foreign-ref
 fi
 tailscaled_running || { echo "generated Tailscale lifecycle did not preserve foreign tailscaled" >&2; exit 1; }
 printf 'tailscaled pid=%s preserved\n' "$(cat "$pidfile")" >"$evidence_dir/tailscaled-foreign-preserved.log"
-run_bounded tailscaled-foreign-stop 45 "$evidence_dir/tailscaled-foreign-stop.log" service tailscaled onestop
+if ! run_bounded tailscaled-foreign-stop 45 "$evidence_dir/tailscaled-foreign-stop.log" service tailscaled onestop && tailscaled_running; then
+  printf 'tailscaled remains live after foreign stop\n' >"$evidence_dir/tailscaled-status-after-stop.log"
+  exit 1
+fi
 foreign_started=0
 printf '%s\n' \
   'tailscale-generated-start-failure-unwinds-owned-service=ok' \
