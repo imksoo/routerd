@@ -41,7 +41,16 @@ own_gre_module=0
 capture_pid=
 
 emit_initial_failure() {
-	for evidence in underlay.ping apply-initial.log gif0.add gif0.initial.status gif.ping gif.proto4 gif.outer.before gif.outer.after gre0.add gre0.initial.status; do
+	for evidence in \
+		underlay.ping \
+		apply-initial.log gif0.add gif0.initial.status gif.ping gif.proto4 gif.outer.before gif.outer.after gre0.add gre0.initial.status \
+		apply-second.log gif0.second.status \
+		apply-change.log gif0.change gre0.change \
+		apply-gre-key-zero.log gre0.key-zero.status \
+		apply-restart.log gif0.restart.status \
+		apply-remove.log \
+		apply-foreign.log gif0.foreign.before gif0.foreign.status gif0.foreign.after \
+		apply-foreign-stale.log gif0.foreign.stale.after; do
 		path="$work/$evidence"
 		[ -f "$path" ] || continue
 		echo "--- tunnelinterface $evidence" >&2
@@ -194,12 +203,14 @@ else
     exit 1
   fi
 fi
+echo 'freebsd-tunnelinterface-stage=initial-dataplane=ok'
 
 # A new serve --once process using the persisted state is a controller restart;
 # it must be a no-op, not an adoption of a different kernel object.
 apply_once second
 status_row gif0 "$work/gif0.second.status"
 jq -e '.phase == "Up" and .reason == "AlreadyConfigured" and .interfaceOwned == true' "$work/gif0.second.status" >/dev/null
+echo 'freebsd-tunnelinterface-stage=second-noop=ok'
 
 write_config 1300
 apply_once change
@@ -207,6 +218,7 @@ r1cmd ifconfig gif0 >"$work/gif0.change"
 r1cmd ifconfig gre0 >"$work/gre0.change"
 grep -F 'mtu 1300' "$work/gif0.change"
 grep -F 'mtu 1300' "$work/gre0.change"
+echo 'freebsd-tunnelinterface-stage=change=ok'
 
 # FreeBSD has no native-verified safe clear token for a configured GRE key;
 # reject this shape rather than silently retaining key 42.
@@ -214,11 +226,13 @@ write_config 1300 0
 apply_once gre-key-zero
 status_row gre0 "$work/gre0.key-zero.status"
 jq -e '.phase == "Error" and (.error | contains("clear FreeBSD GRE key")) and .interfaceOwned == true' "$work/gre0.key-zero.status" >/dev/null
+echo 'freebsd-tunnelinterface-stage=gre-key-zero=ok'
 
 write_config 1300
 apply_once restart
 status_row gif0 "$work/gif0.restart.status"
 jq -e '.phase == "Up" and .reason == "AlreadyConfigured" and .interfaceOwned == true' "$work/gif0.restart.status" >/dev/null
+echo 'freebsd-tunnelinterface-stage=restart=ok'
 
 cat >"$work/router.yaml" <<'EOF'
 apiVersion: routerd.net/v1alpha1
@@ -233,6 +247,7 @@ for ifname in gif0 gre0; do
     exit 1
   fi
 done
+echo 'freebsd-tunnelinterface-stage=owned-cleanup=ok'
 
 # A pre-existing administrator gif must be rejected and remain unchanged; the
 # fixture alone destroys this disposable foreign interface afterward.
@@ -245,6 +260,7 @@ status_row gif0 "$work/gif0.foreign.status"
 jq -e '.phase == "Error" and .reason == "ForeignInterface" and (.interfaceOwned != true)' "$work/gif0.foreign.status" >/dev/null
 r1cmd ifconfig gif0 >"$work/gif0.foreign.after"
 cmp "$work/gif0.foreign.before" "$work/gif0.foreign.after"
+echo 'freebsd-tunnelinterface-stage=foreign-preservation=ok'
 
 cat >"$work/router.yaml" <<'EOF'
 apiVersion: routerd.net/v1alpha1
@@ -256,4 +272,5 @@ apply_once foreign-stale
 r1cmd ifconfig gif0 >"$work/gif0.foreign.stale.after"
 cmp "$work/gif0.foreign.before" "$work/gif0.foreign.stale.after"
 r1cmd ifconfig gif0 destroy
+echo 'freebsd-tunnelinterface-stage=foreign-stale-preservation=ok'
 echo "freebsd-tunnelinterface=ok"
