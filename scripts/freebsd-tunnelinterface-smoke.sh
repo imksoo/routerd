@@ -47,7 +47,7 @@ emit_initial_failure() {
 		apply-second.log gif0.second.status gre0.second.status \
 		apply-change.log gif0.change gre0.change \
 		apply-gre-key-zero.log gre0.key-zero.status \
-		apply-restart.log gif0.restart.status \
+		apply-restart.log gif0.restart.status gre0.restart.status \
 		apply-remove.log \
 		apply-foreign.log gif0.foreign.before gif0.foreign.status gif0.foreign.after \
 		apply-foreign-stale.log gif0.foreign.stale.after; do
@@ -222,18 +222,22 @@ grep -F 'mtu 1300' "$work/gif0.change"
 grep -F 'mtu 1300' "$work/gre0.change"
 echo 'freebsd-tunnelinterface-stage=change=ok'
 
-# FreeBSD has no native-verified safe clear token for a configured GRE key;
-# reject this shape rather than silently retaining key 42.
+# FreeBSD gre(4) defines key zero as disabling the key option. The controller
+# must apply that supported clear instead of retaining key 42.
 write_config 1300 0
 apply_once gre-key-zero
 status_row gre0 "$work/gre0.key-zero.status"
-jq -e '.phase == "Error" and (.error | contains("clear FreeBSD GRE key")) and .interfaceOwned == true' "$work/gre0.key-zero.status" >/dev/null
+jq -e '.phase == "Up" and (.key | not) and .interfaceOwned == true' "$work/gre0.key-zero.status" >/dev/null
 echo 'freebsd-tunnelinterface-stage=gre-key-zero=ok'
 
-write_config 1300
+# Re-key after the supported clear. This is expected to be Applied rather than
+# a no-op; the second stage above is the same-key restart/idempotence oracle.
+write_config 1300 42
 apply_once restart
 status_row gif0 "$work/gif0.restart.status"
+status_row gre0 "$work/gre0.restart.status"
 jq -e '.phase == "Up" and .reason == "AlreadyConfigured" and .interfaceOwned == true' "$work/gif0.restart.status" >/dev/null
+jq -e '.phase == "Up" and .key == 42 and .interfaceOwned == true' "$work/gre0.restart.status" >/dev/null
 echo 'freebsd-tunnelinterface-stage=restart=ok'
 
 cat >"$work/router.yaml" <<'EOF'

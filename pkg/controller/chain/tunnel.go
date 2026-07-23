@@ -211,11 +211,8 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 			// FreeBSD ifconfig does not reliably render a configured GRE key.
 			// For an owned interface, retained provenance is the only safe
 			// observation fallback: it preserves a supported same-key no-op and
-			// refuses an unverified transition back to an unkeyed GRE interface.
+			// lets key changes, including explicit key zero, reconcile normally.
 			previousKey := tunnelStatusKey(previous)
-			if desired.Key == 0 && (observed.Key != 0 || previousKey != 0) {
-				return c.saveApplyError(resource, desired, fmt.Errorf("clear FreeBSD GRE key on %s is not yet native-verified; refusing to retain the old key", desired.Name))
-			}
 			if observed.Key == 0 && previousKey != 0 {
 				observed.Key = previousKey
 			}
@@ -323,12 +320,6 @@ func (c TunnelInterfaceController) saveApplyError(resource api.Resource, desired
 	})
 	previous := c.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name)
 	preserveTunnelInterfaceOwnership(status, previous)
-	// Status writes replace the complete object. When FreeBSD cannot render a
-	// configured GRE key, retain owned nonzero key provenance across an Error
-	// so a subsequent supported same-key reconcile remains idempotent.
-	if desired.Mode == "gre" && desired.Key == 0 && tunnelStatusKey(previous) != 0 {
-		status["key"] = tunnelStatusKey(previous)
-	}
 	return c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status)
 }
 
@@ -721,7 +712,7 @@ func (c TunnelInterfaceController) changeTunnelInterface(ctx context.Context, de
 		if _, err := c.run(ctx, "ifconfig", desired.Name, "tunnel", desired.Local, desired.Remote); err != nil {
 			return commandError("configure FreeBSD tunnel endpoints "+desired.Name, err)
 		}
-		if desired.Mode == "gre" && desired.Key != 0 {
+		if desired.Mode == "gre" {
 			if _, err := c.run(ctx, "ifconfig", desired.Name, "grekey", strconv.Itoa(desired.Key)); err != nil {
 				return commandError("configure FreeBSD GRE key "+desired.Name, err)
 			}
