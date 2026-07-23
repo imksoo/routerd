@@ -210,7 +210,13 @@ routerd_tailscale_home_start() {
       return 1
     fi
   fi
-  '/usr/local/bin/tailscale' 'up' '--hostname=edge-router' '--auth-key=${TS_AUTHKEY}' '--advertise-exit-node' '--advertise-routes=172.18.0.0/16,192.168.20.0/24' '--accept-dns=false' || { routerd_tailscale_home_rollback; return 1; }
+  '/usr/local/bin/tailscale' 'up' '--timeout=30s' '--hostname=edge-router' '--auth-key=${TS_AUTHKEY}' '--advertise-exit-node' '--advertise-routes=172.18.0.0/16,192.168.20.0/24' '--accept-dns=false' >/dev/null 2>&1
+  rc=$?
+  if [ "${rc}" -ne 0 ]; then
+    routerd_tailscale_home_rollback
+    echo "tailscale enrollment failed" >&2
+    return "${rc}"
+  fi
 }
 
 routerd_tailscale_home_stop() {

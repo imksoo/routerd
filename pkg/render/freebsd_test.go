@@ -3,6 +3,9 @@
 package render
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -306,8 +309,7 @@ func TestFreeBSDRendersTailscaleAndFirewallLoggerRCDScripts(t *testing.T) {
 		`foreign tailscaled service is already running; refusing mutation`,
 		`service tailscaled onestart`,
 		`service tailscaled onestop`,
-		`timeout -k 2 45`,
-		`tailscale enrollment timed out`,
+		`--timeout=30s`,
 		`>/dev/null 2>&1`,
 		`routerd ownership marker mismatch`,
 		`unable to publish routerd tailscaled ownership marker`,
@@ -321,6 +323,12 @@ func TestFreeBSDRendersTailscaleAndFirewallLoggerRCDScripts(t *testing.T) {
 		if !strings.Contains(tailscale, want) {
 			t.Fatalf("tailscale rc.d script missing %q:\n%s", want, tailscale)
 		}
+	}
+	if count := strings.Count(tailscale, "--timeout=30s"); count != 1 {
+		t.Fatalf("tailscale timeout argument count = %d, want 1:\n%s", count, tailscale)
+	}
+	if strings.Contains(tailscale, "timeout -k") {
+		t.Fatalf("production rc.d script must use tailscale --timeout, not an external wrapper:\n%s", tailscale)
 	}
 	firewall := string(got.RCDScripts["routerd_firewall_logger"])
 	for _, want := range []string{
@@ -337,6 +345,52 @@ func TestFreeBSDRendersTailscaleAndFirewallLoggerRCDScripts(t *testing.T) {
 		if !strings.Contains(firewall, want) {
 			t.Fatalf("firewall logger rc.d script missing %q:\n%s", want, firewall)
 		}
+	}
+}
+
+func TestFreeBSDTailscaleRCDStartPropagatesFailureAndRollsBackOwnedService(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	serviceLog := filepath.Join(dir, "service.log")
+	service := filepath.Join(binDir, "service")
+	if err := os.WriteFile(service, []byte("#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$2\" >> \"$SERVICE_LOG\"\ncase \"$2\" in onestatus) exit 1;; *) exit 0;; esac\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tailscale := filepath.Join(binDir, "tailscale")
+	if err := os.WriteFile(tailscale, []byte("#!/bin/sh\nexit 7\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	name := "routerd_tailscale_test"
+	markerDir := filepath.Join(dir, "markers")
+	script := string(FreeBSDTailscaleRCDScript(name, api.TailscaleNodeSpec{BinaryPath: tailscale}))
+	script = strings.Replace(script, "/var/run/routerd/tailscale", markerDir, 1)
+	script = strings.Replace(script, ". /etc/rc.subr\n", "", 1)
+	end := strings.Index(script, "load_rc_config $name")
+	if end < 0 {
+		t.Fatalf("generated rc.d script lacks load_rc_config:\n%s", script)
+	}
+	harness := script[:end] + name + "_start\nexit $?\n"
+	cmd := exec.Command("sh", "-c", harness)
+	cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"), "SERVICE_LOG="+serviceLog)
+	err := cmd.Run()
+	if err == nil {
+		t.Fatal("start unexpectedly succeeded after tailscale up failure")
+	}
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 7 {
+		t.Fatalf("start exit = %v, want tailscale failure exit 7", err)
+	}
+	if _, err := os.Stat(filepath.Join(markerDir, name+".owner")); !os.IsNotExist(err) {
+		t.Fatalf("ownership marker remains after rollback: %v", err)
+	}
+	data, err := os.ReadFile(serviceLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "tailscaled onestop") {
+		t.Fatalf("rollback did not stop routerd-started tailscaled:\n%s", data)
 	}
 }
 

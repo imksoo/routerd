@@ -210,7 +210,13 @@ routerd_tailscale_mesh_start() {
       return 1
     fi
   fi
-  '/usr/local/bin/tailscale' 'up' '--hostname=routerd-mesh' '--auth-key=${TS_AUTHKEY}' '--accept-routes=true' '--accept-dns=false' || { routerd_tailscale_mesh_rollback; return 1; }
+  '/usr/local/bin/tailscale' 'up' '--timeout=30s' '--hostname=routerd-mesh' '--auth-key=${TS_AUTHKEY}' '--accept-routes=true' '--accept-dns=false' >/dev/null 2>&1
+  rc=$?
+  if [ "${rc}" -ne 0 ]; then
+    routerd_tailscale_mesh_rollback
+    echo "tailscale enrollment failed" >&2
+    return "${rc}"
+  fi
 }
 
 routerd_tailscale_mesh_stop() {

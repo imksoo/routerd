@@ -36,9 +36,6 @@ func TailscaleSystemdSpec(name string, spec api.TailscaleNodeSpec) api.SystemdUn
 		After:                    []string{"network-online.target", "tailscaled.service"},
 		WantedBy:                 []string{"multi-user.target"},
 		Restart:                  "no",
-		TimeoutStartSec:          "45s",
-		StandardOutput:           "null",
-		StandardError:            "null",
 		RuntimeDirectory:         []string{"routerd"},
 		RuntimeDirectoryPreserve: "yes",
 		RemainAfterExit:          &remainAfterExit,
@@ -50,7 +47,10 @@ func TailscaleSystemdSpec(name string, spec api.TailscaleNodeSpec) api.SystemdUn
 
 func TailscaleUpArgs(spec api.TailscaleNodeSpec) []string {
 	binary := firstNonEmpty(spec.BinaryPath, "/usr/bin/tailscale")
-	args := []string{binary, "up"}
+	// tailscale up defaults to an unbounded initialization wait. Keep the
+	// lifecycle bound in the shared CLI arguments so Linux and FreeBSD have
+	// identical semantics without changing ownership of tailscaled itself.
+	args := []string{binary, "up", "--timeout=30s"}
 	appendValue := func(flag, value string) {
 		value = strings.TrimSpace(value)
 		if value != "" {

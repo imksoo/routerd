@@ -275,9 +275,6 @@ type SystemdUnitSpec struct {
 	WantedBy                 []string `yaml:"wantedBy,omitempty" json:"wantedBy,omitempty"`
 	Restart                  string   `yaml:"restart,omitempty" json:"restart,omitempty" jsonschema:"enum=,enum=no,enum=on-failure,enum=always"`
 	RestartSec               string   `yaml:"restartSec,omitempty" json:"restartSec,omitempty"`
-	TimeoutStartSec          string   `yaml:"timeoutStartSec,omitempty" json:"timeoutStartSec,omitempty"`
-	StandardOutput           string   `yaml:"standardOutput,omitempty" json:"standardOutput,omitempty"`
-	StandardError            string   `yaml:"standardError,omitempty" json:"standardError,omitempty"`
 	User                     string   `yaml:"user,omitempty" json:"user,omitempty"`
 	Group                    string   `yaml:"group,omitempty" json:"group,omitempty"`
 	SupplementaryGroups      []string `yaml:"supplementaryGroups,omitempty" json:"supplementaryGroups,omitempty"`
