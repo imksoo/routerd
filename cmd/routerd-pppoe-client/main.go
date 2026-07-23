@@ -157,6 +157,7 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.SetOutput(io.Discard)
 	opts := options{}
 	fs.StringVar(&opts.resource, "resource", "wan-pppoe", "resource name")
+	_ = fs.String("supervisor-owner", "", "internal routerd supervisor ownership token")
 	fs.StringVar(&opts.ifname, "interface", "", "underlying Ethernet interface name")
 	fs.StringVar(&opts.username, "username", "", "PPPoE username")
 	fs.StringVar(&opts.password, "password", "", "PPPoE password")

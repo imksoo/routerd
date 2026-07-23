@@ -74,6 +74,7 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.SetOutput(io.Discard)
 	var opts options
 	fs.StringVar(&opts.resource, "resource", "wan-dhcpv4", "resource name")
+	_ = fs.String("supervisor-owner", "", "internal routerd supervisor ownership token")
 	fs.StringVar(&opts.ifname, "interface", "", "uplink interface name")
 	fs.StringVar(&opts.hostname, "hostname", "", "DHCP option 12 hostname")
 	fs.StringVar(&opts.requestedAddress, "requested-address", "", "DHCP option 50 requested IPv4 address")

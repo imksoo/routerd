@@ -80,6 +80,7 @@ type options struct {
 
 func bindOptions(fs *flag.FlagSet, opts *options) {
 	fs.StringVar(&opts.resource, "resource", "wan-pd", "resource name")
+	_ = fs.String("supervisor-owner", "", "internal routerd supervisor ownership token")
 	fs.StringVar(&opts.ifname, "interface", "", "uplink interface name")
 	fs.StringVar(&opts.clientDUID, "client-duid", "", "client DUID hex; default derives DUID-LL from interface MAC")
 	fs.UintVar(&opts.iaid, "iaid", 1, "IA_PD IAID")

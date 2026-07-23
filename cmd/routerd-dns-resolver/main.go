@@ -131,6 +131,7 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.SetOutput(io.Discard)
 	opts := options{}
 	fs.StringVar(&opts.resource, "resource", "resolver", "resource name")
+	_ = fs.String("supervisor-owner", "", "internal routerd supervisor ownership token")
 	fs.StringVar(&opts.configFile, "config-file", "", "resolver runtime config JSON")
 	fs.StringVar(&opts.socketPath, "socket", "", "Unix socket path")
 	fs.StringVar(&opts.stateFile, "state-file", "", "state JSON path")
