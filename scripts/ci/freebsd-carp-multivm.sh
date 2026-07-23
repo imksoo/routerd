@@ -92,7 +92,7 @@ spec:
 EOF
 sed 's/carp-a/carp-b/; s/priority: 150/priority: 100/' "$work/a.yaml" >"$work/b.yaml"
 rcenv='env ROUTERD_RUNTIME_DIR=/var/tmp/routerd-carp-runtime routerd_carp_enable=YES'
-for spec in a b; do role=router-$spec; port=$([ "$spec" = a ] && echo 2222 || echo 2223); scpvm "$role" "$port" "$work/routerd" /var/tmp/routerd; scpvm "$role" "$port" "$work/$spec.yaml" /var/tmp/router.yaml; sshvm "$role" "$port" "chmod 755 /var/tmp/routerd; /var/tmp/routerd render freebsd --config /var/tmp/router.yaml --out-dir /var/tmp/carp; $rcenv sh /var/tmp/carp/rc.d-routerd_carp onestart" >"$evidence/$role-start.log"; done
+for spec in a b; do role=router-$spec; port=$([ "$spec" = a ] && echo 2222 || echo 2223); scpvm "$role" "$port" "$work/routerd" /var/tmp/routerd; scpvm "$role" "$port" "$work/$spec.yaml" /var/tmp/router.yaml; sshvm "$role" "$port" "kldload carp || true; kldstat -m carp; chmod 755 /var/tmp/routerd; /var/tmp/routerd render freebsd --config /var/tmp/router.yaml --out-dir /var/tmp/carp; $rcenv sh /var/tmp/carp/rc.d-routerd_carp onestart" >"$evidence/$role-start.log"; done
 wait_role() { local role=$1 port=$2 want=$3; for n in $(seq 1 30); do sshvm "$role" "$port" "ifconfig vtnet1 | grep -q 'carp:.*${want}'" && return 0; sleep 1; done; return 1; }
 ping_vip() { sshvm client 2224 'ping -c 3 198.18.232.100'; }
 exactly_one_master() { local n=0; if sshvm router-a 2222 'ifconfig vtnet1' | grep -q 'carp:.*MASTER'; then n=$((n+1)); fi; if sshvm router-b 2223 'ifconfig vtnet1' | grep -q 'carp:.*MASTER'; then n=$((n+1)); fi; [ "$n" -eq 1 ]; }

@@ -242,12 +242,29 @@ routerd_tailscale_mesh_start() {
       return 1
     fi
     started_here=1
-    /usr/bin/timeout -k 2 15 service tailscaled onestart >/dev/null 2>&1
-    rc=$?
-    if [ "${rc}" -ne 0 ]; then
+    service tailscaled onestart >/dev/null 2>&1 &
+    launcher_pid=$!
+    deadline=$(( $(date +%s) + 15 ))
+    ready=0
+    while [ "$(date +%s)" -lt "${deadline}" ]; do
+      /usr/bin/timeout -k 2 2 service tailscaled onestatus >/dev/null 2>&1
+      status_rc=$?
+      [ "${status_rc}" -eq 0 ] && { ready=1; break; }
+      if ! kill -0 "${launcher_pid}" 2>/dev/null; then
+        wait "${launcher_pid}"; rc=$?
+        routerd_tailscale_mesh_rollback || true
+        echo "tailscaled service exited before readiness" >&2
+        [ "${rc}" -ne 0 ] || rc=1
+        return "${rc}"
+      fi
+      sleep 1
+    done
+    if [ "${ready}" -ne 1 ]; then
+      kill "${launcher_pid}" 2>/dev/null || true
+      wait "${launcher_pid}" 2>/dev/null || true
       routerd_tailscale_mesh_rollback || true
-      echo "tailscaled service start failed" >&2
-      return "${rc}"
+      echo "tailscaled service readiness timed out" >&2
+      return 124
     fi
   else
     echo "tailscaled service status check failed" >&2
