@@ -292,14 +292,14 @@ func FreeBSDTailscaleRCDScript(name string, spec api.TailscaleNodeSpec) []byte {
 	b.WriteString("marker_dir=" + shellSingleQuote("/var/run/routerd/tailscale") + "\nmarker=\"${marker_dir}/" + name + ".owner\"\n")
 	b.WriteString("start_cmd=\"${name}_start\"\nstop_cmd=\"${name}_stop\"\nstatus_cmd=\"${name}_status\"\n\n")
 	b.WriteString(name + "_rollback() {\n  [ \"${started_here:-0}\" = 1 ] || return 0\n  service tailscaled onestop >/dev/null 2>&1 || true\n  rm -f \"${marker}\" \"${marker}.$$\"\n}\n\n")
-	b.WriteString(name + "_start() {\n  started_here=0\n  if service tailscaled onestatus >/dev/null 2>&1; then\n    [ -r \"${marker}\" ] || { echo \"foreign tailscaled service is already running; refusing mutation\" >&2; return 1; }\n    read owned < \"${marker}\"\n    [ \"${owned}\" = \"${name}\" ] || { echo \"routerd ownership marker mismatch\" >&2; return 1; }\n  else\n    service tailscaled onestart || return 1\n    started_here=1\n    if ! mkdir -p \"${marker_dir}\" || ! printf '%s\\n' \"${name}\" > \"${marker}.$$\" || ! mv -f \"${marker}.$$\" \"${marker}\"; then\n      echo \"unable to publish routerd tailscaled ownership marker\" >&2\n      " + name + "_rollback\n      return 1\n    fi\n  fi\n  ")
+	b.WriteString(name + "_start() {\n  started_here=0\n  if service tailscaled onestatus >/dev/null 2>&1; then\n    [ -r \"${marker}\" ] || { echo \"foreign tailscaled service is already running; refusing mutation\" >&2; return 1; }\n    read owned < \"${marker}\"\n    [ \"${owned}\" = \"${name}\" ] || { echo \"routerd ownership marker mismatch\" >&2; return 1; }\n  else\n    service tailscaled onestart || return 1\n    started_here=1\n    if ! mkdir -p \"${marker_dir}\" || ! printf '%s\\n' \"${name}\" > \"${marker}.$$\" || ! mv -f \"${marker}.$$\" \"${marker}\"; then\n      echo \"unable to publish routerd tailscaled ownership marker\" >&2\n      " + name + "_rollback\n      return 1\n    fi\n  fi\n  if ! timeout -k 2 45 ")
 	for i, arg := range args {
 		if i > 0 {
 			b.WriteByte(' ')
 		}
 		b.WriteString(shellSingleQuote(arg))
 	}
-	b.WriteString(" || { " + name + "_rollback; return 1; }\n}\n\n")
+	b.WriteString(" >/dev/null 2>&1; then\n    rc=$?\n    " + name + "_rollback\n    if [ \"${rc}\" -eq 124 ]; then echo \"tailscale enrollment timed out\" >&2; else echo \"tailscale enrollment failed\" >&2; fi\n    return \"${rc}\"\n  fi\n}\n\n")
 	b.WriteString(name + "_stop() {\n  [ -r \"${marker}\" ] || { echo \"foreign tailscaled service ownership is unknown; refusing mutation\" >&2; return 1; }\n  read owned < \"${marker}\"\n  [ \"${owned}\" = \"${name}\" ] || { echo \"routerd ownership marker mismatch\" >&2; return 1; }\n  " + shellSingleQuote(args[0]) + " down || return 1\n  service tailscaled onestop || return 1\n  rm -f \"${marker}\"\n}\n\n")
 	b.WriteString(name + "_status() {\n  [ -r \"${marker}\" ] && service tailscaled onestatus\n}\n\nload_rc_config $name\n: ${" + name + "_enable:=\"YES\"}\nrun_rc_command \"$1\"\n")
 	return b.Bytes()

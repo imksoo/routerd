@@ -81,6 +81,15 @@ func SystemdUnit(name string, spec api.SystemdUnitSpec) []byte {
 	b.WriteString("ExecStart=" + quoteCommand(spec.ExecStart) + "\n")
 	b.WriteString("Restart=" + restart + "\n")
 	b.WriteString("RestartSec=" + restartSec + "\n")
+	if spec.TimeoutStartSec != "" {
+		b.WriteString("TimeoutStartSec=" + spec.TimeoutStartSec + "\n")
+	}
+	if spec.StandardOutput != "" {
+		b.WriteString("StandardOutput=" + spec.StandardOutput + "\n")
+	}
+	if spec.StandardError != "" {
+		b.WriteString("StandardError=" + spec.StandardError + "\n")
+	}
 	writeSpaceList(&b, "RuntimeDirectory", spec.RuntimeDirectory)
 	if spec.RuntimeDirectoryPreserve != "" {
 		b.WriteString("RuntimeDirectoryPreserve=" + spec.RuntimeDirectoryPreserve + "\n")

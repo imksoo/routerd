@@ -28,6 +28,9 @@ func TestTailscaleSystemdSpecRendersExitNodeAndSubnetRoutes(t *testing.T) {
 		"Wants=network-online.target tailscaled.service",
 		"After=network-online.target tailscaled.service",
 		"Restart=no",
+		"TimeoutStartSec=45s",
+		"StandardOutput=null",
+		"StandardError=null",
 	} {
 		if !strings.Contains(data, want) {
 			t.Fatalf("unit missing %q:\n%s", want, data)

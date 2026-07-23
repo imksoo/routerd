@@ -29,14 +29,32 @@ work=$(mktemp -d /var/tmp/routerd-tailscale-boundary.XXXXXX)
 script=
 script_started=0
 foreign_started=0
+
+run_bounded() {
+  label=$1
+  seconds=$2
+  log=$3
+  shift 3
+  started=$(date +%s)
+  printf 'step=%s begin\n' "$label" >>"$evidence_dir/timing.log"
+  if timeout -k 2 "$seconds" "$@" >"$log" 2>&1; then
+    command_rc=0
+  else
+    command_rc=$?
+  fi
+  ended=$(date +%s)
+  printf 'step=%s rc=%s elapsed=%ss\n' "$label" "$command_rc" "$((ended - started))" >>"$evidence_dir/timing.log"
+  return "$command_rc"
+}
+
 cleanup() {
   rc=$?
   if [ "$script_started" -eq 1 ] && [ -n "$script" ]; then
-    "$script" onestop >>"$evidence_dir/tailscale-owned-stop.log" 2>&1 || rc=1
+    run_bounded tailscale-owned-stop 45 "$evidence_dir/tailscale-owned-stop.log" "$script" onestop || rc=1
   fi
   if [ "$foreign_started" -eq 1 ]; then
-    service tailscaled onestop >>"$evidence_dir/tailscaled-stop.log" 2>&1 || rc=1
-    if service tailscaled onestatus >>"$evidence_dir/tailscaled-status-after-stop.log" 2>&1; then
+    run_bounded tailscaled-foreign-stop 45 "$evidence_dir/tailscaled-stop.log" service tailscaled onestop || rc=1
+    if run_bounded tailscaled-status-after-stop 15 "$evidence_dir/tailscaled-status-after-stop.log" service tailscaled onestatus; then
       rc=1
     fi
   fi
@@ -68,30 +86,30 @@ grep -F '/usr/local/bin/tailscale' "$script" >>"$evidence_dir/render-service.log
 
 # The generated lifecycle owns the start attempt. Credential-free enrollment
 # must fail actionably and unwind its service ownership.
-if "$script" start >"$evidence_dir/tailscale-up.log" 2>&1; then
+if run_bounded tailscale-owned-start 45 "$evidence_dir/tailscale-up.log" "$script" start; then
   echo "unexpected authenticated Tailscale enrollment in credential-free CI" >&2
   exit 1
 fi
-if service tailscaled onestatus >"$evidence_dir/tailscaled-status-after-owned-failure.log" 2>&1; then
+if run_bounded tailscaled-status-after-owned-failure 15 "$evidence_dir/tailscaled-status-after-owned-failure.log" service tailscaled onestatus; then
   echo "generated Tailscale lifecycle left tailscaled running after failed enrollment" >&2
   exit 1
 fi
-if tailscale status --json >"$evidence_dir/tailscale-status.json" 2>"$evidence_dir/tailscale-status.stderr"; then
+if run_bounded tailscale-status 15 "$evidence_dir/tailscale-status.json" tailscale status --json; then
   echo "unexpected enrolled Tailscale status in credential-free CI" >&2
   exit 1
 fi
 
 # A service started outside routerd is foreign. The generated artifact must
 # reject it and leave it running for the fixture owner to stop.
-service tailscaled onestart >"$evidence_dir/tailscaled-foreign-start.log" 2>&1
+run_bounded tailscaled-foreign-start 45 "$evidence_dir/tailscaled-foreign-start.log" service tailscaled onestart
 foreign_started=1
-service tailscaled onestatus >"$evidence_dir/tailscaled-foreign-status.log" 2>&1
-if "$script" start >"$evidence_dir/tailscale-foreign-refusal.log" 2>&1; then
+run_bounded tailscaled-foreign-status 15 "$evidence_dir/tailscaled-foreign-status.log" service tailscaled onestatus
+if run_bounded tailscale-foreign-refusal 45 "$evidence_dir/tailscale-foreign-refusal.log" "$script" start; then
   echo "generated Tailscale lifecycle adopted foreign tailscaled" >&2
   exit 1
 fi
-service tailscaled onestatus >"$evidence_dir/tailscaled-foreign-preserved.log" 2>&1
-service tailscaled onestop >"$evidence_dir/tailscaled-foreign-stop.log" 2>&1
+run_bounded tailscaled-foreign-preserved 15 "$evidence_dir/tailscaled-foreign-preserved.log" service tailscaled onestatus
+run_bounded tailscaled-foreign-stop 45 "$evidence_dir/tailscaled-foreign-stop.log" service tailscaled onestop
 foreign_started=0
 printf '%s\n' \
   'tailscale-generated-start-failure-unwinds-owned-service=ok' \
