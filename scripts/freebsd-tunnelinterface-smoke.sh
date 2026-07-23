@@ -43,11 +43,11 @@ capture_pid=
 emit_initial_failure() {
 	for evidence in \
 		underlay.ping \
-		apply-initial.log gif0.add gif0.initial.status gif.ping gif.proto4 gif.outer.before gif.outer.after gre0.add gre0.initial.status \
+		apply-initial.log gif0.add gif0.initial.status gif.ping gif.proto4 gif.outer.before gif.outer.after gre0.add gre0.initial.status gre.ping gre.proto47 \
 		apply-second.log gif0.second.status gre0.second.status \
 		apply-change.log gif0.change gre0.change \
-		apply-gre-key-zero.log gre0.key-zero.status \
-		apply-restart.log gif0.restart.status gre0.restart.status \
+		apply-gre-key-zero.log gre0.key-zero.status gre.key-zero.ping \
+		apply-restart.log gif0.restart.status gre0.restart.status gre.rekey.ping gre.rekey.proto47 \
 		apply-remove.log \
 		apply-foreign.log gif0.foreign.before gif0.foreign.status gif0.foreign.after \
 		apply-foreign-stale.log gif0.foreign.stale.after; do
@@ -123,6 +123,11 @@ r2cmd ifconfig gif0 create
 r2cmd ifconfig gif0 tunnel "$outer_b" "$outer_a"
 r2cmd ifconfig gif0 inet 10.253.89.2/30 10.253.89.1
 r2cmd ifconfig gif0 up
+r2cmd ifconfig gre0 create
+r2cmd ifconfig gre0 tunnel "$outer_b" "$outer_a"
+r2cmd ifconfig gre0 grekey 42
+r2cmd ifconfig gre0 inet 10.253.90.2/30 10.253.90.1
+r2cmd ifconfig gre0 up
 
 write_config() {
   mtu=$1
@@ -140,7 +145,7 @@ spec:
   - apiVersion: hybrid.routerd.net/v1alpha1
     kind: TunnelInterface
     metadata: {name: gre0}
-    spec: {mode: gre, local: $outer_a, remote: $outer_b, mtu: $mtu, key: $key, trustedUnderlay: true}
+    spec: {mode: gre, local: $outer_a, remote: $outer_b, address: 10.253.90.1/30, peerAddress: 10.253.90.2, mtu: $mtu, key: $key, trustedUnderlay: true}
 EOF
 }
 
@@ -174,7 +179,7 @@ grep -F "tunnel inet $outer_a --> $outer_b" "$work/gif0.add"
 # The initial persisted status records the requested key; the immediately
 # following controller restart/no-op assertion is the kernel-observation
 # oracle and must fail if a later reconcile cannot observe key 42.
-jq -e '.phase == "Up" and .key == 42 and .interfaceOwned == true' "$work/gre0.initial.status" >/dev/null
+jq -e '.phase == "Up" and .key == 42 and .address == "10.253.90.1/30" and .peerAddress == "10.253.90.2" and .observedAddress == "10.253.90.1/30" and .observedPeerAddress == "10.253.90.2" and .interfaceOwned == true' "$work/gre0.initial.status" >/dev/null
 jq -e '.phase == "Up" and .address == "10.253.89.1/30" and .peerAddress == "10.253.89.2" and .observedAddress == "10.253.89.1/30" and .observedPeerAddress == "10.253.89.2" and .interfaceOwned == true' "$work/gif0.initial.status" >/dev/null
 if command -v tcpdump >/dev/null 2>&1; then
   # epair_a is r1's outer interface, so its VNET sees the IPIP frames emitted
@@ -203,6 +208,19 @@ else
     exit 1
   fi
 fi
+capture_pid=
+r1cmd tcpdump -n -v -c 1 -i "$epair_a" 'ip proto 47' >"$work/gre.proto47" 2>&1 &
+capture_pid=$!
+sleep 1
+if ! r1cmd ping -n -c 3 -S 10.253.90.1 10.253.90.2 >"$work/gre.ping" 2>&1; then
+	cat "$work/gre.ping" >&2
+	exit 1
+fi
+grep -F '3 packets transmitted, 3 packets received' "$work/gre.ping"
+wait "$capture_pid"
+capture_pid=
+# releng/14.3 contrib/tcpdump/print-gre.c prints this when GRE_KP is set.
+grep -F 'key=0x2a' "$work/gre.proto47"
 echo 'freebsd-tunnelinterface-stage=initial-dataplane=ok'
 
 # A new serve --once process using the persisted state is a controller restart;
@@ -228,6 +246,10 @@ write_config 1300 0
 apply_once gre-key-zero
 status_row gre0 "$work/gre0.key-zero.status"
 jq -e '.phase == "Up" and (.key | not) and .interfaceOwned == true' "$work/gre0.key-zero.status" >/dev/null
+if r1cmd ping -n -c 1 -S 10.253.90.1 10.253.90.2 >"$work/gre.key-zero.ping" 2>&1; then
+	echo 'GRE peer still accepted traffic after grekey 0' >&2
+	exit 1
+fi
 echo 'freebsd-tunnelinterface-stage=gre-key-zero=ok'
 
 # Re-key after the supported clear. This is expected to be Applied rather than
@@ -238,6 +260,18 @@ status_row gif0 "$work/gif0.restart.status"
 status_row gre0 "$work/gre0.restart.status"
 jq -e '.phase == "Up" and .reason == "AlreadyConfigured" and .interfaceOwned == true' "$work/gif0.restart.status" >/dev/null
 jq -e '.phase == "Up" and .key == 42 and .interfaceOwned == true' "$work/gre0.restart.status" >/dev/null
+capture_pid=
+r1cmd tcpdump -n -v -c 1 -i "$epair_a" 'ip proto 47' >"$work/gre.rekey.proto47" 2>&1 &
+capture_pid=$!
+sleep 1
+if ! r1cmd ping -n -c 3 -S 10.253.90.1 10.253.90.2 >"$work/gre.rekey.ping" 2>&1; then
+	cat "$work/gre.rekey.ping" >&2
+	exit 1
+fi
+grep -F '3 packets transmitted, 3 packets received' "$work/gre.rekey.ping"
+wait "$capture_pid"
+capture_pid=
+grep -F 'key=0x2a' "$work/gre.rekey.proto47"
 echo 'freebsd-tunnelinterface-stage=restart=ok'
 
 cat >"$work/router.yaml" <<'EOF'
