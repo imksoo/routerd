@@ -3468,7 +3468,7 @@ func listLinuxSupervisedDaemonProcesses() []supervisedDaemonProcess {
 }
 
 func listFreeBSDSupervisedDaemonProcesses() []supervisedDaemonProcess {
-	data, err := exec.Command("ps", "-axww", "-o", "pid=,command=").Output()
+	data, err := freeBSDSupervisedDaemonPSCommand().Output()
 	if err != nil {
 		return nil
 	}
@@ -3484,6 +3484,10 @@ func listFreeBSDSupervisedDaemonProcesses() []supervisedDaemonProcess {
 		}
 	}
 	return out
+}
+
+func freeBSDSupervisedDaemonPSCommand() *exec.Cmd {
+	return exec.Command("ps", "-axww", "-o", "pid=", "-o", "command=")
 }
 
 func routerdDaemonCmdlineMatches(args []string, binary, resourceName string) bool {

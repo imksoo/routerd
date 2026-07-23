@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"syscall"
@@ -258,6 +259,14 @@ func TestRouterdDaemonCommandMatchesExactBinaryResourceAndToken(t *testing.T) {
 		if routerdDaemonCommandMatches(command, "routerd-dhcpv4-client", "wan", "exact") {
 			t.Fatalf("near-name command matched ownership: %q", command)
 		}
+	}
+}
+
+func TestFreeBSDSupervisedDaemonPSCommandSeparatesPIDAndCommandFields(t *testing.T) {
+	got := freeBSDSupervisedDaemonPSCommand().Args
+	want := []string{"ps", "-axww", "-o", "pid=", "-o", "command="}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ps argv = %q, want %q", got, want)
 	}
 }
 
