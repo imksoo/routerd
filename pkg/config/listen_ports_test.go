@@ -117,6 +117,18 @@ func TestValidateAllowsSharedDHCPv6ClientListenPort(t *testing.T) {
 	}
 }
 
+func TestValidateAllowsDHCPv6ClientListenPortOnDistinctInterfaces(t *testing.T) {
+	router := routerWithResources(
+		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-a"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
+		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "pd-a"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan-a"}},
+		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "pd-b"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan-b"}},
+	)
+	if err := Validate(router); err != nil {
+		t.Fatalf("DHCPv6 clients on distinct interfaces should validate: %v", err)
+	}
+}
+
 func TestValidateAllowsIngressSelectionPolicies(t *testing.T) {
 	for _, selection := range []string{"failover", "sourceHash", "random"} {
 		router := routerWithResources(

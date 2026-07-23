@@ -3,6 +3,10 @@
 package render
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -42,9 +46,9 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 		`ifconfig_vtnet2="up"`,
 		`mpd_enable="YES"`,
 		`mpd_flags="-b"`,
-		`cloned_interfaces="vxlan100 bridge0"`,
-		`ifconfig_vxlan100="vxlanid 100 vxlanlocal 192.0.2.10 vxlanremote 192.0.2.20 vxlandev vtnet0 vxlanport 4789 mtu 1450 up"`,
-		`ifconfig_bridge0="addm vtnet1 stp vtnet1 addm vxlan100 stp vxlan100 up"`,
+		`cloned_interfaces="bridge0"`,
+		`routerd_vxlan_home_vxlan_enable="YES"`,
+		`ifconfig_bridge0="addm vtnet1 stp vtnet1 up"`,
 		`ifconfig_bridge0_alias0="inet 192.0.2.1/24"`,
 		`static_routes="lab_v4"`,
 		`route_lab_v4="-net 192.0.2.0/24 192.168.10.254"`,
@@ -56,6 +60,15 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 		if !strings.Contains(rc, want) {
 			t.Fatalf("rc.conf output missing %q:\n%s", want, rc)
 		}
+	}
+	vxlanScript := string(got.RCDScripts["routerd_vxlan_home_vxlan"])
+	for _, want := range []string{`/sbin/ifconfig "${ifname}" create || /sbin/ifconfig vxlan create name "${ifname}" || return 1`, `vxlanid' '100'`, `vxlanremote' '192.0.2.20'`, `vxlandev' 'vtnet0'`, `vxlanlocalport' '4789'`, `vxlanremoteport' '4789'`, `ifconfig 'bridge0' addm "${ifname}"`, `ifconfig 'bridge0' deletem "${ifname}"`, `unable to publish routerd VXLAN ownership marker`, `load_rc_config $name`, `routerd ownership marker`} {
+		if !strings.Contains(vxlanScript, want) {
+			t.Fatalf("VXLAN rc.d output missing %q:\n%s", want, vxlanScript)
+		}
+	}
+	if strings.Contains(vxlanScript, "vxlanport") {
+		t.Fatalf("FreeBSD VXLAN rc.d output uses unsupported vxlanport token:\n%s", vxlanScript)
 	}
 	pf := string(got.PF)
 	for _, want := range []string{
@@ -136,14 +149,59 @@ func TestFreeBSDRendersCARPRCDScript(t *testing.T) {
 	script := string(got.RCDScripts["routerd_carp"])
 	for _, want := range []string{
 		`kldload carp >/dev/null 2>&1 || true`,
+		`foreign CARP address is already present; refusing mutation`,
+		`foreign CARP VHID is already present; refusing mutation`,
+		`foreign CARP ownership is unknown; refusing mutation`,
+		`${ROUTERD_RUNTIME_DIR:-/var/run/routerd}/carp`,
+		`unable to publish routerd CARP ownership marker`,
+		`grep -Fq 'inet 10.240.70.10 '`,
+		`grep -Eq 'vhid 50([[:space:]]|$)'`,
+		`kldload carp >/dev/null 2>&1 || true`,
+		`preempt_before=$(sysctl -n net.inet.carp.preempt) || { echo "unable to read CARP preempt" >&2; return 1; }`,
+		`unable to configure CARP preempt`,
+		`unable to configure routerd CARP address`,
+		`applied_0=1`,
+		`${applied_0:-0}`,
+		`printf '%s\n%s\n' "${name}" "${preempt_before}"`,
+		`{ read owned; read preempt_before; } < "${marker}"`,
+		`routerd CARP cleanup incomplete; retaining ownership marker`,
+		`if routerd_carp_status; then return 0; fi`,
+		`routerd_carp_stop || return 1`,
+		`if ifconfig 'vtnet1' | grep -Fq 'inet 10.240.70.10 '; then`,
 		`sysctl net.inet.carp.preempt='0'`,
 		`ifconfig 'vtnet1' 'inet' 'vhid' '50' 'advbase' '2' 'advskew' '104' 'pass' 'secret' 'alias' '10.240.70.10/32'`,
-		`ifconfig 'vtnet1' inet '10.240.70.10/32' -alias`,
-		`grep -q 'vhid 50'`,
+		`ifconfig 'vtnet1' 'inet' '10.240.70.10/32' -alias`,
+		`grep -Eq 'vhid 50([[:space:]]|$)'`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("routerd_carp script missing %q:\n%s", want, script)
 		}
+	}
+	if strings.Contains(script, "grep -Fq '10.240.70.10/32'") {
+		t.Fatalf("CARP ownership probes must not grep CIDR-form addresses:\n%s", script)
+	}
+}
+
+func TestFreeBSDCARPRCDScriptStopsIPv6WithInet6(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "vtnet1", Managed: true, Owner: "routerd"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "api-vip-v6"}, Spec: api.VirtualAddressSpec{
+			Family: "ipv6", Interface: "lan", Address: "fd00:1234::10/128", Mode: "vrrp",
+			VRRP: api.VirtualAddressVRRPSpec{VirtualRouterID: 51, Priority: 150},
+		}},
+	}}}
+	got, err := FreeBSD(router)
+	if err != nil {
+		t.Fatalf("render FreeBSD: %v", err)
+	}
+	script := string(got.RCDScripts["routerd_carp"])
+	for _, want := range []string{`grep -Fq 'inet6 fd00:1234::10 '`, `ifconfig 'vtnet1' 'inet6' 'fd00:1234::10/128' -alias`} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("routerd_carp IPv6 script missing %q:\n%s", want, script)
+		}
+	}
+	if strings.Contains(script, "grep -Fq 'fd00:1234::10/128'") {
+		t.Fatalf("routerd_carp IPv6 ownership probes must not grep CIDR-form addresses:\n%s", script)
 	}
 }
 
@@ -258,7 +316,14 @@ func TestFreeBSDRendersTailscaleAndFirewallLoggerRCDScripts(t *testing.T) {
 	tailscale := string(got.RCDScripts["routerd_tailscale_home"])
 	for _, want := range []string{
 		`PROVIDE: routerd_tailscale_home`,
-		`'service' 'tailscaled' 'onestart'`,
+		`foreign tailscaled service is already running; refusing mutation`,
+		`service tailscaled onestart`,
+		`service tailscaled onestop`,
+		`--timeout=30s`,
+		`>/dev/null 2>&1`,
+		`routerd ownership marker mismatch`,
+		`unable to publish routerd tailscaled ownership marker`,
+		`load_rc_config $name`,
 		`/usr/local/bin/tailscale`,
 		`up`,
 		`--hostname=router01`,
@@ -268,6 +333,15 @@ func TestFreeBSDRendersTailscaleAndFirewallLoggerRCDScripts(t *testing.T) {
 		if !strings.Contains(tailscale, want) {
 			t.Fatalf("tailscale rc.d script missing %q:\n%s", want, tailscale)
 		}
+	}
+	if count := strings.Count(tailscale, "--timeout=30s"); count != 1 {
+		t.Fatalf("tailscale timeout argument count = %d, want 1:\n%s", count, tailscale)
+	}
+	if !strings.Contains(tailscale, "service tailscaled onestart >/dev/null 2>&1 &") || !strings.Contains(tailscale, "pidfile=\"${TAILSCALED_PIDFILE:-/var/run/tailscaled.pid}\"") || !strings.Contains(tailscale, "tailscaled_running") || !strings.Contains(tailscale, "clear_stale_tailscaled_pidfile") || !strings.Contains(tailscale, "/usr/bin/timeout -k 2 15 service tailscaled onestop") {
+		t.Fatalf("production rc.d script must asynchronously start and bounded-poll the canonical tailscaled pidfile:\n%s", tailscale)
+	}
+	if !strings.Contains(tailscale, "/usr/bin/timeout -k 2 45 '/usr/local/bin/tailscale' 'up'") {
+		t.Fatalf("production rc.d must bound tailscale up as well as use the shared CLI timeout:\n%s", tailscale)
 	}
 	firewall := string(got.RCDScripts["routerd_firewall_logger"])
 	for _, want := range []string{
@@ -284,6 +358,450 @@ func TestFreeBSDRendersTailscaleAndFirewallLoggerRCDScripts(t *testing.T) {
 		if !strings.Contains(firewall, want) {
 			t.Fatalf("firewall logger rc.d script missing %q:\n%s", want, firewall)
 		}
+	}
+}
+
+func TestFreeBSDTailscaleRCDStartPropagatesFailureAndRollsBackOwnedService(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	serviceLog := filepath.Join(dir, "service.log")
+	service := filepath.Join(binDir, "service")
+	if err := os.WriteFile(service, []byte("#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$2\" >> \"$SERVICE_LOG\"\ncase \"$2\" in onestatus) test -e \"$SERVICE_STATE\";; onestart) sleep 5 & child=$!; printf '%s\\n' \"$child\" >\"$TAILSCALED_PIDFILE\"; : >\"$SERVICE_STATE\"; wait \"$child\";; onestop) [ ! -r \"$TAILSCALED_PIDFILE\" ] || { read child <\"$TAILSCALED_PIDFILE\"; kill \"$child\" 2>/dev/null || true; }; rm -f \"$SERVICE_STATE\" \"$TAILSCALED_PIDFILE\";; *) exit 0;; esac\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "procstat"), []byte("#!/bin/sh\nprintf 'PID COMM OSREL PATH\\n%s tailscaled 1400000 /usr/local/bin/tailscaled\\n' \"$2\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tailscale := filepath.Join(binDir, "tailscale")
+	if err := os.WriteFile(tailscale, []byte("#!/bin/sh\nexit 7\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	name := "routerd_tailscale_test"
+	markerDir := filepath.Join(dir, "markers")
+	script := string(FreeBSDTailscaleRCDScript(name, api.TailscaleNodeSpec{BinaryPath: tailscale}))
+	script = strings.Replace(script, "/var/run/routerd/tailscale", markerDir, 1)
+	script = strings.Replace(script, ". /etc/rc.subr\n", "", 1)
+	end := strings.Index(script, "load_rc_config $name")
+	if end < 0 {
+		t.Fatalf("generated rc.d script lacks load_rc_config:\n%s", script)
+	}
+	harness := script[:end] + name + "_start\nexit $?\n"
+	cmd := exec.Command("sh", "-c", harness)
+	cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"), "SERVICE_LOG="+serviceLog, "SERVICE_STATE="+filepath.Join(dir, "service.state"), "TAILSCALED_PIDFILE="+filepath.Join(dir, "tailscaled.pid"), "PROCSTAT_BIN="+filepath.Join(binDir, "procstat"))
+	err := cmd.Run()
+	if err == nil {
+		t.Fatal("start unexpectedly succeeded after tailscale up failure")
+	}
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 7 {
+		t.Fatalf("start exit = %v, want tailscale failure exit 7", err)
+	}
+	if _, err := os.Stat(filepath.Join(markerDir, name+".owner")); !os.IsNotExist(err) {
+		t.Fatalf("ownership marker remains after rollback: %v", err)
+	}
+	data, err := os.ReadFile(serviceLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "tailscaled onestop") {
+		t.Fatalf("rollback did not stop routerd-started tailscaled:\n%s", data)
+	}
+}
+
+func TestFreeBSDTailscaleRCDServiceStartFailurePropagatesAndRollsBack(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	serviceLog := filepath.Join(dir, "service.log")
+	service := filepath.Join(binDir, "service")
+	if err := os.WriteFile(service, []byte("#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$2\" >> \"$SERVICE_LOG\"\ncase \"$2\" in onestatus) exit 1;; onestart) exit 9;; onestop) exit 0;; *) exit 0;; esac\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	name := "routerd_tailscale_service_failure"
+	markerDir := filepath.Join(dir, "markers")
+	script := string(FreeBSDTailscaleRCDScript(name, api.TailscaleNodeSpec{}))
+	script = strings.Replace(script, "/var/run/routerd/tailscale", markerDir, 1)
+	script = strings.Replace(script, ". /etc/rc.subr\n", "", 1)
+	end := strings.Index(script, "load_rc_config $name")
+	if end < 0 {
+		t.Fatalf("generated rc.d script lacks load_rc_config:\n%s", script)
+	}
+	cmd := exec.Command("sh", "-c", script[:end]+name+"_start\nexit $?\n")
+	cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"), "SERVICE_LOG="+serviceLog)
+	err := cmd.Run()
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 9 {
+		t.Fatalf("service start exit = %v, want 9", err)
+	}
+	if _, err := os.Stat(filepath.Join(markerDir, name+".owner")); !os.IsNotExist(err) {
+		t.Fatalf("ownership marker remains after successful rollback: %v", err)
+	}
+	data, err := os.ReadFile(serviceLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"tailscaled onestart", "tailscaled onestop"} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("service log missing %q:\n%s", want, data)
+		}
+	}
+}
+
+func TestFreeBSDTailscaleRCDEarlyZeroExitFailsReadiness(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(dir, "service.log")
+	service := "#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$2\" >> \"$SERVICE_LOG\"\ncase \"$2\" in onestatus) exit 1;; onestart) exit 0;; onestop) exit 0;; esac\n"
+	if err := os.WriteFile(filepath.Join(binDir, "service"), []byte(service), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	name := "routerd_tailscale_early_zero"
+	script := string(FreeBSDTailscaleRCDScript(name, api.TailscaleNodeSpec{}))
+	script = strings.Replace(script, "/var/run/routerd/tailscale", filepath.Join(dir, "markers"), 1)
+	script = strings.Replace(script, ". /etc/rc.subr\n", "", 1)
+	script = strings.Replace(script, "$(date +%s) + 15", "$(date +%s) + 1", 1)
+	end := strings.Index(script, "load_rc_config $name")
+	cmd := exec.Command("sh", "-c", script[:end]+name+"_start\nexit $?\n")
+	cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"), "SERVICE_LOG="+log)
+	err := cmd.Run()
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 124 {
+		t.Fatalf("early-zero start exit = %v, want readiness timeout 124", err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "tailscaled onestop") {
+		t.Fatalf("early-zero did not roll back: %s", data)
+	}
+}
+
+func TestFreeBSDTailscaleRCDContinuesAfterZeroLauncherExitUntilPidfileReady(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pidfile := filepath.Join(dir, "tailscaled.pid")
+	serviceLog := filepath.Join(dir, "service.log")
+	reached := filepath.Join(dir, "tailscale-reached")
+	service := `#!/bin/sh
+printf '%s %s\n' "$1" "$2" >> "$SERVICE_LOG"
+case "$2" in
+onestatus)
+  if [ -r "$TAILSCALED_PIDFILE" ]; then
+    IFS= read -r pid < "$TAILSCALED_PIDFILE"
+    kill -0 "$pid" 2>/dev/null && exit 0
+  fi
+  exit 1
+  ;;
+onestart)
+  (
+    sleep 1
+    sleep 5 &
+    child=$!
+    printf '%s\n' "$child" > "$TAILSCALED_PIDFILE"
+  ) &
+  exit 0
+  ;;
+onestop)
+  if [ -r "$TAILSCALED_PIDFILE" ]; then
+    IFS= read -r pid < "$TAILSCALED_PIDFILE"
+    kill "$pid" 2>/dev/null || true
+  fi
+  rm -f "$TAILSCALED_PIDFILE"
+  exit 0
+  ;;
+esac
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(binDir, "service"), []byte(service), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "procstat"), []byte("#!/bin/sh\nprintf 'PID COMM OSREL PATH\\n%s tailscaled 1400000 /usr/local/bin/tailscaled\\n' \"$2\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "tailscale"), []byte("#!/bin/sh\nprintf reached > \"$TAILSCALE_REACHED\"\nexit 7\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	name := "routerd_tailscale_zero_launcher_delayed_pid"
+	markerDir := filepath.Join(dir, "markers")
+	script := string(FreeBSDTailscaleRCDScript(name, api.TailscaleNodeSpec{BinaryPath: filepath.Join(binDir, "tailscale")}))
+	script = strings.Replace(script, "/var/run/routerd/tailscale", markerDir, 1)
+	script = strings.Replace(script, ". /etc/rc.subr\n", "", 1)
+	end := strings.Index(script, "load_rc_config $name")
+	if end < 0 {
+		t.Fatalf("generated rc.d script lacks load_rc_config:\n%s", script)
+	}
+	cmd := exec.Command("sh", "-c", script[:end]+name+"_start\nexit $?\n")
+	cmd.Env = append(os.Environ(),
+		"PATH="+binDir+":"+os.Getenv("PATH"),
+		"SERVICE_LOG="+serviceLog,
+		"TAILSCALED_PIDFILE="+pidfile,
+		"TAILSCALE_REACHED="+reached,
+		"PROCSTAT_BIN="+filepath.Join(binDir, "procstat"),
+	)
+	err := cmd.Run()
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 7 {
+		t.Fatalf("delayed pidfile start exit = %v, want tailscale exit 7", err)
+	}
+	if _, err := os.Stat(reached); err != nil {
+		t.Fatalf("tailscale was not invoked after zero-exit launcher: %v", err)
+	}
+	data, err := os.ReadFile(serviceLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "tailscaled onestop") {
+		t.Fatalf("tailscale failure did not roll back the delayed daemon:\n%s", data)
+	}
+}
+
+func TestFreeBSDTailscaleRCDPidfileOwnershipIsFailClosed(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	proc := exec.Command("sleep", "30")
+	if err := proc.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = proc.Process.Kill()
+		_ = proc.Wait()
+	})
+	pidfile := filepath.Join(dir, "tailscaled.pid")
+	if err := os.WriteFile(pidfile, []byte(strconv.Itoa(proc.Process.Pid)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	serviceLog := filepath.Join(dir, "service.log")
+	name := "routerd_tailscale_pid"
+	markerDir := filepath.Join(dir, "markers")
+	base := string(FreeBSDTailscaleRCDScript(name, api.TailscaleNodeSpec{}))
+	base = strings.Replace(base, "/var/run/routerd/tailscale", markerDir, 1)
+	base = strings.Replace(base, ". /etc/rc.subr\n", "", 1)
+	end := strings.Index(base, "load_rc_config $name")
+	if end < 0 {
+		t.Fatalf("generated rc.d script lacks load_rc_config:\n%s", base)
+	}
+	run := func(t *testing.T, command string) error {
+		t.Helper()
+		service := "#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$2\" >> \"$SERVICE_LOG\"\ncase \"$2\" in onestart) exit 9;; onestop) exit 0;; esac\n"
+		if err := os.WriteFile(filepath.Join(binDir, "service"), []byte(service), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("sh", "-c", base[:end]+command+"\nexit $?\n")
+		cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"), "SERVICE_LOG="+serviceLog, "TAILSCALED_PIDFILE="+pidfile)
+		return cmd.Run()
+	}
+	if err := run(t, name+"_status"); err == nil {
+		t.Fatal("live pidfile without ownership marker was treated as managed status")
+	}
+	err := run(t, name+"_start")
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
+		t.Fatalf("live foreign pidfile start = %v, want refusal exit 1", err)
+	}
+	if _, err := os.Stat(serviceLog); !os.IsNotExist(err) {
+		t.Fatalf("live foreign pidfile invoked onestart: %v", err)
+	}
+	_ = proc.Process.Kill()
+	_ = proc.Wait()
+	if err := os.WriteFile(pidfile, []byte("999999"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = run(t, name+"_start")
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 9 {
+		t.Fatalf("dead stale pidfile start = %v, want owned service start exit 9", err)
+	}
+	data, err := os.ReadFile(serviceLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "tailscaled onestart") {
+		t.Fatalf("dead stale pidfile did not permit owned start: %s", data)
+	}
+}
+
+func TestFreeBSDTailscaleRCDTimeoutsWholeStartAndRollsBack(t *testing.T) {
+	run := func(t *testing.T, serviceBody, tailscaleBody string) {
+		t.Helper()
+		dir := t.TempDir()
+		binDir := filepath.Join(dir, "bin")
+		if err := os.Mkdir(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		serviceLog := filepath.Join(dir, "service.log")
+		if err := os.WriteFile(filepath.Join(binDir, "service"), []byte("#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$2\" >> \"$SERVICE_LOG\"\n"+serviceBody), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		tailscale := filepath.Join(binDir, "tailscale")
+		if err := os.WriteFile(tailscale, []byte("#!/bin/sh\n"+tailscaleBody), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		name := "routerd_tailscale_timeout"
+		markerDir := filepath.Join(dir, "markers")
+		script := string(FreeBSDTailscaleRCDScript(name, api.TailscaleNodeSpec{BinaryPath: tailscale}))
+		script = strings.Replace(script, "/var/run/routerd/tailscale", markerDir, 1)
+		script = strings.Replace(script, ". /etc/rc.subr\n", "", 1)
+		script = strings.Replace(script, "$(date +%s) + 15", "$(date +%s) + 1", 1)
+		script = strings.ReplaceAll(script, "/usr/bin/timeout -k 2 15", "timeout -k 1 1")
+		script = strings.ReplaceAll(script, "/usr/bin/timeout -k 2 45", "timeout -k 1 1")
+		end := strings.Index(script, "load_rc_config $name")
+		if end < 0 {
+			t.Fatalf("generated rc.d script lacks load_rc_config:\n%s", script)
+		}
+		cmd := exec.Command("sh", "-c", script[:end]+name+"_start\nexit $?\n")
+		cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"), "SERVICE_LOG="+serviceLog, "SERVICE_STATE="+filepath.Join(dir, "service.state"))
+		err := cmd.Run()
+		if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 124 {
+			t.Fatalf("timeout start exit = %v, want 124", err)
+		}
+		if _, err := os.Stat(filepath.Join(markerDir, name+".owner")); !os.IsNotExist(err) {
+			t.Fatalf("ownership marker remains after bounded rollback: %v", err)
+		}
+		data, err := os.ReadFile(serviceLog)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(data), "tailscaled onestop") {
+			t.Fatalf("bounded failure did not attempt owned service rollback:\n%s", data)
+		}
+	}
+	t.Run("service-start", func(t *testing.T) {
+		run(t, "case \"$2\" in onestatus) exit 1;; onestart) sleep 5;; onestop) rm -f \"$SERVICE_STATE\";; *) exit 0;; esac\n", "exit 0\n")
+	})
+	t.Run("tailscale-up", func(t *testing.T) {
+		run(t, "case \"$2\" in onestatus) test -e \"$SERVICE_STATE\";; onestart) : >\"$SERVICE_STATE\"; sleep 5;; onestop) rm -f \"$SERVICE_STATE\";; *) exit 0;; esac\n", "sleep 5\n")
+	})
+}
+
+func TestFreeBSDTailscaleRCDLoadsSelectedAuthKeyFileWithoutShellEvaluation(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	service := filepath.Join(binDir, "service")
+	if err := os.WriteFile(service, []byte("#!/bin/sh\ncase \"$2\" in onestatus) test -e \"$SERVICE_STATE\";; onestart) sleep 5 & child=$!; printf '%s\\n' \"$child\" >\"$TAILSCALED_PIDFILE\"; : >\"$SERVICE_STATE\"; wait \"$child\";; onestop) [ ! -r \"$TAILSCALED_PIDFILE\" ] || { read child <\"$TAILSCALED_PIDFILE\"; kill \"$child\" 2>/dev/null || true; }; rm -f \"$SERVICE_STATE\" \"$TAILSCALED_PIDFILE\";; *) exit 0;; esac\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "procstat"), []byte("#!/bin/sh\nprintf 'PID COMM OSREL PATH\\n%s tailscaled 1400000 /usr/local/bin/tailscaled\\n' \"$2\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tailscale := filepath.Join(binDir, "tailscale")
+	if err := os.WriteFile(tailscale, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$TAILSCALE_ARGS\"\nprintf 'secret-output\\n' >&2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	authFile := filepath.Join(dir, "tailscale.env")
+	if err := os.WriteFile(authFile, []byte("OTHER=ignored\nTS_AUTHKEY=tskey-auth;touch $INJECTED\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	name := "routerd_tailscale_auth"
+	script := string(FreeBSDTailscaleRCDScript(name, api.TailscaleNodeSpec{BinaryPath: tailscale, AuthKeyFile: authFile}))
+	script = strings.Replace(script, "/var/run/routerd/tailscale", filepath.Join(dir, "markers"), 1)
+	script = strings.Replace(script, ". /etc/rc.subr\n", "", 1)
+	end := strings.Index(script, "load_rc_config $name")
+	if end < 0 {
+		t.Fatalf("generated rc.d script lacks load_rc_config:\n%s", script)
+	}
+	argsFile := filepath.Join(dir, "tailscale.args")
+	injected := filepath.Join(dir, "injected")
+	cmd := exec.Command("sh", "-c", script[:end]+name+"_start\n")
+	cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"), "TAILSCALE_ARGS="+argsFile, "INJECTED="+injected, "SERVICE_STATE="+filepath.Join(dir, "service.state"), "TAILSCALED_PIDFILE="+filepath.Join(dir, "tailscaled.pid"), "PROCSTAT_BIN="+filepath.Join(binDir, "procstat"))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("start failed: %v\n%s", err, output)
+	}
+	if strings.Contains(string(output), "secret-output") {
+		t.Fatalf("tailscale command output leaked from rc.d start: %q", output)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), "--auth-key=tskey-auth;touch $INJECTED\n") {
+		t.Fatalf("tailscale did not receive selected auth key as one literal argument:\n%s", args)
+	}
+	if _, err := os.Stat(injected); !os.IsNotExist(err) {
+		t.Fatalf("auth-key file value was evaluated as shell code: %v", err)
+	}
+	direct := string(FreeBSDTailscaleRCDScript("routerd_tailscale_direct", api.TailscaleNodeSpec{AuthKey: "tskey-auth-direct"}))
+	if !strings.Contains(direct, "'--auth-key=tskey-auth-direct'") {
+		t.Fatalf("direct auth key is not safely quoted:\n%s", direct)
+	}
+}
+
+func TestFreeBSDTailscaleRCDLoadsAuthKeyEnvAndFailsBeforeServiceMutation(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	serviceLog := filepath.Join(dir, "service.log")
+	service := filepath.Join(binDir, "service")
+	if err := os.WriteFile(service, []byte("#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$2\" >> \"$SERVICE_LOG\"\ncase \"$2\" in onestatus) test -e \"$SERVICE_STATE\";; onestart) sleep 5 & child=$!; printf '%s\\n' \"$child\" >\"$TAILSCALED_PIDFILE\"; : >\"$SERVICE_STATE\"; wait \"$child\";; onestop) [ ! -r \"$TAILSCALED_PIDFILE\" ] || { read child <\"$TAILSCALED_PIDFILE\"; kill \"$child\" 2>/dev/null || true; }; rm -f \"$SERVICE_STATE\" \"$TAILSCALED_PIDFILE\";; *) exit 0;; esac\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "procstat"), []byte("#!/bin/sh\nprintf 'PID COMM OSREL PATH\\n%s tailscaled 1400000 /usr/local/bin/tailscaled\\n' \"$2\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tailscale := filepath.Join(binDir, "tailscale")
+	if err := os.WriteFile(tailscale, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$TAILSCALE_ARGS\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runStart := func(t *testing.T, name string, spec api.TailscaleNodeSpec, env []string) ([]byte, error) {
+		t.Helper()
+		script := string(FreeBSDTailscaleRCDScript(name, spec))
+		script = strings.Replace(script, "/var/run/routerd/tailscale", filepath.Join(dir, name+"-markers"), 1)
+		script = strings.Replace(script, ". /etc/rc.subr\n", "", 1)
+		end := strings.Index(script, "load_rc_config $name")
+		if end < 0 {
+			t.Fatalf("generated rc.d script lacks load_rc_config:\n%s", script)
+		}
+		cmd := exec.Command("sh", "-c", script[:end]+name+"_start\n")
+		cmd.Env = append(os.Environ(), append([]string{"PATH=" + binDir + ":" + os.Getenv("PATH"), "SERVICE_LOG=" + serviceLog, "SERVICE_STATE=" + filepath.Join(dir, "service.state"), "TAILSCALED_PIDFILE=" + filepath.Join(dir, name+".pid"), "PROCSTAT_BIN=" + filepath.Join(binDir, "procstat")}, env...)...)
+		return cmd.CombinedOutput()
+	}
+
+	argsFile := filepath.Join(dir, "env.args")
+	if output, err := runStart(t, "routerd_tailscale_env", api.TailscaleNodeSpec{BinaryPath: tailscale, AuthKeyEnv: "ROUTERD_TS_KEY"}, []string{"ROUTERD_TS_KEY=tskey-auth-from-env", "TAILSCALE_ARGS=" + argsFile}); err != nil {
+		t.Fatalf("env-backed start failed: %v\n%s", err, output)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), "--auth-key=tskey-auth-from-env\n") || strings.Contains(string(args), "${ROUTERD_TS_KEY}") {
+		t.Fatalf("env auth key was not passed as its expanded single argv element:\n%s", args)
+	}
+
+	if err := os.WriteFile(serviceLog, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, "missing.env")
+	output, err := runStart(t, "routerd_tailscale_missing", api.TailscaleNodeSpec{BinaryPath: tailscale, AuthKeyEnv: "ROUTERD_TS_KEY", AuthKeyFile: missing}, nil)
+	if err == nil {
+		t.Fatal("unreadable auth-key file unexpectedly started tailscaled")
+	}
+	if !strings.Contains(string(output), "tailscale auth-key file is unreadable") {
+		t.Fatalf("missing auth-key failure is not actionable: %q", output)
+	}
+	serviceData, err := os.ReadFile(serviceLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(serviceData) != 0 {
+		t.Fatalf("service mutated before auth-key load failure:\n%s", serviceData)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "routerd_tailscale_missing-markers", "routerd_tailscale_missing.owner")); !os.IsNotExist(err) {
+		t.Fatalf("ownership marker exists after preflight failure: %v", err)
 	}
 }
 
@@ -387,6 +905,9 @@ func TestFreeBSDRendersWireGuardRCDScript(t *testing.T) {
 		`wg set 'wg0' listen-port '51824' private-key '/usr/local/etc/routerd/secrets/wg0.key'`,
 		`wg set 'wg0' peer 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' allowed-ips '10.44.4.2/32' endpoint '192.0.2.2:51824' persistent-keepalive '25'`,
 		`ifconfig 'wg0' inet '10.44.4.4/24' alias`,
+		`foreign WireGuard interface is already present; refusing mutation`,
+		`unable to publish routerd WireGuard ownership marker`,
+		`routerd_wireguard_wg0_rollback`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("wireguard rc.d script missing %q:\n%s", want, script)
@@ -414,11 +935,12 @@ func TestFreeBSDVXLANMultipleRemotesEmitsWarningAndUsesSeed(t *testing.T) {
 	if !strings.Contains(got.Warnings[0], want) {
 		t.Fatalf("warning %q does not mention single-remote limitation", got.Warnings[0])
 	}
-	if !strings.Contains(string(got.RCConf), "vxlanremote 192.0.2.20") {
-		t.Fatalf("FreeBSD rc.conf must use the first remote as seed:\n%s", got.RCConf)
+	script := string(got.RCDScripts["routerd_vxlan_lab"])
+	if !strings.Contains(script, "vxlanremote' '192.0.2.20'") {
+		t.Fatalf("FreeBSD VXLAN rc.d script must use the first remote as seed:\n%s", script)
 	}
-	if strings.Contains(string(got.RCConf), "vxlanremote 192.0.2.30") || strings.Contains(string(got.RCConf), "vxlanremote 192.0.2.40") {
-		t.Fatalf("FreeBSD rc.conf must not emit additional remotes:\n%s", got.RCConf)
+	if strings.Contains(script, "vxlanremote' '192.0.2.30'") || strings.Contains(script, "vxlanremote' '192.0.2.40'") {
+		t.Fatalf("FreeBSD VXLAN rc.d script must not emit additional remotes:\n%s", script)
 	}
 }
 

@@ -334,27 +334,50 @@ run_rc_command "$1"
 
 name='routerd_wireguard_wg_pve'
 rcvar="${name}_enable"
+marker_dir='/var/run/routerd/wireguard'
+marker="${marker_dir}/routerd_wireguard_wg_pve.owner"
 start_cmd="${name}_start"
 stop_cmd="${name}_stop"
 status_cmd="${name}_status"
 
+routerd_wireguard_wg_pve_rollback() {
+  [ "${created_here:-0}" = 1 ] || return 0
+  /sbin/ifconfig 'wg-pve' destroy >/dev/null 2>&1 || true
+  rm -f "${marker}" "${marker}.$$"
+}
+
 routerd_wireguard_wg_pve_start() {
+  created_here=0
   kldload if_wg >/dev/null 2>&1 || true
-  if ! ifconfig 'wg-pve' >/dev/null 2>&1; then
-    ifconfig 'wg-pve' create >/dev/null 2>&1 || ifconfig wg create name 'wg-pve'
+  if ifconfig 'wg-pve' >/dev/null 2>&1; then
+    [ -r "${marker}" ] || { echo "foreign WireGuard interface is already present; refusing mutation" >&2; return 1; }
+    read owned < "${marker}"
+    [ "${owned}" = 'wg-pve' ] || { echo "routerd WireGuard ownership marker mismatch" >&2; return 1; }
+  else
+    ifconfig 'wg-pve' create >/dev/null 2>&1 || ifconfig wg create name 'wg-pve' || return 1
+    created_here=1
+    if ! mkdir -p "${marker_dir}" || ! printf '%s\n' 'wg-pve' > "${marker}.$$" || ! mv -f "${marker}.$$" "${marker}"; then
+      echo "unable to publish routerd WireGuard ownership marker" >&2
+      routerd_wireguard_wg_pve_rollback
+      return 1
+    fi
   fi
-  ifconfig 'wg-pve' mtu '1420'
-  wg set 'wg-pve' listen-port '51820' private-key '/usr/local/etc/routerd/secrets/wg-pve.key'
-  ifconfig 'wg-pve' inet '10.31.0.21/32' alias >/dev/null 2>&1 || true
-  ifconfig 'wg-pve' up
+  ifconfig 'wg-pve' mtu '1420' || { routerd_wireguard_wg_pve_rollback; return 1; }
+  wg set 'wg-pve' listen-port '51820' private-key '/usr/local/etc/routerd/secrets/wg-pve.key' || { routerd_wireguard_wg_pve_rollback; return 1; }
+  ifconfig 'wg-pve' inet '10.31.0.21/32' alias >/dev/null 2>&1 || { routerd_wireguard_wg_pve_rollback; return 1; }
+  ifconfig 'wg-pve' up || { routerd_wireguard_wg_pve_rollback; return 1; }
 }
 
 routerd_wireguard_wg_pve_stop() {
-  ifconfig 'wg-pve' destroy >/dev/null 2>&1 || true
+  [ -r "${marker}" ] || { echo "foreign WireGuard ownership is unknown; refusing mutation" >&2; return 1; }
+  read owned < "${marker}"
+  [ "${owned}" = 'wg-pve' ] || { echo "routerd WireGuard ownership marker mismatch" >&2; return 1; }
+  ifconfig 'wg-pve' destroy >/dev/null 2>&1 || return 1
+  rm -f "${marker}"
 }
 
 routerd_wireguard_wg_pve_status() {
-  ifconfig 'wg-pve' >/dev/null 2>&1 && wg show 'wg-pve' >/dev/null 2>&1
+  [ -r "${marker}" ] && ifconfig 'wg-pve' >/dev/null 2>&1 && wg show 'wg-pve' >/dev/null 2>&1
 }
 
 load_rc_config $name

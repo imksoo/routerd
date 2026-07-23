@@ -24,7 +24,7 @@ func TestTailscaleSystemdSpecRendersExitNodeAndSubnetRoutes(t *testing.T) {
 		"Type=oneshot",
 		"RemainAfterExit=yes",
 		"EnvironmentFile=/usr/local/etc/routerd/secrets/tailscale.env",
-		"ExecStart=/usr/bin/tailscale up --hostname=homert02 --auth-key=${TS_AUTHKEY} --advertise-exit-node --advertise-routes=172.18.0.0/16,192.168.123.0/24 --accept-dns=false",
+		"ExecStart=/usr/bin/tailscale up --timeout=30s --hostname=homert02 --auth-key=${TS_AUTHKEY} --advertise-exit-node --advertise-routes=172.18.0.0/16,192.168.123.0/24 --accept-dns=false",
 		"Wants=network-online.target tailscaled.service",
 		"After=network-online.target tailscaled.service",
 		"Restart=no",
@@ -32,6 +32,9 @@ func TestTailscaleSystemdSpecRendersExitNodeAndSubnetRoutes(t *testing.T) {
 		if !strings.Contains(data, want) {
 			t.Fatalf("unit missing %q:\n%s", want, data)
 		}
+	}
+	if count := strings.Count(data, "--timeout=30s"); count != 1 {
+		t.Fatalf("timeout argument count = %d, want 1:\n%s", count, data)
 	}
 }
 

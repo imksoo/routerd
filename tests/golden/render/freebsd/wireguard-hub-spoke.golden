@@ -184,29 +184,52 @@ run_rc_command "$1"
 
 name='routerd_wireguard_wg_hub'
 rcvar="${name}_enable"
+marker_dir='/var/run/routerd/wireguard'
+marker="${marker_dir}/routerd_wireguard_wg_hub.owner"
 start_cmd="${name}_start"
 stop_cmd="${name}_stop"
 status_cmd="${name}_status"
 
+routerd_wireguard_wg_hub_rollback() {
+  [ "${created_here:-0}" = 1 ] || return 0
+  /sbin/ifconfig 'wg-hub' destroy >/dev/null 2>&1 || true
+  rm -f "${marker}" "${marker}.$$"
+}
+
 routerd_wireguard_wg_hub_start() {
+  created_here=0
   kldload if_wg >/dev/null 2>&1 || true
-  if ! ifconfig 'wg-hub' >/dev/null 2>&1; then
-    ifconfig 'wg-hub' create >/dev/null 2>&1 || ifconfig wg create name 'wg-hub'
+  if ifconfig 'wg-hub' >/dev/null 2>&1; then
+    [ -r "${marker}" ] || { echo "foreign WireGuard interface is already present; refusing mutation" >&2; return 1; }
+    read owned < "${marker}"
+    [ "${owned}" = 'wg-hub' ] || { echo "routerd WireGuard ownership marker mismatch" >&2; return 1; }
+  else
+    ifconfig 'wg-hub' create >/dev/null 2>&1 || ifconfig wg create name 'wg-hub' || return 1
+    created_here=1
+    if ! mkdir -p "${marker_dir}" || ! printf '%s\n' 'wg-hub' > "${marker}.$$" || ! mv -f "${marker}.$$" "${marker}"; then
+      echo "unable to publish routerd WireGuard ownership marker" >&2
+      routerd_wireguard_wg_hub_rollback
+      return 1
+    fi
   fi
-  ifconfig 'wg-hub' mtu '1420'
-  wg set 'wg-hub' listen-port '51820' private-key '/usr/local/etc/routerd/secrets/wg-hub.key'
-  wg set 'wg-hub' peer 'REPLACE_WITH_SPOKE_A_PUBLIC_KEY' allowed-ips '10.44.0.11/32,172.30.11.0/24' endpoint 'spoke-a.example.net:51820' persistent-keepalive '25'
-  wg set 'wg-hub' peer 'REPLACE_WITH_SPOKE_B_PUBLIC_KEY' allowed-ips '10.44.0.12/32,172.30.12.0/24' endpoint 'spoke-b.example.net:51820' persistent-keepalive '25'
-  ifconfig 'wg-hub' inet '10.44.0.1/24' alias >/dev/null 2>&1 || true
-  ifconfig 'wg-hub' up
+  ifconfig 'wg-hub' mtu '1420' || { routerd_wireguard_wg_hub_rollback; return 1; }
+  wg set 'wg-hub' listen-port '51820' private-key '/usr/local/etc/routerd/secrets/wg-hub.key' || { routerd_wireguard_wg_hub_rollback; return 1; }
+  wg set 'wg-hub' peer 'REPLACE_WITH_SPOKE_A_PUBLIC_KEY' allowed-ips '10.44.0.11/32,172.30.11.0/24' endpoint 'spoke-a.example.net:51820' persistent-keepalive '25' || { routerd_wireguard_wg_hub_rollback; return 1; }
+  wg set 'wg-hub' peer 'REPLACE_WITH_SPOKE_B_PUBLIC_KEY' allowed-ips '10.44.0.12/32,172.30.12.0/24' endpoint 'spoke-b.example.net:51820' persistent-keepalive '25' || { routerd_wireguard_wg_hub_rollback; return 1; }
+  ifconfig 'wg-hub' inet '10.44.0.1/24' alias >/dev/null 2>&1 || { routerd_wireguard_wg_hub_rollback; return 1; }
+  ifconfig 'wg-hub' up || { routerd_wireguard_wg_hub_rollback; return 1; }
 }
 
 routerd_wireguard_wg_hub_stop() {
-  ifconfig 'wg-hub' destroy >/dev/null 2>&1 || true
+  [ -r "${marker}" ] || { echo "foreign WireGuard ownership is unknown; refusing mutation" >&2; return 1; }
+  read owned < "${marker}"
+  [ "${owned}" = 'wg-hub' ] || { echo "routerd WireGuard ownership marker mismatch" >&2; return 1; }
+  ifconfig 'wg-hub' destroy >/dev/null 2>&1 || return 1
+  rm -f "${marker}"
 }
 
 routerd_wireguard_wg_hub_status() {
-  ifconfig 'wg-hub' >/dev/null 2>&1 && wg show 'wg-hub' >/dev/null 2>&1
+  [ -r "${marker}" ] && ifconfig 'wg-hub' >/dev/null 2>&1 && wg show 'wg-hub' >/dev/null 2>&1
 }
 
 load_rc_config $name

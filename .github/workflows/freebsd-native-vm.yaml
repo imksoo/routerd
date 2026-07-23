@@ -39,13 +39,43 @@ on:
         required: false
         default: false
         type: boolean
+      lifecycle_runtime:
+        description: Run isolated FreeBSD DHCPv4 BPF and DNS resolver lifecycle smoke
+        required: false
+        default: false
+        type: boolean
+      pppoe_runtime:
+        description: Run isolated FreeBSD PPPoE client against an mpd5 peer
+        required: false
+        default: false
+        type: boolean
+      wireguard_vxlan_runtime:
+        description: Run isolated FreeBSD if_wg and VXLAN-over-WireGuard lifecycle smoke
+        required: false
+        default: false
+        type: boolean
+      tailscale_boundary_runtime:
+        description: Run FreeBSD Tailscale service lifecycle to the external enrollment boundary
+        required: false
+        default: false
+        type: boolean
+      carp_runtime:
+        description: Run isolated FreeBSD CARP rc.d lifecycle smoke
+        required: false
+        default: false
+        type: boolean
+      carp_multivm_runtime:
+        description: Run three-VM FreeBSD CARP acceptance on an isolated L2
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 jobs:
   native-smoke:
-    if: ${{ inputs.arm64_runtime != true }}
+    if: ${{ inputs.arm64_runtime != true && inputs.carp_multivm_runtime != true }}
     name: FreeBSD 14.3 native VM smoke
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -66,6 +96,11 @@ jobs:
       ROUTERD_FREEBSD_CLIENTPOLICY_IDENTITY_RUNTIME: ${{ inputs.clientpolicy_identity_runtime || 'false' }}
       ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME: ${{ inputs.kernelmodule_persistence_runtime || 'false' }}
       ROUTERD_FREEBSD_PACKAGE_LIFECYCLE_RUNTIME: ${{ inputs.package_lifecycle_runtime || 'false' }}
+      ROUTERD_FREEBSD_LIFECYCLE_RUNTIME: ${{ inputs.lifecycle_runtime || 'false' }}
+      ROUTERD_FREEBSD_PPPOE_RUNTIME: ${{ inputs.pppoe_runtime || 'false' }}
+      ROUTERD_FREEBSD_WIREGUARD_VXLAN_RUNTIME: ${{ inputs.wireguard_vxlan_runtime || 'false' }}
+      ROUTERD_FREEBSD_TAILSCALE_BOUNDARY_RUNTIME: ${{ inputs.tailscale_boundary_runtime || 'false' }}
+      ROUTERD_FREEBSD_CARP_RUNTIME: ${{ inputs.carp_runtime || 'false' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -88,6 +123,23 @@ jobs:
         with:
           name: freebsd-native-console-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/routerd-anyvm-console-*
+          if-no-files-found: error
+
+  carp-multivm:
+    if: ${{ inputs.carp_multivm_runtime == true }}
+    name: FreeBSD 14.3 three-VM CARP acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run three-VM CARP acceptance
+        run: bash scripts/ci/freebsd-carp-multivm.sh
+      - name: Upload CARP multi-VM evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: freebsd-carp-multivm-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/routerd-carp-multivm-*
           if-no-files-found: error
 
   arm64-runtime:

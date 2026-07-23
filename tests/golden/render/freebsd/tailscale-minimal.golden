@@ -174,24 +174,143 @@ load_rc_config $name
 run_rc_command "$1"
 ### rc.d-routerd_tailscale_mesh
 #!/bin/sh
-#
 # Managed by routerd.
-#
 # PROVIDE: routerd_tailscale_mesh
-# REQUIRE: NETWORKING tailscaled
+# REQUIRE: NETWORKING
 # KEYWORD: shutdown
 
 . /etc/rc.subr
 
 name='routerd_tailscale_mesh'
 rcvar="${name}_enable"
-command='/usr/local/bin/tailscale'
-command_args=" 'up' '--hostname=routerd-mesh' '--auth-key=${TS_AUTHKEY}' '--accept-routes=true' '--accept-dns=false'"
-start_precmd="${name}_prestart"
+marker_dir='/var/run/routerd/tailscale'
+marker="${marker_dir}/routerd_tailscale_mesh.owner"
+pidfile="${TAILSCALED_PIDFILE:-/var/run/tailscaled.pid}"
+auth_key_env='TS_AUTHKEY'
+auth_key_file=''
+routerd_tailscale_mesh_load_auth_key() {
+  auth_key=
+  if [ -n "${auth_key_file}" ]; then
+    [ -r "${auth_key_file}" ] || { echo "tailscale auth-key file is unreadable" >&2; return 1; }
+    auth_key_found=0
+    while IFS= read -r line || [ -n "${line}" ]; do
+      case "${line}" in
+        "${auth_key_env}"=*)
+          [ "${auth_key_found}" -eq 0 ] || { echo "tailscale auth-key file has duplicate selected variable" >&2; return 1; }
+          auth_key=${line#*=}
+          auth_key_found=1
+          ;;
+      esac
+    done < "${auth_key_file}"
+    [ "${auth_key_found}" -eq 1 ] || { echo "tailscale auth-key variable is missing" >&2; return 1; }
+  else
+    auth_key=$(/usr/bin/printenv "${auth_key_env}") || { echo "tailscale auth-key environment variable is missing" >&2; return 1; }
+  fi
+  [ -n "${auth_key}" ] || { echo "tailscale auth-key is empty" >&2; return 1; }
+}
 
-routerd_tailscale_mesh_prestart() {
-  mkdir -p '/var/run/routerd'
-  'service' 'tailscaled' 'onestart'
+start_cmd="${name}_start"
+stop_cmd="${name}_stop"
+status_cmd="${name}_status"
+
+routerd_tailscale_mesh_tailscaled_running() {
+  [ -r "${pidfile}" ] || return 1
+  tailscaled_pid=
+  IFS= read -r tailscaled_pid < "${pidfile}" || [ -n "${tailscaled_pid}" ] || return 1
+  case "${tailscaled_pid}" in ''|*[!0-9]*) return 1 ;; esac
+  kill -0 "${tailscaled_pid}" 2>/dev/null
+}
+
+routerd_tailscale_mesh_clear_stale_tailscaled_pidfile() {
+  [ -e "${pidfile}" ] || return 0
+  tailscaled_pid=
+  IFS= read -r tailscaled_pid < "${pidfile}" || [ -n "${tailscaled_pid}" ] || tailscaled_pid=
+  case "${tailscaled_pid}" in ''|*[!0-9]*) rm -f "${pidfile}"; return 0 ;; esac
+  kill -0 "${tailscaled_pid}" 2>/dev/null || rm -f "${pidfile}"
+}
+
+routerd_tailscale_mesh_rollback() {
+  [ "${started_here:-0}" = 1 ] || return 0
+  /usr/bin/timeout -k 2 15 service tailscaled onestop >/dev/null 2>&1
+  stop_rc=$?
+  if routerd_tailscale_mesh_tailscaled_running; then
+    echo "tailscaled service stop failed; retaining ownership marker" >&2
+    [ "${stop_rc}" -ne 0 ] || stop_rc=1
+    return "${stop_rc}"
+  fi
+  rm -f "${marker}" "${marker}.$$"
+}
+
+routerd_tailscale_mesh_start() {
+  started_here=0
+  routerd_tailscale_mesh_load_auth_key || return 1
+  routerd_tailscale_mesh_clear_stale_tailscaled_pidfile
+  if routerd_tailscale_mesh_tailscaled_running; then
+    [ -r "${marker}" ] || { echo "foreign tailscaled service is already running; refusing mutation" >&2; return 1; }
+    read owned < "${marker}"
+    [ "${owned}" = "${name}" ] || { echo "routerd ownership marker mismatch" >&2; return 1; }
+  else
+    if ! mkdir -p "${marker_dir}" || ! printf '%s\n' "${name}" > "${marker}.$$" || ! mv -f "${marker}.$$" "${marker}"; then
+      echo "unable to publish routerd tailscaled ownership marker" >&2
+      return 1
+    fi
+    started_here=1
+    service tailscaled onestart >/dev/null 2>&1 &
+    launcher_pid=$!
+    launcher_done=0
+    deadline=$(( $(date +%s) + 15 ))
+    ready=0
+    while [ "$(date +%s)" -lt "${deadline}" ]; do
+      if routerd_tailscale_mesh_tailscaled_running; then ready=1; break; fi
+      if [ "${launcher_done}" -eq 0 ] && ! kill -0 "${launcher_pid}" 2>/dev/null; then
+        wait "${launcher_pid}"; rc=$?
+        if [ "${rc}" -ne 0 ]; then
+          routerd_tailscale_mesh_rollback || true
+          echo "tailscaled service exited before readiness" >&2
+          return "${rc}"
+        fi
+        launcher_done=1
+        launcher_pid=
+      fi
+      sleep 1
+    done
+    if [ "${ready}" -ne 1 ]; then
+      if [ "${launcher_done}" -eq 0 ]; then
+        kill "${launcher_pid}" 2>/dev/null || true
+        wait "${launcher_pid}" 2>/dev/null || true
+      fi
+      routerd_tailscale_mesh_rollback || true
+      echo "tailscaled service readiness timed out" >&2
+      return 124
+    fi
+  fi
+  /usr/bin/timeout -k 2 45 '/usr/local/bin/tailscale' 'up' '--timeout=30s' '--hostname=routerd-mesh' "--auth-key=${auth_key}" '--accept-routes=true' '--accept-dns=false' >/dev/null 2>&1
+  rc=$?
+  if [ "${rc}" -ne 0 ]; then
+    routerd_tailscale_mesh_rollback || true
+    echo "tailscale enrollment failed" >&2
+    return "${rc}"
+  fi
+}
+
+routerd_tailscale_mesh_stop() {
+  [ -r "${marker}" ] || { echo "foreign tailscaled service ownership is unknown; refusing mutation" >&2; return 1; }
+  read owned < "${marker}"
+  [ "${owned}" = "${name}" ] || { echo "routerd ownership marker mismatch" >&2; return 1; }
+  /usr/bin/timeout -k 2 45 '/usr/local/bin/tailscale' down >/dev/null 2>&1
+  rc=$?
+  if [ "${rc}" -ne 0 ]; then
+    started_here=1
+    routerd_tailscale_mesh_rollback || true
+    echo "tailscale shutdown failed" >&2
+    return "${rc}"
+  fi
+  started_here=1
+  routerd_tailscale_mesh_rollback
+}
+
+routerd_tailscale_mesh_status() {
+  [ -r "${marker}" ] && routerd_tailscale_mesh_tailscaled_running
 }
 
 load_rc_config $name

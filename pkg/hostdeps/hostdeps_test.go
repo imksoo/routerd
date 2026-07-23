@@ -109,9 +109,13 @@ func TestKernelModulesForFreeBSDUsePFRuntimeModules(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "ClientPolicy"}, Metadata: api.ObjectMeta{Name: "lan-policy"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.ObservabilityAPIVersion, Kind: "FirewallEventLog"}, Metadata: api.ObjectMeta{Name: "firewall-log"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"}, Metadata: api.ObjectMeta{Name: "wan-pppoe"}, Spec: api.PPPoESessionSpec{Interface: "wan"}},
 	}}}
-	if got, want := KernelModulesForOS(router, platform.OSFreeBSD), []string{"pf", "pflog"}; !reflect.DeepEqual(got, want) {
+	if got, want := KernelModulesForOS(router, platform.OSFreeBSD), []string{"ng_iface", "ng_pppoe", "pf", "pflog"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("KernelModulesForOS(freebsd) = %#v, want %#v", got, want)
+	}
+	if got, want := KernelModulesForOS(router, platform.OSLinux), []string{"nf_conntrack", "nfnetlink_log"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("KernelModulesForOS(linux) = %#v, want %#v", got, want)
 	}
 	resources := KernelModuleResourcesForOS(router, platform.OSFreeBSD)
 	if len(resources) != 1 {
@@ -121,7 +125,7 @@ func TestKernelModulesForFreeBSDUsePFRuntimeModules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !spec.Persistent || !reflect.DeepEqual(spec.Modules, []string{"pf", "pflog"}) {
+	if !spec.Persistent || !reflect.DeepEqual(spec.Modules, []string{"ng_iface", "ng_pppoe", "pf", "pflog"}) {
 		t.Fatalf("FreeBSD kernel module spec = %#v", spec)
 	}
 }
