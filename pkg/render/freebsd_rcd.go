@@ -285,19 +285,32 @@ func freeBSDVXLANBridges(bridges []bridgeConfig, ifname string) []string {
 func FreeBSDTailscaleRCDScript(name string, spec api.TailscaleNodeSpec) []byte {
 	name = freeBSDServiceName(name)
 	args := TailscaleUpArgs(spec)
+	authKeyEnv := tailscaleAuthKeyEnv(spec)
 	var b bytes.Buffer
 	b.WriteString("#!/bin/sh\n# Managed by routerd.\n")
 	b.WriteString("# PROVIDE: " + name + "\n# REQUIRE: NETWORKING\n# KEYWORD: shutdown\n\n. /etc/rc.subr\n\n")
 	b.WriteString("name=" + shellSingleQuote(name) + "\nrcvar=\"${name}_enable\"\n")
 	b.WriteString("marker_dir=" + shellSingleQuote("/var/run/routerd/tailscale") + "\nmarker=\"${marker_dir}/" + name + ".owner\"\n")
+	if authKeyEnv != "" {
+		b.WriteString("auth_key_env=" + shellSingleQuote(authKeyEnv) + "\nauth_key_file=" + shellSingleQuote(spec.AuthKeyFile) + "\n")
+		b.WriteString(name + "_load_auth_key() {\n  auth_key=\n  if [ -n \"${auth_key_file}\" ]; then\n    [ -r \"${auth_key_file}\" ] || { echo \"tailscale auth-key file is unreadable\" >&2; return 1; }\n    auth_key_found=0\n    while IFS= read -r line || [ -n \"${line}\" ]; do\n      case \"${line}\" in\n        \"${auth_key_env}\"=*)\n          [ \"${auth_key_found}\" -eq 0 ] || { echo \"tailscale auth-key file has duplicate selected variable\" >&2; return 1; }\n          auth_key=${line#*=}\n          auth_key_found=1\n          ;;\n      esac\n    done < \"${auth_key_file}\"\n    [ \"${auth_key_found}\" -eq 1 ] || { echo \"tailscale auth-key variable is missing\" >&2; return 1; }\n  else\n    auth_key=$(/usr/bin/printenv \"${auth_key_env}\") || { echo \"tailscale auth-key environment variable is missing\" >&2; return 1; }\n  fi\n  [ -n \"${auth_key}\" ] || { echo \"tailscale auth-key is empty\" >&2; return 1; }\n}\n\n")
+	}
 	b.WriteString("start_cmd=\"${name}_start\"\nstop_cmd=\"${name}_stop\"\nstatus_cmd=\"${name}_status\"\n\n")
 	b.WriteString(name + "_rollback() {\n  [ \"${started_here:-0}\" = 1 ] || return 0\n  service tailscaled onestop >/dev/null 2>&1 || true\n  rm -f \"${marker}\" \"${marker}.$$\"\n}\n\n")
-	b.WriteString(name + "_start() {\n  started_here=0\n  if service tailscaled onestatus >/dev/null 2>&1; then\n    [ -r \"${marker}\" ] || { echo \"foreign tailscaled service is already running; refusing mutation\" >&2; return 1; }\n    read owned < \"${marker}\"\n    [ \"${owned}\" = \"${name}\" ] || { echo \"routerd ownership marker mismatch\" >&2; return 1; }\n  else\n    service tailscaled onestart || return 1\n    started_here=1\n    if ! mkdir -p \"${marker_dir}\" || ! printf '%s\\n' \"${name}\" > \"${marker}.$$\" || ! mv -f \"${marker}.$$\" \"${marker}\"; then\n      echo \"unable to publish routerd tailscaled ownership marker\" >&2\n      " + name + "_rollback\n      return 1\n    fi\n  fi\n  ")
+	b.WriteString(name + "_start() {\n  started_here=0\n")
+	if authKeyEnv != "" {
+		b.WriteString("  " + name + "_load_auth_key || return 1\n")
+	}
+	b.WriteString("  if service tailscaled onestatus >/dev/null 2>&1; then\n    [ -r \"${marker}\" ] || { echo \"foreign tailscaled service is already running; refusing mutation\" >&2; return 1; }\n    read owned < \"${marker}\"\n    [ \"${owned}\" = \"${name}\" ] || { echo \"routerd ownership marker mismatch\" >&2; return 1; }\n  else\n    service tailscaled onestart || return 1\n    started_here=1\n    if ! mkdir -p \"${marker_dir}\" || ! printf '%s\\n' \"${name}\" > \"${marker}.$$\" || ! mv -f \"${marker}.$$\" \"${marker}\"; then\n      echo \"unable to publish routerd tailscaled ownership marker\" >&2\n      " + name + "_rollback\n      return 1\n    fi\n  fi\n  ")
 	for i, arg := range args {
 		if i > 0 {
 			b.WriteByte(' ')
 		}
-		b.WriteString(shellSingleQuote(arg))
+		if authKeyEnv != "" && arg == "--auth-key=${"+authKeyEnv+"}" {
+			b.WriteString("\"--auth-key=${auth_key}\"")
+		} else {
+			b.WriteString(shellSingleQuote(arg))
+		}
 	}
 	b.WriteString(" >/dev/null 2>&1\n  rc=$?\n  if [ \"${rc}\" -ne 0 ]; then\n    " + name + "_rollback\n    echo \"tailscale enrollment failed\" >&2\n    return \"${rc}\"\n  fi\n}\n\n")
 	b.WriteString(name + "_stop() {\n  [ -r \"${marker}\" ] || { echo \"foreign tailscaled service ownership is unknown; refusing mutation\" >&2; return 1; }\n  read owned < \"${marker}\"\n  [ \"${owned}\" = \"${name}\" ] || { echo \"routerd ownership marker mismatch\" >&2; return 1; }\n  " + shellSingleQuote(args[0]) + " down || return 1\n  service tailscaled onestop || return 1\n  rm -f \"${marker}\"\n}\n\n")

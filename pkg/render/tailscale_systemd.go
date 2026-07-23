@@ -17,9 +17,6 @@ func TailscaleSystemdSpec(name string, spec api.TailscaleNodeSpec) api.SystemdUn
 	if firstNonEmpty(spec.State, "present") == "absent" {
 		return api.SystemdUnitSpec{State: "absent", UnitName: TailscaleUnitName(name)}
 	}
-	if spec.AuthKeyFile != "" && spec.AuthKeyEnv == "" {
-		spec.AuthKeyEnv = "TS_AUTHKEY"
-	}
 	noNewPrivileges := true
 	remainAfterExit := true
 	var environmentFiles []string
@@ -67,8 +64,8 @@ func TailscaleUpArgs(spec api.TailscaleNodeSpec) []string {
 	appendValue("--operator", spec.Operator)
 	if spec.AuthKey != "" {
 		appendValue("--auth-key", spec.AuthKey)
-	} else if spec.AuthKeyEnv != "" {
-		appendValue("--auth-key", "${"+spec.AuthKeyEnv+"}")
+	} else if authKeyEnv := tailscaleAuthKeyEnv(spec); authKeyEnv != "" {
+		appendValue("--auth-key", "${"+authKeyEnv+"}")
 	}
 	if spec.AdvertiseExitNode {
 		args = append(args, "--advertise-exit-node")
@@ -86,6 +83,16 @@ func TailscaleUpArgs(spec api.TailscaleNodeSpec) []string {
 		args = append(args, "--ssh")
 	}
 	return args
+}
+
+func tailscaleAuthKeyEnv(spec api.TailscaleNodeSpec) string {
+	if spec.AuthKeyEnv != "" {
+		return spec.AuthKeyEnv
+	}
+	if spec.AuthKeyFile != "" {
+		return "TS_AUTHKEY"
+	}
+	return ""
 }
 
 func sanitizeSystemdName(name string) string {

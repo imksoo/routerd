@@ -394,6 +394,123 @@ func TestFreeBSDTailscaleRCDStartPropagatesFailureAndRollsBackOwnedService(t *te
 	}
 }
 
+func TestFreeBSDTailscaleRCDLoadsSelectedAuthKeyFileWithoutShellEvaluation(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	service := filepath.Join(binDir, "service")
+	if err := os.WriteFile(service, []byte("#!/bin/sh\ncase \"$2\" in onestatus) exit 1;; *) exit 0;; esac\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tailscale := filepath.Join(binDir, "tailscale")
+	if err := os.WriteFile(tailscale, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$TAILSCALE_ARGS\"\nprintf 'secret-output\\n' >&2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	authFile := filepath.Join(dir, "tailscale.env")
+	if err := os.WriteFile(authFile, []byte("OTHER=ignored\nTS_AUTHKEY=tskey-auth;touch $INJECTED\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	name := "routerd_tailscale_auth"
+	script := string(FreeBSDTailscaleRCDScript(name, api.TailscaleNodeSpec{BinaryPath: tailscale, AuthKeyFile: authFile}))
+	script = strings.Replace(script, "/var/run/routerd/tailscale", filepath.Join(dir, "markers"), 1)
+	script = strings.Replace(script, ". /etc/rc.subr\n", "", 1)
+	end := strings.Index(script, "load_rc_config $name")
+	if end < 0 {
+		t.Fatalf("generated rc.d script lacks load_rc_config:\n%s", script)
+	}
+	argsFile := filepath.Join(dir, "tailscale.args")
+	injected := filepath.Join(dir, "injected")
+	cmd := exec.Command("sh", "-c", script[:end]+name+"_start\n")
+	cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"), "TAILSCALE_ARGS="+argsFile, "INJECTED="+injected)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("start failed: %v\n%s", err, output)
+	}
+	if strings.Contains(string(output), "secret-output") {
+		t.Fatalf("tailscale command output leaked from rc.d start: %q", output)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), "--auth-key=tskey-auth;touch $INJECTED\n") {
+		t.Fatalf("tailscale did not receive selected auth key as one literal argument:\n%s", args)
+	}
+	if _, err := os.Stat(injected); !os.IsNotExist(err) {
+		t.Fatalf("auth-key file value was evaluated as shell code: %v", err)
+	}
+	direct := string(FreeBSDTailscaleRCDScript("routerd_tailscale_direct", api.TailscaleNodeSpec{AuthKey: "tskey-auth-direct"}))
+	if !strings.Contains(direct, "'--auth-key=tskey-auth-direct'") {
+		t.Fatalf("direct auth key is not safely quoted:\n%s", direct)
+	}
+}
+
+func TestFreeBSDTailscaleRCDLoadsAuthKeyEnvAndFailsBeforeServiceMutation(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	serviceLog := filepath.Join(dir, "service.log")
+	service := filepath.Join(binDir, "service")
+	if err := os.WriteFile(service, []byte("#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$2\" >> \"$SERVICE_LOG\"\ncase \"$2\" in onestatus) exit 1;; *) exit 0;; esac\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tailscale := filepath.Join(binDir, "tailscale")
+	if err := os.WriteFile(tailscale, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$TAILSCALE_ARGS\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runStart := func(t *testing.T, name string, spec api.TailscaleNodeSpec, env []string) ([]byte, error) {
+		t.Helper()
+		script := string(FreeBSDTailscaleRCDScript(name, spec))
+		script = strings.Replace(script, "/var/run/routerd/tailscale", filepath.Join(dir, name+"-markers"), 1)
+		script = strings.Replace(script, ". /etc/rc.subr\n", "", 1)
+		end := strings.Index(script, "load_rc_config $name")
+		if end < 0 {
+			t.Fatalf("generated rc.d script lacks load_rc_config:\n%s", script)
+		}
+		cmd := exec.Command("sh", "-c", script[:end]+name+"_start\n")
+		cmd.Env = append(os.Environ(), append([]string{"PATH=" + binDir + ":" + os.Getenv("PATH"), "SERVICE_LOG=" + serviceLog}, env...)...)
+		return cmd.CombinedOutput()
+	}
+
+	argsFile := filepath.Join(dir, "env.args")
+	if output, err := runStart(t, "routerd_tailscale_env", api.TailscaleNodeSpec{BinaryPath: tailscale, AuthKeyEnv: "ROUTERD_TS_KEY"}, []string{"ROUTERD_TS_KEY=tskey-auth-from-env", "TAILSCALE_ARGS=" + argsFile}); err != nil {
+		t.Fatalf("env-backed start failed: %v\n%s", err, output)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), "--auth-key=tskey-auth-from-env\n") || strings.Contains(string(args), "${ROUTERD_TS_KEY}") {
+		t.Fatalf("env auth key was not passed as its expanded single argv element:\n%s", args)
+	}
+
+	if err := os.WriteFile(serviceLog, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, "missing.env")
+	output, err := runStart(t, "routerd_tailscale_missing", api.TailscaleNodeSpec{BinaryPath: tailscale, AuthKeyEnv: "ROUTERD_TS_KEY", AuthKeyFile: missing}, nil)
+	if err == nil {
+		t.Fatal("unreadable auth-key file unexpectedly started tailscaled")
+	}
+	if !strings.Contains(string(output), "tailscale auth-key file is unreadable") {
+		t.Fatalf("missing auth-key failure is not actionable: %q", output)
+	}
+	serviceData, err := os.ReadFile(serviceLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(serviceData) != 0 {
+		t.Fatalf("service mutated before auth-key load failure:\n%s", serviceData)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "routerd_tailscale_missing-markers", "routerd_tailscale_missing.owner")); !os.IsNotExist(err) {
+		t.Fatalf("ownership marker exists after preflight failure: %v", err)
+	}
+}
+
 func TestFreeBSDRendersDNSResolverRCDScript(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

@@ -185,6 +185,29 @@ name='routerd_tailscale_mesh'
 rcvar="${name}_enable"
 marker_dir='/var/run/routerd/tailscale'
 marker="${marker_dir}/routerd_tailscale_mesh.owner"
+auth_key_env='TS_AUTHKEY'
+auth_key_file=''
+routerd_tailscale_mesh_load_auth_key() {
+  auth_key=
+  if [ -n "${auth_key_file}" ]; then
+    [ -r "${auth_key_file}" ] || { echo "tailscale auth-key file is unreadable" >&2; return 1; }
+    auth_key_found=0
+    while IFS= read -r line || [ -n "${line}" ]; do
+      case "${line}" in
+        "${auth_key_env}"=*)
+          [ "${auth_key_found}" -eq 0 ] || { echo "tailscale auth-key file has duplicate selected variable" >&2; return 1; }
+          auth_key=${line#*=}
+          auth_key_found=1
+          ;;
+      esac
+    done < "${auth_key_file}"
+    [ "${auth_key_found}" -eq 1 ] || { echo "tailscale auth-key variable is missing" >&2; return 1; }
+  else
+    auth_key=$(/usr/bin/printenv "${auth_key_env}") || { echo "tailscale auth-key environment variable is missing" >&2; return 1; }
+  fi
+  [ -n "${auth_key}" ] || { echo "tailscale auth-key is empty" >&2; return 1; }
+}
+
 start_cmd="${name}_start"
 stop_cmd="${name}_stop"
 status_cmd="${name}_status"
@@ -197,6 +220,7 @@ routerd_tailscale_mesh_rollback() {
 
 routerd_tailscale_mesh_start() {
   started_here=0
+  routerd_tailscale_mesh_load_auth_key || return 1
   if service tailscaled onestatus >/dev/null 2>&1; then
     [ -r "${marker}" ] || { echo "foreign tailscaled service is already running; refusing mutation" >&2; return 1; }
     read owned < "${marker}"
@@ -210,7 +234,7 @@ routerd_tailscale_mesh_start() {
       return 1
     fi
   fi
-  '/usr/local/bin/tailscale' 'up' '--timeout=30s' '--hostname=routerd-mesh' '--auth-key=${TS_AUTHKEY}' '--accept-routes=true' '--accept-dns=false' >/dev/null 2>&1
+  '/usr/local/bin/tailscale' 'up' '--timeout=30s' '--hostname=routerd-mesh' "--auth-key=${auth_key}" '--accept-routes=true' '--accept-dns=false' >/dev/null 2>&1
   rc=$?
   if [ "${rc}" -ne 0 ]; then
     routerd_tailscale_mesh_rollback
