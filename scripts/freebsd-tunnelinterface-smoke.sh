@@ -32,7 +32,7 @@ outer_a=198.18.89.1
 outer_b=198.18.89.2
 
 emit_initial_failure() {
-	for evidence in apply-initial.log gre0.add gre0.initial.status; do
+	for evidence in apply-initial.log gif0.add gif0.initial.status gre0.add gre0.initial.status; do
 		path="$work/$evidence"
 		[ -f "$path" ] || continue
 		echo "--- tunnelinterface $evidence" >&2
@@ -78,11 +78,11 @@ spec:
   - apiVersion: hybrid.routerd.net/v1alpha1
     kind: TunnelInterface
     metadata: {name: gif0}
-    spec: {mode: ipip, local: $outer_a, remote: $outer_b, address: 10.253.89.1/30, mtu: $mtu, trustedUnderlay: true}
+    spec: {mode: ipip, local: $outer_a, remote: $outer_b, address: 10.253.89.1/30, peerAddress: 10.253.89.2, mtu: $mtu, trustedUnderlay: true}
   - apiVersion: hybrid.routerd.net/v1alpha1
     kind: TunnelInterface
     metadata: {name: gif1}
-    spec: {mode: ipip, local: $outer_b, remote: $outer_a, address: 10.253.89.2/30, mtu: $mtu, trustedUnderlay: true}
+    spec: {mode: ipip, local: $outer_b, remote: $outer_a, address: 10.253.89.2/30, peerAddress: 10.253.89.1, mtu: $mtu, trustedUnderlay: true}
   - apiVersion: hybrid.routerd.net/v1alpha1
     kind: TunnelInterface
     metadata: {name: gre0}
@@ -118,12 +118,14 @@ apply_once initial
 ifconfig gif0 >"$work/gif0.add"
 ifconfig gre0 >"$work/gre0.add"
 status_row gre0 "$work/gre0.initial.status"
+status_row gif0 "$work/gif0.initial.status"
 grep -F "tunnel inet $outer_a --> $outer_b" "$work/gif0.add"
 # FreeBSD 14.3's plain ifconfig output is not a stable GRE-key query surface.
 # The initial persisted status records the requested key; the immediately
 # following controller restart/no-op assertion is the kernel-observation
 # oracle and must fail if a later reconcile cannot observe key 42.
 jq -e '.phase == "Up" and .key == 42 and .interfaceOwned == true' "$work/gre0.initial.status" >/dev/null
+jq -e '.phase == "Up" and .address == "10.253.89.1/30" and .peerAddress == "10.253.89.2" and .observedAddress == "10.253.89.1/30" and .observedPeerAddress == "10.253.89.2" and .interfaceOwned == true' "$work/gif0.initial.status" >/dev/null
 ping -n -c 3 -S 10.253.89.1 10.253.89.2 >"$work/gif.ping"
 grep -F '3 packets transmitted, 3 packets received' "$work/gif.ping"
 

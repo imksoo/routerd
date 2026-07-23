@@ -241,7 +241,7 @@ resolver addresses for DoH or DoT endpoint name resolution.
 | Kind | Role |
 | --- | --- |
 | `DSLiteTunnel` | Creates an `ip6tnl` tunnel to an AFTR. The AFTR can be static IPv6, FQDN, or DHCPv6 information. |
-| `TunnelInterface` | Creates a trusted Linux L3 underlay tunnel device for hybrid overlay delivery. `mode` supports `ipip`, `gre`, and IPIP-over-UDP `fou`/`gue`; `fou`/`gue` require `encapSport` and `encapDport`. |
+| `TunnelInterface` | Creates a trusted Linux or FreeBSD L3 underlay tunnel device for hybrid overlay delivery. `mode` supports `ipip`, `gre`, and IPIP-over-UDP `fou`/`gue`; `fou`/`gue` require `encapSport` and `encapDport`. On FreeBSD point-to-point `ipip`/`gre`, `address` requires the explicit IPv4 `peerAddress`, the inner destination; routerd never derives it from the CIDR. `peerAddress` is rejected on Linux, whose existing `address` semantics remain unchanged. |
 | `OverlayPeer` | Describes an on-prem or cloud overlay peer and the local underlay used to reach it. |
 | `HybridRoute` | Lowers non-default remote IPv4 prefixes through an `OverlayPeer` into managed `IPv4Route` resources. |
 | `MobilityPool` | Declares the CloudEdge mobility intent: pool prefix, federation group, node-to-site membership or `membersFrom` sources, BGP delivery policy, optional reusable cloud capture profiles, local value expansion, and provider trap placement. routerd derives BGP `/32` advertisements and provider trap action plans from observed facts and BGP best paths. |
@@ -758,7 +758,7 @@ and fields outside the target kind's `provides` set.
 | `NTPServer` | `allowCIDRs` (stringList), `listenAddresses` (stringList), `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
 | `ObservabilityPipeline` | `phase` (string), `signals` (stringList) |
 | `OverlayPeer` | `nodeID` (string), `phase` (string), `role` (string), `underlayInterface` (string), `underlayType` (string) |
-| `TunnelInterface` | `dryRun` (bool), `encapDport` (int), `encapSport` (int), `ifname` (string), `interface` (string), `local` (string), `mode` (string), `mtu` (int), `phase` (string), `remote` (string), `ttl` (int) |
+| `TunnelInterface` | `dryRun` (bool), `encapDport` (int), `encapSport` (int), `ifname` (string), `interface` (string), `local` (string), `mode` (string), `mtu` (int), `observedAddress` (string), `observedPeerAddress` (string), `peerAddress` (string), `phase` (string), `remote` (string), `ttl` (int) |
 | `PPPoESession` | `connectedAt` (timestamp), `currentAddress` (string), `device` (string), `dnsServers` (stringList), `dryRun` (bool), `gateway` (string), `interface` (string), `peerAddress` (string), `phase` (string) |
 | `Package` | `dryRun` (bool), `packages` (stringList), `phase` (string) |
 | `PortForward` | `dryRun` (bool), `listenAddress` (string), `phase` (string), `target` (object) |

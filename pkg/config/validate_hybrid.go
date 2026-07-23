@@ -14,6 +14,7 @@ import (
 )
 
 var freeBSDTunnelInterfaceName = regexp.MustCompile(`^(gif|gre)[0-9]+$`)
+
 func validateHybridResource(res api.Resource, targetOS platform.OS) (bool, error) {
 	switch res.Kind {
 	case "OverlayPeer":
@@ -80,6 +81,15 @@ func validateHybridResource(res api.Resource, targetOS platform.OS) (bool, error
 				return true, fmt.Errorf("%s spec.address: %w", res.ID(), err)
 			}
 		}
+		if strings.TrimSpace(spec.PeerAddress) != "" && targetOS == platform.OSLinux {
+			return true, fmt.Errorf("%s spec.peerAddress is supported only on FreeBSD TunnelInterface; Linux address semantics are unchanged", res.ID())
+		}
+		if strings.TrimSpace(spec.PeerAddress) != "" && targetOS == platform.OSFreeBSD {
+			peer, err := netip.ParseAddr(strings.TrimSpace(spec.PeerAddress))
+			if err != nil || !peer.Is4() {
+				return true, fmt.Errorf("%s spec.peerAddress must be an IPv4 address", res.ID())
+			}
+		}
 		if spec.MTU != 0 && (spec.MTU < 576 || spec.MTU > 9216) {
 			return true, fmt.Errorf("%s spec.mtu must be within 576-9216", res.ID())
 		}
@@ -114,6 +124,12 @@ func validateHybridResource(res api.Resource, targetOS platform.OS) (bool, error
 			}
 			if spec.TTL != 0 {
 				return true, fmt.Errorf("%s spec.ttl is unsupported on FreeBSD TunnelInterface; ifconfig has no equivalent per-tunnel TTL control", res.ID())
+			}
+			if strings.TrimSpace(spec.Address) != "" && strings.TrimSpace(spec.PeerAddress) == "" {
+				return true, fmt.Errorf("%s spec.peerAddress is required with spec.address on FreeBSD point-to-point TunnelInterface", res.ID())
+			}
+			if strings.TrimSpace(spec.Address) == "" && strings.TrimSpace(spec.PeerAddress) != "" {
+				return true, fmt.Errorf("%s spec.peerAddress requires spec.address", res.ID())
 			}
 			name := strings.TrimSpace(res.Metadata.Name)
 			if !freeBSDTunnelInterfaceName.MatchString(name) {

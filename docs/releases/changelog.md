@@ -12,6 +12,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Changed
+
+- `TunnelInterface.spec.peerAddress` now explicitly represents the IPv4 inner
+  destination of a FreeBSD point-to-point IPIP/GRE interface. It is required
+  when `spec.address` is used on FreeBSD, rejected on Linux so Linux address
+  semantics do not change, and is never inferred from the configured CIDR.
+
 ## v20260721.1054
 
 ### Added

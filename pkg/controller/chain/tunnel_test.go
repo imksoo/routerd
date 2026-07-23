@@ -1054,7 +1054,7 @@ func TestTunnelInterfaceControllerFreeBSDGIFLifecycle(t *testing.T) {
 		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
 		Metadata: api.ObjectMeta{Name: "gif0"},
 		Spec: api.TunnelInterfaceSpec{
-			Mode: "ipip", Local: "192.0.2.10", Remote: "192.0.2.20", Address: "10.99.0.1/30", MTU: 1400, TrustedUnderlay: true,
+			Mode: "ipip", Local: "192.0.2.10", Remote: "192.0.2.20", Address: "10.99.0.1/30", PeerAddress: "10.99.0.2", MTU: 1400, TrustedUnderlay: true,
 		},
 	}
 	var calls [][]string
@@ -1070,7 +1070,10 @@ func TestTunnelInterfaceControllerFreeBSDGIFLifecycle(t *testing.T) {
 				if lookups == 1 {
 					return []byte("ifconfig: interface gif0 does not exist"), errors.New("exit status 1")
 				}
-				return []byte("gif0: flags=8843<UP,RUNNING> metric 0 mtu 1400\n\ttunnel inet 192.0.2.10 --> 192.0.2.20\n"), nil
+				if lookups == 2 {
+					return []byte("gif0: flags=8843<UP,RUNNING> metric 0 mtu 1400\n\ttunnel inet 192.0.2.10 --> 192.0.2.20\n"), nil
+				}
+				return []byte("gif0: flags=8843<UP,RUNNING> metric 0 mtu 1400\n\ttunnel inet 192.0.2.10 --> 192.0.2.20\n\tinet 10.99.0.1 --> 10.99.0.2 netmask 0xfffffffc\n"), nil
 			}
 			return nil, nil
 		},
@@ -1084,10 +1087,71 @@ func TestTunnelInterfaceControllerFreeBSDGIFLifecycle(t *testing.T) {
 		{"ifconfig", "gif0", "tunnel", "192.0.2.10", "192.0.2.20"},
 		{"ifconfig", "gif0", "mtu", "1400", "up"},
 		{"ifconfig", "gif0"},
-		{"ifconfig", "gif0", "inet", "10.99.0.1/30", "alias"},
+		{"ifconfig", "gif0", "inet", "10.99.0.1/30", "10.99.0.2"},
+		{"ifconfig", "gif0"},
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+}
+
+func TestFreeBSDTunnelPeerAddress(t *testing.T) {
+	out := []byte("gif0: flags=8843<UP,RUNNING> metric 0 mtu 1400\n\tinet 10.99.0.1 --> 10.99.0.2 netmask 0xfffffffc\n")
+	if got, want := freeBSDTunnelPeerAddress(out, "10.99.0.1/30"), "10.99.0.2"; got != want {
+		t.Fatalf("peer = %q, want %q", got, want)
+	}
+	if got := freeBSDTunnelPeerAddress(out, "10.99.0.5/30"); got != "" {
+		t.Fatalf("unexpected peer = %q", got)
+	}
+}
+
+func TestTunnelInterfaceControllerFreeBSDReconfiguresChangedPeerAddress(t *testing.T) {
+	resource := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+		Metadata: api.ObjectMeta{Name: "gif0"},
+		Spec:     api.TunnelInterfaceSpec{Mode: "ipip", Local: "192.0.2.10", Remote: "192.0.2.20", Address: "10.99.0.1/30", PeerAddress: "10.99.0.2", TrustedUnderlay: true},
+	}
+	store := mapStore{}
+	if err := store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", "gif0", map[string]any{"phase": "Up", "interfaceOwned": true}); err != nil {
+		t.Fatal(err)
+	}
+	var calls [][]string
+	configured := false
+	controller := TunnelInterfaceController{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{resource}}}, Store: store, OS: platform.OSFreeBSD,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			call := append([]string{name}, args...)
+			calls = append(calls, call)
+			if reflect.DeepEqual(call, []string{"ifconfig", "gif0", "inet", "10.99.0.1/30", "10.99.0.2"}) {
+				configured = true
+			}
+			if reflect.DeepEqual(call, []string{"ifconfig", "gif0"}) {
+				peer := "10.99.0.9"
+				if configured {
+					peer = "10.99.0.2"
+				}
+				return []byte("gif0: flags=8843<UP,RUNNING> metric 0 mtu 1280\n\ttunnel inet 192.0.2.10 --> 192.0.2.20\n\tinet 10.99.0.1 --> " + peer + " netmask 0xfffffffc\n"), nil
+			}
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"ifconfig", "gif0", "inet", "10.99.0.1/30", "10.99.0.2"}
+	found := false
+	for _, call := range calls {
+		if reflect.DeepEqual(call, want) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("calls = %#v, want peer reconfiguration %v", calls, want)
+	}
+	status := store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "gif0")
+	if status["observedPeerAddress"] != "10.99.0.2" || status["observedAddress"] != "10.99.0.1/30" {
+		t.Fatalf("status = %#v", status)
 	}
 }
 

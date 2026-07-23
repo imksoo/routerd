@@ -42,6 +42,7 @@ type tunnelDesired struct {
 	EncapSport        int
 	EncapDport        int
 	Address           string
+	PeerAddress       string
 	UnderlayInterface string
 	UnderlayMTU       int
 	Overhead          int
@@ -233,6 +234,18 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		applied = applied || addressChanged
 	}
 	status = tunnelStatus(desired, c.DryRun, map[string]any{"phase": "Up"})
+	if c.targetOS() == platform.OSFreeBSD && desired.Address != "" {
+		out, err := c.run(ctx, "ifconfig", desired.Name)
+		if err != nil {
+			return c.saveApplyError(resource, desired, fmt.Errorf("read FreeBSD tunnel interface %s point-to-point address: %w: %s", desired.Name, err, strings.TrimSpace(string(out))))
+		}
+		observedPeer := freeBSDTunnelPeerAddress(out, desired.Address)
+		if observedPeer != desired.PeerAddress {
+			return c.saveApplyError(resource, desired, fmt.Errorf("observe FreeBSD tunnel interface %s point-to-point peer: got %q, want %q", desired.Name, observedPeer, desired.PeerAddress))
+		}
+		status["observedAddress"] = desired.Address
+		status["observedPeerAddress"] = observedPeer
+	}
 	if created {
 		status["interfaceOwned"] = true
 	} else {
@@ -329,6 +342,7 @@ func tunnelDesiredFromSpec(router api.Router, name string, spec api.TunnelInterf
 		EncapSport:        spec.EncapSport,
 		EncapDport:        spec.EncapDport,
 		Address:           strings.TrimSpace(spec.Address),
+		PeerAddress:       strings.TrimSpace(spec.PeerAddress),
 		UnderlayInterface: strings.TrimSpace(spec.UnderlayInterface),
 		UnderlayMTU:       estimate.UnderlayMTU,
 		Overhead:          estimate.Overhead,
@@ -445,6 +459,9 @@ func tunnelStatus(desired tunnelDesired, dryRun bool, extra map[string]any) map[
 	}
 	if desired.Address != "" {
 		status["address"] = desired.Address
+	}
+	if desired.PeerAddress != "" {
+		status["peerAddress"] = desired.PeerAddress
 	}
 	if desired.UnderlayInterface != "" {
 		status["underlayInterface"] = desired.UnderlayInterface
@@ -614,6 +631,33 @@ func parseFreeBSDIPv4AddressPrefixes(out []byte) []string {
 	return addresses
 }
 
+// freeBSDTunnelPeerAddress returns the destination address paired with the
+// requested local IPv4 prefix in FreeBSD ifconfig output. Point-to-point
+// interfaces render this as "inet LOCAL --> PEER netmask ...".
+func freeBSDTunnelPeerAddress(out []byte, wanted string) string {
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 4 || fields[0] != "inet" || fields[2] != "-->" {
+			continue
+		}
+		local, err := netip.ParseAddr(fields[1])
+		if err != nil || !local.Is4() {
+			continue
+		}
+		bits := 32
+		for j := 4; j+1 < len(fields); j++ {
+			if fields[j] == "netmask" {
+				bits = freeBSDNetmaskBits(fields[j+1])
+				break
+			}
+		}
+		if netip.PrefixFrom(local, bits).String() == wanted {
+			return fields[3]
+		}
+	}
+	return ""
+}
+
 func freeBSDNetmaskBits(value string) int {
 	value = strings.TrimPrefix(strings.TrimSpace(value), "0x")
 	if len(value) != 8 {
@@ -721,7 +765,22 @@ func (c TunnelInterfaceController) reconcileTunnelAddress(ctx context.Context, d
 		}
 		changed = true
 	}
-	if hasDesired || desired.Address == "" {
+	if hasDesired {
+		if c.targetOS() == platform.OSFreeBSD && desired.PeerAddress != "" {
+			out, err := c.run(ctx, "ifconfig", desired.Name)
+			if err != nil {
+				return changed, fmt.Errorf("read FreeBSD tunnel interface %s peer address: %w: %s", desired.Name, err, strings.TrimSpace(string(out)))
+			}
+			if freeBSDTunnelPeerAddress(out, desired.Address) != desired.PeerAddress {
+				if err := c.setTunnelAddress(ctx, desired); err != nil {
+					return changed, err
+				}
+				return true, nil
+			}
+		}
+		return changed, nil
+	}
+	if desired.Address == "" {
 		return changed, nil
 	}
 	if err := c.setTunnelAddress(ctx, desired); err != nil {
@@ -777,11 +836,7 @@ func (c TunnelInterfaceController) deleteTunnelAddress(ctx context.Context, ifna
 
 func (c TunnelInterfaceController) setTunnelAddress(ctx context.Context, desired tunnelDesired) error {
 	if c.targetOS() == platform.OSFreeBSD {
-		// Tunnel interfaces are point-to-point devices.  Add the configured
-		// inner address explicitly as an alias so FreeBSD does not treat the
-		// single address as an incomplete primary point-to-point configuration.
-		// deleteTunnelAddress already uses the matching -alias operation.
-		_, err := c.run(ctx, "ifconfig", desired.Name, "inet", desired.Address, "alias")
+		_, err := c.run(ctx, "ifconfig", desired.Name, "inet", desired.Address, desired.PeerAddress)
 		return commandError("set FreeBSD tunnel interface "+desired.Name+" address", err)
 	}
 	_, err := c.run(ctx, "ip", "addr", "replace", desired.Address, "dev", desired.Name)
