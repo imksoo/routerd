@@ -26,9 +26,7 @@ tailscaled_running() {
   IFS= read -r tailscaled_pid <"$pidfile" || return 1
   case "$tailscaled_pid" in ''|*[!0-9]*) return 1 ;; esac
   kill -0 "$tailscaled_pid" 2>/dev/null || return 1
-  tailscaled_comm=$(ps -p "$tailscaled_pid" -o ucomm= 2>/dev/null) || return 1
-  tailscaled_comm=$(printf '%s\n' "$tailscaled_comm" | awk '{$1=$1; print}')
-  case "${tailscaled_comm##*/}" in tailscaled) return 0 ;; *) return 1 ;; esac
+  /usr/bin/timeout -k 2 2 service tailscaled onestatus >/dev/null 2>&1
 }
 tailscaled_running && {
   echo "foreign tailscaled service is already running; refusing mutation" >&2
