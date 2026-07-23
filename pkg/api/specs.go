@@ -428,20 +428,24 @@ type WireGuardPeersSourceSpec struct {
 }
 
 type TunnelInterfaceSpec struct {
-	Mode              string                `yaml:"mode" json:"mode" jsonschema:"enum=ipip,enum=gre,enum=fou,enum=gue"`
-	Local             string                `yaml:"local,omitempty" json:"local,omitempty"`
-	LocalFrom         StatusValueSourceSpec `yaml:"localFrom,omitempty" json:"localFrom,omitempty"`
-	Remote            string                `yaml:"remote,omitempty" json:"remote,omitempty"`
-	RemoteFrom        StatusValueSourceSpec `yaml:"remoteFrom,omitempty" json:"remoteFrom,omitempty"`
-	Address           string                `yaml:"address,omitempty" json:"address,omitempty"`
-	UnderlayInterface string                `yaml:"underlayInterface,omitempty" json:"underlayInterface,omitempty"`
-	MTU               int                   `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=576,maximum=9216"`
-	TTL               int                   `yaml:"ttl,omitempty" json:"ttl,omitempty" jsonschema:"minimum=1,maximum=255"`
-	Key               int                   `yaml:"key,omitempty" json:"key,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
-	EncapSport        int                   `yaml:"encapSport,omitempty" json:"encapSport,omitempty" jsonschema:"minimum=1,maximum=65535"`
-	EncapDport        int                   `yaml:"encapDport,omitempty" json:"encapDport,omitempty" jsonschema:"minimum=1,maximum=65535"`
-	TrustedUnderlay   bool                  `yaml:"trustedUnderlay" json:"trustedUnderlay"`
-	PathMTU           PathMTUOptions        `yaml:"pathMTU,omitempty" json:"pathMTU,omitempty"`
+	Mode       string                `yaml:"mode" json:"mode" jsonschema:"enum=ipip,enum=gre,enum=fou,enum=gue"`
+	Local      string                `yaml:"local,omitempty" json:"local,omitempty"`
+	LocalFrom  StatusValueSourceSpec `yaml:"localFrom,omitempty" json:"localFrom,omitempty"`
+	Remote     string                `yaml:"remote,omitempty" json:"remote,omitempty"`
+	RemoteFrom StatusValueSourceSpec `yaml:"remoteFrom,omitempty" json:"remoteFrom,omitempty"`
+	Address    string                `yaml:"address,omitempty" json:"address,omitempty"`
+	// PeerAddress is the explicit IPv4 inner destination paired with Address on
+	// FreeBSD point-to-point IPIP/GRE interfaces. It is required with Address on
+	// FreeBSD and rejected on Linux; routerd never derives it from the CIDR.
+	PeerAddress       string         `yaml:"peerAddress,omitempty" json:"peerAddress,omitempty"`
+	UnderlayInterface string         `yaml:"underlayInterface,omitempty" json:"underlayInterface,omitempty"`
+	MTU               int            `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=576,maximum=9216"`
+	TTL               int            `yaml:"ttl,omitempty" json:"ttl,omitempty" jsonschema:"minimum=1,maximum=255"`
+	Key               int            `yaml:"key,omitempty" json:"key,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
+	EncapSport        int            `yaml:"encapSport,omitempty" json:"encapSport,omitempty" jsonschema:"minimum=1,maximum=65535"`
+	EncapDport        int            `yaml:"encapDport,omitempty" json:"encapDport,omitempty" jsonschema:"minimum=1,maximum=65535"`
+	TrustedUnderlay   bool           `yaml:"trustedUnderlay" json:"trustedUnderlay"`
+	PathMTU           PathMTUOptions `yaml:"pathMTU,omitempty" json:"pathMTU,omitempty"`
 }
 
 type PathMTUOptions struct {

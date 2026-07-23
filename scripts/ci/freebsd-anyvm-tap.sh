@@ -12,9 +12,14 @@ workspace=${GITHUB_WORKSPACE:?GITHUB_WORKSPACE is required}
 run_id=${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}
 attempt=${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT is required}
 ipv6_candidate=${ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE:-false}
+tunnelinterface_runtime=${ROUTERD_FREEBSD_TUNNELINTERFACE_RUNTIME:-false}
 clientpolicy_identity=${ROUTERD_FREEBSD_CLIENTPOLICY_IDENTITY_RUNTIME:-false}
 kernelmodule_persistence=${ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME:-false}
 package_lifecycle=${ROUTERD_FREEBSD_PACKAGE_LIFECYCLE_RUNTIME:-false}
+guest_packages='go dnsmasq git hs-ShellCheck curl jq ndpi pkgconf strongswan'
+if [[ "$tunnelinterface_runtime" == true ]]; then
+  guest_packages+=' sqlite3'
+fi
 arch=${ROUTERD_ANYVM_ARCH:-x86_64}
 qemu_binary=
 tcg_args=()
@@ -145,4 +150,4 @@ fi
 ROUTERD_ANYVM_REBOOT_MARKER="$reboot_marker" python3 "$work/anyvm.py" \
   --os freebsd --release 14.3 --arch "$arch" "${tcg_args[@]}" --mem 6144 --snapshot \
   --sync rsync -v "$workspace:/home/runner/work/routerd/routerd" \
-  -- "cd /home/runner/work/routerd/routerd && pkg install -y go dnsmasq git hs-ShellCheck curl jq ndpi pkgconf strongswan && ROUTERD_FREEBSD_EXPECTED_ARCH=$arch ROUTERD_IPSEC_TOPOLOGY=tap ROUTERD_IPSEC_UNDERLAY_IF=vtnet1 ROUTERD_IPSEC_PEER_ADDR=$peer_addr ROUTERD_IPSEC_GUEST_ADDR=$guest_addr ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE=$ipv6_candidate ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME=$kernelmodule_persistence ROUTERD_FREEBSD_CLIENTPOLICY_IDENTITY_RUNTIME=$clientpolicy_identity ROUTERD_FREEBSD_PACKAGE_LIFECYCLE_RUNTIME=$package_lifecycle sh scripts/freebsd-native-vm-smoke.sh"
+  -- "cd /home/runner/work/routerd/routerd && pkg install -y $guest_packages && ROUTERD_FREEBSD_EXPECTED_ARCH=$arch ROUTERD_IPSEC_TOPOLOGY=tap ROUTERD_IPSEC_UNDERLAY_IF=vtnet1 ROUTERD_IPSEC_PEER_ADDR=$peer_addr ROUTERD_IPSEC_GUEST_ADDR=$guest_addr ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE=$ipv6_candidate ROUTERD_FREEBSD_TUNNELINTERFACE_RUNTIME=$tunnelinterface_runtime ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME=$kernelmodule_persistence ROUTERD_FREEBSD_CLIENTPOLICY_IDENTITY_RUNTIME=$clientpolicy_identity ROUTERD_FREEBSD_PACKAGE_LIFECYCLE_RUNTIME=$package_lifecycle sh scripts/freebsd-native-vm-smoke.sh"

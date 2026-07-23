@@ -748,6 +748,9 @@ func (e *Engine) observeTunnelInterface(res api.Resource, includePlan bool, rr *
 	} else {
 		rr.Observed["remote"] = spec.Remote
 	}
+	if strings.TrimSpace(spec.PeerAddress) != "" {
+		rr.Observed["peerAddress"] = spec.PeerAddress
+	}
 	if spec.MTU != 0 {
 		rr.Observed["mtu"] = fmt.Sprintf("%d", spec.MTU)
 	}

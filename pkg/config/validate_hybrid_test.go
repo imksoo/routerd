@@ -89,6 +89,21 @@ func TestValidateTunnelInterfaceForFreeBSD(t *testing.T) {
 		{
 			name: "ttl is rejected", edit: func(r *api.Resource) { spec := r.Spec.(api.TunnelInterfaceSpec); spec.TTL = 64; r.Spec = spec }, want: "spec.ttl is unsupported",
 		},
+		{
+			name: "address requires peer address", edit: func(r *api.Resource) {
+				spec := r.Spec.(api.TunnelInterfaceSpec)
+				spec.Address = "10.99.0.1/30"
+				r.Spec = spec
+			}, want: "spec.peerAddress is required",
+		},
+		{
+			name: "peer address must be ipv4", edit: func(r *api.Resource) {
+				spec := r.Spec.(api.TunnelInterfaceSpec)
+				spec.Address = "10.99.0.1/30"
+				spec.PeerAddress = "not-an-address"
+				r.Spec = spec
+			}, want: "spec.peerAddress must be an IPv4 address",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resource := base
@@ -98,6 +113,16 @@ func TestValidateTunnelInterfaceForFreeBSD(t *testing.T) {
 				t.Fatalf("error = %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestValidateTunnelInterfacePeerAddressIsRejectedOnLinux(t *testing.T) {
+	router := validTunnelHybridRouter()
+	spec := router.Spec.Resources[0].Spec.(api.TunnelInterfaceSpec)
+	spec.PeerAddress = "10.99.0.2"
+	router.Spec.Resources[0].Spec = spec
+	if err := ValidateForOS(router, platform.OSLinux); err == nil || !strings.Contains(err.Error(), "spec.peerAddress is supported only on FreeBSD") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

@@ -7184,6 +7184,10 @@
                         },
                         "type": "object"
                       },
+                      "peerAddress": {
+                        "description": "PeerAddress is the explicit IPv4 inner destination paired with Address on\nFreeBSD point-to-point IPIP/GRE interfaces. It is required with Address on\nFreeBSD and rejected on Linux; routerd never derives it from the CIDR.",
+                        "type": "string"
+                      },
                       "remote": {
                         "type": "string"
                       },

@@ -161,6 +161,20 @@ func TestPlanStatusGCUsesDesiredSetAndSyntheticAllowlist(t *testing.T) {
 	}
 }
 
+func TestTunnelInterfaceStatusGCDefersOwnedResourceTeardown(t *testing.T) {
+	statuses := []routerstate.ObjectStatus{
+		{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface", Name: "owned", Status: map[string]any{"managedBy": "routerd", "interfaceOwned": true}},
+		{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface", Name: "foreign", Status: map[string]any{"interfaceOwned": false}},
+	}
+	desired := map[string]bool{}
+	if got, want := objectStatusIDs(PlanStatusGC(desired, statuses).StatusDeletes), []string{api.HybridAPIVersion + "/TunnelInterface/foreign"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("status deletes = %#v, want %#v", got, want)
+	}
+	if got, want := objectStatusIDs(PlanResourceTeardownGC(desired, statuses).ResourceTeardowns), []string{api.HybridAPIVersion + "/TunnelInterface/owned"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("resource teardowns = %#v, want %#v", got, want)
+	}
+}
+
 func actionTypes(actions []GCAction) []GCActionType {
 	out := make([]GCActionType, 0, len(actions))
 	for _, action := range actions {

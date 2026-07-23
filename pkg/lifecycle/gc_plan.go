@@ -265,6 +265,9 @@ func resourceLifecycleObjectStatus(status routerstate.ObjectStatus) bool {
 	switch {
 	case status.APIVersion == api.NetAPIVersion && (status.Kind == "IPv4Route" || status.Kind == "IPv4StaticAddress" || status.Kind == "WireGuardInterface" || status.Kind == "WireGuardPeer"):
 		return true
+	case status.APIVersion == api.HybridAPIVersion && status.Kind == "TunnelInterface":
+		owned, _ := statusBool(status.Status["interfaceOwned"])
+		return owned
 	case status.APIVersion == api.HybridAPIVersion && status.Kind == "RemoteAddressClaim":
 		return true
 	case status.APIVersion == api.SystemAPIVersion && status.Kind == "Sysctl" && strings.HasPrefix(status.Name, "sam-proxy-arp-"):
