@@ -22,9 +22,9 @@ func TestFreeBSDSAMPublishedARPUsesExactAddressAndRefusesForeign(t *testing.T) {
 	freeBSDSAMRunCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		commands = append(commands, name+" "+strings.Join(args, " "))
 		switch strings.Join(args, " ") {
-		case "-n 192.0.2.55":
+		case "-n -i em0 192.0.2.55":
 			return nil, nil
-		case "-s 192.0.2.55 02:00:00:00:00:55 pub":
+		case "-i em0 -s 192.0.2.55 02:00:00:00:00:55 pub":
 			return nil, nil
 		default:
 			return nil, errors.New("unexpected command")
@@ -39,7 +39,7 @@ func TestFreeBSDSAMPublishedARPUsesExactAddressAndRefusesForeign(t *testing.T) {
 	if err := (freeBSDSAMProxyNeighborApplier{}).EnsureProxyNeighbor(context.Background(), "192.0.2.55/32", "em0"); err != nil {
 		t.Fatalf("EnsureProxyNeighbor: %v", err)
 	}
-	if got, want := strings.Join(commands, "\n"), "arp -n 192.0.2.55\narp -s 192.0.2.55 02:00:00:00:00:55 pub"; got != want {
+	if got, want := strings.Join(commands, "\n"), "arp -n -i em0 192.0.2.55\narp -i em0 -s 192.0.2.55 02:00:00:00:00:55 pub"; got != want {
 		t.Fatalf("commands = %q, want %q", got, want)
 	}
 
@@ -60,20 +60,63 @@ func TestFreeBSDSAMARPEntryOnlyNormalizesCanonicalFreeBSDAbsence(t *testing.T) {
 	reset := saveFreeBSDSAMSeams()
 	defer reset()
 	freeBSDSAMRunCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
-		if name != "arp" || strings.Join(args, " ") != "-n 198.18.250.99" {
+		if name != "arp" || strings.Join(args, " ") != "-n -i em0 198.18.250.99" {
 			t.Fatalf("command = %s %s", name, strings.Join(args, " "))
 		}
 		return []byte("198.18.250.99 (198.18.250.99) -- no entry\n"), errors.New("exit status 1")
 	}
-	if entry, found, err := freeBSDARPEntry(context.Background(), "198.18.250.99"); err != nil || found || entry != "" {
+	if entry, found, err := freeBSDARPEntry(context.Background(), "198.18.250.99", "em0"); err != nil || found || entry != "" {
 		t.Fatalf("canonical absent entry = %q, found=%t, err=%v", entry, found, err)
 	}
 
 	freeBSDSAMRunCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		return []byte("arp: route lookup failed\n"), errors.New("exit status 1")
 	}
-	if _, _, err := freeBSDARPEntry(context.Background(), "198.18.250.99"); err == nil || !strings.Contains(err.Error(), "route lookup failed") {
+	if _, _, err := freeBSDARPEntry(context.Background(), "198.18.250.99", "em0"); err == nil || !strings.Contains(err.Error(), "route lookup failed") {
 		t.Fatalf("unrelated arp lookup error = %v", err)
+	}
+}
+
+func TestFreeBSDSAMDeletePublishedARPVerifiesScopedRemoval(t *testing.T) {
+	reset := saveFreeBSDSAMSeams()
+	defer reset()
+	var commands []string
+	lookup := 0
+	freeBSDSAMRunCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		commands = append(commands, name+" "+strings.Join(args, " "))
+		switch strings.Join(args, " ") {
+		case "-n -i em0 192.0.2.55":
+			lookup++
+			if lookup == 1 {
+				return []byte("? (192.0.2.55) at 02:00:00:00:00:55 on em0 permanent published [ethernet]\n"), nil
+			}
+			return []byte("192.0.2.55 (192.0.2.55) -- no entry\n"), errors.New("exit status 1")
+		case "-d 192.0.2.55":
+			return nil, nil
+		default:
+			return nil, errors.New("unexpected command")
+		}
+	}
+	if err := (freeBSDSAMProxyNeighborApplier{}).DeleteProxyNeighbor(context.Background(), "192.0.2.55/32", "em0"); err != nil {
+		t.Fatalf("DeleteProxyNeighbor: %v", err)
+	}
+	if got, want := strings.Join(commands, "\n"), "arp -n -i em0 192.0.2.55\narp -d 192.0.2.55\narp -n -i em0 192.0.2.55"; got != want {
+		t.Fatalf("commands = %q, want %q", got, want)
+	}
+
+	lookup = 0
+	freeBSDSAMRunCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		switch strings.Join(args, " ") {
+		case "-n -i em0 192.0.2.55":
+			return []byte("? (192.0.2.55) at 02:00:00:00:00:55 on em0 permanent published [ethernet]\n"), nil
+		case "-d 192.0.2.55":
+			return nil, nil
+		default:
+			return nil, errors.New("unexpected command")
+		}
+	}
+	if err := (freeBSDSAMProxyNeighborApplier{}).DeleteProxyNeighbor(context.Background(), "192.0.2.55/32", "em0"); err == nil || !strings.Contains(err.Error(), "scoped entry remains") {
+		t.Fatalf("remaining scoped ARP deletion error = %v", err)
 	}
 }
 

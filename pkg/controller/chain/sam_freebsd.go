@@ -84,7 +84,7 @@ func (freeBSDSAMProxyNeighborApplier) EnsureProxyNeighbor(ctx context.Context, a
 	if err != nil {
 		return err
 	}
-	entry, found, err := freeBSDARPEntry(ctx, ip)
+	entry, found, err := freeBSDARPEntry(ctx, ip, ifname)
 	if err != nil {
 		return err
 	}
@@ -101,7 +101,10 @@ func (freeBSDSAMProxyNeighborApplier) EnsureProxyNeighbor(ctx context.Context, a
 	if len(iface.HardwareAddr) != 6 {
 		return fmt.Errorf("published-ARP interface %s has non-ethernet MAC %q", ifname, iface.HardwareAddr)
 	}
-	out, err := freeBSDSAMRunCommand(ctx, "arp", "-s", ip, iface.HardwareAddr.String(), "pub")
+	// FreeBSD arp(8) accepts -i for F_SET. Keep the published neighbor on
+	// the declared Ethernet interface even when a more-specific FIB route for
+	// the same address points at a non-L2 tunnel.
+	out, err := freeBSDSAMRunCommand(ctx, "arp", "-i", ifname, "-s", ip, iface.HardwareAddr.String(), "pub")
 	if err != nil {
 		return fmt.Errorf("publish ARP %s on %s: %w: %s", ip, ifname, err, strings.TrimSpace(string(out)))
 	}
@@ -113,7 +116,7 @@ func (freeBSDSAMProxyNeighborApplier) DeleteProxyNeighbor(ctx context.Context, a
 	if err != nil {
 		return err
 	}
-	entry, found, err := freeBSDARPEntry(ctx, ip)
+	entry, found, err := freeBSDARPEntry(ctx, ip, ifname)
 	if err != nil {
 		return err
 	}
@@ -126,6 +129,11 @@ func (freeBSDSAMProxyNeighborApplier) DeleteProxyNeighbor(ctx context.Context, a
 	out, err := freeBSDSAMRunCommand(ctx, "arp", "-d", ip)
 	if err != nil {
 		return fmt.Errorf("delete published ARP %s: %w: %s", ip, err, strings.TrimSpace(string(out)))
+	}
+	if _, remains, err := freeBSDARPEntry(ctx, ip, ifname); err != nil {
+		return err
+	} else if remains {
+		return fmt.Errorf("delete published ARP %s: scoped entry remains on %s", ip, ifname)
 	}
 	return nil
 }
@@ -270,10 +278,10 @@ func samIPv4Address(address string) (string, error) {
 	return ip.To4().String(), nil
 }
 
-func freeBSDARPEntry(ctx context.Context, address string) (string, bool, error) {
+func freeBSDARPEntry(ctx context.Context, address, ifname string) (string, bool, error) {
 	// FreeBSD arp(8) accepts a hostname/address for the single-entry form;
 	// -a selects all entries and cannot be combined with that operand.
-	out, err := freeBSDSAMRunCommand(ctx, "arp", "-n", address)
+	out, err := freeBSDSAMRunCommand(ctx, "arp", "-n", "-i", ifname, address)
 	if err != nil {
 		text := strings.TrimSpace(string(out))
 		// FreeBSD arp(8) reports an absent single entry as a nonzero command

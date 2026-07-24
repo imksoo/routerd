@@ -250,7 +250,7 @@ jexec "$ra" "$routerd" serve --config "$work/ra.yaml" --state-file "$ra_runtime/
 jexec "$rb" "$routerd" serve --config "$work/rb.yaml" --state-file "$rb_runtime/state.db" --status-file "$rb_runtime/status.json" --socket "$rb_runtime/api.sock" --status-socket "$rb_runtime/status.sock" --controllers all >"$evidence/router-b.log" 2>&1 & rb_pid=$!
 
 wait_for() { jail_name=$1 command=$2 file=$3; n=0; while [ "$n" -lt 45 ]; do if jexec "$jail_name" sh -c "$command" >"$file" 2>&1; then return 0; fi; n=$((n+1)); sleep 1; done; return 1; }
-wait_published_arp() { jail_name=$1 address=$2 file=$3; n=0; while [ "$n" -lt 45 ]; do jexec "$jail_name" arp -n "$address" >"$file" 2>&1 || true; if grep -q published "$file"; then return 0; fi; n=$((n+1)); sleep 1; done; return 1; }
+wait_published_arp() { jail_name=$1 ifname=$2 address=$3 file=$4; n=0; while [ "$n" -lt 45 ]; do jexec "$jail_name" arp -n -i "$ifname" "$address" >"$file" 2>&1 || true; if grep -q published "$file"; then return 0; fi; n=$((n+1)); sleep 1; done; return 1; }
 wait_carp_state() { jail_name=$1 ifname=$2 state_name=$3 file=$4; n=0; while [ "$n" -lt 45 ]; do jexec "$jail_name" ifconfig "$ifname" >"$file" 2>&1 || return 1; if grep -Eq "carp:[[:space:]]+${state_name}([[:space:]]|$)" "$file"; then return 0; fi; n=$((n+1)); sleep 1; done; return 1; }
 snapshot_carp_state() {
   jexec "$ra" ifconfig "$ra_b" >"$evidence/router-a-carp.log" 2>&1 || true
@@ -260,7 +260,7 @@ snapshot_carp_state() {
   ifconfig "$br" >"$evidence/bridge-ifconfig.log" 2>&1 || true
   if [ -n "$carp_capture" ]; then kill "$carp_capture" 2>/dev/null || true; wait "$carp_capture" 2>/dev/null || true; carp_capture=''; fi
 }
-wait_published_arp "$ra" 198.18.250.99 "$evidence/router-a-arp.log"
+wait_published_arp "$ra" "$ra_b" 198.18.250.99 "$evidence/router-a-arp.log"
 stage='carp-master-arp'
 if ! wait_carp_state "$ra" "$ra_b" MASTER "$evidence/router-a-carp.log"; then snapshot_carp_state; exit 1; fi
 if ! wait_carp_state "$rb" "$rb_b" BACKUP "$evidence/router-b-backup.log"; then snapshot_carp_state; exit 1; fi
@@ -269,7 +269,7 @@ wait "$arp_capture" || true; arp_capture=
 stage='garp-observation'
 grep -c '198\.18\.250\.99' "$evidence/client-arp.log" | awk '$1 >= 3 {exit 0} {exit 1}'
 grep -F 'published' "$evidence/router-a-arp.log"
-if jexec "$rb" arp -n 198.18.250.99 >"$evidence/router-b-arp.log" 2>&1 && grep -q published "$evidence/router-b-arp.log"; then echo 'CARP backup published ARP' >&2; exit 1; fi
+if jexec "$rb" arp -n -i "$rb_b" 198.18.250.99 >"$evidence/router-b-arp.log" 2>&1 && grep -q published "$evidence/router-b-arp.log"; then echo 'CARP backup published ARP' >&2; exit 1; fi
 printf 'sam-client-observed-three-garps=ok\n' >"$evidence/summary.log"
 printf 'sam-carp-backup-silent-master-published=ok\n' >>"$evidence/summary.log"
 
@@ -288,7 +288,7 @@ printf 'sam-pf-32-overlay-return=ok\n' >>"$evidence/summary.log"
 # router-b must become master and take over the one published entry.
 jexec "$ra" ifconfig "$ra_b" down
 stage='carp-failover'
-wait_published_arp "$rb" 198.18.250.99 "$evidence/router-b-arp-after-failover.log"
+wait_published_arp "$rb" "$rb_b" 198.18.250.99 "$evidence/router-b-arp-after-failover.log"
 jexec "$client" ping -n -S 198.18.250.20 -c 3 -W 1 198.18.250.99 >"$evidence/client-ping-after-failover.log"
 printf 'sam-carp-forced-switchover-converged=ok\n' >>"$evidence/summary.log"
 
@@ -299,7 +299,7 @@ kill "$rb_pid"; wait "$rb_pid" || true; rb_pid=
 # was routerd-owned before teardown. Status and sockets remain isolated for the
 # delete observation, avoiding collision with the stopped original process.
 jexec "$rb" "$routerd" serve --config "$work/rb-delete.yaml" --state-file "$rb_runtime/state.db" --status-file "$rb_delete_runtime/status.json" --socket "$rb_delete_runtime/api.sock" --status-socket "$rb_delete_runtime/status.sock" --controllers sam,route >"$evidence/router-b-delete.log" 2>&1 & rb_pid=$!
-wait_for "$rb" "! arp -n 198.18.250.99 | grep -q published" "$evidence/router-b-owned-cleanup.log"
+wait_for "$rb" "! arp -n -i $rb_b 198.18.250.99 | grep -q published" "$evidence/router-b-owned-cleanup.log"
 jexec "$rb" pfctl -a routerd_sam_forward -sr >"$evidence/router-b-pf-cleanup.log"
 [ ! -s "$evidence/router-b-pf-cleanup.log" ]
 jexec "$rb" route -n get 198.18.250.99 >"$evidence/router-b-route-cleanup.log" 2>&1 || true
