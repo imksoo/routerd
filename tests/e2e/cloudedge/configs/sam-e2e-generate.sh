@@ -13,6 +13,18 @@ OpenTofu output; do not keep a second hardcoded topology list here.
 The input must be `tofu output -json` from cloudedge-mobility/terraform/envs/sam-e2e.
 WireGuard private keys and the event federation HMAC secret are generated under
 OUT_DIR/secrets and are intentionally not checked into git.
+
+PVE overrides for mixed-OS qualification:
+  PVE_MANAGEMENT_INTERFACE=vtnet0
+  PVE_CAPTURE_INTERFACE=vtnet1
+  PVE_MANAGEMENT_DHCP=false
+  PVE_OWNERSHIP_GATE=carp
+  PVE_CARP_ADDRESS=10.77.60.254/32
+
+The defaults preserve the Linux E2E fixture (ens18 DHCP management, eth1
+capture, and the single-router ownership gate). CARP mode assigns priority 151
+to PVE_CARP_PRIMARY_NODE (pve-leaf-a by default) and 100 to the other PVE
+leaves.
 USAGE
 }
 
@@ -100,8 +112,30 @@ inner_prefix="$(fabric '.tunnel_inner_prefix')"
 bgp_asn="$(fabric '.bgp_asn')"
 wg_port="$(fabric '.wg_port')"
 pve_capture_interface="${PVE_CAPTURE_INTERFACE:-eth1}"
+pve_management_interface="${PVE_MANAGEMENT_INTERFACE:-ens18}"
+pve_management_dhcp="${PVE_MANAGEMENT_DHCP:-true}"
+pve_ownership_gate="${PVE_OWNERSHIP_GATE:-single-router}"
+pve_carp_address="${PVE_CARP_ADDRESS:-}"
+pve_carp_primary_node="${PVE_CARP_PRIMARY_NODE:-pve-leaf-a}"
+pve_carp_vrid="${PVE_CARP_VRID:-77}"
+pve_carp_authentication="${PVE_CARP_AUTHENTICATION:-routerd-sam-e2e}"
 capture_max_secondary_ips="${SAM_E2E_MAX_SECONDARY_IPS:-128}"
 run1_verification_pool_nodes="${SAM_E2E_RUN1_VERIFICATION_POOL_NODES:-pve-leaf-a}"
+
+case "$pve_management_dhcp" in
+  true|false) ;;
+  *) echo "PVE_MANAGEMENT_DHCP must be true or false" >&2; exit 2 ;;
+esac
+case "$pve_ownership_gate" in
+  single-router) ;;
+  carp)
+    [ -n "$pve_carp_address" ] || {
+      echo "PVE_CARP_ADDRESS is required when PVE_OWNERSHIP_GATE=carp" >&2
+      exit 2
+    }
+    ;;
+  *) echo "PVE_OWNERSHIP_GATE must be single-router or carp" >&2; exit 2 ;;
+esac
 
 run1_pool_role() {
   local node="$1"
@@ -434,11 +468,13 @@ EOF
 
 render_pve_leaf() {
   local node="$1" overlay dataplane_ip
-  local pool_role delivery_policy
+  local pool_role delivery_policy carp_priority
   overlay="$(jq_node "$node" '.[$node].overlay_ip')"
   dataplane_ip="$(jq_node "$node" '.[$node].private_ip')"
   pool_role="$(run1_pool_role "$node")"
   delivery_policy="$(run1_delivery_policy "$pool_role")"
+  carp_priority=100
+  [ "$node" = "$pve_carp_primary_node" ] && carp_priority=151
   cat <<EOF
 apiVersion: routerd.net/v1alpha1
 kind: Router
@@ -454,10 +490,13 @@ spec:
       kind: Interface
       metadata: { name: mgmt }
       spec:
-        ifname: ens18
+        ifname: $pve_management_interface
         adminUp: true
         managed: false
         owner: external
+EOF
+  if [ "$pve_management_dhcp" = true ]; then
+    cat <<EOF
     - apiVersion: net.routerd.net/v1alpha1
       kind: DHCPv4Client
       metadata: { name: mgmt-dhcpv4 }
@@ -465,6 +504,9 @@ spec:
         interface: mgmt
         useRoutes: true
         useDNS: true
+EOF
+  fi
+  cat <<EOF
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata: { name: capture }
@@ -476,6 +518,23 @@ spec:
 
 EOF
   render_common "$node" "$overlay"
+  if [ "$pve_ownership_gate" = carp ]; then
+    cat <<EOF
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: VirtualAddress
+      metadata: { name: cloudedge-carp }
+      spec:
+        family: ipv4
+        interface: capture
+        address: $pve_carp_address
+        mode: vrrp
+        vrrp:
+          virtualRouterID: $pve_carp_vrid
+          priority: $carp_priority
+          authentication: $pve_carp_authentication
+EOF
+  fi
   cat <<EOF
 
     - apiVersion: mobility.routerd.net/v1alpha1
@@ -520,8 +579,16 @@ EOF
               type: proxy-arp
               interface: $pve_capture_interface
               sourceAddress: $dataplane_ip
+EOF
+      if [ "$pve_ownership_gate" = carp ]; then
+        cat <<EOF
+              activeWhen: { type: vrrp-master, virtualAddressRef: cloudedge-carp }
+EOF
+      else
+        cat <<EOF
               activeWhen: { type: single-router }
 EOF
+      fi
     fi
   done
 }
