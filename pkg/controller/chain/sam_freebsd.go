@@ -254,7 +254,11 @@ func freeBSDARPEntry(ctx context.Context, address string) (string, bool, error) 
 	out, err := freeBSDSAMRunCommand(ctx, "arp", "-n", address)
 	if err != nil {
 		text := strings.TrimSpace(string(out))
-		if text == "" || strings.Contains(strings.ToLower(text), "no match") {
+		// FreeBSD arp(8) reports an absent single entry as a nonzero command
+		// with the exact "ADDRESS (...) -- no entry" form. That is the only
+		// nonzero lookup outcome that is safe to normalize: every other error
+		// leaves ownership unknown and must remain fail-closed.
+		if strings.HasPrefix(text, address+" (") && strings.HasSuffix(text, ") -- no entry") {
 			return "", false, nil
 		}
 		return "", false, fmt.Errorf("observe ARP %s: %w: %s", address, err, text)

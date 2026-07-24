@@ -55,6 +55,27 @@ func TestFreeBSDSAMPublishedARPUsesExactAddressAndRefusesForeign(t *testing.T) {
 	}
 }
 
+func TestFreeBSDSAMARPEntryOnlyNormalizesCanonicalFreeBSDAbsence(t *testing.T) {
+	reset := saveFreeBSDSAMSeams()
+	defer reset()
+	freeBSDSAMRunCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "arp" || strings.Join(args, " ") != "-n 198.18.250.99" {
+			t.Fatalf("command = %s %s", name, strings.Join(args, " "))
+		}
+		return []byte("198.18.250.99 (198.18.250.99) -- no entry\n"), errors.New("exit status 1")
+	}
+	if entry, found, err := freeBSDARPEntry(context.Background(), "198.18.250.99"); err != nil || found || entry != "" {
+		t.Fatalf("canonical absent entry = %q, found=%t, err=%v", entry, found, err)
+	}
+
+	freeBSDSAMRunCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		return []byte("arp: route lookup failed\n"), errors.New("exit status 1")
+	}
+	if _, _, err := freeBSDARPEntry(context.Background(), "198.18.250.99"); err == nil || !strings.Contains(err.Error(), "route lookup failed") {
+		t.Fatalf("unrelated arp lookup error = %v", err)
+	}
+}
+
 func TestFreeBSDSAMCollisionAndPFEmptyCleanupContracts(t *testing.T) {
 	reset := saveFreeBSDSAMSeams()
 	defer reset()
