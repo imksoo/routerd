@@ -63,7 +63,9 @@ cleanup() {
       "$evidence/router-a-status.json" "$evidence/router-b-status.json" \
       "$evidence/bridge-carp.log" "$evidence/bridge-ifconfig.log" \
       "$evidence/router-a-pf-main.log" "$evidence/router-a-pf-anchor.log" \
-      "$evidence/router-a-bgp-fib-route.log" "$evidence/router-b-route-cleanup.log" \
+      "$evidence/router-a-bgp-fib-route.log" "$evidence/router-b-delete.log" \
+      "$evidence/router-b-delete-status.json" "$evidence/router-b-owned-cleanup.log" \
+      "$evidence/router-b-pf-cleanup.log" "$evidence/router-b-route-cleanup.log" \
       "$evidence/overlay-return-route.log" "$evidence/overlay-failover-return-route.log" \
       "$evidence/client-ping.log" "$evidence/client-ping-after-failover.log" \
       "$evidence/router-b-arp-after-failover.log" "$evidence/collision-status.log"; do
@@ -314,6 +316,7 @@ kill "$rb_pid"; wait "$rb_pid" || true; rb_pid=
 # delete observation, avoiding collision with the stopped original process.
 jexec "$rb" "$routerd" serve --config "$work/rb-delete.yaml" --state-file "$rb_runtime/state.db" --status-file "$rb_delete_runtime/status.json" --socket "$rb_delete_runtime/api.sock" --status-socket "$rb_delete_runtime/status.sock" --controllers sam,route >"$evidence/router-b-delete.log" 2>&1 & rb_pid=$!
 wait_for "$rb" "! arp -n -i $rb_b 198.18.250.99 | grep -q published" "$evidence/router-b-owned-cleanup.log"
+jexec "$rb" cat "$rb_delete_runtime/status.json" >"$evidence/router-b-delete-status.json" 2>&1 || true
 jexec "$rb" pfctl -a routerd_sam_forward -sr >"$evidence/router-b-pf-cleanup.log"
 [ ! -s "$evidence/router-b-pf-cleanup.log" ]
 jexec "$rb" route -n get 198.18.250.99 >"$evidence/router-b-route-cleanup.log" 2>&1 || true
