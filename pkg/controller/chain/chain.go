@@ -1808,7 +1808,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	hybridRoute := HybridRouteController{Router: r.Router, EffectiveRouter: r.Router, Store: store}
 	samController := SAMController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute}
 	policyRoute := IPv4PolicyRouteController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, NftCommand: r.Opts.NftCommand, LedgerPath: r.Opts.LedgerPath, Logger: logger}
-	pathMTU := PathMTUController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, NftCommand: r.Opts.NftCommand, Path: r.Opts.PathMTUPath, ForceFragmentPath: r.Opts.ForceFragmentPath}
+	pathMTU := PathMTUController{Router: r.Router, OS: platform.CurrentOS(), Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, NftCommand: r.Opts.NftCommand, Path: r.Opts.PathMTUPath, ForceFragmentPath: r.Opts.ForceFragmentPath}
 	dhcpv6 := DHCPv6ServerController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDHCPv6, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, ListenAddresses: r.Opts.DnsmasqListen, Logger: logger}
 	dhcp4Client := dhcpv4client.Controller{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunDHCPv4Client, Logger: logger}
 	pppoeSession := pppoesession.Controller{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunPPPoESession, Logger: logger}
