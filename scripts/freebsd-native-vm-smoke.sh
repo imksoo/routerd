@@ -240,7 +240,7 @@ fi
 
 if [ "${ROUTERD_FREEBSD_SAM_DATAPLANE_RUNTIME:-false}" = true ]; then
   sam_evidence="$work/sam-dataplane-runtime"
-  sh scripts/freebsd-sam-dataplane-smoke.sh --routerd "$routerd" --evidence-dir "$sam_evidence"
+  sh scripts/freebsd-sam-dataplane-smoke.sh --routerd "$routerd" --routerctl "$routerctl" --evidence-dir "$sam_evidence"
   cat "$sam_evidence/summary.log"
   cat "$sam_evidence/result"
 fi

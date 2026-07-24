@@ -7,18 +7,20 @@
 set -eu
 
 routerd=''
+routerctl=''
 evidence=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --routerd) routerd=${2:?}; shift 2 ;;
+    --routerctl) routerctl=${2:?}; shift 2 ;;
     --evidence-dir) evidence=${2:?}; shift 2 ;;
-    *) echo "usage: $0 --routerd /absolute/routerd --evidence-dir /absolute/dir" >&2; exit 2 ;;
+    *) echo "usage: $0 --routerd /absolute/routerd --routerctl /absolute/routerctl --evidence-dir /absolute/dir" >&2; exit 2 ;;
   esac
 done
 [ "$(uname -s)" = FreeBSD ] && [ "$(id -u)" -eq 0 ] || exit 2
-[ -x "$routerd" ] && [ -n "$evidence" ] || exit 2
-case "$routerd:$evidence" in /*:/*) ;; *) exit 2;; esac
-for x in ifconfig jail jexec kldload kldstat pfctl tcpdump ping arp; do command -v "$x" >/dev/null; done
+[ -x "$routerd" ] && [ -x "$routerctl" ] && [ -n "$evidence" ] || exit 2
+case "$routerd:$routerctl:$evidence" in /*:/*:/*) ;; *) exit 2;; esac
+for x in ifconfig jail jexec kldload kldstat pfctl tcpdump ping arp jq; do command -v "$x" >/dev/null; done
 mkdir -p "$evidence"
 tag="sam-$$"; work=$(mktemp -d /tmp/routerd-sam-vnet.XXXXXX)
 ra="$tag-ra"; rb="$tag-rb"; client="$tag-client"; overlay="$tag-overlay"
@@ -66,7 +68,7 @@ cleanup() {
       "$evidence/router-a-bgp-fib-route.log" "$evidence/router-b-delete.log" \
       "$evidence/router-b-delete-status.json" "$evidence/router-b-owned-cleanup.log" \
       "$evidence/router-b-pf-cleanup.log" "$evidence/router-b-route-cleanup.log" \
-      "$evidence/router-b-collision.log" "$evidence/collision-status.json" \
+      "$evidence/router-b-collision.log" "$evidence/collision-aggregate-status.json" "$evidence/collision-claim-status.json" \
       "$evidence/foreign-pf-preserved.log" \
       "$evidence/overlay-return-route.log" "$evidence/overlay-failover-return-route.log" \
       "$evidence/client-ping.log" "$evidence/client-ping-after-failover.log" \
@@ -260,7 +262,7 @@ jexec "$rb" "$routerd" serve --config "$work/rb.yaml" --state-file "$rb_runtime/
 wait_for() { jail_name=$1 command=$2 file=$3; n=0; while [ "$n" -lt 45 ]; do if jexec "$jail_name" sh -c "$command" >"$file" 2>&1; then return 0; fi; n=$((n+1)); sleep 1; done; return 1; }
 wait_published_arp() { jail_name=$1 ifname=$2 address=$3 file=$4; n=0; while [ "$n" -lt 45 ]; do jexec "$jail_name" arp -n -i "$ifname" "$address" >"$file" 2>&1 || true; if grep -q published "$file"; then return 0; fi; n=$((n+1)); sleep 1; done; return 1; }
 wait_carp_state() { jail_name=$1 ifname=$2 state_name=$3 file=$4; n=0; while [ "$n" -lt 45 ]; do jexec "$jail_name" ifconfig "$ifname" >"$file" 2>&1 || return 1; if grep -Eq "carp:[[:space:]]+${state_name}([[:space:]]|$)" "$file"; then return 0; fi; n=$((n+1)); sleep 1; done; return 1; }
-wait_foreign_collision() { jail_name=$1 status_file=$2; n=0; while [ "$n" -lt 45 ]; do jexec "$jail_name" cat "$rb_collision_runtime/status.json" >"$status_file" 2>&1 || true; if grep -q 'foreign OS address' "$status_file"; then return 0; fi; n=$((n+1)); sleep 1; done; return 1; }
+wait_foreign_collision() { jail_name=$1 status_file=$2; n=0; while [ "$n" -lt 45 ]; do jexec "$jail_name" "$routerctl" get RemoteAddressClaim/published-host --socket "$rb_collision_runtime/status.sock" -o json >"$status_file" 2>&1 || true; if jq -e '.items | length == 1 and .[0].status.phase == "Error" and .[0].status.reason == "CaptureFailed" and ((.[0].status.error // .[0].status.message // "") | contains("foreign OS address"))' "$status_file" >/dev/null 2>&1; then return 0; fi; n=$((n+1)); sleep 1; done; return 1; }
 snapshot_carp_state() {
   jexec "$ra" ifconfig "$ra_b" >"$evidence/router-a-carp.log" 2>&1 || true
   jexec "$rb" ifconfig "$rb_b" >"$evidence/router-b-carp.log" 2>&1 || true
@@ -338,7 +340,8 @@ jexec "$rb" ifconfig "$rb_b" alias 198.18.250.99/32
 stage='collision-foreign-preservation'
 kill "$rb_pid"; wait "$rb_pid" || true; rb_pid=
 jexec "$rb" "$routerd" serve --config "$work/rb.yaml" --state-file "$rb_collision_runtime/state.db" --status-file "$rb_collision_runtime/status.json" --socket "$rb_collision_runtime/api.sock" --status-socket "$rb_collision_runtime/status.sock" --controllers sam,vrrp >"$evidence/router-b-collision.log" 2>&1 & rb_pid=$!
-wait_foreign_collision "$rb" "$evidence/collision-status.json"
+jexec "$rb" cat "$rb_collision_runtime/status.json" >"$evidence/collision-aggregate-status.json" 2>&1 || true
+wait_foreign_collision "$rb" "$evidence/collision-claim-status.json"
 jexec "$rb" pfctl -a operator_sam -sr >"$evidence/foreign-pf-preserved.log"
 grep -F '198.18.250.200/32' "$evidence/foreign-pf-preserved.log"
 jexec "$rb" ifconfig "$rb_b" inet 198.18.250.99/32 -alias
