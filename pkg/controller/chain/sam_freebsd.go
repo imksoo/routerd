@@ -14,20 +14,27 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
 	"github.com/imksoo/routerd/pkg/sam"
+	"golang.org/x/net/route"
 	"golang.org/x/sys/unix"
 )
 
-const freeBSDSAMForwardAnchor = "routerd_sam_forward"
+const (
+	freeBSDSAMForwardAnchor = "routerd_sam_forward"
+	freeBSDIFTether         = 6
+)
 
 // PF rule updates are a multi-command transaction (begin/add/commit inside
 // pfctl). PF rejects a second transaction against the same anchor while the
 // first one owns its inactive ticket. Keep the whole routerd-owned anchor
 // reconciliation serial, matching the Linux iptables transaction boundary.
 var freeBSDSAMForwardPathMu sync.Mutex
+
+var freeBSDSAMRouteSequence uint32
 
 var (
 	freeBSDSAMRunCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -44,8 +51,10 @@ var (
 	freeBSDSAMSetBPFHeaderComplete = func(fd int) error {
 		return unix.IoctlSetPointerInt(fd, unix.BIOCSHDRCMPLT, 1)
 	}
-	freeBSDSAMWriteBPF = unix.Write
-	freeBSDSAMCloseBPF = unix.Close
+	freeBSDSAMWriteBPF        = unix.Write
+	freeBSDSAMCloseBPF        = unix.Close
+	freeBSDSAMInterfaceType   = freeBSDInterfaceType
+	freeBSDSAMAddPublishedARP = freeBSDAddPublishedARP
 )
 
 // freeBSDSAMProxyNeighborApplier publishes exactly one IPv4 address through a
@@ -101,14 +110,163 @@ func (freeBSDSAMProxyNeighborApplier) EnsureProxyNeighbor(ctx context.Context, a
 	if len(iface.HardwareAddr) != 6 {
 		return fmt.Errorf("published-ARP interface %s has non-ethernet MAC %q", ifname, iface.HardwareAddr)
 	}
-	// FreeBSD arp(8) accepts -i for F_SET. Keep the published neighbor on
-	// the declared Ethernet interface even when a more-specific FIB route for
-	// the same address points at a non-L2 tunnel.
-	out, err := freeBSDSAMRunCommand(ctx, "arp", "-i", ifname, "-s", ip, iface.HardwareAddr.String(), "pub")
-	if err != nil {
-		return fmt.Errorf("publish ARP %s on %s: %w: %s", ip, ifname, err, strings.TrimSpace(string(out)))
+	// releng/14.3 arp(8) cannot pass an exact ifindex to its individual SET:
+	// set() calls set_nl(0, ...), so a more-specific GIF FIB route selects a
+	// non-L2 neighbor and rejects the Ethernet MAC. Use the source-equivalent
+	// routing-socket RTM_ADD with the declared AF_LINK index instead.
+	if err := freeBSDSAMAddPublishedARP(ctx, ip, iface); err != nil {
+		return fmt.Errorf("publish ARP %s on %s: %w", ip, ifname, err)
 	}
 	return nil
+}
+
+func freeBSDInterfaceType(index int) (uint8, error) {
+	rib, err := route.FetchRIB(unix.AF_LINK, route.RIBTypeInterface, index)
+	if err != nil {
+		return 0, fmt.Errorf("fetch interface %d routing data: %w", index, err)
+	}
+	msgs, err := route.ParseRIB(route.RIBTypeInterface, rib)
+	if err != nil {
+		return 0, fmt.Errorf("parse interface %d routing data: %w", index, err)
+	}
+	for _, msg := range msgs {
+		iface, ok := msg.(*route.InterfaceMessage)
+		if !ok || iface.Index != index {
+			continue
+		}
+		for _, sys := range iface.Sys() {
+			metrics, ok := sys.(*route.InterfaceMetrics)
+			if !ok {
+				continue
+			}
+			if metrics.Type <= 0 || metrics.Type > 255 {
+				return 0, fmt.Errorf("interface %d has invalid link type %d", index, metrics.Type)
+			}
+			return uint8(metrics.Type), nil
+		}
+	}
+	return 0, fmt.Errorf("interface %d has no link type", index)
+}
+
+func freeBSDAddPublishedARP(ctx context.Context, address string, iface *net.Interface) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	linkType, err := freeBSDSAMInterfaceType(iface.Index)
+	if err != nil {
+		return err
+	}
+	if !freeBSDARPLinkType(linkType) {
+		return fmt.Errorf("published-ARP interface %s has unsupported link type %d", iface.Name, linkType)
+	}
+	request, sequence, err := freeBSDPublishedARPRouteMessage(address, iface, linkType)
+	if err != nil {
+		return err
+	}
+	return freeBSDWritePublishedARPRoute(ctx, request, int32(os.Getpid()), sequence)
+}
+
+func freeBSDARPLinkType(linkType uint8) bool {
+	return linkType == freeBSDIFTether || linkType == unix.IFT_L2VLAN || linkType == unix.IFT_BRIDGE
+}
+
+func freeBSDPublishedARPRouteMessage(address string, iface *net.Interface, linkType uint8) ([]byte, int32, error) {
+	ip := net.ParseIP(address).To4()
+	if ip == nil {
+		return nil, 0, fmt.Errorf("published ARP address %q is not IPv4", address)
+	}
+	if iface.Index <= 0 || len(iface.HardwareAddr) != 6 {
+		return nil, 0, fmt.Errorf("published-ARP interface %s lacks an Ethernet index/MAC", iface.Name)
+	}
+	headerLen := int(unsafe.Sizeof(unix.RtMsghdr{}))
+	dstLen := int(unsafe.Sizeof(unix.RawSockaddrInet4{}))
+	gatewayOffset := headerLen + freeBSDSARPSockaddrAlign(dstLen)
+	// Match releng/14.3 arp(8): sockaddr_dl is initialized with its complete
+	// structure length even though only the first six link-layer bytes carry
+	// the Ethernet address. The routing-socket SA_SIZE alignment follows that
+	// length.
+	gatewayLen := int(unsafe.Sizeof(unix.RawSockaddrDatalink{}))
+	messageLen := gatewayOffset + freeBSDSARPSockaddrAlign(gatewayLen)
+	message := make([]byte, messageLen)
+	rtm := (*unix.RtMsghdr)(unsafe.Pointer(&message[0]))
+	sequence := int32(atomic.AddUint32(&freeBSDSAMRouteSequence, 1))
+	rtm.Msglen = uint16(messageLen)
+	rtm.Version = unix.RTM_VERSION
+	rtm.Type = unix.RTM_ADD
+	rtm.Flags = unix.RTF_HOST | unix.RTF_STATIC | unix.RTF_LLDATA | unix.RTF_PROTO2
+	rtm.Addrs = unix.RTA_DST | unix.RTA_GATEWAY
+	// releng/14.3 arp(8): rtmsg(RTM_ADD, ...) sets RTV_EXPIRE even for
+	// permanent entries (whose expiration value remains zero).
+	rtm.Inits = unix.RTV_EXPIRE
+	rtm.Pid = int32(os.Getpid())
+	rtm.Seq = sequence
+	dst := (*unix.RawSockaddrInet4)(unsafe.Pointer(&message[headerLen]))
+	dst.Len = uint8(dstLen)
+	dst.Family = unix.AF_INET
+	copy(dst.Addr[:], ip)
+	gateway := (*unix.RawSockaddrDatalink)(unsafe.Pointer(&message[gatewayOffset]))
+	gateway.Len = uint8(gatewayLen)
+	gateway.Family = unix.AF_LINK
+	gateway.Index = uint16(iface.Index)
+	gateway.Type = linkType
+	gateway.Alen = uint8(len(iface.HardwareAddr))
+	copy(unsafe.Slice((*byte)(unsafe.Pointer(&gateway.Data[0])), len(iface.HardwareAddr)), iface.HardwareAddr)
+	return message, sequence, nil
+}
+
+func freeBSDSARPSockaddrAlign(length int) int {
+	const alignment = 8
+	return (length + alignment - 1) &^ (alignment - 1)
+}
+
+func freeBSDWritePublishedARPRoute(ctx context.Context, request []byte, pid, sequence int32) error {
+	fd, err := unix.Socket(unix.AF_ROUTE, unix.SOCK_RAW, 0)
+	if err != nil {
+		return fmt.Errorf("open routing socket: %w", err)
+	}
+	defer unix.Close(fd)
+	if n, err := unix.Write(fd, request); err != nil {
+		return fmt.Errorf("write published ARP route message: %w", err)
+	} else if n != len(request) {
+		return fmt.Errorf("write published ARP route message: wrote %d of %d bytes", n, len(request))
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return errors.New("timed out waiting for published ARP routing-socket acknowledgement")
+		}
+		waitMillis := int(remaining.Milliseconds())
+		if waitMillis < 1 {
+			waitMillis = 1
+		}
+		ready, err := unix.Poll([]unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}, waitMillis)
+		if err != nil {
+			return fmt.Errorf("wait for published ARP routing-socket acknowledgement: %w", err)
+		}
+		if ready == 0 {
+			continue
+		}
+		buffer := make([]byte, 2048)
+		n, err := unix.Read(fd, buffer)
+		if err != nil {
+			return fmt.Errorf("read published ARP routing-socket acknowledgement: %w", err)
+		}
+		if n < int(unsafe.Sizeof(unix.RtMsghdr{})) {
+			continue
+		}
+		rtm := (*unix.RtMsghdr)(unsafe.Pointer(&buffer[0]))
+		if rtm.Type != unix.RTM_ADD || rtm.Pid != pid || rtm.Seq != sequence {
+			continue
+		}
+		if rtm.Errno != 0 {
+			return fmt.Errorf("published ARP routing-socket acknowledgement: %w", unix.Errno(rtm.Errno))
+		}
+		return nil
+	}
 }
 
 func (freeBSDSAMProxyNeighborApplier) DeleteProxyNeighbor(ctx context.Context, address, ifname string) error {
