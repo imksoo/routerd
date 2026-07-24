@@ -71,7 +71,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	if targetOS == "" {
 		targetOS = platform.CurrentOS()
 	}
-	if targetOS != platform.OSLinux {
+	if targetOS != platform.OSLinux && targetOS != platform.OSFreeBSD {
 		return c.reconcileStatuses(targetOS, nil, nil, nil)
 	}
 	statuses, err := c.listObjectStatuses()
@@ -98,10 +98,14 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	deassignResults := map[string]samOSAddressDeassignResult{}
 	garpSent := map[string]bool{}
 	garpErrors := map[string]string{}
+	blockedPublication := map[string]bool{}
 	priorNeighbors := samStoredProxyNeighbors(statuses)
 	for _, action := range actions {
 		switch action.Kind {
 		case "proxy-neighbor":
+			if blockedPublication[action.ClaimName] {
+				continue
+			}
 			if c.DryRun {
 				continue
 			}
@@ -141,6 +145,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 			}
 			deassignResults[action.ClaimName] = result
 			if err != nil {
+				blockedPublication[action.ClaimName] = true
 				failures = append(failures, fmt.Sprintf("%s deassign %s: %v", action.ClaimName, action.Address, err))
 			}
 		default:
@@ -174,6 +179,13 @@ func (c SAMController) reconcileForwardPaths(ctx context.Context, actions []sam.
 }
 
 func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []sam.CaptureAction) error {
+	targetOS := c.OS
+	if targetOS == "" {
+		targetOS = platform.CurrentOS()
+	}
+	if targetOS != platform.OSLinux {
+		return nil
+	}
 	if c.DryRun {
 		return nil
 	}
@@ -225,7 +237,7 @@ func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults m
 	for _, claim := range claims {
 		status := sam.StatusForRemoteAddressClaim(claim, c.Lowerings, c.Store, targetOS)
 		status["dryRun"] = c.DryRun
-		if targetOS == platform.OSLinux {
+		if targetOS == platform.OSLinux || targetOS == platform.OSFreeBSD {
 			if spec, err := claim.RemoteAddressClaimSpec(); err == nil && strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
 				if status["captureStatus"] == sam.CaptureStatusCaptured {
 					aliases := sam.CaptureInterfaceAliases(c.Router)

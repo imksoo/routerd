@@ -508,7 +508,7 @@ func TestPlanCaptureProxyARPDoesNotDeassignOSAddress(t *testing.T) {
 	}
 }
 
-func TestPlanCaptureNoClaimsAndNonLinuxNoActions(t *testing.T) {
+func TestPlanCaptureNoClaimsUnsupportedOSAndFreeBSDActions(t *testing.T) {
 	noClaim := &api.Router{}
 	actions, err := PlanCapture(noClaim, platform.OSLinux)
 	if err != nil {
@@ -517,12 +517,30 @@ func TestPlanCaptureNoClaimsAndNonLinuxNoActions(t *testing.T) {
 	if len(actions) != 0 {
 		t.Fatalf("no-claim actions = %#v, want none", actions)
 	}
-	actions, err = PlanCapture(testRouter(), platform.OSFreeBSD)
+	actions, err = PlanCapture(testRouter(), platform.OSOther)
 	if err != nil {
-		t.Fatalf("PlanCapture non-linux: %v", err)
+		t.Fatalf("PlanCapture unsupported OS: %v", err)
 	}
 	if len(actions) != 0 {
-		t.Fatalf("non-linux actions = %#v, want none", actions)
+		t.Fatalf("unsupported-OS actions = %#v, want none", actions)
+	}
+	actions, err = PlanCapture(testRouter(), platform.OSFreeBSD)
+	if err != nil {
+		t.Fatalf("PlanCapture FreeBSD: %v", err)
+	}
+	var deassign, publish, sysctl bool
+	for _, action := range actions {
+		switch action.Kind {
+		case "deassign-os-address":
+			deassign = true
+		case "proxy-neighbor":
+			publish = true
+		case "sysctl":
+			sysctl = true
+		}
+	}
+	if !deassign || !publish || sysctl {
+		t.Fatalf("FreeBSD actions = %#v, want collision check plus published ARP and no Linux sysctl", actions)
 	}
 }
 

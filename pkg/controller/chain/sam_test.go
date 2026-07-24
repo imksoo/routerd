@@ -122,11 +122,11 @@ func TestSAMControllerDeassignAbsentAddressIsNoopButTracked(t *testing.T) {
 	}
 }
 
-func TestSAMControllerNonLinuxNoHostActions(t *testing.T) {
+func TestSAMControllerUnsupportedOSNoHostActions(t *testing.T) {
 	router := samControllerRouter()
 	store := &samStore{objects: map[string]map[string]any{}}
 	applier := &fakeSAMApplier{}
-	controller := SAMController{Router: router, Store: store, OS: platform.OSFreeBSD, Applier: applier}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSOther, Applier: applier}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -237,6 +237,9 @@ func TestSAMControllerFreeBSDCARPGatesPublicationAndEmptyCleanup(t *testing.T) {
 	if len(applier.ensure) != 1 || len(garp.calls) != 1 {
 		t.Fatalf("master publication = ensure %#v garp %#v, want one each", applier.ensure, garp.calls)
 	}
+	// Model the persisted ownership status that a restarted controller reads
+	// before the desired claim is deleted.
+	store.statuses = []routerstate.ObjectStatus{samRemoteAddressClaimStatus("app", "10.0.1.123/32", "lan0")}
 	controller.Router = &api.Router{}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("delete Reconcile: %v", err)

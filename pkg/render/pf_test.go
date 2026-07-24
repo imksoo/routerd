@@ -674,6 +674,21 @@ func TestPFSkipsRuntimeResolvedNAT44Policy(t *testing.T) {
 	}
 }
 
+func TestPFIncludesReachableSAMForwardAnchor(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
+		Metadata: api.ObjectMeta{Name: "sam-address"},
+		Spec:     api.RemoteAddressClaimSpec{Capture: api.AddressCapture{Type: "proxy-arp", Interface: "em0"}},
+	}}}}
+	data, err := PF(router, nil)
+	if err != nil {
+		t.Fatalf("render PF: %v", err)
+	}
+	if got := string(data); !strings.Contains(got, `anchor "routerd_sam_forward"`) {
+		t.Fatalf("PF output missing reachable SAM forward anchor:\n%s", got)
+	}
+}
+
 func TestPFNAT44RulesRenderResolvedMasquerade(t *testing.T) {
 	data, err := PFNAT44Rules([]NAT44RenderRule{{
 		Name:                    "lan-to-dslite",
