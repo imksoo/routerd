@@ -158,6 +158,7 @@ func parseOptions(name string, args []string) (options, error) {
 	sourceAddress := ""
 	selfMAC := ""
 	fs.StringVar(&opts.resource, "resource", "arp-observer", "observer resource name")
+	_ = fs.String("supervisor-owner", "", "internal routerd supervisor ownership token")
 	fs.StringVar(&opts.ifname, "interface", "", "kernel interface name to observe")
 	fs.StringVar(&opts.eventInterface, "event-interface", "", "logical interface name written to events")
 	fs.StringVar(&opts.socketPath, "socket", "", "Unix socket path")
