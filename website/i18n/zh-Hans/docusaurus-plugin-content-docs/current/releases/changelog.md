@@ -11,6 +11,21 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 新增
+
+- FreeBSD 14.3 amd64 现支持 provider-secondary-IP 加 BGP `/32` path 的完整
+  Cloud SAM local-capture dataplane。native evidence 在隔离 L2 上使用两个独立
+  router 和两个独立 client，验证 published ARP、三次 gratuitous ARP、PF 转发和
+  返回流量、CARP master/backup 切换、restart/idempotence、owned cleanup，以及
+  foreign ARP/PF 的 byte-preserved rejection。
+
+### 修复
+
+- SAM forwarding 现在会 reconcile empty desired state，保留 provider-secondary
+  neighbor ownership 以便 teardown，在 neighbor cleanup 前执行 owned route
+  removal，并通过 resource status 报告 fail-closed capture error。ownership 与
+  status 行为已在 Linux 和 FreeBSD 上覆盖。
+
 ## v20260723.1609
 
 ### 变更

@@ -11,6 +11,22 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 追加
+
+- FreeBSD 14.3 amd64 は、provider-secondary-IP と BGP の `/32` path に対する
+  完全な Cloud SAM local-capture dataplane をサポートします。native evidence は
+  隔離 L2 上の独立した 2 router と 2 client を使い、published ARP、3 回の
+  gratuitous ARP、PF forwarding/return traffic、CARP master/backup handover、
+  restart/idempotence、owned cleanup、foreign ARP/PF の byte-preserved rejection
+  を検証します。
+
+### 修正
+
+- SAM forwarding は empty desired state を reconcile し、provider-secondary の
+  neighbor ownership を teardown 用に保持し、owned route removal を neighbor
+  cleanup より先に行い、fail-closed capture error を resource status に記録します。
+  ownership と status の動作は Linux と FreeBSD の両方で検証されています。
+
 ## v20260723.1609
 
 ### 変更
