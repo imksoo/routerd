@@ -25,6 +25,10 @@ func (unsupportedSAMProxyNeighborApplier) SetProxyARP(context.Context, string, b
 	return nil
 }
 
+func (unsupportedSAMProxyNeighborApplier) SetIPForwarding(context.Context, bool) error {
+	return nil
+}
+
 func (unsupportedSAMProxyNeighborApplier) EnsureProxyNeighbor(context.Context, string, string) error {
 	return fmt.Errorf("SAM capture not implemented on this OS")
 }

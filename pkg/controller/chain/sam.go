@@ -19,6 +19,7 @@ import (
 
 type samProxyNeighborApplier interface {
 	SetProxyARP(ctx context.Context, ifname string, enabled bool) error
+	SetIPForwarding(ctx context.Context, enabled bool) error
 	EnsureProxyNeighbor(ctx context.Context, address, ifname string) error
 	DeleteProxyNeighbor(ctx context.Context, address, ifname string) error
 	EnsureOSAddressAbsent(ctx context.Context, address string) (samOSAddressDeassignResult, error)
@@ -86,6 +87,9 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 		return err
 	}
 	if err := c.cleanupChangedCaptures(ctx, statuses, actions); err != nil {
+		return err
+	}
+	if err := c.reconcileSAMIPForwarding(ctx, actions); err != nil {
 		return err
 	}
 	if err := c.reconcileProxyARPSysctls(ctx, actions); err != nil {
@@ -157,6 +161,50 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	}
 	if len(failures) > 0 {
 		return fmt.Errorf("SAM capture failed: %s", strings.Join(failures, "; "))
+	}
+	return nil
+}
+
+// reconcileSAMIPForwarding applies the planner's global forwarding intent only
+// when a concrete SAM forward path exists. Empty desired state must still reach
+// the adapter for stale-rule cleanup, but must not change a host-wide forwarding
+// setting merely because a prior SAM configuration once needed it.
+func (c SAMController) reconcileSAMIPForwarding(ctx context.Context, actions []sam.CaptureAction) error {
+	targetOS := c.OS
+	if targetOS == "" {
+		targetOS = platform.CurrentOS()
+	}
+	if (targetOS != platform.OSLinux && targetOS != platform.OSFreeBSD) || c.DryRun {
+		return nil
+	}
+	forwardPath := false
+	forwardingIntent := false
+	key := "net.ipv4.ip_forward"
+	if targetOS == platform.OSFreeBSD {
+		key = "net.inet.ip.forwarding"
+	}
+	for _, action := range actions {
+		switch action.Kind {
+		case "forward-path", "forward-local-path":
+			forwardPath = true
+		case "sysctl":
+			if action.Key == key && action.Value == "1" {
+				forwardingIntent = true
+			}
+		}
+	}
+	if !forwardPath {
+		return nil
+	}
+	if !forwardingIntent {
+		return fmt.Errorf("SAM forwarding path is missing planned %s=1", key)
+	}
+	applier := c.Applier
+	if applier == nil {
+		applier = defaultSAMProxyNeighborApplier()
+	}
+	if err := applier.SetIPForwarding(ctx, true); err != nil {
+		return fmt.Errorf("enable SAM IP forwarding: %w", err)
 	}
 	return nil
 }

@@ -179,6 +179,28 @@ func TestFreeBSDSAMPFForwardPathRequiresReachableAnchorAndUses32(t *testing.T) {
 	}
 }
 
+func TestFreeBSDSAMIPForwardingUsesFreeBSDSysctlAndFailsClosed(t *testing.T) {
+	reset := saveFreeBSDSAMSeams()
+	defer reset()
+	var commands []string
+	freeBSDSAMRunCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		commands = append(commands, name+" "+strings.Join(args, " "))
+		return nil, nil
+	}
+	if err := (freeBSDSAMProxyNeighborApplier{}).SetIPForwarding(context.Background(), true); err != nil {
+		t.Fatalf("SetIPForwarding: %v", err)
+	}
+	if got, want := strings.Join(commands, "\n"), "sysctl -w net.inet.ip.forwarding=1"; got != want {
+		t.Fatalf("commands = %q, want %q", got, want)
+	}
+	freeBSDSAMRunCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		return []byte("sysctl: permission denied\n"), errors.New("exit status 1")
+	}
+	if err := (freeBSDSAMProxyNeighborApplier{}).SetIPForwarding(context.Background(), true); err == nil || !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("SetIPForwarding failure = %v", err)
+	}
+}
+
 func TestFreeBSDSAMPFForwardPathSerializesAnchorTransactions(t *testing.T) {
 	reset := saveFreeBSDSAMSeams()
 	defer reset()

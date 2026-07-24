@@ -200,8 +200,11 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 		if forwardingAdded {
 			return
 		}
-		if targetOS == platform.OSLinux {
+		switch targetOS {
+		case platform.OSLinux:
 			actions = append(actions, CaptureAction{Kind: "sysctl", Key: "net.ipv4.ip_forward", Value: "1"})
+		case platform.OSFreeBSD:
+			actions = append(actions, CaptureAction{Kind: "sysctl", Key: "net.inet.ip.forwarding", Value: "1"})
 		}
 		forwardingAdded = true
 	}

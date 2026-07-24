@@ -18,6 +18,7 @@ type fakeSAMApplier struct {
 	delete         []string
 	deassign       []string
 	proxyARP       []string
+	ipForwarding   []string
 	calls          []string
 	forwardSets    [][]sam.CaptureAction
 	deassignResult samOSAddressDeassignResult
@@ -44,6 +45,16 @@ func (a *fakeSAMApplier) SetProxyARP(_ context.Context, ifname string, enabled b
 	}
 	a.proxyARP = append(a.proxyARP, ifname+"="+value)
 	a.calls = append(a.calls, "proxyarp:"+ifname+"="+value)
+	return nil
+}
+
+func (a *fakeSAMApplier) SetIPForwarding(_ context.Context, enabled bool) error {
+	value := "0"
+	if enabled {
+		value = "1"
+	}
+	a.ipForwarding = append(a.ipForwarding, value)
+	a.calls = append(a.calls, "ipforward="+value)
 	return nil
 }
 

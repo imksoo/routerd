@@ -82,6 +82,7 @@ func TestSAMControllerProviderSecondaryBGPUsesProxyNeighborWithoutProxyARP(t *te
 		t.Fatalf("Reconcile: %v", err)
 	}
 	assertSAMCalls(t, applier.calls, []string{
+		"ipforward=1",
 		"proxyarp:ens3=0",
 		"forward:10.0.1.122/32@ens3<->samt0",
 		"deassign:10.0.1.122/32",
@@ -796,12 +797,43 @@ func TestSAMControllerReconcilesEmptyForwardPathSet(t *testing.T) {
 	if len(applier.forwardSets) != 1 || len(applier.forwardSets[0]) != 1 || applier.forwardSets[0][0].Kind != "forward-local-path" {
 		t.Fatalf("initial forward reconciliations = %#v, want one local-inventory path", applier.forwardSets)
 	}
+	if got := applier.ipForwarding; len(got) != 1 || got[0] != "1" {
+		t.Fatalf("initial global forwarding = %#v, want one enable", got)
+	}
 	controller.Router = &api.Router{}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("removed-route Reconcile: %v", err)
 	}
 	if len(applier.forwardSets) != 2 || len(applier.forwardSets[1]) != 0 {
 		t.Fatalf("forward reconciliations = %#v, want empty desired set after route deletion", applier.forwardSets)
+	}
+	if got := applier.ipForwarding; len(got) != 1 || got[0] != "1" {
+		t.Fatalf("empty desired must not mutate global forwarding: %#v", got)
+	}
+}
+
+func TestSAMControllerFreeBSDKeepsForwardingContract(t *testing.T) {
+	store := &samStore{objects: map[string]map[string]any{}}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{Name: "samt0"},
+			Spec:     api.TunnelInterfaceSpec{Mode: "ipip", Local: "10.99.0.2", Remote: "10.99.0.1", Address: "10.255.0.2/31"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
+			Metadata: api.ObjectMeta{Name: "local-inventory", Annotations: map[string]string{
+				"mobility.routerd.net/source": "bgp-local-inventory",
+			}},
+			Spec: api.IPv4RouteSpec{Destination: "10.77.60.13/32", Device: "ens3"},
+		},
+	}}}, Store: store, OS: platform.OSFreeBSD, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got := applier.ipForwarding; len(got) != 1 || got[0] != "1" {
+		t.Fatalf("FreeBSD global forwarding = %#v, want one enable", got)
 	}
 }
 

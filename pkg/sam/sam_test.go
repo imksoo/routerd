@@ -528,7 +528,7 @@ func TestPlanCaptureNoClaimsUnsupportedOSAndFreeBSDActions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PlanCapture FreeBSD: %v", err)
 	}
-	var deassign, publish, sysctl bool
+	var deassign, publish, forwarding bool
 	for _, action := range actions {
 		switch action.Kind {
 		case "deassign-os-address":
@@ -536,11 +536,11 @@ func TestPlanCaptureNoClaimsUnsupportedOSAndFreeBSDActions(t *testing.T) {
 		case "proxy-neighbor":
 			publish = true
 		case "sysctl":
-			sysctl = true
+			forwarding = action.Key == "net.inet.ip.forwarding" && action.Value == "1"
 		}
 	}
-	if !deassign || !publish || sysctl {
-		t.Fatalf("FreeBSD actions = %#v, want collision check plus published ARP and no Linux sysctl", actions)
+	if !deassign || !publish || !forwarding {
+		t.Fatalf("FreeBSD actions = %#v, want collision check, published ARP, and forwarding intent", actions)
 	}
 }
 

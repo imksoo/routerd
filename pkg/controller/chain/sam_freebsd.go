@@ -67,6 +67,18 @@ func (freeBSDSAMProxyNeighborApplier) SetProxyARP(context.Context, string, bool)
 	return nil
 }
 
+func (freeBSDSAMProxyNeighborApplier) SetIPForwarding(ctx context.Context, enabled bool) error {
+	value := "0"
+	if enabled {
+		value = "1"
+	}
+	out, err := freeBSDSAMRunCommand(ctx, "sysctl", "-w", "net.inet.ip.forwarding="+value)
+	if err != nil {
+		return fmt.Errorf("sysctl -w net.inet.ip.forwarding=%s: %w: %s", value, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func (freeBSDSAMProxyNeighborApplier) EnsureProxyNeighbor(ctx context.Context, address, ifname string) error {
 	ip, err := samIPv4Address(address)
 	if err != nil {

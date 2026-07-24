@@ -63,6 +63,8 @@ cleanup() {
       "$evidence/router-a-status.json" "$evidence/router-b-status.json" \
       "$evidence/bridge-carp.log" "$evidence/bridge-ifconfig.log" \
       "$evidence/router-a-pf-main.log" "$evidence/router-a-pf-anchor.log" \
+      "$evidence/router-a-bgp-fib-route.log" "$evidence/router-b-route-cleanup.log" \
+      "$evidence/overlay-return-route.log" \
       "$evidence/client-ping.log" "$evidence/collision-status.log"; do
       [ -s "$log" ] || continue
       printf '%s\n' "--- ${log##*/} ---" >&2
@@ -113,6 +115,12 @@ jexec "$overlay" ifconfig gif0 create
 jexec "$overlay" ifconfig gif0 tunnel 198.18.251.2 198.18.251.1
 jexec "$overlay" ifconfig gif0 inet 10.254.250.2 10.254.250.1 netmask 255.255.255.252 up
 jexec "$overlay" ifconfig lo0 alias 198.18.250.99/32
+# The overlay endpoint is manually configured for this acceptance, not owned by
+# routerd.  It needs the LAN return route that production BGP convergence would
+# supply, so replies from the published /32 return through router-a's gif0.
+jexec "$overlay" route add -net 198.18.250.0/24 10.254.250.1 >"$evidence/overlay-return-route.log" 2>&1
+jexec "$overlay" route -n get 198.18.250.20 >>"$evidence/overlay-return-route.log" 2>&1
+grep -F 'gateway: 10.254.250.1' "$evidence/overlay-return-route.log"
 
 # PF anchors are only effective when the active main ruleset calls them.
 # Install the explicit operator-side anchor call in each isolated router VNET
@@ -133,7 +141,7 @@ anchor "routerd_sam_forward"
 EOF_PF
 
 write_config() {
-  jail_name=$1 lan=$2 outer=$3 outer_address=$4 priority=$5 out=$6
+  jail_name=$1 lan=$2 outer=$3 outer_address=$4 priority=$5 out=$6 include_claim=$7
   cat >"$out" <<EOF
 apiVersion: routerd.net/v1alpha1
 kind: Router
@@ -170,8 +178,7 @@ spec:
     metadata: {name: sam-net}
     spec: {prefix: 198.18.250.0/24, mode: selective-address, peerRef: overlay}
   # This local, inert profile exists solely to satisfy the provider-secondary
-  # configuration contract.  No provider executor/controller is enabled by
-  # this acceptance, and /usr/bin/true cannot mutate a cloud account.
+  # configuration contract. No provider executor/controller is enabled here.
   - apiVersion: hybrid.routerd.net/v1alpha1
     kind: CloudProviderProfile
     metadata: {name: sam-fixture-provider}
@@ -179,6 +186,9 @@ spec:
       provider: aws
       capabilities: [assign-secondary-ip]
       auth: {mode: external-command, command: /usr/bin/true}
+EOF
+  if [ "$include_claim" = true ]; then
+    cat >>"$out" <<'EOF'
   - apiVersion: hybrid.routerd.net/v1alpha1
     kind: RemoteAddressClaim
     metadata: {name: published-host}
@@ -191,10 +201,21 @@ spec:
       # A local-inventory route would instead be overlay-to-LAN.
       capture: {type: provider-secondary-ip, providerRef: sam-fixture-provider, providerMode: assign-secondary-ip, nicRef: lan-fixture-nic, interface: lan, gratuitousARP: true, activeWhen: {type: vrrp-master, virtualAddressRef: sam-vip}}
       delivery: {peerRef: overlay, mode: bgp, tunnelInterface: gif0}
+  # This is the routerd-managed FIB result of the converged BGP /32. It is
+  # deliberately unannotated: `bgp-local-inventory` would create the opposite
+  # `forward-local-path` planner direction. The provider-secondary claim above
+  # creates the LAN-to-overlay PF forward-path; this route performs the L3
+  # destination lookup that PF pass rules intentionally do not steer.
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: IPv4Route
+    metadata: {name: published-host-bgp-fib}
+    spec: {destination: 198.18.250.99/32, device: gif0}
 EOF
+  fi
 }
-write_config "$ra" "$ra_b" "$ra_outer" 198.18.251.1 151 "$work/ra.yaml"
-write_config "$rb" "$rb_b" "$rb_outer" 198.18.251.5 100 "$work/rb.yaml"
+write_config "$ra" "$ra_b" "$ra_outer" 198.18.251.1 151 "$work/ra.yaml" true
+write_config "$rb" "$rb_b" "$rb_outer" 198.18.251.5 100 "$work/rb.yaml" true
+write_config "$rb" "$rb_b" "$rb_outer" 198.18.251.5 100 "$work/rb-delete.yaml" false
 ra_runtime=/tmp/routerd-sam-ra
 rb_runtime=/tmp/routerd-sam-rb
 rb_delete_runtime=/tmp/routerd-sam-rb-delete
@@ -258,6 +279,8 @@ jexec "$ra" pfctl -sr >"$evidence/router-a-pf-main.log"
 jexec "$ra" pfctl -a routerd_sam_forward -sr >"$evidence/router-a-pf-anchor.log"
 grep -F 'routerd_sam_forward' "$evidence/router-a-pf-main.log"
 grep -F '198.18.250.99/32' "$evidence/router-a-pf-anchor.log"
+jexec "$ra" route -n get 198.18.250.99 >"$evidence/router-a-bgp-fib-route.log" 2>&1
+grep -Eq 'interface:[[:space:]]+gif0([[:space:]]|$)' "$evidence/router-a-bgp-fib-route.log"
 jexec "$client" ping -n -S 198.18.250.20 -c 3 -W 1 198.18.250.99 >"$evidence/client-ping.log"
 printf 'sam-pf-32-overlay-return=ok\n' >>"$evidence/summary.log"
 
@@ -272,11 +295,18 @@ printf 'sam-carp-forced-switchover-converged=ok\n' >>"$evidence/summary.log"
 # Delete desired state from current master and require owned ARP/PF cleanup.
 stage='owned-delete-cleanup'
 kill "$rb_pid"; wait "$rb_pid" || true; rb_pid=
-sed '/kind: RemoteAddressClaim/,$d' "$work/rb.yaml" >"$work/rb-delete.yaml"
-jexec "$rb" "$routerd" serve --config "$work/rb-delete.yaml" --state-file "$rb_delete_runtime/state.db" --status-file "$rb_delete_runtime/status.json" --socket "$rb_delete_runtime/api.sock" --status-socket "$rb_delete_runtime/status.sock" --controllers sam >"$evidence/router-b-delete.log" 2>&1 & rb_pid=$!
+# Keep the original state DB so the route controller can prove this exact /32
+# was routerd-owned before teardown. Status and sockets remain isolated for the
+# delete observation, avoiding collision with the stopped original process.
+jexec "$rb" "$routerd" serve --config "$work/rb-delete.yaml" --state-file "$rb_runtime/state.db" --status-file "$rb_delete_runtime/status.json" --socket "$rb_delete_runtime/api.sock" --status-socket "$rb_delete_runtime/status.sock" --controllers sam,route >"$evidence/router-b-delete.log" 2>&1 & rb_pid=$!
 wait_for "$rb" "! arp -n 198.18.250.99 | grep -q published" "$evidence/router-b-owned-cleanup.log"
 jexec "$rb" pfctl -a routerd_sam_forward -sr >"$evidence/router-b-pf-cleanup.log"
 [ ! -s "$evidence/router-b-pf-cleanup.log" ]
+jexec "$rb" route -n get 198.18.250.99 >"$evidence/router-b-route-cleanup.log" 2>&1 || true
+if grep -Eq 'interface:[[:space:]]+gif0([[:space:]]|$)' "$evidence/router-b-route-cleanup.log"; then
+  echo 'routerd-owned /32 route remains on gif0 after delete' >&2
+  exit 1
+fi
 printf 'sam-owned-arp-pf-delete-cleanup=ok\n' >>"$evidence/summary.log"
 
 # Foreign state outside routerd's named anchor remains untouched; a local OS
