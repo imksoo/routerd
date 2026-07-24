@@ -69,6 +69,11 @@ on:
         required: false
         default: false
         type: boolean
+      sam_dataplane_runtime:
+        description: Run FreeBSD amd64 SAM published-ARP, GARP, PF, and CARP VNET acceptance
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -101,6 +106,7 @@ jobs:
       ROUTERD_FREEBSD_WIREGUARD_VXLAN_RUNTIME: ${{ inputs.wireguard_vxlan_runtime || 'false' }}
       ROUTERD_FREEBSD_TAILSCALE_BOUNDARY_RUNTIME: ${{ inputs.tailscale_boundary_runtime || 'false' }}
       ROUTERD_FREEBSD_CARP_RUNTIME: ${{ inputs.carp_runtime || 'false' }}
+      ROUTERD_FREEBSD_SAM_DATAPLANE_RUNTIME: ${{ inputs.sam_dataplane_runtime || 'false' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6

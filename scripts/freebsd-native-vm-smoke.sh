@@ -238,6 +238,13 @@ if [ "${ROUTERD_FREEBSD_CARP_RUNTIME:-false}" = true ]; then
   cat "$carp_evidence/result"
 fi
 
+if [ "${ROUTERD_FREEBSD_SAM_DATAPLANE_RUNTIME:-false}" = true ]; then
+  sam_evidence="$work/sam-dataplane-runtime"
+  sh scripts/freebsd-sam-dataplane-smoke.sh --routerd "$routerd" --evidence-dir "$sam_evidence"
+  cat "$sam_evidence/summary.log"
+  cat "$sam_evidence/result"
+fi
+
 # Package lifecycle replaces binaries/services; run it last and never combine
 # this opt-in input with the mutable lifecycle inputs in one native dispatch.
 if [ "${ROUTERD_FREEBSD_PACKAGE_LIFECYCLE_RUNTIME:-false}" = true ]; then
