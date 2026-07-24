@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-//go:build !linux
+//go:build !linux && !freebsd
 
 package chain
 
@@ -22,6 +22,10 @@ func defaultSAMGratuitousARPAnnouncer() samGratuitousARPAnnouncer {
 }
 
 func (unsupportedSAMProxyNeighborApplier) SetProxyARP(context.Context, string, bool) error {
+	return nil
+}
+
+func (unsupportedSAMProxyNeighborApplier) SetIPForwarding(context.Context, bool) error {
 	return nil
 }
 

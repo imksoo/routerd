@@ -82,6 +82,7 @@ func TestSAMControllerProviderSecondaryBGPUsesProxyNeighborWithoutProxyARP(t *te
 		t.Fatalf("Reconcile: %v", err)
 	}
 	assertSAMCalls(t, applier.calls, []string{
+		"ipforward=1",
 		"proxyarp:ens3=0",
 		"forward:10.0.1.122/32@ens3<->samt0",
 		"deassign:10.0.1.122/32",
@@ -95,9 +96,67 @@ func TestSAMControllerProviderSecondaryBGPUsesProxyNeighborWithoutProxyARP(t *te
 	if note["address"] != "10.0.1.122/32" || note["reason"] != "bgp-delivery" || note["enforced"] != true {
 		t.Fatalf("OS absence note = %#v", note)
 	}
-	if _, ok := status["captureProxyNeighbor"]; ok {
-		t.Fatalf("provider-secondary BGP status must not be reported as proxy-ARP capture: %#v", status)
+	neighbor, ok := status["captureProxyNeighbor"].(map[string]any)
+	if !ok || neighbor["address"] != "10.0.1.122/32" || neighbor["interface"] != "ens3" {
+		t.Fatalf("provider-secondary BGP proxy neighbor ownership = %#v", status["captureProxyNeighbor"])
 	}
+	// Provider-secondary/BGP both publishes a neighbor and enforces local
+	// address absence. They are independent teardown ownership records.
+	store.statuses = []routerstate.ObjectStatus{{
+		APIVersion: api.HybridAPIVersion,
+		Kind:       "RemoteAddressClaim",
+		Name:       "app",
+		Status:     status,
+	}}
+	controller.Router = &api.Router{}
+	applier.calls = nil
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("delete Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{"delete:10.0.1.122/32@ens3"})
+	if !store.deleted[api.HybridAPIVersion+"/RemoteAddressClaim/app"] {
+		t.Fatalf("removed provider-secondary status was not deleted: %#v", store.deleted)
+	}
+}
+
+func TestSAMControllerProviderSecondaryBGPFreeBSDPersistsAndRemovesProxyNeighbor(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.122/32", "provider-secondary-ip", "em0")
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+		Metadata: api.ObjectMeta{Name: "samt0"},
+		Spec:     api.TunnelInterfaceSpec{Mode: "ipip", Local: "10.99.0.2", Remote: "10.99.0.1", Address: "10.255.0.2/31"},
+	})
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ConfigureOSAddress = true
+	spec.Delivery = api.AddressDelivery{PeerRef: "cloud", Mode: "bgp"}
+	router.Spec.Resources[1].Spec = spec
+
+	store := &samStore{objects: map[string]map[string]any{}}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSFreeBSD, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+	neighbor, ok := status["captureProxyNeighbor"].(map[string]any)
+	if !ok || neighbor["address"] != "10.0.1.122/32" || neighbor["interface"] != "em0" {
+		t.Fatalf("FreeBSD proxy neighbor ownership = %#v", status["captureProxyNeighbor"])
+	}
+	if _, ok := status["captureOSAddressAbsence"].(map[string]any); !ok {
+		t.Fatalf("FreeBSD OS-absence ownership missing: %#v", status)
+	}
+	store.statuses = []routerstate.ObjectStatus{{
+		APIVersion: api.HybridAPIVersion,
+		Kind:       "RemoteAddressClaim",
+		Name:       "app",
+		Status:     status,
+	}}
+	controller.Router = &api.Router{}
+	applier.calls = nil
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("delete Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{"delete:10.0.1.122/32@em0"})
 }
 
 func TestSAMControllerDeassignAbsentAddressIsNoopButTracked(t *testing.T) {
@@ -122,11 +181,11 @@ func TestSAMControllerDeassignAbsentAddressIsNoopButTracked(t *testing.T) {
 	}
 }
 
-func TestSAMControllerNonLinuxNoHostActions(t *testing.T) {
+func TestSAMControllerUnsupportedOSNoHostActions(t *testing.T) {
 	router := samControllerRouter()
 	store := &samStore{objects: map[string]map[string]any{}}
 	applier := &fakeSAMApplier{}
-	controller := SAMController{Router: router, Store: store, OS: platform.OSFreeBSD, Applier: applier}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSOther, Applier: applier}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -136,6 +195,156 @@ func TestSAMControllerNonLinuxNoHostActions(t *testing.T) {
 	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
 	if status["phase"] != "Degraded" || status["reason"] != "CaptureUnsupported" {
 		t.Fatalf("status = %#v", status)
+	}
+}
+
+// These are Stage 2 contract tests. They deliberately execute on the Linux
+// test host while setting OSFreeBSD so the controller and planner cannot hide
+// behind host-platform detection. The FreeBSD adapter implementation follows
+// in a separate production commit.
+func TestSAMControllerFreeBSDPublishesAddressGARPAndForwardPath(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "lan0")
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.GratuitousARP = true
+	router.Spec.Resources[1].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{Name: "samt0"},
+			Spec:     api.TunnelInterfaceSpec{Mode: "ipip", Local: "10.99.0.2", Remote: "10.99.0.1", Address: "10.255.0.2/31"},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
+			Metadata: api.ObjectMeta{Name: "local-inventory", Annotations: map[string]string{
+				"mobility.routerd.net/source": "bgp-local-inventory",
+			}},
+			Spec: api.IPv4RouteSpec{Destination: "10.77.60.13/32", Device: "lan0"},
+		},
+	)
+	store := &samStore{objects: map[string]map[string]any{}}
+	applier := &fakeSAMApplier{}
+	garp := &fakeSAMGARP{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSFreeBSD, Applier: applier, GARP: garp}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if applier.deassign == nil || len(applier.deassign) != 1 || applier.deassign[0] != "10.0.1.123/32" {
+		t.Fatalf("FreeBSD address-collision cleanup = %#v, want exact published address", applier.deassign)
+	}
+	if applier.ensure == nil || len(applier.ensure) != 1 || applier.ensure[0] != "10.0.1.123/32@lan0" {
+		t.Fatalf("FreeBSD published ARP ownership = %#v, want exact address@interface", applier.ensure)
+	}
+	if len(garp.calls) != 1 || garp.calls[0] != "10.0.1.123/32@lan0" {
+		t.Fatalf("FreeBSD BPF GARP = %#v, want one published-address announcement", garp.calls)
+	}
+	if len(applier.forwardSets) != 1 || len(applier.forwardSets[0]) != 1 || applier.forwardSets[0][0].Kind != "forward-local-path" {
+		t.Fatalf("FreeBSD PF desired /32 paths = %#v, want one local forward path", applier.forwardSets)
+	}
+}
+
+func TestSAMControllerFreeBSDCollisionFailsBeforePublishedARP(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "lan0")
+	store := &samStore{objects: map[string]map[string]any{}}
+	applier := &fakeSAMApplier{deassignErr: errors.New("foreign OS address owns 10.0.1.123/32")}
+	garp := &fakeSAMGARP{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSFreeBSD, Applier: applier, GARP: garp}
+	err := controller.Reconcile(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "foreign OS address") {
+		t.Fatalf("Reconcile error = %v, want collision refusal", err)
+	}
+	if len(applier.ensure) != 0 || len(garp.calls) != 0 {
+		t.Fatalf("collision published ARP/GARP: ensure=%#v garp=%#v", applier.ensure, garp.calls)
+	}
+	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+	if status["phase"] != "Error" || status["reason"] != "CaptureFailed" || !strings.Contains(status["error"].(string), "foreign OS address") {
+		t.Fatalf("collision status = %#v, want persisted capture failure", status)
+	}
+	if _, ok := status["captureProxyNeighbor"]; ok {
+		t.Fatalf("failed collision retained published-neighbor ownership: %#v", status)
+	}
+}
+
+func TestSAMControllerCaptureFailureStatusRecoversOnLaterSuccess(t *testing.T) {
+	for _, targetOS := range []platform.OS{platform.OSLinux, platform.OSFreeBSD} {
+		t.Run(string(targetOS), func(t *testing.T) {
+			router := samControllerRouterWithClaim("10.0.1.123/32", "provider-secondary-ip", "lan0")
+			store := &samStore{objects: map[string]map[string]any{}}
+			applier := &fakeSAMApplier{deassignErr: errors.New("foreign OS address owns 10.0.1.123/32")}
+			controller := SAMController{Router: router, Store: store, OS: targetOS, Applier: applier}
+			if err := controller.Reconcile(context.Background()); err == nil {
+				t.Fatal("first Reconcile unexpectedly succeeded")
+			}
+			failed := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+			if failed["phase"] != "Error" || failed["reason"] != "CaptureFailed" || !strings.Contains(failed["error"].(string), "foreign OS address") {
+				t.Fatalf("failed status = %#v", failed)
+			}
+
+			applier.deassignErr = nil
+			if err := controller.Reconcile(context.Background()); err != nil {
+				t.Fatalf("successful Reconcile: %v", err)
+			}
+			recovered := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+			if recovered["phase"] == "Error" || recovered["reason"] == "CaptureFailed" {
+				t.Fatalf("recovered status retained failure: %#v", recovered)
+			}
+			if _, ok := recovered["error"]; ok {
+				t.Fatalf("recovered status retained error: %#v", recovered)
+			}
+		})
+	}
+}
+
+func TestSAMControllerFreeBSDForeignPublishedAddressIsPreserved(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "lan0")
+	store := &samStore{objects: map[string]map[string]any{}}
+	applier := &fakeSAMApplier{ensureErr: errors.New("foreign published ARP 10.0.1.123/32 dev lan0")}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSFreeBSD, Applier: applier, GARP: &fakeSAMGARP{}}
+	err := controller.Reconcile(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "foreign published ARP") {
+		t.Fatalf("Reconcile error = %v, want foreign-state refusal", err)
+	}
+	if len(applier.delete) != 0 {
+		t.Fatalf("foreign published ARP was deleted: %#v", applier.delete)
+	}
+}
+
+func TestSAMControllerFreeBSDCARPGatesPublicationAndEmptyCleanup(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "lan0")
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.GratuitousARP = true
+	spec.Capture.ActiveWhen = api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}
+	router.Spec.Resources[1].Spec = spec
+	store := &samStore{objects: map[string]map[string]any{
+		api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "backup"},
+	}}
+	applier := &fakeSAMApplier{}
+	garp := &fakeSAMGARP{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSFreeBSD, Applier: applier, GARP: garp}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("backup Reconcile: %v", err)
+	}
+	if len(applier.ensure) != 0 || len(garp.calls) != 0 {
+		t.Fatalf("backup published capture: ensure=%#v garp=%#v", applier.ensure, garp.calls)
+	}
+	store.objects[api.NetAPIVersion+"/VirtualAddress/onprem-vip"]["role"] = "master"
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("master Reconcile: %v", err)
+	}
+	if len(applier.ensure) != 1 || len(garp.calls) != 1 {
+		t.Fatalf("master publication = ensure %#v garp %#v, want one each", applier.ensure, garp.calls)
+	}
+	// Model the persisted ownership status that a restarted controller reads
+	// before the desired claim is deleted.
+	store.statuses = []routerstate.ObjectStatus{samRemoteAddressClaimStatus("app", "10.0.1.123/32", "lan0")}
+	controller.Router = &api.Router{}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("delete Reconcile: %v", err)
+	}
+	if len(applier.forwardSets) != 3 || len(applier.forwardSets[2]) != 0 {
+		t.Fatalf("empty desired PF cleanup contract = %#v", applier.forwardSets)
+	}
+	if len(applier.delete) != 1 || applier.delete[0] != "10.0.1.123/32@lan0" {
+		t.Fatalf("owned delete cleanup = %#v", applier.delete)
 	}
 }
 
@@ -162,6 +371,71 @@ func TestSAMControllerCleansRemovedProxyNeighbor(t *testing.T) {
 	}
 	if !store.deleted[api.HybridAPIVersion+"/RemoteAddressClaim/old"] {
 		t.Fatalf("deleted = %#v", store.deleted)
+	}
+}
+
+func TestSAMRouteTeardownPrecedesRemovedProxyNeighbor(t *testing.T) {
+	store := &samStore{objects: map[string]map[string]any{}, statuses: []routerstate.ObjectStatus{
+		{
+			APIVersion: api.NetAPIVersion,
+			Kind:       "IPv4Route",
+			Name:       "published-host-bgp-fib",
+			Status: map[string]any{
+				"phase": "Installed", "type": "unicast", "destination": "10.0.1.123/32", "device": "samt0",
+			},
+		},
+		samRemoteAddressClaimStatus("old", "10.0.1.123/32", "lan0"),
+	}}
+	var order []string
+	route := IPv4RouteController{
+		Router: &api.Router{}, Store: store,
+		Command: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			if len(args) >= 2 && args[0] == "route" && args[1] == "del" {
+				order = append(order, "route")
+			}
+			return nil, nil
+		},
+	}
+	applier := &fakeSAMApplier{onDelete: func() { order = append(order, "neighbor") }}
+	controller := SAMController{Router: &api.Router{}, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := reconcileSAMAfterRouteTeardown(context.Background(), route, controller); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	assertSAMCalls(t, order, []string{"route", "neighbor"})
+	if !store.deleted[api.NetAPIVersion+"/IPv4Route/published-host-bgp-fib"] || !store.deleted[api.HybridAPIVersion+"/RemoteAddressClaim/old"] {
+		t.Fatalf("teardown deletions = %#v", store.deleted)
+	}
+}
+
+func TestSAMRouteTeardownFailureRetainsProxyNeighbor(t *testing.T) {
+	store := &samStore{objects: map[string]map[string]any{}, statuses: []routerstate.ObjectStatus{
+		{
+			APIVersion: api.NetAPIVersion,
+			Kind:       "IPv4Route",
+			Name:       "published-host-bgp-fib",
+			Status: map[string]any{
+				"phase": "Installed", "type": "unicast", "destination": "10.0.1.123/32", "device": "samt0",
+			},
+		},
+		samRemoteAddressClaimStatus("old", "10.0.1.123/32", "lan0"),
+	}}
+	route := IPv4RouteController{
+		Router: &api.Router{}, Store: store,
+		Command: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			if len(args) >= 2 && args[0] == "route" && args[1] == "del" {
+				return []byte("delete failed"), errors.New("route delete failed")
+			}
+			return nil, nil
+		},
+	}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: &api.Router{}, Store: store, OS: platform.OSLinux, Applier: applier}
+	err := reconcileSAMAfterRouteTeardown(context.Background(), route, controller)
+	if err == nil || !strings.Contains(err.Error(), "teardown stale IPv4Routes before SAM cleanup") {
+		t.Fatalf("reconcile error = %v", err)
+	}
+	if len(applier.delete) != 0 || store.deleted[api.HybridAPIVersion+"/RemoteAddressClaim/old"] {
+		t.Fatalf("route failure must retain SAM neighbor ownership: delete=%#v statuses=%#v", applier.delete, store.deleted)
 	}
 }
 
@@ -683,12 +957,43 @@ func TestSAMControllerReconcilesEmptyForwardPathSet(t *testing.T) {
 	if len(applier.forwardSets) != 1 || len(applier.forwardSets[0]) != 1 || applier.forwardSets[0][0].Kind != "forward-local-path" {
 		t.Fatalf("initial forward reconciliations = %#v, want one local-inventory path", applier.forwardSets)
 	}
+	if got := applier.ipForwarding; len(got) != 1 || got[0] != "1" {
+		t.Fatalf("initial global forwarding = %#v, want one enable", got)
+	}
 	controller.Router = &api.Router{}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("removed-route Reconcile: %v", err)
 	}
 	if len(applier.forwardSets) != 2 || len(applier.forwardSets[1]) != 0 {
 		t.Fatalf("forward reconciliations = %#v, want empty desired set after route deletion", applier.forwardSets)
+	}
+	if got := applier.ipForwarding; len(got) != 1 || got[0] != "1" {
+		t.Fatalf("empty desired must not mutate global forwarding: %#v", got)
+	}
+}
+
+func TestSAMControllerFreeBSDKeepsForwardingContract(t *testing.T) {
+	store := &samStore{objects: map[string]map[string]any{}}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{Name: "samt0"},
+			Spec:     api.TunnelInterfaceSpec{Mode: "ipip", Local: "10.99.0.2", Remote: "10.99.0.1", Address: "10.255.0.2/31"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
+			Metadata: api.ObjectMeta{Name: "local-inventory", Annotations: map[string]string{
+				"mobility.routerd.net/source": "bgp-local-inventory",
+			}},
+			Spec: api.IPv4RouteSpec{Destination: "10.77.60.13/32", Device: "ens3"},
+		},
+	}}}, Store: store, OS: platform.OSFreeBSD, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got := applier.ipForwarding; len(got) != 1 || got[0] != "1" {
+		t.Fatalf("FreeBSD global forwarding = %#v, want one enable", got)
 	}
 }
 

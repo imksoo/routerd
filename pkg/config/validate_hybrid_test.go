@@ -30,14 +30,13 @@ func TestValidateHybridRemoteClaimConfigureOSAddress(t *testing.T) {
 	}
 }
 
-func TestValidateHybridRemoteClaimRejectsFreeBSDProxyARPCapture(t *testing.T) {
+func TestValidateHybridRemoteClaimAllowsFreeBSDProxyARPCapture(t *testing.T) {
 	router := validHybridRouter()
 	spec := router.Spec.Resources[6].Spec.(api.RemoteAddressClaimSpec)
 	spec.Capture = api.AddressCapture{Type: "proxy-arp", Interface: "ens5"}
 	router.Spec.Resources[6].Spec = spec
-	err := ValidateForOS(router, platform.OSFreeBSD)
-	if err == nil || !strings.Contains(err.Error(), "FreeBSD does not support SAM proxy-ARP local capture") {
-		t.Fatalf("ValidateForOS(FreeBSD) error = %v, want explicit proxy-ARP rejection", err)
+	if err := ValidateForOS(router, platform.OSFreeBSD); err != nil {
+		t.Fatalf("ValidateForOS(FreeBSD) proxy-ARP capture = %v", err)
 	}
 }
 

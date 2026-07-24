@@ -51,6 +51,14 @@ func (netlinkSAMProxyNeighborApplier) SetProxyARP(ctx context.Context, ifname st
 	return samSetSysctl(ctx, key, value)
 }
 
+func (netlinkSAMProxyNeighborApplier) SetIPForwarding(ctx context.Context, enabled bool) error {
+	value := "0"
+	if enabled {
+		value = "1"
+	}
+	return samSetSysctl(ctx, "net.ipv4.ip_forward", value)
+}
+
 func samSetSysctl(ctx context.Context, key, value string) error {
 	out, err := exec.CommandContext(ctx, "sysctl", "-w", key+"="+value).CombinedOutput()
 	if err != nil {

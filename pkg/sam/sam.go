@@ -189,7 +189,7 @@ func PlanCapture(router *api.Router, targetOS platform.OS) ([]CaptureAction, err
 }
 
 func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanOptions) ([]CaptureAction, error) {
-	if router == nil || targetOS != platform.OSLinux {
+	if router == nil || (targetOS != platform.OSLinux && targetOS != platform.OSFreeBSD) {
 		return nil, nil
 	}
 	interfaces := map[string]bool{}
@@ -200,7 +200,12 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 		if forwardingAdded {
 			return
 		}
-		actions = append(actions, CaptureAction{Kind: "sysctl", Key: "net.ipv4.ip_forward", Value: "1"})
+		switch targetOS {
+		case platform.OSLinux:
+			actions = append(actions, CaptureAction{Kind: "sysctl", Key: "net.ipv4.ip_forward", Value: "1"})
+		case platform.OSFreeBSD:
+			actions = append(actions, CaptureAction{Kind: "sysctl", Key: "net.inet.ip.forwarding", Value: "1"})
+		}
 		forwardingAdded = true
 	}
 	for _, resource := range router.Spec.Resources {
@@ -225,7 +230,7 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 		addForwarding()
 		switch captureType {
 		case "proxy-arp":
-			proxyActions, err := planProxyARPCapture(resource, spec, address, interfaceAliases, interfaces)
+			proxyActions, err := planProxyARPCapture(resource, spec, address, interfaceAliases, interfaces, targetOS)
 			if err != nil {
 				return nil, err
 			}
@@ -247,15 +252,20 @@ func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanO
 	return actions, nil
 }
 
-func planProxyARPCapture(resource api.Resource, spec api.RemoteAddressClaimSpec, address string, interfaceAliases map[string]string, enabled map[string]bool) ([]CaptureAction, error) {
+func planProxyARPCapture(resource api.Resource, spec api.RemoteAddressClaimSpec, address string, interfaceAliases map[string]string, enabled map[string]bool, targetOS platform.OS) ([]CaptureAction, error) {
 	iface := ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), interfaceAliases)
 	if iface == "" {
 		return nil, fmt.Errorf("%s spec.capture.interface is required for proxy-arp", resource.ID())
 	}
 	var actions []CaptureAction
-	if !enabled[iface] {
+	if targetOS == platform.OSLinux && !enabled[iface] {
 		enabled[iface] = true
 		actions = append(actions, CaptureAction{Kind: "sysctl", Key: "net.ipv4.conf." + iface + ".proxy_arp", Value: "1", Interface: iface})
+	}
+	if targetOS == platform.OSFreeBSD {
+		// FreeBSD must prove the address is not locally configured before
+		// publishing proxy ARP. The adapter fails closed on a collision.
+		actions = append(actions, CaptureAction{Kind: "deassign-os-address", ClaimName: resource.Metadata.Name, Address: address})
 	}
 	actions = append(actions, CaptureAction{Kind: "proxy-neighbor", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, GratuitousARP: wantsGratuitousARP(spec.Capture)})
 	return actions, nil
@@ -601,10 +611,10 @@ func StatusForRemoteAddressClaim(resource api.Resource, lowerings []DeliveryLowe
 		"peerRef":      normalizeRefName(spec.Delivery.PeerRef, "OverlayPeer"),
 		"deliveryMode": strings.TrimSpace(spec.Delivery.Mode),
 	}
-	if targetOS != platform.OSLinux {
+	if targetOS != platform.OSLinux && targetOS != platform.OSFreeBSD {
 		status["phase"] = "Degraded"
 		status["reason"] = "CaptureUnsupported"
-		status["message"] = "SAM local capture is not implemented on this OS; FreeBSD rejects proxy-ARP capture because proxy-neighbor ownership, GARP, and routerd-owned forwarding are Linux-only"
+		status["message"] = "SAM local capture is not implemented on this OS"
 		status["captureStatus"] = CaptureStatusBlocked
 		return status
 	}

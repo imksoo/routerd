@@ -19,6 +19,7 @@ import (
 
 type samProxyNeighborApplier interface {
 	SetProxyARP(ctx context.Context, ifname string, enabled bool) error
+	SetIPForwarding(ctx context.Context, enabled bool) error
 	EnsureProxyNeighbor(ctx context.Context, address, ifname string) error
 	DeleteProxyNeighbor(ctx context.Context, address, ifname string) error
 	EnsureOSAddressAbsent(ctx context.Context, address string) (samOSAddressDeassignResult, error)
@@ -71,8 +72,8 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	if targetOS == "" {
 		targetOS = platform.CurrentOS()
 	}
-	if targetOS != platform.OSLinux {
-		return c.reconcileStatuses(targetOS, nil, nil, nil)
+	if targetOS != platform.OSLinux && targetOS != platform.OSFreeBSD {
+		return c.reconcileStatuses(targetOS, nil, nil, nil, nil, nil, nil)
 	}
 	statuses, err := c.listObjectStatuses()
 	if err != nil {
@@ -88,6 +89,9 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	if err := c.cleanupChangedCaptures(ctx, statuses, actions); err != nil {
 		return err
 	}
+	if err := c.reconcileSAMIPForwarding(ctx, actions); err != nil {
+		return err
+	}
 	if err := c.reconcileProxyARPSysctls(ctx, actions); err != nil {
 		return err
 	}
@@ -98,10 +102,16 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	deassignResults := map[string]samOSAddressDeassignResult{}
 	garpSent := map[string]bool{}
 	garpErrors := map[string]string{}
+	proxyNeighborApplied := map[string]bool{}
+	captureFailures := map[string]string{}
+	blockedPublication := map[string]bool{}
 	priorNeighbors := samStoredProxyNeighbors(statuses)
 	for _, action := range actions {
 		switch action.Kind {
 		case "proxy-neighbor":
+			if blockedPublication[action.ClaimName] {
+				continue
+			}
 			if c.DryRun {
 				continue
 			}
@@ -110,9 +120,12 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 				applier = defaultSAMProxyNeighborApplier()
 			}
 			if err := applier.EnsureProxyNeighbor(ctx, action.Address, action.Interface); err != nil {
-				failures = append(failures, fmt.Sprintf("%s %s dev %s: %v", action.ClaimName, action.Address, action.Interface, err))
+				failure := fmt.Sprintf("%s %s dev %s: %v", action.ClaimName, action.Address, action.Interface, err)
+				failures = append(failures, failure)
+				captureFailures[action.ClaimName] = failure
 				continue
 			}
+			proxyNeighborApplied[action.ClaimName] = true
 			current := samStoredProxyNeighbor{address: strings.TrimSpace(action.Address), ifname: strings.TrimSpace(action.Interface)}
 			if shouldSendSAMGratuitousARP(action, priorNeighbors[action.ClaimName], current) {
 				announcer := c.GARP
@@ -141,17 +154,64 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 			}
 			deassignResults[action.ClaimName] = result
 			if err != nil {
-				failures = append(failures, fmt.Sprintf("%s deassign %s: %v", action.ClaimName, action.Address, err))
+				blockedPublication[action.ClaimName] = true
+				failure := fmt.Sprintf("%s deassign %s: %v", action.ClaimName, action.Address, err)
+				failures = append(failures, failure)
+				captureFailures[action.ClaimName] = failure
 			}
 		default:
 			continue
 		}
 	}
-	if err := c.reconcileStatuses(targetOS, deassignResults, garpSent, garpErrors); err != nil {
+	if err := c.reconcileStatuses(targetOS, deassignResults, garpSent, garpErrors, proxyNeighborApplied, captureFailures, actions); err != nil {
 		return err
 	}
 	if len(failures) > 0 {
 		return fmt.Errorf("SAM capture failed: %s", strings.Join(failures, "; "))
+	}
+	return nil
+}
+
+// reconcileSAMIPForwarding applies the planner's global forwarding intent only
+// when a concrete SAM forward path exists. Empty desired state must still reach
+// the adapter for stale-rule cleanup, but must not change a host-wide forwarding
+// setting merely because a prior SAM configuration once needed it.
+func (c SAMController) reconcileSAMIPForwarding(ctx context.Context, actions []sam.CaptureAction) error {
+	targetOS := c.OS
+	if targetOS == "" {
+		targetOS = platform.CurrentOS()
+	}
+	if (targetOS != platform.OSLinux && targetOS != platform.OSFreeBSD) || c.DryRun {
+		return nil
+	}
+	forwardPath := false
+	forwardingIntent := false
+	key := "net.ipv4.ip_forward"
+	if targetOS == platform.OSFreeBSD {
+		key = "net.inet.ip.forwarding"
+	}
+	for _, action := range actions {
+		switch action.Kind {
+		case "forward-path", "forward-local-path":
+			forwardPath = true
+		case "sysctl":
+			if action.Key == key && action.Value == "1" {
+				forwardingIntent = true
+			}
+		}
+	}
+	if !forwardPath {
+		return nil
+	}
+	if !forwardingIntent {
+		return fmt.Errorf("SAM forwarding path is missing planned %s=1", key)
+	}
+	applier := c.Applier
+	if applier == nil {
+		applier = defaultSAMProxyNeighborApplier()
+	}
+	if err := applier.SetIPForwarding(ctx, true); err != nil {
+		return fmt.Errorf("enable SAM IP forwarding: %w", err)
 	}
 	return nil
 }
@@ -174,6 +234,13 @@ func (c SAMController) reconcileForwardPaths(ctx context.Context, actions []sam.
 }
 
 func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []sam.CaptureAction) error {
+	targetOS := c.OS
+	if targetOS == "" {
+		targetOS = platform.CurrentOS()
+	}
+	if targetOS != platform.OSLinux {
+		return nil
+	}
 	if c.DryRun {
 		return nil
 	}
@@ -220,27 +287,44 @@ func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []s
 	return nil
 }
 
-func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults map[string]samOSAddressDeassignResult, garpSent map[string]bool, garpErrors map[string]string) error {
+func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults map[string]samOSAddressDeassignResult, garpSent map[string]bool, garpErrors map[string]string, proxyNeighborApplied map[string]bool, captureFailures map[string]string, actions []sam.CaptureAction) error {
+	proxyNeighbors := map[string]samStoredProxyNeighbor{}
+	for _, action := range actions {
+		if action.Kind != "proxy-neighbor" {
+			continue
+		}
+		proxyNeighbors[action.ClaimName] = samStoredProxyNeighbor{
+			address: strings.TrimSpace(action.Address),
+			ifname:  strings.TrimSpace(action.Interface),
+		}
+	}
 	claims := samSelectResources(c.Router.Spec.Resources, "RemoteAddressClaim")
 	for _, claim := range claims {
 		status := sam.StatusForRemoteAddressClaim(claim, c.Lowerings, c.Store, targetOS)
 		status["dryRun"] = c.DryRun
-		if targetOS == platform.OSLinux {
-			if spec, err := claim.RemoteAddressClaimSpec(); err == nil && strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
-				if status["captureStatus"] == sam.CaptureStatusCaptured {
-					aliases := sam.CaptureInterfaceAliases(c.Router)
-					status["captureProxyNeighbor"] = map[string]any{
-						"address":   strings.TrimSpace(spec.Address),
-						"interface": sam.ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), aliases),
-					}
-					if garpSent[claim.Metadata.Name] {
-						status["lastGARPSent"] = true
-					}
-					if garpErrors[claim.Metadata.Name] != "" {
-						status["lastGARPError"] = garpErrors[claim.Metadata.Name]
-					}
+		captureFailure := captureFailures[claim.Metadata.Name]
+		if captureFailure != "" {
+			status["phase"] = "Error"
+			status["reason"] = "CaptureFailed"
+			status["message"] = captureFailure
+			status["error"] = captureFailure
+			status["captureStatus"] = sam.CaptureStatusBlocked
+		}
+		if targetOS == platform.OSLinux || targetOS == platform.OSFreeBSD {
+			if neighbor, ok := proxyNeighbors[claim.Metadata.Name]; ok && proxyNeighborApplied[claim.Metadata.Name] {
+				aliases := sam.CaptureInterfaceAliases(c.Router)
+				status["captureProxyNeighbor"] = map[string]any{
+					"address":   neighbor.address,
+					"interface": sam.ResolveCaptureInterface(neighbor.ifname, aliases),
 				}
-			} else if err == nil && providerSecondaryEnforcesOSAddressAbsence(spec) {
+				if garpSent[claim.Metadata.Name] {
+					status["lastGARPSent"] = true
+				}
+				if garpErrors[claim.Metadata.Name] != "" {
+					status["lastGARPError"] = garpErrors[claim.Metadata.Name]
+				}
+			}
+			if spec, err := claim.RemoteAddressClaimSpec(); err == nil && captureFailure == "" && providerSecondaryEnforcesOSAddressAbsence(spec) {
 				result := deassignResults[claim.Metadata.Name]
 				note := map[string]any{
 					"address": firstNonEmpty(result.address, strings.TrimSpace(spec.Address)),

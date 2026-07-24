@@ -26,6 +26,7 @@ func PF(router *api.Router, holes []FirewallHole) ([]byte, error) {
 	var clientPolicies []api.Resource
 	var egressPolicies []api.Resource
 	var ingressRules []ingressNATRule
+	var samForwardAnchor bool
 	mssPolicies, err := pathMTUMSSPolicies(router)
 	if err != nil {
 		return nil, err
@@ -58,13 +59,21 @@ func PF(router *api.Router, holes []FirewallHole) ([]byte, error) {
 			if res.APIVersion == api.NetAPIVersion {
 				egressPolicies = append(egressPolicies, res)
 			}
+		case "RemoteAddressClaim":
+			if res.APIVersion == api.HybridAPIVersion {
+				spec, err := res.RemoteAddressClaimSpec()
+				if err != nil {
+					return nil, err
+				}
+				samForwardAnchor = samForwardAnchor || strings.TrimSpace(spec.Capture.Type) == "proxy-arp"
+			}
 		}
 	}
 	ingressRules, err = ingressNATRules(router, aliases)
 	if err != nil {
 		return nil, err
 	}
-	if len(nat44Rules) == 0 && len(ingressRules) == 0 && len(zones) == 0 && len(rules) == 0 && len(holes) == 0 && len(mssPolicies) == 0 && len(egressPolicies) == 0 {
+	if len(nat44Rules) == 0 && len(ingressRules) == 0 && len(zones) == 0 && len(rules) == 0 && len(holes) == 0 && len(mssPolicies) == 0 && len(egressPolicies) == 0 && !samForwardAnchor {
 		return nil, nil
 	}
 	sort.Slice(nat44Rules, func(i, j int) bool { return nat44Rules[i].Metadata.Name < nat44Rules[j].Metadata.Name })
@@ -104,6 +113,12 @@ func PF(router *api.Router, holes []FirewallHole) ([]byte, error) {
 	}
 	if hasRuntimeResolvedNAT44(nat44Rules) {
 		buf.WriteString("nat-anchor \"routerd_nat\"\n")
+	}
+	if samForwardAnchor {
+		// The SAM controller loads only this named child anchor. Keeping the
+		// invocation in the active PF ruleset makes the loaded /32 rules
+		// reachable instead of silently inert.
+		buf.WriteString("anchor \"routerd_sam_forward\"\n")
 	}
 	if err := writePFIngress(&buf, ingressRules); err != nil {
 		return nil, err
