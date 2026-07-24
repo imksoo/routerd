@@ -217,6 +217,9 @@ func ReadApplied(path string) (AppliedConfig, bool, error) {
 	if err != nil {
 		return AppliedConfig{}, false, err
 	}
+	if strings.TrimSpace(string(data)) == "" {
+		return AppliedConfig{}, false, nil
+	}
 	var config AppliedConfig
 	if err := json.Unmarshal(data, &config); err != nil {
 		return AppliedConfig{}, false, err
