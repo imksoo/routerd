@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/netip"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -205,7 +206,7 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 		if err != nil {
 			return transportDerivation{}, fmt.Errorf("peer %s: %w", peerNode, err)
 		}
-		tunnelName := firstNonEmpty(strings.TrimSpace(peer.Override.TunnelInterface), compactHashedName("samt", owner.Metadata.Name, self, peerNode))
+		tunnelName := firstNonEmpty(strings.TrimSpace(peer.Override.TunnelInterface), c.transportTunnelName(spec.Mode, index, owner.Metadata.Name, self, peerNode))
 		bgpPeerName := firstNonEmpty(strings.TrimSpace(peer.Override.BGPPeer), safeName("sam-transport-"+owner.Metadata.Name+"-"+self+"-"+peerNode))
 		routeName := firstNonEmpty(strings.TrimSpace(peer.Override.EndpointRoute), safeName("sam-endpoint-"+owner.Metadata.Name+"-"+self+"-"+peerNode))
 		underlay := firstNonEmpty(strings.TrimSpace(peer.Override.UnderlayInterface), strings.TrimSpace(spec.UnderlayInterface))
@@ -316,6 +317,18 @@ func (c TransportController) targetOS() platform.OS {
 		return c.OS
 	}
 	return platform.CurrentOS()
+}
+
+func (c TransportController) transportTunnelName(mode string, edgeIndex int, parts ...string) string {
+	if c.targetOS() == platform.OSFreeBSD {
+		switch strings.TrimSpace(mode) {
+		case "ipip":
+			return "gif" + strconv.Itoa(edgeIndex)
+		case "gre":
+			return "gre" + strconv.Itoa(edgeIndex)
+		}
+	}
+	return compactHashedName("samt", parts...)
 }
 
 func transportBGPImportPolicyForPeer(base api.BGPImportPolicySpec, defaultAllowedPrefixes []string, topologyNodeRefs []string, peerNode string, routeReflectorClient bool) api.BGPImportPolicySpec {

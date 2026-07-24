@@ -104,9 +104,10 @@ func TestSAMTransportProfileDerivesPeerAddressOnlyForFreeBSD(t *testing.T) {
 		name            string
 		targetOS        platform.OS
 		wantPeerAddress string
+		wantTunnelName  string
 	}{
-		{name: "linux", targetOS: platform.OSLinux},
-		{name: "freebsd", targetOS: platform.OSFreeBSD, wantPeerAddress: "10.255.1.1"},
+		{name: "linux", targetOS: platform.OSLinux, wantTunnelName: compactHashedName("samt", "demo", "cloud-rt", "onprem-rt")},
+		{name: "freebsd", targetOS: platform.OSFreeBSD, wantPeerAddress: "10.255.1.1", wantTunnelName: "gif0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := testStore(t, now)
@@ -123,12 +124,15 @@ func TestSAMTransportProfileDerivesPeerAddressOnlyForFreeBSD(t *testing.T) {
 				t.Fatalf("Reconcile: %v", err)
 			}
 			resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("demo", "cloud-rt")).ResourcesJSON)
-			tunnel := findTransportTunnel(t, resources)
+			tunnelName, tunnel := findTransportTunnelResource(t, resources)
 			if tunnel.Address != "10.255.1.0/31" {
 				t.Fatalf("Address = %q, want 10.255.1.0/31", tunnel.Address)
 			}
 			if tunnel.PeerAddress != tc.wantPeerAddress {
 				t.Fatalf("PeerAddress = %q, want %q", tunnel.PeerAddress, tc.wantPeerAddress)
+			}
+			if tunnelName != tc.wantTunnelName {
+				t.Fatalf("TunnelInterface name = %q, want %q", tunnelName, tc.wantTunnelName)
 			}
 		})
 	}
@@ -2047,6 +2051,12 @@ func statusIntForTest(value any) int {
 
 func findTransportTunnel(t *testing.T, resources []api.Resource) api.TunnelInterfaceSpec {
 	t.Helper()
+	_, spec := findTransportTunnelResource(t, resources)
+	return spec
+}
+
+func findTransportTunnelResource(t *testing.T, resources []api.Resource) (string, api.TunnelInterfaceSpec) {
+	t.Helper()
 	for _, resource := range resources {
 		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "TunnelInterface" {
 			continue
@@ -2055,10 +2065,10 @@ func findTransportTunnel(t *testing.T, resources []api.Resource) api.TunnelInter
 		if err != nil {
 			t.Fatalf("TunnelInterface spec: %v", err)
 		}
-		return spec
+		return resource.Metadata.Name, spec
 	}
 	t.Fatalf("TunnelInterface not found in %#v", resources)
-	return api.TunnelInterfaceSpec{}
+	return "", api.TunnelInterfaceSpec{}
 }
 
 func findTransportEndpointRoute(t *testing.T, resources []api.Resource) api.IPv4RouteSpec {
