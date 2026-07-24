@@ -1175,6 +1175,20 @@ func samStatusSubscriptions() []bus.Subscription {
 	return subs
 }
 
+func bgpStatusSubscriptions(router *api.Router) []bus.Subscription {
+	subs := statusSubscriptionsWithWhen(router, []string{"BGPRouter", "BGPPeer"}, "BFD", "BGPRouter", "BGPPeer")
+	subs = append(subs, bus.Subscription{
+		Topics: []string{"routerd.resource.status.changed"},
+		Filter: func(event daemonapi.DaemonEvent) bool {
+			if event.Resource == nil || event.Resource.Kind != "MobilityPool" {
+				return false
+			}
+			return eventChangedField(event, "ownershipResolverFIBVerdicts")
+		},
+	})
+	return subs
+}
+
 func eventChangedField(event daemonapi.DaemonEvent, field string) bool {
 	for _, changed := range strings.Split(event.Attributes["changedFields"], ",") {
 		if strings.TrimSpace(changed) == field {
@@ -2342,7 +2356,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = effective
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "bgp", Every: bgpcontroller.PollInterval(r.Router), Subs: statusSubscriptionsWithWhen(r.Router, []string{"BGPRouter", "BGPPeer"}, "BFD", "BGPRouter", "BGPPeer"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "bgp", Every: bgpcontroller.PollInterval(r.Router), Subs: bgpStatusSubscriptions(r.Router), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return false, err
