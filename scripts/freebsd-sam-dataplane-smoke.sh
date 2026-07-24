@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 #
 # FreeBSD amd64-only SAM acceptance.  The guest is a real FreeBSD VM; this
-# script creates disposable VNET router-a/router-b/client/overlay stacks.
+# script creates disposable VNET router-a/router-b/two-client/overlay stacks.
 # It deliberately uses no Linux namespace, mock, arm64, or TCG substitute.
 set -eu
 
@@ -23,16 +23,18 @@ case "$routerd:$routerctl:$evidence" in /*:/*:/*) ;; *) exit 2;; esac
 for x in ifconfig jail jexec kldload kldstat pfctl tcpdump ping arp jq; do command -v "$x" >/dev/null; done
 mkdir -p "$evidence"
 tag="sam-$$"; work=$(mktemp -d /tmp/routerd-sam-vnet.XXXXXX)
-ra="$tag-ra"; rb="$tag-rb"; client="$tag-client"; overlay="$tag-overlay"
+ra="$tag-ra"; rb="$tag-rb"; client="$tag-client"; client2="$tag-client2"; overlay="$tag-overlay"
 ra_if=''
 rb_if=''
 client_if=''
+client2_if=''
 ra_outer=''
 rb_outer=''
 bridge_created=''
 ra_pid=''
 rb_pid=''
 arp_capture=''
+client2_arp_capture=''
 carp_capture=''
 stage='setup'
 cleanup() {
@@ -40,19 +42,22 @@ cleanup() {
   [ -n "$ra_pid" ] && kill "$ra_pid" 2>/dev/null
   [ -n "$rb_pid" ] && kill "$rb_pid" 2>/dev/null
   [ -n "$arp_capture" ] && kill "$arp_capture" 2>/dev/null
+  [ -n "$client2_arp_capture" ] && kill "$client2_arp_capture" 2>/dev/null
   [ -n "$carp_capture" ] && kill "$carp_capture" 2>/dev/null
   [ -n "$ra_pid" ] && wait "$ra_pid" 2>/dev/null
   [ -n "$rb_pid" ] && wait "$rb_pid" 2>/dev/null
   [ -n "$arp_capture" ] && wait "$arp_capture" 2>/dev/null
+  [ -n "$client2_arp_capture" ] && wait "$client2_arp_capture" 2>/dev/null
   [ -n "$carp_capture" ] && wait "$carp_capture" 2>/dev/null
   {
     jail -r "$ra"
     jail -r "$rb"
     jail -r "$client"
+    jail -r "$client2"
     jail -r "$overlay"
   } >>"$evidence/cleanup.log" 2>&1
   [ -n "$bridge_created" ] && ifconfig "$bridge_created" destroy >>"$evidence/cleanup.log" 2>&1
-  for i in "$ra_if" "$rb_if" "$client_if" "$ra_outer" "$rb_outer"; do [ -n "$i" ] && ifconfig "$i" destroy >>"$evidence/cleanup.log" 2>&1; done
+  for i in "$ra_if" "$rb_if" "$client_if" "$client2_if" "$ra_outer" "$rb_outer"; do [ -n "$i" ] && ifconfig "$i" destroy >>"$evidence/cleanup.log" 2>&1; done
   if [ "$rc" -ne 0 ]; then
     printf 'freebsd-sam-dataplane-failed-stage=%s rc=%s\n' "$stage" "$rc" >&2
     for log in \
@@ -60,18 +65,20 @@ cleanup() {
       "$evidence/router-a.log" "$evidence/router-b.log" \
       "$evidence/router-a-arp.log" "$evidence/router-b-arp.log" "$evidence/router-b-backup.log" \
       "$evidence/router-a-carp.log" "$evidence/router-b-carp.log" \
-      "$evidence/client-arp.log" \
+      "$evidence/client-arp.log" "$evidence/client2-arp.log" \
       "$evidence/router-a-pf-bootstrap.log" "$evidence/router-b-pf-bootstrap.log" \
       "$evidence/router-a-status.json" "$evidence/router-b-status.json" \
       "$evidence/bridge-carp.log" "$evidence/bridge-ifconfig.log" \
       "$evidence/router-a-pf-main.log" "$evidence/router-a-pf-anchor.log" \
+      "$evidence/router-a-restart.log" "$evidence/router-a-restart-arp.log" "$evidence/router-a-restart-pf-anchor.log" \
       "$evidence/router-a-bgp-fib-route.log" "$evidence/router-b-delete.log" \
       "$evidence/router-b-delete-status.json" "$evidence/router-b-owned-cleanup.log" \
       "$evidence/router-b-pf-cleanup.log" "$evidence/router-b-route-cleanup.log" \
       "$evidence/router-b-collision.log" "$evidence/collision-aggregate-status.json" "$evidence/collision-claim-status.json" \
       "$evidence/foreign-pf-preserved.log" \
       "$evidence/overlay-return-route.log" "$evidence/overlay-failover-return-route.log" \
-      "$evidence/client-ping.log" "$evidence/client-ping-after-failover.log" \
+      "$evidence/client-ping.log" "$evidence/client2-ping.log" \
+      "$evidence/client-ping-after-failover.log" "$evidence/client2-ping-after-failover.log" \
       "$evidence/router-b-arp-after-failover.log"; do
       [ -s "$log" ] || continue
       printf '%s\n' "--- ${log##*/} ---" >&2
@@ -87,30 +94,32 @@ kldstat -q -m pf || kldload pf
 kldstat -q -m carp || kldload carp
 stage='vnet-topology'
 jail -c name="$ra" vnet persist; jail -c name="$rb" vnet persist
-jail -c name="$client" vnet persist; jail -c name="$overlay" vnet persist
+jail -c name="$client" vnet persist; jail -c name="$client2" vnet persist; jail -c name="$overlay" vnet persist
 
-# One L2 bridge is unnecessary: an epair fanout is enough for the first
-# native production pass, and keeps client ARP capture on the real client NIC.
+# The host bridge gives router A/B and both clients one isolated real Ethernet
+# collision domain while preserving per-client ARP capture on each VNET NIC.
 ra_if=$(ifconfig epair create); ra_b=${ra_if%a}b
 rb_if=$(ifconfig epair create); rb_b=${rb_if%a}b
 client_if=$(ifconfig epair create); client_b=${client_if%a}b
+client2_if=$(ifconfig epair create); client2_b=${client2_if%a}b
 ra_outer=$(ifconfig epair create); ra_outer_b=${ra_outer%a}b
 rb_outer=$(ifconfig epair create); rb_outer_b=${rb_outer%a}b
-ifconfig "$ra_b" vnet "$ra"; ifconfig "$rb_b" vnet "$rb"; ifconfig "$client_b" vnet "$client"
+ifconfig "$ra_b" vnet "$ra"; ifconfig "$rb_b" vnet "$rb"; ifconfig "$client_b" vnet "$client"; ifconfig "$client2_b" vnet "$client2"
 # Each router/overlay epair must have both endpoints in the intended VNETs:
 # endpoint a is the router interface named in the production config; endpoint
 # b is its remote peer in the overlay VNET.  Keeping a on the host makes the
 # later jexec ifconfig target nonexistent.
 ifconfig "$ra_outer" vnet "$ra"; ifconfig "$ra_outer_b" vnet "$overlay"
 ifconfig "$rb_outer" vnet "$rb"; ifconfig "$rb_outer_b" vnet "$overlay"
-# Host bridge gives the two routers and client one real Ethernet collision domain.
+# Host bridge gives the two routers and two independent clients one real Ethernet collision domain.
 br=$(ifconfig bridge create); bridge_created=$br
-ifconfig "$ra_if" up; ifconfig "$rb_if" up; ifconfig "$client_if" up
-ifconfig "$br" addm "$ra_if" addm "$rb_if" addm "$client_if" up
-for j in "$ra" "$rb" "$client" "$overlay"; do jexec "$j" ifconfig lo0 127.0.0.1/8 up; done
+ifconfig "$ra_if" up; ifconfig "$rb_if" up; ifconfig "$client_if" up; ifconfig "$client2_if" up
+ifconfig "$br" addm "$ra_if" addm "$rb_if" addm "$client_if" addm "$client2_if" up
+for j in "$ra" "$rb" "$client" "$client2" "$overlay"; do jexec "$j" ifconfig lo0 127.0.0.1/8 up; done
 jexec "$ra" ifconfig "$ra_b" inet 198.18.250.11/24 up
 jexec "$rb" ifconfig "$rb_b" inet 198.18.250.12/24 up
 jexec "$client" ifconfig "$client_b" inet 198.18.250.20/24 up
+jexec "$client2" ifconfig "$client2_b" inet 198.18.250.21/24 up
 jexec "$ra" ifconfig "$ra_outer" inet 198.18.251.1/30 up
 jexec "$overlay" ifconfig "$ra_outer_b" inet 198.18.251.2/30 up
 jexec "$rb" ifconfig "$rb_outer" inet 198.18.251.5/30 up
@@ -227,10 +236,11 @@ write_config "$ra" "$ra_b" "$ra_outer" 198.18.251.1 198.18.251.2 10.254.250.1/30
 write_config "$rb" "$rb_b" "$rb_outer" 198.18.251.5 198.18.251.6 10.254.251.1/30 10.254.251.2 100 "$work/rb.yaml" true
 write_config "$rb" "$rb_b" "$rb_outer" 198.18.251.5 198.18.251.6 10.254.251.1/30 10.254.251.2 100 "$work/rb-delete.yaml" false
 ra_runtime=/tmp/routerd-sam-ra
+ra_restart_runtime=/tmp/routerd-sam-ra-restart
 rb_runtime=/tmp/routerd-sam-rb
 rb_delete_runtime=/tmp/routerd-sam-rb-delete
 rb_collision_runtime=/tmp/routerd-sam-rb-collision
-jexec "$ra" mkdir -p "$ra_runtime"
+jexec "$ra" mkdir -p "$ra_runtime" "$ra_restart_runtime"
 jexec "$rb" mkdir -p "$rb_runtime" "$rb_delete_runtime" "$rb_collision_runtime"
 cp "$work/ra.yaml" "$work/rb.yaml" "$evidence/"
 stage='validate-config'
@@ -238,24 +248,28 @@ jexec "$ra" "$routerd" validate --config "$work/ra.yaml" >"$evidence/router-a-va
 jexec "$rb" "$routerd" validate --config "$work/rb.yaml" >"$evidence/router-b-validate.log" 2>&1
 
 # Capture before either controller starts: this proves the three BPF GARPs are
-# visible to a real client, rather than merely constructed in a unit test.
+# visible to two independent real clients, rather than merely constructed in a unit test.
 jexec "$client" timeout 20 tcpdump -n -l -i "$client_b" 'arp and host 198.18.250.99' >"$evidence/client-arp.log" 2>&1 & arp_capture=$!
+jexec "$client2" timeout 20 tcpdump -n -l -i "$client2_b" 'arp and host 198.18.250.99' >"$evidence/client2-arp.log" 2>&1 & client2_arp_capture=$!
 # tcpdump reports readiness on its combined output. Do not start controllers
 # until the client-side BPF capture is attached, or the three immediate GARPs
 # can race past the observation point.
 n=0
 while [ "$n" -lt 10 ]; do
-  grep -q 'listening on' "$evidence/client-arp.log" && break
+  grep -q 'listening on' "$evidence/client-arp.log" && grep -q 'listening on' "$evidence/client2-arp.log" && break
   kill -0 "$arp_capture" 2>/dev/null || { wait "$arp_capture" 2>/dev/null || true; false; }
+  kill -0 "$client2_arp_capture" 2>/dev/null || { wait "$client2_arp_capture" 2>/dev/null || true; false; }
   n=$((n + 1))
   sleep 1
 done
 grep -q 'listening on' "$evidence/client-arp.log"
+grep -q 'listening on' "$evidence/client2-arp.log"
 # CARP is protocol 112; `-T carp` is the FreeBSD carp(4)-documented decoder.
 # This is retained on failure to distinguish a topology/configuration mismatch
 # from an unobserved state transition.
 timeout 20 tcpdump -n -l -T carp -i "$br" 'ip proto 112' >"$evidence/bridge-carp.log" 2>&1 & carp_capture=$!
 stage='start-controllers'
+: >"$evidence/summary.log"
 jexec "$ra" "$routerd" serve --config "$work/ra.yaml" --state-file "$ra_runtime/state.db" --status-file "$ra_runtime/status.json" --socket "$ra_runtime/api.sock" --status-socket "$ra_runtime/status.sock" --controllers all >"$evidence/router-a.log" 2>&1 & ra_pid=$!
 jexec "$rb" "$routerd" serve --config "$work/rb.yaml" --state-file "$rb_runtime/state.db" --status-file "$rb_runtime/status.json" --socket "$rb_runtime/api.sock" --status-socket "$rb_runtime/status.sock" --controllers all >"$evidence/router-b.log" 2>&1 & rb_pid=$!
 
@@ -277,13 +291,31 @@ stage='carp-master-arp'
 if ! wait_carp_state "$ra" "$ra_b" MASTER "$evidence/router-a-carp.log"; then snapshot_carp_state; exit 1; fi
 if ! wait_carp_state "$rb" "$rb_b" BACKUP "$evidence/router-b-backup.log"; then snapshot_carp_state; exit 1; fi
 snapshot_carp_state
+
+# Restart router-a with the identical desired config and ownership DB.  This
+# proves no second published neighbor or PF /32 rule is created on reconcile.
+stage='same-desired-restart-idempotence'
+kill "$ra_pid"; wait "$ra_pid" || true; ra_pid=
+jexec "$ra" "$routerd" serve --config "$work/ra.yaml" --state-file "$ra_runtime/state.db" --status-file "$ra_restart_runtime/status.json" --socket "$ra_restart_runtime/api.sock" --status-socket "$ra_restart_runtime/status.sock" --controllers all >"$evidence/router-a-restart.log" 2>&1 & ra_pid=$!
+wait_carp_state "$ra" "$ra_b" MASTER "$evidence/router-a-carp.log"
+wait_published_arp "$ra" "$ra_b" 198.18.250.99 "$evidence/router-a-restart-arp.log"
+jexec "$ra" pfctl -a routerd_sam_forward -sr >"$evidence/router-a-restart-pf-anchor.log"
+[ "$(grep -F -c "pass quick on $ra_b inet from any to 198.18.250.99" "$evidence/router-a-restart-pf-anchor.log")" -eq 1 ]
+[ "$(grep -F -c 'pass quick on gif0 inet from 198.18.250.99 to any' "$evidence/router-a-restart-pf-anchor.log")" -eq 1 ]
+printf 'sam-same-desired-restart-idempotent=ok\n' >>"$evidence/summary.log"
+
 wait "$arp_capture" || true; arp_capture=
+wait "$client2_arp_capture" || true; client2_arp_capture=
 stage='garp-observation'
 grep -c '198\.18\.250\.99' "$evidence/client-arp.log" | awk '$1 >= 3 {exit 0} {exit 1}'
+grep -c '198\.18\.250\.99' "$evidence/client2-arp.log" | awk '$1 >= 3 {exit 0} {exit 1}'
 grep -F 'published' "$evidence/router-a-arp.log"
 if jexec "$rb" arp -n -i "$rb_b" 198.18.250.99 >"$evidence/router-b-arp.log" 2>&1 && grep -q published "$evidence/router-b-arp.log"; then echo 'CARP backup published ARP' >&2; exit 1; fi
-printf 'sam-client-observed-three-garps=ok\n' >"$evidence/summary.log"
-printf 'sam-carp-backup-silent-master-published=ok\n' >>"$evidence/summary.log"
+{
+  printf 'sam-clients-observed-three-garps=ok\n'
+  printf 'sam-client-observed-three-garps=ok\n'
+  printf 'sam-carp-backup-silent-master-published=ok\n'
+} >>"$evidence/summary.log"
 
 # PF reachability/rules and real client-to-overlay request/return path.
 stage='pf-overlay-dataplane'
@@ -297,6 +329,8 @@ grep -F 'pass quick on gif0 inet from 198.18.250.99 to any' "$evidence/router-a-
 jexec "$ra" route -n get 198.18.250.99 >"$evidence/router-a-bgp-fib-route.log" 2>&1
 grep -Eq 'interface:[[:space:]]+gif0([[:space:]]|$)' "$evidence/router-a-bgp-fib-route.log"
 jexec "$client" ping -n -S 198.18.250.20 -c 3 -W 1 198.18.250.99 >"$evidence/client-ping.log"
+jexec "$client2" ping -n -S 198.18.250.21 -c 3 -W 1 198.18.250.99 >"$evidence/client2-ping.log"
+printf 'sam-clients-pf-32-overlay-return=ok\n' >>"$evidence/summary.log"
 printf 'sam-pf-32-overlay-return=ok\n' >>"$evidence/summary.log"
 
 # Force the master off the LAN.  Management/controller process stays alive;
@@ -312,6 +346,8 @@ jexec "$overlay" route -n get 198.18.250.20 >>"$evidence/overlay-failover-return
 grep -F 'gateway: 10.254.251.1' "$evidence/overlay-failover-return-route.log"
 grep -Eq 'interface:[[:space:]]+gif1([[:space:]]|$)' "$evidence/overlay-failover-return-route.log"
 jexec "$client" ping -n -S 198.18.250.20 -c 3 -W 1 198.18.250.99 >"$evidence/client-ping-after-failover.log"
+jexec "$client2" ping -n -S 198.18.250.21 -c 3 -W 1 198.18.250.99 >"$evidence/client2-ping-after-failover.log"
+printf 'sam-clients-carp-forced-switchover-converged=ok\n' >>"$evidence/summary.log"
 printf 'sam-carp-forced-switchover-converged=ok\n' >>"$evidence/summary.log"
 
 # Delete desired state from current master and require owned ARP/PF cleanup.
@@ -331,6 +367,7 @@ if grep -Eq 'interface:[[:space:]]+gif0([[:space:]]|$)' "$evidence/router-b-rout
   exit 1
 fi
 printf 'sam-owned-arp-pf-delete-cleanup=ok\n' >>"$evidence/summary.log"
+printf 'sam-stale-owned-reconcile-cleanup=ok\n' >>"$evidence/summary.log"
 
 # Foreign state outside routerd's named anchor remains untouched; a local OS
 # address collision must fail closed with controller status evidence.
