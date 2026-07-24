@@ -56,7 +56,7 @@ cleanup() {
     for log in \
       "$evidence/router-a-validate.log" "$evidence/router-b-validate.log" \
       "$evidence/router-a.log" "$evidence/router-b.log" \
-      "$evidence/router-a-arp.log" "$evidence/router-b-backup.log" \
+      "$evidence/router-a-arp.log" "$evidence/router-b-arp.log" "$evidence/router-b-backup.log" \
       "$evidence/router-a-carp.log" "$evidence/router-b-carp.log" \
       "$evidence/client-arp.log" \
       "$evidence/router-a-status.json" "$evidence/router-b-status.json" \
@@ -197,6 +197,7 @@ jexec "$ra" "$routerd" serve --config "$work/ra.yaml" --state-file "$ra_runtime/
 jexec "$rb" "$routerd" serve --config "$work/rb.yaml" --state-file "$rb_runtime/state.db" --status-file "$rb_runtime/status.json" --socket "$rb_runtime/api.sock" --status-socket "$rb_runtime/status.sock" --controllers all >"$evidence/router-b.log" 2>&1 & rb_pid=$!
 
 wait_for() { jail_name=$1 command=$2 file=$3; n=0; while [ "$n" -lt 45 ]; do if jexec "$jail_name" sh -c "$command" >"$file" 2>&1; then return 0; fi; n=$((n+1)); sleep 1; done; return 1; }
+wait_published_arp() { jail_name=$1 address=$2 file=$3; n=0; while [ "$n" -lt 45 ]; do jexec "$jail_name" arp -n "$address" >"$file" 2>&1 || true; if grep -q published "$file"; then return 0; fi; n=$((n+1)); sleep 1; done; return 1; }
 wait_carp_state() { jail_name=$1 ifname=$2 state_name=$3 file=$4; n=0; while [ "$n" -lt 45 ]; do jexec "$jail_name" ifconfig "$ifname" >"$file" 2>&1 || return 1; if grep -Eq "carp:[[:space:]]+${state_name}([[:space:]]|$)" "$file"; then return 0; fi; n=$((n+1)); sleep 1; done; return 1; }
 snapshot_carp_state() {
   jexec "$ra" ifconfig "$ra_b" >"$evidence/router-a-carp.log" 2>&1 || true
@@ -206,7 +207,7 @@ snapshot_carp_state() {
   ifconfig "$br" >"$evidence/bridge-ifconfig.log" 2>&1 || true
   if [ -n "$carp_capture" ]; then kill "$carp_capture" 2>/dev/null || true; wait "$carp_capture" 2>/dev/null || true; carp_capture=''; fi
 }
-wait_for "$ra" "arp -n 198.18.250.99 | grep -q published" "$evidence/router-a-arp.log"
+wait_published_arp "$ra" 198.18.250.99 "$evidence/router-a-arp.log"
 stage='carp-master-arp'
 if ! wait_carp_state "$ra" "$ra_b" MASTER "$evidence/router-a-carp.log"; then snapshot_carp_state; exit 1; fi
 if ! wait_carp_state "$rb" "$rb_b" BACKUP "$evidence/router-b-backup.log"; then snapshot_carp_state; exit 1; fi
@@ -232,7 +233,7 @@ printf 'sam-pf-32-overlay-return=ok\n' >>"$evidence/summary.log"
 # router-b must become master and take over the one published entry.
 jexec "$ra" ifconfig "$ra_b" down
 stage='carp-failover'
-wait_for "$rb" "arp -n 198.18.250.99 | grep -q published" "$evidence/router-b-arp-after-failover.log"
+wait_published_arp "$rb" 198.18.250.99 "$evidence/router-b-arp-after-failover.log"
 jexec "$client" ping -n -S 198.18.250.20 -c 3 -W 1 198.18.250.99 >"$evidence/client-ping-after-failover.log"
 printf 'sam-carp-forced-switchover-converged=ok\n' >>"$evidence/summary.log"
 
