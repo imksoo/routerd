@@ -30,6 +30,7 @@ rb_outer=''
 bridge_created=''
 ra_pid=''
 rb_pid=''
+stage='setup'
 cleanup() {
   rc=$?; set +e
   [ -n "$ra_pid" ] && kill "$ra_pid" 2>/dev/null
@@ -44,6 +45,19 @@ cleanup() {
   } >>"$evidence/cleanup.log" 2>&1
   [ -n "$bridge_created" ] && ifconfig "$bridge_created" destroy >>"$evidence/cleanup.log" 2>&1
   for i in "$ra_if" "$rb_if" "$client_if" "$ra_outer" "$rb_outer"; do [ -n "$i" ] && ifconfig "$i" destroy >>"$evidence/cleanup.log" 2>&1; done
+  if [ "$rc" -ne 0 ]; then
+    printf 'freebsd-sam-dataplane-failed-stage=%s rc=%s\n' "$stage" "$rc" >&2
+    for log in \
+      "$evidence/router-a-validate.log" "$evidence/router-b-validate.log" \
+      "$evidence/router-a.log" "$evidence/router-b.log" \
+      "$evidence/router-a-arp.log" "$evidence/router-b-backup.log" \
+      "$evidence/router-a-pf-main.log" "$evidence/router-a-pf-anchor.log" \
+      "$evidence/client-ping.log" "$evidence/collision-status.log"; do
+      [ -s "$log" ] || continue
+      printf '%s\n' "--- ${log##*/} ---" >&2
+      tail -80 "$log" >&2
+    done
+  fi
   rm -rf "$work"
   exit "$rc"
 }
@@ -51,6 +65,7 @@ trap cleanup EXIT HUP INT TERM
 
 kldstat -q -m pf || kldload pf
 kldstat -q -m carp || kldload carp
+stage='vnet-topology'
 jail -c name="$ra" vnet persist; jail -c name="$rb" vnet persist
 jail -c name="$client" vnet persist; jail -c name="$overlay" vnet persist
 
@@ -104,10 +119,10 @@ spec:
     kind: Interface
     metadata: {name: outer}
     spec: {ifname: $outer, managed: false}
-  - apiVersion: net.routerd.net/v1alpha1
+  - apiVersion: hybrid.routerd.net/v1alpha1
     kind: TunnelInterface
     metadata: {name: gif0}
-    spec: {mode: ipip, local: $outer_address, remote: 198.18.251.2, address: 10.254.250.1/30, peerAddress: 10.254.250.2}
+    spec: {mode: ipip, local: $outer_address, remote: 198.18.251.2, trustedUnderlay: true, address: 10.254.250.1/30, peerAddress: 10.254.250.2}
   - apiVersion: net.routerd.net/v1alpha1
     kind: VirtualAddress
     metadata: {name: sam-vip}
@@ -140,17 +155,20 @@ write_config "$ra" "$ra_b" "$ra_outer" 198.18.251.1 151 "$work/ra.yaml"
 write_config "$rb" "$rb_b" "$rb_outer" 198.18.251.5 100 "$work/rb.yaml"
 jexec "$ra" mkdir -p /tmp/routerd-sam; jexec "$rb" mkdir -p /tmp/routerd-sam
 cp "$work/ra.yaml" "$work/rb.yaml" "$evidence/"
+stage='validate-config'
 jexec "$ra" "$routerd" validate --config "$work/ra.yaml" >"$evidence/router-a-validate.log" 2>&1
 jexec "$rb" "$routerd" validate --config "$work/rb.yaml" >"$evidence/router-b-validate.log" 2>&1
 
 # Capture before either controller starts: this proves the three BPF GARPs are
 # visible to a real client, rather than merely constructed in a unit test.
 jexec "$client" timeout 20 tcpdump -n -l -i "$client_b" 'arp and host 198.18.250.99' >"$evidence/client-arp.log" 2>&1 & arp_capture=$!
+stage='start-controllers'
 jexec "$ra" "$routerd" serve --config "$work/ra.yaml" --state-file /tmp/routerd-sam/state.db --status-file /tmp/routerd-sam/status.json --socket /tmp/routerd-sam/api.sock --status-socket /tmp/routerd-sam/status.sock --controllers all >"$evidence/router-a.log" 2>&1 & ra_pid=$!
 jexec "$rb" "$routerd" serve --config "$work/rb.yaml" --state-file /tmp/routerd-sam/state.db --status-file /tmp/routerd-sam/status.json --socket /tmp/routerd-sam/api.sock --status-socket /tmp/routerd-sam/status.sock --controllers all >"$evidence/router-b.log" 2>&1 & rb_pid=$!
 
 wait_for() { jail_name=$1 command=$2 file=$3; n=0; while [ "$n" -lt 45 ]; do if jexec "$jail_name" sh -c "$command" >"$file" 2>&1; then return 0; fi; n=$((n+1)); sleep 1; done; return 1; }
 wait_for "$ra" "arp -an 198.18.250.99 | grep -q published" "$evidence/router-a-arp.log"
+stage='carp-master-arp'
 wait_for "$rb" "ifconfig $rb_b | grep -q 'carp: BACKUP'" "$evidence/router-b-backup.log"
 wait "$arp_capture" || true; arp_capture=
 grep -c '198\.18\.250\.99' "$evidence/client-arp.log" | awk '$1 >= 3 {exit 0} {exit 1}'
@@ -160,6 +178,7 @@ printf 'sam-client-observed-three-garps=ok\n' >"$evidence/summary.log"
 printf 'sam-carp-backup-silent-master-published=ok\n' >>"$evidence/summary.log"
 
 # PF reachability/rules and real client-to-overlay request/return path.
+stage='pf-overlay-dataplane'
 jexec "$ra" pfctl -sr >"$evidence/router-a-pf-main.log"
 jexec "$ra" pfctl -a routerd_sam_forward -sr >"$evidence/router-a-pf-anchor.log"
 grep -F 'routerd_sam_forward' "$evidence/router-a-pf-main.log"
@@ -170,11 +189,13 @@ printf 'sam-pf-32-overlay-return=ok\n' >>"$evidence/summary.log"
 # Force the master off the LAN.  Management/controller process stays alive;
 # router-b must become master and take over the one published entry.
 jexec "$ra" ifconfig "$ra_b" down
+stage='carp-failover'
 wait_for "$rb" "arp -an 198.18.250.99 | grep -q published" "$evidence/router-b-arp-after-failover.log"
 jexec "$client" ping -n -S 198.18.250.20 -c 3 -W 1 198.18.250.99 >"$evidence/client-ping-after-failover.log"
 printf 'sam-carp-forced-switchover-converged=ok\n' >>"$evidence/summary.log"
 
 # Delete desired state from current master and require owned ARP/PF cleanup.
+stage='owned-delete-cleanup'
 kill "$rb_pid"; wait "$rb_pid" || true; rb_pid=
 sed '/kind: RemoteAddressClaim/,$d' "$work/rb.yaml" >"$work/rb-delete.yaml"
 jexec "$rb" "$routerd" serve --config "$work/rb-delete.yaml" --state-file /tmp/routerd-sam/delete.db --status-file /tmp/routerd-sam/delete.json --socket /tmp/routerd-sam/delete.sock --status-socket /tmp/routerd-sam/delete-status.sock --controllers sam >"$evidence/router-b-delete.log" 2>&1 & rb_pid=$!
@@ -189,6 +210,7 @@ jexec "$rb" pfctl -a operator_sam -f - <<'EOF_PF'
 pass in quick inet from any to 198.18.250.200/32
 EOF_PF
 jexec "$rb" ifconfig "$rb_b" alias 198.18.250.99/32
+stage='collision-foreign-preservation'
 kill "$rb_pid"; wait "$rb_pid" || true; rb_pid=
 jexec "$rb" "$routerd" serve --config "$work/rb.yaml" --state-file /tmp/routerd-sam/collision.db --status-file /tmp/routerd-sam/collision.json --socket /tmp/routerd-sam/collision.sock --status-socket /tmp/routerd-sam/collision-status.sock --controllers sam >"$evidence/router-b-collision.log" 2>&1 & rb_pid=$!
 wait_for "$rb" "grep -q 'foreign OS address' /tmp/routerd-sam/collision.json" "$evidence/collision-status.log"
