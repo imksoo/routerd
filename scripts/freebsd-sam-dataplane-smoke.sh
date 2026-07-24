@@ -167,13 +167,13 @@ jexec "$ra" "$routerd" serve --config "$work/ra.yaml" --state-file /tmp/routerd-
 jexec "$rb" "$routerd" serve --config "$work/rb.yaml" --state-file /tmp/routerd-sam/state.db --status-file /tmp/routerd-sam/status.json --socket /tmp/routerd-sam/api.sock --status-socket /tmp/routerd-sam/status.sock --controllers all >"$evidence/router-b.log" 2>&1 & rb_pid=$!
 
 wait_for() { jail_name=$1 command=$2 file=$3; n=0; while [ "$n" -lt 45 ]; do if jexec "$jail_name" sh -c "$command" >"$file" 2>&1; then return 0; fi; n=$((n+1)); sleep 1; done; return 1; }
-wait_for "$ra" "arp -an 198.18.250.99 | grep -q published" "$evidence/router-a-arp.log"
+wait_for "$ra" "arp -n 198.18.250.99 | grep -q published" "$evidence/router-a-arp.log"
 stage='carp-master-arp'
 wait_for "$rb" "ifconfig $rb_b | grep -q 'carp: BACKUP'" "$evidence/router-b-backup.log"
 wait "$arp_capture" || true; arp_capture=
 grep -c '198\.18\.250\.99' "$evidence/client-arp.log" | awk '$1 >= 3 {exit 0} {exit 1}'
 grep -F 'published' "$evidence/router-a-arp.log"
-if jexec "$rb" arp -an 198.18.250.99 >"$evidence/router-b-arp.log" 2>&1 && grep -q published "$evidence/router-b-arp.log"; then echo 'CARP backup published ARP' >&2; exit 1; fi
+if jexec "$rb" arp -n 198.18.250.99 >"$evidence/router-b-arp.log" 2>&1 && grep -q published "$evidence/router-b-arp.log"; then echo 'CARP backup published ARP' >&2; exit 1; fi
 printf 'sam-client-observed-three-garps=ok\n' >"$evidence/summary.log"
 printf 'sam-carp-backup-silent-master-published=ok\n' >>"$evidence/summary.log"
 
@@ -190,7 +190,7 @@ printf 'sam-pf-32-overlay-return=ok\n' >>"$evidence/summary.log"
 # router-b must become master and take over the one published entry.
 jexec "$ra" ifconfig "$ra_b" down
 stage='carp-failover'
-wait_for "$rb" "arp -an 198.18.250.99 | grep -q published" "$evidence/router-b-arp-after-failover.log"
+wait_for "$rb" "arp -n 198.18.250.99 | grep -q published" "$evidence/router-b-arp-after-failover.log"
 jexec "$client" ping -n -S 198.18.250.20 -c 3 -W 1 198.18.250.99 >"$evidence/client-ping-after-failover.log"
 printf 'sam-carp-forced-switchover-converged=ok\n' >>"$evidence/summary.log"
 
@@ -199,7 +199,7 @@ stage='owned-delete-cleanup'
 kill "$rb_pid"; wait "$rb_pid" || true; rb_pid=
 sed '/kind: RemoteAddressClaim/,$d' "$work/rb.yaml" >"$work/rb-delete.yaml"
 jexec "$rb" "$routerd" serve --config "$work/rb-delete.yaml" --state-file /tmp/routerd-sam/delete.db --status-file /tmp/routerd-sam/delete.json --socket /tmp/routerd-sam/delete.sock --status-socket /tmp/routerd-sam/delete-status.sock --controllers sam >"$evidence/router-b-delete.log" 2>&1 & rb_pid=$!
-wait_for "$rb" "! arp -an 198.18.250.99 | grep -q published" "$evidence/router-b-owned-cleanup.log"
+wait_for "$rb" "! arp -n 198.18.250.99 | grep -q published" "$evidence/router-b-owned-cleanup.log"
 jexec "$rb" pfctl -a routerd_sam_forward -sr >"$evidence/router-b-pf-cleanup.log"
 [ ! -s "$evidence/router-b-pf-cleanup.log" ]
 printf 'sam-owned-arp-pf-delete-cleanup=ok\n' >>"$evidence/summary.log"

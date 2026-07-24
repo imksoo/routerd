@@ -21,7 +21,7 @@ func TestFreeBSDSAMPublishedARPUsesExactAddressAndRefusesForeign(t *testing.T) {
 	freeBSDSAMRunCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		commands = append(commands, name+" "+strings.Join(args, " "))
 		switch strings.Join(args, " ") {
-		case "-an 192.0.2.55":
+		case "-n 192.0.2.55":
 			return nil, nil
 		case "-s 192.0.2.55 02:00:00:00:00:55 pub":
 			return nil, nil
@@ -38,7 +38,7 @@ func TestFreeBSDSAMPublishedARPUsesExactAddressAndRefusesForeign(t *testing.T) {
 	if err := (freeBSDSAMProxyNeighborApplier{}).EnsureProxyNeighbor(context.Background(), "192.0.2.55/32", "em0"); err != nil {
 		t.Fatalf("EnsureProxyNeighbor: %v", err)
 	}
-	if got, want := strings.Join(commands, "\n"), "arp -an 192.0.2.55\narp -s 192.0.2.55 02:00:00:00:00:55 pub"; got != want {
+	if got, want := strings.Join(commands, "\n"), "arp -n 192.0.2.55\narp -s 192.0.2.55 02:00:00:00:00:55 pub"; got != want {
 		t.Fatalf("commands = %q, want %q", got, want)
 	}
 

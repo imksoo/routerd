@@ -249,7 +249,9 @@ func samIPv4Address(address string) (string, error) {
 }
 
 func freeBSDARPEntry(ctx context.Context, address string) (string, bool, error) {
-	out, err := freeBSDSAMRunCommand(ctx, "arp", "-an", address)
+	// FreeBSD arp(8) accepts a hostname/address for the single-entry form;
+	// -a selects all entries and cannot be combined with that operand.
+	out, err := freeBSDSAMRunCommand(ctx, "arp", "-n", address)
 	if err != nil {
 		text := strings.TrimSpace(string(out))
 		if text == "" || strings.Contains(strings.ToLower(text), "no match") {
