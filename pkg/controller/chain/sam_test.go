@@ -96,9 +96,67 @@ func TestSAMControllerProviderSecondaryBGPUsesProxyNeighborWithoutProxyARP(t *te
 	if note["address"] != "10.0.1.122/32" || note["reason"] != "bgp-delivery" || note["enforced"] != true {
 		t.Fatalf("OS absence note = %#v", note)
 	}
-	if _, ok := status["captureProxyNeighbor"]; ok {
-		t.Fatalf("provider-secondary BGP status must not be reported as proxy-ARP capture: %#v", status)
+	neighbor, ok := status["captureProxyNeighbor"].(map[string]any)
+	if !ok || neighbor["address"] != "10.0.1.122/32" || neighbor["interface"] != "ens3" {
+		t.Fatalf("provider-secondary BGP proxy neighbor ownership = %#v", status["captureProxyNeighbor"])
 	}
+	// Provider-secondary/BGP both publishes a neighbor and enforces local
+	// address absence. They are independent teardown ownership records.
+	store.statuses = []routerstate.ObjectStatus{{
+		APIVersion: api.HybridAPIVersion,
+		Kind:       "RemoteAddressClaim",
+		Name:       "app",
+		Status:     status,
+	}}
+	controller.Router = &api.Router{}
+	applier.calls = nil
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("delete Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{"delete:10.0.1.122/32@ens3"})
+	if !store.deleted[api.HybridAPIVersion+"/RemoteAddressClaim/app"] {
+		t.Fatalf("removed provider-secondary status was not deleted: %#v", store.deleted)
+	}
+}
+
+func TestSAMControllerProviderSecondaryBGPFreeBSDPersistsAndRemovesProxyNeighbor(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.122/32", "provider-secondary-ip", "em0")
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+		Metadata: api.ObjectMeta{Name: "samt0"},
+		Spec:     api.TunnelInterfaceSpec{Mode: "ipip", Local: "10.99.0.2", Remote: "10.99.0.1", Address: "10.255.0.2/31"},
+	})
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ConfigureOSAddress = true
+	spec.Delivery = api.AddressDelivery{PeerRef: "cloud", Mode: "bgp"}
+	router.Spec.Resources[1].Spec = spec
+
+	store := &samStore{objects: map[string]map[string]any{}}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSFreeBSD, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+	neighbor, ok := status["captureProxyNeighbor"].(map[string]any)
+	if !ok || neighbor["address"] != "10.0.1.122/32" || neighbor["interface"] != "em0" {
+		t.Fatalf("FreeBSD proxy neighbor ownership = %#v", status["captureProxyNeighbor"])
+	}
+	if _, ok := status["captureOSAddressAbsence"].(map[string]any); !ok {
+		t.Fatalf("FreeBSD OS-absence ownership missing: %#v", status)
+	}
+	store.statuses = []routerstate.ObjectStatus{{
+		APIVersion: api.HybridAPIVersion,
+		Kind:       "RemoteAddressClaim",
+		Name:       "app",
+		Status:     status,
+	}}
+	controller.Router = &api.Router{}
+	applier.calls = nil
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("delete Reconcile: %v", err)
+	}
+	assertSAMCalls(t, applier.calls, []string{"delete:10.0.1.122/32@em0"})
 }
 
 func TestSAMControllerDeassignAbsentAddressIsNoopButTracked(t *testing.T) {
