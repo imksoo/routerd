@@ -59,6 +59,7 @@ cleanup() {
       "$evidence/router-a-arp.log" "$evidence/router-b-arp.log" "$evidence/router-b-backup.log" \
       "$evidence/router-a-carp.log" "$evidence/router-b-carp.log" \
       "$evidence/client-arp.log" \
+      "$evidence/router-a-pf-bootstrap.log" "$evidence/router-b-pf-bootstrap.log" \
       "$evidence/router-a-status.json" "$evidence/router-b-status.json" \
       "$evidence/bridge-carp.log" "$evidence/bridge-ifconfig.log" \
       "$evidence/router-a-pf-main.log" "$evidence/router-a-pf-anchor.log" \
@@ -113,6 +114,24 @@ jexec "$overlay" ifconfig gif0 tunnel 198.18.251.2 198.18.251.1
 jexec "$overlay" ifconfig gif0 inet 10.254.250.2 10.254.250.1 netmask 255.255.255.252 up
 jexec "$overlay" ifconfig lo0 alias 198.18.250.99/32
 
+# PF anchors are only effective when the active main ruleset calls them.
+# Install the explicit operator-side anchor call in each isolated router VNET
+# before routerd starts; routerd itself owns only the anchor's rules.
+if ! jexec "$ra" pfctl -e >"$evidence/router-a-pf-bootstrap.log" 2>&1; then
+  jexec "$ra" pfctl -s info >>"$evidence/router-a-pf-bootstrap.log" 2>&1
+  grep -q 'Status: Enabled' "$evidence/router-a-pf-bootstrap.log"
+fi
+jexec "$ra" pfctl -f - >>"$evidence/router-a-pf-bootstrap.log" 2>&1 <<'EOF_PF'
+anchor "routerd_sam_forward"
+EOF_PF
+if ! jexec "$rb" pfctl -e >"$evidence/router-b-pf-bootstrap.log" 2>&1; then
+  jexec "$rb" pfctl -s info >>"$evidence/router-b-pf-bootstrap.log" 2>&1
+  grep -q 'Status: Enabled' "$evidence/router-b-pf-bootstrap.log"
+fi
+jexec "$rb" pfctl -f - >>"$evidence/router-b-pf-bootstrap.log" 2>&1 <<'EOF_PF'
+anchor "routerd_sam_forward"
+EOF_PF
+
 write_config() {
   jail_name=$1 lan=$2 outer=$3 outer_address=$4 priority=$5 out=$6
   cat >"$out" <<EOF
@@ -133,6 +152,12 @@ spec:
     kind: TunnelInterface
     metadata: {name: gif0}
     spec: {mode: ipip, local: $outer_address, remote: 198.18.251.2, trustedUnderlay: true, address: 10.254.250.1/30, peerAddress: 10.254.250.2}
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: IPv4Route
+    metadata:
+      name: sam-forward-local
+      annotations: {mobility.routerd.net/source: bgp-local-inventory}
+    spec: {destination: 198.18.250.99/32, device: $lan}
   - apiVersion: net.routerd.net/v1alpha1
     kind: VirtualAddress
     metadata: {name: sam-vip}
