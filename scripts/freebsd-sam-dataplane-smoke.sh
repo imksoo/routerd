@@ -337,7 +337,7 @@ EOF_PF
 jexec "$rb" ifconfig "$rb_b" alias 198.18.250.99/32
 stage='collision-foreign-preservation'
 kill "$rb_pid"; wait "$rb_pid" || true; rb_pid=
-jexec "$rb" "$routerd" serve --config "$work/rb.yaml" --state-file "$rb_collision_runtime/state.db" --status-file "$rb_collision_runtime/status.json" --socket "$rb_collision_runtime/api.sock" --status-socket "$rb_collision_runtime/status.sock" --controllers sam >"$evidence/router-b-collision.log" 2>&1 & rb_pid=$!
+jexec "$rb" "$routerd" serve --config "$work/rb.yaml" --state-file "$rb_collision_runtime/state.db" --status-file "$rb_collision_runtime/status.json" --socket "$rb_collision_runtime/api.sock" --status-socket "$rb_collision_runtime/status.sock" --controllers sam,vrrp >"$evidence/router-b-collision.log" 2>&1 & rb_pid=$!
 wait_foreign_collision "$rb" "$evidence/collision-status.json"
 jexec "$rb" pfctl -a operator_sam -sr >"$evidence/foreign-pf-preserved.log"
 grep -F '198.18.250.200/32' "$evidence/foreign-pf-preserved.log"
