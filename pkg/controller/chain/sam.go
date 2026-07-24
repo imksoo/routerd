@@ -73,7 +73,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 		targetOS = platform.CurrentOS()
 	}
 	if targetOS != platform.OSLinux && targetOS != platform.OSFreeBSD {
-		return c.reconcileStatuses(targetOS, nil, nil, nil, nil, nil)
+		return c.reconcileStatuses(targetOS, nil, nil, nil, nil, nil, nil)
 	}
 	statuses, err := c.listObjectStatuses()
 	if err != nil {
@@ -103,6 +103,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	garpSent := map[string]bool{}
 	garpErrors := map[string]string{}
 	proxyNeighborApplied := map[string]bool{}
+	captureFailures := map[string]string{}
 	blockedPublication := map[string]bool{}
 	priorNeighbors := samStoredProxyNeighbors(statuses)
 	for _, action := range actions {
@@ -119,7 +120,9 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 				applier = defaultSAMProxyNeighborApplier()
 			}
 			if err := applier.EnsureProxyNeighbor(ctx, action.Address, action.Interface); err != nil {
-				failures = append(failures, fmt.Sprintf("%s %s dev %s: %v", action.ClaimName, action.Address, action.Interface, err))
+				failure := fmt.Sprintf("%s %s dev %s: %v", action.ClaimName, action.Address, action.Interface, err)
+				failures = append(failures, failure)
+				captureFailures[action.ClaimName] = failure
 				continue
 			}
 			proxyNeighborApplied[action.ClaimName] = true
@@ -152,13 +155,15 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 			deassignResults[action.ClaimName] = result
 			if err != nil {
 				blockedPublication[action.ClaimName] = true
-				failures = append(failures, fmt.Sprintf("%s deassign %s: %v", action.ClaimName, action.Address, err))
+				failure := fmt.Sprintf("%s deassign %s: %v", action.ClaimName, action.Address, err)
+				failures = append(failures, failure)
+				captureFailures[action.ClaimName] = failure
 			}
 		default:
 			continue
 		}
 	}
-	if err := c.reconcileStatuses(targetOS, deassignResults, garpSent, garpErrors, proxyNeighborApplied, actions); err != nil {
+	if err := c.reconcileStatuses(targetOS, deassignResults, garpSent, garpErrors, proxyNeighborApplied, captureFailures, actions); err != nil {
 		return err
 	}
 	if len(failures) > 0 {
@@ -282,7 +287,7 @@ func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []s
 	return nil
 }
 
-func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults map[string]samOSAddressDeassignResult, garpSent map[string]bool, garpErrors map[string]string, proxyNeighborApplied map[string]bool, actions []sam.CaptureAction) error {
+func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults map[string]samOSAddressDeassignResult, garpSent map[string]bool, garpErrors map[string]string, proxyNeighborApplied map[string]bool, captureFailures map[string]string, actions []sam.CaptureAction) error {
 	proxyNeighbors := map[string]samStoredProxyNeighbor{}
 	for _, action := range actions {
 		if action.Kind != "proxy-neighbor" {
@@ -297,6 +302,14 @@ func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults m
 	for _, claim := range claims {
 		status := sam.StatusForRemoteAddressClaim(claim, c.Lowerings, c.Store, targetOS)
 		status["dryRun"] = c.DryRun
+		captureFailure := captureFailures[claim.Metadata.Name]
+		if captureFailure != "" {
+			status["phase"] = "Error"
+			status["reason"] = "CaptureFailed"
+			status["message"] = captureFailure
+			status["error"] = captureFailure
+			status["captureStatus"] = sam.CaptureStatusBlocked
+		}
 		if targetOS == platform.OSLinux || targetOS == platform.OSFreeBSD {
 			if neighbor, ok := proxyNeighbors[claim.Metadata.Name]; ok && proxyNeighborApplied[claim.Metadata.Name] {
 				aliases := sam.CaptureInterfaceAliases(c.Router)
@@ -311,7 +324,7 @@ func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults m
 					status["lastGARPError"] = garpErrors[claim.Metadata.Name]
 				}
 			}
-			if spec, err := claim.RemoteAddressClaimSpec(); err == nil && providerSecondaryEnforcesOSAddressAbsence(spec) {
+			if spec, err := claim.RemoteAddressClaimSpec(); err == nil && captureFailure == "" && providerSecondaryEnforcesOSAddressAbsence(spec) {
 				result := deassignResults[claim.Metadata.Name]
 				note := map[string]any{
 					"address": firstNonEmpty(result.address, strings.TrimSpace(spec.Address)),

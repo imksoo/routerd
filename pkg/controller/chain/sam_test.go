@@ -255,6 +255,43 @@ func TestSAMControllerFreeBSDCollisionFailsBeforePublishedARP(t *testing.T) {
 	if len(applier.ensure) != 0 || len(garp.calls) != 0 {
 		t.Fatalf("collision published ARP/GARP: ensure=%#v garp=%#v", applier.ensure, garp.calls)
 	}
+	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+	if status["phase"] != "Error" || status["reason"] != "CaptureFailed" || !strings.Contains(status["error"].(string), "foreign OS address") {
+		t.Fatalf("collision status = %#v, want persisted capture failure", status)
+	}
+	if _, ok := status["captureProxyNeighbor"]; ok {
+		t.Fatalf("failed collision retained published-neighbor ownership: %#v", status)
+	}
+}
+
+func TestSAMControllerCaptureFailureStatusRecoversOnLaterSuccess(t *testing.T) {
+	for _, targetOS := range []platform.OS{platform.OSLinux, platform.OSFreeBSD} {
+		t.Run(string(targetOS), func(t *testing.T) {
+			router := samControllerRouterWithClaim("10.0.1.123/32", "provider-secondary-ip", "lan0")
+			store := &samStore{objects: map[string]map[string]any{}}
+			applier := &fakeSAMApplier{deassignErr: errors.New("foreign OS address owns 10.0.1.123/32")}
+			controller := SAMController{Router: router, Store: store, OS: targetOS, Applier: applier}
+			if err := controller.Reconcile(context.Background()); err == nil {
+				t.Fatal("first Reconcile unexpectedly succeeded")
+			}
+			failed := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+			if failed["phase"] != "Error" || failed["reason"] != "CaptureFailed" || !strings.Contains(failed["error"].(string), "foreign OS address") {
+				t.Fatalf("failed status = %#v", failed)
+			}
+
+			applier.deassignErr = nil
+			if err := controller.Reconcile(context.Background()); err != nil {
+				t.Fatalf("successful Reconcile: %v", err)
+			}
+			recovered := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
+			if recovered["phase"] == "Error" || recovered["reason"] == "CaptureFailed" {
+				t.Fatalf("recovered status retained failure: %#v", recovered)
+			}
+			if _, ok := recovered["error"]; ok {
+				t.Fatalf("recovered status retained error: %#v", recovered)
+			}
+		})
+	}
 }
 
 func TestSAMControllerFreeBSDForeignPublishedAddressIsPreserved(t *testing.T) {
