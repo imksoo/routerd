@@ -24,6 +24,7 @@ type fakeSAMApplier struct {
 	deassignResult samOSAddressDeassignResult
 	ensureErr      error
 	deleteErr      error
+	onDelete       func()
 	deassignErr    error
 	forwardErr     error
 }
@@ -67,6 +68,9 @@ func (a *fakeSAMApplier) EnsureProxyNeighbor(_ context.Context, address, ifname 
 func (a *fakeSAMApplier) DeleteProxyNeighbor(_ context.Context, address, ifname string) error {
 	a.delete = append(a.delete, address+"@"+ifname)
 	a.calls = append(a.calls, "delete:"+address+"@"+ifname)
+	if a.onDelete != nil {
+		a.onDelete()
+	}
 	return a.deleteErr
 }
 

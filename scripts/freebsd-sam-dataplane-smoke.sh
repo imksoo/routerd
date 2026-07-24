@@ -314,7 +314,7 @@ kill "$rb_pid"; wait "$rb_pid" || true; rb_pid=
 # Keep the original state DB so the route controller can prove this exact /32
 # was routerd-owned before teardown. Status and sockets remain isolated for the
 # delete observation, avoiding collision with the stopped original process.
-jexec "$rb" "$routerd" serve --config "$work/rb-delete.yaml" --state-file "$rb_runtime/state.db" --status-file "$rb_delete_runtime/status.json" --socket "$rb_delete_runtime/api.sock" --status-socket "$rb_delete_runtime/status.sock" --controllers sam,route >"$evidence/router-b-delete.log" 2>&1 & rb_pid=$!
+jexec "$rb" "$routerd" serve --config "$work/rb-delete.yaml" --state-file "$rb_runtime/state.db" --status-file "$rb_delete_runtime/status.json" --socket "$rb_delete_runtime/api.sock" --status-socket "$rb_delete_runtime/status.sock" --controllers sam,ipv4-route >"$evidence/router-b-delete.log" 2>&1 & rb_pid=$!
 wait_for "$rb" "! arp -n -i $rb_b 198.18.250.99 | grep -q published" "$evidence/router-b-owned-cleanup.log"
 jexec "$rb" cat "$rb_delete_runtime/status.json" >"$evidence/router-b-delete-status.json" 2>&1 || true
 jexec "$rb" pfctl -a routerd_sam_forward -sr >"$evidence/router-b-pf-cleanup.log"

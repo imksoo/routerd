@@ -337,6 +337,71 @@ func TestSAMControllerCleansRemovedProxyNeighbor(t *testing.T) {
 	}
 }
 
+func TestSAMRouteTeardownPrecedesRemovedProxyNeighbor(t *testing.T) {
+	store := &samStore{objects: map[string]map[string]any{}, statuses: []routerstate.ObjectStatus{
+		{
+			APIVersion: api.NetAPIVersion,
+			Kind:       "IPv4Route",
+			Name:       "published-host-bgp-fib",
+			Status: map[string]any{
+				"phase": "Installed", "type": "unicast", "destination": "10.0.1.123/32", "device": "samt0",
+			},
+		},
+		samRemoteAddressClaimStatus("old", "10.0.1.123/32", "lan0"),
+	}}
+	var order []string
+	route := IPv4RouteController{
+		Router: &api.Router{}, Store: store,
+		Command: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			if len(args) >= 2 && args[0] == "route" && args[1] == "del" {
+				order = append(order, "route")
+			}
+			return nil, nil
+		},
+	}
+	applier := &fakeSAMApplier{onDelete: func() { order = append(order, "neighbor") }}
+	controller := SAMController{Router: &api.Router{}, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := reconcileSAMAfterRouteTeardown(context.Background(), route, controller); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	assertSAMCalls(t, order, []string{"route", "neighbor"})
+	if !store.deleted[api.NetAPIVersion+"/IPv4Route/published-host-bgp-fib"] || !store.deleted[api.HybridAPIVersion+"/RemoteAddressClaim/old"] {
+		t.Fatalf("teardown deletions = %#v", store.deleted)
+	}
+}
+
+func TestSAMRouteTeardownFailureRetainsProxyNeighbor(t *testing.T) {
+	store := &samStore{objects: map[string]map[string]any{}, statuses: []routerstate.ObjectStatus{
+		{
+			APIVersion: api.NetAPIVersion,
+			Kind:       "IPv4Route",
+			Name:       "published-host-bgp-fib",
+			Status: map[string]any{
+				"phase": "Installed", "type": "unicast", "destination": "10.0.1.123/32", "device": "samt0",
+			},
+		},
+		samRemoteAddressClaimStatus("old", "10.0.1.123/32", "lan0"),
+	}}
+	route := IPv4RouteController{
+		Router: &api.Router{}, Store: store,
+		Command: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			if len(args) >= 2 && args[0] == "route" && args[1] == "del" {
+				return []byte("delete failed"), errors.New("route delete failed")
+			}
+			return nil, nil
+		},
+	}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: &api.Router{}, Store: store, OS: platform.OSLinux, Applier: applier}
+	err := reconcileSAMAfterRouteTeardown(context.Background(), route, controller)
+	if err == nil || !strings.Contains(err.Error(), "teardown stale IPv4Routes before SAM cleanup") {
+		t.Fatalf("reconcile error = %v", err)
+	}
+	if len(applier.delete) != 0 || store.deleted[api.HybridAPIVersion+"/RemoteAddressClaim/old"] {
+		t.Fatalf("route failure must retain SAM neighbor ownership: delete=%#v statuses=%#v", applier.delete, store.deleted)
+	}
+}
+
 func TestSAMControllerCleansChangedProxyNeighborInterface(t *testing.T) {
 	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "br-new")
 	store := &samStore{objects: map[string]map[string]any{}, statuses: []routerstate.ObjectStatus{

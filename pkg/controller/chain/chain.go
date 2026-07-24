@@ -2185,7 +2185,14 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = view.EffectiveRouter
 			current.Store = store.withRouter(view.EffectiveRouter)
 			current.Lowerings = view.SAMLowerings
-			return didWorkError(current.Reconcile(ctx))
+			// FreeBSD routeguard intentionally refuses to delete an owned ARP
+			// neighbor while a stale /32 resolves through a tunnel. Tear down
+			// owned routes from the same effective route view first. If that
+			// teardown fails, SAM retains its capture ownership for retry.
+			routeTeardown := route
+			routeTeardown.Router = view.RouteRouter
+			routeTeardown.Store = store.withRouter(view.RouteRouter)
+			return didWorkError(reconcileSAMAfterRouteTeardown(ctx, routeTeardown, current))
 		}},
 		framework.FuncController{ControllerName: "path-mtu", Subs: statusSubscriptions("DSLiteTunnel", "PPPoESession", "WireGuardInterface", "TunnelInterface", "Interface", "FirewallZone", "DHCPv6Server", "IPv6RouterAdvertisement", "MobilityPool"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
@@ -2387,6 +2394,19 @@ func didWorkPeriodic(fn func(context.Context) error) func(context.Context) (bool
 		err := fn(ctx)
 		return false, err
 	}
+}
+
+// reconcileSAMAfterRouteTeardown preserves the ownership ordering between
+// route-backed SAM delivery and proxy-neighbor cleanup. In particular,
+// FreeBSD must remove an owned /32 route before routeguard can safely remove
+// the corresponding ARP neighbor. The route controller already knows how to
+// retain a failed teardown for retry; do not run SAM if that prerequisite
+// fails.
+func reconcileSAMAfterRouteTeardown(ctx context.Context, route IPv4RouteController, controller SAMController) error {
+	if err := route.cleanupRemovedRoutes(ctx); err != nil {
+		return fmt.Errorf("teardown stale IPv4Routes before SAM cleanup: %w", err)
+	}
+	return controller.Reconcile(ctx)
 }
 
 func didWorkError(err error) (bool, error) {
