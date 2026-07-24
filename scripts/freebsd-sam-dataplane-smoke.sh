@@ -278,7 +278,10 @@ stage='pf-overlay-dataplane'
 jexec "$ra" pfctl -sr >"$evidence/router-a-pf-main.log"
 jexec "$ra" pfctl -a routerd_sam_forward -sr >"$evidence/router-a-pf-anchor.log"
 grep -F 'routerd_sam_forward' "$evidence/router-a-pf-main.log"
-grep -F '198.18.250.99/32' "$evidence/router-a-pf-anchor.log"
+# pfctl canonically omits /32 for IPv4 host rules.  Assert both directions of
+# the provider-secondary/BGP forward path rather than its YAML CIDR spelling.
+grep -F "pass quick on $ra_b inet from any to 198.18.250.99" "$evidence/router-a-pf-anchor.log"
+grep -F 'pass quick on gif0 inet from 198.18.250.99 to any' "$evidence/router-a-pf-anchor.log"
 jexec "$ra" route -n get 198.18.250.99 >"$evidence/router-a-bgp-fib-route.log" 2>&1
 grep -Eq 'interface:[[:space:]]+gif0([[:space:]]|$)' "$evidence/router-a-bgp-fib-route.log"
 jexec "$client" ping -n -S 198.18.250.20 -c 3 -W 1 198.18.250.99 >"$evidence/client-ping.log"
