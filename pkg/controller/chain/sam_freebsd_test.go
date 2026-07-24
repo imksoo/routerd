@@ -97,6 +97,8 @@ func TestFreeBSDSAMDeletePublishedARPVerifiesScopedRemoval(t *testing.T) {
 				return []byte("? (192.0.2.55) at 02:00:00:00:00:55 on em0 permanent published [ethernet]\n"), nil
 			}
 			return []byte("192.0.2.55 (192.0.2.55) -- no entry\n"), errors.New("exit status 1")
+		case "-n get 192.0.2.55":
+			return []byte("   route to: 192.0.2.55\ninterface: em0\n"), nil
 		case "-d 192.0.2.55":
 			return nil, nil
 		default:
@@ -106,7 +108,7 @@ func TestFreeBSDSAMDeletePublishedARPVerifiesScopedRemoval(t *testing.T) {
 	if err := (freeBSDSAMProxyNeighborApplier{}).DeleteProxyNeighbor(context.Background(), "192.0.2.55/32", "em0"); err != nil {
 		t.Fatalf("DeleteProxyNeighbor: %v", err)
 	}
-	if got, want := strings.Join(commands, "\n"), "arp -n -i em0 192.0.2.55\narp -d 192.0.2.55\narp -n -i em0 192.0.2.55"; got != want {
+	if got, want := strings.Join(commands, "\n"), "arp -n -i em0 192.0.2.55\nroute -n get 192.0.2.55\narp -d 192.0.2.55\narp -n -i em0 192.0.2.55"; got != want {
 		t.Fatalf("commands = %q, want %q", got, want)
 	}
 
@@ -115,6 +117,8 @@ func TestFreeBSDSAMDeletePublishedARPVerifiesScopedRemoval(t *testing.T) {
 		switch strings.Join(args, " ") {
 		case "-n -i em0 192.0.2.55":
 			return []byte("? (192.0.2.55) at 02:00:00:00:00:55 on em0 permanent published [ethernet]\n"), nil
+		case "-n get 192.0.2.55":
+			return []byte("interface: em0\n"), nil
 		case "-d 192.0.2.55":
 			return nil, nil
 		default:
@@ -123,6 +127,25 @@ func TestFreeBSDSAMDeletePublishedARPVerifiesScopedRemoval(t *testing.T) {
 	}
 	if err := (freeBSDSAMProxyNeighborApplier{}).DeleteProxyNeighbor(context.Background(), "192.0.2.55/32", "em0"); err == nil || !strings.Contains(err.Error(), "scoped entry remains") {
 		t.Fatalf("remaining scoped ARP deletion error = %v", err)
+	}
+
+	commands = nil
+	freeBSDSAMRunCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		commands = append(commands, name+" "+strings.Join(args, " "))
+		switch strings.Join(args, " ") {
+		case "-n -i em0 192.0.2.55":
+			return []byte("? (192.0.2.55) at 02:00:00:00:00:55 on em0 permanent published [ethernet]\n"), nil
+		case "-n get 192.0.2.55":
+			return []byte("interface: gif0\n"), nil
+		default:
+			return nil, errors.New("unexpected command")
+		}
+	}
+	if err := (freeBSDSAMProxyNeighborApplier{}).DeleteProxyNeighbor(context.Background(), "192.0.2.55/32", "em0"); err == nil || !strings.Contains(err.Error(), "route resolves through gif0") {
+		t.Fatalf("wrong-FIB deletion error = %v", err)
+	}
+	if got, want := strings.Join(commands, "\n"), "arp -n -i em0 192.0.2.55\nroute -n get 192.0.2.55"; got != want {
+		t.Fatalf("wrong-FIB commands = %q, want %q", got, want)
 	}
 }
 

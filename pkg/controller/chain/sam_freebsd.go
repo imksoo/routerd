@@ -126,6 +126,14 @@ func (freeBSDSAMProxyNeighborApplier) DeleteProxyNeighbor(ctx context.Context, a
 	if !freeBSDPublishedARPMatches(entry, ifname) {
 		return fmt.Errorf("foreign published ARP %s: refusing deletion", ip)
 	}
+	// arp(8) deliberately rejects -i for a single delete. Its netlink delete
+	// path consequently derives the target interface from the current FIB.
+	// Do not let a more-specific tunnel route turn this owned-LAN cleanup into
+	// an unsafe or ineffective deletion: prove that the same route lookup
+	// resolves through the declared Ethernet interface before invoking arp -d.
+	if err := freeBSDARPDeleteRouteUsesInterface(ctx, ip, ifname); err != nil {
+		return err
+	}
 	out, err := freeBSDSAMRunCommand(ctx, "arp", "-d", ip)
 	if err != nil {
 		return fmt.Errorf("delete published ARP %s: %w: %s", ip, err, strings.TrimSpace(string(out)))
@@ -136,6 +144,23 @@ func (freeBSDSAMProxyNeighborApplier) DeleteProxyNeighbor(ctx context.Context, a
 		return fmt.Errorf("delete published ARP %s: scoped entry remains on %s", ip, ifname)
 	}
 	return nil
+}
+
+func freeBSDARPDeleteRouteUsesInterface(ctx context.Context, address, ifname string) error {
+	out, err := freeBSDSAMRunCommand(ctx, "route", "-n", "get", address)
+	if err != nil {
+		return fmt.Errorf("observe route before deleting published ARP %s on %s: %w: %s", address, ifname, err, strings.TrimSpace(string(out)))
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "interface:" {
+			if fields[1] == ifname {
+				return nil
+			}
+			return fmt.Errorf("delete published ARP %s: route resolves through %s, not owned interface %s", address, fields[1], ifname)
+		}
+	}
+	return fmt.Errorf("delete published ARP %s: route output has no interface for owned interface %s", address, ifname)
 }
 
 func (freeBSDSAMProxyNeighborApplier) EnsureOSAddressAbsent(ctx context.Context, address string) (samOSAddressDeassignResult, error) {
