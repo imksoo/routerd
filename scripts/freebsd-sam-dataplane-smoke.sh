@@ -62,7 +62,12 @@ client_if=$(ifconfig epair create); client_b=${client_if%a}b
 ra_outer=$(ifconfig epair create); ra_outer_b=${ra_outer%a}b
 rb_outer=$(ifconfig epair create); rb_outer_b=${rb_outer%a}b
 ifconfig "$ra_b" vnet "$ra"; ifconfig "$rb_b" vnet "$rb"; ifconfig "$client_b" vnet "$client"
-ifconfig "$ra_outer_b" vnet "$overlay"; ifconfig "$rb_outer_b" vnet "$overlay"
+# Each router/overlay epair must have both endpoints in the intended VNETs:
+# endpoint a is the router interface named in the production config; endpoint
+# b is its remote peer in the overlay VNET.  Keeping a on the host makes the
+# later jexec ifconfig target nonexistent.
+ifconfig "$ra_outer" vnet "$ra"; ifconfig "$ra_outer_b" vnet "$overlay"
+ifconfig "$rb_outer" vnet "$rb"; ifconfig "$rb_outer_b" vnet "$overlay"
 # Host bridge gives the two routers and client one real Ethernet collision domain.
 br=$(ifconfig bridge create); bridge_created=$br
 ifconfig "$ra_if" up; ifconfig "$rb_if" up; ifconfig "$client_if" up
