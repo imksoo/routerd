@@ -21,6 +21,10 @@ type fakeSAMApplier struct {
 	calls          []string
 	forwardSets    [][]sam.CaptureAction
 	deassignResult samOSAddressDeassignResult
+	ensureErr      error
+	deleteErr      error
+	deassignErr    error
+	forwardErr     error
 }
 
 type fakeSAMGARP struct {
@@ -46,13 +50,13 @@ func (a *fakeSAMApplier) SetProxyARP(_ context.Context, ifname string, enabled b
 func (a *fakeSAMApplier) EnsureProxyNeighbor(_ context.Context, address, ifname string) error {
 	a.ensure = append(a.ensure, address+"@"+ifname)
 	a.calls = append(a.calls, "ensure:"+address+"@"+ifname)
-	return nil
+	return a.ensureErr
 }
 
 func (a *fakeSAMApplier) DeleteProxyNeighbor(_ context.Context, address, ifname string) error {
 	a.delete = append(a.delete, address+"@"+ifname)
 	a.calls = append(a.calls, "delete:"+address+"@"+ifname)
-	return nil
+	return a.deleteErr
 }
 
 func (a *fakeSAMApplier) EnsureOSAddressAbsent(_ context.Context, address string) (samOSAddressDeassignResult, error) {
@@ -62,7 +66,7 @@ func (a *fakeSAMApplier) EnsureOSAddressAbsent(_ context.Context, address string
 	if result.address == "" {
 		result.address = address
 	}
-	return result, nil
+	return result, a.deassignErr
 }
 
 func (a *fakeSAMApplier) ReconcileForwardPaths(_ context.Context, paths []sam.CaptureAction) error {
@@ -70,7 +74,7 @@ func (a *fakeSAMApplier) ReconcileForwardPaths(_ context.Context, paths []sam.Ca
 	for _, path := range paths {
 		a.calls = append(a.calls, "forward:"+path.Address+"@"+path.Interface+"<->"+path.PeerInterface)
 	}
-	return nil
+	return a.forwardErr
 }
 
 func samRemoteAddressClaimStatus(name, address, ifname string) routerstate.ObjectStatus {

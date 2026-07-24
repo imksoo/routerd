@@ -139,6 +139,116 @@ func TestSAMControllerNonLinuxNoHostActions(t *testing.T) {
 	}
 }
 
+// These are Stage 2 contract tests. They deliberately execute on the Linux
+// test host while setting OSFreeBSD so the controller and planner cannot hide
+// behind host-platform detection. The FreeBSD adapter implementation follows
+// in a separate production commit.
+func TestSAMControllerFreeBSDPublishesAddressGARPAndForwardPath(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "lan0")
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.GratuitousARP = true
+	router.Spec.Resources[1].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{Name: "samt0"},
+			Spec:     api.TunnelInterfaceSpec{Mode: "ipip", Local: "10.99.0.2", Remote: "10.99.0.1", Address: "10.255.0.2/31"},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
+			Metadata: api.ObjectMeta{Name: "local-inventory", Annotations: map[string]string{
+				"mobility.routerd.net/source": "bgp-local-inventory",
+			}},
+			Spec: api.IPv4RouteSpec{Destination: "10.77.60.13/32", Device: "lan0"},
+		},
+	)
+	store := &samStore{objects: map[string]map[string]any{}}
+	applier := &fakeSAMApplier{}
+	garp := &fakeSAMGARP{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSFreeBSD, Applier: applier, GARP: garp}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if applier.deassign == nil || len(applier.deassign) != 1 || applier.deassign[0] != "10.0.1.123/32" {
+		t.Fatalf("FreeBSD address-collision cleanup = %#v, want exact published address", applier.deassign)
+	}
+	if applier.ensure == nil || len(applier.ensure) != 1 || applier.ensure[0] != "10.0.1.123/32@lan0" {
+		t.Fatalf("FreeBSD published ARP ownership = %#v, want exact address@interface", applier.ensure)
+	}
+	if len(garp.calls) != 1 || garp.calls[0] != "10.0.1.123/32@lan0" {
+		t.Fatalf("FreeBSD BPF GARP = %#v, want one published-address announcement", garp.calls)
+	}
+	if len(applier.forwardSets) != 1 || len(applier.forwardSets[0]) != 1 || applier.forwardSets[0][0].Kind != "forward-local-path" {
+		t.Fatalf("FreeBSD PF desired /32 paths = %#v, want one local forward path", applier.forwardSets)
+	}
+}
+
+func TestSAMControllerFreeBSDCollisionFailsBeforePublishedARP(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "lan0")
+	store := &samStore{objects: map[string]map[string]any{}}
+	applier := &fakeSAMApplier{deassignErr: errors.New("foreign OS address owns 10.0.1.123/32")}
+	garp := &fakeSAMGARP{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSFreeBSD, Applier: applier, GARP: garp}
+	err := controller.Reconcile(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "foreign OS address") {
+		t.Fatalf("Reconcile error = %v, want collision refusal", err)
+	}
+	if len(applier.ensure) != 0 || len(garp.calls) != 0 {
+		t.Fatalf("collision published ARP/GARP: ensure=%#v garp=%#v", applier.ensure, garp.calls)
+	}
+}
+
+func TestSAMControllerFreeBSDForeignPublishedAddressIsPreserved(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "lan0")
+	store := &samStore{objects: map[string]map[string]any{}}
+	applier := &fakeSAMApplier{ensureErr: errors.New("foreign published ARP 10.0.1.123/32 dev lan0")}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSFreeBSD, Applier: applier, GARP: &fakeSAMGARP{}}
+	err := controller.Reconcile(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "foreign published ARP") {
+		t.Fatalf("Reconcile error = %v, want foreign-state refusal", err)
+	}
+	if len(applier.delete) != 0 {
+		t.Fatalf("foreign published ARP was deleted: %#v", applier.delete)
+	}
+}
+
+func TestSAMControllerFreeBSDCARPGatesPublicationAndEmptyCleanup(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "lan0")
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.GratuitousARP = true
+	spec.Capture.ActiveWhen = api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}
+	router.Spec.Resources[1].Spec = spec
+	store := &samStore{objects: map[string]map[string]any{
+		api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "backup"},
+	}}
+	applier := &fakeSAMApplier{}
+	garp := &fakeSAMGARP{}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSFreeBSD, Applier: applier, GARP: garp}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("backup Reconcile: %v", err)
+	}
+	if len(applier.ensure) != 0 || len(garp.calls) != 0 {
+		t.Fatalf("backup published capture: ensure=%#v garp=%#v", applier.ensure, garp.calls)
+	}
+	store.objects[api.NetAPIVersion+"/VirtualAddress/onprem-vip"]["role"] = "master"
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("master Reconcile: %v", err)
+	}
+	if len(applier.ensure) != 1 || len(garp.calls) != 1 {
+		t.Fatalf("master publication = ensure %#v garp %#v, want one each", applier.ensure, garp.calls)
+	}
+	controller.Router = &api.Router{}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("delete Reconcile: %v", err)
+	}
+	if len(applier.forwardSets) != 3 || len(applier.forwardSets[2]) != 0 {
+		t.Fatalf("empty desired PF cleanup contract = %#v", applier.forwardSets)
+	}
+	if len(applier.delete) != 1 || applier.delete[0] != "10.0.1.123/32@lan0" {
+		t.Fatalf("owned delete cleanup = %#v", applier.delete)
+	}
+}
+
 func TestSAMControllerCleansRemovedProxyNeighbor(t *testing.T) {
 	router := &api.Router{}
 	store := &samStore{
