@@ -1878,6 +1878,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			Router:        r.Router,
 			Store:         mobilityData,
 			PeerGroupSync: peerGroupSync,
+			OS:            platform.CurrentOS(),
 		}
 		mobilityEnrollmentClient = mobilitycontroller.SAMEnrollmentClientController{
 			Router: r.Router,

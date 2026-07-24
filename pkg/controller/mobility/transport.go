@@ -17,6 +17,7 @@ import (
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
@@ -27,6 +28,7 @@ type TransportController struct {
 	Store         Store
 	PeerGroupSync *PeerGroupSyncClient
 	Now           func() time.Time
+	OS            platform.OS
 }
 
 type transportPeerStatus struct {
@@ -220,6 +222,9 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 			EncapDport:        spec.EncapDport,
 			TrustedUnderlay:   true,
 		}
+		if c.targetOS() == platform.OSFreeBSD {
+			tunnelSpec.PeerAddress = remoteAddr.String()
+		}
 		out.Resources = append(out.Resources, api.Resource{
 			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
 			Metadata: api.ObjectMeta{Name: tunnelName, OwnerRefs: ownerRef, Annotations: transportAnnotations(owner.Metadata.Name, self, peerNode)},
@@ -304,6 +309,13 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 	}
 	sort.Strings(out.PendingSources)
 	return out, nil
+}
+
+func (c TransportController) targetOS() platform.OS {
+	if c.OS != "" {
+		return c.OS
+	}
+	return platform.CurrentOS()
 }
 
 func transportBGPImportPolicyForPeer(base api.BGPImportPolicySpec, defaultAllowedPrefixes []string, topologyNodeRefs []string, peerNode string, routeReflectorClient bool) api.BGPImportPolicySpec {

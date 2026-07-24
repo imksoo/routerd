@@ -98,6 +98,42 @@ func TestSAMTransportProfileDerivesSymmetricSortedEdge31(t *testing.T) {
 	}
 }
 
+func TestSAMTransportProfileDerivesPeerAddressOnlyForFreeBSD(t *testing.T) {
+	now := time.Date(2026, 7, 24, 21, 55, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name            string
+		targetOS        platform.OS
+		wantPeerAddress string
+	}{
+		{name: "linux", targetOS: platform.OSLinux},
+		{name: "freebsd", targetOS: platform.OSFreeBSD, wantPeerAddress: "10.255.1.1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := testStore(t, now)
+			controller := TransportController{
+				Router: transportRouter("demo", "cloud-rt", []api.SAMTransportPeerSpec{{
+					NodeRef:        "onprem-rt",
+					RemoteEndpoint: "203.0.113.20",
+				}}),
+				Store: store,
+				Now:   func() time.Time { return now },
+				OS:    tc.targetOS,
+			}
+			if err := controller.Reconcile(context.Background()); err != nil {
+				t.Fatalf("Reconcile: %v", err)
+			}
+			resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("demo", "cloud-rt")).ResourcesJSON)
+			tunnel := findTransportTunnel(t, resources)
+			if tunnel.Address != "10.255.1.0/31" {
+				t.Fatalf("Address = %q, want 10.255.1.0/31", tunnel.Address)
+			}
+			if tunnel.PeerAddress != tc.wantPeerAddress {
+				t.Fatalf("PeerAddress = %q, want %q", tunnel.PeerAddress, tc.wantPeerAddress)
+			}
+		})
+	}
+}
+
 func TestSAMTransportProfileDerivesHubSpokeWithSharedTopology(t *testing.T) {
 	now := time.Date(2026, 6, 6, 9, 3, 0, 0, time.UTC)
 	topology := []string{"k8s-rt01", "k8s-rt02", "pve-rt01", "pve-rt06", "pve-rt08"}
