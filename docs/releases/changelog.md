@@ -12,6 +12,22 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- FreeBSD 14.3 amd64 now supports the complete Cloud SAM local-capture
+  dataplane for the provider-secondary-IP plus BGP `/32` path. Native evidence
+  uses two independent routers and two independent clients on an isolated L2,
+  and verifies published ARP, three gratuitous ARPs, PF forwarding and return
+  traffic, CARP master/backup handover, restart/idempotence, owned cleanup,
+  and byte-preserved foreign ARP/PF rejection.
+
+### Fixed
+
+- SAM forwarding now reconciles empty desired state, retains provider-secondary
+  neighbor ownership for teardown, orders owned route removal before neighbor
+  cleanup, and reports fail-closed capture errors through resource status.
+  The ownership and status behavior is covered on both Linux and FreeBSD.
+
 ## v20260723.1609
 
 ### Changed
