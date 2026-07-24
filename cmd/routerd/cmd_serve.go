@@ -361,6 +361,7 @@ func warnIgnoredLegacyServeFlags(stderr io.Writer, setFlags map[string]bool) {
 func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	defaultBGPSocket, defaultBGPControlSocket, defaultBGPState := bgpServeDefaultPaths(platformDefaults)
 	configPath := fs.String("config", defaultConfigPath, "config path")
 	statusFile := fs.String("status-file", defaultStatusFile(), "status file")
 	socketPath := fs.String("socket", defaultSocketPath(), "Unix domain socket path")
@@ -381,9 +382,9 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	dnsmasqServicePath := fs.String("dnsmasq-service-file", defaultDnsmasqServicePath, "routerd-managed dnsmasq systemd unit file")
 	nftablesPath := fs.String("nftables-file", defaultNftablesPath, "routerd-managed nftables ruleset file")
 	ledgerPath := fs.String("ledger-file", defaultLedgerPath, "routerd ownership ledger file")
-	bgpSocketPath := fs.String("bgp-socket", "/run/routerd/bgp/gobgp.sock", "routerd-bgp GoBGP gRPC Unix socket path")
-	bgpControlSocketPath := fs.String("bgp-control-socket", "", "routerd-bgp control Unix socket path")
-	bgpStatePath := fs.String("bgp-state-file", "", "routerd-bgp applied state JSON path")
+	bgpSocketPath := fs.String("bgp-socket", defaultBGPSocket, "routerd-bgp GoBGP gRPC Unix socket path")
+	bgpControlSocketPath := fs.String("bgp-control-socket", defaultBGPControlSocket, "routerd-bgp control Unix socket path")
+	bgpStatePath := fs.String("bgp-state-file", defaultBGPState, "routerd-bgp applied state JSON path")
 	gracefulStopTimeout := fs.Duration("graceful-stop-timeout", 20*time.Second, "wait up to this duration for mobility make-before-break handoff on SIGTERM/SIGINT; 0 disables")
 	once := fs.Bool("once", false, "converge once and exit without serving control sockets")
 	sandbox := fs.Bool("sandbox", false, "serve control API in a dry-run sandbox with no host mutation")
@@ -961,6 +962,12 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		return err
 	}
 	return nil
+}
+
+func bgpServeDefaultPaths(defaults platform.Defaults) (socket, controlSocket, state string) {
+	return filepath.Join(defaults.RuntimeDir, "bgp", "gobgp.sock"),
+		filepath.Join(defaults.RuntimeDir, "bgp", "control.sock"),
+		filepath.Join(defaults.StateDir, "bgp", "applied.json")
 }
 
 const sandboxDefaultRouterYAML = `apiVersion: routerd.net/v1alpha1
