@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260724.1159
+
 ### Added
 
 - FreeBSD 14.3 amd64 now supports the complete Cloud SAM local-capture

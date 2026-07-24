@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260724.1159
+
 ### 新增
 
 - FreeBSD 14.3 amd64 现支持 provider-secondary-IP 加 BGP `/32` path 的完整

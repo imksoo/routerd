@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260724.1159
+
 ### 追加
 
 - FreeBSD 14.3 amd64 は、provider-secondary-IP と BGP の `/32` path に対する
