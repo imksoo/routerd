@@ -1254,7 +1254,6 @@ type Runner struct {
 	ARPObserverCommands arpObserverCommandPusher
 
 	supervisedMu         sync.Mutex
-	supervisedDaemons    map[string]bool
 	clientDaemonStates   map[string]supervisedDaemonState
 	daemonSourcesStarted map[string]bool
 	arpObserverReadySet  map[string]bool
@@ -2686,6 +2685,13 @@ func (r *Runner) clientDaemonSpecs(router *api.Router) []supervisedDaemonSpec {
 			out = append(out, supervisedDaemonSpec{ResourceName: resource.Metadata.Name, Binary: "routerd-pppoe-client", Args: args})
 		}
 	}
+	for _, spec := range r.mobilityARPObserverDaemonSpecsForRouter(router) {
+		out = append(out, supervisedDaemonSpec{
+			ResourceName: spec.ResourceName,
+			Binary:       "routerd-arp-observer",
+			Args:         arpObserverDaemonArgs(spec),
+		})
+	}
 	return out
 }
 
@@ -2837,14 +2843,21 @@ type mobilityARPObserverDaemonSpec struct {
 }
 
 func (r *Runner) mobilityARPObserverDaemonSpecs() []mobilityARPObserverDaemonSpec {
-	if r == nil || r.Router == nil {
+	if r == nil {
+		return nil
+	}
+	return r.mobilityARPObserverDaemonSpecsForRouter(r.Router)
+}
+
+func (r *Runner) mobilityARPObserverDaemonSpecsForRouter(router *api.Router) []mobilityARPObserverDaemonSpec {
+	if r == nil || router == nil {
 		return nil
 	}
 	defaults, _ := platform.Current()
 	seen := map[string]bool{}
-	ignoredSenderMACs := samNodeSetMACAddresses(r.Router)
+	ignoredSenderMACs := samNodeSetMACAddresses(router)
 	var out []mobilityARPObserverDaemonSpec
-	for _, res := range r.Router.Spec.Resources {
+	for _, res := range router.Spec.Resources {
 		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "MobilityPool" {
 			continue
 		}
@@ -2852,7 +2865,7 @@ func (r *Runner) mobilityARPObserverDaemonSpecs() []mobilityARPObserverDaemonSpe
 		if err != nil || mobilityDeliveryMode(spec) != "bgp" {
 			continue
 		}
-		selfNode, err := chainRouterSelfNode(r.Router, spec.GroupRef)
+		selfNode, err := chainRouterSelfNode(router, spec.GroupRef)
 		if err != nil {
 			continue
 		}
@@ -2873,7 +2886,7 @@ func (r *Runner) mobilityARPObserverDaemonSpecs() []mobilityARPObserverDaemonSpe
 			if strings.TrimSpace(eventInterface) == "" {
 				continue
 			}
-			ifname := interfaceIfName(r.Router, eventInterface)
+			ifname := interfaceIfName(router, eventInterface)
 			if ifname == "" {
 				ifname = eventInterface
 			}
@@ -3034,43 +3047,15 @@ func (r *Runner) startARPObserverDaemonSources(ctx context.Context, logger *slog
 }
 
 func (r *Runner) reconcileARPObserverDaemons(ctx context.Context, logger *slog.Logger) {
-	r.supervisedMu.Lock()
-	if r.supervisedDaemons == nil {
-		r.supervisedDaemons = make(map[string]bool)
-	}
-	if r.arpObserverReadySet == nil {
-		r.arpObserverReadySet = make(map[string]bool)
-	}
-	r.supervisedMu.Unlock()
-
 	r.startARPObserverDaemonSources(ctx, logger)
 
 	for _, spec := range r.mobilityARPObserverDaemonSpecs() {
-		r.supervisedMu.Lock()
-		already := r.supervisedDaemons[spec.ResourceName]
-		if !already {
-			r.supervisedDaemons[spec.ResourceName] = true
-		}
-		r.supervisedMu.Unlock()
-		if already {
-			if r.arpObserverReady(spec.ResourceName) {
-				if err := r.syncARPObserverIgnoredSenderMACs(ctx, spec); err != nil && logger != nil {
-					logger.Warn("arp observer ignore set sync failed", "resource", spec.ResourceName, "error", err)
-				}
-			} else {
-				go func(spec mobilityARPObserverDaemonSpec) {
-					if err := r.waitForARPObserverInitialSync(ctx, spec); err != nil && ctx.Err() == nil && logger != nil {
-						logger.Warn("arp observer initial ignore set sync failed", "resource", spec.ResourceName, "error", err)
-					}
-				}(spec)
+		if r.arpObserverReady(spec.ResourceName) {
+			if err := r.syncARPObserverIgnoredSenderMACs(ctx, spec); err != nil && logger != nil {
+				logger.Warn("arp observer ignore set sync failed", "resource", spec.ResourceName, "error", err)
 			}
 			continue
 		}
-		args := arpObserverDaemonArgs(spec)
-		if logger != nil {
-			logger.Info("daemon-supervisor-reconcile: starting new arp-observer", "resource", spec.ResourceName, "interface", spec.IfName)
-		}
-		r.startSupervisedDaemon(ctx, logger, spec.ResourceName, "routerd-arp-observer", args)
 		go func(spec mobilityARPObserverDaemonSpec) {
 			if err := r.waitForARPObserverInitialSync(ctx, spec); err != nil && ctx.Err() == nil && logger != nil {
 				logger.Warn("arp observer initial ignore set sync failed", "resource", spec.ResourceName, "error", err)
@@ -3185,10 +3170,6 @@ func (r *Runner) startSupervisedDaemonSpec(ctx context.Context, logger *slog.Log
 			}
 		}
 	}()
-}
-
-func (r *Runner) startSupervisedDaemon(ctx context.Context, logger *slog.Logger, resourceName, binary string, args []string) {
-	r.startSupervisedDaemonSpec(ctx, logger, supervisedDaemonSpec{ResourceName: resourceName, Binary: binary, Args: append([]string(nil), args...)})
 }
 
 func routerdClientBinary(name string) string {
