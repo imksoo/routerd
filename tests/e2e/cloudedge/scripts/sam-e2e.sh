@@ -11,6 +11,9 @@ Options:
   --ssh-key FILE          Fixed lab SSH key (default: ~/.ssh/routerd-cloudedge-lab-20260529)
   --configs-dir DIR       Use existing generated configs instead of generating into evidence/config-gen
   --skip-deploy           Do not install routerd/configs; useful for diagnostics-only reruns
+  --skip-initial-validation
+                          Continue from a separately recorded PASS and start with failover;
+                          only the full-suite resume path should normally use this
   --failover-node NODE    Optional router node name; may be repeated. Stops routerd.service and reruns convergence/matrix
   --rejoin-after-failover Restart stopped failover nodes and rerun convergence/matrix
   --load-balance-report   Capture MobilityPool owner-table snapshots after each matrix run
@@ -35,6 +38,7 @@ tfvars=
 ssh_key="${HOME}/.ssh/routerd-cloudedge-lab-20260529"
 configs_dir=
 skip_deploy=0
+skip_initial_validation=0
 failover_nodes=()
 stopped_routers=()
 rejoin_after_failover=0
@@ -59,6 +63,7 @@ while [ "$#" -gt 0 ]; do
     --ssh-key) ssh_key="$2"; shift 2 ;;
     --configs-dir) configs_dir="$2"; shift 2 ;;
     --skip-deploy) skip_deploy=1; shift ;;
+    --skip-initial-validation) skip_initial_validation=1; shift ;;
     --failover-node) failover_nodes+=("$2"); shift 2 ;;
     --rejoin-after-failover) rejoin_after_failover=1; shift ;;
     --load-balance-report) load_balance_report=1; shift ;;
@@ -110,6 +115,10 @@ oci_profile="${OCI_PROFILE:-}"
 [ "${#routers[@]}" -gt 0 ] || { echo "no router nodes found in $nodes_json" >&2; exit 2; }
 [ "${#leaf_routers[@]}" -gt 0 ] || { echo "no leaf router nodes found in $nodes_json" >&2; exit 2; }
 [ "${#clients[@]}" -gt 1 ] || { echo "at least two client nodes are required in $nodes_json" >&2; exit 2; }
+if [ "$skip_initial_validation" -eq 1 ] && [ "${#failover_nodes[@]}" -eq 0 ]; then
+  echo "--skip-initial-validation requires at least one --failover-node" >&2
+  exit 2
+fi
 
 known_hosts="$evidence_dir/ssh/known_hosts"
 : >"$known_hosts"
@@ -353,6 +362,7 @@ record_note() {
     sha256sum "$artifact"
     echo "ssh_key=$ssh_key"
     ssh-keygen -lf "${ssh_key}.pub" 2>/dev/null || ssh-keygen -y -f "$ssh_key" | ssh-keygen -lf -
+    echo "skip_initial_validation=$skip_initial_validation"
     echo "legacy_protocols=$legacy_protocols"
     echo "performance_tests=$performance_tests"
     echo "failover_transfer_tests=$failover_transfer_tests"
@@ -1828,12 +1838,16 @@ if [ "$overall" -eq 0 ]; then
 fi
 if [ "$overall" -eq 0 ]; then
   validation_started=1
-  initial_validation_rc=0
-  run_validation_set "initial" || initial_validation_rc=$?
-  if [ "$initial_validation_rc" -eq 2 ]; then
-    mark_failed "initial validation set PROVIDER-CONVERGENCE-FAIL"
-  elif [ "$initial_validation_rc" -ne 0 ]; then
-    mark_failed "initial validation set"
+  if [ "$skip_initial_validation" -eq 1 ]; then
+    printf 'initial\tSKIP_PRIOR_PASS\t0\n' >>"$evidence_dir/convergence/summary.tsv"
+  else
+    initial_validation_rc=0
+    run_validation_set "initial" || initial_validation_rc=$?
+    if [ "$initial_validation_rc" -eq 2 ]; then
+      mark_failed "initial validation set PROVIDER-CONVERGENCE-FAIL"
+    elif [ "$initial_validation_rc" -ne 0 ]; then
+      mark_failed "initial validation set"
+    fi
   fi
 fi
 if [ "$validation_started" -eq 1 ]; then

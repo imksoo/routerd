@@ -60,11 +60,39 @@ marker-recovery, foreign-process refusal, restart, and cleanup lifecycle.
 Focused regression, unfiltered `go test ./...`, FreeBSD amd64 cross, schema,
 website-schema, and diff checks pass locally. A bounded Claude review returned
 `Execution error` at its 180-second limit and supplied no usable finding; it
-was not retried. Exact CI and retained-topology redeploy/revalidation remain
-required.
+was not retried. The initial implementation was completed by
+`aa7f1ea44f944c8246fbc3fda7a4ede2eb916421`, exact CI
+[30098194329](https://github.com/imksoo/routerd/actions/runs/30098194329)
+passed, and attempt 3 exposed one remaining CLI contract: the observer binary
+did not accept the internal `--supervisor-owner` argument. Commit
+`1eec779a785bc45bf09c510fe2e3da653737081b` adds that parser contract and
+regression; exact CI
+[30099558747](https://github.com/imksoo/routerd/actions/runs/30099558747)
+is terminal success.
 
-Revised evidence-dependent stages: fix and exact CI 13:30–15:30Z; retained
-topology redeploy and all full-run scenarios 15:30–19:00Z; destroy and clean
-inventory audit 19:00–20:00Z if no second production failure. A separate
-mixed Linux/FreeBSD interoperability qualification follows the Linux-only
-cleanup.
+Attempt 4 uses exact artifact
+`/tmp/routerd-sam-full-20260724.fDbT39/artifacts/routerd-1eec779a-linux-amd64.tar.gz`
+(`sha256=e3c851b5b14e57ea05b26509bbb9f882566c21e0e9bd042c97a77c3ea223cd90`).
+Both PVE leaves run two token-bearing observer children and emit real
+`ARPObserved`/`ARPProbeHit` events. The initial dataplane phase is PASS:
+directed client matrix 56/56, cloud-ingress 42/42, provider gate PASS, and
+legacy RPC/FTP/NFS/CIFS matrix 56/56. Baseline performance measurement is in
+progress.
+
+The original full wrapper repeated legacy and throughput probes before,
+during, and after each of ten failovers, which measures the same property
+roughly thirty times and extends the run toward fifteen hours without adding
+owner-transfer validity. The ordered default suite now keeps full
+legacy/performance at baseline and final load-balance while retaining all
+directed client/cloud-ingress checks, provider convergence, in-flight transfer
+observation, owner tables, and rejoin checks at every failover. Resume accepts
+only a contiguous ordered PASS prefix with retained evidence. A standalone
+`--scenario` remains exhaustive. Unfiltered `go test ./...`, FreeBSD amd64
+cross, schemas, shell syntax/ShellCheck, default Linux generator behavior, and
+FreeBSD CARP generator/render checks pass.
+
+Separate mixed Linux/FreeBSD qualification is tracked by
+[#973](https://github.com/imksoo/routerd/issues/973). It uses real FreeBSD
+14.3 amd64 full clones, console/read-only-ISO bootstrap because VM115 QGA is
+not running, and CARP master/backup ownership gating. It follows Linux-only
+terminal cleanup.
