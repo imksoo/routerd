@@ -118,3 +118,11 @@ enable key-only SSH without QGA. The three ISOs passed checksum verification
 both locally and on `pve06` and are attached to the stopped owned clones. A
 bounded Claude review timed out with `Execution error` and no finding; it was
 not retried.
+
+Pre-boot source inspection found that generated FreeBSD rc.d services execute
+routerd daemons from `/usr/local/sbin`, while the first qualification-only
+bundle extraction placed every binary under `/usr/local/bin`. No VM had been
+started. The bootstrap generator now keeps `routerctl` in `bin` and installs
+`routerd` plus every `routerd-*` daemon into `sbin` as well. Regenerated ISOs
+passed checksum verification and rendered FreeBSD `/bin/sh` syntax checks;
+the stopped clones will receive those corrected ISOs only after exact CI.

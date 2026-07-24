@@ -101,7 +101,12 @@ test "$actual_sha" = "$artifact_sha"
 mount -uw /
 install -d -m 0755 /usr/local/bin /usr/local/sbin
 tar -xzf /cdrom/routerd-freebsd-amd64-qualification.tar.gz -C /usr/local
-test -x /usr/local/bin/routerd
+for daemon in /usr/local/bin/routerd /usr/local/bin/routerd-*; do
+  test -f "$daemon" || continue
+  install -m 0755 "$daemon" "/usr/local/sbin/${daemon##*/}"
+done
+test -x /usr/local/sbin/routerd
+test -x /usr/local/sbin/routerd-bgp
 test -x /usr/local/bin/routerctl
 
 hostname "$node"
