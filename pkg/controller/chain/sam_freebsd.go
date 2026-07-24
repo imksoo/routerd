@@ -285,10 +285,11 @@ func freeBSDARPEntry(ctx context.Context, address, ifname string) (string, bool,
 	if err != nil {
 		text := strings.TrimSpace(string(out))
 		// FreeBSD arp(8) reports an absent single entry as a nonzero command
-		// with the exact "ADDRESS (...) -- no entry" form. That is the only
-		// nonzero lookup outcome that is safe to normalize: every other error
-		// leaves ownership unknown and must remain fail-closed.
-		if strings.HasPrefix(text, address+" (") && strings.HasSuffix(text, ") -- no entry") {
+		// with either the unscoped "ADDRESS (ADDRESS) -- no entry" form or,
+		// when -i is used, that exact form followed by " on IFACE". Those are
+		// the only nonzero lookup outcomes safe to normalize; every other error
+		// leaves ownership unknown and remains fail-closed.
+		if freeBSDARPEntryAbsent(text, address, ifname) {
 			return "", false, nil
 		}
 		return "", false, fmt.Errorf("observe ARP %s: %w: %s", address, err, text)
@@ -299,6 +300,11 @@ func freeBSDARPEntry(ctx context.Context, address, ifname string) (string, bool,
 		}
 	}
 	return "", false, nil
+}
+
+func freeBSDARPEntryAbsent(text, address, ifname string) bool {
+	base := address + " (" + address + ") -- no entry"
+	return text == base || text == base+" on "+ifname
 }
 
 func freeBSDPublishedARPMatches(entry, ifname string) bool {

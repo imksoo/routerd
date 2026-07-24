@@ -63,10 +63,16 @@ func TestFreeBSDSAMARPEntryOnlyNormalizesCanonicalFreeBSDAbsence(t *testing.T) {
 		if name != "arp" || strings.Join(args, " ") != "-n -i em0 198.18.250.99" {
 			t.Fatalf("command = %s %s", name, strings.Join(args, " "))
 		}
-		return []byte("198.18.250.99 (198.18.250.99) -- no entry\n"), errors.New("exit status 1")
+		return []byte("198.18.250.99 (198.18.250.99) -- no entry on em0\n"), errors.New("exit status 1")
 	}
 	if entry, found, err := freeBSDARPEntry(context.Background(), "198.18.250.99", "em0"); err != nil || found || entry != "" {
 		t.Fatalf("canonical absent entry = %q, found=%t, err=%v", entry, found, err)
+	}
+	if !freeBSDARPEntryAbsent("198.18.250.99 (198.18.250.99) -- no entry", "198.18.250.99", "em0") {
+		t.Fatal("unscoped canonical absence was not accepted")
+	}
+	if freeBSDARPEntryAbsent("198.18.250.99 (198.18.250.99) -- no entry on em1", "198.18.250.99", "em0") {
+		t.Fatal("different-interface absence was accepted")
 	}
 
 	freeBSDSAMRunCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
