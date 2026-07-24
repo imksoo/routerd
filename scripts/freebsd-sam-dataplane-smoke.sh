@@ -30,13 +30,19 @@ rb_outer=''
 bridge_created=''
 ra_pid=''
 rb_pid=''
+arp_capture=''
+carp_capture=''
 stage='setup'
 cleanup() {
   rc=$?; set +e
   [ -n "$ra_pid" ] && kill "$ra_pid" 2>/dev/null
   [ -n "$rb_pid" ] && kill "$rb_pid" 2>/dev/null
+  [ -n "$arp_capture" ] && kill "$arp_capture" 2>/dev/null
+  [ -n "$carp_capture" ] && kill "$carp_capture" 2>/dev/null
   [ -n "$ra_pid" ] && wait "$ra_pid" 2>/dev/null
   [ -n "$rb_pid" ] && wait "$rb_pid" 2>/dev/null
+  [ -n "$arp_capture" ] && wait "$arp_capture" 2>/dev/null
+  [ -n "$carp_capture" ] && wait "$carp_capture" 2>/dev/null
   {
     jail -r "$ra"
     jail -r "$rb"
@@ -51,6 +57,9 @@ cleanup() {
       "$evidence/router-a-validate.log" "$evidence/router-b-validate.log" \
       "$evidence/router-a.log" "$evidence/router-b.log" \
       "$evidence/router-a-arp.log" "$evidence/router-b-backup.log" \
+      "$evidence/router-a-carp.log" "$evidence/router-b-carp.log" \
+      "$evidence/router-a-status.json" "$evidence/router-b-status.json" \
+      "$evidence/bridge-carp.log" "$evidence/bridge-ifconfig.log" \
       "$evidence/router-a-pf-main.log" "$evidence/router-a-pf-anchor.log" \
       "$evidence/client-ping.log" "$evidence/collision-status.log"; do
       [ -s "$log" ] || continue
@@ -167,14 +176,29 @@ jexec "$rb" "$routerd" validate --config "$work/rb.yaml" >"$evidence/router-b-va
 # Capture before either controller starts: this proves the three BPF GARPs are
 # visible to a real client, rather than merely constructed in a unit test.
 jexec "$client" timeout 20 tcpdump -n -l -i "$client_b" 'arp and host 198.18.250.99' >"$evidence/client-arp.log" 2>&1 & arp_capture=$!
+# CARP is protocol 112; `-T carp` is the FreeBSD carp(4)-documented decoder.
+# This is retained on failure to distinguish a topology/configuration mismatch
+# from an unobserved state transition.
+timeout 20 tcpdump -n -l -T carp -i "$br" 'ip proto 112' >"$evidence/bridge-carp.log" 2>&1 & carp_capture=$!
 stage='start-controllers'
 jexec "$ra" "$routerd" serve --config "$work/ra.yaml" --state-file "$ra_runtime/state.db" --status-file "$ra_runtime/status.json" --socket "$ra_runtime/api.sock" --status-socket "$ra_runtime/status.sock" --controllers all >"$evidence/router-a.log" 2>&1 & ra_pid=$!
 jexec "$rb" "$routerd" serve --config "$work/rb.yaml" --state-file "$rb_runtime/state.db" --status-file "$rb_runtime/status.json" --socket "$rb_runtime/api.sock" --status-socket "$rb_runtime/status.sock" --controllers all >"$evidence/router-b.log" 2>&1 & rb_pid=$!
 
 wait_for() { jail_name=$1 command=$2 file=$3; n=0; while [ "$n" -lt 45 ]; do if jexec "$jail_name" sh -c "$command" >"$file" 2>&1; then return 0; fi; n=$((n+1)); sleep 1; done; return 1; }
+wait_carp_state() { jail_name=$1 ifname=$2 state_name=$3 file=$4; n=0; while [ "$n" -lt 45 ]; do jexec "$jail_name" ifconfig "$ifname" >"$file" 2>&1 || return 1; if grep -Eq "carp:[[:space:]]+${state_name}([[:space:]]|$)" "$file"; then return 0; fi; n=$((n+1)); sleep 1; done; return 1; }
+snapshot_carp_state() {
+  jexec "$ra" ifconfig "$ra_b" >"$evidence/router-a-carp.log" 2>&1 || true
+  jexec "$rb" ifconfig "$rb_b" >"$evidence/router-b-carp.log" 2>&1 || true
+  jexec "$ra" cat "$ra_runtime/status.json" >"$evidence/router-a-status.json" 2>&1 || true
+  jexec "$rb" cat "$rb_runtime/status.json" >"$evidence/router-b-status.json" 2>&1 || true
+  ifconfig "$br" >"$evidence/bridge-ifconfig.log" 2>&1 || true
+  if [ -n "$carp_capture" ]; then kill "$carp_capture" 2>/dev/null || true; wait "$carp_capture" 2>/dev/null || true; carp_capture=''; fi
+}
 wait_for "$ra" "arp -n 198.18.250.99 | grep -q published" "$evidence/router-a-arp.log"
 stage='carp-master-arp'
-wait_for "$rb" "ifconfig $rb_b | grep -q 'carp: BACKUP'" "$evidence/router-b-backup.log"
+if ! wait_carp_state "$ra" "$ra_b" MASTER "$evidence/router-a-carp.log"; then snapshot_carp_state; exit 1; fi
+if ! wait_carp_state "$rb" "$rb_b" BACKUP "$evidence/router-b-backup.log"; then snapshot_carp_state; exit 1; fi
+snapshot_carp_state
 wait "$arp_capture" || true; arp_capture=
 grep -c '198\.18\.250\.99' "$evidence/client-arp.log" | awk '$1 >= 3 {exit 0} {exit 1}'
 grep -F 'published' "$evidence/router-a-arp.log"
