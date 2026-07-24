@@ -64,8 +64,9 @@ cleanup() {
       "$evidence/bridge-carp.log" "$evidence/bridge-ifconfig.log" \
       "$evidence/router-a-pf-main.log" "$evidence/router-a-pf-anchor.log" \
       "$evidence/router-a-bgp-fib-route.log" "$evidence/router-b-route-cleanup.log" \
-      "$evidence/overlay-return-route.log" \
-      "$evidence/client-ping.log" "$evidence/collision-status.log"; do
+      "$evidence/overlay-return-route.log" "$evidence/overlay-failover-return-route.log" \
+      "$evidence/client-ping.log" "$evidence/client-ping-after-failover.log" \
+      "$evidence/router-b-arp-after-failover.log" "$evidence/collision-status.log"; do
       [ -s "$log" ] || continue
       printf '%s\n' "--- ${log##*/} ---" >&2
       tail -80 "$log" >&2
@@ -109,11 +110,14 @@ jexec "$overlay" ifconfig "$ra_outer_b" inet 198.18.251.2/30 up
 jexec "$rb" ifconfig "$rb_outer" inet 198.18.251.5/30 up
 jexec "$overlay" ifconfig "$rb_outer_b" inet 198.18.251.6/30 up
 
-# The remote stack is the real return endpoint.  gif is configured manually
-# only there; router-a/b get their production gif from routerd.
+# The remote stack is the real return endpoint. It has one reciprocal GIF per
+# router underlay, so CARP handover never reuses router-a's outer or inner path.
 jexec "$overlay" ifconfig gif0 create
 jexec "$overlay" ifconfig gif0 tunnel 198.18.251.2 198.18.251.1
 jexec "$overlay" ifconfig gif0 inet 10.254.250.2 10.254.250.1 netmask 255.255.255.252 up
+jexec "$overlay" ifconfig gif1 create
+jexec "$overlay" ifconfig gif1 tunnel 198.18.251.6 198.18.251.5
+jexec "$overlay" ifconfig gif1 inet 10.254.251.2 10.254.251.1 netmask 255.255.255.252 up
 jexec "$overlay" ifconfig lo0 alias 198.18.250.99/32
 # The overlay endpoint is manually configured for this acceptance, not owned by
 # routerd.  It needs the LAN return route that production BGP convergence would
@@ -141,7 +145,7 @@ anchor "routerd_sam_forward"
 EOF_PF
 
 write_config() {
-  jail_name=$1 lan=$2 outer=$3 outer_address=$4 priority=$5 out=$6 include_claim=$7
+  jail_name=$1 lan=$2 outer=$3 outer_address=$4 remote_outer=$5 inner_address=$6 inner_peer=$7 priority=$8 out=$9 include_claim=${10}
   cat >"$out" <<EOF
 apiVersion: routerd.net/v1alpha1
 kind: Router
@@ -159,7 +163,7 @@ spec:
   - apiVersion: hybrid.routerd.net/v1alpha1
     kind: TunnelInterface
     metadata: {name: gif0}
-    spec: {mode: ipip, local: $outer_address, remote: 198.18.251.2, trustedUnderlay: true, address: 10.254.250.1/30, peerAddress: 10.254.250.2}
+    spec: {mode: ipip, local: $outer_address, remote: $remote_outer, trustedUnderlay: true, address: $inner_address, peerAddress: $inner_peer}
   - apiVersion: net.routerd.net/v1alpha1
     kind: VirtualAddress
     metadata: {name: sam-vip}
@@ -213,9 +217,9 @@ EOF
 EOF
   fi
 }
-write_config "$ra" "$ra_b" "$ra_outer" 198.18.251.1 151 "$work/ra.yaml" true
-write_config "$rb" "$rb_b" "$rb_outer" 198.18.251.5 100 "$work/rb.yaml" true
-write_config "$rb" "$rb_b" "$rb_outer" 198.18.251.5 100 "$work/rb-delete.yaml" false
+write_config "$ra" "$ra_b" "$ra_outer" 198.18.251.1 198.18.251.2 10.254.250.1/30 10.254.250.2 151 "$work/ra.yaml" true
+write_config "$rb" "$rb_b" "$rb_outer" 198.18.251.5 198.18.251.6 10.254.251.1/30 10.254.251.2 100 "$work/rb.yaml" true
+write_config "$rb" "$rb_b" "$rb_outer" 198.18.251.5 198.18.251.6 10.254.251.1/30 10.254.251.2 100 "$work/rb-delete.yaml" false
 ra_runtime=/tmp/routerd-sam-ra
 rb_runtime=/tmp/routerd-sam-rb
 rb_delete_runtime=/tmp/routerd-sam-rb-delete
@@ -292,6 +296,13 @@ printf 'sam-pf-32-overlay-return=ok\n' >>"$evidence/summary.log"
 jexec "$ra" ifconfig "$ra_b" down
 stage='carp-failover'
 wait_published_arp "$rb" "$rb_b" 198.18.250.99 "$evidence/router-b-arp-after-failover.log"
+# This explicit route change models the BGP /32 return-path convergence that
+# follows CARP handover. The remote endpoint switches from router-a gif0 to
+# router-b gif1 before the client dataplane assertion.
+jexec "$overlay" route change -net 198.18.250.0/24 10.254.251.1 >"$evidence/overlay-failover-return-route.log" 2>&1
+jexec "$overlay" route -n get 198.18.250.20 >>"$evidence/overlay-failover-return-route.log" 2>&1
+grep -F 'gateway: 10.254.251.1' "$evidence/overlay-failover-return-route.log"
+grep -Eq 'interface:[[:space:]]+gif1([[:space:]]|$)' "$evidence/overlay-failover-return-route.log"
 jexec "$client" ping -n -S 198.18.250.20 -c 3 -W 1 198.18.250.99 >"$evidence/client-ping-after-failover.log"
 printf 'sam-carp-forced-switchover-converged=ok\n' >>"$evidence/summary.log"
 
