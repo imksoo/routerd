@@ -96,3 +96,14 @@ Separate mixed Linux/FreeBSD qualification is tracked by
 14.3 amd64 full clones, console/read-only-ISO bootstrap because VM115 QGA is
 not running, and CARP master/backup ownership gating. It follows Linux-only
 terminal cleanup.
+
+Exact CI
+[30102383983](https://github.com/imksoo/routerd/actions/runs/30102383983)
+is terminal success at
+`a9f1a60503dcd7be83be0493bcdca0051e87f0e4`. While baseline performance
+continued, mixed qualification preparation created three stopped full clones
+from the stopped, unchanged VM115 source on `pve06`: VM970/971 are FreeBSD
+leaf A/B and VM972 is the FreeBSD pseudo-client. They are tagged
+`routerd-owned;issue-973`, have isolated `vmbr404` capture and `vmbr0`
+management NICs, and are not started or counted as acceptance evidence before
+the Linux-only qualification reaches its terminal cleanup.
