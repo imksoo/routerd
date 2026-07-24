@@ -7,6 +7,7 @@ package chain
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -203,6 +204,19 @@ func reconcileSAMForwardPaths(paths []sam.CaptureAction, ops samForwardPathOps) 
 		}
 		return nil
 	}
+	// Empty desired state is a teardown request. Do not create or attach a
+	// forwarding chain merely to clean it: this controller runs for routers
+	// that have no SAM forwarding intent. When the routerd-owned chain exists,
+	// continue through the normal stale-rule and accept_local cleanup below.
+	if len(paths) == 0 {
+		out, err := ops.runIPTables("-S", chain)
+		if err != nil {
+			if samForwardChainAbsent(err, out) {
+				return nil
+			}
+			return fmt.Errorf("iptables -S %s: %w: %s", chain, err, strings.TrimSpace(string(out)))
+		}
+	}
 	_ = run("-N", chain)
 	if err := run("-C", "FORWARD", "-j", chain); err != nil {
 		if insertErr := run("-I", "FORWARD", "1", "-j", chain); insertErr != nil {
@@ -263,6 +277,17 @@ func reconcileSAMForwardPaths(paths []sam.CaptureAction, ops samForwardPathOps) 
 		return err
 	}
 	return nil
+}
+
+func samForwardChainAbsent(err error, output []byte) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, exec.ErrNotFound) {
+		return true
+	}
+	message := strings.ToLower(err.Error() + " " + string(output))
+	return strings.Contains(message, "no chain") || strings.Contains(message, "chain/target/match by that name")
 }
 
 func samSysctlPresent(key string) (bool, error) {

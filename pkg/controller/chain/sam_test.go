@@ -7,6 +7,7 @@ package chain
 import (
 	"context"
 	"errors"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -610,6 +611,85 @@ func TestSAMReconcileForwardPathsEmptyDesiredDeletesStaleState(t *testing.T) {
 		"-D routerd_sam_forward -s 10.77.60.10/32 -i oldtun -o oldcap -j ACCEPT",
 	})
 	assertNotContainsPrefix(t, fake.iptables, "-A routerd_sam_forward ")
+}
+
+func TestSAMReconcileForwardPathsEmptyDesiredDoesNotCreateChain(t *testing.T) {
+	called := false
+	err := reconcileSAMForwardPaths(nil, samForwardPathOps{
+		runIPTables: func(args ...string) ([]byte, error) {
+			called = true
+			if strings.Join(args, " ") != "-S routerd_sam_forward" {
+				t.Fatalf("iptables args = %q, want only chain probe", args)
+			}
+			return []byte("iptables: No chain/target/match by that name.\n"), errors.New("exit status 1")
+		},
+	})
+	if err != nil {
+		t.Fatalf("reconcileSAMForwardPaths: %v", err)
+	}
+	if !called {
+		t.Fatal("empty desired state did not probe the routerd chain")
+	}
+}
+
+func TestSAMReconcileForwardPathsEmptyDesiredIgnoresMissingIPTablesBinary(t *testing.T) {
+	err := reconcileSAMForwardPaths(nil, samForwardPathOps{
+		runIPTables: func(args ...string) ([]byte, error) {
+			if strings.Join(args, " ") != "-S routerd_sam_forward" {
+				t.Fatalf("iptables args = %q, want only chain probe", args)
+			}
+			return nil, exec.ErrNotFound
+		},
+	})
+	if err != nil {
+		t.Fatalf("reconcileSAMForwardPaths: %v", err)
+	}
+}
+
+func TestSAMReconcileForwardPathsEmptyDesiredFailsProbePermissionError(t *testing.T) {
+	err := reconcileSAMForwardPaths(nil, samForwardPathOps{
+		runIPTables: func(args ...string) ([]byte, error) {
+			if strings.Join(args, " ") != "-S routerd_sam_forward" {
+				t.Fatalf("iptables args = %q, want only chain probe", args)
+			}
+			return []byte("iptables: Permission denied (you must be root)\n"), errors.New("exit status 4")
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "Permission denied") {
+		t.Fatalf("empty desired probe error = %v, want permission failure", err)
+	}
+}
+
+func TestSAMControllerReconcilesEmptyForwardPathSet(t *testing.T) {
+	store := &samStore{objects: map[string]map[string]any{}}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+			Metadata: api.ObjectMeta{Name: "samt0"},
+			Spec:     api.TunnelInterfaceSpec{Mode: "ipip", Local: "10.99.0.2", Remote: "10.99.0.1", Address: "10.255.0.2/31"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
+			Metadata: api.ObjectMeta{Name: "local-inventory", Annotations: map[string]string{
+				"mobility.routerd.net/source": "bgp-local-inventory",
+			}},
+			Spec: api.IPv4RouteSpec{Destination: "10.77.60.13/32", Device: "ens3"},
+		},
+	}}}, Store: store, OS: platform.OSLinux, Applier: applier}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	if len(applier.forwardSets) != 1 || len(applier.forwardSets[0]) != 1 || applier.forwardSets[0][0].Kind != "forward-local-path" {
+		t.Fatalf("initial forward reconciliations = %#v, want one local-inventory path", applier.forwardSets)
+	}
+	controller.Router = &api.Router{}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("removed-route Reconcile: %v", err)
+	}
+	if len(applier.forwardSets) != 2 || len(applier.forwardSets[1]) != 0 {
+		t.Fatalf("forward reconciliations = %#v, want empty desired set after route deletion", applier.forwardSets)
+	}
 }
 
 type fakeForwardPathOps struct {

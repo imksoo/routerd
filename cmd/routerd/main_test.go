@@ -790,6 +790,7 @@ func TestConfigCommandPlanObserveAcceptJSONState(t *testing.T) {
 
 func TestRunApplyChainOnceCommitsCanonicalConfigAndGenerationYAML(t *testing.T) {
 	dir := t.TempDir()
+	setMissingSAMForwardChainIPTables(t)
 	configPath := filepath.Join(dir, "router.yaml")
 	statePath := filepath.Join(dir, "routerd.db")
 	statusPath := filepath.Join(dir, "status.json")
@@ -899,6 +900,7 @@ spec:
 
 func TestServeConfigMutatorApplyReplaceCommitsCanonicalAndGeneration(t *testing.T) {
 	dir := t.TempDir()
+	setMissingSAMForwardChainIPTables(t)
 	configPath := filepath.Join(dir, "router.yaml")
 	statePath := filepath.Join(dir, "routerd.db")
 	statusPath := filepath.Join(dir, "status.json")
@@ -4603,4 +4605,19 @@ func waitForFileText(path, want string, timeout time.Duration) error {
 		time.Sleep(10 * time.Millisecond)
 	}
 	return fmt.Errorf("timed out waiting for %q in %s", want, path)
+}
+
+// setMissingSAMForwardChainIPTables supplies the ordinary iptables response
+// for a router with no routerd-owned SAM chain. Empty-desired reconciliation
+// intentionally probes ownership and must still fail on real permission or
+// parse errors; these command tests exercise a config with no host chain.
+func setMissingSAMForwardChainIPTables(t *testing.T) {
+	t.Helper()
+	binDir := t.TempDir()
+	ipTables := filepath.Join(binDir, "iptables")
+	const script = "#!/bin/sh\nprintf '%s\\n' 'iptables: No chain/target/match by that name.' >&2\nexit 1\n"
+	if err := os.WriteFile(ipTables, []byte(script), 0755); err != nil {
+		t.Fatalf("write iptables fake: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
