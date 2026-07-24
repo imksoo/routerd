@@ -58,6 +58,7 @@ cleanup() {
       "$evidence/router-a.log" "$evidence/router-b.log" \
       "$evidence/router-a-arp.log" "$evidence/router-b-backup.log" \
       "$evidence/router-a-carp.log" "$evidence/router-b-carp.log" \
+      "$evidence/client-arp.log" \
       "$evidence/router-a-status.json" "$evidence/router-b-status.json" \
       "$evidence/bridge-carp.log" "$evidence/bridge-ifconfig.log" \
       "$evidence/router-a-pf-main.log" "$evidence/router-a-pf-anchor.log" \
@@ -176,6 +177,17 @@ jexec "$rb" "$routerd" validate --config "$work/rb.yaml" >"$evidence/router-b-va
 # Capture before either controller starts: this proves the three BPF GARPs are
 # visible to a real client, rather than merely constructed in a unit test.
 jexec "$client" timeout 20 tcpdump -n -l -i "$client_b" 'arp and host 198.18.250.99' >"$evidence/client-arp.log" 2>&1 & arp_capture=$!
+# tcpdump reports readiness on its combined output. Do not start controllers
+# until the client-side BPF capture is attached, or the three immediate GARPs
+# can race past the observation point.
+n=0
+while [ "$n" -lt 10 ]; do
+  grep -q 'listening on' "$evidence/client-arp.log" && break
+  kill -0 "$arp_capture" 2>/dev/null || { wait "$arp_capture" 2>/dev/null || true; false; }
+  n=$((n + 1))
+  sleep 1
+done
+grep -q 'listening on' "$evidence/client-arp.log"
 # CARP is protocol 112; `-T carp` is the FreeBSD carp(4)-documented decoder.
 # This is retained on failure to distinguish a topology/configuration mismatch
 # from an unobserved state transition.
@@ -200,6 +212,7 @@ if ! wait_carp_state "$ra" "$ra_b" MASTER "$evidence/router-a-carp.log"; then sn
 if ! wait_carp_state "$rb" "$rb_b" BACKUP "$evidence/router-b-backup.log"; then snapshot_carp_state; exit 1; fi
 snapshot_carp_state
 wait "$arp_capture" || true; arp_capture=
+stage='garp-observation'
 grep -c '198\.18\.250\.99' "$evidence/client-arp.log" | awk '$1 >= 3 {exit 0} {exit 1}'
 grep -F 'published' "$evidence/router-a-arp.log"
 if jexec "$rb" arp -n 198.18.250.99 >"$evidence/router-b-arp.log" 2>&1 && grep -q published "$evidence/router-b-arp.log"; then echo 'CARP backup published ARP' >&2; exit 1; fi
