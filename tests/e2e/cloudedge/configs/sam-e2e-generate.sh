@@ -249,6 +249,12 @@ render_common() {
         underlayInterface: wg-hybrid
         localEndpoint: $router_id
         addressingMode: pair-stable
+        topologyNodeRefs:
+EOF
+  for topology_node in "${routers[@]}"; do
+    echo "          - $topology_node"
+  done
+  cat <<EOF
         peersFrom:
           - resource: SAMNodeSet/cloudedge-nodes
         bgp:
