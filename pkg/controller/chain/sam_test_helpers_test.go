@@ -19,6 +19,7 @@ type fakeSAMApplier struct {
 	deassign       []string
 	proxyARP       []string
 	calls          []string
+	forwardSets    [][]sam.CaptureAction
 	deassignResult samOSAddressDeassignResult
 }
 
@@ -65,6 +66,7 @@ func (a *fakeSAMApplier) EnsureOSAddressAbsent(_ context.Context, address string
 }
 
 func (a *fakeSAMApplier) ReconcileForwardPaths(_ context.Context, paths []sam.CaptureAction) error {
+	a.forwardSets = append(a.forwardSets, append([]sam.CaptureAction(nil), paths...))
 	for _, path := range paths {
 		a.calls = append(a.calls, "forward:"+path.Address+"@"+path.Interface+"<->"+path.PeerInterface)
 	}
