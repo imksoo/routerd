@@ -334,6 +334,72 @@ func TestTunnelInterfaceControllerAppliesTunnelAddress(t *testing.T) {
 	}
 }
 
+func TestTunnelInterfaceControllerRepairsOwnedTunnelAfterAddressApplyFailure(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
+		Metadata: api.ObjectMeta{Name: "tun-ipip"},
+		Spec: api.TunnelInterfaceSpec{
+			Mode:            "ipip",
+			Local:           "192.0.2.10",
+			Remote:          "192.0.2.20",
+			Address:         "10.255.1.0/31",
+			TrustedUnderlay: true,
+		},
+	}}}}
+	store := mapStore{}
+	exists := false
+	failAddress := true
+	var calls [][]string
+	controller := TunnelInterfaceController{
+		Router: router,
+		Store:  store,
+		OS:     platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			call := append([]string{name}, args...)
+			calls = append(calls, call)
+			switch strings.Join(call, " ") {
+			case "ip -d -o link show dev tun-ipip":
+				if !exists {
+					return []byte("Cannot find device \"tun-ipip\""), errors.New("missing")
+				}
+				return []byte(`7: tun-ipip@NONE: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1480 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000 link/ipip 192.0.2.10 peer 192.0.2.20 ttl 64`), nil
+			case "ip link add dev tun-ipip type ipip local 192.0.2.10 remote 192.0.2.20 ttl 64":
+				exists = true
+			case "ip -o -4 addr show dev tun-ipip":
+				return nil, nil
+			case "ip addr replace 10.255.1.0/31 dev tun-ipip":
+				if failAddress {
+					return []byte("RTNETLINK answers: invalid argument"), errors.New("exit status 2")
+				}
+			}
+			return nil, nil
+		},
+	}
+
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("first Reconcile error = %v, want persisted apply error", err)
+	}
+	status := store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip")
+	if status["phase"] != "Error" || status["reason"] != "ApplyFailed" || !statusBoolOrFalse(status["interfaceOwned"]) {
+		t.Fatalf("first status = %#v, want owned ApplyFailed", status)
+	}
+
+	failAddress = false
+	calls = nil
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("repair Reconcile error = %v", err)
+	}
+	status = store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip")
+	if status["phase"] != "Up" || !statusBoolOrFalse(status["interfaceOwned"]) {
+		t.Fatalf("repair status = %#v, want owned Up", status)
+	}
+	for _, call := range calls {
+		if strings.Join(call, " ") == "ip link add dev tun-ipip type ipip local 192.0.2.10 remote 192.0.2.20 ttl 64" {
+			t.Fatalf("repair unexpectedly recreated owned interface; calls = %#v", calls)
+		}
+	}
+}
+
 func TestTunnelInterfaceControllerChangesTunnelAddress(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
 		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
