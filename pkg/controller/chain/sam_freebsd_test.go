@@ -10,6 +10,7 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/sam"
 )
@@ -159,6 +160,10 @@ func TestFreeBSDSAMPFForwardPathRequiresReachableAnchorAndUses32(t *testing.T) {
 	if !strings.Contains(input, "192.0.2.55/32") || strings.Contains(input, "192.0.2.55/24") {
 		t.Fatalf("PF rules do not retain /32 boundary:\n%s", input)
 	}
+	if !strings.Contains(input, "pass quick on em0 inet from any to 192.0.2.55/32") ||
+		!strings.Contains(input, "pass quick on gif0 inet from 192.0.2.55/32 to any") {
+		t.Fatalf("forward-path PF rules have wrong LAN-to-overlay direction:\n%s", input)
+	}
 
 	freeBSDSAMRunCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		if name == "pfctl" && strings.Join(args, " ") == "-a routerd_sam_forward -sr" {
@@ -171,6 +176,56 @@ func TestFreeBSDSAMPFForwardPathRequiresReachableAnchorAndUses32(t *testing.T) {
 	}
 	if err := (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), paths); err == nil || !strings.Contains(err.Error(), "not reachable") {
 		t.Fatalf("unreachable PF anchor error = %v", err)
+	}
+}
+
+func TestFreeBSDSAMPFForwardPathSerializesAnchorTransactions(t *testing.T) {
+	reset := saveFreeBSDSAMSeams()
+	defer reset()
+	freeBSDSAMRunCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		switch name + " " + strings.Join(args, " ") {
+		case "pfctl -a routerd_sam_forward -sr":
+			return nil, nil
+		case "pfctl -sr":
+			return []byte("anchor \"routerd_sam_forward\" all\n"), nil
+		default:
+			return nil, errors.New("unexpected command")
+		}
+	}
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	freeBSDSAMRunCommandInput = func(_ context.Context, name, _ string, args ...string) ([]byte, error) {
+		if name != "pfctl" || strings.Join(args, " ") != "-a routerd_sam_forward -f -" {
+			return nil, errors.New("unexpected PF load")
+		}
+		entered <- struct{}{}
+		<-release
+		return nil, nil
+	}
+	paths := []sam.CaptureAction{{Kind: "forward-path", ClaimName: "claim", Address: "192.0.2.55", Interface: "em0", PeerInterface: "gif0"}}
+	errCh := make(chan error, 2)
+	go func() { errCh <- (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), paths) }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("first PF transaction did not start")
+	}
+	go func() { errCh <- (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), paths) }()
+	select {
+	case <-entered:
+		t.Fatal("second PF transaction entered before the first completed")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	for range 2 {
+		if err := <-errCh; err != nil {
+			t.Fatalf("ReconcileForwardPaths: %v", err)
+		}
+	}
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("second PF transaction did not run after the first completed")
 	}
 }
 

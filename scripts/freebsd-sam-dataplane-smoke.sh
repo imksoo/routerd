@@ -153,12 +153,6 @@ spec:
     metadata: {name: gif0}
     spec: {mode: ipip, local: $outer_address, remote: 198.18.251.2, trustedUnderlay: true, address: 10.254.250.1/30, peerAddress: 10.254.250.2}
   - apiVersion: net.routerd.net/v1alpha1
-    kind: IPv4Route
-    metadata:
-      name: sam-forward-local
-      annotations: {mobility.routerd.net/source: bgp-local-inventory}
-    spec: {destination: 198.18.250.99/32, device: $lan}
-  - apiVersion: net.routerd.net/v1alpha1
     kind: VirtualAddress
     metadata: {name: sam-vip}
     spec:
@@ -175,6 +169,16 @@ spec:
     kind: AddressMobilityDomain
     metadata: {name: sam-net}
     spec: {prefix: 198.18.250.0/24, mode: selective-address, peerRef: overlay}
+  # This local, inert profile exists solely to satisfy the provider-secondary
+  # configuration contract.  No provider executor/controller is enabled by
+  # this acceptance, and /usr/bin/true cannot mutate a cloud account.
+  - apiVersion: hybrid.routerd.net/v1alpha1
+    kind: CloudProviderProfile
+    metadata: {name: sam-fixture-provider}
+    spec:
+      provider: aws
+      capabilities: [assign-secondary-ip]
+      auth: {mode: external-command, command: /usr/bin/true}
   - apiVersion: hybrid.routerd.net/v1alpha1
     kind: RemoteAddressClaim
     metadata: {name: published-host}
@@ -182,8 +186,11 @@ spec:
       domainRef: sam-net
       address: 198.18.250.99/32
       ownerSide: cloud
-      capture: {type: proxy-arp, interface: lan, gratuitousARP: true, activeWhen: {type: vrrp-master, virtualAddressRef: sam-vip}}
-      delivery: {peerRef: overlay, mode: route, tunnelInterface: gif0}
+      # Provider-secondary BGP is the source-valid LAN-to-overlay direction:
+      # PlanCapture lowers it to forward-path (LAN -> /32, /32 -> gif0).
+      # A local-inventory route would instead be overlay-to-LAN.
+      capture: {type: provider-secondary-ip, providerRef: sam-fixture-provider, providerMode: assign-secondary-ip, nicRef: lan-fixture-nic, interface: lan, gratuitousARP: true, activeWhen: {type: vrrp-master, virtualAddressRef: sam-vip}}
+      delivery: {peerRef: overlay, mode: bgp, tunnelInterface: gif0}
 EOF
 }
 write_config "$ra" "$ra_b" "$ra_outer" 198.18.251.1 151 "$work/ra.yaml"

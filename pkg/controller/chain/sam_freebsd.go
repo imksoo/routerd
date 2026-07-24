@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -21,6 +22,12 @@ import (
 )
 
 const freeBSDSAMForwardAnchor = "routerd_sam_forward"
+
+// PF rule updates are a multi-command transaction (begin/add/commit inside
+// pfctl). PF rejects a second transaction against the same anchor while the
+// first one owns its inactive ticket. Keep the whole routerd-owned anchor
+// reconciliation serial, matching the Linux iptables transaction boundary.
+var freeBSDSAMForwardPathMu sync.Mutex
 
 var (
 	freeBSDSAMRunCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -134,6 +141,9 @@ func (freeBSDSAMProxyNeighborApplier) EnsureOSAddressAbsent(ctx context.Context,
 }
 
 func (freeBSDSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction) error {
+	freeBSDSAMForwardPathMu.Lock()
+	defer freeBSDSAMForwardPathMu.Unlock()
+
 	out, err := freeBSDSAMRunCommand(ctx, "pfctl", "-a", freeBSDSAMForwardAnchor, "-sr")
 	if err != nil {
 		// With no desired path, a missing PF device cannot carry a stale SAM
