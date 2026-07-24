@@ -263,6 +263,7 @@ wait_for() { jail_name=$1 command=$2 file=$3; n=0; while [ "$n" -lt 45 ]; do if 
 wait_published_arp() { jail_name=$1 ifname=$2 address=$3 file=$4; n=0; while [ "$n" -lt 45 ]; do jexec "$jail_name" arp -n -i "$ifname" "$address" >"$file" 2>&1 || true; if grep -q published "$file"; then return 0; fi; n=$((n+1)); sleep 1; done; return 1; }
 wait_carp_state() { jail_name=$1 ifname=$2 state_name=$3 file=$4; n=0; while [ "$n" -lt 45 ]; do jexec "$jail_name" ifconfig "$ifname" >"$file" 2>&1 || return 1; if grep -Eq "carp:[[:space:]]+${state_name}([[:space:]]|$)" "$file"; then return 0; fi; n=$((n+1)); sleep 1; done; return 1; }
 wait_foreign_collision() { jail_name=$1 status_file=$2; n=0; while [ "$n" -lt 45 ]; do jexec "$jail_name" "$routerctl" get RemoteAddressClaim/published-host --socket "$rb_collision_runtime/status.sock" -o json >"$status_file" 2>&1 || true; if jq -e '.items | length == 1 and .[0].status.phase == "Error" and .[0].status.reason == "CaptureFailed" and ((.[0].status.error // .[0].status.message // "") | contains("foreign OS address"))' "$status_file" >/dev/null 2>&1; then return 0; fi; n=$((n+1)); sleep 1; done; return 1; }
+wait_status_snapshot() { jail_name=$1 source=$2 destination=$3; n=0; while [ "$n" -lt 45 ]; do if jexec "$jail_name" test -s "$source"; then jexec "$jail_name" cat "$source" >"$destination"; return 0; fi; n=$((n+1)); sleep 1; done; return 1; }
 snapshot_carp_state() {
   jexec "$ra" ifconfig "$ra_b" >"$evidence/router-a-carp.log" 2>&1 || true
   jexec "$rb" ifconfig "$rb_b" >"$evidence/router-b-carp.log" 2>&1 || true
@@ -340,10 +341,12 @@ jexec "$rb" ifconfig "$rb_b" alias 198.18.250.99/32
 stage='collision-foreign-preservation'
 kill "$rb_pid"; wait "$rb_pid" || true; rb_pid=
 jexec "$rb" "$routerd" serve --config "$work/rb.yaml" --state-file "$rb_collision_runtime/state.db" --status-file "$rb_collision_runtime/status.json" --socket "$rb_collision_runtime/api.sock" --status-socket "$rb_collision_runtime/status.sock" --controllers sam,vrrp >"$evidence/router-b-collision.log" 2>&1 & rb_pid=$!
-jexec "$rb" cat "$rb_collision_runtime/status.json" >"$evidence/collision-aggregate-status.json" 2>&1 || true
 wait_foreign_collision "$rb" "$evidence/collision-claim-status.json"
+wait_status_snapshot "$rb" "$rb_collision_runtime/status.json" "$evidence/collision-aggregate-status.json"
 jexec "$rb" pfctl -a operator_sam -sr >"$evidence/foreign-pf-preserved.log"
-grep -F '198.18.250.200/32' "$evidence/foreign-pf-preserved.log"
+# pfctl canonically renders an IPv4 /32 as a host address; preserve the full
+# operator rule semantics rather than comparing the source CIDR spelling.
+grep -F 'pass in quick inet from any to 198.18.250.200 flags S/SA keep state' "$evidence/foreign-pf-preserved.log"
 jexec "$rb" ifconfig "$rb_b" inet 198.18.250.99/32 -alias
 printf 'sam-collision-fail-closed-status=ok\n' >>"$evidence/summary.log"
 printf 'sam-foreign-arp-pf-preservation=ok\n' >>"$evidence/summary.log"
