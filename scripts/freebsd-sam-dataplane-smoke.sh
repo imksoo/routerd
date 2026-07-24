@@ -153,7 +153,12 @@ EOF
 }
 write_config "$ra" "$ra_b" "$ra_outer" 198.18.251.1 151 "$work/ra.yaml"
 write_config "$rb" "$rb_b" "$rb_outer" 198.18.251.5 100 "$work/rb.yaml"
-jexec "$ra" mkdir -p /tmp/routerd-sam; jexec "$rb" mkdir -p /tmp/routerd-sam
+ra_runtime=/tmp/routerd-sam-ra
+rb_runtime=/tmp/routerd-sam-rb
+rb_delete_runtime=/tmp/routerd-sam-rb-delete
+rb_collision_runtime=/tmp/routerd-sam-rb-collision
+jexec "$ra" mkdir -p "$ra_runtime"
+jexec "$rb" mkdir -p "$rb_runtime" "$rb_delete_runtime" "$rb_collision_runtime"
 cp "$work/ra.yaml" "$work/rb.yaml" "$evidence/"
 stage='validate-config'
 jexec "$ra" "$routerd" validate --config "$work/ra.yaml" >"$evidence/router-a-validate.log" 2>&1
@@ -163,8 +168,8 @@ jexec "$rb" "$routerd" validate --config "$work/rb.yaml" >"$evidence/router-b-va
 # visible to a real client, rather than merely constructed in a unit test.
 jexec "$client" timeout 20 tcpdump -n -l -i "$client_b" 'arp and host 198.18.250.99' >"$evidence/client-arp.log" 2>&1 & arp_capture=$!
 stage='start-controllers'
-jexec "$ra" "$routerd" serve --config "$work/ra.yaml" --state-file /tmp/routerd-sam/state.db --status-file /tmp/routerd-sam/status.json --socket /tmp/routerd-sam/api.sock --status-socket /tmp/routerd-sam/status.sock --controllers all >"$evidence/router-a.log" 2>&1 & ra_pid=$!
-jexec "$rb" "$routerd" serve --config "$work/rb.yaml" --state-file /tmp/routerd-sam/state.db --status-file /tmp/routerd-sam/status.json --socket /tmp/routerd-sam/api.sock --status-socket /tmp/routerd-sam/status.sock --controllers all >"$evidence/router-b.log" 2>&1 & rb_pid=$!
+jexec "$ra" "$routerd" serve --config "$work/ra.yaml" --state-file "$ra_runtime/state.db" --status-file "$ra_runtime/status.json" --socket "$ra_runtime/api.sock" --status-socket "$ra_runtime/status.sock" --controllers all >"$evidence/router-a.log" 2>&1 & ra_pid=$!
+jexec "$rb" "$routerd" serve --config "$work/rb.yaml" --state-file "$rb_runtime/state.db" --status-file "$rb_runtime/status.json" --socket "$rb_runtime/api.sock" --status-socket "$rb_runtime/status.sock" --controllers all >"$evidence/router-b.log" 2>&1 & rb_pid=$!
 
 wait_for() { jail_name=$1 command=$2 file=$3; n=0; while [ "$n" -lt 45 ]; do if jexec "$jail_name" sh -c "$command" >"$file" 2>&1; then return 0; fi; n=$((n+1)); sleep 1; done; return 1; }
 wait_for "$ra" "arp -n 198.18.250.99 | grep -q published" "$evidence/router-a-arp.log"
@@ -198,7 +203,7 @@ printf 'sam-carp-forced-switchover-converged=ok\n' >>"$evidence/summary.log"
 stage='owned-delete-cleanup'
 kill "$rb_pid"; wait "$rb_pid" || true; rb_pid=
 sed '/kind: RemoteAddressClaim/,$d' "$work/rb.yaml" >"$work/rb-delete.yaml"
-jexec "$rb" "$routerd" serve --config "$work/rb-delete.yaml" --state-file /tmp/routerd-sam/delete.db --status-file /tmp/routerd-sam/delete.json --socket /tmp/routerd-sam/delete.sock --status-socket /tmp/routerd-sam/delete-status.sock --controllers sam >"$evidence/router-b-delete.log" 2>&1 & rb_pid=$!
+jexec "$rb" "$routerd" serve --config "$work/rb-delete.yaml" --state-file "$rb_delete_runtime/state.db" --status-file "$rb_delete_runtime/status.json" --socket "$rb_delete_runtime/api.sock" --status-socket "$rb_delete_runtime/status.sock" --controllers sam >"$evidence/router-b-delete.log" 2>&1 & rb_pid=$!
 wait_for "$rb" "! arp -n 198.18.250.99 | grep -q published" "$evidence/router-b-owned-cleanup.log"
 jexec "$rb" pfctl -a routerd_sam_forward -sr >"$evidence/router-b-pf-cleanup.log"
 [ ! -s "$evidence/router-b-pf-cleanup.log" ]
@@ -212,8 +217,8 @@ EOF_PF
 jexec "$rb" ifconfig "$rb_b" alias 198.18.250.99/32
 stage='collision-foreign-preservation'
 kill "$rb_pid"; wait "$rb_pid" || true; rb_pid=
-jexec "$rb" "$routerd" serve --config "$work/rb.yaml" --state-file /tmp/routerd-sam/collision.db --status-file /tmp/routerd-sam/collision.json --socket /tmp/routerd-sam/collision.sock --status-socket /tmp/routerd-sam/collision-status.sock --controllers sam >"$evidence/router-b-collision.log" 2>&1 & rb_pid=$!
-wait_for "$rb" "grep -q 'foreign OS address' /tmp/routerd-sam/collision.json" "$evidence/collision-status.log"
+jexec "$rb" "$routerd" serve --config "$work/rb.yaml" --state-file "$rb_collision_runtime/state.db" --status-file "$rb_collision_runtime/status.json" --socket "$rb_collision_runtime/api.sock" --status-socket "$rb_collision_runtime/status.sock" --controllers sam >"$evidence/router-b-collision.log" 2>&1 & rb_pid=$!
+wait_for "$rb" "grep -q 'foreign OS address' $rb_collision_runtime/status.json" "$evidence/collision-status.log"
 jexec "$rb" pfctl -a operator_sam -sr >"$evidence/foreign-pf-preserved.log"
 grep -F '198.18.250.200/32' "$evidence/foreign-pf-preserved.log"
 jexec "$rb" ifconfig "$rb_b" inet 198.18.250.99/32 -alias
