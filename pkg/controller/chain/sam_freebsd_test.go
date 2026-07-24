@@ -91,6 +91,25 @@ func TestFreeBSDSAMCollisionAndPFEmptyCleanupContracts(t *testing.T) {
 	}
 }
 
+func TestFreeBSDSAMPFDeviceMissingIsOnlyAnEmptyDesiredNoop(t *testing.T) {
+	reset := saveFreeBSDSAMSeams()
+	defer reset()
+	missing := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "pfctl" || strings.Join(args, " ") != "-a routerd_sam_forward -sr" {
+			return nil, errors.New("unexpected command")
+		}
+		return []byte("pfctl: /dev/pf: No such file or directory\n"), errors.New("exit status 1")
+	}
+	freeBSDSAMRunCommand = missing
+	if err := (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), nil); err != nil {
+		t.Fatalf("empty desired missing PF = %v", err)
+	}
+	paths := []sam.CaptureAction{{Kind: "forward-path", ClaimName: "claim", Address: "192.0.2.55", Interface: "em0", PeerInterface: "gif0"}}
+	if err := (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), paths); err == nil || !strings.Contains(err.Error(), "/dev/pf") {
+		t.Fatalf("non-empty desired missing PF error = %v", err)
+	}
+}
+
 func TestFreeBSDSAMPFForwardPathRequiresReachableAnchorAndUses32(t *testing.T) {
 	reset := saveFreeBSDSAMSeams()
 	defer reset()

@@ -136,7 +136,11 @@ func (freeBSDSAMProxyNeighborApplier) EnsureOSAddressAbsent(ctx context.Context,
 func (freeBSDSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction) error {
 	out, err := freeBSDSAMRunCommand(ctx, "pfctl", "-a", freeBSDSAMForwardAnchor, "-sr")
 	if err != nil {
-		if errors.Is(err, exec.ErrNotFound) {
+		// With no desired path, a missing PF device cannot carry a stale SAM
+		// rule.  This is the empty-desired cleanup no-op boundary.  A desired
+		// path must still fail closed below: it cannot be made active without
+		// a reachable PF anchor.
+		if len(paths) == 0 && (errors.Is(err, exec.ErrNotFound) || freeBSDPFDeviceUnavailable(out)) {
 			return nil
 		}
 		return fmt.Errorf("pfctl -a %s -sr: %w: %s", freeBSDSAMForwardAnchor, err, strings.TrimSpace(string(out)))
@@ -163,6 +167,10 @@ func (freeBSDSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context,
 		return fmt.Errorf("load SAM PF anchor: %w: %s", loadErr, strings.TrimSpace(string(loaded)))
 	}
 	return nil
+}
+
+func freeBSDPFDeviceUnavailable(out []byte) bool {
+	return strings.Contains(strings.ToLower(string(out)), "/dev/pf: no such file or directory")
 }
 
 func freeBSDSAMForwardAnchorReachable(ctx context.Context) error {
