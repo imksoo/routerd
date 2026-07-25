@@ -44,6 +44,32 @@ func TestPathMTUControllerRendersMSSClamp(t *testing.T) {
 	}
 }
 
+func TestPathMTUControllerSkipsNftablesOnFreeBSD(t *testing.T) {
+	dir := t.TempDir()
+	store := mapStore{}
+	controller := PathMTUController{
+		Router:            &api.Router{},
+		OS:                platform.OSFreeBSD,
+		Store:             store,
+		NftCommand:        filepath.Join(dir, "must-not-run"),
+		Path:              filepath.Join(dir, "mss.nft"),
+		ForceFragmentPath: filepath.Join(dir, "forcefrag.nft"),
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(controller.Path); !os.IsNotExist(err) {
+		t.Fatalf("nftables artifact must not be written on FreeBSD: %v", err)
+	}
+	if _, err := os.Stat(controller.ForceFragmentPath); !os.IsNotExist(err) {
+		t.Fatalf("force-fragment nftables artifact must not be written on FreeBSD: %v", err)
+	}
+	status := store.ObjectStatus(api.RouterAPIVersion, "Router", "derived-path-mtu")
+	if status["phase"] != "Skipped" || status["reason"] != "path MTU policy is enforced by pf" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
 func TestPathMTUControllerRendersForceFragment(t *testing.T) {
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{

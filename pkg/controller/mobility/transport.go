@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/netip"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
@@ -27,6 +29,7 @@ type TransportController struct {
 	Store         Store
 	PeerGroupSync *PeerGroupSyncClient
 	Now           func() time.Time
+	OS            platform.OS
 }
 
 type transportPeerStatus struct {
@@ -203,7 +206,7 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 		if err != nil {
 			return transportDerivation{}, fmt.Errorf("peer %s: %w", peerNode, err)
 		}
-		tunnelName := firstNonEmpty(strings.TrimSpace(peer.Override.TunnelInterface), compactHashedName("samt", owner.Metadata.Name, self, peerNode))
+		tunnelName := firstNonEmpty(strings.TrimSpace(peer.Override.TunnelInterface), c.transportTunnelName(spec.Mode, index, owner.Metadata.Name, self, peerNode))
 		bgpPeerName := firstNonEmpty(strings.TrimSpace(peer.Override.BGPPeer), safeName("sam-transport-"+owner.Metadata.Name+"-"+self+"-"+peerNode))
 		routeName := firstNonEmpty(strings.TrimSpace(peer.Override.EndpointRoute), safeName("sam-endpoint-"+owner.Metadata.Name+"-"+self+"-"+peerNode))
 		underlay := firstNonEmpty(strings.TrimSpace(peer.Override.UnderlayInterface), strings.TrimSpace(spec.UnderlayInterface))
@@ -219,6 +222,9 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 			EncapSport:        spec.EncapSport,
 			EncapDport:        spec.EncapDport,
 			TrustedUnderlay:   true,
+		}
+		if c.targetOS() == platform.OSFreeBSD {
+			tunnelSpec.PeerAddress = remoteAddr.String()
 		}
 		out.Resources = append(out.Resources, api.Resource{
 			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
@@ -279,6 +285,7 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 					RouterRef:               strings.TrimSpace(spec.BGP.RouterRef),
 					PeerASN:                 spec.BGP.PeerASN,
 					Peers:                   []string{remoteAddr.String()},
+					PassiveMode:             localPrefix.Addr().Compare(remoteAddr) > 0,
 					EbgpMultihop:            spec.BGP.EbgpMultihop,
 					RouteReflectorClient:    spec.BGP.RouteReflectorClient,
 					RouteReflectorClusterID: strings.TrimSpace(spec.BGP.RouteReflectorClusterID),
@@ -304,6 +311,25 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 	}
 	sort.Strings(out.PendingSources)
 	return out, nil
+}
+
+func (c TransportController) targetOS() platform.OS {
+	if c.OS != "" {
+		return c.OS
+	}
+	return platform.CurrentOS()
+}
+
+func (c TransportController) transportTunnelName(mode string, edgeIndex int, parts ...string) string {
+	if c.targetOS() == platform.OSFreeBSD {
+		switch strings.TrimSpace(mode) {
+		case "ipip":
+			return "gif" + strconv.Itoa(edgeIndex)
+		case "gre":
+			return "gre" + strconv.Itoa(edgeIndex)
+		}
+	}
+	return compactHashedName("samt", parts...)
 }
 
 func transportBGPImportPolicyForPeer(base api.BGPImportPolicySpec, defaultAllowedPrefixes []string, topologyNodeRefs []string, peerNode string, routeReflectorClient bool) api.BGPImportPolicySpec {

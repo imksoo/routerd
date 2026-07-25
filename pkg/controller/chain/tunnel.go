@@ -195,6 +195,9 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		if err := c.addTunnelInterface(ctx, desired); err != nil {
 			return c.saveApplyError(resource, desired, err)
 		}
+		if err := c.saveCreatedTunnelOwnership(ctx, resource, desired); err != nil {
+			return err
+		}
 		applied = true
 		created = true
 	} else if observed.Mode != "" && observed.Mode != desired.Mode {
@@ -203,6 +206,9 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		}
 		if err := c.addTunnelInterface(ctx, desired); err != nil {
 			return c.saveApplyError(resource, desired, err)
+		}
+		if err := c.saveCreatedTunnelOwnership(ctx, resource, desired); err != nil {
+			return err
 		}
 		applied = true
 		created = true
@@ -289,6 +295,21 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 			"dryRun":    fmt.Sprintf("%t", c.DryRun),
 		}
 		return c.Bus.Publish(ctx, event)
+	}
+	return nil
+}
+
+func (c TunnelInterfaceController) saveCreatedTunnelOwnership(ctx context.Context, resource api.Resource, desired tunnelDesired) error {
+	status := tunnelStatus(desired, false, map[string]any{
+		"phase":          "Pending",
+		"reason":         "Applying",
+		"interfaceOwned": true,
+	})
+	if err := c.Store.SaveObjectStatus(api.HybridAPIVersion, "TunnelInterface", resource.Metadata.Name, status); err != nil {
+		if rollbackErr := c.deleteTunnelInterface(ctx, desired.Name); rollbackErr != nil {
+			return fmt.Errorf("persist ownership of newly created tunnel interface %q: %w (rollback failed: %v)", desired.Name, err, rollbackErr)
+		}
+		return fmt.Errorf("persist ownership of newly created tunnel interface %q: %w", desired.Name, err)
 	}
 	return nil
 }

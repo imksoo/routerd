@@ -12,6 +12,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bgpdaemon"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/sam"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -42,7 +43,10 @@ type bgpDeliveryPlannerInput struct {
 	ObservedStaleSince   map[string]time.Time
 	SuppressDeprovision  bool
 	LivenessMarkers      map[string]string
-	Now                  time.Time
+	// CaptureGate is supplied by the controller from persisted local status.
+	// A nil value preserves planner-only callers' existing ungated behavior.
+	CaptureGate *sam.CaptureGateStatus
+	Now         time.Time
 }
 
 type bgpDeliveryPlannerResult struct {
@@ -67,7 +71,7 @@ func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResu
 	}
 	decisions := decisionsByAddress(in.Decisions)
 	failedActions := interpretProviderCaptureAssignFailures(in.ActionJournal, in.ObservedSelfCaptures, in.ObservedSelfAt).Active
-	paths := planBGPAdvertisements(in.Source, in.Self, in.Decisions, in.Placement)
+	paths := planBGPAdvertisements(in.Source, in.Self, in.Decisions, in.Placement, in.CaptureGate)
 	captureNextHops := in.CaptureNextHops
 	if len(captureNextHops) == 0 {
 		captureNextHops = in.InstalledNextHops
@@ -88,9 +92,14 @@ func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResu
 	}, nil
 }
 
-func planBGPAdvertisements(source string, self memberPlanInfo, decisions []ownershipDecision, placement PlacementDecision) []bgpdaemon.AppliedPath {
+func planBGPAdvertisements(source string, self memberPlanInfo, decisions []ownershipDecision, placement PlacementDecision, captureGate *sam.CaptureGateStatus) []bgpdaemon.AppliedPath {
 	var out []bgpdaemon.AppliedPath
 	for _, decision := range decisions {
+		if captureGate != nil && !captureGate.Active {
+			// A CARP BACKUP must withdraw its local host path. Keeping it with a
+			// lower LocalPref still leaves an ECMP path toward a silent capture.
+			continue
+		}
 		if !decisionAdvertisesFromSelf(decision, self) {
 			continue
 		}

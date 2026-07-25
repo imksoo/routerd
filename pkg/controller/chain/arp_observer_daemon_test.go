@@ -127,6 +127,73 @@ func TestARPObserverDaemonArgsDoNotExposeIgnoredSenderMACFlag(t *testing.T) {
 	}
 }
 
+func TestARPObserverDaemonsUseSupervisedOwnerTokenLifecycle(t *testing.T) {
+	useSupervisedDaemonMarkerTestRoot(t)
+	oldProcesses, oldReady := supervisedDaemonProcesses, supervisedDaemonSocketReady
+	t.Cleanup(func() {
+		supervisedDaemonProcesses, supervisedDaemonSocketReady = oldProcesses, oldReady
+	})
+	supervisedDaemonProcesses = func() []supervisedDaemonProcess { return nil }
+	supervisedDaemonSocketReady = func(string) bool { return false }
+
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"}, Metadata: api.ObjectMeta{Name: "home"}, Spec: api.EventGroupSpec{NodeName: "pve-leaf-a"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "capture"}, Spec: api.InterfaceSpec{IfName: "eth1"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"}, Metadata: api.ObjectMeta{Name: "cloudedge"}, Spec: api.MobilityPoolSpec{
+			Prefix:   "10.77.60.0/24",
+			GroupRef: "home",
+			Members: []api.MobilityPoolMember{{
+				NodeRef: "pve-leaf-a",
+				Site:    "pve",
+				Role:    "onprem",
+				Capture: api.MobilityMemberCapture{Type: "proxy-arp", Interface: "capture"},
+				OwnershipDiscovery: api.MobilityOwnershipDiscovery{
+					Mode: "onprem-l2",
+					Sources: []api.MobilityOwnershipDiscoverySource{
+						{Type: "arp-observer", Interface: "capture"},
+						{Type: "on-demand-arp", Interface: "capture", ScanInterval: "1s"},
+					},
+				},
+			}},
+		}},
+	}}}
+	runner := &Runner{Router: router}
+	specs := runner.clientDaemonSpecs(router)
+	if len(specs) != 2 {
+		t.Fatalf("client daemon specs = %#v, want two ARP observers", specs)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	runner.reconcileSupervisedDaemonSpecs(ctx, nil, specs)
+
+	markers, err := readSupervisedDaemonMarkers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, spec := range specs {
+		key := supervisedDaemonKey(spec.Binary, spec.ResourceName)
+		state, ok := runner.clientDaemonStates[key]
+		if !ok || state.Spec.OwnerToken == "" {
+			t.Fatalf("%s state = %#v, want non-empty owner token", key, state)
+		}
+		marker, ok := markers[key]
+		if !ok || marker.OwnerToken != state.Spec.OwnerToken || marker.SpecHash != supervisedDaemonSpecHash(state.Spec) {
+			t.Fatalf("%s marker = %#v, state = %#v", key, marker, state)
+		}
+	}
+
+	runner.Router = &api.Router{}
+	runner.reconcileSupervisedDaemonSpecs(ctx, nil, runner.clientDaemonSpecs(runner.Router))
+	markers, err = readSupervisedDaemonMarkers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(markers) != 0 || len(runner.clientDaemonStates) != 0 {
+		t.Fatalf("deleted ARP observers retained ownership: markers=%#v states=%#v", markers, runner.clientDaemonStates)
+	}
+}
+
 func TestRunnerSyncsARPObserverIgnoredSenderMACsOnDriftOnly(t *testing.T) {
 	spec := mobilityARPObserverDaemonSpec{
 		ResourceName:      "mobility-svnet1-pve-arp-observer-eth1",

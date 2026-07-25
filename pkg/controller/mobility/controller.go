@@ -23,6 +23,7 @@ import (
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
+	"github.com/imksoo/routerd/pkg/sam"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -204,6 +205,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 	if !ok {
 		return fmt.Errorf("self node %q is not a member of MobilityPool/%s after self capture resolution", selfNode, res.Metadata.Name)
 	}
+	captureGate := sam.EvaluateCaptureGate(self.Capture, c.Store)
 	source := DynamicSource(res.Metadata.Name, selfNode)
 	events, err := c.Store.ListFederationEvents(spec.GroupRef, false, now.Unix())
 	if err != nil {
@@ -289,6 +291,7 @@ func (c Controller) reconcileBGPDelivery(ctx context.Context, res api.Resource, 
 		ObservedStaleSince:   observedStaleSince,
 		SuppressDeprovision:  c.SuppressProviderDeprovision,
 		LivenessMarkers:      livenessMarkers,
+		CaptureGate:          &captureGate,
 		Now:                  now,
 	})
 	if err != nil {

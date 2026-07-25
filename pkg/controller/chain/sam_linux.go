@@ -42,7 +42,7 @@ func defaultSAMGratuitousARPAnnouncer() samGratuitousARPAnnouncer {
 
 type packetSAMGratuitousARPAnnouncer struct{}
 
-func (netlinkSAMProxyNeighborApplier) SetProxyARP(ctx context.Context, ifname string, enabled bool) error {
+func (netlinkSAMProxyNeighborApplier) SetProxyARP(ctx context.Context, ifname string, enabled, _ bool) error {
 	value := "0"
 	if enabled {
 		value = "1"

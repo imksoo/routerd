@@ -848,6 +848,33 @@ func validateSAMTransportProfile(res api.Resource, spec api.SAMTransportProfileS
 	capacity := 1 << (31 - inner.Bits())
 	switch addressingMode {
 	case "pair-stable":
+		if len(spec.TopologyNodeRefs) > 0 {
+			topology, err := normalizeSAMTransportTopology(res.ID(), spec)
+			if err != nil {
+				return err
+			}
+			edgeCount := len(topology) * (len(topology) - 1) / 2
+			if edgeCount > capacity {
+				return fmt.Errorf("%s spec.innerPrefix %s has %d /31 edges but topologyNodeRefs requires %d edges", res.ID(), inner, capacity, edgeCount)
+			}
+			usedSlots := map[int]string{}
+			seedPrefix := inner.Masked().String()
+			for i := 0; i < len(topology); i++ {
+				for j := i + 1; j < len(topology); j++ {
+					left, right := topology[i], topology[j]
+					edge := fmt.Sprintf("%s<->%s", left, right)
+					slot := mobilityconfig.StableSAMTransportSlot(seedPrefix, left, right, capacity)
+					if previous := usedSlots[slot]; previous != "" {
+						slotPrefix, slotErr := mobilityconfig.SAMTransportSlotPrefix(inner, slot)
+						if slotErr != nil {
+							return fmt.Errorf("%s spec.topologyNodeRefs pair-stable slot computation failed for %s: %w", res.ID(), edge, slotErr)
+						}
+						return fmt.Errorf("%s spec.topologyNodeRefs pair-stable edges %s and %s collide in slot %s; expand spec.innerPrefix or change the prefix seed", res.ID(), previous, edge, slotPrefix)
+					}
+					usedSlots[slot] = edge
+				}
+			}
+		}
 		if len(spec.Peers) > capacity {
 			return fmt.Errorf("%s spec.innerPrefix %s has %d /31 edges but spec.peers requires %d edges for pair-stable addressing", res.ID(), inner, capacity, len(spec.Peers))
 		}

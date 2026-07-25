@@ -52,6 +52,27 @@ func TestSAMControllerSubscribesToBGPRouterStatus(t *testing.T) {
 	}
 }
 
+func TestBGPControllerSubscribesToMobilityFIBVerdictsOnly(t *testing.T) {
+	verdicts := daemonapi.DaemonEvent{
+		Type: "routerd.resource.status.changed",
+		Resource: &daemonapi.ResourceRef{
+			APIVersion: api.MobilityAPIVersion,
+			Kind:       "MobilityPool",
+			Name:       "cloudedge",
+		},
+		Attributes: map[string]string{"changedFields": "ownershipResolverFIBVerdicts,phase"},
+	}
+	subs := bgpStatusSubscriptions(&api.Router{})
+	if !subscriptionSetAccepts(subs, verdicts) {
+		t.Fatal("bgp subscriptions did not accept MobilityPool FIB verdict change")
+	}
+	unrelated := verdicts
+	unrelated.Attributes = map[string]string{"changedFields": "packetsSeen,observedAt"}
+	if subscriptionSetAccepts(subs, unrelated) {
+		t.Fatal("bgp subscriptions accepted unrelated high-churn MobilityPool status")
+	}
+}
+
 func TestSAMRouteControllersSubscribeToDHCPv4ClientStatus(t *testing.T) {
 	event := daemonapi.DaemonEvent{
 		Type: "routerd.resource.status.changed",
@@ -222,7 +243,7 @@ func TestRuntimeWhenControllersSubscribeToStatusRefs(t *testing.T) {
 		{name: "ingress-service", subs: statusSubscriptionsWithWhen(router, []string{"IngressService"})},
 		{name: "nat44", subs: statusSubscriptionsWithWhen(router, []string{"NAT44Rule", "LocalServiceRedirect"}, "EgressRoutePolicy", "IngressService")},
 		{name: "bfd", subs: statusSubscriptionsWithWhen(router, []string{"BFD"}, "BGPPeer", "BFD")},
-		{name: "bgp", subs: statusSubscriptionsWithWhen(router, []string{"BGPRouter", "BGPPeer"}, "BFD", "BGPRouter", "BGPPeer")},
+		{name: "bgp", subs: bgpStatusSubscriptions(router)},
 		{name: "vrrp", subs: statusSubscriptionsWithWhen(router, []string{"VirtualAddress"}, "BGPRouter", "BGPPeer", "IngressService")},
 		{name: "ip-address-set", subs: statusSubscriptionsWithWhen(router, []string{"IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"}, "IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole")},
 		{name: "firewall", subs: firewallStatusSubscriptions(router)},

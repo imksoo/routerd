@@ -15,11 +15,13 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/nftstate"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 )
 
 type PathMTUController struct {
 	Router *api.Router
+	OS     platform.OS
 	Bus    interface {
 		Publish(context.Context, daemonapi.DaemonEvent) error
 	}
@@ -33,6 +35,20 @@ type PathMTUController struct {
 func (c PathMTUController) Reconcile(ctx context.Context) error {
 	if c.Router == nil {
 		return nil
+	}
+	targetOS := c.OS
+	if targetOS == "" {
+		targetOS = platform.CurrentOS()
+	}
+	if targetOS == platform.OSFreeBSD {
+		if c.Store == nil {
+			return nil
+		}
+		return c.Store.SaveObjectStatus(api.RouterAPIVersion, "Router", "derived-path-mtu", map[string]any{
+			"phase":     "Skipped",
+			"reason":    "path MTU policy is enforced by pf",
+			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		})
 	}
 	mssData, err := render.NftablesTCPMSSClamp(c.Router)
 	if err != nil {

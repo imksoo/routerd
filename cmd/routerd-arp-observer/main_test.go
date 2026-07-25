@@ -80,6 +80,18 @@ func TestParseOptionsDefaultsSourceModes(t *testing.T) {
 	}
 }
 
+func TestParseOptionsAcceptsSupervisorOwner(t *testing.T) {
+	_, err := parseOptions("test", []string{
+		"--supervisor-owner", "owned-token",
+		"--interface", "eth1",
+		"--pool", "svnet1",
+		"--prefix", "192.168.123.0/24",
+	})
+	if err != nil {
+		t.Fatalf("parseOptions --supervisor-owner: %v", err)
+	}
+}
+
 func TestParseOptionsAcceptsRepeatedIgnoreSenderMAC(t *testing.T) {
 	_, err := parseOptions("test", []string{
 		"--interface", "eth1",

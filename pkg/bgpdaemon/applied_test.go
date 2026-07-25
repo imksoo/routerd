@@ -5,6 +5,7 @@ package bgpdaemon
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -48,6 +49,29 @@ func TestWriteAppliedAtomicRoundTrip(t *testing.T) {
 	}
 	if Hash(got) == "" {
 		t.Fatal("hash is empty")
+	}
+}
+
+func TestReadAppliedTreatsEmptyStateAsMissing(t *testing.T) {
+	for _, data := range []string{"", " \n\t"} {
+		path := filepath.Join(t.TempDir(), "applied.json")
+		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+		config, ok, err := ReadApplied(path)
+		if err != nil || ok || !reflect.DeepEqual(config, AppliedConfig{}) {
+			t.Fatalf("ReadApplied(empty) = config=%#v ok=%t err=%v", config, ok, err)
+		}
+	}
+}
+
+func TestReadAppliedRejectsNonEmptyMalformedState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "applied.json")
+	if err := os.WriteFile(path, []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ReadApplied(path); err == nil {
+		t.Fatal("ReadApplied accepted non-empty malformed state")
 	}
 }
 

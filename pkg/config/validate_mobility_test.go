@@ -215,6 +215,41 @@ func TestValidateSAMTransportProfileAllowsPairStableWithoutSharedTopology(t *tes
 	}
 }
 
+func TestValidateSAMTransportProfilePairStableFullTopologySlots(t *testing.T) {
+	topology := []string{
+		"aws-leaf-a", "aws-leaf-b", "aws-rr-a", "aws-rr-b",
+		"azure-leaf-a", "azure-leaf-b", "oci-leaf-a", "oci-leaf-b",
+		"pve-leaf-a", "pve-leaf-b",
+	}
+
+	t.Run("rejects live full topology collision", func(t *testing.T) {
+		spec := validSAMTransportProfileSpec()
+		spec.SelfNodeRef = "pve-leaf-a"
+		spec.AddressingMode = "pair-stable"
+		spec.InnerPrefix = "10.255.0.0/24"
+		spec.TopologyNodeRefs = topology
+		spec.Peers = nil
+		spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMNodeSet/cloudedge-nodes"}}
+		err := Validate(samTransportProfileRouter(spec))
+		if err == nil || !strings.Contains(err.Error(), "pair-stable edges aws-leaf-a<->aws-rr-b and azure-leaf-b<->oci-leaf-a collide") {
+			t.Fatalf("Validate full topology collision error = %v", err)
+		}
+	})
+
+	t.Run("accepts collision-free expanded prefix", func(t *testing.T) {
+		spec := validSAMTransportProfileSpec()
+		spec.SelfNodeRef = "pve-leaf-a"
+		spec.AddressingMode = "pair-stable"
+		spec.InnerPrefix = "10.255.0.0/20"
+		spec.TopologyNodeRefs = topology
+		spec.Peers = nil
+		spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMNodeSet/cloudedge-nodes"}}
+		if err := Validate(samTransportProfileRouter(spec)); err != nil {
+			t.Fatalf("Validate collision-free full topology: %v", err)
+		}
+	})
+}
+
 func TestValidateSAMTransportProfileAllowsPeersFromWithoutPeers(t *testing.T) {
 	spec := validSAMTransportProfileSpec()
 	spec.AddressingMode = "pair-stable"

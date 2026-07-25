@@ -39,7 +39,7 @@ func (g *fakeSAMGARP) SendGratuitousARP(_ context.Context, address, ifname strin
 	return g.err
 }
 
-func (a *fakeSAMApplier) SetProxyARP(_ context.Context, ifname string, enabled bool) error {
+func (a *fakeSAMApplier) SetProxyARP(_ context.Context, ifname string, enabled, _ bool) error {
 	value := "0"
 	if enabled {
 		value = "1"

@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -156,7 +157,7 @@ func TestSAMControllerProviderSecondaryBGPFreeBSDPersistsAndRemovesProxyNeighbor
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("delete Reconcile: %v", err)
 	}
-	assertSAMCalls(t, applier.calls, []string{"delete:10.0.1.122/32@em0"})
+	assertSAMCalls(t, applier.calls, []string{"delete:10.0.1.122/32@em0", "proxyarp:=0"})
 }
 
 func TestSAMControllerDeassignAbsentAddressIsNoopButTracked(t *testing.T) {
@@ -240,6 +241,12 @@ func TestSAMControllerFreeBSDPublishesAddressGARPAndForwardPath(t *testing.T) {
 	if len(applier.forwardSets) != 1 || len(applier.forwardSets[0]) != 1 || applier.forwardSets[0][0].Kind != "forward-local-path" {
 		t.Fatalf("FreeBSD PF desired /32 paths = %#v, want one local forward path", applier.forwardSets)
 	}
+	callOrder := strings.Join(applier.calls, "\n")
+	ensureIndex := strings.Index(callOrder, "ensure:10.0.1.123/32@lan0")
+	proxyIndex := strings.Index(callOrder, "proxyarp:=1")
+	if ensureIndex < 0 || proxyIndex < 0 || ensureIndex > proxyIndex {
+		t.Fatalf("FreeBSD enabled host-global proxyall before claim validation: %#v", applier.calls)
+	}
 }
 
 func TestSAMControllerFreeBSDCollisionFailsBeforePublishedARP(t *testing.T) {
@@ -254,6 +261,9 @@ func TestSAMControllerFreeBSDCollisionFailsBeforePublishedARP(t *testing.T) {
 	}
 	if len(applier.ensure) != 0 || len(garp.calls) != 0 {
 		t.Fatalf("collision published ARP/GARP: ensure=%#v garp=%#v", applier.ensure, garp.calls)
+	}
+	if strings.Contains(strings.Join(applier.proxyARP, "\n"), "=1") {
+		t.Fatalf("failed claim enabled host-global proxyall: %#v", applier.proxyARP)
 	}
 	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
 	if status["phase"] != "Error" || status["reason"] != "CaptureFailed" || !strings.Contains(status["error"].(string), "foreign OS address") {
@@ -345,6 +355,31 @@ func TestSAMControllerFreeBSDCARPGatesPublicationAndEmptyCleanup(t *testing.T) {
 	}
 	if len(applier.delete) != 1 || applier.delete[0] != "10.0.1.123/32@lan0" {
 		t.Fatalf("owned delete cleanup = %#v", applier.delete)
+	}
+	if got, want := applier.proxyARP, []string{"=0", "=1", "=0"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("FreeBSD aggregate proxyall transitions = %#v, want %#v", got, want)
+	}
+}
+
+func TestSAMControllerFreeBSDDisablesOwnedProxyAllBeforeFailedBackupCleanup(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "lan0")
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ActiveWhen = api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}
+	router.Spec.Resources[1].Spec = spec
+	store := &samStore{
+		objects: map[string]map[string]any{
+			api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "backup"},
+		},
+		statuses: []routerstate.ObjectStatus{samRemoteAddressClaimStatus("app", "10.0.1.123/32", "lan0")},
+	}
+	applier := &fakeSAMApplier{forwardErr: errors.New("PF cleanup failed")}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSFreeBSD, Applier: applier}
+	err := controller.Reconcile(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "PF cleanup failed") {
+		t.Fatalf("backup cleanup error = %v", err)
+	}
+	if got, want := applier.proxyARP, []string{"=0"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("failed backup cleanup proxyall transitions = %#v, want %#v", got, want)
 	}
 }
 
@@ -994,6 +1029,9 @@ func TestSAMControllerFreeBSDKeepsForwardingContract(t *testing.T) {
 	}
 	if got := applier.ipForwarding; len(got) != 1 || got[0] != "1" {
 		t.Fatalf("FreeBSD global forwarding = %#v, want one enable", got)
+	}
+	if len(applier.proxyARP) != 0 {
+		t.Fatalf("router without SAM claims changed host-global proxyall: %#v", applier.proxyARP)
 	}
 }
 

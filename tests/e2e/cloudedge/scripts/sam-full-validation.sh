@@ -9,15 +9,24 @@ Usage:
 Options:
   --ssh-key FILE      Fixed lab SSH key (default: ~/.ssh/routerd-cloudedge-lab-20260529)
   --scenario NAME     Run only the named scenario; may be repeated. Use --list-scenarios for names
+  --resume-status FILE
+                      Resume the default ordered suite after a contiguous PASS prefix
   --destroy-cmd CMD   Optional teardown command to run only after every scenario passes
   --list-scenarios    Validate tofu output has required nodes, print scenario list, and exit
 
 Runs the standard full-topology SAM validation sequence against an already
 applied OpenTofu environment:
   1. baseline full matrix + legacy + performance + load-balance report
-  2. RR failover/rejoin for aws-rr-a and aws-rr-b
-  3. leaf failover/rejoin for both leaf nodes at each site
+  2. RR failover/rejoin for aws-rr-a and aws-rr-b, with full traffic matrices
+  3. leaf failover/rejoin for both leaf nodes at each site, with full matrices
   4. load-balance report rerun
+
+The ordered default suite does not repeat legacy and throughput probes in
+every failover phase: baseline and the final load-balance scenario retain
+those expensive measurements, while each failover/rejoin retains control and
+provider convergence, all directed client/cloud-ingress checks, transfer
+observation, and owner-table evidence. A standalone --scenario remains
+exhaustive.
 
 If any scenario fails, the script stops and does not run destroy-cmd. Inspect
 the live environment and the scenario evidence before retrying or destroying.
@@ -28,6 +37,7 @@ tofu_output=
 artifact=
 evidence_root=
 ssh_key="${HOME}/.ssh/routerd-cloudedge-lab-20260529"
+resume_status=
 destroy_cmd=
 list_scenarios=0
 selected_scenarios=()
@@ -40,6 +50,7 @@ while [ "$#" -gt 0 ]; do
     --evidence-root) evidence_root="$2"; shift 2 ;;
     --ssh-key) ssh_key="$2"; shift 2 ;;
     --scenario) selected_scenarios+=("$2"); scenario_filter=1; shift 2 ;;
+    --resume-status) resume_status="$2"; shift 2 ;;
     --destroy-cmd) destroy_cmd="$2"; shift 2 ;;
     --list-scenarios) list_scenarios=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -103,12 +114,12 @@ if [ "$list_scenarios" -eq 1 ]; then
   exit 0
 fi
 
-if [ "${#selected_scenarios[@]}" -eq 0 ]; then
-  selected_scenarios=("${scenario_names[@]}")
-fi
-
 if [ -n "$destroy_cmd" ] && [ "$scenario_filter" -eq 1 ]; then
   echo "--destroy-cmd is only allowed when running the full default scenario set" >&2
+  exit 2
+fi
+if [ -n "$resume_status" ] && [ "$scenario_filter" -eq 1 ]; then
+  echo "--resume-status cannot be combined with --scenario" >&2
   exit 2
 fi
 
@@ -128,6 +139,47 @@ for scenario in "${selected_scenarios[@]}"; do
     exit 2
   }
 done
+
+resume_count=0
+if [ -n "$resume_status" ]; then
+  [ -f "$resume_status" ] || { echo "resume status not found: $resume_status" >&2; exit 2; }
+  [ "$(head -n 1 "$resume_status")" = $'scenario\tstatus\tevidence_dir' ] || {
+    echo "resume status has an invalid header: $resume_status" >&2
+    exit 2
+  }
+  while IFS=$'\t' read -r name status dir; do
+    [ -n "$name" ] || continue
+    [ "$resume_count" -lt "${#scenario_names[@]}" ] || {
+      echo "resume status contains too many scenarios" >&2
+      exit 2
+    }
+    [ "$name" = "${scenario_names[$resume_count]}" ] || {
+      echo "resume status is not a contiguous ordered prefix at: $name" >&2
+      exit 2
+    }
+    [ "$status" = PASS ] || {
+      echo "resume status contains non-PASS scenario: $name $status" >&2
+      exit 2
+    }
+    [ -d "$dir" ] || {
+      echo "resume evidence directory is missing: $dir" >&2
+      exit 2
+    }
+    resume_count=$((resume_count + 1))
+  done < <(tail -n +2 "$resume_status")
+  selected_scenarios=("${scenario_names[@]:$resume_count}")
+elif [ "${#selected_scenarios[@]}" -eq 0 ]; then
+  selected_scenarios=("${scenario_names[@]}")
+fi
+
+failover_suite_args=(--performance-tests)
+if [ "$scenario_filter" -eq 0 ]; then
+  failover_suite_args=(
+    --skip-initial-validation
+    --skip-legacy-protocols
+    --success-evidence-minimal
+  )
+fi
 
 [ -n "$artifact" ] || { echo "--artifact is required" >&2; exit 2; }
 [ -f "$artifact" ] || { echo "artifact not found: $artifact" >&2; exit 2; }
@@ -193,7 +245,7 @@ run_named_scenario() {
         --failover-node aws-rr-a \
         --rejoin-after-failover \
         --load-balance-report \
-        --performance-tests \
+        "${failover_suite_args[@]}" \
         --failover-transfer-observe
       ;;
     rr-failover-aws-rr-b)
@@ -202,7 +254,7 @@ run_named_scenario() {
         --failover-node aws-rr-b \
         --rejoin-after-failover \
         --load-balance-report \
-        --performance-tests \
+        "${failover_suite_args[@]}" \
         --failover-transfer-observe
       ;;
     leaf-failover-aws-leaf-a)
@@ -211,7 +263,7 @@ run_named_scenario() {
         --failover-node aws-leaf-a \
         --rejoin-after-failover \
         --load-balance-report \
-        --performance-tests \
+        "${failover_suite_args[@]}" \
         --failover-transfer-observe
       ;;
     leaf-failover-aws-leaf-b)
@@ -220,7 +272,7 @@ run_named_scenario() {
         --failover-node aws-leaf-b \
         --rejoin-after-failover \
         --load-balance-report \
-        --performance-tests \
+        "${failover_suite_args[@]}" \
         --failover-transfer-observe
       ;;
     leaf-failover-azure-leaf-a)
@@ -229,7 +281,7 @@ run_named_scenario() {
         --failover-node azure-leaf-a \
         --rejoin-after-failover \
         --load-balance-report \
-        --performance-tests \
+        "${failover_suite_args[@]}" \
         --failover-transfer-observe
       ;;
     leaf-failover-azure-leaf-b)
@@ -238,7 +290,7 @@ run_named_scenario() {
         --failover-node azure-leaf-b \
         --rejoin-after-failover \
         --load-balance-report \
-        --performance-tests \
+        "${failover_suite_args[@]}" \
         --failover-transfer-observe
       ;;
     leaf-failover-oci-leaf-a)
@@ -247,7 +299,7 @@ run_named_scenario() {
         --failover-node oci-leaf-a \
         --rejoin-after-failover \
         --load-balance-report \
-        --performance-tests \
+        "${failover_suite_args[@]}" \
         --failover-transfer-observe
       ;;
     leaf-failover-oci-leaf-b)
@@ -256,7 +308,7 @@ run_named_scenario() {
         --failover-node oci-leaf-b \
         --rejoin-after-failover \
         --load-balance-report \
-        --performance-tests \
+        "${failover_suite_args[@]}" \
         --failover-transfer-observe
       ;;
     leaf-failover-pve-leaf-a)
@@ -265,7 +317,7 @@ run_named_scenario() {
         --failover-node pve-leaf-a \
         --rejoin-after-failover \
         --load-balance-report \
-        --performance-tests \
+        "${failover_suite_args[@]}" \
         --failover-transfer-observe
       ;;
     leaf-failover-pve-leaf-b)
@@ -274,7 +326,7 @@ run_named_scenario() {
         --failover-node pve-leaf-b \
         --rejoin-after-failover \
         --load-balance-report \
-        --performance-tests \
+        "${failover_suite_args[@]}" \
         --failover-transfer-observe
       ;;
     load-balance)
@@ -299,11 +351,17 @@ run_named_scenario() {
   echo "ssh_key=$ssh_key"
   ssh-keygen -lf "${ssh_key}.pub" 2>/dev/null || ssh-keygen -y -f "$ssh_key" | ssh-keygen -lf -
   echo "destroy_cmd=${destroy_cmd:-}"
+  echo "resume_status=${resume_status:-}"
+  echo "resume_count=$resume_count"
   printf 'selected_scenarios=%s\n' "$(IFS=,; echo "${selected_scenarios[*]}")"
   echo "policy_read=Read ~/routerd-orchestration.md and cloudedge-mobility/LAB_POLICY.md before running this on real machines."
 } >"$evidence_root/full-validation-note.txt"
 
-printf 'scenario\tstatus\tevidence_dir\n' >"$evidence_root/scenario-status.tsv"
+if [ -n "$resume_status" ]; then
+  cp "$resume_status" "$evidence_root/scenario-status.tsv"
+else
+  printf 'scenario\tstatus\tevidence_dir\n' >"$evidence_root/scenario-status.tsv"
+fi
 trap write_overall_summary EXIT
 
 for scenario in "${selected_scenarios[@]}"; do

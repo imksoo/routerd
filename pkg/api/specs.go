@@ -656,6 +656,7 @@ type BGPPeerSpec struct {
 	PeerASN                 uint32                `yaml:"peerASN" json:"peerASN" jsonschema:"minimum=1"`
 	Peers                   []string              `yaml:"peers,omitempty" json:"peers,omitempty"`
 	PeersFrom               []BGPPeersSourceSpec  `yaml:"peersFrom,omitempty" json:"peersFrom,omitempty"`
+	PassiveMode             bool                  `yaml:"passiveMode,omitempty" json:"passiveMode,omitempty"`
 	Password                string                `yaml:"password,omitempty" json:"password,omitempty"`
 	PasswordFrom            SecretValueSourceSpec `yaml:"passwordFrom,omitempty" json:"passwordFrom,omitempty"`
 	EbgpMultihop            int                   `yaml:"ebgpMultihop,omitempty" json:"ebgpMultihop,omitempty" jsonschema:"minimum=0,maximum=255"`
