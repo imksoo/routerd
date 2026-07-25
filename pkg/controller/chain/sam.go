@@ -153,11 +153,22 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 		}
 	}
 	if targetOS == platform.OSFreeBSD {
+		proxyARPEnabled := freeBSDProxyARPEnabled(actions, blockedPublication)
+		if !proxyARPEnabled {
+			// Failed-owner silence takes precedence over PF cleanup. Once no
+			// valid active claim remains, drop routerd-owned global proxy ARP
+			// before any later cleanup operation that could fail.
+			if err := c.reconcileProxyARPSysctls(ctx, actions, statuses, blockedPublication); err != nil {
+				return err
+			}
+		}
 		if err := c.reconcileForwardPaths(ctx, actions); err != nil {
 			return err
 		}
-		if err := c.reconcileProxyARPSysctls(ctx, actions, statuses, blockedPublication); err != nil {
-			return err
+		if proxyARPEnabled {
+			if err := c.reconcileProxyARPSysctls(ctx, actions, statuses, blockedPublication); err != nil {
+				return err
+			}
 		}
 	}
 	for _, action := range actions {
@@ -283,13 +294,7 @@ func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []s
 		// proxy_arp. Reconcile it exactly once from the aggregate active plan:
 		// a BACKUP with no active proxy-neighbor action must not answer ARP,
 		// while any active claim needs proxyall for routes reached via GIF.
-		enabled := false
-		for _, action := range actions {
-			if action.Kind == "proxy-neighbor" && !blocked[action.ClaimName] {
-				enabled = true
-				break
-			}
-		}
+		enabled := freeBSDProxyARPEnabled(actions, blocked)
 		owned := len(samStoredProxyNeighbors(statuses)) > 0
 		if err := applier.SetProxyARP(ctx, "", enabled, owned); err != nil {
 			return fmt.Errorf("set SAM FreeBSD proxyall=%t: %w", enabled, err)
@@ -333,6 +338,15 @@ func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []s
 		}
 	}
 	return nil
+}
+
+func freeBSDProxyARPEnabled(actions []sam.CaptureAction, blocked map[string]bool) bool {
+	for _, action := range actions {
+		if action.Kind == "proxy-neighbor" && !blocked[action.ClaimName] {
+			return true
+		}
+	}
+	return false
 }
 
 func (c SAMController) managesFreeBSDProxyARP(statuses []routerstate.ObjectStatus) bool {

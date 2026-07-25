@@ -361,6 +361,28 @@ func TestSAMControllerFreeBSDCARPGatesPublicationAndEmptyCleanup(t *testing.T) {
 	}
 }
 
+func TestSAMControllerFreeBSDDisablesOwnedProxyAllBeforeFailedBackupCleanup(t *testing.T) {
+	router := samControllerRouterWithClaim("10.0.1.123/32", "proxy-arp", "lan0")
+	spec := router.Spec.Resources[1].Spec.(api.RemoteAddressClaimSpec)
+	spec.Capture.ActiveWhen = api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}
+	router.Spec.Resources[1].Spec = spec
+	store := &samStore{
+		objects: map[string]map[string]any{
+			api.NetAPIVersion + "/VirtualAddress/onprem-vip": {"role": "backup"},
+		},
+		statuses: []routerstate.ObjectStatus{samRemoteAddressClaimStatus("app", "10.0.1.123/32", "lan0")},
+	}
+	applier := &fakeSAMApplier{forwardErr: errors.New("PF cleanup failed")}
+	controller := SAMController{Router: router, Store: store, OS: platform.OSFreeBSD, Applier: applier}
+	err := controller.Reconcile(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "PF cleanup failed") {
+		t.Fatalf("backup cleanup error = %v", err)
+	}
+	if got, want := applier.proxyARP, []string{"=0"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("failed backup cleanup proxyall transitions = %#v, want %#v", got, want)
+	}
+}
+
 func TestSAMControllerCleansRemovedProxyNeighbor(t *testing.T) {
 	router := &api.Router{}
 	store := &samStore{
