@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260725.0248
+
 ### Added
 
 - Cloud SAM now has real amd64 mixed Linux/FreeBSD qualification covering two

@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260725.0248
+
 ### 追加
 
 - Cloud SAM に amd64 の実機 Linux/FreeBSD 混在検証を追加しました。2 台の

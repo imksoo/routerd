@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260725.0248
+
 ### 新增
 
 - Cloud SAM 現已通過 amd64 實機 Linux/FreeBSD 混合環境驗證，涵蓋兩台 CARP
