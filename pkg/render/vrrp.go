@@ -282,11 +282,12 @@ func writeKeepalivedInstance(buf *bytes.Buffer, instance vrrpInstance) {
 		parent := strings.TrimSpace(instance.FailoverVMAC.ParentInterface)
 		ifname := strings.TrimSpace(instance.FailoverVMAC.Interface)
 		mac := strings.TrimSpace(instance.FailoverVMAC.MACAddress)
-		hook := "/usr/local/sbin/routerd-vrrp-vmac --parent " + parent + " --interface " + ifname + " --mac " + mac
-		buf.WriteString("  notify_master \"" + hook + " activate\"\n")
-		buf.WriteString("  notify_backup \"" + hook + " deactivate\"\n")
-		buf.WriteString("  notify_fault \"" + hook + " deactivate\"\n")
-		buf.WriteString("  notify_stop \"" + hook + " deactivate\"\n")
+		hook := "/usr/local/sbin/routerd-vrrp-vmac"
+		args := " --parent " + parent + " --interface " + ifname + " --mac " + mac
+		buf.WriteString("  notify_master \"" + hook + " activate" + args + "\"\n")
+		buf.WriteString("  notify_backup \"" + hook + " deactivate" + args + "\"\n")
+		buf.WriteString("  notify_fault \"" + hook + " deactivate" + args + "\"\n")
+		buf.WriteString("  notify_stop \"" + hook + " deactivate" + args + "\"\n")
 	}
 	buf.WriteString("  virtual_ipaddress {\n")
 	buf.WriteString("    " + instance.Address + " dev " + instance.Interface + "\n")

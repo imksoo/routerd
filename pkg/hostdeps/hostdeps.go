@@ -393,6 +393,10 @@ func derivedInterfaceSysctls(router *api.Router) []sysctlResource {
 				Value:      "2",
 				Runtime:    boolPtr(true),
 				Persistent: true,
+				// DHCPv6 may use a VRRP-controlled macvlan that does not exist
+				// until its owner becomes MASTER. The VMAC helper applies this
+				// value when it creates the interface.
+				Optional: true,
 			},
 		})
 	}

@@ -12,7 +12,7 @@ func TestParseOptions(t *testing.T) {
 	if opts.action != "activate" || opts.parent != "eth0" || opts.ifname != "wan-vmac" {
 		t.Fatalf("unexpected options: %#v", opts)
 	}
-	if got := commandsFor(opts); len(got) != 3 || got[0][0] != "ip" || got[0][1] != "link" || got[0][2] != "add" {
+	if got := commandsFor(opts); len(got) != 4 || got[0][0] != "ip" || got[0][1] != "link" || got[0][2] != "add" || got[3][0] != "sysctl" || got[3][2] != "net.ipv6.conf.wan-vmac.accept_ra=2" {
 		t.Fatalf("activate commands: %#v", got)
 	}
 }

@@ -72,6 +72,9 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 		}
 		serviceActive := c.refreshKeepalivedServiceActive(ctx)
 		result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRolesAfterChange(ctx, c, aliases), ServiceActive: &serviceActive, LastChangeReason: reason}
+		if err := syncFailoverVMACs(ctx, c, aliases, result.Roles); err != nil {
+			return backendResult{}, err
+		}
 		if action == "reload" {
 			result.LastReloadAt = now
 		} else {
@@ -96,7 +99,43 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 		}
 		return result, nil
 	}
-	return backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRoles(ctx, c, aliases), ServiceActive: &serviceActive}, nil
+	roles := observeKeepalivedRoles(ctx, c, aliases)
+	if err := syncFailoverVMACs(ctx, c, aliases, roles); err != nil {
+		return backendResult{}, err
+	}
+	return backendResult{Path: path, Changed: changed, Roles: roles, ServiceActive: &serviceActive}, nil
+}
+
+// syncFailoverVMACs makes the WAN L2 identity match the one authoritative
+// VRRP role even if keepalived retains MASTER across a configuration reload.
+// The keepalived notify hooks provide the fast transition path; this sync is
+// the idempotent reconciliation path and runs before role status is published.
+func syncFailoverVMACs(ctx context.Context, c *Controller, aliases map[string]string, roles map[string]string) error {
+	if c.DryRun {
+		return nil
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		spec, ok, err := vrrpResourceSpec(resource)
+		if err != nil || !ok || spec.Mode != "vrrp" || spec.VRRP.FailoverVMAC == nil {
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		vmac := spec.VRRP.FailoverVMAC
+		parent := aliases[vmac.ParentInterface]
+		if parent == "" {
+			return fmt.Errorf("%s spec.vrrp.failoverVMAC references interface with empty ifname %q", resource.ID(), vmac.ParentInterface)
+		}
+		action := "deactivate"
+		if roles[resource.Metadata.Name] == "master" {
+			action = "activate"
+		}
+		if out, err := c.run(ctx, "/usr/local/sbin/routerd-vrrp-vmac", action, "--parent", parent, "--interface", vmac.Interface, "--mac", vmac.MACAddress); err != nil {
+			return fmt.Errorf("sync failover VMAC for %s: %w: %s", resource.ID(), err, strings.TrimSpace(string(out)))
+		}
+	}
+	return nil
 }
 
 func reloadOrRestartSystemdKeepalived(ctx context.Context, c *Controller, path string) (string, error) {
