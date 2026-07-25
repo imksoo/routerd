@@ -12,6 +12,12 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- BGP rolling upgrades now use GoBGP v4's RFC 4271 parallel-connection
+  collision handling, preventing active/active peers from remaining
+  phase-locked while preserving legacy default-active peer transport.
+
 ## v20260725.0248
 
 ### Added
