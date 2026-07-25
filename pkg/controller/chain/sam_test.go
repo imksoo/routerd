@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -156,7 +157,7 @@ func TestSAMControllerProviderSecondaryBGPFreeBSDPersistsAndRemovesProxyNeighbor
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("delete Reconcile: %v", err)
 	}
-	assertSAMCalls(t, applier.calls, []string{"delete:10.0.1.122/32@em0"})
+	assertSAMCalls(t, applier.calls, []string{"delete:10.0.1.122/32@em0", "proxyarp:=0"})
 }
 
 func TestSAMControllerDeassignAbsentAddressIsNoopButTracked(t *testing.T) {
@@ -345,6 +346,9 @@ func TestSAMControllerFreeBSDCARPGatesPublicationAndEmptyCleanup(t *testing.T) {
 	}
 	if len(applier.delete) != 1 || applier.delete[0] != "10.0.1.123/32@lan0" {
 		t.Fatalf("owned delete cleanup = %#v", applier.delete)
+	}
+	if got, want := applier.proxyARP, []string{"=0", "=1", "=0"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("FreeBSD aggregate proxyall transitions = %#v, want %#v", got, want)
 	}
 }
 
@@ -994,6 +998,9 @@ func TestSAMControllerFreeBSDKeepsForwardingContract(t *testing.T) {
 	}
 	if got := applier.ipForwarding; len(got) != 1 || got[0] != "1" {
 		t.Fatalf("FreeBSD global forwarding = %#v, want one enable", got)
+	}
+	if len(applier.proxyARP) != 0 {
+		t.Fatalf("router without SAM claims changed host-global proxyall: %#v", applier.proxyARP)
 	}
 }
 

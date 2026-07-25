@@ -17,25 +17,18 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func TestFreeBSDSAMPublishedARPUsesExactAddressAndRefusesForeign(t *testing.T) {
+func TestFreeBSDSAMProxyAllRequiresRouteThroughAnotherInterface(t *testing.T) {
 	reset := saveFreeBSDSAMSeams()
 	defer reset()
 	var commands []string
 	freeBSDSAMRunCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		commands = append(commands, name+" "+strings.Join(args, " "))
-		switch strings.Join(args, " ") {
-		case "-n -i em0 192.0.2.55":
-			return nil, nil
+		switch name + " " + strings.Join(args, " ") {
+		case "route -n get 192.0.2.55":
+			return []byte("route to: 192.0.2.55\ninterface: gif0\n"), nil
 		default:
 			return nil, errors.New("unexpected command")
 		}
-	}
-	var publishedAddress string
-	var publishedInterface *net.Interface
-	freeBSDSAMAddPublishedARP = func(_ context.Context, address string, iface *net.Interface) error {
-		publishedAddress = address
-		publishedInterface = iface
-		return nil
 	}
 	freeBSDSAMInterfaceByName = func(name string) (*net.Interface, error) {
 		if name != "em0" {
@@ -46,23 +39,17 @@ func TestFreeBSDSAMPublishedARPUsesExactAddressAndRefusesForeign(t *testing.T) {
 	if err := (freeBSDSAMProxyNeighborApplier{}).EnsureProxyNeighbor(context.Background(), "192.0.2.55/32", "em0"); err != nil {
 		t.Fatalf("EnsureProxyNeighbor: %v", err)
 	}
-	if got, want := strings.Join(commands, "\n"), "arp -n -i em0 192.0.2.55"; got != want {
+	if got, want := strings.Join(commands, "\n"), "route -n get 192.0.2.55"; got != want {
 		t.Fatalf("commands = %q, want %q", got, want)
-	}
-	if publishedAddress != "192.0.2.55" || publishedInterface == nil || publishedInterface.Index != 0 || publishedInterface.Name != "em0" {
-		t.Fatalf("published ARP = address %q interface %#v", publishedAddress, publishedInterface)
 	}
 
 	commands = nil
 	freeBSDSAMRunCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		commands = append(commands, name+" "+strings.Join(args, " "))
-		return []byte("? (192.0.2.55) at 02:00:00:00:00:99 on em1 permanent [ethernet]\n"), nil
+		return []byte("route to: 192.0.2.55\ninterface: em0\n"), nil
 	}
-	if err := (freeBSDSAMProxyNeighborApplier{}).EnsureProxyNeighbor(context.Background(), "192.0.2.55/32", "em0"); err == nil || !strings.Contains(err.Error(), "foreign published ARP") {
-		t.Fatalf("foreign EnsureProxyNeighbor error = %v", err)
-	}
-	if len(commands) != 1 {
-		t.Fatalf("foreign state commands = %#v, want only read-only probe", commands)
+	if err := (freeBSDSAMProxyNeighborApplier{}).EnsureProxyNeighbor(context.Background(), "192.0.2.55/32", "em0"); err == nil || !strings.Contains(err.Error(), "capture interface") {
+		t.Fatalf("same-interface EnsureProxyNeighbor error = %v", err)
 	}
 }
 
@@ -125,69 +112,29 @@ func TestFreeBSDSAMARPEntryOnlyNormalizesCanonicalFreeBSDAbsence(t *testing.T) {
 	}
 }
 
-func TestFreeBSDSAMDeletePublishedARPVerifiesScopedRemoval(t *testing.T) {
+func TestFreeBSDSAMProxyAllSysctlAndPerClaimDelete(t *testing.T) {
 	reset := saveFreeBSDSAMSeams()
 	defer reset()
 	var commands []string
-	lookup := 0
 	freeBSDSAMRunCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		commands = append(commands, name+" "+strings.Join(args, " "))
-		switch strings.Join(args, " ") {
-		case "-n -i em0 192.0.2.55":
-			lookup++
-			if lookup == 1 {
-				return []byte("? (192.0.2.55) at 02:00:00:00:00:55 on em0 permanent published [ethernet]\n"), nil
-			}
-			return []byte("192.0.2.55 (192.0.2.55) -- no entry\n"), errors.New("exit status 1")
-		case "-n get 192.0.2.55":
-			return []byte("   route to: 192.0.2.55\ninterface: em0\n"), nil
-		case "-d 192.0.2.55":
-			return nil, nil
-		default:
+		if name != "sysctl" {
 			return nil, errors.New("unexpected command")
 		}
+		return nil, nil
 	}
-	if err := (freeBSDSAMProxyNeighborApplier{}).DeleteProxyNeighbor(context.Background(), "192.0.2.55/32", "em0"); err != nil {
+	applier := freeBSDSAMProxyNeighborApplier{}
+	if err := applier.SetProxyARP(context.Background(), "", true); err != nil {
+		t.Fatalf("SetProxyARP(true): %v", err)
+	}
+	if err := applier.SetProxyARP(context.Background(), "", false); err != nil {
+		t.Fatalf("SetProxyARP(false): %v", err)
+	}
+	if err := applier.DeleteProxyNeighbor(context.Background(), "192.0.2.55/32", "em0"); err != nil {
 		t.Fatalf("DeleteProxyNeighbor: %v", err)
 	}
-	if got, want := strings.Join(commands, "\n"), "arp -n -i em0 192.0.2.55\nroute -n get 192.0.2.55\narp -d 192.0.2.55\narp -n -i em0 192.0.2.55"; got != want {
+	if got, want := strings.Join(commands, "\n"), "sysctl -w net.link.ether.inet.proxyall=1\nsysctl -w net.link.ether.inet.proxyall=0"; got != want {
 		t.Fatalf("commands = %q, want %q", got, want)
-	}
-
-	lookup = 0
-	freeBSDSAMRunCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
-		switch strings.Join(args, " ") {
-		case "-n -i em0 192.0.2.55":
-			return []byte("? (192.0.2.55) at 02:00:00:00:00:55 on em0 permanent published [ethernet]\n"), nil
-		case "-n get 192.0.2.55":
-			return []byte("interface: em0\n"), nil
-		case "-d 192.0.2.55":
-			return nil, nil
-		default:
-			return nil, errors.New("unexpected command")
-		}
-	}
-	if err := (freeBSDSAMProxyNeighborApplier{}).DeleteProxyNeighbor(context.Background(), "192.0.2.55/32", "em0"); err == nil || !strings.Contains(err.Error(), "scoped entry remains") {
-		t.Fatalf("remaining scoped ARP deletion error = %v", err)
-	}
-
-	commands = nil
-	freeBSDSAMRunCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
-		commands = append(commands, name+" "+strings.Join(args, " "))
-		switch strings.Join(args, " ") {
-		case "-n -i em0 192.0.2.55":
-			return []byte("? (192.0.2.55) at 02:00:00:00:00:55 on em0 permanent published [ethernet]\n"), nil
-		case "-n get 192.0.2.55":
-			return []byte("interface: gif0\n"), nil
-		default:
-			return nil, errors.New("unexpected command")
-		}
-	}
-	if err := (freeBSDSAMProxyNeighborApplier{}).DeleteProxyNeighbor(context.Background(), "192.0.2.55/32", "em0"); err == nil || !strings.Contains(err.Error(), "route resolves through gif0") {
-		t.Fatalf("wrong-FIB deletion error = %v", err)
-	}
-	if got, want := strings.Join(commands, "\n"), "arp -n -i em0 192.0.2.55\nroute -n get 192.0.2.55"; got != want {
-		t.Fatalf("wrong-FIB commands = %q, want %q", got, want)
 	}
 }
 

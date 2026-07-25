@@ -92,7 +92,7 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 	if err := c.reconcileSAMIPForwarding(ctx, actions); err != nil {
 		return err
 	}
-	if err := c.reconcileProxyARPSysctls(ctx, actions); err != nil {
+	if err := c.reconcileProxyARPSysctls(ctx, actions, statuses); err != nil {
 		return err
 	}
 	if err := c.reconcileForwardPaths(ctx, actions); err != nil {
@@ -233,15 +233,39 @@ func (c SAMController) reconcileForwardPaths(ctx context.Context, actions []sam.
 	return applier.ReconcileForwardPaths(ctx, paths)
 }
 
-func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []sam.CaptureAction) error {
+func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []sam.CaptureAction, statuses []routerstate.ObjectStatus) error {
 	targetOS := c.OS
 	if targetOS == "" {
 		targetOS = platform.CurrentOS()
 	}
-	if targetOS != platform.OSLinux {
+	if targetOS != platform.OSLinux && targetOS != platform.OSFreeBSD {
 		return nil
 	}
 	if c.DryRun {
+		return nil
+	}
+	applier := c.Applier
+	if applier == nil {
+		applier = defaultSAMProxyNeighborApplier()
+	}
+	if targetOS == platform.OSFreeBSD {
+		if !c.managesFreeBSDProxyARP(statuses) {
+			return nil
+		}
+		// FreeBSD's proxyall knob is host-global, unlike Linux's per-interface
+		// proxy_arp. Reconcile it exactly once from the aggregate active plan:
+		// a BACKUP with no active proxy-neighbor action must not answer ARP,
+		// while any active claim needs proxyall for routes reached via GIF.
+		enabled := false
+		for _, action := range actions {
+			if action.Kind == "proxy-neighbor" {
+				enabled = true
+				break
+			}
+		}
+		if err := applier.SetProxyARP(ctx, "", enabled); err != nil {
+			return fmt.Errorf("set SAM FreeBSD proxyall=%t: %w", enabled, err)
+		}
 		return nil
 	}
 	all := map[string]bool{}
@@ -275,16 +299,32 @@ func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []s
 			active[strings.TrimSpace(action.Interface)] = true
 		}
 	}
-	applier := c.Applier
-	if applier == nil {
-		applier = defaultSAMProxyNeighborApplier()
-	}
 	for iface := range all {
 		if err := applier.SetProxyARP(ctx, iface, active[iface]); err != nil {
 			return fmt.Errorf("set SAM proxy_arp %s=%t: %w", iface, active[iface], err)
 		}
 	}
 	return nil
+}
+
+func (c SAMController) managesFreeBSDProxyARP(statuses []routerstate.ObjectStatus) bool {
+	if len(samStoredProxyNeighbors(statuses)) > 0 {
+		return true
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "RemoteAddressClaim" {
+			continue
+		}
+		spec, err := resource.RemoteAddressClaimSpec()
+		if err != nil {
+			continue
+		}
+		captureType := strings.TrimSpace(spec.Capture.Type)
+		if captureType == "proxy-arp" || (captureType == "provider-secondary-ip" && strings.TrimSpace(spec.Delivery.Mode) == "bgp") {
+			return true
+		}
+	}
+	return false
 }
 
 func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults map[string]samOSAddressDeassignResult, garpSent map[string]bool, garpErrors map[string]string, proxyNeighborApplied map[string]bool, captureFailures map[string]string, actions []sam.CaptureAction) error {

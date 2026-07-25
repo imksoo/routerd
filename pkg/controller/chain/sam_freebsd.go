@@ -57,10 +57,10 @@ var (
 	freeBSDSAMAddPublishedARP = freeBSDAddPublishedARP
 )
 
-// freeBSDSAMProxyNeighborApplier publishes exactly one IPv4 address through a
-// permanent ARP entry on its declared interface. It never overwrites an entry
-// that does not have the routerd-compatible published shape; that is the
-// fail-closed boundary for administrator-owned ARP state.
+// freeBSDSAMProxyNeighborApplier uses FreeBSD's route-aware global proxyall
+// facility. FreeBSD cannot allocate a per-host published neighbor when the
+// destination's more-specific BGP route points at a GIF interface; proxyall is
+// the native mechanism for answering only addresses routed via another link.
 type freeBSDSAMProxyNeighborApplier struct{}
 
 func defaultSAMProxyNeighborApplier() samProxyNeighborApplier {
@@ -71,8 +71,15 @@ func defaultSAMGratuitousARPAnnouncer() samGratuitousARPAnnouncer {
 	return freeBSDSAMGratuitousARPAnnouncer{}
 }
 
-func (freeBSDSAMProxyNeighborApplier) SetProxyARP(context.Context, string, bool) error {
-	// FreeBSD's per-address published ARP entries replace Linux proxy_arp.
+func (freeBSDSAMProxyNeighborApplier) SetProxyARP(ctx context.Context, _ string, enabled bool) error {
+	value := "0"
+	if enabled {
+		value = "1"
+	}
+	out, err := freeBSDSAMRunCommand(ctx, "sysctl", "-w", "net.link.ether.inet.proxyall="+value)
+	if err != nil {
+		return fmt.Errorf("sysctl -w net.link.ether.inet.proxyall=%s: %w: %s", value, err, strings.TrimSpace(string(out)))
+	}
 	return nil
 }
 
@@ -93,31 +100,35 @@ func (freeBSDSAMProxyNeighborApplier) EnsureProxyNeighbor(ctx context.Context, a
 	if err != nil {
 		return err
 	}
-	entry, found, err := freeBSDARPEntry(ctx, ip, ifname)
-	if err != nil {
-		return err
-	}
-	if found {
-		if freeBSDPublishedARPMatches(entry, ifname) {
-			return nil
-		}
-		return fmt.Errorf("foreign published ARP %s: %s", ip, strings.TrimSpace(entry))
-	}
 	iface, err := freeBSDSAMInterfaceByName(ifname)
 	if err != nil {
-		return fmt.Errorf("lookup published-ARP interface %s: %w", ifname, err)
+		return fmt.Errorf("lookup proxy-ARP interface %s: %w", ifname, err)
 	}
 	if len(iface.HardwareAddr) != 6 {
-		return fmt.Errorf("published-ARP interface %s has non-ethernet MAC %q", ifname, iface.HardwareAddr)
+		return fmt.Errorf("proxy-ARP interface %s has non-ethernet MAC %q", ifname, iface.HardwareAddr)
 	}
-	// releng/14.3 arp(8) cannot pass an exact ifindex to its individual SET:
-	// set() calls set_nl(0, ...), so a more-specific GIF FIB route selects a
-	// non-L2 neighbor and rejects the Ethernet MAC. Use the source-equivalent
-	// routing-socket RTM_ADD with the declared AF_LINK index instead.
-	if err := freeBSDSAMAddPublishedARP(ctx, ip, iface); err != nil {
-		return fmt.Errorf("publish ARP %s on %s: %w", ip, ifname, err)
+	out, err := freeBSDSAMRunCommand(ctx, "route", "-n", "get", ip)
+	if err != nil {
+		return fmt.Errorf("observe route for proxy ARP %s on %s: %w: %s", ip, ifname, err, strings.TrimSpace(string(out)))
+	}
+	routeInterface := freeBSDRouteOutputInterface(out)
+	if routeInterface == "" {
+		return fmt.Errorf("route for proxy ARP %s has no interface", ip)
+	}
+	if routeInterface == ifname {
+		return fmt.Errorf("proxyall cannot publish %s on %s: route resolves through the capture interface", ip, ifname)
 	}
 	return nil
+}
+
+func freeBSDRouteOutputInterface(out []byte) string {
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "interface:" {
+			return fields[1]
+		}
+	}
+	return ""
 }
 
 func freeBSDInterfaceType(index int) (uint8, error) {
@@ -270,38 +281,8 @@ func freeBSDWritePublishedARPRoute(ctx context.Context, request []byte, pid, seq
 }
 
 func (freeBSDSAMProxyNeighborApplier) DeleteProxyNeighbor(ctx context.Context, address, ifname string) error {
-	ip, err := samIPv4Address(address)
-	if err != nil {
-		return err
-	}
-	entry, found, err := freeBSDARPEntry(ctx, ip, ifname)
-	if err != nil {
-		return err
-	}
-	if !found {
-		return nil
-	}
-	if !freeBSDPublishedARPMatches(entry, ifname) {
-		return fmt.Errorf("foreign published ARP %s: refusing deletion", ip)
-	}
-	// arp(8) deliberately rejects -i for a single delete. Its netlink delete
-	// path consequently derives the target interface from the current FIB.
-	// Do not let a more-specific tunnel route turn this owned-LAN cleanup into
-	// an unsafe or ineffective deletion: prove that the same route lookup
-	// resolves through the declared Ethernet interface before invoking arp -d.
-	if err := freeBSDARPDeleteRouteUsesInterface(ctx, ip, ifname); err != nil {
-		return err
-	}
-	out, err := freeBSDSAMRunCommand(ctx, "arp", "-d", ip)
-	if err != nil {
-		return fmt.Errorf("delete published ARP %s: %w: %s", ip, err, strings.TrimSpace(string(out)))
-	}
-	if _, remains, err := freeBSDARPEntry(ctx, ip, ifname); err != nil {
-		return err
-	} else if remains {
-		return fmt.Errorf("delete published ARP %s: scoped entry remains on %s", ip, ifname)
-	}
-	return nil
+	_, err := samIPv4Address(address)
+	return err
 }
 
 func freeBSDARPDeleteRouteUsesInterface(ctx context.Context, address, ifname string) error {
