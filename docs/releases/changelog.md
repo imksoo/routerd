@@ -12,6 +12,27 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- Cloud SAM now has real amd64 mixed Linux/FreeBSD qualification covering two
+  CARP routers, multiple clients, AWS route reflectors and leaves, bidirectional
+  traffic, active-router failure, non-preemptive rejoin, and success-only
+  infrastructure cleanup.
+
+### Changed
+
+- FreeBSD Cloud SAM capture now follows the same user-facing ownership and
+  fail-closed lifecycle as Linux while using native route-aware proxy ARP, PF,
+  CARP, and cloned tunnel interfaces.
+
+### Fixed
+
+- CARP backup routers now withdraw their self-owned mobility BGP `/32` path,
+  preventing ECMP traffic from being sent to a silent backup after rejoin.
+- FreeBSD SAM reconciliation now preserves proxy-ARP ownership, rejects foreign
+  enabled state, disables owned proxy ARP before cleanup, derives stable tunnel
+  peers and names, and recovers BGP state without active-open livelock.
+
 ## v20260724.1159
 
 ### Added
