@@ -328,6 +328,20 @@ func TestValidateDnsmasqArtifactsAcceptsMarkedLegacyRuntimeHostsForMigration(t *
 	}
 }
 
+func TestDnsmasqLegacyHostsMatchRouterRejectsAnyUnreproducibleLine(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{StickyHoldDays: 1}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"}, Metadata: api.ObjectMeta{Name: "known"}, Spec: api.DHCPv4ReservationSpec{Server: "lan-v4", MACAddress: "02:00:00:00:00:01", IPAddress: "192.0.2.10"}},
+	}}}
+	known := []byte("02:00:00:00:00:01,set:known,192.0.2.10\n")
+	if !dnsmasqLegacyHostsMatchRouter(known, router) {
+		t.Fatal("reproducible legacy routerd hosts must be accepted")
+	}
+	if dnsmasqLegacyHostsMatchRouter(append(known, []byte("02:00:00:00:00:02,192.0.2.11\n")...), router) {
+		t.Fatal("unreproducible legacy host must remain foreign")
+	}
+}
+
 func TestValidateDnsmasqArtifactsRejectsMarkerConfigWithLegacyHosts(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "dnsmasq.conf")
