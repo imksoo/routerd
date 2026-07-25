@@ -21,8 +21,7 @@ import (
 	"sync"
 	"time"
 
-	gobgpapi "github.com/osrg/gobgp/v3/api"
-	"google.golang.org/protobuf/types/known/anypb"
+	gobgpapi "github.com/osrg/gobgp/v4/api"
 
 	routerapi "github.com/imksoo/routerd/pkg/api"
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
@@ -376,7 +375,7 @@ func (c *Controller) watchBestPathEvents(ctx context.Context) error {
 		Peer: &gobgpapi.WatchEventRequest_Peer{},
 		Table: &gobgpapi.WatchEventRequest_Table{
 			Filters: []*gobgpapi.WatchEventRequest_Table_Filter{{
-				Type: gobgpapi.WatchEventRequest_Table_Filter_BEST,
+				Type: gobgpapi.WatchEventRequest_Table_Filter_TYPE_BEST,
 				Init: false,
 			}},
 		},
@@ -474,7 +473,7 @@ func watchEventHasBestPathChange(resp *gobgpapi.WatchEventResponse) bool {
 
 func watchEventHasPeerStateChange(resp *gobgpapi.WatchEventResponse) bool {
 	pe := resp.GetPeer()
-	return pe != nil && pe.GetType() == gobgpapi.WatchEventResponse_PeerEvent_STATE
+	return pe != nil && pe.GetType() == gobgpapi.WatchEventResponse_PeerEvent_TYPE_STATE
 }
 
 func (c *Controller) watchReconnectDelay() time.Duration {
@@ -886,7 +885,7 @@ func buildBGPPolicyPlan(routerName string, spec routerapi.BGPImportPolicySpec, p
 		}
 		prefixSetName := peer.ExportPolicyName + "-prefixes"
 		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
-			DefinedType: gobgpapi.DefinedType_PREFIX,
+			DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_PREFIX,
 			Name:        prefixSetName,
 			Prefixes:    prefixes,
 		})
@@ -895,10 +894,10 @@ func buildBGPPolicyPlan(routerName string, spec routerapi.BGPImportPolicySpec, p
 			Statements: []*gobgpapi.Statement{{
 				Name: bgpPolicyStatementName(peer.ExportPolicyName, "allow-export"),
 				Conditions: &gobgpapi.Conditions{PrefixSet: &gobgpapi.MatchSet{
-					Type: gobgpapi.MatchSet_ANY,
+					Type: gobgpapi.MatchSet_TYPE_ANY,
 					Name: prefixSetName,
 				}},
-				Actions: &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_ACCEPT},
+				Actions: &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT},
 			}},
 		})
 	}
@@ -914,7 +913,7 @@ func buildBGPPolicyPlan(routerName string, spec routerapi.BGPImportPolicySpec, p
 		}
 		prefixSetName := peer.ExportPolicyName + "-prefixes"
 		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
-			DefinedType: gobgpapi.DefinedType_PREFIX,
+			DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_PREFIX,
 			Name:        prefixSetName,
 			Prefixes:    prefixes,
 		})
@@ -923,10 +922,10 @@ func buildBGPPolicyPlan(routerName string, spec routerapi.BGPImportPolicySpec, p
 			Statements: []*gobgpapi.Statement{{
 				Name: bgpPolicyStatementName(peer.ExportPolicyName, "allow-export"),
 				Conditions: &gobgpapi.Conditions{PrefixSet: &gobgpapi.MatchSet{
-					Type: gobgpapi.MatchSet_ANY,
+					Type: gobgpapi.MatchSet_TYPE_ANY,
 					Name: prefixSetName,
 				}},
-				Actions: &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_ACCEPT},
+				Actions: &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT},
 			}},
 		})
 	}
@@ -941,7 +940,7 @@ func appendImportPolicy(req *gobgpapi.SetPoliciesRequest, policyName, prefixSetN
 	policyName = strings.TrimSpace(policyName)
 	prefixSetName = strings.TrimSpace(prefixSetName)
 	req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
-		DefinedType: gobgpapi.DefinedType_PREFIX,
+		DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_PREFIX,
 		Name:        prefixSetName,
 		Prefixes:    prefixes,
 	})
@@ -949,7 +948,7 @@ func appendImportPolicy(req *gobgpapi.SetPoliciesRequest, policyName, prefixSetN
 	requiredCommunities := cleanCommunityPolicyValues(spec.RequiredCommunities)
 	if len(requiredCommunities) > 0 {
 		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
-			DefinedType: gobgpapi.DefinedType_COMMUNITY,
+			DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_COMMUNITY,
 			Name:        requiredSetName,
 			List:        requiredCommunities,
 		})
@@ -958,7 +957,7 @@ func appendImportPolicy(req *gobgpapi.SetPoliciesRequest, policyName, prefixSetN
 	forbiddenCommunities := cleanCommunityPolicyValues(spec.ForbiddenCommunities)
 	if len(forbiddenCommunities) > 0 {
 		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
-			DefinedType: gobgpapi.DefinedType_COMMUNITY,
+			DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_COMMUNITY,
 			Name:        forbiddenSetName,
 			List:        forbiddenCommunities,
 		})
@@ -968,19 +967,19 @@ func appendImportPolicy(req *gobgpapi.SetPoliciesRequest, policyName, prefixSetN
 		statements = append(statements, &gobgpapi.Statement{
 			Name: bgpPolicyStatementName(policyName, "reject-forbidden-community"),
 			Conditions: &gobgpapi.Conditions{CommunitySet: &gobgpapi.MatchSet{
-				Type: gobgpapi.MatchSet_ANY,
+				Type: gobgpapi.MatchSet_TYPE_ANY,
 				Name: forbiddenSetName,
 			}},
-			Actions: &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_REJECT},
+			Actions: &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_REJECT},
 		})
 	}
 	acceptConditions := &gobgpapi.Conditions{PrefixSet: &gobgpapi.MatchSet{
-		Type: gobgpapi.MatchSet_ANY,
+		Type: gobgpapi.MatchSet_TYPE_ANY,
 		Name: prefixSetName,
 	}}
 	if len(requiredCommunities) > 0 {
 		acceptConditions.CommunitySet = &gobgpapi.MatchSet{
-			Type: gobgpapi.MatchSet_ALL,
+			Type: gobgpapi.MatchSet_TYPE_ALL,
 			Name: requiredSetName,
 		}
 	}
@@ -988,7 +987,7 @@ func appendImportPolicy(req *gobgpapi.SetPoliciesRequest, policyName, prefixSetN
 		Name:       bgpPolicyStatementName(policyName, "allow-import"),
 		Conditions: acceptConditions,
 		Actions: &gobgpapi.Actions{
-			RouteAction: gobgpapi.RouteAction_ACCEPT,
+			RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT,
 			Nexthop:     nextHopRewriteAction(spec),
 		},
 	})
@@ -1149,7 +1148,7 @@ func (c *Controller) actualImportPolicyState(ctx context.Context, desired canoni
 		}
 	}
 	if desired.GlobalAssignment.Name != "" {
-		assignment, err := c.policyAssignment(ctx, desired.GlobalAssignment.Name, gobgpapi.PolicyDirection_IMPORT)
+		assignment, err := c.policyAssignment(ctx, desired.GlobalAssignment.Name, gobgpapi.PolicyDirection_POLICY_DIRECTION_IMPORT)
 		if err != nil {
 			return canonicalImportPolicyState{}, err
 		}
@@ -1176,7 +1175,7 @@ func (c *Controller) actualImportPolicyState(ctx context.Context, desired canoni
 
 func (c *Controller) definedSetByName(ctx context.Context, name string) (*gobgpapi.DefinedSet, error) {
 	var out *gobgpapi.DefinedSet
-	err := c.Server.ListDefinedSet(ctx, &gobgpapi.ListDefinedSetRequest{DefinedType: gobgpapi.DefinedType_PREFIX, Name: name}, func(set *gobgpapi.DefinedSet) {
+	err := c.Server.ListDefinedSet(ctx, &gobgpapi.ListDefinedSetRequest{DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_PREFIX, Name: name}, func(set *gobgpapi.DefinedSet) {
 		if strings.TrimSpace(set.GetName()) == name {
 			out = set
 		}
@@ -1329,7 +1328,7 @@ func (c *Controller) softResetImportPolicy(ctx context.Context, desired map[stri
 		if err := c.Server.ResetPeer(ctx, &gobgpapi.ResetPeerRequest{
 			Address:   address,
 			Soft:      true,
-			Direction: gobgpapi.ResetPeerRequest_IN,
+			Direction: gobgpapi.ResetPeerRequest_DIRECTION_IN,
 		}); err != nil {
 			return fmt.Errorf("soft reset import policy for peer %s: %w", address, err)
 		}
@@ -1365,7 +1364,7 @@ func (c *Controller) softResetExportPolicy(ctx context.Context, addresses []stri
 		if err := c.Server.ResetPeer(ctx, &gobgpapi.ResetPeerRequest{
 			Address:   address,
 			Soft:      true,
-			Direction: gobgpapi.ResetPeerRequest_OUT,
+			Direction: gobgpapi.ResetPeerRequest_DIRECTION_OUT,
 		}); err != nil {
 			return fmt.Errorf("soft reset export policy for peer %s: %w", address, err)
 		}
@@ -1596,7 +1595,7 @@ func (c *Controller) liveEstablishedPeers(ctx context.Context) (map[string]bool,
 		if address == "" {
 			return
 		}
-		out[address] = peer.GetState().GetSessionState() == gobgpapi.PeerState_ESTABLISHED
+		out[address] = peer.GetState().GetSessionState() == gobgpapi.PeerState_SESSION_STATE_ESTABLISHED
 	}); err != nil {
 		return nil, err
 	}
@@ -1634,7 +1633,7 @@ func (c *Controller) hardResetBFDDownPeers(ctx context.Context, targets []bfdPee
 		if err := c.Server.ResetPeer(ctx, &gobgpapi.ResetPeerRequest{
 			Address:       address,
 			Soft:          false,
-			Direction:     gobgpapi.ResetPeerRequest_BOTH,
+			Direction:     gobgpapi.ResetPeerRequest_DIRECTION_BOTH,
 			Communication: "BFD session down",
 		}); err != nil {
 			c.bfdPeerResetError[target.Key] = err.Error()
@@ -1956,7 +1955,7 @@ func (c *Controller) reconcileAdvertisements(ctx context.Context, spec routerapi
 	for prefix := range c.pathUUIDs {
 		if !desired[prefix] {
 			if len(c.pathUUIDs[prefix]) > 0 {
-				if err := c.Server.DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_GLOBAL, Uuid: c.pathUUIDs[prefix]}); err != nil {
+				if err := c.Server.DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Uuid: c.pathUUIDs[prefix]}); err != nil {
 					return err
 				}
 			}
@@ -1971,7 +1970,7 @@ func (c *Controller) reconcileAdvertisements(ctx context.Context, spec routerapi
 		if err != nil {
 			return err
 		}
-		resp, err := c.Server.AddPath(ctx, &gobgpapi.AddPathRequest{TableType: gobgpapi.TableType_GLOBAL, Path: path})
+		resp, err := c.Server.AddPath(ctx, &gobgpapi.AddPathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Path: path})
 		if err != nil {
 			return err
 		}
@@ -2029,14 +2028,8 @@ func appliedPathToGoBGPPath(appliedPath bgpdaemon.AppliedPath) (*gobgpapi.Path, 
 		return nil, err
 	}
 	parsed = parsed.Masked()
-	nlri, err := anypb.New(&gobgpapi.IPAddressPrefix{Prefix: parsed.Addr().String(), PrefixLen: uint32(parsed.Bits())})
-	if err != nil {
-		return nil, err
-	}
-	origin, err := anypb.New(&gobgpapi.OriginAttribute{Origin: 0})
-	if err != nil {
-		return nil, err
-	}
+	nlri := ipAddressNLRI(parsed)
+	attrs := []*gobgpapi.Attribute{originAttribute()}
 	nextHop := "0.0.0.0"
 	if parsed.Addr().Is6() {
 		nextHop = "::"
@@ -2044,37 +2037,47 @@ func appliedPathToGoBGPPath(appliedPath bgpdaemon.AppliedPath) (*gobgpapi.Path, 
 	if appliedPath.Attrs.NextHop != "" {
 		nextHop = appliedPath.Attrs.NextHop
 	}
-	nh, err := anypb.New(&gobgpapi.NextHopAttribute{NextHop: nextHop})
-	if err != nil {
-		return nil, err
-	}
-	attrs := []*anypb.Any{origin, nh}
+	attrs = append(attrs, nextHopAttribute(nextHop))
 	if appliedPath.Attrs.LocalPref > 0 {
-		localPref, err := anypb.New(&gobgpapi.LocalPrefAttribute{LocalPref: appliedPath.Attrs.LocalPref})
-		if err != nil {
-			return nil, err
-		}
-		attrs = append(attrs, localPref)
+		attrs = append(attrs, localPrefAttribute(appliedPath.Attrs.LocalPref))
 	}
 	if appliedPath.Attrs.MED > 0 {
-		med, err := anypb.New(&gobgpapi.MultiExitDiscAttribute{Med: appliedPath.Attrs.MED})
-		if err != nil {
-			return nil, err
-		}
-		attrs = append(attrs, med)
+		attrs = append(attrs, medAttribute(appliedPath.Attrs.MED))
 	}
 	communities, err := standardCommunities(appliedPath.Attrs.Communities)
 	if err != nil {
 		return nil, err
 	}
 	if len(communities) > 0 {
-		attr, err := anypb.New(&gobgpapi.CommunitiesAttribute{Communities: communities})
-		if err != nil {
-			return nil, err
-		}
-		attrs = append(attrs, attr)
+		attrs = append(attrs, communitiesAttribute(communities))
 	}
 	return &gobgpapi.Path{Family: familyForPrefix(parsed), Nlri: nlri, Pattrs: attrs}, nil
+}
+
+func ipAddressNLRI(prefix netip.Prefix) *gobgpapi.NLRI {
+	return &gobgpapi.NLRI{Nlri: &gobgpapi.NLRI_Prefix{Prefix: &gobgpapi.IPAddressPrefix{
+		Prefix: prefix.Addr().String(), PrefixLen: uint32(prefix.Bits()),
+	}}}
+}
+
+func originAttribute() *gobgpapi.Attribute {
+	return &gobgpapi.Attribute{Attr: &gobgpapi.Attribute_Origin{Origin: &gobgpapi.OriginAttribute{Origin: 0}}}
+}
+
+func nextHopAttribute(nextHop string) *gobgpapi.Attribute {
+	return &gobgpapi.Attribute{Attr: &gobgpapi.Attribute_NextHop{NextHop: &gobgpapi.NextHopAttribute{NextHop: nextHop}}}
+}
+
+func localPrefAttribute(localPref uint32) *gobgpapi.Attribute {
+	return &gobgpapi.Attribute{Attr: &gobgpapi.Attribute_LocalPref{LocalPref: &gobgpapi.LocalPrefAttribute{LocalPref: localPref}}}
+}
+
+func medAttribute(med uint32) *gobgpapi.Attribute {
+	return &gobgpapi.Attribute{Attr: &gobgpapi.Attribute_MultiExitDisc{MultiExitDisc: &gobgpapi.MultiExitDiscAttribute{Med: med}}}
+}
+
+func communitiesAttribute(communities []uint32) *gobgpapi.Attribute {
+	return &gobgpapi.Attribute{Attr: &gobgpapi.Attribute_Communities{Communities: &gobgpapi.CommunitiesAttribute{Communities: communities}}}
 }
 
 func standardCommunities(values []string) ([]uint32, error) {
@@ -2140,7 +2143,7 @@ func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []a
 		return bgpstate.State{}, nil, nil, err
 	}
 	for _, family := range bgpFamiliesForRouter(c.Router) {
-		err := c.Server.ListPath(ctx, &gobgpapi.ListPathRequest{TableType: gobgpapi.TableType_GLOBAL, Family: family}, func(dst *gobgpapi.Destination) {
+		err := c.Server.ListPath(ctx, &gobgpapi.ListPathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Family: family}, func(dst *gobgpapi.Destination) {
 			state.Prefixes = append(state.Prefixes, statePrefixes(dst)...)
 			mergeStringMap(livenessMarkers, mobilityLivenessMarkersFromDestination(dst))
 			routes = append(routes, fibRoutesFromDestination(dst, allowedImportPrefixes, fibNextHopRewritePeers, func(prefix netip.Prefix, identityAddress, _ string, communities []string) bool {
@@ -2543,9 +2546,9 @@ func bgpListenAddresses(spec routerapi.BGPListenSpec) []string {
 }
 
 func goBGPPeer(peer desiredPeer) *gobgpapi.Peer {
-	peerType := gobgpapi.PeerType_EXTERNAL
+	peerType := gobgpapi.PeerType_PEER_TYPE_EXTERNAL
 	if peer.LocalASN != 0 && peer.ASN == peer.LocalASN {
-		peerType = gobgpapi.PeerType_INTERNAL
+		peerType = gobgpapi.PeerType_PEER_TYPE_INTERNAL
 	}
 	out := &gobgpapi.Peer{
 		Conf: &gobgpapi.PeerConf{
@@ -2560,7 +2563,7 @@ func goBGPPeer(peer desiredPeer) *gobgpapi.Peer {
 			goBGPAFISAFI(ipv4Family()),
 			goBGPAFISAFI(ipv6Family()),
 		},
-		Transport: &gobgpapi.Transport{PassiveMode: peer.PassiveMode},
+		Transport: goBGPPeerTransport(peer.PassiveMode),
 	}
 	if gr := gobgpPeerGracefulRestart(peer); gr != nil {
 		out.GracefulRestart = gr
@@ -2587,10 +2590,17 @@ func goBGPPeer(peer desiredPeer) *gobgpapi.Peer {
 	return out
 }
 
+func goBGPPeerTransport(passiveMode bool) *gobgpapi.Transport {
+	if !passiveMode {
+		return nil
+	}
+	return &gobgpapi.Transport{PassiveMode: true}
+}
+
 func goBGPDynamicPeerGroup(peer desiredDynamicPeer) *gobgpapi.PeerGroup {
-	peerType := gobgpapi.PeerType_EXTERNAL
+	peerType := gobgpapi.PeerType_PEER_TYPE_EXTERNAL
 	if peer.LocalASN != 0 && peer.ASN == peer.LocalASN {
-		peerType = gobgpapi.PeerType_INTERNAL
+		peerType = gobgpapi.PeerType_PEER_TYPE_INTERNAL
 	}
 	out := &gobgpapi.PeerGroup{
 		Conf: &gobgpapi.PeerGroupConf{
@@ -2795,7 +2805,7 @@ func statePeer(peer *gobgpapi.Peer) bgpstate.Peer {
 		Address:          firstNonEmpty(peerAddress(peer), state.GetNeighborAddress()),
 		ASN:              firstNonZero(state.GetPeerAsn(), peer.GetConf().GetPeerAsn()),
 		State:            session,
-		Established:      state.GetSessionState() == gobgpapi.PeerState_ESTABLISHED,
+		Established:      state.GetSessionState() == gobgpapi.PeerState_SESSION_STATE_ESTABLISHED,
 		PrefixesReceived: prefixes,
 		MessagesReceived: messagesReceived,
 		MessagesSent:     messagesSent,
@@ -3179,21 +3189,17 @@ func comparePathRank(a, b bgpPathRank) int {
 func pathRank(path *gobgpapi.Path) bgpPathRank {
 	rank := bgpPathRank{LocalPref: 100, Origin: 2}
 	for _, attr := range path.GetPattrs() {
-		value, err := attr.UnmarshalNew()
-		if err != nil {
-			continue
-		}
-		switch typed := value.(type) {
-		case *gobgpapi.LocalPrefAttribute:
-			rank.LocalPref = typed.GetLocalPref()
-		case *gobgpapi.AsPathAttribute:
-			rank.ASPathLen += asPathLength(typed.GetSegments())
-		case *gobgpapi.As4PathAttribute:
-			rank.ASPathLen += asPathLength(typed.GetSegments())
-		case *gobgpapi.OriginAttribute:
-			rank.Origin = uint8(typed.GetOrigin())
-		case *gobgpapi.MultiExitDiscAttribute:
-			rank.MED = typed.GetMed()
+		switch {
+		case attr.GetLocalPref() != nil:
+			rank.LocalPref = attr.GetLocalPref().GetLocalPref()
+		case attr.GetAsPath() != nil:
+			rank.ASPathLen += asPathLength(attr.GetAsPath().GetSegments())
+		case attr.GetAs4Path() != nil:
+			rank.ASPathLen += asPathLength(attr.GetAs4Path().GetSegments())
+		case attr.GetOrigin() != nil:
+			rank.Origin = uint8(attr.GetOrigin().GetOrigin())
+		case attr.GetMultiExitDisc() != nil:
+			rank.MED = attr.GetMultiExitDisc().GetMed()
 		}
 	}
 	return rank
@@ -3202,7 +3208,7 @@ func pathRank(path *gobgpapi.Path) bgpPathRank {
 func asPathLength(segments []*gobgpapi.AsSegment) int {
 	length := 0
 	for _, segment := range segments {
-		if segment.GetType() == gobgpapi.AsSegment_AS_SET && len(segment.GetNumbers()) > 0 {
+		if segment.GetType() == gobgpapi.AsSegment_TYPE_AS_SET && len(segment.GetNumbers()) > 0 {
 			length++
 			continue
 		}
@@ -3440,15 +3446,15 @@ func nextHopRewriteAction(spec routerapi.BGPImportPolicySpec) *gobgpapi.NexthopA
 func globalImportPolicyAssignment(policyName string, includePolicy bool) *gobgpapi.PolicyAssignment {
 	return &gobgpapi.PolicyAssignment{
 		Name:          "global",
-		Direction:     gobgpapi.PolicyDirection_IMPORT,
-		DefaultAction: gobgpapi.RouteAction_ACCEPT,
+		Direction:     gobgpapi.PolicyDirection_POLICY_DIRECTION_IMPORT,
+		DefaultAction: gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT,
 	}
 }
 
 func peerImportPolicyAssignment(policyName string) *gobgpapi.PolicyAssignment {
 	assignment := &gobgpapi.PolicyAssignment{
-		Direction:     gobgpapi.PolicyDirection_IMPORT,
-		DefaultAction: gobgpapi.RouteAction_REJECT,
+		Direction:     gobgpapi.PolicyDirection_POLICY_DIRECTION_IMPORT,
+		DefaultAction: gobgpapi.RouteAction_ROUTE_ACTION_REJECT,
 	}
 	if strings.TrimSpace(policyName) != "" {
 		assignment.Policies = []*gobgpapi.Policy{{Name: strings.TrimSpace(policyName)}}
@@ -3502,8 +3508,8 @@ func bgpImportPolicyPrefixes(spec routerapi.BGPImportPolicySpec) []*gobgpapi.Pre
 
 func peerExportPolicyAssignment(policyName string) *gobgpapi.PolicyAssignment {
 	assignment := &gobgpapi.PolicyAssignment{
-		Direction:     gobgpapi.PolicyDirection_EXPORT,
-		DefaultAction: gobgpapi.RouteAction_REJECT,
+		Direction:     gobgpapi.PolicyDirection_POLICY_DIRECTION_EXPORT,
+		DefaultAction: gobgpapi.RouteAction_ROUTE_ACTION_REJECT,
 	}
 	if strings.TrimSpace(policyName) != "" {
 		assignment.Policies = []*gobgpapi.Policy{{Name: strings.TrimSpace(policyName)}}
@@ -3895,7 +3901,7 @@ func dynamicPeerObservationFromPeer(peer *gobgpapi.Peer, admission samDynamicCla
 		PeerGroup:     group,
 		ASN:           firstNonZero(state.GetPeerAsn(), peer.GetConf().GetPeerAsn()),
 		State:         state.GetSessionState().String(),
-		Established:   state.GetSessionState() == gobgpapi.PeerState_ESTABLISHED,
+		Established:   state.GetSessionState() == gobgpapi.PeerState_SESSION_STATE_ESTABLISHED,
 	}
 	for _, af := range peer.GetAfiSafis() {
 		observation.AcceptedPrefixes += int(af.GetState().GetAccepted())
@@ -4041,30 +4047,21 @@ func copyStringIntMap(src map[string]int) map[string]int {
 }
 
 func pathPrefix(path *gobgpapi.Path) string {
-	value, err := path.GetNlri().UnmarshalNew()
+	nlri := path.GetNlri().GetPrefix()
+	if nlri == nil {
+		return ""
+	}
+	addr, err := netip.ParseAddr(nlri.GetPrefix())
 	if err != nil {
 		return ""
 	}
-	switch nlri := value.(type) {
-	case *gobgpapi.IPAddressPrefix:
-		addr, err := netip.ParseAddr(nlri.GetPrefix())
-		if err != nil {
-			return ""
-		}
-		return netip.PrefixFrom(addr, int(nlri.GetPrefixLen())).Masked().String()
-	default:
-		return ""
-	}
+	return netip.PrefixFrom(addr, int(nlri.GetPrefixLen())).Masked().String()
 }
 
 func pathCommunities(path *gobgpapi.Path) []string {
 	var out []string
 	for _, attr := range path.GetPattrs() {
-		value, err := attr.UnmarshalNew()
-		if err != nil {
-			continue
-		}
-		if communities, ok := value.(*gobgpapi.CommunitiesAttribute); ok {
+		if communities := attr.GetCommunities(); communities != nil {
 			for _, community := range communities.GetCommunities() {
 				out = append(out, fmt.Sprintf("%d:%d", community>>16, community&0xffff))
 			}
@@ -4076,15 +4073,11 @@ func pathCommunities(path *gobgpapi.Path) []string {
 
 func pathNextHop(path *gobgpapi.Path) string {
 	for _, attr := range path.GetPattrs() {
-		value, err := attr.UnmarshalNew()
-		if err != nil {
-			continue
-		}
-		switch typed := value.(type) {
-		case *gobgpapi.NextHopAttribute:
-			return strings.TrimSpace(typed.GetNextHop())
-		case *gobgpapi.MpReachNLRIAttribute:
-			for _, hop := range typed.GetNextHops() {
+		switch {
+		case attr.GetNextHop() != nil:
+			return strings.TrimSpace(attr.GetNextHop().GetNextHop())
+		case attr.GetMpReach() != nil:
+			for _, hop := range attr.GetMpReach().GetNextHops() {
 				if strings.TrimSpace(hop) != "" {
 					return strings.TrimSpace(hop)
 				}
@@ -4120,26 +4113,14 @@ func localPath(prefix string) (*gobgpapi.Path, error) {
 		return nil, err
 	}
 	parsed = parsed.Masked()
-	nlri, err := anypb.New(&gobgpapi.IPAddressPrefix{Prefix: parsed.Addr().String(), PrefixLen: uint32(parsed.Bits())})
-	if err != nil {
-		return nil, err
-	}
-	origin, err := anypb.New(&gobgpapi.OriginAttribute{Origin: 0})
-	if err != nil {
-		return nil, err
-	}
 	nextHop := "0.0.0.0"
 	if parsed.Addr().Is6() {
 		nextHop = "::"
 	}
-	nh, err := anypb.New(&gobgpapi.NextHopAttribute{NextHop: nextHop})
-	if err != nil {
-		return nil, err
-	}
 	return &gobgpapi.Path{
 		Family: familyForPrefix(parsed),
-		Nlri:   nlri,
-		Pattrs: []*anypb.Any{origin, nh},
+		Nlri:   ipAddressNLRI(parsed),
+		Pattrs: []*gobgpapi.Attribute{originAttribute(), nextHopAttribute(nextHop)},
 	}, nil
 }
 

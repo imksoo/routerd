@@ -11,6 +11,12 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- BGP rolling upgrade で GoBGP v4 の RFC 4271 parallel-connection collision
+  handling を使用し、legacy の default-active peer transport を維持したまま、
+  active/active peer が phase lock した状態に残る問題を防止しました。
+
 ## v20260725.0248
 
 ### 追加

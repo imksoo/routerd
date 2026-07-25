@@ -11,6 +11,11 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修复
+
+- BGP 滚动升级现在使用 GoBGP v4 的 RFC 4271 并行连接冲突处理，在保留旧版
+  default-active peer transport 的同时，避免 active/active peer 持续相位锁定。
+
 ## v20260725.0248
 
 ### 新增
