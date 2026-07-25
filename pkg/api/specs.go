@@ -568,6 +568,14 @@ type VirtualAddressVRRPSpec struct {
 	AdvertInterval     string                `yaml:"-" json:"-"`
 	Authentication     string                `yaml:"authentication,omitempty" json:"authentication,omitempty"`
 	AuthenticationFrom SecretValueSourceSpec `yaml:"authenticationFrom,omitempty" json:"authenticationFrom,omitempty"`
+	// UseVirtualMAC makes keepalived create a VRRP VMAC. It is required when an
+	// upstream device associates an IPv6 delegated prefix with the Ethernet MAC
+	// that requested it.
+	UseVirtualMAC bool `yaml:"useVirtualMAC,omitempty" json:"useVirtualMAC,omitempty"`
+	// VirtualMACInterface optionally gives the keepalived VMAC a stable Linux
+	// interface name. Use a name without dots when routerd manages per-interface
+	// IPv6 sysctls.
+	VirtualMACInterface string `yaml:"virtualMACInterface,omitempty" json:"virtualMACInterface,omitempty"`
 }
 
 type ResourceTrackSpec struct {

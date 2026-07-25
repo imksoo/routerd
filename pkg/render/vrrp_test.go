@@ -48,6 +48,22 @@ func TestKeepalivedConfigRendersVRRPInstance(t *testing.T) {
 	}
 }
 
+func TestKeepalivedConfigRendersVRRPVirtualMAC(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+		Metadata: api.ObjectMeta{Name: "wan-vip"},
+		Spec: api.VirtualAddressSpec{Family: "ipv4", Interface: "wan", Address: "192.0.2.10/32", Mode: "vrrp",
+			VRRP: api.VirtualAddressVRRPSpec{VirtualRouterID: 19, Peers: []string{"192.0.2.2"}, UseVirtualMAC: true, VirtualMACInterface: "wan-vmac"}},
+	}}}}
+	data, err := KeepalivedConfig(router, map[string]string{"wan": "eth0"})
+	if err != nil {
+		t.Fatalf("render keepalived config: %v", err)
+	}
+	if got := string(data); !strings.Contains(got, "  use_vmac wan-vmac\n") {
+		t.Fatalf("keepalived config missing use_vmac:\n%s", got)
+	}
+}
+
 func TestKeepalivedConfigRendersIPv6VRRPInstance(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

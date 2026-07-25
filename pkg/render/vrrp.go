@@ -14,18 +14,20 @@ import (
 )
 
 type vrrpInstance struct {
-	Name            string
-	Kind            string
-	Interface       string
-	Address         string
-	Family          string
-	VirtualRouterID int
-	Priority        int
-	Preempt         *bool
-	PreemptDelay    time.Duration
-	Peers           []string
-	AdvertInterval  time.Duration
-	Authentication  string
+	Name                string
+	Kind                string
+	Interface           string
+	Address             string
+	Family              string
+	VirtualRouterID     int
+	Priority            int
+	Preempt             *bool
+	PreemptDelay        time.Duration
+	Peers               []string
+	AdvertInterval      time.Duration
+	Authentication      string
+	UseVirtualMAC       bool
+	VirtualMACInterface string
 }
 
 type KeepalivedOptions struct {
@@ -110,18 +112,20 @@ func vrrpInstances(router *api.Router, aliases map[string]string, opts Keepalive
 			return nil, fmt.Errorf("%s spec.vrrp.authenticationFrom: %w", res.ID(), err)
 		}
 		instances = append(instances, vrrpInstance{
-			Name:            res.Metadata.Name,
-			Kind:            res.Kind,
-			Interface:       ifname,
-			Address:         address,
-			Family:          spec.Family,
-			VirtualRouterID: spec.VRRP.VirtualRouterID,
-			Priority:        priority,
-			Preempt:         spec.VRRP.Preempt,
-			PreemptDelay:    preemptDelay,
-			Peers:           peers,
-			AdvertInterval:  advert,
-			Authentication:  authentication,
+			Name:                res.Metadata.Name,
+			Kind:                res.Kind,
+			Interface:           ifname,
+			Address:             address,
+			Family:              spec.Family,
+			VirtualRouterID:     spec.VRRP.VirtualRouterID,
+			Priority:            priority,
+			Preempt:             spec.VRRP.Preempt,
+			PreemptDelay:        preemptDelay,
+			Peers:               peers,
+			AdvertInterval:      advert,
+			Authentication:      authentication,
+			UseVirtualMAC:       spec.VRRP.UseVirtualMAC,
+			VirtualMACInterface: spec.VRRP.VirtualMACInterface,
 		})
 	}
 	sort.Slice(instances, func(i, j int) bool { return instances[i].Name < instances[j].Name })
@@ -140,14 +144,16 @@ type virtualAddressSpec struct {
 }
 
 type virtualVRRPSpec struct {
-	VirtualRouterID    int
-	Priority           int
-	Preempt            *bool
-	PreemptDelay       string
-	Peers              []string
-	AdvertInterval     string
-	Authentication     string
-	AuthenticationFrom api.SecretValueSourceSpec
+	VirtualRouterID     int
+	Priority            int
+	Preempt             *bool
+	PreemptDelay        string
+	Peers               []string
+	AdvertInterval      string
+	Authentication      string
+	AuthenticationFrom  api.SecretValueSourceSpec
+	UseVirtualMAC       bool
+	VirtualMACInterface string
 }
 
 func virtualAddressResourceSpec(res api.Resource) (virtualAddressSpec, bool, error) {
@@ -177,14 +183,16 @@ func virtualAddressResourceSpec(res api.Resource) (virtualAddressSpec, bool, err
 
 func virtualAddressVRRPSpec(spec api.VirtualAddressVRRPSpec) virtualVRRPSpec {
 	return virtualVRRPSpec{
-		VirtualRouterID:    spec.VirtualRouterID,
-		Priority:           spec.Priority,
-		Preempt:            spec.Preempt,
-		PreemptDelay:       spec.PreemptDelay,
-		Peers:              spec.Peers,
-		AdvertInterval:     spec.AdvertInterval,
-		Authentication:     spec.Authentication,
-		AuthenticationFrom: spec.AuthenticationFrom,
+		VirtualRouterID:     spec.VirtualRouterID,
+		Priority:            spec.Priority,
+		Preempt:             spec.Preempt,
+		PreemptDelay:        spec.PreemptDelay,
+		Peers:               spec.Peers,
+		AdvertInterval:      spec.AdvertInterval,
+		Authentication:      spec.Authentication,
+		AuthenticationFrom:  spec.AuthenticationFrom,
+		UseVirtualMAC:       spec.UseVirtualMAC,
+		VirtualMACInterface: spec.VirtualMACInterface,
 	}
 }
 
@@ -263,6 +271,13 @@ func writeKeepalivedInstance(buf *bytes.Buffer, instance vrrpInstance) {
 		buf.WriteString("    auth_type PASS\n")
 		buf.WriteString("    auth_pass " + instance.Authentication + "\n")
 		buf.WriteString("  }\n")
+	}
+	if instance.UseVirtualMAC {
+		buf.WriteString("  use_vmac")
+		if name := strings.TrimSpace(instance.VirtualMACInterface); name != "" {
+			buf.WriteString(" " + name)
+		}
+		buf.WriteString("\n")
 	}
 	buf.WriteString("  virtual_ipaddress {\n")
 	buf.WriteString("    " + instance.Address + " dev " + instance.Interface + "\n")

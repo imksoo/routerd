@@ -47,3 +47,19 @@ routerd-dhcpv6-client
 2 つを同時に出すと、上流が混乱して Reply が返らなくなります。
 
 routerd の管理へ移行するときは、まず古いクライアント (とそのリースファイル、それを起動していた systemd / rc.d の設定) を停止してから、`routerd-dhcpv6-client` を起動してください。
+
+## HA 構成と WAN のレイヤー 2 識別子
+
+`spec.clientDUID` を固定すると active/standby 間で DHCPv6 クライアントの識別子を維持できますが、WAN インターフェースの Ethernet MAC アドレスまでは移動しません。一部の家庭用ゲートウェイは、DHCPv6 クライアントから観測した Ethernet MAC に委譲プレフィックスの戻り経路を関連付けます。この場合、スタンバイ昇格後にリースが `Bound` でも、委譲プレフィックスのアドレス宛て戻り通信を受信できないことがあります。
+
+対策として 2 台の物理 WAN インターフェースへ同じ MAC アドレスを常時設定してはいけません。同じレイヤー 2 セグメントに両ノードが存在するため、MAC アドレスの重複による障害が起きます。正しい HA 構成では、active ノードとともに移動する 1 つの WAN 仮想 MAC を用意し、その仮想 MAC を持つインターフェースへ DHCPv6 クライアントを束縛します。
+
+Linux では WAN の `VirtualAddress` に `spec.vrrp.useVirtualMAC: true` と、ドットを含まない `spec.vrrp.virtualMACInterface` を指定します。keepalived が指定名の VRRP VMAC を MASTER とともに移動します。DHCPv6-PD、DHCPv6 情報取得、DS-Lite トンネルは VMAC インターフェースへ束縛してください。routerd は DHCPv6 クライアントの起動前に、VMAC の EUI-64 link-local IPv6 アドレスを付与します。物理 WAN は VRRP の親として残します。
+
+対応するまで、昇格後は DHCPv6-PD の制御状態とデータ通信の両方を確認してください。
+
+```sh
+routerctl describe DHCPv6PrefixDelegation/wan-pd
+ip -6 route get 2606:4700:4700::1111 from <delegated-lan-address>
+ping -6 -I <delegated-lan-address> -c 3 2606:4700:4700::1111
+```

@@ -43,3 +43,19 @@ The current resource is `DHCPv6PrefixDelegation`. There is intentionally no `cli
 Do not run more than one DHCPv6-PD client on the same WAN interface. Two simultaneous clients can confuse the upstream and stop Reply messages.
 
 When migrating to routerd, first stop the old client (along with its lease files and any old systemd / rc.d configuration that brought it up). Then start `routerd-dhcpv6-client`.
+
+## HA and WAN link-layer identity
+
+`spec.clientDUID` can keep the DHCPv6 client identity stable across an active/standby pair, but it does not move the WAN interface's Ethernet MAC address. Some residential gateways associate the delegated prefix's return path with the Ethernet MAC observed from the DHCPv6 client. In that environment, a standby promotion can report a `Bound` lease and still fail to receive return traffic for addresses from the delegated prefix.
+
+Do not work around this by assigning one shared MAC address to both physical WAN interfaces: both nodes can be present on the same L2 segment, so that creates a duplicate-MAC failure mode. A correct HA design needs one WAN virtual MAC that moves with the active node, and must bind the DHCPv6 client to the interface carrying that virtual MAC.
+
+On Linux, set `spec.vrrp.useVirtualMAC: true` and a dot-free `spec.vrrp.virtualMACInterface` on the WAN `VirtualAddress`. keepalived then moves a named VRRP VMAC with the MASTER. Bind DHCPv6-PD, DHCPv6 information, and DS-Lite tunnels to that VMAC interface, while retaining the physical WAN as the VRRP parent. routerd creates the VMAC's EUI-64 link-local IPv6 address before starting its DHCPv6 client.
+
+Until that support is available, verify both the DHCPv6-PD control plane and the data plane after every promotion:
+
+```sh
+routerctl describe DHCPv6PrefixDelegation/wan-pd
+ip -6 route get 2606:4700:4700::1111 from <delegated-lan-address>
+ping -6 -I <delegated-lan-address> -c 3 2606:4700:4700::1111
+```

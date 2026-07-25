@@ -44,6 +44,15 @@ func TestSelectLinkLocalIPv6RequiresLinkLocalAddress(t *testing.T) {
 	}
 }
 
+func TestLinkLocalFromMAC(t *testing.T) {
+	if got, want := linkLocalFromMAC(net.HardwareAddr{0x00, 0x00, 0x5e, 0x00, 0x01, 0x13}), "fe80::200:5eff:fe00:113"; got != want {
+		t.Fatalf("linkLocalFromMAC() = %q, want %q", got, want)
+	}
+	if got := linkLocalFromMAC(net.HardwareAddr{0x00, 0x00}); got != "" {
+		t.Fatalf("linkLocalFromMAC(short MAC) = %q, want empty", got)
+	}
+}
+
 func TestDHCPv6ListenAddressesAreInterfaceScoped(t *testing.T) {
 	first, err := dhcpv6ListenAddr("fe80::10", "wan0", 546)
 	if err != nil {

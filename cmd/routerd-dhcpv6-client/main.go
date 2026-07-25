@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -242,7 +243,10 @@ func newDHCPv6Daemon(opts options) (*dhcpv6Daemon, error) {
 	if opts.srcLL == "" {
 		opts.srcLL, err = interfaceLinkLocalIPv6(ifi)
 		if err != nil {
-			return nil, fmt.Errorf("DHCPv6 link-local source on %s: %w", opts.ifname, err)
+			opts.srcLL, err = ensureInterfaceLinkLocalIPv6(ifi)
+			if err != nil {
+				return nil, fmt.Errorf("DHCPv6 link-local source on %s: %w", opts.ifname, err)
+			}
 		}
 	}
 	conn, err := listenDHCPv6(opts.srcLL, opts.ifname, opts.listenPort)
@@ -282,6 +286,28 @@ func interfaceLinkLocalIPv6(ifi *net.Interface) (string, error) {
 		return "", err
 	}
 	return selectLinkLocalIPv6(addrs)
+}
+
+// ensureInterfaceLinkLocalIPv6 gives a keepalived VMAC the stable EUI-64
+// link-local address required to bind DHCPv6. VMACs commonly use
+// addrgenmode none, so Linux does not create this address automatically.
+func ensureInterfaceLinkLocalIPv6(ifi *net.Interface) (string, error) {
+	address := linkLocalFromMAC(ifi.HardwareAddr)
+	if address == "" {
+		return "", fmt.Errorf("cannot derive link-local address from MAC %q", ifi.HardwareAddr)
+	}
+	command := exec.Command("ip", "-6", "address", "replace", address+"/64", "dev", ifi.Name)
+	if output, err := command.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("add VMAC link-local address: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return interfaceLinkLocalIPv6(ifi)
+}
+
+func linkLocalFromMAC(mac net.HardwareAddr) string {
+	if len(mac) != 6 {
+		return ""
+	}
+	return net.IP{0xfe, 0x80, 0, 0, 0, 0, 0, 0, mac[0] ^ 0x02, mac[1], mac[2], 0xff, 0xfe, mac[3], mac[4], mac[5]}.String()
 }
 
 func selectLinkLocalIPv6(addrs []net.Addr) (string, error) {

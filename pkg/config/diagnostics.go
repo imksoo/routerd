@@ -320,6 +320,16 @@ func validateVirtualAddressResource(res api.Resource, targetOS platform.OS) erro
 		if spec.VRRP.Priority != 0 && (spec.VRRP.Priority < 1 || spec.VRRP.Priority > 254) {
 			return fmt.Errorf("%s spec.vrrp.priority must be within 1-254", res.ID())
 		}
+		vmacName := strings.TrimSpace(spec.VRRP.VirtualMACInterface)
+		if vmacName != "" && !spec.VRRP.UseVirtualMAC {
+			return fmt.Errorf("%s spec.vrrp.virtualMACInterface requires spec.vrrp.useVirtualMAC", res.ID())
+		}
+		if spec.VRRP.UseVirtualMAC && targetOS == platform.OSFreeBSD {
+			return fmt.Errorf("%s spec.vrrp.useVirtualMAC is supported only on Linux", res.ID())
+		}
+		if vmacName != "" && (!validManagementInterfaceName(vmacName) || strings.Contains(vmacName, ".") || len(vmacName) > 15) {
+			return fmt.Errorf("%s spec.vrrp.virtualMACInterface must be a Linux interface name without dots and at most 15 characters", res.ID())
+		}
 		if spec.VRRP.AdvertInterval != "" || spec.VRRP.PreemptDelay != "" {
 			return fmt.Errorf("%s spec.vrrp.advertInterval and spec.vrrp.preemptDelay are not supported; routerd derives VRRP/CARP timing from profile defaults", res.ID())
 		}

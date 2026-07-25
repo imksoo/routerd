@@ -748,6 +748,24 @@ func TestValidateVirtualAddressIPv4PreemptDelayRequiresPreempt(t *testing.T) {
 	}
 }
 
+func TestValidateVirtualAddressVRRPVirtualMACInterface(t *testing.T) {
+	base := func(vrrp api.VirtualAddressVRRPSpec) *api.Router {
+		return &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "test"}, Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "eth0"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "vip"}, Spec: api.VirtualAddressSpec{Family: "ipv4", Interface: "wan", Address: "192.0.2.10/32", Mode: "vrrp", VRRP: vrrp}},
+		}}}
+	}
+	if err := Validate(base(api.VirtualAddressVRRPSpec{VirtualRouterID: 19, Peers: []string{"192.0.2.2"}, VirtualMACInterface: "wan-vmac"})); err == nil || !strings.Contains(err.Error(), "requires") {
+		t.Fatalf("expected virtual MAC dependency error, got %v", err)
+	}
+	if err := Validate(base(api.VirtualAddressVRRPSpec{VirtualRouterID: 19, Peers: []string{"192.0.2.2"}, UseVirtualMAC: true, VirtualMACInterface: "vrrp.19"})); err == nil || !strings.Contains(err.Error(), "without dots") {
+		t.Fatalf("expected dotted virtual MAC name error, got %v", err)
+	}
+	if err := Validate(base(api.VirtualAddressVRRPSpec{VirtualRouterID: 19, Peers: []string{"192.0.2.2"}, UseVirtualMAC: true, VirtualMACInterface: "wan-vmac"})); err != nil {
+		t.Fatalf("validate named virtual MAC: %v", err)
+	}
+}
+
 func TestValidateVirtualAddressIPv4RejectsDuplicateVRIDOnInterface(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
