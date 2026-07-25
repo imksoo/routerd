@@ -303,6 +303,31 @@ func TestDnsmasqServiceOwnedAcceptsMarkedLegacyRuntimePath(t *testing.T) {
 	}
 }
 
+func TestValidateDnsmasqArtifactsAcceptsMarkedLegacyRuntimeHostsForMigration(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "dnsmasq.conf")
+	hostsPath := filepath.Join(dir, "dnsmasq-hosts.hosts")
+	runtimePath := filepath.Join(dir, "runtime.conf")
+	servicePath := filepath.Join(dir, "routerd-dnsmasq.service")
+	if err := os.WriteFile(configPath, []byte("port=0\nno-resolv\nno-hosts\nbind-dynamic\npid-file=/run/routerd/dnsmasq.pid\ndhcp-leasefile=/var/lib/routerd/dnsmasq/dnsmasq.leases\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hostsPath, []byte("02:00:00:00:00:01,192.0.2.10\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runtime := "port=0\nno-resolv\nno-hosts\nbind-dynamic\npid-file=/run/routerd/dnsmasq.pid\ndhcp-leasefile=/var/lib/routerd/dnsmasq/dnsmasq.leases\ndhcp-hostsfile=" + hostsPath + "\n"
+	if err := os.WriteFile(runtimePath, []byte(runtime), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	service := routerdGeneratedDNSMasqMarker + "[Unit]\nDescription=routerd managed dnsmasq DHCP service\n[Service]\nExecStart=/usr/sbin/dnsmasq --conf-file=" + runtimePath + "\n"
+	if err := os.WriteFile(servicePath, []byte(service), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateDnsmasqArtifacts(configPath, hostsPath, servicePath, platform.OSLinux); err != nil {
+		t.Fatalf("marked legacy runtime artifacts rejected: %v", err)
+	}
+}
+
 func TestValidateDnsmasqArtifactsRejectsMarkerConfigWithLegacyHosts(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "dnsmasq.conf")

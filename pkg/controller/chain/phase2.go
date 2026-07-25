@@ -949,26 +949,22 @@ func validateDnsmasqArtifacts(configPath, hostsPath, servicePath string, osName 
 	if err == nil && !dnsmasqConfigOwned(configData) {
 		return fmt.Errorf("refusing dnsmasq reconcile: foreign config %s", configPath)
 	}
+	var serviceData []byte
+	if servicePath != "" {
+		serviceData, err = os.ReadFile(servicePath)
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("read dnsmasq service %s: %w", servicePath, err)
+		}
+		if err == nil && !dnsmasqServiceOwned(serviceData, configPath, osName) {
+			return fmt.Errorf("refusing dnsmasq reconcile: foreign service %s", servicePath)
+		}
+	}
 	hostsData, err := os.ReadFile(hostsPath)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read dnsmasq canonical hosts sidecar %s: %w", hostsPath, err)
 	}
-	if err == nil && !dnsmasqHostsOwned(hostsData, configData, hostsPath) {
+	if err == nil && !dnsmasqHostsOwned(hostsData, configData, hostsPath) && !dnsmasqLegacyRuntimeHostsOwned(hostsPath, serviceData, osName) {
 		return fmt.Errorf("refusing dnsmasq reconcile: foreign hosts sidecar %s", hostsPath)
-	}
-	if servicePath == "" {
-		return nil
-	}
-	data, err := os.ReadFile(servicePath)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read dnsmasq service %s: %w", servicePath, err)
-	}
-	owned := dnsmasqServiceOwned(data, configPath, osName)
-	if !owned {
-		return fmt.Errorf("refusing dnsmasq reconcile: foreign service %s", servicePath)
 	}
 	return nil
 }
@@ -995,6 +991,28 @@ func dnsmasqHostsOwned(data, configData []byte, hostsPath string) bool {
 	// migration provenance is a recognized legacy routerd config that names
 	// this exact sidecar.
 	return dnsmasqLegacyConfigOwned(configData) && strings.Contains(string(configData), "dhcp-hostsfile="+hostsPath+"\n")
+}
+
+// dnsmasqLegacyRuntimeHostsOwned recognizes the short-lived layout emitted by
+// routerd before canonical dnsmasq configuration moved out of /run. The
+// service itself must carry routerd's ownership marker and its runtime config
+// must be a complete legacy routerd skeleton referring to this exact sidecar.
+func dnsmasqLegacyRuntimeHostsOwned(hostsPath string, serviceData []byte, osName platform.OS) bool {
+	if osName != platform.OSLinux || !strings.HasPrefix(string(serviceData), routerdGeneratedDNSMasqMarker) || !strings.Contains(string(serviceData), "Description=routerd managed dnsmasq DHCP service") {
+		return false
+	}
+	var runtimePath string
+	for _, field := range strings.Fields(string(serviceData)) {
+		if strings.HasPrefix(field, "--conf-file=") {
+			runtimePath = strings.TrimPrefix(field, "--conf-file=")
+			break
+		}
+	}
+	if runtimePath == "" {
+		return false
+	}
+	runtimeData, err := os.ReadFile(runtimePath)
+	return err == nil && dnsmasqLegacyConfigOwned(runtimeData) && strings.Contains(string(runtimeData), "dhcp-hostsfile="+hostsPath+"\n")
 }
 
 func dnsmasqServiceOwned(data []byte, configPath string, osName platform.OS) bool {
