@@ -45,7 +45,47 @@ func run(args []string) error {
 			return fmt.Errorf("%s: %w: %s", strings.Join(command, " "), err, strings.TrimSpace(string(output)))
 		}
 	}
+	if opts.action == "activate" {
+		// Linux installs RA routes per interface. The physical WAN's RA route
+		// normally has a lower metric, which would send packets sourced from
+		// the shared VMAC over the standby-specific physical MAC. Promote the
+		// VMAC route after RA is learned; repeated MASTER reconciliation makes
+		// this converge even when RA arrives after the link is raised.
+		output, err := exec.Command("ip", "-6", "route", "show", "default", "dev", opts.ifname).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("read IPv6 default route for %s: %w: %s", opts.ifname, err, strings.TrimSpace(string(output)))
+		}
+		if command, ok := preferVMACDefaultCommand(string(output), opts.ifname); ok {
+			if output, err := exec.Command(command[0], command[1:]...).CombinedOutput(); err != nil {
+				return fmt.Errorf("%s: %w: %s", strings.Join(command, " "), err, strings.TrimSpace(string(output)))
+			}
+		}
+	}
 	return nil
+}
+
+func preferVMACDefaultCommand(routes, ifname string) ([]string, bool) {
+	for _, line := range strings.Split(routes, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 5 || fields[0] != "default" {
+			continue
+		}
+		var gateway string
+		for i := 0; i+1 < len(fields); i++ {
+			switch fields[i] {
+			case "via":
+				gateway = fields[i+1]
+			case "dev":
+				if fields[i+1] != ifname {
+					gateway = ""
+				}
+			}
+		}
+		if gateway != "" {
+			return []string{"ip", "-6", "route", "replace", "default", "via", gateway, "dev", ifname, "metric", "50"}, true
+		}
+	}
+	return nil, false
 }
 
 func parseOptions(args []string) (options, error) {

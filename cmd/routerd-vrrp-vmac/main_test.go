@@ -22,3 +22,22 @@ func TestParseOptionsRejectsInvalidInterface(t *testing.T) {
 		t.Fatal("expected invalid interface error")
 	}
 }
+
+func TestPreferVMACDefaultCommand(t *testing.T) {
+	command, ok := preferVMACDefaultCommand("default via fe80::1 dev wan-vmac proto ra metric 1024\n", "wan-vmac")
+	if !ok {
+		t.Fatal("expected VMAC default route")
+	}
+	want := []string{"ip", "-6", "route", "replace", "default", "via", "fe80::1", "dev", "wan-vmac", "metric", "50"}
+	if len(command) != len(want) {
+		t.Fatalf("command = %#v", command)
+	}
+	for i := range want {
+		if command[i] != want[i] {
+			t.Fatalf("command = %#v, want %#v", command, want)
+		}
+	}
+	if _, ok := preferVMACDefaultCommand("default via fe80::1 dev eth0 proto ra\n", "wan-vmac"); ok {
+		t.Fatal("physical route must not be selected")
+	}
+}
