@@ -560,14 +560,24 @@ type VirtualAddressSpec struct {
 }
 
 type VirtualAddressVRRPSpec struct {
-	VirtualRouterID    int                   `yaml:"virtualRouterID" json:"virtualRouterID" jsonschema:"minimum=1,maximum=255"`
-	Priority           int                   `yaml:"priority,omitempty" json:"priority,omitempty" jsonschema:"minimum=1,maximum=254"`
-	Preempt            *bool                 `yaml:"preempt,omitempty" json:"preempt,omitempty"`
-	PreemptDelay       string                `yaml:"-" json:"-"`
-	Peers              []string              `yaml:"peers,omitempty" json:"peers,omitempty"`
-	AdvertInterval     string                `yaml:"-" json:"-"`
-	Authentication     string                `yaml:"authentication,omitempty" json:"authentication,omitempty"`
-	AuthenticationFrom SecretValueSourceSpec `yaml:"authenticationFrom,omitempty" json:"authenticationFrom,omitempty"`
+	VirtualRouterID    int                                 `yaml:"virtualRouterID" json:"virtualRouterID" jsonschema:"minimum=1,maximum=255"`
+	Priority           int                                 `yaml:"priority,omitempty" json:"priority,omitempty" jsonschema:"minimum=1,maximum=254"`
+	Preempt            *bool                               `yaml:"preempt,omitempty" json:"preempt,omitempty"`
+	PreemptDelay       string                              `yaml:"-" json:"-"`
+	Peers              []string                            `yaml:"peers,omitempty" json:"peers,omitempty"`
+	AdvertInterval     string                              `yaml:"-" json:"-"`
+	Authentication     string                              `yaml:"authentication,omitempty" json:"authentication,omitempty"`
+	AuthenticationFrom SecretValueSourceSpec               `yaml:"authenticationFrom,omitempty" json:"authenticationFrom,omitempty"`
+	FailoverVMAC       *VirtualAddressVRRPFailoverVMACSpec `yaml:"failoverVMAC,omitempty" json:"failoverVMAC,omitempty"`
+}
+
+// VirtualAddressVRRPFailoverVMAC binds a WAN macvlan to this VRRP instance's
+// own state transitions. It deliberately does not create another VRRP state
+// machine for the WAN.
+type VirtualAddressVRRPFailoverVMACSpec struct {
+	ParentInterface string `yaml:"parentInterface" json:"parentInterface"`
+	Interface       string `yaml:"interface" json:"interface"`
+	MACAddress      string `yaml:"macAddress" json:"macAddress"`
 }
 
 type ResourceTrackSpec struct {

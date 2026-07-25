@@ -26,6 +26,7 @@ type vrrpInstance struct {
 	Peers           []string
 	AdvertInterval  time.Duration
 	Authentication  string
+	FailoverVMAC    *api.VirtualAddressVRRPFailoverVMACSpec
 }
 
 type KeepalivedOptions struct {
@@ -103,6 +104,16 @@ func vrrpInstances(router *api.Router, aliases map[string]string, opts Keepalive
 		if opts.PriorityByResource != nil && opts.PriorityByResource[res.Metadata.Name] > 0 {
 			priority = opts.PriorityByResource[res.Metadata.Name]
 		}
+		failoverVMAC := spec.VRRP.FailoverVMAC
+		if failoverVMAC != nil {
+			parent := aliases[failoverVMAC.ParentInterface]
+			if parent == "" {
+				return nil, fmt.Errorf("%s spec.vrrp.failoverVMAC.parentInterface references interface with empty ifname %q", res.ID(), failoverVMAC.ParentInterface)
+			}
+			copy := *failoverVMAC
+			copy.ParentInterface = parent
+			failoverVMAC = &copy
+		}
 		peers := compactStrings(spec.VRRP.Peers)
 		sort.Strings(peers)
 		authentication, err := secretValue(spec.VRRP.Authentication, spec.VRRP.AuthenticationFrom)
@@ -122,6 +133,7 @@ func vrrpInstances(router *api.Router, aliases map[string]string, opts Keepalive
 			Peers:           peers,
 			AdvertInterval:  advert,
 			Authentication:  authentication,
+			FailoverVMAC:    failoverVMAC,
 		})
 	}
 	sort.Slice(instances, func(i, j int) bool { return instances[i].Name < instances[j].Name })
@@ -148,6 +160,7 @@ type virtualVRRPSpec struct {
 	AdvertInterval     string
 	Authentication     string
 	AuthenticationFrom api.SecretValueSourceSpec
+	FailoverVMAC       *api.VirtualAddressVRRPFailoverVMACSpec
 }
 
 func virtualAddressResourceSpec(res api.Resource) (virtualAddressSpec, bool, error) {
@@ -185,6 +198,7 @@ func virtualAddressVRRPSpec(spec api.VirtualAddressVRRPSpec) virtualVRRPSpec {
 		AdvertInterval:     spec.AdvertInterval,
 		Authentication:     spec.Authentication,
 		AuthenticationFrom: spec.AuthenticationFrom,
+		FailoverVMAC:       spec.FailoverVMAC,
 	}
 }
 
@@ -263,6 +277,16 @@ func writeKeepalivedInstance(buf *bytes.Buffer, instance vrrpInstance) {
 		buf.WriteString("    auth_type PASS\n")
 		buf.WriteString("    auth_pass " + instance.Authentication + "\n")
 		buf.WriteString("  }\n")
+	}
+	if instance.FailoverVMAC != nil {
+		parent := strings.TrimSpace(instance.FailoverVMAC.ParentInterface)
+		ifname := strings.TrimSpace(instance.FailoverVMAC.Interface)
+		mac := strings.TrimSpace(instance.FailoverVMAC.MACAddress)
+		hook := "/usr/local/sbin/routerd-vrrp-vmac --parent " + parent + " --interface " + ifname + " --mac " + mac
+		buf.WriteString("  notify_master \"" + hook + " activate\"\n")
+		buf.WriteString("  notify_backup \"" + hook + " deactivate\"\n")
+		buf.WriteString("  notify_fault \"" + hook + " deactivate\"\n")
+		buf.WriteString("  notify_stop \"" + hook + " deactivate\"\n")
 	}
 	buf.WriteString("  virtual_ipaddress {\n")
 	buf.WriteString("    " + instance.Address + " dev " + instance.Interface + "\n")

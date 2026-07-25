@@ -48,6 +48,34 @@ func TestKeepalivedConfigRendersVRRPInstance(t *testing.T) {
 	}
 }
 
+func TestKeepalivedConfigRendersSingleOwnerFailoverVMAC(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+		Metadata: api.ObjectMeta{Name: "lan-gw"},
+		Spec: api.VirtualAddressSpec{Family: "ipv4", Interface: "lan", Address: "172.18.0.1/32", Mode: "vrrp",
+			VRRP: api.VirtualAddressVRRPSpec{VirtualRouterID: 18, Peers: []string{"172.18.0.3"}, FailoverVMAC: &api.VirtualAddressVRRPFailoverVMACSpec{
+				ParentInterface: "wan", Interface: "wan-vmac", MACAddress: "02:00:5e:00:01:13",
+			}}},
+	}}}}
+	data, err := KeepalivedConfig(router, map[string]string{"lan": "ens19", "wan": "eth0"})
+	if err != nil {
+		t.Fatalf("render keepalived config: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"vrrp_instance lan_gw",
+		"notify_master \"/usr/local/sbin/routerd-vrrp-vmac --parent eth0 --interface wan-vmac --mac 02:00:5e:00:01:13 activate\"",
+		"notify_backup \"/usr/local/sbin/routerd-vrrp-vmac --parent eth0 --interface wan-vmac --mac 02:00:5e:00:01:13 deactivate\"",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("keepalived config missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Count(got, "vrrp_instance ") != 1 {
+		t.Fatalf("expected one VRRP state machine:\n%s", got)
+	}
+}
+
 func TestKeepalivedConfigRendersIPv6VRRPInstance(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
