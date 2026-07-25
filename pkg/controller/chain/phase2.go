@@ -318,7 +318,8 @@ func deleteDSLiteTunnel(ctx context.Context, ifname string) error {
 		return nil
 	}
 	out, err := exec.CommandContext(ctx, "ip", "-6", "tunnel", "del", ifname).CombinedOutput()
-	if err == nil || strings.Contains(strings.ToLower(string(out)), "cannot find device") || strings.Contains(strings.ToLower(string(out)), "does not exist") {
+	message := strings.ToLower(string(out))
+	if err == nil || strings.Contains(message, "cannot find device") || strings.Contains(message, "does not exist") || strings.Contains(message, "no such device") {
 		return nil
 	}
 	return fmt.Errorf("delete ipip6 tunnel %s: %w: %s", ifname, err, strings.TrimSpace(string(out)))
