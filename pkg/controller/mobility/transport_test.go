@@ -96,6 +96,9 @@ func TestSAMTransportProfileDerivesSymmetricSortedEdge31(t *testing.T) {
 	if bTunnel.Address != "10.255.1.1/31" || aPeer.Peers[0] != "10.255.1.1" {
 		t.Fatalf("onprem local / cloud remote = %s / %v, want 10.255.1.1/31 / 10.255.1.1", bTunnel.Address, aPeer.Peers)
 	}
+	if aPeer.PassiveMode || !bPeer.PassiveMode {
+		t.Fatalf("BGP active/passive = cloud:%v onprem:%v, want lower /31 endpoint active and upper endpoint passive", aPeer.PassiveMode, bPeer.PassiveMode)
+	}
 }
 
 func TestSAMTransportProfileDerivesPeerAddressOnlyForFreeBSD(t *testing.T) {

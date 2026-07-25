@@ -285,6 +285,7 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 					RouterRef:               strings.TrimSpace(spec.BGP.RouterRef),
 					PeerASN:                 spec.BGP.PeerASN,
 					Peers:                   []string{remoteAddr.String()},
+					PassiveMode:             localPrefix.Addr().Compare(remoteAddr) > 0,
 					EbgpMultihop:            spec.BGP.EbgpMultihop,
 					RouteReflectorClient:    spec.BGP.RouteReflectorClient,
 					RouteReflectorClusterID: strings.TrimSpace(spec.BGP.RouteReflectorClusterID),

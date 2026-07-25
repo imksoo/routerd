@@ -98,6 +98,16 @@ func TestAppliedPoliciesRestorePeerImportPolicyWithoutGlobalPolicy(t *testing.T)
 	}
 }
 
+func TestAppliedPeerRestoresPassiveMode(t *testing.T) {
+	peer := appliedPeer(
+		bgpdaemon.AppliedPeer{Address: "192.0.2.2", ASN: 64512, PassiveMode: true},
+		bgpdaemon.AppliedGlobal{ASN: 64512},
+	)
+	if !peer.GetTransport().GetPassiveMode() {
+		t.Fatal("restored peer passive mode = false, want true")
+	}
+}
+
 func TestAppliedPoliciesRestorePeerImportPolicyWithCommunities(t *testing.T) {
 	peer := bgpdaemon.AppliedPeer{
 		Address:          "10.99.0.2",

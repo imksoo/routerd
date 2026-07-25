@@ -327,6 +327,7 @@ func appliedPeer(peer bgpdaemon.AppliedPeer, global bgpdaemon.AppliedGlobal) *go
 			afiSafi(ipv4Family()),
 			afiSafi(ipv6Family()),
 		},
+		Transport: &gobgpapi.Transport{PassiveMode: peer.PassiveMode},
 	}
 	if gr := peer.GracefulRestart; gr != nil && gr.Enabled {
 		out.GracefulRestart = &gobgpapi.GracefulRestart{Enabled: true, RestartTime: gr.RestartTime, StaleRoutesTime: gr.StaleRoutesTime}

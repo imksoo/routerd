@@ -137,6 +137,7 @@ type desiredPeer struct {
 	Address                 string
 	ASN                     uint32
 	LocalASN                uint32
+	PassiveMode             bool
 	Password                string
 	BFD                     string
 	EbgpMultihop            int
@@ -640,6 +641,7 @@ func (c *Controller) desiredPeers(routerName string, localASN uint32) (map[strin
 				Address:                 peer,
 				ASN:                     spec.PeerASN,
 				LocalASN:                localASN,
+				PassiveMode:             spec.PassiveMode,
 				Password:                password,
 				BFD:                     strings.TrimSpace(spec.BFD),
 				EbgpMultihop:            spec.EbgpMultihop,
@@ -1385,6 +1387,7 @@ func desiredPeersFromApplied(localASN uint32, peers map[string]bgpdaemon.Applied
 			Address:                 peer.Address,
 			ASN:                     peer.ASN,
 			LocalASN:                localASN,
+			PassiveMode:             peer.PassiveMode,
 			Password:                peer.Password,
 			BFD:                     peer.BFD,
 			EbgpMultihop:            peer.EbgpMultihop,
@@ -1456,6 +1459,7 @@ func appliedPeer(peer desiredPeer) bgpdaemon.AppliedPeer {
 	out := bgpdaemon.AppliedPeer{
 		Address:                 peer.Address,
 		ASN:                     peer.ASN,
+		PassiveMode:             peer.PassiveMode,
 		Password:                peer.Password,
 		BFD:                     peer.BFD,
 		EbgpMultihop:            peer.EbgpMultihop,
@@ -2556,6 +2560,7 @@ func goBGPPeer(peer desiredPeer) *gobgpapi.Peer {
 			goBGPAFISAFI(ipv4Family()),
 			goBGPAFISAFI(ipv6Family()),
 		},
+		Transport: &gobgpapi.Transport{PassiveMode: peer.PassiveMode},
 	}
 	if gr := gobgpPeerGracefulRestart(peer); gr != nil {
 		out.GracefulRestart = gr

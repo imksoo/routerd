@@ -69,6 +69,7 @@ type AppliedGracefulRestart struct {
 type AppliedPeer struct {
 	Address                 string                  `json:"address"`
 	ASN                     uint32                  `json:"asn"`
+	PassiveMode             bool                    `json:"passiveMode,omitempty"`
 	Password                string                  `json:"password,omitempty"`
 	BFD                     string                  `json:"bfd,omitempty"`
 	EbgpMultihop            int                     `json:"ebgpMultihop,omitempty"`
