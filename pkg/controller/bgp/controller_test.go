@@ -1206,6 +1206,18 @@ func TestGoBGPPeerEbgpMultihop(t *testing.T) {
 	}
 }
 
+func TestGoBGPPeerTransportPreservesDefaultActiveCompatibility(t *testing.T) {
+	active := goBGPPeer(desiredPeer{Address: "192.0.2.2", ASN: 64513})
+	if active.Transport != nil {
+		t.Fatalf("default active peer transport = %#v, want nil for pre-passiveMode compatibility", active.Transport)
+	}
+
+	passive := goBGPPeer(desiredPeer{Address: "192.0.2.2", ASN: 64513, PassiveMode: true})
+	if passive.Transport == nil || !passive.Transport.PassiveMode {
+		t.Fatalf("passive peer transport = %#v, want passiveMode=true", passive.Transport)
+	}
+}
+
 func TestGoBGPPeerInternalRouteReflectorClient(t *testing.T) {
 	peer := goBGPPeer(desiredPeer{
 		Address:                 "10.99.0.2",
@@ -3026,6 +3038,68 @@ func TestReconcileUpdatesPeerWhenConfigChangedAcrossRouterdRestart(t *testing.T)
 	}
 	if got := bgpdaemon.Hash(server.applied); got == "" {
 		t.Fatal("applied config hash is empty")
+	}
+}
+
+func TestReconcileRecreatesPeerWhenPassiveModeChangesAcrossRestart(t *testing.T) {
+	router := bgpRouter()
+	server := &fakeServer{}
+	reconcile := func() {
+		t.Helper()
+		controller := Controller{
+			Router: router,
+			Store:  mapStore{},
+			FIB:    &fakeFIB{},
+			NewServer: func() GoBGPServer {
+				return server
+			},
+		}
+		if err := controller.Reconcile(context.Background()); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+	}
+
+	reconcile()
+	if server.adds != 1 || server.deletes != 0 || server.updates != 0 {
+		t.Fatalf("initial counts adds=%d deletes=%d updates=%d, want 1/0/0", server.adds, server.deletes, server.updates)
+	}
+
+	peer := router.Spec.Resources[1]
+	spec, err := peer.BGPPeerSpec()
+	if err != nil {
+		t.Fatalf("peer spec: %v", err)
+	}
+	spec.PassiveMode = true
+	peer.Spec = spec
+	router.Spec.Resources[1] = peer
+	reconcile()
+	if server.adds != 2 || server.deletes != 1 || server.updates != 0 {
+		t.Fatalf("active->passive counts adds=%d deletes=%d updates=%d, want 2/1/0", server.adds, server.deletes, server.updates)
+	}
+	if transport := server.peers["10.0.0.21"].Transport; transport == nil || !transport.PassiveMode {
+		t.Fatalf("active->passive transport = %#v, want explicit passive", transport)
+	}
+	if !server.applied.Peers["10.0.0.21"].PassiveMode {
+		t.Fatalf("active->passive applied peer = %#v, want passive", server.applied.Peers["10.0.0.21"])
+	}
+
+	spec.PassiveMode = false
+	peer.Spec = spec
+	router.Spec.Resources[1] = peer
+	reconcile()
+	if server.adds != 3 || server.deletes != 2 || server.updates != 0 {
+		t.Fatalf("passive->active counts adds=%d deletes=%d updates=%d, want 3/2/0", server.adds, server.deletes, server.updates)
+	}
+	if transport := server.peers["10.0.0.21"].Transport; transport != nil {
+		t.Fatalf("passive->active transport = %#v, want nil default-active transport", transport)
+	}
+	if server.applied.Peers["10.0.0.21"].PassiveMode {
+		t.Fatalf("passive->active applied peer = %#v, want active", server.applied.Peers["10.0.0.21"])
+	}
+
+	reconcile()
+	if server.adds != 3 || server.deletes != 2 || server.updates != 0 {
+		t.Fatalf("unchanged active counts adds=%d deletes=%d updates=%d, want no churn", server.adds, server.deletes, server.updates)
 	}
 }
 

@@ -1829,6 +1829,15 @@ func (c *Controller) reconcilePeers(ctx context.Context, desired map[string]desi
 			c.desiredPeerKeys[address] = peer
 			continue
 		}
+		if c.peerPassiveModeChanged(address, peer) {
+			if err := c.Server.DeletePeer(ctx, &gobgpapi.DeletePeerRequest{Address: address}); err != nil {
+				return changed, err
+			}
+			delete(live, address)
+			delete(c.desiredPeerKeys, address)
+			changed = true
+			continue
+		}
 		if _, err := c.Server.UpdatePeer(ctx, &gobgpapi.UpdatePeerRequest{Peer: goBGPPeer(peer), DoSoftResetIn: true}); err != nil {
 			return changed, err
 		}
@@ -1849,6 +1858,16 @@ func (c *Controller) reconcilePeers(ctx context.Context, desired map[string]desi
 		changed = true
 	}
 	return changed, nil
+}
+
+func (c *Controller) peerPassiveModeChanged(address string, desired desiredPeer) bool {
+	if current, ok := c.desiredPeerKeys[address]; ok {
+		return current.PassiveMode != desired.PassiveMode
+	}
+	if current, ok := c.appliedPeerKeys[address]; ok {
+		return current.PassiveMode != desired.PassiveMode
+	}
+	return false
 }
 
 func isRouterdDynamicPeer(peer *gobgpapi.Peer) bool {
@@ -2560,7 +2579,7 @@ func goBGPPeer(peer desiredPeer) *gobgpapi.Peer {
 			goBGPAFISAFI(ipv4Family()),
 			goBGPAFISAFI(ipv6Family()),
 		},
-		Transport: &gobgpapi.Transport{PassiveMode: peer.PassiveMode},
+		Transport: goBGPPeerTransport(peer.PassiveMode),
 	}
 	if gr := gobgpPeerGracefulRestart(peer); gr != nil {
 		out.GracefulRestart = gr
@@ -2585,6 +2604,13 @@ func goBGPPeer(peer desiredPeer) *gobgpapi.Peer {
 		out.ApplyPolicy = applyPolicy
 	}
 	return out
+}
+
+func goBGPPeerTransport(passiveMode bool) *gobgpapi.Transport {
+	if !passiveMode {
+		return nil
+	}
+	return &gobgpapi.Transport{PassiveMode: true}
 }
 
 func goBGPDynamicPeerGroup(peer desiredDynamicPeer) *gobgpapi.PeerGroup {

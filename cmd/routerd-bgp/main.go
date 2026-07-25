@@ -327,7 +327,7 @@ func appliedPeer(peer bgpdaemon.AppliedPeer, global bgpdaemon.AppliedGlobal) *go
 			afiSafi(ipv4Family()),
 			afiSafi(ipv6Family()),
 		},
-		Transport: &gobgpapi.Transport{PassiveMode: peer.PassiveMode},
+		Transport: appliedPeerTransport(peer.PassiveMode),
 	}
 	if gr := peer.GracefulRestart; gr != nil && gr.Enabled {
 		out.GracefulRestart = &gobgpapi.GracefulRestart{Enabled: true, RestartTime: gr.RestartTime, StaleRoutesTime: gr.StaleRoutesTime}
@@ -366,6 +366,13 @@ func appliedPeer(peer bgpdaemon.AppliedPeer, global bgpdaemon.AppliedGlobal) *go
 		out.ApplyPolicy = applyPolicy
 	}
 	return out
+}
+
+func appliedPeerTransport(passiveMode bool) *gobgpapi.Transport {
+	if !passiveMode {
+		return nil
+	}
+	return &gobgpapi.Transport{PassiveMode: true}
 }
 
 func timers(profile string) *gobgpapi.TimersConfig {

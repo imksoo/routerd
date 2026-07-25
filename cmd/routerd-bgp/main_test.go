@@ -108,6 +108,16 @@ func TestAppliedPeerRestoresPassiveMode(t *testing.T) {
 	}
 }
 
+func TestAppliedPeerRestoresDefaultActiveCompatibility(t *testing.T) {
+	peer := appliedPeer(
+		bgpdaemon.AppliedPeer{Address: "192.0.2.2", ASN: 64512},
+		bgpdaemon.AppliedGlobal{ASN: 64512},
+	)
+	if peer.Transport != nil {
+		t.Fatalf("restored default active peer transport = %#v, want nil for pre-passiveMode compatibility", peer.Transport)
+	}
+}
+
 func TestAppliedPoliciesRestorePeerImportPolicyWithCommunities(t *testing.T) {
 	peer := bgpdaemon.AppliedPeer{
 		Address:          "10.99.0.2",
