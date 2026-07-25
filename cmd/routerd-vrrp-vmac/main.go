@@ -86,5 +86,6 @@ func commandsFor(opts options) [][]string {
 		{"ip", "link", "add", "link", opts.parent, "name", opts.ifname, "type", "macvlan", "mode", "private"},
 		{"ip", "link", "set", "dev", opts.ifname, "address", opts.mac},
 		{"ip", "link", "set", "dev", opts.ifname, "up"},
+		{"sysctl", "-w", "net.ipv6.conf." + opts.ifname + ".accept_ra=2"},
 	}
 }

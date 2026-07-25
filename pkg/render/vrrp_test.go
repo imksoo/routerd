@@ -64,8 +64,8 @@ func TestKeepalivedConfigRendersSingleOwnerFailoverVMAC(t *testing.T) {
 	got := string(data)
 	for _, want := range []string{
 		"vrrp_instance lan_gw",
-		"notify_master \"/usr/local/sbin/routerd-vrrp-vmac --parent eth0 --interface wan-vmac --mac 02:00:5e:00:01:13 activate\"",
-		"notify_backup \"/usr/local/sbin/routerd-vrrp-vmac --parent eth0 --interface wan-vmac --mac 02:00:5e:00:01:13 deactivate\"",
+		"notify_master \"/usr/local/sbin/routerd-vrrp-vmac activate --parent eth0 --interface wan-vmac --mac 02:00:5e:00:01:13\"",
+		"notify_backup \"/usr/local/sbin/routerd-vrrp-vmac deactivate --parent eth0 --interface wan-vmac --mac 02:00:5e:00:01:13\"",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("keepalived config missing %q:\n%s", want, got)

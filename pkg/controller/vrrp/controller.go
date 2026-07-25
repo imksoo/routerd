@@ -397,6 +397,7 @@ type virtualVRRPSpec struct {
 	AdvertInterval     string
 	Authentication     string
 	AuthenticationFrom api.SecretValueSourceSpec
+	FailoverVMAC       *api.VirtualAddressVRRPFailoverVMACSpec
 }
 
 func vrrpResourceSpec(resource api.Resource) (virtualAddressSpec, bool, error) {
@@ -434,6 +435,7 @@ func vrrpSpec(spec api.VirtualAddressVRRPSpec) virtualVRRPSpec {
 		AdvertInterval:     spec.AdvertInterval,
 		Authentication:     spec.Authentication,
 		AuthenticationFrom: spec.AuthenticationFrom,
+		FailoverVMAC:       spec.FailoverVMAC,
 	}
 }
 

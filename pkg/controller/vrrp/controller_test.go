@@ -31,6 +31,36 @@ func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 	return map[string]any{}
 }
 
+func TestSyncFailoverVMACFollowsObservedVRRPRole(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+		Metadata: api.ObjectMeta{Name: "lan-gw"},
+		Spec: api.VirtualAddressSpec{Interface: "lan", Address: "172.18.0.1/32", Family: "ipv4", Mode: "vrrp", VRRP: api.VirtualAddressVRRPSpec{
+			VirtualRouterID: 18,
+			FailoverVMAC:    &api.VirtualAddressVRRPFailoverVMACSpec{ParentInterface: "wan", Interface: "wan-vmac", MACAddress: "02:00:5e:00:01:13"},
+		}},
+	}}}}
+	var calls []string
+	controller := &Controller{Router: router, Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return nil, nil
+	}}
+	aliases := map[string]string{"lan": "ens19", "wan": "ens18"}
+	if err := syncFailoverVMACs(context.Background(), controller, aliases, map[string]string{"lan-gw": "master"}); err != nil {
+		t.Fatalf("sync master: %v", err)
+	}
+	if err := syncFailoverVMACs(context.Background(), controller, aliases, map[string]string{"lan-gw": "backup"}); err != nil {
+		t.Fatalf("sync backup: %v", err)
+	}
+	want := []string{
+		"/usr/local/sbin/routerd-vrrp-vmac activate --parent ens18 --interface wan-vmac --mac 02:00:5e:00:01:13",
+		"/usr/local/sbin/routerd-vrrp-vmac deactivate --parent ens18 --interface wan-vmac --mac 02:00:5e:00:01:13",
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("VMAC sync calls = %#v, want %#v", calls, want)
+	}
+}
+
 func (s mapStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
 	var out []routerstate.ObjectStatus
 	for key, status := range s {
