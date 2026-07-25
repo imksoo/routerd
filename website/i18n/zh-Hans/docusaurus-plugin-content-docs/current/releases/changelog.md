@@ -11,6 +11,26 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 新增
+
+- Cloud SAM 现已通过 amd64 实机 Linux/FreeBSD 混合环境验证，涵盖两台 CARP
+  router、多个 client、AWS route reflector 与 leaf、双向流量、active router
+  故障、非抢占式 rejoin，以及仅在成功后执行的 infrastructure cleanup。
+
+### 变更
+
+- FreeBSD Cloud SAM capture 在使用原生 route-aware proxy ARP、PF、CARP 和
+  cloned tunnel interface 的同时，现遵循与 Linux 相同的面向用户 ownership
+  和 fail-closed lifecycle。
+
+### 修复
+
+- CARP backup router 现在会撤销自身的 mobility BGP `/32` path，避免 rejoin
+  后 ECMP traffic 被发送到 silent backup。
+- FreeBSD SAM reconciliation 现在会保留 proxy ARP ownership、拒绝 foreign
+  enabled state，并在 cleanup 前禁用 owned proxy ARP；同时会推导稳定的
+  tunnel peer/name，并在不发生 active-open livelock 的情况下恢复 BGP state。
+
 ## v20260724.1159
 
 ### 新增
