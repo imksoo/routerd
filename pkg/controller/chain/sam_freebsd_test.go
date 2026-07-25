@@ -116,25 +116,39 @@ func TestFreeBSDSAMProxyAllSysctlAndPerClaimDelete(t *testing.T) {
 	reset := saveFreeBSDSAMSeams()
 	defer reset()
 	var commands []string
+	current := "0"
 	freeBSDSAMRunCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		commands = append(commands, name+" "+strings.Join(args, " "))
-		if name != "sysctl" {
+		switch strings.Join(args, " ") {
+		case "-n net.link.ether.inet.proxyall":
+			return []byte(current + "\n"), nil
+		case "-w net.link.ether.inet.proxyall=1":
+			current = "1"
+			return nil, nil
+		case "-w net.link.ether.inet.proxyall=0":
+			current = "0"
+			return nil, nil
+		default:
 			return nil, errors.New("unexpected command")
 		}
-		return nil, nil
 	}
 	applier := freeBSDSAMProxyNeighborApplier{}
-	if err := applier.SetProxyARP(context.Background(), "", true); err != nil {
+	if err := applier.SetProxyARP(context.Background(), "", true, false); err != nil {
 		t.Fatalf("SetProxyARP(true): %v", err)
 	}
-	if err := applier.SetProxyARP(context.Background(), "", false); err != nil {
+	if err := applier.SetProxyARP(context.Background(), "", false, true); err != nil {
 		t.Fatalf("SetProxyARP(false): %v", err)
 	}
 	if err := applier.DeleteProxyNeighbor(context.Background(), "192.0.2.55/32", "em0"); err != nil {
 		t.Fatalf("DeleteProxyNeighbor: %v", err)
 	}
-	if got, want := strings.Join(commands, "\n"), "sysctl -w net.link.ether.inet.proxyall=1\nsysctl -w net.link.ether.inet.proxyall=0"; got != want {
+	if got, want := strings.Join(commands, "\n"), "sysctl -n net.link.ether.inet.proxyall\nsysctl -w net.link.ether.inet.proxyall=1\nsysctl -n net.link.ether.inet.proxyall\nsysctl -w net.link.ether.inet.proxyall=0"; got != want {
 		t.Fatalf("commands = %q, want %q", got, want)
+	}
+
+	current = "1"
+	if err := applier.SetProxyARP(context.Background(), "", false, false); err == nil || !strings.Contains(err.Error(), "refusing adoption") {
+		t.Fatalf("foreign proxyall refusal = %v", err)
 	}
 }
 

@@ -21,7 +21,7 @@ func defaultSAMGratuitousARPAnnouncer() samGratuitousARPAnnouncer {
 	return unsupportedSAMGratuitousARPAnnouncer{}
 }
 
-func (unsupportedSAMProxyNeighborApplier) SetProxyARP(context.Context, string, bool) error {
+func (unsupportedSAMProxyNeighborApplier) SetProxyARP(context.Context, string, bool, bool) error {
 	return nil
 }
 

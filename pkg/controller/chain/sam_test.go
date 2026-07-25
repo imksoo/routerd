@@ -241,6 +241,12 @@ func TestSAMControllerFreeBSDPublishesAddressGARPAndForwardPath(t *testing.T) {
 	if len(applier.forwardSets) != 1 || len(applier.forwardSets[0]) != 1 || applier.forwardSets[0][0].Kind != "forward-local-path" {
 		t.Fatalf("FreeBSD PF desired /32 paths = %#v, want one local forward path", applier.forwardSets)
 	}
+	callOrder := strings.Join(applier.calls, "\n")
+	ensureIndex := strings.Index(callOrder, "ensure:10.0.1.123/32@lan0")
+	proxyIndex := strings.Index(callOrder, "proxyarp:=1")
+	if ensureIndex < 0 || proxyIndex < 0 || ensureIndex > proxyIndex {
+		t.Fatalf("FreeBSD enabled host-global proxyall before claim validation: %#v", applier.calls)
+	}
 }
 
 func TestSAMControllerFreeBSDCollisionFailsBeforePublishedARP(t *testing.T) {
@@ -255,6 +261,9 @@ func TestSAMControllerFreeBSDCollisionFailsBeforePublishedARP(t *testing.T) {
 	}
 	if len(applier.ensure) != 0 || len(garp.calls) != 0 {
 		t.Fatalf("collision published ARP/GARP: ensure=%#v garp=%#v", applier.ensure, garp.calls)
+	}
+	if strings.Contains(strings.Join(applier.proxyARP, "\n"), "=1") {
+		t.Fatalf("failed claim enabled host-global proxyall: %#v", applier.proxyARP)
 	}
 	status := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", "app")
 	if status["phase"] != "Error" || status["reason"] != "CaptureFailed" || !strings.Contains(status["error"].(string), "foreign OS address") {

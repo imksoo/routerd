@@ -71,10 +71,28 @@ func defaultSAMGratuitousARPAnnouncer() samGratuitousARPAnnouncer {
 	return freeBSDSAMGratuitousARPAnnouncer{}
 }
 
-func (freeBSDSAMProxyNeighborApplier) SetProxyARP(ctx context.Context, _ string, enabled bool) error {
+func (freeBSDSAMProxyNeighborApplier) SetProxyARP(ctx context.Context, _ string, enabled, owned bool) error {
 	value := "0"
 	if enabled {
 		value = "1"
+	}
+	currentOut, err := freeBSDSAMRunCommand(ctx, "sysctl", "-n", "net.link.ether.inet.proxyall")
+	if err != nil {
+		return fmt.Errorf("read net.link.ether.inet.proxyall: %w: %s", err, strings.TrimSpace(string(currentOut)))
+	}
+	current := strings.TrimSpace(string(currentOut))
+	if current != "0" && current != "1" {
+		return fmt.Errorf("net.link.ether.inet.proxyall has unexpected value %q", current)
+	}
+	// A configured claim authorizes routerd to enable proxyall from its safe
+	// disabled state. It does not authorize adopting or disabling an existing
+	// operator-owned global setting. Persisted proxy-neighbor status proves
+	// routerd ownership across MASTER/BACKUP and removal transitions.
+	if !owned && current == "1" {
+		return errors.New("foreign net.link.ether.inet.proxyall=1: refusing adoption")
+	}
+	if current == value {
+		return nil
 	}
 	out, err := freeBSDSAMRunCommand(ctx, "sysctl", "-w", "net.link.ether.inet.proxyall="+value)
 	if err != nil {
