@@ -2916,6 +2916,26 @@
                             },
                             "type": "object"
                           },
+                          "failoverVMAC": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "interface": {
+                                "type": "string"
+                              },
+                              "macAddress": {
+                                "type": "string"
+                              },
+                              "parentInterface": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "parentInterface",
+                              "interface",
+                              "macAddress"
+                            ],
+                            "type": "object"
+                          },
                           "peers": {
                             "items": {
                               "type": "string"
