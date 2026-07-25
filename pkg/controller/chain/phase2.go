@@ -969,10 +969,35 @@ func validateDnsmasqArtifactsForRouter(router *api.Router, configPath, hostsPath
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read dnsmasq canonical hosts sidecar %s: %w", hostsPath, err)
 	}
-	if err == nil && !dnsmasqHostsOwned(hostsData, configData, hostsPath) && !dnsmasqLegacyRuntimeHostsOwned(hostsPath, serviceData, osName) && !dnsmasqLegacyHostsMatchRouter(hostsData, router) {
+	if err == nil && !dnsmasqHostsOwned(hostsData, configData, hostsPath) && !dnsmasqLegacyRuntimeHostsOwned(hostsPath, serviceData, osName) && !dnsmasqLegacyHostsMatchRouter(hostsData, router) && !dnsmasqRetiredHostsOwned(configData, serviceData, osName) {
 		return fmt.Errorf("refusing dnsmasq reconcile: foreign hosts sidecar %s", hostsPath)
 	}
 	return nil
+}
+
+// dnsmasqRetiredHostsOwned recognizes the canonical hosts path left by the
+// pre-#946 layout after routerd has already moved the live, marked sidecar to
+// its runtime directory. The legacy canonical config must no longer reference
+// the file, so accepting it cannot replace a live administrator-owned input.
+func dnsmasqRetiredHostsOwned(configData, serviceData []byte, osName platform.OS) bool {
+	if osName != platform.OSLinux || !dnsmasqLegacyConfigOwned(configData) || strings.Contains(string(configData), "\ndhcp-hostsfile=") {
+		return false
+	}
+	if !strings.HasPrefix(string(serviceData), routerdGeneratedDNSMasqMarker) || !strings.Contains(string(serviceData), "Description=routerd managed dnsmasq DHCP service") {
+		return false
+	}
+	var runtimeConfig string
+	for _, field := range strings.Fields(string(serviceData)) {
+		if strings.HasPrefix(field, "--conf-file=") {
+			runtimeConfig = strings.TrimPrefix(field, "--conf-file=")
+			break
+		}
+	}
+	if runtimeConfig == "" {
+		return false
+	}
+	liveHosts, err := os.ReadFile(filepath.Join(filepath.Dir(runtimeConfig), "dnsmasq-hosts.hosts"))
+	return err == nil && strings.HasPrefix(string(liveHosts), routerdGeneratedDNSMasqMarker)
 }
 
 // dnsmasqLegacyHostsMatchRouter permits a markerless pre-#946 hosts file only

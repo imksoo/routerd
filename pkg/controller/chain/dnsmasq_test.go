@@ -342,6 +342,31 @@ func TestDnsmasqLegacyHostsMatchRouterRejectsAnyUnreproducibleLine(t *testing.T)
 	}
 }
 
+func TestValidateDnsmasqArtifactsAcceptsRetiredLegacyHostsAlongsideMarkedRuntimeHosts(t *testing.T) {
+	dir := t.TempDir()
+	runtimeDir := filepath.Join(dir, "run")
+	if err := os.Mkdir(runtimeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, "dnsmasq.conf")
+	hostsPath := filepath.Join(dir, "dnsmasq-hosts.hosts")
+	runtimePath := filepath.Join(runtimeDir, "dnsmasq.conf")
+	servicePath := filepath.Join(dir, "routerd-dnsmasq.service")
+	legacy := "port=0\nno-resolv\nno-hosts\nbind-dynamic\npid-file=/run/routerd/dnsmasq.pid\ndhcp-leasefile=/var/lib/routerd/dnsmasq/dnsmasq.leases\n"
+	for path, data := range map[string]string{configPath: legacy, hostsPath: "02:00:00:00:00:01,192.0.2.10\n", runtimePath: legacy, filepath.Join(runtimeDir, "dnsmasq-hosts.hosts"): routerdGeneratedDNSMasqMarker + "02:00:00:00:00:02,192.0.2.11\n"} {
+		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	service := routerdGeneratedDNSMasqMarker + "[Unit]\nDescription=routerd managed dnsmasq DHCP service\n[Service]\nExecStart=/usr/sbin/dnsmasq --conf-file=" + runtimePath + "\n"
+	if err := os.WriteFile(servicePath, []byte(service), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateDnsmasqArtifacts(configPath, hostsPath, servicePath, platform.OSLinux); err != nil {
+		t.Fatalf("retired legacy hosts rejected: %v", err)
+	}
+}
+
 func TestValidateDnsmasqArtifactsRejectsMarkerConfigWithLegacyHosts(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "dnsmasq.conf")
