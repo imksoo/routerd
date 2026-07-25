@@ -4,6 +4,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/netip"
 	"net/url"
 	"reflect"
@@ -322,6 +323,18 @@ func validateVirtualAddressResource(res api.Resource, targetOS platform.OS) erro
 		}
 		if spec.VRRP.AdvertInterval != "" || spec.VRRP.PreemptDelay != "" {
 			return fmt.Errorf("%s spec.vrrp.advertInterval and spec.vrrp.preemptDelay are not supported; routerd derives VRRP/CARP timing from profile defaults", res.ID())
+		}
+		if vmac := spec.VRRP.FailoverVMAC; vmac != nil {
+			if targetOS == platform.OSFreeBSD {
+				return fmt.Errorf("%s spec.vrrp.failoverVMAC is supported only on Linux", res.ID())
+			}
+			if !validManagementInterfaceName(vmac.ParentInterface) || !validManagementInterfaceName(vmac.Interface) || len(vmac.Interface) > 15 {
+				return fmt.Errorf("%s spec.vrrp.failoverVMAC requires valid parentInterface and interface names", res.ID())
+			}
+			mac, err := net.ParseMAC(vmac.MACAddress)
+			if err != nil || len(mac) != 6 {
+				return fmt.Errorf("%s spec.vrrp.failoverVMAC.macAddress must be an Ethernet MAC address", res.ID())
+			}
 		}
 		for i, peer := range spec.VRRP.Peers {
 			if err := validateAddressOrHostname(peer); err != nil {
