@@ -144,12 +144,13 @@ func (c DHCPv6InformationController) socketFor(resource string) string {
 }
 
 type DSLiteTunnelController struct {
-	Router       *api.Router
-	Bus          *bus.Bus
-	Store        Store
-	DryRun       bool
-	ResolverPort int
-	Logger       *slog.Logger
+	Router         *api.Router
+	DeclaredRouter *api.Router
+	Bus            *bus.Bus
+	Store          Store
+	DryRun         bool
+	ResolverPort   int
+	Logger         *slog.Logger
 }
 
 func (c DSLiteTunnelController) Start(ctx context.Context) {
@@ -179,6 +180,43 @@ func (c DSLiteTunnelController) Start(ctx context.Context) {
 
 func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 	var failures []string
+	declared := c.DeclaredRouter
+	if declared == nil {
+		declared = c.Router
+	}
+	desired := map[string]struct{}{}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "DSLiteTunnel" {
+			continue
+		}
+		spec, err := resource.DSLiteTunnelSpec()
+		if err != nil {
+			return err
+		}
+		desired[firstNonEmpty(spec.TunnelName, spec.Interface, resource.Metadata.Name)] = struct{}{}
+	}
+	for _, resource := range declared.Spec.Resources {
+		if resource.Kind != "DSLiteTunnel" {
+			continue
+		}
+		spec, err := resource.DSLiteTunnelSpec()
+		if err != nil {
+			return err
+		}
+		ifname := firstNonEmpty(spec.TunnelName, spec.Interface, resource.Metadata.Name)
+		if _, active := desired[ifname]; active {
+			continue
+		}
+		if !c.DryRun {
+			if err := deleteDSLiteTunnel(ctx, ifname); err != nil {
+				failures = append(failures, fmt.Sprintf("remove %s: %v", resource.Metadata.Name, err))
+				continue
+			}
+		}
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": PhaseDisabled, "reason": "WhenFalse", "interface": ifname, "dryRun": c.DryRun}); err != nil {
+			return err
+		}
+	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "DSLiteTunnel" {
 			continue
@@ -273,6 +311,17 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		return fmt.Errorf("%s", strings.Join(failures, "; "))
 	}
 	return nil
+}
+
+func deleteDSLiteTunnel(ctx context.Context, ifname string) error {
+	if strings.TrimSpace(ifname) == "" {
+		return nil
+	}
+	out, err := exec.CommandContext(ctx, "ip", "-6", "tunnel", "del", ifname).CombinedOutput()
+	if err == nil || strings.Contains(strings.ToLower(string(out)), "cannot find device") || strings.Contains(strings.ToLower(string(out)), "does not exist") {
+		return nil
+	}
+	return fmt.Errorf("delete ipip6 tunnel %s: %w: %s", ifname, err, strings.TrimSpace(string(out)))
 }
 
 func (c DSLiteTunnelController) resolveRemote(ctx context.Context, spec api.DSLiteTunnelSpec) (string, string, error) {

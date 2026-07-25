@@ -1817,7 +1817,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	wireGuard := WireGuardController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, Logger: logger}
 	ipv4Static := IPv4StaticAddressController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunAddress, Logger: logger}
 	lan := LANAddressController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunAddress, Logger: logger}
-	dslite := DSLiteTunnelController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDSLite, ResolverPort: r.Opts.DnsmasqPort, Logger: logger}
+	dslite := DSLiteTunnelController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDSLite, ResolverPort: r.Opts.DnsmasqPort, Logger: logger}
 	route := IPv4RouteController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, Logger: logger}
 	hybridRoute := HybridRouteController{Router: r.Router, EffectiveRouter: r.Router, Store: store}
 	samController := SAMController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute}

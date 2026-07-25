@@ -1889,6 +1889,21 @@ func TestDSLiteTunnelResolveRemoteDirectIPv6SkipsDNS(t *testing.T) {
 	}
 }
 
+func TestDSLiteWhenFalseDoesNotRemainInEffectiveDesiredSet(t *testing.T) {
+	declared := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{TunnelName: "ds-lite"}},
+	}}}
+	effective := &api.Router{}
+	controller := DSLiteTunnelController{Router: effective, DeclaredRouter: declared, Store: mapStore{}, DryRun: true}
+	if err := controller.reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := controller.Store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", "ds-lite")
+	if status["phase"] != PhaseDisabled || status["reason"] != "WhenFalse" {
+		t.Fatalf("when-false tunnel status = %#v", status)
+	}
+}
+
 func TestDSLiteTunnelLocalDelegatedAddress(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lo"}, Spec: api.InterfaceSpec{IfName: "lo"}},
