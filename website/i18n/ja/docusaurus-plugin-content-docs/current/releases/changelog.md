@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260725.1413
+
 ### 修正
 
 - BGP rolling upgrade で GoBGP v4 の RFC 4271 parallel-connection collision

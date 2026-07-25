@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260725.1413
+
 ### Fixed
 
 - BGP rolling upgrades now use GoBGP v4's RFC 4271 parallel-connection
