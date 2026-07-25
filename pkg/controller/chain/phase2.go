@@ -1002,6 +1002,12 @@ func dnsmasqServiceOwned(data []byte, configPath string, osName platform.OS) boo
 	if osName == platform.OSFreeBSD {
 		return strings.Contains(text, "# PROVIDE: routerd_dnsmasq") && strings.Contains(text, `name="routerd_dnsmasq"`)
 	}
+	// Current routerd units carry an explicit ownership marker. Accept them
+	// even when an older generated unit still references the legacy runtime
+	// dnsmasq path; reconcile will migrate it to the current path.
+	if strings.HasPrefix(text, routerdGeneratedDNSMasqMarker) && strings.Contains(text, "Description=routerd managed dnsmasq DHCP service") {
+		return true
+	}
 	// Linux units emitted before #946 lack the new marker. Keep accepting the
 	// prior routerd signature only when it names this exact config path.
 	return strings.Contains(text, "Description=routerd managed dnsmasq DHCP service") &&

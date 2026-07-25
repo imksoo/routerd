@@ -296,6 +296,13 @@ func TestValidateDnsmasqArtifactsAcceptsOwnedPair(t *testing.T) {
 	}
 }
 
+func TestDnsmasqServiceOwnedAcceptsMarkedLegacyRuntimePath(t *testing.T) {
+	data := []byte(routerdGeneratedDNSMasqMarker + "[Unit]\nDescription=routerd managed dnsmasq DHCP service\nExecStart=/usr/sbin/dnsmasq --conf-file=/run/routerd/dnsmasq.conf\n")
+	if !dnsmasqServiceOwned(data, "/usr/local/etc/routerd/dnsmasq.conf", platform.OSLinux) {
+		t.Fatal("marked legacy routerd dnsmasq unit must remain owned for migration")
+	}
+}
+
 func TestValidateDnsmasqArtifactsRejectsMarkerConfigWithLegacyHosts(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "dnsmasq.conf")
