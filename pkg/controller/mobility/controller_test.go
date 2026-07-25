@@ -5081,6 +5081,44 @@ func TestControllerBGPModeStaticOwnedAdvertisesOnPremOwner(t *testing.T) {
 	}
 }
 
+func TestControllerBGPModeWithdrawsCARPBackupCaptureAdvertisement(t *testing.T) {
+	now := time.Date(2026, 7, 25, 1, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	spec := staticPoolSpec()
+	spec.DeliveryPolicy.Mode = "bgp"
+	spec.Members[0].Capture = api.MobilityMemberCapture{
+		Type:      "proxy-arp",
+		Interface: "lan",
+		ActiveWhen: api.CaptureActiveWhen{
+			Type:              "vrrp-master",
+			VirtualAddressRef: "VirtualAddress/onprem-vip",
+		},
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "VirtualAddress", "onprem-vip", map[string]any{"role": "master"}); err != nil {
+		t.Fatalf("save master status: %v", err)
+	}
+	paths := &fakeBGPPaths{}
+	controller := Controller{Router: staticRouter("onprem-router", spec), Store: store, BGPPaths: paths, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("master reconcile: %v", err)
+	}
+	if _, ok := maybePathBySourcePrefix(paths, DynamicSource("cloudedge", "onprem-router"), "10.88.60.10/32"); !ok {
+		t.Fatalf("master did not advertise capture path: %#v", paths.paths)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "VirtualAddress", "onprem-vip", map[string]any{"role": "backup"}); err != nil {
+		t.Fatalf("save backup status: %v", err)
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("backup reconcile: %v", err)
+	}
+	if _, ok := maybePathBySourcePrefix(paths, DynamicSource("cloudedge", "onprem-router"), "10.88.60.10/32"); ok {
+		t.Fatalf("backup retained capture path: %#v", paths.paths)
+	}
+	if len(paths.deletes) != 1 || paths.deletes[0].Prefix != "10.88.60.10/32" {
+		t.Fatalf("backup deletes = %#v, want exact capture withdrawal", paths.deletes)
+	}
+}
+
 func TestControllerBGPModeStaticHandoverSwitchesAdvertisementSource(t *testing.T) {
 	base := time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)
 	store := testStore(t, base)
