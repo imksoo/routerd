@@ -550,9 +550,13 @@ func (c SystemdUnitController) reconcileConntrackdSyncUnits(ctx context.Context,
 		unitName := "routerd-conntrackd@" + resource.Metadata.Name + ".service"
 		unit := api.SystemdUnitSpec{
 			Description: "routerd conntrackd state replication " + resource.Metadata.Name,
-			Type:        "notify", ExecStart: []string{"/usr/sbin/conntrackd", "-n", "-C", configPath},
+			// -n is conntrackd client mode (request a peer resync), not daemon
+			// mode.  Starting it with -n exits immediately when no daemon is
+			// running.  Do not claim /run/routerd either: it is owned by routerd
+			// itself, and systemd removes a RuntimeDirectory when this unit stops.
+			Type:        "notify", ExecStart: []string{"/usr/sbin/conntrackd", "-C", configPath},
 			After: []string{"network-online.target"}, Wants: []string{"network-online.target"}, Conflicts: []string{"conntrackd.service"},
-			Restart: "on-failure", RestartSec: "2s", RuntimeDirectory: []string{"routerd"},
+			Restart: "on-failure", RestartSec: "2s",
 			NoNewPrivileges: &noNewPrivileges,
 		}
 		unitPath := filepath.Join(c.SystemdSystemDir, unitName)

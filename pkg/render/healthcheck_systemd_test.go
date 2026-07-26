@@ -55,7 +55,7 @@ func TestHealthCheckSystemdUnit(t *testing.T) {
 
 func TestSystemdUnitRendersConflicts(t *testing.T) {
 	unit := string(SystemdUnit("routerd-conntrackd@test.service", api.SystemdUnitSpec{
-		ExecStart: []string{"/usr/sbin/conntrackd", "-n"},
+		ExecStart: []string{"/usr/sbin/conntrackd", "-C", "/etc/conntrackd/routerd-test.conf"},
 		Conflicts: []string{"conntrackd.service"},
 	}))
 	if !strings.Contains(unit, "Conflicts=conntrackd.service") {

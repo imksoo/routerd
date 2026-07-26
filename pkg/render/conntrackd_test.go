@@ -19,7 +19,7 @@ func TestConntrackdConfigUsesKernelReplicationAndTCPWindowState(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
-		"Mode FTFW", "DisableExternalCache yes", "TCPWindowTracking yes",
+		"Mode FTFW", "CommitTimeout 180", "DisableExternalCache no", "StartupResync yes", "TCPWindowTracking yes",
 		"IPv4_address 172.18.0.2", "IPv4_Destination_Address 172.18.0.3",
 		"Interface ens19", "Port 3780", "IPv4_address 172.18.0.2",
 	} {

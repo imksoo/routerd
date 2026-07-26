@@ -12,9 +12,8 @@ import (
 )
 
 // ConntrackdConfig renders a reliable, bidirectional conntrackd FTFW peer.
-// DisableExternalCache is intentional: received states are inserted into the
-// standby kernel table immediately, including the TCP sequence/window state
-// that cannot be reconstructed by conntrack(8) --insert.
+// FTFW keeps received state in the external cache while BACKUP. The VRRP
+// promotion hook commits it before the node becomes the active firewall.
 func ConntrackdConfig(spec api.ConntrackdSyncSpec) ([]byte, error) {
 	local, err := netip.ParseAddr(strings.TrimSpace(spec.LocalAddress))
 	if err != nil || !local.Is4() {
@@ -50,7 +49,7 @@ func ConntrackdConfig(spec api.ConntrackdSyncSpec) ([]byte, error) {
 	sort.Strings(valid)
 	var b strings.Builder
 	b.WriteString("# Managed by routerd. Do not edit by hand.\n")
-	b.WriteString("Sync {\n  Mode FTFW {\n    ResendQueueSize 131072\n    PurgeTimeout 60\n    ACKWindowSize 300\n    DisableExternalCache yes\n  }\n")
+	b.WriteString("Sync {\n  Mode FTFW {\n    ResendQueueSize 131072\n    CommitTimeout 180\n    PurgeTimeout 60\n    ACKWindowSize 300\n    DisableExternalCache no\n    StartupResync yes\n  }\n")
 	fmt.Fprintf(&b, "  UDP {\n    IPv4_address %s\n    IPv4_Destination_Address %s\n    Port %d\n    Interface %s\n    SndSocketBuffer 2097152\n    RcvSocketBuffer 2097152\n    Checksum yes\n  }\n", local, peer, port, spec.Interface)
 	b.WriteString("  Options {\n    TCPWindowTracking yes\n    ExpectationSync yes\n  }\n}\n")
 	b.WriteString("General {\n  Systemd yes\n  HashSize 32768\n  HashLimit 262144\n  LogFile no\n  Syslog yes\n  LockFile /run/routerd/conntrackd.lock\n  UNIX {\n    Path /run/routerd/conntrackd.ctl\n  }\n  NetlinkBufferSize 2097152\n  NetlinkBufferSizeMaxGrowth 8388608\n  NetlinkOverrunResync yes\n  EventIterationLimit 100\n  Filter From Userspace {\n    Protocol Accept {\n      TCP\n      UDP\n      ICMP\n    }\n    Address Ignore {\n")

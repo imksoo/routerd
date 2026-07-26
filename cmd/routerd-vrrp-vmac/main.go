@@ -92,7 +92,50 @@ func run(args []string) error {
 			}
 		}
 	}
+	if err := reconcileConntrackdRole(opts.action); err != nil {
+		return err
+	}
 	return nil
+}
+
+// reconcileConntrackdRole follows conntrackd's documented primary/backup
+// sequence. State stays in the BACKUP external cache and is committed only
+// when this node takes ownership, avoiding stale-kernel-entry clashes during
+// a second hand-over.
+func reconcileConntrackdRole(action string) error {
+	const binary = "/usr/sbin/conntrackd"
+	const config = "/etc/conntrackd/routerd-dslite-sessions.conf"
+	if _, err := os.Stat(binary); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if _, err := os.Stat(config); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	commands := conntrackdRoleCommands(action)
+	for _, args := range commands {
+		args = append([]string{"-C", config}, args...)
+		if out, err := exec.Command(binary, args...).CombinedOutput(); err != nil {
+			return fmt.Errorf("conntrackd %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		}
+	}
+	return nil
+}
+
+func conntrackdRoleCommands(action string) [][]string {
+	switch action {
+	case "activate":
+		return [][]string{{"-c"}, {"-f"}, {"-R"}, {"-B"}}
+	case "deactivate", "withdraw-ra":
+		return [][]string{{"-t"}, {"-n"}}
+	default:
+		return nil
+	}
 }
 
 // requestRouterAdvertisement solicits an immediate RA after raising the WAN

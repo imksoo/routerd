@@ -2,7 +2,10 @@
 
 package main
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestParseOptions(t *testing.T) {
 	opts, err := parseOptions([]string{"activate", "--parent", "eth0", "--interface", "wan-vmac", "--mac", "02:00:5e:00:01:13"})
@@ -39,5 +42,17 @@ func TestPreferVMACDefaultCommand(t *testing.T) {
 	}
 	if _, ok := preferVMACDefaultCommand("default via fe80::1 dev eth0 proto ra\n", "wan-vmac"); ok {
 		t.Fatal("physical route must not be selected")
+	}
+}
+
+func TestConntrackdRoleCommandsFollowFTFWPrimaryBackupSequence(t *testing.T) {
+	if got, want := conntrackdRoleCommands("activate"), [][]string{{"-c"}, {"-f"}, {"-R"}, {"-B"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("activate commands = %#v, want %#v", got, want)
+	}
+	if got, want := conntrackdRoleCommands("deactivate"), [][]string{{"-t"}, {"-n"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("deactivate commands = %#v, want %#v", got, want)
+	}
+	if got := conntrackdRoleCommands("unknown"); got != nil {
+		t.Fatalf("unknown action commands = %#v", got)
 	}
 }
