@@ -26,6 +26,11 @@ type DaemonSource struct {
 	Wait      time.Duration
 	Backoff   time.Duration
 	Replay    bool
+	// PublishTail emits only the newest event observed while the source fast
+	// forwards to a daemon's current cursor.  It is useful for restored daemon
+	// state: the controller does not replay stale history, but it immediately
+	// refreshes the daemon status and therefore unblocks dependent resources.
+	PublishTail bool
 }
 
 type EventsResponse struct {
@@ -53,9 +58,17 @@ func (s DaemonSource) Run(ctx context.Context) error {
 	var cursor string
 	if !s.Replay {
 		for {
-			next, err := s.fastForward(ctx, client)
+			next, tail, err := s.fastForward(ctx, client)
 			if err == nil {
 				cursor = next
+				if s.PublishTail && tail != nil {
+					if tail.Daemon.Name == "" {
+						tail.Daemon = s.Daemon
+					}
+					if err := s.Publisher.Publish(ctx, *tail); err != nil {
+						return err
+					}
+				}
 				break
 			}
 			timer := time.NewTimer(backoff)
@@ -88,28 +101,33 @@ func (s DaemonSource) Run(ctx context.Context) error {
 	}
 }
 
-func (s DaemonSource) fastForward(ctx context.Context, client *http.Client) (string, error) {
+func (s DaemonSource) fastForward(ctx context.Context, client *http.Client) (string, *daemonapi.DaemonEvent, error) {
 	values := url.Values{}
 	values.Set("wait", "0s")
 	values.Set("tail", "true")
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix/v1/events?"+values.Encode(), nil)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		return "", fmt.Errorf("daemon events returned HTTP %d", resp.StatusCode)
+		return "", nil, fmt.Errorf("daemon events returned HTTP %d", resp.StatusCode)
 	}
 	var decoded EventsResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&decoded); err != nil {
-		return "", err
+		return "", nil, err
+	}
+	var tail *daemonapi.DaemonEvent
+	if len(decoded.Events) > 0 {
+		latest := decoded.Events[len(decoded.Events)-1]
+		tail = &latest
 	}
 	if decoded.Cursor != "" {
-		return decoded.Cursor, nil
+		return decoded.Cursor, tail, nil
 	}
 	next := ""
 	for _, event := range decoded.Events {
@@ -117,7 +135,7 @@ func (s DaemonSource) fastForward(ctx context.Context, client *http.Client) (str
 			next = event.Cursor
 		}
 	}
-	return next, nil
+	return next, tail, nil
 }
 
 func (s DaemonSource) poll(ctx context.Context, client *http.Client, cursor string, wait time.Duration, publish bool) (string, error) {

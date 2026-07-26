@@ -1609,6 +1609,11 @@ func (r *Runner) Start(ctx context.Context) error {
 			Daemon:    daemonapi.DaemonRef{Name: "routerd-dhcpv6-client-" + name, Kind: "routerd-dhcpv6-client", Instance: name},
 			Socket:    socket,
 			Publisher: r.Bus,
+			// A synchronized PD lease may already be Bound when the supervised
+			// daemon starts after VRRP takeover.  Publish only its newest event
+			// after fast-forwarding so DaemonStatusController refreshes the
+			// Bound status immediately, without replaying old lease history.
+			PublishTail: true,
 		}
 		go func() {
 			if err := source.Run(ctx); err != nil && ctx.Err() == nil {

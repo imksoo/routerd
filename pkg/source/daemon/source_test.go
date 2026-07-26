@@ -64,3 +64,34 @@ func TestDaemonSourcePollsUnixSocketEvents(t *testing.T) {
 		t.Fatalf("daemon ref not filled: %+v", publisher.events[0].Daemon)
 	}
 }
+
+func TestDaemonSourceFastForwardReturnsOnlyNewestEvent(t *testing.T) {
+	dir := t.TempDir()
+	socket := filepath.Join(dir, "daemon.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(EventsResponse{Cursor: "2", Events: []daemonapi.DaemonEvent{
+			{Cursor: "1", Type: daemonapi.EventDaemonStarted},
+			{Cursor: "2", Type: daemonapi.EventDHCPv6PrefixBound},
+		}})
+	})}
+	go func() { _ = server.Serve(listener) }()
+	defer server.Close()
+
+	source := DaemonSource{Socket: socket}
+	cursor, tail, err := source.fastForward(context.Background(), httpClientForUnixSocket(socket))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cursor != "2" {
+		t.Fatalf("cursor = %q, want 2", cursor)
+	}
+	if tail == nil || tail.Cursor != "2" || tail.Type != daemonapi.EventDHCPv6PrefixBound {
+		t.Fatalf("tail = %+v, want newest prefix event", tail)
+	}
+}
