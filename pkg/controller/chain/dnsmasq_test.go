@@ -1627,6 +1627,40 @@ func TestLANAddressControllerDeletesStaleIPv6BeforeApply(t *testing.T) {
 	}
 }
 
+func TestLANAddressControllerReplacesDelegatedRouteWithHostRoute(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-vmac"}, Spec: api.InterfaceSpec{IfName: "lo", Managed: false}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "ds-lite-source"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "wan-vmac", SubnetID: "1", AddressSuffix: "::21", PrefixLength: 128}},
+	}}}
+	store := mapStore{}
+	store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{"phase": daemonapi.ResourcePhaseBound, "currentPrefix": "2409:10:3d60:1220::/60"})
+	var commands []string
+	controller := LANAddressController{
+		Router: router,
+		Store:  store,
+		AddressPresent: func(context.Context, string, string) bool {
+			return false
+		},
+		Command: func(_ context.Context, name string, args ...string) error {
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return nil
+		},
+	}
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"ip -6 addr del 2409:10:3d60:1221::21/64 dev lo",
+		"ip -6 addr del 2409:10:3d60:1221::21/128 dev lo",
+		"ip -6 addr replace 2409:10:3d60:1221::21/128 dev lo",
+	}
+	if !reflect.DeepEqual(commands, want) {
+		t.Fatalf("commands = %#v, want %#v", commands, want)
+	}
+}
+
 func TestLANAddressControllerRestoresMissingAddressWithUnchangedStatus(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lo"}},

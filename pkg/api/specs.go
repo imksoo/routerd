@@ -1204,12 +1204,15 @@ type IPv6DelegatedAddressSpec struct {
 	// SubnetID selects the /64 inside the delegated prefix; it defaults to 0.
 	SubnetID string `yaml:"subnetID,omitempty" json:"subnetID,omitempty"`
 	// AddressSuffix is ORed into the selected /64 to derive the final IPv6 address.
-	AddressSuffix string                   `yaml:"addressSuffix" json:"addressSuffix"`
-	SendRA        bool                     `yaml:"sendRA,omitempty" json:"sendRA,omitempty"`
-	Announce      bool                     `yaml:"announce,omitempty" json:"announce,omitempty"`
-	When          ResourceWhenSpec         `yaml:"when,omitempty" json:"when,omitempty"`
-	DependsOn     []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
-	ReadyWhen     []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
+	AddressSuffix string `yaml:"addressSuffix" json:"addressSuffix"`
+	// PrefixLength controls the prefix installed for the derived address. It defaults to /64;
+	// use /128 for an address that must not create an on-link route.
+	PrefixLength int                      `yaml:"prefixLength,omitempty" json:"prefixLength,omitempty" jsonschema:"minimum=1,maximum=128"`
+	SendRA       bool                     `yaml:"sendRA,omitempty" json:"sendRA,omitempty"`
+	Announce     bool                     `yaml:"announce,omitempty" json:"announce,omitempty"`
+	When         ResourceWhenSpec         `yaml:"when,omitempty" json:"when,omitempty"`
+	DependsOn    []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
+	ReadyWhen    []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
 }
 
 type DHCPv6InformationSpec struct {

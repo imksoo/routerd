@@ -4913,6 +4913,12 @@
                         "description": "PrefixDelegation references the DHCPv6PrefixDelegation resource that supplies the delegated prefix.",
                         "type": "string"
                       },
+                      "prefixLength": {
+                        "description": "PrefixLength controls the prefix installed for the derived address. It defaults to /64;\nuse /128 for an address that must not create an on-link route.",
+                        "maximum": 128,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
                       "sendRA": {
                         "type": "boolean"
                       },

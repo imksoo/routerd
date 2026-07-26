@@ -4566,6 +4566,34 @@ func ipAddrShowHasIPv6Address(out []byte, address string) bool {
 	return false
 }
 
+func ipv6AddressPresentWithPrefix(ctx context.Context, ifname, address string) bool {
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		return ipv6AddressPresent(ctx, ifname, address)
+	}
+	want, err := netip.ParsePrefix(strings.TrimSpace(address))
+	if err != nil {
+		return false
+	}
+	out, err := exec.CommandContext(ctx, "ip", "-6", "-o", "addr", "show", "dev", ifname).Output()
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] != "inet6" {
+				continue
+			}
+			got, err := netip.ParsePrefix(fields[i+1])
+			if err != nil || got.Addr() != want.Addr() || got.Bits() != want.Bits() {
+				continue
+			}
+			return !fieldsContain(fields, "tentative") && !fieldsContain(fields, "dadfailed")
+		}
+	}
+	return false
+}
+
 func fieldsContain(fields []string, want string) bool {
 	for _, field := range fields {
 		if field == want {
@@ -4611,14 +4639,31 @@ func ipv6StaticAddressDeleteCandidates(address string) []string {
 	}
 	out := []string{address}
 	prefix, err := netip.ParsePrefix(address)
-	if err != nil || !prefix.Addr().Is6() || prefix.Bits() == 128 {
+	if err != nil || !prefix.Addr().Is6() {
 		return out
+	}
+	if prefix.Bits() == 128 {
+		return []string{prefix.Addr().String() + "/64", address}
 	}
 	host128 := prefix.Addr().String() + "/128"
 	if host128 != address {
 		out = append(out, host128)
 	}
 	return out
+}
+
+func delegatedAddressWithPrefixLength(address string, prefixLength int) (string, error) {
+	prefix, err := netip.ParsePrefix(address)
+	if err != nil {
+		return "", err
+	}
+	if prefixLength == 0 || prefixLength == prefix.Bits() {
+		return prefix.String(), nil
+	}
+	if prefixLength != 128 {
+		return "", fmt.Errorf("unsupported prefixLength %d (want 64 or 128)", prefixLength)
+	}
+	return netip.PrefixFrom(prefix.Addr(), prefixLength).String(), nil
 }
 
 func runCommandContext(ctx context.Context, name string, args ...string) error {
@@ -4675,6 +4720,10 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		if err != nil {
 			return err
 		}
+		addr, err = delegatedAddressWithPrefixLength(addr, spec.PrefixLength)
+		if err != nil {
+			return fmt.Errorf("%s derive address prefix length: %w", resource.ID(), err)
+		}
 		status := map[string]any{
 			"phase":        "Applied",
 			"address":      addr,
@@ -4692,6 +4741,9 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 			addressPresentFn := c.AddressPresent
 			if addressPresentFn == nil {
 				addressPresentFn = ipv6AddressPresent
+				if spec.PrefixLength == 128 {
+					addressPresentFn = ipv6AddressPresentWithPrefix
+				}
 			}
 			addressPresent = addressPresentFn(ctx, ifname, addr)
 		}
