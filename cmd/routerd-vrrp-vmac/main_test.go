@@ -46,7 +46,7 @@ func TestPreferVMACDefaultCommand(t *testing.T) {
 }
 
 func TestConntrackdRoleCommandsFollowFTFWPrimaryBackupSequence(t *testing.T) {
-	if got, want := conntrackdRoleCommands("activate"), [][]string{{"-c"}, {"-f"}, {"-R"}, {"-B"}}; !reflect.DeepEqual(got, want) {
+	if got, want := conntrackdRoleCommands("activate"), [][]string{{"-c"}, {"-R"}, {"-B"}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("activate commands = %#v, want %#v", got, want)
 	}
 	if got, want := conntrackdRoleCommands("deactivate"), [][]string{{"-t"}, {"-n"}}; !reflect.DeepEqual(got, want) {
@@ -54,5 +54,15 @@ func TestConntrackdRoleCommandsFollowFTFWPrimaryBackupSequence(t *testing.T) {
 	}
 	if got := conntrackdRoleCommands("unknown"); got != nil {
 		t.Fatalf("unknown action commands = %#v", got)
+	}
+}
+
+func TestConntrackdRoleForAction(t *testing.T) {
+	for action, want := range map[string]string{
+		"activate": "master", "deactivate": "backup", "withdraw-ra": "backup", "unknown": "",
+	} {
+		if got := conntrackdRoleForAction(action); got != want {
+			t.Fatalf("role for %q = %q, want %q", action, got, want)
+		}
 	}
 }

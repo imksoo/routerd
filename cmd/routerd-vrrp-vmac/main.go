@@ -31,6 +31,8 @@ type vmac struct {
 	withdraw                       bool
 }
 
+const conntrackdRoleStatePath = "/run/routerd/vrrp-vmac-conntrackd-role"
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -46,6 +48,10 @@ func run(args []string) error {
 	if opts.action == "withdraw-ra" {
 		return withdrawRouterAdvertisement(opts.parent)
 	}
+	conntrackdTransition, err := conntrackdRoleTransitionNeeded(opts.action)
+	if err != nil {
+		return err
+	}
 	if opts.action == "deactivate" {
 		for _, vmac := range opts.vmacs {
 			if vmac.withdraw {
@@ -53,6 +59,15 @@ func run(args []string) error {
 					return err
 				}
 			}
+		}
+	}
+	// A promoted router must install the replica's external cache before it
+	// advertises the WAN VMAC or solicits an RA.  Otherwise return traffic can
+	// reach the newly elected router during the VMAC/RA work and be classified
+	// as INVALID before the replicated NAT state exists in the kernel.
+	if opts.action == "activate" && conntrackdTransition {
+		if err := reconcileConntrackdRole(opts.action); err != nil {
+			return err
 		}
 	}
 	for _, command := range commandsFor(opts) {
@@ -92,10 +107,58 @@ func run(args []string) error {
 			}
 		}
 	}
-	if err := reconcileConntrackdRole(opts.action); err != nil {
-		return err
+	if opts.action != "activate" && conntrackdTransition {
+		if err := reconcileConntrackdRole(opts.action); err != nil {
+			return err
+		}
+	}
+	if conntrackdTransition {
+		if err := writeConntrackdRole(opts.action); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func conntrackdRoleTransitionNeeded(action string) (bool, error) {
+	want := conntrackdRoleForAction(action)
+	if want == "" {
+		return false, nil
+	}
+	data, err := os.ReadFile(conntrackdRoleStatePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(string(data)) != want, nil
+}
+
+func conntrackdRoleForAction(action string) string {
+	switch action {
+	case "activate":
+		return "master"
+	case "deactivate", "withdraw-ra":
+		return "backup"
+	default:
+		return ""
+	}
+}
+
+func writeConntrackdRole(action string) error {
+	role := conntrackdRoleForAction(action)
+	if role == "" {
+		return nil
+	}
+	if err := os.MkdirAll("/run/routerd", 0755); err != nil {
+		return err
+	}
+	temporary := conntrackdRoleStatePath + ".tmp"
+	if err := os.WriteFile(temporary, []byte(role+"\n"), 0644); err != nil {
+		return err
+	}
+	return os.Rename(temporary, conntrackdRoleStatePath)
 }
 
 // reconcileConntrackdRole follows conntrackd's documented primary/backup
@@ -130,7 +193,11 @@ func reconcileConntrackdRole(action string) error {
 func conntrackdRoleCommands(action string) [][]string {
 	switch action {
 	case "activate":
-		return [][]string{{"-c"}, {"-f"}, {"-R"}, {"-B"}}
+		// -f without a cache selector flushes both caches.  Flushing the
+		// external cache immediately after -c discards the replica state that
+		// must remain available for a subsequent transition.  Commit it, then
+		// publish the local kernel state without destroying either cache.
+		return [][]string{{"-c"}, {"-R"}, {"-B"}}
 	case "deactivate", "withdraw-ra":
 		return [][]string{{"-t"}, {"-n"}}
 	default:

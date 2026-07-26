@@ -30,6 +30,32 @@ func TestNftOutboundAliasesResolveWireGuardIfName(t *testing.T) {
 	}
 }
 
+func TestNftablesFirewallKeepsStandbyVMACAndDSLiteInterfaces(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "eth0", Managed: false}},
+		// These are intentionally declared even while the backup keeps them
+		// down.  A promoted node must already classify return packets from
+		// its replicated conntrack table before each tunnel link is recreated.
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-vmac"}, Spec: api.InterfaceSpec{IfName: "wan-vmac", Managed: false}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "ds-lite-a"}, Spec: api.InterfaceSpec{IfName: "ds-lite-a", Managed: false}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "ds-lite-b"}, Spec: api.InterfaceSpec{IfName: "ds-lite-b", Managed: false}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "ds-lite-c"}, Spec: api.InterfaceSpec{IfName: "ds-lite-c", Managed: false}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "ds-lite-ra"}, Spec: api.InterfaceSpec{IfName: "ds-lite-ra", Managed: false}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"Interface/wan", "Interface/wan-vmac", "Interface/ds-lite-a", "Interface/ds-lite-b", "Interface/ds-lite-c", "Interface/ds-lite-ra"}}},
+	}}}
+
+	data, err := NftablesFirewall(router, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	for _, want := range []string{"\"wan-vmac\"", "\"ds-lite-a\"", "\"ds-lite-b\"", "\"ds-lite-c\"", "\"ds-lite-ra\""} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("standby firewall is missing %s:\n%s", want, got)
+		}
+	}
+}
+
 func TestNftablesNAT44RuleSourceNATFields(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
