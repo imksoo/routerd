@@ -1236,10 +1236,20 @@ func ipv6HostSuffix64(addr netip.Addr) uint64 {
 }
 
 func ensureIPv6LocalAddress(ifname, address string) (bool, error) {
-	for _, value := range ipv6Addresses(ifname) {
-		if value == address {
+	for _, entry := range ipv6AddressEntries(ifname) {
+		if entry.Address != address {
+			continue
+		}
+		if platformDefaults.OS == platform.OSFreeBSD || entry.PrefixLen == 128 {
 			return false, nil
 		}
+		// A delegated host address must never leave an on-link route for its
+		// containing /64 on a second interface.  Replace an old broader
+		// assignment before re-adding the address as /128.
+		if err := deleteIPv6LocalAddress(ifname, address, entry.PrefixLen); err != nil {
+			return false, err
+		}
+		break
 	}
 	if platformDefaults.OS == platform.OSFreeBSD {
 		if err := runLogged("ifconfig", ifname, "inet6", address, "prefixlen", "64", "alias"); err != nil {
