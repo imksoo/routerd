@@ -115,6 +115,22 @@ func TestIPv4PolicyRouteUsesObservedHealthCheckStatus(t *testing.T) {
 	}
 }
 
+func TestIPv4PolicyRouteRejectsDSLiteTargetUntilTunnelIsUp(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-a"}},
+	}}}
+	controller := IPv4PolicyRouteController{Router: router, Store: mapStore{}}
+	if controller.dsliteResourceReady("ds-lite-a") {
+		t.Fatal("DS-Lite target without an Up status must not be used")
+	}
+	controller.Store = mapStore{
+		api.NetAPIVersion + "/DSLiteTunnel/ds-lite-a": {"phase": "Up"},
+	}
+	if !controller.dsliteResourceReady("DSLiteTunnel/ds-lite-a") {
+		t.Fatal("DS-Lite target with an Up status must be usable")
+	}
+}
+
 func TestIPv4PolicyRouteInstallsFwmarkBootstrapRouteForHealthCheck(t *testing.T) {
 	requireLinuxRuntimeFixture(t)
 	store := mapStore{

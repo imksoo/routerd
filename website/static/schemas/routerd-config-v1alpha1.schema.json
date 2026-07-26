@@ -2898,6 +2898,37 @@
                       "vrrp": {
                         "additionalProperties": false,
                         "properties": {
+                          "additionalFailoverVMACs": {
+                            "description": "AdditionalFailoverVMACs are activated by the same authoritative VRRP\ntransition as FailoverVMAC. They are used for a LAN gateway identity\nwhose MAC and IPv6 link-local address must survive a MASTER change.",
+                            "items": {
+                              "additionalProperties": false,
+                              "description": "VirtualAddressVRRPFailoverVMAC binds a WAN macvlan to this VRRP instance's own state transitions.",
+                              "properties": {
+                                "interface": {
+                                  "type": "string"
+                                },
+                                "linkLocalAddress": {
+                                  "type": "string"
+                                },
+                                "macAddress": {
+                                  "type": "string"
+                                },
+                                "parentInterface": {
+                                  "type": "string"
+                                },
+                                "withdrawRouterAdvertisement": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "parentInterface",
+                                "interface",
+                                "macAddress"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          },
                           "authentication": {
                             "type": "string"
                           },
@@ -2922,11 +2953,17 @@
                               "interface": {
                                 "type": "string"
                               },
+                              "linkLocalAddress": {
+                                "type": "string"
+                              },
                               "macAddress": {
                                 "type": "string"
                               },
                               "parentInterface": {
                                 "type": "string"
+                              },
+                              "withdrawRouterAdvertisement": {
+                                "type": "boolean"
                               }
                             },
                             "required": [
@@ -4912,6 +4949,12 @@
                       "prefixDelegation": {
                         "description": "PrefixDelegation references the DHCPv6PrefixDelegation resource that supplies the delegated prefix.",
                         "type": "string"
+                      },
+                      "prefixLength": {
+                        "description": "PrefixLength controls the prefix installed for the derived address. It defaults to /64;\nuse /128 for an address that must not create an on-link route.",
+                        "maximum": 128,
+                        "minimum": 1,
+                        "type": "integer"
                       },
                       "sendRA": {
                         "type": "boolean"
@@ -12248,6 +12291,38 @@
                       "conntrackCommand": {
                         "type": "string"
                       },
+                      "conntrackd": {
+                        "additionalProperties": false,
+                        "description": "Conntrackd configures a bidirectional, dedicated replication link.  It\ndeliberately has no SSH target: both peers run it continuously.",
+                        "properties": {
+                          "ignoreIPv4": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "interface": {
+                            "type": "string"
+                          },
+                          "localAddress": {
+                            "type": "string"
+                          },
+                          "peerAddress": {
+                            "type": "string"
+                          },
+                          "port": {
+                            "maximum": 65535,
+                            "minimum": 1,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "interface",
+                          "localAddress",
+                          "peerAddress"
+                        ],
+                        "type": "object"
+                      },
                       "excludeNatRules": {
                         "items": {
                           "type": "string"
@@ -12258,9 +12333,10 @@
                         "type": "string"
                       },
                       "mode": {
-                        "description": "Mode accepts only event-stream. It remains to reject legacy snapshot\nconfigurations with a clear validation error.",
+                        "description": "Mode selects either the legacy event stream or conntrackd's complete\nstate replication. conntrackd is required when established TCP flows\nmust survive a VRRP transition.",
                         "enum": [
-                          "event-stream"
+                          "event-stream",
+                          "conntrackd"
                         ],
                         "type": "string"
                       },

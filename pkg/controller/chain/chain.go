@@ -1589,11 +1589,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	}
 	store := eventedStore{Store: r.Store, Bus: r.Bus, Router: r.Router}
 	if r.Opts.SuperviseClientDaemons && r.controllerEnabled("daemon-supervisor") {
-		effective, err := r.effectiveRouterForReconcile(store)
-		if err != nil {
-			return err
-		}
-		r.reconcileSupervisedClientDaemons(ctx, effective, logger)
+		r.reconcileSupervisedClientDaemons(ctx, r.daemonSupervisionRouter(store), logger)
 	}
 	for _, resource := range r.Router.Spec.Resources {
 		if resource.Kind != "DHCPv6PrefixDelegation" {
@@ -1993,11 +1989,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		}},
 		framework.FuncController{ControllerName: "daemon-status", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv6.client.**", "routerd.dhcpv4.client.**", "routerd.healthcheck.**", "routerd.pppoe.client.**", "routerd.mobility.arp.**", "routerd.mobility.pve-svnet.**"}}}, PeriodicFunc: didWorkPeriodic(daemonStatusSync.Reconcile)},
 		framework.FuncController{ControllerName: "daemon-supervisor", Every: 5 * time.Second, Subs: whenStatusSubscriptions(r.Router, "DNSResolver", "DHCPv6PrefixDelegation", "DHCPv4Client", "PPPoESession"), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
-			if err != nil {
-				return false, err
-			}
-			r.reconcileSupervisedClientDaemons(ctx, effective, logger)
+			r.reconcileSupervisedClientDaemons(ctx, r.daemonSupervisionRouter(store), logger)
 			return false, nil
 		}},
 		framework.FuncController{ControllerName: "dhcp-lease-sync", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync"}, "DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) (bool, error) {
@@ -2594,6 +2586,10 @@ func (r *Runner) reconcileSupervisedClientDaemons(ctx context.Context, router *a
 		return
 	}
 	r.reconcileSupervisedDaemonSpecs(ctx, logger, r.clientDaemonSpecs(router))
+}
+
+func (r *Runner) daemonSupervisionRouter(store eventedStore) *api.Router {
+	return resourcequery.FilterRouterByResolvedWhen(r.Router, store)
 }
 
 func (r *Runner) clientDaemonSpecs(router *api.Router) []supervisedDaemonSpec {

@@ -272,6 +272,7 @@ type SystemdUnitSpec struct {
 	EnvironmentFiles         []string `yaml:"environmentFiles,omitempty" json:"environmentFiles,omitempty"`
 	Wants                    []string `yaml:"wants,omitempty" json:"wants,omitempty"`
 	After                    []string `yaml:"after,omitempty" json:"after,omitempty"`
+	Conflicts                []string `yaml:"conflicts,omitempty" json:"conflicts,omitempty"`
 	WantedBy                 []string `yaml:"wantedBy,omitempty" json:"wantedBy,omitempty"`
 	Restart                  string   `yaml:"restart,omitempty" json:"restart,omitempty" jsonschema:"enum=,enum=no,enum=on-failure,enum=always"`
 	RestartSec               string   `yaml:"restartSec,omitempty" json:"restartSec,omitempty"`
@@ -569,15 +570,21 @@ type VirtualAddressVRRPSpec struct {
 	Authentication     string                              `yaml:"authentication,omitempty" json:"authentication,omitempty"`
 	AuthenticationFrom SecretValueSourceSpec               `yaml:"authenticationFrom,omitempty" json:"authenticationFrom,omitempty"`
 	FailoverVMAC       *VirtualAddressVRRPFailoverVMACSpec `yaml:"failoverVMAC,omitempty" json:"failoverVMAC,omitempty"`
+	// AdditionalFailoverVMACs are activated by the same authoritative VRRP
+	// transition as FailoverVMAC. They are used for a LAN gateway identity
+	// whose MAC and IPv6 link-local address must survive a MASTER change.
+	AdditionalFailoverVMACs []VirtualAddressVRRPFailoverVMACSpec `yaml:"additionalFailoverVMACs,omitempty" json:"additionalFailoverVMACs,omitempty"`
 }
 
 // VirtualAddressVRRPFailoverVMAC binds a WAN macvlan to this VRRP instance's
 // own state transitions. It deliberately does not create another VRRP state
 // machine for the WAN.
 type VirtualAddressVRRPFailoverVMACSpec struct {
-	ParentInterface string `yaml:"parentInterface" json:"parentInterface"`
-	Interface       string `yaml:"interface" json:"interface"`
-	MACAddress      string `yaml:"macAddress" json:"macAddress"`
+	ParentInterface             string `yaml:"parentInterface" json:"parentInterface"`
+	Interface                   string `yaml:"interface" json:"interface"`
+	MACAddress                  string `yaml:"macAddress" json:"macAddress"`
+	LinkLocalAddress            string `yaml:"linkLocalAddress,omitempty" json:"linkLocalAddress,omitempty"`
+	WithdrawRouterAdvertisement bool   `yaml:"withdrawRouterAdvertisement,omitempty" json:"withdrawRouterAdvertisement,omitempty"`
 }
 
 type ResourceTrackSpec struct {
@@ -1494,16 +1501,28 @@ type DHCPv6PrefixDelegationLeaseSyncSourceSpec struct {
 }
 
 type NAT44SessionSyncSpec struct {
-	// Mode accepts only event-stream. It remains to reject legacy snapshot
-	// configurations with a clear validation error.
-	Mode             string                       `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=event-stream"`
+	// Mode selects either the legacy event stream or conntrackd's complete
+	// state replication. conntrackd is required when established TCP flows
+	// must survive a VRRP transition.
+	Mode             string                       `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=event-stream,enum=conntrackd"`
 	Interval         string                       `yaml:"interval,omitempty" json:"interval,omitempty"`
 	ConntrackCommand string                       `yaml:"conntrackCommand,omitempty" json:"conntrackCommand,omitempty"`
 	SNATAddresses    []string                     `yaml:"snatAddresses,omitempty" json:"snatAddresses,omitempty"`
 	NATRules         []string                     `yaml:"natRules,omitempty" json:"natRules,omitempty"`
 	ExcludeNATRules  []string                     `yaml:"excludeNatRules,omitempty" json:"excludeNatRules,omitempty"`
 	Targets          []NAT44SessionSyncTargetSpec `yaml:"targets,omitempty" json:"targets,omitempty"`
-	When             ResourceWhenSpec             `yaml:"when,omitempty" json:"when,omitempty"`
+	// Conntrackd configures a bidirectional, dedicated replication link.  It
+	// deliberately has no SSH target: both peers run it continuously.
+	Conntrackd *ConntrackdSyncSpec `yaml:"conntrackd,omitempty" json:"conntrackd,omitempty"`
+	When       ResourceWhenSpec    `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+type ConntrackdSyncSpec struct {
+	Interface    string   `yaml:"interface" json:"interface"`
+	LocalAddress string   `yaml:"localAddress" json:"localAddress"`
+	PeerAddress  string   `yaml:"peerAddress" json:"peerAddress"`
+	Port         int      `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=1,maximum=65535"`
+	IgnoreIPv4   []string `yaml:"ignoreIPv4,omitempty" json:"ignoreIPv4,omitempty"`
 }
 
 type NAT44SessionSyncTargetSpec struct {

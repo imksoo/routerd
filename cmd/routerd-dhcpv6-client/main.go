@@ -285,8 +285,17 @@ func linkLocalUsable(ifname, address string) bool {
 	if err != nil {
 		return false
 	}
-	line := string(output)
-	return strings.Contains(line, address+"/64") && !strings.Contains(line, " tentative")
+	return addressUsableInIPOutput(string(output), address)
+}
+
+func addressUsableInIPOutput(output, address string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.Contains(line, address+"/") {
+			continue
+		}
+		return !strings.Contains(line, " tentative") && !strings.Contains(line, " dadfailed")
+	}
+	return false
 }
 
 func interfaceLinkLocalIPv6(ifi *net.Interface) (string, error) {
@@ -321,8 +330,7 @@ func waitForLinkLocalReady(ifname, address string, timeout time.Duration) error 
 	for {
 		output, err := exec.Command("ip", "-6", "-o", "addr", "show", "dev", ifname).CombinedOutput()
 		if err == nil {
-			line := string(output)
-			if strings.Contains(line, address+"/64") && !strings.Contains(line, " tentative") {
+			if addressUsableInIPOutput(string(output), address) {
 				return nil
 			}
 		}

@@ -55,6 +55,9 @@ func SystemdUnit(name string, spec api.SystemdUnitSpec) []byte {
 	if len(wants) > 0 {
 		b.WriteString("Wants=" + strings.Join(wants, " ") + "\n")
 	}
+	if len(spec.Conflicts) > 0 {
+		b.WriteString("Conflicts=" + strings.Join(spec.Conflicts, " ") + "\n")
+	}
 	b.WriteString("\n[Service]\n")
 	b.WriteString("Type=" + serviceType + "\n")
 	if len(spec.Environment) > 0 {

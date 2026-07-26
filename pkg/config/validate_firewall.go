@@ -199,10 +199,31 @@ func validateFirewallResource(res api.Resource, targetOS platform.OS) (bool, err
 		if err != nil {
 			return true, err
 		}
-		if spec.Mode != "" && spec.Mode != "event-stream" {
-			return true, fmt.Errorf("%s spec.mode must be event-stream", res.ID())
+		mode := strings.TrimSpace(spec.Mode)
+		if mode != "" && mode != "event-stream" && mode != "conntrackd" {
+			return true, fmt.Errorf("%s spec.mode must be event-stream or conntrackd", res.ID())
 		}
-		if strings.TrimSpace(spec.Interval) != "" {
+		if mode == "conntrackd" {
+			if spec.Conntrackd == nil {
+				return true, fmt.Errorf("%s spec.conntrackd is required for conntrackd mode", res.ID())
+			}
+			if strings.TrimSpace(spec.Conntrackd.Interface) == "" || strings.TrimSpace(spec.Conntrackd.LocalAddress) == "" || strings.TrimSpace(spec.Conntrackd.PeerAddress) == "" {
+				return true, fmt.Errorf("%s spec.conntrackd.interface, localAddress and peerAddress are required", res.ID())
+			}
+			for field, value := range map[string]string{"localAddress": spec.Conntrackd.LocalAddress, "peerAddress": spec.Conntrackd.PeerAddress} {
+				addr, err := netip.ParseAddr(strings.TrimSpace(value))
+				if err != nil || !addr.Is4() {
+					return true, fmt.Errorf("%s spec.conntrackd.%s must be an IPv4 address", res.ID(), field)
+				}
+			}
+			if spec.Conntrackd.Port < 0 || spec.Conntrackd.Port > 65535 {
+				return true, fmt.Errorf("%s spec.conntrackd.port must be between 1 and 65535", res.ID())
+			}
+			if !isZeroResourceWhen(spec.When) {
+				return true, fmt.Errorf("%s spec.when must be empty for conntrackd mode because both HA peers must replicate continuously", res.ID())
+			}
+		}
+		if mode != "conntrackd" && strings.TrimSpace(spec.Interval) != "" {
 			return true, fmt.Errorf("%s spec.interval is not supported; NAT44SessionSync always uses event-stream", res.ID())
 		}
 		if strings.ContainsAny(spec.ConntrackCommand, "\n\r") {
@@ -227,7 +248,7 @@ func validateFirewallResource(res api.Resource, targetOS platform.OS) (bool, err
 				return true, fmt.Errorf("%s spec.excludeNatRules[%d]: %w", res.ID(), i, err)
 			}
 		}
-		if len(spec.Targets) == 0 {
+		if mode != "conntrackd" && len(spec.Targets) == 0 {
 			return true, fmt.Errorf("%s spec.targets is required", res.ID())
 		}
 		for i, target := range spec.Targets {

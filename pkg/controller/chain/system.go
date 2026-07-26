@@ -507,9 +507,70 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 				return err
 			}
 		}
+		if err := c.reconcileConntrackdSyncUnits(ctx, command); err != nil {
+			return err
+		}
 	}
 	if err := c.reconcileDisabledPPPoESessions(); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (c SystemdUnitController) reconcileConntrackdSyncUnits(ctx context.Context, command outputCommandFunc) error {
+	aliases := interfaceAliases(c.Router)
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "NAT44SessionSync" {
+			continue
+		}
+		spec, err := resource.NAT44SessionSyncSpec()
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(spec.Mode) != "conntrackd" {
+			continue
+		}
+		if spec.Conntrackd == nil {
+			return fmt.Errorf("%s conntrackd mode has no conntrackd configuration", resource.ID())
+		}
+		resolved := *spec.Conntrackd
+		if ifname := aliases[resolved.Interface]; ifname != "" {
+			resolved.Interface = ifname
+		}
+		data, err := render.ConntrackdConfig(resolved)
+		if err != nil {
+			return fmt.Errorf("render conntrackd config for %s: %w", resource.ID(), err)
+		}
+		configPath := filepath.Join("/etc/conntrackd", "routerd-"+resource.Metadata.Name+".conf")
+		configChanged, err := writeFileIfChanged(configPath, data, 0644, c.DryRun)
+		if err != nil {
+			return err
+		}
+		noNewPrivileges := false
+		unitName := "routerd-conntrackd@" + resource.Metadata.Name + ".service"
+		unit := api.SystemdUnitSpec{
+			Description: "routerd conntrackd state replication " + resource.Metadata.Name,
+			Type:        "notify", ExecStart: []string{"/usr/sbin/conntrackd", "-n", "-C", configPath},
+			After: []string{"network-online.target"}, Wants: []string{"network-online.target"}, Conflicts: []string{"conntrackd.service"},
+			Restart: "on-failure", RestartSec: "2s", RuntimeDirectory: []string{"routerd"},
+			NoNewPrivileges: &noNewPrivileges,
+		}
+		unitPath := filepath.Join(c.SystemdSystemDir, unitName)
+		unitChanged, err := c.applySystemdUnit(ctx, resource.Metadata.Name, unitPath, unitName, unit, command)
+		if err != nil {
+			return err
+		}
+		phase := "Running"
+		if c.DryRun {
+			phase = "Rendered"
+		}
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "NAT44SessionSync", resource.Metadata.Name, map[string]any{
+			"phase": phase, "mode": "conntrackd", "unitName": unitName, "configPath": configPath,
+			"configChanged": configChanged, "unitChanged": unitChanged, "dryRun": c.DryRun,
+			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		}); err != nil {
+			return err
+		}
 	}
 	return nil
 }

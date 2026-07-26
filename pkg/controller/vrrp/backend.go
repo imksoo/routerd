@@ -116,22 +116,41 @@ func syncFailoverVMACs(ctx context.Context, c *Controller, aliases map[string]st
 	}
 	for _, resource := range c.Router.Spec.Resources {
 		spec, ok, err := vrrpResourceSpec(resource)
-		if err != nil || !ok || spec.Mode != "vrrp" || spec.VRRP.FailoverVMAC == nil {
+		if err != nil || !ok || spec.Mode != "vrrp" {
 			if err != nil {
 				return err
 			}
 			continue
 		}
-		vmac := spec.VRRP.FailoverVMAC
-		parent := aliases[vmac.ParentInterface]
-		if parent == "" {
-			return fmt.Errorf("%s spec.vrrp.failoverVMAC references interface with empty ifname %q", resource.ID(), vmac.ParentInterface)
+		vmacs := append([]api.VirtualAddressVRRPFailoverVMACSpec(nil), spec.VRRP.AdditionalFailoverVMACs...)
+		if spec.VRRP.FailoverVMAC != nil {
+			vmacs = append([]api.VirtualAddressVRRPFailoverVMACSpec{*spec.VRRP.FailoverVMAC}, vmacs...)
+		}
+		if len(vmacs) == 0 {
+			continue
 		}
 		action := "deactivate"
 		if roles[resource.Metadata.Name] == "master" {
 			action = "activate"
 		}
-		if out, err := c.run(ctx, "/usr/local/sbin/routerd-vrrp-vmac", action, "--parent", parent, "--interface", vmac.Interface, "--mac", vmac.MACAddress); err != nil {
+		args := []string{action}
+		if len(vmacs) == 1 && strings.TrimSpace(vmacs[0].LinkLocalAddress) == "" {
+			vmac := vmacs[0]
+			parent := aliases[vmac.ParentInterface]
+			if parent == "" {
+				return fmt.Errorf("%s spec.vrrp.failoverVMAC references interface with empty ifname %q", resource.ID(), vmac.ParentInterface)
+			}
+			args = append(args, "--parent", parent, "--interface", vmac.Interface, "--mac", vmac.MACAddress)
+		} else {
+			for _, vmac := range vmacs {
+				parent := aliases[vmac.ParentInterface]
+				if parent == "" {
+					return fmt.Errorf("%s spec.vrrp.failoverVMAC references interface with empty ifname %q", resource.ID(), vmac.ParentInterface)
+				}
+				args = append(args, "--vmac", parent+","+vmac.Interface+","+vmac.MACAddress+","+vmac.LinkLocalAddress+","+fmt.Sprintf("%t", vmac.WithdrawRouterAdvertisement))
+			}
+		}
+		if out, err := c.run(ctx, "/usr/local/sbin/routerd-vrrp-vmac", args...); err != nil {
 			return fmt.Errorf("sync failover VMAC for %s: %w: %s", resource.ID(), err, strings.TrimSpace(string(out)))
 		}
 	}

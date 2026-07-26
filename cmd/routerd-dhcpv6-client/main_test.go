@@ -50,6 +50,17 @@ func TestLinkLocalFromMAC(t *testing.T) {
 	}
 }
 
+func TestAddressUsableInIPOutputIgnoresOtherTentativeAddresses(t *testing.T) {
+	output := "7: wan-vmac    inet6 2409:10:3d60:1221::21/128 scope global tentative dadfailed\n" +
+		"7: wan-vmac    inet6 fe80::5eff:fe00:113/64 scope link nodad\n"
+	if !addressUsableInIPOutput(output, "fe80::5eff:fe00:113") {
+		t.Fatal("usable link-local address was rejected because another address is tentative")
+	}
+	if addressUsableInIPOutput(output, "2409:10:3d60:1221::21") {
+		t.Fatal("tentative address must remain unusable")
+	}
+}
+
 func TestDHCPv6ListenAddressesAreInterfaceScoped(t *testing.T) {
 	first, err := dhcpv6ListenAddr("fe80::10", "wan0", 546)
 	if err != nil {

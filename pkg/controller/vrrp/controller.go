@@ -389,15 +389,16 @@ type virtualAddressSpec struct {
 }
 
 type virtualVRRPSpec struct {
-	VirtualRouterID    int
-	Priority           int
-	Preempt            *bool
-	PreemptDelay       string
-	Peers              []string
-	AdvertInterval     string
-	Authentication     string
-	AuthenticationFrom api.SecretValueSourceSpec
-	FailoverVMAC       *api.VirtualAddressVRRPFailoverVMACSpec
+	VirtualRouterID         int
+	Priority                int
+	Preempt                 *bool
+	PreemptDelay            string
+	Peers                   []string
+	AdvertInterval          string
+	Authentication          string
+	AuthenticationFrom      api.SecretValueSourceSpec
+	FailoverVMAC            *api.VirtualAddressVRRPFailoverVMACSpec
+	AdditionalFailoverVMACs []api.VirtualAddressVRRPFailoverVMACSpec
 }
 
 func vrrpResourceSpec(resource api.Resource) (virtualAddressSpec, bool, error) {
@@ -427,15 +428,16 @@ func vrrpResourceSpec(resource api.Resource) (virtualAddressSpec, bool, error) {
 
 func vrrpSpec(spec api.VirtualAddressVRRPSpec) virtualVRRPSpec {
 	return virtualVRRPSpec{
-		VirtualRouterID:    spec.VirtualRouterID,
-		Priority:           spec.Priority,
-		Preempt:            spec.Preempt,
-		PreemptDelay:       spec.PreemptDelay,
-		Peers:              spec.Peers,
-		AdvertInterval:     spec.AdvertInterval,
-		Authentication:     spec.Authentication,
-		AuthenticationFrom: spec.AuthenticationFrom,
-		FailoverVMAC:       spec.FailoverVMAC,
+		VirtualRouterID:         spec.VirtualRouterID,
+		Priority:                spec.Priority,
+		Preempt:                 spec.Preempt,
+		PreemptDelay:            spec.PreemptDelay,
+		Peers:                   spec.Peers,
+		AdvertInterval:          spec.AdvertInterval,
+		Authentication:          spec.Authentication,
+		AuthenticationFrom:      spec.AuthenticationFrom,
+		FailoverVMAC:            spec.FailoverVMAC,
+		AdditionalFailoverVMACs: spec.AdditionalFailoverVMACs,
 	}
 }
 

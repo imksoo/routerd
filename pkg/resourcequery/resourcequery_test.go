@@ -391,6 +391,27 @@ func TestFilterRouterByWhenPrunesDNSResolverListenSourcesForFilteredForwarder(t 
 	}
 }
 
+func TestFilterRouterByResolvedWhenOmitsIndeterminateResource(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
+			Metadata: api.ObjectMeta{Name: "wan-pd"},
+			Spec: api.DHCPv6PrefixDelegationSpec{When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+				"VirtualAddress/lan-gw-v4.role": {Equals: "master"},
+			}}},
+		},
+	}}}
+	store := statefulMapStore{mapStore: mapStore{
+		api.NetAPIVersion + "/VirtualAddress/lan-gw-v4": {"role": "unknown"},
+	}}
+	if !hasResource(FilterRouterByWhen(router, store), "DHCPv6PrefixDelegation", "wan-pd") {
+		t.Fatal("ordinary reconciliation must retain an indeterminate resource")
+	}
+	if hasResource(FilterRouterByResolvedWhen(router, store), "DHCPv6PrefixDelegation", "wan-pd") {
+		t.Fatal("daemon supervision must not start an indeterminate resource")
+	}
+}
+
 func TestFilterRouterByWhenClearsDNSZoneRecordSourceForFilteredResource(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

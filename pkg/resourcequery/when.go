@@ -23,6 +23,18 @@ type WhenStore interface {
 }
 
 func FilterRouterByWhen(router *api.Router, store StateStore) *api.Router {
+	return filterRouterByWhen(router, store, true)
+}
+
+// FilterRouterByResolvedWhen omits resources whose when condition has not
+// resolved yet.  Use it for client daemons which can acquire a lease or create
+// an external session: treating an unknown VRRP role as eligible can make a
+// BACKUP node send DHCPv6-PD traffic during routerd startup.
+func FilterRouterByResolvedWhen(router *api.Router, store StateStore) *api.Router {
+	return filterRouterByWhen(router, store, false)
+}
+
+func filterRouterByWhen(router *api.Router, store StateStore, includeIndeterminate bool) *api.Router {
 	if router == nil {
 		return nil
 	}
@@ -31,7 +43,7 @@ func FilterRouterByWhen(router *api.Router, store StateStore) *api.Router {
 	filtered.Spec.Resources = nil
 	for _, res := range router.Spec.Resources {
 		when := ResourceWhen(res)
-		if ResourceWhenMatches(when, store) || ResourceWhenIndeterminate(when, store) {
+		if ResourceWhenMatches(when, store) || (includeIndeterminate && ResourceWhenIndeterminate(when, store)) {
 			if res.Kind == "EgressRoutePolicy" {
 				res = filterEgressRoutePolicyCandidatesByWhen(res, store)
 			}

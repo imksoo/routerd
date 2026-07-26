@@ -43,6 +43,7 @@ type nat44SessionSyncJob struct {
 	APIVersion       string
 	Kind             string
 	Name             string
+	Mode             string
 	ConntrackCommand string
 	SNATAddresses    []string
 	Targets          []nat44SessionSyncTarget
@@ -94,6 +95,13 @@ func (c NAT44SessionSyncController) Reconcile(ctx context.Context) error {
 			}
 			continue
 		}
+		if job.Mode == "conntrackd" {
+			// conntrackd runs continuously on both peers and owns the kernel
+			// replication state. Do not resolve role-gated NAT rules or start
+			// the legacy SSH/event-stream worker while a node is BACKUP.
+			c.workerManager().stop(key)
+			continue
+		}
 		if pending != "" {
 			c.workerManager().stop(key)
 			if err := c.save(job.APIVersion, job.Kind, job.Name, map[string]any{"phase": "Pending", "reason": "SNATAddressPending", "pending": pending, "dryRun": c.DryRun}); err != nil {
@@ -132,6 +140,7 @@ func (c NAT44SessionSyncController) jobFromResource(resource api.Resource) (nat4
 		APIVersion:       firstNonEmpty(resource.APIVersion, api.NetAPIVersion),
 		Kind:             resource.Kind,
 		Name:             resource.Metadata.Name,
+		Mode:             firstNonEmpty(strings.TrimSpace(spec.Mode), "event-stream"),
 		ConntrackCommand: firstNonEmpty(strings.TrimSpace(spec.ConntrackCommand), "conntrack"),
 		SNATAddresses:    addresses,
 	}
@@ -223,6 +232,10 @@ func nat44SessionSyncNATRuleName(ref string) string {
 }
 
 func (c NAT44SessionSyncController) reconcileJob(ctx context.Context, job nat44SessionSyncJob) error {
+	if job.Mode == "conntrackd" {
+		c.workerManager().stop(nat44SessionSyncWorkerKey(job.APIVersion, job.Kind, job.Name))
+		return nil
+	}
 	return c.reconcileEventStreamJob(ctx, job)
 }
 

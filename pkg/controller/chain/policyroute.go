@@ -116,6 +116,9 @@ func (c IPv4PolicyRouteController) activeTargetCandidates() map[string]bool {
 func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases map[string]string) error {
 	var failures []string
 	applyTarget := func(owner string, target api.EgressRoutePolicyTarget, skipMissing bool) {
+		if !c.egressTargetAvailable(ctx, aliases, target) {
+			return
+		}
 		if !c.shouldInstallPolicyRouteForHealthCheck(target.HealthCheck, target.Mark) {
 			return
 		}
@@ -508,6 +511,9 @@ func (c IPv4PolicyRouteController) availableDefaultRouteCandidates(spec api.Egre
 				if !c.targetHealthy(target.HealthCheck) {
 					continue
 				}
+				if !c.egressTargetAvailable(context.Background(), aliases, target) {
+					continue
+				}
 				if ifname := aliases[target.EffectiveInterface()]; ifname != "" && c.linkExists(context.Background(), ifname) {
 					out = append(out, candidate)
 					break
@@ -516,11 +522,47 @@ func (c IPv4PolicyRouteController) availableDefaultRouteCandidates(spec api.Egre
 			continue
 		}
 		device := c.candidateDevice(candidate)
+		if !c.egressCandidateAvailable(candidate) {
+			continue
+		}
 		if ifname := firstNonEmpty(aliases[device], device); ifname != "" && c.linkExists(context.Background(), ifname) {
 			out = append(out, candidate)
 		}
 	}
 	return out
+}
+
+// egressTargetAvailable rejects a stale health-check result until its DS-Lite
+// tunnel has been reconciled for the current master.  A link name alone is not
+// sufficient: a previous master can leave a stale status briefly while its
+// tunnel no longer exists on this host.
+func (c IPv4PolicyRouteController) egressTargetAvailable(ctx context.Context, aliases map[string]string, target api.EgressRoutePolicyTarget) bool {
+	logical := target.EffectiveInterface()
+	ifname := firstNonEmpty(aliases[logical], logical)
+	if ifname == "" || !c.linkExists(ctx, ifname) {
+		return false
+	}
+	return c.dsliteResourceReady(logical)
+}
+
+func (c IPv4PolicyRouteController) egressCandidateAvailable(candidate api.EgressRoutePolicyCandidate) bool {
+	return c.dsliteResourceReady(candidate.Source)
+}
+
+func (c IPv4PolicyRouteController) dsliteResourceReady(reference string) bool {
+	if c.Router == nil || reference == "" {
+		return true
+	}
+	for _, res := range c.Router.Spec.Resources {
+		if res.Kind != "DSLiteTunnel" {
+			continue
+		}
+		if reference != res.Metadata.Name && reference != res.ID() {
+			continue
+		}
+		return resourcequery.SourceReady(c.Store, res.ID())
+	}
+	return true
 }
 
 func (c IPv4PolicyRouteController) candidateDevice(candidate api.EgressRoutePolicyCandidate) string {
