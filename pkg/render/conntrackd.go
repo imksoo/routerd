@@ -51,7 +51,13 @@ func ConntrackdConfig(spec api.ConntrackdSyncSpec) ([]byte, error) {
 	b.WriteString("# Managed by routerd. Do not edit by hand.\n")
 	b.WriteString("Sync {\n  Mode FTFW {\n    ResendQueueSize 131072\n    CommitTimeout 180\n    PurgeTimeout 60\n    ACKWindowSize 300\n    DisableExternalCache no\n    StartupResync yes\n  }\n")
 	fmt.Fprintf(&b, "  UDP {\n    IPv4_address %s\n    IPv4_Destination_Address %s\n    Port %d\n    Interface %s\n    SndSocketBuffer 2097152\n    RcvSocketBuffer 2097152\n    Checksum yes\n  }\n", local, peer, port, spec.Interface)
-	b.WriteString("  Options {\n    TCPWindowTracking yes\n    ExpectationSync yes\n  }\n}\n")
+	// Keep TCP window tracking disabled.  The peer can receive a segment that
+	// was already in flight when VRRP moved; strict window validation then
+	// classifies an otherwise replicated established flow as INVALID before the
+	// application can make progress.  The conntrack mark and TCP state remain
+	// synchronized, while the kernel's tcp_be_liberal sysctl handles that small
+	// hand-over window.
+	b.WriteString("  Options {\n    TCPWindowTracking no\n    ExpectationSync yes\n  }\n}\n")
 	b.WriteString("General {\n  Systemd yes\n  HashSize 32768\n  HashLimit 262144\n  LogFile no\n  Syslog yes\n  LockFile /run/routerd/conntrackd.lock\n  UNIX {\n    Path /run/routerd/conntrackd.ctl\n  }\n  NetlinkBufferSize 2097152\n  NetlinkBufferSizeMaxGrowth 8388608\n  NetlinkOverrunResync yes\n  EventIterationLimit 100\n  Filter From Userspace {\n    Protocol Accept {\n      TCP\n      UDP\n      ICMP\n    }\n    Address Ignore {\n")
 	for _, addr := range valid {
 		fmt.Fprintf(&b, "      IPv4_address %s\n", addr)

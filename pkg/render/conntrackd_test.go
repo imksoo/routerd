@@ -9,7 +9,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 )
 
-func TestConntrackdConfigUsesKernelReplicationAndTCPWindowState(t *testing.T) {
+func TestConntrackdConfigUsesKernelReplicationAndFailoverTolerantTCPState(t *testing.T) {
 	data, err := ConntrackdConfig(api.ConntrackdSyncSpec{
 		Interface: "ens19", LocalAddress: "172.18.0.2", PeerAddress: "172.18.0.3",
 		IgnoreIPv4: []string{"192.168.123.129", "172.18.0.2"},
@@ -19,7 +19,7 @@ func TestConntrackdConfigUsesKernelReplicationAndTCPWindowState(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
-		"Mode FTFW", "CommitTimeout 180", "DisableExternalCache no", "StartupResync yes", "TCPWindowTracking yes",
+		"Mode FTFW", "CommitTimeout 180", "DisableExternalCache no", "StartupResync yes", "TCPWindowTracking no",
 		"IPv4_address 172.18.0.2", "IPv4_Destination_Address 172.18.0.3",
 		"Interface ens19", "Port 3780", "IPv4_address 172.18.0.2",
 	} {
