@@ -12,6 +12,23 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Changed
+
+- HA routers retain a validated DHCPv6-PD snapshot while on standby and stage
+  delegated LAN/WAN addresses on the configured VRRP VMACs. Promotion obtains
+  a fresh upstream lease before enabling DS-Lite and NAT44 for new traffic.
+- DNS/DHCP/RA follow the active VRRP role, and DS-Lite health checks now
+  require their configured source interface and mark rather than falling back
+  to a management path.
+
+### Fixed
+
+- The BGP helper repairs an active `routerd-bgp` service only when either its
+  required GoBGP or control socket pathname is missing.
+- Two-node Linux router testing observed both directions of VRRP handover:
+  PD, DHCP/RA/DNS, DS-Lite and new IPv4/IPv6 traffic recovered after role
+  change. Existing TCP sessions are not guaranteed to survive a handover.
+
 ## v20260725.1413
 
 ### Fixed

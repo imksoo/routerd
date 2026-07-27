@@ -11,6 +11,22 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 変更
+
+- HA ルーターは BACKUP 中も検証済みの DHCPv6-PD snapshot を保持し、設定済み
+  VRRP VMAC 上に委譲 LAN/WAN address を stage します。MASTER 昇格後は上流から
+  fresh lease を取得してから、DS-Lite と新規 NAT44 通信を有効化します。
+- DNS/DHCP/RA は active VRRP role に従います。DS-Lite HealthCheck は管理経路へ
+  代替せず、設定済み source interface と mark を必須にします。
+
+### 修正
+
+- active な `routerd-bgp` は、GoBGP socket または control socket の pathname が
+  欠損した場合だけ自動的に修復します。
+- 2 台の Linux router で VRRP の両方向切替を観測し、role 変更後に PD、
+  DHCP/RA/DNS、DS-Lite、新規 IPv4/IPv6 通信が復旧することを確認しました。
+  既存 TCP session の継続は保証しません。
+
 ## v20260725.1413
 
 ### 修正

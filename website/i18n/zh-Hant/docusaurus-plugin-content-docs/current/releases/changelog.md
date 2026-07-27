@@ -11,6 +11,21 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 變更
+
+- HA router 在 BACKUP 狀態仍保留已驗證的 DHCPv6-PD snapshot，並在設定的
+  VRRP VMAC 上預先配置委派的 LAN/WAN address。升為 MASTER 後會先取得新的
+  upstream lease，再啟用 DS-Lite 與新的 NAT44 流量。
+- DNS/DHCP/RA 依 active VRRP role 運作。DS-Lite HealthCheck 必須使用設定的
+  source interface 與 mark，不會改走 management path。
+
+### 修正
+
+- active 的 `routerd-bgp` 僅在 GoBGP socket 或 control socket pathname 缺失時
+  自動修復。
+- 在兩台 Linux router 上觀測到雙向 VRRP 切換；role 變更後 PD、DHCP/RA/DNS、
+  DS-Lite 與新的 IPv4/IPv6 流量均會復原。既有 TCP session 不保證持續。
+
 ## v20260725.1413
 
 ### 修正
