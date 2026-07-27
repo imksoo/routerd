@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260727.2110
+
 ### 變更
 
 - HA router 在 BACKUP 狀態仍保留已驗證的 DHCPv6-PD snapshot，並在設定的

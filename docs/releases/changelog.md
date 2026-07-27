@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260727.2110
+
 ### Changed
 
 - HA routers retain a validated DHCPv6-PD snapshot while on standby and stage

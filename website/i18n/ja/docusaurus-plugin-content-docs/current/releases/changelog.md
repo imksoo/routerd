@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260727.2110
+
 ### 変更
 
 - HA ルーターは BACKUP 中も検証済みの DHCPv6-PD snapshot を保持し、設定済み
