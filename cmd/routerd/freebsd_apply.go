@@ -217,7 +217,7 @@ func runFreeBSDApplyOnce(router *api.Router, opts applyOptions, stdout io.Writer
 	if len(applyErrors) > 0 {
 		next.Phase = "Degraded"
 	}
-	if err := appendLedgerOwnedOrphans(next, router, opts.LedgerPath, false); err != nil {
+	if err := appendLedgerOwnedOrphans(next, router, router, opts.LedgerPath, false); err != nil {
 		return nil, err
 	}
 	if err := writeResult(stdout, opts.StatusFile, next); err != nil {

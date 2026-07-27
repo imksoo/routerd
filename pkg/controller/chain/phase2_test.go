@@ -5,6 +5,7 @@ package chain
 import (
 	"context"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -43,5 +44,12 @@ func TestDHCPv6InformationWaitsForClientSocket(t *testing.T) {
 	}
 	if status["socket"] != socket {
 		t.Fatalf("socket = %v, want %s; status=%v", status["socket"], socket, status)
+	}
+}
+
+func TestDeclaredPrefixDelegationNamesKeepsDeclaredPDWhenEffectiveIsEmpty(t *testing.T) {
+	declared := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}}}}}
+	if got := declaredPrefixDelegationNames(&api.Router{}, declared); !reflect.DeepEqual(got, []string{"wan-pd"}) {
+		t.Fatalf("names = %#v", got)
 	}
 }

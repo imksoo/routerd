@@ -33,17 +33,31 @@ func (e *Engine) Validate(router *api.Router) error {
 }
 
 func (e *Engine) Observe(router *api.Router) (*Result, error) {
-	if err := e.Validate(router); err != nil {
-		return nil, err
-	}
-	return e.evaluate(router, false)
+	return e.ObserveEffective(router, router)
 }
 
 func (e *Engine) Plan(router *api.Router) (*Result, error) {
-	if err := e.Validate(router); err != nil {
+	return e.PlanEffective(router, router)
+}
+
+// ObserveEffective validates the complete declared router graph and observes
+// only the resources selected into the effective graph.
+func (e *Engine) ObserveEffective(effective, declared *api.Router) (*Result, error) {
+	if err := e.Validate(declared); err != nil {
 		return nil, err
 	}
-	return e.evaluate(router, true)
+	return e.evaluate(effective, false)
+}
+
+// PlanEffective validates the complete declared router graph and evaluates
+// only the resources selected into the effective graph.  This preserves hard
+// references from a role-gated resource to its declared dependency while a
+// BACKUP node plans no action for that dependency.
+func (e *Engine) PlanEffective(effective, declared *api.Router) (*Result, error) {
+	if err := e.Validate(declared); err != nil {
+		return nil, err
+	}
+	return e.evaluate(effective, true)
 }
 
 func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error) {

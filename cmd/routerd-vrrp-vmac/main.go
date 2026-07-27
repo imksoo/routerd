@@ -72,7 +72,7 @@ func run(args []string) error {
 	}
 	for _, command := range commandsFor(opts) {
 		if output, err := exec.Command(command[0], command[1:]...).CombinedOutput(); err != nil {
-			if opts.action == "activate" && len(command) > 2 && command[2] == "add" && strings.Contains(string(output), "File exists") {
+			if len(command) > 2 && command[0] == "ip" && command[1] == "link" && command[2] == "add" && strings.Contains(string(output), "File exists") {
 				continue
 			}
 			if opts.action == "deactivate" && strings.Contains(string(output), "Cannot find device") {
@@ -283,7 +283,7 @@ func parseOptions(args []string) (options, error) {
 			return errors.New("--vmac must be parent,interface,mac[,link-local[,withdraw-ra]]")
 		}
 		entry := vmac{parent: parts[0], ifname: parts[1], mac: parts[2]}
-		if len(parts) == 4 {
+		if len(parts) >= 4 {
 			entry.linkLocal = parts[3]
 		}
 		if len(parts) == 5 {
@@ -379,12 +379,34 @@ func commandsFor(opts options) [][]string {
 	var commands [][]string
 	for _, entry := range opts.vmacs {
 		if opts.action == "deactivate" {
+			commands = append(commands, []string{"ip", "link", "add", "link", entry.parent, "name", entry.ifname, "type", "macvlan", "mode", "private"}, []string{"ip", "link", "set", "dev", entry.ifname, "address", entry.mac})
+			// A LAN VMAC owns the client router identity.  Clear its shared or
+			// automatically generated link-local identity before it goes DOWN,
+			// while retaining the PD-derived global address for the next MASTER
+			// reconciliation.
+			// A DOWN interface otherwise drops static delegated IPv6 addresses on
+			// Linux.  WAN and LAN VMACs both retain those addresses across a role
+			// transition.
+			if entry.linkLocal != "" {
+				commands = append(commands, []string{"ip", "link", "set", "dev", entry.ifname, "addrgenmode", "none"})
+				commands = append(commands, []string{"ip", "-6", "addr", "flush", "dev", entry.ifname, "scope", "link"})
+			}
+			commands = append(commands, []string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".keep_addr_on_down=1"})
 			commands = append(commands, []string{"ip", "link", "set", "dev", entry.ifname, "down"})
 			continue
 		}
-		commands = append(commands, []string{"ip", "link", "add", "link", entry.parent, "name", entry.ifname, "type", "macvlan", "mode", "private"}, []string{"ip", "link", "set", "dev", entry.ifname, "address", entry.mac}, []string{"ip", "link", "set", "dev", entry.ifname, "up"}, []string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".accept_ra=2"})
+		commands = append(commands, []string{"ip", "link", "add", "link", entry.parent, "name", entry.ifname, "type", "macvlan", "mode", "private"}, []string{"ip", "link", "set", "dev", entry.ifname, "address", entry.mac})
 		if entry.linkLocal != "" {
-			commands = append(commands, []string{"ip", "-6", "addr", "replace", entry.linkLocal + "/64", "dev", entry.ifname})
+			commands = append(commands, []string{"ip", "link", "set", "dev", entry.ifname, "addrgenmode", "none"})
+		}
+		commands = append(commands, []string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".keep_addr_on_down=1"})
+		commands = append(commands, []string{"ip", "link", "set", "dev", entry.ifname, "up"}, []string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".accept_ra=2"})
+		if entry.linkLocal != "" {
+			// Reconciliation may run while delegated global addresses are already
+			// installed on the LAN VMAC.  Only clear automatic or stale
+			// link-local identities; delegated global addresses are owned by the
+			// PD-derived address controller and must survive this operation.
+			commands = append(commands, []string{"ip", "-6", "addr", "flush", "dev", entry.ifname, "scope", "link"}, []string{"ip", "-6", "addr", "replace", entry.linkLocal + "/64", "dev", entry.ifname, "nodad"})
 		}
 	}
 	return commands

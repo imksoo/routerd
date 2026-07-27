@@ -24,6 +24,7 @@ type backendResult struct {
 	LastReloadAt     string
 	LastRestartAt    string
 	LastChangeReason string
+	VMACRepairError  error
 }
 
 type backend interface {
@@ -72,9 +73,7 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 		}
 		serviceActive := c.refreshKeepalivedServiceActive(ctx)
 		result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRolesAfterChange(ctx, c, aliases), ServiceActive: &serviceActive, LastChangeReason: reason}
-		if err := syncFailoverVMACs(ctx, c, aliases, result.Roles); err != nil {
-			return backendResult{}, err
-		}
+		result.VMACRepairError = syncFailoverVMACs(ctx, c, aliases, result.Roles)
 		if action == "reload" {
 			result.LastReloadAt = now
 		} else {
@@ -82,7 +81,8 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 		}
 		return result, nil
 	}
-	serviceActive := c.keepalivedServiceActive(ctx)
+	roles := observeKeepalivedRoles(ctx, c, aliases)
+	serviceActive := c.refreshKeepalivedServiceActive(ctx)
 	if !serviceActive && !c.DryRun {
 		now := time.Now().UTC().Format(time.RFC3339Nano)
 		reason := "keepalived.service inactive"
@@ -92,6 +92,7 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 		}
 		serviceActive = c.refreshKeepalivedServiceActive(ctx)
 		result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRolesAfterChange(ctx, c, aliases), ServiceActive: &serviceActive, LastChangeReason: reason}
+		result.VMACRepairError = syncFailoverVMACs(ctx, c, aliases, result.Roles)
 		if action == "reload" {
 			result.LastReloadAt = now
 		} else {
@@ -99,11 +100,7 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 		}
 		return result, nil
 	}
-	roles := observeKeepalivedRoles(ctx, c, aliases)
-	if err := syncFailoverVMACs(ctx, c, aliases, roles); err != nil {
-		return backendResult{}, err
-	}
-	return backendResult{Path: path, Changed: changed, Roles: roles, ServiceActive: &serviceActive}, nil
+	return backendResult{Path: path, Changed: changed, Roles: roles, ServiceActive: &serviceActive, VMACRepairError: syncFailoverVMACs(ctx, c, aliases, roles)}, nil
 }
 
 // syncFailoverVMACs makes the WAN L2 identity match the one authoritative
@@ -186,17 +183,14 @@ func observeKeepalivedRolesWithWait(ctx context.Context, c *Controller, aliases 
 		return roles
 	}
 	roles = map[string]string{}
-	serviceActive := c.keepalivedServiceActive(ctx)
+	// Kernel VIP ownership is the authoritative role evidence.  Do not let a
+	// cached systemd result hide an already-owned VIP.
 	for _, resource := range c.Router.Spec.Resources {
 		spec, ok, err := vrrpResourceSpec(resource)
 		if err != nil || !ok {
 			continue
 		}
 		if err != nil || spec.Mode != "vrrp" {
-			continue
-		}
-		if !serviceActive {
-			roles[resource.Metadata.Name] = "inactive"
 			continue
 		}
 		ifname := aliases[spec.Interface]
@@ -233,6 +227,9 @@ func observeKeepalivedRolesWithWait(ctx context.Context, c *Controller, aliases 
 				case <-time.After(200 * time.Millisecond):
 				}
 			}
+		}
+		if role != "master" && !c.refreshKeepalivedServiceActive(ctx) {
+			role = "inactive"
 		}
 		roles[resource.Metadata.Name] = role
 	}

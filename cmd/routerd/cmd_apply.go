@@ -560,7 +560,7 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 	if err != nil {
 		return nil, err
 	}
-	result, err := apply.New().Plan(effectiveRouter)
+	result, err := apply.New().PlanEffective(effectiveRouter, router)
 	if err != nil {
 		return nil, err
 	}
@@ -569,7 +569,7 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 	}
 	result.Warnings = append(result.Warnings, optionWarnings...)
 	appendPrefixDelegationStateWarnings(result, router, stateStore)
-	if err := appendLedgerOwnedOrphans(result, effectiveRouter, opts.LedgerPath, opts.DryRun); err != nil {
+	if err := appendLedgerOwnedOrphans(result, effectiveRouter, router, opts.LedgerPath, opts.DryRun); err != nil {
 		return nil, err
 	}
 	if !opts.DryRun {
@@ -625,7 +625,7 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 		}
 	}
 	applyWarnings := append([]string{}, result.Warnings...)
-	result, err = apply.New().Observe(effectiveRouter)
+	result, err = apply.New().ObserveEffective(effectiveRouter, router)
 	if err != nil {
 		return nil, err
 	}
@@ -633,7 +633,7 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 		result.Generation = generation
 	}
 	result.Warnings = append(result.Warnings, applyWarnings...)
-	if err := appendLedgerOwnedOrphans(result, effectiveRouter, opts.LedgerPath, opts.DryRun); err != nil {
+	if err := appendLedgerOwnedOrphans(result, effectiveRouter, router, opts.LedgerPath, opts.DryRun); err != nil {
 		return nil, err
 	}
 	if !opts.DryRun && configCommitPhase(result.Phase) {

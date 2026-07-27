@@ -554,7 +554,7 @@ func (c SystemdUnitController) reconcileConntrackdSyncUnits(ctx context.Context,
 			// mode.  Starting it with -n exits immediately when no daemon is
 			// running.  Do not claim /run/routerd either: it is owned by routerd
 			// itself, and systemd removes a RuntimeDirectory when this unit stops.
-			Type:        "notify", ExecStart: []string{"/usr/sbin/conntrackd", "-C", configPath},
+			Type: "notify", ExecStart: []string{"/usr/sbin/conntrackd", "-C", configPath},
 			After: []string{"network-online.target"}, Wants: []string{"network-online.target"}, Conflicts: []string{"conntrackd.service"},
 			Restart: "on-failure", RestartSec: "2s",
 			NoNewPrivileges: &noNewPrivileges,
@@ -1267,20 +1267,23 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 	socket := filepath.Join("/run/routerd/healthcheck", resourceName+".sock")
 	resolved := healthcheck.ResolveSpecWithStoreForResource(c.Router, c.Store, resourceName, spec)
 	data := render.HealthCheckSystemdUnit(render.HealthCheckSystemdOptions{
-		Resource:        resourceName,
-		Target:          resolved.Target,
-		Protocol:        resolved.Protocol,
-		Via:             resolved.Via,
-		FwMark:          resolved.FwMark,
-		SourceInterface: resolved.SourceInterface,
-		SourceAddress:   resolved.SourceAddress,
-		Port:            resolved.Port,
-		Interval:        resolved.Interval,
-		Timeout:         resolved.Timeout,
-		SocketPath:      socket,
-		StateFile:       filepath.Join("/var/lib/routerd/healthcheck", resourceName, "state.json"),
-		EventFile:       filepath.Join("/var/lib/routerd/healthcheck", resourceName, "events.jsonl"),
-		Environment:     telemetryEnv,
+		Resource:             resourceName,
+		Target:               resolved.Target,
+		Protocol:             resolved.Protocol,
+		Via:                  resolved.Via,
+		FwMark:               resolved.FwMark,
+		RequireDSLiteBinding: healthcheck.ReferencesDSLiteTunnel(c.Router, resourceName),
+		SourceInterface:      resolved.SourceInterface,
+		SourceAddress:        resolved.SourceAddress,
+		Port:                 resolved.Port,
+		Interval:             resolved.Interval,
+		Timeout:              resolved.Timeout,
+		HealthyThreshold:     resolved.HealthyThreshold,
+		UnhealthyThreshold:   resolved.UnhealthyThreshold,
+		SocketPath:           socket,
+		StateFile:            filepath.Join("/var/lib/routerd/healthcheck", resourceName, "state.json"),
+		EventFile:            filepath.Join("/var/lib/routerd/healthcheck", resourceName, "events.jsonl"),
+		Environment:          telemetryEnv,
 	})
 	changed, err := writeFileIfChanged(path, data, 0644, c.DryRun)
 	if err != nil {
@@ -1724,8 +1727,30 @@ func (c SystemdUnitController) applyLongLivedSystemdUnit(ctx context.Context, pa
 			}
 			return true, nil
 		}
+		if !longLivedHelperSocketsPresent(ctx, unitName, command) {
+			if _, err := command(ctx, "systemctl", "restart", unitName); err != nil {
+				return true, err
+			}
+			return true, nil
+		}
 	}
 	return fileChanged, nil
+}
+
+func longLivedHelperSocketsPresent(ctx context.Context, unitName string, command outputCommandFunc) bool {
+	var sockets []string
+	switch unitName {
+	case render.BGPUnitName:
+		sockets = []string{"/run/routerd/bgp/gobgp.sock", "/run/routerd/bgp/control.sock"}
+	default:
+		return true
+	}
+	for _, socket := range sockets {
+		if _, err := command(ctx, "test", "-S", socket); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func routerHasBGP(router *api.Router) bool {

@@ -275,6 +275,9 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 		if len(spec.Candidates) == 0 {
 			return true, fmt.Errorf("%s spec.candidates is required", res.ID())
 		}
+		if spec.HostTraffic && len(spec.Candidates) != 1 {
+			return true, fmt.Errorf("%s spec.hostTraffic requires exactly one candidate", res.ID())
+		}
 		if targetOS == platform.OSFreeBSD {
 			if spec.Mode == "hash" {
 				return true, validateFreeBSDEgressRoutePolicyHash(res.ID(), spec)
@@ -282,6 +285,20 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 			return true, fmt.Errorf("%s FreeBSD supports only the static sourceAddress hash PF route-to shape; mode %q is not supported", res.ID(), defaultString(spec.Mode, ""))
 		}
 		for i, candidate := range spec.Candidates {
+			if spec.HostTraffic {
+				if defaultString(spec.Family, "ipv4") != "ipv6" {
+					return true, fmt.Errorf("%s spec.hostTraffic requires family ipv6", res.ID())
+				}
+				if candidate.Mark != 0 {
+					return true, fmt.Errorf("%s spec.candidates[%d].mark must be 0 when hostTraffic is true", res.ID(), i)
+				}
+				if len(candidate.Targets) != 0 || candidate.PreferredSource != "interface" {
+					return true, fmt.Errorf("%s spec.candidates[%d] hostTraffic requires preferredSource interface and no targets", res.ID(), i)
+				}
+				if defaultString(candidate.GatewaySource, "none") != "static" || candidate.Gateway == "" {
+					return true, fmt.Errorf("%s spec.candidates[%d] hostTraffic requires a static gateway", res.ID(), i)
+				}
+			}
 			if candidate.Name == "" && candidate.Source == "" && candidate.EffectiveInterface() == "" && len(candidate.Targets) == 0 {
 				return true, fmt.Errorf("%s spec.candidates[%d] requires name or source", res.ID(), i)
 			}
@@ -292,7 +309,7 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 				return true, fmt.Errorf("%s spec.candidates[%d] must not set both routeMetric and metric", res.ID(), i)
 			}
 			if len(candidate.Targets) == 0 && (candidate.Mark != 0 || candidate.Priority != 0 || candidate.EffectiveTable() != 0) {
-				if candidate.Mark < 1 {
+				if !spec.HostTraffic && candidate.Mark < 1 {
 					return true, fmt.Errorf("%s spec.candidates[%d].mark must be greater than 0", res.ID(), i)
 				}
 				if candidate.Priority < 1 || candidate.Priority > 32765 {
@@ -371,6 +388,9 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 			}
 			if strings.Contains(candidate.Gateway, "${") {
 				return true, fmt.Errorf("%s spec.candidates[%d].gateway status expressions were removed; use gatewayFrom", res.ID(), i)
+			}
+			if candidate.PreferredSource != "" && candidate.PreferredSource != "interface" {
+				return true, fmt.Errorf("%s spec.candidates[%d].preferredSource must be interface", res.ID(), i)
 			}
 			if candidate.DeviceFrom.Resource != "" && candidate.DeviceFrom.Field == "" {
 				return true, fmt.Errorf("%s spec.candidates[%d].deviceFrom.field is required", res.ID(), i)

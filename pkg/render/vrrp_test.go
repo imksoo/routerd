@@ -76,6 +76,35 @@ func TestKeepalivedConfigRendersSingleOwnerFailoverVMAC(t *testing.T) {
 	}
 }
 
+func TestKeepalivedConfigRendersWANAndLANFailoverVMACsInOneVRRPTransition(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+		Metadata: api.ObjectMeta{Name: "lan-gw"},
+		Spec: api.VirtualAddressSpec{Family: "ipv4", Interface: "lan", Address: "172.18.0.1/32", Mode: "vrrp",
+			VRRP: api.VirtualAddressVRRPSpec{VirtualRouterID: 18, Peers: []string{"172.18.0.3"},
+				FailoverVMAC: &api.VirtualAddressVRRPFailoverVMACSpec{ParentInterface: "wan", Interface: "wan-vmac", MACAddress: "02:00:5e:00:01:13"},
+				AdditionalFailoverVMACs: []api.VirtualAddressVRRPFailoverVMACSpec{{
+					ParentInterface: "lan", Interface: "lan-vrrp", MACAddress: "02:00:5e:00:01:12", LinkLocalAddress: "fe80::5eff:fe00:112", WithdrawRouterAdvertisement: true,
+				}},
+			},
+		},
+	}}}}
+	data, err := KeepalivedConfig(router, map[string]string{"lan": "ens19", "wan": "eth0"})
+	if err != nil {
+		t.Fatalf("render keepalived config: %v", err)
+	}
+	got := string(data)
+	wantArgs := "--vmac eth0,wan-vmac,02:00:5e:00:01:13,,false --vmac ens19,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true"
+	for _, state := range []string{"notify_master \"/usr/local/sbin/routerd-vrrp-vmac activate ", "notify_backup \"/usr/local/sbin/routerd-vrrp-vmac deactivate ", "notify_fault \"/usr/local/sbin/routerd-vrrp-vmac deactivate ", "notify_stop \"/usr/local/sbin/routerd-vrrp-vmac deactivate "} {
+		if !strings.Contains(got, state+wantArgs+"\"") {
+			t.Fatalf("keepalived config missing %q:\n%s", state+wantArgs, got)
+		}
+	}
+	if strings.Count(got, "vrrp_instance ") != 1 {
+		t.Fatalf("WAN and LAN must share one VRRP state machine:\n%s", got)
+	}
+}
+
 func TestKeepalivedConfigRendersIPv6VRRPInstance(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

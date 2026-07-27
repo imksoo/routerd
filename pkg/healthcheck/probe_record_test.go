@@ -46,7 +46,7 @@ func TestClassifyErrorTimeout(t *testing.T) {
 func TestProbeIncludesEgressEvidence(t *testing.T) {
 	// Stub RouteLookup so we deterministically see route info merged in.
 	orig := RouteLookup
-	RouteLookup = func(ctx context.Context, target, family string) (RouteInfo, error) {
+	RouteLookup = func(ctx context.Context, spec api.HealthCheckSpec) (RouteInfo, error) {
 		return RouteInfo{NextHop: "192.0.2.1", OutInterface: "wan0", Source: "192.0.2.42"}, nil
 	}
 	defer func() { RouteLookup = orig }()
@@ -284,7 +284,7 @@ func TestStateRoundTripJSON(t *testing.T) {
 
 func TestEnrichEvidenceFillsFromSpec(t *testing.T) {
 	orig := RouteLookup
-	RouteLookup = func(ctx context.Context, target, family string) (RouteInfo, error) {
+	RouteLookup = func(ctx context.Context, spec api.HealthCheckSpec) (RouteInfo, error) {
 		return RouteInfo{}, errors.New("not available")
 	}
 	defer func() { RouteLookup = orig }()

@@ -12,7 +12,13 @@ import (
 	"net"
 	"os/exec"
 	"strings"
+
+	"github.com/imksoo/routerd/pkg/api"
 )
+
+var routeLookupCommand = func(ctx context.Context, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, "ip", args...).Output()
+}
 
 // lookupRoute uses `ip -j route get TARGET` to discover the nexthop, output
 // interface and source address the kernel would pick for the probe. We treat
@@ -20,8 +26,8 @@ import (
 // so route info is best-effort. The function honours the address family hint
 // when one is given so dual-stacked targets do not return an IPv6 entry when
 // the probe was IPv4-only.
-func lookupRoute(ctx context.Context, target, family string) (RouteInfo, error) {
-	target = strings.TrimSpace(target)
+func lookupRoute(ctx context.Context, spec api.HealthCheckSpec) (RouteInfo, error) {
+	target := strings.TrimSpace(spec.Target)
 	if target == "" {
 		return RouteInfo{}, errors.New("target is required")
 	}
@@ -29,22 +35,30 @@ func lookupRoute(ctx context.Context, target, family string) (RouteInfo, error) 
 	// so try a DNS lookup first. Failures here are non-fatal: the probe was
 	// the one with the unreachable target, not the route lookup.
 	if net.ParseIP(target) == nil {
-		ip, err := resolveTargetIP(ctx, target, family)
+		ip, err := resolveTargetIP(ctx, target, spec.AddressFamily)
 		if err != nil {
 			return RouteInfo{}, err
 		}
 		target = ip
 	}
 	args := []string{"-j"}
-	switch strings.ToLower(family) {
+	switch strings.ToLower(spec.AddressFamily) {
 	case "ipv4":
 		args = append(args, "-4")
 	case "ipv6":
 		args = append(args, "-6")
 	}
 	args = append(args, "route", "get", target)
-	cmd := exec.CommandContext(ctx, "ip", args...)
-	out, err := cmd.Output()
+	if spec.FwMark != 0 {
+		args = append(args, "mark", fmt.Sprintf("0x%x", spec.FwMark))
+	}
+	if source := strings.TrimSpace(spec.SourceAddress); source != "" {
+		args = append(args, "from", source)
+	}
+	if oif := strings.TrimSpace(spec.SourceInterface); oif != "" {
+		args = append(args, "oif", oif)
+	}
+	out, err := routeLookupCommand(ctx, args...)
 	if err != nil {
 		return RouteInfo{}, fmt.Errorf("ip route get: %w", err)
 	}

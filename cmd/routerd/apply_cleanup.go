@@ -64,7 +64,7 @@ func appendPrefixDelegationStateWarnings(result *apply.Result, router *api.Route
 	}
 }
 
-func appendLedgerOwnedOrphans(result *apply.Result, router *api.Router, ledgerPath string, transient bool) error {
+func appendLedgerOwnedOrphans(result *apply.Result, effective, declared *api.Router, ledgerPath string, transient bool) error {
 	if ledgerPath == "" {
 		return nil
 	}
@@ -74,7 +74,7 @@ func appendLedgerOwnedOrphans(result *apply.Result, router *api.Router, ledgerPa
 	}
 	defer func() { _ = ledger.Close() }()
 	engine := apply.New()
-	orphans, _, err := engine.LedgerOwnedOrphans(router, ledger)
+	orphans, _, err := engine.LedgerOwnedOrphansEffective(effective, declared, ledger)
 	if err != nil {
 		return err
 	}

@@ -1030,7 +1030,7 @@ func validateDnsmasqArtifactsForRouter(router *api.Router, configPath, hostsPath
 // its runtime directory. The legacy canonical config must no longer reference
 // the file, so accepting it cannot replace a live administrator-owned input.
 func dnsmasqRetiredHostsOwned(configData, serviceData []byte, osName platform.OS) bool {
-	if osName != platform.OSLinux || !dnsmasqLegacyConfigOwned(configData) || strings.Contains(string(configData), "\ndhcp-hostsfile=") {
+	if osName != platform.OSLinux || !dnsmasqLegacyConfigSkeletonOwned(configData) || strings.Contains(string(configData), "\ndhcp-hostsfile=") {
 		return false
 	}
 	if !strings.HasPrefix(string(serviceData), routerdGeneratedDNSMasqMarker) || !strings.Contains(string(serviceData), "Description=routerd managed dnsmasq DHCP service") {
@@ -1048,6 +1048,16 @@ func dnsmasqRetiredHostsOwned(configData, serviceData []byte, osName platform.OS
 	}
 	liveHosts, err := os.ReadFile(filepath.Join(filepath.Dir(runtimeConfig), "dnsmasq-hosts.hosts"))
 	return err == nil && strings.HasPrefix(string(liveHosts), routerdGeneratedDNSMasqMarker)
+}
+
+// dnsmasqLegacyConfigSkeletonOwned recognizes the pre-marker config skeleton
+// both before and after routerd prepended its ownership marker.  It is used
+// only for the retired canonical sidecar path: the generated service and its
+// marked runtime hosts file must independently prove that the old sidecar is
+// no longer live before it can be replaced.
+func dnsmasqLegacyConfigSkeletonOwned(data []byte) bool {
+	data = bytes.TrimPrefix(data, []byte(routerdGeneratedDNSMasqMarker))
+	return dnsmasqLegacyConfigOwned(data)
 }
 
 // dnsmasqLegacyHostsMatchRouter permits a markerless pre-#946 hosts file only

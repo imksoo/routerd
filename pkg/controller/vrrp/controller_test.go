@@ -61,6 +61,39 @@ func TestSyncFailoverVMACFollowsObservedVRRPRole(t *testing.T) {
 	}
 }
 
+func TestSyncFailoverVMACKeepsWANAndLANInOneRoleTransition(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+		Metadata: api.ObjectMeta{Name: "lan-gw"},
+		Spec: api.VirtualAddressSpec{Interface: "lan", Address: "172.18.0.1/32", Family: "ipv4", Mode: "vrrp", VRRP: api.VirtualAddressVRRPSpec{
+			VirtualRouterID: 18,
+			FailoverVMAC:    &api.VirtualAddressVRRPFailoverVMACSpec{ParentInterface: "wan", Interface: "wan-vmac", MACAddress: "02:00:5e:00:01:13"},
+			AdditionalFailoverVMACs: []api.VirtualAddressVRRPFailoverVMACSpec{{
+				ParentInterface: "lan", Interface: "lan-vrrp", MACAddress: "02:00:5e:00:01:12", LinkLocalAddress: "fe80::5eff:fe00:112", WithdrawRouterAdvertisement: true,
+			}},
+		}},
+	}}}}
+	var calls []string
+	controller := &Controller{Router: router, Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return nil, nil
+	}}
+	aliases := map[string]string{"lan": "ens19", "wan": "ens18"}
+	if err := syncFailoverVMACs(context.Background(), controller, aliases, map[string]string{"lan-gw": "master"}); err != nil {
+		t.Fatalf("sync master: %v", err)
+	}
+	if err := syncFailoverVMACs(context.Background(), controller, aliases, map[string]string{"lan-gw": "backup"}); err != nil {
+		t.Fatalf("sync backup: %v", err)
+	}
+	want := []string{
+		"/usr/local/sbin/routerd-vrrp-vmac activate --vmac ens18,wan-vmac,02:00:5e:00:01:13,,false --vmac ens19,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true",
+		"/usr/local/sbin/routerd-vrrp-vmac deactivate --vmac ens18,wan-vmac,02:00:5e:00:01:13,,false --vmac ens19,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true",
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("VMAC sync calls = %#v, want %#v", calls, want)
+	}
+}
+
 func (s mapStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
 	var out []routerstate.ObjectStatus
 	for key, status := range s {
@@ -524,6 +557,50 @@ func TestReconcileStopsKeepalivedWhenVRRPRemoved(t *testing.T) {
 	want := []string{"systemctl is-active --quiet keepalived.service", "systemctl stop keepalived.service"}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+}
+
+func TestObserveKeepalivedRolesPrefersKernelVIPOverCachedInactiveService(t *testing.T) {
+	controller := &Controller{
+		Router:                    vrrpRouter("vrrp"),
+		keepalivedActiveCached:    false,
+		keepalivedActiveCheckedAt: time.Now(),
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			if name == "ip" && reflect.DeepEqual(args, []string{"-4", "addr", "show", "dev", "ens18"}) {
+				return []byte("    inet 10.240.70.10/32 scope global\n"), nil
+			}
+			if name == "systemctl" {
+				t.Fatalf("MASTER VIP must not consult cached systemd activity: %v", args)
+			}
+			return nil, nil
+		},
+	}
+	if got := observeKeepalivedRoles(context.Background(), controller, map[string]string{"lan": "ens18"}); got["vip"] != "master" {
+		t.Fatalf("roles = %#v, want kernel MASTER", got)
+	}
+}
+
+func TestReconcilePublishesRoleBeforeVMACRepairFailure(t *testing.T) {
+	store := mapStore{}
+	router := vrrpRouter("vrrp")
+	spec, _ := router.Spec.Resources[1].VirtualAddressSpec()
+	spec.VRRP.FailoverVMAC = &api.VirtualAddressVRRPFailoverVMACSpec{ParentInterface: "lan", Interface: "lan-vrrp", MACAddress: "02:00:5e:00:01:12"}
+	router.Spec.Resources[1].Spec = spec
+	controller := &Controller{Router: router, Store: store, ConfigPath: filepath.Join(t.TempDir(), "keepalived.conf"), Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "/usr/local/sbin/routerd-vrrp-vmac" {
+			return []byte("repair failed"), errors.New("exit status 1")
+		}
+		if name == "ip" {
+			return []byte("    inet 10.240.70.10/32 scope global\n"), nil
+		}
+		return nil, nil
+	}}
+	if err := controller.Reconcile(context.Background()); err == nil {
+		t.Fatal("expected VMAC repair error")
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
+	if status["role"] != "master" || !strings.Contains(statusString(status, "vmacRepairError"), "repair failed") {
+		t.Fatalf("status must publish role and repair error: %#v", status)
 	}
 }
 

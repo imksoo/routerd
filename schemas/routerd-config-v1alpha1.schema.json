@@ -11361,6 +11361,14 @@
                             "name": {
                               "type": "string"
                             },
+                            "preferredSource": {
+                              "description": "PreferredSource=interface selects the current global IPv6 address of the\ncandidate interface for a host-only default route.",
+                              "enum": [
+                                "",
+                                "interface"
+                              ],
+                              "type": "string"
+                            },
                             "priority": {
                               "maximum": 32765,
                               "minimum": 0,
@@ -11553,6 +11561,10 @@
                           "type": "string"
                         },
                         "type": "array"
+                      },
+                      "hostTraffic": {
+                        "description": "HostTraffic selects locally-originated traffic with an iif lo rule rather\nthan a conntrack/nft mark.",
+                        "type": "boolean"
                       },
                       "hysteresis": {
                         "type": "string"

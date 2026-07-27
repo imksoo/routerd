@@ -2228,6 +2228,9 @@ type HealthCheckSpec struct {
 
 type EgressRoutePolicySpec struct {
 	Family string `yaml:"family,omitempty" json:"family,omitempty" jsonschema:"enum=ipv4,enum=ipv6"`
+	// HostTraffic selects locally-originated traffic with an iif lo rule rather
+	// than a conntrack/nft mark.
+	HostTraffic bool `yaml:"hostTraffic,omitempty" json:"hostTraffic,omitempty"`
 	// Mode selects the route policy shape: priority chooses one candidate, mark installs marked tables, and hash spreads flows across targets.
 	Mode                      string                       `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=priority,enum=mark,enum=hash"`
 	SourceCIDRs               []string                     `yaml:"sourceCIDRs,omitempty" json:"sourceCIDRs,omitempty"`
@@ -2253,19 +2256,22 @@ type EgressRoutePolicyCandidate struct {
 	Gateway     string                `yaml:"gateway,omitempty" json:"gateway,omitempty"`
 	GatewayFrom StatusValueSourceSpec `yaml:"gatewayFrom,omitempty" json:"gatewayFrom,omitempty"`
 	// GatewaySource declares whether gateway is static, learned from DHCP status, or intentionally absent.
-	GatewaySource string                    `yaml:"gatewaySource,omitempty" json:"gatewaySource,omitempty" jsonschema:"enum=,enum=static,enum=dhcpv4,enum=dhcpv6,enum=none"`
-	Table         int                       `yaml:"table,omitempty" json:"table,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
-	RouteTable    int                       `yaml:"routeTable,omitempty" json:"routeTable,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
-	Priority      int                       `yaml:"priority,omitempty" json:"priority,omitempty" jsonschema:"minimum=0,maximum=32765"`
-	Mark          int                       `yaml:"mark,omitempty" json:"mark,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
-	RouteMetric   int                       `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
-	Metric        int                       `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
-	Weight        int                       `yaml:"weight,omitempty" json:"weight,omitempty" jsonschema:"minimum=0"`
-	HealthCheck   string                    `yaml:"healthCheck,omitempty" json:"healthCheck,omitempty"`
-	Targets       []EgressRoutePolicyTarget `yaml:"targets,omitempty" json:"targets,omitempty"`
-	DependsOn     []ResourceDependencySpec  `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
-	ReadyWhen     []ReadyWhenSpec           `yaml:"ready_when,omitempty" json:"-"`
-	When          ResourceWhenSpec          `yaml:"when,omitempty" json:"when,omitempty"`
+	GatewaySource string `yaml:"gatewaySource,omitempty" json:"gatewaySource,omitempty" jsonschema:"enum=,enum=static,enum=dhcpv4,enum=dhcpv6,enum=none"`
+	// PreferredSource=interface selects the current global IPv6 address of the
+	// candidate interface for a host-only default route.
+	PreferredSource string                    `yaml:"preferredSource,omitempty" json:"preferredSource,omitempty" jsonschema:"enum=,enum=interface"`
+	Table           int                       `yaml:"table,omitempty" json:"table,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
+	RouteTable      int                       `yaml:"routeTable,omitempty" json:"routeTable,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
+	Priority        int                       `yaml:"priority,omitempty" json:"priority,omitempty" jsonschema:"minimum=0,maximum=32765"`
+	Mark            int                       `yaml:"mark,omitempty" json:"mark,omitempty" jsonschema:"minimum=0,maximum=4294967295"`
+	RouteMetric     int                       `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
+	Metric          int                       `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
+	Weight          int                       `yaml:"weight,omitempty" json:"weight,omitempty" jsonschema:"minimum=0"`
+	HealthCheck     string                    `yaml:"healthCheck,omitempty" json:"healthCheck,omitempty"`
+	Targets         []EgressRoutePolicyTarget `yaml:"targets,omitempty" json:"targets,omitempty"`
+	DependsOn       []ResourceDependencySpec  `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
+	ReadyWhen       []ReadyWhenSpec           `yaml:"ready_when,omitempty" json:"-"`
+	When            ResourceWhenSpec          `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type EgressRoutePolicyTarget struct {

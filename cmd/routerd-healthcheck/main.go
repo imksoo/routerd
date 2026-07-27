@@ -34,25 +34,26 @@ import (
 const daemonKind = healthcheck.DaemonKind
 
 type options struct {
-	resource           string
-	target             string
-	protocol           string
-	addressFamily      string
-	via                string
-	fwmark             int
-	sourceInterface    string
-	sourceAddress      string
-	sourceOrigin       string
-	tunnelLocal        string
-	tunnelRemote       string
-	port               int
-	interval           time.Duration
-	timeout            time.Duration
-	healthyThreshold   int
-	unhealthyThreshold int
-	socketPath         string
-	stateFile          string
-	eventFile          string
+	resource             string
+	target               string
+	protocol             string
+	addressFamily        string
+	via                  string
+	fwmark               int
+	sourceInterface      string
+	requireDSLiteBinding bool
+	sourceAddress        string
+	sourceOrigin         string
+	tunnelLocal          string
+	tunnelRemote         string
+	port                 int
+	interval             time.Duration
+	timeout              time.Duration
+	healthyThreshold     int
+	unhealthyThreshold   int
+	socketPath           string
+	stateFile            string
+	eventFile            string
 }
 
 type daemon struct {
@@ -112,6 +113,7 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.StringVar(&opts.via, "via", "", "gateway IP used by the selected path")
 	fs.IntVar(&opts.fwmark, "fwmark", 0, "Linux socket mark used for policy routing")
 	fs.StringVar(&opts.sourceInterface, "source-interface", "", "source interface for probes")
+	fs.BoolVar(&opts.requireDSLiteBinding, "require-dslite-binding", false, "fail closed unless source-interface and fwmark are set")
 	fs.StringVar(&opts.sourceAddress, "source-address", "", "source IP address for probes")
 	fs.StringVar(&opts.sourceOrigin, "source-origin", "", "source address origin hint: pd, ra, static, dynamic")
 	fs.StringVar(&opts.tunnelLocal, "tunnel-local", "", "tunnel local address hint (informational, recorded in history)")
@@ -252,7 +254,12 @@ func (d *daemon) probeOnce(ctx context.Context) error {
 		attribute.String("server.address", d.spec.Target),
 		attribute.String("network.interface.name", d.spec.SourceInterface),
 	))
-	result := healthcheck.Probe(spanCtx, d.spec)
+	var result healthcheck.ProbeResult
+	if invalid := bindingValidationResult(d.opts, d.spec); invalid != nil {
+		result = *invalid
+	} else {
+		result = healthcheck.Probe(spanCtx, d.spec)
+	}
 	if probeCtx.Err() == context.DeadlineExceeded && !result.OK {
 		result.Timeout = true
 		if result.FailureKind == "" {
@@ -268,7 +275,14 @@ func (d *daemon) probeOnce(ctx context.Context) error {
 	now := time.Now().UTC()
 	d.mu.Lock()
 	previous := d.state
-	evaluation := healthcheck.ApplyResult(d.resource, d.spec, previous, result, now)
+	evaluationSpec := d.spec
+	if d.opts.requireDSLiteBinding && bindingValidationResult(d.opts, d.spec) != nil {
+		// A missing DS-Lite binding means the probe would otherwise fall back to
+		// management routing.  This is a configuration safety failure, not a
+		// transient reachability failure, so bypass the normal threshold once.
+		evaluationSpec.UnhealthyThreshold = 1
+	}
+	evaluation := healthcheck.ApplyResult(d.resource, evaluationSpec, previous, result, now)
 	d.state = evaluation.State
 	if err := d.saveStateLocked(); err != nil {
 		d.mu.Unlock()
@@ -280,6 +294,13 @@ func (d *daemon) probeOnce(ctx context.Context) error {
 		d.publishEvent(evaluation.Event)
 	}
 	return nil
+}
+
+func bindingValidationResult(opts options, spec api.HealthCheckSpec) *healthcheck.ProbeResult {
+	if !opts.requireDSLiteBinding || (strings.TrimSpace(spec.SourceInterface) != "" && spec.FwMark != 0) {
+		return nil
+	}
+	return &healthcheck.ProbeResult{Message: "DSLiteProbeBindingInvalid: source-interface and fwmark are required", ProbeEvidence: healthcheck.ProbeEvidence{FailureKind: healthcheck.FailureKindOther}}
 }
 
 // applyTunnelHints layers operator-provided egress hints onto the evidence

@@ -12,6 +12,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
+	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
@@ -302,6 +303,52 @@ func TestSystemdUnitControllerDoesNotRestartActiveBGPDaemonOnUnitChange(t *testi
 	}
 	if !strings.Contains(gotCommands, "systemctl daemon-reload") || !strings.Contains(gotCommands, "systemctl enable routerd-bgp.service") {
 		t.Fatalf("routerd-bgp unit was not rendered/enabled:\n%s", gotCommands)
+	}
+}
+
+func TestSystemdUnitControllerRestartsActiveBGPDaemonWhenRequiredSocketIsMissing(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
+	for _, tc := range []struct {
+		name          string
+		missingSocket string
+		wantRestart   bool
+	}{
+		{name: "gobgp socket missing", missingSocket: "/run/routerd/bgp/gobgp.sock", wantRestart: true},
+		{name: "control socket missing", missingSocket: "/run/routerd/bgp/control.sock", wantRestart: true},
+		{name: "both required sockets present", wantRestart: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, render.BGPUnitName)
+			spec := render.BGPSystemdSpec("/run/routerd/bgp/gobgp.sock")
+			if err := os.WriteFile(path, render.SystemdUnit(render.BGPUnitName, spec), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var commands []string
+			controller := SystemdUnitController{Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+				_ = ctx
+				line := strings.Join(append([]string{name}, args...), " ")
+				commands = append(commands, line)
+				if line == "test -S "+tc.missingSocket {
+					return nil, errors.New("socket missing")
+				}
+				return []byte("ok"), nil
+			}}
+			if _, err := controller.applyLongLivedSystemdUnit(t.Context(), path, render.BGPUnitName, spec, controller.Command); err != nil {
+				t.Fatal(err)
+			}
+			got := strings.Join(commands, "\n")
+			restarted := strings.Contains(got, "systemctl restart routerd-bgp.service")
+			if restarted != tc.wantRestart {
+				t.Fatalf("restart=%t want=%t commands:\n%s", restarted, tc.wantRestart, got)
+			}
+			if !strings.Contains(got, "test -S /run/routerd/bgp/gobgp.sock") {
+				t.Fatalf("gobgp socket was not checked:\n%s", got)
+			}
+			if tc.missingSocket == "" && !strings.Contains(got, "test -S /run/routerd/bgp/control.sock") {
+				t.Fatalf("control socket was not checked:\n%s", got)
+			}
+		})
 	}
 }
 
@@ -774,7 +821,7 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 	}
 	unit := string(data)
 	for _, want := range []string{
-		`ExecStart=/usr/local/sbin/routerd-healthcheck --resource "internet-via-dslite-a" --target "1.1.1.1" --protocol "tcp" --fwmark 0x110 --source-interface "ds-lite-a" --source-address "172.18.0.1" --port 443`,
+		`ExecStart=/usr/local/sbin/routerd-healthcheck --resource "internet-via-dslite-a" --target "1.1.1.1" --protocol "tcp" --fwmark 0x110 --require-dslite-binding --source-interface "ds-lite-a" --source-address "172.18.0.1" --port 443 --interval "30s" --timeout "3s" --healthy-threshold 1 --unhealthy-threshold 3`,
 		`--socket "/run/routerd/healthcheck/internet-via-dslite-a.sock"`,
 		"RuntimeDirectory=routerd/healthcheck",
 		"RuntimeDirectoryPreserve=yes",

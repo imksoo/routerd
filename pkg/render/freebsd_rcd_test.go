@@ -245,6 +245,21 @@ func TestFreeBSDRenderSynthesizesHealthCheckResourceAsRCD(t *testing.T) {
 	}
 }
 
+func TestFreeBSDRCDDoesNotRenderLinuxDSLiteBindingFlag(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "dslite-a"}, Spec: api.DSLiteTunnelSpec{TunnelName: "gif0"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "internet"}, Spec: api.EgressRoutePolicySpec{Candidates: []api.EgressRoutePolicyCandidate{{Targets: []api.EgressRoutePolicyTarget{{Interface: "dslite-a", HealthCheck: "dslite-health"}}}}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "dslite-health"}, Spec: api.HealthCheckSpec{Daemon: "routerd-healthcheck", Target: "2001:db8::1", Protocol: "icmp"}},
+	}}}
+	cfg, err := FreeBSD(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if script := string(cfg.RCDScripts["routerd_healthcheck_dslite_health"]); strings.Contains(script, "--require-dslite-binding") {
+		t.Fatalf("FreeBSD rc.d script contains Linux-only DS-Lite binding flag:\n%s", script)
+	}
+}
+
 func TestFreeBSDEventdRCDScript(t *testing.T) {
 	data, err := FreeBSDRCDScript("routerd-eventd@cloudedge.service", freeBSDEventdSystemdSpec("cloudedge"))
 	if err != nil {

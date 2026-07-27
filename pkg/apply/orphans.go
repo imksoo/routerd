@@ -111,7 +111,13 @@ func (e *Engine) AppliedOwnedArtifacts(router *api.Router) ([]resource.Artifact,
 }
 
 func (e *Engine) LedgerOwnedOrphans(router *api.Router, ledger resource.Ledger) ([]OrphanedArtifact, []resource.Artifact, error) {
-	plan, err := e.LedgerOwnedOrphanPlan(router, ledger)
+	return e.LedgerOwnedOrphansEffective(router, router, ledger)
+}
+
+// LedgerOwnedOrphansEffective validates the declared graph while computing
+// orphan candidates only from the effective graph.
+func (e *Engine) LedgerOwnedOrphansEffective(effective, declared *api.Router, ledger resource.Ledger) ([]OrphanedArtifact, []resource.Artifact, error) {
+	plan, err := e.LedgerOwnedOrphanPlanEffective(effective, declared, ledger)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -125,14 +131,20 @@ func (e *Engine) LedgerOwnedOrphans(router *api.Router, ledger resource.Ledger) 
 }
 
 func (e *Engine) LedgerOwnedOrphanPlan(router *api.Router, ledger resource.Ledger) (lifecycle.GCPlan, error) {
-	if err := e.Validate(router); err != nil {
+	return e.LedgerOwnedOrphanPlanEffective(router, router, ledger)
+}
+
+// LedgerOwnedOrphanPlanEffective validates the declared graph while deriving
+// desired artifacts from the effective graph.
+func (e *Engine) LedgerOwnedOrphanPlanEffective(effective, declared *api.Router, ledger resource.Ledger) (lifecycle.GCPlan, error) {
+	if err := e.Validate(declared); err != nil {
 		return lifecycle.GCPlan{}, err
 	}
 	if ledger == nil {
 		return lifecycle.GCPlan{}, nil
 	}
-	aliases := interfaceAliases(router)
-	desired := DesiredOwnedArtifacts(router, aliases)
+	aliases := interfaceAliases(effective)
+	desired := DesiredOwnedArtifacts(effective, aliases)
 	return lifecycle.PlanArtifactOrphans(lifecycle.GCPlanInput{
 		DesiredArtifacts: desired,
 		LedgerArtifacts:  ledger.All(),

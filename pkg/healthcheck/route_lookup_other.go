@@ -7,11 +7,13 @@ package healthcheck
 import (
 	"context"
 	"errors"
+
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 // lookupRoute is a no-op on platforms without a native route lookup adapter.
 // ProbeEvidence still carries the spec-derived egress / source info; only the
 // kernel-side nexthop is missing.
-func lookupRoute(_ context.Context, _, _ string) (RouteInfo, error) {
+func lookupRoute(_ context.Context, _ api.HealthCheckSpec) (RouteInfo, error) {
 	return RouteInfo{}, errors.New("route lookup not implemented on this platform")
 }

@@ -48,7 +48,7 @@ func configCommand(args []string, stdout io.Writer, name string) (err error) {
 	configWarnings := config.Warnings(router)
 	switch name {
 	case "observe":
-		result, err := engine.Observe(effectiveRouter)
+		result, err := engine.ObserveEffective(effectiveRouter, router)
 		if err != nil {
 			return err
 		}
@@ -56,7 +56,7 @@ func configCommand(args []string, stdout io.Writer, name string) (err error) {
 		appendPrefixDelegationStateWarnings(result, router, stateStore)
 		return writeResult(stdout, *statusFile, result)
 	case "plan":
-		result, err := engine.Plan(effectiveRouter)
+		result, err := engine.PlanEffective(effectiveRouter, router)
 		if err != nil {
 			return err
 		}

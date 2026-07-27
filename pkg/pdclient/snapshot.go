@@ -3,6 +3,7 @@
 package pdclient
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"net/netip"
@@ -27,6 +28,7 @@ type Snapshot struct {
 	CurrentPrefix string    `json:"currentPrefix,omitempty"`
 	ServerDUID    string    `json:"serverDUID,omitempty"`
 	IAID          uint32    `json:"iaid,omitempty"`
+	ClientDUID    string    `json:"clientDuid,omitempty"`
 	T1Seconds     int64     `json:"t1Seconds,omitempty"`
 	T2Seconds     int64     `json:"t2Seconds,omitempty"`
 	Preferred     int64     `json:"preferredSeconds,omitempty"`
@@ -46,11 +48,12 @@ type Snapshot struct {
 
 func (c *Client) Snapshot() Snapshot {
 	s := Snapshot{
-		Resource:  c.Config.Resource,
-		Interface: c.Config.Interface,
-		State:     c.State,
-		IAID:      c.Config.IAID,
-		UpdatedAt: c.now(),
+		Resource:   c.Config.Resource,
+		Interface:  c.Config.Interface,
+		State:      c.State,
+		IAID:       c.Config.IAID,
+		ClientDUID: hex.EncodeToString(c.Config.ClientDUID),
+		UpdatedAt:  c.now(),
 	}
 	if c.Lease.Prefix.IsValid() {
 		s.CurrentPrefix = c.Lease.Prefix.String()
@@ -77,6 +80,12 @@ func (c *Client) Snapshot() Snapshot {
 }
 
 func (c *Client) Restore(snapshot Snapshot) {
+	if snapshot.State == StateBound && !snapshotMatchesConfig(snapshot, c.Config, c.now()) {
+		c.State = StateIdle
+		c.Lease = Lease{}
+		c.restoreInformation(snapshot)
+		return
+	}
 	c.State = snapshot.State
 	if c.State == "" {
 		c.State = StateIdle
@@ -106,6 +115,24 @@ func (c *Client) Restore(snapshot Snapshot) {
 		RenewedAt:  snapshot.UpdatedAt,
 	}
 	c.restoreInformation(snapshot)
+}
+
+func snapshotMatchesConfig(snapshot Snapshot, config Config, now time.Time) bool {
+	if snapshot.Resource != config.Resource || snapshot.CurrentPrefix == "" || snapshot.Interface != config.Interface || snapshot.IAID != config.IAID {
+		return false
+	}
+	duid, err := hex.DecodeString(snapshot.ClientDUID)
+	if err != nil || len(duid) == 0 || !bytes.Equal(duid, config.ClientDUID) {
+		return false
+	}
+	if _, err := netip.ParsePrefix(snapshot.CurrentPrefix); err != nil {
+		return false
+	}
+	expiresAt := snapshot.ExpiresAt
+	if expiresAt.IsZero() && snapshot.Valid > 0 && !snapshot.AcquiredAt.IsZero() {
+		expiresAt = snapshot.AcquiredAt.Add(time.Duration(snapshot.Valid) * time.Second)
+	}
+	return !expiresAt.IsZero() && now.Before(expiresAt)
 }
 
 func (c *Client) restoreInformation(snapshot Snapshot) {

@@ -63,7 +63,7 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 		prefixLength := api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength)
 		base := "ipv6PrefixDelegation." + res.Metadata.Name
 		lease, _ := routerstate.PDLeaseFromStore(store, base)
-		if snapshot, ok := managedPDClientSnapshot(res.Metadata.Name); ok {
+		if snapshot, ok := managedPDClientSnapshot(res.Metadata.Name, aliases[spec.Interface], spec, store.Now()); ok {
 			lease = mergePDLeaseSnapshot(lease, snapshot)
 		}
 		previousClient := store.Get(base + ".client").Value
@@ -169,7 +169,7 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 	return changes, nil
 }
 
-func managedPDClientSnapshot(resource string) (pdclient.Snapshot, bool) {
+func managedPDClientSnapshot(resource, ifname string, spec api.DHCPv6PrefixDelegationSpec, now time.Time) (pdclient.Snapshot, bool) {
 	path := filepath.Join(pdClientLeaseDir, resource, "lease.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -179,10 +179,35 @@ func managedPDClientSnapshot(resource string) (pdclient.Snapshot, bool) {
 	if err := json.Unmarshal(data, &snapshot); err != nil {
 		return pdclient.Snapshot{}, false
 	}
-	if snapshot.CurrentPrefix == "" || snapshot.State != pdclient.StateBound {
+	if !managedPDClientSnapshotMatches(snapshot, resource, ifname, spec, now) {
 		return pdclient.Snapshot{}, false
 	}
 	return snapshot, true
+}
+
+func managedPDClientSnapshotMatches(snapshot pdclient.Snapshot, resource, ifname string, spec api.DHCPv6PrefixDelegationSpec, now time.Time) bool {
+	if snapshot.State != pdclient.StateBound || snapshot.Resource != resource || snapshot.Interface != ifname || snapshot.CurrentPrefix == "" {
+		return false
+	}
+	if _, err := netip.ParsePrefix(snapshot.CurrentPrefix); err != nil {
+		return false
+	}
+	expectedDUID := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(spec.ClientDUID), ":", ""))
+	if expectedDUID == "" {
+		expectedDUID = linkLayerDUIDFromMAC(strings.TrimSpace(readFirstString(filepath.Join("/sys/class/net", ifname, "address"))))
+	}
+	expectedIAID := uint32(1)
+	if parsed, ok := parseUint32Flexible(spec.IAID); ok {
+		expectedIAID = parsed
+	}
+	if expectedDUID == "" || !strings.EqualFold(snapshot.ClientDUID, expectedDUID) || snapshot.IAID != expectedIAID {
+		return false
+	}
+	expires := snapshot.ExpiresAt
+	if expires.IsZero() && snapshot.Valid > 0 && !snapshot.AcquiredAt.IsZero() {
+		expires = snapshot.AcquiredAt.Add(time.Duration(snapshot.Valid) * time.Second)
+	}
+	return !expires.IsZero() && now.Before(expires)
 }
 
 func mergePDLeaseSnapshot(lease routerstate.PDLease, snapshot pdclient.Snapshot) routerstate.PDLease {

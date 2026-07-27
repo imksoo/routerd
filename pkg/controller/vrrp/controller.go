@@ -83,7 +83,13 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if result.ServiceActive != nil {
 		extra["serviceActive"] = *result.ServiceActive
 	}
-	return c.saveStatuses("Applied", result.Path, result.Changed || cleanupChanged || staticChanged, tracks, result.Roles, staticIsolated, extra)
+	if result.VMACRepairError != nil {
+		extra["vmacRepairError"] = result.VMACRepairError.Error()
+	}
+	if err := c.saveStatuses("Applied", result.Path, result.Changed || cleanupChanged || staticChanged, tracks, result.Roles, staticIsolated, extra); err != nil {
+		return err
+	}
+	return result.VMACRepairError
 }
 
 func (c *Controller) stopVirtualAddressBackend(ctx context.Context) error {

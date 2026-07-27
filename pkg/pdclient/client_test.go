@@ -175,6 +175,8 @@ func TestClientSnapshotIsDBFriendly(t *testing.T) {
 		Resource:   "wan-pd",
 		Interface:  "wan0",
 		ClientDUID: client.Config.ClientDUID,
+		IAID:       1,
+		Now:        func() time.Time { return now },
 	}, &memoryTransport{})
 	if err != nil {
 		t.Fatalf("new restored client: %v", err)
@@ -182,6 +184,30 @@ func TestClientSnapshotIsDBFriendly(t *testing.T) {
 	restored.Restore(snapshot)
 	if restored.State != StateBound || restored.Lease.Prefix.String() != "2001:db8:1200:1240::/60" {
 		t.Fatalf("restored = %s %+v", restored.State, restored.Lease)
+	}
+}
+
+func TestRestoreBoundSnapshotRejectsStaleOrForeignIdentity(t *testing.T) {
+	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+	duid := []byte{0, 3, 0, 1, 2, 0, 0, 0, 1, 3}
+	base := Snapshot{Resource: "wan-pd", Interface: "wan-vmac", State: StateBound, CurrentPrefix: "2001:db8:1200::/60", ClientDUID: "00030001020000000103", IAID: 7, Valid: 3600, AcquiredAt: now, ExpiresAt: now.Add(time.Hour), UpdatedAt: now}
+	for name, snapshot := range map[string]Snapshot{
+		"expired":   func() Snapshot { s := base; s.ExpiresAt = now.Add(-time.Second); return s }(),
+		"resource":  func() Snapshot { s := base; s.Resource = "other-pd"; return s }(),
+		"duid":      func() Snapshot { s := base; s.ClientDUID = "00030001020000000104"; return s }(),
+		"iaid":      func() Snapshot { s := base; s.IAID = 8; return s }(),
+		"interface": func() Snapshot { s := base; s.Interface = "wan"; return s }(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			client, err := New(Config{Resource: "wan-pd", Interface: "wan-vmac", ClientDUID: duid, IAID: 7, Now: func() time.Time { return now }}, &memoryTransport{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			client.Restore(snapshot)
+			if client.State != StateIdle || client.Lease.Prefix.IsValid() {
+				t.Fatalf("restored stale/foreign snapshot = %s %+v", client.State, client.Lease)
+			}
+		})
 	}
 }
 

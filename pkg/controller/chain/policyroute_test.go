@@ -4,6 +4,7 @@ package chain
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,6 +20,187 @@ import (
 	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resource"
 )
+
+func TestIPv6HostPolicyUsesStateAndNeverMarksNft(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "ipv6-host-policy.json")
+	router := hostPolicyRouter(true)
+	store := mapStore{}
+	var calls []string
+	controller := IPv4PolicyRouteController{Router: router, Store: store, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		call := name + " " + strings.Join(args, " ")
+		calls = append(calls, call)
+		switch call {
+		case "ip -6 -o addr show dev wan0 scope global":
+			return []byte("2: wan0    inet6 2001:db8::2/64 scope global\n"), nil
+		case "ip -6 rule show":
+			return []byte(""), nil
+		default:
+			return nil, nil
+		}
+	}}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(calls, "\n")
+	for _, want := range []string{
+		"ip -6 route replace default via fe80::1 dev wan0 table 120 metric 50 src 2001:db8::2",
+		"ip -6 rule add priority 10120 iif lo lookup 120",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("missing %q in:\n%s", want, joined)
+		}
+	}
+	if data, err := render.NftablesIPv4PolicyRoutes(router); err != nil || strings.Contains(string(data), "120") {
+		t.Fatalf("host policy must not enter IPv4 nft: %q, %v", data, err)
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(strings.Join(calls, "\n"), "route replace default"); got != 2 {
+		t.Fatalf("state must not suppress route drift repair, route replace count=%d", got)
+	}
+}
+
+func TestIPv6HostPolicyRepairsMissingRuleWithMatchingState(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "ipv6-host-policy.json")
+	previous := ipv6HostPolicyState{Policies: []ipv6HostPolicy{{Name: "host-ipv6-ra", Priority: 10120, Table: 120, Gateway: "fe80::1", Interface: "wan0", Source: "2001:db8::2", Metric: 50}}}
+	if err := writeIPv6HostPolicyState(statePath, previous); err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: mapStore{}, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		call := name + " " + strings.Join(args, " ")
+		calls = append(calls, call)
+		switch call {
+		case "ip -6 -o addr show dev wan0 scope global":
+			return []byte("2: wan0 inet6 2001:db8::2/64 scope global\n"), nil
+		case "ip -6 rule show":
+			return []byte("0: from all lookup local\n"), nil
+		}
+		return nil, nil
+	}}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(calls, "\n")
+	for _, want := range []string{
+		"ip -6 route replace default via fe80::1 dev wan0 table 120 metric 50 src 2001:db8::2",
+		"ip -6 rule add priority 10120 iif lo lookup 120",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("matching state did not repair %q:\n%s", want, joined)
+		}
+	}
+}
+
+func TestIPv6HostPolicyInitialSourceUnavailableDoesNotApply(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "ipv6-host-policy.json")
+	store := mapStore{}
+	var calls []string
+	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: store, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		if strings.Contains(strings.Join(args, " "), "addr show") {
+			return nil, errors.New("no global address")
+		}
+		return nil, nil
+	}}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatalf("initial unavailable source must not fail policy reconcile: %v", err)
+	}
+	if got := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "host-ipv6-ra"); got["phase"] != "Pending" || got["reason"] != "PreferredSourceUnavailable" {
+		t.Fatalf("status = %#v", got)
+	}
+	for _, call := range calls {
+		if strings.Contains(call, "route replace") || strings.Contains(call, "rule add") {
+			t.Fatalf("initial unavailable source must not apply host policy: %s", call)
+		}
+	}
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatalf("initial unavailable source must not create state: %v", err)
+	}
+}
+
+func TestIPv6HostPolicyRetainsStateWhenPreferredSourceUnavailable(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "ipv6-host-policy.json")
+	previous := ipv6HostPolicyState{Policies: []ipv6HostPolicy{{Name: "host-ipv6-ra", Priority: 10120, Table: 120, Gateway: "fe80::1", Interface: "wan0", Source: "2001:db8::2", Metric: 50}}}
+	if err := writeIPv6HostPolicyState(statePath, previous); err != nil {
+		t.Fatal(err)
+	}
+	store := mapStore{}
+	var calls []string
+	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: store, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		if strings.Contains(strings.Join(args, " "), "addr show") {
+			return nil, errors.New("no global address")
+		}
+		return nil, nil
+	}}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatalf("host source loss must not fail IPv4 reconciliation: %v", err)
+	}
+	if got := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "host-ipv6-ra"); got["reason"] != "PreferredSourceUnavailable" || got["phase"] != "Pending" {
+		t.Fatalf("unexpected status: %#v", got)
+	}
+	for _, call := range calls {
+		if strings.Contains(call, "route del") || strings.Contains(call, "rule del") || strings.Contains(call, "route replace") || strings.Contains(call, "rule add") {
+			t.Fatalf("must retain previous host state: %s", call)
+		}
+	}
+}
+
+func TestIPv6HostPolicyChangesAndRemovesOnlyStatefulRules(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "ipv6-host-policy.json")
+	previous := ipv6HostPolicyState{Policies: []ipv6HostPolicy{{Name: "host-ipv6-ra", Priority: 10120, Table: 120, Gateway: "fe80::1", Interface: "wan0", Source: "2001:db8::2", Metric: 50}}}
+	if err := writeIPv6HostPolicyState(statePath, previous); err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: mapStore{}, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		call := name + " " + strings.Join(args, " ")
+		calls = append(calls, call)
+		if strings.Contains(call, "addr show") {
+			return []byte("2: wan0 inet6 2001:db8::9/64 scope global\n"), nil
+		}
+		if strings.Contains(call, "rule show") {
+			return nil, nil
+		}
+		return nil, nil
+	}}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(calls, "\n")
+	for _, want := range []string{
+		"ip -6 rule del priority 10120 iif lo lookup 120",
+		"ip -6 route del default via fe80::1 dev wan0 table 120 metric 50 src 2001:db8::2",
+		"ip -6 route replace default via fe80::1 dev wan0 table 120 metric 50 src 2001:db8::9",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("missing %q in:\n%s", want, joined)
+		}
+	}
+	calls = nil
+	controller.Router = hostPolicyRouter(false)
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	joined = strings.Join(calls, "\n")
+	if !strings.Contains(joined, "ip -6 route del default via fe80::1 dev wan0 table 120 metric 50 src 2001:db8::9") {
+		t.Fatalf("config removal must clean current route:\n%s", joined)
+	}
+	state, err := loadIPv6HostPolicyState(statePath)
+	if err != nil || len(state.Policies) != 0 {
+		t.Fatalf("state after removal = %#v, %v", state, err)
+	}
+}
+
+func hostPolicyRouter(includeHost bool) *api.Router {
+	resources := []api.Resource{{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "wan0"}}}
+	if includeHost {
+		resources = append(resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "host-ipv6-ra"}, Spec: api.EgressRoutePolicySpec{Family: "ipv6", Mode: "priority", HostTraffic: true, Candidates: []api.EgressRoutePolicyCandidate{{Name: "physical-ra", Interface: "wan", GatewaySource: "static", Gateway: "fe80::1", PreferredSource: "interface", Table: 120, Priority: 10120, Metric: 50}}}})
+	}
+	return &api.Router{Spec: api.RouterSpec{Resources: resources}}
+}
 
 func TestEgressRoutePolicyFiltersUnhealthyTargets(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{

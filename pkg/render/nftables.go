@@ -305,7 +305,7 @@ func NftablesIPv4PolicyRoutes(router *api.Router) ([]byte, error) {
 			continue
 		}
 		spec, err := res.EgressRoutePolicySpec()
-		if err == nil && egressPolicyRendersPolicyMarks(spec) {
+		if err == nil && !spec.HostTraffic && egressPolicyRendersPolicyMarks(spec) {
 			policies = append(policies, res)
 		}
 	}

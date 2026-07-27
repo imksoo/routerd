@@ -9,9 +9,11 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/healthcheck"
 	routerotel "github.com/imksoo/routerd/pkg/otel"
 )
@@ -50,6 +52,42 @@ func TestSelftestTCP(t *testing.T) {
 	}
 }
 
+func TestBindingValidationResult(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts options
+		spec api.HealthCheckSpec
+		want bool
+	}{
+		{"normal", options{}, api.HealthCheckSpec{}, false}, {"missing-iface", options{requireDSLiteBinding: true}, api.HealthCheckSpec{FwMark: 1}, true}, {"missing-mark", options{requireDSLiteBinding: true}, api.HealthCheckSpec{SourceInterface: "dslite0"}, true}, {"complete", options{requireDSLiteBinding: true}, api.HealthCheckSpec{SourceInterface: "dslite0", FwMark: 1}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := bindingValidationResult(tc.opts, tc.spec) != nil; got != tc.want {
+				t.Fatalf("invalid=%v", got)
+			}
+		})
+	}
+}
+
+func TestProbeOnceRequiresDSLiteBindingImmediatelyUnhealthy(t *testing.T) {
+	dir := t.TempDir()
+	d := newDaemon(options{
+		resource: "dslite", target: "2001:db8::1", protocol: "tcp", timeout: time.Second,
+		requireDSLiteBinding: true, unhealthyThreshold: 5,
+		stateFile: filepath.Join(dir, "state.json"), eventFile: filepath.Join(dir, "events.jsonl"),
+	}, &routerotel.Runtime{})
+	d.state.Phase = healthcheck.PhaseHealthy
+	if err := d.probeOnce(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if d.state.Phase != healthcheck.PhaseUnhealthy || !strings.Contains(d.state.LastMessage, "DSLiteProbeBindingInvalid") {
+		t.Fatalf("state = %#v", d.state)
+	}
+	if d.state.LastEvidence.FailureKind != healthcheck.FailureKindOther {
+		t.Fatalf("evidence = %#v", d.state.LastEvidence)
+	}
+}
+
 func TestRestoreStateIgnoresEmptyFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	if err := os.WriteFile(path, []byte("\n"), 0644); err != nil {
@@ -64,7 +102,7 @@ func TestRestoreStateIgnoresEmptyFile(t *testing.T) {
 func TestProbeOnceUpdatesStateHistory(t *testing.T) {
 	// Stub the route lookup so the daemon path is hermetic.
 	orig := healthcheck.RouteLookup
-	healthcheck.RouteLookup = func(ctx context.Context, target, family string) (healthcheck.RouteInfo, error) {
+	healthcheck.RouteLookup = func(ctx context.Context, spec api.HealthCheckSpec) (healthcheck.RouteInfo, error) {
 		return healthcheck.RouteInfo{NextHop: "192.0.2.1", OutInterface: "wan0", Source: "192.0.2.42"}, nil
 	}
 	defer func() { healthcheck.RouteLookup = orig }()

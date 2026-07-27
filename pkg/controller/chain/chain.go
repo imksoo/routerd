@@ -57,6 +57,7 @@ import (
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/observabilitypipeline"
 	"github.com/imksoo/routerd/pkg/observe"
+	"github.com/imksoo/routerd/pkg/pdclient"
 	"github.com/imksoo/routerd/pkg/platform"
 	provideraction "github.com/imksoo/routerd/pkg/provideraction"
 	"github.com/imksoo/routerd/pkg/providerinventory"
@@ -1432,6 +1433,9 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 		if resourcequery.ResourceWhenIndeterminate(when, store) {
 			continue
 		}
+		if preserveStagedIPv6DelegatedAddressWhenFalse(res, apiVersion, store) {
+			continue
+		}
 		if preserved, err := r.preserveFreshDaemonStatusWhenFalse(res, apiVersion, store, now); err != nil {
 			return err
 		} else if preserved {
@@ -1449,6 +1453,18 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 		}
 	}
 	return nil
+}
+
+// preserveStagedIPv6DelegatedAddressWhenFalse keeps a LAN address which the
+// LAN controller deliberately staged on an existing VRRP VMAC.  The LAN
+// controller owns its expiry and VMAC-loss cleanup; replacing it here with a
+// generic WhenFalse status would make the staging state oscillate every pass.
+func preserveStagedIPv6DelegatedAddressWhenFalse(res api.Resource, apiVersion string, store eventedStore) bool {
+	if res.Kind != "IPv6DelegatedAddress" {
+		return false
+	}
+	status := store.ObjectStatus(apiVersion, res.Kind, res.Metadata.Name)
+	return strings.TrimSpace(fmt.Sprint(status["phase"])) == "Applied" && status["staged"] == true
 }
 
 func (r *Runner) clearWhenFalseStatus(apiVersion, kind, name string, store eventedStore) error {
@@ -2126,11 +2142,9 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			current := lan
 			current.Router = effective
-			for _, resource := range effective.Spec.Resources {
-				if resource.Kind == "DHCPv6PrefixDelegation" {
-					if err := current.reconcile(ctx, resource.Metadata.Name); err != nil {
-						return err
-					}
+			for _, name := range declaredPrefixDelegationNames(effective, r.Router) {
+				if err := current.reconcile(ctx, name); err != nil {
+					return err
 				}
 			}
 			return nil
@@ -2398,6 +2412,25 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	}
 	controllers = r.filterControllers(controllers)
 	return controllers, daemonStatusSync, nil
+}
+
+func declaredPrefixDelegationNames(effective, declared *api.Router) []string {
+	seen := map[string]bool{}
+	for _, router := range []*api.Router{effective, declared} {
+		if router != nil {
+			for _, resource := range router.Spec.Resources {
+				if resource.Kind == "DHCPv6PrefixDelegation" && resource.Metadata.Name != "" {
+					seen[resource.Metadata.Name] = true
+				}
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for name := range seen {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func didWorkPeriodic(fn func(context.Context) error) func(context.Context) (bool, error) {
@@ -3626,6 +3659,15 @@ type LANAddressController struct {
 	Logger         *slog.Logger
 	Command        commandFunc
 	AddressPresent func(context.Context, string, string) bool
+	// StagingAddressPresent is the VMAC standby readback seam. Production uses
+	// the staging-specific Linux readback; tests may inject the same contract.
+	StagingAddressPresent func(context.Context, string, string) bool
+	// EnsureVMAC is used only for standby staging.  The authoritative VRRP
+	// helper creates the configured macvlan cold and leaves it DOWN.
+	EnsureVMAC          func(context.Context, string) error
+	VMACPresent         func(string) bool
+	Now                 func() time.Time
+	PDLeaseSnapshotPath func(string) string
 }
 
 type LinkController struct {
@@ -4595,6 +4637,42 @@ func ipv6AddressPresentWithPrefix(ctx context.Context, ifname, address string) b
 	return false
 }
 
+// ipv6StagedAddressPresentWithPrefix is intentionally narrower than the
+// active-owner readback: a DOWN macvlan cannot complete DAD, so a tentative
+// exact delegated address is valid standby staging evidence. A dadfailed
+// address is never valid evidence.
+func ipv6StagedAddressPresentWithPrefix(ctx context.Context, ifname, address string) bool {
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		return ipv6AddressPresentWithPrefix(ctx, ifname, address)
+	}
+	out, err := exec.CommandContext(ctx, "ip", "-6", "-o", "addr", "show", "dev", ifname).Output()
+	if err != nil {
+		return false
+	}
+	return ipAddrShowHasStagedIPv6AddressWithPrefix(out, address)
+}
+
+func ipAddrShowHasStagedIPv6AddressWithPrefix(out []byte, address string) bool {
+	want, err := netip.ParsePrefix(strings.TrimSpace(address))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] != "inet6" {
+				continue
+			}
+			got, err := netip.ParsePrefix(fields[i+1])
+			if err != nil || got.Addr() != want.Addr() || got.Bits() != want.Bits() {
+				continue
+			}
+			return !fieldsContain(fields, "dadfailed")
+		}
+	}
+	return false
+}
+
 func fieldsContain(fields []string, want string) bool {
 	for _, field := range fields {
 		if field == want {
@@ -4690,14 +4768,40 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		return err
 	}
 	pdStatus := c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", pdName)
-	if statusStringPreferObserved(pdStatus, "phase") != daemonapi.ResourcePhaseBound {
+	activePD := statusStringPreferObserved(pdStatus, "phase") == daemonapi.ResourcePhaseBound
+	prefix := ""
+	if activePD {
+		prefix = statusStringPreferObserved(pdStatus, "currentPrefix")
+	}
+	stagedSnapshot, stagedSnapshotFresh := c.freshStagedPDSnapshot(pdName)
+	if !activePD && !stagedSnapshotFresh {
 		return nil
 	}
-	prefix := statusStringPreferObserved(pdStatus, "currentPrefix")
-	if prefix == "" {
+	if activePD && prefix == "" {
 		return nil
 	}
-	for _, resource := range c.Router.Spec.Resources {
+	if !activePD {
+		prefix = stagedSnapshot.CurrentPrefix
+	}
+	resources := append([]api.Resource(nil), c.Router.Spec.Resources...)
+	stagedIDs := map[string]bool{}
+	if !activePD && c.DeclaredRouter != nil && stagedSnapshotFresh {
+		present := map[string]bool{}
+		for _, resource := range resources {
+			present[resource.ID()] = true
+		}
+		for _, resource := range c.DeclaredRouter.Spec.Resources {
+			if resource.Kind != "IPv6DelegatedAddress" || present[resource.ID()] {
+				continue
+			}
+			spec, err := resource.IPv6DelegatedAddressSpec()
+			if err == nil && spec.PrefixDelegation == pdName && c.vrrpVMACConfigured(spec.Interface) {
+				resources = append(resources, resource)
+				stagedIDs[resource.ID()] = true
+			}
+		}
+	}
+	for _, resource := range resources {
 		if resource.Kind != "IPv6DelegatedAddress" {
 			continue
 		}
@@ -4708,8 +4812,29 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		if spec.PrefixDelegation != pdName {
 			continue
 		}
-		linkUp := c.linkReady(spec.Interface)
-		if !resourcequery.DependenciesReady(c.Store, spec.DependsOn) {
+		stagingVMAC := stagedIDs[resource.ID()] || (!activePD && stagedSnapshotFresh && c.vrrpVMACConfigured(spec.Interface))
+		if stagingVMAC && !stagedSnapshotFresh {
+			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "PDLeaseStale"})
+			continue
+		}
+		if stagingVMAC {
+			if err := c.ensureStagingVMAC(ctx, spec.Interface); err != nil || !c.stagingVMACPresent(spec.Interface) {
+				reason := "VMACMissing"
+				message := ""
+				if err != nil {
+					reason = "VMACEnsureFailed"
+					message = err.Error()
+				}
+				status := map[string]any{"phase": "Pending", "reason": reason}
+				if message != "" {
+					status["message"] = message
+				}
+				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, status)
+				continue
+			}
+		}
+		linkUp := c.linkReady(spec.Interface) || stagingVMAC
+		if !c.delegatedAddressDependenciesReady(spec.DependsOn, spec.Interface, pdName, stagingVMAC) {
 			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse"})
 			continue
 		}
@@ -4732,20 +4857,39 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 			"prefixSource": pdName,
 			"dryRun":       c.DryRun,
 		}
+		if stagingVMAC {
+			status["staged"] = true
+		}
 		changed := objectStatusChanged("IPv6DelegatedAddress", c.Store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name), status)
-		ifname := interfaceIfName(c.Router, spec.Interface)
+		ifname := ""
+		if c.DeclaredRouter != nil {
+			ifname = interfaceIfName(c.DeclaredRouter, spec.Interface)
+		}
+		if ifname == "" {
+			ifname = interfaceIfName(c.Router, spec.Interface)
+		}
 		if ifname == "" {
 			ifname = spec.Interface
 		}
 		addressPresent := true
-		if !c.DryRun {
-			addressPresentFn := c.AddressPresent
+		addressPresentFn := c.AddressPresent
+		if stagingVMAC {
+			addressPresentFn = c.StagingAddressPresent
 			if addressPresentFn == nil {
-				addressPresentFn = ipv6AddressPresent
-				if spec.PrefixLength == 128 {
-					addressPresentFn = ipv6AddressPresentWithPrefix
-				}
+				// Keep the existing test seam, while production always uses the
+				// standby-specific exact-prefix readback.
+				addressPresentFn = c.AddressPresent
 			}
+			if addressPresentFn == nil {
+				addressPresentFn = ipv6StagedAddressPresentWithPrefix
+			}
+		} else if addressPresentFn == nil {
+			addressPresentFn = ipv6AddressPresent
+			if spec.PrefixLength == 128 {
+				addressPresentFn = ipv6AddressPresentWithPrefix
+			}
+		}
+		if !c.DryRun {
 			addressPresent = addressPresentFn(ctx, ifname, addr)
 		}
 		if !c.DryRun && (changed || !addressPresent) {
@@ -4765,6 +4909,10 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 			if err := command(ctx, name, args...); err != nil {
 				return err
 			}
+			if stagingVMAC && !addressPresentFn(ctx, ifname, addr) {
+				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "AddressReadbackFailed"})
+				continue
+			}
 		}
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, status); err != nil {
 			return err
@@ -4779,6 +4927,271 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		}
 	}
 	return nil
+}
+
+func (c LANAddressController) delegatedAddressDependenciesReady(dependencies []api.ResourceDependencySpec, iface, pdName string, stagingVMAC bool) bool {
+	if !stagingVMAC {
+		return resourcequery.DependenciesReady(c.Store, dependencies)
+	}
+	filtered := make([]api.ResourceDependencySpec, 0, len(dependencies))
+	for _, dep := range dependencies {
+		if dep.Resource == "Interface/"+iface && dep.Phase == "Up" {
+			continue
+		}
+		if dep.Resource == "DHCPv6PrefixDelegation/"+pdName && dep.Phase == daemonapi.ResourcePhaseBound {
+			continue
+		}
+		filtered = append(filtered, dep)
+	}
+	return resourcequery.DependenciesReady(c.Store, filtered)
+}
+
+// stagingVMACPresent accepts only the fully cold BACKUP shape.  In particular,
+// a VMAC left UP or retaining any link-local identity must be reconciled by the
+// helper before delegated addresses can be staged.
+func (c LANAddressController) stagingVMACPresent(logical string) bool {
+	if c.VMACPresent != nil {
+		return c.VMACPresent(logical)
+	}
+	return c.vrrpVMACReadbackPresent(logical)
+}
+
+func (c LANAddressController) vrrpVMACReadbackPresent(logical string) bool {
+	router := c.DeclaredRouter
+	if router == nil {
+		router = c.Router
+	}
+	if router == nil {
+		return false
+	}
+	ifname := interfaceIfName(router, logical)
+	if ifname == "" {
+		return false
+	}
+	ifi, err := net.InterfaceByName(ifname)
+	if err != nil {
+		return false
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "VirtualAddress" {
+			continue
+		}
+		spec, err := resource.VirtualAddressSpec()
+		if err != nil || spec.Mode != "vrrp" {
+			continue
+		}
+		entries := append([]api.VirtualAddressVRRPFailoverVMACSpec(nil), spec.VRRP.AdditionalFailoverVMACs...)
+		if spec.VRRP.FailoverVMAC != nil {
+			entries = append(entries, *spec.VRRP.FailoverVMAC)
+		}
+		for _, entry := range entries {
+			if entry.Interface == ifname {
+				addrs, addrErr := ifi.Addrs()
+				return addrErr == nil && vrrpVMACStagingReadbackMatches(entry, ifi.HardwareAddr, ifi.Flags, addrs)
+			}
+		}
+	}
+	return false
+}
+
+func vrrpVMACActiveReadbackMatches(entry api.VirtualAddressVRRPFailoverVMACSpec, mac net.HardwareAddr, flags net.Flags, addrs []net.Addr) bool {
+	if flags&net.FlagUp == 0 || !vrrpVMACMACMatches(entry, mac) {
+		return false
+	}
+	return vrrpVMACHasConfiguredLinkLocal(entry, addrs)
+}
+
+func vrrpVMACStagingReadbackMatches(entry api.VirtualAddressVRRPFailoverVMACSpec, mac net.HardwareAddr, flags net.Flags, addrs []net.Addr) bool {
+	return flags&net.FlagUp == 0 && vrrpVMACMACMatches(entry, mac) && !hasIPv6LinkLocal(addrs)
+}
+
+func vrrpVMACMACMatches(entry api.VirtualAddressVRRPFailoverVMACSpec, mac net.HardwareAddr) bool {
+	wantMAC, err := net.ParseMAC(entry.MACAddress)
+	if err != nil || !strings.EqualFold(mac.String(), wantMAC.String()) {
+		return false
+	}
+	return true
+}
+
+func vrrpVMACHasConfiguredLinkLocal(entry api.VirtualAddressVRRPFailoverVMACSpec, addrs []net.Addr) bool {
+	if strings.TrimSpace(entry.LinkLocalAddress) == "" {
+		return true
+	}
+	wantLL := net.ParseIP(entry.LinkLocalAddress)
+	if wantLL == nil {
+		return false
+	}
+	for _, addr := range addrs {
+		ip, _, err := net.ParseCIDR(addr.String())
+		if err == nil && ip.Equal(wantLL) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasIPv6LinkLocal(addrs []net.Addr) bool {
+	for _, addr := range addrs {
+		ip, _, err := net.ParseCIDR(addr.String())
+		if err == nil && ip.IsLinkLocalUnicast() && ip.To4() == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (c LANAddressController) vrrpVMACConfigured(logical string) bool {
+	_, ok := c.vrrpVMAC(logical)
+	return ok
+}
+
+func (c LANAddressController) ensureStagingVMAC(ctx context.Context, logical string) error {
+	if c.stagingVMACPresent(logical) {
+		return nil
+	}
+	entry, ok := c.vrrpVMAC(logical)
+	if !ok {
+		return fmt.Errorf("no VRRP VMAC configured for %s", logical)
+	}
+	if c.EnsureVMAC != nil {
+		return c.EnsureVMAC(ctx, logical)
+	}
+	router := c.DeclaredRouter
+	if router == nil {
+		router = c.Router
+	}
+	parent := interfaceIfName(router, entry.ParentInterface)
+	if parent == "" {
+		// ParentInterface normally names an Interface resource alias.  Preserve
+		// the helper's direct-interface contract for configurations that provide
+		// an actual Linux interface name instead.
+		parent = entry.ParentInterface
+	}
+	command := c.Command
+	args := []string{"deactivate", "--vmac", parent + "," + entry.Interface + "," + entry.MACAddress + "," + entry.LinkLocalAddress + "," + fmt.Sprintf("%t", entry.WithdrawRouterAdvertisement)}
+	if command != nil {
+		return command(ctx, "/usr/local/sbin/routerd-vrrp-vmac", args...)
+	}
+	output, err := exec.CommandContext(ctx, "/usr/local/sbin/routerd-vrrp-vmac", args...).CombinedOutput()
+	if err != nil {
+		return vmacHelperCommandError(args, err, output)
+	}
+	return nil
+}
+
+func vmacHelperCommandError(args []string, err error, output []byte) error {
+	message := strings.TrimSpace(string(output))
+	if message == "" {
+		return fmt.Errorf("routerd-vrrp-vmac %s: %w", strings.Join(args, " "), err)
+	}
+	return fmt.Errorf("routerd-vrrp-vmac %s: %w: %s", strings.Join(args, " "), err, message)
+}
+
+func (c LANAddressController) vrrpVMAC(logical string) (api.VirtualAddressVRRPFailoverVMACSpec, bool) {
+	router := c.DeclaredRouter
+	if router == nil {
+		router = c.Router
+	}
+	if router == nil {
+		return api.VirtualAddressVRRPFailoverVMACSpec{}, false
+	}
+	ifname := interfaceIfName(router, logical)
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "VirtualAddress" {
+			continue
+		}
+		spec, err := resource.VirtualAddressSpec()
+		if err != nil || spec.Mode != "vrrp" {
+			continue
+		}
+		entries := append([]api.VirtualAddressVRRPFailoverVMACSpec(nil), spec.VRRP.AdditionalFailoverVMACs...)
+		if spec.VRRP.FailoverVMAC != nil {
+			entries = append(entries, *spec.VRRP.FailoverVMAC)
+		}
+		for _, entry := range entries {
+			if entry.Interface == ifname {
+				return entry, true
+			}
+		}
+	}
+	return api.VirtualAddressVRRPFailoverVMACSpec{}, false
+}
+
+func (c LANAddressController) freshStagedPDSnapshot(pdName string) (pdclient.Snapshot, bool) {
+	declared := c.DeclaredRouter
+	if declared == nil {
+		return pdclient.Snapshot{}, false
+	}
+	var spec api.DHCPv6PrefixDelegationSpec
+	found := false
+	for _, resource := range declared.Spec.Resources {
+		if resource.Kind != "DHCPv6PrefixDelegation" || resource.Metadata.Name != pdName {
+			continue
+		}
+		parsed, err := resource.DHCPv6PrefixDelegationSpec()
+		if err != nil {
+			return pdclient.Snapshot{}, false
+		}
+		spec = parsed
+		found = true
+		break
+	}
+	if !found {
+		return pdclient.Snapshot{}, false
+	}
+	ifname := interfaceIfName(declared, spec.Interface)
+	if ifname == "" {
+		return pdclient.Snapshot{}, false
+	}
+	path := defaultDHCPv6PDLeaseFile(pdName)
+	if c.PDLeaseSnapshotPath != nil {
+		path = c.PDLeaseSnapshotPath(pdName)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return pdclient.Snapshot{}, false
+	}
+	var snapshot pdclient.Snapshot
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return pdclient.Snapshot{}, false
+	}
+	if snapshot.State != pdclient.StateBound || snapshot.Resource != pdName || snapshot.Interface != ifname || strings.TrimSpace(snapshot.CurrentPrefix) == "" {
+		return pdclient.Snapshot{}, false
+	}
+	prefix, err := netip.ParsePrefix(snapshot.CurrentPrefix)
+	if err != nil {
+		return pdclient.Snapshot{}, false
+	}
+	if prefix.Bits() != api.EffectiveIPv6PDPrefixLength(spec.Profile, spec.PrefixLength) {
+		return pdclient.Snapshot{}, false
+	}
+	expectedDUID := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(spec.ClientDUID), ":", ""))
+	if expectedDUID == "" || !strings.EqualFold(strings.ReplaceAll(strings.TrimSpace(snapshot.ClientDUID), ":", ""), expectedDUID) {
+		return pdclient.Snapshot{}, false
+	}
+	expectedIAID := uint32(1)
+	if value := strings.TrimSpace(spec.IAID); value != "" {
+		parsed, err := strconv.ParseUint(value, 0, 32)
+		if err != nil {
+			return pdclient.Snapshot{}, false
+		}
+		expectedIAID = uint32(parsed)
+	}
+	if snapshot.IAID != expectedIAID {
+		return pdclient.Snapshot{}, false
+	}
+	expires := snapshot.ExpiresAt
+	if expires.IsZero() && snapshot.Valid > 0 && !snapshot.AcquiredAt.IsZero() {
+		expires = snapshot.AcquiredAt.Add(time.Duration(snapshot.Valid) * time.Second)
+	}
+	now := time.Now().UTC()
+	if c.Now != nil {
+		now = c.Now().UTC()
+	}
+	if expires.IsZero() || !now.Before(expires) {
+		return pdclient.Snapshot{}, false
+	}
+	return snapshot, true
 }
 
 func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context.Context, pdName string) error {
@@ -4805,7 +5218,10 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 			continue
 		}
 		when := resourcequery.ResourceWhen(resource)
-		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, stateStore) || resourcequery.ResourceWhenIndeterminate(when, stateStore) {
+		_, stagedSnapshotFresh := c.freshStagedPDSnapshot(pdName)
+		// A configured VRRP-owned VMAC may be absent while the node is BACKUP.
+		// Its presence is therefore not evidence for staging eligibility.
+		if (c.vrrpVMACConfigured(spec.Interface) && stagedSnapshotFresh) || !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, stateStore) || resourcequery.ResourceWhenIndeterminate(when, stateStore) {
 			continue
 		}
 		previous := c.Store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name)
@@ -4837,9 +5253,13 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 				}
 			}
 		}
+		reason := "WhenFalse"
+		if c.vrrpVMACConfigured(spec.Interface) {
+			reason = "PDLeaseStale"
+		}
 		status := map[string]any{
 			"phase":        "Pending",
-			"reason":       "WhenFalse",
+			"reason":       reason,
 			"interface":    spec.Interface,
 			"prefixSource": pdName,
 			"dryRun":       c.DryRun,

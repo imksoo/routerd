@@ -27,6 +27,7 @@ import (
 	"github.com/imksoo/routerd/pkg/controlapi"
 	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
 	"github.com/imksoo/routerd/pkg/eventlog"
+	"github.com/imksoo/routerd/pkg/pdclient"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resource"
@@ -492,6 +493,66 @@ func TestRunApplyChainOnceDryRunDoesNotCreateStateDB(t *testing.T) {
 	if _, err := os.Stat(ledgerDir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("dry-run ledger dir stat error = %v, want not exist", err)
 	}
+}
+
+func TestRunApplyChainOncePlansBackupEffectiveRouterAgainstDeclaredGraph(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "routerd.db")
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open state: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "VirtualAddress", "lan-gw-v4", map[string]any{"role": "backup"}); err != nil {
+		t.Fatalf("save backup role: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close state: %v", err)
+	}
+
+	master := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+		"VirtualAddress/lan-gw-v4.role": {Equals: "master"},
+	}}
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "backup-effective"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "wan0", Managed: false, Owner: "external"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lan0", Managed: false, Owner: "external"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "lan-gw-v4"}, Spec: api.VirtualAddressSpec{Family: "ipv4", Interface: "lan", Address: "192.0.2.1/32", Mode: "vrrp", VRRP: api.VirtualAddressVRRPSpec{VirtualRouterID: 18, Priority: 100, Peers: []string{"192.0.2.2"}}}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan", When: master}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-base"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", AddressSuffix: "::1", DependsOn: []api.ResourceDependencySpec{{Resource: "DHCPv6PrefixDelegation/wan-pd", Phase: "Bound"}}}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"}, Metadata: api.ObjectMeta{Name: "lan-resolver"}, Spec: api.DNSResolverSpec{Listen: []api.DNSResolverListenSpec{{AddressFrom: []api.StatusValueSourceSpec{{Resource: "IPv6DelegatedAddress/lan-base", Field: "address"}}}}, Sources: []api.DNSResolverSourceSpec{{Name: "upstream", Kind: "upstream", Match: []string{"."}, Upstreams: []string{"udp://[2001:db8::53]:53"}}}}},
+		}},
+	}
+
+	result, err := runApplyChainOnce(context.Background(), router, applyOptions{
+		DryRun:            true,
+		Sandbox:           true,
+		StatePath:         statePath,
+		LedgerPath:        filepath.Join(dir, "ledger.db"),
+		StatusFile:        filepath.Join(dir, "status.json"),
+		DnsmasqConfigPath: filepath.Join(dir, "dnsmasq.conf"),
+		NftablesPath:      filepath.Join(dir, "nftables.conf"),
+		ConfigPath:        filepath.Join(dir, "router.yaml"),
+	}, io.Discard, &eventlog.Logger{})
+	if err != nil {
+		t.Fatalf("run backup apply chain: %v", err)
+	}
+	if findApplyResult(result, api.NetAPIVersion+"/DHCPv6PrefixDelegation/wan-pd") != nil {
+		t.Fatalf("backup apply plan contains master-only PD: %#v", result.Resources)
+	}
+	if findApplyResult(result, api.NetAPIVersion+"/IPv6DelegatedAddress/lan-base") == nil {
+		t.Fatalf("backup apply plan omitted delegated address: %#v", result.Resources)
+	}
+}
+
+func findApplyResult(result *apply.Result, id string) *apply.ResourceResult {
+	for i := range result.Resources {
+		if result.Resources[i].ID == id {
+			return &result.Resources[i]
+		}
+	}
+	return nil
 }
 
 func TestApplyCommandDryRunUsesChainOnceWithoutCreatingStateDB(t *testing.T) {
@@ -4141,6 +4202,7 @@ func TestRecordPrefixDelegationStateUsesManagedDaemonLease(t *testing.T) {
   "state": "bound",
   "currentPrefix": "2001:db8:1230::/60",
   "serverDUID": "00030001020000000001",
+  "clientDuid": "00030001020000000103",
   "iaid": 1,
   "t1Seconds": 7200,
   "t2Seconds": 12600,
@@ -4161,7 +4223,7 @@ func TestRecordPrefixDelegationStateUsesManagedDaemonLease(t *testing.T) {
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
 			Metadata: api.ObjectMeta{Name: "wan-pd"},
-			Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan"},
+			Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan", ClientDUID: "00030001020000000103", IAID: "1"},
 		},
 	}}}
 	store := routerstate.New()
@@ -4179,6 +4241,19 @@ func TestRecordPrefixDelegationStateUsesManagedDaemonLease(t *testing.T) {
 	}
 	if lease.CurrentPrefix != "2001:db8:1230::/60" || lease.VLTime != "14400" || lease.LastReplyAt != acquiredAt {
 		t.Fatalf("lease = %+v", lease)
+	}
+}
+
+func TestManagedPDClientSnapshotMatchesDefaultProfileImplicitDUID(t *testing.T) {
+	mac := strings.TrimSpace(readFirstString("/sys/class/net/lo/address"))
+	duid := linkLayerDUIDFromMAC(mac)
+	if duid == "" {
+		t.Skip("loopback MAC is unavailable")
+	}
+	now := time.Now().UTC()
+	snapshot := pdclient.Snapshot{Resource: "wan-pd", Interface: "lo", State: pdclient.StateBound, CurrentPrefix: "2001:db8:1200::/60", ClientDUID: duid, IAID: 1, Valid: 60, AcquiredAt: now, ExpiresAt: now.Add(time.Minute)}
+	if !managedPDClientSnapshotMatches(snapshot, "wan-pd", "lo", api.DHCPv6PrefixDelegationSpec{Interface: "wan"}, now) {
+		t.Fatal("default profile implicit link-layer DUID must match daemon rule")
 	}
 }
 

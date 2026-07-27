@@ -150,8 +150,8 @@ type RouteInfo struct {
 
 // RouteLookup resolves "ip route get TARGET" style information for a probe.
 // Tests can override the default by replacing this var.
-var RouteLookup = func(ctx context.Context, target, family string) (RouteInfo, error) {
-	return lookupRoute(ctx, target, family)
+var RouteLookup = func(ctx context.Context, spec api.HealthCheckSpec) (RouteInfo, error) {
+	return lookupRoute(ctx, spec)
 }
 
 // historyLimit returns the maximum number of probe history entries to keep.

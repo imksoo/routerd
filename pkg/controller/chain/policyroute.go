@@ -5,6 +5,7 @@ package chain
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -29,16 +30,17 @@ import (
 )
 
 type IPv4PolicyRouteController struct {
-	Router           *api.Router
-	Bus              *bus.Bus
-	Store            Store
-	DryRun           bool
-	NftCommand       string
-	PolicyPath       string
-	DefaultRoutePath string
-	LedgerPath       string
-	CommandOutput    func(context.Context, string, ...string) ([]byte, error)
-	Logger           *slog.Logger
+	Router              *api.Router
+	Bus                 *bus.Bus
+	Store               Store
+	DryRun              bool
+	NftCommand          string
+	PolicyPath          string
+	DefaultRoutePath    string
+	LedgerPath          string
+	HostPolicyStatePath string
+	CommandOutput       func(context.Context, string, ...string) ([]byte, error)
+	Logger              *slog.Logger
 }
 
 func (c IPv4PolicyRouteController) Reconcile(ctx context.Context) error {
@@ -64,7 +66,250 @@ func (c IPv4PolicyRouteController) Reconcile(ctx context.Context) error {
 	if err := c.applyDefaultRoutePolicies(ctx, nft, defaultRoutePath); err != nil {
 		return err
 	}
+	// Host-only IPv6 policy is deliberately last and isolated: an RA address
+	// gap must not roll back the already-complete IPv4 DS-Lite policy path.
+	c.reconcileIPv6HostPolicies(ctx)
 	return nil
+}
+
+type ipv6HostPolicy struct {
+	Name      string `json:"name"`
+	Priority  int    `json:"priority"`
+	Table     int    `json:"table"`
+	Gateway   string `json:"gateway"`
+	Interface string `json:"interface"`
+	Source    string `json:"source"`
+	Metric    int    `json:"metric"`
+}
+
+type ipv6HostPolicyState struct {
+	Policies []ipv6HostPolicy `json:"policies"`
+}
+
+func (c IPv4PolicyRouteController) reconcileIPv6HostPolicies(ctx context.Context) {
+	path := firstNonEmpty(c.HostPolicyStatePath, "/run/routerd/ipv6-host-policy.json")
+	previous, err := loadIPv6HostPolicyState(path)
+	if err != nil {
+		c.logHostPolicyError("load IPv6 host policy state", err)
+		return
+	}
+	desired, unavailable, err := c.desiredIPv6HostPolicies(ctx)
+	if err != nil {
+		c.logHostPolicyError("derive IPv6 host policy", err)
+		return
+	}
+	previousByName := make(map[string]ipv6HostPolicy, len(previous.Policies))
+	for _, policy := range previous.Policies {
+		previousByName[policy.Name] = policy
+	}
+	for name := range unavailable {
+		_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", name, map[string]any{
+			"phase": "Pending", "reason": "PreferredSourceUnavailable", "dryRun": c.DryRun,
+		})
+		if old, ok := previousByName[name]; ok {
+			desired = append(desired, old) // retain a known-good rule until RA returns.
+		}
+	}
+	if len(unavailable) > 0 && len(desired) == 0 && len(previous.Policies) == 0 {
+		return // first acquisition is intentionally unapplied.
+	}
+	if err := c.applyIPv6HostPolicyState(ctx, previous, ipv6HostPolicyState{Policies: desired}, unavailable); err != nil {
+		c.logHostPolicyError("reconcile IPv6 host policy", err)
+		for _, policy := range desired {
+			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policy.Name, map[string]any{"phase": "Pending", "reason": "HostPolicyApplyFailed", "dryRun": c.DryRun})
+		}
+		return
+	}
+	if !c.DryRun {
+		if err := writeIPv6HostPolicyState(path, ipv6HostPolicyState{Policies: desired}); err != nil {
+			c.logHostPolicyError("write IPv6 host policy state", err)
+			return
+		}
+	}
+	for _, policy := range desired {
+		if unavailable[policy.Name] {
+			continue
+		}
+		_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policy.Name, map[string]any{"phase": "Applied", "dryRun": c.DryRun})
+	}
+}
+
+func (c IPv4PolicyRouteController) logHostPolicyError(message string, err error) {
+	if c.Logger != nil {
+		c.Logger.Error(message, "error", err)
+	}
+}
+
+func (c IPv4PolicyRouteController) desiredIPv6HostPolicies(ctx context.Context) ([]ipv6HostPolicy, map[string]bool, error) {
+	aliases := c.aliases()
+	var policies []ipv6HostPolicy
+	unavailable := map[string]bool{}
+	for _, res := range c.Router.Spec.Resources {
+		if res.Kind != "EgressRoutePolicy" {
+			continue
+		}
+		spec, err := res.EgressRoutePolicySpec()
+		if err != nil {
+			return nil, nil, err
+		}
+		if !spec.HostTraffic || firstNonEmpty(spec.Family, "ipv4") != "ipv6" {
+			continue
+		}
+		for _, candidate := range spec.Candidates {
+			if egressRoutePolicyCandidateDisabled(candidate) {
+				continue
+			}
+			ifname := firstNonEmpty(aliases[candidate.EffectiveInterface()], candidate.EffectiveInterface())
+			source, err := c.ipv6GlobalAddress(ctx, ifname)
+			if err != nil {
+				unavailable[res.Metadata.Name] = true
+				continue
+			}
+			metric := candidate.EffectiveMetric()
+			if metric == 0 {
+				metric = 50
+			}
+			policies = append(policies, ipv6HostPolicy{Name: res.Metadata.Name, Priority: candidate.Priority, Table: candidate.EffectiveTable(), Gateway: candidate.Gateway, Interface: ifname, Source: source, Metric: metric})
+		}
+	}
+	return policies, unavailable, nil
+}
+
+func (c IPv4PolicyRouteController) applyIPv6HostPolicyState(ctx context.Context, previous, desired ipv6HostPolicyState, retained map[string]bool) error {
+	desiredByName := map[string]ipv6HostPolicy{}
+	for _, policy := range desired.Policies {
+		desiredByName[policy.Name] = policy
+	}
+	for _, old := range previous.Policies {
+		if retained[old.Name] {
+			continue
+		}
+		if next, ok := desiredByName[old.Name]; !ok || next != old {
+			if err := c.deleteIPv6HostPolicy(ctx, old); err != nil {
+				return err
+			}
+		}
+	}
+	previousByName := map[string]ipv6HostPolicy{}
+	for _, policy := range previous.Policies {
+		previousByName[policy.Name] = policy
+	}
+	for _, policy := range desired.Policies {
+		if retained[policy.Name] {
+			continue
+		}
+		if c.DryRun {
+			continue
+		}
+		if out, err := c.commandOutput(ctx, "ip", "-6", "route", "replace", "default", "via", policy.Gateway, "dev", policy.Interface, "table", strconv.Itoa(policy.Table), "metric", strconv.Itoa(policy.Metric), "src", policy.Source); err != nil {
+			return fmt.Errorf("ip -6 route replace: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		if err := c.ensureIPv6HostRule(ctx, policy); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c IPv4PolicyRouteController) ipv6GlobalAddress(ctx context.Context, ifname string) (string, error) {
+	out, err := c.commandOutput(ctx, "ip", "-6", "-o", "addr", "show", "dev", ifname, "scope", "global")
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		for i, field := range fields {
+			if field == "inet6" && i+1 < len(fields) {
+				return strings.Split(fields[i+1], "/")[0], nil
+			}
+		}
+	}
+	return "", fmt.Errorf("no global IPv6 address on %s", ifname)
+}
+
+func (c IPv4PolicyRouteController) ensureIPv6HostRule(ctx context.Context, policy ipv6HostPolicy) error {
+	out, err := c.commandOutput(ctx, "ip", "-6", "rule", "show")
+	if err != nil {
+		return err
+	}
+	priority := strconv.Itoa(policy.Priority)
+	table := strconv.Itoa(policy.Table)
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.Contains(line, priority+":") && strings.Contains(line, "iif lo") && strings.Contains(line, "lookup "+table) {
+			return nil
+		}
+	}
+	if _, err := c.commandOutput(ctx, "ip", "-6", "rule", "add", "priority", priority, "iif", "lo", "lookup", table); err != nil {
+		return fmt.Errorf("ip -6 rule add: %w", err)
+	}
+	return nil
+}
+
+func (c IPv4PolicyRouteController) deleteIPv6HostPolicy(ctx context.Context, policy ipv6HostPolicy) error {
+	if c.DryRun {
+		return nil
+	}
+	for _, args := range [][]string{
+		{"-6", "rule", "del", "priority", strconv.Itoa(policy.Priority), "iif", "lo", "lookup", strconv.Itoa(policy.Table)},
+		{"-6", "route", "del", "default", "via", policy.Gateway, "dev", policy.Interface, "table", strconv.Itoa(policy.Table), "metric", strconv.Itoa(policy.Metric), "src", policy.Source},
+	} {
+		out, err := c.commandOutput(ctx, "ip", args...)
+		if err != nil && !missingIPv6HostPolicy(out, err) {
+			return fmt.Errorf("ip %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		}
+	}
+	return nil
+}
+
+func missingIPv6HostPolicy(out []byte, err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(string(out) + " " + err.Error())
+	return strings.Contains(message, "no such process") || strings.Contains(message, "not in table") || strings.Contains(message, "cannot find")
+}
+
+func loadIPv6HostPolicyState(path string) (ipv6HostPolicyState, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return ipv6HostPolicyState{}, nil
+	}
+	if err != nil {
+		return ipv6HostPolicyState{}, err
+	}
+	var state ipv6HostPolicyState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return ipv6HostPolicyState{}, err
+	}
+	return state, nil
+}
+
+func writeIPv6HostPolicyState(path string, state ipv6HostPolicyState) error {
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".ipv6-host-policy-*")
+	if err != nil {
+		return err
+	}
+	name := temporary.Name()
+	defer os.Remove(name)
+	if err := temporary.Chmod(0600); err != nil {
+		temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(append(data, '\n')); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(name, path)
 }
 
 func (c IPv4PolicyRouteController) aliases() map[string]string {
@@ -98,7 +343,7 @@ func (c IPv4PolicyRouteController) activeTargetCandidates() map[string]bool {
 			continue
 		}
 		spec, err := res.EgressRoutePolicySpec()
-		if err != nil || firstNonEmpty(spec.Mode, "") != "priority" {
+		if err != nil || spec.HostTraffic || firstNonEmpty(spec.Mode, "") != "priority" {
 			continue
 		}
 		if unsupportedPrioritySelection(spec) {
@@ -141,6 +386,9 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 		spec, err := res.EgressRoutePolicySpec()
 		if err != nil {
 			failures = append(failures, err.Error())
+			continue
+		}
+		if spec.HostTraffic {
 			continue
 		}
 		mode := firstNonEmpty(spec.Mode, "")
@@ -446,7 +694,7 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 			continue
 		}
 		spec, err := res.EgressRoutePolicySpec()
-		if err != nil || firstNonEmpty(spec.Mode, "") != "priority" {
+		if err != nil || spec.HostTraffic || firstNonEmpty(spec.Mode, "") != "priority" {
 			if err != nil {
 				return err
 			}
@@ -591,6 +839,9 @@ func (c IPv4PolicyRouteController) effectivePolicyRouteRouter(activeTargetCandid
 		spec, err := res.EgressRoutePolicySpec()
 		if err != nil {
 			out.Spec.Resources = append(out.Spec.Resources, res)
+			continue
+		}
+		if spec.HostTraffic {
 			continue
 		}
 		mode := firstNonEmpty(spec.Mode, "")

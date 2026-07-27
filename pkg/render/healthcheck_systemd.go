@@ -12,21 +12,24 @@ import (
 )
 
 type HealthCheckSystemdOptions struct {
-	BinaryPath      string
-	Resource        string
-	Target          string
-	Protocol        string
-	Via             string
-	FwMark          int
-	SourceInterface string
-	SourceAddress   string
-	Port            int
-	Interval        string
-	Timeout         string
-	SocketPath      string
-	StateFile       string
-	EventFile       string
-	Environment     []string
+	BinaryPath           string
+	Resource             string
+	Target               string
+	Protocol             string
+	Via                  string
+	FwMark               int
+	RequireDSLiteBinding bool
+	SourceInterface      string
+	SourceAddress        string
+	Port                 int
+	Interval             string
+	Timeout              string
+	HealthyThreshold     int
+	UnhealthyThreshold   int
+	SocketPath           string
+	StateFile            string
+	EventFile            string
+	Environment          []string
 }
 
 type HealthCheckDaemonUnitOptions struct {
@@ -143,6 +146,9 @@ func HealthCheckSystemdUnit(options HealthCheckSystemdOptions) []byte {
 	if options.FwMark != 0 {
 		args += fmt.Sprintf(" --fwmark 0x%x", options.FwMark)
 	}
+	if options.RequireDSLiteBinding {
+		args += " --require-dslite-binding"
+	}
 	if options.SourceInterface != "" {
 		args += " --source-interface " + strconv.Quote(options.SourceInterface)
 	}
@@ -157,6 +163,12 @@ func HealthCheckSystemdUnit(options HealthCheckSystemdOptions) []byte {
 	}
 	if options.Timeout != "" {
 		args += " --timeout " + strconv.Quote(options.Timeout)
+	}
+	if options.HealthyThreshold != 0 {
+		args += fmt.Sprintf(" --healthy-threshold %d", options.HealthyThreshold)
+	}
+	if options.UnhealthyThreshold != 0 {
+		args += fmt.Sprintf(" --unhealthy-threshold %d", options.UnhealthyThreshold)
 	}
 	if options.SocketPath != "" {
 		args += " --socket " + strconv.Quote(options.SocketPath)

@@ -11,17 +11,19 @@ import (
 	"net"
 	"os/exec"
 	"strings"
+
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 // lookupRoute uses FreeBSD's read-only `route -n get` command to record the
 // nexthop and output interface selected for a healthcheck probe. It does not
 // alter routing state.
-func lookupRoute(ctx context.Context, target, family string) (RouteInfo, error) {
-	target = strings.TrimSpace(target)
+func lookupRoute(ctx context.Context, spec api.HealthCheckSpec) (RouteInfo, error) {
+	target := strings.TrimSpace(spec.Target)
 	if target == "" {
 		return RouteInfo{}, errors.New("target is required")
 	}
-	family, err := normalizeFreeBSDRouteFamily(family)
+	family, err := normalizeFreeBSDRouteFamily(spec.AddressFamily)
 	if err != nil {
 		return RouteInfo{}, err
 	}

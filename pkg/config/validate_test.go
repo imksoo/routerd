@@ -1295,6 +1295,43 @@ func TestValidateLinuxEgressRoutePolicyAllowsPolicyRouting(t *testing.T) {
 	}
 }
 
+func TestValidateLinuxEgressRoutePolicyHostTrafficAllowsOnlyMarkZero(t *testing.T) {
+	base := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "host-ipv6-ra"}, Spec: api.EgressRoutePolicySpec{
+		Family: "ipv6", HostTraffic: true, Candidates: []api.EgressRoutePolicyCandidate{{
+			Interface: "wan", GatewaySource: "static", Gateway: "fe80::1", PreferredSource: "interface", Table: 120, Priority: 10120,
+		}},
+	}}
+	router := func(resource api.Resource) *api.Router {
+		wan := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "wan0"}}
+		return &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "test"}, Spec: api.RouterSpec{Resources: []api.Resource{wan, resource}}}
+	}
+	if err := Validate(router(base)); err != nil {
+		t.Fatalf("mark=0 host policy must validate: %v", err)
+	}
+	marked := base
+	markedSpec := marked.Spec.(api.EgressRoutePolicySpec)
+	markedSpec.Candidates = append([]api.EgressRoutePolicyCandidate(nil), markedSpec.Candidates...)
+	markedSpec.Candidates[0].Mark = 0x110
+	marked.Spec = markedSpec
+	if err := Validate(router(marked)); err == nil {
+		t.Fatal("host policy mark must be rejected")
+	}
+	normal := base
+	normalSpec := normal.Spec.(api.EgressRoutePolicySpec)
+	normalSpec.HostTraffic = false
+	normal.Spec = normalSpec
+	if err := Validate(router(normal)); err == nil {
+		t.Fatal("ordinary policy must retain mark-required contract")
+	}
+	multiple := base
+	multipleSpec := multiple.Spec.(api.EgressRoutePolicySpec)
+	multipleSpec.Candidates = append(multipleSpec.Candidates, multipleSpec.Candidates[0])
+	multiple.Spec = multipleSpec
+	if err := Validate(router(multiple)); err == nil {
+		t.Fatal("host policy must reject multiple candidates")
+	}
+}
+
 func TestValidateFreeBSDIPv4PolicyRouteSetIsRejected(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
