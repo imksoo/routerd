@@ -45,6 +45,9 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 	if err := idx.build(router, targetOS); err != nil {
 		return err
 	}
+	if err := validateUniqueSysctlKeys(router); err != nil {
+		return err
+	}
 	if err := validateConntrackdTCPLiberalPrerequisite(router, targetOS); err != nil {
 		return err
 	}
@@ -1304,6 +1307,25 @@ func ownedAddressAuthorizedByMobilityPools(address netip.Prefix, refs []string, 
 }
 
 const conntrackdTCPLiberalSysctlKey = "net.netfilter.nf_conntrack_tcp_be_liberal"
+
+func validateUniqueSysctlKeys(router *api.Router) error {
+	declaredByKey := map[string]string{}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.SystemAPIVersion || resource.Kind != "Sysctl" {
+			continue
+		}
+		spec, err := resource.SysctlSpec()
+		if err != nil {
+			return err
+		}
+		key := strings.TrimSpace(spec.Key)
+		if previous := declaredByKey[key]; previous != "" {
+			return fmt.Errorf("duplicate Sysctl key %q: declared by %s and %s", key, previous, resource.ID())
+		}
+		declaredByKey[key] = resource.ID()
+	}
+	return nil
+}
 
 func validateConntrackdTCPLiberalPrerequisite(router *api.Router, targetOS platform.OS) error {
 	if targetOS != platform.OSLinux {

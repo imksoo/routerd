@@ -39,6 +39,9 @@ routerd は読み戻した値を確認してから設定します。
 `value` は書き込む値です。
 `expectedValue` は読み戻しで期待する値です。
 `expectedValue` を省略すると `value` を使います。
+同じ sysctl key を宣言できる明示的な `Sysctl` resource は1つだけです。
+値が同じ場合も重複keyをvalidationで拒否し、runtime・永続設定がresource順に
+依存しないようにします。
 
 ```yaml
 apiVersion: system.routerd.net/v1alpha1
