@@ -3,7 +3,10 @@
 package main
 
 import (
+	"errors"
+	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -88,6 +91,105 @@ func TestConntrackdRoleForAction(t *testing.T) {
 			t.Fatalf("role for %q = %q, want %q", action, got, want)
 		}
 	}
+}
+
+func TestDeactivateSkipsOnlyMissingVMACAndCompletesBackupTransition(t *testing.T) {
+	var commands []string
+	var conntrackd []string
+	var wroteRole string
+	err := runWithHooks([]string{
+		"deactivate",
+		"--vmac", "missing-parent,wan-vmac,02:00:5e:00:01:13,,false",
+		"--vmac", "lan-parent,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true",
+	}, runHooks{
+		command: func(name string, args ...string) ([]byte, error) {
+			line := name + " " + strings.Join(args, " ")
+			commands = append(commands, line)
+			if line == "ip link add link missing-parent name wan-vmac type macvlan mode private" {
+				return []byte("Cannot find device \"missing-parent\"\n"), errors.New("exit status 1")
+			}
+			return nil, nil
+		},
+		withdrawRA: func(ifname string) error {
+			if ifname != "lan-parent" {
+				t.Fatalf("withdraw RA interface = %q, want lan-parent", ifname)
+			}
+			return os.ErrNotExist
+		},
+		conntrackdTransitionNeeded: func(string) (bool, error) { return true, nil },
+		reconcileConntrackdRole: func(action string) error {
+			for _, args := range conntrackdRoleCommands(action) {
+				conntrackd = append(conntrackd, strings.Join(args, " "))
+			}
+			return nil
+		},
+		writeConntrackdRole: func(action string) error {
+			wroteRole = conntrackdRoleForAction(action)
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("deactivate: %v", err)
+	}
+	if !slicesContain(commands, "ip link set dev lan-vrrp down") {
+		t.Fatalf("later VMAC was not deactivated: %#v", commands)
+	}
+	if slicesContain(commands, "ip link set dev wan-vmac address 02:00:5e:00:01:13") {
+		t.Fatalf("missing VMAC must not run remaining commands: %#v", commands)
+	}
+	if got, want := conntrackd, []string{"-t", "-n"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("conntrackd commands = %#v, want %#v", got, want)
+	}
+	if wroteRole != "backup" {
+		t.Fatalf("written role = %q, want backup", wroteRole)
+	}
+}
+
+func TestDeactivateWithdrawRAMissingInterfaceIsNoopButOtherErrorsFail(t *testing.T) {
+	opts := []string{"deactivate", "--vmac", "lan-parent,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true"}
+	base := runHooks{
+		command:                    func(string, ...string) ([]byte, error) { return nil, nil },
+		conntrackdTransitionNeeded: func(string) (bool, error) { return false, nil },
+	}
+
+	missing := base
+	missing.withdrawRA = func(string) error { return os.ErrNotExist }
+	if err := runWithHooks(opts, missing); err != nil {
+		t.Fatalf("missing RA interface must be a no-op: %v", err)
+	}
+
+	missingNetworkInterface := base
+	missingNetworkInterface.withdrawRA = func(string) error { return errors.New("route ip+net: no such network interface") }
+	if err := runWithHooks(opts, missingNetworkInterface); err != nil {
+		t.Fatalf("missing RA network interface must be a no-op: %v", err)
+	}
+
+	denied := base
+	denied.withdrawRA = func(string) error { return errors.New("permission denied") }
+	if err := runWithHooks(opts, denied); err == nil || !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("withdraw RA error = %v, want permission error", err)
+	}
+}
+
+func TestDeactivateDoesNotIgnoreMissingExecutable(t *testing.T) {
+	err := runWithHooks([]string{
+		"deactivate", "--vmac", "wan,wan-vmac,02:00:5e:00:01:13,,false",
+	}, runHooks{
+		command:                    func(string, ...string) ([]byte, error) { return nil, os.ErrNotExist },
+		conntrackdTransitionNeeded: func(string) (bool, error) { return false, nil },
+	})
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing executable error = %v, want os.ErrNotExist", err)
+	}
+}
+
+func slicesContain(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 // The additional LAN VMAC is the client router identity.  It must never keep
