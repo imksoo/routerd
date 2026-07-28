@@ -275,7 +275,10 @@ source NAT と、`type`、`egressInterface` または `egressPolicyRef`、`sourc
 `NAT44SessionSync` は、選択した SNAT address に対して
 `conntrack --dump -o extended` を実行し、tuple と conntrack mark を standby target
 へ復元します。active-to-standby の HA 同期を想定しており、通常は `spec.when` で
-active node に限定します。
+active node に限定します。`mode: conntrackd` は双方向の常時同期を行うため
+`spec.when` を指定しません。Linux では runtime 有効・non-optional な `Sysctl`
+resource で `net.netfilter.nf_conntrack_tcp_be_liberal=1` を明示する必要があり、
+live 値は `routerctl doctor nat` で確認できます。
 
 `PortForward` と `IngressService` は、Linux nftables と FreeBSD pf に DNAT を生成します。
 `spec.hairpin.enabled: true` と `spec.hairpin.interfaces` を指定すると、LAN

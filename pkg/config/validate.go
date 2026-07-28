@@ -45,6 +45,9 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 	if err := idx.build(router, targetOS); err != nil {
 		return err
 	}
+	if err := validateConntrackdTCPLiberalPrerequisite(router, targetOS); err != nil {
+		return err
+	}
 
 	if err := validateListenPortCollisions(router); err != nil {
 		return err
@@ -1298,6 +1301,59 @@ func ownedAddressAuthorizedByMobilityPools(address netip.Prefix, refs []string, 
 		}
 	}
 	return false
+}
+
+const conntrackdTCPLiberalSysctlKey = "net.netfilter.nf_conntrack_tcp_be_liberal"
+
+func validateConntrackdTCPLiberalPrerequisite(router *api.Router, targetOS platform.OS) error {
+	if targetOS != platform.OSLinux {
+		return nil
+	}
+	var conntrackdResourceID string
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "NAT44SessionSync" {
+			continue
+		}
+		spec, err := resource.NAT44SessionSyncSpec()
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(spec.Mode) == "conntrackd" {
+			conntrackdResourceID = resource.ID()
+			break
+		}
+	}
+	if conntrackdResourceID == "" {
+		return nil
+	}
+
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.SystemAPIVersion || resource.Kind != "Sysctl" {
+			continue
+		}
+		spec, err := resource.SysctlSpec()
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(spec.Key) != conntrackdTCPLiberalSysctlKey {
+			continue
+		}
+		expectedValue := spec.ExpectedValue
+		if strings.TrimSpace(expectedValue) == "" {
+			expectedValue = spec.Value
+		}
+		if strings.TrimSpace(spec.Value) != "1" || strings.TrimSpace(expectedValue) != "1" {
+			return fmt.Errorf("%s conntrackd mode requires %s value 1; %s does not declare value 1", conntrackdResourceID, conntrackdTCPLiberalSysctlKey, resource.ID())
+		}
+		if !api.BoolDefault(spec.Runtime, true) {
+			return fmt.Errorf("%s conntrackd mode requires %s with runtime enabled; %s disables runtime apply", conntrackdResourceID, conntrackdTCPLiberalSysctlKey, resource.ID())
+		}
+		if spec.Optional {
+			return fmt.Errorf("%s conntrackd mode requires a non-optional %s Sysctl; %s is optional", conntrackdResourceID, conntrackdTCPLiberalSysctlKey, resource.ID())
+		}
+		return nil
+	}
+	return fmt.Errorf("%s conntrackd mode requires a Sysctl resource declaring %s=1 with runtime enabled", conntrackdResourceID, conntrackdTCPLiberalSysctlKey)
 }
 
 func validateApplyPolicy(spec api.ApplyPolicySpec) error {

@@ -385,7 +385,11 @@ addresses and restores the parsed tuple and conntrack mark on standby targets.
 It also supports `mode: event-stream`, which starts with a snapshot resync and
 then consumes local `conntrack -E -o extended` events for incremental batches.
 It is intended for active-to-standby HA sync and is usually gated with
-`spec.when`.
+`spec.when`. `mode: conntrackd` instead runs bidirectional continuous
+replication and must not use `spec.when`. On Linux it requires an explicit,
+runtime, non-optional `Sysctl` resource declaring
+`net.netfilter.nf_conntrack_tcp_be_liberal=1`; `routerctl doctor nat` verifies
+the live value.
 
 `BGPRouter`, `BGPPeer`, and `BGPDynamicPeer` currently use the long-lived
 `routerd-bgp` daemon.

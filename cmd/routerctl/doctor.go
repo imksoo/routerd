@@ -2904,30 +2904,95 @@ func (r doctorRunner) doctorDHCPv6PD() []doctorCheck {
 
 func (r doctorRunner) doctorNAT() []doctorCheck {
 	rules := selectResources(r.router.Spec.Resources, "NAT44Rule", "")
-	if len(rules) == 0 {
+	conntrackdResources := doctorConntrackdResources(r.router)
+	if len(rules) == 0 && len(conntrackdResources) == 0 {
 		return []doctorCheck{{Area: "nat", Name: "NAT44Rule", Status: doctorSkip, Detail: "no NAT44Rule resources configured"}}
 	}
 	var checks []doctorCheck
 	natCounts := doctorResourceStatusCounts{}
-	for _, res := range rules {
-		status := objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name)
-		checks = append(checks, doctorResourceCheck("nat", res, status, healthyPhases("Applied", "Active", "Ready")))
-		natCounts.tally(status, healthyPhases("Applied", "Active", "Ready"))
+	if len(rules) == 0 {
+		checks = append(checks, doctorCheck{Area: "nat", Name: "NAT44Rule", Status: doctorSkip, Detail: "no NAT44Rule resources configured"})
+	} else {
+		for _, res := range rules {
+			status := objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name)
+			checks = append(checks, doctorResourceCheck("nat", res, status, healthyPhases("Applied", "Active", "Ready")))
+			natCounts.tally(status, healthyPhases("Applied", "Active", "Ready"))
+		}
 	}
 	if r.opts.Host {
 		ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
 		defer cancel()
-		if doctorCurrentOS() == platform.OSFreeBSD {
-			checks = append(checks, doctorFreeBSDPFStatus(ctx, "nat"))
+		hostOS := doctorCurrentOS()
+		if hostOS == platform.OSFreeBSD {
+			if len(rules) > 0 {
+				checks = append(checks, doctorFreeBSDPFStatus(ctx, "nat"))
+			}
+			if len(conntrackdResources) > 0 {
+				checks = append(checks, doctorCheck{Area: "nat", Name: "NAT44SessionSync conntrackd tcp_be_liberal", Status: doctorSkip, Detail: "tcp_be_liberal host check is Linux-only"})
+			}
 			return checks
 		}
-		command := runDiagnosticCommand(ctx, "nft list table ip routerd_nat", "nft", "list", "table", "ip", "routerd_nat")
-		extra := fmt.Sprintf("NAT44Rule active=%d pending=%d", natCounts.Active, natCounts.Pending)
-		checks = append(checks, doctorNftCheckStatus("nat", command, "ip", "routerd_nat", doctorFail, "apply NAT44Rule resources or inspect nftables errors", extra))
+		if len(rules) > 0 {
+			command := runDiagnosticCommand(ctx, "nft list table ip routerd_nat", "nft", "list", "table", "ip", "routerd_nat")
+			extra := fmt.Sprintf("NAT44Rule active=%d pending=%d", natCounts.Active, natCounts.Pending)
+			checks = append(checks, doctorNftCheckStatus("nat", command, "ip", "routerd_nat", doctorFail, "apply NAT44Rule resources or inspect nftables errors", extra))
+		}
+		if len(conntrackdResources) > 0 {
+			if hostOS == platform.OSLinux {
+				checks = append(checks, doctorConntrackdTCPLiberalCheck(ctx, len(conntrackdResources)))
+			} else {
+				checks = append(checks, doctorCheck{Area: "nat", Name: "NAT44SessionSync conntrackd tcp_be_liberal", Status: doctorSkip, Detail: "tcp_be_liberal host check is Linux-only"})
+			}
+		}
 	} else {
-		checks = append(checks, doctorHostSkipped("nat", "nft routerd_nat"))
+		if len(rules) > 0 {
+			checks = append(checks, doctorHostSkipped("nat", "nft routerd_nat"))
+		}
+		if len(conntrackdResources) > 0 {
+			checks = append(checks, doctorHostSkipped("nat", "NAT44SessionSync conntrackd tcp_be_liberal"))
+		}
 	}
 	return checks
+}
+
+func doctorConntrackdResources(router *api.Router) []api.Resource {
+	if router == nil {
+		return nil
+	}
+	var resources []api.Resource
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "NAT44SessionSync" {
+			continue
+		}
+		spec, err := resource.NAT44SessionSyncSpec()
+		if err == nil && strings.TrimSpace(spec.Mode) == "conntrackd" {
+			resources = append(resources, resource)
+		}
+	}
+	return resources
+}
+
+func doctorConntrackdTCPLiberalCheck(ctx context.Context, resourceCount int) doctorCheck {
+	const (
+		name = "NAT44SessionSync conntrackd tcp_be_liberal"
+		key  = "net.netfilter.nf_conntrack_tcp_be_liberal"
+	)
+	command := doctorRunDiagnosticCommand(ctx, "sysctl "+key, "sysctl", "-n", key)
+	detail := fmt.Sprintf("resources=%d", resourceCount)
+	if command.OK && strings.TrimSpace(command.Stdout) == "1" {
+		return doctorCheck{Area: "nat", Name: name, Status: doctorPass, Detail: appendDoctorDetail(detail, "value=1")}
+	}
+	observed := firstNonEmpty(command.Error, oneLine(command.Output))
+	if command.OK {
+		observed = "value=" + strings.TrimSpace(command.Stdout)
+	}
+	return doctorCheck{
+		Area:   "nat",
+		Name:   name,
+		Status: doctorFail,
+		Detail: appendDoctorDetail(detail, observed),
+		Remedy: "declare a runtime, non-optional Sysctl with " + key + "=1, reconcile it, and retry",
+	}
 }
 
 func (r doctorRunner) doctorFirewall() []doctorCheck {

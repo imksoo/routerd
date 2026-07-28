@@ -52,6 +52,46 @@ spec:
   snatAddresses: [192.0.0.2, 192.0.0.3, 192.0.0.4]
 ```
 
+## Preserve established TCP with conntrackd
+
+Use `mode: conntrackd` when established TCP flows must survive a VRRP role
+change. Both peers run conntrackd continuously, so this mode must not use
+`spec.when`.
+
+Linux conntrack must accept the small TCP window mismatch that can occur when
+an in-flight segment reaches the new active peer. Declare that host prerequisite
+explicitly; routerd does not change it from a VRRP hook:
+
+```yaml
+- apiVersion: system.routerd.net/v1alpha1
+  kind: Sysctl
+  metadata:
+    name: conntrack-tcp-ha-liberal
+  spec:
+    key: net.netfilter.nf_conntrack_tcp_be_liberal
+    value: "1"
+    runtime: true
+    persistent: true
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: NAT44SessionSync
+  metadata:
+    name: dslite-sessions
+  spec:
+    mode: conntrackd
+    snatAddresses: [192.0.2.2]
+    conntrackd:
+      interface: ha-sync
+      localAddress: 192.0.2.10
+      peerAddress: 192.0.2.11
+      port: 3780
+```
+
+Validation rejects Linux conntrackd mode unless a runtime, non-optional
+`Sysctl` declares `net.netfilter.nf_conntrack_tcp_be_liberal=1`.
+`persistent: true` is recommended so the prerequisite is also present before
+routerd starts after a reboot.
+
 ## How restore works
 
 The controller runs:
@@ -108,9 +148,14 @@ and migration plan.
 
 ```bash
 routerctl describe NAT44SessionSync/dslite-abc-sessions
+routerctl doctor nat
 routerd serve --controllers nat44-session-sync --config router.yaml
 ```
 
 When `spec.when` is false, status stays `Pending` with reason `WhenFalse`. When
 a referenced `NAT44Rule` has not resolved `snatAddress` yet, status stays
 `Pending` with reason `SNATAddressPending`.
+
+For conntrackd mode, `routerctl doctor nat` fails when the runtime
+`nf_conntrack_tcp_be_liberal` value is not `1` or cannot be read. With
+`--no-host`, this check is reported as `skip`.
