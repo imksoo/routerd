@@ -75,9 +75,6 @@ func runWithHooks(args []string, hooks runHooks) error {
 	if err != nil {
 		return err
 	}
-	if opts.action == "withdraw-ra" {
-		return hooks.withdrawRA(opts.parent)
-	}
 	conntrackdTransition, err := hooks.conntrackdTransitionNeeded(opts.action)
 	if err != nil {
 		return err
@@ -194,7 +191,7 @@ func conntrackdRoleForAction(action string) string {
 	switch action {
 	case "activate":
 		return "master"
-	case "deactivate", "withdraw-ra":
+	case "deactivate":
 		return "backup"
 	default:
 		return ""
@@ -253,7 +250,7 @@ func conntrackdRoleCommands(action string) [][]string {
 		// must remain available for a subsequent transition.  Commit it, then
 		// publish the local kernel state without destroying either cache.
 		return [][]string{{"-c"}, {"-R"}, {"-B"}}
-	case "deactivate", "withdraw-ra":
+	case "deactivate":
 		return [][]string{{"-t"}, {"-n"}}
 	default:
 		return nil
@@ -354,14 +351,8 @@ func parseOptions(args []string) (options, error) {
 	if err := fs.Parse(args[1:]); err != nil {
 		return options{}, err
 	}
-	if opts.action != "activate" && opts.action != "deactivate" && opts.action != "withdraw-ra" {
-		return options{}, errors.New("action must be activate, deactivate, or withdraw-ra")
-	}
-	if opts.action == "withdraw-ra" {
-		if !validInterface(opts.parent) {
-			return options{}, errors.New("--parent must be a Linux interface name")
-		}
-		return opts, nil
+	if opts.action != "activate" && opts.action != "deactivate" {
+		return options{}, errors.New("action must be activate or deactivate")
 	}
 	if len(opts.vmacs) == 0 {
 		opts.vmacs = append(opts.vmacs, vmac{parent: opts.parent, ifname: opts.ifname, mac: opts.mac})
