@@ -40,7 +40,7 @@ routerctl doctor -o yaml
 | `dns` | `DNSResolver` のリソース status、`dig @127.0.0.1` での A レコード応答プローブ。 |
 | `dslite` | `DSLiteTunnel` のリソース status、AFTR FQDN の AAAA プローブ、tunnel device の存在（`ip link show`）。 |
 | `dhcpv6-pd` | `DHCPv6PrefixDelegation` の status（Bound、委任 prefix）。PD 未取得時は設計上 **WARN**（壊れている IPv6 を LAN に出さない）。 |
-| `nat` | `NAT44Rule` のリソース status、`nft list table ip routerd_nat` の存在。 |
+| `nat` | `NAT44Rule` のリソース status、`nft list table ip routerd_nat` の存在。Linux で `NAT44SessionSync` が conntrackd mode を使う場合は、runtime の `net.netfilter.nf_conntrack_tcp_be_liberal` が `1` であることも確認し、読取不能または異なる値を FAIL にします。 |
 | `firewall` | `FirewallZone` / `FirewallPolicy` の status、`nft list table inet routerd_filter` の存在と input チェインの `policy drop`（無いと permissive）、current config から render される ruleset に含まれない routerd-prefixed nft table が Linux host 上に残っていないか。 |
 | `rollback` | 1 つ以上の世代が保存されていて `routerctl rollback --to` が使えること。 |
 | `disk` | `/var/lib/routerd` と `/run/routerd` の容量。90% 以上 or 256 MiB 未満で WARN、98% 以上 or 64 MiB 未満で FAIL。Linux では一時ディレクトリの不変条件も確認します。`/tmp` と `/var/tmp` は `root:root` の sticky `1777` directory である必要があります。 |

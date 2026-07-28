@@ -11,6 +11,12 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 変更
+
+- Linux の `NAT44SessionSync` conntrackd mode は、runtime 有効・non-optional な
+  `Sysctl` で `net.netfilter.nf_conntrack_tcp_be_liberal=1` を明示する必要が
+  あります。`routerctl doctor nat` は host を変更せず live 前提条件を確認します。
+
 ## v20260727.2110
 
 ### 変更

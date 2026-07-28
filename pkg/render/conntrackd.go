@@ -55,8 +55,8 @@ func ConntrackdConfig(spec api.ConntrackdSyncSpec) ([]byte, error) {
 	// was already in flight when VRRP moved; strict window validation then
 	// classifies an otherwise replicated established flow as INVALID before the
 	// application can make progress.  The conntrack mark and TCP state remain
-	// synchronized, while the kernel's tcp_be_liberal sysctl handles that small
-	// hand-over window.
+	// synchronized, while NAT44SessionSync validation and doctor require the
+	// kernel's tcp_be_liberal sysctl for that small hand-over window.
 	b.WriteString("  Options {\n    TCPWindowTracking no\n    ExpectationSync yes\n  }\n}\n")
 	b.WriteString("General {\n  Systemd yes\n  HashSize 32768\n  HashLimit 262144\n  LogFile no\n  Syslog yes\n  LockFile /run/routerd/conntrackd.lock\n  UNIX {\n    Path /run/routerd/conntrackd.ctl\n  }\n  NetlinkBufferSize 2097152\n  NetlinkBufferSizeMaxGrowth 8388608\n  NetlinkOverrunResync yes\n  EventIterationLimit 100\n  Filter From Userspace {\n    Protocol Accept {\n      TCP\n      UDP\n      ICMP\n    }\n    Address Ignore {\n")
 	for _, addr := range valid {

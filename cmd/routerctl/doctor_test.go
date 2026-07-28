@@ -3257,6 +3257,109 @@ func TestDoctorNATPassesWhenNftSucceeds(t *testing.T) {
 	}
 }
 
+func TestDoctorNATConntrackdTCPLiberalRuntime(t *testing.T) {
+	oldRun := doctorRunDiagnosticCommand
+	oldOS := doctorCurrentOS
+	t.Cleanup(func() {
+		doctorRunDiagnosticCommand = oldRun
+		doctorCurrentOS = oldOS
+	})
+	doctorCurrentOS = func() platform.OS { return platform.OSLinux }
+
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44SessionSync"},
+		Metadata: api.ObjectMeta{Name: "sessions"},
+		Spec: api.NAT44SessionSyncSpec{
+			Mode:          "conntrackd",
+			SNATAddresses: []string{"192.0.2.2"},
+			Conntrackd: &api.ConntrackdSyncSpec{
+				Interface:    "sync0",
+				LocalAddress: "192.0.2.10",
+				PeerAddress:  "192.0.2.11",
+			},
+		},
+	}}}}
+
+	for _, tc := range []struct {
+		name       string
+		command    diagnoseCommandCheck
+		wantStatus string
+		wantDetail string
+	}{
+		{
+			name:       "enabled",
+			command:    diagnoseCommandCheck{OK: true, Stdout: "1", Output: "1"},
+			wantStatus: doctorPass,
+			wantDetail: "value=1",
+		},
+		{
+			name:       "disabled",
+			command:    diagnoseCommandCheck{OK: true, Stdout: "0", Output: "0"},
+			wantStatus: doctorFail,
+			wantDetail: "value=0",
+		},
+		{
+			name:       "unreadable",
+			command:    diagnoseCommandCheck{OK: false, Error: "sysctl unavailable", ExitCode: -1},
+			wantStatus: doctorFail,
+			wantDetail: "sysctl unavailable",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
+				if label != "sysctl net.netfilter.nf_conntrack_tcp_be_liberal" || name != "sysctl" || strings.Join(args, " ") != "-n net.netfilter.nf_conntrack_tcp_be_liberal" {
+					t.Fatalf("unexpected command: label=%q command=%s %v", label, name, args)
+				}
+				command := tc.command
+				command.Name = label
+				return command
+			}
+			checks := (doctorRunner{opts: diagnoseOptions{Host: true}, router: router}).doctorNAT()
+			check := findDoctorCheck(t, doctorReport{Checks: checks}, "NAT44SessionSync conntrackd tcp_be_liberal")
+			if check.Status != tc.wantStatus || !strings.Contains(check.Detail, tc.wantDetail) {
+				t.Fatalf("tcp_be_liberal check = %#v", check)
+			}
+		})
+	}
+}
+
+func TestDoctorNATConntrackdTCPLiberalNoHostSkips(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44SessionSync"},
+		Metadata: api.ObjectMeta{Name: "sessions"},
+		Spec:     api.NAT44SessionSyncSpec{Mode: "conntrackd"},
+	}}}}
+	checks := (doctorRunner{opts: diagnoseOptions{Host: false}, router: router}).doctorNAT()
+	check := findDoctorCheck(t, doctorReport{Checks: checks}, "NAT44SessionSync conntrackd tcp_be_liberal")
+	if check.Status != doctorSkip || !strings.Contains(check.Detail, "--no-host") {
+		t.Fatalf("tcp_be_liberal no-host check = %#v", check)
+	}
+}
+
+func TestDoctorNATConntrackdTCPLiberalNonLinuxSkips(t *testing.T) {
+	oldRun := doctorRunDiagnosticCommand
+	oldOS := doctorCurrentOS
+	t.Cleanup(func() {
+		doctorRunDiagnosticCommand = oldRun
+		doctorCurrentOS = oldOS
+	})
+	doctorCurrentOS = func() platform.OS { return platform.OSOther }
+	doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
+		t.Fatalf("unexpected non-Linux host command: label=%q command=%s %v", label, name, args)
+		return diagnoseCommandCheck{}
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44SessionSync"},
+		Metadata: api.ObjectMeta{Name: "sessions"},
+		Spec:     api.NAT44SessionSyncSpec{Mode: "conntrackd"},
+	}}}}
+	checks := (doctorRunner{opts: diagnoseOptions{Host: true}, router: router}).doctorNAT()
+	check := findDoctorCheck(t, doctorReport{Checks: checks}, "NAT44SessionSync conntrackd tcp_be_liberal")
+	if check.Status != doctorSkip || !strings.Contains(check.Detail, "Linux-only") {
+		t.Fatalf("tcp_be_liberal non-Linux check = %#v", check)
+	}
+}
+
 func writeDoctorNATFixture(t *testing.T) (string, string) {
 	t.Helper()
 	dir := t.TempDir()

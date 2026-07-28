@@ -52,6 +52,46 @@ spec:
   snatAddresses: [192.0.0.2, 192.0.0.3, 192.0.0.4]
 ```
 
+## conntrackd で確立済み TCP を引き継ぐ
+
+VRRP role 変更後も確立済み TCP flow を引き継ぐ場合は
+`mode: conntrackd` を使います。両 peer で conntrackd を常時動作させるため、
+この mode では `spec.when` を指定しません。
+
+切替時に飛行中だった TCP segment が新しい active peer へ届くと、小さな window
+差異が生じる場合があります。Linux conntrack がこれを受け入れるための host
+前提条件を明示的に宣言します。VRRP hook はこの値を暗黙に変更しません。
+
+```yaml
+- apiVersion: system.routerd.net/v1alpha1
+  kind: Sysctl
+  metadata:
+    name: conntrack-tcp-ha-liberal
+  spec:
+    key: net.netfilter.nf_conntrack_tcp_be_liberal
+    value: "1"
+    runtime: true
+    persistent: true
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: NAT44SessionSync
+  metadata:
+    name: dslite-sessions
+  spec:
+    mode: conntrackd
+    snatAddresses: [192.0.2.2]
+    conntrackd:
+      interface: ha-sync
+      localAddress: 192.0.2.10
+      peerAddress: 192.0.2.11
+      port: 3780
+```
+
+Linux の conntrackd mode は、runtime 有効・non-optional な `Sysctl` で
+`net.netfilter.nf_conntrack_tcp_be_liberal=1` が宣言されていない場合、
+validation で拒否されます。再起動後に routerd より先に前提条件を満たすため、
+`persistent: true` を推奨します。
+
 ## 復元の仕組み
 
 コントローラーは以下を実行します。
@@ -102,9 +142,14 @@ spec:
 
 ```bash
 routerctl describe NAT44SessionSync/dslite-abc-sessions
+routerctl doctor nat
 routerd serve --controllers nat44-session-sync --config router.yaml
 ```
 
 `spec.when` が false の間は `Pending` / `WhenFalse` になります。参照した
 `NAT44Rule` がまだ `snatAddress` を解決していない場合は、`Pending` /
 `SNATAddressPending` になります。
+
+conntrackd mode では、runtime の `nf_conntrack_tcp_be_liberal` が `1` でない、
+または読み取れない場合に `routerctl doctor nat` が FAIL します。
+`--no-host` ではこのチェックを SKIP として報告します。

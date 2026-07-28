@@ -12,6 +12,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Changed
+
+- Linux `NAT44SessionSync` conntrackd mode now requires an explicit runtime,
+  non-optional `Sysctl` declaration for
+  `net.netfilter.nf_conntrack_tcp_be_liberal=1`. `routerctl doctor nat`
+  verifies the live prerequisite without mutating the host.
+
 ## v20260727.2110
 
 ### Changed
