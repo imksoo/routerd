@@ -1685,6 +1685,83 @@ func TestValidateNAT44SessionSyncRequiresEventStream(t *testing.T) {
 	}
 }
 
+func TestValidateNAT44SessionSyncConntrackdRequiresTCPLiberalSysctl(t *testing.T) {
+	falseValue := false
+	conntrackd := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44SessionSync"},
+		Metadata: api.ObjectMeta{Name: "sessions"},
+		Spec: api.NAT44SessionSyncSpec{
+			Mode:          "conntrackd",
+			SNATAddresses: []string{"192.0.2.2"},
+			Conntrackd: &api.ConntrackdSyncSpec{
+				Interface:    "sync0",
+				LocalAddress: "192.0.2.10",
+				PeerAddress:  "192.0.2.11",
+			},
+		},
+	}
+	sysctl := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Sysctl"},
+		Metadata: api.ObjectMeta{Name: "conntrack-tcp-ha-liberal"},
+		Spec: api.SysctlSpec{
+			Key:        "net.netfilter.nf_conntrack_tcp_be_liberal",
+			Value:      "1",
+			Persistent: true,
+		},
+	}
+	router := func(resources ...api.Resource) *api.Router {
+		return &api.Router{
+			TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+			Metadata: api.ObjectMeta{Name: "test"},
+			Spec:     api.RouterSpec{Resources: resources},
+		}
+	}
+
+	for _, tc := range []struct {
+		name   string
+		sysctl *api.Resource
+		want   string
+	}{
+		{name: "missing", want: "requires a Sysctl resource"},
+		{name: "wrong-value", sysctl: func() *api.Resource {
+			resource := sysctl
+			spec := resource.Spec.(api.SysctlSpec)
+			spec.Value = "0"
+			resource.Spec = spec
+			return &resource
+		}(), want: "value 1"},
+		{name: "runtime-disabled", sysctl: func() *api.Resource {
+			resource := sysctl
+			spec := resource.Spec.(api.SysctlSpec)
+			spec.Runtime = &falseValue
+			resource.Spec = spec
+			return &resource
+		}(), want: "runtime enabled"},
+		{name: "optional", sysctl: func() *api.Resource {
+			resource := sysctl
+			spec := resource.Spec.(api.SysctlSpec)
+			spec.Optional = true
+			resource.Spec = spec
+			return &resource
+		}(), want: "non-optional"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resources := []api.Resource{conntrackd}
+			if tc.sysctl != nil {
+				resources = append(resources, *tc.sysctl)
+			}
+			err := ValidateForOS(router(resources...), platform.OSLinux)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ValidateForOS(conntrackd) error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+
+	if err := ValidateForOS(router(conntrackd, sysctl), platform.OSLinux); err != nil {
+		t.Fatalf("ValidateForOS(conntrackd with tcp_be_liberal): %v", err)
+	}
+}
+
 func TestValidateNAT44RuleRequiresValidCIDR(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
