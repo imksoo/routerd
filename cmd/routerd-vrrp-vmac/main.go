@@ -33,6 +33,17 @@ type vmac struct {
 
 const conntrackdRoleStatePath = "/run/routerd/vrrp-vmac-conntrackd-role"
 
+type commandRunner func(name string, args ...string) ([]byte, error)
+
+type runHooks struct {
+	command                    commandRunner
+	withdrawRA                 func(string) error
+	requestRA                  func(string) error
+	conntrackdTransitionNeeded func(string) (bool, error)
+	reconcileConntrackdRole    func(string) error
+	writeConntrackdRole        func(string) error
+}
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -41,22 +52,41 @@ func main() {
 }
 
 func run(args []string) error {
+	return runWithHooks(args, productionRunHooks())
+}
+
+func productionRunHooks() runHooks {
+	return runHooks{
+		command:                    runCommand,
+		withdrawRA:                 withdrawRouterAdvertisement,
+		requestRA:                  requestRouterAdvertisement,
+		conntrackdTransitionNeeded: conntrackdRoleTransitionNeeded,
+		reconcileConntrackdRole:    reconcileConntrackdRole,
+		writeConntrackdRole:        writeConntrackdRole,
+	}
+}
+
+func runCommand(name string, args ...string) ([]byte, error) {
+	return exec.Command(name, args...).CombinedOutput()
+}
+
+func runWithHooks(args []string, hooks runHooks) error {
 	opts, err := parseOptions(args)
 	if err != nil {
 		return err
 	}
 	if opts.action == "withdraw-ra" {
-		return withdrawRouterAdvertisement(opts.parent)
+		return hooks.withdrawRA(opts.parent)
 	}
-	conntrackdTransition, err := conntrackdRoleTransitionNeeded(opts.action)
+	conntrackdTransition, err := hooks.conntrackdTransitionNeeded(opts.action)
 	if err != nil {
 		return err
 	}
 	if opts.action == "deactivate" {
 		for _, vmac := range opts.vmacs {
 			if vmac.withdraw {
-				if err := withdrawRouterAdvertisement(vmac.parent); err != nil {
-					return err
+				if err := hooks.withdrawRA(vmac.parent); err != nil && !isMissingRAInterface(err) {
+					return fmt.Errorf("withdraw router advertisement on %s: %w", vmac.parent, err)
 				}
 			}
 		}
@@ -66,19 +96,13 @@ func run(args []string) error {
 	// reach the newly elected router during the VMAC/RA work and be classified
 	// as INVALID before the replicated NAT state exists in the kernel.
 	if opts.action == "activate" && conntrackdTransition {
-		if err := reconcileConntrackdRole(opts.action); err != nil {
+		if err := hooks.reconcileConntrackdRole(opts.action); err != nil {
 			return err
 		}
 	}
-	for _, command := range commandsFor(opts) {
-		if output, err := exec.Command(command[0], command[1:]...).CombinedOutput(); err != nil {
-			if len(command) > 2 && command[0] == "ip" && command[1] == "link" && command[2] == "add" && strings.Contains(string(output), "File exists") {
-				continue
-			}
-			if opts.action == "deactivate" && strings.Contains(string(output), "Cannot find device") {
-				return nil
-			}
-			return fmt.Errorf("%s: %w: %s", strings.Join(command, " "), err, strings.TrimSpace(string(output)))
+	for _, commands := range commandsForVMACs(opts) {
+		if err := runVMACCommands(opts.action, commands, hooks.command); err != nil {
+			return err
 		}
 	}
 	if opts.action == "activate" {
@@ -86,7 +110,7 @@ func run(args []string) error {
 			if vmac.withdraw {
 				continue
 			}
-			if err := requestRouterAdvertisement(vmac.ifname); err != nil {
+			if err := hooks.requestRA(vmac.ifname); err != nil {
 				return err
 			}
 		}
@@ -96,28 +120,59 @@ func run(args []string) error {
 		// VMAC route after RA is learned; repeated MASTER reconciliation makes
 		// this converge even when RA arrives after the link is raised.
 		for _, vmac := range opts.vmacs {
-			output, err := exec.Command("ip", "-6", "route", "show", "default", "dev", vmac.ifname).CombinedOutput()
+			output, err := hooks.command("ip", "-6", "route", "show", "default", "dev", vmac.ifname)
 			if err != nil {
 				return fmt.Errorf("read IPv6 default route for %s: %w: %s", vmac.ifname, err, strings.TrimSpace(string(output)))
 			}
 			if command, ok := preferVMACDefaultCommand(string(output), vmac.ifname); ok {
-				if output, err := exec.Command(command[0], command[1:]...).CombinedOutput(); err != nil {
+				if output, err := hooks.command(command[0], command[1:]...); err != nil {
 					return fmt.Errorf("%s: %w: %s", strings.Join(command, " "), err, strings.TrimSpace(string(output)))
 				}
 			}
 		}
 	}
 	if opts.action != "activate" && conntrackdTransition {
-		if err := reconcileConntrackdRole(opts.action); err != nil {
+		if err := hooks.reconcileConntrackdRole(opts.action); err != nil {
 			return err
 		}
 	}
 	if conntrackdTransition {
-		if err := writeConntrackdRole(opts.action); err != nil {
+		if err := hooks.writeConntrackdRole(opts.action); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func runVMACCommands(action string, commands [][]string, command commandRunner) error {
+	for _, args := range commands {
+		output, err := command(args[0], args[1:]...)
+		if err == nil {
+			continue
+		}
+		if len(args) > 2 && args[0] == "ip" && args[1] == "link" && args[2] == "add" && strings.Contains(string(output), "File exists") {
+			continue
+		}
+		if action == "deactivate" && isIPRouteMissingDevice(args, output) {
+			// A missing parent or child is local to this VMAC. Keep processing
+			// remaining VMACs, then complete the conntrackd BACKUP transition.
+			return nil
+		}
+		return fmt.Errorf("%s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func isMissingRAInterface(err error) bool {
+	if errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "no such network interface")
+}
+
+func isIPRouteMissingDevice(args []string, output []byte) bool {
+	return len(args) > 0 && args[0] == "ip" && strings.Contains(strings.ToLower(string(output)), "cannot find device")
 }
 
 func conntrackdRoleTransitionNeeded(action string) (bool, error) {
@@ -408,6 +463,19 @@ func commandsFor(opts options) [][]string {
 			// PD-derived address controller and must survive this operation.
 			commands = append(commands, []string{"ip", "-6", "addr", "flush", "dev", entry.ifname, "scope", "link"}, []string{"ip", "-6", "addr", "replace", entry.linkLocal + "/64", "dev", entry.ifname, "nodad"})
 		}
+	}
+	return commands
+}
+
+// commandsForVMACs keeps each VMAC's commands as one failure boundary. A
+// missing parent on a BACKUP must not skip the remaining VMACs or the
+// conntrackd role transition.
+func commandsForVMACs(opts options) [][][]string {
+	commands := make([][][]string, 0, len(opts.vmacs))
+	for _, entry := range opts.vmacs {
+		single := opts
+		single.vmacs = []vmac{entry}
+		commands = append(commands, commandsFor(single))
 	}
 	return commands
 }
