@@ -41,6 +41,9 @@ Some sysctl values are rounded up by the kernel.
 For those, use `compare: atLeast`.
 `value` is what routerd writes; `expectedValue` is what routerd accepts on read-back.
 If `expectedValue` is omitted, `value` is used.
+Each explicit sysctl key may be declared by only one `Sysctl` resource.
+Validation rejects duplicate keys even when their values match, avoiding
+order-dependent runtime and persistent writes.
 
 ```yaml
 apiVersion: system.routerd.net/v1alpha1

@@ -43,6 +43,30 @@ func TestValidateSysctl(t *testing.T) {
 	}
 }
 
+func TestValidateSysctlRejectsDuplicateKey(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Sysctl"},
+				Metadata: api.ObjectMeta{Name: "tcp-liberal-enabled"},
+				Spec:     api.SysctlSpec{Key: "net.netfilter.nf_conntrack_tcp_be_liberal", Value: "1"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Sysctl"},
+				Metadata: api.ObjectMeta{Name: "tcp-liberal-disabled"},
+				Spec:     api.SysctlSpec{Key: "net.netfilter.nf_conntrack_tcp_be_liberal", Value: "0"},
+			},
+		}},
+	}
+
+	err := ValidateForOS(router, platform.OSLinux)
+	if err == nil || !strings.Contains(err.Error(), "duplicate Sysctl key") {
+		t.Fatalf("ValidateForOS(duplicate Sysctl key) error = %v", err)
+	}
+}
+
 func TestValidateSystemKernelModuleRejectsUnsafeFreeBSDLoaderIdentifier(t *testing.T) {
 	for _, module := range []string{"pf#comment", "pf=YES", `pf"bad`, "pf module", "pf/module"} {
 		t.Run(module, func(t *testing.T) {
