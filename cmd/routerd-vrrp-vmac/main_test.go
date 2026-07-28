@@ -52,6 +52,12 @@ func TestParseOptionsRejectsInvalidInterface(t *testing.T) {
 	}
 }
 
+func TestParseOptionsRejectsWithdrawRAAction(t *testing.T) {
+	if _, err := parseOptions([]string{"withdraw-ra", "--parent", "eth0"}); err == nil || !strings.Contains(err.Error(), "activate or deactivate") {
+		t.Fatalf("withdraw-ra action error = %v", err)
+	}
+}
+
 func TestPreferVMACDefaultCommand(t *testing.T) {
 	command, ok := preferVMACDefaultCommand("default via fe80::1 dev wan-vmac proto ra metric 1024\n", "wan-vmac")
 	if !ok {
@@ -85,7 +91,7 @@ func TestConntrackdRoleCommandsFollowFTFWPrimaryBackupSequence(t *testing.T) {
 
 func TestConntrackdRoleForAction(t *testing.T) {
 	for action, want := range map[string]string{
-		"activate": "master", "deactivate": "backup", "withdraw-ra": "backup", "unknown": "",
+		"activate": "master", "deactivate": "backup", "withdraw-ra": "", "unknown": "",
 	} {
 		if got := conntrackdRoleForAction(action); got != want {
 			t.Fatalf("role for %q = %q, want %q", action, got, want)
