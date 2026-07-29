@@ -297,6 +297,31 @@ func addressUsableInIPOutput(output, address string) bool {
 	return false
 }
 
+// addressUsableInIfconfigOutput reports whether exactly address is ready for
+// use in FreeBSD ifconfig output. Other link-local addresses must not affect
+// the result: a VMAC can have more than one, and DAD is per address.
+func addressUsableInIfconfigOutput(output, address string) bool {
+	want := net.ParseIP(address)
+	if want == nil {
+		return false
+	}
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "inet6" {
+			continue
+		}
+		got := net.ParseIP(strings.SplitN(fields[1], "%", 2)[0])
+		if got == nil || !got.Equal(want) {
+			continue
+		}
+		state := strings.ToLower(line)
+		return !strings.Contains(state, "tentative") &&
+			!strings.Contains(state, "duplicate") &&
+			!strings.Contains(state, "dadfailed")
+	}
+	return false
+}
+
 func linkLocalFromMAC(mac net.HardwareAddr) string {
 	if len(mac) != 6 {
 		return ""

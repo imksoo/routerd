@@ -11,17 +11,13 @@ import (
 	"time"
 )
 
+var runIfconfig = func(args ...string) ([]byte, error) {
+	return exec.Command("ifconfig", args...).CombinedOutput()
+}
+
 func linkLocalUsable(ifname, address string) bool {
-	ifi, err := net.InterfaceByName(ifname)
-	if err != nil {
-		return false
-	}
-	addrs, err := ifi.Addrs()
-	if err != nil {
-		return false
-	}
-	got, err := selectLinkLocalIPv6(addrs)
-	return err == nil && got == address
+	output, err := runIfconfig(ifname)
+	return err == nil && addressUsableInIfconfigOutput(string(output), address)
 }
 
 func ensureInterfaceLinkLocalIPv6(ifi *net.Interface) (string, error) {
@@ -29,9 +25,10 @@ func ensureInterfaceLinkLocalIPv6(ifi *net.Interface) (string, error) {
 	if address == "" {
 		return "", fmt.Errorf("cannot derive link-local address from MAC %q", ifi.HardwareAddr)
 	}
-	command := exec.Command("ifconfig", ifi.Name, "inet6", address, "prefixlen", "64", "alias")
-	if output, err := command.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("add VMAC link-local address: %w: %s", err, strings.TrimSpace(string(output)))
+	if !linkLocalPresent(ifi.Name, address) {
+		if output, err := runIfconfig(ifi.Name, "inet6", address, "prefixlen", "64", "alias"); err != nil {
+			return "", fmt.Errorf("add VMAC link-local address: %w: %s", err, strings.TrimSpace(string(output)))
+		}
 	}
 	deadline := time.Now().Add(3 * time.Second)
 	for !linkLocalUsable(ifi.Name, address) {
@@ -41,4 +38,25 @@ func ensureInterfaceLinkLocalIPv6(ifi *net.Interface) (string, error) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	return address, nil
+}
+
+func linkLocalPresent(ifname, address string) bool {
+	output, err := runIfconfig(ifname)
+	if err != nil {
+		return false
+	}
+	want := net.ParseIP(address)
+	if want == nil {
+		return false
+	}
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "inet6" {
+			continue
+		}
+		if got := net.ParseIP(strings.SplitN(fields[1], "%", 2)[0]); got != nil && got.Equal(want) {
+			return true
+		}
+	}
+	return false
 }
