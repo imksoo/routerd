@@ -5,6 +5,7 @@ package eventsubscription
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -419,6 +420,52 @@ func TestScheduledBatchIsDiscardedWhenGenerationStops(t *testing.T) {
 	}
 	timers.fireLast()
 	assertNoExtraPluginCall(t, calls)
+}
+
+func TestFiredSchedulesReleaseContextWatchers(t *testing.T) {
+	const cycles = 10
+	store := mustStore(t)
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		pluginResource("claim-plugin", "/unused"),
+		subscriptionResourceWithTrigger("claim-plugin", api.EventSubscriptionMatch{Types: []string{"routerd.client.ipv4.observed"}}, api.EventSubscriptionTrigger{
+			PluginRef: "claim-plugin",
+			Debounce:  "1m",
+		}),
+	}}}
+	timers := &fakeTriggerTimerFactory{}
+	calls := make(chan []string, cycles)
+	var released atomic.Int32
+	c := newController(t, store, router)
+	c.NewTimer = timers.newTimer
+	c.AfterFunc = func(ctx context.Context, fn func()) func() bool {
+		stop := context.AfterFunc(ctx, fn)
+		return func() bool {
+			if stop() {
+				released.Add(1)
+				return true
+			}
+			return false
+		}
+	}
+	c.PluginRunner = func(_ context.Context, _ api.PluginSpec, _ string, opts routerplugin.RunOptions) (routerplugin.PluginResult, routerplugin.RunOutcome, error) {
+		calls <- pluginEventIDs(opts.Events)
+		return routerplugin.PluginResult{Status: routerplugin.PluginResultStatus{TTL: "10m"}}, routerplugin.RunOutcome{HasExitCode: true}, nil
+	}
+	ctx := context.Background()
+	for i := 0; i < cycles; i++ {
+		id := fmt.Sprintf("event-%02d", i)
+		recordEvent(t, store, routerstate.EventRecord{ID: id, Group: "cloudedge", Type: "routerd.client.ipv4.observed"})
+		if err := c.Reconcile(ctx); err != nil {
+			t.Fatalf("cycle %d reconcile: %v", i, err)
+		}
+		timers.fireLast()
+		if got := waitPluginCall(t, calls); len(got) == 0 || got[len(got)-1] != id {
+			t.Fatalf("cycle %d plugin events = %v, want latest %s", i, got, id)
+		}
+	}
+	if got := released.Load(); got != cycles {
+		t.Fatalf("released context watchers = %d, want %d", got, cycles)
+	}
 }
 
 func TestReconcileBatchWindowCoalescesFromFirstEvent(t *testing.T) {

@@ -90,6 +90,7 @@ type Controller struct {
 	Now          func() time.Time
 	MaxAttempts  int
 	NewTimer     triggerTimerFactory
+	AfterFunc    func(context.Context, func()) func() bool
 
 	mu         sync.Mutex
 	schedules  map[string]*subscriptionSchedule
@@ -109,6 +110,7 @@ type subscriptionSchedule struct {
 	ctx      context.Context
 	bytes    int
 	timer    triggerTimer
+	stop     func() bool
 }
 
 func (c *Controller) now() time.Time {
@@ -362,7 +364,21 @@ func (c *Controller) deferBatch(ctx context.Context, resource api.Resource, spec
 			ctx:      ctx,
 		}
 		c.schedules[subKey] = sched
-		go c.cancelScheduleOnDone(subKey, ctx)
+		afterFunc := context.AfterFunc
+		if c.AfterFunc != nil {
+			afterFunc = c.AfterFunc
+		}
+		sched.stop = afterFunc(ctx, func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			current := c.schedules[subKey]
+			if current == nil || current != sched {
+				return
+			}
+			current.timer.Stop()
+			delete(c.schedules, subKey)
+			current.stop()
+		})
 	} else {
 		sched.resource = resource
 		sched.spec = spec
@@ -416,10 +432,12 @@ func (c *Controller) fireScheduled(subKey string) {
 	if err := sched.ctx.Err(); err != nil {
 		delete(c.schedules, subKey)
 		sched.timer.Stop()
+		sched.stop()
 		c.mu.Unlock()
 		return
 	}
 	delete(c.schedules, subKey)
+	sched.stop()
 	if c.processing == nil {
 		c.processing = map[string]bool{}
 	}
@@ -448,18 +466,6 @@ func (c *Controller) fireScheduled(subKey string) {
 		c.saveStatus(resource.Metadata.Name, "Degraded", err.Error(), len(batch))
 	}
 	c.finishProcessing(subKey)
-}
-
-func (c *Controller) cancelScheduleOnDone(subKey string, ctx context.Context) {
-	<-ctx.Done()
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	sched := c.schedules[subKey]
-	if sched == nil || sched.ctx != ctx {
-		return
-	}
-	sched.timer.Stop()
-	delete(c.schedules, subKey)
 }
 
 func (c *Controller) finishProcessing(subKey string) {
