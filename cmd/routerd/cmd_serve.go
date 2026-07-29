@@ -553,10 +553,11 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		applySandboxControllerOptions(&controllerOpts, *dnsmasqConfigPath, *nftablesPath)
 	}
 	chainRunner = &controllerchain.Runner{
-		Router: router,
-		Bus:    controllerBus,
-		Store:  stateStore,
-		Opts:   controllerOpts,
+		Router:      router,
+		Bus:         controllerBus,
+		Store:       stateStore,
+		Opts:        controllerOpts,
+		CancelServe: cancelSignalCtx,
 	}
 	if *once {
 		_, err := runServeChainOnce(ctx, chainRunner, router, applyOpts, stateStore, stdout, logger)

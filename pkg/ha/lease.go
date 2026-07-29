@@ -5,6 +5,7 @@ package ha
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 	"syscall"
 	"time"
 )
+
+var ErrLeaseClosed = errors.New("cluster lease is closed")
 
 type Config struct {
 	Name      string
@@ -86,7 +89,7 @@ func Acquire(ctx context.Context, cfg Config) (Decision, error) {
 
 func (l *AcquiredLease) Refresh() error {
 	if l == nil || l.File == nil {
-		return nil
+		return ErrLeaseClosed
 	}
 	now := time.Now().UTC()
 	lease := Lease{Holder: l.Config.Identity, UpdatedAt: now, ExpiresAt: now.Add(l.Config.TTL)}

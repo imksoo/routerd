@@ -574,8 +574,10 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 	if err := appendLedgerOwnedOrphans(result, effectiveRouter, router, opts.LedgerPath, opts.DryRun); err != nil {
 		return nil, err
 	}
+	decision := ha.Decision{Leader: true}
 	if !opts.DryRun {
-		decision, clusterName, err := acquireApplyClusterLease(ctx, effectiveRouter, stateStore)
+		var clusterName string
+		decision, clusterName, err = acquireApplyClusterLease(ctx, effectiveRouter, stateStore)
 		if err != nil {
 			return nil, err
 		}
@@ -608,10 +610,11 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 	eventBus.SetLogger(slog.Default())
 	controllerOpts := applyChainControllerOptions(opts)
 	runner := &controllerchain.Runner{
-		Router: router,
-		Bus:    eventBus,
-		Store:  stateStore,
-		Opts:   controllerOpts,
+		Router:     router,
+		Bus:        eventBus,
+		Store:      stateStore,
+		Opts:       controllerOpts,
+		HADecision: &decision,
 	}
 	if err := runner.ReconcileOnce(ctx); err != nil {
 		return nil, err
