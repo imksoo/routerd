@@ -9,9 +9,9 @@ trap 'rm -rf "$tmp"' EXIT
 die() { echo "sam-pve-qga offline: $*" >&2; exit 1; }
 
 write_output() {
-  local boot=$1 public=${2:-} private=${3:-}
-  jq -n --arg boot "$boot" --arg public "$public" --arg private "$private" \
-    '{fabric:{value:{pve:{node_ssh_host:"pve06",boot_source:$boot}}},nodes:{value:{"pve-client-a":{site:"pve",vm_id:141,public_ip:$public,private_ip:$private}}}}' >"$tmp/in.json"
+  local boot=$1 public=${2:-} private=${3:-} host=${4:-pve06} vmid=${5:-141}
+  jq -n --arg boot "$boot" --arg public "$public" --arg private "$private" --arg host "$host" --argjson vmid "$vmid" \
+    '{fabric:{value:{pve:{node_ssh_host:$host,boot_source:$boot}}},nodes:{value:{"pve-client-a":{site:"pve",vm_id:$vmid,public_ip:$public,private_ip:$private}}}}' >"$tmp/in.json"
 }
 
 fake_bin="$tmp/bin"; mkdir -p "$fake_bin"
@@ -53,9 +53,24 @@ if PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" QGA_TRANSPORT_FAIL=1 "$SCRI
 grep -q PVEQGATransportUnavailable "$tmp/stderr" || die "missing transport diagnostic"
 grep -q 'permission denied' "$tmp/evidence" || die "transport stderr was not preserved in evidence"
 
-write_output iso '' 10.0.0.20
+write_output template '' 10.0.0.20
 : >"$tmp/ssh.log"
 PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" "$SCRIPT" --tofu-output "$tmp/in.json" --out "$tmp/out.json" --retries 1 >/dev/null
 [ "$(wc -l <"$tmp/ssh.log")" -eq 0 ] || die "private address should bypass QGA"
+
+write_output template '' 10.0.0.20 '' 141
+: >"$tmp/ssh.log"
+PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" "$SCRIPT" --tofu-output "$tmp/in.json" --out "$tmp/out.json" --retries 1 >/dev/null
+[ "$(wc -l <"$tmp/ssh.log")" -eq 0 ] || die "private address should not require a PVE SSH host"
+
+write_output template '' 10.0.0.20 pve06 null
+: >"$tmp/ssh.log"
+PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" "$SCRIPT" --tofu-output "$tmp/in.json" --out "$tmp/out.json" --retries 1 >/dev/null
+[ "$(wc -l <"$tmp/ssh.log")" -eq 0 ] || die "private address should not require a VM ID"
+
+write_output iso
+: >"$tmp/ssh.log"
+PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" QGA_AGENT_MODE='enabled=1,fstrim_cloned_disks=1' "$SCRIPT" --tofu-output "$tmp/in.json" --out "$tmp/out.json" --retries 1 --retry-sleep 0 >/dev/null
+grep -q '192.0.2.20' "$tmp/out.json" || die "enabled=1 QGA agent was not accepted"
 
 echo "sam PVE QGA offline OK"
