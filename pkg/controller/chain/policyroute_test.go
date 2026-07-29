@@ -17,6 +17,7 @@ import (
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/nftstate"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resource"
 )
@@ -26,7 +27,7 @@ func TestIPv6HostPolicyUsesStateAndNeverMarksNft(t *testing.T) {
 	router := hostPolicyRouter(true)
 	store := mapStore{}
 	var calls []string
-	controller := IPv4PolicyRouteController{Router: router, Store: store, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+	controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		call := name + " " + strings.Join(args, " ")
 		calls = append(calls, call)
 		switch call {
@@ -68,7 +69,7 @@ func TestIPv6HostPolicyRepairsMissingRuleWithMatchingState(t *testing.T) {
 		t.Fatal(err)
 	}
 	var calls []string
-	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: mapStore{}, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: mapStore{}, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		call := name + " " + strings.Join(args, " ")
 		calls = append(calls, call)
 		switch call {
@@ -97,7 +98,7 @@ func TestIPv6HostPolicyInitialSourceUnavailableDoesNotApply(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "ipv6-host-policy.json")
 	store := mapStore{}
 	var calls []string
-	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: store, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		calls = append(calls, name+" "+strings.Join(args, " "))
 		if strings.Contains(strings.Join(args, " "), "addr show") {
 			return nil, errors.New("no global address")
@@ -128,7 +129,7 @@ func TestIPv6HostPolicyRetainsStateWhenPreferredSourceUnavailable(t *testing.T) 
 	}
 	store := mapStore{}
 	var calls []string
-	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: store, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		calls = append(calls, name+" "+strings.Join(args, " "))
 		if strings.Contains(strings.Join(args, " "), "addr show") {
 			return nil, errors.New("no global address")
@@ -155,7 +156,7 @@ func TestIPv6HostPolicyChangesAndRemovesOnlyStatefulRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	var calls []string
-	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: mapStore{}, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: mapStore{}, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		call := name + " " + strings.Join(args, " ")
 		calls = append(calls, call)
 		if strings.Contains(call, "addr show") {

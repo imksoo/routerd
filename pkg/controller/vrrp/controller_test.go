@@ -586,7 +586,7 @@ func TestReconcilePublishesRoleBeforeVMACRepairFailure(t *testing.T) {
 	spec, _ := router.Spec.Resources[1].VirtualAddressSpec()
 	spec.VRRP.FailoverVMAC = &api.VirtualAddressVRRPFailoverVMACSpec{ParentInterface: "lan", Interface: "lan-vrrp", MACAddress: "02:00:5e:00:01:12"}
 	router.Spec.Resources[1].Spec = spec
-	controller := &Controller{Router: router, Store: store, ConfigPath: filepath.Join(t.TempDir(), "keepalived.conf"), Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+	controller := &Controller{Router: router, Store: store, OperatingSystem: platform.OSLinux, ConfigPath: filepath.Join(t.TempDir(), "keepalived.conf"), Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		if name == "/usr/local/sbin/routerd-vrrp-vmac" {
 			return []byte("repair failed"), errors.New("exit status 1")
 		}

@@ -1329,7 +1329,7 @@ func TestValidateLinuxEgressRoutePolicyHostTrafficAllowsOnlyMarkZero(t *testing.
 		wan := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "wan0"}}
 		return &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "test"}, Spec: api.RouterSpec{Resources: []api.Resource{wan, resource}}}
 	}
-	if err := Validate(router(base)); err != nil {
+	if err := ValidateForOS(router(base), platform.OSLinux); err != nil {
 		t.Fatalf("mark=0 host policy must validate: %v", err)
 	}
 	marked := base
@@ -1337,21 +1337,21 @@ func TestValidateLinuxEgressRoutePolicyHostTrafficAllowsOnlyMarkZero(t *testing.
 	markedSpec.Candidates = append([]api.EgressRoutePolicyCandidate(nil), markedSpec.Candidates...)
 	markedSpec.Candidates[0].Mark = 0x110
 	marked.Spec = markedSpec
-	if err := Validate(router(marked)); err == nil {
+	if err := ValidateForOS(router(marked), platform.OSLinux); err == nil {
 		t.Fatal("host policy mark must be rejected")
 	}
 	normal := base
 	normalSpec := normal.Spec.(api.EgressRoutePolicySpec)
 	normalSpec.HostTraffic = false
 	normal.Spec = normalSpec
-	if err := Validate(router(normal)); err == nil {
+	if err := ValidateForOS(router(normal), platform.OSLinux); err == nil {
 		t.Fatal("ordinary policy must retain mark-required contract")
 	}
 	multiple := base
 	multipleSpec := multiple.Spec.(api.EgressRoutePolicySpec)
 	multipleSpec.Candidates = append(multipleSpec.Candidates, multipleSpec.Candidates[0])
 	multiple.Spec = multipleSpec
-	if err := Validate(router(multiple)); err == nil {
+	if err := ValidateForOS(router(multiple), platform.OSLinux); err == nil {
 		t.Fatal("host policy must reject multiple candidates")
 	}
 }
