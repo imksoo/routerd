@@ -40,7 +40,7 @@ func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) 
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", controlapi.ErrBadRequest, err)
 	}
-	if !req.DryRun {
+	if !req.DryRun && !req.NoReconcile {
 		if changed, resources := runtimeShapeChanged(m.getRouter(), nextRouter); changed {
 			return nil, fmt.Errorf("%w: restart required for runtime lifecycle change: %s", controlapi.ErrBadRequest, strings.Join(resources, ", "))
 		}
@@ -58,10 +58,11 @@ func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) 
 		if err != nil {
 			return nil, err
 		}
-		m.setRouter(nextRouter)
 		apiResult := controlapi.NewApplyResult(result)
 		return &apiResult, nil
 	}
+	unlock := m.lockMutationTransaction()
+	defer unlock()
 	result, err := m.reconcile(nextRouter, nextYAML)
 	if err != nil {
 		return nil, err
@@ -136,7 +137,7 @@ func (m serveConfigMutator) delete(r *http.Request, req controlapi.DeleteRequest
 	if !removed {
 		return nil, fmt.Errorf("%w: %s/%s not found in canonical config", controlapi.ErrBadRequest, target.Kind, target.Name)
 	}
-	if !req.DryRun {
+	if !req.DryRun && !req.NoReconcile {
 		if changed, resources := runtimeShapeChanged(m.getRouter(), nextRouter); changed {
 			return nil, fmt.Errorf("%w: restart required for runtime lifecycle change: %s", controlapi.ErrBadRequest, strings.Join(resources, ", "))
 		}
@@ -159,10 +160,11 @@ func (m serveConfigMutator) delete(r *http.Request, req controlapi.DeleteRequest
 		if err != nil {
 			return nil, err
 		}
-		m.setRouter(nextRouter)
 		result.Result = committed
 		return &result, nil
 	}
+	unlock := m.lockMutationTransaction()
+	defer unlock()
 	applied, err := m.reconcile(nextRouter, string(nextYAML))
 	if err != nil {
 		return nil, err
@@ -290,7 +292,18 @@ func (m serveConfigMutator) reconcile(router *api.Router, configYAML string) (*a
 	opts.DryRun = false
 	opts.SkipConfigCommit = false
 	opts.ConfigYAMLOverride = configYAML
+	// This transaction owns the exclusive gate through config commit and the
+	// Router pointer swap. Do not recursively lock it inside RunOnce.
+	opts.MutationGate = nil
 	return runApplyChainOnce(context.Background(), router, opts, io.Discard, m.logger)
+}
+
+func (m serveConfigMutator) lockMutationTransaction() func() {
+	if m.baseOpts.MutationGate == nil {
+		return func() {}
+	}
+	m.baseOpts.MutationGate.Lock()
+	return m.baseOpts.MutationGate.Unlock
 }
 
 func (m serveConfigMutator) commitOnly(router *api.Router, configYAML string) (*apply.Result, error) {

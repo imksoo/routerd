@@ -1065,7 +1065,7 @@ spec:
 	}
 }
 
-func TestServeConfigMutatorDeleteNoReconcileUpdatesCanonical(t *testing.T) {
+func TestServeConfigMutatorDeleteNoReconcileCommitsForRestartWithoutChangingRuntime(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "router.yaml")
 	statePath := filepath.Join(dir, "routerd.db")
@@ -1113,8 +1113,8 @@ spec:
 	if strings.Contains(string(data), "appliance") || strings.Contains(string(data), "resource to remove") {
 		t.Fatalf("canonical still contains deleted resource:\n%s", data)
 	}
-	if len(router.Spec.Resources) != 0 {
-		t.Fatalf("in-memory resources = %d, want 0", len(router.Spec.Resources))
+	if len(router.Spec.Resources) != 1 {
+		t.Fatalf("running generation changed before restart: resources = %d, want 1", len(router.Spec.Resources))
 	}
 }
 
