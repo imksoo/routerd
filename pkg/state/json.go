@@ -105,7 +105,7 @@ type EventLister interface {
 }
 
 type EventConsumerCursorStore interface {
-	EventConsumerCursor(consumer string) (int64, error)
+	LoadOrInitializeEventConsumerCursor(consumer string) (int64, error)
 	SaveEventConsumerCursor(consumer string, cursor int64) error
 }
 

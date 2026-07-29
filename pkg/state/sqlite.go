@@ -1505,17 +1505,20 @@ FROM events`+where+` ORDER BY id `+order+` LIMIT ?`, args...)
 	return events, nil
 }
 
-func (s *SQLiteStore) EventConsumerCursor(consumer string) (int64, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+func (s *SQLiteStore) LoadOrInitializeEventConsumerCursor(consumer string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.closed {
 		return 0, nil
 	}
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.db.Exec(`INSERT INTO event_consumer_cursors(consumer,cursor,updated_at)
+SELECT ?,COALESCE(MAX(id),0),? FROM events WHERE true
+ON CONFLICT(consumer) DO NOTHING`, consumer, now); err != nil {
+		return 0, err
+	}
 	var cursor int64
 	err := s.db.QueryRow(`SELECT cursor FROM event_consumer_cursors WHERE consumer = ?`, consumer).Scan(&cursor)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil
-	}
 	return cursor, err
 }
 

@@ -86,6 +86,7 @@ func (c *Controller) Start(ctx context.Context) {
 		ticker := time.NewTicker(poll)
 		defer ticker.Stop()
 		wake := make(chan struct{}, 1)
+		var retry eventconsumer.Backoff
 		wake <- struct{}{}
 		for {
 			select {
@@ -103,8 +104,16 @@ func (c *Controller) Start(ctx context.Context) {
 				default:
 				}
 			case <-wake:
-				if err := c.drainStoredEvents(ctx); err != nil && ctx.Err() == nil && c.Logger != nil {
-					c.Logger.Warn("event rule reconcile failed", "error", err)
+				if !retry.Ready() {
+					continue
+				}
+				if err := c.drainStoredEvents(ctx); err != nil {
+					retry.Failure()
+					if ctx.Err() == nil && c.Logger != nil {
+						c.Logger.Warn("event rule reconcile failed", "error", err)
+					}
+				} else {
+					retry.Success()
 				}
 			case <-ctx.Done():
 				return
@@ -132,7 +141,10 @@ func (c *Controller) Reconcile(ctx context.Context, event daemonapi.DaemonEvent)
 		}
 		events, err := c.reconcileRule(ctx, resource, event)
 		if err != nil {
-			return err
+			if c.Logger != nil {
+				c.Logger.Warn("event rule configuration is invalid; skipping rule", "rule", resource.Metadata.Name, "error", err)
+			}
+			continue
 		}
 		for _, emitted := range events {
 			pending = append(pending, pendingEvent{resource: resource, event: emitted})
