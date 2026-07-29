@@ -52,9 +52,11 @@ type Packet struct {
 }
 
 type Reader struct {
-	fd    int
-	group uint16
-	seq   uint32
+	fd      int
+	group   uint16
+	seq     uint32
+	buf     []byte
+	pending []Packet
 }
 
 func Open(group int) (*Reader, error) {
@@ -65,7 +67,7 @@ func Open(group int) (*Reader, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &Reader{fd: fd, group: uint16(group)}
+	r := &Reader{fd: fd, group: uint16(group), buf: make([]byte, 1<<20)}
 	if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_RCVBUF, 1<<20); err != nil {
 		_ = unix.Close(fd)
 		return nil, err
@@ -101,7 +103,12 @@ func (r *Reader) Close() error {
 }
 
 func (r *Reader) Read(ctx context.Context) (Packet, error) {
-	buf := make([]byte, 1<<20)
+	if len(r.pending) > 0 {
+		packet := r.pending[0]
+		r.pending[0] = Packet{}
+		r.pending = r.pending[1:]
+		return packet, nil
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -119,19 +126,22 @@ func (r *Reader) Read(ctx context.Context) (Packet, error) {
 		if n == 0 {
 			continue
 		}
-		size, _, err := unix.Recvfrom(r.fd, buf, 0)
+		size, _, err := unix.Recvfrom(r.fd, r.buf, 0)
 		if err != nil {
 			if errors.Is(err, unix.EINTR) || errors.Is(err, unix.ENOBUFS) {
 				continue
 			}
 			return Packet{}, err
 		}
-		packets, err := ParseMessages(buf[:size])
+		packets, err := ParseMessages(r.buf[:size])
 		if err != nil {
 			return Packet{}, err
 		}
 		if len(packets) > 0 {
-			return packets[0], nil
+			packet := packets[0]
+			packets[0] = Packet{}
+			r.pending = packets[1:]
+			return packet, nil
 		}
 	}
 }
