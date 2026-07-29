@@ -58,16 +58,49 @@ trap 'rm -f "$tmp"' EXIT
 cp "$tofu_output" "$tmp"
 : >"$evidence"
 
+boot_source="$(jq -r '.fabric.value.pve.boot_source // empty' "$tofu_output")"
+if [ "$boot_source" != "iso" ]; then
+  printf 'PVEQGAUnsupportedBootSource: PVE nodes have no management address, but boot_source=%s; QGA fallback requires boot_source=iso\n' "${boot_source:-<empty>}" >&2
+  exit 2
+fi
+
 mapfile -t pve_nodes < <(jq -r '.nodes.value | to_entries[] | select(.value.site == "pve") | [.key, (.value.vm_id | tostring)] | @tsv' "$tofu_output")
 [ "${#pve_nodes[@]}" -gt 0 ] || { echo "no PVE nodes found in $tofu_output" >&2; exit 2; }
 
 for entry in "${pve_nodes[@]}"; do
   IFS=$'\t' read -r node vmid <<<"$entry"
-  [ -n "$vmid" ] && [ "$vmid" != "null" ] || { echo "missing vm_id for $node" >&2; exit 1; }
+  if [ -z "$vmid" ] || [ "$vmid" = "null" ]; then
+    echo "missing vm_id for $node" >&2
+    exit 1
+  fi
+
+  public_ip="$(jq -r --arg node "$node" '.nodes.value[$node].public_ip // empty' "$tmp")"
+  private_ip="$(jq -r --arg node "$node" '.nodes.value[$node].private_ip // empty' "$tmp")"
+  if [ -n "$public_ip" ] || [ -n "$private_ip" ]; then
+    printf 'SKIP node=%s vmid=%s management_address=%s\n' "$node" "$vmid" "${public_ip:-$private_ip}" >>"$evidence"
+    continue
+  fi
+
+  # shellcheck disable=SC2029 # awk runs on the PVE host, not locally.
+  if ! agent_config="$(ssh "root@$pve_node_ssh_host" "qm config $vmid | awk -F: '\$1 == \"agent\" { gsub(/[[:space:]]/, \"\", \$2); print \$2; exit }'" 2>"$tmp.ssh-stderr")"; then
+    cat "$tmp.ssh-stderr" >>"$evidence"
+    printf 'PVEQGATransportUnavailable: cannot query QGA capability on PVE host %s\n' "$pve_node_ssh_host" >&2
+    exit 2
+  fi
+  qga_configured=false
+  case "$agent_config" in 1|1,*|yes|yes,*) qga_configured=true ;; esac
+  {
+    printf 'node=%s\nvmid=%s\nboot_source=%s\ntransport=ssh\nqga_configured=%s\n' "$node" "$vmid" "$boot_source" "$qga_configured"
+  } >>"$evidence"
+  if [ "$qga_configured" != true ]; then
+    printf 'PVEQGADisabled: QEMU guest agent is disabled for node %s vmid=%s\n' "$node" "$vmid" >&2
+    exit 2
+  fi
 
   raw=
   for attempt in $(seq 1 "$retries"); do
-    if raw="$(ssh "root@$pve_node_ssh_host" "qm agent $vmid ping >/dev/null && qm agent $vmid network-get-interfaces" 2>/dev/null)"; then
+    # shellcheck disable=SC2029 # the redirect is part of the remote QGA readiness check.
+    if raw="$(ssh "root@$pve_node_ssh_host" "qm agent $vmid ping >/dev/null && qm agent $vmid network-get-interfaces" 2>>"$tmp.ssh-stderr")"; then
       break
     fi
     if [ "$attempt" -eq "$retries" ]; then

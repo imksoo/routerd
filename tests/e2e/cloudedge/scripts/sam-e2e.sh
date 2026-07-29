@@ -189,19 +189,41 @@ node_ssh_host() {
 }
 
 node_qga_eligible() {
-  local node="$1" site role public_ip vm_id
+  local node="$1" site role public_ip private_ip vm_id boot_source
   site="$(node_field "$node" site)"
   role="$(node_field "$node" role)"
   public_ip="$(node_field "$node" public_ip)"
+  private_ip="$(node_field "$node" private_ip)"
   vm_id="$(node_field "$node" vm_id)"
+  boot_source="$(jq -r '.pve.boot_source // empty' "$fabric_json")"
   [ "$site" = "pve" ] || return 1
   [ "$role" = "client" ] || return 1
   [ -n "$vm_id" ] && [ "$vm_id" != "null" ] || return 1
-  [ -z "$public_ip" ] || [ "$public_ip" = "null" ]
+  [ -z "$public_ip" ] || [ "$public_ip" = "null" ] || return 1
+  [ -z "$private_ip" ] || [ "$private_ip" = "null" ] || return 1
+  [ "$boot_source" = "iso" ]
+}
+
+pve_qga_preflight() {
+  local node="$1" vm_id pve_host agent
+  vm_id="$(node_field "$node" vm_id)"
+  pve_host="$(jq -r '.pve.node_ssh_host // .pve.node_name // empty' "$fabric_json")"
+  [ -n "$pve_host" ] && [ "$pve_host" != "null" ] || {
+    echo "PVEQGATransportUnavailable: cannot query QGA capability because no PVE SSH host is configured" >&2
+    return 1
+  }
+  if ! agent="$(ssh "root@$pve_host" "qm config $vm_id | awk -F: '\$1 == \"agent\" { gsub(/[[:space:]]/, \"\", \$2); print \$2; exit }'")"; then
+    echo "PVEQGATransportUnavailable: cannot query QGA capability on PVE host $pve_host" >&2
+    return 1
+  fi
+  case "$agent" in 1|1,*|yes|yes,*) return 0 ;; esac
+  echo "PVEQGADisabled: QEMU guest agent is disabled for node $node vmid=$vm_id" >&2
+  return 1
 }
 
 pve_qga_exec() {
   local node="$1" command="$2" vm_id pve_host raw exitcode
+  pve_qga_preflight "$node" || return 1
   vm_id="$(node_field "$node" vm_id)"
   pve_host="$(jq -r '.pve.node_ssh_host // .pve.node_name' "$fabric_json")"
   raw="$(ssh "root@$pve_host" "qm guest exec $vm_id --timeout 600 -- /bin/sh -lc $(printf '%q' "$command")")"
@@ -213,6 +235,7 @@ pve_qga_exec() {
 
 pve_qga_copy() {
   local src="$1" node="$2" dst="$3" vm_id pve_host raw exitcode quoted_dst
+  pve_qga_preflight "$node" || return 1
   vm_id="$(node_field "$node" vm_id)"
   pve_host="$(jq -r '.pve.node_ssh_host // .pve.node_name' "$fabric_json")"
   quoted_dst="$(printf '%q' "$dst")"
