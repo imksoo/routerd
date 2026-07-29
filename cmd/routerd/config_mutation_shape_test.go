@@ -4,10 +4,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
@@ -35,6 +37,26 @@ func TestRuntimeShapeChangedAllowsDataplaneOnlyChange(t *testing.T) {
 	next := &api.Router{Spec: api.RouterSpec{Resources: nil}}
 	if changed, resources := runtimeShapeChanged(current, next); changed {
 		t.Fatalf("changed=%v resources=%v", changed, resources)
+	}
+}
+
+func TestRuntimeReloadHasFiniteDeadline(t *testing.T) {
+	wantErr := errors.New("stop after inspecting deadline")
+	mutator := serveConfigMutator{
+		reload: func(ctx context.Context, _ *api.Router) error {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("runtime reload context has no deadline")
+			}
+			remaining := time.Until(deadline)
+			if remaining < 59*time.Second || remaining > time.Minute {
+				t.Fatalf("runtime reload deadline remaining = %s, want approximately 60s", remaining)
+			}
+			return wantErr
+		},
+	}
+	if err := mutator.reloadRuntime(&api.Router{}); !errors.Is(err, wantErr) {
+		t.Fatalf("reloadRuntime error = %v, want %v", err, wantErr)
 	}
 }
 

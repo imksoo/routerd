@@ -65,7 +65,7 @@ func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) 
 		if m.reload == nil {
 			return nil, fmt.Errorf("runtime generation reload is unavailable")
 		}
-		if err := m.reload(context.Background(), nextRouter); err != nil {
+		if err := m.reloadRuntime(nextRouter); err != nil {
 			return nil, err
 		}
 		m.setRouter(nextRouter)
@@ -73,7 +73,7 @@ func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) 
 	result, err := m.reconcile(nextRouter, nextYAML)
 	if err != nil {
 		if shapeChanged {
-			_ = m.reload(context.Background(), previous)
+			_ = m.reloadRuntime(previous)
 			m.setRouter(previous)
 		}
 		return nil, err
@@ -179,7 +179,7 @@ func (m serveConfigMutator) delete(r *http.Request, req controlapi.DeleteRequest
 		if m.reload == nil {
 			return nil, fmt.Errorf("runtime generation reload is unavailable")
 		}
-		if err := m.reload(context.Background(), nextRouter); err != nil {
+		if err := m.reloadRuntime(nextRouter); err != nil {
 			return nil, err
 		}
 		m.setRouter(nextRouter)
@@ -187,7 +187,7 @@ func (m serveConfigMutator) delete(r *http.Request, req controlapi.DeleteRequest
 	applied, err := m.reconcile(nextRouter, string(nextYAML))
 	if err != nil {
 		if shapeChanged {
-			_ = m.reload(context.Background(), previous)
+			_ = m.reloadRuntime(previous)
 			m.setRouter(previous)
 		}
 		return nil, err
@@ -333,6 +333,12 @@ func (m serveConfigMutator) lockMutationTransaction() func() {
 	}
 	m.baseOpts.MutationGate.Lock()
 	return m.baseOpts.MutationGate.Unlock
+}
+
+func (m serveConfigMutator) reloadRuntime(router *api.Router) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	return m.reload(ctx, router)
 }
 
 func (m serveConfigMutator) commitOnly(router *api.Router, configYAML string) (*apply.Result, error) {

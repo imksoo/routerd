@@ -1814,6 +1814,17 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 	reloads := r.runtimeReloadChannel()
 	for ctx.Err() == nil {
 		if generation == nil {
+			select {
+			case request := <-reloads:
+				var reloadErr error
+				generation, reloadErr = r.prepareReloadedControllerGeneration(ctx, logger, store, request.router)
+				request.done <- reloadErr
+				if generation == nil {
+					return reloadErr
+				}
+				continue
+			default:
+			}
 			var err error
 			generation, err = r.prepareControllerGeneration(ctx, logger, store)
 			if err != nil {
@@ -1850,25 +1861,30 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 			generation.cancel()
 			<-loopDone
 			closeControllerGeneration(generation)
-			previous := r.Router
-			r.Router = request.router
-			next, err := r.prepareControllerGenerationWithGate(ctx, logger, store.withRouter(request.router), nil)
-			if err != nil {
-				r.Router = previous
-				rollback, rollbackErr := r.prepareControllerGenerationWithGate(ctx, logger, store.withRouter(previous), nil)
-				if rollbackErr != nil {
-					request.done <- errors.Join(err, fmt.Errorf("restore previous generation: %w", rollbackErr))
-					return errors.Join(err, rollbackErr)
-				}
-				generation = rollback
-				request.done <- err
-				continue
+			var reloadErr error
+			generation, reloadErr = r.prepareReloadedControllerGeneration(ctx, logger, store, request.router)
+			request.done <- reloadErr
+			if generation == nil {
+				return reloadErr
 			}
-			generation = next
-			request.done <- nil
 		}
 	}
 	return ctx.Err()
+}
+
+func (r *Runner) prepareReloadedControllerGeneration(ctx context.Context, logger *slog.Logger, store eventedStore, router *api.Router) (*controllerGeneration, error) {
+	previous := r.Router
+	r.Router = router
+	next, err := r.prepareControllerGenerationWithGate(ctx, logger, store.withRouter(router), nil)
+	if err == nil {
+		return next, nil
+	}
+	r.Router = previous
+	rollback, rollbackErr := r.prepareControllerGenerationWithGate(ctx, logger, store.withRouter(previous), nil)
+	if rollbackErr != nil {
+		return nil, errors.Join(err, fmt.Errorf("restore previous generation: %w", rollbackErr))
+	}
+	return rollback, err
 }
 
 func closeControllerGeneration(generation *controllerGeneration) {

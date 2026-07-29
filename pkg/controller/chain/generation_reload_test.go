@@ -4,7 +4,9 @@ package chain
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -92,6 +94,113 @@ func TestRuntimeGenerationReloadActivatesLifecycleChangeWithoutOverlap(t *testin
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("generation supervisor did not stop")
+	}
+}
+
+func TestRuntimeReloadQueuedBetweenGenerationsPreemptsGatedPrepare(t *testing.T) {
+	gate := &sync.RWMutex{}
+	oldRouter := lifecycleTestRouter("router-a", "dns-old")
+	newRouter := lifecycleTestRouter("router-b", "dns-new")
+	runner := &Runner{
+		Router: oldRouter,
+		Bus:    bus.New(),
+		Store:  mapStore{},
+		Opts: Options{
+			EnabledControllers: []string{"reload-preemption"},
+			MutationGate:       gate,
+		},
+		reloadCh: make(chan generationReload, 1),
+	}
+	runner.generationBuilder = func(context.Context, *slog.Logger, eventedStore, bool, ha.Decision) ([]framework.Controller, DaemonStatusController, error) {
+		return []framework.Controller{framework.FuncController{
+			ControllerName: "reload-preemption",
+			ReconcileFunc:  func(context.Context, daemonapi.DaemonEvent) error { return nil },
+		}}, DaemonStatusController{}, nil
+	}
+	request := generationReload{router: newRouter, done: make(chan error, 1)}
+	runner.reloadCh <- request
+
+	gate.Lock()
+	ctx, cancel := context.WithCancel(context.Background())
+	store := eventedStore{Store: runner.Store, Bus: runner.Bus, Router: oldRouter}
+	supervisorDone := make(chan error, 1)
+	go func() {
+		supervisorDone <- runner.runControllerGenerations(ctx, slog.Default(), store, nil)
+	}()
+	select {
+	case err := <-request.done:
+		if err != nil {
+			t.Fatalf("queued reload failed: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("queued reload deadlocked behind the mutation gate")
+	}
+	if runner.Router != newRouter {
+		t.Fatal("queued reload did not replace the Router before prepare")
+	}
+	cancel()
+	gate.Unlock()
+	select {
+	case <-supervisorDone:
+	case <-time.After(time.Second):
+		t.Fatal("generation supervisor did not stop")
+	}
+}
+
+func TestStandbyPrepareRaceReloadTimesOutAndSupervisorRecovers(t *testing.T) {
+	leasePath := filepath.Join(t.TempDir(), "routerd-cluster.lease")
+	holder, err := ha.Acquire(context.Background(), ha.Config{
+		Identity:  "router-a",
+		Peers:     []string{"router-a", "router-b"},
+		LeasePath: leasePath,
+		TTL:       time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Lease.Close()
+
+	gate := &sync.RWMutex{}
+	runner := newClusterAcceptanceRunner("router-b", leasePath, time.Minute, &mutatorExecutionLog{})
+	runner.Opts.MutationGate = gate
+	prepareStarted := make(chan ha.Decision, 1)
+	runner.generationBuilder = func(_ context.Context, _ *slog.Logger, _ eventedStore, _ bool, decision ha.Decision) ([]framework.Controller, DaemonStatusController, error) {
+		prepareStarted <- decision
+		return []framework.Controller{framework.FuncController{
+			ControllerName: "standby-prepare",
+			ReconcileFunc:  func(context.Context, daemonapi.DaemonEvent) error { return nil },
+		}}, DaemonStatusController{}, nil
+	}
+	store := eventedStore{Store: runner.Store, Bus: runner.Bus, Router: runner.Router}
+	ctx, cancel := context.WithCancel(context.Background())
+	supervisorDone := make(chan error, 1)
+
+	gate.Lock()
+	go func() {
+		supervisorDone <- runner.runControllerGenerations(ctx, slog.Default(), store, nil)
+	}()
+	select {
+	case decision := <-prepareStarted:
+		if decision.Leader {
+			t.Fatal("test did not enter a standby prepare window")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("standby prepare did not start")
+	}
+
+	reloadCtx, reloadCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer reloadCancel()
+	err = runner.ReloadRuntime(reloadCtx, lifecycleTestRouter("router-b-new", "dns-new"))
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("ReloadRuntime error = %v, want deadline exceeded", err)
+	}
+
+	gate.Unlock()
+	cancel()
+	select {
+	case <-supervisorDone:
+	case <-time.After(time.Second):
+		t.Fatal("supervisor did not recover after the mutation gate was released")
 	}
 }
 
