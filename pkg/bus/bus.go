@@ -69,12 +69,14 @@ func (b *Bus) SetLogger(logger *slog.Logger) {
 }
 
 func (b *Bus) Publish(ctx context.Context, event Event) error {
+	var storeErr error
 	if b.store != nil {
 		cursor, err := b.store.RecordBusEvent(ctx, event)
 		if err != nil {
-			return err
+			storeErr = err
+		} else {
+			event.Cursor = cursor
 		}
-		event.Cursor = cursor
 	}
 	b.mu.Lock()
 	if event.Cursor == "" {
@@ -104,6 +106,12 @@ func (b *Bus) Publish(ctx context.Context, event Event) error {
 	b.mu.Unlock()
 
 	if logger != nil {
+		if storeErr != nil {
+			logger.ErrorContext(ctx, "routerd event persistence failed; delivered locally",
+				slog.String("topic", event.Type),
+				slog.Any("error", storeErr),
+			)
+		}
 		for _, drop := range drops {
 			logger.WarnContext(ctx, "routerd event dropped for slow subscriber",
 				slog.Uint64("subscriber", drop.subscriber),
@@ -113,7 +121,7 @@ func (b *Bus) Publish(ctx context.Context, event Event) error {
 		}
 	}
 	logEvent(ctx, logger, event)
-	return nil
+	return storeErr
 }
 
 func logEvent(ctx context.Context, logger *slog.Logger, event Event) {

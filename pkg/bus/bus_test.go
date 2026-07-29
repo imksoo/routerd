@@ -5,6 +5,7 @@ package bus
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -12,6 +13,37 @@ import (
 
 	"github.com/imksoo/routerd/pkg/daemonapi"
 )
+
+type failingEventStore struct{ err error }
+
+func (s failingEventStore) RecordBusEvent(context.Context, Event) (string, error) {
+	return "", s.err
+}
+
+func TestPersistenceFailureStillDeliversLocally(t *testing.T) {
+	storeErr := errors.New("disk full")
+	b := NewWithStore(failingEventStore{err: storeErr})
+	var logs bytes.Buffer
+	b.SetLogger(slog.New(slog.NewTextHandler(&logs, nil)))
+	ch, cancel := b.Subscribe(context.Background(), Subscription{}, 1)
+	defer cancel()
+
+	err := b.Publish(context.Background(), daemonapi.DaemonEvent{Type: "routerd.test.event"})
+	if !errors.Is(err, storeErr) {
+		t.Fatalf("Publish error = %v", err)
+	}
+	select {
+	case event := <-ch:
+		if event.Type != "routerd.test.event" || event.Cursor == "" {
+			t.Fatalf("event = %#v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("persistence failure suppressed local delivery")
+	}
+	if !strings.Contains(logs.String(), "persistence failed; delivered locally") {
+		t.Fatalf("persistence failure was not logged: %s", logs.String())
+	}
+}
 
 func TestPublishSubscribeWithTopicGlobAndResource(t *testing.T) {
 	b := New()
