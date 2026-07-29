@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/imksoo/routerd/pkg/daemonapi"
 )
@@ -25,7 +24,7 @@ type Subscription struct {
 type Bus struct {
 	mu          sync.Mutex
 	nextCursor  uint64
-	subscribers map[uint64]subscriber
+	subscribers map[uint64]*subscriber
 	recent      map[string][]Event
 	recentLimit int
 	store       EventStore
@@ -37,13 +36,21 @@ type EventStore interface {
 }
 
 type subscriber struct {
-	sub Subscription
-	ch  chan Event
+	id      uint64
+	sub     Subscription
+	ch      chan Event
+	dropped uint64
+}
+
+type dropNotice struct {
+	subscriber uint64
+	dropped    uint64
+	topics     []string
 }
 
 func New() *Bus {
 	return &Bus{
-		subscribers: map[uint64]subscriber{},
+		subscribers: map[uint64]*subscriber{},
 		recent:      map[string][]Event{},
 		recentLimit: 200,
 	}
@@ -61,13 +68,20 @@ func (b *Bus) SetLogger(logger *slog.Logger) {
 	b.logger = logger
 }
 
+// Publish records event in the configured store and delivers it to matching
+// local subscribers. A non-nil error reports a persistence failure; local
+// delivery is still attempted, so callers must not assume that an error means
+// the event was not delivered. Retrying after an error may therefore deliver a
+// duplicate event.
 func (b *Bus) Publish(ctx context.Context, event Event) error {
+	var storeErr error
 	if b.store != nil {
 		cursor, err := b.store.RecordBusEvent(ctx, event)
 		if err != nil {
-			return err
+			storeErr = err
+		} else {
+			event.Cursor = cursor
 		}
-		event.Cursor = cursor
 	}
 	b.mu.Lock()
 	if event.Cursor == "" {
@@ -76,31 +90,43 @@ func (b *Bus) Publish(ctx context.Context, event Event) error {
 	}
 	logger := b.logger
 	b.appendRecentLocked(event)
-	var targets []chan Event
+	var drops []dropNotice
 	for _, sub := range b.subscribers {
-		if sub.matches(event) {
-			targets = append(targets, sub.ch)
+		if !sub.matches(event) {
+			continue
 		}
-	}
-	var sendErr error
-	for _, target := range targets {
 		select {
-		case target <- event:
+		case sub.ch <- event:
 		default:
-			select {
-			case target <- event:
-			case <-time.After(100 * time.Millisecond):
-			case <-ctx.Done():
-				sendErr = ctx.Err()
+			sub.dropped++
+			if sub.dropped == 1 || sub.dropped&(sub.dropped-1) == 0 {
+				drops = append(drops, dropNotice{
+					subscriber: sub.id,
+					dropped:    sub.dropped,
+					topics:     append([]string(nil), sub.sub.Topics...),
+				})
 			}
-		}
-		if sendErr != nil {
-			break
 		}
 	}
 	b.mu.Unlock()
+
+	if logger != nil {
+		if storeErr != nil {
+			logger.ErrorContext(ctx, "routerd event persistence failed; delivered locally",
+				slog.String("topic", event.Type),
+				slog.Any("error", storeErr),
+			)
+		}
+		for _, drop := range drops {
+			logger.WarnContext(ctx, "routerd event dropped for slow subscriber",
+				slog.Uint64("subscriber", drop.subscriber),
+				slog.Uint64("dropped", drop.dropped),
+				slog.Any("topics", drop.topics),
+			)
+		}
+	}
 	logEvent(ctx, logger, event)
-	return sendErr
+	return storeErr
 }
 
 func logEvent(ctx context.Context, logger *slog.Logger, event Event) {
@@ -168,7 +194,12 @@ func (b *Bus) Subscribe(ctx context.Context, sub Subscription, buffer int) (<-ch
 	b.mu.Lock()
 	b.nextCursor++
 	id := b.nextCursor
-	b.subscribers[id] = subscriber{sub: sub, ch: ch}
+	s := &subscriber{
+		id:  id,
+		sub: sub,
+		ch:  ch,
+	}
+	b.subscribers[id] = s
 	b.mu.Unlock()
 
 	var once sync.Once
@@ -176,8 +207,8 @@ func (b *Bus) Subscribe(ctx context.Context, sub Subscription, buffer int) (<-ch
 		once.Do(func() {
 			b.mu.Lock()
 			delete(b.subscribers, id)
-			b.mu.Unlock()
 			close(ch)
+			b.mu.Unlock()
 		})
 	}
 	if ctx.Done() != nil {
@@ -207,7 +238,7 @@ func (b *Bus) appendRecentLocked(event Event) {
 	b.recent[event.Type] = events
 }
 
-func (s subscriber) matches(event Event) bool {
+func (s *subscriber) matches(event Event) bool {
 	if len(s.sub.Topics) > 0 {
 		matched := false
 		for _, topic := range s.sub.Topics {
