@@ -3,6 +3,7 @@
 package nflog
 
 import (
+	"context"
 	"encoding/binary"
 	"testing"
 )
@@ -57,6 +58,28 @@ func TestParseMessagesIPv6UDPWithPrefix(t *testing.T) {
 	}
 	if p.SrcAddress != "2409:10:3d60:1271::1" || p.SrcPort != 5353 || p.DstAddress != "ff02::fb" || p.DstPort != 5353 {
 		t.Fatalf("packet = %+v", p)
+	}
+}
+
+func TestReaderReturnsPendingPacketsBeforeReceivingAgain(t *testing.T) {
+	r := &Reader{
+		fd: -1,
+		pending: []Packet{
+			{Prefix: "second"},
+			{Prefix: "third"},
+		},
+	}
+
+	first, err := r.Read(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := r.Read(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Prefix != "second" || second.Prefix != "third" {
+		t.Fatalf("packets = %q, %q", first.Prefix, second.Prefix)
 	}
 }
 
