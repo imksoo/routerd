@@ -178,7 +178,8 @@ var runtimeShapeKinds = map[string]bool{
 	"DHCPv6Client": true, "DHCPv6Server": true, "DHCPv6PrefixDelegation": true,
 	"PPPoESession": true, "HealthCheck": true, "DNSResolver": true,
 	"EventGroup": true, "EventSubscription": true, "WebConsole": true,
-	"SAMPeerGroup": true, "MobilityMemberSet": true, "ServiceUnit": true,
+	"SAMPeerGroup": true, "MobilityMemberSet": true, "SAMTransportProfile": true,
+	"MobilityPool": true, "ServiceUnit": true,
 }
 
 func runtimeShapeChanged(current, next *api.Router) (bool, []string) {
