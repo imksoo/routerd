@@ -97,6 +97,9 @@ type Controller struct {
 	Store  Store
 	DryRun bool
 	Logger *slog.Logger
+	// MutationGate fences watch-driven FIB writes against live-apply
+	// transactions. Framework reconciles are gated by their worker.
+	MutationGate *sync.RWMutex
 
 	Server    GoBGPServer
 	NewServer func() GoBGPServer
@@ -384,6 +387,10 @@ func (c *Controller) watchBestPathEvents(ctx context.Context) error {
 	return server.WatchEvent(ctx, req, func(resp *gobgpapi.WatchEventResponse) error {
 		if !watchEventHasBestPathChange(resp) && !watchEventHasPeerStateChange(resp) {
 			return nil
+		}
+		if c.MutationGate != nil {
+			c.MutationGate.RLock()
+			defer c.MutationGate.RUnlock()
 		}
 		c.mu.Lock()
 		defer c.mu.Unlock()
