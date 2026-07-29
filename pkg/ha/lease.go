@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -34,6 +35,7 @@ type AcquiredLease struct {
 	Config Config
 	File   *os.File
 	Lease  Lease
+	mu     sync.Mutex
 }
 
 type Decision struct {
@@ -88,7 +90,12 @@ func Acquire(ctx context.Context, cfg Config) (Decision, error) {
 }
 
 func (l *AcquiredLease) Refresh() error {
-	if l == nil || l.File == nil {
+	if l == nil {
+		return ErrLeaseClosed
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.File == nil {
 		return ErrLeaseClosed
 	}
 	now := time.Now().UTC()
@@ -101,7 +108,12 @@ func (l *AcquiredLease) Refresh() error {
 }
 
 func (l *AcquiredLease) Close() error {
-	if l == nil || l.File == nil {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.File == nil {
 		return nil
 	}
 	err := syscall.Flock(int(l.File.Fd()), syscall.LOCK_UN)
@@ -113,7 +125,7 @@ func (l *AcquiredLease) Close() error {
 }
 
 func (l *AcquiredLease) Heartbeat(ctx context.Context, onError func(error)) {
-	if l == nil || l.File == nil {
+	if l == nil {
 		return
 	}
 	interval := l.Config.TTL / 3
@@ -127,7 +139,11 @@ func (l *AcquiredLease) Heartbeat(ctx context.Context, onError func(error)) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := l.Refresh(); err != nil && onError != nil {
+			err := l.Refresh()
+			if errors.Is(err, ErrLeaseClosed) {
+				return
+			}
+			if err != nil && onError != nil {
 				onError(err)
 			}
 		}
