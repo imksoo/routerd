@@ -174,6 +174,7 @@ func (e *Exporter) run(ctx context.Context, wakeEvents <-chan bus.Event, store e
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
 	wake := make(chan struct{}, 1)
+	var retry eventconsumer.Backoff
 	wake <- struct{}{}
 	for {
 		select {
@@ -193,7 +194,14 @@ func (e *Exporter) run(ctx context.Context, wakeEvents <-chan bus.Event, store e
 			default:
 			}
 		case <-wake:
-			_ = eventconsumer.Drain(ctx, store, "observabilitypipeline/"+e.name, e.processStoredEvent)
+			if !retry.Ready() {
+				continue
+			}
+			if err := eventconsumer.Drain(ctx, store, "observabilitypipeline/"+e.name, e.processStoredEvent); err != nil {
+				retry.Failure()
+			} else {
+				retry.Success()
+			}
 		}
 	}
 }
