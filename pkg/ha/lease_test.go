@@ -4,6 +4,7 @@ package ha
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -25,6 +26,20 @@ func TestAcquireLeaseElectsSingleLeader(t *testing.T) {
 	}
 	if second.Leader || second.Holder != "router-a" {
 		t.Fatalf("second decision = %#v", second)
+	}
+}
+
+func TestClosedLeaseCannotRefresh(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ha-lease")
+	decision, err := Acquire(context.Background(), Config{Identity: "router-a", Peers: []string{"router-a", "router-b"}, LeasePath: path, TTL: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := decision.Lease.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := decision.Lease.Refresh(); !errors.Is(err, ErrLeaseClosed) {
+		t.Fatalf("Refresh error = %v, want ErrLeaseClosed", err)
 	}
 }
 

@@ -45,6 +45,9 @@ type Runner struct {
 	Logger   *slog.Logger
 	Interval time.Duration
 	Observer Observer
+	// SkipBootstrap is used when the caller synchronously bootstrapped a
+	// generation before handing it to the long-running event loop.
+	SkipBootstrap bool
 }
 
 type FuncController struct {
@@ -118,12 +121,33 @@ func (r Runner) Run(ctx context.Context, controllers ...Controller) error {
 			go func() {
 				defer wg.Done()
 				defer cancel()
-				runController(ctx, logger, locker, r.Observer, controllerInterval(controller, interval), controller, events)
+				runController(ctx, logger, locker, r.Observer, controllerInterval(controller, interval), controller, events, r.SkipBootstrap)
 			}()
 		}
 	}
 	<-ctx.Done()
 	wg.Wait()
+	return ctx.Err()
+}
+
+// Bootstrap synchronously enters every controller once and returns all
+// initialization failures to the caller.
+func (r Runner) Bootstrap(ctx context.Context, controllers ...Controller) error {
+	logger := r.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	locker := r.Locker
+	if locker == nil {
+		locker = lock.NewResourceLocker()
+	}
+	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "event-loop"}, "routerd.controller.bootstrap", daemonapi.SeverityInfo)
+	for _, controller := range controllers {
+		interval := controllerInterval(controller, r.Interval)
+		runLocked(ctx, logger, locker, r.Observer, controller.Name()+":bootstrap", controller.Name(), "bootstrap", "", "", interval, func(runCtx context.Context) error {
+			return controller.Reconcile(runCtx, event)
+		})
+	}
 	return ctx.Err()
 }
 
@@ -162,7 +186,7 @@ func (r Runner) RunOnce(ctx context.Context, controllers ...Controller) error {
 	return errors.Join(errs...)
 }
 
-func runController(ctx context.Context, logger *slog.Logger, locker *lock.ResourceLocker, observer Observer, interval time.Duration, controller Controller, events <-chan daemonapi.DaemonEvent) {
+func runController(ctx context.Context, logger *slog.Logger, locker *lock.ResourceLocker, observer Observer, interval time.Duration, controller Controller, events <-chan daemonapi.DaemonEvent, skipBootstrap bool) {
 	intervals := adaptiveReconcileIntervalsForMax(interval)
 	level := 0
 	ticker := time.NewTicker(intervals[level])
@@ -170,10 +194,12 @@ func runController(ctx context.Context, logger *slog.Logger, locker *lock.Resour
 	if observer != nil {
 		observer.ControllerStarted(controller.Name(), intervals[level])
 	}
-	bootstrap := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "event-loop"}, "routerd.controller.bootstrap", daemonapi.SeverityInfo)
-	runLocked(ctx, logger, locker, observer, controller.Name()+":bootstrap", controller.Name(), "bootstrap", "", "", intervals[level], func(runCtx context.Context) error {
-		return controller.Reconcile(runCtx, bootstrap)
-	})
+	if !skipBootstrap {
+		bootstrap := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "event-loop"}, "routerd.controller.bootstrap", daemonapi.SeverityInfo)
+		runLocked(ctx, logger, locker, observer, controller.Name()+":bootstrap", controller.Name(), "bootstrap", "", "", intervals[level], func(runCtx context.Context) error {
+			return controller.Reconcile(runCtx, bootstrap)
+		})
+	}
 	for {
 		select {
 		case event, ok := <-events:

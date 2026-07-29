@@ -4,6 +4,9 @@ package chain
 
 import (
 	"context"
+	"errors"
+	"log/slog"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -11,7 +14,87 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/controller/framework"
+	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/ha"
 )
+
+func TestOneShotUsesInjectedClusterDecisionWithoutReacquiring(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lease")
+	decision, err := ha.Acquire(context.Background(), ha.Config{
+		Identity:  "router-a",
+		Peers:     []string{"router-a", "router-b"},
+		LeasePath: path,
+		TTL:       time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer decision.Lease.Close()
+
+	runner := &Runner{HADecision: &decision}
+	got, closeLease, err := runner.oneShotHADecision(context.Background(), eventedStore{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeLease()
+	if !got.Leader || got.Lease != decision.Lease {
+		t.Fatalf("decision = %#v", got)
+	}
+	if err := decision.Lease.Refresh(); err != nil {
+		t.Fatalf("injected lease was unexpectedly closed: %v", err)
+	}
+}
+
+func TestStandbyGenerationDoesNotPoisonLeaderOptions(t *testing.T) {
+	runner := &Runner{
+		Router: &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}},
+		Bus:    bus.New(),
+		Store:  mapStore{},
+		Opts: Options{
+			EnabledControllers: []string{"log-retention"},
+			DryRunRoute:        false,
+			DryRunFirewall:     false,
+		},
+	}
+	store := eventedStore{Store: runner.Store, Bus: runner.Bus, Router: runner.Router}
+	if _, _, err := runner.frameworkControllers(context.Background(), slog.Default(), store, false, ha.Decision{Enabled: true, Leader: false}); err != nil {
+		t.Fatal(err)
+	}
+	if runner.Opts.DryRunRoute || runner.Opts.DryRunFirewall {
+		t.Fatalf("standby generation mutated base options: %+v", runner.Opts)
+	}
+	if _, _, err := runner.frameworkControllers(context.Background(), slog.Default(), store, false, ha.Decision{Enabled: true, Leader: true}); err != nil {
+		t.Fatal(err)
+	}
+	if runner.Opts.DryRunRoute || runner.Opts.DryRunFirewall {
+		t.Fatalf("leader generation did not retain base options: %+v", runner.Opts)
+	}
+}
+
+func TestPrepareControllerGenerationIgnoresBootstrapReconcileError(t *testing.T) {
+	runner := &Runner{
+		Router: &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}},
+		Bus:    bus.New(),
+		Store:  mapStore{},
+	}
+	runner.generationBuilder = func(context.Context, *slog.Logger, eventedStore, bool, ha.Decision) ([]framework.Controller, DaemonStatusController, error) {
+		return []framework.Controller{framework.FuncController{
+			ControllerName: "always-errors",
+			ReconcileFunc: func(context.Context, daemonapi.DaemonEvent) error {
+				return errors.New("bootstrap failed")
+			},
+		}}, DaemonStatusController{}, nil
+	}
+	store := eventedStore{Store: runner.Store, Bus: runner.Bus, Router: runner.Router}
+	generation, err := runner.prepareControllerGeneration(context.Background(), slog.Default(), store)
+	if err != nil {
+		t.Fatalf("prepareControllerGeneration returned bootstrap error: %v", err)
+	}
+	if generation == nil {
+		t.Fatal("prepareControllerGeneration returned nil generation")
+	}
+	generation.cancel()
+}
 
 type onceObserver struct {
 	mu    sync.Mutex
