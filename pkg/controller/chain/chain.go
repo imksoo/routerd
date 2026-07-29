@@ -1259,6 +1259,7 @@ type Options struct {
 	ProviderInventoryRunner providerinventory.Runner
 	PeerGroupSyncClient     *mobilitycontroller.PeerGroupSyncClient
 	MemberSetSyncClient     *mobilitycontroller.PeerGroupSyncClient
+	MutationGate            *sync.RWMutex
 }
 
 type Runner struct {
@@ -1711,7 +1712,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		r.warmDaemonStatuses(ctx, daemonStatusSync, logger)
 	}
 	go func() {
-		loop := framework.Runner{Bus: r.Bus, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
+		loop := framework.Runner{Bus: r.Bus, MutationGate: r.Opts.MutationGate, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
 		if err := loop.Run(ctx, controllers...); err != nil && ctx.Err() == nil {
 			logger.Warn("controller event loop stopped", "error", err)
 		}
@@ -1732,7 +1733,7 @@ func (r *Runner) ReconcileOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	loop := framework.Runner{Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
+	loop := framework.Runner{MutationGate: r.Opts.MutationGate, Exclusive: true, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
 	return loop.RunOnce(ctx, controllers...)
 }
 
@@ -1750,7 +1751,7 @@ func (r *Runner) ReconcileScheduled(ctx context.Context) error {
 		return err
 	}
 	controllers = filterScheduledReconcileControllers(controllers)
-	loop := framework.Runner{Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
+	loop := framework.Runner{MutationGate: r.Opts.MutationGate, Exclusive: true, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
 	return loop.RunOnce(ctx, controllers...)
 }
 

@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -87,6 +88,7 @@ type applyOptions struct {
 	SkipConfigCommit    bool
 	ConfigYAMLOverride  string
 	Sandbox             bool
+	MutationGate        *sync.RWMutex
 }
 
 func effectiveApplyPolicy(router *api.Router) api.ApplyPolicySpec {
@@ -675,6 +677,7 @@ func applyChainControllerOptions(opts applyOptions) controllerchain.Options {
 		LedgerPath:             defaultString(opts.LedgerPath, defaultLedgerPath),
 		NftCommand:             "nft",
 		ConntrackInterval:      30 * time.Second,
+		MutationGate:           opts.MutationGate,
 	}
 	if opts.DryRun {
 		applySandboxControllerOptions(&controllerOpts, controllerOpts.DnsmasqConfig, controllerOpts.NftablesPath)

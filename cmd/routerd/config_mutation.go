@@ -4,11 +4,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -37,6 +39,11 @@ func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) 
 	nextYAML, nextRouter, err := m.mutatedCandidate(req.CandidateYAML, req.Replace)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", controlapi.ErrBadRequest, err)
+	}
+	if !req.DryRun {
+		if changed, resources := runtimeShapeChanged(m.getRouter(), nextRouter); changed {
+			return nil, fmt.Errorf("%w: restart required for runtime lifecycle change: %s", controlapi.ErrBadRequest, strings.Join(resources, ", "))
+		}
 	}
 	if req.DryRun {
 		result, err := m.planRouter(nextRouter, nextYAML)
@@ -129,6 +136,11 @@ func (m serveConfigMutator) delete(r *http.Request, req controlapi.DeleteRequest
 	if !removed {
 		return nil, fmt.Errorf("%w: %s/%s not found in canonical config", controlapi.ErrBadRequest, target.Kind, target.Name)
 	}
+	if !req.DryRun {
+		if changed, resources := runtimeShapeChanged(m.getRouter(), nextRouter); changed {
+			return nil, fmt.Errorf("%w: restart required for runtime lifecycle change: %s", controlapi.ErrBadRequest, strings.Join(resources, ", "))
+		}
+	}
 	result := controlapi.DeleteResult{
 		TypeMeta: controlapi.TypeMeta{APIVersion: controlapi.APIVersion, Kind: "DeleteResult"},
 		Deleted:  []string{target.APIVersion + "/" + target.Kind + "/" + target.Name},
@@ -159,6 +171,49 @@ func (m serveConfigMutator) delete(r *http.Request, req controlapi.DeleteRequest
 	m.cache.Store(applied)
 	result.Result = applied
 	return &result, nil
+}
+
+var runtimeShapeKinds = map[string]bool{
+	"RouterdCluster": true, "DHCPv4Client": true, "DHCPv4Server": true,
+	"DHCPv6Client": true, "DHCPv6Server": true, "DHCPv6PrefixDelegation": true,
+	"PPPoESession": true, "HealthCheck": true, "DNSResolver": true,
+	"EventGroup": true, "EventSubscription": true, "WebConsole": true,
+	"SAMPeerGroup": true, "MobilityMemberSet": true, "ServiceUnit": true,
+}
+
+func runtimeShapeChanged(current, next *api.Router) (bool, []string) {
+	snapshot := func(router *api.Router) map[string]string {
+		out := map[string]string{}
+		if router == nil {
+			return out
+		}
+		for _, resource := range router.Spec.Resources {
+			if !runtimeShapeKinds[resource.Kind] {
+				continue
+			}
+			data, _ := json.Marshal(resource)
+			out[resource.APIVersion+"/"+resource.Kind+"/"+resource.Metadata.Name] = string(data)
+		}
+		return out
+	}
+	before, after := snapshot(current), snapshot(next)
+	changed := map[string]bool{}
+	for key, value := range before {
+		if after[key] != value {
+			changed[key] = true
+		}
+	}
+	for key, value := range after {
+		if before[key] != value {
+			changed[key] = true
+		}
+	}
+	resources := make([]string, 0, len(changed))
+	for key := range changed {
+		resources = append(resources, key)
+	}
+	sort.Strings(resources)
+	return len(resources) > 0, resources
 }
 
 func (m serveConfigMutator) mutatedCandidate(candidateYAML string, replace bool) (string, *api.Router, error) {
