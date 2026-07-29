@@ -200,6 +200,18 @@ func TestRunRejectsMalformedStdout(t *testing.T) {
 	}
 }
 
+func TestRunRejectsStdoutPastHardLimit(t *testing.T) {
+	requireShell(t)
+	path := writePluginScript(t, "#!/bin/sh\ndd if=/dev/zero bs=1048576 count=5 2>/dev/null\n")
+	_, outcome, err := Run(context.Background(), api.PluginSpec{Executable: path}, "noisy", RunOptions{})
+	if err == nil || !strings.Contains(err.Error(), "stdout output exceeded") {
+		t.Fatalf("error = %v, want stdout limit error", err)
+	}
+	if outcome.Error == "" {
+		t.Fatal("outcome error is empty")
+	}
+}
+
 func requireShell(t *testing.T) {
 	t.Helper()
 	if _, err := os.Stat("/bin/sh"); err != nil {

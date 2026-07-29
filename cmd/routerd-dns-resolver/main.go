@@ -57,6 +57,7 @@ type daemon struct {
 	sources      []runtimeSource
 	listeners    map[string]*boundListener
 	sourceCancel context.CancelFunc
+	generation   uint64
 	cache        map[string]cacheEntry
 	queryLogMu   sync.Mutex
 	queryLog     *logstore.DNSQueryLog
@@ -74,8 +75,9 @@ type boundListener struct {
 }
 
 type cacheEntry struct {
-	Message []byte
-	Expires time.Time
+	Message    []byte
+	Expires    time.Time
+	Generation uint64
 }
 
 type reloadSummary struct {
@@ -425,14 +427,13 @@ func (d *daemon) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
 		resp.SetRcode(req, dns.RcodeServerFailure)
 		result.Response = resp
 		result.ResponseCode = dns.RcodeToString[resp.Rcode]
-		d.publish("routerd.dns.resolver.query.failed", daemonapi.SeverityWarning, "QueryFailed", err.Error(), nil)
 	}
 	_ = w.WriteMsg(resp)
 	d.recordQuery(w.RemoteAddr().String(), req, result, time.Since(started))
 }
 
 func (d *daemon) resolve(localAddr string, req *dns.Msg) (resolveResult, error) {
-	config, sources, zones := d.runtimeSnapshot()
+	config, sources, zones, generation := d.runtimeSnapshot()
 	if len(req.Question) == 0 {
 		resp := new(dns.Msg)
 		resp.SetRcode(req, dns.RcodeFormatError)
@@ -440,7 +441,7 @@ func (d *daemon) resolve(localAddr string, req *dns.Msg) (resolveResult, error) 
 	}
 	cacheKey := dnsCacheKey(localAddr, req)
 	if config.Spec.Cache.Enabled {
-		if cached, ok := d.cacheGet(cacheKey); ok {
+		if cached, ok := d.cacheGet(cacheKey, generation); ok {
 			var msg dns.Msg
 			if err := msg.Unpack(cached); err == nil {
 				msg.Id = req.Id
@@ -456,7 +457,6 @@ func (d *daemon) resolve(localAddr string, req *dns.Msg) (resolveResult, error) 
 		switch source.Spec.Kind {
 		case "zone":
 			if resp, ok := zones.Answer(req, source.Spec.ZoneRef); ok {
-				d.publish("routerd.dns.zone.answered", daemonapi.SeverityInfo, "Answered", question.Name, map[string]string{"qname": question.Name})
 				return resolveResult{Response: resp, Upstream: sourceName(source.Spec), ResponseCode: dns.RcodeToString[resp.Rcode]}, nil
 			}
 		case "forward", "upstream":
@@ -484,7 +484,7 @@ func (d *daemon) resolve(localAddr string, req *dns.Msg) (resolveResult, error) 
 				continue
 			}
 			if config.Spec.Cache.Enabled {
-				d.cacheSet(cacheKey, out, dnsMessageTTL(&resp, config.Spec.Cache), config.Spec.Cache.MaxEntries)
+				d.cacheSet(cacheKey, out, dnsMessageTTL(&resp, config.Spec.Cache), config.Spec.Cache.MaxEntries, generation)
 			}
 			return resolveResult{Response: &resp, Upstream: sourceName(source.Spec), ResponseCode: dns.RcodeToString[resp.Rcode]}, nil
 		}
@@ -494,10 +494,10 @@ func (d *daemon) resolve(localAddr string, req *dns.Msg) (resolveResult, error) 
 	return resolveResult{Response: resp, ResponseCode: dns.RcodeToString[resp.Rcode]}, nil
 }
 
-func (d *daemon) runtimeSnapshot() (dnsresolver.RuntimeConfig, []runtimeSource, *zoneTable) {
+func (d *daemon) runtimeSnapshot() (dnsresolver.RuntimeConfig, []runtimeSource, *zoneTable, uint64) {
 	d.stateMu.RLock()
 	defer d.stateMu.RUnlock()
-	return d.config, append([]runtimeSource(nil), d.sources...), d.zones
+	return d.config, append([]runtimeSource(nil), d.sources...), d.zones, d.generation
 }
 
 func (d *daemon) listenerCount() int {
@@ -616,30 +616,36 @@ func sourcesForListen(config dnsresolver.RuntimeConfig, sources []runtimeSource,
 	return out
 }
 
-func (d *daemon) cacheGet(key string) ([]byte, bool) {
+func (d *daemon) cacheGet(key string, generation uint64) ([]byte, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	entry, ok := d.cache[key]
-	if !ok || time.Now().After(entry.Expires) {
+	if !ok || entry.Generation != generation || time.Now().After(entry.Expires) {
 		delete(d.cache, key)
 		return nil, false
 	}
 	return append([]byte(nil), entry.Message...), true
 }
 
-func (d *daemon) cacheSet(key string, msg []byte, ttl time.Duration, maxEntries int) {
+func (d *daemon) cacheSet(key string, msg []byte, ttl time.Duration, maxEntries int, generation uint64) {
 	if ttl <= 0 {
 		return
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.stateMu.RLock()
+	currentGeneration := d.generation
+	d.stateMu.RUnlock()
+	if generation != currentGeneration {
+		return
+	}
 	if maxEntries > 0 && len(d.cache) >= maxEntries {
 		for k := range d.cache {
 			delete(d.cache, k)
 			break
 		}
 	}
-	d.cache[key] = cacheEntry{Message: append([]byte(nil), msg...), Expires: time.Now().Add(ttl)}
+	d.cache[key] = cacheEntry{Message: append([]byte(nil), msg...), Expires: time.Now().Add(ttl), Generation: generation}
 }
 
 func (d *daemon) routes() http.Handler {
@@ -771,7 +777,11 @@ func (d *daemon) reload(ctx context.Context) (reloadSummary, error) {
 	d.zones = zones
 	d.listeners = mergedListeners
 	d.sourceCancel = sourceCancel
+	d.generation++
 	d.stateMu.Unlock()
+	d.mu.Lock()
+	clear(d.cache)
+	d.mu.Unlock()
 
 	shutdownBoundListeners(removals)
 	if oldSourceCancel != nil {
