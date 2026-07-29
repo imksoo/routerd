@@ -68,6 +68,11 @@ func (b *Bus) SetLogger(logger *slog.Logger) {
 	b.logger = logger
 }
 
+// Publish records event in the configured store and delivers it to matching
+// local subscribers. A non-nil error reports a persistence failure; local
+// delivery is still attempted, so callers must not assume that an error means
+// the event was not delivered. Retrying after an error may therefore deliver a
+// duplicate event.
 func (b *Bus) Publish(ctx context.Context, event Event) error {
 	var storeErr error
 	if b.store != nil {
