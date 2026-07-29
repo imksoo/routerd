@@ -485,6 +485,8 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		SkipServiceManager: *sandbox,
 		Sandbox:            *sandbox,
 	}
+	mutationGate := &sync.RWMutex{}
+	applyOpts.MutationGate = mutationGate
 	cache := &resultCache{}
 
 	signalCtx, cancelSignalCtx := context.WithCancel(context.Background())
@@ -545,6 +547,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		EnabledControllers:     enabledControllers,
 		PeerGroupSyncClient:    peerGroupSyncClient,
 		MemberSetSyncClient:    peerGroupSyncClient,
+		MutationGate:           mutationGate,
 	}
 	if *sandbox {
 		applySandboxControllerOptions(&controllerOpts, *dnsmasqConfigPath, *nftablesPath)

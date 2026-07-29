@@ -1259,6 +1259,7 @@ type Options struct {
 	ProviderInventoryRunner providerinventory.Runner
 	PeerGroupSyncClient     *mobilitycontroller.PeerGroupSyncClient
 	MemberSetSyncClient     *mobilitycontroller.PeerGroupSyncClient
+	MutationGate            *sync.RWMutex
 }
 
 type Runner struct {
@@ -1757,7 +1758,7 @@ func (r *Runner) prepareControllerGeneration(ctx context.Context, logger *slog.L
 			cancel()
 		})
 	}
-	bootstrap := framework.Runner{Bus: r.Bus, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
+	bootstrap := framework.Runner{Bus: r.Bus, MutationGate: r.Opts.MutationGate, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
 	_ = bootstrap.Bootstrap(generationCtx, controllers...)
 	return &controllerGeneration{
 		ctx:              generationCtx,
@@ -1789,7 +1790,7 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 		} else if generation.decision.Enabled {
 			time.AfterFunc(clusterRetryInterval(r.Router), generation.cancel)
 		}
-		loop := framework.Runner{Bus: r.Bus, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver, SkipBootstrap: true}
+		loop := framework.Runner{Bus: r.Bus, MutationGate: r.Opts.MutationGate, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver, SkipBootstrap: true}
 		_ = loop.Run(generation.ctx, generation.controllers...)
 		generation.cancel()
 		if generation.decision.Lease != nil {
@@ -1834,7 +1835,7 @@ func (r *Runner) ReconcileOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	loop := framework.Runner{Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
+	loop := framework.Runner{MutationGate: r.Opts.MutationGate, Exclusive: true, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
 	return loop.RunOnce(ctx, controllers...)
 }
 
@@ -1857,7 +1858,7 @@ func (r *Runner) ReconcileScheduled(ctx context.Context) error {
 		return err
 	}
 	controllers = filterScheduledReconcileControllers(controllers)
-	loop := framework.Runner{Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
+	loop := framework.Runner{MutationGate: r.Opts.MutationGate, Exclusive: true, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
 	return loop.RunOnce(ctx, controllers...)
 }
 
@@ -2058,7 +2059,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	nat := nat44.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNAT, IngressLive: !r.Opts.DryRunIngress, NftablesPath: r.Opts.NftablesPath, NftCommand: r.Opts.NftCommand, Logger: logger}
 	ingressService := ingressservicecontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunIngress, Resolver: ingressServiceDNSResolver(r.Router, store), Logger: logger}
 	bfd := bfdcontroller.Controller{Router: r.Router, Store: store, DryRun: r.Opts.DryRunBGP, RuntimeDir: defaults.RuntimeDir}
-	bgp := bgpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunBGP, Logger: logger, Daemon: bgpDaemon}
+	bgp := bgpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunBGP, Logger: logger, Daemon: bgpDaemon, MutationGate: r.Opts.MutationGate}
 	vrrp := vrrpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunVRRP, Logger: logger}
 	ipAddressSet := IPAddressSetController{Router: r.Router, Store: store, DryRunNAT: r.Opts.DryRunNAT, DryRunRoute: r.Opts.DryRunRoute, DryRunFirewall: r.Opts.DryRunFirewall, NftCommand: r.Opts.NftCommand, RuntimeDir: defaults.RuntimeDir}
 	firewall := firewallcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunFirewall, NftablesPath: firstNonEmpty(r.Opts.FirewallPath, "/run/routerd/firewall.nft"), NftCommand: r.Opts.NftCommand, Logger: logger}
