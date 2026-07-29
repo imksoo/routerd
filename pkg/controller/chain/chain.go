@@ -1787,7 +1787,7 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 				logger.Error("routerd cluster lease heartbeat failed; fencing controller generation", "error", err)
 				generation.cancel()
 			})
-		} else if generation.decision.Enabled {
+		} else if generation.decision.Enabled && !generation.decision.Leader {
 			time.AfterFunc(clusterRetryInterval(r.Router), generation.cancel)
 		}
 		loop := framework.Runner{Bus: r.Bus, MutationGate: r.Opts.MutationGate, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver, SkipBootstrap: true}
