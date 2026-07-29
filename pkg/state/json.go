@@ -71,12 +71,13 @@ type EventRecorder interface {
 }
 
 type EventQuery struct {
-	Limit    int
-	SinceID  int64
-	Topic    string
-	Kind     string
-	Name     string
-	Resource string
+	Limit     int
+	SinceID   int64
+	Ascending bool
+	Topic     string
+	Kind      string
+	Name      string
+	Resource  string
 }
 
 type StoredEvent struct {
@@ -101,6 +102,11 @@ type StoredEvent struct {
 
 type EventLister interface {
 	ListEvents(query EventQuery) ([]StoredEvent, error)
+}
+
+type EventConsumerCursorStore interface {
+	LoadOrInitializeEventConsumerCursor(consumer string) (int64, error)
+	SaveEventConsumerCursor(consumer string, cursor int64) error
 }
 
 // FederationEventStore is the cross-node Event Federation store surface

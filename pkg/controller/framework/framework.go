@@ -156,8 +156,8 @@ func (r Runner) Run(ctx context.Context, controllers ...Controller) error {
 	return ctx.Err()
 }
 
-// Bootstrap synchronously enters every controller once and returns all
-// initialization failures to the caller.
+// Bootstrap synchronously enters every controller once. Reconcile failures are
+// logged by runLocked; Bootstrap returns only the context error.
 func (r Runner) Bootstrap(ctx context.Context, controllers ...Controller) error {
 	logger := r.Logger
 	if logger == nil {
