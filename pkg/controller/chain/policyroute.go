@@ -41,14 +41,14 @@ type IPv4PolicyRouteController struct {
 	HostPolicyStatePath string
 	CommandOutput       func(context.Context, string, ...string) ([]byte, error)
 	Logger              *slog.Logger
+	OperatingSystem     platform.OS
 }
 
 func (c IPv4PolicyRouteController) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
-	_, features := platform.Current()
-	if !features.HasIproute2 {
+	if !c.hasIPRoute2() {
 		return nil
 	}
 	nft := firstNonEmpty(c.NftCommand, "nft")
@@ -70,6 +70,14 @@ func (c IPv4PolicyRouteController) Reconcile(ctx context.Context) error {
 	// gap must not roll back the already-complete IPv4 DS-Lite policy path.
 	c.reconcileIPv6HostPolicies(ctx)
 	return nil
+}
+
+func (c IPv4PolicyRouteController) hasIPRoute2() bool {
+	if c.OperatingSystem != "" {
+		return c.OperatingSystem == platform.OSLinux
+	}
+	_, features := platform.Current()
+	return features.HasIproute2
 }
 
 type ipv6HostPolicy struct {

@@ -24,7 +24,7 @@ func TestPathMTUControllerRendersMSSClamp(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"ds-lite-a"}}},
 	}}}
 	store := mapStore{}
-	controller := PathMTUController{Router: router, Store: store, DryRun: true, Path: dir + "/mss.nft"}
+	controller := PathMTUController{Router: router, OS: platform.OSLinux, Store: store, DryRun: true, Path: dir + "/mss.nft"}
 	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestPathMTUControllerRendersForceFragment(t *testing.T) {
 		}},
 	}}}
 	store := mapStore{}
-	controller := PathMTUController{Router: router, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft"), ForceFragmentPath: filepath.Join(dir, "forcefrag.nft")}
+	controller := PathMTUController{Router: router, OS: platform.OSLinux, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft"), ForceFragmentPath: filepath.Join(dir, "forcefrag.nft")}
 	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestPathMTUControllerSkipsUnchangedLiveReload(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"ds-lite-a"}}},
 	}}}
-	controller := PathMTUController{Router: router, Store: mapStore{}, NftCommand: nftPath, Path: filepath.Join(dir, "mss.nft"), ForceFragmentPath: filepath.Join(dir, "forcefrag.nft")}
+	controller := PathMTUController{Router: router, OS: platform.OSLinux, Store: mapStore{}, NftCommand: nftPath, Path: filepath.Join(dir, "mss.nft"), ForceFragmentPath: filepath.Join(dir, "forcefrag.nft")}
 	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestPathMTUControllerRendersDynamicRemoteAddressClaimMSSClamp(t *testing.T)
 	if err != nil {
 		t.Fatalf("buildDynamicRouteSAMView: %v", err)
 	}
-	controller := PathMTUController{Router: view.EffectiveRouter, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft")}
+	controller := PathMTUController{Router: view.EffectiveRouter, OS: platform.OSLinux, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft")}
 	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +255,7 @@ func TestPathMTUControllerRendersBGPMobilityMSSClamp(t *testing.T) {
 		},
 	}}}
 	store := mapStore{}
-	controller := PathMTUController{Router: router, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft")}
+	controller := PathMTUController{Router: router, OS: platform.OSLinux, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft")}
 	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +324,7 @@ func TestPathMTUControllerRendersBGPMobilityMSSClampWithoutMemberDelivery(t *tes
 		},
 	}}}
 	store := mapStore{}
-	controller := PathMTUController{Router: router, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft")}
+	controller := PathMTUController{Router: router, OS: platform.OSLinux, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft")}
 	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -384,7 +384,7 @@ func TestPathMTUControllerRendersSAMTransportMSSClamp(t *testing.T) {
 		},
 	}}}
 	store := mapStore{}
-	controller := PathMTUController{Router: router, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft")}
+	controller := PathMTUController{Router: router, OS: platform.OSLinux, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft")}
 	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
