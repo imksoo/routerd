@@ -39,9 +39,6 @@ type subscriber struct {
 	id      uint64
 	sub     Subscription
 	ch      chan Event
-	inbox   chan Event
-	done    chan struct{}
-	stopped chan struct{}
 	dropped uint64
 }
 
@@ -92,7 +89,7 @@ func (b *Bus) Publish(ctx context.Context, event Event) error {
 			continue
 		}
 		select {
-		case sub.inbox <- event:
+		case sub.ch <- event:
 		default:
 			sub.dropped++
 			if sub.dropped == 1 || sub.dropped&(sub.dropped-1) == 0 {
@@ -185,25 +182,20 @@ func (b *Bus) Subscribe(ctx context.Context, sub Subscription, buffer int) (<-ch
 	b.nextCursor++
 	id := b.nextCursor
 	s := &subscriber{
-		id:      id,
-		sub:     sub,
-		ch:      ch,
-		inbox:   make(chan Event, buffer),
-		done:    make(chan struct{}),
-		stopped: make(chan struct{}),
+		id:  id,
+		sub: sub,
+		ch:  ch,
 	}
 	b.subscribers[id] = s
 	b.mu.Unlock()
-	go s.run()
 
 	var once sync.Once
 	cancel := func() {
 		once.Do(func() {
 			b.mu.Lock()
 			delete(b.subscribers, id)
+			close(ch)
 			b.mu.Unlock()
-			close(s.done)
-			<-s.stopped
 		})
 	}
 	if ctx.Done() != nil {
@@ -213,23 +205,6 @@ func (b *Bus) Subscribe(ctx context.Context, sub Subscription, buffer int) (<-ch
 		}()
 	}
 	return ch, cancel
-}
-
-func (s *subscriber) run() {
-	defer close(s.stopped)
-	defer close(s.ch)
-	for {
-		select {
-		case event := <-s.inbox:
-			select {
-			case s.ch <- event:
-			case <-s.done:
-				return
-			}
-		case <-s.done:
-			return
-		}
-	}
 }
 
 func (b *Bus) Recent(topic string) []Event {
