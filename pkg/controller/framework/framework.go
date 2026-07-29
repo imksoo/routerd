@@ -106,23 +106,47 @@ func (r Runner) Run(ctx context.Context, controllers ...Controller) error {
 	}
 
 	var wg sync.WaitGroup
+	var cancels []func()
 	for _, controller := range controllers {
 		controller := controller
 		subs := controller.Subscriptions()
 		if len(subs) == 0 {
 			subs = []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.controller.bootstrap"}}}
 		}
+		events := make(chan daemonapi.DaemonEvent, 64)
 		for _, sub := range subs {
-			events, cancel := r.Bus.Subscribe(ctx, sub, 64)
+			subEvents, cancel := r.Bus.Subscribe(ctx, sub, 64)
+			cancels = append(cancels, cancel)
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				defer cancel()
-				runController(ctx, logger, locker, r.Observer, controllerInterval(controller, interval), controller, events)
+				for {
+					select {
+					case event, ok := <-subEvents:
+						if !ok {
+							return
+						}
+						select {
+						case events <- event:
+						case <-ctx.Done():
+							return
+						}
+					case <-ctx.Done():
+						return
+					}
+				}
 			}()
 		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			runController(ctx, logger, locker, r.Observer, controllerInterval(controller, interval), controller, events)
+		}()
 	}
 	<-ctx.Done()
+	for _, cancel := range cancels {
+		cancel()
+	}
 	wg.Wait()
 	return ctx.Err()
 }
