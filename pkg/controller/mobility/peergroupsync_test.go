@@ -26,7 +26,7 @@ func TestPeerGroupSyncServerReturnsPublishedGroups(t *testing.T) {
 		RemoteEndpoint: "10.252.0.1",
 	}}, now)
 
-	req := httptest.NewRequest(http.MethodGet, peerGroupSyncPath, nil)
+	req := httptest.NewRequest(http.MethodGet, peerGroupSyncPath+"?name=svnet1-rrs", nil)
 	rr := httptest.NewRecorder()
 	server := &PeerGroupSyncServer{Store: store, Now: func() time.Time { return now }}
 	server.ServeHTTP(rr, req)
@@ -40,6 +40,54 @@ func TestPeerGroupSyncServerReturnsPublishedGroups(t *testing.T) {
 	}
 	if len(payload.PeerGroups) != 1 || payload.PeerGroups[0].Metadata.Name != "svnet1-rrs" {
 		t.Fatalf("peer groups = %#v, want svnet1-rrs", payload.PeerGroups)
+	}
+	if payload.Revision == 0 {
+		t.Fatal("semantic source generation was not published")
+	}
+	firstRevision, firstDigest := payload.Revision, payload.ResourceDigest
+	server.Now = func() time.Time { return now.Add(time.Minute) }
+	rr = httptest.NewRecorder()
+	server.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, peerGroupSyncPath+"?name=svnet1-rrs", nil))
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Revision != firstRevision || payload.ResourceDigest != firstDigest {
+		t.Fatalf("unchanged resource changed semantic envelope: revision %d->%d digest %s->%s", firstRevision, payload.Revision, firstDigest, payload.ResourceDigest)
+	}
+}
+
+func TestSelectSyncCandidateUsesRevisionNotArrivalOrder(t *testing.T) {
+	older := syncCandidate{
+		resource: samPeerGroupResource("svnet1-rrs", []api.SAMTransportPeerSpec{{NodeRef: "old"}}),
+		meta:     syncMetadata{PublisherID: "rr-a", Revision: 10, Digest: "sha256:old"},
+	}
+	newer := syncCandidate{
+		resource: samPeerGroupResource("svnet1-rrs", []api.SAMTransportPeerSpec{{NodeRef: "new"}}),
+		meta:     syncMetadata{PublisherID: "rr-b", Revision: 11, Digest: "sha256:new"},
+	}
+	for _, candidates := range [][]syncCandidate{{older, newer}, {newer, older}} {
+		selected, err := selectSyncCandidate(candidates, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		spec, err := selected.resource.SAMPeerGroupSpec()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if spec.Peers[0].NodeRef != "new" {
+			t.Fatalf("selected peer = %q", spec.Peers[0].NodeRef)
+		}
+	}
+}
+
+func TestSelectSyncCandidateRejectsSameRevisionConflict(t *testing.T) {
+	resource := samPeerGroupResource("svnet1-rrs", []api.SAMTransportPeerSpec{{NodeRef: "rr"}})
+	_, err := selectSyncCandidate([]syncCandidate{
+		{resource: resource, meta: syncMetadata{PublisherID: "rr-a", Revision: 10, Digest: "sha256:a"}},
+		{resource: resource, meta: syncMetadata{PublisherID: "rr-b", Revision: 10, Digest: "sha256:b"}},
+	}, time.Now())
+	if err == nil {
+		t.Fatal("same-revision digest conflict was accepted")
 	}
 }
 
