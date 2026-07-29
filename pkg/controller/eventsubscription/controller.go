@@ -35,7 +35,10 @@ import (
 )
 
 const (
-	defaultMaxAttempts = 3
+	defaultMaxAttempts       = 3
+	defaultDebounceMaxWait   = time.Minute
+	maxScheduledEvents       = 1024
+	maxScheduledPayloadBytes = 4 << 20
 	// triggerType is recorded on plugin_runs rows so federation-triggered runs
 	// are distinguishable from interval/manual/event-bus runs.
 	triggerType = "federation-subscription"
@@ -102,6 +105,8 @@ type subscriptionSchedule struct {
 	spec     api.EventSubscriptionSpec
 	firstAt  time.Time
 	events   map[string]routerstate.EventRecord
+	ctx      context.Context
+	bytes    int
 	timer    triggerTimer
 }
 
@@ -326,9 +331,12 @@ func (c *Controller) processBatch(ctx context.Context, resource api.Resource, sp
 	return nil
 }
 
-func (c *Controller) deferBatch(_ context.Context, resource api.Resource, spec api.EventSubscriptionSpec, batch []routerstate.EventRecord, now time.Time) bool {
+func (c *Controller) deferBatch(ctx context.Context, resource api.Resource, spec api.EventSubscriptionSpec, batch []routerstate.EventRecord, now time.Time) bool {
 	batchWindow := parseTriggerDuration(spec.Trigger.BatchWindow)
 	debounce := parseTriggerDuration(spec.Trigger.Debounce)
+	if debounce > 0 && batchWindow <= 0 {
+		batchWindow = defaultDebounceMaxWait
+	}
 	if batchWindow <= 0 && debounce <= 0 {
 		return false
 	}
@@ -350,6 +358,7 @@ func (c *Controller) deferBatch(_ context.Context, resource api.Resource, spec a
 			spec:     spec,
 			firstAt:  now,
 			events:   map[string]routerstate.EventRecord{},
+			ctx:      ctx,
 		}
 		c.schedules[subKey] = sched
 	} else {
@@ -357,14 +366,30 @@ func (c *Controller) deferBatch(_ context.Context, resource api.Resource, spec a
 		sched.spec = spec
 	}
 	newEvent := false
+	limitReached := false
 	for _, ev := range batch {
-		if _, found := sched.events[ev.ID]; !found {
-			newEvent = true
+		if _, found := sched.events[ev.ID]; found {
+			sched.events[ev.ID] = ev
+			continue
 		}
+		payload, _ := json.Marshal(ev.Payload)
+		eventBytes := len(payload) + len(ev.ID) + len(ev.Type) + len(ev.Subject)
+		if len(sched.events) >= maxScheduledEvents || sched.bytes+eventBytes > maxScheduledPayloadBytes {
+			limitReached = true
+			break
+		}
+		newEvent = true
+		sched.bytes += eventBytes
 		sched.events[ev.ID] = ev
+		if len(sched.events) == maxScheduledEvents || sched.bytes == maxScheduledPayloadBytes {
+			limitReached = true
+		}
 	}
 	if sched.timer == nil || newEvent || debounce <= 0 {
 		delay := coalesceDelay(now, sched.firstAt, batchWindow, debounce)
+		if limitReached {
+			delay = 0
+		}
 		if sched.timer == nil {
 			sched.timer = c.newTimer(delay, func() {
 				c.fireScheduled(subKey)
@@ -411,7 +436,7 @@ func (c *Controller) fireScheduled(subKey string) {
 		c.finishProcessing(subKey)
 		return
 	}
-	if err := c.processBatch(context.Background(), resource, spec, pluginSpec, batch, c.now()); err != nil {
+	if err := c.processBatch(sched.ctx, resource, spec, pluginSpec, batch, c.now()); err != nil {
 		c.saveStatus(resource.Metadata.Name, "Degraded", err.Error(), len(batch))
 	}
 	c.finishProcessing(subKey)

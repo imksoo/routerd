@@ -81,6 +81,21 @@ func TestReloadAddsListenAddressWithoutRebindingExisting(t *testing.T) {
 	assertDNSAnswer(t, addr2, "router.lab.example.", "192.0.2.1")
 }
 
+func TestReloadClearsDNSCache(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "resolver.json")
+	config := testResolverConfig(nil)
+	writeRuntimeConfig(t, configPath, config)
+	d := newTestDaemon(t, configPath, config, true)
+	d.cacheSet("stale", []byte("old-answer"), time.Hour, 10)
+
+	if _, err := d.reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := d.cacheGet("stale"); ok {
+		t.Fatal("cache entry survived successful reload")
+	}
+}
+
 func TestReloadRemovesListenAddress(t *testing.T) {
 	port1 := freeTCPPort(t)
 	port2 := freeTCPPort(t)

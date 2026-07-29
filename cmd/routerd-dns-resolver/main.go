@@ -425,7 +425,6 @@ func (d *daemon) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
 		resp.SetRcode(req, dns.RcodeServerFailure)
 		result.Response = resp
 		result.ResponseCode = dns.RcodeToString[resp.Rcode]
-		d.publish("routerd.dns.resolver.query.failed", daemonapi.SeverityWarning, "QueryFailed", err.Error(), nil)
 	}
 	_ = w.WriteMsg(resp)
 	d.recordQuery(w.RemoteAddr().String(), req, result, time.Since(started))
@@ -456,7 +455,6 @@ func (d *daemon) resolve(localAddr string, req *dns.Msg) (resolveResult, error) 
 		switch source.Spec.Kind {
 		case "zone":
 			if resp, ok := zones.Answer(req, source.Spec.ZoneRef); ok {
-				d.publish("routerd.dns.zone.answered", daemonapi.SeverityInfo, "Answered", question.Name, map[string]string{"qname": question.Name})
 				return resolveResult{Response: resp, Upstream: sourceName(source.Spec), ResponseCode: dns.RcodeToString[resp.Rcode]}, nil
 			}
 		case "forward", "upstream":
@@ -772,6 +770,9 @@ func (d *daemon) reload(ctx context.Context) (reloadSummary, error) {
 	d.listeners = mergedListeners
 	d.sourceCancel = sourceCancel
 	d.stateMu.Unlock()
+	d.mu.Lock()
+	clear(d.cache)
+	d.mu.Unlock()
 
 	shutdownBoundListeners(removals)
 	if oldSourceCancel != nil {

@@ -16,6 +16,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/plugin"
+	"github.com/imksoo/routerd/pkg/subprocessio"
 )
 
 const (
@@ -65,9 +66,10 @@ func RunInventory(ctx context.Context, spec api.PluginSpec, req ObservePrivateIP
 	cmd := exec.CommandContext(runCtx, spec.Executable)
 	cmd.Env = inventoryEnvironment(spec.Env)
 	cmd.Stdin = bytes.NewReader(stdin)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdout := subprocessio.NewCapture(subprocessio.StdoutLimit)
+	stderr := subprocessio.NewCapture(subprocessio.StderrLimit)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	runErr := cmd.Run()
 	duration := time.Since(started)
 
@@ -81,6 +83,11 @@ func RunInventory(ctx context.Context, spec api.PluginSpec, req ObservePrivateIP
 	}
 	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 		err := fmt.Errorf("provider inventory %s timed out after %s", spec.Executable, timeout)
+		outcome.Error = err.Error()
+		return result, outcome, err
+	}
+	if err := subprocessio.LimitError(stdout, stderr); err != nil {
+		err = fmt.Errorf("provider inventory %s protocol failure: %w", spec.Executable, err)
 		outcome.Error = err.Error()
 		return result, outcome, err
 	}

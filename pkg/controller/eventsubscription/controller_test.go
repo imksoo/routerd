@@ -378,6 +378,14 @@ func TestReconcileDebounceCoalescesUntilQuietPeriod(t *testing.T) {
 	}
 }
 
+func TestDebounceOnlyHasAbsoluteMaximumWait(t *testing.T) {
+	first := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
+	now := first.Add(defaultDebounceMaxWait - 20*time.Millisecond)
+	if got := coalesceDelay(now, first, defaultDebounceMaxWait, 80*time.Millisecond); got != 20*time.Millisecond {
+		t.Fatalf("delay = %s, want 20ms absolute deadline", got)
+	}
+}
+
 func TestReconcileBatchWindowCoalescesFromFirstEvent(t *testing.T) {
 	store := mustStore(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
