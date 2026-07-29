@@ -73,6 +73,7 @@ type PluginRunner func(ctx context.Context, spec api.PluginSpec, name string, op
 
 type triggerTimer interface {
 	Reset(time.Duration) bool
+	Stop() bool
 }
 
 type triggerTimerFactory func(time.Duration, func()) triggerTimer
@@ -361,6 +362,7 @@ func (c *Controller) deferBatch(ctx context.Context, resource api.Resource, spec
 			ctx:      ctx,
 		}
 		c.schedules[subKey] = sched
+		go c.cancelScheduleOnDone(subKey, ctx)
 	} else {
 		sched.resource = resource
 		sched.spec = spec
@@ -411,6 +413,12 @@ func (c *Controller) fireScheduled(subKey string) {
 		c.mu.Unlock()
 		return
 	}
+	if err := sched.ctx.Err(); err != nil {
+		delete(c.schedules, subKey)
+		sched.timer.Stop()
+		c.mu.Unlock()
+		return
+	}
 	delete(c.schedules, subKey)
 	if c.processing == nil {
 		c.processing = map[string]bool{}
@@ -440,6 +448,18 @@ func (c *Controller) fireScheduled(subKey string) {
 		c.saveStatus(resource.Metadata.Name, "Degraded", err.Error(), len(batch))
 	}
 	c.finishProcessing(subKey)
+}
+
+func (c *Controller) cancelScheduleOnDone(subKey string, ctx context.Context) {
+	<-ctx.Done()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	sched := c.schedules[subKey]
+	if sched == nil || sched.ctx != ctx {
+		return
+	}
+	sched.timer.Stop()
+	delete(c.schedules, subKey)
 }
 
 func (c *Controller) finishProcessing(subKey string) {

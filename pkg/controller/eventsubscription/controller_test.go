@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -386,6 +387,40 @@ func TestDebounceOnlyHasAbsoluteMaximumWait(t *testing.T) {
 	}
 }
 
+func TestScheduledBatchIsDiscardedWhenGenerationStops(t *testing.T) {
+	store := mustStore(t)
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		pluginResource("claim-plugin", "/unused"),
+		subscriptionResourceWithTrigger("claim-plugin", api.EventSubscriptionMatch{Types: []string{"routerd.client.ipv4.observed"}}, api.EventSubscriptionTrigger{
+			PluginRef: "claim-plugin",
+			Debounce:  "1m",
+		}),
+	}}}
+	timers := &fakeTriggerTimerFactory{}
+	calls := make(chan []string, 1)
+	c := newController(t, store, router)
+	c.NewTimer = timers.newTimer
+	c.PluginRunner = func(_ context.Context, _ api.PluginSpec, _ string, opts routerplugin.RunOptions) (routerplugin.PluginResult, routerplugin.RunOutcome, error) {
+		calls <- pluginEventIDs(opts.Events)
+		return routerplugin.PluginResult{}, routerplugin.RunOutcome{}, nil
+	}
+	recordEvent(t, store, routerstate.EventRecord{ID: "e1", Group: "cloudedge", Type: "routerd.client.ipv4.observed"})
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	deadline := time.Now().Add(time.Second)
+	for !timers.last().stopped.Load() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !timers.last().stopped.Load() {
+		t.Fatal("generation cancellation did not stop scheduled timer")
+	}
+	timers.fireLast()
+	assertNoExtraPluginCall(t, calls)
+}
+
 func TestReconcileBatchWindowCoalescesFromFirstEvent(t *testing.T) {
 	store := mustStore(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
@@ -527,8 +562,9 @@ type fakeTriggerTimerFactory struct {
 }
 
 type fakeTriggerTimer struct {
-	delay time.Duration
-	fn    func()
+	delay   time.Duration
+	fn      func()
+	stopped atomic.Bool
 }
 
 func (f *fakeTriggerTimerFactory) newTimer(d time.Duration, fn func()) triggerTimer {
@@ -546,7 +582,7 @@ func (f *fakeTriggerTimerFactory) last() *fakeTriggerTimer {
 
 func (f *fakeTriggerTimerFactory) fireLast() {
 	timer := f.last()
-	if timer != nil && timer.fn != nil {
+	if timer != nil && !timer.stopped.Load() && timer.fn != nil {
 		timer.fn()
 	}
 }
@@ -554,6 +590,10 @@ func (f *fakeTriggerTimerFactory) fireLast() {
 func (t *fakeTriggerTimer) Reset(d time.Duration) bool {
 	t.delay = d
 	return true
+}
+
+func (t *fakeTriggerTimer) Stop() bool {
+	return !t.stopped.Swap(true)
 }
 
 func waitPluginCall(t *testing.T, calls <-chan []string) []string {

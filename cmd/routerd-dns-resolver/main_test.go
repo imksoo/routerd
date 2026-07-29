@@ -86,13 +86,31 @@ func TestReloadClearsDNSCache(t *testing.T) {
 	config := testResolverConfig(nil)
 	writeRuntimeConfig(t, configPath, config)
 	d := newTestDaemon(t, configPath, config, true)
-	d.cacheSet("stale", []byte("old-answer"), time.Hour, 10)
+	d.cacheSet("stale", []byte("old-answer"), time.Hour, 10, d.generation)
 
 	if _, err := d.reload(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := d.cacheGet("stale"); ok {
+	if _, ok := d.cacheGet("stale", d.generation); ok {
 		t.Fatal("cache entry survived successful reload")
+	}
+}
+
+func TestCacheRejectsResponseFromPreviousGeneration(t *testing.T) {
+	d := &daemon{cache: map[string]cacheEntry{}, generation: 1}
+	d.cacheSet("answer", []byte("old"), time.Hour, 10, 1)
+	d.stateMu.Lock()
+	d.generation = 2
+	d.stateMu.Unlock()
+	d.mu.Lock()
+	clear(d.cache)
+	d.mu.Unlock()
+
+	// This models an upstream response which started before reload and
+	// completed after the new runtime was installed.
+	d.cacheSet("answer", []byte("late-old"), time.Hour, 10, 1)
+	if _, ok := d.cacheGet("answer", 2); ok {
+		t.Fatal("response from previous runtime generation entered current cache")
 	}
 }
 
