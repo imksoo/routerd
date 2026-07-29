@@ -141,17 +141,14 @@ func (r Runner) Bootstrap(ctx context.Context, controllers ...Controller) error 
 	if locker == nil {
 		locker = lock.NewResourceLocker()
 	}
-	var errs []error
 	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "event-loop"}, "routerd.controller.bootstrap", daemonapi.SeverityInfo)
 	for _, controller := range controllers {
 		interval := controllerInterval(controller, r.Interval)
-		if err := runLocked(ctx, logger, locker, r.Observer, controller.Name()+":bootstrap", controller.Name(), "bootstrap", "", "", interval, func(runCtx context.Context) error {
+		runLocked(ctx, logger, locker, r.Observer, controller.Name()+":bootstrap", controller.Name(), "bootstrap", "", "", interval, func(runCtx context.Context) error {
 			return controller.Reconcile(runCtx, event)
-		}); err != nil {
-			errs = append(errs, err)
-		}
+		})
 	}
-	return errors.Join(errs...)
+	return ctx.Err()
 }
 
 func (r Runner) RunOnce(ctx context.Context, controllers ...Controller) error {

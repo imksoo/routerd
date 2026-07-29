@@ -1274,6 +1274,7 @@ type Runner struct {
 	clientDaemonStates   map[string]supervisedDaemonState
 	daemonSourcesStarted map[string]bool
 	arpObserverReadySet  map[string]bool
+	generationBuilder    func(context.Context, *slog.Logger, eventedStore, bool, ha.Decision) ([]framework.Controller, DaemonStatusController, error)
 }
 
 type supervisedDaemonSpec struct {
@@ -1736,7 +1737,11 @@ func (r *Runner) prepareControllerGeneration(ctx context.Context, logger *slog.L
 		return nil, err
 	}
 	generationCtx, cancel := context.WithCancel(ctx)
-	controllers, daemonStatusSync, err := r.frameworkControllers(generationCtx, logger, store, true, decision)
+	builder := r.frameworkControllers
+	if r.generationBuilder != nil {
+		builder = r.generationBuilder
+	}
+	controllers, daemonStatusSync, err := builder(generationCtx, logger, store, true, decision)
 	if err != nil {
 		cancel()
 		if decision.Lease != nil {
@@ -1753,13 +1758,7 @@ func (r *Runner) prepareControllerGeneration(ctx context.Context, logger *slog.L
 		})
 	}
 	bootstrap := framework.Runner{Bus: r.Bus, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
-	if err := bootstrap.Bootstrap(generationCtx, controllers...); err != nil {
-		cancel()
-		if decision.Lease != nil {
-			_ = decision.Lease.Close()
-		}
-		return nil, fmt.Errorf("bootstrap controller generation: %w", err)
-	}
+	_ = bootstrap.Bootstrap(generationCtx, controllers...)
 	return &controllerGeneration{
 		ctx:              generationCtx,
 		cancel:           cancel,

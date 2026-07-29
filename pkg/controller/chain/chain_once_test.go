@@ -4,6 +4,7 @@ package chain
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"path/filepath"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/controller/framework"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/ha"
 )
 
@@ -67,6 +69,31 @@ func TestStandbyGenerationDoesNotPoisonLeaderOptions(t *testing.T) {
 	if runner.Opts.DryRunRoute || runner.Opts.DryRunFirewall {
 		t.Fatalf("leader generation did not retain base options: %+v", runner.Opts)
 	}
+}
+
+func TestPrepareControllerGenerationIgnoresBootstrapReconcileError(t *testing.T) {
+	runner := &Runner{
+		Router: &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}},
+		Bus:    bus.New(),
+		Store:  mapStore{},
+	}
+	runner.generationBuilder = func(context.Context, *slog.Logger, eventedStore, bool, ha.Decision) ([]framework.Controller, DaemonStatusController, error) {
+		return []framework.Controller{framework.FuncController{
+			ControllerName: "always-errors",
+			ReconcileFunc: func(context.Context, daemonapi.DaemonEvent) error {
+				return errors.New("bootstrap failed")
+			},
+		}}, DaemonStatusController{}, nil
+	}
+	store := eventedStore{Store: runner.Store, Bus: runner.Bus, Router: runner.Router}
+	generation, err := runner.prepareControllerGeneration(context.Background(), slog.Default(), store)
+	if err != nil {
+		t.Fatalf("prepareControllerGeneration returned bootstrap error: %v", err)
+	}
+	if generation == nil {
+		t.Fatal("prepareControllerGeneration returned nil generation")
+	}
+	generation.cancel()
 }
 
 type onceObserver struct {
