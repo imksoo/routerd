@@ -30,6 +30,7 @@ type serveConfigMutator struct {
 	logger     *eventlog.Logger
 	getRouter  func() *api.Router
 	setRouter  func(*api.Router)
+	reload     func(context.Context, *api.Router) error
 }
 
 func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) (*controlapi.ApplyResult, error) {
@@ -40,11 +41,7 @@ func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) 
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", controlapi.ErrBadRequest, err)
 	}
-	if !req.DryRun && !req.NoReconcile {
-		if changed, resources := runtimeShapeChanged(m.getRouter(), nextRouter); changed {
-			return nil, fmt.Errorf("%w: restart required for runtime lifecycle change: %s", controlapi.ErrBadRequest, strings.Join(resources, ", "))
-		}
-	}
+	shapeChanged, _ := runtimeShapeChanged(m.getRouter(), nextRouter)
 	if req.DryRun {
 		result, err := m.planRouter(nextRouter, nextYAML)
 		if err != nil {
@@ -63,11 +60,27 @@ func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) 
 	}
 	unlock := m.lockMutationTransaction()
 	defer unlock()
+	previous := m.getRouter()
+	if shapeChanged {
+		if m.reload == nil {
+			return nil, fmt.Errorf("runtime generation reload is unavailable")
+		}
+		if err := m.reload(context.Background(), nextRouter); err != nil {
+			return nil, err
+		}
+		m.setRouter(nextRouter)
+	}
 	result, err := m.reconcile(nextRouter, nextYAML)
 	if err != nil {
+		if shapeChanged {
+			_ = m.reload(context.Background(), previous)
+			m.setRouter(previous)
+		}
 		return nil, err
 	}
-	m.setRouter(nextRouter)
+	if !shapeChanged {
+		m.setRouter(nextRouter)
+	}
 	m.cache.Store(result)
 	apiResult := controlapi.NewApplyResult(result)
 	return &apiResult, nil
@@ -137,11 +150,7 @@ func (m serveConfigMutator) delete(r *http.Request, req controlapi.DeleteRequest
 	if !removed {
 		return nil, fmt.Errorf("%w: %s/%s not found in canonical config", controlapi.ErrBadRequest, target.Kind, target.Name)
 	}
-	if !req.DryRun && !req.NoReconcile {
-		if changed, resources := runtimeShapeChanged(m.getRouter(), nextRouter); changed {
-			return nil, fmt.Errorf("%w: restart required for runtime lifecycle change: %s", controlapi.ErrBadRequest, strings.Join(resources, ", "))
-		}
-	}
+	shapeChanged, _ := runtimeShapeChanged(m.getRouter(), nextRouter)
 	result := controlapi.DeleteResult{
 		TypeMeta: controlapi.TypeMeta{APIVersion: controlapi.APIVersion, Kind: "DeleteResult"},
 		Deleted:  []string{target.APIVersion + "/" + target.Kind + "/" + target.Name},
@@ -165,11 +174,27 @@ func (m serveConfigMutator) delete(r *http.Request, req controlapi.DeleteRequest
 	}
 	unlock := m.lockMutationTransaction()
 	defer unlock()
+	previous := m.getRouter()
+	if shapeChanged {
+		if m.reload == nil {
+			return nil, fmt.Errorf("runtime generation reload is unavailable")
+		}
+		if err := m.reload(context.Background(), nextRouter); err != nil {
+			return nil, err
+		}
+		m.setRouter(nextRouter)
+	}
 	applied, err := m.reconcile(nextRouter, string(nextYAML))
 	if err != nil {
+		if shapeChanged {
+			_ = m.reload(context.Background(), previous)
+			m.setRouter(previous)
+		}
 		return nil, err
 	}
-	m.setRouter(nextRouter)
+	if !shapeChanged {
+		m.setRouter(nextRouter)
+	}
 	m.cache.Store(applied)
 	result.Result = applied
 	return &result, nil
@@ -281,7 +306,11 @@ func (m serveConfigMutator) reconcile(router *api.Router, configYAML string) (*a
 		if err != nil {
 			return nil, err
 		}
-		result, err := m.planRouter(router, configYAML)
+		// The caller owns the exclusive mutation gate for the whole live-apply
+		// transaction. Avoid recursively taking it in the sandbox plan runner.
+		planner := m
+		planner.baseOpts.MutationGate = nil
+		result, err := planner.planRouter(router, configYAML)
 		if err != nil {
 			return nil, err
 		}

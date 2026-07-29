@@ -606,6 +606,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		logger:     logger,
 		getRouter:  currentRouter,
 		setRouter:  setCurrentRouter,
+		reload:     chainRunner.ReloadRuntime,
 	}
 	applyMu := &sync.Mutex{}
 	if *applyInterval > 0 {

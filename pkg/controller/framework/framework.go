@@ -170,7 +170,7 @@ func (r Runner) Bootstrap(ctx context.Context, controllers ...Controller) error 
 	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "event-loop"}, "routerd.controller.bootstrap", daemonapi.SeverityInfo)
 	for _, controller := range controllers {
 		interval := controllerInterval(controller, r.Interval)
-		runWithMutationGate(r.MutationGate, func() {
+		runWithMutationGate(ctx, r.MutationGate, func() {
 			runLocked(ctx, logger, locker, r.Observer, controller.Name()+":bootstrap", controller.Name(), "bootstrap", "", "", interval, func(runCtx context.Context) error {
 				return controller.Reconcile(runCtx, event)
 			})
@@ -228,7 +228,7 @@ func runController(ctx context.Context, logger *slog.Logger, locker *lock.Resour
 	}
 	if !skipBootstrap {
 		bootstrap := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "event-loop"}, "routerd.controller.bootstrap", daemonapi.SeverityInfo)
-		runWithMutationGate(gate, func() {
+		runWithMutationGate(ctx, gate, func() {
 			runLocked(ctx, logger, locker, observer, controller.Name()+":bootstrap", controller.Name(), "bootstrap", "", "", intervals[level], func(runCtx context.Context) error {
 				return controller.Reconcile(runCtx, bootstrap)
 			})
@@ -242,7 +242,7 @@ func runController(ctx context.Context, logger *slog.Logger, locker *lock.Resour
 			}
 			key := eventResourceKey(event)
 			kind, name := eventResourceKindName(event)
-			runWithMutationGate(gate, func() {
+			runWithMutationGate(ctx, gate, func() {
 				runLocked(ctx, logger, locker, observer, key, controller.Name(), event.Type, kind, name, intervals[level], func(runCtx context.Context) error {
 					return controller.Reconcile(runCtx, event)
 				})
@@ -252,7 +252,7 @@ func runController(ctx context.Context, logger *slog.Logger, locker *lock.Resour
 		case <-ticker.C:
 			didWork := false
 			nextLevel := level
-			runWithMutationGate(gate, func() {
+			runWithMutationGate(ctx, gate, func() {
 				_ = runLockedObservedInterval(ctx, logger, locker, observer, controller.Name()+":periodic", controller.Name(), "periodic", "", "", intervals[level], func(runErr error) time.Duration {
 					nextLevel = nextAdaptiveReconcileLevel(level, didWork, runErr, len(intervals)-1)
 					return intervals[nextLevel]
@@ -270,11 +270,19 @@ func runController(ctx context.Context, logger *slog.Logger, locker *lock.Resour
 	}
 }
 
-func runWithMutationGate(gate *sync.RWMutex, fn func()) {
-	if gate != nil {
-		gate.RLock()
-		defer gate.RUnlock()
+func runWithMutationGate(ctx context.Context, gate *sync.RWMutex, fn func()) {
+	if gate == nil {
+		fn()
+		return
 	}
+	for !gate.TryRLock() {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Millisecond):
+		}
+	}
+	defer gate.RUnlock()
 	fn()
 }
 

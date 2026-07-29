@@ -389,7 +389,13 @@ func (c *Controller) watchBestPathEvents(ctx context.Context) error {
 			return nil
 		}
 		if c.MutationGate != nil {
-			c.MutationGate.RLock()
+			for !c.MutationGate.TryRLock() {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(time.Millisecond):
+				}
+			}
 			defer c.MutationGate.RUnlock()
 		}
 		c.mu.Lock()
