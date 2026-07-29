@@ -185,16 +185,10 @@ func (p *upstreamPool) Exchange(ctx context.Context, query []byte, publish func(
 		cancel()
 		if err == nil {
 			p.markSuccess(upstream)
-			if publish != nil {
-				publish("routerd.dns.upstream.query.succeeded", daemonapi.SeverityInfo, "QuerySucceeded", "DNS query succeeded", map[string]string{"upstream": upstream.URL, "scheme": upstream.Scheme})
-			}
 			return resp, nil
 		}
 		errs = append(errs, fmt.Sprintf("%s: %v", upstream.URL, err))
 		p.markFailure(upstream, err)
-		if publish != nil {
-			publish("routerd.dns.upstream.query.failed", daemonapi.SeverityWarning, "QueryFailed", err.Error(), map[string]string{"upstream": upstream.URL, "scheme": upstream.Scheme})
-		}
 	}
 	return nil, fmt.Errorf("all DNS upstreams failed: %s", strings.Join(errs, "; "))
 }

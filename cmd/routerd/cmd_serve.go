@@ -485,6 +485,8 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		SkipServiceManager: *sandbox,
 		Sandbox:            *sandbox,
 	}
+	mutationGate := &sync.RWMutex{}
+	applyOpts.MutationGate = mutationGate
 	cache := &resultCache{}
 
 	signalCtx, cancelSignalCtx := context.WithCancel(context.Background())
@@ -545,15 +547,17 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		EnabledControllers:     enabledControllers,
 		PeerGroupSyncClient:    peerGroupSyncClient,
 		MemberSetSyncClient:    peerGroupSyncClient,
+		MutationGate:           mutationGate,
 	}
 	if *sandbox {
 		applySandboxControllerOptions(&controllerOpts, *dnsmasqConfigPath, *nftablesPath)
 	}
 	chainRunner = &controllerchain.Runner{
-		Router: router,
-		Bus:    controllerBus,
-		Store:  stateStore,
-		Opts:   controllerOpts,
+		Router:      router,
+		Bus:         controllerBus,
+		Store:       stateStore,
+		Opts:        controllerOpts,
+		CancelServe: cancelSignalCtx,
 	}
 	if *once {
 		_, err := runServeChainOnce(ctx, chainRunner, router, applyOpts, stateStore, stdout, logger)

@@ -11,9 +11,106 @@ import (
 	"testing"
 	"time"
 
+	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/lock"
 )
+
+type testEventBus struct {
+	mu   sync.Mutex
+	subs []chan daemonapi.DaemonEvent
+}
+
+func (b *testEventBus) Subscribe(_ context.Context, _ bus.Subscription, buffer int) (<-chan daemonapi.DaemonEvent, func()) {
+	ch := make(chan daemonapi.DaemonEvent, buffer)
+	b.mu.Lock()
+	b.subs = append(b.subs, ch)
+	b.mu.Unlock()
+	var once sync.Once
+	return ch, func() { once.Do(func() { close(ch) }) }
+}
+
+func TestRunUsesOneWorkerForMultipleSubscriptions(t *testing.T) {
+	eventBus := &testEventBus{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var mu sync.Mutex
+	bootstrap := 0
+	active := 0
+	maxActive := 0
+	events := 0
+	controller := FuncController{
+		ControllerName: "multi",
+		Subs: []bus.Subscription{
+			{Topics: []string{"routerd.a"}},
+			{Topics: []string{"routerd.b"}},
+		},
+		ReconcileFunc: func(_ context.Context, event daemonapi.DaemonEvent) error {
+			mu.Lock()
+			active++
+			if active > maxActive {
+				maxActive = active
+			}
+			if event.Type == "routerd.controller.bootstrap" {
+				bootstrap++
+			} else {
+				events++
+			}
+			mu.Unlock()
+			if event.Type != "routerd.controller.bootstrap" {
+				time.Sleep(20 * time.Millisecond)
+			}
+			mu.Lock()
+			active--
+			mu.Unlock()
+			return nil
+		},
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- (Runner{Bus: eventBus, Interval: time.Hour}).Run(ctx, controller)
+	}()
+	deadline := time.Now().Add(time.Second)
+	for {
+		eventBus.mu.Lock()
+		if len(eventBus.subs) == 2 {
+			eventBus.subs[0] <- daemonapi.DaemonEvent{Type: "routerd.a"}
+			eventBus.subs[1] <- daemonapi.DaemonEvent{Type: "routerd.b"}
+			eventBus.mu.Unlock()
+			break
+		}
+		eventBus.mu.Unlock()
+		if time.Now().After(deadline) {
+			t.Fatal("subscriptions were not established")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	deadline = time.Now().Add(time.Second)
+	for {
+		mu.Lock()
+		complete := events == 2
+		mu.Unlock()
+		if complete {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("events were not reconciled")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error = %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if bootstrap != 1 {
+		t.Fatalf("bootstrap = %d, want 1", bootstrap)
+	}
+	if maxActive != 1 {
+		t.Fatalf("max concurrent reconciles = %d, want 1", maxActive)
+	}
+}
 
 type recordingResourceObserver struct {
 	mu       sync.Mutex
