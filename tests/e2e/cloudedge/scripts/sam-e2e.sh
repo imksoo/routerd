@@ -188,20 +188,44 @@ node_ssh_host() {
   return 1
 }
 
-node_qga_eligible() {
-  local node="$1" site role public_ip vm_id
+node_has_management_address() {
+  node_ssh_host "$1" >/dev/null
+}
+
+node_requires_qga() {
+  local node="$1" site vm_id
   site="$(node_field "$node" site)"
-  role="$(node_field "$node" role)"
-  public_ip="$(node_field "$node" public_ip)"
   vm_id="$(node_field "$node" vm_id)"
   [ "$site" = "pve" ] || return 1
-  [ "$role" = "client" ] || return 1
   [ -n "$vm_id" ] && [ "$vm_id" != "null" ] || return 1
-  [ -z "$public_ip" ] || [ "$public_ip" = "null" ]
+  ! node_has_management_address "$node"
+}
+
+pve_qga_preflight() {
+  local node="$1" vm_id pve_host agent boot_source
+  vm_id="$(node_field "$node" vm_id)"
+  boot_source="$(jq -r '.pve.boot_source // empty' "$fabric_json")"
+  if [ "$boot_source" != "iso" ]; then
+    echo "PVEQGAUnsupportedBootSource: node $node has no management address, but boot_source=${boot_source:-<empty>}; QGA fallback requires boot_source=iso" >&2
+    return 1
+  fi
+  pve_host="$(jq -r '.pve.node_ssh_host // .pve.node_name // empty' "$fabric_json")"
+  [ -n "$pve_host" ] && [ "$pve_host" != "null" ] || {
+    echo "PVEQGATransportUnavailable: cannot query QGA capability because no PVE SSH host is configured" >&2
+    return 1
+  }
+  if ! agent="$(ssh "root@$pve_host" "qm config $vm_id | awk -F: '\$1 == \"agent\" { gsub(/[[:space:]]/, \"\", \$2); print \$2; exit }'")"; then
+    echo "PVEQGATransportUnavailable: cannot query QGA capability on PVE host $pve_host" >&2
+    return 1
+  fi
+  case "$agent" in 1|1,*|yes|yes,*|enabled=1|enabled=1,*|enabled=yes|enabled=yes,*) return 0 ;; esac
+  echo "PVEQGADisabled: QEMU guest agent is disabled for node $node vmid=$vm_id" >&2
+  return 1
 }
 
 pve_qga_exec() {
   local node="$1" command="$2" vm_id pve_host raw exitcode
+  pve_qga_preflight "$node" || return 1
   vm_id="$(node_field "$node" vm_id)"
   pve_host="$(jq -r '.pve.node_ssh_host // .pve.node_name' "$fabric_json")"
   raw="$(ssh "root@$pve_host" "qm guest exec $vm_id --timeout 600 -- /bin/sh -lc $(printf '%q' "$command")")"
@@ -213,6 +237,7 @@ pve_qga_exec() {
 
 pve_qga_copy() {
   local src="$1" node="$2" dst="$3" vm_id pve_host raw exitcode quoted_dst
+  pve_qga_preflight "$node" || return 1
   vm_id="$(node_field "$node" vm_id)"
   pve_host="$(jq -r '.pve.node_ssh_host // .pve.node_name' "$fabric_json")"
   quoted_dst="$(printf '%q' "$dst")"
@@ -261,24 +286,24 @@ ssh_base=(-i "$ssh_key" -o UserKnownHostsFile="$known_hosts" -o StrictHostKeyChe
 ssh_node() {
   local node="$1"; shift
   local user host
-  if node_qga_eligible "$node"; then
+  if node_requires_qga "$node"; then
     pve_qga_exec "$node" "$*"
     return
   fi
   user="$(node_field "$node" ssh_user)"
-  host="$(node_ssh_host "$node")"
+  host="$(node_ssh_host "$node")" || { echo "missing management address for node $node" >&2; return 1; }
   ssh -n "${ssh_base[@]}" "$user@$host" "$@"
 }
 
 scp_node() {
   local src="$1" node="$2" dst="$3"
   local user host
-  if node_qga_eligible "$node"; then
+  if node_requires_qga "$node"; then
     pve_qga_copy "$src" "$node" "$dst"
     return
   fi
   user="$(node_field "$node" ssh_user)"
-  host="$(node_ssh_host "$node")"
+  host="$(node_ssh_host "$node")" || { echo "missing management address for node $node" >&2; return 1; }
   scp -i "$ssh_key" -o UserKnownHostsFile="$known_hosts" -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 "$src" "$user@$host:$dst"
 }
 
