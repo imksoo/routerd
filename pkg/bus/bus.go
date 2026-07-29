@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/imksoo/routerd/pkg/daemonapi"
 )
@@ -25,7 +24,7 @@ type Subscription struct {
 type Bus struct {
 	mu          sync.Mutex
 	nextCursor  uint64
-	subscribers map[uint64]subscriber
+	subscribers map[uint64]*subscriber
 	recent      map[string][]Event
 	recentLimit int
 	store       EventStore
@@ -37,13 +36,24 @@ type EventStore interface {
 }
 
 type subscriber struct {
-	sub Subscription
-	ch  chan Event
+	id      uint64
+	sub     Subscription
+	ch      chan Event
+	inbox   chan Event
+	done    chan struct{}
+	stopped chan struct{}
+	dropped uint64
+}
+
+type dropNotice struct {
+	subscriber uint64
+	dropped    uint64
+	topics     []string
 }
 
 func New() *Bus {
 	return &Bus{
-		subscribers: map[uint64]subscriber{},
+		subscribers: map[uint64]*subscriber{},
 		recent:      map[string][]Event{},
 		recentLimit: 200,
 	}
@@ -76,31 +86,37 @@ func (b *Bus) Publish(ctx context.Context, event Event) error {
 	}
 	logger := b.logger
 	b.appendRecentLocked(event)
-	var targets []chan Event
+	var drops []dropNotice
 	for _, sub := range b.subscribers {
-		if sub.matches(event) {
-			targets = append(targets, sub.ch)
+		if !sub.matches(event) {
+			continue
 		}
-	}
-	var sendErr error
-	for _, target := range targets {
 		select {
-		case target <- event:
+		case sub.inbox <- event:
 		default:
-			select {
-			case target <- event:
-			case <-time.After(100 * time.Millisecond):
-			case <-ctx.Done():
-				sendErr = ctx.Err()
+			sub.dropped++
+			if sub.dropped == 1 || sub.dropped&(sub.dropped-1) == 0 {
+				drops = append(drops, dropNotice{
+					subscriber: sub.id,
+					dropped:    sub.dropped,
+					topics:     append([]string(nil), sub.sub.Topics...),
+				})
 			}
-		}
-		if sendErr != nil {
-			break
 		}
 	}
 	b.mu.Unlock()
+
+	if logger != nil {
+		for _, drop := range drops {
+			logger.WarnContext(ctx, "routerd event dropped for slow subscriber",
+				slog.Uint64("subscriber", drop.subscriber),
+				slog.Uint64("dropped", drop.dropped),
+				slog.Any("topics", drop.topics),
+			)
+		}
+	}
 	logEvent(ctx, logger, event)
-	return sendErr
+	return nil
 }
 
 func logEvent(ctx context.Context, logger *slog.Logger, event Event) {
@@ -168,8 +184,17 @@ func (b *Bus) Subscribe(ctx context.Context, sub Subscription, buffer int) (<-ch
 	b.mu.Lock()
 	b.nextCursor++
 	id := b.nextCursor
-	b.subscribers[id] = subscriber{sub: sub, ch: ch}
+	s := &subscriber{
+		id:      id,
+		sub:     sub,
+		ch:      ch,
+		inbox:   make(chan Event, buffer),
+		done:    make(chan struct{}),
+		stopped: make(chan struct{}),
+	}
+	b.subscribers[id] = s
 	b.mu.Unlock()
+	go s.run()
 
 	var once sync.Once
 	cancel := func() {
@@ -177,7 +202,8 @@ func (b *Bus) Subscribe(ctx context.Context, sub Subscription, buffer int) (<-ch
 			b.mu.Lock()
 			delete(b.subscribers, id)
 			b.mu.Unlock()
-			close(ch)
+			close(s.done)
+			<-s.stopped
 		})
 	}
 	if ctx.Done() != nil {
@@ -187,6 +213,23 @@ func (b *Bus) Subscribe(ctx context.Context, sub Subscription, buffer int) (<-ch
 		}()
 	}
 	return ch, cancel
+}
+
+func (s *subscriber) run() {
+	defer close(s.stopped)
+	defer close(s.ch)
+	for {
+		select {
+		case event := <-s.inbox:
+			select {
+			case s.ch <- event:
+			case <-s.done:
+				return
+			}
+		case <-s.done:
+			return
+		}
+	}
 }
 
 func (b *Bus) Recent(topic string) []Event {
@@ -207,7 +250,7 @@ func (b *Bus) appendRecentLocked(event Event) {
 	b.recent[event.Type] = events
 }
 
-func (s subscriber) matches(event Event) bool {
+func (s *subscriber) matches(event Event) bool {
 	if len(s.sub.Topics) > 0 {
 		matched := false
 		for _, topic := range s.sub.Topics {
