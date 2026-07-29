@@ -4,6 +4,7 @@ package chain
 
 import (
 	"context"
+	"log/slog"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -39,6 +40,32 @@ func TestOneShotUsesInjectedClusterDecisionWithoutReacquiring(t *testing.T) {
 	}
 	if err := decision.Lease.Refresh(); err != nil {
 		t.Fatalf("injected lease was unexpectedly closed: %v", err)
+	}
+}
+
+func TestStandbyGenerationDoesNotPoisonLeaderOptions(t *testing.T) {
+	runner := &Runner{
+		Router: &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}},
+		Bus:    bus.New(),
+		Store:  mapStore{},
+		Opts: Options{
+			EnabledControllers: []string{"log-retention"},
+			DryRunRoute:        false,
+			DryRunFirewall:     false,
+		},
+	}
+	store := eventedStore{Store: runner.Store, Bus: runner.Bus, Router: runner.Router}
+	if _, _, err := runner.frameworkControllers(context.Background(), slog.Default(), store, false, ha.Decision{Enabled: true, Leader: false}); err != nil {
+		t.Fatal(err)
+	}
+	if runner.Opts.DryRunRoute || runner.Opts.DryRunFirewall {
+		t.Fatalf("standby generation mutated base options: %+v", runner.Opts)
+	}
+	if _, _, err := runner.frameworkControllers(context.Background(), slog.Default(), store, false, ha.Decision{Enabled: true, Leader: true}); err != nil {
+		t.Fatal(err)
+	}
+	if runner.Opts.DryRunRoute || runner.Opts.DryRunFirewall {
+		t.Fatalf("leader generation did not retain base options: %+v", runner.Opts)
 	}
 }
 
