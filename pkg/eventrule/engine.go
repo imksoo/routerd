@@ -13,6 +13,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/eventconsumer"
 )
 
 const (
@@ -39,8 +40,10 @@ type Controller struct {
 	Router *api.Router
 	Bus    *bus.Bus
 	Store  Store
+	Events eventconsumer.Store
 	Now    func() time.Time
 	Logger *slog.Logger
+	Poll   time.Duration
 
 	mu    sync.Mutex
 	state map[string]*ruleState
@@ -70,22 +73,37 @@ type pendingEvent struct {
 }
 
 func (c *Controller) Start(ctx context.Context) {
-	if c.Router == nil || c.Bus == nil || c.Store == nil {
+	if c.Router == nil || c.Bus == nil || c.Store == nil || c.Events == nil {
 		return
 	}
 	c.init()
 	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.**"}}, 128)
+	poll := c.Poll
+	if poll <= 0 {
+		poll = time.Second
+	}
 	go func() {
+		ticker := time.NewTicker(poll)
+		defer ticker.Stop()
+		wake := make(chan struct{}, 1)
+		wake <- struct{}{}
 		for {
 			select {
-			case event, ok := <-ch:
+			case _, ok := <-ch:
 				if !ok {
 					return
 				}
-				if event.Daemon.Kind == "routerd-eventrule" {
-					continue
+				select {
+				case wake <- struct{}{}:
+				default:
 				}
-				if err := c.Reconcile(ctx, event); err != nil && c.Logger != nil {
+			case <-ticker.C:
+				select {
+				case wake <- struct{}{}:
+				default:
+				}
+			case <-wake:
+				if err := c.drainStoredEvents(ctx); err != nil && ctx.Err() == nil && c.Logger != nil {
 					c.Logger.Warn("event rule reconcile failed", "error", err)
 				}
 			case <-ctx.Done():
@@ -93,6 +111,15 @@ func (c *Controller) Start(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+func (c *Controller) drainStoredEvents(ctx context.Context) error {
+	return eventconsumer.Drain(ctx, c.Events, "eventrule/engine", func(ctx context.Context, event daemonapi.DaemonEvent) error {
+		if event.Daemon.Kind == "routerd-eventrule" {
+			return nil
+		}
+		return c.Reconcile(ctx, event)
+	})
 }
 
 func (c *Controller) Reconcile(ctx context.Context, event daemonapi.DaemonEvent) error {

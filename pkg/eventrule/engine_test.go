@@ -4,13 +4,16 @@ package eventrule
 
 import (
 	"context"
+	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 type mapStore map[string]map[string]any
@@ -123,6 +126,83 @@ func TestCorrelationStateIsBounded(t *testing.T) {
 	if gotLastSeen != maxRuleCorrelationKeys || gotLastEmit != maxRuleCorrelationKeys {
 		t.Fatalf("state sizes lastSeen=%d lastEmit=%d", gotLastSeen, gotLastEmit)
 	}
+}
+
+func TestStoredEventsRecoverMissedWakeupAndCursorPreventsRestartDuplicates(t *testing.T) {
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	b := bus.NewWithStore(store)
+	blockedEvents := &blockingEventStore{
+		SQLiteStore: store,
+		entered:     make(chan struct{}),
+		release:     make(chan struct{}),
+	}
+	controller := &Controller{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EventRule"},
+			Metadata: api.ObjectMeta{Name: "rule"},
+			Spec: api.EventRuleSpec{
+				Pattern: api.EventRulePatternSpec{Operator: OperatorCount, Topic: "routerd.a", Threshold: 200},
+				Emit:    api.EventRuleEmitSpec{Topic: "routerd.out"},
+			},
+		}}}},
+		Bus:    b,
+		Store:  store,
+		Events: blockedEvents,
+		Poll:   20 * time.Millisecond,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	controller.Start(ctx)
+	select {
+	case <-blockedEvents.entered:
+	case <-time.After(time.Second):
+		t.Fatal("stored event drain did not start")
+	}
+	// The drain is blocked while more events than the 128-entry bus
+	// subscription buffer are published. Wake-ups are therefore dropped, but
+	// every event remains recoverable from the store.
+	for i := 0; i < 200; i++ {
+		if err := b.Publish(context.Background(), testEvent("routerd.a")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	close(blockedEvents.release)
+	waitForRecent(t, b, "routerd.out", 1)
+	cancel()
+	controller.StopTimers()
+
+	restarted := &Controller{
+		Router: controller.Router,
+		Bus:    b,
+		Store:  store,
+		Events: store,
+		Poll:   20 * time.Millisecond,
+	}
+	restartCtx, restartCancel := context.WithCancel(context.Background())
+	defer restartCancel()
+	restarted.Start(restartCtx)
+	time.Sleep(100 * time.Millisecond)
+	if got := len(b.Recent("routerd.out")); got != 1 {
+		t.Fatalf("restart replayed processed events: outputs = %d, want 1", got)
+	}
+}
+
+type blockingEventStore struct {
+	*routerstate.SQLiteStore
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *blockingEventStore) ListEvents(query routerstate.EventQuery) ([]routerstate.StoredEvent, error) {
+	s.once.Do(func() {
+		close(s.entered)
+		<-s.release
+	})
+	return s.SQLiteStore.ListEvents(query)
 }
 
 func testController(pattern api.EventRulePatternSpec) (*Controller, *bus.Bus) {

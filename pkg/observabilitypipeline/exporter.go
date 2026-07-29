@@ -18,6 +18,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/eventconsumer"
 )
 
 type Store interface {
@@ -28,8 +29,10 @@ type Controller struct {
 	Router     *api.Router
 	Bus        *bus.Bus
 	Store      Store
+	Events     eventconsumer.Store
 	HTTPClient *http.Client
 	Stdout     io.Writer
+	Poll       time.Duration
 
 	mu      sync.Mutex
 	running map[string]runningExporter
@@ -40,7 +43,7 @@ func (c *Controller) Start(ctx context.Context) error {
 }
 
 func (c *Controller) Reconcile(ctx context.Context) error {
-	if c.Router == nil || c.Bus == nil {
+	if c.Router == nil || c.Bus == nil || c.Events == nil {
 		return nil
 	}
 	c.mu.Lock()
@@ -71,7 +74,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		}
 		runCtx, cancel := context.WithCancel(ctx)
 		ch, _ := c.Bus.Subscribe(runCtx, bus.Subscription{Topics: []string{"routerd.**"}}, 256)
-		go exporter.run(runCtx, ch)
+		go exporter.run(runCtx, ch, c.Events, c.Poll)
 		c.running[resource.Metadata.Name] = runningExporter{cancel: cancel, signature: signature}
 		c.saveStatus(resource.Metadata.Name, "Running", exporter)
 	}
@@ -164,26 +167,50 @@ type Exporter struct {
 	seq        uint64
 }
 
-func (e *Exporter) run(ctx context.Context, events <-chan bus.Event) {
+func (e *Exporter) run(ctx context.Context, wakeEvents <-chan bus.Event, store eventconsumer.Store, poll time.Duration) {
+	if poll <= 0 {
+		poll = time.Second
+	}
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+	wake := make(chan struct{}, 1)
+	wake <- struct{}{}
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case event, ok := <-events:
+		case _, ok := <-wakeEvents:
 			if !ok {
 				return
 			}
-			if !e.sample() {
-				continue
+			select {
+			case wake <- struct{}{}:
+			default:
 			}
-			for _, sink := range e.sinks {
-				if severityRank(event.Severity) < severityRank(defaultString(sink.MinLevel, "info")) {
-					continue
-				}
-				_ = e.export(ctx, sink, event)
+		case <-ticker.C:
+			select {
+			case wake <- struct{}{}:
+			default:
 			}
+		case <-wake:
+			_ = eventconsumer.Drain(ctx, store, "observabilitypipeline/"+e.name, e.processStoredEvent)
 		}
 	}
+}
+
+func (e *Exporter) processStoredEvent(ctx context.Context, event daemonapi.DaemonEvent) error {
+	if !e.sample() {
+		return nil
+	}
+	for _, sink := range e.sinks {
+		if severityRank(event.Severity) < severityRank(defaultString(sink.MinLevel, "info")) {
+			continue
+		}
+		if err := e.export(ctx, sink, event); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (e *Exporter) sample() bool {

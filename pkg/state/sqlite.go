@@ -154,6 +154,11 @@ CREATE TABLE IF NOT EXISTS events (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_type ON events(type, id);
+CREATE TABLE IF NOT EXISTS event_consumer_cursors (
+  consumer TEXT PRIMARY KEY,
+  cursor INTEGER NOT NULL,
+  updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS access_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts TEXT,
@@ -1465,10 +1470,14 @@ func (s *SQLiteStore) ListEvents(query EventQuery) ([]StoredEvent, error) {
 	if len(clauses) > 0 {
 		where = " WHERE " + strings.Join(clauses, " AND ")
 	}
+	order := "DESC"
+	if query.Ascending {
+		order = "ASC"
+	}
 	args = append(args, limit)
 	rows, err := s.db.Query(`SELECT id,api_version,kind,name,type,reason,message,coalesce(generation,0),created_at,
 coalesce(topic,''),coalesce(source_kind,''),coalesce(source_instance,''),coalesce(resource_api_version,''),coalesce(resource_kind,''),coalesce(resource_name,''),coalesce(severity,''),coalesce(attributes,'')
-FROM events`+where+` ORDER BY id DESC LIMIT ?`, args...)
+FROM events`+where+` ORDER BY id `+order+` LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1494,6 +1503,32 @@ FROM events`+where+` ORDER BY id DESC LIMIT ?`, args...)
 		return nil, err
 	}
 	return events, nil
+}
+
+func (s *SQLiteStore) EventConsumerCursor(consumer string) (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return 0, nil
+	}
+	var cursor int64
+	err := s.db.QueryRow(`SELECT cursor FROM event_consumer_cursors WHERE consumer = ?`, consumer).Scan(&cursor)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return cursor, err
+}
+
+func (s *SQLiteStore) SaveEventConsumerCursor(consumer string, cursor int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	_, err := s.db.Exec(`INSERT INTO event_consumer_cursors(consumer,cursor,updated_at) VALUES(?,?,?)
+ON CONFLICT(consumer) DO UPDATE SET cursor=excluded.cursor,updated_at=excluded.updated_at`,
+		consumer, cursor, s.now().UTC().Format(time.RFC3339Nano))
+	return err
 }
 
 func (s *SQLiteStore) Close() error {
