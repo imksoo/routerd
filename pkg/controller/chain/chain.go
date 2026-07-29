@@ -1277,6 +1277,41 @@ type Runner struct {
 	daemonSourcesStarted map[string]bool
 	arpObserverReadySet  map[string]bool
 	generationBuilder    func(context.Context, *slog.Logger, eventedStore, bool, ha.Decision) ([]framework.Controller, DaemonStatusController, error)
+	reloadMu             sync.Mutex
+	reloadCh             chan generationReload
+}
+
+type generationReload struct {
+	router *api.Router
+	done   chan error
+}
+
+func (r *Runner) ReloadRuntime(ctx context.Context, router *api.Router) error {
+	if router == nil {
+		return fmt.Errorf("reload router is required")
+	}
+	ch := r.runtimeReloadChannel()
+	request := generationReload{router: router, done: make(chan error, 1)}
+	select {
+	case ch <- request:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case err := <-request.done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (r *Runner) runtimeReloadChannel() chan generationReload {
+	r.reloadMu.Lock()
+	defer r.reloadMu.Unlock()
+	if r.reloadCh == nil {
+		r.reloadCh = make(chan generationReload)
+	}
+	return r.reloadCh
 }
 
 type supervisedDaemonSpec struct {
@@ -1734,6 +1769,10 @@ type controllerGeneration struct {
 }
 
 func (r *Runner) prepareControllerGeneration(ctx context.Context, logger *slog.Logger, store eventedStore) (*controllerGeneration, error) {
+	return r.prepareControllerGenerationWithGate(ctx, logger, store, r.Opts.MutationGate)
+}
+
+func (r *Runner) prepareControllerGenerationWithGate(ctx context.Context, logger *slog.Logger, store eventedStore, gate *sync.RWMutex) (*controllerGeneration, error) {
 	decision, err := acquireClusterLease(ctx, r.Router, store)
 	if err != nil {
 		return nil, err
@@ -1759,7 +1798,7 @@ func (r *Runner) prepareControllerGeneration(ctx context.Context, logger *slog.L
 			cancel()
 		})
 	}
-	bootstrap := framework.Runner{Bus: r.Bus, MutationGate: r.Opts.MutationGate, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
+	bootstrap := framework.Runner{Bus: r.Bus, MutationGate: gate, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
 	_ = bootstrap.Bootstrap(generationCtx, controllers...)
 	return &controllerGeneration{
 		ctx:              generationCtx,
@@ -1772,8 +1811,20 @@ func (r *Runner) prepareControllerGeneration(ctx context.Context, logger *slog.L
 }
 
 func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logger, store eventedStore, generation *controllerGeneration) error {
+	reloads := r.runtimeReloadChannel()
 	for ctx.Err() == nil {
 		if generation == nil {
+			select {
+			case request := <-reloads:
+				var reloadErr error
+				generation, reloadErr = r.prepareReloadedControllerGeneration(ctx, logger, store, request.router)
+				request.done <- reloadErr
+				if generation == nil {
+					return reloadErr
+				}
+				continue
+			default:
+			}
 			var err error
 			generation, err = r.prepareControllerGeneration(ctx, logger, store)
 			if err != nil {
@@ -1792,14 +1843,58 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 			time.AfterFunc(clusterRetryInterval(r.Router), generation.cancel)
 		}
 		loop := framework.Runner{Bus: r.Bus, MutationGate: r.Opts.MutationGate, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver, SkipBootstrap: true}
-		_ = loop.Run(generation.ctx, generation.controllers...)
-		generation.cancel()
-		if generation.decision.Lease != nil {
-			_ = generation.decision.Lease.Close()
+		loopDone := make(chan error, 1)
+		go func(current *controllerGeneration) {
+			loopDone <- loop.Run(current.ctx, current.controllers...)
+		}(generation)
+		select {
+		case <-ctx.Done():
+			generation.cancel()
+			<-loopDone
+			closeControllerGeneration(generation)
+			return ctx.Err()
+		case <-generation.ctx.Done():
+			<-loopDone
+			closeControllerGeneration(generation)
+			generation = nil
+		case request := <-reloads:
+			generation.cancel()
+			<-loopDone
+			closeControllerGeneration(generation)
+			var reloadErr error
+			generation, reloadErr = r.prepareReloadedControllerGeneration(ctx, logger, store, request.router)
+			request.done <- reloadErr
+			if generation == nil {
+				return reloadErr
+			}
 		}
-		generation = nil
 	}
 	return ctx.Err()
+}
+
+func (r *Runner) prepareReloadedControllerGeneration(ctx context.Context, logger *slog.Logger, store eventedStore, router *api.Router) (*controllerGeneration, error) {
+	previous := r.Router
+	r.Router = router
+	next, err := r.prepareControllerGenerationWithGate(ctx, logger, store.withRouter(router), nil)
+	if err == nil {
+		return next, nil
+	}
+	r.Router = previous
+	rollback, rollbackErr := r.prepareControllerGenerationWithGate(ctx, logger, store.withRouter(previous), nil)
+	if rollbackErr != nil {
+		return nil, errors.Join(err, fmt.Errorf("restore previous generation: %w", rollbackErr))
+	}
+	return rollback, err
+}
+
+func closeControllerGeneration(generation *controllerGeneration) {
+	if generation == nil {
+		return
+	}
+	generation.cancel()
+	if generation.decision.Lease != nil {
+		_ = generation.decision.Lease.Close()
+	}
 }
 
 func clusterRetryInterval(router *api.Router) time.Duration {
