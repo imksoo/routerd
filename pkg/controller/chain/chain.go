@@ -1727,6 +1727,7 @@ type controllerGeneration struct {
 	decision         ha.Decision
 	controllers      []framework.Controller
 	daemonStatusSync DaemonStatusController
+	heartbeatStarted bool
 }
 
 func (r *Runner) prepareControllerGeneration(ctx context.Context, logger *slog.Logger, store eventedStore) (*controllerGeneration, error) {
@@ -1743,12 +1744,29 @@ func (r *Runner) prepareControllerGeneration(ctx context.Context, logger *slog.L
 		}
 		return nil, err
 	}
+	heartbeatStarted := false
+	if decision.Enabled && decision.Leader && decision.Lease != nil {
+		heartbeatStarted = true
+		go decision.Lease.Heartbeat(generationCtx, func(err error) {
+			logger.Error("routerd cluster lease heartbeat failed during generation bootstrap; fencing generation", "error", err)
+			cancel()
+		})
+	}
+	bootstrap := framework.Runner{Bus: r.Bus, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
+	if err := bootstrap.Bootstrap(generationCtx, controllers...); err != nil {
+		cancel()
+		if decision.Lease != nil {
+			_ = decision.Lease.Close()
+		}
+		return nil, fmt.Errorf("bootstrap controller generation: %w", err)
+	}
 	return &controllerGeneration{
 		ctx:              generationCtx,
 		cancel:           cancel,
 		decision:         decision,
 		controllers:      controllers,
 		daemonStatusSync: daemonStatusSync,
+		heartbeatStarted: heartbeatStarted,
 	}, nil
 }
 
@@ -1764,7 +1782,7 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 		if r.controllerEnabled("daemon-status") {
 			r.warmDaemonStatuses(generation.ctx, generation.daemonStatusSync, logger)
 		}
-		if generation.decision.Enabled && generation.decision.Leader && generation.decision.Lease != nil {
+		if generation.decision.Enabled && generation.decision.Leader && generation.decision.Lease != nil && !generation.heartbeatStarted {
 			go generation.decision.Lease.Heartbeat(generation.ctx, func(err error) {
 				logger.Error("routerd cluster lease heartbeat failed; fencing controller generation", "error", err)
 				generation.cancel()
@@ -1772,7 +1790,7 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 		} else if generation.decision.Enabled {
 			time.AfterFunc(clusterRetryInterval(r.Router), generation.cancel)
 		}
-		loop := framework.Runner{Bus: r.Bus, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
+		loop := framework.Runner{Bus: r.Bus, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver, SkipBootstrap: true}
 		_ = loop.Run(generation.ctx, generation.controllers...)
 		generation.cancel()
 		if generation.decision.Lease != nil {
