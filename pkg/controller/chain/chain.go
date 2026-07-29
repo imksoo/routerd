@@ -1266,6 +1266,7 @@ type Runner struct {
 	Bus                 *bus.Bus
 	Store               Store
 	Opts                Options
+	HADecision          *ha.Decision
 	ARPObserverCommands arpObserverCommandPusher
 
 	supervisedMu         sync.Mutex
@@ -1702,21 +1703,64 @@ func (r *Runner) Start(ctx context.Context) error {
 	}
 	r.startARPObserverDaemonSources(ctx, logger)
 
-	controllers, daemonStatusSync, err := r.frameworkControllers(ctx, logger, store, true)
-	if err != nil {
-		return err
-	}
-
-	if r.controllerEnabled("daemon-status") {
-		r.warmDaemonStatuses(ctx, daemonStatusSync, logger)
-	}
 	go func() {
-		loop := framework.Runner{Bus: r.Bus, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
-		if err := loop.Run(ctx, controllers...); err != nil && ctx.Err() == nil {
-			logger.Warn("controller event loop stopped", "error", err)
+		if err := r.runControllerGenerations(ctx, logger, store); err != nil && ctx.Err() == nil {
+			logger.Warn("controller generation supervisor stopped", "error", err)
 		}
 	}()
 	return nil
+}
+
+func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logger, store eventedStore) error {
+	for ctx.Err() == nil {
+		decision, err := acquireClusterLease(ctx, r.Router, store)
+		if err != nil {
+			return err
+		}
+		generationCtx, cancel := context.WithCancel(ctx)
+		controllers, daemonStatusSync, err := r.frameworkControllers(generationCtx, logger, store, true, decision)
+		if err != nil {
+			cancel()
+			if decision.Lease != nil {
+				_ = decision.Lease.Close()
+			}
+			return err
+		}
+		if r.controllerEnabled("daemon-status") {
+			r.warmDaemonStatuses(generationCtx, daemonStatusSync, logger)
+		}
+		if decision.Enabled && decision.Leader && decision.Lease != nil {
+			go decision.Lease.Heartbeat(generationCtx, func(err error) {
+				logger.Error("routerd cluster lease heartbeat failed; fencing controller generation", "error", err)
+				cancel()
+			})
+		} else if decision.Enabled {
+			time.AfterFunc(clusterRetryInterval(r.Router), cancel)
+		}
+		loop := framework.Runner{Bus: r.Bus, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
+		_ = loop.Run(generationCtx, controllers...)
+		cancel()
+		if decision.Lease != nil {
+			_ = decision.Lease.Close()
+		}
+	}
+	return ctx.Err()
+}
+
+func clusterRetryInterval(router *api.Router) time.Duration {
+	_, spec, ok, _ := routerdClusterResource(router)
+	if !ok {
+		return 10 * time.Second
+	}
+	ttl := 30 * time.Second
+	if parsed, err := time.ParseDuration(strings.TrimSpace(spec.LeaseTTL)); err == nil && parsed > 0 {
+		ttl = parsed
+	}
+	interval := ttl / 3
+	if interval < time.Second {
+		interval = time.Second
+	}
+	return interval
 }
 
 func (r *Runner) ReconcileOnce(ctx context.Context) error {
@@ -1728,7 +1772,12 @@ func (r *Runner) ReconcileOnce(ctx context.Context) error {
 		logger = slog.Default()
 	}
 	store := eventedStore{Store: r.Store, Bus: r.Bus, Router: r.Router}
-	controllers, _, err := r.frameworkControllers(ctx, logger, store, false)
+	decision, closeLease, err := r.oneShotHADecision(ctx, store)
+	if err != nil {
+		return err
+	}
+	defer closeLease()
+	controllers, _, err := r.frameworkControllers(ctx, logger, store, false, decision)
 	if err != nil {
 		return err
 	}
@@ -1745,7 +1794,12 @@ func (r *Runner) ReconcileScheduled(ctx context.Context) error {
 		logger = slog.Default()
 	}
 	store := eventedStore{Store: r.Store, Bus: r.Bus, Router: r.Router}
-	controllers, _, err := r.frameworkControllers(ctx, logger, store, false)
+	decision, closeLease, err := r.oneShotHADecision(ctx, store)
+	if err != nil {
+		return err
+	}
+	defer closeLease()
+	controllers, _, err := r.frameworkControllers(ctx, logger, store, false, decision)
 	if err != nil {
 		return err
 	}
@@ -1784,17 +1838,22 @@ func scheduledReconcileSkipsController(name string) bool {
 	}
 }
 
-func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, store eventedStore, startAuxiliary bool) ([]framework.Controller, DaemonStatusController, error) {
-	haDecision, err := acquireClusterLease(ctx, r.Router, store)
+func (r *Runner) oneShotHADecision(ctx context.Context, store eventedStore) (ha.Decision, func(), error) {
+	if r.HADecision != nil {
+		return *r.HADecision, func() {}, nil
+	}
+	decision, err := acquireClusterLease(ctx, r.Router, store)
 	if err != nil {
-		return nil, DaemonStatusController{}, err
+		return decision, func() {}, err
 	}
-	if haDecision.Enabled && haDecision.Leader && haDecision.Lease != nil {
-		go haDecision.Lease.Heartbeat(ctx, func(err error) {
-			logger.Warn("routerd cluster lease heartbeat failed", "error", err)
-		})
-		defer haDecision.Lease.Close()
-	}
+	return decision, func() {
+		if decision.Lease != nil {
+			_ = decision.Lease.Close()
+		}
+	}, nil
+}
+
+func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, store eventedStore, startAuxiliary bool, haDecision ha.Decision) ([]framework.Controller, DaemonStatusController, error) {
 	opts := r.Opts
 	if haDecision.Enabled && !haDecision.Leader {
 		logger.Info("routerd cluster standby mode; mutating controllers run dry-run", "holder", haDecision.Holder, "leasePath", haDecision.LeasePath)

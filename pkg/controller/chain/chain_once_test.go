@@ -4,6 +4,7 @@ package chain
 
 import (
 	"context"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -11,7 +12,35 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/controller/framework"
+	"github.com/imksoo/routerd/pkg/ha"
 )
+
+func TestOneShotUsesInjectedClusterDecisionWithoutReacquiring(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lease")
+	decision, err := ha.Acquire(context.Background(), ha.Config{
+		Identity:  "router-a",
+		Peers:     []string{"router-a", "router-b"},
+		LeasePath: path,
+		TTL:       time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer decision.Lease.Close()
+
+	runner := &Runner{HADecision: &decision}
+	got, closeLease, err := runner.oneShotHADecision(context.Background(), eventedStore{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeLease()
+	if !got.Leader || got.Lease != decision.Lease {
+		t.Fatalf("decision = %#v", got)
+	}
+	if err := decision.Lease.Refresh(); err != nil {
+		t.Fatalf("injected lease was unexpectedly closed: %v", err)
+	}
+}
 
 type onceObserver struct {
 	mu    sync.Mutex
