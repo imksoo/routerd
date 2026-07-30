@@ -456,7 +456,7 @@ func TestPathMTUControllerRendersSAMTransportHubRelayMSSClamp(t *testing.T) {
 		},
 	}}}
 	store := mapStore{}
-	controller := PathMTUController{Router: router, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft")}
+	controller := PathMTUController{Router: router, OS: platform.OSLinux, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft")}
 	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
