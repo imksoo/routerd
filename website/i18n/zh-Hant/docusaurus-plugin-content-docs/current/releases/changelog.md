@@ -11,6 +11,28 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 變更
+
+- Linux `NAT44SessionSync` 的 conntrackd mode 現在要求明確宣告 runtime 有效且
+  non-optional 的 `Sysctl`：
+  `net.netfilter.nf_conntrack_tcp_be_liberal=1`。`routerctl doctor nat`
+  會在不修改 host 的情況下檢查此 live 前置條件。
+- 離散 event consumer 現在透過 durable cursor 讀取 SQLite event store；即使遺失
+  memory 內的 wake-up 仍可復原，restart 後也不會重播已處理的 event。
+- live config apply 現在會切換明確的 runtime generation、取消舊 generation，並以
+  有界的 single worker 串行執行 controller 工作。
+
+### 修正
+
+- 修正 RouterdCluster lease close 與 leader generation race 遺留舊工作的問題；
+  peer 同步現在依 revision 與 digest 收斂。
+- FreeBSD DHCPv6-PD 現在使用 platform native 的 link-local 探測，並等待新 address
+  完成 DAD 後才使用。
+- IPv6 `hostTraffic` policy route 會跟隨持有 PD address 的 failover VMAC；desired
+  policy 消失時會移除過期 rule。
+- CloudEdge qualification 在 PVE QGA 不可用時會快速停止，並優先使用目前 PVE
+  inventory 探測到的 management address。
+
 ## v20260727.2110
 
 ### 變更

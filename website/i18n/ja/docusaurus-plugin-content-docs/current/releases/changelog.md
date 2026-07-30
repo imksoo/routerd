@@ -16,6 +16,22 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 - Linux の `NAT44SessionSync` conntrackd mode は、runtime 有効・non-optional な
   `Sysctl` で `net.netfilter.nf_conntrack_tcp_be_liberal=1` を明示する必要が
   あります。`routerctl doctor nat` は host を変更せず live 前提条件を確認します。
+- 離散 event consumer は durable cursor を使って SQLite event store を読み出すように
+  なり、memory 上の wake-up を取りこぼしても復旧し、restart 後に処理済み event を
+  再生しません。
+- live config apply は明示的な runtime generation を切り替え、旧 generation を
+  cancel し、controller の処理を有界な single worker に直列化します。
+
+### 修正
+
+- RouterdCluster lease close と leader generation の race で古い処理が残る問題を
+  修正し、peer 同期が revision と digest に基づいて収束するようにしました。
+- FreeBSD DHCPv6-PD は platform native な link-local 検出を使い、新しい address の
+  DAD 完了を待ってから使用します。
+- IPv6 `hostTraffic` policy route は PD address を所有する failover VMAC に追従し、
+  desired policy が消えた場合は古い rule を削除します。
+- CloudEdge qualification は PVE QGA が利用できない場合に早期停止し、現在の PVE
+  inventory から検出した management address を優先します。
 
 ## v20260727.2110
 
