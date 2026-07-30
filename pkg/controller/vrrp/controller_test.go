@@ -197,6 +197,78 @@ func TestReconcileRestoresTrackHysteresisFromStore(t *testing.T) {
 	}
 }
 
+func TestReconcileDoesNotPenalizeNeutralTrackState(t *testing.T) {
+	router := vrrpRouter("vrrp")
+	spec, _ := router.Spec.Resources[1].VirtualAddressSpec()
+	spec.Track = []api.ResourceTrackSpec{{
+		Resource:                    "HealthCheck/internet-via-dslite",
+		UnhealthyPenalty:            80,
+		ConfirmConsecutiveUnhealthy: 1,
+	}}
+	router.Spec.Resources[1].Spec = spec
+	store := mapStore{
+		api.NetAPIVersion + "/HealthCheck/internet-via-dslite": {
+			"phase":  "Pending",
+			"reason": "WhenFalse",
+		},
+	}
+	controller := Controller{Router: router, Store: store, DryRun: true, ConfigPath: t.TempDir() + "/keepalived.conf"}
+	for i := 0; i < 3; i++ {
+		if err := controller.Reconcile(context.Background()); err != nil {
+			t.Fatalf("neutral reconcile %d: %v", i, err)
+		}
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
+	if status["priority"] != 150 {
+		t.Fatalf("neutral track state should not lower priority: %#v", status)
+	}
+	track, ok := status["track"].([]map[string]any)
+	if !ok || len(track) != 1 || track[0]["unhealthyCount"] != 0 || track[0]["penalized"] != false {
+		t.Fatalf("neutral track state should preserve counters: %#v", status["track"])
+	}
+}
+
+func TestReconcileDoesNotPenalizeTrackedResourceWhenFalse(t *testing.T) {
+	router := vrrpRouter("vrrp")
+	spec, _ := router.Spec.Resources[1].VirtualAddressSpec()
+	spec.Track = []api.ResourceTrackSpec{{
+		Resource:                    "HealthCheck/internet-via-dslite",
+		UnhealthyPenalty:            80,
+		ConfirmConsecutiveUnhealthy: 1,
+	}}
+	router.Spec.Resources[1].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
+		Metadata: api.ObjectMeta{Name: "internet-via-dslite"},
+		Spec: api.HealthCheckSpec{
+			When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+				"VirtualAddress/vip.role": {Equals: "master"},
+			}},
+			Target: "1.1.1.1",
+		},
+	})
+	store := mapStore{
+		api.NetAPIVersion + "/VirtualAddress/vip": {
+			"role": "backup",
+		},
+		api.NetAPIVersion + "/HealthCheck/internet-via-dslite": {
+			"phase": "Unhealthy",
+		},
+	}
+	controller := Controller{Router: router, Store: store, DryRun: true, ConfigPath: t.TempDir() + "/keepalived.conf"}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
+	if status["priority"] != 150 {
+		t.Fatalf("when false track state should not lower priority: %#v", status)
+	}
+	track, ok := status["track"].([]map[string]any)
+	if !ok || len(track) != 1 || track[0]["unhealthyCount"] != 0 || track[0]["penalized"] != false {
+		t.Fatalf("when false track state should preserve counters: %#v", status["track"])
+	}
+}
+
 func TestReconcileAppliesStaticVirtualAddressIPv4(t *testing.T) {
 	store := mapStore{}
 	var calls []string
