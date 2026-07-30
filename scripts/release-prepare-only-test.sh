@@ -13,6 +13,15 @@ cp "$repo_root/scripts/release.sh" "$work/repo/scripts/release.sh"
 cd "$work/repo"
 git config user.name "routerd release test"
 git config user.email "routerd-release-test@example.invalid"
+for changelog in \
+	docs/releases/changelog.md \
+	website/i18n/ja/docusaurus-plugin-content-docs/current/releases/changelog.md \
+	website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/releases/changelog.md \
+	website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/releases/changelog.md
+do
+	printf '## Unreleased\n\nrelease prepare-only fixture\n' >"$changelog"
+	git add "$changelog"
+done
 git add Makefile scripts/release.sh
 git commit --quiet --allow-empty -m "test release prepare-only fixture"
 
@@ -57,6 +66,17 @@ if ! grep -Fqx "VERSION ?= $tag" Makefile; then
 	echo "prepared release did not update Makefile version" >&2
 	exit 1
 fi
+for changelog in \
+	docs/releases/changelog.md \
+	website/i18n/ja/docusaurus-plugin-content-docs/current/releases/changelog.md \
+	website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/releases/changelog.md \
+	website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/releases/changelog.md
+do
+	if ! grep -Fqx "## $tag" "$changelog"; then
+		echo "prepared release did not promote $changelog" >&2
+		exit 1
+	fi
+done
 if [ -n "$(git status --short)" ]; then
 	echo "prepare-only left a dirty working tree" >&2
 	git status --short >&2
