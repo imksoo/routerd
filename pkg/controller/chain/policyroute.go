@@ -423,13 +423,10 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 		if egressRoutePolicyCandidateDisabled(candidate) {
 			return
 		}
-		if !c.egressCandidateAvailable(candidate) {
-			return
-		}
 		if !c.shouldInstallPolicyRouteForHealthCheck(candidate.HealthCheck, candidate.Mark) {
 			return
 		}
-		c.applyRouteTarget(ctx, aliases, owner, firstNonEmpty(candidate.Name, candidate.EffectiveInterface()), c.candidateDevice(candidate), candidate.EffectiveTable(), candidate.Priority, candidate.Mark, candidate.EffectiveMetric(), firstNonEmpty(candidate.GatewaySource, "none"), c.candidateGateway(candidate), c.egressCandidateReferencesDSLite(candidate), &failures)
+		c.applyRouteTarget(ctx, aliases, owner, firstNonEmpty(candidate.Name, candidate.EffectiveInterface()), c.candidateDevice(candidate), candidate.EffectiveTable(), candidate.Priority, candidate.Mark, candidate.EffectiveMetric(), firstNonEmpty(candidate.GatewaySource, "none"), c.candidateGateway(candidate), false, &failures)
 	}
 	for _, res := range c.Router.Spec.Resources {
 		if res.Kind != "EgressRoutePolicy" {
@@ -847,24 +844,6 @@ func (c IPv4PolicyRouteController) egressTargetAvailable(ctx context.Context, al
 
 func (c IPv4PolicyRouteController) egressCandidateAvailable(candidate api.EgressRoutePolicyCandidate) bool {
 	return c.dsliteResourceReady(candidate.Source)
-}
-
-func (c IPv4PolicyRouteController) egressCandidateReferencesDSLite(candidate api.EgressRoutePolicyCandidate) bool {
-	if c.Router == nil {
-		return false
-	}
-	references := []string{candidate.Source, candidate.EffectiveInterface(), candidate.DeviceFrom.Resource}
-	for _, res := range c.Router.Spec.Resources {
-		if res.Kind != "DSLiteTunnel" {
-			continue
-		}
-		for _, reference := range references {
-			if reference == res.Metadata.Name || reference == res.ID() {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func (c IPv4PolicyRouteController) dsliteResourceReady(reference string) bool {
