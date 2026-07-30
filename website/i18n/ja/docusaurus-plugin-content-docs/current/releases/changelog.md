@@ -24,6 +24,9 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ### 修正
 
+- release qualification は、文書だけの script contract ではなく、実行可能な環境認証、
+  schema/preflight、exact artifact、独立 TTL/heartbeat watchdog、run 限定
+  cleanup/inventory gate を使用するようになりました。
 - RouterdCluster lease close と leader generation の race で古い処理が残る問題を
   修正し、peer 同期が revision と digest に基づいて収束するようにしました。
 - FreeBSD DHCPv6-PD は platform native な link-local 検出を使い、新しい address の

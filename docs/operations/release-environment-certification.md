@@ -138,10 +138,19 @@ The cloud certification script is expected to verify:
 Repairs are allowed here. The manifest must record each repair action and the
 post-repair check that made the environment certifiable.
 
-## routerd-labs script contract
+## Certification script contract
 
-The script implementations live in the routerd-labs repository. This repository
-defines their interface so release qualification can rely on the same contract.
+The generic script implementations live in this repository under `scripts/`.
+Environment-specific PVE and provider operations remain in the private
+routerd-labs driver. This keeps the executable interface, schema validation,
+preflight, watchdog, and cleanup invariants under public CI without exposing
+credentials or private infrastructure identifiers.
+
+Both certifiers consume one run contract. The contract fixes the run ID, exact
+routerd artifact and checksum, routerd-labs revision, logical provider
+profiles/regions, OpenTofu paths, PVE topology inputs, and lifecycle limits.
+Drivers receive the contract and must return structured checks and repairs;
+free-form successful output is not accepted as certification evidence.
 
 ### `certify-pve-substrate.sh`
 
@@ -154,6 +163,9 @@ Required interface:
 certify-pve-substrate.sh \
   --environment <name> \
   --topology <name> \
+  --contract <run-contract.json> \
+  --driver <routerd-labs-pve-driver> \
+  [--cloud-certification <cloud-manifest.json>] \
   --out <manifest.json> \
   [--repair] \
   [--valid-for 24h]
@@ -166,6 +178,9 @@ Behavior:
   certification result.
 - Exit `0` only when the PVE portion is certified.
 - Exit non-zero for infra failure or blocked inspection.
+- Verify the exact release artifact path and SHA-256 from the run contract.
+- When cloud is certified first, merge its passing manifest with the PVE
+  result; reject a different run ID, environment, or topology.
 - Write a manifest that conforms to
   `docs/releases/manifests/release-environment-certification.schema.json`.
 
@@ -181,6 +196,9 @@ certify-cloud-substrate.sh \
   --environment <name> \
   --topology <name> \
   --providers aws,azure,oci \
+  --contract <run-contract.json> \
+  --driver <routerd-labs-cloud-driver> \
+  [--pve-certification <pve-manifest.json>] \
   --out <manifest.json> \
   [--repair] \
   [--valid-for 24h]
@@ -194,7 +212,10 @@ Behavior:
   final certification result.
 - Exit `0` only when every requested provider is certified.
 - Exit non-zero for infra failure or blocked inspection.
-- Write a manifest that conforms to the certification schema.
+- When PVE is certified first, merge its passing manifest with the cloud
+  result; reject a different run ID, environment, or topology.
+- A final merged manifest from either valid phase order conforms to the
+  certification schema and contains both certifier results.
 
 ### `release-environment-preflight.sh`
 
@@ -207,7 +228,8 @@ release-environment-preflight.sh \
   --certification <manifest.json> \
   --environment <name> \
   --topology <name> \
-  --providers aws,azure,oci,pve
+  --providers aws,azure,oci,pve \
+  [--release <version-or-commit>]
 ```
 
 Behavior:
@@ -218,6 +240,9 @@ Behavior:
 - Fail if environment, topology, or provider set does not match the requested
   release qualification run.
 - Fail if required PVE/cloud check groups are missing.
+- Recompute the release artifact SHA-256 and fail on artifact drift.
+- When `--release` is supplied, fail unless it matches the certified version or
+  commit.
 - Never repair substrate.
 
 ### `release-qualification-smoke.sh`
@@ -230,7 +255,14 @@ Required interface:
 release-qualification-smoke.sh \
   --certification <manifest.json> \
   --release <version-or-commit> \
-  --out <qualification-result.json>
+  --out <qualification-result.json> \
+  --qualification-command <routerd-labs-qualification-driver> \
+  --cleanup-command <run-id-scoped-cleanup-driver> \
+  --inventory-command <post-cleanup-inventory-driver> \
+  --evidence-dir <directory> \
+  [--ttl 75m] \
+  [--heartbeat-stale 5m] \
+  [--cleanup-timeout 15m]
 ```
 
 Behavior:
@@ -242,6 +274,15 @@ Behavior:
 - Classify failures from routerd readiness, matrix, or provider action checks as
   routerd product failures only when preflight passed.
 - Classify any discovered substrate defect as infra failure and stop the run.
+- Start an independent watchdog before the qualification driver. A stale
+  heartbeat or expired TTL terminates the driver, invokes run-ID-scoped cleanup,
+  and then invokes the inventory driver.
+- Terminate a hung cleanup or inventory process group after
+  `--cleanup-timeout` and record the timeout as an infra failure.
+- Invoke cleanup and post-cleanup inventory on success and failure. Exit `0`
+  only when product checks pass and both cleanup commands return success.
+- Write a result conforming to
+  `docs/releases/manifests/release-qualification-result.schema.json`.
 
 ## Evidence and retention
 

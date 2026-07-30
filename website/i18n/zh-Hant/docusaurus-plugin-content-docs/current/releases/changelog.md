@@ -24,6 +24,9 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ### 修正
 
+- release qualification 不再依賴只存在於文件中的 script contract；現在使用可執行的
+  環境認證、schema/preflight、exact artifact、獨立 TTL/heartbeat watchdog，以及
+  依 run 限定的 cleanup/inventory gate。
 - 修正 RouterdCluster lease close 與 leader generation race 遺留舊工作的問題；
   peer 同步現在依 revision 與 digest 收斂。
 - FreeBSD DHCPv6-PD 現在使用 platform native 的 link-local 探測，並等待新 address

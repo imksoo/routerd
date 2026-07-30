@@ -16,7 +16,8 @@
     "providers",
     "certifiers",
     "checks",
-    "repairs"
+    "repairs",
+    "run"
   ],
   "properties": {
     "schemaVersion": {
@@ -192,6 +193,211 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 168
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "runId",
+        "environment",
+        "topology",
+        "stateMode",
+        "routerdArtifact",
+        "labsCommit",
+        "providers",
+        "tofu",
+        "pve",
+        "lifecycle"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "release-environment-contract/v1"
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "environment": {
+          "type": "string",
+          "minLength": 1
+        },
+        "topology": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stateMode": {
+          "type": "string",
+          "enum": [
+            "fresh-fabric-fresh-state",
+            "retained-fabric-retained-state",
+            "retained-fabric-certified-repair"
+          ]
+        },
+        "routerdArtifact": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version", "commit", "path", "sha256", "target"],
+          "properties": {
+            "version": {
+              "type": "string",
+              "minLength": 1
+            },
+            "commit": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "target": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "labsCommit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "providers": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "profile", "region", "authMode"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "enum": ["pve", "aws", "azure", "oci"]
+              },
+              "profile": {
+                "type": "string",
+                "minLength": 1
+              },
+              "region": {
+                "type": "string",
+                "minLength": 1
+              },
+              "authMode": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "tofu": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "workingDirectory",
+            "statePath",
+            "variablesPath",
+            "lockPath",
+            "outputPath"
+          ],
+          "properties": {
+            "workingDirectory": {
+              "type": "string",
+              "minLength": 1
+            },
+            "statePath": {
+              "type": "string",
+              "minLength": 1
+            },
+            "variablesPath": {
+              "type": "string",
+              "minLength": 1
+            },
+            "lockPath": {
+              "type": "string",
+              "minLength": 1
+            },
+            "outputPath": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "pve": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "node",
+            "datastore",
+            "bootSource",
+            "underlayBridge",
+            "captureBridge",
+            "managementAddressSource",
+            "vmids"
+          ],
+          "properties": {
+            "node": {
+              "type": "string",
+              "minLength": 1
+            },
+            "datastore": {
+              "type": "string",
+              "minLength": 1
+            },
+            "bootSource": {
+              "type": "string",
+              "minLength": 1
+            },
+            "underlayBridge": {
+              "type": "string",
+              "minLength": 1
+            },
+            "captureBridge": {
+              "type": "string",
+              "minLength": 1
+            },
+            "managementAddressSource": {
+              "type": "string",
+              "enum": ["qga-dhcp", "certified-static"]
+            },
+            "vmids": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        },
+        "lifecycle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ttl",
+            "heartbeatStale",
+            "cleanupScope"
+          ],
+          "properties": {
+            "ttl": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*[smhd]$"
+            },
+            "heartbeatStale": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*[smhd]$"
+            },
+            "cleanupScope": {
+              "const": "run-id"
+            }
+          }
         }
       }
     },

@@ -52,8 +52,9 @@ Schema:
 docs/releases/manifests/release-environment-certification.schema.json
 ```
 
-The manifest is produced by routerd-labs certification scripts and consumed by
-release preflight and qualification smoke scripts.
+The manifest is produced by the generic certification scripts in this
+repository together with private routerd-labs drivers, then consumed by release
+preflight and qualification smoke scripts.
 
 Minimum example:
 
@@ -85,6 +86,7 @@ Minimum example:
     {
       "name": "pve-qga-ready",
       "component": "pve",
+      "provider": "pve",
       "result": "pass",
       "checkedAt": "2026-06-28T00:50:00Z"
     },
@@ -94,12 +96,73 @@ Minimum example:
       "provider": "aws",
       "result": "pass",
       "checkedAt": "2026-06-28T00:55:00Z"
+    },
+    {
+      "name": "azure-bootstrap-ssh",
+      "component": "cloud",
+      "provider": "azure",
+      "result": "pass",
+      "checkedAt": "2026-06-28T00:56:00Z"
+    },
+    {
+      "name": "oci-bootstrap-ssh",
+      "component": "cloud",
+      "provider": "oci",
+      "result": "pass",
+      "checkedAt": "2026-06-28T00:57:00Z"
     }
   ],
   "repairs": [],
+  "run": {
+    "schemaVersion": "release-environment-contract/v1",
+    "runId": "envcert-20260628T010000Z-routerd-full",
+    "environment": "routerd-dev",
+    "topology": "sam-full",
+    "stateMode": "fresh-fabric-fresh-state",
+    "routerdArtifact": {
+      "version": "v20260628.0100",
+      "commit": "0123456789abcdef0123456789abcdef01234567",
+      "path": "/release-evidence/routerd-v20260628.0100-linux-amd64.tar.gz",
+      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "target": "linux-amd64"
+    },
+    "labsCommit": "abcdef0123456789abcdef0123456789abcdef01",
+    "providers": [
+      {"name": "pve", "profile": "release-lab", "region": "local", "authMode": "ssh-key"},
+      {"name": "aws", "profile": "release-lab", "region": "example-1", "authMode": "profile"},
+      {"name": "azure", "profile": "release-lab", "region": "example-2", "authMode": "service-principal"},
+      {"name": "oci", "profile": "release-lab", "region": "example-3", "authMode": "profile"}
+    ],
+    "tofu": {
+      "workingDirectory": "/release-lab/terraform/envs/default",
+      "statePath": "/release-lab/terraform/envs/default/terraform.tfstate",
+      "variablesPath": "/release-lab/terraform/envs/default/terraform.tfvars",
+      "lockPath": "/release-lab/terraform/envs/default/.terraform.lock.hcl",
+      "outputPath": "/release-evidence/tofu-output.json"
+    },
+    "pve": {
+      "node": "release-pve",
+      "datastore": "release-store",
+      "bootSource": "release-image",
+      "underlayBridge": "release-underlay",
+      "captureBridge": "release-capture",
+      "managementAddressSource": "qga-dhcp",
+      "vmids": [1001, 1002, 1003, 1004]
+    },
+    "lifecycle": {
+      "ttl": "75m",
+      "heartbeatStale": "5m",
+      "cleanupScope": "run-id"
+    }
+  },
   "notes": "No substrate repair required."
 }
 ```
+
+The paths, profiles, regions, node names, VMIDs, and checksum above are
+illustrative. A live manifest is private release evidence unless it has been
+sanitized; preflight also verifies that the artifact path exists and its
+checksum matches.
 
 Policy:
 
