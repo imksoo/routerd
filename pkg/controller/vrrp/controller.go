@@ -461,14 +461,6 @@ type trackDecision struct {
 	Penalized      bool
 }
 
-type trackedResourceState int
-
-const (
-	trackedResourceUnhealthy trackedResourceState = iota
-	trackedResourceHealthy
-	trackedResourceNeutral
-)
-
 func (c *Controller) effectivePriorities() (map[string]int, map[string]trackSummary) {
 	priorities := map[string]int{}
 	summaries := map[string]trackSummary{}
@@ -496,16 +488,12 @@ func (c *Controller) effectivePriorities() (map[string]int, map[string]trackSumm
 			}
 			status := c.Store.ObjectStatus(resourcequery.APIVersionForKind(kind), kind, name)
 			phase := fmt.Sprint(status["phase"])
-			state := trackedPhaseState(kind, phase, fmt.Sprint(status["reason"]))
-			if c.trackedResourceWhenFalse(kind, name) {
-				state = trackedResourceNeutral
-			}
-			healthy := state == trackedResourceHealthy
+			healthy := trackedPhaseHealthy(kind, phase)
 			penalty := track.UnhealthyPenalty
 			if penalty == 0 {
 				penalty = 50
 			}
-			decision := c.trackStateFor(resource.Kind, resource.Metadata.Name, track, state)
+			decision := c.confirmTrack(resource.Kind, resource.Metadata.Name, track, healthy)
 			if decision.Penalized {
 				effective -= penalty
 			}
@@ -530,47 +518,12 @@ func (c *Controller) effectivePriorities() (map[string]int, map[string]trackSumm
 	return priorities, summaries
 }
 
-func (c *Controller) trackedResourceWhenFalse(kind, name string) bool {
-	if c.Router == nil || c.Store == nil {
-		return false
-	}
-	for _, res := range c.Router.Spec.Resources {
-		if res.Kind != kind || res.Metadata.Name != name {
-			continue
-		}
-		when := resourcequery.ResourceWhen(res)
-		return resourcequery.ResourceWhenPresent(when) && !resourcequery.ResourceWhenMatches(when, vrrpWhenStore{Store: c.Store})
-	}
-	return false
-}
-
-type vrrpWhenStore struct {
-	Store
-}
-
-func (s vrrpWhenStore) Get(string) routerstate.Value {
-	return routerstate.Value{}
-}
-
-func (s vrrpWhenStore) Age(string) time.Duration {
-	return 0
-}
-
-func (s vrrpWhenStore) Now() time.Time {
-	return time.Now()
-}
-
-func (c *Controller) trackStateFor(kind, vip string, track api.ResourceTrackSpec, state trackedResourceState) trackDecision {
-	decision := c.currentTrackDecision(kind, vip, track.Resource)
-	if state == trackedResourceNeutral {
-		return decision
-	}
-	return c.confirmTrack(kind, vip, track, state == trackedResourceHealthy)
-}
-
 func (c *Controller) confirmTrack(kind, vip string, track api.ResourceTrackSpec, healthy bool) trackDecision {
 	key := kind + "\x00" + vip + "\x00" + track.Resource
-	decision := c.currentTrackDecision(kind, vip, track.Resource)
+	decision, ok := c.trackState[key]
+	if !ok {
+		decision = c.restoreTrackDecision(kind, vip, track.Resource)
+	}
 	if healthy {
 		decision.HealthyCount++
 		decision.UnhealthyCount = 0
@@ -585,16 +538,6 @@ func (c *Controller) confirmTrack(kind, vip string, track api.ResourceTrackSpec,
 		}
 	}
 	c.trackState[key] = decision
-	return decision
-}
-
-func (c *Controller) currentTrackDecision(kind, vip, trackedResource string) trackDecision {
-	key := kind + "\x00" + vip + "\x00" + trackedResource
-	decision, ok := c.trackState[key]
-	if !ok {
-		decision = c.restoreTrackDecision(kind, vip, trackedResource)
-		c.trackState[key] = decision
-	}
 	return decision
 }
 
@@ -661,34 +604,19 @@ func statusBool(value any) bool {
 }
 
 func trackedPhaseHealthy(kind, phase string) bool {
-	return trackedPhaseState(kind, phase, "") == trackedResourceHealthy
-}
-
-func trackedPhaseState(kind, phase, reason string) trackedResourceState {
-	if phase == "Pending" && reason == "WhenFalse" {
-		return trackedResourceNeutral
-	}
-	switch phase {
-	case "Standby", "NotApplicable", "Disabled":
-		return trackedResourceNeutral
-	}
 	switch kind {
 	case "BGPRouter", "BGPPeer":
-		if phase == "Established" {
-			return trackedResourceHealthy
-		}
+		return phase == "Established"
 	case "IngressService":
-		switch phase {
-		case "Active", "Healthy", "Applied":
-			return trackedResourceHealthy
-		}
+		return phase == "Active" || phase == "Healthy" || phase == "Applied"
 	default:
 		switch phase {
 		case "Applied", "Bound", "Healthy", "Installed", "Ready", "Running", "Up", "Established", "Active":
-			return trackedResourceHealthy
+			return true
+		default:
+			return false
 		}
 	}
-	return trackedResourceUnhealthy
 }
 
 func (c *Controller) virtualAddressBackend(spec virtualAddressSpec) string {

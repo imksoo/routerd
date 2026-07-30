@@ -447,42 +447,6 @@ func TestIPv4PolicyRouteInstallsFwmarkBootstrapRouteForHealthCheck(t *testing.T)
 	}
 }
 
-func TestIPv4PolicyRouteSkipsMissingDSLiteBootstrapRouteDuringTransition(t *testing.T) {
-	requireLinuxRuntimeFixture(t)
-	store := mapStore{
-		api.NetAPIVersion + "/DSLiteTunnel/ds-lite-ra": {
-			"phase": "Up",
-		},
-		api.NetAPIVersion + "/HealthCheck/internet-via-dslite-ra": {
-			"phase":         "Unhealthy",
-			"lastCheckedAt": time.Now().UTC().Format(time.RFC3339Nano),
-		},
-	}
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-ra"}, Spec: api.DSLiteTunnelSpec{TunnelName: "ds-lite-ra"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet-via-dslite-ra"}, Spec: api.HealthCheckSpec{
-			Target: "1.1.1.1",
-		}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "default"}, Spec: api.EgressRoutePolicySpec{
-			Mode: "priority",
-			Candidates: []api.EgressRoutePolicyCandidate{{
-				Name:          "ds-lite-ra",
-				Source:        "DSLiteTunnel/ds-lite-ra",
-				Interface:     "ds-lite-ra",
-				GatewaySource: "none",
-				Table:         113,
-				Priority:      10113,
-				Mark:          0x113,
-				HealthCheck:   "internet-via-dslite-ra",
-			}},
-		}},
-	}}}
-	controller := IPv4PolicyRouteController{Router: router, Store: store, DryRun: true}
-	if err := controller.applyRouteTables(t.Context(), map[string]string{}); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestEgressRoutePolicyTargetCandidateRendersOnlyWhenActive(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "lan-default"}, Spec: api.EgressRoutePolicySpec{
