@@ -94,6 +94,51 @@ func TestIPv6HostPolicyRepairsMissingRuleWithMatchingState(t *testing.T) {
 	}
 }
 
+func TestIPv6HostPolicyUsesFailoverVMACWhenPDIsBoundThere(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "ipv6-host-policy.json")
+	router := hostPolicyRouter(true)
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-vmac"}, Spec: api.InterfaceSpec{IfName: "wan-vmac"}},
+		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "lan-gw"}, Spec: api.VirtualAddressSpec{
+			Family: "ipv4", Interface: "lan", Address: "192.0.2.1/32", Mode: "vrrp",
+			VRRP: api.VirtualAddressVRRPSpec{
+				VirtualRouterID: 18,
+				FailoverVMAC:    &api.VirtualAddressVRRPFailoverVMACSpec{ParentInterface: "wan", Interface: "wan-vmac", MACAddress: "02:00:5e:00:01:13"},
+			},
+		}},
+		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan-vmac"}},
+	)
+	var calls []string
+	controller := IPv4PolicyRouteController{Router: router, Store: mapStore{}, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		call := name + " " + strings.Join(args, " ")
+		calls = append(calls, call)
+		switch call {
+		case "ip -6 -o addr show dev wan-vmac scope global":
+			return []byte("3: wan-vmac inet6 2001:db8:1200::113/64 scope global\n"), nil
+		case "ip -6 rule show":
+			return []byte(""), nil
+		default:
+			return nil, nil
+		}
+	}}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(calls, "\n")
+	if strings.Contains(joined, "addr show dev wan0") || strings.Contains(joined, "dev wan0 table 120") {
+		t.Fatalf("VMAC PD host policy must not use parent device:\n%s", joined)
+	}
+	for _, want := range []string{
+		"ip -6 -o addr show dev wan-vmac scope global",
+		"ip -6 route replace default via fe80::1 dev wan-vmac table 120 metric 50 src 2001:db8:1200::113",
+		"ip -6 rule add priority 10120 iif lo lookup 120",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("missing %q in:\n%s", want, joined)
+		}
+	}
+}
+
 func TestIPv6HostPolicyInitialSourceUnavailableDoesNotApply(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "ipv6-host-policy.json")
 	store := mapStore{}
