@@ -9,9 +9,10 @@ usage: scripts/release.sh [options]
 Create a date-and-time-based routerd release.
 
 Options:
-  --date YYYYMMDD       Override the release date. Defaults to Asia/Tokyo today.
+  --date YYYYMMDD       Override the release date. Defaults to UTC today.
   --timezone TZ         Override the timezone used for date/time calculation.
   --skip-checks         Skip local test/schema/example/website checks.
+  --prepare-only        Create the release commit without a tag or push.
   --no-push             Create the commit and tag locally but do not push.
   --dry-run             Print the computed release tag and exit.
   -h, --help            Show this help.
@@ -25,6 +26,7 @@ EOF
 timezone=${ROUTERD_RELEASE_TZ:-UTC}
 release_date=${ROUTERD_RELEASE_DATE:-}
 skip_checks=0
+prepare_only=0
 no_push=0
 dry_run=0
 
@@ -42,6 +44,9 @@ while [ "$#" -gt 0 ]; do
 			;;
 		--skip-checks)
 			skip_checks=1
+			;;
+		--prepare-only)
+			prepare_only=1
 			;;
 		--no-push)
 			no_push=1
@@ -61,6 +66,11 @@ while [ "$#" -gt 0 ]; do
 	esac
 	shift
 done
+
+if [ "$prepare_only" -eq 1 ] && [ "$no_push" -eq 1 ]; then
+	echo "--prepare-only and --no-push are mutually exclusive" >&2
+	exit 2
+fi
 
 repo_root=$(git rev-parse --show-toplevel)
 cd "$repo_root"
@@ -179,6 +189,12 @@ if git diff --cached --quiet; then
 fi
 
 git commit -m "Release ${release_tag}"
+
+if [ "$prepare_only" -eq 1 ]; then
+	printf 'prepared release %s\n' "$release_tag"
+	exit 0
+fi
+
 git tag "$release_tag"
 
 if [ "$no_push" -ne 1 ]; then
