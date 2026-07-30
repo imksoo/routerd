@@ -3883,6 +3883,14 @@ type LANAddressController struct {
 	VMACPresent         func(string) bool
 	Now                 func() time.Time
 	PDLeaseSnapshotPath func(string) string
+	OperatingSystem     platform.OS
+}
+
+func (c LANAddressController) currentOS() platform.OS {
+	if c.OperatingSystem != "" {
+		return c.OperatingSystem
+	}
+	return platform.CurrentOS()
 }
 
 type LinkController struct {
@@ -5114,13 +5122,13 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 			}
 			if !addressPresent {
 				for _, stale := range ipv6StaticAddressDeleteCandidates(addr) {
-					deleteName, deleteArgs := ipv6StaticAddressDeleteCommand(platform.CurrentOS(), ifname, stale)
+					deleteName, deleteArgs := ipv6StaticAddressDeleteCommand(c.currentOS(), ifname, stale)
 					if err := command(ctx, deleteName, deleteArgs...); err != nil && c.Logger != nil {
 						c.Logger.Debug("delete stale IPv6 delegated address before apply skipped", "resource", resource.Metadata.Name, "address", stale, "interface", ifname, "error", err)
 					}
 				}
 			}
-			name, args := ipv6StaticAddressApplyCommand(platform.CurrentOS(), ifname, addr)
+			name, args := ipv6StaticAddressApplyCommand(c.currentOS(), ifname, addr)
 			if err := command(ctx, name, args...); err != nil {
 				return err
 			}

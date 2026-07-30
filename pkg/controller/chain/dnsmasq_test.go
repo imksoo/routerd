@@ -1616,7 +1616,7 @@ func TestLANAddressControllerAppliesActiveEffectiveResourceWithoutFreshStageEvid
 		api.NetAPIVersion + "/Interface/lan-vmac":            {"phase": "Up", "ifname": "lo"},
 	}
 	var calls []string
-	c := LANAddressController{Router: router, Store: store, AddressPresent: func(context.Context, string, string) bool { return false }, Command: func(_ context.Context, n string, a ...string) error {
+	c := LANAddressController{Router: router, Store: store, OperatingSystem: platform.OSLinux, AddressPresent: func(context.Context, string, string) bool { return false }, Command: func(_ context.Context, n string, a ...string) error {
 		calls = append(calls, n+" "+strings.Join(a, " "))
 		return nil
 	}}
@@ -1702,7 +1702,7 @@ func TestLANAddressControllerStagingRequiresVMACAndAddressReadback(t *testing.T)
 			present := map[string]bool{"lan-vmac": tc.present, "wan-vmac": tc.present}
 			addressPresent := map[string]bool{}
 			ensureCalls := map[string]int{}
-			controller := LANAddressController{Router: effective, DeclaredRouter: declared, Store: eventedStore{Store: store, Router: declared}, Now: func() time.Time { return now }, PDLeaseSnapshotPath: func(string) string { return snapshotPath }, VMACPresent: func(logical string) bool { return present[logical] }, EnsureVMAC: func(_ context.Context, logical string) error {
+			controller := LANAddressController{Router: effective, DeclaredRouter: declared, Store: eventedStore{Store: store, Router: declared}, OperatingSystem: platform.OSLinux, Now: func() time.Time { return now }, PDLeaseSnapshotPath: func(string) string { return snapshotPath }, VMACPresent: func(logical string) bool { return present[logical] }, EnsureVMAC: func(_ context.Context, logical string) error {
 				ensureCalls[logical]++
 				if tc.ensureErr != nil {
 					return tc.ensureErr
