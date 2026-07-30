@@ -18,6 +18,23 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   non-optional `Sysctl` declaration for
   `net.netfilter.nf_conntrack_tcp_be_liberal=1`. `routerctl doctor nat`
   verifies the live prerequisite without mutating the host.
+- Discrete event consumers now drain the SQLite event store by durable cursor,
+  recovering missed in-memory wake-ups without replaying processed events
+  after restart.
+- Live config apply now switches an explicit runtime generation, cancels the
+  previous generation, and serializes controller work through one bounded
+  worker.
+
+### Fixed
+
+- RouterdCluster lease close and leader-generation races no longer leave stale
+  work running, and peer synchronization now converges by revision and digest.
+- FreeBSD DHCPv6-PD uses platform-native link-local discovery and waits for DAD
+  before using a newly assigned address.
+- IPv6 `hostTraffic` policy routes follow the failover VMAC that owns the PD
+  address and remove stale rules when the desired policy disappears.
+- CloudEdge qualification fails fast when PVE QGA is unavailable and prefers
+  management addresses discovered from the current PVE inventory.
 
 ## v20260727.2110
 
