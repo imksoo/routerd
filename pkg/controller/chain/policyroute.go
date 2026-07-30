@@ -150,6 +150,7 @@ func (c IPv4PolicyRouteController) logHostPolicyError(message string, err error)
 
 func (c IPv4PolicyRouteController) desiredIPv6HostPolicies(ctx context.Context) ([]ipv6HostPolicy, map[string]bool, error) {
 	aliases := c.aliases()
+	failoverVMACByParent := c.pdFailoverVMACByParentInterface()
 	var policies []ipv6HostPolicy
 	unavailable := map[string]bool{}
 	for _, res := range c.Router.Spec.Resources {
@@ -167,7 +168,11 @@ func (c IPv4PolicyRouteController) desiredIPv6HostPolicies(ctx context.Context) 
 			if egressRoutePolicyCandidateDisabled(candidate) {
 				continue
 			}
-			ifname := firstNonEmpty(aliases[candidate.EffectiveInterface()], candidate.EffectiveInterface())
+			logical := candidate.EffectiveInterface()
+			if vmac := failoverVMACByParent[logical]; vmac != "" {
+				logical = vmac
+			}
+			ifname := firstNonEmpty(aliases[logical], logical)
 			source, err := c.ipv6GlobalAddress(ctx, ifname)
 			if err != nil {
 				unavailable[res.Metadata.Name] = true
@@ -181,6 +186,42 @@ func (c IPv4PolicyRouteController) desiredIPv6HostPolicies(ctx context.Context) 
 		}
 	}
 	return policies, unavailable, nil
+}
+
+func (c IPv4PolicyRouteController) pdFailoverVMACByParentInterface() map[string]string {
+	pdInterfaces := map[string]bool{}
+	for _, res := range c.Router.Spec.Resources {
+		if res.Kind != "DHCPv6PrefixDelegation" {
+			continue
+		}
+		spec, err := res.DHCPv6PrefixDelegationSpec()
+		if err == nil && spec.Interface != "" {
+			pdInterfaces[spec.Interface] = true
+		}
+	}
+	if len(pdInterfaces) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for _, res := range c.Router.Spec.Resources {
+		if res.Kind != "VirtualAddress" {
+			continue
+		}
+		spec, err := res.VirtualAddressSpec()
+		if err != nil || spec.Mode != "vrrp" {
+			continue
+		}
+		entries := append([]api.VirtualAddressVRRPFailoverVMACSpec(nil), spec.VRRP.AdditionalFailoverVMACs...)
+		if spec.VRRP.FailoverVMAC != nil {
+			entries = append(entries, *spec.VRRP.FailoverVMAC)
+		}
+		for _, entry := range entries {
+			if entry.ParentInterface != "" && pdInterfaces[entry.Interface] {
+				out[entry.ParentInterface] = entry.Interface
+			}
+		}
+	}
+	return out
 }
 
 func (c IPv4PolicyRouteController) applyIPv6HostPolicyState(ctx context.Context, previous, desired ipv6HostPolicyState, retained map[string]bool) error {
