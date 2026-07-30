@@ -115,6 +115,26 @@ func TestInstallConfigureUsesCurrentRouterdServeCLI(t *testing.T) {
 	}
 }
 
+func TestInstallConfigureKeepsOneConfigBackupGeneration(t *testing.T) {
+	script, err := os.ReadFile(filepath.Join(repoRoot(t), "packaging", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(script)
+	if strings.Contains(text, `backup.${timestamp}`) {
+		t.Fatalf("install.sh still creates timestamped config backups")
+	}
+	for _, want := range []string{
+		"backup_config_one_generation()",
+		`backup="${target}.backup"`,
+		`find "${dir}" -maxdepth 1 -type f -name "${base}.backup.*" -exec rm -f {} +`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("install.sh missing one-generation backup contract %q", want)
+		}
+	}
+}
+
 func TestInstallWithNDPIRejectsStaticAgent(t *testing.T) {
 	dir := t.TempDir()
 	pkg := filepath.Join(dir, "package")
