@@ -27,6 +27,10 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ### Fixed
 
+- Release qualification now uses executable environment-certification,
+  schema/preflight, exact-artifact, independent TTL/heartbeat watchdog, and
+  run-scoped cleanup/inventory gates instead of documentation-only script
+  contracts.
 - RouterdCluster lease close and leader-generation races no longer leave stale
   work running, and peer synchronization now converges by revision and digest.
 - FreeBSD DHCPv6-PD uses platform-native link-local discovery and waits for DAD

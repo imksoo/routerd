@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://routerd.net/schemas/release-qualification-result-v1.schema.json",
+  "title": "routerd release qualification result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "runId",
+    "certificationManifestId",
+    "release",
+    "status",
+    "classification",
+    "startedAt",
+    "finishedAt",
+    "driverExit",
+    "cleanupExit",
+    "inventoryExit",
+    "watchdogPid",
+    "watchdogAbort",
+    "checks"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "release-qualification-result/v1"
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "certificationManifestId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "release": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pass", "fail"]
+    },
+    "classification": {
+      "type": "string",
+      "enum": ["none", "preflight_failure", "product_failure", "infra_failure"]
+    },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "finishedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "driverExit": {
+      "type": "integer"
+    },
+    "cleanupExit": {
+      "type": "integer"
+    },
+    "inventoryExit": {
+      "type": "integer"
+    },
+    "watchdogPid": {
+      "type": ["integer", "null"],
+      "minimum": 1
+    },
+    "watchdogAbort": {
+      "type": ["object", "null"]
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    }
+  }
+}

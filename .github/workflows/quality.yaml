@@ -233,6 +233,9 @@ jobs:
       - name: Run CloudEdge PVE QGA offline smoke
         run: make cloudedge-pve-qga-offline-test
 
+      - name: Run release certification lifecycle offline smoke
+        run: make release-certification-offline-test
+
   shellcheck:
     name: Shell scripts
     runs-on: ubuntu-latest
@@ -249,7 +252,7 @@ jobs:
 
       - name: Lint shell scripts
         run: |
-          shellcheck packaging/install.sh packaging/uninstall.sh packaging/bootstrap.sh scripts/pre-commit.sh scripts/release.sh scripts/build-live-iso.sh scripts/install-deps-smoke.sh scripts/install-sh-cwd-smoke.sh scripts/bootstrap-cleanup-smoke.sh scripts/check-active-stable.sh tests/e2e/cloudedge/scripts/sam-pve-qga-addresses.sh tests/e2e/cloudedge/scripts/sam-pve-qga-addresses-offline-test.sh
+          shellcheck packaging/install.sh packaging/uninstall.sh packaging/bootstrap.sh scripts/pre-commit.sh scripts/release.sh scripts/build-live-iso.sh scripts/install-deps-smoke.sh scripts/install-sh-cwd-smoke.sh scripts/bootstrap-cleanup-smoke.sh scripts/check-active-stable.sh scripts/certify-pve-substrate.sh scripts/certify-cloud-substrate.sh scripts/release-environment-preflight.sh scripts/release-qualification-smoke.sh scripts/release-certification-offline-test.sh tests/e2e/cloudedge/scripts/sam-pve-qga-addresses.sh tests/e2e/cloudedge/scripts/sam-pve-qga-addresses-offline-test.sh
 
   warm-iso-rootfs-cache:
     name: Warm ISO rootfs cache

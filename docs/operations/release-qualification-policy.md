@@ -103,6 +103,12 @@ record whether each failure is `product_failure`, `infra_failure`, or
 7. If qualification finds substrate damage, stop and recertify; do not repair in
    place during the product run.
 
+The generic scripts, schemas, preflight checks, and lifecycle watchdog are
+versioned in this repository. Private routerd-labs drivers perform the actual
+provider/PVE checks and qualification scenarios. Qualification must not start
+unless its independent TTL/heartbeat watchdog and run-ID-scoped cleanup and
+inventory commands are executable.
+
 This separation keeps release evidence interpretable: certification proves the
 lab was trustworthy, and qualification proves routerd behavior on that trusted
 lab.
