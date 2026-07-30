@@ -61,6 +61,25 @@ func TestAddressUsableInIPOutputIgnoresOtherTentativeAddresses(t *testing.T) {
 	}
 }
 
+func TestAddressUsableInIfconfigOutput(t *testing.T) {
+	output := "em0: flags=8843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST> metric 0 mtu 1500\n" +
+		"\tinet6 fe80::1%em0 prefixlen 64 scopeid 0x1 <link>\n" +
+		"\tinet6 fe80::2%em0 prefixlen 64 scopeid 0x1 <link> tentative\n" +
+		"\tinet6 fe80::3%em0 prefixlen 64 scopeid 0x1 <link>\n"
+	if !addressUsableInIfconfigOutput(output, "fe80::3") {
+		t.Fatal("second ready link-local address was not accepted")
+	}
+	if addressUsableInIfconfigOutput(output, "fe80::2") {
+		t.Fatal("tentative target address was accepted")
+	}
+	if addressUsableInIfconfigOutput(output, "fe80::4") {
+		t.Fatal("absent target address was accepted")
+	}
+	if !addressUsableInIfconfigOutput(output, "fe80::1") {
+		t.Fatal("ready address was affected by another tentative address")
+	}
+}
+
 func TestDHCPv6ListenAddressesAreInterfaceScoped(t *testing.T) {
 	first, err := dhcpv6ListenAddr("fe80::10", "wan0", 546)
 	if err != nil {

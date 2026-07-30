@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -280,12 +279,12 @@ func newDHCPv6Daemon(opts options) (*dhcpv6Daemon, error) {
 	return d, nil
 }
 
-func linkLocalUsable(ifname, address string) bool {
-	output, err := exec.Command("ip", "-6", "-o", "addr", "show", "dev", ifname).CombinedOutput()
+func interfaceLinkLocalIPv6(ifi *net.Interface) (string, error) {
+	addrs, err := ifi.Addrs()
 	if err != nil {
-		return false
+		return "", err
 	}
-	return addressUsableInIPOutput(string(output), address)
+	return selectLinkLocalIPv6(addrs)
 }
 
 func addressUsableInIPOutput(output, address string) bool {
@@ -298,47 +297,29 @@ func addressUsableInIPOutput(output, address string) bool {
 	return false
 }
 
-func interfaceLinkLocalIPv6(ifi *net.Interface) (string, error) {
-	addrs, err := ifi.Addrs()
-	if err != nil {
-		return "", err
+// addressUsableInIfconfigOutput reports whether exactly address is ready for
+// use in FreeBSD ifconfig output. Other link-local addresses must not affect
+// the result: a VMAC can have more than one, and DAD is per address.
+func addressUsableInIfconfigOutput(output, address string) bool {
+	want := net.ParseIP(address)
+	if want == nil {
+		return false
 	}
-	return selectLinkLocalIPv6(addrs)
-}
-
-// ensureInterfaceLinkLocalIPv6 gives a keepalived-controlled VMAC a stable
-// EUI-64 link-local address before binding the DHCPv6 socket. VMACs often use
-// addrgenmode none. nodad makes the deterministic address immediately usable
-// during the VRRP MASTER transition.
-func ensureInterfaceLinkLocalIPv6(ifi *net.Interface) (string, error) {
-	address := linkLocalFromMAC(ifi.HardwareAddr)
-	if address == "" {
-		return "", fmt.Errorf("cannot derive link-local address from MAC %q", ifi.HardwareAddr)
-	}
-	command := exec.Command("ip", "-6", "address", "replace", address+"/64", "dev", ifi.Name, "nodad")
-	if output, err := command.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("add VMAC link-local address: %w: %s", err, strings.TrimSpace(string(output)))
-	}
-	if err := waitForLinkLocalReady(ifi.Name, address, 3*time.Second); err != nil {
-		return "", err
-	}
-	return address, nil
-}
-
-func waitForLinkLocalReady(ifname, address string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for {
-		output, err := exec.Command("ip", "-6", "-o", "addr", "show", "dev", ifname).CombinedOutput()
-		if err == nil {
-			if addressUsableInIPOutput(string(output), address) {
-				return nil
-			}
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "inet6" {
+			continue
 		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("VMAC link-local address %s did not become usable on %s", address, ifname)
+		got := net.ParseIP(strings.SplitN(fields[1], "%", 2)[0])
+		if got == nil || !got.Equal(want) {
+			continue
 		}
-		time.Sleep(50 * time.Millisecond)
+		state := strings.ToLower(line)
+		return !strings.Contains(state, "tentative") &&
+			!strings.Contains(state, "duplicate") &&
+			!strings.Contains(state, "dadfailed")
 	}
+	return false
 }
 
 func linkLocalFromMAC(mac net.HardwareAddr) string {
