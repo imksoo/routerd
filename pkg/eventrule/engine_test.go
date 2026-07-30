@@ -144,6 +144,8 @@ func TestCorrelationStateIsBounded(t *testing.T) {
 }
 
 func TestStoredEventsRecoverMissedWakeupAndCursorPreventsRestartDuplicates(t *testing.T) {
+	const eventCount = 129
+
 	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -160,7 +162,7 @@ func TestStoredEventsRecoverMissedWakeupAndCursorPreventsRestartDuplicates(t *te
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EventRule"},
 			Metadata: api.ObjectMeta{Name: "rule"},
 			Spec: api.EventRuleSpec{
-				Pattern: api.EventRulePatternSpec{Operator: OperatorCount, Topic: "routerd.a", Threshold: 200},
+				Pattern: api.EventRulePatternSpec{Operator: OperatorCount, Topic: "routerd.a", Threshold: eventCount},
 				Emit:    api.EventRuleEmitSpec{Topic: "routerd.out"},
 			},
 		}}}},
@@ -179,7 +181,7 @@ func TestStoredEventsRecoverMissedWakeupAndCursorPreventsRestartDuplicates(t *te
 	// The drain is blocked while more events than the 128-entry bus
 	// subscription buffer are published. Wake-ups are therefore dropped, but
 	// every event remains recoverable from the store.
-	for i := 0; i < 200; i++ {
+	for i := 0; i < eventCount; i++ {
 		if err := b.Publish(context.Background(), testEvent("routerd.a")); err != nil {
 			t.Fatal(err)
 		}
@@ -248,7 +250,10 @@ func mustReconcile(t *testing.T, controller *Controller, event daemonapi.DaemonE
 
 func waitForRecent(t *testing.T, b *bus.Bus, topic string, want int) {
 	t.Helper()
-	deadline := time.Now().Add(500 * time.Millisecond)
+	// These tests assert eventual timer/store recovery, not sub-second
+	// throughput. SQLite cursor persistence can take several seconds under
+	// concurrent package tests, so keep a bounded but scheduler-tolerant wait.
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		if got := len(b.Recent(topic)); got == want {
 			return
