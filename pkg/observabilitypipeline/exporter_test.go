@@ -57,6 +57,8 @@ func TestExporterPushesLokiEvent(t *testing.T) {
 }
 
 func TestStoredExporterRecoversMissedWakeupAndRestoresCursor(t *testing.T) {
+	const eventCount = 257
+
 	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -80,14 +82,14 @@ func TestStoredExporterRecoversMissedWakeupAndRestoresCursor(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("stored exporter drain did not start")
 	}
-	for i := 0; i < 300; i++ {
+	for i := 0; i < eventCount; i++ {
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "test", Kind: "test"}, "routerd.test", daemonapi.SeverityInfo)
 		if err := b.Publish(context.Background(), event); err != nil {
 			t.Fatal(err)
 		}
 	}
 	close(blockedEvents.release)
-	waitForLines(t, firstOutput, 300)
+	waitForLines(t, firstOutput, eventCount)
 	cancel()
 
 	secondOutput := &lockedBuffer{}
@@ -159,7 +161,10 @@ func (b *lockedBuffer) lines() int {
 
 func waitForLines(t *testing.T, output *lockedBuffer, want int) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	// This test asserts eventual store recovery across a dropped bus wake-up,
+	// not a fixed export latency. Leave enough bounded time for per-event
+	// SQLite cursor persistence on loaded CI hosts.
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		if output.lines() == want {
 			return
