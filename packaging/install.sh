@@ -22,7 +22,6 @@ configure_yes=0
 configure_apply=1
 completed=0
 backup_dir=
-timestamp=$(date +%Y%m%d%H%M%S)
 
 usage()
 {
@@ -119,6 +118,19 @@ backup_target()
     else
         printf '%s\n' "${target}" >> "${backup_dir}/remove.list"
     fi
+}
+
+backup_config_one_generation()
+{
+    target=$1
+    [ -f "${target}" ] || return 0
+    backup="${target}.backup"
+    rm -f "${backup}"
+    cp -p "${target}" "${backup}"
+    dir=$(dirname "${target}")
+    base=$(basename "${target}")
+    find "${dir}" -maxdepth 1 -type f -name "${base}.backup.*" -exec rm -f {} +
+    echo "backup: ${backup}"
 }
 
 restore_backup_target()
@@ -1734,8 +1746,7 @@ run_configure()
         fi
     fi
     if [ -f "${final_config}" ]; then
-        cp -p "${final_config}" "${final_config}.backup.${timestamp}"
-        echo "backup: ${final_config}.backup.${timestamp}"
+        backup_config_one_generation "${final_config}"
     fi
     install -m 0600 "${candidate}" "${final_config}"
     echo "installed config: ${final_config}"
