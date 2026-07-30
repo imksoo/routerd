@@ -315,7 +315,7 @@ func missingIPv6HostPolicy(out []byte, err error) bool {
 		return false
 	}
 	message := strings.ToLower(string(out) + " " + err.Error())
-	return strings.Contains(message, "no such process") || strings.Contains(message, "not in table") || strings.Contains(message, "cannot find")
+	return strings.Contains(message, "no such process") || strings.Contains(message, "no such file or directory") || strings.Contains(message, "not in table") || strings.Contains(message, "cannot find")
 }
 
 func loadIPv6HostPolicyState(path string) (ipv6HostPolicyState, error) {
