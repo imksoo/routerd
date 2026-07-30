@@ -240,6 +240,43 @@ func TestIPv6HostPolicyChangesAndRemovesOnlyStatefulRules(t *testing.T) {
 	}
 }
 
+func TestIPv6HostPolicyChangeIgnoresAlreadyMissingPreviousRule(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "ipv6-host-policy.json")
+	previous := ipv6HostPolicyState{Policies: []ipv6HostPolicy{{Name: "host-ipv6-ra", Priority: 10120, Table: 120, Gateway: "fe80::1", Interface: "wan0", Source: "2001:db8::2", Metric: 50}}}
+	if err := writeIPv6HostPolicyState(statePath, previous); err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: mapStore{}, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		call := name + " " + strings.Join(args, " ")
+		calls = append(calls, call)
+		switch {
+		case call == "ip -6 -o addr show dev wan0 scope global":
+			return []byte("2: wan0 inet6 2001:db8::9/64 scope global\n"), nil
+		case call == "ip -6 rule del priority 10120 iif lo lookup 120":
+			return []byte("RTNETLINK answers: No such file or directory\n"), errors.New("exit status 2")
+		case call == "ip -6 rule show":
+			return []byte("0: from all lookup local\n"), nil
+		default:
+			return nil, nil
+		}
+	}}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(calls, "\n")
+	for _, want := range []string{
+		"ip -6 rule del priority 10120 iif lo lookup 120",
+		"ip -6 route del default via fe80::1 dev wan0 table 120 metric 50 src 2001:db8::2",
+		"ip -6 route replace default via fe80::1 dev wan0 table 120 metric 50 src 2001:db8::9",
+		"ip -6 rule add priority 10120 iif lo lookup 120",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("missing %q in:\n%s", want, joined)
+		}
+	}
+}
+
 func hostPolicyRouter(includeHost bool) *api.Router {
 	resources := []api.Resource{{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "wan0"}}}
 	if includeHost {
