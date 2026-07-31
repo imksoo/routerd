@@ -9,7 +9,9 @@ User=routerd-release-qa
 WorkingDirectory=/var/lib/routerd-release-qa/%i/repo
 ExecStart=/var/lib/routerd-release-qa/%i/repo/tools/release-qa-labs/drivers/start-egress-proxy.sh %i
 Restart=no
-RuntimeMaxSec=4500
+# Cover the 75-minute paid/recovery envelope plus preflight, prepare, and the
+# authoritative post-terminal inventory while remaining strictly bounded.
+RuntimeMaxSec=5400
 TimeoutStartSec=10s
 TimeoutStopSec=10s
 KillMode=control-group
