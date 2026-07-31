@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260731.1612
+
 ### 変更
 
 - Linux の `NAT44SessionSync` conntrackd mode は、runtime 有効・non-optional な
