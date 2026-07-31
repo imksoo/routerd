@@ -461,6 +461,14 @@ type trackDecision struct {
 	Penalized      bool
 }
 
+type trackedResourceState int
+
+const (
+	trackedResourceUnhealthy trackedResourceState = iota
+	trackedResourceHealthy
+	trackedResourceNeutral
+)
+
 func (c *Controller) effectivePriorities() (map[string]int, map[string]trackSummary) {
 	priorities := map[string]int{}
 	summaries := map[string]trackSummary{}
@@ -488,12 +496,16 @@ func (c *Controller) effectivePriorities() (map[string]int, map[string]trackSumm
 			}
 			status := c.Store.ObjectStatus(resourcequery.APIVersionForKind(kind), kind, name)
 			phase := fmt.Sprint(status["phase"])
-			healthy := trackedPhaseHealthy(kind, phase)
+			state := trackedPhaseState(kind, phase, fmt.Sprint(status["reason"]))
+			if c.trackedResourceWhenFalse(kind, name) {
+				state = trackedResourceNeutral
+			}
+			healthy := state == trackedResourceHealthy
 			penalty := track.UnhealthyPenalty
 			if penalty == 0 {
 				penalty = 50
 			}
-			decision := c.confirmTrack(resource.Kind, resource.Metadata.Name, track, healthy)
+			decision := c.trackStateFor(resource.Kind, resource.Metadata.Name, track, state)
 			if decision.Penalized {
 				effective -= penalty
 			}
@@ -518,12 +530,63 @@ func (c *Controller) effectivePriorities() (map[string]int, map[string]trackSumm
 	return priorities, summaries
 }
 
+func (c *Controller) trackedResourceWhenFalse(kind, name string) bool {
+	if c.Router == nil || c.Store == nil {
+		return false
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != kind || resource.Metadata.Name != name {
+			continue
+		}
+		when := resourcequery.ResourceWhen(resource)
+		return resourcequery.ResourceWhenPresent(when) && !resourcequery.ResourceWhenMatches(when, newVRRPWhenStore(c.Store))
+	}
+	return false
+}
+
+type vrrpWhenStore struct {
+	Store
+	state resourcequery.StateStore
+}
+
+func newVRRPWhenStore(store Store) vrrpWhenStore {
+	state, _ := store.(resourcequery.StateStore)
+	return vrrpWhenStore{Store: store, state: state}
+}
+
+func (s vrrpWhenStore) Get(name string) routerstate.Value {
+	if s.state != nil {
+		return s.state.Get(name)
+	}
+	now := s.Now()
+	return routerstate.Value{Status: routerstate.StatusUnknown, Since: now, UpdatedAt: now}
+}
+
+func (s vrrpWhenStore) Age(name string) time.Duration {
+	if s.state != nil {
+		return s.state.Age(name)
+	}
+	return 0
+}
+
+func (s vrrpWhenStore) Now() time.Time {
+	if s.state != nil {
+		return s.state.Now()
+	}
+	return time.Now().UTC()
+}
+
+func (c *Controller) trackStateFor(kind, vip string, track api.ResourceTrackSpec, state trackedResourceState) trackDecision {
+	decision := c.currentTrackDecision(kind, vip, track.Resource)
+	if state == trackedResourceNeutral {
+		return decision
+	}
+	return c.confirmTrack(kind, vip, track, state == trackedResourceHealthy)
+}
+
 func (c *Controller) confirmTrack(kind, vip string, track api.ResourceTrackSpec, healthy bool) trackDecision {
 	key := kind + "\x00" + vip + "\x00" + track.Resource
-	decision, ok := c.trackState[key]
-	if !ok {
-		decision = c.restoreTrackDecision(kind, vip, track.Resource)
-	}
+	decision := c.currentTrackDecision(kind, vip, track.Resource)
 	if healthy {
 		decision.HealthyCount++
 		decision.UnhealthyCount = 0
@@ -538,6 +601,16 @@ func (c *Controller) confirmTrack(kind, vip string, track api.ResourceTrackSpec,
 		}
 	}
 	c.trackState[key] = decision
+	return decision
+}
+
+func (c *Controller) currentTrackDecision(kind, vip, trackedResource string) trackDecision {
+	key := kind + "\x00" + vip + "\x00" + trackedResource
+	decision, ok := c.trackState[key]
+	if !ok {
+		decision = c.restoreTrackDecision(kind, vip, trackedResource)
+		c.trackState[key] = decision
+	}
 	return decision
 }
 
@@ -604,19 +677,34 @@ func statusBool(value any) bool {
 }
 
 func trackedPhaseHealthy(kind, phase string) bool {
+	return trackedPhaseState(kind, phase, "") == trackedResourceHealthy
+}
+
+func trackedPhaseState(kind, phase, reason string) trackedResourceState {
+	if phase == "Pending" && reason == "WhenFalse" {
+		return trackedResourceNeutral
+	}
+	switch phase {
+	case "Standby", "NotApplicable", "Disabled":
+		return trackedResourceNeutral
+	}
 	switch kind {
 	case "BGPRouter", "BGPPeer":
-		return phase == "Established"
+		if phase == "Established" {
+			return trackedResourceHealthy
+		}
 	case "IngressService":
-		return phase == "Active" || phase == "Healthy" || phase == "Applied"
+		switch phase {
+		case "Active", "Healthy", "Applied":
+			return trackedResourceHealthy
+		}
 	default:
 		switch phase {
 		case "Applied", "Bound", "Healthy", "Installed", "Ready", "Running", "Up", "Established", "Active":
-			return true
-		default:
-			return false
+			return trackedResourceHealthy
 		}
 	}
+	return trackedResourceUnhealthy
 }
 
 func (c *Controller) virtualAddressBackend(spec virtualAddressSpec) string {

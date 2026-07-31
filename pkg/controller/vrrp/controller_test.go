@@ -14,6 +14,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -30,6 +31,22 @@ func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 	}
 	return map[string]any{}
 }
+
+type statefulMapStore struct {
+	mapStore
+	values map[string]routerstate.Value
+	now    time.Time
+}
+
+func (s statefulMapStore) Get(name string) routerstate.Value {
+	if value, ok := s.values[name]; ok {
+		return value
+	}
+	return routerstate.Value{Status: routerstate.StatusUnknown, Since: s.Now(), UpdatedAt: s.Now()}
+}
+
+func (s statefulMapStore) Age(name string) time.Duration { return s.Now().Sub(s.Get(name).Since) }
+func (s statefulMapStore) Now() time.Time                { return s.now }
 
 func TestSyncFailoverVMACFollowsObservedVRRPRole(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
@@ -194,6 +211,116 @@ func TestReconcileRestoresTrackHysteresisFromStore(t *testing.T) {
 	track, ok := status["track"].([]map[string]any)
 	if !ok || len(track) != 1 || track[0]["unhealthyCount"] != 4 {
 		t.Fatalf("track state was not restored and advanced: %#v", status["track"])
+	}
+}
+
+func TestReconcilePenalizesUnhealthyTrackedResourceWhenWhenMatches(t *testing.T) {
+	router := vrrpRouter("vrrp")
+	spec, _ := router.Spec.Resources[1].VirtualAddressSpec()
+	spec.Track = []api.ResourceTrackSpec{{
+		Resource:                    "HealthCheck/internet-via-dslite",
+		UnhealthyPenalty:            80,
+		ConfirmConsecutiveUnhealthy: 1,
+	}}
+	router.Spec.Resources[1].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
+		Metadata: api.ObjectMeta{Name: "internet-via-dslite"},
+		Spec: api.HealthCheckSpec{
+			When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+				"VirtualAddress/vip.role": {Equals: "master"},
+			}},
+			Target: "1.1.1.1",
+		},
+	})
+	store := mapStore{
+		api.NetAPIVersion + "/VirtualAddress/vip": {"role": "master"},
+		api.NetAPIVersion + "/HealthCheck/internet-via-dslite": {
+			"phase": "Unhealthy",
+		},
+	}
+	controller := Controller{Router: router, Store: store, DryRun: true, ConfigPath: t.TempDir() + "/keepalived.conf"}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
+	if status["priority"] != 70 {
+		t.Fatalf("matching unhealthy track must apply penalty: %#v", status)
+	}
+}
+
+func TestVRRPWhenStoreDelegatesRouterState(t *testing.T) {
+	now := time.Date(2026, 7, 30, 20, 0, 0, 0, time.UTC)
+	store := statefulMapStore{mapStore: mapStore{}, now: now, values: map[string]routerstate.Value{
+		"cluster.role": {Status: routerstate.StatusSet, Value: "master", Since: now.Add(-time.Minute), UpdatedAt: now},
+	}}
+	when := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"cluster.role": {Equals: "master"}}}
+	if !resourcequery.ResourceWhenMatches(when, newVRRPWhenStore(store)) {
+		t.Fatal("VRRP when store must delegate router state")
+	}
+}
+
+func TestReconcileDoesNotPenalizeTrackedResourceWhenWhenIsFalse(t *testing.T) {
+	router := vrrpRouter("vrrp")
+	spec, _ := router.Spec.Resources[1].VirtualAddressSpec()
+	spec.Track = []api.ResourceTrackSpec{{
+		Resource:                    "HealthCheck/internet-via-dslite",
+		UnhealthyPenalty:            80,
+		ConfirmConsecutiveUnhealthy: 1,
+	}}
+	router.Spec.Resources[1].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
+		Metadata: api.ObjectMeta{Name: "internet-via-dslite"},
+		Spec: api.HealthCheckSpec{
+			When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+				"VirtualAddress/vip.role": {Equals: "master"},
+			}},
+			Target: "1.1.1.1",
+		},
+	})
+	store := mapStore{
+		api.NetAPIVersion + "/VirtualAddress/vip": {
+			"role": "backup",
+			"track": []map[string]any{{
+				"resource": "HealthCheck/internet-via-dslite", "healthyCount": 0, "unhealthyCount": 2, "penalized": false,
+			}},
+		},
+		api.NetAPIVersion + "/HealthCheck/internet-via-dslite": {"phase": "Unhealthy"},
+	}
+	controller := Controller{Router: router, Store: store, DryRun: true, ConfigPath: t.TempDir() + "/keepalived.conf"}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
+	if status["priority"] != 150 {
+		t.Fatalf("when false track must not lower priority: %#v", status)
+	}
+	track, ok := status["track"].([]map[string]any)
+	if !ok || len(track) != 1 || track[0]["unhealthyCount"] != 2 || track[0]["penalized"] != false {
+		t.Fatalf("neutral track must preserve counters: %#v", status["track"])
+	}
+}
+
+func TestReconcileDoesNotPenalizePendingWhenFalseTrack(t *testing.T) {
+	router := vrrpRouter("vrrp")
+	spec, _ := router.Spec.Resources[1].VirtualAddressSpec()
+	spec.Track = []api.ResourceTrackSpec{{
+		Resource:                    "HealthCheck/internet-via-dslite",
+		UnhealthyPenalty:            80,
+		ConfirmConsecutiveUnhealthy: 1,
+	}}
+	router.Spec.Resources[1].Spec = spec
+	store := mapStore{
+		api.NetAPIVersion + "/HealthCheck/internet-via-dslite": {"phase": "Pending", "reason": "WhenFalse"},
+	}
+	controller := Controller{Router: router, Store: store, DryRun: true, ConfigPath: t.TempDir() + "/keepalived.conf"}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
+	if status["priority"] != 150 {
+		t.Fatalf("Pending/WhenFalse track must not lower priority: %#v", status)
 	}
 }
 
