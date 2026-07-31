@@ -1,0 +1,14 @@
+contract.json
+evidence/
+run.env
+run.env.json
+provider-mirror/
+tests/__pycache__/
+__pycache__/
+terraform/envs/default/.terraform/
+terraform/envs/default/*.tfplan
+terraform/envs/default/*.plan
+terraform/envs/default/terraform.tfvars
+terraform/envs/default/terraform.tfstate
+terraform/envs/default/terraform.tfstate.*
+terraform/envs/default/tofu-output*.json

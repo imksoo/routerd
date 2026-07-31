@@ -1,0 +1,25 @@
+[Unit]
+Description=routerd release QA durable lifecycle %i
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=routerd-release-qa
+WorkingDirectory=/var/lib/routerd-release-qa/%i/repo
+ExecStart=/var/lib/routerd-release-qa/%i/repo/tools/release-qa-labs/drivers/start-supervised-release-qa.sh /var/lib/routerd-release-qa/%i/runtime/contract.json
+Restart=on-failure
+RestartPreventExitStatus=1
+RestartSec=5s
+TimeoutStopSec=30s
+KillMode=mixed
+NoNewPrivileges=true
+UMask=0077
+PrivateTmp=true
+ProtectSystem=strict
+ReadOnlyPaths=/var/lib/routerd-release-qa/%i/repo /var/lib/routerd-release-qa/provider-mirror
+ReadWritePaths=/var/lib/routerd-release-qa/%i/runtime
+
+[Install]
+WantedBy=multi-user.target

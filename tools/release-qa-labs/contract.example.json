@@ -1,0 +1,85 @@
+{
+  "schemaVersion": "release-environment-contract/v2",
+  "runId": "relqa-<rc8>-<UTC timestamp>",
+  "environment": "routerd-release-qualification",
+  "topology": "cloudedge-sam-full",
+  "stateMode": "fresh-fabric-fresh-state",
+  "routerdArtifact": {
+    "version": "vYYYYMMDD.HHMM",
+    "commit": "<exact untagged release commit>",
+    "parentMainCommit": "<frozen origin/main commit>",
+    "canonicalRemote": "https://github.com/imksoo/routerd",
+    "path": "/var/lib/routerd-release-qa/<run>/runtime/routerd-vYYYYMMDD.HHMM-linux-amd64.tar.gz",
+    "sha256": "<artifact SHA-256>",
+    "target": "linux-amd64",
+    "scriptBlobs": {
+      "scripts/certify-cloud-substrate.sh": "<committed blob SHA-256>",
+      "scripts/certify-pve-substrate.sh": "<committed blob SHA-256>",
+      "tests/e2e/cloudedge/scripts/sam-full-validation.sh": "<committed blob SHA-256>",
+      "tests/e2e/cloudedge/scripts/sam-pve-qga-addresses.sh": "<committed blob SHA-256>",
+      "tests/e2e/cloudedge/scripts/sam-pve-bridge-audit.sh": "<committed blob SHA-256>"
+    }
+  },
+  "qaImplementation": {
+    "commit": "<exact canonical commit containing this directory>",
+    "canonicalRemote": "https://github.com/imksoo/routerd",
+    "scriptBlobs": {
+      "tools/release-qa-labs/qa_guard.py": "<committed blob SHA-256>",
+      "tools/release-qa-labs/lifecycle_supervisor.py": "<committed blob SHA-256>",
+      "tools/release-qa-labs/drivers/start-supervised-release-qa.sh": "<committed blob SHA-256>"
+    }
+  },
+  "execution": {
+    "host": "chatty.lain.local",
+    "requireRemote": true,
+    "providerMirror": "/var/lib/routerd-release-qa/provider-mirror",
+    "providerVersions": {
+      "hashicorp/aws": "6.53.0",
+      "hashicorp/azurerm": "4.80.0",
+      "oracle/oci": "8.22.0",
+      "bpg/proxmox": "0.111.1"
+    }
+  },
+  "limits": {
+    "maxEstimatedCostUsd": 1.0,
+    "providerCounts": {"aws": 6, "azure": 4, "oci": 4, "pve": 4},
+    "instanceTypes": {
+      "aws": {"t3.medium": 2, "t3.large": 2, "t3.micro": 2},
+      "azure": {"Standard_B1s": 4},
+      "oci": {"VM.Standard.E2.1": 4},
+      "pve": {"template-clone": 4}
+    },
+    "regions": {"aws": "ap-northeast-1", "azure": "japaneast", "oci": "ap-tokyo-1", "pve": "local"}
+  },
+  "providers": [
+    {"name": "aws", "profile": "<profile>", "region": "ap-northeast-1", "authMode": "aws-shared-profile"},
+    {"name": "azure", "profile": "active-az-account", "region": "japaneast", "authMode": "az-cli-session"},
+    {"name": "oci", "profile": "<profile>", "region": "ap-tokyo-1", "authMode": "oci-config-profile"},
+    {"name": "pve", "profile": "<profile>", "region": "local", "authMode": "api-token-and-ssh-key"}
+  ],
+  "tofu": {
+    "workingDirectory": "/var/lib/routerd-release-qa/<run>/repo/tools/release-qa-labs/terraform/envs/default",
+    "statePath": "/var/lib/routerd-release-qa/<run>/runtime/terraform.tfstate",
+    "variablesPath": "/var/lib/routerd-release-qa/<run>/runtime/terraform.tfvars",
+    "lockPath": "/var/lib/routerd-release-qa/<run>/repo/tools/release-qa-labs/terraform/envs/default/.terraform.lock.hcl",
+    "outputPath": "/var/lib/routerd-release-qa/<run>/runtime/tofu-output-full.json"
+  },
+  "pve": {
+    "node": "pve01",
+    "datastore": "local-lvm",
+    "bootSource": "template",
+    "underlayBridge": "vmbr0",
+    "captureBridge": "<run-scoped bridge>",
+    "managementAddressSource": "certified-static",
+    "vmids": [131, 141, 181, 182]
+  },
+  "lifecycle": {
+    "ttl": "45m",
+    "heartbeatStale": "5m",
+    "cleanupTimeout": "10m",
+    "inventoryTimeout": "5m",
+    "maxCleanupAttempts": 2,
+    "maxPaidLifecycleSeconds": 4500,
+    "cleanupScope": "run-id"
+  }
+}
