@@ -81,7 +81,7 @@ class EgressProxyTests(unittest.TestCase):
         proxy_unit = (ROOT / "supervisor/routerd-release-qa-egress-proxy@.service").read_text()
         main_unit = (ROOT / "supervisor/routerd-release-qa@.service").read_text()
         prepare_unit = (ROOT / "supervisor/routerd-release-qa-prepare@.service").read_text()
-        self.assertIn("RuntimeMaxSec=4500", proxy_unit)
+        self.assertIn("RuntimeMaxSec=5400", proxy_unit)
         self.assertIn("Restart=no", proxy_unit)
         self.assertNotIn("StartLimitIntervalSec=0", proxy_unit)
         self.assertIn("RestrictAddressFamilies=AF_INET AF_UNIX", proxy_unit)
