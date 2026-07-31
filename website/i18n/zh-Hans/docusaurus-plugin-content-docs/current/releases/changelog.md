@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260731.2141
+
 ### 变更
 
 - Linux `NAT44SessionSync` 的 conntrackd mode 现在要求明确声明 runtime 有效且
