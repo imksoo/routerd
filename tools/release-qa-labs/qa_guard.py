@@ -264,6 +264,27 @@ def verify_contract(contract_path: Path, release_repo: Path, framework: Path, ac
         raise GuardError("PVE SSH private key must be a regular mode 0600 file")
     if key_stat.st_uid != os.geteuid() or not os.access(ssh_key, os.R_OK):
         raise GuardError("PVE SSH private key must be owned and readable by the executing UID")
+    azure_source = confined_path(
+        require(run_env, "azureAuthSource", str), run_root, "Azure authentication source",
+        exact=secrets_dir / "azure-auth-source",
+    )
+    source_stat = azure_source.stat()
+    if not azure_source.is_dir() or (source_stat.st_mode & 0o777) != 0o700:
+        raise GuardError("Azure authentication source must be a mode 0700 directory")
+    if source_stat.st_uid != os.geteuid():
+        raise GuardError("Azure authentication source must be owned by the executing UID")
+    source_files = list(azure_source.rglob("*"))
+    if not source_files:
+        raise GuardError("Azure authentication source must not be empty")
+    for source_file in source_files:
+        if source_file.is_symlink():
+            raise GuardError("Azure authentication source must not contain symlinks")
+        stat = source_file.stat()
+        wanted = 0o700 if source_file.is_dir() else 0o600
+        if (not source_file.is_dir() and not source_file.is_file()) or (stat.st_mode & 0o777) != wanted:
+            raise GuardError("Azure authentication source entries must be mode 0700 directories or mode 0600 files")
+        if stat.st_uid != os.geteuid():
+            raise GuardError("Azure authentication source entries must be owned by the executing UID")
     lifecycle = require(contract, "lifecycle", dict)
     ttl = duration_seconds(require(lifecycle, "ttl", str))
     stale = duration_seconds(require(lifecycle, "heartbeatStale", str))

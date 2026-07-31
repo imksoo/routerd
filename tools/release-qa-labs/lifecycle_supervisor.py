@@ -259,7 +259,7 @@ class Supervisor:
                 raise SupervisorError("durable execution mode is not bound to lifecycle state")
             self.state = data
             clean_sources = self.verify_pins()
-            if not clean_sources:
+            if not clean_sources or getattr(self.args, "source_input_tamper_detected", False):
                 data["sourceInputTamperDetected"] = True
                 atomic_json(self.state_path, data)
             return data
@@ -293,6 +293,9 @@ class Supervisor:
             "cleanupAttempts": 0,
             "executionMode": effective["executionMode"],
             "mutationCommandExecuted": False,
+            "sourceInputTamperDetected": bool(
+                getattr(self.args, "source_input_tamper_detected", False)
+            ),
         }
         if root is not None:
             data["runRoot"] = str(root)
@@ -509,6 +512,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--inventory-timeout-seconds", type=float, default=300)
     parser.add_argument("--max-cleanup-attempts", type=int, default=2)
     parser.add_argument("--max-paid-lifecycle-seconds", type=int, default=4500)
+    parser.add_argument("--source-input-tamper-detected", action="store_true")
     parser.add_argument("--precheck-command", nargs="+")
     parser.add_argument("--mutation-command", nargs="+")
     parser.add_argument("--cleanup-command", nargs="+")

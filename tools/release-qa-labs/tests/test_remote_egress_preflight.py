@@ -47,6 +47,12 @@ class RemoteEgressPreflightTests(unittest.TestCase):
         self.ssh_key.parent.mkdir(mode=0o700)
         self.ssh_key.write_text("fixture key\n", encoding="utf-8")
         self.ssh_key.chmod(0o600)
+        self.azure_source = self.runtime / "secrets/azure-auth-source"
+        self.azure_source.mkdir(mode=0o700)
+        (self.azure_source / "azureProfile.json").write_text("{}\n", encoding="utf-8")
+        (self.azure_source / "azureProfile.json").chmod(0o600)
+        self.azure_state = self.runtime / "provider-state/azure"
+        self.azure_state.mkdir(parents=True, mode=0o700)
         self.mirror = self.root / "mirror"
         (self.mirror / "registry.opentofu.org/hashicorp/aws/1.2.3/linux_amd64").mkdir(parents=True)
         contract = {
@@ -105,8 +111,10 @@ exec "$@"''')
         self.make("openssl", '''echo "openssl $*" >>"$CALLS"
 case "${FAILURE:-}:$*" in tls:*|v6_tls:*-6*) exit 9;; esac
 exit 0''')
-        for name in ("aws", "az", "oci", "ssh"):
+        for name in ("aws", "oci", "ssh"):
             self.make(name, f'echo "{name} $*" >>"$CALLS"; [ "${{FAILURE:-}}" = {name} ] && exit 9; echo "{{}}"')
+        self.make("az", 'mkdir -p "$AZURE_CONFIG_DIR/commands"; echo "$*" >>"$AZURE_CONFIG_DIR/commands/test.log"; '
+                         'echo "az $*" >>"$CALLS"; [ "${FAILURE:-}" = az ] && exit 9; echo "{}"')
 
     def tearDown(self):
         self.temp.cleanup()
@@ -118,7 +126,7 @@ exit 0''')
 
     def run_preflight(self, failure="", proxy=True, mirror_present=True, address_mode="native"):
         run_env = {"noProxy": "127.0.0.1,localhost,pve01", "pveTokenTfvars": str(self.token),
-                   "pveSshPrivateKey": str(self.ssh_key)}
+                   "pveSshPrivateKey": str(self.ssh_key), "azureAuthSource": str(self.azure_source)}
         if proxy:
             run_env["httpsProxy"] = "http://proxy.invalid:3128"
         run_env_path = self.runtime / "run.env.json"

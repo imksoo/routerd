@@ -62,6 +62,22 @@ runtime inputs must be mode 0600:
 - `runtime/run.env.json`
 - `runtime/terraform.tfvars`
 
+`runtime/run.env.json` must point `azureAuthSource` at the exact
+`runtime/secrets/azure-auth-source` directory.  Before the unit is started,
+copy only the Azure CLI authentication/configuration files required by the
+selected account into that directory, with mode 0700 on directories and 0600
+on files.  Symlinks are rejected.  The unit mounts this source read-only; the
+launcher digest-pins it and creates the writable CLI working copy at
+`runtime/provider-state/azure`.  Every driver receives that working copy via
+`AZURE_CONFIG_DIR`, so Azure command logs and token-cache updates cannot target
+the service user's global home.
+
+The service home and its `.aws`, `.azure`, and `.oci` trees remain read-only
+under `ProtectSystem=strict`; do not add them to `ReadWritePaths`.  AWS and OCI
+use their read-only credential/config sources, while PVE credentials remain
+run-confined inputs.  Provider writes are permitted only below the exact run's
+`runtime` directory.
+
 Credentials, artifacts, provider mirrors, state, plans and evidence are never
 committed. `tofu.rc` expects the reviewed provider mirror at
 `/var/lib/routerd-release-qa/provider-mirror` on the execution host.
@@ -143,7 +159,8 @@ Do not alter host DNS, routes, network configuration, routerd services, or DHCP.
    `environment: routerd-release-qa-staging`. Keep every other contract field,
    provenance digest, credential, TTL and cleanup scope identical to the reviewed
    production contract.
-2. Install the tracked `supervisor/routerd-release-qa@.service` unchanged, run
+2. Install the tracked `supervisor/routerd-release-qa-prepare@.service` and
+   `supervisor/routerd-release-qa@.service` unchanged, run
    `systemctl daemon-reload`, and enable and start
    `routerd-release-qa@$RUN_ID.service`. Disconnect the SSH client immediately;
    the service does not depend on that session.
@@ -159,3 +176,10 @@ Do not alter host DNS, routes, network configuration, routerd services, or DHCP.
    final-cleanup, final-inventory and lifecycle evidence. Disable the staging run
    unit after recording its terminal result. Never reuse this staging run root
    for production; create a fresh `production` contract and run ID after review.
+5. Only after both tracked units are inactive, lifecycle evidence is terminal,
+   and the authoritative seven-scope inventory is zero, run the tracked
+   `drivers/finalize-sealed-provider-auth.sh "$RUN_ID"` as root. It removes only
+   `/var/lib/routerd-release-qa-sealed/$RUN_ID`; the root-owned global sealed
+   parent (root:root mode 0755) is retained. Run IDs are not secret; the security
+   invariant is that the service user cannot create, remove, or rename its
+   root-owned mode-0750 run leaf. The script fails closed before zero evidence.

@@ -1,0 +1,19 @@
+[Unit]
+Description=prepare pinned provider authentication for routerd release QA %i
+Before=routerd-release-qa@%i.service
+
+[Service]
+Type=oneshot
+ExecStart=/var/lib/routerd-release-qa/%i/repo/tools/release-qa-labs/drivers/prepare-provider-auth.sh %i
+StateDirectory=routerd-release-qa-sealed/%i
+StateDirectoryMode=0711
+NoNewPrivileges=true
+UMask=0077
+PrivateNetwork=true
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER
+AmbientCapabilities=
+PrivateTmp=true
+ProtectSystem=strict
+ReadOnlyPaths=/var/lib/routerd-release-qa/%i/repo /var/lib/routerd-release-qa/%i/runtime/secrets
+ReadWritePaths=/var/lib/routerd-release-qa-sealed/%i
