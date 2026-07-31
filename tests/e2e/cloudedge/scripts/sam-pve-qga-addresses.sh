@@ -12,7 +12,7 @@ DHCP IPv4 address reported by qemu-guest-agent into each PVE node's public_ip.
 Options:
   --tofu-output FILE       Raw `tofu output -json` file.
   --out FILE               Patched output file for sam-e2e.sh.
-  --pve-node-ssh-host HOST PVE SSH host; defaults to fabric.value.pve.node_name.
+  --pve-node-ssh-host HOST PVE SSH host; defaults to fabric.value.pve.node_ssh_host.
   --ssh-key FILE           Exact private key for PVE node SSH.
   --management-ifname NAME Management interface reported by QGA (default: ens18).
   --retries N              QGA retry attempts per VM (default: 90).
@@ -86,7 +86,7 @@ if [ "$boot_source" != "iso" ]; then
   exit 2
 fi
 if [ -z "$pve_node_ssh_host" ]; then
-  pve_node_ssh_host="$(jq -r '.fabric.value.pve.node_ssh_host // .fabric.value.pve.node_name // empty' "$tofu_output")"
+  pve_node_ssh_host="$(jq -r '.fabric.value.pve.node_ssh_host // empty' "$tofu_output")"
 fi
 [ -n "$pve_node_ssh_host" ] || { echo "PVEQGATransportUnavailable: cannot query QGA capability because no PVE SSH host is configured" >&2; exit 2; }
 

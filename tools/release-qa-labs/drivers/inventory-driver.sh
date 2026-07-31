@@ -126,11 +126,38 @@ else
 fi
 
 oci_tagged="$inventory_evidence/oci-tagged-resources.json"
-oci --profile "$oci_profile" --region "$oci_region" search resource structured-search \
-  --query-text "query all resources where (freeformTags.key = 'RouterdRunId' && freeformTags.value = '$run_id')" \
-  --all >"$oci_tagged"
-jq -e '((."opc-next-page" // ."next-page" // "") == "")' "$oci_tagged" >/dev/null ||
-  die "OCI tagged-resource inventory is partial"
+oci_pages_dir="$inventory_evidence/oci-tagged-resource-pages"
+mkdir -p "$oci_pages_dir"
+seen_tokens="$oci_pages_dir/seen-next-page-tokens.txt"
+: >"$seen_tokens"
+page_token=
+page_number=1
+while :; do
+  page="$oci_pages_dir/page-${page_number}.json"
+  oci_args=(--profile "$oci_profile" --region "$oci_region" search resource structured-search
+    --query-text "query all resources where (freeformTags.key = 'RouterdRunId' && freeformTags.value = '$run_id')")
+  if [ -n "$page_token" ]; then
+    oci_args+=(--page "$page_token")
+  fi
+  oci "${oci_args[@]}" >"$page"
+  jq -e '
+    (.data | type == "object") and (.data.items | type == "array") and
+    ((has("opc-next-page") | not) or (."opc-next-page" == null) or (."opc-next-page" | type == "string")) and
+    (has("next-page") | not)
+  ' "$page" >/dev/null || die "OCI tagged-resource inventory page is malformed or has ambiguous pagination metadata"
+  next_token="$(jq -r '."opc-next-page" // empty' "$page")"
+  if [ -z "$next_token" ]; then
+    break
+  fi
+  if grep -Fqx -- "$next_token" "$seen_tokens"; then
+    die "OCI tagged-resource inventory repeated a pagination token"
+  fi
+  printf '%s\n' "$next_token" >>"$seen_tokens"
+  page_token="$next_token"
+  page_number=$((page_number + 1))
+done
+jq -s '{data:{items:[.[].data.items[]]}, pagination:{status:"complete", pages:length}}' \
+  "$oci_pages_dir"/page-*.json >"$oci_tagged"
 oci_tagged_count="$(jq '[.data.items[]] | length' "$oci_tagged")"
 if [ "$oci_tagged_count" -eq 0 ]; then
   record oci-tagged-resources PASS "all paginated run-tagged resources=0"
@@ -138,7 +165,7 @@ else
   record oci-tagged-resources FAIL "run-tagged resource count=$oci_tagged_count"
 fi
 
-pve_host="$(jq -er '.pve.node' "$contract_path")"
+pve_host="$pve_ssh_host"
 pve_vmids="$(jq -c '.pve.vmids' "$contract_path")"
 # One authoritative cluster query distinguishes absence from SSH/auth/API
 # failure. Any nonzero SSH status or malformed result aborts inventory.
@@ -157,7 +184,6 @@ else
 fi
 
 pve_bridge="$(jq -er '.pve.captureBridge' "$contract_path")"
-pve_node="$(jq -er '.pve.node' "$contract_path")"
 ssh -n -i "$pve_ssh_private_key" -o BatchMode=yes -o ConnectTimeout=10 "root@$pve_host" \
   "pvesh get /nodes/$(printf '%q' "$pve_node")/network --output-format json" \
   >"$inventory_evidence/pve-network.json"

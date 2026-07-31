@@ -35,7 +35,9 @@ class InventoryDriverTests(unittest.TestCase):
         self.tfvars.write_text(
             'run_id = "run-1"\ncommit = "release-commit"\n'
             'aws_region = "ap-northeast-1"\naws_profile = "fixture"\n'
-            'oci_region = "ap-tokyo-1"\noci_profile = "fixture"\noci_compartment_id = "ocid.fixture"\n',
+            'oci_region = "ap-tokyo-1"\noci_profile = "fixture"\noci_compartment_id = "ocid.fixture"\n'
+            'pve_node_name = "pve01"\npve_ssh_host = "pve01.lain.local"\n'
+            'pve_endpoint = "https://pve01.lain.local:8006/"\n',
             encoding="utf-8",
         )
         self.tfvars.chmod(0o600)
@@ -58,7 +60,8 @@ class InventoryDriverTests(unittest.TestCase):
             "tofu": {"workingDirectory": str(self.tf), "statePath": str(self.tf / "state"),
                      "variablesPath": str(self.tfvars), "outputPath": str(self.tf / "output")},
             "lifecycle": {"ttl": "75m", "heartbeatStale": "5m"},
-            "pve": {"node": "pve01", "vmids": [131, 141, 181, 182], "captureBridge": "vmbr999"},
+            "pve": {"node": "pve01", "sshHost": "pve01.lain.local",
+                    "vmids": [131, 141, 181, 182], "captureBridge": "vmbr999"},
         }
         contract_path = self.runtime / "contract.json"
         contract_path.write_text(json.dumps(contract), encoding="utf-8")
@@ -81,16 +84,27 @@ exit 0''')
     def install_provider_fixtures(self, *, aws_tagged='{"ResourceTagMappingList":[]}',
                                   azure_exists="false", azure_resources="[]",
                                   oci_tagged='{"data":{"items":[]}}', pve_bridge="[]",
-                                  pve_vm=False, qm_transient=False, fail=""):
+                                  oci_pages=None, pve_vm=False, qm_transient=False, fail=""):
         self.make("aws", f'''echo "$*" >>"$CALLS/aws"
 [ "{fail}" = aws ] && exit 7
 case " $* " in *" ec2 describe-instances "*) echo '{{"Reservations":[]}}';; *) printf '%s\\n' '{aws_tagged}';; esac''')
         self.make("az", f'''echo "$*" >>"$CALLS/az"
 [ "{fail}" = az ] && exit 7
 case " $* " in *" group exists "*) echo '{azure_exists}';; *) printf '%s\\n' '{azure_resources}';; esac''')
+        pages = oci_pages or [oci_tagged]
+        page_cases = []
+        for index, page in enumerate(pages[1:], start=1):
+            token = json.loads(pages[index - 1]).get("opc-next-page", "")
+            page_cases.append(f'*" --page {token} "*) printf \'%s\\n\' \'{page}\';;')
+        page_cases_text = "\n".join(page_cases)
         self.make("oci", f'''echo "$*" >>"$CALLS/oci"
 [ "{fail}" = oci ] && exit 7
-case " $* " in *" compute instance list "*) echo '{{"data":[]}}';; *) printf '%s\\n' '{oci_tagged}';; esac''')
+[ "{fail}" = oci_page_2 ] && case " $* " in *" --page "*) exit 7;; esac
+case " $* " in
+ *" compute instance list "*) echo '{{"data":[]}}';;
+ {page_cases_text}
+ *" search resource structured-search "*) printf '%s\\n' '{pages[0]}';;
+esac''')
         pve_vms = '[{"vmid":131},{"vmid":141},{"vmid":181},{"vmid":182}]' if pve_vm else '[]'
         self.make("ssh", f'''echo "$*" >>"$CALLS/ssh"
 [ "{fail}" = ssh ] && exit 7
@@ -115,10 +129,14 @@ esac''')
         result, evidence = self.run_driver()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("resourcegroupstaggingapi get-resources", (self.calls / "aws").read_text())
-        self.assertIn("--all", (self.calls / "oci").read_text())
+        search_calls = [line for line in (self.calls / "oci").read_text().splitlines()
+                        if "search resource structured-search" in line]
+        self.assertTrue(search_calls)
+        self.assertTrue(all("--all" not in line for line in search_calls))
         ssh = (self.calls / "ssh").read_text()
         self.assertIn("pvesh get /cluster/resources --type vm", ssh)
         self.assertIn("pvesh get /nodes/pve01/network", ssh)
+        self.assertIn("root@pve01.lain.local", ssh)
         scopes = {x["name"]: x for x in json.loads((evidence / "inventory.json").read_text())["scopes"]}
         self.assertTrue(all(x["count"] == 0 and x["queryStatus"] == "complete" for x in scopes.values()))
 
@@ -168,9 +186,48 @@ esac''')
                 self.install_provider_fixtures(aws_tagged=json.dumps({"ResourceTagMappingList": [], field: "more"}))
                 result, _ = self.run_driver()
                 self.assertNotEqual(result.returncode, 0)
-        self.install_provider_fixtures(oci_tagged='{"data":{"items":[]},"opc-next-page":"more"}')
-        result, _ = self.run_driver()
+
+    def test_oci_search_explicit_pagination_aggregates_all_pages(self):
+        pages = [
+            '{"data":{"items":[]},"opc-next-page":"page-2"}',
+            '{"data":{"items":[]}}',
+        ]
+        self.install_provider_fixtures(oci_pages=pages)
+        result, evidence = self.run_driver()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--page page-2", (self.calls / "oci").read_text())
+        aggregate = json.loads((evidence / "oci-tagged-resources.json").read_text())
+        self.assertEqual(aggregate["pagination"], {"status": "complete", "pages": 2})
+
+    def test_oci_later_page_nonzero_is_not_zero(self):
+        pages = [
+            '{"data":{"items":[]},"opc-next-page":"page-2"}',
+            '{"data":{"items":[{"identifier":"ocid.later"}]}}',
+        ]
+        self.install_provider_fixtures(oci_pages=pages)
+        result, evidence = self.run_driver()
         self.assertNotEqual(result.returncode, 0)
+        scopes = {x["name"]: x for x in json.loads((evidence / "inventory.json").read_text())["scopes"]}
+        self.assertEqual(scopes["oci-tagged-resources"]["count"], 1)
+
+    def test_oci_repeated_token_malformed_and_later_transport_fail_closed(self):
+        cases = (
+            ([
+                '{"data":{"items":[]},"opc-next-page":"repeat"}',
+                '{"data":{"items":[]},"opc-next-page":"repeat"}',
+            ], ""),
+            (['{"data":{"items":{}}}'], ""),
+            (['{"data":{"items":[]},"next-page":"ambiguous"}'], ""),
+            ([
+                '{"data":{"items":[]},"opc-next-page":"page-2"}',
+                '{"data":{"items":[]}}',
+            ], "oci_page_2"),
+        )
+        for pages, failure in cases:
+            with self.subTest(pages=pages, failure=failure):
+                self.install_provider_fixtures(oci_pages=pages, fail=failure)
+                result, _ = self.run_driver()
+                self.assertNotEqual(result.returncode, 0)
 
 
 if __name__ == "__main__":

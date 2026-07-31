@@ -209,7 +209,7 @@ pve_qga_preflight() {
     echo "PVEQGAUnsupportedBootSource: node $node has no management address, but boot_source=${boot_source:-<empty>}; QGA fallback requires boot_source=iso" >&2
     return 1
   fi
-  pve_host="$(jq -r '.pve.node_ssh_host // .pve.node_name // empty' "$fabric_json")"
+  pve_host="$(jq -r '.pve.node_ssh_host // empty' "$fabric_json")"
   [ -n "$pve_host" ] && [ "$pve_host" != "null" ] || {
     echo "PVEQGATransportUnavailable: cannot query QGA capability because no PVE SSH host is configured" >&2
     return 1
@@ -227,7 +227,7 @@ pve_qga_exec() {
   local node="$1" command="$2" vm_id pve_host raw exitcode
   pve_qga_preflight "$node" || return 1
   vm_id="$(node_field "$node" vm_id)"
-  pve_host="$(jq -r '.pve.node_ssh_host // .pve.node_name' "$fabric_json")"
+  pve_host="$(jq -er '.pve.node_ssh_host' "$fabric_json")"
   raw="$(ssh "root@$pve_host" "qm guest exec $vm_id --timeout 600 -- /bin/sh -lc $(printf '%q' "$command")")"
   printf '%s\n' "$raw" | jq -r '."out-data" // empty'
   printf '%s\n' "$raw" | jq -r '."err-data" // empty' >&2
@@ -239,7 +239,7 @@ pve_qga_copy() {
   local src="$1" node="$2" dst="$3" vm_id pve_host raw exitcode quoted_dst
   pve_qga_preflight "$node" || return 1
   vm_id="$(node_field "$node" vm_id)"
-  pve_host="$(jq -r '.pve.node_ssh_host // .pve.node_name' "$fabric_json")"
+  pve_host="$(jq -er '.pve.node_ssh_host' "$fabric_json")"
   quoted_dst="$(printf '%q' "$dst")"
   raw="$(ssh "root@$pve_host" "qm guest exec $vm_id --pass-stdin 1 --timeout 120 -- /bin/sh -lc 'cat > $quoted_dst'" <"$src")"
   printf '%s\n' "$raw" | jq -r '."out-data" // empty'
@@ -449,10 +449,13 @@ run_preflight_probe() {
 
 preflight() {
   echo "== preflight =="
-  local node host
+  local node host pve_host
   if jq -e '.fabric.value.pve.capture_bridge? and (.nodes.value | to_entries[] | select(.value.site == "pve"))' "$tofu_output" >/dev/null; then
+    pve_host="$(jq -er '.fabric.value.pve.node_ssh_host' "$tofu_output")" || return 1
     "$script_dir/sam-pve-bridge-audit.sh" \
       --tofu-output "$tofu_output" \
+      --pve-node-ssh-host "$pve_host" \
+      --ssh-key "$ssh_key" \
       --evidence "$evidence_dir/preflight/pve-bridge-audit.txt" || return 1
   fi
   for node in "${routers[@]}" "${clients[@]}"; do

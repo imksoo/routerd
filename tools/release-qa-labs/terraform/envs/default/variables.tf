@@ -129,6 +129,10 @@ variable "pve_node_name" {
   description = "PVE cluster node to deploy VMs on."
   type        = string
 }
+variable "pve_ssh_host" {
+  description = "DNS FQDN used for PVE SSH and TCP connectivity."
+  type        = string
+}
 variable "pve_boot_source" {
   type    = string
   default = "template"

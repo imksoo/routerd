@@ -20,7 +20,7 @@ for command in tofu jq ssh; do
 done
 require_supervisor_mutating || fail_driver "durable lifecycle supervisor is not running before PVE apply"
 
-pve_host="$(jq -er '.pve.node' "$contract_path")"
+pve_host="$pve_ssh_host"
 pve_dir="$evidence_root/certification/pve"
 mkdir -p "$pve_dir"
 if ssh -i "$pve_ssh_private_key" -o BatchMode=yes -o ConnectTimeout=10 "root@$pve_host" \
@@ -72,6 +72,7 @@ fi
 bridge_audit="$(routerd_script tests/e2e/cloudedge/scripts/sam-pve-bridge-audit.sh)"
 if ! run_with_progress pve-bridge-audit "$bridge_audit" \
   --tofu-output "$tofu_output_path" \
+  --pve-node-ssh-host "$pve_host" \
   --ssh-key "$pve_ssh_private_key" \
   --evidence "$pve_dir/bridge-audit.txt"; then
   fail_driver "PVE capture bridge contains missing or unrelated VMs"

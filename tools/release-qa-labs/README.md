@@ -76,6 +76,11 @@ The contract must bind:
 - TTL no greater than 75 minutes and heartbeat-stale less than TTL;
 - exact regions, instance types, provider counts and a cost ceiling no greater
   than USD 1.00.
+- separate PVE identities: `pve.sshHost` is a DNS FQDN used by every PVE
+  DNS/TCP/SSH consumer, while `pve.node` is the short Proxmox cluster node ID
+  used by `pvesh /nodes/...` and Terraform `pve_node_name`. The FQDN's first
+  label must exactly equal the cluster node ID; `pve_endpoint` must be the
+  corresponding `https://<pve.sshHost>:8006/` API endpoint.
 
 `qa_guard.py` rejects dirty/local-only provenance and validates saved OpenTofu
 plans against a closed resource-type/count/type allowlist before apply.

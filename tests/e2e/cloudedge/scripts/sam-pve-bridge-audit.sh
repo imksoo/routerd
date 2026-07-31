@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/sam-pve-bridge-audit.sh --tofu-output tofu-output.json --ssh-key FILE [--evidence FILE]
+  scripts/sam-pve-bridge-audit.sh --tofu-output tofu-output.json --pve-node-ssh-host HOST --ssh-key FILE [--evidence FILE]
 
 Fails when the PVE capture bridge contains VMs outside the topology described
 by tofu-output.json. This protects SAM qualification from shared overlay
@@ -16,12 +16,14 @@ USAGE
 tofu_output=
 evidence=
 ssh_key=
+pve_node_ssh_host=
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --tofu-output) tofu_output=${2:?missing --tofu-output value}; shift 2 ;;
     --evidence) evidence=${2:?missing --evidence value}; shift 2 ;;
     --ssh-key) ssh_key=${2:?missing --ssh-key value}; shift 2 ;;
+    --pve-node-ssh-host) pve_node_ssh_host=${2:?missing --pve-node-ssh-host value}; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -34,8 +36,9 @@ if [ -z "$ssh_key" ] || [ ! -f "$ssh_key" ]; then
   exit 2
 fi
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }
+[ -n "$pve_node_ssh_host" ] || { echo "--pve-node-ssh-host HOST is required" >&2; exit 2; }
 
-pve_host="$(jq -r '.fabric.value.pve.node_ssh_host // .fabric.value.pve.node_name // empty' "$tofu_output")"
+pve_host="$pve_node_ssh_host"
 capture_bridge="$(jq -r '.fabric.value.pve.capture_bridge // empty' "$tofu_output")"
 [ -n "$pve_host" ] || { echo "PVE host not found in $tofu_output" >&2; exit 2; }
 [ -n "$capture_bridge" ] || { echo "PVE capture bridge not found in $tofu_output" >&2; exit 2; }

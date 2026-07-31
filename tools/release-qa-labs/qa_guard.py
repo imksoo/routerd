@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import subprocess
 import sys
@@ -177,6 +178,34 @@ def estimated_cost(ttl_seconds: int) -> float:
     return hourly * ttl_seconds / 3600 + STORAGE_AND_IPV4_ALLOWANCE_USD
 
 
+def verify_pve_identities(contract: dict[str, Any], tfvars_path: Path) -> None:
+    pve = require(contract, "pve", dict)
+    node = require(pve, "node", str)
+    ssh_host = require(pve, "sshHost", str)
+    label = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    if not re.fullmatch(label, node):
+        raise GuardError("pve.node must be an exact short Proxmox cluster node ID")
+    if len(ssh_host) > 253 or not re.fullmatch(rf"{label}(?:\.{label})+", ssh_host):
+        raise GuardError("pve.sshHost must be a DNS FQDN")
+    if ssh_host == node or ssh_host.split(".", 1)[0] != node:
+        raise GuardError("pve.sshHost FQDN must identify the pve.node cluster ID")
+
+    values: dict[str, str] = {}
+    assignment = re.compile(r'^\s*(pve_node_name|pve_ssh_host|pve_endpoint)\s*=\s*"([^"\n]+)"\s*(?:#.*)?$')
+    for line in tfvars_path.read_text(encoding="utf-8").splitlines():
+        match = assignment.fullmatch(line)
+        if match:
+            if match.group(1) in values:
+                raise GuardError(f"duplicate {match.group(1)} in OpenTofu variables")
+            values[match.group(1)] = match.group(2)
+    if values.get("pve_node_name") != node:
+        raise GuardError("OpenTofu pve_node_name must equal pve.node")
+    if values.get("pve_ssh_host") != ssh_host:
+        raise GuardError("OpenTofu pve_ssh_host must equal pve.sshHost")
+    if values.get("pve_endpoint") != f"https://{ssh_host}:8006/":
+        raise GuardError("OpenTofu pve_endpoint must use the exact pve.sshHost FQDN")
+
+
 def confined_path(value: str | Path, root: Path, label: str, *, exact: Path | None = None) -> Path:
     path = Path(value)
     if not path.is_absolute():
@@ -209,6 +238,7 @@ def verify_contract(contract_path: Path, release_repo: Path, framework: Path, ac
     confined_path(require(tofu, "workingDirectory", str), run_root, "tofu workingDirectory", exact=tofu_work)
     confined_path(require(tofu, "statePath", str), run_root, "tofu statePath", exact=run_root / "runtime/terraform.tfstate")
     confined_path(require(tofu, "variablesPath", str), run_root, "tofu variablesPath", exact=run_root / "runtime/terraform.tfvars")
+    verify_pve_identities(contract, run_root / "runtime/terraform.tfvars")
     confined_path(require(tofu, "outputPath", str), run_root, "tofu outputPath", exact=run_root / "runtime/tofu-output-full.json")
     if "lockPath" in tofu:
         confined_path(require(tofu, "lockPath", str), run_root, "tofu lockPath", exact=tofu_work / ".terraform.lock.hcl")
