@@ -40,8 +40,7 @@ spec:
         privateKeyFile: /usr/local/etc/routerd/secrets/wg-pve.key
         listenPort: 51820
         mtu: 1420
-        peersFrom:
-          - resource: SAMRRSet/pve-rrs
+        peersFrom: [{ resource: SAMRRSet/pve-rrs }]
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
@@ -75,9 +74,7 @@ spec:
         routerID: 10.255.10.23
         exportPolicy:
           allowedPrefixes: [10.77.70.23/32, 10.77.70.19/32]
-        redistribute:
-          connected:
-            allowedPrefixes: [10.77.70.23/32]
+        redistribute: { connected: { allowedPrefixes: [10.77.70.23/32] } }
         timers: { profile: fast }
         convergenceProfile: fast
 
@@ -92,8 +89,7 @@ spec:
         innerPrefix: 10.255.10.0/24
         underlayInterface: wg-pve
         localEndpoint: 10.31.0.23
-        peersFrom:
-          - resource: SAMRRSet/pve-rrs
+        peersFrom: [{ resource: SAMRRSet/pve-rrs }]
         bgp:
           routerRef: BGPRouter/mobility-bgp
           peerASN: 64577
@@ -119,12 +115,7 @@ spec:
             site: pve-lab-b
             role: onprem
             staticOwnedAddresses: [10.77.70.19/32]
-            capture:
-              type: proxy-arp
-              interface: client-lan
-              sourceAddress: 10.77.70.36/32
-              gratuitousARP: true
-              activeWhen: { type: single-router }
+            capture: { type: proxy-arp, interface: client-lan, sourceAddress: 10.77.70.36/32, gratuitousARP: true, activeWhen: { type: single-router } }
 
     - apiVersion: mobility.routerd.net/v1alpha1
       kind: SAMEnrollmentPolicy
@@ -132,11 +123,9 @@ spec:
       spec:
         transportProfileRef: SAMTransportProfile/pve-leaf-c
         rrSetRef: SAMRRSet/pve-rrs
-        joinTokenFrom:
-          file: /usr/local/etc/routerd/secrets/pve-join-token
+        joinTokenFrom: { file: /usr/local/etc/routerd/secrets/pve-join-token }
         joinAudience: pve-wg-underlay
-        allowedLeafIDs:
-          pattern: ^pve-leaf-[a-z0-9-]+$
+        allowedLeafIDs: { pattern: '^pve-leaf-[a-z0-9-]+$' }
         tunnelAddressPrefixes: [10.255.10.0/24]
         endpointPrefixes: [10.31.0.0/24]
         ttl: 8760h
@@ -170,11 +159,7 @@ spec:
         domainRef: bgp-pve-mobility
         address: 10.77.70.15/32
         ownerSide: onprem
-        capture:
-          type: proxy-arp
-          interface: client-lan
-          gratuitousARP: true
-          activeWhen: { type: single-router }
+        capture: { type: proxy-arp, interface: client-lan, gratuitousARP: true, activeWhen: { type: single-router } }
         delivery: { mode: bgp, peerRef: pve-rrs }
 
     - apiVersion: mobility.routerd.net/v1alpha1
