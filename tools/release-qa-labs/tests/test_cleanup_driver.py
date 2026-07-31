@@ -49,7 +49,8 @@ class CleanupDriverTests(unittest.TestCase):
         token.chmod(0o600)
         self.run_env = self.runtime / "run.env.json"
         self.run_env.write_text(
-            json.dumps({"pveSshPrivateKey": str(key), "pveTokenTfvars": str(token)}),
+            json.dumps({"pveSshPrivateKey": str(key), "pveTokenTfvars": str(token),
+                        "httpsProxy": "http://127.0.0.1:18081"}),
             encoding="utf-8",
         )
         self.run_env.chmod(0o600)

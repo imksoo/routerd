@@ -1,0 +1,25 @@
+[Unit]
+Description=run-confined IPv4 egress proxy for routerd release QA %i
+Before=routerd-release-qa-prepare@%i.service routerd-release-qa@%i.service
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=routerd-release-qa
+WorkingDirectory=/var/lib/routerd-release-qa/%i/repo
+ExecStart=/var/lib/routerd-release-qa/%i/repo/tools/release-qa-labs/drivers/start-egress-proxy.sh %i
+Restart=no
+RuntimeMaxSec=4500
+TimeoutStartSec=10s
+TimeoutStopSec=10s
+KillMode=control-group
+NoNewPrivileges=true
+UMask=0077
+PrivateTmp=true
+ProtectSystem=strict
+ReadOnlyPaths=/var/lib/routerd-release-qa/%i/repo /var/lib/routerd-release-qa/%i/runtime/run.env.json
+ReadWritePaths=/var/lib/routerd-release-qa/%i/runtime/evidence/egress-proxy
+RestrictAddressFamilies=AF_INET AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

@@ -205,9 +205,11 @@ class SystemdConfinementTests(unittest.TestCase):
             evidence = run_root / "runtime/evidence"
             inventory = evidence / "final-inventory/inventory.json"
             lifecycle = evidence / "lifecycle/supervisor-state.json"
+            run_env = run_root / "runtime/run.env.json"
             framework = run_root / "repo/tools/release-qa-labs"
             inventory.parent.mkdir(parents=True)
             lifecycle.parent.mkdir(parents=True)
+            run_env.write_text(json.dumps({"httpsProxy": "http://127.0.0.1:18081"}))
             framework.mkdir(parents=True)
             shutil.copy2(ROOT / "qa_guard.py", framework / "qa_guard.py")
             lifecycle.write_text(json.dumps({
@@ -225,6 +227,9 @@ class SystemdConfinementTests(unittest.TestCase):
             systemctl = fake_bin / "systemctl"
             systemctl.write_text("#!/bin/sh\necho inactive\n")
             systemctl.chmod(0o755)
+            ss = fake_bin / "ss"
+            ss.write_text('#!/bin/sh\n[ "${PROXY_LISTENING:-}" = 1 ] && echo "LISTEN fixture"\nexit 0\n')
+            ss.chmod(0o755)
             finalize = Path(temporary) / "finalize.sh"
             text = (ROOT / "drivers/finalize-sealed-provider-auth.sh").read_text()
             text = text.replace("/var/lib/routerd-release-qa-sealed", str(sealed_parent))
@@ -262,6 +267,11 @@ class SystemdConfinementTests(unittest.TestCase):
             lifecycle.write_text(json.dumps({
                 "phase": "STAGING_ARMED", "mutationCommandExecuted": False, "mutationPgid": None,
             }))
+            listening = subprocess.run([
+                "sudo", "-n", "env", env_path, "PROXY_LISTENING=1", finalize, run_id,
+            ], check=False)
+            self.assertNotEqual(listening.returncode, 0)
+            self.assertEqual(subprocess.run(["sudo", "-n", "test", "-d", child]).returncode, 0)
             allowed = subprocess.run(["sudo", "-n", "env", env_path, finalize, run_id], check=False)
             self.assertEqual(allowed.returncode, 0)
             self.assertNotEqual(subprocess.run(["sudo", "-n", "test", "-e", child]).returncode, 0)

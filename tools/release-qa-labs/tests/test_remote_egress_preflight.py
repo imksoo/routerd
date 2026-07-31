@@ -98,7 +98,7 @@ esac
 exit 0''')
         self.make("timeout", '''echo "timeout $*" >>"$CALLS"
 case "${FAILURE:-}:$*" in
-  tcp:*proxy.invalid*) exit 9;;
+  tcp:*127.0.0.1*) exit 9;;
   pve_tcp:*8006*) exit 9;;
   direct_tcp:*443*) exit 9;;
   v6_tcp:*2001:db8::10*) exit 9;;
@@ -128,7 +128,7 @@ exit 0''')
         run_env = {"noProxy": "127.0.0.1,localhost,pve01", "pveTokenTfvars": str(self.token),
                    "pveSshPrivateKey": str(self.ssh_key), "azureAuthSource": str(self.azure_source)}
         if proxy:
-            run_env["httpsProxy"] = "http://proxy.invalid:3128"
+            run_env["httpsProxy"] = "http://127.0.0.1:18081"
         run_env_path = self.runtime / "run.env.json"
         run_env_path.write_text(json.dumps(run_env), encoding="utf-8")
         run_env_path.chmod(0o600)

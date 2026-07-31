@@ -16,6 +16,16 @@ The only lifecycle entry point is:
 drivers/start-supervised-release-qa.sh CONTRACT
 ```
 
+Provider HTTPS egress uses the tracked unit
+`routerd-release-qa-egress-proxy@RUN_ID.service` introduced by issue #1068.
+It listens only on the run's explicit `http://127.0.0.1:<high-port>` endpoint
+and resolves and connects upstream with IPv4 sockets only. It changes no host
+DNS, route, interface, DHCP, or routerd setting. The proxy is started before
+baseline inventory, remains available through post/failure inventory, and is
+stopped only after final inventory. Its independent `RuntimeMaxSec` bounds it
+when the operator disconnects; a port collision fails readiness instead of
+falling back to an untracked or externally reachable proxy.
+
 It must run under the tracked boot-enabled supervisor unit on the remote
 execution host named by the contract. Never run the paid lifecycle from a
 shared development host, a Codex process, or an interactive transport.
@@ -71,6 +81,10 @@ launcher digest-pins it and creates the writable CLI working copy at
 `runtime/provider-state/azure`.  Every driver receives that working copy via
 `AZURE_CONFIG_DIR`, so Azure command logs and token-cache updates cannot target
 the service user's global home.
+
+The same file must set `httpsProxy` to a run-unique unprivileged endpoint of
+the exact form `http://127.0.0.1:<port>`. External proxy hosts, IPv6 loopback,
+wildcard listeners, omitted endpoints, and privileged ports are rejected.
 
 The service home and its `.aws`, `.azure`, and `.oci` trees remain read-only
 under `ProtectSystem=strict`; do not add them to `ReadWritePaths`.  AWS and OCI
@@ -159,10 +173,17 @@ Do not alter host DNS, routes, network configuration, routerd services, or DHCP.
    `environment: routerd-release-qa-staging`. Keep every other contract field,
    provenance digest, credential, TTL and cleanup scope identical to the reviewed
    production contract.
-2. Install the tracked `supervisor/routerd-release-qa-prepare@.service` and
-   `supervisor/routerd-release-qa@.service` unchanged, run
-   `systemctl daemon-reload`, and enable and start
-   `routerd-release-qa@$RUN_ID.service`. Disconnect the SSH client immediately;
+2. Install the tracked `supervisor/routerd-release-qa-egress-proxy@.service`,
+   `supervisor/routerd-release-qa-prepare@.service`, and
+   `supervisor/routerd-release-qa@.service` unchanged and run
+   `systemctl daemon-reload`. Before baseline inventory, run tracked
+   `drivers/manage-egress-proxy.sh start "$RUN_ID"` as root. It selects or
+   validates a collision-free run port, creates the status directory, starts
+   the proxy, and waits for systemd readiness. Keep the existing reviewed
+   sequence unchanged after that: authoritative baseline zero, first prepare,
+   pinned metadata/digest capture, second prepare/restart and byte comparison,
+   then main-unit start without blocking on the controller connection.
+   Disconnect the SSH client immediately;
    the service does not depend on that session.
 3. Reconnect and inspect
    `runtime/evidence/lifecycle/supervisor-state.json`. Its history must contain
@@ -176,9 +197,11 @@ Do not alter host DNS, routes, network configuration, routerd services, or DHCP.
    final-cleanup, final-inventory and lifecycle evidence. Disable the staging run
    unit after recording its terminal result. Never reuse this staging run root
    for production; create a fresh `production` contract and run ID after review.
-5. Only after both tracked units are inactive, lifecycle evidence is terminal,
-   and the authoritative seven-scope inventory is zero, run the tracked
-   `drivers/finalize-sealed-provider-auth.sh "$RUN_ID"` as root. It removes only
+5. Keep the proxy active through every success/failure final-inventory path.
+   Every operator trap must run bounded final inventory and its zero guard first,
+   then call `drivers/manage-egress-proxy.sh stop "$RUN_ID"`, and only after the
+   unit is inactive and its exact port is not listening invoke the tracked
+   finalizer. The finalizer removes only
    `/var/lib/routerd-release-qa-sealed/$RUN_ID`; the root-owned global sealed
    parent (root:root mode 0755) is retained. Run IDs are not secret; the security
    invariant is that the service user cannot create, remove, or rename its

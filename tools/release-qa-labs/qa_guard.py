@@ -249,6 +249,10 @@ def verify_contract(contract_path: Path, release_repo: Path, framework: Path, ac
         require(run_env, "releaseRepo", str), run_root, "release repository", exact=run_root / "repo"
     )
     confined_path(release_repo, run_root, "release repository argument", exact=expected_release)
+    https_proxy = require(run_env, "httpsProxy", str)
+    match = re.fullmatch(r"http://127\.0\.0\.1:([0-9]{4,5})", https_proxy)
+    if match is None or not 1024 <= int(match.group(1)) <= 65535:
+        raise GuardError("httpsProxy must be the tracked IPv4 loopback proxy endpoint")
     token_path = run_env.get("pveTokenTfvars")
     if token_path:
         confined_path(require(run_env, "pveTokenTfvars", str), run_root, "PVE token source")
