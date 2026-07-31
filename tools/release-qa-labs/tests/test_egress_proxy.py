@@ -87,6 +87,7 @@ class EgressProxyTests(unittest.TestCase):
         self.assertIn("RestrictAddressFamilies=AF_INET AF_UNIX", proxy_unit)
         self.assertIn("Type=notify", proxy_unit)
         self.assertIn("TimeoutStartSec=10s", proxy_unit)
+        self.assertIn("WantedBy=multi-user.target", proxy_unit)
         self.assertIn("BindsTo=routerd-release-qa-egress-proxy@%i.service", main_unit)
         self.assertIn("Requires=routerd-release-qa-egress-proxy@%i.service", prepare_unit)
         self.assertNotIn("PartOf=routerd-release-qa@%i.service", proxy_unit)

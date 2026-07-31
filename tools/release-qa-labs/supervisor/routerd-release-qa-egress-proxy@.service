@@ -20,3 +20,6 @@ ProtectSystem=strict
 ReadOnlyPaths=/var/lib/routerd-release-qa/%i/repo /var/lib/routerd-release-qa/%i/runtime/run.env.json
 ReadWritePaths=/var/lib/routerd-release-qa/%i/runtime/evidence/egress-proxy
 RestrictAddressFamilies=AF_INET AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
