@@ -13,6 +13,7 @@ Options:
   --tofu-output FILE       Raw `tofu output -json` file.
   --out FILE               Patched output file for sam-e2e.sh.
   --pve-node-ssh-host HOST PVE SSH host; defaults to fabric.value.pve.node_name.
+  --ssh-key FILE           Exact private key for PVE node SSH.
   --management-ifname NAME Management interface reported by QGA (default: ens18).
   --retries N              QGA retry attempts per VM (default: 90).
   --retry-sleep SEC        Delay between QGA retries (default: 20).
@@ -23,6 +24,7 @@ USAGE
 tofu_output=
 out=
 pve_node_ssh_host=
+ssh_key=
 management_ifname=ens18
 retries=90
 retry_sleep=20
@@ -33,6 +35,7 @@ while [ "$#" -gt 0 ]; do
     --tofu-output) tofu_output=${2:?missing --tofu-output value}; shift 2 ;;
     --out) out=${2:?missing --out value}; shift 2 ;;
     --pve-node-ssh-host) pve_node_ssh_host=${2:?missing --pve-node-ssh-host value}; shift 2 ;;
+    --ssh-key) ssh_key=${2:?missing --ssh-key value}; shift 2 ;;
     --management-ifname) management_ifname=${2:?missing --management-ifname value}; shift 2 ;;
     --retries) retries=${2:?missing --retries value}; shift 2 ;;
     --retry-sleep) retry_sleep=${2:?missing --retry-sleep value}; shift 2 ;;
@@ -44,6 +47,8 @@ done
 
 [ -n "$tofu_output" ] || { usage >&2; exit 2; }
 [ -n "$out" ] || { usage >&2; exit 2; }
+[ -n "$ssh_key" ] || { echo "--ssh-key is required" >&2; exit 2; }
+[ -f "$ssh_key" ] || { echo "SSH key not found: $ssh_key" >&2; exit 2; }
 [ -f "$tofu_output" ] || { echo "tofu output not found: $tofu_output" >&2; exit 2; }
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }
 
@@ -93,7 +98,7 @@ for entry in "${qga_nodes[@]}"; do
   fi
 
   # shellcheck disable=SC2029 # awk runs on the PVE host, not locally.
-  if ! agent_config="$(ssh "root@$pve_node_ssh_host" "qm config $vmid | awk -F: '\$1 == \"agent\" { gsub(/[[:space:]]/, \"\", \$2); print \$2; exit }'" 2>"$tmp.ssh-stderr")"; then
+  if ! agent_config="$(ssh -i "$ssh_key" "root@$pve_node_ssh_host" "qm config $vmid | awk -F: '\$1 == \"agent\" { gsub(/[[:space:]]/, \"\", \$2); print \$2; exit }'" 2>"$tmp.ssh-stderr")"; then
     cat "$tmp.ssh-stderr" >>"$evidence"
     printf 'PVEQGATransportUnavailable: cannot query QGA capability on PVE host %s\n' "$pve_node_ssh_host" >&2
     exit 2
@@ -111,7 +116,7 @@ for entry in "${qga_nodes[@]}"; do
   raw=
   for attempt in $(seq 1 "$retries"); do
     # shellcheck disable=SC2029 # the redirect is part of the remote QGA readiness check.
-    if raw="$(ssh "root@$pve_node_ssh_host" "qm agent $vmid ping >/dev/null && qm agent $vmid network-get-interfaces" 2>>"$tmp.ssh-stderr")"; then
+    if raw="$(ssh -i "$ssh_key" "root@$pve_node_ssh_host" "qm agent $vmid ping >/dev/null && qm agent $vmid network-get-interfaces" 2>>"$tmp.ssh-stderr")"; then
       break
     fi
     if [ "$attempt" -eq "$retries" ]; then

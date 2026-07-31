@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/sam-pve-bridge-audit.sh --tofu-output tofu-output.json [--evidence FILE]
+  scripts/sam-pve-bridge-audit.sh --tofu-output tofu-output.json --ssh-key FILE [--evidence FILE]
 
 Fails when the PVE capture bridge contains VMs outside the topology described
 by tofu-output.json. This protects SAM qualification from shared overlay
@@ -15,11 +15,13 @@ USAGE
 
 tofu_output=
 evidence=
+ssh_key=
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --tofu-output) tofu_output=${2:?missing --tofu-output value}; shift 2 ;;
     --evidence) evidence=${2:?missing --evidence value}; shift 2 ;;
+    --ssh-key) ssh_key=${2:?missing --ssh-key value}; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -27,6 +29,10 @@ done
 
 [ -n "$tofu_output" ] || { echo "--tofu-output is required" >&2; exit 2; }
 [ -f "$tofu_output" ] || { echo "tofu output not found: $tofu_output" >&2; exit 2; }
+if [ -z "$ssh_key" ] || [ ! -f "$ssh_key" ]; then
+  echo "--ssh-key FILE is required" >&2
+  exit 2
+fi
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }
 
 pve_host="$(jq -r '.fabric.value.pve.node_ssh_host // .fabric.value.pve.node_name // empty' "$tofu_output")"
@@ -49,6 +55,8 @@ if [ ! -s "$tmp_dir/expected.txt" ]; then
   exit 2
 fi
 
+# The single-quoted payload is intentionally expanded only by the remote shell.
+# shellcheck disable=SC2016
 remote_script='
 set -eu
 bridge="$1"
@@ -68,7 +76,7 @@ for id in $(qm list | awk "NR>1 {print \$1}"); do
 done
 '
 
-ssh "root@$pve_host" "bash -s -- $(printf '%q' "$capture_bridge")" <<<"$remote_script" | sort -n >"$tmp_dir/attached.tsv"
+ssh -i "$ssh_key" "root@$pve_host" "bash -s -- $(printf '%q' "$capture_bridge")" <<<"$remote_script" | sort -n >"$tmp_dir/attached.tsv"
 
 {
   echo "pve_host=$pve_host"

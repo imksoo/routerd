@@ -15,6 +15,9 @@ write_output() {
 }
 
 fake_bin="$tmp/bin"; mkdir -p "$fake_bin"
+ssh_key="$tmp/pve_ssh"
+: >"$ssh_key"
+chmod 0600 "$ssh_key"
 cat >"$fake_bin/ssh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -31,46 +34,46 @@ chmod +x "$fake_bin/ssh"
 
 write_output template
 : >"$tmp/ssh.log"
-if PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" "$SCRIPT" --tofu-output "$tmp/in.json" --out "$tmp/out.json" --retries 1 >"$tmp/stdout" 2>"$tmp/stderr"; then die "template unexpectedly passed"; fi
+if PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" "$SCRIPT" --ssh-key "$ssh_key" --tofu-output "$tmp/in.json" --out "$tmp/out.json" --retries 1 >"$tmp/stdout" 2>"$tmp/stderr"; then die "template unexpectedly passed"; fi
 [ "$(wc -l <"$tmp/ssh.log")" -eq 0 ] || die "template used SSH"
 grep -q PVEQGAUnsupportedBootSource "$tmp/stderr" || die "missing boot-source diagnostic"
 
 write_output iso
 : >"$tmp/ssh.log"
-PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" "$SCRIPT" --tofu-output "$tmp/in.json" --out "$tmp/out.json" --retries 1 --retry-sleep 0 --evidence "$tmp/evidence" >/dev/null
+PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" "$SCRIPT" --ssh-key "$ssh_key" --tofu-output "$tmp/in.json" --out "$tmp/out.json" --retries 1 --retry-sleep 0 --evidence "$tmp/evidence" >/dev/null
 grep -q 'qga_configured=true' "$tmp/evidence" || die "missing safe capability evidence"
 grep -q '192.0.2.20' "$tmp/out.json" || die "QGA address was not patched"
 
 write_output iso
 : >"$tmp/ssh.log"
-if PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" QGA_AGENT_MODE=0 "$SCRIPT" --tofu-output "$tmp/in.json" --out "$tmp/out.json" --retries 1 >"$tmp/stdout" 2>"$tmp/stderr"; then die "disabled agent unexpectedly passed"; fi
+if PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" QGA_AGENT_MODE=0 "$SCRIPT" --ssh-key "$ssh_key" --tofu-output "$tmp/in.json" --out "$tmp/out.json" --retries 1 >"$tmp/stdout" 2>"$tmp/stderr"; then die "disabled agent unexpectedly passed"; fi
 [ "$(wc -l <"$tmp/ssh.log")" -eq 1 ] || die "disabled agent entered readiness retry"
 grep -q PVEQGADisabled "$tmp/stderr" || die "missing disabled-agent diagnostic"
 
 write_output iso
 : >"$tmp/ssh.log"
-if PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" QGA_TRANSPORT_FAIL=1 "$SCRIPT" --tofu-output "$tmp/in.json" --out "$tmp/out.json" --retries 1 --evidence "$tmp/evidence" >"$tmp/stdout" 2>"$tmp/stderr"; then die "unavailable transport unexpectedly passed"; fi
+if PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" QGA_TRANSPORT_FAIL=1 "$SCRIPT" --ssh-key "$ssh_key" --tofu-output "$tmp/in.json" --out "$tmp/out.json" --retries 1 --evidence "$tmp/evidence" >"$tmp/stdout" 2>"$tmp/stderr"; then die "unavailable transport unexpectedly passed"; fi
 grep -q PVEQGATransportUnavailable "$tmp/stderr" || die "missing transport diagnostic"
 grep -q 'permission denied' "$tmp/evidence" || die "transport stderr was not preserved in evidence"
 
 write_output template '' 10.0.0.20
 : >"$tmp/ssh.log"
-PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" "$SCRIPT" --tofu-output "$tmp/in.json" --out "$tmp/out.json" --retries 1 >/dev/null
+PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" "$SCRIPT" --ssh-key "$ssh_key" --tofu-output "$tmp/in.json" --out "$tmp/out.json" --retries 1 >/dev/null
 [ "$(wc -l <"$tmp/ssh.log")" -eq 0 ] || die "private address should bypass QGA"
 
 write_output template '' 10.0.0.20 '' 141
 : >"$tmp/ssh.log"
-PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" "$SCRIPT" --tofu-output "$tmp/in.json" --out "$tmp/out.json" --retries 1 >/dev/null
+PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" "$SCRIPT" --ssh-key "$ssh_key" --tofu-output "$tmp/in.json" --out "$tmp/out.json" --retries 1 >/dev/null
 [ "$(wc -l <"$tmp/ssh.log")" -eq 0 ] || die "private address should not require a PVE SSH host"
 
 write_output template '' 10.0.0.20 pve06 null
 : >"$tmp/ssh.log"
-PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" "$SCRIPT" --tofu-output "$tmp/in.json" --out "$tmp/out.json" --retries 1 >/dev/null
+PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" "$SCRIPT" --ssh-key "$ssh_key" --tofu-output "$tmp/in.json" --out "$tmp/out.json" --retries 1 >/dev/null
 [ "$(wc -l <"$tmp/ssh.log")" -eq 0 ] || die "private address should not require a VM ID"
 
 write_output iso
 : >"$tmp/ssh.log"
-PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" QGA_AGENT_MODE='enabled=1,fstrim_cloned_disks=1' "$SCRIPT" --tofu-output "$tmp/in.json" --out "$tmp/out.json" --retries 1 --retry-sleep 0 >/dev/null
+PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" QGA_AGENT_MODE='enabled=1,fstrim_cloned_disks=1' "$SCRIPT" --ssh-key "$ssh_key" --tofu-output "$tmp/in.json" --out "$tmp/out.json" --retries 1 --retry-sleep 0 >/dev/null
 grep -q '192.0.2.20' "$tmp/out.json" || die "enabled=1 QGA agent was not accepted"
 
 echo "sam PVE QGA offline OK"
