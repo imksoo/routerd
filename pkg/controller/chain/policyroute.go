@@ -97,6 +97,13 @@ type ipv6HostPolicyState struct {
 	Policies []ipv6HostPolicy `json:"policies"`
 }
 
+// isSourceRule also recognizes the short-lived on-disk form written while
+// this feature was being introduced. That form has no route fields and is
+// therefore unambiguously a source-only rule, even if ruleFrom is absent.
+func (p ipv6HostPolicy) isSourceRule() bool {
+	return p.RuleFrom || (p.Lookup != "" && p.Table == 0 && p.Gateway == "" && p.Interface == "" && p.Source != "")
+}
+
 func (c IPv4PolicyRouteController) reconcileIPv6HostPolicies(ctx context.Context) {
 	path := firstNonEmpty(c.HostPolicyStatePath, "/run/routerd/ipv6-host-policy.json")
 	previous, err := loadIPv6HostPolicyState(path)
@@ -139,7 +146,7 @@ func (c IPv4PolicyRouteController) reconcileIPv6HostPolicies(ctx context.Context
 		}
 	}
 	for _, policy := range desired {
-		if policy.RuleFrom {
+		if policy.isSourceRule() {
 			continue
 		}
 		if unavailable[policy.Name] || transient[policy.Name] {
@@ -240,7 +247,7 @@ func (c IPv4PolicyRouteController) applyIPv6HostPolicyState(ctx context.Context,
 			applied.Policies = append(applied.Policies, policy)
 			continue
 		}
-		if !policy.RuleFrom {
+		if !policy.isSourceRule() {
 			if out, err := c.commandOutput(ctx, "ip", "-6", "route", "replace", "default", "via", policy.Gateway, "dev", policy.Interface, "table", strconv.Itoa(policy.Table), "metric", strconv.Itoa(policy.Metric), "src", policy.Source); err != nil {
 				if transientIPv6HostPolicyError(out, err) {
 					c.logHostPolicyTransient(policy, "route replace", out, err)
@@ -314,7 +321,7 @@ func (c IPv4PolicyRouteController) ensureIPv6HostRule(ctx context.Context, polic
 	table := firstNonEmpty(policy.Lookup, strconv.Itoa(policy.Table))
 	for _, line := range strings.Split(string(out), "\n") {
 		selector := "iif lo"
-		if policy.RuleFrom {
+		if policy.isSourceRule() {
 			// ip rule show renders a host prefix as the bare address, while
 			// ip rule add requires the explicit /128 we persist in state.
 			selector = "from " + policy.Source
@@ -324,7 +331,7 @@ func (c IPv4PolicyRouteController) ensureIPv6HostRule(ctx context.Context, polic
 		}
 	}
 	args := []string{"-6", "rule", "add", "priority", priority}
-	if policy.RuleFrom {
+	if policy.isSourceRule() {
 		args = append(args, "from", policy.Source+"/128")
 	} else {
 		args = append(args, "iif", "lo")
@@ -359,14 +366,14 @@ func (c IPv4PolicyRouteController) deleteIPv6HostPolicy(ctx context.Context, pol
 		return nil
 	}
 	rule := []string{"-6", "rule", "del", "priority", strconv.Itoa(policy.Priority)}
-	if policy.RuleFrom {
+	if policy.isSourceRule() {
 		rule = append(rule, "from", policy.Source+"/128")
 	} else {
 		rule = append(rule, "iif", "lo")
 	}
 	rule = append(rule, "lookup", firstNonEmpty(policy.Lookup, strconv.Itoa(policy.Table)))
 	commands := [][]string{rule}
-	if !policy.RuleFrom {
+	if !policy.isSourceRule() {
 		commands = append(commands, []string{"-6", "route", "del", "default", "via", policy.Gateway, "dev", policy.Interface, "table", strconv.Itoa(policy.Table), "metric", strconv.Itoa(policy.Metric), "src", policy.Source})
 	}
 	for _, args := range commands {

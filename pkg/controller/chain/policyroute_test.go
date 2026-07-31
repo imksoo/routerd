@@ -246,6 +246,45 @@ func TestIPv6HostPolicyRecognizesKernelHostPrefixDisplay(t *testing.T) {
 	}
 }
 
+func TestIPv6HostPolicyMigratesLegacySourceRuleStateWithoutDeletingRoute(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "ipv6-host-policy.json")
+	previous := ipv6HostPolicyState{Policies: []ipv6HostPolicy{
+		{Name: "host-ipv6-ra", Priority: 10120, Table: 120, Gateway: "fe80::1", Interface: "wan0", Source: "2001:db8::2", Metric: 50},
+		// ruleFrom was absent in the short-lived initial state format.
+		{Name: "dslite-source-ds-lite-ra", Priority: 10100, Lookup: "main", Source: "2001:db8:1200::23"},
+	}}
+	if err := writeIPv6HostPolicyState(statePath, previous); err != nil {
+		t.Fatal(err)
+	}
+	router := hostPolicyRouter(true)
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-ra"}, Spec: api.DSLiteTunnelSpec{Interface: "wan-vmac"}})
+	store := mapStore{api.NetAPIVersion + "/DSLiteTunnel/ds-lite-ra": {"localIPv6": "2001:db8:1200::23"}}
+	var calls []string
+	controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		call := name + " " + strings.Join(args, " ")
+		calls = append(calls, call)
+		switch call {
+		case "ip -o link show dev wan0":
+			return []byte("2: wan0: <BROADCAST,UP,LOWER_UP> mtu 1500 state UP mode DEFAULT group default\n"), nil
+		case "ip -6 -o addr show dev wan0 scope global":
+			return []byte("2: wan0 inet6 2001:db8::2/64 scope global\n"), nil
+		case "ip -6 rule show":
+			return []byte("10100: from 2001:db8:1200::23 lookup main\n10120: from all iif lo lookup 120\n"), nil
+		}
+		return nil, nil
+	}}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(calls, "\n")
+	if strings.Contains(joined, "route del default via  dev  table 0") {
+		t.Fatalf("legacy source rule must not be treated as a route policy:\n%s", joined)
+	}
+	if !strings.Contains(joined, "ip -6 rule del priority 10100 from 2001:db8:1200::23/128 lookup main") {
+		t.Fatalf("legacy source rule was not deleted as a source rule:\n%s", joined)
+	}
+}
+
 func TestIPv6HostPolicyInitialSourceUnavailableDoesNotApply(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "ipv6-host-policy.json")
 	store := mapStore{}
