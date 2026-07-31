@@ -1,6 +1,8 @@
 [Unit]
 Description=prepare pinned provider authentication for routerd release QA %i
 Before=routerd-release-qa@%i.service
+Requires=routerd-release-qa-egress-proxy@%i.service
+After=routerd-release-qa-egress-proxy@%i.service
 
 [Service]
 Type=oneshot

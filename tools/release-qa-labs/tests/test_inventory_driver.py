@@ -50,7 +50,7 @@ class InventoryDriverTests(unittest.TestCase):
         ssh_key.chmod(0o600)
         run_env_path = self.runtime / "run.env.json"
         run_env_path.write_text(json.dumps({
-            "httpsProxy": "http://proxy.invalid:3128", "noProxy": "localhost,pve01",
+            "httpsProxy": "http://127.0.0.1:18081", "noProxy": "localhost,pve01",
             "pveTokenTfvars": str(token), "pveSshPrivateKey": str(ssh_key),
         }), encoding="utf-8")
         run_env_path.chmod(0o600)

@@ -56,7 +56,7 @@ class ContractGuardTests(unittest.TestCase):
         (self.azure_source / "azureProfile.json").chmod(0o600)
         write_json(pinned / "run.env.json", {
             "releaseRepo": str(self.release), "pveSshPrivateKey": str(self.ssh_key),
-            "azureAuthSource": str(self.azure_source),
+            "azureAuthSource": str(self.azure_source), "httpsProxy": "http://127.0.0.1:18081",
         })
         self.contract = {
             "runId": "run-1",
@@ -215,7 +215,7 @@ class ContractGuardTests(unittest.TestCase):
         self.contract_path = self.runtime / "pinned/contract.json"
         write_json(self.runtime / "pinned/run.env.json", {
             "releaseRepo": str(self.release), "pveSshPrivateKey": str(self.ssh_key),
-            "azureAuthSource": str(self.azure_source),
+            "azureAuthSource": str(self.azure_source), "httpsProxy": "http://127.0.0.1:18081",
         })
         self.verify(self.fake_git())
 
@@ -279,7 +279,8 @@ class ContractGuardTests(unittest.TestCase):
 
         def set_key(value):
             write_json(run_env, {"releaseRepo": str(self.release), "pveSshPrivateKey": str(value),
-                                 "azureAuthSource": str(self.azure_source)})
+                                 "azureAuthSource": str(self.azure_source),
+                                 "httpsProxy": "http://127.0.0.1:18081"})
 
         set_key(key)
         self.verify(self.fake_git())
@@ -317,7 +318,8 @@ class ContractGuardTests(unittest.TestCase):
         def set_source(value):
             write_json(run_env, {"releaseRepo": str(self.release),
                                  "pveSshPrivateKey": str(self.ssh_key),
-                                 "azureAuthSource": str(value)})
+                                 "azureAuthSource": str(value),
+                                 "httpsProxy": "http://127.0.0.1:18081"})
 
         set_source(self.azure_source)
         self.verify(self.fake_git())

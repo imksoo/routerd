@@ -2,8 +2,9 @@
 Description=routerd release QA durable lifecycle %i
 After=network-online.target
 Wants=network-online.target
+BindsTo=routerd-release-qa-egress-proxy@%i.service
 Requires=routerd-release-qa-prepare@%i.service
-After=routerd-release-qa-prepare@%i.service
+After=routerd-release-qa-egress-proxy@%i.service routerd-release-qa-prepare@%i.service
 StartLimitIntervalSec=0
 
 [Service]
