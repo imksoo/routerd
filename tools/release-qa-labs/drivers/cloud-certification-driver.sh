@@ -62,7 +62,6 @@ record_check tooling "" "CloudEdge pre-apply contract" pass "artifact, name budg
 
 tofu -chdir="$tf_dir" apply -help >"$preflight_dir/tofu-apply-help.txt"
 if ! run_with_progress tofu-init \
-  env TF_CLI_CONFIG_FILE="$framework_root/tofu.rc" \
   tofu -chdir="$tf_dir" init -input=false -lockfile=readonly \
     -backend-config="path=$tofu_state_path"; then
   fail_driver "OpenTofu init failed"
