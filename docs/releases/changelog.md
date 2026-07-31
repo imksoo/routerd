@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260731.1514
+
 ### Changed
 
 - Linux `NAT44SessionSync` conntrackd mode now requires an explicit runtime,
