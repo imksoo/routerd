@@ -1481,18 +1481,62 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 		} else if preserved {
 			continue
 		}
-		if current := store.ObjectStatus(apiVersion, res.Kind, res.Metadata.Name); statusIsPendingWhenFalse(current) {
+		current := store.ObjectStatus(apiVersion, res.Kind, res.Metadata.Name)
+		if statusIsPendingWhenFalse(current) {
+			next := copyStatusMap(current)
+			if preserveStaticVirtualAddressCleanupStatus(res, current, next) {
+				if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, next); err != nil {
+					return err
+				}
+			}
 			continue
 		}
-		if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, map[string]any{
+		status := map[string]any{
 			"phase":      "Pending",
 			"reason":     "WhenFalse",
 			"observedAt": now.Format(time.RFC3339Nano),
-		}); err != nil {
+		}
+		preserveStaticVirtualAddressCleanupStatus(res, current, status)
+		if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, status); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// preserveStaticVirtualAddressCleanupStatus retains only the ownership data
+// needed by the VRRP controller to remove a static address after its when
+// condition becomes false. The resource is filtered out of the effective
+// router before VRRP reconciliation, so dropping these fields would leave the
+// address configured on the host indefinitely.
+func preserveStaticVirtualAddressCleanupStatus(res api.Resource, current, status map[string]any) bool {
+	if res.Kind != "VirtualAddress" {
+		return false
+	}
+	spec, err := res.VirtualAddressSpec()
+	if err != nil || (strings.TrimSpace(spec.Mode) != "" && spec.Mode != "static") {
+		return false
+	}
+	changed := false
+	for _, key := range []string{"backend", "ifname", "appliedAddress"} {
+		if value := statusString(current, key); value != "" {
+			if statusString(status, key) == "" {
+				status[key] = value
+				changed = true
+			}
+		}
+	}
+	// A status written by older routerd versions may already be
+	// Pending/WhenFalse and have lost the ownership fields above. Keep the
+	// declared address and logical interface so the VRRP controller can perform
+	// an idempotent one-time cleanup of that legacy address.
+	for key, value := range map[string]string{"address": spec.Address, "interface": spec.Interface} {
+		if strings.TrimSpace(value) != "" && statusString(status, key) == "" {
+			status[key] = value
+			changed = true
+		}
+	}
+	return changed
 }
 
 // preserveStagedIPv6DelegatedAddressWhenFalse keeps a LAN address which the

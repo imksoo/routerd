@@ -655,6 +655,51 @@ func TestReconcileCleansRemovedStaticVirtualAddressIPv4(t *testing.T) {
 	}
 }
 
+func TestReconcileCleansStaticVirtualAddressWhenConditionBecomesFalse(t *testing.T) {
+	store := mapStore{
+		api.NetAPIVersion + "/VirtualAddress/wan-nat-v4": {
+			"phase":     "Pending",
+			"reason":    "WhenFalse",
+			"interface": "wan",
+			"address":   "192.168.1.249/32",
+		},
+	}
+	var calls []string
+	controller := Controller{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18"},
+			},
+		}}},
+		Store:           store,
+		IP:              "ip",
+		OperatingSystem: platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := []string{"ip addr del 192.168.1.249/32 dev ens18"}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "wan-nat-v4")
+	if status["phase"] != "Pending" || status["reason"] != "WhenFalse" || status["appliedAddress"] != "" || status["staticAddressRemoved"] != true {
+		t.Fatalf("stale WhenFalse VIP status was not cleared: %#v", status)
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("second reconcile repeated cleanup: calls = %#v, want %#v", calls, want)
+	}
+}
+
 func TestReconcileStopsKeepalivedWhenVRRPRemoved(t *testing.T) {
 	store := mapStore{}
 	dir := t.TempDir()
