@@ -1051,6 +1051,59 @@ func TestIPv4StaticAddressControllerKeepsDeclaredWhenFalseOutOfRemovedCleanup(t 
 	}
 }
 
+func TestIPv4StaticAddressControllerRemovesLegacyWhenFalseAddressFromPersistentInterface(t *testing.T) {
+	whenMaster := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+		"VirtualAddress/lan-gw-v4.role": {Equals: "master"},
+	}}
+	declared := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "master-source"}, Spec: api.IPv4StaticAddressSpec{Interface: "wan", Address: "192.0.2.249/32", When: whenMaster}},
+	}}}
+	effective := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
+	}}}
+	store := mapStore{
+		api.NetAPIVersion + "/VirtualAddress/lan-gw-v4":        {"role": "backup"},
+		api.NetAPIVersion + "/IPv4StaticAddress/master-source": {"phase": "Pending", "reason": "WhenFalse", "interface": "wan", "address": "192.0.2.249/32"},
+	}
+	present := true
+	var commands []string
+	controller := IPv4StaticAddressController{
+		Router:         effective,
+		DeclaredRouter: effective,
+		WhenRouter:     declared,
+		Store:          store,
+		AddressPresent: func(_ context.Context, ifname, address string) bool {
+			if ifname != "ens18" || address != "192.0.2.249/32" {
+				t.Fatalf("address presence check = %s %s", ifname, address)
+			}
+			return present
+		},
+		Command: func(_ context.Context, name string, args ...string) error {
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			present = false
+			return nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"ip -4 addr del 192.0.2.249/32 dev ens18"}
+	if !reflect.DeepEqual(commands, want) {
+		t.Fatalf("commands = %#v, want %#v", commands, want)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "master-source")
+	if status["phase"] != "Pending" || status["reason"] != "WhenFalse" || status["ifname"] != "ens18" || status["staticAddressRemoved"] != true {
+		t.Fatalf("status = %#v, want retained Pending/WhenFalse cleanup status", status)
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(commands, want) {
+		t.Fatalf("commands after second reconcile = %#v, want one deletion", commands)
+	}
+}
+
 func TestIPv4StaticAddressControllerKeepsGeneratedWireGuardSAMAddress(t *testing.T) {
 	startup := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

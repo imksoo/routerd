@@ -186,6 +186,37 @@ func TestSaveWhenFalseStatusesHydratesLegacyStaticVirtualAddressForCleanup(t *te
 	}
 }
 
+func TestSaveWhenFalseStatusesRetainsIPv4StaticAddressCleanupMetadata(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.InterfaceSpec{IfName: "ens18"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+			Metadata: api.ObjectMeta{Name: "master-source"},
+			Spec: api.IPv4StaticAddressSpec{
+				Interface: "wan", Address: "192.0.2.249/32",
+				When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+					"VirtualAddress/lan-gw-v4.role": {Equals: "master"},
+				}},
+			},
+		},
+	}}}
+	store := mapStore{
+		api.NetAPIVersion + "/VirtualAddress/lan-gw-v4":        {"role": "backup"},
+		api.NetAPIVersion + "/IPv4StaticAddress/master-source": {"phase": "Pending", "reason": "WhenFalse", "interface": "wan", "address": "192.0.2.249/32"},
+	}
+	if err := (&Runner{Router: router}).saveWhenFalseStatuses(eventedStore{Store: store}); err != nil {
+		t.Fatalf("saveWhenFalseStatuses returned error: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "master-source")
+	if got := status["ifname"]; got != "ens18" {
+		t.Fatalf("ifname = %v, want ens18; status=%#v", got, status)
+	}
+}
+
 func TestSaveWhenFalseStatusesPreservesExistingWhenFalseDetails(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
