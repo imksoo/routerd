@@ -43,8 +43,78 @@ hosts=(
 for host in "${hosts[@]}"; do
   getent ahosts "$host" >"$out/dns-${host//[^A-Za-z0-9_.-]/_}.txt"
 done
+
+resolved_addresses() {
+  local family="$1" host="$2"
+  getent "ahostsv$family" "$host" 2>/dev/null |
+    awk '$2 == "STREAM" && !seen[$1]++ {print $1}'
+}
+
+tcp_literal() {
+  local address="$1" port="$2"
+  # Expansion is intentionally deferred to the inner Bash positional args.
+  # shellcheck disable=SC2016
+  timeout 10 bash -c 'exec 3<>"/dev/tcp/$1/$2"' bash "$address" "$port"
+}
+
+direct_tcp_tls() {
+  local host="$1" port="$2" result="$3"
+  local family address connect selected=
+  : >"$result.attempts"
+  for family in 6 4; do
+    while IFS= read -r address; do
+      [ -n "$address" ] || continue
+      printf 'family=ipv%s address=%s tcp=' "$family" "$address" >>"$result.attempts"
+      if ! tcp_literal "$address" "$port"; then
+        printf 'fail tls=not-run\n' >>"$result.attempts"
+        continue
+      fi
+      printf 'pass tls=' >>"$result.attempts"
+      if [ "$family" = 6 ]; then
+        connect="[$address]:$port"
+      else
+        connect="$address:$port"
+      fi
+      if timeout 15 openssl s_client "-$family" -connect "$connect" \
+          -servername "$host" -verify_hostname "$host" -verify_return_error \
+          </dev/null >"$result" 2>&1; then
+        printf 'pass\n' >>"$result.attempts"
+        selected="family=ipv$family address=$address host=$host port=$port"
+        printf '%s\n' "$selected" >"$result.selected"
+        return 0
+      fi
+      printf 'fail\n' >>"$result.attempts"
+    done < <(resolved_addresses "$family" "$host")
+  done
+  echo "release lab driver: no TCP+TLS-capable address for $host:$port" >&2
+  return 2
+}
+
+direct_tcp_any_family() {
+  local host="$1" port="$2" result="$3"
+  local family address
+  : >"$result.attempts"
+  for family in 6 4; do
+    while IFS= read -r address; do
+      [ -n "$address" ] || continue
+      if tcp_literal "$address" "$port"; then
+        printf 'family=ipv%s address=%s tcp=pass\n' "$family" "$address" >>"$result.attempts"
+        printf 'family=ipv%s address=%s host=%s port=%s\n' \
+          "$family" "$address" "$host" "$port" >"$result.selected"
+        return 0
+      fi
+      printf 'family=ipv%s address=%s tcp=fail\n' "$family" "$address" >>"$result.attempts"
+    done < <(resolved_addresses "$family" "$host")
+  done
+  echo "release lab driver: no TCP-capable address for $host:$port" >&2
+  return 2
+}
+
 proxy="${HTTPS_PROXY:-${https_proxy:-}}"
 if [ -n "$proxy" ]; then
+  # In proxy mode the explicit TCP gate is for the proxy endpoint. curl then
+  # performs the origin TLS exchange through that proxy; this path does not
+  # claim that the proxy and origin use the same address family.
   proxy_authority="${proxy#*://}"
   proxy_authority="${proxy_authority%%/*}"
   proxy_host="${proxy_authority%%:*}"
@@ -58,12 +128,12 @@ if [ -n "$proxy" ]; then
   done
 else
   for host in "${hosts[@]:0:4}"; do
-    timeout 10 bash -c "exec 3<>/dev/tcp/$host/443"
-    timeout 15 openssl s_client -connect "$host:443" -servername "$host" \
-      -verify_return_error </dev/null >"$out/tls-${host//[^A-Za-z0-9_.-]/_}.txt" 2>&1
+    direct_tcp_tls "$host" 443 "$out/tls-${host//[^A-Za-z0-9_.-]/_}.txt"
   done
 fi
-timeout 10 bash -c "exec 3<>/dev/tcp/$pve_host/8006"
+# PVE's API endpoint is only a TCP reachability gate here. Its authenticated
+# API/SSH checks below are separate and do not claim a shared selected family.
+direct_tcp_any_family "$pve_host" 8006 "$out/tcp-${pve_host//[^A-Za-z0-9_.-]/_}-8006"
 
 # Authenticated reads are deliberately redirected to private evidence files.
 aws --profile "$(extract_tfvars_string "$tfvars_path" aws_profile)" \
