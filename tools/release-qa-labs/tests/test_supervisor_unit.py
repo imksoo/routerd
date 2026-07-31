@@ -27,6 +27,11 @@ class SupervisorUnitTests(unittest.TestCase):
         self.assertTrue(launcher.stat().st_mode & 0o111)
         self.assertIn("lifecycle_supervisor.py", launcher.read_text(encoding="utf-8"))
 
+        prepare = (ROOT / "supervisor" / "routerd-release-qa-prepare@.service").read_text(encoding="utf-8")
+        self.assertIn("Group=routerd-release-qa", prepare)
+        self.assertNotIn("User=routerd-release-qa", prepare)
+        self.assertIn("StateDirectory=routerd-release-qa-sealed/%i", prepare)
+
     def test_launcher_does_not_replace_contract_lifecycle_with_policy_maxima(self):
         launcher = (ROOT / "drivers" / "start-supervised-release-qa.sh").read_text(encoding="utf-8")
         for hardcoded in (

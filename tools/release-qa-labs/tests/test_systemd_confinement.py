@@ -42,6 +42,7 @@ class SystemdConfinementTests(unittest.TestCase):
             script.chmod(0o755)
             result = subprocess.run([
                 "sudo", "-n", "systemd-run", "--quiet", "--wait", "--pipe",
+                "-p", f"Group={os.getgid()}",
                 "-p", "ProtectSystem=strict", "-p", "PrivateNetwork=true",
                 "-p", f"ReadWritePaths={sealed}",
                 "-p", f"ReadOnlyPaths={runtime / 'secrets'}",
@@ -67,6 +68,66 @@ class SystemdConfinementTests(unittest.TestCase):
                 ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
                 self.assertNotEqual(denied.returncode, 0, denied_command)
             subprocess.run(["sudo", "-n", "chown", "-R", f"{os.getuid()}:{os.getgid()}", temporary], check=True)
+
+    def test_state_directory_reconcile_preserves_prepare_pins_across_three_runs(self):
+        self.require_systemd_sudo()
+        run_id = f"test-{uuid.uuid4().hex}"
+        sealed = Path("/var/lib/routerd-release-qa-sealed") / run_id
+        with tempfile.TemporaryDirectory(dir="/var/tmp") as temporary:
+            base = Path(temporary) / "runs"
+            source = base / run_id / "runtime/secrets/azure-auth-source"
+            source.mkdir(parents=True, mode=0o700)
+            source.chmod(0o700)
+            profile = source / "profile"
+            profile.write_text("auth\n")
+            profile.chmod(0o600)
+            script = Path(temporary) / "prepare-provider-auth.sh"
+            script.write_text(
+                (ROOT / "drivers/prepare-provider-auth.sh").read_text()
+                .replace("/var/lib/routerd-release-qa", str(base))
+                .replace(f"{base}-sealed", "/var/lib/routerd-release-qa-sealed")
+                .replace("service_user=routerd-release-qa", f"service_user={pwd.getpwuid(os.getuid()).pw_name}")
+                .replace("service_group=routerd-release-qa", f"service_group={os.getgid()}")
+            )
+            script.chmod(0o755)
+            command = [
+                "sudo", "-n", "systemd-run", "--quiet", "--wait", "--pipe",
+                "-p", f"Group={os.getgid()}",
+                "-p", f"StateDirectory=routerd-release-qa-sealed/{run_id}",
+                "-p", "StateDirectoryMode=0711",
+                "-p", "PrivateNetwork=true", "-p", "RestrictAddressFamilies=AF_UNIX",
+                str(script), run_id,
+            ]
+            try:
+                first = subprocess.run(command, text=True, stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE, check=False)
+                self.assertEqual(first.returncode, 0, first.stderr)
+
+                def sealed_identity():
+                    result = subprocess.run([
+                        "sudo", "-n", "find", sealed, "-printf", "%P %u:%G:%m %y\\n",
+                    ], text=True, stdout=subprocess.PIPE, check=True)
+                    digest = subprocess.run([
+                        "sudo", "-n", "sha256sum", sealed / "azure-auth-source.sha256",
+                        sealed / "azure-auth-snapshot/profile",
+                    ], text=True, stdout=subprocess.PIPE, check=True)
+                    return sorted(result.stdout.splitlines()), digest.stdout
+
+                initial = sealed_identity()
+                self.assertTrue(initial[0][0].endswith(f"root:{os.getgid()}:750 d"), initial[0])
+                self.assertIn(f"azure-auth-source.sha256 root:{os.getgid()}:640 f", initial[0])
+                second = subprocess.run(command, text=True, stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE, check=False)
+                self.assertEqual(second.returncode, 0, second.stderr)
+                self.assertEqual(sealed_identity(), initial)
+                shutil.rmtree(source)
+                third = subprocess.run(command, text=True, stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE, check=False)
+                self.assertEqual(third.returncode, 0, third.stderr)
+                self.assertEqual(sealed_identity(), initial)
+            finally:
+                subprocess.run(["sudo", "-n", "rm", "-rf", "--", sealed], check=False)
+                subprocess.run(["sudo", "-n", "chown", "-R", f"{os.getuid()}:{os.getgid()}", temporary], check=True)
 
     def test_state_directory_creates_exact_root_owned_run_and_parent_blocks_rename(self):
         self.require_systemd_sudo()
@@ -184,14 +245,22 @@ class SystemdConfinementTests(unittest.TestCase):
             inventory.write_text(json.dumps({"scopes": [
                 {"name": name, "count": 0, "queryStatus": "complete"} for name in scopes
             ]}))
+            for phase in ("MUTATING", "STOPPING", "CLEANING", "VERIFYING_ZERO"):
+                lifecycle.write_text(json.dumps({
+                    "phase": phase, "mutationCommandExecuted": True, "mutationPgid": 123,
+                }))
+                post_mutation = subprocess.run(
+                    ["sudo", "-n", "env", env_path, finalize, run_id], check=False
+                )
+                self.assertNotEqual(post_mutation.returncode, 0, phase)
+                self.assertEqual(subprocess.run(["sudo", "-n", "test", "-d", child]).returncode, 0)
             lifecycle.write_text(json.dumps({
-                "phase": "MUTATING", "mutationCommandExecuted": True, "mutationPgid": 123,
+                "phase": "STAGING_ARMED", "mutationCommandExecuted": True, "mutationPgid": 123,
             }))
-            post_mutation = subprocess.run(["sudo", "-n", "env", env_path, finalize, run_id], check=False)
-            self.assertNotEqual(post_mutation.returncode, 0)
-            self.assertEqual(subprocess.run(["sudo", "-n", "test", "-d", child]).returncode, 0)
+            armed_mutated = subprocess.run(["sudo", "-n", "env", env_path, finalize, run_id], check=False)
+            self.assertNotEqual(armed_mutated.returncode, 0)
             lifecycle.write_text(json.dumps({
-                "phase": "PRECHECK", "mutationCommandExecuted": False, "mutationPgid": None,
+                "phase": "STAGING_ARMED", "mutationCommandExecuted": False, "mutationPgid": None,
             }))
             allowed = subprocess.run(["sudo", "-n", "env", env_path, finalize, run_id], check=False)
             self.assertEqual(allowed.returncode, 0)

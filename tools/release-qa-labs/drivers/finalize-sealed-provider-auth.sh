@@ -21,9 +21,9 @@ for unit in "routerd-release-qa@$run_id.service" "routerd-release-qa-prepare@$ru
   }
 done
 phase="$(jq -er '.phase' "$state")"
-safe_precheck="$(jq -er '(.phase == "PRECHECK") and (.mutationCommandExecuted == false) and (.mutationPgid == null)' "$state" || true)"
-if [[ ! "$phase" =~ ^(STAGING_DONE|DONE|FAILED)$ ]] && [ "$safe_precheck" != true ]; then
-  echo "sealed auth finalize: lifecycle is neither terminal nor an unmutated PRECHECK" >&2; exit 2
+safe_unmutated="$(jq -er '((.phase == "PRECHECK") or (.phase == "STAGING_ARMED")) and (.mutationCommandExecuted == false) and (.mutationPgid == null)' "$state" || true)"
+if [[ ! "$phase" =~ ^(STAGING_DONE|DONE|FAILED)$ ]] && [ "$safe_unmutated" != true ]; then
+  echo "sealed auth finalize: lifecycle is neither terminal nor an explicitly safe unmutated phase" >&2; exit 2
 fi
 python3 "$guard" inventory --inventory-json "$inventory" >/dev/null || {
   echo "sealed auth finalize: authoritative inventory is not zero" >&2; exit 2;

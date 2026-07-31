@@ -68,8 +68,8 @@ class LauncherRestartTests(unittest.TestCase):
                     fake_cp.chmod(0o755)
                     env["PATH"] = f"{fake_bin}:{env['PATH']}"
                     env["AZURE_TEST_SOURCE"] = str(source)
-                sudo_env = ["sudo", "-n", "env"]
                 (Path(temporary) / "sealed/run-1").mkdir(parents=True, mode=0o750)
+                sudo_env = ["sudo", "-n", "-u", "root", "-g", f"#{os.getgid()}", "env"]
                 if kind == "source-change-during-copy":
                     sudo_env += [f"PATH={env['PATH']}", f"AZURE_TEST_SOURCE={source}"]
                 result = subprocess.run(sudo_env + [str(prepare), "run-1"], text=True,
@@ -163,7 +163,7 @@ class LauncherRestartTests(unittest.TestCase):
             state_path = lifecycle_dir / "supervisor-state.json"
             command = [str(launcher), str(runtime / "contract.json")]
             (Path(temporary) / "sealed/run-1").mkdir(parents=True, mode=0o750)
-            prepared = subprocess.run(["sudo", "-n", str(prepare), "run-1"], text=True,
+            prepared = subprocess.run(["sudo", "-n", "-u", "root", "-g", f"#{os.getgid()}", str(prepare), "run-1"], text=True,
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
             self.assertEqual(prepared.returncode, 0, prepared.stderr)
             first = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,

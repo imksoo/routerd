@@ -4,6 +4,7 @@ Before=routerd-release-qa@%i.service
 
 [Service]
 Type=oneshot
+Group=routerd-release-qa
 ExecStart=/var/lib/routerd-release-qa/%i/repo/tools/release-qa-labs/drivers/prepare-provider-auth.sh %i
 StateDirectory=routerd-release-qa-sealed/%i
 StateDirectoryMode=0711
