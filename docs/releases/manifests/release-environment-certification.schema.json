@@ -199,6 +199,24 @@
     "run": {
       "type": "object",
       "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": ["labsCommit"],
+          "properties": {
+            "schemaVersion": {
+              "const": "release-environment-contract/v1"
+            }
+          }
+        },
+        {
+          "required": ["qaImplementation"],
+          "properties": {
+            "schemaVersion": {
+              "const": "release-environment-contract/v2"
+            }
+          }
+        }
+      ],
       "required": [
         "schemaVersion",
         "runId",
@@ -206,7 +224,6 @@
         "topology",
         "stateMode",
         "routerdArtifact",
-        "labsCommit",
         "providers",
         "tofu",
         "pve",
@@ -214,7 +231,10 @@
       ],
       "properties": {
         "schemaVersion": {
-          "const": "release-environment-contract/v1"
+          "enum": [
+            "release-environment-contract/v1",
+            "release-environment-contract/v2"
+          ]
         },
         "runId": {
           "type": "string",
@@ -250,6 +270,14 @@
               "type": "string",
               "pattern": "^[0-9a-f]{40}$"
             },
+            "parentMainCommit": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "canonicalRemote": {
+              "type": "string",
+              "minLength": 1
+            },
             "path": {
               "type": "string",
               "minLength": 1
@@ -261,12 +289,49 @@
             "target": {
               "type": "string",
               "minLength": 1
+            },
+            "scriptBlobs": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
             }
           }
         },
         "labsCommit": {
           "type": "string",
           "pattern": "^[0-9a-f]{40}$"
+        },
+        "qaImplementation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["commit", "canonicalRemote", "scriptBlobs"],
+          "properties": {
+            "commit": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "canonicalRemote": {
+              "type": "string",
+              "minLength": 1
+            },
+            "scriptBlobs": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
+        },
+        "execution": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": true
         },
         "providers": {
           "type": "array",
@@ -393,6 +458,22 @@
             "heartbeatStale": {
               "type": "string",
               "pattern": "^[1-9][0-9]*[smhd]$"
+            },
+            "cleanupTimeout": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*[smhd]$"
+            },
+            "inventoryTimeout": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*[smhd]$"
+            },
+            "maxCleanupAttempts": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "maxPaidLifecycleSeconds": {
+              "type": "integer",
+              "minimum": 1
             },
             "cleanupScope": {
               "const": "run-id"

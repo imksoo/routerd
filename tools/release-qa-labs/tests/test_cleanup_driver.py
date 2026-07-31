@@ -27,6 +27,7 @@ class CleanupDriverTests(unittest.TestCase):
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.calls = self.root / "tofu-calls"
+        self.init_marker = self.root / "tofu-initialized"
         self.artifact = self.runtime / "artifact"
         self.artifact.write_bytes(b"artifact")
         self.tf = self.runtime / "tf"
@@ -64,6 +65,8 @@ exit 0''')
         self.make("tofu", '''[ "${TF_VAR_pve_api_token:-}" = fixture-secret-token ] || exit 91
 printf '%s|%s|token-set|%s\\n' "$TF_DATA_DIR" "$TF_CLI_CONFIG_FILE" "$*" >>"$CALLS"
 case " $* " in
+ *" init "*) touch "$INIT_MARKER";;
+ *" destroy -auto-approve "*) [ -f "$INIT_MARKER" ] || { echo "Backend initialization required" >&2; exit 92; };;
  *" output -json "*) echo '{}';;
 esac
 exit 0''')
@@ -101,6 +104,7 @@ exit 0''')
         environment.update(
             PATH=f"{self.bin}:/usr/bin:/bin",
             CALLS=str(self.calls),
+            INIT_MARKER=str(self.init_marker),
             ROUTERD_RELEASE_QA_PINNED_CONTRACT=str(self.contract_path),
             ROUTERD_RELEASE_QA_PINNED_RUN_ENV=str(self.run_env),
         )
@@ -126,10 +130,23 @@ exit 0''')
         self.assertEqual(decision["reason"], "staging-no-mutation-no-state")
         self.assertEqual((evidence / "tofu-state-after-destroy.txt").read_text(), "")
 
-    def test_production_without_state_still_attempts_destroy(self):
+    def test_production_without_state_initializes_before_destroy(self):
         result, evidence, calls = self.run_driver("production")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("destroy -auto-approve -input=false", calls)
+        commands = [line.split("|", 3)[3] for line in calls.splitlines()]
+        init = (
+            f"-chdir={self.tf} init -input=false -lockfile=readonly -reconfigure "
+            f"-backend-config=path={self.state}"
+        )
+        self.assertLess(
+            commands.index(init),
+            commands.index(
+                f"-chdir={self.tf} destroy -auto-approve -input=false "
+                f"-var-file={self.tfvars}"
+            ),
+        )
+        self.assertEqual(commands.count(init), 1)
         self.assert_confined_tofu_environment(calls)
         self.assertEqual(json.loads((evidence / "cleanup-decision.json").read_text())["action"], "tofu-destroy")
 
@@ -154,6 +171,7 @@ exit 0''')
         environment.update(
             PATH=f"{self.bin}:/usr/bin:/bin",
             CALLS=str(self.calls),
+            INIT_MARKER=str(self.init_marker),
             ROUTERD_RELEASE_QA_PINNED_CONTRACT=str(self.contract_path),
             ROUTERD_RELEASE_QA_PINNED_RUN_ENV=str(self.run_env),
         )

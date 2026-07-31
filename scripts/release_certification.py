@@ -102,6 +102,16 @@ def validate_schema(value: Any, schema: dict[str, Any], location: str = "$") -> 
     """Validate the JSON Schema subset used by release evidence schemas."""
     if "$ref" in schema:
         raise ContractError(f"{location}: $ref is not supported by the local validator")
+    if "oneOf" in schema:
+        matches = 0
+        for candidate in schema["oneOf"]:
+            try:
+                validate_schema(value, candidate, location)
+            except ContractError:
+                continue
+            matches += 1
+        if matches != 1:
+            raise ContractError(f"{location}: expected exactly one oneOf schema match")
     if "const" in schema and value != schema["const"]:
         raise ContractError(f"{location}: expected constant {schema['const']!r}")
     if "enum" in schema and value not in schema["enum"]:
@@ -177,7 +187,7 @@ def normalize_providers(value: str) -> list[str]:
 
 def validate_contract(
     contract: dict[str, Any], environment: str, topology: str, providers: list[str]
-) -> None:
+) -> str:
     required = {
         "schemaVersion",
         "runId",
@@ -185,7 +195,6 @@ def validate_contract(
         "topology",
         "stateMode",
         "routerdArtifact",
-        "labsCommit",
         "providers",
         "tofu",
         "pve",
@@ -194,8 +203,25 @@ def validate_contract(
     missing = sorted(required - set(contract))
     if missing:
         raise ContractError(f"run contract is missing: {', '.join(missing)}")
-    if contract["schemaVersion"] != "release-environment-contract/v1":
+    schema_version = contract["schemaVersion"]
+    if schema_version not in {
+        "release-environment-contract/v1",
+        "release-environment-contract/v2",
+    }:
         raise ContractError("unsupported run contract schemaVersion")
+    if schema_version == "release-environment-contract/v1":
+        if "qaImplementation" in contract:
+            raise ContractError("v1 run contract must use labsCommit")
+        labs_commit = contract.get("labsCommit")
+        provenance_name = "labsCommit"
+    else:
+        if "labsCommit" in contract:
+            raise ContractError("v2 run contract must use qaImplementation.commit")
+        qa_implementation = contract.get("qaImplementation")
+        if not isinstance(qa_implementation, dict):
+            raise ContractError("v2 run contract requires qaImplementation")
+        labs_commit = qa_implementation.get("commit")
+        provenance_name = "qaImplementation.commit"
     if contract["environment"] != environment:
         raise ContractError("run contract environment does not match the request")
     if contract["topology"] != topology:
@@ -220,10 +246,15 @@ def validate_contract(
         )
     if not re.fullmatch(r"[0-9a-f]{40}", artifact["commit"]):
         raise ContractError("routerdArtifact.commit must be a full 40-character commit")
-    if not re.fullmatch(r"[0-9a-f]{40}", contract["labsCommit"]):
-        raise ContractError("labsCommit must be a full 40-character commit")
+    if not isinstance(labs_commit, str) or not re.fullmatch(
+        r"[0-9a-f]{40}", labs_commit
+    ):
+        raise ContractError(
+            f"{provenance_name} must be a full 40-character commit"
+        )
     if contract["lifecycle"]["cleanupScope"] != "run-id":
         raise ContractError("cleanupScope must be run-id")
+    return labs_commit
 
 
 def run_driver(
@@ -362,7 +393,9 @@ def command_certify(component: str, argv: list[str]) -> int:
         args.pve_certification if component == "cloud" else args.cloud_certification
     )
     contract_provider_set = sorted(item["name"] for item in contract["providers"])
-    validate_contract(contract, args.environment, args.topology, contract_provider_set)
+    labs_commit = validate_contract(
+        contract, args.environment, args.topology, contract_provider_set
+    )
 
     started = rfc3339(utc_now())
     driver_out = args.driver_out or args.out.with_suffix(".driver.json")
@@ -414,7 +447,7 @@ def command_certify(component: str, argv: list[str]) -> int:
         "issuedAt": rfc3339(issued),
         "expiresAt": rfc3339(issued + dt.timedelta(seconds=validity)),
         "routerdCommit": contract["routerdArtifact"]["commit"],
-        "labsCommit": contract["labsCommit"],
+        "labsCommit": labs_commit,
         "providers": sorted(set(expected) | set(other_providers)),
         "certifiers": certifiers,
         "checks": checks,
