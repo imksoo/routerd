@@ -71,8 +71,23 @@ exit 0''')
         self.make("getent", '''echo "getent $*" >>"$CALLS"
 [ "${FAILURE:-}" = dns ] && exit 9
 case "$1" in
-  ahostsv6) [ "${FAILURE:-}" = no_addresses ] || echo "2001:db8::10 STREAM fixture";;
-  ahostsv4) [ "${FAILURE:-}" = no_addresses ] || echo "192.0.2.10 STREAM fixture";;
+  ahostsv6)
+    [ "${FAILURE:-}" = no_addresses ] && exit 0
+    case "${ADDRESS_MODE:-native}" in
+      native) echo "2001:db8::10 STREAM fixture";;
+      mapped_mixed)
+        echo "2001:db8::10 STREAM fixture"
+        echo "::ffff:192.0.2.10 STREAM fixture"
+        echo "0:0:0:0:0:ffff:c000:020a STREAM fixture";;
+      mapped_only) echo "::ffff:c000:020a STREAM fixture";;
+      all_fail) echo "::ffff:192.0.2.10 STREAM fixture";;
+    esac;;
+  ahostsv4)
+    [ "${FAILURE:-}" = no_addresses ] && exit 0
+    case "${ADDRESS_MODE:-native}" in
+      mapped_only) :;;
+      *) echo "192.0.2.10 STREAM fixture";;
+    esac;;
 esac
 exit 0''')
         self.make("timeout", '''echo "timeout $*" >>"$CALLS"
@@ -101,7 +116,7 @@ exit 0''')
         path.write_text("#!/bin/sh\nset -eu\n" + body + "\n", encoding="utf-8")
         path.chmod(0o755)
 
-    def run_preflight(self, failure="", proxy=True, mirror_present=True):
+    def run_preflight(self, failure="", proxy=True, mirror_present=True, address_mode="native"):
         run_env = {"noProxy": "127.0.0.1,localhost,pve01", "pveTokenTfvars": str(self.token),
                    "pveSshPrivateKey": str(self.ssh_key)}
         if proxy:
@@ -120,7 +135,8 @@ exit 0''')
         environment = os.environ.copy()
         for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"):
             environment.pop(key, None)
-        environment.update(PATH=f"{self.bin}:/usr/bin:/bin", CALLS=str(call_log), FAILURE=failure)
+        environment.update(PATH=f"{self.bin}:/usr/bin:/bin", CALLS=str(call_log), FAILURE=failure,
+                           ADDRESS_MODE=address_mode)
         result = subprocess.run(
             [str(self.drivers / "remote-egress-preflight.sh"), "--contract", str(self.contract)],
             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment, check=False)
@@ -195,6 +211,30 @@ exit 0''')
 
     def test_direct_no_addresses_fails_closed(self):
         self.assert_failed("no_addresses", proxy=False)
+
+    def test_mapped_dotted_and_hex_are_ipv4_and_deduplicate_native_a(self):
+        result, calls, output = self.run_preflight(proxy=False, address_mode="mapped_mixed")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        selected = (output.parent / "tls-management.azure.com.txt.selected").read_text()
+        self.assertIn("family=ipv6 address=2001:db8::10", selected)
+        attempts = (output.parent / "tls-management.azure.com.txt.attempts").read_text()
+        self.assertNotIn("::ffff", attempts.lower())
+        self.assertNotIn("0:0:0:0:0:ffff", attempts.lower())
+
+    def test_mapped_only_normalizes_to_canonical_ipv4(self):
+        result, calls, output = self.run_preflight(proxy=False, address_mode="mapped_only")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        selected = (output.parent / "tls-github.com.txt.selected").read_text()
+        self.assertIn("family=ipv4 address=192.0.2.10", selected)
+        self.assertNotIn("::ffff", calls.read_text().lower().split("timeout", 1)[-1])
+
+    def test_true_ipv6_failure_then_mapped_and_native_duplicate_uses_one_ipv4(self):
+        result, calls, output = self.run_preflight(
+            failure="v6_tcp", proxy=False, address_mode="mapped_mixed")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        attempts = (output.parent / "tls-management.azure.com.txt.attempts").read_text()
+        self.assertEqual(attempts.count("family=ipv4 address=192.0.2.10"), 1)
+        self.assertIn("family=ipv4 address=192.0.2.10", (output.parent / "tls-management.azure.com.txt.selected").read_text())
 
 
 if __name__ == "__main__":

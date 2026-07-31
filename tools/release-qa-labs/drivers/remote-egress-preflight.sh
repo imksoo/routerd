@@ -46,8 +46,43 @@ done
 
 resolved_addresses() {
   local family="$1" host="$2"
-  getent "ahostsv$family" "$host" 2>/dev/null |
-    awk '$2 == "STREAM" && !seen[$1]++ {print $1}'
+  if [ "$family" = 6 ]; then
+    getent ahostsv6 "$host" 2>/dev/null || true
+  else
+    # Some glibc/NSS configurations return IPv4-mapped IPv6 literals from
+    # ahostsv6. Feed both sources to one semantic classifier so mapped forms
+    # become canonical dotted IPv4 and deduplicate against the native A result.
+    getent ahostsv6 "$host" 2>/dev/null || true
+    getent ahostsv4 "$host" 2>/dev/null || true
+  fi | python3 -c '
+import ipaddress
+import sys
+
+family = int(sys.argv[1])
+seen = set()
+for line in sys.stdin:
+    fields = line.split()
+    if len(fields) < 2 or fields[1] != "STREAM":
+        continue
+    try:
+        address = ipaddress.ip_address(fields[0])
+    except ValueError:
+        continue
+    if family == 6:
+        if address.version != 6 or address.ipv4_mapped is not None:
+            continue
+        candidate = address.compressed
+    else:
+        if address.version == 6 and address.ipv4_mapped is not None:
+            candidate = str(address.ipv4_mapped)
+        elif address.version == 4:
+            candidate = str(address)
+        else:
+            continue
+    if candidate not in seen:
+        seen.add(candidate)
+        print(candidate)
+' "$family"
 }
 
 tcp_literal() {
