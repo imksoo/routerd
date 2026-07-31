@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+import subprocess
 import unittest
 
 
@@ -31,6 +32,28 @@ class CertificationPlanPathTests(unittest.TestCase):
 
     def test_pve_saved_plan_is_runtime_only_and_single_source(self):
         self.assert_runtime_plan_pipeline("pve-certification-driver.sh", "pve")
+
+    def test_cloud_provider_graph_check_uses_standard_grep(self):
+        script = (ROOT / "drivers/cloud-certification-driver.sh").read_text(
+            encoding="utf-8"
+        )
+        needle = "provider[registry.opentofu.org/hashicorp/oci]"
+        self.assertIn("for command in tofu jq grep aws az oci ssh; do", script)
+        self.assertIn(f"grep -Fq '{needle}'", script)
+        self.assertNotIn("for command in tofu jq rg ", script)
+        self.assertNotRegex(script, r"(?m)^if rg(?: |$)")
+
+        for graph, expected in (
+            (f"└── {needle}\n", 0),
+            ("└── provider[registry.opentofu.org/oracle/oci]\n", 1),
+        ):
+            result = subprocess.run(
+                ["grep", "-Fq", needle],
+                input=graph,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, expected)
 
 
 if __name__ == "__main__":

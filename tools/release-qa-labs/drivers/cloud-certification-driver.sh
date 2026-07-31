@@ -15,7 +15,7 @@ fail_driver() {
   exit 1
 }
 
-for command in tofu jq rg aws az oci ssh; do
+for command in tofu jq grep aws az oci ssh; do
   require_command "$command"
 done
 require_supervisor_mutating || fail_driver "durable lifecycle supervisor is not running before cloud apply"
@@ -69,7 +69,7 @@ fi
 if ! tofu -chdir="$tf_dir" providers >"$preflight_dir/tofu-providers.txt"; then
   fail_driver "OpenTofu provider graph inspection failed"
 fi
-if rg -q 'provider\[registry\.opentofu\.org/hashicorp/oci\]' \
+if grep -Fq 'provider[registry.opentofu.org/hashicorp/oci]' \
   "$preflight_dir/tofu-providers.txt"; then
   fail_driver "OCI module resolved the unconfigured hashicorp/oci provider"
 fi
