@@ -55,6 +55,10 @@ jq -n \
   '{runId: $runId, executionMode: $executionMode, action: "tofu-destroy", reason: "state-or-production"}' \
   >"$cleanup_evidence/cleanup-decision.json"
 
+tofu -chdir="$tf_dir" init -input=false -lockfile=readonly -reconfigure \
+  -backend-config="path=$tofu_state_path" \
+  >"$cleanup_evidence/tofu-init.txt" \
+  2>"$cleanup_evidence/tofu-init.stderr"
 tofu -chdir="$tf_dir" destroy -help >"$cleanup_evidence/tofu-destroy-help.txt"
 if [ -f "$tofu_state_path" ]; then
   tofu -chdir="$tf_dir" state list >"$cleanup_evidence/tofu-state-before-destroy.txt"

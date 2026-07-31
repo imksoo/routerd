@@ -194,6 +194,82 @@ chmod +x \
   --out "$work/pve-certification.json" \
   --valid-for 24h
 
+jq '
+  .schemaVersion = "release-environment-contract/v2"
+  | .qaImplementation = {
+      commit: .labsCommit,
+      canonicalRemote: "https://github.com/imksoo/routerd",
+      scriptBlobs: {"tools/release-qa-labs/qa_guard.py": ("c" * 64)}
+    }
+  | del(.labsCommit)
+  | .routerdArtifact.parentMainCommit = ("d" * 40)
+  | .routerdArtifact.canonicalRemote = "https://github.com/imksoo/routerd"
+  | .routerdArtifact.scriptBlobs = {"scripts/certify-pve-substrate.sh": ("e" * 64)}
+  | .execution = {mode: "production", host: "offline", requireRemote: true}
+  | .limits = {maxEstimatedCostUsd: 1}
+  | .lifecycle.cleanupTimeout = "10m"
+  | .lifecycle.inventoryTimeout = "5m"
+  | .lifecycle.maxCleanupAttempts = 2
+  | .lifecycle.maxPaidLifecycleSeconds = 4500
+' "$work/contract.json" >"$work/contract-v2.json"
+
+"$repo_root/scripts/certify-pve-substrate.sh" \
+  --environment offline \
+  --topology full \
+  --contract "$work/contract-v2.json" \
+  --driver "$work/pve-driver" \
+  --out "$work/pve-certification-v2.json" \
+  --valid-for 24h
+
+python3 - "$work/pve-certification-v2.json" <<'PY'
+import json
+import sys
+value = json.load(open(sys.argv[1], encoding="utf-8"))
+assert value["run"]["schemaVersion"] == "release-environment-contract/v2", value
+assert value["labsCommit"] == value["run"]["qaImplementation"]["commit"], value
+PY
+
+jq 'del(.qaImplementation)' "$work/contract-v2.json" >"$work/contract-v2-invalid.json"
+if "$repo_root/scripts/certify-pve-substrate.sh" \
+  --environment offline \
+  --topology full \
+  --contract "$work/contract-v2-invalid.json" \
+  --driver "$work/pve-driver" \
+  --out "$work/pve-certification-v2-invalid.json" \
+  --valid-for 24h; then
+  echo "v2 contract without qaImplementation unexpectedly passed" >&2
+  exit 1
+fi
+
+jq '.qaImplementation.commit = "short"' \
+  "$work/contract-v2.json" >"$work/contract-v2-malformed.json"
+if "$repo_root/scripts/certify-pve-substrate.sh" \
+  --environment offline \
+  --topology full \
+  --contract "$work/contract-v2-malformed.json" \
+  --driver "$work/pve-driver" \
+  --out "$work/pve-certification-v2-malformed.json" \
+  --valid-for 24h; then
+  echo "v2 contract with malformed qaImplementation.commit unexpectedly passed" >&2
+  exit 1
+fi
+
+jq '.qaImplementation = {
+  commit: .labsCommit,
+  canonicalRemote: "https://github.com/imksoo/routerd",
+  scriptBlobs: {}
+}' "$work/contract.json" >"$work/contract-v1-conflicting.json"
+if "$repo_root/scripts/certify-pve-substrate.sh" \
+  --environment offline \
+  --topology full \
+  --contract "$work/contract-v1-conflicting.json" \
+  --driver "$work/pve-driver" \
+  --out "$work/pve-certification-v1-conflicting.json" \
+  --valid-for 24h; then
+  echo "v1 contract with conflicting qaImplementation unexpectedly passed" >&2
+  exit 1
+fi
+
 "$repo_root/scripts/certify-cloud-substrate.sh" \
   --environment offline \
   --topology full \
