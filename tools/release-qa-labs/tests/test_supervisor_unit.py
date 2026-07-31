@@ -13,6 +13,12 @@ class SupervisorUnitTests(unittest.TestCase):
         self.assertIn("Restart=on-failure", unit)
         self.assertIn("WantedBy=multi-user.target", unit)
         self.assertIn("UMask=0077", unit)
+        self.assertIn("ReadWritePaths=/var/lib/routerd-release-qa/%i/runtime", unit)
+        self.assertIn("runtime/secrets", unit)
+        self.assertIn("/var/lib/routerd-release-qa-sealed/%i", unit)
+        self.assertIn("Requires=routerd-release-qa-prepare@%i.service", unit)
+        self.assertNotIn("ReadWritePaths=/var/lib/routerd-release-qa/.azure", unit)
+        self.assertNotIn("ReadWritePaths=/var/lib/routerd-release-qa\n", unit)
         exec_start = next(line for line in unit.splitlines() if line.startswith("ExecStart="))
         self.assertIn("drivers/start-supervised-release-qa.sh", exec_start)
         self.assertNotIn("/tmp/", exec_start)
@@ -30,6 +36,8 @@ class SupervisorUnitTests(unittest.TestCase):
         ):
             self.assertNotIn(hardcoded, launcher)
         self.assertIn("pinned", launcher.lower())
+        self.assertIn("azure-auth-source.sha256", launcher)
+        self.assertIn('export AZURE_CONFIG_DIR="$azure_state"', launcher)
 
     def test_contract_example_matches_repo_native_deployment_layout(self):
         repo = ROOT.parents[1]

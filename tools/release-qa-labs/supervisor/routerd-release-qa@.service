@@ -2,6 +2,8 @@
 Description=routerd release QA durable lifecycle %i
 After=network-online.target
 Wants=network-online.target
+Requires=routerd-release-qa-prepare@%i.service
+After=routerd-release-qa-prepare@%i.service
 StartLimitIntervalSec=0
 
 [Service]
@@ -18,7 +20,7 @@ NoNewPrivileges=true
 UMask=0077
 PrivateTmp=true
 ProtectSystem=strict
-ReadOnlyPaths=/var/lib/routerd-release-qa/%i/repo /var/lib/routerd-release-qa/provider-mirror
+ReadOnlyPaths=/var/lib/routerd-release-qa/%i/repo /var/lib/routerd-release-qa/provider-mirror /var/lib/routerd-release-qa/%i/runtime/secrets /var/lib/routerd-release-qa-sealed/%i
 ReadWritePaths=/var/lib/routerd-release-qa/%i/runtime
 
 [Install]

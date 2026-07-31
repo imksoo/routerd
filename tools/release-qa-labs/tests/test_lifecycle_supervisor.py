@@ -55,6 +55,7 @@ class SupervisorTests(unittest.TestCase):
             inventory_timeout_seconds=300,
             max_cleanup_attempts=2,
             max_paid_lifecycle_seconds=4500,
+            source_input_tamper_detected=False,
         )
 
     def tearDown(self):
@@ -191,6 +192,16 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(events, ["precheck", "mutation-start", "cleanup", "inventory"])
         self.assertEqual(self.phases(), ["MUTATING", "STOPPING", "CLEANING", "VERIFYING_ZERO", "DONE"])
+
+    def test_production_source_tamper_cleans_to_zero_but_fails_qualification(self):
+        self.args.source_input_tamper_detected = True
+        rc, events = self.run_with_commands()
+        self.assertEqual(rc, 1)
+        self.assertEqual(events[-2:], ["cleanup", "inventory"])
+        final = json.loads(self.state.read_text())
+        self.assertEqual(final["phase"], "FAILED")
+        self.assertTrue(final["sourceInputTamperDetected"])
+        self.assertEqual(final["inventoryExit"], 0)
 
     def test_mutation_failure_still_cleans_and_returns_failure(self):
         rc, events = self.run_with_commands(mutation_exit=7)

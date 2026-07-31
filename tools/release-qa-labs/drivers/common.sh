@@ -126,6 +126,20 @@ load_contract() {
   no_proxy_hosts="$(jq -r '.noProxy // "127.0.0.1,localhost,pve01"' "$run_env_path")"
   pve_token_tfvars="$(jq -r '.pveTokenTfvars // empty' "$run_env_path")"
   pve_ssh_private_key="${ROUTERD_RELEASE_QA_PINNED_PVE_SSH_PRIVATE_KEY:-$(jq -er '.pveSshPrivateKey' "$run_env_path")}"
+  azure_auth_source="$(jq -r '.azureAuthSource // empty' "$run_env_path")"
+  if [ -n "$azure_auth_source" ]; then
+    azure_config_dir="$runtime_root/provider-state/azure"
+    require_run_confined "$azure_auth_source"
+    require_run_confined "$azure_config_dir"
+    [ "$azure_auth_source" = "$runtime_root/secrets/azure-auth-source" ] ||
+      die "Azure authentication source is not canonical"
+    [ -d "$azure_config_dir" ] || die "run-confined Azure configuration is missing"
+    [ "$(stat -c %a "$azure_config_dir")" = 700 ] ||
+      die "run-confined Azure configuration must be mode 0700"
+    [ "$(stat -c %u "$azure_config_dir")" = "$(id -u)" ] ||
+      die "run-confined Azure configuration must be owned by the service UID"
+    export AZURE_CONFIG_DIR="$azure_config_dir"
+  fi
   pve_ssh_private_key="$(absolute_path "$pve_ssh_private_key")"
   require_run_confined "$pve_ssh_private_key"
   require_private_file "$pve_ssh_private_key" "PVE SSH private key"

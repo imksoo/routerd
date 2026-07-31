@@ -50,8 +50,13 @@ class ContractGuardTests(unittest.TestCase):
         self.ssh_key = secrets / "pve_ssh"
         self.ssh_key.write_text("fixture private key\n", encoding="utf-8")
         self.ssh_key.chmod(0o600)
+        self.azure_source = secrets / "azure-auth-source"
+        self.azure_source.mkdir(mode=0o700)
+        (self.azure_source / "azureProfile.json").write_text("{}\n", encoding="utf-8")
+        (self.azure_source / "azureProfile.json").chmod(0o600)
         write_json(pinned / "run.env.json", {
             "releaseRepo": str(self.release), "pveSshPrivateKey": str(self.ssh_key),
+            "azureAuthSource": str(self.azure_source),
         })
         self.contract = {
             "runId": "run-1",
@@ -206,9 +211,11 @@ class ContractGuardTests(unittest.TestCase):
         self.tf_dir = Path(self.contract["tofu"]["workingDirectory"])
         self.tfvars = Path(self.contract["tofu"]["variablesPath"])
         self.ssh_key = self.runtime / "secrets/pve_ssh"
+        self.azure_source = self.runtime / "secrets/azure-auth-source"
         self.contract_path = self.runtime / "pinned/contract.json"
         write_json(self.runtime / "pinned/run.env.json", {
             "releaseRepo": str(self.release), "pveSshPrivateKey": str(self.ssh_key),
+            "azureAuthSource": str(self.azure_source),
         })
         self.verify(self.fake_git())
 
@@ -271,7 +278,8 @@ class ContractGuardTests(unittest.TestCase):
         run_env = self.runtime / "pinned/run.env.json"
 
         def set_key(value):
-            write_json(run_env, {"releaseRepo": str(self.release), "pveSshPrivateKey": str(value)})
+            write_json(run_env, {"releaseRepo": str(self.release), "pveSshPrivateKey": str(value),
+                                 "azureAuthSource": str(self.azure_source)})
 
         set_key(key)
         self.verify(self.fake_git())
@@ -302,6 +310,32 @@ class ContractGuardTests(unittest.TestCase):
         with mock.patch.object(qa_guard.os, "access", return_value=False):
             with self.assertRaisesRegex(qa_guard.GuardError, "owned.*readable"):
                 self.verify(self.fake_git())
+
+    def test_azure_auth_source_is_canonical_private_and_symlink_free(self):
+        run_env = self.runtime / "pinned/run.env.json"
+
+        def set_source(value):
+            write_json(run_env, {"releaseRepo": str(self.release),
+                                 "pveSshPrivateKey": str(self.ssh_key),
+                                 "azureAuthSource": str(value)})
+
+        set_source(self.azure_source)
+        self.verify(self.fake_git())
+        outside = self.root / "outside-azure"
+        outside.mkdir(mode=0o700)
+        (outside / "azureProfile.json").write_text("{}\n", encoding="utf-8")
+        (outside / "azureProfile.json").chmod(0o600)
+        set_source(outside)
+        with self.assertRaisesRegex(qa_guard.GuardError, "escapes canonical run root|must be exactly"):
+            self.verify(self.fake_git())
+        set_source(self.azure_source)
+        (self.azure_source / "alias").symlink_to(self.azure_source / "azureProfile.json")
+        with self.assertRaisesRegex(qa_guard.GuardError, "symlink"):
+            self.verify(self.fake_git())
+        (self.azure_source / "alias").unlink()
+        (self.azure_source / "azureProfile.json").chmod(0o644)
+        with self.assertRaisesRegex(qa_guard.GuardError, "0600"):
+            self.verify(self.fake_git())
 
     def test_paid_envelope_overrun_and_one_cent_over_ceiling_are_rejected(self):
         self.contract["lifecycle"]["ttl"] = "46m"
