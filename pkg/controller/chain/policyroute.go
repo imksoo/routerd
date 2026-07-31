@@ -82,16 +82,26 @@ func (c IPv4PolicyRouteController) hasIPRoute2() bool {
 
 type ipv6HostPolicy struct {
 	Name      string `json:"name"`
+	Owner     string `json:"owner,omitempty"`
 	Priority  int    `json:"priority"`
-	Table     int    `json:"table"`
-	Gateway   string `json:"gateway"`
-	Interface string `json:"interface"`
-	Source    string `json:"source"`
-	Metric    int    `json:"metric"`
+	Table     int    `json:"table,omitempty"`
+	Lookup    string `json:"lookup,omitempty"`
+	Gateway   string `json:"gateway,omitempty"`
+	Interface string `json:"interface,omitempty"`
+	Source    string `json:"source,omitempty"`
+	Metric    int    `json:"metric,omitempty"`
+	RuleFrom  bool   `json:"ruleFrom,omitempty"`
 }
 
 type ipv6HostPolicyState struct {
 	Policies []ipv6HostPolicy `json:"policies"`
+}
+
+// isSourceRule also recognizes the short-lived on-disk form written while
+// this feature was being introduced. That form has no route fields and is
+// therefore unambiguously a source-only rule, even if ruleFrom is absent.
+func (p ipv6HostPolicy) isSourceRule() bool {
+	return p.RuleFrom || (p.Lookup != "" && p.Table == 0 && p.Gateway == "" && p.Interface == "" && p.Source != "")
 }
 
 func (c IPv4PolicyRouteController) reconcileIPv6HostPolicies(ctx context.Context) {
@@ -136,6 +146,9 @@ func (c IPv4PolicyRouteController) reconcileIPv6HostPolicies(ctx context.Context
 		}
 	}
 	for _, policy := range desired {
+		if policy.isSourceRule() {
+			continue
+		}
 		if unavailable[policy.Name] || transient[policy.Name] {
 			continue
 		}
@@ -151,7 +164,6 @@ func (c IPv4PolicyRouteController) logHostPolicyError(message string, err error)
 
 func (c IPv4PolicyRouteController) desiredIPv6HostPolicies(ctx context.Context) ([]ipv6HostPolicy, map[string]bool, error) {
 	aliases := c.aliases()
-	failoverVMACByParent := c.pdFailoverVMACByParentInterface()
 	var policies []ipv6HostPolicy
 	unavailable := map[string]bool{}
 	for _, res := range c.Router.Spec.Resources {
@@ -170,9 +182,6 @@ func (c IPv4PolicyRouteController) desiredIPv6HostPolicies(ctx context.Context) 
 				continue
 			}
 			logical := candidate.EffectiveInterface()
-			if vmac := failoverVMACByParent[logical]; vmac != "" {
-				logical = vmac
-			}
 			ifname := firstNonEmpty(aliases[logical], logical)
 			ready, err := c.ipv6HostPolicyDeviceReady(ctx, ifname)
 			if err != nil || !ready {
@@ -188,46 +197,28 @@ func (c IPv4PolicyRouteController) desiredIPv6HostPolicies(ctx context.Context) 
 			if metric == 0 {
 				metric = 50
 			}
-			policies = append(policies, ipv6HostPolicy{Name: res.Metadata.Name, Priority: candidate.Priority, Table: candidate.EffectiveTable(), Gateway: candidate.Gateway, Interface: ifname, Source: source, Metric: metric})
+			policies = append(policies, ipv6HostPolicy{Name: res.Metadata.Name, Owner: res.Metadata.Name, Priority: candidate.Priority, Table: candidate.EffectiveTable(), Gateway: candidate.Gateway, Interface: ifname, Source: source, Metric: metric})
+		}
+	}
+	// A hostTraffic rule selects every local packet (iif lo), not merely the
+	// outer packets of a DS-Lite tunnel.  Keep normal host traffic on the
+	// configured physical-WAN policy, and let only a tunnel's explicit outer
+	// source address bypass it to the VMAC-preferred main table.
+	if len(policies) > 0 {
+		nextPriority := 10100
+		for _, res := range c.Router.Spec.Resources {
+			if res.Kind != "DSLiteTunnel" {
+				continue
+			}
+			local := strings.TrimSpace(resourcequery.Value(c.Store, api.StatusValueSourceSpec{Resource: "DSLiteTunnel/" + res.Metadata.Name, Field: "localIPv6"}))
+			if local == "" {
+				continue
+			}
+			policies = append(policies, ipv6HostPolicy{Name: "dslite-source-" + res.Metadata.Name, Owner: policies[0].Owner, Priority: nextPriority, Lookup: "main", Source: local, RuleFrom: true})
+			nextPriority++
 		}
 	}
 	return policies, unavailable, nil
-}
-
-func (c IPv4PolicyRouteController) pdFailoverVMACByParentInterface() map[string]string {
-	pdInterfaces := map[string]bool{}
-	for _, res := range c.Router.Spec.Resources {
-		if res.Kind != "DHCPv6PrefixDelegation" {
-			continue
-		}
-		spec, err := res.DHCPv6PrefixDelegationSpec()
-		if err == nil && spec.Interface != "" {
-			pdInterfaces[spec.Interface] = true
-		}
-	}
-	if len(pdInterfaces) == 0 {
-		return nil
-	}
-	out := map[string]string{}
-	for _, res := range c.Router.Spec.Resources {
-		if res.Kind != "VirtualAddress" {
-			continue
-		}
-		spec, err := res.VirtualAddressSpec()
-		if err != nil || spec.Mode != "vrrp" {
-			continue
-		}
-		entries := append([]api.VirtualAddressVRRPFailoverVMACSpec(nil), spec.VRRP.AdditionalFailoverVMACs...)
-		if spec.VRRP.FailoverVMAC != nil {
-			entries = append(entries, *spec.VRRP.FailoverVMAC)
-		}
-		for _, entry := range entries {
-			if entry.ParentInterface != "" && pdInterfaces[entry.Interface] {
-				out[entry.ParentInterface] = entry.Interface
-			}
-		}
-	}
-	return out
 }
 
 func (c IPv4PolicyRouteController) applyIPv6HostPolicyState(ctx context.Context, previous, desired ipv6HostPolicyState, retained map[string]bool) (ipv6HostPolicyState, map[string]bool, error) {
@@ -256,13 +247,15 @@ func (c IPv4PolicyRouteController) applyIPv6HostPolicyState(ctx context.Context,
 			applied.Policies = append(applied.Policies, policy)
 			continue
 		}
-		if out, err := c.commandOutput(ctx, "ip", "-6", "route", "replace", "default", "via", policy.Gateway, "dev", policy.Interface, "table", strconv.Itoa(policy.Table), "metric", strconv.Itoa(policy.Metric), "src", policy.Source); err != nil {
-			if transientIPv6HostPolicyError(out, err) {
-				c.logHostPolicyTransient(policy, "route replace", out, err)
-				transient[policy.Name] = true
-				continue
+		if !policy.isSourceRule() {
+			if out, err := c.commandOutput(ctx, "ip", "-6", "route", "replace", "default", "via", policy.Gateway, "dev", policy.Interface, "table", strconv.Itoa(policy.Table), "metric", strconv.Itoa(policy.Metric), "src", policy.Source); err != nil {
+				if transientIPv6HostPolicyError(out, err) {
+					c.logHostPolicyTransient(policy, "route replace", out, err)
+					transient[policy.Name] = true
+					continue
+				}
+				return ipv6HostPolicyState{}, nil, fmt.Errorf("ip -6 route replace: %w: %s", err, strings.TrimSpace(string(out)))
 			}
-			return ipv6HostPolicyState{}, nil, fmt.Errorf("ip -6 route replace: %w: %s", err, strings.TrimSpace(string(out)))
 		}
 		isTransient, err := c.ensureIPv6HostRule(ctx, policy)
 		if err != nil {
@@ -325,13 +318,26 @@ func (c IPv4PolicyRouteController) ensureIPv6HostRule(ctx context.Context, polic
 		return false, err
 	}
 	priority := strconv.Itoa(policy.Priority)
-	table := strconv.Itoa(policy.Table)
+	table := firstNonEmpty(policy.Lookup, strconv.Itoa(policy.Table))
 	for _, line := range strings.Split(string(out), "\n") {
-		if strings.Contains(line, priority+":") && strings.Contains(line, "iif lo") && strings.Contains(line, "lookup "+table) {
+		selector := "iif lo"
+		if policy.isSourceRule() {
+			// ip rule show renders a host prefix as the bare address, while
+			// ip rule add requires the explicit /128 we persist in state.
+			selector = "from " + policy.Source
+		}
+		if strings.Contains(line, priority+":") && strings.Contains(line, selector) && strings.Contains(line, "lookup "+table) {
 			return false, nil
 		}
 	}
-	if out, err := c.commandOutput(ctx, "ip", "-6", "rule", "add", "priority", priority, "iif", "lo", "lookup", table); err != nil {
+	args := []string{"-6", "rule", "add", "priority", priority}
+	if policy.isSourceRule() {
+		args = append(args, "from", policy.Source+"/128")
+	} else {
+		args = append(args, "iif", "lo")
+	}
+	args = append(args, "lookup", table)
+	if out, err := c.commandOutput(ctx, "ip", args...); err != nil {
 		if transientIPv6HostPolicyError(out, err) {
 			c.logHostPolicyTransient(policy, "rule add", out, err)
 			return true, nil
@@ -359,10 +365,18 @@ func (c IPv4PolicyRouteController) deleteIPv6HostPolicy(ctx context.Context, pol
 	if c.DryRun {
 		return nil
 	}
-	for _, args := range [][]string{
-		{"-6", "rule", "del", "priority", strconv.Itoa(policy.Priority), "iif", "lo", "lookup", strconv.Itoa(policy.Table)},
-		{"-6", "route", "del", "default", "via", policy.Gateway, "dev", policy.Interface, "table", strconv.Itoa(policy.Table), "metric", strconv.Itoa(policy.Metric), "src", policy.Source},
-	} {
+	rule := []string{"-6", "rule", "del", "priority", strconv.Itoa(policy.Priority)}
+	if policy.isSourceRule() {
+		rule = append(rule, "from", policy.Source+"/128")
+	} else {
+		rule = append(rule, "iif", "lo")
+	}
+	rule = append(rule, "lookup", firstNonEmpty(policy.Lookup, strconv.Itoa(policy.Table)))
+	commands := [][]string{rule}
+	if !policy.isSourceRule() {
+		commands = append(commands, []string{"-6", "route", "del", "default", "via", policy.Gateway, "dev", policy.Interface, "table", strconv.Itoa(policy.Table), "metric", strconv.Itoa(policy.Metric), "src", policy.Source})
+	}
+	for _, args := range commands {
 		out, err := c.commandOutput(ctx, "ip", args...)
 		if err != nil && !missingIPv6HostPolicy(out, err) {
 			return fmt.Errorf("ip %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
