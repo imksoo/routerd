@@ -27,6 +27,34 @@ cleanup_evidence="$(absolute_path "$cleanup_evidence")"
 mkdir -p "$cleanup_evidence"
 require_command tofu
 
+execution_mode="$(jq -er '.execution.mode' "$contract_path")"
+case "$execution_mode" in
+  production|staging-no-mutation) ;;
+  *) die "unsupported execution mode in cleanup: $execution_mode" ;;
+esac
+
+# A fresh staging run deliberately never initializes OpenTofu or executes the
+# mutation driver.  With no state there is therefore nothing for OpenTofu to
+# destroy; authoritative inventory remains the independent proof of zero.  Do
+# not extend this exception to production, or to staging recovery with state.
+if [ "$execution_mode" = staging-no-mutation ] && [ ! -f "$tofu_state_path" ]; then
+  jq -n \
+    --arg runId "$run_id" \
+    --arg executionMode "$execution_mode" \
+    '{runId: $runId, executionMode: $executionMode, action: "skip-tofu-destroy", reason: "staging-no-mutation-no-state"}' \
+    >"$cleanup_evidence/cleanup-decision.json"
+  : >"$cleanup_evidence/tofu-state-before-destroy.txt"
+  : >"$cleanup_evidence/tofu-state-after-destroy.txt"
+  echo "cleanup complete: runId=$run_id action=skip-tofu-destroy reason=staging-no-mutation-no-state"
+  exit 0
+fi
+
+jq -n \
+  --arg runId "$run_id" \
+  --arg executionMode "$execution_mode" \
+  '{runId: $runId, executionMode: $executionMode, action: "tofu-destroy", reason: "state-or-production"}' \
+  >"$cleanup_evidence/cleanup-decision.json"
+
 tofu -chdir="$tf_dir" destroy -help >"$cleanup_evidence/tofu-destroy-help.txt"
 if [ -f "$tofu_state_path" ]; then
   tofu -chdir="$tf_dir" state list >"$cleanup_evidence/tofu-state-before-destroy.txt"
@@ -38,7 +66,6 @@ if tofu -chdir="$tf_dir" output -json >"$cleanup_evidence/tofu-output-before-des
 fi
 
 run_with_progress tofu-destroy \
-  env TF_CLI_CONFIG_FILE="$framework_root/tofu.rc" \
   tofu -chdir="$tf_dir" destroy -auto-approve -input=false \
   -var-file="$tfvars_path"
 

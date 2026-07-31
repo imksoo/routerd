@@ -169,9 +169,13 @@ load_contract() {
   tofu() {
     [ -n "$tofu_binary" ] || die "required command not found: tofu"
     if [ -n "${TF_VAR_pve_api_token:-}" ]; then
-      env TF_DATA_DIR="$runtime_root/tofu-data" TF_VAR_pve_api_token="$TF_VAR_pve_api_token" "$tofu_binary" "$@"
+      env TF_DATA_DIR="$runtime_root/tofu-data" \
+        TF_CLI_CONFIG_FILE="$framework_root/tofu.rc" \
+        TF_VAR_pve_api_token="$TF_VAR_pve_api_token" "$tofu_binary" "$@"
     else
-      env TF_DATA_DIR="$runtime_root/tofu-data" "$tofu_binary" "$@"
+      env TF_DATA_DIR="$runtime_root/tofu-data" \
+        TF_CLI_CONFIG_FILE="$framework_root/tofu.rc" \
+        "$tofu_binary" "$@"
     fi
   }
 
