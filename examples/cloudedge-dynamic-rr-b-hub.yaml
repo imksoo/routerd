@@ -23,8 +23,7 @@ spec:
         privateKeyFile: /usr/local/etc/routerd/secrets/wg-cloudedge.key
         listenPort: 51820
         mtu: 1420
-        peersFrom:
-          - resource: SAMEnrollmentPolicy/cloudedge-public-wg-leaves
+        peersFrom: [{ resource: SAMEnrollmentPolicy/cloudedge-public-wg-leaves }]
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
@@ -102,8 +101,7 @@ spec:
         innerPrefix: 10.255.0.0/20
         underlayInterface: private-wan
         localEndpoint: 10.10.0.3
-        peersFrom:
-          - resource: SAMEnrollmentPolicy/cloudedge-leaves
+        peersFrom: [{ resource: SAMEnrollmentPolicy/cloudedge-leaves }]
         publishPeerGroup: true
         bgp:
           routerRef: BGPRouter/mobility-bgp
@@ -122,8 +120,7 @@ spec:
         innerPrefix: 10.255.0.0/20
         underlayInterface: wg-cloudedge
         localEndpoint: 10.20.0.3
-        peersFrom:
-          - resource: SAMEnrollmentPolicy/cloudedge-public-wg-leaves
+        peersFrom: [{ resource: SAMEnrollmentPolicy/cloudedge-public-wg-leaves }]
         bgp:
           routerRef: BGPRouter/mobility-bgp
           peerASN: 64577
@@ -143,8 +140,7 @@ spec:
         localEndpoint: 10.10.0.3
         encapSport: 5555
         encapDport: 5555
-        peersFrom:
-          - resource: SAMEnrollmentPolicy/cloudedge-private-fou-leaves
+        peersFrom: [{ resource: SAMEnrollmentPolicy/cloudedge-private-fou-leaves }]
         bgp:
           routerRef: BGPRouter/mobility-bgp
           peerASN: 64577
@@ -157,11 +153,9 @@ spec:
       spec:
         transportProfileRef: SAMTransportProfile/rr-b
         rrSetRef: SAMRRSet/cloudedge-rrs
-        joinTokenFrom:
-          file: /usr/local/etc/routerd/secrets/cloudedge-join-token
+        joinTokenFrom: { file: /usr/local/etc/routerd/secrets/cloudedge-join-token }
         joinAudience: cloudedge-private-underlay
-        allowedLeafIDs:
-          pattern: ^leaf-[a-z0-9-]+$
+        allowedLeafIDs: { pattern: '^leaf-[a-z0-9-]+$' }
         tunnelAddressPrefixes: [10.255.0.0/20]
         endpointPrefixes: [10.20.0.0/24]
         mobilityPrefixes: [10.77.60.0/24]
@@ -174,11 +168,9 @@ spec:
       spec:
         transportProfileRef: SAMTransportProfile/rr-b-wg
         rrSetRef: SAMRRSet/cloudedge-rrs
-        joinTokenFrom:
-          file: /usr/local/etc/routerd/secrets/cloudedge-join-token
+        joinTokenFrom: { file: /usr/local/etc/routerd/secrets/cloudedge-join-token }
         joinAudience: cloudedge-public-underlay
-        allowedLeafIDs:
-          pattern: ^leaf-[a-z0-9-]+$
+        allowedLeafIDs: { pattern: '^leaf-[a-z0-9-]+$' }
         tunnelAddressPrefixes: [10.255.0.0/20]
         endpointPrefixes: [10.20.0.0/24]
         wireGuard:
@@ -196,11 +188,9 @@ spec:
       spec:
         transportProfileRef: SAMTransportProfile/rr-b-fou
         rrSetRef: SAMRRSet/cloudedge-rrs
-        joinTokenFrom:
-          file: /usr/local/etc/routerd/secrets/cloudedge-join-token
+        joinTokenFrom: { file: /usr/local/etc/routerd/secrets/cloudedge-join-token }
         joinAudience: cloudedge-private-underlay
-        allowedLeafIDs:
-          pattern: ^leaf-[a-z0-9-]+$
+        allowedLeafIDs: { pattern: '^leaf-[a-z0-9-]+$' }
         tunnelAddressPrefixes: [10.255.0.0/20]
         endpointPrefixes: [10.20.0.0/24]
         mobilityPrefixes: [10.77.60.0/24]
