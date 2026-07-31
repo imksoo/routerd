@@ -228,11 +228,18 @@ func (c *Controller) cleanupStaleStaticAddresses(ctx context.Context, aliases ma
 	changed := false
 	for _, item := range statuses {
 		backend := strings.TrimSpace(statusString(item.Status, "backend"))
-		if item.APIVersion != api.NetAPIVersion || !isVirtualAddressKind(item.Kind) || (backend != "iproute2" && backend != "ifconfig") {
+		whenFalse := statusString(item.Status, "phase") == "Pending" && statusString(item.Status, "reason") == "WhenFalse"
+		if item.APIVersion != api.NetAPIVersion || !isVirtualAddressKind(item.Kind) || ((backend != "iproute2" && backend != "ifconfig") && !whenFalse) {
 			continue
 		}
+		if backend == "" && whenFalse {
+			backend = c.staticVirtualAddressBackend()
+		}
 		previous := staticVIP{IfName: statusString(item.Status, "ifname"), Address: statusString(item.Status, "appliedAddress")}
-		if previous.Address == "" && statusString(item.Status, "phase") != "Removed" {
+		if previous.IfName == "" && whenFalse {
+			previous.IfName = aliases[statusString(item.Status, "interface")]
+		}
+		if previous.Address == "" && statusString(item.Status, "phase") != "Removed" && (!whenFalse || item.Status["staticAddressRemoved"] != true) {
 			previous.Address = statusString(item.Status, "address")
 		}
 		if previous.IfName == "" || previous.Address == "" {
@@ -243,7 +250,7 @@ func (c *Controller) cleanupStaleStaticAddresses(ctx context.Context, aliases ma
 		}
 		changed = true
 		if !c.DryRun {
-			if err := c.removeStaticAddress(ctx, previous.IfName, previous.Address); err != nil {
+			if err := c.removeStaticAddress(ctx, previous.IfName, previous.Address); err != nil && !(whenFalse && staticAddressAlreadyAbsent(err)) {
 				return changed, err
 			}
 		}
@@ -258,12 +265,31 @@ func (c *Controller) cleanupStaleStaticAddresses(ctx context.Context, aliases ma
 				"dryRun":         c.DryRun,
 				"observedAt":     time.Now().UTC().Format(time.RFC3339Nano),
 			}
+			if whenFalse {
+				status["phase"] = "Pending"
+				status["reason"] = "WhenFalse"
+				status["staticAddressRemoved"] = true
+			}
 			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, item.Kind, item.Name, status); err != nil {
 				return changed, err
 			}
 		}
 	}
 	return changed, nil
+}
+
+func (c *Controller) staticVirtualAddressBackend() string {
+	if c.currentOS() == platform.OSFreeBSD {
+		return "ifconfig"
+	}
+	return "iproute2"
+}
+
+func staticAddressAlreadyAbsent(err error) bool {
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "cannot assign requested address") ||
+		strings.Contains(message, "can't assign requested address") ||
+		strings.Contains(message, "does not exist")
 }
 
 func (c *Controller) applyStaticAddresses(ctx context.Context, aliases map[string]string) (bool, map[string]bool, error) {

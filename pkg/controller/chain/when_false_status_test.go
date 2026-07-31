@@ -24,7 +24,6 @@ func TestSaveWhenFalseStatusesPreservesFreshHealthCheckDaemonStatus(t *testing.T
 			"consecutivePassed": 12,
 		},
 	}
-
 	if err := (&Runner{Router: router}).saveWhenFalseStatuses(eventedStore{Store: store}); err != nil {
 		t.Fatalf("saveWhenFalseStatuses returned error: %v", err)
 	}
@@ -56,7 +55,6 @@ func TestSaveWhenFalseStatusesPreservesFreshHealthCheckDaemonEvidenceAfterOldWhe
 			"observed": observed,
 		},
 	}
-
 	if err := (&Runner{Router: router}).saveWhenFalseStatuses(eventedStore{Store: store}); err != nil {
 		t.Fatalf("saveWhenFalseStatuses returned error: %v", err)
 	}
@@ -122,6 +120,69 @@ func TestSaveWhenFalseStatusesStillMarksNonDaemonResourceWhenFalse(t *testing.T)
 	}
 	if got := status["reason"]; got != "WhenFalse" {
 		t.Fatalf("reason = %v, want WhenFalse", got)
+	}
+}
+
+func TestSaveWhenFalseStatusesRetainsStaticVirtualAddressCleanupMetadata(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+			Metadata: api.ObjectMeta{Name: "wan-nat-v4"},
+			Spec: api.VirtualAddressSpec{
+				Family: "ipv4", Interface: "wan", Address: "192.168.1.249/32", Mode: "static",
+				When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+					"VirtualAddress/lan-gw-v4.role": {Equals: "master"},
+				}},
+			},
+		},
+	}}}
+	store := mapStore{
+		api.NetAPIVersion + "/VirtualAddress/lan-gw-v4": {"role": "backup"},
+		api.NetAPIVersion + "/VirtualAddress/wan-nat-v4": {
+			"phase": "Applied", "backend": "iproute2", "ifname": "ens18", "appliedAddress": "192.168.1.249/32",
+		},
+	}
+	if err := (&Runner{Router: router}).saveWhenFalseStatuses(eventedStore{Store: store}); err != nil {
+		t.Fatalf("saveWhenFalseStatuses returned error: %v", err)
+	}
+
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "wan-nat-v4")
+	if status["phase"] != "Pending" || status["reason"] != "WhenFalse" {
+		t.Fatalf("status = %#v, want Pending/WhenFalse", status)
+	}
+	for key, want := range map[string]any{"backend": "iproute2", "ifname": "ens18", "appliedAddress": "192.168.1.249/32", "address": "192.168.1.249/32", "interface": "wan"} {
+		if got := status[key]; got != want {
+			t.Fatalf("status[%q] = %v, want %v; status=%#v", key, got, want, status)
+		}
+	}
+}
+
+func TestSaveWhenFalseStatusesHydratesLegacyStaticVirtualAddressForCleanup(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+			Metadata: api.ObjectMeta{Name: "wan-nat-v4"},
+			Spec: api.VirtualAddressSpec{
+				Family: "ipv4", Interface: "wan", Address: "192.168.1.249/32", Mode: "static",
+				When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+					"VirtualAddress/lan-gw-v4.role": {Equals: "master"},
+				}},
+			},
+		},
+	}}}
+	store := mapStore{
+		api.NetAPIVersion + "/VirtualAddress/lan-gw-v4":  {"role": "backup"},
+		api.NetAPIVersion + "/VirtualAddress/wan-nat-v4": {"phase": "Pending", "reason": "WhenFalse"},
+	}
+
+	if err := (&Runner{Router: router}).saveWhenFalseStatuses(eventedStore{Store: store}); err != nil {
+		t.Fatalf("saveWhenFalseStatuses returned error: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "wan-nat-v4")
+	for key, want := range map[string]any{"address": "192.168.1.249/32", "interface": "wan"} {
+		if got := status[key]; got != want {
+			t.Fatalf("status[%q] = %v, want %v; status=%#v", key, got, want, status)
+		}
 	}
 }
 
