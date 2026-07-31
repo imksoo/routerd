@@ -121,7 +121,8 @@ func (c IPv4PolicyRouteController) reconcileIPv6HostPolicies(ctx context.Context
 	if len(unavailable) > 0 && len(desired) == 0 && len(previous.Policies) == 0 {
 		return // first acquisition is intentionally unapplied.
 	}
-	if err := c.applyIPv6HostPolicyState(ctx, previous, ipv6HostPolicyState{Policies: desired}, unavailable); err != nil {
+	applied, transient, err := c.applyIPv6HostPolicyState(ctx, previous, ipv6HostPolicyState{Policies: desired}, unavailable)
+	if err != nil {
 		c.logHostPolicyError("reconcile IPv6 host policy", err)
 		for _, policy := range desired {
 			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policy.Name, map[string]any{"phase": "Pending", "reason": "HostPolicyApplyFailed", "dryRun": c.DryRun})
@@ -129,13 +130,13 @@ func (c IPv4PolicyRouteController) reconcileIPv6HostPolicies(ctx context.Context
 		return
 	}
 	if !c.DryRun {
-		if err := writeIPv6HostPolicyState(path, ipv6HostPolicyState{Policies: desired}); err != nil {
+		if err := writeIPv6HostPolicyState(path, applied); err != nil {
 			c.logHostPolicyError("write IPv6 host policy state", err)
 			return
 		}
 	}
 	for _, policy := range desired {
-		if unavailable[policy.Name] {
+		if unavailable[policy.Name] || transient[policy.Name] {
 			continue
 		}
 		_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policy.Name, map[string]any{"phase": "Applied", "dryRun": c.DryRun})
@@ -173,6 +174,11 @@ func (c IPv4PolicyRouteController) desiredIPv6HostPolicies(ctx context.Context) 
 				logical = vmac
 			}
 			ifname := firstNonEmpty(aliases[logical], logical)
+			ready, err := c.ipv6HostPolicyDeviceReady(ctx, ifname)
+			if err != nil || !ready {
+				unavailable[res.Metadata.Name] = true
+				continue
+			}
 			source, err := c.ipv6GlobalAddress(ctx, ifname)
 			if err != nil {
 				unavailable[res.Metadata.Name] = true
@@ -224,7 +230,7 @@ func (c IPv4PolicyRouteController) pdFailoverVMACByParentInterface() map[string]
 	return out
 }
 
-func (c IPv4PolicyRouteController) applyIPv6HostPolicyState(ctx context.Context, previous, desired ipv6HostPolicyState, retained map[string]bool) error {
+func (c IPv4PolicyRouteController) applyIPv6HostPolicyState(ctx context.Context, previous, desired ipv6HostPolicyState, retained map[string]bool) (ipv6HostPolicyState, map[string]bool, error) {
 	desiredByName := map[string]ipv6HostPolicy{}
 	for _, policy := range desired.Policies {
 		desiredByName[policy.Name] = policy
@@ -235,29 +241,56 @@ func (c IPv4PolicyRouteController) applyIPv6HostPolicyState(ctx context.Context,
 		}
 		if next, ok := desiredByName[old.Name]; !ok || next != old {
 			if err := c.deleteIPv6HostPolicy(ctx, old); err != nil {
-				return err
+				return ipv6HostPolicyState{}, nil, err
 			}
 		}
 	}
-	previousByName := map[string]ipv6HostPolicy{}
-	for _, policy := range previous.Policies {
-		previousByName[policy.Name] = policy
-	}
+	applied := ipv6HostPolicyState{}
+	transient := map[string]bool{}
 	for _, policy := range desired.Policies {
 		if retained[policy.Name] {
+			applied.Policies = append(applied.Policies, policy)
 			continue
 		}
 		if c.DryRun {
+			applied.Policies = append(applied.Policies, policy)
 			continue
 		}
 		if out, err := c.commandOutput(ctx, "ip", "-6", "route", "replace", "default", "via", policy.Gateway, "dev", policy.Interface, "table", strconv.Itoa(policy.Table), "metric", strconv.Itoa(policy.Metric), "src", policy.Source); err != nil {
-			return fmt.Errorf("ip -6 route replace: %w: %s", err, strings.TrimSpace(string(out)))
+			if transientIPv6HostPolicyError(out, err) {
+				c.logHostPolicyTransient(policy, "route replace", out, err)
+				transient[policy.Name] = true
+				continue
+			}
+			return ipv6HostPolicyState{}, nil, fmt.Errorf("ip -6 route replace: %w: %s", err, strings.TrimSpace(string(out)))
 		}
-		if err := c.ensureIPv6HostRule(ctx, policy); err != nil {
-			return err
+		isTransient, err := c.ensureIPv6HostRule(ctx, policy)
+		if err != nil {
+			return ipv6HostPolicyState{}, nil, err
+		}
+		if isTransient {
+			transient[policy.Name] = true
+			continue
+		}
+		applied.Policies = append(applied.Policies, policy)
+	}
+	return applied, transient, nil
+}
+
+func (c IPv4PolicyRouteController) ipv6HostPolicyDeviceReady(ctx context.Context, ifname string) (bool, error) {
+	out, err := c.commandOutput(ctx, "ip", "-o", "link", "show", "dev", ifname)
+	if err != nil {
+		return false, err
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		for i, field := range fields {
+			if field == "state" && i+1 < len(fields) && fields[i+1] == "UP" {
+				return true, nil
+			}
 		}
 	}
-	return nil
+	return false, nil
 }
 
 func (c IPv4PolicyRouteController) ipv6GlobalAddress(ctx context.Context, ifname string) (string, error) {
@@ -267,6 +300,16 @@ func (c IPv4PolicyRouteController) ipv6GlobalAddress(ctx context.Context, ifname
 	}
 	for _, line := range strings.Split(string(out), "\n") {
 		fields := strings.Fields(line)
+		ineligible := false
+		for _, field := range fields {
+			if field == "tentative" || field == "deprecated" {
+				ineligible = true
+				break
+			}
+		}
+		if ineligible {
+			continue
+		}
 		for i, field := range fields {
 			if field == "inet6" && i+1 < len(fields) {
 				return strings.Split(fields[i+1], "/")[0], nil
@@ -276,22 +319,40 @@ func (c IPv4PolicyRouteController) ipv6GlobalAddress(ctx context.Context, ifname
 	return "", fmt.Errorf("no global IPv6 address on %s", ifname)
 }
 
-func (c IPv4PolicyRouteController) ensureIPv6HostRule(ctx context.Context, policy ipv6HostPolicy) error {
+func (c IPv4PolicyRouteController) ensureIPv6HostRule(ctx context.Context, policy ipv6HostPolicy) (bool, error) {
 	out, err := c.commandOutput(ctx, "ip", "-6", "rule", "show")
 	if err != nil {
-		return err
+		return false, err
 	}
 	priority := strconv.Itoa(policy.Priority)
 	table := strconv.Itoa(policy.Table)
 	for _, line := range strings.Split(string(out), "\n") {
 		if strings.Contains(line, priority+":") && strings.Contains(line, "iif lo") && strings.Contains(line, "lookup "+table) {
-			return nil
+			return false, nil
 		}
 	}
-	if _, err := c.commandOutput(ctx, "ip", "-6", "rule", "add", "priority", priority, "iif", "lo", "lookup", table); err != nil {
-		return fmt.Errorf("ip -6 rule add: %w", err)
+	if out, err := c.commandOutput(ctx, "ip", "-6", "rule", "add", "priority", priority, "iif", "lo", "lookup", table); err != nil {
+		if transientIPv6HostPolicyError(out, err) {
+			c.logHostPolicyTransient(policy, "rule add", out, err)
+			return true, nil
+		}
+		return false, fmt.Errorf("ip -6 rule add: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	return nil
+	return false, nil
+}
+
+func transientIPv6HostPolicyError(out []byte, err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(string(out) + " " + err.Error())
+	return strings.Contains(message, "nexthop device is not up") || strings.Contains(message, "invalid source address")
+}
+
+func (c IPv4PolicyRouteController) logHostPolicyTransient(policy ipv6HostPolicy, operation string, out []byte, err error) {
+	if c.Logger != nil {
+		c.Logger.Warn("IPv6 host policy operation temporarily unavailable", "policy", policy.Name, "operation", operation, "error", err, "output", strings.TrimSpace(string(out)))
+	}
 }
 
 func (c IPv4PolicyRouteController) deleteIPv6HostPolicy(ctx context.Context, policy ipv6HostPolicy) error {

@@ -31,6 +31,8 @@ func TestIPv6HostPolicyUsesStateAndNeverMarksNft(t *testing.T) {
 		call := name + " " + strings.Join(args, " ")
 		calls = append(calls, call)
 		switch call {
+		case "ip -o link show dev wan0":
+			return []byte("2: wan0: <BROADCAST,UP,LOWER_UP> mtu 1500 state UP mode DEFAULT group default\n"), nil
 		case "ip -6 -o addr show dev wan0 scope global":
 			return []byte("2: wan0    inet6 2001:db8::2/64 scope global\n"), nil
 		case "ip -6 rule show":
@@ -73,6 +75,8 @@ func TestIPv6HostPolicyRepairsMissingRuleWithMatchingState(t *testing.T) {
 		call := name + " " + strings.Join(args, " ")
 		calls = append(calls, call)
 		switch call {
+		case "ip -o link show dev wan0":
+			return []byte("2: wan0: <BROADCAST,UP,LOWER_UP> mtu 1500 state UP mode DEFAULT group default\n"), nil
 		case "ip -6 -o addr show dev wan0 scope global":
 			return []byte("2: wan0 inet6 2001:db8::2/64 scope global\n"), nil
 		case "ip -6 rule show":
@@ -113,6 +117,8 @@ func TestIPv6HostPolicyUsesFailoverVMACWhenPDIsBoundThere(t *testing.T) {
 		call := name + " " + strings.Join(args, " ")
 		calls = append(calls, call)
 		switch call {
+		case "ip -o link show dev wan-vmac":
+			return []byte("3: wan-vmac: <BROADCAST,UP,LOWER_UP> mtu 1500 state UP mode DEFAULT group default\n"), nil
 		case "ip -6 -o addr show dev wan-vmac scope global":
 			return []byte("3: wan-vmac inet6 2001:db8:1200::113/64 scope global\n"), nil
 		case "ip -6 rule show":
@@ -145,6 +151,9 @@ func TestIPv6HostPolicyInitialSourceUnavailableDoesNotApply(t *testing.T) {
 	var calls []string
 	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		calls = append(calls, name+" "+strings.Join(args, " "))
+		if strings.Contains(strings.Join(args, " "), "link show") {
+			return []byte("2: wan0: <BROADCAST,UP,LOWER_UP> mtu 1500 state UP mode DEFAULT group default\n"), nil
+		}
 		if strings.Contains(strings.Join(args, " "), "addr show") {
 			return nil, errors.New("no global address")
 		}
@@ -176,6 +185,9 @@ func TestIPv6HostPolicyRetainsStateWhenPreferredSourceUnavailable(t *testing.T) 
 	var calls []string
 	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		calls = append(calls, name+" "+strings.Join(args, " "))
+		if strings.Contains(strings.Join(args, " "), "link show") {
+			return []byte("2: wan0: <BROADCAST,UP,LOWER_UP> mtu 1500 state UP mode DEFAULT group default\n"), nil
+		}
 		if strings.Contains(strings.Join(args, " "), "addr show") {
 			return nil, errors.New("no global address")
 		}
@@ -204,6 +216,9 @@ func TestIPv6HostPolicyChangesAndRemovesOnlyStatefulRules(t *testing.T) {
 	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: mapStore{}, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		call := name + " " + strings.Join(args, " ")
 		calls = append(calls, call)
+		if strings.Contains(call, "link show") {
+			return []byte("2: wan0: <BROADCAST,UP,LOWER_UP> mtu 1500 state UP mode DEFAULT group default\n"), nil
+		}
 		if strings.Contains(call, "addr show") {
 			return []byte("2: wan0 inet6 2001:db8::9/64 scope global\n"), nil
 		}
@@ -251,6 +266,8 @@ func TestIPv6HostPolicyChangeIgnoresAlreadyMissingPreviousRule(t *testing.T) {
 		call := name + " " + strings.Join(args, " ")
 		calls = append(calls, call)
 		switch {
+		case call == "ip -o link show dev wan0":
+			return []byte("2: wan0: <BROADCAST,UP,LOWER_UP> mtu 1500 state UP mode DEFAULT group default\n"), nil
 		case call == "ip -6 -o addr show dev wan0 scope global":
 			return []byte("2: wan0 inet6 2001:db8::9/64 scope global\n"), nil
 		case call == "ip -6 rule del priority 10120 iif lo lookup 120":
@@ -274,6 +291,104 @@ func TestIPv6HostPolicyChangeIgnoresAlreadyMissingPreviousRule(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("missing %q in:\n%s", want, joined)
 		}
+	}
+}
+
+func TestIPv6HostPolicyRetainsStateWhenDeviceIsDown(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "ipv6-host-policy.json")
+	previous := ipv6HostPolicyState{Policies: []ipv6HostPolicy{{Name: "host-ipv6-ra", Priority: 10120, Table: 120, Gateway: "fe80::1", Interface: "wan0", Source: "2001:db8::2", Metric: 50}}}
+	if err := writeIPv6HostPolicyState(statePath, previous); err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: mapStore{}, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		call := name + " " + strings.Join(args, " ")
+		calls = append(calls, call)
+		switch call {
+		case "ip -o link show dev wan0":
+			return []byte("2: wan0: <BROADCAST,MULTICAST> mtu 1500 state DOWN mode DEFAULT group default\n"), nil
+		case "ip -6 -o addr show dev wan0 scope global":
+			return []byte("2: wan0 inet6 2001:db8::2/64 scope global\n"), nil
+		}
+		return nil, nil
+	}}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(calls, "\n"), "route replace") {
+		t.Fatalf("device down must not install a host policy:\n%s", strings.Join(calls, "\n"))
+	}
+	got, err := loadIPv6HostPolicyState(statePath)
+	if err != nil || len(got.Policies) != 1 || got.Policies[0] != previous.Policies[0] {
+		t.Fatalf("state = %#v, %v", got, err)
+	}
+}
+
+func TestIPv6HostPolicyRetainsStateWhenOnlyAddressIsTentative(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "ipv6-host-policy.json")
+	previous := ipv6HostPolicyState{Policies: []ipv6HostPolicy{{Name: "host-ipv6-ra", Priority: 10120, Table: 120, Gateway: "fe80::1", Interface: "wan0", Source: "2001:db8::2", Metric: 50}}}
+	if err := writeIPv6HostPolicyState(statePath, previous); err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: mapStore{}, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		call := name + " " + strings.Join(args, " ")
+		calls = append(calls, call)
+		switch call {
+		case "ip -o link show dev wan0":
+			return []byte("2: wan0: <BROADCAST,UP,LOWER_UP> mtu 1500 state UP mode DEFAULT group default\n"), nil
+		case "ip -6 -o addr show dev wan0 scope global":
+			return []byte("2: wan0 inet6 2001:db8::9/64 scope global tentative\n"), nil
+		}
+		return nil, nil
+	}}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(calls, "\n"), "route replace") {
+		t.Fatalf("tentative address must not install a host policy:\n%s", strings.Join(calls, "\n"))
+	}
+	got, err := loadIPv6HostPolicyState(statePath)
+	if err != nil || len(got.Policies) != 1 || got.Policies[0] != previous.Policies[0] {
+		t.Fatalf("state = %#v, %v", got, err)
+	}
+}
+
+func TestIPv6HostPolicyRetriesTransientRouteReplaceWithoutRecordingState(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "ipv6-host-policy.json")
+	previous := ipv6HostPolicyState{Policies: []ipv6HostPolicy{{Name: "host-ipv6-ra", Priority: 10120, Table: 120, Gateway: "fe80::1", Interface: "wan0", Source: "2001:db8::9", Metric: 50}}}
+	if err := writeIPv6HostPolicyState(statePath, previous); err != nil {
+		t.Fatal(err)
+	}
+	var routeReplaceCalls int
+	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: mapStore{}, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		call := name + " " + strings.Join(args, " ")
+		switch call {
+		case "ip -o link show dev wan0":
+			return []byte("2: wan0: <BROADCAST,UP,LOWER_UP> mtu 1500 state UP mode DEFAULT group default\n"), nil
+		case "ip -6 -o addr show dev wan0 scope global":
+			return []byte("2: wan0 inet6 2001:db8::2/64 scope global\n"), nil
+		case "ip -6 rule show":
+			return []byte(""), nil
+		}
+		if strings.Contains(call, "route replace") {
+			routeReplaceCalls++
+			return []byte("RTNETLINK answers: Nexthop device is not up\n"), errors.New("exit status 2")
+		}
+		return nil, nil
+	}}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatalf("transient route failure must not fail reconcile: %v", err)
+	}
+	state, err := loadIPv6HostPolicyState(statePath)
+	if err != nil || len(state.Policies) != 0 {
+		t.Fatalf("state after transient failure = %#v, %v", state, err)
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatalf("transient route failure must remain retryable: %v", err)
+	}
+	if routeReplaceCalls != 2 {
+		t.Fatalf("route replace calls = %d, want 2", routeReplaceCalls)
 	}
 }
 
