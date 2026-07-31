@@ -2084,7 +2084,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	adoption := NetworkAdoptionController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNetworkAdoption}
 	serviceUnits := SystemdUnitController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunServiceUnit, SynthesizeClientDaemonUnits: !r.Opts.SuperviseClientDaemons}
 	logRetention := LogRetentionController{Router: r.Router, Bus: r.Bus, Store: store}
-	ntpClient := NTPClientController{Router: r.Router, Bus: r.Bus, Store: store}
+	ntpClient := NTPClientController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store}
 	ntpServer := NTPServerController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store}
 	info := DHCPv6InformationController{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
 	link := LinkController{Router: r.Router, Store: store, Logger: logger}

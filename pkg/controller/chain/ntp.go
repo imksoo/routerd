@@ -5,8 +5,10 @@ package chain
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
+	"os"
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -16,8 +18,9 @@ import (
 )
 
 type NTPClientController struct {
-	Router *api.Router
-	Bus    interface {
+	Router         *api.Router
+	DeclaredRouter *api.Router
+	Bus            interface {
 		Publish(context.Context, daemonapi.DaemonEvent) error
 	}
 	Store      Store
@@ -31,6 +34,9 @@ func (c NTPClientController) Reconcile(ctx context.Context) error {
 	command := c.Command
 	if command == nil {
 		command = runOutputCommandContext
+	}
+	if err := c.cleanupWhenFalseNTPClients(ctx, command); err != nil {
+		return err
 	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "NTPClient" {
@@ -151,6 +157,84 @@ func (c NTPClientController) Reconcile(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (c NTPClientController) cleanupWhenFalseNTPClients(ctx context.Context, command outputCommandFunc) error {
+	declared := c.DeclaredRouter
+	if declared == nil {
+		return nil
+	}
+	stateStore, ok := c.Store.(resourcequery.StateStore)
+	if !ok {
+		return nil
+	}
+	defaults, _ := platform.Current()
+	for _, resource := range declared.Spec.Resources {
+		if resource.Kind != "NTPClient" {
+			continue
+		}
+		spec, err := resource.NTPClientSpec()
+		if err != nil {
+			return err
+		}
+		when := resourcequery.ResourceWhen(resource)
+		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, stateStore) || resourcequery.ResourceWhenIndeterminate(when, stateStore) || !spec.Managed {
+			continue
+		}
+		provider := firstNonEmpty(spec.Provider, defaultNTPProvider())
+		configPath := c.ntpConfigPath(provider, defaults)
+		changed, err := removeNTPClientConfig(configPath, c.DryRun)
+		if err != nil {
+			return c.saveNTPCommandError(resource.Metadata.Name, provider, nil, "WhenFalseCleanupFailed", err)
+		}
+		if changed && !c.DryRun {
+			if err := c.reloadNTPClientProvider(ctx, provider, command); err != nil {
+				return c.saveNTPCommandError(resource.Metadata.Name, provider, nil, "WhenFalseCleanupReloadFailed", err)
+			}
+		}
+		if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NTPClient", resource.Metadata.Name, map[string]any{
+			"phase":      "Pending",
+			"reason":     "WhenFalse",
+			"provider":   provider,
+			"configPath": configPath,
+			"changed":    changed,
+			"dryRun":     c.DryRun,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func removeNTPClientConfig(path string, dryRun bool) (bool, error) {
+	if dryRun {
+		_, err := os.Stat(path)
+		return err == nil, nil
+	}
+	err := os.Remove(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (c NTPClientController) reloadNTPClientProvider(ctx context.Context, provider string, command outputCommandFunc) error {
+	switch provider {
+	case "systemd-timesyncd":
+		_, err := command(ctx, "systemctl", "restart", "systemd-timesyncd.service")
+		return err
+	case "chrony":
+		_, err := command(ctx, "systemctl", "restart", "chrony.service")
+		return err
+	case "ntpd":
+		_, err := command(ctx, "service", "ntpd", "restart")
+		return err
+	default:
+		return fmt.Errorf("unsupported NTP provider %q", provider)
+	}
 }
 
 func defaultNTPProvider() string {
