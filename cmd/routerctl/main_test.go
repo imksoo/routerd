@@ -774,6 +774,84 @@ func TestApplyRequiresInputAndExplainsMissingDaemon(t *testing.T) {
 	}
 }
 
+func TestApplyDriftedPreservesDiagnosticsAndFailsForUncommittedCanonical(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "routerd.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	defer listener.Close()
+	server := &http.Server{Handler: controlapi.Handler{
+		Apply: func(r *http.Request, req controlapi.ApplyRequest) (*controlapi.ApplyResult, error) {
+			result := controlapi.NewApplyResult(&apply.Result{
+				Phase:      "Drifted",
+				Generation: 42,
+				Warnings:   []string{"Interface/wan differs from the requested state"},
+			})
+			return &result, nil
+		},
+	}}
+	go func() { _ = server.Serve(listener) }()
+	defer server.Close()
+
+	candidatePath := filepath.Join(t.TempDir(), "candidate.yaml")
+	if err := os.WriteFile(candidatePath, []byte(testRouterYAML("candidate-router")), 0644); err != nil {
+		t.Fatalf("write candidate: %v", err)
+	}
+	var out bytes.Buffer
+	err = run([]string{"apply", "--socket", socketPath, "-f", candidatePath, "--replace"}, &out, &bytes.Buffer{})
+	var exitErr commandExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
+		t.Fatalf("apply error = %v, want exit code 1", err)
+	}
+	if !strings.Contains(err.Error(), "canonical config was not committed") {
+		t.Fatalf("apply error = %q, want persisted-state warning", err)
+	}
+	var result controlapi.ApplyResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode structured apply result: %v\n%s", err, out.String())
+	}
+	if result.Result.Phase != "Drifted" || result.Result.Generation != 42 {
+		t.Fatalf("apply result = %+v", result.Result)
+	}
+	if len(result.Result.Warnings) != 1 || !strings.Contains(result.Result.Warnings[0], "Interface/wan") {
+		t.Fatalf("apply warnings = %#v", result.Result.Warnings)
+	}
+}
+
+func TestApplyDriftedProcessExitIsNonZero(t *testing.T) {
+	bin := buildRouterctlBinary(t)
+	socketPath := filepath.Join(t.TempDir(), "routerd.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	defer listener.Close()
+	server := &http.Server{Handler: controlapi.Handler{
+		Apply: func(r *http.Request, req controlapi.ApplyRequest) (*controlapi.ApplyResult, error) {
+			result := controlapi.NewApplyResult(&apply.Result{Phase: "Drifted", Generation: 43})
+			return &result, nil
+		},
+	}}
+	go func() { _ = server.Serve(listener) }()
+	defer server.Close()
+
+	candidatePath := filepath.Join(t.TempDir(), "candidate.yaml")
+	if err := os.WriteFile(candidatePath, []byte(testRouterYAML("candidate-router")), 0644); err != nil {
+		t.Fatalf("write candidate: %v", err)
+	}
+	cmd := exec.Command(bin, "apply", "--socket", socketPath, "-f", candidatePath, "--replace")
+	out, err := cmd.CombinedOutput()
+	if got := processExitCode(err); got != 1 {
+		t.Fatalf("exit code = %d, want 1 (err=%v output=%s)", got, err, out)
+	}
+	for _, want := range []string{`"phase": "Drifted"`, `"generation": 43`, "canonical config was not committed"} {
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("apply output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestReadCandidateYAMLFromStdin(t *testing.T) {
 	got, err := readCandidateYAML("-", strings.NewReader("kind: Router\n"))
 	if err != nil {

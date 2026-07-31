@@ -136,7 +136,16 @@ func applyCommand(args []string, stdout io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("routerd serve is not reachable for apply; start routerd serve or check --socket: %w", err)
 	}
-	return writeJSON(stdout, result)
+	if err := writeJSON(stdout, result); err != nil {
+		return err
+	}
+	if strings.EqualFold(strings.TrimSpace(result.Result.Phase), "Drifted") {
+		return commandExitError{
+			Code: 1,
+			Err:  errors.New("apply finished with phase Drifted; canonical config was not committed"),
+		}
+	}
+	return nil
 }
 
 func deleteCommand(args []string, stdout io.Writer) error {
