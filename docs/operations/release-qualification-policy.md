@@ -7,6 +7,10 @@ title: Release qualification policy
 routerd release qualification tests the product, not the test substrate. The
 test substrate must be certified before the release run starts.
 
+If an incident requires a release rollback before or during qualification,
+follow [Release rollback procedure](release-rollback.md). A binary rollback is
+the default and must not silently replace the current canonical configuration.
+
 ## Gating rule
 
 Release qualification must not start unless all of the following are true:
@@ -102,6 +106,9 @@ record whether each failure is `product_failure`, `infra_failure`, or
 6. Run release qualification smoke on the certified environment.
 7. If qualification finds substrate damage, stop and recertify; do not repair in
    place during the product run.
+
+When a rollback was used, review its binary SHA-256, selected scope, candidate
+provenance, apply result, and resulting canonical config SHA-256 before step 5.
 
 The generic scripts, schemas, preflight checks, and lifecycle watchdog are
 versioned in this repository. Private routerd-labs drivers perform the actual

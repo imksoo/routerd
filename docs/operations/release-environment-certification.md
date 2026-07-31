@@ -9,6 +9,10 @@ certified. The certification phase proves that the PVE and cloud substrate is
 healthy enough to be used as a test environment. It is not a routerd product
 test.
 
+When certification or qualification requires a release rollback, follow
+[Release rollback procedure](release-rollback.md). In particular, a binary
+rollback does not authorize an implicit configuration rollback.
+
 ## Phase boundary
 
 Release validation is split into two phases:
@@ -67,6 +71,9 @@ evidence must identify:
 - whether routerd state databases, provider-side secondary IPs, PVE guests,
   config media, and guest `/tmp/routerd-*` artifacts are fresh, retained with
   matching state, or repaired during certification.
+- the rollback scope, release artifact SHA-256, configuration candidate
+  provenance, and resulting canonical configuration SHA-256 when rollback was
+  used to prepare the environment.
 
 The accepted starting modes are:
 
