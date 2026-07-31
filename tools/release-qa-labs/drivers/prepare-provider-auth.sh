@@ -12,6 +12,10 @@ service_group=routerd-release-qa
 service_uid="$(id -u "$service_user")"
 service_gid="$(getent group "$service_group" | cut -d: -f3)"
 [ -n "$service_gid" ] || { echo "provider auth prepare: service group is missing" >&2; exit 2; }
+[ "$(id -u)" -eq 0 ] || { echo "provider auth prepare: root is required" >&2; exit 2; }
+[ "$(id -g)" -eq "$service_gid" ] || {
+  echo "provider auth prepare: effective group must be $service_group" >&2; exit 2;
+}
 runtime_root="/var/lib/routerd-release-qa/$run_id/runtime"
 source_root="$runtime_root/secrets/azure-auth-source"
 pinned_root="/var/lib/routerd-release-qa-sealed/$run_id"
