@@ -67,6 +67,7 @@
   },
   "pve": {
     "node": "pve01",
+    "sshHost": "pve01.lain.local",
     "datastore": "local-lvm",
     "bootSource": "template",
     "underlayBridge": "vmbr0",

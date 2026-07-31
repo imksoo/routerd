@@ -70,6 +70,7 @@ output "fabric" {
     }
     pve = {
       node_name       = var.pve_node_name
+      node_ssh_host   = var.pve_ssh_host
       boot_source     = var.pve_boot_source
       underlay_bridge = var.pve_underlay_bridge
       capture_bridge  = module.pve_leaf.capture_bridge

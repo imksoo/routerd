@@ -36,6 +36,9 @@ class RemoteEgressPreflightTests(unittest.TestCase):
             'run_id = "run-1"\ncommit = "release-commit"\n'
             'aws_region = "ap-northeast-1"\naws_profile = "fixture"\n'
             'oci_region = "ap-tokyo-1"\noci_profile = "fixture"\n', encoding="utf-8")
+        with self.tfvars.open("a", encoding="utf-8") as handle:
+            handle.write('pve_node_name = "pve01"\npve_ssh_host = "pve01.lain.local"\n'
+                         'pve_endpoint = "https://pve01.lain.local:8006/"\n')
         self.tfvars.chmod(0o600)
         self.token = self.runtime / "pve-token.tfvars"
         self.token.write_text('pve_api_token = "fixture"\n', encoding="utf-8")
@@ -54,7 +57,7 @@ class RemoteEgressPreflightTests(unittest.TestCase):
             "lifecycle": {"ttl": "75m", "heartbeatStale": "5m"},
             "execution": {"host": "chatty", "providerMirror": str(self.mirror),
                           "providerVersions": {"hashicorp/aws": "1.2.3"}},
-            "pve": {"node": "pve01"},
+            "pve": {"node": "pve01", "sshHost": "pve01.lain.local"},
         }
         self.contract = self.runtime / "contract.json"
         self.contract.write_text(json.dumps(contract), encoding="utf-8")
@@ -67,7 +70,7 @@ esac
 exit 0''')
         self.make("getent", 'echo "getent $*" >>"$CALLS"; [ "${FAILURE:-}" = dns ] && exit 9; exit 0')
         self.make("timeout", '''echo "timeout $*" >>"$CALLS"
-case "${FAILURE:-}:$*" in tcp:*proxy.invalid*) exit 9;; pve_tcp:*pve01/8006*) exit 9;; direct_tcp:*443*) exit 9;; esac
+case "${FAILURE:-}:$*" in tcp:*proxy.invalid*) exit 9;; pve_tcp:*pve01.lain.local/8006*) exit 9;; direct_tcp:*443*) exit 9;; esac
 shift
 [ "$1" = bash ] && exit 0
 exec "$@"''')
@@ -126,6 +129,8 @@ exec "$@"''')
         self.assertEqual(result_data["runId"], "run-1")
         self.assertEqual(result_data["executionHost"], "chatty")
         self.assertRegex(result_data["contractSha256"], r"^[0-9a-f]{64}$")
+        self.assertIn("pve01.lain.local", log)
+        self.assertNotIn("root@pve01 ", log)
 
     def test_proxy_negative_matrix_is_fail_closed(self):
         for failure in ("dns", "tcp", "proxy", "aws", "az", "oci", "ssh", "pve_tcp"):

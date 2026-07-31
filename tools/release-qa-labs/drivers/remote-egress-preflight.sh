@@ -32,7 +32,7 @@ esac
 
 aws_region="$(extract_tfvars_string "$tfvars_path" aws_region)"
 oci_region="$(extract_tfvars_string "$tfvars_path" oci_region)"
-pve_host="$(jq -er '.pve.node' "$contract_path")"
+pve_host="$pve_ssh_host"
 hosts=(
   "sts.${aws_region}.amazonaws.com"
   "management.azure.com"

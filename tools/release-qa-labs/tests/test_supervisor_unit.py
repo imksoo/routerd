@@ -62,6 +62,33 @@ class SupervisorUnitTests(unittest.TestCase):
         self.assertIn('(\"pveSshPrivateKey\", \"pve_ssh_private_key\")', source)
         self.assertIn('"ROUTERD_RELEASE_QA_PINNED_PVE_SSH_PRIVATE_KEY"', source)
 
+    def test_pve_network_and_cluster_id_consumers_are_separated(self):
+        example = json.loads((ROOT / "contract.example.json").read_text(encoding="utf-8"))
+        self.assertEqual(example["pve"]["node"], "pve01")
+        self.assertEqual(example["pve"]["sshHost"], "pve01.lain.local")
+        drivers = {path.name: path.read_text(encoding="utf-8")
+                   for path in (ROOT / "drivers").glob("*.sh")}
+        self.assertIn(".pve.node", drivers["common.sh"])
+        for name, source in drivers.items():
+            if name != "common.sh":
+                self.assertNotIn(".pve.node", source, name)
+        for name in ("remote-egress-preflight.sh", "inventory-driver.sh",
+                     "pve-certification-driver.sh"):
+            self.assertIn("$pve_ssh_host", drivers[name], name)
+        inventory = drivers["inventory-driver.sh"]
+        self.assertIn("/nodes/$(printf '%q' \"$pve_node\")/network", inventory)
+        outputs = (ROOT / "terraform/envs/default/outputs.tf").read_text(encoding="utf-8")
+        self.assertIn("node_name       = var.pve_node_name", outputs)
+        self.assertIn("node_ssh_host   = var.pve_ssh_host", outputs)
+
+    def test_oci_search_uses_explicit_complete_pagination(self):
+        inventory = (ROOT / "drivers/inventory-driver.sh").read_text(encoding="utf-8")
+        search = inventory[inventory.index("search resource structured-search"):]
+        self.assertNotIn("--all", search)
+        self.assertIn('oci_args+=(--page "$page_token")', search)
+        self.assertIn("repeated a pagination token", search)
+        self.assertIn('pagination:{status:"complete", pages:length}', search)
+
 
 if __name__ == "__main__":
     unittest.main()

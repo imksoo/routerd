@@ -104,6 +104,14 @@ load_contract() {
     die "tfvars run_id does not equal contract runId"
   [ "$(extract_tfvars_string "$tfvars_path" commit)" = "$artifact_commit" ] ||
     die "tfvars commit does not equal exact artifact commit"
+  pve_node="$(jq -er '.pve.node' "$contract_path")"
+  pve_ssh_host="$(jq -er '.pve.sshHost' "$contract_path")"
+  [ "$(extract_tfvars_string "$tfvars_path" pve_node_name)" = "$pve_node" ] ||
+    die "tfvars pve_node_name does not equal contract pve.node"
+  [ "$(extract_tfvars_string "$tfvars_path" pve_ssh_host)" = "$pve_ssh_host" ] ||
+    die "tfvars pve_ssh_host does not equal contract pve.sshHost"
+  [ "$(extract_tfvars_string "$tfvars_path" pve_endpoint)" = "https://$pve_ssh_host:8006/" ] ||
+    die "tfvars pve_endpoint does not use contract pve.sshHost"
 
   local actual_labs_commit
   actual_labs_commit="$(git -C "$framework_root" rev-parse HEAD)"

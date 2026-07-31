@@ -39,7 +39,11 @@ class ContractGuardTests(unittest.TestCase):
         self.tf_dir = self.framework / "terraform/envs/default"
         self.tf_dir.mkdir(parents=True)
         self.tfvars = self.runtime / "terraform.tfvars"
-        self.tfvars.write_text('fixture = true\n', encoding="utf-8")
+        self.tfvars.write_text(
+            'pve_node_name = "pve01"\npve_ssh_host = "pve01.lain.local"\n'
+            'pve_endpoint = "https://pve01.lain.local:8006/"\n',
+            encoding="utf-8",
+        )
         self.tfvars.chmod(0o600)
         secrets = self.runtime / "secrets"
         secrets.mkdir(mode=0o700)
@@ -66,6 +70,7 @@ class ContractGuardTests(unittest.TestCase):
                 "workingDirectory": str(self.tf_dir), "statePath": str(self.runtime / "terraform.tfstate"),
                 "variablesPath": str(self.tfvars), "outputPath": str(self.runtime / "tofu-output-full.json"),
             },
+            "pve": {"node": "pve01", "sshHost": "pve01.lain.local"},
             "limits": {
                 "maxEstimatedCostUsd": 1.0,
                 "providerCounts": qa_guard.APPROVED_COUNTS,
@@ -141,6 +146,35 @@ class ContractGuardTests(unittest.TestCase):
 
     def test_exact_artifact_and_clean_provenance_pass(self):
         self.verify(self.fake_git())
+
+    def test_pve_short_cluster_id_and_fqdn_pair_are_mandatory(self):
+        del self.contract["pve"]["sshHost"]
+        with self.assertRaisesRegex(qa_guard.GuardError, "sshHost"):
+            self.verify(self.fake_git())
+
+    def test_pve_swapped_short_and_fqdn_identities_are_rejected(self):
+        self.contract["pve"] = {"node": "pve01.lain.local", "sshHost": "pve01"}
+        with self.assertRaisesRegex(qa_guard.GuardError, "cluster node ID"):
+            self.verify(self.fake_git())
+
+    def test_pve_short_or_unrelated_ssh_host_is_rejected(self):
+        for ssh_host in ("pve01", "other.lain.local"):
+            with self.subTest(ssh_host=ssh_host):
+                self.contract["pve"]["sshHost"] = ssh_host
+                with self.assertRaisesRegex(qa_guard.GuardError, "FQDN|identify"):
+                    self.verify(self.fake_git())
+
+    def test_pve_tfvars_identity_mismatch_is_rejected(self):
+        cases = (
+            'pve_node_name = "pve02"\npve_ssh_host = "pve01.lain.local"\npve_endpoint = "https://pve01.lain.local:8006/"\n',
+            'pve_node_name = "pve01"\npve_ssh_host = "pve02.lain.local"\npve_endpoint = "https://pve01.lain.local:8006/"\n',
+            'pve_node_name = "pve01"\npve_ssh_host = "pve01.lain.local"\npve_endpoint = "https://pve01:8006/"\n',
+        )
+        for value in cases:
+            with self.subTest(value=value):
+                self.tfvars.write_text(value, encoding="utf-8")
+                with self.assertRaisesRegex(qa_guard.GuardError, "OpenTofu"):
+                    self.verify(self.fake_git())
 
     def test_execution_mode_is_explicit_and_staging_identity_is_separate(self):
         del self.contract["execution"]["mode"]

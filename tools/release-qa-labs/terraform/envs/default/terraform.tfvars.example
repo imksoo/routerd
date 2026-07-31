@@ -49,6 +49,7 @@ oci_shape               = "VM.Standard.E2.1"
 #   export TF_VAR_pve_api_token='root@pam!tofu=<secret>'
 pve_endpoint        = "https://pve01.local:8006/"
 pve_node_name       = "pve01"
+pve_ssh_host        = "pve01.local"
 pve_boot_source     = "template"        # "iso" to boot from ISO instead
 pve_template_vm_id  = 9000              # cloud-init template VM ID
 # pve_iso_file_id   = "local:iso/routerd.iso"
