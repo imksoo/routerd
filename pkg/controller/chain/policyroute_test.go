@@ -98,7 +98,7 @@ func TestIPv6HostPolicyRepairsMissingRuleWithMatchingState(t *testing.T) {
 	}
 }
 
-func TestIPv6HostPolicyUsesFailoverVMACWhenPDIsBoundThere(t *testing.T) {
+func TestIPv6HostPolicyKeepsNormalLocalTrafficOnPhysicalWANWhenPDUsesVMAC(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "ipv6-host-policy.json")
 	router := hostPolicyRouter(true)
 	router.Spec.Resources = append(router.Spec.Resources,
@@ -117,10 +117,10 @@ func TestIPv6HostPolicyUsesFailoverVMACWhenPDIsBoundThere(t *testing.T) {
 		call := name + " " + strings.Join(args, " ")
 		calls = append(calls, call)
 		switch call {
-		case "ip -o link show dev wan-vmac":
-			return []byte("3: wan-vmac: <BROADCAST,UP,LOWER_UP> mtu 1500 state UP mode DEFAULT group default\n"), nil
-		case "ip -6 -o addr show dev wan-vmac scope global":
-			return []byte("3: wan-vmac inet6 2001:db8:1200::113/64 scope global\n"), nil
+		case "ip -o link show dev wan0":
+			return []byte("2: wan0: <BROADCAST,UP,LOWER_UP> mtu 1500 state UP mode DEFAULT group default\n"), nil
+		case "ip -6 -o addr show dev wan0 scope global":
+			return []byte("2: wan0 inet6 2001:db8:1200::2/64 scope global\n"), nil
 		case "ip -6 rule show":
 			return []byte(""), nil
 		default:
@@ -131,17 +131,118 @@ func TestIPv6HostPolicyUsesFailoverVMACWhenPDIsBoundThere(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(calls, "\n")
-	if strings.Contains(joined, "addr show dev wan0") || strings.Contains(joined, "dev wan0 table 120") {
-		t.Fatalf("VMAC PD host policy must not use parent device:\n%s", joined)
+	if strings.Contains(joined, "addr show dev wan-vmac") || strings.Contains(joined, "dev wan-vmac table 120") {
+		t.Fatalf("normal host policy must not use the DS-Lite VMAC:\n%s", joined)
 	}
 	for _, want := range []string{
-		"ip -6 -o addr show dev wan-vmac scope global",
-		"ip -6 route replace default via fe80::1 dev wan-vmac table 120 metric 50 src 2001:db8:1200::113",
+		"ip -6 -o addr show dev wan0 scope global",
+		"ip -6 route replace default via fe80::1 dev wan0 table 120 metric 50 src 2001:db8:1200::2",
 		"ip -6 rule add priority 10120 iif lo lookup 120",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("missing %q in:\n%s", want, joined)
 		}
+	}
+}
+
+func TestIPv6HostPolicyRoutesOnlyDSLiteOuterSourcesThroughVMACMainTable(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "ipv6-host-policy.json")
+	router := hostPolicyRouter(true)
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-a"}, Spec: api.DSLiteTunnelSpec{Interface: "wan-vmac"}},
+		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-ra"}, Spec: api.DSLiteTunnelSpec{Interface: "wan-vmac"}},
+	)
+	store := mapStore{
+		api.NetAPIVersion + "/DSLiteTunnel/ds-lite-a":  {"localIPv6": "2001:db8:1200::21"},
+		api.NetAPIVersion + "/DSLiteTunnel/ds-lite-ra": {"localIPv6": "2001:db8:1200::23"},
+	}
+	var calls []string
+	controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		call := name + " " + strings.Join(args, " ")
+		calls = append(calls, call)
+		switch call {
+		case "ip -o link show dev wan0":
+			return []byte("2: wan0: <BROADCAST,UP,LOWER_UP> mtu 1500 state UP mode DEFAULT group default\n"), nil
+		case "ip -6 -o addr show dev wan0 scope global":
+			return []byte("2: wan0 inet6 2001:db8:1200::2/64 scope global\n"), nil
+		case "ip -6 rule show":
+			return []byte(""), nil
+		}
+		return nil, nil
+	}}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(calls, "\n")
+	for _, want := range []string{
+		"ip -6 rule add priority 10100 from 2001:db8:1200::21/128 lookup main",
+		"ip -6 rule add priority 10101 from 2001:db8:1200::23/128 lookup main",
+		"ip -6 route replace default via fe80::1 dev wan0 table 120 metric 50 src 2001:db8:1200::2",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("missing %q in:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "route replace default via fe80::1 dev wan-vmac") {
+		t.Fatalf("DS-Lite source rules must use the existing VMAC main route, not replace a host route:\n%s", joined)
+	}
+}
+
+func TestIPv6HostPolicyMigratesVMACCatchAllRuleToPhysicalWANAndCleansOldState(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "ipv6-host-policy.json")
+	previous := ipv6HostPolicyState{Policies: []ipv6HostPolicy{{Name: "host-ipv6-ra", Owner: "host-ipv6-ra", Priority: 10120, Table: 120, Gateway: "fe80::1", Interface: "wan-vmac", Source: "2001:db8:1200::23", Metric: 50}}}
+	if err := writeIPv6HostPolicyState(statePath, previous); err != nil {
+		t.Fatal(err)
+	}
+	router := hostPolicyRouter(true)
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-ra"}, Spec: api.DSLiteTunnelSpec{Interface: "wan-vmac"}})
+	store := mapStore{api.NetAPIVersion + "/DSLiteTunnel/ds-lite-ra": {"localIPv6": "2001:db8:1200::23"}}
+	var calls []string
+	controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		call := name + " " + strings.Join(args, " ")
+		calls = append(calls, call)
+		switch call {
+		case "ip -o link show dev wan0":
+			return []byte("2: wan0: <BROADCAST,UP,LOWER_UP> mtu 1500 state UP mode DEFAULT group default\n"), nil
+		case "ip -6 -o addr show dev wan0 scope global":
+			return []byte("2: wan0 inet6 2001:db8:1200::2/64 scope global\n"), nil
+		case "ip -6 rule show":
+			return []byte(""), nil
+		}
+		return nil, nil
+	}}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(calls, "\n")
+	for _, want := range []string{
+		"ip -6 rule del priority 10120 iif lo lookup 120",
+		"ip -6 route del default via fe80::1 dev wan-vmac table 120 metric 50 src 2001:db8:1200::23",
+		"ip -6 route replace default via fe80::1 dev wan0 table 120 metric 50 src 2001:db8:1200::2",
+		"ip -6 rule add priority 10100 from 2001:db8:1200::23/128 lookup main",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("missing %q in:\n%s", want, joined)
+		}
+	}
+}
+
+func TestIPv6HostPolicyRecognizesKernelHostPrefixDisplay(t *testing.T) {
+	var calls []string
+	controller := IPv4PolicyRouteController{CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		call := name + " " + strings.Join(args, " ")
+		calls = append(calls, call)
+		if call == "ip -6 rule show" {
+			return []byte("10100: from 2001:db8:1200::23 lookup main\n"), nil
+		}
+		return nil, nil
+	}}
+	transient, err := controller.ensureIPv6HostRule(t.Context(), ipv6HostPolicy{Priority: 10100, Lookup: "main", Source: "2001:db8:1200::23", RuleFrom: true})
+	if err != nil || transient {
+		t.Fatalf("ensure existing source rule = transient:%t err:%v", transient, err)
+	}
+	if strings.Contains(strings.Join(calls, "\n"), "rule add") {
+		t.Fatalf("kernel's bare /128 display must not add a duplicate rule: %s", strings.Join(calls, "\n"))
 	}
 }
 
