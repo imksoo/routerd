@@ -4,6 +4,7 @@ package chain
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -132,6 +133,69 @@ func TestNTPClientControllerReportsTimesyncdDisableForChrony(t *testing.T) {
 	events := eventBus.Recent("routerd.system.ntp.provider_conflict_resolved")
 	if len(events) != 1 || events[0].Resource == nil || events[0].Resource.Name != "system-time" {
 		t.Fatalf("events = %#v", events)
+	}
+}
+
+func TestNTPClientControllerCleansWhenFalseChronyConfigAndRecreatesWhenTrue(t *testing.T) {
+	router := ntpRouter(api.NTPClientSpec{
+		When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+			"VirtualAddress/lan-vip.role": {Equals: "master"},
+		}},
+		Provider: "chrony",
+		Managed:  true,
+		Servers:  []string{"2001:db8::123"},
+	})
+	store := statefulDHCPMapStore{mapStore: mapStore{
+		api.NetAPIVersion + "/VirtualAddress/lan-vip": {"role": "master"},
+	}}
+	configPath := filepath.Join(t.TempDir(), "routerd-client.conf")
+	var commands []string
+	controller := NTPClientController{
+		Router:         resourcequery.FilterRouterByWhen(router, store),
+		DeclaredRouter: router,
+		Store:          store,
+		ConfigPath:     configPath,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return []byte("ok"), nil
+		},
+	}
+
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile master: %v", err)
+	}
+	if data, err := os.ReadFile(configPath); err != nil || !strings.Contains(string(data), "server 2001:db8::123 iburst\n") {
+		t.Fatalf("master config = %q, err=%v", data, err)
+	}
+
+	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "backup"
+	controller.Router = resourcequery.FilterRouterByWhen(router, store)
+	commands = nil
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile backup: %v", err)
+	}
+	if _, err := os.Stat(configPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("backup config still exists, err=%v", err)
+	}
+	if got := strings.Join(commands, "\n"); !strings.Contains(got, "systemctl restart chrony.service") {
+		t.Fatalf("backup reconcile did not restart chrony:\n%s", got)
+	}
+	status := store.ObjectStatus(api.SystemAPIVersion, "NTPClient", "system-time")
+	if status["phase"] != "Pending" || status["reason"] != "WhenFalse" {
+		t.Fatalf("backup status = %#v", status)
+	}
+
+	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "master"
+	controller.Router = resourcequery.FilterRouterByWhen(router, store)
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile remaster: %v", err)
+	}
+	if data, err := os.ReadFile(configPath); err != nil || !strings.Contains(string(data), "server 2001:db8::123 iburst\n") {
+		t.Fatalf("remaster config = %q, err=%v", data, err)
+	}
+	status = store.ObjectStatus(api.SystemAPIVersion, "NTPClient", "system-time")
+	if status["phase"] != "Applied" {
+		t.Fatalf("remaster status = %#v", status)
 	}
 }
 
