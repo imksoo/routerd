@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -528,6 +529,84 @@ exec /bin/rm "$@"
 			}
 			if data, err := os.ReadFile(commandLog); err == nil && len(data) != 0 {
 				t.Fatalf("foreign service invoked service manager:\n%s", data)
+			}
+		})
+	}
+}
+
+func TestUninstallCoversShippedBinaryAndPluginPayload(t *testing.T) {
+	makefile, err := os.ReadFile(filepath.Join(repoRoot(t), "Makefile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	uninstaller, err := os.ReadFile(filepath.Join(repoRoot(t), "packaging", "uninstall.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Makefile's dist recipe is the release payload manifest. install.sh
+	// installs every bin/* file and every supported libexec plugin file, so
+	// every such shipped path must have an exact uninstall counterpart.
+	distPathRE := regexp.MustCompile(`\$\(DISTROOT\)/(bin/[A-Za-z0-9._-]+|libexec/routerd/plugins/[A-Za-z0-9._/-]+)`)
+	matches := distPathRE.FindAllSubmatch(makefile, -1)
+	if len(matches) == 0 {
+		t.Fatal("no shipped binary/plugin paths found in dist recipe")
+	}
+	for _, match := range matches {
+		shipped := string(match[1])
+		var uninstallPath string
+		if strings.HasPrefix(shipped, "bin/") {
+			uninstallPath = strings.TrimPrefix(shipped, "bin/")
+		} else {
+			uninstallPath = shipped
+		}
+		if !strings.Contains(string(uninstaller), uninstallPath) {
+			t.Errorf("shipped payload %q has no exact uninstall entry", shipped)
+		}
+	}
+}
+
+func TestUninstallRemovesShippedPayloadAndPreservesUserPlugin(t *testing.T) {
+	for _, osName := range []string{"Linux", "FreeBSD"} {
+		t.Run(strings.ToLower(osName), func(t *testing.T) {
+			dir := t.TempDir()
+			prefix := filepath.Join(dir, "prefix")
+			fakeBin := filepath.Join(dir, "bin")
+			writeExecutable(t, filepath.Join(fakeBin, "uname"), fmt.Sprintf("#!/bin/sh\necho %s\n", osName))
+
+			shipped := []string{
+				"sbin/routerd-bgp",
+				"sbin/routerd-ndpi-agent",
+				"sbin/routerd-ra-observer",
+				"sbin/routerd-arp-observer",
+				"sbin/routerd-eventd",
+				"sbin/routerd-vrrp-vmac",
+				"libexec/routerd/plugins/aws-provider-executor/bin/aws-provider-executor",
+				"libexec/routerd/plugins/aws-provider-executor/plugin.yaml",
+				"libexec/routerd/plugins/azure-provider-executor/bin/azure-provider-executor",
+				"libexec/routerd/plugins/azure-provider-executor/plugin.yaml",
+				"libexec/routerd/plugins/oci-provider-executor/bin/oci-provider-executor",
+				"libexec/routerd/plugins/oci-provider-executor/plugin.yaml",
+				"libexec/routerd/plugins/provider-private-ip-inventory",
+			}
+			for _, rel := range shipped {
+				writeExecutable(t, filepath.Join(prefix, rel), "shipped\n")
+			}
+			userPlugin := filepath.Join(prefix, "libexec/routerd/plugins/user-plugin/plugin.yaml")
+			writeExecutable(t, userPlugin, "operator-owned\n")
+
+			cmd := exec.Command(filepath.Join(repoRoot(t), "packaging", "uninstall.sh"), "--prefix", prefix, "--yes")
+			cmd.Env = append(os.Environ(), "PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("uninstall failed: %v\n%s", err, out)
+			}
+			for _, rel := range shipped {
+				if _, err := os.Lstat(filepath.Join(prefix, rel)); !os.IsNotExist(err) {
+					t.Errorf("shipped payload remains: %s (stat err=%v)", rel, err)
+				}
+			}
+			if got, err := os.ReadFile(userPlugin); err != nil || string(got) != "operator-owned\n" {
+				t.Errorf("user plugin was not preserved: content=%q err=%v", got, err)
 			}
 		})
 	}

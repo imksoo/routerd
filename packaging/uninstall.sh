@@ -184,12 +184,47 @@ for binary in \
     routerd-dhcp-event-relay \
     routerd-dhcp-fingerprint-watcher \
     routerd-healthcheck \
+    routerd-bgp \
     routerd-dns-resolver \
     routerd-firewall-logger \
     routerd-dpi-classifier \
+    routerd-ndpi-agent \
+    routerd-ra-observer \
+    routerd-arp-observer \
+    routerd-eventd \
+    routerd-vrrp-vmac \
     routerd-pppoe-client
 do
     rm_path "${prefix}/sbin/${binary}"
+done
+
+# Remove only the plugin payload paths shipped by routerd.  In particular, do
+# not remove the plugins directory: operators may install additional trusted
+# local plugins there.
+for plugin_path in \
+    libexec/routerd/plugins/aws-provider-executor/bin/aws-provider-executor \
+    libexec/routerd/plugins/aws-provider-executor/plugin.yaml \
+    libexec/routerd/plugins/azure-provider-executor/bin/azure-provider-executor \
+    libexec/routerd/plugins/azure-provider-executor/plugin.yaml \
+    libexec/routerd/plugins/oci-provider-executor/bin/oci-provider-executor \
+    libexec/routerd/plugins/oci-provider-executor/plugin.yaml \
+    libexec/routerd/plugins/provider-private-ip-inventory
+do
+    rm_path "${prefix}/${plugin_path}"
+done
+
+# Prune directories belonging to the bundled executors only when empty.
+for plugin_dir in \
+    "${prefix}/libexec/routerd/plugins/aws-provider-executor/bin" \
+    "${prefix}/libexec/routerd/plugins/aws-provider-executor" \
+    "${prefix}/libexec/routerd/plugins/azure-provider-executor/bin" \
+    "${prefix}/libexec/routerd/plugins/azure-provider-executor" \
+    "${prefix}/libexec/routerd/plugins/oci-provider-executor/bin" \
+    "${prefix}/libexec/routerd/plugins/oci-provider-executor"
+do
+    if [ -d "${plugin_dir}" ]; then
+        run rmdir "${plugin_dir}" 2>/dev/null || true
+    fi
 done
 
 if [ "${purge_config}" -eq 1 ]; then
