@@ -30,6 +30,7 @@
     }
   },
   "execution": {
+    "mode": "production",
     "host": "chatty.lain.local",
     "requireRemote": true,
     "providerMirror": "/var/lib/routerd-release-qa/provider-mirror",
