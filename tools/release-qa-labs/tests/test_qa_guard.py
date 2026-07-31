@@ -51,12 +51,14 @@ class ContractGuardTests(unittest.TestCase):
         })
         self.contract = {
             "runId": "run-1",
+            "environment": "routerd-release-qualification",
             "lifecycle": {
                 "ttl": "45m", "heartbeatStale": "5m", "cleanupScope": "run-id",
                 "cleanupTimeout": "10m", "inventoryTimeout": "5m",
                 "maxCleanupAttempts": 2, "maxPaidLifecycleSeconds": 4500,
             },
             "execution": {
+                "mode": "production",
                 "host": "chatty", "requireRemote": True,
                 "providerMirror": str(self.runs_root / "provider-mirror"),
             },
@@ -138,6 +140,42 @@ class ContractGuardTests(unittest.TestCase):
             qa_guard.verify_contract(self.contract_path, self.release, self.framework, "chatty")
 
     def test_exact_artifact_and_clean_provenance_pass(self):
+        self.verify(self.fake_git())
+
+    def test_execution_mode_is_explicit_and_staging_identity_is_separate(self):
+        del self.contract["execution"]["mode"]
+        with self.assertRaisesRegex(qa_guard.GuardError, "mode"):
+            self.verify(self.fake_git())
+        self.contract["execution"]["mode"] = qa_guard.STAGING_MODE
+        with self.assertRaisesRegex(qa_guard.GuardError, "staging-specific"):
+            self.verify(self.fake_git())
+        self.contract["environment"] = "routerd-release-qa-staging"
+        self.contract["execution"]["mode"] = qa_guard.PRODUCTION_MODE
+        with self.assertRaisesRegex(qa_guard.GuardError, "production environment"):
+            self.verify(self.fake_git())
+
+    def test_staging_identity_and_contract_mode_pass_together(self):
+        old_root = self.run_root
+        new_root = self.runs_root / "relqa-staging-fixture"
+        old_root.rename(new_root)
+        self.contract = json.loads(
+            json.dumps(self.contract).replace(str(old_root), str(new_root))
+        )
+        self.contract["runId"] = new_root.name
+        self.contract["environment"] = "routerd-release-qa-staging"
+        self.contract["execution"]["mode"] = qa_guard.STAGING_MODE
+        self.run_root = new_root
+        self.release = new_root / "repo"
+        self.framework = self.release / "tools/release-qa-labs"
+        self.runtime = new_root / "runtime"
+        self.artifact = Path(self.contract["routerdArtifact"]["path"])
+        self.tf_dir = Path(self.contract["tofu"]["workingDirectory"])
+        self.tfvars = Path(self.contract["tofu"]["variablesPath"])
+        self.ssh_key = self.runtime / "secrets/pve_ssh"
+        self.contract_path = self.runtime / "pinned/contract.json"
+        write_json(self.runtime / "pinned/run.env.json", {
+            "releaseRepo": str(self.release), "pveSshPrivateKey": str(self.ssh_key),
+        })
         self.verify(self.fake_git())
 
     def test_artifact_tamper_is_rejected(self):

@@ -91,6 +91,101 @@ class SupervisorTests(unittest.TestCase):
             rc = supervisor.run()
         return rc, events
 
+    def test_staging_clean_service_restart_never_mutates_and_has_distinct_success(self):
+        supervisor = lifecycle.Supervisor(self.args)
+        supervisor.state["executionMode"] = lifecycle.STAGING_MODE
+        supervisor.state["effectiveLifecycle"]["executionMode"] = lifecycle.STAGING_MODE
+        lifecycle.atomic_json(self.state, supervisor.state)
+        events = []
+
+        def run(command, check=False, timeout=None):
+            events.append(command[0])
+            return mock.Mock(returncode=0)
+
+        with mock.patch.object(lifecycle.subprocess, "run", side_effect=run), \
+             mock.patch.object(lifecycle.subprocess, "Popen") as popen:
+            self.assertEqual(supervisor.run(), 2)
+            self.assertEqual(json.loads(self.state.read_text())["phase"], "STAGING_ARMED")
+            self.assertEqual(lifecycle.Supervisor(self.args).run(), 0)
+        popen.assert_not_called()
+        self.assertEqual(events, ["precheck", "cleanup", "inventory"])
+        final = json.loads(self.state.read_text())
+        self.assertEqual(final["phase"], "STAGING_DONE")
+        self.assertIn("STAGING_ARMED", [item["to"] for item in final["history"]])
+        self.assertEqual(final["stopReason"], "supervisor-restart")
+        self.assertEqual(final["executionMode"], lifecycle.STAGING_MODE)
+        self.assertFalse(final["mutationCommandExecuted"])
+        self.assertEqual(final["result"], {
+            "status": "pass", "kind": lifecycle.STAGING_MODE,
+            "paidQualification": "not-run", "mutationExecuted": False,
+        })
+
+    def test_staging_signal_cleans_without_mutation(self):
+        supervisor = lifecycle.Supervisor(self.args)
+        supervisor.state["executionMode"] = lifecycle.STAGING_MODE
+        supervisor.state["effectiveLifecycle"]["executionMode"] = lifecycle.STAGING_MODE
+        lifecycle.atomic_json(self.state, supervisor.state)
+        supervisor.signal_handler(signal.SIGTERM, None)
+        events = []
+
+        def run(command, check=False, timeout=None):
+            events.append(command[0])
+            return mock.Mock(returncode=0)
+
+        with mock.patch.object(lifecycle.subprocess, "run", side_effect=run), \
+             mock.patch.object(lifecycle.subprocess, "Popen") as popen:
+            self.assertEqual(supervisor.run(), 1)
+        popen.assert_not_called()
+        self.assertEqual(events, ["precheck", "cleanup", "inventory"])
+        final = json.loads(self.state.read_text())
+        self.assertEqual(final["stopReason"], "SIGTERM")
+        self.assertEqual(final["phase"], "FAILED")
+        self.assertFalse(any(item["to"] == "STAGING_ARMED" for item in final["history"]))
+
+    def test_staging_cannot_pass_with_forged_armed_marker_without_history(self):
+        supervisor = lifecycle.Supervisor(self.args)
+        supervisor.state["executionMode"] = lifecycle.STAGING_MODE
+        supervisor.state["effectiveLifecycle"]["executionMode"] = lifecycle.STAGING_MODE
+        supervisor.state["stagingRestartRequired"] = True
+        lifecycle.atomic_json(self.state, supervisor.state)
+
+        def run(command, check=False, timeout=None):
+            return mock.Mock(returncode=0)
+
+        with mock.patch.object(lifecycle.subprocess, "run", side_effect=run), \
+             mock.patch.object(lifecycle.subprocess, "Popen") as popen:
+            self.assertEqual(supervisor.cleanup_and_verify("supervisor-restart"), 1)
+        popen.assert_not_called()
+        self.assertEqual(json.loads(self.state.read_text())["phase"], "FAILED")
+
+    def test_staging_nonzero_inventory_is_restartable_not_success(self):
+        supervisor = lifecycle.Supervisor(self.args)
+        supervisor.state["executionMode"] = lifecycle.STAGING_MODE
+        supervisor.state["effectiveLifecycle"]["executionMode"] = lifecycle.STAGING_MODE
+        lifecycle.atomic_json(self.state, supervisor.state)
+        outcomes = iter((1, 0))
+
+        def run(command, check=False, timeout=None):
+            return mock.Mock(returncode=next(outcomes) if command[0] == "inventory" else 0)
+
+        with mock.patch.object(lifecycle.subprocess, "run", side_effect=run), \
+             mock.patch.object(lifecycle.subprocess, "Popen") as popen:
+            self.assertEqual(supervisor.run(), 2)
+            self.assertEqual(lifecycle.Supervisor(self.args).run(), 2)
+            self.assertEqual(json.loads(self.state.read_text())["phase"], "VERIFYING_ZERO")
+            self.assertEqual(lifecycle.Supervisor(self.args).run(), 0)
+        popen.assert_not_called()
+        final = json.loads(self.state.read_text())
+        self.assertEqual(final["phase"], "STAGING_DONE")
+        self.assertEqual(final["cleanupAttempts"], 2)
+
+    def test_durable_mode_cannot_change_on_restart(self):
+        supervisor = lifecycle.Supervisor(self.args)
+        supervisor.state["executionMode"] = lifecycle.STAGING_MODE
+        lifecycle.atomic_json(self.state, supervisor.state)
+        with self.assertRaisesRegex(lifecycle.SupervisorError, "not bound"):
+            lifecycle.Supervisor(self.args)
+
     def test_success_cleans_and_verifies_before_done(self):
         rc, events = self.run_with_commands()
         self.assertEqual(rc, 0)
@@ -212,7 +307,7 @@ class SupervisorTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             content = name
             if attribute == "contract":
-                content = json.dumps({"lifecycle": {
+                content = json.dumps({"execution": {"mode": lifecycle.PAID_MODE}, "lifecycle": {
                     "ttl": "30m", "heartbeatStale": "2m", "cleanupTimeout": "4m",
                     "inventoryTimeout": "1m", "maxCleanupAttempts": 2,
                     "maxPaidLifecycleSeconds": 2400,
@@ -243,6 +338,13 @@ class SupervisorTests(unittest.TestCase):
             self.assertEqual(restarted.cleanup_and_verify("supervisor-restart"), 1)
         self.assertEqual(len(observed), 2)
         self.assertTrue(all("/pinned/" in value for env in observed for value in env.values()))
+        durable = json.loads(self.state.read_text())
+        durable["executionMode"] = lifecycle.STAGING_MODE
+        durable["effectiveLifecycle"]["executionMode"] = lifecycle.STAGING_MODE
+        lifecycle.atomic_json(self.state, durable)
+        with mock.patch.object(lifecycle.Supervisor, "validate_run_root", return_value=run_root):
+            with self.assertRaisesRegex(lifecycle.SupervisorError, "differs from the pinned contract"):
+                lifecycle.Supervisor(self.args)
 
     def test_past_paid_deadline_and_many_failures_never_cap_cleanup_recovery(self):
         supervisor = lifecycle.Supervisor(self.args)

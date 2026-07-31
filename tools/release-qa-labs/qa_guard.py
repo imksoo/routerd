@@ -26,6 +26,11 @@ POLICY_MAX_CLEANUP_ATTEMPTS = 2
 RUNS_ROOT = Path("/var/lib/routerd-release-qa")
 POLICY_MAX_COST_USD = 1.00
 APPROVED_EXECUTION_HOSTS = {"chatty", "chatty.lain.local"}
+PRODUCTION_MODE = "production"
+STAGING_MODE = "staging-no-mutation"
+EXECUTION_MODES = {PRODUCTION_MODE, STAGING_MODE}
+PRODUCTION_ENVIRONMENT = "routerd-release-qualification"
+STAGING_ENVIRONMENT = "routerd-release-qa-staging"
 APPROVED_REGIONS = {"aws": "ap-northeast-1", "azure": "japaneast", "oci": "ap-tokyo-1", "pve": "local"}
 APPROVED_COUNTS = {"aws": 6, "azure": 4, "oci": 4, "pve": 4}
 APPROVED_TYPES = {
@@ -252,6 +257,15 @@ def verify_contract(contract_path: Path, release_repo: Path, framework: Path, ac
         raise GuardError("paid lifecycle cleanup/retry envelope exceeds policy")
 
     execution = require(contract, "execution", dict)
+    mode = require(execution, "mode", str)
+    if mode not in EXECUTION_MODES:
+        raise GuardError("contract execution mode is missing or invalid")
+    environment = require(contract, "environment", str)
+    if mode == STAGING_MODE:
+        if not run_id.startswith("relqa-staging-") or environment != STAGING_ENVIRONMENT:
+            raise GuardError("staging mode requires a staging-specific runId and environment")
+    elif run_id.startswith("relqa-staging-") or environment != PRODUCTION_ENVIRONMENT:
+        raise GuardError("production mode requires the production environment and non-staging runId")
     expected_host = require(execution, "host", str)
     if expected_host not in APPROVED_EXECUTION_HOSTS or execution.get("requireRemote") is not True:
         raise GuardError("execution must require an approved remote host")
@@ -307,7 +321,10 @@ def verify_contract(contract_path: Path, release_repo: Path, framework: Path, ac
     mirror_path = Path(mirror).resolve(strict=False)
     if mirror_path != RUNS_ROOT / "provider-mirror" or Path(os.path.abspath(mirror)) != mirror_path:
         raise GuardError("provider mirror is not the canonical read-only mirror")
-    print(json.dumps({"status": "pass", "estimatedCostUsd": round(cost, 2), "executionHost": host}))
+    print(json.dumps({
+        "status": "pass", "executionMode": mode,
+        "estimatedCostUsd": round(cost, 2), "executionHost": host,
+    }))
 
 
 def walk_modules(module: dict[str, Any]) -> Iterable[dict[str, Any]]:

@@ -18,8 +18,14 @@ import time
 from typing import Any
 
 
-PHASES = ("PRECHECK", "MUTATING", "STOPPING", "CLEANING", "VERIFYING_ZERO", "DONE", "FAILED")
-TERMINAL = {"DONE", "FAILED"}
+PAID_MODE = "production"
+STAGING_MODE = "staging-no-mutation"
+MODES = {PAID_MODE, STAGING_MODE}
+PHASES = (
+    "PRECHECK", "STAGING_ARMED", "MUTATING", "STOPPING", "CLEANING", "VERIFYING_ZERO",
+    "DONE", "STAGING_DONE", "FAILED",
+)
+TERMINAL = {"DONE", "STAGING_DONE", "FAILED"}
 
 
 class SupervisorError(RuntimeError):
@@ -154,6 +160,14 @@ class Supervisor:
         effective = self.state.get("effectiveLifecycle")
         if not isinstance(effective, dict) or effective.get("contractSha256") != pins["contract"].get("sha256"):
             raise SupervisorError("durable lifecycle values are not bound to the pinned contract")
+        if (
+            effective.get("executionMode") != self.state.get("executionMode")
+            or self.state.get("executionMode") not in MODES
+        ):
+            raise SupervisorError("durable execution mode is not bound to the pinned contract")
+        pinned_contract = json.loads(Path(pins["contract"]["pinned"]).read_text(encoding="utf-8"))
+        if require_execution_mode(pinned_contract) != self.state.get("executionMode"):
+            raise SupervisorError("durable execution mode differs from the pinned contract")
         for name, item in pins.items():
             pinned = Path(item["pinned"]).resolve()
             source = Path(item["source"]).resolve()
@@ -195,6 +209,7 @@ class Supervisor:
             "plannedCleanupAttempts": lifecycle.get("maxCleanupAttempts"),
             "plannedPaidLifecycleSeconds": lifecycle.get("maxPaidLifecycleSeconds"),
             "contractSha256": pins["contract"]["sha256"],
+            "executionMode": require_execution_mode(contract),
         }
         attempts = effective["plannedCleanupAttempts"]
         paid = effective["plannedPaidLifecycleSeconds"]
@@ -238,6 +253,10 @@ class Supervisor:
             data = json.loads(self.state_path.read_text(encoding="utf-8"))
             if data.get("runId") != self.args.run_id or data.get("phase") not in PHASES:
                 raise SupervisorError("durable state does not match the requested run")
+            if data.get("executionMode") not in MODES:
+                raise SupervisorError("durable execution mode is invalid")
+            if data.get("effectiveLifecycle", {}).get("executionMode") != data.get("executionMode"):
+                raise SupervisorError("durable execution mode is not bound to lifecycle state")
             self.state = data
             clean_sources = self.verify_pins()
             if not clean_sources:
@@ -255,6 +274,7 @@ class Supervisor:
                 "plannedCleanupAttempts": getattr(self.args, "max_cleanup_attempts", 2),
                 "plannedPaidLifecycleSeconds": getattr(self.args, "max_paid_lifecycle_seconds", 4500),
                 "contractSha256": None,
+                "executionMode": PAID_MODE,
             }
         else:
             pins = self.create_pins(root)
@@ -271,6 +291,8 @@ class Supervisor:
             "mutationPgid": None,
             "history": [],
             "cleanupAttempts": 0,
+            "executionMode": effective["executionMode"],
+            "mutationCommandExecuted": False,
         }
         if root is not None:
             data["runRoot"] = str(root)
@@ -365,6 +387,24 @@ class Supervisor:
             and pins_clean
             and not self.state.get("sourceInputTamperDetected", False)
         )
+        staging_succeeded = (
+            self.state["executionMode"] == STAGING_MODE
+            and pins_clean
+            and not self.state.get("sourceInputTamperDetected", False)
+            and not self.state.get("mutationCommandExecuted", False)
+            and self.state.get("stagingRestartRequired") is True
+            and reason == "supervisor-restart"
+            and any(item.get("to") == "STAGING_ARMED" for item in self.state.get("history", []))
+        )
+        if cleanup.returncode == 0 and inventory.returncode == 0 and staging_succeeded:
+            self.transition(
+                "STAGING_DONE", inventoryExit=0, finishedAt=rfc3339(now_utc()),
+                result={
+                    "status": "pass", "kind": STAGING_MODE,
+                    "paidQualification": "not-run", "mutationExecuted": False,
+                },
+            )
+            return 0
         if cleanup.returncode == 0 and inventory.returncode == 0 and mutation_succeeded:
             self.transition("DONE", inventoryExit=0, finishedAt=rfc3339(now_utc()))
             return 0
@@ -392,13 +432,22 @@ class Supervisor:
             signal.signal(sig, self.signal_handler)
         phase = self.state["phase"]
         if phase in TERMINAL:
-            return 0 if phase == "DONE" else 1
+            return 0 if phase in {"DONE", "STAGING_DONE"} else 1
         # Any supervisor restart after mutation began fails closed into cleanup.
         if phase != "PRECHECK":
             return self.cleanup_and_verify("supervisor-restart")
         self.run_checked(self.args.precheck_command, "precheck")
+        if self.state["executionMode"] == STAGING_MODE:
+            if self.stop_reason:
+                return self.cleanup_and_verify(self.stop_reason)
+            # Deliberately cross one service-manager restart boundary. This is
+            # deterministic and happens before any mutation process exists.
+            self.transition("STAGING_ARMED", stagingRestartRequired=True)
+            return 2
         if now_utc() >= parse_time(self.state["deadline"]):
             return self.cleanup_and_verify("absolute-deadline-before-mutation")
+        self.state["mutationCommandExecuted"] = True
+        atomic_json(self.state_path, self.state)
         self.child = subprocess.Popen(self.args.mutation_command, start_new_session=True)
         pgid = os.getpgid(self.child.pid)
         self.transition("MUTATING", mutationPgid=pgid, mutationBootId=self.boot_id())
@@ -432,6 +481,14 @@ def command_values(values: list[str] | None, name: str) -> list[str]:
     if not values:
         raise SupervisorError(f"{name} is required")
     return values
+
+
+def require_execution_mode(contract: dict[str, Any]) -> str:
+    execution = contract.get("execution")
+    mode = execution.get("mode") if isinstance(execution, dict) else None
+    if mode not in MODES:
+        raise SupervisorError("contract execution mode is missing or invalid")
+    return mode
 
 
 def main(argv: list[str]) -> int:

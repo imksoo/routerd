@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class LauncherRestartTests(unittest.TestCase):
-    def test_deleted_and_tampered_sources_restart_through_pinned_cleanup(self):
+    def test_staging_deleted_inputs_restart_recovers_zero_but_cannot_pass(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary) / "runs"
             run_root = base / "run-1"
@@ -45,9 +45,13 @@ class LauncherRestartTests(unittest.TestCase):
                 script = drivers / name
                 script.write_text(f"#!/bin/sh\ntouch '{marker}'\n", encoding="utf-8")
                 script.chmod(0o755)
+            mutation_marker = run_root / "mutation-called"
             for name in ("precheck-driver.sh", "mutation-driver.sh"):
                 script = drivers / name
-                script.write_text("#!/bin/sh\nexit 99\n", encoding="utf-8")
+                body = "#!/bin/sh\nexit 0\n"
+                if name == "mutation-driver.sh":
+                    body = f"#!/bin/sh\ntouch '{mutation_marker}'\nexit 99\n"
+                script.write_text(body, encoding="utf-8")
                 script.chmod(0o755)
 
             sources = {
@@ -57,7 +61,7 @@ class LauncherRestartTests(unittest.TestCase):
                 "pveSshPrivateKey": runtime / "secrets/pve_ssh",
             }
             payloads = {
-                "contract": json.dumps({"runId": "run-1", "lifecycle": {
+                "contract": json.dumps({"runId": "run-1", "execution": {"mode": "staging-no-mutation"}, "lifecycle": {
                     "ttl": "30m", "heartbeatStale": "2m", "cleanupTimeout": "4m",
                     "inventoryTimeout": "1m", "maxCleanupAttempts": 2,
                     "maxPaidLifecycleSeconds": 2400,
@@ -82,15 +86,14 @@ class LauncherRestartTests(unittest.TestCase):
                 "cleanupTimeoutSeconds": 240, "inventoryTimeoutSeconds": 60,
                 "plannedCleanupAttempts": 2, "plannedPaidLifecycleSeconds": 2400,
                 "contractSha256": hashlib.sha256(payloads["contract"]).hexdigest(),
+                "executionMode": "staging-no-mutation",
             })
             started = datetime.fromisoformat(state["startedAt"].replace("Z", "+00:00"))
             deadline = datetime.fromisoformat(state["deadline"].replace("Z", "+00:00"))
             paid_deadline = datetime.fromisoformat(state["plannedPaidDeadline"].replace("Z", "+00:00"))
             self.assertEqual((deadline - started).total_seconds(), 1800)
             self.assertEqual((paid_deadline - started).total_seconds(), 2400)
-            state.update(phase="MUTATING", mutationPgid=None, mutationBootId="old-boot", cleanupAttempts=7)
-            state_path.write_text(json.dumps(state), encoding="utf-8")
-            state_path.chmod(0o600)
+            self.assertEqual(state["phase"], "STAGING_ARMED")
 
             # Both deletion and tampering of mutable sources must be irrelevant
             # to cleanup command selection and its pinned environment.
@@ -114,6 +117,8 @@ class LauncherRestartTests(unittest.TestCase):
                              final["inputs"]["pveSshPrivateKey"]["sha256"])
             self.assertEqual(final["phase"], "FAILED")
             self.assertEqual(final["inventoryExit"], 0)
+            self.assertFalse(mutation_marker.exists())
+            self.assertTrue(final["sourceInputTamperDetected"])
 
 
 if __name__ == "__main__":
