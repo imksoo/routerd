@@ -68,14 +68,28 @@ class RemoteEgressPreflightTests(unittest.TestCase):
  *" rev-parse HEAD "*) echo qa-commit;;
 esac
 exit 0''')
-        self.make("getent", 'echo "getent $*" >>"$CALLS"; [ "${FAILURE:-}" = dns ] && exit 9; exit 0')
+        self.make("getent", '''echo "getent $*" >>"$CALLS"
+[ "${FAILURE:-}" = dns ] && exit 9
+case "$1" in
+  ahostsv6) [ "${FAILURE:-}" = no_addresses ] || echo "2001:db8::10 STREAM fixture";;
+  ahostsv4) [ "${FAILURE:-}" = no_addresses ] || echo "192.0.2.10 STREAM fixture";;
+esac
+exit 0''')
         self.make("timeout", '''echo "timeout $*" >>"$CALLS"
-case "${FAILURE:-}:$*" in tcp:*proxy.invalid*) exit 9;; pve_tcp:*pve01.lain.local/8006*) exit 9;; direct_tcp:*443*) exit 9;; esac
+case "${FAILURE:-}:$*" in
+  tcp:*proxy.invalid*) exit 9;;
+  pve_tcp:*8006*) exit 9;;
+  direct_tcp:*443*) exit 9;;
+  v6_tcp:*2001:db8::10*) exit 9;;
+  v4_tcp:*192.0.2.10*) exit 9;;
+esac
 shift
 [ "$1" = bash ] && exit 0
 exec "$@"''')
         self.make("curl", 'echo "curl $*" >>"$CALLS"; [ "${FAILURE:-}" = proxy ] && exit 9; exit 0')
-        self.make("openssl", 'echo "openssl $*" >>"$CALLS"; [ "${FAILURE:-}" = tls ] && exit 9; exit 0')
+        self.make("openssl", '''echo "openssl $*" >>"$CALLS"
+case "${FAILURE:-}:$*" in tls:*|v6_tls:*-6*) exit 9;; esac
+exit 0''')
         for name in ("aws", "az", "oci", "ssh"):
             self.make(name, f'echo "{name} $*" >>"$CALLS"; [ "${{FAILURE:-}}" = {name} ] && exit 9; echo "{{}}"')
 
@@ -153,6 +167,34 @@ exec "$@"''')
         for failure in ("direct_tcp", "tls"):
             with self.subTest(failure=failure):
                 self.assert_failed(failure, proxy=False)
+
+    def test_direct_unreachable_ipv6_falls_back_to_ipv4_for_tcp_and_tls(self):
+        result, calls, output = self.run_preflight(failure="v6_tcp", proxy=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        log = calls.read_text()
+        self.assertIn("2001:db8::10", log)
+        self.assertIn("192.0.2.10", log)
+        selected = (output.parent / "tls-management.azure.com.txt.selected").read_text()
+        self.assertIn("family=ipv4 address=192.0.2.10", selected)
+
+    def test_direct_ipv6_tls_failure_falls_back_to_ipv4_tcp_and_tls(self):
+        result, calls, output = self.run_preflight(failure="v6_tls", proxy=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        log = calls.read_text()
+        self.assertIn("openssl s_client -6 -connect [2001:db8::10]:443", log)
+        self.assertIn("openssl s_client -4 -connect 192.0.2.10:443", log)
+        selected = (output.parent / "tls-github.com.txt.selected").read_text()
+        self.assertIn("family=ipv4 address=192.0.2.10", selected)
+
+    def test_direct_ipv6_success_selects_ipv6_without_needing_ipv4(self):
+        result, calls, output = self.run_preflight(proxy=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        selected = (output.parent / "tls-management.azure.com.txt.selected").read_text()
+        self.assertIn("family=ipv6 address=2001:db8::10", selected)
+        self.assertNotIn("192.0.2.10 443", calls.read_text())
+
+    def test_direct_no_addresses_fails_closed(self):
+        self.assert_failed("no_addresses", proxy=False)
 
 
 if __name__ == "__main__":
