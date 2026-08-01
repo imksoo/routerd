@@ -1732,6 +1732,79 @@ func TestLANAddressControllerStagesFreshPDSnapshotWhenPDIsWhenFalse(t *testing.T
 	}
 }
 
+func TestLANAddressControllerDeprecatesStagedDSLiteSourceOnBackupBootstrap(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
+	now := time.Date(2026, 8, 1, 5, 30, 0, 0, time.UTC)
+	store, declared, snapshotPath := sqliteLANAddressStagingFixture(t, pdSnapshotFixture(now))
+	declared.Spec.Resources = append(declared.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+		Metadata: api.ObjectMeta{Name: "ds-lite-backup"},
+		Spec: api.DSLiteTunnelSpec{
+			Interface:             "wan-vmac",
+			LocalAddressSource:    "delegatedAddress",
+			LocalDelegatedAddress: "wan-source",
+			LocalAddressSuffix:    "::2",
+			When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+				"VirtualAddress/lan-gw.role": {Equals: "master"},
+			}},
+		},
+	})
+	effective := resourcequery.FilterRouterByResolvedWhen(declared, store)
+	for _, resource := range effective.Spec.Resources {
+		if resource.Kind == "DHCPv6PrefixDelegation" || resource.Kind == "IPv6DelegatedAddress" || resource.Kind == "DSLiteTunnel" {
+			t.Fatalf("when=false resource remained effective on BACKUP: %s", resource.ID())
+		}
+	}
+
+	addressDeprecated := false
+	var commands []string
+	controller := LANAddressController{
+		Router:              effective,
+		DeclaredRouter:      declared,
+		Store:               eventedStore{Store: store, Router: declared},
+		OperatingSystem:     platform.OSLinux,
+		Now:                 func() time.Time { return now },
+		PDLeaseSnapshotPath: func(string) string { return snapshotPath },
+		VMACPresent:         func(string) bool { return true },
+		StagingAddressPresent: func(_ context.Context, ifname, address string) bool {
+			return (ifname == "wan-vmac" && address == "2001:db8:1200:2::2/128") ||
+				(ifname == "lan-vrrp" && address == "2001:db8:1200:1::1/64")
+		},
+		DeprecatedAddressPresent: func(_ context.Context, ifname, address string) bool {
+			if ifname != "wan-vmac" || address != "2001:db8:1200:2::2/128" {
+				t.Fatalf("deprecated readback target = %s %s", ifname, address)
+			}
+			return addressDeprecated
+		},
+		Command: func(_ context.Context, name string, args ...string) error {
+			command := strings.Join(append([]string{name}, args...), " ")
+			commands = append(commands, command)
+			if command == "ip -6 addr replace 2001:db8:1200:2::2/128 dev wan-vmac preferred_lft 0 valid_lft forever" {
+				addressDeprecated = true
+			}
+			return nil
+		},
+	}
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	want := "ip -6 addr replace 2001:db8:1200:2::2/128 dev wan-vmac preferred_lft 0 valid_lft forever"
+	if !slices.Contains(commands, want) {
+		t.Fatalf("BACKUP bootstrap commands = %#v, want %q", commands, want)
+	}
+	if status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "wan-source"); status["phase"] != "Applied" || status["staged"] != true || status["sourceSelection"] != "deprecated" {
+		t.Fatalf("staged DS-Lite source status = %#v", status)
+	}
+
+	commands = nil
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 0 {
+		t.Fatalf("second BACKUP reconcile commands = %#v, want no-op", commands)
+	}
+}
+
 func TestLANAddressControllerStagingRequiresVMACAndAddressReadback(t *testing.T) {
 	now := time.Date(2026, 7, 27, 15, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
