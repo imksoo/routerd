@@ -204,7 +204,8 @@ var runtimeShapeKinds = map[string]bool{
 	"RouterdCluster": true, "DHCPv4Client": true, "DHCPv4Server": true,
 	"DHCPv6Client": true, "DHCPv6Server": true, "DHCPv6PrefixDelegation": true,
 	"PPPoESession": true, "HealthCheck": true, "DNSResolver": true,
-	"EventGroup": true, "EventSubscription": true, "WebConsole": true,
+	"DSLiteTunnel": true,
+	"EventGroup":   true, "EventSubscription": true, "WebConsole": true,
 	"SAMPeerGroup": true, "MobilityMemberSet": true, "SAMTransportProfile": true,
 	"MobilityPool": true, "ServiceUnit": true,
 }
