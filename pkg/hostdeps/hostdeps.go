@@ -702,7 +702,13 @@ func NetworkAdoptions(router *api.Router) []NetworkAdoptionResource {
 		case "DHCPv4Server":
 			if spec, err := res.DHCPv4ServerSpec(); err == nil {
 				if item := ensure(spec.Interface); item != nil {
+					// A server-facing LAN must never be turned into a DHCPv6 or
+					// RA client as a side effect of disabling networkd's DHCPv4
+					// client.  Rendering DHCP=ipv6 here caused the router to learn
+					// its peer's VRRP RA as a default route during HA transitions.
 					item.disableDHCPv4 = true
+					item.disableDHCPv6 = true
+					item.disableIPv6RA = true
 				}
 			}
 		case "DHCPv6Address":
@@ -727,7 +733,9 @@ func NetworkAdoptions(router *api.Router) []NetworkAdoptionResource {
 		case "DHCPv6Server":
 			if spec, err := res.DHCPv6ServerSpec(); err == nil {
 				if item := ensure(spec.Interface); item != nil {
+					item.disableDHCPv4 = true
 					item.disableDHCPv6 = true
+					item.disableIPv6RA = true
 				}
 			}
 		case "IPv6RouterAdvertisement", "IPv6RAAddress":
