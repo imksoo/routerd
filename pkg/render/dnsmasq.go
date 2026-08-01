@@ -690,6 +690,7 @@ ConditionPathExists=` + configPath + `
 [Service]
 Type=simple
 ExecStart=` + dnsmasqPath + ` --keep-in-foreground --conf-file=` + configPath + ` --pid-file=` + pidFile + `
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=2s
 KillMode=mixed
@@ -724,6 +725,8 @@ rcvar="routerd_dnsmasq_enable"
 command="` + dnsmasqPath + `"
 pidfile="` + strings.TrimRight(runtimeDir, "/") + `/dnsmasq.pid"
 command_args="--conf-file=` + configPath + ` --pid-file=${pidfile}"
+extra_commands="reload"
+sig_reload="HUP"
 start_precmd="${name}_prestart"
 
 routerd_dnsmasq_prestart()

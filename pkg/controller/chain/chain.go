@@ -64,6 +64,7 @@ import (
 	"github.com/imksoo/routerd/pkg/providerinventory"
 	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resourcequery"
+	"github.com/imksoo/routerd/pkg/servicemgr"
 	daemonsource "github.com/imksoo/routerd/pkg/source/daemon"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -5750,15 +5751,19 @@ func renderAndEnsureDnsmasq(ctx context.Context, router *api.Router, store Store
 	if port == 0 {
 		port = 1053
 	}
+	hostsSnapshot, err := snapshotDnsmasqHostsFile(dnsmasqHostsFile(configPath))
+	if err != nil {
+		return err
+	}
 	changed, reloadOnly, err := writeDnsmasqConfig(router, store, configPath, pidFile, port, listenAddresses)
 	if err != nil {
 		return err
 	}
 	if err := ensureDnsmasq(ctx, command, configPath, pidFile, changed); err != nil {
-		return err
+		return restoreDnsmasqHostsForRetry(configPath, reloadOnly, hostsSnapshot, err)
 	}
 	if reloadOnly && !changed {
-		return reloadDnsmasq(ctx, pidFile)
+		return reloadDnsmasqHostsSidecar(ctx, pidFile, configPath, hostsSnapshot, reloadDnsmasq)
 	}
 	return nil
 }
@@ -6454,12 +6459,70 @@ func ensureDnsmasq(ctx context.Context, command, configPath, pidFile string, cha
 	return startDnsmasq(ctx, command, configPath, pidFile)
 }
 
-func reloadDnsmasq(_ context.Context, pidFile string) error {
+func reloadDnsmasq(ctx context.Context, pidFile string) error {
+	_, features := platform.Current()
+	if features.HasSystemd || features.HasRCD {
+		manager := servicemgr.ForPlatform(features)
+		command := manager.Command(servicemgr.OperationReload, servicemgr.Service{
+			SystemdName: "routerd-dnsmasq.service",
+			RCDName:     "routerd_dnsmasq",
+		})
+		out, err := exec.CommandContext(ctx, command.Name, command.Args...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("%s: %w: %s", strings.Join(append([]string{command.Name}, command.Args...), " "), err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
 	proc, alive := dnsmasqProcess(pidFile)
 	if !alive {
 		return nil
 	}
 	return proc.Signal(syscall.SIGHUP)
+}
+
+type dnsmasqHostsSnapshot struct {
+	data   []byte
+	mode   os.FileMode
+	exists bool
+}
+
+func snapshotDnsmasqHostsFile(path string) (dnsmasqHostsSnapshot, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return dnsmasqHostsSnapshot{}, nil
+	}
+	if err != nil {
+		return dnsmasqHostsSnapshot{}, fmt.Errorf("read dnsmasq hosts sidecar %s before update: %w", path, err)
+	}
+	mode := os.FileMode(0o644)
+	if info, statErr := os.Stat(path); statErr == nil {
+		mode = info.Mode().Perm()
+	}
+	return dnsmasqHostsSnapshot{data: data, mode: mode, exists: true}, nil
+}
+
+func restoreDnsmasqHostsForRetry(configPath string, sidecarChanged bool, snapshot dnsmasqHostsSnapshot, reloadErr error) error {
+	if !sidecarChanged {
+		return reloadErr
+	}
+	path := dnsmasqHostsFile(configPath)
+	var restoreErr error
+	if snapshot.exists {
+		restoreErr = os.WriteFile(path, snapshot.data, snapshot.mode)
+	} else if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		restoreErr = err
+	}
+	if restoreErr != nil {
+		return errors.Join(reloadErr, fmt.Errorf("restore dnsmasq hosts sidecar %s for retry: %w", path, restoreErr))
+	}
+	return reloadErr
+}
+
+func reloadDnsmasqHostsSidecar(ctx context.Context, pidFile, configPath string, snapshot dnsmasqHostsSnapshot, reload func(context.Context, string) error) error {
+	if err := reload(ctx, pidFile); err != nil {
+		return restoreDnsmasqHostsForRetry(configPath, true, snapshot, err)
+	}
+	return nil
 }
 
 func ensureSystemdDnsmasqService(ctx context.Context, systemdDir, command, configPath, pidFile string, changed bool) error {

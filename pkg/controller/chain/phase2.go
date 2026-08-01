@@ -907,6 +907,10 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 	if port == 0 {
 		port = 1053
 	}
+	hostsSnapshot, err := snapshotDnsmasqHostsFile(dnsmasqHostsFile(configPath))
+	if err != nil {
+		return err
+	}
 	changed, reloadOnly, err := writeDnsmasqConfig(effectiveRouter, c.Store, configPath, pidFile, port, c.ListenAddresses)
 	if err != nil {
 		return err
@@ -918,10 +922,10 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 		}
 	} else {
 		if err := ensureDnsmasq(ctx, c.Command, configPath, pidFile, changed); err != nil {
-			return err
+			return restoreDnsmasqHostsForRetry(configPath, reloadOnly, hostsSnapshot, err)
 		}
 		if reloadOnly && !changed {
-			if err := reloadDnsmasq(ctx, pidFile); err != nil {
+			if err := reloadDnsmasqHostsSidecar(ctx, pidFile, configPath, hostsSnapshot, reloadDnsmasq); err != nil {
 				return err
 			}
 		}

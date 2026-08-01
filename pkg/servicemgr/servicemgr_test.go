@@ -103,12 +103,12 @@ func TestCrossOSDNSMasqServiceSemanticEquivalence(t *testing.T) {
 				t.Fatalf("validate dnsmasq service: %v", err)
 			}
 			enable := manager.Command(OperationEnable, service)
-			reload := manager.Plan(OperationReload, service, PIDSignalHook(OperationReload, "HUP", "/run/routerd/dnsmasq.pid"))
+			reload := manager.Plan(OperationReload, service)
 			if enable.Name == "" || len(enable.Args) == 0 {
 				t.Fatalf("%s enable command is empty: %#v", manager.Name(), enable)
 			}
-			if got := reload.Commands; len(got) != 1 || got[0].Name != "sh" || !strings.Contains(strings.Join(got[0].Args, " "), "kill -HUP") {
-				t.Fatalf("%s dnsmasq reload must remain pid-file SIGHUP, got %#v", manager.Name(), got)
+			if got := reload.Commands; len(got) != 1 || !reflect.DeepEqual(got[0], manager.Command(OperationReload, service)) {
+				t.Fatalf("%s dnsmasq reload must use the service manager, got %#v", manager.Name(), got)
 			}
 		})
 	}

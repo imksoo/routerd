@@ -766,6 +766,9 @@ func TestDnsmasqServiceUnitDoesNotOwnRouterdRuntimeDirectory(t *testing.T) {
 			t.Fatalf("dnsmasq unit missing %q:\n%s", want, unit)
 		}
 	}
+	if !strings.Contains(unit, "ExecReload=/bin/kill -HUP $MAINPID") {
+		t.Fatalf("dnsmasq unit must let systemd deliver SIGHUP:\n%s", unit)
+	}
 }
 
 func TestDnsmasqServiceUnitWithCustomPIDFile(t *testing.T) {
@@ -783,6 +786,8 @@ func TestDnsmasqRCScriptUsesFreeBSDRuntimeAndLeaseDirectories(t *testing.T) {
 		`# REQUIRE: NETWORKING mpd5`,
 		`command="/usr/local/sbin/dnsmasq"`,
 		`pidfile="/var/run/routerd/dnsmasq.pid"`,
+		`extra_commands="reload"`,
+		`sig_reload="HUP"`,
 		`start_precmd="${name}_prestart"`,
 		`mkdir -p "/var/run/routerd"`,
 		`mkdir -p "/var/db/routerd/dnsmasq"`,
