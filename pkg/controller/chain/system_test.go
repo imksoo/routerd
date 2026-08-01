@@ -467,6 +467,41 @@ func TestSystemdUnitControllerDoesNotReloadForAlreadyAbsentUnit(t *testing.T) {
 	}
 }
 
+func TestSystemdUnitControllerDoesNotStartSupervisedDHCPv6LegacyUnit(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
+	dir := t.TempDir()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
+	}}}
+	var commands []string
+	controller := SystemdUnitController{
+		Router:                      router,
+		Store:                       mapStore{},
+		SystemdSystemDir:            dir,
+		SynthesizeClientDaemonUnits: false,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			line := strings.Join(append([]string{name}, args...), " ")
+			commands = append(commands, line)
+			if name == "systemctl" && len(args) >= 2 && (args[0] == "is-active" || args[0] == "is-enabled") {
+				return nil, errors.New("inactive")
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	gotCommands := strings.Join(commands, "\n")
+	if strings.Contains(gotCommands, "routerd-dhcpv6-client@wan-pd.service") {
+		t.Fatalf("supervised DHCPv6 client must not be managed as a legacy systemd unit:\n%s", gotCommands)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "routerd-dhcpv6-client@wan-pd.service")); !os.IsNotExist(err) {
+		t.Fatalf("legacy DHCPv6 client unit was created: %v", err)
+	}
+}
+
 func TestSystemdUnitControllerDefersActiveStaleClientDaemonCleanup(t *testing.T) {
 	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()

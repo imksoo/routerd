@@ -38,7 +38,10 @@ The reference list:
 | Diagnostics | `dnsutils`, `iputils-ping`, `iputils-tracepath`, `tcpdump`, `traceroute`, `net-tools` |
 | OS control | `procps`, `systemd`, `kmod` |
 
-`routerd-dhcpv6-client`, `routerd-dhcpv4-client`, `routerd-pppoe-client`, and `routerd-healthcheck` run as systemd services on Linux.
+Long-running `routerd serve` directly supervises `routerd-dhcpv6-client`,
+`routerd-dhcpv4-client`, and `routerd-pppoe-client` on Linux. Do not run the
+legacy per-resource systemd units alongside it. `routerd-healthcheck` remains a
+managed systemd service.
 
 Ubuntu 26.04 LTS (`resolute`) has been validated with the same Linux data-plane
 renderers used by Ubuntu 24.04 for managed dnsmasq, nftables, DHCPv6-PD,

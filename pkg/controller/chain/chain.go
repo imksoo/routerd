@@ -1237,6 +1237,9 @@ type Options struct {
 	DryRunNetworkAdoption   bool
 	DryRunServiceUnit       bool
 	SuperviseClientDaemons  bool
+	// SkipLegacyClientUnits keeps a one-shot reconciliation from creating
+	// per-resource service units when client lifecycle belongs to routerd serve.
+	SkipLegacyClientUnits   bool
 	SuperviseDNSResolvers   bool
 	FirewallDisabled        bool
 	DnsmasqCommand          string
@@ -2130,7 +2133,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	sysctl := SysctlController{Router: r.Router, Bus: r.Bus, Store: store}
 	kernelModules := KernelModuleController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunPackage}
 	adoption := NetworkAdoptionController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNetworkAdoption}
-	serviceUnits := SystemdUnitController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunServiceUnit, SynthesizeClientDaemonUnits: !r.Opts.SuperviseClientDaemons}
+	serviceUnits := SystemdUnitController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunServiceUnit, SynthesizeClientDaemonUnits: !r.Opts.SuperviseClientDaemons && !r.Opts.SkipLegacyClientUnits}
 	logRetention := LogRetentionController{Router: r.Router, Bus: r.Bus, Store: store}
 	ntpClient := NTPClientController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store}
 	ntpServer := NTPServerController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store}

@@ -42,7 +42,10 @@ Ubuntu でも、パッケージが事前に導入されていることは前提�
 | Diagnostics | `dnsutils`, `iputils-ping`, `iputils-tracepath`, `tcpdump`, `traceroute`, `net-tools` |
 | OS 制御 | `procps`, `systemd`, `kmod` |
 
-`routerd-dhcpv6-client`、`routerd-dhcpv4-client`、`routerd-pppoe-client`、`routerd-healthcheck` は、Linux 上では systemd サービスとして動作します。
+Linux では、長時間稼働する `routerd serve` が `routerd-dhcpv6-client`、
+`routerd-dhcpv4-client`、`routerd-pppoe-client` を直接監視して起動します。
+旧来のリソース単位の systemd ユニットを併用しないでください。
+`routerd-healthcheck` は引き続き管理対象の systemd サービスとして動作します。
 
 Ubuntu 26.04 LTS（`resolute`）は、managed dnsmasq、nftables、DHCPv6-PD、
 委任された LAN IPv6 アドレス、control API について、Ubuntu 24.04 と同じ Linux
