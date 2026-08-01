@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/imksoo/routerd/pkg/pdclient"
 )
 
 func TestRestoreLeaseIgnoresEmptyFile(t *testing.T) {
@@ -95,4 +98,54 @@ func TestDHCPv6ListenAddressesAreInterfaceScoped(t *testing.T) {
 	if first.Zone != "wan0" || second.Zone != "wan1" || first.IP.Equal(second.IP) {
 		t.Fatalf("scoped addresses = %v, %v", first, second)
 	}
+}
+
+func TestDaemonTickRetransmitsSolicit(t *testing.T) {
+	now := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	transport := &daemonMemoryTransport{}
+	client, err := pdclient.New(pdclient.Config{
+		Resource:    "wan-pd",
+		Interface:   "wan-vmac",
+		ClientDUID:  []byte{0, 3, 0, 1, 2, 0, 0, 0, 1, 3},
+		IAID:        1,
+		Now:         func() time.Time { return now },
+		Transaction: func() (uint32, error) { return 0x010203, nil },
+		Random:      func() float64 { return 0.5 },
+	}, transport)
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	if err := client.Start(context.Background()); err != nil {
+		t.Fatalf("start client: %v", err)
+	}
+	daemon := &dhcpv6Daemon{opts: options{resource: "wan-pd"}, client: client}
+	daemon.initTelemetry()
+
+	now = client.NextSolicitRetryAt()
+	if err := daemon.tick(context.Background()); err != nil {
+		t.Fatalf("daemon tick: %v", err)
+	}
+	if len(transport.sent) != 2 {
+		t.Fatalf("sent packets = %d, want initial Solicit and one retry", len(transport.sent))
+	}
+	if transport.sent[0].Message.TransactionID != transport.sent[1].Message.TransactionID {
+		t.Fatalf("retry changed transaction ID: first=%06x retry=%06x", transport.sent[0].Message.TransactionID, transport.sent[1].Message.TransactionID)
+	}
+}
+
+func TestNextReadDeadlineUsesSolicitRetry(t *testing.T) {
+	now := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	retryAt := now.Add(time.Second)
+	if got := nextReadDeadline(context.Background(), now, 3*time.Second, retryAt); !got.Equal(retryAt) {
+		t.Fatalf("deadline = %s, want retry at %s", got, retryAt)
+	}
+}
+
+type daemonMemoryTransport struct {
+	sent []pdclient.OutboundPacket
+}
+
+func (m *daemonMemoryTransport) Send(_ context.Context, packet pdclient.OutboundPacket) error {
+	m.sent = append(m.sent, packet)
+	return nil
 }
