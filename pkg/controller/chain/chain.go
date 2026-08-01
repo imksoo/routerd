@@ -5242,6 +5242,30 @@ func mergeManagedPreviousDelegatedAddresses(now time.Time, current string, group
 	return out
 }
 
+func retainFailedPreviousDelegatedAddresses(current, failed []managedPreviousDelegatedAddress) []managedPreviousDelegatedAddress {
+	byAddress := map[string]time.Time{}
+	for _, group := range [][]managedPreviousDelegatedAddress{current, failed} {
+		for _, previous := range group {
+			if previous.Address == "" {
+				continue
+			}
+			if expiresAt, ok := byAddress[previous.Address]; !ok || expiresAt.Before(previous.ExpiresAt) {
+				byAddress[previous.Address] = previous.ExpiresAt
+			}
+		}
+	}
+	addresses := make([]string, 0, len(byAddress))
+	for address := range byAddress {
+		addresses = append(addresses, address)
+	}
+	sort.Strings(addresses)
+	out := make([]managedPreviousDelegatedAddress, 0, len(addresses))
+	for _, address := range addresses {
+		out = append(out, managedPreviousDelegatedAddress{Address: address, ExpiresAt: byAddress[address]})
+	}
+	return out
+}
+
 func delegatedAddressRAWithdrawalLifetime(router *api.Router, delegatedName string) (time.Duration, bool) {
 	if router == nil || strings.TrimSpace(delegatedName) == "" {
 		return 0, false
@@ -5266,11 +5290,63 @@ func delegatedAddressRAWithdrawalLifetime(router *api.Router, delegatedName stri
 			}
 			lifetime = time.Duration(seconds) * time.Second
 		}
+		// RFC 4862 section 5.5.3(e) may keep an unauthenticated prefix valid
+		// for two hours even when a shorter lifetime is advertised.  Keep the
+		// deprecated constructor address for at least that long so dnsmasq can
+		// continue sending preferred=0 PIOs throughout the protection window.
+		if lifetime < defaultIPv6DelegatedAddressWithdrawalLifetime {
+			lifetime = defaultIPv6DelegatedAddressWithdrawalLifetime
+		}
 		if lifetime > longest {
 			longest = lifetime
 		}
 	}
 	return longest, found
+}
+
+func declaredCurrentIPv6AddressExclusions(router *api.Router, store Store, ifname, exceptDelegatedName string) map[string]bool {
+	excluded := map[string]bool{}
+	if router == nil {
+		return excluded
+	}
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil || !prefix.Addr().Is6() {
+			return
+		}
+		excluded[netip.PrefixFrom(prefix.Addr(), prefix.Bits()).String()] = true
+	}
+	for _, resource := range router.Spec.Resources {
+		switch resource.Kind {
+		case "IPv6DelegatedAddress":
+			if resource.Metadata.Name == exceptDelegatedName {
+				continue
+			}
+			spec, err := resource.IPv6DelegatedAddressSpec()
+			if err != nil || interfaceIfName(router, spec.Interface) != ifname {
+				continue
+			}
+			if store != nil {
+				status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name)
+				add(cleanStatusString(status["address"]))
+				pdStatus := store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", spec.PrefixDelegation)
+				if currentPrefix := statusStringPreferObserved(pdStatus, "currentPrefix"); currentPrefix != "" {
+					if address, deriveErr := DeriveIPv6Address(currentPrefix, spec.SubnetID, spec.AddressSuffix); deriveErr == nil {
+						if address, lengthErr := delegatedAddressWithPrefixLength(address, spec.PrefixLength); lengthErr == nil {
+							add(address)
+						}
+					}
+				}
+			}
+		case "VirtualAddress":
+			spec, err := resource.VirtualAddressSpec()
+			if err == nil && spec.Family == "ipv6" && interfaceIfName(router, spec.Interface) == ifname {
+				add(spec.Address)
+			}
+		}
+	}
+	return excluded
 }
 
 func managedDelegatedAddressCandidate(value, current string, spec api.IPv6DelegatedAddressSpec) (string, bool) {
@@ -5340,19 +5416,26 @@ func linuxIPv6GlobalInterfaceAddresses(ctx context.Context, ifname string) ([]st
 func parseIPv6InterfaceAddressPrefixes(out string) []string {
 	var addresses []string
 	seen := map[string]bool{}
-	fields := strings.Fields(out)
-	for i := 0; i+1 < len(fields); i++ {
-		if fields[i] != "inet6" {
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		// SLAAC/temporary addresses are not owned by IPv6DelegatedAddress even
+		// if their host bits happen to match a managed suffix.
+		if fieldsContain(fields, "dynamic") || fieldsContain(fields, "temporary") || fieldsContain(fields, "mngtmpaddr") || fieldsContain(fields, "autoconf") {
 			continue
 		}
-		prefix, err := netip.ParsePrefix(strings.TrimSpace(fields[i+1]))
-		if err != nil || !prefix.Addr().Is6() || prefix.Addr().IsLinkLocalUnicast() {
-			continue
-		}
-		address := netip.PrefixFrom(prefix.Addr(), prefix.Bits()).String()
-		if !seen[address] {
-			seen[address] = true
-			addresses = append(addresses, address)
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] != "inet6" {
+				continue
+			}
+			prefix, err := netip.ParsePrefix(strings.TrimSpace(fields[i+1]))
+			if err != nil || !prefix.Addr().Is6() || prefix.Addr().IsLinkLocalUnicast() {
+				continue
+			}
+			address := netip.PrefixFrom(prefix.Addr(), prefix.Bits()).String()
+			if !seen[address] {
+				seen[address] = true
+				addresses = append(addresses, address)
+			}
 		}
 	}
 	return addresses
@@ -5534,10 +5617,11 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 				for _, previous := range append(append([]managedPreviousDelegatedAddress(nil), historicalPrevious...), previousAddresses...) {
 					known[previous.Address] = true
 				}
+				excluded := declaredCurrentIPv6AddressExclusions(sourceRouter, c.Store, ifname, resource.Metadata.Name)
 				untracked := observed[:0]
 				for _, value := range observed {
 					candidate, ok := managedDelegatedAddressCandidate(value, addr, spec)
-					if ok && !known[candidate] {
+					if ok && !known[candidate] && !excluded[candidate] {
 						untracked = append(untracked, candidate)
 					}
 				}
@@ -5608,6 +5692,7 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		if !c.DryRun {
 			desiredPrevious := make(map[string]bool, len(previousAddresses))
 			managedPrevious := make(map[string]time.Time)
+			var failedPreviousDeletes []managedPreviousDelegatedAddress
 			for _, previous := range previousDelegatedAddressesFromStatus(previousStatus) {
 				managedPrevious[previous.Address] = previous.ExpiresAt
 			}
@@ -5618,11 +5703,22 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 				if stale.Address == "" || stale.Address == addr || desiredPrevious[stale.Address] {
 					continue
 				}
+				deleteFailed := false
 				for _, candidate := range ipv6StaticAddressDeleteCandidates(stale.Address) {
 					name, args := ipv6StaticAddressDeleteCommand(c.currentOS(), ifname, candidate)
-					if err := command(ctx, name, args...); err != nil && c.Logger != nil {
-						c.Logger.Debug("delete expired previous IPv6 delegated address skipped", "resource", resource.Metadata.Name, "address", candidate, "interface", ifname, "error", err)
+					if err := command(ctx, name, args...); err != nil {
+						deleteFailed = true
+						if c.Logger != nil {
+							c.Logger.Debug("delete expired previous IPv6 delegated address skipped", "resource", resource.Metadata.Name, "address", candidate, "interface", ifname, "error", err)
+						}
 					}
+				}
+				// A /64 cleanup also tries its legacy /128 shape; one of those
+				// deletes may legitimately return not-found.  Only retain the
+				// tombstone when a failed command is followed by a positive
+				// readback, proving that the managed address still exists.
+				if deleteFailed && addressPresentFn(ctx, ifname, stale.Address) {
+					failedPreviousDeletes = append(failedPreviousDeletes, stale)
 				}
 			}
 			for _, previous := range previousAddresses {
@@ -5644,6 +5740,9 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 				if err := command(ctx, name, args...); err != nil {
 					return err
 				}
+			}
+			if len(failedPreviousDeletes) > 0 {
+				status["previousAddresses"] = retainFailedPreviousDelegatedAddresses(previousAddresses, failedPreviousDeletes)
 			}
 		}
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, status); err != nil {
