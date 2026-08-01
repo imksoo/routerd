@@ -1732,6 +1732,83 @@ func TestLANAddressControllerStagesFreshPDSnapshotWhenPDIsWhenFalse(t *testing.T
 	}
 }
 
+func TestLANAddressControllerRemovesWhenFalseVRRPAddressesDespiteFreshSnapshot(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
+	now := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	store, declared, snapshotPath := sqliteLANAddressStagingFixture(t, pdSnapshotFixture(now))
+	whenMaster := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+		"VirtualAddress/lan-gw.role": {Equals: "master"},
+	}}
+	for index := range declared.Spec.Resources {
+		if declared.Spec.Resources[index].Kind != "IPv6DelegatedAddress" {
+			continue
+		}
+		spec, err := declared.Spec.Resources[index].IPv6DelegatedAddressSpec()
+		if err != nil {
+			t.Fatal(err)
+		}
+		spec.When = whenMaster
+		declared.Spec.Resources[index].Spec = spec
+	}
+	for name, address := range map[string]string{
+		"lan-base":   "2001:db8:1200:1::1/64",
+		"wan-source": "2001:db8:1200:2::2/128",
+	} {
+		if err := store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", name, map[string]any{
+			"phase": "Applied", "address": address, "staged": true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := (&Runner{Router: declared}).saveWhenFalseStatuses(eventedStore{Store: store, Router: declared}); err != nil {
+		t.Fatal(err)
+	}
+	effective := resourcequery.FilterRouterByResolvedWhen(declared, store)
+	var calls []string
+	ensureCalls := 0
+	controller := LANAddressController{
+		Router:              effective,
+		DeclaredRouter:      declared,
+		Store:               eventedStore{Store: store, Router: declared},
+		OperatingSystem:     platform.OSLinux,
+		Now:                 func() time.Time { return now },
+		PDLeaseSnapshotPath: func(string) string { return snapshotPath },
+		EnsureVMAC: func(context.Context, string) error {
+			ensureCalls++
+			return nil
+		},
+		Command: func(_ context.Context, name string, args ...string) error {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			return nil
+		},
+	}
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"ip -6 addr del 2001:db8:1200:1::1/64 dev lan-vrrp",
+		"ip -6 addr del 2001:db8:1200:2::2/128 dev wan-vmac",
+	} {
+		if !slices.Contains(calls, want) {
+			t.Fatalf("when=false cleanup calls = %#v, want %q", calls, want)
+		}
+	}
+	for _, call := range calls {
+		if strings.Contains(call, " addr replace ") {
+			t.Fatalf("when=false address was re-staged after cleanup: %#v", calls)
+		}
+	}
+	if ensureCalls != 0 {
+		t.Fatalf("when=false address invoked VMAC staging %d times", ensureCalls)
+	}
+	for _, name := range []string{"lan-base", "wan-source"} {
+		status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", name)
+		if status["phase"] != "Pending" || status["reason"] != "WhenFalse" || status["address"] != nil || status["staged"] != nil {
+			t.Fatalf("%s when=false status = %#v", name, status)
+		}
+	}
+}
+
 func TestLANAddressControllerStagingRequiresVMACAndAddressReadback(t *testing.T) {
 	now := time.Date(2026, 7, 27, 15, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
@@ -1995,8 +2072,8 @@ func sqliteLANAddressStagingFixture(t *testing.T, snapshot pdclient.Snapshot) (*
 			},
 		}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan-vmac", Profile: api.IPv6PDProfileNTTHGWLANPD, ClientDUID: "00030001020000000112", When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"VirtualAddress/lan-gw.role": {Equals: "master"}}}}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-base"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan-vmac", SubnetID: "1", AddressSuffix: "::1", DependsOn: []api.ResourceDependencySpec{{Resource: "DHCPv6PrefixDelegation/wan-pd", Phase: daemonapi.ResourcePhaseBound}, {Resource: "Interface/lan-vmac", Phase: "Up"}}, When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"VirtualAddress/lan-gw.role": {Equals: "master"}}}}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "wan-source"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "wan-vmac", SubnetID: "2", AddressSuffix: "::2", PrefixLength: 128, DependsOn: []api.ResourceDependencySpec{{Resource: "DHCPv6PrefixDelegation/wan-pd", Phase: daemonapi.ResourcePhaseBound}, {Resource: "Interface/wan-vmac", Phase: "Up"}}, When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"VirtualAddress/lan-gw.role": {Equals: "master"}}}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-base"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan-vmac", SubnetID: "1", AddressSuffix: "::1", DependsOn: []api.ResourceDependencySpec{{Resource: "DHCPv6PrefixDelegation/wan-pd", Phase: daemonapi.ResourcePhaseBound}, {Resource: "Interface/lan-vmac", Phase: "Up"}}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "wan-source"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "wan-vmac", SubnetID: "2", AddressSuffix: "::2", PrefixLength: 128, DependsOn: []api.ResourceDependencySpec{{Resource: "DHCPv6PrefixDelegation/wan-pd", Phase: daemonapi.ResourcePhaseBound}, {Resource: "Interface/wan-vmac", Phase: "Up"}}}},
 	}}}
 	store.Set("VirtualAddress/lan-gw.role", "backup", "test")
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{"phase": "Pending", "reason": "WhenFalse"}); err != nil {

@@ -1473,9 +1473,6 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 		if resourcequery.ResourceWhenIndeterminate(when, store) {
 			continue
 		}
-		if preserveStagedIPv6DelegatedAddressWhenFalse(res, apiVersion, store) {
-			continue
-		}
 		if preserved, err := r.preserveFreshDaemonStatusWhenFalse(res, apiVersion, store, now); err != nil {
 			return err
 		} else if preserved {
@@ -1486,6 +1483,7 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 			next := copyStatusMap(current)
 			changed := preserveStaticVirtualAddressCleanupStatus(res, current, next)
 			changed = preserveIPv4StaticAddressCleanupStatus(r.Router, res, current, next) || changed
+			changed = preserveIPv6DelegatedAddressCleanupStatus(res, current, next) || changed
 			if changed {
 				if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, next); err != nil {
 					return err
@@ -1500,6 +1498,7 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 		}
 		preserveStaticVirtualAddressCleanupStatus(res, current, status)
 		preserveIPv4StaticAddressCleanupStatus(r.Router, res, current, status)
+		preserveIPv6DelegatedAddressCleanupStatus(res, current, status)
 		if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, status); err != nil {
 			return err
 		}
@@ -1570,16 +1569,36 @@ func preserveIPv4StaticAddressCleanupStatus(router *api.Router, res api.Resource
 	return changed
 }
 
-// preserveStagedIPv6DelegatedAddressWhenFalse keeps a LAN address which the
-// LAN controller deliberately staged on an existing VRRP VMAC.  The LAN
-// controller owns its expiry and VMAC-loss cleanup; replacing it here with a
-// generic WhenFalse status would make the staging state oscillate every pass.
-func preserveStagedIPv6DelegatedAddressWhenFalse(res api.Resource, apiVersion string, store eventedStore) bool {
+// preserveIPv6DelegatedAddressCleanupStatus keeps only the ownership data
+// needed by the LAN address controller after the resource is filtered out of
+// the effective router. In particular, an address staged while the node was
+// BACKUP must not remain Applied once its own when condition resolves false.
+func preserveIPv6DelegatedAddressCleanupStatus(res api.Resource, current, status map[string]any) bool {
 	if res.Kind != "IPv6DelegatedAddress" {
 		return false
 	}
-	status := store.ObjectStatus(apiVersion, res.Kind, res.Metadata.Name)
-	return strings.TrimSpace(fmt.Sprint(status["phase"])) == "Applied" && status["staged"] == true
+	spec, err := res.IPv6DelegatedAddressSpec()
+	if err != nil {
+		return false
+	}
+	changed := false
+	for _, key := range []string{"address", "previousAddresses"} {
+		value, exists := current[key]
+		if !exists || value == nil {
+			continue
+		}
+		if _, exists := status[key]; !exists {
+			status[key] = value
+			changed = true
+		}
+	}
+	for key, value := range map[string]string{"interface": spec.Interface, "prefixSource": spec.PrefixDelegation} {
+		if strings.TrimSpace(value) != "" && statusString(status, key) == "" {
+			status[key] = value
+			changed = true
+		}
+	}
+	return changed
 }
 
 func (r *Runner) clearWhenFalseStatus(apiVersion, kind, name string, store eventedStore) error {
@@ -5192,7 +5211,7 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 				continue
 			}
 			spec, err := resource.IPv6DelegatedAddressSpec()
-			if err == nil && spec.PrefixDelegation == pdName && c.vrrpVMACConfigured(spec.Interface) {
+			if err == nil && spec.PrefixDelegation == pdName && c.vrrpVMACConfigured(spec.Interface) && c.delegatedAddressStagingEligible(resource) {
 				resources = append(resources, resource)
 				stagedIDs[resource.ID()] = true
 			}
@@ -5324,6 +5343,22 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		}
 	}
 	return nil
+}
+
+// delegatedAddressStagingEligible distinguishes an unresolved startup role
+// from an explicitly false resource condition. A fresh PD snapshot may stage
+// an unconditional or indeterminate delegated address, but it must never
+// override a resolved when=false decision.
+func (c LANAddressController) delegatedAddressStagingEligible(resource api.Resource) bool {
+	when := resourcequery.ResourceWhen(resource)
+	if !resourcequery.ResourceWhenPresent(when) {
+		return true
+	}
+	stateStore, ok := c.Store.(resourcequery.StateStore)
+	if !ok {
+		return false
+	}
+	return resourcequery.ResourceWhenMatches(when, stateStore) || resourcequery.ResourceWhenIndeterminate(when, stateStore)
 }
 
 func (c LANAddressController) delegatedAddressDependenciesReady(dependencies []api.ResourceDependencySpec, iface, pdName string, stagingVMAC bool) bool {
@@ -5603,6 +5638,9 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 	if !ok {
 		return nil
 	}
+	pdStatus := c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", pdName)
+	activePD := statusStringPreferObserved(pdStatus, "phase") == daemonapi.ResourcePhaseBound
+	_, stagedSnapshotFresh := c.freshStagedPDSnapshot(pdName)
 	for _, resource := range declared.Spec.Resources {
 		if resource.Kind != "IPv6DelegatedAddress" {
 			continue
@@ -5615,10 +5653,9 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 			continue
 		}
 		when := resourcequery.ResourceWhen(resource)
-		_, stagedSnapshotFresh := c.freshStagedPDSnapshot(pdName)
-		// A configured VRRP-owned VMAC may be absent while the node is BACKUP.
-		// Its presence is therefore not evidence for staging eligibility.
-		if (c.vrrpVMACConfigured(spec.Interface) && stagedSnapshotFresh) || !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, stateStore) || resourcequery.ResourceWhenIndeterminate(when, stateStore) {
+		whenFalse := resourcequery.ResourceWhenPresent(when) && !resourcequery.ResourceWhenMatches(when, stateStore) && !resourcequery.ResourceWhenIndeterminate(when, stateStore)
+		stagingUnavailable := !activePD && c.vrrpVMACConfigured(spec.Interface) && !stagedSnapshotFresh
+		if !whenFalse && !stagingUnavailable {
 			continue
 		}
 		previous := c.Store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name)
@@ -5651,7 +5688,7 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 			}
 		}
 		reason := "WhenFalse"
-		if c.vrrpVMACConfigured(spec.Interface) {
+		if !whenFalse {
 			reason = "PDLeaseStale"
 		}
 		status := map[string]any{
