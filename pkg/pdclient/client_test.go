@@ -86,6 +86,64 @@ func TestClientSolicitRequestReply(t *testing.T) {
 	}
 }
 
+func TestClientSolicitRetransmitsWithSameTransactionAndBoundedBackoff(t *testing.T) {
+	startedAt := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	now := startedAt
+	transport := &memoryTransport{}
+	client, err := New(Config{
+		Resource:    "wan-pd",
+		Interface:   "wan-vmac",
+		ClientDUID:  []byte{0, 3, 0, 1, 2, 0, 0, 0, 1, 3},
+		IAID:        1,
+		Now:         func() time.Time { return now },
+		Transaction: func() (uint32, error) { return 0x010203, nil },
+		Random:      func() float64 { return 0.5 },
+	}, transport)
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	if err := client.Start(context.Background()); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	firstRetry := client.NextSolicitRetryAt()
+	if !firstRetry.After(now.Add(solicitInitialRetransmissionTimeout)) || firstRetry.After(now.Add(1100*time.Millisecond)) {
+		t.Fatalf("first retry = %s, want just over 1s", firstRetry.Sub(now))
+	}
+	now = firstRetry.Add(-time.Nanosecond)
+	if err := client.Tick(context.Background()); err != nil {
+		t.Fatalf("early tick: %v", err)
+	}
+	if len(transport.sent) != 1 {
+		t.Fatalf("packets before retry = %d, want 1", len(transport.sent))
+	}
+
+	now = firstRetry
+	if err := client.Tick(context.Background()); err != nil {
+		t.Fatalf("retry tick: %v", err)
+	}
+	if len(transport.sent) != 2 {
+		t.Fatalf("packets after retry = %d, want 2", len(transport.sent))
+	}
+	if got := transport.sent[1].Message.TransactionID; got != 0x010203 {
+		t.Fatalf("retry transaction ID = %06x, want 010203", got)
+	}
+	wantSecondInterval := 2 * firstRetry.Sub(startedAt)
+	if got := client.NextSolicitRetryAt().Sub(now); got != wantSecondInterval {
+		t.Fatalf("second retry interval = %s, want %s", got, wantSecondInterval)
+	}
+
+	client.solicitRetryTimeout = solicitMaxRetransmissionTimeout
+	now = client.NextSolicitRetryAt()
+	client.solicitRetryAt = now
+	if err := client.Tick(context.Background()); err != nil {
+		t.Fatalf("capped retry tick: %v", err)
+	}
+	if got := client.NextSolicitRetryAt().Sub(now); got != solicitMaxRetransmissionTimeout {
+		t.Fatalf("capped retry interval = %s, want %s", got, solicitMaxRetransmissionTimeout)
+	}
+}
+
 func TestClientRenewRebindExpire(t *testing.T) {
 	now := time.Date(2026, 5, 2, 1, 0, 0, 0, time.UTC)
 	transport := &memoryTransport{}
