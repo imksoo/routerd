@@ -555,6 +555,15 @@ func routedInterfaceNames(router *api.Router, aliases map[string]string) []strin
 	return sortedKeys(names)
 }
 
+// LANDistributionInterfaceNames returns the concrete interface names that
+// distribute addresses or router advertisements to downstream clients.
+func LANDistributionInterfaceNames(router *api.Router) []string {
+	if router == nil {
+		return nil
+	}
+	return routedInterfaceNames(router, interfaceAliases(router))
+}
+
 func interfaceAliases(router *api.Router) map[string]string {
 	aliases := map[string]string{}
 	if router == nil {

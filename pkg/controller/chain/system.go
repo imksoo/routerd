@@ -48,6 +48,11 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 	if command == nil {
 		command = runOutputCommandContext
 	}
+	lanInterfaceNames := hostdeps.LANDistributionInterfaceNames(c.Router)
+	lanInterfaces := map[string]bool{}
+	for _, ifname := range lanInterfaceNames {
+		lanInterfaces[ifname] = true
+	}
 	for _, resource := range networkAdoptionControllerResources(c.Router) {
 		spec, err := resource.NetworkAdoptionSpec()
 		if err != nil {
@@ -87,6 +92,11 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 			}
 			return err
 		}
+		if changed && !c.DryRun && firstNonEmpty(spec.State, "present") != "absent" && lanInterfaces[ifname] && spec.SystemdNetworkd.DisableIPv6RA {
+			if err := flushLANIPv6RADefaultRoute(ctx, command, ifname); err != nil {
+				return err
+			}
+		}
 		phase := "Applied"
 		if c.DryRun && changed {
 			phase = "Rendered"
@@ -109,6 +119,18 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func flushLANIPv6RADefaultRoute(ctx context.Context, command outputCommandFunc, ifname string) error {
+	ifname = strings.TrimSpace(ifname)
+	if ifname == "" || ifname == "lo" || unsafeSysctlName.MatchString(ifname) {
+		return nil
+	}
+	out, err := command(ctx, "ip", "-6", "route", "flush", "default", "dev", ifname, "proto", "ra")
+	if err != nil {
+		return fmt.Errorf("flush LAN RA default route on %s: %w: %s", ifname, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

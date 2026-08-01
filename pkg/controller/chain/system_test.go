@@ -137,6 +137,50 @@ func TestNetworkAdoptionControllerCanKeepDHCPv4ClientWithoutRoutes(t *testing.T)
 	}
 }
 
+func TestNetworkAdoptionControllerDisablesServerLANClientsAndFlushesRADefault(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
+	dir := t.TempDir()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-dhcpv4"}, Spec: api.DHCPv4ServerSpec{Interface: "lan"}},
+	}}}
+	var commands []string
+	controller := NetworkAdoptionController{
+		Router:             router,
+		Store:              mapStore{},
+		NetworkdDropinBase: filepath.Join(dir, "network"),
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "network", "10-netplan-ens19.network.d", "90-routerd-adoption.conf")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read LAN adoption drop-in: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{"DHCP=no", "IPv6AcceptRA=no"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("LAN adoption drop-in missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "DHCP=ipv6") || strings.Contains(got, "IPv6AcceptRA=yes") {
+		t.Fatalf("LAN adoption drop-in enables a client mode:\n%s", got)
+	}
+	joined := strings.Join(commands, "\n")
+	if !strings.Contains(joined, "ip -6 route flush default dev ens19 proto ra") {
+		t.Fatalf("LAN RA default route was not flushed:\n%s", joined)
+	}
+	if strings.Contains(joined, "dev ens18 proto ra") {
+		t.Fatalf("WAN RA default route was flushed:\n%s", joined)
+	}
+}
+
 func TestSystemdUnitControllerRendersAndEnablesUnit(t *testing.T) {
 	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
