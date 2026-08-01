@@ -2332,27 +2332,28 @@ func TestLANAddressControllerDeprecatesOnlyDSLiteDelegatedSource(t *testing.T) {
 	}
 }
 
-func TestLANAddressControllerRepairsExistingDSLiteSourceWithoutActivePD(t *testing.T) {
+func TestLANAddressControllerKeepsPublicExampleLANPrefixPreferred(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-vmac"}, Spec: api.InterfaceSpec{IfName: "wan-vmac"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan-vmac"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "ds-source"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "wan-vmac", SubnetID: "1", AddressSuffix: "::23", PrefixLength: 128}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{Interface: "wan-vmac", LocalAddressSource: "delegatedAddress", LocalDelegatedAddress: "ds-source"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "eth0"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "wan", SubnetID: "1", AddressSuffix: "::1"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{Interface: "wan", LocalAddressSource: "delegatedAddress", LocalDelegatedAddress: "lan-v6", LocalAddressSuffix: "::100"}},
 	}}}
 	store := statefulDHCPMapStore{mapStore: mapStore{}}
-	store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{"phase": "Pending", "reason": "WhenFalse"})
+	store.SaveObjectStatus(api.NetAPIVersion, "Interface", "wan", map[string]any{"phase": "Up"})
+	store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{"phase": daemonapi.ResourcePhaseBound, "currentPrefix": "2001:db8:1220::/60"})
+	store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-v6", map[string]any{
+		"phase": "Applied", "address": "2001:db8:1220:1::1/64", "interface": "wan", "prefixSource": "wan-pd", "dryRun": false,
+	})
 	var commands []string
 	controller := LANAddressController{
 		Router:          router,
-		DeclaredRouter:  router,
 		Store:           store,
 		OperatingSystem: platform.OSLinux,
-		CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			got := strings.Join(append([]string{name}, args...), " ")
-			if got != "ip -6 -o addr show dev wan-vmac scope global" {
-				t.Fatalf("readback command = %q", got)
-			}
-			return []byte("7: wan-vmac inet6 2001:db8:1221::23/128 scope global tentative valid_lft forever preferred_lft forever\n"), nil
+		AddressPresent:  func(context.Context, string, string) bool { return false },
+		DeprecatedAddressPresent: func(context.Context, string, string) bool {
+			t.Fatal("LAN /64 must not be checked as deprecated")
+			return false
 		},
 		Command: func(_ context.Context, name string, args ...string) error {
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -2362,9 +2363,25 @@ func TestLANAddressControllerRepairsExistingDSLiteSourceWithoutActivePD(t *testi
 	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"ip -6 addr replace 2001:db8:1221::23/128 dev wan-vmac preferred_lft 0 valid_lft forever"}
-	if !reflect.DeepEqual(commands, want) {
-		t.Fatalf("commands = %#v, want %#v", commands, want)
+	want := "ip -6 addr replace 2001:db8:1220:1::1/64 dev eth0"
+	if !slices.Contains(commands, want) {
+		t.Fatalf("commands = %#v, want %q", commands, want)
+	}
+	if status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-v6"); status["sourceSelection"] != nil {
+		t.Fatalf("LAN /64 status = %#v, did not want deprecated sourceSelection", status)
+	}
+}
+
+func TestLinuxIPv6LocalEndpointArgsDeprecateDelegatedSource(t *testing.T) {
+	got := linuxIPv6LocalEndpointArgs("wan0", "2001:db8::100", true)
+	want := []string{"-6", "addr", "replace", "2001:db8::100/128", "dev", "wan0", "preferred_lft", "0", "valid_lft", "forever"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("delegated endpoint args = %#v, want %#v", got, want)
+	}
+	ordinary := linuxIPv6LocalEndpointArgs("wan0", "2001:db8::1", false)
+	ordinaryWant := []string{"-6", "addr", "replace", "2001:db8::1/128", "dev", "wan0"}
+	if !reflect.DeepEqual(ordinary, ordinaryWant) {
+		t.Fatalf("ordinary endpoint args = %#v, want %#v", ordinary, ordinaryWant)
 	}
 }
 

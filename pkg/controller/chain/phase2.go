@@ -270,7 +270,8 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		changed := objectStatusChanged("DSLiteTunnel", c.Store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name), status)
 		if !c.DryRun {
 			if localIfName != "" {
-				if err := ensureIPv6LocalEndpoint(ctx, localIfName, local); err != nil {
+				delegatedSource := firstNonEmpty(spec.LocalAddressSource, "interface") == "delegatedAddress"
+				if err := ensureIPv6LocalEndpoint(ctx, localIfName, local, delegatedSource); err != nil {
 					failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))
 					_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "LocalEndpointApplyFailed", "interface": ifname, "localIPv6": local, "aftrIPv6": remote, "error": err.Error(), "dryRun": c.DryRun})
 					continue
@@ -1793,7 +1794,7 @@ func interfaceName(router *api.Router, name string) string {
 	return name
 }
 
-func ensureIPv6LocalEndpoint(ctx context.Context, ifname, address string) error {
+func ensureIPv6LocalEndpoint(ctx context.Context, ifname, address string, deprecated bool) error {
 	if ifname == "" || address == "" {
 		return nil
 	}
@@ -1807,7 +1808,16 @@ func ensureIPv6LocalEndpoint(ctx context.Context, ifname, address string) error 
 		}
 		return nil
 	}
-	return exec.CommandContext(ctx, "ip", "-6", "addr", "replace", address+"/128", "dev", ifname).Run()
+	args := linuxIPv6LocalEndpointArgs(ifname, address, deprecated)
+	return exec.CommandContext(ctx, "ip", args...).Run()
+}
+
+func linuxIPv6LocalEndpointArgs(ifname, address string, deprecated bool) []string {
+	args := []string{"-6", "addr", "replace", address + "/128", "dev", ifname}
+	if deprecated {
+		args = append(args, "preferred_lft", "0", "valid_lft", "forever")
+	}
+	return args
 }
 
 func ensureDSLiteTunnel(ctx context.Context, router *api.Router, spec api.DSLiteTunnelSpec, ifname, remote, local, innerLocal string) (string, error) {

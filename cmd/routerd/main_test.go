@@ -3521,11 +3521,14 @@ func TestEnsureDeprecatedIPv6LocalAddressForeverRepairsPreferredSource(t *testin
 
 func TestDSLiteDelegatedAddressSources(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{LocalAddressSource: "delegatedAddress", LocalDelegatedAddress: "ds-source"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "ds-source"}, Spec: api.IPv6DelegatedAddressSpec{AddressSuffix: "::23", PrefixLength: 128}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.IPv6DelegatedAddressSpec{AddressSuffix: "::1"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{LocalAddressSource: "delegatedAddress", LocalDelegatedAddress: "ds-source", LocalAddressSuffix: "::23"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "public-example"}, Spec: api.DSLiteTunnelSpec{LocalAddressSource: "delegatedAddress", LocalDelegatedAddress: "lan-v6", LocalAddressSuffix: "::100"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ra"}, Spec: api.DSLiteTunnelSpec{LocalAddressSource: "interface", LocalDelegatedAddress: "ordinary"}},
 	}}}
 	got := dsliteDelegatedAddressSources(router)
-	if !got["ds-source"] || got["ordinary"] {
+	if !got["ds-source"] || got["ordinary"] || got["lan-v6"] {
 		t.Fatalf("DS-Lite delegated sources = %#v", got)
 	}
 }
