@@ -29,6 +29,7 @@ func applyIPv6DelegatedAddressesWithState(router *api.Router, store routerstate.
 	aliases := map[string]string{}
 	pdPrefixes := map[string]string{}
 	pdResources := map[string]bool{}
+	dsliteSources := dsliteDelegatedAddressSources(router)
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
 		case "Interface":
@@ -90,7 +91,12 @@ func applyIPv6DelegatedAddressesWithState(router *api.Router, store routerstate.
 			return nil, fmt.Errorf("%s cleanup stale delegated address: %w", res.ID(), err)
 		}
 		applied = append(applied, removed...)
-		ensured, err := ensureIPv6LocalAddress(ifname, address)
+		var ensured bool
+		if dsliteSources[res.Metadata.Name] {
+			ensured, err = ensureDeprecatedIPv6LocalAddressForever(ifname, address)
+		} else {
+			ensured, err = ensureIPv6LocalAddress(ifname, address)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("%s ensure delegated address: %w", res.ID(), err)
 		}
@@ -99,6 +105,26 @@ func applyIPv6DelegatedAddressesWithState(router *api.Router, store routerstate.
 		}
 	}
 	return applied, nil
+}
+
+func dsliteDelegatedAddressSources(router *api.Router) map[string]bool {
+	out := map[string]bool{}
+	if router == nil {
+		return out
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "DSLiteTunnel" {
+			continue
+		}
+		spec, err := resource.DSLiteTunnelSpec()
+		if err != nil || defaultString(spec.LocalAddressSource, "interface") != "delegatedAddress" {
+			continue
+		}
+		if name := strings.TrimSpace(spec.LocalDelegatedAddress); name != "" {
+			out[name] = true
+		}
+	}
+	return out
 }
 
 func cleanupConflictingIPv6SuffixAddresses(ifname, desiredAddress, suffix string) ([]string, error) {
@@ -1006,7 +1032,7 @@ func applyDSLiteTunnelsWithState(router *api.Router, store routerstate.Store) ([
 			return nil, fmt.Errorf("%s resolve AFTR: %w", res.ID(), err)
 		}
 		if localIfName != "" {
-			ensured, err := ensureIPv6LocalAddress(localIfName, local)
+			ensured, err := ensureDeprecatedIPv6LocalAddressForever(localIfName, local)
 			if err != nil {
 				return nil, fmt.Errorf("%s ensure local address: %w", res.ID(), err)
 			}
@@ -1261,6 +1287,61 @@ func ensureIPv6LocalAddress(ifname, address string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func ensureDeprecatedIPv6LocalAddressForever(ifname, address string) (bool, error) {
+	if platformDefaults.OS == platform.OSFreeBSD {
+		return ensureIPv6LocalAddress(ifname, address)
+	}
+	for _, entry := range ipv6AddressEntries(ifname) {
+		if entry.Address != address {
+			continue
+		}
+		if entry.PrefixLen != 128 {
+			if err := deleteIPv6LocalAddress(ifname, address, entry.PrefixLen); err != nil {
+				return false, err
+			}
+			break
+		}
+		if ipv6LocalAddressIsDeprecated(ifname, address, 128) {
+			return false, nil
+		}
+		break
+	}
+	if err := runLogged("ip", "-6", "addr", "replace", address+"/128", "dev", ifname, "preferred_lft", "0", "valid_lft", "forever"); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func ipv6LocalAddressIsDeprecated(ifname, address string, prefixLen int) bool {
+	out, err := exec.Command("ip", "-6", "-o", "addr", "show", "dev", ifname).CombinedOutput()
+	if err != nil {
+		return false
+	}
+	want := fmt.Sprintf("%s/%d", address, prefixLen)
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		for i, field := range fields {
+			if field != "inet6" || i+1 >= len(fields) || fields[i+1] != want {
+				continue
+			}
+			if slicesContainString(fields, "dadfailed") {
+				return false
+			}
+			return slicesContainString(fields, "deprecated")
+		}
+	}
+	return false
+}
+
+func slicesContainString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func deleteIPv6LocalAddress(ifname, address string, prefixLen int) error {

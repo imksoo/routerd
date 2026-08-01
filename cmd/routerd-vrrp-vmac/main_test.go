@@ -59,11 +59,11 @@ func TestParseOptionsRejectsWithdrawRAAction(t *testing.T) {
 }
 
 func TestPreferVMACDefaultCommand(t *testing.T) {
-	command, ok := preferVMACDefaultCommand("default via fe80::1 dev wan-vmac proto ra metric 1024\n", "wan-vmac")
+	command, ok := preferVMACDefaultCommand("default via fe80::1 dev wan-vmac proto ra metric 1024\n", "wan-vmac", "2001:db8:1200::13")
 	if !ok {
 		t.Fatal("expected VMAC default route")
 	}
-	want := []string{"ip", "-6", "route", "replace", "default", "via", "fe80::1", "dev", "wan-vmac", "metric", "50"}
+	want := []string{"ip", "-6", "route", "replace", "default", "via", "fe80::1", "dev", "wan-vmac", "metric", "50", "src", "2001:db8:1200::13"}
 	if len(command) != len(want) {
 		t.Fatalf("command = %#v", command)
 	}
@@ -72,8 +72,18 @@ func TestPreferVMACDefaultCommand(t *testing.T) {
 			t.Fatalf("command = %#v, want %#v", command, want)
 		}
 	}
-	if _, ok := preferVMACDefaultCommand("default via fe80::1 dev eth0 proto ra\n", "wan-vmac"); ok {
+	if _, ok := preferVMACDefaultCommand("default via fe80::1 dev eth0 proto ra\n", "wan-vmac", "2001:db8:1200::13"); ok {
 		t.Fatal("physical route must not be selected")
+	}
+}
+
+func TestPreferredVMACGlobalAddressExcludesTunnelAndUnreadyAddresses(t *testing.T) {
+	output := "" +
+		"7: wan-vmac inet6 2001:db8:1221::23/128 scope global deprecated valid_lft forever preferred_lft 0sec\n" +
+		"7: wan-vmac inet6 2001:db8:1200::12/64 scope global tentative valid_lft forever preferred_lft forever\n" +
+		"7: wan-vmac inet6 2001:db8:1200::13/64 scope global dynamic valid_lft 100sec preferred_lft 50sec\n"
+	if got, want := preferredVMACGlobalAddress(output), "2001:db8:1200::13"; got != want {
+		t.Fatalf("preferred VMAC global address = %q, want %q", got, want)
 	}
 }
 

@@ -3493,6 +3493,43 @@ func TestEnsureIPv6LocalAddressReplacesBroaderPrefixWithHostRoute(t *testing.T) 
 	}
 }
 
+func TestEnsureDeprecatedIPv6LocalAddressForeverRepairsPreferredSource(t *testing.T) {
+	if platformDefaults.OS != platform.OSLinux {
+		t.Skip("Linux address lifetime behavior")
+	}
+	binDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "ip.log")
+	writeExecutable(t, filepath.Join(binDir, "ip"), "#!/bin/sh\nif [ \"$1 $2 $3 $4 $5 $6\" = \"-brief -6 addr show dev wan-vmac\" ]; then\n  echo \"wan-vmac UP 2001:db8:1221::23/128\"\n  exit 0\nfi\nif [ \"$1 $2 $3 $4 $5 $6\" = \"-6 -o addr show dev wan-vmac\" ]; then\n  echo \"7: wan-vmac inet6 2001:db8:1221::23/128 scope global valid_lft forever preferred_lft forever\"\n  exit 0\nfi\nprintf '%s\\n' \"$*\" >> \""+logPath+"\"\n")
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	changed, err := ensureDeprecatedIPv6LocalAddressForever("wan-vmac", "2001:db8:1221::23")
+	if err != nil {
+		t.Fatalf("ensure deprecated tunnel source: %v", err)
+	}
+	if !changed {
+		t.Fatal("changed = false, want lifetime repair")
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read ip log: %v", err)
+	}
+	want := "-6 addr replace 2001:db8:1221::23/128 dev wan-vmac preferred_lft 0 valid_lft forever"
+	if !strings.Contains(string(data), want) {
+		t.Fatalf("ip commands missing %q:\n%s", want, data)
+	}
+}
+
+func TestDSLiteDelegatedAddressSources(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{LocalAddressSource: "delegatedAddress", LocalDelegatedAddress: "ds-source"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ra"}, Spec: api.DSLiteTunnelSpec{LocalAddressSource: "interface", LocalDelegatedAddress: "ordinary"}},
+	}}}
+	got := dsliteDelegatedAddressSources(router)
+	if !got["ds-source"] || got["ordinary"] {
+		t.Fatalf("DS-Lite delegated sources = %#v", got)
+	}
+}
+
 func TestFreeBSDProtectedIfnames(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{
 		Apply: api.ApplyPolicySpec{ProtectedInterfaces: []string{"mgmt"}},
