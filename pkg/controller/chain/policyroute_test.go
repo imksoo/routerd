@@ -149,8 +149,8 @@ func TestIPv6HostPolicyRoutesOnlyDSLiteOuterSourcesThroughVMACMainTable(t *testi
 	statePath := filepath.Join(t.TempDir(), "ipv6-host-policy.json")
 	router := hostPolicyRouter(true)
 	router.Spec.Resources = append(router.Spec.Resources,
-		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-a"}, Spec: api.DSLiteTunnelSpec{Interface: "wan-vmac"}},
-		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-ra"}, Spec: api.DSLiteTunnelSpec{Interface: "wan-vmac"}},
+		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-a"}, Spec: api.DSLiteTunnelSpec{Interface: "wan-vmac", LocalAddressSource: "delegatedAddress"}},
+		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-ra"}, Spec: api.DSLiteTunnelSpec{Interface: "wan-vmac", LocalAddressSource: "delegatedAddress"}},
 	)
 	store := mapStore{
 		api.NetAPIVersion + "/DSLiteTunnel/ds-lite-a":  {"localIPv6": "2001:db8:1200::21"},
@@ -188,6 +188,60 @@ func TestIPv6HostPolicyRoutesOnlyDSLiteOuterSourcesThroughVMACMainTable(t *testi
 	}
 }
 
+func TestIPv6HostPolicyKeepsPhysicalSLAACDSLiteSourceInHostPolicyTable(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "ipv6-host-policy.json")
+	physical := "2001:db8:1200::2"
+	previous := ipv6HostPolicyState{Policies: []ipv6HostPolicy{
+		{Name: "host-ipv6-ra", Owner: "host-ipv6-ra", Priority: 10120, Table: 120, Gateway: "fe80::1", Interface: "wan0", Source: physical, Metric: 50},
+		// This is the erroneous rule produced when physical-SLAAC tunnel
+		// endpoints were first introduced.  Reconcile must remove it.
+		{Name: "dslite-source-ds-lite-ra", Owner: "host-ipv6-ra", Priority: 10100, Lookup: "main", Source: physical, RuleFrom: true},
+	}}
+	if err := writeIPv6HostPolicyState(statePath, previous); err != nil {
+		t.Fatal(err)
+	}
+	router := hostPolicyRouter(true)
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-ra"}, Spec: api.DSLiteTunnelSpec{Interface: "wan"}},
+	)
+	store := mapStore{api.NetAPIVersion + "/DSLiteTunnel/ds-lite-ra": {"localIPv6": physical}}
+	var calls []string
+	controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		call := name + " " + strings.Join(args, " ")
+		calls = append(calls, call)
+		switch call {
+		case "ip -o link show dev wan0":
+			return []byte("2: wan0: <BROADCAST,UP,LOWER_UP> mtu 1500 state UP mode DEFAULT group default\n"), nil
+		case "ip -6 -o addr show dev wan0 scope global":
+			return []byte("2: wan0 inet6 " + physical + "/64 scope global dynamic\n"), nil
+		case "ip -6 rule show":
+			return []byte("10100: from " + physical + " lookup main\n10120: from all iif lo lookup 120\n"), nil
+		default:
+			return nil, nil
+		}
+	}}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(calls, "\n")
+	wantDelete := "ip -6 rule del priority 10100 from " + physical + "/128 lookup main"
+	if !strings.Contains(joined, wantDelete) {
+		t.Fatalf("physical-SLAAC source rule was not removed; missing %q in:\n%s", wantDelete, joined)
+	}
+	if strings.Contains(joined, "ip -6 rule add priority 10100") {
+		t.Fatalf("physical-SLAAC DS-Lite endpoint must use iif lo/table 120, not main:\n%s", joined)
+	}
+	state, err := loadIPv6HostPolicyState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, policy := range state.Policies {
+		if policy.isSourceRule() {
+			t.Fatalf("physical-SLAAC source rule remained in state: %#v", state)
+		}
+	}
+}
+
 func TestIPv6HostPolicyMigratesVMACCatchAllRuleToPhysicalWANAndCleansOldState(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "ipv6-host-policy.json")
 	previous := ipv6HostPolicyState{Policies: []ipv6HostPolicy{{Name: "host-ipv6-ra", Owner: "host-ipv6-ra", Priority: 10120, Table: 120, Gateway: "fe80::1", Interface: "wan-vmac", Source: "2001:db8:1200::23", Metric: 50}}}
@@ -195,7 +249,7 @@ func TestIPv6HostPolicyMigratesVMACCatchAllRuleToPhysicalWANAndCleansOldState(t 
 		t.Fatal(err)
 	}
 	router := hostPolicyRouter(true)
-	router.Spec.Resources = append(router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-ra"}, Spec: api.DSLiteTunnelSpec{Interface: "wan-vmac"}})
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-ra"}, Spec: api.DSLiteTunnelSpec{Interface: "wan-vmac", LocalAddressSource: "delegatedAddress"}})
 	store := mapStore{api.NetAPIVersion + "/DSLiteTunnel/ds-lite-ra": {"localIPv6": "2001:db8:1200::23"}}
 	var calls []string
 	controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -257,7 +311,7 @@ func TestIPv6HostPolicyMigratesLegacySourceRuleStateWithoutDeletingRoute(t *test
 		t.Fatal(err)
 	}
 	router := hostPolicyRouter(true)
-	router.Spec.Resources = append(router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-ra"}, Spec: api.DSLiteTunnelSpec{Interface: "wan-vmac"}})
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-ra"}, Spec: api.DSLiteTunnelSpec{Interface: "wan-vmac", LocalAddressSource: "delegatedAddress"}})
 	store := mapStore{api.NetAPIVersion + "/DSLiteTunnel/ds-lite-ra": {"localIPv6": "2001:db8:1200::23"}}
 	var calls []string
 	controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -648,6 +702,107 @@ func TestIPv4PolicyRouteRejectsDSLiteTargetUntilTunnelIsUp(t *testing.T) {
 	}
 	if !controller.dsliteResourceReady("DSLiteTunnel/ds-lite-a") {
 		t.Fatal("DS-Lite target with an Up status must be usable")
+	}
+	controller.Store = mapStore{
+		api.NetAPIVersion + "/DSLiteTunnel/ds-lite-a": {
+			"phase":  "Disabled",
+			"reason": "WhenFalse",
+			"observed": map[string]any{
+				"phase": "Up",
+			},
+		},
+	}
+	if controller.dsliteResourceReady("DSLiteTunnel/ds-lite-a") {
+		t.Fatal("WhenFalse DS-Lite target must not inherit a stale observed Up phase")
+	}
+}
+
+func TestIPv4PolicyRouteSkipsDSLiteCandidateDuringMasterStartup(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
+	const missing = "routerd-test-missing-dslite"
+	store := mapStore{
+		api.NetAPIVersion + "/DSLiteTunnel/ds-lite-ra": {
+			"phase":  "Disabled",
+			"reason": "WhenFalse",
+			"observed": map[string]any{
+				"phase":  "Up",
+				"device": missing,
+			},
+		},
+		api.NetAPIVersion + "/HealthCheck/internet-via-dslite-ra": {
+			"phase":         "Healthy",
+			"lastCheckedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		},
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-ra"}, Spec: api.DSLiteTunnelSpec{TunnelName: missing}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet-via-dslite-ra"}, Spec: api.HealthCheckSpec{Interval: "3s", Timeout: "2s"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "ipv4-default"}, Spec: api.EgressRoutePolicySpec{
+			Mode: "priority",
+			Candidates: []api.EgressRoutePolicyCandidate{{
+				Name:        "ds-lite-ra",
+				Source:      "DSLiteTunnel/ds-lite-ra",
+				Interface:   missing,
+				Table:       113,
+				Priority:    10113,
+				Mark:        275,
+				HealthCheck: "internet-via-dslite-ra",
+				DependsOn: []api.ResourceDependencySpec{{
+					Resource: "DSLiteTunnel/ds-lite-ra",
+					Phase:    "Up",
+				}},
+			}},
+		}},
+	}}}
+	controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux, DryRun: true}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatalf("normal DS-Lite startup gap must be transient: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
+	if status["phase"] != "Pending" || status["reason"] != "NoReadyCandidates" {
+		t.Fatalf("policy status = %#v, want Pending/NoReadyCandidates", status)
+	}
+}
+
+func TestEffectivePolicyRouteExcludesWhenFalseDSLiteTargetWithoutMutatingSpec(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
+	const missing = "routerd-test-stale-dslite"
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-up"}, Spec: api.DSLiteTunnelSpec{TunnelName: "lo"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-stale"}, Spec: api.DSLiteTunnelSpec{TunnelName: missing}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "ipv4-default"}, Spec: api.EgressRoutePolicySpec{
+			Mode: "priority",
+			Candidates: []api.EgressRoutePolicyCandidate{{
+				Name: "dslite-balanced",
+				Targets: []api.EgressRoutePolicyTarget{
+					{Name: "up", Interface: "ds-lite-up", Table: 110, Mark: 272},
+					{Name: "stale", Interface: "ds-lite-stale", Table: 111, Mark: 273},
+				},
+			}},
+		}},
+	}}}
+	store := mapStore{
+		api.NetAPIVersion + "/DSLiteTunnel/ds-lite-up": {"phase": "Up"},
+		api.NetAPIVersion + "/DSLiteTunnel/ds-lite-stale": {
+			"phase":    "Disabled",
+			"observed": map[string]any{"phase": "Up"},
+		},
+	}
+	controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux}
+	effective := controller.effectivePolicyRouteRouter(map[string]bool{"ipv4-default/dslite-balanced": true})
+	spec, err := effective.Spec.Resources[2].EgressRoutePolicySpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spec.Candidates) != 1 || len(spec.Candidates[0].Targets) != 1 || spec.Candidates[0].Targets[0].Name != "up" {
+		t.Fatalf("effective targets = %#v, want only ready target", spec.Candidates)
+	}
+	original, err := router.Spec.Resources[2].EgressRoutePolicySpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(original.Candidates[0].Targets) != 2 {
+		t.Fatalf("effective filtering mutated declared targets: %#v", original.Candidates[0].Targets)
 	}
 }
 
