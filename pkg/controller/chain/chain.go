@@ -5479,8 +5479,14 @@ func parseIPv6InterfaceAddressPrefixes(out string) []string {
 	for _, line := range strings.Split(out, "\n") {
 		fields := strings.Fields(line)
 		// SLAAC/temporary addresses are not owned by IPv6DelegatedAddress even
-		// if their host bits happen to match a managed suffix.
-		if fieldsContain(fields, "dynamic") || fieldsContain(fields, "temporary") || fieldsContain(fields, "mngtmpaddr") || fieldsContain(fields, "autoconf") {
+		// if their host bits happen to match a managed suffix. Linux also labels
+		// a manually installed address with a finite valid_lft as "dynamic", so
+		// that flag alone is not an origin signal. Accept a dynamic address only
+		// after it is deprecated; the caller additionally requires the exact
+		// managed suffix and excludes other declared address owners.
+		dynamic := fieldsContain(fields, "dynamic")
+		deprecated := fieldsContain(fields, "deprecated")
+		if fieldsContain(fields, "temporary") || fieldsContain(fields, "mngtmpaddr") || fieldsContain(fields, "autoconf") || fieldsContain(fields, "tentative") || fieldsContain(fields, "dadfailed") || (dynamic && !deprecated) {
 			continue
 		}
 		for i := 0; i+1 < len(fields); i++ {
