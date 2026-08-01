@@ -435,6 +435,25 @@ func commandsFor(opts options) [][]string {
 			// transition.
 			if entry.linkLocal != "" {
 				commands = append(commands, []string{"ip", "link", "set", "dev", entry.ifname, "addrgenmode", "none"})
+			}
+			// Linux otherwise answers requests received on the physical parent for
+			// IPv4 addresses owned by its macvlan child.  Apply the restriction to
+			// both sides so the shared VMAC remains the only advertised L2 identity.
+			commands = append(commands,
+				[]string{"sysctl", "-w", "net.ipv4.conf." + entry.parent + ".arp_ignore=1"},
+				[]string{"sysctl", "-w", "net.ipv4.conf." + entry.ifname + ".arp_ignore=1"},
+			)
+			if entry.withdraw {
+				// A LAN parent or LAN VMAC must never learn an upstream RA.  Leaving
+				// either enabled can create a second dnsmasq RA source.
+				commands = append(commands,
+					[]string{"sysctl", "-w", "net.ipv6.conf." + entry.parent + ".accept_ra=0"},
+					[]string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".accept_ra=0"},
+				)
+			} else {
+				commands = append(commands, []string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".accept_ra=2"})
+			}
+			if entry.linkLocal != "" {
 				commands = append(commands, []string{"ip", "-6", "addr", "flush", "dev", entry.ifname, "scope", "link"})
 			}
 			commands = append(commands, []string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".keep_addr_on_down=1"})
@@ -445,8 +464,29 @@ func commandsFor(opts options) [][]string {
 		if entry.linkLocal != "" {
 			commands = append(commands, []string{"ip", "link", "set", "dev", entry.ifname, "addrgenmode", "none"})
 		}
+		commands = append(commands,
+			[]string{"sysctl", "-w", "net.ipv4.conf." + entry.parent + ".arp_ignore=1"},
+			[]string{"sysctl", "-w", "net.ipv4.conf." + entry.ifname + ".arp_ignore=1"},
+		)
+		if entry.withdraw {
+			commands = append(commands,
+				[]string{"sysctl", "-w", "net.ipv6.conf." + entry.parent + ".accept_ra=0"},
+				[]string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".accept_ra=0"},
+			)
+		} else {
+			commands = append(commands, []string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".accept_ra=2"})
+		}
 		commands = append(commands, []string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".keep_addr_on_down=1"})
-		commands = append(commands, []string{"ip", "link", "set", "dev", entry.ifname, "up"}, []string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".accept_ra=2"})
+		if entry.withdraw {
+			// Remove only kernel-learned SLAAC/temporary addresses.  Delegated
+			// addresses installed by routerd are permanent and deliberately stay
+			// staged across the role transition.
+			commands = append(commands,
+				[]string{"ip", "-6", "addr", "flush", "dev", entry.ifname, "scope", "global", "dynamic"},
+				[]string{"ip", "-6", "addr", "flush", "dev", entry.parent, "scope", "global", "dynamic"},
+			)
+		}
+		commands = append(commands, []string{"ip", "link", "set", "dev", entry.ifname, "up"})
 		if entry.linkLocal != "" {
 			// Reconciliation may run while delegated global addresses are already
 			// installed on the LAN VMAC.  Only clear automatic or stale
