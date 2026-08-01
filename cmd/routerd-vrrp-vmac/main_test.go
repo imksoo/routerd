@@ -76,6 +76,280 @@ func TestRunVMACCommandsReappliesHygieneWhenLinkAlreadyExists(t *testing.T) {
 	}
 }
 
+func TestRepeatedActivateKeepsReadyVMACLinkAndRAStable(t *testing.T) {
+	var commands []string
+	requests := 0
+	err := runWithHooks([]string{
+		"activate", "--parent", "wan", "--interface", "wan-vmac", "--mac", "02:00:5e:00:01:13",
+	}, runHooks{
+		command: func(name string, args ...string) ([]byte, error) {
+			line := name + " " + strings.Join(args, " ")
+			commands = append(commands, line)
+			switch line {
+			case "ip -6 route show default dev wan-vmac":
+				return []byte("default via fe80::1 dev wan-vmac metric 50 src 2001:db8:1200::13\n"), nil
+			case "ip -6 -o addr show dev wan-vmac scope global":
+				return []byte("7: wan-vmac inet6 2001:db8:1200::13/64 scope global dynamic valid_lft 100sec preferred_lft 50sec\n"), nil
+			default:
+				return nil, nil
+			}
+		},
+		inspectVMAC: func(vmac) (vmacRuntimeState, error) {
+			return vmacRuntimeState{exists: true, up: true, macMatches: true, hasLinkLocal: true}, nil
+		},
+		requestRA: func(string) error {
+			requests++
+			return nil
+		},
+		conntrackdTransitionNeeded: func(string) (bool, error) { return false, nil },
+	})
+	if err != nil {
+		t.Fatalf("repeat activate: %v", err)
+	}
+	for _, forbidden := range []string{
+		"ip link add ",
+		"ip link set dev wan-vmac address ",
+		"ip link set dev wan-vmac up",
+		"ip -6 route replace default ",
+	} {
+		if slicesContainPrefix(commands, forbidden) {
+			t.Fatalf("ready VMAC ran disruptive command %q: %#v", forbidden, commands)
+		}
+	}
+	if requests != 0 {
+		t.Fatalf("router solicitations = %d, want 0", requests)
+	}
+	for _, want := range []string{
+		"sysctl -w net.ipv4.conf.wan.arp_ignore=1",
+		"sysctl -w net.ipv4.conf.wan-vmac.arp_ignore=1",
+		"sysctl -w net.ipv6.conf.wan-vmac.accept_ra=2",
+		"sysctl -w net.ipv6.conf.wan-vmac.keep_addr_on_down=1",
+	} {
+		if !slicesContain(commands, want) {
+			t.Fatalf("steady-state repair omitted %q: %#v", want, commands)
+		}
+	}
+}
+
+func TestRepeatedActivateRequestsRAOnlyWhenWANStateIsIncomplete(t *testing.T) {
+	var commands []string
+	requests := 0
+	err := runWithHooks([]string{
+		"activate", "--parent", "wan", "--interface", "wan-vmac", "--mac", "02:00:5e:00:01:13",
+	}, runHooks{
+		command: func(name string, args ...string) ([]byte, error) {
+			commands = append(commands, name+" "+strings.Join(args, " "))
+			return nil, nil
+		},
+		inspectVMAC: func(vmac) (vmacRuntimeState, error) {
+			return vmacRuntimeState{exists: true, up: true, macMatches: true, hasLinkLocal: true}, nil
+		},
+		requestRA: func(string) error {
+			requests++
+			return nil
+		},
+		conntrackdTransitionNeeded: func(string) (bool, error) { return false, nil },
+	})
+	if err != nil {
+		t.Fatalf("repeat activate without RA state: %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("router solicitations = %d, want 1", requests)
+	}
+	if slicesContainPrefix(commands, "ip link set dev wan-vmac address ") || slicesContain(commands, "ip link set dev wan-vmac up") {
+		t.Fatalf("missing RA state must not reset a healthy link: %#v", commands)
+	}
+}
+
+func TestRepeatedActivateRepairsWANDefaultRouteWithoutSolicitingRA(t *testing.T) {
+	var commands []string
+	requests := 0
+	err := runWithHooks([]string{
+		"activate", "--parent", "wan", "--interface", "wan-vmac", "--mac", "02:00:5e:00:01:13",
+	}, runHooks{
+		command: func(name string, args ...string) ([]byte, error) {
+			line := name + " " + strings.Join(args, " ")
+			commands = append(commands, line)
+			switch line {
+			case "ip -6 route show default dev wan-vmac":
+				return []byte("default via fe80::1 dev wan-vmac proto ra metric 1024\n"), nil
+			case "ip -6 -o addr show dev wan-vmac scope global":
+				return []byte("7: wan-vmac inet6 2001:db8:1200::13/64 scope global dynamic valid_lft 100sec preferred_lft 50sec\n"), nil
+			default:
+				return nil, nil
+			}
+		},
+		inspectVMAC: func(vmac) (vmacRuntimeState, error) {
+			return vmacRuntimeState{exists: true, up: true, macMatches: true, hasLinkLocal: true}, nil
+		},
+		requestRA: func(string) error {
+			requests++
+			return nil
+		},
+		conntrackdTransitionNeeded: func(string) (bool, error) { return false, nil },
+	})
+	if err != nil {
+		t.Fatalf("repair WAN default: %v", err)
+	}
+	want := "ip -6 route replace default via fe80::1 dev wan-vmac metric 50 src 2001:db8:1200::13"
+	if !slicesContain(commands, want) {
+		t.Fatalf("default route repair omitted %q: %#v", want, commands)
+	}
+	if requests != 0 {
+		t.Fatalf("router solicitations = %d, want 0", requests)
+	}
+}
+
+func TestRepeatedActivateKeepsReadyLANVMACAddressesStable(t *testing.T) {
+	var commands []string
+	requests := 0
+	err := runWithHooks([]string{
+		"activate", "--vmac", "lan,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true",
+	}, runHooks{
+		command: func(name string, args ...string) ([]byte, error) {
+			commands = append(commands, name+" "+strings.Join(args, " "))
+			return nil, nil
+		},
+		inspectVMAC: func(vmac) (vmacRuntimeState, error) {
+			return vmacRuntimeState{exists: true, up: true, macMatches: true, hasLinkLocal: true, configuredLinkLocalSet: true}, nil
+		},
+		requestRA: func(string) error {
+			requests++
+			return nil
+		},
+		conntrackdTransitionNeeded: func(string) (bool, error) { return false, nil },
+	})
+	if err != nil {
+		t.Fatalf("repeat LAN activate: %v", err)
+	}
+	for _, forbidden := range []string{
+		"ip link ",
+		"ip -6 addr flush ",
+		"ip -6 addr replace ",
+	} {
+		if slicesContainPrefix(commands, forbidden) {
+			t.Fatalf("ready LAN VMAC ran disruptive command %q: %#v", forbidden, commands)
+		}
+	}
+	if requests != 0 {
+		t.Fatalf("router solicitations = %d, want 0", requests)
+	}
+}
+
+func TestActivateStillRepairsDownVMAC(t *testing.T) {
+	var commands []string
+	requests := 0
+	err := runWithHooks([]string{
+		"activate", "--parent", "wan", "--interface", "wan-vmac", "--mac", "02:00:5e:00:01:13",
+	}, runHooks{
+		command: func(name string, args ...string) ([]byte, error) {
+			line := name + " " + strings.Join(args, " ")
+			commands = append(commands, line)
+			if strings.HasPrefix(line, "ip link add ") {
+				return []byte("RTNETLINK answers: File exists\n"), errors.New("exit status 2")
+			}
+			return nil, nil
+		},
+		inspectVMAC: func(vmac) (vmacRuntimeState, error) {
+			return vmacRuntimeState{exists: true, up: false, macMatches: true, hasLinkLocal: true}, nil
+		},
+		requestRA: func(string) error {
+			requests++
+			return nil
+		},
+		conntrackdTransitionNeeded: func(string) (bool, error) { return false, nil },
+	})
+	if err != nil {
+		t.Fatalf("repair down VMAC: %v", err)
+	}
+	for _, want := range []string{
+		"ip link set dev wan-vmac address 02:00:5e:00:01:13",
+		"ip link set dev wan-vmac up",
+	} {
+		if !slicesContain(commands, want) {
+			t.Fatalf("repair omitted %q: %#v", want, commands)
+		}
+	}
+	if requests != 1 {
+		t.Fatalf("router solicitations = %d, want 1", requests)
+	}
+}
+
+func TestRepeatedDeactivateKeepsStagedVMACStable(t *testing.T) {
+	var commands []string
+	withdrawals := 0
+	err := runWithHooks([]string{
+		"deactivate", "--vmac", "lan,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true",
+	}, runHooks{
+		command: func(name string, args ...string) ([]byte, error) {
+			commands = append(commands, name+" "+strings.Join(args, " "))
+			return nil, nil
+		},
+		inspectVMAC: func(vmac) (vmacRuntimeState, error) {
+			return vmacRuntimeState{exists: true, up: false, macMatches: true}, nil
+		},
+		withdrawRA: func(string) error {
+			withdrawals++
+			return nil
+		},
+		conntrackdTransitionNeeded: func(string) (bool, error) { return false, nil },
+	})
+	if err != nil {
+		t.Fatalf("repeat deactivate: %v", err)
+	}
+	if withdrawals != 0 {
+		t.Fatalf("RA withdrawals = %d, want 0", withdrawals)
+	}
+	if slicesContainPrefix(commands, "ip link ") || slicesContainPrefix(commands, "ip -6 addr ") {
+		t.Fatalf("staged VMAC ran disruptive command: %#v", commands)
+	}
+}
+
+func TestDeactivateWithdrawsRAOnlyOnRoleTransition(t *testing.T) {
+	var commands []string
+	withdrawals := 0
+	staged := false
+	hooks := runHooks{
+		command: func(name string, args ...string) ([]byte, error) {
+			line := name + " " + strings.Join(args, " ")
+			commands = append(commands, line)
+			if strings.HasPrefix(line, "ip link add ") {
+				return []byte("RTNETLINK answers: File exists\n"), errors.New("exit status 2")
+			}
+			return nil, nil
+		},
+		inspectVMAC: func(vmac) (vmacRuntimeState, error) {
+			if staged {
+				return vmacRuntimeState{exists: true, up: false, macMatches: true}, nil
+			}
+			return vmacRuntimeState{exists: true, up: true, macMatches: true, hasLinkLocal: true, configuredLinkLocalSet: true}, nil
+		},
+		withdrawRA: func(string) error {
+			withdrawals++
+			return nil
+		},
+		conntrackdTransitionNeeded: func(string) (bool, error) { return false, nil },
+	}
+	args := []string{"deactivate", "--vmac", "lan,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true"}
+	if err := runWithHooks(args, hooks); err != nil {
+		t.Fatalf("initial deactivate: %v", err)
+	}
+	if withdrawals != 1 || !slicesContain(commands, "ip link set dev lan-vrrp down") {
+		t.Fatalf("initial transition withdrawals = %d, commands = %#v", withdrawals, commands)
+	}
+	staged = true
+	commands = nil
+	if err := runWithHooks(args, hooks); err != nil {
+		t.Fatalf("repeat deactivate: %v", err)
+	}
+	if withdrawals != 1 {
+		t.Fatalf("repeat transition withdrawals = %d, want total 1", withdrawals)
+	}
+	if slicesContainPrefix(commands, "ip link ") || slicesContainPrefix(commands, "ip -6 addr ") {
+		t.Fatalf("repeat deactivate changed the staged link: %#v", commands)
+	}
+}
+
 func TestMixedVMACHygieneDoesNotLeakLANPolicyToWAN(t *testing.T) {
 	opts, err := parseOptions([]string{
 		"activate",
@@ -160,6 +434,9 @@ func TestPreferVMACDefaultCommand(t *testing.T) {
 	}
 	if _, ok := preferVMACDefaultCommand("default via fe80::1 dev wan-vmac proto ra\n", "wan-vmac", ""); ok {
 		t.Fatal("VMAC default must wait for an eligible RA source")
+	}
+	if command, ok := preferVMACDefaultCommand("default via fe80::1 dev wan-vmac metric 50 src 2001:db8:1200::13\n", "wan-vmac", "2001:db8:1200::13"); ok || command != nil {
+		t.Fatalf("already preferred VMAC default command = %#v, ok = %t", command, ok)
 	}
 }
 
@@ -288,6 +565,15 @@ func TestDeactivateDoesNotIgnoreMissingExecutable(t *testing.T) {
 func slicesContain(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func slicesContainPrefix(values []string, prefix string) bool {
+	for _, value := range values {
+		if strings.HasPrefix(value, prefix) {
 			return true
 		}
 	}
