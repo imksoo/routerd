@@ -2166,12 +2166,11 @@ func TestLANAddressControllerRecoversLostPreviousPrefixFromKernelForRAWithdrawal
 		VMACPresent:         func(string) bool { return true },
 		AddressPresent:      func(context.Context, string, string) bool { return true },
 		AddressList: func(context.Context, string) ([]string, error) {
-			return []string{
-				"2001:db8:1200:1::1/64",
-				"2001:db8:1200:1241::1/64",
-				"2001:db8:1200:1241::99/64",
-				"2001:db8:1200:1241::23/128",
-			}, nil
+			return parseIPv6InterfaceAddressPrefixes(`7: lan-vrrp inet6 2001:db8:1200:1::1/64 scope global valid_lft forever preferred_lft forever
+7: lan-vrrp inet6 2001:db8:1200:1241::1/64 scope global dynamic deprecated valid_lft 7199sec preferred_lft 0sec
+7: lan-vrrp inet6 2001:db8:1200:1241::99/64 scope global valid_lft forever preferred_lft forever
+7: lan-vrrp inet6 2001:db8:1200:1241::23/128 scope global valid_lft forever preferred_lft forever
+`), nil
 		},
 		Command: func(_ context.Context, name string, args ...string) error {
 			commandLine := strings.Join(append([]string{name}, args...), " ")
@@ -2389,14 +2388,19 @@ func TestLANAddressControllerDoesNotWithdrawOtherDeclaredCurrentAddresses(t *tes
 }
 
 func TestParseIPv6InterfaceAddressPrefixes(t *testing.T) {
-	out := `7: lan-vrrp inet6 2001:db8:1200:1241::1/64 scope global deprecated valid_lft 7199sec preferred_lft 0sec
+	out := `7: lan-vrrp inet6 2001:db8:1200:1241::1/64 scope global dynamic deprecated valid_lft 7199sec preferred_lft 0sec
+7: lan-vrrp inet6 2001:db8:1200:1242::1/64 scope global deprecated valid_lft forever preferred_lft 0sec
 7: lan-vrrp inet6 2001:db8:1200:1241::23/128 scope global valid_lft forever preferred_lft forever
 7: lan-vrrp inet6 2001:db8:1200:1251::1/64 scope global dynamic valid_lft 7199sec preferred_lft 3599sec
 7: lan-vrrp inet6 2001:db8:1200:1261::1/64 scope global temporary dynamic valid_lft 7199sec preferred_lft 3599sec
+7: lan-vrrp inet6 2001:db8:1200:1271::1/64 scope global mngtmpaddr dynamic deprecated valid_lft 7199sec preferred_lft 0sec
+7: lan-vrrp inet6 2001:db8:1200:1281::1/64 scope global autoconf dynamic deprecated valid_lft 7199sec preferred_lft 0sec
+7: lan-vrrp inet6 2001:db8:1200:1291::1/64 scope global tentative valid_lft forever preferred_lft forever
+7: lan-vrrp inet6 2001:db8:1200:1301::1/64 scope global dadfailed valid_lft forever preferred_lft forever
 7: lan-vrrp inet6 fe80::1/64 scope link valid_lft forever preferred_lft forever
 `
 	got := parseIPv6InterfaceAddressPrefixes(out)
-	want := []string{"2001:db8:1200:1241::1/64", "2001:db8:1200:1241::23/128"}
+	want := []string{"2001:db8:1200:1241::1/64", "2001:db8:1200:1242::1/64", "2001:db8:1200:1241::23/128"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("parsed addresses = %#v, want %#v", got, want)
 	}
