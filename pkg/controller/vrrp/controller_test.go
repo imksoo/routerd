@@ -346,6 +346,191 @@ func TestReconcileAppliesStaticVirtualAddressIPv4(t *testing.T) {
 	}
 }
 
+func TestReconcileAnnouncesRestoredStaticVirtualAddressIPv4(t *testing.T) {
+	router := vrrpRouter("static")
+	spec, _ := router.Spec.Resources[1].VirtualAddressSpec()
+	spec.GratuitousARP = true
+	router.Spec.Resources[1].Spec = spec
+	store := mapStore{
+		api.NetAPIVersion + "/VirtualAddress/vip": {
+			"phase": "Pending", "reason": "WhenFalse", "ifname": "ens18", "address": "10.240.70.10/32", "staticAddressRemoved": true,
+		},
+	}
+	var calls []string
+	controller := Controller{
+		Router:          router,
+		Store:           store,
+		IP:              "ip",
+		Arping:          "arping",
+		OperatingSystem: platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			call := name + " " + strings.Join(args, " ")
+			calls = append(calls, call)
+			if call == "ip -4 -o addr show dev ens18" {
+				return nil, nil
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := []string{
+		"ip -4 -o addr show dev ens18",
+		"ip addr replace 10.240.70.10/32 dev ens18",
+		"arping -U -c 3 -I ens18 10.240.70.10",
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
+	if status["phase"] != "Applied" || status["appliedAddress"] != "10.240.70.10/32" {
+		t.Fatalf("status = %#v, want Applied restored address", status)
+	}
+}
+
+func TestReconcileDoesNotRepeatStaticVirtualAddressAnnouncement(t *testing.T) {
+	router := vrrpRouter("static")
+	spec, _ := router.Spec.Resources[1].VirtualAddressSpec()
+	spec.GratuitousARP = true
+	router.Spec.Resources[1].Spec = spec
+	store := mapStore{}
+	var calls []string
+	controller := Controller{
+		Router:          router,
+		Store:           store,
+		IP:              "ip",
+		Arping:          "arping",
+		OperatingSystem: platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			call := name + " " + strings.Join(args, " ")
+			calls = append(calls, call)
+			if call == "ip -4 -o addr show dev ens18" {
+				return []byte("2: ens18 inet 10.240.70.10/32 scope global ens18\n"), nil
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := []string{
+		"ip -4 -o addr show dev ens18",
+		"ip addr replace 10.240.70.10/32 dev ens18",
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want no arping: %#v", calls, want)
+	}
+}
+
+func TestReconcileReportsStaticVirtualAddressAnnouncementFailure(t *testing.T) {
+	router := vrrpRouter("static")
+	spec, _ := router.Spec.Resources[1].VirtualAddressSpec()
+	spec.GratuitousARP = true
+	router.Spec.Resources[1].Spec = spec
+	store := mapStore{}
+	arpingAttempts := 0
+	controller := Controller{
+		Router:          router,
+		Store:           store,
+		IP:              "ip",
+		Arping:          "arping",
+		OperatingSystem: platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			call := name + " " + strings.Join(args, " ")
+			if call == "ip -4 -o addr show dev ens18" {
+				return nil, nil
+			}
+			if name == "arping" {
+				arpingAttempts++
+				if arpingAttempts == 1 {
+					return []byte("send failed"), errors.New("exit 1")
+				}
+				return []byte("sent"), nil
+			}
+			return []byte("ok"), nil
+		},
+	}
+	err := controller.Reconcile(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "arping -U -c 3 -I ens18 10.240.70.10") {
+		t.Fatalf("error = %v, want arping failure", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
+	if status["phase"] != "Error" || status["reason"] != "StaticVIPGratuitousARPFailed" {
+		t.Fatalf("status = %#v, want explicit GARP failure", status)
+	}
+	controller.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		call := name + " " + strings.Join(args, " ")
+		if call == "ip -4 -o addr show dev ens18" {
+			return []byte("2: ens18 inet 10.240.70.10/32 scope global ens18\n"), nil
+		}
+		if name == "arping" {
+			arpingAttempts++
+			return []byte("sent"), nil
+		}
+		return []byte("ok"), nil
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("retry reconcile: %v", err)
+	}
+	if arpingAttempts != 2 {
+		t.Fatalf("arping attempts = %d, want failed send plus retry despite present address", arpingAttempts)
+	}
+	if status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip"); status["phase"] != "Applied" {
+		t.Fatalf("retry status = %#v, want Applied", status)
+	}
+}
+
+func TestReconcileDoesNotAnnounceWhenStaticVirtualAddressIsFilteredOut(t *testing.T) {
+	store := mapStore{
+		api.NetAPIVersion + "/VirtualAddress/wan-nat-v4": {
+			"phase": "Pending", "reason": "WhenFalse", "ifname": "ens18", "address": "192.168.1.249/32", "staticAddressRemoved": true,
+		},
+	}
+	controller := Controller{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.InterfaceSpec{IfName: "ens18"},
+		}}}},
+		Store:           store,
+		ConfigPath:      t.TempDir() + "/missing-keepalived.conf",
+		OperatingSystem: platform.OSLinux,
+		Command: func(context.Context, string, ...string) ([]byte, error) {
+			t.Fatal("BACKUP effective config must not run static address or arping commands")
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+}
+
+func TestReconcileKeepsFreeBSDStaticVirtualAddressCommandUnchangedWithGARPOptIn(t *testing.T) {
+	router := vrrpRouter("static")
+	spec, _ := router.Spec.Resources[1].VirtualAddressSpec()
+	spec.GratuitousARP = true
+	router.Spec.Resources[1].Spec = spec
+	var calls []string
+	controller := Controller{
+		Router:          router,
+		Store:           mapStore{},
+		Ifconfig:        "ifconfig",
+		OperatingSystem: platform.OSFreeBSD,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	want := []string{"ifconfig ens18 inet 10.240.70.10/32 alias"}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want FreeBSD address operation only %#v", calls, want)
+	}
+}
+
 func TestReconcileIsolatesUnresolvedStaticVirtualAddress(t *testing.T) {
 	store := mapStore{}
 	var calls []string
@@ -697,6 +882,85 @@ func TestReconcileCleansStaticVirtualAddressWhenConditionBecomesFalse(t *testing
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("second reconcile repeated cleanup: calls = %#v, want %#v", calls, want)
+	}
+}
+
+func TestReconcileTreatsMissingWhenFalseStaticVirtualAddressAsRemoved(t *testing.T) {
+	store := mapStore{
+		api.NetAPIVersion + "/VirtualAddress/wan-nat-v4": {
+			"phase":     "Pending",
+			"reason":    "WhenFalse",
+			"interface": "wan",
+			"address":   "192.168.1.249/32",
+		},
+	}
+	var calls []string
+	controller := Controller{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18"},
+			},
+		}}},
+		Store:           store,
+		IP:              "ip",
+		OperatingSystem: platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			return []byte("RTNETLINK answers: Address not found\n"), errors.New("exit status 2")
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile missing address: %v", err)
+	}
+	want := []string{"ip addr del 192.168.1.249/32 dev ens18"}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "wan-nat-v4")
+	if status["phase"] != "Pending" || status["reason"] != "WhenFalse" || status["appliedAddress"] != "" || status["staticAddressRemoved"] != true {
+		t.Fatalf("missing WhenFalse VIP was not recorded as removed: %#v", status)
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("second reconcile repeated cleanup: calls = %#v, want %#v", calls, want)
+	}
+}
+
+func TestReconcileKeepsUnexpectedWhenFalseStaticAddressDeleteErrorHard(t *testing.T) {
+	store := mapStore{
+		api.NetAPIVersion + "/VirtualAddress/wan-nat-v4": {
+			"phase":     "Pending",
+			"reason":    "WhenFalse",
+			"interface": "wan",
+			"address":   "192.168.1.249/32",
+		},
+	}
+	controller := Controller{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18"},
+			},
+		}}},
+		Store:           store,
+		IP:              "ip",
+		OperatingSystem: platform.OSLinux,
+		Command: func(context.Context, string, ...string) ([]byte, error) {
+			return []byte("RTNETLINK answers: Operation not permitted\n"), errors.New("exit status 2")
+		},
+	}
+	err := controller.Reconcile(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "Operation not permitted") {
+		t.Fatalf("unexpected delete error = %v, want hard error", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "wan-nat-v4")
+	if status["staticAddressRemoved"] == true {
+		t.Fatalf("failed delete was recorded as removed: %#v", status)
 	}
 }
 

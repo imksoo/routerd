@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"strconv"
@@ -31,12 +32,21 @@ type vmac struct {
 	withdraw                       bool
 }
 
+type vmacRuntimeState struct {
+	exists                 bool
+	up                     bool
+	macMatches             bool
+	hasLinkLocal           bool
+	configuredLinkLocalSet bool
+}
+
 const conntrackdRoleStatePath = "/run/routerd/vrrp-vmac-conntrackd-role"
 
 type commandRunner func(name string, args ...string) ([]byte, error)
 
 type runHooks struct {
 	command                    commandRunner
+	inspectVMAC                func(vmac) (vmacRuntimeState, error)
 	withdrawRA                 func(string) error
 	requestRA                  func(string) error
 	conntrackdTransitionNeeded func(string) (bool, error)
@@ -58,6 +68,7 @@ func run(args []string) error {
 func productionRunHooks() runHooks {
 	return runHooks{
 		command:                    runCommand,
+		inspectVMAC:                inspectVMACRuntimeState,
 		withdrawRA:                 withdrawRouterAdvertisement,
 		requestRA:                  requestRouterAdvertisement,
 		conntrackdTransitionNeeded: conntrackdRoleTransitionNeeded,
@@ -70,6 +81,63 @@ func runCommand(name string, args ...string) ([]byte, error) {
 	return exec.Command(name, args...).CombinedOutput()
 }
 
+func inspectVMACRuntimeState(entry vmac) (vmacRuntimeState, error) {
+	ifi, err := net.InterfaceByName(entry.ifname)
+	if err != nil {
+		message := strings.ToLower(err.Error())
+		if errors.Is(err, os.ErrNotExist) || strings.Contains(message, "no such network interface") {
+			return vmacRuntimeState{}, nil
+		}
+		return vmacRuntimeState{}, err
+	}
+	state := vmacRuntimeState{
+		exists:     true,
+		up:         ifi.Flags&net.FlagUp != 0,
+		macMatches: strings.EqualFold(ifi.HardwareAddr.String(), entry.mac),
+	}
+	addrs, err := ifi.Addrs()
+	if err != nil {
+		return vmacRuntimeState{}, err
+	}
+	wantLinkLocal := net.ParseIP(entry.linkLocal)
+	for _, addr := range addrs {
+		ip, _, parseErr := net.ParseCIDR(addr.String())
+		if parseErr != nil || ip.To4() != nil || !ip.IsLinkLocalUnicast() {
+			continue
+		}
+		state.hasLinkLocal = true
+		if wantLinkLocal != nil && ip.Equal(wantLinkLocal) {
+			state.configuredLinkLocalSet = true
+		}
+	}
+	return state, nil
+}
+
+func vmacStateReadyForAction(action string, entry vmac, state vmacRuntimeState) bool {
+	if !state.exists || !state.macMatches {
+		return false
+	}
+	switch action {
+	case "activate":
+		if !state.up {
+			return false
+		}
+		if entry.linkLocal != "" {
+			return state.configuredLinkLocalSet
+		}
+		// Router Solicitation requires a usable link-local source. Treat a WAN
+		// VMAC without one as incomplete so the slow path can raise it again.
+		return state.hasLinkLocal
+	case "deactivate":
+		if state.up {
+			return false
+		}
+		return entry.linkLocal == "" || !state.hasLinkLocal
+	default:
+		return false
+	}
+}
+
 func runWithHooks(args []string, hooks runHooks) error {
 	opts, err := parseOptions(args)
 	if err != nil {
@@ -79,9 +147,19 @@ func runWithHooks(args []string, hooks runHooks) error {
 	if err != nil {
 		return err
 	}
+	ready := make([]bool, len(opts.vmacs))
+	if hooks.inspectVMAC != nil {
+		for index, entry := range opts.vmacs {
+			state, inspectErr := hooks.inspectVMAC(entry)
+			if inspectErr != nil {
+				return fmt.Errorf("inspect VMAC %s: %w", entry.ifname, inspectErr)
+			}
+			ready[index] = vmacStateReadyForAction(opts.action, entry, state)
+		}
+	}
 	if opts.action == "deactivate" {
-		for _, vmac := range opts.vmacs {
-			if vmac.withdraw {
+		for index, vmac := range opts.vmacs {
+			if vmac.withdraw && !ready[index] {
 				if err := hooks.withdrawRA(vmac.parent); err != nil && !isMissingRAInterface(err) {
 					return fmt.Errorf("withdraw router advertisement on %s: %w", vmac.parent, err)
 				}
@@ -97,31 +175,44 @@ func runWithHooks(args []string, hooks runHooks) error {
 			return err
 		}
 	}
-	for _, commands := range commandsForVMACs(opts) {
+	for index, entry := range opts.vmacs {
+		single := opts
+		single.vmacs = []vmac{entry}
+		commands := commandsFor(single)
+		if ready[index] {
+			commands = steadyStateCommands(entry)
+		}
 		if err := runVMACCommands(opts.action, commands, hooks.command); err != nil {
 			return err
 		}
 	}
 	if opts.action == "activate" {
-		for _, vmac := range opts.vmacs {
+		for index, vmac := range opts.vmacs {
 			if vmac.withdraw {
 				continue
 			}
-			if err := hooks.requestRA(vmac.ifname); err != nil {
-				return err
-			}
-		}
-		// Linux installs RA routes per interface. The physical WAN's RA route
-		// normally has a lower metric, which would send packets sourced from
-		// the shared VMAC over the standby-specific physical MAC. Promote the
-		// VMAC route after RA is learned; repeated MASTER reconciliation makes
-		// this converge even when RA arrives after the link is raised.
-		for _, vmac := range opts.vmacs {
 			output, err := hooks.command("ip", "-6", "route", "show", "default", "dev", vmac.ifname)
 			if err != nil {
 				return fmt.Errorf("read IPv6 default route for %s: %w: %s", vmac.ifname, err, strings.TrimSpace(string(output)))
 			}
-			if command, ok := preferVMACDefaultCommand(string(output), vmac.ifname); ok {
+			addressOutput, _ := hooks.command("ip", "-6", "-o", "addr", "show", "dev", vmac.ifname, "scope", "global")
+			source := preferredVMACGlobalAddress(string(addressOutput))
+			// A healthy MASTER already has both an eligible SLAAC address and an
+			// RA default route. Re-soliciting on every reconcile needlessly resets
+			// neighbour/router state and, combined with repeated link updates,
+			// makes systemd-networkd re-acquire IPv6LL continuously. Keep RS as a
+			// repair path only when the link was changed or RA state is incomplete.
+			if !ready[index] || source == "" || !hasVMACDefaultRoute(string(output), vmac.ifname) {
+				if err := hooks.requestRA(vmac.ifname); err != nil {
+					return err
+				}
+			}
+			// Linux installs RA routes per interface. The physical WAN's RA route
+			// normally has a lower metric, which would send packets sourced from
+			// the shared VMAC over the standby-specific physical MAC. Promote the
+			// VMAC route after RA is learned; repeated MASTER reconciliation makes
+			// this converge even when RA arrives after the link is raised.
+			if command, ok := preferVMACDefaultCommand(string(output), vmac.ifname, source); ok {
 				if output, err := hooks.command(command[0], command[1:]...); err != nil {
 					return fmt.Errorf("%s: %w: %s", strings.Join(command, " "), err, strings.TrimSpace(string(output)))
 				}
@@ -295,28 +386,78 @@ func requestRouterAdvertisement(ifname string) error {
 	return err
 }
 
-func preferVMACDefaultCommand(routes, ifname string) ([]string, bool) {
+func preferVMACDefaultCommand(routes, ifname, source string) ([]string, bool) {
+	if strings.TrimSpace(source) == "" {
+		return nil, false
+	}
 	for _, line := range strings.Split(routes, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 5 || fields[0] != "default" {
 			continue
 		}
-		var gateway string
+		var gateway, device, metric, routeSource string
 		for i := 0; i+1 < len(fields); i++ {
 			switch fields[i] {
 			case "via":
 				gateway = fields[i+1]
 			case "dev":
-				if fields[i+1] != ifname {
-					gateway = ""
-				}
+				device = fields[i+1]
+			case "metric":
+				metric = fields[i+1]
+			case "src":
+				routeSource = fields[i+1]
 			}
 		}
-		if gateway != "" {
-			return []string{"ip", "-6", "route", "replace", "default", "via", gateway, "dev", ifname, "metric", "50"}, true
+		if gateway != "" && device == ifname {
+			if metric == "50" && routeSource == source {
+				return nil, false
+			}
+			command := []string{"ip", "-6", "route", "replace", "default", "via", gateway, "dev", ifname, "metric", "50", "src", source}
+			return command, true
 		}
 	}
 	return nil, false
+}
+
+func hasVMACDefaultRoute(routes, ifname string) bool {
+	for _, line := range strings.Split(routes, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] != "default" {
+			continue
+		}
+		for index := 0; index+1 < len(fields); index++ {
+			if fields[index] == "dev" && fields[index+1] == ifname {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func preferredVMACGlobalAddress(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		ineligible := false
+		for _, field := range fields {
+			if field == "tentative" || field == "deprecated" || field == "dadfailed" {
+				ineligible = true
+				break
+			}
+		}
+		if ineligible {
+			continue
+		}
+		for i, field := range fields {
+			if field != "inet6" || i+1 >= len(fields) {
+				continue
+			}
+			prefix, err := netip.ParsePrefix(fields[i+1])
+			if err == nil && prefix.Addr().Is6() && !prefix.Addr().IsLinkLocalUnicast() && prefix.Bits() < 128 {
+				return prefix.Addr().String()
+			}
+		}
+	}
+	return ""
 }
 
 func parseOptions(args []string) (options, error) {
@@ -421,6 +562,27 @@ func validInterface(value string) bool {
 	return value != "" && len(value) <= 15 && !strings.ContainsAny(value, "/ \t\r\n")
 }
 
+// steadyStateCommands repairs policy knobs without touching the link identity.
+// In particular, setting an unchanged MAC address on an UP macvlan still emits
+// a link-change notification and makes IPv6 regenerate its link-local address.
+// Structural commands therefore remain reserved for a missing or mismatched
+// runtime state.
+func steadyStateCommands(entry vmac) [][]string {
+	commands := [][]string{
+		{"sysctl", "-w", "net.ipv4.conf." + entry.parent + ".arp_ignore=1"},
+		{"sysctl", "-w", "net.ipv4.conf." + entry.ifname + ".arp_ignore=1"},
+	}
+	if entry.withdraw {
+		commands = append(commands,
+			[]string{"sysctl", "-w", "net.ipv6.conf." + entry.parent + ".accept_ra=0"},
+			[]string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".accept_ra=0"},
+		)
+	} else {
+		commands = append(commands, []string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".accept_ra=2"})
+	}
+	return append(commands, []string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".keep_addr_on_down=1"})
+}
+
 func commandsFor(opts options) [][]string {
 	var commands [][]string
 	for _, entry := range opts.vmacs {
@@ -435,6 +597,25 @@ func commandsFor(opts options) [][]string {
 			// transition.
 			if entry.linkLocal != "" {
 				commands = append(commands, []string{"ip", "link", "set", "dev", entry.ifname, "addrgenmode", "none"})
+			}
+			// Linux otherwise answers requests received on the physical parent for
+			// IPv4 addresses owned by its macvlan child.  Apply the restriction to
+			// both sides so the shared VMAC remains the only advertised L2 identity.
+			commands = append(commands,
+				[]string{"sysctl", "-w", "net.ipv4.conf." + entry.parent + ".arp_ignore=1"},
+				[]string{"sysctl", "-w", "net.ipv4.conf." + entry.ifname + ".arp_ignore=1"},
+			)
+			if entry.withdraw {
+				// A LAN parent or LAN VMAC must never learn an upstream RA.  Leaving
+				// either enabled can create a second dnsmasq RA source.
+				commands = append(commands,
+					[]string{"sysctl", "-w", "net.ipv6.conf." + entry.parent + ".accept_ra=0"},
+					[]string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".accept_ra=0"},
+				)
+			} else {
+				commands = append(commands, []string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".accept_ra=2"})
+			}
+			if entry.linkLocal != "" {
 				commands = append(commands, []string{"ip", "-6", "addr", "flush", "dev", entry.ifname, "scope", "link"})
 			}
 			commands = append(commands, []string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".keep_addr_on_down=1"})
@@ -445,8 +626,29 @@ func commandsFor(opts options) [][]string {
 		if entry.linkLocal != "" {
 			commands = append(commands, []string{"ip", "link", "set", "dev", entry.ifname, "addrgenmode", "none"})
 		}
+		commands = append(commands,
+			[]string{"sysctl", "-w", "net.ipv4.conf." + entry.parent + ".arp_ignore=1"},
+			[]string{"sysctl", "-w", "net.ipv4.conf." + entry.ifname + ".arp_ignore=1"},
+		)
+		if entry.withdraw {
+			commands = append(commands,
+				[]string{"sysctl", "-w", "net.ipv6.conf." + entry.parent + ".accept_ra=0"},
+				[]string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".accept_ra=0"},
+			)
+		} else {
+			commands = append(commands, []string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".accept_ra=2"})
+		}
 		commands = append(commands, []string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".keep_addr_on_down=1"})
-		commands = append(commands, []string{"ip", "link", "set", "dev", entry.ifname, "up"}, []string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".accept_ra=2"})
+		if entry.withdraw {
+			// Remove only kernel-learned SLAAC/temporary addresses.  Delegated
+			// addresses installed by routerd are permanent and deliberately stay
+			// staged across the role transition.
+			commands = append(commands,
+				[]string{"ip", "-6", "addr", "flush", "dev", entry.ifname, "scope", "global", "dynamic"},
+				[]string{"ip", "-6", "addr", "flush", "dev", entry.parent, "scope", "global", "dynamic"},
+			)
+		}
+		commands = append(commands, []string{"ip", "link", "set", "dev", entry.ifname, "up"})
 		if entry.linkLocal != "" {
 			// Reconciliation may run while delegated global addresses are already
 			// installed on the LAN VMAC.  Only clear automatic or stale

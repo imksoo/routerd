@@ -86,6 +86,64 @@ func TestClientSolicitRequestReply(t *testing.T) {
 	}
 }
 
+func TestClientSolicitRetransmitsWithSameTransactionAndBoundedBackoff(t *testing.T) {
+	startedAt := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	now := startedAt
+	transport := &memoryTransport{}
+	client, err := New(Config{
+		Resource:    "wan-pd",
+		Interface:   "wan-vmac",
+		ClientDUID:  []byte{0, 3, 0, 1, 2, 0, 0, 0, 1, 3},
+		IAID:        1,
+		Now:         func() time.Time { return now },
+		Transaction: func() (uint32, error) { return 0x010203, nil },
+		Random:      func() float64 { return 0.5 },
+	}, transport)
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	if err := client.Start(context.Background()); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	firstRetry := client.NextSolicitRetryAt()
+	if !firstRetry.After(now.Add(solicitInitialRetransmissionTimeout)) || firstRetry.After(now.Add(1100*time.Millisecond)) {
+		t.Fatalf("first retry = %s, want just over 1s", firstRetry.Sub(now))
+	}
+	now = firstRetry.Add(-time.Nanosecond)
+	if err := client.Tick(context.Background()); err != nil {
+		t.Fatalf("early tick: %v", err)
+	}
+	if len(transport.sent) != 1 {
+		t.Fatalf("packets before retry = %d, want 1", len(transport.sent))
+	}
+
+	now = firstRetry
+	if err := client.Tick(context.Background()); err != nil {
+		t.Fatalf("retry tick: %v", err)
+	}
+	if len(transport.sent) != 2 {
+		t.Fatalf("packets after retry = %d, want 2", len(transport.sent))
+	}
+	if got := transport.sent[1].Message.TransactionID; got != 0x010203 {
+		t.Fatalf("retry transaction ID = %06x, want 010203", got)
+	}
+	wantSecondInterval := 2 * firstRetry.Sub(startedAt)
+	if got := client.NextSolicitRetryAt().Sub(now); got != wantSecondInterval {
+		t.Fatalf("second retry interval = %s, want %s", got, wantSecondInterval)
+	}
+
+	client.solicitRetryTimeout = solicitMaxRetransmissionTimeout
+	now = client.NextSolicitRetryAt()
+	client.solicitRetryAt = now
+	if err := client.Tick(context.Background()); err != nil {
+		t.Fatalf("capped retry tick: %v", err)
+	}
+	if got := client.NextSolicitRetryAt().Sub(now); got != solicitMaxRetransmissionTimeout {
+		t.Fatalf("capped retry interval = %s, want %s", got, solicitMaxRetransmissionTimeout)
+	}
+}
+
 func TestClientRenewRebindExpire(t *testing.T) {
 	now := time.Date(2026, 5, 2, 1, 0, 0, 0, time.UTC)
 	transport := &memoryTransport{}
@@ -184,6 +242,75 @@ func TestClientSnapshotIsDBFriendly(t *testing.T) {
 	restored.Restore(snapshot)
 	if restored.State != StateBound || restored.Lease.Prefix.String() != "2001:db8:1200:1240::/60" {
 		t.Fatalf("restored = %s %+v", restored.State, restored.Lease)
+	}
+}
+
+func TestClientRetainsMultipleUnexpiredPreviousPrefixes(t *testing.T) {
+	now := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
+	client, err := New(Config{
+		Resource:   "wan-pd",
+		Interface:  "wan-vmac",
+		ClientDUID: []byte{0, 3, 0, 1, 2, 0, 0, 0, 1, 3},
+		IAID:       7,
+		Now:        func() time.Time { return now },
+	}, &memoryTransport{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply := func(prefix string, valid uint32) {
+		client.acceptReply(Message{
+			Prefix:     netip.MustParsePrefix(prefix),
+			ServerDUID: []byte{0, 3, 0, 1, 2, 0, 0, 0, 0, 1},
+			IAID:       7,
+			Preferred:  valid,
+			Valid:      valid,
+		})
+	}
+
+	reply("2001:db8:1200:1220::/60", 600)
+	now = now.Add(10 * time.Second)
+	reply("2001:db8:1200:1240::/60", 300)
+	now = now.Add(10 * time.Second)
+	reply("2001:db8:1200:1220::/60", 600)
+	now = now.Add(10 * time.Second)
+	reply("2001:db8:1200:1230::/60", 200)
+	now = now.Add(10 * time.Second)
+	reply("2001:db8:1200:1220::/60", 600)
+
+	snapshot := client.Snapshot()
+	if got, want := snapshot.CurrentPrefix, "2001:db8:1200:1220::/60"; got != want {
+		t.Fatalf("current prefix = %q, want %q", got, want)
+	}
+	if got, want := len(snapshot.PreviousPrefixes), 2; got != want {
+		t.Fatalf("previous prefix count = %d, want %d: %+v", got, want, snapshot.PreviousPrefixes)
+	}
+	if got, want := snapshot.PreviousPrefixes[0].Prefix, "2001:db8:1200:1230::/60"; got != want {
+		t.Fatalf("previous[0] = %q, want %q", got, want)
+	}
+	if got, want := snapshot.PreviousPrefixes[0].ExpiresAt, time.Date(2026, 8, 1, 9, 3, 50, 0, time.UTC); !got.Equal(want) {
+		t.Fatalf("1230 expiry = %s, want %s", got, want)
+	}
+	if got, want := snapshot.PreviousPrefixes[1].Prefix, "2001:db8:1200:1240::/60"; got != want {
+		t.Fatalf("previous[1] = %q, want %q", got, want)
+	}
+	if got, want := snapshot.PreviousPrefixes[1].ExpiresAt, time.Date(2026, 8, 1, 9, 5, 10, 0, time.UTC); !got.Equal(want) {
+		t.Fatalf("1240 expiry = %s, want %s", got, want)
+	}
+
+	restored, err := New(client.Config, &memoryTransport{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored.Restore(snapshot)
+	if got := restored.Snapshot().PreviousPrefixes; len(got) != 2 {
+		t.Fatalf("restored previous prefixes = %+v", got)
+	}
+
+	now = time.Date(2026, 8, 1, 9, 4, 0, 0, time.UTC)
+	client.prunePreviousPrefixes(now)
+	got := client.Snapshot().PreviousPrefixes
+	if len(got) != 1 || got[0].Prefix != "2001:db8:1200:1240::/60" {
+		t.Fatalf("previous prefixes after expiry = %+v", got)
 	}
 }
 

@@ -93,11 +93,10 @@ func bespokeLifecycleContracts() []bespokeLifecycleContract {
 	return []bespokeLifecycleContract{
 		{
 			name:   "dnsmasq-sighup-reload",
-			proves: "dnsmasq host and lease updates can be reloaded with SIGHUP through the pid file without a service restart.",
-			plan:   Systemd{}.Plan(OperationReload, dnsmasq, PIDSignalHook(OperationReload, "HUP", "/run/routerd/dnsmasq.pid")),
+			proves: "dnsmasq host and lease updates are reloaded through the service manager without a service restart.",
+			plan:   Systemd{}.Plan(OperationReload, dnsmasq),
 			forbidden: []Command{
 				{Name: "systemctl", Args: []string{"restart", "routerd-dnsmasq.service"}},
-				{Name: "systemctl", Args: []string{"reload", "routerd-dnsmasq.service"}},
 			},
 		},
 		{
@@ -214,7 +213,7 @@ func bespokeMatrixPlan(contract bespokeLifecycleContract, manager Manager) Plan 
 	dnsmasq := Service{SystemdName: "routerd-dnsmasq.service", RCDName: "routerd_dnsmasq"}
 	switch contract.name {
 	case "dnsmasq-sighup-reload":
-		return manager.Plan(OperationReload, dnsmasq, PIDSignalHook(OperationReload, "HUP", "/run/routerd/dnsmasq.pid"))
+		return manager.Plan(OperationReload, dnsmasq)
 	case "vrrp-track-script-artifacts":
 		return Plan{Operation: OperationEnable, Commands: []Command{
 			{Name: "artifact-write", Args: []string{"/usr/local/libexec/routerd/keepalived-track.d", "mode=0755"}},
@@ -232,7 +231,7 @@ func bespokeMatrixForbidden(contract bespokeLifecycleContract, manager Manager) 
 	case "vrrp-track-script-artifacts":
 		return []Command{manager.Command(OperationRestart, keepalived)}
 	case "dnsmasq-sighup-reload":
-		return []Command{manager.Command(OperationRestart, dnsmasq), manager.Command(OperationReload, dnsmasq)}
+		return []Command{manager.Command(OperationRestart, dnsmasq)}
 	default:
 		return contract.forbidden
 	}

@@ -106,6 +106,9 @@ func packageFeatures(router *api.Router) map[string]bool {
 				if spec, err := res.VirtualAddressSpec(); err == nil && spec.Mode == "vrrp" {
 					features["vrrp"] = true
 				}
+				if spec, err := res.VirtualAddressSpec(); err == nil && (strings.TrimSpace(spec.Mode) == "" || spec.Mode == "static") && spec.Family == "ipv4" && spec.GratuitousARP {
+					features["arping"] = true
+				}
 			}
 		case "DSLiteTunnel":
 			features["base"] = true
@@ -466,9 +469,30 @@ func ipv4TunnelInterfaceNames(router *api.Router) []string {
 
 func raAcceptInterfaceNames(router *api.Router, aliases map[string]string) []string {
 	names := map[string]bool{}
+	lanDistributionInterfaces := map[string]bool{}
 	add := func(name string) {
 		if resolved := resolveInterfaceName(name, aliases); resolved != "" {
 			names[resolved] = true
+		}
+	}
+	addLANDistributionInterface := func(name string) {
+		if resolved := resolveInterfaceName(name, aliases); resolved != "" {
+			lanDistributionInterfaces[resolved] = true
+		}
+	}
+	for _, res := range router.Spec.Resources {
+		switch res.Kind {
+		case "IPv6RouterAdvertisement":
+			if spec, err := res.IPv6RouterAdvertisementSpec(); err == nil {
+				addLANDistributionInterface(spec.Interface)
+			}
+		case "DHCPv6Server":
+			if spec, err := res.DHCPv6ServerSpec(); err == nil {
+				addLANDistributionInterface(spec.Interface)
+				for _, iface := range spec.ListenInterfaces {
+					addLANDistributionInterface(iface)
+				}
+			}
 		}
 	}
 	for _, res := range router.Spec.Resources {
@@ -491,7 +515,10 @@ func raAcceptInterfaceNames(router *api.Router, aliases map[string]string) []str
 			}
 		case "IPv6DelegatedAddress":
 			if spec, err := res.IPv6DelegatedAddressSpec(); err == nil {
-				add(spec.Interface)
+				iface := resolveInterfaceName(spec.Interface, aliases)
+				if iface != "" && !spec.SendRA && !spec.Announce && !lanDistributionInterfaces[iface] {
+					names[iface] = true
+				}
 			}
 		}
 	}
@@ -526,6 +553,15 @@ func routedInterfaceNames(router *api.Router, aliases map[string]string) []strin
 		}
 	}
 	return sortedKeys(names)
+}
+
+// LANDistributionInterfaceNames returns the concrete interface names that
+// distribute addresses or router advertisements to downstream clients.
+func LANDistributionInterfaceNames(router *api.Router) []string {
+	if router == nil {
+		return nil
+	}
+	return routedInterfaceNames(router, interfaceAliases(router))
 }
 
 func interfaceAliases(router *api.Router) map[string]string {
@@ -675,7 +711,13 @@ func NetworkAdoptions(router *api.Router) []NetworkAdoptionResource {
 		case "DHCPv4Server":
 			if spec, err := res.DHCPv4ServerSpec(); err == nil {
 				if item := ensure(spec.Interface); item != nil {
+					// A server-facing LAN must never be turned into a DHCPv6 or
+					// RA client as a side effect of disabling networkd's DHCPv4
+					// client.  Rendering DHCP=ipv6 here caused the router to learn
+					// its peer's VRRP RA as a default route during HA transitions.
 					item.disableDHCPv4 = true
+					item.disableDHCPv6 = true
+					item.disableIPv6RA = true
 				}
 			}
 		case "DHCPv6Address":
@@ -700,7 +742,9 @@ func NetworkAdoptions(router *api.Router) []NetworkAdoptionResource {
 		case "DHCPv6Server":
 			if spec, err := res.DHCPv6ServerSpec(); err == nil {
 				if item := ensure(spec.Interface); item != nil {
+					item.disableDHCPv4 = true
 					item.disableDHCPv6 = true
+					item.disableIPv6RA = true
 				}
 			}
 		case "IPv6RouterAdvertisement", "IPv6RAAddress":

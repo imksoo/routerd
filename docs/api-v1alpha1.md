@@ -189,6 +189,13 @@ instead of silently ignoring the input.
 | `IPv6DelegatedAddress` | Derives a LAN-side address from a delegated prefix. |
 | `IPv6RAAddress` | Represents IPv6 addresses learned from RA/SLAAC. |
 
+`VirtualAddress.spec.gratuitousARP: true` sends
+`arping -U -c 3 -I <interface> <address>` after Linux adds or restores the
+address in `mode: static`. The default is `false`, so existing command
+sequences are unchanged. This option is valid only for an IPv4 static address
+on Linux. FreeBSD continues to use only its `ifconfig ... alias` address
+operation when the option is left disabled.
+
 `DHCPv6PrefixDelegation` no longer selects an OS DHCPv6 client. DHCPv6-PD is
 owned by `routerd-dhcpv6-client`. Set `spec.clientDUID` to a plain hex DUID when
 the DHCPv6 client identity must stay fixed across HA nodes.

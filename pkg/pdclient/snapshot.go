@@ -18,42 +18,58 @@ type Store interface {
 	Save(ctx context.Context, snapshot Snapshot) error
 }
 
+type PreviousPrefixSnapshot struct {
+	Prefix    string    `json:"prefix"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
 // Snapshot is intentionally plain and database-friendly. LAN-side controllers
 // should consume CurrentPrefix from here instead of knowing anything about
 // DHCPv6 transactions, OS clients, or service lifecycles.
 type Snapshot struct {
-	Resource      string    `json:"resource"`
-	Interface     string    `json:"interface"`
-	State         State     `json:"state"`
-	CurrentPrefix string    `json:"currentPrefix,omitempty"`
-	ServerDUID    string    `json:"serverDUID,omitempty"`
-	IAID          uint32    `json:"iaid,omitempty"`
-	ClientDUID    string    `json:"clientDuid,omitempty"`
-	T1Seconds     int64     `json:"t1Seconds,omitempty"`
-	T2Seconds     int64     `json:"t2Seconds,omitempty"`
-	Preferred     int64     `json:"preferredSeconds,omitempty"`
-	Valid         int64     `json:"validSeconds,omitempty"`
-	AcquiredAt    time.Time `json:"acquiredAt,omitempty"`
-	RenewAt       time.Time `json:"renewAt,omitempty"`
-	RebindAt      time.Time `json:"rebindAt,omitempty"`
-	ExpiresAt     time.Time `json:"expiresAt,omitempty"`
-	AFTRName      string    `json:"aftrName,omitempty"`
-	DNSServers    []string  `json:"dnsServers,omitempty"`
-	SNTPServers   []string  `json:"sntpServers,omitempty"`
-	DomainSearch  []string  `json:"domainSearch,omitempty"`
-	InfoUpdatedAt time.Time `json:"infoUpdatedAt,omitempty"`
-	UpdatedAt     time.Time `json:"updatedAt"`
-	LastError     string    `json:"lastError,omitempty"`
+	Resource         string                   `json:"resource"`
+	Interface        string                   `json:"interface"`
+	State            State                    `json:"state"`
+	CurrentPrefix    string                   `json:"currentPrefix,omitempty"`
+	PreviousPrefixes []PreviousPrefixSnapshot `json:"previousPrefixes,omitempty"`
+	ServerDUID       string                   `json:"serverDUID,omitempty"`
+	IAID             uint32                   `json:"iaid,omitempty"`
+	ClientDUID       string                   `json:"clientDuid,omitempty"`
+	T1Seconds        int64                    `json:"t1Seconds,omitempty"`
+	T2Seconds        int64                    `json:"t2Seconds,omitempty"`
+	Preferred        int64                    `json:"preferredSeconds,omitempty"`
+	Valid            int64                    `json:"validSeconds,omitempty"`
+	AcquiredAt       time.Time                `json:"acquiredAt,omitempty"`
+	RenewAt          time.Time                `json:"renewAt,omitempty"`
+	RebindAt         time.Time                `json:"rebindAt,omitempty"`
+	ExpiresAt        time.Time                `json:"expiresAt,omitempty"`
+	AFTRName         string                   `json:"aftrName,omitempty"`
+	DNSServers       []string                 `json:"dnsServers,omitempty"`
+	SNTPServers      []string                 `json:"sntpServers,omitempty"`
+	DomainSearch     []string                 `json:"domainSearch,omitempty"`
+	InfoUpdatedAt    time.Time                `json:"infoUpdatedAt,omitempty"`
+	UpdatedAt        time.Time                `json:"updatedAt"`
+	LastError        string                   `json:"lastError,omitempty"`
 }
 
 func (c *Client) Snapshot() Snapshot {
+	now := c.now()
 	s := Snapshot{
 		Resource:   c.Config.Resource,
 		Interface:  c.Config.Interface,
 		State:      c.State,
 		IAID:       c.Config.IAID,
 		ClientDUID: hex.EncodeToString(c.Config.ClientDUID),
-		UpdatedAt:  c.now(),
+		UpdatedAt:  now,
+	}
+	for _, previous := range c.PreviousPrefixes {
+		if !previous.Prefix.IsValid() || previous.Prefix == c.Lease.Prefix || !now.Before(previous.ExpiresAt) {
+			continue
+		}
+		s.PreviousPrefixes = append(s.PreviousPrefixes, PreviousPrefixSnapshot{
+			Prefix:    previous.Prefix.String(),
+			ExpiresAt: previous.ExpiresAt,
+		})
 	}
 	if c.Lease.Prefix.IsValid() {
 		s.CurrentPrefix = c.Lease.Prefix.String()
@@ -80,9 +96,11 @@ func (c *Client) Snapshot() Snapshot {
 }
 
 func (c *Client) Restore(snapshot Snapshot) {
-	if snapshot.State == StateBound && !snapshotMatchesConfig(snapshot, c.Config, c.now()) {
+	now := c.now()
+	if snapshot.State == StateBound && !snapshotMatchesConfig(snapshot, c.Config, now) {
 		c.State = StateIdle
 		c.Lease = Lease{}
+		c.PreviousPrefixes = nil
 		c.restoreInformation(snapshot)
 		return
 	}
@@ -92,6 +110,7 @@ func (c *Client) Restore(snapshot Snapshot) {
 	}
 	if snapshot.CurrentPrefix == "" {
 		c.Lease = Lease{}
+		c.PreviousPrefixes = nil
 		c.restoreInformation(snapshot)
 		return
 	}
@@ -99,6 +118,7 @@ func (c *Client) Restore(snapshot Snapshot) {
 	if err != nil {
 		c.State = StateExpired
 		c.Lease = Lease{}
+		c.PreviousPrefixes = nil
 		c.restoreInformation(snapshot)
 		return
 	}
@@ -114,6 +134,15 @@ func (c *Client) Restore(snapshot Snapshot) {
 		AcquiredAt: snapshot.AcquiredAt,
 		RenewedAt:  snapshot.UpdatedAt,
 	}
+	previous := make(map[netip.Prefix]time.Time, len(snapshot.PreviousPrefixes))
+	for _, entry := range snapshot.PreviousPrefixes {
+		prefix, err := netip.ParsePrefix(entry.Prefix)
+		if err != nil || prefix == c.Lease.Prefix || !now.Before(entry.ExpiresAt) {
+			continue
+		}
+		previous[prefix] = entry.ExpiresAt
+	}
+	c.setPreviousPrefixes(previous)
 	c.restoreInformation(snapshot)
 }
 

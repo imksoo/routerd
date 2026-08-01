@@ -10,26 +10,43 @@ import (
 )
 
 type PDLease struct {
-	CurrentPrefix  string `json:"currentPrefix,omitempty"`
-	LastPrefix     string `json:"lastPrefix,omitempty"`
-	Prefix         string `json:"prefix,omitempty"`
-	T1             string `json:"t1,omitempty"`
-	T2             string `json:"t2,omitempty"`
-	PLTime         string `json:"pltime,omitempty"`
-	VLTime         string `json:"vltime,omitempty"`
-	SourceMAC      string `json:"sourceMAC,omitempty"`
-	SourceLL       string `json:"sourceLL,omitempty"`
-	LastObservedAt string `json:"lastObservedAt,omitempty"`
-	LastReplyAt    string `json:"lastReplyAt,omitempty"`
-	LastSolicitAt  string `json:"lastSolicitAt,omitempty"`
-	LastRequestAt  string `json:"lastRequestAt,omitempty"`
-	LastRenewAt    string `json:"lastRenewAt,omitempty"`
-	LastRebindAt   string `json:"lastRebindAt,omitempty"`
-	LastReleaseAt  string `json:"lastReleaseAt,omitempty"`
-	DUID           string `json:"duid,omitempty"`
-	DUIDText       string `json:"duidText,omitempty"`
-	IAID           string `json:"iaid,omitempty"`
-	ExpectedDUID   string `json:"expectedDUID,omitempty"`
+	CurrentPrefix    string             `json:"currentPrefix,omitempty"`
+	LastPrefix       string             `json:"lastPrefix,omitempty"`
+	PreviousPrefixes []PDPreviousPrefix `json:"previousPrefixes,omitempty"`
+	Prefix           string             `json:"prefix,omitempty"`
+	T1               string             `json:"t1,omitempty"`
+	T2               string             `json:"t2,omitempty"`
+	PLTime           string             `json:"pltime,omitempty"`
+	VLTime           string             `json:"vltime,omitempty"`
+	SourceMAC        string             `json:"sourceMAC,omitempty"`
+	SourceLL         string             `json:"sourceLL,omitempty"`
+	LastObservedAt   string             `json:"lastObservedAt,omitempty"`
+	LastReplyAt      string             `json:"lastReplyAt,omitempty"`
+	LastSolicitAt    string             `json:"lastSolicitAt,omitempty"`
+	LastRequestAt    string             `json:"lastRequestAt,omitempty"`
+	LastRenewAt      string             `json:"lastRenewAt,omitempty"`
+	LastRebindAt     string             `json:"lastRebindAt,omitempty"`
+	LastReleaseAt    string             `json:"lastReleaseAt,omitempty"`
+	DUID             string             `json:"duid,omitempty"`
+	DUIDText         string             `json:"duidText,omitempty"`
+	IAID             string             `json:"iaid,omitempty"`
+	ExpectedDUID     string             `json:"expectedDUID,omitempty"`
+}
+
+type PDPreviousPrefix struct {
+	Prefix    string    `json:"prefix"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+func (l PDLease) ValidPreviousPrefixes(now time.Time) []PDPreviousPrefix {
+	out := make([]PDPreviousPrefix, 0, len(l.PreviousPrefixes))
+	for _, previous := range l.PreviousPrefixes {
+		if previous.Prefix == "" || previous.Prefix == l.CurrentPrefix || previous.ExpiresAt.IsZero() || !now.Before(previous.ExpiresAt) {
+			continue
+		}
+		out = append(out, previous)
+	}
+	return out
 }
 
 func EncodePDLease(lease PDLease) string {

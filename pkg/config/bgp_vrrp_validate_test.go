@@ -691,6 +691,41 @@ func TestValidateVirtualAddressIPv4RejectsStaticAddressConflict(t *testing.T) {
 	}
 }
 
+func TestValidateStaticVirtualAddressGratuitousARP(t *testing.T) {
+	base := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+		Metadata: api.ObjectMeta{Name: "wan-nat-v4"},
+		Spec: api.VirtualAddressSpec{
+			Family: "ipv4", Interface: "wan", Address: "192.168.1.249/32", Mode: "static", GratuitousARP: true,
+		},
+	}
+	if err := validateVirtualAddressResource(base, platform.OSLinux); err != nil {
+		t.Fatalf("Linux static IPv4 gratuitousARP rejected: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		osName platform.OS
+		mutate func(*api.VirtualAddressSpec)
+		want   string
+	}{
+		{name: "vrrp", osName: platform.OSLinux, mutate: func(spec *api.VirtualAddressSpec) { spec.Mode = "vrrp" }, want: "requires family ipv4 and mode static"},
+		{name: "ipv6", osName: platform.OSLinux, mutate: func(spec *api.VirtualAddressSpec) { spec.Family, spec.Address = "ipv6", "2001:db8::1/128" }, want: "requires family ipv4 and mode static"},
+		{name: "freebsd", osName: platform.OSFreeBSD, mutate: func(*api.VirtualAddressSpec) {}, want: "supported only on Linux"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resource := base
+			spec := base.Spec.(api.VirtualAddressSpec)
+			tc.mutate(&spec)
+			resource.Spec = spec
+			err := validateVirtualAddressResource(resource, tc.osName)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestValidateVirtualAddressIPv4VRRPRequiresPeers(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

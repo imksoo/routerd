@@ -40,6 +40,35 @@ func TestRuntimeShapeChangedAllowsDataplaneOnlyChange(t *testing.T) {
 	}
 }
 
+func TestRuntimeShapeChangedReloadsDSLiteSourceChange(t *testing.T) {
+	current := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+		Metadata: api.ObjectMeta{Name: "ds-lite-ra"},
+		Spec: api.DSLiteTunnelSpec{
+			Interface:             "wan-vmac",
+			AFTRIPv6:              "2001:db8::1",
+			LocalAddressSource:    "delegatedAddress",
+			LocalDelegatedAddress: "ds-lite-ra-source-v6",
+			LocalAddressSuffix:    "::23",
+		},
+	}}}}
+	next := &api.Router{Spec: api.RouterSpec{Resources: append([]api.Resource(nil), current.Spec.Resources...)}}
+	next.Spec.Resources[0].Spec = api.DSLiteTunnelSpec{
+		Interface:          "wan-vmac",
+		AFTRIPv6:           "2001:db8::1",
+		LocalAddressSource: "interface",
+	}
+
+	changed, resources := runtimeShapeChanged(current, next)
+	if !changed {
+		t.Fatal("DSLiteTunnel source change did not require runtime generation reload")
+	}
+	want := "net.routerd.net/v1alpha1/DSLiteTunnel/ds-lite-ra"
+	if len(resources) != 1 || resources[0] != want {
+		t.Fatalf("changed resources = %v, want [%s]", resources, want)
+	}
+}
+
 func TestRuntimeReloadHasFiniteDeadline(t *testing.T) {
 	wantErr := errors.New("stop after inspecting deadline")
 	mutator := serveConfigMutator{

@@ -210,6 +210,17 @@ func (c IPv4PolicyRouteController) desiredIPv6HostPolicies(ctx context.Context) 
 			if res.Kind != "DSLiteTunnel" {
 				continue
 			}
+			spec, err := res.DSLiteTunnelSpec()
+			if err != nil {
+				return nil, nil, err
+			}
+			// A tunnel using the physical WAN SLAAC address already matches the
+			// normal iif lo host policy below and must stay in its dedicated table.
+			// Only an endpoint derived from the delegated prefix needs to bypass
+			// that policy and follow the VMAC-aware main table.
+			if firstNonEmpty(spec.LocalAddressSource, "interface") != "delegatedAddress" {
+				continue
+			}
 			local := strings.TrimSpace(resourcequery.Value(c.Store, api.StatusValueSourceSpec{Resource: "DSLiteTunnel/" + res.Metadata.Name, Field: "localIPv6"}))
 			if local == "" {
 				continue
@@ -498,10 +509,17 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 		if egressRoutePolicyCandidateDisabled(candidate) {
 			return
 		}
+		// A candidate can become eligible as soon as its when condition flips,
+		// before the referenced DS-Lite tunnel has been recreated.  Do not turn
+		// that normal HA transition into a controller-wide hard error, and do not
+		// install a bootstrap rule from a stale health-check result.
+		if !c.egressCandidateAvailable(candidate) {
+			return
+		}
 		if !c.shouldInstallPolicyRouteForHealthCheck(candidate.HealthCheck, candidate.Mark) {
 			return
 		}
-		c.applyRouteTarget(ctx, aliases, owner, firstNonEmpty(candidate.Name, candidate.EffectiveInterface()), c.candidateDevice(candidate), candidate.EffectiveTable(), candidate.Priority, candidate.Mark, candidate.EffectiveMetric(), firstNonEmpty(candidate.GatewaySource, "none"), c.candidateGateway(candidate), false, &failures)
+		c.applyRouteTarget(ctx, aliases, owner, firstNonEmpty(candidate.Name, candidate.EffectiveInterface()), c.candidateDevice(candidate), candidate.EffectiveTable(), candidate.Priority, candidate.Mark, candidate.EffectiveMetric(), firstNonEmpty(candidate.GatewaySource, "none"), c.candidateGateway(candidate), c.candidateReferencesDSLite(candidate), &failures)
 	}
 	for _, res := range c.Router.Spec.Resources {
 		if res.Kind != "EgressRoutePolicy" {
@@ -918,23 +936,59 @@ func (c IPv4PolicyRouteController) egressTargetAvailable(ctx context.Context, al
 }
 
 func (c IPv4PolicyRouteController) egressCandidateAvailable(candidate api.EgressRoutePolicyCandidate) bool {
-	return c.dsliteResourceReady(candidate.Source)
+	if !resourcequery.DependenciesReady(c.Store, candidate.DependsOn) {
+		return false
+	}
+	for _, reference := range []string{candidate.Source, candidate.DeviceFrom.Resource} {
+		if c.dsliteResourceReference(reference) && !c.dsliteResourceReady(reference) {
+			return false
+		}
+	}
+	return true
 }
 
 func (c IPv4PolicyRouteController) dsliteResourceReady(reference string) bool {
-	if c.Router == nil || reference == "" {
+	if c.Router == nil || reference == "" || !c.dsliteResourceReference(reference) {
 		return true
+	}
+	kind, name, qualified := resourcequery.SplitResource(reference)
+	for _, res := range c.Router.Spec.Resources {
+		if res.Kind != "DSLiteTunnel" {
+			continue
+		}
+		if (qualified && (kind != "DSLiteTunnel" || name != res.Metadata.Name)) || (!qualified && reference != res.Metadata.Name) {
+			continue
+		}
+		// DSLiteTunnel is reconciled by routerd itself, not by a daemon whose
+		// observed substatus should override the controller phase.  In
+		// particular, phase=Disabled/reason=WhenFalse must win over a retained
+		// observed.phase=Up from the previous MASTER generation.
+		return strings.TrimSpace(fmt.Sprint(c.Store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", res.Metadata.Name)["phase"])) == "Up"
+	}
+	return false
+}
+
+func (c IPv4PolicyRouteController) dsliteResourceReference(reference string) bool {
+	if c.Router == nil || strings.TrimSpace(reference) == "" {
+		return false
+	}
+	kind, _, qualified := resourcequery.SplitResource(reference)
+	if qualified {
+		return kind == "DSLiteTunnel"
 	}
 	for _, res := range c.Router.Spec.Resources {
 		if res.Kind != "DSLiteTunnel" {
 			continue
 		}
-		if reference != res.Metadata.Name && reference != res.ID() {
-			continue
+		if reference == res.Metadata.Name {
+			return true
 		}
-		return resourcequery.SourceReady(c.Store, res.ID())
 	}
-	return true
+	return false
+}
+
+func (c IPv4PolicyRouteController) candidateReferencesDSLite(candidate api.EgressRoutePolicyCandidate) bool {
+	return c.dsliteResourceReference(candidate.Source) || c.dsliteResourceReference(candidate.DeviceFrom.Resource)
 }
 
 func (c IPv4PolicyRouteController) candidateDevice(candidate api.EgressRoutePolicyCandidate) string {
@@ -955,6 +1009,7 @@ func (c IPv4PolicyRouteController) effectivePolicyRouteRouter(activeTargetCandid
 	}
 	out := *c.Router
 	out.Spec.Resources = make([]api.Resource, 0, len(c.Router.Spec.Resources))
+	aliases := c.aliases()
 	for _, res := range c.Router.Spec.Resources {
 		if res.Kind != "EgressRoutePolicy" {
 			out.Spec.Resources = append(out.Spec.Resources, res)
@@ -975,9 +1030,9 @@ func (c IPv4PolicyRouteController) effectivePolicyRouteRouter(activeTargetCandid
 				if egressRoutePolicyCandidateDisabled(candidate) || len(candidate.Targets) == 0 || !activeTargetCandidates[egressCandidateKey(res.Metadata.Name, candidate)] {
 					continue
 				}
-				targets := candidate.Targets[:0]
+				targets := make([]api.EgressRoutePolicyTarget, 0, len(candidate.Targets))
 				for _, target := range candidate.Targets {
-					if c.targetHealthy(target.HealthCheck) {
+					if c.targetHealthy(target.HealthCheck) && (!c.dsliteResourceReference(target.EffectiveInterface()) || c.egressTargetAvailable(context.Background(), aliases, target)) {
 						targets = append(targets, target)
 					}
 				}
@@ -1003,10 +1058,13 @@ func (c IPv4PolicyRouteController) effectivePolicyRouteRouter(activeTargetCandid
 			if !c.targetHealthy(candidate.HealthCheck) {
 				continue
 			}
+			if !c.egressCandidateAvailable(candidate) {
+				continue
+			}
 			if len(candidate.Targets) > 0 {
-				targets := candidate.Targets[:0]
+				targets := make([]api.EgressRoutePolicyTarget, 0, len(candidate.Targets))
 				for _, target := range candidate.Targets {
-					if c.targetHealthy(target.HealthCheck) {
+					if c.targetHealthy(target.HealthCheck) && (!c.dsliteResourceReference(target.EffectiveInterface()) || c.egressTargetAvailable(context.Background(), aliases, target)) {
 						targets = append(targets, target)
 					}
 				}

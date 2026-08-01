@@ -2851,6 +2851,10 @@
                         ],
                         "type": "string"
                       },
+                      "gratuitousARP": {
+                        "description": "GratuitousARP sends an unsolicited ARP announcement after Linux adds or restores a static IPv4 address.",
+                        "type": "boolean"
+                      },
                       "hostname": {
                         "type": "string"
                       },

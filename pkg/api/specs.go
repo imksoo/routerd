@@ -558,6 +558,8 @@ type VirtualAddressSpec struct {
 	Track       []ResourceTrackSpec    `yaml:"track,omitempty" json:"track,omitempty"`
 	When        ResourceWhenSpec       `yaml:"when,omitempty" json:"when,omitempty"`
 	AddressFrom StatusValueSourceSpec  `yaml:"addressFrom,omitempty" json:"addressFrom,omitempty"`
+	// GratuitousARP sends an unsolicited ARP announcement after Linux adds or restores a static IPv4 address.
+	GratuitousARP bool `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
 }
 
 type VirtualAddressVRRPSpec struct {

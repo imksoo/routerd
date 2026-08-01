@@ -64,6 +64,7 @@ import (
 	"github.com/imksoo/routerd/pkg/providerinventory"
 	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resourcequery"
+	"github.com/imksoo/routerd/pkg/servicemgr"
 	daemonsource "github.com/imksoo/routerd/pkg/source/daemon"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -1236,6 +1237,9 @@ type Options struct {
 	DryRunNetworkAdoption   bool
 	DryRunServiceUnit       bool
 	SuperviseClientDaemons  bool
+	// SkipLegacyClientUnits keeps a one-shot reconciliation from creating
+	// per-resource service units when client lifecycle belongs to routerd serve.
+	SkipLegacyClientUnits   bool
 	SuperviseDNSResolvers   bool
 	FirewallDisabled        bool
 	DnsmasqCommand          string
@@ -1473,9 +1477,6 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 		if resourcequery.ResourceWhenIndeterminate(when, store) {
 			continue
 		}
-		if preserveStagedIPv6DelegatedAddressWhenFalse(res, apiVersion, store) {
-			continue
-		}
 		if preserved, err := r.preserveFreshDaemonStatusWhenFalse(res, apiVersion, store, now); err != nil {
 			return err
 		} else if preserved {
@@ -1486,6 +1487,7 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 			next := copyStatusMap(current)
 			changed := preserveStaticVirtualAddressCleanupStatus(res, current, next)
 			changed = preserveIPv4StaticAddressCleanupStatus(r.Router, res, current, next) || changed
+			changed = preserveIPv6DelegatedAddressCleanupStatus(res, current, next) || changed
 			if changed {
 				if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, next); err != nil {
 					return err
@@ -1500,6 +1502,7 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 		}
 		preserveStaticVirtualAddressCleanupStatus(res, current, status)
 		preserveIPv4StaticAddressCleanupStatus(r.Router, res, current, status)
+		preserveIPv6DelegatedAddressCleanupStatus(res, current, status)
 		if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, status); err != nil {
 			return err
 		}
@@ -1570,16 +1573,36 @@ func preserveIPv4StaticAddressCleanupStatus(router *api.Router, res api.Resource
 	return changed
 }
 
-// preserveStagedIPv6DelegatedAddressWhenFalse keeps a LAN address which the
-// LAN controller deliberately staged on an existing VRRP VMAC.  The LAN
-// controller owns its expiry and VMAC-loss cleanup; replacing it here with a
-// generic WhenFalse status would make the staging state oscillate every pass.
-func preserveStagedIPv6DelegatedAddressWhenFalse(res api.Resource, apiVersion string, store eventedStore) bool {
+// preserveIPv6DelegatedAddressCleanupStatus keeps only the ownership data
+// needed by the LAN address controller after the resource is filtered out of
+// the effective router. In particular, an address staged while the node was
+// BACKUP must not remain Applied once its own when condition resolves false.
+func preserveIPv6DelegatedAddressCleanupStatus(res api.Resource, current, status map[string]any) bool {
 	if res.Kind != "IPv6DelegatedAddress" {
 		return false
 	}
-	status := store.ObjectStatus(apiVersion, res.Kind, res.Metadata.Name)
-	return strings.TrimSpace(fmt.Sprint(status["phase"])) == "Applied" && status["staged"] == true
+	spec, err := res.IPv6DelegatedAddressSpec()
+	if err != nil {
+		return false
+	}
+	changed := false
+	for _, key := range []string{"address", "previousAddresses"} {
+		value, exists := current[key]
+		if !exists || value == nil {
+			continue
+		}
+		if _, exists := status[key]; !exists {
+			status[key] = value
+			changed = true
+		}
+	}
+	for key, value := range map[string]string{"interface": spec.Interface, "prefixSource": spec.PrefixDelegation} {
+		if strings.TrimSpace(value) != "" && statusString(status, key) == "" {
+			status[key] = value
+			changed = true
+		}
+	}
+	return changed
 }
 
 func (r *Runner) clearWhenFalseStatus(apiVersion, kind, name string, store eventedStore) error {
@@ -1719,9 +1742,6 @@ func (r *Runner) Start(ctx context.Context) error {
 		logger = slog.Default()
 	}
 	store := eventedStore{Store: r.Store, Bus: r.Bus, Router: r.Router}
-	if r.Opts.SuperviseClientDaemons && r.controllerEnabled("daemon-supervisor") {
-		r.reconcileSupervisedClientDaemons(ctx, r.daemonSupervisionRouter(store), logger)
-	}
 	for _, resource := range r.Router.Spec.Resources {
 		if resource.Kind != "DHCPv6PrefixDelegation" {
 			continue
@@ -2113,7 +2133,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	sysctl := SysctlController{Router: r.Router, Bus: r.Bus, Store: store}
 	kernelModules := KernelModuleController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunPackage}
 	adoption := NetworkAdoptionController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNetworkAdoption}
-	serviceUnits := SystemdUnitController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunServiceUnit, SynthesizeClientDaemonUnits: !r.Opts.SuperviseClientDaemons}
+	serviceUnits := SystemdUnitController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunServiceUnit, SynthesizeClientDaemonUnits: !r.Opts.SuperviseClientDaemons && !r.Opts.SkipLegacyClientUnits}
 	logRetention := LogRetentionController{Router: r.Router, Bus: r.Bus, Store: store}
 	ntpClient := NTPClientController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store}
 	ntpServer := NTPServerController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store}
@@ -2294,10 +2314,6 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(observabilityPipeline.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "daemon-status", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv6.client.**", "routerd.dhcpv4.client.**", "routerd.healthcheck.**", "routerd.pppoe.client.**", "routerd.mobility.arp.**", "routerd.mobility.pve-svnet.**"}}}, PeriodicFunc: didWorkPeriodic(daemonStatusSync.Reconcile)},
-		framework.FuncController{ControllerName: "daemon-supervisor", Every: 5 * time.Second, Subs: whenStatusSubscriptions(r.Router, "DNSResolver", "DHCPv6PrefixDelegation", "DHCPv4Client", "PPPoESession"), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			r.reconcileSupervisedClientDaemons(ctx, r.daemonSupervisionRouter(store), logger)
-			return false, nil
-		}},
 		framework.FuncController{ControllerName: "dhcp-lease-sync", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync"}, "DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
@@ -2673,6 +2689,13 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			vrrp.Router = effective
 			return didWorkError(vrrp.Reconcile(ctx))
+		}},
+		// Client daemons with a VRRP role condition must be supervised only
+		// after this generation has observed the kernel-owned VIP.  A persisted
+		// role from the previous process is not authoritative during startup.
+		framework.FuncController{ControllerName: "daemon-supervisor", Every: 5 * time.Second, Subs: whenStatusSubscriptions(r.Router, "DNSResolver", "DHCPv6PrefixDelegation", "DHCPv4Client", "PPPoESession"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+			r.reconcileSupervisedClientDaemons(ctx, r.daemonSupervisionRouter(store), logger)
+			return false, nil
 		}},
 		framework.FuncController{ControllerName: "ip-address-set", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"}, "IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
@@ -3953,6 +3976,14 @@ type LANAddressController struct {
 	// StagingAddressPresent is the VMAC standby readback seam. Production uses
 	// the staging-specific Linux readback; tests may inject the same contract.
 	StagingAddressPresent func(context.Context, string, string) bool
+	// DeprecatedAddressPresent verifies that a DS-Lite-only address is not a
+	// preferred source for unrelated host traffic.
+	DeprecatedAddressPresent func(context.Context, string, string) bool
+	// AddressList returns the global IPv6 addresses currently present on an
+	// interface.  The controller uses this readback to recover routerd-owned
+	// delegated /64 history after a lease-sync file replaces a local snapshot
+	// which contained PreviousPrefixes.
+	AddressList func(context.Context, string) ([]string, error)
 	// EnsureVMAC is used only for standby staging.  The authoritative VRRP
 	// helper creates the configured macvlan cold and leaves it DOWN.
 	EnsureVMAC          func(context.Context, string) error
@@ -4209,6 +4240,9 @@ func daemonObservedOnlyStatus(current, base map[string]any, observed daemonapi.R
 	daemonObserved["health"] = observed.Health
 	next["observed"] = daemonObserved
 	if daemonObservedPromotesTopLevel(observed.Resource.Kind) && strings.TrimSpace(observed.Phase) != "" {
+		if observed.Resource.Kind == "HealthCheck" && strings.TrimSpace(fmt.Sprint(daemonObserved["lastResult"])) == healthcheck.ResultPassed {
+			clearRecoveredHealthCheckFailureStatus(next)
+		}
 		for key, value := range daemonObserved {
 			next[key] = value
 		}
@@ -4220,6 +4254,21 @@ func daemonObservedOnlyStatus(current, base map[string]any, observed daemonapi.R
 		delete(next, "reason")
 	}
 	return next
+}
+
+// clearRecoveredHealthCheckFailureStatus removes event-only failure details
+// once the health-check daemon has reported a successful probe. Historical
+// timestamps (for example lastFailureTime) are deliberately retained.
+func clearRecoveredHealthCheckFailureStatus(status map[string]any) {
+	for _, key := range []string{
+		"result",
+		"message",
+		"timeout",
+		"failureKind",
+		"routerd.healthcheck.failureKind",
+	} {
+		delete(status, key)
+	}
 }
 
 func daemonObservedPromotesTopLevel(kind string) bool {
@@ -5070,6 +5119,38 @@ func ipAddrShowHasStagedIPv6AddressWithPrefix(out []byte, address string) bool {
 	return false
 }
 
+func ipv6DeprecatedAddressPresentWithPrefix(ctx context.Context, ifname, address string) bool {
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		return true
+	}
+	out, err := exec.CommandContext(ctx, "ip", "-6", "-o", "addr", "show", "dev", ifname).Output()
+	if err != nil {
+		return false
+	}
+	return ipAddrShowHasDeprecatedIPv6AddressWithPrefix(out, address)
+}
+
+func ipAddrShowHasDeprecatedIPv6AddressWithPrefix(out []byte, address string) bool {
+	want, err := netip.ParsePrefix(strings.TrimSpace(address))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] != "inet6" {
+				continue
+			}
+			got, err := netip.ParsePrefix(fields[i+1])
+			if err != nil || got.Addr() != want.Addr() || got.Bits() != want.Bits() {
+				continue
+			}
+			return fieldsContain(fields, "deprecated") && !fieldsContain(fields, "dadfailed")
+		}
+	}
+	return false
+}
+
 func fieldsContain(fields []string, want string) bool {
 	for _, field := range fields {
 		if field == want {
@@ -5093,6 +5174,35 @@ func ipv6StaticAddressApplyCommand(osName platform.OS, ifname, address string) (
 		return "ifconfig", []string{ifname, "inet6", host, "prefixlen", prefixLen, "alias"}
 	}
 	return "ip", []string{"-6", "addr", "replace", address, "dev", ifname}
+}
+
+func ipv6DeprecatedAddressApplyCommand(osName platform.OS, ifname, address string, validSeconds int64) (string, []string) {
+	valid := strconv.FormatInt(validSeconds, 10)
+	if osName == platform.OSFreeBSD {
+		host := strings.TrimSpace(address)
+		prefixLen := "64"
+		if parsed, err := netip.ParsePrefix(host); err == nil {
+			host = parsed.Addr().String()
+			prefixLen = strconv.Itoa(parsed.Bits())
+		}
+		return "ifconfig", []string{ifname, "inet6", host, "prefixlen", prefixLen, "pltime", "0", "vltime", valid, "alias"}
+	}
+	return "ip", []string{"-6", "addr", "replace", address, "dev", ifname, "preferred_lft", "0", "valid_lft", valid}
+}
+
+func remainingIPv6ValidLifetime(now, expiresAt time.Time) int64 {
+	remaining := expiresAt.Sub(now)
+	if remaining <= 0 {
+		return 0
+	}
+	return int64((remaining + time.Second - 1) / time.Second)
+}
+
+func ipv6PermanentDeprecatedAddressApplyCommand(osName platform.OS, ifname, address string) (string, []string) {
+	if osName == platform.OSFreeBSD {
+		return ipv6StaticAddressApplyCommand(osName, ifname, address)
+	}
+	return "ip", []string{"-6", "addr", "replace", address, "dev", ifname, "preferred_lft", "0", "valid_lft", "forever"}
 }
 
 func ipv6StaticAddressDeleteCommand(osName platform.OS, ifname, address string) (string, []string) {
@@ -5142,6 +5252,300 @@ func delegatedAddressWithPrefixLength(address string, prefixLength int) (string,
 	return netip.PrefixFrom(prefix.Addr(), prefixLength).String(), nil
 }
 
+type managedPreviousDelegatedAddress struct {
+	Address   string    `json:"address"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+func derivePreviousDelegatedAddresses(snapshot pdclient.Snapshot, currentPrefix string, spec api.IPv6DelegatedAddressSpec, now time.Time) ([]managedPreviousDelegatedAddress, error) {
+	if spec.PrefixLength == 128 || snapshot.CurrentPrefix != currentPrefix {
+		return nil, nil
+	}
+	current, err := netip.ParsePrefix(currentPrefix)
+	if err != nil {
+		return nil, nil
+	}
+	byAddress := map[string]time.Time{}
+	for _, previous := range snapshot.PreviousPrefixes {
+		if previous.Prefix == "" || previous.Prefix == currentPrefix || !now.Before(previous.ExpiresAt) {
+			continue
+		}
+		previousPrefix, err := netip.ParsePrefix(previous.Prefix)
+		if err != nil || previousPrefix.Bits() != current.Bits() {
+			continue
+		}
+		address, err := DeriveIPv6Address(previousPrefix.String(), spec.SubnetID, spec.AddressSuffix)
+		if err != nil {
+			return nil, err
+		}
+		address, err = delegatedAddressWithPrefixLength(address, spec.PrefixLength)
+		if err != nil {
+			return nil, err
+		}
+		if expiresAt, ok := byAddress[address]; !ok || expiresAt.Before(previous.ExpiresAt) {
+			byAddress[address] = previous.ExpiresAt
+		}
+	}
+	addresses := make([]string, 0, len(byAddress))
+	for address := range byAddress {
+		addresses = append(addresses, address)
+	}
+	sort.Strings(addresses)
+	out := make([]managedPreviousDelegatedAddress, 0, len(addresses))
+	for _, address := range addresses {
+		out = append(out, managedPreviousDelegatedAddress{Address: address, ExpiresAt: byAddress[address]})
+	}
+	return out, nil
+}
+
+const defaultIPv6DelegatedAddressWithdrawalLifetime = 2 * time.Hour
+
+func mergeManagedPreviousDelegatedAddresses(now time.Time, current string, groups ...[]managedPreviousDelegatedAddress) []managedPreviousDelegatedAddress {
+	byAddress := map[string]time.Time{}
+	for _, group := range groups {
+		for _, previous := range group {
+			address := strings.TrimSpace(previous.Address)
+			if address == "" || address == current || !now.Before(previous.ExpiresAt) {
+				continue
+			}
+			if expiresAt, ok := byAddress[address]; !ok || expiresAt.Before(previous.ExpiresAt) {
+				byAddress[address] = previous.ExpiresAt
+			}
+		}
+	}
+	addresses := make([]string, 0, len(byAddress))
+	for address := range byAddress {
+		addresses = append(addresses, address)
+	}
+	sort.Strings(addresses)
+	out := make([]managedPreviousDelegatedAddress, 0, len(addresses))
+	for _, address := range addresses {
+		out = append(out, managedPreviousDelegatedAddress{Address: address, ExpiresAt: byAddress[address]})
+	}
+	return out
+}
+
+func retainFailedPreviousDelegatedAddresses(current, failed []managedPreviousDelegatedAddress) []managedPreviousDelegatedAddress {
+	byAddress := map[string]time.Time{}
+	for _, group := range [][]managedPreviousDelegatedAddress{current, failed} {
+		for _, previous := range group {
+			if previous.Address == "" {
+				continue
+			}
+			if expiresAt, ok := byAddress[previous.Address]; !ok || expiresAt.Before(previous.ExpiresAt) {
+				byAddress[previous.Address] = previous.ExpiresAt
+			}
+		}
+	}
+	addresses := make([]string, 0, len(byAddress))
+	for address := range byAddress {
+		addresses = append(addresses, address)
+	}
+	sort.Strings(addresses)
+	out := make([]managedPreviousDelegatedAddress, 0, len(addresses))
+	for _, address := range addresses {
+		out = append(out, managedPreviousDelegatedAddress{Address: address, ExpiresAt: byAddress[address]})
+	}
+	return out
+}
+
+func delegatedAddressRAWithdrawalLifetime(router *api.Router, delegatedName string) (time.Duration, bool) {
+	if router == nil || strings.TrimSpace(delegatedName) == "" {
+		return 0, false
+	}
+	want := "IPv6DelegatedAddress/" + strings.TrimSpace(delegatedName)
+	var longest time.Duration
+	found := false
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "IPv6RouterAdvertisement" {
+			continue
+		}
+		spec, err := resource.IPv6RouterAdvertisementSpec()
+		if err != nil || strings.TrimSpace(spec.PrefixFrom.Resource) != want {
+			continue
+		}
+		found = true
+		lifetime := defaultIPv6DelegatedAddressWithdrawalLifetime
+		if value := strings.TrimSpace(spec.ValidLifetime); value != "" {
+			seconds, err := strconv.ParseInt(value, 10, 64)
+			if err != nil || seconds < 0 {
+				continue
+			}
+			lifetime = time.Duration(seconds) * time.Second
+		}
+		// RFC 4862 section 5.5.3(e) may keep an unauthenticated prefix valid
+		// for two hours even when a shorter lifetime is advertised.  Keep the
+		// deprecated constructor address for at least that long so dnsmasq can
+		// continue sending preferred=0 PIOs throughout the protection window.
+		if lifetime < defaultIPv6DelegatedAddressWithdrawalLifetime {
+			lifetime = defaultIPv6DelegatedAddressWithdrawalLifetime
+		}
+		if lifetime > longest {
+			longest = lifetime
+		}
+	}
+	return longest, found
+}
+
+func declaredCurrentIPv6AddressExclusions(router *api.Router, store Store, ifname, exceptDelegatedName string) map[string]bool {
+	excluded := map[string]bool{}
+	if router == nil {
+		return excluded
+	}
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil || !prefix.Addr().Is6() {
+			return
+		}
+		excluded[netip.PrefixFrom(prefix.Addr(), prefix.Bits()).String()] = true
+	}
+	for _, resource := range router.Spec.Resources {
+		switch resource.Kind {
+		case "IPv6DelegatedAddress":
+			if resource.Metadata.Name == exceptDelegatedName {
+				continue
+			}
+			spec, err := resource.IPv6DelegatedAddressSpec()
+			if err != nil || interfaceIfName(router, spec.Interface) != ifname {
+				continue
+			}
+			if store != nil {
+				status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name)
+				add(cleanStatusString(status["address"]))
+				pdStatus := store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", spec.PrefixDelegation)
+				if currentPrefix := statusStringPreferObserved(pdStatus, "currentPrefix"); currentPrefix != "" {
+					if address, deriveErr := DeriveIPv6Address(currentPrefix, spec.SubnetID, spec.AddressSuffix); deriveErr == nil {
+						if address, lengthErr := delegatedAddressWithPrefixLength(address, spec.PrefixLength); lengthErr == nil {
+							add(address)
+						}
+					}
+				}
+			}
+		case "VirtualAddress":
+			spec, err := resource.VirtualAddressSpec()
+			if err == nil && spec.Family == "ipv6" && interfaceIfName(router, spec.Interface) == ifname {
+				add(spec.Address)
+			}
+		}
+	}
+	return excluded
+}
+
+func managedDelegatedAddressCandidate(value, current string, spec api.IPv6DelegatedAddressSpec) (string, bool) {
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+	if err != nil || !prefix.Addr().Is6() || prefix.Addr().IsLinkLocalUnicast() {
+		return "", false
+	}
+	prefixLength := spec.PrefixLength
+	if prefixLength == 0 {
+		prefixLength = 64
+	}
+	if prefixLength == 128 || prefix.Bits() != prefixLength {
+		return "", false
+	}
+	suffix, err := netip.ParseAddr(firstNonEmpty(strings.TrimSpace(spec.AddressSuffix), "::1"))
+	if err != nil || !suffix.Is6() || !sameIPv6HostSuffix64(prefix.Addr(), suffix) {
+		return "", false
+	}
+	address := netip.PrefixFrom(prefix.Addr(), prefixLength).String()
+	if address == strings.TrimSpace(current) {
+		return "", false
+	}
+	return address, true
+}
+
+func sameIPv6HostSuffix64(a, b netip.Addr) bool {
+	if !a.Is6() || !b.Is6() {
+		return false
+	}
+	aBytes := a.As16()
+	bBytes := b.As16()
+	for i := 8; i < len(aBytes); i++ {
+		if aBytes[i] != bBytes[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func inferredPreviousDelegatedAddresses(now time.Time, current string, spec api.IPv6DelegatedAddressSpec, withdrawalLifetime time.Duration, values ...string) []managedPreviousDelegatedAddress {
+	if withdrawalLifetime <= 0 {
+		return nil
+	}
+	expiresAt := now.Add(withdrawalLifetime)
+	var out []managedPreviousDelegatedAddress
+	seen := map[string]bool{}
+	for _, value := range values {
+		address, ok := managedDelegatedAddressCandidate(value, current, spec)
+		if !ok || seen[address] {
+			continue
+		}
+		seen[address] = true
+		out = append(out, managedPreviousDelegatedAddress{Address: address, ExpiresAt: expiresAt})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Address < out[j].Address })
+	return out
+}
+
+func linuxIPv6GlobalInterfaceAddresses(ctx context.Context, ifname string) ([]string, error) {
+	out, err := exec.CommandContext(ctx, "ip", "-6", "-o", "addr", "show", "dev", ifname, "scope", "global").Output()
+	if err != nil {
+		return nil, fmt.Errorf("ip -6 -o addr show dev %s scope global: %w", ifname, err)
+	}
+	return parseIPv6InterfaceAddressPrefixes(string(out)), nil
+}
+
+func parseIPv6InterfaceAddressPrefixes(out string) []string {
+	var addresses []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		// SLAAC/temporary addresses are not owned by IPv6DelegatedAddress even
+		// if their host bits happen to match a managed suffix. Linux also labels
+		// a manually installed address with a finite valid_lft as "dynamic", so
+		// that flag alone is not an origin signal. Accept a dynamic address only
+		// after it is deprecated; the caller additionally requires the exact
+		// managed suffix and excludes other declared address owners.
+		dynamic := fieldsContain(fields, "dynamic")
+		deprecated := fieldsContain(fields, "deprecated")
+		if fieldsContain(fields, "temporary") || fieldsContain(fields, "mngtmpaddr") || fieldsContain(fields, "autoconf") || fieldsContain(fields, "tentative") || fieldsContain(fields, "dadfailed") || (dynamic && !deprecated) {
+			continue
+		}
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] != "inet6" {
+				continue
+			}
+			prefix, err := netip.ParsePrefix(strings.TrimSpace(fields[i+1]))
+			if err != nil || !prefix.Addr().Is6() || prefix.Addr().IsLinkLocalUnicast() {
+				continue
+			}
+			address := netip.PrefixFrom(prefix.Addr(), prefix.Bits()).String()
+			if !seen[address] {
+				seen[address] = true
+				addresses = append(addresses, address)
+			}
+		}
+	}
+	return addresses
+}
+
+func previousDelegatedAddressesFromStatus(status map[string]any) []managedPreviousDelegatedAddress {
+	raw, ok := status["previousAddresses"]
+	if !ok || raw == nil {
+		return nil
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var out []managedPreviousDelegatedAddress
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
 func runCommandContext(ctx context.Context, name string, args ...string) error {
 	return exec.CommandContext(ctx, name, args...).Run()
 }
@@ -5171,6 +5575,10 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		prefix = statusStringPreferObserved(pdStatus, "currentPrefix")
 	}
 	stagedSnapshot, stagedSnapshotFresh := c.freshStagedPDSnapshot(pdName)
+	now := time.Now().UTC()
+	if c.Now != nil {
+		now = c.Now().UTC()
+	}
 	if !activePD && !stagedSnapshotFresh {
 		return nil
 	}
@@ -5192,7 +5600,7 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 				continue
 			}
 			spec, err := resource.IPv6DelegatedAddressSpec()
-			if err == nil && spec.PrefixDelegation == pdName && c.vrrpVMACConfigured(spec.Interface) {
+			if err == nil && spec.PrefixDelegation == pdName && c.vrrpVMACConfigured(spec.Interface) && c.delegatedAddressStagingEligible(resource) {
 				resources = append(resources, resource)
 				stagedIDs[resource.ID()] = true
 			}
@@ -5247,17 +5655,11 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		if err != nil {
 			return fmt.Errorf("%s derive address prefix length: %w", resource.ID(), err)
 		}
-		status := map[string]any{
-			"phase":        "Applied",
-			"address":      addr,
-			"interface":    spec.Interface,
-			"prefixSource": pdName,
-			"dryRun":       c.DryRun,
+		sourceRouter := c.DeclaredRouter
+		if sourceRouter == nil {
+			sourceRouter = c.Router
 		}
-		if stagingVMAC {
-			status["staged"] = true
-		}
-		changed := objectStatusChanged("IPv6DelegatedAddress", c.Store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name), status)
+		previousStatus := c.Store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name)
 		ifname := ""
 		if c.DeclaredRouter != nil {
 			ifname = interfaceIfName(c.DeclaredRouter, spec.Interface)
@@ -5268,6 +5670,75 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		if ifname == "" {
 			ifname = spec.Interface
 		}
+		previousAddresses := []managedPreviousDelegatedAddress(nil)
+		if stagedSnapshotFresh {
+			previousAddresses, err = derivePreviousDelegatedAddresses(stagedSnapshot, prefix, spec, now)
+			if err != nil {
+				return fmt.Errorf("%s derive previous addresses: %w", resource.ID(), err)
+			}
+		}
+		// Lease sync deliberately replaces the standby snapshot with the active
+		// peer's file.  A peer which never owned this node's former prefix cannot
+		// carry that PreviousPrefixes history.  Preserve existing status history,
+		// then recover a lost transition from the resource's previous current
+		// address and exact managed-suffix /64 addresses still present in kernel.
+		// This is restricted to resources which actually feed RA; DS-Lite /128
+		// endpoints and unrelated IPv6 addresses are never adopted here.
+		if spec.PrefixLength != 128 {
+			historicalPrevious := previousDelegatedAddressesFromStatus(previousStatus)
+			previousAddresses = mergeManagedPreviousDelegatedAddresses(now, addr, previousAddresses, historicalPrevious)
+			if withdrawalLifetime, hasRA := delegatedAddressRAWithdrawalLifetime(sourceRouter, resource.Metadata.Name); hasRA && withdrawalLifetime > 0 {
+				observed := []string{cleanStatusString(previousStatus["address"])}
+				if !c.DryRun {
+					list := c.AddressList
+					if list == nil && c.currentOS() == platform.OSLinux {
+						list = linuxIPv6GlobalInterfaceAddresses
+					}
+					if list != nil {
+						addresses, listErr := list(ctx, ifname)
+						if listErr != nil {
+							return fmt.Errorf("%s list delegated interface addresses: %w", resource.ID(), listErr)
+						}
+						observed = append(observed, addresses...)
+					}
+				}
+				known := make(map[string]bool, len(historicalPrevious)+len(previousAddresses))
+				for _, previous := range append(append([]managedPreviousDelegatedAddress(nil), historicalPrevious...), previousAddresses...) {
+					known[previous.Address] = true
+				}
+				excluded := declaredCurrentIPv6AddressExclusions(sourceRouter, c.Store, ifname, resource.Metadata.Name)
+				untracked := observed[:0]
+				for _, value := range observed {
+					candidate, ok := managedDelegatedAddressCandidate(value, addr, spec)
+					if ok && !known[candidate] && !excluded[candidate] {
+						untracked = append(untracked, candidate)
+					}
+				}
+				inferred := inferredPreviousDelegatedAddresses(now, addr, spec, withdrawalLifetime, untracked...)
+				previousAddresses = mergeManagedPreviousDelegatedAddresses(now, addr, previousAddresses, inferred)
+			}
+		}
+		status := map[string]any{
+			"phase":        "Applied",
+			"address":      addr,
+			"interface":    spec.Interface,
+			"prefixSource": pdName,
+			"dryRun":       c.DryRun,
+		}
+		dsliteSource := c.currentOS() == platform.OSLinux && delegatedAddressUsedByDSLite(sourceRouter, resource.Metadata.Name)
+		if dsliteSource {
+			status["sourceSelection"] = "deprecated"
+		}
+		if stagingVMAC {
+			status["staged"] = true
+		}
+		currentStatus := copyStatusMap(previousStatus)
+		delete(currentStatus, "previousAddresses")
+		currentChanged := objectStatusChanged("IPv6DelegatedAddress", currentStatus, status)
+		if len(previousAddresses) > 0 {
+			status["previousAddresses"] = previousAddresses
+		}
+		changed := objectStatusChanged("IPv6DelegatedAddress", previousStatus, status)
 		addressPresent := true
 		addressPresentFn := c.AddressPresent
 		if stagingVMAC {
@@ -5289,11 +5760,19 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		if !c.DryRun {
 			addressPresent = addressPresentFn(ctx, ifname, addr)
 		}
-		if !c.DryRun && (changed || !addressPresent) {
-			command := c.Command
-			if command == nil {
-				command = runCommandContext
+		command := c.Command
+		if command == nil {
+			command = runCommandContext
+		}
+		addressDeprecated := true
+		if !c.DryRun && dsliteSource {
+			deprecatedAddressPresent := c.DeprecatedAddressPresent
+			if deprecatedAddressPresent == nil {
+				deprecatedAddressPresent = ipv6DeprecatedAddressPresentWithPrefix
 			}
+			addressDeprecated = deprecatedAddressPresent(ctx, ifname, addr)
+		}
+		if !c.DryRun && (currentChanged || !addressPresent || !addressDeprecated) {
 			if !addressPresent {
 				for _, stale := range ipv6StaticAddressDeleteCandidates(addr) {
 					deleteName, deleteArgs := ipv6StaticAddressDeleteCommand(c.currentOS(), ifname, stale)
@@ -5303,6 +5782,9 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 				}
 			}
 			name, args := ipv6StaticAddressApplyCommand(c.currentOS(), ifname, addr)
+			if dsliteSource {
+				name, args = ipv6PermanentDeprecatedAddressApplyCommand(c.currentOS(), ifname, addr)
+			}
 			if err := command(ctx, name, args...); err != nil {
 				return err
 			}
@@ -5311,10 +5793,66 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 				continue
 			}
 		}
+		if !c.DryRun {
+			desiredPrevious := make(map[string]bool, len(previousAddresses))
+			managedPrevious := make(map[string]time.Time)
+			var failedPreviousDeletes []managedPreviousDelegatedAddress
+			for _, previous := range previousDelegatedAddressesFromStatus(previousStatus) {
+				managedPrevious[previous.Address] = previous.ExpiresAt
+			}
+			for _, previous := range previousAddresses {
+				desiredPrevious[previous.Address] = true
+			}
+			for _, stale := range previousDelegatedAddressesFromStatus(previousStatus) {
+				if stale.Address == "" || stale.Address == addr || desiredPrevious[stale.Address] {
+					continue
+				}
+				deleteFailed := false
+				for _, candidate := range ipv6StaticAddressDeleteCandidates(stale.Address) {
+					name, args := ipv6StaticAddressDeleteCommand(c.currentOS(), ifname, candidate)
+					if err := command(ctx, name, args...); err != nil {
+						deleteFailed = true
+						if c.Logger != nil {
+							c.Logger.Debug("delete expired previous IPv6 delegated address skipped", "resource", resource.Metadata.Name, "address", candidate, "interface", ifname, "error", err)
+						}
+					}
+				}
+				// A /64 cleanup also tries its legacy /128 shape; one of those
+				// deletes may legitimately return not-found.  Only retain the
+				// tombstone when a failed command is followed by a positive
+				// readback, proving that the managed address still exists.
+				if deleteFailed && addressPresentFn(ctx, ifname, stale.Address) {
+					failedPreviousDeletes = append(failedPreviousDeletes, stale)
+				}
+			}
+			for _, previous := range previousAddresses {
+				validSeconds := remainingIPv6ValidLifetime(now, previous.ExpiresAt)
+				if validSeconds == 0 {
+					continue
+				}
+				present := addressPresentFn(ctx, ifname, previous.Address)
+				if expiresAt, ok := managedPrevious[previous.Address]; ok && expiresAt.Equal(previous.ExpiresAt) && present {
+					continue
+				}
+				if c.currentOS() == platform.OSFreeBSD && present {
+					name, args := ipv6StaticAddressDeleteCommand(c.currentOS(), ifname, previous.Address)
+					if err := command(ctx, name, args...); err != nil {
+						return err
+					}
+				}
+				name, args := ipv6DeprecatedAddressApplyCommand(c.currentOS(), ifname, previous.Address, validSeconds)
+				if err := command(ctx, name, args...); err != nil {
+					return err
+				}
+			}
+			if len(failedPreviousDeletes) > 0 {
+				status["previousAddresses"] = retainFailedPreviousDelegatedAddresses(previousAddresses, failedPreviousDeletes)
+			}
+		}
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, status); err != nil {
 			return err
 		}
-		if (changed || !addressPresent) && c.Bus != nil {
+		if (changed || !addressPresent || !addressDeprecated) && c.Bus != nil {
 			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.lan.address.applied", daemonapi.SeverityInfo)
 			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress", Name: resource.Metadata.Name}
 			event.Attributes = map[string]string{"address": addr, "interface": spec.Interface, "dryRun": fmt.Sprintf("%t", c.DryRun)}
@@ -5324,6 +5862,66 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		}
 	}
 	return nil
+}
+
+func delegatedAddressUsedByDSLite(router *api.Router, name string) bool {
+	if router == nil || strings.TrimSpace(name) == "" {
+		return false
+	}
+	var delegated api.IPv6DelegatedAddressSpec
+	found := false
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "IPv6DelegatedAddress" || resource.Metadata.Name != strings.TrimSpace(name) {
+			continue
+		}
+		var err error
+		delegated, err = resource.IPv6DelegatedAddressSpec()
+		if err != nil || delegated.PrefixLength != 128 {
+			return false
+		}
+		found = true
+		break
+	}
+	if !found {
+		return false
+	}
+	delegatedSuffix, err := netip.ParseAddr(firstNonEmpty(strings.TrimSpace(delegated.AddressSuffix), "::1"))
+	if err != nil || !delegatedSuffix.Is6() {
+		return false
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "DSLiteTunnel" {
+			continue
+		}
+		spec, err := resource.DSLiteTunnelSpec()
+		if err != nil || firstNonEmpty(spec.LocalAddressSource, "interface") != "delegatedAddress" {
+			continue
+		}
+		if strings.TrimSpace(spec.LocalDelegatedAddress) != strings.TrimSpace(name) {
+			continue
+		}
+		endpointSuffix, err := netip.ParseAddr(firstNonEmpty(strings.TrimSpace(spec.LocalAddressSuffix), strings.TrimSpace(delegated.AddressSuffix), "::1"))
+		if err == nil && endpointSuffix.Is6() && endpointSuffix == delegatedSuffix {
+			return true
+		}
+	}
+	return false
+}
+
+// delegatedAddressStagingEligible distinguishes an unresolved startup role
+// from an explicitly false resource condition. A fresh PD snapshot may stage
+// an unconditional or indeterminate delegated address, but it must never
+// override a resolved when=false decision.
+func (c LANAddressController) delegatedAddressStagingEligible(resource api.Resource) bool {
+	when := resourcequery.ResourceWhen(resource)
+	if !resourcequery.ResourceWhenPresent(when) {
+		return true
+	}
+	stateStore, ok := c.Store.(resourcequery.StateStore)
+	if !ok {
+		return false
+	}
+	return resourcequery.ResourceWhenMatches(when, stateStore) || resourcequery.ResourceWhenIndeterminate(when, stateStore)
 }
 
 func (c LANAddressController) delegatedAddressDependenciesReady(dependencies []api.ResourceDependencySpec, iface, pdName string, stagingVMAC bool) bool {
@@ -5603,6 +6201,9 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 	if !ok {
 		return nil
 	}
+	pdStatus := c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", pdName)
+	activePD := statusStringPreferObserved(pdStatus, "phase") == daemonapi.ResourcePhaseBound
+	_, stagedSnapshotFresh := c.freshStagedPDSnapshot(pdName)
 	for _, resource := range declared.Spec.Resources {
 		if resource.Kind != "IPv6DelegatedAddress" {
 			continue
@@ -5615,10 +6216,9 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 			continue
 		}
 		when := resourcequery.ResourceWhen(resource)
-		_, stagedSnapshotFresh := c.freshStagedPDSnapshot(pdName)
-		// A configured VRRP-owned VMAC may be absent while the node is BACKUP.
-		// Its presence is therefore not evidence for staging eligibility.
-		if (c.vrrpVMACConfigured(spec.Interface) && stagedSnapshotFresh) || !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, stateStore) || resourcequery.ResourceWhenIndeterminate(when, stateStore) {
+		whenFalse := resourcequery.ResourceWhenPresent(when) && !resourcequery.ResourceWhenMatches(when, stateStore) && !resourcequery.ResourceWhenIndeterminate(when, stateStore)
+		stagingUnavailable := !activePD && c.vrrpVMACConfigured(spec.Interface) && !stagedSnapshotFresh
+		if !whenFalse && !stagingUnavailable {
 			continue
 		}
 		previous := c.Store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name)
@@ -5632,7 +6232,16 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 				}
 			}
 		}
-		if address != "" && address != "<nil>" && !c.DryRun {
+		addresses := []string(nil)
+		if address != "" && address != "<nil>" {
+			addresses = append(addresses, address)
+		}
+		for _, tracked := range previousDelegatedAddressesFromStatus(previous) {
+			if tracked.Address != "" && tracked.Address != address {
+				addresses = append(addresses, tracked.Address)
+			}
+		}
+		if len(addresses) > 0 && !c.DryRun {
 			ifname := interfaceIfName(declared, spec.Interface)
 			if ifname == "" {
 				ifname = spec.Interface
@@ -5641,17 +6250,19 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 			if command == nil {
 				command = runCommandContext
 			}
-			for _, stale := range ipv6StaticAddressDeleteCandidates(address) {
-				name, args := ipv6StaticAddressDeleteCommand(platform.CurrentOS(), ifname, stale)
-				if err := command(ctx, name, args...); err != nil {
-					if c.Logger != nil {
-						c.Logger.Debug("delete when-false IPv6 delegated address skipped", "resource", resource.Metadata.Name, "address", stale, "interface", ifname, "error", err)
+			for _, trackedAddress := range addresses {
+				for _, stale := range ipv6StaticAddressDeleteCandidates(trackedAddress) {
+					name, args := ipv6StaticAddressDeleteCommand(platform.CurrentOS(), ifname, stale)
+					if err := command(ctx, name, args...); err != nil {
+						if c.Logger != nil {
+							c.Logger.Debug("delete when-false IPv6 delegated address skipped", "resource", resource.Metadata.Name, "address", stale, "interface", ifname, "error", err)
+						}
 					}
 				}
 			}
 		}
 		reason := "WhenFalse"
-		if c.vrrpVMACConfigured(spec.Interface) {
+		if !whenFalse {
 			reason = "PDLeaseStale"
 		}
 		status := map[string]any{
@@ -5750,15 +6361,19 @@ func renderAndEnsureDnsmasq(ctx context.Context, router *api.Router, store Store
 	if port == 0 {
 		port = 1053
 	}
+	hostsSnapshot, err := snapshotDnsmasqHostsFile(dnsmasqHostsFile(configPath))
+	if err != nil {
+		return err
+	}
 	changed, reloadOnly, err := writeDnsmasqConfig(router, store, configPath, pidFile, port, listenAddresses)
 	if err != nil {
 		return err
 	}
 	if err := ensureDnsmasq(ctx, command, configPath, pidFile, changed); err != nil {
-		return err
+		return restoreDnsmasqHostsForRetry(configPath, reloadOnly, hostsSnapshot, err)
 	}
 	if reloadOnly && !changed {
-		return reloadDnsmasq(ctx, pidFile)
+		return reloadDnsmasqHostsSidecar(ctx, pidFile, configPath, hostsSnapshot, reloadDnsmasq)
 	}
 	return nil
 }
@@ -6060,7 +6675,6 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 	}
 	return lines, nil
 }
-
 func chainInterfaceAliases(router *api.Router) map[string]string {
 	aliases := map[string]string{}
 	for _, resource := range router.Spec.Resources {
@@ -6454,12 +7068,70 @@ func ensureDnsmasq(ctx context.Context, command, configPath, pidFile string, cha
 	return startDnsmasq(ctx, command, configPath, pidFile)
 }
 
-func reloadDnsmasq(_ context.Context, pidFile string) error {
+func reloadDnsmasq(ctx context.Context, pidFile string) error {
+	_, features := platform.Current()
+	if features.HasSystemd || features.HasRCD {
+		manager := servicemgr.ForPlatform(features)
+		command := manager.Command(servicemgr.OperationReload, servicemgr.Service{
+			SystemdName: "routerd-dnsmasq.service",
+			RCDName:     "routerd_dnsmasq",
+		})
+		out, err := exec.CommandContext(ctx, command.Name, command.Args...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("%s: %w: %s", strings.Join(append([]string{command.Name}, command.Args...), " "), err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
 	proc, alive := dnsmasqProcess(pidFile)
 	if !alive {
 		return nil
 	}
 	return proc.Signal(syscall.SIGHUP)
+}
+
+type dnsmasqHostsSnapshot struct {
+	data   []byte
+	mode   os.FileMode
+	exists bool
+}
+
+func snapshotDnsmasqHostsFile(path string) (dnsmasqHostsSnapshot, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return dnsmasqHostsSnapshot{}, nil
+	}
+	if err != nil {
+		return dnsmasqHostsSnapshot{}, fmt.Errorf("read dnsmasq hosts sidecar %s before update: %w", path, err)
+	}
+	mode := os.FileMode(0o644)
+	if info, statErr := os.Stat(path); statErr == nil {
+		mode = info.Mode().Perm()
+	}
+	return dnsmasqHostsSnapshot{data: data, mode: mode, exists: true}, nil
+}
+
+func restoreDnsmasqHostsForRetry(configPath string, sidecarChanged bool, snapshot dnsmasqHostsSnapshot, reloadErr error) error {
+	if !sidecarChanged {
+		return reloadErr
+	}
+	path := dnsmasqHostsFile(configPath)
+	var restoreErr error
+	if snapshot.exists {
+		restoreErr = os.WriteFile(path, snapshot.data, snapshot.mode)
+	} else if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		restoreErr = err
+	}
+	if restoreErr != nil {
+		return errors.Join(reloadErr, fmt.Errorf("restore dnsmasq hosts sidecar %s for retry: %w", path, restoreErr))
+	}
+	return reloadErr
+}
+
+func reloadDnsmasqHostsSidecar(ctx context.Context, pidFile, configPath string, snapshot dnsmasqHostsSnapshot, reload func(context.Context, string) error) error {
+	if err := reload(ctx, pidFile); err != nil {
+		return restoreDnsmasqHostsForRetry(configPath, true, snapshot, err)
+	}
+	return nil
 }
 
 func ensureSystemdDnsmasqService(ctx context.Context, systemdDir, command, configPath, pidFile string, changed bool) error {

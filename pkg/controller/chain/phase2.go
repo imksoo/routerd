@@ -270,7 +270,8 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		changed := objectStatusChanged("DSLiteTunnel", c.Store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name), status)
 		if !c.DryRun {
 			if localIfName != "" {
-				if err := ensureIPv6LocalEndpoint(ctx, localIfName, local); err != nil {
+				delegatedSource := firstNonEmpty(spec.LocalAddressSource, "interface") == "delegatedAddress"
+				if err := ensureIPv6LocalEndpoint(ctx, localIfName, local, delegatedSource); err != nil {
 					failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))
 					_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "LocalEndpointApplyFailed", "interface": ifname, "localIPv6": local, "aftrIPv6": remote, "error": err.Error(), "dryRun": c.DryRun})
 					continue
@@ -863,6 +864,9 @@ type DHCPv6ServerController struct {
 	Port            int
 	ListenAddresses []string
 	Logger          *slog.Logger
+	Now             func() time.Time
+	RALinkLocal     routerAdvertisementLinkLocalFunc
+	RASender        routerAdvertisementSenderFunc
 }
 
 func (c DHCPv6ServerController) Start(ctx context.Context) {
@@ -907,6 +911,10 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 	if port == 0 {
 		port = 1053
 	}
+	hostsSnapshot, err := snapshotDnsmasqHostsFile(dnsmasqHostsFile(configPath))
+	if err != nil {
+		return err
+	}
 	changed, reloadOnly, err := writeDnsmasqConfig(effectiveRouter, c.Store, configPath, pidFile, port, c.ListenAddresses)
 	if err != nil {
 		return err
@@ -918,10 +926,10 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 		}
 	} else {
 		if err := ensureDnsmasq(ctx, c.Command, configPath, pidFile, changed); err != nil {
-			return err
+			return restoreDnsmasqHostsForRetry(configPath, reloadOnly, hostsSnapshot, err)
 		}
 		if reloadOnly && !changed {
-			if err := reloadDnsmasq(ctx, pidFile); err != nil {
+			if err := reloadDnsmasqHostsSidecar(ctx, pidFile, configPath, hostsSnapshot, reloadDnsmasq); err != nil {
 				return err
 			}
 		}
@@ -1324,6 +1332,11 @@ func (c DHCPv6ServerController) reconcileRouterAdvertisements(ctx context.Contex
 			"renderer":   "dnsmasq",
 			"dryRun":     c.DryRun,
 		}
+		if !c.DryRun {
+			if err := c.advertisePreviousDelegatedPrefixes(ctx, spec); err != nil {
+				return fmt.Errorf("%s advertise previous delegated prefixes: %w", resource.ID(), err)
+			}
+		}
 		status = preserveStatusFields(status, c.Store.ObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name), "managedBy", "unitName")
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, status); err != nil {
 			return err
@@ -1505,10 +1518,12 @@ func (c DSLiteTunnelController) localAddress(spec api.DSLiteTunnelSpec) (string,
 type ipJSONAddress struct {
 	Family            string `json:"family"`
 	Local             string `json:"local"`
+	PrefixLen         int    `json:"prefixlen"`
 	Scope             string `json:"scope"`
 	Dynamic           bool   `json:"dynamic"`
 	Temporary         bool   `json:"temporary"`
 	Deprecated        bool   `json:"deprecated"`
+	Tentative         bool   `json:"tentative"`
 	PreferredLifeTime int    `json:"preferred_life_time"`
 }
 
@@ -1544,25 +1559,40 @@ func firstUsableGlobalIPv6(data []byte) string {
 	if err := json.Unmarshal(data, &links); err != nil {
 		return ""
 	}
-	var fallback string
+	var stableSLAAC, onLink, dynamic, fallback string
 	for _, link := range links {
 		for _, info := range link.AddrInfo {
-			if info.Family != "inet6" || info.Local == "" || info.Scope != "global" || info.Deprecated || info.Temporary || info.PreferredLifeTime == 0 {
+			if info.Family != "inet6" || info.Local == "" || info.Scope != "global" || info.Deprecated || info.Temporary || info.Tentative || info.PreferredLifeTime == 0 {
 				continue
 			}
 			if fallback == "" {
 				fallback = info.Local
 			}
-			if info.Dynamic {
-				return info.Local
+			if info.Dynamic && info.PrefixLen == 64 && stableSLAAC == "" {
+				stableSLAAC = info.Local
+			}
+			if info.PrefixLen == 64 && onLink == "" {
+				onLink = info.Local
+			}
+			if info.Dynamic && dynamic == "" {
+				dynamic = info.Local
 			}
 		}
+	}
+	if stableSLAAC != "" {
+		return stableSLAAC
+	}
+	if onLink != "" {
+		return onLink
+	}
+	if dynamic != "" {
+		return dynamic
 	}
 	return fallback
 }
 
 func firstUsableIfconfigGlobalIPv6(data []byte) string {
-	var fallback string
+	var stableSLAAC, onLink, autoconf, fallback string
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(strings.TrimSpace(line))
 		if len(fields) < 2 || fields[0] != "inet6" {
@@ -1575,15 +1605,39 @@ func firstUsableIfconfigGlobalIPv6(data []byte) string {
 			continue
 		}
 		text := strings.Join(fields[2:], " ")
-		if strings.Contains(text, "deprecated") || strings.Contains(text, "temporary") {
+		if strings.Contains(text, "deprecated") || strings.Contains(text, "temporary") || strings.Contains(text, "tentative") {
 			continue
 		}
 		if fallback == "" {
 			fallback = addr.String()
 		}
-		if strings.Contains(text, "autoconf") {
-			return addr.String()
+		prefixLen := 0
+		for i := 2; i+1 < len(fields); i++ {
+			if fields[i] != "prefixlen" {
+				continue
+			}
+			prefixLen, _ = strconv.Atoi(fields[i+1])
+			break
 		}
+		isAutoconf := strings.Contains(text, "autoconf")
+		if isAutoconf && prefixLen == 64 && stableSLAAC == "" {
+			stableSLAAC = addr.String()
+		}
+		if prefixLen == 64 && onLink == "" {
+			onLink = addr.String()
+		}
+		if isAutoconf && autoconf == "" {
+			autoconf = addr.String()
+		}
+	}
+	if stableSLAAC != "" {
+		return stableSLAAC
+	}
+	if onLink != "" {
+		return onLink
+	}
+	if autoconf != "" {
+		return autoconf
 	}
 	return fallback
 }
@@ -1793,7 +1847,7 @@ func interfaceName(router *api.Router, name string) string {
 	return name
 }
 
-func ensureIPv6LocalEndpoint(ctx context.Context, ifname, address string) error {
+func ensureIPv6LocalEndpoint(ctx context.Context, ifname, address string, deprecated bool) error {
 	if ifname == "" || address == "" {
 		return nil
 	}
@@ -1807,7 +1861,16 @@ func ensureIPv6LocalEndpoint(ctx context.Context, ifname, address string) error 
 		}
 		return nil
 	}
-	return exec.CommandContext(ctx, "ip", "-6", "addr", "replace", address+"/128", "dev", ifname).Run()
+	args := linuxIPv6LocalEndpointArgs(ifname, address, deprecated)
+	return exec.CommandContext(ctx, "ip", args...).Run()
+}
+
+func linuxIPv6LocalEndpointArgs(ifname, address string, deprecated bool) []string {
+	args := []string{"-6", "addr", "replace", address + "/128", "dev", ifname}
+	if deprecated {
+		args = append(args, "preferred_lft", "0", "valid_lft", "forever")
+	}
+	return args
 }
 
 func ensureDSLiteTunnel(ctx context.Context, router *api.Router, spec api.DSLiteTunnelSpec, ifname, remote, local, innerLocal string) (string, error) {
@@ -1815,25 +1878,36 @@ func ensureDSLiteTunnel(ctx context.Context, router *api.Router, spec api.DSLite
 		return ensureFreeBSDDSLiteTunnel(ctx, spec, ifname, remote, local, innerLocal)
 	}
 	show, showErr := exec.CommandContext(ctx, "ip", "-6", "tunnel", "show", ifname).CombinedOutput()
-	if showErr == nil && strings.Contains(string(show), "remote "+remote) && strings.Contains(string(show), "local "+local) {
+	underlay := interfaceName(router, spec.Interface)
+	if underlay == ifname {
+		underlay = ""
+	}
+	encapLimit := firstNonEmpty(spec.EncapsulationLimit, "none")
+	if showErr == nil && linuxDSLiteTunnelMatches(show, remote, local, underlay, encapLimit) {
 		if err := ensureLinuxDSLiteInnerIPv4(ctx, ifname, innerLocal); err != nil {
 			return "", err
 		}
 		return ifname, nil
 	}
-	_ = exec.CommandContext(ctx, "ip", "-6", "tunnel", "del", ifname).Run()
-	args := []string{"-6", "tunnel", "add", ifname, "mode", "ipip6", "remote", remote, "local", local}
-	if underlay := interfaceName(router, spec.Interface); underlay != "" && underlay != ifname {
-		args = append(args, "dev", underlay)
+	operation := "add"
+	if showErr == nil {
+		// Updating an owned tunnel in place avoids the delete/add gap. In
+		// particular, keep the previous usable tunnel when the kernel rejects a
+		// newly selected endpoint and let the next reconcile retry the change.
+		operation = "change"
+	} else if !linuxDSLiteTunnelMissing(show) {
+		return "", fmt.Errorf("ip -6 tunnel show %s: %w: %s", ifname, showErr, strings.TrimSpace(string(show)))
 	}
-	args = append(args, "encaplimit", firstNonEmpty(spec.EncapsulationLimit, "none"))
+	args := linuxDSLiteTunnelApplyArgs(operation, ifname, remote, local, underlay, encapLimit)
 	out, err := exec.CommandContext(ctx, "ip", args...).CombinedOutput()
 	if err != nil {
-		if existing := existingDSLiteTunnel(ctx, remote, local); existing != "" {
-			if err := ensureLinuxDSLiteInnerIPv4(ctx, existing, innerLocal); err != nil {
-				return "", err
+		if operation == "add" {
+			if existing := existingDSLiteTunnel(ctx, remote, local); existing != "" {
+				if err := ensureLinuxDSLiteInnerIPv4(ctx, existing, innerLocal); err != nil {
+					return "", err
+				}
+				return existing, nil
 			}
-			return existing, nil
 		}
 		return "", fmt.Errorf("ip %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
@@ -1841,6 +1915,63 @@ func ensureDSLiteTunnel(ctx context.Context, router *api.Router, spec api.DSLite
 		return "", err
 	}
 	return ifname, nil
+}
+
+func linuxDSLiteTunnelApplyArgs(operation, ifname, remote, local, underlay, encapLimit string) []string {
+	args := []string{"-6", "tunnel", operation, ifname, "mode", "ipip6", "remote", remote, "local", local}
+	if underlay != "" && underlay != ifname {
+		args = append(args, "dev", underlay)
+	}
+	return append(args, "encaplimit", encapLimit)
+}
+
+func linuxDSLiteTunnelMatches(show []byte, remote, local, underlay, encapLimit string) bool {
+	fields := strings.Fields(string(show))
+	if len(fields) == 0 || !fieldsContain(fields, "ip/ipv6") {
+		return false
+	}
+	want := map[string]string{
+		"remote":     canonicalIPAddress(remote),
+		"local":      canonicalIPAddress(local),
+		"encaplimit": strings.TrimSpace(encapLimit),
+	}
+	if underlay != "" {
+		want["dev"] = strings.TrimSpace(underlay)
+	}
+	for key, value := range want {
+		if value == "" || linuxTunnelField(fields, key) != value {
+			return false
+		}
+	}
+	return true
+}
+
+func linuxTunnelField(fields []string, key string) string {
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] != key {
+			continue
+		}
+		if key == "local" || key == "remote" {
+			return canonicalIPAddress(fields[i+1])
+		}
+		return strings.TrimSpace(fields[i+1])
+	}
+	return ""
+}
+
+func canonicalIPAddress(value string) string {
+	addr, err := netip.ParseAddr(strings.TrimSpace(value))
+	if err != nil {
+		return ""
+	}
+	return addr.String()
+}
+
+func linuxDSLiteTunnelMissing(output []byte) bool {
+	message := strings.ToLower(string(output))
+	return strings.Contains(message, "cannot find device") ||
+		strings.Contains(message, "does not exist") ||
+		strings.Contains(message, "no such device")
 }
 
 func existingDSLiteTunnel(ctx context.Context, remote, local string) string {

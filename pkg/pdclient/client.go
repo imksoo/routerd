@@ -8,6 +8,8 @@ import (
 	"crypto/rand"
 	"fmt"
 	"net/netip"
+	"slices"
+	"strings"
 	"time"
 )
 
@@ -23,6 +25,11 @@ const (
 	StateExpired    State = "expired"
 )
 
+const (
+	solicitInitialRetransmissionTimeout = time.Second
+	solicitMaxRetransmissionTimeout     = time.Hour
+)
+
 type Config struct {
 	Resource    string
 	Interface   string
@@ -31,6 +38,7 @@ type Config struct {
 	WantPrefix  int
 	Now         func() time.Time
 	Transaction func() (uint32, error)
+	Random      func() float64
 }
 
 type Lease struct {
@@ -43,6 +51,15 @@ type Lease struct {
 	Valid      time.Duration
 	AcquiredAt time.Time
 	RenewedAt  time.Time
+}
+
+// PreviousPrefix records a delegated prefix which is no longer current but
+// remains valid until ExpiresAt.  Multiple entries are required because an
+// upstream server may move a client through several prefixes before their
+// valid lifetimes expire.
+type PreviousPrefix struct {
+	Prefix    netip.Prefix
+	ExpiresAt time.Time
 }
 
 type Information struct {
@@ -76,15 +93,19 @@ type OutboundPacket struct {
 }
 
 type Client struct {
-	Config    Config
-	Transport Transport
-	State     State
-	Lease     Lease
-	Info      Information
+	Config           Config
+	Transport        Transport
+	State            State
+	Lease            Lease
+	PreviousPrefixes []PreviousPrefix
+	Info             Information
 
 	lastTransaction     uint32
 	lastInfoTransaction uint32
 	advertise           Message
+	lastMessage         Message
+	solicitRetryAt      time.Time
+	solicitRetryTimeout time.Duration
 }
 
 func New(config Config, transport Transport) (*Client, error) {
@@ -113,6 +134,10 @@ func (c *Client) Tick(ctx context.Context) error {
 
 func (c *Client) TickWithMargin(ctx context.Context, renewMargin, rebindMargin time.Duration) error {
 	now := c.now()
+	c.prunePreviousPrefixes(now)
+	if c.State == StateSoliciting && !c.solicitRetryAt.IsZero() && !now.Before(c.solicitRetryAt) {
+		return c.retransmitSolicit(ctx, now)
+	}
 	if c.State == StateBound || c.State == StateRenewing || c.State == StateRebinding {
 		if c.Lease.Valid > 0 && !now.Before(c.Lease.ExpiresAt()) {
 			c.State = StateExpired
@@ -130,6 +155,15 @@ func (c *Client) TickWithMargin(ctx context.Context, renewMargin, rebindMargin t
 		return c.Start(ctx)
 	}
 	return nil
+}
+
+// NextSolicitRetryAt returns the next scheduled Solicit retransmission. The
+// transaction ID remains unchanged for every retransmission in the exchange.
+func (c *Client) NextSolicitRetryAt() time.Time {
+	if c.State != StateSoliciting {
+		return time.Time{}
+	}
+	return c.solicitRetryAt
 }
 
 func (c *Client) Renew(ctx context.Context) error {
@@ -154,6 +188,7 @@ func (c *Client) Release(ctx context.Context) error {
 		return err
 	}
 	c.Lease = Lease{}
+	c.PreviousPrefixes = nil
 	return nil
 }
 
@@ -246,6 +281,7 @@ func (c *Client) acceptInformation(msg Message) {
 
 func (c *Client) acceptReply(msg Message) {
 	now := c.now()
+	c.rememberPreviousPrefix(msg.Prefix, now)
 	t1 := seconds(msg.T1)
 	t2 := seconds(msg.T2)
 	valid := seconds(msg.Valid)
@@ -262,6 +298,48 @@ func (c *Client) acceptReply(msg Message) {
 		RenewedAt:  now,
 	}
 	c.State = StateBound
+}
+
+func (c *Client) rememberPreviousPrefix(next netip.Prefix, now time.Time) {
+	byPrefix := make(map[netip.Prefix]time.Time, len(c.PreviousPrefixes)+1)
+	for _, previous := range c.PreviousPrefixes {
+		if !previous.Prefix.IsValid() || previous.Prefix == next || !now.Before(previous.ExpiresAt) {
+			continue
+		}
+		byPrefix[previous.Prefix] = previous.ExpiresAt
+	}
+	if c.Lease.Prefix.IsValid() && c.Lease.Prefix != next {
+		expiresAt := c.Lease.ExpiresAt()
+		if now.Before(expiresAt) {
+			byPrefix[c.Lease.Prefix] = expiresAt
+		}
+	}
+	c.setPreviousPrefixes(byPrefix)
+}
+
+func (c *Client) prunePreviousPrefixes(now time.Time) {
+	byPrefix := make(map[netip.Prefix]time.Time, len(c.PreviousPrefixes))
+	for _, previous := range c.PreviousPrefixes {
+		if !previous.Prefix.IsValid() || previous.Prefix == c.Lease.Prefix || !now.Before(previous.ExpiresAt) {
+			continue
+		}
+		byPrefix[previous.Prefix] = previous.ExpiresAt
+	}
+	c.setPreviousPrefixes(byPrefix)
+}
+
+func (c *Client) setPreviousPrefixes(byPrefix map[netip.Prefix]time.Time) {
+	prefixes := make([]netip.Prefix, 0, len(byPrefix))
+	for prefix := range byPrefix {
+		prefixes = append(prefixes, prefix)
+	}
+	slices.SortFunc(prefixes, func(a, b netip.Prefix) int {
+		return strings.Compare(a.String(), b.String())
+	})
+	c.PreviousPrefixes = make([]PreviousPrefix, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		c.PreviousPrefixes = append(c.PreviousPrefixes, PreviousPrefix{Prefix: prefix, ExpiresAt: byPrefix[prefix]})
+	}
 }
 
 func (c *Client) send(ctx context.Context, next State, msg Message) error {
@@ -293,11 +371,61 @@ func (c *Client) send(ctx context.Context, next State, msg Message) error {
 	}
 	c.lastTransaction = xid
 	c.State = next
+	c.lastMessage = msg
+	if next == StateSoliciting {
+		c.solicitRetryTimeout = c.nextSolicitRetryTimeout(0)
+		c.solicitRetryAt = c.now().Add(c.solicitRetryTimeout)
+	} else {
+		c.clearSolicitRetry()
+	}
+	return c.sendMessage(ctx, msg, payload)
+}
+
+func (c *Client) retransmitSolicit(ctx context.Context, now time.Time) error {
+	if c.State != StateSoliciting || c.lastMessage.Type != MessageSolicit || c.lastMessage.TransactionID != c.lastTransaction {
+		return nil
+	}
+	payload, err := EncodeMessage(c.lastMessage)
+	if err != nil {
+		return err
+	}
+	if err := c.sendMessage(ctx, c.lastMessage, payload); err != nil {
+		return err
+	}
+	c.solicitRetryTimeout = c.nextSolicitRetryTimeout(c.solicitRetryTimeout)
+	c.solicitRetryAt = now.Add(c.solicitRetryTimeout)
+	return nil
+}
+
+func (c *Client) sendMessage(ctx context.Context, msg Message, payload []byte) error {
 	return c.Transport.Send(ctx, OutboundPacket{
 		Interface: c.Config.Interface,
 		Message:   msg,
 		Payload:   payload,
 	})
+}
+
+func (c *Client) clearSolicitRetry() {
+	c.solicitRetryAt = time.Time{}
+	c.solicitRetryTimeout = 0
+}
+
+// nextSolicitRetryTimeout follows the RFC 8415 retransmission shape: a
+// randomized initial timeout, exponential growth, and SOL_MAX_RT as the
+// upper bound before the permitted +/-10 percent randomization.
+func (c *Client) nextSolicitRetryTimeout(previous time.Duration) time.Duration {
+	random := c.random()
+	if previous <= 0 {
+		// RFC 8415 requires the first Solicit RT to be strictly greater than
+		// SOL_TIMEOUT. Keep the random component in the (0, 0.1] range.
+		return solicitInitialRetransmissionTimeout + time.Duration((0.000001+random*0.099999)*float64(solicitInitialRetransmissionTimeout))
+	}
+	factor := random*0.2 - 0.1
+	next := time.Duration(float64(previous) * (2 + factor))
+	if next > solicitMaxRetransmissionTimeout {
+		next = time.Duration(float64(solicitMaxRetransmissionTimeout) * (1 + factor))
+	}
+	return next
 }
 
 func (c *Client) now() time.Time {
@@ -316,6 +444,27 @@ func (c *Client) transaction() (uint32, error) {
 		return 0, err
 	}
 	return uint32(raw[0])<<16 | uint32(raw[1])<<8 | uint32(raw[2]), nil
+}
+
+func (c *Client) random() float64 {
+	if c.Config.Random != nil {
+		value := c.Config.Random()
+		switch {
+		case value < 0:
+			return 0
+		case value >= 1:
+			return 1
+		default:
+			return value
+		}
+	}
+	var raw [8]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return 0.5
+	}
+	value := uint64(raw[0])<<56 | uint64(raw[1])<<48 | uint64(raw[2])<<40 | uint64(raw[3])<<32 |
+		uint64(raw[4])<<24 | uint64(raw[5])<<16 | uint64(raw[6])<<8 | uint64(raw[7])
+	return float64(value>>11) / (1 << 53)
 }
 
 func seconds(value uint32) time.Duration {

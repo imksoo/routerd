@@ -98,12 +98,6 @@ var serviceDeclarations = []serviceDeclaration{
 		},
 	},
 	{
-		kind: "DHCPv6PrefixDelegation",
-		declare: func(ctx serviceDeclarationContext) []resource.Intent {
-			return []resource.Intent{serviceIntent(ctx, servicemgr.Service{SystemdName: "routerd-dhcpv6-client@" + ctx.res.Metadata.Name + ".service"}, resource.ActionEnsure, map[string]string{"purpose": "dhcpv6-prefix-delegation"})}
-		},
-	},
-	{
 		kind: "DNSResolver",
 		declare: func(ctx serviceDeclarationContext) []resource.Intent {
 			return []resource.Intent{serviceIntent(ctx, servicemgr.Service{SystemdName: "routerd-dns-resolver@" + ctx.res.Metadata.Name + ".service"}, resource.ActionEnsure, nil)}
@@ -361,7 +355,7 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		}
 		return []resource.Intent{artifact("net.ipv6.ra.client", aliases[spec.Interface], resource.ActionEnsure, "platform-network", nil)}
 	case "DHCPv6PrefixDelegation":
-		return declaredServiceIntents(serviceContext)
+		return []resource.Intent{artifact("routerd.dhcpv6.prefixDelegation", res.Metadata.Name, resource.ActionEnsure, "routerd-serve", map[string]string{"purpose": "dhcpv6-prefix-delegation"})}
 	case "IPv6DelegatedAddress":
 		spec, err := res.IPv6DelegatedAddressSpec()
 		if err != nil {

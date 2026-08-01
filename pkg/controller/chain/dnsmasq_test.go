@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -235,6 +236,101 @@ func TestEnsureSystemdDnsmasqServiceCachesStatusChecks(t *testing.T) {
 	}
 	if isEnabled != 1 || isActive != 1 {
 		t.Fatalf("status checks = is-enabled:%d is-active:%d, want 1 each; log:\n%s", isEnabled, isActive, string(data))
+	}
+}
+
+func TestReloadDnsmasqUsesSystemdServiceManager(t *testing.T) {
+	_, features := platform.Current()
+	if !features.HasSystemd {
+		t.Skip("systemd reload path is Linux-specific")
+	}
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	logPath := filepath.Join(dir, "systemctl.log")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + shellQuote(logPath) + "\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(binDir, "systemctl"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if err := reloadDnsmasq(t.Context(), filepath.Join(dir, "unreadable.pid")); err != nil {
+		t.Fatalf("reload dnsmasq: %v", err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "reload routerd-dnsmasq.service" {
+		t.Fatalf("systemctl command = %q, want managed reload", got)
+	}
+}
+
+func TestDnsmasqHostsReloadFailureRestoresSidecarForNextReconcileRetry(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "dnsmasq.conf")
+	pidFile := filepath.Join(dir, "dnsmasq.pid")
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{
+			Interface: "lan", LeaseFile: filepath.Join(dir, "state", "dnsmasq.leases"), AddressPool: api.DHCPAddressPoolSpec{Start: "192.168.10.100", End: "192.168.10.199", LeaseTime: "8h"},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"}, Metadata: api.ObjectMeta{Name: "printer"}, Spec: api.DHCPv4ReservationSpec{
+			Server: "lan-v4", MACAddress: "02:00:00:00:01:50", Hostname: "printer", IPAddress: "192.168.10.150",
+		}},
+	}}}
+	if changed, _, err := writeDnsmasqConfig(router, mapStore{}, configPath, pidFile, 53, nil); err != nil || !changed {
+		t.Fatalf("initial write changed=%t err=%v", changed, err)
+	}
+
+	snapshot, err := snapshotDnsmasqHostsFile(dnsmasqHostsFile(configPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	router.Spec.Resources[2].Spec = api.DHCPv4ReservationSpec{
+		Server: "lan-v4", MACAddress: "02:00:00:00:01:50", Hostname: "printer", IPAddress: "192.168.10.151",
+	}
+	changed, reloadOnly, err := writeDnsmasqConfig(router, mapStore{}, configPath, pidFile, 53, nil)
+	if err != nil || changed || !reloadOnly {
+		t.Fatalf("sidecar update changed=%t reloadOnly=%t err=%v", changed, reloadOnly, err)
+	}
+	attempts := 0
+	reload := func(context.Context, string) error {
+		attempts++
+		if attempts == 1 {
+			return syscall.EPERM
+		}
+		return nil
+	}
+	if err := reloadDnsmasqHostsSidecar(t.Context(), pidFile, configPath, snapshot, reload); !errors.Is(err, syscall.EPERM) {
+		t.Fatalf("first reload error = %v, want EPERM", err)
+	}
+	hostsData, err := os.ReadFile(dnsmasqHostsFile(configPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(hostsData), "192.168.10.150") || strings.Contains(string(hostsData), "192.168.10.151") {
+		t.Fatalf("failed reload did not restore prior sidecar:\n%s", hostsData)
+	}
+
+	retrySnapshot, err := snapshotDnsmasqHostsFile(dnsmasqHostsFile(configPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, reloadOnly, err = writeDnsmasqConfig(router, mapStore{}, configPath, pidFile, 53, nil)
+	if err != nil || changed || !reloadOnly {
+		t.Fatalf("retry write changed=%t reloadOnly=%t err=%v", changed, reloadOnly, err)
+	}
+	if err := reloadDnsmasqHostsSidecar(t.Context(), pidFile, configPath, retrySnapshot, reload); err != nil {
+		t.Fatalf("retry reload: %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("reload attempts = %d, want 2", attempts)
+	}
+	if changed, reloadOnly, err = writeDnsmasqConfig(router, mapStore{}, configPath, pidFile, 53, nil); err != nil || changed || reloadOnly {
+		t.Fatalf("converged write changed=%t reloadOnly=%t err=%v", changed, reloadOnly, err)
 	}
 }
 
@@ -1732,6 +1828,90 @@ func TestLANAddressControllerStagesFreshPDSnapshotWhenPDIsWhenFalse(t *testing.T
 	}
 }
 
+func TestLANAddressControllerRemovesWhenFalseVRRPAddressesDespiteFreshSnapshot(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
+	now := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	store, declared, snapshotPath := sqliteLANAddressStagingFixture(t, pdSnapshotFixture(now))
+	whenMaster := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+		"VirtualAddress/lan-gw.role": {Equals: "master"},
+	}}
+	for index := range declared.Spec.Resources {
+		if declared.Spec.Resources[index].Kind != "IPv6DelegatedAddress" {
+			continue
+		}
+		spec, err := declared.Spec.Resources[index].IPv6DelegatedAddressSpec()
+		if err != nil {
+			t.Fatal(err)
+		}
+		spec.When = whenMaster
+		declared.Spec.Resources[index].Spec = spec
+	}
+	for name, address := range map[string]string{
+		"lan-base":   "2001:db8:1200:1::1/64",
+		"wan-source": "2001:db8:1200:2::2/128",
+	} {
+		status := map[string]any{
+			"phase": "Applied", "address": address, "staged": true,
+		}
+		if name == "lan-base" {
+			status["previousAddresses"] = []managedPreviousDelegatedAddress{{
+				Address: "2001:db8:1200:1241::1/64", ExpiresAt: now.Add(time.Hour),
+			}}
+		}
+		if err := store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", name, status); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := (&Runner{Router: declared}).saveWhenFalseStatuses(eventedStore{Store: store, Router: declared}); err != nil {
+		t.Fatal(err)
+	}
+	effective := resourcequery.FilterRouterByResolvedWhen(declared, store)
+	var calls []string
+	ensureCalls := 0
+	controller := LANAddressController{
+		Router:              effective,
+		DeclaredRouter:      declared,
+		Store:               eventedStore{Store: store, Router: declared},
+		OperatingSystem:     platform.OSLinux,
+		Now:                 func() time.Time { return now },
+		PDLeaseSnapshotPath: func(string) string { return snapshotPath },
+		EnsureVMAC: func(context.Context, string) error {
+			ensureCalls++
+			return nil
+		},
+		Command: func(_ context.Context, name string, args ...string) error {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			return nil
+		},
+	}
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"ip -6 addr del 2001:db8:1200:1::1/64 dev lan-vrrp",
+		"ip -6 addr del 2001:db8:1200:1241::1/64 dev lan-vrrp",
+		"ip -6 addr del 2001:db8:1200:2::2/128 dev wan-vmac",
+	} {
+		if !slices.Contains(calls, want) {
+			t.Fatalf("when=false cleanup calls = %#v, want %q", calls, want)
+		}
+	}
+	for _, call := range calls {
+		if strings.Contains(call, " addr replace ") {
+			t.Fatalf("when=false address was re-staged after cleanup: %#v", calls)
+		}
+	}
+	if ensureCalls != 0 {
+		t.Fatalf("when=false address invoked VMAC staging %d times", ensureCalls)
+	}
+	for _, name := range []string{"lan-base", "wan-source"} {
+		status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", name)
+		if status["phase"] != "Pending" || status["reason"] != "WhenFalse" || status["address"] != nil || status["staged"] != nil || status["previousAddresses"] != nil {
+			t.Fatalf("%s when=false status = %#v", name, status)
+		}
+	}
+}
+
 func TestLANAddressControllerStagingRequiresVMACAndAddressReadback(t *testing.T) {
 	now := time.Date(2026, 7, 27, 15, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
@@ -1995,8 +2175,8 @@ func sqliteLANAddressStagingFixture(t *testing.T, snapshot pdclient.Snapshot) (*
 			},
 		}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan-vmac", Profile: api.IPv6PDProfileNTTHGWLANPD, ClientDUID: "00030001020000000112", When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"VirtualAddress/lan-gw.role": {Equals: "master"}}}}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-base"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan-vmac", SubnetID: "1", AddressSuffix: "::1", DependsOn: []api.ResourceDependencySpec{{Resource: "DHCPv6PrefixDelegation/wan-pd", Phase: daemonapi.ResourcePhaseBound}, {Resource: "Interface/lan-vmac", Phase: "Up"}}, When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"VirtualAddress/lan-gw.role": {Equals: "master"}}}}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "wan-source"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "wan-vmac", SubnetID: "2", AddressSuffix: "::2", PrefixLength: 128, DependsOn: []api.ResourceDependencySpec{{Resource: "DHCPv6PrefixDelegation/wan-pd", Phase: daemonapi.ResourcePhaseBound}, {Resource: "Interface/wan-vmac", Phase: "Up"}}, When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"VirtualAddress/lan-gw.role": {Equals: "master"}}}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-base"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan-vmac", SubnetID: "1", AddressSuffix: "::1", DependsOn: []api.ResourceDependencySpec{{Resource: "DHCPv6PrefixDelegation/wan-pd", Phase: daemonapi.ResourcePhaseBound}, {Resource: "Interface/lan-vmac", Phase: "Up"}}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "wan-source"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "wan-vmac", SubnetID: "2", AddressSuffix: "::2", PrefixLength: 128, DependsOn: []api.ResourceDependencySpec{{Resource: "DHCPv6PrefixDelegation/wan-pd", Phase: daemonapi.ResourcePhaseBound}, {Resource: "Interface/wan-vmac", Phase: "Up"}}}},
 	}}}
 	store.Set("VirtualAddress/lan-gw.role", "backup", "test")
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{"phase": "Pending", "reason": "WhenFalse"}); err != nil {
@@ -2021,6 +2201,399 @@ func pdSnapshotFixture(now time.Time) pdclient.Snapshot {
 		AcquiredAt:    now.Add(-time.Minute),
 		Valid:         3600,
 		ExpiresAt:     now.Add(time.Hour),
+	}
+}
+
+func TestLANAddressControllerRetainsMultiplePreviousLANPrefixesUntilExpiry(t *testing.T) {
+	now := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
+	snapshot := pdSnapshotFixture(now)
+	snapshot.PreviousPrefixes = []pdclient.PreviousPrefixSnapshot{
+		{Prefix: "2001:db8:1200:1230::/60", ExpiresAt: now.Add(5 * time.Minute)},
+		{Prefix: "2001:db8:1200:1240::/60", ExpiresAt: now.Add(10 * time.Minute)},
+	}
+	store, declared, snapshotPath := sqliteLANAddressStagingFixture(t, snapshot)
+	store.Set("VirtualAddress/lan-gw.role", "master", "test")
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{
+		"phase": daemonapi.ResourcePhaseBound, "currentPrefix": snapshot.CurrentPrefix,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "lan-vmac", map[string]any{"phase": "Up", "ifname": "lan-vrrp"}); err != nil {
+		t.Fatal(err)
+	}
+	effective := resourcequery.FilterRouterByResolvedWhen(declared, store)
+	var commands []string
+	controller := LANAddressController{
+		Router:              effective,
+		DeclaredRouter:      declared,
+		Store:               eventedStore{Store: store, Router: declared},
+		OperatingSystem:     platform.OSLinux,
+		Now:                 func() time.Time { return now },
+		PDLeaseSnapshotPath: func(string) string { return snapshotPath },
+		VMACPresent:         func(string) bool { return true },
+		AddressPresent:      func(context.Context, string, string) bool { return true },
+		Command: func(_ context.Context, name string, args ...string) error {
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return nil
+		},
+	}
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"ip -6 addr replace 2001:db8:1200:1231::1/64 dev lan-vrrp preferred_lft 0 valid_lft 300",
+		"ip -6 addr replace 2001:db8:1200:1241::1/64 dev lan-vrrp preferred_lft 0 valid_lft 600",
+	} {
+		if !slices.Contains(commands, want) {
+			t.Fatalf("missing deprecated LAN prefix command %q: %#v", want, commands)
+		}
+	}
+	for _, command := range commands {
+		if strings.Contains(command, "1232::2") || strings.Contains(command, "1242::2") {
+			t.Fatalf("WAN/DS-Lite /128 previous prefix was retained: %q", command)
+		}
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base")
+	if got := previousDelegatedAddressesFromStatus(status); len(got) != 2 {
+		t.Fatalf("previous LAN status = %#v, decoded=%#v", status, got)
+	}
+	wanStatus := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "wan-source")
+	if got := previousDelegatedAddressesFromStatus(wanStatus); len(got) != 0 {
+		t.Fatalf("WAN/DS-Lite /128 previous status retained = %#v", got)
+	}
+	commands = nil
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 0 {
+		t.Fatalf("unchanged delegated addresses were re-applied: %#v", commands)
+	}
+	snapshot.PreviousPrefixes[1].ExpiresAt = now.Add(20 * time.Minute)
+	writePDSnapshot(t, snapshotPath, snapshot)
+	controller.OperatingSystem = platform.OSFreeBSD
+	commands = nil
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"ifconfig lan-vrrp inet6 2001:db8:1200:1241::1 -alias",
+		"ifconfig lan-vrrp inet6 2001:db8:1200:1241::1 prefixlen 64 pltime 0 vltime 1200 alias",
+	} {
+		if !slices.Contains(commands, want) {
+			t.Fatalf("FreeBSD existing previous address was not replaced safely, missing %q: %#v", want, commands)
+		}
+	}
+	if len(commands) != 2 {
+		t.Fatalf("FreeBSD previous update re-applied unrelated addresses: %#v", commands)
+	}
+
+	now = now.Add(5*time.Minute + time.Second)
+	controller.OperatingSystem = platform.OSLinux
+	commands = nil
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(commands, "ip -6 addr del 2001:db8:1200:1231::1/64 dev lan-vrrp") {
+		t.Fatalf("expired previous LAN prefix was not deleted: %#v", commands)
+	}
+	status = store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base")
+	got := previousDelegatedAddressesFromStatus(status)
+	if len(got) != 1 || got[0].Address != "2001:db8:1200:1241::1/64" {
+		t.Fatalf("previous LAN status after expiry = %#v", got)
+	}
+}
+
+func TestLANAddressControllerRecoversLostPreviousPrefixFromKernelForRAWithdrawal(t *testing.T) {
+	now := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
+	snapshot := pdSnapshotFixture(now)
+	store, declared, snapshotPath := sqliteLANAddressStagingFixture(t, snapshot)
+	declared.Spec.Resources = append(declared.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"},
+		Metadata: api.ObjectMeta{Name: "lan-ra"},
+		Spec: api.IPv6RouterAdvertisementSpec{
+			Interface:     "lan-vmac",
+			PrefixFrom:    api.StatusValueSourceSpec{Resource: "IPv6DelegatedAddress/lan-base", Field: "address"},
+			ValidLifetime: "7200",
+		},
+	})
+	store.Set("VirtualAddress/lan-gw.role", "master", "test")
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{
+		"phase": daemonapi.ResourcePhaseBound, "currentPrefix": snapshot.CurrentPrefix,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "lan-vmac", map[string]any{"phase": "Up", "ifname": "lan-vrrp"}); err != nil {
+		t.Fatal(err)
+	}
+	// This is the post-lease-sync failure shape: current status and snapshot
+	// already point at 1220, PreviousPrefixes is empty, but the old 1240 LAN
+	// address remains in kernel and clients still hold 1241::/64 from RA.
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base", map[string]any{
+		"phase": "Applied", "address": "2001:db8:1200:1::1/64", "interface": "lan-vmac", "prefixSource": "wan-pd", "dryRun": false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	effective := resourcequery.FilterRouterByResolvedWhen(declared, store)
+	var commands []string
+	deleteFailures := false
+	controller := LANAddressController{
+		Router:              effective,
+		DeclaredRouter:      declared,
+		Store:               eventedStore{Store: store, Router: declared},
+		OperatingSystem:     platform.OSLinux,
+		Now:                 func() time.Time { return now },
+		PDLeaseSnapshotPath: func(string) string { return snapshotPath },
+		VMACPresent:         func(string) bool { return true },
+		AddressPresent:      func(context.Context, string, string) bool { return true },
+		AddressList: func(context.Context, string) ([]string, error) {
+			return parseIPv6InterfaceAddressPrefixes(`7: lan-vrrp inet6 2001:db8:1200:1::1/64 scope global valid_lft forever preferred_lft forever
+7: lan-vrrp inet6 2001:db8:1200:1241::1/64 scope global dynamic deprecated valid_lft 7199sec preferred_lft 0sec
+7: lan-vrrp inet6 2001:db8:1200:1241::99/64 scope global valid_lft forever preferred_lft forever
+7: lan-vrrp inet6 2001:db8:1200:1241::23/128 scope global valid_lft forever preferred_lft forever
+`), nil
+		},
+		Command: func(_ context.Context, name string, args ...string) error {
+			commandLine := strings.Join(append([]string{name}, args...), " ")
+			commands = append(commands, commandLine)
+			if deleteFailures && strings.Contains(commandLine, "addr del 2001:db8:1200:1241::1/64") {
+				return errors.New("injected previous-address delete failure")
+			}
+			return nil
+		},
+	}
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	want := "ip -6 addr replace 2001:db8:1200:1241::1/64 dev lan-vrrp preferred_lft 0 valid_lft 7200"
+	if !slices.Contains(commands, want) {
+		t.Fatalf("lost previous prefix was not recovered for RA withdrawal, missing %q: %#v", want, commands)
+	}
+	for _, forbidden := range []string{"1241::99", "1241::23"} {
+		for _, command := range commands {
+			if strings.Contains(command, forbidden) {
+				t.Fatalf("unowned or /128 address was adopted as LAN history: %q", command)
+			}
+		}
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base")
+	previous := previousDelegatedAddressesFromStatus(status)
+	if len(previous) != 1 || previous[0].Address != "2001:db8:1200:1241::1/64" || !previous[0].ExpiresAt.Equal(now.Add(2*time.Hour)) {
+		t.Fatalf("recovered previous status = %#v, raw=%#v", previous, status)
+	}
+
+	commands = nil
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 0 {
+		t.Fatalf("recovered withdrawal lifetime was extended or re-applied: %#v", commands)
+	}
+
+	now = now.Add(2*time.Hour + time.Second)
+	commands = nil
+	deleteFailures = true
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(commands, "ip -6 addr del 2001:db8:1200:1241::1/64 dev lan-vrrp") {
+		t.Fatalf("expired recovered prefix was not deleted: %#v", commands)
+	}
+	failed := previousDelegatedAddressesFromStatus(store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base"))
+	if len(failed) != 1 || failed[0].Address != previous[0].Address || !failed[0].ExpiresAt.Equal(previous[0].ExpiresAt) {
+		t.Fatalf("failed deletion did not preserve the original tombstone: got %#v, want %#v", failed, previous)
+	}
+	for _, command := range commands {
+		if strings.Contains(command, "addr replace 2001:db8:1200:1241::1/64") {
+			t.Fatalf("failed deletion extended the expired withdrawal lifetime: %q", command)
+		}
+	}
+
+	commands = nil
+	deleteFailures = false
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(commands, "ip -6 addr del 2001:db8:1200:1241::1/64 dev lan-vrrp") {
+		t.Fatalf("failed previous-prefix deletion was not retried: %#v", commands)
+	}
+	if got := previousDelegatedAddressesFromStatus(store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base")); len(got) != 0 {
+		t.Fatalf("successfully deleted previous prefix remained in status: %#v", got)
+	}
+}
+
+func TestLANAddressControllerRecoversPreviousCurrentStatusWithoutKernelHistory(t *testing.T) {
+	now := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
+	snapshot := pdSnapshotFixture(now)
+	store, declared, snapshotPath := sqliteLANAddressStagingFixture(t, snapshot)
+	declared.Spec.Resources = append(declared.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"},
+		Metadata: api.ObjectMeta{Name: "lan-ra"},
+		Spec: api.IPv6RouterAdvertisementSpec{
+			Interface:     "lan-vmac",
+			PrefixFrom:    api.StatusValueSourceSpec{Resource: "IPv6DelegatedAddress/lan-base", Field: "address"},
+			ValidLifetime: "600",
+		},
+	})
+	store.Set("VirtualAddress/lan-gw.role", "master", "test")
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{
+		"phase": daemonapi.ResourcePhaseBound, "currentPrefix": snapshot.CurrentPrefix,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "lan-vmac", map[string]any{"phase": "Up", "ifname": "lan-vrrp"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base", map[string]any{
+		"phase": "Applied", "address": "2001:db8:1200:1241::1/64", "interface": "lan-vmac", "prefixSource": "wan-pd", "dryRun": false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	effective := resourcequery.FilterRouterByResolvedWhen(declared, store)
+	var commands []string
+	controller := LANAddressController{
+		Router:              effective,
+		DeclaredRouter:      declared,
+		Store:               eventedStore{Store: store, Router: declared},
+		OperatingSystem:     platform.OSLinux,
+		Now:                 func() time.Time { return now },
+		PDLeaseSnapshotPath: func(string) string { return snapshotPath },
+		VMACPresent:         func(string) bool { return true },
+		AddressPresent:      func(context.Context, string, string) bool { return true },
+		AddressList:         func(context.Context, string) ([]string, error) { return nil, nil },
+		Command: func(_ context.Context, name string, args ...string) error {
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return nil
+		},
+	}
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	if want := "ip -6 addr replace 2001:db8:1200:1241::1/64 dev lan-vrrp preferred_lft 0 valid_lft 7200"; !slices.Contains(commands, want) {
+		t.Fatalf("previous current status was not withdrawn, missing %q: %#v", want, commands)
+	}
+	previous := previousDelegatedAddressesFromStatus(store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base"))
+	if len(previous) != 1 || !previous[0].ExpiresAt.Equal(now.Add(2*time.Hour)) {
+		t.Fatalf("RFC 4862 two-hour withdrawal floor was not preserved: %#v", previous)
+	}
+}
+
+func TestLANAddressControllerDoesNotWithdrawOtherDeclaredCurrentAddresses(t *testing.T) {
+	now := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
+	snapshot := pdSnapshotFixture(now)
+	store, declared, snapshotPath := sqliteLANAddressStagingFixture(t, snapshot)
+	declared.Spec.Resources = append(declared.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"},
+			Metadata: api.ObjectMeta{Name: "lan-ra"},
+			Spec: api.IPv6RouterAdvertisementSpec{
+				Interface:     "lan-vmac",
+				PrefixFrom:    api.StatusValueSourceSpec{Resource: "IPv6DelegatedAddress/lan-base", Field: "address"},
+				ValidLifetime: "7200",
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"},
+			Metadata: api.ObjectMeta{Name: "other-lan"},
+			Spec: api.IPv6DelegatedAddressSpec{
+				PrefixDelegation: "other-pd",
+				Interface:        "lan-vmac",
+				SubnetID:         "1",
+				AddressSuffix:    "::1",
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+			Metadata: api.ObjectMeta{Name: "static-v6"},
+			Spec: api.VirtualAddressSpec{
+				Family:    "ipv6",
+				Mode:      "static",
+				Interface: "lan-vmac",
+				Address:   "2001:db8:1200:1251::1/64",
+			},
+		},
+	)
+	store.Set("VirtualAddress/lan-gw.role", "master", "test")
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{
+		"phase": daemonapi.ResourcePhaseBound, "currentPrefix": snapshot.CurrentPrefix,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "lan-vmac", map[string]any{"phase": "Up", "ifname": "lan-vrrp"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base", map[string]any{
+		"phase": "Applied", "address": "2001:db8:1200:1::1/64", "interface": "lan-vmac", "prefixSource": "wan-pd", "dryRun": false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "other-lan", map[string]any{
+		"phase": "Applied", "address": "2001:db8:1200:1241::1/64", "interface": "lan-vmac", "prefixSource": "other-pd", "dryRun": false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	effective := resourcequery.FilterRouterByResolvedWhen(declared, store)
+	var commands []string
+	controller := LANAddressController{
+		Router:              effective,
+		DeclaredRouter:      declared,
+		Store:               eventedStore{Store: store, Router: declared},
+		OperatingSystem:     platform.OSLinux,
+		Now:                 func() time.Time { return now },
+		PDLeaseSnapshotPath: func(string) string { return snapshotPath },
+		VMACPresent:         func(string) bool { return true },
+		AddressPresent:      func(context.Context, string, string) bool { return true },
+		AddressList: func(context.Context, string) ([]string, error) {
+			return []string{
+				"2001:db8:1200:1::1/64",
+				"2001:db8:1200:1241::1/64",
+				"2001:db8:1200:1251::1/64",
+			}, nil
+		},
+		Command: func(_ context.Context, name string, args ...string) error {
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return nil
+		},
+	}
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range commands {
+		if strings.Contains(command, "1241::1") || strings.Contains(command, "1251::1") {
+			t.Fatalf("another declared resource's current address was adopted as stale history: %q", command)
+		}
+	}
+	if got := previousDelegatedAddressesFromStatus(store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base")); len(got) != 0 {
+		t.Fatalf("another declared resource's current address was stored as stale history: %#v", got)
+	}
+}
+
+func TestParseIPv6InterfaceAddressPrefixes(t *testing.T) {
+	out := `7: lan-vrrp inet6 2001:db8:1200:1241::1/64 scope global dynamic deprecated valid_lft 7199sec preferred_lft 0sec
+7: lan-vrrp inet6 2001:db8:1200:1242::1/64 scope global deprecated valid_lft forever preferred_lft 0sec
+7: lan-vrrp inet6 2001:db8:1200:1241::23/128 scope global valid_lft forever preferred_lft forever
+7: lan-vrrp inet6 2001:db8:1200:1251::1/64 scope global dynamic valid_lft 7199sec preferred_lft 3599sec
+7: lan-vrrp inet6 2001:db8:1200:1261::1/64 scope global temporary dynamic valid_lft 7199sec preferred_lft 3599sec
+7: lan-vrrp inet6 2001:db8:1200:1271::1/64 scope global mngtmpaddr dynamic deprecated valid_lft 7199sec preferred_lft 0sec
+7: lan-vrrp inet6 2001:db8:1200:1281::1/64 scope global autoconf dynamic deprecated valid_lft 7199sec preferred_lft 0sec
+7: lan-vrrp inet6 2001:db8:1200:1291::1/64 scope global tentative valid_lft forever preferred_lft forever
+7: lan-vrrp inet6 2001:db8:1200:1301::1/64 scope global dadfailed valid_lft forever preferred_lft forever
+7: lan-vrrp inet6 fe80::1/64 scope link valid_lft forever preferred_lft forever
+`
+	got := parseIPv6InterfaceAddressPrefixes(out)
+	want := []string{"2001:db8:1200:1241::1/64", "2001:db8:1200:1242::1/64", "2001:db8:1200:1241::23/128"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("parsed addresses = %#v, want %#v", got, want)
+	}
+}
+
+func TestIPv6DeprecatedAddressApplyCommand(t *testing.T) {
+	name, args := ipv6DeprecatedAddressApplyCommand(platform.OSLinux, "ens19", "2001:db8::1/64", 42)
+	if got, want := strings.Join(append([]string{name}, args...), " "), "ip -6 addr replace 2001:db8::1/64 dev ens19 preferred_lft 0 valid_lft 42"; got != want {
+		t.Fatalf("Linux command = %q, want %q", got, want)
+	}
+	name, args = ipv6DeprecatedAddressApplyCommand(platform.OSFreeBSD, "vtnet1", "2001:db8::1/64", 42)
+	if got, want := strings.Join(append([]string{name}, args...), " "), "ifconfig vtnet1 inet6 2001:db8::1 prefixlen 64 pltime 0 vltime 42 alias"; got != want {
+		t.Fatalf("FreeBSD command = %q, want %q", got, want)
 	}
 }
 
@@ -2281,6 +2854,124 @@ func TestLANAddressControllerKeepsWhenFalseStatusWhenDeleteMissing(t *testing.T)
 	}
 }
 
+func TestLANAddressControllerDeprecatesOnlyDSLiteDelegatedSource(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-vmac"}, Spec: api.InterfaceSpec{IfName: "wan-vmac"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan-vmac"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "ds-source"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "wan-vmac", SubnetID: "1", AddressSuffix: "::23", PrefixLength: 128}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{Interface: "wan-vmac", LocalAddressSource: "delegatedAddress", LocalDelegatedAddress: "ds-source"}},
+	}}}
+	store := statefulDHCPMapStore{mapStore: mapStore{}}
+	store.SaveObjectStatus(api.NetAPIVersion, "Interface", "wan-vmac", map[string]any{"phase": "Up"})
+	store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{"phase": daemonapi.ResourcePhaseBound, "currentPrefix": "2001:db8:1220::/60"})
+	store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "ds-source", map[string]any{
+		"phase": "Applied", "address": "2001:db8:1220:1::23/128", "interface": "wan-vmac", "prefixSource": "wan-pd", "dryRun": false,
+	})
+	var commands []string
+	controller := LANAddressController{
+		Router:                   router,
+		Store:                    store,
+		OperatingSystem:          platform.OSLinux,
+		AddressPresent:           func(context.Context, string, string) bool { return true },
+		DeprecatedAddressPresent: func(context.Context, string, string) bool { return false },
+		Command: func(_ context.Context, name string, args ...string) error {
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return nil
+		},
+	}
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"ip -6 addr replace 2001:db8:1220:1::23/128 dev wan-vmac preferred_lft 0 valid_lft forever"}
+	if !reflect.DeepEqual(commands, want) {
+		t.Fatalf("commands = %#v, want %#v", commands, want)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "ds-source")
+	if status["sourceSelection"] != "deprecated" {
+		t.Fatalf("status = %#v, want deprecated source selection", status)
+	}
+
+	router.Spec.Resources = router.Spec.Resources[:3]
+	store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "ds-source", map[string]any{
+		"phase": "Applied", "address": "2001:db8:1220:1::23/128", "interface": "wan-vmac", "prefixSource": "wan-pd", "dryRun": false,
+	})
+	commands = nil
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	want = []string{"ip -6 addr replace 2001:db8:1220:1::23/128 dev wan-vmac"}
+	if !reflect.DeepEqual(commands, want) {
+		t.Fatalf("ordinary delegated address commands = %#v, want %#v", commands, want)
+	}
+}
+
+func TestLANAddressControllerKeepsPublicExampleLANPrefixPreferred(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "eth0"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "wan", SubnetID: "1", AddressSuffix: "::1"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{Interface: "wan", LocalAddressSource: "delegatedAddress", LocalDelegatedAddress: "lan-v6", LocalAddressSuffix: "::100"}},
+	}}}
+	store := statefulDHCPMapStore{mapStore: mapStore{}}
+	store.SaveObjectStatus(api.NetAPIVersion, "Interface", "wan", map[string]any{"phase": "Up"})
+	store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{"phase": daemonapi.ResourcePhaseBound, "currentPrefix": "2001:db8:1220::/60"})
+	store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-v6", map[string]any{
+		"phase": "Applied", "address": "2001:db8:1220:1::1/64", "interface": "wan", "prefixSource": "wan-pd", "dryRun": false,
+	})
+	var commands []string
+	controller := LANAddressController{
+		Router:          router,
+		Store:           store,
+		OperatingSystem: platform.OSLinux,
+		AddressPresent:  func(context.Context, string, string) bool { return false },
+		DeprecatedAddressPresent: func(context.Context, string, string) bool {
+			t.Fatal("LAN /64 must not be checked as deprecated")
+			return false
+		},
+		Command: func(_ context.Context, name string, args ...string) error {
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return nil
+		},
+	}
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	want := "ip -6 addr replace 2001:db8:1220:1::1/64 dev eth0"
+	if !slices.Contains(commands, want) {
+		t.Fatalf("commands = %#v, want %q", commands, want)
+	}
+	if status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-v6"); status["sourceSelection"] != nil {
+		t.Fatalf("LAN /64 status = %#v, did not want deprecated sourceSelection", status)
+	}
+}
+
+func TestLinuxIPv6LocalEndpointArgsDeprecateDelegatedSource(t *testing.T) {
+	got := linuxIPv6LocalEndpointArgs("wan0", "2001:db8::100", true)
+	want := []string{"-6", "addr", "replace", "2001:db8::100/128", "dev", "wan0", "preferred_lft", "0", "valid_lft", "forever"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("delegated endpoint args = %#v, want %#v", got, want)
+	}
+	ordinary := linuxIPv6LocalEndpointArgs("wan0", "2001:db8::1", false)
+	ordinaryWant := []string{"-6", "addr", "replace", "2001:db8::1/128", "dev", "wan0"}
+	if !reflect.DeepEqual(ordinary, ordinaryWant) {
+		t.Fatalf("ordinary endpoint args = %#v, want %#v", ordinary, ordinaryWant)
+	}
+}
+
+func TestDeprecatedIPv6ReadbackRequiresExactPrefixAndFlag(t *testing.T) {
+	out := []byte("7: wan-vmac inet6 2001:db8:1221::23/128 scope global deprecated tentative valid_lft forever preferred_lft 0sec\n")
+	if !ipAddrShowHasDeprecatedIPv6AddressWithPrefix(out, "2001:db8:1221::23/128") {
+		t.Fatal("deprecated tentative standby source was not recognized")
+	}
+	if ipAddrShowHasDeprecatedIPv6AddressWithPrefix(out, "2001:db8:1221::23/64") {
+		t.Fatal("wrong prefix length was recognized")
+	}
+	preferred := []byte("7: wan-vmac inet6 2001:db8:1221::23/128 scope global valid_lft forever preferred_lft forever\n")
+	if ipAddrShowHasDeprecatedIPv6AddressWithPrefix(preferred, "2001:db8:1221::23/128") {
+		t.Fatal("preferred address was recognized as deprecated")
+	}
+}
+
 func TestLocalIPv6AddressKeepsHostBitsFromPrefix(t *testing.T) {
 	got := localIPv6Address("2409:10:3d60:1250::11/64")
 	if got != "2409:10:3d60:1250::11" {
@@ -2507,10 +3198,26 @@ func TestFirstUsableGlobalIPv6PrefersDynamicStableAddress(t *testing.T) {
 	}
 }
 
+func TestFirstUsableGlobalIPv6PrefersOnLinkSLAACOverDelegatedEndpoints(t *testing.T) {
+	data := []byte(`[{"ifname":"wan-vmac","addr_info":[
+		{"family":"inet6","local":"2409:10:3d60:1221::23","prefixlen":128,"scope":"global","dynamic":true,"preferred_life_time":1000},
+		{"family":"inet6","local":"2409:10:3d60:1200::10","prefixlen":64,"scope":"global","dynamic":true,"temporary":true,"preferred_life_time":1000},
+		{"family":"inet6","local":"2409:10:3d60:1200::11","prefixlen":64,"scope":"global","dynamic":true,"deprecated":true,"preferred_life_time":1000},
+		{"family":"inet6","local":"2409:10:3d60:1200::12","prefixlen":64,"scope":"global","dynamic":true,"tentative":true,"preferred_life_time":1000},
+		{"family":"inet6","local":"2409:10:3d60:1200:0:5eff:fe00:113","prefixlen":64,"scope":"global","dynamic":true,"preferred_life_time":1000}
+	]}]`)
+	want := "2409:10:3d60:1200:0:5eff:fe00:113"
+	if got := firstUsableGlobalIPv6(data); got != want {
+		t.Fatalf("firstUsableGlobalIPv6 = %q, want %q", got, want)
+	}
+}
+
 func TestFirstUsableIfconfigGlobalIPv6PrefersAutoconf(t *testing.T) {
 	data := []byte(`vtnet0: flags=...
 	inet6 fe80::be24:11ff:fefb:928d%vtnet0 prefixlen 64 scopeid 0x1
 	inet6 2409:10:3d60:1200::dead prefixlen 64 temporary
+	inet6 2409:10:3d60:1200::23 prefixlen 128 autoconf
+	inet6 2409:10:3d60:1200::24 prefixlen 64 tentative autoconf
 	inet6 2409:10:3d60:1200:be24:11ff:fefb:928d prefixlen 64 autoconf
 `)
 	if got := firstUsableIfconfigGlobalIPv6(data); got != "2409:10:3d60:1200:be24:11ff:fefb:928d" {

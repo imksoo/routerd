@@ -168,15 +168,11 @@ func onceCommand(args []string, stdout io.Writer) error {
 		}
 		daemon.mu.Unlock()
 
-		_ = daemon.conn.SetReadDeadline(nextReadDeadline(ctx, 3*time.Second))
+		_ = daemon.conn.SetReadDeadline(nextReadDeadline(ctx, time.Now(), 3*time.Second, daemon.nextSolicitRetryAt()))
 		n, _, err := daemon.conn.ReadFromUDP(buf)
 		if err != nil {
 			if timeoutError(err) && ctx.Err() == nil {
-				daemon.mu.Lock()
-				if daemon.client.State == pdclient.StateSoliciting {
-					err = daemon.client.Start(ctx)
-				}
-				daemon.mu.Unlock()
+				err = daemon.tick(ctx)
 				if err != nil {
 					return err
 				}
@@ -379,7 +375,7 @@ func (d *dhcpv6Daemon) Run(ctx context.Context) error {
 			d.publish(daemonapi.EventDaemonStopped, daemonapi.SeverityInfo, "Stopped", "DHCPv6 client daemon stopped", nil)
 			return ctx.Err()
 		}
-		_ = d.conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+		_ = d.conn.SetReadDeadline(nextReadDeadline(ctx, time.Now(), 3*time.Second, d.nextSolicitRetryAt()))
 		n, _, err := d.conn.ReadFromUDP(buf)
 		if err != nil {
 			if timeoutError(err) {
@@ -459,6 +455,12 @@ func (d *dhcpv6Daemon) tick(ctx context.Context) error {
 	}
 	d.publishStateEvents(before, after)
 	return nil
+}
+
+func (d *dhcpv6Daemon) nextSolicitRetryAt() time.Time {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.client.NextSolicitRetryAt()
 }
 
 func (d *dhcpv6Daemon) restoreLease(ctx context.Context) error {
@@ -932,8 +934,11 @@ func dhcpv6ListenAddr(srcLL, ifname string, port int) (*net.UDPAddr, error) {
 	return addr, nil
 }
 
-func nextReadDeadline(ctx context.Context, interval time.Duration) time.Time {
-	deadline := time.Now().Add(interval)
+func nextReadDeadline(ctx context.Context, now time.Time, interval time.Duration, retryAt time.Time) time.Time {
+	deadline := now.Add(interval)
+	if !retryAt.IsZero() && retryAt.Before(deadline) {
+		deadline = retryAt
+	}
 	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
 		return ctxDeadline
 	}
@@ -1120,6 +1125,7 @@ func leaseStateValue(state pdclient.State) int64 {
 func snapshotChanged(a, b pdclient.Snapshot) bool {
 	return a.State != b.State ||
 		a.CurrentPrefix != b.CurrentPrefix ||
+		!previousPrefixSnapshotsEqual(a.PreviousPrefixes, b.PreviousPrefixes) ||
 		a.ServerDUID != b.ServerDUID ||
 		a.T1Seconds != b.T1Seconds ||
 		a.T2Seconds != b.T2Seconds ||
@@ -1130,6 +1136,18 @@ func snapshotChanged(a, b pdclient.Snapshot) bool {
 		!a.RebindAt.Equal(b.RebindAt) ||
 		!a.ExpiresAt.Equal(b.ExpiresAt) ||
 		infoChanged(a, b)
+}
+
+func previousPrefixSnapshotsEqual(a, b []pdclient.PreviousPrefixSnapshot) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Prefix != b[i].Prefix || !a[i].ExpiresAt.Equal(b[i].ExpiresAt) {
+			return false
+		}
+	}
+	return true
 }
 
 func infoChanged(a, b pdclient.Snapshot) bool {
