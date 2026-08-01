@@ -189,6 +189,17 @@ func TestPackageFeaturesIncludeArpingForVRRPGatedSAMCapture(t *testing.T) {
 	}
 }
 
+func TestPackageFeaturesIncludeArpingForStaticVirtualAddressAnnouncement(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+		Metadata: api.ObjectMeta{Name: "wan-nat-v4"},
+		Spec:     api.VirtualAddressSpec{Interface: "wan", Address: "192.168.1.249/32", Family: "ipv4", Mode: "static", GratuitousARP: true},
+	}}}}
+	if features := packageFeatures(router); !features["arping"] {
+		t.Fatalf("features = %#v, want arping for static VirtualAddress gratuitousARP", features)
+	}
+}
+
 func TestPackageFeaturesCoverStandaloneDataplaneResources(t *testing.T) {
 	for _, tc := range []struct {
 		kind string

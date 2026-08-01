@@ -106,6 +106,9 @@ func packageFeatures(router *api.Router) map[string]bool {
 				if spec, err := res.VirtualAddressSpec(); err == nil && spec.Mode == "vrrp" {
 					features["vrrp"] = true
 				}
+				if spec, err := res.VirtualAddressSpec(); err == nil && (strings.TrimSpace(spec.Mode) == "" || spec.Mode == "static") && spec.Family == "ipv4" && spec.GratuitousARP {
+					features["arping"] = true
+				}
 			}
 		case "DSLiteTunnel":
 			features["base"] = true

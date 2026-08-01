@@ -309,7 +309,16 @@ func validateVirtualAddressResource(res api.Resource, targetOS platform.OS) erro
 			return fmt.Errorf("%s spec.hostname is invalid: %w", res.ID(), err)
 		}
 	}
-	switch defaultString(spec.Mode, "static") {
+	mode := defaultString(spec.Mode, "static")
+	if spec.GratuitousARP {
+		if spec.Family != "ipv4" || mode != "static" {
+			return fmt.Errorf("%s spec.gratuitousARP requires family ipv4 and mode static", res.ID())
+		}
+		if targetOS != platform.OSLinux {
+			return fmt.Errorf("%s spec.gratuitousARP is supported only on Linux", res.ID())
+		}
+	}
+	switch mode {
 	case "static":
 	case "vrrp":
 		if spec.VRRP.VirtualRouterID < 1 || spec.VRRP.VirtualRouterID > 255 {
