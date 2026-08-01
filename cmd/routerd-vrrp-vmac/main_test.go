@@ -18,7 +18,7 @@ func TestParseOptions(t *testing.T) {
 	if opts.action != "activate" || opts.parent != "eth0" || opts.ifname != "wan-vmac" {
 		t.Fatalf("unexpected options: %#v", opts)
 	}
-	if got := commandsFor(opts); len(got) != 5 || got[0][0] != "ip" || got[0][1] != "link" || got[0][2] != "add" || got[4][0] != "sysctl" || got[4][2] != "net.ipv6.conf.wan-vmac.accept_ra=2" {
+	if got := commandsFor(opts); len(got) != 7 || got[0][0] != "ip" || got[0][1] != "link" || got[0][2] != "add" || got[4][0] != "sysctl" || got[4][2] != "net.ipv6.conf.wan-vmac.accept_ra=2" || got[6][0] != "ip" || got[6][4] != "wan-vmac" {
 		t.Fatalf("activate commands: %#v", got)
 	}
 }
@@ -33,16 +33,99 @@ func TestWANFailoverVMACKeepsDelegatedAddressesAcrossDown(t *testing.T) {
 	want := [][]string{
 		{"ip", "link", "add", "link", "wan", "name", "wan-vmac", "type", "macvlan", "mode", "private"},
 		{"ip", "link", "set", "dev", "wan-vmac", "address", "02:00:5e:00:01:13"},
+		{"sysctl", "-w", "net.ipv4.conf.wan.arp_ignore=1"},
+		{"sysctl", "-w", "net.ipv4.conf.wan-vmac.arp_ignore=1"},
+		{"sysctl", "-w", "net.ipv6.conf.wan-vmac.accept_ra=2"},
 		{"sysctl", "-w", "net.ipv6.conf.wan-vmac.keep_addr_on_down=1"},
 		{"ip", "link", "set", "dev", "wan-vmac", "up"},
-		{"sysctl", "-w", "net.ipv6.conf.wan-vmac.accept_ra=2"},
 	}
 	if got := commandsFor(wan); !reflect.DeepEqual(got, want) {
 		t.Fatalf("WAN commands = %#v, want %#v", got, want)
 	}
 	wan.action = "deactivate"
-	if got, want := commandsFor(wan), [][]string{{"ip", "link", "add", "link", "wan", "name", "wan-vmac", "type", "macvlan", "mode", "private"}, {"ip", "link", "set", "dev", "wan-vmac", "address", "02:00:5e:00:01:13"}, {"sysctl", "-w", "net.ipv6.conf.wan-vmac.keep_addr_on_down=1"}, {"ip", "link", "set", "dev", "wan-vmac", "down"}}; !reflect.DeepEqual(got, want) {
+	if got, want := commandsFor(wan), [][]string{{"ip", "link", "add", "link", "wan", "name", "wan-vmac", "type", "macvlan", "mode", "private"}, {"ip", "link", "set", "dev", "wan-vmac", "address", "02:00:5e:00:01:13"}, {"sysctl", "-w", "net.ipv4.conf.wan.arp_ignore=1"}, {"sysctl", "-w", "net.ipv4.conf.wan-vmac.arp_ignore=1"}, {"sysctl", "-w", "net.ipv6.conf.wan-vmac.accept_ra=2"}, {"sysctl", "-w", "net.ipv6.conf.wan-vmac.keep_addr_on_down=1"}, {"ip", "link", "set", "dev", "wan-vmac", "down"}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("WAN deactivate commands = %#v, want %#v", got, want)
+	}
+}
+
+func TestRunVMACCommandsReappliesHygieneWhenLinkAlreadyExists(t *testing.T) {
+	commands := [][]string{
+		{"ip", "link", "add", "link", "wan", "name", "wan-vmac", "type", "macvlan", "mode", "private"},
+		{"sysctl", "-w", "net.ipv4.conf.wan.arp_ignore=1"},
+		{"sysctl", "-w", "net.ipv4.conf.wan-vmac.arp_ignore=1"},
+	}
+	var executed []string
+	err := runVMACCommands("activate", commands, func(name string, args ...string) ([]byte, error) {
+		line := name + " " + strings.Join(args, " ")
+		executed = append(executed, line)
+		if strings.HasPrefix(line, "ip link add ") {
+			return []byte("RTNETLINK answers: File exists\n"), errors.New("exit status 2")
+		}
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatalf("repeat VMAC activation: %v", err)
+	}
+	want := []string{
+		"ip link add link wan name wan-vmac type macvlan mode private",
+		"sysctl -w net.ipv4.conf.wan.arp_ignore=1",
+		"sysctl -w net.ipv4.conf.wan-vmac.arp_ignore=1",
+	}
+	if !reflect.DeepEqual(executed, want) {
+		t.Fatalf("executed = %#v, want %#v", executed, want)
+	}
+}
+
+func TestMixedVMACHygieneDoesNotLeakLANPolicyToWAN(t *testing.T) {
+	opts, err := parseOptions([]string{
+		"activate",
+		"--vmac", "wan,wan-vmac,02:00:5e:00:01:13,,false",
+		"--vmac", "lan,lan-vmac,02:00:5e:00:01:12,fe80::5eff:fe00:112,true",
+	})
+	if err != nil {
+		t.Fatalf("parse mixed VMACs: %v", err)
+	}
+	groups := commandsForVMACs(opts)
+	if len(groups) != 2 {
+		t.Fatalf("VMAC command groups = %d, want 2", len(groups))
+	}
+	assertContainsCommand(t, groups[0], []string{"sysctl", "-w", "net.ipv6.conf.wan-vmac.accept_ra=2"})
+	assertDoesNotContainCommand(t, groups[0], []string{"sysctl", "-w", "net.ipv6.conf.wan.accept_ra=0"})
+	assertDoesNotContainCommand(t, groups[0], []string{"ip", "-6", "addr", "flush", "dev", "wan-vmac", "scope", "global", "dynamic"})
+	assertContainsCommand(t, groups[1], []string{"sysctl", "-w", "net.ipv6.conf.lan.accept_ra=0"})
+	assertContainsCommand(t, groups[1], []string{"sysctl", "-w", "net.ipv6.conf.lan-vmac.accept_ra=0"})
+	assertContainsCommand(t, groups[1], []string{"ip", "-6", "addr", "flush", "dev", "lan", "scope", "global", "dynamic"})
+}
+
+func TestActivateStopsBeforeLinkUpWhenParentHygieneFails(t *testing.T) {
+	var commands []string
+	var wroteRole bool
+	err := runWithHooks([]string{
+		"activate", "--vmac", "lan,lan-vmac,02:00:5e:00:01:12,fe80::5eff:fe00:112,true",
+	}, runHooks{
+		command: func(name string, args ...string) ([]byte, error) {
+			line := name + " " + strings.Join(args, " ")
+			commands = append(commands, line)
+			if line == "sysctl -w net.ipv4.conf.lan.arp_ignore=1" {
+				return []byte("permission denied\n"), errors.New("exit status 1")
+			}
+			return nil, nil
+		},
+		conntrackdTransitionNeeded: func(string) (bool, error) { return true, nil },
+		reconcileConntrackdRole:    func(string) error { return nil },
+		writeConntrackdRole: func(string) error {
+			wroteRole = true
+			return nil
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "net.ipv4.conf.lan.arp_ignore=1") {
+		t.Fatalf("parent hygiene error = %v", err)
+	}
+	if slicesContain(commands, "ip link set dev lan-vmac up") {
+		t.Fatalf("LAN VMAC was raised after hygiene failure: %#v", commands)
+	}
+	if wroteRole {
+		t.Fatal("master role was written after hygiene failure")
 	}
 }
 
@@ -226,6 +309,18 @@ func TestLANFailoverVMACCommandsHaveOneSharedLinkLocalAndCleanBackup(t *testing.
 		t.Fatalf("LAN tuple lost link-local or withdraw-ra flag: %#v", lan.vmacs[0])
 	}
 	commands := commandsFor(lan)
+	assertContainsCommand(t, commands, []string{"sysctl", "-w", "net.ipv4.conf.ens19.arp_ignore=1"})
+	assertContainsCommand(t, commands, []string{"sysctl", "-w", "net.ipv4.conf.lan-vrrp.arp_ignore=1"})
+	assertContainsCommand(t, commands, []string{"sysctl", "-w", "net.ipv6.conf.ens19.accept_ra=0"})
+	assertContainsCommand(t, commands, []string{"sysctl", "-w", "net.ipv6.conf.lan-vrrp.accept_ra=0"})
+	assertCommandBefore(t, commands,
+		[]string{"sysctl", "-w", "net.ipv6.conf.lan-vrrp.accept_ra=0"},
+		[]string{"ip", "link", "set", "dev", "lan-vrrp", "up"},
+	)
+	assertContainsCommand(t, commands, []string{"ip", "-6", "addr", "flush", "dev", "lan-vrrp", "scope", "global", "dynamic"})
+	assertContainsCommand(t, commands, []string{"ip", "-6", "addr", "flush", "dev", "ens19", "scope", "global", "dynamic"})
+	assertDoesNotContainCommand(t, commands, []string{"ip", "-6", "addr", "flush", "dev", "lan-vrrp", "scope", "global"})
+	assertDoesNotContainCommand(t, commands, []string{"ip", "-6", "addr", "flush", "dev", "ens19", "scope", "global"})
 	assertCommandBefore(t, commands,
 		[]string{"ip", "link", "set", "dev", "lan-vrrp", "addrgenmode", "none"},
 		[]string{"ip", "link", "set", "dev", "lan-vrrp", "up"},
@@ -240,6 +335,20 @@ func TestLANFailoverVMACCommandsHaveOneSharedLinkLocalAndCleanBackup(t *testing.
 
 	lan.action = "deactivate"
 	deactivate := commandsFor(lan)
+	assertContainsCommand(t, deactivate, []string{"sysctl", "-w", "net.ipv4.conf.ens19.arp_ignore=1"})
+	assertContainsCommand(t, deactivate, []string{"sysctl", "-w", "net.ipv4.conf.lan-vrrp.arp_ignore=1"})
+	assertContainsCommand(t, deactivate, []string{"sysctl", "-w", "net.ipv6.conf.ens19.accept_ra=0"})
+	assertContainsCommand(t, deactivate, []string{"sysctl", "-w", "net.ipv6.conf.lan-vrrp.accept_ra=0"})
+	assertCommandBefore(t, deactivate,
+		[]string{"sysctl", "-w", "net.ipv4.conf.ens19.arp_ignore=1"},
+		[]string{"ip", "link", "set", "dev", "lan-vrrp", "down"},
+	)
+	assertCommandBefore(t, deactivate,
+		[]string{"sysctl", "-w", "net.ipv6.conf.lan-vrrp.accept_ra=0"},
+		[]string{"ip", "link", "set", "dev", "lan-vrrp", "down"},
+	)
+	assertDoesNotContainCommand(t, deactivate, []string{"ip", "-6", "addr", "flush", "dev", "lan-vrrp", "scope", "global", "dynamic"})
+	assertDoesNotContainCommand(t, deactivate, []string{"ip", "-6", "addr", "flush", "dev", "ens19", "scope", "global", "dynamic"})
 	assertCommandBefore(t, deactivate,
 		[]string{"ip", "-6", "addr", "flush", "dev", "lan-vrrp", "scope", "link"},
 		[]string{"ip", "link", "set", "dev", "lan-vrrp", "down"},
