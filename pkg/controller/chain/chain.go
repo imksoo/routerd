@@ -6628,6 +6628,7 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 			ifname = spec.Interface
 		}
 		lines = append(lines, "interface="+ifname, "enable-ra")
+		lines = append(lines, dnsmasqPreviousDelegatedPrefixWithdrawalLines(spec, store, time.Now().UTC())...)
 		var params []string
 		mtu := chainFirstNonZero(raMTUByScope[resource.Metadata.Name], spec.MTU)
 		if mtu != 0 {
@@ -6671,6 +6672,49 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		}
 	}
 	return lines, nil
+}
+
+func dnsmasqPreviousDelegatedPrefixWithdrawalLines(spec api.IPv6RouterAdvertisementSpec, store Store, now time.Time) []string {
+	kind, name, ok := resourcequery.SplitResource(strings.TrimSpace(spec.PrefixFrom.Resource))
+	if !ok || kind != "IPv6DelegatedAddress" || store == nil {
+		return nil
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, kind, name)
+	currentPrefix, _ := netip.ParsePrefix(cleanStatusString(status["address"]))
+	seen := map[string]bool{}
+	var prefixes []string
+	for _, previous := range previousDelegatedAddressesFromStatus(status) {
+		if !now.Before(previous.ExpiresAt) {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(previous.Address))
+		if err != nil || !prefix.Addr().Is6() || prefix.Bits() != 64 {
+			// Only LAN /64 resources feed PIOs. In particular, a DS-Lite
+			// source /128 must never become an advertised LAN prefix.
+			continue
+		}
+		prefix = prefix.Masked()
+		if currentPrefix.IsValid() && currentPrefix.Bits() == prefix.Bits() && currentPrefix.Masked() == prefix {
+			continue
+		}
+		value := prefix.Addr().String()
+		if seen[value] {
+			continue
+		}
+		seen[value] = true
+		prefixes = append(prefixes, value)
+	}
+	sort.Strings(prefixes)
+	lines := make([]string, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		// dnsmasq's deprecated IPv6 range makes the PIO preferred lifetime
+		// zero. Its valid lifetime is read from the matching deprecated
+		// address on the interface, whose finite valid_lft is maintained by
+		// LANAddressController. Keeping this line in generated configuration
+		// makes the withdrawal survive a dnsmasq process restart.
+		lines = append(lines, fmt.Sprintf("dhcp-range=%s,ra-only,64,deprecated", prefix))
+	}
+	return lines
 }
 
 func chainInterfaceAliases(router *api.Router) map[string]string {
