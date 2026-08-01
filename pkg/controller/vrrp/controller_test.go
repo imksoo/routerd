@@ -885,6 +885,85 @@ func TestReconcileCleansStaticVirtualAddressWhenConditionBecomesFalse(t *testing
 	}
 }
 
+func TestReconcileTreatsMissingWhenFalseStaticVirtualAddressAsRemoved(t *testing.T) {
+	store := mapStore{
+		api.NetAPIVersion + "/VirtualAddress/wan-nat-v4": {
+			"phase":     "Pending",
+			"reason":    "WhenFalse",
+			"interface": "wan",
+			"address":   "192.168.1.249/32",
+		},
+	}
+	var calls []string
+	controller := Controller{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18"},
+			},
+		}}},
+		Store:           store,
+		IP:              "ip",
+		OperatingSystem: platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, name+" "+strings.Join(args, " "))
+			return []byte("RTNETLINK answers: Address not found\n"), errors.New("exit status 2")
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile missing address: %v", err)
+	}
+	want := []string{"ip addr del 192.168.1.249/32 dev ens18"}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "wan-nat-v4")
+	if status["phase"] != "Pending" || status["reason"] != "WhenFalse" || status["appliedAddress"] != "" || status["staticAddressRemoved"] != true {
+		t.Fatalf("missing WhenFalse VIP was not recorded as removed: %#v", status)
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("second reconcile repeated cleanup: calls = %#v, want %#v", calls, want)
+	}
+}
+
+func TestReconcileKeepsUnexpectedWhenFalseStaticAddressDeleteErrorHard(t *testing.T) {
+	store := mapStore{
+		api.NetAPIVersion + "/VirtualAddress/wan-nat-v4": {
+			"phase":     "Pending",
+			"reason":    "WhenFalse",
+			"interface": "wan",
+			"address":   "192.168.1.249/32",
+		},
+	}
+	controller := Controller{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.InterfaceSpec{IfName: "ens18"},
+			},
+		}}},
+		Store:           store,
+		IP:              "ip",
+		OperatingSystem: platform.OSLinux,
+		Command: func(context.Context, string, ...string) ([]byte, error) {
+			return []byte("RTNETLINK answers: Operation not permitted\n"), errors.New("exit status 2")
+		},
+	}
+	err := controller.Reconcile(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "Operation not permitted") {
+		t.Fatalf("unexpected delete error = %v, want hard error", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "wan-nat-v4")
+	if status["staticAddressRemoved"] == true {
+		t.Fatalf("failed delete was recorded as removed: %#v", status)
+	}
+}
+
 func TestReconcileStopsKeepalivedWhenVRRPRemoved(t *testing.T) {
 	store := mapStore{}
 	dir := t.TempDir()
