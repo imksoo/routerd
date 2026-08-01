@@ -289,6 +289,7 @@ func staticAddressAlreadyAbsent(err error) bool {
 	message := strings.ToLower(err.Error())
 	return strings.Contains(message, "cannot assign requested address") ||
 		strings.Contains(message, "can't assign requested address") ||
+		strings.Contains(message, "address not found") ||
 		strings.Contains(message, "does not exist")
 }
 
