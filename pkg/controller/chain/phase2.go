@@ -863,6 +863,9 @@ type DHCPv6ServerController struct {
 	Port            int
 	ListenAddresses []string
 	Logger          *slog.Logger
+	Now             func() time.Time
+	RALinkLocal     routerAdvertisementLinkLocalFunc
+	RASender        routerAdvertisementSenderFunc
 }
 
 func (c DHCPv6ServerController) Start(ctx context.Context) {
@@ -1323,6 +1326,11 @@ func (c DHCPv6ServerController) reconcileRouterAdvertisements(ctx context.Contex
 			"pidFile":    pidFile,
 			"renderer":   "dnsmasq",
 			"dryRun":     c.DryRun,
+		}
+		if !c.DryRun {
+			if err := c.advertisePreviousDelegatedPrefixes(ctx, spec); err != nil {
+				return fmt.Errorf("%s advertise previous delegated prefixes: %w", resource.ID(), err)
+			}
 		}
 		status = preserveStatusFields(status, c.Store.ObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name), "managedBy", "unitName")
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, status); err != nil {
