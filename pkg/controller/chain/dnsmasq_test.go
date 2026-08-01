@@ -2391,6 +2391,71 @@ func TestLANAddressControllerKeepsWhenFalseStatusWhenDeleteMissing(t *testing.T)
 	}
 }
 
+func TestLANAddressControllerDeprecatesOnlyDSLiteDelegatedSource(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-vmac"}, Spec: api.InterfaceSpec{IfName: "wan-vmac"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan-vmac"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "ds-source"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "wan-vmac", SubnetID: "1", AddressSuffix: "::23", PrefixLength: 128}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{Interface: "wan-vmac", LocalAddressSource: "delegatedAddress", LocalDelegatedAddress: "ds-source"}},
+	}}}
+	store := statefulDHCPMapStore{mapStore: mapStore{}}
+	store.SaveObjectStatus(api.NetAPIVersion, "Interface", "wan-vmac", map[string]any{"phase": "Up"})
+	store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{"phase": daemonapi.ResourcePhaseBound, "currentPrefix": "2001:db8:1220::/60"})
+	store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "ds-source", map[string]any{
+		"phase": "Applied", "address": "2001:db8:1220:1::23/128", "interface": "wan-vmac", "prefixSource": "wan-pd", "dryRun": false,
+	})
+	var commands []string
+	controller := LANAddressController{
+		Router:                   router,
+		Store:                    store,
+		OperatingSystem:          platform.OSLinux,
+		AddressPresent:           func(context.Context, string, string) bool { return true },
+		DeprecatedAddressPresent: func(context.Context, string, string) bool { return false },
+		Command: func(_ context.Context, name string, args ...string) error {
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return nil
+		},
+	}
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"ip -6 addr replace 2001:db8:1220:1::23/128 dev wan-vmac preferred_lft 0 valid_lft forever"}
+	if !reflect.DeepEqual(commands, want) {
+		t.Fatalf("commands = %#v, want %#v", commands, want)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "ds-source")
+	if status["sourceSelection"] != "deprecated" {
+		t.Fatalf("status = %#v, want deprecated source selection", status)
+	}
+
+	router.Spec.Resources = router.Spec.Resources[:3]
+	store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "ds-source", map[string]any{
+		"phase": "Applied", "address": "2001:db8:1220:1::23/128", "interface": "wan-vmac", "prefixSource": "wan-pd", "dryRun": false,
+	})
+	commands = nil
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	want = []string{"ip -6 addr replace 2001:db8:1220:1::23/128 dev wan-vmac"}
+	if !reflect.DeepEqual(commands, want) {
+		t.Fatalf("ordinary delegated address commands = %#v, want %#v", commands, want)
+	}
+}
+
+func TestDeprecatedIPv6ReadbackRequiresExactPrefixAndFlag(t *testing.T) {
+	out := []byte("7: wan-vmac inet6 2001:db8:1221::23/128 scope global deprecated tentative valid_lft forever preferred_lft 0sec\n")
+	if !ipAddrShowHasDeprecatedIPv6AddressWithPrefix(out, "2001:db8:1221::23/128") {
+		t.Fatal("deprecated tentative standby source was not recognized")
+	}
+	if ipAddrShowHasDeprecatedIPv6AddressWithPrefix(out, "2001:db8:1221::23/64") {
+		t.Fatal("wrong prefix length was recognized")
+	}
+	preferred := []byte("7: wan-vmac inet6 2001:db8:1221::23/128 scope global valid_lft forever preferred_lft forever\n")
+	if ipAddrShowHasDeprecatedIPv6AddressWithPrefix(preferred, "2001:db8:1221::23/128") {
+		t.Fatal("preferred address was recognized as deprecated")
+	}
+}
+
 func TestLocalIPv6AddressKeepsHostBitsFromPrefix(t *testing.T) {
 	got := localIPv6Address("2409:10:3d60:1250::11/64")
 	if got != "2409:10:3d60:1250::11" {

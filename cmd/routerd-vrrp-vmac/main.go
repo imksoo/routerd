@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"strconv"
@@ -117,11 +118,16 @@ func runWithHooks(args []string, hooks runHooks) error {
 		// VMAC route after RA is learned; repeated MASTER reconciliation makes
 		// this converge even when RA arrives after the link is raised.
 		for _, vmac := range opts.vmacs {
+			if vmac.withdraw {
+				continue
+			}
 			output, err := hooks.command("ip", "-6", "route", "show", "default", "dev", vmac.ifname)
 			if err != nil {
 				return fmt.Errorf("read IPv6 default route for %s: %w: %s", vmac.ifname, err, strings.TrimSpace(string(output)))
 			}
-			if command, ok := preferVMACDefaultCommand(string(output), vmac.ifname); ok {
+			addressOutput, _ := hooks.command("ip", "-6", "-o", "addr", "show", "dev", vmac.ifname, "scope", "global")
+			source := preferredVMACGlobalAddress(string(addressOutput))
+			if command, ok := preferVMACDefaultCommand(string(output), vmac.ifname, source); ok {
 				if output, err := hooks.command(command[0], command[1:]...); err != nil {
 					return fmt.Errorf("%s: %w: %s", strings.Join(command, " "), err, strings.TrimSpace(string(output)))
 				}
@@ -295,7 +301,7 @@ func requestRouterAdvertisement(ifname string) error {
 	return err
 }
 
-func preferVMACDefaultCommand(routes, ifname string) ([]string, bool) {
+func preferVMACDefaultCommand(routes, ifname, source string) ([]string, bool) {
 	for _, line := range strings.Split(routes, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 5 || fields[0] != "default" {
@@ -313,10 +319,40 @@ func preferVMACDefaultCommand(routes, ifname string) ([]string, bool) {
 			}
 		}
 		if gateway != "" {
-			return []string{"ip", "-6", "route", "replace", "default", "via", gateway, "dev", ifname, "metric", "50"}, true
+			command := []string{"ip", "-6", "route", "replace", "default", "via", gateway, "dev", ifname, "metric", "50"}
+			if source != "" {
+				command = append(command, "src", source)
+			}
+			return command, true
 		}
 	}
 	return nil, false
+}
+
+func preferredVMACGlobalAddress(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		ineligible := false
+		for _, field := range fields {
+			if field == "tentative" || field == "deprecated" || field == "dadfailed" {
+				ineligible = true
+				break
+			}
+		}
+		if ineligible {
+			continue
+		}
+		for i, field := range fields {
+			if field != "inet6" || i+1 >= len(fields) {
+				continue
+			}
+			prefix, err := netip.ParsePrefix(fields[i+1])
+			if err == nil && prefix.Addr().Is6() && !prefix.Addr().IsLinkLocalUnicast() && prefix.Bits() < 128 {
+				return prefix.Addr().String()
+			}
+		}
+	}
+	return ""
 }
 
 func parseOptions(args []string) (options, error) {

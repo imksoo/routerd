@@ -3953,6 +3953,9 @@ type LANAddressController struct {
 	// StagingAddressPresent is the VMAC standby readback seam. Production uses
 	// the staging-specific Linux readback; tests may inject the same contract.
 	StagingAddressPresent func(context.Context, string, string) bool
+	// DeprecatedAddressPresent verifies that a DS-Lite-only address is not a
+	// preferred source for unrelated host traffic.
+	DeprecatedAddressPresent func(context.Context, string, string) bool
 	// EnsureVMAC is used only for standby staging.  The authoritative VRRP
 	// helper creates the configured macvlan cold and leaves it DOWN.
 	EnsureVMAC          func(context.Context, string) error
@@ -5088,6 +5091,38 @@ func ipAddrShowHasStagedIPv6AddressWithPrefix(out []byte, address string) bool {
 	return false
 }
 
+func ipv6DeprecatedAddressPresentWithPrefix(ctx context.Context, ifname, address string) bool {
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		return true
+	}
+	out, err := exec.CommandContext(ctx, "ip", "-6", "-o", "addr", "show", "dev", ifname).Output()
+	if err != nil {
+		return false
+	}
+	return ipAddrShowHasDeprecatedIPv6AddressWithPrefix(out, address)
+}
+
+func ipAddrShowHasDeprecatedIPv6AddressWithPrefix(out []byte, address string) bool {
+	want, err := netip.ParsePrefix(strings.TrimSpace(address))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] != "inet6" {
+				continue
+			}
+			got, err := netip.ParsePrefix(fields[i+1])
+			if err != nil || got.Addr() != want.Addr() || got.Bits() != want.Bits() {
+				continue
+			}
+			return fieldsContain(fields, "deprecated") && !fieldsContain(fields, "dadfailed")
+		}
+	}
+	return false
+}
+
 func fieldsContain(fields []string, want string) bool {
 	for _, field := range fields {
 		if field == want {
@@ -5133,6 +5168,13 @@ func remainingIPv6ValidLifetime(now, expiresAt time.Time) int64 {
 		return 0
 	}
 	return int64((remaining + time.Second - 1) / time.Second)
+}
+
+func ipv6PermanentDeprecatedAddressApplyCommand(osName platform.OS, ifname, address string) (string, []string) {
+	if osName == platform.OSFreeBSD {
+		return ipv6StaticAddressApplyCommand(osName, ifname, address)
+	}
+	return "ip", []string{"-6", "addr", "replace", address, "dev", ifname, "preferred_lft", "0", "valid_lft", "forever"}
 }
 
 func ipv6StaticAddressDeleteCommand(osName platform.OS, ifname, address string) (string, []string) {
@@ -5367,6 +5409,14 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 			"prefixSource": pdName,
 			"dryRun":       c.DryRun,
 		}
+		sourceRouter := c.DeclaredRouter
+		if sourceRouter == nil {
+			sourceRouter = c.Router
+		}
+		dsliteSource := c.currentOS() == platform.OSLinux && delegatedAddressUsedByDSLite(sourceRouter, resource.Metadata.Name)
+		if dsliteSource {
+			status["sourceSelection"] = "deprecated"
+		}
 		if stagingVMAC {
 			status["staged"] = true
 		}
@@ -5413,7 +5463,15 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		if command == nil {
 			command = runCommandContext
 		}
-		if !c.DryRun && (currentChanged || !addressPresent) {
+		addressDeprecated := true
+		if !c.DryRun && dsliteSource {
+			deprecatedAddressPresent := c.DeprecatedAddressPresent
+			if deprecatedAddressPresent == nil {
+				deprecatedAddressPresent = ipv6DeprecatedAddressPresentWithPrefix
+			}
+			addressDeprecated = deprecatedAddressPresent(ctx, ifname, addr)
+		}
+		if !c.DryRun && (currentChanged || !addressPresent || !addressDeprecated) {
 			if !addressPresent {
 				for _, stale := range ipv6StaticAddressDeleteCandidates(addr) {
 					deleteName, deleteArgs := ipv6StaticAddressDeleteCommand(c.currentOS(), ifname, stale)
@@ -5423,6 +5481,9 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 				}
 			}
 			name, args := ipv6StaticAddressApplyCommand(c.currentOS(), ifname, addr)
+			if dsliteSource {
+				name, args = ipv6PermanentDeprecatedAddressApplyCommand(c.currentOS(), ifname, addr)
+			}
 			if err := command(ctx, name, args...); err != nil {
 				return err
 			}
@@ -5475,7 +5536,7 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, status); err != nil {
 			return err
 		}
-		if (changed || !addressPresent) && c.Bus != nil {
+		if (changed || !addressPresent || !addressDeprecated) && c.Bus != nil {
 			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.lan.address.applied", daemonapi.SeverityInfo)
 			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress", Name: resource.Metadata.Name}
 			event.Attributes = map[string]string{"address": addr, "interface": spec.Interface, "dryRun": fmt.Sprintf("%t", c.DryRun)}
@@ -5485,6 +5546,25 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		}
 	}
 	return nil
+}
+
+func delegatedAddressUsedByDSLite(router *api.Router, name string) bool {
+	if router == nil || strings.TrimSpace(name) == "" {
+		return false
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "DSLiteTunnel" {
+			continue
+		}
+		spec, err := resource.DSLiteTunnelSpec()
+		if err != nil || firstNonEmpty(spec.LocalAddressSource, "interface") != "delegatedAddress" {
+			continue
+		}
+		if strings.TrimSpace(spec.LocalDelegatedAddress) == strings.TrimSpace(name) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c LANAddressController) delegatedAddressDependenciesReady(dependencies []api.ResourceDependencySpec, iface, pdName string, stagingVMAC bool) bool {
