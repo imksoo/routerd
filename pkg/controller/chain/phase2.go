@@ -1518,10 +1518,12 @@ func (c DSLiteTunnelController) localAddress(spec api.DSLiteTunnelSpec) (string,
 type ipJSONAddress struct {
 	Family            string `json:"family"`
 	Local             string `json:"local"`
+	PrefixLen         int    `json:"prefixlen"`
 	Scope             string `json:"scope"`
 	Dynamic           bool   `json:"dynamic"`
 	Temporary         bool   `json:"temporary"`
 	Deprecated        bool   `json:"deprecated"`
+	Tentative         bool   `json:"tentative"`
 	PreferredLifeTime int    `json:"preferred_life_time"`
 }
 
@@ -1557,25 +1559,40 @@ func firstUsableGlobalIPv6(data []byte) string {
 	if err := json.Unmarshal(data, &links); err != nil {
 		return ""
 	}
-	var fallback string
+	var stableSLAAC, onLink, dynamic, fallback string
 	for _, link := range links {
 		for _, info := range link.AddrInfo {
-			if info.Family != "inet6" || info.Local == "" || info.Scope != "global" || info.Deprecated || info.Temporary || info.PreferredLifeTime == 0 {
+			if info.Family != "inet6" || info.Local == "" || info.Scope != "global" || info.Deprecated || info.Temporary || info.Tentative || info.PreferredLifeTime == 0 {
 				continue
 			}
 			if fallback == "" {
 				fallback = info.Local
 			}
-			if info.Dynamic {
-				return info.Local
+			if info.Dynamic && info.PrefixLen == 64 && stableSLAAC == "" {
+				stableSLAAC = info.Local
+			}
+			if info.PrefixLen == 64 && onLink == "" {
+				onLink = info.Local
+			}
+			if info.Dynamic && dynamic == "" {
+				dynamic = info.Local
 			}
 		}
+	}
+	if stableSLAAC != "" {
+		return stableSLAAC
+	}
+	if onLink != "" {
+		return onLink
+	}
+	if dynamic != "" {
+		return dynamic
 	}
 	return fallback
 }
 
 func firstUsableIfconfigGlobalIPv6(data []byte) string {
-	var fallback string
+	var stableSLAAC, onLink, autoconf, fallback string
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(strings.TrimSpace(line))
 		if len(fields) < 2 || fields[0] != "inet6" {
@@ -1588,15 +1605,39 @@ func firstUsableIfconfigGlobalIPv6(data []byte) string {
 			continue
 		}
 		text := strings.Join(fields[2:], " ")
-		if strings.Contains(text, "deprecated") || strings.Contains(text, "temporary") {
+		if strings.Contains(text, "deprecated") || strings.Contains(text, "temporary") || strings.Contains(text, "tentative") {
 			continue
 		}
 		if fallback == "" {
 			fallback = addr.String()
 		}
-		if strings.Contains(text, "autoconf") {
-			return addr.String()
+		prefixLen := 0
+		for i := 2; i+1 < len(fields); i++ {
+			if fields[i] != "prefixlen" {
+				continue
+			}
+			prefixLen, _ = strconv.Atoi(fields[i+1])
+			break
 		}
+		isAutoconf := strings.Contains(text, "autoconf")
+		if isAutoconf && prefixLen == 64 && stableSLAAC == "" {
+			stableSLAAC = addr.String()
+		}
+		if prefixLen == 64 && onLink == "" {
+			onLink = addr.String()
+		}
+		if isAutoconf && autoconf == "" {
+			autoconf = addr.String()
+		}
+	}
+	if stableSLAAC != "" {
+		return stableSLAAC
+	}
+	if onLink != "" {
+		return onLink
+	}
+	if autoconf != "" {
+		return autoconf
 	}
 	return fallback
 }

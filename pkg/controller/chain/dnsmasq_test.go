@@ -3198,10 +3198,26 @@ func TestFirstUsableGlobalIPv6PrefersDynamicStableAddress(t *testing.T) {
 	}
 }
 
+func TestFirstUsableGlobalIPv6PrefersOnLinkSLAACOverDelegatedEndpoints(t *testing.T) {
+	data := []byte(`[{"ifname":"wan-vmac","addr_info":[
+		{"family":"inet6","local":"2409:10:3d60:1221::23","prefixlen":128,"scope":"global","dynamic":true,"preferred_life_time":1000},
+		{"family":"inet6","local":"2409:10:3d60:1200::10","prefixlen":64,"scope":"global","dynamic":true,"temporary":true,"preferred_life_time":1000},
+		{"family":"inet6","local":"2409:10:3d60:1200::11","prefixlen":64,"scope":"global","dynamic":true,"deprecated":true,"preferred_life_time":1000},
+		{"family":"inet6","local":"2409:10:3d60:1200::12","prefixlen":64,"scope":"global","dynamic":true,"tentative":true,"preferred_life_time":1000},
+		{"family":"inet6","local":"2409:10:3d60:1200:0:5eff:fe00:113","prefixlen":64,"scope":"global","dynamic":true,"preferred_life_time":1000}
+	]}]`)
+	want := "2409:10:3d60:1200:0:5eff:fe00:113"
+	if got := firstUsableGlobalIPv6(data); got != want {
+		t.Fatalf("firstUsableGlobalIPv6 = %q, want %q", got, want)
+	}
+}
+
 func TestFirstUsableIfconfigGlobalIPv6PrefersAutoconf(t *testing.T) {
 	data := []byte(`vtnet0: flags=...
 	inet6 fe80::be24:11ff:fefb:928d%vtnet0 prefixlen 64 scopeid 0x1
 	inet6 2409:10:3d60:1200::dead prefixlen 64 temporary
+	inet6 2409:10:3d60:1200::23 prefixlen 128 autoconf
+	inet6 2409:10:3d60:1200::24 prefixlen 64 tentative autoconf
 	inet6 2409:10:3d60:1200:be24:11ff:fefb:928d prefixlen 64 autoconf
 `)
 	if got := firstUsableIfconfigGlobalIPv6(data); got != "2409:10:3d60:1200:be24:11ff:fefb:928d" {
