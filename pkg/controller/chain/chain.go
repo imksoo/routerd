@@ -1719,9 +1719,6 @@ func (r *Runner) Start(ctx context.Context) error {
 		logger = slog.Default()
 	}
 	store := eventedStore{Store: r.Store, Bus: r.Bus, Router: r.Router}
-	if r.Opts.SuperviseClientDaemons && r.controllerEnabled("daemon-supervisor") {
-		r.reconcileSupervisedClientDaemons(ctx, r.daemonSupervisionRouter(store), logger)
-	}
 	for _, resource := range r.Router.Spec.Resources {
 		if resource.Kind != "DHCPv6PrefixDelegation" {
 			continue
@@ -2294,10 +2291,6 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(observabilityPipeline.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "daemon-status", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv6.client.**", "routerd.dhcpv4.client.**", "routerd.healthcheck.**", "routerd.pppoe.client.**", "routerd.mobility.arp.**", "routerd.mobility.pve-svnet.**"}}}, PeriodicFunc: didWorkPeriodic(daemonStatusSync.Reconcile)},
-		framework.FuncController{ControllerName: "daemon-supervisor", Every: 5 * time.Second, Subs: whenStatusSubscriptions(r.Router, "DNSResolver", "DHCPv6PrefixDelegation", "DHCPv4Client", "PPPoESession"), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			r.reconcileSupervisedClientDaemons(ctx, r.daemonSupervisionRouter(store), logger)
-			return false, nil
-		}},
 		framework.FuncController{ControllerName: "dhcp-lease-sync", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync"}, "DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
@@ -2673,6 +2666,13 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			vrrp.Router = effective
 			return didWorkError(vrrp.Reconcile(ctx))
+		}},
+		// Client daemons with a VRRP role condition must be supervised only
+		// after this generation has observed the kernel-owned VIP.  A persisted
+		// role from the previous process is not authoritative during startup.
+		framework.FuncController{ControllerName: "daemon-supervisor", Every: 5 * time.Second, Subs: whenStatusSubscriptions(r.Router, "DNSResolver", "DHCPv6PrefixDelegation", "DHCPv4Client", "PPPoESession"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+			r.reconcileSupervisedClientDaemons(ctx, r.daemonSupervisionRouter(store), logger)
+			return false, nil
 		}},
 		framework.FuncController{ControllerName: "ip-address-set", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"}, "IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
