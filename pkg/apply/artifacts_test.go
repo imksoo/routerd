@@ -341,11 +341,6 @@ func TestLinuxServiceArtifactIntentsUseSystemd(t *testing.T) {
 			Spec:     api.TailscaleNodeSpec{},
 		},
 		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
-			Metadata: api.ObjectMeta{Name: "wan-pd"},
-			Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan"},
-		},
-		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
 			Metadata: api.ObjectMeta{Name: "lan-dhcp"},
 			Spec:     api.DHCPv4ServerSpec{Server: "dnsmasq"},
@@ -368,6 +363,37 @@ func TestLinuxServiceArtifactIntentsUseSystemd(t *testing.T) {
 			}
 			if !hasArtifactKind(intents, wantKind) {
 				t.Fatalf("%s missing %s intent: %+v", res.Kind, wantKind, intents)
+			}
+		})
+	}
+}
+
+func TestDHCPv6PrefixDelegationArtifactIsOwnedByRouterdServe(t *testing.T) {
+	res := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
+		Metadata: api.ObjectMeta{Name: "wan-pd"},
+		Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan"},
+	}
+	platforms := []struct {
+		name     string
+		targetOS platform.OS
+		features platform.Features
+	}{
+		{name: "linux", targetOS: platform.OSLinux, features: platform.Features{HasSystemd: true}},
+		{name: "freebsd", targetOS: platform.OSFreeBSD, features: platform.Features{HasRCD: true}},
+	}
+	for _, platformCase := range platforms {
+		t.Run(platformCase.name, func(t *testing.T) {
+			intents := resourceArtifactIntentsForPlatform(res, map[string]string{"wan": "eth1"}, platformCase.targetOS, platformCase.features)
+			if len(intents) != 1 {
+				t.Fatalf("DHCPv6PrefixDelegation intents = %+v, want one routerd-owned intent", intents)
+			}
+			intent := intents[0]
+			if intent.Artifact.Kind != "routerd.dhcpv6.prefixDelegation" || intent.Artifact.Name != "wan-pd" || intent.ApplyWith != "routerd-serve" {
+				t.Fatalf("DHCPv6PrefixDelegation intent = %+v, want routerd serve ownership", intent)
+			}
+			if intent.Artifact.Kind == "systemd.service" || intent.Artifact.Kind == "rc.d.service" {
+				t.Fatalf("DHCPv6PrefixDelegation must not declare a legacy service: %+v", intent)
 			}
 		})
 	}
@@ -404,11 +430,6 @@ func TestServiceDeclarationsUsePlatformManagerMatrix(t *testing.T) {
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"},
 			Metadata: api.ObjectMeta{Name: "lan-dhcpv6"},
 			Spec:     api.DHCPv6ServerSpec{Server: "dnsmasq"},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
-			Metadata: api.ObjectMeta{Name: "wan-pd"},
-			Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan"},
 		},
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},

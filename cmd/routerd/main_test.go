@@ -455,6 +455,16 @@ func TestEnsureFreeBSDStrongSwanFailsClosedWhenIPsecModuleLoadFails(t *testing.T
 	}
 }
 
+func TestApplyChainControllerOptionsSkipLegacyClientUnits(t *testing.T) {
+	opts := applyChainControllerOptions(applyOptions{})
+	if !opts.SkipLegacyClientUnits {
+		t.Fatal("one-shot apply must not synthesize legacy DHCP client service units")
+	}
+	if opts.SuperviseClientDaemons {
+		t.Fatal("one-shot apply must leave client daemon supervision to long-running routerd")
+	}
+}
+
 func TestRunApplyChainOnceDryRunDoesNotCreateStateDB(t *testing.T) {
 	dir := t.TempDir()
 	stateDir := filepath.Join(dir, "state")

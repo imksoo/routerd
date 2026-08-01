@@ -669,6 +669,7 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 func applyChainControllerOptions(opts applyOptions) controllerchain.Options {
 	controllerOpts := controllerchain.Options{
 		SuperviseClientDaemons: false,
+		SkipLegacyClientUnits:  true,
 		SuperviseDNSResolvers:  false,
 		DnsmasqCommand:         "dnsmasq",
 		DnsmasqConfig:          defaultString(opts.DnsmasqConfigPath, defaultDnsmasqConfigPath),
