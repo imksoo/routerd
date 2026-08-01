@@ -1878,25 +1878,36 @@ func ensureDSLiteTunnel(ctx context.Context, router *api.Router, spec api.DSLite
 		return ensureFreeBSDDSLiteTunnel(ctx, spec, ifname, remote, local, innerLocal)
 	}
 	show, showErr := exec.CommandContext(ctx, "ip", "-6", "tunnel", "show", ifname).CombinedOutput()
-	if showErr == nil && strings.Contains(string(show), "remote "+remote) && strings.Contains(string(show), "local "+local) {
+	underlay := interfaceName(router, spec.Interface)
+	if underlay == ifname {
+		underlay = ""
+	}
+	encapLimit := firstNonEmpty(spec.EncapsulationLimit, "none")
+	if showErr == nil && linuxDSLiteTunnelMatches(show, remote, local, underlay, encapLimit) {
 		if err := ensureLinuxDSLiteInnerIPv4(ctx, ifname, innerLocal); err != nil {
 			return "", err
 		}
 		return ifname, nil
 	}
-	_ = exec.CommandContext(ctx, "ip", "-6", "tunnel", "del", ifname).Run()
-	args := []string{"-6", "tunnel", "add", ifname, "mode", "ipip6", "remote", remote, "local", local}
-	if underlay := interfaceName(router, spec.Interface); underlay != "" && underlay != ifname {
-		args = append(args, "dev", underlay)
+	operation := "add"
+	if showErr == nil {
+		// Updating an owned tunnel in place avoids the delete/add gap. In
+		// particular, keep the previous usable tunnel when the kernel rejects a
+		// newly selected endpoint and let the next reconcile retry the change.
+		operation = "change"
+	} else if !linuxDSLiteTunnelMissing(show) {
+		return "", fmt.Errorf("ip -6 tunnel show %s: %w: %s", ifname, showErr, strings.TrimSpace(string(show)))
 	}
-	args = append(args, "encaplimit", firstNonEmpty(spec.EncapsulationLimit, "none"))
+	args := linuxDSLiteTunnelApplyArgs(operation, ifname, remote, local, underlay, encapLimit)
 	out, err := exec.CommandContext(ctx, "ip", args...).CombinedOutput()
 	if err != nil {
-		if existing := existingDSLiteTunnel(ctx, remote, local); existing != "" {
-			if err := ensureLinuxDSLiteInnerIPv4(ctx, existing, innerLocal); err != nil {
-				return "", err
+		if operation == "add" {
+			if existing := existingDSLiteTunnel(ctx, remote, local); existing != "" {
+				if err := ensureLinuxDSLiteInnerIPv4(ctx, existing, innerLocal); err != nil {
+					return "", err
+				}
+				return existing, nil
 			}
-			return existing, nil
 		}
 		return "", fmt.Errorf("ip %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
@@ -1904,6 +1915,63 @@ func ensureDSLiteTunnel(ctx context.Context, router *api.Router, spec api.DSLite
 		return "", err
 	}
 	return ifname, nil
+}
+
+func linuxDSLiteTunnelApplyArgs(operation, ifname, remote, local, underlay, encapLimit string) []string {
+	args := []string{"-6", "tunnel", operation, ifname, "mode", "ipip6", "remote", remote, "local", local}
+	if underlay != "" && underlay != ifname {
+		args = append(args, "dev", underlay)
+	}
+	return append(args, "encaplimit", encapLimit)
+}
+
+func linuxDSLiteTunnelMatches(show []byte, remote, local, underlay, encapLimit string) bool {
+	fields := strings.Fields(string(show))
+	if len(fields) == 0 || !fieldsContain(fields, "ip/ipv6") {
+		return false
+	}
+	want := map[string]string{
+		"remote":     canonicalIPAddress(remote),
+		"local":      canonicalIPAddress(local),
+		"encaplimit": strings.TrimSpace(encapLimit),
+	}
+	if underlay != "" {
+		want["dev"] = strings.TrimSpace(underlay)
+	}
+	for key, value := range want {
+		if value == "" || linuxTunnelField(fields, key) != value {
+			return false
+		}
+	}
+	return true
+}
+
+func linuxTunnelField(fields []string, key string) string {
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] != key {
+			continue
+		}
+		if key == "local" || key == "remote" {
+			return canonicalIPAddress(fields[i+1])
+		}
+		return strings.TrimSpace(fields[i+1])
+	}
+	return ""
+}
+
+func canonicalIPAddress(value string) string {
+	addr, err := netip.ParseAddr(strings.TrimSpace(value))
+	if err != nil {
+		return ""
+	}
+	return addr.String()
+}
+
+func linuxDSLiteTunnelMissing(output []byte) bool {
+	message := strings.ToLower(string(output))
+	return strings.Contains(message, "cannot find device") ||
+		strings.Contains(message, "does not exist") ||
+		strings.Contains(message, "no such device")
 }
 
 func existingDSLiteTunnel(ctx context.Context, remote, local string) string {
