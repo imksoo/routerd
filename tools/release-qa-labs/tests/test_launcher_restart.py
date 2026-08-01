@@ -31,6 +31,7 @@ class LauncherRestartTests(unittest.TestCase):
                 if kind == "directory":
                     nested = source / "nested"
                     nested.mkdir(mode=0o755)
+                    nested.chmod(0o755)
                 elif kind == "file":
                     profile.chmod(0o644)
                 run_env = runtime / "run.env.json"
