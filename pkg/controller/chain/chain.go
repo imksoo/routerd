@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -3957,9 +3956,6 @@ type LANAddressController struct {
 	// DeprecatedAddressPresent verifies that a DS-Lite-only address is not a
 	// preferred source for unrelated host traffic.
 	DeprecatedAddressPresent func(context.Context, string, string) bool
-	// CommandOutput is the readback seam used to repair already-present
-	// DS-Lite-only /128 addresses even when no current PD status is available.
-	CommandOutput func(context.Context, string, ...string) ([]byte, error)
 	// EnsureVMAC is used only for standby staging.  The authoritative VRRP
 	// helper creates the configured macvlan cold and leaves it DOWN.
 	EnsureVMAC          func(context.Context, string) error
@@ -5312,9 +5308,6 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 	if err := c.cleanupWhenFalseIPv6DelegatedAddresses(ctx, pdName); err != nil {
 		return err
 	}
-	if err := c.repairExistingDSLiteSourcePreference(ctx, pdName); err != nil {
-		return err
-	}
 	pdStatus := c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", pdName)
 	activePD := statusStringPreferObserved(pdStatus, "phase") == daemonapi.ResourcePhaseBound
 	prefix := ""
@@ -5555,132 +5548,29 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 	return nil
 }
 
-type dsliteSourcePreferenceTarget struct {
-	ifname string
-	suffix netip.Addr
-}
-
-func (c LANAddressController) repairExistingDSLiteSourcePreference(ctx context.Context, pdName string) error {
-	if c.DryRun || c.currentOS() == platform.OSFreeBSD {
-		return nil
-	}
-	declared := c.DeclaredRouter
-	if declared == nil {
-		declared = c.Router
-	}
-	if declared == nil {
-		return nil
-	}
-	delegated := map[string]api.IPv6DelegatedAddressSpec{}
-	for _, resource := range declared.Spec.Resources {
-		if resource.Kind != "IPv6DelegatedAddress" {
-			continue
-		}
-		spec, err := resource.IPv6DelegatedAddressSpec()
-		if err != nil {
-			return err
-		}
-		if spec.PrefixDelegation == pdName && spec.PrefixLength == 128 {
-			delegated[resource.Metadata.Name] = spec
-		}
-	}
-	var targets []dsliteSourcePreferenceTarget
-	seen := map[string]bool{}
-	for _, resource := range declared.Spec.Resources {
-		if resource.Kind != "DSLiteTunnel" {
-			continue
-		}
-		spec, err := resource.DSLiteTunnelSpec()
-		if err != nil {
-			return err
-		}
-		if firstNonEmpty(spec.LocalAddressSource, "interface") != "delegatedAddress" {
-			continue
-		}
-		addressSpec, ok := delegated[strings.TrimSpace(spec.LocalDelegatedAddress)]
-		if !ok {
-			continue
-		}
-		ifname := interfaceIfName(declared, addressSpec.Interface)
-		if ifname == "" {
-			ifname = addressSpec.Interface
-		}
-		suffix, err := netip.ParseAddr(firstNonEmpty(strings.TrimSpace(addressSpec.AddressSuffix), "::"))
-		if err != nil || !suffix.Is6() {
-			return fmt.Errorf("IPv6DelegatedAddress/%s has invalid addressSuffix %q", spec.LocalDelegatedAddress, addressSpec.AddressSuffix)
-		}
-		key := ifname + "|" + suffix.String()
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		targets = append(targets, dsliteSourcePreferenceTarget{ifname: ifname, suffix: suffix})
-	}
-	if len(targets) == 0 {
-		return nil
-	}
-	commandOutput := c.CommandOutput
-	if commandOutput == nil {
-		commandOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-			return exec.CommandContext(ctx, name, args...).Output()
-		}
-	}
-	command := c.Command
-	if command == nil {
-		command = runCommandContext
-	}
-	byInterface := map[string][]dsliteSourcePreferenceTarget{}
-	for _, candidate := range targets {
-		byInterface[candidate.ifname] = append(byInterface[candidate.ifname], candidate)
-	}
-	for ifname, candidates := range byInterface {
-		out, err := commandOutput(ctx, "ip", "-6", "-o", "addr", "show", "dev", ifname, "scope", "global")
-		if err != nil {
-			continue
-		}
-		for _, address := range existingPreferredIPv6HostAddresses(out, candidates) {
-			name, args := ipv6PermanentDeprecatedAddressApplyCommand(c.currentOS(), ifname, address)
-			if err := command(ctx, name, args...); err != nil {
-				return fmt.Errorf("deprecate existing DS-Lite source %s on %s: %w", address, ifname, err)
-			}
-		}
-	}
-	return nil
-}
-
-func existingPreferredIPv6HostAddresses(out []byte, targets []dsliteSourcePreferenceTarget) []string {
-	var addresses []string
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(line)
-		if fieldsContain(fields, "deprecated") || fieldsContain(fields, "dadfailed") {
-			continue
-		}
-		for i := 0; i+1 < len(fields); i++ {
-			if fields[i] != "inet6" {
-				continue
-			}
-			prefix, err := netip.ParsePrefix(fields[i+1])
-			if err != nil || !prefix.Addr().Is6() || prefix.Bits() != 128 {
-				continue
-			}
-			for _, target := range targets {
-				if ipv6AddressHostSuffix64(prefix.Addr()) == ipv6AddressHostSuffix64(target.suffix) {
-					addresses = append(addresses, prefix.String())
-					break
-				}
-			}
-		}
-	}
-	return addresses
-}
-
-func ipv6AddressHostSuffix64(address netip.Addr) uint64 {
-	bytes := address.As16()
-	return binary.BigEndian.Uint64(bytes[8:])
-}
-
 func delegatedAddressUsedByDSLite(router *api.Router, name string) bool {
 	if router == nil || strings.TrimSpace(name) == "" {
+		return false
+	}
+	var delegated api.IPv6DelegatedAddressSpec
+	found := false
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "IPv6DelegatedAddress" || resource.Metadata.Name != strings.TrimSpace(name) {
+			continue
+		}
+		var err error
+		delegated, err = resource.IPv6DelegatedAddressSpec()
+		if err != nil || delegated.PrefixLength != 128 {
+			return false
+		}
+		found = true
+		break
+	}
+	if !found {
+		return false
+	}
+	delegatedSuffix, err := netip.ParseAddr(firstNonEmpty(strings.TrimSpace(delegated.AddressSuffix), "::1"))
+	if err != nil || !delegatedSuffix.Is6() {
 		return false
 	}
 	for _, resource := range router.Spec.Resources {
@@ -5691,7 +5581,11 @@ func delegatedAddressUsedByDSLite(router *api.Router, name string) bool {
 		if err != nil || firstNonEmpty(spec.LocalAddressSource, "interface") != "delegatedAddress" {
 			continue
 		}
-		if strings.TrimSpace(spec.LocalDelegatedAddress) == strings.TrimSpace(name) {
+		if strings.TrimSpace(spec.LocalDelegatedAddress) != strings.TrimSpace(name) {
+			continue
+		}
+		endpointSuffix, err := netip.ParseAddr(firstNonEmpty(strings.TrimSpace(spec.LocalAddressSuffix), strings.TrimSpace(delegated.AddressSuffix), "::1"))
+		if err == nil && endpointSuffix.Is6() && endpointSuffix == delegatedSuffix {
 			return true
 		}
 	}

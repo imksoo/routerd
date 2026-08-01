@@ -139,6 +139,16 @@ func dsliteDelegatedAddressSources(router *api.Router) map[string]bool {
 	if router == nil {
 		return out
 	}
+	delegated := map[string]api.IPv6DelegatedAddressSpec{}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "IPv6DelegatedAddress" {
+			continue
+		}
+		spec, err := resource.IPv6DelegatedAddressSpec()
+		if err == nil {
+			delegated[resource.Metadata.Name] = spec
+		}
+	}
 	for _, resource := range router.Spec.Resources {
 		if resource.Kind != "DSLiteTunnel" {
 			continue
@@ -147,7 +157,14 @@ func dsliteDelegatedAddressSources(router *api.Router) map[string]bool {
 		if err != nil || defaultString(spec.LocalAddressSource, "interface") != "delegatedAddress" {
 			continue
 		}
-		if name := strings.TrimSpace(spec.LocalDelegatedAddress); name != "" {
+		name := strings.TrimSpace(spec.LocalDelegatedAddress)
+		addressSpec, ok := delegated[name]
+		if !ok || addressSpec.PrefixLength != 128 {
+			continue
+		}
+		addressSuffix, addressErr := netip.ParseAddr(defaultString(strings.TrimSpace(addressSpec.AddressSuffix), "::1"))
+		endpointSuffix, endpointErr := netip.ParseAddr(defaultString(strings.TrimSpace(spec.LocalAddressSuffix), defaultString(strings.TrimSpace(addressSpec.AddressSuffix), "::1")))
+		if addressErr == nil && endpointErr == nil && addressSuffix == endpointSuffix {
 			out[name] = true
 		}
 	}
