@@ -245,6 +245,75 @@ func TestClientSnapshotIsDBFriendly(t *testing.T) {
 	}
 }
 
+func TestClientRetainsMultipleUnexpiredPreviousPrefixes(t *testing.T) {
+	now := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
+	client, err := New(Config{
+		Resource:   "wan-pd",
+		Interface:  "wan-vmac",
+		ClientDUID: []byte{0, 3, 0, 1, 2, 0, 0, 0, 1, 3},
+		IAID:       7,
+		Now:        func() time.Time { return now },
+	}, &memoryTransport{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply := func(prefix string, valid uint32) {
+		client.acceptReply(Message{
+			Prefix:     netip.MustParsePrefix(prefix),
+			ServerDUID: []byte{0, 3, 0, 1, 2, 0, 0, 0, 0, 1},
+			IAID:       7,
+			Preferred:  valid,
+			Valid:      valid,
+		})
+	}
+
+	reply("2001:db8:1200:1220::/60", 600)
+	now = now.Add(10 * time.Second)
+	reply("2001:db8:1200:1240::/60", 300)
+	now = now.Add(10 * time.Second)
+	reply("2001:db8:1200:1220::/60", 600)
+	now = now.Add(10 * time.Second)
+	reply("2001:db8:1200:1230::/60", 200)
+	now = now.Add(10 * time.Second)
+	reply("2001:db8:1200:1220::/60", 600)
+
+	snapshot := client.Snapshot()
+	if got, want := snapshot.CurrentPrefix, "2001:db8:1200:1220::/60"; got != want {
+		t.Fatalf("current prefix = %q, want %q", got, want)
+	}
+	if got, want := len(snapshot.PreviousPrefixes), 2; got != want {
+		t.Fatalf("previous prefix count = %d, want %d: %+v", got, want, snapshot.PreviousPrefixes)
+	}
+	if got, want := snapshot.PreviousPrefixes[0].Prefix, "2001:db8:1200:1230::/60"; got != want {
+		t.Fatalf("previous[0] = %q, want %q", got, want)
+	}
+	if got, want := snapshot.PreviousPrefixes[0].ExpiresAt, time.Date(2026, 8, 1, 9, 3, 50, 0, time.UTC); !got.Equal(want) {
+		t.Fatalf("1230 expiry = %s, want %s", got, want)
+	}
+	if got, want := snapshot.PreviousPrefixes[1].Prefix, "2001:db8:1200:1240::/60"; got != want {
+		t.Fatalf("previous[1] = %q, want %q", got, want)
+	}
+	if got, want := snapshot.PreviousPrefixes[1].ExpiresAt, time.Date(2026, 8, 1, 9, 5, 10, 0, time.UTC); !got.Equal(want) {
+		t.Fatalf("1240 expiry = %s, want %s", got, want)
+	}
+
+	restored, err := New(client.Config, &memoryTransport{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored.Restore(snapshot)
+	if got := restored.Snapshot().PreviousPrefixes; len(got) != 2 {
+		t.Fatalf("restored previous prefixes = %+v", got)
+	}
+
+	now = time.Date(2026, 8, 1, 9, 4, 0, 0, time.UTC)
+	client.prunePreviousPrefixes(now)
+	got := client.Snapshot().PreviousPrefixes
+	if len(got) != 1 || got[0].Prefix != "2001:db8:1200:1240::/60" {
+		t.Fatalf("previous prefixes after expiry = %+v", got)
+	}
+}
+
 func TestRestoreBoundSnapshotRejectsStaleOrForeignIdentity(t *testing.T) {
 	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
 	duid := []byte{0, 3, 0, 1, 2, 0, 0, 0, 1, 3}

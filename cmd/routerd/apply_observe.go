@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -63,8 +64,10 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 		prefixLength := api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength)
 		base := "ipv6PrefixDelegation." + res.Metadata.Name
 		lease, _ := routerstate.PDLeaseFromStore(store, base)
+		managedSnapshotFresh := false
 		if snapshot, ok := managedPDClientSnapshot(res.Metadata.Name, aliases[spec.Interface], spec, store.Now()); ok {
 			lease = mergePDLeaseSnapshot(lease, snapshot)
+			managedSnapshotFresh = true
 		}
 		previousClient := store.Get(base + ".client").Value
 		if previousClient != "" && previousClient != client {
@@ -99,6 +102,9 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 		}
 
 		var observedPrefix, observedIfname string
+		if managedSnapshotFresh {
+			observedPrefix = lease.CurrentPrefix
+		}
 		for _, delegated := range delegatedByPD[res.Metadata.Name] {
 			delegatedSpec, err := delegated.IPv6DelegatedAddressSpec()
 			if err != nil {
@@ -110,6 +116,9 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 			}
 			prefix, ok := delegatedPrefixFromObservedInterface(ifname, prefixLength, delegatedAddressSuffixes(delegatedByPD[res.Metadata.Name]))
 			if ok {
+				if managedSnapshotFresh && prefix != observedPrefix {
+					continue
+				}
 				observedPrefix = prefix
 				observedIfname = ifname
 				break
@@ -211,8 +220,45 @@ func managedPDClientSnapshotMatches(snapshot pdclient.Snapshot, resource, ifname
 }
 
 func mergePDLeaseSnapshot(lease routerstate.PDLease, snapshot pdclient.Snapshot) routerstate.PDLease {
+	legacyPrefix := lease.LastPrefix
+	legacyExpiresAt := time.Time{}
+	if lastReplyAt, err := time.Parse(time.RFC3339Nano, lease.LastReplyAt); err == nil {
+		if validSeconds, err := strconv.ParseInt(lease.VLTime, 10, 64); err == nil && validSeconds > 0 {
+			legacyExpiresAt = lastReplyAt.Add(time.Duration(validSeconds) * time.Second)
+		}
+	}
 	lease.CurrentPrefix = snapshot.CurrentPrefix
 	lease.LastPrefix = snapshot.CurrentPrefix
+	now := snapshot.UpdatedAt
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	previousByPrefix := make(map[string]time.Time, len(lease.PreviousPrefixes)+len(snapshot.PreviousPrefixes)+1)
+	for _, previous := range lease.PreviousPrefixes {
+		if previous.Prefix != "" && previous.Prefix != snapshot.CurrentPrefix && now.Before(previous.ExpiresAt) {
+			previousByPrefix[previous.Prefix] = previous.ExpiresAt
+		}
+	}
+	for _, previous := range snapshot.PreviousPrefixes {
+		if previous.Prefix == "" || previous.Prefix == snapshot.CurrentPrefix || !now.Before(previous.ExpiresAt) {
+			continue
+		}
+		previousByPrefix[previous.Prefix] = previous.ExpiresAt
+	}
+	if legacyPrefix != "" && legacyPrefix != snapshot.CurrentPrefix && now.Before(legacyExpiresAt) {
+		if expiresAt, exists := previousByPrefix[legacyPrefix]; !exists || expiresAt.Before(legacyExpiresAt) {
+			previousByPrefix[legacyPrefix] = legacyExpiresAt
+		}
+	}
+	previousPrefixes := make([]string, 0, len(previousByPrefix))
+	for prefix := range previousByPrefix {
+		previousPrefixes = append(previousPrefixes, prefix)
+	}
+	sort.Strings(previousPrefixes)
+	lease.PreviousPrefixes = make([]routerstate.PDPreviousPrefix, 0, len(previousPrefixes))
+	for _, prefix := range previousPrefixes {
+		lease.PreviousPrefixes = append(lease.PreviousPrefixes, routerstate.PDPreviousPrefix{Prefix: prefix, ExpiresAt: previousByPrefix[prefix]})
+	}
 	if !snapshot.UpdatedAt.IsZero() {
 		lease.LastObservedAt = snapshot.UpdatedAt.Format(time.RFC3339)
 	}

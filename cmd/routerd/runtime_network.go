@@ -27,7 +27,7 @@ import (
 
 func applyIPv6DelegatedAddressesWithState(router *api.Router, store routerstate.Store) ([]string, error) {
 	aliases := map[string]string{}
-	pdPrefixes := map[string]string{}
+	pdLeases := map[string]routerstate.PDLease{}
 	pdResources := map[string]bool{}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
@@ -44,9 +44,7 @@ func applyIPv6DelegatedAddressesWithState(router *api.Router, store routerstate.
 			}
 			base := "ipv6PrefixDelegation." + res.Metadata.Name
 			lease, _ := routerstate.PDLeaseFromStore(store, base)
-			if lease.CurrentPrefix != "" {
-				pdPrefixes[res.Metadata.Name] = lease.CurrentPrefix
-			}
+			pdLeases[res.Metadata.Name] = lease
 		}
 	}
 	var applied []string
@@ -63,8 +61,10 @@ func applyIPv6DelegatedAddressesWithState(router *api.Router, store routerstate.
 			return nil, fmt.Errorf("%s references interface with empty ifname", res.ID())
 		}
 		var address string
+		var previousAddresses []routerstate.PDPreviousPrefix
 		if store != nil && pdResources[spec.PrefixDelegation] {
-			prefix := pdPrefixes[spec.PrefixDelegation]
+			lease := pdLeases[spec.PrefixDelegation]
+			prefix := lease.CurrentPrefix
 			if prefix == "" {
 				applied = append(applied, "skipped-unavailable:"+ifname)
 				continue
@@ -73,6 +73,16 @@ func applyIPv6DelegatedAddressesWithState(router *api.Router, store routerstate.
 			address, err = deriveIPv6AddressFromDelegatedPrefix(prefix, spec.SubnetID, spec.AddressSuffix)
 			if err != nil {
 				return nil, fmt.Errorf("%s derive delegated address from state: %w", res.ID(), err)
+			}
+			if spec.PrefixLength != 128 {
+				for _, previous := range lease.ValidPreviousPrefixes(time.Now().UTC()) {
+					previousAddress, err := deriveIPv6AddressFromDelegatedPrefix(previous.Prefix, spec.SubnetID, spec.AddressSuffix)
+					if err != nil {
+						return nil, fmt.Errorf("%s derive previous delegated address from state: %w", res.ID(), err)
+					}
+					previous.Prefix = previousAddress
+					previousAddresses = append(previousAddresses, previous)
+				}
 			}
 		} else {
 			var err error
@@ -85,7 +95,11 @@ func applyIPv6DelegatedAddressesWithState(router *api.Router, store routerstate.
 				return nil, fmt.Errorf("%s derive delegated address: %w", res.ID(), err)
 			}
 		}
-		removed, err := cleanupConflictingIPv6SuffixAddresses(ifname, address, spec.AddressSuffix)
+		preserved := make([]string, 0, len(previousAddresses))
+		for _, previous := range previousAddresses {
+			preserved = append(preserved, previous.Prefix)
+		}
+		removed, err := cleanupConflictingIPv6SuffixAddresses(ifname, address, spec.AddressSuffix, preserved...)
 		if err != nil {
 			return nil, fmt.Errorf("%s cleanup stale delegated address: %w", res.ID(), err)
 		}
@@ -97,17 +111,34 @@ func applyIPv6DelegatedAddressesWithState(router *api.Router, store routerstate.
 		if ensured {
 			applied = append(applied, ifname+":"+address)
 		}
+		for _, previous := range previousAddresses {
+			remaining := remainingValidLifetimeSeconds(time.Now().UTC(), previous.ExpiresAt)
+			if remaining == 0 {
+				continue
+			}
+			ensured, err := ensureDeprecatedIPv6LocalAddress(ifname, previous.Prefix, remaining)
+			if err != nil {
+				return nil, fmt.Errorf("%s ensure previous delegated address: %w", res.ID(), err)
+			}
+			if ensured {
+				applied = append(applied, ifname+":"+previous.Prefix+":deprecated")
+			}
+		}
 	}
 	return applied, nil
 }
 
-func cleanupConflictingIPv6SuffixAddresses(ifname, desiredAddress, suffix string) ([]string, error) {
+func cleanupConflictingIPv6SuffixAddresses(ifname, desiredAddress, suffix string, preservedAddresses ...string) ([]string, error) {
 	suffixAddr, err := netip.ParseAddr(defaultString(suffix, "::"))
 	if err != nil || !suffixAddr.Is6() {
 		return nil, fmt.Errorf("invalid IPv6 suffix %q", suffix)
 	}
 	var removed []string
-	for _, entry := range conflictingManagedIPv6Addresses(ipv6AddressEntries(ifname), desiredAddress, ipv6HostSuffix64(suffixAddr)) {
+	desired := map[string]bool{desiredAddress: true}
+	for _, address := range preservedAddresses {
+		desired[address] = true
+	}
+	for _, entry := range conflictingManagedIPv6Addresses(ipv6AddressEntries(ifname), desired, ipv6HostSuffix64(suffixAddr)) {
 		if err := deleteIPv6LocalAddress(ifname, entry.Address, entry.PrefixLen); err != nil {
 			return removed, err
 		}
@@ -116,14 +147,14 @@ func cleanupConflictingIPv6SuffixAddresses(ifname, desiredAddress, suffix string
 	return removed, nil
 }
 
-func conflictingManagedIPv6Addresses(entries []ipv6AddressEntry, desiredAddress string, suffix uint64) []ipv6AddressEntry {
+func conflictingManagedIPv6Addresses(entries []ipv6AddressEntry, desiredAddresses map[string]bool, suffix uint64) []ipv6AddressEntry {
 	var out []ipv6AddressEntry
 	for _, entry := range entries {
 		addr, err := netip.ParseAddr(entry.Address)
 		if err != nil || !addr.Is6() || addr.IsLinkLocalUnicast() {
 			continue
 		}
-		if addr.String() == desiredAddress {
+		if desiredAddresses[addr.String()] {
 			continue
 		}
 		if ipv6HostSuffix64(addr) != suffix {
@@ -148,7 +179,7 @@ func managedDelegatedIPv6Targets(router *api.Router, store routerstate.Store) (d
 		return targets, nil
 	}
 	aliases := map[string]string{}
-	pdPrefixes := map[string]string{}
+	pdLeases := map[string]routerstate.PDLease{}
 	delegated := map[string]api.IPv6DelegatedAddressSpec{}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
@@ -161,17 +192,23 @@ func managedDelegatedIPv6Targets(router *api.Router, store routerstate.Store) (d
 		case "DHCPv6PrefixDelegation":
 			base := "ipv6PrefixDelegation." + res.Metadata.Name
 			lease, _ := routerstate.PDLeaseFromStore(store, base)
-			if lease.CurrentPrefix != "" {
-				pdPrefixes[res.Metadata.Name] = lease.CurrentPrefix
-			}
+			pdLeases[res.Metadata.Name] = lease
 		case "IPv6DelegatedAddress":
 			spec, err := res.IPv6DelegatedAddressSpec()
 			if err != nil {
 				return targets, err
 			}
 			delegated[res.Metadata.Name] = spec
-			if err := addManagedDelegatedIPv6Target(targets, aliases[spec.Interface], pdPrefixes[spec.PrefixDelegation], spec.SubnetID, spec.AddressSuffix); err != nil {
+			lease := pdLeases[spec.PrefixDelegation]
+			if err := addManagedDelegatedIPv6Target(targets, aliases[spec.Interface], lease.CurrentPrefix, spec.SubnetID, spec.AddressSuffix); err != nil {
 				return targets, fmt.Errorf("%s target: %w", res.ID(), err)
+			}
+			if spec.PrefixLength != 128 {
+				for _, previous := range lease.ValidPreviousPrefixes(time.Now().UTC()) {
+					if err := addManagedDelegatedIPv6Target(targets, aliases[spec.Interface], previous.Prefix, spec.SubnetID, spec.AddressSuffix); err != nil {
+						return targets, fmt.Errorf("%s previous target: %w", res.ID(), err)
+					}
+				}
 			}
 		}
 	}
@@ -194,7 +231,7 @@ func managedDelegatedIPv6Targets(router *api.Router, store routerstate.Store) (d
 			continue
 		}
 		suffix := defaultString(spec.LocalAddressSuffix, delegatedSpec.AddressSuffix)
-		if err := addManagedDelegatedIPv6Target(targets, aliases[delegatedSpec.Interface], pdPrefixes[delegatedSpec.PrefixDelegation], delegatedSpec.SubnetID, suffix); err != nil {
+		if err := addManagedDelegatedIPv6Target(targets, aliases[delegatedSpec.Interface], pdLeases[delegatedSpec.PrefixDelegation].CurrentPrefix, delegatedSpec.SubnetID, suffix); err != nil {
 			return targets, fmt.Errorf("%s target: %w", res.ID(), err)
 		}
 	}
@@ -1258,6 +1295,38 @@ func ensureIPv6LocalAddress(ifname, address string) (bool, error) {
 		return true, nil
 	}
 	if err := runLogged("ip", "-6", "addr", "add", address+"/128", "dev", ifname); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func remainingValidLifetimeSeconds(now, expiresAt time.Time) int64 {
+	remaining := expiresAt.Sub(now)
+	if remaining <= 0 {
+		return 0
+	}
+	return int64((remaining + time.Second - 1) / time.Second)
+}
+
+func deprecatedIPv6LocalAddressCommand(osName platform.OS, ifname, address string, validSeconds int64) (string, []string) {
+	valid := strconv.FormatInt(validSeconds, 10)
+	if osName == platform.OSFreeBSD {
+		return "ifconfig", []string{ifname, "inet6", address, "prefixlen", "64", "pltime", "0", "vltime", valid, "alias"}
+	}
+	return "ip", []string{"-6", "addr", "replace", address + "/64", "dev", ifname, "preferred_lft", "0", "valid_lft", valid}
+}
+
+func ensureDeprecatedIPv6LocalAddress(ifname, address string, validSeconds int64) (bool, error) {
+	if validSeconds <= 0 {
+		return false, nil
+	}
+	for _, entry := range ipv6AddressEntries(ifname) {
+		if entry.Address == address {
+			return false, nil
+		}
+	}
+	name, args := deprecatedIPv6LocalAddressCommand(platformDefaults.OS, ifname, address, validSeconds)
+	if err := runLogged(name, args...); err != nil {
 		return false, err
 	}
 	return true, nil

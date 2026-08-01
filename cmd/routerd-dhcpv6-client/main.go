@@ -1125,6 +1125,7 @@ func leaseStateValue(state pdclient.State) int64 {
 func snapshotChanged(a, b pdclient.Snapshot) bool {
 	return a.State != b.State ||
 		a.CurrentPrefix != b.CurrentPrefix ||
+		!previousPrefixSnapshotsEqual(a.PreviousPrefixes, b.PreviousPrefixes) ||
 		a.ServerDUID != b.ServerDUID ||
 		a.T1Seconds != b.T1Seconds ||
 		a.T2Seconds != b.T2Seconds ||
@@ -1135,6 +1136,18 @@ func snapshotChanged(a, b pdclient.Snapshot) bool {
 		!a.RebindAt.Equal(b.RebindAt) ||
 		!a.ExpiresAt.Equal(b.ExpiresAt) ||
 		infoChanged(a, b)
+}
+
+func previousPrefixSnapshotsEqual(a, b []pdclient.PreviousPrefixSnapshot) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Prefix != b[i].Prefix || !a[i].ExpiresAt.Equal(b[i].ExpiresAt) {
+			return false
+		}
+	}
+	return true
 }
 
 func infoChanged(a, b pdclient.Snapshot) bool {

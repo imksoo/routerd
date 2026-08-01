@@ -8,6 +8,8 @@ import (
 	"crypto/rand"
 	"fmt"
 	"net/netip"
+	"slices"
+	"strings"
 	"time"
 )
 
@@ -51,6 +53,15 @@ type Lease struct {
 	RenewedAt  time.Time
 }
 
+// PreviousPrefix records a delegated prefix which is no longer current but
+// remains valid until ExpiresAt.  Multiple entries are required because an
+// upstream server may move a client through several prefixes before their
+// valid lifetimes expire.
+type PreviousPrefix struct {
+	Prefix    netip.Prefix
+	ExpiresAt time.Time
+}
+
 type Information struct {
 	AFTRName     string
 	DNSServers   []netip.Addr
@@ -82,11 +93,12 @@ type OutboundPacket struct {
 }
 
 type Client struct {
-	Config    Config
-	Transport Transport
-	State     State
-	Lease     Lease
-	Info      Information
+	Config           Config
+	Transport        Transport
+	State            State
+	Lease            Lease
+	PreviousPrefixes []PreviousPrefix
+	Info             Information
 
 	lastTransaction     uint32
 	lastInfoTransaction uint32
@@ -122,6 +134,7 @@ func (c *Client) Tick(ctx context.Context) error {
 
 func (c *Client) TickWithMargin(ctx context.Context, renewMargin, rebindMargin time.Duration) error {
 	now := c.now()
+	c.prunePreviousPrefixes(now)
 	if c.State == StateSoliciting && !c.solicitRetryAt.IsZero() && !now.Before(c.solicitRetryAt) {
 		return c.retransmitSolicit(ctx, now)
 	}
@@ -175,6 +188,7 @@ func (c *Client) Release(ctx context.Context) error {
 		return err
 	}
 	c.Lease = Lease{}
+	c.PreviousPrefixes = nil
 	return nil
 }
 
@@ -267,6 +281,7 @@ func (c *Client) acceptInformation(msg Message) {
 
 func (c *Client) acceptReply(msg Message) {
 	now := c.now()
+	c.rememberPreviousPrefix(msg.Prefix, now)
 	t1 := seconds(msg.T1)
 	t2 := seconds(msg.T2)
 	valid := seconds(msg.Valid)
@@ -283,6 +298,48 @@ func (c *Client) acceptReply(msg Message) {
 		RenewedAt:  now,
 	}
 	c.State = StateBound
+}
+
+func (c *Client) rememberPreviousPrefix(next netip.Prefix, now time.Time) {
+	byPrefix := make(map[netip.Prefix]time.Time, len(c.PreviousPrefixes)+1)
+	for _, previous := range c.PreviousPrefixes {
+		if !previous.Prefix.IsValid() || previous.Prefix == next || !now.Before(previous.ExpiresAt) {
+			continue
+		}
+		byPrefix[previous.Prefix] = previous.ExpiresAt
+	}
+	if c.Lease.Prefix.IsValid() && c.Lease.Prefix != next {
+		expiresAt := c.Lease.ExpiresAt()
+		if now.Before(expiresAt) {
+			byPrefix[c.Lease.Prefix] = expiresAt
+		}
+	}
+	c.setPreviousPrefixes(byPrefix)
+}
+
+func (c *Client) prunePreviousPrefixes(now time.Time) {
+	byPrefix := make(map[netip.Prefix]time.Time, len(c.PreviousPrefixes))
+	for _, previous := range c.PreviousPrefixes {
+		if !previous.Prefix.IsValid() || previous.Prefix == c.Lease.Prefix || !now.Before(previous.ExpiresAt) {
+			continue
+		}
+		byPrefix[previous.Prefix] = previous.ExpiresAt
+	}
+	c.setPreviousPrefixes(byPrefix)
+}
+
+func (c *Client) setPreviousPrefixes(byPrefix map[netip.Prefix]time.Time) {
+	prefixes := make([]netip.Prefix, 0, len(byPrefix))
+	for prefix := range byPrefix {
+		prefixes = append(prefixes, prefix)
+	}
+	slices.SortFunc(prefixes, func(a, b netip.Prefix) int {
+		return strings.Compare(a.String(), b.String())
+	})
+	c.PreviousPrefixes = make([]PreviousPrefix, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		c.PreviousPrefixes = append(c.PreviousPrefixes, PreviousPrefix{Prefix: prefix, ExpiresAt: byPrefix[prefix]})
+	}
 }
 
 func (c *Client) send(ctx context.Context, next State, msg Message) error {
