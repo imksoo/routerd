@@ -2123,6 +2123,165 @@ func TestLANAddressControllerRetainsMultiplePreviousLANPrefixesUntilExpiry(t *te
 	}
 }
 
+func TestLANAddressControllerRecoversLostPreviousPrefixFromKernelForRAWithdrawal(t *testing.T) {
+	now := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
+	snapshot := pdSnapshotFixture(now)
+	store, declared, snapshotPath := sqliteLANAddressStagingFixture(t, snapshot)
+	declared.Spec.Resources = append(declared.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"},
+		Metadata: api.ObjectMeta{Name: "lan-ra"},
+		Spec: api.IPv6RouterAdvertisementSpec{
+			Interface:     "lan-vmac",
+			PrefixFrom:    api.StatusValueSourceSpec{Resource: "IPv6DelegatedAddress/lan-base", Field: "address"},
+			ValidLifetime: "7200",
+		},
+	})
+	store.Set("VirtualAddress/lan-gw.role", "master", "test")
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{
+		"phase": daemonapi.ResourcePhaseBound, "currentPrefix": snapshot.CurrentPrefix,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "lan-vmac", map[string]any{"phase": "Up", "ifname": "lan-vrrp"}); err != nil {
+		t.Fatal(err)
+	}
+	// This is the post-lease-sync failure shape: current status and snapshot
+	// already point at 1220, PreviousPrefixes is empty, but the old 1240 LAN
+	// address remains in kernel and clients still hold 1241::/64 from RA.
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base", map[string]any{
+		"phase": "Applied", "address": "2001:db8:1200:1::1/64", "interface": "lan-vmac", "prefixSource": "wan-pd", "dryRun": false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	effective := resourcequery.FilterRouterByResolvedWhen(declared, store)
+	var commands []string
+	controller := LANAddressController{
+		Router:              effective,
+		DeclaredRouter:      declared,
+		Store:               eventedStore{Store: store, Router: declared},
+		OperatingSystem:     platform.OSLinux,
+		Now:                 func() time.Time { return now },
+		PDLeaseSnapshotPath: func(string) string { return snapshotPath },
+		VMACPresent:         func(string) bool { return true },
+		AddressPresent:      func(context.Context, string, string) bool { return true },
+		AddressList: func(context.Context, string) ([]string, error) {
+			return []string{
+				"2001:db8:1200:1::1/64",
+				"2001:db8:1200:1241::1/64",
+				"2001:db8:1200:1241::99/64",
+				"2001:db8:1200:1241::23/128",
+			}, nil
+		},
+		Command: func(_ context.Context, name string, args ...string) error {
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return nil
+		},
+	}
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	want := "ip -6 addr replace 2001:db8:1200:1241::1/64 dev lan-vrrp preferred_lft 0 valid_lft 7200"
+	if !slices.Contains(commands, want) {
+		t.Fatalf("lost previous prefix was not recovered for RA withdrawal, missing %q: %#v", want, commands)
+	}
+	for _, forbidden := range []string{"1241::99", "1241::23"} {
+		for _, command := range commands {
+			if strings.Contains(command, forbidden) {
+				t.Fatalf("unowned or /128 address was adopted as LAN history: %q", command)
+			}
+		}
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base")
+	previous := previousDelegatedAddressesFromStatus(status)
+	if len(previous) != 1 || previous[0].Address != "2001:db8:1200:1241::1/64" || !previous[0].ExpiresAt.Equal(now.Add(2*time.Hour)) {
+		t.Fatalf("recovered previous status = %#v, raw=%#v", previous, status)
+	}
+
+	commands = nil
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 0 {
+		t.Fatalf("recovered withdrawal lifetime was extended or re-applied: %#v", commands)
+	}
+
+	now = now.Add(2*time.Hour + time.Second)
+	commands = nil
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(commands, "ip -6 addr del 2001:db8:1200:1241::1/64 dev lan-vrrp") {
+		t.Fatalf("expired recovered prefix was not deleted: %#v", commands)
+	}
+	if got := previousDelegatedAddressesFromStatus(store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base")); len(got) != 0 {
+		t.Fatalf("expired recovered prefix remained in status: %#v", got)
+	}
+}
+
+func TestLANAddressControllerRecoversPreviousCurrentStatusWithoutKernelHistory(t *testing.T) {
+	now := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
+	snapshot := pdSnapshotFixture(now)
+	store, declared, snapshotPath := sqliteLANAddressStagingFixture(t, snapshot)
+	declared.Spec.Resources = append(declared.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"},
+		Metadata: api.ObjectMeta{Name: "lan-ra"},
+		Spec: api.IPv6RouterAdvertisementSpec{
+			Interface:     "lan-vmac",
+			PrefixFrom:    api.StatusValueSourceSpec{Resource: "IPv6DelegatedAddress/lan-base", Field: "address"},
+			ValidLifetime: "600",
+		},
+	})
+	store.Set("VirtualAddress/lan-gw.role", "master", "test")
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{
+		"phase": daemonapi.ResourcePhaseBound, "currentPrefix": snapshot.CurrentPrefix,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "lan-vmac", map[string]any{"phase": "Up", "ifname": "lan-vrrp"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base", map[string]any{
+		"phase": "Applied", "address": "2001:db8:1200:1241::1/64", "interface": "lan-vmac", "prefixSource": "wan-pd", "dryRun": false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	effective := resourcequery.FilterRouterByResolvedWhen(declared, store)
+	var commands []string
+	controller := LANAddressController{
+		Router:              effective,
+		DeclaredRouter:      declared,
+		Store:               eventedStore{Store: store, Router: declared},
+		OperatingSystem:     platform.OSLinux,
+		Now:                 func() time.Time { return now },
+		PDLeaseSnapshotPath: func(string) string { return snapshotPath },
+		VMACPresent:         func(string) bool { return true },
+		AddressPresent:      func(context.Context, string, string) bool { return true },
+		AddressList:         func(context.Context, string) ([]string, error) { return nil, nil },
+		Command: func(_ context.Context, name string, args ...string) error {
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return nil
+		},
+	}
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	if want := "ip -6 addr replace 2001:db8:1200:1241::1/64 dev lan-vrrp preferred_lft 0 valid_lft 600"; !slices.Contains(commands, want) {
+		t.Fatalf("previous current status was not withdrawn, missing %q: %#v", want, commands)
+	}
+}
+
+func TestParseIPv6InterfaceAddressPrefixes(t *testing.T) {
+	out := `7: lan-vrrp inet6 2001:db8:1200:1241::1/64 scope global deprecated valid_lft 7199sec preferred_lft 0sec
+7: lan-vrrp inet6 2001:db8:1200:1241::23/128 scope global valid_lft forever preferred_lft forever
+7: lan-vrrp inet6 fe80::1/64 scope link valid_lft forever preferred_lft forever
+`
+	got := parseIPv6InterfaceAddressPrefixes(out)
+	want := []string{"2001:db8:1200:1241::1/64", "2001:db8:1200:1241::23/128"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("parsed addresses = %#v, want %#v", got, want)
+	}
+}
+
 func TestIPv6DeprecatedAddressApplyCommand(t *testing.T) {
 	name, args := ipv6DeprecatedAddressApplyCommand(platform.OSLinux, "ens19", "2001:db8::1/64", 42)
 	if got, want := strings.Join(append([]string{name}, args...), " "), "ip -6 addr replace 2001:db8::1/64 dev ens19 preferred_lft 0 valid_lft 42"; got != want {
