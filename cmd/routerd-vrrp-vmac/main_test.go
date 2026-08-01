@@ -75,6 +75,9 @@ func TestPreferVMACDefaultCommand(t *testing.T) {
 	if _, ok := preferVMACDefaultCommand("default via fe80::1 dev eth0 proto ra\n", "wan-vmac", "2001:db8:1200::13"); ok {
 		t.Fatal("physical route must not be selected")
 	}
+	if _, ok := preferVMACDefaultCommand("default via fe80::1 dev wan-vmac proto ra\n", "wan-vmac", ""); ok {
+		t.Fatal("VMAC default must wait for an eligible RA source")
+	}
 }
 
 func TestPreferredVMACGlobalAddressExcludesTunnelAndUnreadyAddresses(t *testing.T) {

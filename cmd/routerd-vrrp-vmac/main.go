@@ -302,6 +302,9 @@ func requestRouterAdvertisement(ifname string) error {
 }
 
 func preferVMACDefaultCommand(routes, ifname, source string) ([]string, bool) {
+	if strings.TrimSpace(source) == "" {
+		return nil, false
+	}
 	for _, line := range strings.Split(routes, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 5 || fields[0] != "default" {
@@ -319,10 +322,7 @@ func preferVMACDefaultCommand(routes, ifname, source string) ([]string, bool) {
 			}
 		}
 		if gateway != "" {
-			command := []string{"ip", "-6", "route", "replace", "default", "via", gateway, "dev", ifname, "metric", "50"}
-			if source != "" {
-				command = append(command, "src", source)
-			}
+			command := []string{"ip", "-6", "route", "replace", "default", "via", gateway, "dev", ifname, "metric", "50", "src", source}
 			return command, true
 		}
 	}
