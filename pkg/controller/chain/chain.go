@@ -5095,6 +5095,28 @@ func ipv6StaticAddressApplyCommand(osName platform.OS, ifname, address string) (
 	return "ip", []string{"-6", "addr", "replace", address, "dev", ifname}
 }
 
+func ipv6DeprecatedAddressApplyCommand(osName platform.OS, ifname, address string, validSeconds int64) (string, []string) {
+	valid := strconv.FormatInt(validSeconds, 10)
+	if osName == platform.OSFreeBSD {
+		host := strings.TrimSpace(address)
+		prefixLen := "64"
+		if parsed, err := netip.ParsePrefix(host); err == nil {
+			host = parsed.Addr().String()
+			prefixLen = strconv.Itoa(parsed.Bits())
+		}
+		return "ifconfig", []string{ifname, "inet6", host, "prefixlen", prefixLen, "pltime", "0", "vltime", valid, "alias"}
+	}
+	return "ip", []string{"-6", "addr", "replace", address, "dev", ifname, "preferred_lft", "0", "valid_lft", valid}
+}
+
+func remainingIPv6ValidLifetime(now, expiresAt time.Time) int64 {
+	remaining := expiresAt.Sub(now)
+	if remaining <= 0 {
+		return 0
+	}
+	return int64((remaining + time.Second - 1) / time.Second)
+}
+
 func ipv6StaticAddressDeleteCommand(osName platform.OS, ifname, address string) (string, []string) {
 	if osName == platform.OSFreeBSD {
 		host := strings.TrimSpace(address)
@@ -5142,6 +5164,68 @@ func delegatedAddressWithPrefixLength(address string, prefixLength int) (string,
 	return netip.PrefixFrom(prefix.Addr(), prefixLength).String(), nil
 }
 
+type managedPreviousDelegatedAddress struct {
+	Address   string    `json:"address"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+func derivePreviousDelegatedAddresses(snapshot pdclient.Snapshot, currentPrefix string, spec api.IPv6DelegatedAddressSpec, now time.Time) ([]managedPreviousDelegatedAddress, error) {
+	if spec.PrefixLength == 128 || snapshot.CurrentPrefix != currentPrefix {
+		return nil, nil
+	}
+	current, err := netip.ParsePrefix(currentPrefix)
+	if err != nil {
+		return nil, nil
+	}
+	byAddress := map[string]time.Time{}
+	for _, previous := range snapshot.PreviousPrefixes {
+		if previous.Prefix == "" || previous.Prefix == currentPrefix || !now.Before(previous.ExpiresAt) {
+			continue
+		}
+		previousPrefix, err := netip.ParsePrefix(previous.Prefix)
+		if err != nil || previousPrefix.Bits() != current.Bits() {
+			continue
+		}
+		address, err := DeriveIPv6Address(previousPrefix.String(), spec.SubnetID, spec.AddressSuffix)
+		if err != nil {
+			return nil, err
+		}
+		address, err = delegatedAddressWithPrefixLength(address, spec.PrefixLength)
+		if err != nil {
+			return nil, err
+		}
+		if expiresAt, ok := byAddress[address]; !ok || expiresAt.Before(previous.ExpiresAt) {
+			byAddress[address] = previous.ExpiresAt
+		}
+	}
+	addresses := make([]string, 0, len(byAddress))
+	for address := range byAddress {
+		addresses = append(addresses, address)
+	}
+	sort.Strings(addresses)
+	out := make([]managedPreviousDelegatedAddress, 0, len(addresses))
+	for _, address := range addresses {
+		out = append(out, managedPreviousDelegatedAddress{Address: address, ExpiresAt: byAddress[address]})
+	}
+	return out, nil
+}
+
+func previousDelegatedAddressesFromStatus(status map[string]any) []managedPreviousDelegatedAddress {
+	raw, ok := status["previousAddresses"]
+	if !ok || raw == nil {
+		return nil
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var out []managedPreviousDelegatedAddress
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
 func runCommandContext(ctx context.Context, name string, args ...string) error {
 	return exec.CommandContext(ctx, name, args...).Run()
 }
@@ -5171,6 +5255,10 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		prefix = statusStringPreferObserved(pdStatus, "currentPrefix")
 	}
 	stagedSnapshot, stagedSnapshotFresh := c.freshStagedPDSnapshot(pdName)
+	now := time.Now().UTC()
+	if c.Now != nil {
+		now = c.Now().UTC()
+	}
 	if !activePD && !stagedSnapshotFresh {
 		return nil
 	}
@@ -5247,6 +5335,13 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		if err != nil {
 			return fmt.Errorf("%s derive address prefix length: %w", resource.ID(), err)
 		}
+		previousAddresses := []managedPreviousDelegatedAddress(nil)
+		if stagedSnapshotFresh {
+			previousAddresses, err = derivePreviousDelegatedAddresses(stagedSnapshot, prefix, spec, now)
+			if err != nil {
+				return fmt.Errorf("%s derive previous addresses: %w", resource.ID(), err)
+			}
+		}
 		status := map[string]any{
 			"phase":        "Applied",
 			"address":      addr,
@@ -5257,7 +5352,14 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		if stagingVMAC {
 			status["staged"] = true
 		}
-		changed := objectStatusChanged("IPv6DelegatedAddress", c.Store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name), status)
+		previousStatus := c.Store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name)
+		currentStatus := copyStatusMap(previousStatus)
+		delete(currentStatus, "previousAddresses")
+		currentChanged := objectStatusChanged("IPv6DelegatedAddress", currentStatus, status)
+		if len(previousAddresses) > 0 {
+			status["previousAddresses"] = previousAddresses
+		}
+		changed := objectStatusChanged("IPv6DelegatedAddress", previousStatus, status)
 		ifname := ""
 		if c.DeclaredRouter != nil {
 			ifname = interfaceIfName(c.DeclaredRouter, spec.Interface)
@@ -5289,11 +5391,11 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		if !c.DryRun {
 			addressPresent = addressPresentFn(ctx, ifname, addr)
 		}
-		if !c.DryRun && (changed || !addressPresent) {
-			command := c.Command
-			if command == nil {
-				command = runCommandContext
-			}
+		command := c.Command
+		if command == nil {
+			command = runCommandContext
+		}
+		if !c.DryRun && (currentChanged || !addressPresent) {
 			if !addressPresent {
 				for _, stale := range ipv6StaticAddressDeleteCandidates(addr) {
 					deleteName, deleteArgs := ipv6StaticAddressDeleteCommand(c.currentOS(), ifname, stale)
@@ -5309,6 +5411,47 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 			if stagingVMAC && !addressPresentFn(ctx, ifname, addr) {
 				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "AddressReadbackFailed"})
 				continue
+			}
+		}
+		if !c.DryRun {
+			desiredPrevious := make(map[string]bool, len(previousAddresses))
+			managedPrevious := make(map[string]time.Time)
+			for _, previous := range previousDelegatedAddressesFromStatus(previousStatus) {
+				managedPrevious[previous.Address] = previous.ExpiresAt
+			}
+			for _, previous := range previousAddresses {
+				desiredPrevious[previous.Address] = true
+			}
+			for _, stale := range previousDelegatedAddressesFromStatus(previousStatus) {
+				if stale.Address == "" || stale.Address == addr || desiredPrevious[stale.Address] {
+					continue
+				}
+				for _, candidate := range ipv6StaticAddressDeleteCandidates(stale.Address) {
+					name, args := ipv6StaticAddressDeleteCommand(c.currentOS(), ifname, candidate)
+					if err := command(ctx, name, args...); err != nil && c.Logger != nil {
+						c.Logger.Debug("delete expired previous IPv6 delegated address skipped", "resource", resource.Metadata.Name, "address", candidate, "interface", ifname, "error", err)
+					}
+				}
+			}
+			for _, previous := range previousAddresses {
+				validSeconds := remainingIPv6ValidLifetime(now, previous.ExpiresAt)
+				if validSeconds == 0 {
+					continue
+				}
+				present := addressPresentFn(ctx, ifname, previous.Address)
+				if expiresAt, ok := managedPrevious[previous.Address]; ok && expiresAt.Equal(previous.ExpiresAt) && present {
+					continue
+				}
+				if c.currentOS() == platform.OSFreeBSD && present {
+					name, args := ipv6StaticAddressDeleteCommand(c.currentOS(), ifname, previous.Address)
+					if err := command(ctx, name, args...); err != nil {
+						return err
+					}
+				}
+				name, args := ipv6DeprecatedAddressApplyCommand(c.currentOS(), ifname, previous.Address, validSeconds)
+				if err := command(ctx, name, args...); err != nil {
+					return err
+				}
 			}
 		}
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, status); err != nil {
@@ -5632,7 +5775,16 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 				}
 			}
 		}
-		if address != "" && address != "<nil>" && !c.DryRun {
+		addresses := []string(nil)
+		if address != "" && address != "<nil>" {
+			addresses = append(addresses, address)
+		}
+		for _, tracked := range previousDelegatedAddressesFromStatus(previous) {
+			if tracked.Address != "" && tracked.Address != address {
+				addresses = append(addresses, tracked.Address)
+			}
+		}
+		if len(addresses) > 0 && !c.DryRun {
 			ifname := interfaceIfName(declared, spec.Interface)
 			if ifname == "" {
 				ifname = spec.Interface
@@ -5641,11 +5793,13 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 			if command == nil {
 				command = runCommandContext
 			}
-			for _, stale := range ipv6StaticAddressDeleteCandidates(address) {
-				name, args := ipv6StaticAddressDeleteCommand(platform.CurrentOS(), ifname, stale)
-				if err := command(ctx, name, args...); err != nil {
-					if c.Logger != nil {
-						c.Logger.Debug("delete when-false IPv6 delegated address skipped", "resource", resource.Metadata.Name, "address", stale, "interface", ifname, "error", err)
+			for _, trackedAddress := range addresses {
+				for _, stale := range ipv6StaticAddressDeleteCandidates(trackedAddress) {
+					name, args := ipv6StaticAddressDeleteCommand(platform.CurrentOS(), ifname, stale)
+					if err := command(ctx, name, args...); err != nil {
+						if c.Logger != nil {
+							c.Logger.Debug("delete when-false IPv6 delegated address skipped", "resource", resource.Metadata.Name, "address", stale, "interface", ifname, "error", err)
+						}
 					}
 				}
 			}

@@ -58,3 +58,27 @@ func TestPDLeaseHasFreshTransactionEvidence(t *testing.T) {
 		})
 	}
 }
+
+func TestPDLeaseValidPreviousPrefixes(t *testing.T) {
+	now := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
+	lease := PDLease{
+		CurrentPrefix: "2001:db8:1200:1220::/60",
+		PreviousPrefixes: []PDPreviousPrefix{
+			{Prefix: "2001:db8:1200:1240::/60", ExpiresAt: now.Add(time.Hour)},
+			{Prefix: "2001:db8:1200:1230::/60", ExpiresAt: now.Add(-time.Second)},
+			{Prefix: "2001:db8:1200:1220::/60", ExpiresAt: now.Add(time.Hour)},
+		},
+	}
+	encoded := EncodePDLease(lease)
+	decoded, ok := DecodePDLease(encoded)
+	if !ok {
+		t.Fatalf("decode failed: %s", encoded)
+	}
+	got := decoded.ValidPreviousPrefixes(now)
+	if len(got) != 1 || got[0].Prefix != "2001:db8:1200:1240::/60" {
+		t.Fatalf("valid previous prefixes = %#v", got)
+	}
+	if legacy, ok := DecodePDLease(`{"currentPrefix":"2001:db8:1200:1220::/60"}`); !ok || legacy.CurrentPrefix == "" || len(legacy.PreviousPrefixes) != 0 {
+		t.Fatalf("legacy PDLease compatibility = %#v, ok=%t", legacy, ok)
+	}
+}
