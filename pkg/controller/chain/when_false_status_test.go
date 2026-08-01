@@ -330,6 +330,42 @@ func TestDaemonObservedOnlyStatusPromotesHealthCheckObservedPhase(t *testing.T) 
 	}
 }
 
+func TestDaemonObservedOnlyStatusClearsStaleHealthCheckFailureAfterRecovery(t *testing.T) {
+	current := map[string]any{
+		"phase":                           healthcheck.PhaseUnhealthy,
+		"result":                          healthcheck.ResultTimeout,
+		"message":                         "dial tcp 1.1.1.1:443: i/o timeout",
+		"timeout":                         true,
+		"failureKind":                     healthcheck.FailureKindTimeout,
+		"routerd.healthcheck.failureKind": healthcheck.FailureKindTimeout,
+		"lastFailureTime":                 "2026-08-01T03:23:07Z",
+	}
+	base := map[string]any{
+		"phase":     healthcheck.PhaseHealthy,
+		"health":    "ok",
+		"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	status := daemonObservedOnlyStatus(current, base, daemonapi.ResourceStatus{
+		Resource: daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "HealthCheck", Name: "internet-via-hgw-direct"},
+		Phase:    healthcheck.PhaseHealthy,
+		Health:   "ok",
+		Observed: map[string]string{
+			"lastCheckedAt":   time.Now().UTC().Format(time.RFC3339Nano),
+			"lastResult":      healthcheck.ResultPassed,
+			"failureCount":    "0",
+			"lastSuccessTime": time.Now().UTC().Format(time.RFC3339Nano),
+		},
+	})
+	for _, key := range []string{"result", "message", "timeout", "failureKind", "routerd.healthcheck.failureKind"} {
+		if _, ok := status[key]; ok {
+			t.Fatalf("stale failure field %q remained in %#v", key, status)
+		}
+	}
+	if status["phase"] != healthcheck.PhaseHealthy || status["lastResult"] != healthcheck.ResultPassed || status["lastFailureTime"] != "2026-08-01T03:23:07Z" {
+		t.Fatalf("status = %#v, want recovered status with retained failure history", status)
+	}
+}
+
 func TestDaemonObservedOnlyStatusPromotesDHCPv6PrefixDelegationObservedPhase(t *testing.T) {
 	current := map[string]any{
 		"phase":         "Pending",
