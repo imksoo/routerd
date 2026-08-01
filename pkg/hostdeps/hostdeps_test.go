@@ -34,12 +34,94 @@ func TestDerivedSysctlResourcesForRouterHost(t *testing.T) {
 		"net.ipv4.conf.wg-mesh.rp_filter",
 		"net.ipv4.conf.ens19.send_redirects",
 		"net.ipv6.conf.ens18.accept_ra",
-		"net.ipv6.conf.ens19.accept_ra",
 		"net.ipv6.conf.ens19.accept_ra_defrtr",
 	} {
 		if !keys[want] {
 			t.Fatalf("missing derived sysctl %s in %#v", want, sortedKeys(keys))
 		}
+	}
+	if keys["net.ipv6.conf.ens19.accept_ra"] {
+		t.Fatalf("LAN RA interface must not derive accept_ra=2: %#v", sortedKeys(keys))
+	}
+}
+
+func TestRAAcceptInterfaceNamesExcludeLANDelegatedAddresses(t *testing.T) {
+	tests := []struct {
+		name      string
+		resources []api.Resource
+	}{
+		{
+			name: "sendRA",
+			resources: []api.Resource{{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"},
+				Metadata: api.ObjectMeta{Name: "lan-v6"},
+				Spec:     api.IPv6DelegatedAddressSpec{Interface: "lan", SendRA: true},
+			}},
+		},
+		{
+			name: "announce",
+			resources: []api.Resource{{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"},
+				Metadata: api.ObjectMeta{Name: "lan-v6"},
+				Spec:     api.IPv6DelegatedAddressSpec{Interface: "lan", Announce: true},
+			}},
+		},
+		{
+			name: "router advertisement target",
+			resources: []api.Resource{
+				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.IPv6DelegatedAddressSpec{Interface: "lan"}},
+				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{Interface: "lan"}},
+			},
+		},
+		{
+			name: "DHCPv6 server interface",
+			resources: []api.Resource{
+				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.IPv6DelegatedAddressSpec{Interface: "lan"}},
+				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"}, Metadata: api.ObjectMeta{Name: "lan-dhcpv6"}, Spec: api.DHCPv6ServerSpec{Interface: "lan"}},
+			},
+		},
+		{
+			name: "DHCPv6 server listen interface",
+			resources: []api.Resource{
+				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.IPv6DelegatedAddressSpec{Interface: "lan"}},
+				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"}, Metadata: api.ObjectMeta{Name: "lan-dhcpv6"}, Spec: api.DHCPv6ServerSpec{ListenInterfaces: []string{"lan"}}},
+			},
+		},
+	}
+	aliases := map[string]string{"lan": "lan-vrrp"}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := &api.Router{Spec: api.RouterSpec{Resources: tt.resources}}
+			if got := raAcceptInterfaceNames(router, aliases); len(got) != 0 {
+				t.Fatalf("raAcceptInterfaceNames() = %#v, want none", got)
+			}
+		})
+	}
+}
+
+func TestRAAcceptInterfaceNamesPreserveClientAndStandaloneDelegatedSources(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Address"}, Metadata: api.ObjectMeta{Name: "wan-address"}, Spec: api.DHCPv6AddressSpec{Interface: "dhcp-address"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Information"}, Metadata: api.ObjectMeta{Name: "wan-info"}, Spec: api.DHCPv6InformationSpec{Interface: "dhcp-info"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "dhcp-pd"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RAAddress"}, Metadata: api.ObjectMeta{Name: "wan-ra"}, Spec: api.IPv6RAAddressSpec{Interface: "ra-address"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "wan-ds"}, Spec: api.IPv6DelegatedAddressSpec{Interface: "wan-ds"}},
+	}}}
+	want := []string{"dhcp-address", "dhcp-info", "dhcp-pd", "ra-address", "wan-ds"}
+	if got := raAcceptInterfaceNames(router, nil); !reflect.DeepEqual(got, want) {
+		t.Fatalf("raAcceptInterfaceNames() = %#v, want %#v", got, want)
+	}
+}
+
+func TestRAAcceptInterfaceNamesPreserveExplicitRAClientOnLANDistributionInterface(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.IPv6DelegatedAddressSpec{Interface: "lan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{Interface: "lan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RAAddress"}, Metadata: api.ObjectMeta{Name: "explicit-ra-client"}, Spec: api.IPv6RAAddressSpec{Interface: "lan"}},
+	}}}
+	want := []string{"lan-vrrp"}
+	if got := raAcceptInterfaceNames(router, map[string]string{"lan": "lan-vrrp"}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("raAcceptInterfaceNames() = %#v, want %#v", got, want)
 	}
 }
 

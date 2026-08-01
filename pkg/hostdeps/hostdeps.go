@@ -469,9 +469,30 @@ func ipv4TunnelInterfaceNames(router *api.Router) []string {
 
 func raAcceptInterfaceNames(router *api.Router, aliases map[string]string) []string {
 	names := map[string]bool{}
+	lanDistributionInterfaces := map[string]bool{}
 	add := func(name string) {
 		if resolved := resolveInterfaceName(name, aliases); resolved != "" {
 			names[resolved] = true
+		}
+	}
+	addLANDistributionInterface := func(name string) {
+		if resolved := resolveInterfaceName(name, aliases); resolved != "" {
+			lanDistributionInterfaces[resolved] = true
+		}
+	}
+	for _, res := range router.Spec.Resources {
+		switch res.Kind {
+		case "IPv6RouterAdvertisement":
+			if spec, err := res.IPv6RouterAdvertisementSpec(); err == nil {
+				addLANDistributionInterface(spec.Interface)
+			}
+		case "DHCPv6Server":
+			if spec, err := res.DHCPv6ServerSpec(); err == nil {
+				addLANDistributionInterface(spec.Interface)
+				for _, iface := range spec.ListenInterfaces {
+					addLANDistributionInterface(iface)
+				}
+			}
 		}
 	}
 	for _, res := range router.Spec.Resources {
@@ -494,7 +515,10 @@ func raAcceptInterfaceNames(router *api.Router, aliases map[string]string) []str
 			}
 		case "IPv6DelegatedAddress":
 			if spec, err := res.IPv6DelegatedAddressSpec(); err == nil {
-				add(spec.Interface)
+				iface := resolveInterfaceName(spec.Interface, aliases)
+				if iface != "" && !spec.SendRA && !spec.Announce && !lanDistributionInterfaces[iface] {
+					names[iface] = true
+				}
 			}
 		}
 	}
