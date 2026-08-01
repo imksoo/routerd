@@ -4209,6 +4209,9 @@ func daemonObservedOnlyStatus(current, base map[string]any, observed daemonapi.R
 	daemonObserved["health"] = observed.Health
 	next["observed"] = daemonObserved
 	if daemonObservedPromotesTopLevel(observed.Resource.Kind) && strings.TrimSpace(observed.Phase) != "" {
+		if observed.Resource.Kind == "HealthCheck" && strings.TrimSpace(fmt.Sprint(daemonObserved["lastResult"])) == healthcheck.ResultPassed {
+			clearRecoveredHealthCheckFailureStatus(next)
+		}
 		for key, value := range daemonObserved {
 			next[key] = value
 		}
@@ -4220,6 +4223,21 @@ func daemonObservedOnlyStatus(current, base map[string]any, observed daemonapi.R
 		delete(next, "reason")
 	}
 	return next
+}
+
+// clearRecoveredHealthCheckFailureStatus removes event-only failure details
+// once the health-check daemon has reported a successful probe. Historical
+// timestamps (for example lastFailureTime) are deliberately retained.
+func clearRecoveredHealthCheckFailureStatus(status map[string]any) {
+	for _, key := range []string{
+		"result",
+		"message",
+		"timeout",
+		"failureKind",
+		"routerd.healthcheck.failureKind",
+	} {
+		delete(status, key)
+	}
 }
 
 func daemonObservedPromotesTopLevel(kind string) bool {
