@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"os"
 	"os/exec"
 	"strconv"
@@ -36,6 +37,7 @@ type Controller struct {
 	Systemctl                 string
 	KeepalivedCheck           string
 	IP                        string
+	Arping                    string
 	Ifconfig                  string
 	Sysctl                    string
 	Kldload                   string
@@ -328,8 +330,23 @@ func (c *Controller) applyStaticAddresses(ctx context.Context, aliases map[strin
 		if c.DryRun {
 			continue
 		}
+		announce := false
+		_, isIPv4 := staticIPv4Host(address)
+		if spec.GratuitousARP && isIPv4 && c.currentOS() == platform.OSLinux {
+			addressPresent, err := c.staticIPv4AddressPresent(ctx, ifname, address)
+			if err != nil {
+				return changed, isolated, c.saveError("", changed, nil, "StaticVIPObserveFailed", err)
+			}
+			previous := c.Store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name)
+			announce = !addressPresent || statusString(previous, "reason") == "StaticVIPGratuitousARPFailed"
+		}
 		if err := c.replaceStaticAddress(ctx, ifname, address); err != nil {
 			return changed, isolated, c.saveError("", changed, nil, "StaticVIPApplyFailed", err)
+		}
+		if announce {
+			if err := c.announceStaticIPv4Address(ctx, ifname, address); err != nil {
+				return changed, isolated, c.saveError("", changed, nil, "StaticVIPGratuitousARPFailed", err)
+			}
 		}
 	}
 	return changed, isolated, nil
@@ -410,14 +427,15 @@ type trackSummary struct {
 }
 
 type virtualAddressSpec struct {
-	Interface   string
-	Address     string
-	Hostname    string
-	Mode        string
-	VRRP        virtualVRRPSpec
-	Track       []api.ResourceTrackSpec
-	AddressFrom api.StatusValueSourceSpec
-	Family      string
+	Interface     string
+	Address       string
+	Hostname      string
+	Mode          string
+	VRRP          virtualVRRPSpec
+	Track         []api.ResourceTrackSpec
+	AddressFrom   api.StatusValueSourceSpec
+	Family        string
+	GratuitousARP bool
 }
 
 type virtualVRRPSpec struct {
@@ -444,14 +462,15 @@ func vrrpResourceSpec(resource api.Resource) (virtualAddressSpec, bool, error) {
 			return virtualAddressSpec{}, false, err
 		}
 		return virtualAddressSpec{
-			Interface:   spec.Interface,
-			Address:     spec.Address,
-			Hostname:    spec.Hostname,
-			Mode:        spec.Mode,
-			VRRP:        vrrpSpec(spec.VRRP),
-			Track:       spec.Track,
-			AddressFrom: spec.AddressFrom,
-			Family:      spec.Family,
+			Interface:     spec.Interface,
+			Address:       spec.Address,
+			Hostname:      spec.Hostname,
+			Mode:          spec.Mode,
+			VRRP:          vrrpSpec(spec.VRRP),
+			Track:         spec.Track,
+			AddressFrom:   spec.AddressFrom,
+			Family:        spec.Family,
+			GratuitousARP: spec.GratuitousARP,
 		}, true, nil
 	default:
 		return virtualAddressSpec{}, false, nil
@@ -780,6 +799,42 @@ func (c *Controller) replaceStaticAddress(ctx context.Context, ifname, address s
 		return fmt.Errorf("%s addr replace %s dev %s: %w: %s", ip, address, ifname, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func (c *Controller) staticIPv4AddressPresent(ctx context.Context, ifname, address string) (bool, error) {
+	if _, ok := staticIPv4Host(address); !ok {
+		return false, nil
+	}
+	ip := firstNonEmpty(c.IP, "ip")
+	out, err := c.run(ctx, ip, "-4", "-o", "addr", "show", "dev", ifname)
+	if err != nil {
+		return false, fmt.Errorf("%s -4 -o addr show dev %s: %w: %s", ip, ifname, err, strings.TrimSpace(string(out)))
+	}
+	return ipv4AddressPresent(string(out), address), nil
+}
+
+func (c *Controller) announceStaticIPv4Address(ctx context.Context, ifname, address string) error {
+	host, ok := staticIPv4Host(address)
+	if !ok {
+		return nil
+	}
+	arping := firstNonEmpty(c.Arping, "arping")
+	out, err := c.run(ctx, arping, "-U", "-c", "3", "-I", ifname, host)
+	if err != nil {
+		return fmt.Errorf("%s -U -c 3 -I %s %s: %w: %s", arping, ifname, host, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func staticIPv4Host(address string) (string, bool) {
+	value := strings.TrimSpace(address)
+	if prefix, err := netip.ParsePrefix(value); err == nil && prefix.Addr().Is4() {
+		return prefix.Addr().String(), true
+	}
+	if parsed, err := netip.ParseAddr(value); err == nil && parsed.Is4() {
+		return parsed.String(), true
+	}
+	return "", false
 }
 
 func (c *Controller) removeStaticAddress(ctx context.Context, ifname, address string) error {
