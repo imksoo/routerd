@@ -111,6 +111,48 @@ func TestSyncFailoverVMACKeepsWANAndLANInOneRoleTransition(t *testing.T) {
 	}
 }
 
+func TestSaveStatusesPublishesConfiguredFailoverVMACCount(t *testing.T) {
+	tests := []struct {
+		name       string
+		role       string
+		primary    bool
+		additional int
+		want       int
+	}{
+		{name: "none", role: "master", want: 0},
+		{name: "primary", role: "master", primary: true, want: 1},
+		{name: "primary and additional", role: "master", primary: true, additional: 1, want: 2},
+		{name: "backup keeps desired count", role: "backup", primary: true, additional: 1, want: 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := vrrpRouter("vrrp")
+			spec, err := router.Spec.Resources[1].VirtualAddressSpec()
+			if err != nil {
+				t.Fatalf("virtual address spec: %v", err)
+			}
+			if tt.primary {
+				spec.VRRP.FailoverVMAC = &api.VirtualAddressVRRPFailoverVMACSpec{ParentInterface: "lan", Interface: "lan-vrrp", MACAddress: "02:00:5e:00:01:12"}
+			}
+			for i := 0; i < tt.additional; i++ {
+				spec.VRRP.AdditionalFailoverVMACs = append(spec.VRRP.AdditionalFailoverVMACs, api.VirtualAddressVRRPFailoverVMACSpec{
+					ParentInterface: "lan", Interface: "lan-vrrp-extra", MACAddress: "02:00:5e:00:01:13",
+				})
+			}
+			router.Spec.Resources[1].Spec = spec
+			store := mapStore{}
+			controller := Controller{Router: router, Store: store}
+			if err := controller.saveStatuses("Applied", "", false, nil, map[string]string{"vip": tt.role}, nil, nil); err != nil {
+				t.Fatalf("save statuses: %v", err)
+			}
+			status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
+			if status["failoverVMACs"] != tt.want || status["role"] != tt.role {
+				t.Fatalf("status = %#v, want failoverVMACs=%d role=%s", status, tt.want, tt.role)
+			}
+		})
+	}
+}
+
 func (s mapStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
 	var out []routerstate.ObjectStatus
 	for key, status := range s {
@@ -1021,9 +1063,11 @@ func TestReconcilePublishesRoleBeforeVMACRepairFailure(t *testing.T) {
 	router := vrrpRouter("vrrp")
 	spec, _ := router.Spec.Resources[1].VirtualAddressSpec()
 	spec.VRRP.FailoverVMAC = &api.VirtualAddressVRRPFailoverVMACSpec{ParentInterface: "lan", Interface: "lan-vrrp", MACAddress: "02:00:5e:00:01:12"}
+	spec.VRRP.AdditionalFailoverVMACs = []api.VirtualAddressVRRPFailoverVMACSpec{{ParentInterface: "lan", Interface: "lan-vrrp-extra", MACAddress: "02:00:5e:00:01:13"}}
 	router.Spec.Resources[1].Spec = spec
+	failRepair := true
 	controller := &Controller{Router: router, Store: store, OperatingSystem: platform.OSLinux, ConfigPath: filepath.Join(t.TempDir(), "keepalived.conf"), Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-		if name == "/usr/local/sbin/routerd-vrrp-vmac" {
+		if name == "/usr/local/sbin/routerd-vrrp-vmac" && failRepair {
 			return []byte("repair failed"), errors.New("exit status 1")
 		}
 		if name == "ip" {
@@ -1035,8 +1079,28 @@ func TestReconcilePublishesRoleBeforeVMACRepairFailure(t *testing.T) {
 		t.Fatal("expected VMAC repair error")
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
-	if status["role"] != "master" || !strings.Contains(statusString(status, "vmacRepairError"), "repair failed") {
+	if status["role"] != "master" || status["failoverVMACs"] != 2 || !strings.Contains(statusString(status, "vmacRepairError"), "repair failed") {
 		t.Fatalf("status must publish role and repair error: %#v", status)
+	}
+
+	failRepair = false
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("successful VMAC repair: %v", err)
+	}
+	status = store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
+	if status["failoverVMACs"] != 2 || statusString(status, "vmacRepairError") != "" {
+		t.Fatalf("successful repair must clear error and retain desired count: %#v", status)
+	}
+
+	spec.VRRP.FailoverVMAC = nil
+	spec.VRRP.AdditionalFailoverVMACs = nil
+	router.Spec.Resources[1].Spec = spec
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile after removing VMAC spec: %v", err)
+	}
+	status = store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
+	if status["failoverVMACs"] != 0 || statusString(status, "vmacRepairError") != "" {
+		t.Fatalf("removed VMAC spec must publish zero without stale error: %#v", status)
 	}
 }
 

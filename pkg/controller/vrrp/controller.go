@@ -153,13 +153,18 @@ func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[s
 		if spec.Mode == "vrrp" {
 			track := tracks[resource.Metadata.Name]
 			role := firstNonEmpty(roles[resource.Metadata.Name], "unknown")
+			previous := c.Store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name)
+			desiredVMACs := len(spec.VRRP.AdditionalFailoverVMACs)
+			if spec.VRRP.FailoverVMAC != nil {
+				desiredVMACs++
+			}
 			status["virtualRouterID"] = spec.VRRP.VirtualRouterID
 			status["priority"] = track.EffectivePriority
 			status["basePriority"] = track.BasePriority
 			status["preempt"] = spec.VRRP.Preempt != nil && *spec.VRRP.Preempt
 			status["track"] = track.Entries
 			status["role"] = role
-			previous := c.Store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name)
+			status["failoverVMACs"] = desiredVMACs
 			carryBackendActionStatus(status, previous, extra)
 			if statusString(previous, "role") == role && statusString(previous, "lastRoleTransitionAt") != "" {
 				status["lastRoleTransitionAt"] = statusString(previous, "lastRoleTransitionAt")
