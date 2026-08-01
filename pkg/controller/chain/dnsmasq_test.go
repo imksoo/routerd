@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -235,6 +236,101 @@ func TestEnsureSystemdDnsmasqServiceCachesStatusChecks(t *testing.T) {
 	}
 	if isEnabled != 1 || isActive != 1 {
 		t.Fatalf("status checks = is-enabled:%d is-active:%d, want 1 each; log:\n%s", isEnabled, isActive, string(data))
+	}
+}
+
+func TestReloadDnsmasqUsesSystemdServiceManager(t *testing.T) {
+	_, features := platform.Current()
+	if !features.HasSystemd {
+		t.Skip("systemd reload path is Linux-specific")
+	}
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	logPath := filepath.Join(dir, "systemctl.log")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + shellQuote(logPath) + "\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(binDir, "systemctl"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if err := reloadDnsmasq(t.Context(), filepath.Join(dir, "unreadable.pid")); err != nil {
+		t.Fatalf("reload dnsmasq: %v", err)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "reload routerd-dnsmasq.service" {
+		t.Fatalf("systemctl command = %q, want managed reload", got)
+	}
+}
+
+func TestDnsmasqHostsReloadFailureRestoresSidecarForNextReconcileRetry(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "dnsmasq.conf")
+	pidFile := filepath.Join(dir, "dnsmasq.pid")
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{
+			Interface: "lan", AddressPool: api.DHCPAddressPoolSpec{Start: "192.168.10.100", End: "192.168.10.199", LeaseTime: "8h"},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"}, Metadata: api.ObjectMeta{Name: "printer"}, Spec: api.DHCPv4ReservationSpec{
+			Server: "lan-v4", MACAddress: "02:00:00:00:01:50", Hostname: "printer", IPAddress: "192.168.10.150",
+		}},
+	}}}
+	if changed, _, err := writeDnsmasqConfig(router, mapStore{}, configPath, pidFile, 53, nil); err != nil || !changed {
+		t.Fatalf("initial write changed=%t err=%v", changed, err)
+	}
+
+	snapshot, err := snapshotDnsmasqHostsFile(dnsmasqHostsFile(configPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	router.Spec.Resources[2].Spec = api.DHCPv4ReservationSpec{
+		Server: "lan-v4", MACAddress: "02:00:00:00:01:50", Hostname: "printer", IPAddress: "192.168.10.151",
+	}
+	changed, reloadOnly, err := writeDnsmasqConfig(router, mapStore{}, configPath, pidFile, 53, nil)
+	if err != nil || changed || !reloadOnly {
+		t.Fatalf("sidecar update changed=%t reloadOnly=%t err=%v", changed, reloadOnly, err)
+	}
+	attempts := 0
+	reload := func(context.Context, string) error {
+		attempts++
+		if attempts == 1 {
+			return syscall.EPERM
+		}
+		return nil
+	}
+	if err := reloadDnsmasqHostsSidecar(t.Context(), pidFile, configPath, snapshot, reload); !errors.Is(err, syscall.EPERM) {
+		t.Fatalf("first reload error = %v, want EPERM", err)
+	}
+	hostsData, err := os.ReadFile(dnsmasqHostsFile(configPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(hostsData), "192.168.10.150") || strings.Contains(string(hostsData), "192.168.10.151") {
+		t.Fatalf("failed reload did not restore prior sidecar:\n%s", hostsData)
+	}
+
+	retrySnapshot, err := snapshotDnsmasqHostsFile(dnsmasqHostsFile(configPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, reloadOnly, err = writeDnsmasqConfig(router, mapStore{}, configPath, pidFile, 53, nil)
+	if err != nil || changed || !reloadOnly {
+		t.Fatalf("retry write changed=%t reloadOnly=%t err=%v", changed, reloadOnly, err)
+	}
+	if err := reloadDnsmasqHostsSidecar(t.Context(), pidFile, configPath, retrySnapshot, reload); err != nil {
+		t.Fatalf("retry reload: %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("reload attempts = %d, want 2", attempts)
+	}
+	if changed, reloadOnly, err = writeDnsmasqConfig(router, mapStore{}, configPath, pidFile, 53, nil); err != nil || changed || reloadOnly {
+		t.Fatalf("converged write changed=%t reloadOnly=%t err=%v", changed, reloadOnly, err)
 	}
 }
 
