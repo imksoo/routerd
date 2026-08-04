@@ -25,18 +25,21 @@ func DNSResolverSystemdSpec(name string, spec api.DNSResolverSpec, binaryPath, c
 	}
 	noNewPrivileges := true
 	return api.SystemdUnitSpec{
-		Description:           "routerd DNS resolver " + name,
-		ExecStart:             exec,
-		Wants:                 []string{"network-online.target"},
-		After:                 []string{"network-online.target"},
-		WantedBy:              []string{"multi-user.target"},
-		Restart:               "always",
-		RestartSec:            "5s",
-		RuntimeDirectory:      []string{"routerd/dns-resolver"},
-		StateDirectory:        []string{"routerd/dns-resolver", "routerd/dns-resolver/" + name},
-		LogsDirectory:         []string{"routerd"},
-		CapabilityBoundingSet: []string{"CAP_NET_BIND_SERVICE"},
-		AmbientCapabilities:   []string{"CAP_NET_BIND_SERVICE"},
-		NoNewPrivileges:       &noNewPrivileges,
+		Description:      "routerd DNS resolver " + name,
+		ExecStart:        exec,
+		Wants:            []string{"network-online.target"},
+		After:            []string{"network-online.target"},
+		WantedBy:         []string{"multi-user.target"},
+		Restart:          "always",
+		RestartSec:       "5s",
+		RuntimeDirectory: []string{"routerd/dns-resolver"},
+		// Resolver instances share this directory for their control sockets.
+		// Do not remove it while a peer instance is still running.
+		RuntimeDirectoryPreserve: "yes",
+		StateDirectory:           []string{"routerd/dns-resolver", "routerd/dns-resolver/" + name},
+		LogsDirectory:            []string{"routerd"},
+		CapabilityBoundingSet:    []string{"CAP_NET_BIND_SERVICE"},
+		AmbientCapabilities:      []string{"CAP_NET_BIND_SERVICE"},
+		NoNewPrivileges:          &noNewPrivileges,
 	}
 }

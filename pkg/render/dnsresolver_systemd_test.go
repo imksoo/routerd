@@ -20,6 +20,8 @@ func TestDNSResolverSystemdSpec(t *testing.T) {
 		"ExecStart=/usr/local/sbin/routerd-dns-resolver daemon",
 		"--config-file /var/lib/routerd/dns-resolver/cloudflare/config.json",
 		"Restart=always",
+		"RuntimeDirectory=routerd/dns-resolver",
+		"RuntimeDirectoryPreserve=yes",
 	} {
 		if !strings.Contains(unit, want) {
 			t.Fatalf("unit missing %q:\n%s", want, unit)
