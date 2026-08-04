@@ -1410,6 +1410,32 @@ func TestHandlerIncludesDHCPLeases(t *testing.T) {
 	}
 }
 
+func TestHandlerOmitsUnsetDHCPLeaseStickyUntil(t *testing.T) {
+	leasePath := filepath.Join(t.TempDir(), "dnsmasq.leases")
+	expires := time.Now().Add(time.Hour).Unix()
+	if err := os.WriteFile(leasePath, []byte(fmt.Sprintf("%d 7c:dd:e9:01:40:15 172.18.1.78 ATOM 01:7c:dd:e9:01:40:15\n", expires)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handler := New(Options{DHCPLeasePaths: []string{leasePath}})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/summary?dhcpLeases=1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		DHCPLeases []map[string]json.RawMessage `json:"dhcpLeases"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.DHCPLeases) != 1 {
+		t.Fatalf("leases = %#v", response.DHCPLeases)
+	}
+	if _, ok := response.DHCPLeases[0]["stickyUntil"]; ok {
+		t.Fatalf("unset stickyUntil must be omitted: %s", rec.Body.String())
+	}
+}
+
 func TestHandlerDefaultDHCPLeasePathsUsePlatformDefaults(t *testing.T) {
 	defaults, features := platform.Current()
 	handler := New(Options{})
