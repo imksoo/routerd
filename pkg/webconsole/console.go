@@ -189,16 +189,19 @@ type GenerationDiff struct {
 }
 
 type DHCPLease struct {
-	ExpiresAt   time.Time `json:"expiresAt,omitempty"`
-	MAC         string    `json:"mac"`
-	IP          string    `json:"ip"`
-	Hostname    string    `json:"hostname,omitempty"`
-	ClientID    string    `json:"clientId,omitempty"`
-	Vendor      string    `json:"vendor,omitempty"`
-	Family      string    `json:"family,omitempty"`
-	Source      string    `json:"source,omitempty"`
-	StickyUntil time.Time `json:"stickyUntil,omitempty"`
-	StickyState string    `json:"stickyState,omitempty"`
+	ExpiresAt time.Time `json:"expiresAt,omitempty"`
+	MAC       string    `json:"mac"`
+	IP        string    `json:"ip"`
+	Hostname  string    `json:"hostname,omitempty"`
+	ClientID  string    `json:"clientId,omitempty"`
+	Vendor    string    `json:"vendor,omitempty"`
+	Family    string    `json:"family,omitempty"`
+	Source    string    `json:"source,omitempty"`
+	// StickyUntil is nil unless the lease is actively held. A time.Time value
+	// cannot be omitted by encoding/json, even with omitempty, which exposed
+	// Go's zero time to API consumers as 0001-01-01T00:00:00Z.
+	StickyUntil *time.Time `json:"stickyUntil,omitempty"`
+	StickyState string     `json:"stickyState,omitempty"`
 }
 
 type NeighborEntry struct {
@@ -3437,7 +3440,8 @@ func annotateDHCPLeasesWithSticky(leases []DHCPLease, sticky []logstore.DHCPStic
 		if !ok {
 			continue
 		}
-		leases[i].StickyUntil = row.StickyUntil
+		stickyUntil := row.StickyUntil
+		leases[i].StickyUntil = &stickyUntil
 		leases[i].StickyState = "held"
 	}
 	for _, row := range byIP {
@@ -3445,13 +3449,14 @@ func annotateDHCPLeasesWithSticky(leases []DHCPLease, sticky []logstore.DHCPStic
 		if seen[key] {
 			continue
 		}
+		stickyUntil := row.StickyUntil
 		leases = append(leases, DHCPLease{
 			MAC:         row.MAC,
 			IP:          row.IP,
 			Hostname:    row.Hostname,
 			Family:      row.Family,
 			Source:      "sticky-history",
-			StickyUntil: row.StickyUntil,
+			StickyUntil: &stickyUntil,
 			StickyState: "held",
 		})
 	}
@@ -4842,7 +4847,7 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 		if row.Vendor == "" {
 			row.Vendor = lease.Vendor
 		}
-		if !lease.StickyUntil.IsZero() {
+		if lease.StickyUntil != nil && !lease.StickyUntil.IsZero() {
 			row.StickyUntil = lease.StickyUntil.Format(time.RFC3339Nano)
 			row.StickyState = firstNonEmptyString(lease.StickyState, "held")
 		}

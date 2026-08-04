@@ -5152,9 +5152,9 @@ function Highlighted({ text, query }: { text: string; query: string }) {
 }
 
 function RelativeTime({ value }: { value?: string }) {
+  if (!value || isZeroTime(value)) return null;
   const absolute = absoluteTime(value);
   const relative = relativeTimeText(value);
-  if (!value) return null;
   return <span title={absolute}>{relative || absolute}</span>;
 }
 
@@ -6112,7 +6112,7 @@ function DHCPLeaseTable({ leases }: { leases: DHCPLease[] }) {
               <TableCell><code className={styles.wrapCode}>{lease.mac || "-"}</code></TableCell>
               <TableCell>{lease.vendor || "-"}</TableCell>
               <TableCell><RelativeTime value={lease.expiresAt} /></TableCell>
-              <TableCell>{lease.stickyUntil ? <Text size={200} className={styles.muted}>until <RelativeTime value={lease.stickyUntil} /></Text> : "-"}</TableCell>
+              <TableCell>{lease.stickyUntil && !isZeroTime(lease.stickyUntil) ? <Text size={200} className={styles.muted}>until <RelativeTime value={lease.stickyUntil} /></Text> : "-"}</TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -9042,14 +9042,14 @@ function firewallTupleKey(source?: string, sourcePort?: string | number, destina
 }
 
 function absoluteTime(value?: string) {
-  if (!value) return "";
+  if (!value || isZeroTime(value)) return "";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return `${new Intl.DateTimeFormat("en-US", { month: "2-digit", day: "2-digit" }).format(date)} ${new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(date)}`;
 }
 
 function relativeTimeText(value?: string) {
-  if (!value) return "";
+  if (!value || isZeroTime(value)) return "";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   const diffSeconds = Math.round((date.getTime() - Date.now()) / 1000);
@@ -9062,6 +9062,10 @@ function relativeTimeText(value?: string) {
   if (Math.abs(diffHours) < 48) return rtf.format(diffHours, "hour");
   const diffDays = Math.round(diffHours / 24);
   return rtf.format(diffDays, "day");
+}
+
+function isZeroTime(value?: string) {
+  return value?.startsWith("0001-01-01T00:00:00") ?? false;
 }
 
 createRoot(document.getElementById("root")!).render(<App />);
