@@ -1459,6 +1459,81 @@ func TestValidateDHCPv4ServerPoolRange(t *testing.T) {
 	}
 }
 
+func TestValidateDHCPv4ScopeOUIPrefix(t *testing.T) {
+	base := api.DHCPv4ServerSpec{
+		Interface:   "lan",
+		AddressPool: api.DHCPAddressPoolSpec{Start: "192.0.2.100", End: "192.0.2.199"},
+		Scopes: []api.DHCPv4ServerScopeSpec{{
+			Name:        "cameras",
+			Match:       api.DHCPv4ServerScopeMatchSpec{OUIPrefixes: []string{"7c:dd:e9"}},
+			AddressPool: api.DHCPAddressPoolSpec{Start: "192.0.2.200", End: "192.0.2.220"},
+		}},
+	}
+	resource := func(spec api.DHCPv4ServerSpec) api.Resource {
+		return api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
+			Metadata: api.ObjectMeta{Name: "lan-dhcp4"},
+			Spec:     spec,
+		}
+	}
+	if _, err := validateDHCPResource(resource(base), platform.OSLinux); err != nil {
+		t.Fatalf("valid three-octet OUI: %v", err)
+	}
+	for _, oui := range []string{"7c:dd:e9:*", "7c:dd", "7c:dd:e9:00", "7c:dd:gg"} {
+		t.Run(oui, func(t *testing.T) {
+			spec := base
+			spec.Scopes = append([]api.DHCPv4ServerScopeSpec(nil), base.Scopes...)
+			spec.Scopes[0].Match.OUIPrefixes = []string{oui}
+			if _, err := validateDHCPResource(resource(spec), platform.OSLinux); err == nil || !strings.Contains(err.Error(), "invalid OUI") {
+				t.Fatalf("OUI %q validation error = %v, want invalid OUI", oui, err)
+			}
+		})
+	}
+}
+
+func TestValidateDHCPv4ScopeProfileReference(t *testing.T) {
+	profile := api.DHCPv4ServerProfileSpec{
+		Name:        "legacy-iot",
+		AddressPool: api.DHCPAddressPoolSpec{Start: "172.17.1.100", End: "172.17.1.199", LeaseTime: "12h"},
+		Netmask:     "255.255.0.0",
+		Gateway:     "172.17.0.1",
+		DNSServers:  []string{"172.17.0.1"},
+	}
+	base := api.DHCPv4ServerSpec{
+		Interface:   "lan",
+		AddressPool: api.DHCPAddressPoolSpec{Start: "192.0.2.100", End: "192.0.2.199"},
+		Profiles:    []api.DHCPv4ServerProfileSpec{profile},
+		Scopes: []api.DHCPv4ServerScopeSpec{{
+			Name:       "atom-cam",
+			Match:      api.DHCPv4ServerScopeMatchSpec{OUIPrefixes: []string{"7c:dd:e9"}},
+			ProfileRef: "legacy-iot",
+		}},
+	}
+	resource := func(spec api.DHCPv4ServerSpec) api.Resource {
+		return api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-dhcp4"}, Spec: spec}
+	}
+	if _, err := validateDHCPResource(resource(base), platform.OSLinux); err != nil {
+		t.Fatalf("valid scope profile reference: %v", err)
+	}
+
+	t.Run("unknown profile", func(t *testing.T) {
+		spec := base
+		spec.Scopes = append([]api.DHCPv4ServerScopeSpec(nil), base.Scopes...)
+		spec.Scopes[0].ProfileRef = "missing"
+		if _, err := validateDHCPResource(resource(spec), platform.OSLinux); err == nil || !strings.Contains(err.Error(), "unknown profile") {
+			t.Fatalf("unknown profile error = %v", err)
+		}
+	})
+	t.Run("inline settings", func(t *testing.T) {
+		spec := base
+		spec.Scopes = append([]api.DHCPv4ServerScopeSpec(nil), base.Scopes...)
+		spec.Scopes[0].AddressPool = api.DHCPAddressPoolSpec{Start: "192.0.2.210", End: "192.0.2.220"}
+		if _, err := validateDHCPResource(resource(spec), platform.OSLinux); err == nil || !strings.Contains(err.Error(), "cannot combine profileRef") {
+			t.Fatalf("profile and inline settings error = %v", err)
+		}
+	})
+}
+
 func TestValidateDHCPv4ReservationMayLiveOutsidePool(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

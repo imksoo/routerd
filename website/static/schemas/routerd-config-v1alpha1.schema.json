@@ -4435,6 +4435,76 @@
                         },
                         "type": "array"
                       },
+                      "profiles": {
+                        "items": {
+                          "additionalProperties": false,
+                          "description": "DHCPv4ServerProfileSpec defines DHCP options and an address pool that can be reused by multiple selector scopes on the same DHCPv4Server.",
+                          "properties": {
+                            "addressPool": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "end": {
+                                  "type": "string"
+                                },
+                                "leaseTime": {
+                                  "type": "string"
+                                },
+                                "start": {
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "dnsServers": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "gateway": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "netmask": {
+                              "type": "string"
+                            },
+                            "ntpServers": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "options": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "code": {
+                                    "maximum": 65535,
+                                    "minimum": 1,
+                                    "type": "integer"
+                                  },
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "value": {
+                                    "type": "string"
+                                  }
+                                },
+                                "type": "object"
+                              },
+                              "type": "array"
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "addressPool"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
                       "rangeEnd": {
                         "type": "string"
                       },
@@ -4459,6 +4529,98 @@
                           "none"
                         ],
                         "type": "string"
+                      },
+                      "scopes": {
+                        "items": {
+                          "additionalProperties": false,
+                          "description": "DHCPv4ServerScopeSpec allocates a separate tagged pool from the same DHCPv4 server.",
+                          "properties": {
+                            "addressPool": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "end": {
+                                  "type": "string"
+                                },
+                                "leaseTime": {
+                                  "type": "string"
+                                },
+                                "start": {
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "dnsServers": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "gateway": {
+                              "type": "string"
+                            },
+                            "match": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "macAddresses": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "ouiPrefixes": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "netmask": {
+                              "type": "string"
+                            },
+                            "ntpServers": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "options": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "code": {
+                                    "maximum": 65535,
+                                    "minimum": 1,
+                                    "type": "integer"
+                                  },
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "value": {
+                                    "type": "string"
+                                  }
+                                },
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            "profileRef": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "match",
+                            "addressPool"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       },
                       "server": {
                         "enum": [

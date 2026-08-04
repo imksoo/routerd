@@ -6560,6 +6560,51 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		for _, option := range spec.Options {
 			lines = append(lines, "dhcp-option=tag:"+tag+","+dnsmasqDHCPv4Option(option))
 		}
+		profiles := make(map[string]api.DHCPv4ServerProfileSpec, len(spec.Profiles))
+		for _, profile := range spec.Profiles {
+			profiles[profile.Name] = profile
+		}
+		for _, scope := range spec.Scopes {
+			addressPool := scope.AddressPool
+			netmask := scope.Netmask
+			gateway := scope.Gateway
+			dnsServers := scope.DNSServers
+			ntpServers := scope.NTPServers
+			options := scope.Options
+			if profile, ok := profiles[scope.ProfileRef]; ok && scope.ProfileRef != "" {
+				addressPool = profile.AddressPool
+				netmask = profile.Netmask
+				gateway = profile.Gateway
+				dnsServers = profile.DNSServers
+				ntpServers = profile.NTPServers
+				options = profile.Options
+			}
+			scopeTag := sanitizeChainTag(resource.Metadata.Name + "-" + scope.Name)
+			for _, mac := range scope.Match.MACAddresses {
+				lines = append(lines, "dhcp-mac=set:"+scopeTag+","+strings.ToLower(mac))
+			}
+			for _, oui := range scope.Match.OUIPrefixes {
+				lines = append(lines, "dhcp-mac=set:"+scopeTag+","+strings.ToLower(oui)+":*:*:*")
+			}
+			scopeLease := firstNonEmpty(addressPool.LeaseTime, leaseTime)
+			scopeRange := fmt.Sprintf("dhcp-range=tag:%s,%s,%s", scopeTag, addressPool.Start, addressPool.End)
+			if netmask != "" {
+				scopeRange += "," + netmask
+			}
+			lines = append(lines, scopeRange+","+scopeLease)
+			if gateway != "" {
+				lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:router,%s", scopeTag, gateway))
+			}
+			if len(dnsServers) > 0 {
+				lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:dns-server,%s", scopeTag, strings.Join(dnsServers, ",")))
+			}
+			if len(ntpServers) > 0 {
+				lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option:ntp-server,%s", scopeTag, strings.Join(ntpServers, ",")))
+			}
+			for _, option := range options {
+				lines = append(lines, "dhcp-option=tag:"+scopeTag+","+dnsmasqDHCPv4Option(option))
+			}
+		}
 		for _, reservation := range router.Spec.Resources {
 			if reservation.Kind != "DHCPv4Reservation" {
 				continue
