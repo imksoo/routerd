@@ -676,6 +676,14 @@ func gatewayComponentStatus(kind string, status map[string]any) string {
 	if len(status) == 0 {
 		return "unknown"
 	}
+	// A resource whose condition evaluated false is intentionally inactive.
+	// It is not a partially applied gateway component, so it must not affect
+	// the gateway-health aggregate. Do this before kind-specific handling:
+	// NAT44Rule and HealthCheck both otherwise map every Pending phase to
+	// degraded, which made an inactive standby path look like an outage.
+	if gatewayStatusSuppressedByReason(status) {
+		return "skip"
+	}
 	switch kind {
 	case "EgressRoutePolicy":
 		return gatewayEgressRoutePolicyStatus(status)
@@ -685,6 +693,15 @@ func gatewayComponentStatus(kind string, status map[string]any) string {
 		return gatewayHealthCheckStatus(status)
 	}
 	return gatewayGenericComponentStatus(status)
+}
+
+func gatewayStatusSuppressedByReason(status map[string]any) bool {
+	switch statusText(status, "reason") {
+	case "WhenFalse", "DependsOnFalse":
+		return true
+	default:
+		return false
+	}
 }
 
 func gatewayGenericComponentStatus(status map[string]any) string {

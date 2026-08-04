@@ -314,6 +314,34 @@ func TestGatewayHealthNAT44AndHealthCheckStatuses(t *testing.T) {
 	}
 }
 
+func TestGatewayHealthSkipsConditionFalseComponents(t *testing.T) {
+	health := gatewayHealth([]routerstate.ObjectStatus{
+		{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation", Name: "wan-pd", Status: map[string]any{"phase": "Pending", "reason": "WhenFalse"}},
+		{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel", Name: "ds-lite", Status: map[string]any{"phase": "Pending", "reason": "WhenFalse"}},
+		{APIVersion: api.NetAPIVersion, Kind: "HealthCheck", Name: "internet-via-dslite", Status: map[string]any{"phase": "Pending", "reason": "WhenFalse"}},
+		{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule", Name: "lan-to-dslite", Status: map[string]any{"phase": "Pending", "reason": "WhenFalse"}},
+		{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule", Name: "lan-to-ix2215", Status: map[string]any{"phase": "Active"}},
+	})
+	if health.Overall != "ok" {
+		t.Fatalf("overall = %q, want ok: %+v", health.Overall, health)
+	}
+	statuses := map[string]string{}
+	for _, component := range health.Components {
+		statuses[component.Kind+"/"+component.Name] = component.Status
+	}
+	for name, want := range map[string]string{
+		"DHCPv6PrefixDelegation/wan-pd":   "skip",
+		"DSLiteTunnel/ds-lite":            "skip",
+		"HealthCheck/internet-via-dslite": "skip",
+		"NAT44Rule/lan-to-dslite":         "skip",
+		"NAT44Rule/lan-to-ix2215":         "pass",
+	} {
+		if statuses[name] != want {
+			t.Fatalf("%s status = %q, want %q: %+v", name, statuses[name], want, health.Components)
+		}
+	}
+}
+
 func TestSummaryIncludesGatewayHealthJSON(t *testing.T) {
 	handler := New(Options{Store: fakeStore{resources: []routerstate.ObjectStatus{
 		{APIVersion: api.NetAPIVersion, Kind: "DNSResolver", Name: "lan-resolver", Status: map[string]any{"phase": "Applied", "health": "ok"}},

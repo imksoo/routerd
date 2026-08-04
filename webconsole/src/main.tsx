@@ -3921,6 +3921,7 @@ function GatewayHealthBanner({ health }: { health?: GatewayHealth }) {
 function GatewayHealthRow({ component }: { component: GatewayHealthComponent }) {
   const styles = useStyles();
   const status = normalizeGatewayStatus(component.status);
+  const conditionFalse = gatewayComponentSuppressedByReason(component);
   const waiting = component.waiting ?? [];
   const showDiagnostic = status === "degraded" || status === "down";
   const selectedCandidate = component.selectedCandidate || gatewayDetailValue(component.detail, "selectedCandidate") || gatewayDetailValue(component.detail, "selected");
@@ -3938,7 +3939,7 @@ function GatewayHealthRow({ component }: { component: GatewayHealthComponent }) 
         </Text>
         <div className={styles.gatewayComponentBadges}>
           <Badge appearance="tint" color={gatewayStatusColor(status)}>{gatewayStatusLabel(status)}</Badge>
-          {component.phase ? <Badge appearance="outline" color={phaseColor(component.phase)}>{component.phase}</Badge> : null}
+          {component.phase ? <Badge appearance="outline" color={conditionFalse ? "subtle" : phaseColor(component.phase)}>{conditionFalse ? "Inactive" : component.phase}</Badge> : null}
         </div>
       </div>
       <div className={styles.gatewayDetail}>
@@ -3967,6 +3968,7 @@ function GatewayHealthRow({ component }: { component: GatewayHealthComponent }) 
         {component.detail ? <code className={styles.wrapCode}>{component.detail}</code> : null}
         {failedProbes.length ? <Text size={200} className={styles.muted}>failed probes: {failedProbes.join(", ")}</Text> : null}
         {component.lastTransition ? <Text size={200} className={styles.muted}>last transition: <RelativeTime value={component.lastTransition} /></Text> : null}
+        {conditionFalse ? <Text size={200} className={styles.muted}>condition: false (not active)</Text> : null}
         {showDiagnostic ? <Text size={200} className={styles.muted}>reason: {component.reason || "-"}</Text> : null}
         {showDiagnostic ? <Text size={200} className={styles.muted}>waiting: {waiting.length ? waiting.map(formatGatewayWaiting).join("; ") : "-"}</Text> : null}
         {!showDiagnostic && !component.detail && !component.phase ? <Text size={200} className={styles.muted}>No observed status detail</Text> : null}
@@ -6608,6 +6610,10 @@ function resourceStatusClassification(resource: ResourceStatus): { disposition: 
 function resourcePhaseSuppressedByReason(phase: unknown, reason: unknown) {
   if (String(phase ?? "") !== "Pending") return false;
   return ["WhenFalse", "DependsOnFalse"].includes(String(reason ?? ""));
+}
+
+function gatewayComponentSuppressedByReason(component: GatewayHealthComponent) {
+  return ["WhenFalse", "DependsOnFalse"].includes(String(component.reason ?? ""));
 }
 
 function resourceAlertCount(resources: ResourceStatus[]) {
