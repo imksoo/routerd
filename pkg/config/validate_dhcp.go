@@ -270,6 +270,87 @@ func validateDHCPResource(res api.Resource, targetOS platform.OS) (bool, error) 
 					return true, fmt.Errorf("%s spec.options[%d]: %w", res.ID(), i, err)
 				}
 			}
+			validateScopeSettings := func(path string, addressPool api.DHCPAddressPoolSpec, netmask, gateway string, dnsServers, ntpServers []string, options []api.DHCPv4OptionSpec) error {
+				if err := validateIPv4AddressPair(addressPool.Start, addressPool.End); err != nil {
+					return fmt.Errorf("%s.addressPool: %w", path, err)
+				}
+				if netmask != "" {
+					maskAddress := net.ParseIP(netmask).To4()
+					if maskAddress == nil {
+						return fmt.Errorf("%s.netmask must be an IPv4 netmask", path)
+					}
+					if ones, bits := net.IPMask(maskAddress).Size(); bits != 32 || ones < 1 {
+						return fmt.Errorf("%s.netmask must be an IPv4 netmask", path)
+					}
+				}
+				for _, address := range append(append([]string{}, dnsServers...), append(ntpServers, gateway)...) {
+					if address == "" {
+						continue
+					}
+					if addr, err := netip.ParseAddr(address); err != nil || !addr.Is4() {
+						return fmt.Errorf("%s contains invalid IPv4 address %q", path, address)
+					}
+				}
+				for j, option := range options {
+					if err := validateDHCPv4Option(option); err != nil {
+						return fmt.Errorf("%s.options[%d]: %w", path, j, err)
+					}
+				}
+				return nil
+			}
+			profiles := map[string]api.DHCPv4ServerProfileSpec{}
+			for i, profile := range spec.Profiles {
+				name := strings.TrimSpace(profile.Name)
+				if name == "" || strings.ContainsAny(name, " \t\n,") || profiles[name].Name != "" {
+					return true, fmt.Errorf("%s spec.profiles[%d].name must be unique and contain no whitespace or commas", res.ID(), i)
+				}
+				if err := validateScopeSettings(fmt.Sprintf("%s spec.profiles[%d]", res.ID(), i), profile.AddressPool, profile.Netmask, profile.Gateway, profile.DNSServers, profile.NTPServers, profile.Options); err != nil {
+					return true, err
+				}
+				profiles[name] = profile
+			}
+			seenScopes := map[string]bool{}
+			for i, scope := range spec.Scopes {
+				name := strings.TrimSpace(scope.Name)
+				if name == "" || strings.ContainsAny(name, " \t\n,") || seenScopes[name] {
+					return true, fmt.Errorf("%s spec.scopes[%d].name must be unique and contain no whitespace or commas", res.ID(), i)
+				}
+				seenScopes[name] = true
+				if len(scope.Match.MACAddresses) == 0 && len(scope.Match.OUIPrefixes) == 0 {
+					return true, fmt.Errorf("%s spec.scopes[%d].match requires macAddresses or ouiPrefixes", res.ID(), i)
+				}
+				settings := api.DHCPv4ServerProfileSpec{AddressPool: scope.AddressPool, Netmask: scope.Netmask, Gateway: scope.Gateway, DNSServers: scope.DNSServers, NTPServers: scope.NTPServers, Options: scope.Options}
+				if scope.ProfileRef != "" {
+					profile, ok := profiles[scope.ProfileRef]
+					if !ok {
+						return true, fmt.Errorf("%s spec.scopes[%d].profileRef references unknown profile %q", res.ID(), i, scope.ProfileRef)
+					}
+					if scope.AddressPool.Start != "" || scope.AddressPool.End != "" || scope.AddressPool.LeaseTime != "" || scope.Netmask != "" || scope.Gateway != "" || len(scope.DNSServers) > 0 || len(scope.NTPServers) > 0 || len(scope.Options) > 0 {
+						return true, fmt.Errorf("%s spec.scopes[%d] cannot combine profileRef with inline DHCP settings", res.ID(), i)
+					}
+					settings = profile
+				}
+				for _, mac := range scope.Match.MACAddresses {
+					if _, err := net.ParseMAC(mac); err != nil {
+						return true, fmt.Errorf("%s spec.scopes[%d].match.macAddresses contains invalid MAC %q", res.ID(), i, mac)
+					}
+				}
+				for _, oui := range scope.Match.OUIPrefixes {
+					normalized, err := normalizeOUIPrefix(oui)
+					if err != nil {
+						return true, fmt.Errorf("%s spec.scopes[%d].match.ouiPrefixes contains invalid OUI %q: %w", res.ID(), i, oui, err)
+					}
+					// dnsmasq matches MAC wildcards one octet at a time. Keep this
+					// invariant here as well as in the renderer so incomplete values
+					// can never produce a non-matching selector.
+					if fields := strings.Split(normalized+":*:*:*", ":"); len(fields) != 6 || fields[3] != "*" || fields[4] != "*" || fields[5] != "*" {
+						return true, fmt.Errorf("%s spec.scopes[%d].match.ouiPrefixes contains invalid dnsmasq MAC pattern for OUI %q", res.ID(), i, oui)
+					}
+				}
+				if err := validateScopeSettings(fmt.Sprintf("%s spec.scopes[%d]", res.ID(), i), settings.AddressPool, settings.Netmask, settings.Gateway, settings.DNSServers, settings.NTPServers, settings.Options); err != nil {
+					return true, err
+				}
+			}
 		}
 	case "DHCPv4Reservation":
 		if res.APIVersion != api.NetAPIVersion {

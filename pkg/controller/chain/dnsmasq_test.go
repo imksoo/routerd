@@ -85,6 +85,16 @@ func TestDnsmasqLANServiceLines(t *testing.T) {
 			DNSServerFrom: []api.StatusValueSourceSpec{{Resource: "IPv4StaticAddress/lan-base", Field: "address"}},
 			NTPServerFrom: []api.StatusValueSourceSpec{{Resource: "IPv4StaticAddress/lan-base", Field: "address"}},
 			DomainFrom:    api.StatusValueSourceSpec{Resource: "DNSZone/lan-zone", Field: "zone"},
+			Profiles: []api.DHCPv4ServerProfileSpec{{
+				Name:        "legacy-iot",
+				AddressPool: api.DHCPAddressPoolSpec{Start: "172.17.1.100", End: "172.17.1.199", LeaseTime: "12h"},
+				Netmask:     "255.255.0.0", Gateway: "172.17.0.1", DNSServers: []string{"172.17.0.1"},
+			}},
+			Scopes: []api.DHCPv4ServerScopeSpec{{
+				Name:       "atom-cam",
+				Match:      api.DHCPv4ServerScopeMatchSpec{OUIPrefixes: []string{"7c:dd:e9"}},
+				ProfileRef: "legacy-iot",
+			}},
 		}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"}, Metadata: api.ObjectMeta{Name: "printer"}, Spec: api.DHCPv4ReservationSpec{
 			Server:     "lan-v4",
@@ -136,6 +146,10 @@ func TestDnsmasqLANServiceLines(t *testing.T) {
 		"dhcp-option=tag:lan-v4,option:domain-name,lan",
 		"dhcp-option=tag:lan-v4,option:domain-search,lan",
 		"dhcp-option=tag:printer,42,192.168.10.1",
+		"dhcp-mac=set:lan-v4-atom-cam,7c:dd:e9:*:*:*",
+		"dhcp-range=tag:lan-v4-atom-cam,172.17.1.100,172.17.1.199,255.255.0.0,12h",
+		"dhcp-option=tag:lan-v4-atom-cam,option:router,172.17.0.1",
+		"dhcp-option=tag:lan-v4-atom-cam,option:dns-server,172.17.0.1",
 		"dhcp-range=set:lan-v6,::100,::1ff,constructor:ens19,slaac,64,6h",
 		"dhcp-option=tag:lan-v6,option6:dns-server,[2001:db8::53]",
 		"dhcp-option=tag:lan-v6,option6:sntp-server,[2001:db8::123]",

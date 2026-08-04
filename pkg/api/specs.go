@@ -1048,18 +1048,20 @@ type IPv6StaticRouteSpec struct {
 }
 
 type DHCPv4ServerSpec struct {
-	Server           string              `yaml:"server,omitempty" json:"server,omitempty" jsonschema:"enum=dnsmasq,enum=kea,enum=dhcpd"`
-	Managed          bool                `yaml:"managed,omitempty" json:"managed,omitempty"`
-	Role             string              `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=server,enum=transit"`
-	ListenInterfaces []string            `yaml:"listenInterfaces,omitempty" json:"listenInterfaces,omitempty"`
-	LogDHCP          bool                `yaml:"logDHCP,omitempty" json:"logDHCP,omitempty"`
-	StickyHoldDays   int                 `yaml:"stickyHoldDays,omitempty" json:"stickyHoldDays,omitempty" jsonschema:"minimum=0"`
-	DNS              DHCPv4ServerDNSSpec `yaml:"dns,omitempty" json:"dns,omitempty"`
-	Interface        string              `yaml:"interface,omitempty" json:"interface,omitempty"`
-	AddressPool      DHCPAddressPoolSpec `yaml:"addressPool,omitempty" json:"addressPool,omitempty"`
-	RangeStart       string              `yaml:"rangeStart,omitempty" json:"rangeStart,omitempty"`
-	RangeEnd         string              `yaml:"rangeEnd,omitempty" json:"rangeEnd,omitempty"`
-	LeaseTime        string              `yaml:"leaseTime,omitempty" json:"leaseTime,omitempty"`
+	Server           string                    `yaml:"server,omitempty" json:"server,omitempty" jsonschema:"enum=dnsmasq,enum=kea,enum=dhcpd"`
+	Managed          bool                      `yaml:"managed,omitempty" json:"managed,omitempty"`
+	Role             string                    `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=server,enum=transit"`
+	ListenInterfaces []string                  `yaml:"listenInterfaces,omitempty" json:"listenInterfaces,omitempty"`
+	LogDHCP          bool                      `yaml:"logDHCP,omitempty" json:"logDHCP,omitempty"`
+	StickyHoldDays   int                       `yaml:"stickyHoldDays,omitempty" json:"stickyHoldDays,omitempty" jsonschema:"minimum=0"`
+	DNS              DHCPv4ServerDNSSpec       `yaml:"dns,omitempty" json:"dns,omitempty"`
+	Interface        string                    `yaml:"interface,omitempty" json:"interface,omitempty"`
+	AddressPool      DHCPAddressPoolSpec       `yaml:"addressPool,omitempty" json:"addressPool,omitempty"`
+	Profiles         []DHCPv4ServerProfileSpec `yaml:"profiles,omitempty" json:"profiles,omitempty"`
+	Scopes           []DHCPv4ServerScopeSpec   `yaml:"scopes,omitempty" json:"scopes,omitempty"`
+	RangeStart       string                    `yaml:"rangeStart,omitempty" json:"rangeStart,omitempty"`
+	RangeEnd         string                    `yaml:"rangeEnd,omitempty" json:"rangeEnd,omitempty"`
+	LeaseTime        string                    `yaml:"leaseTime,omitempty" json:"leaseTime,omitempty"`
 	// RouterSource defaults to interfaceAddress; static uses router, and none omits DHCP option 3.
 	RouterSource string                `yaml:"routerSource,omitempty" json:"routerSource,omitempty" jsonschema:"enum=interfaceAddress,enum=static,enum=none"`
 	Router       string                `yaml:"router,omitempty" json:"router,omitempty"`
@@ -1078,6 +1080,38 @@ type DHCPv4ServerSpec struct {
 	Authoritative bool                    `yaml:"authoritative,omitempty" json:"authoritative,omitempty"`
 	LeaseFile     string                  `yaml:"leaseFile,omitempty" json:"leaseFile,omitempty"`
 	When          ResourceWhenSpec        `yaml:"when,omitempty" json:"when,omitempty"`
+}
+
+// DHCPv4ServerProfileSpec defines DHCP options and an address pool that can be
+// reused by multiple selector scopes on the same DHCPv4Server.
+type DHCPv4ServerProfileSpec struct {
+	Name        string              `yaml:"name" json:"name"`
+	AddressPool DHCPAddressPoolSpec `yaml:"addressPool" json:"addressPool"`
+	Netmask     string              `yaml:"netmask,omitempty" json:"netmask,omitempty"`
+	Gateway     string              `yaml:"gateway,omitempty" json:"gateway,omitempty"`
+	DNSServers  []string            `yaml:"dnsServers,omitempty" json:"dnsServers,omitempty"`
+	NTPServers  []string            `yaml:"ntpServers,omitempty" json:"ntpServers,omitempty"`
+	Options     []DHCPv4OptionSpec  `yaml:"options,omitempty" json:"options,omitempty"`
+}
+
+// DHCPv4ServerScopeSpec allocates a separate tagged pool from the same DHCPv4
+// server. A client selected by Match receives this pool and its DHCP options;
+// clients that match no scope continue to use the server's primary pool.
+type DHCPv4ServerScopeSpec struct {
+	Name        string                     `yaml:"name" json:"name"`
+	Match       DHCPv4ServerScopeMatchSpec `yaml:"match" json:"match"`
+	ProfileRef  string                     `yaml:"profileRef,omitempty" json:"profileRef,omitempty"`
+	AddressPool DHCPAddressPoolSpec        `yaml:"addressPool" json:"addressPool"`
+	Netmask     string                     `yaml:"netmask,omitempty" json:"netmask,omitempty"`
+	Gateway     string                     `yaml:"gateway,omitempty" json:"gateway,omitempty"`
+	DNSServers  []string                   `yaml:"dnsServers,omitempty" json:"dnsServers,omitempty"`
+	NTPServers  []string                   `yaml:"ntpServers,omitempty" json:"ntpServers,omitempty"`
+	Options     []DHCPv4OptionSpec         `yaml:"options,omitempty" json:"options,omitempty"`
+}
+
+type DHCPv4ServerScopeMatchSpec struct {
+	MACAddresses []string `yaml:"macAddresses,omitempty" json:"macAddresses,omitempty"`
+	OUIPrefixes  []string `yaml:"ouiPrefixes,omitempty" json:"ouiPrefixes,omitempty"`
 }
 
 type DHCPv4ServerDNSSpec struct {
