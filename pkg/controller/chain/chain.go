@@ -6518,6 +6518,17 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	ipv4DHCPInterfaces := dnsmasqIPv4DHCPInterfaces(router, store, aliases)
+	ipv4SuppressedInterfaces := map[string]bool{}
+	appendIPv4DHCPSuppression := func(lines *[]string, ifname string) {
+		if ifname == "" || ipv4DHCPInterfaces[ifname] || ipv4SuppressedInterfaces[ifname] {
+			return
+		}
+		// A macvlan used only for DHCPv6/RA also receives IPv4 DHCP broadcasts
+		// from its parent. Suppress IPv4 DHCP there while retaining DHCPv6 and RA.
+		*lines = append(*lines, "no-dhcpv4-interface="+ifname)
+		ipv4SuppressedInterfaces[ifname] = true
+	}
 	var lines []string
 	for _, resource := range router.Spec.Resources {
 		if resource.Kind != "DHCPv4Server" {
@@ -6647,6 +6658,7 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 			continue
 		}
 		tag := sanitizeChainTag(resource.Metadata.Name)
+		appendIPv4DHCPSuppression(&lines, ifname)
 		lines = append(lines, "interface="+ifname, "enable-ra")
 		leaseTime := firstNonEmpty(spec.AddressPool.LeaseTime, spec.LeaseTime, "12h")
 		switch firstNonEmpty(spec.Mode, "stateless") {
@@ -6685,6 +6697,7 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		if ifname == "" {
 			ifname = spec.Interface
 		}
+		appendIPv4DHCPSuppression(&lines, ifname)
 		lines = append(lines, "interface="+ifname, "enable-ra")
 		var params []string
 		mtu := chainFirstNonZero(raMTUByScope[resource.Metadata.Name], spec.MTU)
@@ -6729,6 +6742,36 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		}
 	}
 	return lines, nil
+}
+
+func dnsmasqIPv4DHCPInterfaces(router *api.Router, store Store, aliases map[string]string) map[string]bool {
+	interfaces := map[string]bool{}
+	if router == nil {
+		return interfaces
+	}
+	for _, resource := range router.Spec.Resources {
+		switch resource.Kind {
+		case "DHCPv4Server":
+			spec, err := resource.DHCPv4ServerSpec()
+			if err != nil || spec.Interface == "" || dhcpv4ServerPending(router, store, spec) != "" {
+				continue
+			}
+			if ifname := firstNonEmpty(aliases[spec.Interface], spec.Interface); ifname != "" {
+				interfaces[ifname] = true
+			}
+		case "DHCPv4Relay":
+			spec, err := resource.DHCPv4RelaySpec()
+			if err != nil {
+				continue
+			}
+			for _, iface := range spec.Interfaces {
+				if ifname := firstNonEmpty(aliases[iface], iface); ifname != "" {
+					interfaces[ifname] = true
+				}
+			}
+		}
+	}
+	return interfaces
 }
 func chainInterfaceAliases(router *api.Router) map[string]string {
 	aliases := map[string]string{}

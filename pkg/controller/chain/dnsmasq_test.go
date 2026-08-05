@@ -168,6 +168,29 @@ func TestDnsmasqLANServiceLines(t *testing.T) {
 	if profileRange < 0 || baseRange < 0 || profileRange >= baseRange {
 		t.Fatalf("profile range must precede catch-all range: %#v", got)
 	}
+	if containsLine(got, "no-dhcpv4-interface=ens19") {
+		t.Fatalf("IPv4 DHCP interface must not be suppressed: %#v", got)
+	}
+}
+
+func TestDnsmasqLANServiceLinesSuppressesIPv4DHCPOnIPv6OnlyInterface(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan-vrrp"}, Spec: api.InterfaceSpec{IfName: "lan-vrrp"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.DHCPv6ServerSpec{Interface: "lan-vrrp", Mode: "stateless"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{Interface: "lan-vrrp"}},
+	}}}
+	lines, err := dnsmasqLANServiceLines(router, mapStore{})
+	if err != nil {
+		t.Fatalf("render lines: %v", err)
+	}
+	if count := countLine(lines, "no-dhcpv4-interface=lan-vrrp"); count != 1 {
+		t.Fatalf("no-dhcpv4-interface count = %d, want 1: %#v", count, lines)
+	}
+	for _, want := range []string{"interface=lan-vrrp", "enable-ra", "dhcp-range=set:lan-v6,::,constructor:lan-vrrp,ra-stateless,64,12h"} {
+		if !containsLine(lines, want) {
+			t.Fatalf("missing IPv6 service line %q: %#v", want, lines)
+		}
+	}
 }
 
 func TestDnsmasqLANServiceLinesStripIPv6PrefixLengthFromOptions(t *testing.T) {
@@ -1106,6 +1129,16 @@ func indexLine(lines []string, want string) int {
 		}
 	}
 	return -1
+}
+
+func countLine(lines []string, want string) int {
+	count := 0
+	for _, line := range lines {
+		if line == want {
+			count++
+		}
+	}
+	return count
 }
 
 func TestIPv4StaticAddressControllerAppliesAddressOnAliasedInterface(t *testing.T) {
