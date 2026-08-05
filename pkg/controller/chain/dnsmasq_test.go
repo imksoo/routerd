@@ -146,8 +146,8 @@ func TestDnsmasqLANServiceLines(t *testing.T) {
 		"dhcp-option=tag:lan-v4,option:domain-name,lan",
 		"dhcp-option=tag:lan-v4,option:domain-search,lan",
 		"dhcp-option=tag:printer,42,192.168.10.1",
-		"dhcp-mac=set:lan-v4-atom-cam,7c:dd:e9:*:*:*",
-		"dhcp-range=tag:lan-v4-atom-cam,172.17.1.100,172.17.1.199,255.255.0.0,12h",
+		"dhcp-mac=set:lan-v4-atom-cam-match,7c:dd:e9:*:*:*",
+		"dhcp-range=tag:lan-v4-atom-cam-match,set:lan-v4-atom-cam,172.17.1.100,172.17.1.199,255.255.0.0,12h",
 		"dhcp-option=tag:lan-v4-atom-cam,option:router,172.17.0.1",
 		"dhcp-option=tag:lan-v4-atom-cam,option:dns-server,172.17.0.1",
 		"dhcp-range=set:lan-v6,::100,::1ff,constructor:ens19,slaac,64,6h",
@@ -162,6 +162,11 @@ func TestDnsmasqLANServiceLines(t *testing.T) {
 		if !containsLine(got, want) {
 			t.Fatalf("dnsmasq LAN service lines missing %q:\n%#v", want, got)
 		}
+	}
+	profileRange := indexLine(got, "dhcp-range=tag:lan-v4-atom-cam-match,set:lan-v4-atom-cam,172.17.1.100,172.17.1.199,255.255.0.0,12h")
+	baseRange := indexLine(got, "dhcp-range=set:lan-v4,192.168.10.100,192.168.10.199,8h")
+	if profileRange < 0 || baseRange < 0 || profileRange >= baseRange {
+		t.Fatalf("profile range must precede catch-all range: %#v", got)
 	}
 }
 
@@ -723,6 +728,48 @@ func TestWriteDnsmasqConfigUsesDeclaredLeaseFile(t *testing.T) {
 	}
 }
 
+func TestPruneDHCPv4ProfileMismatchedLeases(t *testing.T) {
+	dir := t.TempDir()
+	leaseFile := filepath.Join(dir, "dnsmasq.leases")
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{
+			LeaseFile: leaseFile,
+			Profiles:  []api.DHCPv4ServerProfileSpec{{Name: "legacy-iot", AddressPool: api.DHCPAddressPoolSpec{Start: "172.17.1.100", End: "172.17.1.199"}}},
+			Scopes:    []api.DHCPv4ServerScopeSpec{{Name: "iot", ProfileRef: "legacy-iot", Match: api.DHCPv4ServerScopeMatchSpec{OUIPrefixes: []string{"7c:dd:e9"}}}},
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"}, Metadata: api.ObjectMeta{Name: "reserved-iot"}, Spec: api.DHCPv4ReservationSpec{Server: "lan-v4", MACAddress: "7c:dd:e9:00:00:04", IPAddress: "172.18.1.104"}},
+	}}}
+	leases := "0 7c:dd:e9:00:00:01 172.18.1.101 old-iot *\n" +
+		"0 7c:dd:e9:00:00:02 172.17.1.102 profile-iot *\n" +
+		"0 02:00:00:00:00:03 172.18.1.103 normal *\n" +
+		"0 7c:dd:e9:00:00:04 172.18.1.104 reserved-iot *\n"
+	if err := os.WriteFile(leaseFile, []byte(leases), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := pruneDHCPv4ProfileMismatchedLeases(router, filepath.Join(dir, "dnsmasq.conf"), filepath.Join(dir, "dnsmasq.pid"))
+	if err != nil {
+		t.Fatalf("prune leases: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected old profile lease to be removed")
+	}
+	got, err := os.ReadFile(leaseFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "old-iot") {
+		t.Fatalf("old profile lease remains: %s", got)
+	}
+	for _, hostname := range []string{"profile-iot", "normal", "reserved-iot"} {
+		if !strings.Contains(string(got), hostname) {
+			t.Fatalf("expected %s to remain: %s", hostname, got)
+		}
+	}
+	if changed, err := pruneDHCPv4ProfileMismatchedLeases(router, filepath.Join(dir, "dnsmasq.conf"), filepath.Join(dir, "dnsmasq.pid")); err != nil || changed {
+		t.Fatalf("second prune = changed:%t err:%v, want false nil", changed, err)
+	}
+}
+
 func TestWriteDnsmasqConfigKeepsReservationsInHostsFile(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "dnsmasq.conf")
@@ -1050,6 +1097,15 @@ func containsLine(lines []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func indexLine(lines []string, want string) int {
+	for i, line := range lines {
+		if line == want {
+			return i
+		}
+	}
+	return -1
 }
 
 func TestIPv4StaticAddressControllerAppliesAddressOnAliasedInterface(t *testing.T) {

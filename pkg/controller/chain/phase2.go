@@ -925,6 +925,11 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 			return err
 		}
 	} else {
+		leaseChanged, err := pruneDHCPv4ProfileMismatchedLeases(effectiveRouter, configPath, pidFile)
+		if err != nil {
+			return err
+		}
+		changed = changed || leaseChanged
 		if err := ensureDnsmasq(ctx, c.Command, configPath, pidFile, changed); err != nil {
 			return restoreDnsmasqHostsForRetry(configPath, reloadOnly, hostsSnapshot, err)
 		}
