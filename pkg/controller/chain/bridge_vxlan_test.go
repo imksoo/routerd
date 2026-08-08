@@ -420,7 +420,8 @@ func TestVXLANTunnelRestartOrphanMarkerTriggersCleanup(t *testing.T) {
 	dir := t.TempDir()
 	controller := VXLANTunnelController{DeclaredRouter: &api.Router{}, Router: &api.Router{}, Store: mapStore{}, NetworkdDir: dir, OperatingSystem: platform.OSLinux}
 	cfg := vxlan.Config{IfName: "vx-old", VNI: 200001, LocalAddress: "10.254.200.1", UnderlayInterface: "wg-l2", UDPPort: 4789, MTU: 1370, Bridge: "br-l2", Peers: []string{"10.254.200.2"}}
-	if _, err := controller.persistOwnership(cfg); err != nil {
+	resource := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"}, Metadata: api.ObjectMeta{Name: "retired-overlay"}}
+	if _, err := controller.persistOwnershipBound(resource, cfg, 8); err != nil {
 		t.Fatal(err)
 	}
 	exists := true
@@ -507,7 +508,11 @@ func TestVXLANTunnelOwnedConfigChangeDownsOldBeforeRecreate(t *testing.T) {
 	dir := t.TempDir()
 	controller := VXLANTunnelController{Router: router, DeclaredRouter: router, Store: store, NetworkdDir: dir, OperatingSystem: platform.OSLinux}
 	old := vxlan.Config{IfName: "vx-l2", VNI: 200001, LocalAddress: "10.254.200.1", UnderlayInterface: "wg-l2", UDPPort: 4789, MTU: 1370, Bridge: "br-l2", Peers: []string{"10.254.200.2"}}
-	if _, err := controller.persistOwnership(old); err != nil {
+	oldResource := resource
+	oldSpec := desired
+	oldSpec.VNI = old.VNI
+	oldResource.Spec = oldSpec
+	if _, err := controller.persistOwnershipBound(oldResource, old, 8); err != nil {
 		t.Fatal(err)
 	}
 	exists := true
@@ -603,8 +608,11 @@ func bridgeVXLANWhenRouter(when api.ResourceWhenSpec) *api.Router {
 
 func writeVXLANOwnedArtifacts(t *testing.T, dir, ifname string) {
 	t.Helper()
-	path := filepath.Join(dir, "31-routerd-"+ifname+".owner")
-	if err := os.WriteFile(path, []byte(routerdGeneratedNetworkdHeader+"\n"), 0o600); err != nil {
+	resource := bridgeVXLANTestRouter(true).Spec.Resources[3]
+	spec, _ := resource.VXLANTunnelSpec()
+	cfg := vxlan.Config{Name: resource.Metadata.Name, IfName: ifname, VNI: spec.VNI, LocalAddress: spec.LocalAddress, Peers: append([]string(nil), spec.Peers...), UnderlayInterface: spec.UnderlayInterface, UDPPort: spec.UDPPort, MTU: spec.MTU, Bridge: "br-l2"}
+	controller := VXLANTunnelController{NetworkdDir: dir}
+	if _, err := controller.persistOwnershipBound(resource, cfg, 8); err != nil {
 		t.Fatalf("write artifact: %v", err)
 	}
 }
