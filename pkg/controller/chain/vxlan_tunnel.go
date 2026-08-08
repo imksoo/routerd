@@ -583,6 +583,13 @@ func (c VXLANTunnelController) reconcileOne(ctx context.Context, resource api.Re
 		if err := c.verifyOwnership(ctx, resource, owner.Config); err != nil {
 			return err
 		}
+		deleteObserved, deleteObserveErr := c.command(ctx, "ip", "-details", "link", "show", "dev", cfg.IfName)
+		if deleteObserveErr != nil || vxlanIfIndex(string(deleteObserved)) != owner.IfIndex {
+			if deleteObserveErr == nil {
+				deleteObserveErr = fmt.Errorf("VXLAN %s ifindex changed immediately before config replacement delete: owner=%d current=%d", cfg.IfName, owner.IfIndex, vxlanIfIndex(string(deleteObserved)))
+			}
+			return deleteObserveErr
+		}
 		if _, err := c.command(ctx, "ip", "link", "delete", "dev", cfg.IfName); err != nil {
 			return err
 		}

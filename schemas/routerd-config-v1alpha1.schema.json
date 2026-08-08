@@ -27,6 +27,9 @@
                     },
                     "type": "array"
                   },
+                  "maxAge": {
+                    "type": "string"
+                  },
                   "status": {
                     "enum": [
                       "set",
@@ -945,6 +948,9 @@
                                   },
                                   "type": "array"
                                 },
+                                "maxAge": {
+                                  "type": "string"
+                                },
                                 "status": {
                                   "enum": [
                                     "set",
@@ -1401,6 +1407,9 @@
                                   },
                                   "type": "array"
                                 },
+                                "maxAge": {
+                                  "type": "string"
+                                },
                                 "status": {
                                   "enum": [
                                     "set",
@@ -1597,6 +1606,9 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "maxAge": {
+                                  "type": "string"
                                 },
                                 "status": {
                                   "enum": [
@@ -1890,6 +1902,9 @@
                                   },
                                   "type": "array"
                                 },
+                                "maxAge": {
+                                  "type": "string"
+                                },
                                 "status": {
                                   "enum": [
                                     "set",
@@ -1998,6 +2013,9 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "maxAge": {
+                                  "type": "string"
                                 },
                                 "status": {
                                   "enum": [
@@ -2424,6 +2442,9 @@
                                   },
                                   "type": "array"
                                 },
+                                "maxAge": {
+                                  "type": "string"
+                                },
                                 "status": {
                                   "enum": [
                                     "set",
@@ -2672,6 +2693,52 @@
                         "maximum": 16777215,
                         "minimum": 1,
                         "type": "integer"
+                      },
+                      "when": {
+                        "additionalProperties": false,
+                        "description": "When gates the forwarding VXLAN. Unlike general-purpose resources, the\noperational controller treats an unresolved predicate as disabled so a\nstale or missing HA role can never leave the stretched L2 active.",
+                        "properties": {
+                          "state": {
+                            "additionalProperties": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "contains": {
+                                  "type": "string"
+                                },
+                                "equals": {
+                                  "type": "string"
+                                },
+                                "exists": {
+                                  "type": "boolean"
+                                },
+                                "for": {
+                                  "type": "string"
+                                },
+                                "in": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "maxAge": {
+                                  "type": "string"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "set",
+                                    "unset",
+                                    "unknown"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "description": "State gates a resource on status fields from other resources.",
+                            "type": "object"
+                          }
+                        },
+                        "type": "object"
                       }
                     },
                     "required": [
@@ -2762,6 +2829,9 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "maxAge": {
+                                  "type": "string"
                                 },
                                 "status": {
                                   "enum": [
@@ -3035,6 +3105,9 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "maxAge": {
+                                  "type": "string"
                                 },
                                 "status": {
                                   "enum": [
@@ -3336,6 +3409,9 @@
                                   },
                                   "type": "array"
                                 },
+                                "maxAge": {
+                                  "type": "string"
+                                },
                                 "status": {
                                   "enum": [
                                     "set",
@@ -3599,6 +3675,9 @@
                                   },
                                   "type": "array"
                                 },
+                                "maxAge": {
+                                  "type": "string"
+                                },
                                 "status": {
                                   "enum": [
                                     "set",
@@ -3809,6 +3888,9 @@
                                   },
                                   "type": "array"
                                 },
+                                "maxAge": {
+                                  "type": "string"
+                                },
                                 "status": {
                                   "enum": [
                                     "set",
@@ -3925,6 +4007,9 @@
                                   },
                                   "type": "array"
                                 },
+                                "maxAge": {
+                                  "type": "string"
+                                },
                                 "status": {
                                   "enum": [
                                     "set",
@@ -4037,6 +4122,9 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "maxAge": {
+                                  "type": "string"
                                 },
                                 "status": {
                                   "enum": [
@@ -4173,6 +4261,9 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "maxAge": {
+                                  "type": "string"
                                 },
                                 "status": {
                                   "enum": [
@@ -4668,6 +4759,9 @@
                                   },
                                   "type": "array"
                                 },
+                                "maxAge": {
+                                  "type": "string"
+                                },
                                 "status": {
                                   "enum": [
                                     "set",
@@ -4790,6 +4884,9 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "maxAge": {
+                                  "type": "string"
                                 },
                                 "status": {
                                   "enum": [
@@ -5016,6 +5113,9 @@
                                   },
                                   "type": "array"
                                 },
+                                "maxAge": {
+                                  "type": "string"
+                                },
                                 "status": {
                                   "enum": [
                                     "set",
@@ -5163,6 +5263,9 @@
                                   },
                                   "type": "array"
                                 },
+                                "maxAge": {
+                                  "type": "string"
+                                },
                                 "status": {
                                   "enum": [
                                     "set",
@@ -5293,6 +5396,9 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "maxAge": {
+                                  "type": "string"
                                 },
                                 "status": {
                                   "enum": [
@@ -5529,6 +5635,9 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "maxAge": {
+                                  "type": "string"
                                 },
                                 "status": {
                                   "enum": [
@@ -5829,6 +5938,9 @@
                                   },
                                   "type": "array"
                                 },
+                                "maxAge": {
+                                  "type": "string"
+                                },
                                 "status": {
                                   "enum": [
                                     "set",
@@ -5964,6 +6076,9 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "maxAge": {
+                                  "type": "string"
                                 },
                                 "status": {
                                   "enum": [
@@ -6101,6 +6216,9 @@
                                   },
                                   "type": "array"
                                 },
+                                "maxAge": {
+                                  "type": "string"
+                                },
                                 "status": {
                                   "enum": [
                                     "set",
@@ -6236,6 +6354,9 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "maxAge": {
+                                  "type": "string"
                                 },
                                 "status": {
                                   "enum": [
@@ -6769,6 +6890,9 @@
                                   },
                                   "type": "array"
                                 },
+                                "maxAge": {
+                                  "type": "string"
+                                },
                                 "status": {
                                   "enum": [
                                     "set",
@@ -6894,6 +7018,9 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "maxAge": {
+                                  "type": "string"
                                 },
                                 "status": {
                                   "enum": [
@@ -7067,6 +7194,9 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "maxAge": {
+                                  "type": "string"
                                 },
                                 "status": {
                                   "enum": [
@@ -7297,6 +7427,9 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "maxAge": {
+                                  "type": "string"
                                 },
                                 "status": {
                                   "enum": [
@@ -8204,6 +8337,9 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "maxAge": {
+                                  "type": "string"
                                 },
                                 "status": {
                                   "enum": [
@@ -11361,6 +11497,9 @@
                                   },
                                   "type": "array"
                                 },
+                                "maxAge": {
+                                  "type": "string"
+                                },
                                 "status": {
                                   "enum": [
                                     "set",
@@ -11678,6 +11817,9 @@
                                         },
                                         "type": "array"
                                       },
+                                      "maxAge": {
+                                        "type": "string"
+                                      },
                                       "status": {
                                         "enum": [
                                           "set",
@@ -11790,6 +11932,9 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "maxAge": {
+                                  "type": "string"
                                 },
                                 "status": {
                                   "enum": [
@@ -12246,6 +12391,9 @@
                                   },
                                   "type": "array"
                                 },
+                                "maxAge": {
+                                  "type": "string"
+                                },
                                 "status": {
                                   "enum": [
                                     "set",
@@ -12410,6 +12558,9 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "maxAge": {
+                                  "type": "string"
                                 },
                                 "status": {
                                   "enum": [
@@ -12596,6 +12747,9 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "maxAge": {
+                                  "type": "string"
                                 },
                                 "status": {
                                   "enum": [
@@ -12853,6 +13007,9 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "maxAge": {
+                                  "type": "string"
                                 },
                                 "status": {
                                   "enum": [
@@ -13139,6 +13296,9 @@
                                   },
                                   "type": "array"
                                 },
+                                "maxAge": {
+                                  "type": "string"
+                                },
                                 "status": {
                                   "enum": [
                                     "set",
@@ -13242,6 +13402,9 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "maxAge": {
+                                  "type": "string"
                                 },
                                 "status": {
                                   "enum": [
@@ -13367,6 +13530,9 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "maxAge": {
+                                  "type": "string"
                                 },
                                 "status": {
                                   "enum": [
@@ -13537,6 +13703,9 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "maxAge": {
+                                  "type": "string"
                                 },
                                 "status": {
                                   "enum": [
