@@ -3,7 +3,12 @@
 package chain
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -177,51 +182,380 @@ func TestPathMTUControllerSkipsUnchangedLiveReload(t *testing.T) {
 	}
 }
 
-func TestPathMTUControllerPreservesUnownedL2MSSTable(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "nft.log")
-	nftPath := filepath.Join(dir, "nft")
-	script := "#!/bin/sh\n" +
-		"echo \"$@\" >> " + shellQuote(logPath) + "\n" +
-		"if [ \"$1\" = \"list\" ]; then printf '%s\\n' 'table bridge routerd_l2_mss {' ' comment \"external\"' '}'; exit 0; fi\n" +
-		"exit 0\n"
-	if err := os.WriteFile(nftPath, []byte(script), 0755); err != nil {
+func TestPathMTUControllerL2OwnerManifestIsPrivate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "owner.json")
+	bootID, netns, identityErr := currentL2OwnerIdentity()
+	if identityErr != nil {
+		t.Fatal(identityErr)
+	}
+	g := l2MSSGeneration{Table: "t", Chain: "c", Token: "secret", Digest: "digest", Handle: 7, State: "active"}
+	m := l2MSSOwnerManifest{Version: 3, BootID: bootID, NetNS: netns, ActiveToken: g.Token, Generations: []l2MSSGeneration{g}}
+	if err := writeL2MSSOwner(path, m); err != nil {
 		t.Fatal(err)
 	}
-	c := PathMTUController{NftCommand: nftPath}
-	if _, err := c.applyTable(t.Context(), nftPath, filepath.Join(dir, "l2.nft"), "bridge", "routerd_l2_mss", nil); err == nil || !strings.Contains(err.Error(), "unowned") {
-		t.Fatalf("error=%v, want unowned refusal", err)
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	logData, _ := os.ReadFile(logPath)
-	if strings.Contains(string(logData), "delete table") {
-		t.Fatalf("unowned table was deleted:\n%s", logData)
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("mode=%o, want 600", info.Mode().Perm())
+	}
+	got, err := readL2MSSOwner(path)
+	if err != nil || got.Version != 3 || len(got.Generations) != 1 || got.Generations[0].Token != "secret" {
+		t.Fatalf("got=%#v err=%v", got, err)
 	}
 }
 
-func TestPathMTUControllerRepairsOwnedL2MSSDigestDrift(t *testing.T) {
+func TestPathMTUControllerDeleteRaceNeverDeletesTable(t *testing.T) {
+	g := &l2MSSGeneration{Table: "routerd_l2_deadbeef", Chain: "forward_deadbeef", Token: "secret", Digest: "digest", Handle: 7, State: "retired"}
+	owned := "table bridge " + g.Table + " { # handle 7\n chain " + g.Chain + " { comment \"" + render.NftablesL2MSSPrivateProofMarker + l2OwnerProof(*g) + "\"; }\n}"
+	var calls []string
+	foreignPreserved := true
+	c := PathMTUController{RunNFT: func(_ context.Context, args ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(args, " "))
+		if args[0] == "-a" {
+			return []byte(owned), nil
+		}
+		if args[0] == "delete" {
+			foreignPreserved = true // stale handle 7 cannot target replacement handle 8
+			return []byte("No such file or directory"), fmt.Errorf("stale handle")
+		}
+		return nil, nil
+	}}
+	if _, err := c.deleteOwnedL2Table(t.Context(), "nft", g); err == nil {
+		t.Fatal("want fail-closed delete error")
+	}
+	if !foreignPreserved {
+		t.Fatal("foreign replacement was modified")
+	}
+	for _, call := range calls {
+		if strings.Contains(call, g.Table) && strings.HasPrefix(call, "delete") {
+			t.Fatalf("name-based delete %q", call)
+		}
+		if strings.HasPrefix(call, "delete") && call != "delete table bridge handle 7" {
+			t.Fatalf("wrong identity delete %q", call)
+		}
+	}
+}
+
+func TestPathMTUControllerCreateRaceFailsWithoutMutatingReplacement(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lan0", MTU: 1500}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"}, Metadata: api.ObjectMeta{Name: "br"}, Spec: api.BridgeSpec{IfName: "br0", Members: []string{"lan"}, MTU: 1500}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "underlay"}, Spec: api.InterfaceSpec{IfName: "eth0", MTU: 1500}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"}, Metadata: api.ObjectMeta{Name: "vx"}, Spec: api.VXLANTunnelSpec{IfName: "vx0", VNI: 42, LocalAddress: "198.18.0.1", UnderlayInterface: "underlay", Bridge: "br", MTU: 1280, TCPMSSClamp: true}},
+	}}}
+	var calls []string
+	c := PathMTUController{Router: router, RandomToken: func() (string, error) { return "0123456789abcdef", nil }, RunNFT: func(_ context.Context, args ...string) ([]byte, error) {
+		call := strings.Join(args, " ")
+		calls = append(calls, call)
+		switch {
+		case args[0] == "-a":
+			return nil, fmt.Errorf("missing")
+		case args[0] == "-c":
+			return nil, nil
+		case args[0] == "--echo":
+			return []byte("File exists"), fmt.Errorf("foreign replacement won race")
+		}
+		return nil, nil
+	}}
 	dir := t.TempDir()
-	logPath := filepath.Join(dir, "nft.log")
-	nftPath := filepath.Join(dir, "nft")
-	script := "#!/bin/sh\n" +
-		"echo \"$@\" >> " + shellQuote(logPath) + "\n" +
-		"if [ \"$1\" = \"list\" ]; then printf '%s\\n' 'table bridge routerd_l2_mss {' ' comment \"" + render.NftablesRouterdOwnerMarker + " " + render.NftablesL2MSSDigestMarker + "stale\"' '}'; exit 0; fi\n" +
-		"exit 0\n"
-	if err := os.WriteFile(nftPath, []byte(script), 0755); err != nil {
+	_, err := c.applyL2MSSTable(t.Context(), "nft", filepath.Join(dir, "l2.nft"), filepath.Join(dir, "owner.json"), true)
+	if err == nil {
+		t.Fatal("want create race error")
+	}
+	for _, call := range calls {
+		if strings.Contains(call, "flush") || strings.Contains(call, "delete") {
+			t.Fatalf("unsafe call %q", call)
+		}
+	}
+	journal, readErr := readL2MSSOwner(filepath.Join(dir, "owner.json"))
+	if readErr != nil || len(journal.Generations) != 1 || journal.Generations[0].State != "staged" || journal.Generations[0].Handle != 0 {
+		t.Fatalf("recoverable pending journal=%#v err=%v", journal, readErr)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "l2.nft"))
+	if !strings.Contains(string(data), "create table bridge") || strings.Contains(string(data), "add table bridge") {
+		t.Fatalf("non-exclusive create:\n%s", data)
+	}
+}
+
+func TestPathMTUControllerNeverUsesHandleFromStaleBoot(t *testing.T) {
+	dir := t.TempDir()
+	owner := filepath.Join(dir, "owner.json")
+	_, netns, err := currentL2OwnerIdentity()
+	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(dir, "l2.nft")
-	desired := []byte("table bridge routerd_l2_mss { comment \"" + render.NftablesRouterdOwnerMarker + " " + render.NftablesL2MSSDigestMarker + "desired\"; }\n")
-	if err := os.WriteFile(path, desired, 0644); err != nil {
+	g := l2MSSGeneration{Table: "routerd_l2_stale", Chain: "forward_stale", Token: "secret", Digest: "digest", Handle: 7, State: "active"}
+	m := l2MSSOwnerManifest{Version: 3, BootID: "different-boot", NetNS: netns, ActiveToken: g.Token, Generations: []l2MSSGeneration{g}}
+	if err := writeL2MSSOwner(owner, m); err != nil {
 		t.Fatal(err)
 	}
-	c := PathMTUController{NftCommand: nftPath}
-	changed, err := c.applyTable(t.Context(), nftPath, path, "bridge", "routerd_l2_mss", desired)
-	if err != nil || !changed {
-		t.Fatalf("changed=%t err=%v", changed, err)
+	var calls []string
+	c := PathMTUController{Router: &api.Router{}, RunNFT: func(_ context.Context, args ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(args, " "))
+		return nil, nil
+	}}
+	result, err := c.applyL2MSSTable(t.Context(), "nft", filepath.Join(dir, "l2.nft"), owner, false)
+	if err != nil {
+		t.Fatal(err)
 	}
-	logData, _ := os.ReadFile(logPath)
-	if !strings.Contains(string(logData), "-c -f "+path) || !strings.Contains(string(logData), "-f "+path) {
-		t.Fatalf("drift was not checked and applied:\n%s", logData)
+	if !result.Drifted {
+		t.Fatal("stale identity must be reported as drift")
+	}
+	for _, call := range calls {
+		if strings.Contains(call, "handle 7") {
+			t.Fatalf("stale handle used: %s", call)
+		}
+	}
+}
+
+func emptyL2RulesDigest() string {
+	sum := sha256.Sum256([]byte("null"))
+	return hex.EncodeToString(sum[:])
+}
+
+func l2OwnerJSON(g l2MSSGeneration, handle uint64) []byte {
+	proof := render.NftablesL2MSSPrivateProofMarker + l2OwnerProof(g)
+	hook := l2HookChain(&g)
+	return []byte(fmt.Sprintf(`{"nftables":[{"metainfo":{"json_schema_version":1}},{"table":{"family":"bridge","name":%q,"handle":%d}},{"chain":{"family":"bridge","table":%q,"name":%q,"handle":1,"comment":%q}},{"chain":{"family":"bridge","table":%q,"name":%q,"handle":2,"type":"filter","hook":"forward","prio":-150,"policy":"accept","comment":%q}},{"rule":{"family":"bridge","table":%q,"chain":%q,"expr":[{"jump":{"target":%q}}]}}]}`,
+		g.Table, handle, g.Table, g.Chain, proof, g.Table, hook, proof, g.Table, hook, g.Chain))
+}
+
+func TestPathMTUControllerRecoveryRetiresPriorActiveBeforePromotion(t *testing.T) {
+	owner := filepath.Join(t.TempDir(), "owner.json")
+	bootID, netns, err := currentL2OwnerIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := emptyL2RulesDigest()
+	a := l2MSSGeneration{Table: "routerd_l2_a", Chain: "forward_a", Token: "a-secret", Digest: digest, Handle: 11, State: "active"}
+	b := l2MSSGeneration{Table: "routerd_l2_b", Chain: "forward_b", Token: "b-secret", Digest: digest, Handle: 22, State: "activating"}
+	m := l2MSSOwnerManifest{Version: 3, BootID: bootID, NetNS: netns, ActiveToken: a.Token, Generations: []l2MSSGeneration{a, b}}
+	c := PathMTUController{RunNFT: func(_ context.Context, args ...string) ([]byte, error) {
+		name := args[len(args)-1]
+		if name == a.Table {
+			return l2OwnerJSON(a, a.Handle), nil
+		}
+		if name == b.Table {
+			return l2OwnerJSON(b, b.Handle), nil
+		}
+		return nil, fmt.Errorf("unexpected table %s", name)
+	}}
+	if _, err := c.recoverL2Journal(t.Context(), "nft", owner, digest, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m.ActiveToken != b.Token || m.Generations[0].State != "retired" || m.Generations[1].State != "active" {
+		t.Fatalf("non-atomic promotion: %#v", m)
+	}
+	got, err := readL2MSSOwner(owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ActiveToken != b.Token || got.Generations[0].State != "retired" || got.Generations[1].State != "active" {
+		t.Fatalf("durable journal lost retirement: %#v", got)
+	}
+}
+
+func TestPathMTUControllerLiveRuleDriftRetiresGeneration(t *testing.T) {
+	owner := filepath.Join(t.TempDir(), "owner.json")
+	bootID, netns, err := currentL2OwnerIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := l2MSSGeneration{Table: "routerd_l2_drift", Chain: "forward_drift", Token: "secret", Digest: "not-empty-rules", Handle: 31, State: "active"}
+	m := l2MSSOwnerManifest{Version: 3, BootID: bootID, NetNS: netns, ActiveToken: g.Token, Generations: []l2MSSGeneration{g}}
+	c := PathMTUController{RunNFT: func(context.Context, ...string) ([]byte, error) { return l2OwnerJSON(g, g.Handle), nil }}
+	drifted, err := c.recoverL2Journal(t.Context(), "nft", owner, g.Digest, &m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !drifted || m.ActiveToken != "" || m.Generations[0].State != "retired" {
+		t.Fatalf("live rules drift was trusted: %#v", m)
+	}
+}
+
+func TestPathMTUControllerOwnedUnknownDropIsDeletedByExactHandle(t *testing.T) {
+	owner := filepath.Join(t.TempDir(), "owner.json")
+	bootID, netns, err := currentL2OwnerIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := l2MSSGeneration{Table: "routerd_l2_owned_drop", Chain: "rules_owned_drop", Token: "secret", Digest: emptyL2RulesDigest(), Handle: 37, State: "active"}
+	m := l2MSSOwnerManifest{Version: 3, BootID: bootID, NetNS: netns, ActiveToken: g.Token, Generations: []l2MSSGeneration{g}}
+	var doc map[string]any
+	if err := json.Unmarshal(l2OwnerJSON(g, g.Handle), &doc); err != nil {
+		t.Fatal(err)
+	}
+	items := doc["nftables"].([]any)
+	doc["nftables"] = append(items, map[string]any{"rule": map[string]any{"family": "bridge", "table": g.Table, "chain": g.Chain, "expr": []any{map[string]any{"counter": nil}, map[string]any{"drop": nil}}}})
+	driftJSON, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleted := false
+	c := PathMTUController{RunNFT: func(_ context.Context, args ...string) ([]byte, error) {
+		if args[0] == "delete" {
+			if got := strings.Join(args, " "); got != "delete table bridge handle 37" {
+				t.Fatalf("unsafe delete %q", got)
+			}
+			deleted = true
+			return nil, nil
+		}
+		return driftJSON, nil
+	}}
+	drifted, err := c.recoverL2Journal(t.Context(), "nft", owner, g.Digest, &m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !drifted || m.Generations[0].State != "retired" {
+		t.Fatalf("owned content drift demoted to foreign: %#v", m)
+	}
+	_, _, err = c.cleanupRetiredL2(t.Context(), "nft", owner, &m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !deleted || len(m.Generations) != 0 {
+		t.Fatalf("owned DROP generation not removed: deleted=%v manifest=%#v", deleted, m)
+	}
+}
+
+func TestPathMTUControllerSameHandleProofLossRemainsOwned(t *testing.T) {
+	owner := filepath.Join(t.TempDir(), "owner.json")
+	bootID, netns, err := currentL2OwnerIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := l2MSSGeneration{Table: "routerd_l2_proof_loss", Chain: "rules_proof_loss", Token: "secret", Digest: emptyL2RulesDigest(), Handle: 39, State: "active"}
+	m := l2MSSOwnerManifest{Version: 3, BootID: bootID, NetNS: netns, ActiveToken: g.Token, Generations: []l2MSSGeneration{g}}
+	var doc map[string]any
+	if err := json.Unmarshal(l2OwnerJSON(g, g.Handle), &doc); err != nil {
+		t.Fatal(err)
+	}
+	items := doc["nftables"].([]any)
+	rulesChain := items[2].(map[string]any)["chain"].(map[string]any)
+	rulesChain["comment"] = "proof removed"
+	doc["nftables"] = append(items, map[string]any{"rule": map[string]any{"family": "bridge", "table": g.Table, "chain": g.Chain, "expr": []any{map[string]any{"counter": nil}, map[string]any{"drop": nil}}}})
+	driftJSON, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleted := false
+	c := PathMTUController{RunNFT: func(_ context.Context, args ...string) ([]byte, error) {
+		if args[0] == "delete" {
+			if got := strings.Join(args, " "); got != "delete table bridge handle 39" {
+				t.Fatalf("unsafe delete %q", got)
+			}
+			deleted = true
+			return nil, nil
+		}
+		return driftJSON, nil
+	}}
+	drifted, err := c.recoverL2Journal(t.Context(), "nft", owner, g.Digest, &m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !drifted || m.Generations[0].State != "retired" {
+		t.Fatalf("same-handle proof loss demoted to foreign: %#v", m)
+	}
+	_, _, err = c.cleanupRetiredL2(t.Context(), "nft", owner, &m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !deleted || len(m.Generations) != 0 {
+		t.Fatalf("proof-loss table not exact-handle deleted: deleted=%v manifest=%#v", deleted, m)
+	}
+}
+
+func TestPathMTUControllerDeleteFailurePreservesRetiredJournal(t *testing.T) {
+	owner := filepath.Join(t.TempDir(), "owner.json")
+	bootID, netns, err := currentL2OwnerIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := l2MSSGeneration{Table: "routerd_l2_delete_fail", Chain: "rules_delete_fail", Token: "secret", Digest: emptyL2RulesDigest(), Handle: 47, State: "retired"}
+	m := l2MSSOwnerManifest{Version: 3, BootID: bootID, NetNS: netns, Generations: []l2MSSGeneration{g}}
+	c := PathMTUController{RunNFT: func(_ context.Context, args ...string) ([]byte, error) {
+		if args[0] == "delete" {
+			return []byte("Operation not permitted"), fmt.Errorf("exit status 1")
+		}
+		return l2OwnerJSON(g, g.Handle), nil
+	}}
+	_, drifted, err := c.cleanupRetiredL2(t.Context(), "nft", owner, &m)
+	if err == nil || !strings.Contains(err.Error(), "drift cleanup failed") || !drifted {
+		t.Fatalf("delete failure was reported as success: drifted=%v err=%v", drifted, err)
+	}
+	if len(m.Generations) != 1 || m.Generations[0].State != "retired" || m.Generations[0].Handle != 47 {
+		t.Fatalf("retry identity lost: %#v", m)
+	}
+	got, readErr := readL2MSSOwner(owner)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(got.Generations) != 1 || got.Generations[0].State != "retired" || got.Generations[0].Handle != 47 {
+		t.Fatalf("durable retry journal lost: %#v", got)
+	}
+}
+
+func TestPathMTUControllerCleanupFailureSavesErrorDriftStatus(t *testing.T) {
+	store := mapStore{}
+	c := PathMTUController{Store: store}
+	cause := fmt.Errorf("L2 MSS drift cleanup failed: injected delete failure")
+	if err := c.savePathMTUError("L2MSSApplyFailed", cause); err == nil || err.Error() != cause.Error() {
+		t.Fatalf("cause not propagated: %v", err)
+	}
+	status := store.ObjectStatus(api.RouterAPIVersion, "Router", "derived-path-mtu")
+	if status["phase"] != "Error" || status["reason"] != "L2MSSApplyFailed" || status["drifted"] != true {
+		t.Fatalf("cleanup failure reported as applied: %#v", status)
+	}
+}
+
+func TestPathMTUControllerNeverRebindsNonzeroHandle(t *testing.T) {
+	owner := filepath.Join(t.TempDir(), "owner.json")
+	bootID, netns, err := currentL2OwnerIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := l2MSSGeneration{Table: "routerd_l2_replay", Chain: "forward_replay", Token: "secret", Digest: emptyL2RulesDigest(), Handle: 41, State: "active"}
+	m := l2MSSOwnerManifest{Version: 3, BootID: bootID, NetNS: netns, ActiveToken: g.Token, Generations: []l2MSSGeneration{g}}
+	c := PathMTUController{RunNFT: func(context.Context, ...string) ([]byte, error) { return l2OwnerJSON(g, 42), nil }}
+	drifted, err := c.recoverL2Journal(t.Context(), "nft", owner, g.Digest, &m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !drifted || m.Generations[0].Handle != 41 || m.Generations[0].State != "foreign" || m.ActiveToken != "" {
+		t.Fatalf("foreign replacement was rebound: %#v", m)
+	}
+}
+
+func TestPathMTUControllerTransientListErrorPreservesJournal(t *testing.T) {
+	dir := t.TempDir()
+	owner := filepath.Join(dir, "owner.json")
+	bootID, netns, err := currentL2OwnerIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := l2MSSGeneration{Table: "routerd_l2_live", Chain: "forward_live", Token: "secret", Digest: "digest", Handle: 51, State: "active"}
+	m := l2MSSOwnerManifest{Version: 3, BootID: bootID, NetNS: netns, ActiveToken: g.Token, Generations: []l2MSSGeneration{g}}
+	if err := writeL2MSSOwner(owner, m); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := PathMTUController{Router: &api.Router{}, RunNFT: func(context.Context, ...string) ([]byte, error) {
+		return []byte("Operation not permitted"), fmt.Errorf("exit status 1")
+	}}
+	if _, err := c.applyL2MSSTable(t.Context(), "nft", filepath.Join(dir, "l2.nft"), owner, false); err == nil {
+		t.Fatal("transient list failure treated as missing")
+	}
+	after, err := os.ReadFile(owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("journal mutated on transient list failure: before=%s after=%s", before, after)
 	}
 }
 

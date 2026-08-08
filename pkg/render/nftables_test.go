@@ -754,7 +754,7 @@ func TestNftablesL2TCPMSSClampForVXLANTunnelBridge(t *testing.T) {
 	got := string(data)
 	for _, want := range []string{
 		"table bridge routerd_l2_mss",
-		NftablesRouterdOwnerMarker + " " + NftablesL2MSSDigestMarker,
+		NftablesL2MSSPrivateProofMarker,
 		`iifname "ens19" oifname "vx-l2" ether type ip ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1240 tcp option maxseg size set 1240`,
 		`iifname "vx-l2" oifname "ens19" ether type ip6 meta l4proto tcp tcp flags syn / syn,rst tcp option maxseg size > 1220 tcp option maxseg size set 1220`,
 	} {
