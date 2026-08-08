@@ -2681,6 +2681,10 @@
                         },
                         "type": "array"
                       },
+                      "tcpMSSClamp": {
+                        "description": "TCPMSSClamp enables routerd-owned bridge-family MSS clamping on paths\nbetween this VXLAN and the member ports of Bridge.",
+                        "type": "boolean"
+                      },
                       "udpPort": {
                         "maximum": 65535,
                         "minimum": 1,

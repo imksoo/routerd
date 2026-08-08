@@ -324,6 +324,12 @@ func validateInterfaceResource(res api.Resource, targetOS platform.OS) (bool, er
 		if spec.MTU != 0 && (spec.MTU < 576 || spec.MTU > 9216) {
 			return true, fmt.Errorf("%s spec.mtu must be within 576-9216", res.ID())
 		}
+		if spec.TCPMSSClamp && spec.Bridge == "" {
+			return true, fmt.Errorf("%s spec.bridge is required when spec.tcpMSSClamp is enabled", res.ID())
+		}
+		if spec.TCPMSSClamp && spec.MTU < 1280 {
+			return true, fmt.Errorf("%s spec.mtu must be explicitly set to at least 1280 when spec.tcpMSSClamp is enabled", res.ID())
+		}
 	case "IPv4StaticAddress":
 		if res.APIVersion != api.NetAPIVersion {
 			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)

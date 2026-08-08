@@ -2588,7 +2588,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			routeTeardown.Store = store.withRouter(view.RouteRouter)
 			return didWorkError(reconcileSAMAfterRouteTeardown(ctx, routeTeardown, current))
 		}},
-		framework.FuncController{ControllerName: "path-mtu", Subs: statusSubscriptions("DSLiteTunnel", "PPPoESession", "WireGuardInterface", "TunnelInterface", "Interface", "FirewallZone", "DHCPv6Server", "IPv6RouterAdvertisement", "MobilityPool"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "path-mtu", Subs: statusSubscriptionsWithWhen(r.Router, []string{"VXLANTunnel"}, "DSLiteTunnel", "PPPoESession", "WireGuardInterface", "TunnelInterface", "Interface", "Bridge", "VXLANTunnel", "FirewallZone", "DHCPv6Server", "IPv6RouterAdvertisement", "MobilityPool"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err

@@ -514,6 +514,9 @@ type VXLANTunnelSpec struct {
 	// operational controller treats an unresolved predicate as disabled so a
 	// stale or missing HA role can never leave the stretched L2 active.
 	When ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
+	// TCPMSSClamp enables routerd-owned bridge-family MSS clamping on paths
+	// between this VXLAN and the member ports of Bridge.
+	TCPMSSClamp bool `yaml:"tcpMSSClamp,omitempty" json:"tcpMSSClamp,omitempty"`
 }
 
 type PPPoESessionSpec struct {

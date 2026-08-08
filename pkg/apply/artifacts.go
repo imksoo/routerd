@@ -484,6 +484,14 @@ func routerArtifactIntentsForOS(router *api.Router, aliases map[string]string, t
 				ApplyWith: "nft",
 			})
 		}
+		if wants, err := render.RouterWantsL2TCPMSSClamp(router); err == nil && wants {
+			owner := api.RouterAPIVersion + "/Router/" + router.Metadata.Name
+			intents = append(intents, resource.Intent{
+				Artifact:  newNftTableArtifact(owner, "bridge", "routerd_l2_mss"),
+				Action:    resource.ActionEnsure,
+				ApplyWith: "nft",
+			})
+		}
 		if wants, err := render.RouterWantsIPv4ForceFragment(router); err == nil && wants {
 			owner := api.RouterAPIVersion + "/Router/" + router.Metadata.Name
 			intents = append(intents, resource.Intent{
