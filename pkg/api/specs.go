@@ -510,6 +510,10 @@ type VXLANTunnelSpec struct {
 	MTU               int      `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=0"`
 	Bridge            string   `yaml:"bridge,omitempty" json:"bridge,omitempty"`
 	OuterDF           string   `yaml:"outerDF,omitempty" json:"outerDF,omitempty" jsonschema:"enum=,enum=inherit,enum=set,enum=unset"`
+	// When gates the forwarding VXLAN. Unlike general-purpose resources, the
+	// operational controller treats an unresolved predicate as disabled so a
+	// stale or missing HA role can never leave the stretched L2 active.
+	When ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type PPPoESessionSpec struct {
@@ -1589,6 +1593,7 @@ type StateMatchSpec struct {
 	Contains string   `yaml:"contains,omitempty" json:"contains,omitempty"`
 	Status   string   `yaml:"status,omitempty" json:"status,omitempty" jsonschema:"enum=set,enum=unset,enum=unknown"`
 	For      string   `yaml:"for,omitempty" json:"for,omitempty"`
+	MaxAge   string   `yaml:"maxAge,omitempty" json:"maxAge,omitempty"`
 }
 
 type SelfAddressPolicySpec struct {

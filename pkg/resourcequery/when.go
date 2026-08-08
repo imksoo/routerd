@@ -67,6 +67,9 @@ func ResourceWhen(res api.Resource) api.ResourceWhenSpec {
 	case "Interface":
 		spec, _ := res.InterfaceSpec()
 		return spec.When
+	case "VXLANTunnel":
+		spec, _ := res.VXLANTunnelSpec()
+		return spec.When
 	case "VirtualAddress":
 		spec, _ := res.VirtualAddressSpec()
 		return spec.When
@@ -281,6 +284,18 @@ func stateMatchResult(store StateStore, name string, match api.StateMatchSpec) w
 			return whenIndeterminate
 		}
 		return whenFalse
+	}
+	if match.MaxAge != "" {
+		duration, err := time.ParseDuration(match.MaxAge)
+		if err != nil || duration <= 0 {
+			return whenFalse
+		}
+		if !hasCustomAge {
+			age = store.Age(name)
+		}
+		if age > duration {
+			return whenFalse
+		}
 	}
 	if match.For != "" {
 		duration, err := time.ParseDuration(match.For)

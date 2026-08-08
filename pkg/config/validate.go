@@ -1444,8 +1444,30 @@ func validateResourceWhens(res api.Resource) error {
 		if err := validateResourceWhen(item.path, item.when); err != nil {
 			return err
 		}
+		if res.Kind == "VXLANTunnel" && resourceWhenAcceptsUnknown(item.when) {
+			return fmt.Errorf("%s must not accept unknown state", item.path)
+		}
 	}
 	return nil
+}
+
+func resourceWhenAcceptsUnknown(when api.ResourceWhenSpec) bool {
+	for _, match := range when.State {
+		if strings.EqualFold(match.Status, string(routerstate.StatusUnknown)) || strings.EqualFold(match.Equals, "unknown") {
+			return true
+		}
+		for _, value := range match.In {
+			if strings.EqualFold(value, "unknown") {
+				return true
+			}
+		}
+	}
+	for _, child := range append(append([]api.ResourceWhenSpec(nil), when.All...), when.Any...) {
+		if resourceWhenAcceptsUnknown(child) {
+			return true
+		}
+	}
+	return false
 }
 
 type resourceWhenRef struct {
@@ -1463,6 +1485,9 @@ func resourceWhens(res api.Resource) []resourceWhenRef {
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "Interface":
 		spec, _ := res.InterfaceSpec()
+		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
+	case "VXLANTunnel":
+		spec, _ := res.VXLANTunnelSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "VirtualAddress":
 		spec, _ := res.VirtualAddressSpec()
@@ -1611,6 +1636,12 @@ func validateResourceWhen(path string, when api.ResourceWhenSpec) error {
 		if match.For != "" {
 			if _, err := time.ParseDuration(match.For); err != nil {
 				return fmt.Errorf("%s state[%q].for is invalid: %w", path, name, err)
+			}
+		}
+		if match.MaxAge != "" {
+			duration, err := time.ParseDuration(match.MaxAge)
+			if err != nil || duration <= 0 {
+				return fmt.Errorf("%s state[%q].maxAge must be a positive duration", path, name)
 			}
 		}
 	}
