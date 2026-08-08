@@ -188,7 +188,7 @@ func TestVXLANTunnelWhenFalseTeardownIsFailClosedAndOrdered(t *testing.T) {
 			switch {
 			case strings.HasPrefix(joined, "ip -details link show dev vx-l2"):
 				if exists {
-					return []byte("8: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"), nil
+					return []byte("8: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit"), nil
 				}
 				return nil, errors.New("not found")
 			case joined == "bridge fdb show dev vx-l2":
@@ -243,7 +243,7 @@ func TestVXLANTunnelUnknownRoleTearsDownInsteadOfForwarding(t *testing.T) {
 				if !exists {
 					return nil, errors.New("not found")
 				}
-				return []byte("8: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"), nil
+				return []byte("8: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit"), nil
 			}
 			if joined == "ip link delete dev vx-l2" {
 				deleted = true
@@ -308,7 +308,7 @@ func TestVXLANTunnelActiveReconcileDeletesStaleFloodFDB(t *testing.T) {
 			commands = append(commands, joined)
 			switch {
 			case strings.HasPrefix(joined, "ip -details link show dev vx-l2"):
-				return []byte("8: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"), nil
+				return []byte("8: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit"), nil
 			case joined == "bridge fdb show dev vx-l2":
 				if stale {
 					return []byte("00:00:00:00:00:00 dst 10.254.200.2 self permanent\n00:00:00:00:00:00 dst 10.254.200.99 self permanent\n"), nil
@@ -359,7 +359,7 @@ func TestVXLANTunnelDualMasterRequiresSingleWitnessLeader(t *testing.T) {
 					if !exists {
 						return nil, errors.New("not found")
 					}
-					return []byte("8: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"), nil
+					return []byte("8: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit"), nil
 				}
 				if joined == "ip link delete dev vx-l2" {
 					exists = false
@@ -431,7 +431,7 @@ func TestVXLANTunnelRestartOrphanMarkerTriggersCleanup(t *testing.T) {
 			if !exists {
 				return nil, errors.New("not found")
 			}
-			return []byte("8: vx-old: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"), nil
+			return []byte("8: vx-old: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit"), nil
 		}
 		if joined == "bridge fdb show dev vx-old" {
 			return []byte("00:00:00:00:00:00 dst 10.254.200.2 self permanent\n"), nil
@@ -466,7 +466,7 @@ func TestVXLANTunnelWitnessLossBeforeCommitNeverBringsLinkUp(t *testing.T) {
 			if !exists {
 				return nil, errors.New("not found")
 			}
-			return []byte("8: vx-l2: <BROADCAST> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"), nil
+			return []byte("8: vx-l2: <BROADCAST> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit"), nil
 		}
 		if strings.HasPrefix(joined, "ip link add vx-l2 ") {
 			exists = true
@@ -525,7 +525,7 @@ func TestVXLANTunnelOwnedConfigChangeDownsOldBeforeRecreate(t *testing.T) {
 			if !exists {
 				return nil, errors.New("not found")
 			}
-			return []byte(fmt.Sprintf("8: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id %d local 10.254.200.1 dev wg-l2 dstport 4789 nolearning", vni)), nil
+			return []byte(fmt.Sprintf("8: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id %d local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit", vni)), nil
 		}
 		if joined == "ip link delete dev vx-l2" {
 			exists = false
@@ -542,7 +542,7 @@ func TestVXLANTunnelOwnedConfigChangeDownsOldBeforeRecreate(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	assertCommandsInOrder(t, commands, []string{"ip link set dev vx-l2 down", "ip link delete dev vx-l2", "ip link add vx-l2 type vxlan id 200002 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"})
+	assertCommandsInOrder(t, commands, []string{"ip link set dev vx-l2 down", "ip link delete dev vx-l2", "ip link add vx-l2 type vxlan id 200002 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit"})
 }
 
 func TestVXLANTunnelNextExpiryUsesProducerAbsoluteDeadline(t *testing.T) {
@@ -583,7 +583,7 @@ func TestVXLANTunnelRevisionMismatchDuringFDBFailsClosed(t *testing.T) {
 			if down {
 				flags = "BROADCAST"
 			}
-			return []byte(fmt.Sprintf("8: vx-l2: <%s> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning", flags)), nil
+			return []byte(fmt.Sprintf("8: vx-l2: <%s> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit", flags)), nil
 		case joined == "bridge fdb show dev vx-l2":
 			store.values["ha.lease"] = routerstate.Value{Status: routerstate.StatusSet, Value: "leader", UpdatedAt: now.Add(time.Nanosecond)}
 			return []byte("00:00:00:00:00:00 dst 10.254.200.2 self permanent\n"), nil
@@ -623,7 +623,7 @@ func TestVXLANTunnelActiveDoesNotAdoptSameNameReplacement(t *testing.T) {
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			joined := strings.Join(append([]string{name}, args...), " ")
 			if joined == "ip -details link show dev vx-l2" {
-				return []byte("9: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"), nil
+				return []byte("9: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit"), nil
 			}
 			if strings.Contains(joined, " link set ") || strings.Contains(joined, " fdb ") || strings.Contains(joined, " link delete ") {
 				mutated = true
@@ -653,7 +653,7 @@ func TestVXLANTunnelGateTeardownPreservesSameNameReplacement(t *testing.T) {
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			joined := strings.Join(append([]string{name}, args...), " ")
 			if joined == "ip -details link show dev vx-l2" {
-				return []byte("9: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"), nil
+				return []byte("9: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit"), nil
 			}
 			mutated = mutated || strings.Contains(joined, " link set ") || strings.Contains(joined, " fdb del ") || strings.Contains(joined, " link delete ")
 			return nil, nil
@@ -682,7 +682,7 @@ func TestVXLANTunnelOrphanCleanupPreservesSameNameReplacement(t *testing.T) {
 	controller.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		joined := strings.Join(append([]string{name}, args...), " ")
 		if joined == "ip -details link show dev vx-old" {
-			return []byte("9: vx-old: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"), nil
+			return []byte("9: vx-old: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit"), nil
 		}
 		mutated = mutated || strings.Contains(joined, " link set ") || strings.Contains(joined, " fdb del ") || strings.Contains(joined, " link delete ")
 		return nil, nil
@@ -713,7 +713,7 @@ func TestVXLANTunnelFloodFDBRepairsDuplicateAndWrongAttributes(t *testing.T) {
 		joined := strings.Join(append([]string{name}, args...), " ")
 		switch {
 		case joined == "ip -details link show dev vx-l2":
-			return []byte("8: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"), nil
+			return []byte("8: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit"), nil
 		case joined == "bridge fdb show dev vx-l2":
 			return []byte(strings.Join(entries, "\n") + "\n"), nil
 		case strings.HasPrefix(joined, "bridge fdb del "):
@@ -751,13 +751,13 @@ func TestVXLANTunnelTeardownDetectsIfindexSwapImmediatelyBeforeDelete(t *testing
 		switch {
 		case joined == "ip -details link show dev vx-l2":
 			if nomaster && verifiedAfterNomaster {
-				return []byte("9: vx-l2: <BROADCAST> mtu 1370\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"), nil
+				return []byte("9: vx-l2: <BROADCAST> mtu 1370\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit"), nil
 			}
 			if nomaster {
 				verifiedAfterNomaster = true
-				return []byte("8: vx-l2: <BROADCAST> mtu 1370\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"), nil
+				return []byte("8: vx-l2: <BROADCAST> mtu 1370\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit"), nil
 			}
-			return []byte("8: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"), nil
+			return []byte("8: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit"), nil
 		case joined == "bridge fdb show dev vx-l2":
 			return []byte("00:00:00:00:00:00 dst 10.254.200.2 self permanent\n"), nil
 		case joined == "ip link set dev vx-l2 nomaster":
@@ -809,7 +809,7 @@ func TestVXLANTunnelOwnershipRejectsSameNameReplacementIfindex(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.Command = func(context.Context, string, ...string) ([]byte, error) {
-		return []byte("9: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"), nil
+		return []byte("9: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit"), nil
 	}
 	if err := c.verifyOwnership(context.Background(), resource, cfg); err == nil {
 		t.Fatal("same-name replacement with a new ifindex was accepted")

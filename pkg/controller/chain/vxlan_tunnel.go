@@ -202,7 +202,7 @@ func parseVXLANOwnership(data []byte) (vxlan.Config, bool) {
 	if values["peers"] != "" {
 		peers = strings.Split(values["peers"], ",")
 	}
-	return vxlan.Config{IfName: values["ifname"], VNI: vni, LocalAddress: values["local"], UnderlayInterface: values["underlay"], UDPPort: port, MTU: mtu, Bridge: values["bridge"], Peers: peers}, true
+	return vxlan.Config{IfName: values["ifname"], VNI: vni, LocalAddress: values["local"], UnderlayInterface: values["underlay"], UDPPort: port, MTU: mtu, Bridge: values["bridge"], Peers: peers, OuterDF: values["outerDF"]}, true
 }
 
 type vxlanGateState string
@@ -448,6 +448,7 @@ func (c VXLANTunnelController) reconcileResource(ctx context.Context, resource a
 		UDPPort:           spec.UDPPort,
 		MTU:               spec.MTU,
 		Bridge:            aliases[spec.Bridge],
+		OuterDF:           spec.OuterDF,
 	}
 	if cfg.UnderlayInterface == "" {
 		cfg.UnderlayInterface = spec.UnderlayInterface
@@ -807,7 +808,7 @@ func (c VXLANTunnelController) teardownOne(ctx context.Context, resource api.Res
 		return err
 	}
 	ifname := firstNonEmpty(spec.IfName, resource.Metadata.Name)
-	status := c.baseStatus(vxlan.Config{Name: resource.Metadata.Name, IfName: ifname, VNI: spec.VNI, LocalAddress: spec.LocalAddress, Peers: spec.Peers, UnderlayInterface: spec.UnderlayInterface, MTU: spec.MTU, Bridge: spec.Bridge})
+	status := c.baseStatus(vxlan.Config{Name: resource.Metadata.Name, IfName: ifname, VNI: spec.VNI, LocalAddress: spec.LocalAddress, Peers: spec.Peers, UnderlayInterface: spec.UnderlayInterface, MTU: spec.MTU, Bridge: spec.Bridge, OuterDF: spec.OuterDF})
 	status["gateState"] = string(gate)
 	status["forwarding"] = false
 	if c.DryRun {
@@ -821,7 +822,7 @@ func (c VXLANTunnelController) teardownOne(ctx context.Context, resource api.Res
 		return err
 	}
 	aliases := bridgeInterfaceAliases(c.DeclaredRouter)
-	cfg := vxlan.Config{Name: resource.Metadata.Name, IfName: ifname, VNI: spec.VNI, LocalAddress: spec.LocalAddress, Peers: spec.Peers, UnderlayInterface: aliases[spec.UnderlayInterface], UDPPort: spec.UDPPort, MTU: spec.MTU, Bridge: aliases[spec.Bridge]}
+	cfg := vxlan.Config{Name: resource.Metadata.Name, IfName: ifname, VNI: spec.VNI, LocalAddress: spec.LocalAddress, Peers: spec.Peers, UnderlayInterface: aliases[spec.UnderlayInterface], UDPPort: spec.UDPPort, MTU: spec.MTU, Bridge: aliases[spec.Bridge], OuterDF: spec.OuterDF}
 	if cfg.UnderlayInterface == "" {
 		cfg.UnderlayInterface = spec.UnderlayInterface
 	}
@@ -962,6 +963,7 @@ func (c VXLANTunnelController) baseStatus(cfg vxlan.Config) map[string]any {
 		"underlayIfname": cfg.UnderlayInterface,
 		"bridgeIfname":   cfg.Bridge,
 		"peers":          append([]string(nil), cfg.Peers...),
+		"outerDF":        defaultVXLANOuterDF(cfg.OuterDF),
 		"observedAt":     time.Now().UTC().Format(time.RFC3339Nano),
 	}
 }
@@ -1008,7 +1010,7 @@ func (c VXLANTunnelController) persistOwnershipBound(resource api.Resource, cfg 
 		token = hex.EncodeToString(raw)
 	}
 	digest := vxlanOwnershipDigest(resource, cfg)
-	data := []byte(fmt.Sprintf("%s\nownerVersion=2\nresource=%s/%s/%s\ndigest=%s\ninstanceToken=%s\nifindex=%d\nifname=%s\nvni=%d\nlocal=%s\nunderlay=%s\nport=%d\nmtu=%d\nbridge=%s\npeers=%s\n", routerdGeneratedNetworkdHeader, resource.APIVersion, resource.Kind, resource.Metadata.Name, digest, token, ifindex, cfg.IfName, cfg.VNI, cfg.LocalAddress, cfg.UnderlayInterface, cfg.UDPPort, cfg.MTU, cfg.Bridge, strings.Join(cfg.Peers, ",")))
+	data := []byte(fmt.Sprintf("%s\nownerVersion=2\nresource=%s/%s/%s\ndigest=%s\ninstanceToken=%s\nifindex=%d\nifname=%s\nvni=%d\nlocal=%s\nunderlay=%s\nport=%d\nmtu=%d\nbridge=%s\nouterDF=%s\npeers=%s\n", routerdGeneratedNetworkdHeader, resource.APIVersion, resource.Kind, resource.Metadata.Name, digest, token, ifindex, cfg.IfName, cfg.VNI, cfg.LocalAddress, cfg.UnderlayInterface, cfg.UDPPort, cfg.MTU, cfg.Bridge, defaultVXLANOuterDF(cfg.OuterDF), strings.Join(cfg.Peers, ",")))
 	if current, err := c.readFile(path); err == nil && string(current) == string(data) {
 		return false, nil
 	}
@@ -1057,6 +1059,7 @@ func vxlanOwnershipDigest(resource api.Resource, cfg vxlan.Config) string {
 	// ownership manifest. Excluding it keeps the digest reproducible from the
 	// persisted v2 record across restart and orphan cleanup.
 	cfg.Name = ""
+	cfg.OuterDF = defaultVXLANOuterDF(cfg.OuterDF)
 	data, _ := json.Marshal(struct {
 		APIVersion, Kind, Name string
 		Config                 vxlan.Config
@@ -1101,7 +1104,7 @@ func resourceFromVXLANOwnership(owner vxlanOwnership) (api.Resource, bool) {
 		Spec: api.VXLANTunnelSpec{
 			IfName: owner.Config.IfName, VNI: owner.Config.VNI, LocalAddress: owner.Config.LocalAddress,
 			Peers: append([]string(nil), owner.Config.Peers...), UnderlayInterface: owner.Config.UnderlayInterface,
-			UDPPort: owner.Config.UDPPort, MTU: owner.Config.MTU, Bridge: owner.Config.Bridge,
+			UDPPort: owner.Config.UDPPort, MTU: owner.Config.MTU, Bridge: owner.Config.Bridge, OuterDF: owner.Config.OuterDF,
 		},
 	}
 	return resource, resource.APIVersion != "" && resource.Metadata.Name != ""
@@ -1114,6 +1117,7 @@ func validateVXLANOwnershipManifest(owner vxlanOwnership, resource api.Resource,
 	}
 	ownerConfig, wantedConfig := owner.Config, cfg
 	ownerConfig.Name, wantedConfig.Name = "", ""
+	ownerConfig.OuterDF, wantedConfig.OuterDF = defaultVXLANOuterDF(ownerConfig.OuterDF), defaultVXLANOuterDF(wantedConfig.OuterDF)
 	if owner.Config.IfName != cfg.IfName || !reflect.DeepEqual(ownerConfig, wantedConfig) {
 		return fmt.Errorf("VXLAN ownership manifest config is not valid for %s", cfg.IfName)
 	}
@@ -1313,5 +1317,15 @@ func vxlanDetailsConfigMatch(observed string, cfg vxlan.Config) bool {
 	if cfg.Bridge != "" && !strings.Contains(observed, "master "+cfg.Bridge) {
 		return false
 	}
+	if !strings.Contains(observed, " df "+defaultVXLANOuterDF(cfg.OuterDF)) {
+		return false
+	}
 	return true
+}
+
+func defaultVXLANOuterDF(value string) string {
+	if value == "" {
+		return "inherit"
+	}
+	return value
 }
