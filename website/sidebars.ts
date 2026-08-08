@@ -110,6 +110,7 @@ const sidebars: SidebarsConfig = {
         'how-to/guest-mode',
         'how-to/os-bootstrap',
         'how-to/pve-overlay',
+        'how-to/oci-qemu-vxlan-l2',
         'how-to/pve-live-iso-nocloud',
         'how-to/hybrid-azure-pve-same-subnet',
         'how-to/event-federation-subscription',

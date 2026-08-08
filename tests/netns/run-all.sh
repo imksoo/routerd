@@ -15,6 +15,7 @@ scripts=(
   forcefrag-df-forward.sh
   arp-observer-ignore-member-mac.sh
   sam-proxy-arp-garp-transition.sh
+  vxlan-l2-control-plane-transparency.sh
 )
 
 for script in "${scripts[@]}"; do

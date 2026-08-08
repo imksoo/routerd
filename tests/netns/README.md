@@ -21,6 +21,7 @@ sudo ./keepalived-vip-failover.sh
 sudo ./keepalived-no-spurious-restart.sh
 sudo ./ingress-conntrack-survive.sh
 sudo ./forcefrag-df-forward.sh
+sudo ./vxlan-l2-control-plane-transparency.sh
 ./render-compatibility.sh
 ```
 
@@ -35,6 +36,7 @@ The scripts cover:
 | `ingress-conntrack-survive.sh` | Existing DNAT conntrack flows stay on the old backend while new flows use the new backend. |
 | `forcefrag-df-forward.sh` | Linux nftables `routerd_forcefrag` clears IPv4 DF on an oversized forwarded packet before a low-MTU egress link. |
 | `arp-observer-ignore-member-mac.sh` | `routerd-arp-observer` ignores configured SAM member sender MACs while preserving real-client observations on passive packet and ARP table scan paths. |
+| `vxlan-l2-control-plane-transparency.sh` | A unicast-peer `VXLANTunnel` bridge carries ARP, DHCPv4 Discover/Offer, IPv6 RS/RA/NS/NA, and DHCPv6 Solicit/Reply between isolated endpoint namespaces. |
 | `render-compatibility.sh` | Non-root render golden compatibility check for Linux and FreeBSD/rc.d output snapshots. |
 
 Do not add tests here that mutate the default host namespace. New scenarios must

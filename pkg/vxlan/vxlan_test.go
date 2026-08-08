@@ -29,3 +29,21 @@ func TestCommands(t *testing.T) {
 		t.Fatalf("commands = %#v, want %#v", got, want)
 	}
 }
+
+func TestCommandsInstallFloodEntryForEveryUnicastPeer(t *testing.T) {
+	got := Commands(Config{
+		Name:              "legacy-l2",
+		VNI:               200001,
+		LocalAddress:      "10.254.200.1",
+		UnderlayInterface: "wg-legacy",
+		Peers:             []string{"10.254.200.2", "10.254.200.3"},
+		Bridge:            "br-legacy",
+	})
+	want := [][]string{
+		{"bridge", "fdb", "append", "00:00:00:00:00:00", "dev", "legacy-l2", "dst", "10.254.200.2"},
+		{"bridge", "fdb", "append", "00:00:00:00:00:00", "dev", "legacy-l2", "dst", "10.254.200.3"},
+	}
+	if len(got) < len(want) || !reflect.DeepEqual(got[len(got)-len(want):], want) {
+		t.Fatalf("flood entries = %#v, want %#v", got, want)
+	}
+}

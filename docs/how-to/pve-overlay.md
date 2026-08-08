@@ -65,6 +65,13 @@ The `mtu: 1420` value matches WireGuard's default with IPv4 underlay (1500 - 20 
 
 ```yaml
 apiVersion: net.routerd.net/v1alpha1
+kind: Bridge
+metadata:
+  name: legacy-bridge
+spec:
+  ifname: br-legacy
+---
+apiVersion: net.routerd.net/v1alpha1
 kind: VXLANTunnel
 metadata:
   name: vx-bridge1
@@ -76,9 +83,26 @@ spec:
   underlayInterface: wg-cluster
   udpPort: 4789
   mtu: 1370
+  bridge: br-legacy
 ```
 
 VXLAN adds 50 bytes of header (14 outer Ethernet + 20 outer IPv4 + 8 UDP + 8 VXLAN). On a 1420-byte WireGuard MTU, the inner MTU drops to 1370. Set this explicitly; do not rely on default MTU calculation when stacking encapsulations.
+
+`VXLANTunnel` is a transparent Ethernet attachment. With a unicast peer list,
+routerd installs the all-zero FDB entries required to replicate broadcast and
+unknown-unicast traffic to every peer. When the VXLAN interface and a LAN/tap
+interface are members of the same bridge, ARP, DHCPv4, IPv6 Router and Neighbor
+Discovery, and DHCPv6 cross the overlay. This differs from `VXLANSegment`, whose
+default `l2Filter` intentionally suppresses these control-plane protocols;
+choose `VXLANTunnel` for a deliberately stretched broadcast domain.
+
+The `Bridge` resource above creates the empty bridge and routerd adds the VXLAN
+port. The hypervisor or VM launcher must add the intended LAN/tap ports to
+`br-legacy`; do not add the physical underlay interface.
+
+Full transparency also carries a rogue DHCP server or router advertisement in
+the opposite direction. Do not attach the bridge until the remote test guests
+are trusted or a separately verified directional bridge firewall is in place.
 
 ## Verification
 
@@ -91,7 +115,11 @@ ping -M do -s 1392 <peer-underlay-address>   # 1420 - 20 IP - 8 ICMP
 # Overlay
 routerctl describe VXLANTunnel/vx-bridge1
 ip -d link show vx-bridge1
+bridge fdb show dev vx-bridge1
 ping -M do -s 1342 <peer-overlay-host>        # 1370 - 20 IP - 8 ICMP
+
+# Disposable-host conformance test; it never joins a physical interface.
+sudo tests/netns/vxlan-l2-control-plane-transparency.sh
 ```
 
 `routerctl doctor --probe egress` is also useful when the underlay is itself a candidate egress (for example, when traffic to a remote office should ride the WireGuard underlay rather than the public default route).
@@ -105,5 +133,6 @@ ping -M do -s 1342 <peer-overlay-host>        # 1370 - 20 IP - 8 ICMP
 
 ## See also
 
+- [Stretching a PVE LAN to QEMU guests on OCI](./oci-qemu-vxlan-l2.md)
 - [Path MTU and MSS clamping](../concepts/path-mtu.md)
 - [Multi-WAN egress with health-based selection](./multi-wan.md)
