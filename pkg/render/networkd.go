@@ -54,6 +54,9 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 			netdev.WriteString("Remote=" + vxlan.Remotes[0] + "\n")
 		}
 		netdev.WriteString(fmt.Sprintf("DestinationPort=%d\n", vxlan.UDPPort))
+		if vxlan.OuterDF != "" {
+			netdev.WriteString("IPDoNotFragment=" + networkdOuterDF(vxlan.OuterDF) + "\n")
+		}
 		additional = append(additional, File{
 			Path: filepath.Join("/etc/systemd/network", "31-routerd-"+vxlan.IfName+".netdev"),
 			Data: netdev.Bytes(),
@@ -83,6 +86,17 @@ func NetworkdDropins(router *api.Router) ([]File, error) {
 	}
 	files = append(files, additional...)
 	return networkdAdditionalDropins(router, aliases, files)
+}
+
+func networkdOuterDF(value string) string {
+	switch value {
+	case "set":
+		return "yes"
+	case "unset":
+		return "no"
+	default:
+		return "inherit"
+	}
 }
 
 // NetworkdBridgeFiles renders only the persistent systemd-networkd artifacts

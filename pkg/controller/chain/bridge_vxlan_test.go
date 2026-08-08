@@ -99,7 +99,7 @@ func TestVXLANTunnelControllerCreatesAndThenConvergesWithoutDuplicateFDB(t *test
 				if !exists {
 					return nil, errors.New("not found")
 				}
-				return []byte("8: vx-l2: <UP> mtu 1370 master br-l2\n    vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"), nil
+				return []byte("8: vx-l2: <UP> mtu 1370 master br-l2\n    vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit"), nil
 			case strings.HasPrefix(joined, "ip link add vx-l2"):
 				exists = true
 			case strings.HasPrefix(joined, "bridge fdb append"):

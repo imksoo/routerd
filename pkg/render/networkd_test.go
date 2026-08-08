@@ -207,6 +207,28 @@ func TestNetworkdDropinsRenderVXLANSegment(t *testing.T) {
 	}
 }
 
+func TestNetworkdDropinsRenderVXLANTunnelOuterDF(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		netResource("Interface", "underlay", api.InterfaceSpec{IfName: "wg-l2", Managed: true}),
+		netResource("Bridge", "legacy-l2", api.BridgeSpec{IfName: "br-l2"}),
+		netResource("VXLANTunnel", "legacy-overlay", api.VXLANTunnelSpec{
+			IfName: "vx-l2", VNI: 200001, LocalAddress: "10.254.200.1",
+			Peers: []string{"10.254.200.2"}, UnderlayInterface: "underlay",
+			UDPPort: 4789, MTU: 1280, Bridge: "legacy-l2", OuterDF: "unset",
+		}),
+	}}}
+	files, err := NetworkdDropins(router)
+	if err != nil {
+		t.Fatalf("render networkd dropins: %v", err)
+	}
+	netdev := string(findNetworkdTestFile(files, "/etc/systemd/network/31-routerd-vx-l2.netdev").Data)
+	for _, want := range []string{"VNI=200001", "DestinationPort=4789", "IPDoNotFragment=no"} {
+		if !strings.Contains(netdev, want) {
+			t.Fatalf("vxlan tunnel netdev missing %q:\n%s", want, netdev)
+		}
+	}
+}
+
 func boolPtr(value bool) *bool {
 	return &value
 }

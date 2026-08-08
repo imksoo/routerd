@@ -25,6 +25,7 @@ type Config struct {
 	UDPPort           int
 	MTU               int
 	Bridge            string
+	OuterDF           string
 }
 
 type Controller struct {
@@ -47,6 +48,11 @@ func Commands(cfg Config) [][]string {
 		"dstport", strconv.Itoa(port),
 		"nolearning",
 	}}
+	outerDF := cfg.OuterDF
+	if outerDF == "" {
+		outerDF = "inherit"
+	}
+	args[0] = append(args[0], "df", outerDF)
 	if cfg.MTU != 0 {
 		args = append(args, []string{"ip", "link", "set", "dev", ifname, "mtu", strconv.Itoa(cfg.MTU)})
 	}

@@ -2645,6 +2645,15 @@
                         "minimum": 0,
                         "type": "integer"
                       },
+                      "outerDF": {
+                        "enum": [
+                          "",
+                          "inherit",
+                          "set",
+                          "unset"
+                        ],
+                        "type": "string"
+                      },
                       "peers": {
                         "items": {
                           "type": "string"
