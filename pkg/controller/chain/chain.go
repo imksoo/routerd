@@ -1235,6 +1235,8 @@ type Options struct {
 	DryRunVRRP              bool
 	DryRunPackage           bool
 	DryRunNetworkAdoption   bool
+	DryRunBridge            bool
+	DryRunVXLANTunnel       bool
 	DryRunServiceUnit       bool
 	SuperviseClientDaemons  bool
 	// SkipLegacyClientUnits keeps a one-shot reconciliation from creating
@@ -2121,6 +2123,8 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		opts.DryRunVRRP = true
 		opts.DryRunPackage = true
 		opts.DryRunNetworkAdoption = true
+		opts.DryRunBridge = true
+		opts.DryRunVXLANTunnel = true
 		opts.DryRunServiceUnit = true
 	}
 	// Keep Runner.Opts immutable across generations. Standby dry-run flags are
@@ -2133,6 +2137,8 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	sysctl := SysctlController{Router: r.Router, Bus: r.Bus, Store: store}
 	kernelModules := KernelModuleController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunPackage}
 	adoption := NetworkAdoptionController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNetworkAdoption}
+	bridge := BridgeController{Router: r.Router, Store: store, DryRun: r.Opts.DryRunBridge}
+	vxlanTunnel := VXLANTunnelController{Router: r.Router, Store: store, DryRun: r.Opts.DryRunVXLANTunnel}
 	serviceUnits := SystemdUnitController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunServiceUnit, SynthesizeClientDaemonUnits: !r.Opts.SuperviseClientDaemons && !r.Opts.SkipLegacyClientUnits}
 	logRetention := LogRetentionController{Router: r.Router, Bus: r.Bus, Store: store}
 	ntpClient := NTPClientController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store}
@@ -2344,6 +2350,26 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		}},
 		framework.FuncController{ControllerName: "sysctl", Every: 5 * time.Minute, Subs: bootstrapSubscriptions(), PeriodicFunc: didWorkPeriodic(sysctl.Reconcile)},
 		framework.FuncController{ControllerName: "network-adoption", Every: 5 * time.Minute, Subs: bootstrapSubscriptions(), PeriodicFunc: didWorkPeriodic(adoption.Reconcile)},
+		framework.FuncController{ControllerName: "bridge", Every: 30 * time.Second, Subs: statusSubscriptions("Interface", "VXLANTunnel", "VXLANSegment"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+			effective, err := effectiveForReconcile()
+			if err != nil {
+				return false, err
+			}
+			current := bridge
+			current.Router = effective
+			current.Store = store.withRouter(effective)
+			return didWorkError(current.Reconcile(ctx))
+		}},
+		framework.FuncController{ControllerName: "vxlan-tunnel", Every: 30 * time.Second, Subs: statusSubscriptions("Bridge", "WireGuardInterface"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+			effective, err := effectiveForReconcile()
+			if err != nil {
+				return false, err
+			}
+			current := vxlanTunnel
+			current.Router = effective
+			current.Store = store.withRouter(effective)
+			return didWorkError(current.Reconcile(ctx))
+		}},
 		framework.FuncController{ControllerName: "service-unit", Every: 5 * time.Minute, Subs: serviceUnitStatusSubscriptions(r.Router), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {

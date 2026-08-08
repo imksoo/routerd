@@ -62,10 +62,12 @@ spec:
   underlayInterface: wg-l2
   udpPort: 4789
   mtu: 1370
-  bridge: br-l2
+  bridge: legacy-l2
 ```
 
-Swap `.1` and `.2` on the OCI endpoint. `VXLANTunnel` installs an all-zero MAC
+`VXLANTunnel.spec.bridge` references the Bridge resource name (`legacy-l2`),
+not its kernel `ifname` (`br-l2`). Swap `.1` and `.2` on the OCI endpoint.
+`VXLANTunnel` installs an all-zero MAC
 FDB entry per peer, so broadcast and unknown-unicast frames are replicated over
 the unicast underlay. It does not apply the default `VXLANSegment` control-plane
 filter. ARP, DHCPv4, IPv6 RS/RA/NS/NA, and DHCPv6 therefore cross the bridge.

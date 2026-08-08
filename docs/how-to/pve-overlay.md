@@ -83,7 +83,7 @@ spec:
   underlayInterface: wg-cluster
   udpPort: 4789
   mtu: 1370
-  bridge: br-legacy
+  bridge: legacy-bridge
 ```
 
 VXLAN adds 50 bytes of header (14 outer Ethernet + 20 outer IPv4 + 8 UDP + 8 VXLAN). On a 1420-byte WireGuard MTU, the inner MTU drops to 1370. Set this explicitly; do not rely on default MTU calculation when stacking encapsulations.
@@ -96,7 +96,9 @@ Discovery, and DHCPv6 cross the overlay. This differs from `VXLANSegment`, whose
 default `l2Filter` intentionally suppresses these control-plane protocols;
 choose `VXLANTunnel` for a deliberately stretched broadcast domain.
 
-The `Bridge` resource above creates the empty bridge and routerd adds the VXLAN
+`VXLANTunnel.spec.bridge` references the Bridge resource name
+(`legacy-bridge`), while `Bridge.spec.ifname` selects the kernel link name
+(`br-legacy`). The `Bridge` resource above creates the empty bridge and routerd adds the VXLAN
 port. The hypervisor or VM launcher must add the intended LAN/tap ports to
 `br-legacy`; do not add the physical underlay interface.
 

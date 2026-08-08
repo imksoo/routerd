@@ -1117,6 +1117,8 @@ func applySandboxControllerOptions(opts *controllerchain.Options, dnsmasqConfigP
 	opts.DryRunVRRP = true
 	opts.DryRunPackage = true
 	opts.DryRunNetworkAdoption = true
+	opts.DryRunBridge = true
+	opts.DryRunVXLANTunnel = true
 	opts.DryRunServiceUnit = true
 	opts.DnsmasqConfig = dnsmasqConfigPath
 	opts.DnsmasqPID = filepath.Join(platformDefaults.RuntimeDir, "dnsmasq.pid")
