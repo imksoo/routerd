@@ -3,6 +3,7 @@
 package chain
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,6 +42,33 @@ func TestPathMTUControllerRendersMSSClamp(t *testing.T) {
 	status := store.ObjectStatus(api.RouterAPIVersion, "Router", "derived-path-mtu")
 	if status["phase"] != "Applied" {
 		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestPathMTUControllerRendersBridgeFamilyMSSClamp(t *testing.T) {
+	router := &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "l2"}, Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lan0", MTU: 1500, Managed: true}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"}, Metadata: api.ObjectMeta{Name: "br"}, Spec: api.BridgeSpec{IfName: "br0", Members: []string{"lan"}, MTU: 1500}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "underlay"}, Spec: api.InterfaceSpec{IfName: "underlay0", MTU: 1500, Managed: true}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"}, Metadata: api.ObjectMeta{Name: "vx"}, Spec: api.VXLANTunnelSpec{IfName: "vx0", VNI: 42, LocalAddress: "198.18.0.1", UnderlayInterface: "underlay", MTU: 1280, Bridge: "br", TCPMSSClamp: true}},
+	}}}
+	dir := t.TempDir()
+	store := mapStore{}
+	path := filepath.Join(dir, "l2-mss.nft")
+	controller := PathMTUController{Router: router, OS: platform.OSLinux, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft"), L2Path: path, ForceFragmentPath: filepath.Join(dir, "forcefrag.nft")}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "table bridge routerd_l2_mss") {
+		t.Fatalf("missing bridge family table:\n%s", data)
+	}
+	status := store.ObjectStatus(api.RouterAPIVersion, "Router", "derived-path-mtu")
+	if status["l2MSSActive"] != true || status["l2MSSNftTable"] != "routerd_l2_mss" {
+		t.Fatalf("status=%#v", status)
 	}
 }
 
@@ -146,6 +174,54 @@ func TestPathMTUControllerSkipsUnchangedLiveReload(t *testing.T) {
 	}
 	if count := countLogLine(got, "-c -f "+controller.Path); count != 1 {
 		t.Fatalf("nft -c -f count = %d, want 1:\n%s", count, got)
+	}
+}
+
+func TestPathMTUControllerPreservesUnownedL2MSSTable(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "nft.log")
+	nftPath := filepath.Join(dir, "nft")
+	script := "#!/bin/sh\n" +
+		"echo \"$@\" >> " + shellQuote(logPath) + "\n" +
+		"if [ \"$1\" = \"list\" ]; then printf '%s\\n' 'table bridge routerd_l2_mss {' ' comment \"external\"' '}'; exit 0; fi\n" +
+		"exit 0\n"
+	if err := os.WriteFile(nftPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	c := PathMTUController{NftCommand: nftPath}
+	if _, err := c.applyTable(t.Context(), nftPath, filepath.Join(dir, "l2.nft"), "bridge", "routerd_l2_mss", nil); err == nil || !strings.Contains(err.Error(), "unowned") {
+		t.Fatalf("error=%v, want unowned refusal", err)
+	}
+	logData, _ := os.ReadFile(logPath)
+	if strings.Contains(string(logData), "delete table") {
+		t.Fatalf("unowned table was deleted:\n%s", logData)
+	}
+}
+
+func TestPathMTUControllerRepairsOwnedL2MSSDigestDrift(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "nft.log")
+	nftPath := filepath.Join(dir, "nft")
+	script := "#!/bin/sh\n" +
+		"echo \"$@\" >> " + shellQuote(logPath) + "\n" +
+		"if [ \"$1\" = \"list\" ]; then printf '%s\\n' 'table bridge routerd_l2_mss {' ' comment \"" + render.NftablesRouterdOwnerMarker + " " + render.NftablesL2MSSDigestMarker + "stale\"' '}'; exit 0; fi\n" +
+		"exit 0\n"
+	if err := os.WriteFile(nftPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "l2.nft")
+	desired := []byte("table bridge routerd_l2_mss { comment \"" + render.NftablesRouterdOwnerMarker + " " + render.NftablesL2MSSDigestMarker + "desired\"; }\n")
+	if err := os.WriteFile(path, desired, 0644); err != nil {
+		t.Fatal(err)
+	}
+	c := PathMTUController{NftCommand: nftPath}
+	changed, err := c.applyTable(t.Context(), nftPath, path, "bridge", "routerd_l2_mss", desired)
+	if err != nil || !changed {
+		t.Fatalf("changed=%t err=%v", changed, err)
+	}
+	logData, _ := os.ReadFile(logPath)
+	if !strings.Contains(string(logData), "-c -f "+path) || !strings.Contains(string(logData), "-f "+path) {
+		t.Fatalf("drift was not checked and applied:\n%s", logData)
 	}
 }
 

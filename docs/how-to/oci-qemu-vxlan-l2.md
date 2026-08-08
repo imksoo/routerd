@@ -67,6 +67,7 @@ spec:
   # ignore the learned VXLAN path MTU.
   outerDF: inherit
   bridge: legacy-l2
+  tcpMSSClamp: true
 ```
 
 `VXLANTunnel.spec.bridge` references the Bridge resource name (`legacy-l2`),
@@ -75,6 +76,14 @@ not its kernel `ifname` (`br-l2`). Swap `.1` and `.2` on the OCI endpoint.
 FDB entry per peer, so broadcast and unknown-unicast frames are replicated over
 the unicast underlay. It does not apply the default `VXLANSegment` control-plane
 filter. ARP, DHCPv4, IPv6 RS/RA/NS/NA, and DHCPv6 therefore cross the bridge.
+
+Set `spec.tcpMSSClamp: true` when the stretched L2 path has a smaller effective
+MTU than its attached LAN. routerd then owns `table bridge routerd_l2_mss` and
+lowers only oversized IPv4 and IPv6 SYN MSS values in both directions. The
+ceiling is the minimum of the VXLAN, Bridge, and member-interface MTUs; smaller
+MSS values and non-TCP Ethernet control traffic are unchanged. Disabling the
+field or removing the tunnel removes only the table carrying routerd's owner
+marker.
 
 ## Safety gates
 

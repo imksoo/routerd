@@ -16,6 +16,7 @@ scripts=(
   arp-observer-ignore-member-mac.sh
   sam-proxy-arp-garp-transition.sh
   vxlan-l2-control-plane-transparency.sh
+  vxlan-l2-mss-clamp.sh
 )
 
 for script in "${scripts[@]}"; do

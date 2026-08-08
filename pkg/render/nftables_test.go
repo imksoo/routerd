@@ -740,6 +740,53 @@ func TestNftablesTCPMSSClampOnlyLowersMSS(t *testing.T) {
 	}
 }
 
+func TestNftablesL2TCPMSSClampForVXLANTunnelBridge(t *testing.T) {
+	router := &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "l2"}, Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", MTU: 1500, Managed: true}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"}, Metadata: api.ObjectMeta{Name: "legacy"}, Spec: api.BridgeSpec{IfName: "br-legacy", Members: []string{"lan"}, MTU: 1370}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wg"}, Spec: api.InterfaceSpec{IfName: "wg0", MTU: 1420, Managed: true}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"}, Metadata: api.ObjectMeta{Name: "overlay"}, Spec: api.VXLANTunnelSpec{IfName: "vx-l2", VNI: 200001, LocalAddress: "198.18.0.1", Peers: []string{"198.18.0.2"}, UnderlayInterface: "wg", MTU: 1280, Bridge: "legacy", TCPMSSClamp: true}},
+	}}}
+	data, err := NftablesL2TCPMSSClamp(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"table bridge routerd_l2_mss",
+		NftablesRouterdOwnerMarker + " " + NftablesL2MSSDigestMarker,
+		`iifname "ens19" oifname "vx-l2" ether type ip ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1240 tcp option maxseg size set 1240`,
+		`iifname "vx-l2" oifname "ens19" ether type ip6 meta l4proto tcp tcp flags syn / syn,rst tcp option maxseg size > 1220 tcp option maxseg size set 1220`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("L2 MSS output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "maxseg size set 1460") {
+		t.Fatalf("rule must lower only to the effective MTU ceiling:\n%s", got)
+	}
+}
+
+func TestNftablesL2TCPMSSClampDisabledProducesNoTable(t *testing.T) {
+	router := bridgeVXLANL2MSSRouter(false)
+	data, err := NftablesL2TCPMSSClamp(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != 0 {
+		t.Fatalf("disabled clamp rendered state:\n%s", data)
+	}
+}
+
+func bridgeVXLANL2MSSRouter(enabled bool) *api.Router {
+	return &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "l2"}, Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lan0", MTU: 1500, Managed: true}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"}, Metadata: api.ObjectMeta{Name: "br"}, Spec: api.BridgeSpec{IfName: "br0", Members: []string{"lan"}, MTU: 1500}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "underlay"}, Spec: api.InterfaceSpec{IfName: "underlay0", MTU: 1500, Managed: true}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"}, Metadata: api.ObjectMeta{Name: "vx"}, Spec: api.VXLANTunnelSpec{IfName: "vx0", VNI: 42, LocalAddress: "198.18.0.1", UnderlayInterface: "underlay", MTU: 1280, Bridge: "br", TCPMSSClamp: enabled}},
+	}}}
+}
+
 func TestNftablesTCPMSSClampForSAMOverlay(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
