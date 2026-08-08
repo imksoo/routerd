@@ -177,11 +177,12 @@ func TestVXLANTunnelWhenFalseTeardownIsFailClosedAndOrdered(t *testing.T) {
 	var commands []string
 	stale := true
 	controller := VXLANTunnelController{
-		Router:          router,
-		DeclaredRouter:  router,
-		Store:           store,
-		NetworkdDir:     dir,
-		OperatingSystem: platform.OSLinux,
+		Router:            router,
+		DeclaredRouter:    router,
+		Store:             store,
+		NetworkdDir:       dir,
+		OperatingSystem:   platform.OSLinux,
+		DeleteLinkByIndex: testVXLANDeleteByIndex(&exists, nil, &commands),
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			joined := strings.Join(append([]string{name}, args...), " ")
 			commands = append(commands, joined)
@@ -198,8 +199,6 @@ func TestVXLANTunnelWhenFalseTeardownIsFailClosedAndOrdered(t *testing.T) {
 				return []byte("00:00:00:00:00:00 dst 10.254.200.2 self permanent\n"), nil
 			case joined == "bridge fdb del 00:00:00:00:00:00 dev vx-l2 dst 10.254.200.99":
 				stale = false
-			case joined == "ip link delete dev vx-l2":
-				exists = false
 			}
 			return nil, nil
 		},
@@ -221,7 +220,7 @@ func TestVXLANTunnelWhenFalseTeardownIsFailClosedAndOrdered(t *testing.T) {
 		"bridge fdb del 00:00:00:00:00:00 dev vx-l2 dst 10.254.200.2",
 		"bridge fdb del 00:00:00:00:00:00 dev vx-l2 dst 10.254.200.99",
 		"ip link set dev vx-l2 nomaster",
-		"ip link delete dev vx-l2",
+		"netlink link delete ifindex 8",
 	}
 	assertCommandsInOrder(t, commands, wantOrder)
 }
@@ -237,6 +236,7 @@ func TestVXLANTunnelUnknownRoleTearsDownInsteadOfForwarding(t *testing.T) {
 	exists := true
 	controller := VXLANTunnelController{
 		Router: router, DeclaredRouter: router, Store: store, NetworkdDir: dir, OperatingSystem: platform.OSLinux,
+		DeleteLinkByIndex: testVXLANDeleteByIndex(&exists, &deleted, nil),
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			joined := strings.Join(append([]string{name}, args...), " ")
 			if strings.HasPrefix(joined, "ip -details link show dev vx-l2") {
@@ -244,10 +244,6 @@ func TestVXLANTunnelUnknownRoleTearsDownInsteadOfForwarding(t *testing.T) {
 					return nil, errors.New("not found")
 				}
 				return []byte("8: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit"), nil
-			}
-			if joined == "ip link delete dev vx-l2" {
-				deleted = true
-				exists = false
 			}
 			return nil, nil
 		},
@@ -269,13 +265,11 @@ func TestVXLANTunnelWhenFalseRefusesForeignStateAndNeverReportsHealthy(t *testin
 	var deleted bool
 	controller := VXLANTunnelController{
 		Router: router, DeclaredRouter: router, Store: store, NetworkdDir: dir, OperatingSystem: platform.OSLinux,
+		DeleteLinkByIndex: func(int) error { deleted = true; return nil },
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			joined := strings.Join(append([]string{name}, args...), " ")
 			if strings.HasPrefix(joined, "ip -details link show dev vx-l2") {
 				return []byte("foreign vxlan"), nil
-			}
-			if joined == "ip link delete dev vx-l2" {
-				deleted = true
 			}
 			return nil, nil
 		},
@@ -288,6 +282,34 @@ func TestVXLANTunnelWhenFalseRefusesForeignStateAndNeverReportsHealthy(t *testin
 	status := store.ObjectStatus(api.NetAPIVersion, "VXLANTunnel", "legacy-l2-overlay")
 	if deleted || status["phase"] != "Blocked" || status["reason"] != "ForeignStateWhileGated" || status["managedBy"] != "external" {
 		t.Fatalf("deleted=%t status=%#v", deleted, status)
+	}
+}
+
+func TestVXLANTunnelWhenFalseRemovesLegacyMarkerOnlyWhenLinkIsAbsent(t *testing.T) {
+	router := bridgeVXLANWhenRouter(api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"ha.role": {Equals: "master"}}})
+	store := &vxlanWhenStore{mapStore: mapStore{}, values: map[string]routerstate.Value{"ha.role": {Status: routerstate.StatusSet, Value: "backup"}}}
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "31-routerd-vx-l2.owner")
+	if err := os.WriteFile(marker, []byte(routerdGeneratedNetworkdHeader+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	controller := VXLANTunnelController{Router: router, DeclaredRouter: router, Store: store, NetworkdDir: dir, OperatingSystem: platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			joined := strings.Join(append([]string{name}, args...), " ")
+			if joined == "ip -details link show dev vx-l2" {
+				return nil, errors.New("not found")
+			}
+			return nil, nil
+		}}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy marker remains: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "VXLANTunnel", "legacy-l2-overlay")
+	if status["phase"] != "Disabled" || status["forwarding"] != false {
+		t.Fatalf("status=%#v", status)
 	}
 }
 
@@ -353,6 +375,7 @@ func TestVXLANTunnelDualMasterRequiresSingleWitnessLeader(t *testing.T) {
 		exists := true
 		return VXLANTunnelController{
 			Router: routerA, DeclaredRouter: routerA, Store: store, NetworkdDir: dir, OperatingSystem: platform.OSLinux,
+			DeleteLinkByIndex: testVXLANDeleteByIndex(&exists, nil, nil),
 			Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 				joined := strings.Join(append([]string{name}, args...), " ")
 				if strings.HasPrefix(joined, "ip -details link show dev vx-l2") {
@@ -360,9 +383,6 @@ func TestVXLANTunnelDualMasterRequiresSingleWitnessLeader(t *testing.T) {
 						return nil, errors.New("not found")
 					}
 					return []byte("8: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit"), nil
-				}
-				if joined == "ip link delete dev vx-l2" {
-					exists = false
 				}
 				if joined == "bridge fdb show dev vx-l2" {
 					return []byte("00:00:00:00:00:00 dst 10.254.200.2 self permanent\n"), nil
@@ -425,6 +445,7 @@ func TestVXLANTunnelRestartOrphanMarkerTriggersCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	exists := true
+	controller.DeleteLinkByIndex = testVXLANDeleteByIndex(&exists, nil, nil)
 	controller.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		joined := strings.Join(append([]string{name}, args...), " ")
 		if joined == "ip -details link show dev vx-old" {
@@ -435,9 +456,6 @@ func TestVXLANTunnelRestartOrphanMarkerTriggersCleanup(t *testing.T) {
 		}
 		if joined == "bridge fdb show dev vx-old" {
 			return []byte("00:00:00:00:00:00 dst 10.254.200.2 self permanent\n"), nil
-		}
-		if joined == "ip link delete dev vx-old" {
-			exists = false
 		}
 		return nil, nil
 	}
@@ -460,6 +478,7 @@ func TestVXLANTunnelWitnessLossBeforeCommitNeverBringsLinkUp(t *testing.T) {
 	upCalled := false
 	fdbReads := 0
 	controller := VXLANTunnelController{Router: router, DeclaredRouter: router, Store: store, NetworkdDir: dir, OperatingSystem: platform.OSLinux}
+	controller.DeleteLinkByIndex = testVXLANDeleteByIndex(&exists, nil, nil)
 	controller.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		joined := strings.Join(append([]string{name}, args...), " ")
 		if joined == "ip -details link show dev vx-l2" {
@@ -480,9 +499,6 @@ func TestVXLANTunnelWitnessLossBeforeCommitNeverBringsLinkUp(t *testing.T) {
 		}
 		if joined == "ip link set dev vx-l2 up" {
 			upCalled = true
-		}
-		if joined == "ip link delete dev vx-l2" {
-			exists = false
 		}
 		return nil, nil
 	}
@@ -518,6 +534,7 @@ func TestVXLANTunnelOwnedConfigChangeDownsOldBeforeRecreate(t *testing.T) {
 	exists := true
 	vni := 200001
 	var commands []string
+	controller.DeleteLinkByIndex = testVXLANDeleteByIndex(&exists, nil, &commands)
 	controller.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		joined := strings.Join(append([]string{name}, args...), " ")
 		commands = append(commands, joined)
@@ -526,9 +543,6 @@ func TestVXLANTunnelOwnedConfigChangeDownsOldBeforeRecreate(t *testing.T) {
 				return nil, errors.New("not found")
 			}
 			return []byte(fmt.Sprintf("8: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id %d local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit", vni)), nil
-		}
-		if joined == "ip link delete dev vx-l2" {
-			exists = false
 		}
 		if strings.HasPrefix(joined, "ip link add vx-l2 type vxlan id 200002 ") {
 			exists = true
@@ -542,7 +556,7 @@ func TestVXLANTunnelOwnedConfigChangeDownsOldBeforeRecreate(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	assertCommandsInOrder(t, commands, []string{"ip link set dev vx-l2 down", "ip link delete dev vx-l2", "ip link add vx-l2 type vxlan id 200002 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit"})
+	assertCommandsInOrder(t, commands, []string{"ip link set dev vx-l2 down", "netlink link delete ifindex 8", "ip link add vx-l2 type vxlan id 200002 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit"})
 }
 
 func TestVXLANTunnelNextExpiryUsesProducerAbsoluteDeadline(t *testing.T) {
@@ -572,6 +586,7 @@ func TestVXLANTunnelRevisionMismatchDuringFDBFailsClosed(t *testing.T) {
 	writeVXLANOwnedArtifacts(t, dir, "vx-l2")
 	exists, down, deleted, appended := true, false, false, false
 	controller := VXLANTunnelController{Router: router, DeclaredRouter: router, Store: store, NetworkdDir: dir, OperatingSystem: platform.OSLinux}
+	controller.DeleteLinkByIndex = testVXLANDeleteByIndex(&exists, &deleted, nil)
 	controller.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		joined := strings.Join(append([]string{name}, args...), " ")
 		switch {
@@ -589,8 +604,6 @@ func TestVXLANTunnelRevisionMismatchDuringFDBFailsClosed(t *testing.T) {
 			return []byte("00:00:00:00:00:00 dst 10.254.200.2 self permanent\n"), nil
 		case joined == "ip link set dev vx-l2 down":
 			down = true
-		case joined == "ip link delete dev vx-l2":
-			deleted, exists = true, false
 		case strings.HasPrefix(joined, "bridge fdb append"):
 			appended = true
 		}
@@ -739,19 +752,33 @@ func TestVXLANTunnelFloodFDBRepairsDuplicateAndWrongAttributes(t *testing.T) {
 	}
 }
 
-func TestVXLANTunnelTeardownDetectsIfindexSwapImmediatelyBeforeDelete(t *testing.T) {
+func TestVXLANTunnelTeardownDeletesByOwnedIfindexAndPreservesLastMomentReplacement(t *testing.T) {
 	router := bridgeVXLANWhenRouter(api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"ha.role": {Equals: "master"}}})
 	store := &vxlanWhenStore{mapStore: mapStore{}, values: map[string]routerstate.Value{"ha.role": {Status: routerstate.StatusSet, Value: "backup"}}}
 	dir := t.TempDir()
 	writeVXLANOwnedArtifacts(t, dir, "vx-l2")
-	nomaster, verifiedAfterNomaster, deleted := false, false, false
+	nomaster, verifiedAfterNomaster := false, false
+	liveIfindex, deleteCalls := 8, 0
 	controller := VXLANTunnelController{Router: router, DeclaredRouter: router, Store: store, NetworkdDir: dir, OperatingSystem: platform.OSLinux}
+	controller.DeleteLinkByIndex = func(ownedIfindex int) error {
+		deleteCalls++
+		if ownedIfindex != liveIfindex {
+			return os.ErrNotExist
+		}
+		liveIfindex = 0
+		return nil
+	}
 	controller.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		joined := strings.Join(append([]string{name}, args...), " ")
 		switch {
 		case joined == "ip -details link show dev vx-l2":
 			if nomaster && verifiedAfterNomaster {
-				return []byte("9: vx-l2: <BROADCAST> mtu 1370\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit"), nil
+				// Return the last valid observation, then atomically replace the
+				// same name before the delete callback. A name-based delete would
+				// remove index 9; RTM_DELLINK for owned index 8 must not.
+				observed := []byte("8: vx-l2: <BROADCAST> mtu 1370\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning df inherit")
+				liveIfindex = 9
+				return observed, nil
 			}
 			if nomaster {
 				verifiedAfterNomaster = true
@@ -762,8 +789,6 @@ func TestVXLANTunnelTeardownDetectsIfindexSwapImmediatelyBeforeDelete(t *testing
 			return []byte("00:00:00:00:00:00 dst 10.254.200.2 self permanent\n"), nil
 		case joined == "ip link set dev vx-l2 nomaster":
 			nomaster = true
-		case joined == "ip link delete dev vx-l2":
-			deleted = true
 		}
 		return nil, nil
 	}
@@ -771,8 +796,8 @@ func TestVXLANTunnelTeardownDetectsIfindexSwapImmediatelyBeforeDelete(t *testing
 		t.Fatal("ifindex swap should fail the teardown")
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "VXLANTunnel", "legacy-l2-overlay")
-	if deleted || status["reason"] != "OwnershipVerifyFailed" {
-		t.Fatalf("foreign replacement delete=%t status=%#v", deleted, status)
+	if deleteCalls != 1 || liveIfindex != 9 || status["reason"] != "LinkDeleteFailed" {
+		t.Fatalf("replacement was not preserved: deleteCalls=%d liveIfindex=%d status=%#v", deleteCalls, liveIfindex, status)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "31-routerd-vx-l2.owner")); err != nil {
 		t.Fatalf("owner evidence removed: %v", err)
@@ -838,6 +863,27 @@ func writeVXLANOwnedArtifacts(t *testing.T, dir, ifname string) {
 	controller := VXLANTunnelController{NetworkdDir: dir}
 	if _, err := controller.persistOwnershipBound(resource, cfg, 8); err != nil {
 		t.Fatalf("write artifact: %v", err)
+	}
+}
+
+func testVXLANDeleteByIndex(exists, deleted *bool, commands *[]string) func(int) error {
+	return func(ifindex int) error {
+		if ifindex != 8 {
+			return fmt.Errorf("unexpected delete ifindex %d", ifindex)
+		}
+		if exists != nil && !*exists {
+			return os.ErrNotExist
+		}
+		if commands != nil {
+			*commands = append(*commands, fmt.Sprintf("netlink link delete ifindex %d", ifindex))
+		}
+		if deleted != nil {
+			*deleted = true
+		}
+		if exists != nil {
+			*exists = false
+		}
+		return nil
 	}
 }
 

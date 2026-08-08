@@ -58,10 +58,9 @@ func main() {
 		if name == "networkctl" {
 			return nil, nil
 		}
-		argv := append([]string{"netns", "exec", ns, name}, args...)
-		out, err := exec.CommandContext(ctx, "ip", argv...).CombinedOutput()
+		out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
 		if err != nil {
-			return out, fmt.Errorf("%v: %w: %s", append([]string{"ip"}, argv...), err, out)
+			return out, fmt.Errorf("%v: %w: %s", append([]string{name}, args...), err, out)
 		}
 		return out, nil
 	}

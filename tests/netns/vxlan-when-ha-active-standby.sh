@@ -35,7 +35,7 @@ CONTROLLER="$WORKDIR/vxlan-controller-driver"
 go build -o "$CONTROLLER" ./tests/netns/vxlan-controller-driver
 gate() {
   local ns="$1" role="$2" witness="$3" local_ip="$4" peer_ip="$5"
-  "$CONTROLLER" "$ns" "$role" "$witness" "$local_ip" "$peer_ip" 200113
+  ip netns exec "$ns" "$CONTROLLER" "$ns" "$role" "$witness" "$local_ip" "$peer_ip" 200113
 }
 
 cat >"$WORKDIR/frame.py" <<'PY'

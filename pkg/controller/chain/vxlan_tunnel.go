@@ -40,10 +40,14 @@ type VXLANTunnelController struct {
 	OperatingSystem platform.OS
 	NetworkdDir     string
 	Command         vxlan.CommandRunner
-	ReadFile        func(string) ([]byte, error)
-	RemoveFile      func(string) error
-	StartedAt       time.Time
-	Mu              *sync.Mutex
+	// DeleteLinkByIndex removes the exact kernel object represented by an
+	// ownership manifest. Production uses RTM_DELLINK with IFLA_IFINDEX; tests
+	// inject a deterministic kernel model.
+	DeleteLinkByIndex func(int) error
+	ReadFile          func(string) ([]byte, error)
+	RemoveFile        func(string) error
+	StartedAt         time.Time
+	Mu                *sync.Mutex
 }
 
 type vxlanOwnership struct {
@@ -481,7 +485,7 @@ func (c VXLANTunnelController) reconcileOne(ctx context.Context, resource api.Re
 		status["phase"], status["reason"], status["forwarding"], status["error"] = "Error", "LinkObserveFailed", "unknown", showErr.Error()
 		return c.Store.SaveObjectStatus(api.NetAPIVersion, "VXLANTunnel", resource.Metadata.Name, status)
 	}
-	_, foreignArtifact, err := c.artifactOwnership(cfg.IfName)
+	ownedArtifact, foreignArtifact, err := c.artifactOwnership(cfg.IfName)
 	if err != nil {
 		return err
 	}
@@ -507,6 +511,15 @@ func (c VXLANTunnelController) reconcileOne(ctx context.Context, resource api.Re
 		status["forwarding"] = "unknown"
 		status["managedBy"] = "external"
 		return c.Store.SaveObjectStatus(api.NetAPIVersion, "VXLANTunnel", resource.Metadata.Name, status)
+	}
+	if showErr != nil && hasOwner && !manifestValid && ownedArtifact {
+		// A legacy or malformed routerd marker cannot authorize mutation of a
+		// live link. When the kernel object is already absent, however, retiring
+		// only that routerd-marked file is safe and permits a fresh v2 token.
+		if err := c.removeFile(c.artifactPaths(cfg.IfName)[0]); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		hasOwner = false
 	}
 	if hasOwner && !manifestValid {
 		status["phase"] = "RequiresAdoption"
@@ -591,7 +604,7 @@ func (c VXLANTunnelController) reconcileOne(ctx context.Context, resource api.Re
 			}
 			return deleteObserveErr
 		}
-		if _, err := c.command(ctx, "ip", "link", "delete", "dev", cfg.IfName); err != nil {
+		if err := c.deleteLinkByIndex(owner.IfIndex); err != nil {
 			return err
 		}
 		deletedObserved, deletedErr := c.command(ctx, "ip", "-details", "link", "show", "dev", cfg.IfName)
@@ -844,7 +857,7 @@ func (c VXLANTunnelController) teardownOne(ctx context.Context, resource api.Res
 		ownedLink = vxlanDetailsConfigMatch(string(observed), owner.Config) && vxlanIfIndex(string(observed)) == owner.IfIndex
 	}
 	foreignPreserved := foreignArtifact
-	if (foreignArtifact && !ownedLink) || (linkExists && !ownedLink) || (hasOwner && !manifestValid) || (!hasOwner && ownedArtifact) {
+	if (foreignArtifact && !ownedLink) || (linkExists && !ownedLink) || (linkExists && hasOwner && !manifestValid) || (linkExists && !hasOwner && ownedArtifact) {
 		status["phase"] = "Blocked"
 		status["reason"] = "ForeignStateWhileGated"
 		status["forwarding"] = "unknown"
@@ -897,7 +910,7 @@ func (c VXLANTunnelController) teardownOne(ctx context.Context, resource api.Res
 			}
 			return c.saveTeardownError(resource, status, "OwnershipVerifyFailed", deleteObserveErr)
 		}
-		if _, err := c.command(ctx, "ip", "link", "delete", "dev", ifname); err != nil {
+		if err := c.deleteLinkByIndex(owner.IfIndex); err != nil {
 			return c.saveTeardownError(resource, status, "LinkDeleteFailed", err)
 		}
 		status["deleted"] = true
@@ -1321,6 +1334,16 @@ func vxlanDetailsConfigMatch(observed string, cfg vxlan.Config) bool {
 		return false
 	}
 	return true
+}
+
+func (c VXLANTunnelController) deleteLinkByIndex(ifindex int) error {
+	if ifindex <= 0 {
+		return fmt.Errorf("refusing to delete VXLAN with invalid ifindex %d", ifindex)
+	}
+	if c.DeleteLinkByIndex != nil {
+		return c.DeleteLinkByIndex(ifindex)
+	}
+	return deleteVXLANLinkByIndex(ifindex)
 }
 
 func defaultVXLANOuterDF(value string) string {
