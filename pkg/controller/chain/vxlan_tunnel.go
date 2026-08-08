@@ -51,6 +51,7 @@ func (c VXLANTunnelController) Reconcile(ctx context.Context) error {
 			UDPPort:           spec.UDPPort,
 			MTU:               spec.MTU,
 			Bridge:            aliases[spec.Bridge],
+			OuterDF:           spec.OuterDF,
 		}
 		if cfg.UnderlayInterface == "" {
 			cfg.UnderlayInterface = spec.UnderlayInterface
@@ -76,6 +77,7 @@ func (c VXLANTunnelController) reconcileOne(ctx context.Context, resource api.Re
 		"peers":             append([]string(nil), cfg.Peers...),
 		"managedBy":         "routerd",
 		"restartPersistent": true,
+		"outerDF":           defaultOuterDF(cfg.OuterDF),
 	}
 	if c.DryRun {
 		status["phase"] = "Planned"
@@ -172,5 +174,15 @@ func vxlanDetailsMatch(observed string, cfg vxlan.Config) bool {
 	if cfg.Bridge != "" && !strings.Contains(observed, "master "+cfg.Bridge) {
 		return false
 	}
+	if !strings.Contains(observed, " df "+defaultOuterDF(cfg.OuterDF)) {
+		return false
+	}
 	return true
+}
+
+func defaultOuterDF(value string) string {
+	if value == "" {
+		return "inherit"
+	}
+	return value
 }

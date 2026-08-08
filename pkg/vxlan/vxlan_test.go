@@ -19,7 +19,7 @@ func TestCommands(t *testing.T) {
 		MTU:               1380,
 	})
 	want := [][]string{
-		{"ip", "link", "add", "vx240", "type", "vxlan", "id", "240", "local", "10.44.0.1", "dev", "wg0", "dstport", "4789", "nolearning"},
+		{"ip", "link", "add", "vx240", "type", "vxlan", "id", "240", "local", "10.44.0.1", "dev", "wg0", "dstport", "4789", "nolearning", "df", "inherit"},
 		{"ip", "link", "set", "dev", "vx240", "mtu", "1380"},
 		{"ip", "link", "set", "dev", "vx240", "master", "br240"},
 		{"ip", "link", "set", "dev", "vx240", "up"},
@@ -27,6 +27,13 @@ func TestCommands(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("commands = %#v, want %#v", got, want)
+	}
+}
+
+func TestCommandsSetExplicitOuterDF(t *testing.T) {
+	got := Commands(Config{Name: "vx-l2", VNI: 200001, LocalAddress: "10.254.200.1", UnderlayInterface: "wg-l2", OuterDF: "unset"})
+	if !reflect.DeepEqual(got[0][len(got[0])-2:], []string{"df", "unset"}) {
+		t.Fatalf("create command = %#v, want explicit df unset", got[0])
 	}
 }
 

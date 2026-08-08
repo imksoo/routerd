@@ -509,6 +509,7 @@ type VXLANTunnelSpec struct {
 	UDPPort           int      `yaml:"udpPort,omitempty" json:"udpPort,omitempty" jsonschema:"minimum=1,maximum=65535"`
 	MTU               int      `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=0"`
 	Bridge            string   `yaml:"bridge,omitempty" json:"bridge,omitempty"`
+	OuterDF           string   `yaml:"outerDF,omitempty" json:"outerDF,omitempty" jsonschema:"enum=,enum=inherit,enum=set,enum=unset"`
 }
 
 type PPPoESessionSpec struct {

@@ -62,6 +62,10 @@ spec:
   underlayInterface: wg-l2
   udpPort: 4789
   mtu: 1370
+  # Keep the compatibility default unless the trusted underlay has been tested.
+  # `unset` permits outer IPv4 fragmentation but does not make inner DF packets
+  # ignore the learned VXLAN path MTU.
+  outerDF: inherit
   bridge: legacy-l2
 ```
 

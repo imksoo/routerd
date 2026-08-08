@@ -2744,6 +2744,20 @@ func TestValidateRejectsInvalidVXLANFilterMode(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsInvalidVXLANTunnelOuterDF(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "underlay"}, Spec: api.InterfaceSpec{IfName: "wg-l2", Managed: true}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"}, Metadata: api.ObjectMeta{Name: "legacy-overlay"}, Spec: api.VXLANTunnelSpec{VNI: 200001, LocalAddress: "10.254.200.1", UnderlayInterface: "underlay", OuterDF: "sometimes"}},
+		}},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.outerDF") {
+		t.Fatalf("expected invalid outerDF error, got %v", err)
+	}
+}
+
 func TestValidateDHCPServerTransitRole(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

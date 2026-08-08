@@ -322,6 +322,11 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 			if spec.Bridge != "" && !idx.Interfaces[spec.Bridge] {
 				return fmt.Errorf("%s spec.bridge references missing Bridge %q", res.ID(), spec.Bridge)
 			}
+			switch spec.OuterDF {
+			case "", "inherit", "set", "unset":
+			default:
+				return fmt.Errorf("%s spec.outerDF must be inherit, set, or unset", res.ID())
+			}
 		}
 		if res.Kind == "DHCPv4Reservation" {
 			spec, err := res.DHCPv4ReservationSpec()
