@@ -29,17 +29,13 @@ ip -n "$RIGHT" addr flush dev eth0
 ip -n "$LEFT" link set eth0 address 02:00:00:00:11:31
 ip -n "$RIGHT" link set eth0 address 02:00:00:00:11:32
 
-# This is the kernel acceptance half of the production-controller tests. The
-# exact controller predicate evaluation and mutation ordering are covered by
-# TestVXLANTunnel*; this helper applies its MASTER AND witness-leader result.
+# Build the small namespace adapter once. It invokes the production chain
+# controller; the shell harness only supplies producer state and packets.
+CONTROLLER="$WORKDIR/vxlan-controller-driver"
+go build -o "$CONTROLLER" ./tests/netns/vxlan-controller-driver
 gate() {
   local ns="$1" role="$2" witness="$3" local_ip="$4" peer_ip="$5"
-  ip -n "$ns" link delete vx-l2 2>/dev/null || true
-  if [[ "$role" != master || "$witness" != leader ]]; then return; fi
-  ip -n "$ns" link add vx-l2 type vxlan id 200113 local "$local_ip" dev ul0 dstport 4789 nolearning
-  ip -n "$ns" link set vx-l2 master br-l2
-  ip -n "$ns" link set vx-l2 up
-  ip netns exec "$ns" bridge fdb append 00:00:00:00:00:00 dev vx-l2 dst "$peer_ip"
+  "$CONTROLLER" "$ns" "$role" "$witness" "$local_ip" "$peer_ip" 200113
 }
 
 cat >"$WORKDIR/frame.py" <<'PY'
@@ -48,6 +44,22 @@ mode, marker = sys.argv[1], sys.argv[2].encode()
 s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0003))
 s.bind(("eth0", 0))
 types = {b"dhcp4-discover": 1, b"dhcp4-offer": 2, b"dhcp4-request": 3, b"dhcp4-ack": 5}
+
+def protocol_frame(name, src):
+    if name == b"arp":
+        body = struct.pack("!HHBBH", 1, 0x0800, 6, 4, 1) + src + socket.inet_aton("192.0.2.11") + b"\0"*6 + socket.inet_aton("192.0.2.12") + name
+        return b"\xff"*6 + src + b"\x08\x06" + body
+    icmp = {b"ra": 134, b"nd": 135}
+    if name in icmp:
+        payload = bytes([icmp[name], 0, 0, 0]) + name
+        header = struct.pack("!IHBB16s16s", 0x60000000, len(payload), 58, 255, b"\x20\x01\x0d\xb8"+b"\0"*12, b"\xff\x02"+b"\0"*13+b"\x01")
+        return b"\x33\x33\x00\x00\x00\x01" + src + b"\x86\xdd" + header + payload
+    if name == b"dhcp6":
+        payload = b"\x01\x11\x31\x13" + name
+        udp = struct.pack("!HHHH", 546, 547, 8+len(payload), 0) + payload
+        header = struct.pack("!IHBB16s16s", 0x60000000, len(udp), 17, 64, b"\x20\x01\x0d\xb8"+b"\0"*12, b"\xff\x02"+b"\0"*11+b"\x01\x00\x02")
+        return b"\x33\x33\x00\x01\x00\x02" + src + b"\x86\xdd" + header + udp
+    return b"\xff"*6 + src + b"\x88\xb5" + name
 
 def ipv4_checksum(data):
     if len(data) % 2: data += b"\0"
@@ -81,15 +93,24 @@ def classify(frame):
     if (sport,dport) != ((67,68) if mt in (2,5) else (68,67)): return None
     return names.get(mt)
 
+def protocol_match(frame, name):
+    if len(frame) < 14: return False
+    et = frame[12:14]
+    if name == b"arp": return et == b"\x08\x06" and name in frame[14:]
+    if name in (b"ra", b"nd"):
+        return et == b"\x86\xdd" and len(frame) > 58 and frame[20] == 58 and frame[54] == {b"ra":134,b"nd":135}[name] and name in frame[54:]
+    if name == b"dhcp6": return et == b"\x86\xdd" and len(frame) > 62 and frame[20] == 17 and frame[54:58] == struct.pack("!HH",546,547) and name in frame[62:]
+    return et == b"\x88\xb5" and name in frame[14:]
+
 if mode == "send":
     src = bytes.fromhex(sys.argv[3].replace(":", ""))
-    s.send(dhcp_frame(marker, src) if marker in types else b"\xff"*6 + src + b"\x88\xb5" + marker)
+    s.send(dhcp_frame(marker, src) if marker in types else protocol_frame(marker, src))
 else:
     s.settimeout(.15); end=time.monotonic()+1.25; count=0
     while time.monotonic() < end:
         try: frame=s.recv(2048)
         except TimeoutError: continue
-        if (marker in types and classify(frame) == marker) or (marker not in types and len(frame)>=14 and frame[12:14]==b"\x88\xb5" and marker in frame[14:]): count += 1
+        if (marker in types and classify(frame) == marker) or (marker not in types and protocol_match(frame, marker)): count += 1
     print(count)
 PY
 
@@ -118,6 +139,7 @@ gate "$OCI_A" master leader 198.18.113.3 198.18.113.1
 gate "$OCI_B" master standby 198.18.113.4 198.18.113.2
 assert_single_forwarder_pair
 expect_frames "$LEFT" "$RIGHT" BUM-A 1 02:00:00:00:11:31
+for proto in arp ra nd dhcp6; do expect_frames "$LEFT" "$RIGHT" "$proto" 1 02:00:00:00:11:31; done
 for phase in discover request; do expect_frames "$LEFT" "$RIGHT" "dhcp4-$phase" 1 02:00:00:00:11:31; done
 for phase in offer ack; do expect_frames "$RIGHT" "$LEFT" "dhcp4-$phase" 1 02:00:00:00:11:32; done
 
@@ -135,6 +157,7 @@ gate "$ON_B" master leader 198.18.113.2 198.18.113.4
 gate "$OCI_B" master leader 198.18.113.4 198.18.113.2
 assert_single_forwarder_pair
 expect_frames "$LEFT" "$RIGHT" BUM-B 1 02:00:00:00:11:31
+for proto in arp ra nd dhcp6; do expect_frames "$LEFT" "$RIGHT" "$proto" 1 02:00:00:00:11:31; done
 for phase in discover request; do expect_frames "$LEFT" "$RIGHT" "dhcp4-$phase" 1 02:00:00:00:11:31; done
 for phase in offer ack; do expect_frames "$RIGHT" "$LEFT" "dhcp4-$phase" 1 02:00:00:00:11:32; done
 

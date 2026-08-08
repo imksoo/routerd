@@ -42,8 +42,20 @@ also inventories owner manifests and removes an exact-matching orphan created
 by resource deletion or `ifname` rename. Legacy routerd-generated auto-start
 artifacts are removed; foreign artifacts remain blocked for manual isolation.
 When `maxAge` is omitted the VXLAN controller applies a conservative 30-second
-default; its periodic reconciliation fences an expired observation even if no
-status-change event arrives.
+default. The controller derives the earliest absolute expiry from producer
+timestamps and arms a one-shot reconciliation deadline, so expiry does not
+wait for the normal 30-second pass or for another status-change event.
+
+Before changing an FDB entry or committing link `UP`, the controller compares a
+deterministic revision tuple of every referenced producer value with the tuple
+captured at gate evaluation. A revision change aborts the commit; a change in
+the final `UP` syscall window is synchronously fenced back to `DOWN`.
+
+The ownership manifest is versioned and records the resource identity, desired
+configuration digest, a random instance token, and the kernel ifindex. The
+token and ifindex are re-read before destructive mutations. Consequently an
+external interface that replaces a routerd interface under the same name is
+reported as foreign/drifted and is not brought down or deleted.
 
 The second predicate is mandatory for production HA. VRRP alone cannot fence a
 partition that elects two masters. `RouterdCluster` currently supplies only a
@@ -76,3 +88,9 @@ Rollback is fail closed: force either predicate away from its accepted value
 and verify link-down precedes FDB and link deletion. If status is `Blocked`,
 isolate the host and resolve ownership manually; routerd deliberately will not
 delete foreign kernel or networkd state.
+
+For a privileged Linux validation host, run
+`sudo -n bash tests/netns/vxlan-when-ha-active-standby.sh`. The harness invokes
+the production chain controller in four real iproute2 namespaces and checks
+dual-MASTER fencing, witness loss, failover, single-copy ARP/RA/ND/DHCPv6,
+stateful DHCPv4 DORA, and MAC-learning stability.

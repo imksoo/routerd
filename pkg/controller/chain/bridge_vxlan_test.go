@@ -540,6 +540,53 @@ func TestVXLANTunnelOwnedConfigChangeDownsOldBeforeRecreate(t *testing.T) {
 	assertCommandsInOrder(t, commands, []string{"ip link set dev vx-l2 down", "ip link delete dev vx-l2", "ip link add vx-l2 type vxlan id 200002 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"})
 }
 
+func TestVXLANTunnelNextExpiryUsesProducerAbsoluteDeadline(t *testing.T) {
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	router := bridgeVXLANWhenRouter(api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"ha.role": {Equals: "master", MaxAge: "5s"}}})
+	store := &vxlanWhenStore{now: now, values: map[string]routerstate.Value{"ha.role": {Status: routerstate.StatusSet, Value: "master", UpdatedAt: now.Add(-2 * time.Second)}}}
+	c := VXLANTunnelController{DeclaredRouter: router, Store: store}
+	if got := c.NextExpiryAfter(); got != 3*time.Second {
+		t.Fatalf("NextExpiryAfter=%s want 3s", got)
+	}
+}
+
+func TestVXLANTunnelDependencyRevisionChangesWithoutPredicateFlip(t *testing.T) {
+	now := time.Now().UTC()
+	router := bridgeVXLANWhenRouter(api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"ha.role": {Equals: "master"}}})
+	resource := router.Spec.Resources[3]
+	store := &vxlanWhenStore{now: now, values: map[string]routerstate.Value{"ha.role": {Status: routerstate.StatusSet, Value: "master", UpdatedAt: now}}}
+	c := VXLANTunnelController{Store: store}
+	first, ok := c.dependencyRevision(resource)
+	if !ok {
+		t.Fatal("missing first revision")
+	}
+	store.values["ha.role"] = routerstate.Value{Status: routerstate.StatusSet, Value: "master", UpdatedAt: now.Add(time.Nanosecond)}
+	second, ok := c.dependencyRevision(resource)
+	if !ok {
+		t.Fatal("missing second revision")
+	}
+	if first == second {
+		t.Fatal("producer revision did not change when timestamp changed")
+	}
+}
+
+func TestVXLANTunnelOwnershipRejectsSameNameReplacementIfindex(t *testing.T) {
+	router := bridgeVXLANTestRouter(true)
+	resource := router.Spec.Resources[3]
+	spec, _ := resource.VXLANTunnelSpec()
+	cfg := vxlan.Config{Name: resource.Metadata.Name, IfName: spec.IfName, VNI: spec.VNI, LocalAddress: spec.LocalAddress, Peers: spec.Peers, UnderlayInterface: spec.UnderlayInterface, UDPPort: spec.UDPPort, MTU: spec.MTU, Bridge: spec.Bridge}
+	c := VXLANTunnelController{NetworkdDir: t.TempDir()}
+	if _, err := c.persistOwnershipBound(resource, cfg, 8); err != nil {
+		t.Fatal(err)
+	}
+	c.Command = func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("9: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"), nil
+	}
+	if err := c.verifyOwnership(context.Background(), resource, cfg); err == nil {
+		t.Fatal("same-name replacement with a new ifindex was accepted")
+	}
+}
+
 func bridgeVXLANWhenRouter(when api.ResourceWhenSpec) *api.Router {
 	router := bridgeVXLANTestRouter(true)
 	for i, resource := range router.Spec.Resources {
