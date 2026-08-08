@@ -643,6 +643,27 @@ config_disk_router_yaml()
     return 1
 }
 
+restore_config_disk_secrets()
+{
+    src_dir="${config_mount_dir}/secrets"
+    dest_dir="${config_dir}/secrets"
+    [ -d "${src_dir}" ] || return 0
+    install -d -m 0700 "${dest_dir}"
+    restored=0
+    while IFS= read -r src; do
+        [ -f "${src}" ] || continue
+        name=$(basename "${src}")
+        case "${name}" in
+            ''|.*|*/*) continue ;;
+        esac
+        install -m 0600 "${src}" "${dest_dir}/${name}"
+        restored=$((restored + 1))
+    done < <(find "${src_dir}" -maxdepth 1 -type f -print 2>/dev/null | sort)
+    if [ "${restored}" -gt 0 ]; then
+        log "restored ${restored} secret file(s) from ROUTERD_CONFIG media"
+    fi
+}
+
 restore_config_disk_config()
 {
     command -v udevadm >/dev/null 2>&1 && udevadm settle --timeout=10 2>/dev/null || true
@@ -652,6 +673,7 @@ restore_config_disk_config()
         src=$(config_disk_router_yaml 2>/dev/null || true)
         if [ -n "${src}" ]; then
             install -m 0600 "${src}" "${config_file}"
+            restore_config_disk_secrets
             log "restored ${config_file} from ROUTERD_CONFIG media ${candidate}"
             umount "${config_mount_dir}" 2>/dev/null || true
             return 0

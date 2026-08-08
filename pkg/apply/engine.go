@@ -8,7 +8,9 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -98,6 +100,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeWebConsole(res, includePlan, &rr)
 		case "Interface":
 			e.observeInterface(res, policies[res.Metadata.Name], observedV4ByInterface[res.Metadata.Name], includePlan, &rr)
+		case "Bridge":
+			e.observeBridge(res, aliases, includePlan, &rr)
 		case "PPPoESession":
 			e.observePPPoESession(res, aliases, includePlan, &rr)
 		case "WireGuardInterface":
@@ -177,6 +181,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 
 		if rr.Phase == "RequiresAdoption" || rr.Phase == "Blocked" {
 			result.Phase = "Blocked"
+		} else if rr.Phase == "Drifted" && result.Phase == "Healthy" && (res.Kind == "Bridge" || res.Kind == "VXLANTunnel") {
+			result.Phase = "Drifted"
 		}
 		result.Resources = append(result.Resources, rr)
 	}
@@ -200,6 +206,77 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 	}
 
 	return result, nil
+}
+
+func (e *Engine) observeBridge(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.BridgeSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
+	ifname := strings.TrimSpace(spec.IfName)
+	if ifname == "" {
+		ifname = res.Metadata.Name
+	}
+	rr.Observed["ifname"] = ifname
+	out, err := e.Command("ip", "-details", "link", "show", "dev", ifname)
+	if err != nil {
+		rr.Phase = "Drifted"
+		rr.Observed["present"] = "false"
+		if includePlan {
+			rr.Plan = append(rr.Plan, fmt.Sprintf("create persistent systemd-networkd bridge %s", ifname))
+		}
+		return
+	}
+	text := string(out)
+	rr.Observed["present"] = "true"
+	if !strings.Contains(text, " bridge ") && !strings.Contains(text, "\n    bridge ") {
+		rr.Phase = "Drifted"
+		rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s exists but is not a Linux bridge", ifname))
+	}
+	if spec.MTU != 0 {
+		rr.Observed["mtu"] = strconv.Itoa(spec.MTU)
+		if !strings.Contains(text, fmt.Sprintf(" mtu %d ", spec.MTU)) {
+			rr.Phase = "Drifted"
+			rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s MTU does not match %d", ifname, spec.MTU))
+		}
+	}
+	for setting, want := range map[string]bool{
+		"stp_state":          api.BoolDefault(spec.STP, true),
+		"multicast_snooping": api.BoolDefault(spec.MulticastSnooping, false),
+	} {
+		value, readErr := e.Command("cat", filepath.Join("/sys/class/net", ifname, "bridge", setting))
+		if readErr != nil || strings.TrimSpace(string(value)) != strconv.Itoa(boolIntApply(want)) {
+			rr.Phase = "Drifted"
+			rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s %s does not match %t", ifname, setting, want))
+		}
+	}
+	for _, member := range spec.Members {
+		memberIfName := aliases[member]
+		if memberIfName == "" {
+			memberIfName = member
+		}
+		memberOut, memberErr := e.Command("bridge", "link", "show", "dev", memberIfName)
+		if memberErr != nil || !strings.Contains(string(memberOut), "master "+ifname) {
+			rr.Phase = "Drifted"
+			rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s is not attached to %s", memberIfName, ifname))
+		}
+	}
+	if includePlan {
+		if rr.Phase == "Healthy" {
+			rr.Plan = append(rr.Plan, fmt.Sprintf("keep persistent systemd-networkd bridge %s", ifname))
+		} else {
+			rr.Plan = append(rr.Plan, fmt.Sprintf("reconcile persistent systemd-networkd bridge %s and its members", ifname))
+		}
+	}
+}
+
+func boolIntApply(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func (e *Engine) observeManagementAccess(res api.Resource, includePlan bool, rr *ResourceResult) {
@@ -904,11 +981,58 @@ func (e *Engine) observeVXLANTunnel(res api.Resource, aliases map[string]string,
 	rr.Observed["underlayInterface"] = spec.UnderlayInterface
 	rr.Observed["underlayIfname"] = aliases[spec.UnderlayInterface]
 	rr.Observed["peers"] = strings.Join(spec.Peers, ",")
+	bridgeIfName := aliases[spec.Bridge]
 	if spec.Bridge != "" {
 		rr.Observed["bridge"] = spec.Bridge
+		rr.Observed["bridgeIfname"] = bridgeIfName
+	}
+	out, observeErr := e.Command("ip", "-details", "link", "show", "dev", ifname)
+	if observeErr != nil {
+		rr.Phase = "Drifted"
+		rr.Observed["present"] = "false"
+		if includePlan {
+			rr.Plan = append(rr.Plan, fmt.Sprintf("create VXLAN tunnel %s vni %d over %s", ifname, spec.VNI, aliases[spec.UnderlayInterface]))
+		}
+		return
+	}
+	rr.Observed["present"] = "true"
+	port := spec.UDPPort
+	if port == 0 {
+		port = 4789
+	}
+	for _, want := range []string{
+		"vxlan id " + strconv.Itoa(spec.VNI),
+		"local " + spec.LocalAddress,
+		"dev " + aliases[spec.UnderlayInterface],
+		"dstport " + strconv.Itoa(port),
+		"nolearning",
+	} {
+		if !strings.Contains(string(out), want) {
+			rr.Phase = "Drifted"
+			rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s readback is missing %q", ifname, want))
+		}
+	}
+	if spec.MTU != 0 && !strings.Contains(string(out), " mtu "+strconv.Itoa(spec.MTU)+" ") {
+		rr.Phase = "Drifted"
+		rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s MTU does not match %d", ifname, spec.MTU))
+	}
+	if bridgeIfName != "" && !strings.Contains(string(out), "master "+bridgeIfName) {
+		rr.Phase = "Drifted"
+		rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s is not attached to %s", ifname, bridgeIfName))
+	}
+	for _, peer := range spec.Peers {
+		fdb, err := e.Command("bridge", "fdb", "show", "dev", ifname)
+		if err != nil || !strings.Contains(string(fdb), "00:00:00:00:00:00 dst "+peer) {
+			rr.Phase = "Drifted"
+			rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s flood FDB entry for %s is absent", ifname, peer))
+		}
 	}
 	if includePlan {
-		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure VXLAN tunnel %s vni %d over %s", ifname, spec.VNI, aliases[spec.UnderlayInterface]))
+		if rr.Phase == "Healthy" {
+			rr.Plan = append(rr.Plan, fmt.Sprintf("keep VXLAN tunnel %s vni %d over %s", ifname, spec.VNI, aliases[spec.UnderlayInterface]))
+		} else {
+			rr.Plan = append(rr.Plan, fmt.Sprintf("reconcile VXLAN tunnel %s vni %d over %s", ifname, spec.VNI, aliases[spec.UnderlayInterface]))
+		}
 	}
 }
 

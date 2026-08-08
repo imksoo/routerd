@@ -44,7 +44,9 @@ At boot, the live setup service:
 2. Regenerates SSH host keys so every VM has a distinct host identity.
 3. Installs `ssh_authorized_keys` into `/root/.ssh/authorized_keys` and enables
    `ssh.service`.
-4. Tries a `ROUTERD_CONFIG` config disk first.
+4. Tries a `ROUTERD_CONFIG` config disk first. It restores `router.yaml` and
+   root-only regular files from a sibling `secrets/` directory before routerd
+   starts.
 5. If no config disk is present, fetches `routerd.config_url` with `curl`.
 6. Verifies `routerd.config_sha256` when present.
 7. Installs the fetched `router.yaml` or extracts a supported config bundle.
@@ -57,6 +59,18 @@ Supported bundle URLs currently end in `.tar.zst`, `.tzst`, `.tar.gz`, `.tgz`,
 or `.tar`. Bundles must contain `router.yaml` at the archive root. Optional
 `secrets/` and `metadata.json` entries are installed under
 `/usr/local/etc/routerd/`.
+
+A persistent `ROUTERD_CONFIG` filesystem uses the same minimal layout:
+
+```text
+router.yaml
+secrets/
+  wg-l2.key
+```
+
+Secret files are installed under `/usr/local/etc/routerd/secrets` with mode
+`0600`; the directory itself is mode `0700`. Keep the config filesystem
+root-only at the hypervisor/storage layer because it contains private keys.
 
 After a successful fetch and checksum verification, the installed `router.yaml`
 is cached under `/var/lib/routerd/validated-config/router.yaml`. If a later boot
