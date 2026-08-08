@@ -770,23 +770,6 @@ func (c VXLANTunnelController) reconcileFloodFDB(ctx context.Context, resource a
 	return nil
 }
 
-func sortedFDBDestinations(destinations map[string]bool) []string {
-	peers := make([]string, 0, len(destinations))
-	for peer := range destinations {
-		peers = append(peers, peer)
-	}
-	sort.Strings(peers)
-	return peers
-}
-
-func allZeroFDBDestinations(output string) map[string]bool {
-	out := map[string]bool{}
-	for _, entry := range allZeroFDBEntries(output) {
-		out[entry.Destination] = true
-	}
-	return out
-}
-
 func allZeroFDBEntries(output string) []floodFDBEntry {
 	out := []floodFDBEntry{}
 	for _, line := range strings.Split(output, "\n") {
@@ -877,7 +860,12 @@ func (c VXLANTunnelController) teardownOne(ctx context.Context, resource api.Res
 	}
 	if linkExists {
 		fdb, _ := c.command(ctx, "bridge", "fdb", "show", "dev", ifname)
-		for _, peer := range sortedFDBDestinations(allZeroFDBDestinations(string(fdb))) {
+		fdbPeers := make([]string, 0)
+		for _, entry := range allZeroFDBEntries(string(fdb)) {
+			fdbPeers = append(fdbPeers, entry.Destination)
+		}
+		sort.Strings(fdbPeers)
+		for _, peer := range fdbPeers {
 			if err := c.verifyOwnership(ctx, resource, cfg); err != nil {
 				return c.saveTeardownError(resource, status, "OwnershipVerifyFailed", err)
 			}

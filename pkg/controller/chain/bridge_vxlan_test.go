@@ -553,6 +553,230 @@ func TestVXLANTunnelNextExpiryUsesProducerAbsoluteDeadline(t *testing.T) {
 	if got := c.NextExpiryAfter(); got != 3*time.Second {
 		t.Fatalf("NextExpiryAfter=%s want 3s", got)
 	}
+	store.now = now.Add(6 * time.Second)
+	if got := c.NextExpiryAfter(); got != 0 {
+		t.Fatalf("expired NextExpiryAfter=%s want disarmed zero", got)
+	}
+	if got := c.NextExpiryAfter(); got != 0 {
+		t.Fatalf("repeated expired NextExpiryAfter=%s want disarmed zero", got)
+	}
+}
+
+func TestVXLANTunnelRevisionMismatchDuringFDBFailsClosed(t *testing.T) {
+	now := time.Now().UTC()
+	router := bridgeVXLANWhenRouter(api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"ha.lease": {Equals: "leader"}}})
+	store := &vxlanWhenStore{mapStore: mapStore{}, now: now, values: map[string]routerstate.Value{
+		"ha.lease": {Status: routerstate.StatusSet, Value: "leader", UpdatedAt: now},
+	}}
+	dir := t.TempDir()
+	writeVXLANOwnedArtifacts(t, dir, "vx-l2")
+	exists, down, deleted, appended := true, false, false, false
+	controller := VXLANTunnelController{Router: router, DeclaredRouter: router, Store: store, NetworkdDir: dir, OperatingSystem: platform.OSLinux}
+	controller.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		joined := strings.Join(append([]string{name}, args...), " ")
+		switch {
+		case joined == "ip -details link show dev vx-l2":
+			if !exists {
+				return nil, errors.New("not found")
+			}
+			flags := "UP"
+			if down {
+				flags = "BROADCAST"
+			}
+			return []byte(fmt.Sprintf("8: vx-l2: <%s> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning", flags)), nil
+		case joined == "bridge fdb show dev vx-l2":
+			store.values["ha.lease"] = routerstate.Value{Status: routerstate.StatusSet, Value: "leader", UpdatedAt: now.Add(time.Nanosecond)}
+			return []byte("00:00:00:00:00:00 dst 10.254.200.2 self permanent\n"), nil
+		case joined == "ip link set dev vx-l2 down":
+			down = true
+		case joined == "ip link delete dev vx-l2":
+			deleted, exists = true, false
+		case strings.HasPrefix(joined, "bridge fdb append"):
+			appended = true
+		}
+		return nil, nil
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !down || !deleted || appended || exists {
+		t.Fatalf("revision mismatch did not fail closed: down=%t deleted=%t appended=%t exists=%t", down, deleted, appended, exists)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "VXLANTunnel", "legacy-l2-overlay")
+	if status["phase"] != "Disabled" || status["forwarding"] != false {
+		t.Fatalf("status=%#v", status)
+	}
+}
+
+func TestVXLANTunnelActiveDoesNotAdoptSameNameReplacement(t *testing.T) {
+	router := bridgeVXLANTestRouter(true)
+	dir := t.TempDir()
+	writeVXLANOwnedArtifacts(t, dir, "vx-l2")
+	marker := filepath.Join(dir, "31-routerd-vx-l2.owner")
+	before, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := mapStore{}
+	mutated := false
+	controller := VXLANTunnelController{Router: router, DeclaredRouter: router, Store: store, NetworkdDir: dir, OperatingSystem: platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			joined := strings.Join(append([]string{name}, args...), " ")
+			if joined == "ip -details link show dev vx-l2" {
+				return []byte("9: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"), nil
+			}
+			if strings.Contains(joined, " link set ") || strings.Contains(joined, " fdb ") || strings.Contains(joined, " link delete ") {
+				mutated = true
+			}
+			return nil, nil
+		}}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "VXLANTunnel", "legacy-l2-overlay")
+	if mutated || !reflect.DeepEqual(before, after) || status["phase"] != "RequiresAdoption" || status["managedBy"] != "external" {
+		t.Fatalf("replacement was adopted or mutated: mutated=%t markerChanged=%t status=%#v", mutated, !reflect.DeepEqual(before, after), status)
+	}
+}
+
+func TestVXLANTunnelGateTeardownPreservesSameNameReplacement(t *testing.T) {
+	router := bridgeVXLANWhenRouter(api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"ha.role": {Equals: "master"}}})
+	store := &vxlanWhenStore{mapStore: mapStore{}, values: map[string]routerstate.Value{"ha.role": {Status: routerstate.StatusSet, Value: "backup"}}}
+	dir := t.TempDir()
+	writeVXLANOwnedArtifacts(t, dir, "vx-l2")
+	mutated := false
+	controller := VXLANTunnelController{Router: router, DeclaredRouter: router, Store: store, NetworkdDir: dir, OperatingSystem: platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			joined := strings.Join(append([]string{name}, args...), " ")
+			if joined == "ip -details link show dev vx-l2" {
+				return []byte("9: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"), nil
+			}
+			mutated = mutated || strings.Contains(joined, " link set ") || strings.Contains(joined, " fdb del ") || strings.Contains(joined, " link delete ")
+			return nil, nil
+		}}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "VXLANTunnel", "legacy-l2-overlay")
+	if mutated || status["phase"] != "Blocked" || status["managedBy"] != "external" {
+		t.Fatalf("foreign replacement was mutated: mutated=%t status=%#v", mutated, status)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "31-routerd-vx-l2.owner")); err != nil {
+		t.Fatalf("owner evidence removed: %v", err)
+	}
+}
+
+func TestVXLANTunnelOrphanCleanupPreservesSameNameReplacement(t *testing.T) {
+	dir := t.TempDir()
+	resource := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"}, Metadata: api.ObjectMeta{Name: "retired-overlay"}}
+	cfg := vxlan.Config{IfName: "vx-old", VNI: 200001, LocalAddress: "10.254.200.1", UnderlayInterface: "wg-l2", UDPPort: 4789, MTU: 1370, Bridge: "br-l2", Peers: []string{"10.254.200.2"}}
+	controller := VXLANTunnelController{DeclaredRouter: &api.Router{}, Router: &api.Router{}, Store: mapStore{}, NetworkdDir: dir, OperatingSystem: platform.OSLinux}
+	if _, err := controller.persistOwnershipBound(resource, cfg, 8); err != nil {
+		t.Fatal(err)
+	}
+	mutated := false
+	controller.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		joined := strings.Join(append([]string{name}, args...), " ")
+		if joined == "ip -details link show dev vx-old" {
+			return []byte("9: vx-old: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"), nil
+		}
+		mutated = mutated || strings.Contains(joined, " link set ") || strings.Contains(joined, " fdb del ") || strings.Contains(joined, " link delete ")
+		return nil, nil
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if mutated {
+		t.Fatal("orphan cleanup mutated a same-name foreign replacement")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "31-routerd-vx-old.owner")); err != nil {
+		t.Fatalf("owner evidence removed: %v", err)
+	}
+}
+
+func TestVXLANTunnelFloodFDBRepairsDuplicateAndWrongAttributes(t *testing.T) {
+	router := bridgeVXLANTestRouter(true)
+	dir := t.TempDir()
+	writeVXLANOwnedArtifacts(t, dir, "vx-l2")
+	entries := []string{
+		"00:00:00:00:00:00 dst 10.254.200.2 self permanent",
+		"00:00:00:00:00:00 dst 10.254.200.2 self permanent",
+		"00:00:00:00:00:00 dst 10.254.200.99 master permanent",
+	}
+	deletes, appends := 0, 0
+	controller := VXLANTunnelController{Router: router, DeclaredRouter: router, Store: mapStore{}, NetworkdDir: dir, OperatingSystem: platform.OSLinux}
+	controller.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		joined := strings.Join(append([]string{name}, args...), " ")
+		switch {
+		case joined == "ip -details link show dev vx-l2":
+			return []byte("8: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"), nil
+		case joined == "bridge fdb show dev vx-l2":
+			return []byte(strings.Join(entries, "\n") + "\n"), nil
+		case strings.HasPrefix(joined, "bridge fdb del "):
+			deletes++
+			peer := args[len(args)-1]
+			for i, entry := range entries {
+				if strings.Contains(entry, "dst "+peer+" ") {
+					entries = append(entries[:i], entries[i+1:]...)
+					break
+				}
+			}
+		case strings.HasPrefix(joined, "bridge fdb append "):
+			appends++
+			entries = append(entries, "00:00:00:00:00:00 dst "+args[len(args)-1]+" self permanent")
+		}
+		return nil, nil
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if deletes != 3 || appends != 1 || len(entries) != 1 || !strings.Contains(entries[0], "10.254.200.2 self permanent") {
+		t.Fatalf("FDB not canonical: deletes=%d appends=%d entries=%#v", deletes, appends, entries)
+	}
+}
+
+func TestVXLANTunnelTeardownDetectsIfindexSwapImmediatelyBeforeDelete(t *testing.T) {
+	router := bridgeVXLANWhenRouter(api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"ha.role": {Equals: "master"}}})
+	store := &vxlanWhenStore{mapStore: mapStore{}, values: map[string]routerstate.Value{"ha.role": {Status: routerstate.StatusSet, Value: "backup"}}}
+	dir := t.TempDir()
+	writeVXLANOwnedArtifacts(t, dir, "vx-l2")
+	nomaster, verifiedAfterNomaster, deleted := false, false, false
+	controller := VXLANTunnelController{Router: router, DeclaredRouter: router, Store: store, NetworkdDir: dir, OperatingSystem: platform.OSLinux}
+	controller.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		joined := strings.Join(append([]string{name}, args...), " ")
+		switch {
+		case joined == "ip -details link show dev vx-l2":
+			if nomaster && verifiedAfterNomaster {
+				return []byte("9: vx-l2: <BROADCAST> mtu 1370\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"), nil
+			}
+			if nomaster {
+				verifiedAfterNomaster = true
+				return []byte("8: vx-l2: <BROADCAST> mtu 1370\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"), nil
+			}
+			return []byte("8: vx-l2: <UP> mtu 1370 master br-l2\n vxlan id 200001 local 10.254.200.1 dev wg-l2 dstport 4789 nolearning"), nil
+		case joined == "bridge fdb show dev vx-l2":
+			return []byte("00:00:00:00:00:00 dst 10.254.200.2 self permanent\n"), nil
+		case joined == "ip link set dev vx-l2 nomaster":
+			nomaster = true
+		case joined == "ip link delete dev vx-l2":
+			deleted = true
+		}
+		return nil, nil
+	}
+	if err := controller.Reconcile(context.Background()); err == nil {
+		t.Fatal("ifindex swap should fail the teardown")
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "VXLANTunnel", "legacy-l2-overlay")
+	if deleted || status["reason"] != "OwnershipVerifyFailed" {
+		t.Fatalf("foreign replacement delete=%t status=%#v", deleted, status)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "31-routerd-vx-l2.owner")); err != nil {
+		t.Fatalf("owner evidence removed: %v", err)
+	}
 }
 
 func TestVXLANTunnelDependencyRevisionChangesWithoutPredicateFlip(t *testing.T) {
