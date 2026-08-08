@@ -11,6 +11,29 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 追加
+
+- `Bridge` と `VXLANTunnel` に operational controller を追加しました。
+  rendered artifact だけに依存せず、persistent/kernel state を reconcile し、
+  実際の member、MTU、STP、VXLAN、forwarding health を報告します。
+- `VXLANTunnel.spec.outerDF` で outer IPv4 DF の `inherit`、`set`、`unset` を
+  明示し、live setting を検証できるようにしました。
+- opt-in の `VXLANTunnel.spec.tcpMSSClamp` は、宣言した overlay MTU から
+  downward-only な IPv4/IPv6 bridge-family MSS rule を導出します。private な
+  generation、token、table handle identity により、activation、recovery、
+  cleanup 時に foreign nftables state を保護します。
+- release operator 向けに binary-first の rollback 手順を追加しました。
+  config rollback は明示的な例外とし、UTC provenance、SHA-256 evidence、
+  canonical commit 確認、readiness gate を必須にします。
+
+### 修正
+
+- VXLAN active/standby forwarding を、VRRP role と external witness を使う
+  `spec.when` で gate できるようにしました。unknown、stale、revision 変更時は
+  fail closed とし、revision barrier、ownership token/ifindex、crash recovery、
+  exact-ifindex teardown により split-brain forwarding と foreign deletion を
+  防止します。
+
 ## v20260731.2332
 
 ### 変更
