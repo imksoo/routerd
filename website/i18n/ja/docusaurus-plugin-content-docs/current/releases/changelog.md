@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260808.1741
+
 ### 追加
 
 - `Bridge` と `VXLANTunnel` に operational controller を追加しました。

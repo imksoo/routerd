@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260808.1741
+
 ### 新增
 
 - `Bridge` 和 `VXLANTunnel` 现在具有 operational controller，不再只依赖

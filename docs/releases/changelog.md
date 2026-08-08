@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260808.1741
+
 ### Added
 
 - `Bridge` and `VXLANTunnel` now have operational controllers that reconcile
