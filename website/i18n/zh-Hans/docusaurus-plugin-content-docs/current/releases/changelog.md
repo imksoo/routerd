@@ -11,6 +11,28 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 新增
+
+- `Bridge` 和 `VXLANTunnel` 现在具有 operational controller，不再只依赖
+  rendered artifact；controller 会 reconcile persistent 与 kernel state，并报告
+  实际的 member、MTU、STP、VXLAN 和 forwarding health。
+- `VXLANTunnel.spec.outerDF` 可明确选择 outer IPv4 DF 的 `inherit`、`set` 或
+  `unset`，并验证 live setting。
+- opt-in 的 `VXLANTunnel.spec.tcpMSSClamp` 会根据声明的 overlay MTU 推导
+  downward-only IPv4/IPv6 bridge-family MSS rule。private generation、token 和
+  table handle identity 会在 activation、recovery 和 cleanup 时保护 foreign
+  nftables state。
+- release operator 现有 binary-first rollback 流程。config rollback 必须明确
+  选择，并记录 UTC provenance、SHA-256 evidence、canonical commit 验证和
+  readiness gate。
+
+### 修复
+
+- VXLAN active/standby forwarding 可通过使用 VRRP role 和 external witness 的
+  `spec.when` 进行 gate。unknown、stale 或 revision 变更时会 fail closed；
+  revision barrier、ownership token/ifindex、crash recovery 和 exact-ifindex
+  teardown 可防止 split-brain forwarding 和 foreign deletion。
+
 ## v20260731.2332
 
 ### 变更

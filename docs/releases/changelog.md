@@ -12,6 +12,28 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- `Bridge` and `VXLANTunnel` now have operational controllers that reconcile
+  persistent and kernel state and report actual membership, MTU, STP, VXLAN,
+  and forwarding health instead of relying on rendered artifacts alone.
+- `VXLANTunnel.spec.outerDF` explicitly selects `inherit`, `set`, or `unset`
+  outer IPv4 DF behavior and verifies the live setting.
+- Opt-in `VXLANTunnel.spec.tcpMSSClamp` derives downward-only IPv4 and IPv6
+  bridge-family MSS rules from the declared overlay MTU. Private generation,
+  token, and table-handle identities protect foreign nftables state during
+  activation, recovery, and cleanup.
+- Release operators now have a documented binary-first rollback procedure;
+  configuration rollback is an explicit exception with UTC provenance,
+  SHA-256 evidence, canonical-commit verification, and readiness gates.
+
+### Fixed
+
+- VXLAN active/standby forwarding can be gated by `spec.when` using VRRP role
+  and an external witness. Unknown, stale, or revised state fails closed;
+  revision barriers, ownership token and ifindex checks, crash recovery, and
+  exact-ifindex teardown prevent split-brain forwarding and foreign deletion.
+
 ## v20260731.2332
 
 ### Changed
