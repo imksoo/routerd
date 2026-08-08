@@ -1285,6 +1285,17 @@ type Runner struct {
 	generationBuilder    func(context.Context, *slog.Logger, eventedStore, bool, ha.Decision) ([]framework.Controller, DaemonStatusController, error)
 	reloadMu             sync.Mutex
 	reloadCh             chan generationReload
+	startedMu            sync.Mutex
+	processStartedAt     time.Time
+}
+
+func (r *Runner) startedAt() time.Time {
+	r.startedMu.Lock()
+	defer r.startedMu.Unlock()
+	if r.processStartedAt.IsZero() {
+		r.processStartedAt = time.Now().UTC()
+	}
+	return r.processStartedAt
 }
 
 type generationReload struct {
@@ -1490,6 +1501,7 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 			changed := preserveStaticVirtualAddressCleanupStatus(res, current, next)
 			changed = preserveIPv4StaticAddressCleanupStatus(r.Router, res, current, next) || changed
 			changed = preserveIPv6DelegatedAddressCleanupStatus(res, current, next) || changed
+			changed = preserveVXLANTunnelCleanupStatus(res, current, next) || changed
 			if changed {
 				if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, next); err != nil {
 					return err
@@ -1505,11 +1517,32 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 		preserveStaticVirtualAddressCleanupStatus(res, current, status)
 		preserveIPv4StaticAddressCleanupStatus(r.Router, res, current, status)
 		preserveIPv6DelegatedAddressCleanupStatus(res, current, status)
+		preserveVXLANTunnelCleanupStatus(res, current, status)
 		if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, status); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// preserveVXLANTunnelCleanupStatus retains the ownership proof needed by the
+// operational controller after spec.when filters the tunnel from the effective
+// graph. Without it a safe controller must treat the still-live link as foreign
+// and cannot close forwarding during HA demotion.
+func preserveVXLANTunnelCleanupStatus(res api.Resource, current, status map[string]any) bool {
+	if res.Kind != "VXLANTunnel" {
+		return false
+	}
+	changed := false
+	for _, key := range []string{"managedBy", "ifname", "bridgeIfname", "underlayIfname", "restartPersistent"} {
+		if value, ok := current[key]; ok {
+			if _, exists := status[key]; !exists {
+				status[key] = value
+				changed = true
+			}
+		}
+	}
+	return changed
 }
 
 // preserveStaticVirtualAddressCleanupStatus retains only the ownership data
@@ -1870,6 +1903,7 @@ func (r *Runner) prepareControllerGeneration(ctx context.Context, logger *slog.L
 }
 
 func (r *Runner) prepareControllerGenerationWithGate(ctx context.Context, logger *slog.Logger, store eventedStore, gate *sync.RWMutex) (*controllerGeneration, error) {
+	r.startedAt()
 	decision, err := acquireClusterLease(ctx, r.Router, store)
 	if err != nil {
 		return nil, err
@@ -2086,6 +2120,7 @@ func scheduledReconcileSkipsController(name string) bool {
 }
 
 func (r *Runner) oneShotHADecision(ctx context.Context, store eventedStore) (ha.Decision, func(), error) {
+	r.startedAt()
 	if r.HADecision != nil {
 		return *r.HADecision, func() {}, nil
 	}
@@ -2138,7 +2173,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	kernelModules := KernelModuleController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunPackage}
 	adoption := NetworkAdoptionController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNetworkAdoption}
 	bridge := BridgeController{Router: r.Router, Store: store, DryRun: r.Opts.DryRunBridge}
-	vxlanTunnel := VXLANTunnelController{Router: r.Router, Store: store, DryRun: r.Opts.DryRunVXLANTunnel}
+	vxlanTunnel := VXLANTunnelController{Router: r.Router, DeclaredRouter: r.Router, Store: store, DryRun: r.Opts.DryRunVXLANTunnel, StartedAt: r.startedAt(), Mu: &sync.Mutex{}}
 	serviceUnits := SystemdUnitController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunServiceUnit, SynthesizeClientDaemonUnits: !r.Opts.SuperviseClientDaemons && !r.Opts.SkipLegacyClientUnits}
 	logRetention := LogRetentionController{Router: r.Router, Bus: r.Bus, Store: store}
 	ntpClient := NTPClientController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store}
@@ -2360,13 +2395,14 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Store = store.withRouter(effective)
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "vxlan-tunnel", Every: 30 * time.Second, Subs: statusSubscriptions("Bridge", "WireGuardInterface"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "vxlan-tunnel", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"VXLANTunnel"}, "Bridge", "WireGuardInterface"), NextAfter: vxlanTunnel.NextExpiryAfter, PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
 			}
 			current := vxlanTunnel
 			current.Router = effective
+			current.DeclaredRouter = r.Router
 			current.Store = store.withRouter(effective)
 			return didWorkError(current.Reconcile(ctx))
 		}},

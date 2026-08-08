@@ -16,6 +16,16 @@ import (
 	"github.com/imksoo/routerd/pkg/lock"
 )
 
+func TestNextControllerIntervalHonorsSafetyDeadline(t *testing.T) {
+	c := FuncController{ControllerName: "deadline", NextAfter: func() time.Duration { return 125 * time.Millisecond }}
+	if got := nextControllerInterval(c, 30*time.Second); got != 125*time.Millisecond {
+		t.Fatalf("interval=%s", got)
+	}
+	if got := nextControllerInterval(c, 50*time.Millisecond); got != 50*time.Millisecond {
+		t.Fatalf("deadline lengthened fallback: %s", got)
+	}
+}
+
 type testEventBus struct {
 	mu   sync.Mutex
 	subs []chan daemonapi.DaemonEvent

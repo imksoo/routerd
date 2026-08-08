@@ -133,6 +133,14 @@ func TestWhenStatusSubscriptionsFollowResourceWhenRefs(t *testing.T) {
 				},
 			},
 		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"},
+			Metadata: api.ObjectMeta{Name: "overlay"},
+			Spec: api.VXLANTunnelSpec{When: api.ResourceWhenSpec{All: []api.ResourceWhenSpec{
+				{State: map[string]api.StateMatchSpec{"${VirtualAddress/overlay-vip.status.role}": {Equals: "master"}}},
+				{State: map[string]api.StateMatchSpec{"${RouterdCluster/overlay-ha.status.phase}": {Equals: "Leader"}}},
+			}}},
+		},
 	}}}
 
 	dnsSubs := whenStatusSubscriptions(router, "DNSResolver")
@@ -154,6 +162,15 @@ func TestWhenStatusSubscriptionsFollowResourceWhenRefs(t *testing.T) {
 	egressSubs := whenStatusSubscriptions(router, "EgressRoutePolicy")
 	if !subscriptionSetAccepts(egressSubs, statusChangedEvent("HealthCheck", "internet")) {
 		t.Fatal("EgressRoutePolicy when subscription did not accept candidate when reference")
+	}
+
+	vxlanSubs := statusSubscriptionsWithWhen(router, []string{"VXLANTunnel"}, "Bridge", "WireGuardInterface")
+	if !subscriptionSetAccepts(vxlanSubs, statusChangedEvent("VirtualAddress", "overlay-vip")) ||
+		!subscriptionSetAccepts(vxlanSubs, statusChangedEvent("RouterdCluster", "overlay-ha")) {
+		t.Fatal("VXLANTunnel did not subscribe to both role and witness dependencies")
+	}
+	if subscriptionSetAccepts(vxlanSubs, statusChangedEvent("VirtualAddress", "other-vip")) {
+		t.Fatal("VXLANTunnel accepted an unrelated role event")
 	}
 }
 

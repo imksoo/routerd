@@ -58,6 +58,16 @@ type FuncController struct {
 	Every          time.Duration
 	ReconcileFunc  func(context.Context, daemonapi.DaemonEvent) error
 	PeriodicFunc   func(context.Context) (bool, error)
+	// NextAfter returns an optional one-shot safety deadline. It is consulted
+	// after every event/periodic reconciliation and never lengthens Every.
+	NextAfter func() time.Duration
+}
+
+func (c FuncController) NextReconcileAfter() time.Duration {
+	if c.NextAfter == nil {
+		return 0
+	}
+	return c.NextAfter()
 }
 
 func (c FuncController) Name() string {
@@ -221,7 +231,7 @@ func (r Runner) RunOnce(ctx context.Context, controllers ...Controller) error {
 func runController(ctx context.Context, logger *slog.Logger, locker *lock.ResourceLocker, gate *sync.RWMutex, observer Observer, interval time.Duration, controller Controller, events <-chan daemonapi.DaemonEvent, skipBootstrap bool) {
 	intervals := adaptiveReconcileIntervalsForMax(interval)
 	level := 0
-	ticker := time.NewTicker(intervals[level])
+	ticker := time.NewTicker(nextControllerInterval(controller, intervals[level]))
 	defer ticker.Stop()
 	if observer != nil {
 		observer.ControllerStarted(controller.Name(), intervals[level])
@@ -248,7 +258,7 @@ func runController(ctx context.Context, logger *slog.Logger, locker *lock.Resour
 				})
 			})
 			level = 0
-			ticker.Reset(intervals[level])
+			ticker.Reset(nextControllerInterval(controller, intervals[level]))
 		case <-ticker.C:
 			didWork := false
 			nextLevel := level
@@ -263,11 +273,29 @@ func runController(ctx context.Context, logger *slog.Logger, locker *lock.Resour
 				})
 			})
 			level = nextLevel
-			ticker.Reset(intervals[level])
+			ticker.Reset(nextControllerInterval(controller, intervals[level]))
 		case <-ctx.Done():
 			return
 		}
 	}
+}
+
+type deadlineController interface{ NextReconcileAfter() time.Duration }
+
+func nextControllerInterval(controller Controller, fallback time.Duration) time.Duration {
+	deadline, ok := controller.(deadlineController)
+	if !ok {
+		return fallback
+	}
+	next := deadline.NextReconcileAfter()
+	if next <= 0 || next >= fallback {
+		return fallback
+	}
+	// Avoid a zero-duration spin when the deadline races the producer update.
+	if next < time.Millisecond {
+		return time.Millisecond
+	}
+	return next
 }
 
 func runWithMutationGate(ctx context.Context, gate *sync.RWMutex, fn func()) {
