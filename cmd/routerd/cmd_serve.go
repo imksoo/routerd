@@ -2308,7 +2308,9 @@ func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, 
 	configYAML := routerConfigYAML(router, opts)
 	var generation int64
 	generationFinished := false
-	if !opts.DryRun && store != nil {
+	// Scheduled reconciliation repairs already-applied state. It must not create
+	// another identical configuration snapshot on every interval.
+	if !opts.DryRun && store != nil && !scheduled {
 		var err error
 		generation, err = store.BeginGeneration(routerConfigHash(router))
 		if err != nil {
