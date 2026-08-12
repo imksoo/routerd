@@ -23,6 +23,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
+	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
@@ -1221,6 +1222,29 @@ func TestServeOnceConvergesAndExits(t *testing.T) {
 	}
 	if _, err := os.Stat(statusPath); err != nil {
 		t.Fatalf("status file: %v", err)
+	}
+}
+
+func TestScheduledServeReconcileDoesNotCreateConfigGeneration(t *testing.T) {
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "routerd.db"))
+	if err != nil {
+		t.Fatalf("open state: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	router := &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "scheduled-reconcile-router"}}
+	runner := &controllerchain.Runner{Router: router, Bus: bus.New(), Store: store, Opts: controllerchain.Options{EnabledControllers: []string{"log-retention"}}}
+	if _, err := runServeChainOnce(context.Background(), runner, router, applyOptions{}, store, io.Discard, nil); err != nil {
+		t.Fatalf("initial reconcile: %v", err)
+	}
+	before := store.LatestGeneration()
+	if before == 0 {
+		t.Fatal("initial reconcile did not create a generation")
+	}
+	if _, err := runServeChainScheduledOnce(context.Background(), runner, router, applyOptions{}, store, io.Discard, nil); err != nil {
+		t.Fatalf("scheduled reconcile: %v", err)
+	}
+	if got := store.LatestGeneration(); got != before {
+		t.Fatalf("generation after scheduled reconcile = %d, want %d", got, before)
 	}
 }
 
