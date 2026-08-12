@@ -268,9 +268,9 @@ func validateSystemResource(res api.Resource, targetOS platform.OS) (bool, error
 		}
 		for i, signal := range spec.Signals {
 			switch signal {
-			case "events", "dnsQueries", "trafficFlows", "firewallEvents":
+			case "events", "accessLogs", "pluginRuns", "dnsQueries", "trafficFlows", "firewallEvents", "dhcpFingerprints":
 			default:
-				return true, fmt.Errorf("%s spec.signals[%d] must be events, dnsQueries, trafficFlows, or firewallEvents", res.ID(), i)
+				return true, fmt.Errorf("%s spec.signals[%d] must be events, accessLogs, pluginRuns, dnsQueries, trafficFlows, firewallEvents, or dhcpFingerprints", res.ID(), i)
 			}
 		}
 	case "NTPClient":

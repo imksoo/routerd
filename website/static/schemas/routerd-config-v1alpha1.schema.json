@@ -1025,9 +1025,12 @@
                         "items": {
                           "enum": [
                             "events",
+                            "accessLogs",
+                            "pluginRuns",
                             "dnsQueries",
                             "trafficFlows",
-                            "firewallEvents"
+                            "firewallEvents",
+                            "dhcpFingerprints"
                           ],
                           "type": "string"
                         },
@@ -6861,9 +6864,6 @@
                             "type": "boolean"
                           },
                           "path": {
-                            "type": "string"
-                          },
-                          "retention": {
                             "type": "string"
                           }
                         },

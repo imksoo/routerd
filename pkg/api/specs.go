@@ -98,15 +98,16 @@ type RouterdClusterSpec struct {
 
 type LogRetentionSpec struct {
 	Retention string   `yaml:"retention" json:"retention"`
-	Signals   []string `yaml:"signals,omitempty" json:"signals,omitempty" jsonschema:"enum=events,enum=dnsQueries,enum=trafficFlows,enum=firewallEvents"`
+	Signals   []string `yaml:"signals,omitempty" json:"signals,omitempty" jsonschema:"enum=events,enum=accessLogs,enum=pluginRuns,enum=dnsQueries,enum=trafficFlows,enum=firewallEvents,enum=dhcpFingerprints"`
 	Sinks     []string `yaml:"sinks,omitempty" json:"sinks,omitempty"`
 	Vacuum    bool     `yaml:"vacuum,omitempty" json:"vacuum,omitempty"`
 	Schedule  string   `yaml:"schedule,omitempty" json:"schedule,omitempty" jsonschema:"enum=,enum=daily"`
 }
 
 type LogRetentionTargetSpec struct {
-	File      string `yaml:"file" json:"file"`
-	Retention string `yaml:"retention" json:"retention"`
+	File      string   `yaml:"file" json:"file"`
+	Retention string   `yaml:"retention" json:"retention"`
+	Signals   []string `yaml:"signals,omitempty" json:"signals,omitempty"`
 }
 
 type ApplyPolicySpec struct {
@@ -1390,9 +1391,8 @@ type DNSResolverMetricsSpec struct {
 }
 
 type DNSResolverQueryLogSpec struct {
-	Enabled   bool   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Path      string `yaml:"path,omitempty" json:"path,omitempty"`
-	Retention string `yaml:"retention,omitempty" json:"retention,omitempty"`
+	Enabled bool   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Path    string `yaml:"path,omitempty" json:"path,omitempty"`
 }
 
 type TrafficFlowLogSpec struct {

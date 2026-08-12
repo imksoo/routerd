@@ -65,9 +65,6 @@ func NormalizeSpec(spec api.DNSResolverSpec) api.DNSResolverSpec {
 		if strings.TrimSpace(spec.QueryLog.Path) == "" {
 			spec.QueryLog.Path = "/var/lib/routerd/dns-queries.db"
 		}
-		if strings.TrimSpace(spec.QueryLog.Retention) == "" {
-			spec.QueryLog.Retention = "30d"
-		}
 	}
 	return spec
 }
@@ -138,11 +135,6 @@ func Validate(spec api.DNSResolverSpec) error {
 	if spec.QueryLog.Enabled {
 		if strings.TrimSpace(spec.QueryLog.Path) == "" {
 			return fmt.Errorf("queryLog.path is required when queryLog.enabled is true")
-		}
-		if strings.TrimSpace(spec.QueryLog.Retention) != "" {
-			if _, err := parseRetentionDuration(spec.QueryLog.Retention); err != nil {
-				return fmt.Errorf("queryLog.retention must be a duration: %w", err)
-			}
 		}
 	}
 	return nil
