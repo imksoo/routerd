@@ -51,9 +51,26 @@ type Logger struct {
 }
 
 func New(router *api.Router) (*Logger, error) {
+	return NewSelected(router, nil)
+}
+
+// NewSelected builds a logger from named LogSink resources. An empty selection
+// preserves the existing behaviour of selecting every enabled sink.
+func NewSelected(router *api.Router, refs []string) (*Logger, error) {
+	selected := map[string]bool{}
+	for _, ref := range refs {
+		const prefix = "LogSink/"
+		name := strings.TrimPrefix(strings.TrimSpace(ref), prefix)
+		if name != "" {
+			selected[name] = true
+		}
+	}
 	var sinks []Sink
 	for _, res := range router.Spec.Resources {
 		if res.APIVersion != api.SystemAPIVersion || res.Kind != "LogSink" {
+			continue
+		}
+		if len(selected) > 0 && !selected[res.Metadata.Name] {
 			continue
 		}
 		spec, err := res.LogSinkSpec()
@@ -131,6 +148,36 @@ func (l *Logger) Emit(level Level, command, message string, fields map[string]st
 	for _, sink := range l.sinks {
 		_ = sink.Emit(event)
 	}
+}
+
+// EmitRecord forwards one structured operational-log row without imposing a
+// schema on sinks that only understand Event. The encoded record is preserved
+// as JSON so downstream log systems can parse it independently.
+func (l *Logger) EmitRecord(signal string, record map[string]any) error {
+	if l == nil || len(l.sinks) == 0 {
+		return nil
+	}
+	data, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	event := Event{
+		Timestamp: time.Now().UTC(),
+		Level:     LevelInfo,
+		Message:   "routerd operational log archived",
+		Router:    l.router,
+		Command:   "log-retention",
+		Fields: map[string]string{
+			"signal": signal,
+			"record": string(data),
+		},
+	}
+	for _, sink := range l.sinks {
+		if err := sink.Emit(event); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (l *Logger) Close() error {

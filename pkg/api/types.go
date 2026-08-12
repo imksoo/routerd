@@ -494,6 +494,9 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		if hasMappingKey(&raw.Spec, "sources") {
 			return fmt.Errorf("%s spec.sources is not supported; split DNS source intent into DNSForwarder and DNSUpstream resources that reference this DNSResolver", r.ID())
 		}
+		if queryLog := mappingValueNode(&raw.Spec, "queryLog"); queryLog != nil && hasMappingKey(queryLog, "retention") {
+			return fmt.Errorf("%s spec.queryLog.retention is not supported; declare a LogRetention resource for DNS query retention", r.ID())
+		}
 		var spec DNSResolverSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)

@@ -46,6 +46,70 @@ func TestApplyRetentionDeletesExpiredDNSQueries(t *testing.T) {
 	}
 }
 
+func TestApplyRetentionUsesRegisteredSignalTableOnly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mixed.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`
+CREATE TABLE dns_queries (ts INTEGER NOT NULL);
+CREATE TABLE dhcp_fingerprint (mac TEXT PRIMARY KEY, observed_at INTEGER NOT NULL);
+INSERT INTO dns_queries(ts) VALUES (0);
+INSERT INTO dhcp_fingerprint(mac, observed_at) VALUES ('aa:bb:cc:dd:ee:ff', 0);`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	result, err := ApplyRetention(context.Background(), RetentionTarget{File: path, Retention: time.Hour, Signals: []string{RetentionSignalDNSQueries}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Deleted != 1 {
+		t.Fatalf("deleted = %d, want 1", result.Deleted)
+	}
+	db, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var fingerprints int
+	if err := db.QueryRow(`SELECT count(*) FROM dhcp_fingerprint`).Scan(&fingerprints); err != nil {
+		t.Fatal(err)
+	}
+	if fingerprints != 1 {
+		t.Fatalf("dhcp fingerprint rows = %d, want 1", fingerprints)
+	}
+}
+
+func TestApplyRetentionExportsRowsBeforeDeletion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dns-queries.db")
+	log, err := OpenDNSQueryLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := log.Record(context.Background(), DNSQuery{Timestamp: time.Now().Add(-48 * time.Hour), ClientAddress: "172.18.0.10", QuestionName: "old.example", QuestionType: "A"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = log.Close()
+	var exported []RetentionRecord
+	_, err = ApplyRetention(context.Background(), RetentionTarget{
+		File: path, Retention: 24 * time.Hour, Signals: []string{RetentionSignalDNSQueries},
+		BeforeDelete: func(record RetentionRecord) error {
+			exported = append(exported, record)
+			return nil
+		},
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(exported) != 1 || exported[0].Signal != RetentionSignalDNSQueries || exported[0].Values["question_name"] != "old.example" {
+		t.Fatalf("exported = %#v", exported)
+	}
+}
+
 func TestVacuumAfterRetentionShrinksFreelist(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "freelist.db")
 	db, err := sql.Open("sqlite", path)

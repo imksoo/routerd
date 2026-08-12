@@ -42,7 +42,7 @@ func TestNormalizeDNSResolverQueryLogDefaults(t *testing.T) {
 		Sources:  []api.DNSResolverSourceSpec{{Kind: "upstream", Match: []string{"."}, Upstreams: []string{"udp://1.1.1.1:53"}}},
 		QueryLog: api.DNSResolverQueryLogSpec{Enabled: true},
 	})
-	if spec.QueryLog.Path != "/var/lib/routerd/dns-queries.db" || spec.QueryLog.Retention != "30d" {
+	if spec.QueryLog.Path != "/var/lib/routerd/dns-queries.db" {
 		t.Fatalf("query log defaults = %#v", spec.QueryLog)
 	}
 	if err := Validate(spec); err != nil {

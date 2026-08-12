@@ -10,6 +10,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/eventlog"
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/platform"
 )
@@ -36,6 +37,14 @@ func (c LogRetentionController) Reconcile(ctx context.Context) error {
 			continue
 		}
 		targetSpecs := logRetentionTargets(c.Router, spec)
+		var archive *eventlog.Logger
+		if len(spec.Sinks) > 0 {
+			archive, err = eventlog.NewSelected(c.Router, spec.Sinks)
+			if err != nil {
+				return err
+			}
+			defer archive.Close()
+		}
 		var total int64
 		var targets []map[string]any
 		for _, target := range targetSpecs {
@@ -43,7 +52,13 @@ func (c LogRetentionController) Reconcile(ctx context.Context) error {
 			if err != nil {
 				return fmt.Errorf("%s retention %q: %w", res.ID(), target.Retention, err)
 			}
-			result, err := logstore.ApplyRetention(ctx, logstore.RetentionTarget{File: target.File, Retention: duration}, spec.Vacuum)
+			retentionTarget := logstore.RetentionTarget{File: target.File, Retention: duration, Signals: target.Signals}
+			if archive != nil {
+				retentionTarget.BeforeDelete = func(record logstore.RetentionRecord) error {
+					return archive.EmitRecord(record.Signal, record.Values)
+				}
+			}
+			result, err := logstore.ApplyRetention(ctx, retentionTarget, spec.Vacuum)
 			if err != nil {
 				return err
 			}
@@ -75,12 +90,18 @@ func (c LogRetentionController) Reconcile(ctx context.Context) error {
 func logRetentionTargets(router *api.Router, spec api.LogRetentionSpec) []api.LogRetentionTargetSpec {
 	signals := spec.Signals
 	if len(signals) == 0 {
-		signals = []string{"events", "dnsQueries", "trafficFlows", "firewallEvents"}
+		signals = []string{"events", "accessLogs", "pluginRuns", "dnsQueries", "trafficFlows", "firewallEvents", "dhcpFingerprints"}
 	}
+	byFile := map[string]int{}
 	var out []api.LogRetentionTargetSpec
 	for _, signal := range signals {
 		for _, file := range logRetentionSignalFiles(router, signal) {
-			out = append(out, api.LogRetentionTargetSpec{File: file, Retention: spec.Retention})
+			if i, ok := byFile[file]; ok {
+				out[i].Signals = append(out[i].Signals, signal)
+				continue
+			}
+			byFile[file] = len(out)
+			out = append(out, api.LogRetentionTargetSpec{File: file, Retention: spec.Retention, Signals: []string{signal}})
 		}
 	}
 	return out
@@ -89,7 +110,7 @@ func logRetentionTargets(router *api.Router, spec api.LogRetentionSpec) []api.Lo
 func logRetentionSignalFiles(router *api.Router, signal string) []string {
 	defaults, _ := platform.Current()
 	switch signal {
-	case "events":
+	case "events", "accessLogs", "pluginRuns":
 		return []string{defaults.DBFile()}
 	case "dnsQueries":
 		if router != nil {
@@ -134,6 +155,8 @@ func logRetentionSignalFiles(router *api.Router, signal string) []string {
 			}
 		}
 		return []string{defaults.FirewallLogFile()}
+	case "dhcpFingerprints":
+		return []string{defaults.StateDir + "/dhcp-fingerprints.db"}
 	default:
 		return nil
 	}
