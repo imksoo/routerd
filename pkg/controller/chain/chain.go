@@ -1231,6 +1231,7 @@ type Options struct {
 	DryRunBGP               bool
 	DryRunVRRP              bool
 	DryRunPackage           bool
+	DryRunSysctl            bool
 	DryRunNetworkAdoption   bool
 	DryRunBridge            bool
 	DryRunVXLANTunnel       bool
@@ -2153,6 +2154,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		opts.DryRunBGP = true
 		opts.DryRunVRRP = true
 		opts.DryRunPackage = true
+		opts.DryRunSysctl = true
 		opts.DryRunNetworkAdoption = true
 		opts.DryRunBridge = true
 		opts.DryRunVXLANTunnel = true
@@ -2163,7 +2165,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	// generation after lease acquisition. Keep the options local rather than
 	// copying Runner: Runner owns synchronization and runtime state.
 	packages := PackageController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunPackage}
-	sysctl := SysctlController{Router: r.Router, Bus: r.Bus, Store: store}
+	sysctl := SysctlController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunSysctl}
 	kernelModules := KernelModuleController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunPackage}
 	adoption := NetworkAdoptionController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunNetworkAdoption}
 	bridge := BridgeController{Router: r.Router, Store: store, DryRun: opts.DryRunBridge}

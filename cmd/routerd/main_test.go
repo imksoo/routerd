@@ -1316,6 +1316,9 @@ func TestSandboxControllerOptionsRoutePathMTUArtifactsIntoRuntimeDir(t *testing.
 
 	var opts controllerchain.Options
 	applySandboxControllerOptions(&opts, "", "")
+	if !opts.DryRunSysctl {
+		t.Fatal("sandbox must dry-run sysctl changes")
+	}
 
 	if got, want := opts.PathMTUPath, filepath.Join(platformDefaults.RuntimeDir, "mss.nft"); got != want {
 		t.Fatalf("PathMTUPath = %q, want %q", got, want)

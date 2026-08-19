@@ -1114,6 +1114,7 @@ func applySandboxControllerOptions(opts *controllerchain.Options, dnsmasqConfigP
 	opts.DryRunBGP = true
 	opts.DryRunVRRP = true
 	opts.DryRunPackage = true
+	opts.DryRunSysctl = true
 	opts.DryRunNetworkAdoption = true
 	opts.DryRunBridge = true
 	opts.DryRunVXLANTunnel = true
