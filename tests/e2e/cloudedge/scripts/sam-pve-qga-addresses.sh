@@ -10,9 +10,9 @@ keys from QGA, then patch tofu-output.json. Every PVE guest obtains its
 management IPv4 from the existing PVE underlay DHCP service. This script copies
 the QGA-reported address into each PVE node's management_ip and public_ip only
 after proving QGA is enabled on that VM. For PVE leaf routers, it also records
-the MAC of the interface holding the declared capture address, so the generated
-SAMNodeSet can ignore member-originated ARP observations. It reads the guest's
-public SSH host key through the authenticated PVE/QGA path and binds it to that
+the MAC of the declared capture interface, which is intentionally unaddressed
+until routerd applies its MobilityPool-owned /32. It reads the guest's public
+SSH host key through the authenticated PVE/QGA path and binds it to that
 discovered address.
 
 Options:
@@ -23,6 +23,7 @@ Options:
   --guest-known-hosts-out FILE
                            Write QGA-pinned PVE guest known_hosts (default: OUT.guest-known_hosts).
   --management-ifname NAME Management interface reported by QGA (default: ens18).
+  --capture-ifname NAME    PVE leaf capture interface reported by QGA (default: ens19).
   --retries N              QGA retry attempts per VM (default: 90).
   --retry-sleep SEC        Delay between QGA retries (default: 20).
   --evidence FILE          Write discovery evidence (default: OUT.qga-addresses.txt).
@@ -35,6 +36,7 @@ pve_ssh_key=
 pve_known_hosts=
 guest_known_hosts_out=
 management_ifname=ens18
+capture_ifname=ens19
 retries=90
 retry_sleep=20
 evidence=
@@ -47,6 +49,7 @@ while [ "$#" -gt 0 ]; do
     --pve-known-hosts) pve_known_hosts=${2:?missing --pve-known-hosts value}; shift 2 ;;
     --guest-known-hosts-out) guest_known_hosts_out=${2:?missing --guest-known-hosts-out value}; shift 2 ;;
     --management-ifname) management_ifname=${2:?missing --management-ifname value}; shift 2 ;;
+    --capture-ifname) capture_ifname=${2:?missing --capture-ifname value}; shift 2 ;;
     --retries) retries=${2:?missing --retries value}; shift 2 ;;
     --retry-sleep) retry_sleep=${2:?missing --retry-sleep value}; shift 2 ;;
     --evidence) evidence=${2:?missing --evidence value}; shift 2 ;;
@@ -64,6 +67,10 @@ done
 [ -f "$tofu_output" ] || { echo "tofu output not found: $tofu_output" >&2; exit 2; }
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }
 command -v ssh-keygen >/dev/null || { echo "ssh-keygen is required" >&2; exit 2; }
+[[ "$capture_ifname" =~ ^[[:alnum:]_.:-]+$ ]] || {
+  echo "--capture-ifname must be a non-empty interface name" >&2
+  exit 2
+}
 
 evidence=${evidence:-"$out.qga-addresses.txt"}
 guest_known_hosts_out=${guest_known_hosts_out:-"$out.guest-known_hosts"}
@@ -252,7 +259,6 @@ for entry in "${pve_nodes[@]}"; do
   role="$(jq -r --arg node "$node" '.nodes.value[$node].role // empty' "$tmp")"
   expected_management_ip="$(jq -r --arg node "$node" '.nodes.value[$node].management_ip // empty' "$tmp")"
   expected_management_source="$(jq -r --arg node "$node" '.nodes.value[$node].pve_management_source // empty' "$tmp")"
-  capture_ip="$(jq -r --arg node "$node" '.nodes.value[$node].private_ip // empty' "$tmp")"
   if [ -z "$vmid" ] || [ "$vmid" = "null" ]; then
     echo "missing vm_id for $node" >&2
     exit 1
@@ -323,33 +329,32 @@ for entry in "${pve_nodes[@]}"; do
   discovered_management_ips["$ip"]="$node"
 
   capture_mac=""
-  capture_ifname=""
+  observed_capture_ifname=""
   if [ "$role" = "leaf" ]; then
-    if ! valid_unicast_ipv4 "$capture_ip"; then
-      printf 'PVEQGACaptureAddressInvalid: node=%s has no usable declared capture address\n' "$node" >&2
-      exit 1
-    fi
-    mapfile -t capture_links < <(jq -r --arg ip "$capture_ip" '
+    # capture.sourceAddress is a MobilityPool-owned /32.  It must not be
+    # seeded into cloud-init merely so this bootstrap step can discover a
+    # MAC: doing so introduces a conflicting /24 route before routerd starts.
+    mapfile -t capture_links < <(jq -r --arg ifname "$capture_ifname" '
       (if type == "object" and has("result") then .result else . end)[]?
-      | select([."ip-addresses"[]? | select(."ip-address-type" == "ipv4" and ."ip-address" == $ip)] | length > 0)
+      | select((.name // "") == $ifname)
       | [(.name // ""), (."hardware-address" // "")] | @tsv
     ' <<<"$raw")
     if [ "${#capture_links[@]}" -ne 1 ]; then
       {
-        printf 'FAIL node=%s vmid=%s capture_ip=%s capture_link_count=%s\n' "$node" "$vmid" "$capture_ip" "${#capture_links[@]}"
+        printf 'FAIL node=%s vmid=%s capture_ifname=%s capture_link_count=%s\n' "$node" "$vmid" "$capture_ifname" "${#capture_links[@]}"
         printf 'capture_links=%s\n' "${capture_links[*]:-<empty>}"
         echo "$raw"
       } >>"$evidence"
-      printf 'PVEQGACaptureMACUnavailable: QGA must report exactly one capture interface for node %s address %s\n' "$node" "$capture_ip" >&2
+      printf 'PVEQGACaptureMACUnavailable: QGA must report exactly one capture interface for node %s name %s\n' "$node" "$capture_ifname" >&2
       exit 1
     fi
-    IFS=$'\t' read -r capture_ifname capture_mac_raw <<<"${capture_links[0]}"
-    if [ -z "$capture_ifname" ] || ! capture_mac="$(canonical_ethernet_mac "$capture_mac_raw")"; then
+    IFS=$'\t' read -r observed_capture_ifname capture_mac_raw <<<"${capture_links[0]}"
+    if [ -z "$observed_capture_ifname" ] || ! capture_mac="$(canonical_ethernet_mac "$capture_mac_raw")"; then
       {
-        printf 'FAIL node=%s vmid=%s capture_ip=%s capture_ifname=%s capture_mac=%s\n' "$node" "$vmid" "$capture_ip" "${capture_ifname:-<empty>}" "${capture_mac_raw:-<empty>}"
+        printf 'FAIL node=%s vmid=%s capture_ifname=%s capture_mac=%s\n' "$node" "$vmid" "${observed_capture_ifname:-<empty>}" "${capture_mac_raw:-<empty>}"
         echo "$raw"
       } >>"$evidence"
-      printf 'PVEQGACaptureMACUnavailable: QGA reported an invalid capture MAC for node %s address %s\n' "$node" "$capture_ip" >&2
+      printf 'PVEQGACaptureMACUnavailable: QGA reported an invalid capture MAC for node %s interface %s\n' "$node" "$capture_ifname" >&2
       exit 1
     fi
     if [ -n "${discovered_capture_macs[$capture_mac]:-}" ]; then
@@ -379,7 +384,7 @@ for entry in "${pve_nodes[@]}"; do
   {
     echo "PASS node=$node vmid=$vmid ifname=$management_ifname ip=$ip source=qga-dhcp"
     if [ -n "$capture_mac" ]; then
-      echo "capture_ifname=$capture_ifname capture_ip=$capture_ip capture_mac=$capture_mac"
+      echo "capture_ifname=$observed_capture_ifname capture_mac=$capture_mac"
     fi
     echo "$raw"
     echo
