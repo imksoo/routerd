@@ -543,6 +543,33 @@ run_preflight_probe() {
   return 1
 }
 
+quiesce_existing_routerd_units() {
+  local node
+  # A reused Live ISO can boot its sample router.yaml before this test has
+  # copied the generated configuration. Stop only routerd units on the exact
+  # test guests after their SSH keys are pinned, before any guest probe or
+  # provider/control-plane work. deploy_one_router repeats this defensively
+  # immediately before installing its intended configuration.
+  for node in "${routers[@]}"; do
+    ssh_node "$node" "$(cat <<'REMOTE_QUIESCE'
+set -e
+systemctl list-units --all --type=service --no-legend 'routerd*.service' 2>/dev/null \
+  | awk '{print $1}' \
+  | while IFS= read -r unit; do
+      [ -n "$unit" ] || continue
+      sudo systemctl stop "$unit"
+    done
+if systemctl list-units --all --type=service --no-legend 'routerd*.service' 2>/dev/null \
+  | awk '$3 == "active" || $4 == "running" { exit 1 }'; then
+  exit 0
+fi
+echo "routerd unit remained active after quiesce" >&2
+exit 1
+REMOTE_QUIESCE
+)" >"$evidence_dir/preflight/${node}-routerd-quiesce.txt" 2>&1 || return 1
+  done
+}
+
 preflight() {
   echo "== preflight =="
   local node host pve_host site
@@ -578,6 +605,7 @@ preflight() {
     fi
     scan_host_key "$node" "$host" || return 1
   done
+  quiesce_existing_routerd_units || return 1
   for node in "${routers[@]}" "${clients[@]}"; do
     run_preflight_probe "$node" || {
       echo "$node preflight failed" >&2
@@ -975,7 +1003,12 @@ deploy_staged_rr() {
 }
 
 wait_router_service_ready() {
-  local node="$1" deadline=$((SECONDS + 120))
+  # A first cloud reconciliation can include a real provider inventory/action
+  # before routerd exposes its control socket.  This is a bounded readiness
+  # wait, not a retry of a failed scenario; the former 60-second deploy-local
+  # probe rejected healthy nodes while that first reconciliation was still in
+  # progress.
+  local node="$1" deadline=$((SECONDS + 180))
   while [ "$SECONDS" -lt "$deadline" ]; do
     if ssh_node "$node" 'systemctl is-active --quiet routerd.service && sudo routerctl get status -o json >/dev/null'; then
       return 0
@@ -1113,23 +1146,14 @@ sudo systemctl is-active routerd.service
 command -v routerd
 command -v routerctl
 command -v jq
-ready=0
-deadline=$((SECONDS + 60))
-while [ "$SECONDS" -lt "$deadline" ]; do
-  if sudo routerctl get status -o json >/dev/null 2>&1; then
-    ready=1
-    break
-  fi
-  sleep 2
-done
-if [ "$ready" -ne 1 ]; then
-  sudo systemctl status routerd.service routerd-bgp.service --no-pager -l || true
-  ls -la /run/routerd 2>&1 || true
-  sudo routerctl get status -o json >/dev/null
-fi
 REMOTE_DEPLOY
-)"
-  } >"$evidence_dir/deploy/${node}.txt" 2>&1
+    )"
+  } >"$evidence_dir/deploy/${node}.txt" 2>&1 || return 1
+  if ! wait_router_service_ready "$node"; then
+    ssh_node "$node" 'sudo systemctl status routerd.service routerd-bgp.service --no-pager -l || true; ls -la /run/routerd 2>&1 || true; sudo routerctl get status -o json >/dev/null' \
+      >>"$evidence_dir/deploy/${node}.txt" 2>&1 || true
+    return 1
+  fi
 }
 
 setup_pve_dataplane() {
