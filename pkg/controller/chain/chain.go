@@ -4711,10 +4711,6 @@ func interfaceDevicePresent(ctx context.Context, ifname string) bool {
 }
 
 func ipv4AddressPresent(ctx context.Context, ifname, address string) bool {
-	want := strings.TrimSpace(address)
-	if host, _, ok := strings.Cut(want, "/"); ok {
-		want = host
-	}
 	if platform.CurrentOS() == platform.OSFreeBSD {
 		out, err := exec.CommandContext(ctx, "ifconfig", ifname).Output()
 		if err != nil {
@@ -4726,15 +4722,21 @@ func ipv4AddressPresent(ctx context.Context, ifname, address string) bool {
 	if err != nil {
 		return false
 	}
+	return linuxIPv4AddressPresent(out, address)
+}
+
+// linuxIPv4AddressPresent requires the address and prefix length to match.
+// A host address assigned with a wider external subnet is not routerd's
+// equivalent /32: treating it as such later makes a precise `ip addr del`
+// fail and leaves the controller's applied-effect ledger inconsistent.
+func linuxIPv4AddressPresent(out []byte, address string) bool {
+	want := strings.TrimSpace(address)
 	fields := strings.Fields(string(out))
 	for i := 0; i+1 < len(fields); i++ {
 		if fields[i] != "inet" {
 			continue
 		}
 		got := strings.TrimPrefix(fields[i+1], "addr:")
-		if host, _, ok := strings.Cut(got, "/"); ok {
-			got = host
-		}
 		if got == want {
 			return true
 		}

@@ -135,7 +135,7 @@ mapfile -t leaf_routers < <(jq -r 'to_entries[] | select(.value.role == "leaf") 
 mapfile -t pve_leaf_routers < <(jq -r 'to_entries[] | select(.value.site == "pve" and .value.role == "leaf") | .key' "$nodes_json" | sort)
 mapfile -t pve_routers < <(jq -r 'to_entries[] | select(.value.site == "pve" and (.value.role == "rr" or .value.role == "leaf")) | .key' "$nodes_json" | sort)
 mapfile -t clients < <(jq -r 'to_entries[] | select(.value.role == "client") | .key' "$nodes_json" | sort)
-mapfile -t pve_dataplane_nodes < <(jq -r 'to_entries[] | select(.value.site == "pve" and (.value.role == "leaf" or .value.role == "client")) | .key' "$nodes_json" | sort)
+mapfile -t pve_clients < <(jq -r 'to_entries[] | select(.value.site == "pve" and .value.role == "client") | .key' "$nodes_json" | sort)
 # Both supported PVE boot sources use the Ubuntu virtio convention: ens18 is
 # the provider-owned QGA management NIC and ens19 is the isolated capture NIC.
 # Do not infer eth1 for a template clone: the certified template exposes ens19.
@@ -1158,7 +1158,23 @@ REMOTE_DEPLOY
 
 setup_pve_dataplane() {
   local node ip
-  for node in "${pve_dataplane_nodes[@]}"; do
+  # MobilityPool owns a leaf capture.sourceAddress as a /32.  Do not seed it
+  # as a /24: that makes the applied-effect ledger mistake an external subnet
+  # for the managed host address and blocks on-prem discovery.  The exact
+  # cleanup below also makes an in-place qualification retry converge from the
+  # old, incorrect setup without touching the management NIC or bridge.
+  for node in "${pve_leaf_routers[@]}"; do
+    ip="$(node_field "$node" private_ip)"
+    ssh_node "$node" "set -e
+sudo ip -4 addr del '$ip/24' dev '$pve_capture_interface' 2>/dev/null || true
+if ip -4 -o addr show dev '$pve_capture_interface' | awk '\$3 == \"inet\" { print \$4 }' | grep -Fxq '$ip/24'; then
+  echo 'unexpected external capture subnet remains: $ip/24' >&2
+  exit 1
+fi
+ip -br addr show dev '$pve_capture_interface'" \
+      >"$evidence_dir/preflight/${node}-capture-source-normalized.txt" 2>&1
+  done
+  for node in "${pve_clients[@]}"; do
     ip="$(node_field "$node" private_ip)"
     ssh_node "$node" "set -e; if ! ip -4 addr show dev '$pve_capture_interface' | grep -qw '$ip/24'; then sudo ip addr add '$ip/24' dev '$pve_capture_interface'; fi; ip -br addr show dev '$pve_capture_interface'" \
       >"$evidence_dir/preflight/${node}-dataplane-ip.txt" 2>&1
