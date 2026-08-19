@@ -400,7 +400,7 @@ class ContractGuardTests(unittest.TestCase):
             self.verify(self.fake_git())
 
     def test_pve_short_or_unrelated_ssh_host_is_rejected(self):
-        for ssh_host in ("pve01", "other.lain.local"):
+        for ssh_host in ("pve01", "other.lain.local", "192.0.2.4"):
             with self.subTest(ssh_host=ssh_host):
                 self.contract["pve"]["sshHost"] = ssh_host
                 with self.assertRaisesRegex(qa_guard.GuardError, "FQDN|identify"):

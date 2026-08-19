@@ -186,6 +186,15 @@ type MobilityDataplanePlan struct {
     in-repository configuration, schema, CLI, tests, and documentation have
     migrated. Do not retain compatibility adapters.
 
+### Peer synchronization upgrade boundary
+
+`/v1/member-sets` and its response envelope are removed. Current
+`SAMPeerGroup` peers and the preceding member-set protocol are not compatible,
+so upgrade every RR and leaf in one peer-synchronization domain as one planned
+cutover. Do not run a mixed-version rolling upgrade within that domain; use a
+maintenance window and verify every participant is on the new release before
+resuming Cloud SAM configuration changes.
+
 ## Required code organization
 
 `pkg/controller/mobility` should converge around orchestration, snapshot,

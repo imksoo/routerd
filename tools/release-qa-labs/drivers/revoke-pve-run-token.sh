@@ -133,8 +133,15 @@ if ! jq -e --arg run_id "$run_id" --argjson supervised "$supervised" '
 fi
 pve_ssh_host="$(jq -er '.pve.sshHost' "$contract")"
 expected_token_owner="$(jq -er '.pve.tokenOwner' "$contract")"
-[[ "$pve_ssh_host" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$ ]] ||
+is_dns_fqdn() {
+  local host="$1"
+  [[ "$host" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$ ]] || return 1
+  [[ "$host" =~ ^[0-9]+(\.[0-9]+){3}$ ]] && return 1
+  return 0
+}
+if ! is_dns_fqdn "$pve_ssh_host"; then
   die "pinned contract PVE SSH host is not a DNS FQDN"
+fi
 if ! { [[ "$expected_token_owner" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$ ]] &&
   [ "${expected_token_owner%%@*}" != root ]; }; then
   die "pinned contract PVE token owner is not a scoped service account"

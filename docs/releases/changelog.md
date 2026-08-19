@@ -28,6 +28,10 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   `Delivery`, `DeliveryTo`, non-BGP delivery, and remote-full-member API
   surfaces. BGP pools now emit typed local capture intents directly. This is a
   breaking v1alpha1 API change.
+- `/v1/member-sets` and its response envelope. The new `SAMPeerGroup` sync
+  protocol is not wire-compatible with preceding member-set peers: upgrade
+  every RR and leaf within a peer-synchronization domain in one planned
+  cutover, not a mixed-version rolling upgrade.
 - `routerctl mobility enrollment-join`, the parallel manual RRSet bootstrap
   path. `SAMEnrollmentClient` is now the sole submit/fetch/persist
   implementation and retains configured bearer-token/mTLS authentication and

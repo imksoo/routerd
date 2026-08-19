@@ -298,7 +298,10 @@ diagnostics if needed, and stores a non-secret receipt at
 sealed provider-auth finalizer requires that matching receipt, so it cannot
 discard recovery credentials before the run token is gone. The manual form of
 the hook is production-only and is reserved for independently verified
-terminal recovery; it still refuses an active/unknown unit.
+terminal recovery; it still refuses an active/unknown unit. A terminal
+`FAILED` run may use that manual form only when both cleanup and the complete
+zero-inventory result succeeded. That revokes a credential that is no longer
+needed; it does not turn the failed qualification into a pass.
 
 ## Bounded Cloud SAM qualification
 

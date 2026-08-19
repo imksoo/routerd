@@ -181,6 +181,16 @@ class PveTokenRevocationTests(unittest.TestCase):
             check=False,
         )
 
+    def set_contract_ssh_host(self, ssh_host: str) -> None:
+        contract = json.loads(self.contract.read_text(encoding="utf-8"))
+        contract["pve"]["sshHost"] = ssh_host
+        write_private(self.contract, contract)
+        state = json.loads(self.state.read_text(encoding="utf-8"))
+        contract_sha = digest(self.contract)
+        state["effectiveLifecycle"]["contractSha256"] = contract_sha
+        state["inputs"]["contract"]["sha256"] = contract_sha
+        write_private(self.state, state)
+
     def test_terminal_zero_run_revokes_only_the_run_scoped_identity_without_secret(self):
         result = self.hook()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -216,6 +226,21 @@ class PveTokenRevocationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         calls = self.calls.read_text(encoding="utf-8")
         self.assertIn("pveum user token delete release-qa@pve run-1", calls)
+
+    def test_failed_but_proven_zero_terminal_run_revokes_the_run_token(self):
+        state = json.loads(self.state.read_text(encoding="utf-8"))
+        state["phase"] = "FAILED"
+        write_private(self.state, state)
+        result = self.hook()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('"tokenRevocation":"revoked"', result.stdout)
+
+    def test_ipv4_literal_pve_host_refuses_before_ssh(self):
+        self.set_contract_ssh_host("192.0.2.4")
+        result = self.hook()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not a DNS FQDN", result.stderr)
+        self.assertFalse(self.calls.exists())
 
     def test_nonzero_or_inflight_lifecycle_refuses_before_ssh(self):
         self.write_inventory(count=1)

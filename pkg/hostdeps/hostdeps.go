@@ -60,7 +60,7 @@ func PackageSets(router *api.Router) []api.OSPackageSetSpec {
 }
 
 var ubuntuPackages = map[string][]string{
-	"arping":        {"iputils-arping"},
+	"arping": {"iputils-arping"},
 	// systemd is the host service manager, not a routerd runtime dependency.
 	// Letting the Package controller upgrade it can re-exec PID 1 while routerd
 	// is reconciling, interrupting its own control socket and service restart.

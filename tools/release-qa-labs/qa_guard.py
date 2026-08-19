@@ -350,7 +350,11 @@ def verify_run_scoped_pve_token(token_path: Path, run_id: str, token_owner: str)
 def verify_pve_node_identity(node: str, ssh_host: str, *, label: str) -> None:
     if not re.fullmatch(_PVE_NODE_LABEL, node):
         raise GuardError(f"{label}.node must be an exact short Proxmox cluster node ID")
-    if len(ssh_host) > 253 or not re.fullmatch(rf"{_PVE_NODE_LABEL}(?:\.{_PVE_NODE_LABEL})+", ssh_host):
+    if (
+        len(ssh_host) > 253
+        or not re.fullmatch(rf"{_PVE_NODE_LABEL}(?:\.{_PVE_NODE_LABEL})+", ssh_host)
+        or re.fullmatch(r"[0-9]+(?:\.[0-9]+){3}", ssh_host)
+    ):
         raise GuardError(f"{label}.sshHost must be a DNS FQDN")
     if ssh_host == node or ssh_host.split(".", 1)[0] != node:
         raise GuardError(f"{label}.sshHost FQDN must identify the {label}.node cluster ID")
