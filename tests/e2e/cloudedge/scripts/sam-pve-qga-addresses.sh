@@ -5,12 +5,15 @@ usage() {
   cat <<'USAGE'
 Usage: sam-pve-qga-addresses.sh --tofu-output IN --out OUT [options]
 
-Discover PVE guest management addresses and SSH host keys from QGA, then patch
-tofu-output.json. Every PVE guest obtains its management IPv4 from the
-existing PVE underlay DHCP service. This script copies the QGA-reported address
-into each PVE node's management_ip and public_ip only after proving QGA is
-enabled on that VM. It also reads the guest's public SSH host key through the
-authenticated PVE/QGA path and binds it to that discovered address.
+Discover PVE guest management addresses, capture-interface MACs, and SSH host
+keys from QGA, then patch tofu-output.json. Every PVE guest obtains its
+management IPv4 from the existing PVE underlay DHCP service. This script copies
+the QGA-reported address into each PVE node's management_ip and public_ip only
+after proving QGA is enabled on that VM. For PVE leaf routers, it also records
+the MAC of the interface holding the declared capture address, so the generated
+SAMNodeSet can ignore member-originated ARP observations. It reads the guest's
+public SSH host key through the authenticated PVE/QGA path and binds it to that
+discovered address.
 
 Options:
   --tofu-output FILE       Raw `tofu output -json` file.
@@ -86,17 +89,36 @@ mapfile -t pve_nodes < <(jq -r '
 
 for entry in "${pve_nodes[@]}"; do
   IFS=$'\t' read -r node vmid pve_node_ssh_host <<<"$entry"
+  role="$(jq -r --arg node "$node" '.nodes.value[$node].role // empty' "$tmp")"
   public_ip="$(jq -r --arg node "$node" '.nodes.value[$node].public_ip // empty' "$tmp")"
   management_ip="$(jq -r --arg node "$node" '.nodes.value[$node].management_ip // empty' "$tmp")"
   management_source="$(jq -r --arg node "$node" '.nodes.value[$node].pve_management_source // empty' "$tmp")"
-  if [ -n "$public_ip" ] || [ -n "$management_ip" ] || [ "$management_source" = "qga-dhcp" ]; then
-    printf 'PVEQGAStaticManagementAddress: node=%s has management data before mandatory QGA discovery\n' "$node" >&2
-    exit 2
-  fi
-  [ "$management_source" = "pending-qga-dhcp" ] || {
-    printf 'PVEQGAManagementSource: node=%s must declare pve_management_source=pending-qga-dhcp before discovery\n' "$node" >&2
-    exit 2
-  }
+  capture_mac="$(jq -r --arg node "$node" '.nodes.value[$node].capture_mac // empty' "$tmp")"
+  case "$management_source" in
+    pending-qga-dhcp)
+      if [ -n "$public_ip" ] || [ -n "$management_ip" ]; then
+        printf 'PVEQGAStaticManagementAddress: node=%s has management data before mandatory QGA discovery\n' "$node" >&2
+        exit 2
+      fi
+      if [ "$role" = "leaf" ] && [ -n "$capture_mac" ]; then
+        printf 'PVEQGAStaticCaptureMAC: node=%s has capture_mac before mandatory QGA discovery\n' "$node" >&2
+        exit 2
+      fi
+      ;;
+    qga-dhcp)
+      # A rerun is allowed only when the previous value was itself QGA
+      # attested. The observation below must reproduce it exactly before we
+      # refresh the host-key and capture-MAC facts.
+      if [ -z "$management_ip" ] || [ "$public_ip" != "$management_ip" ]; then
+        printf 'PVEQGARecordedManagementAddress: node=%s has incomplete QGA-attested management data\n' "$node" >&2
+        exit 2
+      fi
+      ;;
+    *)
+      printf 'PVEQGAManagementSource: node=%s must declare pve_management_source=pending-qga-dhcp or qga-dhcp\n' "$node" >&2
+      exit 2
+      ;;
+  esac
   [ -n "$pve_node_ssh_host" ] || {
     printf 'PVEQGATransportUnavailable: node=%s has no declared PVE SSH host\n' "$node" >&2
     exit 2
@@ -112,7 +134,7 @@ case "$boot_source" in
   ;;
 esac
 
-valid_management_ipv4() {
+valid_unicast_ipv4() {
   local candidate="$1" octet first_octet
   [[ "$candidate" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
   IFS=. read -r -a octets <<<"$candidate"
@@ -134,11 +156,22 @@ valid_management_ipv4() {
   [[ "$candidate" != 169.254.* ]] || return 1
 }
 
+canonical_ethernet_mac() {
+  local candidate="$1" first_octet
+  candidate="$(printf '%s' "$candidate" | tr '[:upper:]' '[:lower:]')"
+  [[ "$candidate" =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]] || return 1
+  [ "$candidate" != "00:00:00:00:00:00" ] || return 1
+  first_octet="${candidate%%:*}"
+  (( (16#$first_octet & 1) == 0 )) || return 1
+  printf '%s\n' "$candidate"
+}
+
 ssh_qga=(ssh -n -i "$pve_ssh_key" -o BatchMode=yes -o StrictHostKeyChecking=yes \
   -o UserKnownHostsFile="$pve_known_hosts" -o GlobalKnownHostsFile=/dev/null \
   -o CanonicalizeHostname=no -o IdentitiesOnly=yes -o PasswordAuthentication=no \
   -o KbdInteractiveAuthentication=no -o ConnectTimeout=10)
 declare -A discovered_management_ips=()
+declare -A discovered_capture_macs=()
 qga_host_keys=()
 
 valid_guest_host_key_line() {
@@ -216,6 +249,10 @@ qga_guest_host_keys() {
 
 for entry in "${pve_nodes[@]}"; do
   IFS=$'\t' read -r node vmid pve_node_ssh_host <<<"$entry"
+  role="$(jq -r --arg node "$node" '.nodes.value[$node].role // empty' "$tmp")"
+  expected_management_ip="$(jq -r --arg node "$node" '.nodes.value[$node].management_ip // empty' "$tmp")"
+  expected_management_source="$(jq -r --arg node "$node" '.nodes.value[$node].pve_management_source // empty' "$tmp")"
+  capture_ip="$(jq -r --arg node "$node" '.nodes.value[$node].private_ip // empty' "$tmp")"
   if [ -z "$vmid" ] || [ "$vmid" = "null" ]; then
     echo "missing vm_id for $node" >&2
     exit 1
@@ -258,7 +295,7 @@ for entry in "${pve_nodes[@]}"; do
   ' <<<"$raw")
   valid_ips=()
   for ip in "${ips[@]}"; do
-    valid_management_ipv4 "$ip" && valid_ips+=("$ip")
+    valid_unicast_ipv4 "$ip" && valid_ips+=("$ip")
   done
   if [ "${#valid_ips[@]}" -ne 1 ]; then
     {
@@ -270,6 +307,14 @@ for entry in "${pve_nodes[@]}"; do
     exit 1
   fi
   ip="${valid_ips[0]}"
+  if [ "$expected_management_source" = "qga-dhcp" ] && [ "$ip" != "$expected_management_ip" ]; then
+    {
+      printf 'FAIL node=%s vmid=%s expected_management_ip=%s observed_management_ip=%s\n' "$node" "$vmid" "$expected_management_ip" "$ip"
+      echo "$raw"
+    } >>"$evidence"
+    printf 'PVEQGAManagementAddressMismatch: node=%s recorded %s but QGA now reports %s\n' "$node" "$expected_management_ip" "$ip" >&2
+    exit 1
+  fi
   if [ -n "${discovered_management_ips[$ip]:-}" ]; then
     printf 'PVEQGADuplicateManagementAddress: node=%s and node=%s report %s\n' \
       "$node" "${discovered_management_ips[$ip]}" "$ip" >&2
@@ -277,23 +322,65 @@ for entry in "${pve_nodes[@]}"; do
   fi
   discovered_management_ips["$ip"]="$node"
 
+  capture_mac=""
+  capture_ifname=""
+  if [ "$role" = "leaf" ]; then
+    if ! valid_unicast_ipv4 "$capture_ip"; then
+      printf 'PVEQGACaptureAddressInvalid: node=%s has no usable declared capture address\n' "$node" >&2
+      exit 1
+    fi
+    mapfile -t capture_links < <(jq -r --arg ip "$capture_ip" '
+      (if type == "object" and has("result") then .result else . end)[]?
+      | select([."ip-addresses"[]? | select(."ip-address-type" == "ipv4" and ."ip-address" == $ip)] | length > 0)
+      | [(.name // ""), (."hardware-address" // "")] | @tsv
+    ' <<<"$raw")
+    if [ "${#capture_links[@]}" -ne 1 ]; then
+      {
+        printf 'FAIL node=%s vmid=%s capture_ip=%s capture_link_count=%s\n' "$node" "$vmid" "$capture_ip" "${#capture_links[@]}"
+        printf 'capture_links=%s\n' "${capture_links[*]:-<empty>}"
+        echo "$raw"
+      } >>"$evidence"
+      printf 'PVEQGACaptureMACUnavailable: QGA must report exactly one capture interface for node %s address %s\n' "$node" "$capture_ip" >&2
+      exit 1
+    fi
+    IFS=$'\t' read -r capture_ifname capture_mac_raw <<<"${capture_links[0]}"
+    if [ -z "$capture_ifname" ] || ! capture_mac="$(canonical_ethernet_mac "$capture_mac_raw")"; then
+      {
+        printf 'FAIL node=%s vmid=%s capture_ip=%s capture_ifname=%s capture_mac=%s\n' "$node" "$vmid" "$capture_ip" "${capture_ifname:-<empty>}" "${capture_mac_raw:-<empty>}"
+        echo "$raw"
+      } >>"$evidence"
+      printf 'PVEQGACaptureMACUnavailable: QGA reported an invalid capture MAC for node %s address %s\n' "$node" "$capture_ip" >&2
+      exit 1
+    fi
+    if [ -n "${discovered_capture_macs[$capture_mac]:-}" ]; then
+      printf 'PVEQGADuplicateCaptureMAC: node=%s and node=%s report %s\n' \
+        "$node" "${discovered_capture_macs[$capture_mac]}" "$capture_mac" >&2
+      exit 1
+    fi
+    discovered_capture_macs["$capture_mac"]="$node"
+  fi
+
   qga_guest_host_keys "$node" "$vmid" "$pve_node_ssh_host" || exit 1
   for key in "${qga_host_keys[@]}"; do
     printf '%s %s\n' "$ip" "$key" >>"$guest_known_hosts_tmp"
   done
 
   host_keys_json="$(printf '%s\n' "${qga_host_keys[@]}" | jq -R . | jq -s .)"
-  jq --arg node "$node" --arg ip "$ip" --argjson hostKeys "$host_keys_json" '
+  jq --arg node "$node" --arg ip "$ip" --arg captureMAC "$capture_mac" --argjson hostKeys "$host_keys_json" '
     .nodes.value[$node].management_ip = $ip
     | .nodes.value[$node].public_ip = $ip
     | .nodes.value[$node].pve_management_source = "qga-dhcp"
     | .nodes.value[$node].ssh_host_keys = $hostKeys
     | .nodes.value[$node].ssh_host_key_source = "qga"
+    | if $captureMAC == "" then . else .nodes.value[$node].capture_mac = $captureMAC end
   ' "$tmp" >"$tmp.next"
   mv "$tmp.next" "$tmp"
 
   {
     echo "PASS node=$node vmid=$vmid ifname=$management_ifname ip=$ip source=qga-dhcp"
+    if [ -n "$capture_mac" ]; then
+      echo "capture_ifname=$capture_ifname capture_ip=$capture_ip capture_mac=$capture_mac"
+    fi
     echo "$raw"
     echo
   } >>"$evidence"

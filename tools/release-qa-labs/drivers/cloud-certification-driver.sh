@@ -146,6 +146,9 @@ if ! jq -n --slurpfile raw "$raw_output" --slurpfile pve "$pve_qga_output" '
        (.value.site == "pve" and .value.management_ip != null and .value.public_ip != null and
         .value.pve_management_source == "qga-dhcp" and (.value.ssh_host_keys | type == "array") and
         (.value.ssh_host_keys | length > 0) and .value.ssh_host_key_source == "qga") ] | all)
+    and
+    ([ $pveNodes | to_entries[] | select(.value.role == "leaf") |
+       (.value.capture_mac | if type == "string" then test("^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$") else false end) ] | all)
   ) then
     reduce ($pveNodes | to_entries[]) as $entry
       ($full; .nodes.value[$entry.key] = (
@@ -156,6 +159,7 @@ if ! jq -n --slurpfile raw "$raw_output" --slurpfile pve "$pve_qga_output" '
           ssh_host_keys: $entry.value.ssh_host_keys,
           ssh_host_key_source: $entry.value.ssh_host_key_source
         }
+        | if $entry.value.role == "leaf" then .capture_mac = $entry.value.capture_mac else . end
       ))
   else error("full output and PVE QGA handoff do not describe the same six pending PVE nodes") end
 ' >"$merged_output"; then
@@ -172,6 +176,9 @@ if ! jq -e '
     (.value.management_ip != null and .value.public_ip != null and
      .value.pve_management_source == "qga-dhcp" and (.value.ssh_host_keys | length > 0))] | all)
   and
+  ([.nodes.value | to_entries[] | select(.value.site == "pve" and .value.role == "leaf") |
+    (.value.capture_mac | if type == "string" then test("^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$") else false end)] | all)
+  and
   ([.nodes.value | to_entries[] |
     select(.value.site == "pve" and (.value.role == "rr" or .value.role == "leaf")) |
     (.value.overlay_ip | type == "string")] | all)
@@ -185,7 +192,7 @@ if ! jq -e '
 fi
 install -m 0600 "$merged_output" "$tofu_output_path"
 rm -f "$merged_output"
-record_check cross-substrate "" "full topology output handoff" pass "full cloud output carries the six once-attested PVE QGA identities without a cloud refresh in the PVE phase"
+record_check cross-substrate "" "full topology output handoff" pass "full cloud output carries the six once-attested PVE QGA identities and PVE-leaf capture MACs without a cloud refresh in the PVE phase"
 touch_heartbeat
 
 aws --profile "$aws_profile" --region "$aws_region" ec2 describe-instances \

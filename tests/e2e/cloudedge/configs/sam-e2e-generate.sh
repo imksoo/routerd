@@ -189,6 +189,30 @@ pve_management_ip() {
   printf '%s\n' "$management_ip"
 }
 
+pve_capture_mac() {
+  local node="$1" capture_mac first_octet
+  # The PVE certification path derives this from QGA's
+  # network-get-interfaces result for the interface holding private_ip. It is
+  # deliberately distinct from the PVE management NIC and is used only to
+  # keep router-member proxy ARP frames out of on-prem ownership discovery.
+  capture_mac="$(jq_node "$node" ".[\$node].capture_mac // empty")"
+  capture_mac="$(printf '%s' "$capture_mac" | tr '[:upper:]' '[:lower:]')"
+  if [[ ! "$capture_mac" =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]]; then
+    echo "PVE leaf $node requires a QGA-derived capture_mac before ARP observer configuration" >&2
+    return 1
+  fi
+  [ "$capture_mac" != "00:00:00:00:00:00" ] || {
+    echo "PVE leaf $node capture_mac must not be all zero" >&2
+    return 1
+  }
+  first_octet="${capture_mac%%:*}"
+  if (( (16#$first_octet & 1) != 0 )); then
+    echo "PVE leaf $node capture_mac must be a unicast Ethernet MAC" >&2
+    return 1
+  fi
+  printf '%s\n' "$capture_mac"
+}
+
 run1_pool_role() {
   local node="$1"
   case " $run1_verification_pool_nodes " in
@@ -220,6 +244,10 @@ node_set_file="$out_dir/node-set.yaml"
     echo "            routeReflector: $rr"
     echo "            eventEndpoint: http://$overlay:9443"
     echo "            samEndpoint: $overlay"
+    if [ "$node_role" = "leaf" ] && [ "$site" = "pve" ]; then
+      capture_mac="$(pve_capture_mac "$node")" || exit 1
+      echo "            macAddresses: [\"$capture_mac\"]"
+    fi
     if [ "$node_role" = "leaf" ] && [ "$site" != "pve" ]; then
       echo "            placement: { group: $site-leaf }"
       echo "            maxSecondaryIPs: $capture_max_secondary_ips"

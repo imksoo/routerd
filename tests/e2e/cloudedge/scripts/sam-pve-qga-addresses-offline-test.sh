@@ -25,12 +25,12 @@ write_multi_output() {
   jq -n '{
     fabric:{value:{pve:{boot_source:"template"}}},
     nodes:{value:{
-      "pve-leaf-a": {site:"pve",vm_id:141,pve_ssh_host:"pve01.example.test",private_ip:"10.77.60.34",public_ip:"",management_ip:"",pve_management_source:"pending-qga-dhcp"},
-      "pve-client-a": {site:"pve",vm_id:144,pve_ssh_host:"pve01.example.test",private_ip:"10.77.60.15",public_ip:"",management_ip:"",pve_management_source:"pending-qga-dhcp"},
-      "pve-leaf-b": {site:"pve",vm_id:145,pve_ssh_host:"pve01.example.test",private_ip:"10.77.60.35",public_ip:"",management_ip:"",pve_management_source:"pending-qga-dhcp"},
-      "pve-client-b": {site:"pve",vm_id:146,pve_ssh_host:"pve01.example.test",private_ip:"10.77.60.19",public_ip:"",management_ip:"",pve_management_source:"pending-qga-dhcp"},
-      "pve-rr-a": {site:"pve",vm_id:142,pve_ssh_host:"pve05.example.test",private_ip:null,public_ip:"",management_ip:"",pve_management_source:"pending-qga-dhcp"},
-      "pve-rr-b": {site:"pve",vm_id:143,pve_ssh_host:"pve06.example.test",private_ip:null,public_ip:"",management_ip:"",pve_management_source:"pending-qga-dhcp"}
+      "pve-leaf-a": {site:"pve",role:"leaf",vm_id:141,pve_ssh_host:"pve01.example.test",private_ip:"10.77.60.34",public_ip:"",management_ip:"",pve_management_source:"pending-qga-dhcp"},
+      "pve-client-a": {site:"pve",role:"client",vm_id:144,pve_ssh_host:"pve01.example.test",private_ip:"10.77.60.15",public_ip:"",management_ip:"",pve_management_source:"pending-qga-dhcp"},
+      "pve-leaf-b": {site:"pve",role:"leaf",vm_id:145,pve_ssh_host:"pve01.example.test",private_ip:"10.77.60.35",public_ip:"",management_ip:"",pve_management_source:"pending-qga-dhcp"},
+      "pve-client-b": {site:"pve",role:"client",vm_id:146,pve_ssh_host:"pve01.example.test",private_ip:"10.77.60.19",public_ip:"",management_ip:"",pve_management_source:"pending-qga-dhcp"},
+      "pve-rr-a": {site:"pve",role:"rr",vm_id:142,pve_ssh_host:"pve05.example.test",private_ip:null,public_ip:"",management_ip:"",pve_management_source:"pending-qga-dhcp"},
+      "pve-rr-b": {site:"pve",role:"rr",vm_id:143,pve_ssh_host:"pve06.example.test",private_ip:null,public_ip:"",management_ip:"",pve_management_source:"pending-qga-dhcp"}
     }}
   }' >"$tmp/in.json"
 }
@@ -62,7 +62,20 @@ case "$*" in
         *) ip=192.0.2.20 ;;
       esac
     fi
-    printf '[{"name":"ens18","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"%s"}]}]\n' "$ip"
+    capture_ip=
+    capture_mac=
+    case "$*" in
+      *"qm agent 141 "*) capture_ip=10.77.60.34; capture_mac=02:00:00:00:00:41 ;;
+      *"qm agent 145 "*) capture_ip=10.77.60.35; capture_mac=02:00:00:00:00:45 ;;
+    esac
+    if [ -n "${QGA_CAPTURE_MAC_OVERRIDE:-}" ] && [ -n "$capture_mac" ]; then
+      capture_mac=$QGA_CAPTURE_MAC_OVERRIDE
+    fi
+    if [ -n "$capture_ip" ]; then
+      printf '[{"name":"ens18","hardware-address":"02:00:00:00:18:00","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"%s"}]},{"name":"ens19","hardware-address":"%s","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"%s"}]}]\n' "$ip" "$capture_mac" "$capture_ip"
+    else
+      printf '[{"name":"ens18","hardware-address":"02:00:00:00:18:00","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"%s"}]}]\n' "$ip"
+    fi
     ;;
   *"qm guest exec"*)
     printf '{"exitcode":0,"out-data":"%s\\n"}\n' "$QGA_HOST_KEY"
@@ -108,7 +121,7 @@ write_output template pve06.example.test 141 '' '' qga-dhcp
 : >"$tmp/ssh.log"
 if PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" "$SCRIPT" --pve-ssh-key "$ssh_key" --pve-known-hosts "$pve_known_hosts" --tofu-output "$tmp/in.json" --out "$tmp/out.json" --retries 1 >"$tmp/stdout" 2>"$tmp/stderr"; then die "predeclared QGA source unexpectedly passed"; fi
 [ "$(wc -l <"$tmp/ssh.log")" -eq 0 ] || die "predeclared management source reached QGA"
-grep -q PVEQGAStaticManagementAddress "$tmp/stderr" || die "missing predeclared-source diagnostic"
+grep -q PVEQGARecordedManagementAddress "$tmp/stderr" || die "missing incomplete-QGA-attestation diagnostic"
 
 write_output template __missing__
 : >"$tmp/ssh.log"
@@ -153,12 +166,38 @@ grep -q PVEQGAHostKeyUnavailable "$tmp/stderr" || die "missing invalid-host-key 
 write_multi_output
 : >"$tmp/ssh.log"
 guest_known_hosts="$tmp/multi-guest-known_hosts"
-PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" "$SCRIPT" --pve-ssh-key "$ssh_key" --pve-known-hosts "$pve_known_hosts" --tofu-output "$tmp/in.json" --out "$tmp/out.json" --guest-known-hosts-out "$guest_known_hosts" --retries 1 --retry-sleep 0 >/dev/null
+PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" "$SCRIPT" --pve-ssh-key "$ssh_key" --pve-known-hosts "$pve_known_hosts" --tofu-output "$tmp/in.json" --out "$tmp/out.json" --guest-known-hosts-out "$guest_known_hosts" --retries 1 --retry-sleep 0 --evidence "$tmp/multi-evidence" >/dev/null
 for pair in 'pve-leaf-a:192.0.2.21' 'pve-client-a:192.0.2.22' 'pve-leaf-b:192.0.2.23' 'pve-client-b:192.0.2.24' 'pve-rr-a:192.0.2.25' 'pve-rr-b:192.0.2.26'; do
   node=${pair%%:*}; ip=${pair#*:}
   jq -e --arg node "$node" --arg ip "$ip" --arg key "$QGA_HOST_KEY" '.nodes.value[$node].management_ip == $ip and .nodes.value[$node].pve_management_source == "qga-dhcp" and .nodes.value[$node].ssh_host_key_source == "qga" and .nodes.value[$node].ssh_host_keys == [$key]' "$tmp/out.json" >/dev/null || die "missing per-host QGA result for $node"
   grep -Fx "$ip $QGA_HOST_KEY" "$guest_known_hosts" >/dev/null || die "missing QGA host-key binding for $node"
 done
+jq -e '
+  .nodes.value["pve-leaf-a"].capture_mac == "02:00:00:00:00:41" and
+  .nodes.value["pve-leaf-b"].capture_mac == "02:00:00:00:00:45" and
+  (.nodes.value["pve-client-a"] | has("capture_mac") | not) and
+  (.nodes.value["pve-rr-a"] | has("capture_mac") | not)
+' "$tmp/out.json" >/dev/null || die "QGA did not record only PVE leaf capture MACs"
+[ "$(grep -c 'capture_ifname=ens19' "$tmp/multi-evidence")" -eq 2 ] || die "capture-interface evidence is missing for a PVE leaf"
+
+# A QGA-attested output is deliberately rerunnable: it must re-query the
+# guest, retain the same management address, and replace any stale capture MAC
+# with the observed interface MAC rather than trusting JSON carried forward.
+jq '.nodes.value["pve-leaf-a"].capture_mac = "02:00:00:00:00:ff"' "$tmp/out.json" >"$tmp/rerun-input.json"
+PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" "$SCRIPT" --pve-ssh-key "$ssh_key" --pve-known-hosts "$pve_known_hosts" --tofu-output "$tmp/rerun-input.json" --out "$tmp/rerun-output.json" --guest-known-hosts-out "$tmp/rerun-known_hosts" --retries 1 --retry-sleep 0 >/dev/null
+jq -e '.nodes.value["pve-leaf-a"].management_ip == "192.0.2.21" and .nodes.value["pve-leaf-a"].capture_mac == "02:00:00:00:00:41"' "$tmp/rerun-output.json" >/dev/null || die "QGA rerun did not re-attest management IP and replace capture MAC"
+
+# A previously QGA-attested management address is not silently rewritten if
+# the guest changes underneath it. The operator must investigate the identity
+# change rather than carry it forward as an ordinary refresh.
+jq '.nodes.value["pve-leaf-a"].management_ip = "192.0.2.99" | .nodes.value["pve-leaf-a"].public_ip = "192.0.2.99"' "$tmp/out.json" >"$tmp/mismatch-input.json"
+if PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" "$SCRIPT" --pve-ssh-key "$ssh_key" --pve-known-hosts "$pve_known_hosts" --tofu-output "$tmp/mismatch-input.json" --out "$tmp/mismatch-output.json" --guest-known-hosts-out "$tmp/mismatch-known_hosts" --retries 1 --retry-sleep 0 >"$tmp/stdout" 2>"$tmp/stderr"; then die "QGA rerun accepted a changed management address"; fi
+grep -q PVEQGAManagementAddressMismatch "$tmp/stderr" || die "missing QGA management-address mismatch diagnostic"
+
+# A unicast router interface MAC is required before it can enter the shared
+# ARP-observer ignore set.
+if PATH="$fake_bin:$PATH" QGA_SSH_LOG="$tmp/ssh.log" QGA_CAPTURE_MAC_OVERRIDE=01:00:00:00:00:41 "$SCRIPT" --pve-ssh-key "$ssh_key" --pve-known-hosts "$pve_known_hosts" --tofu-output "$tmp/out.json" --out "$tmp/invalid-capture-output.json" --guest-known-hosts-out "$tmp/invalid-capture-known_hosts" --retries 1 --retry-sleep 0 >"$tmp/stdout" 2>"$tmp/stderr"; then die "invalid QGA capture MAC unexpectedly passed"; fi
+grep -q PVEQGACaptureMACUnavailable "$tmp/stderr" || die "missing invalid capture-MAC diagnostic"
 [ "$(wc -l <"$guest_known_hosts")" -eq 6 ] || die "expected a QGA-pinned known_hosts entry for every PVE guest"
 grep -q 'root@pve01.example.test' "$tmp/ssh.log" || die "leaf QGA did not use its PVE host"
 grep -q 'root@pve05.example.test' "$tmp/ssh.log" || die "RR A QGA did not use its own PVE host"

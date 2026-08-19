@@ -995,7 +995,7 @@ if systemctl list-unit-files routerd-bgp.service --no-legend 2>/dev/null | grep 
 fi
 status="$(sudo routerctl get BGPRouter/mobility-bgp -o json)"
 printf "%s\n" "$status" | jq -e '
-  (.resource.status // .status // {}) as $s
+  (.items[0].status // .resource.status // .status // {}) as $s
   | (($s.establishedPeers // 0) >= 1)
   | select(.)
   | (($s.phase // "") | ascii_downcase)
@@ -1078,19 +1078,31 @@ deploy_one_router() {
     fi
     ssh_node "$node" "$(printf 'export ROUTERD_E2E_REQUIRE_AWS_CLI=%q\n' "$require_aws_cli"; remote_prepare_script; cat <<'REMOTE_DEPLOY'
 set -e
-rm -rf /tmp/routerd-sam-e2e
-mkdir -p /tmp/routerd-sam-e2e
-tar -xzf /tmp/routerd-sam-e2e.tar.gz -C /tmp/routerd-sam-e2e
-cd /tmp/routerd-sam-e2e
-sudo ./install.sh --yes --prefix /usr/local
-if [ -f systemd/routerd-bgp.service ] && ! systemctl list-unit-files routerd-bgp.service --no-legend 2>/dev/null | grep -q '^routerd-bgp\.service'; then
-  sudo install -m 0644 systemd/routerd-bgp.service /etc/systemd/system/routerd-bgp.service
-  sudo systemctl daemon-reload
-fi
+stop_existing_routerd_units() {
+  # A live-ISO guest can still be running its sample router.yaml.  Do not let
+  # the installer restart that configuration while replacing binaries: apart
+  # from being the wrong test input, it can start services such as DHCP/RA.
+  systemctl list-units --all --type=service --no-legend 'routerd*.service' 2>/dev/null \
+    | awk '{print $1}' \
+    | while IFS= read -r unit; do
+        [ -n "$unit" ] || continue
+        sudo systemctl stop "$unit" || true
+      done
+}
+stop_existing_routerd_units
 sudo mkdir -p /usr/local/etc/routerd/secrets
 sudo install -m 0600 /tmp/router.yaml /usr/local/etc/routerd/router.yaml
 if [ -f /tmp/eventd-cloudedge.key ]; then
   sudo install -m 0600 /tmp/eventd-cloudedge.key /usr/local/etc/routerd/secrets/eventd-cloudedge.key
+fi
+rm -rf /tmp/routerd-sam-e2e
+mkdir -p /tmp/routerd-sam-e2e
+tar -xzf /tmp/routerd-sam-e2e.tar.gz -C /tmp/routerd-sam-e2e
+cd /tmp/routerd-sam-e2e
+sudo ./install.sh --yes --prefix /usr/local --no-restart --no-config-update
+if [ -f systemd/routerd-bgp.service ] && ! systemctl list-unit-files routerd-bgp.service --no-legend 2>/dev/null | grep -q '^routerd-bgp\.service'; then
+  sudo install -m 0644 systemd/routerd-bgp.service /etc/systemd/system/routerd-bgp.service
+  sudo systemctl daemon-reload
 fi
 sudo systemctl restart routerd.service
 if systemctl list-unit-files routerd-bgp.service --no-legend 2>/dev/null | grep -q '^routerd-bgp\.service'; then

@@ -57,12 +57,12 @@ jq -n '{
     "pve-leaf-a": {
       role: "leaf", site: "pve", overlay_ip: "10.99.0.31",
       private_ip: "10.77.60.31", management_ip: "192.0.2.31",
-      pve_management_source: "qga-dhcp"
+      pve_management_source: "qga-dhcp", capture_mac: "02:00:00:00:00:31"
     },
     "pve-leaf-b": {
       role: "leaf", site: "pve", overlay_ip: "10.99.0.32",
       private_ip: "10.77.60.32", management_ip: "192.0.2.32",
-      pve_management_source: "qga-dhcp"
+      pve_management_source: "qga-dhcp", capture_mac: "02:00:00:00:00:32"
     }
   }},
   fabric: {value: {
@@ -105,6 +105,8 @@ require_absent "$different_owner_out/configs/harness-version.txt" 'harness_git_d
 node_set="$out_dir/node-set.yaml"
 require_contains "$node_set" 'endpoint: 203.0.113.11:51820'
 require_absent "$node_set" '198.51.100.21:51820'
+require_contains "$node_set" 'macAddresses: ["02:00:00:00:00:31"]'
+require_contains "$node_set" 'macAddresses: ["02:00:00:00:00:32"]'
 if ! awk '
   /^[[:space:]]*-[[:space:]]nodeRef:[[:space:]]*/ {
     pve = ($3 ~ /^pve-/)
@@ -183,6 +185,13 @@ if PATH="$fake_bin:$PATH" "$generator" --tofu-output "$unverified_output" --out-
   die "generator accepted a PVE management address without QGA provenance"
 fi
 require_contains "$work/unverified.stderr" 'pve_management_source=qga-dhcp'
+
+missing_capture_mac_output="$work/tofu-output-missing-capture-mac.json"
+jq 'del(.nodes.value["pve-leaf-a"].capture_mac)' "$tofu_output" >"$missing_capture_mac_output"
+if PATH="$fake_bin:$PATH" "$generator" --tofu-output "$missing_capture_mac_output" --out-dir "$work/missing-capture-mac" >"$work/missing-capture-mac.stdout" 2>"$work/missing-capture-mac.stderr"; then
+  die "generator accepted a PVE leaf without a QGA capture MAC"
+fi
+require_contains "$work/missing-capture-mac.stderr" 'requires a QGA-derived capture_mac'
 
 invalid_output="$work/tofu-output-invalid-management.json"
 jq '.nodes.value["pve-rr-b"].management_ip = "224.0.0.1"' "$tofu_output" >"$invalid_output"

@@ -53,7 +53,9 @@ capture_bridge="$(jq -r '.fabric.value.pve.leaf_capture_bridge // empty' "$tofu_
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
-pve_ssh=(ssh -n -i "$pve_ssh_key" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+# The capture-bridge query below supplies its remote script on stdin, so this
+# connection must not use ssh -n.
+pve_ssh=(ssh -i "$pve_ssh_key" -o BatchMode=yes -o StrictHostKeyChecking=yes \
   -o UserKnownHostsFile="$pve_known_hosts" -o GlobalKnownHostsFile=/dev/null \
   -o CanonicalizeHostname=no -o IdentitiesOnly=yes -o PasswordAuthentication=no \
   -o KbdInteractiveAuthentication=no -o ConnectTimeout=10)

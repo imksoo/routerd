@@ -261,6 +261,21 @@ func TestPackageFeaturesIncludeArpingForStaticVirtualAddressAnnouncement(t *test
 	}
 }
 
+func TestDerivedPackagesDoNotManageHostServiceManager(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+		Metadata: api.ObjectMeta{Name: "wan"},
+		Spec:     api.InterfaceSpec{IfName: "ens18"},
+	}}}}
+	for _, set := range PackageSets(router) {
+		for _, name := range set.Names {
+			if name == "systemd" {
+				t.Fatalf("derived package set for %s must not manage systemd: %#v", set.OS, set.Names)
+			}
+		}
+	}
+}
+
 func TestPackageFeaturesCoverStandaloneDataplaneResources(t *testing.T) {
 	for _, tc := range []struct {
 		kind string

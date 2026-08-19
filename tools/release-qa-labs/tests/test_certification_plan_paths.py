@@ -98,9 +98,12 @@ class CertificationPlanPathTests(unittest.TestCase):
         self.assertIn('pve_qga_output="$evidence_root/certification/pve/tofu-output-pve-qga.json"', cloud)
         self.assertIn('install -m 0600 "$merged_output" "$tofu_output_path"', cloud)
         self.assertIn('full topology output handoff', cloud)
-        # QGA owns only management/bootstrap facts.  The complete output
-        # remains the source of overlay and client topology fields.
+        # QGA owns management/bootstrap facts and the PVE leaf's capture-NIC
+        # identity. The complete output remains the source of overlay and
+        # client topology fields.
         self.assertIn('.nodes.value[$entry.key] * {', cloud)
+        self.assertIn('.capture_mac = $entry.value.capture_mac', cloud)
+        self.assertIn('select(.value.role == "leaf")', cloud)
         self.assertIn('.value.overlay_ip | type == "string"', cloud)
         self.assertIn('.value.client_ip | type == "string"', cloud)
 
