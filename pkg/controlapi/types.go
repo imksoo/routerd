@@ -239,12 +239,12 @@ type DHCPv6EventResult struct {
 }
 
 type DHCPLeaseEventRequest struct {
-	TypeMeta `json:",inline" yaml:",inline"`
-	Action   string            `json:"action" yaml:"action"`
-	MAC      string            `json:"mac,omitempty" yaml:"mac,omitempty"`
-	IP       string            `json:"ip" yaml:"ip"`
-	Hostname string            `json:"hostname,omitempty" yaml:"hostname,omitempty"`
-	Env      map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
+	TypeMeta  `json:",inline" yaml:",inline"`
+	Action    string `json:"action" yaml:"action"`
+	MAC       string `json:"mac,omitempty" yaml:"mac,omitempty"`
+	IP        string `json:"ip" yaml:"ip"`
+	Hostname  string `json:"hostname,omitempty" yaml:"hostname,omitempty"`
+	Interface string `json:"interface,omitempty" yaml:"interface,omitempty"`
 }
 
 type DHCPLeaseEventResult struct {

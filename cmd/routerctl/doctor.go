@@ -17,15 +17,16 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/hybrid"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/platform"
 	routerplugin "github.com/imksoo/routerd/pkg/plugin"
 	"github.com/imksoo/routerd/pkg/render"
-	"github.com/imksoo/routerd/pkg/sam"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -736,7 +737,7 @@ func doctorBGPDynamicPeerAdmissionCheck(name string, status map[string]any) doct
 }
 
 func (r doctorRunner) doctorSAMBGPDeliveryChecks(pool api.Resource) []doctorCheck {
-	spec, err := pool.MobilityPoolSpec()
+	_, err := pool.MobilityPoolSpec()
 	if err != nil {
 		return []doctorCheck{{
 			Area:   "sam",
@@ -745,10 +746,6 @@ func (r doctorRunner) doctorSAMBGPDeliveryChecks(pool api.Resource) []doctorChec
 			Detail: "invalid MobilityPool spec: " + err.Error(),
 			Remedy: "fix MobilityPool spec before accepting SAM dataplane readiness",
 		}}
-	}
-	mode := strings.TrimSpace(spec.DeliveryPolicy.Mode)
-	if mode != "" && mode != "bgp" {
-		return nil
 	}
 	routerRefs := r.samTransportBGPRouterRefs()
 	if len(routerRefs) == 0 {
@@ -772,7 +769,7 @@ func (r doctorRunner) doctorSAMBGPDeliveryChecks(pool api.Resource) []doctorChec
 		established := statusInt(status["establishedPeers"])
 		fibMissing := statusInt(status["fibMissingRoutes"])
 		fibUnsupported := statusInt(status["fibUnsupportedRoutes"])
-		detail := appendDoctorDetail("phase="+firstNonEmpty(phase, "missing"), fmt.Sprintf("establishedPeers=%d fibMissingRoutes=%d fibUnsupportedRoutes=%d", established, fibMissing, fibUnsupported))
+		detail := appendDoctorDetail("phase="+stringutil.FirstNonEmpty(phase, "missing"), fmt.Sprintf("establishedPeers=%d fibMissingRoutes=%d fibUnsupportedRoutes=%d", established, fibMissing, fibUnsupported))
 		check := doctorCheck{
 			Area:   "sam",
 			Name:   name,
@@ -847,7 +844,7 @@ func (r doctorRunner) doctorSAMFederationDiscoveryChecks(pool string, poolSpec a
 	if groupRef == "" {
 		return []doctorCheck{{Area: "sam", Name: label, Status: doctorWarn, Detail: "groupRef is empty; federation checks skipped"}}
 	}
-	groupSpec, ok, err := doctorSAMEventGroupSpec(r.router, groupRef)
+	groupSpec, ok, err := api.LookupEventGroup(r.router, groupRef)
 	if err != nil {
 		return []doctorCheck{{Area: "sam", Name: label, Status: doctorFail, Detail: err.Error(), Remedy: "fix EventGroup spec and retry"}}
 	}
@@ -858,8 +855,12 @@ func (r doctorRunner) doctorSAMFederationDiscoveryChecks(pool string, poolSpec a
 	if selfNode == "" {
 		return []doctorCheck{{Area: "sam", Name: label, Status: doctorFail, Detail: "EventGroup spec.nodeName is required", Remedy: "set EventGroup.nodeName to this node id"}}
 	}
+	resolved, err := mobilityconfig.ResolveMobilityPoolMembers(r.router, poolSpec)
+	if err != nil {
+		return []doctorCheck{{Area: "sam", Name: label, Status: doctorWarn, Detail: "MobilityPool membership is unresolved: " + err.Error(), Remedy: "resolve SAMNodeSet membership and retry"}}
+	}
 	peers := map[string]bool{}
-	for _, member := range poolSpec.Members {
+	for _, member := range resolved.Members {
 		nodeRef := strings.TrimSpace(member.NodeRef)
 		if nodeRef == "" || nodeRef == selfNode {
 			continue
@@ -934,31 +935,19 @@ func (r doctorRunner) doctorSAMFederationDiscoveryChecks(pool string, poolSpec a
 }
 
 func doctorSAMOwnershipTableCoversFederation(status map[string]any) (bool, string) {
-	if !strings.EqualFold(stringStatus(status, "ownershipResolverPhase"), "Resolved") {
-		return false, ""
-	}
 	if !boolStatus(status, "bgpRIBObserved") {
 		return false, ""
 	}
-	rows, ok := status["ownershipResolverOwnerTable"].([]any)
-	if !ok {
-		if typed, typedOK := status["ownershipResolverOwnerTable"].([]map[string]any); typedOK {
-			rows = make([]any, 0, len(typed))
-			for _, row := range typed {
-				rows = append(rows, row)
-			}
-		}
-	}
+	rows := ownershipResolverStatusRows(status)
 	if len(rows) == 0 {
 		return false, ""
 	}
 	ready := 0
-	for _, raw := range rows {
-		row, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
+	for _, row := range rows {
 		state := stringStatus(row, "state")
+		if strings.EqualFold(state, "Conflict") {
+			return false, ""
+		}
 		if state == "" || strings.EqualFold(state, "OK") || strings.EqualFold(state, "Resolved") {
 			ready++
 		}
@@ -980,44 +969,28 @@ func boolStatus(status map[string]any, key string) bool {
 	}
 }
 
-func doctorSAMEventGroupSpec(router *api.Router, group string) (api.EventGroupSpec, bool, error) {
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "EventGroup" || strings.TrimSpace(res.Metadata.Name) != strings.TrimSpace(group) {
-			continue
-		}
-		spec, err := res.EventGroupSpec()
-		if err != nil {
-			return api.EventGroupSpec{}, false, err
-		}
-		return spec, true, nil
-	}
-	return api.EventGroupSpec{}, false, nil
-}
-
 func doctorSAMOwnershipConflictCheck(pool string, status map[string]any) doctorCheck {
 	label := "MobilityPool/" + pool + " ownership conflicts"
-	if strings.EqualFold(stringStatus(status, "ownershipResolverPhase"), "Conflict") || statusInt(status["ownershipResolverConflictCount"]) > 0 {
-		conflicts := statusMaps(status["ownershipResolverConflicts"])
-		count := statusInt(status["ownershipResolverConflictCount"])
-		if len(conflicts) > count {
-			count = len(conflicts)
-		}
+	conflicts := ownershipResolverStatusRowsWithState(status, "Conflict")
+	if len(conflicts) > 0 {
+		count := len(conflicts)
 		detail := fmt.Sprintf("%d ownership conflict(s)", count)
 		if len(conflicts) > 0 {
 			detail = appendDoctorDetail(detail, doctorSAMOwnerRowsSummary(conflicts, 3))
-		} else if reason := stringStatus(status, "ownershipResolverReason"); reason != "" {
-			detail = appendDoctorDetail(detail, reason)
 		}
 		return doctorCheck{
 			Area:   "sam",
 			Name:   label,
 			Status: doctorFail,
 			Detail: detail,
-			Remedy: "fix duplicate /32 ownership before applying provider capture actions; inspect ownershipResolverOwnerTable",
+			Remedy: "fix duplicate /32 ownership before applying provider capture actions; inspect ownershipResolverControlPlaneOwnerTable",
 		}
 	}
 	if len(status) == 0 {
 		return doctorCheck{Area: "sam", Name: label, Status: doctorSkip, Detail: "MobilityPool status unavailable"}
+	}
+	if _, ok := status["ownershipResolverControlPlaneOwnerTable"]; !ok {
+		return doctorCheck{Area: "sam", Name: label, Status: doctorSkip, Detail: "ownership resolver owner table unavailable"}
 	}
 	return doctorCheck{Area: "sam", Name: label, Status: doctorPass, Detail: "no ownership conflicts"}
 }
@@ -1027,11 +1000,8 @@ func doctorSAMStaleCaptureCheck(pool string, status map[string]any) doctorCheck 
 	if len(status) == 0 {
 		return doctorCheck{Area: "sam", Name: label, Status: doctorSkip, Detail: "MobilityPool status unavailable"}
 	}
-	stale := statusMaps(status["ownershipResolverStaleClaims"])
-	count := statusInt(status["ownershipResolverStaleCount"])
-	if len(stale) > count {
-		count = len(stale)
-	}
+	stale := ownershipResolverStatusRowsWithState(status, "Stale")
+	count := len(stale)
 	if count == 0 {
 		return doctorCheck{Area: "sam", Name: label, Status: doctorPass, Detail: "no stale capture evidence"}
 	}
@@ -1050,9 +1020,9 @@ func doctorSAMStaleCaptureCheck(pool string, status map[string]any) doctorCheck 
 
 func (r doctorRunner) doctorSAMOwnerTableRouteChecks(pool string, poolSpec api.MobilityPoolSpec, status map[string]any) []doctorCheck {
 	label := "MobilityPool/" + pool + " owner-table route drift"
-	rows := statusMaps(status["ownershipResolverOwnerTable"])
+	rows := ownershipResolverStatusRows(status)
 	if len(rows) == 0 {
-		return []doctorCheck{{Area: "sam", Name: label, Status: doctorSkip, Detail: "ownershipResolverOwnerTable unavailable"}}
+		return []doctorCheck{{Area: "sam", Name: label, Status: doctorSkip, Detail: "ownershipResolverControlPlaneOwnerTable unavailable"}}
 	}
 	if !r.opts.Host {
 		return []doctorCheck{doctorHostSkipped("sam", label)}
@@ -1062,7 +1032,7 @@ func (r doctorRunner) doctorSAMOwnerTableRouteChecks(pool string, poolSpec api.M
 	snapshotCommand := doctorRunDiagnosticCommand(ctx, "ip -4 route show table main", "ip", "-4", "route", "show", "table", "main")
 	actualRoutes := parseDoctorIPv4MainRoutes(snapshotCommand.Stdout)
 	if !snapshotCommand.OK {
-		checks = append(checks, doctorCheck{Area: "sam", Name: label + " actual FIB snapshot", Status: doctorWarn, Detail: firstNonEmpty(snapshotCommand.Error, oneLine(snapshotCommand.Output), "main table route snapshot unavailable"), Remedy: "inspect ip -4 route show table main"})
+		checks = append(checks, doctorCheck{Area: "sam", Name: label + " actual FIB snapshot", Status: doctorWarn, Detail: stringutil.FirstNonEmpty(snapshotCommand.Error, oneLine(snapshotCommand.Output), "main table route snapshot unavailable"), Remedy: "inspect ip -4 route show table main"})
 	}
 	expectedPrefixes := map[string]bool{}
 	for _, row := range rows {
@@ -1085,7 +1055,7 @@ func (r doctorRunner) doctorSAMOwnerTableRouteChecks(pool string, poolSpec api.M
 				checks = append(checks, doctorCheck{Area: "sam", Name: name, Status: doctorFail, Detail: appendDoctorDetail("expected endpoint-owned local route, actual "+badLine, "actual FIB snapshot has stale BGP/SAM route and route get failed"), Remedy: "reconcile routerd and remove stale remote /32 FIB state; expected endpoint-owned local/cloud route to win"})
 				continue
 			}
-			checks = append(checks, doctorCheck{Area: "sam", Name: name, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "route lookup failed"), Remedy: "inspect Linux route selection for local owned address"})
+			checks = append(checks, doctorCheck{Area: "sam", Name: name, Status: doctorWarn, Detail: stringutil.FirstNonEmpty(command.Error, oneLine(command.Output), "route lookup failed"), Remedy: "inspect Linux route selection for local owned address"})
 			continue
 		}
 		out := oneLine(command.Stdout)
@@ -1140,7 +1110,7 @@ func doctorSAMObservedBGPReturnRoutes(status map[string]any) []string {
 }
 
 func doctorSAMOwnerRowNeedsLocalFIB(row map[string]any) bool {
-	if strings.TrimSpace(fmt.Sprint(row["localNode"])) == "" {
+	if strings.TrimSpace(fmt.Sprint(row["localEvidenceNode"])) == "" {
 		return false
 	}
 	if state := strings.TrimSpace(fmt.Sprint(row["state"])); state != "" && state != "OK" {
@@ -1236,7 +1206,7 @@ func doctorSAMUnexpectedRouteResidueChecks(pool string, poolSpec api.MobilityPoo
 			Area:   "sam",
 			Name:   "MobilityPool/" + pool + " owner-table unexpected reachability route " + address,
 			Status: doctorWarn,
-			Detail: "route inside MobilityPool prefix is reachable in the host FIB but absent from ownershipResolverOwnerTable; " + detail,
+			Detail: "route inside MobilityPool prefix is reachable in the host FIB but absent from ownershipResolverControlPlaneOwnerTable; " + detail,
 			Remedy: "inspect provider subnet and BGPRouter advertised prefixes; confirm the route is reachability-only rather than stale captured ownership",
 		})
 	}
@@ -1246,7 +1216,7 @@ func doctorSAMUnexpectedRouteResidueChecks(pool string, poolSpec api.MobilityPoo
 			Area:   "sam",
 			Name:   "MobilityPool/" + pool + " owner-table unexpected route residue " + address,
 			Status: doctorFail,
-			Detail: "route inside MobilityPool prefix is present in the host FIB but absent from ownershipResolverOwnerTable; " + detail,
+			Detail: "route inside MobilityPool prefix is present in the host FIB but absent from ownershipResolverControlPlaneOwnerTable; " + detail,
 			Remedy: "inspect routerd/provider ownership state and remove stale /32 host route only after confirming it is not currently owned",
 		})
 	}
@@ -1306,8 +1276,8 @@ func doctorSAMOwnerRowsSummary(rows []map[string]any, limit int) string {
 	var parts []string
 	for _, row := range rows[:limit] {
 		address := strings.TrimSpace(fmt.Sprint(row["address"]))
-		owner := firstNonEmpty(strings.TrimSpace(fmt.Sprint(row["homeOwnerNode"])), strings.TrimSpace(fmt.Sprint(row["ownerNode"])))
-		local := firstNonEmpty(strings.TrimSpace(fmt.Sprint(row["localNodeRef"])), strings.TrimSpace(fmt.Sprint(row["localNode"])))
+		owner := stringutil.FirstNonEmpty(strings.TrimSpace(fmt.Sprint(row["homeOwnerNode"])), strings.TrimSpace(fmt.Sprint(row["ownerNode"])))
+		local := stringutil.FirstNonEmpty(strings.TrimSpace(fmt.Sprint(row["localEvidenceNode"])), strings.TrimSpace(fmt.Sprint(row["localNodeRef"])), strings.TrimSpace(fmt.Sprint(row["localNode"])))
 		reason := strings.TrimSpace(fmt.Sprint(row["conflictReason"]))
 		item := address
 		if owner != "" || local != "" {
@@ -1324,24 +1294,33 @@ func doctorSAMOwnerRowsSummary(rows []map[string]any, limit int) string {
 	return strings.Join(parts, "; ")
 }
 
+func ownershipResolverStatusRows(status map[string]any) []map[string]any {
+	return statusMaps(status["ownershipResolverControlPlaneOwnerTable"])
+}
+
+func ownershipResolverStatusRowsWithState(status map[string]any, want string) []map[string]any {
+	rows := ownershipResolverStatusRows(status)
+	out := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		if strings.EqualFold(stringStatus(row, "state"), want) {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
 func (r doctorRunner) doctorHybrid() []doctorCheck {
 	if r.router == nil {
 		return []doctorCheck{{Area: "hybrid", Name: "startup config", Status: doctorSkip, Detail: "startup config unavailable"}}
 	}
 	routes := selectResources(r.router.Spec.Resources, "HybridRoute", "")
 	peers := selectResources(r.router.Spec.Resources, "OverlayPeer", "")
-	domains := selectResources(r.router.Spec.Resources, "AddressMobilityDomain", "")
-	claims := selectResources(r.router.Spec.Resources, "RemoteAddressClaim", "")
-	if len(routes) == 0 && len(peers) == 0 && len(domains) == 0 && len(claims) == 0 {
+	if len(routes) == 0 && len(peers) == 0 {
 		return []doctorCheck{{Area: "hybrid", Name: "HybridRoute", Status: doctorSkip, Detail: "no hybrid resources configured"}}
 	}
 	peerMap := map[string]api.Resource{}
 	for _, peer := range peers {
 		peerMap[peer.Metadata.Name] = peer
-	}
-	domainMap := map[string]api.Resource{}
-	for _, domain := range domains {
-		domainMap[domain.Metadata.Name] = domain
 	}
 	wgInterfaces := map[string]bool{}
 	for _, res := range selectResources(r.router.Spec.Resources, "WireGuardInterface", "") {
@@ -1392,130 +1371,7 @@ func (r doctorRunner) doctorHybrid() []doctorCheck {
 		checks = append(checks, r.doctorHybridHealthCheck(route.Metadata.Name, spec.HealthCheckRef))
 		checks = append(checks, r.doctorHybridRouteInstalledChecks(route.Metadata.Name, spec.DestinationCIDRs)...)
 	}
-	for _, domain := range domains {
-		spec, err := domain.AddressMobilityDomainSpec()
-		if err != nil {
-			checks = append(checks, doctorCheck{Area: "hybrid", Name: "AddressMobilityDomain/" + domain.Metadata.Name, Status: doctorFail, Detail: err.Error(), Remedy: "fix AddressMobilityDomain spec"})
-			continue
-		}
-		if spec.PeerRef == "" {
-			checks = append(checks, doctorCheck{Area: "hybrid", Name: "AddressMobilityDomain/" + domain.Metadata.Name + " peerRef", Status: doctorSkip, Detail: "no default peerRef configured"})
-			continue
-		}
-		peerName := doctorHybridRefName(spec.PeerRef, "OverlayPeer")
-		if _, ok := peerMap[peerName]; ok {
-			checks = append(checks, doctorCheck{Area: "hybrid", Name: "AddressMobilityDomain/" + domain.Metadata.Name + " peerRef", Status: doctorPass, Detail: "OverlayPeer/" + peerName})
-		} else {
-			checks = append(checks, doctorCheck{Area: "hybrid", Name: "AddressMobilityDomain/" + domain.Metadata.Name + " peerRef", Status: doctorFail, Detail: "missing OverlayPeer/" + peerName, Remedy: "declare the OverlayPeer or update spec.peerRef"})
-		}
-	}
-	for _, claim := range claims {
-		spec, err := claim.RemoteAddressClaimSpec()
-		if err != nil {
-			checks = append(checks, doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + claim.Metadata.Name, Status: doctorFail, Detail: err.Error(), Remedy: "fix RemoteAddressClaim spec"})
-			continue
-		}
-		domainName := doctorHybridRefName(spec.DomainRef, "AddressMobilityDomain")
-		if _, ok := domainMap[domainName]; ok {
-			checks = append(checks, doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + claim.Metadata.Name + " domainRef", Status: doctorPass, Detail: "AddressMobilityDomain/" + domainName})
-		} else {
-			checks = append(checks, doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + claim.Metadata.Name + " domainRef", Status: doctorFail, Detail: "missing AddressMobilityDomain/" + domainName, Remedy: "declare the AddressMobilityDomain or update spec.domainRef"})
-		}
-		peerName := doctorHybridRefName(spec.Delivery.PeerRef, "OverlayPeer")
-		if _, ok := peerMap[peerName]; ok {
-			checks = append(checks, doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + claim.Metadata.Name + " delivery.peerRef", Status: doctorPass, Detail: "OverlayPeer/" + peerName})
-		} else {
-			checks = append(checks, doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + claim.Metadata.Name + " delivery.peerRef", Status: doctorFail, Detail: "missing OverlayPeer/" + peerName, Remedy: "declare the OverlayPeer or update spec.delivery.peerRef"})
-		}
-		checks = append(checks, doctorHybridCaptureTypeCheck(claim.Metadata.Name, spec.Capture.Type))
-		checks = append(checks, r.doctorSAMLiveChecks(claim.Metadata.Name, spec)...)
-	}
 	return checks
-}
-
-func (r doctorRunner) doctorSAMLiveChecks(name string, spec api.RemoteAddressClaimSpec) []doctorCheck {
-	if !r.opts.Host {
-		return []doctorCheck{doctorHostSkipped("hybrid", "RemoteAddressClaim/"+name+" SAM dataplane")}
-	}
-	if doctorCurrentOS() != platform.OSLinux {
-		return []doctorCheck{{Area: "hybrid", Name: "RemoteAddressClaim/" + name + " SAM dataplane", Status: doctorSkip, Detail: "SAM capture not implemented on this OS"}}
-	}
-	statusReader, _ := r.store.(sam.StatusReader)
-	gate := sam.EvaluateCaptureGate(spec.Capture, statusReader)
-	var gateChecks []doctorCheck
-	if gate.Type == "vrrp-master" || gate.VirtualAddressRef != "" {
-		gateChecks = append(gateChecks, doctorSAMActiveWhenVRRPCheck(name, gate))
-	}
-	if !gate.Active {
-		return append(gateChecks, doctorSAMInactiveCaptureChecks(name, spec, gate)...)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
-	defer cancel()
-	address := strings.TrimSpace(spec.Address)
-	routeName := sam.DeliveryRouteName(name)
-	tunnel := strings.TrimSpace(spec.Delivery.TunnelInterface)
-	if tunnel == "" {
-		tunnel = "delivery tunnel interface unresolved from OverlayPeer in doctor"
-	}
-	captureInterface := strings.TrimSpace(spec.Capture.Interface)
-	checks := append([]doctorCheck{}, gateChecks...)
-	checks = append(checks,
-		doctorSAMIPForwardCheck(ctx, name),
-		doctorSAMDeliveryRouteCheck(ctx, name, routeName, address, tunnel),
-		doctorSAMRouteGetCheck(ctx, name, address),
-		doctorSAMMSSClampCheck(ctx, name, captureInterface, tunnel),
-		doctorSAMForceFragmentCheck(ctx, name, captureInterface, tunnel),
-		doctorSAMHostFirewallCheck(ctx, name, captureInterface, tunnel, r.doctorWireGuardListenPort(tunnel)),
-	)
-	if strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
-		checks = append(checks, doctorSAMCaptureInterfaceCheck(ctx, name, captureInterface))
-		checks = append(checks, doctorSAMProxyARPEnabledCheck(ctx, name, captureInterface))
-		checks = append(checks, doctorSAMProxyNeighborCheck(ctx, name, address, captureInterface))
-		if gate.Type == "vrrp-master" || gate.VirtualAddressRef != "" {
-			checks = append(checks, doctorSAMProxyARPDuplicateResponderCheck(ctx, name, address, captureInterface, gate.Active))
-		}
-		checks = append(checks, doctorSAMRPFilterCheck(ctx, name, captureInterface))
-		checks = append(checks, doctorSAMForwardPolicyCheck(ctx, name, captureInterface, tunnel, address))
-	}
-	if iface := strings.TrimSpace(spec.Delivery.TunnelInterface); iface != "" {
-		checks = append(checks, doctorSAMRPFilterCheck(ctx, name, iface))
-	}
-	if strings.TrimSpace(spec.Capture.Type) == "provider-secondary-ip" {
-		if !spec.Capture.ConfigureOSAddress {
-			checks = append(checks, doctorSAMLocalAddressAbsentCheck(ctx, name, address))
-		}
-		checks = append(checks, doctorSAMForwardPolicyCheck(ctx, name, strings.TrimSpace(spec.Capture.Interface), tunnel, address))
-	}
-	return checks
-}
-
-func doctorSAMActiveWhenVRRPCheck(name string, gate sam.CaptureGateStatus) doctorCheck {
-	label := "RemoteAddressClaim/" + name + " activeWhen vrrp-master"
-	if gate.Active {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: gate.Message}
-	}
-	return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "capture gated inactive: " + gate.Message}
-}
-
-func doctorSAMInactiveCaptureChecks(name string, spec api.RemoteAddressClaimSpec, gate sam.CaptureGateStatus) []doctorCheck {
-	base := doctorCheck{
-		Area:   "hybrid",
-		Name:   "RemoteAddressClaim/" + name + " SAM dataplane",
-		Status: doctorSkip,
-		Detail: "capture gated inactive: " + gate.Message,
-	}
-	if strings.TrimSpace(spec.Capture.Type) != "proxy-arp" {
-		return []doctorCheck{base}
-	}
-	iface := strings.TrimSpace(spec.Capture.Interface)
-	if iface == "" {
-		return []doctorCheck{base}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	proxy := doctorSAMProxyNeighborAbsentCheck(ctx, name, strings.TrimSpace(spec.Address), iface, gate)
-	proxyARP := doctorSAMProxyARPDisabledCheck(ctx, name, iface, gate)
-	return []doctorCheck{base, proxy, proxyARP}
 }
 
 func (r doctorRunner) doctorWireGuardListenPort(iface string) int {
@@ -1532,498 +1388,6 @@ func (r doctorRunner) doctorWireGuardListenPort(iface string) int {
 		}
 	}
 	return 0
-}
-
-func doctorSAMCaptureInterfaceCheck(ctx context.Context, name, iface string) doctorCheck {
-	label := "RemoteAddressClaim/" + name + " proxy-arp interface"
-	if strings.TrimSpace(iface) == "" {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "interface unavailable"}
-	}
-	command := doctorRunDiagnosticCommand(ctx, "ip link show "+iface, "ip", "-o", "link", "show", "dev", iface)
-	if command.OK {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: firstNonEmpty(oneLine(command.Stdout), "interface "+iface+" found")}
-	}
-	return doctorCheck{
-		Area:   "hybrid",
-		Name:   label,
-		Status: doctorFail,
-		Detail: "RemoteAddressClaim/" + name + " proxy-arp interface " + iface + " not found",
-		Remedy: "create or rename the interface; routerd cannot set proxy_arp on a missing interface",
-	}
-}
-
-func doctorSAMIPForwardCheck(ctx context.Context, name string) doctorCheck {
-	label := "RemoteAddressClaim/" + name + " ip_forward"
-	command := doctorRunDiagnosticCommand(ctx, "sysctl net.ipv4.ip_forward", "sysctl", "-n", "net.ipv4.ip_forward")
-	if command.OK && strings.TrimSpace(command.Stdout) == "1" {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: "net.ipv4.ip_forward=1"}
-	}
-	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "net.ipv4.ip_forward is not 1"), Remedy: "wait for routerd sysctl reconciliation or set net.ipv4.ip_forward=1"}
-}
-
-func doctorSAMRouteGetCheck(ctx context.Context, name, address string) doctorCheck {
-	label := "RemoteAddressClaim/" + name + " route get"
-	ip := strings.TrimSuffix(strings.TrimSpace(address), "/32")
-	if ip == "" {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "address unavailable"}
-	}
-	command := doctorRunDiagnosticCommand(ctx, "ip route get "+ip, "ip", "-4", "route", "get", ip)
-	if command.OK {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: oneLine(command.Stdout)}
-	}
-	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "route lookup failed"), Remedy: "inspect Linux route selection for the SAM claim address"}
-}
-
-func doctorSAMDeliveryRouteCheck(ctx context.Context, name, routeName, address, tunnel string) doctorCheck {
-	label := "RemoteAddressClaim/" + name + " delivery route"
-	command := doctorRunDiagnosticCommand(ctx, "ip route show "+address, "ip", "-4", "route", "show", address)
-	if command.OK && (strings.Contains(command.Stdout, strings.TrimSpace(address)) || strings.Contains(command.Stdout, strings.TrimSuffix(strings.TrimSpace(address), "/32"))) {
-		if strings.HasPrefix(tunnel, "delivery tunnel interface unresolved") || strings.Contains(command.Stdout, "dev "+tunnel) {
-			return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: appendDoctorDetail(oneLine(command.Stdout), "lowered IPv4Route/"+routeName)}
-		}
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: appendDoctorDetail(oneLine(command.Stdout), "expected dev "+tunnel), Remedy: "inspect lowered IPv4Route/" + routeName + " and OverlayPeer delivery settings"}
-	}
-	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "route not found"), Remedy: "wait for routerd to install lowered IPv4Route/" + routeName}
-}
-
-func doctorSAMProxyARPEnabledCheck(ctx context.Context, name, iface string) doctorCheck {
-	label := "RemoteAddressClaim/" + name + " proxy_arp " + iface
-	if strings.TrimSpace(iface) == "" {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "interface unavailable"}
-	}
-	key := "net.ipv4.conf." + iface + ".proxy_arp"
-	command := doctorRunDiagnosticCommand(ctx, "sysctl "+key, "sysctl", "-n", key)
-	if command.OK && strings.TrimSpace(command.Stdout) == "1" {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: key + "=1"}
-	}
-	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), key+" is not 1"), Remedy: "wait for routerd SAM capture reconciliation or set " + key + "=1"}
-}
-
-func doctorSAMProxyNeighborCheck(ctx context.Context, name, address, iface string) doctorCheck {
-	label := "RemoteAddressClaim/" + name + " proxy neighbor"
-	command := doctorRunDiagnosticCommand(ctx, "ip neigh show proxy "+address+" dev "+iface, "ip", "neigh", "show", "proxy", address, "dev", iface)
-	if command.OK && strings.Contains(command.Stdout, strings.TrimSuffix(address, "/32")) {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: oneLine(command.Stdout)}
-	}
-	return doctorCheck{Area: "hybrid", Name: label, Status: doctorFail, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "proxy neighbor not found"), Remedy: "wait for routerd SAM capture reconciliation or inspect proxy_arp and netlink neighbor state"}
-}
-
-func doctorSAMProxyNeighborAbsentCheck(ctx context.Context, name, address, iface string, gate sam.CaptureGateStatus) doctorCheck {
-	label := "RemoteAddressClaim/" + name + " proxy neighbor absent"
-	command := doctorRunDiagnosticCommand(ctx, "ip neigh show proxy "+address+" dev "+iface, "ip", "neigh", "show", "proxy", address, "dev", iface)
-	if command.OK && strings.Contains(command.Stdout, strings.TrimSuffix(address, "/32")) {
-		return doctorCheck{
-			Area:   "hybrid",
-			Name:   label,
-			Status: doctorFail,
-			Detail: "capture gated inactive but proxy neighbor is present: " + oneLine(command.Stdout),
-			Remedy: "wait for routerd SAM cleanup; if it persists, inspect VirtualAddress/" + gate.VirtualAddressRef + " role and remove the stale proxy neighbor",
-		}
-	}
-	return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "capture gated inactive and proxy neighbor absent"}
-}
-
-func doctorSAMProxyARPDisabledCheck(ctx context.Context, name, iface string, gate sam.CaptureGateStatus) doctorCheck {
-	label := "RemoteAddressClaim/" + name + " proxy_arp disabled"
-	if strings.TrimSpace(iface) == "" {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "interface unavailable"}
-	}
-	key := "net.ipv4.conf." + iface + ".proxy_arp"
-	command := doctorRunDiagnosticCommand(ctx, "sysctl "+key, "sysctl", "-n", key)
-	if command.OK && strings.TrimSpace(command.Stdout) == "0" {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: key + "=0"}
-	}
-	return doctorCheck{
-		Area:   "hybrid",
-		Name:   label,
-		Status: doctorFail,
-		Detail: "capture gated inactive but route-based proxy_arp is enabled: " + firstNonEmpty(command.Error, oneLine(command.Output), key+" is not 0"),
-		Remedy: "wait for routerd SAM cleanup; if it persists, inspect VirtualAddress/" + gate.VirtualAddressRef + " role and set " + key + "=0",
-	}
-}
-
-func doctorSAMProxyARPDuplicateResponderCheck(ctx context.Context, name, address, iface string, localMaster bool) doctorCheck {
-	label := "RemoteAddressClaim/" + name + " proxy-arp duplicate responders"
-	if strings.TrimSpace(iface) == "" {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "interface unavailable"}
-	}
-	ip, ok := doctorProbeIPv4(address)
-	if !ok {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "IPv4 address unavailable"}
-	}
-	command := doctorRunDiagnosticCommand(ctx, "arping "+ip+" dev "+iface, "arping", "-c", "3", "-w", "2", "-I", iface, ip)
-	macs := doctorUniqueMACAddresses(command.Output)
-	switch {
-	case len(macs) > 1:
-		return doctorCheck{
-			Area:   "hybrid",
-			Name:   label,
-			Status: doctorFail,
-			Detail: fmt.Sprintf("multiple ARP responders for %s on %s: %s", ip, iface, strings.Join(macs, ", ")),
-			Remedy: "split-brain proxy-ARP capture detected; verify only the VRRP master captures this /32 and inspect L2 loop/storm stability evidence",
-		}
-	case len(macs) == 1:
-		if localMaster {
-			localMAC := doctorLocalInterfaceMAC(ctx, iface)
-			if localMAC != "" && !strings.EqualFold(macs[0], localMAC) {
-				return doctorCheck{
-					Area:   "hybrid",
-					Name:   label,
-					Status: doctorFail,
-					Detail: fmt.Sprintf("local VRRP master plus peer ARP responder for %s on %s: peer %s, local %s", ip, iface, macs[0], localMAC),
-					Remedy: "split-brain proxy-ARP capture detected; backup nodes must be fail-closed and only the VRRP master may answer this /32",
-				}
-			}
-		}
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: fmt.Sprintf("single ARP responder for %s on %s: %s", ip, iface, macs[0])}
-	case command.OK:
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: fmt.Sprintf("no duplicate ARP responders observed for %s on %s", ip, iface)}
-	default:
-		return doctorCheck{
-			Area:   "hybrid",
-			Name:   label,
-			Status: doctorWarn,
-			Detail: "duplicate responder probe unavailable: " + firstNonEmpty(command.Error, oneLine(command.Output), "arping produced no output"),
-			Remedy: "install arping or run doctor with privileges that can send ARP probes to verify split-brain proxy-ARP capture",
-		}
-	}
-}
-
-func doctorLocalInterfaceMAC(ctx context.Context, iface string) string {
-	if strings.TrimSpace(iface) == "" {
-		return ""
-	}
-	command := doctorRunDiagnosticCommand(ctx, "cat /sys/class/net/"+iface+"/address", "cat", "/sys/class/net/"+iface+"/address")
-	if !command.OK {
-		return ""
-	}
-	return strings.ToLower(strings.TrimSpace(command.Stdout))
-}
-
-func doctorProbeIPv4(address string) (string, bool) {
-	address = strings.TrimSpace(address)
-	if address == "" {
-		return "", false
-	}
-	if prefix, err := netip.ParsePrefix(address); err == nil && prefix.Addr().Is4() {
-		return prefix.Addr().String(), true
-	}
-	if addr, err := netip.ParseAddr(address); err == nil && addr.Is4() {
-		return addr.String(), true
-	}
-	return "", false
-}
-
-func doctorUniqueMACAddresses(output string) []string {
-	seen := map[string]bool{}
-	for _, match := range doctorMACAddressPattern.FindAllString(output, -1) {
-		seen[strings.ToLower(match)] = true
-	}
-	macs := make([]string, 0, len(seen))
-	for mac := range seen {
-		macs = append(macs, mac)
-	}
-	sort.Strings(macs)
-	return macs
-}
-
-func doctorSAMLocalAddressAbsentCheck(ctx context.Context, name, address string) doctorCheck {
-	label := "RemoteAddressClaim/" + name + " local OS address"
-	command := doctorRunDiagnosticCommand(ctx, "ip addr show "+address, "ip", "-o", "-4", "addr", "show", "to", address)
-	if command.OK && strings.TrimSpace(command.Stdout) == "" {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: strings.TrimSpace(address) + " absent from local interfaces"}
-	}
-	if command.OK {
-		return doctorCheck{
-			Area:   "hybrid",
-			Name:   label,
-			Status: doctorWarn,
-			Detail: oneLine(command.Stdout),
-			Remedy: "routerd enforces OS-absence and removes this address during reconcile when present; if it keeps reappearing, disable the guest cloud-init/netplan config for that IP",
-		}
-	}
-	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "local address check failed"), Remedy: "verify the captured address is not assigned to the guest OS"}
-}
-
-func doctorSAMForwardPolicyCheck(ctx context.Context, name, captureIface, tunnel, address string) doctorCheck {
-	label := "RemoteAddressClaim/" + name + " FORWARD policy"
-	command := doctorRunDiagnosticCommand(ctx, "nft list table inet routerd_filter", "nft", "list", "table", "inet", "routerd_filter")
-	if !command.OK {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: doctorSAMForwardPolicyUnavailableDetail(command)}
-	}
-	detail := "SAM delivery traverses FORWARD"
-	if captureIface != "" || tunnel != "" {
-		detail = appendDoctorDetail(detail, "path "+firstNonEmpty(captureIface, "<capture-interface>")+" -> "+firstNonEmpty(tunnel, "<tunnel-interface>"))
-	}
-	if address != "" {
-		detail = appendDoctorDetail(detail, "claim "+address)
-	}
-	if nftForwardPolicyDrop(command.Stdout) {
-		return doctorCheck{
-			Area:   "hybrid",
-			Name:   label,
-			Status: doctorWarn,
-			Detail: appendDoctorDetail(detail, "default-drop FORWARD policy observed"),
-			Remedy: "verify firewall policy permits SAM forwarding between the capture interface and tunnel interface for the captured /32",
-		}
-	}
-	return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: detail}
-}
-
-func doctorSAMMSSClampCheck(ctx context.Context, name, captureIface, tunnel string) doctorCheck {
-	label := "RemoteAddressClaim/" + name + " MSS clamp"
-	tunnel = strings.TrimSpace(tunnel)
-	captureIface = strings.TrimSpace(captureIface)
-	if tunnel == "" || strings.HasPrefix(tunnel, "delivery tunnel interface unresolved") {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "delivery tunnel interface unavailable"}
-	}
-	link := doctorRunDiagnosticCommand(ctx, "ip link show "+tunnel, "ip", "-o", "link", "show", "dev", tunnel)
-	detail := "SAM delivery tunnel " + tunnel
-	if link.OK {
-		if mtu := doctorExtractLinkMTU(link.Stdout); mtu != "" {
-			detail = appendDoctorDetail(detail, "mtu="+mtu)
-		} else {
-			detail = appendDoctorDetail(detail, oneLine(link.Stdout))
-		}
-	}
-	if captureIface == "" {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: appendDoctorDetail(detail, "capture interface unavailable"), Remedy: "set spec.capture.interface on the RemoteAddressClaim so routerd can derive and diagnose SAM MSS clamp rules"}
-	}
-	table := doctorRunDiagnosticCommand(ctx, "nft list table inet routerd_mss", "nft", "list", "table", "inet", "routerd_mss")
-	if !table.OK {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: appendDoctorDetail(detail, doctorSAMMSSClampUnavailableDetail(table)), Remedy: "wait for routerd PathMTUController to install routerd_mss or inspect TCP MSS clamp rendering for the SAM path"}
-	}
-	if nftMSSClampHasPath(table.Stdout, captureIface, tunnel) {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: appendDoctorDetail(detail, "routerd_mss covers "+captureIface+" -> "+tunnel)}
-	}
-	return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: appendDoctorDetail(detail, "routerd_mss missing "+captureIface+" -> "+tunnel), Remedy: "ensure SAM Path MTU derivation includes the capture interface and WireGuard delivery tunnel"}
-}
-
-func doctorSAMMSSClampUnavailableDetail(command diagnoseCommandCheck) string {
-	combined := strings.ToLower(strings.Join([]string{command.Error, command.Stderr, command.Stdout, command.Output}, " "))
-	switch {
-	case strings.Contains(combined, "executable file not found") || strings.Contains(combined, "no such file or directory") && strings.Contains(strings.ToLower(command.Error), "exec"):
-		return "nft unavailable"
-	case strings.Contains(combined, "permission denied") || strings.Contains(combined, "operation not permitted"):
-		return "permission denied running nft"
-	case strings.Contains(combined, "no such file or directory") || strings.Contains(combined, "no such table") || strings.Contains(combined, "table does not exist"):
-		return "routerd_mss table absent"
-	default:
-		return firstNonEmpty(command.Error, oneLine(command.Output), "exit "+strconv.Itoa(command.ExitCode))
-	}
-}
-
-func doctorSAMForceFragmentCheck(ctx context.Context, name, captureIface, tunnel string) doctorCheck {
-	label := "RemoteAddressClaim/" + name + " force-fragment"
-	tunnel = strings.TrimSpace(tunnel)
-	captureIface = strings.TrimSpace(captureIface)
-	if tunnel == "" || strings.HasPrefix(tunnel, "delivery tunnel interface unresolved") {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "delivery tunnel interface unavailable"}
-	}
-	if captureIface == "" {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "capture interface unavailable"}
-	}
-	table := doctorRunDiagnosticCommand(ctx, "nft list table ip routerd_forcefrag", "nft", "list", "table", "ip", "routerd_forcefrag")
-	if !table.OK {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: appendDoctorDetail("optional IPv4 force-fragment not active", doctorForceFragmentUnavailableDetail(table))}
-	}
-	if nftForceFragmentHasPath(table.Stdout, captureIface, tunnel) {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: "routerd_forcefrag covers " + captureIface + " -> " + tunnel}
-	}
-	return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "routerd_forcefrag does not cover " + captureIface + " -> " + tunnel}
-}
-
-func doctorForceFragmentUnavailableDetail(command diagnoseCommandCheck) string {
-	combined := strings.ToLower(strings.Join([]string{command.Error, command.Stderr, command.Stdout, command.Output}, " "))
-	switch {
-	case strings.Contains(combined, "executable file not found") || strings.Contains(combined, "no such file or directory") && strings.Contains(strings.ToLower(command.Error), "exec"):
-		return "nft unavailable"
-	case strings.Contains(combined, "permission denied") || strings.Contains(combined, "operation not permitted"):
-		return "permission denied running nft"
-	case strings.Contains(combined, "no such file or directory") || strings.Contains(combined, "no such table") || strings.Contains(combined, "table does not exist"):
-		return "routerd_forcefrag table absent"
-	default:
-		return firstNonEmpty(command.Error, oneLine(command.Output), "exit "+strconv.Itoa(command.ExitCode))
-	}
-}
-
-func doctorExtractLinkMTU(output string) string {
-	fields := strings.Fields(output)
-	for i, field := range fields {
-		if field == "mtu" && i+1 < len(fields) {
-			return fields[i+1]
-		}
-	}
-	return ""
-}
-
-func nftMSSClampHasPath(output, from, to string) bool {
-	for _, line := range strings.Split(output, "\n") {
-		if strings.Contains(line, `iifname "`+from+`"`) && strings.Contains(line, `oifname "`+to+`"`) && strings.Contains(line, "maxseg") {
-			return true
-		}
-	}
-	return false
-}
-
-func nftForceFragmentHasPath(output, from, to string) bool {
-	for _, line := range strings.Split(output, "\n") {
-		if strings.Contains(line, `iifname "`+from+`"`) &&
-			(strings.Contains(line, `fib daddr oifname "`+to+`"`) || strings.Contains(line, `oifname "`+to+`"`)) &&
-			strings.Contains(line, "frag-off set 0") {
-			return true
-		}
-	}
-	return false
-}
-
-func doctorSAMHostFirewallCheck(ctx context.Context, name, captureIface, tunnel string, listenPort int) doctorCheck {
-	label := "RemoteAddressClaim/" + name + " host firewall"
-	var warnings []string
-	var details []string
-	input := doctorRunDiagnosticCommand(ctx, "iptables -S INPUT", "iptables", "-S", "INPUT")
-	if input.OK {
-		if listenPort > 0 {
-			if iptablesChainHasTerminalDropReject(input.Stdout) && !iptablesInputAllowsUDPPort(input.Stdout, listenPort) {
-				warnings = append(warnings, fmt.Sprintf("INPUT has terminal drop/reject without UDP/%d accept", listenPort))
-			} else {
-				details = append(details, fmt.Sprintf("INPUT permits or does not block UDP/%d", listenPort))
-			}
-		}
-	} else {
-		details = append(details, "iptables INPUT unavailable: "+firstNonEmpty(input.Error, oneLine(input.Output), "exit "+strconv.Itoa(input.ExitCode)))
-	}
-	forward := doctorRunDiagnosticCommand(ctx, "iptables -S FORWARD", "iptables", "-S", "FORWARD")
-	if forward.OK {
-		if captureIface != "" && tunnel != "" && !strings.HasPrefix(tunnel, "delivery tunnel interface unresolved") {
-			forwardOK := iptablesForwardAllowsPath(forward.Stdout, captureIface, tunnel) && iptablesForwardAllowsPath(forward.Stdout, tunnel, captureIface)
-			if iptablesChainHasTerminalDropReject(forward.Stdout) && !forwardOK {
-				warnings = append(warnings, "FORWARD has terminal drop/reject without "+captureIface+" <-> "+tunnel+" accept")
-			} else {
-				details = append(details, "FORWARD permits or does not block "+captureIface+" <-> "+tunnel)
-			}
-		} else {
-			details = append(details, "FORWARD path unavailable")
-		}
-	} else {
-		details = append(details, "iptables FORWARD unavailable: "+firstNonEmpty(forward.Error, oneLine(forward.Output), "exit "+strconv.Itoa(forward.ExitCode)))
-	}
-	if len(warnings) > 0 {
-		return doctorCheck{
-			Area:   "hybrid",
-			Name:   label,
-			Status: doctorWarn,
-			Detail: strings.Join(warnings, "; "),
-			Remedy: "permit WireGuard UDP ingress and forwarding between the SAM capture interface and delivery tunnel in the host firewall",
-		}
-	}
-	if len(details) == 0 {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "host firewall state unavailable"}
-	}
-	return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: strings.Join(details, "; ")}
-}
-
-func iptablesChainHasTerminalDropReject(output string) bool {
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if strings.Contains(line, "-P ") && (strings.HasSuffix(line, " DROP") || strings.HasSuffix(line, " REJECT")) {
-			return true
-		}
-		if strings.Contains(line, "-j DROP") || strings.Contains(line, "-j REJECT") {
-			return true
-		}
-	}
-	return false
-}
-
-func iptablesInputAllowsUDPPort(output string, port int) bool {
-	portString := strconv.Itoa(port)
-	for _, line := range strings.Split(output, "\n") {
-		if !strings.Contains(line, "-A INPUT") || !strings.Contains(line, "-j ACCEPT") {
-			continue
-		}
-		if strings.Contains(line, "-p udp") && (strings.Contains(line, "--dport "+portString) || strings.Contains(line, "dpt:"+portString)) {
-			return true
-		}
-	}
-	return false
-}
-
-func iptablesForwardAllowsPath(output, from, to string) bool {
-	for _, line := range strings.Split(output, "\n") {
-		if !strings.Contains(line, "-A FORWARD") || !strings.Contains(line, "-j ACCEPT") {
-			continue
-		}
-		hasFrom := strings.Contains(line, "-i "+from) || strings.Contains(line, "-i "+shellQuoteForIptablesMatch(from))
-		hasTo := strings.Contains(line, "-o "+to) || strings.Contains(line, "-o "+shellQuoteForIptablesMatch(to))
-		if hasFrom && hasTo {
-			return true
-		}
-	}
-	return false
-}
-
-func shellQuoteForIptablesMatch(value string) string {
-	return "'" + value + "'"
-}
-
-func doctorSAMForwardPolicyUnavailableDetail(command diagnoseCommandCheck) string {
-	combined := strings.ToLower(strings.Join([]string{command.Error, command.Stderr, command.Stdout, command.Output}, " "))
-	switch {
-	case strings.Contains(combined, "executable file not found") || strings.Contains(combined, "no such file or directory") && strings.Contains(strings.ToLower(command.Error), "exec"):
-		return "nft unavailable"
-	case strings.Contains(combined, "permission denied") || strings.Contains(combined, "operation not permitted"):
-		return "permission denied running nft"
-	case strings.Contains(combined, "no such file or directory") || strings.Contains(combined, "no such table") || strings.Contains(combined, "table does not exist"):
-		return "routerd_filter table absent; no routerd firewall policy observed"
-	default:
-		detail := firstNonEmpty(command.Error, oneLine(command.Output), "exit "+strconv.Itoa(command.ExitCode))
-		return "nft list table inet routerd_filter failed: " + detail
-	}
-}
-
-func nftForwardPolicyDrop(output string) bool {
-	lower := strings.ToLower(output)
-	for _, block := range strings.Split(lower, "chain ") {
-		if !strings.Contains(block, "forward") {
-			continue
-		}
-		if strings.Contains(block, "hook forward") && strings.Contains(block, "policy drop") {
-			return true
-		}
-	}
-	return false
-}
-
-func doctorSAMRPFilterCheck(ctx context.Context, name, iface string) doctorCheck {
-	label := "RemoteAddressClaim/" + name + " rp_filter " + iface
-	if strings.TrimSpace(iface) == "" {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: "interface unavailable"}
-	}
-	key := "net.ipv4.conf." + iface + ".rp_filter"
-	command := doctorRunDiagnosticCommand(ctx, "sysctl "+key, "sysctl", "-n", key)
-	value := strings.TrimSpace(command.Stdout)
-	if command.OK && value == "1" {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: key + "=1 (strict); SAM forwarded /32 traffic may be dropped", Remedy: "consider setting " + key + "=2 (loose) after validating router policy"}
-	}
-	if command.OK {
-		return doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: key + "=" + value}
-	}
-	return doctorCheck{Area: "hybrid", Name: label, Status: doctorSkip, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "rp_filter unavailable")}
-}
-
-func doctorHybridCaptureTypeCheck(name, captureType string) doctorCheck {
-	switch strings.TrimSpace(captureType) {
-	case "provider-secondary-ip", "proxy-arp":
-		return doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + name + " capture.type", Status: doctorPass, Detail: captureType}
-	case "static-host-route", "garp":
-		return doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + name + " capture.type", Status: doctorFail, Detail: captureType + " is reserved/not implemented in MVP", Remedy: "use provider-secondary-ip or proxy-arp"}
-	default:
-		return doctorCheck{Area: "hybrid", Name: "RemoteAddressClaim/" + name + " capture.type", Status: doctorFail, Detail: "unsupported capture type " + captureType, Remedy: "use provider-secondary-ip or proxy-arp"}
-	}
 }
 
 func doctorHybridDefaultRouteCheck(name string, destinations []string) doctorCheck {
@@ -2077,7 +1441,7 @@ func (r doctorRunner) doctorHybridRouteInstalledChecks(routeName string, destina
 			checks = append(checks, doctorCheck{Area: "hybrid", Name: label, Status: doctorPass, Detail: oneLine(command.Stdout)})
 			continue
 		}
-		detail := firstNonEmpty(command.Error, oneLine(command.Output), oneLine(command.Stdout), "route not found")
+		detail := stringutil.FirstNonEmpty(command.Error, oneLine(command.Output), oneLine(command.Stdout), "route not found")
 		checks = append(checks, doctorCheck{Area: "hybrid", Name: label, Status: doctorWarn, Detail: detail, Remedy: "wait for routerd to install the lowered IPv4Route or inspect route controller status"})
 	}
 	return checks
@@ -2219,7 +1583,7 @@ func (r doctorRunner) doctorIPv4RouteStatusDriftCheck(name string, status map[st
 	if doctorCurrentOS() != platform.OSLinux {
 		return doctorCheck{Area: "routes", Name: label, Status: doctorSkip, Detail: "host route drift checks require Linux iproute2"}
 	}
-	destination := firstNonEmpty(stringStatus(status, "destination"), "0.0.0.0/0")
+	destination := stringutil.FirstNonEmpty(stringStatus(status, "destination"), "0.0.0.0/0")
 	if normalizeDoctorIPv4RoutePrefix(destination) == "" {
 		return doctorCheck{Area: "routes", Name: label, Status: doctorSkip, Detail: "non-IPv4 destination " + destination}
 	}
@@ -2227,7 +1591,7 @@ func (r doctorRunner) doctorIPv4RouteStatusDriftCheck(name string, status map[st
 	defer cancel()
 	command := doctorRunDiagnosticCommand(ctx, "ip -4 route show "+destination, "ip", "-4", "route", "show", destination)
 	if !command.OK {
-		return doctorCheck{Area: "routes", Name: label, Status: doctorFail, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "route snapshot unavailable"), Remedy: "inspect ip -4 route show " + destination}
+		return doctorCheck{Area: "routes", Name: label, Status: doctorFail, Detail: stringutil.FirstNonEmpty(command.Error, oneLine(command.Output), "route snapshot unavailable"), Remedy: "inspect ip -4 route show " + destination}
 	}
 	lines := doctorRouteLines(command.Stdout)
 	if len(lines) == 0 {
@@ -2262,8 +1626,8 @@ func doctorIPv4RouteLineMatchesStatus(line string, status map[string]any) bool {
 	if len(fields) == 0 {
 		return false
 	}
-	routeType := firstNonEmpty(stringStatus(status, "type"), "unicast")
-	destination := firstNonEmpty(stringStatus(status, "destination"), "0.0.0.0/0")
+	routeType := stringutil.FirstNonEmpty(stringStatus(status, "type"), "unicast")
+	destination := stringutil.FirstNonEmpty(stringStatus(status, "destination"), "0.0.0.0/0")
 	if routeType == "blackhole" {
 		if fields[0] != "blackhole" {
 			return false
@@ -2319,8 +1683,8 @@ func doctorIPv4RoutePreferredSource(status map[string]any) string {
 
 func doctorIPv4RouteExpectedDetail(status map[string]any) string {
 	parts := []string{
-		"type=" + firstNonEmpty(stringStatus(status, "type"), "unicast"),
-		"destination=" + firstNonEmpty(stringStatus(status, "destination"), "0.0.0.0/0"),
+		"type=" + stringutil.FirstNonEmpty(stringStatus(status, "type"), "unicast"),
+		"destination=" + stringutil.FirstNonEmpty(stringStatus(status, "destination"), "0.0.0.0/0"),
 	}
 	for _, key := range []string{"gateway", "device"} {
 		if value := stringStatus(status, key); value != "" {
@@ -2467,7 +1831,7 @@ func doctorPluginLastRunCheck(lister routerstate.PluginRunLister, name string) d
 	}
 	latest := runs[0]
 	if latest.Status == "failed" {
-		return doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last run", Status: doctorFail, Detail: firstNonEmpty(latest.Error, latest.Stderr, "last run failed"), Remedy: "inspect plugin stderr and rerun the plugin"}
+		return doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last run", Status: doctorFail, Detail: stringutil.FirstNonEmpty(latest.Error, latest.Stderr, "last run failed"), Remedy: "inspect plugin stderr and rerun the plugin"}
 	}
 	if latest.Status != "succeeded" {
 		return doctorCheck{Area: "plugin", Name: "Plugin/" + name + " last run", Status: doctorWarn, Detail: "last run status " + latest.Status}
@@ -2530,7 +1894,7 @@ func (r doctorRunner) doctorReconcile() []doctorCheck {
 						resource = entry.ResourceName
 					}
 				}
-				sample := controller.Name + "@" + entry.CompletedAt.Format(time.RFC3339) + " trigger=" + firstNonEmpty(entry.Trigger, "-")
+				sample := controller.Name + "@" + entry.CompletedAt.Format(time.RFC3339) + " trigger=" + stringutil.FirstNonEmpty(entry.Trigger, "-")
 				if resource != "" {
 					sample += " resource=" + resource
 				}
@@ -2743,7 +2107,7 @@ func (r doctorRunner) doctorDNS() []doctorCheck {
 	if r.opts.Host {
 		ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
 		defer cancel()
-		name := firstNonEmpty(firstCSV(r.opts.Names), "example.com")
+		name := stringutil.FirstNonEmpty(firstCSV(r.opts.Names), "example.com")
 		checks = append(checks, doctorCommandStatus("dns", runDiagnosticCommand(ctx, "dig @127.0.0.1 "+name, "dig", "@127.0.0.1", name, "A", "+time=2", "+tries=1"), doctorFail, "check routerd-dns-resolver and local DNS listener"))
 	} else {
 		checks = append(checks, doctorHostSkipped("dns", "dig @127.0.0.1"))
@@ -2762,8 +2126,8 @@ func (r doctorRunner) doctorDSLite() []doctorCheck {
 		resourceCheck := doctorResourceCheck("dslite", res, status, healthyPhases("Applied", "Active", "Ready", "Up"))
 		checks = append(checks, resourceCheck)
 		spec, _ := res.DSLiteTunnelSpec()
-		aftr := firstNonEmpty(spec.AFTRFQDN, stringStatus(status, "aftrFQDN"), stringStatus(status, "aftrName"))
-		device := firstNonEmpty(spec.TunnelName, stringStatus(status, "device"), stringStatus(status, "tunnelName"))
+		aftr := stringutil.FirstNonEmpty(spec.AFTRFQDN, stringStatus(status, "aftrFQDN"), stringStatus(status, "aftrName"))
+		device := stringutil.FirstNonEmpty(spec.TunnelName, stringStatus(status, "device"), stringStatus(status, "tunnelName"))
 		selectedEvidence := ""
 		if resourceCheck.Status == doctorPass {
 			selectedEvidence = r.dsliteSelectedEvidence(res.Metadata.Name, device)
@@ -2807,7 +2171,7 @@ func (r doctorRunner) dsliteSelectedEvidence(tunnelName, device string) string {
 		}
 		detail := "selected via EgressRoutePolicy/" + policy.Metadata.Name + ", gatewayHealth-aligned"
 		if candidateOK {
-			if hc := firstNonEmpty(candidate.HealthCheck, selectedTargetHealthCheck(candidate)); hc != "" {
+			if hc := stringutil.FirstNonEmpty(candidate.HealthCheck, selectedTargetHealthCheck(candidate)); hc != "" {
 				hcStatus := objectStatus(r.store, api.NetAPIVersion, "HealthCheck", hc)
 				if doctorStatusPass(hcStatus, healthyPhases("Healthy", "Applied", "Ready")) {
 					detail += ", HealthCheck/" + hc + " healthy"
@@ -2892,7 +2256,7 @@ func (r doctorRunner) doctorDHCPv6PD() []doctorCheck {
 			checks = append(checks, doctorCheck{Area: "dhcpv6-pd", Name: name, Status: doctorWarn, Detail: doctorStatusDetail(status), Remedy: "check WAN DHCPv6-PD reachability and client logs"})
 			continue
 		}
-		prefix := firstNonEmpty(stringStatus(status, "currentPrefix"), stringStatus(status, "delegatedPrefix"), stringStatus(status, "prefix"))
+		prefix := stringutil.FirstNonEmpty(stringStatus(status, "currentPrefix"), stringStatus(status, "delegatedPrefix"), stringStatus(status, "prefix"))
 		if prefix == "" {
 			checks = append(checks, doctorCheck{Area: "dhcpv6-pd", Name: name, Status: doctorWarn, Detail: doctorStatusDetail(status), Remedy: "wait for delegated prefix status to be recorded"})
 			continue
@@ -2982,7 +2346,7 @@ func doctorConntrackdTCPLiberalCheck(ctx context.Context, resourceCount int) doc
 	if command.OK && strings.TrimSpace(command.Stdout) == "1" {
 		return doctorCheck{Area: "nat", Name: name, Status: doctorPass, Detail: appendDoctorDetail(detail, "value=1")}
 	}
-	observed := firstNonEmpty(command.Error, oneLine(command.Output))
+	observed := stringutil.FirstNonEmpty(command.Error, oneLine(command.Output))
 	if command.OK {
 		observed = "value=" + strings.TrimSpace(command.Stdout)
 	}
@@ -3048,7 +2412,7 @@ func (r doctorRunner) doctorFirewallLoggerRuntimeCheck(ctx context.Context) doct
 	if doctorCurrentOS() == platform.OSFreeBSD {
 		process := doctorRunDiagnosticCommand(ctx, "pgrep routerd-firewall-logger", "pgrep", "-f", "routerd-firewall-logger")
 		if !process.OK {
-			return doctorCheck{Area: "firewall", Name: name, Status: doctorWarn, Detail: firstNonEmpty(process.Error, oneLine(process.Output), "routerd-firewall-logger process is not running"), Remedy: "inspect routerd_firewall_logger rc.d service and pflog configuration"}
+			return doctorCheck{Area: "firewall", Name: name, Status: doctorWarn, Detail: stringutil.FirstNonEmpty(process.Error, oneLine(process.Output), "routerd-firewall-logger process is not running"), Remedy: "inspect routerd_firewall_logger rc.d service and pflog configuration"}
 		}
 		fields := strings.Fields(process.Stdout)
 		pid := ""
@@ -3060,7 +2424,7 @@ func (r doctorRunner) doctorFirewallLoggerRuntimeCheck(ctx context.Context) doct
 		}
 		files := doctorRunDiagnosticCommand(ctx, "procstat logger files", "procstat", "-f", pid)
 		if !files.OK {
-			return doctorCheck{Area: "firewall", Name: name, Status: doctorWarn, Detail: firstNonEmpty(files.Error, oneLine(files.Output), "procstat could not inspect logger"), Remedy: "inspect logger process permissions and open files"}
+			return doctorCheck{Area: "firewall", Name: name, Status: doctorWarn, Detail: stringutil.FirstNonEmpty(files.Error, oneLine(files.Output), "procstat could not inspect logger"), Remedy: "inspect logger process permissions and open files"}
 		}
 		return doctorCheck{Area: "firewall", Name: name, Status: doctorPass, Detail: "pid=" + pid + "; " + oneLine(files.Output)}
 	}
@@ -3069,13 +2433,13 @@ func (r doctorRunner) doctorFirewallLoggerRuntimeCheck(ctx context.Context) doct
 	}
 	command := runDiagnosticCommand(ctx, "systemctl show routerd-firewall-logger", "systemctl", "show", "routerd-firewall-logger.service", "--property=ActiveState", "--property=MainPID")
 	if !command.OK {
-		return doctorCheck{Area: "firewall", Name: name, Status: doctorSkip, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "routerd-firewall-logger.service unavailable")}
+		return doctorCheck{Area: "firewall", Name: name, Status: doctorSkip, Detail: stringutil.FirstNonEmpty(command.Error, oneLine(command.Output), "routerd-firewall-logger.service unavailable")}
 	}
 	active, pid := parseSystemctlActiveStateMainPID(command.Stdout)
 	path := doctorFirewallLogPath(r.router)
 	dbBytes := doctorFileSize(path)
 	walBytes := doctorFileSize(path + "-wal")
-	detail := fmt.Sprintf("activeState=%s mainPID=%d dbBytes=%d walBytes=%d path=%s", firstNonEmpty(active, "unknown"), pid, dbBytes, walBytes, path)
+	detail := fmt.Sprintf("activeState=%s mainPID=%d dbBytes=%d walBytes=%d path=%s", stringutil.FirstNonEmpty(active, "unknown"), pid, dbBytes, walBytes, path)
 	if pid > 0 {
 		if writeBytes, ok := doctorProcWriteBytes(pid); ok {
 			detail = appendDoctorDetail(detail, fmt.Sprintf("writeBytes=%d", writeBytes))
@@ -3094,9 +2458,9 @@ func (r doctorRunner) doctorFirewallLoggerRuntimeCheck(ctx context.Context) doct
 func doctorFreeBSDPFStatus(ctx context.Context, area string) doctorCheck {
 	command := runDiagnosticCommand(ctx, "pfctl status", "pfctl", "-s", "info")
 	if !command.OK {
-		return doctorCheck{Area: area, Name: command.Name, Status: doctorWarn, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "pfctl unavailable"), Remedy: "enable or grant read-only access to PF before relying on firewall diagnostics"}
+		return doctorCheck{Area: area, Name: command.Name, Status: doctorWarn, Detail: stringutil.FirstNonEmpty(command.Error, oneLine(command.Output), "pfctl unavailable"), Remedy: "enable or grant read-only access to PF before relying on firewall diagnostics"}
 	}
-	detail := oneLine(firstNonEmpty(command.Stdout, command.Output, "pfctl returned no status"))
+	detail := oneLine(stringutil.FirstNonEmpty(command.Stdout, command.Output, "pfctl returned no status"))
 	if !strings.Contains(strings.ToLower(command.Stdout), "status: enabled") {
 		return doctorCheck{Area: area, Name: command.Name, Status: doctorWarn, Detail: detail, Remedy: "enable PF or verify the intended firewall backend"}
 	}
@@ -3180,7 +2544,7 @@ func (r doctorRunner) doctorStaleNftTablesCheck(ctx context.Context) doctorCheck
 	}
 	command := runDiagnosticCommand(ctx, "nft list tables", "nft", "list", "tables")
 	if !command.OK {
-		return doctorCheck{Area: "firewall", Name: name, Status: doctorSkip, Detail: firstNonEmpty(command.Error, oneLine(command.Output), "nft list tables unavailable")}
+		return doctorCheck{Area: "firewall", Name: name, Status: doctorSkip, Detail: stringutil.FirstNonEmpty(command.Error, oneLine(command.Output), "nft list tables unavailable")}
 	}
 	present := parseNftTables(command.Stdout)
 	var stale []string
@@ -3303,7 +2667,7 @@ func (r doctorRunner) doctorDisk() []doctorCheck {
 	checks := []doctorCheck{doctorTempDirPermissionsCheck(ctx)}
 	command := runDiagnosticCommand(ctx, "df routerd runtime", "df", "-Pk", "/var/lib/routerd", "/run/routerd")
 	if !command.OK {
-		return append(checks, doctorCheck{Area: "disk", Name: command.Name, Status: doctorWarn, Detail: firstNonEmpty(command.Error, command.Output), Remedy: "check routerd runtime and state paths"})
+		return append(checks, doctorCheck{Area: "disk", Name: command.Name, Status: doctorWarn, Detail: stringutil.FirstNonEmpty(command.Error, command.Output), Remedy: "check routerd runtime and state paths"})
 	}
 	return append(checks, doctorDFChecks(command.Output)...)
 }
@@ -3314,7 +2678,7 @@ func doctorTempDirPermissionsCheck(ctx context.Context) doctorCheck {
 	}
 	command := doctorRunDiagnosticCommand(ctx, "stat temporary directories", "env", "LC_ALL=C", "stat", "-c", "%a|%u|%g|%A|%F|%n", "/tmp", "/var/tmp")
 	if !command.OK {
-		return doctorCheck{Area: "disk", Name: command.Name, Status: doctorWarn, Detail: firstNonEmpty(command.Error, command.Output), Remedy: "inspect /tmp and /var/tmp permissions manually"}
+		return doctorCheck{Area: "disk", Name: command.Name, Status: doctorWarn, Detail: stringutil.FirstNonEmpty(command.Error, command.Output), Remedy: "inspect /tmp and /var/tmp permissions manually"}
 	}
 	type expectedTempDir struct {
 		mode string
@@ -3395,7 +2759,7 @@ func (r doctorRunner) doctorMgmt() []doctorCheck {
 	for _, res := range consoles {
 		spec, _ := res.WebConsoleSpec()
 		name := "WebConsole/" + res.Metadata.Name
-		listen := firstNonEmpty(spec.ListenAddress, stringStatus(objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name), "listenAddress"))
+		listen := stringutil.FirstNonEmpty(spec.ListenAddress, stringStatus(objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name), "listenAddress"))
 		if listen == "" {
 			checks = append(checks, doctorCheck{Area: "mgmt", Name: name, Status: doctorSkip, Detail: "listen address is derived or unavailable"})
 			continue
@@ -3470,7 +2834,7 @@ func doctorCommandStatus(area string, command diagnoseCommandCheck, failStatus, 
 		}
 		return doctorCheck{Area: area, Name: command.Name, Status: doctorPass, Detail: oneLine(detail)}
 	}
-	return doctorCheck{Area: area, Name: command.Name, Status: failStatus, Detail: firstNonEmpty(command.Error, oneLine(command.Output)), Remedy: remedy}
+	return doctorCheck{Area: area, Name: command.Name, Status: failStatus, Detail: stringutil.FirstNonEmpty(command.Error, oneLine(command.Output)), Remedy: remedy}
 }
 
 // doctorResourceStatusCounts tallies resource status phases for compact
@@ -3606,7 +2970,7 @@ func doctorDSLiteCommandStatus(command diagnoseCommandCheck, failStatus, remedy,
 		return check
 	}
 	check.Status = doctorPass
-	check.Detail = appendDoctorDetail(selectedEvidence, "host observation ignored: "+firstNonEmpty(command.Error, oneLine(command.Output)))
+	check.Detail = appendDoctorDetail(selectedEvidence, "host observation ignored: "+stringutil.FirstNonEmpty(command.Error, oneLine(command.Output)))
 	check.Remedy = ""
 	return check
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/miekg/dns"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 	resolvercfg "github.com/imksoo/routerd/pkg/dnsresolver"
 	"github.com/imksoo/routerd/pkg/logstore"
 )
@@ -211,7 +212,7 @@ func TestReloadPreservesDynamicLeaseRecords(t *testing.T) {
 	initial := testResolverConfig([]int{5053})
 	writeRuntimeConfig(t, configPath, initial)
 	d := newTestDaemon(t, configPath, initial, true)
-	d.zones.ApplyLease(dhcpLeaseEvent{Action: "add", MAC: "02:00:00:00:00:01", IP: "192.0.2.55", Hostname: "leasehost"})
+	d.zones.ApplyLease(dhcpLeaseEvent{Action: daemonapi.DHCPLeaseActionAdded, MAC: "02:00:00:00:00:01", IP: "192.0.2.55", Hostname: "leasehost"})
 
 	writeRuntimeConfig(t, configPath, initial)
 	if _, err := d.reload(context.Background()); err != nil {

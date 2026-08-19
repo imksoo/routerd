@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/logstore"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -159,7 +160,7 @@ func RecordStatusMetrics(ctx context.Context, resources []routerstate.ObjectStat
 				for _, backend := range statusMaps(resource.Status["backends"]) {
 					backendName := toString(backend["name"])
 					healthy := int64(0)
-					if statusBool(backend["healthy"]) {
+					if statusvalue.BoolOrFalse(backend["healthy"]) {
 						healthy = 1
 					}
 					ingressHealthyBackendGauge.Record(ctx, healthy, metric.WithAttributes(
@@ -293,17 +294,6 @@ func statusMap(value any) map[string]any {
 		return typed
 	}
 	return map[string]any{}
-}
-
-func statusBool(value any) bool {
-	switch typed := value.(type) {
-	case bool:
-		return typed
-	case string:
-		return strings.EqualFold(strings.TrimSpace(typed), "true")
-	default:
-		return false
-	}
 }
 
 func defaultStatusString(value, fallback string) string {

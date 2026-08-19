@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/internal/hostcmd"
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/bus"
@@ -640,7 +641,7 @@ func gatewayHealth(resources []routerstate.ObjectStatus) GatewayHealth {
 			Name:               resource.Name,
 			Status:             gatewayComponentStatus(resource.Kind, resource.Status),
 			Phase:              statusText(resource.Status, "phase"),
-			Reason:             firstNonEmpty(statusText(resource.Status, "reason"), statusText(resource.Status, "message")),
+			Reason:             stringutil.FirstNonBlank(statusText(resource.Status, "reason"), statusText(resource.Status, "message")),
 			Detail:             gatewayComponentDetail(resource.Kind, resource.Status),
 			SelectedCandidate:  statusText(resource.Status, "selectedCandidate"),
 			PreferredCandidate: gatewayPreferredCandidate(resource.Status),
@@ -896,11 +897,11 @@ func gatewayFailedProbes(kind string, status map[string]any) []string {
 		probes = appendGatewayProbeNames(probes, status[key])
 	}
 	for _, probe := range statusList(status["probes"]) {
-		result := strings.ToLower(firstNonEmpty(statusAnyText(probe["result"]), statusAnyText(probe["status"]), statusAnyText(probe["phase"]), statusAnyText(probe["health"])))
+		result := strings.ToLower(stringutil.FirstNonBlank(statusAnyText(probe["result"]), statusAnyText(probe["status"]), statusAnyText(probe["phase"]), statusAnyText(probe["health"])))
 		if !gatewayDownStatus(result) {
 			continue
 		}
-		probes = appendGatewayProbeNames(probes, firstNonEmpty(statusAnyText(probe["name"]), statusAnyText(probe["target"]), statusAnyText(probe["address"])))
+		probes = appendGatewayProbeNames(probes, stringutil.FirstNonBlank(statusAnyText(probe["name"]), statusAnyText(probe["target"]), statusAnyText(probe["address"])))
 	}
 	if len(probes) > 5 {
 		probes = probes[:5]
@@ -1099,19 +1100,17 @@ type SAMNode struct {
 }
 
 type SAMPool struct {
-	Name                  string           `json:"name"`
-	Prefix                string           `json:"prefix,omitempty"`
-	Phase                 string           `json:"phase,omitempty"`
-	Reason                string           `json:"reason,omitempty"`
-	DiscoveryMode         string           `json:"discoveryMode,omitempty"`
-	DiscoveryPhase        string           `json:"discoveryPhase,omitempty"`
-	GeneratedBGPPaths     int              `json:"generatedBGPPaths,omitempty"`
-	ResolvedMemberCount   int              `json:"resolvedMemberCount,omitempty"`
-	PlacementActive       bool             `json:"placementActive,omitempty"`
-	PlacementActiveNode   string           `json:"placementActiveNode,omitempty"`
-	Addresses             []SAMPoolAddress `json:"addresses,omitempty"`
-	HeldAddresses         []string         `json:"heldAddresses,omitempty"`
-	StoppedInstancePolicy string           `json:"stoppedInstancePolicy,omitempty"`
+	Name                string           `json:"name"`
+	Prefix              string           `json:"prefix,omitempty"`
+	Phase               string           `json:"phase,omitempty"`
+	Reason              string           `json:"reason,omitempty"`
+	DiscoveryMode       string           `json:"discoveryMode,omitempty"`
+	DiscoveryPhase      string           `json:"discoveryPhase,omitempty"`
+	GeneratedBGPPaths   int              `json:"generatedBGPPaths,omitempty"`
+	ResolvedMemberCount int              `json:"resolvedMemberCount,omitempty"`
+	PlacementActive     bool             `json:"placementActive,omitempty"`
+	PlacementActiveNode string           `json:"placementActiveNode,omitempty"`
+	Addresses           []SAMPoolAddress `json:"addresses,omitempty"`
 }
 
 type SAMPoolAddress struct {
@@ -1242,58 +1241,24 @@ func samPoolFromResource(res routerstate.ObjectStatus) (SAMPool, bool) {
 		return SAMPool{}, false
 	}
 	pool := SAMPool{
-		Name:                  res.Name,
-		Prefix:                statusAnyText(status["prefix"]),
-		Phase:                 statusAnyText(status["phase"]),
-		Reason:                statusAnyText(status["reason"]),
-		DiscoveryMode:         statusAnyText(status["discoveryMode"]),
-		DiscoveryPhase:        statusAnyText(status["discoveryPhase"]),
-		GeneratedBGPPaths:     statusIntValue(status["generatedBGPPaths"]),
-		ResolvedMemberCount:   statusIntValue(status["resolvedMemberCount"]),
-		PlacementActive:       statusAnyText(status["placementActive"]) == "true",
-		PlacementActiveNode:   statusAnyText(status["placementActiveNode"]),
-		StoppedInstancePolicy: statusAnyText(status["stoppedInstancePolicy"]),
+		Name:                res.Name,
+		Prefix:              statusAnyText(status["prefix"]),
+		Phase:               statusAnyText(status["phase"]),
+		Reason:              statusAnyText(status["reason"]),
+		DiscoveryMode:       statusAnyText(status["discoveryMode"]),
+		DiscoveryPhase:      statusAnyText(status["discoveryPhase"]),
+		GeneratedBGPPaths:   statusIntValue(status["generatedBGPPaths"]),
+		ResolvedMemberCount: statusIntValue(status["resolvedMemberCount"]),
+		PlacementActive:     statusAnyText(status["placementActive"]) == "true",
+		PlacementActiveNode: statusAnyText(status["placementActiveNode"]),
 	}
-	if prefix := statusAnyText(status["configuredPrefix"]); prefix != "" && pool.Prefix == "" {
-		pool.Prefix = prefix
-	}
-
-	for _, entry := range statusList(status["ownedAddresses"]) {
+	for _, entry := range statusList(status["ownershipResolverControlPlaneOwnerTable"]) {
 		pool.Addresses = append(pool.Addresses, SAMPoolAddress{
 			Address:   statusAnyText(entry["address"]),
 			OwnerNode: statusAnyText(entry["ownerNode"]),
 			Source:    statusAnyText(entry["source"]),
 			State:     statusAnyText(entry["state"]),
 		})
-	}
-	for _, entry := range statusList(status["discoveredAddresses"]) {
-		addr := statusAnyText(entry["address"])
-		if addr == "" {
-			continue
-		}
-		found := false
-		for _, existing := range pool.Addresses {
-			if existing.Address == addr {
-				found = true
-				break
-			}
-		}
-		if !found {
-			pool.Addresses = append(pool.Addresses, SAMPoolAddress{
-				Address:   addr,
-				OwnerNode: statusAnyText(entry["ownerNode"]),
-				Source:    statusAnyText(entry["source"]),
-				State:     "discovered",
-			})
-		}
-	}
-
-	if held := statusList(status["discoveryHeldAddresses"]); len(held) > 0 {
-		for _, entry := range held {
-			pool.HeldAddresses = append(pool.HeldAddresses, statusAnyText(entry["address"]))
-		}
-	} else if heldStr := statusAnyText(status["discoveryHeldAddresses"]); heldStr != "" {
-		pool.HeldAddresses = append(pool.HeldAddresses, heldStr)
 	}
 
 	return pool, true
@@ -1435,12 +1400,12 @@ func (h Handler) configuredRouteEntries(resources []routerstate.ObjectStatus) []
 				Source:      "static",
 				Resource:    resource.Kind + "/" + resource.Metadata.Name,
 				Family:      "ipv4",
-				Destination: firstNonEmpty(stringFromMap(status, "destination"), spec.Destination),
-				Gateway:     firstNonEmpty(stringFromMap(status, "gateway"), spec.Via),
-				Device:      firstNonEmpty(stringFromMap(status, "device"), spec.Interface),
-				Metric:      routeMetricText(firstNonEmpty(stringFromMap(status, "metric"), strconv.Itoa(spec.Metric))),
+				Destination: stringutil.FirstNonBlank(stringFromMap(status, "destination"), spec.Destination),
+				Gateway:     stringutil.FirstNonBlank(stringFromMap(status, "gateway"), spec.Via),
+				Device:      stringutil.FirstNonBlank(stringFromMap(status, "device"), spec.Interface),
+				Metric:      routeMetricText(stringutil.FirstNonBlank(stringFromMap(status, "metric"), strconv.Itoa(spec.Metric))),
 				Phase:       stringFromMap(status, "phase"),
-				ObservedAt:  firstNonEmpty(stringFromMap(status, "observedAt"), stringFromMap(status, "updatedAt")),
+				ObservedAt:  stringutil.FirstNonBlank(stringFromMap(status, "observedAt"), stringFromMap(status, "updatedAt")),
 			})
 		case "IPv6StaticRoute":
 			spec, err := resource.IPv6StaticRouteSpec()
@@ -1451,12 +1416,12 @@ func (h Handler) configuredRouteEntries(resources []routerstate.ObjectStatus) []
 				Source:      "static",
 				Resource:    resource.Kind + "/" + resource.Metadata.Name,
 				Family:      "ipv6",
-				Destination: firstNonEmpty(stringFromMap(status, "destination"), spec.Destination),
-				Gateway:     firstNonEmpty(stringFromMap(status, "gateway"), spec.Via),
-				Device:      firstNonEmpty(stringFromMap(status, "device"), spec.Interface),
-				Metric:      routeMetricText(firstNonEmpty(stringFromMap(status, "metric"), strconv.Itoa(spec.Metric))),
+				Destination: stringutil.FirstNonBlank(stringFromMap(status, "destination"), spec.Destination),
+				Gateway:     stringutil.FirstNonBlank(stringFromMap(status, "gateway"), spec.Via),
+				Device:      stringutil.FirstNonBlank(stringFromMap(status, "device"), spec.Interface),
+				Metric:      routeMetricText(stringutil.FirstNonBlank(stringFromMap(status, "metric"), strconv.Itoa(spec.Metric))),
 				Phase:       stringFromMap(status, "phase"),
-				ObservedAt:  firstNonEmpty(stringFromMap(status, "observedAt"), stringFromMap(status, "updatedAt")),
+				ObservedAt:  stringutil.FirstNonBlank(stringFromMap(status, "observedAt"), stringFromMap(status, "updatedAt")),
 			})
 		case "IPv4Route":
 			spec, err := resource.IPv4RouteSpec()
@@ -1467,20 +1432,20 @@ func (h Handler) configuredRouteEntries(resources []routerstate.ObjectStatus) []
 				Source:      "static",
 				Resource:    resource.Kind + "/" + resource.Metadata.Name,
 				Family:      "ipv4",
-				Destination: firstNonEmpty(stringFromMap(status, "destination"), spec.Destination),
-				Gateway:     firstNonEmpty(stringFromMap(status, "gateway"), spec.Gateway),
-				Device:      firstNonEmpty(stringFromMap(status, "device"), spec.Device),
-				Metric:      routeMetricText(firstNonEmpty(stringFromMap(status, "metric"), strconv.Itoa(spec.Metric))),
-				Type:        firstNonEmpty(stringFromMap(status, "type"), spec.Type),
+				Destination: stringutil.FirstNonBlank(stringFromMap(status, "destination"), spec.Destination),
+				Gateway:     stringutil.FirstNonBlank(stringFromMap(status, "gateway"), spec.Gateway),
+				Device:      stringutil.FirstNonBlank(stringFromMap(status, "device"), spec.Device),
+				Metric:      routeMetricText(stringutil.FirstNonBlank(stringFromMap(status, "metric"), strconv.Itoa(spec.Metric))),
+				Type:        stringutil.FirstNonBlank(stringFromMap(status, "type"), spec.Type),
 				Phase:       stringFromMap(status, "phase"),
-				ObservedAt:  firstNonEmpty(stringFromMap(status, "observedAt"), stringFromMap(status, "updatedAt")),
+				ObservedAt:  stringutil.FirstNonBlank(stringFromMap(status, "observedAt"), stringFromMap(status, "updatedAt")),
 			})
 		case "DHCPv4Client":
 			spec, err := resource.DHCPv4ClientSpec()
 			if err != nil {
 				continue
 			}
-			gateway := firstNonEmpty(stringFromMap(status, "appliedDefaultGateway"), stringFromMap(status, "defaultGateway"), stringFromMap(status, "gateway"))
+			gateway := stringutil.FirstNonBlank(stringFromMap(status, "appliedDefaultGateway"), stringFromMap(status, "defaultGateway"), stringFromMap(status, "gateway"))
 			if gateway == "" {
 				continue
 			}
@@ -1490,15 +1455,15 @@ func (h Handler) configuredRouteEntries(resources []routerstate.ObjectStatus) []
 				Family:      "ipv4",
 				Destination: "default",
 				Gateway:     gateway,
-				Device:      firstNonEmpty(stringFromMap(status, "interface"), spec.Interface),
+				Device:      stringutil.FirstNonBlank(stringFromMap(status, "interface"), spec.Interface),
 				Protocol:    "dhcp",
-				Metric:      routeMetricText(firstNonEmpty(stringFromMap(status, "routeMetric"), strconv.Itoa(spec.RouteMetric))),
+				Metric:      routeMetricText(stringutil.FirstNonBlank(stringFromMap(status, "routeMetric"), strconv.Itoa(spec.RouteMetric))),
 				Phase:       stringFromMap(status, "phase"),
-				ObservedAt:  firstNonEmpty(stringFromMap(status, "observedAt"), stringFromMap(status, "updatedAt")),
+				ObservedAt:  stringutil.FirstNonBlank(stringFromMap(status, "observedAt"), stringFromMap(status, "updatedAt")),
 			})
 		case "EgressRoutePolicy":
 			spec, err := resource.EgressRoutePolicySpec()
-			if err != nil || firstNonEmpty(spec.Mode, "") != "priority" {
+			if err != nil || stringutil.FirstNonBlank(spec.Mode, "") != "priority" {
 				continue
 			}
 			for _, candidate := range spec.Candidates {
@@ -1515,7 +1480,7 @@ func (h Handler) configuredRouteEntries(resources []routerstate.ObjectStatus) []
 					Table:       routeMetricText(strconv.Itoa(candidate.EffectiveTable())),
 					Metric:      routeMetricText(strconv.Itoa(candidate.EffectiveMetric())),
 					Phase:       stringFromMap(status, "phase"),
-					ObservedAt:  firstNonEmpty(stringFromMap(status, "observedAt"), stringFromMap(status, "updatedAt")),
+					ObservedAt:  stringutil.FirstNonBlank(stringFromMap(status, "observedAt"), stringFromMap(status, "updatedAt")),
 				})
 			}
 		}
@@ -1530,7 +1495,7 @@ func bgpRouteEntries(resources []routerstate.ObjectStatus) []RouteEntry {
 			continue
 		}
 		for _, prefix := range statusList(resource.Status["prefixes"]) {
-			destination := firstNonEmpty(statusAnyText(prefix["prefix"]), statusAnyText(prefix["network"]))
+			destination := stringutil.FirstNonBlank(statusAnyText(prefix["prefix"]), statusAnyText(prefix["network"]))
 			if destination == "" {
 				continue
 			}
@@ -1540,7 +1505,7 @@ func bgpRouteEntries(resources []routerstate.ObjectStatus) []RouteEntry {
 				Family:      routeFamily(destination),
 				Destination: destination,
 				Protocol:    "bgp",
-				Peer:        firstNonEmpty(statusAnyText(prefix["peer"]), statusAnyText(prefix["nextHop"]), statusAnyText(prefix["nexthop"])),
+				Peer:        stringutil.FirstNonBlank(statusAnyText(prefix["peer"]), statusAnyText(prefix["nextHop"]), statusAnyText(prefix["nexthop"])),
 				Phase:       statusText(resource.Status, "phase"),
 				ObservedAt:  statusText(resource.Status, "observedAt"),
 			})
@@ -1622,8 +1587,8 @@ func parseLinuxRoutesJSON(data []byte, family string, now time.Time) ([]RouteEnt
 	}
 	out := make([]RouteEntry, 0, len(raw))
 	for _, item := range raw {
-		destination := firstNonEmpty(item.Dst, "default")
-		protocol := firstNonEmpty(item.Protocol, item.Proto)
+		destination := stringutil.FirstNonBlank(item.Dst, "default")
+		protocol := stringutil.FirstNonBlank(item.Protocol, item.Proto)
 		out = append(out, RouteEntry{
 			Source:      "kernel",
 			Family:      family,
@@ -3650,7 +3615,7 @@ func (h Handler) enrichTrafficFlowsWithDPI(flows []logstore.TrafficFlow, now tim
 			flows[i].DNSQuery = dpiFlow.DNSQuery
 		}
 		if flows[i].ResolvedHostname == "" {
-			flows[i].ResolvedHostname = firstNonEmpty(dpiFlow.TLSSNI, dpiFlow.HTTPHost, dpiFlow.DNSQuery)
+			flows[i].ResolvedHostname = stringutil.FirstNonBlank(dpiFlow.TLSSNI, dpiFlow.HTTPHost, dpiFlow.DNSQuery)
 		}
 		applyTrafficFlowPortFallback(&flows[i])
 	}
@@ -6114,7 +6079,7 @@ func interfaceConfiguredAddresses(router *api.Router, statuses map[string]map[st
 			if err != nil {
 				continue
 			}
-			addr := firstNonEmpty(stringFromMap(statuses[api.NetAPIVersion+"/IPv4StaticAddress/"+resource.Metadata.Name], "address"), spec.Address)
+			addr := stringutil.FirstNonBlank(stringFromMap(statuses[api.NetAPIVersion+"/IPv4StaticAddress/"+resource.Metadata.Name], "address"), spec.Address)
 			if addr != "" {
 				out[spec.Interface] = appendUnique(out[spec.Interface], addr)
 			}
@@ -6140,7 +6105,7 @@ func interfaceConfiguredAddresses(router *api.Router, statuses map[string]map[st
 func addressStatusForInterface(resource api.Resource, statuses map[string]map[string]any) (string, string) {
 	status := statuses[resource.APIVersion+"/"+resource.Kind+"/"+resource.Metadata.Name]
 	iface := stringFromMap(status, "interface")
-	addr := firstNonEmpty(stringFromMap(status, "address"), stringFromMap(status, "ip"))
+	addr := stringutil.FirstNonBlank(stringFromMap(status, "address"), stringFromMap(status, "ip"))
 	if iface != "" {
 		return iface, addr
 	}
@@ -6200,15 +6165,6 @@ func normalizedIPAddrString(value string) string {
 		return ""
 	}
 	return addr.Unmap().String()
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }
 
 func appendUnique(values []string, value string) []string {

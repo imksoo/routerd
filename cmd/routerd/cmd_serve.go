@@ -522,7 +522,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	controllerBus.SetLogger(slog.Default())
 	publishControllerModeEvents(ctx, controllerBus, controllerStatuses)
 	peerGroupSyncClient := mobilitycontroller.NewPeerGroupSyncClient(stateStore)
-	if !*once && !*sandbox && (mobilitycontroller.HasPublishedPeerGroups(router) || mobilitycontroller.HasPublishedMemberSets(router)) {
+	if !*once && !*sandbox && mobilitycontroller.HasPublishedPeerGroups(router) {
 		if err := startPeerGroupSyncServer(ctx, stateStore, logger); err != nil {
 			return err
 		}
@@ -546,7 +546,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		ControllerObserver:     controllerRuntime,
 		EnabledControllers:     enabledControllers,
 		PeerGroupSyncClient:    peerGroupSyncClient,
-		MemberSetSyncClient:    peerGroupSyncClient,
 		MutationGate:           mutationGate,
 	}
 	if *sandbox {
@@ -578,7 +577,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 				Timeout:          *gracefulStopTimeout,
 				PollInterval:     time.Second,
 				BGPPaths:         bgpdaemon.NewControlClient(controllerOpts.BGPControlSocketPath),
-				MemberSetSync:    controllerOpts.MemberSetSyncClient,
 				ProviderAction:   provideractioncontroller.Controller{Bus: controllerBus, Runner: controllerOpts.ProviderActionRunner, DryRun: controllerOpts.DryRunProviderAction},
 				Logger:           logger,
 				ControllerLogger: controllerOpts.Logger,
@@ -835,7 +833,8 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			return &result, nil
 		},
 		DHCPLeaseEvent: func(r *http.Request, req controlapi.DHCPLeaseEventRequest) (*controlapi.DHCPLeaseEventResult, error) {
-			if req.Action == "" || req.IP == "" {
+			topic, ok := daemonapi.DHCPLeaseEventType(req.Action)
+			if !ok {
 				return nil, controlapi.ErrBadRequest
 			}
 			if holdDays := dhcpStickyHoldDays(currentRouter(), req.IP); holdDays > 0 {
@@ -849,9 +848,8 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 				}
 			}
 			if controllerBus != nil {
-				topic := "routerd.dhcp.lease." + req.Action
 				event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd-dhcp-event-relay", Kind: "routerd-dhcp-event-relay"}, topic, daemonapi.SeverityInfo)
-				event.Attributes = map[string]string{"mac": req.MAC, "ip": req.IP, "hostname": req.Hostname}
+				event.Attributes = map[string]string{"mac": req.MAC, "ip": req.IP, "hostname": req.Hostname, "interface": req.Interface}
 				_ = controllerBus.Publish(r.Context(), event)
 			}
 			result := controlapi.NewDHCPLeaseEventResult()

@@ -15,6 +15,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/samenrollment"
 )
 
 // validateMobilityResource performs local field validation for CloudEdge
@@ -22,7 +23,12 @@ import (
 // derived BGP paths and provider trap actions are runtime state and never appear
 // as config Kinds. It returns handled=true for Kinds it owns so the caller's Kind
 // switch accepts them.
-func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
+type mobilityPoolValidation struct {
+	SelfNode string
+	Members  []api.ResolvedMobilityPoolMember
+}
+
+func validateMobilityResource(router *api.Router, res api.Resource, _ platform.OS, allowRuntimePayloads bool, idx *RouterIndex) (bool, error) {
 	switch res.Kind {
 	case "MobilityPool":
 		if res.APIVersion != api.MobilityAPIVersion {
@@ -46,35 +52,36 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 		if strings.TrimSpace(spec.GroupRef) == "" {
 			return true, fmt.Errorf("%s spec.groupRef is required", res.ID())
 		}
-		switch strings.TrimSpace(spec.Mode) {
-		case "", "selective-address":
-		default:
-			return true, fmt.Errorf("%s spec.mode %q is not supported; only selective-address", res.ID(), spec.Mode)
+		selfNode, err := api.EventGroupSelfNode(router, spec.GroupRef)
+		if err != nil {
+			return true, fmt.Errorf("%s spec.groupRef must reference a local EventGroup with spec.nodeName", res.ID())
 		}
-		if len(spec.Members) == 0 && len(spec.MembersFrom) == 0 {
-			return true, fmt.Errorf("%s spec.members or spec.membersFrom requires at least one member source", res.ID())
+		if len(spec.MembersFrom) == 0 {
+			return true, fmt.Errorf("%s spec.membersFrom requires at least one SAMNodeSet source", res.ID())
 		}
 		for i, source := range spec.MembersFrom {
 			if err := validateMobilityMembersFrom(res.ID(), i, source); err != nil {
 				return true, err
 			}
 		}
-		normalized, _, err := mobilityconfig.NormalizeMobilityPool(spec, "")
+		resolved, err := mobilityconfig.ResolveMobilityPoolMembers(router, spec)
 		if err != nil {
 			return true, fmt.Errorf("%s %w", res.ID(), err)
 		}
-		spec = normalized
-		switch strings.TrimSpace(spec.DeliveryPolicy.Mode) {
-		case "", "bgp":
-		default:
-			return true, fmt.Errorf("%s spec.deliveryPolicy.mode %q is not supported; only bgp", res.ID(), spec.DeliveryPolicy.Mode)
+		if err := mobilityconfig.RequireResolvedMobilityPoolSelfMember(resolved.Members, selfNode); err != nil {
+			return true, fmt.Errorf("%s %w", res.ID(), err)
 		}
+		normalized, err := mobilityconfig.NormalizeResolvedMobilityPoolMembers(spec, resolved.Members, selfNode)
+		if err != nil {
+			return true, fmt.Errorf("%s %w", res.ID(), err)
+		}
+		members := normalized
 		nodeRefs := map[string]bool{}
 		memberRoles := map[string]string{}
 		staticOwners := map[string]string{}
 		placementGroups := map[string]mobilityPlacementGroup{}
 		placementCompleteness := map[string]mobilityPlacementCompleteness{}
-		for i, member := range spec.Members {
+		for i, member := range members {
 			nodeRef := strings.TrimSpace(member.NodeRef)
 			if nodeRef == "" {
 				return true, fmt.Errorf("%s spec.members[%d].nodeRef is required", res.ID(), i)
@@ -109,37 +116,11 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 		if err := validateMobilityPlacementCompleteness(res, placementCompleteness); err != nil {
 			return true, err
 		}
-		switch strings.TrimSpace(spec.CapturePolicy.Mode) {
-		case "", "all-non-owner-sites":
-		default:
-			return true, fmt.Errorf("%s spec.capturePolicy.mode %q is not supported; only all-non-owner-sites", res.ID(), spec.CapturePolicy.Mode)
-		}
-		if err := validateMobilityIPOwnershipPolicy(res, spec, nodeRefs); err != nil {
-			return true, err
-		}
 		if err := validateMobilityStaticHandovers(res, spec, parsedPrefix.Masked(), nodeRefs, memberRoles, staticOwners); err != nil {
 			return true, err
 		}
-		switch strings.TrimSpace(spec.Authority.Mode) {
-		case "", "static":
-			authNode := strings.TrimSpace(spec.Authority.NodeRef)
-			if authNode != "" && !nodeRefs[authNode] && len(spec.MembersFrom) == 0 {
-				return true, fmt.Errorf("%s spec.authority.nodeRef %q must be one of the member nodeRefs", res.ID(), authNode)
-			}
-		default:
-			return true, fmt.Errorf("%s spec.authority.mode %q is not supported; only static", res.ID(), spec.Authority.Mode)
-		}
-		return true, nil
-	case "MobilityMemberSet":
-		if res.APIVersion != api.MobilityAPIVersion {
-			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.MobilityAPIVersion)
-		}
-		spec, err := res.MobilityMemberSetSpec()
-		if err != nil {
-			return true, err
-		}
-		if err := validateMobilityMemberSet(res, spec); err != nil {
-			return true, err
+		if idx != nil {
+			idx.MobilityPools[res.Metadata.Name] = mobilityPoolValidation{SelfNode: selfNode, Members: normalized}
 		}
 		return true, nil
 	case "SAMNodeSet":
@@ -155,6 +136,9 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 		}
 		return true, nil
 	case "SAMPeerGroup":
+		if !allowRuntimePayloads {
+			return true, fmt.Errorf("%s is runtime-only; publish it from SAMTransportProfile.spec.publishPeerGroup and consume it through SAMTransportProfile.spec.peersFrom", res.ID())
+		}
 		if res.APIVersion != api.MobilityAPIVersion {
 			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.MobilityAPIVersion)
 		}
@@ -167,6 +151,9 @@ func validateMobilityResource(res api.Resource, _ platform.OS) (bool, error) {
 		}
 		return true, nil
 	case "SAMRRSet":
+		if !allowRuntimePayloads {
+			return true, fmt.Errorf("%s is runtime-only; select RR nodes through SAMEnrollmentPolicy.spec.rrNodeSetRef and fetch the enrollment snapshot", res.ID())
+		}
 		if res.APIVersion != api.MobilityAPIVersion {
 			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.MobilityAPIVersion)
 		}
@@ -247,6 +234,7 @@ func validateSAMNodeSet(res api.Resource, spec api.SAMNodeSetSpec) error {
 		return fmt.Errorf("%s spec.nodes requires at least one node", res.ID())
 	}
 	seen := map[string]bool{}
+	placementGroups := map[string]mobilityPlacementGroup{}
 	for i, node := range spec.Nodes {
 		nodeRef := strings.TrimSpace(node.NodeRef)
 		if nodeRef == "" {
@@ -260,6 +248,9 @@ func validateSAMNodeSet(res api.Resource, spec api.SAMNodeSetSpec) error {
 		case "", "onprem", "cloud":
 		default:
 			return fmt.Errorf("%s spec.nodes[%d].role must be onprem or cloud", res.ID(), i)
+		}
+		if err := validateSAMNodePlacement(res, i, node, placementGroups); err != nil {
+			return err
 		}
 		if endpoint := strings.TrimSpace(node.EventEndpoint); endpoint != "" {
 			if err := validateSAMNodeEventEndpoint(endpoint); err != nil {
@@ -330,6 +321,7 @@ func validateSAMNodeSAMEndpoint(endpoint string) error {
 func validateSAMNodeWireGuard(resourceID string, index int, spec api.SAMNodeWireGuardSpec) error {
 	wireGuardSet := strings.TrimSpace(spec.PublicKey) != "" ||
 		strings.TrimSpace(spec.Endpoint) != "" ||
+		strings.TrimSpace(spec.TransportEndpoint) != "" ||
 		len(spec.AllowedIPs) > 0 ||
 		spec.PersistentKeepalive != 0
 	if !wireGuardSet {
@@ -349,6 +341,11 @@ func validateSAMNodeWireGuard(resourceID string, index int, spec api.SAMNodeWire
 	if endpoint := strings.TrimSpace(spec.Endpoint); endpoint != "" {
 		if err := validateWireGuardEndpoint(endpoint); err != nil {
 			return fmt.Errorf("%s spec.nodes[%d].wireGuard.endpoint: %w", resourceID, index, err)
+		}
+	}
+	if endpoint := strings.TrimSpace(spec.TransportEndpoint); endpoint != "" {
+		if err := validateSAMNodeSAMEndpoint(endpoint); err != nil {
+			return fmt.Errorf("%s spec.nodes[%d].wireGuard.transportEndpoint: %w", resourceID, index, err)
 		}
 	}
 	if spec.PersistentKeepalive < 0 || spec.PersistentKeepalive > 65535 {
@@ -375,51 +372,6 @@ func validateWireGuardEndpoint(endpoint string) error {
 	return nil
 }
 
-func parseSAMEnrollmentTunnelAddress(value string) (netip.Prefix, error) {
-	value = strings.TrimSpace(value)
-	if strings.Contains(value, "/") {
-		prefix, err := netip.ParsePrefix(value)
-		if err != nil {
-			return netip.Prefix{}, err
-		}
-		return prefix.Masked(), nil
-	}
-	addr, err := netip.ParseAddr(value)
-	if err != nil {
-		return netip.Prefix{}, err
-	}
-	return netip.PrefixFrom(addr, 32), nil
-}
-
-func validateMobilityMemberSet(res api.Resource, spec api.MobilityMemberSetSpec) error {
-	if len(spec.Members) == 0 {
-		return fmt.Errorf("%s spec.members requires at least one member", res.ID())
-	}
-	seen := map[string]bool{}
-	for i, member := range spec.Members {
-		nodeRef := strings.TrimSpace(member.NodeRef)
-		if nodeRef == "" {
-			return fmt.Errorf("%s spec.members[%d].nodeRef is required", res.ID(), i)
-		}
-		if strings.TrimSpace(member.Site) == "" {
-			return fmt.Errorf("%s spec.members[%d].site is required", res.ID(), i)
-		}
-		switch strings.TrimSpace(member.Role) {
-		case "onprem", "cloud":
-		default:
-			return fmt.Errorf("%s spec.members[%d].role must be onprem or cloud", res.ID(), i)
-		}
-		if seen[nodeRef] {
-			return fmt.Errorf("%s spec.members nodeRef %q is duplicated", res.ID(), nodeRef)
-		}
-		seen[nodeRef] = true
-		if member.Placement.Priority < 0 {
-			return fmt.Errorf("%s spec.members[%d].placement.priority must be >= 0", res.ID(), i)
-		}
-	}
-	return nil
-}
-
 func validateSAMPeerGroup(res api.Resource, spec api.SAMPeerGroupSpec) error {
 	if len(spec.Peers) == 0 {
 		return fmt.Errorf("%s spec.peers requires at least one peer", res.ID())
@@ -437,9 +389,6 @@ func validateSAMPeerGroup(res api.Resource, spec api.SAMPeerGroupSpec) error {
 		if err := validateTunnelEndpointOrSource(res.ID(), fmt.Sprintf("peers[%d].remoteEndpoint", i), peer.RemoteEndpoint, peer.RemoteEndpointFrom); err != nil {
 			return err
 		}
-		if err := validateSAMTransportPeerOverrideShape(res.ID(), i, peer.Override); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -451,71 +400,12 @@ func validateSAMRRSet(res api.Resource, spec api.SAMRRSetSpec) error {
 	if kind, name, ok := strings.Cut(strings.TrimSpace(spec.EnrollmentPolicyRef), "/"); !ok || kind != "SAMEnrollmentPolicy" || strings.TrimSpace(name) == "" {
 		return fmt.Errorf("%s spec.enrollmentPolicyRef must reference SAMEnrollmentPolicy/<name>", res.ID())
 	}
-	for i, ref := range spec.MobilityPoolRefs {
-		if kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/"); !ok || kind != "MobilityPool" || strings.TrimSpace(name) == "" {
-			return fmt.Errorf("%s spec.mobilityPoolRefs[%d] must reference MobilityPool/<name>", res.ID(), i)
-		}
-	}
-	if _, err := validateBGPPrefixList(res.ID(), "spec.mobilityPrefixes", spec.MobilityPrefixes); err != nil {
+	if err := validateSAMNodeSet(res, api.SAMNodeSetSpec{Nodes: spec.Nodes}); err != nil {
 		return err
 	}
-	if _, err := validateBGPPrefixList(res.ID(), "spec.routeAdmission.allowedPrefixes", spec.RouteAdmission.AllowedPrefixes); err != nil {
-		return err
-	}
-	switch strings.TrimSpace(spec.RouteAdmission.NextHopRewrite) {
-	case "", "peer-address", "unchanged":
-	default:
-		return fmt.Errorf("%s spec.routeAdmission.nextHopRewrite must be peer-address or unchanged", res.ID())
-	}
-	if len(spec.Members) == 0 {
-		return fmt.Errorf("%s spec.members requires at least one RR member", res.ID())
-	}
-	seen := map[string]bool{}
-	for i, member := range spec.Members {
-		nodeRef := strings.TrimSpace(member.NodeRef)
-		if nodeRef == "" {
-			return fmt.Errorf("%s spec.members[%d].nodeRef is required", res.ID(), i)
-		}
-		if seen[nodeRef] {
-			return fmt.Errorf("%s spec.members nodeRef %q is duplicated", res.ID(), nodeRef)
-		}
-		seen[nodeRef] = true
-		tunnel, err := parseSAMEnrollmentTunnelAddress(member.TunnelAddress)
-		if err != nil || !tunnel.Addr().Is4() || tunnel.Bits() != 32 {
-			return fmt.Errorf("%s spec.members[%d].tunnelAddress must be an IPv4 /32", res.ID(), i)
-		}
-		if err := validateTunnelEndpointOrSource(res.ID(), fmt.Sprintf("members[%d].endpoint", i), member.Endpoint, api.StatusValueSourceSpec{}); err != nil {
-			return err
-		}
-		wireGuardSet := strings.TrimSpace(member.WireGuard.PublicKey) != "" ||
-			strings.TrimSpace(member.WireGuard.Endpoint) != "" ||
-			len(member.WireGuard.AllowedIPs) > 0 ||
-			member.WireGuard.PersistentKeepalive != 0
-		if wireGuardSet && strings.TrimSpace(member.WireGuard.PublicKey) == "" {
-			return fmt.Errorf("%s spec.members[%d].wireGuard.publicKey is required when wireGuard is set", res.ID(), i)
-		}
-		if wireGuardSet && strings.TrimSpace(member.WireGuard.Endpoint) == "" {
-			return fmt.Errorf("%s spec.members[%d].wireGuard.endpoint is required when wireGuard is set", res.ID(), i)
-		}
-		if endpoint := strings.TrimSpace(member.WireGuard.Endpoint); endpoint != "" {
-			if err := validateWireGuardEndpoint(endpoint); err != nil {
-				return fmt.Errorf("%s spec.members[%d].wireGuard.endpoint: %w", res.ID(), i, err)
-			}
-		}
-		for j, allowed := range member.WireGuard.AllowedIPs {
-			parsed, err := netip.ParsePrefix(strings.TrimSpace(allowed))
-			if err != nil || !parsed.Addr().Is4() {
-				return fmt.Errorf("%s spec.members[%d].wireGuard.allowedIPs[%d] must be an IPv4 prefix", res.ID(), i, j)
-			}
-		}
-		if member.WireGuard.PersistentKeepalive < 0 || member.WireGuard.PersistentKeepalive > 65535 {
-			return fmt.Errorf("%s spec.members[%d].wireGuard.persistentKeepalive must be within 0-65535", res.ID(), i)
-		}
-		if strings.TrimSpace(member.BGP.RouterID) != "" {
-			addr, err := netip.ParseAddr(strings.TrimSpace(member.BGP.RouterID))
-			if err != nil || !addr.Is4() {
-				return fmt.Errorf("%s spec.members[%d].bgp.routerID must be an IPv4 address", res.ID(), i)
-			}
+	for i, node := range spec.Nodes {
+		if !node.RouteReflector {
+			return fmt.Errorf("%s spec.nodes[%d].routeReflector must be true in an RR snapshot", res.ID(), i)
 		}
 	}
 	return nil
@@ -532,6 +422,17 @@ func validateSAMEnrollmentPolicy(res api.Resource, spec api.SAMEnrollmentPolicyS
 		if kind, name, ok := strings.Cut(rrSetRef, "/"); !ok || kind != "SAMRRSet" || strings.TrimSpace(name) == "" {
 			return fmt.Errorf("%s spec.rrSetRef must reference SAMRRSet/<name>", res.ID())
 		}
+	}
+	if nodeSetRef := strings.TrimSpace(spec.RRNodeSetRef); nodeSetRef != "" {
+		if kind, name, ok := strings.Cut(nodeSetRef, "/"); !ok || kind != "SAMNodeSet" || strings.TrimSpace(name) == "" {
+			return fmt.Errorf("%s spec.rrNodeSetRef must reference SAMNodeSet/<name>", res.ID())
+		}
+	}
+	if strings.TrimSpace(spec.RRSetRef) != "" && strings.TrimSpace(spec.RRNodeSetRef) == "" {
+		return fmt.Errorf("%s spec.rrNodeSetRef is required when spec.rrSetRef is set", res.ID())
+	}
+	if strings.TrimSpace(spec.RRNodeSetRef) != "" && strings.TrimSpace(spec.RRSetRef) == "" {
+		return fmt.Errorf("%s spec.rrSetRef is required when spec.rrNodeSetRef is set", res.ID())
 	}
 	if pattern := strings.TrimSpace(spec.AllowedLeafIDs.Pattern); pattern != "" {
 		if _, err := regexp.Compile(pattern); err != nil {
@@ -627,7 +528,7 @@ func validateSAMEnrollmentClaimShape(res api.Resource, spec api.SAMEnrollmentCla
 	if strings.TrimSpace(spec.JoinHMAC) != "" && strings.TrimSpace(spec.JoinNonce) == "" {
 		return fmt.Errorf("%s spec.joinNonce is required when spec.joinHMAC is set", res.ID())
 	}
-	tunnel, err := parseSAMEnrollmentTunnelAddress(spec.TunnelAddress)
+	tunnel, err := samenrollment.ParsePrefixOrAddress(spec.TunnelAddress)
 	if err != nil {
 		return fmt.Errorf("%s spec.tunnelAddress must be an IPv4 address or /32 prefix: %w", res.ID(), err)
 	}
@@ -661,7 +562,7 @@ func validateSAMEnrollmentClaimShape(res api.Resource, spec api.SAMEnrollmentCla
 		return fmt.Errorf("%s spec.wireGuard.persistentKeepalive must be within 0-65535", res.ID())
 	}
 	for i, owned := range spec.Mobility.OwnedAddresses {
-		parsed, err := parseSAMEnrollmentTunnelAddress(owned)
+		parsed, err := samenrollment.ParsePrefixOrAddress(owned)
 		if err != nil || !parsed.Addr().Is4() || parsed.Bits() != 32 {
 			return fmt.Errorf("%s spec.mobility.ownedAddresses[%d] must be an IPv4 /32", res.ID(), i)
 		}
@@ -812,8 +713,8 @@ func validateSAMTransportProfile(res api.Resource, spec api.SAMTransportProfileS
 			return fmt.Errorf("%s spec.bgp.routeReflectorClusterID must be an IPv4 address", res.ID())
 		}
 	}
-	if len(spec.Peers) == 0 && len(spec.PeersFrom) == 0 && !spec.PublishPeerGroup {
-		return fmt.Errorf("%s spec.peers, spec.peersFrom, or spec.publishPeerGroup requires at least one peer source or published endpoint", res.ID())
+	if len(spec.PeersFrom) == 0 && !spec.PublishPeerGroup {
+		return fmt.Errorf("%s spec.peersFrom or spec.publishPeerGroup requires at least one peer source or published endpoint", res.ID())
 	}
 	for i, source := range spec.PeersFrom {
 		if err := validateSAMTransportPeersFrom(res.ID(), i, source); err != nil {
@@ -824,130 +725,7 @@ func validateSAMTransportProfile(res api.Resource, spec api.SAMTransportProfileS
 	if strings.TrimSpace(spec.AddressingMode) != "" && addressingMode == "" {
 		return fmt.Errorf("%s spec.addressingMode must be edge-index or pair-stable", res.ID())
 	}
-	seenPeers := map[string]bool{}
-	usedInner := map[string]string{}
-	for i, peer := range spec.Peers {
-		nodeRef := strings.TrimSpace(peer.NodeRef)
-		if nodeRef == "" {
-			return fmt.Errorf("%s spec.peers[%d].nodeRef is required", res.ID(), i)
-		}
-		if nodeRef == strings.TrimSpace(spec.SelfNodeRef) {
-			return fmt.Errorf("%s spec.peers[%d].nodeRef must not equal spec.selfNodeRef", res.ID(), i)
-		}
-		if seenPeers[nodeRef] {
-			return fmt.Errorf("%s spec.peers nodeRef %q is duplicated", res.ID(), nodeRef)
-		}
-		seenPeers[nodeRef] = true
-		if err := validateTunnelEndpointOrSource(res.ID(), fmt.Sprintf("peers[%d].remoteEndpoint", i), peer.RemoteEndpoint, peer.RemoteEndpointFrom); err != nil {
-			return err
-		}
-		if err := validateSAMTransportPeerOverride(res.ID(), i, inner, peer.Override, usedInner); err != nil {
-			return err
-		}
-	}
-	capacity := 1 << (31 - inner.Bits())
-	switch addressingMode {
-	case "pair-stable":
-		if len(spec.TopologyNodeRefs) > 0 {
-			topology, err := normalizeSAMTransportTopology(res.ID(), spec)
-			if err != nil {
-				return err
-			}
-			edgeCount := len(topology) * (len(topology) - 1) / 2
-			if edgeCount > capacity {
-				return fmt.Errorf("%s spec.innerPrefix %s has %d /31 edges but topologyNodeRefs requires %d edges", res.ID(), inner, capacity, edgeCount)
-			}
-			usedSlots := map[int]string{}
-			seedPrefix := inner.Masked().String()
-			for i := 0; i < len(topology); i++ {
-				for j := i + 1; j < len(topology); j++ {
-					left, right := topology[i], topology[j]
-					edge := fmt.Sprintf("%s<->%s", left, right)
-					slot := mobilityconfig.StableSAMTransportSlot(seedPrefix, left, right, capacity)
-					if previous := usedSlots[slot]; previous != "" {
-						slotPrefix, slotErr := mobilityconfig.SAMTransportSlotPrefix(inner, slot)
-						if slotErr != nil {
-							return fmt.Errorf("%s spec.topologyNodeRefs pair-stable slot computation failed for %s: %w", res.ID(), edge, slotErr)
-						}
-						return fmt.Errorf("%s spec.topologyNodeRefs pair-stable edges %s and %s collide in slot %s; expand spec.innerPrefix or change the prefix seed", res.ID(), previous, edge, slotPrefix)
-					}
-					usedSlots[slot] = edge
-				}
-			}
-		}
-		if len(spec.Peers) > capacity {
-			return fmt.Errorf("%s spec.innerPrefix %s has %d /31 edges but spec.peers requires %d edges for pair-stable addressing", res.ID(), inner, capacity, len(spec.Peers))
-		}
-		seedPrefix := inner.Masked().String()
-		collisions := map[int]string{}
-		self := strings.TrimSpace(spec.SelfNodeRef)
-		for i, peer := range spec.Peers {
-			peerNode := strings.TrimSpace(peer.NodeRef)
-			if strings.TrimSpace(peer.Override.LocalInner) != "" && strings.TrimSpace(peer.Override.RemoteInner) != "" {
-				continue
-			}
-			slot := mobilityconfig.StableSAMTransportSlot(seedPrefix, self, peerNode, capacity)
-			slotPrefix, err := mobilityconfig.SAMTransportSlotPrefix(inner, slot)
-			if err != nil {
-				return fmt.Errorf("%s spec.peers[%d].nodeRef %q slot computation failed: %w", res.ID(), i, peerNode, err)
-			}
-			for _, addr := range []string{slotPrefix.Addr().String(), slotPrefix.Addr().Next().String()} {
-				if previous := usedInner[addr]; previous != "" {
-					return fmt.Errorf("%s spec.peers[%d].nodeRef %q pair-stable slot %s conflicts with %s; change override.localInner/remoteInner or expand spec.innerPrefix", res.ID(), i, peerNode, slotPrefix, previous)
-				}
-			}
-			if prev, ok := collisions[slot]; ok {
-				return fmt.Errorf("%s spec.peers[%d].nodeRef %q collides with %s in pair-stable slot %s; use override.localInner/remoteInner or expand spec.innerPrefix", res.ID(), i, peerNode, prev, slotPrefix)
-			}
-			collisions[slot] = fmt.Sprintf("spec.peers[%d].nodeRef %q", i, peerNode)
-		}
-	default:
-		if len(spec.Peers) > 1 && len(spec.TopologyNodeRefs) == 0 {
-			return fmt.Errorf("%s spec.topologyNodeRefs is required when spec.peers has more than one peer", res.ID())
-		}
-		topology, err := normalizeSAMTransportTopology(res.ID(), spec)
-		if err != nil {
-			return err
-		}
-		edgeCount := len(topology) * (len(topology) - 1) / 2
-		if edgeCount > capacity {
-			return fmt.Errorf("%s spec.innerPrefix %s has %d /31 edges but topologyNodeRefs requires %d edges", res.ID(), inner, capacity, edgeCount)
-		}
-		for i, peer := range spec.Peers {
-			nodeRef := strings.TrimSpace(peer.NodeRef)
-			if !stringInSlice(nodeRef, topology) {
-				return fmt.Errorf("%s spec.peers[%d].nodeRef %q must be listed in spec.topologyNodeRefs", res.ID(), i, nodeRef)
-			}
-		}
-	}
 	return nil
-}
-
-func normalizeSAMTransportTopology(resourceID string, spec api.SAMTransportProfileSpec) ([]string, error) {
-	topology := append([]string(nil), spec.TopologyNodeRefs...)
-	if len(topology) == 0 {
-		topology = []string{spec.SelfNodeRef}
-		for _, peer := range spec.Peers {
-			topology = append(topology, peer.NodeRef)
-		}
-	}
-	seen := map[string]bool{}
-	out := make([]string, 0, len(topology))
-	for i, node := range topology {
-		node = strings.TrimSpace(node)
-		if node == "" {
-			return nil, fmt.Errorf("%s spec.topologyNodeRefs[%d] must not be empty", resourceID, i)
-		}
-		if seen[node] {
-			return nil, fmt.Errorf("%s spec.topologyNodeRefs nodeRef %q is duplicated", resourceID, node)
-		}
-		seen[node] = true
-		out = append(out, node)
-	}
-	if !seen[strings.TrimSpace(spec.SelfNodeRef)] {
-		return nil, fmt.Errorf("%s spec.selfNodeRef %q must be listed in spec.topologyNodeRefs", resourceID, spec.SelfNodeRef)
-	}
-	return out, nil
 }
 
 func validateSAMTransportPeersFrom(resourceID string, index int, source api.SAMTransportPeersSourceSpec) error {
@@ -960,91 +738,29 @@ func validateSAMTransportPeersFrom(resourceID string, index int, source api.SAMT
 	default:
 		return fmt.Errorf("%s spec.peersFrom[%d].resource must reference SAMPeerGroup/<name>, SAMNodeSet/<name>, SAMEnrollmentPolicy/<name>, or SAMRRSet/<name>", resourceID, index)
 	}
+	seen := map[string]bool{}
+	for nodeIndex, nodeRef := range source.NodeRefs {
+		nodeRef = strings.TrimSpace(nodeRef)
+		if nodeRef == "" {
+			return fmt.Errorf("%s spec.peersFrom[%d].nodeRefs[%d] must not be empty", resourceID, index, nodeIndex)
+		}
+		if seen[nodeRef] {
+			return fmt.Errorf("%s spec.peersFrom[%d].nodeRefs nodeRef %q is duplicated", resourceID, index, nodeRef)
+		}
+		seen[nodeRef] = true
+	}
 	return nil
 }
 
 func validateMobilityMembersFrom(resourceID string, index int, source api.MobilityMembersSourceSpec) error {
 	kind, name, ok := strings.Cut(strings.TrimSpace(source.Resource), "/")
-	if !ok || kind != "MobilityMemberSet" || strings.TrimSpace(name) == "" {
-		return fmt.Errorf("%s spec.membersFrom[%d].resource must reference MobilityMemberSet/<name>", resourceID, index)
+	if !ok || kind != "SAMNodeSet" || strings.TrimSpace(name) == "" {
+		return fmt.Errorf("%s spec.membersFrom[%d].resource must reference SAMNodeSet/<name>", resourceID, index)
 	}
 	return nil
 }
 
-func validateSAMTransportPeerOverrideShape(resourceID string, index int, override api.SAMTransportPeerOverrideSpec) error {
-	localSet := strings.TrimSpace(override.LocalInner) != ""
-	remoteSet := strings.TrimSpace(override.RemoteInner) != ""
-	if localSet != remoteSet {
-		return fmt.Errorf("%s spec.peers[%d].override.localInner and remoteInner must be set together", resourceID, index)
-	}
-	if !localSet {
-		return nil
-	}
-	local, err := netip.ParsePrefix(strings.TrimSpace(override.LocalInner))
-	if err != nil || !local.Addr().Is4() || local.Bits() != 31 {
-		return fmt.Errorf("%s spec.peers[%d].override.localInner must be an IPv4 /31 prefix", resourceID, index)
-	}
-	remoteValue := strings.TrimSpace(override.RemoteInner)
-	if strings.Contains(remoteValue, "/") {
-		remotePrefix, err := netip.ParsePrefix(remoteValue)
-		if err != nil || !remotePrefix.Addr().Is4() || remotePrefix.Bits() != 32 {
-			return fmt.Errorf("%s spec.peers[%d].override.remoteInner must be an IPv4 address or /32", resourceID, index)
-		}
-		remoteValue = remotePrefix.Addr().String()
-	}
-	remote, err := netip.ParseAddr(remoteValue)
-	if err != nil || !remote.Is4() {
-		return fmt.Errorf("%s spec.peers[%d].override.remoteInner must be an IPv4 address", resourceID, index)
-	}
-	local = local.Masked()
-	if !local.Contains(remote) || remote == local.Addr() {
-		return fmt.Errorf("%s spec.peers[%d].override.remoteInner must be the other address in override.localInner", resourceID, index)
-	}
-	return nil
-}
-
-func validateSAMTransportPeerOverride(resourceID string, index int, inner netip.Prefix, override api.SAMTransportPeerOverrideSpec, used map[string]string) error {
-	localSet := strings.TrimSpace(override.LocalInner) != ""
-	remoteSet := strings.TrimSpace(override.RemoteInner) != ""
-	if localSet != remoteSet {
-		return fmt.Errorf("%s spec.peers[%d].override.localInner and remoteInner must be set together", resourceID, index)
-	}
-	if !localSet {
-		return nil
-	}
-	local, err := netip.ParsePrefix(strings.TrimSpace(override.LocalInner))
-	if err != nil {
-		return fmt.Errorf("%s spec.peers[%d].override.localInner must be an IPv4 /31 prefix: %w", resourceID, index, err)
-	}
-	local = local.Masked()
-	if !local.Addr().Is4() || local.Bits() != 31 || !inner.Contains(local.Addr()) {
-		return fmt.Errorf("%s spec.peers[%d].override.localInner must be an IPv4 /31 inside spec.innerPrefix", resourceID, index)
-	}
-	remoteValue := strings.TrimSpace(override.RemoteInner)
-	if strings.Contains(remoteValue, "/") {
-		remotePrefix, err := netip.ParsePrefix(remoteValue)
-		if err != nil || !remotePrefix.Addr().Is4() || remotePrefix.Bits() != 32 {
-			return fmt.Errorf("%s spec.peers[%d].override.remoteInner must be an IPv4 address or /32", resourceID, index)
-		}
-		remoteValue = remotePrefix.Addr().String()
-	}
-	remote, err := netip.ParseAddr(remoteValue)
-	if err != nil || !remote.Is4() {
-		return fmt.Errorf("%s spec.peers[%d].override.remoteInner must be an IPv4 address", resourceID, index)
-	}
-	if !local.Contains(remote) || remote == local.Addr() {
-		return fmt.Errorf("%s spec.peers[%d].override.remoteInner must be the other address in override.localInner", resourceID, index)
-	}
-	for _, addr := range []string{local.Addr().String(), remote.String()} {
-		if previous := used[addr]; previous != "" {
-			return fmt.Errorf("%s spec.peers[%d].override inner address %s conflicts with %s", resourceID, index, addr, previous)
-		}
-		used[addr] = fmt.Sprintf("spec.peers[%d].override", index)
-	}
-	return nil
-}
-
-func validateMobilityOwnershipDiscovery(res api.Resource, index int, spec api.MobilityPoolSpec, member api.MobilityPoolMember) error {
+func validateMobilityOwnershipDiscovery(res api.Resource, index int, spec api.MobilityPoolSpec, member api.ResolvedMobilityPoolMember) error {
 	discovery := member.OwnershipDiscovery
 	discoverySet := strings.TrimSpace(discovery.Mode) != "" ||
 		strings.TrimSpace(discovery.ProviderRef) != "" ||
@@ -1053,6 +769,7 @@ func validateMobilityOwnershipDiscovery(res api.Resource, index int, spec api.Mo
 		strings.TrimSpace(discovery.SubnetRefFrom) != "" ||
 		strings.TrimSpace(discovery.ScanInterval) != "" ||
 		strings.TrimSpace(discovery.LeaseTTL) != "" ||
+		strings.TrimSpace(discovery.StoppedInstancePolicy) != "" ||
 		strings.TrimSpace(discovery.AllowEmptyAfter) != "" ||
 		len(discovery.Sources) > 0 ||
 		len(discovery.Scope.IncludeAddresses) > 0 ||
@@ -1060,6 +777,9 @@ func validateMobilityOwnershipDiscovery(res api.Resource, index int, spec api.Mo
 		len(discovery.Selector.Tags) > 0
 	if !discoverySet {
 		return nil
+	}
+	if strings.TrimSpace(discovery.StoppedInstancePolicy) != "" && strings.TrimSpace(discovery.Mode) != "provider-private-ip" {
+		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.stoppedInstancePolicy is supported only when mode is provider-private-ip", res.ID(), index)
 	}
 	switch strings.TrimSpace(discovery.Mode) {
 	case "", "disabled":
@@ -1073,7 +793,7 @@ func validateMobilityOwnershipDiscovery(res api.Resource, index int, spec api.Mo
 	}
 }
 
-func validateMobilityProviderOwnershipDiscovery(res api.Resource, index int, spec api.MobilityPoolSpec, member api.MobilityPoolMember) error {
+func validateMobilityProviderOwnershipDiscovery(res api.Resource, index int, spec api.MobilityPoolSpec, member api.ResolvedMobilityPoolMember) error {
 	discovery := member.OwnershipDiscovery
 	if len(discovery.Sources) > 0 {
 		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.sources is supported only when mode is onprem-l2", res.ID(), index)
@@ -1081,11 +801,13 @@ func validateMobilityProviderOwnershipDiscovery(res api.Resource, index int, spe
 	if strings.TrimSpace(discovery.AllowEmptyAfter) != "" {
 		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.allowEmptyAfter is supported only when mode is onprem-l2", res.ID(), index)
 	}
+	switch strings.TrimSpace(discovery.StoppedInstancePolicy) {
+	case "", "hold", "release":
+	default:
+		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery.stoppedInstancePolicy %q is not supported; use hold or release", res.ID(), index, discovery.StoppedInstancePolicy)
+	}
 	if strings.TrimSpace(member.Role) != "cloud" {
 		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery is supported only for role cloud", res.ID(), index)
-	}
-	if effectiveMobilityDeliveryMode(spec) != "bgp" {
-		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery requires spec.deliveryPolicy.mode=bgp", res.ID(), index)
 	}
 	if strings.TrimSpace(member.Capture.Type) != "provider-secondary-ip" {
 		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery requires capture.type provider-secondary-ip", res.ID(), index)
@@ -1126,13 +848,10 @@ func validateMobilityProviderOwnershipDiscovery(res api.Resource, index int, spe
 	return nil
 }
 
-func validateMobilityOnPremOwnershipDiscovery(res api.Resource, index int, spec api.MobilityPoolSpec, member api.MobilityPoolMember) error {
+func validateMobilityOnPremOwnershipDiscovery(res api.Resource, index int, spec api.MobilityPoolSpec, member api.ResolvedMobilityPoolMember) error {
 	discovery := member.OwnershipDiscovery
 	if strings.TrimSpace(member.Role) != "onprem" {
 		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery mode onprem-l2 is supported only for role onprem", res.ID(), index)
-	}
-	if effectiveMobilityDeliveryMode(spec) != "bgp" {
-		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery mode onprem-l2 requires spec.deliveryPolicy.mode=bgp", res.ID(), index)
 	}
 	if strings.TrimSpace(member.Capture.Type) != "proxy-arp" {
 		return fmt.Errorf("%s spec.members[%d].ownershipDiscovery mode onprem-l2 requires capture.type proxy-arp", res.ID(), index)
@@ -1284,7 +1003,7 @@ func mustParsePrefixForValidation(raw string) netip.Prefix {
 	return prefix.Masked()
 }
 
-func validateMobilityStaticOwnedAddresses(res api.Resource, index int, member api.MobilityPoolMember, pool netip.Prefix, owners map[string]string) error {
+func validateMobilityStaticOwnedAddresses(res api.Resource, index int, member api.ResolvedMobilityPoolMember, pool netip.Prefix, owners map[string]string) error {
 	if len(member.StaticOwnedAddresses) == 0 {
 		return nil
 	}
@@ -1361,34 +1080,6 @@ func parseMobilityStaticAddress(raw string, pool netip.Prefix) (string, error) {
 	return prefix.String(), nil
 }
 
-func validateMobilityIPOwnershipPolicy(res api.Resource, spec api.MobilityPoolSpec, nodeRefs map[string]bool) error {
-	policy := spec.IPOwnershipPolicy
-	policySet := strings.TrimSpace(policy.Type) != "" ||
-		len(policy.PreferNodes) > 0 ||
-		policy.AutoFailover
-	if !policySet {
-		return nil
-	}
-	if strings.TrimSpace(policy.Type) != "centralized" {
-		return fmt.Errorf("%s spec.ipOwnershipPolicy.type %q is not supported; only centralized", res.ID(), policy.Type)
-	}
-	seen := map[string]bool{}
-	for i, nodeRef := range policy.PreferNodes {
-		nodeRef = strings.TrimSpace(nodeRef)
-		if nodeRef == "" {
-			return fmt.Errorf("%s spec.ipOwnershipPolicy.preferNodes[%d] must not be empty", res.ID(), i)
-		}
-		if !nodeRefs[nodeRef] {
-			return fmt.Errorf("%s spec.ipOwnershipPolicy.preferNodes[%d] %q must be one of the member nodeRefs", res.ID(), i, nodeRef)
-		}
-		if seen[nodeRef] {
-			return fmt.Errorf("%s spec.ipOwnershipPolicy.preferNodes contains duplicate nodeRef %q", res.ID(), nodeRef)
-		}
-		seen[nodeRef] = true
-	}
-	return nil
-}
-
 type mobilityPlacementGroup struct {
 	site        string
 	role        string
@@ -1405,44 +1096,95 @@ type mobilityPlacementCompleteness struct {
 	placedNodeRef string
 }
 
-func validateMobilityMemberPlacement(res api.Resource, index int, member api.MobilityPoolMember, groups map[string]mobilityPlacementGroup) error {
-	group := strings.TrimSpace(member.Placement.Group)
-	if group == "" {
-		if member.Placement.Priority != 0 {
-			return fmt.Errorf("%s spec.members[%d].placement.priority requires placement.group", res.ID(), index)
-		}
-		if member.Maintenance.Drain {
-			return fmt.Errorf("%s spec.members[%d].maintenance.drain requires placement.group", res.ID(), index)
-		}
-		if member.MaxSecondaryIPs > 0 {
-			return fmt.Errorf("%s spec.members[%d].maxSecondaryIPs requires placement.group", res.ID(), index)
-		}
+func validateMobilityMemberPlacement(res api.Resource, index int, member api.ResolvedMobilityPoolMember, groups map[string]mobilityPlacementGroup) error {
+	memberPath := fmt.Sprintf("spec.members[%d]", index)
+	if err := validateMobilityPlacementIdentity(
+		res.ID(),
+		memberPath,
+		member.Site,
+		member.Role,
+		member.Placement,
+		member.Maintenance,
+		member.MaxSecondaryIPs,
+		member.Capture.ProviderRef,
+		groups,
+	); err != nil {
+		return err
+	}
+	if strings.TrimSpace(member.Placement.Group) == "" {
 		return nil
-	}
-	if member.Placement.Priority < 0 || member.Placement.Priority > 1000000 {
-		return fmt.Errorf("%s spec.members[%d].placement.priority must be between 0 and 1000000", res.ID(), index)
-	}
-	if strings.TrimSpace(member.Role) != "cloud" {
-		return fmt.Errorf("%s spec.members[%d].placement.group is supported only for role cloud", res.ID(), index)
 	}
 	captureType := strings.TrimSpace(member.Capture.Type)
 	if captureType != "" && captureType != "provider-secondary-ip" {
-		return fmt.Errorf("%s spec.members[%d].placement.group requires provider-secondary-ip capture", res.ID(), index)
+		return fmt.Errorf("%s %s.placement.group requires provider-secondary-ip capture", res.ID(), memberPath)
+	}
+	return nil
+}
+
+// validateSAMNodePlacement validates the subset of placement semantics that is
+// shared topology. Provider-local capture is deliberately absent from
+// SAMNodeSet and is validated only after a MobilityPool overlay is resolved.
+func validateSAMNodePlacement(res api.Resource, index int, node api.SAMNodeSpec, groups map[string]mobilityPlacementGroup) error {
+	return validateMobilityPlacementIdentity(
+		res.ID(),
+		fmt.Sprintf("spec.nodes[%d]", index),
+		node.Site,
+		node.Role,
+		node.Placement,
+		node.Maintenance,
+		node.MaxSecondaryIPs,
+		"",
+		groups,
+	)
+}
+
+func validateMobilityPlacementIdentity(
+	resourceID string,
+	memberPath string,
+	site string,
+	role string,
+	placement api.MobilityMemberPlacement,
+	maintenance api.MobilityMemberMaintenance,
+	maxSecondaryIPs int,
+	providerRef string,
+	groups map[string]mobilityPlacementGroup,
+) error {
+	if maxSecondaryIPs < 0 {
+		return fmt.Errorf("%s %s.maxSecondaryIPs must be >= 0", resourceID, memberPath)
+	}
+	group := strings.TrimSpace(placement.Group)
+	if group == "" {
+		if placement.Priority != 0 {
+			return fmt.Errorf("%s %s.placement.priority requires placement.group", resourceID, memberPath)
+		}
+		if maintenance.Drain {
+			return fmt.Errorf("%s %s.maintenance.drain requires placement.group", resourceID, memberPath)
+		}
+		if maxSecondaryIPs > 0 {
+			return fmt.Errorf("%s %s.maxSecondaryIPs requires placement.group", resourceID, memberPath)
+		}
+		return nil
+	}
+	if placement.Priority < 0 || placement.Priority > 1000000 {
+		return fmt.Errorf("%s %s.placement.priority must be between 0 and 1000000", resourceID, memberPath)
+	}
+	if strings.TrimSpace(role) != "cloud" {
+		return fmt.Errorf("%s %s.placement.group is supported only for role cloud", resourceID, memberPath)
 	}
 	current := mobilityPlacementGroup{
-		site:        strings.TrimSpace(member.Site),
-		role:        strings.TrimSpace(member.Role),
-		providerRef: strings.TrimSpace(member.Capture.ProviderRef),
+		site:        strings.TrimSpace(site),
+		role:        strings.TrimSpace(role),
+		providerRef: strings.TrimSpace(providerRef),
 	}
 	if existing, ok := groups[group]; ok {
 		if existing.site != current.site {
-			return fmt.Errorf("%s spec.members[%d].placement.group %q must use one site; got %q and %q", res.ID(), index, group, existing.site, current.site)
+			return fmt.Errorf("%s %s.placement.group %q must use one site; got %q and %q", resourceID, memberPath, group, existing.site, current.site)
 		}
 		if existing.role != current.role {
-			return fmt.Errorf("%s spec.members[%d].placement.group %q must use one role; got %q and %q", res.ID(), index, group, existing.role, current.role)
+			return fmt.Errorf("%s %s.placement.group %q must use one role; got %q and %q", resourceID, memberPath, group, existing.role, current.role)
 		}
 		if existing.providerRef != "" && current.providerRef != "" && existing.providerRef != current.providerRef {
-			return fmt.Errorf("%s spec.members[%d].placement.group %q must use one providerRef; got %q and %q", res.ID(), index, group, existing.providerRef, current.providerRef)
+			return fmt.Errorf("%s %s.placement.group %q must use one providerRef; got %q and %q", resourceID, memberPath, group, existing.providerRef, current.providerRef)
 		}
 		if existing.providerRef == "" && current.providerRef != "" {
 			existing.providerRef = current.providerRef
@@ -1454,7 +1196,7 @@ func validateMobilityMemberPlacement(res api.Resource, index int, member api.Mob
 	return nil
 }
 
-func trackMobilityPlacementCompleteness(groups map[string]mobilityPlacementCompleteness, index int, member api.MobilityPoolMember) {
+func trackMobilityPlacementCompleteness(groups map[string]mobilityPlacementCompleteness, index int, member api.ResolvedMobilityPoolMember) {
 	if strings.TrimSpace(member.Role) != "cloud" || strings.TrimSpace(member.Capture.Type) != "provider-secondary-ip" {
 		return
 	}
@@ -1492,36 +1234,8 @@ func validateMobilityPlacementCompleteness(res api.Resource, groups map[string]m
 	return nil
 }
 
-func validateMobilityMemberCapture(res api.Resource, index int, spec api.MobilityPoolSpec, member api.MobilityPoolMember) error {
+func validateMobilityMemberCapture(res api.Resource, index int, spec api.MobilityPoolSpec, member api.ResolvedMobilityPoolMember) error {
 	captureType := strings.TrimSpace(member.Capture.Type)
-	switch strings.TrimSpace(member.Delivery.Mode) {
-	case "", "route":
-	default:
-		return fmt.Errorf("%s spec.members[%d].delivery.mode must be empty or route", res.ID(), index)
-	}
-	if captureType != "" && effectiveMobilityDeliveryMode(spec) != "bgp" && strings.TrimSpace(member.Delivery.PeerRef) == "" {
-		if len(member.DeliveryTo) == 0 {
-			return fmt.Errorf("%s spec.members[%d].delivery.peerRef or deliveryTo is required when capture.type is set", res.ID(), index)
-		}
-	}
-	for j, delivery := range member.DeliveryTo {
-		if strings.TrimSpace(delivery.NodeRef) == "" && strings.TrimSpace(delivery.Site) == "" && strings.TrimSpace(delivery.Role) == "" {
-			return fmt.Errorf("%s spec.members[%d].deliveryTo[%d] must set nodeRef, site, or role", res.ID(), index, j)
-		}
-		switch strings.TrimSpace(delivery.Role) {
-		case "", "onprem", "cloud":
-		default:
-			return fmt.Errorf("%s spec.members[%d].deliveryTo[%d].role must be onprem or cloud", res.ID(), index, j)
-		}
-		if strings.TrimSpace(delivery.PeerRef) == "" {
-			return fmt.Errorf("%s spec.members[%d].deliveryTo[%d].peerRef is required", res.ID(), index, j)
-		}
-		switch strings.TrimSpace(delivery.Mode) {
-		case "", "route":
-		default:
-			return fmt.Errorf("%s spec.members[%d].deliveryTo[%d].mode must be empty or route", res.ID(), index, j)
-		}
-	}
 	for key, value := range member.Capture.Target {
 		if strings.TrimSpace(key) == "" {
 			return fmt.Errorf("%s spec.members[%d].capture.target contains an empty key", res.ID(), index)
@@ -1537,7 +1251,7 @@ func validateMobilityMemberCapture(res api.Resource, index int, spec api.Mobilit
 	if err := validateCaptureActiveWhen(fmt.Sprintf("%s spec.members[%d].capture.activeWhen", res.ID(), index), member.Capture.ActiveWhen); err != nil {
 		return err
 	}
-	captureStrategy := mobilityCaptureStrategy(member.Capture)
+	captureStrategy := strings.TrimSpace(member.Capture.CaptureStrategy)
 	if captureType == "" {
 		if captureStrategy != "" {
 			return fmt.Errorf("%s spec.members[%d].capture.captureStrategy requires capture.type", res.ID(), index)
@@ -1566,32 +1280,27 @@ func validateMobilityMemberCapture(res api.Resource, index int, spec api.Mobilit
 	}
 	switch captureType {
 	case "provider-secondary-ip":
+		if strings.TrimSpace(member.Capture.ActiveWhen.Type) != "" || strings.TrimSpace(member.Capture.ActiveWhen.VirtualAddressRef) != "" {
+			return fmt.Errorf("%s spec.members[%d].capture.activeWhen is supported only for role onprem proxy-arp capture", res.ID(), index)
+		}
 		switch captureStrategy {
-		case "", "secondary-ip":
+		case "":
 		case "route-table":
 			if strings.TrimSpace(member.Capture.Target["routeTableRef"]) == "" {
 				return fmt.Errorf("%s spec.members[%d].capture.target.routeTableRef is required when capture.captureStrategy is route-table", res.ID(), index)
 			}
 		default:
-			return fmt.Errorf("%s spec.members[%d].capture.captureStrategy must be secondary-ip or route-table", res.ID(), index)
+			return fmt.Errorf("%s spec.members[%d].capture.captureStrategy only supports route-table; omit it for provider-secondary-ip capture", res.ID(), index)
 		}
 		if strings.TrimSpace(member.Capture.ProviderRef) == "" {
 			return fmt.Errorf("%s spec.members[%d].capture.providerRef is required when capture.type is provider-secondary-ip", res.ID(), index)
 		}
-		if strings.TrimSpace(member.Capture.ProviderMode) == "" {
-			return fmt.Errorf("%s spec.members[%d].capture.providerMode is required when capture.type is provider-secondary-ip", res.ID(), index)
-		}
 		if strings.TrimSpace(member.Capture.NICRef) == "" && !mobilityProviderCaptureAllowsDiscoveredNIC(spec, member) {
 			return fmt.Errorf("%s spec.members[%d].capture.nicRef is required when capture.type is provider-secondary-ip", res.ID(), index)
 		}
-		if member.Capture.ConfigureOSAddress && strings.TrimSpace(member.Capture.Interface) == "" {
-			return fmt.Errorf("%s spec.members[%d].capture.interface is required when capture.configureOSAddress is true", res.ID(), index)
-		}
 	case "proxy-arp":
-		switch captureStrategy {
-		case "", "proxy-arp":
-		default:
-			return fmt.Errorf("%s spec.members[%d].capture.captureStrategy must be proxy-arp when capture.type is proxy-arp", res.ID(), index)
+		if captureStrategy != "" {
+			return fmt.Errorf("%s spec.members[%d].capture.captureStrategy is only supported for provider-secondary-ip route-table capture", res.ID(), index)
 		}
 		if strings.TrimSpace(member.Capture.Interface) == "" {
 			return fmt.Errorf("%s spec.members[%d].capture.interface is required when capture.type is proxy-arp", res.ID(), index)
@@ -1602,26 +1311,10 @@ func validateMobilityMemberCapture(res api.Resource, index int, spec api.Mobilit
 	return nil
 }
 
-func mobilityProviderCaptureAllowsDiscoveredNIC(spec api.MobilityPoolSpec, member api.MobilityPoolMember) bool {
-	return effectiveMobilityDeliveryMode(spec) == "bgp" &&
-		strings.TrimSpace(member.Role) == "cloud" &&
+func mobilityProviderCaptureAllowsDiscoveredNIC(spec api.MobilityPoolSpec, member api.ResolvedMobilityPoolMember) bool {
+	return strings.TrimSpace(member.Role) == "cloud" &&
 		strings.TrimSpace(member.Capture.Type) == "provider-secondary-ip" &&
 		strings.TrimSpace(member.OwnershipDiscovery.Mode) == "provider-private-ip"
-}
-
-func mobilityCaptureStrategy(capture api.MobilityMemberCapture) string {
-	if value := strings.TrimSpace(capture.CaptureStrategy); value != "" {
-		return value
-	}
-	return strings.TrimSpace(capture.Strategy)
-}
-
-func effectiveMobilityDeliveryMode(spec api.MobilityPoolSpec) string {
-	mode := strings.TrimSpace(spec.DeliveryPolicy.Mode)
-	if mode == "" {
-		return "bgp"
-	}
-	return mode
 }
 
 func validateSAMSubnetPolicy(res api.Resource, spec api.SAMSubnetPolicySpec) error {

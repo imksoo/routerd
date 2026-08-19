@@ -417,7 +417,6 @@ type PartialSAMWizardState = {
 export function buildSAMRouterConfig(state: SAMWizardState, selfNodeRef: string): RouterConfig {
   const nodes = stableSAMNodes(state.nodes);
   const self = nodes.find((node) => node.nodeRef === selfNodeRef) ?? nodes[0];
-  const topologyNodeRefs = nodes.map((node) => node.nodeRef).sort();
   const routeReflector = nodes.find((node) => node.nodeRef === state.routeReflectorNodeRef) ?? nodes[0];
   const resources: RouterResource[] = [];
 
@@ -488,12 +487,25 @@ export function buildSAMRouterConfig(state: SAMWizardState, selfNodeRef: string)
     convergenceProfile: "fast",
   }));
 
+  resources.push(resource(MOBILITY_API, "SAMNodeSet", "cloudedge-nodes", {
+    nodes: nodes.map((node) => ({
+      nodeRef: node.nodeRef,
+      site: node.site,
+      role: node.role,
+      routeReflector: node.nodeRef === routeReflector.nodeRef,
+      samEndpoint: node.underlayIPv4,
+      placement: node.role === "cloud" ? {
+        group: node.placementGroup,
+        priority: node.placementPriority,
+      } : undefined,
+    })),
+  }));
+
   resources.push(resource(MOBILITY_API, "SAMTransportProfile", "cloudedge-transport", {
     selfNodeRef: self.nodeRef,
     mode: "ipip",
     encryption: "wireguard",
     innerPrefix: state.innerCIDR,
-    topologyNodeRefs,
     underlayInterface: "wg-hybrid",
     localEndpointFrom: ref("IPv4StaticAddress/wg-hybrid-ipv4", "address"),
     bgp: {
@@ -510,20 +522,15 @@ export function buildSAMRouterConfig(state: SAMWizardState, selfNodeRef: string)
         allowedPrefixes: [state.mobilityPrefix],
       },
     },
-    peers: nodes
-      .filter((node) => node.nodeRef !== self.nodeRef)
-      .map((node) => ({
-        nodeRef: node.nodeRef,
-        remoteEndpoint: node.underlayIPv4,
-      })),
+    peersFrom: [{resource: "SAMNodeSet/cloudedge-nodes"}],
   }));
 
-  addSAMProviderProfiles(resources, nodes);
+  addSAMProviderProfile(resources, self);
   resources.push(resource(MOBILITY_API, "MobilityPool", state.name || "cloudedge", {
     prefix: state.mobilityPrefix,
     groupRef: "cloudedge",
-    deliveryPolicy: {mode: "bgp"},
-    members: nodes.map((node) => mobilityMember(node)),
+    membersFrom: [{resource: "SAMNodeSet/cloudedge-nodes"}],
+    members: [mobilitySelfOverlay(self)],
   }));
 
   return {
@@ -947,22 +954,18 @@ function mobilitySubjectPrefix(prefix: string): string {
   return address;
 }
 
-function addSAMProviderProfiles(resources: RouterResource[], nodes: SAMNode[]): void {
-  const emitted = new Set<string>();
-  for (const node of nodes) {
-    if (node.role !== "cloud" || !node.provider || !node.providerRef || emitted.has(node.providerRef)) {
-      continue;
-    }
-    emitted.add(node.providerRef);
-    resources.push(resource(HYBRID_API, "CloudProviderProfile", node.providerRef, {
-      provider: node.provider,
-      capabilities: providerCapabilities(node.provider),
-      auth: {
-        mode: "external-command",
-        command: `/usr/local/libexec/routerd/plugins/${node.provider}-auth`,
-      },
-    }));
+function addSAMProviderProfile(resources: RouterResource[], self: SAMNode): void {
+  if (self.role !== "cloud" || !self.provider || !self.providerRef) {
+    return;
   }
+  resources.push(resource(HYBRID_API, "CloudProviderProfile", self.providerRef, {
+    provider: self.provider,
+    capabilities: providerCapabilities(self.provider),
+    auth: {
+      mode: "external-command",
+      command: `/usr/local/libexec/routerd/plugins/${self.provider}-auth`,
+    },
+  }));
 }
 
 function providerCapabilities(provider: SAMProvider): string[] {
@@ -977,34 +980,18 @@ function providerCapabilities(provider: SAMProvider): string[] {
   }
 }
 
-function providerMode(provider: SAMProvider): string {
-  switch (provider) {
-    case "azure":
-      return "nic-secondary-ip";
-    case "oci":
-      return "vnic-secondary-ip";
-    case "aws":
-    default:
-      return "eni-secondary-ip";
-  }
-}
-
 function defaultCloudInterface(provider?: SAMProvider): string {
   return provider === "azure" ? "eth0" : "ens5";
 }
 
-function mobilityMember(node: SAMNode): Record<string, unknown> {
+function mobilitySelfOverlay(node: SAMNode): Record<string, unknown> {
   if (node.role === "cloud") {
     return {
       nodeRef: node.nodeRef,
-      site: node.site,
-      role: "cloud",
       capture: {
         type: "provider-secondary-ip",
         interface: node.captureInterface || defaultCloudInterface(node.provider),
         providerRef: node.providerRef,
-        providerMode: providerMode(node.provider ?? "aws"),
-        configureOSAddress: false,
       },
       ownershipDiscovery: {
         mode: "provider-private-ip",
@@ -1012,16 +999,10 @@ function mobilityMember(node: SAMNode): Record<string, unknown> {
         scanInterval: "60s",
         leaseTTL: "10m",
       },
-      placement: {
-        group: node.placementGroup,
-        priority: node.placementPriority,
-      },
     };
   }
   return {
     nodeRef: node.nodeRef,
-    site: node.site,
-    role: "onprem",
     staticOwnedAddresses: node.staticOwnedAddresses,
     capture: {
       type: "proxy-arp",

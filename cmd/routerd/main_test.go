@@ -2166,12 +2166,22 @@ func TestCleanupUnsupportedLegacyObjectStatusesUsesDynamicEffectiveView(t *testi
 					Mode:              "ipip",
 					Encryption:        "wireguard",
 					InnerPrefix:       "10.255.0.0/24",
-					TopologyNodeRefs:  []string{"core-a", "core-b"},
 					UnderlayInterface: "wg-hybrid",
 					LocalEndpoint:     "10.99.0.1",
 					BGP:               api.SAMTransportBGPProfileSpec{RouterRef: "BGPRouter/core", PeerASN: 64512},
-					Peers:             []api.SAMTransportPeerSpec{{NodeRef: "core-b", RemoteEndpoint: "10.99.0.2"}},
+					PeersFrom: []api.SAMTransportPeersSourceSpec{{
+						Resource: "SAMNodeSet/fabric-nodes",
+						NodeRefs: []string{"core-b"},
+					}},
 				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMNodeSet"},
+				Metadata: api.ObjectMeta{Name: "fabric-nodes"},
+				Spec: api.SAMNodeSetSpec{Nodes: []api.SAMNodeSpec{
+					{NodeRef: "core-a", SAMEndpoint: "10.99.0.1"},
+					{NodeRef: "core-b", SAMEndpoint: "10.99.0.2"},
+				}},
 			},
 		}},
 	}

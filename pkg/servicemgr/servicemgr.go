@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resource"
 )
@@ -54,7 +55,7 @@ func ReplaceDefaultHook(op Operation, command Command) Hook {
 }
 
 func PIDSignalHook(op Operation, signal, pidPath string) Hook {
-	signal = strings.TrimPrefix(firstNonEmpty(signal, "HUP"), "-")
+	signal = strings.TrimPrefix(stringutil.FirstNonBlank(signal, "HUP"), "-")
 	return ReplaceDefaultHook(op, Command{Name: "sh", Args: []string{"-c", fmt.Sprintf("kill -%s \"$(cat %s)\"", signal, pidPath)}})
 }
 
@@ -109,9 +110,9 @@ func ValidateService(manager Manager, service Service) error {
 func rawServiceName(manager Manager, service Service) string {
 	switch manager.(type) {
 	case Systemd:
-		return firstNonEmpty(service.SystemdName, service.Name)
+		return stringutil.FirstNonBlank(service.SystemdName, service.Name)
 	case RCD:
-		return firstNonEmpty(service.RCDName, service.SystemdName, service.Name)
+		return stringutil.FirstNonBlank(service.RCDName, service.SystemdName, service.Name)
 	default:
 		return manager.ServiceName(service)
 	}
@@ -123,7 +124,7 @@ func (Systemd) Name() string         { return "systemd" }
 func (Systemd) ArtifactKind() string { return "systemd.service" }
 func (Systemd) ApplyWith() string    { return "systemctl" }
 func (m Systemd) ServiceName(s Service) string {
-	return firstNonEmpty(s.SystemdName, s.Name)
+	return stringutil.FirstNonBlank(s.SystemdName, s.Name)
 }
 func (m Systemd) Command(op Operation, s Service) Command {
 	name := m.ServiceName(s)
@@ -144,7 +145,7 @@ func (m Systemd) Plan(op Operation, s Service, hooks ...Hook) Plan {
 	return operationPlan(op, m.Command(op, s), hooks...)
 }
 func (m Systemd) Intent(owner string, service Service, action string, attrs map[string]string) resource.Intent {
-	return serviceIntent(owner, firstNonEmpty(service.SystemdArtifactKind, m.ArtifactKind()), m.ServiceName(service), action, m.ApplyWith(), attrs)
+	return serviceIntent(owner, stringutil.FirstNonBlank(service.SystemdArtifactKind, m.ArtifactKind()), m.ServiceName(service), action, m.ApplyWith(), attrs)
 }
 
 type RCD struct{}
@@ -153,7 +154,7 @@ func (RCD) Name() string         { return "rc.d" }
 func (RCD) ArtifactKind() string { return "rc.d.service" }
 func (RCD) ApplyWith() string    { return "service" }
 func (m RCD) ServiceName(s Service) string {
-	return normalizeRCServiceName(firstNonEmpty(s.RCDName, s.SystemdName, s.Name))
+	return normalizeRCServiceName(stringutil.FirstNonBlank(s.RCDName, s.SystemdName, s.Name))
 }
 func (m RCD) Command(op Operation, s Service) Command {
 	name := m.ServiceName(s)
@@ -222,13 +223,4 @@ func normalizeRCServiceName(value string) string {
 		return "routerd_service"
 	}
 	return value
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }

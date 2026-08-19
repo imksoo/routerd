@@ -15,8 +15,13 @@ variable "template_vm_id" {
   type    = number
   default = null
 }
+variable "template_source_node" {
+  description = "Explicit PVE node that owns the run-scoped shared template. Required for template clones, including same-host leaves."
+  type        = string
+  default     = null
+}
 variable "clone_full" {
-  description = "Use a full clone when boot_source is template. False creates linked clones and is faster for ephemeral labs."
+  description = "Template qualification requires full clones so every disposable workload has an independent disk."
   type        = bool
   default     = false
 }
@@ -52,29 +57,25 @@ variable "client_name" {
 }
 variable "router_ipv4_cidr" { type = string }
 variable "client_ipv4_cidr" { type = string }
-variable "router_management_ipv4_cidr" { type = string }
-variable "client_management_ipv4_cidr" { type = string }
 variable "extra_leaf_nodes" {
   type = map(object({
-    router_vm_id                = number
-    router_ipv4_cidr            = string
-    router_management_ipv4_cidr = string
-    client_name                 = string
-    client_vm_id                = number
-    client_ipv4_cidr            = string
-    client_management_ipv4_cidr = string
+    router_vm_id     = number
+    router_ipv4_cidr = string
+    client_name      = string
+    client_vm_id     = number
+    client_ipv4_cidr = string
   }))
   default = {}
-}
-variable "gateway_ipv4" {
-  type    = string
-  default = null
 }
 variable "capture_gateway_ipv4" {
   type    = string
   default = null
 }
 variable "ssh_public_key" { type = string }
+variable "pve_ssh_host" {
+  description = "Trusted PVE host FQDN used for QGA discovery of this module's guests."
+  type        = string
+}
 variable "username" {
   type    = string
   default = "ubuntu"

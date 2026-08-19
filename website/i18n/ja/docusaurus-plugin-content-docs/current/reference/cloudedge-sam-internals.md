@@ -27,7 +27,7 @@ CloudEdge SAM は到達性とクラウド受け口を明確に分離します。
 - 非ホルダーノードは BGP best-path から remote owned アドレスを学習し、オーバー
   レイ next-hop 経由の delivery route を FIB にインストールします。
 - アドレスの移動は **BGP の withdraw / advertise と path preference の変更** で
-  表現されます。オペレーターはリースや claim を手で書きません。
+  表現されます。オペレーターはリース、アドレスごとの所有権レコード、provider action を手で書きません。
 - 失敗検知は **BFD**（FRR `bfdd`）で高速化し、BFD が不安定なときは BGP hold timer
   が非破壊的な権威として route 撤回を担います。
 
@@ -92,7 +92,7 @@ make-before-break 広告より高い preference を持つよう設定されま�
 
 ## placement：アクティブ/スタンバイの決定
 
-`MobilityPool` の各メンバーは `placement.group` と `placement.priority` を持ちます。
+`SAMNodeSet` の各ノードは `placement.group` と `placement.priority` を持ち、MobilityPool は `membersFrom` を通じてその共有 placement を取り込みます。
 
 - **group** — アクティブ/スタンバイを競わせる単位（例 `azure-edge`）。
 - **priority** — **数字が小さいほど高優先**。`0`（未指定）のメンバーは
@@ -130,8 +130,8 @@ placementSettleWindow = 120 * time.Second
 も完了していることを意味します。`placementSettleWindow` は、readiness signal を渡せない
 caller のための保守的 fallback として残ります。readiness が既知のまま未完了で
 残る場合でも、フェンスは `placementSettleWindow * 3`（既定 360 秒）で上限を持ちます。
-その後は `startupFenceReadiness.degraded: true` を出しつつ active 主張を解放し、
-provider API や観測経路の障害で overlay liveness を永久に止めないようにします。
+その後は readiness が未完了でも active 主張を解放し、provider API や観測経路の障害で
+overlay liveness を永久に止めないようにします。
 
 - 復帰直後のノードは、自分の BGP RIB / プロバイダー観測が収束する前に同 priority
   タイブレークを勝ってホルダーを奪い返してしまう。fence はこれを防ぎます。
@@ -184,31 +184,29 @@ seize（failover 時の奪取）には専用の hold-down があります。
 
 ## Dynamic RR sync は fail-static
 
-RR ノードは TCP 19652 の sync endpoint で `SAMPeerGroup` と `MobilityMemberSet`
-を公開でき、leaf は transport peer と共有 member topology を bootstrap できます。
-取得した resource は通常の TTL を持つ DynamicConfigPart として保存されます。
+RR ノードは TCP 19652 の sync endpoint で `SAMPeerGroup` を公開でき、leaf は
+transport peer を bootstrap できます。取得した resource は通常の TTL を持つ
+DynamicConfigPart として保存されます。
 
 - `peer-group-sync/<name>`: `SAMPeerGroup`
-- `member-set-sync/<name>`: `MobilityMemberSet`
 
-TTL expiry は data plane の撤去を意味しません。leaf が以前に取得した record を持ち
-RR publisher が消えた場合、routerd は期限切れ record を **last-known-good** 入力と
-して扱い、source を `Stale` と表示し、生成済み tunnel、BGP peer、MobilityPool
-planning artifact を維持します。一度も見たことのない source だけが `Pending` のまま
-です。これにより route reflector 障害が leaf transport teardown に波及しません。
-`Stale` marker と `warning` field は topology freshness が更新されていないことを示す
-operator signal です。
+TTL expiry は data plane の撤去を意味しません。leaf が以前に取得した peer-group
+record を持ち RR publisher が消えた場合、routerd は期限切れ record を
+**last-known-good** 入力として扱い、source を `Stale` と表示し、生成済み tunnel と
+BGP peer を維持します。一度も見たことのない source だけが `Pending` のままです。
+MobilityPool membership は synced dynamic resource ではなく、static な `SAMNodeSet`
+configuration から解決します。
 
 ## capture strategy（クラウド受け口の作り方）
 
-`capture.captureStrategy` でクラウド受け口の作り方を選びます。
+通常のクラウド受け口は `capture.type` で決まります。
+`capture.captureStrategy` は `provider-secondary-ip` を `route-table` に切り替える場合だけ指定します。
 
-| strategy | 対応プロバイダー | 動作 |
+| 設定 | 対応プロバイダー | 動作 |
 | --- | --- | --- |
-| `secondary-ip`（既定） | AWS / Azure / OCI / GCP | NIC に `/32` を secondary IP として割り当てる |
-| `route-table` | Azure | UDR のエントリをホルダーの NIC に向ける |
-| `proxy-arp` | on-prem | L2 セグメントで proxy-ARP/GARP により capture |
-| `addr-add` | （汎用） | OS アドレス追加 |
+| `type: provider-secondary-ip` | AWS / Azure / OCI / GCP | NIC に `/32` を secondary IP として割り当てる |
+| `captureStrategy: route-table` | Azure | UDR のエントリをホルダーの NIC に向ける |
+| `type: proxy-arp` | on-prem | L2 セグメントで proxy-ARP/GARP により capture |
 
 現在の release lab 認定は `secondary-ip` 捕捉のみを対象にしています。
 `route-table` 戦略は **未認定 (uncertified)** です。Azure では
@@ -281,12 +279,10 @@ BGP は **remote オーバーレイ到達性** を決めますが、ローカル
 
 ## 状態（status）フィールド
 
-`MobilityPool` の status には placement 関連の観測値が出ます。
-
-- `placementActive` — 自ノードがこのグループの active か
-- `placementActiveNode` — グループの active ノード
-- `placementGroup` — グループ名
-- `livenessMarkers` — 観測された peer の liveness marker（node-identity community）
+`MobilityPool` status は desired-state の配送路ではなく表示用 projection です。
+`prefix`、`groupRef`、`placementActive`、`placementActiveNode`、`placementGroup` を含み、
+`ownershipResolverControlPlaneOwnerTable` はアドレスごとの所有権を表示します。BGP の
+liveness marker は型付き runtime snapshot に復元される内部 fact であり、別の status 契約ではありません。
 
 これらは `routerctl doctor` の SAM 診断や `routerctl get MobilityPool/<name>` で確認できます。
 

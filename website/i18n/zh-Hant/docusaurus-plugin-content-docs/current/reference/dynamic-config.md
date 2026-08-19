@@ -20,7 +20,9 @@ provider-action 引擎僅從作用中的 part 匯入，並僅在通過 `Provider
 ## DynamicConfigPart
 
 `DynamicConfigPart` 是來自 dynamic 來源的已驗證執行時片段。來源可以提供一般的
-`api.Resource` 物件和指令。
+`api.Resource` 物件和指令。Mobility controller 也會持久化型別化的
+`localCaptureIntents` 與 `fibVerdicts`；它們是 controller 輸出的計畫，而非 plugin
+撰寫的 resource。
 
 ```yaml
 apiVersion: config.routerd.net/v1alpha1
@@ -34,19 +36,14 @@ spec:
   expiresAt: "2026-05-29T12:05:00Z"
   digest: sha256:...
   resources:
-    - apiVersion: hybrid.routerd.net/v1alpha1
-      kind: RemoteAddressClaim
-      metadata: { name: app-10-0-1-123 }
-      spec:
-        domainRef: cloudedge-same-subnet
-        address: 10.0.1.123/32
-        ownerSide: cloud
-        capture: { type: provider-secondary-ip, providerRef: oci-prod, providerMode: vnic-private-ip, nicRef: ocid1.vnic.oc1..example }
-        delivery: { peerRef: cloud-main, mode: route, tunnelInterface: wg-hybrid }
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata: { name: cloud-app-static-fallback }
+      spec: { destination: 10.0.1.123/32, gateway: 192.0.2.1 }
   directives:
     - op: mask
       target: { apiVersion: net.routerd.net/v1alpha1, kind: IPv4Route, name: cloud-app-static-fallback }
-      reason: "RemoteAddressClaim/app-10-0-1-123 is active"
+      reason: "provider inventory confirms the dynamic route"
 ```
 
 | 欄位 | 含義 |

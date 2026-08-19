@@ -26,7 +26,7 @@ OCI では、Canonical Ubuntu 24.04 イメージが `iptables-nft` フィルタ�
 
 `WireGuardInterface.spec.listenPort` は Linux 上では routerd の所有範囲です。`WireGuardInterface` controller はその UDP port への `INPUT` accept rule を保証し、結果を `WireGuardInterface.status.hostFirewall` に出します。
 
-転送許可はパスごとに扱います。管理対象の capture path では、`RemoteAddressClaim` が必要な capture interface から tunnel への `FORWARD` 許可を所有します。CloudEdge SAM の全経路がクリーンな OCI ホストで green になるまでは、イメージ由来の reject-all `FORWARD` がサイレントな dataplane failure にならないよう、`routerctl doctor hybrid` を acceptance gate に残してください。
+転送許可はパスごとに扱います。管理対象の capture path では、`MobilityPool` が出力する型付き local capture intent が、capture interface から tunnel への `FORWARD` 許可を導出します。CloudEdge SAM の全経路がクリーンな OCI ホストで green になるまでは、イメージ由来の reject-all `FORWARD` がサイレントな dataplane failure にならないよう、`routerctl doctor hybrid` を acceptance gate に残してください。
 
 ## 診断方法
 

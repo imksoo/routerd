@@ -80,36 +80,31 @@ spec:
           allowedPrefixes: [10.77.70.0/24]
         timers: { profile: fast }
 
+    # Static RR identity/topology is authored once here. Enrollment projects
+    # this NodeSet into a runtime-only SAMRRSet for each admitted leaf.
     - apiVersion: mobility.routerd.net/v1alpha1
-      kind: SAMRRSet
+      kind: SAMNodeSet
       metadata: { name: pve-rrs }
       spec:
-        enrollmentPolicyRef: SAMEnrollmentPolicy/pve-fou-leaves
-        mobilityPrefixes: [10.77.70.0/24]
-        routeAdmission:
-          allowedPrefixes: [10.77.70.0/24]
-          allowedPrefixLengthMin: 32
-          allowedPrefixLengthMax: 32
-          nextHopRewrite: peer-address
-        members:
+        nodes:
           - nodeRef: pve-rr-a
-            endpoint: 10.30.0.10
-            tunnelAddress: 10.255.10.1/32
+            routeReflector: true
+            samEndpoint: 10.30.0.10
             wireGuard:
               publicKey: PVE_RR_WIREGUARD_PUBLIC_KEY
               endpoint: 10.30.0.10:51820
-              allowedIPs: [10.31.0.10/32]
+              transportEndpoint: 10.31.0.10
+              allowedIPs: [10.255.10.1/32, 10.31.0.10/32]
               persistentKeepalive: 25
-            bgp: { asn: 64577, routerID: 10.255.10.1 }
           - nodeRef: pve-rr-b
-            endpoint: 10.30.0.11
-            tunnelAddress: 10.255.10.2/32
+            routeReflector: true
+            samEndpoint: 10.30.0.11
             wireGuard:
               publicKey: PVE_RR_B_WIREGUARD_PUBLIC_KEY
               endpoint: 10.30.0.11:51820
-              allowedIPs: [10.31.0.11/32]
+              transportEndpoint: 10.31.0.11
+              allowedIPs: [10.255.10.2/32, 10.31.0.11/32]
               persistentKeepalive: 25
-            bgp: { asn: 64577, routerID: 10.255.10.2 }
 
     - apiVersion: mobility.routerd.net/v1alpha1
       kind: SAMTransportProfile
@@ -157,6 +152,7 @@ spec:
       spec:
         transportProfileRef: SAMTransportProfile/pve-rr-b-wg
         rrSetRef: SAMRRSet/pve-rrs
+        rrNodeSetRef: SAMNodeSet/pve-rrs
         joinTokenFrom:
           file: /usr/local/etc/routerd/secrets/pve-join-token
         joinAudience: pve-wg-underlay
@@ -178,6 +174,7 @@ spec:
       spec:
         transportProfileRef: SAMTransportProfile/pve-rr-b-fou
         rrSetRef: SAMRRSet/pve-rrs
+        rrNodeSetRef: SAMNodeSet/pve-rrs
         joinTokenFrom:
           file: /usr/local/etc/routerd/secrets/pve-join-token
         joinAudience: pve-private-underlay

@@ -72,16 +72,30 @@ spec:
 
 `spec.selfNodeRef` はすべてのルーターに必須です。決定論的な `/31` 内部アドレス導出に使う安定した識別子であり、routerd はホスト名や BGP ルーター ID からの推定は行いません。
 
-- `addressingMode: edge-index`（デフォルト）は既存の動作を維持します。トランスポートドメイン内の全ルーターが `spec.topologyNodeRefs` を共有し、routerd がそのリストをソートし、順序なしノードペアにランクを付け、`innerPrefix` からランク順に `/31` を割り当てます。
-- `addressingMode: pair-stable` は各ノードペアの安定ハッシュから `/31` スロットを導出するため、リーフノードは `topologyNodeRefs` に全リーフを列挙せずに実際のピア（例: RR ノード）だけを宣言できます。
-  - 衝突チェックは現在プロファイルローカル（1 つの `SAMTransportProfile.spec.peers` リスト内）です。
-  - `override.localInner` + `override.remoteInner` を指定すると、そのピアをハッシュスロット割り当てから除外し、明示的な `/31` アドレスを予約します。
+- `addressingMode: edge-index`（デフォルト）は、`spec.peersFrom` が参照する共有 `SAMNodeSet` を使います。routerd はその node set をソートし、順序なしノードペアにランクを付け、`innerPrefix` からランク順に `/31` を割り当てます。
+- `addressingMode: pair-stable` は各ノードペアの安定ハッシュから `/31` スロットを導出します。共有 node set を変えずに、adjacency selector で実際のピア（例: RR ノード）だけを選べます。
 
 本番ファブリックでは、衝突確率を考慮して `innerPrefix` のサイズを決めてください。`/24` は `/31` スロットが 128 個しかなく、ハッシュ + mod 方式では中程度のエッジ数で衝突する可能性があります。可能であれば `/20` 以上を使ってください。
 
-`MobilityPool.spec.members` はモビリティの所有権/捕捉/配置の意図を表すものであり、SAM トランスポートの BGP ピアトポロジではありません。
+`SAMNodeSet` は共有されるモビリティ配置とトランスポートトポロジを表します。`MobilityPool.spec.members` はローカルの所有権/捕捉 overlay だけを持ち、SAM トランスポートの BGP ピアトポロジではありません。
 
 ```yaml
+apiVersion: mobility.routerd.net/v1alpha1
+kind: SAMNodeSet
+metadata:
+  name: lab-nodes
+spec:
+  nodes:
+    - nodeRef: pve-rt
+      site: pve
+      role: onprem
+      routeReflector: true
+      samEndpoint: 10.99.0.1
+    - nodeRef: k8s-rt
+      site: k8s
+      role: cloud
+      samEndpoint: 10.99.0.2
+---
 apiVersion: mobility.routerd.net/v1alpha1
 kind: SAMTransportProfile
 metadata:
@@ -102,12 +116,12 @@ spec:
     # ルートリフレクターのコアルーターでのみ設定してください。
     routeReflectorClient: true
     routeReflectorClusterID: 192.168.1.38
-  peers:
-    - nodeRef: k8s-rt
-      remoteEndpoint: 10.99.0.2
+  peersFrom:
+    - resource: SAMNodeSet/lab-nodes
+      nodeRefs: [k8s-rt]
 ```
 
-明示的なピアオーバーライドで、生成されるリソース名、ピアごとのアンダーレイインターフェース、ローカル/リモートの内部アドレスを固定できます。`localInner` または `remoteInner` のいずれかをオーバーライドする場合は両方を指定し、そのペアが `innerPrefix` 内の有効な `/31` でなければなりません。
+`SAMTransportProfile` に直接 peer または topology のリストはありません。共有の identity と endpoint はすべて `SAMNodeSet` に置き、`nodeRefs` では transport peer にする非 self node だけを選択します。`nodeRefs` を省略すると、`samEndpoint` を持つすべての非 self node を選びます。
 
 ## クリーンアップ
 

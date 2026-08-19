@@ -42,13 +42,37 @@ func defaultSAMGratuitousARPAnnouncer() samGratuitousARPAnnouncer {
 
 type packetSAMGratuitousARPAnnouncer struct{}
 
-func (netlinkSAMProxyNeighborApplier) SetProxyARP(ctx context.Context, ifname string, enabled, _ bool) error {
-	value := "0"
-	if enabled {
-		value = "1"
-	}
+func (netlinkSAMProxyNeighborApplier) SetProxyARP(ctx context.Context, ifname string, enabled, owned bool) (samProxyARPApplyResult, error) {
 	key := "net.ipv4.conf." + ifname + ".proxy_arp"
-	return samSetSysctl(ctx, key, value)
+	current, err := samReadBinarySysctl(ctx, key)
+	if err != nil {
+		return samProxyARPApplyResult{}, err
+	}
+	if enabled {
+		if current == "1" {
+			if !owned {
+				return samProxyARPApplyResult{}, fmt.Errorf("foreign %s=1: refusing adoption", key)
+			}
+			return samProxyARPApplyResult{}, nil
+		}
+		if err := samSetSysctl(ctx, key, "1"); err != nil {
+			return samProxyARPApplyResult{}, err
+		}
+		return samProxyARPApplyResult{changedByRouterd: true}, nil
+	}
+	if !owned {
+		if current == "1" {
+			return samProxyARPApplyResult{}, fmt.Errorf("foreign %s=1: refusing disable", key)
+		}
+		return samProxyARPApplyResult{}, nil
+	}
+	if current == "0" {
+		return samProxyARPApplyResult{}, nil
+	}
+	if err := samSetSysctl(ctx, key, "0"); err != nil {
+		return samProxyARPApplyResult{}, err
+	}
+	return samProxyARPApplyResult{}, nil
 }
 
 func (netlinkSAMProxyNeighborApplier) SetIPForwarding(ctx context.Context, enabled bool) error {
@@ -65,6 +89,18 @@ func samSetSysctl(ctx context.Context, key, value string) error {
 		return fmt.Errorf("sysctl -w %s=%s: %w: %s", key, value, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func samReadBinarySysctl(ctx context.Context, key string) (string, error) {
+	out, err := exec.CommandContext(ctx, "sysctl", "-n", key).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("sysctl -n %s: %w: %s", key, err, strings.TrimSpace(string(out)))
+	}
+	value := strings.TrimSpace(string(out))
+	if value != "0" && value != "1" {
+		return "", fmt.Errorf("sysctl %s has unexpected value %q", key, value)
+	}
+	return value, nil
 }
 
 func (packetSAMGratuitousARPAnnouncer) SendGratuitousARP(ctx context.Context, address, ifname string) error {

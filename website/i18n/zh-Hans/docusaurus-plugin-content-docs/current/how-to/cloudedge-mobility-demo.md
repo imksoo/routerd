@@ -44,8 +44,9 @@ title: CloudEdge Mobility 演示
 
 操作员只需声明意图，其余均为导出。
 
-- **MobilityPool** — 操作员描述的唯一意图（成员、捕获模式、交付、放置、维护 drain）。
-- **北极星成员结构** — 每个渲染配置通过 `profiles.cloudCaptures`、`spec.values`、`targetFrom`、`subnetRefFrom` 完全声明自身站点，远程站点仅为 ID 对等条目。与 BGP 类似，节点需要知道对等体，但不需要对等体的提供商 NIC/子网实现细节。
+- **SAMNodeSet** — 7 台 router 的唯一共享 identity/topology/placement registry。
+- **MobilityPool** — 本地 address/capture intent。它导入该 node set，只保留 self 的 provider、capture、discovery overlay。
+- **北极星成员结构** — 每个渲染配置通过 `profiles.cloudCaptures`、`spec.values`、`targetFrom`、`subnetRefFrom` 完全声明自身站点，不重复 remote member 或其提供商 NIC/子网实现细节。
 - **SAMTransportProfile** — 从共享拓扑和内部前缀导出逐对等体的 `TunnelInterface`、端点 `/32` `IPv4Route`、`BGPPeer` 资源。
 - **BGP `/32` mobility 路径** — 每个拥有者广告其拥有的主机路由，其他站点通过生成的 SAM 传输学习当前最佳路径。
 - **提供商 trap 操作** — 云端路由器最终将远程拥有的 `/32` 作为辅助 IP assign/unassign 以进行本地捕获。这些操作不再位于关键转发路径上。
@@ -53,7 +54,9 @@ title: CloudEdge Mobility 演示
 - **提供商操作 executor** — 在 `ProviderActionPolicy` 下，使用实例自身的云原生 ID 执行门控云端变更（辅助 IP 的 assign / unassign、forwarding）（参见 [ADR 0007](../adr/0007-provider-action-execution.md)）。
 - **pathSig fencing** — 提供商操作针对当前 BGP 期望路径签名和持有者进行 fence，因此过时的操作无法变更在其他地方已重新收敛的路由。
 
-示例配置有意避免了旧式 remote-full 内联风格。在预发布期间旧风格仍可接受，但如果远程 `MobilityPool` 成员包含本地提供商的捕获或发现详细信息，`routerctl validate`、plan、apply 会发出警告。未来的预发布配置中，远程成员可能仅要求 ID。
+示例配置使用共享 `SAMNodeSet` 和 `MobilityPool.membersFrom`。每个 Pool 只保留一个 local
+self overlay；remote identity、placement、maintenance 留在 node set 中。remote member 的
+provider、capture 与 discovery detail 会被 `routerctl validate`、plan、apply 拒绝。
 
 ## 运行方法
 

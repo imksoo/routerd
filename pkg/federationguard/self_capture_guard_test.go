@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/federation"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -24,7 +24,7 @@ func (s fakeDynamicConfigPartStore) ListDynamicConfigParts() ([]routerstate.Dyna
 func TestRejectSelfCapturedObservedEventRejectsActiveCapturedAddress(t *testing.T) {
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	store := fakeDynamicConfigPartStore{parts: []routerstate.DynamicConfigPartRecord{
-		dynamicPart(t, now, remoteAddressClaim("capture-10", "10.77.60.10/32", "proxy-arp")),
+		dynamicPart(t, now, localCaptureIntent("capture-10", "10.77.60.10/32", "proxy-arp")),
 	}}
 	err := RejectSelfCapturedObservedEvent(store, federation.Event{
 		Type:    federation.ObservedIPv4EventType,
@@ -42,7 +42,7 @@ func TestRejectSelfCapturedObservedEventRejectsActiveCapturedAddress(t *testing.
 func TestRejectSelfCapturedObservedEventAllowsNonCapturedAddress(t *testing.T) {
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	store := fakeDynamicConfigPartStore{parts: []routerstate.DynamicConfigPartRecord{
-		dynamicPart(t, now, remoteAddressClaim("capture-10", "10.77.60.10/32", "proxy-arp")),
+		dynamicPart(t, now, localCaptureIntent("capture-10", "10.77.60.10/32", "proxy-arp")),
 	}}
 	if err := RejectSelfCapturedObservedEvent(store, federation.Event{
 		Type:    federation.ObservedIPv4EventType,
@@ -55,7 +55,7 @@ func TestRejectSelfCapturedObservedEventAllowsNonCapturedAddress(t *testing.T) {
 func TestRejectSelfCapturedObservedEventIgnoresNonObservedTypes(t *testing.T) {
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	store := fakeDynamicConfigPartStore{parts: []routerstate.DynamicConfigPartRecord{
-		dynamicPart(t, now, remoteAddressClaim("capture-10", "10.77.60.10/32", "proxy-arp")),
+		dynamicPart(t, now, localCaptureIntent("capture-10", "10.77.60.10/32", "proxy-arp")),
 	}}
 	if err := RejectSelfCapturedObservedEvent(store, federation.Event{
 		Type:    "routerd.mobility.unrelated",
@@ -68,7 +68,7 @@ func TestRejectSelfCapturedObservedEventIgnoresNonObservedTypes(t *testing.T) {
 func TestRejectSelfCapturedObservedEventIgnoresNonIPSubjectsAndPayloads(t *testing.T) {
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	store := fakeDynamicConfigPartStore{parts: []routerstate.DynamicConfigPartRecord{
-		dynamicPart(t, now, remoteAddressClaim("capture-10", "10.77.60.10/32", "proxy-arp")),
+		dynamicPart(t, now, localCaptureIntent("capture-10", "10.77.60.10/32", "proxy-arp")),
 	}}
 	if err := RejectSelfCapturedObservedEvent(store, federation.Event{
 		Type:    federation.ObservedIPv4EventType,
@@ -82,7 +82,7 @@ func TestRejectSelfCapturedObservedEventIgnoresNonIPSubjectsAndPayloads(t *testi
 func TestRejectSelfCapturedObservedEventPayloadAddressTakesPrecedence(t *testing.T) {
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	store := fakeDynamicConfigPartStore{parts: []routerstate.DynamicConfigPartRecord{
-		dynamicPart(t, now, remoteAddressClaim("capture-10", "10.77.60.10/32", "provider-secondary-ip")),
+		dynamicPart(t, now, localCaptureIntent("capture-10", "10.77.60.10/32", "provider-secondary-ip")),
 	}}
 	err := RejectSelfCapturedObservedEvent(store, federation.Event{
 		Type:    federation.ObservedIPv4EventType,
@@ -98,34 +98,47 @@ func TestRejectSelfCapturedObservedEventPayloadAddressTakesPrecedence(t *testing
 	}
 }
 
-func dynamicPart(t *testing.T, now time.Time, resources ...api.Resource) routerstate.DynamicConfigPartRecord {
+func TestRejectSelfCapturedObservedEventIgnoresNonMobilityPlanSource(t *testing.T) {
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	part := dynamicPart(t, now, localCaptureIntent("capture-10", "10.77.60.10/32", "proxy-arp"))
+	part.Source = "plugin/untrusted"
+	if err := RejectSelfCapturedObservedEvent(fakeDynamicConfigPartStore{parts: []routerstate.DynamicConfigPartRecord{part}}, federation.Event{
+		Type: federation.ObservedIPv4EventType, Subject: "10.77.60.10/32",
+	}, now); err != nil {
+		t.Fatalf("non-MobilityPool typed payload suppressed an observed event: %v", err)
+	}
+}
+
+func TestRejectSelfCapturedObservedEventGuardsHeldCapture(t *testing.T) {
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	intent := localCaptureIntent("capture-10", "10.77.60.10/32", "proxy-arp")
+	intent.Disposition = dynamicconfig.CaptureHold
+	err := RejectSelfCapturedObservedEvent(fakeDynamicConfigPartStore{parts: []routerstate.DynamicConfigPartRecord{
+		dynamicPart(t, now, intent),
+	}}, federation.Event{Type: federation.ObservedIPv4EventType, Subject: "10.77.60.10/32"}, now)
+	var guardErr SelfCapturedObservedEventError
+	if !errors.As(err, &guardErr) {
+		t.Fatalf("held capture error = %v, want SelfCapturedObservedEventError", err)
+	}
+}
+
+func dynamicPart(t *testing.T, now time.Time, intents ...dynamicconfig.LocalCaptureIntent) routerstate.DynamicConfigPartRecord {
 	t.Helper()
-	data, err := json.Marshal(resources)
+	data, err := json.Marshal(dynamicconfig.MobilityDataplanePlan{PoolPrefix: "10.77.60.0/24", Captures: intents})
 	if err != nil {
 		t.Fatalf("marshal resources: %v", err)
 	}
 	return routerstate.DynamicConfigPartRecord{
-		Source:        "test",
-		Generation:    1,
-		ResourcesJSON: string(data),
-		Status:        "active",
-		ExpiresAt:     now.Add(time.Minute),
+		Source:                "MobilityPool/cloudedge/node/test",
+		Generation:            1,
+		ObservedAt:            now,
+		MobilityDataplaneJSON: string(data),
+		Status:                "active",
+		ExpiresAt:             now.Add(5 * time.Minute),
+		Digest:                "sha256:self-capture-guard",
 	}
 }
 
-func remoteAddressClaim(name, address, captureType string) api.Resource {
-	return api.Resource{
-		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
-		Metadata: api.ObjectMeta{
-			Name:        name,
-			Annotations: map[string]string{"routerd.net/dynamic-source": "test-source"},
-		},
-		Spec: api.RemoteAddressClaimSpec{
-			DomainRef: "cloudedge",
-			Address:   address,
-			OwnerSide: "cloud",
-			Capture:   api.AddressCapture{Type: captureType},
-			Delivery:  api.AddressDelivery{Mode: "route"},
-		},
-	}
+func localCaptureIntent(name, address, captureType string) dynamicconfig.LocalCaptureIntent {
+	return dynamicconfig.LocalCaptureIntent{ID: name, PoolRef: "cloudedge", Address: address, CaptureType: captureType, CaptureInterface: "lan0", Disposition: dynamicconfig.CaptureDesired}
 }

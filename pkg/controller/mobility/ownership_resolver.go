@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/mapsort"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/controller/mobilityfib"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
-	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 const (
@@ -30,411 +30,447 @@ const (
 	captureStateStale     = "Stale"
 )
 
-type ownershipResolverInput struct {
-	PoolName          string
-	SelfNode          string
-	Spec              api.MobilityPoolSpec
-	Events            []routerstate.EventRecord
-	Status            map[string]any
-	ActionJournal     []routerstate.ActionExecutionRecord
-	PreviousPlans     []dynamicconfig.ActionPlan
-	InstalledNextHops map[string][]string
-	BGPHomeOwnerNodes map[string]string
-	BGPReturnRoutes   map[string]bool
-	Now               time.Time
+// AddressDecision is the single per-/32 ownership and capture result emitted
+// by the PoolPlan core.  The unexported alias below keeps package-local helper
+// names stable while making the plan boundary explicit to other packages.
+type AddressDecision struct {
+	Address string
+	Class   string
+	// CaptureDisposition is the final local/provider capture decision for
+	// this address. It is filled by the pure delivery planner after it has
+	// considered placement, BGP observations, the previous plan, and provider
+	// safety gates. Downstream effectors must project this value rather than
+	// re-evaluating those inputs.
+	CaptureDisposition dynamicconfig.CaptureDisposition
+	CaptureReason      string
+	// CapturePathSig, CaptureLastSeenAt, and CaptureSeize are selected at the
+	// same decision boundary as CaptureDisposition. They are provider-action
+	// fence inputs, not a second capture-candidate representation.
+	CapturePathSig    string
+	CaptureLastSeenAt time.Time
+	CaptureSeize      bool
+	// CaptureReleasePathSig is the fence selected together with a Release
+	// disposition. It is intentionally part of the decision, rather than
+	// being reconstructed by the provider effector from status or the RIB.
+	CaptureReleasePathSig string
+	CaptureReleaseSince   time.Time
+	HomeOwnerNode         string
+	HomeProviderRef       string
+	HomeNICRef            string
+	HomeResourceRef       string
+	LocalNodeRef          string
+	LocalProviderRef      string
+	LocalNICRef           string
+	LocalResourceRef      string
+	LocalSource           string
+	CaptureHolderNode     string
+	CaptureProviderRef    string
+	CaptureTargetRef      string
+	CaptureStrategy       string
+	CaptureState          string
+	CaptureSucceeded      bool
+	AdvertiseOwnerNode    string
+	AdvertiseReason       string
+	SuppressionReason     string
+	ConflictReason        string
+	ConflictWinnerNode    string
+	ConflictResolution    string
+	Source                string
 }
 
-type ownershipDecision struct {
-	Address            string
-	Class              string
-	HomeOwnerNode      string
-	HomeProviderRef    string
-	HomeSubnetRef      string
-	HomeNICRef         string
-	HomeResourceRef    string
-	HomeResourceType   string
-	LocalNodeRef       string
-	LocalProviderRef   string
-	LocalSubnetRef     string
-	LocalNICRef        string
-	LocalResourceRef   string
-	LocalResourceType  string
-	LocalSource        string
-	LocalSourceType    string
-	CaptureHolderNode  string
-	CaptureProviderRef string
-	CaptureTargetRef   string
-	CaptureStrategy    string
-	CaptureState       string
-	CaptureSucceeded   bool
-	AdvertiseOwnerNode string
-	AdvertiseReason    string
-	SuppressionReason  string
-	ConflictReason     string
-	ConflictWinnerNode string
-	ConflictResolution string
-	ConflictOwners     []providerInventoryOwnerFact
-	Fresh              bool
-	Source             string
+type ownershipDecision = AddressDecision
+
+// ownershipRuleContext is the complete immutable fact set for a single /32
+// decision. Rules only read it and write their supplied decision.
+type ownershipRuleContext struct {
+	PoolRuntimeSnapshot
+	self                 memberPlanInfo
+	localStaticOwners    map[string]string
+	providerHomeFactSets map[string][]providerInventoryOwnerFact
+	remoteHomeFacts      map[string]providerInventoryOwnerFact
+	remoteHomeConflicts  map[string][]providerInventoryOwnerFact
+	eventOwned           map[string]resolverEventOwnedAddress
+	selfIPs              map[string]bool
+	capturedIPs          map[string]bool
+	selfIPsObserved      bool
+	confirmedCaptures    map[string]resolverCaptureState
+	staleCaptures        map[string]resolverCaptureState
+	handoverTargets      map[string]string
 }
 
-func resolveAddressOwnership(in ownershipResolverInput) ([]ownershipDecision, error) {
-	prefix, err := netip.ParsePrefix(strings.TrimSpace(in.Spec.Prefix))
-	if err != nil {
-		return nil, fmt.Errorf("parse pool prefix: %w", err)
+type ownershipRuleOutcome uint8
+
+const (
+	ownershipRuleContinue ownershipRuleOutcome = iota
+	ownershipRuleResolved
+	ownershipRuleDiscard
+)
+
+type ownershipRule func(ownershipRuleContext, string, *ownershipDecision) ownershipRuleOutcome
+
+// ownershipRules is the ownership precedence order. The first matching rule
+// decides the address; effectors only project the resulting decision.
+var ownershipRules = []ownershipRule{
+	duplicateProviderHomeOwnerRule,
+	staticOwnerRule,
+	staticHandoverRule,
+	selfCapturedSecondaryRule,
+	routeTableRouterSelfRule,
+	providerLocalHomeRule,
+	localOwnershipEventRule,
+	remoteProviderHomeRule,
+	confirmedCaptureRule,
+	selfPrivateIPRule,
+	bgpHomeOwnerRule,
+	staleCaptureRule,
+	unknownOwnershipRule,
+}
+
+func resolveAddressOwnership(in PoolRuntimeSnapshot) ([]ownershipDecision, error) {
+	pool := in.Pool
+	prefix := pool.Prefix
+	if !prefix.IsValid() {
+		return nil, fmt.Errorf("MobilityPool/%s normalized prefix is required", pool.Name)
 	}
-	prefix = prefix.Masked()
 	now := in.Now.UTC()
 	if now.IsZero() {
-		now = time.Now().UTC()
+		return nil, fmt.Errorf("ownership resolver time is required")
 	}
-	members := plannerMembers(in.Spec.Members)
-	self, ok := lookupMemberByNodeRef(members, in.SelfNode)
+	self, ok := lookupMemberByNodeRef(pool.Members, pool.Self.NodeRef)
 	if !ok {
-		return nil, fmt.Errorf("self node %q is not a member of MobilityPool/%s", in.SelfNode, in.PoolName)
+		return nil, fmt.Errorf("self node %q is not a member of MobilityPool/%s", pool.Self.NodeRef, pool.Name)
 	}
-	staticOwners := staticOwnedOwnerNodesByAddress(in.Spec)
-	remoteHomeFactSets := providerInventoryHomeOwnerFactSets(in.PoolName, in.Spec, in.Events, now)
-	remoteHomeFacts := selectedProviderInventoryHomeOwnerFacts(remoteHomeFactSets)
-	remoteHomeConflicts := duplicateProviderHomeOwnerFacts(remoteHomeFactSets)
-	localInventory := localInventoryRecordsFromStatus(in.Status, prefix)
-	removeSelfResourceLocalInventory(localInventory, statusString(in.Status["discoverySelfResourceRef"]))
-	discoveryOwned := statusStringSet(in.Status["discoveryOwnedAddresses"], prefix)
-	selfIPs, capturedIPs, selfIPsObserved := selfInventoryAddressSetsFromStatus(in.Status, prefix)
-	selfIPsObservedAt := statusTime(in.Status["discoveryLastScanAt"])
-	eventOwned := resolverEventOwnedAddresses(in.PoolName, in.SelfNode, in.Spec, in.Events, in.Status, prefix, now)
-	confirmedCaptures, staleCaptures := captureStatesForSelf(self, in.PreviousPlans, in.ActionJournal, capturedIPs, selfIPsObserved, selfIPsObservedAt)
-	handoverTargets := staticHandoverTargets(in.Spec, prefix)
+	localStaticOwners := localStaticOwnerNodesByAddress(pool, prefix)
+	providerHomeFactSets := providerInventoryHomeOwnerFactSets(pool, prefix, in.Ownership.providerRuntime, now)
+	remoteHomeFacts, remoteHomeConflicts := providerInventoryHomeOwnerFacts(providerHomeFactSets)
+	providerOwned := map[string]providerDiscoveryAddressFact{}
+	if runtime, found := in.Ownership.providerRuntimeForNode(pool.SelfNode); found {
+		providerOwned = providerDiscoveryActiveAddressFacts(runtime.RuntimeFact.Addresses, prefix, now)
+	}
+	selfIPs, capturedIPs, selfIPsObserved := in.Ownership.SelfPrivateIPs, in.Ownership.SelfCapturedIPs, in.Ownership.SelfInventoryKnown
+	selfIPsObservedAt := in.Ownership.DiscoveryLastScanAt
+	eventOwned := resolverEventOwnedAddresses(pool, in.Events, providerOwned, prefix, now)
+	confirmedCaptures, staleCaptures := captureStatesForSelf(self, in.Provider.ActionHistory, capturedIPs, selfIPsObserved, selfIPsObservedAt)
+	handoverTargets := staticHandoverTargets(pool.Spec.StaticHandovers, prefix)
 	universe := map[string]bool{}
-	for address := range staticOwners {
-		universe[address] = true
-	}
-	for address := range remoteHomeFacts {
-		universe[address] = true
-	}
-	for address := range remoteHomeConflicts {
-		universe[address] = true
-	}
-	for address := range localInventory {
-		universe[address] = true
-	}
-	for address := range eventOwned {
-		universe[address] = true
-	}
-	for address := range selfIPs {
-		universe[address] = true
-	}
-	for address := range capturedIPs {
-		universe[address] = true
-	}
-	for address := range confirmedCaptures {
-		universe[address] = true
-	}
-	for address := range staleCaptures {
-		universe[address] = true
-	}
-	for address := range handoverTargets {
-		universe[address] = true
-	}
-	for raw := range in.InstalledNextHops {
-		if address, ok := normalizeBGPTrapPrefix(raw, prefix); ok {
-			if in.BGPReturnRoutes[address] {
-				continue
-			}
+	addAddressKeys(universe, localStaticOwners)
+	addAddressKeys(universe, remoteHomeFacts)
+	addAddressKeys(universe, remoteHomeConflicts)
+	addAddressKeys(universe, eventOwned)
+	addAddressKeys(universe, selfIPs)
+	addAddressKeys(universe, capturedIPs)
+	addAddressKeys(universe, confirmedCaptures)
+	addAddressKeys(universe, staleCaptures)
+	addAddressKeys(universe, handoverTargets)
+	for raw := range in.BGP.InstalledNextHops {
+		if address, ok := normalizeBGPTrapPrefix(raw, prefix); ok && !in.BGP.ReturnRoutes[address] {
 			universe[address] = true
 		}
 	}
-	for raw := range in.BGPHomeOwnerNodes {
+	for raw := range in.BGP.HomeOwnerNodes {
 		if address, ok := normalizeBGPTrapPrefix(raw, prefix); ok {
 			universe[address] = true
 		}
+	}
+	ctx := ownershipRuleContext{
+		PoolRuntimeSnapshot:  in,
+		self:                 self,
+		localStaticOwners:    localStaticOwners,
+		providerHomeFactSets: providerHomeFactSets,
+		remoteHomeFacts:      remoteHomeFacts,
+		remoteHomeConflicts:  remoteHomeConflicts,
+		eventOwned:           eventOwned,
+		selfIPs:              selfIPs,
+		capturedIPs:          capturedIPs,
+		selfIPsObserved:      selfIPsObserved,
+		confirmedCaptures:    confirmedCaptures,
+		staleCaptures:        staleCaptures,
+		handoverTargets:      handoverTargets,
 	}
 	var out []ownershipDecision
-	for _, address := range mapKeysSorted(universe) {
-		decision := ownershipDecision{
-			Address:      address,
-			Class:        ownershipClassUnknown,
-			CaptureState: captureStateNone,
-		}
+	for _, address := range mapsort.Keys(universe) {
+		decision := ownershipDecision{Address: address, Class: ownershipClassUnknown, CaptureState: captureStateNone}
 		if capture, ok := confirmedCaptures[address]; ok {
-			decision.CaptureState = captureStateConfirmed
-			decision.CaptureHolderNode = capture.HolderNode
-			decision.CaptureProviderRef = capture.ProviderRef
-			decision.CaptureTargetRef = capture.TargetRef
-			decision.CaptureStrategy = capture.Strategy
-			decision.CaptureSucceeded = capture.Succeeded
+			applyCaptureState(&decision, captureStateConfirmed, capture)
+		} else if capture, ok := staleCaptures[address]; ok {
+			applyCaptureState(&decision, captureStateStale, capture)
 		}
-		if capture, ok := staleCaptures[address]; ok && decision.CaptureState == captureStateNone {
-			decision.CaptureState = captureStateStale
-			decision.CaptureHolderNode = capture.HolderNode
-			decision.CaptureProviderRef = capture.ProviderRef
-			decision.CaptureTargetRef = capture.TargetRef
-			decision.CaptureStrategy = capture.Strategy
-			decision.CaptureSucceeded = capture.Succeeded
-		}
-		if facts := remoteHomeConflicts[address]; len(facts) > 1 {
-			winner := providerInventoryConflictWinner(facts, strings.TrimSpace(in.BGPHomeOwnerNodes[address]))
-			applyProviderHomeOwnerFact(&decision, winner)
-			decision.Source = providerDiscoverySource
-			decision.SuppressionReason = "provider-home-owner-conflict"
-			decision.ConflictReason = "duplicate-provider-home-owners"
-			decision.ConflictWinnerNode = strings.TrimSpace(winner.NodeRef)
-			decision.ConflictResolution = providerInventoryConflictResolution(decision, self.NodeRef, capturedIPs[address])
-			decision.ConflictOwners = facts
-			decision.Fresh = true
-			if providerInventoryConflictReleasesLocalCapture(decision, self.NodeRef) {
-				decision.Class = ownershipClassStaleCapture
-				decision.SuppressionReason = "provider-split-brain-loser"
-			} else {
-				decision.Class = ownershipClassRemoteHomeOwned
-			}
+		if applyOwnershipRules(ctx, address, &decision) == ownershipRuleResolved {
 			out = append(out, decision)
-			continue
 		}
-		if owner := strings.TrimSpace(staticOwners[address]); owner != "" {
-			decision.HomeOwnerNode = owner
-			decision.Source = staticOwnedType
-			if owner == self.NodeRef {
-				decision.Class = ownershipClassStaticOwned
-				decision.AdvertiseOwnerNode = self.NodeRef
-				decision.AdvertiseReason = "static-owned"
-			} else {
-				decision.Class = ownershipClassRemoteHomeOwned
-				decision.SuppressionReason = "static-owned-by-remote"
-			}
-			clearDisprovedStaleCapture(&decision, self.NodeRef, capturedIPs, selfIPsObserved, address)
-			out = append(out, decision)
-			continue
-		}
-		if toNode := strings.TrimSpace(handoverTargets[address]); toNode != "" {
-			decision.HomeOwnerNode = toNode
-			decision.Source = staticHandoverType
-			if toNode == self.NodeRef {
-				decision.Class = ownershipClassStaticHandover
-				decision.AdvertiseOwnerNode = self.NodeRef
-				decision.AdvertiseReason = "static-handover"
-			} else {
-				decision.Class = ownershipClassRemoteHomeOwned
-				decision.SuppressionReason = "static-handover-to-remote"
-			}
-			out = append(out, decision)
-			continue
-		}
-		if capturedIPs[address] {
-			remoteFact, hasRemoteFact := remoteHomeFacts[address]
-			bgpOwner := strings.TrimSpace(in.BGPHomeOwnerNodes[address])
-			if (!hasRemoteFact || strings.TrimSpace(remoteFact.NodeRef) == "" || strings.TrimSpace(remoteFact.NodeRef) == self.NodeRef) && (bgpOwner == "" || bgpOwner == self.NodeRef) {
-				if decision.CaptureState == captureStateNone {
-					decision.CaptureState = captureStateStale
-					decision.CaptureHolderNode = self.NodeRef
-					decision.CaptureProviderRef = strings.TrimSpace(self.Capture.ProviderRef)
-					decision.CaptureTargetRef = providerCaptureRefFromCapture(self.Capture, self.CaptureTarget)
-					decision.CaptureStrategy = effectiveCaptureStrategy("", captureStrategyValue(self.Capture))
-				}
-				decision.Class = ownershipClassStaleCapture
-				decision.SuppressionReason = "self-captured-secondary"
-				decision.Source = "self-inventory"
-				decision.Fresh = true
-				out = append(out, decision)
-				continue
-			}
-			// Remote fresh-home facts below decide whether this is a valid
-			// same-provider capture or a stale cross-home attachment.
-		}
-		if rec, ok := localInventory[address]; ok && localInventoryRecordIsRouterSelf(rec, self) {
-			if decision.CaptureState != captureStateNone && decision.CaptureStrategy == captureStrategyRouteTable {
-				decision.Class = ownershipClassStaleCapture
-				decision.HomeOwnerNode = self.NodeRef
-				decision.HomeProviderRef = firstNonEmpty(rec.ProviderRef, self.Capture.ProviderRef)
-				decision.HomeSubnetRef = rec.SubnetRef
-				decision.HomeNICRef = rec.NICRef
-				decision.LocalNodeRef = self.NodeRef
-				decision.LocalProviderRef = decision.HomeProviderRef
-				decision.LocalSubnetRef = rec.SubnetRef
-				decision.LocalNICRef = rec.NICRef
-				decision.LocalResourceRef = rec.ResourceRef
-				decision.LocalResourceType = rec.ResourceType
-				decision.Source = "local-inventory"
-				decision.SuppressionReason = "local-router-self"
-				decision.Fresh = true
-				out = append(out, decision)
-				continue
-			}
-			decision.Class = ownershipClassLocalRouterSelf
-			decision.HomeOwnerNode = self.NodeRef
-			decision.HomeProviderRef = firstNonEmpty(rec.ProviderRef, self.Capture.ProviderRef)
-			decision.HomeSubnetRef = rec.SubnetRef
-			decision.HomeNICRef = rec.NICRef
-			decision.LocalNodeRef = self.NodeRef
-			decision.LocalProviderRef = decision.HomeProviderRef
-			decision.LocalSubnetRef = rec.SubnetRef
-			decision.LocalNICRef = rec.NICRef
-			decision.LocalResourceRef = rec.ResourceRef
-			decision.LocalResourceType = rec.ResourceType
-			decision.Source = "local-inventory"
-			decision.Fresh = true
-			out = append(out, decision)
-			continue
-		}
-		if fact, ok := remoteHomeFacts[address]; ok && strings.TrimSpace(fact.NodeRef) == self.NodeRef && strings.TrimSpace(fact.ProviderRef) != "" {
-			applyProviderHomeOwnerFact(&decision, fact)
-			decision.AdvertiseOwnerNode = self.NodeRef
-			decision.Source = providerDiscoverySource
-			decision.Fresh = true
-			decision.Class = ownershipClassLocalHomeOwned
-			decision.AdvertiseReason = "provider-home-owner"
-			out = append(out, decision)
-			continue
-		}
-		if eventOwner, ok := eventOwned[address]; ok && strings.TrimSpace(eventOwner.AdvertiseOwnerNode) == self.NodeRef {
-			if fact, remote := remoteHomeFacts[address]; remote && strings.TrimSpace(fact.NodeRef) != "" && strings.TrimSpace(fact.NodeRef) != self.NodeRef {
-				decision.Class = ownershipClassRemoteHomeOwned
-				applyProviderHomeOwnerFact(&decision, fact)
-				decision.LocalNodeRef = self.NodeRef
-				decision.LocalSource = ownershipEventLocalSource(eventOwner.SourceType)
-				decision.LocalSourceType = eventOwner.SourceType
-				decision.Source = providerDiscoverySource
-				decision.SuppressionReason = "remote-home-owner"
-				decision.ConflictReason = "remote-home-owner-overlaps-local-ownership-event"
-				decision.Fresh = true
-				out = append(out, decision)
-				continue
-			}
-			decision.Class = ownershipClassLocalHomeOwned
-			decision.HomeOwnerNode = self.NodeRef
-			decision.LocalNodeRef = self.NodeRef
-			decision.LocalSource = ownershipEventLocalSource(eventOwner.SourceType)
-			decision.LocalSourceType = eventOwner.SourceType
-			decision.AdvertiseOwnerNode = self.NodeRef
-			decision.AdvertiseReason = "ownership-event"
-			decision.Source = eventOwner.SourceType
-			decision.Fresh = true
-			out = append(out, decision)
-			continue
-		}
-		if fact, ok := remoteHomeFacts[address]; ok && strings.TrimSpace(fact.NodeRef) != "" && strings.TrimSpace(fact.NodeRef) != self.NodeRef {
-			applyProviderHomeOwnerFact(&decision, fact)
-			decision.Source = providerDiscoverySource
-			decision.Fresh = true
-			if rec, local := localInventory[address]; local {
-				decision.ConflictReason = "remote-home-owner-overlaps-local-inventory"
-				decision.LocalNodeRef = self.NodeRef
-				decision.LocalProviderRef = firstNonEmpty(rec.ProviderRef, self.OwnershipDiscovery.ProviderRef, self.Capture.ProviderRef)
-				decision.LocalSubnetRef = rec.SubnetRef
-				decision.LocalNICRef = rec.NICRef
-				decision.LocalResourceRef = rec.ResourceRef
-				decision.LocalResourceType = rec.ResourceType
-				decision.LocalSource = "local-inventory"
-			}
-			homeProviderRef := strings.TrimSpace(fact.ProviderRef)
-			selfProviderRef := strings.TrimSpace(self.Capture.ProviderRef)
-			if decision.CaptureState == captureStateConfirmed && (homeProviderRef == "" || selfProviderRef == "" || homeProviderRef == selfProviderRef) {
-				decision.Class = ownershipClassConfirmedCapture
-				decision.AdvertiseReason = "confirmed-capture"
-				decision.Source = "provider-action"
-				out = append(out, decision)
-				continue
-			}
-			if decision.CaptureState != captureStateNone || selfIPs[address] || capturedIPs[address] {
-				decision.Class = ownershipClassStaleCapture
-				decision.SuppressionReason = "fresh-home-owner"
-			} else {
-				decision.Class = ownershipClassRemoteHomeOwned
-				decision.SuppressionReason = "remote-home-owner"
-			}
-			clearDisprovedStaleCapture(&decision, self.NodeRef, capturedIPs, selfIPsObserved, address)
-			out = append(out, decision)
-			continue
-		}
-		if decision.CaptureState == captureStateConfirmed {
-			if owner := strings.TrimSpace(in.BGPHomeOwnerNodes[address]); owner != "" && owner != self.NodeRef {
-				decision.HomeOwnerNode = owner
-			}
-			decision.Class = ownershipClassConfirmedCapture
-			decision.AdvertiseReason = "confirmed-capture"
-			decision.Source = "provider-action"
-			decision.Fresh = true
-			out = append(out, decision)
-			continue
-		}
-		if selfIPs[address] {
-			decision.Class = ownershipClassLocalRouterSelf
-			decision.HomeOwnerNode = self.NodeRef
-			decision.HomeProviderRef = self.Capture.ProviderRef
-			decision.HomeSubnetRef = statusString(in.Status["discoverySelfSubnetRef"])
-			decision.HomeNICRef = self.Capture.NICRef
-			decision.LocalNodeRef = self.NodeRef
-			decision.LocalProviderRef = self.Capture.ProviderRef
-			decision.LocalSubnetRef = decision.HomeSubnetRef
-			decision.LocalNICRef = self.Capture.NICRef
-			decision.LocalSource = "self-inventory"
-			decision.Source = "self-inventory"
-			decision.Fresh = true
-			out = append(out, decision)
-			continue
-		}
-		if rec, ok := localInventory[address]; ok && discoveryOwned[address] {
-			decision.Class = ownershipClassLocalHomeOwned
-			decision.HomeOwnerNode = self.NodeRef
-			decision.HomeProviderRef = firstNonEmpty(rec.ProviderRef, self.OwnershipDiscovery.ProviderRef, self.Capture.ProviderRef)
-			decision.HomeSubnetRef = rec.SubnetRef
-			decision.HomeNICRef = rec.NICRef
-			decision.LocalNodeRef = self.NodeRef
-			decision.LocalProviderRef = decision.HomeProviderRef
-			decision.LocalSubnetRef = rec.SubnetRef
-			decision.LocalNICRef = rec.NICRef
-			decision.LocalResourceRef = rec.ResourceRef
-			decision.LocalResourceType = rec.ResourceType
-			decision.LocalSource = "local-inventory"
-			decision.AdvertiseOwnerNode = self.NodeRef
-			decision.AdvertiseReason = "local-home-inventory"
-			decision.Source = "local-inventory"
-			decision.Fresh = true
-			out = append(out, decision)
-			continue
-		}
-		if owner := strings.TrimSpace(in.BGPHomeOwnerNodes[address]); owner != "" {
-			if owner == self.NodeRef {
-				if decision.CaptureState == captureStateStale {
-					decision.Class = ownershipClassStaleCapture
-					decision.SuppressionReason = "capture-not-desired"
-					out = append(out, decision)
-					continue
-				}
-			} else if decision.CaptureState == captureStateConfirmed {
-				decision.HomeOwnerNode = owner
-				decision.Source = "bgp-owner"
-				decision.Class = ownershipClassConfirmedCapture
-				decision.AdvertiseReason = "confirmed-capture"
-				decision.Source = "provider-action"
-			} else {
-				decision.HomeOwnerNode = owner
-				decision.Source = "bgp-owner"
-				decision.Class = ownershipClassRemoteHomeOwned
-				decision.SuppressionReason = "bgp-owner"
-			}
-			if decision.Class != ownershipClassUnknown {
-				clearDisprovedStaleCapture(&decision, self.NodeRef, capturedIPs, selfIPsObserved, address)
-				out = append(out, decision)
-				continue
-			}
-		}
-		if decision.CaptureState == captureStateStale {
-			decision.Class = ownershipClassStaleCapture
-			decision.SuppressionReason = "capture-not-desired"
-			decision.Source = "provider-action"
-			out = append(out, decision)
-			continue
-		}
-		if in.BGPReturnRoutes[address] {
-			continue
-		}
-		if decision.Source == "" {
-			decision.Source = "bgp-rib"
-		}
-		out = append(out, decision)
 	}
 	return out, nil
+}
+
+func applyOwnershipRules(ctx ownershipRuleContext, address string, decision *ownershipDecision) ownershipRuleOutcome {
+	for _, rule := range ownershipRules {
+		if outcome := rule(ctx, address, decision); outcome != ownershipRuleContinue {
+			return outcome
+		}
+	}
+	return ownershipRuleDiscard
+}
+
+func duplicateProviderHomeOwnerRule(ctx ownershipRuleContext, address string, decision *ownershipDecision) ownershipRuleOutcome {
+	facts := ctx.remoteHomeConflicts[address]
+	if len(facts) <= 1 {
+		return ownershipRuleContinue
+	}
+	winner := providerInventoryConflictWinner(facts, strings.TrimSpace(ctx.BGP.HomeOwnerNodes[address]))
+	applyProviderHomeOwnerFact(decision, winner)
+	if local, found := providerInventoryOwnerFactForNode(ctx.providerHomeFactSets[address], ctx.self.NodeRef); found && strings.TrimSpace(winner.NodeRef) != ctx.self.NodeRef {
+		applyProviderLocalEvidence(decision, ctx.self, local)
+		decision.LocalSource = providerDiscoverySource
+	}
+	decision.Source = providerDiscoverySource
+	decision.SuppressionReason = "provider-home-owner-conflict"
+	decision.ConflictReason = "duplicate-provider-home-owners"
+	decision.ConflictWinnerNode = strings.TrimSpace(winner.NodeRef)
+	decision.ConflictResolution = providerInventoryConflictResolution(*decision, ctx.self.NodeRef, ctx.capturedIPs[address])
+	if providerInventoryConflictReleasesLocalCapture(*decision, ctx.self.NodeRef) {
+		decision.Class = ownershipClassStaleCapture
+		decision.SuppressionReason = "provider-split-brain-loser"
+	} else {
+		decision.Class = ownershipClassRemoteHomeOwned
+	}
+	return ownershipRuleResolved
+}
+
+func staticOwnerRule(ctx ownershipRuleContext, address string, decision *ownershipDecision) ownershipRuleOutcome {
+	owner := strings.TrimSpace(ctx.localStaticOwners[address])
+	if owner == "" {
+		return ownershipRuleContinue
+	}
+	decision.HomeOwnerNode = owner
+	decision.Source = staticOwnedType
+	decision.Class = ownershipClassStaticOwned
+	decision.AdvertiseOwnerNode = ctx.self.NodeRef
+	decision.AdvertiseReason = "static-owned"
+	clearDisprovedStaleCapture(decision, ctx.self.NodeRef, ctx.capturedIPs, ctx.selfIPsObserved, address)
+	return ownershipRuleResolved
+}
+
+func staticHandoverRule(ctx ownershipRuleContext, address string, decision *ownershipDecision) ownershipRuleOutcome {
+	toNode := strings.TrimSpace(ctx.handoverTargets[address])
+	if toNode == "" {
+		return ownershipRuleContinue
+	}
+	decision.HomeOwnerNode = toNode
+	decision.Source = staticHandoverType
+	if toNode == ctx.self.NodeRef {
+		decision.Class = ownershipClassStaticHandover
+		decision.AdvertiseOwnerNode = ctx.self.NodeRef
+		decision.AdvertiseReason = "static-handover"
+	} else {
+		decision.Class = ownershipClassRemoteHomeOwned
+		decision.SuppressionReason = "static-handover-to-remote"
+	}
+	return ownershipRuleResolved
+}
+
+func selfCapturedSecondaryRule(ctx ownershipRuleContext, address string, decision *ownershipDecision) ownershipRuleOutcome {
+	if !ctx.capturedIPs[address] {
+		return ownershipRuleContinue
+	}
+	remoteFact, hasRemoteFact := ctx.remoteHomeFacts[address]
+	bgpOwner := strings.TrimSpace(ctx.BGP.HomeOwnerNodes[address])
+	if (hasRemoteFact && strings.TrimSpace(remoteFact.NodeRef) != "" && strings.TrimSpace(remoteFact.NodeRef) != ctx.self.NodeRef) || (bgpOwner != "" && bgpOwner != ctx.self.NodeRef) {
+		return ownershipRuleContinue
+	}
+	if decision.CaptureState == captureStateNone {
+		applyCaptureState(decision, captureStateStale, resolverCaptureState{
+			HolderNode:  ctx.self.NodeRef,
+			ProviderRef: strings.TrimSpace(ctx.self.Capture.ProviderRef),
+			TargetRef:   providerCaptureRefFromCapture(ctx.self.Capture),
+			Strategy:    providerCaptureStrategy(ctx.self.Capture),
+		})
+	}
+	decision.Class = ownershipClassStaleCapture
+	decision.SuppressionReason = "self-captured-secondary"
+	decision.Source = "self-inventory"
+	return ownershipRuleResolved
+}
+
+func routeTableRouterSelfRule(ctx ownershipRuleContext, address string, decision *ownershipDecision) ownershipRuleOutcome {
+	if !ctx.selfIPs[address] || decision.CaptureState == captureStateNone || decision.CaptureStrategy != captureStrategyRouteTable {
+		return ownershipRuleContinue
+	}
+	applySelfInventoryOwner(decision, ctx.self)
+	decision.Class = ownershipClassStaleCapture
+	decision.SuppressionReason = "local-router-self"
+	decision.Source = "self-inventory"
+	return ownershipRuleResolved
+}
+
+func providerLocalHomeRule(ctx ownershipRuleContext, address string, decision *ownershipDecision) ownershipRuleOutcome {
+	fact, ok := ctx.remoteHomeFacts[address]
+	if !ok || strings.TrimSpace(fact.NodeRef) != ctx.self.NodeRef || strings.TrimSpace(fact.ProviderRef) == "" {
+		return ownershipRuleContinue
+	}
+	applyProviderHomeOwnerFact(decision, fact)
+	decision.AdvertiseOwnerNode = ctx.self.NodeRef
+	decision.Source = providerDiscoverySource
+	decision.Class = ownershipClassLocalHomeOwned
+	decision.AdvertiseReason = "provider-home-owner"
+	return ownershipRuleResolved
+}
+
+func localOwnershipEventRule(ctx ownershipRuleContext, address string, decision *ownershipDecision) ownershipRuleOutcome {
+	eventOwner, ok := ctx.eventOwned[address]
+	if !ok || strings.TrimSpace(eventOwner.AdvertiseOwnerNode) != ctx.self.NodeRef {
+		return ownershipRuleContinue
+	}
+	if fact, remote := ctx.remoteHomeFacts[address]; remote && strings.TrimSpace(fact.NodeRef) != "" && strings.TrimSpace(fact.NodeRef) != ctx.self.NodeRef {
+		decision.Class = ownershipClassRemoteHomeOwned
+		applyProviderHomeOwnerFact(decision, fact)
+		decision.LocalNodeRef = ctx.self.NodeRef
+		decision.LocalSource = ownershipEventLocalSource(eventOwner.SourceType)
+		decision.Source = providerDiscoverySource
+		decision.SuppressionReason = "remote-home-owner"
+		decision.ConflictReason = "remote-home-owner-overlaps-local-ownership-event"
+		return ownershipRuleResolved
+	}
+	decision.Class = ownershipClassLocalHomeOwned
+	decision.HomeOwnerNode = ctx.self.NodeRef
+	decision.LocalNodeRef = ctx.self.NodeRef
+	decision.LocalSource = ownershipEventLocalSource(eventOwner.SourceType)
+	decision.AdvertiseOwnerNode = ctx.self.NodeRef
+	decision.AdvertiseReason = "ownership-event"
+	decision.Source = eventOwner.SourceType
+	return ownershipRuleResolved
+}
+
+func remoteProviderHomeRule(ctx ownershipRuleContext, address string, decision *ownershipDecision) ownershipRuleOutcome {
+	fact, ok := ctx.remoteHomeFacts[address]
+	if !ok || strings.TrimSpace(fact.NodeRef) == "" || strings.TrimSpace(fact.NodeRef) == ctx.self.NodeRef {
+		return ownershipRuleContinue
+	}
+	applyProviderHomeOwnerFact(decision, fact)
+	decision.Source = providerDiscoverySource
+	if local, found := providerInventoryOwnerFactForNode(ctx.providerHomeFactSets[address], ctx.self.NodeRef); found {
+		decision.ConflictReason = "remote-home-owner-overlaps-local-inventory"
+		applyProviderLocalEvidence(decision, ctx.self, local)
+		decision.LocalSource = providerDiscoverySource
+	}
+	homeProviderRef := strings.TrimSpace(fact.ProviderRef)
+	selfProviderRef := strings.TrimSpace(ctx.self.Capture.ProviderRef)
+	if decision.CaptureState == captureStateConfirmed && (homeProviderRef == "" || selfProviderRef == "" || homeProviderRef == selfProviderRef) {
+		decision.Class = ownershipClassConfirmedCapture
+		decision.AdvertiseReason = "confirmed-capture"
+		decision.Source = "provider-action"
+		return ownershipRuleResolved
+	}
+	if decision.CaptureState != captureStateNone || ctx.selfIPs[address] || ctx.capturedIPs[address] {
+		decision.Class = ownershipClassStaleCapture
+		decision.SuppressionReason = "fresh-home-owner"
+	} else {
+		decision.Class = ownershipClassRemoteHomeOwned
+		decision.SuppressionReason = "remote-home-owner"
+	}
+	clearDisprovedStaleCapture(decision, ctx.self.NodeRef, ctx.capturedIPs, ctx.selfIPsObserved, address)
+	return ownershipRuleResolved
+}
+
+func confirmedCaptureRule(ctx ownershipRuleContext, address string, decision *ownershipDecision) ownershipRuleOutcome {
+	if decision.CaptureState != captureStateConfirmed {
+		return ownershipRuleContinue
+	}
+	if owner := strings.TrimSpace(ctx.BGP.HomeOwnerNodes[address]); owner != "" && owner != ctx.self.NodeRef {
+		decision.HomeOwnerNode = owner
+	}
+	decision.Class = ownershipClassConfirmedCapture
+	decision.AdvertiseReason = "confirmed-capture"
+	decision.Source = "provider-action"
+	return ownershipRuleResolved
+}
+
+func selfPrivateIPRule(ctx ownershipRuleContext, address string, decision *ownershipDecision) ownershipRuleOutcome {
+	if !ctx.selfIPs[address] {
+		return ownershipRuleContinue
+	}
+	applySelfInventoryOwner(decision, ctx.self)
+	decision.Class = ownershipClassLocalRouterSelf
+	decision.LocalSource = "self-inventory"
+	decision.Source = "self-inventory"
+	return ownershipRuleResolved
+}
+
+func bgpHomeOwnerRule(ctx ownershipRuleContext, address string, decision *ownershipDecision) ownershipRuleOutcome {
+	owner := strings.TrimSpace(ctx.BGP.HomeOwnerNodes[address])
+	if owner == "" {
+		return ownershipRuleContinue
+	}
+	if owner == ctx.self.NodeRef {
+		if decision.CaptureState != captureStateStale {
+			return ownershipRuleContinue
+		}
+		decision.Class = ownershipClassStaleCapture
+		decision.SuppressionReason = "capture-not-desired"
+		return ownershipRuleResolved
+	}
+	decision.HomeOwnerNode = owner
+	if decision.CaptureState == captureStateConfirmed {
+		decision.Class = ownershipClassConfirmedCapture
+		decision.AdvertiseReason = "confirmed-capture"
+		decision.Source = "provider-action"
+	} else {
+		decision.Class = ownershipClassRemoteHomeOwned
+		decision.SuppressionReason = "bgp-owner"
+		decision.Source = "bgp-owner"
+	}
+	clearDisprovedStaleCapture(decision, ctx.self.NodeRef, ctx.capturedIPs, ctx.selfIPsObserved, address)
+	return ownershipRuleResolved
+}
+
+func staleCaptureRule(_ ownershipRuleContext, _ string, decision *ownershipDecision) ownershipRuleOutcome {
+	if decision.CaptureState != captureStateStale {
+		return ownershipRuleContinue
+	}
+	decision.Class = ownershipClassStaleCapture
+	decision.SuppressionReason = "capture-not-desired"
+	decision.Source = "provider-action"
+	return ownershipRuleResolved
+}
+
+func unknownOwnershipRule(ctx ownershipRuleContext, address string, decision *ownershipDecision) ownershipRuleOutcome {
+	if ctx.BGP.ReturnRoutes[address] {
+		return ownershipRuleDiscard
+	}
+	if decision.Source == "" {
+		decision.Source = "bgp-rib"
+	}
+	return ownershipRuleResolved
+}
+
+func addAddressKeys[V any](universe map[string]bool, values map[string]V) {
+	for address := range values {
+		universe[address] = true
+	}
+}
+
+func applyCaptureState(decision *ownershipDecision, state string, capture resolverCaptureState) {
+	decision.CaptureState = state
+	decision.CaptureHolderNode = capture.HolderNode
+	decision.CaptureProviderRef = capture.ProviderRef
+	decision.CaptureTargetRef = capture.TargetRef
+	decision.CaptureStrategy = capture.Strategy
+	decision.CaptureSucceeded = capture.Succeeded
+}
+
+func applyProviderLocalEvidence(decision *ownershipDecision, self memberPlanInfo, fact providerInventoryOwnerFact) {
+	decision.LocalNodeRef = self.NodeRef
+	decision.LocalProviderRef = strings.TrimSpace(fact.ProviderRef)
+	decision.LocalNICRef = strings.TrimSpace(fact.NICRef)
+	decision.LocalResourceRef = strings.TrimSpace(fact.ResourceRef)
+}
+
+func applySelfInventoryOwner(decision *ownershipDecision, self memberPlanInfo) {
+	decision.HomeOwnerNode = self.NodeRef
+	decision.HomeProviderRef = self.Capture.ProviderRef
+	decision.HomeNICRef = self.Capture.NICRef
+	decision.LocalNodeRef = self.NodeRef
+	decision.LocalProviderRef = self.Capture.ProviderRef
+	decision.LocalNICRef = self.Capture.NICRef
 }
 
 func clearDisprovedStaleCapture(decision *ownershipDecision, selfNode string, capturedIPs map[string]bool, selfIPsObserved bool, address string) {
@@ -452,20 +488,14 @@ func clearDisprovedStaleCapture(decision *ownershipDecision, selfNode string, ca
 	decision.CaptureSucceeded = false
 }
 
-func selectedProviderInventoryHomeOwnerFacts(sets map[string][]providerInventoryOwnerFact) map[string]providerInventoryOwnerFact {
-	out := map[string]providerInventoryOwnerFact{}
+func providerInventoryHomeOwnerFacts(sets map[string][]providerInventoryOwnerFact) (map[string]providerInventoryOwnerFact, map[string][]providerInventoryOwnerFact) {
+	selected := map[string]providerInventoryOwnerFact{}
+	conflicts := map[string][]providerInventoryOwnerFact{}
 	for address, facts := range sets {
 		if len(facts) == 0 {
 			continue
 		}
-		out[address] = facts[0]
-	}
-	return out
-}
-
-func duplicateProviderHomeOwnerFacts(sets map[string][]providerInventoryOwnerFact) map[string][]providerInventoryOwnerFact {
-	out := map[string][]providerInventoryOwnerFact{}
-	for address, facts := range sets {
+		selected[address] = facts[0]
 		byOwner := map[string]providerInventoryOwnerFact{}
 		for _, fact := range facts {
 			identity := providerInventoryOwnerIdentity(fact)
@@ -485,14 +515,11 @@ func duplicateProviderHomeOwnerFacts(sets map[string][]providerInventoryOwnerFac
 			rows = append(rows, fact)
 		}
 		sort.SliceStable(rows, func(i, j int) bool {
-			if !rows[i].ObservedAt.Equal(rows[j].ObservedAt) {
-				return rows[i].ObservedAt.After(rows[j].ObservedAt)
-			}
-			return rows[i].NodeRef < rows[j].NodeRef
+			return providerInventoryOwnerFactGreater(rows[i], rows[j])
 		})
-		out[address] = rows
+		conflicts[address] = rows
 	}
-	return out
+	return selected, conflicts
 }
 
 func providerInventoryConflictWinner(facts []providerInventoryOwnerFact, bgpOwner string) providerInventoryOwnerFact {
@@ -592,89 +619,8 @@ func providerInventoryOwnerIdentity(fact providerInventoryOwnerFact) string {
 func applyProviderHomeOwnerFact(decision *ownershipDecision, fact providerInventoryOwnerFact) {
 	decision.HomeOwnerNode = strings.TrimSpace(fact.NodeRef)
 	decision.HomeProviderRef = strings.TrimSpace(fact.ProviderRef)
-	decision.HomeSubnetRef = strings.TrimSpace(fact.SubnetRef)
 	decision.HomeNICRef = strings.TrimSpace(fact.NICRef)
 	decision.HomeResourceRef = strings.TrimSpace(fact.ResourceRef)
-	decision.HomeResourceType = strings.TrimSpace(fact.ResourceType)
-}
-
-type resolverPrivateIPRecord struct {
-	Address       string
-	NICRef        string
-	SubnetRef     string
-	VPCRef        string
-	ProviderRef   string
-	ResourceRef   string
-	ResourceType  string
-	Primary       bool
-	InstanceState string
-}
-
-func localInventoryRecordsFromStatus(status map[string]any, poolPrefix netip.Prefix) map[string]resolverPrivateIPRecord {
-	out := map[string]resolverPrivateIPRecord{}
-	discoveryOwned := statusStringSet(status["discoveryOwnedAddresses"], poolPrefix)
-	discoveryOwnedObserved := statusHasAny(status, "discoveryOwnedAddresses")
-	for _, raw := range statusMapSlice(status["discoveryLocalInventory"]) {
-		address, ok := normalizeDiscoveredAddress(firstNonEmpty(raw["address"], raw["ip"]), poolPrefix)
-		if !ok {
-			continue
-		}
-		if discoveryOwnedObserved && !discoveryOwned[address] {
-			continue
-		}
-		out[address] = resolverPrivateIPRecord{
-			Address:       address,
-			NICRef:        strings.TrimSpace(raw["nicRef"]),
-			SubnetRef:     strings.TrimSpace(raw["subnetRef"]),
-			VPCRef:        strings.TrimSpace(raw["vpcRef"]),
-			ProviderRef:   strings.TrimSpace(raw["providerRef"]),
-			ResourceRef:   strings.TrimSpace(raw["resourceRef"]),
-			ResourceType:  strings.TrimSpace(raw["resourceType"]),
-			Primary:       strings.EqualFold(strings.TrimSpace(raw["primary"]), "true"),
-			InstanceState: strings.TrimSpace(raw["instanceState"]),
-		}
-	}
-	return out
-}
-
-func removeSelfResourceLocalInventory(records map[string]resolverPrivateIPRecord, selfResourceRef string) {
-	selfResourceRef = strings.TrimSpace(selfResourceRef)
-	if selfResourceRef == "" {
-		return
-	}
-	for address, rec := range records {
-		if strings.TrimSpace(rec.ResourceRef) == selfResourceRef {
-			delete(records, address)
-		}
-	}
-}
-
-func selfInventoryAddressSetsFromStatus(status map[string]any, poolPrefix netip.Prefix) (map[string]bool, map[string]bool, bool) {
-	privateIPs := map[string]bool{}
-	capturedIPs := map[string]bool{}
-	observed := false
-	for _, key := range []string{"discoverySelfPrivateIPs", "discoverySelfCapturedAddresses"} {
-		if _, ok := status[key]; ok {
-			observed = true
-		}
-		for _, raw := range statusStringSlice(status[key]) {
-			address, ok := normalizeDiscoveredAddress(raw, poolPrefix)
-			if !ok {
-				continue
-			}
-			if key == "discoverySelfCapturedAddresses" {
-				capturedIPs[address] = true
-			} else {
-				privateIPs[address] = true
-			}
-		}
-	}
-	return privateIPs, capturedIPs, observed
-}
-
-type resolverEventOwnedAddress struct {
-	AdvertiseOwnerNode string
-	SourceType         string
 }
 
 func ownershipEventLocalSource(sourceType string) string {
@@ -686,114 +632,6 @@ func ownershipEventLocalSource(sourceType string) string {
 	}
 }
 
-func resolverEventOwnedAddresses(poolName, selfNode string, spec api.MobilityPoolSpec, events []routerstate.EventRecord, status map[string]any, poolPrefix netip.Prefix, now time.Time) map[string]resolverEventOwnedAddress {
-	discoveryOwnedAddresses := statusStringSet(status["discoveryOwnedAddresses"], poolPrefix)
-	discoveryOwnedObserved := statusHasAny(status, "discoveryOwnedAddresses")
-	discoverySelfIPs, _, discoverySelfIPsObserved := selfInventoryAddressSetsFromStatus(status, poolPrefix)
-	owned := bgpLocalOwnedAddressesFromConfigAndEvents(poolName, selfNode, spec, events, discoveryOwnedAddresses, discoveryOwnedObserved, discoverySelfIPs, discoverySelfIPsObserved, poolPrefix, now)
-	out := map[string]resolverEventOwnedAddress{}
-	for _, item := range owned {
-		address := normalizeAddressString(item.Address)
-		if address == "" {
-			continue
-		}
-		out[address] = resolverEventOwnedAddress{AdvertiseOwnerNode: strings.TrimSpace(selfNode), SourceType: item.SourceType}
-	}
-	if self, ok := lookupMemberByNodeRef(plannerMembers(spec.Members), selfNode); ok && strings.TrimSpace(self.OwnershipDiscovery.Mode) == "onprem-l2" {
-		for _, snapshot := range onPremObservedClientSnapshotsFromStatus(status) {
-			for _, client := range snapshot.Clients {
-				observation := onPremObservation{
-					Action:     "observed",
-					Address:    firstNonEmpty(client.Address, client.IP),
-					MAC:        client.MAC,
-					Interface:  snapshot.Interface,
-					Network:    snapshot.Network,
-					Bridge:     snapshot.Bridge,
-					SourceType: firstNonEmpty(client.SourceType, snapshot.SourceType),
-					ObservedAt: now,
-				}
-				address, ok := normalizeDiscoveredAddress(observation.Address, poolPrefix)
-				if !ok || !discoveryScopeAllowsAddress(self.OwnershipDiscovery.Scope, address) {
-					continue
-				}
-				if _, ok := matchingOnPremDiscoverySource(self, observation); !ok {
-					continue
-				}
-				out[address] = resolverEventOwnedAddress{AdvertiseOwnerNode: strings.TrimSpace(selfNode), SourceType: observation.SourceType}
-			}
-		}
-	}
-	return out
-}
-
-func statusStringSet(value any, poolPrefix netip.Prefix) map[string]bool {
-	out := map[string]bool{}
-	for _, raw := range statusStringSlice(value) {
-		address, ok := normalizeDiscoveredAddress(raw, poolPrefix)
-		if ok {
-			out[address] = true
-		}
-	}
-	return out
-}
-
-func statusHasAny(status map[string]any, key string) bool {
-	_, ok := status[key]
-	return ok
-}
-
-func statusMapSlice(value any) []map[string]string {
-	var out []map[string]string
-	switch typed := value.(type) {
-	case []map[string]string:
-		return append([]map[string]string(nil), typed...)
-	case []map[string]any:
-		for _, item := range typed {
-			out = append(out, anyMapToStringMap(item))
-		}
-	case []any:
-		for _, item := range typed {
-			switch v := item.(type) {
-			case map[string]any:
-				out = append(out, anyMapToStringMap(v))
-			case map[string]string:
-				out = append(out, v)
-			}
-		}
-	}
-	return out
-}
-
-func anyMapToStringMap(values map[string]any) map[string]string {
-	out := map[string]string{}
-	for k, v := range values {
-		key := strings.TrimSpace(k)
-		if key == "" {
-			continue
-		}
-		out[key] = statusString(v)
-	}
-	return out
-}
-
-func statusString(value any) string {
-	if value == nil {
-		return ""
-	}
-	return strings.TrimSpace(fmt.Sprint(value))
-}
-
-func localInventoryRecordIsRouterSelf(rec resolverPrivateIPRecord, self memberPlanInfo) bool {
-	nicRef := strings.TrimSpace(rec.NICRef)
-	if nicRef == "" {
-		return false
-	}
-	if nicRef == strings.TrimSpace(self.Capture.NICRef) {
-		return true
-	}
-	return strings.TrimSpace(rec.ResourceType) == "router-nic"
-}
-
 type resolverCaptureState struct {
 	HolderNode  string
 	ProviderRef string
@@ -802,12 +640,12 @@ type resolverCaptureState struct {
 	Succeeded   bool
 }
 
-func captureStatesForSelf(self memberPlanInfo, previousPlans []dynamicconfig.ActionPlan, journal []routerstate.ActionExecutionRecord, selfIPs map[string]bool, selfIPsObserved bool, selfIPsObservedAt time.Time) (map[string]resolverCaptureState, map[string]resolverCaptureState) {
+func captureStatesForSelf(self memberPlanInfo, history ProviderActionHistory, selfIPs map[string]bool, selfIPsObserved bool, selfIPsObservedAt time.Time) (map[string]resolverCaptureState, map[string]resolverCaptureState) {
 	confirmed := map[string]resolverCaptureState{}
 	stale := map[string]resolverCaptureState{}
-	latest := latestProviderCaptureTransitions(previousPlans, journal)
+	latest := history.captureTransitions
 	selfProviderRef := strings.TrimSpace(self.Capture.ProviderRef)
-	selfTargetRef := providerCaptureRefFromCapture(self.Capture, self.CaptureTarget)
+	selfTargetRef := providerCaptureRefFromCapture(self.Capture)
 	for key, tr := range latest {
 		parts := strings.Split(key, "\x00")
 		if len(parts) != 3 {
@@ -822,7 +660,7 @@ func captureStatesForSelf(self memberPlanInfo, previousPlans []dynamicconfig.Act
 			HolderNode:  holder,
 			ProviderRef: providerRef,
 			TargetRef:   targetRef,
-			Strategy:    effectiveCaptureStrategy(tr.plan.Provider, firstNonEmpty(tr.plan.Target["captureStrategy"], captureStrategyValue(self.Capture))),
+			Strategy:    actionPlanCaptureStrategy(tr.plan),
 			Succeeded:   tr.succeeded,
 		}
 		if tr.assign && tr.succeeded && selfIPs[address] && providerObservationFresh(selfIPsObservedAt, tr.at) {
@@ -833,10 +671,7 @@ func captureStatesForSelf(self memberPlanInfo, previousPlans []dynamicconfig.Act
 			stale[address] = state
 		}
 	}
-	for _, plan := range previousPlans {
-		if !isProviderCaptureAssignAction(plan.Action) {
-			continue
-		}
+	for _, plan := range history.previousCaptureAssigns {
 		address := normalizeAddressString(plan.Target["address"])
 		providerRef := firstNonEmpty(plan.ProviderRef, plan.Target["providerRef"])
 		targetRef := providerCaptureRefFromTarget(plan.Target)
@@ -853,15 +688,15 @@ func captureStatesForSelf(self memberPlanInfo, previousPlans []dynamicconfig.Act
 			HolderNode:  firstNonEmpty(plan.Parameters[captureParamHolder], self.NodeRef),
 			ProviderRef: providerRef,
 			TargetRef:   targetRef,
-			Strategy:    effectiveCaptureStrategy(plan.Provider, firstNonEmpty(plan.Target["captureStrategy"], captureStrategyValue(self.Capture))),
+			Strategy:    actionPlanCaptureStrategy(plan),
 		}
 	}
 	return confirmed, stale
 }
 
-func staticHandoverTargets(spec api.MobilityPoolSpec, poolPrefix netip.Prefix) map[string]string {
+func staticHandoverTargets(handovers []api.MobilityStaticHandover, poolPrefix netip.Prefix) map[string]string {
 	out := map[string]string{}
-	for _, handover := range spec.StaticHandovers {
+	for _, handover := range handovers {
 		address, ok := normalizeLeaseAddress(handover.Address, poolPrefix)
 		if !ok {
 			continue
@@ -871,307 +706,6 @@ func staticHandoverTargets(spec api.MobilityPoolSpec, poolPrefix netip.Prefix) m
 		}
 	}
 	return out
-}
-
-func ownershipResolverStatus(decisions []ownershipDecision) map[string]any {
-	counts := map[string]int{}
-	items := make([]map[string]any, 0, len(decisions))
-	conflicts := []map[string]any{}
-	staleClaims := []map[string]any{}
-	unknownClaims := []map[string]any{}
-	for _, d := range decisions {
-		counts[d.Class]++
-		item := map[string]any{
-			"address": d.Address,
-			"class":   d.Class,
-			"source":  d.Source,
-		}
-		if d.HomeOwnerNode != "" {
-			item["homeOwnerNode"] = d.HomeOwnerNode
-		}
-		if d.HomeProviderRef != "" {
-			item["homeProviderRef"] = d.HomeProviderRef
-		}
-		if d.HomeSubnetRef != "" {
-			item["homeSubnetRef"] = d.HomeSubnetRef
-		}
-		if d.HomeNICRef != "" {
-			item["homeNICRef"] = d.HomeNICRef
-		}
-		if d.LocalNodeRef != "" {
-			item["localNodeRef"] = d.LocalNodeRef
-		}
-		if d.LocalProviderRef != "" {
-			item["localProviderRef"] = d.LocalProviderRef
-		}
-		if d.LocalSubnetRef != "" {
-			item["localSubnetRef"] = d.LocalSubnetRef
-		}
-		if d.LocalNICRef != "" {
-			item["localNICRef"] = d.LocalNICRef
-		}
-		if d.LocalResourceRef != "" {
-			item["localResourceRef"] = d.LocalResourceRef
-		}
-		if d.LocalResourceType != "" {
-			item["localResourceType"] = d.LocalResourceType
-		}
-		if d.LocalSource != "" {
-			item["localSource"] = d.LocalSource
-		}
-		if d.LocalSourceType != "" {
-			item["localSourceType"] = d.LocalSourceType
-		}
-		if d.CaptureState != "" && d.CaptureState != captureStateNone {
-			item["captureState"] = d.CaptureState
-		}
-		if d.CaptureHolderNode != "" {
-			item["captureHolderNode"] = d.CaptureHolderNode
-		}
-		if d.CaptureProviderRef != "" {
-			item["captureProviderRef"] = d.CaptureProviderRef
-		}
-		if d.CaptureTargetRef != "" {
-			item["captureTargetRef"] = d.CaptureTargetRef
-		}
-		if d.CaptureStrategy != "" {
-			item["captureStrategy"] = d.CaptureStrategy
-		}
-		if d.AdvertiseOwnerNode != "" {
-			item["advertiseOwnerNode"] = d.AdvertiseOwnerNode
-		}
-		if d.AdvertiseReason != "" {
-			item["advertiseReason"] = d.AdvertiseReason
-		}
-		if d.SuppressionReason != "" {
-			item["suppressionReason"] = d.SuppressionReason
-		}
-		if d.ConflictReason != "" {
-			item["conflictReason"] = d.ConflictReason
-			if d.ConflictWinnerNode != "" {
-				item["conflictWinnerNode"] = d.ConflictWinnerNode
-			}
-			if d.ConflictResolution != "" {
-				item["conflictResolution"] = d.ConflictResolution
-			}
-			if len(d.ConflictOwners) > 0 {
-				item["conflictOwners"] = providerInventoryOwnerFactStatusRows(d.ConflictOwners)
-			}
-			conflict := map[string]any{
-				"address":        d.Address,
-				"class":          d.Class,
-				"conflictReason": d.ConflictReason,
-				"homeOwnerNode":  d.HomeOwnerNode,
-				"source":         d.Source,
-			}
-			if d.HomeProviderRef != "" {
-				conflict["homeProviderRef"] = d.HomeProviderRef
-			}
-			if d.HomeSubnetRef != "" {
-				conflict["homeSubnetRef"] = d.HomeSubnetRef
-			}
-			if d.HomeNICRef != "" {
-				conflict["homeNICRef"] = d.HomeNICRef
-			}
-			if d.LocalNodeRef != "" {
-				conflict["localNodeRef"] = d.LocalNodeRef
-			}
-			if d.LocalProviderRef != "" {
-				conflict["localProviderRef"] = d.LocalProviderRef
-			}
-			if d.LocalSubnetRef != "" {
-				conflict["localSubnetRef"] = d.LocalSubnetRef
-			}
-			if d.LocalNICRef != "" {
-				conflict["localNICRef"] = d.LocalNICRef
-			}
-			if d.LocalResourceRef != "" {
-				conflict["localResourceRef"] = d.LocalResourceRef
-			}
-			if d.LocalResourceType != "" {
-				conflict["localResourceType"] = d.LocalResourceType
-			}
-			if d.LocalSource != "" {
-				conflict["localSource"] = d.LocalSource
-			}
-			if d.LocalSourceType != "" {
-				conflict["localSourceType"] = d.LocalSourceType
-			}
-			if len(d.ConflictOwners) > 0 {
-				conflict["owners"] = providerInventoryOwnerFactStatusRows(d.ConflictOwners)
-			}
-			if d.ConflictWinnerNode != "" {
-				conflict["winnerNode"] = d.ConflictWinnerNode
-			}
-			if d.ConflictResolution != "" {
-				conflict["resolution"] = d.ConflictResolution
-			}
-			conflicts = append(conflicts, conflict)
-		}
-		switch ownershipResolverClaimState(d) {
-		case "Stale":
-			staleClaims = append(staleClaims, ownershipResolverDiagnosticRow(d, "stale"))
-		case "Unknown":
-			unknownClaims = append(unknownClaims, ownershipResolverDiagnosticRow(d, "unknown"))
-		}
-		if d.Fresh {
-			item["fresh"] = true
-		}
-		items = append(items, item)
-	}
-	sort.SliceStable(items, func(i, j int) bool {
-		return fmt.Sprint(items[i]["address"]) < fmt.Sprint(items[j]["address"])
-	})
-	countMap := map[string]any{}
-	for _, key := range mapStringKeysSorted(counts) {
-		countMap[key] = counts[key]
-	}
-	sort.SliceStable(conflicts, func(i, j int) bool {
-		return fmt.Sprint(conflicts[i]["address"]) < fmt.Sprint(conflicts[j]["address"])
-	})
-	sort.SliceStable(staleClaims, func(i, j int) bool {
-		return fmt.Sprint(staleClaims[i]["address"]) < fmt.Sprint(staleClaims[j]["address"])
-	})
-	sort.SliceStable(unknownClaims, func(i, j int) bool {
-		return fmt.Sprint(unknownClaims[i]["address"]) < fmt.Sprint(unknownClaims[j]["address"])
-	})
-	phase := "Resolved"
-	reason := ""
-	if len(conflicts) > 0 {
-		phase = "Conflict"
-		reason = "remote home owner overlaps local ownership evidence"
-	}
-	status := map[string]any{
-		"ownershipResolverPhase":                  "Resolved",
-		"ownershipResolverAddressCount":           len(decisions),
-		"ownershipResolverClassCounts":            countMap,
-		"ownershipResolverDecisions":              items,
-		"ownershipResolverOwnerTable":             ownershipResolverOwnerTable(decisions),
-		"ownershipResolverControlPlaneOwnerTable": ownershipResolverControlPlaneOwnerTable(decisions),
-		"ownershipResolverFIBVerdicts":            ownershipResolverFIBVerdicts(decisions),
-	}
-	status["ownershipResolverPhase"] = phase
-	status["ownershipResolverConflictCount"] = len(conflicts)
-	status["ownershipResolverConflicts"] = conflicts
-	status["ownershipResolverStaleCount"] = len(staleClaims)
-	status["ownershipResolverStaleClaims"] = staleClaims
-	status["ownershipResolverUnknownCount"] = len(unknownClaims)
-	status["ownershipResolverUnknownClaims"] = unknownClaims
-	status["ownershipResolverReason"] = reason
-	return status
-}
-
-func ownershipResolverClaimState(d ownershipDecision) string {
-	if d.ConflictReason != "" {
-		return "Conflict"
-	}
-	if d.Class == ownershipClassUnknown {
-		return "Unknown"
-	}
-	if d.Class == ownershipClassStaleCapture || d.CaptureState == captureStateStale {
-		return "Stale"
-	}
-	return "OK"
-}
-
-func ownershipResolverDiagnosticRow(d ownershipDecision, reason string) map[string]any {
-	row := map[string]any{
-		"address": d.Address,
-		"class":   d.Class,
-		"state":   ownershipResolverClaimState(d),
-		"source":  d.Source,
-		"reason":  reason,
-	}
-	if d.HomeOwnerNode != "" {
-		row["ownerNode"] = d.HomeOwnerNode
-	}
-	if d.CaptureState != "" && d.CaptureState != captureStateNone {
-		row["captureState"] = d.CaptureState
-	}
-	if d.CaptureHolderNode != "" {
-		row["captureHolderNode"] = d.CaptureHolderNode
-	}
-	if d.SuppressionReason != "" {
-		row["suppressionReason"] = d.SuppressionReason
-	}
-	if d.ConflictReason != "" {
-		row["conflictReason"] = d.ConflictReason
-		if d.ConflictWinnerNode != "" {
-			row["conflictWinnerNode"] = d.ConflictWinnerNode
-		}
-		if d.ConflictResolution != "" {
-			row["conflictResolution"] = d.ConflictResolution
-		}
-	}
-	return row
-}
-
-func providerInventoryOwnerFactStatusRows(facts []providerInventoryOwnerFact) []map[string]any {
-	rows := make([]map[string]any, 0, len(facts))
-	for _, fact := range facts {
-		row := map[string]any{
-			"nodeRef": fact.NodeRef,
-		}
-		if fact.Provider != "" {
-			row["provider"] = fact.Provider
-		}
-		if fact.ProviderRef != "" {
-			row["providerRef"] = fact.ProviderRef
-		}
-		if fact.SubnetRef != "" {
-			row["subnetRef"] = fact.SubnetRef
-		}
-		if fact.NICRef != "" {
-			row["nicRef"] = fact.NICRef
-		}
-		if fact.ResourceRef != "" {
-			row["resourceRef"] = fact.ResourceRef
-		}
-		if fact.ResourceType != "" {
-			row["resourceType"] = fact.ResourceType
-		}
-		if !fact.ObservedAt.IsZero() {
-			row["observedAt"] = fact.ObservedAt.UTC().Format(time.RFC3339Nano)
-		}
-		rows = append(rows, row)
-	}
-	return rows
-}
-
-func ownershipResolverFIBVerdicts(decisions []ownershipDecision) []map[string]any {
-	rows := make([]map[string]any, 0, len(decisions))
-	for _, d := range decisions {
-		action, reason := ownershipResolverFIBVerdict(d)
-		row := map[string]any{
-			"address": d.Address,
-			"action":  action,
-			"reason":  reason,
-			"class":   d.Class,
-		}
-		if d.HomeOwnerNode != "" {
-			row["ownerNode"] = d.HomeOwnerNode
-		}
-		if d.LocalNodeRef != "" {
-			row["localNode"] = d.LocalNodeRef
-		}
-		if d.ConflictReason != "" {
-			row["conflictReason"] = d.ConflictReason
-			if d.ConflictWinnerNode != "" {
-				row["conflictWinnerNode"] = d.ConflictWinnerNode
-			}
-			if d.ConflictResolution != "" {
-				row["conflictResolution"] = d.ConflictResolution
-			}
-		}
-		if len(d.ConflictOwners) > 0 {
-			row["conflictOwners"] = providerInventoryOwnerFactStatusRows(d.ConflictOwners)
-		}
-		rows = append(rows, row)
-	}
-	sort.SliceStable(rows, func(i, j int) bool {
-		return fmt.Sprint(rows[i]["address"]) < fmt.Sprint(rows[j]["address"])
-	})
-	return rows
 }
 
 func ownershipResolverFIBVerdict(d ownershipDecision) (string, string) {
@@ -1196,130 +730,4 @@ func ownershipResolverFIBVerdict(d ownershipDecision) (string, string) {
 		}
 	}
 	return mobilityfib.ActionWithhold, firstNonEmpty(d.SuppressionReason, d.Source, "no-fib-owner")
-}
-
-func ownershipResolverOwnerTable(decisions []ownershipDecision) []map[string]any {
-	rows := make([]map[string]any, 0, len(decisions))
-	for _, d := range decisions {
-		row := map[string]any{
-			"address": d.Address,
-			"class":   d.Class,
-			"state":   ownershipResolverClaimState(d),
-			"source":  d.Source,
-		}
-		if d.HomeOwnerNode != "" {
-			row["ownerNode"] = d.HomeOwnerNode
-		}
-		if d.HomeProviderRef != "" {
-			row["ownerProviderRef"] = d.HomeProviderRef
-		}
-		if d.HomeSubnetRef != "" {
-			row["ownerSubnetRef"] = d.HomeSubnetRef
-		}
-		if d.HomeNICRef != "" {
-			row["ownerNICRef"] = d.HomeNICRef
-		}
-		if d.LocalNodeRef != "" {
-			row["localNode"] = d.LocalNodeRef
-		}
-		if d.LocalProviderRef != "" {
-			row["localProviderRef"] = d.LocalProviderRef
-		}
-		if d.LocalSubnetRef != "" {
-			row["localSubnetRef"] = d.LocalSubnetRef
-		}
-		if d.LocalNICRef != "" {
-			row["localNICRef"] = d.LocalNICRef
-		}
-		if d.LocalResourceRef != "" {
-			row["localResourceRef"] = d.LocalResourceRef
-		}
-		if d.LocalResourceType != "" {
-			row["localResourceType"] = d.LocalResourceType
-		}
-		if d.LocalSource != "" {
-			row["localSource"] = d.LocalSource
-		}
-		if d.LocalSourceType != "" {
-			row["localSourceType"] = d.LocalSourceType
-		}
-		if d.AdvertiseOwnerNode != "" {
-			row["advertiseOwnerNode"] = d.AdvertiseOwnerNode
-		}
-		if d.SuppressionReason != "" {
-			row["suppressionReason"] = d.SuppressionReason
-		}
-		if d.ConflictReason != "" {
-			row["conflictReason"] = d.ConflictReason
-		}
-		if d.ConflictWinnerNode != "" {
-			row["conflictWinnerNode"] = d.ConflictWinnerNode
-		}
-		if d.ConflictResolution != "" {
-			row["conflictResolution"] = d.ConflictResolution
-		}
-		rows = append(rows, row)
-	}
-	sort.SliceStable(rows, func(i, j int) bool {
-		return fmt.Sprint(rows[i]["address"]) < fmt.Sprint(rows[j]["address"])
-	})
-	return rows
-}
-
-func ownershipResolverControlPlaneOwnerTable(decisions []ownershipDecision) []map[string]any {
-	rows := make([]map[string]any, 0, len(decisions))
-	for _, d := range decisions {
-		row := map[string]any{
-			"address": d.Address,
-			"state":   ownershipResolverClaimState(d),
-			"class":   d.Class,
-			"source":  d.Source,
-		}
-		putNonEmpty(row, "ownerNode", d.HomeOwnerNode)
-		putNonEmpty(row, "ownerProviderRef", d.HomeProviderRef)
-		putNonEmpty(row, "ownerSubnetRef", d.HomeSubnetRef)
-		putNonEmpty(row, "ownerNICRef", d.HomeNICRef)
-		putNonEmpty(row, "ownerResourceRef", d.HomeResourceRef)
-		putNonEmpty(row, "ownerResourceType", d.HomeResourceType)
-		putNonEmpty(row, "localEvidenceNode", d.LocalNodeRef)
-		putNonEmpty(row, "localEvidenceProviderRef", d.LocalProviderRef)
-		putNonEmpty(row, "localEvidenceSubnetRef", d.LocalSubnetRef)
-		putNonEmpty(row, "localEvidenceNICRef", d.LocalNICRef)
-		putNonEmpty(row, "localEvidenceResourceRef", d.LocalResourceRef)
-		putNonEmpty(row, "localEvidenceResourceType", d.LocalResourceType)
-		putNonEmpty(row, "localEvidenceSource", d.LocalSource)
-		putNonEmpty(row, "localEvidenceSourceType", d.LocalSourceType)
-		putNonEmpty(row, "captureHolderNode", d.CaptureHolderNode)
-		putNonEmpty(row, "captureProviderRef", d.CaptureProviderRef)
-		putNonEmpty(row, "captureTargetRef", d.CaptureTargetRef)
-		putNonEmpty(row, "captureStrategy", d.CaptureStrategy)
-		if d.CaptureState != "" && d.CaptureState != captureStateNone {
-			row["captureState"] = d.CaptureState
-		}
-		putNonEmpty(row, "advertiseOwnerNode", d.AdvertiseOwnerNode)
-		putNonEmpty(row, "advertiseReason", d.AdvertiseReason)
-		putNonEmpty(row, "suppressionReason", d.SuppressionReason)
-		putNonEmpty(row, "conflictReason", d.ConflictReason)
-		putNonEmpty(row, "conflictWinnerNode", d.ConflictWinnerNode)
-		putNonEmpty(row, "conflictResolution", d.ConflictResolution)
-		if len(d.ConflictOwners) > 0 {
-			row["conflictOwners"] = providerInventoryOwnerFactStatusRows(d.ConflictOwners)
-		}
-		rows = append(rows, row)
-	}
-	sort.SliceStable(rows, func(i, j int) bool {
-		left := fmt.Sprint(rows[i]["address"])
-		right := fmt.Sprint(rows[j]["address"])
-		if left == right {
-			return fmt.Sprint(rows[i]["localEvidenceNode"]) < fmt.Sprint(rows[j]["localEvidenceNode"])
-		}
-		return left < right
-	})
-	return rows
-}
-
-func putNonEmpty(row map[string]any, key, value string) {
-	if value = strings.TrimSpace(value); value != "" {
-		row[key] = value
-	}
 }

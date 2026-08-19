@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/hybrid"
 	"github.com/imksoo/routerd/pkg/platform"
@@ -610,7 +611,7 @@ func TestTunnelInterfaceControllerRejectsWrongExistingFOUListenerShape(t *testin
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-fou")
-	if status["phase"] != "Error" || status["reason"] != "ApplyFailed" || !strings.Contains(statusString(status, "error"), "does not match") {
+	if status["phase"] != "Error" || status["reason"] != "ApplyFailed" || !strings.Contains(statusvalue.Field(status, "error"), "does not match") {
 		t.Fatalf("status = %#v, want fail-closed listener-shape error", status)
 	}
 	for _, call := range calls {
@@ -956,7 +957,7 @@ func TestTunnelInterfaceControllerTransfersSharedFOUListenerOwnership(t *testing
 	}
 	for _, name := range []string{"tun-a", "tun-b"} {
 		status := store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", name)
-		if owned, _ := statusBool(status["fouListenerOwned"]); !owned {
+		if owned, _ := statusvalue.ExtendedBool(status["fouListenerOwned"]); !owned {
 			t.Fatalf("%s did not inherit routerd FOU ownership: %#v", name, status)
 		}
 	}
@@ -988,7 +989,7 @@ func TestTunnelInterfaceControllerTransfersSharedFOUListenerOwnership(t *testing
 }
 
 func statusBoolOrFalse(value any) bool {
-	ok, _ := statusBool(value)
+	ok, _ := statusvalue.ExtendedBool(value)
 	return ok
 }
 

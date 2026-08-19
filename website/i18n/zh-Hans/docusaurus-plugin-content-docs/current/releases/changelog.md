@@ -11,6 +11,24 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 变更
+
+- Cloud SAM 现在通过单一类型化 `PoolRuntimeSnapshot` → `PoolPlan` 管线评估每个
+  BGP Pool。placement、ownership、BGP、provider action、FIB verdict 和 local
+  capture intent 都使用同一个 plan；dataplane desired state 不再从 status 值重建。
+- PVE route reflector 现在是 host-redundant 的 PVE pair。cloud capacity 仅保留给
+  qualification 使用的 leaf topology。
+
+### 已移除
+
+- 已移除 legacy BGP → synthetic `RemoteAddressClaim` lowering 路径，以及
+  `RemoteAddressClaim`、`AddressMobilityDomain`、`MobilityMemberSet`、
+  `Delivery`、`DeliveryTo`、non-BGP delivery 和 remote-full-member API surface。
+  BGP Pool 现在直接输出类型化 local capture intent。这是 v1alpha1 API 的破坏性变更。
+- 移除了并行的手动 RRSet bootstrap 路径 `routerctl mobility
+  enrollment-join`。现在仅由 `SAMEnrollmentClient` 执行 submit/fetch/persist，
+  并保留已配置的 bearer token/mTLS 认证与 refresh backoff。
+
 ## v20260808.1741
 
 ### 新增

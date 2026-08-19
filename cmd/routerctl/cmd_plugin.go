@@ -20,6 +20,7 @@ import (
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/dynamicconfig/codec"
 	routerplugin "github.com/imksoo/routerd/pkg/plugin"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -170,7 +171,7 @@ func pluginRunCommand(args []string, stdout io.Writer) error {
 		ActionPlans: result.Status.ActionPlans,
 	}
 	if store != nil {
-		record, err := dynamicPartRecord(part)
+		record, err := codec.Encode(part)
 		if err != nil {
 			_ = completePluginRun(store, runID, outcome, "failed", err.Error())
 			recordDynamicPartRejectedEvent(store, source, err)
@@ -359,45 +360,6 @@ func startupConfigHash(router *api.Router) string {
 	data, _ := json.Marshal(router)
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
-}
-
-func dynamicPartRecord(part dynamicconfig.DynamicConfigPart) (routerstate.DynamicConfigPartRecord, error) {
-	resources, err := json.Marshal(part.Spec.Resources)
-	if err != nil {
-		return routerstate.DynamicConfigPartRecord{}, err
-	}
-	directives, err := json.Marshal(part.Spec.Directives)
-	if err != nil {
-		return routerstate.DynamicConfigPartRecord{}, err
-	}
-	actionPlansJSON, err := marshalActionPlans(part.Spec.ActionPlans)
-	if err != nil {
-		return routerstate.DynamicConfigPartRecord{}, err
-	}
-	return routerstate.DynamicConfigPartRecord{
-		Source:          part.Spec.Source,
-		Generation:      part.Spec.Generation,
-		ObservedAt:      part.Spec.ObservedAt,
-		ExpiresAt:       part.Spec.ExpiresAt,
-		Digest:          part.Spec.Digest,
-		ResourcesJSON:   string(resources),
-		DirectivesJSON:  string(directives),
-		ActionPlansJSON: actionPlansJSON,
-		Status:          "active",
-	}, nil
-}
-
-// marshalActionPlans encodes display-only ActionPlans for persistence. Empty
-// input yields "" so the actionplans_json column stays NULL (no plans).
-func marshalActionPlans(plans []dynamicconfig.ActionPlan) (string, error) {
-	if len(plans) == 0 {
-		return "", nil
-	}
-	data, err := json.Marshal(plans)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
 }
 
 func completePluginRun(store *routerstate.SQLiteStore, id int64, outcome routerplugin.RunOutcome, status, runError string) error {

@@ -230,6 +230,9 @@ jobs:
       - name: Run CloudEdge E2E preflight offline smoke
         run: make cloudedge-e2e-preflight-offline-test
 
+      - name: Run CloudEdge SAM config generator offline smoke
+        run: make cloudedge-sam-config-generator-offline-test
+
       - name: Run CloudEdge PVE QGA offline smoke
         run: make cloudedge-pve-qga-offline-test
 

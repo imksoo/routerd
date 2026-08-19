@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
 )
 
 const NftablesRouterdOwnerMarker = "routerd.owner=routerd routerd.generation=1"
@@ -258,11 +259,18 @@ func privateIPv4CIDRs() []string {
 }
 
 func NftablesTCPMSSClamp(router *api.Router) ([]byte, error) {
-	aliases, err := nftOutboundAliases(router)
+	return NftablesTCPMSSClampWithLocalCaptureIntents(router, nil)
+}
+
+// NftablesTCPMSSClampWithLocalCaptureIntents renders path-MTU policy from the
+// already-decided mobility local-dataplane plan. Supplying nil preserves the
+// static-config-only renderer contract.
+func NftablesTCPMSSClampWithLocalCaptureIntents(router *api.Router, intents []dynamicconfig.LocalCaptureIntent) ([]byte, error) {
+	aliases, err := nftOutboundAliasesWithLocalCaptureIntents(router, intents)
 	if err != nil {
 		return nil, err
 	}
-	policies, err := pathMTUMSSPolicies(router)
+	policies, err := pathMTUMSSPoliciesWithLocalCaptureIntents(router, intents)
 	if err != nil {
 		return nil, err
 	}
@@ -480,11 +488,18 @@ func l2MSSClampPolicies(router *api.Router, aliases map[string]string) ([]l2MSSC
 }
 
 func NftablesIPv4ForceFragment(router *api.Router) ([]byte, error) {
-	aliases, err := nftOutboundAliases(router)
+	return NftablesIPv4ForceFragmentWithLocalCaptureIntents(router, nil)
+}
+
+// NftablesIPv4ForceFragmentWithLocalCaptureIntents renders IPv4 fragmentation
+// handling from the already-decided mobility local-dataplane plan. Supplying
+// nil preserves the static-config-only renderer contract.
+func NftablesIPv4ForceFragmentWithLocalCaptureIntents(router *api.Router, intents []dynamicconfig.LocalCaptureIntent) ([]byte, error) {
+	aliases, err := nftOutboundAliasesWithLocalCaptureIntents(router, intents)
 	if err != nil {
 		return nil, err
 	}
-	policies, err := pathMTUForceFragmentPolicies(router)
+	policies, err := pathMTUForceFragmentPoliciesWithLocalCaptureIntents(router, intents)
 	if err != nil {
 		return nil, err
 	}
@@ -703,6 +718,10 @@ func writeIPv6LocalServiceRedirectTable(buf *bytes.Buffer, redirectRules []local
 }
 
 func nftOutboundAliases(router *api.Router) (map[string]string, error) {
+	return nftOutboundAliasesWithLocalCaptureIntents(router, nil)
+}
+
+func nftOutboundAliasesWithLocalCaptureIntents(router *api.Router, intents []dynamicconfig.LocalCaptureIntent) (map[string]string, error) {
 	aliases := map[string]string{}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
@@ -753,7 +772,7 @@ func nftOutboundAliases(router *api.Router) (map[string]string, error) {
 			aliases[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
 		}
 	}
-	for _, iface := range pathMTUForwardedPathInterfaces(router) {
+	for _, iface := range pathMTUForwardedPathInterfacesWithLocalCaptureIntents(router, intents) {
 		if aliases[iface] == "" {
 			aliases[iface] = iface
 		}

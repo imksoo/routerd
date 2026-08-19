@@ -76,8 +76,8 @@ journal.
 ### `ProviderActionPolicy` Kind
 
 A new Kind (`apiVersion: hybrid.routerd.net/v1alpha1`) gates execution. It is
-defined in the `hybrid` group to sit alongside `RemoteAddressClaim` and
-`CloudProviderProfile`, which it governs. Its zero value is the safe locked-down
+defined in the `hybrid` group alongside `CloudProviderProfile` and the typed
+mobility plan it governs. Its zero value is the safe locked-down
 state:
 
 - `enabled` (bool, default false) — execution is disabled unless true.

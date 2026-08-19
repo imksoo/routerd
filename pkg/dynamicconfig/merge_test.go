@@ -292,6 +292,31 @@ func TestBuildEffectiveConfigPreservesTypedSpecs(t *testing.T) {
 	}
 }
 
+func TestBuildEffectiveConfigKeepsRuntimeSAMPeerGroup(t *testing.T) {
+	now := testNow()
+	startup := testRouter(testInterface("wan", "ens18"))
+	peerGroup := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
+		Metadata: api.ObjectMeta{Name: "rrs"},
+		Spec: api.SAMPeerGroupSpec{Peers: []api.SAMTransportPeerSpec{{
+			NodeRef:        "rr-a",
+			RemoteEndpoint: "192.0.2.10",
+		}}},
+	}
+	part := testPart("SAMTransportProfile/rr/peer-group", 1, now.Add(time.Hour), []api.Resource{peerGroup}, nil)
+
+	effective, result, err := BuildEffectiveConfig(startup, []DynamicConfigPart{part}, nil, now)
+	if err != nil {
+		t.Fatalf("BuildEffectiveConfig: %v", err)
+	}
+	if !hasResource(effective, api.MobilityAPIVersion, "SAMPeerGroup", "rrs") {
+		t.Fatal("runtime SAMPeerGroup missing from effective config")
+	}
+	if len(result.AddedResources) != 1 || result.AddedResources[0].Kind != "SAMPeerGroup" {
+		t.Fatalf("added resources = %#v, want runtime SAMPeerGroup", result.AddedResources)
+	}
+}
+
 func TestBuildEffectiveConfigRecordsDynamicOwnerInAddedResources(t *testing.T) {
 	now := testNow()
 	startup := testRouter()

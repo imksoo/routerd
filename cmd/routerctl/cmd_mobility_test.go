@@ -90,73 +90,6 @@ func TestMobilityEnrollmentHMACCommand(t *testing.T) {
 	}
 }
 
-func TestMobilityEnrollmentJoinFetchesRRSetIntoDynamicState(t *testing.T) {
-	rrSet := api.Resource{
-		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMRRSet"},
-		Metadata: api.ObjectMeta{Name: "pve-rrs"},
-		Spec: api.SAMRRSetSpec{
-			EnrollmentPolicyRef: "SAMEnrollmentPolicy/pve-fou-leaves",
-			MobilityPoolRefs:    []string{"MobilityPool/pve-mobility"},
-			Members: []api.SAMRRSetMember{{
-				NodeRef:       "pve-rr",
-				Endpoint:      "10.30.0.10",
-				TunnelAddress: "10.255.10.1/32",
-				BGP:           api.SAMRRSetMemberBGPSpec{ASN: 64577, RouterID: "10.255.10.1"},
-			}},
-		},
-	}
-	now := time.Date(2026, 6, 28, 0, 1, 0, 0, time.UTC)
-	assertAuth := func(r *http.Request) {
-		if got := r.Header.Get("Authorization"); got != "Bearer rr-token" {
-			t.Fatalf("Authorization = %q, want bearer token", got)
-		}
-	}
-	server := httptest.NewServer(controlapi.Handler{
-		SubmitSAMEnrollmentClaim: func(r *http.Request, req controlapi.SAMEnrollmentClaimSubmitRequest) (*controlapi.SAMEnrollmentClaimSubmitResult, error) {
-			assertAuth(r)
-			if req.Claim.Kind != "SAMEnrollmentClaim" || req.Claim.Metadata.Name != "pve-leaf-b" {
-				t.Fatalf("submitted claim = %#v", req.Claim)
-			}
-			result := controlapi.NewSAMEnrollmentClaimSubmitResult("SAMEnrollmentClaim/pve-leaf-b", "SAMEnrollmentClaim/pve-leaf-b", 1, now, now.Add(time.Hour))
-			return &result, nil
-		},
-		GetSAMRRSet: func(r *http.Request, req controlapi.SAMRRSetGetRequest) (*controlapi.SAMRRSetGetResult, error) {
-			assertAuth(r)
-			if req.Name != "pve-rrs" || req.ClaimRef != "SAMEnrollmentClaim/pve-leaf-b" {
-				t.Fatalf("rrset request = %#v", req)
-			}
-			result := controlapi.NewSAMRRSetGetResult("pve-rrs", rrSet)
-			return &result, nil
-		},
-	})
-	defer server.Close()
-	statePath := filepath.Join(t.TempDir(), "routerd.db")
-	tokenPath := filepath.Join(t.TempDir(), "rr-token")
-	if err := os.WriteFile(tokenPath, []byte("rr-token\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	configPath := filepath.Join("..", "..", "examples", "pve-minimal-leaf-b-fou.yaml")
-	var stdout, stderr bytes.Buffer
-	if err := mobilityCommand([]string{"enrollment-join", "--config", configPath, "--claim", "pve-leaf-b", "--rr-url", server.URL, "--rr-token-file", tokenPath, "--state-file", statePath, "-o", "json"}, &stdout, &stderr); err != nil {
-		t.Fatalf("mobility enrollment-join: %v stderr=%s", err, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), `"rrSetRef": "SAMRRSet/pve-rrs"`) || !strings.Contains(stdout.String(), `"dynamicSource": "SAMRRSet/pve-rrs"`) {
-		t.Fatalf("join output = %s", stdout.String())
-	}
-	store, err := routerstate.OpenSQLite(statePath)
-	if err != nil {
-		t.Fatalf("OpenSQLite: %v", err)
-	}
-	defer store.Close()
-	records, err := store.GetDynamicConfigPartsBySource("SAMRRSet/pve-rrs")
-	if err != nil {
-		t.Fatalf("GetDynamicConfigPartsBySource: %v", err)
-	}
-	if len(records) != 1 || !strings.Contains(records[0].ResourcesJSON, `"pve-rrs"`) || !strings.Contains(records[0].ResourcesJSON, `"pve-rr"`) {
-		t.Fatalf("records = %#v", records)
-	}
-}
-
 func TestMobilityEnrollmentRevokeCommand(t *testing.T) {
 	now := time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC)
 	assertAuth := func(r *http.Request) {
@@ -203,12 +136,10 @@ func TestMobilityLeafConfigCommandGeneratesValidConfig(t *testing.T) {
 		"--endpoint-prefix", "10.30.0.0/24",
 		"--inner-prefix", "10.255.10.0/24",
 		"--tunnel-address", "10.255.10.22/32",
-		"--mobility-pool", "pve-mobility",
-		"--mobility-pool-prefix", "10.77.70.0/24",
+		"--mobility-prefix", "10.77.70.0/24",
 		"--owned-address", "10.77.70.22/32",
 		"--rr-set", "pve-rrs",
 		"--policy", "pve-fou-leaves",
-		"--join-token-file", secretPath,
 		"--join-audience", "pve-private-underlay",
 		"--join-nonce", "pve-leaf-b-0001",
 		"--join-timestamp", "2026-06-28T00:00:00Z",
@@ -260,6 +191,17 @@ func TestMobilityLeafConfigCommandGeneratesValidConfig(t *testing.T) {
 	if !foundClient {
 		t.Fatal("generated config missing SAMEnrollmentClient/pve-leaf-b")
 	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion == api.MobilityAPIVersion {
+			switch resource.Kind {
+			case "SAMEnrollmentPolicy", "SAMNodeSet", "MobilityPool":
+				t.Fatalf("generated leaf must not contain %s: %s", resource.Kind, resource.ID())
+			}
+		}
+		if resource.APIVersion == api.FederationAPIVersion && resource.Kind == "EventGroup" {
+			t.Fatalf("generated leaf must not contain EventGroup: %s", resource.ID())
+		}
+	}
 }
 
 func TestMobilityLeafConfigCommandRejectsMissingRequiredInput(t *testing.T) {
@@ -267,6 +209,18 @@ func TestMobilityLeafConfigCommandRejectsMissingRequiredInput(t *testing.T) {
 	err := mobilityCommand([]string{"leaf-config", "--leaf-id", "leaf-a"}, &stdout, &stderr)
 	if err == nil || !strings.Contains(err.Error(), "mobility leaf-config requires --") {
 		t.Fatalf("leaf-config error = %v stdout=%s stderr=%s", err, stdout.String(), stderr.String())
+	}
+}
+
+func TestMobilityLeafConfigCommandRejectsRemovedPoolFlags(t *testing.T) {
+	for _, flagName := range []string{"--mobility-pool", "--mobility-pool-prefix", "--site", "--role"} {
+		t.Run(flagName, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			err := mobilityCommand([]string{"leaf-config", flagName, "removed"}, &stdout, &stderr)
+			if err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+				t.Fatalf("leaf-config %s error = %v stdout=%s stderr=%s", flagName, err, stdout.String(), stderr.String())
+			}
+		})
 	}
 }
 
@@ -361,6 +315,9 @@ func TestMobilityOwnersCommand(t *testing.T) {
 			"localEvidenceSource":      "local-inventory",
 			"localEvidenceNICRef":      "eni-client",
 			"localEvidenceResourceRef": "i-aws-client",
+			"captureHolderNode":        "aws-router-a",
+			"captureDisposition":       "protect-existing",
+			"captureReason":            "provider capture observed",
 			"conflictReason":           "remote-home-owner-overlaps-local-inventory",
 		}},
 	}); err != nil {
@@ -375,7 +332,7 @@ func TestMobilityOwnersCommand(t *testing.T) {
 		t.Fatalf("mobility owners: %v stderr=%s", err, stderr.String())
 	}
 	out := stdout.String()
-	for _, want := range []string{"cloudedge", "10.88.60.11/32", "Conflict", "oci-router", "aws-router-a", "remote-home-owner-overlaps-local-inventory"} {
+	for _, want := range []string{"cloudedge", "10.88.60.11/32", "Conflict", "oci-router", "aws-router-a", "protect-existing", "provider capture observed", "remote-home-owner-overlaps-local-inventory"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("mobility owners output missing %q:\n%s", want, out)
 		}
@@ -400,26 +357,19 @@ func TestMobilityExplainCommand(t *testing.T) {
 		t.Fatalf("OpenSQLite: %v", err)
 	}
 	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
-		"phase": "Pending",
-		"addresses": map[string]any{
-			"10.88.60.11/32": map[string]any{
-				"phase":                "Pending",
-				"class":                "RemoteHomeOwned",
-				"ownerNode":            "aws-router",
-				"assignmentGeneration": "gen-42",
-				"providerAction":       "assign-secondary-ip",
-				"providerActionKey":    "assign-key",
-				"blockingCondition":    "ProviderObserved",
-				"conditions": map[string]any{
-					"OwnershipResolved":     "True",
-					"ProviderActionApplied": "True",
-					"ProviderObserved":      "False",
-				},
-				"conditionReasons": map[string]any{
-					"ProviderObserved": "provider inventory has not observed capture on self",
-				},
-			},
-		},
+		"phase":                               "Pending",
+		"providerActionPhase":                 "Failed",
+		"providerActionError":                 "a different address failed",
+		"providerActionFailedAddresses":       []string{"10.88.60.12/32"},
+		"providerObservationPendingAddresses": []string{"10.88.60.11/32"},
+		"ownershipResolverControlPlaneOwnerTable": []map[string]any{{
+			"address":            "10.88.60.11/32",
+			"state":              "OK",
+			"class":              "RemoteHomeOwned",
+			"ownerNode":          "aws-router",
+			"captureDisposition": "desired",
+			"captureReason":      "installed BGP path",
+		}},
 	}); err != nil {
 		t.Fatalf("SaveObjectStatus: %v", err)
 	}
@@ -432,7 +382,7 @@ func TestMobilityExplainCommand(t *testing.T) {
 		t.Fatalf("mobility explain: %v stderr=%s", err, stderr.String())
 	}
 	out := stdout.String()
-	for _, want := range []string{"10.88.60.11/32", "Phase: Pending", "ProviderObserved", "gen-42", "provider inventory has not observed capture on self"} {
+	for _, want := range []string{"10.88.60.11/32", "Phase: Pending", "Capture disposition: desired", "installed BGP path", "ProviderObserved", "provider observation pending", "ProviderActionApplied", "address-specific provider action status unavailable"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("mobility explain output missing %q:\n%s", want, out)
 		}
@@ -442,8 +392,49 @@ func TestMobilityExplainCommand(t *testing.T) {
 	if err := mobilityCommand([]string{"explain", "--state-file", path, "--pool", "cloudedge", "--address", "10.88.60.11/32", "-o", "json"}, &stdout, &stderr); err != nil {
 		t.Fatalf("mobility explain json: %v stderr=%s", err, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), `"phase": "Pending"`) || !strings.Contains(stdout.String(), `"blockingCondition": "ProviderObserved"`) {
+	if !strings.Contains(stdout.String(), `"phase": "Pending"`) || !strings.Contains(stdout.String(), `"blockingCondition": "ProviderObserved"`) || !strings.Contains(stdout.String(), `"captureDisposition": "desired"`) {
 		t.Fatalf("mobility explain json missing phase/blocker:\n%s", stdout.String())
+	}
+}
+
+func TestMobilityExplainScopesPoolProviderStatusByAddress(t *testing.T) {
+	statuses := []routerstate.ObjectStatus{{
+		APIVersion: api.MobilityAPIVersion,
+		Kind:       "MobilityPool",
+		Name:       "cloudedge",
+		Status: map[string]any{
+			"phase":                               "Pending",
+			"providerActionPhase":                 "Failed",
+			"providerActionError":                 "assign failed",
+			"providerActionFailedAddresses":       []string{"10.88.60.12/32"},
+			"providerObservationPendingAddresses": []string{"10.88.60.13/32"},
+			"ownershipResolverControlPlaneOwnerTable": []map[string]any{
+				{"address": "10.88.60.11/32", "state": "OK", "class": "RemoteHomeOwned"},
+				{"address": "10.88.60.12/32", "state": "OK", "class": "RemoteHomeOwned"},
+				{"address": "10.88.60.13/32", "state": "OK", "class": "RemoteHomeOwned"},
+			},
+		},
+	}}
+
+	for _, tc := range []struct {
+		address          string
+		providerAction   string
+		providerObserved string
+		blocking         string
+	}{
+		{address: "10.88.60.11/32", providerAction: "Unknown", providerObserved: "Unknown"},
+		{address: "10.88.60.12/32", providerAction: "False", providerObserved: "Unknown", blocking: "ProviderActionApplied"},
+		{address: "10.88.60.13/32", providerAction: "Unknown", providerObserved: "False", blocking: "ProviderObserved"},
+	} {
+		t.Run(tc.address, func(t *testing.T) {
+			report, err := mobilityExplainReportFor(statuses, "cloudedge", tc.address)
+			if err != nil {
+				t.Fatalf("mobilityExplainReportFor: %v", err)
+			}
+			if report.Conditions["ProviderActionApplied"] != tc.providerAction || report.Conditions["ProviderObserved"] != tc.providerObserved || report.BlockingCondition != tc.blocking {
+				t.Fatalf("report = %#v, want provider action=%s observation=%s blocker=%s", report, tc.providerAction, tc.providerObserved, tc.blocking)
+			}
+		})
 	}
 }
 
@@ -455,20 +446,11 @@ func TestMobilityExplainClassifiesStaleCaptureAsDiagnostic(t *testing.T) {
 	}
 	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
 		"phase": "Ready",
-		"addresses": map[string]any{
-			"10.88.60.16/32": map[string]any{
-				"phase":             "Pending",
-				"class":             "StaleCapture",
-				"blockingCondition": "OwnershipResolved",
-				"conditions": map[string]any{
-					"OwnershipResolved": "False",
-					"ProviderObserved":  "True",
-				},
-				"conditionReasons": map[string]any{
-					"OwnershipResolved": "stale capture evidence remains after ownership moved",
-				},
-			},
-		},
+		"ownershipResolverControlPlaneOwnerTable": []map[string]any{{
+			"address": "10.88.60.16/32",
+			"state":   "Stale",
+			"class":   "StaleCapture",
+		}},
 	}); err != nil {
 		t.Fatalf("SaveObjectStatus: %v", err)
 	}

@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/imksoo/routerd/internal/mapsort"
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/hostdeps"
 )
@@ -294,7 +296,7 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	if err != nil {
 		return FreeBSDConfig{}, err
 	}
-	for _, name := range sortedByteMapKeys(rcdScripts) {
+	for _, name := range mapsort.Keys(rcdScripts) {
 		rc.WriteString(name + "_enable=\"YES\"\n")
 	}
 	writeFreeBSDClonedInterfaces(&rc, bridges, dslites)
@@ -649,7 +651,7 @@ func hasManagedFreeBSDTailscale(router *api.Router) bool {
 		if err != nil {
 			continue
 		}
-		if firstNonEmpty(spec.State, "present") != "absent" {
+		if stringutil.FirstNonBlank(spec.State, "present") != "absent" {
 			return true
 		}
 	}

@@ -38,6 +38,7 @@ spec:
 | --- | --- |
 | `routerd.net/v1alpha1` | `Router` |
 | `net.routerd.net/v1alpha1` | 介面、`ManagementAccess`、可重複使用的 `IPAddressSet`、DHCP、DNS、路由、隧道、VIP、BGP、事件、通訊流量紀錄 |
+| `mobility.routerd.net/v1alpha1` | `MobilityPool`、`SAMNodeSet`、`SAMRRSet`、`SAMEnrollmentPolicy`、`SAMEnrollmentClaim`、`SAMEnrollmentClient`、`SAMTransportProfile` |
 | `firewall.routerd.net/v1alpha1` | `FirewallZone`, `FirewallPolicy`, `FirewallRule`, `FirewallEventLog`, `ClientPolicy`, `PortForward`, `IngressService`, `LocalServiceRedirect` |
 | `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `Package`, `NTPClient`, `NTPServer`, `LogSink`, `ObservabilityPipeline`, `RouterdCluster`, `LogRetention`, `WebConsole` |
 | `plugin.routerd.net/v1alpha1` | 外掛程式清單 |
@@ -153,11 +154,14 @@ DNSSEC 驗證寫在 `DNSForwarder.spec.dnssecValidate`。
 | `TunnelInterface` | 為 hybrid overlay delivery 建立受信任的 Linux L3 underlay tunnel device。`mode` 支援 `ipip`、`gre` 以及 IPIP-over-UDP `fou`/`gue`。 |
 | `OverlayPeer` | 描述 on-prem 或 cloud overlay peer 以及用於到達它的本地 underlay。新 CloudEdge SAM transport 優先使用 `SAMTransportProfile`。 |
 | `HybridRoute` | 將非預設遠端 IPv4 prefix 經由 `OverlayPeer` 降低為受管理的 `IPv4Route` resource。 |
-| `MobilityPool` | CloudEdge mobility 的高層 intent。宣告 pool prefix、federation group、node membership、BGP delivery policy、cloud capture profile、local value expansion 與 provider trap placement。 |
-| `SAMTransportProfile` | 宣告本 router 的 `selfNodeRef`、共享 topology node list、inner tunnel prefix、underlay interface、BGP router 與 SAM transport peer。routerd 透過 `DynamicConfigPart` 產生 per-peer `TunnelInterface`、endpoint `/32` `IPv4Route` 與 `BGPPeer`。 |
-| `AddressMobilityDomain` | 低層相容 SAM resource，用於 hand-authored selective-address config 中的 IPv4 prefix。不是目前 CloudEdge Mobility 的主要 authoring surface。 |
+| `MobilityPool` | CloudEdge 的本機 address/capture intent。宣告 pool prefix、federation group、BGP delivery、cloud capture profile、local value expansion、provider trap placement 與一個 local self overlay；共享 topology 只能透過 `membersFrom` 從 `SAMNodeSet` 匯入。 |
+| `SAMNodeSet` | 共享 SAM fabric 的 identity/topology registry：node identity、site、role、placement、maintenance、Event Federation endpoint、SAM transport endpoint 與非祕密 WireGuard peer identity。它是 MobilityPool 唯一的 topology source。 |
+| `SAMRRSet` | 回傳給已核准 leaf 的僅限執行期、以 policy 為範圍的 enrollment snapshot。它包含從 policy 的靜態 `SAMNodeSet` 投影出的已選 RR node，不能在頂層 router YAML 中宣告。 |
+| `SAMEnrollmentPolicy` | 僅 hub/RR 使用的 SAM transport enrollment claim 授權。它繫結 transport profile、輸出 `rrSetRef`、必要的靜態 RR topology `rrNodeSetRef`、join-token source、join audience、tunnel/endpoint prefix、選用 leaf ID pattern、TTL/revocation policy、選用 WireGuard materialization，以及作為 RR 端 admission authority 的 `MobilityPool` reference 或直接 `mobilityPrefixes`。leaf 不宣告副本。 |
+| `SAMEnrollmentClaim` | leaf 本機的遠端 enrollment request：leaf identity、join nonce/timestamp/HMAC、遠端 policy/RRSet reference、tunnel address、endpoint、選用 BGP identity、選用由 MobilityPool 擁有的 `/32`、選用 WireGuard credential、expiry 和 revocation state。 |
+| `SAMEnrollmentClient` | leaf 端 bootstrap/refresh controller：向 bootstrap RR endpoint 提交本機遠端請求的 `SAMEnrollmentClaim`，取得允許的 `SAMRRSet`，僅在缺失、接近到期或 claim material 變更時將其儲存為 dynamic state。它不需要本機 policy 或 NodeSet。 |
+| `SAMTransportProfile` | 宣告 router 穩定的 `selfNodeRef`、`mode`（`ipip`、`gre`、`fou` 或 `gue`）、`encryption`（`none` 或 `wireguard`）、inner tunnel prefix、underlay interface、BGP router 和 peer source。`fou`/`gue` 使用既有 `TunnelInterface` FOU/GUE 路徑並要求 `encapSport` 與 `encapDport`。它透過 `peersFrom` 從 `SAMNodeSet`、執行期同步的 `SAMPeerGroup`、`SAMEnrollmentPolicy` 或已取得的 `SAMRRSet` 讀取 topology 和 peer endpoint；`SAMNodeSet` 是 canonical identity/topology/endpoint source，`nodeRefs` 可選擇相鄰 peer。`SAMPeerGroup` 不能作為可 author 的頂層 resource。routerd 透過 replace-on-reconcile 的 `DynamicConfigPart` 為每個 peer 導出 `TunnelInterface`、endpoint `/32` `IPv4Route`，以及（除非 `spec.bgp.generatePeers: false`）`BGPPeer`。 |
 | `CloudProviderProfile` | 描述 provider capabilities 與 external-command auth，用於 declarative address capture planning。 |
-| `RemoteAddressClaim` | 低層相容 SAM resource，宣告單個 mobile IPv4 `/32`、capture mechanism 與 legacy `OverlayPeer` route delivery。 |
 | `IPAddressSet` | 從直接指定的位址或 FQDN 定義可重複使用的 IP 位址集。Linux nftables 的產生器將其輸出為 named set，可從 redirect、NAT、policy routing 參照。 |
 | `IPv4Route` | 新增 IPv4 路由。也可用於 DS-Lite 的預設路由或明確的捨棄路由。 |
 | `ClusterNetworkRoute` | 將 Kubernetes 的 Pod / Service CIDR 展開為經由 worker next hop 的靜態 IPv4 路由。 |
@@ -170,16 +174,28 @@ DNSSEC 驗證寫在 `DNSForwarder.spec.dnssecValidate`。
 | `LocalServiceRedirect` | 將 LAN 側用戶端向 `IPAddressSet` 發出的 IPv4/IPv6 通訊 redirect 至路由器本地連接埠。適用於集中純文字 DNS/NTP，不影響 DoH 或 DoT 連接埠。 |
 | `EgressRoutePolicy` | 表示預設路由選擇、基於 mark 的 IPv4 policy routing，以及向多個 target 的 hash 分散。 |
 
-CloudEdge Mobility 的 operator-authored surface 是 `MobilityPool` 與
-`SAMTransportProfile`。`MobilityPool` 負責位址 ownership/capture intent，
-`SAMTransportProfile` 負責 transport/BGP intent；federation event 是 observed fact，
+CloudEdge Mobility 保持宣告式的 operator-authored surface：`MobilityPool` 是高層
+address/capture intent，`SAMNodeSet` 是 write-once node identity registry 和產生 peer 的
+共享 membership source。`SAMEnrollmentPolicy` 透過必要的 `rrNodeSetRef` 選擇靜態 RR
+identity/topology，並用 `rrSetRef` 命名取得的 runtime snapshot；它僅用於 hub/RR，
+而 `SAMEnrollmentClaim` 是 leaf 的遠端請求。`SAMEnrollmentClient` 是 leaf 的
+bootstrap/refresh controller，它無需本機 policy 或 NodeSet 即可取得該 snapshot。
+`SAMTransportProfile` 是高層 transport/BGP intent；federation event 是 observed fact，
 BGP best path 是 mobility ownership/delivery view。mobility planner 產生 BGP `/32`
-advertisement 與 provider trap action plan。operator 不應手寫 per-address path 或
-capture procedure。`AddressMobilityDomain` 與 `RemoteAddressClaim` 仍作為低層相容 Kind
-保留在 MobilityPool BGP path 之外。
+advertisement 與 provider trap action plan；operator 不應手寫 per-address path 或 capture
+procedure。
+`MobilityPool` 一次性規劃位址 ownership、capture 與 BGP delivery，並將型別化的本機
+dataplane intent 與 FIB verdict 儲存到 `DynamicConfigPart`。
 
-`MobilityPool.spec.deliveryPolicy.mode` 預設為 `bgp`。Provider action plan 是 review
-artifact，只有在匯入 action journal 並通過 `ProviderActionPolicy`、approval、allowlist
+每個 pool 透過 `membersFrom` 匯入同一個 `SAMNodeSet`，並且只保留本節點的
+`nodeRef`、capture、discovery、`profileRef` 與 static-owned-address overlay。
+`site`、`role`、placement、maintenance 和 capacity 只能在 `SAMNodeSet` 宣告。
+`SAMRRSet` 只是在 enrollment fetch/dynamic-state 路徑中供 transport 的 `peersFrom`
+使用的執行期 RR snapshot；它不可作為頂層 YAML resource，也絕不取代
+`MobilityPool` 從 `SAMNodeSet` 匯入的 authoring 或 membership/topology source。
+
+`MobilityPool` 一律使用 BGP delivery，不公開 delivery mode selector。Provider action
+plan 是 review artifact，只有在匯入 action journal 並通過 `ProviderActionPolicy`、approval、allowlist
 與 executor plugin gate 後才可能執行。
 
 `EgressRoutePolicy` 除 CIDR 指定外，還具有 `destinationSetRefs` 與

@@ -16,6 +16,7 @@ import (
 	mobilitycontroller "github.com/imksoo/routerd/pkg/controller/mobility"
 	provideractioncontroller "github.com/imksoo/routerd/pkg/controller/provideraction"
 	"github.com/imksoo/routerd/pkg/eventlog"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -30,7 +31,6 @@ type gracefulStopOptions struct {
 	Timeout          time.Duration
 	PollInterval     time.Duration
 	BGPPaths         mobilitycontroller.BGPPathClient
-	MemberSetSync    *mobilitycontroller.PeerGroupSyncClient
 	ProviderAction   provideractioncontroller.Controller
 	Logger           *eventlog.Logger
 	ControllerLogger *slog.Logger
@@ -48,16 +48,16 @@ func runGracefulStopHandoff(ctx context.Context, router *api.Router, store *rout
 		logGracefulStop(opts.Logger, eventlog.LevelInfo, "graceful stop found no mobility /32 paths to hand off", nil)
 		return nil
 	}
-	drained, changed := routerWithGracefulStopDrain(router)
-	if !changed {
+	if !hasGracefulStopDrainablePool(router) {
 		return nil
 	}
 	prepare := mobilitycontroller.Controller{
-		Router:                      drained,
+		Router:                      router,
 		Store:                       store,
 		BGPPaths:                    opts.BGPPaths,
-		MemberSetSync:               opts.MemberSetSync,
+		StartedAt:                   time.Unix(0, 0).UTC(),
 		SuppressProviderDeprovision: true,
+		ForceSelfDrain:              true,
 	}
 	if err := prepare.Reconcile(ctx); err != nil {
 		return fmt.Errorf("prepare graceful mobility stop: %w", err)
@@ -69,15 +69,16 @@ func runGracefulStopHandoff(ctx context.Context, router *api.Router, store *rout
 		return err
 	}
 	final := mobilitycontroller.Controller{
-		Router:        drained,
-		Store:         store,
-		BGPPaths:      opts.BGPPaths,
-		MemberSetSync: opts.MemberSetSync,
+		Router:         router,
+		Store:          store,
+		BGPPaths:       opts.BGPPaths,
+		StartedAt:      time.Unix(0, 0).UTC(),
+		ForceSelfDrain: true,
 	}
 	if err := final.Reconcile(ctx); err != nil {
 		return fmt.Errorf("finalize graceful mobility stop: %w", err)
 	}
-	opts.ProviderAction.Router = drained
+	opts.ProviderAction.Router = router
 	opts.ProviderAction.Store = store
 	opts.ProviderAction.Logger = opts.ControllerLogger
 	if err := opts.ProviderAction.Reconcile(ctx); err != nil {
@@ -104,7 +105,7 @@ func gracefulStopTargets(ctx context.Context, router *api.Router, bgp mobilityco
 		if err != nil {
 			continue
 		}
-		selfNode, err := gracefulStopSelfNode(router, spec.GroupRef)
+		selfNode, err := api.EventGroupSelfNode(router, spec.GroupRef)
 		if err != nil {
 			continue
 		}
@@ -122,42 +123,38 @@ func gracefulStopTargets(ctx context.Context, router *api.Router, bgp mobilityco
 	return targets, nil
 }
 
-func routerWithGracefulStopDrain(router *api.Router) (*api.Router, bool) {
-	cp := *router
-	cp.Spec.Resources = append([]api.Resource(nil), router.Spec.Resources...)
-	hasSelfDrain := false
-	for i := range cp.Spec.Resources {
-		res := &cp.Spec.Resources[i]
+func hasGracefulStopDrainablePool(router *api.Router) bool {
+	if router == nil {
+		return false
+	}
+	for i := range router.Spec.Resources {
+		res := &router.Spec.Resources[i]
 		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "MobilityPool" {
 			continue
 		}
-		poolHasSelfDrain := false
 		spec, err := res.MobilityPoolSpec()
 		if err != nil {
 			continue
 		}
-		selfNode, err := gracefulStopSelfNode(router, spec.GroupRef)
+		selfNode, err := api.EventGroupSelfNode(router, spec.GroupRef)
 		if err != nil {
 			continue
 		}
-		for j := range spec.Members {
-			if strings.TrimSpace(spec.Members[j].NodeRef) != strings.TrimSpace(selfNode) {
-				continue
-			}
-			if spec.Members[j].Placement.Group == "" {
-				continue
-			}
-			hasSelfDrain = true
-			poolHasSelfDrain = true
-			if !spec.Members[j].Maintenance.Drain {
-				spec.Members[j].Maintenance.Drain = true
-			}
+		resolved, err := mobilityconfig.ResolveMobilityPoolMembers(router, spec)
+		if err != nil {
+			continue
 		}
-		if poolHasSelfDrain {
-			res.Spec = spec
+		for _, member := range resolved.Members {
+			if strings.TrimSpace(member.NodeRef) != strings.TrimSpace(selfNode) {
+				continue
+			}
+			if member.Placement.Group == "" {
+				continue
+			}
+			return true
 		}
 	}
-	return &cp, hasSelfDrain
+	return false
 }
 
 func waitForGracefulStopTakeover(ctx context.Context, bgp mobilitycontroller.BGPPathClient, targets []gracefulStopTarget, poll time.Duration) error {
@@ -239,24 +236,6 @@ func gracefulStopPoolPathPrefixes(paths []bgpdaemon.AppliedPath, poolPrefix neti
 	}
 	sort.Strings(out)
 	return out
-}
-
-func gracefulStopSelfNode(router *api.Router, groupRef string) (string, error) {
-	groupRef = strings.TrimSpace(groupRef)
-	for _, res := range router.Spec.Resources {
-		if res.APIVersion != api.FederationAPIVersion || res.Kind != "EventGroup" || strings.TrimSpace(res.Metadata.Name) != groupRef {
-			continue
-		}
-		spec, err := res.EventGroupSpec()
-		if err != nil {
-			return "", err
-		}
-		if strings.TrimSpace(spec.NodeName) == "" {
-			return "", fmt.Errorf("EventGroup/%s spec.nodeName is required for graceful stop", groupRef)
-		}
-		return strings.TrimSpace(spec.NodeName), nil
-	}
-	return "", fmt.Errorf("EventGroup/%s not found for graceful stop", groupRef)
 }
 
 func gracefulStopTargetCount(targets []gracefulStopTarget) int {

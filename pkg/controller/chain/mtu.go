@@ -23,15 +23,17 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/nftstate"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 )
 
 type PathMTUController struct {
-	Router *api.Router
-	OS     platform.OS
-	Bus    interface {
+	Router              *api.Router
+	LocalCaptureIntents []dynamicconfig.LocalCaptureIntent
+	OS                  platform.OS
+	Bus                 interface {
 		Publish(context.Context, daemonapi.DaemonEvent) error
 	}
 	Store             Store
@@ -104,7 +106,7 @@ func (c PathMTUController) Reconcile(ctx context.Context) error {
 			"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
 		})
 	}
-	mssData, err := render.NftablesTCPMSSClamp(c.Router)
+	mssData, err := render.NftablesTCPMSSClampWithLocalCaptureIntents(c.Router, c.LocalCaptureIntents)
 	if err != nil {
 		return c.savePathMTUError("MSSRenderFailed", err)
 	}
@@ -112,7 +114,7 @@ func (c PathMTUController) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return c.savePathMTUError("L2MSSRenderFailed", err)
 	}
-	forceFragmentData, err := render.NftablesIPv4ForceFragment(c.Router)
+	forceFragmentData, err := render.NftablesIPv4ForceFragmentWithLocalCaptureIntents(c.Router, c.LocalCaptureIntents)
 	if err != nil {
 		return c.savePathMTUError("ForceFragmentRenderFailed", err)
 	}

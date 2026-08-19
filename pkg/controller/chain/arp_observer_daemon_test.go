@@ -4,41 +4,46 @@ package chain
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
-func TestRunnerMobilityARPObserverDaemonSpecsFromOnPremL2Sources(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"}, Metadata: api.ObjectMeta{Name: "home"}, Spec: api.EventGroupSpec{NodeName: "pve-rt08"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "svnet1"}, Spec: api.InterfaceSpec{IfName: "eth1"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"}, Metadata: api.ObjectMeta{Name: "svnet1"}, Spec: api.MobilityPoolSpec{
-			Prefix:   "192.168.123.0/24",
-			GroupRef: "home",
-			Members: []api.MobilityPoolMember{
-				{NodeRef: "pve-rt01", Site: "pve01", Role: "onprem"},
-				{
-					NodeRef: "pve-rt08",
-					Site:    "pve08",
-					Role:    "onprem",
-					Capture: api.MobilityMemberCapture{Type: "proxy-arp", Interface: "svnet1"},
-					OwnershipDiscovery: api.MobilityOwnershipDiscovery{
-						Mode: "onprem-l2",
-						Sources: []api.MobilityOwnershipDiscoverySource{
-							{Type: "arp-observer", Interface: "svnet1"},
-							{Type: "on-demand-arp", Interface: "svnet1", ProbeTimeout: "500ms", ProbeRetries: 2, ScanInterval: "1s", SourceAddressFrom: api.StatusValueSourceSpec{Resource: "DHCPv4Client/svnet1-source", Field: "currentAddress"}},
-							{Type: "pve-svnet", Interface: "svnet1", Network: "svnet1", Bridge: "vmbr123", ScanInterval: "3s"},
-						},
-					},
-				},
-			},
-		}},
-	}}}
-	store := mapStore{api.NetAPIVersion + "/DHCPv4Client/svnet1-source": {"currentAddress": "192.168.123.134/24"}}
-	runner := Runner{Router: router, Store: store}
+func arpObserverIntentRecord(t *testing.T, intents []dynamicconfig.ARPObserverIntent, expiresAt time.Time) routerstate.DynamicConfigPartRecord {
+	t.Helper()
+	raw, err := json.Marshal(intents)
+	if err != nil {
+		t.Fatalf("marshal ARP observer intents: %v", err)
+	}
+	now := time.Now().UTC()
+	if expiresAt.IsZero() || !expiresAt.After(now) || expiresAt.Sub(now) > 10*time.Minute {
+		expiresAt = now.Add(5 * time.Minute)
+	}
+	return routerstate.DynamicConfigPartRecord{
+		Source:                 "MobilityPool/svnet1/node/pve-rt08/arp-observer",
+		Generation:             1,
+		ObservedAt:             now,
+		ExpiresAt:              expiresAt,
+		Digest:                 "arp-observer-test",
+		ARPObserverIntentsJSON: string(raw),
+		Status:                 "active",
+	}
+}
+
+func TestRunnerMobilityARPObserverDaemonSpecsFromTypedIntents(t *testing.T) {
+	intents := []dynamicconfig.ARPObserverIntent{
+		{ResourceName: "mobility-arp-svnet1-observer-0", PoolRef: "svnet1", Prefix: "192.168.123.0/24", SourceType: "arp-observer", IfName: "eth1", EventInterface: "svnet1", Observe: true},
+		{ResourceName: "mobility-arp-svnet1-demand-1", PoolRef: "svnet1", Prefix: "192.168.123.0/24", SourceType: "on-demand-arp", IfName: "eth1", EventInterface: "svnet1", SourceAddress: "192.168.123.134", OnDemand: true, ProbeTimeout: "500ms", ProbeRetries: 2, ScanInterval: "1s"},
+		{ResourceName: "mobility-arp-svnet1-pve-2", PoolRef: "svnet1", Prefix: "192.168.123.0/24", SourceType: "pve-svnet", IfName: "eth1", EventInterface: "svnet1", Network: "svnet1", Bridge: "vmbr123", Observe: true, ScanInterval: "3s"},
+	}
+	store := &dynamicRouteSAMStore{records: []routerstate.DynamicConfigPartRecord{arpObserverIntentRecord(t, intents, time.Now().Add(time.Hour))}}
+	runner := Runner{Store: store}
 	specs := runner.mobilityARPObserverDaemonSpecs()
 	if len(specs) != 3 {
 		t.Fatalf("daemon specs = %d, want 3: %#v", len(specs), specs)
@@ -70,32 +75,22 @@ func TestRunnerMobilityARPObserverDaemonSpecsFromOnPremL2Sources(t *testing.T) {
 	}
 }
 
-func TestRunnerMobilityARPObserverDaemonSpecsIncludeSAMNodeSetMemberMACs(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"}, Metadata: api.ObjectMeta{Name: "home"}, Spec: api.EventGroupSpec{NodeName: "pve-leaf-a"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "svnet1"}, Spec: api.InterfaceSpec{IfName: "eth1"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMNodeSet"}, Metadata: api.ObjectMeta{Name: "fabric"}, Spec: api.SAMNodeSetSpec{Nodes: []api.SAMNodeSpec{
-			{NodeRef: "pve-leaf-a", Site: "pve", Role: "onprem", MACAddresses: []string{"02:00:00:00:00:aa"}},
-			{NodeRef: "aws-leaf-a", Site: "aws", Role: "cloud", MACAddresses: []string{"02:00:00:00:00:BB", "02:00:00:00:00:cc"}},
-		}}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"}, Metadata: api.ObjectMeta{Name: "svnet1"}, Spec: api.MobilityPoolSpec{
-			Prefix:   "192.168.123.0/24",
-			GroupRef: "home",
-			Members: []api.MobilityPoolMember{
-				{
-					NodeRef: "pve-leaf-a",
-					Site:    "pve",
-					Role:    "onprem",
-					Capture: api.MobilityMemberCapture{Type: "proxy-arp", Interface: "svnet1"},
-					OwnershipDiscovery: api.MobilityOwnershipDiscovery{
-						Mode:    "onprem-l2",
-						Sources: []api.MobilityOwnershipDiscoverySource{{Type: "arp-observer", Interface: "svnet1"}},
-					},
-				},
-			},
-		}},
-	}}}
-	runner := Runner{Router: router}
+func TestRunnerMobilityARPObserverDaemonSpecsPreserveTypedIgnoredSenderMACs(t *testing.T) {
+	store := &dynamicRouteSAMStore{records: []routerstate.DynamicConfigPartRecord{arpObserverIntentRecord(t, []dynamicconfig.ARPObserverIntent{{
+		ResourceName:   "mobility-arp-svnet1-observer-0",
+		PoolRef:        "svnet1",
+		Prefix:         "192.168.123.0/24",
+		SourceType:     "arp-observer",
+		IfName:         "eth1",
+		EventInterface: "svnet1",
+		Observe:        true,
+		IgnoredSenderMACs: []string{
+			"02:00:00:00:00:aa",
+			"02:00:00:00:00:bb",
+			"02:00:00:00:00:cc",
+		},
+	}}, time.Now().Add(time.Hour))}}
+	runner := Runner{Store: store}
 	specs := runner.mobilityARPObserverDaemonSpecs()
 	if len(specs) != 1 {
 		t.Fatalf("daemon specs = %#v, want one arp-observer spec", specs)
@@ -106,16 +101,32 @@ func TestRunnerMobilityARPObserverDaemonSpecsIncludeSAMNodeSetMemberMACs(t *test
 	}
 }
 
+func TestRunnerMobilityARPObserverDaemonSpecsRejectsWrongSourceOrPool(t *testing.T) {
+	now := time.Now().UTC()
+	intent := dynamicconfig.ARPObserverIntent{
+		ResourceName: "mobility-arp-svnet1-observer-0", PoolRef: "svnet1", Prefix: "192.168.123.0/24",
+		SourceType: "arp-observer", IfName: "eth1", EventInterface: "svnet1", Observe: true,
+	}
+	mainSource := arpObserverIntentRecord(t, []dynamicconfig.ARPObserverIntent{intent}, now.Add(time.Hour))
+	mainSource.Source = "MobilityPool/svnet1/node/pve-rt08"
+	wrongPool := arpObserverIntentRecord(t, []dynamicconfig.ARPObserverIntent{intent}, now.Add(time.Hour))
+	wrongPool.Source = "MobilityPool/other/node/pve-rt08/arp-observer"
+	runner := Runner{Store: &dynamicRouteSAMStore{records: []routerstate.DynamicConfigPartRecord{mainSource, wrongPool}}}
+	if specs := runner.mobilityARPObserverDaemonSpecs(); len(specs) != 0 {
+		t.Fatalf("untrusted ARP observer records produced daemon specs: %#v", specs)
+	}
+}
+
 func TestARPObserverDaemonArgsDoNotExposeIgnoredSenderMACFlag(t *testing.T) {
 	spec := mobilityARPObserverDaemonSpec{
-		ResourceName:      "mobility-svnet1-pve-arp-observer-eth1",
+		ResourceName:      "mobility-arp-svnet1-observer-0",
 		PoolName:          "svnet1",
 		Prefix:            "192.168.123.0/24",
 		SourceType:        "arp-observer",
 		IfName:            "eth1",
 		EventInterface:    "eth1",
-		Socket:            "/run/routerd/arp-observer/mobility-svnet1-pve-arp-observer-eth1.sock",
-		EventFile:         "/var/lib/routerd/arp-observer/mobility-svnet1-pve-arp-observer-eth1/events.jsonl",
+		Socket:            "/run/routerd/arp-observer/mobility-arp-svnet1-observer-0.sock",
+		EventFile:         "/var/lib/routerd/arp-observer/mobility-arp-svnet1-observer-0/events.jsonl",
 		Observe:           true,
 		IgnoredSenderMACs: []string{"02:00:00:00:00:aa"},
 	}
@@ -136,28 +147,12 @@ func TestARPObserverDaemonsUseSupervisedOwnerTokenLifecycle(t *testing.T) {
 	supervisedDaemonProcesses = func() []supervisedDaemonProcess { return nil }
 	supervisedDaemonSocketReady = func(string) bool { return false }
 
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"}, Metadata: api.ObjectMeta{Name: "home"}, Spec: api.EventGroupSpec{NodeName: "pve-leaf-a"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "capture"}, Spec: api.InterfaceSpec{IfName: "eth1"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"}, Metadata: api.ObjectMeta{Name: "cloudedge"}, Spec: api.MobilityPoolSpec{
-			Prefix:   "10.77.60.0/24",
-			GroupRef: "home",
-			Members: []api.MobilityPoolMember{{
-				NodeRef: "pve-leaf-a",
-				Site:    "pve",
-				Role:    "onprem",
-				Capture: api.MobilityMemberCapture{Type: "proxy-arp", Interface: "capture"},
-				OwnershipDiscovery: api.MobilityOwnershipDiscovery{
-					Mode: "onprem-l2",
-					Sources: []api.MobilityOwnershipDiscoverySource{
-						{Type: "arp-observer", Interface: "capture"},
-						{Type: "on-demand-arp", Interface: "capture", ScanInterval: "1s"},
-					},
-				},
-			}},
-		}},
-	}}}
-	runner := &Runner{Router: router}
+	router := &api.Router{}
+	store := &dynamicRouteSAMStore{records: []routerstate.DynamicConfigPartRecord{arpObserverIntentRecord(t, []dynamicconfig.ARPObserverIntent{
+		{ResourceName: "mobility-arp-cloudedge-observer-0", PoolRef: "svnet1", Prefix: "10.77.60.0/24", SourceType: "arp-observer", IfName: "eth1", EventInterface: "capture", Observe: true},
+		{ResourceName: "mobility-arp-cloudedge-demand-1", PoolRef: "svnet1", Prefix: "10.77.60.0/24", SourceType: "on-demand-arp", IfName: "eth1", EventInterface: "capture", SourceAddress: "10.77.60.1", OnDemand: true, ScanInterval: "1s"},
+	}, time.Now().Add(time.Hour))}}
+	runner := &Runner{Router: router, Store: store}
 	specs := runner.clientDaemonSpecs(router)
 	if len(specs) != 2 {
 		t.Fatalf("client daemon specs = %#v, want two ARP observers", specs)
@@ -183,8 +178,8 @@ func TestARPObserverDaemonsUseSupervisedOwnerTokenLifecycle(t *testing.T) {
 		}
 	}
 
-	runner.Router = &api.Router{}
-	runner.reconcileSupervisedDaemonSpecs(ctx, nil, runner.clientDaemonSpecs(runner.Router))
+	store.records = []routerstate.DynamicConfigPartRecord{arpObserverIntentRecord(t, nil, time.Now().Add(time.Hour))}
+	runner.reconcileSupervisedDaemonSpecs(ctx, nil, runner.clientDaemonSpecs(router))
 	markers, err = readSupervisedDaemonMarkers()
 	if err != nil {
 		t.Fatal(err)
@@ -196,8 +191,8 @@ func TestARPObserverDaemonsUseSupervisedOwnerTokenLifecycle(t *testing.T) {
 
 func TestRunnerSyncsARPObserverIgnoredSenderMACsOnDriftOnly(t *testing.T) {
 	spec := mobilityARPObserverDaemonSpec{
-		ResourceName:      "mobility-svnet1-pve-arp-observer-eth1",
-		Socket:            "/run/routerd/arp-observer/mobility-svnet1-pve-arp-observer-eth1.sock",
+		ResourceName:      "mobility-arp-svnet1-observer-0",
+		Socket:            "/run/routerd/arp-observer/mobility-arp-svnet1-observer-0.sock",
 		IgnoredSenderMACs: []string{"02:00:00:00:00:aa", "02:00:00:00:00:bb"},
 	}
 	pusher := &fakeARPObserverCommandPusher{
@@ -225,8 +220,8 @@ func TestRunnerSyncsARPObserverIgnoredSenderMACsOnDriftOnly(t *testing.T) {
 
 func TestRunnerSyncsARPObserverIgnoredSenderMACsPushesEmptySetBeforeReady(t *testing.T) {
 	spec := mobilityARPObserverDaemonSpec{
-		ResourceName: "mobility-svnet1-pve-arp-observer-eth1",
-		Socket:       "/run/routerd/arp-observer/mobility-svnet1-pve-arp-observer-eth1.sock",
+		ResourceName: "mobility-arp-svnet1-observer-0",
+		Socket:       "/run/routerd/arp-observer/mobility-arp-svnet1-observer-0.sock",
 	}
 	pusher := &fakeARPObserverCommandPusher{
 		statuses: []daemonapi.DaemonStatus{{
@@ -253,8 +248,8 @@ func TestRunnerSyncsARPObserverIgnoredSenderMACsPushesEmptySetBeforeReady(t *tes
 
 func TestRunnerSyncsARPObserverIgnoredSenderMACsRepushesAfterObserverReset(t *testing.T) {
 	spec := mobilityARPObserverDaemonSpec{
-		ResourceName: "mobility-svnet1-pve-arp-observer-eth1",
-		Socket:       "/run/routerd/arp-observer/mobility-svnet1-pve-arp-observer-eth1.sock",
+		ResourceName: "mobility-arp-svnet1-observer-0",
+		Socket:       "/run/routerd/arp-observer/mobility-arp-svnet1-observer-0.sock",
 	}
 	pusher := &fakeARPObserverCommandPusher{
 		statuses: []daemonapi.DaemonStatus{{
@@ -281,8 +276,8 @@ func TestRunnerSyncsARPObserverIgnoredSenderMACsRepushesAfterObserverReset(t *te
 
 func TestRunnerDoesNotMarkARPObserverReadyBeforeInitialIgnoredSenderMACPush(t *testing.T) {
 	spec := mobilityARPObserverDaemonSpec{
-		ResourceName:      "mobility-svnet1-pve-arp-observer-eth1",
-		Socket:            "/run/routerd/arp-observer/mobility-svnet1-pve-arp-observer-eth1.sock",
+		ResourceName:      "mobility-arp-svnet1-observer-0",
+		Socket:            "/run/routerd/arp-observer/mobility-arp-svnet1-observer-0.sock",
 		IgnoredSenderMACs: []string{"02:00:00:00:00:aa"},
 	}
 	pusher := &fakeARPObserverCommandPusher{setErr: context.DeadlineExceeded}

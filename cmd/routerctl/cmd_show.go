@@ -15,6 +15,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/imksoo/routerd/internal/statusvalue"
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/config"
@@ -315,13 +317,13 @@ func buildDerivedShowResources(router *api.Router, store routerstate.Store, incl
 		if !planned && !includeStale {
 			continue
 		}
-		source := firstNonEmpty(statusString(status.Status["source"]), status.Owner)
+		source := stringutil.FirstNonEmpty(statusvalue.Text(status.Status["source"]), status.Owner)
 		observed := status.Status
 		stale := false
 		if !planned {
 			stale = true
 			observed = staleObjectStatus(status)
-			source = firstNonEmpty(source, "stale-state")
+			source = stringutil.FirstNonEmpty(source, "stale-state")
 		}
 		add(showResource{
 			APIVersion: status.APIVersion,
@@ -379,7 +381,7 @@ func plannedEffectiveDerivedResources(startup, current *api.Router) []showResour
 		if res.APIVersion == "" || res.Kind == "" || res.Metadata.Name == "" || explicit[res.ID()] {
 			continue
 		}
-		source := derivedResourceSource(res)
+		const source = "dynamic-effective"
 		rows = append(rows, showResource{
 			APIVersion: res.APIVersion,
 			Kind:       res.Kind,
@@ -391,16 +393,6 @@ func plannedEffectiveDerivedResources(startup, current *api.Router) []showResour
 	return rows
 }
 
-func derivedResourceSource(res api.Resource) string {
-	if source := strings.TrimSpace(res.Metadata.Annotations["mobility.routerd.net/source"]); source != "" {
-		if pool := strings.TrimSpace(res.Metadata.Annotations["mobility.routerd.net/pool"]); pool != "" {
-			return "MobilityPool/" + pool + "/" + source
-		}
-		return source
-	}
-	return "dynamic-effective"
-}
-
 func staleObjectStatus(status routerstate.ObjectStatus) map[string]any {
 	out := map[string]any{}
 	for key, value := range status.Status {
@@ -410,7 +402,7 @@ func staleObjectStatus(status routerstate.ObjectStatus) map[string]any {
 	if showAPIVersionForKnownKind(canonicalShowKind(status.Kind)) == "" {
 		reason = "UnsupportedResourceKind"
 	}
-	if phase := statusString(out["phase"]); phase != "" {
+	if phase := statusvalue.Text(out["phase"]); phase != "" {
 		out["previousPhase"] = phase
 	}
 	out["phase"] = "Stale"
@@ -449,7 +441,7 @@ func plannedDerivedShowResources(router *api.Router) []showResource {
 				continue
 			}
 			unit := render.TailscaleSystemdSpec(res.Metadata.Name, spec)
-			addServiceUnit(firstNonEmpty(unit.UnitName, render.TailscaleUnitName(res.Metadata.Name)), "TailscaleNode/"+res.Metadata.Name)
+			addServiceUnit(stringutil.FirstNonEmpty(unit.UnitName, render.TailscaleUnitName(res.Metadata.Name)), "TailscaleNode/"+res.Metadata.Name)
 		case "HealthCheck":
 			addServiceUnit("routerd-healthcheck@"+res.Metadata.Name+".service", "HealthCheck/"+res.Metadata.Name)
 		case "FirewallEventLog":
@@ -470,12 +462,12 @@ func writeDerivedResourcesTable(stdout io.Writer, rows []showResource) error {
 		if len(status) == 0 {
 			status = row.State
 		}
-		detail := firstNonEmpty(statusString(status["path"]), statusString(status["unitName"]), statusString(status["reason"]), "-")
+		detail := stringutil.FirstNonEmpty(statusvalue.Text(status["path"]), statusvalue.Text(status["unitName"]), statusvalue.Text(status["reason"]), "-")
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			row.Kind,
 			row.Name,
 			defaultShowString(row.Source, "-"),
-			defaultShowString(statusString(status["phase"]), "Planned"),
+			defaultShowString(statusvalue.Text(status["phase"]), "Planned"),
 			detail,
 		)
 	}
@@ -710,10 +702,10 @@ func observeResource(res api.Resource, aliases map[string]string, opts showOptio
 		return map[string]any{"interface": aliases[spec.Interface]}
 	case "DSLiteTunnel":
 		spec, _ := res.DSLiteTunnelSpec()
-		return observeInterface(firstNonEmpty(spec.TunnelName, res.Metadata.Name))
+		return observeInterface(stringutil.FirstNonEmpty(spec.TunnelName, res.Metadata.Name))
 	case "PPPoESession":
 		spec, _ := res.PPPoESessionSpec()
-		return observeInterface(firstNonEmpty(spec.IfName, "ppp-"+res.Metadata.Name))
+		return observeInterface(stringutil.FirstNonEmpty(spec.IfName, "ppp-"+res.Metadata.Name))
 	case "Hostname":
 		hostname, err := os.Hostname()
 		if err != nil {

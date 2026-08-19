@@ -22,7 +22,7 @@ Result: PASS (クリーン -- 手動回避策なし; Azure 同等性)
 - ENI: プライマリ `10.88.60.4`、セカンダリプライベート IPv4 `10.88.60.9`。
 - EC2 source/destination check: DISABLED (Azure NIC IP フォワーディングの AWS 相当)。
 - routerd-cloud ゲスト OS: routerd により `10.88.60.9` がローカルアドレスから削除
-  (`provider-secondary-ip` + `configureOSAddress=false` de-assign 強制)。
+  (BGP `provider-secondary-ip` の no-local-address 強制)。
 
 ## アサーション (すべて PASS)
 

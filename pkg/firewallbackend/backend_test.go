@@ -144,14 +144,14 @@ func TestForPlatformSelectsNativeBackend(t *testing.T) {
 
 func TestFirewallBackendRenderMetadata(t *testing.T) {
 	router := nftBespokeRouter()
-	nftRuleset, err := Nftables{}.Render(router, "/tmp/routerd/custom.nft")
+	nftRuleset, err := Nftables{}.Render(router, "/tmp/routerd/custom.nft", nil)
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
 	if nftRuleset.Backend != "nftables" || nftRuleset.Path != "/tmp/routerd/custom.nft" || nftRuleset.InternalHoles == 0 {
 		t.Fatalf("nft ruleset metadata = %#v", nftRuleset)
 	}
-	pfRuleset, err := PF{}.Render(pfBespokeRouter(), "/tmp/routerd/custom.nft")
+	pfRuleset, err := PF{}.Render(pfBespokeRouter(), "/tmp/routerd/custom.nft", nil)
 	if err != nil {
 		t.Fatalf("render pf: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestFirewallBackendRendersEdgeCaseResourceNames(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan-zone"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan.edge"}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"}, Metadata: api.ObjectMeta{Name: "allow-dash.dot"}, Spec: api.FirewallRuleSpec{FromZone: "lan-zone", ToZone: "self", Protocol: "tcp", Port: 443, Action: "accept"}},
 	}}}
-	ruleset, err := Nftables{}.Render(router, "")
+	ruleset, err := Nftables{}.Render(router, "", nil)
 	if err != nil {
 		t.Fatalf("render edge ruleset: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestFirewallBackendRendersEdgeCaseResourceNames(t *testing.T) {
 }
 
 func TestNftablesBespokeExpressionsSurviveBackendRefactor(t *testing.T) {
-	filter, err := Nftables{}.Render(nftBespokeRouter(), "")
+	filter, err := Nftables{}.Render(nftBespokeRouter(), "", nil)
 	if err != nil {
 		t.Fatalf("render nftables firewall: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestNftablesBespokeExpressionsSurviveBackendRefactor(t *testing.T) {
 }
 
 func TestPFBespokeSyntaxSurvivesBackendRefactor(t *testing.T) {
-	ruleset, err := PF{}.Render(pfBespokeRouter(), "")
+	ruleset, err := PF{}.Render(pfBespokeRouter(), "", nil)
 	if err != nil {
 		t.Fatalf("render pf firewall: %v", err)
 	}

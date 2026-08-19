@@ -3,11 +3,74 @@
 package samenrollment
 
 import (
+	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 )
+
+func TestClaimHelpersUseCanonicalEnrollmentSemantics(t *testing.T) {
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	policy := api.SAMEnrollmentPolicySpec{TTL: "10m", TunnelAddressPrefixes: []string{"10.255.0.0/24"}}
+	claim := api.SAMEnrollmentClaimSpec{JoinTimestamp: "2026-08-17T11:55:00Z", TunnelAddress: "10.255.0.31"}
+	if ClaimExpired(policy, claim, now) {
+		t.Fatal("claim inside ttl reported expired")
+	}
+	claim.JoinTimestamp = "not-a-time"
+	if !ClaimExpired(policy, claim, now) {
+		t.Fatal("invalid lifetime timestamp must fail closed")
+	}
+
+	prefix, err := ParsePrefixOrAddress("10.255.0.31")
+	if err != nil || prefix.String() != "10.255.0.31/32" {
+		t.Fatalf("IPv4 host prefix = %v, %v", prefix, err)
+	}
+	prefix, err = ParsePrefixOrAddress("2001:db8::31")
+	if err != nil || prefix.String() != "2001:db8::31/128" {
+		t.Fatalf("IPv6 host prefix = %v, %v", prefix, err)
+	}
+	if !PrefixContains(policy.TunnelAddressPrefixes, netip.MustParseAddr("10.255.0.31")) {
+		t.Fatal("configured prefix did not authorize address")
+	}
+	if PrefixContains([]string{"invalid"}, netip.MustParseAddr("10.255.0.31")) {
+		t.Fatal("invalid configured prefix authorized address")
+	}
+}
+
+func TestActiveClaimsSharesExpiryAndAuthorizationFiltering(t *testing.T) {
+	resource := func(name string, claim api.SAMEnrollmentClaimSpec) api.Resource {
+		return api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentClaim"},
+			Metadata: api.ObjectMeta{Name: name},
+			Spec:     claim,
+		}
+	}
+	policy := api.SAMEnrollmentPolicySpec{TTL: "10m", TunnelAddressPrefixes: []string{"10.255.0.0/24"}}
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	resources := []api.Resource{
+		resource("valid", api.SAMEnrollmentClaimSpec{PolicyRef: "SAMEnrollmentPolicy/leaves", JoinTimestamp: "2026-08-17T11:55:00Z", TunnelAddress: "10.255.0.31"}),
+		resource("revoked", api.SAMEnrollmentClaimSpec{PolicyRef: "SAMEnrollmentPolicy/leaves", Revoked: true}),
+		resource("expired", api.SAMEnrollmentClaimSpec{PolicyRef: "SAMEnrollmentPolicy/leaves", JoinTimestamp: "2026-08-17T11:00:00Z", TunnelAddress: "10.255.0.32"}),
+		resource("outside", api.SAMEnrollmentClaimSpec{PolicyRef: "SAMEnrollmentPolicy/leaves", JoinTimestamp: "2026-08-17T11:55:00Z", TunnelAddress: "10.254.0.33"}),
+		resource("other-policy", api.SAMEnrollmentClaimSpec{PolicyRef: "SAMEnrollmentPolicy/other", JoinTimestamp: "2026-08-17T11:55:00Z", TunnelAddress: "10.255.0.34"}),
+	}
+	got, err := ActiveClaims(resources, "SAMEnrollmentPolicy/leaves", policy, now)
+	if err != nil {
+		t.Fatalf("ActiveClaims: %v", err)
+	}
+	if len(got.Claims) != 1 || got.Claims[0].ResourceName != "valid" || got.Claims[0].Tunnel.String() != "10.255.0.31/32" {
+		t.Fatalf("accepted claims = %#v", got.Claims)
+	}
+	if got.Skipped != 3 {
+		t.Fatalf("skipped = %d, want 3", got.Skipped)
+	}
+	want := []string{"expired: expired", "outside: unauthorized tunnel address", "revoked: revoked"}
+	if strings.Join(got.SkippedReasons, "|") != strings.Join(want, "|") {
+		t.Fatalf("skip reasons = %#v, want %#v", got.SkippedReasons, want)
+	}
+}
 
 func TestJoinCanonicalPayloadSortsClaimsAndKeepsWireGuardOptional(t *testing.T) {
 	claim := api.SAMEnrollmentClaimSpec{

@@ -106,11 +106,9 @@ CloudEdge の基盤には現在、次が含まれます。
 - `CloudProviderProfile` は、プロバイダーの能力と外部認証の形を記述します。
 - `ProviderActionPolicy` は、インポートされたプロバイダーアクションプランをエグゼキュータープラグインに渡せるかどうかを制御します。
 
-低レベルの `AddressMobilityDomain` と `RemoteAddressClaim` リソースは互換性と実験のために残っていますが、CloudEdge SAM の主な記述面ではなくなりました。
-
 選択的アドレス移動性は通常のスイッチング/フォワーディングプレーンに存在し、ファイアウォールや NAT の概念を含みません。送信元と宛先の透過性は固有であり、設定可能なフィールドではありません。運用者はファイアウォールと NAT ポリシーを、既存の `FirewallZone`、`FirewallRule`、`NAT44Rule` リソースでリテラルアドレスを参照して別途構成します。
 
-詳細は [選択的アドレス移動性](./reference/selective-address-mobility) を参照してください。
+詳細は [CloudEdge SAM 内部実装](./reference/cloudedge-sam-internals) を参照してください。
 
 ## クラウドインベントリとプロバイダーアクション
 

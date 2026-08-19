@@ -3615,24 +3615,6 @@
                         },
                         "type": "array"
                       },
-                      "peersFrom": {
-                        "items": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "optional": {
-                              "type": "boolean"
-                            },
-                            "resource": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "resource"
-                          ],
-                          "type": "object"
-                        },
-                        "type": "array"
-                      },
                       "routeReflectorClient": {
                         "type": "boolean"
                       },
@@ -7811,65 +7793,6 @@
                     "type": "string"
                   },
                   "kind": {
-                    "const": "AddressMobilityDomain",
-                    "type": "string"
-                  },
-                  "metadata": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "name": {
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "name"
-                    ],
-                    "type": "object"
-                  },
-                  "spec": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "mode": {
-                        "enum": [
-                          "selective-address"
-                        ],
-                        "type": "string"
-                      },
-                      "peerRef": {
-                        "type": "string"
-                      },
-                      "prefix": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "prefix",
-                      "mode"
-                    ],
-                    "type": "object"
-                  },
-                  "status": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "apiVersion",
-                  "kind",
-                  "metadata",
-                  "spec"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "apiVersion": {
-                    "const": "hybrid.routerd.net/v1alpha1",
-                    "type": "string"
-                  },
-                  "kind": {
                     "const": "CloudProviderProfile",
                     "type": "string"
                   },
@@ -7933,169 +7856,6 @@
                       "provider",
                       "capabilities",
                       "auth"
-                    ],
-                    "type": "object"
-                  },
-                  "status": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "apiVersion",
-                  "kind",
-                  "metadata",
-                  "spec"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "apiVersion": {
-                    "const": "hybrid.routerd.net/v1alpha1",
-                    "type": "string"
-                  },
-                  "kind": {
-                    "const": "RemoteAddressClaim",
-                    "type": "string"
-                  },
-                  "metadata": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "name": {
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "name"
-                    ],
-                    "type": "object"
-                  },
-                  "spec": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "address": {
-                        "type": "string"
-                      },
-                      "capture": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "activeWhen": {
-                            "additionalProperties": false,
-                            "properties": {
-                              "type": {
-                                "enum": [
-                                  "",
-                                  "single-router",
-                                  "vrrp-master"
-                                ],
-                                "type": "string"
-                              },
-                              "virtualAddressRef": {
-                                "type": "string"
-                              }
-                            },
-                            "type": "object"
-                          },
-                          "captureStrategy": {
-                            "description": "CaptureStrategy selects the provider/on-link capture mechanism. The\nlegacy strategy field remains accepted as an alias.",
-                            "enum": [
-                              "",
-                              "proxy-arp",
-                              "secondary-ip",
-                              "route-table",
-                              "addr-add"
-                            ],
-                            "type": "string"
-                          },
-                          "configureOSAddress": {
-                            "type": "boolean"
-                          },
-                          "excludeAddresses": {
-                            "description": "ExcludeAddresses prevents proxy-ARP capture for selected IPv4 addresses\nor CIDRs inside the mobility prefix.",
-                            "items": {
-                              "type": "string"
-                            },
-                            "type": "array"
-                          },
-                          "gratuitousARP": {
-                            "type": "boolean"
-                          },
-                          "interface": {
-                            "type": "string"
-                          },
-                          "nicRef": {
-                            "type": "string"
-                          },
-                          "providerMode": {
-                            "type": "string"
-                          },
-                          "providerRef": {
-                            "type": "string"
-                          },
-                          "strategy": {
-                            "enum": [
-                              "",
-                              "secondary-ip",
-                              "route-table"
-                            ],
-                            "type": "string"
-                          },
-                          "type": {
-                            "enum": [
-                              "provider-secondary-ip",
-                              "proxy-arp"
-                            ],
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "type"
-                        ],
-                        "type": "object"
-                      },
-                      "delivery": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "mode": {
-                            "enum": [
-                              "route",
-                              "bgp"
-                            ],
-                            "type": "string"
-                          },
-                          "peerRef": {
-                            "type": "string"
-                          },
-                          "tunnelInterface": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "peerRef",
-                          "mode"
-                        ],
-                        "type": "object"
-                      },
-                      "domainRef": {
-                        "type": "string"
-                      },
-                      "ownerSide": {
-                        "enum": [
-                          "cloud",
-                          "onprem"
-                        ],
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "domainRef",
-                      "address",
-                      "ownerSide",
-                      "capture",
-                      "delivery"
                     ],
                     "type": "object"
                   },
@@ -8691,104 +8451,25 @@
                   },
                   "spec": {
                     "additionalProperties": false,
-                    "description": "MobilityPoolSpec declares a selective-address mobility pool for the CloudEdge Mobility Control Plane.",
+                    "description": "MobilityPoolSpec declares the per-node capture and ownership overlay for a selective-address mobility pool.",
                     "properties": {
-                      "authority": {
-                        "additionalProperties": false,
-                        "description": "Authority declares who arbitrates ownership. The MVP supports static\narbitration only. Empty means every node deterministically projects the\nshared event stream locally.",
-                        "properties": {
-                          "mode": {
-                            "description": "Mode selects the arbitration scheme. Only \"static\" is supported in the\nMVP; empty defaults to it.",
-                            "enum": [
-                              "",
-                              "static"
-                            ],
-                            "type": "string"
-                          },
-                          "nodeRef": {
-                            "description": "NodeRef optionally names the arbitrating node. When set, it must be one of\nthe member NodeRefs.",
-                            "type": "string"
-                          }
-                        },
-                        "type": "object"
-                      },
-                      "capturePolicy": {
-                        "additionalProperties": false,
-                        "description": "CapturePolicy declares how non-owner sites capture an address that has\nmoved.",
-                        "properties": {
-                          "mode": {
-                            "description": "Mode selects the capture behavior. Only \"all-non-owner-sites\" is supported\nin the MVP; empty defaults to it.",
-                            "enum": [
-                              "",
-                              "all-non-owner-sites"
-                            ],
-                            "type": "string"
-                          }
-                        },
-                        "type": "object"
-                      },
-                      "deliveryPolicy": {
-                        "additionalProperties": false,
-                        "description": "DeliveryPolicy selects the pool-level delivery control plane. Empty means\nbgp; owned /32s are advertised and remote /32s are learned through BGP.",
-                        "properties": {
-                          "mode": {
-                            "description": "Mode selects delivery. Empty means bgp delivery.",
-                            "enum": [
-                              "",
-                              "bgp"
-                            ],
-                            "type": "string"
-                          }
-                        },
-                        "type": "object"
-                      },
                       "groupRef": {
                         "description": "GroupRef is the EventGroup whose observed/expired events can feed BGP\nmobility ownership for this pool (required).",
                         "type": "string"
                       },
-                      "ipOwnershipPolicy": {
-                        "additionalProperties": false,
-                        "description": "IPOwnershipPolicy retains high-level failover intent for BGP-mode\nmobility. Ownership itself is represented by BGP best-path.",
-                        "properties": {
-                          "autoFailover": {
-                            "type": "boolean"
-                          },
-                          "preferNodes": {
-                            "items": {
-                              "type": "string"
-                            },
-                            "type": "array"
-                          },
-                          "stoppedInstancePolicy": {
-                            "enum": [
-                              "",
-                              "hold",
-                              "release"
-                            ],
-                            "type": "string"
-                          },
-                          "type": {
-                            "enum": [
-                              "",
-                              "centralized"
-                            ],
-                            "type": "string"
-                          }
-                        },
-                        "type": "object"
-                      },
                       "members": {
-                        "description": "Members maps routerd nodes to the site they serve within the pool\n(required unless membersFrom is set, at least one after resolution).",
+                        "description": "Members carries local capture/ownership overlays keyed by a nodeRef from\nMembersFrom. It cannot set site, role, placement, maintenance, or capacity.\nA router may overlay only its EventGroup local node.",
                         "items": {
                           "additionalProperties": false,
-                          "description": "MobilityPoolMember binds a routerd node to a site within a MobilityPool.",
+                          "description": "MobilityPoolMemberOverlay is the declared, local-only portion of a MobilityPool member.",
                           "properties": {
                             "capture": {
                               "additionalProperties": false,
-                              "description": "Capture declares how this member captures addresses currently owned by\nanother site.",
+                              "description": "Capture declares the local capture mechanism.",
                               "properties": {
                                 "activeWhen": {
                                   "additionalProperties": false,
+                                  "description": "ActiveWhen gates on-prem proxy-ARP capture only. Cloud\nprovider-secondary-ip capture rejects this field because a local VRRP\nrole cannot safely gate provider assignment.",
                                   "properties": {
                                     "type": {
                                       "enum": [
@@ -8805,18 +8486,12 @@
                                   "type": "object"
                                 },
                                 "captureStrategy": {
-                                  "description": "CaptureStrategy selects the provider/on-link capture mechanism. The\nlegacy strategy field remains accepted as an alias.",
+                                  "description": "CaptureStrategy opts a provider-secondary-ip capture into route-table\ndelivery. Omit it for the type-derived secondary-IP or proxy-ARP paths.",
                                   "enum": [
                                     "",
-                                    "proxy-arp",
-                                    "secondary-ip",
-                                    "route-table",
-                                    "addr-add"
+                                    "route-table"
                                   ],
                                   "type": "string"
-                                },
-                                "configureOSAddress": {
-                                  "type": "boolean"
                                 },
                                 "excludeAddresses": {
                                   "description": "ExcludeAddresses prevents proxy-ARP capture for selected IPv4 addresses or\nCIDRs inside the mobility prefix. Use this for local-only infrastructure\naddresses such as a PVE Simple SDN gateway address that must not be\nanswered across the extended segment.",
@@ -8832,9 +8507,6 @@
                                   "type": "string"
                                 },
                                 "nicRef": {
-                                  "type": "string"
-                                },
-                                "providerMode": {
                                   "type": "string"
                                 },
                                 "providerRef": {
@@ -8865,14 +8537,6 @@
                                   ],
                                   "type": "object"
                                 },
-                                "strategy": {
-                                  "enum": [
-                                    "",
-                                    "secondary-ip",
-                                    "route-table"
-                                  ],
-                                  "type": "string"
-                                },
                                 "target": {
                                   "additionalProperties": {
                                     "type": "string"
@@ -8897,88 +8561,13 @@
                               },
                               "type": "object"
                             },
-                            "delivery": {
-                              "additionalProperties": false,
-                              "description": "Delivery is retained for hand-authored SAM compatibility. BGP-mode\nMobilityPool delivery does not require per-member delivery routes.",
-                              "properties": {
-                                "mode": {
-                                  "enum": [
-                                    "",
-                                    "route"
-                                  ],
-                                  "type": "string"
-                                },
-                                "peerRef": {
-                                  "type": "string"
-                                },
-                                "tunnelInterface": {
-                                  "type": "string"
-                                }
-                              },
-                              "type": "object"
-                            },
-                            "deliveryTo": {
-                              "description": "DeliveryTo optionally selects delivery per owner identity. It is retained\nfor SAM compatibility; BGP-mode mobility does not lower per-lease routes.",
-                              "items": {
-                                "additionalProperties": false,
-                                "properties": {
-                                  "mode": {
-                                    "enum": [
-                                      "",
-                                      "route"
-                                    ],
-                                    "type": "string"
-                                  },
-                                  "nodeRef": {
-                                    "type": "string"
-                                  },
-                                  "peerRef": {
-                                    "type": "string"
-                                  },
-                                  "role": {
-                                    "enum": [
-                                      "",
-                                      "onprem",
-                                      "cloud"
-                                    ],
-                                    "type": "string"
-                                  },
-                                  "site": {
-                                    "type": "string"
-                                  },
-                                  "tunnelInterface": {
-                                    "type": "string"
-                                  }
-                                },
-                                "required": [
-                                  "peerRef"
-                                ],
-                                "type": "object"
-                              },
-                              "type": "array"
-                            },
-                            "maintenance": {
-                              "additionalProperties": false,
-                              "description": "Maintenance carries declarative operator maintenance intent for this member.\nDrained placement members are excluded from active capture selection.",
-                              "properties": {
-                                "drain": {
-                                  "type": "boolean"
-                                }
-                              },
-                              "type": "object"
-                            },
-                            "maxSecondaryIPs": {
-                              "description": "MaxSecondaryIPs limits the number of provider secondary IPs this member can\ncapture. When set on any member in a placement group, the group switches to\ndistributed capture mode: addresses are spread across all live members using\nrendezvous hashing, each member capturing only its assigned subset.\n0 (default) means no limit and single-active placement applies.",
-                              "minimum": 0,
-                              "type": "integer"
-                            },
                             "nodeRef": {
-                              "description": "NodeRef is the routerd node identity (matches federation sourceNode).",
+                              "description": "NodeRef selects the local member imported from SAMNodeSet.",
                               "type": "string"
                             },
                             "ownershipDiscovery": {
                               "additionalProperties": false,
-                              "description": "OwnershipDiscovery optionally lets a cloud member discover locally owned\nprovider private IPs and emit them as observed federation facts.",
+                              "description": "OwnershipDiscovery declares local provider or L2 observations.",
                               "properties": {
                                 "allowEmptyAfter": {
                                   "description": "AllowEmptyAfter lets passive on-prem discovery declare an empty segment\ncomplete after the sources have been armed for this duration. Empty keeps\nzero-client passive discovery pending.",
@@ -9122,6 +8711,15 @@
                                   },
                                   "type": "array"
                                 },
+                                "stoppedInstancePolicy": {
+                                  "description": "StoppedInstancePolicy controls whether a stopped provider instance remains\nan ownership fact. Empty and hold retain the fact; release expires it.",
+                                  "enum": [
+                                    "",
+                                    "hold",
+                                    "release"
+                                  ],
+                                  "type": "string"
+                                },
                                 "subnetRef": {
                                   "description": "SubnetRef optionally constrains the provider scan. Empty asks the plugin\nto infer it from the self NIC.",
                                   "type": "string"
@@ -9133,40 +8731,12 @@
                               },
                               "type": "object"
                             },
-                            "placement": {
-                              "additionalProperties": false,
-                              "description": "Placement optionally places this member in an active/standby capture group.\nWhen set, only the highest-priority non-drained member in the same group\ncaptures provider-side addresses. Provider-secondary members that share a\nsite/providerRef with an existing placement group must declare placement.",
-                              "properties": {
-                                "group": {
-                                  "type": "string"
-                                },
-                                "priority": {
-                                  "description": "Priority orders active/standby candidates. Empty/0 is auto-numbered\ndeterministically within the group as 10, 20, ... while preserving any\nexplicitly configured priorities.",
-                                  "maximum": 1000000,
-                                  "minimum": 0,
-                                  "type": "integer"
-                                }
-                              },
-                              "type": "object"
-                            },
                             "profileRef": {
-                              "description": "ProfileRef selects a profile from spec.profiles.cloudCaptures. It is a\nlocal shorthand for the node's capture/discovery details; remote members\nshould normally remain identity-only.",
-                              "type": "string"
-                            },
-                            "role": {
-                              "description": "Role selects the SAM side semantics for this node. It is separate from Site\nso sites can be named for topology while role remains provider-agnostic.",
-                              "enum": [
-                                "onprem",
-                                "cloud"
-                              ],
-                              "type": "string"
-                            },
-                            "site": {
-                              "description": "Site is the location label the node serves within the pool.",
+                              "description": "ProfileRef selects a profile from spec.profiles.cloudCaptures.",
                               "type": "string"
                             },
                             "staticOwnedAddresses": {
-                              "description": "StaticOwnedAddresses declares IPv4 /32 addresses in the pool that this\nmember owns without relying on observed-client federation events. It is\nintended for on-prem static-IP segments.",
+                              "description": "StaticOwnedAddresses declares local on-prem addresses that do not depend\non observed-client federation events.",
                               "items": {
                                 "type": "string"
                               },
@@ -9174,16 +8744,14 @@
                             }
                           },
                           "required": [
-                            "nodeRef",
-                            "site",
-                            "role"
+                            "nodeRef"
                           ],
                           "type": "object"
                         },
                         "type": "array"
                       },
                       "membersFrom": {
-                        "description": "MembersFrom imports shared node/site/role membership from MobilityMemberSet\nresources. Imported members are merged before spec.members, so a local\nmember entry can add capture/discovery details or override shared fields.",
+                        "description": "MembersFrom imports the required shared topology from SAMNodeSet resources.\nA MobilityPool never declares topology directly.",
                         "items": {
                           "additionalProperties": false,
                           "properties": {
@@ -9199,15 +8767,8 @@
                           ],
                           "type": "object"
                         },
+                        "minItems": 1,
                         "type": "array"
-                      },
-                      "mode": {
-                        "description": "Mode selects the mobility scheme. Only \"selective-address\" is supported in\nthe MVP; empty defaults to it.",
-                        "enum": [
-                          "",
-                          "selective-address"
-                        ],
-                        "type": "string"
                       },
                       "prefix": {
                         "description": "Prefix is the CIDR managed by this pool, e.g. 10.88.60.0/24 (required).",
@@ -9227,6 +8788,7 @@
                                   "properties": {
                                     "activeWhen": {
                                       "additionalProperties": false,
+                                      "description": "ActiveWhen gates on-prem proxy-ARP capture only. Cloud\nprovider-secondary-ip capture rejects this field because a local VRRP\nrole cannot safely gate provider assignment.",
                                       "properties": {
                                         "type": {
                                           "enum": [
@@ -9243,18 +8805,12 @@
                                       "type": "object"
                                     },
                                     "captureStrategy": {
-                                      "description": "CaptureStrategy selects the provider/on-link capture mechanism. The\nlegacy strategy field remains accepted as an alias.",
+                                      "description": "CaptureStrategy opts a provider-secondary-ip capture into route-table\ndelivery. Omit it for the type-derived secondary-IP or proxy-ARP paths.",
                                       "enum": [
                                         "",
-                                        "proxy-arp",
-                                        "secondary-ip",
-                                        "route-table",
-                                        "addr-add"
+                                        "route-table"
                                       ],
                                       "type": "string"
-                                    },
-                                    "configureOSAddress": {
-                                      "type": "boolean"
                                     },
                                     "excludeAddresses": {
                                       "description": "ExcludeAddresses prevents proxy-ARP capture for selected IPv4 addresses or\nCIDRs inside the mobility prefix. Use this for local-only infrastructure\naddresses such as a PVE Simple SDN gateway address that must not be\nanswered across the extended segment.",
@@ -9270,9 +8826,6 @@
                                       "type": "string"
                                     },
                                     "nicRef": {
-                                      "type": "string"
-                                    },
-                                    "providerMode": {
                                       "type": "string"
                                     },
                                     "providerRef": {
@@ -9302,14 +8855,6 @@
                                         "resource"
                                       ],
                                       "type": "object"
-                                    },
-                                    "strategy": {
-                                      "enum": [
-                                        "",
-                                        "secondary-ip",
-                                        "route-table"
-                                      ],
-                                      "type": "string"
                                     },
                                     "target": {
                                       "additionalProperties": {
@@ -9481,6 +9026,15 @@
                                       },
                                       "type": "array"
                                     },
+                                    "stoppedInstancePolicy": {
+                                      "description": "StoppedInstancePolicy controls whether a stopped provider instance remains\nan ownership fact. Empty and hold retain the fact; release expires it.",
+                                      "enum": [
+                                        "",
+                                        "hold",
+                                        "release"
+                                      ],
+                                      "type": "string"
+                                    },
                                     "subnetRef": {
                                       "description": "SubnetRef optionally constrains the provider scan. Empty asks the plugin\nto infer it from the self NIC.",
                                       "type": "string"
@@ -9500,10 +9054,6 @@
                           }
                         },
                         "type": "object"
-                      },
-                      "publishMemberSet": {
-                        "description": "PublishMemberSet emits a MobilityMemberSet DynamicConfigPart from the\npool's identity fields for distribution to leaf routers.",
-                        "type": "boolean"
                       },
                       "staticHandovers": {
                         "description": "StaticHandovers declares planned static-owned address movement from an\non-prem member to another member. The controller releases the from member\nfirst and only projects the to member after observing the release event.",
@@ -9539,440 +9089,8 @@
                     },
                     "required": [
                       "prefix",
-                      "groupRef"
-                    ],
-                    "type": "object"
-                  },
-                  "status": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "apiVersion",
-                  "kind",
-                  "metadata",
-                  "spec"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "apiVersion": {
-                    "const": "mobility.routerd.net/v1alpha1",
-                    "type": "string"
-                  },
-                  "kind": {
-                    "const": "MobilityMemberSet",
-                    "type": "string"
-                  },
-                  "metadata": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "name": {
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "name"
-                    ],
-                    "type": "object"
-                  },
-                  "spec": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "members": {
-                        "items": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "capture": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "activeWhen": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "type": {
-                                      "enum": [
-                                        "",
-                                        "single-router",
-                                        "vrrp-master"
-                                      ],
-                                      "type": "string"
-                                    },
-                                    "virtualAddressRef": {
-                                      "type": "string"
-                                    }
-                                  },
-                                  "type": "object"
-                                },
-                                "captureStrategy": {
-                                  "description": "CaptureStrategy selects the provider/on-link capture mechanism. The\nlegacy strategy field remains accepted as an alias.",
-                                  "enum": [
-                                    "",
-                                    "proxy-arp",
-                                    "secondary-ip",
-                                    "route-table",
-                                    "addr-add"
-                                  ],
-                                  "type": "string"
-                                },
-                                "configureOSAddress": {
-                                  "type": "boolean"
-                                },
-                                "excludeAddresses": {
-                                  "description": "ExcludeAddresses prevents proxy-ARP capture for selected IPv4 addresses or\nCIDRs inside the mobility prefix. Use this for local-only infrastructure\naddresses such as a PVE Simple SDN gateway address that must not be\nanswered across the extended segment.",
-                                  "items": {
-                                    "type": "string"
-                                  },
-                                  "type": "array"
-                                },
-                                "gratuitousARP": {
-                                  "type": "boolean"
-                                },
-                                "interface": {
-                                  "type": "string"
-                                },
-                                "nicRef": {
-                                  "type": "string"
-                                },
-                                "providerMode": {
-                                  "type": "string"
-                                },
-                                "providerRef": {
-                                  "type": "string"
-                                },
-                                "sourceAddress": {
-                                  "description": "SourceAddress is an optional local IPv4 address used by proxy-ARP capture\nmembers as the capture-interface sender address. In BGP delivery mode,\nrouterd lowers it to a /32 IPv4StaticAddress and uses it as the capture\nprefix route preferred source so Linux ARP for local same-subnet clients\nstays inside the mobility prefix.",
-                                  "type": "string"
-                                },
-                                "sourceAddressFrom": {
-                                  "additionalProperties": false,
-                                  "description": "SourceAddressFrom resolves the capture-interface sender address from a\nresource status field, for example DHCPv4Client/currentAddress. Unlike\nsourceAddress, routerd does not lower this to an IPv4StaticAddress because\nthe referenced resource owns the address lifecycle.",
-                                  "properties": {
-                                    "field": {
-                                      "description": "Field defaults to phase when omitted.",
-                                      "type": "string"
-                                    },
-                                    "optional": {
-                                      "type": "boolean"
-                                    },
-                                    "resource": {
-                                      "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
-                                      "type": "string"
-                                    }
-                                  },
-                                  "required": [
-                                    "resource"
-                                  ],
-                                  "type": "object"
-                                },
-                                "strategy": {
-                                  "enum": [
-                                    "",
-                                    "secondary-ip",
-                                    "route-table"
-                                  ],
-                                  "type": "string"
-                                },
-                                "target": {
-                                  "additionalProperties": {
-                                    "type": "string"
-                                  },
-                                  "description": "Target carries non-secret provider target hints such as region,\ncompartmentId, resourceGroup, nicName, or ipConfigName. It is copied to\nprovider ActionPlan.target; credentials and tokens do not belong here.",
-                                  "type": "object"
-                                },
-                                "targetFrom": {
-                                  "additionalProperties": {
-                                    "type": "string"
-                                  },
-                                  "description": "TargetFrom resolves provider target hints from spec.values. Keys are\nprovider target keys and values are spec.values keys. Explicit target\nentries take precedence over targetFrom.",
-                                  "type": "object"
-                                },
-                                "type": {
-                                  "enum": [
-                                    "provider-secondary-ip",
-                                    "proxy-arp"
-                                  ],
-                                  "type": "string"
-                                }
-                              },
-                              "type": "object"
-                            },
-                            "delivery": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "mode": {
-                                  "enum": [
-                                    "",
-                                    "route"
-                                  ],
-                                  "type": "string"
-                                },
-                                "peerRef": {
-                                  "type": "string"
-                                },
-                                "tunnelInterface": {
-                                  "type": "string"
-                                }
-                              },
-                              "type": "object"
-                            },
-                            "deliveryTo": {
-                              "items": {
-                                "additionalProperties": false,
-                                "properties": {
-                                  "mode": {
-                                    "enum": [
-                                      "",
-                                      "route"
-                                    ],
-                                    "type": "string"
-                                  },
-                                  "nodeRef": {
-                                    "type": "string"
-                                  },
-                                  "peerRef": {
-                                    "type": "string"
-                                  },
-                                  "role": {
-                                    "enum": [
-                                      "",
-                                      "onprem",
-                                      "cloud"
-                                    ],
-                                    "type": "string"
-                                  },
-                                  "site": {
-                                    "type": "string"
-                                  },
-                                  "tunnelInterface": {
-                                    "type": "string"
-                                  }
-                                },
-                                "required": [
-                                  "peerRef"
-                                ],
-                                "type": "object"
-                              },
-                              "type": "array"
-                            },
-                            "maintenance": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "drain": {
-                                  "type": "boolean"
-                                }
-                              },
-                              "type": "object"
-                            },
-                            "nodeRef": {
-                              "type": "string"
-                            },
-                            "ownershipDiscovery": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "allowEmptyAfter": {
-                                  "description": "AllowEmptyAfter lets passive on-prem discovery declare an empty segment\ncomplete after the sources have been armed for this duration. Empty keeps\nzero-client passive discovery pending.",
-                                  "type": "string"
-                                },
-                                "leaseTTL": {
-                                  "description": "LeaseTTL controls the emitted observed event expiry. Empty defaults to the\ncontroller default.",
-                                  "type": "string"
-                                },
-                                "mode": {
-                                  "description": "Mode selects the discovery backend. Empty/disabled does nothing.",
-                                  "enum": [
-                                    "",
-                                    "disabled",
-                                    "provider-private-ip",
-                                    "onprem-l2"
-                                  ],
-                                  "type": "string"
-                                },
-                                "pluginRef": {
-                                  "description": "PluginRef optionally pins the inventory plugin. Empty resolves by\nprovider name or sole observe.providerPrivateIPs plugin.",
-                                  "type": "string"
-                                },
-                                "providerRef": {
-                                  "description": "ProviderRef defaults to the member capture.providerRef.",
-                                  "type": "string"
-                                },
-                                "scanInterval": {
-                                  "description": "ScanInterval bounds provider inventory calls. Empty defaults to 60s.",
-                                  "type": "string"
-                                },
-                                "scope": {
-                                  "additionalProperties": false,
-                                  "description": "Scope narrows which provider private IPs become mobility ownership facts.\nEmpty keeps the historical broad scan behavior.",
-                                  "properties": {
-                                    "excludeAddresses": {
-                                      "description": "ExcludeAddresses optionally denylists discovered addresses by IPv4 CIDR or\nbare IPv4 address.",
-                                      "items": {
-                                        "type": "string"
-                                      },
-                                      "type": "array"
-                                    },
-                                    "includeAddresses": {
-                                      "description": "IncludeAddresses optionally allowlists discovered addresses by IPv4 CIDR or\nbare IPv4 address. Empty means all pool addresses are candidates.",
-                                      "items": {
-                                        "type": "string"
-                                      },
-                                      "type": "array"
-                                    }
-                                  },
-                                  "type": "object"
-                                },
-                                "selector": {
-                                  "additionalProperties": false,
-                                  "description": "Selector optionally filters discovered IP records by provider tags/labels.",
-                                  "properties": {
-                                    "tags": {
-                                      "additionalProperties": {
-                                        "type": "string"
-                                      },
-                                      "type": "object"
-                                    }
-                                  },
-                                  "type": "object"
-                                },
-                                "sources": {
-                                  "description": "Sources enables one or more on-prem L2 ownership signals. The controller\nnormalizes DHCP lease hooks, ARP observers, on-demand ARP probes, and\nPVE svnet observations into the same observed-client federation fact.",
-                                  "items": {
-                                    "additionalProperties": false,
-                                    "properties": {
-                                      "bridge": {
-                                        "description": "Bridge optionally carries the local bridge name for PVE/svnet observers.",
-                                        "type": "string"
-                                      },
-                                      "interface": {
-                                        "description": "Interface narrows L2 observations to one capture interface. Empty defaults\nto the member capture.interface when applicable.",
-                                        "type": "string"
-                                      },
-                                      "leaseTTL": {
-                                        "description": "LeaseTTL overrides ownership event expiry for this source.",
-                                        "type": "string"
-                                      },
-                                      "network": {
-                                        "description": "Network optionally carries the logical svnet/network name, for example svnet1.",
-                                        "type": "string"
-                                      },
-                                      "probeRetries": {
-                                        "description": "ProbeRetries controls retry count for active ARP probes.",
-                                        "maximum": 20,
-                                        "minimum": 0,
-                                        "type": "integer"
-                                      },
-                                      "probeTimeout": {
-                                        "description": "ProbeTimeout bounds one active ARP probe attempt for on-demand-arp.",
-                                        "type": "string"
-                                      },
-                                      "resource": {
-                                        "description": "Resource optionally identifies the daemon/resource that emits the signal.",
-                                        "type": "string"
-                                      },
-                                      "scanInterval": {
-                                        "description": "ScanInterval bounds polling sources. Event-driven sources may ignore it.",
-                                        "type": "string"
-                                      },
-                                      "sourceAddressFrom": {
-                                        "additionalProperties": false,
-                                        "description": "SourceAddressFrom resolves the sender address used by active probing\nsources when the capture source address is DHCP-managed.",
-                                        "properties": {
-                                          "field": {
-                                            "description": "Field defaults to phase when omitted.",
-                                            "type": "string"
-                                          },
-                                          "optional": {
-                                            "type": "boolean"
-                                          },
-                                          "resource": {
-                                            "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
-                                            "type": "string"
-                                          }
-                                        },
-                                        "required": [
-                                          "resource"
-                                        ],
-                                        "type": "object"
-                                      },
-                                      "type": {
-                                        "description": "Type selects the on-prem observation source.",
-                                        "enum": [
-                                          "dhcpv4-lease",
-                                          "arp-observer",
-                                          "on-demand-arp",
-                                          "pve-svnet"
-                                        ],
-                                        "type": "string"
-                                      }
-                                    },
-                                    "required": [
-                                      "type"
-                                    ],
-                                    "type": "object"
-                                  },
-                                  "type": "array"
-                                },
-                                "subnetRef": {
-                                  "description": "SubnetRef optionally constrains the provider scan. Empty asks the plugin\nto infer it from the self NIC.",
-                                  "type": "string"
-                                },
-                                "subnetRefFrom": {
-                                  "description": "SubnetRefFrom resolves SubnetRef from spec.values when SubnetRef is not\nset explicitly.",
-                                  "type": "string"
-                                }
-                              },
-                              "type": "object"
-                            },
-                            "placement": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "group": {
-                                  "type": "string"
-                                },
-                                "priority": {
-                                  "description": "Priority orders active/standby candidates. Empty/0 is auto-numbered\ndeterministically within the group as 10, 20, ... while preserving any\nexplicitly configured priorities.",
-                                  "maximum": 1000000,
-                                  "minimum": 0,
-                                  "type": "integer"
-                                }
-                              },
-                              "type": "object"
-                            },
-                            "profileRef": {
-                              "type": "string"
-                            },
-                            "role": {
-                              "enum": [
-                                "onprem",
-                                "cloud"
-                              ],
-                              "type": "string"
-                            },
-                            "site": {
-                              "type": "string"
-                            },
-                            "staticOwnedAddresses": {
-                              "items": {
-                                "type": "string"
-                              },
-                              "type": "array"
-                            }
-                          },
-                          "required": [
-                            "nodeRef",
-                            "site",
-                            "role"
-                          ],
-                          "type": "object"
-                        },
-                        "type": "array"
-                      }
-                    },
-                    "required": [
-                      "members"
+                      "groupRef",
+                      "membersFrom"
                     ],
                     "type": "object"
                   },
@@ -10039,6 +9157,11 @@
                                 }
                               },
                               "type": "object"
+                            },
+                            "maxSecondaryIPs": {
+                              "description": "MaxSecondaryIPs is the shared provider-capture capacity for this node.\nIt belongs with identity/topology because distributed capture must see the\nsame capacity for every member; provider-local capture details stay in a\nMobilityPool self overlay.",
+                              "minimum": 0,
+                              "type": "integer"
                             },
                             "nodeRef": {
                               "type": "string"
@@ -10114,6 +9237,10 @@
                                 },
                                 "publicKey": {
                                   "type": "string"
+                                },
+                                "transportEndpoint": {
+                                  "description": "TransportEndpoint is the inner endpoint that a WireGuard-protected SAM\ntunnel targets. It is distinct from Endpoint, which is the WireGuard UDP\nsocket, and from SAMEndpoint, which is used by unencrypted transports.",
+                                  "type": "string"
                                 }
                               },
                               "type": "object"
@@ -10129,279 +9256,6 @@
                     },
                     "required": [
                       "nodes"
-                    ],
-                    "type": "object"
-                  },
-                  "status": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "apiVersion",
-                  "kind",
-                  "metadata",
-                  "spec"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "apiVersion": {
-                    "const": "mobility.routerd.net/v1alpha1",
-                    "type": "string"
-                  },
-                  "kind": {
-                    "const": "SAMPeerGroup",
-                    "type": "string"
-                  },
-                  "metadata": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "name": {
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "name"
-                    ],
-                    "type": "object"
-                  },
-                  "spec": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "peers": {
-                        "items": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "nodeRef": {
-                              "type": "string"
-                            },
-                            "override": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "bgpPeer": {
-                                  "type": "string"
-                                },
-                                "endpointRoute": {
-                                  "type": "string"
-                                },
-                                "localInner": {
-                                  "type": "string"
-                                },
-                                "remoteInner": {
-                                  "type": "string"
-                                },
-                                "tunnelInterface": {
-                                  "type": "string"
-                                },
-                                "underlayInterface": {
-                                  "type": "string"
-                                }
-                              },
-                              "type": "object"
-                            },
-                            "remoteEndpoint": {
-                              "type": "string"
-                            },
-                            "remoteEndpointFrom": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "field": {
-                                  "description": "Field defaults to phase when omitted.",
-                                  "type": "string"
-                                },
-                                "optional": {
-                                  "type": "boolean"
-                                },
-                                "resource": {
-                                  "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
-                                  "type": "string"
-                                }
-                              },
-                              "required": [
-                                "resource"
-                              ],
-                              "type": "object"
-                            }
-                          },
-                          "required": [
-                            "nodeRef"
-                          ],
-                          "type": "object"
-                        },
-                        "type": "array"
-                      }
-                    },
-                    "required": [
-                      "peers"
-                    ],
-                    "type": "object"
-                  },
-                  "status": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "apiVersion",
-                  "kind",
-                  "metadata",
-                  "spec"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "apiVersion": {
-                    "const": "mobility.routerd.net/v1alpha1",
-                    "type": "string"
-                  },
-                  "kind": {
-                    "const": "SAMRRSet",
-                    "type": "string"
-                  },
-                  "metadata": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "name": {
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "name"
-                    ],
-                    "type": "object"
-                  },
-                  "spec": {
-                    "additionalProperties": false,
-                    "description": "SAMRRSet declares the intended hub/RR set.",
-                    "properties": {
-                      "enrollmentPolicyRef": {
-                        "type": "string"
-                      },
-                      "members": {
-                        "items": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "bgp": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "asn": {
-                                  "minimum": 1,
-                                  "type": "integer"
-                                },
-                                "routerID": {
-                                  "type": "string"
-                                }
-                              },
-                              "type": "object"
-                            },
-                            "endpoint": {
-                              "description": "Endpoint is the member's generic underlay endpoint. For\nencryption=none this is the remote endpoint used by ipip/gre. For\nencryption=wireguard, the WireGuard block carries the UDP endpoint and\nthis field remains the transport endpoint consumed by SAMTransportProfile.",
-                              "type": "string"
-                            },
-                            "nodeRef": {
-                              "type": "string"
-                            },
-                            "tunnelAddress": {
-                              "type": "string"
-                            },
-                            "wireGuard": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "allowedIPs": {
-                                  "items": {
-                                    "type": "string"
-                                  },
-                                  "type": "array"
-                                },
-                                "endpoint": {
-                                  "type": "string"
-                                },
-                                "persistentKeepalive": {
-                                  "maximum": 65535,
-                                  "minimum": 0,
-                                  "type": "integer"
-                                },
-                                "publicKey": {
-                                  "type": "string"
-                                }
-                              },
-                              "type": "object"
-                            }
-                          },
-                          "required": [
-                            "nodeRef",
-                            "endpoint",
-                            "tunnelAddress"
-                          ],
-                          "type": "object"
-                        },
-                        "type": "array"
-                      },
-                      "mobilityPoolRefs": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "mobilityPrefixes": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "routeAdmission": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "allowedPrefixLengthMax": {
-                            "maximum": 128,
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          "allowedPrefixLengthMin": {
-                            "maximum": 128,
-                            "minimum": 0,
-                            "type": "integer"
-                          },
-                          "allowedPrefixes": {
-                            "items": {
-                              "type": "string"
-                            },
-                            "type": "array"
-                          },
-                          "forbiddenCommunities": {
-                            "items": {
-                              "type": "string"
-                            },
-                            "type": "array"
-                          },
-                          "nextHopRewrite": {
-                            "enum": [
-                              "",
-                              "peer-address",
-                              "unchanged"
-                            ],
-                            "type": "string"
-                          },
-                          "requiredCommunities": {
-                            "items": {
-                              "type": "string"
-                            },
-                            "type": "array"
-                          }
-                        },
-                        "type": "object"
-                      }
-                    },
-                    "required": [
-                      "enrollmentPolicyRef",
-                      "members"
                     ],
                     "type": "object"
                   },
@@ -10492,6 +9346,10 @@
                         "type": "array"
                       },
                       "revokeAfterInactive": {
+                        "type": "string"
+                      },
+                      "rrNodeSetRef": {
+                        "description": "RRNodeSetRef is the sole static source for RR identity and topology.\nThe enrollment server selects route-reflector nodes from its local NodeSet\nand returns them as the runtime SAMRRSet named by RRSetRef. It belongs only\nto an enrollment-serving policy; a leaf sends a remote claim through\nSAMEnrollmentClient and does not author a local policy or NodeSet.",
                         "type": "string"
                       },
                       "rrSetRef": {
@@ -11031,72 +9889,17 @@
                         ],
                         "type": "string"
                       },
-                      "peers": {
-                        "items": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "nodeRef": {
-                              "type": "string"
-                            },
-                            "override": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "bgpPeer": {
-                                  "type": "string"
-                                },
-                                "endpointRoute": {
-                                  "type": "string"
-                                },
-                                "localInner": {
-                                  "type": "string"
-                                },
-                                "remoteInner": {
-                                  "type": "string"
-                                },
-                                "tunnelInterface": {
-                                  "type": "string"
-                                },
-                                "underlayInterface": {
-                                  "type": "string"
-                                }
-                              },
-                              "type": "object"
-                            },
-                            "remoteEndpoint": {
-                              "type": "string"
-                            },
-                            "remoteEndpointFrom": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "field": {
-                                  "description": "Field defaults to phase when omitted.",
-                                  "type": "string"
-                                },
-                                "optional": {
-                                  "type": "boolean"
-                                },
-                                "resource": {
-                                  "description": "Resource names the source resource as Kind/name and reads its status, or a router config field for supported resources.",
-                                  "type": "string"
-                                }
-                              },
-                              "required": [
-                                "resource"
-                              ],
-                              "type": "object"
-                            }
-                          },
-                          "required": [
-                            "nodeRef"
-                          ],
-                          "type": "object"
-                        },
-                        "type": "array"
-                      },
                       "peersFrom": {
                         "items": {
                           "additionalProperties": false,
                           "properties": {
+                            "nodeRefs": {
+                              "description": "NodeRefs narrows a static SAMNodeSet (or an RR/enrollment source) to the\ntransport adjacencies this profile should create. The source remains the\nsole owner of endpoint identity and complete topology; this is only a\nlocal adjacency overlay.",
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
                             "optional": {
                               "type": "boolean"
                             },
@@ -11116,12 +9919,6 @@
                       },
                       "selfNodeRef": {
                         "type": "string"
-                      },
-                      "topologyNodeRefs": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
                       },
                       "underlayInterface": {
                         "type": "string"

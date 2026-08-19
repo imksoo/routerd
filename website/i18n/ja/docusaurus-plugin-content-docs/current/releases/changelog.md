@@ -11,6 +11,27 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 変更
+
+- Cloud SAM は各 BGP Pool を単一の型付き
+  `PoolRuntimeSnapshot` → `PoolPlan` パイプラインで評価します。配置、所有権、
+  BGP、provider action、FIB verdict、local capture intent は同じ plan を使い、
+  dataplane の desired state を status 値から再構成しなくなりました。
+- PVE の route reflector は host-redundant な PVE pair になりました。cloud の
+  capacity は qualification で使う leaf topology 用に限定します。
+
+### 削除
+
+- legacy の BGP → synthetic `RemoteAddressClaim` lowering 経路、および
+  `RemoteAddressClaim`、`AddressMobilityDomain`、`MobilityMemberSet`、
+  `Delivery`、`DeliveryTo`、non-BGP delivery、remote-full-member API surface を
+  削除しました。BGP Pool は型付き local capture intent を直接出力します。これは
+  v1alpha1 API の破壊的変更です。
+- 手動の並列 RRSet bootstrap 経路であった `routerctl mobility
+  enrollment-join` を削除しました。submit/fetch/persist は
+  `SAMEnrollmentClient` のみが担い、設定済みの bearer token/mTLS 認証と
+  refresh backoff を維持します。
+
 ## v20260808.1741
 
 ### 追加
@@ -390,12 +411,6 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 - SAM ピアグループ同期: WireGuard 内部ネットワーク上のポート 19652 で動作する
   軽量 HTTP サービス。パブリッシャーが `GET /v1/peer-groups` を提供し、leaf が
   WireGuard ピアを検出して一致するグループを自動取得。手動配布が不要に (#334, #336)。
-- `MobilityMemberSet` Kind と `MobilityPool.spec.membersFrom` を追加。
-  共有の識別情報のみのプールメンバーの配布。leaf は共有トポロジを取り込み、
-  自身の捕捉/検出の詳細だけをインラインに残す。O(N^2) の設定重複を削減 (#339, #340)。
-- `MobilityPool.spec.publishMemberSet` で RR が `MobilityMemberSet` を
-  `DynamicConfigPart` として生成。leaf は同じ sync サービスの
-  `GET /v1/member-sets` で取得 (#340)。
 
 ### 修正
 

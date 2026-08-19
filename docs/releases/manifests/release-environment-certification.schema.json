@@ -209,7 +209,7 @@
           }
         },
         {
-          "required": ["qaImplementation"],
+          "required": ["qaImplementation", "guestSSH"],
           "properties": {
             "schemaVersion": {
               "const": "release-environment-contract/v2"
@@ -325,9 +325,68 @@
             }
           }
         },
+        "guestSSH": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["publicKey"],
+          "properties": {
+            "publicKey": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
         "execution": {
           "type": "object",
           "additionalProperties": true
+        },
+        "qualification": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "profile",
+            "provisioningBudgetSeconds",
+            "qualificationBudgetSeconds",
+            "minimumSupervisorReserveSeconds"
+          ],
+          "properties": {
+            "profile": {
+              "type": "string",
+              "minLength": 1
+            },
+            "runScope": {
+              "type": "string",
+              "enum": [
+                "pve-certification-only",
+                "full-representative"
+              ]
+            },
+            "provisioningBudgetSeconds": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "qualificationBudgetSeconds": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "minimumSupervisorReserveSeconds": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "safety": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["pveManagementControlPlane", "pveTLS"],
+          "properties": {
+            "pveManagementControlPlane": {
+              "const": "none"
+            },
+            "pveTLS": {
+              "const": "pinned-ca"
+            }
+          }
         },
         "limits": {
           "type": "object",
@@ -411,6 +470,14 @@
               "type": "string",
               "minLength": 1
             },
+            "sshHost": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tokenOwner": {
+              "type": "string",
+              "minLength": 1
+            },
             "datastore": {
               "type": "string",
               "minLength": 1
@@ -429,15 +496,94 @@
             },
             "managementAddressSource": {
               "type": "string",
-              "enum": ["qga-dhcp", "certified-static"]
+              "enum": ["qga-dhcp"]
+            },
+            "templateStage": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["sourceNode", "sourceTemplateVMID", "vmid", "datastore"],
+              "properties": {
+                "sourceNode": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sourceTemplateVMID": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "vmid": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "datastore": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
             },
             "vmids": {
-              "type": "array",
-              "minItems": 1,
-              "uniqueItems": true,
-              "items": {
-                "type": "integer",
-                "minimum": 1
+              "oneOf": [
+                {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "pve-leaf-a",
+                    "pve-client-a",
+                    "pve-leaf-b",
+                    "pve-client-b",
+                    "pve-rr-a",
+                    "pve-rr-b"
+                  ],
+                  "properties": {
+                    "pve-leaf-a": {"type": "integer", "minimum": 1},
+                    "pve-client-a": {"type": "integer", "minimum": 1},
+                    "pve-leaf-b": {"type": "integer", "minimum": 1},
+                    "pve-client-b": {"type": "integer", "minimum": 1},
+                    "pve-rr-a": {"type": "integer", "minimum": 1},
+                    "pve-rr-b": {"type": "integer", "minimum": 1}
+                  }
+                }
+              ]
+            },
+            "rrFaultDomain": {
+              "const": "host-redundant"
+            },
+            "rrNodes": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["pve-rr-a", "pve-rr-b"],
+              "properties": {
+                "pve-rr-a": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["node", "sshHost", "vmid", "underlayBridge"],
+                  "properties": {
+                    "node": {"type": "string", "minLength": 1},
+                    "sshHost": {"type": "string", "minLength": 1},
+                    "vmid": {"type": "integer", "minimum": 1},
+                    "underlayBridge": {"type": "string", "minLength": 1}
+                  }
+                },
+                "pve-rr-b": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["node", "sshHost", "vmid", "underlayBridge"],
+                  "properties": {
+                    "node": {"type": "string", "minLength": 1},
+                    "sshHost": {"type": "string", "minLength": 1},
+                    "vmid": {"type": "integer", "minimum": 1},
+                    "underlayBridge": {"type": "string", "minLength": 1}
+                  }
+                }
               }
             }
           }

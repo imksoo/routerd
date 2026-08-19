@@ -69,10 +69,11 @@ it leans on plain BGP unicast `/32` (see
 A few routerd-specific terms appear. Here are the ones to learn first (the full
 internals are in [CloudEdge SAM internals](../reference/cloudedge-sam-internals.md)).
 
-- **MobilityPool** — the single operator-authored resource that declares *which*
-  `/32`s move, *across which* nodes, and *how*. Like a BGP peer list, each node
-  only needs the *identity* of the others (nodeRef / site / role / placement); it
-  does not need their NIC IDs or subnet IDs.
+- **SAMNodeSet + MobilityPool** — `SAMNodeSet` is the static shared
+  identity/topology/placement registry. A per-router `MobilityPool` declares
+  which `/32`s move and carries only that router's local capture and provider
+  intent; it imports the shared members instead of repeating remote NIC or
+  subnet details.
 - **capture** — assigning a target `/32` to a cloud VM's NIC as a secondary IP so
   that VM can receive packets for that address. This builds the "cloud ingress".
 - **holder** — the node that currently captures a `/32` and advertises it as the
@@ -85,10 +86,12 @@ internals are in [CloudEdge SAM internals](../reference/cloudedge-sam-internals.
   advertising a best path carrying this community is the real holder". It is the
   **authoritative marker** that prevents a standby's weak advertisement or a
   just-booted advertisement from being mistaken for holdership.
-- **dynamic RR sync** — route reflectors can publish shared transport peer
-  groups and member sets to leaves. Leaves keep the last-known-good synced input
-  if the RR publisher disappears, marking it `Stale` instead of tearing down
-  generated transport and surfacing a warning while freshness is degraded.
+- **dynamic transport and enrollment** — generic RR-published `SAMPeerGroup`
+  transport sync is fail-static: a leaf keeps its last-known-good peer group if
+  the publisher disappears, marks it `Stale`, and does not tear down generated
+  transport. Enrollment is a separate path: an admitted leaf fetches a
+  policy-scoped runtime `SAMRRSet` projected from the RR policy's static
+  `SAMNodeSet`; neither runtime payload is a statically authored RR topology.
 - **RR admission filter** — on generated RR-client BGP peers, routerd accepts
   only `/32` mobility routes that carry the advertising leaf's own node-identity
   community and rejects routes carrying another topology node's identity. When
@@ -141,7 +144,7 @@ To reconcile all three, routerd combines the following mechanisms (details in
 ## What to read next
 
 - [Selective Address Mobility (config model)](../reference/selective-address-mobility.md)
-  — how to author `MobilityPool`, self/remote members, capture policy.
+  — how to author `SAMNodeSet`, a local `MobilityPool` overlay, and capture policy.
 - [CloudEdge SAM internals](../reference/cloudedge-sam-internals.md)
   — the BGP community taxonomy, placement, no-preempt, holder-beacon, failover.
 - [ADR 0012: BGP /32 Address Mobility](../adr/0012-bgp-address-mobility.md)

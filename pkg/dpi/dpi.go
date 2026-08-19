@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/netip"
 	"strings"
+
+	"github.com/imksoo/routerd/internal/stringutil"
 )
 
 type ClassifyRequest struct {
@@ -180,7 +182,7 @@ func FinalizeResult(result ClassifyResult) ClassifyResult {
 		result.ApplicationProtocol = result.AppName
 	}
 	if result.DetectedProtocol == "" {
-		result.DetectedProtocol = firstNonEmpty(result.ApplicationProtocol, result.MasterProtocol, result.AppName, result.TransportProtocol)
+		result.DetectedProtocol = stringutil.FirstNonEmpty(result.ApplicationProtocol, result.MasterProtocol, result.AppName, result.TransportProtocol)
 	}
 	if result.Category == "" {
 		result.Category = result.AppCategory
@@ -207,15 +209,6 @@ func FinalizeResult(result ClassifyResult) ClassifyResult {
 		result.Metadata = nil
 	}
 	return result
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 type vpnClassification struct {

@@ -25,6 +25,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/imksoo/routerd/internal/hostcmd"
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/conntracktuning"
 	"github.com/imksoo/routerd/pkg/dpi"
 	"github.com/imksoo/routerd/pkg/logstore"
@@ -489,7 +490,7 @@ func enrichEntryWithDPIFlow(ctx context.Context, log *logstore.FirewallLog, entr
 }
 
 func recordDPIFlowFromEntry(ctx context.Context, log *logstore.FirewallLog, entry logstore.FirewallLogEntry, opts options) error {
-	appName := firstNonEmpty(entry.DPIApp, dpiHintValue(entry.Hint, "dpi.app"))
+	appName := stringutil.FirstNonEmpty(entry.DPIApp, dpiHintValue(entry.Hint, "dpi.app"))
 	if appName == "" {
 		return nil
 	}
@@ -511,7 +512,7 @@ func recordDPIFlowFromEntry(ctx context.Context, log *logstore.FirewallLog, entr
 		DstAddress:          entry.DstAddress,
 		DstPort:             entry.DstPort,
 		AppName:             appName,
-		AppCategory:         firstNonEmpty(entry.DPICategory, dpiHintValue(entry.Hint, "dpi.category")),
+		AppCategory:         stringutil.FirstNonEmpty(entry.DPICategory, dpiHintValue(entry.Hint, "dpi.category")),
 		AppConfidence:       firstNonZero(entry.DPIConfidence, atoiDefault(dpiHintValue(entry.Hint, "dpi.confidence"), 0)),
 		DetectedProtocol:    dpiHintValue(entry.Hint, "dpi.detected_protocol"),
 		MasterProtocol:      dpiHintValue(entry.Hint, "dpi.master_protocol"),
@@ -1264,14 +1265,14 @@ func parseKeyValueFirewallLogLine(line string) (logstore.FirewallLogEntry, bool)
 		ZoneFrom:    fields["zone_from"],
 		ZoneTo:      fields["zone_to"],
 		RuleName:    fields["rule_name"],
-		Action:      firstNonEmpty(fields["action"], "drop"),
-		SrcAddress:  firstNonEmpty(fields["src_address"], fields["src"]),
-		DstAddress:  firstNonEmpty(fields["dst_address"], fields["dst"]),
+		Action:      stringutil.FirstNonEmpty(fields["action"], "drop"),
+		SrcAddress:  stringutil.FirstNonEmpty(fields["src_address"], fields["src"]),
+		DstAddress:  stringutil.FirstNonEmpty(fields["dst_address"], fields["dst"]),
 		SrcPort:     atoi(fields["src_port"]),
 		DstPort:     atoi(fields["dst_port"]),
-		Protocol:    firstNonEmpty(fields["protocol"], fields["proto"]),
-		TCPFlags:    normalizeTCPFlags(firstNonEmpty(fields["tcp_flags"], fields["tcpFlags"], fields["flags"])),
-		L3Proto:     firstNonEmpty(fields["l3_proto"], fields["family"], "ipv4"),
+		Protocol:    stringutil.FirstNonEmpty(fields["protocol"], fields["proto"]),
+		TCPFlags:    normalizeTCPFlags(stringutil.FirstNonEmpty(fields["tcp_flags"], fields["tcpFlags"], fields["flags"])),
+		L3Proto:     stringutil.FirstNonEmpty(fields["l3_proto"], fields["family"], "ipv4"),
 		InIface:     fields["in_iface"],
 		OutIface:    fields["out_iface"],
 		PacketBytes: atoi(fields["packet_bytes"]),
@@ -1577,15 +1578,6 @@ func joinTCPFlags(flags map[string]bool) string {
 func atoi(value string) int {
 	parsed, _ := strconv.Atoi(value)
 	return parsed
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func firstNonZero(values ...int) int {

@@ -42,7 +42,6 @@ the same distinction as the apply path.
 | `TunnelInterface` | Linux `ipip`/`gre` tunnel device; FOU/GUE modes also ensure the matching `ip fou` listener port |
 | `SAMTransportProfile` | A `DynamicConfigPart` containing generated `TunnelInterface`, endpoint `/32` `IPv4Route`, and `BGPPeer` resources |
 | `MobilityPool` | Dynamic SAM capture/control-plane resources, BGP `/32` advertisements, provider action plans, and ownership observations |
-| `RemoteAddressClaim` | Low-level SAM capture state, proxy-ARP sysctl/neighbor state, provider-secondary capture status, and resource-specific teardown |
 | `IPAddressSet` | nftables IPv4/IPv6 named sets when referenced by a Linux renderer |
 | `IPv4Route` | Kernel route |
 | `ClusterNetworkRoute` | Generated `IPv4StaticRoute` intents for Pod / Service CIDRs through configured next hops |

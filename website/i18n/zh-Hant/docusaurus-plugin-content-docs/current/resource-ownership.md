@@ -41,7 +41,6 @@ apply path 作出相同判斷。
 | `TunnelInterface` | Linux `ipip` / `gre` tunnel device；FOU/GUE mode 也會確保對應的 `ip fou` listener port |
 | `SAMTransportProfile` | 包含產生的 `TunnelInterface`、endpoint `/32` `IPv4Route` 與 `BGPPeer` 的 `DynamicConfigPart` |
 | `MobilityPool` | 動態 SAM capture/control-plane resource、BGP `/32` advertisement、provider action plan 與 ownership observation |
-| `RemoteAddressClaim` | 低層 SAM capture state、proxy-ARP sysctl/neighbor state、provider-secondary capture status 與 resource-specific teardown |
 | `IPAddressSet` | Linux 產生器參照的 nftables IPv4/IPv6 named set |
 | `IPv4Route` | 核心路由 |
 | `ClusterNetworkRoute` | 將 Pod / Service CIDR 透過指定 next hop 路由的已產生 `IPv4StaticRoute` 意圖 |

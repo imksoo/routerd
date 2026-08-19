@@ -27,6 +27,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/imksoo/routerd/internal/statusvalue"
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bgpdaemon"
 	"github.com/imksoo/routerd/pkg/bus"
@@ -48,6 +50,7 @@ import (
 	vrrpcontroller "github.com/imksoo/routerd/pkg/controller/vrrp"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/derived"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/egressroute"
 	"github.com/imksoo/routerd/pkg/eventconsumer"
 	"github.com/imksoo/routerd/pkg/eventrule"
@@ -55,7 +58,6 @@ import (
 	"github.com/imksoo/routerd/pkg/healthcheck"
 	"github.com/imksoo/routerd/pkg/lifecycle"
 	"github.com/imksoo/routerd/pkg/logstore"
-	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/observabilitypipeline"
 	"github.com/imksoo/routerd/pkg/observe"
 	"github.com/imksoo/routerd/pkg/pdclient"
@@ -286,6 +288,32 @@ func copyStatusMap(status map[string]any) map[string]any {
 	return out
 }
 
+// statusValueMap normalizes a persisted status value for the generic
+// controller paths that consume nested observed state. It is deliberately
+// unrelated to MobilityPool/ARP observation handling.
+func statusValueMap(value any) map[string]any {
+	out := map[string]any{}
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, item := range typed {
+			out[key] = item
+		}
+	case map[string]string:
+		for key, item := range typed {
+			out[key] = item
+		}
+	case map[string]map[string]any:
+		for key, item := range typed {
+			out[key] = item
+		}
+	case map[any]any:
+		for key, item := range typed {
+			out[fmt.Sprint(key)] = item
+		}
+	}
+	return out
+}
+
 func preserveStatusFields(status, current map[string]any, fields ...string) map[string]any {
 	if len(current) == 0 || len(fields) == 0 {
 		return status
@@ -313,7 +341,7 @@ func statusWithLifecycle(apiVersion, kind, name string, resource api.Resource, f
 		}
 	}
 	if _, ok := out["managedBy"]; !ok {
-		if managed, ok := statusBool(out["managed"]); ok && !managed {
+		if managed, ok := statusvalue.ExtendedBool(out["managed"]); ok && !managed {
 			out["managedBy"] = "external"
 		} else {
 			out["managedBy"] = "routerd"
@@ -326,7 +354,7 @@ func statusWithLifecycle(apiVersion, kind, name string, resource api.Resource, f
 		case "external":
 			out["management"] = "adopted"
 		default:
-			if managed, ok := statusBool(out["managed"]); ok && !managed {
+			if managed, ok := statusvalue.ExtendedBool(out["managed"]); ok && !managed {
 				out["management"] = "adopted"
 			} else {
 				out["management"] = "managed"
@@ -388,21 +416,6 @@ func syntheticLifecycleStatus(apiVersion, kind, _ string) bool {
 	}
 }
 
-func statusBool(value any) (bool, bool) {
-	switch typed := value.(type) {
-	case bool:
-		return typed, true
-	case string:
-		switch strings.ToLower(strings.TrimSpace(typed)) {
-		case "true", "yes", "1":
-			return true, true
-		case "false", "no", "0":
-			return false, true
-		}
-	}
-	return false, false
-}
-
 func resourceOwnerController(kind string) string {
 	switch kind {
 	case "IPv4StaticAddress", "IPv6DelegatedAddress", "IPv6RAAddress", "Interface":
@@ -437,7 +450,7 @@ func resourceOwnerController(kind string) string {
 		return "package"
 	case "PPPoESession":
 		return "pppoesession"
-	case "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "EgressRoutePolicy", "HybridRoute", "SAMTransportProfile", "AddressMobilityDomain", "RemoteAddressClaim":
+	case "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "EgressRoutePolicy", "HybridRoute", "SAMTransportProfile":
 		return "route"
 	case "ServiceUnit", "TailscaleNode", "HealthCheck", "NTPClient", "NTPServer", "SysctlProfile", "Sysctl", "LogRetention", "Hostname", "ConntrackTuning":
 		return "service-unit"
@@ -694,23 +707,12 @@ func mobilityPoolRoutineObservationPhaseTransition(previousPhase, phase string) 
 }
 
 func mobilityPoolObservationRefreshFields() map[string]bool {
-	fields := map[string]bool{
-		"observedClients":         true,
-		"observedClientsBySource": true,
-		"sourceType":              true,
-		"observe":                 true,
-		"onDemand":                true,
-	}
+	fields := map[string]bool{}
 	for _, field := range []string{
-		"bgpCaptureObserveAt",
-		"bgpCaptureObservedAt",
 		"discoveryCompletedAt",
 		"discoveryFreshUntil",
 		"discoveryLastScanAt",
-		"discoveryNextScanAt",
 		"discoveryObserved",
-		"discoveryResultCount",
-		"observedCount",
 	} {
 		fields[field] = true
 	}
@@ -741,15 +743,8 @@ func statusChangedEventSeverity(apiVersion, kind string, current, next map[strin
 
 func chattyStatusChangedFields() map[string]bool {
 	return map[string]bool{
-		"observedClients":           true,
-		"observedClientsBySource":   true,
-		"observedSelfStaleCaptures": true,
-		"sourceType":                true,
-		"observe":                   true,
-		"onDemand":                  true,
+		"observedSelfStaleCaptures":               true,
 		"ownershipResolverControlPlaneOwnerTable": true,
-		"ownershipResolverDecisions":              true,
-		"ownershipResolverOwnerTable":             true,
 		"discoveryObserved":                       true,
 	}
 }
@@ -848,13 +843,11 @@ func volatileStatusEventField(apiVersion, kind, key string) bool {
 
 func mobilityStatusEventVolatileField(key string) bool {
 	switch key {
-	case "plannedAt", "projectedAt", "dynamicExpiresAt":
+	case "bgpCaptureTransitionCompleted":
 		return true
 	case "discoveryLastScanAt", "lastEventAt", "lastPacketAt", "lastScanAt":
 		return true
 	case "packetsSeen", "scanCount", "probeCount", "probeHitCount", "proactiveCount":
-		return true
-	case "observedCount":
 		return true
 	default:
 		return false
@@ -1139,7 +1132,7 @@ func bootstrapSubscriptions() []bus.Subscription {
 func dnsResolverStatusSubscriptions(router *api.Router) []bus.Subscription {
 	subs := statusSubscriptionsWithWhen(router, []string{"DNSResolver", "DNSForwarder", "DNSUpstream", "DNSZone"},
 		"DNSResolver", "DNSForwarder", "DNSUpstream", "DNSZone", "IPv6DelegatedAddress", "DHCPv6Information", "VirtualAddress", "Interface", "IngressService")
-	subs = append(subs, bus.Subscription{Topics: []string{"routerd.dhcp.lease.**"}})
+	subs = append(subs, bus.Subscription{Topics: []string{daemonapi.EventDHCPLeaseAdded, daemonapi.EventDHCPLeaseRenewed, daemonapi.EventDHCPLeaseRemoved}})
 	return subs
 }
 
@@ -1149,11 +1142,23 @@ func firewallStatusSubscriptions(router *api.Router) []bus.Subscription {
 		"FirewallZone", "FirewallPolicy", "FirewallRule", "ClientPolicy", "PortForward", "IngressService", "LocalServiceRedirect", "FirewallFlowPinhole",
 		"IPAddressSet", "Interface", "DSLiteTunnel", "EgressRoutePolicy", "NAT44Rule", "VirtualAddress", "IPv4StaticAddress", "DHCPv4Client")
 	subs = append(subs, bus.Subscription{Topics: []string{"routerd.firewall.**"}})
-	return subs
+	return withMobilityPlanSubscriptions(subs)
 }
 
 func ipv4RouteStatusSubscriptions() []bus.Subscription {
-	return statusSubscriptions("DSLiteTunnel", "TunnelInterface", "EgressRoutePolicy", "VirtualAddress", "DHCPv4Client")
+	return withMobilityPlanSubscriptions(statusSubscriptions("DSLiteTunnel", "TunnelInterface", "EgressRoutePolicy", "VirtualAddress", "DHCPv4Client"))
+}
+
+func ipv4StaticAddressStatusSubscriptions() []bus.Subscription {
+	return withMobilityPlanSubscriptions(statusSubscriptions("WireGuardInterface", "TunnelInterface"))
+}
+
+func ipv4RouteControllerStatusSubscriptions(router *api.Router) []bus.Subscription {
+	return withMobilityPlanSubscriptions(statusSubscriptionsWithWhen(router, []string{"ClusterNetworkRoute"}, "DSLiteTunnel", "TunnelInterface", "EgressRoutePolicy", "VirtualAddress", "DHCPv4Client"))
+}
+
+func pathMTUStatusSubscriptions(router *api.Router) []bus.Subscription {
+	return withMobilityPlanSubscriptions(statusSubscriptionsWithWhen(router, []string{"VXLANTunnel"}, "DSLiteTunnel", "PPPoESession", "WireGuardInterface", "TunnelInterface", "Interface", "Bridge", "VXLANTunnel", "FirewallZone", "DHCPv6Server", "IPv6RouterAdvertisement"))
 }
 
 func hybridRouteStatusSubscriptions() []bus.Subscription {
@@ -1161,35 +1166,27 @@ func hybridRouteStatusSubscriptions() []bus.Subscription {
 }
 
 func samStatusSubscriptions() []bus.Subscription {
-	subs := statusSubscriptions("IPv4Route", "Sysctl", "WireGuardInterface", "TunnelInterface", "Interface", "VirtualAddress", "DHCPv4Client")
-	subs = append(subs, bus.Subscription{
-		Topics: []string{"routerd.resource.status.changed"},
+	return withMobilityPlanSubscriptions(statusSubscriptions("IPv4Route", "Sysctl", "WireGuardInterface", "TunnelInterface", "Interface", "VirtualAddress", "DHCPv4Client"))
+}
+
+func mobilityPlanSubscriptions() []bus.Subscription {
+	return []bus.Subscription{{
+		Topics: []string{mobilitycontroller.PoolPlanChangedEvent},
 		Filter: func(event daemonapi.DaemonEvent) bool {
-			if event.Resource == nil || event.Resource.Kind != "BGPRouter" {
+			if event.Resource == nil || event.Resource.APIVersion != api.MobilityAPIVersion || event.Resource.Kind != "MobilityPool" {
 				return false
 			}
-			return eventChangedField(event, "installedNextHops") ||
-				eventChangedField(event, "prefixes") ||
-				eventChangedField(event, "phase") ||
-				eventChangedField(event, "fibRoutes") ||
-				eventChangedField(event, "fibUnsupportedRoutes")
+			return strings.TrimSpace(event.Attributes["source"]) != "" && strings.TrimSpace(event.Attributes["digest"]) != ""
 		},
-	})
-	return subs
+	}}
+}
+
+func withMobilityPlanSubscriptions(subscriptions []bus.Subscription) []bus.Subscription {
+	return append(subscriptions, mobilityPlanSubscriptions()...)
 }
 
 func bgpStatusSubscriptions(router *api.Router) []bus.Subscription {
-	subs := statusSubscriptionsWithWhen(router, []string{"BGPRouter", "BGPPeer"}, "BFD", "BGPRouter", "BGPPeer")
-	subs = append(subs, bus.Subscription{
-		Topics: []string{"routerd.resource.status.changed"},
-		Filter: func(event daemonapi.DaemonEvent) bool {
-			if event.Resource == nil || event.Resource.Kind != "MobilityPool" {
-				return false
-			}
-			return eventChangedField(event, "ownershipResolverFIBVerdicts")
-		},
-	})
-	return subs
+	return withMobilityPlanSubscriptions(statusSubscriptionsWithWhen(router, []string{"BGPRouter", "BGPPeer"}, "BFD", "BGPRouter", "BGPPeer"))
 }
 
 func eventChangedField(event daemonapi.DaemonEvent, field string) bool {
@@ -1265,7 +1262,6 @@ type Options struct {
 	ProviderActionRunner    provideraction.ExecutorRunner
 	ProviderInventoryRunner providerinventory.Runner
 	PeerGroupSyncClient     *mobilitycontroller.PeerGroupSyncClient
-	MemberSetSyncClient     *mobilitycontroller.PeerGroupSyncClient
 	MutationGate            *sync.RWMutex
 }
 
@@ -1560,8 +1556,8 @@ func preserveStaticVirtualAddressCleanupStatus(res api.Resource, current, status
 	}
 	changed := false
 	for _, key := range []string{"backend", "ifname", "appliedAddress"} {
-		if value := statusString(current, key); value != "" {
-			if statusString(status, key) == "" {
+		if value := statusvalue.Field(current, key); value != "" {
+			if statusvalue.Field(status, key) == "" {
 				status[key] = value
 				changed = true
 			}
@@ -1572,7 +1568,7 @@ func preserveStaticVirtualAddressCleanupStatus(res api.Resource, current, status
 	// declared address and logical interface so the VRRP controller can perform
 	// an idempotent one-time cleanup of that legacy address.
 	for key, value := range map[string]string{"address": spec.Address, "interface": spec.Interface} {
-		if strings.TrimSpace(value) != "" && statusString(status, key) == "" {
+		if strings.TrimSpace(value) != "" && statusvalue.Field(status, key) == "" {
 			status[key] = value
 			changed = true
 		}
@@ -1593,12 +1589,12 @@ func preserveIPv4StaticAddressCleanupStatus(router *api.Router, res api.Resource
 		return false
 	}
 	changed := false
-	ifname := statusString(current, "ifname")
-	if ifname != "" && statusString(status, "ifname") == "" {
+	ifname := statusvalue.Field(current, "ifname")
+	if ifname != "" && statusvalue.Field(status, "ifname") == "" {
 		status["ifname"] = ifname
 		changed = true
 	}
-	if statusString(status, "ifname") == "" {
+	if statusvalue.Field(status, "ifname") == "" {
 		ifname = interfaceIfName(router, spec.Interface)
 		if ifname != "" {
 			status["ifname"] = ifname
@@ -1632,7 +1628,7 @@ func preserveIPv6DelegatedAddressCleanupStatus(res api.Resource, current, status
 		}
 	}
 	for key, value := range map[string]string{"interface": spec.Interface, "prefixSource": spec.PrefixDelegation} {
-		if strings.TrimSpace(value) != "" && statusString(status, key) == "" {
+		if strings.TrimSpace(value) != "" && statusvalue.Field(status, key) == "" {
 			status[key] = value
 			changed = true
 		}
@@ -1646,7 +1642,7 @@ func (r *Runner) clearWhenFalseStatus(apiVersion, kind, name string, store event
 	if reason != "WhenFalse" {
 		return nil
 	}
-	observed := statusMap(current["observed"])
+	observed := statusValueMap(current["observed"])
 	if len(observed) == 0 || strings.TrimSpace(fmt.Sprint(observed["phase"])) == "" {
 		return nil
 	}
@@ -1664,7 +1660,7 @@ func (r *Runner) preserveFreshDaemonStatusWhenFalse(res api.Resource, apiVersion
 		return false, nil
 	}
 	status := store.ObjectStatus(apiVersion, res.Kind, res.Metadata.Name)
-	observed := statusMap(status["observed"])
+	observed := statusValueMap(status["observed"])
 	evidence := status
 	evidenceFromObserved := false
 	if healthCheckStatusHasDaemonEvidence(observed) {
@@ -2164,52 +2160,50 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	}
 	// Keep Runner.Opts immutable across generations. Standby dry-run flags are
 	// effective only for this generation and must not poison a later leader
-	// generation after lease acquisition.
-	effectiveRunner := *r
-	effectiveRunner.Opts = opts
-	r = &effectiveRunner
-	packages := PackageController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunPackage}
+	// generation after lease acquisition. Keep the options local rather than
+	// copying Runner: Runner owns synchronization and runtime state.
+	packages := PackageController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunPackage}
 	sysctl := SysctlController{Router: r.Router, Bus: r.Bus, Store: store}
-	kernelModules := KernelModuleController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunPackage}
-	adoption := NetworkAdoptionController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNetworkAdoption}
-	bridge := BridgeController{Router: r.Router, Store: store, DryRun: r.Opts.DryRunBridge}
-	vxlanTunnel := VXLANTunnelController{Router: r.Router, DeclaredRouter: r.Router, Store: store, DryRun: r.Opts.DryRunVXLANTunnel, StartedAt: r.startedAt(), Mu: &sync.Mutex{}}
-	serviceUnits := SystemdUnitController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunServiceUnit, SynthesizeClientDaemonUnits: !r.Opts.SuperviseClientDaemons && !r.Opts.SkipLegacyClientUnits}
+	kernelModules := KernelModuleController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunPackage}
+	adoption := NetworkAdoptionController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunNetworkAdoption}
+	bridge := BridgeController{Router: r.Router, Store: store, DryRun: opts.DryRunBridge}
+	vxlanTunnel := VXLANTunnelController{Router: r.Router, DeclaredRouter: r.Router, Store: store, DryRun: opts.DryRunVXLANTunnel, StartedAt: r.startedAt(), Mu: &sync.Mutex{}}
+	serviceUnits := SystemdUnitController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunServiceUnit, SynthesizeClientDaemonUnits: !opts.SuperviseClientDaemons && !opts.SkipLegacyClientUnits}
 	logRetention := LogRetentionController{Router: r.Router, Bus: r.Bus, Store: store}
 	ntpClient := NTPClientController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store}
 	ntpServer := NTPServerController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store}
-	info := DHCPv6InformationController{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
+	info := DHCPv6InformationController{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, Logger: logger}
 	link := LinkController{Router: r.Router, Store: store, Logger: logger}
-	tunnel := TunnelInterfaceController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, OS: platform.CurrentOS(), Logger: logger}
-	wireGuard := WireGuardController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, Logger: logger}
-	ipv4Static := IPv4StaticAddressController{Router: r.Router, DeclaredRouter: r.Router, WhenRouter: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunAddress, Logger: logger}
-	lan := LANAddressController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunAddress, Logger: logger}
-	dslite := DSLiteTunnelController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDSLite, ResolverPort: r.Opts.DnsmasqPort, Logger: logger}
-	route := IPv4RouteController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, Logger: logger}
+	tunnel := TunnelInterfaceController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, OS: platform.CurrentOS(), Logger: logger}
+	wireGuard := WireGuardController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger}
+	ipv4Static := IPv4StaticAddressController{Router: r.Router, DeclaredRouter: r.Router, WhenRouter: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger}
+	lan := LANAddressController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger}
+	dslite := DSLiteTunnelController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunDSLite, ResolverPort: opts.DnsmasqPort, Logger: logger}
+	route := IPv4RouteController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger}
 	hybridRoute := HybridRouteController{Router: r.Router, EffectiveRouter: r.Router, Store: store}
-	samController := SAMController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute}
-	policyRoute := IPv4PolicyRouteController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, NftCommand: r.Opts.NftCommand, LedgerPath: r.Opts.LedgerPath, Logger: logger}
-	pathMTU := PathMTUController{Router: r.Router, OS: platform.CurrentOS(), Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunRoute, NftCommand: r.Opts.NftCommand, Path: r.Opts.PathMTUPath, ForceFragmentPath: r.Opts.ForceFragmentPath}
-	dhcpv6 := DHCPv6ServerController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDHCPv6, Command: r.Opts.DnsmasqCommand, ConfigPath: r.Opts.DnsmasqConfig, PIDFile: r.Opts.DnsmasqPID, Port: r.Opts.DnsmasqPort, ListenAddresses: r.Opts.DnsmasqListen, Logger: logger}
-	dhcp4Client := dhcpv4client.Controller{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunDHCPv4Client, Logger: logger}
-	pppoeSession := pppoesession.Controller{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, DryRun: r.Opts.DryRunPPPoESession, Logger: logger}
+	samController := SAMController{Router: r.Router, Store: store, DryRun: opts.DryRunRoute}
+	policyRoute := IPv4PolicyRouteController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, NftCommand: opts.NftCommand, LedgerPath: opts.LedgerPath, Logger: logger}
+	pathMTU := PathMTUController{Router: r.Router, OS: platform.CurrentOS(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, NftCommand: opts.NftCommand, Path: opts.PathMTUPath, ForceFragmentPath: opts.ForceFragmentPath}
+	dhcpv6 := DHCPv6ServerController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunDHCPv6, Command: opts.DnsmasqCommand, ConfigPath: opts.DnsmasqConfig, PIDFile: opts.DnsmasqPID, Port: opts.DnsmasqPort, ListenAddresses: opts.DnsmasqListen, Logger: logger}
+	dhcp4Client := dhcpv4client.Controller{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, DryRun: opts.DryRunDHCPv4Client, Logger: logger}
+	pppoeSession := pppoesession.Controller{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, DryRun: opts.DryRunPPPoESession, Logger: logger}
 	defaults, features := platform.Current()
-	dnsResolver := dnsresolvercontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunDNSResolver, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
-	eventFederation := eventfederationcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunEventFederation, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
-	leaseSync := FileSyncController{Router: r.Router, Store: store, DryRun: r.Opts.DryRunLeaseSync}
-	nat44SessionSync := NAT44SessionSyncController{Router: r.Router, Store: store, DryRun: r.Opts.DryRunNAT44SessionSync}
+	dnsResolver := dnsresolvercontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunDNSResolver, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
+	eventFederation := eventfederationcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunEventFederation, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
+	leaseSync := FileSyncController{Router: r.Router, Store: store, DryRun: opts.DryRunLeaseSync}
+	nat44SessionSync := NAT44SessionSyncController{Router: r.Router, Store: store, DryRun: opts.DryRunNAT44SessionSync}
 	bgpDaemon := bgpcontroller.DefaultDaemonSpec()
-	if strings.TrimSpace(r.Opts.BGPSocketPath) != "" {
-		bgpDaemon.SocketPath = strings.TrimSpace(r.Opts.BGPSocketPath)
-		if strings.TrimSpace(r.Opts.BGPControlSocketPath) == "" {
+	if strings.TrimSpace(opts.BGPSocketPath) != "" {
+		bgpDaemon.SocketPath = strings.TrimSpace(opts.BGPSocketPath)
+		if strings.TrimSpace(opts.BGPControlSocketPath) == "" {
 			bgpDaemon.ControlSocketPath = filepath.Join(filepath.Dir(bgpDaemon.SocketPath), "control.sock")
 		}
 	}
-	if strings.TrimSpace(r.Opts.BGPControlSocketPath) != "" {
-		bgpDaemon.ControlSocketPath = strings.TrimSpace(r.Opts.BGPControlSocketPath)
+	if strings.TrimSpace(opts.BGPControlSocketPath) != "" {
+		bgpDaemon.ControlSocketPath = strings.TrimSpace(opts.BGPControlSocketPath)
 	}
-	if strings.TrimSpace(r.Opts.BGPStatePath) != "" {
-		bgpDaemon.StatePath = strings.TrimSpace(r.Opts.BGPStatePath)
+	if strings.TrimSpace(opts.BGPStatePath) != "" {
+		bgpDaemon.StatePath = strings.TrimSpace(opts.BGPStatePath)
 	}
 	// EventSubscriptionController needs the SQLite-backed federation/dynamic/
 	// plugin methods in addition to status writes. The raw r.Store is the
@@ -2221,7 +2215,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			Router:     r.Router,
 			Bus:        r.Bus,
 			Store:      eventSubscriptionStore{evented: store, data: rawStore},
-			DryRun:     r.Opts.DryRunEventSubscription,
+			DryRun:     opts.DryRunEventSubscription,
 			RuntimeDir: defaults.RuntimeDir,
 			StateDir:   defaults.StateDir,
 		}
@@ -2233,27 +2227,23 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	var mobilityShard mobilitycontroller.ShardController
 	if rawStore, ok := r.Store.(mobilityDataStore); ok {
 		mobilityData := mobilityStore{evented: store, data: rawStore}
-		peerGroupSync := r.Opts.PeerGroupSyncClient
+		peerGroupSync := opts.PeerGroupSyncClient
 		if peerGroupSync == nil {
 			peerGroupSync = mobilitycontroller.NewPeerGroupSyncClient(rawStore)
 		}
-		memberSetSync := r.Opts.MemberSetSyncClient
-		if memberSetSync == nil {
-			memberSetSync = peerGroupSync
-		}
 		mobilityDiscovery = mobilitycontroller.DiscoveryController{
-			Router:        r.Router,
-			Bus:           r.Bus,
-			Store:         mobilityData,
-			Runner:        r.Opts.ProviderInventoryRunner,
-			MemberSetSync: memberSetSync,
+			Router:    r.Router,
+			Bus:       r.Bus,
+			Store:     mobilityData,
+			Runner:    opts.ProviderInventoryRunner,
+			StartedAt: r.startedAt(),
 		}
 		mobility = mobilitycontroller.Controller{
-			Router:        r.Router,
-			Bus:           r.Bus,
-			Store:         mobilityData,
-			BGPPaths:      bgpdaemon.NewControlClient(bgpDaemon.ControlSocketPath),
-			MemberSetSync: memberSetSync,
+			Router:    r.Router,
+			Bus:       r.Bus,
+			Store:     mobilityData,
+			BGPPaths:  bgpdaemon.NewControlClient(bgpDaemon.ControlSocketPath),
+			StartedAt: r.startedAt(),
 		}
 		mobilityTransport = mobilitycontroller.TransportController{
 			Router:        r.Router,
@@ -2277,26 +2267,26 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			Router: r.Router,
 			Bus:    r.Bus,
 			Store:  rawStore,
-			Runner: r.Opts.ProviderActionRunner,
-			DryRun: r.Opts.DryRunProviderAction,
+			Runner: opts.ProviderActionRunner,
+			DryRun: opts.DryRunProviderAction,
 			Logger: logger,
 		}
 	}
-	daemonStatusSync := DaemonStatusController{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: r.Opts.DaemonSockets, Logger: logger}
+	daemonStatusSync := DaemonStatusController{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, Logger: logger}
 	wan := egressroute.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
 	durableEvents, _ := r.Store.(eventconsumer.Store)
 	rules := eventrule.Controller{Router: r.Router, Bus: r.Bus, Store: store, Events: durableEvents, Logger: logger}
 	derivedEvents := derived.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
 	observabilityPipeline := observabilitypipeline.Controller{Router: r.Router, Bus: r.Bus, Store: store, Events: durableEvents}
 	health := healthcheck.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
-	nat := nat44.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunNAT, IngressLive: !r.Opts.DryRunIngress, NftablesPath: r.Opts.NftablesPath, NftCommand: r.Opts.NftCommand, Logger: logger}
-	ingressService := ingressservicecontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunIngress, Resolver: ingressServiceDNSResolver(r.Router, store), Logger: logger}
-	bfd := bfdcontroller.Controller{Router: r.Router, Store: store, DryRun: r.Opts.DryRunBGP, RuntimeDir: defaults.RuntimeDir}
-	bgp := bgpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunBGP, Logger: logger, Daemon: bgpDaemon, MutationGate: r.Opts.MutationGate}
-	vrrp := vrrpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunVRRP, Logger: logger}
-	ipAddressSet := IPAddressSetController{Router: r.Router, Store: store, DryRunNAT: r.Opts.DryRunNAT, DryRunRoute: r.Opts.DryRunRoute, DryRunFirewall: r.Opts.DryRunFirewall, NftCommand: r.Opts.NftCommand, RuntimeDir: defaults.RuntimeDir}
-	firewall := firewallcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: r.Opts.DryRunFirewall, NftablesPath: firstNonEmpty(r.Opts.FirewallPath, "/run/routerd/firewall.nft"), NftCommand: r.Opts.NftCommand, Logger: logger}
-	conntrackObs := conntrackobserver.Controller{Router: r.Router, Bus: r.Bus, Store: store, Paths: conntrack.DefaultPaths(), Interval: r.Opts.ConntrackInterval, Logger: logger}
+	nat := nat44.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunNAT, IngressLive: !opts.DryRunIngress, NftablesPath: opts.NftablesPath, NftCommand: opts.NftCommand, Logger: logger}
+	ingressService := ingressservicecontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunIngress, Resolver: ingressServiceDNSResolver(r.Router, store), Logger: logger}
+	bfd := bfdcontroller.Controller{Router: r.Router, Store: store, DryRun: opts.DryRunBGP, RuntimeDir: defaults.RuntimeDir}
+	bgp := bgpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunBGP, Logger: logger, Daemon: bgpDaemon, MutationGate: opts.MutationGate}
+	vrrp := vrrpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunVRRP, Logger: logger}
+	ipAddressSet := IPAddressSetController{Router: r.Router, Store: store, DryRunNAT: opts.DryRunNAT, DryRunRoute: opts.DryRunRoute, DryRunFirewall: opts.DryRunFirewall, NftCommand: opts.NftCommand, RuntimeDir: defaults.RuntimeDir}
+	firewall := firewallcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunFirewall, NftablesPath: stringutil.FirstNonEmpty(opts.FirewallPath, "/run/routerd/firewall.nft"), NftCommand: opts.NftCommand, Logger: logger}
+	conntrackObs := conntrackobserver.Controller{Router: r.Router, Bus: r.Bus, Store: store, Paths: conntrack.DefaultPaths(), Interval: opts.ConntrackInterval, Logger: logger}
 	if features.HasPF && !features.HasIproute2 {
 		conntrackObs.SnapshotSource = "pf"
 		conntrackObs.Snapshot = func() (conntrack.Snapshot, error) {
@@ -2449,7 +2439,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = r.Router
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "sam-transport", Every: 30 * time.Second, Subs: statusSubscriptions("SAMTransportProfile", "SAMPeerGroup", "SAMNodeSet", "MobilityMemberSet", "Interface", "IPv4StaticAddress", "DHCPv4Client", "WireGuardInterface", "WireGuardPeer"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "sam-transport", Every: 30 * time.Second, Subs: statusSubscriptions("SAMTransportProfile", "SAMNodeSet", "Interface", "IPv4StaticAddress", "DHCPv4Client", "WireGuardInterface", "WireGuardPeer"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return false, err
@@ -2477,7 +2467,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = effective
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "ipv4-static-address", Subs: statusSubscriptions("WireGuardInterface", "TunnelInterface"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "ipv4-static-address", Subs: ipv4StaticAddressStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
@@ -2491,6 +2481,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.DeclaredRouter = view.RouteRouter
 			current.WhenRouter = r.Router
 			current.Store = store.withRouter(view.RouteRouter)
+			current.MobilityDataplane = view.MobilityDataplane
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "dhcpv6-information", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPv6PrefixDelegation"), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
@@ -2536,7 +2527,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = effective
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "ipv4-route", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"ClusterNetworkRoute"}, "DSLiteTunnel", "TunnelInterface", "EgressRoutePolicy", "VirtualAddress", "DHCPv4Client"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "ipv4-route", Every: 30 * time.Second, Subs: ipv4RouteControllerStatusSubscriptions(r.Router), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
@@ -2548,6 +2539,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current := route
 			current.Router = view.RouteRouter
 			current.Store = store.withRouter(view.RouteRouter)
+			current.MobilityDataplane = view.MobilityDataplane
 			return didWorkError(current.reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "hybrid-route", Subs: hybridRouteStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
@@ -2578,7 +2570,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current := samController
 			current.Router = view.EffectiveRouter
 			current.Store = store.withRouter(view.EffectiveRouter)
-			current.Lowerings = view.SAMLowerings
+			current.LocalCaptureIntents = view.MobilityDataplane.Captures
 			// FreeBSD routeguard intentionally refuses to delete an owned ARP
 			// neighbor while a stale /32 resolves through a tunnel. Tear down
 			// owned routes from the same effective route view first. If that
@@ -2586,9 +2578,10 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			routeTeardown := route
 			routeTeardown.Router = view.RouteRouter
 			routeTeardown.Store = store.withRouter(view.RouteRouter)
+			routeTeardown.MobilityDataplane = view.MobilityDataplane
 			return didWorkError(reconcileSAMAfterRouteTeardown(ctx, routeTeardown, current))
 		}},
-		framework.FuncController{ControllerName: "path-mtu", Subs: statusSubscriptionsWithWhen(r.Router, []string{"VXLANTunnel"}, "DSLiteTunnel", "PPPoESession", "WireGuardInterface", "TunnelInterface", "Interface", "Bridge", "VXLANTunnel", "FirewallZone", "DHCPv6Server", "IPv6RouterAdvertisement", "MobilityPool"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "path-mtu", Subs: pathMTUStatusSubscriptions(r.Router), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
@@ -2600,9 +2593,10 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current := pathMTU
 			current.Router = view.EffectiveRouter
 			current.Store = store.withRouter(view.EffectiveRouter)
+			current.LocalCaptureIntents = view.MobilityDataplane.Captures
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "dhcpv6-server", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.**"}}}, PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "dhcpv6-server", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", daemonapi.EventDHCPLeaseAdded, daemonapi.EventDHCPLeaseRenewed, daemonapi.EventDHCPLeaseRemoved}}}, PeriodicFunc: func(ctx context.Context) (bool, error) {
 			if _, err := effectiveForReconcile(); err != nil {
 				return false, err
 			}
@@ -2656,7 +2650,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "event-subscription", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: didWorkPeriodic(eventSubscription.Reconcile)},
-		framework.FuncController{ControllerName: "mobility-discovery", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", "routerd.dhcp.lease.add", "routerd.dhcp.lease.old", "routerd.dhcp.lease.del", mobilitycontroller.OnPremARPObservedEvent, mobilitycontroller.OnPremARPProbeHitEvent, mobilitycontroller.OnPremPVESVNetObservedEvent, provideraction.ProviderCaptureChangedEvent}}}, ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
+		framework.FuncController{ControllerName: "mobility-discovery", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", daemonapi.EventDHCPLeaseAdded, daemonapi.EventDHCPLeaseRenewed, daemonapi.EventDHCPLeaseRemoved, mobilitycontroller.OnPremARPObservedEvent, mobilitycontroller.OnPremARPProbeHitEvent, mobilitycontroller.OnPremPVESVNetObservedEvent, provideraction.ProviderCaptureChangedEvent}}}, ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
 			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return err
@@ -2769,18 +2763,23 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.Reconcile(ctx))
 		}},
 	}
-	if !r.Opts.FirewallDisabled {
+	if !opts.FirewallDisabled {
 		controllers = append(controllers, framework.FuncController{ControllerName: "firewall", Subs: firewallStatusSubscriptions(r.Router), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
 			}
+			view, err := buildDynamicRouteSAMView(effective, r.Store, time.Now().UTC(), platform.CurrentOS())
+			if err != nil {
+				return false, err
+			}
 			current := firewall
-			current.Router = effective
+			current.Router = view.EffectiveRouter
+			current.LocalCaptureIntents = view.MobilityDataplane.Captures
 			return didWorkError(current.Reconcile(ctx))
 		}})
 	}
-	if r.Opts.SuperviseClientDaemons && r.controllerEnabled("daemon-supervisor") {
+	if opts.SuperviseClientDaemons && r.controllerEnabled("daemon-supervisor") {
 		controllers = append(controllers, framework.FuncController{ControllerName: "daemon-supervisor-reconcile", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: func(ctx context.Context) (bool, error) {
 			r.reconcileARPObserverDaemons(ctx, logger)
 			return false, nil
@@ -2823,6 +2822,9 @@ func didWorkPeriodic(fn func(context.Context) error) func(context.Context) (bool
 // retain a failed teardown for retry; do not run SAM if that prerequisite
 // fails.
 func reconcileSAMAfterRouteTeardown(ctx context.Context, route IPv4RouteController, controller SAMController) error {
+	if err := route.cleanupRemovedMobilityRoutes(ctx); err != nil {
+		return fmt.Errorf("teardown stale mobility IPv4 routes before SAM cleanup: %w", err)
+	}
 	if err := route.cleanupRemovedRoutes(ctx); err != nil {
 		return fmt.Errorf("teardown stale IPv4Routes before SAM cleanup: %w", err)
 	}
@@ -3110,7 +3112,7 @@ func (r *Runner) clientDaemonSpecs(router *api.Router) []supervisedDaemonSpec {
 			out = append(out, supervisedDaemonSpec{ResourceName: resource.Metadata.Name, Binary: "routerd-pppoe-client", Args: args})
 		}
 	}
-	for _, spec := range r.mobilityARPObserverDaemonSpecsForRouter(router) {
+	for _, spec := range r.mobilityARPObserverDaemonSpecs() {
 		out = append(out, supervisedDaemonSpec{
 			ResourceName: spec.ResourceName,
 			Binary:       "routerd-arp-observer",
@@ -3271,170 +3273,57 @@ func (r *Runner) mobilityARPObserverDaemonSpecs() []mobilityARPObserverDaemonSpe
 	if r == nil {
 		return nil
 	}
-	return r.mobilityARPObserverDaemonSpecsForRouter(r.Router)
-}
-
-func (r *Runner) mobilityARPObserverDaemonSpecsForRouter(router *api.Router) []mobilityARPObserverDaemonSpec {
-	if r == nil || router == nil {
+	lister, ok := r.Store.(dynamicConfigPartLister)
+	if !ok {
 		return nil
 	}
+	records, err := lister.ListDynamicConfigParts()
+	if err != nil {
+		return nil
+	}
+	return r.mobilityARPObserverDaemonSpecsFromIntents(mobilityARPObserverIntentsFromRecords(records, time.Now().UTC()))
+}
+
+func (r *Runner) mobilityARPObserverDaemonSpecsFromIntents(intents []dynamicconfig.ARPObserverIntent) []mobilityARPObserverDaemonSpec {
 	defaults, _ := platform.Current()
 	seen := map[string]bool{}
-	ignoredSenderMACs := samNodeSetMACAddresses(router)
 	var out []mobilityARPObserverDaemonSpec
-	for _, res := range router.Spec.Resources {
-		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "MobilityPool" {
+	for _, intent := range intents {
+		resourceName := strings.TrimSpace(intent.ResourceName)
+		poolName := strings.TrimSpace(intent.PoolRef)
+		prefix := strings.TrimSpace(intent.Prefix)
+		sourceType := strings.TrimSpace(intent.SourceType)
+		ifName := strings.TrimSpace(intent.IfName)
+		eventInterface := strings.TrimSpace(intent.EventInterface)
+		if resourceName == "" || poolName == "" || prefix == "" || sourceType == "" || ifName == "" || eventInterface == "" || seen[resourceName] {
 			continue
 		}
-		spec, err := res.MobilityPoolSpec()
-		if err != nil || mobilityDeliveryMode(spec) != "bgp" {
-			continue
+		seen[resourceName] = true
+		socket := filepath.Join(defaults.RuntimeDir, "arp-observer", resourceName+".sock")
+		if override := strings.TrimSpace(r.Opts.DaemonSockets[resourceName]); override != "" {
+			socket = override
 		}
-		selfNode, err := chainRouterSelfNode(router, spec.GroupRef)
-		if err != nil {
-			continue
-		}
-		spec, _, err = mobilityconfig.NormalizeMobilityPool(spec, selfNode)
-		if err != nil {
-			continue
-		}
-		self, ok := mobilityPoolMemberByNodeRef(spec.Members, selfNode)
-		if !ok || strings.TrimSpace(self.OwnershipDiscovery.Mode) != "onprem-l2" {
-			continue
-		}
-		for _, source := range self.OwnershipDiscovery.Sources {
-			sourceType := strings.TrimSpace(source.Type)
-			if sourceType != mobilitycontroller.OnPremSourceARPObserver && sourceType != mobilitycontroller.OnPremSourceOnDemandARP && sourceType != mobilitycontroller.OnPremSourcePVESVNet {
-				continue
-			}
-			eventInterface := firstNonEmpty(source.Interface, self.Capture.Interface, source.Bridge, source.Network)
-			if strings.TrimSpace(eventInterface) == "" {
-				continue
-			}
-			ifname := interfaceIfName(router, eventInterface)
-			if ifname == "" {
-				ifname = eventInterface
-			}
-			resourceName := strings.TrimSpace(source.Resource)
-			if resourceName == "" {
-				resourceName = safeDaemonResourceName("mobility-" + res.Metadata.Name + "-" + selfNode + "-" + sourceType + "-" + eventInterface)
-			}
-			if seen[resourceName] {
-				continue
-			}
-			seen[resourceName] = true
-			socket := filepath.Join(defaults.RuntimeDir, "arp-observer", resourceName+".sock")
-			if override := strings.TrimSpace(r.Opts.DaemonSockets[resourceName]); override != "" {
-				socket = override
-			}
-			out = append(out, mobilityARPObserverDaemonSpec{
-				ResourceName:      resourceName,
-				PoolName:          strings.TrimSpace(res.Metadata.Name),
-				Prefix:            strings.TrimSpace(spec.Prefix),
-				SourceType:        sourceType,
-				IfName:            ifname,
-				EventInterface:    eventInterface,
-				Network:           strings.TrimSpace(source.Network),
-				Bridge:            strings.TrimSpace(source.Bridge),
-				Socket:            socket,
-				EventFile:         filepath.Join(defaults.StateDir, "arp-observer", resourceName, "events.jsonl"),
-				SourceAddress:     statusAddressValue(resourcequery.Value(r.Store, source.SourceAddressFrom)),
-				Observe:           sourceType == mobilitycontroller.OnPremSourceARPObserver || sourceType == mobilitycontroller.OnPremSourcePVESVNet,
-				OnDemand:          sourceType == mobilitycontroller.OnPremSourceOnDemandARP,
-				ProbeTimeout:      strings.TrimSpace(source.ProbeTimeout),
-				ProbeRetries:      source.ProbeRetries,
-				ScanInterval:      strings.TrimSpace(source.ScanInterval),
-				IgnoredSenderMACs: ignoredSenderMACs,
-			})
-		}
+		out = append(out, mobilityARPObserverDaemonSpec{
+			ResourceName:      resourceName,
+			PoolName:          poolName,
+			Prefix:            prefix,
+			SourceType:        sourceType,
+			IfName:            ifName,
+			EventInterface:    eventInterface,
+			Network:           strings.TrimSpace(intent.Network),
+			Bridge:            strings.TrimSpace(intent.Bridge),
+			Socket:            socket,
+			EventFile:         filepath.Join(defaults.StateDir, "arp-observer", resourceName, "events.jsonl"),
+			SourceAddress:     strings.TrimSpace(intent.SourceAddress),
+			Observe:           intent.Observe,
+			OnDemand:          intent.OnDemand,
+			ProbeTimeout:      strings.TrimSpace(intent.ProbeTimeout),
+			ProbeRetries:      intent.ProbeRetries,
+			ScanInterval:      strings.TrimSpace(intent.ScanInterval),
+			IgnoredSenderMACs: append([]string(nil), intent.IgnoredSenderMACs...),
+		})
 	}
-	return out
-}
-
-func samNodeSetMACAddresses(router *api.Router) []string {
-	if router == nil {
-		return nil
-	}
-	seen := map[string]bool{}
-	for _, res := range router.Spec.Resources {
-		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "SAMNodeSet" {
-			continue
-		}
-		spec, err := res.SAMNodeSetSpec()
-		if err != nil {
-			continue
-		}
-		for _, node := range spec.Nodes {
-			for _, value := range node.MACAddresses {
-				mac, err := net.ParseMAC(strings.TrimSpace(value))
-				if err != nil {
-					continue
-				}
-				seen[strings.ToLower(mac.String())] = true
-			}
-		}
-	}
-	out := make([]string, 0, len(seen))
-	for mac := range seen {
-		out = append(out, mac)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func chainRouterSelfNode(router *api.Router, groupRef string) (string, error) {
-	groupRef = strings.TrimSpace(groupRef)
-	if groupRef == "" {
-		return "", fmt.Errorf("groupRef is required")
-	}
-	if router == nil {
-		return "", fmt.Errorf("EventGroup/%s not found", groupRef)
-	}
-	for _, res := range router.Spec.Resources {
-		if res.APIVersion != api.FederationAPIVersion || res.Kind != "EventGroup" || res.Metadata.Name != groupRef {
-			continue
-		}
-		spec, err := res.EventGroupSpec()
-		if err != nil {
-			return "", err
-		}
-		if strings.TrimSpace(spec.NodeName) == "" {
-			return "", fmt.Errorf("EventGroup/%s spec.nodeName is required", groupRef)
-		}
-		return strings.TrimSpace(spec.NodeName), nil
-	}
-	return "", fmt.Errorf("EventGroup/%s not found", groupRef)
-}
-
-func mobilityPoolMemberByNodeRef(members []api.MobilityPoolMember, nodeRef string) (api.MobilityPoolMember, bool) {
-	for _, member := range members {
-		if strings.TrimSpace(member.NodeRef) == strings.TrimSpace(nodeRef) {
-			return member, true
-		}
-	}
-	return api.MobilityPoolMember{}, false
-}
-
-func safeDaemonResourceName(value string) string {
-	value = strings.TrimSpace(value)
-	var b strings.Builder
-	lastDash := false
-	for _, r := range value {
-		ok := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
-		if ok {
-			b.WriteRune(r)
-			lastDash = false
-			continue
-		}
-		if !lastDash {
-			b.WriteByte('-')
-			lastDash = true
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if out == "" {
-		return "arp-observer"
-	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ResourceName < out[j].ResourceName })
 	return out
 }
 
@@ -3462,6 +3351,11 @@ func (r *Runner) startARPObserverDaemonSources(ctx context.Context, logger *slog
 			Daemon:    daemonapi.DaemonRef{Name: "routerd-arp-observer-" + spec.ResourceName, Kind: "routerd-arp-observer", Instance: spec.ResourceName},
 			Socket:    spec.Socket,
 			Publisher: r.Bus,
+			// ARP observations are persisted as TTL-bounded federation events.
+			// Replay that event history after a router restart so the discovery
+			// controller reconstructs ownership from the durable source rather
+			// than from a MobilityPool status projection.
+			Replay: true,
 		}
 		go func(spec mobilityARPObserverDaemonSpec, source daemonsource.DaemonSource) {
 			if err := source.Run(ctx); err != nil && ctx.Err() == nil {
@@ -4184,17 +4078,17 @@ func interfaceStatusAddresses(ifi *net.Interface) ([]string, []string, []string)
 }
 
 type IPv4StaticAddressController struct {
-	Router         *api.Router
-	DeclaredRouter *api.Router
-	WhenRouter     *api.Router
-	Bus            *bus.Bus
-	Store          Store
-	DryRun         bool
-	Logger         *slog.Logger
-	Command        commandFunc
-	AddressPresent func(context.Context, string, string) bool
-	DevicePresent  func(context.Context, string) bool
-	AddressList    func(context.Context, string) ([]string, error)
+	Router            *api.Router
+	DeclaredRouter    *api.Router
+	WhenRouter        *api.Router
+	Bus               *bus.Bus
+	Store             Store
+	MobilityDataplane dynamicconfig.MobilityDataplanePlan
+	DryRun            bool
+	Logger            *slog.Logger
+	Command           commandFunc
+	AddressPresent    func(context.Context, string, string) bool
+	DevicePresent     func(context.Context, string) bool
 }
 
 type DaemonStatusController struct {
@@ -4242,28 +4136,6 @@ func (c DaemonStatusController) Reconcile(ctx context.Context) error {
 				"health":     observed.Health,
 				"conditions": observed.Conditions,
 				"updatedAt":  time.Now().UTC().Format(time.RFC3339Nano),
-			}
-			if observed.Resource.APIVersion == api.MobilityAPIVersion && observed.Resource.Kind == "MobilityPool" {
-				next := copyStatusMap(base)
-				for key, value := range observed.Observed {
-					next[key] = value
-				}
-				mergeMobilityObservedSourceStatus(next, observed.Observed)
-				if store, ok := c.Store.(objectStatusMerger); ok {
-					if err := store.MergeObjectStatus(observed.Resource.APIVersion, observed.Resource.Kind, observed.Resource.Name, next); err != nil {
-						return err
-					}
-					continue
-				}
-				full := copyStatusMap(c.Store.ObjectStatus(observed.Resource.APIVersion, observed.Resource.Kind, observed.Resource.Name))
-				for key, value := range next {
-					full[key] = value
-				}
-				next = full
-				if err := c.Store.SaveObjectStatus(observed.Resource.APIVersion, observed.Resource.Kind, observed.Resource.Name, next); err != nil {
-					return err
-				}
-				continue
 			}
 			next := copyStatusMap(base)
 			if daemonStatusObservedOnlyKind(observed.Resource.Kind) {
@@ -4388,43 +4260,6 @@ func normalizedDaemonObservedValue(kind, key, value string) any {
 		}
 	}
 	return value
-}
-
-func mergeMobilityObservedSourceStatus(status map[string]any, observed map[string]string) {
-	sourceType := strings.TrimSpace(observed["sourceType"])
-	if sourceType == "" {
-		return
-	}
-	bySource := statusMap(status["observedClientsBySource"])
-	snapshot := map[string]any{}
-	for key, value := range observed {
-		snapshot[key] = value
-	}
-	bySource[sourceType] = snapshot
-	status["observedClientsBySource"] = bySource
-}
-
-func statusMap(value any) map[string]any {
-	out := map[string]any{}
-	switch typed := value.(type) {
-	case map[string]any:
-		for key, item := range typed {
-			out[key] = item
-		}
-	case map[string]string:
-		for key, item := range typed {
-			out[key] = item
-		}
-	case map[string]map[string]any:
-		for key, item := range typed {
-			out[key] = item
-		}
-	case map[any]any:
-		for key, item := range typed {
-			out[fmt.Sprint(key)] = item
-		}
-	}
-	return out
 }
 
 func (c DaemonStatusController) daemonSockets() []string {
@@ -4622,10 +4457,7 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 	if err := c.cleanupRemovedIPv4StaticAddresses(ctx); err != nil {
 		return err
 	}
-	if err := c.cleanupStaleMobilityProviderOSAddresses(ctx); err != nil {
-		return err
-	}
-	return nil
+	return c.reconcileMobilityStaticAddresses(ctx)
 }
 
 func (c IPv4StaticAddressController) cleanupRemovedIPv4StaticAddresses(ctx context.Context) error {
@@ -4810,150 +4642,6 @@ func (c IPv4StaticAddressController) teardownRemovedIPv4StaticAddress(ctx contex
 		}
 	}
 	return nil
-}
-
-func (c IPv4StaticAddressController) cleanupStaleMobilityProviderOSAddresses(ctx context.Context) error {
-	if c.Router == nil || c.Store == nil || c.DryRun || platform.CurrentOS() != platform.OSLinux {
-		return nil
-	}
-	selfByGroup := eventGroupSelfNodes(*c.Router)
-	aliases := interfaceIfNames(*c.Router)
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "MobilityPool" {
-			continue
-		}
-		spec, err := resource.MobilityPoolSpec()
-		if err != nil || mobilityDeliveryMode(spec) != "bgp" {
-			continue
-		}
-		selfNode := strings.TrimSpace(selfByGroup[strings.TrimSpace(spec.GroupRef)])
-		if selfNode == "" {
-			continue
-		}
-		spec, _, err = mobilityconfig.NormalizeMobilityPool(spec, selfNode)
-		if err != nil {
-			continue
-		}
-		self, ok := mobilityPoolMemberByNode(spec.Members, selfNode)
-		if !ok || strings.TrimSpace(self.Capture.Type) != "provider-secondary-ip" || !self.Capture.ConfigureOSAddress {
-			continue
-		}
-		ifname := resolveInterfaceIfName(strings.TrimSpace(self.Capture.Interface), aliases)
-		if ifname == "" {
-			continue
-		}
-		prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
-		if err != nil || !prefix.Addr().Is4() {
-			continue
-		}
-		status := c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", resource.Metadata.Name)
-		if !statusKeyObserved(status, "discoverySelfPrivateIPs") || !statusKeyObserved(status, "discoverySelfCapturedAddresses") {
-			continue
-		}
-		privateHosts := map[string]bool{}
-		keepCIDRs := map[string]bool{}
-		for _, value := range statusStringSlice(status["discoverySelfPrivateIPs"]) {
-			if normalized, ok := normalizeIPv4HostPrefixInPool(value, prefix.Masked()); ok {
-				privateHosts[strings.TrimSuffix(normalized, "/32")] = true
-			}
-		}
-		for _, res := range c.Router.Spec.Resources {
-			if res.APIVersion != api.NetAPIVersion || res.Kind != "IPv4StaticAddress" {
-				continue
-			}
-			spec, err := res.IPv4StaticAddressSpec()
-			if err != nil || resolveInterfaceIfName(strings.TrimSpace(spec.Interface), aliases) != ifname {
-				continue
-			}
-			if normalized, ok := normalizeIPv4HostPrefixInPool(spec.Address, prefix.Masked()); ok {
-				keepCIDRs[normalized] = true
-			}
-		}
-		current, err := c.listIPv4InterfaceAddresses(ctx, ifname)
-		if err != nil {
-			return err
-		}
-		command := c.Command
-		if command == nil {
-			command = runCommandContext
-		}
-		for _, address := range current {
-			normalized, ok := normalizeIPv4HostPrefixInPool(address, prefix.Masked())
-			if !ok {
-				continue
-			}
-			host := strings.TrimSuffix(normalized, "/32")
-			if privateHosts[host] || keepCIDRs[strings.TrimSpace(address)] || keepCIDRs[normalized] && strings.TrimSpace(address) == normalized {
-				continue
-			}
-			name, args := ipv4StaticAddressDeleteCommand(platform.CurrentOS(), ifname, address)
-			if err := command(ctx, name, args...); err != nil {
-				return fmt.Errorf("delete stale MobilityPool/%s OS address %s dev %s: %w", resource.Metadata.Name, address, ifname, err)
-			}
-			if c.Bus != nil {
-				event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.mobility.os_address.removed", daemonapi.SeverityInfo)
-				event.Resource = &daemonapi.ResourceRef{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool", Name: resource.Metadata.Name}
-				event.Attributes = map[string]string{"address": address, "ifname": ifname, "reason": "stale-provider-secondary-os-address"}
-				if err := c.Bus.Publish(ctx, event); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func (c IPv4StaticAddressController) listIPv4InterfaceAddresses(ctx context.Context, ifname string) ([]string, error) {
-	if c.AddressList != nil {
-		return c.AddressList(ctx, ifname)
-	}
-	return linuxIPv4InterfaceAddresses(ctx, ifname)
-}
-
-func linuxIPv4InterfaceAddresses(ctx context.Context, ifname string) ([]string, error) {
-	out, err := exec.CommandContext(ctx, "ip", "-4", "-o", "addr", "show", "dev", ifname).Output()
-	if err != nil {
-		return nil, fmt.Errorf("ip -4 -o addr show dev %s: %w", ifname, err)
-	}
-	var addresses []string
-	fields := strings.Fields(string(out))
-	for i := 0; i+1 < len(fields); i++ {
-		if fields[i] != "inet" {
-			continue
-		}
-		address := strings.TrimPrefix(fields[i+1], "addr:")
-		if strings.TrimSpace(address) != "" {
-			addresses = append(addresses, address)
-		}
-	}
-	return addresses, nil
-}
-
-func normalizeIPv4HostPrefixInPool(value string, pool netip.Prefix) (string, bool) {
-	value = strings.TrimSpace(value)
-	if value == "" || !pool.Addr().Is4() {
-		return "", false
-	}
-	var addr netip.Addr
-	if prefix, err := netip.ParsePrefix(value); err == nil && prefix.Addr().Is4() {
-		addr = prefix.Addr()
-	} else if parsed, err := netip.ParseAddr(value); err == nil && parsed.Is4() {
-		addr = parsed
-	} else {
-		return "", false
-	}
-	if !pool.Contains(addr) {
-		return "", false
-	}
-	return netip.PrefixFrom(addr, 32).String(), true
-}
-
-func statusKeyObserved(status map[string]any, key string) bool {
-	if status == nil {
-		return false
-	}
-	_, ok := status[key]
-	return ok
 }
 
 func cleanStatusString(value any) string {
@@ -5506,7 +5194,7 @@ func managedDelegatedAddressCandidate(value, current string, spec api.IPv6Delega
 	if prefixLength == 128 || prefix.Bits() != prefixLength {
 		return "", false
 	}
-	suffix, err := netip.ParseAddr(firstNonEmpty(strings.TrimSpace(spec.AddressSuffix), "::1"))
+	suffix, err := netip.ParseAddr(stringutil.FirstNonEmpty(strings.TrimSpace(spec.AddressSuffix), "::1"))
 	if err != nil || !suffix.Is6() || !sameIPv6HostSuffix64(prefix.Addr(), suffix) {
 		return "", false
 	}
@@ -5947,7 +5635,7 @@ func delegatedAddressUsedByDSLite(router *api.Router, name string) bool {
 	if !found {
 		return false
 	}
-	delegatedSuffix, err := netip.ParseAddr(firstNonEmpty(strings.TrimSpace(delegated.AddressSuffix), "::1"))
+	delegatedSuffix, err := netip.ParseAddr(stringutil.FirstNonEmpty(strings.TrimSpace(delegated.AddressSuffix), "::1"))
 	if err != nil || !delegatedSuffix.Is6() {
 		return false
 	}
@@ -5956,13 +5644,13 @@ func delegatedAddressUsedByDSLite(router *api.Router, name string) bool {
 			continue
 		}
 		spec, err := resource.DSLiteTunnelSpec()
-		if err != nil || firstNonEmpty(spec.LocalAddressSource, "interface") != "delegatedAddress" {
+		if err != nil || stringutil.FirstNonEmpty(spec.LocalAddressSource, "interface") != "delegatedAddress" {
 			continue
 		}
 		if strings.TrimSpace(spec.LocalDelegatedAddress) != strings.TrimSpace(name) {
 			continue
 		}
-		endpointSuffix, err := netip.ParseAddr(firstNonEmpty(strings.TrimSpace(spec.LocalAddressSuffix), strings.TrimSpace(delegated.AddressSuffix), "::1"))
+		endpointSuffix, err := netip.ParseAddr(stringutil.FirstNonEmpty(strings.TrimSpace(spec.LocalAddressSuffix), strings.TrimSpace(delegated.AddressSuffix), "::1"))
 		if err == nil && endpointSuffix.Is6() && endpointSuffix == delegatedSuffix {
 			return true
 		}
@@ -6342,7 +6030,7 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 }
 
 func statusStringPreferObserved(status map[string]any, field string) string {
-	if observed := statusMap(status["observed"]); len(observed) > 0 {
+	if observed := statusValueMap(status["observed"]); len(observed) > 0 {
 		text := strings.TrimSpace(fmt.Sprint(observed[field]))
 		if text != "" && text != "<nil>" {
 			return text
@@ -6374,52 +6062,12 @@ func (c LANAddressController) linkReady(name string) bool {
 }
 
 func interfaceIfName(router *api.Router, name string) string {
-	if router == nil {
-		return name
-	}
-	for _, resource := range router.Spec.Resources {
-		if resource.Metadata.Name != name {
-			continue
-		}
-		switch resource.Kind {
-		case "Interface":
-			spec, err := resource.InterfaceSpec()
-			if err == nil && spec.IfName != "" {
-				return spec.IfName
-			}
-		case "Bridge":
-			spec, err := resource.BridgeSpec()
-			if err == nil && spec.IfName != "" {
-				return spec.IfName
-			}
-		case "VXLANSegment":
-			spec, err := resource.VXLANSegmentSpec()
-			if err == nil && spec.IfName != "" {
-				return spec.IfName
-			}
-		case "WireGuardInterface":
-			spec, err := resource.WireGuardInterfaceSpec()
-			if err == nil && spec.IfName != "" {
-				return spec.IfName
-			}
-		case "PPPoESession":
-			spec, err := resource.PPPoESessionSpec()
-			if err == nil {
-				return firstNonEmpty(spec.IfName, "ppp-"+resource.Metadata.Name)
-			}
-		case "DSLiteTunnel":
-			spec, err := resource.DSLiteTunnelSpec()
-			if err == nil {
-				return firstNonEmpty(spec.TunnelName, resource.Metadata.Name)
-			}
-		}
-	}
-	return name
+	return api.ResolveInterfaceIfName(router, name)
 }
 
 func renderAndEnsureDnsmasq(ctx context.Context, router *api.Router, store Store, command, configPath, pidFile string, port int, listenAddresses []string) error {
-	configPath = firstNonEmpty(configPath, "/run/routerd/dnsmasq-phase1.conf")
-	pidFile = firstNonEmpty(pidFile, "/run/routerd/dnsmasq-phase1.pid")
+	configPath = stringutil.FirstNonEmpty(configPath, "/run/routerd/dnsmasq-phase1.conf")
+	pidFile = stringutil.FirstNonEmpty(pidFile, "/run/routerd/dnsmasq-phase1.pid")
 	if port == 0 {
 		port = 1053
 	}
@@ -6599,10 +6247,10 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		tag := sanitizeChainTag(resource.Metadata.Name)
 		lines = append(lines, "interface="+ifname)
 		lines = append(lines, "dhcp-script=/usr/local/libexec/routerd/dhcp-event-relay")
-		start := firstNonEmpty(spec.AddressPool.Start, spec.RangeStart)
-		end := firstNonEmpty(spec.AddressPool.End, spec.RangeEnd)
-		leaseTime := firstNonEmpty(spec.AddressPool.LeaseTime, spec.LeaseTime, "12h")
-		gateway := firstNonEmpty(statusAddressValue(resourcequery.Value(store, spec.GatewayFrom)), spec.Gateway)
+		start := stringutil.FirstNonEmpty(spec.AddressPool.Start, spec.RangeStart)
+		end := stringutil.FirstNonEmpty(spec.AddressPool.End, spec.RangeEnd)
+		leaseTime := stringutil.FirstNonEmpty(spec.AddressPool.LeaseTime, spec.LeaseTime, "12h")
+		gateway := stringutil.FirstNonEmpty(statusvalue.Address(resourcequery.Value(store, spec.GatewayFrom)), spec.Gateway)
 		dnsServerSources, _ := expandIPv4DHCPServerSources(store, spec.DNSServerFrom, "DNSServerFrom")
 		ntpServerSources, _ := expandIPv4DHCPServerSources(store, spec.NTPServerFrom, "NTPServerFrom")
 		dnsServers := append(expandIPv4DHCPServers(spec.DNSServers), dnsServerSources...)
@@ -6635,7 +6283,7 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 			for _, oui := range scope.Match.OUIPrefixes {
 				lines = append(lines, "dhcp-mac=set:"+matchTag+","+strings.ToLower(oui)+":*:*:*")
 			}
-			scopeLease := firstNonEmpty(addressPool.LeaseTime, leaseTime)
+			scopeLease := stringutil.FirstNonEmpty(addressPool.LeaseTime, leaseTime)
 			scopeRange := fmt.Sprintf("dhcp-range=tag:%s,set:%s,%s,%s", matchTag, scopeTag, addressPool.Start, addressPool.End)
 			if netmask != "" {
 				scopeRange += "," + netmask
@@ -6710,8 +6358,8 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		}
 		tag := sanitizeChainTag(resource.Metadata.Name)
 		lines = append(lines, "interface="+ifname, "enable-ra")
-		leaseTime := firstNonEmpty(spec.AddressPool.LeaseTime, spec.LeaseTime, "12h")
-		switch firstNonEmpty(spec.Mode, "stateless") {
+		leaseTime := stringutil.FirstNonEmpty(spec.AddressPool.LeaseTime, spec.LeaseTime, "12h")
+		switch stringutil.FirstNonEmpty(spec.Mode, "stateless") {
 		case "stateful":
 			lines = append(lines, fmt.Sprintf("dhcp-range=set:%s,%s,%s,constructor:%s,64,%s", tag, spec.AddressPool.Start, spec.AddressPool.End, ifname, leaseTime))
 		case "both":
@@ -7005,7 +6653,7 @@ func dnsmasqReservationHostLines(router *api.Router) []string {
 func expandIPv4DHCPServers(values []string) []string {
 	var out []string
 	for _, value := range values {
-		if address := statusAddressValue(value); address != "" {
+		if address := statusvalue.Address(value); address != "" {
 			out = append(out, address)
 		}
 	}
@@ -7017,7 +6665,7 @@ func expandIPv4DHCPServerSources(store Store, sources []api.StatusValueSourceSpe
 	for _, source := range sources {
 		before := len(out)
 		for _, value := range resourcequery.Values(store, source) {
-			if address := statusAddressValue(value); address != "" {
+			if address := statusvalue.Address(value); address != "" {
 				out = append(out, address)
 			}
 		}
@@ -7028,17 +6676,6 @@ func expandIPv4DHCPServerSources(store Store, sources []api.StatusValueSourceSpe
 		}
 	}
 	return out, ""
-}
-
-func statusAddressValue(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	if prefix, err := netip.ParsePrefix(value); err == nil {
-		return prefix.Addr().String()
-	}
-	return value
 }
 
 func dnsmasqIPv6Address(value string) string {
@@ -7111,7 +6748,7 @@ func expandDomainValues(router *api.Router, store Store, values []string, source
 
 func dhcpv4ServerPending(router *api.Router, store Store, spec api.DHCPv4ServerSpec) string {
 	if strings.TrimSpace(spec.GatewayFrom.Resource) != "" {
-		if address := statusAddressValue(resourcequery.Value(store, spec.GatewayFrom)); address == "" {
+		if address := statusvalue.Address(resourcequery.Value(store, spec.GatewayFrom)); address == "" {
 			if pending := unresolvedStatusSourceReason("GatewayFrom", spec.GatewayFrom); pending != "" {
 				return pending
 			}
@@ -7167,7 +6804,7 @@ func ensureDnsmasq(ctx context.Context, command, configPath, pidFile string, cha
 	dnsmasqMu.Lock()
 	defer dnsmasqMu.Unlock()
 
-	command = firstNonEmpty(command, "dnsmasq")
+	command = stringutil.FirstNonEmpty(command, "dnsmasq")
 	if err := testDnsmasqConfig(ctx, command, configPath); err != nil {
 		return err
 	}
@@ -7367,7 +7004,7 @@ func dnsmasqCmdlineUsesConfig(fields []string, configPath string) bool {
 }
 
 func dnsmasqCommandPath(command string) string {
-	command = strings.TrimSpace(firstNonEmpty(command, "dnsmasq"))
+	command = strings.TrimSpace(stringutil.FirstNonEmpty(command, "dnsmasq"))
 	if strings.ContainsRune(command, os.PathSeparator) {
 		return command
 	}
@@ -7387,7 +7024,7 @@ func runSystemctl(ctx context.Context, args ...string) error {
 
 func startDnsmasq(ctx context.Context, command, configPath, pidFile string) error {
 	_ = os.Remove(pidFile)
-	cmd := exec.CommandContext(ctx, firstNonEmpty(command, "dnsmasq"), "--keep-in-foreground", "--conf-file="+configPath, "--pid-file="+pidFile)
+	cmd := exec.CommandContext(ctx, stringutil.FirstNonEmpty(command, "dnsmasq"), "--keep-in-foreground", "--conf-file="+configPath, "--pid-file="+pidFile)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 	if err := cmd.Start(); err != nil {
@@ -7411,15 +7048,6 @@ func startDnsmasq(ctx context.Context, command, configPath, pidFile string) erro
 	return nil
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
-}
-
 func chainFirstNonZero(values ...int) int {
 	for _, value := range values {
 		if value != 0 {
@@ -7427,6 +7055,10 @@ func chainFirstNonZero(values ...int) int {
 		}
 	}
 	return 0
+}
+
+func firstNonEmpty(values ...string) string {
+	return stringutil.FirstNonEmpty(values...)
 }
 
 func atoi(value string) int {

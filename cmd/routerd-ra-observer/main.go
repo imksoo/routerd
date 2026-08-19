@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/eventfile"
@@ -123,7 +124,7 @@ func daemonCommand(args []string) error {
 		routers:       map[string]raobserver.RouterObservation{},
 	}
 	d.cond = sync.NewCond(&d.mu)
-	d.selfMAC = firstNonEmpty(opts.selfMAC, interfaceMAC(opts.ifname))
+	d.selfMAC = stringutil.FirstNonEmpty(opts.selfMAC, interfaceMAC(opts.ifname))
 	go d.observe(ctx)
 	return d.serve(ctx)
 }
@@ -290,7 +291,7 @@ func (d *daemon) observedRoutersLocked() []raobserver.RouterObservation {
 		out = append(out, router)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		return firstNonEmpty(out[i].SourceMAC, out[i].SourceLLA) < firstNonEmpty(out[j].SourceMAC, out[j].SourceLLA)
+		return stringutil.FirstNonEmpty(out[i].SourceMAC, out[i].SourceLLA) < stringutil.FirstNonEmpty(out[j].SourceMAC, out[j].SourceLLA)
 	})
 	return out
 }
@@ -369,15 +370,6 @@ func conditionStatus(ok bool) string {
 		return "True"
 	}
 	return "False"
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func writeHTTPJSON(w http.ResponseWriter, value any) {

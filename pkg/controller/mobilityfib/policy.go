@@ -1,33 +1,37 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
+// Package mobilityfib admits only the typed MobilityPool FIB plan produced by
+// the mobility controller. It must not normalize MobilityPool configuration or
+// recover desired state from status.
 package mobilityfib
 
 import (
-	"fmt"
 	"net/netip"
 	"sort"
 	"strings"
 
-	"github.com/imksoo/routerd/pkg/api"
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
-	"github.com/imksoo/routerd/pkg/mobilityconfig"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
 )
 
-type StatusReader interface {
-	ObjectStatus(apiVersion, kind, name string) map[string]any
-}
-
 type Snapshot struct {
-	pools []poolSnapshot
+	pools           []poolSnapshot
+	invalidPrefixes []netip.Prefix
 }
 
 type poolSnapshot struct {
-	name        string
-	selfNode    string
-	prefix      netip.Prefix
-	verdicts    map[string]Verdict
-	staticLocal map[string]bool
-	localReturn map[string]bool
+	name            string
+	prefix          netip.Prefix
+	verdicts        map[string]Verdict
+	remoteReturn    map[string]bool
+	preferredSource netip.Prefix
+}
+
+type scopedPool struct {
+	name            string
+	prefix          netip.Prefix
+	remoteReturn    map[string]bool
+	preferredSource netip.Prefix
 }
 
 const (
@@ -37,11 +41,16 @@ const (
 )
 
 const (
-	communityMobilityOwner          = "64512:100"
+	communityMobilityOwner          = bgpstate.MobilityCommunityOwner
+	communityMobilityRoleOnPrem     = "64512:101"
+	communityMobilityRoleCloud      = "64512:102"
 	communityMobilitySourceObserved = "64512:110"
 	communityMobilitySourceStatic   = "64512:111"
 	communityMobilitySourceHandover = "64512:112"
 	communityMobilityReturnRoute    = bgpstate.MobilityCommunityReturnRoute
+	communityMobilityFailover       = "64512:120"
+	communityMobilityActiveHolder   = "64512:121"
+	communityMobilityNodeLiveness   = bgpstate.MobilityCommunityNodeLiveness
 )
 
 type Verdict struct {
@@ -52,191 +61,345 @@ type Verdict struct {
 	Reason    string
 }
 
-func NewSnapshot(router *api.Router, reader StatusReader) Snapshot {
-	if router == nil {
-		return Snapshot{}
+// PreferredSource is a direct projection of a normalized FIBPoolScope. The
+// BGP controller consumes it without reopening MobilityPool configuration.
+type PreferredSource struct {
+	PoolRef       string
+	Prefix        netip.Prefix
+	Address       string
+	AddressPrefix string
+}
+
+// NewSnapshotFromVerdicts builds the BGP admission policy solely from the
+// typed mobility plan. A valid Pool scope is mandatory: old or malformed
+// unscoped mobility data is deliberately fail-closed rather than falling back
+// to a second MobilityPool normalization.
+func NewSnapshotFromVerdicts(verdicts []dynamicconfig.FIBVerdict) Snapshot {
+	validatedVerdicts, invalidPrefixes := validatedMobilityFIBVerdicts(verdicts)
+	scopes, scopeInvalidPrefixes := poolScopesFromVerdicts(validatedVerdicts)
+	invalidPrefixes = appendInvalidPrefixes(invalidPrefixes, scopeInvalidPrefixes)
+	if len(scopes) == 0 {
+		return Snapshot{invalidPrefixes: invalidPrefixes}
 	}
-	selfByGroup := eventGroupSelfNodes(router)
-	if len(selfByGroup) == 0 {
-		return Snapshot{}
+	pools := make([]poolSnapshot, 0, len(scopes))
+	poolIndexes := make(map[string]int, len(scopes))
+	for _, scope := range scopes {
+		poolIndexes[scope.name] = len(pools)
+		pools = append(pools, poolSnapshot{
+			name:            scope.name,
+			prefix:          scope.prefix,
+			verdicts:        map[string]Verdict{},
+			remoteReturn:    scope.remoteReturn,
+			preferredSource: scope.preferredSource,
+		})
 	}
-	var pools []poolSnapshot
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "MobilityPool" {
+	invalidPools := map[string]bool{}
+	for _, verdict := range validatedVerdicts {
+		poolIndex, ok := poolIndexes[strings.TrimSpace(verdict.PoolRef)]
+		if !ok || strings.TrimSpace(verdict.Address) == "" {
 			continue
 		}
-		spec, err := resource.MobilityPoolSpec()
-		if err != nil || mobilityDeliveryMode(spec) != "bgp" {
+		pool := &pools[poolIndex]
+		address, ok := normalizePoolAddress(verdict.Address, pool.prefix)
+		if !ok {
 			continue
 		}
-		selfNode := strings.TrimSpace(selfByGroup[strings.TrimSpace(spec.GroupRef)])
-		if selfNode == "" {
+		next := Verdict{
+			Address:   address,
+			Action:    strings.TrimSpace(verdict.Action),
+			Class:     strings.TrimSpace(verdict.Class),
+			OwnerNode: strings.TrimSpace(verdict.OwnerNode),
+			Reason:    strings.TrimSpace(verdict.Reason),
+		}
+		if previous, found := pool.verdicts[address]; found && previous != next {
+			invalidPools[pool.name] = true
 			continue
 		}
-		spec, _, err = mobilityconfig.NormalizeMobilityPool(spec, selfNode)
+		pool.verdicts[address] = next
+	}
+	if len(invalidPools) > 0 {
+		remaining := pools[:0]
+		invalidByPrefix := map[string]netip.Prefix{}
+		for _, prefix := range invalidPrefixes {
+			invalidByPrefix[prefix.String()] = prefix
+		}
+		for _, pool := range pools {
+			if invalidPools[pool.name] {
+				invalidByPrefix[pool.prefix.String()] = pool.prefix
+				continue
+			}
+			remaining = append(remaining, pool)
+		}
+		pools = remaining
+		invalidPrefixes = invalidPrefixes[:0]
+		for _, prefix := range invalidByPrefix {
+			invalidPrefixes = append(invalidPrefixes, prefix)
+		}
+		sort.Slice(invalidPrefixes, func(i, j int) bool { return invalidPrefixes[i].String() < invalidPrefixes[j].String() })
+	}
+	return Snapshot{pools: pools, invalidPrefixes: invalidPrefixes}
+}
+
+// validatedMobilityFIBVerdicts keeps the in-process policy boundary as strict
+// as the persistence decoder. Controllers normally validate one record before
+// calling this package, but this second check ensures a direct caller cannot
+// make NewSnapshotFromVerdicts silently normalize or partially use a malformed
+// Pool's address table.
+func validatedMobilityFIBVerdicts(verdicts []dynamicconfig.FIBVerdict) ([]dynamicconfig.FIBVerdict, []netip.Prefix) {
+	byPool := map[string][]dynamicconfig.FIBVerdict{}
+	order := make([]string, 0)
+	knownPools := map[string]bool{}
+	for _, verdict := range verdicts {
+		name := verdict.PoolRef
+		if name == "" || name != strings.TrimSpace(name) {
+			continue
+		}
+		if _, found := byPool[name]; !found {
+			order = append(order, name)
+		}
+		byPool[name] = append(byPool[name], verdict)
+		if verdict.Scope != nil {
+			if _, err := dynamicconfig.ParseCanonicalIPv4Prefix(verdict.Scope.Prefix); err == nil {
+				knownPools[name] = true
+			}
+		}
+	}
+	invalidPools := map[string]bool{}
+	for _, verdict := range verdicts {
+		if verdict.PoolRef == strings.TrimSpace(verdict.PoolRef) {
+			continue
+		}
+		if knownPools[strings.TrimSpace(verdict.PoolRef)] {
+			invalidPools[strings.TrimSpace(verdict.PoolRef)] = true
+		}
+	}
+	valid := make([]dynamicconfig.FIBVerdict, 0, len(verdicts))
+	invalidPrefixes := []netip.Prefix{}
+	for _, name := range order {
+		poolVerdicts := byPool[name]
+		if err := dynamicconfig.ValidateMobilityFIBVerdicts(poolVerdicts, name); err != nil {
+			invalidPools[name] = true
+		}
+		if invalidPools[name] {
+			invalidPrefixes = appendInvalidPrefixes(invalidPrefixes, fibScopePrefixes(poolVerdicts))
+			continue
+		}
+		valid = append(valid, poolVerdicts...)
+	}
+	return valid, invalidPrefixes
+}
+
+func fibScopePrefixes(verdicts []dynamicconfig.FIBVerdict) []netip.Prefix {
+	var prefixes []netip.Prefix
+	for _, verdict := range verdicts {
+		if verdict.Scope == nil {
+			continue
+		}
+		prefix, err := dynamicconfig.ParseCanonicalIPv4Prefix(verdict.Scope.Prefix)
+		if err == nil {
+			prefixes = appendInvalidPrefixes(prefixes, []netip.Prefix{prefix})
+		}
+	}
+	return prefixes
+}
+
+func appendInvalidPrefixes(existing, more []netip.Prefix) []netip.Prefix {
+	byPrefix := make(map[string]netip.Prefix, len(existing)+len(more))
+	for _, prefix := range existing {
+		if prefix.IsValid() {
+			byPrefix[prefix.String()] = prefix
+		}
+	}
+	for _, prefix := range more {
+		if prefix.IsValid() {
+			byPrefix[prefix.String()] = prefix
+		}
+	}
+	out := make([]netip.Prefix, 0, len(byPrefix))
+	for _, prefix := range byPrefix {
+		out = append(out, prefix)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
+	return out
+}
+
+func poolScopesFromVerdicts(verdicts []dynamicconfig.FIBVerdict) ([]scopedPool, []netip.Prefix) {
+	byName := map[string]scopedPool{}
+	invalidNames := map[string]bool{}
+	invalidPrefixes := map[string]netip.Prefix{}
+	for _, verdict := range verdicts {
+		if verdict.Scope == nil {
+			continue
+		}
+		name := strings.TrimSpace(verdict.PoolRef)
+		scope, ok := parsePoolScope(name, *verdict.Scope)
+		if !ok {
+			if name != "" {
+				invalidNames[name] = true
+			}
+			continue
+		}
+		if previous, found := byName[name]; found && !samePoolScope(previous, scope) {
+			invalidNames[name] = true
+			invalidPrefixes[previous.prefix.String()] = previous.prefix
+			invalidPrefixes[scope.prefix.String()] = scope.prefix
+			continue
+		}
+		byName[name] = scope
+	}
+	for name, scope := range byName {
+		if invalidNames[name] {
+			invalidPrefixes[scope.prefix.String()] = scope.prefix
+			delete(byName, name)
+		}
+	}
+	for _, scope := range byName {
+		for _, other := range byName {
+			if scope.name >= other.name || !scope.prefix.Overlaps(other.prefix) {
+				continue
+			}
+			invalidNames[scope.name] = true
+			invalidNames[other.name] = true
+			invalidPrefixes[scope.prefix.String()] = scope.prefix
+			invalidPrefixes[other.prefix.String()] = other.prefix
+		}
+	}
+	for name, scope := range byName {
+		if invalidNames[name] {
+			invalidPrefixes[scope.prefix.String()] = scope.prefix
+			delete(byName, name)
+		}
+	}
+	names := make([]string, 0, len(byName))
+	for name := range byName {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	scopes := make([]scopedPool, 0, len(names))
+	for _, name := range names {
+		scopes = append(scopes, byName[name])
+	}
+	invalid := make([]netip.Prefix, 0, len(invalidPrefixes))
+	for _, prefix := range invalidPrefixes {
+		invalid = append(invalid, prefix)
+	}
+	sort.Slice(invalid, func(i, j int) bool { return invalid[i].String() < invalid[j].String() })
+	return scopes, invalid
+}
+
+func parsePoolScope(name string, scope dynamicconfig.FIBPoolScope) (scopedPool, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return scopedPool{}, false
+	}
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(scope.Prefix))
+	if err != nil || !prefix.Addr().Is4() {
+		return scopedPool{}, false
+	}
+	prefix = prefix.Masked()
+	remoteReturn := map[string]bool{}
+	for _, community := range scope.RemoteReturnCommunities {
+		community = strings.TrimSpace(community)
+		if !bgpstate.IsMobilityNodeIdentityCommunity(community) {
+			return scopedPool{}, false
+		}
+		remoteReturn[community] = true
+	}
+	preferredSource := netip.Prefix{}
+	if raw := strings.TrimSpace(scope.PreferredSource); raw != "" {
+		address, ok := normalizePoolAddress(raw, prefix)
+		if !ok {
+			return scopedPool{}, false
+		}
+		preferredSource, err = netip.ParsePrefix(address)
 		if err != nil {
-			continue
+			return scopedPool{}, false
 		}
-		prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.Prefix))
-		if err != nil || !prefix.Addr().Is4() {
-			continue
-		}
-		pool := poolSnapshot{
-			name:        resource.Metadata.Name,
-			selfNode:    selfNode,
-			prefix:      prefix.Masked(),
-			verdicts:    map[string]Verdict{},
-			staticLocal: map[string]bool{},
-			localReturn: map[string]bool{},
-		}
-		var selfMember api.MobilityPoolMember
-		for _, member := range spec.Members {
-			if strings.TrimSpace(member.NodeRef) == selfNode {
-				selfMember = member
-				break
-			}
-		}
-		for _, member := range spec.Members {
-			nodeRef := strings.TrimSpace(member.NodeRef)
-			if nodeRef == "" {
-				continue
-			}
-			if sameReturnRouteSite(selfMember, member) {
-				if community := bgpstate.MobilityNodeIdentityCommunity(canonicalNodeIdentity(nodeRef)); community != "" {
-					pool.localReturn[community] = true
-				}
-			}
-			if nodeRef != selfNode {
-				continue
-			}
-			for _, raw := range member.StaticOwnedAddresses {
-				if address, ok := normalizePoolAddress(raw, pool.prefix); ok {
-					pool.staticLocal[address] = true
-				}
-			}
-		}
-		if reader != nil {
-			status := reader.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", resource.Metadata.Name)
-			for _, row := range statusMapSlice(status["ownershipResolverFIBVerdicts"]) {
-				parsed := verdictFromMap(row)
-				address, ok := normalizePoolAddress(parsed.Address, pool.prefix)
-				if !ok {
-					continue
-				}
-				parsed.Address = address
-				pool.verdicts[address] = parsed
-			}
-		}
-		pools = append(pools, pool)
 	}
-	return Snapshot{pools: pools}
+	return scopedPool{name: name, prefix: prefix, remoteReturn: remoteReturn, preferredSource: preferredSource}, true
+}
+
+func samePoolScope(a, b scopedPool) bool {
+	if a.name != b.name || a.prefix != b.prefix || a.preferredSource != b.preferredSource || len(a.remoteReturn) != len(b.remoteReturn) {
+		return false
+	}
+	for community := range a.remoteReturn {
+		if !b.remoteReturn[community] {
+			return false
+		}
+	}
+	return true
 }
 
 func (s Snapshot) AdmitBGPPath(prefix netip.Prefix, communities []string) bool {
 	prefix = prefix.Masked()
+	if s.invalidFor(prefix) {
+		return false
+	}
 	pool, ok := s.poolFor(prefix)
 	if !ok {
-		return true
+		// Without a valid scope, an old FIB verdict cannot establish either
+		// the Pool boundary or return-route topology. Fail only mobility-tagged
+		// paths closed; ordinary BGP remains governed by its import policy.
+		return !hasMobilityRoutingCommunity(communities)
 	}
 	if prefix.Bits() != 32 {
 		return false
 	}
 	address := prefix.String()
-	if pool.staticLocal[address] {
-		return false
-	}
 	if hasCommunity(communities, communityMobilityReturnRoute) {
-		return pool.admitReturnRoute(communities)
+		return pool.admitPlannedReturnRoute(communities)
 	}
 	if verdict, ok := pool.verdicts[address]; ok {
 		return strings.TrimSpace(verdict.Action) == ActionDeliverRemote
 	}
-	if !hasCommunity(communities, communityMobilityOwner) {
-		return false
-	}
-	return hasCommunity(communities, communityMobilitySourceObserved) ||
-		hasCommunity(communities, communityMobilitySourceStatic) ||
-		hasCommunity(communities, communityMobilitySourceHandover)
+	return false
 }
 
-func (p poolSnapshot) admitReturnRoute(communities []string) bool {
-	for _, community := range communities {
-		community = strings.TrimSpace(community)
-		if !bgpstate.IsMobilityNodeIdentityCommunity(community) {
-			continue
+func (s Snapshot) invalidFor(prefix netip.Prefix) bool {
+	if !prefix.Addr().Is4() {
+		return false
+	}
+	for _, invalid := range s.invalidPrefixes {
+		if invalid.Contains(prefix.Addr()) {
+			return true
 		}
-		return !p.localReturn[community]
 	}
 	return false
 }
 
-func (s Snapshot) LocalRouteAddressesForPool(poolName string) []string {
-	poolName = strings.TrimSpace(poolName)
-	seen := map[string]bool{}
+func (p poolSnapshot) admitPlannedReturnRoute(communities []string) bool {
+	for _, community := range communities {
+		community = strings.TrimSpace(community)
+		if p.remoteReturn[community] {
+			return true
+		}
+	}
+	return false
+}
+
+func (s Snapshot) PreferredSources() []PreferredSource {
+	out := make([]PreferredSource, 0, len(s.pools))
 	for _, pool := range s.pools {
-		if pool.name != poolName {
+		if !pool.preferredSource.IsValid() {
 			continue
 		}
-		for _, address := range pool.localRouteAddresses() {
-			seen[address] = true
+		out = append(out, PreferredSource{
+			PoolRef:       pool.name,
+			Prefix:        pool.prefix,
+			Address:       pool.preferredSource.Addr().String(),
+			AddressPrefix: pool.preferredSource.String(),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Prefix.Bits() != out[j].Prefix.Bits() {
+			return out[i].Prefix.Bits() > out[j].Prefix.Bits()
 		}
-	}
-	return sortedKeys(seen)
-}
-
-func (s Snapshot) LocalRouteVerdictsForPool(poolName string) []Verdict {
-	poolName = strings.TrimSpace(poolName)
-	seen := map[string]Verdict{}
-	for _, pool := range s.pools {
-		if pool.name != poolName {
-			continue
+		if out[i].Prefix != out[j].Prefix {
+			return out[i].Prefix.String() < out[j].Prefix.String()
 		}
-		for _, verdict := range pool.localRouteVerdicts() {
-			seen[verdict.Address] = verdict
-		}
-	}
-	keys := sortedVerdictKeys(seen)
-	out := make([]Verdict, 0, len(keys))
-	for _, key := range keys {
-		out = append(out, seen[key])
-	}
-	return out
-}
-
-func (p poolSnapshot) localRouteAddresses() []string {
-	seen := map[string]bool{}
-	for address := range p.staticLocal {
-		seen[address] = true
-	}
-	for address, verdict := range p.verdicts {
-		if strings.TrimSpace(verdict.Action) == ActionLocalRoute {
-			seen[address] = true
-		}
-	}
-	return sortedKeys(seen)
-}
-
-func (p poolSnapshot) localRouteVerdicts() []Verdict {
-	seen := map[string]Verdict{}
-	for address := range p.staticLocal {
-		seen[address] = Verdict{
-			Address:   address,
-			Action:    ActionLocalRoute,
-			Class:     "StaticOwned",
-			OwnerNode: p.selfNode,
-			Reason:    "static-local",
-		}
-	}
-	for address, verdict := range p.verdicts {
-		if strings.TrimSpace(verdict.Action) == ActionLocalRoute {
-			seen[address] = verdict
-		}
-	}
-	keys := sortedVerdictKeys(seen)
-	out := make([]Verdict, 0, len(keys))
-	for _, key := range keys {
-		out = append(out, seen[key])
-	}
+		return out[i].PoolRef < out[j].PoolRef
+	})
 	return out
 }
 
@@ -250,64 +413,6 @@ func (s Snapshot) poolFor(prefix netip.Prefix) (poolSnapshot, bool) {
 		}
 	}
 	return poolSnapshot{}, false
-}
-
-func verdictFromMap(row map[string]string) Verdict {
-	return Verdict{
-		Address:   row["address"],
-		Action:    row["action"],
-		Class:     row["class"],
-		OwnerNode: row["ownerNode"],
-		Reason:    row["reason"],
-	}
-}
-
-func eventGroupSelfNodes(router *api.Router) map[string]string {
-	out := map[string]string{}
-	if router == nil {
-		return out
-	}
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.FederationAPIVersion || resource.Kind != "EventGroup" {
-			continue
-		}
-		spec, err := resource.EventGroupSpec()
-		if err == nil {
-			out[resource.Metadata.Name] = strings.TrimSpace(spec.NodeName)
-		}
-	}
-	return out
-}
-
-func mobilityDeliveryMode(spec api.MobilityPoolSpec) string {
-	switch strings.TrimSpace(spec.DeliveryPolicy.Mode) {
-	case "":
-		return "bgp"
-	default:
-		return strings.TrimSpace(spec.DeliveryPolicy.Mode)
-	}
-}
-
-func sameReturnRouteSite(a, b api.MobilityPoolMember) bool {
-	aNode := strings.TrimSpace(a.NodeRef)
-	bNode := strings.TrimSpace(b.NodeRef)
-	if aNode == "" || bNode == "" {
-		return false
-	}
-	if aNode == bNode {
-		return true
-	}
-	aSite := strings.TrimSpace(a.Site)
-	bSite := strings.TrimSpace(b.Site)
-	return aSite != "" && aSite == bSite
-}
-
-func canonicalNodeIdentity(value string) string {
-	value = strings.TrimSpace(value)
-	if strings.HasPrefix(value, "Node/") {
-		return strings.TrimSpace(strings.TrimPrefix(value, "Node/"))
-	}
-	return value
 }
 
 func normalizePoolAddress(value string, pool netip.Prefix) (string, bool) {
@@ -335,69 +440,23 @@ func normalizePoolAddress(value string, pool netip.Prefix) (string, bool) {
 	return netip.PrefixFrom(addr, 32).String(), true
 }
 
-func statusMapSlice(value any) []map[string]string {
-	var out []map[string]string
-	switch typed := value.(type) {
-	case []map[string]string:
-		return append([]map[string]string(nil), typed...)
-	case []map[string]any:
-		for _, item := range typed {
-			out = append(out, statusAnyMapToStringMap(item))
-		}
-	case []any:
-		for _, item := range typed {
-			switch v := item.(type) {
-			case map[string]string:
-				out = append(out, v)
-			case map[string]any:
-				out = append(out, statusAnyMapToStringMap(v))
-			}
-		}
-	}
-	return out
-}
-
-func statusAnyMapToStringMap(values map[string]any) map[string]string {
-	out := map[string]string{}
-	for key, value := range values {
-		key = strings.TrimSpace(key)
-		if key == "" {
-			continue
-		}
-		text := strings.TrimSpace(fmt.Sprint(value))
-		if text == "<nil>" {
-			text = ""
-		}
-		out[key] = text
-	}
-	return out
-}
-
-func firstNonEmpty(values ...string) string {
+func hasMobilityRoutingCommunity(values []string) bool {
 	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
+		switch strings.TrimSpace(value) {
+		case communityMobilityOwner,
+			communityMobilityRoleOnPrem,
+			communityMobilityRoleCloud,
+			communityMobilitySourceObserved,
+			communityMobilitySourceStatic,
+			communityMobilitySourceHandover,
+			communityMobilityReturnRoute,
+			communityMobilityFailover,
+			communityMobilityActiveHolder,
+			communityMobilityNodeLiveness:
+			return true
 		}
 	}
-	return ""
-}
-
-func sortedKeys(values map[string]bool) []string {
-	out := make([]string, 0, len(values))
-	for value := range values {
-		out = append(out, value)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func sortedVerdictKeys(values map[string]Verdict) []string {
-	out := make([]string, 0, len(values))
-	for value := range values {
-		out = append(out, value)
-	}
-	sort.Strings(out)
-	return out
+	return false
 }
 
 func hasCommunity(values []string, want string) bool {

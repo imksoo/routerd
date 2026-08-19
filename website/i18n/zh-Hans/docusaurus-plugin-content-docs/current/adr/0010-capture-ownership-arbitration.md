@@ -22,12 +22,10 @@
 - 协调是**单节点本地投影**：每个节点从相同的 federation 事件流
   独立投影到相同的 `AddressLease` 状态
   （`pkg/controller/mobility/controller.go`）。**无分布式锁、无仲裁、无共识**。
-- "单一所有者"是*隐式的*（capturePolicy `all-non-owner-sites` + 确定性
-  `evaluatePlacement`），而 `captureEpoch`
+- "单一所有者"由每个成员的 capture 声明和确定性 placement 导出，而 `captureEpoch`
   （`pkg/state/mobility_capture_epoch.go`）是**每节点、每
   (pool, address, captureDomain)** 的单调递增 token，在导入/执行门控处
   围栏 stale 的 provider action（ADR 0008）。
-- 预留字段 `MobilityPoolSpec.Authority` 未使用。
 
 #76 要求集中式所有权映射、竞争排除和脑裂防止。
 ADR 0008 有意**回避共识**（Paxos/Raft/etcd），
@@ -69,7 +67,7 @@ provider / action 的围栏 token。`captureEpoch`
 每个节点从 federation 事件流确定性构建的**收敛视图**：
 
 - 每个 `(pool, address)` 的 owner 通过确定性仲裁选择：
-  **preferNodes → 放置优先级 → 稳定 tie-break** 对*合格*成员应用
+  **放置优先级 → 稳定 tie-break** 对*合格*成员应用
   （合格性由 ADR 0011 定义：未排空、健康、存活、适用时 VRRP master）。
 - 多实例分散：placement group 内每个地址仲裁到一个 owner。
   地址集分散到合格成员（未来：最小负载）。1 IP → 同时 1 个 owner。
@@ -77,20 +75,11 @@ provider / action 的围栏 token。`captureEpoch`
   操作员可以看到"哪个 IP 被哪个节点所有" —
   以收敛视图而非单一写入者存储实现 #76 要求的"集中式所有权映射"。
 
-### `MobilityPool` 的 `ipOwnershipPolicy`
+### `MobilityPool` 意图
 
-```yaml
-spec:
-  ipOwnershipPolicy:
-    type: centralized          # 收敛的确定性映射（唯一模式）
-    epochLocking: true         # 用 ownershipEpoch 为 action 打戳+围栏
-    preferNodes: [aws-router-a, aws-router-b]
-    autoFailover: true         # ADR 0011（活性驱动 seize）消费
-```
-
-`preferNodes` 为仲裁施加偏向。`epochLocking` 启用
-ownershipEpoch fencing。`autoFailover` 是 ADR 0011 使用的钩子。
-`type` 当前仅一个模式（`centralized` = 收敛的确定性）。
+`MobilityPool` 没有全局 capture、authority 或 ownership-policy 开关。
+成员声明本地 capture/discovery；placement、BGP 观测和 provider facts
+确定性地导出 ownership。不会接受对运行中 controller 没有影响的配置。
 
 ### Action 幂等性 key
 
@@ -101,8 +90,8 @@ ownershipEpoch / actionVerb / provider / nicRef`。stale epoch 或
 ## 阶段划分（此 ADR）
 
 - **Phase 1（此 ADR 的最小范围）**: `ownershipEpoch` token、
-  确定性所有权记录 + 仲裁（preferNodes/priority/tie-break）、
-  `ipOwnershipPolicy` spec + 验证、**所有权映射的可视化**（status +
+  确定性所有权记录 + 仲裁（placement priority/tie-break）、
+  **所有权映射的可视化**（status +
   指标 + `routerctl`）。**无自动 seizure** — Phase 1 仅
   *计算并发布* desired 所有权，用 ownershipEpoch 围栏 action。
   现有静态放置继续驱动谁来执行。

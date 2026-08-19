@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/internal/hostcmd"
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/tailscale"
 	"github.com/imksoo/routerd/pkg/wireguard"
 )
@@ -117,7 +118,7 @@ func writeTailscalePeersTable(stdout io.Writer, status tailscale.Status) error {
 			lastSeen = time.Since(seen).Round(time.Second).String() + " ago"
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			displayCell(firstNonEmpty(peer.HostName, peer.DNSName, peer.ID)),
+			displayCell(stringutil.FirstNonEmpty(peer.HostName, peer.DNSName, peer.ID)),
 			state,
 			displayCell(strings.Join(peer.TailscaleIPs, ",")),
 			displayCell(strings.Join(peer.AllowedIPs, ",")),

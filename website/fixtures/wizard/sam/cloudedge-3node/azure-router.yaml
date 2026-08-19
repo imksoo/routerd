@@ -113,6 +113,33 @@ spec:
           profile: "fast"
         convergenceProfile: "fast"
     - apiVersion: "mobility.routerd.net/v1alpha1"
+      kind: "SAMNodeSet"
+      metadata:
+        name: "cloudedge-nodes"
+      spec:
+        nodes:
+          - nodeRef: "aws-router-a"
+            site: "aws"
+            role: "cloud"
+            routeReflector: false
+            samEndpoint: "10.99.0.2"
+            placement:
+              group: "aws-edge"
+              priority: 10
+          - nodeRef: "azure-router"
+            site: "azure"
+            role: "cloud"
+            routeReflector: false
+            samEndpoint: "10.99.0.3"
+            placement:
+              group: "azure-edge"
+              priority: 10
+          - nodeRef: "onprem-router"
+            site: "onprem"
+            role: "onprem"
+            routeReflector: true
+            samEndpoint: "10.99.0.1"
+    - apiVersion: "mobility.routerd.net/v1alpha1"
       kind: "SAMTransportProfile"
       metadata:
         name: "cloudedge-transport"
@@ -121,10 +148,6 @@ spec:
         mode: "ipip"
         encryption: "wireguard"
         innerPrefix: "10.255.0.0/24"
-        topologyNodeRefs:
-          - "aws-router-a"
-          - "azure-router"
-          - "onprem-router"
         underlayInterface: "wg-hybrid"
         localEndpointFrom:
           resource: "IPv4StaticAddress/wg-hybrid-ipv4"
@@ -142,23 +165,8 @@ spec:
           exportPolicy:
             allowedPrefixes:
               - "10.77.60.0/24"
-        peers:
-          - nodeRef: "aws-router-a"
-            remoteEndpoint: "10.99.0.2"
-          - nodeRef: "onprem-router"
-            remoteEndpoint: "10.99.0.1"
-    - apiVersion: "hybrid.routerd.net/v1alpha1"
-      kind: "CloudProviderProfile"
-      metadata:
-        name: "aws-lab"
-      spec:
-        provider: "aws"
-        capabilities:
-          - "eni-secondary-ip"
-          - "source-dest-check-disable"
-        auth:
-          mode: "external-command"
-          command: "/usr/local/libexec/routerd/plugins/aws-auth"
+        peersFrom:
+          - resource: "SAMNodeSet/cloudedge-nodes"
     - apiVersion: "hybrid.routerd.net/v1alpha1"
       kind: "CloudProviderProfile"
       metadata:
@@ -178,51 +186,16 @@ spec:
       spec:
         prefix: "10.77.60.0/24"
         groupRef: "cloudedge"
-        deliveryPolicy:
-          mode: "bgp"
+        membersFrom:
+          - resource: "SAMNodeSet/cloudedge-nodes"
         members:
-          - nodeRef: "aws-router-a"
-            site: "aws"
-            role: "cloud"
-            capture:
-              type: "provider-secondary-ip"
-              interface: "ens5"
-              providerRef: "aws-lab"
-              providerMode: "eni-secondary-ip"
-              configureOSAddress: false
-            ownershipDiscovery:
-              mode: "provider-private-ip"
-              providerRef: "aws-lab"
-              scanInterval: "60s"
-              leaseTTL: "10m"
-            placement:
-              group: "aws-edge"
-              priority: 10
           - nodeRef: "azure-router"
-            site: "azure"
-            role: "cloud"
             capture:
               type: "provider-secondary-ip"
               interface: "eth0"
               providerRef: "azure-lab"
-              providerMode: "nic-secondary-ip"
-              configureOSAddress: false
             ownershipDiscovery:
               mode: "provider-private-ip"
               providerRef: "azure-lab"
               scanInterval: "60s"
               leaseTTL: "10m"
-            placement:
-              group: "azure-edge"
-              priority: 10
-          - nodeRef: "onprem-router"
-            site: "onprem"
-            role: "onprem"
-            staticOwnedAddresses:
-              - "10.77.60.10/32"
-            capture:
-              type: "proxy-arp"
-              interface: "ens21"
-              gratuitousARP: true
-              activeWhen:
-                type: "single-router"

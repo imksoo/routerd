@@ -3,13 +3,13 @@
 package federationguard
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/netip"
 	"strings"
 	"time"
 
-	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/dynamicconfig/codec"
 	"github.com/imksoo/routerd/pkg/federation"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -36,7 +36,7 @@ func (e SelfCapturedObservedEventError) Error() string {
 
 // RejectSelfCapturedObservedEvent rejects routerd.client.ipv4.observed events
 // whose subject/address is currently captured by an active local
-// RemoteAddressClaim. Non-observed events and unparsable/non-IP subjects are
+// LocalCaptureIntent. Non-observed events and unparsable/non-IP subjects are
 // left untouched so legitimate federation traffic is not blocked.
 func RejectSelfCapturedObservedEvent(store DynamicConfigPartStore, ev federation.Event, now time.Time) error {
 	if store == nil || strings.TrimSpace(ev.Type) != federation.ObservedIPv4EventType {
@@ -50,33 +50,40 @@ func RejectSelfCapturedObservedEvent(store DynamicConfigPartStore, ev federation
 	if err != nil {
 		return fmt.Errorf("list dynamic config parts for federation self-capture guard: %w", err)
 	}
-	for _, part := range parts {
-		if part.EffectiveStatus(now) != "active" || strings.TrimSpace(part.ResourcesJSON) == "" {
+	activeParts, invalidPools := codec.ActiveMobilityPoolPlanRecords(parts, now)
+	if len(invalidPools) != 0 {
+		return fmt.Errorf("invalid active MobilityPool typed plan record prevents federation self-capture evaluation")
+	}
+	for _, active := range activeParts {
+		part, source := active.Record, active.Source
+		if source.ARPObserver {
 			continue
 		}
-		var resources []api.Resource
-		if err := json.Unmarshal([]byte(part.ResourcesJSON), &resources); err != nil {
-			return fmt.Errorf("decode dynamic resources for federation self-capture guard source %q: %w", part.Source, err)
+		if strings.TrimSpace(part.MobilityDataplaneJSON) == "" {
+			continue
 		}
-		for _, res := range resources {
-			if res.Kind != "RemoteAddressClaim" {
+		plan, err := codec.DecodeMobilityDataplanePlan(part.MobilityDataplaneJSON)
+		if err != nil {
+			return fmt.Errorf("decode mobility dataplane plan for federation self-capture guard source %q: %w", part.Source, err)
+		}
+		if err := dynamicconfig.ValidateMobilityDataplanePlanScope(plan, source.PoolRef); err != nil {
+			return fmt.Errorf("validate mobility dataplane scope for federation self-capture guard source %q: %w", part.Source, err)
+		}
+		for _, intent := range plan.Captures {
+			if intent.Disposition != dynamicconfig.CaptureDesired && intent.Disposition != dynamicconfig.CaptureProtectExisting && intent.Disposition != dynamicconfig.CaptureHold {
 				continue
 			}
-			spec, err := res.RemoteAddressClaimSpec()
-			if err != nil {
-				return fmt.Errorf("decode RemoteAddressClaim/%s for federation self-capture guard: %w", res.Metadata.Name, err)
-			}
-			if strings.TrimSpace(spec.Capture.Type) == "" {
+			if strings.TrimSpace(intent.CaptureType) == "" {
 				continue
 			}
-			claimAddr, ok := parseAddress(spec.Address)
+			if strings.TrimSpace(intent.PoolRef) != source.PoolRef {
+				continue
+			}
+			claimAddr, ok := parseAddress(intent.Address)
 			if !ok || claimAddr != addr {
 				continue
 			}
-			source := res.Kind + "/" + res.Metadata.Name
-			if annSource := strings.TrimSpace(res.Metadata.Annotations["routerd.net/dynamic-source"]); annSource != "" {
-				source += " from " + annSource
-			}
+			source := "MobilityPool/" + strings.TrimSpace(intent.PoolRef)
 			return SelfCapturedObservedEventError{Address: addr.String(), Source: source}
 		}
 	}

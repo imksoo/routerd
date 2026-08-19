@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
@@ -117,7 +118,7 @@ func (c TunnelInterfaceController) cleanupStaleResources(ctx context.Context) er
 		if _, ok := desired[item.Name]; ok || !routerdManagedObjectStatus(item) || !tunnelInterfaceOwned(item.Status) {
 			continue
 		}
-		ifname := firstNonEmpty(statusString(item.Status, "ifname"), statusString(item.Status, "interface"), item.Name)
+		ifname := firstNonEmpty(statusvalue.Field(item.Status, "ifname"), statusvalue.Field(item.Status, "interface"), item.Name)
 		if ifname != "" && !c.DryRun {
 			if err := c.deleteTunnelInterface(ctx, ifname); err != nil {
 				return err
@@ -241,7 +242,7 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		}
 		applied = true
 	}
-	if desired.Address != "" || statusString(previous, "address") != "" {
+	if desired.Address != "" || statusvalue.Field(previous, "address") != "" {
 		addressChanged, err := c.reconcileTunnelAddress(ctx, desired)
 		if err != nil {
 			return c.saveApplyError(resource, desired, err)
@@ -345,7 +346,7 @@ func (c TunnelInterfaceController) saveApplyError(resource api.Resource, desired
 }
 
 func tunnelInterfaceOwned(status map[string]any) bool {
-	owned, ok := statusBool(status["interfaceOwned"])
+	owned, ok := statusvalue.ExtendedBool(status["interfaceOwned"])
 	return ok && owned
 }
 
@@ -423,7 +424,7 @@ func (c TunnelInterfaceController) tunnelEndpointFromSource(source api.StatusVal
 		return "", false, fmt.Errorf("field is required")
 	}
 	status := c.Store.ObjectStatus(c.statusSourceAPIVersion(kind, name), kind, name)
-	value := statusString(status, field)
+	value := statusvalue.Field(status, field)
 	if value == "" {
 		return "", true, nil
 	}
@@ -443,7 +444,7 @@ func (c TunnelInterfaceController) statusSourceAPIVersion(kind, name string) str
 		}
 	}
 	switch kind {
-	case "TunnelInterface", "OverlayPeer", "HybridRoute", "AddressMobilityDomain", "RemoteAddressClaim", "CloudProviderProfile":
+	case "TunnelInterface", "OverlayPeer", "HybridRoute", "CloudProviderProfile":
 		return api.HybridAPIVersion
 	case "RouterdCluster", "ServiceUnit", "NetworkAdoption":
 		return api.SystemAPIVersion
@@ -895,11 +896,11 @@ func fouListenerForDesired(desired tunnelDesired) (fouListener, bool) {
 }
 
 func fouListenerFromStatus(status map[string]any) (fouListener, bool) {
-	owned, ok := statusBool(status["fouListenerOwned"])
+	owned, ok := statusvalue.ExtendedBool(status["fouListenerOwned"])
 	if !ok || !owned {
 		return fouListener{}, false
 	}
-	mode := statusString(status, "mode")
+	mode := statusvalue.Field(status, "mode")
 	port, ok := statusInt(status["encapSport"])
 	if (mode != "fou" && mode != "gue") || !ok || port < 1 || port > 65535 {
 		return fouListener{}, false

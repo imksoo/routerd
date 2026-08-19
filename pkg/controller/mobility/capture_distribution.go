@@ -14,11 +14,6 @@ type captureDistributionNode struct {
 	MaxSecondaryIPs int
 }
 
-type captureDistribution struct {
-	Assignments map[string]string
-	NodeCounts  map[string]int
-}
-
 func distributedCaptureEnabled(members map[string]memberPlanInfo, group string) bool {
 	for _, m := range members {
 		if strings.TrimSpace(m.PlacementGroup) != group || m.MaintenanceDrain {
@@ -51,26 +46,24 @@ func distributedCaptureNodes(members map[string]memberPlanInfo, group string, li
 	return nodes
 }
 
-func distributeCaptures(addresses []string, nodes []captureDistributionNode) captureDistribution {
-	dist := captureDistribution{
-		Assignments: make(map[string]string, len(addresses)),
-		NodeCounts:  make(map[string]int, len(nodes)),
-	}
+func distributeCaptures(addresses []string, nodes []captureDistributionNode) map[string]string {
+	assignments := make(map[string]string, len(addresses))
 	if len(nodes) == 0 {
-		return dist
+		return assignments
 	}
+	counts := make(map[string]int, len(nodes))
 	for _, node := range nodes {
-		dist.NodeCounts[node.NodeRef] = 0
+		counts[node.NodeRef] = 0
 	}
 	sort.Strings(addresses)
 	for _, address := range addresses {
-		best := assignByRendezvous(address, nodes, dist.NodeCounts)
+		best := assignByRendezvous(address, nodes, counts)
 		if best != "" {
-			dist.Assignments[address] = best
-			dist.NodeCounts[best]++
+			assignments[address] = best
+			counts[best]++
 		}
 	}
-	return dist
+	return assignments
 }
 
 func assignByRendezvous(address string, nodes []captureDistributionNode, counts map[string]int) string {

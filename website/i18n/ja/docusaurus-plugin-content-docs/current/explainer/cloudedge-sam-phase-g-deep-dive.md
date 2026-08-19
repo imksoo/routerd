@@ -80,7 +80,7 @@ flowchart TB
 ## 3. BGP ownership plane
 
 mobile `/32` の所有者は、そのプレフィクスの現在の BGP best path です。
-運用者が lease、claim、アドレスごとの provider action を手書きする必要はありません。
+運用者が lease、アドレスごとの所有権レコード、provider action を手書きする必要はありません。
 routerd は `MobilityPool` の intent を BGP 広告に投影し、RIB を観測してローカルで
 何を実現すべきかを判断します。
 

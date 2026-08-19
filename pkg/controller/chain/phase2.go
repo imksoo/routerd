@@ -23,9 +23,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/lifecycle"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resourcequery"
@@ -356,13 +358,14 @@ func (c DSLiteTunnelController) resolveRemote(ctx context.Context, spec api.DSLi
 }
 
 type IPv4RouteController struct {
-	Router        *api.Router
-	Bus           *bus.Bus
-	Store         Store
-	DryRun        bool
-	Logger        *slog.Logger
-	Command       func(ctx context.Context, name string, args ...string) ([]byte, error)
-	DevicePresent func(context.Context, string) bool
+	Router            *api.Router
+	Bus               *bus.Bus
+	Store             Store
+	MobilityDataplane dynamicconfig.MobilityDataplanePlan
+	DryRun            bool
+	Logger            *slog.Logger
+	Command           func(ctx context.Context, name string, args ...string) ([]byte, error)
+	DevicePresent     func(context.Context, string) bool
 }
 
 func (c IPv4RouteController) Start(ctx context.Context) {
@@ -506,7 +509,7 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 	if len(failures) > 0 {
 		return fmt.Errorf("%s", strings.Join(failures, "; "))
 	}
-	return nil
+	return c.reconcileMobilityRoutes(ctx)
 }
 
 func ipv4RouteInstalled(ctx context.Context, command outputCommandFunc, routeType, destination, device, gateway, preferredSource string, metric int) bool {
@@ -641,13 +644,14 @@ func (c IPv4RouteController) cleanupRemovedRoutes(ctx context.Context) error {
 }
 
 func (c IPv4RouteController) teardownRemovedRoute(ctx context.Context, status routerstate.ObjectStatus, deleter routerstate.ObjectDeleteStore) error {
+	removal := ipv4RouteRemovalFromStatus(status.Status)
 	if !c.DryRun {
-		args := ipv4RouteDeleteArgs(status.Status)
+		args := ipv4RouteRemovalDeleteArgs(removal)
 		if len(args) > 0 {
 			name := "ip"
 			if platform.CurrentOS() == platform.OSFreeBSD {
-				name, args = freeBSDIPv4RouteDeleteCommand(status.Status)
-			} else if removedIPv4RouteIsCurrentlyBGP(ctx, c.run, status.Status) {
+				name, args = freeBSDIPv4RouteRemovalDeleteCommand(removal)
+			} else if removedIPv4RouteRemovalIsCurrentlyBGP(ctx, c.run, removal) {
 				args = nil
 			}
 			if len(args) > 0 {
@@ -664,7 +668,7 @@ func (c IPv4RouteController) teardownRemovedRoute(ctx context.Context, status ro
 	if c.Bus != nil {
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.ipv4.route.removed", daemonapi.SeverityInfo)
 		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv4Route", Name: status.Name}
-		event.Attributes = map[string]string{"destination": fmt.Sprint(status.Status["destination"]), "device": fmt.Sprint(status.Status["device"])}
+		event.Attributes = map[string]string{"destination": removal.Destination, "device": removal.Device}
 		if err := c.Bus.Publish(ctx, event); err != nil {
 			return err
 		}
@@ -672,33 +676,50 @@ func (c IPv4RouteController) teardownRemovedRoute(ctx context.Context, status ro
 	return nil
 }
 
-func removedIPv4RouteIsCurrentlyBGP(ctx context.Context, run outputCommandFunc, status map[string]any) bool {
-	destination := fmt.Sprint(status["destination"])
-	if destination == "" || destination == "<nil>" {
+// ipv4RouteRemoval identifies the exact route being withdrawn.  The regular
+// IPv4Route controller constructs it at the persisted-status boundary; typed
+// Mobility dataplane effects construct it directly from their applied-effect
+// ledger.  Keeping the removal logic typed avoids treating a status map as an
+// internal route-planning API.
+type ipv4RouteRemoval struct {
+	Type            string
+	Destination     string
+	Device          string
+	Gateway         string
+	PreferredSource string
+	Metric          string
+}
+
+func ipv4RouteRemovalFromStatus(status map[string]any) ipv4RouteRemoval {
+	removal := ipv4RouteRemoval{
+		Type:        routeStatusString(status["type"]),
+		Destination: routeStatusString(status["destination"]),
+		Device:      routeStatusString(status["device"]),
+		Gateway:     routeStatusString(status["gateway"]),
+	}
+	if removal.Type == "" {
+		removal.Type = "unicast"
+	}
+	removal.PreferredSource = routeStatusString(status["effectivePreferredSource"])
+	if removal.PreferredSource == "" {
+		removal.PreferredSource = routeStatusString(status["preferredSource"])
+	}
+	removal.Metric = routeStatusString(status["metric"])
+	return removal
+}
+
+func routeStatusString(value any) string {
+	text := fmt.Sprint(value)
+	if text == "<nil>" {
+		return ""
+	}
+	return text
+}
+
+func removedIPv4RouteRemovalIsCurrentlyBGP(ctx context.Context, run outputCommandFunc, removal ipv4RouteRemoval) bool {
+	destination := removal.Destination
+	if destination == "" {
 		return false
-	}
-	routeType := fmt.Sprint(status["type"])
-	if routeType == "" || routeType == "<nil>" {
-		routeType = "unicast"
-	}
-	device := fmt.Sprint(status["device"])
-	if device == "<nil>" {
-		device = ""
-	}
-	gateway := fmt.Sprint(status["gateway"])
-	if gateway == "<nil>" {
-		gateway = ""
-	}
-	preferredSource := fmt.Sprint(status["effectivePreferredSource"])
-	if preferredSource == "" || preferredSource == "<nil>" {
-		preferredSource = fmt.Sprint(status["preferredSource"])
-	}
-	if preferredSource == "<nil>" {
-		preferredSource = ""
-	}
-	metric := 0
-	if raw := fmt.Sprint(status["metric"]); raw != "" && raw != "<nil>" {
-		_, _ = fmt.Sscanf(raw, "%d", &metric)
 	}
 	out, err := run(ctx, "ip", "route", "show", destination)
 	if err != nil {
@@ -709,7 +730,7 @@ func removedIPv4RouteIsCurrentlyBGP(ctx context.Context, run outputCommandFunc, 
 		if len(fields) == 0 || !routeLineMatchesDestination(fields[0], destination) {
 			continue
 		}
-		if !ipv4RouteLineMatches(line, routeType, destination, device, gateway, preferredSource, metric) {
+		if !ipv4RouteLineMatches(line, removal.Type, destination, removal.Device, removal.Gateway, removal.PreferredSource, removal.metricForMatch()) {
 			continue
 		}
 		for i := 0; i+1 < len(fields); i++ {
@@ -719,6 +740,14 @@ func removedIPv4RouteIsCurrentlyBGP(ctx context.Context, run outputCommandFunc, 
 		}
 	}
 	return false
+}
+
+func (r ipv4RouteRemoval) metricForMatch() int {
+	metric := 0
+	if r.Metric != "" {
+		_, _ = fmt.Sscanf(r.Metric, "%d", &metric)
+	}
+	return metric
 }
 
 func routeLineMatchesDestination(got, want string) bool {
@@ -740,32 +769,25 @@ func (c IPv4RouteController) run(ctx context.Context, name string, args ...strin
 	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
 
-func ipv4RouteDeleteArgs(status map[string]any) []string {
-	destination := fmt.Sprint(status["destination"])
-	if destination == "" || destination == "<nil>" {
+func ipv4RouteRemovalDeleteArgs(removal ipv4RouteRemoval) []string {
+	destination := removal.Destination
+	if destination == "" {
 		return nil
 	}
-	routeType := fmt.Sprint(status["type"])
-	if routeType == "" || routeType == "<nil>" {
-		routeType = "unicast"
-	}
 	args := []string{"route", "del"}
-	if routeType == "blackhole" {
+	if removal.Type == "blackhole" {
 		args = append(args, "blackhole", destination)
 	} else {
 		args = append(args, destination)
-		gateway := fmt.Sprint(status["gateway"])
-		if gateway != "" && gateway != "<nil>" {
-			args = append(args, "via", gateway)
+		if removal.Gateway != "" {
+			args = append(args, "via", removal.Gateway)
 		}
-		device := fmt.Sprint(status["device"])
-		if device != "" && device != "<nil>" {
-			args = append(args, "dev", device)
+		if removal.Device != "" {
+			args = append(args, "dev", removal.Device)
 		}
 	}
-	metric := fmt.Sprint(status["metric"])
-	if metric != "" && metric != "0" && metric != "<nil>" {
-		args = append(args, "metric", metric)
+	if removal.Metric != "" && removal.Metric != "0" {
+		args = append(args, "metric", removal.Metric)
 	}
 	return args
 }
@@ -811,8 +833,8 @@ func freeBSDIPv4RouteAddArgs(changeArgs []string) []string {
 	return out
 }
 
-func freeBSDIPv4RouteDeleteCommand(status map[string]any) (string, []string) {
-	return "route", append([]string{"-n", "delete"}, freeBSDRouteDestinationArgs(fmt.Sprint(status["destination"]))...)
+func freeBSDIPv4RouteRemovalDeleteCommand(removal ipv4RouteRemoval) (string, []string) {
+	return "route", append([]string{"-n", "delete"}, freeBSDRouteDestinationArgs(removal.Destination)...)
 }
 
 func freeBSDRouteDestination(destination string) string {
@@ -2081,9 +2103,9 @@ const (
 func dsliteInnerLocalIPv4(router *api.Router, store Store, spec api.DSLiteTunnelSpec) (string, string, error) {
 	value := ""
 	if strings.TrimSpace(spec.LocalAddressFrom.Resource) != "" {
-		value = statusAddressValue(resourcequery.Value(store, spec.LocalAddressFrom))
+		value = statusvalue.Address(resourcequery.Value(store, spec.LocalAddressFrom))
 		if value == "" {
-			value = statusAddressValue(addressFromRouterResource(router, spec.LocalAddressFrom))
+			value = statusvalue.Address(addressFromRouterResource(router, spec.LocalAddressFrom))
 		}
 		if value == "" {
 			if spec.LocalAddressFrom.Optional {

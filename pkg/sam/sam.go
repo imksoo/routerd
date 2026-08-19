@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
+// Package sam lowers the typed local capture plan to OS-neutral actions.
 package sam
 
 import (
@@ -11,48 +12,23 @@ import (
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/hybrid"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/platform"
 )
 
-const DeliveryRouteMetricDefault = 120
-
-const DeliveryPreferredSourceAnnotation = "mobility.routerd.net/delivery-preferred-source"
-
-const (
-	CaptureStatusCaptured = "Captured"
-	CaptureStatusStandby  = "Standby"
-	CaptureStatusBlocked  = "Blocked"
-)
-
-type DeliveryLowering struct {
-	ClaimName       string
-	AddressCIDR     string
-	IPv4RouteName   string
-	Device          string
-	PreferredSource string
-	Metric          int
-	OwnerSide       string
-	CaptureType     string
-	DeliveryPeer    string
-	DeliveryMode    string
-	CaptureIface    string
-	CaptureMessage  string
-}
+var captureInterfaceToken = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,62}$`)
 
 type CaptureAction struct {
 	Kind          string
-	ClaimName     string
+	IntentID      string
+	PoolRef       string
+	PoolPrefix    string
 	Address       string
 	Interface     string
 	PeerInterface string
 	Key           string
 	Value         string
 	GratuitousARP bool
-}
-
-type PlanOptions struct {
-	StatusReader StatusReader
 }
 
 type CaptureGateStatus struct {
@@ -64,300 +40,148 @@ type CaptureGateStatus struct {
 	Message            string
 }
 
-func HasRemoteAddressClaims(router *api.Router) bool {
-	if router == nil {
-		return false
-	}
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion == api.HybridAPIVersion && resource.Kind == "RemoteAddressClaim" {
-			return true
-		}
-	}
-	return false
+// CaptureGateObservation is the typed fact needed to evaluate a capture
+// gate. The controller shell reads and decodes persisted resource status;
+// this pure lowering package never depends on a status store.
+type CaptureGateObservation struct {
+	VirtualAddressStatusAvailable bool
+	VirtualAddressRole            string
 }
 
-func ExpandRemoteAddressClaimRoutes(router api.Router) (api.Router, []DeliveryLowering, error) {
-	return ExpandRemoteAddressClaimRoutesWithOptions(router, PlanOptions{})
-}
-
-func ExpandRemoteAddressClaimRoutesWithOptions(router api.Router, opts PlanOptions) (api.Router, []DeliveryLowering, error) {
-	if !HasRemoteAddressClaims(&router) {
-		return router, nil, nil
-	}
-	peers := overlayPeers(router)
-	userRouteNames := map[string]bool{}
-	userRouteDestinations := map[string]string{}
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "IPv4Route" {
-			continue
-		}
-		userRouteNames[resource.Metadata.Name] = true
-		spec, err := resource.IPv4RouteSpec()
-		if err != nil {
-			return router, nil, err
-		}
-		if destination := strings.TrimSpace(spec.Destination); destination != "" {
-			userRouteDestinations[destination] = resource.Metadata.Name
-		}
-	}
-
-	out := router
-	out.Spec.Resources = append([]api.Resource(nil), router.Spec.Resources...)
-	syntheticNames := map[string]bool{}
-	var lowerings []DeliveryLowering
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "RemoteAddressClaim" {
-			continue
-		}
-		spec, err := resource.RemoteAddressClaimSpec()
-		if err != nil {
-			return router, nil, err
-		}
-		cidr, err := normalizeClaimAddress(spec.Address)
-		if err != nil {
-			return router, nil, fmt.Errorf("%s spec.address: %w", resource.ID(), err)
-		}
-		if gate := EvaluateCaptureGate(spec.Capture, opts.StatusReader); !gate.Active {
-			continue
-		}
-		if strings.TrimSpace(spec.Delivery.Mode) == "bgp" {
-			continue
-		}
-		if existing := userRouteDestinations[cidr]; existing != "" {
-			return router, nil, fmt.Errorf("%s destination %s collides with user IPv4Route/%s", resource.ID(), cidr, existing)
-		}
-		name := DeliveryRouteName(resource.Metadata.Name)
-		if userRouteNames[name] {
-			return router, nil, fmt.Errorf("%s synthetic IPv4Route name %q collides with a user-authored IPv4Route", resource.ID(), name)
-		}
-		if syntheticNames[name] {
-			return router, nil, fmt.Errorf("%s synthetic IPv4Route name %q is not unique", resource.ID(), name)
-		}
-		peerName := normalizeRefName(spec.Delivery.PeerRef, "OverlayPeer")
-		device := strings.TrimSpace(spec.Delivery.TunnelInterface)
-		if device == "" {
-			peer, ok := peers[peerName]
-			if !ok {
-				return router, nil, fmt.Errorf("%s spec.delivery.peerRef references missing OverlayPeer %q", resource.ID(), spec.Delivery.PeerRef)
-			}
-			resolvedDevice, _, err := hybrid.RouteTarget(peer)
-			if err != nil {
-				return router, nil, fmt.Errorf("%s: %w", resource.ID(), err)
-			}
-			device = resolvedDevice
-		}
-		syntheticNames[name] = true
-		preferredSource := strings.TrimSpace(resource.Metadata.Annotations[DeliveryPreferredSourceAnnotation])
-		route := api.Resource{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
-			Metadata: api.ObjectMeta{
-				Name: name,
-				OwnerRefs: []api.OwnerRef{{
-					APIVersion: api.HybridAPIVersion,
-					Kind:       "RemoteAddressClaim",
-					Name:       resource.Metadata.Name,
-				}},
-			},
-			Spec: api.IPv4RouteSpec{
-				Destination:     cidr,
-				Type:            "unicast",
-				Device:          device,
-				PreferredSource: preferredSource,
-				Metric:          DeliveryRouteMetricDefault,
-			},
-		}
-		out.Spec.Resources = append(out.Spec.Resources, route)
-		lowerings = append(lowerings, DeliveryLowering{
-			ClaimName:       resource.Metadata.Name,
-			AddressCIDR:     cidr,
-			IPv4RouteName:   name,
-			Device:          device,
-			PreferredSource: preferredSource,
-			Metric:          DeliveryRouteMetricDefault,
-			OwnerSide:       strings.TrimSpace(spec.OwnerSide),
-			CaptureType:     strings.TrimSpace(spec.Capture.Type),
-			DeliveryPeer:    peerName,
-			DeliveryMode:    strings.TrimSpace(spec.Delivery.Mode),
-			CaptureIface:    strings.TrimSpace(spec.Capture.Interface),
-		})
-	}
-	return out, lowerings, nil
-}
-
-func PlanCapture(router *api.Router, targetOS platform.OS) ([]CaptureAction, error) {
-	return PlanCaptureWithOptions(router, targetOS, PlanOptions{})
-}
-
-func PlanCaptureWithOptions(router *api.Router, targetOS platform.OS, opts PlanOptions) ([]CaptureAction, error) {
-	if router == nil || (targetOS != platform.OSLinux && targetOS != platform.OSFreeBSD) {
+// PlanLocalCaptureIntents is the sole Cloud SAM lowering path. Ownership,
+// capture eligibility, and the kernel capture interface have already been
+// decided by mobility.PoolPlan.
+func PlanLocalCaptureIntents(intents []dynamicconfig.LocalCaptureIntent, targetOS platform.OS) ([]CaptureAction, error) {
+	if targetOS != platform.OSLinux && targetOS != platform.OSFreeBSD {
 		return nil, nil
 	}
-	interfaces := map[string]bool{}
-	interfaceAliases := CaptureInterfaceAliases(router)
-	forwardingAdded := false
 	var actions []CaptureAction
+	forwarding := false
 	addForwarding := func() {
-		if forwardingAdded {
+		if forwarding {
 			return
 		}
-		switch targetOS {
-		case platform.OSLinux:
-			actions = append(actions, CaptureAction{Kind: "sysctl", Key: "net.ipv4.ip_forward", Value: "1"})
-		case platform.OSFreeBSD:
-			actions = append(actions, CaptureAction{Kind: "sysctl", Key: "net.inet.ip.forwarding", Value: "1"})
+		key := "net.ipv4.ip_forward"
+		if targetOS == platform.OSFreeBSD {
+			key = "net.inet.ip.forwarding"
 		}
-		forwardingAdded = true
+		actions = append(actions, CaptureAction{Kind: "sysctl", Key: key, Value: "1"})
+		forwarding = true
 	}
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "RemoteAddressClaim" {
-			continue
+	proxyEnabled := map[string]bool{}
+	for _, intent := range intents {
+		intentID := strings.TrimSpace(intent.ID)
+		if intentID == "" {
+			return nil, fmt.Errorf("local capture intent requires id")
 		}
-		spec, err := resource.RemoteAddressClaimSpec()
+		if strings.TrimSpace(intent.PoolRef) == "" {
+			return nil, fmt.Errorf("local capture intent %q requires poolRef", intentID)
+		}
+		address, err := normalizeIPv4Host(intent.Address)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("local capture intent %q: %w", intentID, err)
 		}
-		address, err := normalizeClaimAddress(spec.Address)
-		if err != nil {
-			return nil, err
+		poolPrefix, err := canonicalCapturePoolPrefix(intent.PoolPrefix)
+		if err != nil || !poolPrefix.Contains(mustParseIPv4HostAddress(address)) {
+			return nil, fmt.Errorf("local capture intent %q poolPrefix %q does not contain address %q", intentID, intent.PoolPrefix, address)
 		}
-		captureType := strings.TrimSpace(spec.Capture.Type)
-		if captureType == "proxy-arp" && CaptureExcludesAddress(spec.Capture, address) {
+		captureType := strings.TrimSpace(intent.CaptureType)
+		if captureType != "proxy-arp" && captureType != "provider-secondary-ip" {
+			return nil, fmt.Errorf("local capture intent %q has unsupported captureType %q", intentID, captureType)
+		}
+		switch intent.Disposition {
+		case dynamicconfig.CaptureProhibited, dynamicconfig.CaptureDesired, dynamicconfig.CaptureProtectExisting, dynamicconfig.CaptureRelease, dynamicconfig.CaptureHold:
+		default:
+			return nil, fmt.Errorf("local capture intent %q has unsupported disposition %q", intentID, intent.Disposition)
+		}
+		if captureType == "proxy-arp" || intent.Disposition != dynamicconfig.CaptureRelease {
+			if err := ValidateCaptureInterface(intent.CaptureInterface); err != nil {
+				return nil, fmt.Errorf("local capture intent %q captureInterface: %w", intentID, err)
+			}
+		}
+		if captureType == "provider-secondary-ip" && intent.Disposition != dynamicconfig.CaptureRelease {
+			if err := validateCaptureTunnelInterfaces(intent.TunnelInterfaces); err != nil {
+				return nil, fmt.Errorf("local capture intent %q tunnelInterfaces: %w", intentID, err)
+			}
+		}
+		if intent.Disposition == dynamicconfig.CaptureRelease {
+			// A release is an explicit desired dataplane operation, not a
+			// fallback status cleanup. Provider-secondary-IP capture must never
+			// leave a formerly assigned address configured in the local OS.
+			if captureType == "provider-secondary-ip" {
+				actions = append(actions, CaptureAction{Kind: "deassign-os-address", IntentID: intentID, PoolRef: intent.PoolRef, PoolPrefix: poolPrefix.String(), Address: address})
+			}
 			continue
 		}
-		if gate := EvaluateCaptureGate(spec.Capture, opts.StatusReader); !gate.Active {
+		if intent.Disposition != dynamicconfig.CaptureDesired && intent.Disposition != dynamicconfig.CaptureProtectExisting {
 			continue
 		}
+		iface := strings.TrimSpace(intent.CaptureInterface)
 		addForwarding()
 		switch captureType {
 		case "proxy-arp":
-			proxyActions, err := planProxyARPCapture(resource, spec, address, interfaceAliases, interfaces, targetOS)
-			if err != nil {
-				return nil, err
+			if targetOS == platform.OSLinux && !proxyEnabled[iface] {
+				proxyEnabled[iface] = true
+				actions = append(actions, CaptureAction{Kind: "sysctl", Key: "net.ipv4.conf." + iface + ".proxy_arp", Value: "1", Interface: iface})
 			}
-			actions = append(actions, proxyActions...)
+			if targetOS == platform.OSFreeBSD {
+				actions = append(actions, CaptureAction{Kind: "deassign-os-address", IntentID: intentID, PoolRef: intent.PoolRef, PoolPrefix: poolPrefix.String(), Address: address})
+			}
+			actions = append(actions, CaptureAction{Kind: "proxy-neighbor", IntentID: intentID, PoolRef: intent.PoolRef, PoolPrefix: poolPrefix.String(), Address: address, Interface: iface, GratuitousARP: intent.GratuitousARP})
 		case "provider-secondary-ip":
-			providerActions, err := planProviderSecondaryCapture(router, resource, spec, address, interfaceAliases)
-			if err != nil {
-				return nil, err
+			actions = append(actions, CaptureAction{Kind: "deassign-os-address", IntentID: intentID, PoolRef: intent.PoolRef, PoolPrefix: poolPrefix.String(), Address: address})
+			actions = append(actions, CaptureAction{Kind: "proxy-neighbor", IntentID: intentID, PoolRef: intent.PoolRef, PoolPrefix: poolPrefix.String(), Address: address, Interface: iface, GratuitousARP: intent.GratuitousARP})
+			for _, tunnel := range intent.TunnelInterfaces {
+				if tunnel = strings.TrimSpace(tunnel); tunnel != "" {
+					actions = append(actions, CaptureAction{Kind: "forward-path", IntentID: intentID, PoolRef: intent.PoolRef, PoolPrefix: poolPrefix.String(), Address: address, Interface: iface, PeerInterface: tunnel})
+				}
 			}
-			actions = append(actions, providerActions...)
-		default:
-			continue
 		}
-	}
-	for _, action := range localInventoryForwardPathActions(router) {
-		addForwarding()
-		actions = append(actions, action)
 	}
 	return actions, nil
 }
 
-func planProxyARPCapture(resource api.Resource, spec api.RemoteAddressClaimSpec, address string, interfaceAliases map[string]string, enabled map[string]bool, targetOS platform.OS) ([]CaptureAction, error) {
-	iface := ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), interfaceAliases)
-	if iface == "" {
-		return nil, fmt.Errorf("%s spec.capture.interface is required for proxy-arp", resource.ID())
-	}
-	var actions []CaptureAction
-	if targetOS == platform.OSLinux && !enabled[iface] {
-		enabled[iface] = true
-		actions = append(actions, CaptureAction{Kind: "sysctl", Key: "net.ipv4.conf." + iface + ".proxy_arp", Value: "1", Interface: iface})
-	}
-	if targetOS == platform.OSFreeBSD {
-		// FreeBSD must prove the address is not locally configured before
-		// publishing proxy ARP. The adapter fails closed on a collision.
-		actions = append(actions, CaptureAction{Kind: "deassign-os-address", ClaimName: resource.Metadata.Name, Address: address})
-	}
-	actions = append(actions, CaptureAction{Kind: "proxy-neighbor", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, GratuitousARP: wantsGratuitousARP(spec.Capture)})
-	return actions, nil
+func canonicalCapturePoolPrefix(value string) (netip.Prefix, error) {
+	return dynamicconfig.ParseCanonicalIPv4Prefix(value)
 }
 
-func planProviderSecondaryCapture(router *api.Router, resource api.Resource, spec api.RemoteAddressClaimSpec, address string, interfaceAliases map[string]string) ([]CaptureAction, error) {
-	bgpDelivery := strings.TrimSpace(spec.Delivery.Mode) == "bgp"
-	var actions []CaptureAction
-	if !spec.Capture.ConfigureOSAddress || bgpDelivery {
-		actions = append(actions, CaptureAction{Kind: "deassign-os-address", ClaimName: resource.Metadata.Name, Address: address})
-	}
-	if !bgpDelivery {
-		return actions, nil
-	}
-	iface := ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), interfaceAliases)
-	if iface == "" {
-		return nil, fmt.Errorf("%s spec.capture.interface is required for provider-secondary-ip BGP forwarding", resource.ID())
-	}
-	actions = append(actions, CaptureAction{Kind: "proxy-neighbor", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, GratuitousARP: wantsGratuitousARP(spec.Capture)})
-	for _, tunnelIface := range bgpDeliveryForwardInterfaces(router) {
-		actions = append(actions, CaptureAction{Kind: "forward-path", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, PeerInterface: tunnelIface})
-	}
-	return actions, nil
+func mustParseIPv4HostAddress(value string) netip.Addr {
+	prefix, _ := netip.ParsePrefix(value)
+	return prefix.Addr()
 }
 
-func localInventoryForwardPathActions(router *api.Router) []CaptureAction {
-	if router == nil {
-		return nil
+// ValidateCaptureInterface rejects pseudo sysctl namespaces and unsafe link
+// tokens before a typed local capture can reach sysctl, netlink, PF, or
+// iptables. It is intentionally OS-neutral because all supported dataplanes
+// use the same names as command arguments.
+func ValidateCaptureInterface(value string) error {
+	if !captureInterfaceToken.MatchString(value) || value == "all" || value == "default" {
+		return fmt.Errorf("%q is not a safe capture interface", value)
 	}
-	tunnels := bgpDeliveryForwardInterfaces(router)
-	if len(tunnels) == 0 {
-		return nil
-	}
-	var actions []CaptureAction
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "IPv4Route" {
-			continue
-		}
-		if strings.TrimSpace(resource.Metadata.Annotations["mobility.routerd.net/source"]) != "bgp-local-inventory" {
-			continue
-		}
-		if strings.TrimSpace(resource.Metadata.Annotations["mobility.routerd.net/fibClass"]) == "LocalRouterSelf" {
-			continue
-		}
-		spec, err := resource.IPv4RouteSpec()
-		if err != nil {
-			continue
-		}
-		address, err := normalizeClaimAddress(spec.Destination)
-		if err != nil {
-			continue
-		}
-		iface := strings.TrimSpace(spec.Device)
-		if iface == "" {
-			continue
-		}
-		for _, tunnelIface := range tunnels {
-			actions = append(actions, CaptureAction{Kind: "forward-local-path", ClaimName: resource.Metadata.Name, Address: address, Interface: iface, PeerInterface: tunnelIface})
-		}
-	}
-	return actions
+	return nil
 }
 
-func bgpDeliveryForwardInterfaces(router *api.Router) []string {
-	if router == nil {
-		return nil
-	}
+func validateCaptureTunnelInterfaces(values []string) error {
 	seen := map[string]bool{}
-	var out []string
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "TunnelInterface" {
-			continue
+	for _, value := range values {
+		if err := ValidateCaptureInterface(value); err != nil {
+			return err
 		}
-		iface := strings.TrimSpace(resource.Metadata.Name)
-		if iface == "" || seen[iface] {
-			continue
+		if seen[value] {
+			return fmt.Errorf("duplicate tunnel interface %q", value)
 		}
-		seen[iface] = true
-		out = append(out, iface)
+		seen[value] = true
 	}
-	sort.Strings(out)
-	return out
+	return nil
 }
 
-func CaptureExcludesAddress(capture api.AddressCapture, address string) bool {
-	addr, ok := normalizeIPv4Addr(address)
+func CaptureExcludesAddress(capture api.MobilityMemberCapture, address string) bool {
+	addr, ok := normalizeIPv4Address(address)
 	if !ok {
 		return false
 	}
 	for _, raw := range capture.ExcludeAddresses {
-		prefix, ok := normalizeIPv4ExcludePrefix(raw)
-		if ok && prefix.Contains(addr) {
+		if prefix, ok := normalizeIPv4Prefix(raw); ok && prefix.Contains(addr) {
 			return true
 		}
 	}
@@ -372,12 +196,8 @@ func IPv4PrefixesExcluding(pool netip.Prefix, excludes []string) []netip.Prefix 
 	start, end := ipv4PrefixRange(pool)
 	ranges := []ipv4Range{{start: start, end: end}}
 	for _, raw := range excludes {
-		exclude, ok := normalizeIPv4ExcludePrefix(raw)
-		if !ok {
-			continue
-		}
-		exclude = exclude.Masked()
-		if !pool.Overlaps(exclude) {
+		exclude, ok := normalizeIPv4Prefix(raw)
+		if !ok || !pool.Overlaps(exclude) {
 			continue
 		}
 		excludeStart, excludeEnd := ipv4PrefixRange(exclude)
@@ -388,10 +208,10 @@ func IPv4PrefixesExcluding(pool netip.Prefix, excludes []string) []netip.Prefix 
 				continue
 			}
 			if excludeStart > current.start {
-				next = append(next, ipv4Range{start: current.start, end: excludeStart - 1})
+				next = append(next, ipv4Range{current.start, excludeStart - 1})
 			}
 			if excludeEnd < current.end {
-				next = append(next, ipv4Range{start: excludeEnd + 1, end: current.end})
+				next = append(next, ipv4Range{excludeEnd + 1, current.end})
 			}
 		}
 		ranges = next
@@ -401,419 +221,87 @@ func IPv4PrefixesExcluding(pool netip.Prefix, excludes []string) []netip.Prefix 
 		out = append(out, ipv4RangePrefixes(r.start, r.end)...)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Addr() == out[j].Addr() {
-			return out[i].Bits() < out[j].Bits()
-		}
-		return out[i].Addr().Compare(out[j].Addr()) < 0
+		return out[i].Addr().Compare(out[j].Addr()) < 0 || out[i].Addr() == out[j].Addr() && out[i].Bits() < out[j].Bits()
 	})
 	return out
 }
 
-type ipv4Range struct {
-	start uint32
-	end   uint32
+func EvaluateCaptureGate(capture api.MobilityMemberCapture, observation CaptureGateObservation) CaptureGateStatus {
+	typ, ref := strings.TrimSpace(capture.ActiveWhen.Type), strings.TrimSpace(capture.ActiveWhen.VirtualAddressRef)
+	ref = strings.TrimPrefix(ref, "VirtualAddress/")
+	if typ == "" && ref == "" {
+		return CaptureGateStatus{Active: true, Reason: "AlwaysActive"}
+	}
+	if typ == "single-router" && ref == "" {
+		return CaptureGateStatus{Active: true, Type: typ, Reason: "SingleRouter"}
+	}
+	result := CaptureGateStatus{Type: typ, VirtualAddressRef: ref, Reason: "CaptureGateInactive"}
+	if typ != "vrrp-master" || ref == "" || !observation.VirtualAddressStatusAvailable {
+		result.Message = "capture activeWhen requires an available vrrp-master VirtualAddress"
+		return result
+	}
+	role := strings.TrimSpace(observation.VirtualAddressRole)
+	result.VirtualAddressRole = role
+	if strings.EqualFold(role, "master") {
+		result.Active, result.Reason = true, "VRRPMaster"
+		return result
+	}
+	result.Message = "VirtualAddress is not VRRP master"
+	return result
 }
 
-func normalizeIPv4Addr(value string) (netip.Addr, bool) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return netip.Addr{}, false
-	}
-	if prefix, err := netip.ParsePrefix(value); err == nil && prefix.Addr().Is4() {
-		return prefix.Masked().Addr(), true
-	}
-	addr, err := netip.ParseAddr(value)
-	if err != nil || !addr.Is4() {
-		return netip.Addr{}, false
-	}
-	return addr, true
-}
+type ipv4Range struct{ start, end uint32 }
 
-func normalizeIPv4ExcludePrefix(value string) (netip.Prefix, bool) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return netip.Prefix{}, false
+func normalizeIPv4Host(value string) (string, error) {
+	p, err := netip.ParsePrefix(strings.TrimSpace(value))
+	if err != nil || !p.Addr().Is4() || p.Bits() != 32 {
+		return "", fmt.Errorf("must be an IPv4 /32 CIDR")
 	}
-	if prefix, err := netip.ParsePrefix(value); err == nil && prefix.Addr().Is4() {
-		return prefix.Masked(), true
-	}
-	addr, err := netip.ParseAddr(value)
-	if err != nil || !addr.Is4() {
-		return netip.Prefix{}, false
-	}
-	return netip.PrefixFrom(addr, 32), true
+	return p.Masked().String(), nil
 }
-
+func normalizeIPv4Address(value string) (netip.Addr, bool) {
+	if p, err := netip.ParsePrefix(strings.TrimSpace(value)); err == nil && p.Addr().Is4() {
+		return p.Masked().Addr(), true
+	}
+	a, err := netip.ParseAddr(strings.TrimSpace(value))
+	return a, err == nil && a.Is4()
+}
+func normalizeIPv4Prefix(value string) (netip.Prefix, bool) {
+	if p, err := netip.ParsePrefix(strings.TrimSpace(value)); err == nil && p.Addr().Is4() {
+		return p.Masked(), true
+	}
+	a, err := netip.ParseAddr(strings.TrimSpace(value))
+	return netip.PrefixFrom(a, 32), err == nil && a.Is4()
+}
 func ipv4PrefixRange(prefix netip.Prefix) (uint32, uint32) {
 	addr := ipv4ToUint32(prefix.Masked().Addr())
 	size := uint64(1) << uint(32-prefix.Bits())
 	return addr, addr + uint32(size-1)
 }
-
 func ipv4RangePrefixes(start, end uint32) []netip.Prefix {
 	var out []netip.Prefix
 	for uint64(start) <= uint64(end) {
-		zeroBits := bits.TrailingZeros32(start)
+		zero := bits.TrailingZeros32(start)
 		if start == 0 {
-			zeroBits = 32
+			zero = 32
 		}
-		blockSize := uint64(1) << uint(zeroBits)
-		remaining := uint64(end) - uint64(start) + 1
-		for blockSize > remaining {
-			zeroBits--
-			blockSize >>= 1
+		size := uint64(1) << uint(zero)
+		for size > uint64(end)-uint64(start)+1 {
+			zero--
+			size >>= 1
 		}
-		bitsLen := 32 - zeroBits
-		out = append(out, netip.PrefixFrom(uint32ToIPv4(start), bitsLen))
-		if blockSize > uint64(^uint32(0))-uint64(start) {
+		out = append(out, netip.PrefixFrom(uint32ToIPv4(start), 32-zero))
+		if size > uint64(^uint32(0))-uint64(start) {
 			break
 		}
-		start += uint32(blockSize)
+		start += uint32(size)
 	}
 	return out
 }
-
 func ipv4ToUint32(addr netip.Addr) uint32 {
 	raw := addr.As4()
 	return uint32(raw[0])<<24 | uint32(raw[1])<<16 | uint32(raw[2])<<8 | uint32(raw[3])
 }
-
 func uint32ToIPv4(value uint32) netip.Addr {
 	return netip.AddrFrom4([4]byte{byte(value >> 24), byte(value >> 16), byte(value >> 8), byte(value)})
-}
-
-// CaptureInterfaceAliases maps Interface resource names to their Linux ifname.
-func CaptureInterfaceAliases(router *api.Router) map[string]string {
-	out := map[string]string{}
-	if router == nil {
-		return out
-	}
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "Interface" {
-			continue
-		}
-		spec, err := resource.InterfaceSpec()
-		if err != nil {
-			continue
-		}
-		name := strings.TrimSpace(resource.Metadata.Name)
-		ifname := strings.TrimSpace(spec.IfName)
-		if name != "" && ifname != "" {
-			out[name] = ifname
-		}
-	}
-	return out
-}
-
-// ResolveCaptureInterface resolves a capture interface resource name to ifname.
-func ResolveCaptureInterface(value string, aliases map[string]string) string {
-	value = strings.TrimSpace(value)
-	if aliases == nil {
-		return value
-	}
-	if ifname := strings.TrimSpace(aliases[value]); ifname != "" {
-		return ifname
-	}
-	return value
-}
-
-func EvaluateCaptureGate(capture api.AddressCapture, store StatusReader) CaptureGateStatus {
-	activeWhen := capture.ActiveWhen
-	gateType := strings.TrimSpace(activeWhen.Type)
-	ref := normalizeRefName(activeWhen.VirtualAddressRef, "VirtualAddress")
-	if gateType == "" && ref == "" {
-		return CaptureGateStatus{Active: true, Reason: "AlwaysActive"}
-	}
-	if gateType == "single-router" && ref == "" {
-		return CaptureGateStatus{Active: true, Type: gateType, Reason: "SingleRouter"}
-	}
-	status := CaptureGateStatus{
-		Type:              gateType,
-		VirtualAddressRef: ref,
-		Reason:            "CaptureGateInactive",
-	}
-	if gateType == "single-router" {
-		status.Message = "capture activeWhen virtualAddressRef must be empty when type is single-router"
-		return status
-	}
-	if gateType != "vrrp-master" {
-		status.Message = fmt.Sprintf("unsupported capture activeWhen type %q", gateType)
-		return status
-	}
-	if ref == "" {
-		status.Message = "capture activeWhen virtualAddressRef is empty"
-		return status
-	}
-	if store == nil {
-		status.Message = fmt.Sprintf("VirtualAddress/%s status is unavailable", ref)
-		return status
-	}
-	role := strings.TrimSpace(fmt.Sprint(store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", ref)["role"]))
-	if role == "<nil>" {
-		role = ""
-	}
-	status.VirtualAddressRole = role
-	if strings.EqualFold(role, "master") {
-		status.Active = true
-		status.Reason = "CaptureGateActive"
-		status.Message = fmt.Sprintf("VirtualAddress/%s role is master", ref)
-		return status
-	}
-	status.Message = fmt.Sprintf("VirtualAddress/%s role is %s", ref, firstNonEmpty(role, "unknown"))
-	return status
-}
-
-func wantsGratuitousARP(capture api.AddressCapture) bool {
-	if capture.GratuitousARP {
-		return true
-	}
-	return strings.TrimSpace(capture.ActiveWhen.Type) == "vrrp-master"
-}
-
-func ProxyARPInterfaces(router *api.Router) []string {
-	if router == nil {
-		return nil
-	}
-	interfaces := map[string]bool{}
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "RemoteAddressClaim" {
-			continue
-		}
-		spec, err := resource.RemoteAddressClaimSpec()
-		if err != nil || strings.TrimSpace(spec.Capture.Type) != "proxy-arp" {
-			continue
-		}
-		if strings.TrimSpace(spec.Capture.ActiveWhen.Type) != "" || strings.TrimSpace(spec.Capture.ActiveWhen.VirtualAddressRef) != "" {
-			continue
-		}
-		if iface := strings.TrimSpace(spec.Capture.Interface); iface != "" {
-			interfaces[iface] = true
-		}
-	}
-	return sortedKeys(interfaces)
-}
-
-func DeliveryRouteName(claimName string) string {
-	return "sam-" + safeName(claimName) + "-delivery"
-}
-
-func StatusForRemoteAddressClaim(resource api.Resource, lowerings []DeliveryLowering, store StatusReader, targetOS platform.OS) map[string]any {
-	spec, err := resource.RemoteAddressClaimSpec()
-	if err != nil {
-		return map[string]any{"phase": "Degraded", "reason": "SpecInvalid", "message": err.Error(), "captureStatus": CaptureStatusBlocked}
-	}
-	status := map[string]any{
-		"phase":        "Ready",
-		"domainRef":    normalizeRefName(spec.DomainRef, "AddressMobilityDomain"),
-		"address":      strings.TrimSpace(spec.Address),
-		"ownerSide":    strings.TrimSpace(spec.OwnerSide),
-		"captureType":  strings.TrimSpace(spec.Capture.Type),
-		"peerRef":      normalizeRefName(spec.Delivery.PeerRef, "OverlayPeer"),
-		"deliveryMode": strings.TrimSpace(spec.Delivery.Mode),
-	}
-	if targetOS != platform.OSLinux && targetOS != platform.OSFreeBSD {
-		status["phase"] = "Degraded"
-		status["reason"] = "CaptureUnsupported"
-		status["message"] = "SAM local capture is not implemented on this OS"
-		status["captureStatus"] = CaptureStatusBlocked
-		return status
-	}
-	if strings.TrimSpace(spec.Capture.Type) == "proxy-arp" && CaptureExcludesAddress(spec.Capture, spec.Address) {
-		status["phase"] = "Gated"
-		status["reason"] = "CaptureExcluded"
-		status["message"] = "proxy-ARP capture is excluded by capture.excludeAddresses"
-		status["captureActive"] = false
-		status["captureStatus"] = CaptureStatusStandby
-		return status
-	}
-	if gate := EvaluateCaptureGate(spec.Capture, store); !gate.Active {
-		status["phase"] = "Gated"
-		status["reason"] = gate.Reason
-		status["message"] = gate.Message
-		status["captureActive"] = false
-		status["captureStatus"] = captureStatusForInactiveGate(gate)
-		status["activeWhenType"] = gate.Type
-		status["activeWhenVirtualAddressRef"] = gate.VirtualAddressRef
-		status["activeWhenVirtualAddressRole"] = gate.VirtualAddressRole
-		return status
-	} else if gate.Type != "" || gate.VirtualAddressRef != "" {
-		status["captureActive"] = true
-		status["captureStatus"] = CaptureStatusCaptured
-		status["activeWhenType"] = gate.Type
-		status["activeWhenVirtualAddressRef"] = gate.VirtualAddressRef
-		status["activeWhenVirtualAddressRole"] = gate.VirtualAddressRole
-	}
-	if strings.TrimSpace(spec.Delivery.Mode) == "bgp" {
-		if strings.TrimSpace(spec.Capture.Interface) != "" {
-			status["captureInterface"] = strings.TrimSpace(spec.Capture.Interface)
-		}
-		if strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
-			if _, exists := status["captureStatus"]; !exists {
-				status["captureStatus"] = CaptureStatusCaptured
-			}
-		}
-		return status
-	}
-	lowering, ok := deliveryLoweringForClaim(resource.Metadata.Name, lowerings)
-	if !ok {
-		status["phase"] = "Degraded"
-		status["reason"] = "RouteNotLowered"
-		status["message"] = "delivery route was not lowered to an IPv4Route"
-		status["captureStatus"] = CaptureStatusBlocked
-		return status
-	}
-	status["deliveryRouteName"] = lowering.IPv4RouteName
-	status["deliveryDevice"] = lowering.Device
-	if strings.TrimSpace(lowering.PreferredSource) != "" {
-		status["deliveryPreferredSource"] = strings.TrimSpace(lowering.PreferredSource)
-	}
-	status["deliveryMetric"] = lowering.Metric
-	if strings.TrimSpace(spec.Capture.Interface) != "" {
-		status["captureInterface"] = strings.TrimSpace(spec.Capture.Interface)
-	}
-	if store != nil {
-		routeStatus := store.ObjectStatus(api.NetAPIVersion, "IPv4Route", lowering.IPv4RouteName)
-		if phase := strings.TrimSpace(fmt.Sprint(routeStatus["phase"])); phase != "" && phase != "<nil>" {
-			status["deliveryRoutePhase"] = phase
-			if phase != "Installed" {
-				status["phase"] = "Degraded"
-				status["reason"] = "RouteNotInstalled"
-				status["message"] = "lowered delivery route is not installed"
-				status["captureStatus"] = CaptureStatusBlocked
-			}
-		}
-	}
-	if strings.TrimSpace(spec.Capture.Type) == "proxy-arp" {
-		if _, exists := status["captureStatus"]; !exists {
-			status["captureStatus"] = CaptureStatusCaptured
-		}
-	}
-	return status
-}
-
-func captureStatusForInactiveGate(gate CaptureGateStatus) string {
-	if gate.Type != "vrrp-master" || gate.VirtualAddressRef == "" {
-		return CaptureStatusBlocked
-	}
-	role := strings.TrimSpace(gate.VirtualAddressRole)
-	if role == "" {
-		return CaptureStatusBlocked
-	}
-	return CaptureStatusStandby
-}
-
-func StatusForAddressMobilityDomain(domain api.Resource, claims []api.Resource, store StatusReader) map[string]any {
-	spec, err := domain.AddressMobilityDomainSpec()
-	if err != nil {
-		return map[string]any{"phase": "Degraded", "reason": "SpecInvalid", "message": err.Error()}
-	}
-	status := map[string]any{
-		"phase":   "Ready",
-		"prefix":  strings.TrimSpace(spec.Prefix),
-		"mode":    strings.TrimSpace(spec.Mode),
-		"peerRef": normalizeRefName(spec.PeerRef, "OverlayPeer"),
-	}
-	var members []map[string]any
-	degraded := false
-	for _, claim := range claims {
-		claimSpec, err := claim.RemoteAddressClaimSpec()
-		if err != nil || normalizeRefName(claimSpec.DomainRef, "AddressMobilityDomain") != domain.Metadata.Name {
-			continue
-		}
-		item := map[string]any{"name": claim.Metadata.Name, "address": strings.TrimSpace(claimSpec.Address)}
-		if store != nil {
-			claimStatus := store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", claim.Metadata.Name)
-			if phase := strings.TrimSpace(fmt.Sprint(claimStatus["phase"])); phase != "" && phase != "<nil>" {
-				item["phase"] = phase
-				if phase != "Ready" {
-					degraded = true
-				}
-			}
-		}
-		members = append(members, item)
-	}
-	sort.Slice(members, func(i, j int) bool { return fmt.Sprint(members[i]["name"]) < fmt.Sprint(members[j]["name"]) })
-	status["claims"] = members
-	status["claimCount"] = len(members)
-	if degraded {
-		status["phase"] = "Degraded"
-		status["reason"] = "ClaimDegraded"
-		status["message"] = "one or more RemoteAddressClaim members are degraded"
-	}
-	return status
-}
-
-type StatusReader interface {
-	ObjectStatus(apiVersion, kind, name string) map[string]any
-}
-
-func deliveryLoweringForClaim(name string, lowerings []DeliveryLowering) (DeliveryLowering, bool) {
-	for _, lowering := range lowerings {
-		if lowering.ClaimName == name {
-			return lowering, true
-		}
-	}
-	return DeliveryLowering{}, false
-}
-
-func overlayPeers(router api.Router) map[string]api.OverlayPeerSpec {
-	out := map[string]api.OverlayPeerSpec{}
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "OverlayPeer" {
-			continue
-		}
-		spec, err := resource.OverlayPeerSpec()
-		if err == nil {
-			out[resource.Metadata.Name] = spec
-		}
-	}
-	return out
-}
-
-func normalizeClaimAddress(value string) (string, error) {
-	prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
-	if err != nil {
-		return "", err
-	}
-	prefix = prefix.Masked()
-	if !prefix.Addr().Is4() || prefix.Bits() != 32 {
-		return "", fmt.Errorf("must be an IPv4 /32 CIDR")
-	}
-	return prefix.String(), nil
-}
-
-func normalizeRefName(ref, kind string) string {
-	ref = strings.TrimSpace(ref)
-	if strings.HasPrefix(ref, kind+"/") {
-		return strings.TrimPrefix(ref, kind+"/")
-	}
-	return ref
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-var safeNamePattern = regexp.MustCompile(`[^A-Za-z0-9.-]+`)
-
-func safeName(name string) string {
-	name = strings.Trim(safeNamePattern.ReplaceAllString(name, "-"), "-.")
-	if name == "" {
-		return "claim"
-	}
-	return name
-}
-
-func sortedKeys(values map[string]bool) []string {
-	out := make([]string, 0, len(values))
-	for key := range values {
-		out = append(out, key)
-	}
-	sort.Strings(out)
-	return out
 }

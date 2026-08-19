@@ -150,6 +150,47 @@ spec:
         convergenceProfile: fast
 
     - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMNodeSet
+      metadata: { name: cloudedge-nodes }
+      spec:
+        nodes:
+          - nodeRef: onprem-router
+            site: onprem
+            role: onprem
+            routeReflector: true
+            samEndpoint: 10.99.0.1
+          - nodeRef: aws-router-a
+            site: aws
+            role: cloud
+            samEndpoint: 10.99.0.2
+            placement: { group: aws-edge, priority: 10 }
+          - nodeRef: aws-router-b
+            site: aws
+            role: cloud
+            samEndpoint: 10.99.0.5
+            placement: { group: aws-edge, priority: 20 }
+          - nodeRef: "${DEMO_SELF_NODE}"
+            site: azure
+            role: cloud
+            samEndpoint: "${DEMO_SELF_IP}"
+            placement: { group: azure-edge, priority: ${DEMO_SELF_PRIORITY} }
+          - nodeRef: "${DEMO_SAMESITE_PEER_NODE}"
+            site: azure
+            role: cloud
+            samEndpoint: "${DEMO_SAMESITE_PEER_IP}"
+            placement: { group: azure-edge, priority: ${DEMO_SAMESITE_PEER_PRIORITY} }
+          - nodeRef: oci-router
+            site: oci
+            role: cloud
+            samEndpoint: 10.99.0.4
+            placement: { group: oci-edge, priority: 10 }
+          - nodeRef: oci-router-b
+            site: oci
+            role: cloud
+            samEndpoint: 10.99.0.7
+            placement: { group: oci-edge, priority: 20 }
+
+    - apiVersion: mobility.routerd.net/v1alpha1
       kind: SAMTransportProfile
       metadata: { name: cloudedge-transport }
       spec:
@@ -157,7 +198,6 @@ spec:
         mode: ipip
         encryption: wireguard
         innerPrefix: 10.255.0.0/20
-        topologyNodeRefs: [onprem-router, aws-router-a, aws-router-b, "${DEMO_SELF_NODE}", "${DEMO_SAMESITE_PEER_NODE}", oci-router, oci-router-b]
         underlayInterface: wg-hybrid
         localEndpointFrom: { resource: IPv4StaticAddress/wg-hybrid-ipv4, field: address }
         bgp:
@@ -170,8 +210,9 @@ spec:
           importPolicy:
             allowedPrefixes: [10.77.60.0/24]
             nextHopRewrite: peer-address
-        peers:
-          - { nodeRef: onprem-router, remoteEndpoint: 10.99.0.1 }
+        peersFrom:
+          - resource: SAMNodeSet/cloudedge-nodes
+            nodeRefs: [onprem-router]
 
     - apiVersion: hybrid.routerd.net/v1alpha1
       kind: CloudProviderProfile
@@ -180,7 +221,6 @@ spec:
         provider: azure
         subscriptionID: "${AZURE_SUBSCRIPTION_ID}"
         resourceGroup: "${AZURE_RESOURCE_GROUP}"
-        region: "${AZURE_REGION}"
         capabilities: [secondary-ip, ip-forwarding]
         auth: { mode: external-command, command: /usr/local/libexec/routerd/plugins/azure-auth }
 
@@ -201,9 +241,6 @@ spec:
                 type: provider-secondary-ip
                 interface: eth0
                 providerRef: azure-lab
-                providerMode: secondary-ip
-                captureStrategy: secondary-ip
-                configureOSAddress: false
                 targetFrom:
                   region: self.region
                   resourceGroup: self.resourceGroup
@@ -212,38 +249,11 @@ spec:
                 subnetRefFrom: self.subnetRef
                 scanInterval: 60s
                 leaseTTL: 10m
-        deliveryPolicy: { mode: bgp }
+        membersFrom:
+          - resource: SAMNodeSet/cloudedge-nodes
         members:
-          - nodeRef: onprem-router
-            site: onprem
-            role: onprem
-          - nodeRef: aws-router-a
-            site: aws
-            role: cloud
-            placement: { group: aws-edge, priority: 10 }
-          - nodeRef: aws-router-b
-            site: aws
-            role: cloud
-            placement: { group: aws-edge, priority: 20 }
           - nodeRef: "${DEMO_SELF_NODE}"
-            site: azure
-            role: cloud
             profileRef: azure-self
-            placement: { group: azure-edge, priority: ${DEMO_SELF_PRIORITY} }
-          - nodeRef: "${DEMO_SAMESITE_PEER_NODE}"
-            site: azure
-            role: cloud
-            placement: { group: azure-edge, priority: ${DEMO_SAMESITE_PEER_PRIORITY} }
-          - nodeRef: oci-router
-            site: oci
-            role: cloud
-            placement: { group: oci-edge, priority: 10 }
-          - nodeRef: oci-router-b
-            site: oci
-            role: cloud
-            placement: { group: oci-edge, priority: 20 }
-        capturePolicy: { mode: all-non-owner-sites }
-        ipOwnershipPolicy: { type: centralized, autoFailover: true }
 
     - apiVersion: hybrid.routerd.net/v1alpha1
       kind: ProviderActionPolicy

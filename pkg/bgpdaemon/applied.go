@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/imksoo/routerd/internal/stringutil"
 )
 
 const AppliedVersion = 1
@@ -104,19 +106,19 @@ func Normalize(config AppliedConfig) AppliedConfig {
 		config.Version = AppliedVersion
 	}
 	config.Global.RouterID = strings.TrimSpace(config.Global.RouterID)
-	config.Global.ListenAddresses = cleanStrings(config.Global.ListenAddresses)
-	config.Global.Families = cleanStrings(config.Global.Families)
-	config.Global.ImportPolicy.AllowedPrefixes = cleanStrings(config.Global.ImportPolicy.AllowedPrefixes)
-	config.Global.ImportPolicy.RequiredCommunities = cleanStrings(config.Global.ImportPolicy.RequiredCommunities)
-	config.Global.ImportPolicy.ForbiddenCommunities = cleanStrings(config.Global.ImportPolicy.ForbiddenCommunities)
+	config.Global.ListenAddresses = stringutil.UniqueTrimmedSorted(config.Global.ListenAddresses)
+	config.Global.Families = stringutil.UniqueTrimmedSorted(config.Global.Families)
+	config.Global.ImportPolicy.AllowedPrefixes = stringutil.UniqueTrimmedSorted(config.Global.ImportPolicy.AllowedPrefixes)
+	config.Global.ImportPolicy.RequiredCommunities = stringutil.UniqueTrimmedSorted(config.Global.ImportPolicy.RequiredCommunities)
+	config.Global.ImportPolicy.ForbiddenCommunities = stringutil.UniqueTrimmedSorted(config.Global.ImportPolicy.ForbiddenCommunities)
 	config.Global.ImportPolicy.NextHopRewrite = strings.TrimSpace(config.Global.ImportPolicy.NextHopRewrite)
-	config.Advertisements = cleanStrings(config.Advertisements)
+	config.Advertisements = stringutil.UniqueTrimmedSorted(config.Advertisements)
 	config.Paths = normalizeAppliedPaths(config.Paths, config.Advertisements)
 	config.Advertisements = StaticAdvertisements(config.Paths)
 	if config.Peers != nil {
 		peers := make(map[string]AppliedPeer, len(config.Peers))
 		for key, peer := range config.Peers {
-			peer.Address = firstNonEmpty(strings.TrimSpace(peer.Address), strings.TrimSpace(key))
+			peer.Address = stringutil.FirstNonBlank(peer.Address, key)
 			peer.BFD = strings.TrimSpace(peer.BFD)
 			if peer.EbgpMultihop < 0 || peer.EbgpMultihop > 255 {
 				peer.EbgpMultihop = 0
@@ -125,12 +127,12 @@ func Normalize(config AppliedConfig) AppliedConfig {
 			peer.TimersProfile = strings.TrimSpace(peer.TimersProfile)
 			peer.ConvergenceProfile = strings.TrimSpace(peer.ConvergenceProfile)
 			peer.ImportPolicyName = strings.TrimSpace(peer.ImportPolicyName)
-			peer.ImportPolicy.AllowedPrefixes = cleanStrings(peer.ImportPolicy.AllowedPrefixes)
-			peer.ImportPolicy.RequiredCommunities = cleanStrings(peer.ImportPolicy.RequiredCommunities)
-			peer.ImportPolicy.ForbiddenCommunities = cleanStrings(peer.ImportPolicy.ForbiddenCommunities)
+			peer.ImportPolicy.AllowedPrefixes = stringutil.UniqueTrimmedSorted(peer.ImportPolicy.AllowedPrefixes)
+			peer.ImportPolicy.RequiredCommunities = stringutil.UniqueTrimmedSorted(peer.ImportPolicy.RequiredCommunities)
+			peer.ImportPolicy.ForbiddenCommunities = stringutil.UniqueTrimmedSorted(peer.ImportPolicy.ForbiddenCommunities)
 			peer.ImportPolicy.NextHopRewrite = strings.TrimSpace(peer.ImportPolicy.NextHopRewrite)
 			peer.ExportPolicyName = strings.TrimSpace(peer.ExportPolicyName)
-			peer.ExportPolicy.AllowedPrefixes = cleanStrings(peer.ExportPolicy.AllowedPrefixes)
+			peer.ExportPolicy.AllowedPrefixes = stringutil.UniqueTrimmedSorted(peer.ExportPolicy.AllowedPrefixes)
 			if peer.Address != "" {
 				peers[peer.Address] = peer
 			}
@@ -152,7 +154,7 @@ func NormalizeAppliedPath(path AppliedPath) AppliedPath {
 	}
 	path.Family = strings.TrimSpace(path.Family)
 	path.Attrs.NextHop = strings.TrimSpace(path.Attrs.NextHop)
-	path.Attrs.Communities = cleanStrings(path.Attrs.Communities)
+	path.Attrs.Communities = stringutil.UniqueTrimmedSorted(path.Attrs.Communities)
 	path.UUID = strings.TrimSpace(path.UUID)
 	return path
 }
@@ -172,7 +174,7 @@ func StaticAdvertisements(paths []AppliedPath) []string {
 			out = append(out, path.Prefix)
 		}
 	}
-	return cleanStrings(out)
+	return stringutil.UniqueTrimmedSorted(out)
 }
 
 func NonStaticPaths(paths []AppliedPath) []AppliedPath {
@@ -344,7 +346,7 @@ func ValidateAppliedPath(path AppliedPath) error {
 
 func normalizeAppliedPaths(paths []AppliedPath, legacyAdvertisements []string) []AppliedPath {
 	byKey := map[string]AppliedPath{}
-	for _, prefix := range cleanStrings(legacyAdvertisements) {
+	for _, prefix := range stringutil.UniqueTrimmedSorted(legacyAdvertisements) {
 		path := StaticAppliedPath(prefix, nil)
 		byKey[AppliedPathKey(path)] = path
 	}
@@ -372,28 +374,4 @@ func familyForPrefix(prefix netip.Prefix) string {
 		return AppliedPathFamilyIPv6Unicast
 	}
 	return AppliedPathFamilyIPv4Unicast
-}
-
-func cleanStrings(values []string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" || seen[value] {
-			continue
-		}
-		seen[value] = true
-		out = append(out, value)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }

@@ -28,7 +28,8 @@ BGP advertisement**.
 - Non-holder nodes learn remote owned addresses from the BGP best path and
   install delivery routes via the overlay next hop into the FIB.
 - Address movement is expressed as **BGP withdraw / advertise and path
-  preference changes**. Operators never hand-author leases or claims.
+  preference changes**. Operators never hand-author leases, per-address
+  ownership records, or provider actions.
 - Failure detection is accelerated by **BFD** (FRR `bfdd`); when BFD is unstable,
   BGP hold timers remain the non-destructive authority for route withdrawal.
 
@@ -97,7 +98,8 @@ the active node emits the beacon).
 
 ## Placement: deciding active/standby
 
-Each `MobilityPool` member has `placement.group` and `placement.priority`.
+Each `SAMNodeSet` node has `placement.group` and `placement.priority`; the
+MobilityPool imports that shared placement through `membersFrom`.
 
 - **group** — the unit that competes for active/standby (e.g. `azure-edge`).
 - **priority** — a **lower number is higher priority**. Members left at `0`
@@ -138,8 +140,8 @@ captures, provider self-observation has completed. `placementSettleWindow`
 remains as a conservative fallback for callers that do not provide readiness
 signals. When readiness is known but remains incomplete, the fence is bounded:
 after `placementSettleWindow * 3` (360 seconds by default) routerd releases the
-active assertion with `startupFenceReadiness.degraded: true` so overlay liveness
-is not blocked forever by a provider API or observation failure.
+active assertion even while readiness remains incomplete, so overlay liveness is
+not blocked forever by a provider API or observation failure.
 
 - A just-returned node would otherwise win the equal-priority tie-break and
   reclaim holdership before its fresh BGP RIB / provider observations converge.
@@ -201,34 +203,32 @@ Seize (the takeover during failover) has dedicated hold-downs:
 
 ## Dynamic RR sync is fail-static
 
-RR nodes may publish `SAMPeerGroup` and `MobilityMemberSet` resources over the
-TCP 19652 sync endpoint so leaves can bootstrap their transport peers and shared
-member topology. Those fetched resources are saved as dynamic config parts with
-ordinary TTLs:
+RR nodes may publish `SAMPeerGroup` resources over the TCP 19652 sync endpoint
+so leaves can bootstrap their transport peers. Fetched peer groups are saved as
+dynamic config parts with ordinary TTLs:
 
 - `peer-group-sync/<name>` for `SAMPeerGroup`
-- `member-set-sync/<name>` for `MobilityMemberSet`
 
 TTL expiry does not mean the data plane should be dismantled. If a leaf has a
-previously fetched record and the RR publisher disappears, routerd treats the
-expired record as **last-known-good** input, marks the source `Stale`, and keeps
-the generated tunnel, BGP peer, and MobilityPool planning artifacts rendered.
-Only a source that has never been seen remains `Pending`. This keeps a route
-reflector outage from cascading into leaf transport teardown; the stale marker is
+previously fetched peer group and the RR publisher disappears, routerd treats
+the expired record as **last-known-good** input, marks the source `Stale`, and
+keeps the generated tunnel and BGP peer rendered. Only a source that has never
+been seen remains `Pending`. MobilityPool membership is resolved from static
+`SAMNodeSet` configuration. The stale marker is
 an operator signal that topology freshness is no longer being refreshed. Status
 also includes a `warning` field on stale sources so long-lived fail-static mode
 is visible without tearing down the working data plane.
 
 ## Capture strategies (how cloud ingress is built)
 
-`capture.captureStrategy` selects how the cloud ingress is built.
+`capture.type` selects the normal ingress mechanism. `capture.captureStrategy`
+is only an explicit `route-table` override for `provider-secondary-ip`.
 
-| strategy | providers | behavior |
+| configuration | providers | behavior |
 | --- | --- | --- |
-| `secondary-ip` (default) | AWS / Azure / OCI / GCP | assign the `/32` to the NIC as a secondary IP |
-| `route-table` | Azure | point a UDR entry at the holder's NIC |
-| `proxy-arp` | on-prem | capture on the L2 segment via proxy-ARP/GARP |
-| `addr-add` | (generic) | add the OS address |
+| `type: provider-secondary-ip` | AWS / Azure / OCI / GCP | assign the `/32` to the NIC as a secondary IP |
+| `captureStrategy: route-table` | Azure | point a UDR entry at the holder's NIC |
+| `type: proxy-arp` | on-prem | capture on the L2 segment via proxy-ARP/GARP |
 
 Current release lab certification covers `secondary-ip` capture only. The
 `route-table` strategy is **uncertified**. On Azure it requires

@@ -22,8 +22,8 @@ changing how addresses are delivered.
 The overlay is already abstracted at the right seams (confirmed in code):
 
 - **Delivery is underlay-independent.** `hybrid.RouteTarget(peer)` maps an
-  `OverlayPeer.Underlay.Type` to `(device, gateway)`, and the `/32` delivery routes
-  (`RemoteAddressClaim` / `HybridRoute`) point at that device. Adding a transport is
+  `OverlayPeer.Underlay.Type` to `(device, gateway)`, and BGP-imported `/32`
+  routes plus `HybridRoute` resources point at that device. Adding a transport is
   a new `switch` case.
 - **MTU / MSS clamp is parameterized.** `hybrid.EstimateMTU = underlayMTU(interface)
   − overheadFor(type)`; the zone-independent clamp follows `EstimateMTU`. A new
@@ -113,7 +113,7 @@ unlike WireGuard. They are only safe over an already-trusted underlay.
 - **Phase 1**: `TunnelInterface` Kind + `tunnel` controller
   (Linux `ipip`/`gre`) + `trustedUnderlay` gate + `RouteTarget`/overhead/MTU +
   validation + unit/fixture tests + an example config. Tests include the **deletion
-  ordering** invariant: removing the `OverlayPeer`/claim drops the `/32` route, and
+  ordering** invariant: removing the `OverlayPeer`/mobility intent drops the `/32` route, and
   removing the `TunnelInterface` yields a device-delete plan; route install must
   tolerate a missing device.
 - **Phase 2 (implemented)**: `fou` / `gue` as IPIP-over-UDP. We deliberately do

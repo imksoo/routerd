@@ -12,6 +12,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/firewallbackend"
 	"github.com/imksoo/routerd/pkg/platform"
 )
@@ -30,6 +31,10 @@ type Controller struct {
 	NftCommand   string
 	Interval     time.Duration
 	Logger       *slog.Logger
+	// LocalCaptureIntents is the already-decided dynamic Mobility dataplane
+	// plan. It matters to the PF backend, where path-MTU rules live in the
+	// native firewall ruleset rather than a separate nftables table.
+	LocalCaptureIntents []dynamicconfig.LocalCaptureIntent
 }
 
 func (c Controller) Start(ctx context.Context) {
@@ -75,11 +80,12 @@ func (c Controller) reconcileLogged(ctx context.Context) error {
 }
 
 func (c Controller) Reconcile(ctx context.Context) error {
-	if !hasFirewall(c.Router) {
+	targetOS := platform.CurrentOS()
+	if !hasFirewall(c.Router) && (targetOS != platform.OSFreeBSD || len(c.LocalCaptureIntents) == 0) {
 		return nil
 	}
-	backend := firewallbackend.ForPlatform(platform.CurrentOS(), c.NftCommand)
-	ruleset, err := backend.Render(c.Router, c.NftablesPath)
+	backend := firewallbackend.ForPlatform(targetOS, c.NftCommand)
+	ruleset, err := backend.Render(c.Router, c.NftablesPath, c.LocalCaptureIntents)
 	if err != nil {
 		_ = c.saveErrorStatuses(ctx, backend.Name(), c.NftablesPath, "RenderFailed", err)
 		return err
@@ -167,13 +173,4 @@ func firewallRuleCount(router *api.Router) int {
 		}
 	}
 	return n
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/internal/hostcmd"
+	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -35,10 +36,10 @@ func writeIngressShowTable(stdout io.Writer, router *api.Router, resources []rou
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d/%d\n",
 			resource.Name,
-			defaultShowString(statusString(resource.Status["hostname"]), "-"),
+			defaultShowString(statusvalue.Text(resource.Status["hostname"]), "-"),
 			ingressListenString(spec, resource.Status),
 			activeBackendString(active),
-			defaultShowString(statusString(resource.Status["selection"]), "failover"),
+			defaultShowString(statusvalue.Text(resource.Status["selection"]), "failover"),
 			statusInt(resource.Status["healthyBackends"]),
 			statusInt(resource.Status["totalBackends"]),
 		)
@@ -48,21 +49,21 @@ func writeIngressShowTable(stdout io.Writer, router *api.Router, resources []rou
 			fmt.Fprintln(w, "BACKEND\tADDRESS\tSTATE\tDRAINED_UNTIL\tLAST_HEALTHY\tLAST_UNHEALTHY")
 			for _, backend := range backends {
 				state := "Unhealthy"
-				if statusBool(backend["healthy"]) {
+				if statusvalue.BoolOrFalse(backend["healthy"]) {
 					state = "Healthy"
 				}
-				if statusBool(backend["drained"]) {
+				if statusvalue.BoolOrFalse(backend["drained"]) {
 					state = "Drained"
 				}
 				fmt.Fprintf(w, "%s\t%s\t%s(%d/%d)\t%s\t%s\t%s\n",
-					statusString(backend["name"]),
+					statusvalue.Text(backend["name"]),
 					backendAddressString(backend),
 					state,
 					statusInt(backend["healthyCount"]),
 					statusInt(backend["unhealthyCount"]),
-					defaultShowString(statusString(backend["drainedUntil"]), "-"),
-					ageString(statusString(backend["lastHealthyAt"])),
-					ageString(statusString(backend["lastUnhealthyAt"])),
+					defaultShowString(statusvalue.Text(backend["drainedUntil"]), "-"),
+					ageString(statusvalue.Text(backend["lastHealthyAt"])),
+					ageString(statusvalue.Text(backend["lastUnhealthyAt"])),
 				)
 			}
 		}
@@ -190,7 +191,7 @@ func ingressHairpinDataplaneDetail(spec api.IngressServiceSpec, status map[strin
 }
 
 func ingressShowAutoHairpinRequired(spec api.IngressServiceSpec, status map[string]any) bool {
-	listen := statusString(status["listenAddress"])
+	listen := statusvalue.Text(status["listenAddress"])
 	if listen == "" {
 		listen = spec.Listen.Address
 	}
@@ -219,14 +220,14 @@ func ingressShowBackendAddresses(spec api.IngressServiceSpec, status map[string]
 		out = append(out, value)
 	}
 	for _, backend := range statusMaps(status["backends"]) {
-		add(statusString(backend["resolvedAddress"]))
-		if address := statusString(backend["address"]); net.ParseIP(address) != nil {
+		add(statusvalue.Text(backend["resolvedAddress"]))
+		if address := statusvalue.Text(backend["address"]); net.ParseIP(address) != nil {
 			add(address)
 		}
 	}
 	if active := statusMap(status["activeBackend"]); len(active) > 0 {
-		add(statusString(active["resolvedAddress"]))
-		if address := statusString(active["address"]); net.ParseIP(address) != nil {
+		add(statusvalue.Text(active["resolvedAddress"]))
+		if address := statusvalue.Text(active["address"]); net.ParseIP(address) != nil {
 			add(address)
 		}
 	}
@@ -280,7 +281,7 @@ func ingressConntrackNeedles(spec api.IngressServiceSpec, status map[string]any)
 		seen[value] = true
 		needles = append(needles, value)
 	}
-	if listen := statusString(status["listenAddress"]); listen != "" {
+	if listen := statusvalue.Text(status["listenAddress"]); listen != "" {
 		add("dst=" + listen)
 		add("reply_src=" + listen)
 	} else if spec.Listen.Address != "" {
@@ -288,12 +289,12 @@ func ingressConntrackNeedles(spec api.IngressServiceSpec, status map[string]any)
 		add("reply_src=" + spec.Listen.Address)
 	}
 	for _, backend := range statusMaps(status["backends"]) {
-		if resolved := statusString(backend["resolvedAddress"]); resolved != "" {
+		if resolved := statusvalue.Text(backend["resolvedAddress"]); resolved != "" {
 			add("dst=" + resolved)
 			add("src=" + resolved)
 			continue
 		}
-		if address := statusString(backend["address"]); net.ParseIP(address) != nil {
+		if address := statusvalue.Text(backend["address"]); net.ParseIP(address) != nil {
 			add("dst=" + address)
 			add("src=" + address)
 		}
@@ -354,14 +355,14 @@ func boolShow(value any) string {
 	if value == false {
 		return "no"
 	}
-	if text := statusString(value); text != "" {
+	if text := statusvalue.Text(value); text != "" {
 		return text
 	}
 	return "-"
 }
 
 func ingressListenString(spec api.IngressServiceSpec, status map[string]any) string {
-	address := statusString(status["listenAddress"])
+	address := statusvalue.Text(status["listenAddress"])
 	if address == "" {
 		address = spec.Listen.Address
 	}
@@ -372,8 +373,8 @@ func ingressListenString(spec api.IngressServiceSpec, status map[string]any) str
 }
 
 func activeBackendString(active map[string]any) string {
-	name := statusString(active["name"])
-	address := statusString(active["address"])
+	name := statusvalue.Text(active["name"])
+	address := statusvalue.Text(active["address"])
 	port := statusInt(active["port"])
 	if name == "" && address == "" {
 		return "-"
@@ -385,8 +386,8 @@ func activeBackendString(active map[string]any) string {
 }
 
 func backendAddressString(backend map[string]any) string {
-	address := statusString(backend["address"])
-	resolved := statusString(backend["resolvedAddress"])
+	address := statusvalue.Text(backend["address"])
+	resolved := statusvalue.Text(backend["resolvedAddress"])
 	port := statusInt(backend["port"])
 	if resolved != "" && resolved != address {
 		return fmt.Sprintf("%s -> %s:%d", address, resolved, port)
@@ -451,13 +452,6 @@ func statusMap(value any) map[string]any {
 	return map[string]any{}
 }
 
-func statusString(value any) string {
-	if value == nil {
-		return ""
-	}
-	return strings.TrimSpace(fmt.Sprint(value))
-}
-
 func statusInt(value any) int {
 	switch typed := value.(type) {
 	case int:
@@ -477,17 +471,6 @@ func statusInt(value any) int {
 		return parsed
 	default:
 		return 0
-	}
-}
-
-func statusBool(value any) bool {
-	switch typed := value.(type) {
-	case bool:
-		return typed
-	case string:
-		return strings.EqualFold(strings.TrimSpace(typed), "true")
-	default:
-		return false
 	}
 }
 

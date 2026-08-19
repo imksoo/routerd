@@ -73,10 +73,14 @@ The project focuses on a few independent strengths:
   best path as the source of truth: equal-priority members are no-preempt to
   minimize churn, unequal-priority members auto-restore to the higher priority
   with no dataplane dip, and an active node's death fails over new flows to a
-  standby after convergence. Dynamic RR-published peer groups and member sets
-  are fail-static on leaves: a stale last-known-good sync record keeps generated
-  transport and BGP artifacts in place while status reports the source as stale
-  with an operator warning. Startup fencing is readiness-first but bounded, and
+  standby after convergence. Generic RR-published `SAMPeerGroup` transport
+  sync is fail-static on leaves: a stale last-known-good sync record keeps
+  generated transport and BGP artifacts in place while status reports the
+  source as stale with an operator warning. Enrollment is separate: an
+  admitted leaf fetches a policy-scoped runtime `SAMRRSet`, never a statically
+  authored RR topology. Static identity/topology comes from `SAMNodeSet`, while
+  each MobilityPool supplies the local `/32` and capture intent. Startup
+  fencing is readiness-first but bounded, and
   generated RR-client import admission defaults to declared MobilityPool prefixes
   when explicit allowed prefixes are omitted.
   Abrupt failover does not promise that TCP sessions already in flight survive

@@ -54,14 +54,42 @@ jq -n \
   --arg executionMode "$execution_mode" \
   '{runId: $runId, executionMode: $executionMode, action: "tofu-destroy", reason: "state-or-production"}' \
   >"$cleanup_evidence/cleanup-decision.json"
+destroy_state_backup="$cleanup_evidence/tofu-pre-destroy.tfstate"
+declare -a cleanup_failures=()
+cleanup_errors="$cleanup_evidence/cleanup-errors.tsv"
+printf 'step\texit\n' >"$cleanup_errors"
 
-tofu -chdir="$tf_dir" init -input=false -lockfile=readonly -reconfigure \
+record_cleanup_failure() {
+  local step="$1" status="$2"
+  cleanup_failures+=("$step=$status")
+  printf '%s\t%s\n' "$step" "$status" >>"$cleanup_errors"
+}
+
+tofu_init_status=0
+if tofu -chdir="$tf_dir" init -input=false -lockfile=readonly -reconfigure \
   -backend-config="path=$tofu_state_path" \
   >"$cleanup_evidence/tofu-init.txt" \
-  2>"$cleanup_evidence/tofu-init.stderr"
-tofu -chdir="$tf_dir" destroy -help >"$cleanup_evidence/tofu-destroy-help.txt"
+  2>"$cleanup_evidence/tofu-init.stderr"; then
+  :
+else
+  tofu_init_status=$?
+  record_cleanup_failure tofu-init "$tofu_init_status"
+fi
+
+tofu_help_status=0
+if tofu -chdir="$tf_dir" destroy -help >"$cleanup_evidence/tofu-destroy-help.txt"; then
+  :
+else
+  tofu_help_status=$?
+  record_cleanup_failure tofu-destroy-help "$tofu_help_status"
+fi
+
 if [ -f "$tofu_state_path" ]; then
-  tofu -chdir="$tf_dir" state list >"$cleanup_evidence/tofu-state-before-destroy.txt"
+  if tofu -chdir="$tf_dir" state list >"$cleanup_evidence/tofu-state-before-destroy.txt"; then
+    :
+  else
+    record_cleanup_failure tofu-state-before-destroy "$?"
+  fi
 else
   : >"$cleanup_evidence/tofu-state-before-destroy.txt"
 fi
@@ -69,15 +97,58 @@ if tofu -chdir="$tf_dir" output -json >"$cleanup_evidence/tofu-output-before-des
   install -m 0600 "$cleanup_evidence/tofu-output-before-destroy.json" "$tofu_output_path"
 fi
 
-run_with_progress tofu-destroy \
-  tofu -chdir="$tf_dir" destroy -auto-approve -input=false \
-  -var-file="$tfvars_path"
+if [ "$tofu_init_status" -eq 0 ] && [ "$tofu_help_status" -eq 0 ]; then
+  if run_with_progress tofu-destroy \
+    tofu -chdir="$tf_dir" destroy -auto-approve -input=false \
+    -backup="$destroy_state_backup" \
+    -var-file="$tfvars_path"; then
+    :
+  else
+    record_cleanup_failure tofu-destroy "$?"
+  fi
+else
+  record_cleanup_failure tofu-destroy-not-attempted 125
+fi
 
+# A provider can create a PVE VM and fail before it records that resource in
+# state. Recover only identity-matched run VMs before asking the bridge helper
+# to prove the whole run inventory is gone. This guard never searches by name
+# or deletes an unpinned VMID.
+orphan_cleanup_driver="$script_dir/pve-orphan-cleanup.sh"
+if run_with_progress pve-orphan-recovery "$orphan_cleanup_driver" \
+  --evidence "$cleanup_evidence/pve-orphan-recovery.json"; then
+  :
+else
+  record_cleanup_failure pve-orphan-recovery "$?"
+fi
+
+# The capture bridge is intentionally outside the API-token Terraform
+# surface.  It is removed only after destroy has completed; the root-PVE
+# helper independently refuses deletion until the cluster inventory confirms
+# all six workloads and the disposable shared template stage are absent.
+capture_bridge_driver="$script_dir/pve-capture-bridge.sh"
+if run_with_progress pve-capture-bridge-remove "$capture_bridge_driver" \
+  --remove --evidence "$cleanup_evidence/pve-capture-bridge-remove.json"; then
+  :
+else
+  record_cleanup_failure pve-capture-bridge-remove "$?"
+fi
+
+tofu_state_after_status=0
 if [ -f "$tofu_state_path" ]; then
-  tofu -chdir="$tf_dir" state list >"$cleanup_evidence/tofu-state-after-destroy.txt"
+  if tofu -chdir="$tf_dir" state list >"$cleanup_evidence/tofu-state-after-destroy.txt"; then
+    :
+  else
+    tofu_state_after_status=$?
+    record_cleanup_failure tofu-state-after-destroy "$tofu_state_after_status"
+  fi
 else
   : >"$cleanup_evidence/tofu-state-after-destroy.txt"
 fi
-[ "$(wc -l <"$cleanup_evidence/tofu-state-after-destroy.txt")" -eq 0 ] ||
-  die "OpenTofu state is not empty after destroy"
+if [ "$tofu_state_after_status" -eq 0 ] &&
+  [ "$(wc -l <"$cleanup_evidence/tofu-state-after-destroy.txt")" -ne 0 ]; then
+  record_cleanup_failure tofu-state-not-empty 1
+fi
+[ "${#cleanup_failures[@]}" -eq 0 ] ||
+  die "cleanup incomplete: ${cleanup_failures[*]}"
 echo "cleanup complete: runId=$run_id"

@@ -7,74 +7,47 @@ import (
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/samenrollment"
 )
 
 func TestValidateMobilityPool(t *testing.T) {
-	router := mobilityPoolRouter(api.MobilityPoolSpec{
+	router := mobilityPoolRouter(mobilityPoolFixture{
 		Prefix:   "10.88.60.0/24",
 		GroupRef: "cloudedge",
-		Members: []api.MobilityPoolMember{
+		Members: []api.ResolvedMobilityPoolMember{
 			{
-				NodeRef:  "onprem-router",
-				Site:     "onprem",
-				Role:     "onprem",
-				Capture:  api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan", ActiveWhen: api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}},
-				Delivery: api.MobilityMemberDelivery{PeerRef: "azure", Mode: "route", TunnelInterface: "wg-hybrid"},
+				NodeRef: "onprem-router",
+				Site:    "onprem",
+				Role:    "onprem",
+				Capture: api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan", ActiveWhen: api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}},
 			},
 			{
 				NodeRef: "azure-router",
 				Site:    "azure",
 				Role:    "cloud",
 				Capture: api.MobilityMemberCapture{
-					Type:         "provider-secondary-ip",
-					ProviderRef:  "azure-provider",
-					ProviderMode: "nic-secondary-ip",
-					NICRef:       "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/networkInterfaces/router-nic",
+					Type:        "provider-secondary-ip",
+					ProviderRef: "azure-provider",
+					NICRef:      "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/networkInterfaces/router-nic",
 				},
-				Delivery: api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
+				OwnershipDiscovery: api.MobilityOwnershipDiscovery{
+					Mode:                  "provider-private-ip",
+					StoppedInstancePolicy: "release",
+				},
 			},
 		},
-		Authority: api.MobilityAuthority{Mode: "static"},
 	}, testInterfaceResource("lan"), testVirtualAddressResource("onprem-vip"))
 	if err := Validate(router); err != nil {
 		t.Fatalf("Validate MobilityPool: %v", err)
 	}
 }
 
-func TestValidateMobilityPoolAllowsProviderCaptureConfigureOSAddress(t *testing.T) {
-	router := mobilityPoolRouter(api.MobilityPoolSpec{
-		Prefix:   "10.88.60.0/24",
-		GroupRef: "cloudedge",
-		Members: []api.MobilityPoolMember{
-			{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
-			{
-				NodeRef: "aws-router",
-				Site:    "aws",
-				Role:    "cloud",
-				Capture: api.MobilityMemberCapture{
-					Type:               "provider-secondary-ip",
-					Interface:          "ens5",
-					ProviderRef:        "aws-provider",
-					ProviderMode:       "secondary-ip",
-					NICRef:             "eni-router",
-					ConfigureOSAddress: true,
-				},
-				Placement: api.MobilityMemberPlacement{Group: "aws-edge", Priority: 10},
-			},
-		},
-		DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
-	})
-	if err := Validate(router); err != nil {
-		t.Fatalf("Validate MobilityPool: %v", err)
-	}
-}
-
 func TestValidateMobilityPoolRejectsOverlappingPrefixes(t *testing.T) {
-	router := mobilityPoolRouter(api.MobilityPoolSpec{
+	router := mobilityPoolRouter(mobilityPoolFixture{
 		Prefix:   "10.88.60.0/24",
 		GroupRef: "cloudedge-a",
-		Members: []api.MobilityPoolMember{
+		Members: []api.ResolvedMobilityPoolMember{
 			{NodeRef: "onprem-a", Site: "onprem-a", Role: "onprem"},
 			{NodeRef: "cloud-a", Site: "cloud-a", Role: "cloud"},
 		},
@@ -82,14 +55,18 @@ func TestValidateMobilityPoolRejectsOverlappingPrefixes(t *testing.T) {
 		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
 		Metadata: api.ObjectMeta{Name: "cloudedge-b"},
 		Spec: api.MobilityPoolSpec{
-			Prefix:   "10.88.60.128/25",
-			GroupRef: "cloudedge-b",
-			Members: []api.MobilityPoolMember{
-				{NodeRef: "onprem-b", Site: "onprem-b", Role: "onprem"},
-				{NodeRef: "cloud-b", Site: "cloud-b", Role: "cloud"},
-			},
+			Prefix:      "10.88.60.128/25",
+			GroupRef:    "cloudedge-b",
+			MembersFrom: []api.MobilityMembersSourceSpec{{Resource: "SAMNodeSet/cloudedge-b-members"}},
 		},
-	})
+	}, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMNodeSet"},
+		Metadata: api.ObjectMeta{Name: "cloudedge-b-members"},
+		Spec: api.SAMNodeSetSpec{Nodes: []api.SAMNodeSpec{
+			{NodeRef: "onprem-b", Site: "onprem-b", Role: "onprem"},
+			{NodeRef: "cloud-b", Site: "cloud-b", Role: "cloud"},
+		}},
+	}, testEventGroupResource("cloudedge-b", "onprem-b"))
 	err := Validate(router)
 	if err == nil || !strings.Contains(err.Error(), "MobilityPool prefixes must be disjoint") {
 		t.Fatalf("Validate overlap error = %v, want disjoint MobilityPool prefix error", err)
@@ -115,55 +92,28 @@ func TestValidateSAMTransportProfileRejectsInvalidFields(t *testing.T) {
 			want: "spec.selfNodeRef is required",
 		},
 		{
-			name: "self peer",
-			mut:  func(spec *api.SAMTransportProfileSpec) { spec.Peers[0].NodeRef = "pve-rt" },
-			want: "must not equal spec.selfNodeRef",
+			name: "missing peer source",
+			mut:  func(spec *api.SAMTransportProfileSpec) { spec.PeersFrom = nil },
+			want: "spec.peersFrom or spec.publishPeerGroup requires",
 		},
 		{
-			name: "duplicate peer",
+			name: "duplicate selected node",
 			mut: func(spec *api.SAMTransportProfileSpec) {
-				spec.TopologyNodeRefs = []string{"pve-rt", "k8s-rt"}
-				spec.Peers = append(spec.Peers, api.SAMTransportPeerSpec{NodeRef: "k8s-rt", RemoteEndpoint: "203.0.113.30"})
+				spec.PeersFrom[0].NodeRefs = []string{"k8s-rt", "k8s-rt"}
 			},
-			want: "nodeRef \"k8s-rt\" is duplicated",
+			want: "nodeRefs nodeRef \"k8s-rt\" is duplicated",
 		},
 		{
-			name: "missing topology for multiple peers",
+			name: "empty selected node",
 			mut: func(spec *api.SAMTransportProfileSpec) {
-				spec.Peers = append(spec.Peers, api.SAMTransportPeerSpec{NodeRef: "cloud-rt", RemoteEndpoint: "203.0.113.30"})
+				spec.PeersFrom[0].NodeRefs = []string{""}
 			},
-			want: "spec.topologyNodeRefs is required",
+			want: "nodeRefs[0] must not be empty",
 		},
 		{
 			name: "invalid addressing mode",
 			mut:  func(spec *api.SAMTransportProfileSpec) { spec.AddressingMode = "invalid-mode" },
 			want: "spec.addressingMode must be edge-index or pair-stable",
-		},
-		{
-			name: "peer missing from topology",
-			mut: func(spec *api.SAMTransportProfileSpec) {
-				spec.TopologyNodeRefs = []string{"pve-rt", "k8s-rt", "other-rt"}
-				spec.Peers = append(spec.Peers, api.SAMTransportPeerSpec{NodeRef: "cloud-rt", RemoteEndpoint: "203.0.113.30"})
-			},
-			want: "must be listed in spec.topologyNodeRefs",
-		},
-		{
-			name: "override half set",
-			mut:  func(spec *api.SAMTransportProfileSpec) { spec.Peers[0].Override.LocalInner = "10.255.1.0/31" },
-			want: "localInner and remoteInner must be set together",
-		},
-		{
-			name: "override conflict",
-			mut: func(spec *api.SAMTransportProfileSpec) {
-				spec.TopologyNodeRefs = []string{"pve-rt", "k8s-rt", "cloud-rt"}
-				spec.Peers[0].Override = api.SAMTransportPeerOverrideSpec{LocalInner: "10.255.1.0/31", RemoteInner: "10.255.1.1"}
-				spec.Peers = append(spec.Peers, api.SAMTransportPeerSpec{
-					NodeRef:        "cloud-rt",
-					RemoteEndpoint: "203.0.113.30",
-					Override:       api.SAMTransportPeerOverrideSpec{LocalInner: "10.255.1.0/31", RemoteInner: "10.255.1.1"},
-				})
-			},
-			want: "conflicts with spec.peers[0].override",
 		},
 		{
 			name: "missing underlay interface",
@@ -206,54 +156,15 @@ func TestValidateSAMTransportProfileRejectsInvalidFields(t *testing.T) {
 func TestValidateSAMTransportProfileAllowsPairStableWithoutSharedTopology(t *testing.T) {
 	spec := validSAMTransportProfileSpec()
 	spec.AddressingMode = "pair-stable"
-	spec.Peers = append(spec.Peers, api.SAMTransportPeerSpec{
-		NodeRef:        "k8s-rr02",
-		RemoteEndpoint: "203.0.113.21",
-	})
+	spec.PeersFrom[0].NodeRefs = []string{"k8s-rt"}
 	if err := Validate(samTransportProfileRouter(spec)); err != nil {
 		t.Fatalf("Validate pair-stable SAMTransportProfile: %v", err)
 	}
 }
 
-func TestValidateSAMTransportProfilePairStableFullTopologySlots(t *testing.T) {
-	topology := []string{
-		"aws-leaf-a", "aws-leaf-b", "aws-rr-a", "aws-rr-b",
-		"azure-leaf-a", "azure-leaf-b", "oci-leaf-a", "oci-leaf-b",
-		"pve-leaf-a", "pve-leaf-b",
-	}
-
-	t.Run("rejects live full topology collision", func(t *testing.T) {
-		spec := validSAMTransportProfileSpec()
-		spec.SelfNodeRef = "pve-leaf-a"
-		spec.AddressingMode = "pair-stable"
-		spec.InnerPrefix = "10.255.0.0/24"
-		spec.TopologyNodeRefs = topology
-		spec.Peers = nil
-		spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMNodeSet/cloudedge-nodes"}}
-		err := Validate(samTransportProfileRouter(spec))
-		if err == nil || !strings.Contains(err.Error(), "pair-stable edges aws-leaf-a<->aws-rr-b and azure-leaf-b<->oci-leaf-a collide") {
-			t.Fatalf("Validate full topology collision error = %v", err)
-		}
-	})
-
-	t.Run("accepts collision-free expanded prefix", func(t *testing.T) {
-		spec := validSAMTransportProfileSpec()
-		spec.SelfNodeRef = "pve-leaf-a"
-		spec.AddressingMode = "pair-stable"
-		spec.InnerPrefix = "10.255.0.0/20"
-		spec.TopologyNodeRefs = topology
-		spec.Peers = nil
-		spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMNodeSet/cloudedge-nodes"}}
-		if err := Validate(samTransportProfileRouter(spec)); err != nil {
-			t.Fatalf("Validate collision-free full topology: %v", err)
-		}
-	})
-}
-
 func TestValidateSAMTransportProfileAllowsPeersFromWithoutPeers(t *testing.T) {
 	spec := validSAMTransportProfileSpec()
 	spec.AddressingMode = "pair-stable"
-	spec.Peers = nil
 	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMPeerGroup/svnet1-rrs"}}
 	if err := Validate(samTransportProfileRouter(spec)); err != nil {
 		t.Fatalf("Validate peersFrom SAMTransportProfile: %v", err)
@@ -263,7 +174,6 @@ func TestValidateSAMTransportProfileAllowsPeersFromWithoutPeers(t *testing.T) {
 func TestValidateSAMTransportProfileAllowsSAMNodeSetPeersFromWithoutPeers(t *testing.T) {
 	spec := validSAMTransportProfileSpec()
 	spec.AddressingMode = "pair-stable"
-	spec.Peers = nil
 	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMNodeSet/svnet1-nodes"}}
 	if err := Validate(samTransportProfileRouter(spec)); err != nil {
 		t.Fatalf("Validate SAMNodeSet peersFrom SAMTransportProfile: %v", err)
@@ -273,7 +183,6 @@ func TestValidateSAMTransportProfileAllowsSAMNodeSetPeersFromWithoutPeers(t *tes
 func TestValidateSAMTransportProfileAllowsPublishPeerGroupWithoutPeers(t *testing.T) {
 	spec := validSAMTransportProfileSpec()
 	spec.AddressingMode = "pair-stable"
-	spec.Peers = nil
 	spec.PeersFrom = nil
 	spec.PublishPeerGroup = true
 	if err := Validate(samTransportProfileRouter(spec)); err != nil {
@@ -290,14 +199,77 @@ func TestValidateSAMTransportProfileRejectsInvalidPeersFrom(t *testing.T) {
 	}
 }
 
+func TestValidateSAMTransportProfileRejectsMissingSAMNodeSetSource(t *testing.T) {
+	spec := validSAMTransportProfileSpec()
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMNodeSet/missing"}}
+	err := Validate(samTransportProfileRouter(spec))
+	if err == nil || !strings.Contains(err.Error(), `spec.peersFrom[0].resource references missing SAMNodeSet "SAMNodeSet/missing"`) {
+		t.Fatalf("Validate missing SAMNodeSet source error = %v, want missing SAMNodeSet error", err)
+	}
+}
+
+func TestValidateSAMTransportProfileRejectsNodeRefOutsideSAMNodeSet(t *testing.T) {
+	spec := validSAMTransportProfileSpec()
+	spec.PeersFrom[0].NodeRefs = []string{"missing"}
+	err := Validate(samTransportProfileRouter(spec))
+	if err == nil || !strings.Contains(err.Error(), `spec.peersFrom[0].nodeRefs[0] "missing" is not present in SAMNodeSet/svnet1-nodes`) {
+		t.Fatalf("Validate missing SAMNodeSet nodeRef error = %v, want nodeRef membership error", err)
+	}
+}
+
 func TestValidateMobilityPoolAllowsMembersFromWithoutMembers(t *testing.T) {
 	spec := api.MobilityPoolSpec{
 		Prefix:      "10.88.60.0/24",
 		GroupRef:    "cloudedge",
-		MembersFrom: []api.MobilityMembersSourceSpec{{Resource: "MobilityMemberSet/svnet1-members"}},
+		MembersFrom: []api.MobilityMembersSourceSpec{{Resource: "SAMNodeSet/svnet1-members"}},
 	}
-	if err := Validate(mobilityPoolRouter(spec)); err != nil {
-		t.Fatalf("Validate membersFrom MobilityPool: %v", err)
+	nodeSet := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMNodeSet"},
+		Metadata: api.ObjectMeta{Name: "svnet1-members"},
+		Spec: api.SAMNodeSetSpec{Nodes: []api.SAMNodeSpec{
+			{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
+			{NodeRef: "aws-router", Site: "aws", Role: "cloud"},
+		}},
+	}
+	if err := Validate(mobilityPoolRouter(spec, nodeSet, testEventGroupResource("cloudedge", "onprem-router"))); err != nil {
+		t.Fatalf("Validate SAMNodeSet membersFrom MobilityPool: %v", err)
+	}
+}
+
+func TestValidateMobilityPoolResolvesNodeSetIdentityForSelfOverlay(t *testing.T) {
+	spec := api.MobilityPoolSpec{
+		Prefix:      "10.88.60.0/24",
+		GroupRef:    "cloudedge",
+		MembersFrom: []api.MobilityMembersSourceSpec{{Resource: "SAMNodeSet/cloudedge-nodes"}},
+		Profiles: api.MobilityPoolProfiles{CloudCaptures: map[string]api.MobilityCloudCaptureProfile{
+			"aws-self": {Capture: api.MobilityMemberCapture{
+				Type:        "provider-secondary-ip",
+				ProviderRef: "aws-provider",
+				NICRef:      "eni-self",
+			}},
+		}},
+		Members: []api.MobilityPoolMemberOverlay{{
+			NodeRef:    "aws-router",
+			ProfileRef: "aws-self",
+		}},
+	}
+	nodeSet := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMNodeSet"},
+		Metadata: api.ObjectMeta{Name: "cloudedge-nodes"},
+		Spec: api.SAMNodeSetSpec{Nodes: []api.SAMNodeSpec{{
+			NodeRef: "aws-router",
+			Site:    "aws",
+			Role:    "cloud",
+		}}},
+	}
+	if err := ValidateForOS(mobilityPoolRouter(spec, nodeSet, testEventGroupResource("cloudedge", "aws-router")), platform.OSLinux); err != nil {
+		t.Fatalf("Validate NodeSet-backed self overlay: %v", err)
+	}
+
+	spec.MembersFrom = nil
+	err := ValidateForOS(mobilityPoolRouter(spec, testEventGroupResource("cloudedge", "aws-router")), platform.OSLinux)
+	if err == nil || !strings.Contains(err.Error(), "spec.membersFrom requires at least one SAMNodeSet source") {
+		t.Fatalf("Validate missing membersFrom error = %v, want source requirement", err)
 	}
 }
 
@@ -307,28 +279,9 @@ func TestValidateMobilityPoolRejectsInvalidMembersFrom(t *testing.T) {
 		GroupRef:    "cloudedge",
 		MembersFrom: []api.MobilityMembersSourceSpec{{Resource: "SAMPeerGroup/svnet1-rrs"}},
 	}
-	err := Validate(mobilityPoolRouter(spec))
-	if err == nil || !strings.Contains(err.Error(), "spec.membersFrom[0].resource must reference MobilityMemberSet/<name>") {
-		t.Fatalf("Validate membersFrom error = %v, want MobilityMemberSet ref error", err)
-	}
-}
-
-func TestValidateMobilityMemberSet(t *testing.T) {
-	router := mobilityMemberSetRouter(api.MobilityMemberSetSpec{Members: []api.MobilityMemberSetMember{{
-		NodeRef: "pve-rt01",
-		Site:    "pve01",
-		Role:    "onprem",
-	}}})
-	if err := Validate(router); err != nil {
-		t.Fatalf("Validate MobilityMemberSet: %v", err)
-	}
-}
-
-func TestValidateMobilityMemberSetRejectsInvalidMember(t *testing.T) {
-	router := mobilityMemberSetRouter(api.MobilityMemberSetSpec{Members: []api.MobilityMemberSetMember{{Site: "pve01", Role: "onprem"}}})
-	err := Validate(router)
-	if err == nil || !strings.Contains(err.Error(), "spec.members[0].nodeRef is required") {
-		t.Fatalf("Validate MobilityMemberSet error = %v, want nodeRef required", err)
+	err := Validate(mobilityPoolRouter(spec, testEventGroupResource("cloudedge", "test-local-node")))
+	if err == nil || !strings.Contains(err.Error(), "spec.membersFrom[0].resource must reference SAMNodeSet/<name>") {
+		t.Fatalf("Validate membersFrom error = %v, want SAMNodeSet ref error", err)
 	}
 }
 
@@ -350,6 +303,66 @@ func TestValidateSAMNodeSet(t *testing.T) {
 	}}})
 	if err := Validate(router); err != nil {
 		t.Fatalf("Validate SAMNodeSet: %v", err)
+	}
+}
+
+func TestValidateSAMNodeSetPlacementAndCapacity(t *testing.T) {
+	valid := validSAMNodeSetSpec()
+	valid.Nodes[0].Role = "cloud"
+	valid.Nodes[0].Placement = api.MobilityMemberPlacement{Group: "aws-a", Priority: 10}
+	valid.Nodes[0].MaxSecondaryIPs = 32
+	if err := Validate(samNodeSetRouter(valid)); err != nil {
+		t.Fatalf("Validate SAMNodeSet cloud placement: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		mut  func(*api.SAMNodeSetSpec)
+		want string
+	}{
+		{
+			name: "negative capacity",
+			mut:  func(spec *api.SAMNodeSetSpec) { spec.Nodes[0].MaxSecondaryIPs = -1 },
+			want: "maxSecondaryIPs must be >= 0",
+		},
+		{
+			name: "capacity requires group",
+			mut:  func(spec *api.SAMNodeSetSpec) { spec.Nodes[0].MaxSecondaryIPs = 1 },
+			want: "maxSecondaryIPs requires placement.group",
+		},
+		{
+			name: "priority requires group",
+			mut:  func(spec *api.SAMNodeSetSpec) { spec.Nodes[0].Placement.Priority = 1 },
+			want: "placement.priority requires placement.group",
+		},
+		{
+			name: "drain requires group",
+			mut:  func(spec *api.SAMNodeSetSpec) { spec.Nodes[0].Maintenance.Drain = true },
+			want: "maintenance.drain requires placement.group",
+		},
+		{
+			name: "group requires cloud role",
+			mut:  func(spec *api.SAMNodeSetSpec) { spec.Nodes[0].Placement.Group = "aws-a" },
+			want: "placement.group is supported only for role cloud",
+		},
+		{
+			name: "priority range",
+			mut: func(spec *api.SAMNodeSetSpec) {
+				spec.Nodes[0].Role = "cloud"
+				spec.Nodes[0].Placement = api.MobilityMemberPlacement{Group: "aws-a", Priority: 1000001}
+			},
+			want: "placement.priority must be between 0 and 1000000",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := validSAMNodeSetSpec()
+			tt.mut(&spec)
+			err := Validate(samNodeSetRouter(spec))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Validate SAMNodeSet placement error = %v, want %q", err, tt.want)
+			}
+		})
 	}
 }
 
@@ -527,12 +540,10 @@ func TestValidateSAMEnrollmentJoinTokenVerifiesHMACWhenSecretAvailable(t *testin
 	policy := router.Spec.Resources[policyIndex].Spec.(api.SAMEnrollmentPolicySpec)
 	policy.JoinTokenFrom = api.SecretValueSourceSpec{Env: envName}
 	policy.JoinAudience = "cloudedge"
-	policy.RRSetRef = "SAMRRSet/cloudedge-rrs"
 	router.Spec.Resources[policyIndex].Spec = policy
 
 	claimIndex := len(router.Spec.Resources) - 1
 	claim := router.Spec.Resources[claimIndex].Spec.(api.SAMEnrollmentClaimSpec)
-	claim.RRSetRef = "SAMRRSet/cloudedge-rrs"
 	claim.JoinAudience = "cloudedge"
 	claim.JoinNonce = "nonce-1"
 	claim.JoinTimestamp = "2026-06-28T00:00:00Z"
@@ -726,11 +737,19 @@ func TestValidateSAMEnrollmentClaimRejectsDuplicatePolicyFields(t *testing.T) {
 
 func TestValidateSAMEnrollmentRejectsRRSetScopeMismatch(t *testing.T) {
 	router := samEnrollmentRouter()
-	policyIndex := len(router.Spec.Resources) - 2
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMNodeSet"},
+		Metadata: api.ObjectMeta{Name: "rrs"},
+		Spec: api.SAMNodeSetSpec{Nodes: []api.SAMNodeSpec{{
+			NodeRef: "aws-rr-a", RouteReflector: true, SAMEndpoint: "10.99.0.2",
+		}}},
+	})
+	policyIndex := len(router.Spec.Resources) - 3
 	policy := router.Spec.Resources[policyIndex].Spec.(api.SAMEnrollmentPolicySpec)
 	policy.RRSetRef = "SAMRRSet/cloudedge-rrs"
+	policy.RRNodeSetRef = "SAMNodeSet/rrs"
 	router.Spec.Resources[policyIndex].Spec = policy
-	claimIndex := len(router.Spec.Resources) - 1
+	claimIndex := len(router.Spec.Resources) - 2
 	claim := router.Spec.Resources[claimIndex].Spec.(api.SAMEnrollmentClaimSpec)
 	claim.RRSetRef = "SAMRRSet/other"
 	router.Spec.Resources[claimIndex].Spec = claim
@@ -778,73 +797,122 @@ func TestValidateSAMEnrollmentAllowsNonWireGuardClaim(t *testing.T) {
 	}
 }
 
-func TestValidateSAMRRSetAllowsPlainIPIPWithoutWireGuard(t *testing.T) {
+func TestValidateRejectsTopLevelSAMRRSet(t *testing.T) {
 	router := samEnrollmentRouter()
 	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMRRSet"},
 		Metadata: api.ObjectMeta{Name: "cloudedge-rrs"},
 		Spec: api.SAMRRSetSpec{
 			EnrollmentPolicyRef: "SAMEnrollmentPolicy/cloudedge-leaves",
-			MobilityPoolRefs:    []string{"MobilityPool/cloudedge"},
-			RouteAdmission:      api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}},
-			Members: []api.SAMRRSetMember{
-				{NodeRef: "aws-rr-a", Endpoint: "203.0.113.10", TunnelAddress: "10.99.0.2/32"},
-				{NodeRef: "aws-rr-b", Endpoint: "203.0.113.11", TunnelAddress: "10.99.0.3/32"},
+			Nodes: []api.SAMNodeSpec{
+				{NodeRef: "aws-rr-a", RouteReflector: true, SAMEndpoint: "203.0.113.10"},
+				{NodeRef: "aws-rr-b", RouteReflector: true, SAMEndpoint: "203.0.113.11"},
 			},
 		},
 	})
-	if err := Validate(router); err != nil {
-		t.Fatalf("Validate plain IPIP SAMRRSet without WireGuard: %v", err)
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "is runtime-only") {
+		t.Fatalf("Validate static SAMRRSet = %v, want runtime-only error", err)
 	}
 }
 
-func TestValidateSAMPeerGroup(t *testing.T) {
-	router := samPeerGroupRouter(api.SAMPeerGroupSpec{Peers: []api.SAMTransportPeerSpec{{
-		NodeRef:        "k8s-rt01",
-		RemoteEndpoint: "203.0.113.11",
-	}}})
-	if err := Validate(router); err != nil {
-		t.Fatalf("Validate SAMPeerGroup: %v", err)
+func TestValidateSAMEnrollmentPolicyRequiresRRNodeSetRefForRRSet(t *testing.T) {
+	router := samEnrollmentRouter()
+	for i, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentPolicy" {
+			continue
+		}
+		policy := resource.Spec.(api.SAMEnrollmentPolicySpec)
+		policy.RRSetRef = "SAMRRSet/cloudedge-rrs"
+		router.Spec.Resources[i].Spec = policy
+		break
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.rrNodeSetRef is required") {
+		t.Fatalf("Validate policy without rrNodeSetRef = %v, want required rrNodeSetRef error", err)
 	}
 }
 
-func TestValidateSAMPeerGroupRejectsInvalidPeer(t *testing.T) {
-	router := samPeerGroupRouter(api.SAMPeerGroupSpec{Peers: []api.SAMTransportPeerSpec{{RemoteEndpoint: "203.0.113.11"}}})
-	err := Validate(router)
-	if err == nil || !strings.Contains(err.Error(), "spec.peers[0].nodeRef is required") {
-		t.Fatalf("Validate SAMPeerGroup error = %v, want nodeRef required", err)
+func TestValidateSAMEnrollmentPolicyRRNodeSetRequiresRouteReflectors(t *testing.T) {
+	router := samEnrollmentRouter()
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMNodeSet"},
+		Metadata: api.ObjectMeta{Name: "rrs"},
+		Spec: api.SAMNodeSetSpec{Nodes: []api.SAMNodeSpec{{
+			NodeRef: "rr-a", SAMEndpoint: "10.99.0.2",
+		}}},
+	})
+	for i, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentPolicy" {
+			continue
+		}
+		policy := resource.Spec.(api.SAMEnrollmentPolicySpec)
+		policy.RRSetRef = "SAMRRSet/cloudedge-rrs"
+		policy.RRNodeSetRef = "SAMNodeSet/rrs"
+		router.Spec.Resources[i].Spec = policy
+		break
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.nodes[0].routeReflector must be true") {
+		t.Fatalf("Validate policy RR node set without route reflector = %v, want routeReflector error", err)
 	}
 }
 
-func TestValidateSAMTransportProfileRejectsPairStableSlotCollision(t *testing.T) {
-	spec := validSAMTransportProfileSpec()
-	spec.AddressingMode = "pair-stable"
-	spec.Peers = []api.SAMTransportPeerSpec{
-		{NodeRef: "node-03", RemoteEndpoint: "203.0.113.20"},
-		{NodeRef: "node-50", RemoteEndpoint: "203.0.113.21"},
+func TestValidateSAMEnrollmentClientAllowsRemotePolicyClaim(t *testing.T) {
+	router := samEnrollmentRouter()
+	resources := make([]api.Resource, 0, len(router.Spec.Resources))
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "SAMEnrollmentPolicy" {
+			continue
+		}
+		if resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "SAMEnrollmentClaim" {
+			claim := resource.Spec.(api.SAMEnrollmentClaimSpec)
+			claim.RRSetRef = "SAMRRSet/cloudedge-rrs"
+			resource.Spec = claim
+		}
+		resources = append(resources, resource)
 	}
-	err := Validate(samTransportProfileRouter(spec))
-	if err == nil || !strings.Contains(err.Error(), "collides with") {
-		t.Fatalf("Validate collision error = %v, want collides with", err)
-	}
-}
-
-func TestValidateSAMTransportProfileAllowsPairStableCollisionWithOverride(t *testing.T) {
-	spec := validSAMTransportProfileSpec()
-	spec.AddressingMode = "pair-stable"
-	spec.Peers = []api.SAMTransportPeerSpec{
-		{NodeRef: "node-03", RemoteEndpoint: "203.0.113.20"},
-		{
-			NodeRef:        "node-50",
-			RemoteEndpoint: "203.0.113.21",
-			Override: api.SAMTransportPeerOverrideSpec{
-				LocalInner:  "10.255.1.126/31",
-				RemoteInner: "10.255.1.127",
-			},
+	router.Spec.Resources = resources
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentClient"},
+		Metadata: api.ObjectMeta{Name: "leaf-pve"},
+		Spec: api.SAMEnrollmentClientSpec{
+			ClaimRef:           "SAMEnrollmentClaim/leaf-pve",
+			BootstrapEndpoints: []string{"https://203.0.113.10:65432"},
 		},
+	})
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate client-side remote policy claim: %v", err)
 	}
-	if err := Validate(samTransportProfileRouter(spec)); err != nil {
-		t.Fatalf("Validate collision with override: %v", err)
+}
+
+func TestValidateSAMEnrollmentClaimWithoutLocalPolicyRequiresClient(t *testing.T) {
+	router := samEnrollmentRouter()
+	resources := make([]api.Resource, 0, len(router.Spec.Resources))
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "SAMEnrollmentPolicy" {
+			continue
+		}
+		resources = append(resources, resource)
+	}
+	router.Spec.Resources = resources
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "references missing SAMEnrollmentPolicy") {
+		t.Fatalf("Validate claim without local policy/client = %v, want missing policy error", err)
+	}
+}
+
+func TestValidateRejectsTopLevelSAMPeerGroup(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
+			Metadata: api.ObjectMeta{Name: "svnet1-rrs"},
+			Spec: api.SAMPeerGroupSpec{Peers: []api.SAMTransportPeerSpec{{
+				NodeRef:        "k8s-rt01",
+				RemoteEndpoint: "203.0.113.11",
+			}}},
+		}}},
+	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "is runtime-only") {
+		t.Fatalf("Validate top-level SAMPeerGroup error = %v, want runtime-only rejection", err)
 	}
 }
 
@@ -860,9 +928,9 @@ func validSAMTransportProfileSpec() api.SAMTransportProfileSpec {
 			PeerASN:      64512,
 			TimersPreset: "fast",
 		},
-		Peers: []api.SAMTransportPeerSpec{{
-			NodeRef:        "k8s-rt",
-			RemoteEndpoint: "203.0.113.20",
+		PeersFrom: []api.SAMTransportPeersSourceSpec{{
+			Resource: "SAMNodeSet/svnet1-nodes",
+			NodeRefs: []string{"k8s-rt"},
 		}},
 	}
 }
@@ -887,31 +955,15 @@ func samTransportProfileRouter(spec api.SAMTransportProfileSpec) *api.Router {
 				Metadata: api.ObjectMeta{Name: "lab"},
 				Spec:     spec,
 			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMNodeSet"},
+				Metadata: api.ObjectMeta{Name: "svnet1-nodes"},
+				Spec: api.SAMNodeSetSpec{Nodes: []api.SAMNodeSpec{
+					{NodeRef: "pve-rt", SAMEndpoint: "198.51.100.10"},
+					{NodeRef: "k8s-rt", SAMEndpoint: "203.0.113.20"},
+				}},
+			},
 		}},
-	}
-}
-
-func samPeerGroupRouter(spec api.SAMPeerGroupSpec) *api.Router {
-	return &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{{
-			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
-			Metadata: api.ObjectMeta{Name: "svnet1-rrs"},
-			Spec:     spec,
-		}}},
-	}
-}
-
-func mobilityMemberSetRouter(spec api.MobilityMemberSetSpec) *api.Router {
-	return &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{{
-			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityMemberSet"},
-			Metadata: api.ObjectMeta{Name: "svnet1-members"},
-			Spec:     spec,
-		}}},
 	}
 }
 
@@ -948,7 +1000,7 @@ func samEnrollmentRouter() *api.Router {
 	spec.SelfNodeRef = "aws-rr-a"
 	spec.UnderlayInterface = "wg-hybrid"
 	spec.LocalEndpoint = "10.99.0.2"
-	spec.Peers = nil
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMPeerGroup/cloudedge-rrs"}}
 	spec.PublishPeerGroup = true
 	return &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
@@ -956,10 +1008,23 @@ func samEnrollmentRouter() *api.Router {
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"}, Metadata: api.ObjectMeta{Name: "wg-hybrid"}, Spec: api.WireGuardInterfaceSpec{PrivateKey: "priv", ListenPort: 51820}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "mobility"}, Spec: api.BGPRouterSpec{ASN: 64577, RouterID: "10.99.0.2"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"}, Metadata: api.ObjectMeta{Name: "cloudedge"}, Spec: api.EventGroupSpec{NodeName: "test-local-node"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMNodeSet"}, Metadata: api.ObjectMeta{Name: "cloudedge-members"}, Spec: api.SAMNodeSetSpec{Nodes: []api.SAMNodeSpec{
+				{NodeRef: "test-local-node", Site: "aws", Role: "cloud"},
+				{NodeRef: "aws-rr-a", Site: "aws", Role: "cloud"},
+			}}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"}, Metadata: api.ObjectMeta{Name: "cloudedge"}, Spec: api.MobilityPoolSpec{
-				Prefix:   "10.77.60.0/24",
-				GroupRef: "cloudedge",
-				Members:  []api.MobilityPoolMember{{NodeRef: "aws-rr-a", Site: "aws", Role: "cloud"}},
+				Prefix:      "10.77.60.0/24",
+				GroupRef:    "cloudedge",
+				MembersFrom: []api.MobilityMembersSourceSpec{{Resource: "SAMNodeSet/cloudedge-members"}},
+				Members: []api.MobilityPoolMemberOverlay{{
+					NodeRef: "test-local-node",
+					Capture: api.MobilityMemberCapture{
+						Type:        "provider-secondary-ip",
+						ProviderRef: "aws-provider",
+						NICRef:      "eni-test-local-node",
+					},
+				}},
 			}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile"}, Metadata: api.ObjectMeta{Name: "aws-rr-a"}, Spec: spec},
 			{TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentPolicy"}, Metadata: api.ObjectMeta{Name: "cloudedge-leaves"}, Spec: api.SAMEnrollmentPolicySpec{
@@ -984,110 +1049,111 @@ func samEnrollmentRouter() *api.Router {
 }
 
 func TestValidateMobilityPoolAllowsExplicitSingleOnpremProxyARPWithoutVRRP(t *testing.T) {
-	router := mobilityPoolRouter(api.MobilityPoolSpec{
+	router := mobilityPoolRouter(mobilityPoolFixture{
 		Prefix:   "10.88.60.0/24",
 		GroupRef: "cloudedge",
-		Members: []api.MobilityPoolMember{
+		Members: []api.ResolvedMobilityPoolMember{
 			{
-				NodeRef:  "onprem-router",
-				Site:     "onprem",
-				Role:     "onprem",
-				Capture:  api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan", ActiveWhen: api.CaptureActiveWhen{Type: "single-router"}},
-				Delivery: api.MobilityMemberDelivery{PeerRef: "azure", Mode: "route", TunnelInterface: "wg-hybrid"},
+				NodeRef: "onprem-router",
+				Site:    "onprem",
+				Role:    "onprem",
+				Capture: api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan", ActiveWhen: api.CaptureActiveWhen{Type: "single-router"}},
 			},
 			{
 				NodeRef: "azure-router",
 				Site:    "azure",
 				Role:    "cloud",
 				Capture: api.MobilityMemberCapture{
-					Type:         "provider-secondary-ip",
-					ProviderRef:  "azure-provider",
-					ProviderMode: "nic-secondary-ip",
-					NICRef:       "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/networkInterfaces/router-nic",
+					Type:        "provider-secondary-ip",
+					ProviderRef: "azure-provider",
+					NICRef:      "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/networkInterfaces/router-nic",
 				},
-				Delivery: api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
 			},
 		},
-		Authority: api.MobilityAuthority{Mode: "static"},
 	}, testInterfaceResource("lan"))
 	if err := Validate(router); err != nil {
 		t.Fatalf("Validate single onprem proxy-arp MobilityPool: %v", err)
 	}
 }
 
-func TestValidateMobilityPoolAllowsExplicitProxyARPCaptureStrategy(t *testing.T) {
-	router := mobilityPoolRouter(api.MobilityPoolSpec{
-		Prefix:   "10.88.60.0/24",
-		GroupRef: "cloudedge",
-		Members: []api.MobilityPoolMember{{
-			NodeRef: "onprem-router",
-			Site:    "onprem",
-			Role:    "onprem",
-			Capture: api.MobilityMemberCapture{
-				Type:            "proxy-arp",
-				CaptureStrategy: "proxy-arp",
-				Interface:       "lan",
-				ActiveWhen:      api.CaptureActiveWhen{Type: "single-router"},
-			},
-		}},
-	}, testInterfaceResource("lan"))
-	if err := Validate(router); err != nil {
-		t.Fatalf("Validate proxy-arp captureStrategy: %v", err)
-	}
-}
-
-func TestValidateMobilityPoolAllowsRouteTableCaptureStrategyAndLegacyStrategy(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		capture api.MobilityMemberCapture
+func TestValidateMobilityPoolRejectsRedundantCaptureStrategy(t *testing.T) {
+	cases := []struct {
+		name   string
+		member api.ResolvedMobilityPoolMember
+		want   string
 	}{
 		{
-			name: "captureStrategy",
-			capture: api.MobilityMemberCapture{
-				Type:            "provider-secondary-ip",
-				ProviderRef:     "azure-provider",
-				ProviderMode:    "route-table",
-				CaptureStrategy: "route-table",
-				NICRef:          "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/networkInterfaces/router-nic",
-				Target:          map[string]string{"routeTableRef": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/routeTables/rt-cloudedge"},
+			name: "provider secondary ip",
+			member: api.ResolvedMobilityPoolMember{
+				NodeRef: "azure-router",
+				Site:    "azure",
+				Role:    "cloud",
+				Capture: api.MobilityMemberCapture{
+					Type:            "provider-secondary-ip",
+					CaptureStrategy: "secondary-ip",
+					ProviderRef:     "azure-provider",
+					NICRef:          "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/networkInterfaces/router-nic",
+				},
 			},
+			want: "only supports route-table",
 		},
 		{
-			name: "legacy strategy",
-			capture: api.MobilityMemberCapture{
-				Type:         "provider-secondary-ip",
-				ProviderRef:  "azure-provider",
-				ProviderMode: "route-table",
-				Strategy:     "route-table",
-				NICRef:       "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/networkInterfaces/router-nic",
-				Target:       map[string]string{"routeTableRef": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/routeTables/rt-cloudedge"},
+			name: "proxy arp",
+			member: api.ResolvedMobilityPoolMember{
+				NodeRef: "onprem-router",
+				Site:    "onprem",
+				Role:    "onprem",
+				Capture: api.MobilityMemberCapture{
+					Type:            "proxy-arp",
+					CaptureStrategy: "proxy-arp",
+					Interface:       "lan",
+					ActiveWhen:      api.CaptureActiveWhen{Type: "single-router"},
+				},
 			},
+			want: "only supported for provider-secondary-ip route-table",
 		},
-	} {
+	}
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			router := mobilityPoolRouter(api.MobilityPoolSpec{
+			router := mobilityPoolRouter(mobilityPoolFixture{
 				Prefix:   "10.88.60.0/24",
 				GroupRef: "cloudedge",
-				Members: []api.MobilityPoolMember{{
-					NodeRef: "azure-router",
-					Site:    "azure",
-					Role:    "cloud",
-					Capture: tc.capture,
-				}},
-			})
-			if err := Validate(router); err != nil {
-				t.Fatalf("Validate route-table capture strategy: %v", err)
+				Members:  []api.ResolvedMobilityPoolMember{tc.member},
+			}, testInterfaceResource("lan"))
+			if err := Validate(router); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate redundant captureStrategy error = %v, want containing %q", err, tc.want)
 			}
 		})
 	}
 }
 
+func TestValidateMobilityPoolAllowsRouteTableCaptureStrategy(t *testing.T) {
+	router := mobilityPoolRouter(mobilityPoolFixture{
+		Prefix:   "10.88.60.0/24",
+		GroupRef: "cloudedge",
+		Members: []api.ResolvedMobilityPoolMember{{
+			NodeRef: "azure-router",
+			Site:    "azure",
+			Role:    "cloud",
+			Capture: api.MobilityMemberCapture{
+				Type:            "provider-secondary-ip",
+				ProviderRef:     "azure-provider",
+				CaptureStrategy: "route-table",
+				NICRef:          "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/networkInterfaces/router-nic",
+				Target:          map[string]string{"routeTableRef": "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Network/routeTables/rt-cloudedge"},
+			},
+		}},
+	})
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate route-table capture strategy: %v", err)
+	}
+}
+
 func TestValidateMobilityPoolAllowsOnPremL2OwnershipDiscoverySources(t *testing.T) {
-	router := mobilityPoolRouter(api.MobilityPoolSpec{
-		Prefix:         "192.168.123.0/24",
-		GroupRef:       "svnet1",
-		DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
-		Members: []api.MobilityPoolMember{
+	router := mobilityPoolRouter(mobilityPoolFixture{
+		Prefix:   "192.168.123.0/24",
+		GroupRef: "svnet1",
+		Members: []api.ResolvedMobilityPoolMember{
 			{
 				NodeRef: "pve-rt01",
 				Site:    "pve01",
@@ -1113,10 +1179,9 @@ func TestValidateMobilityPoolAllowsOnPremL2OwnershipDiscoverySources(t *testing.
 				Site:    "core",
 				Role:    "cloud",
 				Capture: api.MobilityMemberCapture{
-					Type:         "provider-secondary-ip",
-					ProviderRef:  "aws-provider",
-					ProviderMode: "nic-secondary-ip",
-					NICRef:       "eni-router",
+					Type:        "provider-secondary-ip",
+					ProviderRef: "aws-provider",
+					NICRef:      "eni-router",
 				},
 			},
 		},
@@ -1126,29 +1191,25 @@ func TestValidateMobilityPoolAllowsOnPremL2OwnershipDiscoverySources(t *testing.
 	}
 }
 
-func TestValidateMobilityPoolAllowsDiscoveredCloudNICOnlyInBGPDiscoveryMode(t *testing.T) {
-	spec := api.MobilityPoolSpec{
-		Prefix:         "10.88.60.0/24",
-		GroupRef:       "cloudedge",
-		DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
-		Members: []api.MobilityPoolMember{
+func TestValidateMobilityPoolAllowsDiscoveredCloudNICWithProviderDiscovery(t *testing.T) {
+	spec := mobilityPoolFixture{
+		Prefix:   "10.88.60.0/24",
+		GroupRef: "cloudedge",
+		Members: []api.ResolvedMobilityPoolMember{
 			{
-				NodeRef:  "onprem-router",
-				Site:     "onprem",
-				Role:     "onprem",
-				Capture:  api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan", ActiveWhen: api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}},
-				Delivery: api.MobilityMemberDelivery{PeerRef: "azure", Mode: "route", TunnelInterface: "wg-hybrid"},
+				NodeRef: "onprem-router",
+				Site:    "onprem",
+				Role:    "onprem",
+				Capture: api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan", ActiveWhen: api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}},
 			},
 			{
 				NodeRef: "azure-router",
 				Site:    "azure",
 				Role:    "cloud",
 				Capture: api.MobilityMemberCapture{
-					Type:         "provider-secondary-ip",
-					ProviderRef:  "azure-provider",
-					ProviderMode: "nic-secondary-ip",
+					Type:        "provider-secondary-ip",
+					ProviderRef: "azure-provider",
 				},
-				Delivery: api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
 				OwnershipDiscovery: api.MobilityOwnershipDiscovery{
 					Mode:        "provider-private-ip",
 					ProviderRef: "azure-provider",
@@ -1171,17 +1232,16 @@ func TestValidateMobilityPoolAllowsDiscoveredCloudNICOnlyInBGPDiscoveryMode(t *t
 	}
 
 	spec.Members[1].OwnershipDiscovery = api.MobilityOwnershipDiscovery{Mode: "provider-private-ip", ProviderRef: "azure-provider"}
-	spec.DeliveryPolicy.Mode = ""
 	if err := Validate(mobilityPoolRouter(spec, testInterfaceResource("lan"), testVirtualAddressResource("onprem-vip"))); err != nil {
 		t.Fatalf("Validate default-BGP discovery err = %v", err)
 	}
 }
 
 func TestValidateMobilityPoolActiveWhenVirtualAddressReferenceIsLocalToSelfNode(t *testing.T) {
-	spec := api.MobilityPoolSpec{
+	spec := mobilityPoolFixture{
 		Prefix:   "10.88.60.0/24",
 		GroupRef: "cloudedge",
-		Members: []api.MobilityPoolMember{
+		Members: []api.ResolvedMobilityPoolMember{
 			{
 				NodeRef: "onprem-router",
 				Site:    "onprem",
@@ -1191,53 +1251,48 @@ func TestValidateMobilityPoolActiveWhenVirtualAddressReferenceIsLocalToSelfNode(
 					Interface:  "lan",
 					ActiveWhen: api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"},
 				},
-				Delivery: api.MobilityMemberDelivery{PeerRef: "azure", Mode: "route", TunnelInterface: "wg-hybrid"},
 			},
 			{
 				NodeRef: "azure-router",
 				Site:    "azure",
 				Role:    "cloud",
 				Capture: api.MobilityMemberCapture{
-					Type:         "provider-secondary-ip",
-					ProviderRef:  "azure-provider",
-					ProviderMode: "nic-secondary-ip",
-					NICRef:       "nic-1",
+					Type:        "provider-secondary-ip",
+					ProviderRef: "azure-provider",
+					NICRef:      "nic-1",
 				},
-				Delivery: api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
 			},
 		},
 	}
-	router := mobilityPoolRouter(spec, testEventGroupResource("cloudedge", "azure-router"))
+	router := mobilityPoolRouter(localMobilityPoolSpecForValidation(spec, "azure-router"), testEventGroupResource("cloudedge", "azure-router"))
 	if err := Validate(router); err != nil {
 		t.Fatalf("Validate cloud node with non-local onprem VirtualAddress ref: %v", err)
 	}
-	router = mobilityPoolRouter(spec, testEventGroupResource("cloudedge", "onprem-router"))
+	router = mobilityPoolRouter(localMobilityPoolSpecForValidation(spec, "onprem-router"), testEventGroupResource("cloudedge", "onprem-router"))
 	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "references missing VirtualAddress") {
 		t.Fatalf("Validate onprem node without local VirtualAddress err = %v", err)
 	}
-	router = mobilityPoolRouter(spec, testEventGroupResource("cloudedge", "onprem-router"), testInterfaceResource("lan"), testVirtualAddressResource("onprem-vip"))
+	router = mobilityPoolRouter(localMobilityPoolSpecForValidation(spec, "onprem-router"), testEventGroupResource("cloudedge", "onprem-router"), testInterfaceResource("lan"), testVirtualAddressResource("onprem-vip"))
 	if err := Validate(router); err != nil {
 		t.Fatalf("Validate onprem node with local VirtualAddress: %v", err)
 	}
 }
 
 func TestValidateMobilityPoolPlacement(t *testing.T) {
-	spec := api.MobilityPoolSpec{
+	spec := mobilityPoolFixture{
 		Prefix:   "10.88.60.0/24",
 		GroupRef: "cloudedge",
-		Members: []api.MobilityPoolMember{
+		Members: []api.ResolvedMobilityPoolMember{
 			{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
 			{
 				NodeRef: "azure-router-a",
 				Site:    "azure",
 				Role:    "cloud",
 				Capture: api.MobilityMemberCapture{
-					Type:         "provider-secondary-ip",
-					ProviderRef:  "azure-provider",
-					ProviderMode: "nic-secondary-ip",
-					NICRef:       "nic-a",
+					Type:        "provider-secondary-ip",
+					ProviderRef: "azure-provider",
+					NICRef:      "nic-a",
 				},
-				Delivery:    api.MobilityMemberDelivery{PeerRef: "onprem"},
 				Placement:   api.MobilityMemberPlacement{Group: "azure-edge", Priority: 10},
 				Maintenance: api.MobilityMemberMaintenance{Drain: true},
 			},
@@ -1246,12 +1301,10 @@ func TestValidateMobilityPoolPlacement(t *testing.T) {
 				Site:    "azure",
 				Role:    "cloud",
 				Capture: api.MobilityMemberCapture{
-					Type:         "provider-secondary-ip",
-					ProviderRef:  "azure-provider",
-					ProviderMode: "nic-secondary-ip",
-					NICRef:       "nic-b",
+					Type:        "provider-secondary-ip",
+					ProviderRef: "azure-provider",
+					NICRef:      "nic-b",
 				},
-				Delivery:  api.MobilityMemberDelivery{PeerRef: "onprem"},
 				Placement: api.MobilityMemberPlacement{Group: "azure-edge", Priority: 20},
 			},
 		},
@@ -1260,15 +1313,8 @@ func TestValidateMobilityPoolPlacement(t *testing.T) {
 		t.Fatalf("Validate placement MobilityPool: %v", err)
 	}
 
-	partial := spec
-	partial.Members = append([]api.MobilityPoolMember(nil), spec.Members...)
-	partial.Members[2].Placement = api.MobilityMemberPlacement{}
-	if err := Validate(mobilityPoolRouter(partial)); err == nil || !strings.Contains(err.Error(), "placement.group is required for provider-secondary-ip member") {
-		t.Fatalf("Validate partial placement err = %v, want missing placement group failure", err)
-	}
-
 	autoPriority := spec
-	autoPriority.Members = append([]api.MobilityPoolMember(nil), spec.Members...)
+	autoPriority.Members = append([]api.ResolvedMobilityPoolMember(nil), spec.Members...)
 	autoPriority.Members[1].Placement.Priority = 0
 	autoPriority.Members[2].Placement.Priority = 0
 	if err := Validate(mobilityPoolRouter(autoPriority)); err != nil {
@@ -1277,19 +1323,18 @@ func TestValidateMobilityPoolPlacement(t *testing.T) {
 }
 
 func TestValidateMobilityPoolAllowsIdentityOnlyPlacementMember(t *testing.T) {
-	spec := api.MobilityPoolSpec{
+	spec := mobilityPoolFixture{
 		Prefix:   "10.88.60.0/24",
 		GroupRef: "cloudedge",
-		Members: []api.MobilityPoolMember{
+		Members: []api.ResolvedMobilityPoolMember{
 			{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
 			{
 				NodeRef: "aws-router-a",
 				Site:    "aws",
 				Role:    "cloud",
 				Capture: api.MobilityMemberCapture{
-					Type:         "provider-secondary-ip",
-					ProviderRef:  "aws-provider",
-					ProviderMode: "eni-secondary-ip",
+					Type:        "provider-secondary-ip",
+					ProviderRef: "aws-provider",
 				},
 				OwnershipDiscovery: api.MobilityOwnershipDiscovery{Mode: "provider-private-ip"},
 				Placement:          api.MobilityMemberPlacement{Group: "aws-edge", Priority: 10},
@@ -1309,7 +1354,7 @@ func TestValidateMobilityPoolAllowsIdentityOnlyPlacementMember(t *testing.T) {
 }
 
 func TestValidateMobilityPoolCloudCaptureProfile(t *testing.T) {
-	spec := api.MobilityPoolSpec{
+	spec := mobilityPoolFixture{
 		Prefix:   "10.88.60.0/24",
 		GroupRef: "cloudedge",
 		Values: map[string]string{
@@ -1319,10 +1364,9 @@ func TestValidateMobilityPoolCloudCaptureProfile(t *testing.T) {
 		Profiles: api.MobilityPoolProfiles{CloudCaptures: map[string]api.MobilityCloudCaptureProfile{
 			"azure-edge": {
 				Capture: api.MobilityMemberCapture{
-					Type:         "provider-secondary-ip",
-					ProviderRef:  "azure-provider",
-					ProviderMode: "nic-secondary-ip",
-					TargetFrom:   map[string]string{"region": "region"},
+					Type:        "provider-secondary-ip",
+					ProviderRef: "azure-provider",
+					TargetFrom:  map[string]string{"region": "region"},
 				},
 				OwnershipDiscovery: api.MobilityOwnershipDiscovery{
 					Mode:          "provider-private-ip",
@@ -1330,7 +1374,7 @@ func TestValidateMobilityPoolCloudCaptureProfile(t *testing.T) {
 				},
 			},
 		}},
-		Members: []api.MobilityPoolMember{
+		Members: []api.ResolvedMobilityPoolMember{
 			{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
 			{
 				NodeRef:    "azure-router",
@@ -1348,10 +1392,10 @@ func TestValidateMobilityPoolCloudCaptureProfile(t *testing.T) {
 }
 
 func TestValidateMobilityPoolSelfCloudMemberMustResolveCapture(t *testing.T) {
-	spec := api.MobilityPoolSpec{
+	spec := mobilityPoolFixture{
 		Prefix:   "10.88.60.0/24",
 		GroupRef: "cloudedge",
-		Members: []api.MobilityPoolMember{
+		Members: []api.ResolvedMobilityPoolMember{
 			{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
 			{NodeRef: "azure-router", Site: "azure", Role: "cloud"},
 		},
@@ -1365,13 +1409,18 @@ func TestValidateMobilityPoolSelfCloudMemberMustResolveCapture(t *testing.T) {
 	if err := Validate(mobilityPoolRouter(spec)); err != nil {
 		t.Fatalf("Validate identity-only cloud member without self node should remain offline-compatible: %v", err)
 	}
+
+	err = Validate(mobilityPoolRouter(spec, testEventGroupResource("cloudedge", "azure-router-alias")))
+	if err == nil || !strings.Contains(err.Error(), `self node "azure-router-alias" is not a member`) {
+		t.Fatalf("Validate EventGroup identity mismatch = %v, want exact SAMNodeSet membership error", err)
+	}
 }
 
 func TestValidateMobilityPoolProfileReferenceErrors(t *testing.T) {
-	spec := api.MobilityPoolSpec{
+	spec := mobilityPoolFixture{
 		Prefix:   "10.88.60.0/24",
 		GroupRef: "cloudedge",
-		Members: []api.MobilityPoolMember{
+		Members: []api.ResolvedMobilityPoolMember{
 			{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
 			{NodeRef: "azure-router", Site: "azure", Role: "cloud", ProfileRef: "missing"},
 		},
@@ -1391,35 +1440,39 @@ func TestValidateMobilityPoolProfileReferenceErrors(t *testing.T) {
 	}
 }
 
-func TestWarningsMobilityPoolRemoteDetails(t *testing.T) {
-	spec := api.MobilityPoolSpec{
-		Prefix:   "10.88.60.0/24",
-		GroupRef: "cloudedge",
-		Profiles: api.MobilityPoolProfiles{CloudCaptures: map[string]api.MobilityCloudCaptureProfile{
-			"azure": {Capture: api.MobilityMemberCapture{Type: "provider-secondary-ip"}},
-		}},
-		Members: []api.MobilityPoolMember{
+func TestValidateMobilityPoolRejectsRemoteDetailsWhenSelfKnown(t *testing.T) {
+	spec := mobilityPoolFixture{
+		Prefix:             "10.88.60.0/24",
+		GroupRef:           "cloudedge",
+		IncludeAllOverlays: true,
+		Members: []api.ResolvedMobilityPoolMember{
 			{NodeRef: "aws-router", Site: "aws", Role: "cloud"},
-			{NodeRef: "azure-router", Site: "azure", Role: "cloud", ProfileRef: "azure"},
+			{
+				NodeRef: "azure-router",
+				Site:    "azure",
+				Role:    "cloud",
+				Capture: api.MobilityMemberCapture{
+					Type:        "provider-secondary-ip",
+					ProviderRef: "azure-provider",
+					NICRef:      "azure-nic",
+				},
+			},
 		},
 	}
-	warnings := Warnings(mobilityPoolRouter(spec, testEventGroupResource("cloudedge", "aws-router")))
-	found := false
-	for _, warning := range warnings {
-		if strings.Contains(warning, "remote member") && strings.Contains(warning, "azure-router") {
-			found = true
-		}
+	if err := Validate(mobilityPoolRouter(spec)); err != nil {
+		t.Fatalf("Validate without a concrete self node: %v", err)
 	}
-	if !found {
-		t.Fatalf("Warnings = %#v, want remote member warning", warnings)
+	err := Validate(mobilityPoolRouter(spec, testEventGroupResource("cloudedge", "aws-router")))
+	if err == nil || !strings.Contains(err.Error(), "resolved member[1]") || !strings.Contains(err.Error(), "remote to local node") {
+		t.Fatalf("Validate remote member details error = %v, want identity-only rejection", err)
 	}
 }
 
 func TestValidateMobilityPoolStaticOwnedAndHandover(t *testing.T) {
-	spec := api.MobilityPoolSpec{
+	spec := mobilityPoolFixture{
 		Prefix:   "10.88.60.0/24",
 		GroupRef: "cloudedge",
-		Members: []api.MobilityPoolMember{
+		Members: []api.ResolvedMobilityPoolMember{
 			{NodeRef: "onprem-router", Site: "onprem", Role: "onprem", StaticOwnedAddresses: []string{"10.88.60.10/32"}},
 			{NodeRef: "azure-router", Site: "azure", Role: "cloud"},
 		},
@@ -1437,74 +1490,75 @@ func TestValidateMobilityPoolStaticOwnedAndHandover(t *testing.T) {
 func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 	tests := []struct {
 		name string
-		mut  func(*api.MobilityPoolSpec)
+		mut  func(*mobilityPoolFixture)
 		want string
 	}{
 		{
 			name: "missing group",
-			mut:  func(spec *api.MobilityPoolSpec) { spec.GroupRef = "" },
+			mut:  func(spec *mobilityPoolFixture) { spec.GroupRef = "" },
 			want: "spec.groupRef is required",
 		},
 		{
 			name: "ipv6 prefix",
-			mut:  func(spec *api.MobilityPoolSpec) { spec.Prefix = "2001:db8::/64" },
+			mut:  func(spec *mobilityPoolFixture) { spec.Prefix = "2001:db8::/64" },
 			want: "spec.prefix must be an IPv4 CIDR",
 		},
 		{
 			name: "missing role",
-			mut:  func(spec *api.MobilityPoolSpec) { spec.Members[0].Role = "" },
+			mut:  func(spec *mobilityPoolFixture) { spec.Members[0].Role = "" },
 			want: "role must be onprem or cloud",
 		},
 		{
 			name: "placement priority without group",
-			mut:  func(spec *api.MobilityPoolSpec) { spec.Members[1].Placement.Priority = 10 },
+			mut:  func(spec *mobilityPoolFixture) { spec.Members[1].Placement.Priority = 10 },
 			want: "placement.priority requires placement.group",
 		},
 		{
 			name: "drain without placement",
-			mut:  func(spec *api.MobilityPoolSpec) { spec.Members[1].Maintenance.Drain = true },
+			mut:  func(spec *mobilityPoolFixture) { spec.Members[1].Maintenance.Drain = true },
 			want: "maintenance.drain requires placement.group",
 		},
 		{
-			name: "delivery policy route mode rejected",
-			mut: func(spec *api.MobilityPoolSpec) {
-				spec.DeliveryPolicy.Mode = "route"
-				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", ProviderMode: "nic-secondary-ip", NICRef: "nic-1"}
-				spec.Members[1].Delivery = api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route"}
-				spec.Members[1].OwnershipDiscovery = api.MobilityOwnershipDiscovery{Mode: "provider-private-ip"}
-			},
-			want: "spec.deliveryPolicy.mode \"route\" is not supported; only bgp",
-		},
-		{
 			name: "ownership discovery requires cloud",
-			mut: func(spec *api.MobilityPoolSpec) {
-				spec.DeliveryPolicy.Mode = "bgp"
+			mut: func(spec *mobilityPoolFixture) {
 				spec.Members[0].OwnershipDiscovery = api.MobilityOwnershipDiscovery{Mode: "provider-private-ip"}
 			},
 			want: "ownershipDiscovery is supported only for role cloud",
 		},
 		{
 			name: "provider ownership discovery rejects allow empty",
-			mut: func(spec *api.MobilityPoolSpec) {
-				spec.DeliveryPolicy.Mode = "bgp"
-				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", ProviderMode: "nic-secondary-ip", NICRef: "nic-1"}
+			mut: func(spec *mobilityPoolFixture) {
+				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", NICRef: "nic-1"}
 				spec.Members[1].OwnershipDiscovery = api.MobilityOwnershipDiscovery{Mode: "provider-private-ip", AllowEmptyAfter: "30s"}
 			},
 			want: "ownershipDiscovery.allowEmptyAfter is supported only when mode is onprem-l2",
 		},
 		{
+			name: "provider ownership discovery rejects unknown stopped instance policy",
+			mut: func(spec *mobilityPoolFixture) {
+				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", NICRef: "nic-1"}
+				spec.Members[1].OwnershipDiscovery = api.MobilityOwnershipDiscovery{Mode: "provider-private-ip", StoppedInstancePolicy: "drop"}
+			},
+			want: "ownershipDiscovery.stoppedInstancePolicy \"drop\" is not supported",
+		},
+		{
+			name: "stopped instance policy requires provider discovery",
+			mut: func(spec *mobilityPoolFixture) {
+				spec.Members[0].OwnershipDiscovery = api.MobilityOwnershipDiscovery{Mode: "onprem-l2", StoppedInstancePolicy: "hold"}
+			},
+			want: "ownershipDiscovery.stoppedInstancePolicy is supported only when mode is provider-private-ip",
+		},
+		{
 			name: "onprem l2 discovery requires onprem",
-			mut: func(spec *api.MobilityPoolSpec) {
-				spec.DeliveryPolicy.Mode = "bgp"
-				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", ProviderMode: "nic-secondary-ip", NICRef: "nic-1"}
+			mut: func(spec *mobilityPoolFixture) {
+				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", NICRef: "nic-1"}
 				spec.Members[1].OwnershipDiscovery = api.MobilityOwnershipDiscovery{Mode: "onprem-l2", Sources: []api.MobilityOwnershipDiscoverySource{{Type: "arp-observer"}}}
 			},
 			want: "mode onprem-l2 is supported only for role onprem",
 		},
 		{
 			name: "onprem l2 discovery requires sources",
-			mut: func(spec *api.MobilityPoolSpec) {
-				spec.DeliveryPolicy.Mode = "bgp"
+			mut: func(spec *mobilityPoolFixture) {
 				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan", ActiveWhen: api.CaptureActiveWhen{Type: "single-router"}}
 				spec.Members[0].OwnershipDiscovery = api.MobilityOwnershipDiscovery{Mode: "onprem-l2"}
 			},
@@ -1512,8 +1566,7 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 		},
 		{
 			name: "onprem l2 discovery rejects unknown source",
-			mut: func(spec *api.MobilityPoolSpec) {
-				spec.DeliveryPolicy.Mode = "bgp"
+			mut: func(spec *mobilityPoolFixture) {
 				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan", ActiveWhen: api.CaptureActiveWhen{Type: "single-router"}}
 				spec.Members[0].OwnershipDiscovery = api.MobilityOwnershipDiscovery{Mode: "onprem-l2", Sources: []api.MobilityOwnershipDiscoverySource{{Type: "neighbor-cache"}}}
 			},
@@ -1521,8 +1574,7 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 		},
 		{
 			name: "onprem l2 discovery allow empty duration must be positive",
-			mut: func(spec *api.MobilityPoolSpec) {
-				spec.DeliveryPolicy.Mode = "bgp"
+			mut: func(spec *mobilityPoolFixture) {
 				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan", ActiveWhen: api.CaptureActiveWhen{Type: "single-router"}}
 				spec.Members[0].OwnershipDiscovery = api.MobilityOwnershipDiscovery{
 					Mode:            "onprem-l2",
@@ -1536,20 +1588,16 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 		},
 		{
 			name: "ownership discovery scan interval minimum",
-			mut: func(spec *api.MobilityPoolSpec) {
-				spec.DeliveryPolicy.Mode = "bgp"
-				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", ProviderMode: "nic-secondary-ip", NICRef: "nic-1"}
-				spec.Members[1].Delivery = api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route"}
+			mut: func(spec *mobilityPoolFixture) {
+				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", NICRef: "nic-1"}
 				spec.Members[1].OwnershipDiscovery = api.MobilityOwnershipDiscovery{Mode: "provider-private-ip", ScanInterval: "5s"}
 			},
 			want: "ownershipDiscovery.scanInterval must be >= 30s",
 		},
 		{
 			name: "ownership discovery include address outside pool",
-			mut: func(spec *api.MobilityPoolSpec) {
-				spec.DeliveryPolicy.Mode = "bgp"
-				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", ProviderMode: "nic-secondary-ip", NICRef: "nic-1"}
-				spec.Members[1].Delivery = api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route"}
+			mut: func(spec *mobilityPoolFixture) {
+				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", NICRef: "nic-1"}
 				spec.Members[1].OwnershipDiscovery = api.MobilityOwnershipDiscovery{
 					Mode: "provider-private-ip",
 					Scope: api.MobilityOwnershipDiscoveryScope{
@@ -1561,10 +1609,8 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 		},
 		{
 			name: "ownership discovery exclude aggregate outside pool",
-			mut: func(spec *api.MobilityPoolSpec) {
-				spec.DeliveryPolicy.Mode = "bgp"
-				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", ProviderMode: "nic-secondary-ip", NICRef: "nic-1"}
-				spec.Members[1].Delivery = api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route"}
+			mut: func(spec *mobilityPoolFixture) {
+				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", NICRef: "nic-1"}
 				spec.Members[1].OwnershipDiscovery = api.MobilityOwnershipDiscovery{
 					Mode: "provider-private-ip",
 					Scope: api.MobilityOwnershipDiscoveryScope{
@@ -1576,155 +1622,100 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 		},
 		{
 			name: "placement priority range",
-			mut: func(spec *api.MobilityPoolSpec) {
-				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", ProviderMode: "nic-secondary-ip", NICRef: "nic-1"}
-				spec.Members[1].Delivery = api.MobilityMemberDelivery{PeerRef: "onprem"}
+			mut: func(spec *mobilityPoolFixture) {
+				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", NICRef: "nic-1"}
 				spec.Members[1].Placement = api.MobilityMemberPlacement{Group: "azure-edge", Priority: -1}
 			},
 			want: "placement.priority must be between 0 and 1000000",
 		},
 		{
 			name: "placement role",
-			mut: func(spec *api.MobilityPoolSpec) {
+			mut: func(spec *mobilityPoolFixture) {
 				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan", ActiveWhen: api.CaptureActiveWhen{Type: "single-router"}}
-				spec.Members[0].Delivery = api.MobilityMemberDelivery{PeerRef: "azure"}
 				spec.Members[0].Placement = api.MobilityMemberPlacement{Group: "onprem-edge", Priority: 10}
 			},
 			want: "placement.group is supported only for role cloud",
 		},
 		{
 			name: "onprem proxy arp missing activeWhen",
-			mut: func(spec *api.MobilityPoolSpec) {
+			mut: func(spec *mobilityPoolFixture) {
 				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan"}
-				spec.Members[0].Delivery = api.MobilityMemberDelivery{PeerRef: "azure"}
 			},
 			want: "capture.activeWhen.type is required",
 		},
 		{
-			name: "placement group provider mismatch",
-			mut: func(spec *api.MobilityPoolSpec) {
-				spec.Members = append(spec.Members, api.MobilityPoolMember{
-					NodeRef: "azure-router-b",
-					Site:    "azure",
-					Role:    "cloud",
-					Capture: api.MobilityMemberCapture{
-						Type:         "provider-secondary-ip",
-						ProviderRef:  "other-provider",
-						ProviderMode: "nic-secondary-ip",
-						NICRef:       "nic-2",
-					},
-					Delivery:  api.MobilityMemberDelivery{PeerRef: "onprem"},
-					Placement: api.MobilityMemberPlacement{Group: "azure-edge", Priority: 20},
-				})
-				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", ProviderMode: "nic-secondary-ip", NICRef: "nic-1"}
-				spec.Members[1].Delivery = api.MobilityMemberDelivery{PeerRef: "onprem"}
-				spec.Members[1].Placement = api.MobilityMemberPlacement{Group: "azure-edge", Priority: 10}
-			},
-			want: "must use one providerRef",
-		},
-		{
-			name: "unknown authority node",
-			mut:  func(spec *api.MobilityPoolSpec) { spec.Authority.NodeRef = "other" },
-			want: "must be one of the member nodeRefs",
-		},
-		{
-			name: "bad ownership policy type",
-			mut:  func(spec *api.MobilityPoolSpec) { spec.IPOwnershipPolicy.Type = "lock-service" },
-			want: "spec.ipOwnershipPolicy.type",
-		},
-		{
-			name: "ownership prefer missing node",
-			mut: func(spec *api.MobilityPoolSpec) {
-				spec.IPOwnershipPolicy = api.MobilityIPOwnershipPolicy{Type: "centralized", PreferNodes: []string{"missing-router"}}
-			},
-			want: "spec.ipOwnershipPolicy.preferNodes[0]",
-		},
-		{
-			name: "ownership prefer duplicate node",
-			mut: func(spec *api.MobilityPoolSpec) {
-				spec.IPOwnershipPolicy = api.MobilityIPOwnershipPolicy{Type: "centralized", PreferNodes: []string{"azure-router", "azure-router"}}
-			},
-			want: "contains duplicate nodeRef",
-		},
-		{
 			name: "cloud capture type",
-			mut: func(spec *api.MobilityPoolSpec) {
+			mut: func(spec *mobilityPoolFixture) {
 				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan"}
-				spec.Members[1].Delivery = api.MobilityMemberDelivery{PeerRef: "onprem"}
 			},
 			want: "capture.type must be provider-secondary-ip for role cloud",
 		},
 		{
-			name: "deliveryTo selector",
-			mut: func(spec *api.MobilityPoolSpec) {
-				spec.Members[1].Capture = api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", ProviderMode: "nic-secondary-ip", NICRef: "nic-1"}
-				spec.Members[1].DeliveryTo = []api.MobilityMemberDeliveryTarget{{PeerRef: "onprem"}}
+			name: "cloud provider capture rejects activeWhen",
+			mut: func(spec *mobilityPoolFixture) {
+				spec.Members[1].Capture = api.MobilityMemberCapture{
+					Type:        "provider-secondary-ip",
+					ProviderRef: "azure-provider",
+					NICRef:      "nic-1",
+					ActiveWhen: api.CaptureActiveWhen{
+						Type:              "vrrp-master",
+						VirtualAddressRef: "VirtualAddress/cloud-vip",
+					},
+				}
 			},
-			want: "must set nodeRef, site, or role",
+			want: "capture.activeWhen is supported only for role onprem proxy-arp capture",
 		},
 		{
 			name: "secret target",
-			mut: func(spec *api.MobilityPoolSpec) {
+			mut: func(spec *mobilityPoolFixture) {
 				spec.Members[1].Capture = api.MobilityMemberCapture{
-					Type:         "provider-secondary-ip",
-					ProviderRef:  "azure-provider",
-					ProviderMode: "nic-secondary-ip",
-					NICRef:       "nic-1",
-					Target:       map[string]string{"accessToken": "nope"},
+					Type:        "provider-secondary-ip",
+					ProviderRef: "azure-provider",
+					NICRef:      "nic-1",
+					Target:      map[string]string{"accessToken": "nope"},
 				}
-				spec.Members[1].Delivery = api.MobilityMemberDelivery{PeerRef: "onprem"}
 			},
 			want: "looks secret-like",
 		},
 		{
 			name: "activeWhen missing ref",
-			mut: func(spec *api.MobilityPoolSpec) {
+			mut: func(spec *mobilityPoolFixture) {
 				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan", ActiveWhen: api.CaptureActiveWhen{Type: "vrrp-master"}}
-				spec.Members[0].Delivery = api.MobilityMemberDelivery{PeerRef: "azure"}
 			},
 			want: "capture.activeWhen.virtualAddressRef is required",
 		},
 		{
 			name: "activeWhen unresolved virtual address",
-			mut: func(spec *api.MobilityPoolSpec) {
+			mut: func(spec *mobilityPoolFixture) {
 				spec.Members[0].Capture = api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan", ActiveWhen: api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}}
-				spec.Members[0].Delivery = api.MobilityMemberDelivery{PeerRef: "azure"}
 			},
 			want: "references missing VirtualAddress",
 		},
 		{
 			name: "static owned on cloud",
-			mut:  func(spec *api.MobilityPoolSpec) { spec.Members[1].StaticOwnedAddresses = []string{"10.88.60.20/32"} },
+			mut:  func(spec *mobilityPoolFixture) { spec.Members[1].StaticOwnedAddresses = []string{"10.88.60.20/32"} },
 			want: "staticOwnedAddresses is supported only for role onprem",
 		},
 		{
 			name: "static owned outside prefix",
-			mut:  func(spec *api.MobilityPoolSpec) { spec.Members[0].StaticOwnedAddresses = []string{"10.88.61.10/32"} },
+			mut:  func(spec *mobilityPoolFixture) { spec.Members[0].StaticOwnedAddresses = []string{"10.88.61.10/32"} },
 			want: "must be within spec.prefix",
 		},
 		{
 			name: "static owned requires host prefix",
-			mut:  func(spec *api.MobilityPoolSpec) { spec.Members[0].StaticOwnedAddresses = []string{"10.88.60.10/24"} },
+			mut:  func(spec *mobilityPoolFixture) { spec.Members[0].StaticOwnedAddresses = []string{"10.88.60.10/24"} },
 			want: "must be an IPv4 /32 CIDR",
 		},
 		{
-			name: "static owned duplicate",
-			mut: func(spec *api.MobilityPoolSpec) {
-				spec.Members = append(spec.Members, api.MobilityPoolMember{NodeRef: "onprem-router-b", Site: "onprem", Role: "onprem", StaticOwnedAddresses: []string{"10.88.60.10/32"}})
-				spec.Members[0].StaticOwnedAddresses = []string{"10.88.60.10/32"}
-			},
-			want: "duplicates staticOwnedAddresses",
-		},
-		{
 			name: "handover from missing",
-			mut: func(spec *api.MobilityPoolSpec) {
+			mut: func(spec *mobilityPoolFixture) {
 				spec.StaticHandovers = []api.MobilityStaticHandover{{Address: "10.88.60.10/32", FromNodeRef: "missing", ToNodeRef: "azure-router"}}
 			},
 			want: "fromNodeRef \"missing\" must be one of the member nodeRefs",
 		},
 		{
 			name: "handover from must be onprem",
-			mut: func(spec *api.MobilityPoolSpec) {
+			mut: func(spec *mobilityPoolFixture) {
 				spec.StaticHandovers = []api.MobilityStaticHandover{{Address: "10.88.60.10/32", FromNodeRef: "azure-router", ToNodeRef: "onprem-router"}}
 			},
 			want: "must reference an onprem member",
@@ -1732,10 +1723,10 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spec := api.MobilityPoolSpec{
+			spec := mobilityPoolFixture{
 				Prefix:   "10.88.60.0/24",
 				GroupRef: "cloudedge",
-				Members: []api.MobilityPoolMember{
+				Members: []api.ResolvedMobilityPoolMember{
 					{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
 					{NodeRef: "azure-router", Site: "azure", Role: "cloud"},
 				},
@@ -1749,18 +1740,182 @@ func TestValidateMobilityPoolRejectsInvalidFields(t *testing.T) {
 	}
 }
 
-func mobilityPoolRouter(spec api.MobilityPoolSpec, extra ...api.Resource) *api.Router {
-	resources := []api.Resource{{
-		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
-		Metadata: api.ObjectMeta{Name: "cloudedge"},
-		Spec:     spec,
-	}}
+// mobilityPoolFixture keeps the former full-member test notation out of the
+// public API.  The helper below materializes its topology as SAMNodeSet and
+// converts only capture/ownership fields into MobilityPool overlays.
+//
+// Tests that need to exercise the declared API directly use
+// api.MobilityPoolSpec instead.  Keeping that distinction in tests makes it
+// impossible for a fixture to accidentally preserve the removed direct-member
+// configuration surface.
+type mobilityPoolFixture struct {
+	Prefix          string
+	GroupRef        string
+	Values          map[string]string
+	Profiles        api.MobilityPoolProfiles
+	MembersFrom     []api.MobilityMembersSourceSpec
+	Members         []api.ResolvedMobilityPoolMember
+	StaticHandovers []api.MobilityStaticHandover
+	// LocalNode selects which SAMNodeSet member receives this router's local
+	// overlay. An explicit EventGroup passed to mobilityPoolRouter takes
+	// precedence. Empty chooses the last member carrying local details so
+	// compact negative fixtures naturally validate the member they mutate.
+	LocalNode string
+	// IncludeAllOverlays is reserved for tests that deliberately verify the
+	// rejected remote-overlay shape. Normal fixtures model the production
+	// contract and emit exactly one local overlay.
+	IncludeAllOverlays bool
+}
+
+func (fixture mobilityPoolFixture) declared(eventGroupNode string) (api.MobilityPoolSpec, api.Resource, string) {
+	sources := append([]api.MobilityMembersSourceSpec(nil), fixture.MembersFrom...)
+	nodeSetName := "cloudedge-members"
+	if len(sources) == 0 {
+		sources = []api.MobilityMembersSourceSpec{{Resource: "SAMNodeSet/" + nodeSetName}}
+	} else if resource := strings.TrimSpace(sources[0].Resource); strings.HasPrefix(resource, "SAMNodeSet/") {
+		nodeSetName = strings.TrimPrefix(resource, "SAMNodeSet/")
+	}
+
+	declared := api.MobilityPoolSpec{
+		Prefix:          fixture.Prefix,
+		GroupRef:        fixture.GroupRef,
+		Values:          fixture.Values,
+		Profiles:        fixture.Profiles,
+		MembersFrom:     sources,
+		StaticHandovers: fixture.StaticHandovers,
+		Members:         make([]api.MobilityPoolMemberOverlay, 0, len(fixture.Members)),
+	}
+	nodes := make([]api.SAMNodeSpec, 0, len(fixture.Members))
+	localNode := fixture.localNode(eventGroupNode)
+	for _, member := range fixture.Members {
+		nodes = append(nodes, api.SAMNodeSpec{
+			NodeRef:         member.NodeRef,
+			Site:            member.Site,
+			Role:            member.Role,
+			Placement:       member.Placement,
+			Maintenance:     member.Maintenance,
+			MaxSecondaryIPs: member.MaxSecondaryIPs,
+		})
+		if fixture.IncludeAllOverlays || strings.TrimSpace(member.NodeRef) == localNode {
+			declared.Members = append(declared.Members, api.MobilityPoolMemberOverlay{
+				NodeRef:              member.NodeRef,
+				ProfileRef:           member.ProfileRef,
+				Capture:              member.Capture,
+				StaticOwnedAddresses: append([]string(nil), member.StaticOwnedAddresses...),
+				OwnershipDiscovery:   member.OwnershipDiscovery,
+			})
+		}
+	}
+	return declared, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMNodeSet"},
+		Metadata: api.ObjectMeta{Name: nodeSetName},
+		Spec:     api.SAMNodeSetSpec{Nodes: nodes},
+	}, localNode
+}
+
+func mobilityPoolRouter(spec any, extra ...api.Resource) *api.Router {
+	resources := make([]api.Resource, 0, len(extra)+3)
+	switch value := spec.(type) {
+	case mobilityPoolFixture:
+		eventGroupNode := testMobilityEventGroupNode(extra, value.GroupRef)
+		declared, nodeSet, localNode := value.declared(eventGroupNode)
+		resources = append(resources, api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec:     declared,
+		})
+		if !hasTestMobilityResource(extra, "SAMNodeSet", nodeSet.Metadata.Name) {
+			resources = append(resources, nodeSet)
+		}
+		if strings.TrimSpace(declared.GroupRef) != "" && !hasTestMobilityResource(extra, "EventGroup", declared.GroupRef) {
+			resources = append(resources, testEventGroupResource(declared.GroupRef, localNode))
+		}
+	case api.MobilityPoolSpec:
+		resources = append(resources, api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec:     value,
+		})
+	default:
+		panic("mobilityPoolRouter requires mobilityPoolFixture or api.MobilityPoolSpec")
+	}
 	resources = append(resources, extra...)
 	return &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
 		Spec:     api.RouterSpec{Resources: resources},
 	}
+}
+
+func (fixture mobilityPoolFixture) localNode(eventGroupNode string) string {
+	if nodeRef := strings.TrimSpace(eventGroupNode); nodeRef != "" {
+		return nodeRef
+	}
+	if nodeRef := strings.TrimSpace(fixture.LocalNode); nodeRef != "" {
+		return nodeRef
+	}
+	for i := len(fixture.Members) - 1; i >= 0; i-- {
+		if mobilityFixtureMemberHasLocalOverlay(fixture.Members[i]) {
+			return strings.TrimSpace(fixture.Members[i].NodeRef)
+		}
+	}
+	if len(fixture.Members) > 0 {
+		return strings.TrimSpace(fixture.Members[0].NodeRef)
+	}
+	return "test-local-node"
+}
+
+func mobilityFixtureMemberHasLocalOverlay(member api.ResolvedMobilityPoolMember) bool {
+	discovery := member.OwnershipDiscovery
+	capture := member.Capture
+	return strings.TrimSpace(member.ProfileRef) != "" ||
+		strings.TrimSpace(capture.Type) != "" ||
+		strings.TrimSpace(capture.ProviderRef) != "" ||
+		strings.TrimSpace(capture.Interface) != "" ||
+		strings.TrimSpace(capture.NICRef) != "" ||
+		strings.TrimSpace(capture.CaptureStrategy) != "" ||
+		len(capture.Target) != 0 || len(capture.TargetFrom) != 0 ||
+		len(member.StaticOwnedAddresses) != 0 ||
+		strings.TrimSpace(discovery.Mode) != "" ||
+		strings.TrimSpace(discovery.ProviderRef) != "" ||
+		len(discovery.Sources) != 0
+}
+
+func hasTestMobilityResource(resources []api.Resource, kind, name string) bool {
+	for _, resource := range resources {
+		if resource.Kind == kind && resource.Metadata.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func testMobilityEventGroupNode(resources []api.Resource, name string) string {
+	for _, resource := range resources {
+		if resource.Kind != "EventGroup" || resource.Metadata.Name != name {
+			continue
+		}
+		spec, err := resource.EventGroupSpec()
+		if err == nil {
+			return strings.TrimSpace(spec.NodeName)
+		}
+	}
+	return ""
+}
+
+func localMobilityPoolSpecForValidation(spec mobilityPoolFixture, selfNode string) mobilityPoolFixture {
+	out := spec
+	out.Members = append([]api.ResolvedMobilityPoolMember(nil), spec.Members...)
+	for i := range out.Members {
+		if strings.TrimSpace(out.Members[i].NodeRef) == strings.TrimSpace(selfNode) {
+			continue
+		}
+		out.Members[i].ProfileRef = ""
+		out.Members[i].Capture = api.MobilityMemberCapture{}
+		out.Members[i].StaticOwnedAddresses = nil
+		out.Members[i].OwnershipDiscovery = api.MobilityOwnershipDiscovery{}
+	}
+	return out
 }
 
 func testVirtualAddressResource(name string) api.Resource {

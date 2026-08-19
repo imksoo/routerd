@@ -98,7 +98,8 @@ class EgressProxyTests(unittest.TestCase):
         self.assertLess(enable, source.index('systemctl is-active "$unit"', enable))
         self.assertLess(source.index('systemctl disable --now "$unit"'),
                         source.rindex('proxy socket remained after unit stop'))
-        self.assertIn('runtime/evidence/egress-proxy', source)
+        self.assertIn('evidence_root="$run_root/runtime/evidence"', source)
+        self.assertIn('require_private_service_directory "$evidence_root"', source)
         self.assertNotIn('routerd-release-qa@$run_id', source)
         self.assertNotIn('inventory-driver.sh', source)
         self.assertNotIn('finalize-sealed-provider-auth.sh', source)
@@ -107,7 +108,7 @@ class EgressProxyTests(unittest.TestCase):
         docs = (ROOT / "README.md").read_text()
         self.assertLess(docs.index('manage-egress-proxy.sh start'), docs.index('authoritative baseline zero'))
         self.assertLess(docs.index('bounded final inventory'), docs.index('manage-egress-proxy.sh stop'))
-        self.assertLess(docs.index('manage-egress-proxy.sh stop'), docs.index('finalizer'))
+        self.assertLess(docs.index('manage-egress-proxy.sh stop'), docs.rindex('finalizer'))
 
     def test_manager_selects_atomic_endpoint_waits_ready_and_stops_exact_unit(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -159,7 +160,9 @@ class EgressProxyTests(unittest.TestCase):
             endpoint = json.loads(run_env.read_text())["httpsProxy"]
             self.assertRegex(endpoint, r"^http://127\.0\.0\.1:18[0-9]{3}$")
             self.assertEqual(run_env.stat().st_mode & 0o777, 0o600)
+            self.assertEqual((runtime / "evidence").stat().st_mode & 0o777, 0o700)
             self.assertTrue((runtime / "evidence/egress-proxy").is_dir())
+            self.assertEqual((runtime / "evidence/egress-proxy").stat().st_mode & 0o777, 0o700)
             stopped = subprocess.run([script, "stop", run_id], text=True, capture_output=True,
                                      env=environment, check=False)
             self.assertEqual(stopped.returncode, 0, stopped.stderr)
@@ -181,6 +184,53 @@ class EgressProxyTests(unittest.TestCase):
             self.assertNotEqual(occupied.returncode, 0)
             self.assertIn("already listening", occupied.stderr)
             self.assertEqual(calls.read_text().count("enable --now"), before)
+
+    def test_manager_rejects_unsafe_preexisting_evidence_root(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runs = root / "runs"
+            etc = root / "etc"
+            run_id = "relqa-staging-fixture"
+            run_root = runs / run_id
+            framework = run_root / "repo/tools/release-qa-labs"
+            runtime = run_root / "runtime"
+            framework.mkdir(parents=True)
+            runtime.mkdir()
+            evidence = runtime / "evidence"
+            evidence.mkdir(mode=0o755)
+            evidence.chmod(0o755)
+            source_unit = ROOT / "supervisor/routerd-release-qa-egress-proxy@.service"
+            tracked_unit = framework / "supervisor/routerd-release-qa-egress-proxy@.service"
+            tracked_unit.parent.mkdir()
+            shutil.copy2(source_unit, tracked_unit)
+            etc.mkdir()
+            shutil.copy2(source_unit, etc / "routerd-release-qa-egress-proxy@.service")
+            run_env = runtime / "run.env.json"
+            run_env.write_text(json.dumps({"releaseRepo": str(run_root / "repo")}), encoding="utf-8")
+            run_env.chmod(0o600)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            for command, content in {
+                "systemctl": '#!/bin/sh\nexit 99\n',
+                "ss": '#!/bin/sh\nexit 0\n',
+            }.items():
+                path = fake_bin / command
+                path.write_text(content, encoding="utf-8")
+                path.chmod(0o755)
+            script = root / "manage.sh"
+            text = (ROOT / "drivers/manage-egress-proxy.sh").read_text()
+            text = text.replace('[ "$(id -u)" -eq 0 ]', '[ 1 -eq 1 ]')
+            text = text.replace("/var/lib/routerd-release-qa", str(runs))
+            text = text.replace("/etc/systemd/system", str(etc))
+            text = text.replace("service_user=routerd-release-qa", f"service_user={pwd.getpwuid(os.getuid()).pw_name}")
+            script.write_text(text, encoding="utf-8")
+            script.chmod(0o755)
+            environment = os.environ.copy()
+            environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
+            result = subprocess.run([script, "start", run_id], text=True, capture_output=True,
+                                    env=environment, check=False)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("evidence root is not owned privately", result.stderr)
 
     def test_manager_rejects_external_or_occupied_endpoint(self):
         source = (ROOT / "drivers/manage-egress-proxy.sh").read_text()

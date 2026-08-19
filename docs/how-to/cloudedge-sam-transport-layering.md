@@ -95,25 +95,38 @@ these invariants:
 for deterministic `/31` inner address derivation; routerd does not infer it from
 hostname or BGP router ID.
 
-- `addressingMode: edge-index` (default) keeps the existing behavior: all routers
-  in the transport domain share `spec.topologyNodeRefs`, routerd sorts that list,
-  ranks unordered node pairs, and allocates ranked `/31` edges from `innerPrefix`.
+- `addressingMode: edge-index` (default) uses the shared `SAMNodeSet` named by
+  `spec.peersFrom`. routerd sorts that node set, ranks unordered node pairs, and
+  allocates ranked `/31` edges from `innerPrefix`.
 - `addressingMode: pair-stable` derives `/31` slots from a stable hash of each
-  node pair, so leaf nodes can declare only their actual peers (for example RR
-  nodes) without enumerating every leaf in `topologyNodeRefs`.
-  - Collision checks are currently profile-local (within one
-    `SAMTransportProfile.spec.peers` list).
-  - `override.localInner` + `override.remoteInner` removes that peer from
-    hash-slot allocation and reserves the explicit `/31` addresses instead.
+  node pair, so an adjacency selector can choose only actual peers (for example
+  RR nodes) without changing the shared node set.
 
 For production fabrics, size `innerPrefix` with collision probability in mind.
 `/24` has only 128 `/31` slots; with hash+mod allocation this can collide at
 modest edge counts. Use `/20` or larger where feasible.
 
-`MobilityPool.spec.members` remains a mobility ownership/capture/placement intent.
-It is not the SAM transport BGP peer topology.
+`SAMNodeSet` remains the shared mobility placement and transport topology.
+`MobilityPool.spec.members` contains only the local ownership/capture overlay;
+it is not the SAM transport BGP peer topology.
 
 ```yaml
+apiVersion: mobility.routerd.net/v1alpha1
+kind: SAMNodeSet
+metadata:
+  name: lab-nodes
+spec:
+  nodes:
+    - nodeRef: pve-rt
+      site: pve
+      role: onprem
+      routeReflector: true
+      samEndpoint: 10.99.0.1
+    - nodeRef: k8s-rt
+      site: k8s
+      role: cloud
+      samEndpoint: 10.99.0.2
+---
 apiVersion: mobility.routerd.net/v1alpha1
 kind: SAMTransportProfile
 metadata:
@@ -134,15 +147,15 @@ spec:
     # Set these only on route-reflector core routers.
     routeReflectorClient: true
     routeReflectorClusterID: 192.168.1.38
-  peers:
-    - nodeRef: k8s-rt
-      remoteEndpoint: 10.99.0.2
+  peersFrom:
+    - resource: SAMNodeSet/lab-nodes
+      nodeRefs: [k8s-rt]
 ```
 
-Explicit peer overrides can pin generated resource names, the per-peer underlay
-interface, or the local/remote inner addresses. If either `localInner` or
-`remoteInner` is overridden, both must be supplied and the pair must be a valid
-`/31` inside `innerPrefix`.
+`SAMTransportProfile` has no direct peer or topology list. Keep the full shared
+identity and endpoint registry in `SAMNodeSet`; use `nodeRefs` only to select
+which non-self nodes become transport peers. Omitting `nodeRefs` selects every
+non-self node with a `samEndpoint`.
 
 The controller writes one `DynamicConfigPart` per profile and self node. Peer
 removal replaces that part with the new generated resource set. Profile deletion

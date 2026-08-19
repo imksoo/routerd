@@ -28,7 +28,6 @@ type RouterIndex struct {
 	DSLiteTunnels              map[string]bool
 	OverlayPeers               map[string]api.OverlayPeerSpec
 	VirtualAddresses           map[string]api.VirtualAddressSpec
-	AddressMobilityDomains     map[string]api.AddressMobilityDomainSpec
 	CloudProviderProfiles      map[string]api.CloudProviderProfileSpec
 	HealthChecks               map[string]bool
 	BGPRouters                 map[string]bool
@@ -52,6 +51,7 @@ type RouterIndex struct {
 	ProtectedInterfaces        map[string]bool
 	DHCPv6AddressByInterface   map[string]dhcpv6AddressIndexEntry
 	ExternalPDByInterface      map[string]externalPDIndexEntry
+	MobilityPools              map[string]mobilityPoolValidation
 }
 
 type staticIPv4IndexEntry struct {
@@ -88,7 +88,6 @@ func newRouterIndex(router *api.Router) *RouterIndex {
 		DSLiteTunnels:              map[string]bool{},
 		OverlayPeers:               map[string]api.OverlayPeerSpec{},
 		VirtualAddresses:           map[string]api.VirtualAddressSpec{},
-		AddressMobilityDomains:     map[string]api.AddressMobilityDomainSpec{},
 		CloudProviderProfiles:      map[string]api.CloudProviderProfileSpec{},
 		HealthChecks:               map[string]bool{},
 		BGPRouters:                 map[string]bool{},
@@ -112,6 +111,7 @@ func newRouterIndex(router *api.Router) *RouterIndex {
 		ProtectedInterfaces:        map[string]bool{},
 		DHCPv6AddressByInterface:   map[string]dhcpv6AddressIndexEntry{},
 		ExternalPDByInterface:      map[string]externalPDIndexEntry{},
+		MobilityPools:              map[string]mobilityPoolValidation{},
 	}
 
 	for _, name := range router.Spec.Apply.ProtectedInterfaces {
@@ -120,9 +120,9 @@ func newRouterIndex(router *api.Router) *RouterIndex {
 	return idx
 }
 
-func (idx *RouterIndex) build(router *api.Router, targetOS platform.OS) error {
+func (idx *RouterIndex) build(router *api.Router, targetOS platform.OS, allowRuntimePayloads bool) error {
 	for _, res := range router.Spec.Resources {
-		if err := validateResource(res, targetOS); err != nil {
+		if err := validateResource(router, res, targetOS, allowRuntimePayloads, idx); err != nil {
 			return err
 		}
 		if idx.Seen[res.ID()] {
@@ -281,13 +281,6 @@ func (idx *RouterIndex) build(router *api.Router, targetOS platform.OS) error {
 				return err
 			}
 			idx.VirtualAddresses[res.Metadata.Name] = spec
-		}
-		if res.APIVersion == api.HybridAPIVersion && res.Kind == "AddressMobilityDomain" {
-			spec, err := res.AddressMobilityDomainSpec()
-			if err != nil {
-				return err
-			}
-			idx.AddressMobilityDomains[res.Metadata.Name] = spec
 		}
 		if res.APIVersion == api.HybridAPIVersion && res.Kind == "CloudProviderProfile" {
 			spec, err := res.CloudProviderProfileSpec()

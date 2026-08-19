@@ -10,6 +10,7 @@ run_id="$2"
 run_root="/var/lib/routerd-release-qa/$run_id"
 framework="$run_root/repo/tools/release-qa-labs"
 run_env="$run_root/runtime/run.env.json"
+evidence_root="$run_root/runtime/evidence"
 unit="routerd-release-qa-egress-proxy@$run_id.service"
 service_user=routerd-release-qa
 tracked_unit="$framework/supervisor/routerd-release-qa-egress-proxy@.service"
@@ -37,6 +38,22 @@ require_exact_unit() {
     die "tracked proxy unit is not installed"
   fi
   cmp -s "$tracked_unit" "$installed_unit" || die "installed proxy unit differs from tracked unit"
+}
+require_private_service_directory() {
+  local directory="$1" label="$2"
+  if [ -e "$directory" ]; then
+    if [ -L "$directory" ] || [ ! -d "$directory" ]; then
+      die "$label is not a regular directory"
+    fi
+    if [ "$(stat -c '%U:%G:%a' "$directory")" != "$service_user:$service_user:700" ]; then
+      die "$label is not owned privately by $service_user"
+    fi
+    return
+  fi
+  install -d -o "$service_user" -g "$service_user" -m 0700 "$directory"
+  if [ "$(stat -c '%U:%G:%a' "$directory")" != "$service_user:$service_user:700" ]; then
+    die "$label was not created privately for $service_user"
+  fi
 }
 read_port() {
   endpoint="$(jq -r '.httpsProxy // empty' "$run_env")"
@@ -66,8 +83,12 @@ case "$action" in
       mv -f -- "$temporary" "$run_env"
     fi
     ! port_listening "$proxy_port" || die "configured proxy port is already listening"
-    install -d -o "$service_user" -g "$service_user" -m 0700 \
-      "$run_root/runtime/evidence/egress-proxy"
+    # `install -d evidence/egress-proxy` leaves an intermediate `evidence`
+    # directory owned by the caller on some hosts. Create and verify each
+    # boundary explicitly, because the later supervisor writes lifecycle
+    # evidence as the unprivileged service user.
+    require_private_service_directory "$evidence_root" "release QA evidence root"
+    require_private_service_directory "$evidence_root/egress-proxy" "release QA proxy evidence directory"
     trap cleanup_failed_start ERR
     systemctl enable --now "$unit"
     if [ "$(systemctl is-active "$unit")" != active ]; then

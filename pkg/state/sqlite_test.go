@@ -580,6 +580,96 @@ func TestSQLiteStoreDynamicConfigPartActionPlansRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSQLiteStoreDynamicConfigPartARPObserverIntentsRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routerd.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("open sqlite store: %v", err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	const intentsJSON = `[{"resourceName":"mobility-cloudedge-pve-arp-observer-ens3","poolRef":"cloudedge","prefix":"10.77.60.0/24","sourceType":"arp-observer","ifName":"ens3","eventInterface":"capture","observe":true}]`
+	rec := DynamicConfigPartRecord{
+		Source:                 "MobilityPool/cloudedge/node/pve/arp-observer",
+		Generation:             1,
+		ObservedAt:             now,
+		ExpiresAt:              now.Add(5 * time.Minute),
+		Digest:                 "sha256:arp-observer",
+		ResourcesJSON:          `[]`,
+		DirectivesJSON:         `[]`,
+		ARPObserverIntentsJSON: intentsJSON,
+		Status:                 "active",
+	}
+	if err := store.UpsertDynamicConfigPart(rec); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	parts, err := store.GetDynamicConfigPartsBySource(rec.Source)
+	if err != nil {
+		t.Fatalf("get by source: %v", err)
+	}
+	if len(parts) != 1 || parts[0].ARPObserverIntentsJSON != intentsJSON {
+		t.Fatalf("ARP observer intents round-trip = %+v", parts)
+	}
+}
+
+func TestSQLiteStoreDynamicConfigPartMobilityDataplaneRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routerd.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("open sqlite store: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	const planJSON = `{"poolPrefix":"192.0.2.0/24","captures":[{"id":"cloudedge/192.0.2.1","poolRef":"cloudedge","address":"192.0.2.1/32","disposition":"desired","captureType":"proxy-arp"}],"routes":[{"id":"cloudedge/route/local/192.0.2.1","poolRef":"cloudedge","purpose":"local-inventory","destination":"192.0.2.1/32","device":"ens3","metric":1}],"staticAddresses":[{"id":"cloudedge/address/capture-source","poolRef":"cloudedge","purpose":"capture-source","interface":"ens3","address":"192.0.2.254/32"}]}`
+	rec := DynamicConfigPartRecord{
+		Source:                "MobilityPool/cloudedge/node/router-a",
+		Generation:            1,
+		ObservedAt:            now,
+		ExpiresAt:             now.Add(5 * time.Minute),
+		Digest:                "sha256:mobility-dataplane",
+		ResourcesJSON:         `[]`,
+		DirectivesJSON:        `[]`,
+		MobilityDataplaneJSON: planJSON,
+		Status:                "active",
+	}
+	if err := store.UpsertDynamicConfigPart(rec); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	parts, err := store.GetDynamicConfigPartsBySource(rec.Source)
+	if err != nil {
+		t.Fatalf("get by source: %v", err)
+	}
+	if len(parts) != 1 || parts[0].MobilityDataplaneJSON != planJSON {
+		t.Fatalf("mobility dataplane round-trip = %+v", parts)
+	}
+
+	rows, err := store.db.Query(`PRAGMA table_info(dynamic_config_parts)`)
+	if err != nil {
+		t.Fatalf("table info: %v", err)
+	}
+	defer rows.Close()
+	var hasMobilityDataplane bool
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &primaryKey); err != nil {
+			t.Fatalf("scan column: %v", err)
+		}
+		if name == "mobility_dataplane_json" {
+			hasMobilityDataplane = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("table info rows: %v", err)
+	}
+	if !hasMobilityDataplane {
+		t.Fatal("fresh dynamic_config_parts is missing mobility_dataplane_json")
+	}
+}
+
 func TestSQLiteStorePluginRunsListNewestFirstAndFilter(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routerd.db")
 	store, err := OpenSQLite(path)
@@ -716,8 +806,8 @@ func TestSQLiteStoreMergeObjectStatusPreservesExistingFields(t *testing.T) {
 		t.Fatalf("save planner status: %v", err)
 	}
 	if err := store.MergeObjectStatus("mobility.routerd.net/v1alpha1", "MobilityPool", "cloudedge", map[string]any{
-		"discoveryPhase":          "Observed",
-		"discoverySelfPrivateIPs": []string{"10.88.60.21"},
+		"discoveryPhase":                "Observed",
+		"providerActionFailedAddresses": []string{"10.88.60.21/32"},
 	}); err != nil {
 		t.Fatalf("merge discovery status: %v", err)
 	}
@@ -726,8 +816,8 @@ func TestSQLiteStoreMergeObjectStatusPreservesExistingFields(t *testing.T) {
 	if status["plannerPhase"] != "Planned" || status["discoveryPhase"] != "Observed" {
 		t.Fatalf("merged status = %#v", status)
 	}
-	if got, ok := status["discoverySelfPrivateIPs"].([]any); !ok || len(got) != 1 || got[0] != "10.88.60.21" {
-		t.Fatalf("discoverySelfPrivateIPs = %#v", status["discoverySelfPrivateIPs"])
+	if got, ok := status["providerActionFailedAddresses"].([]any); !ok || len(got) != 1 || got[0] != "10.88.60.21/32" {
+		t.Fatalf("providerActionFailedAddresses = %#v", status["providerActionFailedAddresses"])
 	}
 }
 

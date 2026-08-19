@@ -74,8 +74,8 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 		if spec.PeerASN == 0 {
 			return true, fmt.Errorf("%s spec.peerASN is required", res.ID())
 		}
-		if len(spec.Peers) == 0 && len(spec.PeersFrom) == 0 {
-			return true, fmt.Errorf("%s spec.peers or spec.peersFrom is required", res.ID())
+		if len(spec.Peers) == 0 {
+			return true, fmt.Errorf("%s spec.peers is required", res.ID())
 		}
 		if spec.EbgpMultihop < 0 || spec.EbgpMultihop > 255 {
 			return true, fmt.Errorf("%s spec.ebgpMultihop must be within 0-255", res.ID())
@@ -96,11 +96,6 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 				return true, fmt.Errorf("%s spec.peers[%d] duplicates %q", res.ID(), i, peer)
 			}
 			seenPeers[peer] = true
-		}
-		for i, source := range spec.PeersFrom {
-			if err := validateBGPPeersFrom(res.ID(), i, source); err != nil {
-				return true, err
-			}
 		}
 		if err := validateBGPTimerProfile(res.ID(), "spec.timers", spec.Timers); err != nil {
 			return true, err
@@ -638,14 +633,6 @@ func validateFreeBSDEgressRoutePolicyHash(resourceID string, spec api.EgressRout
 		if err != nil || !addr.Is4() {
 			return fmt.Errorf("%s FreeBSD route-to target[%d].gateway must be an ipv4 address", resourceID, i)
 		}
-	}
-	return nil
-}
-
-func validateBGPPeersFrom(resourceID string, index int, source api.BGPPeersSourceSpec) error {
-	kind, name, ok := strings.Cut(strings.TrimSpace(source.Resource), "/")
-	if !ok || kind != "SAMRRSet" || strings.TrimSpace(name) == "" {
-		return fmt.Errorf("%s spec.peersFrom[%d].resource must reference SAMRRSet/<name>", resourceID, index)
 	}
 	return nil
 }

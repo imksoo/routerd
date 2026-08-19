@@ -4,6 +4,7 @@ package bgp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/netip"
 	"reflect"
@@ -20,9 +21,12 @@ import (
 	gobgp "github.com/osrg/gobgp/v4/pkg/packet/bgp"
 	gobgpserver "github.com/osrg/gobgp/v4/pkg/server"
 
+	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/bgpdaemon"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 type mapStore map[string]map[string]any
@@ -39,16 +43,157 @@ func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 	return map[string]any{}
 }
 
-func mobilityOwnerStore(rows ...map[string]any) mapStore {
-	values := make([]any, 0, len(rows))
+type mobilityFIBStore struct {
+	mapStore
+	records []routerstate.DynamicConfigPartRecord
+}
+
+func (s mobilityFIBStore) ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error) {
+	return append([]routerstate.DynamicConfigPartRecord(nil), s.records...), nil
+}
+
+func mobilityOwnerStore(rows ...map[string]any) mobilityFIBStore {
+	return mobilityFIBStore{mapStore: mapStore{}, records: mobilityFIBRecords(rows...)}
+}
+
+func mobilityFIBRecords(rows ...map[string]any) []routerstate.DynamicConfigPartRecord {
+	scope := dynamicconfig.FIBPoolScope{
+		Prefix:                  "10.77.60.0/24",
+		RemoteReturnCommunities: []string{bgpstate.MobilityNodeIdentityCommunity("aws-router-a")},
+	}
 	for _, row := range rows {
-		values = append(values, row)
+		if preferredSource := stringValue(row["preferredSource"]); preferredSource != "" {
+			scope.PreferredSource = preferredSource
+			break
+		}
 	}
-	return mapStore{
-		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
-			"ownershipResolverFIBVerdicts": values,
-		},
+	verdicts := make([]dynamicconfig.FIBVerdict, 0, len(rows)+1)
+	verdicts = append(verdicts, dynamicconfig.FIBVerdict{PoolRef: "cloudedge", Scope: &scope})
+	for _, row := range rows {
+		verdicts = append(verdicts, dynamicconfig.FIBVerdict{
+			PoolRef:   "cloudedge",
+			Address:   stringValue(row["address"]),
+			Action:    stringValue(row["action"]),
+			Class:     stringValue(row["class"]),
+			OwnerNode: stringValue(row["ownerNode"]),
+			Reason:    stringValue(row["reason"]),
+		})
 	}
+	raw, err := json.Marshal(verdicts)
+	if err != nil {
+		panic(err)
+	}
+	now := time.Now().UTC()
+	return []routerstate.DynamicConfigPartRecord{{Source: "MobilityPool/cloudedge/node/test", Generation: 1, ObservedAt: now, ExpiresAt: now.Add(5 * time.Minute), Digest: "sha256:fib-test", FIBVerdictsJSON: string(raw), Status: "active"}}
+}
+
+func TestMobilityFIBVerdictsIgnoreNonMobilityPlanSource(t *testing.T) {
+	raw, err := json.Marshal([]dynamicconfig.FIBVerdict{{
+		PoolRef: "untrusted", Address: "10.255.0.1/32", Action: "deliver-remote",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	controller := &Controller{Store: mobilityFIBStore{mapStore: mapStore{}, records: []routerstate.DynamicConfigPartRecord{{
+		Source: "plugin/untrusted", Generation: 1, ObservedAt: now, ExpiresAt: now.Add(5 * time.Minute), Digest: "sha256:untrusted", FIBVerdictsJSON: string(raw), Status: "active",
+	}}}}
+	if verdicts := controller.mobilityFIBVerdicts(); len(verdicts) != 0 {
+		t.Fatalf("non-MobilityPool FIB verdicts entered mobility FIB policy: %#v", verdicts)
+	}
+}
+
+func TestMobilityFIBVerdictsRejectPoolRefOutsideSourcePool(t *testing.T) {
+	raw, err := json.Marshal([]dynamicconfig.FIBVerdict{{
+		PoolRef: "other", Address: "10.255.0.1/32", Action: "deliver-remote",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	records := append(mobilityFIBRecords(map[string]any{"address": "10.77.60.10/32", "action": "deliver-remote"}), routerstate.DynamicConfigPartRecord{
+		Source: "MobilityPool/cloudedge/node/corrupt", Generation: 1, ObservedAt: now, ExpiresAt: now.Add(5 * time.Minute), Digest: "sha256:corrupt-pool", FIBVerdictsJSON: string(raw), Status: "active",
+	})
+	controller := &Controller{Store: mobilityFIBStore{mapStore: mapStore{}, records: records}}
+	if verdicts := controller.mobilityFIBVerdicts(); len(verdicts) != 0 {
+		t.Fatalf("cross-pool FIB verdict left a policy for its source pool: %#v", verdicts)
+	}
+}
+
+func TestMobilityFIBVerdictsRejectMalformedSourcePayload(t *testing.T) {
+	now := time.Now().UTC()
+	records := append(mobilityFIBRecords(map[string]any{"address": "10.77.60.10/32", "action": "deliver-remote"}), routerstate.DynamicConfigPartRecord{
+		Source: "MobilityPool/cloudedge/node/corrupt", Generation: 1, ObservedAt: now, ExpiresAt: now.Add(5 * time.Minute), Digest: "sha256:corrupt-json", FIBVerdictsJSON: "{", Status: "active",
+	})
+	controller := &Controller{Store: mobilityFIBStore{mapStore: mapStore{}, records: records}}
+	if verdicts := controller.mobilityFIBVerdicts(); len(verdicts) != 0 {
+		t.Fatalf("malformed FIB verdict payload left a policy for its source pool: %#v", verdicts)
+	}
+}
+
+func TestMobilityFIBVerdictsRejectSemanticCorruptionForWholePool(t *testing.T) {
+	raw, err := json.Marshal([]dynamicconfig.FIBVerdict{
+		{PoolRef: "cloudedge", Scope: &dynamicconfig.FIBPoolScope{Prefix: "10.77.60.0/24"}},
+		{PoolRef: "cloudedge", Address: "10.77.60.10", Action: "deliver-remote"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	records := append(mobilityFIBRecords(map[string]any{"address": "10.77.60.10/32", "action": "deliver-remote"}), routerstate.DynamicConfigPartRecord{
+		Source: "MobilityPool/cloudedge/node/corrupt", Generation: 1, ObservedAt: now, ExpiresAt: now.Add(5 * time.Minute), Digest: "sha256:semantic-corrupt", FIBVerdictsJSON: string(raw), Status: "active",
+	})
+	controller := &Controller{Store: mobilityFIBStore{mapStore: mapStore{}, records: records}}
+	if verdicts := controller.mobilityFIBVerdicts(); len(verdicts) != 0 {
+		t.Fatalf("semantic FIB corruption left a partial policy for its pool: %#v", verdicts)
+	}
+}
+
+func TestMobilityFIBVerdictsRejectDuplicateJSONFieldForWholePool(t *testing.T) {
+	// encoding/json normally accepts duplicate object keys with the last value
+	// winning. The typed FIB boundary must instead invalidate the entire Pool.
+	raw := `[{"poolRef":"cloudedge","scope":{"prefix":"10.77.60.0/24"}},{"poolRef":"cloudedge","poolRef":"other","address":"10.77.60.10/32","action":"deliver-remote"}]`
+	now := time.Now().UTC()
+	records := append(mobilityFIBRecords(map[string]any{"address": "10.77.60.10/32", "action": "deliver-remote"}), routerstate.DynamicConfigPartRecord{
+		Source: "MobilityPool/cloudedge/node/corrupt", Generation: 1, ObservedAt: now, ExpiresAt: now.Add(5 * time.Minute), Digest: "sha256:duplicate-json-field", FIBVerdictsJSON: raw, Status: "active",
+	})
+	controller := &Controller{Store: mobilityFIBStore{mapStore: mapStore{}, records: records}}
+	if verdicts := controller.mobilityFIBVerdicts(); len(verdicts) != 0 {
+		t.Fatalf("duplicate JSON field left a partial policy for its pool: %#v", verdicts)
+	}
+}
+
+func TestMobilityFIBVerdictsRejectDataplaneScopeMismatch(t *testing.T) {
+	fibRaw, err := json.Marshal([]dynamicconfig.FIBVerdict{
+		{PoolRef: "cloudedge", Scope: &dynamicconfig.FIBPoolScope{Prefix: "10.77.60.0/24"}},
+		{PoolRef: "cloudedge", Address: "10.77.60.10/32", Action: "deliver-remote"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataplaneRaw, err := json.Marshal(dynamicconfig.MobilityDataplanePlan{
+		PoolPrefix: "10.77.61.0/24",
+		Routes: []dynamicconfig.MobilityIPv4RouteIntent{{
+			ID: "mobility-cloudedge-local-10-77-61-10", PoolRef: "cloudedge", Destination: "10.77.61.10/32",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	controller := &Controller{Store: mobilityFIBStore{mapStore: mapStore{}, records: []routerstate.DynamicConfigPartRecord{{
+		Source: "MobilityPool/cloudedge/node/test", Generation: 1, ObservedAt: now, ExpiresAt: now.Add(5 * time.Minute), Digest: "sha256:scope-mismatch", FIBVerdictsJSON: string(fibRaw), MobilityDataplaneJSON: string(dataplaneRaw), Status: "active",
+	}}}}
+	if verdicts := controller.mobilityFIBVerdicts(); len(verdicts) != 0 {
+		t.Fatalf("mismatched dataplane/FIB scope left a policy: %#v", verdicts)
+	}
+}
+
+func stringValue(value any) string {
+	if value == nil {
+		return ""
+	}
+	return value.(string)
 }
 
 type testGoBGPServer struct {
@@ -312,49 +457,6 @@ func TestReconcileDoesNotDeleteLiveDynamicPeerFromStaticReconcile(t *testing.T) 
 	}
 	if server.peers["10.255.0.21"] == nil {
 		t.Fatalf("dynamic peer removed from fake server; call log=%#v", server.callLog)
-	}
-}
-
-func TestReconcileBGPPeerConsumesSAMRRSet(t *testing.T) {
-	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
-	router.Metadata.Name = "leaf-pve"
-	router.Spec.Resources = append(router.Spec.Resources[:1],
-		api.Resource{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
-			Metadata: api.ObjectMeta{Name: "cloudedge-rrs"},
-			Spec: api.BGPPeerSpec{
-				RouterRef: "BGPRouter/lan",
-				PeerASN:   64512,
-				PeersFrom: []api.BGPPeersSourceSpec{{Resource: "SAMRRSet/cloudedge-rrs"}},
-				ImportPolicy: api.BGPImportPolicySpec{
-					AllowedPrefixes: []string{"10.77.60.0/24"},
-				},
-				ExportPolicy: api.BGPExportPolicySpec{
-					AllowedPrefixes: []string{"10.77.60.21/32"},
-				},
-			},
-		},
-		api.Resource{
-			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMRRSet"},
-			Metadata: api.ObjectMeta{Name: "cloudedge-rrs"},
-			Spec: api.SAMRRSetSpec{
-				EnrollmentPolicyRef: "SAMEnrollmentPolicy/cloudedge-leaves",
-				Members: []api.SAMRRSetMember{
-					{NodeRef: "aws-rr-a", Endpoint: "203.0.113.10", TunnelAddress: "10.99.0.2/32"},
-					{NodeRef: "aws-rr-b", Endpoint: "203.0.113.11", TunnelAddress: "10.99.0.3/32"},
-				},
-			},
-		},
-	)
-	server := &fakeServer{}
-	controller := Controller{Router: router, Store: mapStore{}, Server: server}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-	for _, address := range []string{"10.99.0.2", "10.99.0.3"} {
-		if server.peers[address] == nil {
-			t.Fatalf("missing BGP peer %s from SAMRRSet; peers=%v", address, server.peers)
-		}
 	}
 }
 
@@ -723,7 +825,7 @@ func TestBGPDynamicPeerStatusReportsDiscoveredPeersAndAdmissionCounters(t *testi
 		t.Fatalf("discoveredPeers = %#v", status["discoveredPeers"])
 	}
 	peer := peers[0]
-	if statusString(peer["enrollmentClaimRef"]) != "SAMEnrollmentClaim/leaf-a" || statusInt(peer["acceptedRoutes"]) != 1 || statusInt(peer["rejectedRoutes"]) != 1 {
+	if statusvalue.Text(peer["enrollmentClaimRef"]) != "SAMEnrollmentClaim/leaf-a" || statusInt(peer["acceptedRoutes"]) != 1 || statusInt(peer["rejectedRoutes"]) != 1 {
 		t.Fatalf("discovered peer status = %#v", peer)
 	}
 	reasons, ok := status["rejectedRouteSummary"].(map[string]int)
@@ -1666,7 +1768,7 @@ func TestReconcileReportsReconvergingDuringGracefulRestartWindow(t *testing.T) {
 			ASN:               64513,
 			State:             gobgpapi.PeerState_SESSION_STATE_IDLE.String(),
 			Established:       false,
-			LastEstablishedAt: statusString(peerStatus["reconvergingSince"]),
+			LastEstablishedAt: statusvalue.Text(peerStatus["reconvergingSince"]),
 			LastErrorAt:       oldErrorAt,
 			LastErrorReason:   gobgpapi.PeerState_SESSION_STATE_IDLE.String(),
 		}},
@@ -2005,13 +2107,12 @@ func TestReconcileImportsFourSiteMobilityHostRoutes(t *testing.T) {
 
 func TestReconcileAddsMobilityPreferredSourceForLocalStaticOwnedAddress(t *testing.T) {
 	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
-	router.Spec.Resources = append(router.Spec.Resources, bgpMobilityPreferredSourceResources("onprem-router")...)
 	server := &fakeServer{routes: []*gobgpapi.Destination{
 		testDestination("10.77.60.11/32", "10.99.0.2"),
 	}}
 	fib := &fakeFIB{guardPreferredSource: true, localPreferredSources: map[string]bool{"10.77.60.10": true}}
 	controller := Controller{Router: router, Store: mobilityOwnerStore(
-		map[string]any{"address": "10.77.60.11/32", "action": "deliver-remote", "ownerNode": "aws-router"},
+		map[string]any{"address": "10.77.60.11/32", "action": "deliver-remote", "ownerNode": "aws-router", "preferredSource": "10.77.60.10/32"},
 	), Server: server, FIB: fib}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
@@ -2028,13 +2129,12 @@ func TestReconcileAddsMobilityPreferredSourceForLocalStaticOwnedAddress(t *testi
 
 func TestReconcileSkipsMobilityPreferredSourceWhenLocalAddressMissing(t *testing.T) {
 	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
-	router.Spec.Resources = append(router.Spec.Resources, bgpMobilityPreferredSourceResources("onprem-router")...)
 	server := &fakeServer{routes: []*gobgpapi.Destination{
 		testDestination("10.77.60.11/32", "10.99.0.2"),
 	}}
 	fib := &fakeFIB{guardPreferredSource: true, localPreferredSources: map[string]bool{}}
 	controller := Controller{Router: router, Store: mobilityOwnerStore(
-		map[string]any{"address": "10.77.60.11/32", "action": "deliver-remote", "ownerNode": "aws-router"},
+		map[string]any{"address": "10.77.60.11/32", "action": "deliver-remote", "ownerNode": "aws-router", "preferredSource": "10.77.60.10/32"},
 	), Server: server, FIB: fib}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
@@ -2056,7 +2156,6 @@ func TestReconcileSkipsMobilityPreferredSourceWhenLocalAddressMissing(t *testing
 
 func TestReconcileDoesNotAddMobilityPreferredSourceForCloudNonOwner(t *testing.T) {
 	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
-	router.Spec.Resources = append(router.Spec.Resources, bgpMobilityPreferredSourceResources("aws-router")...)
 	server := &fakeServer{routes: []*gobgpapi.Destination{
 		testDestination("10.77.60.10/32", "10.99.0.1"),
 	}}
@@ -2121,7 +2220,7 @@ func TestReconcileInstallsMobilityReturnRouteWithoutOwnerRetain(t *testing.T) {
 		testDestinationWithCommunities("10.77.60.4/32", "10.99.0.2", bgpstate.MobilityCommunityReturnRoute, bgpstate.MobilityNodeIdentityCommunity("aws-router-a")),
 	}}
 	fib := &fakeFIB{}
-	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: fib}
+	controller := Controller{Router: router, Store: mobilityOwnerStore(), Server: server, FIB: fib}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -2298,7 +2397,7 @@ func TestWatchPeerStateChangeTriggersReObservation(t *testing.T) {
 		t.Fatalf("initial reconcile: %v", err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
-	firstObserved := statusString(status["observedAt"])
+	firstObserved := statusvalue.Text(status["observedAt"])
 	if firstObserved == "" {
 		t.Fatal("missing observedAt after initial reconcile")
 	}
@@ -2309,7 +2408,7 @@ func TestWatchPeerStateChangeTriggersReObservation(t *testing.T) {
 		t.Fatalf("watch events: %v", err)
 	}
 	status = store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
-	secondObserved := statusString(status["observedAt"])
+	secondObserved := statusvalue.Text(status["observedAt"])
 	if secondObserved == "" || secondObserved == firstObserved {
 		t.Fatalf("peer state change did not trigger re-observation: observedAt before=%q after=%q", firstObserved, secondObserved)
 	}
@@ -2499,24 +2598,10 @@ func TestReconcileReportsFIBSyncFailure(t *testing.T) {
 
 func TestReconcileSuppressesLocalMobilityPrivateIPFromFIB(t *testing.T) {
 	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
-	router.Spec.Resources = append(router.Spec.Resources, bgpMobilityPreferredSourceResources("aws-router")...)
-	store := mapStore{
-		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
-			"discoverySelfPrivateIPs": []any{"10.77.60.4/32"},
-			"ownershipResolverFIBVerdicts": []any{
-				map[string]any{
-					"address":   "10.77.60.4/32",
-					"action":    "local-route",
-					"ownerNode": "aws-router",
-				},
-				map[string]any{
-					"address":   "10.77.60.11/32",
-					"action":    "deliver-remote",
-					"ownerNode": "aws-router-b",
-				},
-			},
-		},
-	}
+	store := mobilityFIBStore{mapStore: mapStore{}, records: mobilityFIBRecords(
+		map[string]any{"address": "10.77.60.4/32", "action": "local-route", "ownerNode": "aws-router"},
+		map[string]any{"address": "10.77.60.11/32", "action": "deliver-remote", "ownerNode": "aws-router-b"},
+	)}
 	fib := &fakeFIB{}
 	controller := Controller{
 		Router: router,
@@ -2538,25 +2623,12 @@ func TestReconcileSuppressesLocalMobilityPrivateIPFromFIB(t *testing.T) {
 
 func TestReconcileSuppressesConflictLocalProviderEvidenceFromFIB(t *testing.T) {
 	router := bgpRouterWithImportPrefixes("10.77.60.0/24")
-	router.Spec.Resources = append(router.Spec.Resources, bgpMobilityPreferredSourceResources("aws-router-a")...)
-	store := mapStore{
-		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
-			"ownershipResolverFIBVerdicts": []any{
-				map[string]any{
-					"address":        "10.77.60.11/32",
-					"action":         "local-route",
-					"conflictReason": "remote-home-owner-overlaps-local-ownership-event",
-					"ownerNode":      "aws-router-b",
-					"localNode":      "aws-router-a",
-				},
-				map[string]any{
-					"address":   "10.77.60.12/32",
-					"action":    "deliver-remote",
-					"ownerNode": "azure-router",
-				},
-			},
-		},
-	}
+	store := mobilityFIBStore{mapStore: mapStore{
+		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {},
+	}, records: mobilityFIBRecords(
+		map[string]any{"address": "10.77.60.11/32", "action": "local-route", "ownerNode": "aws-router-b", "reason": "remote-home-owner-overlaps-local-ownership-event"},
+		map[string]any{"address": "10.77.60.12/32", "action": "deliver-remote", "ownerNode": "azure-router"},
+	)}
 	fib := &fakeFIB{}
 	controller := Controller{
 		Router: router,
@@ -3506,40 +3578,6 @@ func samEnrollmentClaimResourceForTest(name, tunnelAddress, ownedAddress string)
 			BGP: api.SAMEnrollmentClaimBGPSpec{
 				ASN:      64512,
 				RouterID: strings.TrimSuffix(tunnelAddress, "/32"),
-			},
-		},
-	}
-}
-
-func bgpMobilityPreferredSourceResources(selfNode string) []api.Resource {
-	return []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
-			Metadata: api.ObjectMeta{Name: "cloudedge"},
-			Spec:     api.EventGroupSpec{NodeName: selfNode},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
-			Metadata: api.ObjectMeta{Name: "cloudedge"},
-			Spec: api.MobilityPoolSpec{
-				Prefix:         "10.77.60.0/24",
-				GroupRef:       "cloudedge",
-				DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
-				Members: []api.MobilityPoolMember{
-					{
-						NodeRef:              "onprem-router",
-						Site:                 "onprem",
-						Role:                 "onprem",
-						StaticOwnedAddresses: []string{"10.77.60.10/32"},
-						Capture:              api.MobilityMemberCapture{Type: "proxy-arp", Interface: "ens21"},
-					},
-					{
-						NodeRef: "aws-router",
-						Site:    "aws",
-						Role:    "cloud",
-						Capture: api.MobilityMemberCapture{Type: "provider-secondary-ip", Interface: "ens5", ConfigureOSAddress: false},
-					},
-				},
 			},
 		},
 	}

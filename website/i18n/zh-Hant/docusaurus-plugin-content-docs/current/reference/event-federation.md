@@ -4,12 +4,12 @@
 
 > 實驗性（CloudEdge）。關於設計和不變條件，請參見 [ADR 0006: CloudEdge Event Federation](../adr/0006-event-federation.md)；
 > 關於實踐範例，請參見 how-to 的
-> [Event Federation subscription](../how-to/event-federation-subscription.md)。
+> [CloudEdge mobility demo](../how-to/cloudedge-mobility-demo.md)。
 
 Event Federation 是一種機制，透過 overlay 在 routerd 節點之間交換**類型化的觀測事實**
 （例如：「此用戶端 IPv4 已被觀測到」、「此位址已過期」），訂閱者將比對的事件透過 plugin
 轉換為衍生設定。它是[選擇性位址移動性](./selective-address-mobility)下的控制平面基礎設施，
-一個節點上觀測到的位址會成為另一個節點的 `RemoteAddressClaim`（capture）。
+一個節點上觀測到的位址會成為另一個節點 `MobilityPool` 計畫使用的型別化 ownership fact。
 
 模型是**冪等觀測事實事件的 at-least-once 分發**。事件是關於世界的不可變描述
 （"observed"），而非命令式指令。對於從同一事件重新導出相同狀態的接收者來說是 no-op。
@@ -66,7 +66,7 @@ routerctl federation event deliveries --group <g>
 事件，`deliveries` 顯示每個對等方的 push 分發狀態。
 
 > 自我擷取保護（ADR 0006 的 no-feedback-loop 不變條件）：節點不得為自身透過本機
-> `RemoteAddressClaim` capture 的位址發出 `routerd.client.ipv4.observed`。否則，
+> `MobilityPool` 計畫已 capture 的位址發出 `routerd.client.ipv4.observed`。否則，
 > 已分發的 capture 位址將作為新觀測回圈。
 
 ## 傳輸 — `routerd-eventd`
@@ -87,9 +87,8 @@ outbox 具有 `sourceNode` 保護，接收到的事件不會被轉發回發起�
 2. `routerd-eventd` 向對等方分發，各對等方記錄到自身的事件儲存。
 3. 對等方的 `EventSubscription` 比對事件並呼叫 `trigger.pluginRef`
    （透過 `batchWindow` / `debounce` 彙總）。
-4. plugin 回傳 `DynamicConfigPart`（例如：`RemoteAddressClaim`），
-   [dynamic-config](./dynamic-config.md) 鏈將其整合到 effective config 並
-   reconcile 到資料平面。
+4. plugin 回傳觀測事實或一般 dynamic resource，Mobility controller 持久化型別化的
+   local capture plan 並將其 reconcile 到資料平面。
 
 這樣維運人員編寫的 intent 保持宣告式。維運人員宣告 group/peers/subscription，
-claim、capture、action plan 均為**衍生**產物。
+capture 與 action plan 均為**衍生**產物。

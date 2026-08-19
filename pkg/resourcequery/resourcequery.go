@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 )
 
@@ -107,7 +108,7 @@ func DependencyReady(store Store, dependency api.ResourceDependencySpec) bool {
 	if dependency.NotEmpty && strings.TrimSpace(values[0]) == "" {
 		return false
 	}
-	expected := firstNonEmpty(dependency.Phase, dependency.Equals)
+	expected := stringutil.FirstNonEmpty(dependency.Phase, dependency.Equals)
 	if expected != "" {
 		for _, value := range values {
 			if value == expected {
@@ -161,9 +162,9 @@ func APIVersionForKind(kind string) string {
 		return api.SystemAPIVersion
 	case "FirewallZone", "FirewallPolicy", "FirewallEventLog", "FirewallRule", "FirewallFlowPinhole", "ClientPolicy", "PortForward", "IngressService", "LocalServiceRedirect":
 		return api.FirewallAPIVersion
-	case "TunnelInterface", "OverlayPeer", "HybridRoute", "AddressMobilityDomain", "CloudProviderProfile", "RemoteAddressClaim":
+	case "TunnelInterface", "OverlayPeer", "HybridRoute", "CloudProviderProfile":
 		return api.HybridAPIVersion
-	case "MobilityPool", "MobilityMemberSet", "SAMNodeSet", "SAMPeerGroup", "SAMTransportProfile":
+	case "MobilityPool", "SAMNodeSet", "SAMTransportProfile":
 		return api.MobilityAPIVersion
 	default:
 		return api.NetAPIVersion
@@ -238,13 +239,4 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }

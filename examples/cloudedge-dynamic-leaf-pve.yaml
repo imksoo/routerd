@@ -27,7 +27,7 @@ spec:
         interface: lo-mobility
         address: 10.77.60.21/32
         allowOverlap: true
-        allowOverlapReason: leaf-owned mobility /32 advertised to the RR set
+        allowOverlapReason: leaf-owned SAM /32 authorized by the RR policy
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: BGPRouter
@@ -42,27 +42,6 @@ spec:
             allowedPrefixes: [10.77.60.21/32]
         timers: { profile: fast }
         convergenceProfile: fast
-
-    - apiVersion: mobility.routerd.net/v1alpha1
-      kind: SAMRRSet
-      metadata: { name: cloudedge-rrs }
-      spec:
-        enrollmentPolicyRef: SAMEnrollmentPolicy/cloudedge-leaves
-        mobilityPoolRefs: [MobilityPool/cloudedge]
-        routeAdmission:
-          allowedPrefixes: [10.77.60.0/24]
-          allowedPrefixLengthMin: 32
-          allowedPrefixLengthMax: 32
-          nextHopRewrite: peer-address
-        members:
-          - nodeRef: rr-a
-            endpoint: 10.10.0.2
-            tunnelAddress: 10.99.0.2/32
-            bgp: { asn: 64577, routerID: 10.99.0.2 }
-          - nodeRef: rr-b
-            endpoint: 10.10.0.3
-            tunnelAddress: 10.99.0.3/32
-            bgp: { asn: 64577, routerID: 10.99.0.3 }
 
     - apiVersion: mobility.routerd.net/v1alpha1
       kind: SAMTransportProfile
@@ -90,35 +69,6 @@ spec:
             allowedPrefixes: [10.77.60.21/32]
 
     - apiVersion: mobility.routerd.net/v1alpha1
-      kind: MobilityPool
-      metadata: { name: cloudedge }
-      spec:
-        prefix: 10.77.60.0/24
-        groupRef: cloudedge
-        mode: selective-address
-        members:
-          - nodeRef: leaf-pve
-            site: pve
-            role: onprem
-
-    - apiVersion: mobility.routerd.net/v1alpha1
-      kind: SAMEnrollmentPolicy
-      metadata: { name: cloudedge-leaves }
-      spec:
-        transportProfileRef: SAMTransportProfile/leaf-pve
-        rrSetRef: SAMRRSet/cloudedge-rrs
-        joinTokenFrom:
-          file: /usr/local/etc/routerd/secrets/cloudedge-join-token
-        joinAudience: cloudedge-private-underlay
-        allowedLeafIDs:
-          pattern: ^leaf-[a-z0-9-]+$
-        tunnelAddressPrefixes: [10.255.0.0/20]
-        endpointPrefixes: [10.20.0.0/24]
-        mobilityPoolRefs: [MobilityPool/cloudedge]
-        ttl: 24h
-        revokeAfterInactive: 168h
-
-    - apiVersion: mobility.routerd.net/v1alpha1
       kind: SAMEnrollmentClaim
       metadata: { name: leaf-pve }
       spec:
@@ -136,3 +86,14 @@ spec:
         bgp:
           asn: 64577
           routerID: 10.255.0.21
+
+    # The RR owns enrollment policy and /32 authorization. The leaf sends this
+    # claim and persists the policy-scoped runtime SAMRRSet fetched from either RR.
+    - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMEnrollmentClient
+      metadata: { name: leaf-pve }
+      spec:
+        claimRef: SAMEnrollmentClaim/leaf-pve
+        bootstrapEndpoints: [https://10.10.0.2:65432, https://10.10.0.3:65432]
+        stateTTLRefreshBefore: 10m
+        retryBackoff: { min: 10s, max: 15m }

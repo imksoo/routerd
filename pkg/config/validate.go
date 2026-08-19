@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/samenrollment"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -25,6 +24,19 @@ func Validate(router *api.Router) error {
 }
 
 func ValidateForOS(router *api.Router, targetOS platform.OS) error {
+	return validateForOS(router, targetOS, false)
+}
+
+// ValidateEffectiveForOS validates a Router after trusted runtime
+// DynamicConfigParts have been merged. Callers must validate the original
+// operator-authored Router with ValidateForOS before calling this function:
+// runtime-only payload kinds are intentionally accepted only in the effective
+// view.
+func ValidateEffectiveForOS(router *api.Router, targetOS platform.OS) error {
+	return validateForOS(router, targetOS, true)
+}
+
+func validateForOS(router *api.Router, targetOS platform.OS, allowRuntimePayloads bool) error {
 	if router == nil {
 		return fmt.Errorf("router is nil")
 	}
@@ -42,7 +54,7 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 	}
 
 	idx := newRouterIndex(router)
-	if err := idx.build(router, targetOS); err != nil {
+	if err := idx.build(router, targetOS, allowRuntimePayloads); err != nil {
 		return err
 	}
 	if err := validateUniqueSysctlKeys(router); err != nil {
@@ -158,12 +170,6 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 					return fmt.Errorf("%s spec.routeReflectorClient requires iBGP peerASN matching %s spec.asn", res.ID(), spec.RouterRef)
 				}
 			}
-			for i, source := range spec.PeersFrom {
-				kind, name, ok := strings.Cut(strings.TrimSpace(source.Resource), "/")
-				if !ok || kind != "SAMRRSet" || !idx.Seen[api.MobilityAPIVersion+"/SAMRRSet/"+name] {
-					return fmt.Errorf("%s spec.peersFrom[%d].resource references missing SAMRRSet %q", res.ID(), i, source.Resource)
-				}
-			}
 			if strings.TrimSpace(spec.BFD) != "" {
 				refKind, refName, ok := strings.Cut(strings.TrimSpace(spec.BFD), "/")
 				bfdSpec, exists := idx.BFDSpecs[refName]
@@ -220,28 +226,7 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 			if kind != "BGPRouter" || !idx.BGPRouters[name] {
 				return fmt.Errorf("%s spec.bgp.routerRef references missing BGPRouter %q", res.ID(), spec.BGP.RouterRef)
 			}
-			for i, peer := range spec.Peers {
-				if override := strings.TrimSpace(peer.Override.UnderlayInterface); override != "" && !idx.Interfaces[override] {
-					return fmt.Errorf("%s spec.peers[%d].override.underlayInterface references missing Interface %q", res.ID(), i, override)
-				}
-			}
-		}
-		if res.Kind == "SAMRRSet" {
-			spec, err := res.SAMRRSetSpec()
-			if err != nil {
-				return err
-			}
-			kind, name, ok := strings.Cut(strings.TrimSpace(spec.EnrollmentPolicyRef), "/")
-			if !ok || kind != "SAMEnrollmentPolicy" || strings.TrimSpace(name) == "" {
-				return fmt.Errorf("%s spec.enrollmentPolicyRef must reference SAMEnrollmentPolicy/<name>", res.ID())
-			}
-			for i, ref := range spec.MobilityPoolRefs {
-				kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
-				if !ok || kind != "MobilityPool" || strings.TrimSpace(name) == "" {
-					return fmt.Errorf("%s spec.mobilityPoolRefs[%d] must reference MobilityPool/<name>", res.ID(), i)
-				}
-			}
-			if _, err := validateBGPPrefixList(res.ID(), "spec.mobilityPrefixes", spec.MobilityPrefixes); err != nil {
+			if err := validateSAMTransportNodeSetSources(router, res, spec); err != nil {
 				return err
 			}
 		}
@@ -497,66 +482,16 @@ func ValidateForOS(router *api.Router, targetOS platform.OS) error {
 				}
 			}
 		}
-		if res.Kind == "AddressMobilityDomain" {
-			spec, err := res.AddressMobilityDomainSpec()
-			if err != nil {
-				return err
-			}
-			if spec.PeerRef != "" {
-				if _, ok := idx.OverlayPeers[spec.PeerRef]; !ok {
-					return fmt.Errorf("%s spec.peerRef references missing OverlayPeer %q", res.ID(), spec.PeerRef)
-				}
-			}
-		}
-		if res.Kind == "RemoteAddressClaim" {
-			spec, err := res.RemoteAddressClaimSpec()
-			if err != nil {
-				return err
-			}
-			domain, ok := idx.AddressMobilityDomains[spec.DomainRef]
-			if !ok {
-				return fmt.Errorf("%s spec.domainRef references missing AddressMobilityDomain %q", res.ID(), spec.DomainRef)
-			}
-			domainPrefix, err := netip.ParsePrefix(domain.Prefix)
-			if err != nil {
-				return fmt.Errorf("%s spec.domainRef references AddressMobilityDomain %q with invalid prefix %q", res.ID(), spec.DomainRef, domain.Prefix)
-			}
-			claimPrefix, err := netip.ParsePrefix(spec.Address)
-			if err != nil {
-				return fmt.Errorf("%s spec.address is invalid: %w", res.ID(), err)
-			}
-			if !domainPrefix.Masked().Contains(claimPrefix.Masked().Addr()) {
-				return fmt.Errorf("%s spec.address %q is outside AddressMobilityDomain %q prefix %q", res.ID(), claimPrefix.Masked().String(), spec.DomainRef, domainPrefix.Masked().String())
-			}
-			if _, ok := idx.OverlayPeers[spec.Delivery.PeerRef]; !ok {
-				return fmt.Errorf("%s spec.delivery.peerRef references missing OverlayPeer %q", res.ID(), spec.Delivery.PeerRef)
-			}
-			if spec.Capture.Type == "provider-secondary-ip" {
-				if _, ok := idx.CloudProviderProfiles[spec.Capture.ProviderRef]; !ok {
-					return fmt.Errorf("%s spec.capture.providerRef references missing CloudProviderProfile %q", res.ID(), spec.Capture.ProviderRef)
-				}
-			}
-			if ref := captureActiveWhenVirtualAddressRef(spec.Capture.ActiveWhen); ref != "" {
-				if _, ok := idx.VirtualAddresses[ref]; !ok {
-					return fmt.Errorf("%s spec.capture.activeWhen.virtualAddressRef references missing VirtualAddress %q", res.ID(), ref)
-				}
-			}
-		}
 		if res.Kind == "MobilityPool" {
-			spec, err := res.MobilityPoolSpec()
-			if err != nil {
+			validated, ok := idx.MobilityPools[res.Metadata.Name]
+			if !ok {
+				return fmt.Errorf("%s normalized mobility topology was not collected", res.ID())
+			}
+			if err := validateMobilitySelfMemberCompleteness(res, validated.Members, validated.SelfNode); err != nil {
 				return err
 			}
-			selfNode := mobilitySelfNode(router, spec.GroupRef)
-			normalized, _, err := mobilityconfig.NormalizeMobilityPool(spec, selfNode)
-			if err != nil {
-				return fmt.Errorf("%s %w", res.ID(), err)
-			}
-			if err := validateMobilitySelfMemberCompleteness(res, normalized, selfNode); err != nil {
-				return err
-			}
-			for i, member := range normalized.Members {
-				if selfNode != "" && strings.TrimSpace(member.NodeRef) != selfNode {
+			for i, member := range validated.Members {
+				if strings.TrimSpace(member.NodeRef) != validated.SelfNode {
 					continue
 				}
 				if ref := captureActiveWhenVirtualAddressRef(member.Capture.ActiveWhen); ref != "" {
@@ -828,12 +763,12 @@ func captureActiveWhenVirtualAddressRef(activeWhen api.CaptureActiveWhen) string
 	return strings.TrimPrefix(ref, "VirtualAddress/")
 }
 
-func validateMobilitySelfMemberCompleteness(res api.Resource, spec api.MobilityPoolSpec, selfNode string) error {
+func validateMobilitySelfMemberCompleteness(res api.Resource, members []api.ResolvedMobilityPoolMember, selfNode string) error {
 	selfNode = strings.TrimSpace(selfNode)
-	if selfNode == "" || effectiveMobilityDeliveryMode(spec) != "bgp" {
+	if selfNode == "" {
 		return nil
 	}
-	for i, member := range spec.Members {
+	for i, member := range members {
 		if strings.TrimSpace(member.NodeRef) != selfNode {
 			continue
 		}
@@ -842,7 +777,7 @@ func validateMobilitySelfMemberCompleteness(res api.Resource, spec api.MobilityP
 		}
 		return nil
 	}
-	return nil
+	return fmt.Errorf("%s self node %q must be declared by spec.membersFrom", res.ID(), selfNode)
 }
 
 func validateBGPDynamicEffectiveImportPolicy(resourceID string, spec api.BGPDynamicPeerSpec, routerSpec api.BGPRouterSpec) error {
@@ -872,24 +807,6 @@ func validateBGPDynamicEffectiveImportPolicy(resourceID string, spec api.BGPDyna
 		return fmt.Errorf("%s effective import policy %s.allowedPrefixes[%d] must be an IPv4 MobilityPool prefix for dynamic leaf route admission", resourceID, sourcePath, i)
 	}
 	return nil
-}
-
-func mobilitySelfNode(router *api.Router, groupRef string) string {
-	groupRef = strings.TrimSpace(groupRef)
-	if router == nil || groupRef == "" {
-		return ""
-	}
-	for _, res := range router.Spec.Resources {
-		if res.APIVersion != api.FederationAPIVersion || res.Kind != "EventGroup" || res.Metadata.Name != groupRef {
-			continue
-		}
-		spec, err := res.EventGroupSpec()
-		if err != nil {
-			return ""
-		}
-		return strings.TrimSpace(spec.NodeName)
-	}
-	return ""
 }
 
 func isExternalIPv6PDClient(client string) bool {
@@ -994,6 +911,21 @@ func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error
 			if !ok || kind != "SAMTransportProfile" || !idx.Seen[api.MobilityAPIVersion+"/SAMTransportProfile/"+name] {
 				return fmt.Errorf("%s spec.transportProfileRef references missing SAMTransportProfile %q", res.ID(), spec.TransportProfileRef)
 			}
+			if ref := strings.TrimSpace(spec.RRNodeSetRef); ref != "" {
+				kind, name, ok := strings.Cut(ref, "/")
+				if !ok || kind != "SAMNodeSet" || !idx.Seen[api.MobilityAPIVersion+"/SAMNodeSet/"+name] {
+					return fmt.Errorf("%s spec.rrNodeSetRef references missing SAMNodeSet %q", res.ID(), spec.RRNodeSetRef)
+				}
+				nodeSet, found, err := api.LookupSAMNodeSet(router, ref, res.ID()+" spec.rrNodeSetRef")
+				if err != nil || !found {
+					return fmt.Errorf("%s spec.rrNodeSetRef references missing SAMNodeSet %q", res.ID(), spec.RRNodeSetRef)
+				}
+				for i, node := range nodeSet.Nodes {
+					if !node.RouteReflector {
+						return fmt.Errorf("%s spec.rrNodeSetRef SAMNodeSet/%s spec.nodes[%d].routeReflector must be true", res.ID(), name, i)
+					}
+				}
+			}
 			if strings.TrimSpace(spec.WireGuard.Interface) != "" && !idx.WireGuardInterfaces[strings.TrimSpace(spec.WireGuard.Interface)] {
 				return fmt.Errorf("%s spec.wireGuard.interface references missing WireGuardInterface %q", res.ID(), spec.WireGuard.Interface)
 			}
@@ -1018,6 +950,7 @@ func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error
 			claims[res.Metadata.Name] = true
 		}
 	}
+	clientClaims := map[string]bool{}
 	for _, res := range router.Spec.Resources {
 		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "SAMEnrollmentClient" {
 			continue
@@ -1033,6 +966,7 @@ func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error
 		if !claims[strings.TrimSpace(name)] {
 			return fmt.Errorf("%s spec.claimRef references missing SAMEnrollmentClaim %q", res.ID(), spec.ClaimRef)
 		}
+		clientClaims[strings.TrimSpace(name)] = true
 	}
 	for _, res := range router.Spec.Resources {
 		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "SAMEnrollmentClaim" {
@@ -1043,11 +977,19 @@ func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error
 			return err
 		}
 		kind, name, ok := strings.Cut(strings.TrimSpace(spec.PolicyRef), "/")
-		policy, exists := policies[name]
 		if !ok || kind != "SAMEnrollmentPolicy" {
 			return fmt.Errorf("%s spec.policyRef must reference SAMEnrollmentPolicy/<name>", res.ID())
 		}
+		policy, exists := policies[name]
 		if !exists {
+			if clientClaims[res.Metadata.Name] {
+				// A leaf claim submitted by SAMEnrollmentClient is an opaque request
+				// to the remote RR. The RR validates policy membership, HMAC, TTL,
+				// and address authorization when it admits the request. Requiring a
+				// local policy here would recreate the policy/topology duplication
+				// that the runtime snapshot removes.
+				continue
+			}
 			return fmt.Errorf("%s spec.policyRef references missing SAMEnrollmentPolicy %q", res.ID(), spec.PolicyRef)
 		}
 		policyKey := strings.TrimSpace(spec.PolicyRef)
@@ -1063,7 +1005,7 @@ func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error
 				return fmt.Errorf("%s spec.leafID %q is not allowed by %s spec.allowedLeafIDs.pattern", res.ID(), spec.LeafID, spec.PolicyRef)
 			}
 		}
-		tunnel, err := parseSAMEnrollmentTunnelAddress(spec.TunnelAddress)
+		tunnel, err := samenrollment.ParsePrefixOrAddress(spec.TunnelAddress)
 		if err != nil {
 			return fmt.Errorf("%s spec.tunnelAddress is invalid: %w", res.ID(), err)
 		}
@@ -1136,7 +1078,7 @@ func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error
 			}
 		}
 		for i, owned := range spec.Mobility.OwnedAddresses {
-			prefix, err := parseSAMEnrollmentTunnelAddress(owned)
+			prefix, err := samenrollment.ParsePrefixOrAddress(owned)
 			if err != nil {
 				return fmt.Errorf("%s spec.mobility.ownedAddresses[%d] is invalid: %w", res.ID(), i, err)
 			}
@@ -1153,7 +1095,6 @@ func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error
 	}
 	return nil
 }
-
 func seenSAMEnrollmentValue(seen map[string]string, policyRef, value, resourceID string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -1177,11 +1118,11 @@ func validateSAMEnrollmentClaimTTL(resourceID string, policy api.SAMEnrollmentPo
 	if err != nil {
 		return nil
 	}
-	joinedAt, err := parseSAMEnrollmentTime(claim.JoinTimestamp)
+	joinedAt, err := samenrollment.ParseTime(claim.JoinTimestamp)
 	if err != nil {
 		return fmt.Errorf("%s spec.joinTimestamp must be an RFC3339 timestamp when spec.expiresAt is set with policy ttl: %w", resourceID, err)
 	}
-	expiresAt, err := parseSAMEnrollmentTime(expiresText)
+	expiresAt, err := samenrollment.ParseTime(expiresText)
 	if err != nil {
 		return fmt.Errorf("%s spec.expiresAt must be an RFC3339 timestamp: %w", resourceID, err)
 	}
@@ -1190,14 +1131,6 @@ func validateSAMEnrollmentClaimTTL(resourceID string, policy api.SAMEnrollmentPo
 		return fmt.Errorf("%s spec.expiresAt %s exceeds %s ttl window ending %s", resourceID, expiresAt.Format(time.RFC3339), claim.PolicyRef, maxExpiresAt.Format(time.RFC3339))
 	}
 	return nil
-}
-
-func parseSAMEnrollmentTime(value string) (time.Time, error) {
-	value = strings.TrimSpace(value)
-	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
-		return parsed, nil
-	}
-	return time.Parse(time.RFC3339, value)
 }
 
 func validateSAMEnrollmentClaimHMAC(resourceID string, policy api.SAMEnrollmentPolicySpec, claim api.SAMEnrollmentClaimSpec) error {
@@ -1311,6 +1244,37 @@ func ownedAddressAuthorizedByMobilityPools(address netip.Prefix, refs []string, 
 	return false
 }
 
+// validateSAMTransportNodeSetSources verifies the static topology inputs that
+// a SAMTransportProfile consumes. Other source kinds retain their existing
+// dynamic source validation semantics.
+func validateSAMTransportNodeSetSources(router *api.Router, res api.Resource, spec api.SAMTransportProfileSpec) error {
+	for sourceIndex, source := range spec.PeersFrom {
+		kind, name, ok := strings.Cut(strings.TrimSpace(source.Resource), "/")
+		if !ok || kind != "SAMNodeSet" {
+			continue
+		}
+		name = strings.TrimSpace(name)
+		nodeSet, found, err := api.LookupSAMNodeSet(router, source.Resource, fmt.Sprintf("%s spec.peersFrom[%d]", res.ID(), sourceIndex))
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("%s spec.peersFrom[%d].resource references missing SAMNodeSet %q", res.ID(), sourceIndex, source.Resource)
+		}
+		nodes := make(map[string]struct{}, len(nodeSet.Nodes))
+		for _, node := range nodeSet.Nodes {
+			nodes[strings.TrimSpace(node.NodeRef)] = struct{}{}
+		}
+		for nodeIndex, nodeRef := range source.NodeRefs {
+			nodeRef = strings.TrimSpace(nodeRef)
+			if _, ok := nodes[nodeRef]; !ok {
+				return fmt.Errorf("%s spec.peersFrom[%d].nodeRefs[%d] %q is not present in SAMNodeSet/%s", res.ID(), sourceIndex, nodeIndex, nodeRef, name)
+			}
+		}
+	}
+	return nil
+}
+
 const conntrackdTCPLiberalSysctlKey = "net.netfilter.nf_conntrack_tcp_be_liberal"
 
 func validateUniqueSysctlKeys(router *api.Router) error {
@@ -1402,7 +1366,7 @@ func validateApplyPolicy(spec api.ApplyPolicySpec) error {
 	return nil
 }
 
-func validateResource(res api.Resource, targetOS platform.OS) error {
+func validateResource(router *api.Router, res api.Resource, targetOS platform.OS, allowRuntimePayloads bool, idx *RouterIndex) error {
 	if res.APIVersion == "" {
 		return fmt.Errorf("resource apiVersion is required")
 	}
@@ -1424,7 +1388,6 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		validateRouteResource,
 		validateHybridResource,
 		validateEventResource,
-		validateMobilityResource,
 		validateFirewallResource,
 	}
 	for _, validate := range validators {
@@ -1435,6 +1398,11 @@ func validateResource(res api.Resource, targetOS platform.OS) error {
 		if handled {
 			return validateResourceWhens(res)
 		}
+	}
+	if handled, err := validateMobilityResource(router, res, targetOS, allowRuntimePayloads, idx); err != nil {
+		return err
+	} else if handled {
+		return validateResourceWhens(res)
 	}
 	return fmt.Errorf("unsupported resource kind %s in %s", res.Kind, res.ID())
 }

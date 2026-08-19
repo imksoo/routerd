@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/statusvalue"
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
@@ -154,7 +155,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	if len(data) == 0 {
 		return nil
 	}
-	path := firstNonEmpty(c.NftablesPath, "/run/routerd/nat44.nft")
+	path := stringutil.FirstNonEmpty(c.NftablesPath, "/run/routerd/nat44.nft")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
@@ -172,7 +173,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	if !applyLive {
 		return c.saveRuleStatuses(ctx, rules, path, changed, false)
 	}
-	nft := firstNonEmpty(c.NftCommand, "nft")
+	nft := stringutil.FirstNonEmpty(c.NftCommand, "nft")
 	if !changed && nftstate.RecentlyVerified(path, time.Now().UTC()) {
 		return c.saveRuleStatuses(ctx, rules, path, false, false)
 	}
@@ -218,7 +219,7 @@ func (c Controller) reconcilePF(ctx context.Context, rules []render.NAT44RenderR
 	if c.DryRun {
 		return c.saveRuleStatuses(ctx, rules, path, changed, false)
 	}
-	pfctl := firstNonEmpty(c.NftCommand, "pfctl")
+	pfctl := stringutil.FirstNonEmpty(c.NftCommand, "pfctl")
 	if c.NftCommand == "" || c.NftCommand == "nft" {
 		pfctl = "pfctl"
 	}
@@ -232,7 +233,7 @@ func (c Controller) reconcilePF(ctx context.Context, rules []render.NAT44RenderR
 }
 
 func (c Controller) clearPF(ctx context.Context) error {
-	pfctl := firstNonEmpty(c.NftCommand, "pfctl")
+	pfctl := stringutil.FirstNonEmpty(c.NftCommand, "pfctl")
 	if c.NftCommand == "" || c.NftCommand == "nft" {
 		pfctl = "pfctl"
 	}
@@ -328,9 +329,9 @@ func (c Controller) resolveSNATAddress(spec api.NAT44RuleSpec) (string, string) 
 	if strings.TrimSpace(spec.SNATAddressFrom.Resource) == "" {
 		return "", "SNATAddressMissing"
 	}
-	value := statusAddressValue(resourcequery.Value(c.Store, spec.SNATAddressFrom))
+	value := statusvalue.Address(resourcequery.Value(c.Store, spec.SNATAddressFrom))
 	if value == "" {
-		value = statusAddressValue(addressFromRouterResource(c.Router, spec.SNATAddressFrom))
+		value = statusvalue.Address(addressFromRouterResource(c.Router, spec.SNATAddressFrom))
 	}
 	if value == "" {
 		return "", "SNATAddressSourcePending"
@@ -450,17 +451,6 @@ func activeBackend(value any) (string, string, int) {
 	return name, address, port
 }
 
-func statusAddressValue(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	if prefix, err := netip.ParsePrefix(value); err == nil {
-		return prefix.Addr().String()
-	}
-	return value
-}
-
 func addressFromRouterResource(router *api.Router, source api.StatusValueSourceSpec) string {
 	if router == nil || strings.TrimSpace(source.Resource) == "" {
 		return ""
@@ -509,12 +499,12 @@ func interfaceAliases(router *api.Router) map[string]string {
 		case "DSLiteTunnel":
 			spec, err := resource.DSLiteTunnelSpec()
 			if err == nil {
-				aliases[resource.Metadata.Name] = firstNonEmpty(spec.TunnelName, resource.Metadata.Name)
+				aliases[resource.Metadata.Name] = stringutil.FirstNonEmpty(spec.TunnelName, resource.Metadata.Name)
 			}
 		case "PPPoESession":
 			spec, err := resource.PPPoESessionSpec()
 			if err == nil {
-				aliases[resource.Metadata.Name] = firstNonEmpty(spec.IfName, "ppp-"+resource.Metadata.Name)
+				aliases[resource.Metadata.Name] = stringutil.FirstNonEmpty(spec.IfName, "ppp-"+resource.Metadata.Name)
 			}
 		case "WireGuardInterface", "VRF", "VXLANTunnel", "Bridge":
 			aliases[resource.Metadata.Name] = resource.Metadata.Name
@@ -535,13 +525,4 @@ func policyNames(router *api.Router) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }

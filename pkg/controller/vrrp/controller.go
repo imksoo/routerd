@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/statusvalue"
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/platform"
@@ -98,11 +100,11 @@ func (c *Controller) stopVirtualAddressBackend(ctx context.Context) error {
 	if c.DryRun {
 		return nil
 	}
-	path := firstNonEmpty(c.ConfigPath, "/etc/keepalived/keepalived.conf")
+	path := stringutil.FirstNonEmpty(c.ConfigPath, "/etc/keepalived/keepalived.conf")
 	if _, err := os.Stat(path); err != nil {
 		return nil
 	}
-	systemctl := firstNonEmpty(c.Systemctl, "systemctl")
+	systemctl := stringutil.FirstNonEmpty(c.Systemctl, "systemctl")
 	if _, err := c.run(ctx, systemctl, "is-active", "--quiet", "keepalived.service"); err != nil {
 		return nil
 	}
@@ -152,7 +154,7 @@ func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[s
 		}
 		if spec.Mode == "vrrp" {
 			track := tracks[resource.Metadata.Name]
-			role := firstNonEmpty(roles[resource.Metadata.Name], "unknown")
+			role := stringutil.FirstNonEmpty(roles[resource.Metadata.Name], "unknown")
 			previous := c.Store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name)
 			desiredVMACs := len(spec.VRRP.AdditionalFailoverVMACs)
 			if spec.VRRP.FailoverVMAC != nil {
@@ -166,8 +168,8 @@ func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[s
 			status["role"] = role
 			status["failoverVMACs"] = desiredVMACs
 			carryBackendActionStatus(status, previous, extra)
-			if statusString(previous, "role") == role && statusString(previous, "lastRoleTransitionAt") != "" {
-				status["lastRoleTransitionAt"] = statusString(previous, "lastRoleTransitionAt")
+			if statusvalue.Field(previous, "role") == role && statusvalue.Field(previous, "lastRoleTransitionAt") != "" {
+				status["lastRoleTransitionAt"] = statusvalue.Field(previous, "lastRoleTransitionAt")
 			} else {
 				status["lastRoleTransitionAt"] = now
 			}
@@ -176,7 +178,7 @@ func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[s
 			if !c.DryRun {
 				if phase == "Applied" {
 					status["appliedAddress"] = address
-				} else if previous := statusString(c.Store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name), "appliedAddress"); previous != "" {
+				} else if previous := statusvalue.Field(c.Store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name), "appliedAddress"); previous != "" {
 					status["appliedAddress"] = previous
 				}
 			}
@@ -197,7 +199,7 @@ func carryBackendActionStatus(status, previous map[string]any, extra map[string]
 			status[key] = value
 			continue
 		}
-		if value := statusString(previous, key); value != "" {
+		if value := statusvalue.Field(previous, key); value != "" {
 			status[key] = value
 		}
 	}
@@ -234,20 +236,20 @@ func (c *Controller) cleanupStaleStaticAddresses(ctx context.Context, aliases ma
 	}
 	changed := false
 	for _, item := range statuses {
-		backend := strings.TrimSpace(statusString(item.Status, "backend"))
-		whenFalse := statusString(item.Status, "phase") == "Pending" && statusString(item.Status, "reason") == "WhenFalse"
+		backend := strings.TrimSpace(statusvalue.Field(item.Status, "backend"))
+		whenFalse := statusvalue.Field(item.Status, "phase") == "Pending" && statusvalue.Field(item.Status, "reason") == "WhenFalse"
 		if item.APIVersion != api.NetAPIVersion || !isVirtualAddressKind(item.Kind) || ((backend != "iproute2" && backend != "ifconfig") && !whenFalse) {
 			continue
 		}
 		if backend == "" && whenFalse {
 			backend = c.staticVirtualAddressBackend()
 		}
-		previous := staticVIP{IfName: statusString(item.Status, "ifname"), Address: statusString(item.Status, "appliedAddress")}
+		previous := staticVIP{IfName: statusvalue.Field(item.Status, "ifname"), Address: statusvalue.Field(item.Status, "appliedAddress")}
 		if previous.IfName == "" && whenFalse {
-			previous.IfName = aliases[statusString(item.Status, "interface")]
+			previous.IfName = aliases[statusvalue.Field(item.Status, "interface")]
 		}
-		if previous.Address == "" && statusString(item.Status, "phase") != "Removed" && (!whenFalse || item.Status["staticAddressRemoved"] != true) {
-			previous.Address = statusString(item.Status, "address")
+		if previous.Address == "" && statusvalue.Field(item.Status, "phase") != "Removed" && (!whenFalse || item.Status["staticAddressRemoved"] != true) {
+			previous.Address = statusvalue.Field(item.Status, "address")
 		}
 		if previous.IfName == "" || previous.Address == "" {
 			continue
@@ -344,7 +346,7 @@ func (c *Controller) applyStaticAddresses(ctx context.Context, aliases map[strin
 				return changed, isolated, c.saveError("", changed, nil, "StaticVIPObserveFailed", err)
 			}
 			previous := c.Store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name)
-			announce = !addressPresent || statusString(previous, "reason") == "StaticVIPGratuitousARPFailed"
+			announce = !addressPresent || statusvalue.Field(previous, "reason") == "StaticVIPGratuitousARPFailed"
 		}
 		if err := c.replaceStaticAddress(ctx, ifname, address); err != nil {
 			return changed, isolated, c.saveError("", changed, nil, "StaticVIPApplyFailed", err)
@@ -377,7 +379,7 @@ func (c *Controller) saveStaticAddressStatus(resource api.Resource, spec virtual
 	if applyErr != nil {
 		status["error"] = applyErr.Error()
 	}
-	if previous := statusString(c.Store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name), "appliedAddress"); previous != "" {
+	if previous := statusvalue.Field(c.Store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name), "appliedAddress"); previous != "" {
 		status["appliedAddress"] = previous
 	}
 	return c.Store.SaveObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name, status)
@@ -677,7 +679,7 @@ func (c *Controller) restoreTrackDecision(kind, vip, trackedResource string) tra
 		return trackDecision{
 			HealthyCount:   statusInt(entry["healthyCount"]),
 			UnhealthyCount: statusInt(entry["unhealthyCount"]),
-			Penalized:      statusBool(entry["penalized"]),
+			Penalized:      statusvalue.BoolOrFalse(entry["penalized"]),
 		}
 	}
 	return trackDecision{}
@@ -713,17 +715,6 @@ func statusInt(value any) int {
 		return parsed
 	default:
 		return 0
-	}
-}
-
-func statusBool(value any) bool {
-	switch typed := value.(type) {
-	case bool:
-		return typed
-	case string:
-		return strings.EqualFold(strings.TrimSpace(typed), "true")
-	default:
-		return false
 	}
 }
 
@@ -793,14 +784,14 @@ func (c *Controller) run(ctx context.Context, name string, args ...string) ([]by
 
 func (c *Controller) replaceStaticAddress(ctx context.Context, ifname, address string) error {
 	if c.currentOS() == platform.OSFreeBSD {
-		ifconfig := firstNonEmpty(c.Ifconfig, "ifconfig")
+		ifconfig := stringutil.FirstNonEmpty(c.Ifconfig, "ifconfig")
 		family := ifconfigAddressFamily(address)
 		if out, err := c.run(ctx, ifconfig, ifname, family, address, "alias"); err != nil {
 			return fmt.Errorf("%s %s %s %s alias: %w: %s", ifconfig, ifname, family, address, err, strings.TrimSpace(string(out)))
 		}
 		return nil
 	}
-	ip := firstNonEmpty(c.IP, "ip")
+	ip := stringutil.FirstNonEmpty(c.IP, "ip")
 	if out, err := c.run(ctx, ip, "addr", "replace", address, "dev", ifname); err != nil {
 		return fmt.Errorf("%s addr replace %s dev %s: %w: %s", ip, address, ifname, err, strings.TrimSpace(string(out)))
 	}
@@ -811,7 +802,7 @@ func (c *Controller) staticIPv4AddressPresent(ctx context.Context, ifname, addre
 	if _, ok := staticIPv4Host(address); !ok {
 		return false, nil
 	}
-	ip := firstNonEmpty(c.IP, "ip")
+	ip := stringutil.FirstNonEmpty(c.IP, "ip")
 	out, err := c.run(ctx, ip, "-4", "-o", "addr", "show", "dev", ifname)
 	if err != nil {
 		return false, fmt.Errorf("%s -4 -o addr show dev %s: %w: %s", ip, ifname, err, strings.TrimSpace(string(out)))
@@ -824,7 +815,7 @@ func (c *Controller) announceStaticIPv4Address(ctx context.Context, ifname, addr
 	if !ok {
 		return nil
 	}
-	arping := firstNonEmpty(c.Arping, "arping")
+	arping := stringutil.FirstNonEmpty(c.Arping, "arping")
 	out, err := c.run(ctx, arping, "-U", "-c", "3", "-I", ifname, host)
 	if err != nil {
 		return fmt.Errorf("%s -U -c 3 -I %s %s: %w: %s", arping, ifname, host, err, strings.TrimSpace(string(out)))
@@ -845,14 +836,14 @@ func staticIPv4Host(address string) (string, bool) {
 
 func (c *Controller) removeStaticAddress(ctx context.Context, ifname, address string) error {
 	if c.currentOS() == platform.OSFreeBSD {
-		ifconfig := firstNonEmpty(c.Ifconfig, "ifconfig")
+		ifconfig := stringutil.FirstNonEmpty(c.Ifconfig, "ifconfig")
 		family := ifconfigAddressFamily(address)
 		if out, err := c.run(ctx, ifconfig, ifname, family, address, "-alias"); err != nil {
 			return fmt.Errorf("%s %s %s %s -alias: %w: %s", ifconfig, ifname, family, address, err, strings.TrimSpace(string(out)))
 		}
 		return nil
 	}
-	ip := firstNonEmpty(c.IP, "ip")
+	ip := stringutil.FirstNonEmpty(c.IP, "ip")
 	if out, err := c.run(ctx, ip, "addr", "del", address, "dev", ifname); err != nil {
 		return fmt.Errorf("%s addr del %s dev %s: %w: %s", ip, address, ifname, err, strings.TrimSpace(string(out)))
 	}
@@ -889,17 +880,6 @@ func ipAddressPresent(output, address, family string) bool {
 	return false
 }
 
-func statusString(status map[string]any, key string) string {
-	if status == nil {
-		return ""
-	}
-	value, ok := status[key]
-	if !ok || value == nil {
-		return ""
-	}
-	return strings.TrimSpace(fmt.Sprint(value))
-}
-
 func interfaceAliases(router *api.Router) map[string]string {
 	aliases := map[string]string{}
 	for _, resource := range router.Spec.Resources {
@@ -912,15 +892,6 @@ func interfaceAliases(router *api.Router) map[string]string {
 		}
 	}
 	return aliases
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func defaultInt(value, fallback int) int {

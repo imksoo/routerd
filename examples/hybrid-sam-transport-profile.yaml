@@ -28,6 +28,23 @@ spec:
         managed: false
 
     - apiVersion: mobility.routerd.net/v1alpha1
+      kind: SAMNodeSet
+      metadata:
+        name: hybrid-sam-nodes
+      spec:
+        nodes:
+          - nodeRef: pve-rt08
+            site: pve08
+            role: onprem
+            samEndpointFrom:
+              resource: Interface/wg-hybrid
+              field: primaryIPv4
+          - nodeRef: k8s-rt02
+            site: k8s
+            role: cloud
+            samEndpoint: 10.99.0.2
+
+    - apiVersion: mobility.routerd.net/v1alpha1
       kind: SAMTransportProfile
       metadata:
         name: pve08-core
@@ -43,6 +60,6 @@ spec:
           routerRef: BGPRouter/main
           peerASN: 64512
           timersPreset: fast
-        peers:
-          - nodeRef: k8s-rt02
-            remoteEndpoint: 10.99.0.2
+        peersFrom:
+          - resource: SAMNodeSet/hybrid-sam-nodes
+            nodeRefs: [k8s-rt02]

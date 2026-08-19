@@ -14,6 +14,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/observe"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -167,7 +168,7 @@ func writeDescribeStatus(w io.Writer, row showResource) {
 		fmt.Fprintf(w, "Currently observable:\t%s\n", yesNo(lease.CurrentPrefix != ""))
 		fmt.Fprintf(w, "Current delegated prefix:\t%s\n", displayCell(lease.CurrentPrefix))
 		fmt.Fprintf(w, "Last delegated prefix:\t%s\n", displayCell(lease.LastPrefix))
-		fmt.Fprintf(w, "Client DUID:\t%s\n", displayCell(firstNonEmpty(lease.DUIDText, lease.DUID)))
+		fmt.Fprintf(w, "Client DUID:\t%s\n", displayCell(stringutil.FirstNonEmpty(lease.DUIDText, lease.DUID)))
 		fmt.Fprintf(w, "Expected DUID:\t%s\n", displayCell(lease.ExpectedDUID))
 		fmt.Fprintf(w, "IAID:\t%s\n", displayCell(lease.IAID))
 		fmt.Fprintf(w, "Last Reply at:\t%s\n", displayCell(lease.LastReplyAt))
@@ -397,15 +398,6 @@ func stateSummary(state map[string]any) string {
 		}
 	}
 	return fmt.Sprintf("%d values", len(state))
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func displayCell(value string) string {

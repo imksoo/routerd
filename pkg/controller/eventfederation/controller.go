@@ -12,7 +12,6 @@ package eventfederation
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -196,7 +195,7 @@ func (c Controller) resolvePeersFrom(spec api.EventGroupSpec, addPeer func(event
 			Optional: source.Optional,
 			Phase:    "Resolved",
 		}
-		nodeSet, found, err := c.samNodeSet(ref)
+		nodeSet, found, err := api.LookupSAMNodeSet(c.Router, ref, "peersFrom")
 		if err != nil {
 			status.Phase = "Invalid"
 			status.Reason = err.Error()
@@ -228,27 +227,6 @@ func (c Controller) resolvePeersFrom(spec api.EventGroupSpec, addPeer func(event
 	}
 	sort.Strings(pending)
 	return statuses, pending, nil
-}
-
-func (c Controller) samNodeSet(ref string) (api.SAMNodeSetSpec, bool, error) {
-	kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
-	if !ok || kind != "SAMNodeSet" || strings.TrimSpace(name) == "" {
-		return api.SAMNodeSetSpec{}, false, fmt.Errorf("peersFrom resource must reference SAMNodeSet/<name>")
-	}
-	if c.Router == nil {
-		return api.SAMNodeSetSpec{}, false, nil
-	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMNodeSet" || resource.Metadata.Name != strings.TrimSpace(name) {
-			continue
-		}
-		spec, err := resource.SAMNodeSetSpec()
-		if err != nil {
-			return api.SAMNodeSetSpec{}, true, fmt.Errorf("%s spec: %w", ref, err)
-		}
-		return spec, true, nil
-	}
-	return api.SAMNodeSetSpec{}, false, nil
 }
 
 // writeConfig writes config.json idempotently, reporting whether it changed.

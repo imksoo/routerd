@@ -15,6 +15,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 	"github.com/imksoo/routerd/pkg/wireguard"
@@ -27,6 +28,42 @@ func mustWireGuardRouter(t *testing.T, body string) *api.Router {
 		t.Fatal(err)
 	}
 	return &router
+}
+
+// wireGuardRouterWithFetchedRRSet models the only leaf-side RR input: a
+// runtime snapshot admitted by the remote enrollment server. Static Router
+// config intentionally contains neither SAMRRSet nor a duplicate RR topology.
+func wireGuardRouterWithFetchedRRSet(t *testing.T, router *api.Router, name, policyRef string, nodes []api.SAMNodeSpec) *api.Router {
+	t.Helper()
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	snapshot := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMRRSet"},
+		Metadata: api.ObjectMeta{Name: name},
+		Spec: api.SAMRRSetSpec{
+			EnrollmentPolicyRef: policyRef,
+			Nodes:               append([]api.SAMNodeSpec(nil), nodes...),
+		},
+	}
+	part := dynamicconfig.DynamicConfigPart{
+		TypeMeta: api.TypeMeta{APIVersion: dynamicconfig.ConfigAPIVersion, Kind: "DynamicConfigPart"},
+		Metadata: api.ObjectMeta{Name: "fetched-" + name},
+		Spec: dynamicconfig.DynamicConfigPartSpec{
+			Source:     "SAMRRSet/" + name,
+			Generation: 1,
+			ObservedAt: now,
+			ExpiresAt:  now.Add(time.Hour),
+			Resources:  []api.Resource{snapshot},
+		},
+	}
+	policies, err := dynamicconfig.ExtractDynamicOverridePolicies(*router)
+	if err != nil {
+		t.Fatalf("ExtractDynamicOverridePolicies: %v", err)
+	}
+	effective, _, err := dynamicconfig.BuildEffectiveConfigForOS(*router, []dynamicconfig.DynamicConfigPart{part}, policies, now, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("BuildEffectiveConfigForOS: %v", err)
+	}
+	return &effective
 }
 
 func assertStringSet(t *testing.T, label string, got, want []string) {
@@ -82,25 +119,11 @@ spec:
         privateKey: priv
         peersFrom:
           - resource: SAMRRSet/cloudedge-rrs
-    - apiVersion: mobility.routerd.net/v1alpha1
-      kind: SAMRRSet
-      metadata: {name: cloudedge-rrs}
-      spec:
-        enrollmentPolicyRef: SAMEnrollmentPolicy/cloudedge-leaves
-        members:
-          - nodeRef: aws-rr-a
-            endpoint: 203.0.113.10
-            tunnelAddress: 10.99.0.2/32
-            wireGuard:
-              publicKey: rrpub-a
-              endpoint: 203.0.113.10:51820
-          - nodeRef: aws-rr-b
-            endpoint: 203.0.113.11
-            tunnelAddress: 10.99.0.3/32
-            wireGuard:
-              publicKey: rrpub-b
-              endpoint: 203.0.113.11:51820
 `)
+	router = wireGuardRouterWithFetchedRRSet(t, router, "cloudedge-rrs", "SAMEnrollmentPolicy/cloudedge-leaves", []api.SAMNodeSpec{
+		{NodeRef: "aws-rr-a", RouteReflector: true, SAMEndpoint: "203.0.113.10", WireGuard: api.SAMNodeWireGuardSpec{PublicKey: "rrpub-a", Endpoint: "203.0.113.10:51820", AllowedIPs: []string{"10.99.0.2/32"}}},
+		{NodeRef: "aws-rr-b", RouteReflector: true, SAMEndpoint: "203.0.113.11", WireGuard: api.SAMNodeWireGuardSpec{PublicKey: "rrpub-b", Endpoint: "203.0.113.11:51820", AllowedIPs: []string{"10.99.0.3/32"}}},
+	})
 	var setconf string
 	controller := WireGuardController{
 		Router: router,
@@ -154,27 +177,11 @@ spec:
         privateKey: priv
         peersFrom:
           - resource: SAMRRSet/cloudedge-rrs
-    - apiVersion: mobility.routerd.net/v1alpha1
-      kind: SAMRRSet
-      metadata: {name: cloudedge-rrs}
-      spec:
-        enrollmentPolicyRef: SAMEnrollmentPolicy/cloudedge-leaves
-        members:
-          - nodeRef: rr-a
-            endpoint: 10.10.0.2
-            tunnelAddress: 10.99.0.2/32
-            wireGuard:
-              publicKey: rrpub-a
-              endpoint: 203.0.113.10:51820
-              allowedIPs: [10.10.0.2/32]
-          - nodeRef: rr-b
-            endpoint: 10.10.0.3
-            tunnelAddress: 10.99.0.3/32
-            wireGuard:
-              publicKey: rrpub-b
-              endpoint: 203.0.113.11:51820
-              allowedIPs: [10.10.0.3/32]
 `)
+	router = wireGuardRouterWithFetchedRRSet(t, router, "cloudedge-rrs", "SAMEnrollmentPolicy/cloudedge-leaves", []api.SAMNodeSpec{
+		{NodeRef: "rr-a", RouteReflector: true, SAMEndpoint: "10.10.0.2", WireGuard: api.SAMNodeWireGuardSpec{PublicKey: "rrpub-a", Endpoint: "203.0.113.10:51820", AllowedIPs: []string{"10.99.0.2/32", "10.10.0.2/32"}}},
+		{NodeRef: "rr-b", RouteReflector: true, SAMEndpoint: "10.10.0.3", WireGuard: api.SAMNodeWireGuardSpec{PublicKey: "rrpub-b", Endpoint: "203.0.113.11:51820", AllowedIPs: []string{"10.99.0.3/32", "10.10.0.3/32"}}},
+	})
 	effective, err := resolveWireGuardSAMResources(router)
 	if err != nil {
 		t.Fatal(err)

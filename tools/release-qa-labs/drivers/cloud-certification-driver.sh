@@ -93,10 +93,11 @@ fi
 record_check tooling "" "fresh run inventory" pass "OpenTofu, cloud run-id, and exact PVE VM inventory are zero"
 
 plan="$plan_root/cloud.tfplan"
+cloud_state_backup="$preflight_dir/tofu-cloud-pre-apply.tfstate"
 if ! run_with_progress tofu-cloud-plan \
   tofu -chdir="$tf_dir" plan -input=false -out="$plan" \
   -var-file="$tfvars_path" \
-  -target=module.aws_rr \
+  -target=module.aws_fabric \
   -target=module.aws_leaf \
   -target=module.azure_leaf \
   -target=module.oci_leaf; then
@@ -109,20 +110,91 @@ if ! python3 "$framework_root/qa_guard.py" plan \
   fail_driver "cloud plan exceeds closed topology or cost policy"
 fi
 if ! run_with_progress tofu-cloud-apply \
-  tofu -chdir="$tf_dir" apply -input=false -auto-approve "$plan"; then
+  tofu -chdir="$tf_dir" apply -input=false -auto-approve \
+    -backup="$cloud_state_backup" "$plan"; then
   fail_driver "targeted cloud OpenTofu apply failed"
 fi
 
-tofu -chdir="$tf_dir" show -json >"$evidence_root/certification/cloud/tofu-state-after-cloud.json"
+cloud_dir="$evidence_root/certification/cloud"
+tofu -chdir="$tf_dir" show -json >"$cloud_dir/tofu-state-after-cloud.json"
+
+# The PVE phase owns QGA discovery and guest-host-key pinning.  After cloud
+# apply, rebuild the full output from Terraform and replace only its six PVE
+# entries with that already-attested PVE projection.  This preserves the one
+# authoritative QGA observation without refreshing cloud providers during the
+# PVE phase or reinterpreting PVE addresses from status-like side channels.
+raw_output="$cloud_dir/tofu-output-full-raw.json"
+if ! tofu -chdir="$tf_dir" output -json >"$raw_output"; then
+  fail_driver "could not capture full OpenTofu output after cloud apply"
+fi
+pve_qga_output="$evidence_root/certification/pve/tofu-output-pve-qga.json"
+pve_guest_known_hosts="$evidence_root/certification/pve/guest-known_hosts"
+[ -s "$pve_qga_output" ] || fail_driver "PVE QGA output handoff is missing"
+[ -s "$pve_guest_known_hosts" ] || fail_driver "PVE QGA guest host-key handoff is missing"
+merged_output="$(mktemp "$cloud_dir/.tofu-output-merged.XXXXXX")"
+if ! jq -n --slurpfile raw "$raw_output" --slurpfile pve "$pve_qga_output" '
+  $raw[0] as $full |
+  $pve[0].nodes.value as $pveNodes |
+  ([ $full.nodes.value | to_entries[] | select(.value.site == "pve") | .key ] | sort) as $rawPVEKeys |
+  ([ $pveNodes | to_entries[] | .key ] | sort) as $qgaPVEKeys |
+  if (
+    ($rawPVEKeys | length == 6) and
+    ($qgaPVEKeys == $rawPVEKeys) and
+    ([ $full.nodes.value | to_entries[] | select(.value.site == "pve") |
+       (.value.management_ip == null and .value.public_ip == null and .value.pve_management_source == "pending-qga-dhcp") ] | all) and
+    ([ $pveNodes | to_entries[] |
+       (.value.site == "pve" and .value.management_ip != null and .value.public_ip != null and
+        .value.pve_management_source == "qga-dhcp" and (.value.ssh_host_keys | type == "array") and
+        (.value.ssh_host_keys | length > 0) and .value.ssh_host_key_source == "qga") ] | all)
+  ) then
+    reduce ($pveNodes | to_entries[]) as $entry
+      ($full; .nodes.value[$entry.key] = (
+        .nodes.value[$entry.key] * {
+          management_ip: $entry.value.management_ip,
+          public_ip: $entry.value.public_ip,
+          pve_management_source: $entry.value.pve_management_source,
+          ssh_host_keys: $entry.value.ssh_host_keys,
+          ssh_host_key_source: $entry.value.ssh_host_key_source
+        }
+      ))
+  else error("full output and PVE QGA handoff do not describe the same six pending PVE nodes") end
+' >"$merged_output"; then
+  rm -f "$merged_output"
+  fail_driver "full OpenTofu/PVE QGA output handoff is invalid"
+fi
+if ! jq -e '
+  (.nodes.value | type == "object") and
+  ([.nodes.value | to_entries[] | select(.value.site == "pve")] | length == 6) and
+  ([.nodes.value | to_entries[] | select(.value.site == "aws")] | length == 4) and
+  ([.nodes.value | to_entries[] | select(.value.site == "azure")] | length == 4) and
+  ([.nodes.value | to_entries[] | select(.value.site == "oci")] | length == 4) and
+  ([.nodes.value | to_entries[] | select(.value.site == "pve") |
+    (.value.management_ip != null and .value.public_ip != null and
+     .value.pve_management_source == "qga-dhcp" and (.value.ssh_host_keys | length > 0))] | all)
+  and
+  ([.nodes.value | to_entries[] |
+    select(.value.site == "pve" and (.value.role == "rr" or .value.role == "leaf")) |
+    (.value.overlay_ip | type == "string")] | all)
+  and
+  ([.nodes.value | to_entries[] |
+    select(.value.site == "pve" and .value.role == "client") |
+    (.value.client_ip | type == "string")] | all)
+' "$merged_output" >/dev/null; then
+  rm -f "$merged_output"
+  fail_driver "merged full topology output is incomplete or lost PVE QGA identity"
+fi
+install -m 0600 "$merged_output" "$tofu_output_path"
+rm -f "$merged_output"
+record_check cross-substrate "" "full topology output handoff" pass "full cloud output carries the six once-attested PVE QGA identities without a cloud refresh in the PVE phase"
 touch_heartbeat
 
 aws --profile "$aws_profile" --region "$aws_region" ec2 describe-instances \
   --filters "Name=tag:routerd-run-id,Values=$run_id" \
   >"$evidence_root/certification/cloud/aws-instances.json"
 aws_running="$(jq '[.Reservations[].Instances[] | select(.State.Name == "running")] | length' "$evidence_root/certification/cloud/aws-instances.json")"
-[ "$aws_running" -eq 6 ] ||
+[ "$aws_running" -eq 4 ] ||
   fail_driver "not all AWS nodes are running"
-record_check cloud aws "AWS full substrate inventory" pass "six exact run instances are running"
+record_check cloud aws "AWS full substrate inventory" pass "four exact AWS leaf/client instances are running; route reflectors run on PVE"
 
 azure_rg="rg-routerd-${run_id}-azure"
 az vm list --resource-group "$azure_rg" --show-details --output json \
@@ -144,6 +216,6 @@ oci_running="$(
   fail_driver "not all four OCI nodes are running"
 record_check cloud oci "OCI full substrate inventory" pass "four exact run instances are running"
 
-record_check cross-substrate "" "cloud provider inventory convergence" pass "all fourteen fresh cloud nodes are running in the declared provider contexts"
+record_check cross-substrate "" "cloud provider inventory convergence" pass "all twelve fresh cloud leaf/client nodes are running in the declared provider contexts; RR compute is excluded from AWS"
 write_driver_result "$out_arg" pass "Fresh AWS/Azure/OCI substrate applied from the pinned OpenTofu source without repair."
 echo "cloud certification driver: pass"

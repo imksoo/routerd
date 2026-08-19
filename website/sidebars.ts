@@ -113,7 +113,6 @@ const sidebars: SidebarsConfig = {
         'how-to/oci-qemu-vxlan-l2',
         'how-to/pve-live-iso-nocloud',
         'how-to/hybrid-azure-pve-same-subnet',
-        'how-to/event-federation-subscription',
         'how-to/federation-delivery-observability',
         'how-to/cloudedge-sam-oci-firewall-bootstrap',
         'how-to/cloudedge-mobility-demo',

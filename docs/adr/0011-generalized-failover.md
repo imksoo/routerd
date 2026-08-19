@@ -4,7 +4,15 @@
 
 ## Status
 
-Proposed; Accepted for experimental implementation — 2026-06-01.
+Superseded — 2026-08-18. See [ADR 0012: BGP Address Mobility](0012-bgp-address-mobility.md).
+
+> **Historical record, not a current API contract.** This ADR records an
+> experimental design that was not retained. The current MobilityPool model
+> has no global failover-policy, heartbeat, epoch, or compatibility fields
+> described below. Current behavior is the typed
+> `PoolRuntimeSnapshot -> PoolPlan` pipeline in ADR 0012: BGP liveness
+> markers, placement, startup fences, holder retention, and hold-downs are
+> runtime safety rules rather than user-configurable policy switches.
 
 Consumes [ADR 0010: Capture Ownership Arbitration](../adr/0010-capture-ownership-arbitration.md)
 (ownership map + `ownershipEpoch`) and realizes the failover deferred as Phase C of
@@ -69,31 +77,18 @@ component with a live member keeps stream time advancing. The **promotion hold**
 absorbs transient gaps and suppresses flapping; `maintenance.drain` remains an
 **immediate** exclusion (cooperative, no hold).
 
-### Phase 2 implementation decisions (locked 2026-06-01)
+### Implementation status
 
-- **Heartbeat event**: type `routerd.mobility.member.heartbeat`, group =
-  `MobilityPool.groupRef`, payload `{pool, node, emittedAt, seq}`. Emitted by the
-  **mobility controller** at its reconcile tick, **only for `autoFailover: true`
-  pools** and only for the self node (cloud `provider-secondary-ip` role), rate-limited
-  by `heartbeatInterval`. The staleness decision uses the event's `ObservedAt`;
-  `lastHeartbeat` is derived from the same projected event stream as leases (no
-  wall-clock admixture).
-- **Hold fields** live flat under `ipOwnershipPolicy`:
-  `heartbeatInterval` / `heartbeatTTL` / `promotionHoldDuration` (duration strings),
-  distinct from the lease owner-change hold. No dedicated state table — eligibility
-  is the pure `lastHeartbeat + ttl + hold <= streamMaxObservedAt` test. Validation
-  requires `heartbeatInterval`/`heartbeatTTL` when `autoFailover` is true and
-  `heartbeatTTL >= heartbeatInterval`.
+The proposed global ownership-policy fields were not retained as MobilityPool API.
+Current BGP delivery derives liveness eligibility from BGP
+markers, placement, startup fences, holder retention, and hold-downs. Those are
+runtime safety rules, not dormant user-configurable policy switches.
 - **Seize action**: the existing `assign-secondary-ip` verb gains an
   `allowReassignment` parameter (rather than a new verb), set when the new owner must
   take an address whose stale/dead prior owner cannot itself `unassign`. The AWS
   executor maps it to `--allow-reassignment`; the `ActionPlan` description/risk
   reads as a seize/reassign. `ownershipEpoch` stamping/fencing is unchanged from
   ADR 0010.
-- **`autoFailover` gate**: heartbeat staleness enters arbitration eligibility **only
-  when `autoFailover: true`**. Unset/false pools keep the current behavior (drain is
-  the only owner-change driver), so #76 Phase 1 / SAM / captureEpoch paths are
-  unaffected; heartbeats are emitted/consumed only for `autoFailover: true` pools.
 - **Scope**: Phase 2 is cloud `provider-secondary-ip` + **AWS** seize only; on-prem
   (proxy-ARP / VRRP-master) and Azure/OCI reassign executors are Phase 3.
 - **Known follow-up**: heartbeat events have no TTL/expiry so a dead member's last
@@ -106,8 +101,8 @@ absorbs transient gaps and suppresses flapping; `maintenance.drain` remains an
 When the eligible-owner changes (drain, heartbeat expiry, health failure), the
 `ownershipEpoch` bumps and the **new owner seizes**: it issues the provider
 acquire-with-reassignment for the secondary IP and enables forwarding; the old
-owner's actions carry the stale epoch and are fenced at the gate. `autoFailover`
-(ADR 0010 `ipOwnershipPolicy`) gates whether this is automatic.
+owner's actions carry the stale epoch and are fenced at the gate. Runtime placement
+and liveness decide this behavior directly.
 
 ### Provider-agnostic action layer
 
@@ -124,7 +119,7 @@ owner's actions carry the stale epoch and are fenced at the gate. `autoFailover`
 
 - **Phase 2**: cloud liveness failover — heartbeat events + TTL + promotion hold +
   unified eligibility, `ownershipEpoch` bump, **cloud secondary-IP seize** (AWS
-  first, the proven path), `autoFailover` gate. Forced-failure CI/lab test that L3
+  first, the proven path). Forced-failure CI/lab test that L3
   does not break (the standby serves the address after promotion).
 - **Phase 3**: provider action parity — Azure (remove+add ipConfig) and OCI
   (`--unassign-if-already-assigned`) executors; on-prem VRRP/GARP integration via an

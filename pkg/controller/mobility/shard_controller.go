@@ -19,7 +19,6 @@ import (
 
 const (
 	ShardAssignedEventType = "routerd.mobility.shard.assigned"
-	ShardExpiredEventType  = "routerd.mobility.shard.expired"
 	shardEventTTL          = 10 * time.Minute
 )
 
@@ -68,7 +67,7 @@ func (c ShardController) Reconcile(ctx context.Context) error {
 }
 
 func (c ShardController) reconcilePolicy(policyName string, spec api.SAMSubnetPolicySpec, now time.Time) error {
-	selfNode, err := routerSelfNode(c.Router, spec.GroupRef)
+	selfNode, err := api.EventGroupSelfNode(c.Router, spec.GroupRef)
 	if err != nil {
 		return err
 	}

@@ -9,113 +9,90 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 )
 
-const (
-	DiagnosticWarning = "warning"
-)
-
-type Diagnostic struct {
-	Severity string
-	Path     string
-	Message  string
-}
-
-// NormalizeMobilityPool expands MobilityPool profile/value shorthand into the
-// concrete per-member shape consumed by validation and controllers. It is pure:
-// callers own both the input and the returned spec.
-func NormalizeMobilityPool(spec api.MobilityPoolSpec, selfNode string) (api.MobilityPoolSpec, []Diagnostic, error) {
-	out := copySpec(spec)
-	selfNode = strings.TrimSpace(selfNode)
-	selfSite := ""
-	if selfNode != "" {
-		for _, member := range out.Members {
-			if strings.TrimSpace(member.NodeRef) == selfNode {
-				selfSite = strings.TrimSpace(member.Site)
-				break
-			}
-		}
+// NormalizeResolvedMobilityPoolMembers expands MobilityPool profile/value shorthand
+// into the concrete resolved-member shape consumed by validation and
+// controllers. It is pure: callers own both the declared spec and members.
+//
+// A concrete self node makes the input node-local: every other member is
+// identity/topology-only. Provider, capture, and ownership details belong only
+// to the local member, whose resulting BGP and federation facts are the shared
+// representation of that state.
+func NormalizeResolvedMobilityPoolMembers(spec api.MobilityPoolSpec, members []api.ResolvedMobilityPoolMember, selfNode string) ([]api.ResolvedMobilityPoolMember, error) {
+	values := copyStringMap(spec.Values)
+	profiles := copyProfiles(spec.Profiles)
+	out := make([]api.ResolvedMobilityPoolMember, len(members))
+	for i, member := range members {
+		out[i] = copyMember(member)
 	}
+	selfNode = strings.TrimSpace(selfNode)
 
-	for name, profile := range out.Profiles.CloudCaptures {
-		capture, err := resolveCaptureValues(out.Values, profile.Capture, fmt.Sprintf("spec.profiles.cloudCaptures[%q].capture", name))
+	for name, profile := range profiles.CloudCaptures {
+		capture, err := resolveCaptureValues(values, profile.Capture, fmt.Sprintf("spec.profiles.cloudCaptures[%q].capture", name))
 		if err != nil {
-			return api.MobilityPoolSpec{}, nil, err
+			return nil, err
 		}
-		discovery, err := resolveDiscoveryValues(out.Values, profile.OwnershipDiscovery, fmt.Sprintf("spec.profiles.cloudCaptures[%q].ownershipDiscovery", name))
+		discovery, err := resolveDiscoveryValues(values, profile.OwnershipDiscovery, fmt.Sprintf("spec.profiles.cloudCaptures[%q].ownershipDiscovery", name))
 		if err != nil {
-			return api.MobilityPoolSpec{}, nil, err
+			return nil, err
 		}
 		profile.Capture = capture
 		profile.OwnershipDiscovery = discovery
-		out.Profiles.CloudCaptures[name] = profile
+		profiles.CloudCaptures[name] = profile
 	}
 
-	var diagnostics []Diagnostic
-	for i := range out.Members {
-		member := out.Members[i]
+	for i := range out {
+		member := out[i]
+		if selfNode != "" && strings.TrimSpace(member.NodeRef) != selfNode && memberHasLocalOverlay(member) {
+			return nil, fmt.Errorf("resolved member[%d] nodeRef %q is remote to local node %q and carries a local overlay", i, strings.TrimSpace(member.NodeRef), selfNode)
+		}
 		ref := strings.TrimSpace(member.ProfileRef)
 		if ref != "" {
-			profile, ok := out.Profiles.CloudCaptures[ref]
+			profile, ok := profiles.CloudCaptures[ref]
 			if !ok {
-				return api.MobilityPoolSpec{}, nil, fmt.Errorf("spec.members[%d].profileRef %q references missing spec.profiles.cloudCaptures entry", i, ref)
+				return nil, fmt.Errorf("resolved member[%d].profileRef %q references missing spec.profiles.cloudCaptures entry", i, ref)
 			}
 			if strings.TrimSpace(member.Role) != "cloud" {
-				return api.MobilityPoolSpec{}, nil, fmt.Errorf("spec.members[%d].profileRef is supported only for role cloud", i)
+				return nil, fmt.Errorf("resolved member[%d].profileRef is supported only for role cloud", i)
 			}
 			member.Capture = mergeCapture(profile.Capture, member.Capture)
 			member.OwnershipDiscovery = mergeOwnershipDiscovery(profile.OwnershipDiscovery, member.OwnershipDiscovery)
 		}
-		resolvedCapture, err := resolveCaptureValues(out.Values, member.Capture, fmt.Sprintf("spec.members[%d].capture", i))
+		resolvedCapture, err := resolveCaptureValues(values, member.Capture, fmt.Sprintf("resolved member[%d].capture", i))
 		if err != nil {
-			return api.MobilityPoolSpec{}, nil, err
+			return nil, err
 		}
 		member.Capture = resolvedCapture
-		resolvedDiscovery, err := resolveDiscoveryValues(out.Values, member.OwnershipDiscovery, fmt.Sprintf("spec.members[%d].ownershipDiscovery", i))
+		resolvedDiscovery, err := resolveDiscoveryValues(values, member.OwnershipDiscovery, fmt.Sprintf("resolved member[%d].ownershipDiscovery", i))
 		if err != nil {
-			return api.MobilityPoolSpec{}, nil, err
+			return nil, err
 		}
 		if strings.TrimSpace(resolvedDiscovery.ProviderRef) == "" {
 			resolvedDiscovery.ProviderRef = strings.TrimSpace(member.Capture.ProviderRef)
 		}
 		member.OwnershipDiscovery = resolvedDiscovery
-		out.Members[i] = member
-
-		if selfNode != "" && selfSite != "" && strings.TrimSpace(member.Site) != selfSite && remoteMemberHasLocalDetails(member) {
-			diagnostics = append(diagnostics, Diagnostic{
-				Severity: DiagnosticWarning,
-				Path:     fmt.Sprintf("spec.members[%d]", i),
-				Message:  fmt.Sprintf("remote member %q declares local capture/discovery details; prefer identity-only remote members and keep node-local details in the local router config", strings.TrimSpace(member.NodeRef)),
-			})
-		}
+		out[i] = member
 	}
-	applyAutoPlacementPriorities(out.Members)
-	return out, diagnostics, nil
+	applyAutoPlacementPriorities(out)
+	return out, nil
 }
 
-func copySpec(spec api.MobilityPoolSpec) api.MobilityPoolSpec {
-	out := spec
-	out.Values = copyStringMap(spec.Values)
-	out.Members = make([]api.MobilityPoolMember, len(spec.Members))
-	for i, member := range spec.Members {
-		out.Members[i] = copyMember(member)
-	}
-	out.StaticHandovers = append([]api.MobilityStaticHandover(nil), spec.StaticHandovers...)
-	out.Profiles.CloudCaptures = map[string]api.MobilityCloudCaptureProfile{}
-	for name, profile := range spec.Profiles.CloudCaptures {
-		out.Profiles.CloudCaptures[name] = api.MobilityCloudCaptureProfile{
+func copyProfiles(profiles api.MobilityPoolProfiles) api.MobilityPoolProfiles {
+	out := api.MobilityPoolProfiles{CloudCaptures: map[string]api.MobilityCloudCaptureProfile{}}
+	for name, profile := range profiles.CloudCaptures {
+		out.CloudCaptures[name] = api.MobilityCloudCaptureProfile{
 			Capture:            copyCapture(profile.Capture),
 			OwnershipDiscovery: copyDiscovery(profile.OwnershipDiscovery),
 		}
 	}
-	if len(out.Profiles.CloudCaptures) == 0 {
-		out.Profiles.CloudCaptures = nil
+	if len(out.CloudCaptures) == 0 {
+		out.CloudCaptures = nil
 	}
 	return out
 }
 
-func copyMember(member api.MobilityPoolMember) api.MobilityPoolMember {
+func copyMember(member api.ResolvedMobilityPoolMember) api.ResolvedMobilityPoolMember {
 	out := member
 	out.Capture = copyCapture(member.Capture)
-	out.DeliveryTo = append([]api.MobilityMemberDeliveryTarget(nil), member.DeliveryTo...)
 	out.StaticOwnedAddresses = append([]string(nil), member.StaticOwnedAddresses...)
 	out.OwnershipDiscovery = copyDiscovery(member.OwnershipDiscovery)
 	return out
@@ -146,20 +123,11 @@ func mergeCapture(base, override api.MobilityMemberCapture) api.MobilityMemberCa
 	if strings.TrimSpace(override.ProviderRef) != "" {
 		out.ProviderRef = override.ProviderRef
 	}
-	if strings.TrimSpace(override.ProviderMode) != "" {
-		out.ProviderMode = override.ProviderMode
-	}
 	if strings.TrimSpace(override.CaptureStrategy) != "" {
 		out.CaptureStrategy = override.CaptureStrategy
 	}
-	if strings.TrimSpace(override.Strategy) != "" {
-		out.Strategy = override.Strategy
-	}
 	if strings.TrimSpace(override.NICRef) != "" {
 		out.NICRef = override.NICRef
-	}
-	if override.ConfigureOSAddress {
-		out.ConfigureOSAddress = true
 	}
 	if strings.TrimSpace(override.Interface) != "" {
 		out.Interface = override.Interface
@@ -210,6 +178,9 @@ func mergeOwnershipDiscovery(base, override api.MobilityOwnershipDiscovery) api.
 	if strings.TrimSpace(override.LeaseTTL) != "" {
 		out.LeaseTTL = override.LeaseTTL
 	}
+	if strings.TrimSpace(override.StoppedInstancePolicy) != "" {
+		out.StoppedInstancePolicy = override.StoppedInstancePolicy
+	}
 	if len(override.Sources) > 0 {
 		out.Sources = append([]api.MobilityOwnershipDiscoverySource(nil), override.Sources...)
 	}
@@ -225,6 +196,12 @@ func mergeOwnershipDiscovery(base, override api.MobilityOwnershipDiscovery) api.
 
 func resolveCaptureValues(values map[string]string, capture api.MobilityMemberCapture, path string) (api.MobilityMemberCapture, error) {
 	out := copyCapture(capture)
+	if _, ok := out.Target["nicRef"]; ok {
+		return api.MobilityMemberCapture{}, fmt.Errorf("%s.target.nicRef is not supported; use %s.nicRef", path, path)
+	}
+	if _, ok := out.TargetFrom["nicRef"]; ok {
+		return api.MobilityMemberCapture{}, fmt.Errorf("%s.targetFrom.nicRef is not supported; use %s.nicRef", path, path)
+	}
 	if len(out.TargetFrom) == 0 {
 		return out, nil
 	}
@@ -266,7 +243,7 @@ func resolveDiscoveryValues(values map[string]string, discovery api.MobilityOwne
 	return out, nil
 }
 
-func applyAutoPlacementPriorities(members []api.MobilityPoolMember) {
+func applyAutoPlacementPriorities(members []api.ResolvedMobilityPoolMember) {
 	usedByGroup := map[string]map[int]bool{}
 	for _, member := range members {
 		group := strings.TrimSpace(member.Placement.Group)
@@ -301,18 +278,21 @@ func applyAutoPlacementPriorities(members []api.MobilityPoolMember) {
 	}
 }
 
-func remoteMemberHasLocalDetails(member api.MobilityPoolMember) bool {
-	return strings.TrimSpace(member.ProfileRef) != "" || captureSet(member.Capture) || discoverySet(member.OwnershipDiscovery)
+func memberHasLocalOverlay(member api.ResolvedMobilityPoolMember) bool {
+	return strings.TrimSpace(member.ProfileRef) != "" ||
+		captureSet(member.Capture) ||
+		len(member.StaticOwnedAddresses) > 0 ||
+		discoverySet(member.OwnershipDiscovery)
 }
 
 func captureSet(c api.MobilityMemberCapture) bool {
 	return strings.TrimSpace(c.Type) != "" ||
 		strings.TrimSpace(c.ProviderRef) != "" ||
-		strings.TrimSpace(c.ProviderMode) != "" ||
+		strings.TrimSpace(c.CaptureStrategy) != "" ||
 		strings.TrimSpace(c.NICRef) != "" ||
-		c.ConfigureOSAddress ||
 		strings.TrimSpace(c.Interface) != "" ||
 		strings.TrimSpace(c.SourceAddress) != "" ||
+		statusValueSourceSet(c.SourceAddressFrom) ||
 		len(c.ExcludeAddresses) > 0 ||
 		c.GratuitousARP ||
 		strings.TrimSpace(c.ActiveWhen.Type) != "" ||
@@ -329,9 +309,16 @@ func discoverySet(d api.MobilityOwnershipDiscovery) bool {
 		strings.TrimSpace(d.SubnetRefFrom) != "" ||
 		strings.TrimSpace(d.ScanInterval) != "" ||
 		strings.TrimSpace(d.LeaseTTL) != "" ||
+		strings.TrimSpace(d.StoppedInstancePolicy) != "" ||
+		strings.TrimSpace(d.AllowEmptyAfter) != "" ||
+		len(d.Sources) > 0 ||
 		len(d.Scope.IncludeAddresses) > 0 ||
 		len(d.Scope.ExcludeAddresses) > 0 ||
 		len(d.Selector.Tags) > 0
+}
+
+func statusValueSourceSet(source api.StatusValueSourceSpec) bool {
+	return strings.TrimSpace(source.Resource) != "" || strings.TrimSpace(source.Field) != "" || source.Optional
 }
 
 func copyStringMap(in map[string]string) map[string]string {

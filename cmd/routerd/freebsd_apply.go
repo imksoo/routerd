@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/mapsort"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/eventlog"
@@ -262,7 +263,7 @@ func applyFreeBSDConfigWithOptions(router *api.Router, stateStore routerstate.St
 	} else {
 		changed = append(changed, appliedPackages...)
 	}
-	newKeys := sortedStringMapKeys(rcValues)
+	newKeys := mapsort.Keys(rcValues)
 	for _, key := range newKeys {
 		value := rcValues[key]
 		currentOut, err := exec.Command("sysrc", key).CombinedOutput()
@@ -502,7 +503,7 @@ func applyFreeBSDRCDScripts(scripts map[string][]byte, rcScriptDir string) ([]st
 		return changed, err
 	}
 	changed = append(changed, disabled...)
-	for _, name := range sortedByteSliceMapKeys(scripts) {
+	for _, name := range mapsort.Keys(scripts) {
 		path := filepath.Join(rcScriptDir, name)
 		fileChanged, err := writeFileIfChanged(path, scripts[name], 0555)
 		if err != nil {
@@ -703,22 +704,4 @@ func freeBSDDHCPClientIfnames(data []byte) []string {
 		ifnames = append(ifnames, name)
 	}
 	return ifnames
-}
-
-func sortedStringMapKeys(values map[string]string) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func sortedByteSliceMapKeys(values map[string][]byte) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }

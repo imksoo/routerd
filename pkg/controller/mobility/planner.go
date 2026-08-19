@@ -11,8 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/dynamicconfig/codec"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -21,24 +23,14 @@ const (
 	dynamicSourceKind  = "MobilityPool"
 	captureParamHolder = "mobilityCaptureHolder"
 
-	captureClaimPhaseParam          = "mobilityClaimPhase"
-	captureClaimGenerationParam     = "mobilityClaimGeneration"
-	captureClaimDesiredHolderParam  = "mobilityClaimDesiredHolder"
-	captureClaimPreviousHolderParam = "mobilityClaimPreviousHolder"
-	captureClaimReasonParam         = "mobilityClaimReason"
-	captureClaimLeaseUntilParam     = "mobilityClaimLeaseUntil"
-
-	captureAssignmentPhaseParam          = "mobilityAssignmentPhase"
 	captureAssignmentGenerationParam     = "mobilityAssignmentGeneration"
 	captureAssignmentDesiredHolderParam  = "mobilityAssignmentDesiredHolder"
 	captureAssignmentPreviousHolderParam = "mobilityAssignmentPreviousHolder"
-	captureAssignmentClaimEpochParam     = "mobilityAssignmentClaimEpoch"
 	captureAssignmentLeaseUntilParam     = "mobilityAssignmentLeaseUntil"
+	captureAssignmentReasonParam         = "mobilityAssignmentReason"
 
-	captureStrategyProxyARP    = "proxy-arp"
 	captureStrategySecondaryIP = "secondary-ip"
 	captureStrategyRouteTable  = "route-table"
-	captureStrategyAddrAdd     = "addr-add"
 
 	actionAssignSecondaryIP       = "assign-secondary-ip"
 	actionUnassignSecondaryIP     = "unassign-secondary-ip"
@@ -46,60 +38,23 @@ const (
 	actionUnassignRouteTableRoute = "unassign-route-table-route"
 )
 
-type PlacementDecision struct {
-	Group                 string
-	Active                bool
-	ActiveNode            string
-	Reason                string
-	Seize                 bool
-	LivenessObserved      bool
-	SelfCommunity         string
-	SelfMarker            string
-	SelfMarkerPresent     bool
-	ActiveCommunity       string
-	ActiveMarker          string
-	ActiveMarkerPresent   bool
-	ActiveIdentityNodeRef string
-	SeizeHoldDown         bool
-	SeizeHoldDownKey      string
-	SeizeHoldDownSince    time.Time
-	SeizeHoldDownUntil    time.Time
+type dynamicConfigPartSourceReader interface {
+	GetDynamicConfigPartsBySource(string) ([]routerstate.DynamicConfigPartRecord, error)
 }
 
-func (d PlacementDecision) NoCandidate() bool {
-	return d.Group != "" && d.ActiveNode == ""
-}
-
-type memberPlanInfo struct {
-	NodeRef            string
-	Site               string
-	Role               string
-	Capture            api.AddressCapture
-	CaptureTarget      map[string]string
-	Delivery           api.AddressDelivery
-	DeliveryTo         []deliveryTargetPlanInfo
-	OwnershipDiscovery api.MobilityOwnershipDiscovery
-	PlacementGroup     string
-	PlacementPriority  int
-	MaintenanceDrain   bool
-	MaxSecondaryIPs    int
-}
-
-type deliveryTargetPlanInfo struct {
-	NodeRef  string
-	Site     string
-	Role     string
-	Delivery api.AddressDelivery
-}
-
-func (c Controller) previousGeneratedActionPlans(poolName, selfNode string) ([]dynamicconfig.ActionPlan, error) {
+// previousGeneratedActionPlans returns only the currently active provider
+// plan. Its revision is retained even when that part is empty or expired so a
+// later reintroduction receives a new assignment generation instead of
+// reviving a withdrawn fence. Both controller shells use this exact read, so
+// discovery and planning cannot disagree about which prior plan is current.
+func previousGeneratedActionPlans(store dynamicConfigPartSourceReader, poolName, selfNode string, now time.Time) ([]dynamicconfig.ActionPlan, string, error) {
 	source := DynamicSource(poolName, selfNode)
-	parts, err := c.Store.GetDynamicConfigPartsBySource(source)
+	parts, err := store.GetDynamicConfigPartsBySource(source)
 	if err != nil {
-		return nil, fmt.Errorf("get previous dynamic config part %s: %w", source, err)
+		return nil, "", fmt.Errorf("get previous dynamic config part %s: %w", source, err)
 	}
 	if len(parts) == 0 {
-		return nil, nil
+		return nil, "", nil
 	}
 	sort.SliceStable(parts, func(i, j int) bool {
 		if parts[i].Generation == parts[j].Generation {
@@ -107,14 +62,27 @@ func (c Controller) previousGeneratedActionPlans(poolName, selfNode string) ([]d
 		}
 		return parts[i].Generation > parts[j].Generation
 	})
-	if strings.TrimSpace(parts[0].ActionPlansJSON) == "" {
-		return nil, nil
+	latest := parts[0]
+	revision := dynamicConfigPartRevision(latest, now)
+	if latest.EffectiveStatus(now) != "active" || strings.TrimSpace(latest.ActionPlansJSON) == "" {
+		return nil, revision, nil
 	}
-	var plans []dynamicconfig.ActionPlan
-	if err := json.Unmarshal([]byte(parts[0].ActionPlansJSON), &plans); err != nil {
-		return nil, fmt.Errorf("decode previous dynamic config part action plans %s: %w", source, err)
+	plans, err := codec.DecodeActionPlans(latest.ActionPlansJSON)
+	if err != nil {
+		return nil, "", fmt.Errorf("decode previous dynamic config part action plans %s: %w", source, err)
 	}
-	return plans, nil
+	return plans, revision, nil
+}
+
+func dynamicConfigPartRevision(part routerstate.DynamicConfigPartRecord, now time.Time) string {
+	return strings.Join([]string{
+		fmt.Sprintf("id=%d", part.ID),
+		fmt.Sprintf("generation=%d", part.Generation),
+		"digest=" + strings.TrimSpace(part.Digest),
+		"observedAt=" + part.ObservedAt.UTC().Format(time.RFC3339Nano),
+		"updatedAt=" + part.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		"effective=" + part.EffectiveStatus(now),
+	}, "\x00")
 }
 
 // DynamicSource is the stable DynamicConfigPart source for one pool x node. The
@@ -124,469 +92,33 @@ func DynamicSource(poolName, selfNode string) string {
 	return dynamicSourceKind + "/" + strings.TrimSpace(poolName) + "/node/" + strings.TrimSpace(selfNode)
 }
 
-func (c Controller) selfNode(groupRef string) (string, error) {
-	return routerSelfNode(c.Router, groupRef)
-}
-
-func routerSelfNode(router *api.Router, groupRef string) (string, error) {
-	groupRef = strings.TrimSpace(groupRef)
-	if groupRef == "" {
-		return "", fmt.Errorf("groupRef is required")
-	}
-	if router == nil {
-		return "", fmt.Errorf("EventGroup/%s not found for mobility planning", groupRef)
-	}
-	for _, res := range router.Spec.Resources {
-		if res.APIVersion != api.FederationAPIVersion || res.Kind != "EventGroup" || res.Metadata.Name != groupRef {
-			continue
-		}
-		spec, err := res.EventGroupSpec()
-		if err != nil {
-			return "", err
-		}
-		if strings.TrimSpace(spec.NodeName) == "" {
-			return "", fmt.Errorf("EventGroup/%s spec.nodeName is required for mobility planning", groupRef)
-		}
-		return strings.TrimSpace(spec.NodeName), nil
-	}
-	return "", fmt.Errorf("EventGroup/%s not found for mobility planning", groupRef)
-}
-
 func (c Controller) savePlannerStatus(poolName string, updates map[string]any) error {
-	if store, ok := c.Store.(objectStatusMerger); ok {
-		return store.MergeObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName, updates)
-	}
-	status := map[string]any{}
-	if c.Store != nil {
-		for k, v := range c.Store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName) {
-			status[k] = v
-		}
-	}
-	for k, v := range updates {
-		status[k] = v
-	}
-	return c.Store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName, status)
-}
-
-func plannerMembers(members []api.MobilityPoolMember) map[string]memberPlanInfo {
-	out := map[string]memberPlanInfo{}
-	priorities := autoPlacementPriorities(members)
-	for _, member := range members {
-		nodeRef := strings.TrimSpace(member.NodeRef)
-		capture := trimCapture(member.Capture)
-		discovery := member.OwnershipDiscovery
-		if strings.TrimSpace(discovery.ProviderRef) == "" {
-			discovery.ProviderRef = strings.TrimSpace(capture.ProviderRef)
-		}
-		out[nodeRef] = memberPlanInfo{
-			NodeRef:            nodeRef,
-			Site:               strings.TrimSpace(member.Site),
-			Role:               strings.TrimSpace(member.Role),
-			Capture:            capture,
-			CaptureTarget:      copyStringMap(member.Capture.Target),
-			Delivery:           trimDelivery(member.Delivery),
-			DeliveryTo:         trimDeliveryTargets(member.DeliveryTo),
-			OwnershipDiscovery: discovery,
-			PlacementGroup:     strings.TrimSpace(member.Placement.Group),
-			PlacementPriority:  priorities[nodeRef],
-			MaintenanceDrain:   member.Maintenance.Drain,
-			MaxSecondaryIPs:    member.MaxSecondaryIPs,
-		}
-	}
-	return out
-}
-
-func autoPlacementPriorities(members []api.MobilityPoolMember) map[string]int {
-	out := map[string]int{}
-	usedByGroup := map[string]map[int]bool{}
-	for _, member := range members {
-		nodeRef := strings.TrimSpace(member.NodeRef)
-		priority := member.Placement.Priority
-		out[nodeRef] = priority
-		group := strings.TrimSpace(member.Placement.Group)
-		if group == "" || priority == 0 {
-			continue
-		}
-		if usedByGroup[group] == nil {
-			usedByGroup[group] = map[int]bool{}
-		}
-		usedByGroup[group][priority] = true
-	}
-	nextByGroup := map[string]int{}
-	for _, member := range members {
-		nodeRef := strings.TrimSpace(member.NodeRef)
-		group := strings.TrimSpace(member.Placement.Group)
-		if group == "" || out[nodeRef] != 0 {
-			continue
-		}
-		if usedByGroup[group] == nil {
-			usedByGroup[group] = map[int]bool{}
-		}
-		next := nextByGroup[group]
-		if next == 0 {
-			next = 10
-		}
-		for usedByGroup[group][next] {
-			next += 10
-		}
-		out[nodeRef] = next
-		usedByGroup[group][next] = true
-		nextByGroup[group] = next + 10
-	}
-	return out
-}
-
-func evaluatePlacement(self memberPlanInfo, members map[string]memberPlanInfo) PlacementDecision {
-	return evaluatePlacementWithIncumbent(self, members, "")
-}
-
-// placementSettleStart anchors the post-startup settle window. It is captured when
-// the process loads this package, so a node restart (VM stop/start or reboot) resets
-// it — which is exactly what flags a returning node that must not preempt before its
-// observations converge. placementSettleWindow is the settle duration (a package var
-// so tests and operators can tune it).
-var (
-	placementSettleStart  = time.Now()
-	placementSettleWindow = 120 * time.Second
-)
-
-const placementStartupReadinessFallbackMultiplier = 3
-
-type placementStartupReadiness struct {
-	Known            bool
-	BGPObserved      bool
-	ProviderRequired bool
-	ProviderObserved bool
-}
-
-func (r placementStartupReadiness) Ready() bool {
-	return r.BGPObserved && (!r.ProviderRequired || r.ProviderObserved)
-}
-
-// placementSettleDefersActive reports whether a node must defer a brand-new active
-// assertion because it is still inside the post-startup settle window and has not
-// yet observed an incumbent. This is the startup fence: a returning node would
-// otherwise win the equal-priority tie-break and reclaim captures before its fresh
-// BGP RIB / provider observations surface the live peer that took over.
-//
-// It defers only when the node WOULD assert active, no incumbent peer has been
-// observed yet, and the settle window has not elapsed. Once the window elapses (or
-// an incumbent appears, in which case the tie-break already defers) normal placement
-// applies, so cold start and genuine failover are unaffected: a long-running standby
-// is past its settle window and seizes immediately when the active dies.
-func placementSettleDefersActive(active bool, incumbent string, sinceStart, settle time.Duration) bool {
-	if !active || strings.TrimSpace(incumbent) != "" {
-		return false
-	}
-	return sinceStart < settle
-}
-
-func placementStartupFenceDefersActive(active bool, incumbent string, sinceStart, settle time.Duration, readiness placementStartupReadiness) bool {
-	if !active || strings.TrimSpace(incumbent) != "" {
-		return false
-	}
-	if !readiness.Known {
-		return sinceStart < settle
-	}
-	if readiness.Ready() {
-		return false
-	}
-	return sinceStart < placementStartupReadinessFallbackWindow(settle)
-}
-
-func placementStartupReadinessFallbackWindow(settle time.Duration) time.Duration {
-	if settle <= 0 {
-		return 0
-	}
-	return settle * placementStartupReadinessFallbackMultiplier
-}
-
-func placementStartupReadinessForMember(self memberPlanInfo, bgpObserved, providerObserved bool) placementStartupReadiness {
-	return placementStartupReadiness{
-		Known:            true,
-		BGPObserved:      bgpObserved,
-		ProviderRequired: placementStartupProviderObservationRequired(self),
-		ProviderObserved: providerObserved,
-	}
-}
-
-func placementStartupProviderObservationRequired(self memberPlanInfo) bool {
-	if strings.TrimSpace(self.Capture.Type) != "provider-secondary-ip" {
-		return false
-	}
-	if strings.TrimSpace(self.Capture.ProviderRef) == "" {
-		return false
-	}
-	return strings.TrimSpace(self.OwnershipDiscovery.Mode) == "provider-private-ip"
-}
-
-func placementStartupReadinessStatus(readiness placementStartupReadiness, now time.Time) map[string]any {
-	sinceStart := now.Sub(placementSettleStart)
-	fallbackAfter := placementStartupReadinessFallbackWindow(placementSettleWindow)
-	degraded := readiness.Known && !readiness.Ready() && sinceStart >= fallbackAfter
-	status := map[string]any{
-		"known":            readiness.Known,
-		"ready":            readiness.Ready(),
-		"bgpObserved":      readiness.BGPObserved,
-		"providerRequired": readiness.ProviderRequired,
-		"providerObserved": readiness.ProviderObserved,
-		"fallbackAfter":    fallbackAfter.String(),
-		"degraded":         degraded,
-	}
-	if degraded {
-		status["degradeReason"] = "startup readiness incomplete after fallback window; releasing fence to preserve overlay liveness"
-	}
-	return status
-}
-
-// applyHolderRetention keeps a node active while it still physically holds its
-// group's captures, so the live holder never yields to the deterministic tie-break
-// winner or to a transient peer observation (ADR 0016: yield only on losing your
-// own holdership, never because a peer was observed). It applies only after the
-// startup settle window so the selfHolds signal (the node's fresh provider
-// self-capture observation) is trustworthy rather than the returning node's stale
-// "I used to hold" memory.
-// higherPriorityHolderActive reports that the observed active holder beacon belongs
-// to a strictly higher-priority peer (lower priority number). When true the local
-// holder must yield rather than retain, so a returning higher-priority node performs
-// the configured priority restore instead of deadlocking against retention.
-func higherPriorityHolderActive(self memberPlanInfo, members map[string]memberPlanInfo, observedHolder string) bool {
-	holder := strings.TrimSpace(observedHolder)
-	if holder == "" {
-		return false
-	}
-	member, ok := lookupMemberByNodeRef(members, holder)
-	if !ok || member.NodeRef == self.NodeRef {
-		return false
-	}
-	return member.PlacementPriority < self.PlacementPriority
-}
-
-func applyHolderRetention(placement PlacementDecision, selfHolds bool, yieldToHigherPriority bool, now time.Time) PlacementDecision {
-	if placement.Active || !selfHolds || yieldToHigherPriority {
-		return placement
-	}
-	if now.Sub(placementSettleStart) < placementSettleWindow {
-		return placement
-	}
-	placement.Active = true
-	placement.Seize = false
-	placement.Reason = fmt.Sprintf("holder retention: keeping active while self holds placement group %q captures", placement.Group)
-	return placement
-}
-
-// fencePlacementForStartup applies placementSettleDefersActive to a placement
-// decision, converting a fenced active assertion into a standby decision.
-func fencePlacementForStartup(placement PlacementDecision, incumbent string, now time.Time) PlacementDecision {
-	return fencePlacementForStartupWithReadiness(placement, incumbent, now, placementStartupReadiness{})
-}
-
-func fencePlacementForStartupWithReadiness(placement PlacementDecision, incumbent string, now time.Time, readiness placementStartupReadiness) PlacementDecision {
-	if strings.TrimSpace(placement.Group) == "" {
-		return placement
-	}
-	if !placementStartupFenceDefersActive(placement.Active, incumbent, now.Sub(placementSettleStart), placementSettleWindow, readiness) {
-		return placement
-	}
-	placement.Active = false
-	placement.Seize = false
-	if readiness.Known {
-		placement.Reason = fmt.Sprintf("startup readiness: deferring active assertion in placement group %q until BGP/provider observations converge", placement.Group)
-	} else {
-		placement.Reason = fmt.Sprintf("startup settle: deferring active assertion in placement group %q until peer-holder state converges", placement.Group)
-	}
-	return placement
-}
-
-// bgpObservedGroupHolder returns the live placement-group peer that is currently the
-// active capture holder according to the fresh BGP RIB, or "" if no peer is. The
-// active holder advertises the group's owner /32 at the active (higher) preference,
-// so it is the best-path advertiser; mobilityPrefixCommunities carries the best-path
-// communities, and the holder is identified by its node-identity community there.
-// This is the holder-beacon: it is independent of the provider plugin (BGP is always
-// present) and of a standby's lower-preference make-before-break advertisement
-// (which never wins best path).
-//
-// It deliberately does NOT guard on self's own community: holder retention keeps the
-// real holder active regardless, and a node defers only to a peer it actually sees on
-// a best path. BGP best-path tie-break keeps exactly one advertiser best even when
-// both briefly advertise at the active preference, so this cannot deadlock.
-func bgpObservedGroupHolder(self memberPlanInfo, members map[string]memberPlanInfo, livenessMarkers map[string]string, mobilityPrefixCommunities map[string][]string) string {
-	group := strings.TrimSpace(self.PlacementGroup)
-	if group == "" {
-		return ""
-	}
-	communityToPeer := map[string]string{}
-	for _, member := range members {
-		if strings.TrimSpace(member.PlacementGroup) != group || member.NodeRef == self.NodeRef {
-			continue
-		}
-		if community, _, present := livenessMarkerForNode(livenessMarkers, member.NodeRef); present && strings.TrimSpace(community) != "" {
-			communityToPeer[strings.TrimSpace(community)] = member.NodeRef
-		}
-	}
-	if len(communityToPeer) == 0 {
-		return ""
-	}
-	matched := ""
-	for _, communities := range mobilityPrefixCommunities {
-		holderPeer := ""
-		hasActiveHolder := false
-		for _, community := range communities {
-			community = strings.TrimSpace(community)
-			if community == bgpMobilityCommunityActiveHolder {
-				hasActiveHolder = true
-				continue
-			}
-			if node, ok := communityToPeer[community]; ok {
-				if holderPeer == "" || node < holderPeer {
-					holderPeer = node
-				}
-			}
-		}
-		// Only an owner /32 advertised at the active preference (carrying the
-		// active-holder beacon) marks its advertiser as the group holder; a standby's
-		// lower-preference advertisement and cold-start advertisements are ignored.
-		if !hasActiveHolder || holderPeer == "" {
-			continue
-		}
-		if matched == "" || holderPeer < matched {
-			matched = holderPeer
-		}
-	}
-	return matched
-}
-
-// evaluatePlacementWithIncumbent selects the active member for self's placement
-// group. Members are ordered by ascending priority, then by NodeRef as a stable
-// deterministic tie-break.
-//
-// On an equal-priority tie the current capture holder (incumbentHolder, observed
-// from provider inventory) is preferred over the NodeRef tie-break so a returning
-// peer does not preempt a live holder and trigger an avoidable capture handoff.
-// A strictly higher-priority member (lower priority number) still reclaims, because
-// the incumbent override only applies when the incumbent shares the top priority.
-// An empty incumbentHolder reproduces the deterministic priority/NodeRef ordering,
-// which also bootstraps the group before any holder has been observed.
-func evaluatePlacementWithIncumbent(self memberPlanInfo, members map[string]memberPlanInfo, incumbentHolder string) PlacementDecision {
-	group := strings.TrimSpace(self.PlacementGroup)
-	if group == "" {
-		return PlacementDecision{Active: true, ActiveNode: self.NodeRef}
-	}
-	candidates := make([]memberPlanInfo, 0, len(members))
-	for _, member := range members {
-		if strings.TrimSpace(member.PlacementGroup) != group || member.MaintenanceDrain {
-			continue
-		}
-		candidates = append(candidates, member)
-	}
-	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].PlacementPriority == candidates[j].PlacementPriority {
-			return candidates[i].NodeRef < candidates[j].NodeRef
-		}
-		return candidates[i].PlacementPriority < candidates[j].PlacementPriority
-	})
-	if len(candidates) == 0 {
-		return PlacementDecision{
-			Group:  group,
-			Active: false,
-			Reason: fmt.Sprintf("placement group %q has no non-drained members", group),
-		}
-	}
-	activeNode := candidates[0].NodeRef
-	// No-preempt on equal priority: keep the live incumbent holder active instead
-	// of the NodeRef tie-break winner when both share the top priority.
-	if incumbent := strings.TrimSpace(incumbentHolder); incumbent != "" {
-		if member, ok := lookupMemberByNodeRef(members, incumbent); ok &&
-			member.NodeRef != activeNode &&
-			strings.TrimSpace(member.PlacementGroup) == group &&
-			!member.MaintenanceDrain &&
-			member.PlacementPriority == candidates[0].PlacementPriority {
-			activeNode = member.NodeRef
-		}
-	}
-	if activeNode == self.NodeRef {
-		return PlacementDecision{Group: group, Active: true, ActiveNode: activeNode}
-	}
-	return PlacementDecision{
-		Group:      group,
-		Active:     false,
-		ActiveNode: activeNode,
-		Reason:     fmt.Sprintf("placement group %q active node is %q", group, activeNode),
-	}
+	return saveMergedObjectStatus(c.Store, api.MobilityAPIVersion, "MobilityPool", poolName, updates)
 }
 
 func normalizeAddressString(address string) string {
 	return strings.TrimSpace(address)
 }
 
-func providerActionPlans(poolName string, profile api.CloudProviderProfileSpec, capture api.AddressCapture, captureTarget map[string]string, address string, forwardingSeen map[string]bool, seize bool) ([]dynamicconfig.ActionPlan, error) {
-	capture = captureWithTargetFallback(capture, captureTarget)
-	provider := strings.TrimSpace(profile.Provider)
-	providerRef := strings.TrimSpace(capture.ProviderRef)
-	nicRef := strings.TrimSpace(capture.NICRef)
-	strategy := effectiveCaptureStrategy(provider, captureStrategyValue(capture))
-	if err := validateProviderCaptureStrategy(provider, strategy); err != nil {
-		return nil, err
-	}
-	target := map[string]string{
-		"provider":        provider,
-		"providerRef":     providerRef,
-		"nicRef":          nicRef,
-		"address":         address,
-		"captureStrategy": strategy,
-	}
-	for key, value := range captureTarget {
-		target[strings.TrimSpace(key)] = strings.TrimSpace(value)
-	}
-	addProfileTargetFields(target, provider, profile, poolName, address, nicRef)
-	target["provider"] = provider
-	target["providerRef"] = providerRef
-	target["nicRef"] = nicRef
-	target["address"] = address
-	target["captureStrategy"] = strategy
-	assignAction, unassignAction := providerCaptureActions(strategy)
-	assignDescription, assignEffects, err := providerAssignActionDetails(poolName, provider, nicRef, address, strategy, target)
+func providerActionPlans(poolName string, profile api.CloudProviderProfileSpec, capture api.MobilityMemberCapture, address string, forwardingSeen map[string]bool, seize bool) ([]dynamicconfig.ActionPlan, error) {
+	assign, err := providerCaptureActionPlan(poolName, profile, capture, address, true, seize, time.Time{})
 	if err != nil {
 		return nil, err
 	}
-	assignRisk := "medium"
-	var assignParams map[string]string
-	if seize {
-		assignDescription = fmt.Sprintf("Seize/reassign %s capture on %s for MobilityPool/%s after capture failover", address, provider, poolName)
-		assignRisk = "high"
-		assignParams = map[string]string{}
-		assignParams["allowReassignment"] = "true"
-		assignEffects = []string{
-			fmt.Sprintf("%s would seize %s from any previous holder", provider, address),
-		}
-	}
-	assign := dynamicconfig.ActionPlan{
-		Name:            safeName("mobility-" + poolName + "-assign-" + address),
-		Provider:        provider,
-		Action:          assignAction,
-		Target:          target,
-		ProviderRef:     providerRef,
-		Mode:            "dry-run",
-		Description:     assignDescription,
-		RiskLevel:       assignRisk,
-		IdempotencyKey:  "mobility:" + poolName + ":" + provider + ":" + providerCaptureTargetRef(strategy, target) + ":" + assignAction + ":" + address,
-		Parameters:      assignParams,
-		ExpectedEffects: assignEffects,
-		Undo: &dynamicconfig.ActionUndo{
-			Action:     unassignAction,
-			Parameters: copyStringMap(target),
-		},
-	}
 	plans := []dynamicconfig.ActionPlan{assign}
 
+	provider, providerRef, nicRef := assign.Provider, assign.ProviderRef, assign.Target["nicRef"]
 	forwardingKey := provider + "\x00" + providerRef + "\x00" + nicRef
 	if !forwardingSeen[forwardingKey] {
 		params, err := forwardingParams(provider)
 		if err != nil {
 			return nil, err
 		}
-		fwdTarget := copyStringMap(target)
+		fwdTarget := copyStringMap(assign.Target)
+		undoParameters := copyStringMap(fwdTarget)
+		for key, value := range params {
+			undoParameters[key] = value
+		}
 		forwardingSeen[forwardingKey] = true
 		plans = append(plans, dynamicconfig.ActionPlan{
 			Name:           safeName("mobility-" + poolName + "-forwarding-" + nicRef),
@@ -604,42 +136,63 @@ func providerActionPlans(poolName string, profile api.CloudProviderProfileSpec, 
 			},
 			Undo: &dynamicconfig.ActionUndo{
 				Action:     "ensure-forwarding-disabled",
-				Parameters: mergeStringMaps(fwdTarget, params),
+				Parameters: undoParameters,
 			},
 		})
 	}
 	return plans, nil
 }
 
-func providerUnassignActionPlan(poolName string, profile api.CloudProviderProfileSpec, capture api.AddressCapture, captureTarget map[string]string, address string, since time.Time) (dynamicconfig.ActionPlan, error) {
-	capture = captureWithTargetFallback(capture, captureTarget)
-	provider := strings.TrimSpace(profile.Provider)
-	providerRef := strings.TrimSpace(capture.ProviderRef)
-	nicRef := strings.TrimSpace(capture.NICRef)
-	strategy := effectiveCaptureStrategy(provider, captureStrategyValue(capture))
-	if err := validateProviderCaptureStrategy(provider, strategy); err != nil {
-		return dynamicconfig.ActionPlan{}, err
+// providerCaptureActionPlan is the only construction path for an individual
+// provider capture mutation. Assign and release share their target, action
+// identity, undo, and provider strategy validation; only their safe effect
+// description and transition parameters differ.
+func providerCaptureActionPlan(poolName string, profile api.CloudProviderProfileSpec, capture api.MobilityMemberCapture, address string, assign, seize bool, since time.Time) (dynamicconfig.ActionPlan, error) {
+	target := providerActionTarget(poolName, profile, capture, address)
+	provider, providerRef, nicRef := target["provider"], target["providerRef"], target["nicRef"]
+	strategy := providerCaptureStrategy(capture)
+	if strategy == captureStrategyRouteTable {
+		if err := validateRouteTableCaptureProvider(provider); err != nil {
+			return dynamicconfig.ActionPlan{}, err
+		}
 	}
-	assignAction, unassignAction := providerCaptureActions(strategy)
-	target := providerActionTarget(poolName, profile, capture, captureTarget, address)
-	target["captureStrategy"] = strategy
-	description, effects := providerUnassignActionDetails(poolName, provider, nicRef, address, strategy, target)
+	action, undoAction := actionAssignSecondaryIP, actionUnassignSecondaryIP
+	if strategy == captureStrategyRouteTable {
+		action, undoAction = actionAssignRouteTableRoute, actionUnassignRouteTableRoute
+	}
+	description, effects, risk := "", []string(nil), "medium"
+	parameters := map[string]string(nil)
+	if assign {
+		var err error
+		description, effects, err = providerAssignActionDetails(poolName, provider, nicRef, address, strategy, target)
+		if err != nil {
+			return dynamicconfig.ActionPlan{}, err
+		}
+		if seize {
+			description = fmt.Sprintf("Seize/reassign %s capture on %s for MobilityPool/%s after capture failover", address, provider, poolName)
+			effects = []string{fmt.Sprintf("%s would seize %s from any previous holder", provider, address)}
+			risk = "high"
+			parameters = map[string]string{"allowReassignment": "true"}
+		}
+	} else {
+		action, undoAction = undoAction, action
+		description, effects = providerUnassignActionDetails(poolName, provider, nicRef, address, strategy, target)
+		parameters = map[string]string{"deprovisionSince": since.UTC().Format(time.RFC3339Nano)}
+	}
 	return dynamicconfig.ActionPlan{
-		Name:           safeName("mobility-" + poolName + "-unassign-" + address),
-		Provider:       provider,
-		Action:         unassignAction,
-		Target:         target,
-		ProviderRef:    providerRef,
-		Mode:           "dry-run",
-		Description:    description,
-		RiskLevel:      "medium",
-		IdempotencyKey: "mobility:" + poolName + ":" + provider + ":" + providerCaptureTargetRef(strategy, target) + ":" + unassignAction + ":" + address,
-		Parameters: map[string]string{
-			"deprovisionSince": since.UTC().Format(time.RFC3339Nano),
-		},
+		Name:            safeName("mobility-" + poolName + "-" + strings.TrimSuffix(action, "-secondary-ip") + "-" + address),
+		Provider:        provider,
+		Action:          action,
+		Target:          target,
+		ProviderRef:     providerRef,
+		Mode:            "dry-run",
+		Description:     description,
+		RiskLevel:       risk,
+		IdempotencyKey:  "mobility:" + poolName + ":" + provider + ":" + providerCaptureTargetRef(strategy, target) + ":" + action + ":" + address,
+		Parameters:      parameters,
 		ExpectedEffects: effects,
 		Undo: &dynamicconfig.ActionUndo{
-			Action:     assignAction,
+			Action:     undoAction,
 			Parameters: copyStringMap(target),
 		},
 	}, nil
@@ -685,71 +238,41 @@ func validateRouteTableCaptureTarget(provider string, target map[string]string) 
 	return routeTableRef, nil
 }
 
-func providerActionTarget(poolName string, profile api.CloudProviderProfileSpec, capture api.AddressCapture, captureTarget map[string]string, address string) map[string]string {
-	capture = captureWithTargetFallback(capture, captureTarget)
+func providerActionTarget(poolName string, profile api.CloudProviderProfileSpec, capture api.MobilityMemberCapture, address string) map[string]string {
 	provider := strings.TrimSpace(profile.Provider)
 	providerRef := strings.TrimSpace(capture.ProviderRef)
 	nicRef := strings.TrimSpace(capture.NICRef)
-	target := map[string]string{
-		"provider":        provider,
-		"providerRef":     providerRef,
-		"nicRef":          nicRef,
-		"address":         strings.TrimSpace(address),
-		"captureStrategy": effectiveCaptureStrategy(provider, captureStrategyValue(capture)),
-	}
-	for key, value := range captureTarget {
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
-		if key != "" && value != "" {
-			target[key] = value
-		}
-	}
-	if nicRef == "" {
-		nicRef = strings.TrimSpace(target["nicRef"])
-	}
+	target := copyStringMap(capture.Target)
 	addProfileTargetFields(target, provider, profile, poolName, address, nicRef)
 	target["provider"] = provider
 	target["providerRef"] = providerRef
 	target["nicRef"] = nicRef
 	target["address"] = strings.TrimSpace(address)
-	target["captureStrategy"] = effectiveCaptureStrategy(provider, captureStrategyValue(capture))
+	target["captureStrategy"] = providerCaptureStrategy(capture)
 	return target
 }
 
-func effectiveCaptureStrategy(provider, strategy string) string {
-	strategy = strings.TrimSpace(strategy)
-	if strategy != "" {
-		return strategy
+func providerCaptureStrategy(capture api.MobilityMemberCapture) string {
+	if strings.TrimSpace(capture.CaptureStrategy) == captureStrategyRouteTable {
+		return captureStrategyRouteTable
 	}
 	return captureStrategySecondaryIP
 }
 
-func captureStrategyValue(capture api.AddressCapture) string {
-	return firstNonEmpty(capture.CaptureStrategy, capture.Strategy)
-}
-
-func memberCaptureStrategyValue(capture api.MobilityMemberCapture) string {
-	return firstNonEmpty(capture.CaptureStrategy, capture.Strategy)
-}
-
-func validateProviderCaptureStrategy(provider, strategy string) error {
-	switch strings.TrimSpace(strategy) {
-	case captureStrategySecondaryIP:
-		return nil
-	case captureStrategyRouteTable:
-		switch strings.TrimSpace(provider) {
-		case "aws", "azure", "oci":
-			return nil
-		default:
-			return fmt.Errorf("provider %q does not support capture.captureStrategy route-table", provider)
-		}
-	default:
-		return fmt.Errorf("capture.captureStrategy %q is not supported", strategy)
+func actionPlanCaptureStrategy(plan dynamicconfig.ActionPlan) string {
+	if strings.TrimSpace(plan.Target["captureStrategy"]) == captureStrategyRouteTable {
+		return captureStrategyRouteTable
 	}
+	return captureStrategySecondaryIP
 }
 
-func providerCaptureActions(strategy string) (assign, unassign string) {
-	return actionAssignSecondaryIP, actionUnassignSecondaryIP
+func validateRouteTableCaptureProvider(provider string) error {
+	switch strings.TrimSpace(provider) {
+	case "aws", "azure", "oci":
+		return nil
+	default:
+		return fmt.Errorf("provider %q does not support capture.captureStrategy route-table", provider)
+	}
 }
 
 func isProviderCaptureAssignAction(action string) bool {
@@ -775,31 +298,11 @@ func providerCaptureRefFromTarget(target map[string]string) string {
 	return providerCaptureTargetRef(strings.TrimSpace(target["captureStrategy"]), target)
 }
 
-func providerCaptureRefFromCapture(capture api.AddressCapture, target map[string]string) string {
-	if strings.TrimSpace(captureStrategyValue(capture)) == captureStrategyRouteTable {
-		if target != nil {
-			if value := strings.TrimSpace(target["routeTableRef"]); value != "" {
-				return value
-			}
-		}
-		return ""
-	}
-	if target != nil {
-		if value := providerCaptureRefFromTarget(target); value != "" {
-			return value
-		}
+func providerCaptureRefFromCapture(capture api.MobilityMemberCapture) string {
+	if providerCaptureStrategy(capture) == captureStrategyRouteTable {
+		return strings.TrimSpace(capture.Target["routeTableRef"])
 	}
 	return strings.TrimSpace(capture.NICRef)
-}
-
-func captureWithTargetFallback(capture api.AddressCapture, captureTarget map[string]string) api.AddressCapture {
-	if strings.TrimSpace(capture.NICRef) != "" {
-		return capture
-	}
-	if value := strings.TrimSpace(captureTarget["nicRef"]); value != "" {
-		capture.NICRef = value
-	}
-	return capture
 }
 
 func addProfileTargetFields(target map[string]string, provider string, profile api.CloudProviderProfileSpec, poolName, address, nicRef string) {
@@ -811,7 +314,7 @@ func addProfileTargetFields(target map[string]string, provider string, profile a
 	}
 	if provider == "azure" {
 		if _, ok := target["nicName"]; !ok {
-			if name := azureNICName(nicRef); name != "" {
+			if name := azureResourceName(nicRef); name != "" {
 				target["nicName"] = name
 			}
 		}
@@ -842,41 +345,6 @@ func forwardingParams(provider string) (map[string]string, error) {
 	default:
 		return nil, fmt.Errorf("provider %q is not supported for mobility action plans", provider)
 	}
-}
-
-func dedupeActionPlans(plans []dynamicconfig.ActionPlan) []dynamicconfig.ActionPlan {
-	if len(plans) < 2 {
-		return plans
-	}
-	seen := map[string]bool{}
-	out := make([]dynamicconfig.ActionPlan, 0, len(plans))
-	for _, plan := range plans {
-		key := strings.TrimSpace(plan.IdempotencyKey)
-		if key == "" {
-			key = strings.TrimSpace(plan.Action) + "\x00" + strings.TrimSpace(plan.Target["providerRef"]) + "\x00" + strings.TrimSpace(plan.Target["nicRef"]) + "\x00" + strings.TrimSpace(plan.Target["address"])
-		}
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		out = append(out, plan)
-	}
-	return out
-}
-
-func decodeDynamicConfigResources(raw string) ([]api.Resource, error) {
-	if strings.TrimSpace(raw) == "" {
-		return nil, nil
-	}
-	var resources []api.Resource
-	if err := json.Unmarshal([]byte(raw), &resources); err != nil {
-		return nil, err
-	}
-	return resources, nil
-}
-
-func azureNICName(nicRef string) string {
-	return azureResourceName(nicRef)
 }
 
 func azureResourceName(ref string) string {
@@ -914,126 +382,29 @@ func cloudProviderProfiles(router *api.Router) map[string]api.CloudProviderProfi
 	return out
 }
 
-func trimCapture(c api.MobilityMemberCapture) api.AddressCapture {
-	return api.AddressCapture{
-		Type:               strings.TrimSpace(c.Type),
-		ProviderRef:        strings.TrimSpace(c.ProviderRef),
-		ProviderMode:       strings.TrimSpace(c.ProviderMode),
-		CaptureStrategy:    strings.TrimSpace(memberCaptureStrategyValue(c)),
-		Strategy:           strings.TrimSpace(c.Strategy),
-		NICRef:             strings.TrimSpace(c.NICRef),
-		ConfigureOSAddress: c.ConfigureOSAddress,
-		Interface:          strings.TrimSpace(c.Interface),
-		GratuitousARP:      c.GratuitousARP,
-		ActiveWhen: api.CaptureActiveWhen{
-			Type:              strings.TrimSpace(c.ActiveWhen.Type),
-			VirtualAddressRef: strings.TrimSpace(c.ActiveWhen.VirtualAddressRef),
-		},
-	}
-}
-
-func trimDelivery(d api.MobilityMemberDelivery) api.AddressDelivery {
-	mode := strings.TrimSpace(d.Mode)
-	if mode == "" {
-		mode = "route"
-	}
-	return api.AddressDelivery{
-		PeerRef:         strings.TrimSpace(d.PeerRef),
-		Mode:            mode,
-		TunnelInterface: strings.TrimSpace(d.TunnelInterface),
-	}
-}
-
-func trimDeliveryTargets(targets []api.MobilityMemberDeliveryTarget) []deliveryTargetPlanInfo {
-	out := make([]deliveryTargetPlanInfo, 0, len(targets))
-	for _, target := range targets {
-		out = append(out, deliveryTargetPlanInfo{
-			NodeRef: strings.TrimSpace(target.NodeRef),
-			Site:    strings.TrimSpace(target.Site),
-			Role:    strings.TrimSpace(target.Role),
-			Delivery: api.AddressDelivery{
-				PeerRef:         strings.TrimSpace(target.PeerRef),
-				Mode:            firstNonEmpty(strings.TrimSpace(target.Mode), "route"),
-				TunnelInterface: strings.TrimSpace(target.TunnelInterface),
-			},
-		})
-	}
-	return out
-}
-
-func dynamicPartRecord(part dynamicconfig.DynamicConfigPart) (routerstate.DynamicConfigPartRecord, error) {
-	resources, err := json.Marshal(part.Spec.Resources)
-	if err != nil {
-		return routerstate.DynamicConfigPartRecord{}, err
-	}
-	directives, err := json.Marshal(part.Spec.Directives)
-	if err != nil {
-		return routerstate.DynamicConfigPartRecord{}, err
-	}
-	var actionPlansJSON string
-	if len(part.Spec.ActionPlans) > 0 {
-		data, err := json.Marshal(part.Spec.ActionPlans)
-		if err != nil {
-			return routerstate.DynamicConfigPartRecord{}, err
-		}
-		actionPlansJSON = string(data)
-	}
-	return routerstate.DynamicConfigPartRecord{
-		Source:          part.Spec.Source,
-		Generation:      part.Spec.Generation,
-		ObservedAt:      part.Spec.ObservedAt,
-		ExpiresAt:       part.Spec.ExpiresAt,
-		Digest:          part.Spec.Digest,
-		ResourcesJSON:   string(resources),
-		DirectivesJSON:  string(directives),
-		ActionPlansJSON: actionPlansJSON,
-		Status:          "active",
-	}, nil
-}
-
-func cloneResource(res api.Resource) api.Resource {
-	out := res
-	out.Metadata.Annotations = copyStringMap(res.Metadata.Annotations)
-	out.Metadata.OwnerRefs = append([]api.OwnerRef(nil), res.Metadata.OwnerRefs...)
-	return out
-}
-
 func digestDynamicPart(part dynamicconfig.DynamicConfigPart) string {
 	type digestSpec struct {
-		Resources   []api.Resource                         `json:"resources"`
-		Directives  []dynamicconfig.DynamicConfigDirective `json:"directives"`
-		ActionPlans []dynamicconfig.ActionPlan             `json:"actionPlans"`
+		Resources          []api.Resource                         `json:"resources"`
+		Directives         []dynamicconfig.DynamicConfigDirective `json:"directives"`
+		ActionPlans        []dynamicconfig.ActionPlan             `json:"actionPlans"`
+		MobilityDataplane  dynamicconfig.MobilityDataplanePlan    `json:"mobilityDataplane"`
+		ARPObserverIntents []dynamicconfig.ARPObserverIntent      `json:"arpObserverIntents"`
+		FIBVerdicts        []dynamicconfig.FIBVerdict             `json:"fibVerdicts"`
 	}
 	data, _ := json.Marshal(digestSpec{
-		Resources:   part.Spec.Resources,
-		Directives:  part.Spec.Directives,
-		ActionPlans: part.Spec.ActionPlans,
+		Resources:          part.Spec.Resources,
+		Directives:         part.Spec.Directives,
+		ActionPlans:        part.Spec.ActionPlans,
+		MobilityDataplane:  part.Spec.MobilityDataplane,
+		ARPObserverIntents: part.Spec.ARPObserverIntents,
+		FIBVerdicts:        part.Spec.FIBVerdicts,
 	})
 	sum := sha256.Sum256(data)
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func safeName(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	var b strings.Builder
-	lastDash := false
-	for _, r := range value {
-		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
-		if ok {
-			b.WriteRune(r)
-			lastDash = false
-			continue
-		}
-		if !lastDash {
-			b.WriteByte('-')
-			lastDash = true
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if out == "" {
-		return "mobility"
-	}
-	return out
+	return stringutil.ConservativeName(value, "mobility")
 }
 
 func copyStringMap(in map[string]string) map[string]string {
@@ -1042,14 +413,6 @@ func copyStringMap(in map[string]string) map[string]string {
 	}
 	out := make(map[string]string, len(in))
 	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
-
-func mergeStringMaps(a, b map[string]string) map[string]string {
-	out := copyStringMap(a)
-	for k, v := range b {
 		out[k] = v
 	}
 	return out

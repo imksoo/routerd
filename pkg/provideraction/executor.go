@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/plugin"
 	"github.com/imksoo/routerd/pkg/subprocessio"
@@ -157,7 +158,7 @@ func executorTimeout(value string) (time.Duration, error) {
 // own site-local identity configuration.
 func executorEnvironment(extra map[string]string) []string {
 	env := map[string]string{
-		"PATH": firstNonEmpty(os.Getenv("PATH"), defaultExecutorPathEnv),
+		"PATH": stringutil.FirstPresent(os.Getenv("PATH"), defaultExecutorPathEnv),
 	}
 	for key, value := range extra {
 		key = strings.TrimSpace(key)
@@ -183,13 +184,4 @@ func truncateString(value string, limit int) string {
 		return value
 	}
 	return value[:limit]
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }

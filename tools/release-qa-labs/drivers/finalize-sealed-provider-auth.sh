@@ -32,12 +32,30 @@ if ss -H -ltn "sport = :$proxy_port" | grep -q .; then
   echo "sealed auth finalize: tracked proxy socket is still listening" >&2; exit 2
 fi
 phase="$(jq -er '.phase' "$state")"
-safe_unmutated="$(jq -er '((.phase == "PRECHECK") or (.phase == "STAGING_ARMED")) and (.mutationCommandExecuted == false) and (.mutationPgid == null)' "$state" || true)"
-if [[ ! "$phase" =~ ^(STAGING_DONE|DONE|FAILED)$ ]] && [ "$safe_unmutated" != true ]; then
-  echo "sealed auth finalize: lifecycle is neither terminal nor an explicitly safe unmutated phase" >&2; exit 2
+if [[ ! "$phase" =~ ^(STAGING_DONE|DONE|FAILED)$ ]]; then
+  echo "sealed auth finalize: lifecycle is not terminal after post-zero token revocation" >&2; exit 2
 fi
 python3 "$guard" inventory --inventory-json "$inventory" >/dev/null || {
   echo "sealed auth finalize: authoritative inventory is not zero" >&2; exit 2;
+}
+contract="$run_root/runtime/pinned/contract.json"
+receipt="$run_root/runtime/evidence/final-token-revocation/revocation.json"
+if ! { [ -f "$contract" ] && [ ! -L "$contract" ] && [ "$(stat -c '%a' "$contract")" = 600 ]; }; then
+  echo "sealed auth finalize: pinned contract is missing or unsafe" >&2; exit 2;
+fi
+if ! { [ -f "$receipt" ] && [ ! -L "$receipt" ] && [ "$(stat -c '%a' "$receipt")" = 600 ]; }; then
+  echo "sealed auth finalize: post-zero token revocation receipt is missing or unsafe" >&2; exit 2;
+fi
+token_owner="$(jq -er '.pve.tokenOwner' "$contract")"
+if ! { [[ "$token_owner" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$ ]] && [ "${token_owner%%@*}" != root ]; }; then
+  echo "sealed auth finalize: pinned contract token owner is unsafe" >&2; exit 2;
+fi
+token_identity_sha256="$(printf '%s!%s' "$token_owner" "$run_id" | sha256sum | awk '{print $1}')"
+jq -e --arg run_id "$run_id" --arg identity_sha "$token_identity_sha256" '
+  .runId == $run_id and .status == "revoked" and
+  .tokenIdentitySha256 == $identity_sha and (.revokedAt | type == "string")
+' "$receipt" >/dev/null || {
+  echo "sealed auth finalize: post-zero token revocation receipt does not match this run" >&2; exit 2;
 }
 [ "$(readlink -m "$sealed_child")" = "$sealed_child" ] && [ -d "$sealed_child" ] || exit 2
 [ "$(stat -c '%u:%g:%a' "$sealed_parent")" = "0:0:755" ] || {

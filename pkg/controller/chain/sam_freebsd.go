@@ -71,34 +71,50 @@ func defaultSAMGratuitousARPAnnouncer() samGratuitousARPAnnouncer {
 	return freeBSDSAMGratuitousARPAnnouncer{}
 }
 
-func (freeBSDSAMProxyNeighborApplier) SetProxyARP(ctx context.Context, _ string, enabled, owned bool) error {
+func (freeBSDSAMProxyNeighborApplier) SetProxyARP(ctx context.Context, _ string, enabled, owned bool) (samProxyARPApplyResult, error) {
 	value := "0"
 	if enabled {
 		value = "1"
 	}
 	currentOut, err := freeBSDSAMRunCommand(ctx, "sysctl", "-n", "net.link.ether.inet.proxyall")
 	if err != nil {
-		return fmt.Errorf("read net.link.ether.inet.proxyall: %w: %s", err, strings.TrimSpace(string(currentOut)))
+		return samProxyARPApplyResult{}, fmt.Errorf("read net.link.ether.inet.proxyall: %w: %s", err, strings.TrimSpace(string(currentOut)))
 	}
 	current := strings.TrimSpace(string(currentOut))
 	if current != "0" && current != "1" {
-		return fmt.Errorf("net.link.ether.inet.proxyall has unexpected value %q", current)
+		return samProxyARPApplyResult{}, fmt.Errorf("net.link.ether.inet.proxyall has unexpected value %q", current)
 	}
 	// A configured claim authorizes routerd to enable proxyall from its safe
 	// disabled state. It does not authorize adopting or disabling an existing
 	// operator-owned global setting. Persisted proxy-neighbor status proves
 	// routerd ownership across MASTER/BACKUP and removal transitions.
-	if !owned && current == "1" {
-		return errors.New("foreign net.link.ether.inet.proxyall=1: refusing adoption")
+	if enabled {
+		if current == "1" {
+			if !owned {
+				return samProxyARPApplyResult{}, errors.New("foreign net.link.ether.inet.proxyall=1: refusing adoption")
+			}
+			return samProxyARPApplyResult{}, nil
+		}
+		out, err := freeBSDSAMRunCommand(ctx, "sysctl", "-w", "net.link.ether.inet.proxyall=1")
+		if err != nil {
+			return samProxyARPApplyResult{}, fmt.Errorf("sysctl -w net.link.ether.inet.proxyall=1: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		return samProxyARPApplyResult{changedByRouterd: true}, nil
 	}
-	if current == value {
-		return nil
+	if !owned {
+		if current == "1" {
+			return samProxyARPApplyResult{}, errors.New("foreign net.link.ether.inet.proxyall=1: refusing disable")
+		}
+		return samProxyARPApplyResult{}, nil
+	}
+	if current == "0" {
+		return samProxyARPApplyResult{}, nil
 	}
 	out, err := freeBSDSAMRunCommand(ctx, "sysctl", "-w", "net.link.ether.inet.proxyall="+value)
 	if err != nil {
-		return fmt.Errorf("sysctl -w net.link.ether.inet.proxyall=%s: %w: %s", value, err, strings.TrimSpace(string(out)))
+		return samProxyARPApplyResult{}, fmt.Errorf("sysctl -w net.link.ether.inet.proxyall=%s: %w: %s", value, err, strings.TrimSpace(string(out)))
 	}
-	return nil
+	return samProxyARPApplyResult{}, nil
 }
 
 func (freeBSDSAMProxyNeighborApplier) SetIPForwarding(ctx context.Context, enabled bool) error {
@@ -513,7 +529,7 @@ func freeBSDSAMForwardRules(paths []sam.CaptureAction) ([]string, error) {
 		capture := strings.TrimSpace(path.Interface)
 		peer := strings.TrimSpace(path.PeerInterface)
 		if capture == "" || peer == "" {
-			return nil, fmt.Errorf("SAM PF path %s requires capture and overlay interfaces", path.ClaimName)
+			return nil, fmt.Errorf("SAM PF path %s requires capture and overlay interfaces", path.IntentID)
 		}
 		if path.Kind == "forward-local-path" {
 			rules = append(rules,

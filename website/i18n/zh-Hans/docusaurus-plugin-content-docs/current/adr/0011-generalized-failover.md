@@ -4,7 +4,14 @@
 
 ## 状态
 
-已提议。批准为实验性实现 — 2026-06-01。
+已废弃 — 2026-08-18。请参阅 [ADR 0012: BGP Address Mobility](0012-bgp-address-mobility.md)。
+
+> **这是历史记录，不是当前 API 契约。** 本 ADR 记录的是未保留的实验性设计。
+> 下文所述的全局故障切换策略、心跳、epoch 和兼容字段均不属于当前
+> MobilityPool 模型。当前实现采用 ADR 0012 中类型化的
+> `PoolRuntimeSnapshot -> PoolPlan` 管道；BGP liveness marker、placement、
+> startup fence、holder retention 与 hold-down 是运行时安全规则，
+> 而不是用户可配置的策略开关。
 
 消费 [ADR 0010: Capture 所有权仲裁](../adr/0010-capture-ownership-arbitration.md)
 （所有权映射 + `ownershipEpoch`），实现

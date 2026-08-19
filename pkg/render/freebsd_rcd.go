@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
 )
@@ -231,10 +232,10 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		if firstNonEmpty(spec.State, "present") == "absent" {
+		if stringutil.FirstNonBlank(spec.State, "present") == "absent" {
 			continue
 		}
-		spec.BinaryPath = firstNonEmpty(spec.BinaryPath, "/usr/local/bin/tailscale")
+		spec.BinaryPath = stringutil.FirstNonBlank(spec.BinaryPath, "/usr/local/bin/tailscale")
 		name := freeBSDServiceName(TailscaleUnitName(res.Metadata.Name))
 		if explicit[name] {
 			continue
@@ -1056,13 +1057,4 @@ func freeBSDRCDExecPath(args []string) string {
 		}
 	}
 	return ""
-}
-
-func sortedByteMapKeys(values map[string][]byte) []string {
-	out := make([]string, 0, len(values))
-	for key := range values {
-		out = append(out, key)
-	}
-	sort.Strings(out)
-	return out
 }

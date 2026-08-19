@@ -4,7 +4,7 @@
 # This node observes LAN clients and emits routerd.client.ipv4.observed events
 # into the shared "cloudedge" EventGroup, then pushes them over the overlay to
 # the cloud peer (EventPeer). The cloud side (examples/event-federation/
-# receiver-cloud.yaml) subscribes and turns them into RemoteAddressClaims.
+# A MobilityPool controller consumes the observed federation events directly.
 #
 # Emitting an observed event by hand for testing:
 #

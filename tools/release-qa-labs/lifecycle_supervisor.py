@@ -23,9 +23,11 @@ STAGING_MODE = "staging-no-mutation"
 MODES = {PAID_MODE, STAGING_MODE}
 PHASES = (
     "PRECHECK", "STAGING_ARMED", "MUTATING", "STOPPING", "CLEANING", "VERIFYING_ZERO",
-    "DONE", "STAGING_DONE", "FAILED",
+    "REVOKING_TOKEN", "DONE", "STAGING_DONE", "FAILED",
 )
 TERMINAL = {"DONE", "STAGING_DONE", "FAILED"}
+MAX_MUTATION_TTL_SECONDS = 55 * 60
+MAX_PAID_LIFECYCLE_SECONDS = 85 * 60
 
 
 class SupervisorError(RuntimeError):
@@ -79,6 +81,10 @@ class Supervisor:
         for name, attribute in (
             ("contract", "contract"), ("runEnv", "run_env"), ("tfvars", "tfvars"),
             ("pveSshPrivateKey", "pve_ssh_private_key"),
+            ("guestSshPrivateKey", "guest_ssh_private_key"),
+            ("pveSshKnownHosts", "pve_ssh_known_hosts"),
+            ("pveTokenTfvars", "pve_token_tfvars"),
+            ("pveCaPem", "pve_ca_pem"),
         ):
             value = getattr(self.args, attribute, None)
             if value is not None:
@@ -102,6 +108,10 @@ class Supervisor:
             "runEnv": root / "runtime/run.env.json",
             "tfvars": root / "runtime/terraform.tfvars",
             "pveSshPrivateKey": root / "runtime/secrets/pve_ssh",
+            "guestSshPrivateKey": root / "runtime/secrets/guest_ssh",
+            "pveSshKnownHosts": root / "runtime/secrets/pve-known_hosts",
+            "pveTokenTfvars": root / "runtime/secrets/pve-token.tfvars",
+            "pveCaPem": root / "runtime/secrets/pve-ca.pem",
         }
         configured_inputs = dict(self.configured_inputs())
         secrets = root / "runtime/secrets"
@@ -117,6 +127,7 @@ class Supervisor:
             "mutation_command": "mutation-driver.sh",
             "cleanup_command": "supervisor-cleanup.sh",
             "inventory_command": "supervisor-inventory.sh",
+            "post_zero_command": "revoke-pve-run-token.sh",
         }
         for attribute, filename in expected_commands.items():
             command = getattr(self.args, attribute, None)
@@ -132,6 +143,10 @@ class Supervisor:
         names = {
             "contract": "contract.json", "runEnv": "run.env.json", "tfvars": "terraform.tfvars",
             "pveSshPrivateKey": "pve_ssh",
+            "guestSshPrivateKey": "guest_ssh",
+            "pveSshKnownHosts": "pve-known_hosts",
+            "pveTokenTfvars": "pve-token.tfvars",
+            "pveCaPem": "pve-ca.pem",
         }
         for name, source in self.configured_inputs():
             self.require_mode_600(source)
@@ -153,6 +168,10 @@ class Supervisor:
         expected_names = {
             "contract": "contract.json", "runEnv": "run.env.json", "tfvars": "terraform.tfvars",
             "pveSshPrivateKey": "pve_ssh",
+            "guestSshPrivateKey": "guest_ssh",
+            "pveSshKnownHosts": "pve-known_hosts",
+            "pveTokenTfvars": "pve-token.tfvars",
+            "pveCaPem": "pve-ca.pem",
         }
         run_root = Path(self.state["runRoot"]).resolve() if "runRoot" in self.state else None
         if set(pins) != set(expected_names):
@@ -189,6 +208,10 @@ class Supervisor:
         os.environ["ROUTERD_RELEASE_QA_PINNED_RUN_ENV"] = pins["runEnv"]["pinned"]
         os.environ["ROUTERD_RELEASE_QA_PINNED_TFVARS"] = pins["tfvars"]["pinned"]
         os.environ["ROUTERD_RELEASE_QA_PINNED_PVE_SSH_PRIVATE_KEY"] = pins["pveSshPrivateKey"]["pinned"]
+        os.environ["ROUTERD_RELEASE_QA_PINNED_GUEST_SSH_PRIVATE_KEY"] = pins["guestSshPrivateKey"]["pinned"]
+        os.environ["ROUTERD_RELEASE_QA_PINNED_PVE_SSH_KNOWN_HOSTS"] = pins["pveSshKnownHosts"]["pinned"]
+        os.environ["ROUTERD_RELEASE_QA_PINNED_PVE_TOKEN_TFVARS"] = pins["pveTokenTfvars"]["pinned"]
+        os.environ["ROUTERD_RELEASE_QA_PINNED_PVE_CA_PEM"] = pins["pveCaPem"]["pinned"]
 
     @staticmethod
     def duration_seconds(value: Any) -> int:
@@ -219,12 +242,12 @@ class Supervisor:
             effective["cleanupTimeoutSeconds"] + effective["inventoryTimeoutSeconds"]
         )
         if (
-            not 0 < effective["ttlSeconds"] <= 2700
+            not 0 < effective["ttlSeconds"] <= MAX_MUTATION_TTL_SECONDS
             or not 0 < effective["staleSeconds"] < effective["ttlSeconds"]
             or not 0 < effective["cleanupTimeoutSeconds"] <= 600
             or not 0 < effective["inventoryTimeoutSeconds"] <= 300
             or not 0 < attempts <= 2
-            or not 0 < paid <= 4500
+            or not 0 < paid <= MAX_PAID_LIFECYCLE_SECONDS
             or worst > paid
         ):
             raise SupervisorError("contract lifecycle exceeds policy")
@@ -272,7 +295,9 @@ class Supervisor:
                 "cleanupTimeoutSeconds": getattr(self.args, "cleanup_timeout_seconds", 600),
                 "inventoryTimeoutSeconds": getattr(self.args, "inventory_timeout_seconds", 300),
                 "plannedCleanupAttempts": getattr(self.args, "max_cleanup_attempts", 2),
-                "plannedPaidLifecycleSeconds": getattr(self.args, "max_paid_lifecycle_seconds", 4500),
+                "plannedPaidLifecycleSeconds": getattr(
+                    self.args, "max_paid_lifecycle_seconds", MAX_PAID_LIFECYCLE_SECONDS
+                ),
                 "contractSha256": None,
                 "executionMode": PAID_MODE,
             }
@@ -316,7 +341,17 @@ class Supervisor:
         self.stop_reason = signal.Signals(signum).name
 
     def run_checked(self, command: list[str], label: str) -> None:
-        proc = subprocess.run(command, check=False)
+        try:
+            proc = subprocess.run(command, check=False)
+        except (OSError, subprocess.SubprocessError) as exc:
+            # Preserve only the exception class in durable evidence: command
+            # output can contain provider diagnostics and must not become a
+            # second, unreviewed credential log.
+            self.state[f"{label}Error"] = type(exc).__name__
+            atomic_json(self.state_path, self.state)
+            raise SupervisorError(f"{label} could not start") from exc
+        self.state[f"{label}Exit"] = proc.returncode
+        atomic_json(self.state_path, self.state)
         if proc.returncode:
             raise SupervisorError(f"{label} failed with exit {proc.returncode}")
 
@@ -363,6 +398,40 @@ class Supervisor:
         self.state["mutationPgid"] = None
         atomic_json(self.state_path, self.state)
 
+    def complete_post_zero(self) -> int:
+        """Revoke the ephemeral PVE token only after durable zero inventory.
+
+        A restart from this phase must not re-run OpenTofu cleanup: the token
+        is deliberately being removed, so retry only the idempotent revoker.
+        """
+        if self.state["phase"] != "REVOKING_TOKEN":
+            raise SupervisorError("post-zero revocation requires REVOKING_TOKEN phase")
+        revocation = subprocess.run(
+            self.args.post_zero_command,
+            check=False,
+            timeout=self.state["effectiveLifecycle"]["inventoryTimeoutSeconds"],
+        )
+        self.state["tokenRevocationExit"] = revocation.returncode
+        atomic_json(self.state_path, self.state)
+        if revocation.returncode != 0:
+            # The zero-inventory proof remains durable. Systemd retries only
+            # this idempotent token revocation, never a paid mutation.
+            return 2
+        if self.state.get("postZeroStagingSucceeded") is True:
+            self.transition(
+                "STAGING_DONE", inventoryExit=0, finishedAt=rfc3339(now_utc()),
+                result={
+                    "status": "pass", "kind": STAGING_MODE,
+                    "paidQualification": "not-run", "mutationExecuted": False,
+                },
+            )
+            return 0
+        if self.state.get("postZeroMutationSucceeded") is True:
+            self.transition("DONE", inventoryExit=0, finishedAt=rfc3339(now_utc()))
+            return 0
+        self.transition("FAILED", inventoryExit=0, finishedAt=rfc3339(now_utc()))
+        return 1
+
     def cleanup_and_verify(self, reason: str) -> int:
         pins_clean = self.verify_pins()
         if self.state["phase"] not in {"STOPPING", "CLEANING", "VERIFYING_ZERO"}:
@@ -399,21 +468,14 @@ class Supervisor:
             and reason == "supervisor-restart"
             and any(item.get("to") == "STAGING_ARMED" for item in self.state.get("history", []))
         )
-        if cleanup.returncode == 0 and inventory.returncode == 0 and staging_succeeded:
-            self.transition(
-                "STAGING_DONE", inventoryExit=0, finishedAt=rfc3339(now_utc()),
-                result={
-                    "status": "pass", "kind": STAGING_MODE,
-                    "paidQualification": "not-run", "mutationExecuted": False,
-                },
-            )
-            return 0
-        if cleanup.returncode == 0 and inventory.returncode == 0 and mutation_succeeded:
-            self.transition("DONE", inventoryExit=0, finishedAt=rfc3339(now_utc()))
-            return 0
         if cleanup.returncode == 0 and inventory.returncode == 0:
-            self.transition("FAILED", inventoryExit=0, finishedAt=rfc3339(now_utc()))
-            return 1
+            self.transition(
+                "REVOKING_TOKEN",
+                inventoryExit=0,
+                postZeroMutationSucceeded=mutation_succeeded,
+                postZeroStagingSucceeded=staging_succeeded,
+            )
+            return self.complete_post_zero()
         # Resource recovery is never capped by the planned paid envelope.
         # Preserve a restartable phase so systemd retries with backoff until
         # cleanup succeeds and authoritative inventory is zero.
@@ -436,10 +498,20 @@ class Supervisor:
         phase = self.state["phase"]
         if phase in TERMINAL:
             return 0 if phase in {"DONE", "STAGING_DONE"} else 1
+        if phase == "REVOKING_TOKEN":
+            return self.complete_post_zero()
         # Any supervisor restart after mutation began fails closed into cleanup.
         if phase != "PRECHECK":
             return self.cleanup_and_verify("supervisor-restart")
-        self.run_checked(self.args.precheck_command, "precheck")
+        try:
+            self.run_checked(self.args.precheck_command, "precheck")
+        except SupervisorError:
+            # The run-scoped PVE token exists before precheck.  Even when no
+            # mutation has begun, retain the run under supervision until the
+            # normal cleanup, authoritative-zero, and token-revocation path
+            # has completed.  This deliberately makes a failed precheck a
+            # failed qualification rather than an early terminal escape.
+            return self.cleanup_and_verify("precheck-failed")
         if self.state["executionMode"] == STAGING_MODE:
             if self.stop_reason:
                 return self.cleanup_and_verify(self.stop_reason)
@@ -504,33 +576,39 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--run-env", type=Path)
     parser.add_argument("--tfvars", type=Path)
     parser.add_argument("--pve-ssh-private-key", type=Path)
-    parser.add_argument("--ttl-seconds", type=int, default=2700)
+    parser.add_argument("--guest-ssh-private-key", type=Path)
+    parser.add_argument("--pve-ssh-known-hosts", type=Path)
+    parser.add_argument("--pve-token-tfvars", type=Path)
+    parser.add_argument("--pve-ca-pem", type=Path)
+    parser.add_argument("--ttl-seconds", type=int, default=MAX_MUTATION_TTL_SECONDS)
     parser.add_argument("--stale-seconds", type=int, default=300)
     parser.add_argument("--term-grace-seconds", type=float, default=10)
     parser.add_argument("--kill-grace-seconds", type=float, default=5)
     parser.add_argument("--cleanup-timeout-seconds", type=float, default=600)
     parser.add_argument("--inventory-timeout-seconds", type=float, default=300)
     parser.add_argument("--max-cleanup-attempts", type=int, default=2)
-    parser.add_argument("--max-paid-lifecycle-seconds", type=int, default=4500)
+    parser.add_argument("--max-paid-lifecycle-seconds", type=int, default=MAX_PAID_LIFECYCLE_SECONDS)
     parser.add_argument("--source-input-tamper-detected", action="store_true")
     parser.add_argument("--precheck-command", nargs="+")
     parser.add_argument("--mutation-command", nargs="+")
     parser.add_argument("--cleanup-command", nargs="+")
     parser.add_argument("--inventory-command", nargs="+")
+    parser.add_argument("--post-zero-command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
-    if args.ttl_seconds <= 0 or args.ttl_seconds > 2700:
-        raise SupervisorError("TTL must be in 1..2700 seconds")
+    if args.ttl_seconds <= 0 or args.ttl_seconds > MAX_MUTATION_TTL_SECONDS:
+        raise SupervisorError(f"TTL must be in 1..{MAX_MUTATION_TTL_SECONDS} seconds")
     if args.stale_seconds <= 0 or args.stale_seconds >= args.ttl_seconds:
         raise SupervisorError("stale threshold must be positive and less than TTL")
     if args.max_cleanup_attempts <= 0 or args.max_cleanup_attempts > 2:
         raise SupervisorError("cleanup attempts must be in 1..2")
     worst = args.ttl_seconds + args.max_cleanup_attempts * (args.cleanup_timeout_seconds + args.inventory_timeout_seconds)
-    if args.max_paid_lifecycle_seconds > 4500 or worst > args.max_paid_lifecycle_seconds:
+    if args.max_paid_lifecycle_seconds > MAX_PAID_LIFECYCLE_SECONDS or worst > args.max_paid_lifecycle_seconds:
         raise SupervisorError("paid lifecycle envelope exceeds policy")
     args.precheck_command = command_values(args.precheck_command, "precheck command")
     args.mutation_command = command_values(args.mutation_command, "mutation command")
     args.cleanup_command = command_values(args.cleanup_command, "cleanup command")
     args.inventory_command = command_values(args.inventory_command, "inventory command")
+    args.post_zero_command = command_values(args.post_zero_command, "post-zero command")
     return Supervisor(args).run()
 
 

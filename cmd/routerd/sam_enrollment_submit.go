@@ -14,10 +14,10 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/controller/mobility"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/dynamicconfig/codec"
 	"github.com/imksoo/routerd/pkg/samenrollment"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -75,7 +75,7 @@ func submitSAMEnrollmentClaim(router *api.Router, store samEnrollmentClaimStore,
 		},
 	}
 	part.Spec.Digest = digestSAMEnrollmentClaimPart(part)
-	record, err := samEnrollmentClaimPartRecord(part)
+	record, err := codec.Encode(part)
 	if err != nil {
 		return nil, err
 	}
@@ -124,9 +124,6 @@ func getSAMRRSetForAcceptedClaim(router *api.Router, store samEnrollmentClaimSto
 	if err != nil {
 		return nil, err
 	}
-	if err := config.Validate(&effective); err != nil {
-		return nil, err
-	}
 	claimResource, claim, ok, err := findSAMEnrollmentClaimResource(&effective, claimName)
 	if err != nil {
 		return nil, err
@@ -152,12 +149,9 @@ func getSAMRRSetForAcceptedClaim(router *api.Router, store samEnrollmentClaimSto
 	if strings.TrimSpace(policy.RRSetRef) != wantRRSetRef {
 		return nil, fmt.Errorf("%w: %s references %s, not %s", controlapi.ErrBadRequest, claim.PolicyRef, policy.RRSetRef, wantRRSetRef)
 	}
-	rrSetResource, ok, err := findSAMRRSetResource(&effective, rrSetName)
+	rrSetResource, err := projectSAMRRSetForEnrollment(router, policyName, policy, rrSetName)
 	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, fmt.Errorf("%w: %s not found", controlapi.ErrBadRequest, wantRRSetRef)
+		return nil, fmt.Errorf("%w: %v", controlapi.ErrBadRequest, err)
 	}
 	result := controlapi.NewSAMRRSetGetResult(rrSetName, rrSetResource)
 	return &result, nil
@@ -206,7 +200,7 @@ func revokeSAMEnrollmentClaim(router *api.Router, store samEnrollmentClaimStore,
 		},
 	}
 	part.Spec.Digest = digestSAMEnrollmentClaimPart(part)
-	record, err := samEnrollmentClaimPartRecord(part)
+	record, err := codec.Encode(part)
 	if err != nil {
 		return nil, err
 	}
@@ -269,11 +263,11 @@ func activeSubmittedSAMEnrollmentClaimResource(records []routerstate.DynamicConf
 		if record.Source != source || record.EffectiveStatus(now.UTC()) != "active" {
 			continue
 		}
-		var resources []api.Resource
 		if strings.TrimSpace(record.ResourcesJSON) == "" {
 			continue
 		}
-		if err := json.Unmarshal([]byte(record.ResourcesJSON), &resources); err != nil {
+		resources, err := codec.DecodeGenericResources(record)
+		if err != nil {
 			continue
 		}
 		for _, resource := range resources {
@@ -317,17 +311,47 @@ func findSAMEnrollmentPolicy(router *api.Router, name string) (api.SAMEnrollment
 	return api.SAMEnrollmentPolicySpec{}, false, nil
 }
 
-func findSAMRRSetResource(router *api.Router, name string) (api.Resource, bool, error) {
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMRRSet" || resource.Metadata.Name != name {
+// projectSAMRRSetForEnrollment serializes the selected RR nodes across the
+// enrollment boundary. SAMRRSet itself is deliberately runtime-only: static
+// identity/topology lives in the policy's SAMNodeSet, and the result is scoped
+// to the already admitted claim's policy.
+func projectSAMRRSetForEnrollment(router *api.Router, policyName string, policy api.SAMEnrollmentPolicySpec, rrSetName string) (api.Resource, error) {
+	ref := strings.TrimSpace(policy.RRNodeSetRef)
+	if ref == "" {
+		return api.Resource{}, fmt.Errorf("SAMEnrollmentPolicy/%s spec.rrNodeSetRef is required to project %s", policyName, rrSetName)
+	}
+	nodeSet, found, err := api.LookupSAMNodeSet(router, ref, "SAMEnrollmentPolicy/"+policyName+" spec.rrNodeSetRef")
+	if err != nil {
+		return api.Resource{}, err
+	}
+	if !found {
+		return api.Resource{}, fmt.Errorf("SAMEnrollmentPolicy/%s spec.rrNodeSetRef references missing %s", policyName, ref)
+	}
+	nodes := make([]api.SAMNodeSpec, 0, len(nodeSet.Nodes))
+	for _, node := range nodeSet.Nodes {
+		if !node.RouteReflector {
 			continue
 		}
-		if _, err := resource.SAMRRSetSpec(); err != nil {
-			return api.Resource{}, false, err
-		}
-		return resource, true, nil
+		nodes = append(nodes, cloneSAMRRSetNode(node))
 	}
-	return api.Resource{}, false, nil
+	if len(nodes) == 0 {
+		return api.Resource{}, fmt.Errorf("SAMEnrollmentPolicy/%s spec.rrNodeSetRef %s has no route-reflector nodes", policyName, ref)
+	}
+	return api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMRRSet"},
+		Metadata: api.ObjectMeta{Name: rrSetName},
+		Spec: api.SAMRRSetSpec{
+			EnrollmentPolicyRef: "SAMEnrollmentPolicy/" + policyName,
+			Nodes:               nodes,
+		},
+	}, nil
+}
+
+func cloneSAMRRSetNode(node api.SAMNodeSpec) api.SAMNodeSpec {
+	clone := node
+	clone.MACAddresses = append([]string(nil), node.MACAddresses...)
+	clone.WireGuard.AllowedIPs = append([]string(nil), node.WireGuard.AllowedIPs...)
+	return clone
 }
 
 func submittedSAMEnrollmentClaimPolicy(router *api.Router, store samEnrollmentClaimStore, replaceSource string, claim api.SAMEnrollmentClaimSpec, now time.Time) (api.SAMEnrollmentPolicySpec, error) {
@@ -448,69 +472,22 @@ func validateSubmittedSAMEnrollmentClaim(router *api.Router, store samEnrollment
 	if err != nil {
 		return err
 	}
-	effective, _, err := dynamicconfig.BuildEffectiveConfig(*router, parts, policies, now.UTC())
+	_, _, err = dynamicconfig.BuildEffectiveConfig(*router, parts, policies, now.UTC())
 	if err != nil {
 		return err
 	}
-	return config.Validate(&effective)
+	return nil
 }
 
 func samEnrollmentDynamicPartsFromRecords(records []routerstate.DynamicConfigPartRecord, skipSource string) ([]dynamicconfig.DynamicConfigPart, error) {
-	parts := make([]dynamicconfig.DynamicConfigPart, 0, len(records))
+	kept := make([]routerstate.DynamicConfigPartRecord, 0, len(records))
 	for _, record := range records {
 		if record.Source == skipSource {
 			continue
 		}
-		var resources []api.Resource
-		if strings.TrimSpace(record.ResourcesJSON) != "" {
-			if err := json.Unmarshal([]byte(record.ResourcesJSON), &resources); err != nil {
-				return nil, fmt.Errorf("%s generation %d resources: %w", record.Source, record.Generation, err)
-			}
-		}
-		var directives []dynamicconfig.DynamicConfigDirective
-		if strings.TrimSpace(record.DirectivesJSON) != "" {
-			if err := json.Unmarshal([]byte(record.DirectivesJSON), &directives); err != nil {
-				return nil, fmt.Errorf("%s generation %d directives: %w", record.Source, record.Generation, err)
-			}
-		}
-		parts = append(parts, dynamicconfig.DynamicConfigPart{
-			TypeMeta: api.TypeMeta{APIVersion: dynamicconfig.ConfigAPIVersion, Kind: "DynamicConfigPart"},
-			Metadata: api.ObjectMeta{
-				Name: fmt.Sprintf("%s-%d", record.Source, record.Generation),
-			},
-			Spec: dynamicconfig.DynamicConfigPartSpec{
-				Source:     record.Source,
-				Generation: record.Generation,
-				ObservedAt: record.ObservedAt,
-				ExpiresAt:  record.ExpiresAt,
-				Digest:     record.Digest,
-				Resources:  resources,
-				Directives: directives,
-			},
-		})
+		kept = append(kept, record)
 	}
-	return parts, nil
-}
-
-func samEnrollmentClaimPartRecord(part dynamicconfig.DynamicConfigPart) (routerstate.DynamicConfigPartRecord, error) {
-	resources, err := json.Marshal(part.Spec.Resources)
-	if err != nil {
-		return routerstate.DynamicConfigPartRecord{}, err
-	}
-	directives, err := json.Marshal(part.Spec.Directives)
-	if err != nil {
-		return routerstate.DynamicConfigPartRecord{}, err
-	}
-	return routerstate.DynamicConfigPartRecord{
-		Source:         part.Spec.Source,
-		Generation:     part.Spec.Generation,
-		ObservedAt:     part.Spec.ObservedAt,
-		ExpiresAt:      part.Spec.ExpiresAt,
-		Digest:         part.Spec.Digest,
-		ResourcesJSON:  string(resources),
-		DirectivesJSON: string(directives),
-		Status:         "active",
-	}, nil
+	return codec.DecodeAll(kept)
 }
 
 func digestSAMEnrollmentClaimPart(part dynamicconfig.DynamicConfigPart) string {

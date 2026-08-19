@@ -331,12 +331,18 @@ func (d *daemon) proactiveProbeLoop(ctx context.Context, socket *packetSocket) {
 }
 
 func (d *daemon) probeNextPrefixTarget(ctx context.Context, socket *packetSocket) {
+	// An on-demand observer must not transmit until its controller has supplied
+	// the complete ignored-sender set.  In particular, an empty set is a valid
+	// completed handshake; absence of the handshake is not.
+	if !d.activeProbingArmed() {
+		return
+	}
 	now := time.Now().UTC()
 	target, ok := d.nextProactiveTarget()
 	if !ok {
 		return
 	}
-	if !d.shouldProbe(target, now) {
+	if !d.shouldStartActiveProbe(target, now) {
 		return
 	}
 	d.mu.Lock()
@@ -378,7 +384,7 @@ func (d *daemon) recordPacket(ctx context.Context, socket *packetSocket, packet 
 		if sameAddr(packet.TargetIP, packet.SenderIP) {
 			return
 		}
-		if d.shouldProbe(packet.TargetIP, now) {
+		if d.shouldStartActiveProbe(packet.TargetIP, now) {
 			go d.probeTarget(ctx, socket, packet.TargetIP)
 		}
 	}
@@ -490,6 +496,19 @@ func (d *daemon) shouldProbe(target netip.Addr, now time.Time) bool {
 	return true
 }
 
+func (d *daemon) activeProbingArmed() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.ignoredSenderMACsInitialized
+}
+
+func (d *daemon) shouldStartActiveProbe(target netip.Addr, now time.Time) bool {
+	if !d.activeProbingArmed() {
+		return false
+	}
+	return d.shouldProbe(target, now)
+}
+
 func (d *daemon) markProbeHit(address netip.Addr) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -506,7 +525,7 @@ func (d *daemon) markProbeHit(address netip.Addr) bool {
 func (d *daemon) probeTarget(ctx context.Context, socket *packetSocket, target netip.Addr) {
 	attempts := d.opts.probeRetries + 1
 	for i := 0; i < attempts; i++ {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || !d.activeProbingArmed() {
 			return
 		}
 		if err := d.sendARPProbe(socket, target); err != nil {
@@ -658,7 +677,10 @@ func (d *daemon) status() daemonapi.DaemonStatus {
 		Health:   health,
 		Since:    d.startedAt,
 		Resources: []daemonapi.ResourceStatus{{
-			Resource: daemonapi.ResourceRef{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool", Name: d.opts.poolName},
+			// ARP observer status is operational diagnostics. Ownership flows
+			// through its TTL-bounded observation events, never through a
+			// MobilityPool status merge.
+			Resource: d.resourceRef(),
 			Phase:    resourcePhase,
 			Health:   health,
 			Since:    d.startedAt,
@@ -734,7 +756,8 @@ func (d *daemon) publishLocked(topic, severity, reason, message string, attrs ma
 	d.nextCursor++
 	event := daemonapi.NewEvent(d.daemonRef(), topic, severity)
 	event.Cursor = strconv.FormatUint(d.nextCursor, 10)
-	event.Resource = &daemonapi.ResourceRef{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool", Name: d.opts.poolName}
+	resource := d.resourceRef()
+	event.Resource = &resource
 	event.Reason = reason
 	event.Message = message
 	event.Attributes = attrs
@@ -762,6 +785,10 @@ func (d *daemon) clearObserverError() {
 
 func (d *daemon) daemonRef() daemonapi.DaemonRef {
 	return daemonapi.DaemonRef{Name: daemonKind + "-" + d.opts.resource, Kind: daemonKind, Instance: d.opts.resource}
+}
+
+func (d *daemon) resourceRef() daemonapi.ResourceRef {
+	return daemonapi.ResourceRef{APIVersion: api.MobilityAPIVersion, Kind: "ARPObserver", Name: d.opts.resource}
 }
 
 func parseEthernetARP(frame []byte) (arpPacket, bool, error) {

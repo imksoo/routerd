@@ -74,12 +74,8 @@ index 00000000..00000000 100644
                capture:
                  type: provider-secondary-ip
                  interface: eth0
-                 providerRef: azure-lab
--                providerMode: secondary-ip
--                captureStrategy: secondary-ip
-+                providerMode: route-table
+                providerRef: azure-lab
 +                captureStrategy: route-table
-                 configureOSAddress: false
                  targetFrom:
                    region: self.region
                    resourceGroup: self.resourceGroup

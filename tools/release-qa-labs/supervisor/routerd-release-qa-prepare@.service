@@ -3,9 +3,17 @@ Description=prepare pinned provider authentication for routerd release QA %i
 Before=routerd-release-qa@%i.service
 Requires=routerd-release-qa-egress-proxy@%i.service
 After=routerd-release-qa-egress-proxy@%i.service
+# Once no supervisor instance requires the completed preparation, systemd may
+# release it.  This belongs to [Unit], not [Service].
+StopWhenUnneeded=yes
 
 [Service]
 Type=oneshot
+# The main supervised unit requires this preparation unit.  Keep a successful
+# preparation active for the lifetime of that dependent unit; otherwise
+# systemd considers the required oneshot inactive immediately after ExecStart
+# and never launches the supervisor.
+RemainAfterExit=yes
 Group=routerd-release-qa
 ExecStart=/var/lib/routerd-release-qa/%i/repo/tools/release-qa-labs/drivers/prepare-provider-auth.sh %i
 StateDirectory=routerd-release-qa-sealed/%i

@@ -186,6 +186,14 @@ chmod +x \
   "$work/cleanup" \
   "$work/inventory"
 
+cat >"$work/forbidden-driver" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+touch "$work/forbidden-driver-called"
+exit 99
+EOF
+chmod +x "$work/forbidden-driver"
+
 "$repo_root/scripts/certify-pve-substrate.sh" \
   --environment offline \
   --topology full \
@@ -194,6 +202,21 @@ chmod +x \
   --out "$work/pve-certification.json" \
   --valid-for 24h
 
+# QGA discovery is the only accepted PVE management-address source.  Keep the
+# certification schema from quietly reintroducing the retired static mode.
+jq '.pve.managementAddressSource = "certified-static"' \
+  "$work/contract.json" >"$work/contract-static-management.json"
+if "$repo_root/scripts/certify-pve-substrate.sh" \
+  --environment offline \
+  --topology full \
+  --contract "$work/contract-static-management.json" \
+  --driver "$work/pve-driver" \
+  --out "$work/pve-certification-static-management.json" \
+  --valid-for 24h; then
+  echo "retired static PVE management source unexpectedly passed" >&2
+  exit 1
+fi
+
 jq '
   .schemaVersion = "release-environment-contract/v2"
   | .qaImplementation = {
@@ -201,12 +224,60 @@ jq '
       canonicalRemote: "https://github.com/imksoo/routerd",
       scriptBlobs: {"tools/release-qa-labs/qa_guard.py": ("c" * 64)}
     }
+  | .guestSSH = {publicKey: "ssh-ed25519 offline-fixture"}
   | del(.labsCommit)
   | .routerdArtifact.parentMainCommit = ("d" * 40)
   | .routerdArtifact.canonicalRemote = "https://github.com/imksoo/routerd"
   | .routerdArtifact.scriptBlobs = {"scripts/certify-pve-substrate.sh": ("e" * 64)}
   | .execution = {mode: "production", host: "offline", requireRemote: true}
+  | .qualification = {
+      profile: "representative-redundancy",
+      runScope: "pve-certification-only",
+      provisioningBudgetSeconds: 1080,
+      qualificationBudgetSeconds: 1920,
+      minimumSupervisorReserveSeconds: 300
+    }
+  | .safety = {pveManagementControlPlane: "none", pveTLS: "pinned-ca"}
   | .limits = {maxEstimatedCostUsd: 1}
+  | .pve = {
+      node: "offline-pve",
+      sshHost: "offline-pve.example.test",
+      tokenOwner: "release-qa@pve",
+      datastore: "offline-store",
+      bootSource: "template",
+      templateStage: {
+        sourceNode: "offline-pve",
+        sourceTemplateVMID: 9000,
+        vmid: 9010,
+        datastore: "offline-store"
+      },
+      underlayBridge: "offline-underlay",
+      captureBridge: "offline-capture",
+      managementAddressSource: "qga-dhcp",
+      vmids: {
+        "pve-leaf-a": 9001,
+        "pve-client-a": 9002,
+        "pve-leaf-b": 9003,
+        "pve-client-b": 9004,
+        "pve-rr-a": 9005,
+        "pve-rr-b": 9006
+      },
+      rrFaultDomain: "host-redundant",
+      rrNodes: {
+        "pve-rr-a": {
+          node: "offline-pve-a",
+          sshHost: "offline-pve-a.example.test",
+          vmid: 9005,
+          underlayBridge: "offline-underlay-a"
+        },
+        "pve-rr-b": {
+          node: "offline-pve-b",
+          sshHost: "offline-pve-b.example.test",
+          vmid: 9006,
+          underlayBridge: "offline-underlay-b"
+        }
+      }
+    }
   | .lifecycle.cleanupTimeout = "10m"
   | .lifecycle.inventoryTimeout = "5m"
   | .lifecycle.maxCleanupAttempts = 2
@@ -227,7 +298,22 @@ import sys
 value = json.load(open(sys.argv[1], encoding="utf-8"))
 assert value["run"]["schemaVersion"] == "release-environment-contract/v2", value
 assert value["labsCommit"] == value["run"]["qaImplementation"]["commit"], value
+assert value["run"]["guestSSH"]["publicKey"] == "ssh-ed25519 offline-fixture", value
 PY
+
+jq 'del(.guestSSH)' "$work/contract-v2.json" >"$work/contract-v2-missing-guest-ssh.json"
+if "$repo_root/scripts/certify-pve-substrate.sh" \
+  --environment offline \
+  --topology full \
+  --contract "$work/contract-v2-missing-guest-ssh.json" \
+  --driver "$work/forbidden-driver" \
+  --driver-out "$work/contract-v2-missing-guest-ssh.driver.json" \
+  --out "$work/pve-certification-v2-missing-guest-ssh.json" \
+  --valid-for 24h; then
+  echo "v2 contract without guestSSH unexpectedly passed" >&2
+  exit 1
+fi
+test ! -e "$work/forbidden-driver-called"
 
 jq 'del(.qaImplementation)' "$work/contract-v2.json" >"$work/contract-v2-invalid.json"
 if "$repo_root/scripts/certify-pve-substrate.sh" \

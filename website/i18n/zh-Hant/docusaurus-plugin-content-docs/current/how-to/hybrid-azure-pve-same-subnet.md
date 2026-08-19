@@ -11,7 +11,7 @@ title: Azure 與 PVE 的 same-subnet SAM 冒煙測試
 ## Azure 側
 
 - Azure NIC 次要 IP 保留在 Azure 側。這個 provider-side 物件捕獲發往 on-prem `/32` 的封包。
-- 不要讓 Ubuntu 來賓 OS 持有已捕獲的 `/32`。cloud-init 或 netplan 可能會自動為次要 NIC IP 指派位址。請抑制或刪除該設定。當 Claim 設定 `configureOSAddress: false` 時，routerd 在 reconcile 時會從本機介面 de-assign 該特定位址，並維持位址不存在的狀態。
+- 不要讓 Ubuntu 來賓 OS 持有已捕獲的 `/32`。cloud-init 或 netplan 可能會自動為次要 NIC IP 指派位址。請抑制或刪除該設定。routerd 在每次 BGP `provider-secondary-ip` reconcile 時都會從本機介面 de-assign 該特定位址，並維持位址不存在的狀態；即使 provider capture 將次要 IP 留在 Azure 也同樣如此。
 - 在 Azure NIC 和 Linux 上都啟用 IP forwarding（`net.ipv4.ip_forward=1`）。
 
 ## 本機 PVE 側
@@ -26,7 +26,7 @@ title: Azure 與 PVE 的 same-subnet SAM 冒煙測試
 - WireGuard 從 on-prem 向 Azure public IP 撥號。
 - 在 on-prem peer 上設定 `persistentKeepalive`，以維持 NAT 和 cloud edge 狀態。
 - 首次冒煙測試不使用 UDR。如果後續新增 UDR fallback，請注意 Azure 可能將已捕獲 `/32` 回送到交付源路由器形成 same-subnet 迴圈。
-- SAM 交付將每個 claim lower 為指向 tunnel 介面的 `/32` 路由。不變更預設路由。
+- 遠端 owner 的 `/32` 交付路由由 BGP best-path import 經由 tunnel 介面取得，不變更預設路由。
 
 ## 驗證
 
@@ -36,6 +36,6 @@ title: Azure 與 PVE 的 same-subnet SAM 冒煙測試
 routerctl doctor hybrid
 ```
 
-對於 `provider-secondary-ip` + `configureOSAddress: false`，確認已捕獲的 `/32` 不存在於本機 `ip addr` 中、交付路由指向 tunnel、`ip_forward=1`。對於 `proxy-arp`，確認 `proxy_arp=1`、proxy neighbor、指向 tunnel 的交付路由、`ip_forward=1`。
+對於 BGP `provider-secondary-ip`，確認已捕獲的 `/32` 不存在於本機 `ip addr` 中、交付路由指向 tunnel、`ip_forward=1`。對於 `proxy-arp`，確認 `proxy_arp=1`、proxy neighbor、指向 tunnel 的交付路由、`ip_forward=1`。
 
 在低 MTU overlay 中，`doctor hybrid` 會報告 SAM MSS clamp，確認 `nft list table inet routerd_mss` 中包含選定 `/32` 路徑的 capture-to-tunnel 和 tunnel-to-capture 雙向規則。

@@ -9,7 +9,7 @@ Entry point for the CloudEdge Event Federation release status.
 | Phase 1 | Event envelope, EventGroup, SQLite store, CLI | done | [checkpoint](event-federation-checkpoint) |
 | Phase 1.5 | EventPeer, EventSubscription Kinds + validation | done | [checkpoint](event-federation-checkpoint) |
 | Phase 2 | Peer delivery, HMAC, retry, prune | done | [transport evidence](evidence/cloudedge-event-federation-transport-20260530) |
-| Phase 3 | Subscription → plugin → RemoteAddressClaim | done | [subscription evidence](evidence/cloudedge-event-federation-subscription-20260530) |
+| Phase 3 | Subscription/plugin → typed ownership facts → `MobilityPool` plan | done | [historical subscription evidence](evidence/cloudedge-event-federation-subscription-20260530) |
 | Phase 4 | Provider actionPlan plugins, dry-run | done | [ADR 0007](../adr/provider-action-execution) |
 | Phase 5 | Provider action execution (gated) | done | [AWS](evidence/cloudedge-phase5-aws-provider-executor-smoke-20260530), [Azure](evidence/cloudedge-phase5-azure-provider-executor-smoke-20260531), [OCI](evidence/cloudedge-phase5-oci-provider-executor-smoke-20260531) |
 | P1 | Federation pipeline observability (14 OTel metrics) | done | [observability how-to](../how-to/federation-delivery-observability) |

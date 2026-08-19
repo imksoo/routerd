@@ -46,21 +46,20 @@ func (f *gracefulStopFakeBGP) DeletePath(_ context.Context, path bgpdaemon.Appli
 	return nil
 }
 
-func TestRouterWithGracefulStopDrainMarksSelfPlacementMember(t *testing.T) {
+func TestGracefulStopFindsSelfPlacementWithoutMutatingTopology(t *testing.T) {
 	router := gracefulStopRouter()
-	drained, ok := routerWithGracefulStopDrain(router)
-	if !ok {
-		t.Fatal("routerWithGracefulStopDrain returned ok=false")
+	if !hasGracefulStopDrainablePool(router) {
+		t.Fatal("hasGracefulStopDrainablePool = false, want true")
 	}
-	spec, err := drained.Spec.Resources[1].MobilityPoolSpec()
+	nodeSet, err := router.Spec.Resources[1].SAMNodeSetSpec()
 	if err != nil {
-		t.Fatalf("MobilityPoolSpec: %v", err)
+		t.Fatalf("SAMNodeSetSpec: %v", err)
 	}
-	if !spec.Members[0].Maintenance.Drain {
-		t.Fatalf("self member drain = false, want true")
+	if nodeSet.Nodes[0].Maintenance.Drain {
+		t.Fatalf("self topology maintenance.drain = true, want unchanged false")
 	}
-	if spec.Members[1].Maintenance.Drain {
-		t.Fatalf("peer member drain = true, want unchanged false")
+	if nodeSet.Nodes[1].Maintenance.Drain {
+		t.Fatalf("peer topology maintenance.drain = true, want unchanged false")
 	}
 }
 
@@ -99,18 +98,20 @@ func gracefulStopRouter() *api.Router {
 				Spec:     api.EventGroupSpec{NodeName: "aws-router-a"},
 			},
 			{
+				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMNodeSet"},
+				Metadata: api.ObjectMeta{Name: "cloudedge-nodes"},
+				Spec: api.SAMNodeSetSpec{Nodes: []api.SAMNodeSpec{
+					{NodeRef: "aws-router-a", Site: "aws", Role: "cloud", Placement: api.MobilityMemberPlacement{Group: "aws-edge", Priority: 10}},
+					{NodeRef: "aws-router-b", Site: "aws", Role: "cloud", Placement: api.MobilityMemberPlacement{Group: "aws-edge", Priority: 20}},
+				}},
+			},
+			{
 				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
 				Metadata: api.ObjectMeta{Name: "cloudedge"},
 				Spec: api.MobilityPoolSpec{
-					Prefix:   "10.88.60.0/24",
-					GroupRef: "cloudedge",
-					DeliveryPolicy: api.MobilityDeliveryPolicy{
-						Mode: "bgp",
-					},
-					Members: []api.MobilityPoolMember{
-						{NodeRef: "aws-router-a", Site: "aws", Role: "cloud", Placement: api.MobilityMemberPlacement{Group: "aws-edge", Priority: 10}},
-						{NodeRef: "aws-router-b", Site: "aws", Role: "cloud", Placement: api.MobilityMemberPlacement{Group: "aws-edge", Priority: 20}},
-					},
+					Prefix:      "10.88.60.0/24",
+					GroupRef:    "cloudedge",
+					MembersFrom: []api.MobilityMembersSourceSpec{{Resource: "SAMNodeSet/cloudedge-nodes"}},
 				},
 			},
 		}},

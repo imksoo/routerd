@@ -121,10 +121,14 @@ class LauncherRestartTests(unittest.TestCase):
 
             cleanup_marker = run_root / "cleanup-called"
             inventory_marker = run_root / "inventory-called"
+            post_zero_marker = run_root / "post-zero-called"
             for name, marker in (("supervisor-cleanup.sh", cleanup_marker), ("supervisor-inventory.sh", inventory_marker)):
                 script = drivers / name
                 script.write_text(f"#!/bin/sh\ntouch '{marker}'\n", encoding="utf-8")
                 script.chmod(0o755)
+            revoker = drivers / "revoke-pve-run-token.sh"
+            revoker.write_text(f"#!/bin/sh\ntouch '{post_zero_marker}'\n", encoding="utf-8")
+            revoker.chmod(0o755)
             mutation_marker = run_root / "mutation-called"
             for name in ("precheck-driver.sh", "mutation-driver.sh"):
                 script = drivers / name
@@ -139,6 +143,10 @@ class LauncherRestartTests(unittest.TestCase):
                 "runEnv": runtime / "run.env.json",
                 "tfvars": runtime / "terraform.tfvars",
                 "pveSshPrivateKey": runtime / "secrets/pve_ssh",
+                "guestSshPrivateKey": runtime / "secrets/guest_ssh",
+                "pveSshKnownHosts": runtime / "secrets/pve-known_hosts",
+                "pveTokenTfvars": runtime / "secrets/pve-token.tfvars",
+                "pveCaPem": runtime / "secrets/pve-ca.pem",
             }
             azure_source = runtime / "secrets/azure-auth-source"
             azure_source.mkdir(parents=True, mode=0o700)
@@ -152,12 +160,20 @@ class LauncherRestartTests(unittest.TestCase):
                     "maxPaidLifecycleSeconds": 2400,
                 }}).encode() + b"\n",
                 "runEnv": json.dumps({"pveSshPrivateKey": str(runtime / "secrets/pve_ssh"),
+                                       "guestSshPrivateKey": str(runtime / "secrets/guest_ssh"),
+                                       "pveSshKnownHosts": str(runtime / "secrets/pve-known_hosts"),
+                                       "pveTokenTfvars": str(runtime / "secrets/pve-token.tfvars"),
+                                       "pveCaPem": str(runtime / "secrets/pve-ca.pem"),
                                        "azureAuthSource": str(azure_source)}).encode() + b"\n",
-                "tfvars": b"run_id=\"run-1\"\n", "pveSshPrivateKey": b"fixture key\n",
+                "tfvars": b"run_id=\"run-1\"\n", "pveSshPrivateKey": b"fixture PVE key\n",
+                "guestSshPrivateKey": b"fixture guest key\n",
+                "pveSshKnownHosts": b"pve01.example.test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEZpeHR1cmUtaG9zdC1rZXk=\n",
+                "pveTokenTfvars": b'pve_api_token = "fixture-token"\n',
+                "pveCaPem": b"-----BEGIN CERTIFICATE-----\nfixture\n-----END CERTIFICATE-----\n",
             }
             for key, source in sources.items():
                 source.parent.mkdir(parents=True, exist_ok=True)
-                if key == "pveSshPrivateKey":
+                if key in {"pveSshPrivateKey", "guestSshPrivateKey", "pveSshKnownHosts", "pveTokenTfvars", "pveCaPem"}:
                     source.parent.chmod(0o700)
                 source.write_bytes(payloads[key])
                 source.chmod(0o600)
@@ -198,6 +214,7 @@ class LauncherRestartTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1, result.stderr)
             self.assertTrue(cleanup_marker.exists())
             self.assertTrue(inventory_marker.exists())
+            self.assertTrue(post_zero_marker.exists())
             final = json.loads(state_path.read_text())
             self.assertEqual(final["effectiveLifecycle"], state["effectiveLifecycle"])
             self.assertTrue(final["sourceInputTamperDetected"])
@@ -205,6 +222,22 @@ class LauncherRestartTests(unittest.TestCase):
             self.assertTrue(pinned_key.is_file())
             self.assertEqual(hashlib.sha256(pinned_key.read_bytes()).hexdigest(),
                              final["inputs"]["pveSshPrivateKey"]["sha256"])
+            pinned_guest_key = Path(final["inputs"]["guestSshPrivateKey"]["pinned"])
+            self.assertTrue(pinned_guest_key.is_file())
+            self.assertEqual(hashlib.sha256(pinned_guest_key.read_bytes()).hexdigest(),
+                             final["inputs"]["guestSshPrivateKey"]["sha256"])
+            pinned_known_hosts = Path(final["inputs"]["pveSshKnownHosts"]["pinned"])
+            self.assertTrue(pinned_known_hosts.is_file())
+            self.assertEqual(hashlib.sha256(pinned_known_hosts.read_bytes()).hexdigest(),
+                             final["inputs"]["pveSshKnownHosts"]["sha256"])
+            pinned_token = Path(final["inputs"]["pveTokenTfvars"]["pinned"])
+            self.assertTrue(pinned_token.is_file())
+            self.assertEqual(hashlib.sha256(pinned_token.read_bytes()).hexdigest(),
+                             final["inputs"]["pveTokenTfvars"]["sha256"])
+            pinned_ca = Path(final["inputs"]["pveCaPem"]["pinned"])
+            self.assertTrue(pinned_ca.is_file())
+            self.assertEqual(hashlib.sha256(pinned_ca.read_bytes()).hexdigest(),
+                             final["inputs"]["pveCaPem"]["sha256"])
             self.assertEqual(final["phase"], "FAILED")
             self.assertEqual(final["inventoryExit"], 0)
             self.assertFalse(mutation_marker.exists())

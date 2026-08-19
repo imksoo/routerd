@@ -20,7 +20,7 @@ CloudEdge 的 Selective Address Mobility 最初從 routerd 專有控制平面
 
 - Event Federation 傳遞 observed/expired/heartbeat 事實；
 - mobility 控制器將這些事件投影為 `AddressLease` 列；
-- planner 將 lease 下降為 `AddressMobilityDomain`、`RemoteAddressClaim`、
+- planner 將 lease 下降為舊 mobility-domain/claim 資源圖、
   provider `ActionPlan`、`captureEpoch`、`ownershipEpoch` 狀態；
 - SAM 將產生的 claim 下降為路由、proxy-ARP、provider secondary-IP action；
 - provider action 控制器核准/執行雲端 mutation。
@@ -124,7 +124,7 @@ On-prem LAN capture 保持本機：
 | expired/released 事件 | 本機 `/32` withdraw |
 | `staticOwnedAddresses` | 所有成員的靜態本機 `/32` advertise |
 | F3 交接 | release/withdraw 屏障，隨後新 owner advertise |
-| `RemoteAddressClaim` 投遞路由 | 匯入的 BGP `/32` FIB 路由 |
+| 舊 claim 投遞路由 | 匯入的 BGP `/32` FIB 路由 |
 | capture 放置的活躍成員 | 路徑優先順序 / origin 合格性 |
 | overlay 路由的 `ownershipEpoch`/`captureEpoch` | best-path 檢視和可選路由中繼資料 |
 | provider secondary-IP action | 後台 fabric 入口 reconciliation |

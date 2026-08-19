@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
 )
 
 func TestNftOutboundAliasesResolveWireGuardIfName(t *testing.T) {
@@ -787,122 +788,7 @@ func bridgeVXLANL2MSSRouter(enabled bool) *api.Router {
 	}}}
 }
 
-func TestNftablesTCPMSSClampForSAMOverlay(t *testing.T) {
-	router := &api.Router{
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
-				Metadata: api.ObjectMeta{Name: "wg-hybrid"},
-				Spec:     api.WireGuardInterfaceSpec{MTU: 1420},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "OverlayPeer"},
-				Metadata: api.ObjectMeta{Name: "onprem-main"},
-				Spec: api.OverlayPeerSpec{
-					Role:     "onprem",
-					NodeID:   "onprem-router",
-					Underlay: api.OverlayUnderlay{Type: "wireguard", Interface: "wg-hybrid"},
-				},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "AddressMobilityDomain"},
-				Metadata: api.ObjectMeta{Name: "same-subnet"},
-				Spec:     api.AddressMobilityDomainSpec{Prefix: "10.77.60.0/24", Mode: "selective-address", PeerRef: "onprem-main"},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "CloudProviderProfile"},
-				Metadata: api.ObjectMeta{Name: "oci-lab"},
-				Spec: api.CloudProviderProfileSpec{
-					Provider:     "oci",
-					Capabilities: []string{"vnic-secondary-ip", "skip-source-dest-check"},
-					Auth:         api.ProviderAuth{Mode: "external-command", Command: "/bin/true"},
-				},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
-				Metadata: api.ObjectMeta{Name: "onprem-client"},
-				Spec: api.RemoteAddressClaimSpec{
-					DomainRef: "same-subnet",
-					Address:   "10.77.60.9/32",
-					OwnerSide: "onprem",
-					Capture: api.AddressCapture{
-						Type:               "provider-secondary-ip",
-						ProviderRef:        "oci-lab",
-						ProviderMode:       "vnic-secondary-ip",
-						NICRef:             "ocid1.vnic.example",
-						ConfigureOSAddress: false,
-						Interface:          "ens3",
-					},
-					Delivery: api.AddressDelivery{PeerRef: "onprem-main", Mode: "route", TunnelInterface: "wg-hybrid"},
-				},
-			},
-		}},
-	}
-
-	data, err := NftablesTCPMSSClamp(router)
-	if err != nil {
-		t.Fatalf("render TCP MSS clamp: %v", err)
-	}
-	got := string(data)
-	for _, want := range []string{
-		"table inet routerd_mss",
-		`iifname "ens3" oifname "wg-hybrid" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1300 tcp option maxseg size set 1300`,
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("nftables output missing SAM MSS clamp %q:\n%s", want, got)
-		}
-	}
-	if strings.Contains(got, `iifname "wg-hybrid" oifname "ens3"`) {
-		t.Fatalf("SAM MSS clamp should follow capture-to-tunnel orientation only:\n%s", got)
-	}
-	if strings.Contains(got, "meta nfproto ipv6") {
-		t.Fatalf("SAM MSS clamp should be IPv4-only:\n%s", got)
-	}
-}
-
-func TestNftablesIPv4ForceFragmentDefaultOff(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
-			Metadata: api.ObjectMeta{Name: "wg-hybrid"},
-			Spec:     api.WireGuardInterfaceSpec{MTU: 1420},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "OverlayPeer"},
-			Metadata: api.ObjectMeta{Name: "onprem-main"},
-			Spec: api.OverlayPeerSpec{
-				Role:     "onprem",
-				NodeID:   "onprem-router",
-				Underlay: api.OverlayUnderlay{Type: "wireguard", Interface: "wg-hybrid"},
-			},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "AddressMobilityDomain"},
-			Metadata: api.ObjectMeta{Name: "same-subnet"},
-			Spec:     api.AddressMobilityDomainSpec{Prefix: "10.77.60.0/24", Mode: "selective-address", PeerRef: "onprem-main"},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
-			Metadata: api.ObjectMeta{Name: "onprem-client"},
-			Spec: api.RemoteAddressClaimSpec{
-				DomainRef: "same-subnet",
-				Address:   "10.77.60.9/32",
-				OwnerSide: "onprem",
-				Capture:   api.AddressCapture{Type: "provider-secondary-ip", ProviderRef: "oci-lab", ProviderMode: "vnic-secondary-ip", NICRef: "ocid1.vnic.example", Interface: "ens3"},
-				Delivery:  api.AddressDelivery{PeerRef: "onprem-main", Mode: "route", TunnelInterface: "wg-hybrid"},
-			},
-		},
-	}}}
-	data, err := NftablesIPv4ForceFragment(router)
-	if err != nil {
-		t.Fatalf("render forcefrag: %v", err)
-	}
-	if len(data) != 0 {
-		t.Fatalf("forcefrag default off should render nothing:\n%s", string(data))
-	}
-}
-
-func TestNftablesIPv4ForceFragmentForSAMOverlay(t *testing.T) {
+func TestNftablesIPv4ForceFragmentForBGPMobilityOverlay(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
@@ -919,24 +805,11 @@ func TestNftablesIPv4ForceFragmentForSAMOverlay(t *testing.T) {
 				PathMTU:  api.PathMTUOptions{ForceFragmentIPv4: true},
 			},
 		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "AddressMobilityDomain"},
-			Metadata: api.ObjectMeta{Name: "same-subnet"},
-			Spec:     api.AddressMobilityDomainSpec{Prefix: "10.77.60.0/24", Mode: "selective-address", PeerRef: "onprem-main"},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
-			Metadata: api.ObjectMeta{Name: "onprem-client"},
-			Spec: api.RemoteAddressClaimSpec{
-				DomainRef: "same-subnet",
-				Address:   "10.77.60.9/32",
-				OwnerSide: "onprem",
-				Capture:   api.AddressCapture{Type: "provider-secondary-ip", ProviderRef: "oci-lab", ProviderMode: "vnic-secondary-ip", NICRef: "ocid1.vnic.example", Interface: "ens3"},
-				Delivery:  api.AddressDelivery{PeerRef: "onprem-main", Mode: "route", TunnelInterface: "wg-hybrid"},
-			},
-		},
 	}}}
-	data, err := NftablesIPv4ForceFragment(router)
+	data, err := NftablesIPv4ForceFragmentWithLocalCaptureIntents(router, []dynamicconfig.LocalCaptureIntent{{
+		ID: "cloudedge/10.77.60.9", PoolRef: "cloudedge", Address: "10.77.60.9/32",
+		Disposition: dynamicconfig.CaptureProtectExisting, CaptureType: "provider-secondary-ip", CaptureInterface: "ens3",
+	}})
 	if err != nil {
 		t.Fatalf("render forcefrag: %v", err)
 	}
@@ -957,63 +830,9 @@ func TestNftablesIPv4ForceFragmentForSAMOverlay(t *testing.T) {
 	}
 }
 
-func TestNftablesIPv4ForceFragmentCanFollowTunnelInterfaceOption(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
-			Metadata: api.ObjectMeta{Name: "tun-gre"},
-			Spec: api.TunnelInterfaceSpec{
-				Mode:            "gre",
-				Local:           "192.0.2.10",
-				Remote:          "192.0.2.20",
-				TrustedUnderlay: true,
-				PathMTU:         api.PathMTUOptions{ForceFragmentIPv4: true},
-			},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "OverlayPeer"},
-			Metadata: api.ObjectMeta{Name: "onprem-main"},
-			Spec: api.OverlayPeerSpec{
-				Role:     "onprem",
-				NodeID:   "onprem-router",
-				Underlay: api.OverlayUnderlay{Type: "gre", Interface: "tun-gre"},
-			},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "AddressMobilityDomain"},
-			Metadata: api.ObjectMeta{Name: "same-subnet"},
-			Spec:     api.AddressMobilityDomainSpec{Prefix: "10.77.60.0/24", Mode: "selective-address", PeerRef: "onprem-main"},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
-			Metadata: api.ObjectMeta{Name: "onprem-client"},
-			Spec: api.RemoteAddressClaimSpec{
-				DomainRef: "same-subnet",
-				Address:   "10.77.60.9/32",
-				OwnerSide: "onprem",
-				Capture:   api.AddressCapture{Type: "provider-secondary-ip", ProviderRef: "oci-lab", ProviderMode: "vnic-secondary-ip", NICRef: "ocid1.vnic.example", Interface: "ens3"},
-				Delivery:  api.AddressDelivery{PeerRef: "onprem-main", Mode: "route", TunnelInterface: "tun-gre"},
-			},
-		},
-	}}}
-	data, err := NftablesIPv4ForceFragment(router)
-	if err != nil {
-		t.Fatalf("render forcefrag: %v", err)
-	}
-	want := `iifname "ens3" fib daddr oifname "tun-gre" ip length > 1476 ip frag-off 0x4000 ip frag-off set 0`
-	if !strings.Contains(string(data), want) {
-		t.Fatalf("forcefrag output missing tunnel option rule %q:\n%s", want, string(data))
-	}
-}
-
 func TestNftablesTCPMSSClampForBGPMobilityOverlay(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
-				Metadata: api.ObjectMeta{Name: "cloudedge"},
-				Spec:     api.EventGroupSpec{NodeName: "oci-router"},
-			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
 				Metadata: api.ObjectMeta{Name: "wg-hybrid"},
@@ -1028,37 +847,13 @@ func TestNftablesTCPMSSClampForBGPMobilityOverlay(t *testing.T) {
 					Underlay: api.OverlayUnderlay{Type: "wireguard", Interface: "wg-hybrid"},
 				},
 			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
-				Metadata: api.ObjectMeta{Name: "cloudedge"},
-				Spec: api.MobilityPoolSpec{
-					Prefix:         "10.77.60.0/24",
-					GroupRef:       "cloudedge",
-					DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
-					Members: []api.MobilityPoolMember{
-						{
-							NodeRef: "onprem-router",
-							Site:    "onprem",
-							Role:    "onprem",
-							Capture: api.MobilityMemberCapture{Type: "proxy-arp", Interface: "ens21"},
-							DeliveryTo: []api.MobilityMemberDeliveryTarget{
-								{NodeRef: "oci-router", PeerRef: "onprem-main", Mode: "route", TunnelInterface: "wg-hybrid"},
-							},
-						},
-						{
-							NodeRef:  "oci-router",
-							Site:     "oci",
-							Role:     "cloud",
-							Capture:  api.MobilityMemberCapture{Type: "provider-secondary-ip", Interface: "ens3", ProviderRef: "oci-lab"},
-							Delivery: api.MobilityMemberDelivery{PeerRef: "onprem-main", Mode: "route", TunnelInterface: "wg-hybrid"},
-						},
-					},
-				},
-			},
 		}},
 	}
 
-	data, err := NftablesTCPMSSClamp(router)
+	data, err := NftablesTCPMSSClampWithLocalCaptureIntents(router, []dynamicconfig.LocalCaptureIntent{{
+		ID: "cloudedge/10.77.60.9", PoolRef: "cloudedge", Address: "10.77.60.9/32",
+		Disposition: dynamicconfig.CaptureProtectExisting, CaptureType: "provider-secondary-ip", CaptureInterface: "ens3",
+	}})
 	if err != nil {
 		t.Fatalf("render TCP MSS clamp: %v", err)
 	}
@@ -1076,123 +871,6 @@ func TestNftablesTCPMSSClampForBGPMobilityOverlay(t *testing.T) {
 	}
 	if strings.Contains(got, "meta nfproto ipv6") {
 		t.Fatalf("BGP mobility MSS clamp should be IPv4-only:\n%s", got)
-	}
-}
-
-func TestNftablesTCPMSSClampForSAMIPIPOverlay(t *testing.T) {
-	router := &api.Router{
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
-				Metadata: api.ObjectMeta{Name: "wg-underlay"},
-				Spec:     api.WireGuardInterfaceSpec{MTU: 1420},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"},
-				Metadata: api.ObjectMeta{Name: "tun-ipip"},
-				Spec: api.TunnelInterfaceSpec{
-					Mode:              "ipip",
-					Local:             "10.99.0.1",
-					Remote:            "10.99.0.2",
-					UnderlayInterface: "wg-underlay",
-					TrustedUnderlay:   true,
-				},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "OverlayPeer"},
-				Metadata: api.ObjectMeta{Name: "onprem-main"},
-				Spec: api.OverlayPeerSpec{
-					Role:     "onprem",
-					NodeID:   "onprem-router",
-					Underlay: api.OverlayUnderlay{Type: "ipip", Interface: "tun-ipip"},
-				},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "AddressMobilityDomain"},
-				Metadata: api.ObjectMeta{Name: "same-subnet"},
-				Spec:     api.AddressMobilityDomainSpec{Prefix: "10.77.60.0/24", Mode: "selective-address", PeerRef: "onprem-main"},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
-				Metadata: api.ObjectMeta{Name: "onprem-client"},
-				Spec: api.RemoteAddressClaimSpec{
-					DomainRef: "same-subnet",
-					Address:   "10.77.60.9/32",
-					OwnerSide: "onprem",
-					Capture:   api.AddressCapture{Type: "provider-secondary-ip", ProviderRef: "oci-lab", ProviderMode: "vnic-secondary-ip", NICRef: "ocid1.vnic.example", Interface: "ens3"},
-					Delivery:  api.AddressDelivery{PeerRef: "onprem-main", Mode: "route", TunnelInterface: "tun-ipip"},
-				},
-			},
-		}},
-	}
-
-	data, err := NftablesTCPMSSClamp(router)
-	if err != nil {
-		t.Fatalf("render TCP MSS clamp: %v", err)
-	}
-	got := string(data)
-	want := `iifname "ens3" oifname "tun-ipip" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1360 tcp option maxseg size set 1360`
-	if !strings.Contains(got, want) {
-		t.Fatalf("nftables output missing ipip SAM MSS clamp %q:\n%s", want, got)
-	}
-}
-
-func TestNftablesTCPMSSClampForForwardedPathLowerMTUOverlay(t *testing.T) {
-	router := &api.Router{
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "ens3"},
-				Spec:     api.InterfaceSpec{IfName: "ens3", Managed: false, Owner: "external"},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANSegment"},
-				Metadata: api.ObjectMeta{Name: "vxlan-sam"},
-				Spec: api.VXLANSegmentSpec{
-					IfName:            "vxlan100",
-					VNI:               100,
-					LocalAddress:      "192.0.2.10",
-					Remotes:           []string{"192.0.2.20"},
-					UnderlayInterface: "ens3",
-					MTU:               1370,
-				},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "OverlayPeer"},
-				Metadata: api.ObjectMeta{Name: "edge-main"},
-				Spec: api.OverlayPeerSpec{
-					Role:     "onprem",
-					NodeID:   "edge-router",
-					Underlay: api.OverlayUnderlay{Type: "vxlan", Interface: "vxlan-sam"},
-				},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "AddressMobilityDomain"},
-				Metadata: api.ObjectMeta{Name: "same-subnet"},
-				Spec:     api.AddressMobilityDomainSpec{Prefix: "10.77.60.0/24", Mode: "selective-address", PeerRef: "edge-main"},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
-				Metadata: api.ObjectMeta{Name: "remote-client"},
-				Spec: api.RemoteAddressClaimSpec{
-					DomainRef: "same-subnet",
-					Address:   "10.77.60.9/32",
-					OwnerSide: "onprem",
-					Capture:   api.AddressCapture{Type: "provider-secondary-ip", ProviderRef: "lab", ProviderMode: "secondary-ip", NICRef: "nic", Interface: "ens3"},
-					Delivery:  api.AddressDelivery{PeerRef: "edge-main", Mode: "route", TunnelInterface: "vxlan-sam"},
-				},
-			},
-		}},
-	}
-
-	data, err := NftablesTCPMSSClamp(router)
-	if err != nil {
-		t.Fatalf("render TCP MSS clamp: %v", err)
-	}
-	got := string(data)
-	want := `iifname "ens3" oifname "vxlan100" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1330 tcp option maxseg size set 1330`
-	if !strings.Contains(got, want) {
-		t.Fatalf("nftables output missing generic lower-MTU overlay clamp %q:\n%s", want, got)
 	}
 }
 

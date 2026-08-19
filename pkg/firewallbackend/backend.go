@@ -12,7 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/nftstate"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
@@ -29,7 +31,7 @@ type Ruleset struct {
 
 type Backend interface {
 	Name() string
-	Render(router *api.Router, path string) (Ruleset, error)
+	Render(router *api.Router, path string, intents []dynamicconfig.LocalCaptureIntent) (Ruleset, error)
 	Diff(ruleset Ruleset) (bool, error)
 	Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool, error)
 	Reload(ctx context.Context, ruleset Ruleset) error
@@ -42,7 +44,7 @@ type Nftables struct {
 
 func (b Nftables) Name() string { return "nftables" }
 
-func (b Nftables) Render(router *api.Router, path string) (Ruleset, error) {
+func (b Nftables) Render(router *api.Router, path string, _ []dynamicconfig.LocalCaptureIntent) (Ruleset, error) {
 	holes := render.InternalFirewallHoles(router)
 	data, err := render.NftablesFirewall(router, holes)
 	if err != nil {
@@ -50,7 +52,7 @@ func (b Nftables) Render(router *api.Router, path string) (Ruleset, error) {
 	}
 	return Ruleset{
 		Backend:       b.Name(),
-		Path:          firstNonEmpty(path, "/run/routerd/firewall.nft"),
+		Path:          stringutil.FirstNonEmpty(path, "/run/routerd/firewall.nft"),
 		Data:          data,
 		InternalHoles: len(holes),
 	}, nil
@@ -95,7 +97,7 @@ func (b Nftables) rulesetTablesPresent(ctx context.Context, ruleset Ruleset) boo
 	if len(tables) == 0 {
 		return false
 	}
-	nft := firstNonEmpty(b.Command, "nft")
+	nft := stringutil.FirstNonEmpty(b.Command, "nft")
 	for _, table := range tables {
 		if _, err := b.run(ctx, nft, "list", "table", table.family, table.name); err != nil {
 			return false
@@ -108,7 +110,7 @@ func (b Nftables) Reload(ctx context.Context, ruleset Ruleset) error {
 	if err := validateRuleset(ruleset); err != nil {
 		return err
 	}
-	nft := firstNonEmpty(b.Command, "nft")
+	nft := stringutil.FirstNonEmpty(b.Command, "nft")
 	if out, err := b.run(ctx, nft, "-c", "-f", ruleset.Path); err != nil {
 		return fmt.Errorf("%s -c -f %s: %w: %s", nft, ruleset.Path, err, strings.TrimSpace(string(out)))
 	}
@@ -132,14 +134,14 @@ type PF struct {
 
 func (b PF) Name() string { return "pf" }
 
-func (b PF) Render(router *api.Router, path string) (Ruleset, error) {
+func (b PF) Render(router *api.Router, path string, intents []dynamicconfig.LocalCaptureIntent) (Ruleset, error) {
 	holes := render.InternalFirewallHoles(router)
-	data, err := render.PF(router, holes)
+	data, err := render.PFWithLocalCaptureIntents(router, holes, intents)
 	if err != nil {
 		return Ruleset{}, err
 	}
 	defaults, _ := platform.Current()
-	path = firstNonEmpty(path, filepath.Join(defaults.RuntimeDir, "firewall.pf"))
+	path = stringutil.FirstNonEmpty(path, filepath.Join(defaults.RuntimeDir, "firewall.pf"))
 	if strings.HasSuffix(path, ".nft") {
 		path = strings.TrimSuffix(path, ".nft") + ".pf"
 	}
@@ -181,7 +183,7 @@ func (b PF) Reload(ctx context.Context, ruleset Ruleset) error {
 	if err := validateRuleset(ruleset); err != nil {
 		return err
 	}
-	pfctl := firstNonEmpty(b.Command, "pfctl")
+	pfctl := stringutil.FirstNonEmpty(b.Command, "pfctl")
 	if pfctl == "nft" {
 		pfctl = "pfctl"
 	}
@@ -249,19 +251,10 @@ func nftRulesetTables(data []byte) []nftTableRef {
 
 func validateRuleset(ruleset Ruleset) error {
 	if strings.TrimSpace(ruleset.Path) == "" {
-		return fmt.Errorf("%s ruleset path is empty", firstNonEmpty(ruleset.Backend, "firewall"))
+		return fmt.Errorf("%s ruleset path is empty", stringutil.FirstNonEmpty(ruleset.Backend, "firewall"))
 	}
 	if strings.Contains(ruleset.Path, "\x00") {
-		return fmt.Errorf("%s ruleset path contains NUL byte", firstNonEmpty(ruleset.Backend, "firewall"))
+		return fmt.Errorf("%s ruleset path contains NUL byte", stringutil.FirstNonEmpty(ruleset.Backend, "firewall"))
 	}
 	return nil
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }

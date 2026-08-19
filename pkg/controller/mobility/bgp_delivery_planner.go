@@ -9,87 +9,180 @@ import (
 	"strings"
 	"time"
 
-	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bgpdaemon"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/sam"
-	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 type bgpDeliveryPlannerInput struct {
-	PoolName             string
-	Source               string
-	Self                 memberPlanInfo
-	Members              map[string]memberPlanInfo
-	Spec                 api.MobilityPoolSpec
-	Decisions            []ownershipDecision
-	Placement            PlacementDecision
-	InstalledNextHops    map[string][]string
-	CaptureNextHops      map[string][]string
-	RIBObserved          bool
-	PreviousPlans        []dynamicconfig.ActionPlan
-	Profiles             map[string]api.CloudProviderProfileSpec
-	ActionJournal        []routerstate.ActionExecutionRecord
-	ObservedSelfIPs      map[string]bool
-	ObservedSelfCaptures map[string]bool
-	ObservedSelfIPsOK    bool
-	ObservedSelfAt       time.Time
-	ForwardingObserved   bool
-	ForwardingEnabled    bool
-	ForwardingObservedAt time.Time
-	CaptureClaim         bgpCaptureClaim
-	CaptureAssignments   map[string]bgpCaptureAssignment
-	CaptureAssignmentSeq int64
-	ObservedStaleSince   map[string]time.Time
-	SuppressDeprovision  bool
-	LivenessMarkers      map[string]string
-	// CaptureGate is supplied by the controller from persisted local status.
-	// A nil value preserves planner-only callers' existing ungated behavior.
-	CaptureGate *sam.CaptureGateStatus
-	Now         time.Time
+	PoolRuntimeSnapshot
+	Decisions []ownershipDecision
+	Placement PlacementDecision
 }
 
-type bgpDeliveryPlannerResult struct {
-	Paths                []bgpdaemon.AppliedPath
-	ActionPlans          []dynamicconfig.ActionPlan
-	CaptureCandidates    map[string]bgpTrapCandidate
-	Placement            PlacementDecision
-	Distribution         *captureDistribution
-	CaptureAssignments   map[string]bgpCaptureAssignment
-	CaptureAssignmentSeq int64
-}
-
-func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (bgpDeliveryPlannerResult, error) {
-	poolPrefix, err := netip.ParsePrefix(strings.TrimSpace(in.Spec.Prefix))
-	if err != nil {
-		return bgpDeliveryPlannerResult{}, fmt.Errorf("parse pool prefix: %w", err)
+func planBGPMobilityDelivery(in bgpDeliveryPlannerInput) (PoolPlan, error) {
+	poolPrefix := in.Pool.Prefix
+	if !poolPrefix.IsValid() {
+		return PoolPlan{}, fmt.Errorf("MobilityPool/%s normalized prefix is required", in.Pool.Name)
 	}
-	poolPrefix = poolPrefix.Masked()
 	now := in.Now.UTC()
 	if now.IsZero() {
-		now = time.Now().UTC()
+		return PoolPlan{}, fmt.Errorf("BGP mobility delivery planner time is required")
 	}
-	decisions := decisionsByAddress(in.Decisions)
-	failedActions := interpretProviderCaptureAssignFailures(in.ActionJournal, in.ObservedSelfCaptures, in.ObservedSelfAt).Active
-	paths := planBGPAdvertisements(in.Source, in.Self, in.Decisions, in.Placement, in.CaptureGate)
-	captureNextHops := in.CaptureNextHops
+	// All downstream pure planning steps receive the same snapshot time. This
+	// keeps capture-release timing and provider assignment fences from taking
+	// independent wall-clock samples in one plan.
+	in.Now = now
+	captureNextHops := in.BGP.CaptureNextHops
 	if len(captureNextHops) == 0 {
-		captureNextHops = in.InstalledNextHops
+		captureNextHops = in.BGP.InstalledNextHops
 	}
-	candidates, dist := planCaptureCandidatesWithDistribution(in.Self, in.Members, decisions, in.Placement, captureNextHops, in.RIBObserved, in.PreviousPlans, in.ObservedSelfCaptures, failedActions, in.LivenessMarkers, poolPrefix, now)
-	actionPlans, assignments, assignmentSeq, err := planCaptureActionPlans(in, candidates)
+	// Finalize each address exactly once before projecting it to BGP provider
+	// effects and the local dataplane. In particular, neither projection is
+	// allowed to reinterpret the RIB, provider observation, or placement.
+	finalizeCaptureDispositions(&in, captureNextHops, poolPrefix, now)
+	paths := planBGPAdvertisements(in.Pool.Source, in.Pool.Self, in.Decisions, in.Placement, in.CaptureGate)
+	actionPlans, err := planCaptureActionPlans(in)
 	if err != nil {
-		return bgpDeliveryPlannerResult{}, err
+		return PoolPlan{}, err
 	}
-	return bgpDeliveryPlannerResult{
-		Paths:                paths,
-		ActionPlans:          actionPlans,
-		CaptureCandidates:    candidates,
-		Placement:            in.Placement,
-		Distribution:         dist,
-		CaptureAssignments:   assignments,
-		CaptureAssignmentSeq: assignmentSeq,
+	captures := planLocalCaptureIntents(in)
+	routes, staticAddresses := planCapturePrefixEffects(in, poolPrefix, captures)
+	return PoolPlan{
+		BGPPaths:        paths,
+		ProviderActions: actionPlans,
+		LocalDataplane: dynamicconfig.MobilityDataplanePlan{
+			PoolPrefix:      poolPrefix.String(),
+			Captures:        captures,
+			Routes:          routes,
+			StaticAddresses: staticAddresses,
+		},
 	}, nil
+}
+
+// planLocalCaptureIntents turns the already-observed BGP/provider result into
+// a direct local dataplane plan. It is intentionally adjacent to the BGP and
+// provider plan, rather than being reconstructed later from status.
+func planLocalCaptureIntents(in bgpDeliveryPlannerInput) []dynamicconfig.LocalCaptureIntent {
+	captureGateClosed := in.CaptureGate != nil && !in.CaptureGate.Active
+	captureInterface := strings.TrimSpace(in.Pool.SelfCaptureInterface)
+	out := make([]dynamicconfig.LocalCaptureIntent, 0, len(in.Decisions))
+	captureType := strings.TrimSpace(in.Pool.Self.Capture.Type)
+	for _, decision := range in.Decisions {
+		disposition := decision.CaptureDisposition
+		if disposition == "" || disposition == dynamicconfig.CaptureProhibited {
+			continue
+		}
+		// Capture gates prevent acquisition, not safe teardown. A release must
+		// still reach the dataplane when a CARP/VRRP role changes.
+		if captureGateClosed && disposition != dynamicconfig.CaptureRelease {
+			continue
+		}
+		switch captureType {
+		case "proxy-arp":
+			if disposition != dynamicconfig.CaptureDesired && disposition != dynamicconfig.CaptureProtectExisting && disposition != dynamicconfig.CaptureRelease {
+				continue
+			}
+		case "provider-secondary-ip":
+			// A secondary IP is locally captured only after its provider-side
+			// assignment is observed. CaptureDesired is therefore deliberately
+			// projected to the provider effector only; ProtectExisting and
+			// Release are the complete local desired state.
+			if disposition != dynamicconfig.CaptureProtectExisting && disposition != dynamicconfig.CaptureRelease && disposition != dynamicconfig.CaptureHold {
+				continue
+			}
+		default:
+			continue
+		}
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(decision.Address))
+		if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 32 {
+			continue
+		}
+		address := prefix.Masked().String()
+		out = append(out, dynamicconfig.LocalCaptureIntent{
+			ID:               "mobility-" + safeName(in.Pool.Name) + "-" + safeName(strings.TrimSuffix(address, "/32")),
+			PoolRef:          in.Pool.Name,
+			Address:          address,
+			Disposition:      disposition,
+			CaptureType:      captureType,
+			CaptureInterface: captureInterface,
+			TunnelInterfaces: append([]string(nil), in.TunnelInterfaces...),
+			GratuitousARP:    in.Pool.Self.Capture.GratuitousARP,
+			Reason:           decision.CaptureReason,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// planCapturePrefixEffects emits the non-neighbor local effects implied by a
+// proxy-ARP capture. The capture disposition has already been decided; this
+// function only lowers desired/protect-existing captures into their typed
+// source-address and prefix-route effects.
+func planCapturePrefixEffects(in bgpDeliveryPlannerInput, pool netip.Prefix, captures []dynamicconfig.LocalCaptureIntent) ([]dynamicconfig.MobilityIPv4RouteIntent, []dynamicconfig.MobilityIPv4AddressIntent) {
+	activeCapture := false
+	for _, capture := range captures {
+		if strings.TrimSpace(capture.CaptureType) != "proxy-arp" {
+			continue
+		}
+		if capture.Disposition == dynamicconfig.CaptureDesired || capture.Disposition == dynamicconfig.CaptureProtectExisting {
+			activeCapture = true
+			break
+		}
+	}
+	if !activeCapture {
+		return nil, nil
+	}
+
+	if !pool.IsValid() || !pool.Addr().Is4() {
+		return nil, nil
+	}
+	device := strings.TrimSpace(in.Pool.SelfCaptureInterface)
+	if device == "" {
+		return nil, nil
+	}
+
+	preferredSource := ""
+	var staticAddresses []dynamicconfig.MobilityIPv4AddressIntent
+	if source, ok := captureSourcePrefix(in.Pool.Self.CaptureSourceAddress, pool); ok {
+		preferredSource = source.Addr().String()
+		if strings.TrimSpace(in.Pool.Self.CaptureSourceAddressFrom.Resource) == "" {
+			staticAddresses = append(staticAddresses, dynamicconfig.MobilityIPv4AddressIntent{
+				ID:        "mobility-" + safeName(in.Pool.Name) + "-capture-source",
+				PoolRef:   in.Pool.Name,
+				Purpose:   dynamicconfig.MobilityIPv4AddressPurposeCaptureSource,
+				Interface: device,
+				Address:   source.String(),
+			})
+		}
+	}
+
+	prefixes := sam.IPv4PrefixesExcluding(pool, in.Pool.Self.Capture.ExcludeAddresses)
+	routes := make([]dynamicconfig.MobilityIPv4RouteIntent, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		id := "mobility-" + safeName(in.Pool.Name) + "-capture-prefix"
+		if len(prefixes) != 1 {
+			id = "mobility-" + safeName(in.Pool.Name) + "-capture-" + safeName(prefix.String())
+		}
+		routes = append(routes, dynamicconfig.MobilityIPv4RouteIntent{
+			ID:              id,
+			PoolRef:         in.Pool.Name,
+			Purpose:         dynamicconfig.MobilityIPv4RoutePurposeCapturePrefix,
+			Destination:     prefix.String(),
+			Device:          device,
+			PreferredSource: preferredSource,
+			Metric:          90,
+		})
+	}
+	return routes, staticAddresses
+}
+
+func captureSourcePrefix(raw string, pool netip.Prefix) (netip.Prefix, bool) {
+	prefix, ok := parseIPv4AddressOrPrefix(raw)
+	if !ok || !pool.Addr().Is4() || !pool.Masked().Contains(prefix.Addr()) {
+		return netip.Prefix{}, false
+	}
+	return netip.PrefixFrom(prefix.Addr(), 32), true
 }
 
 func planBGPAdvertisements(source string, self memberPlanInfo, decisions []ownershipDecision, placement PlacementDecision, captureGate *sam.CaptureGateStatus) []bgpdaemon.AppliedPath {
@@ -143,178 +236,6 @@ func bgpDecisionSourceType(decision ownershipDecision) string {
 	}
 }
 
-func planCaptureCandidatesWithDistribution(self memberPlanInfo, members map[string]memberPlanInfo, decisions map[string]ownershipDecision, placement PlacementDecision, installedNextHops map[string][]string, ribObserved bool, previousPlans []dynamicconfig.ActionPlan, observedSelfIPs map[string]bool, failedActions map[string]routerstate.ActionExecutionRecord, livenessMarkers map[string]string, poolPrefix netip.Prefix, now time.Time) (map[string]bgpTrapCandidate, *captureDistribution) {
-	out := map[string]bgpTrapCandidate{}
-	if self.Capture.Type != "provider-secondary-ip" {
-		return out, nil
-	}
-	for address, decision := range decisions {
-		if desiredCaptureObservedOnSelf(decision, self, members, placement, observedSelfIPs) {
-			out[address] = bgpTrapCandidate{ProtectOnly: true}
-		}
-	}
-	if placement.SeizeHoldDown {
-		return out, nil
-	}
-	group := strings.TrimSpace(self.PlacementGroup)
-	distributed := distributedCaptureEnabled(members, group)
-	if !distributed && !placement.Active {
-		return out, nil
-	}
-	var selfAssigned map[string]bool
-	var dist *captureDistribution
-	if distributed {
-		distributedPlacement := PlacementDecision{Group: group, Active: true, ActiveNode: self.NodeRef}
-		eligibleAddresses := collectEligibleCaptureAddresses(self, members, decisions, distributedPlacement, installedNextHops, previousPlans, failedActions, poolPrefix)
-		liveNodes := distributedLiveNodes(self, members, livenessMarkers)
-		nodes := distributedCaptureNodes(members, group, liveNodes)
-		d := distributeCaptures(eligibleAddresses, nodes)
-		dist = &d
-		selfAssigned = map[string]bool{}
-		for addr, node := range d.Assignments {
-			if node == self.NodeRef {
-				selfAssigned[addr] = true
-			}
-		}
-	}
-	installedAddresses := map[string]bool{}
-	for rawPrefix, nextHops := range installedNextHops {
-		if len(cleanStrings(nextHops)) == 0 {
-			continue
-		}
-		if address, ok := normalizeBGPTrapPrefix(rawPrefix, poolPrefix); ok {
-			installedAddresses[address] = true
-		}
-	}
-	for rawPrefix, nextHops := range installedNextHops {
-		cleanNextHops := cleanStrings(nextHops)
-		if len(cleanNextHops) == 0 {
-			continue
-		}
-		address, ok := normalizeBGPTrapPrefix(rawPrefix, poolPrefix)
-		if !ok {
-			continue
-		}
-		decision, ok := decisions[address]
-		if !ok {
-			continue
-		}
-		if decision.Class == ownershipClassConfirmedCapture {
-			if providerCaptureObservedOnSelf(decision, self, observedSelfIPs) {
-				out[address] = bgpTrapCandidate{ProtectOnly: true}
-			}
-			continue
-		}
-		if !decisionEligibleForCapture(decision, self, members, placement) {
-			continue
-		}
-		if !routeTableCaptureAllowed(decision, self) {
-			continue
-		}
-		if selfAssigned != nil && !selfAssigned[address] {
-			continue
-		}
-		out[address] = bgpTrapCandidate{PathSig: bgpTrapPathSig(address, cleanNextHops), LastSeenAt: now.UTC(), Seize: placement.Seize}
-	}
-	for address, candidate := range previousBGPTrapCandidateAddresses(previousPlans, poolPrefix) {
-		decision, ok := decisions[address]
-		if !ok {
-			continue
-		}
-		if !decisionEligibleForCapture(decision, self, members, placement) {
-			if ribObserved && decisionIsCaptureNotDesiredStale(decision) && !decision.CaptureSucceeded && !installedAddresses[address] && bgpTrapCandidateWithinMissingHold(candidate, now) {
-				out[address] = candidate
-			}
-			continue
-		}
-		if decision.Class == ownershipClassConfirmedCapture {
-			if providerCaptureObservedOnSelf(decision, self, observedSelfIPs) {
-				out[address] = bgpTrapCandidate{ProtectOnly: true}
-			}
-			continue
-		}
-		if !routeTableCaptureAllowed(decision, self) {
-			continue
-		}
-		if _, desired := out[address]; desired {
-			continue
-		}
-		if selfAssigned != nil && !selfAssigned[address] {
-			continue
-		}
-		if !ribObserved || bgpTrapCandidateWithinMissingHold(candidate, now) {
-			if candidate.LastSeenAt.IsZero() {
-				candidate.LastSeenAt = now.UTC()
-			}
-			candidate.Seize = placement.Seize
-			out[address] = candidate
-		}
-	}
-	return out, dist
-}
-
-func collectEligibleCaptureAddresses(self memberPlanInfo, members map[string]memberPlanInfo, decisions map[string]ownershipDecision, placement PlacementDecision, installedNextHops map[string][]string, previousPlans []dynamicconfig.ActionPlan, failedActions map[string]routerstate.ActionExecutionRecord, poolPrefix netip.Prefix) []string {
-	eligible := map[string]bool{}
-	for rawPrefix, nextHops := range installedNextHops {
-		if len(cleanStrings(nextHops)) == 0 {
-			continue
-		}
-		address, ok := normalizeBGPTrapPrefix(rawPrefix, poolPrefix)
-		if !ok {
-			continue
-		}
-		decision, ok := decisions[address]
-		if !ok {
-			continue
-		}
-		if decision.Class == ownershipClassConfirmedCapture {
-			continue
-		}
-		if !decisionEligibleForCapture(decision, self, members, placement) {
-			continue
-		}
-		if !routeTableCaptureAllowed(decision, self) {
-			continue
-		}
-		eligible[address] = true
-	}
-	for address := range previousBGPTrapCandidateAddresses(previousPlans, poolPrefix) {
-		decision, ok := decisions[address]
-		if !ok {
-			continue
-		}
-		if decision.Class == ownershipClassConfirmedCapture {
-			continue
-		}
-		if !decisionEligibleForCapture(decision, self, members, placement) {
-			continue
-		}
-		if !routeTableCaptureAllowed(decision, self) {
-			continue
-		}
-		eligible[address] = true
-	}
-	out := make([]string, 0, len(eligible))
-	for addr := range eligible {
-		out = append(out, addr)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func desiredCaptureObservedOnSelf(decision ownershipDecision, self memberPlanInfo, members map[string]memberPlanInfo, placement PlacementDecision, observedSelfIPs map[string]bool) bool {
-	if !providerCaptureObservedOnSelf(decision, self, observedSelfIPs) {
-		return false
-	}
-	if standbyShouldReleaseCapture(self, placement) {
-		return false
-	}
-	if decision.Class == ownershipClassConfirmedCapture {
-		return true
-	}
-	return decisionEligibleForCapture(decision, self, members, placement)
-}
-
 func standbyShouldReleaseCapture(self memberPlanInfo, placement PlacementDecision) bool {
 	return !placement.Active &&
 		strings.TrimSpace(placement.ActiveNode) != "" &&
@@ -349,10 +270,8 @@ func decisionEligibleForCapture(decision ownershipDecision, self memberPlanInfo,
 		case "capture-not-desired", "local-router-self", "local-home-owner", "self-captured-secondary":
 			return false
 		case "fresh-home-owner":
-			if decision.Source == providerDiscoverySource {
-				if owner, ok := lookupMemberByNodeRef(members, decision.HomeOwnerNode); ok && samePlacementSite(self, owner) && !placement.Seize {
-					return false
-				}
+			if providerHomeNeedsSeize(decision, self, members) && !placement.Seize {
+				return false
 			}
 			return strings.TrimSpace(decision.HomeOwnerNode) != "" &&
 				strings.TrimSpace(decision.HomeOwnerNode) != strings.TrimSpace(self.NodeRef)
@@ -363,10 +282,8 @@ func decisionEligibleForCapture(decision ownershipDecision, self memberPlanInfo,
 		if strings.TrimSpace(decision.AdvertiseOwnerNode) == strings.TrimSpace(self.NodeRef) {
 			return false
 		}
-		if decision.Source == providerDiscoverySource {
-			if owner, ok := lookupMemberByNodeRef(members, decision.HomeOwnerNode); ok && samePlacementSite(self, owner) && !placement.Seize {
-				return false
-			}
+		if providerHomeNeedsSeize(decision, self, members) && !placement.Seize {
+			return false
 		}
 		return true
 	}
@@ -383,8 +300,25 @@ func samePlacementSite(a, b memberPlanInfo) bool {
 		strings.TrimSpace(a.Site) == strings.TrimSpace(b.Site)
 }
 
+// providerHomeNeedsSeize is the one same-site provider-home test shared by
+// direct capture eligibility, distributed capture selection, and initial
+// acquisition suppression. A same-site fresh provider home must not be
+// claimed until placement has explicitly entered seize; other ownership
+// sources deliberately remain eligible under their own rules.
+func providerHomeNeedsSeize(decision ownershipDecision, self memberPlanInfo, members map[string]memberPlanInfo) bool {
+	if strings.TrimSpace(decision.Source) != providerDiscoverySource {
+		return false
+	}
+	if decision.Class != ownershipClassRemoteHomeOwned &&
+		(decision.Class != ownershipClassStaleCapture || strings.TrimSpace(decision.SuppressionReason) != "fresh-home-owner") {
+		return false
+	}
+	owner, ok := lookupMemberByNodeRef(members, decision.HomeOwnerNode)
+	return ok && samePlacementSite(self, owner)
+}
+
 func routeTableCaptureAllowed(decision ownershipDecision, self memberPlanInfo) bool {
-	if effectiveCaptureStrategy("", captureStrategyValue(self.Capture)) != captureStrategyRouteTable {
+	if providerCaptureStrategy(self.Capture) != captureStrategyRouteTable {
 		return true
 	}
 	if decision.Class == ownershipClassLocalRouterSelf || decision.Class == ownershipClassLocalHomeOwned {
@@ -393,7 +327,7 @@ func routeTableCaptureAllowed(decision ownershipDecision, self memberPlanInfo) b
 	if strings.TrimSpace(decision.AdvertiseOwnerNode) == strings.TrimSpace(self.NodeRef) {
 		return false
 	}
-	nextHop := normalizeAddressString(strings.TrimSpace(self.CaptureTarget["nextHopIPAddress"]))
+	nextHop := normalizeAddressString(strings.TrimSpace(self.Capture.Target["nextHopIPAddress"]))
 	if nextHop == "" {
 		return true
 	}
@@ -413,213 +347,62 @@ func decisionHasProviderCaptureState(decision ownershipDecision) bool {
 	return state != "" && state != captureStateNone
 }
 
-func planCaptureActionPlans(in bgpDeliveryPlannerInput, candidates map[string]bgpTrapCandidate) ([]dynamicconfig.ActionPlan, map[string]bgpCaptureAssignment, int64, error) {
-	if in.Self.Capture.Type != "provider-secondary-ip" {
-		return nil, in.CaptureAssignments, in.CaptureAssignmentSeq, nil
+func planCaptureActionPlans(in bgpDeliveryPlannerInput) ([]dynamicconfig.ActionPlan, error) {
+	if in.Pool.Self.Capture.Type != "provider-secondary-ip" {
+		return nil, nil
 	}
-	claim := in.CaptureClaim
-	if strings.TrimSpace(claim.Generation) == "" {
-		claim = bgpCaptureClaimForPlacement(in.Self, in.Placement, in.Now)
-	}
-	candidates = filterUnsafeSecondaryIPCaptureCandidates(in, candidates)
-	plans, err := bgpProviderActionPlans(in.PoolName, in.Self.NodeRef, in.Spec, candidates, in.PreviousPlans, in.Profiles, in.ActionJournal, in.ObservedSelfCaptures, in.ObservedSelfIPsOK, in.ObservedSelfAt, in.ForwardingObserved, in.ForwardingEnabled, in.ForwardingObservedAt, in.SuppressDeprovision, standbyShouldReleaseCapture(in.Self, in.Placement), in.Now)
+	plans, err := bgpProviderActionPlans(in.Pool.Name, in.Pool.Self, in.Decisions, in.Provider.ActionHistory, in.Provider.Profiles, in.Ownership.ForwardingKnown, in.Ownership.ForwardingOn, in.Ownership.DiscoveryLastScanAt, in.Provider.SuppressDeprovision, in.Now)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, err
 	}
-	stampBGPClaimFenceActionPlans(plans, claim)
-	assignments, assignmentSeq := stampBGPAssignmentFenceActionPlans(plans, in.PoolName, in.Self, decisionsByAddress(in.Decisions), claim, in.CaptureAssignments, in.CaptureAssignmentSeq, in.Now)
-	stampBGPProviderTransitionFences(plans, in.Self, "", in.ActionJournal, in.ObservedSelfCaptures, in.ObservedSelfIPsOK, in.ObservedSelfAt)
-	plans = filterRetainedStaleCaptureUnassignPlans(plans, retainedStaleCaptureAddresses(in.Decisions, in.InstalledNextHops))
-	if !in.SuppressDeprovision {
-		observed, err := observedSelfStaleCaptureActionPlans(in, candidates)
-		if err != nil {
-			return nil, nil, 0, err
-		}
-		plans = append(plans, observed...)
-	}
-	return dedupeActionPlans(plans), assignments, assignmentSeq, nil
+	stampBGPAssignmentFenceActionPlans(plans, in.Pool, decisionsByAddress(in.Decisions), in.Placement, in.Provider.ActionHistory, in.Now)
+	stampBGPProviderTransitionFences(plans, in.Pool.Self, "", in.Provider.ActionHistory, in.Ownership.SelfCapturedIPs, in.Ownership.SelfInventoryKnown, in.Ownership.DiscoveryLastScanAt)
+	return plans, nil
 }
 
-func filterUnsafeSecondaryIPCaptureCandidates(in bgpDeliveryPlannerInput, candidates map[string]bgpTrapCandidate) map[string]bgpTrapCandidate {
-	if len(candidates) == 0 || effectiveCaptureStrategy("", captureStrategyValue(in.Self.Capture)) != captureStrategySecondaryIP {
-		return candidates
-	}
-	decisions := decisionsByAddress(in.Decisions)
-	out := make(map[string]bgpTrapCandidate, len(candidates))
-	for address, candidate := range candidates {
-		decision, ok := decisions[address]
-		if ok && suppressInitialSameSiteSecondaryIPCapture(decision, in.Self, in.Members, candidate) {
-			continue
-		}
-		out[address] = candidate
-	}
-	return out
-}
-
-func suppressInitialSameSiteSecondaryIPCapture(decision ownershipDecision, self memberPlanInfo, members map[string]memberPlanInfo, candidate bgpTrapCandidate) bool {
-	if candidate.ProtectOnly {
+// suppressInitialSameSiteSecondaryIPCapture retains the safety boundary from
+// the former candidate planner: a fresh home address on the same provider is
+// not a normal secondary-IP acquisition. A real placement seize may acquire
+// it only when there is no prior local capture plan to preserve. That narrow
+// exception lets a peer take over after a drained holder withdraws its marker,
+// without reviving a stale same-site plan while its provider transition is
+// still unresolved.
+func suppressInitialSameSiteSecondaryIPCapture(decision ownershipDecision, self memberPlanInfo, members map[string]memberPlanInfo, seize, hasPrevious bool) bool {
+	if decision.CaptureDisposition == dynamicconfig.CaptureProtectExisting || decisionHasProviderCaptureState(decision) || decision.CaptureSucceeded {
 		return false
 	}
+
 	sameProviderHome := false
 	switch decision.Class {
 	case ownershipClassRemoteHomeOwned:
 		sameProviderHome = strings.TrimSpace(decision.HomeProviderRef) != "" &&
 			strings.TrimSpace(decision.HomeProviderRef) == strings.TrimSpace(self.Capture.ProviderRef)
-		if !sameProviderHome && candidate.Seize {
-			return false
+		if sameProviderHome {
+			return !seize || hasPrevious
 		}
-		if !sameProviderHome && strings.TrimSpace(decision.Source) != providerDiscoverySource {
+		if seize || strings.TrimSpace(decision.Source) != providerDiscoverySource {
 			return false
 		}
 	case ownershipClassStaleCapture:
-		if strings.TrimSpace(decision.SuppressionReason) != "fresh-home-owner" {
-			return false
-		}
-		if strings.TrimSpace(decision.Source) != providerDiscoverySource {
+		if strings.TrimSpace(decision.SuppressionReason) != "fresh-home-owner" ||
+			strings.TrimSpace(decision.Source) != providerDiscoverySource {
 			return false
 		}
 		sameProviderHome = decisionHomeProviderRefMatches(decision, self.Capture.ProviderRef)
+		if sameProviderHome {
+			return true
+		}
 	default:
 		return false
 	}
-	if decisionHasProviderCaptureState(decision) || decision.CaptureSucceeded {
-		return false
-	}
-	if sameProviderHome {
-		return true
-	}
-	owner, ok := lookupMemberByNodeRef(members, decision.HomeOwnerNode)
-	if !ok || !samePlacementSite(self, owner) {
-		return false
-	}
-	return true
-}
 
-func retainedStaleCaptureAddresses(decisions []ownershipDecision, installedNextHops map[string][]string) map[string]bool {
-	out := map[string]bool{}
-	for _, decision := range decisions {
-		if !retainsStaleProviderCapture(decision, installedNextHops) {
-			continue
-		}
-		if address := normalizeAddressString(decision.Address); address != "" {
-			out[address] = true
-		}
-	}
-	return out
-}
-
-func retainsStaleProviderCapture(decision ownershipDecision, installedNextHops map[string][]string) bool {
-	if effectiveCaptureStrategy("", strings.TrimSpace(decision.CaptureStrategy)) != captureStrategySecondaryIP {
-		return false
-	}
-	if decisionIsCaptureNotDesiredStale(decision) {
-		return true
-	}
-	return decision.Class == ownershipClassStaleCapture &&
-		decision.CaptureSucceeded &&
-		strings.TrimSpace(decision.SuppressionReason) == "self-captured-secondary" &&
-		len(cleanStrings(installedNextHops[normalizeAddressString(decision.Address)])) > 0
-}
-
-func filterRetainedStaleCaptureUnassignPlans(plans []dynamicconfig.ActionPlan, retained map[string]bool) []dynamicconfig.ActionPlan {
-	if len(plans) == 0 || len(retained) == 0 {
-		return plans
-	}
-	out := plans[:0]
-	for _, plan := range plans {
-		if isProviderCaptureUnassignAction(plan.Action) &&
-			effectiveCaptureStrategy(plan.Provider, plan.Target["captureStrategy"]) == captureStrategySecondaryIP &&
-			retained[normalizeAddressString(plan.Target["address"])] {
-			continue
-		}
-		out = append(out, plan)
-	}
-	return out
-}
-
-func observedSelfStaleCaptureActionPlans(in bgpDeliveryPlannerInput, candidates map[string]bgpTrapCandidate) ([]dynamicconfig.ActionPlan, error) {
-	if !in.RIBObserved {
-		return nil, nil
-	}
-	desired := map[string]bool{}
-	for raw := range candidates {
-		address := normalizeAddressString(raw)
-		if address != "" {
-			desired[address] = true
-		}
-	}
-	poolPrefix, err := netip.ParsePrefix(strings.TrimSpace(in.Spec.Prefix))
-	if err != nil {
-		return nil, fmt.Errorf("parse pool prefix: %w", err)
-	}
-	poolPrefix = poolPrefix.Masked()
-	recentTrapCandidates := previousBGPTrapCandidateAddresses(in.PreviousPlans, poolPrefix)
-	var staleAddresses []string
-	staleSinceByAddress := map[string]time.Time{}
-	releaseStandby := standbyShouldReleaseCapture(in.Self, in.Placement)
-	for _, decision := range in.Decisions {
-		address := normalizeAddressString(decision.Address)
-		if address == "" || desired[address] {
-			continue
-		}
-		if releaseStandby && in.ObservedSelfCaptures[address] {
-			staleAddresses = append(staleAddresses, address)
-			staleSinceByAddress[address] = in.Now.UTC()
-			continue
-		}
-		if providerInventoryConflictReleasesLocalCapture(decision, in.Self.NodeRef) && in.ObservedSelfCaptures[address] {
-			staleSince, ok := in.ObservedStaleSince[address]
-			if !ok || staleSince.IsZero() || in.Now.UTC().Sub(staleSince.UTC()) < bgpTrapRIBMissingHold {
-				continue
-			}
-			staleAddresses = append(staleAddresses, address)
-			staleSinceByAddress[address] = staleSince
-			continue
-		}
-		if decision.Class != ownershipClassStaleCapture {
-			continue
-		}
-		if retainsStaleProviderCapture(decision, in.InstalledNextHops) {
-			continue
-		}
-		if strings.TrimSpace(decision.CaptureHolderNode) != "" && strings.TrimSpace(decision.CaptureHolderNode) != strings.TrimSpace(in.Self.NodeRef) {
-			continue
-		}
-		staleSince, ok := in.ObservedStaleSince[address]
-		if !ok || staleSince.IsZero() || in.Now.UTC().Sub(staleSince.UTC()) < bgpTrapRIBMissingHold {
-			continue
-		}
-		if candidate, ok := recentTrapCandidates[address]; ok && bgpTrapCandidateWithinMissingHold(candidate, in.Now) {
-			continue
-		}
-		staleAddresses = append(staleAddresses, address)
-		staleSinceByAddress[address] = staleSince
-	}
-	if len(staleAddresses) == 0 {
-		return nil, nil
-	}
-	profile, ok := in.Profiles[strings.TrimSpace(in.Self.Capture.ProviderRef)]
-	if !ok {
-		return nil, fmt.Errorf("CloudProviderProfile/%s not found for MobilityPool/%s member %q", in.Self.Capture.ProviderRef, in.PoolName, in.Self.NodeRef)
-	}
-	var plans []dynamicconfig.ActionPlan
-	for _, address := range staleAddresses {
-		unassign, err := providerUnassignActionPlan(in.PoolName, profile, in.Self.Capture, in.Self.CaptureTarget, address, in.Now)
-		if err != nil {
-			return nil, err
-		}
-		unassign = stampSingleBGPPathFence(unassign, address, bgpPathSigFromObservedSelfStale(address, staleSinceByAddress[address]), in.Self.NodeRef)
-		plans = append(plans, unassign)
-	}
-	return plans, nil
+	return providerHomeNeedsSeize(decision, self, members)
 }
 
 func bgpPathSigFromObservedSelfStale(address string, staleSince time.Time) string {
 	normalized := normalizeAddressString(address)
-	if prefix, err := netip.ParsePrefix(normalized); err == nil && prefix.Addr().Is4() {
+	if prefix, ok := parseIPv4AddressOrPrefix(normalized); ok {
 		normalized = prefix.Masked().String()
-	} else if addr, err := netip.ParseAddr(normalized); err == nil && addr.Is4() {
-		normalized = netip.PrefixFrom(addr, 32).String()
 	}
 	generation := staleSince.UTC().Format(time.RFC3339Nano)
 	return "deprovision:" + normalized + ":observed-self-stale:since=" + generation

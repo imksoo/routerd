@@ -24,10 +24,9 @@ a routerd-specific control plane:
 
 - event federation carries observed/expired/heartbeat facts;
 - the mobility controller projects those events into `AddressLease` rows;
-- the planner lowers leases into `AddressMobilityDomain`,
-  `RemoteAddressClaim`, provider `ActionPlan`s, `captureEpoch`, and
-  `ownershipEpoch` state;
-- SAM lowers generated claims into routes, proxy-ARP, and provider secondary-IP
+- the planner lowers leases into a legacy mobility-domain/claim resource graph,
+  provider `ActionPlan`s, `captureEpoch`, and `ownershipEpoch` state;
+- SAM lowers generated legacy resources into routes, proxy-ARP, and provider secondary-IP
   actions;
 - the provider-action controller approves/executes cloud mutations.
 
@@ -143,7 +142,7 @@ The intended steady-state mapping is:
 | expired/released event | local `/32` withdraw |
 | `staticOwnedAddresses` | static local `/32` advertise by the owning member |
 | F3 handover | release/withdraw barrier, then new owner advertise |
-| `RemoteAddressClaim` delivery route | imported BGP `/32` FIB route |
+| legacy claim delivery route | imported BGP `/32` FIB route |
 | capture placement active member | path preference / origin eligibility |
 | `ownershipEpoch`/`captureEpoch` for overlay routing | best-path view and optional route metadata |
 | provider secondary-IP action | background fabric-ingress reconciliation |

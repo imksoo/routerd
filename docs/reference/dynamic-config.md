@@ -22,7 +22,10 @@ approval, and executor-plugin gates.
 ## DynamicConfigPart
 
 `DynamicConfigPart` is one validated runtime fragment from a dynamic source.
-The source can contribute normal `api.Resource` objects and directives.
+The source can contribute normal `api.Resource` objects and directives. Mobility
+controllers additionally persist the typed `mobilityDataplane` plan,
+`fibVerdicts`, and fact-side `arpObserverIntents`; those are controller-owned
+outputs, not plugin-authored resources.
 
 ```yaml
 apiVersion: config.routerd.net/v1alpha1
@@ -36,19 +39,14 @@ spec:
   expiresAt: "2026-05-29T12:05:00Z"
   digest: sha256:...
   resources:
-    - apiVersion: hybrid.routerd.net/v1alpha1
-      kind: RemoteAddressClaim
-      metadata: { name: app-10-0-1-123 }
-      spec:
-        domainRef: cloudedge-same-subnet
-        address: 10.0.1.123/32
-        ownerSide: cloud
-        capture: { type: provider-secondary-ip, providerRef: oci-prod, providerMode: vnic-private-ip, nicRef: ocid1.vnic.oc1..example }
-        delivery: { peerRef: cloud-main, mode: route, tunnelInterface: wg-hybrid }
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata: { name: cloud-app-static-fallback }
+      spec: { destination: 10.0.1.123/32, gateway: 192.0.2.1 }
   directives:
     - op: mask
       target: { apiVersion: net.routerd.net/v1alpha1, kind: IPv4Route, name: cloud-app-static-fallback }
-      reason: "RemoteAddressClaim/app-10-0-1-123 is active"
+      reason: "provider inventory confirms the dynamic route"
 ```
 
 | Field | Meaning |

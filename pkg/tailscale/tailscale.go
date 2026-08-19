@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/stringutil"
+
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -139,7 +141,7 @@ func ParseStatusJSON(data []byte) (Status, error) {
 		if LastSeenAfter(right.LastSeen, left.LastSeen) {
 			return false
 		}
-		return strings.ToLower(firstNonEmpty(left.HostName, left.DNSName, left.ID)) < strings.ToLower(firstNonEmpty(right.HostName, right.DNSName, right.ID))
+		return strings.ToLower(stringutil.FirstNonBlank(left.HostName, left.DNSName, left.ID)) < strings.ToLower(stringutil.FirstNonBlank(right.HostName, right.DNSName, right.ID))
 	})
 	return status, nil
 }
@@ -170,7 +172,7 @@ func RecordMetrics(ctx context.Context, resourceName string, status Status, now 
 		}
 		handshakeAge.Record(ctx, age, metric.WithAttributes(
 			attribute.String("routerd.tailscale.node", resourceName),
-			attribute.String("routerd.tailscale.peer", firstNonEmpty(peer.HostName, peer.DNSName, peer.ID)),
+			attribute.String("routerd.tailscale.peer", stringutil.FirstNonBlank(peer.HostName, peer.DNSName, peer.ID)),
 		))
 	}
 }
@@ -182,13 +184,4 @@ func LastSeenAfter(left, right string) bool {
 		return left != "" && right == ""
 	}
 	return leftTime.After(rightTime)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }

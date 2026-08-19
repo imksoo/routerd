@@ -683,7 +683,6 @@ type BGPPeerSpec struct {
 	RouterRef               string                `yaml:"routerRef" json:"routerRef"`
 	PeerASN                 uint32                `yaml:"peerASN" json:"peerASN" jsonschema:"minimum=1"`
 	Peers                   []string              `yaml:"peers,omitempty" json:"peers,omitempty"`
-	PeersFrom               []BGPPeersSourceSpec  `yaml:"peersFrom,omitempty" json:"peersFrom,omitempty"`
 	PassiveMode             bool                  `yaml:"passiveMode,omitempty" json:"passiveMode,omitempty"`
 	Password                string                `yaml:"password,omitempty" json:"password,omitempty"`
 	PasswordFrom            SecretValueSourceSpec `yaml:"passwordFrom,omitempty" json:"passwordFrom,omitempty"`
@@ -696,11 +695,6 @@ type BGPPeerSpec struct {
 	Communities             BGPCommunitiesSpec    `yaml:"communities,omitempty" json:"communities,omitempty"`
 	BFD                     string                `yaml:"bfd,omitempty" json:"bfd,omitempty"`
 	When                    ResourceWhenSpec      `yaml:"when,omitempty" json:"when,omitempty"`
-}
-
-type BGPPeersSourceSpec struct {
-	Resource string `yaml:"resource" json:"resource"`
-	Optional bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
 }
 
 // BGPDynamicPeer represents an admission/listen rule for dynamic BGP
@@ -734,7 +728,6 @@ type SAMTransportProfileSpec struct {
 	Encryption        string                        `yaml:"encryption,omitempty" json:"encryption,omitempty" jsonschema:"enum=,enum=none,enum=wireguard"`
 	InnerPrefix       string                        `yaml:"innerPrefix" json:"innerPrefix"`
 	AddressingMode    string                        `yaml:"addressingMode,omitempty" json:"addressingMode,omitempty" jsonschema:"enum=,enum=edge-index,enum=pair-stable"`
-	TopologyNodeRefs  []string                      `yaml:"topologyNodeRefs,omitempty" json:"topologyNodeRefs,omitempty"`
 	UnderlayInterface string                        `yaml:"underlayInterface" json:"underlayInterface"`
 	LocalEndpoint     string                        `yaml:"localEndpoint,omitempty" json:"localEndpoint,omitempty"`
 	LocalEndpointFrom StatusValueSourceSpec         `yaml:"localEndpointFrom,omitempty" json:"localEndpointFrom,omitempty"`
@@ -743,52 +736,33 @@ type SAMTransportProfileSpec struct {
 	BGP               SAMTransportBGPProfileSpec    `yaml:"bgp" json:"bgp"`
 	PeersFrom         []SAMTransportPeersSourceSpec `yaml:"peersFrom,omitempty" json:"peersFrom,omitempty"`
 	PublishPeerGroup  bool                          `yaml:"publishPeerGroup,omitempty" json:"publishPeerGroup,omitempty"`
-	Peers             []SAMTransportPeerSpec        `yaml:"peers,omitempty" json:"peers,omitempty"`
 }
 
 type SAMTransportPeersSourceSpec struct {
 	Resource string `yaml:"resource" json:"resource"`
 	Optional bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
+	// NodeRefs narrows a static SAMNodeSet (or an RR/enrollment source) to the
+	// transport adjacencies this profile should create. The source remains the
+	// sole owner of endpoint identity and complete topology; this is only a
+	// local adjacency overlay.
+	NodeRefs []string `yaml:"nodeRefs,omitempty" json:"nodeRefs,omitempty"`
 }
 
+// SAMPeerGroupSpec is a runtime payload published by SAMTransportProfile and
+// consumed through the peer-group sync cache. It is intentionally not an
+// operator-authored top-level resource kind.
 type SAMPeerGroupSpec struct {
 	Peers []SAMTransportPeerSpec `yaml:"peers" json:"peers"`
 }
 
-// SAMRRSet declares the intended hub/RR set. It lists RR members and shared
-// delivery metadata, but never lists leaves. Transport credentials are optional
-// and mode-specific; SAMTransportProfile chooses whether the set is consumed as
-// plain IPIP/GRE, WireGuard-underlay transport, or a future mode.
+// SAMRRSet is the runtime enrollment snapshot returned to one admitted leaf.
+// It is intentionally not a static topology authoring surface: the RR identity
+// and transport material are projected from the policy's SAMNodeSet reference.
+// Keeping the snapshot typed makes the enrollment/dynamic-config boundary
+// explicit without recreating a second member model.
 type SAMRRSetSpec struct {
-	EnrollmentPolicyRef string              `yaml:"enrollmentPolicyRef" json:"enrollmentPolicyRef"`
-	MobilityPoolRefs    []string            `yaml:"mobilityPoolRefs,omitempty" json:"mobilityPoolRefs,omitempty"`
-	MobilityPrefixes    []string            `yaml:"mobilityPrefixes,omitempty" json:"mobilityPrefixes,omitempty"`
-	RouteAdmission      BGPImportPolicySpec `yaml:"routeAdmission,omitempty" json:"routeAdmission,omitempty"`
-	Members             []SAMRRSetMember    `yaml:"members" json:"members"`
-}
-
-type SAMRRSetMember struct {
-	NodeRef string `yaml:"nodeRef" json:"nodeRef"`
-	// Endpoint is the member's generic underlay endpoint. For
-	// encryption=none this is the remote endpoint used by ipip/gre. For
-	// encryption=wireguard, the WireGuard block carries the UDP endpoint and
-	// this field remains the transport endpoint consumed by SAMTransportProfile.
-	Endpoint      string                      `yaml:"endpoint" json:"endpoint"`
-	TunnelAddress string                      `yaml:"tunnelAddress" json:"tunnelAddress"`
-	WireGuard     SAMRRSetMemberWireGuardSpec `yaml:"wireGuard,omitempty" json:"wireGuard,omitempty"`
-	BGP           SAMRRSetMemberBGPSpec       `yaml:"bgp,omitempty" json:"bgp,omitempty"`
-}
-
-type SAMRRSetMemberWireGuardSpec struct {
-	PublicKey           string   `yaml:"publicKey,omitempty" json:"publicKey,omitempty"`
-	Endpoint            string   `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
-	AllowedIPs          []string `yaml:"allowedIPs,omitempty" json:"allowedIPs,omitempty"`
-	PersistentKeepalive int      `yaml:"persistentKeepalive,omitempty" json:"persistentKeepalive,omitempty" jsonschema:"minimum=0,maximum=65535"`
-}
-
-type SAMRRSetMemberBGPSpec struct {
-	ASN      uint32 `yaml:"asn,omitempty" json:"asn,omitempty" jsonschema:"minimum=1"`
-	RouterID string `yaml:"routerID,omitempty" json:"routerID,omitempty"`
+	EnrollmentPolicyRef string        `yaml:"enrollmentPolicyRef" json:"enrollmentPolicyRef"`
+	Nodes               []SAMNodeSpec `yaml:"nodes" json:"nodes"`
 }
 
 // SAMEnrollmentPolicy authorizes leaf-side enrollment claims for SAM. It is the
@@ -796,8 +770,14 @@ type SAMRRSetMemberBGPSpec struct {
 // MobilityPool/direct mobility prefixes, and optional transport-specific
 // material.
 type SAMEnrollmentPolicySpec struct {
-	TransportProfileRef   string                        `yaml:"transportProfileRef" json:"transportProfileRef"`
-	RRSetRef              string                        `yaml:"rrSetRef,omitempty" json:"rrSetRef,omitempty"`
+	TransportProfileRef string `yaml:"transportProfileRef" json:"transportProfileRef"`
+	RRSetRef            string `yaml:"rrSetRef,omitempty" json:"rrSetRef,omitempty"`
+	// RRNodeSetRef is the sole static source for RR identity and topology.
+	// The enrollment server selects route-reflector nodes from its local NodeSet
+	// and returns them as the runtime SAMRRSet named by RRSetRef. It belongs only
+	// to an enrollment-serving policy; a leaf sends a remote claim through
+	// SAMEnrollmentClient and does not author a local policy or NodeSet.
+	RRNodeSetRef          string                        `yaml:"rrNodeSetRef,omitempty" json:"rrNodeSetRef,omitempty"`
 	JoinTokenFrom         SecretValueSourceSpec         `yaml:"joinTokenFrom,omitempty" json:"joinTokenFrom,omitempty"`
 	JoinAudience          string                        `yaml:"joinAudience,omitempty" json:"joinAudience,omitempty"`
 	AllowedLeafIDs        SAMEnrollmentLeafIDPolicySpec `yaml:"allowedLeafIDs,omitempty" json:"allowedLeafIDs,omitempty"`
@@ -911,24 +891,6 @@ type SAMSubnetShard struct {
 	AssignedNodes []string `yaml:"assignedNodes" json:"assignedNodes"`
 }
 
-type MobilityMemberSetSpec struct {
-	Members []MobilityMemberSetMember `yaml:"members" json:"members"`
-}
-
-type MobilityMemberSetMember struct {
-	NodeRef              string                         `yaml:"nodeRef" json:"nodeRef"`
-	Site                 string                         `yaml:"site" json:"site"`
-	Role                 string                         `yaml:"role" json:"role" jsonschema:"enum=onprem,enum=cloud"`
-	ProfileRef           string                         `yaml:"profileRef,omitempty" json:"profileRef,omitempty"`
-	Capture              MobilityMemberCapture          `yaml:"capture,omitempty" json:"capture,omitempty"`
-	Delivery             MobilityMemberDelivery         `yaml:"delivery,omitempty" json:"delivery,omitempty"`
-	DeliveryTo           []MobilityMemberDeliveryTarget `yaml:"deliveryTo,omitempty" json:"deliveryTo,omitempty"`
-	StaticOwnedAddresses []string                       `yaml:"staticOwnedAddresses,omitempty" json:"staticOwnedAddresses,omitempty"`
-	OwnershipDiscovery   MobilityOwnershipDiscovery     `yaml:"ownershipDiscovery,omitempty" json:"ownershipDiscovery,omitempty"`
-	Placement            MobilityMemberPlacement        `yaml:"placement,omitempty" json:"placement,omitempty"`
-	Maintenance          MobilityMemberMaintenance      `yaml:"maintenance,omitempty" json:"maintenance,omitempty"`
-}
-
 // SAMNodeSetSpec is the shared node identity registry for write-once SAM
 // fabrics. Follow-on controllers derive EventPeer, WireGuardPeer,
 // SAMTransportProfile peers/topology, and MobilityPool members from this common
@@ -949,11 +911,20 @@ type SAMNodeSpec struct {
 	WireGuard       SAMNodeWireGuardSpec      `yaml:"wireGuard,omitempty" json:"wireGuard,omitempty"`
 	Placement       MobilityMemberPlacement   `yaml:"placement,omitempty" json:"placement,omitempty"`
 	Maintenance     MobilityMemberMaintenance `yaml:"maintenance,omitempty" json:"maintenance,omitempty"`
+	// MaxSecondaryIPs is the shared provider-capture capacity for this node.
+	// It belongs with identity/topology because distributed capture must see the
+	// same capacity for every member; provider-local capture details stay in a
+	// MobilityPool self overlay.
+	MaxSecondaryIPs int `yaml:"maxSecondaryIPs,omitempty" json:"maxSecondaryIPs,omitempty" jsonschema:"minimum=0"`
 }
 
 type SAMNodeWireGuardSpec struct {
-	PublicKey           string   `yaml:"publicKey,omitempty" json:"publicKey,omitempty"`
-	Endpoint            string   `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
+	PublicKey string `yaml:"publicKey,omitempty" json:"publicKey,omitempty"`
+	Endpoint  string `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
+	// TransportEndpoint is the inner endpoint that a WireGuard-protected SAM
+	// tunnel targets. It is distinct from Endpoint, which is the WireGuard UDP
+	// socket, and from SAMEndpoint, which is used by unencrypted transports.
+	TransportEndpoint   string   `yaml:"transportEndpoint,omitempty" json:"transportEndpoint,omitempty"`
 	AllowedIPs          []string `yaml:"allowedIPs,omitempty" json:"allowedIPs,omitempty"`
 	PersistentKeepalive int      `yaml:"persistentKeepalive,omitempty" json:"persistentKeepalive,omitempty" jsonschema:"minimum=0,maximum=65535"`
 }
@@ -982,19 +953,9 @@ type SAMTransportBFDSpec struct {
 }
 
 type SAMTransportPeerSpec struct {
-	NodeRef            string                       `yaml:"nodeRef" json:"nodeRef"`
-	RemoteEndpoint     string                       `yaml:"remoteEndpoint,omitempty" json:"remoteEndpoint,omitempty"`
-	RemoteEndpointFrom StatusValueSourceSpec        `yaml:"remoteEndpointFrom,omitempty" json:"remoteEndpointFrom,omitempty"`
-	Override           SAMTransportPeerOverrideSpec `yaml:"override,omitempty" json:"override,omitempty"`
-}
-
-type SAMTransportPeerOverrideSpec struct {
-	TunnelInterface   string `yaml:"tunnelInterface,omitempty" json:"tunnelInterface,omitempty"`
-	BGPPeer           string `yaml:"bgpPeer,omitempty" json:"bgpPeer,omitempty"`
-	EndpointRoute     string `yaml:"endpointRoute,omitempty" json:"endpointRoute,omitempty"`
-	LocalInner        string `yaml:"localInner,omitempty" json:"localInner,omitempty"`
-	RemoteInner       string `yaml:"remoteInner,omitempty" json:"remoteInner,omitempty"`
-	UnderlayInterface string `yaml:"underlayInterface,omitempty" json:"underlayInterface,omitempty"`
+	NodeRef            string                `yaml:"nodeRef" json:"nodeRef"`
+	RemoteEndpoint     string                `yaml:"remoteEndpoint,omitempty" json:"remoteEndpoint,omitempty"`
+	RemoteEndpointFrom StatusValueSourceSpec `yaml:"remoteEndpointFrom,omitempty" json:"remoteEndpointFrom,omitempty"`
 }
 
 type BFDSpec struct {
@@ -1701,12 +1662,6 @@ type HybridRouteInstall struct {
 	Metric int    `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
 }
 
-type AddressMobilityDomainSpec struct {
-	Prefix  string `yaml:"prefix" json:"prefix"`
-	Mode    string `yaml:"mode" json:"mode" jsonschema:"enum=selective-address"`
-	PeerRef string `yaml:"peerRef,omitempty" json:"peerRef,omitempty"`
-}
-
 // EventGroupSpec declares a CloudEdge Event Federation bus identity (ADR 0006).
 //
 // An EventGroup names a cross-node event bus that routerd nodes share. It is the
@@ -1866,12 +1821,12 @@ type FederationSLOSubscription struct {
 	MaxFailedRuns int `yaml:"maxFailedRuns,omitempty" json:"maxFailedRuns,omitempty" jsonschema:"minimum=0"`
 }
 
-// MobilityPoolSpec declares a selective-address mobility pool for the CloudEdge
-// Mobility Control Plane. It is the ONLY operator-authored Kind in the
-// mobility plane: the operator declares the /24, which routerd nodes are members
-// and at which site, and the capture/authority policy ONCE. The system then
-// derives BGP /32 advertisements and provider trap action plans from static
-// intent and observed-client federation events.
+// MobilityPoolSpec declares the per-node capture and ownership overlay for a
+// selective-address mobility pool. Static membership, site, role, placement,
+// maintenance, and capacity are authored once in SAMNodeSet; this resource
+// imports that topology and supplies only local provider/L2 details. The system
+// derives BGP /32 advertisements and provider trap action plans from the typed
+// topology, local intent, and observed-client federation events.
 type MobilityPoolSpec struct {
 	// Prefix is the CIDR managed by this pool, e.g. 10.88.60.0/24 (required).
 	Prefix string `yaml:"prefix" json:"prefix"`
@@ -1885,36 +1840,17 @@ type MobilityPoolSpec struct {
 	// Profiles defines reusable capture/discovery fragments. Members opt in
 	// with profileRef and can override any concrete field locally.
 	Profiles MobilityPoolProfiles `yaml:"profiles,omitempty" json:"profiles,omitempty"`
-	// Mode selects the mobility scheme. Only "selective-address" is supported in
-	// the MVP; empty defaults to it.
-	Mode string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=selective-address"`
-	// MembersFrom imports shared node/site/role membership from MobilityMemberSet
-	// resources. Imported members are merged before spec.members, so a local
-	// member entry can add capture/discovery details or override shared fields.
-	MembersFrom []MobilityMembersSourceSpec `yaml:"membersFrom,omitempty" json:"membersFrom,omitempty"`
-	// PublishMemberSet emits a MobilityMemberSet DynamicConfigPart from the
-	// pool's identity fields for distribution to leaf routers.
-	PublishMemberSet bool `yaml:"publishMemberSet,omitempty" json:"publishMemberSet,omitempty"`
-	// Members maps routerd nodes to the site they serve within the pool
-	// (required unless membersFrom is set, at least one after resolution).
-	Members []MobilityPoolMember `yaml:"members,omitempty" json:"members,omitempty"`
+	// MembersFrom imports the required shared topology from SAMNodeSet resources.
+	// A MobilityPool never declares topology directly.
+	MembersFrom []MobilityMembersSourceSpec `yaml:"membersFrom,omitempty" json:"membersFrom,omitempty" jsonschema:"required,minItems=1"`
+	// Members carries local capture/ownership overlays keyed by a nodeRef from
+	// MembersFrom. It cannot set site, role, placement, maintenance, or capacity.
+	// A router may overlay only its EventGroup local node.
+	Members []MobilityPoolMemberOverlay `yaml:"members,omitempty" json:"members,omitempty"`
 	// StaticHandovers declares planned static-owned address movement from an
 	// on-prem member to another member. The controller releases the from member
 	// first and only projects the to member after observing the release event.
 	StaticHandovers []MobilityStaticHandover `yaml:"staticHandovers,omitempty" json:"staticHandovers,omitempty"`
-	// CapturePolicy declares how non-owner sites capture an address that has
-	// moved.
-	CapturePolicy MobilityCapturePolicy `yaml:"capturePolicy,omitempty" json:"capturePolicy,omitempty"`
-	// IPOwnershipPolicy retains high-level failover intent for BGP-mode
-	// mobility. Ownership itself is represented by BGP best-path.
-	IPOwnershipPolicy MobilityIPOwnershipPolicy `yaml:"ipOwnershipPolicy,omitempty" json:"ipOwnershipPolicy,omitempty"`
-	// DeliveryPolicy selects the pool-level delivery control plane. Empty means
-	// bgp; owned /32s are advertised and remote /32s are learned through BGP.
-	DeliveryPolicy MobilityDeliveryPolicy `yaml:"deliveryPolicy,omitempty" json:"deliveryPolicy,omitempty"`
-	// Authority declares who arbitrates ownership. The MVP supports static
-	// arbitration only. Empty means every node deterministically projects the
-	// shared event stream locally.
-	Authority MobilityAuthority `yaml:"authority,omitempty" json:"authority,omitempty"`
 }
 
 type MobilityMembersSourceSpec struct {
@@ -1936,9 +1872,27 @@ type MobilityCloudCaptureProfile struct {
 	OwnershipDiscovery MobilityOwnershipDiscovery `yaml:"ownershipDiscovery,omitempty" json:"ownershipDiscovery,omitempty"`
 }
 
-// MobilityPoolMember binds a routerd node to a site within a MobilityPool. Both
-// fields are required; NodeRef must be unique within the pool.
-type MobilityPoolMember struct {
+// MobilityPoolMemberOverlay is the declared, local-only portion of a
+// MobilityPool member. Its NodeRef must refer to a node imported from
+// MembersFrom. Identity and topology live exclusively in SAMNodeSet.
+type MobilityPoolMemberOverlay struct {
+	// NodeRef selects the local member imported from SAMNodeSet.
+	NodeRef string `yaml:"nodeRef" json:"nodeRef"`
+	// ProfileRef selects a profile from spec.profiles.cloudCaptures.
+	ProfileRef string `yaml:"profileRef,omitempty" json:"profileRef,omitempty"`
+	// Capture declares the local capture mechanism.
+	Capture MobilityMemberCapture `yaml:"capture,omitempty" json:"capture,omitempty"`
+	// StaticOwnedAddresses declares local on-prem addresses that do not depend
+	// on observed-client federation events.
+	StaticOwnedAddresses []string `yaml:"staticOwnedAddresses,omitempty" json:"staticOwnedAddresses,omitempty"`
+	// OwnershipDiscovery declares local provider or L2 observations.
+	OwnershipDiscovery MobilityOwnershipDiscovery `yaml:"ownershipDiscovery,omitempty" json:"ownershipDiscovery,omitempty"`
+}
+
+// ResolvedMobilityPoolMember is the resolved controller-only member shape. It is
+// assembled from a SAMNodeSet identity/topology entry and a local overlay; it
+// is not a MobilityPool configuration surface.
+type ResolvedMobilityPoolMember struct {
 	// NodeRef is the routerd node identity (matches federation sourceNode).
 	NodeRef string `yaml:"nodeRef" json:"nodeRef"`
 	// Site is the location label the node serves within the pool.
@@ -1948,17 +1902,11 @@ type MobilityPoolMember struct {
 	Role string `yaml:"role" json:"role" jsonschema:"enum=onprem,enum=cloud"`
 	// ProfileRef selects a profile from spec.profiles.cloudCaptures. It is a
 	// local shorthand for the node's capture/discovery details; remote members
-	// should normally remain identity-only.
+	// must remain identity-only.
 	ProfileRef string `yaml:"profileRef,omitempty" json:"profileRef,omitempty"`
 	// Capture declares how this member captures addresses currently owned by
 	// another site.
 	Capture MobilityMemberCapture `yaml:"capture,omitempty" json:"capture,omitempty"`
-	// Delivery is retained for hand-authored SAM compatibility. BGP-mode
-	// MobilityPool delivery does not require per-member delivery routes.
-	Delivery MobilityMemberDelivery `yaml:"delivery,omitempty" json:"delivery,omitempty"`
-	// DeliveryTo optionally selects delivery per owner identity. It is retained
-	// for SAM compatibility; BGP-mode mobility does not lower per-lease routes.
-	DeliveryTo []MobilityMemberDeliveryTarget `yaml:"deliveryTo,omitempty" json:"deliveryTo,omitempty"`
 	// StaticOwnedAddresses declares IPv4 /32 addresses in the pool that this
 	// member owns without relying on observed-client federation events. It is
 	// intended for on-prem static-IP segments.
@@ -2019,6 +1967,9 @@ type MobilityOwnershipDiscovery struct {
 	// LeaseTTL controls the emitted observed event expiry. Empty defaults to the
 	// controller default.
 	LeaseTTL string `yaml:"leaseTTL,omitempty" json:"leaseTTL,omitempty"`
+	// StoppedInstancePolicy controls whether a stopped provider instance remains
+	// an ownership fact. Empty and hold retain the fact; release expires it.
+	StoppedInstancePolicy string `yaml:"stoppedInstancePolicy,omitempty" json:"stoppedInstancePolicy,omitempty" jsonschema:"enum=,enum=hold,enum=release"`
 	// AllowEmptyAfter lets passive on-prem discovery declare an empty segment
 	// complete after the sources have been armed for this duration. Empty keeps
 	// zero-client passive discovery pending.
@@ -2072,24 +2023,14 @@ type MobilityOwnershipDiscoverySource struct {
 	LeaseTTL string `yaml:"leaseTTL,omitempty" json:"leaseTTL,omitempty"`
 }
 
-type MobilityIPOwnershipPolicy struct {
-	Type                  string   `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=,enum=centralized"`
-	PreferNodes           []string `yaml:"preferNodes,omitempty" json:"preferNodes,omitempty"`
-	AutoFailover          bool     `yaml:"autoFailover,omitempty" json:"autoFailover,omitempty"`
-	StoppedInstancePolicy string   `yaml:"stoppedInstancePolicy,omitempty" json:"stoppedInstancePolicy,omitempty" jsonschema:"enum=,enum=hold,enum=release"`
-}
-
 type MobilityMemberCapture struct {
-	Type         string `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=provider-secondary-ip,enum=proxy-arp"`
-	ProviderRef  string `yaml:"providerRef,omitempty" json:"providerRef,omitempty"`
-	ProviderMode string `yaml:"providerMode,omitempty" json:"providerMode,omitempty"`
-	// CaptureStrategy selects the provider/on-link capture mechanism. The
-	// legacy strategy field remains accepted as an alias.
-	CaptureStrategy    string `yaml:"captureStrategy,omitempty" json:"captureStrategy,omitempty" jsonschema:"enum=,enum=proxy-arp,enum=secondary-ip,enum=route-table,enum=addr-add"`
-	Strategy           string `yaml:"strategy,omitempty" json:"strategy,omitempty" jsonschema:"enum=,enum=secondary-ip,enum=route-table"`
-	NICRef             string `yaml:"nicRef,omitempty" json:"nicRef,omitempty"`
-	ConfigureOSAddress bool   `yaml:"configureOSAddress,omitempty" json:"configureOSAddress,omitempty"`
-	Interface          string `yaml:"interface,omitempty" json:"interface,omitempty"`
+	Type        string `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=provider-secondary-ip,enum=proxy-arp"`
+	ProviderRef string `yaml:"providerRef,omitempty" json:"providerRef,omitempty"`
+	// CaptureStrategy opts a provider-secondary-ip capture into route-table
+	// delivery. Omit it for the type-derived secondary-IP or proxy-ARP paths.
+	CaptureStrategy string `yaml:"captureStrategy,omitempty" json:"captureStrategy,omitempty" jsonschema:"enum=,enum=route-table"`
+	NICRef          string `yaml:"nicRef,omitempty" json:"nicRef,omitempty"`
+	Interface       string `yaml:"interface,omitempty" json:"interface,omitempty"`
 	// SourceAddress is an optional local IPv4 address used by proxy-ARP capture
 	// members as the capture-interface sender address. In BGP delivery mode,
 	// routerd lowers it to a /32 IPv4StaticAddress and uses it as the capture
@@ -2105,9 +2046,12 @@ type MobilityMemberCapture struct {
 	// CIDRs inside the mobility prefix. Use this for local-only infrastructure
 	// addresses such as a PVE Simple SDN gateway address that must not be
 	// answered across the extended segment.
-	ExcludeAddresses []string          `yaml:"excludeAddresses,omitempty" json:"excludeAddresses,omitempty"`
-	GratuitousARP    bool              `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
-	ActiveWhen       CaptureActiveWhen `yaml:"activeWhen,omitempty" json:"activeWhen,omitempty"`
+	ExcludeAddresses []string `yaml:"excludeAddresses,omitempty" json:"excludeAddresses,omitempty"`
+	GratuitousARP    bool     `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
+	// ActiveWhen gates on-prem proxy-ARP capture only. Cloud
+	// provider-secondary-ip capture rejects this field because a local VRRP
+	// role cannot safely gate provider assignment.
+	ActiveWhen CaptureActiveWhen `yaml:"activeWhen,omitempty" json:"activeWhen,omitempty"`
 	// Target carries non-secret provider target hints such as region,
 	// compartmentId, resourceGroup, nicName, or ipConfigName. It is copied to
 	// provider ActionPlan.target; credentials and tokens do not belong here.
@@ -2123,44 +2067,6 @@ type CaptureActiveWhen struct {
 	VirtualAddressRef string `yaml:"virtualAddressRef,omitempty" json:"virtualAddressRef,omitempty"`
 }
 
-type MobilityMemberDelivery struct {
-	PeerRef         string `yaml:"peerRef,omitempty" json:"peerRef,omitempty"`
-	Mode            string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=route"`
-	TunnelInterface string `yaml:"tunnelInterface,omitempty" json:"tunnelInterface,omitempty"`
-}
-
-type MobilityMemberDeliveryTarget struct {
-	NodeRef         string `yaml:"nodeRef,omitempty" json:"nodeRef,omitempty"`
-	Site            string `yaml:"site,omitempty" json:"site,omitempty"`
-	Role            string `yaml:"role,omitempty" json:"role,omitempty" jsonschema:"enum=,enum=onprem,enum=cloud"`
-	PeerRef         string `yaml:"peerRef" json:"peerRef"`
-	Mode            string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=route"`
-	TunnelInterface string `yaml:"tunnelInterface,omitempty" json:"tunnelInterface,omitempty"`
-}
-
-// MobilityCapturePolicy declares how non-owner sites capture a moved address.
-type MobilityCapturePolicy struct {
-	// Mode selects the capture behavior. Only "all-non-owner-sites" is supported
-	// in the MVP; empty defaults to it.
-	Mode string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=all-non-owner-sites"`
-}
-
-// MobilityDeliveryPolicy selects the mobility delivery control plane.
-type MobilityDeliveryPolicy struct {
-	// Mode selects delivery. Empty means bgp delivery.
-	Mode string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=bgp"`
-}
-
-// MobilityAuthority declares who arbitrates address ownership in the pool.
-type MobilityAuthority struct {
-	// Mode selects the arbitration scheme. Only "static" is supported in the
-	// MVP; empty defaults to it.
-	Mode string `yaml:"mode,omitempty" json:"mode,omitempty" jsonschema:"enum=,enum=static"`
-	// NodeRef optionally names the arbitrating node. When set, it must be one of
-	// the member NodeRefs.
-	NodeRef string `yaml:"nodeRef,omitempty" json:"nodeRef,omitempty"`
-}
-
 type CloudProviderProfileSpec struct {
 	Provider       string       `yaml:"provider" json:"provider" jsonschema:"enum=azure,enum=aws,enum=oci,enum=gcp"`
 	SubscriptionID string       `yaml:"subscriptionID,omitempty" json:"subscriptionID,omitempty"`
@@ -2172,38 +2078,6 @@ type CloudProviderProfileSpec struct {
 type ProviderAuth struct {
 	Mode    string `yaml:"mode" json:"mode" jsonschema:"enum=external-command"`
 	Command string `yaml:"command,omitempty" json:"command,omitempty"`
-}
-
-type RemoteAddressClaimSpec struct {
-	DomainRef string          `yaml:"domainRef" json:"domainRef"`
-	Address   string          `yaml:"address" json:"address"`
-	OwnerSide string          `yaml:"ownerSide" json:"ownerSide" jsonschema:"enum=cloud,enum=onprem"`
-	Capture   AddressCapture  `yaml:"capture" json:"capture"`
-	Delivery  AddressDelivery `yaml:"delivery" json:"delivery"`
-}
-
-type AddressCapture struct {
-	Type         string `yaml:"type" json:"type" jsonschema:"enum=provider-secondary-ip,enum=proxy-arp"`
-	ProviderRef  string `yaml:"providerRef,omitempty" json:"providerRef,omitempty"`
-	ProviderMode string `yaml:"providerMode,omitempty" json:"providerMode,omitempty"`
-	// CaptureStrategy selects the provider/on-link capture mechanism. The
-	// legacy strategy field remains accepted as an alias.
-	CaptureStrategy    string `yaml:"captureStrategy,omitempty" json:"captureStrategy,omitempty" jsonschema:"enum=,enum=proxy-arp,enum=secondary-ip,enum=route-table,enum=addr-add"`
-	Strategy           string `yaml:"strategy,omitempty" json:"strategy,omitempty" jsonschema:"enum=,enum=secondary-ip,enum=route-table"`
-	NICRef             string `yaml:"nicRef,omitempty" json:"nicRef,omitempty"`
-	ConfigureOSAddress bool   `yaml:"configureOSAddress,omitempty" json:"configureOSAddress,omitempty"`
-	Interface          string `yaml:"interface,omitempty" json:"interface,omitempty"`
-	// ExcludeAddresses prevents proxy-ARP capture for selected IPv4 addresses
-	// or CIDRs inside the mobility prefix.
-	ExcludeAddresses []string          `yaml:"excludeAddresses,omitempty" json:"excludeAddresses,omitempty"`
-	GratuitousARP    bool              `yaml:"gratuitousARP,omitempty" json:"gratuitousARP,omitempty"`
-	ActiveWhen       CaptureActiveWhen `yaml:"activeWhen,omitempty" json:"activeWhen,omitempty"`
-}
-
-type AddressDelivery struct {
-	PeerRef         string `yaml:"peerRef" json:"peerRef"`
-	Mode            string `yaml:"mode" json:"mode" jsonschema:"enum=route,enum=bgp"`
-	TunnelInterface string `yaml:"tunnelInterface,omitempty" json:"tunnelInterface,omitempty"`
 }
 
 // ProviderActionPolicySpec gates whether routerd may execute plugin-proposed
@@ -2864,10 +2738,6 @@ func (r Resource) SAMSubnetPolicySpec() (SAMSubnetPolicySpec, error) {
 	return specAs[SAMSubnetPolicySpec](r)
 }
 
-func (r Resource) MobilityMemberSetSpec() (MobilityMemberSetSpec, error) {
-	return specAs[MobilityMemberSetSpec](r)
-}
-
 func (r Resource) SAMNodeSetSpec() (SAMNodeSetSpec, error) {
 	return specAs[SAMNodeSetSpec](r)
 }
@@ -2996,10 +2866,6 @@ func (r Resource) HybridRouteSpec() (HybridRouteSpec, error) {
 	return specAs[HybridRouteSpec](r)
 }
 
-func (r Resource) AddressMobilityDomainSpec() (AddressMobilityDomainSpec, error) {
-	return specAs[AddressMobilityDomainSpec](r)
-}
-
 func (r Resource) EventGroupSpec() (EventGroupSpec, error) {
 	return specAs[EventGroupSpec](r)
 }
@@ -3022,10 +2888,6 @@ func (r Resource) MobilityPoolSpec() (MobilityPoolSpec, error) {
 
 func (r Resource) CloudProviderProfileSpec() (CloudProviderProfileSpec, error) {
 	return specAs[CloudProviderProfileSpec](r)
-}
-
-func (r Resource) RemoteAddressClaimSpec() (RemoteAddressClaimSpec, error) {
-	return specAs[RemoteAddressClaimSpec](r)
 }
 
 func (r Resource) ProviderActionPolicySpec() (ProviderActionPolicySpec, error) {

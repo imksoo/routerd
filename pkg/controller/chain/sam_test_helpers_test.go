@@ -6,9 +6,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/sam"
-	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 // These fakes are shared with dynamic route tests and intentionally compile on
@@ -27,6 +25,8 @@ type fakeSAMApplier struct {
 	onDelete       func()
 	deassignErr    error
 	forwardErr     error
+	proxyARPErr    error
+	proxyARPResult *samProxyARPApplyResult
 }
 
 type fakeSAMGARP struct {
@@ -39,14 +39,20 @@ func (g *fakeSAMGARP) SendGratuitousARP(_ context.Context, address, ifname strin
 	return g.err
 }
 
-func (a *fakeSAMApplier) SetProxyARP(_ context.Context, ifname string, enabled, _ bool) error {
+func (a *fakeSAMApplier) SetProxyARP(_ context.Context, ifname string, enabled, owned bool) (samProxyARPApplyResult, error) {
 	value := "0"
 	if enabled {
 		value = "1"
 	}
 	a.proxyARP = append(a.proxyARP, ifname+"="+value)
 	a.calls = append(a.calls, "proxyarp:"+ifname+"="+value)
-	return nil
+	if a.proxyARPErr != nil {
+		return samProxyARPApplyResult{}, a.proxyARPErr
+	}
+	if a.proxyARPResult != nil {
+		return *a.proxyARPResult, nil
+	}
+	return samProxyARPApplyResult{changedByRouterd: enabled && !owned}, nil
 }
 
 func (a *fakeSAMApplier) SetIPForwarding(_ context.Context, enabled bool) error {
@@ -90,17 +96,6 @@ func (a *fakeSAMApplier) ReconcileForwardPaths(_ context.Context, paths []sam.Ca
 		a.calls = append(a.calls, "forward:"+path.Address+"@"+path.Interface+"<->"+path.PeerInterface)
 	}
 	return a.forwardErr
-}
-
-func samRemoteAddressClaimStatus(name, address, ifname string) routerstate.ObjectStatus {
-	return routerstate.ObjectStatus{
-		APIVersion: api.HybridAPIVersion,
-		Kind:       "RemoteAddressClaim",
-		Name:       name,
-		Status: map[string]any{
-			"captureProxyNeighbor": map[string]any{"address": address, "interface": ifname},
-		},
-	}
 }
 
 func assertSAMCalls(t *testing.T, got, want []string) {

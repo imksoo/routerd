@@ -4,7 +4,14 @@
 
 ## 狀態
 
-已提議。核准為實驗性實作 — 2026-06-01。
+已取代 — 2026-08-18。請參閱 [ADR 0012: BGP Address Mobility](0012-bgp-address-mobility.md)。
+
+> **這是歷史記錄，不是目前的 API 契約。** 本 ADR 記錄的是未保留的實驗性設計。
+> 下文所述的全域故障切換策略、心跳、epoch 和相容欄位均不屬於目前的
+> MobilityPool 模型。目前實作採用 ADR 0012 中型別化的
+> `PoolRuntimeSnapshot -> PoolPlan` 管線；BGP liveness marker、placement、
+> startup fence、holder retention 與 hold-down 是執行期安全規則，
+> 而不是使用者可設定的策略開關。
 
 消費 [ADR 0010: Capture 所有權仲裁](../adr/0010-capture-ownership-arbitration.md)
 （所有權對映 + `ownershipEpoch`），實現

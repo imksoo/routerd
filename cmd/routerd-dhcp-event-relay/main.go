@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/controlapi"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 )
 
 const (
@@ -54,7 +55,10 @@ func run(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	event := eventFromArgs(fs.Args(), os.Environ())
+	event, err := eventFromArgs(fs.Args(), os.Environ())
+	if err != nil {
+		return err
+	}
 	if event.Action == "" || event.IP == "" {
 		return fmt.Errorf("usage: routerd-dhcp-event-relay [add|old|del] MAC IP HOSTNAME")
 	}
@@ -83,18 +87,16 @@ func run(args []string) error {
 	return nil
 }
 
-func eventFromArgs(args []string, env []string) controlapi.DHCPLeaseEventRequest {
+func eventFromArgs(args []string, env []string) (controlapi.DHCPLeaseEventRequest, error) {
 	event := controlapi.DHCPLeaseEventRequest{
 		TypeMeta: controlapi.TypeMeta{APIVersion: controlapi.APIVersion, Kind: "DHCPLeaseEvent"},
-		Env:      map[string]string{},
-	}
-	for _, pair := range env {
-		if k, v, ok := strings.Cut(pair, "="); ok {
-			event.Env[k] = v
-		}
 	}
 	if len(args) > 0 {
-		event.Action = normalizeAction(args[0])
+		action, err := normalizeAction(args[0])
+		if err != nil {
+			return controlapi.DHCPLeaseEventRequest{}, err
+		}
+		event.Action = action
 	}
 	if len(args) > 1 {
 		event.MAC = args[1]
@@ -105,18 +107,28 @@ func eventFromArgs(args []string, env []string) controlapi.DHCPLeaseEventRequest
 	if len(args) > 3 && args[3] != "*" {
 		event.Hostname = args[3]
 	}
-	return event
+	event.Interface = dnsmasqInterface(env)
+	return event, nil
 }
 
-func normalizeAction(action string) string {
-	switch action {
+func normalizeAction(action string) (string, error) {
+	switch strings.TrimSpace(action) {
 	case "add":
-		return "added"
+		return daemonapi.DHCPLeaseActionAdded, nil
 	case "old":
-		return "renewed"
+		return daemonapi.DHCPLeaseActionRenewed, nil
 	case "del":
-		return "removed"
+		return daemonapi.DHCPLeaseActionRemoved, nil
 	default:
-		return action
+		return "", fmt.Errorf("unsupported dnsmasq lease action %q", action)
 	}
+}
+
+func dnsmasqInterface(env []string) string {
+	for _, value := range env {
+		if ifname, ok := strings.CutPrefix(value, "DNSMASQ_INTERFACE="); ok {
+			return strings.TrimSpace(ifname)
+		}
+	}
+	return ""
 }

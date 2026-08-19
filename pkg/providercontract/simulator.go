@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 )
 
@@ -164,7 +165,7 @@ func (s *Simulator) snapshotLocked() Snapshot {
 
 func (s *Simulator) assignSecondaryIP(plan dynamicconfig.ActionPlan) Result {
 	address := clean(plan.Target["address"])
-	targetRef := firstNonEmpty(plan.Target["targetRef"], plan.Target["nicRef"], plan.Target["vnicRef"], plan.Target["networkInterfaceId"])
+	targetRef := stringutil.FirstNonBlank(plan.Target["targetRef"], plan.Target["nicRef"], plan.Target["vnicRef"], plan.Target["networkInterfaceId"])
 	if address == "" || targetRef == "" {
 		return failed("InvalidTarget", "assign-secondary-ip requires target.address and targetRef/nicRef/vnicRef")
 	}
@@ -184,7 +185,7 @@ func (s *Simulator) assignSecondaryIP(plan dynamicconfig.ActionPlan) Result {
 	assignment := AddressAssignment{
 		Address:       address,
 		TargetRef:     targetRef,
-		Generation:    firstNonEmpty(plan.Parameters["assignmentGeneration"], plan.Parameters["claimGeneration"]),
+		Generation:    stringutil.FirstNonBlank(plan.Parameters["assignmentGeneration"], plan.Parameters["claimGeneration"]),
 		AssignedAt:    time.Time{},
 		LastActionKey: clean(plan.IdempotencyKey),
 	}
@@ -198,7 +199,7 @@ func (s *Simulator) assignSecondaryIP(plan dynamicconfig.ActionPlan) Result {
 
 func (s *Simulator) unassignSecondaryIP(plan dynamicconfig.ActionPlan) Result {
 	address := clean(plan.Target["address"])
-	targetRef := firstNonEmpty(plan.Target["targetRef"], plan.Target["nicRef"], plan.Target["vnicRef"], plan.Target["networkInterfaceId"])
+	targetRef := stringutil.FirstNonBlank(plan.Target["targetRef"], plan.Target["nicRef"], plan.Target["vnicRef"], plan.Target["networkInterfaceId"])
 	if address == "" {
 		return failed("InvalidTarget", "unassign-secondary-ip requires target.address")
 	}
@@ -217,9 +218,9 @@ func (s *Simulator) unassignSecondaryIP(plan dynamicconfig.ActionPlan) Result {
 }
 
 func (s *Simulator) assignRouteTableRoute(plan dynamicconfig.ActionPlan) Result {
-	prefix := firstNonEmpty(plan.Target["prefix"], plan.Target["destination"], plan.Target["address"])
+	prefix := stringutil.FirstNonBlank(plan.Target["prefix"], plan.Target["destination"], plan.Target["address"])
 	routeTable := clean(plan.Target["routeTableRef"])
-	nextHop := firstNonEmpty(plan.Target["nextHopRef"], plan.Target["nextHop"], plan.Target["targetRef"])
+	nextHop := stringutil.FirstNonBlank(plan.Target["nextHopRef"], plan.Target["nextHop"], plan.Target["targetRef"])
 	if prefix == "" || routeTable == "" || nextHop == "" {
 		return failed("InvalidTarget", "assign-route-table-route requires prefix, routeTableRef, and nextHopRef")
 	}
@@ -232,7 +233,7 @@ func (s *Simulator) assignRouteTableRoute(plan dynamicconfig.ActionPlan) Result 
 		Prefix:        prefix,
 		RouteTableRef: routeTable,
 		NextHopRef:    nextHop,
-		Generation:    firstNonEmpty(plan.Parameters["assignmentGeneration"], plan.Parameters["claimGeneration"]),
+		Generation:    stringutil.FirstNonBlank(plan.Parameters["assignmentGeneration"], plan.Parameters["claimGeneration"]),
 		UpdatedAt:     time.Time{},
 	}
 	s.scheduleMutationLocked(func() {
@@ -245,7 +246,7 @@ func (s *Simulator) assignRouteTableRoute(plan dynamicconfig.ActionPlan) Result 
 }
 
 func (s *Simulator) unassignRouteTableRoute(plan dynamicconfig.ActionPlan) Result {
-	prefix := firstNonEmpty(plan.Target["prefix"], plan.Target["destination"], plan.Target["address"])
+	prefix := stringutil.FirstNonBlank(plan.Target["prefix"], plan.Target["destination"], plan.Target["address"])
 	routeTable := clean(plan.Target["routeTableRef"])
 	if prefix == "" || routeTable == "" {
 		return failed("InvalidTarget", "unassign-route-table-route requires prefix and routeTableRef")
@@ -263,7 +264,7 @@ func (s *Simulator) unassignRouteTableRoute(plan dynamicconfig.ActionPlan) Resul
 }
 
 func (s *Simulator) ensureForwardingEnabled(plan dynamicconfig.ActionPlan) Result {
-	targetRef := firstNonEmpty(plan.Target["targetRef"], plan.Target["nicRef"], plan.Target["vnicRef"], plan.Target["networkInterfaceId"])
+	targetRef := stringutil.FirstNonBlank(plan.Target["targetRef"], plan.Target["nicRef"], plan.Target["vnicRef"], plan.Target["networkInterfaceId"])
 	if targetRef == "" {
 		return failed("InvalidTarget", "ensure-forwarding-enabled requires targetRef/nicRef/vnicRef")
 	}
@@ -379,15 +380,6 @@ func truthy(value string) bool {
 	default:
 		return false
 	}
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if cleaned := clean(value); cleaned != "" {
-			return cleaned
-		}
-	}
-	return ""
 }
 
 func clean(value string) string {
