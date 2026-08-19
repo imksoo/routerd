@@ -115,10 +115,17 @@ resource "proxmox_virtual_environment_vm" "node" {
       }
     }
 
-    ip_config {
-      ipv4 {
-        address = each.value.ipv4_cidr
-        gateway = var.capture_gateway_ipv4
+    # A leaf's capture.sourceAddress is owned by MobilityPool as a /32.
+    # Seeding its /24 through cloud-init makes that external subnet look like
+    # a managed capture address and leaves a conflicting connected route.
+    # Only traffic clients need a static address on the isolated capture L2.
+    dynamic "ip_config" {
+      for_each = each.value.role == "client" ? [each.value.ipv4_cidr] : []
+      content {
+        ipv4 {
+          address = ip_config.value
+          gateway = var.capture_gateway_ipv4
+        }
       }
     }
 
