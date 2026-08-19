@@ -138,8 +138,13 @@ mapfile -t clients < <(jq -r 'to_entries[] | select(.value.role == "client") | .
 mapfile -t pve_clients < <(jq -r 'to_entries[] | select(.value.site == "pve" and .value.role == "client") | .key' "$nodes_json" | sort)
 # Both supported PVE boot sources use the Ubuntu virtio convention: ens18 is
 # the provider-owned QGA management NIC and ens19 is the isolated capture NIC.
-# Do not infer eth1 for a template clone: the certified template exposes ens19.
+# A cloud-init configuration that assigns a client-side capture address may
+# expose that client NIC as eth1 even while the unaddressed leaf NIC remains
+# ens19.  Keep the router's capture interface authoritative for generated
+# MobilityPool configuration and allow only the client-side setup to override
+# its local name.
 pve_capture_interface="${PVE_CAPTURE_INTERFACE:-ens19}"
+pve_client_capture_interface="${PVE_CLIENT_CAPTURE_INTERFACE:-$pve_capture_interface}"
 aws_profile="${AWS_PROFILE:-}"
 oci_profile="${OCI_PROFILE:-}"
 
@@ -1162,10 +1167,14 @@ setup_pve_dataplane() {
   # as a /24: that makes the applied-effect ledger mistake an external subnet
   # for the managed host address and blocks on-prem discovery.  The exact
   # cleanup below also makes an in-place qualification retry converge from the
-  # old, incorrect setup without touching the management NIC or bridge.
+  # old, incorrect setup without touching the management NIC or bridge. The
+  # capture link is externally managed, so this run-scoped setup also brings
+  # the isolated guest NIC up before routerd installs its capture-prefix route.
   for node in "${pve_leaf_routers[@]}"; do
     ip="$(node_field "$node" private_ip)"
     ssh_node "$node" "set -e
+sudo ip link set dev '$pve_capture_interface' up
+ip -o link show dev '$pve_capture_interface' | grep -q '<.*UP.*>'
 sudo ip -4 addr del '$ip/24' dev '$pve_capture_interface' 2>/dev/null || true
 if ip -4 -o addr show dev '$pve_capture_interface' | awk '\$3 == \"inet\" { print \$4 }' | grep -Fxq '$ip/24'; then
   echo 'unexpected external capture subnet remains: $ip/24' >&2
@@ -1176,7 +1185,7 @@ ip -br addr show dev '$pve_capture_interface'" \
   done
   for node in "${pve_clients[@]}"; do
     ip="$(node_field "$node" private_ip)"
-    ssh_node "$node" "set -e; if ! ip -4 addr show dev '$pve_capture_interface' | grep -qw '$ip/24'; then sudo ip addr add '$ip/24' dev '$pve_capture_interface'; fi; ip -br addr show dev '$pve_capture_interface'" \
+    ssh_node "$node" "set -e; if ! ip -4 addr show dev '$pve_client_capture_interface' | grep -qw '$ip/24'; then sudo ip addr add '$ip/24' dev '$pve_client_capture_interface'; fi; ip -br addr show dev '$pve_client_capture_interface'" \
       >"$evidence_dir/preflight/${node}-dataplane-ip.txt" 2>&1
   done
 }

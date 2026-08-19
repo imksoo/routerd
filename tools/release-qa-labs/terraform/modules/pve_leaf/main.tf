@@ -55,6 +55,12 @@ resource "proxmox_virtual_environment_vm" "node" {
   vm_id       = each.value.vm_id
   tags        = concat(local.tags, [each.value.role])
 
+  # Qualification guests are disposable. A live image may ignore an ACPI
+  # shutdown request, so use PVE's immediate stop on destroy instead of
+  # holding a release cleanup for the graceful-shutdown timeout.
+  stop_on_destroy = true
+  timeout_stop_vm = 30
+
   dynamic "clone" {
     for_each = var.boot_source == "template" ? [1] : []
     content {
