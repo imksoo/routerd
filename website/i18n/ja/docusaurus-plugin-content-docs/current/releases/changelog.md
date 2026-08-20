@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260820.1144
+
 ### 修正
 
 - `MobilityPool` を意図的に置かない static direct-IPIP route reflector が、

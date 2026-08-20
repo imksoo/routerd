@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260820.1144
+
 ### Fixed
 
 - Static direct-IPIP route reflectors that intentionally omit `MobilityPool`

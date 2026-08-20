@@ -11,6 +11,17 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260820.1144
+
+### 修正
+
+- 修正刻意不設置 `MobilityPool` 的 static direct-IPIP route reflector：現在只有通過
+  transport 擁有的 RR-client peer scope（明示 prefix、精確 `/32`、peer neighbor 與
+  node-identity community）的 remote mobility `/32` 才會進入 FIB。此 profile 必須在
+  `spec.bgp.importPolicy` 明示 IPv4 mobility prefix 與 `/32` bounds；未設邊界的
+  no-pool RR 會由 validation 拒絕，而不會在 control plane 顯示正常時遺漏 FIB route。
+  Proxy-ARP local capture intent 也會直接輸出 tunnel-to-capture forwarding path。
+
 ## v20260820.0052
 
 ### 變更
