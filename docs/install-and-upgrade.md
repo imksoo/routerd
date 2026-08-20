@@ -11,16 +11,25 @@ The archive contains the binaries, service template, sample configuration, and
 the installer scripts.
 You do not need a Go toolchain or the Makefile on the router host.
 
+:::caution First installation
+For a first live test, choose an isolated Ubuntu Server VM or spare computer
+with a console or a separate management path. Installing software is not the
+same as safely applying a router configuration: a later live apply can change
+addresses, routes, DHCP, and DNS.
+:::
+
 ## Quick install
 
-Download the archive for your OS and architecture from the stable release tag,
-[v20260820.1629](https://github.com/imksoo/routerd/releases/tag/v20260820.1629).
+Download the archive for your OS and architecture from the recommended stable
+milestone, [v20260707.1514](https://github.com/imksoo/routerd/releases/tag/v20260707.1514).
+The [stable milestone](./releases/stable.md) page is the single source for this
+recommendation.
 
 Linux amd64:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260820.1629/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260820.1629/routerd-linux-amd64.tar.gz.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-linux-amd64.tar.gz.sha256
 tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
@@ -31,8 +40,8 @@ For Linux arm64, use the `linux-arm64` archive.
 FreeBSD amd64:
 
 ```sh
-fetch https://github.com/imksoo/routerd/releases/download/v20260820.1629/routerd-freebsd-amd64.tar.gz
-fetch https://github.com/imksoo/routerd/releases/download/v20260820.1629/routerd-freebsd-amd64.tar.gz.sha256
+fetch https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-freebsd-amd64.tar.gz
+fetch https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-freebsd-amd64.tar.gz.sha256
 cat routerd-freebsd-amd64.tar.gz.sha256
 sha256 routerd-freebsd-amd64.tar.gz
 tar -xzf routerd-freebsd-amd64.tar.gz
@@ -41,7 +50,7 @@ sudo ./install.sh
 
 For FreeBSD arm64, use the `freebsd-arm64` archive.
 The same release also includes versioned archives such as
-`routerd-v20260820.1629-linux-amd64.tar.gz`.
+`routerd-v20260707.1514-linux-amd64.tar.gz`.
 Use those when you need an explicitly named artifact.
 
 Linux archives are built with `CGO_ENABLED=0` and contain statically linked
@@ -54,8 +63,8 @@ the matching `routerd-ndpi-agent-libndpi-linux-amd64.tar.gz` archive and install
 it explicitly with the normal archive:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260820.1629/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260820.1629/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
 sudo ./install.sh --with-ndpi \
   --with-ndpi-archive ./routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
@@ -128,8 +137,8 @@ hardening, not a regression. No service-unit change is required.
 The stable release page also publishes a bootable Ubuntu-based live ISO:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260820.1629/routerd-live.iso
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260820.1629/routerd-live.iso.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-live.iso
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-live.iso.sha256
 sha256sum -c routerd-live.iso.sha256
 ```
 
@@ -331,20 +340,24 @@ The installer never removes these state locations:
 
 ## First configuration
 
-For a first trial, run the built-in setup wizard:
+For a first trial, start with the built-in setup wizard but ask it to stop
+before a live apply:
 
 ```sh
-sudo ./install.sh configure
+sudo ./install.sh configure --no-apply
 ```
 
 The wizard asks for the WAN interface, LAN interface, LAN address, LAN services,
 management placement, and optional USB persistence. It writes a candidate file to
 `/usr/local/etc/routerd/router.yaml.configure`, shows a diff when an existing
 configuration is present, and installs it as
-`/usr/local/etc/routerd/router.yaml` only after confirmation.
-It then runs `routerctl validate`, `routerctl plan`, and `routerctl apply`.
+`/usr/local/etc/routerd/router.yaml` only after confirmation. Review the file
+and use the direct validation and dry-run below before deciding on a live
+apply.
 
-Automation can use environment variables and skip prompts:
+Automation can use environment variables and skip prompts. For a first lab,
+render the candidate only; `--dry-run` does not install the file, write USB
+persistence, start the service, or apply a network change:
 
 ```sh
 sudo ROUTERD_WAN_INTERFACE=ens18 \
@@ -353,20 +366,17 @@ sudo ROUTERD_WAN_INTERFACE=ens18 \
   ROUTERD_LAN_CIDR=192.168.10.0/24 \
   ROUTERD_MGMT_MODE=lan \
   ROUTERD_ENABLE_USB_PERSISTENCE=no \
-  ./install.sh configure --non-interactive --yes
+  ./install.sh configure --non-interactive --yes --dry-run
 ```
 
-For live ISO USB persistence, set:
+Do not copy a USB-persistence command from this first-run page. Selecting a
+USB device writes the configuration to that device even when live network apply
+is skipped. Follow the [diskless mini PC walkthrough](./tutorials/diskless-minipc-walkthrough.md)
+only after identifying the exact disposable USB partition from its console.
 
-```sh
-sudo ROUTERD_ENABLE_USB_PERSISTENCE=yes \
-  ROUTERD_USB_DEVICE=/dev/sdb1 \
-  ROUTERD_USB_FLUSH=yes \
-  ROUTERD_LOG_TMPFS_LIMIT=100M \
-  ./install.sh configure --non-interactive --yes
-```
-
-Use `--no-apply` when you want only the YAML file.
+Use `--no-apply` when you want to install the YAML file but delay the live
+network apply. This is the recommended first-lab option after you have reviewed
+the candidate:
 
 ```sh
 sudo ./install.sh configure --no-apply
@@ -381,17 +391,25 @@ sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/ro
 sudo vi /usr/local/etc/routerd/router.yaml
 ```
 
-Then validate and review the plan:
+Before a service is running, validate the file directly and perform a dry-run
+with isolated temporary state:
 
 ```sh
-routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
-routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
+sudo routerd validate --config /usr/local/etc/routerd/router.yaml
+
+workdir=$(mktemp -d)
+sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run \
+  --state-file "$workdir/state.db" \
+  --ledger-file "$workdir/ledger.db" \
+  --status-file "$workdir/status.json"
+rm -rf "$workdir"
 ```
 
-Apply only after the management path is safe:
+Apply only from a console or an independent management path after reviewing the
+file. This command changes the host network:
 
 ```sh
-sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
+sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
 ```
 
 Start the service when the one-shot apply is healthy:
@@ -399,6 +417,12 @@ Start the service when the one-shot apply is healthy:
 ```sh
 sudo systemctl enable --now routerd.service
 ```
+
+After the service starts, use `sudo routerctl get status` to inspect it.
+`routerctl` is a client for the running local daemon; it is not the standalone
+first-run validator. The installer creates a `routerd` group, so an operator
+can later join that group and begin a new login session to use read-only status
+commands without `sudo`.
 
 On FreeBSD:
 

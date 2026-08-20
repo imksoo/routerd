@@ -466,6 +466,48 @@ func TestApplyChainControllerOptionsSkipLegacyClientUnits(t *testing.T) {
 	}
 }
 
+func TestRouterWithDryRunLeaseFilesKeepsDHCPLeaseStateInArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{LeaseFile: "/var/lib/routerd/dnsmasq/dnsmasq.leases"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.DHCPv6ServerSpec{LeaseFile: "/var/lib/routerd/dnsmasq/dnsmasq.leases"}},
+	}}}
+
+	got, err := routerWithDryRunLeaseFiles(router, dir)
+	if err != nil {
+		t.Fatalf("sandbox DHCP lease paths: %v", err)
+	}
+	want := filepath.Join(dir, "dnsmasq.leases")
+	for _, resource := range got.Spec.Resources {
+		switch resource.Kind {
+		case "DHCPv4Server":
+			spec, err := resource.DHCPv4ServerSpec()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if spec.LeaseFile != want {
+				t.Fatalf("DHCPv4 dry-run lease file = %q, want %q", spec.LeaseFile, want)
+			}
+		case "DHCPv6Server":
+			spec, err := resource.DHCPv6ServerSpec()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if spec.LeaseFile != want {
+				t.Fatalf("DHCPv6 dry-run lease file = %q, want %q", spec.LeaseFile, want)
+			}
+		}
+	}
+
+	original, err := router.Spec.Resources[0].DHCPv4ServerSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if original.LeaseFile != "/var/lib/routerd/dnsmasq/dnsmasq.leases" {
+		t.Fatalf("dry-run mutated input lease file = %q", original.LeaseFile)
+	}
+}
+
 func TestRunApplyChainOnceDryRunDoesNotCreateStateDB(t *testing.T) {
 	dir := t.TempDir()
 	stateDir := filepath.Join(dir, "state")
@@ -1383,22 +1425,32 @@ func TestServeAcceptsLegacyControllerChainFlags(t *testing.T) {
 	}
 }
 
-func TestSandboxControllerOptionsRoutePathMTUArtifactsIntoRuntimeDir(t *testing.T) {
+func TestSandboxControllerOptionsRouteArtifactsIntoArtifactDirectory(t *testing.T) {
 	oldDefaults := platformDefaults
 	dir := t.TempDir()
 	platformDefaults.RuntimeDir = filepath.Join(dir, "run", "routerd")
 	t.Cleanup(func() { platformDefaults = oldDefaults })
 
 	var opts controllerchain.Options
-	applySandboxControllerOptions(&opts, "", "")
+	artifacts := filepath.Join(dir, "artifacts")
+	applySandboxControllerOptions(&opts, filepath.Join(artifacts, "dnsmasq.conf"), filepath.Join(artifacts, "nat44.nft"))
 	if !opts.DryRunSysctl {
 		t.Fatal("sandbox must dry-run sysctl changes")
 	}
 
-	if got, want := opts.PathMTUPath, filepath.Join(platformDefaults.RuntimeDir, "mss.nft"); got != want {
+	if got, want := opts.DnsmasqPID, filepath.Join(artifacts, "dnsmasq.pid"); got != want {
+		t.Fatalf("DnsmasqPID = %q, want %q", got, want)
+	}
+	if got, want := opts.NftablesPath, filepath.Join(artifacts, "nat44.nft"); got != want {
+		t.Fatalf("NftablesPath = %q, want %q", got, want)
+	}
+	if got, want := opts.FirewallPath, filepath.Join(artifacts, "firewall.nft"); got != want {
+		t.Fatalf("FirewallPath = %q, want %q", got, want)
+	}
+	if got, want := opts.PathMTUPath, filepath.Join(artifacts, "mss.nft"); got != want {
 		t.Fatalf("PathMTUPath = %q, want %q", got, want)
 	}
-	if got, want := opts.ForceFragmentPath, filepath.Join(platformDefaults.RuntimeDir, "forcefrag.nft"); got != want {
+	if got, want := opts.ForceFragmentPath, filepath.Join(artifacts, "forcefrag.nft"); got != want {
 		t.Fatalf("ForceFragmentPath = %q, want %q", got, want)
 	}
 }

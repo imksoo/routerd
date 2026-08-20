@@ -65,8 +65,14 @@ flowchart LR
 ## Checks
 
 ```bash
-routerctl validate -f examples/telemetry-export.yaml --replace
-routerctl describe Telemetry/otlp
+routerd validate --config examples/telemetry-export.yaml
+
+workdir=$(mktemp -d)
+routerd apply --config examples/telemetry-export.yaml --once --dry-run \
+  --state-file "$workdir/state.db" \
+  --ledger-file "$workdir/ledger.db" \
+  --status-file "$workdir/status.json"
+rm -rf "$workdir"
 ```
 
 Confirm data arrival from the collector or backend side. Keep the endpoint on a

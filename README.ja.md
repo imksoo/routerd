@@ -2,15 +2,41 @@
 
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD--3--Clause-blue.svg)](LICENSE)
 
-[プロジェクトサイトとドキュメント: routerd.net](https://routerd.net/)
+[プロジェクトサイトとドキュメント: routerd.net](https://routerd.net/) ·
+[日本語ドキュメント](https://routerd.net/ja/docs/) ·
+[English documentation](https://routerd.net/docs/) ·
+[繁體中文](https://routerd.net/zh-Hant/docs/) ·
+[简体中文](https://routerd.net/zh-Hans/docs/)
 
 Linux amd64 と FreeBSD amd64 のビルド済みアーカイブは
 [GitHub Releases](https://github.com/imksoo/routerd/releases) で公開しています。
 インストールとアップグレードは
-[`docs/install-and-upgrade.md`](docs/install-and-upgrade.md) を参照してください。
+[日本語の導入手順](https://routerd.net/ja/docs/install-and-upgrade) を参照してください。
 
 routerd は、汎用ホストを見通しのよいルーターとして動かすための、
 プレリリースの宣言的ルーター制御プレーンです。
+
+## 最初は安全なラボから
+
+ネットワークに初めて触れる場合は、家庭・学校・職場で実際に使っている唯一の
+ルーターではなく、隔離した Ubuntu Server VM または予備 PC で試してください。
+仮想化コンソール、シリアルコンソール、または設定変更しない管理用 NIC を確保します。
+`routerd apply --once` と `routerd serve` はホストのネットワークを変更します。
+
+次の順で進めると、途中で分からなくなりにくくなります。
+
+1. [ネットワークの基本](https://routerd.net/ja/docs/tutorials/network-basics) —
+   WAN、LAN、DHCP、DNS、NAT、`/24` を平易な言葉で確認します。
+2. [インストールとアップグレード](https://routerd.net/ja/docs/install-and-upgrade) —
+   正式な導入手順です。
+3. [安全な最初の手順](https://routerd.net/ja/docs/tutorials/getting-started) —
+   実機反映の前に検証と dry-run を行います。
+4. [最初のラボルーター](https://routerd.net/ja/docs/tutorials/first-router) —
+   DHCP と IPv4 NAT を小さな隔離 LAN で確認します。
+
+最も多く検証している対象は Ubuntu Server です。FreeBSD と NixOS は一部の
+統合経路が groundwork 段階なので、初回ラボで同等の動作を前提にしないでください。
+対応状況は [プラットフォーム対応表](https://routerd.net/ja/docs/platforms) を確認します。
 
 netplan、systemd-networkd、dnsmasq、nftables、sysctl、個別スクリプト、
 systemd ユニットに意図を分散させず、型付き YAML リソースとしてまとめます。
@@ -51,15 +77,16 @@ SDN/VNET セグメント間をつなぐ仮想ルーターと、ディスクレ�
 
 routerd は、他のルータープロジェクトや appliance UI を置き換えるための
 ものではありません。
-同じネットワーク意図を Proxmox ラボ、NixOS/FreeBSD ルーター、Ubuntu 家庭用
-gateway、ライブ ISO で起動するディスクレス mini PC の間で移せることに
-強みがあります。
+同じネットワーク意図を Proxmox ラボ、Ubuntu 家庭用 gateway、ライブ ISO で
+起動するディスクレス mini PC の間で移せることに強みがあります。FreeBSD と
+NixOS は native renderer の整備が続く second-tier 対象です。
 
 routerd は、次の独立した特徴を大切にします。
 
-- **OS をまたぐ宣言的リソース**: Ubuntu、NixOS、FreeBSD のホスト統合を
-  同じモデルで扱い、Alpine Linux はライブ ISO と最小ホスト向けの土台を
-  持ちます。
+- **OS をまたぐ宣言的リソース**: Ubuntu Server を主対象にします。FreeBSD と
+  NixOS は同じモデルを共有しますが、native renderer が未完成の部分は
+  groundwork として扱います。Alpine Linux はライブ ISO と最小ホスト向けの
+  土台を持ちます。
 - **ライブ ISO と USB 永続化**: ディスクレス mini PC ルーターを構成できます。
 - **観測できる経路判断**: イベント、世代差分、ヘルスチェック、Web Console、
   OpenTelemetry で理由を追えます。
@@ -85,8 +112,10 @@ routerd は、次の独立した特徴を大切にします。
   なしで必ず継続することまでは保証しません。
   詳細は [CloudEdge SAM とは](docs/concepts/cloudedge-sam.md) と
   [CloudEdge SAM 内部実装](docs/reference/cloudedge-sam-internals.md) を参照。
-- **作成支援**: 生成済み JSON Schema、VS Code/YAML Language Server の
-  modeline、`https://routerd.net/wizard` の browser config wizard を提供します。
+- **作成支援**: 生成済み JSON Schema と VS Code/YAML Language Server の
+  modeline を提供します。browser config wizard は現在英語のみです。日本語で
+  最初の設定を学ぶときは、まず
+  [最初の実験用ルーター](https://routerd.net/ja/docs/tutorials/first-router)を使ってください。
 
 そのため routerd は、Proxmox ラボから家庭用 DS-Lite ルーター、
 WireGuard/Tailscale overlay、USB 状態から復元できるディスクレス mini PC へと、
@@ -142,19 +171,21 @@ routerd は NAT44、ゾーンポリシー、管理対象サービス用の許可
   自動導出、DHCPv6-PD、DS-Lite、DNS リゾルバー、DHCP サーバー、RA、
   BGP peer、Web Console を含みます。
 - `examples/router-lab.yaml`: 小さめの Linux ラボ構成です。
-- `examples/nixos-edge.yaml`: NixOS 向け生成経路の例です。
+- `examples/nixos-edge-configuration.nix`: NixOS 向け system configuration の形を
+  確認する例です。初回ラボ向けではありません。
 - `examples/freebsd-edge.yaml`: FreeBSD の rc.d、pf、dnsmasq、DS-Lite 生成の
   小さな例です。
 - `examples/tailscale-exit-subnet.yaml`: Tailscale の exit node と subnet router
   の広告を管理対象 systemd ユニットで行う例です。
-- `examples/guest-mode.yaml`: 同一 LAN 上の端末を MAC アドレスで分類し、
-  ゲスト端末を隔離する例です。
+- `examples/guest-mode.yaml`: MAC アドレスで分類した通信をルーター上で扱う例です。
+  VLAN、SSID、スイッチポート、Wi-Fi client isolation の代わりにはなりません。
 - `examples/cloudedge-mobility-demo/`: `SAMTransportProfile` を使う
   on-prem/AWS/Azure/OCI CloudEdge SAM の設定例です。
 - `examples/README.md`: 用途別の設定例一覧です。最小 Tailscale、
   WireGuard hub-spoke、VRF lab、multi-WAN home のテンプレートを含みます。
 
-browser wizard から始めることもできます。
+browser wizard は現在英語のみです。Home Router、CloudEdge SAM、Kubernetes BGP の
+スターター設定をブラウザーで生成したい場合に限り、次の URL を使えます。
 
 ```text
 https://routerd.net/wizard
@@ -248,21 +279,28 @@ release archive には `share/doc/LICENSE` と
 make third-party-licenses
 ```
 
-設定ファイルを作成し、検証します。
+設定ファイルを作成し、デーモンを起動する前に直接検証します。
 
 ```sh
 sudo install -d -m 0755 /usr/local/etc/routerd
 sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
 sudo vi /usr/local/etc/routerd/router.yaml
 
-routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
-routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
+sudo routerd validate --config /usr/local/etc/routerd/router.yaml
+
+workdir=$(mktemp -d)
+sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run \
+  --state-file "$workdir/state.db" \
+  --ledger-file "$workdir/ledger.db" \
+  --status-file "$workdir/status.json"
+rm -rf "$workdir"
 ```
 
-管理経路が残ることを確認してから反映します。
+管理経路が残ることを確認し、コンソールまたは独立した管理経路から反映します。
+次のコマンドはホストのネットワークを変更します。
 
 ```sh
-sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
+sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
 ```
 
 ## 開発者向けビルド
@@ -292,16 +330,16 @@ Makefile は開発用です。
 - `routerd-dhcp-event-relay`
 - `routerd-firewall-logger`
 
-よく使う確認:
+よく使う確認（`routerctl` は稼働中のローカル `routerd.service` を必要とします。明示的に
+`routerd` グループへ参加して新しいログインを開始していない初回は `sudo` を付けます）:
 
 ```sh
-routerctl validate -f examples/home-router.yaml --replace
-routerctl plan -f examples/home-router.yaml --replace
-routerctl get status
-routerctl get events --limit 20
-routerctl get connections --limit 50
-routerctl plugin list
-routerctl plugin run <name> --dry-run
+routerd validate --config examples/home-router.yaml
+sudo routerctl get status
+sudo routerctl get events --limit 20
+sudo routerctl get connections --limit 50
+sudo routerctl plugin list
+sudo routerctl plugin run <name> --dry-run
 ```
 
 ## 配置先
@@ -325,11 +363,10 @@ routerctl plugin run <name> --dry-run
 
 ## プラットフォーム
 
-もっとも多く検証している対象は Ubuntu Server です。
-NixOS と FreeBSD も同じリソースモデルを使います。
-反映先は、それぞれの OS に合った機構です。
-Alpine はライブ ISO と `apk` package bootstrap に対応していますが、OpenRC
-service parity はまだ groundwork として扱います。
+もっとも多く検証している対象は Ubuntu Server です。NixOS と FreeBSD は同じ
+リソースモデルを使いますが、native renderer と service integration の一部は
+まだ groundwork で、機能同等ではありません。Alpine はライブ ISO と `apk`
+package bootstrap に対応していますが、OpenRC service parity も groundwork です。
 現在の対応表は `docs/platforms.md` を参照してください。
 
 routerd はプレリリースです。

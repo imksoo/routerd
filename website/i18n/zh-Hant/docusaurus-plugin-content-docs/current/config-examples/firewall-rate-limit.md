@@ -14,11 +14,18 @@ title: 防火牆速率限制與 ICMP 規則
 
 完整的 YAML 位於 `examples/firewall-rate-limit.yaml`。
 
-## 套用步驟
+## daemon 尚未啟動時檢查
+
+下列指令由具有 `sudo` 權限的本機使用者執行；它們不會連線或啟動 daemon，也不會變更主機網路。
 
 ```bash
-routerctl validate -f examples/firewall-rate-limit.yaml --replace
-routerctl plan -f examples/firewall-rate-limit.yaml --replace
+LAB_DIR="$(mktemp -d)"
+sudo routerd validate --config examples/firewall-rate-limit.yaml
+sudo routerd apply --config examples/firewall-rate-limit.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
+rm -rf "$LAB_DIR"
 ```
 
 ## 規則摘錄

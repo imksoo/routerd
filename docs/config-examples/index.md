@@ -16,14 +16,12 @@ before applying them to a real router.
 
 ![Configuration example workflow diagram showing topology numbers, diagram map entries, YAML excerpts, local edits, validate-plan-dry-run sequence, apply, and routerctl verification](/img/diagrams/config-example-workflow.png)
 
-:::tip Canonical starting point
-If you are replacing a home router with routerd, start from
-[`examples/home-router-mgmt-protected.yaml`](https://github.com/imksoo/routerd/blob/main/examples/home-router-mgmt-protected.yaml).
-It is the safe-minimal canonical configuration: 3-role firewall
-(untrust / trust / mgmt), DS-Lite preferred with PPPoE fallback,
-`ManagementAccess` for apply-time lockout protection, and `WebConsole`
-bound to a management address. Adapt it to your interfaces and ISP, then
-apply through the safety checklist below.
+:::tip Start with the smallest matching situation
+For a first isolated IPv4 lab, begin with
+[Basic IPv4 NAT gateway](./basic-ipv4-nat.md). It has one DHCP WAN and one
+private LAN. The home-router, DS-Lite, PPPoE, BGP, and management-protected
+examples are useful later, but they assume ISP facts, more interfaces, or a
+working baseline. Do not treat any example as a universal safe default.
 :::
 
 ## How to read an example
@@ -49,8 +47,8 @@ The numbers in diagrams and YAML comments intentionally match. For example,
 | [PPPoE IPv4 NAT gateway](./pppoe-ipv4-nat.md) | Works today with ISP credentials | The WAN is an Ethernet access line and IPv4 comes from a PPPoE session. |
 | [Port forward to an inside web server](./port-forward-web.md) | Works today with a known WAN address | You need to publish one inside HTTPS service and support hairpin access from LAN clients. |
 | [Kubernetes API VIP with BGP](./kubernetes-api-vip.md) | Works today with `routerd-bgp` GoBGP and keepalived | You want routerd to hold a Kubernetes API VIP, health-check control planes, and receive Service prefixes by BGP. |
-| [Guest and IoT client isolation](./guest-isolation.md) | Works today on Linux nftables | A small set of MAC addresses should reach the internet but not the trusted LAN or management networks. |
-| [Firewall rate limits and ICMP rules](./firewall-rate-limit.md) | Works today on Linux nftables | You need multi-port service openings, ICMP type matching, and SSH brute-force dampening. |
+| [Guest and IoT client isolation](./guest-isolation.md) | Router policy example | You understand it is not VLAN, SSID, switch-port, or Wi-Fi client isolation. |
+| [Firewall rate limits and ICMP rules](./firewall-rate-limit.md) | Firewall groundwork | You are testing on an isolated host, not depending on it as the sole security boundary. |
 | [Multi-WAN IPv4 failover](./multi-wan-failover.md) | Works today; tune health checks carefully | Several IPv4 egress paths exist and routerd should select a healthy default route. |
 | [Redirect public DNS to the local resolver](./local-dns-redirect.md) | Works today on Linux nftables | LAN clients try to query public plaintext DNS directly and you want port 53 to stay local. |
 | [Tailscale subnet and exit node](./tailscale-subnet-exit.md) | Works today when Tailscale is installed | The router should advertise LAN routes or an exit-node service into a tailnet. |
@@ -75,15 +73,26 @@ Before applying an example on a router you are actively using:
 
 - Keep console or hypervisor access available.
 - Know which interface carries management traffic.
-- Run `routerctl validate` and `routerctl plan` first.
-- Check that the plan does not remove the management interface address, route, or firewall opening.
+- Before a daemon exists, run `routerd validate` and an isolated dry-run first.
+- Check the result for the management interface address, route, and expected
+  host artifacts.
 - Apply from the release binary installed on the router, not from an unrelated development tree.
 
 ```bash
-routerctl validate -f router.yaml --replace
-routerctl plan -f router.yaml --replace
-routerctl apply -f router.yaml --replace
-routerctl get status
+sudo routerd validate --config router.yaml
+
+workdir=$(mktemp -d)
+sudo routerd apply --config router.yaml --once --dry-run --skip-service-manager \
+  --state-file "$workdir/state.db" \
+  --ledger-file "$workdir/ledger.db" \
+  --status-file "$workdir/status.json"
+rm -rf "$workdir"
+
+# Only from a console or independent management path:
+sudo routerd apply --config router.yaml --once
+
+# After routerd.service is running:
+sudo routerctl get status
 ```
 
 ## Related pages

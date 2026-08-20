@@ -79,13 +79,28 @@ flowchart LR
 `IPAddressSet.spec.names` は完全一致の DNS 名です。
 `dns.google` はサブドメインを含みません。必要な宛先名はすべて明示的に列挙します。
 
-## 確認
+## daemon の前に確認する
 
-```bash
-routerctl validate -f examples/example-local-dns-redirect.yaml --replace
-routerctl plan -f examples/example-local-dns-redirect.yaml --replace
-routerctl describe IPAddressSet/public-dns
-nft list table ip routerd_nat
+以下は `sudo` を実行できる通常ユーザーを想定します。まだサービスを起動していないため、
+`routerctl` ではなく `routerd` を使い、dry-run の状態ファイルは一時ディレクトリへ隔離します。
+
+```sh
+LAB_DIR="$(mktemp -d)"
+sudo routerd validate --config examples/example-local-dns-redirect.yaml
+sudo routerd apply --config examples/example-local-dns-redirect.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
+sudo sed -n "1,160p" "$LAB_DIR/status.json"
+```
+
+## サービス起動後に確認する
+
+レビュー済みの設定を適用して `routerd.service` を起動した**後で**、ルーター上で次を実行します。
+
+```sh
+sudo routerctl describe IPAddressSet/public-dns
+sudo nft list table ip routerd_nat
 ```
 
 LAN クライアントからは次のように確認できます。

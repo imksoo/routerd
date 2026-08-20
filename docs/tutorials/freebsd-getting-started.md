@@ -6,8 +6,9 @@ title: Getting started on FreeBSD
 
 ![Diagram showing the FreeBSD getting started flow from release archive install to rendered rc.d, rc.conf.d, pf, dnsmasq, mpd5, and apply validation](/img/diagrams/tutorial-freebsd-getting-started.png)
 
-FreeBSD uses the same routerd resource model as Ubuntu and NixOS, but the host
-artifacts are FreeBSD-native. routerd renders `rc.conf.d`, `rc.d` scripts,
+FreeBSD uses the same routerd resource model as Ubuntu, but it is a second-tier
+target with selected native integration paths rather than first-lab parity.
+Start on an isolated test host with a console. routerd renders `rc.conf.d`, `rc.d` scripts,
 `pf.conf`, `dhclient.conf`, dnsmasq configuration, `mpd5.conf`, and dynamic
 `ifconfig gif` operations for DS-Lite.
 
@@ -53,16 +54,16 @@ SSH on a separate interface or use a hypervisor console during the first run.
 Validate the configuration:
 
 ```sh
-routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
+sudo routerd validate --config /usr/local/etc/routerd/router.yaml
 ```
 
 Render FreeBSD artifacts into a temporary directory:
 
 ```sh
-rm -rf /tmp/routerd-freebsd-render
-routerd render freebsd \
+render_dir=$(mktemp -d)
+sudo routerd render freebsd \
   --config /usr/local/etc/routerd/router.yaml \
-  --out-dir /tmp/routerd-freebsd-render
+  --out-dir "$render_dir"
 ```
 
 Expected files include:
@@ -78,9 +79,9 @@ Expected files include:
 Review the output before touching the live host:
 
 ```sh
-less /tmp/routerd-freebsd-render/rc.conf.d-routerd
-less /tmp/routerd-freebsd-render/pf.conf
-less /tmp/routerd-freebsd-render/dnsmasq.conf
+sudo less "$render_dir/rc.conf.d-routerd"
+sudo less "$render_dir/pf.conf"
+sudo less "$render_dir/dnsmasq.conf"
 ```
 
 ## 4. Understand the FreeBSD host surfaces
@@ -98,30 +99,42 @@ routerd maps resources to these FreeBSD components:
 | `mpd5.conf` | PPPoE bundle, link, authentication, MTU/MRU, and default-route behavior |
 | `ifconfig gif` | Dynamic DS-Lite tunnel application when static `rc.conf` is not enough |
 
-## 5. Apply
+## 5. Dry-run, then apply from the console
 
-Run a plan first:
-
-```sh
-routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
-```
-
-Apply when the generated files and plan are expected:
+Use temporary state files to perform a non-destructive preview:
 
 ```sh
-sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
+workdir=$(mktemp -d)
+sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run --skip-service-manager \
+  --state-file "$workdir/state.db" \
+  --ledger-file "$workdir/ledger.db" \
+  --status-file "$workdir/status.json"
+rm -rf "$workdir"
 ```
 
-routerctl validates `pf.conf` with `pfctl -nf` before loading it. It validates
-dnsmasq with `dnsmasq --test` before restarting the service.
+Apply only when the rendered files and dry-run are expected. This changes the
+host; use a console or separate management network:
+
+```sh
+sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
+```
+
+routerd validates `pf.conf` with `pfctl -nf` before loading it. It validates
+dnsmasq with `dnsmasq --test` before restarting the service. Start the rc.d
+service after the one-shot apply:
+
+```sh
+sudo sysrc routerd_enable=YES
+sudo service routerd start
+```
 
 ## 6. Inspect status and logs
 
 Read routerctl get status:
 
 ```sh
-routerctl get status
-routerctl get events --limit 20
+sudo routerctl get status
+sudo routerctl get events --limit 20
 ```
 
 Follow the system log:

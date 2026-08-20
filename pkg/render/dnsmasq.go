@@ -238,10 +238,9 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, []string
 		raMTU := raMTUByScope[res.Metadata.Name]
 		switch {
 		case raMTU != 0 && !spec.DefaultRoute:
-			buf.WriteString(fmt.Sprintf("ra-param=%s,%d\n", delegated.IfName, raMTU))
-			buf.WriteString(fmt.Sprintf("ra-param=%s,0,0\n", delegated.IfName))
+			buf.WriteString(fmt.Sprintf("ra-param=%s,mtu:%d,0,0\n", delegated.IfName, raMTU))
 		case raMTU != 0:
-			buf.WriteString(fmt.Sprintf("ra-param=%s,%d\n", delegated.IfName, raMTU))
+			buf.WriteString(fmt.Sprintf("ra-param=%s,mtu:%d,0\n", delegated.IfName, raMTU))
 		case !spec.DefaultRoute:
 			buf.WriteString(fmt.Sprintf("ra-param=%s,0,0\n", delegated.IfName))
 		}
@@ -501,7 +500,9 @@ func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases
 		}
 		if spec.ValidLifetime != "" {
 			params = append(params, "0", spec.ValidLifetime)
-		} else if mtu != 0 && (spec.PRFPreference == "high" || spec.PRFPreference == "low") {
+		} else if len(params) > 0 {
+			// dnsmasq requires the RA interval whenever mtu or router
+			// preference is supplied. Zero retains its default interval.
 			params = append(params, "0")
 		}
 		if len(params) > 0 {

@@ -6411,7 +6411,9 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		}
 		if spec.ValidLifetime != "" {
 			params = append(params, "0", spec.ValidLifetime)
-		} else if mtu != 0 && (spec.PRFPreference == "high" || spec.PRFPreference == "low") {
+		} else if len(params) > 0 {
+			// dnsmasq requires the RA interval whenever mtu or router
+			// preference is supplied. Zero retains its default interval.
 			params = append(params, "0")
 		}
 		if len(params) > 0 {

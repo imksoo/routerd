@@ -25,39 +25,36 @@ For some RGW / ONU combinations, DHCPv6 information-request returns DNS, SNTP, a
 For DS-Lite, supply the AFTR explicitly with one of:
 
 - `DSLiteTunnel.spec.aftrIPv6` — pin the AFTR's IPv6 address directly.
-- `DSLiteTunnel.spec.aftrFQDN` — let routerd resolve the FQDN through a known resolver.
+- `DSLiteTunnel.spec.aftrFQDN` with `spec.aftrDNSServers` — resolve the FQDN
+  through known carrier DNS servers.
 
-## AFTR FQDN often needs conditional DNS forwarding
+## AFTR FQDN often needs carrier DNS
 
 Carrier-managed AFTR FQDNs (for example `gw.transix.jp`) typically resolve only through the carrier's own DNS servers. Public resolvers may answer with NXDOMAIN.
 
-In routerd, express that with a `forward` source on `DNSResolver`:
+Configure those DNS server addresses on the `DSLiteTunnel` itself:
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
-  kind: DNSResolver
+  kind: DSLiteTunnel
   metadata:
-    name: resolver
+    name: ds-lite
   spec:
-    listen:
-      - name: local
-        addresses: [127.0.0.1]
-        port: 53
-    sources:
-      - name: aftr
-        kind: forward
-        match: [transix.jp]
-        upstreams:
-          - udp://[2404:8e00::feed:101]:53
+    interface: wan
+    aftrFQDN: gw.transix.jp
+    aftrDNSServers:
+      - 2404:8e00::feed:101
 ```
 
-The DS-Lite controller resolves the AFTR FQDN through `routerd-dns-resolver`, not through the system stub resolver.
+With `aftrDNSServers`, the DS-Lite controller sends its AAAA lookup directly
+to those carrier resolvers. `DNSForwarder` rules govern queries received by
+`routerd-dns-resolver`; they do not configure the tunnel's AFTR lookup.
 
 ## DS-Lite end-to-end checklist
 
 When a DS-Lite tunnel is fully working you should see:
 
-- The conditional forwarder resolves the AFTR FQDN.
+- The configured carrier DNS servers resolve the AFTR FQDN.
 - An `ip6tnl` tunnel device exists.
 - The IPv4 default route points into the tunnel.
 - nftables NAT44 is in place for outbound IPv4 from the LAN.

@@ -75,14 +75,29 @@ flowchart LR
       - 192.168.40.0/24
 ```
 
-## 確認
+## daemon の前に確認する
 
-```bash
-routerctl validate -f examples/example-pppoe-ipv4-nat.yaml --replace
-routerctl plan -f examples/example-pppoe-ipv4-nat.yaml --replace
-routerctl describe PPPoESession/pppoe-home
-ip link show ppp-home
-ip route show default
+以下は `sudo` を実行できる通常ユーザーを想定します。まだサービスを起動していないため、
+`routerctl` ではなく `routerd` を使い、dry-run の状態ファイルは一時ディレクトリへ隔離します。
+
+```sh
+LAB_DIR="$(mktemp -d)"
+sudo routerd validate --config examples/example-pppoe-ipv4-nat.yaml
+sudo routerd apply --config examples/example-pppoe-ipv4-nat.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
+sudo sed -n "1,160p" "$LAB_DIR/status.json"
+```
+
+## サービス起動後に確認する
+
+レビュー済みの設定を適用して `routerd.service` を起動した**後で**、ルーター上で次を実行します。
+
+```sh
+sudo routerctl describe PPPoESession/pppoe-home
+sudo ip link show ppp-home
+sudo ip route show default
 ```
 
 ## よく変えるところ

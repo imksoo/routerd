@@ -1,0 +1,42 @@
+{
+  "link.title.Docs": {
+    "message": "文件",
+    "description": "頁尾文件連結欄的標題"
+  },
+  "link.title.Project": {
+    "message": "專案",
+    "description": "頁尾專案連結欄的標題"
+  },
+  "link.item.label.Install & Upgrade": {
+    "message": "安裝與升級",
+    "description": "安裝與升級頁面的連結"
+  },
+  "link.item.label.Getting Started": {
+    "message": "快速開始",
+    "description": "快速開始頁面的連結"
+  },
+  "link.item.label.Resource API": {
+    "message": "資源 API",
+    "description": "資源 API 頁面的連結"
+  },
+  "link.item.label.Plugin Protocol": {
+    "message": "外掛協定",
+    "description": "外掛協定頁面的連結"
+  },
+  "link.item.label.GitHub": {
+    "message": "GitHub",
+    "description": "GitHub 專案頁面的連結"
+  },
+  "link.item.label.Stable milestone": {
+    "message": "穩定版里程碑",
+    "description": "穩定版里程碑頁面的連結"
+  },
+  "link.item.label.Changelog": {
+    "message": "變更記錄",
+    "description": "變更記錄頁面的連結"
+  },
+  "copyright": {
+    "message": "Copyright © 2026 Kirino Minato and routerd contributors. 依 BSD 3-Clause License 授權。",
+    "description": "頁尾版權資訊"
+  }
+}

@@ -10,24 +10,31 @@ sidebar_position: 3
 
 routerd configuration is a top-level `Router` resource with a list of typed
 resources. The shape is intentionally close to Kubernetes resources, but
-routerd applies them to one local router host.
+routerd applies them to one local router host. Think of it as a labelled parts
+list: each part says what it is, what you call it, and the settings it needs.
 
 ```yaml
-apiVersion: net.routerd.net/v1alpha1
-kind: DHCPv6PrefixDelegation
+apiVersion: routerd.net/v1alpha1
+kind: Router
 metadata:
-  name: wan-pd
+  name: my-lab-router
 spec:
-  interface: wan
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv6PrefixDelegation
+      metadata:
+        name: wan-pd
+      spec:
+        interface: wan
 ```
 
 ## Common Fields
 
-- `apiVersion`: API group and version.
-- `kind`: resource kind.
-- `metadata.name`: unique name within the kind.
-- `spec`: desired intent declared by the user.
-- `status`: observed state written by routerd or a managed daemon.
+- `apiVersion`: the family and version of a part.
+- `kind`: what kind of part it is, such as `Interface` or `DHCPv4Server`.
+- `metadata.name`: a short label you choose so other parts can refer to it.
+- `spec`: the settings you want.
+- `status`: what routerd or a managed daemon observed after it runs.
 
 Configuration files normally contain `spec`. `status` is read through the
 control API, state database, daemon `/v1/status`, `routerctl`, and Web Console.

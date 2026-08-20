@@ -15,6 +15,7 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         'intro',
+        'tutorials/network-basics',
         'concepts/what-is-routerd',
         'concepts/positioning',
         'concepts/design-philosophy',

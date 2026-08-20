@@ -12,6 +12,23 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Changed
+
+- Rebuilt the Japanese-first beginner documentation and synchronized the
+  English, Traditional Chinese, and Simplified Chinese entry paths. The first
+  journey now explains WAN, LAN, DHCP, DNS, YAML resources, standalone
+  validation, isolated dry-run, and when `routerctl` becomes available.
+- Corrected copyable IPv4 NAT, guest isolation, DS-Lite, and multi-WAN
+  explanations so they match their YAML and state their operational safety
+  boundaries.
+
+### Fixed
+
+- `routerd apply --once --dry-run` now keeps DHCPv4 and DHCPv6 lease paths,
+  dnsmasq, firewall, and Path MTU artifacts in its temporary artifact
+  directory rather than normal runtime paths. Generated dnsmasq RA parameters
+  now also express a derived MTU with valid dnsmasq syntax.
+
 ## v20260820.1629
 
 ### Fixed

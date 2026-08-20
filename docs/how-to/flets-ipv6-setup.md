@@ -79,34 +79,12 @@ curl --unix-socket /run/routerd/dhcpv6-client/wan-pd.sock http://unix/v1/status
 
 The advertised RDNSS uses the LAN-side address derived from the delegated prefix. SLAAC clients pick up that resolver automatically.
 
-## Conditional DNS forwarding for the AFTR
+## AFTR DNS servers
 
-The AFTR FQDN is normally only resolvable through the carrier's own DNS servers. Use a conditional forwarder so queries for that domain go to the access-network resolver, while everything else uses your normal upstream.
-
-```yaml
-- apiVersion: net.routerd.net/v1alpha1
-  kind: DNSResolver
-  metadata:
-    name: resolver
-  spec:
-    listen:
-      - name: local
-        addresses: [127.0.0.1]
-        port: 53
-    sources:
-      - name: aftr
-        kind: forward
-        match: [transix.jp]
-        upstreams:
-          - udp://[2404:8e00::feed:101]:53
-      - name: default
-        kind: upstream
-        match: ["."]
-        upstreams:
-          - udp://1.1.1.1:53
-```
-
-Replace `transix.jp` and the upstream IPv6 address with the values your ISP publishes.
+The AFTR FQDN is normally only resolvable through carrier DNS. Configure those
+DNS server addresses on the tunnel itself. `DSLiteTunnel` sends its AAAA lookup
+directly to `aftrDNSServers`; it does not use a `DNSResolver` or a
+`DNSForwarder` resource for this lookup.
 
 ## DS-Lite tunnel
 
@@ -120,12 +98,15 @@ Replace `transix.jp` and the upstream IPv6 address with the values your ISP publ
     tunnelName: ds-routerd
     localAddressSource: interface
     aftrFQDN: gw.transix.jp
-    dependsOn:
-      - resource: DNSResolver/resolver
-        phase: Applied
+    aftrDNSServers:
+      - 2404:8e00::feed:101
 ```
 
 `localAddressSource: interface` uses the WAN-side IPv6 address that SLAAC/RA gave you (rather than a delegated-prefix-derived one) as the local endpoint of the tunnel. That address is usually available before LAN derivation finishes, so the tunnel comes up sooner.
+
+Replace `gw.transix.jp` and the DNS server addresses with values your ISP
+publishes. A separate `DNSResolver` can still serve LAN clients, but it does
+not configure AFTR resolution for this tunnel.
 
 If your ISP publishes a stable AFTR address and you prefer to skip DNS resolution, set `aftrIPv6` directly:
 
@@ -143,18 +124,22 @@ See `examples/dslite-lan-range-snat.yaml` for the optional form.
 ## Verification
 
 ```bash
-routerctl plan -f router.yaml --replace
-routerctl get status
+# Before a daemon exists:
+sudo routerd validate --config router.yaml
 
-ip -6 tunnel show
-ip route show default
-nft list table ip routerd_nat
+# After the local routerd daemon is running:
+sudo routerctl plan -f router.yaml --replace
+sudo routerctl get status
+
+sudo ip -6 tunnel show
+sudo ip route show default
+sudo nft list table ip routerd_nat
 
 # IPv4 reachability through the tunnel
-curl --interface ds-routerd https://1.1.1.1/
+sudo curl --interface ds-routerd https://1.1.1.1/
 ```
 
-Run the dry-run first; only apply for real once the plan looks right and a rollback path is in place.
+Only apply for real once the plan looks right and a rollback path is in place.
 
 ## See also
 

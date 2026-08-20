@@ -1,56 +1,51 @@
 ---
-title: ゲスト / IoT 端末の分離
+title: ゲスト / IoT の分離を設計する
 sidebar_position: 60
 ---
 
-# ゲスト / IoT 端末の分離
+# ゲスト / IoT の分離を設計する
 
-![ClientPolicy が共有 LAN 上のゲストと IoT の MAC アドレスを分類し、LAN や管理網へのアクセスを拒否する構成](/img/diagrams/config-example-guest-isolation.png)
+![信頼済み LAN とゲスト VLAN を別の Layer 2 ネットワークにし、ルーターで通信を扱う構成](/img/diagrams/config-example-guest-isolation.png)
 
-同じ LAN につながった特定の MAC アドレスをゲスト / IoT 端末として扱い、
-インターネットは許可しつつ、信頼済み LAN や管理網への到達を止める例です。
+ゲスト端末や IoT 端末を「信頼済み端末と話せないネットワーク」に置くには、
+ルーターの設定だけでは足りません。最初に、何を分ける必要があるかを整理します。
 
-完全な YAML は `examples/guest-mode.yaml` にあります。
+:::danger 同じ LAN に置いただけでは分離できない
 
-## 構成図
+同じ Ethernet スイッチ、同じ VLAN、同じ Wi-Fi SSID にいる端末は、
+ルーターを通らずに直接フレームを送れることがあります。
+Layer 2 は、スイッチや AP が端末どうしのフレームを直接運ぶ部分です。
+routerd がルーターを通る IP 通信を制限しても、共有された Layer 2 の通信を
+完全には止められません。MAC アドレスだけの区別は、MAC アドレスの偽装にも弱いです。
 
-```mermaid
-flowchart LR
-  internet((Internet))
-  router["[1] routerd host"]
-  lan["[2] shared LAN"]
-  trusted["[3] trusted clients"]
-  guest["[4] guest / IoT MACs"]
-  mgmt["[5] management network"]
+本当に分けるには、管理できるスイッチや Wi-Fi AP で **別の VLAN / SSID** を作り、
+信頼済み用とゲスト用を別の Layer 2 ネットワークにします。分けられない場合は、
+その端末を「隔離済み」と呼ばないでください。
 
-  internet --- router --- lan
-  lan --- trusted
-  lan --- guest
-  router --- mgmt
+:::
+
+## 安全な構成の考え方
+
+```text
+信頼済み端末 ── VLAN 10 / trusted SSID ──┐
+                                         ├── [ routerd VM ] ── WAN
+ゲスト / IoT ── VLAN 20 / guest SSID ────┘
 ```
 
-## 図の対応表
+- スイッチと AP が VLAN / SSID の境界を守ります。
+- ルーターは、別れたネットワークの間を通る IP 通信を扱います。
+- 管理用ネットワークも、可能なら別の VLAN にします。
+- VM で試すときも、trusted と guest を別の仮想スイッチにします。
 
-| 番号 | 意味 | 主なリソース |
-| --- | --- | --- |
-| [1] | 端末ポリシーを適用するルーター。 | `FirewallPolicy/default` |
-| [2] | 信頼済み端末とゲスト端末が同居する共有 LAN。 | `FirewallZone/lan` |
-| [3] | ゲストポリシーに一致しない通常の端末。 | default zone behavior |
-| [4] | ゲスト / IoT として扱う MAC アドレス。 | `ClientPolicy/guest-devices` |
-| [5] | ゲスト端末から到達させない管理宛先。 | `ClientPolicy.spec.isolation.lanMgmt` |
+このページにある `ClientPolicy` は、routerd に「この端末をゲストとして扱いたい」
+という意図を書く例です。VLAN / SSID の代わりにはなりません。
 
-## この例で管理するもの
+## ClientPolicy の例
 
-| 領域 | routerd リソース |
-| --- | --- |
-| LAN アドレス | `IPv4StaticAddress/lan-gateway`, `DHCPv4Server/lan-v4` |
-| 端末の分類 | `ClientPolicy/guest-devices` |
-| フィルタリング | `FirewallZone/*`, `FirewallPolicy/default` |
-
-## 設定の要点
+完全な YAML は `examples/guest-mode.yaml` にあります。次は、指定した MAC
+アドレスをゲスト候補として扱う形です。
 
 ```yaml
-# [4] 列挙した MAC アドレスを隔離されたゲスト / IoT 端末として扱う。
 - apiVersion: firewall.routerd.net/v1alpha1
   kind: ClientPolicy
   metadata:
@@ -59,7 +54,6 @@ flowchart LR
     mode: include
     macs:
       - 18:ec:e7:33:12:6c
-    # [4] -> [1] インターネットは許可し、LAN と管理網は拒否する。
     isolation:
       lanInternet: allow
       lanLAN: deny
@@ -67,19 +61,63 @@ flowchart LR
       mDNSBroadcast: deny
 ```
 
-## 確認
+- `mode: include` は、ここに列挙した端末だけを対象にします。
+- `lanInternet: allow` は、インターネット側へ出したいという意図です。
+- `lanLAN: deny` と `lanMgmt: deny` は、LAN と管理網に届かせたくないという意図です。
+- `mDNSBroadcast: deny` は、mDNS のブロードキャストを出したくないという意図です。
 
-```bash
-routerctl validate -f examples/guest-mode.yaml --replace
-routerctl plan -f examples/guest-mode.yaml --replace
-routerctl describe ClientPolicy/guest-devices
-nft list table inet routerd_filter
+:::caution ファイアウォール機能の現在地
+
+`ClientPolicy` とファイアウォール用リソースは、現在も土台を整えている段階です。
+この YAML が validate できても、公開ネットワークに対する完成した安全保証には
+なりません。隔離した Ubuntu Server VM 以外で、唯一の防御として使わないでください。
+
+:::
+
+## daemon の前に確認する
+
+例をコピーし、MAC アドレス、NIC 名、VLAN / 仮想スイッチの構成を自分のラボに
+合わせてから確認します。まだサービスを起動していないので、`routerd` を使います。
+
+```sh
+cp examples/guest-mode.yaml ./guest-mode.yaml
+LAB_DIR="$(mktemp -d)"
+sudo routerd validate --config ./guest-mode.yaml
+sudo routerd apply --config ./guest-mode.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
+sudo sed -n "1,160p" "$LAB_DIR/status.json"
 ```
 
-ゲスト端末からインターネットへ出られること、信頼済み LAN と管理網へ届かないことを確認します。
+ここで確認するのは YAML と routerd が扱う IP 側の意図です。
+VLAN の番号や SSID の分離が本当にスイッチ / AP に設定されているかは、
+その機器の管理画面や設定でも別に確認します。
 
-## よく変えるところ
+## サービス起動後に確認する
 
-- 列挙した MAC アドレスだけを分離するなら `mode: include`。
-- 原則ゲスト扱いにして、列挙した端末だけ信頼済みにするなら `mode: exclude`。
-- Web 管理画面で分かりやすくするため、DHCP の予約と組み合わせる。
+VM コンソールを開いたままサービスを起動した**後で**、`routerctl` を使います。
+
+```sh
+sudo install -m 0600 ./guest-mode.yaml /usr/local/etc/routerd/router.yaml
+sudo systemctl enable --now routerd.service
+sudo systemctl is-active routerd.service
+sudo routerctl get status
+sudo routerctl describe ClientPolicy/guest-devices
+```
+
+本当の分離を試すときは、ゲスト VLAN / SSID の端末から次を確認します。
+
+- インターネットへの通信が必要なら、その通信だけができる。
+- trusted VLAN / SSID の端末へ届かない。
+- 管理用ネットワークとルーターの管理画面へ届かない。
+- 同じ物理スイッチでも、VLAN をまたぐ直接通信ができない。
+
+期待と違う結果なら、routerd の YAML だけでなく、スイッチのポート設定、AP の
+SSID と VLAN の対応、クライアント間通信を許す設定を見直します。
+
+## 次に読むもの
+
+- [NAT44 とファイアウォールの準備](../tutorials/basic-firewall.md)
+- [LAN 側サービス](../tutorials/lan-side-services.md)
+- [対応プラットフォーム](../platforms.md)

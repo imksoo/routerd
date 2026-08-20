@@ -11,6 +11,14 @@ This page introduces the routerd resources that handle the LAN side of a router:
 
 The companion page on the [WAN side](./wan-side-services.md) covers how the router gets its upstream addresses; this page is what the router publishes to the inside.
 
+:::caution These are building blocks, not a complete file
+Every YAML block on this page is a fragment to add to the same top-level
+`spec.resources:` list. It assumes the referenced `Interface`, address, and DNS
+resources already exist. Do not paste one fragment into an empty file and apply
+it to a live LAN. Start with [the first lab router](./first-router.md), then add
+one service and test it at a time.
+:::
+
 ## Service split
 
 routerd splits LAN service across two daemons with clear boundaries:
@@ -176,35 +184,55 @@ When DHCP-derived hostnames are relative names, they are published under the zon
             field: address
         port: 53
         sources: [local-zone, default]
-    sources:
-      - name: local-zone
-        kind: zone
-        match:
-          - lan.example.org
-        zoneRef:
-          - DNSZone/lan
-      - name: default
-        kind: upstream
-        match:
-          - "."
-        upstreams:
-          - https://dns.example.net/dns-query
-          - udp://1.1.1.1:53
     cache:
       enabled: true
       maxEntries: 10000
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSForwarder
+  metadata:
+    name: local-zone
+  spec:
+    resolver: DNSResolver/lan-resolver
+    match:
+      - lan.example.org
+    zoneRefs:
+      - DNSZone/lan
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSForwarder
+  metadata:
+    name: default
+  spec:
+    resolver: DNSResolver/lan-resolver
+    match:
+      - "."
+    upstreams:
+      - DNSUpstream/public-dns
+
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: public-dns
+  spec:
+    protocol: doh
+    address: dns.example.net
+    path: /dns-query
 ```
 
-The resolver listens on every address routerd derives from the referenced status fields. New IPv6 addresses (e.g. on PD renewal) are picked up without a restart.
+The `sources` under a listener name `DNSForwarder` resources; they do not
+contain inline resolver configuration. The resolver listens on every address
+routerd derives from the referenced status fields. New IPv6 addresses (e.g. on
+PD renewal) are picked up without a restart.
 
 ## Verification
 
 ```sh
 # Confirm the LAN interface has both v4 and v6
-routerctl describe Interface/lan
+sudo routerctl describe Interface/lan
 
 # Watch DHCP events live
-routerctl get events --topic 'routerd.dhcp.lease.**' --resource DHCPv4Server/lan-dhcpv4
+sudo routerctl get events --topic 'routerd.dhcp.lease.**' --resource DHCPv4Server/lan-dhcpv4
 
 # Resolve a name through the local resolver
 dig @<lan-ip> router.lan.example.org
@@ -213,7 +241,10 @@ dig @<lan-ip> example.com
 
 ## Operational notes
 
-- Begin with `routerctl plan`. Only enable the real LAN listener after the management path and a known rollback are ready.
+- Before a daemon exists, begin with `routerd validate --config FILE` and an
+  isolated `routerd apply --once --dry-run`. Only enable a real LAN listener
+  after the management path and a known rollback are ready. Use `routerctl
+  plan` only after the local daemon is running.
 - Manual dnsmasq lease-file edits do not notify routerd automatically. Reconcile the affected lease through the supported configuration workflow; `routerd-dhcp-event-relay` is a one-shot dnsmasq hook, not a service to restart. Prefer changing the lease through routerd.
 - Keep upstream public resolvers as a fallback: `routerd-dns-resolver` will demote a forwarder that fails health checks but only if a working alternative exists.
 

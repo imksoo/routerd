@@ -1,36 +1,24 @@
 ---
-title: 入門指南
+title: 安全起步
 ---
 
-# 入門指南
+# 安全起步：先檢查，不先斷線
 
-![從 interface discovery 與小型 YAML config 到 validate、plan、dry-run、serve、routerctl get status 的安全 first routerd loop](/img/diagrams/tutorial-getting-started.png)
+![安全的 routerd 首次流程：找出介面、寫小型 YAML、驗證、暫存路徑 dry-run、啟動服務、讀取狀態](/img/diagrams/tutorial-getting-started.png)
 
-本教學首先確認安全的操作流程。
+本教學的目的不是立刻把機器變成家用閘道，而是安全完成第一輪：寫一份很小的設定、檢查它、再在不提交網路變更的情況下跑一次。請使用隔離的 Ubuntu Server VM 或備用電腦，並保留主控台。
 
-1. 撰寫小型的路由器資源檔。
-2. 驗證。
-3. 確認計畫。
-4. 預演執行。
-5. 確認安全後啟動常駐程式。
-
-第一次確認時，不會變更主機的網路設定。
-請先透過 release 封存檔與 `install.sh` 安裝 routerd。
-各 OS 的安裝步驟請參閱[安裝與升級](../install-and-upgrade.md)。
-
-## 1. 確認介面名稱
+## 1. 找出介面名稱
 
 ```bash
-ip link
+ip -br link
 ```
 
-本教學以 WAN 為 `ens18`、LAN 為 `ens19`、管理用為 `ens20` 為例。
-在實際主機上請務必根據自身環境替換。
+範例將 `ens18` 當 WAN、`ens19` 當 LAN。你的主機可能顯示 `enp1s0`、`eth0` 或其他名稱，務必以輸出為準。不要透過即將由 routerd 接管的唯一網路介面遠端 SSH 後進行實驗。
 
-請將管理路徑與要變更的介面分開。
-若只對 routerd 將接管的介面進行初次驗證，風險較高。
+## 2. 建立最小設定
 
-## 2. 描述介面與主機準備
+將下列內容存成 `first-router.yaml`。它目前只宣告兩個介面，尚未提供 DHCP、NAT 或網際網路分享。
 
 ```yaml
 apiVersion: routerd.net/v1alpha1
@@ -39,15 +27,6 @@ metadata:
   name: first-router
 spec:
   resources:
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: Package
-      metadata:
-        name: router-host-tools
-      spec:
-        packages:
-          - os: ubuntu
-            names: [dnsmasq, nftables, conntrack, iproute2]
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
@@ -55,7 +34,8 @@ spec:
       spec:
         ifname: ens18
         adminUp: true
-        managed: true
+        managed: false
+        owner: external
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
@@ -65,51 +45,44 @@ spec:
         ifname: ens19
         adminUp: true
         managed: true
+        owner: routerd
 ```
 
-路由器功能所需的主機端執行時期設定，routerd 會從宣告的資源中自動推導。
-`Package`、`Sysctl`、`SysctlProfile` 僅作為補充尚無法自動推導的套件或核心設定的有限逃生口，請僅在必要時使用。
+`metadata.name` 是設定內部使用的名稱；`spec.ifname` 才是 Linux 看到的實體介面名稱。將 WAN 標為 `external` 是保守的第一步：一開始不要讓 routerd 直接接管上游連線。
 
-## 3. 驗證
+## 3. 離線驗證檔案
 
 ```bash
-routerctl validate -f first-router.yaml --replace
+routerd validate --config first-router.yaml
 ```
 
-驗證步驟在 routerd 接觸主機之前，先確認資源的格式是否正確。
+這是獨立命令，不需要 `routerd serve` 已經啟動，也不會寫入網路設定。若出現錯誤，先修正 YAML 或介面名稱，別急著做真實套用。
 
-## 4. 確認計畫
+## 4. 在暫存路徑做一次 dry-run
 
 ```bash
-routerctl plan -f first-router.yaml --replace
+workdir=$(mktemp -d)
+routerd apply --once --dry-run --skip-service-manager --config first-router.yaml --status-file "$workdir/status.json" --state-file "$workdir/state.db" --ledger-file "$workdir/ledger.db" --netplan-file "$workdir/50-routerd.yaml" --dnsmasq-file "$workdir/dnsmasq.conf" --dnsmasq-service-file "$workdir/routerd-dnsmasq.service" --nftables-file "$workdir/routerd-nat.nft"
 ```
 
-計畫步驟可確認介面名稱錯誤、缺少相依關係，以及將產生的主機成品。
+`--dry-run` 會計算相依關係、計畫和產生意圖，但不會提交主機網路變更。暫存目錄也讓狀態報告與輸出不會落入 `/run`、`/etc` 或 `/var/lib`。請閱讀輸出，尤其是介面名、資源參照與管理路徑警告。
 
-## 5. 預演執行
+不要把 dry-run 當作連通性或安全測試：它不會替你測量真實 ISP、交換器 VLAN 或完整的防火牆暴露面。
+
+## 5. 準備好後再運行 daemon
+
+不帶 `--dry-run` 的 `routerd apply --once` 和 `routerd serve` 都可能變更網路。確認已有主控台或獨立管理網路後，再把檔案安裝到預設位置並啟動服務：
 
 ```bash
-routerctl plan -f first-router.yaml --replace
+sudo install -m 0600 first-router.yaml /usr/local/etc/routerd/router.yaml
+sudo systemctl enable --now routerd
+sudo routerctl get status
 ```
 
-預演執行可確認資源載入、相依順序及產生內容。
-不會確認網路變更。
+最後一行放在這裡，是因為此時 `routerd serve` 已由 systemd 運行。`routerctl` 透過執行中的 daemon 讀取狀態；服務未啟動時，不能以它取代 `routerd validate`。
 
-## 6. 計畫安全後啟動常駐程式
+## 下一步
 
-```bash
-sudo routerd serve --config first-router.yaml
-```
-
-在生產環境中，請使用產生的服務成品資源或 systemd unit 檔案。
-這樣便能在系統啟動時自動執行 `routerd serve`。
-
-## 7. 確認狀態
-
-```bash
-routerctl get status
-routerctl get events --limit 20
-routerctl get connections --limit 50
-```
-
-下一篇教學將新增 LAN 的 DHCP、RA、DNS、路由政策、NAT44 與 DS-Lite。
+- [第一台實驗路由器](./first-router.md)會加入 WAN DHCP 與 LAN 閘道位址。
+- [WAN 側服務](./wan-side-services.md)介紹更多上游連線方式。
+- [LAN 側服務](./lan-side-services.md)介紹 DHCP、DNS、RA 與 NTP。

@@ -5,29 +5,51 @@ slug: /tutorials
 
 # チュートリアル
 
-![インストール、はじめに、ディスクレスライブ ISO から WAN サービス、LAN サービス、ファイアウォール、FreeBSD へ進む routerd チュートリアルの進め方](/img/diagrams/tutorial-index.png)
+![routerd を安全に学ぶ順番。Ubuntu VM、設定、検証、dry-run、サービス、機能別チュートリアル](/img/diagrams/tutorial-index.png)
 
-## ディスクレス mini PC で 5 分ルーター
+最初は、**隔離した Ubuntu Server VM** で練習します。VM の画面を直接開ける
+コンソールを用意し、変更する NIC とは別の管理経路を残してください。
+普段使っている家・学校・職場の回線を、最初の練習台にしてはいけません。
 
-routerd ライブ ISO を起動し、テキストウィザードに答えます。
-設定を USB メモリーへ保存すれば、内蔵ディスクに OS を入れずに、
-小型 x86 mini PC を永続的なルーターとして使えます。
+## おすすめの順番
 
-[ディスクレス手順を始める](/docs/tutorials/diskless-minipc-walkthrough)
+| 順番 | すること | ページ |
+| --- | --- | --- |
+| 0 | WAN、LAN、DHCP、NAT の短い説明を読む | [ネットワーク基礎](./network-basics.md) |
+| 1 | Ubuntu Server VM に routerd を入れる | [インストール](./install.md) |
+| 2 | 設定を検証し、ネットワークを変えない dry-run をする | [はじめに](./getting-started.md) |
+| 3 | WAN と LAN を持つ小さなルーターを作る | [最初のルーターを立ち上げる](./first-router.md) |
+| 4 | DHCP、DNS、RA などを LAN 側に足す | [LAN 側サービス](./lan-side-services.md) |
+| 5 | DHCPv6-PD、PPPoE、DS-Lite などを WAN 側に足す | [WAN 側サービス](./wan-side-services.md) |
+| 6 | NAT44 の目的と、ファイアウォールの現在地を知る | [NAT44 とファイアウォールの準備](./basic-firewall.md) |
 
-![ディスクレス mini PC の流れ](/img/routerd-diskless-minipc.svg)
+最初の 3 段階では、先に `routerd validate`、次に
+`routerd apply --once --dry-run` を使います。`routerctl` は、
+`routerd.service` が起動してから状態を見るためのクライアントです。
 
 ## 目的から選ぶ
 
-| 目的 | チュートリアル |
+| やりたいこと | チュートリアル / 例 |
 | --- | --- |
-| リリースアーカイブから導入する | [インストール](/docs/tutorials/install) |
-| YAML から最初のルーターを作る | [はじめに](/docs/tutorials/getting-started) |
-| WAN 取得とトンネルを設定する | [WAN 側サービス](/docs/tutorials/wan-side-services) |
-| LAN の DHCP、DNS、RA、NTP を設定する | [LAN 側サービス](/docs/tutorials/lan-side-services) |
-| 保守的なファイアウォールの基本構成を追加する | [基本のファイアウォール](/docs/tutorials/basic-firewall) |
-| FreeBSD から始める | [FreeBSD で始める](/docs/tutorials/freebsd-getting-started) |
+| リリースアーカイブから導入する | [インストール](./install.md) |
+| YAML から最初のルーターを作る | [はじめに](./getting-started.md) |
+| IPv4 NAT の完全な例を見る | [基本的な IPv4 NAT ルーター](../config-examples/basic-ipv4-nat.md) |
+| ゲスト端末を分けるときの注意を知る | [ゲスト / IoT の分離を設計する](../config-examples/guest-isolation.md) |
+| ディスクを使わない mini PC を試す | [ディスクレス mini PC](./diskless-minipc-walkthrough.md) |
+| FreeBSD の導入の土台を確認する | [FreeBSD で始める](./freebsd-getting-started.md) |
 
-routerd の特徴は、同じリソースモデルで、仮想 SDN/VNET 間のルーターと、
-ディスクレスな物理 mini PC ルーターの両方を記述できることです。
-最初の導入に合う手順から始めれば、ネットワークが広がっても同じリソースを使い続けられます。
+:::caution ファイアウォールとゲスト分離
+
+ファイアウォールのリソースはまだ土台を整えている段階です。インターネットに
+公開するルーターの唯一の防御には使わないでください。また、同じスイッチや
+同じ Wi-Fi の端末を、本当の意味で分けるには VLAN（スイッチ内の別 LAN） /
+SSID（Wi-Fi の名前）の分離が必要です。
+
+:::
+
+## 対応する環境
+
+この入門の手順は Ubuntu Server を対象にしています。FreeBSD と NixOS は
+導入とサービス連携の土台がありますが、Ubuntu と同じネットワーク機能の
+対応を意味しません。詳しくは [対応プラットフォーム](../platforms.md) を
+確認してください。

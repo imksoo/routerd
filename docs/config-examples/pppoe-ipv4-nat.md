@@ -76,15 +76,20 @@ flowchart LR
       - 192.168.40.0/24
 ```
 
-## Checks
+## Validate before live testing
 
 ```bash
-routerctl validate -f examples/example-pppoe-ipv4-nat.yaml --replace
-routerctl plan -f examples/example-pppoe-ipv4-nat.yaml --replace
-routerctl describe PPPoESession/pppoe-home
-ip link show ppp-home
-ip route show default
+routerd validate --config examples/example-pppoe-ipv4-nat.yaml
 ```
+
+Replace the interface name and credentials first. A one-shot dry-run does not
+start `routerd-pppoe-client`; it waits for that helper's existing status socket.
+On a fresh host, its absence makes the preview fail before it can test the
+access line. Use the standalone validation above, then make the first live
+apply only from a console or independent management path.
+
+After the routerd service starts the helper, inspect `routerctl describe
+PPPoESession/pppoe-home`, `ip link show ppp-home`, and `ip route show default`.
 
 ## Common edits
 

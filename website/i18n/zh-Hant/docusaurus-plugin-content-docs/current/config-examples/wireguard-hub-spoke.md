@@ -57,12 +57,20 @@ flowchart LR
 
 ## 確認步驟
 
+先在 daemon 尚未啟動時進行獨立檢查。下列指令需要具有 `sudo` 權限的本機使用者，但不會套用網路變更。
+
 ```bash
-routerctl validate -f examples/wireguard-hub-spoke.yaml --replace
-routerctl plan -f examples/wireguard-hub-spoke.yaml --replace
-routerctl describe WireGuardInterface/wg-hub
-wg show
+LAB_DIR="$(mktemp -d)"
+sudo routerd validate --config examples/wireguard-hub-spoke.yaml
+sudo routerd apply --config examples/wireguard-hub-spoke.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
+rm -rf "$LAB_DIR"
 ```
+
+服務運行後，才在路由器上執行 `sudo routerctl describe WireGuardInterface/wg-hub`
+與 `sudo wg show`。
 
 ## 常見調整項目
 

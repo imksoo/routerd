@@ -7,53 +7,84 @@ sidebar_label: 概要
 
 # routerd ドキュメント
 
-![Diagram showing the routerd documentation map from install and first router goals through concepts, examples, tutorials, how-to guides, operations, API references, platforms, plugins, and schemas](/img/diagrams/intro.png)
+![routerd を安全に試す順番。隔離した Ubuntu VM、設定ファイル、検証、dry-run、サービス起動、状態確認](/img/diagrams/intro.png)
 
-routerd は、型付きの YAML で書いた望ましい状態から、Linux / FreeBSD 上で動くルーターを組み立てる宣言型のルーターです。設定を手続きで積み上げるのではなく、欲しい状態を宣言すると、routerd が実機をその状態へ近づけます。
+routerd は、ルーターにしてほしいことを YAML ファイルに書くための道具です。
+たとえば「この線を WAN にする」「LAN にこの IP アドレスを付ける」「LAN から
+外へ出るときだけ IPv4 NAT を使う」と書きます。routerd は、その内容を読んで
+Linux ホストの設定を作ります。
 
-目的に合うところから読んでください。
+現在の最初の対象は **Ubuntu Server** です。FreeBSD と NixOS には、ビルド、
+導入場所、サービス管理の土台がありますが、各 OS に合ったネットワーク設定の
+生成はまだそろっていません。この入門では Ubuntu Server を使ってください。
+対応状況は [対応プラットフォーム](./platforms.md) で確認できます。
+
+:::caution 最初は本物の回線を触らない
+
+routerd はネットワークを変えられます。最初の実験は、普段の自宅・学校・職場の
+ルーターではなく、**隔離した Ubuntu Server VM** で行ってください。
+Proxmox、KVM、VirtualBox などの VM コンソールを開ける状態にし、変更する NIC
+とは別の管理経路も残します。SSH だけに頼らないでください。
+
+:::
 
 :::tip 推奨の安定版
-新規に導入するなら、推奨の安定版マイルストーン **v20260707.1514** から始めてください。詳細は [安定版マイルストーン](./releases/stable.md) を参照してください。
+
+新規に導入するなら、[安定版マイルストーン](./releases/stable.md) にある推奨版から
+始めてください。
+
 :::
+
+## 最初の順番
+
+1. 隔離した Ubuntu Server VM と、そのコンソールを用意します。
+2. routerd を導入します。
+3. 小さな YAML を書き、`routerd validate` で形を確かめます。
+4. `routerd apply --once --dry-run` を、使い捨ての state・ledger・status ファイルを
+   指定して実行します。この段階では本当に反映しません。
+5. VM の構成が安全だと分かってから `routerd.service` を起動します。
+6. サービスが起動した**後で**、`routerctl get status` を使って状態を見ます。
+
+具体的なコマンドは [はじめに](./tutorials/getting-started.md) にあります。
 
 ## 目的から探す
 
-| やりたいこと | 出発点 |
+| やりたいこと | 読むページ |
 | --- | --- |
-| routerd を導入・更新する | [導入 → インストールとアップグレード](./install-and-upgrade.md) |
-| routerd とは何か、なぜあるのかを知る | [はじめに → routerd とは](./concepts/what-is-routerd.md) |
-| 他製品・他方式に対する位置づけを知る | [はじめに → 位置づけ](./concepts/positioning.md) |
-| 初めてルーターを立てる | [導入 → クイックスタート](./tutorials/getting-started.md) |
-| browser で初期設定を生成する | [routerd config wizard](https://routerd.net/wizard) |
-| editor 補完と検証を有効にする | [How-to → VS Code YAML schema](./how-to/vscode-yaml-schema.md) |
-| ディスクレス mini PC をルーターにする | [導入 → ディスクレス mini PC](./tutorials/diskless-minipc-walkthrough.md) |
-| 宣言型モデル（リソース・適用・調整）を理解する | [機能解説 → リソースモデル](./concepts/resource-model.md) |
-| 検証済みの構成例から設定を組む | [設定例集](./config-examples/index.md) |
-| 特定の配置課題を解く | [How-to ガイド](./how-to/multi-wan.md) |
-| リソースの種別やフィールドを引く | [リファレンス → リソース API](./api-v1alpha1.md) |
-| 稼働中のルーターを運用する | [機能解説 → 調整（リコンサイル）](/docs/operations/reconcile) |
-| 何が変わったかを追う | [リリースと安定版 → 変更履歴](./releases/changelog.md) |
-| 難しい事例の背景を知る | [ナレッジベース](./knowledge-base/dhcpv6-pd-clients.md) |
+| Ubuntu Server VM に導入する | [インストール](./tutorials/install.md) |
+| ネットワークの基本用語を知る | [routerd を始める前のネットワーク基礎](./tutorials/network-basics.md) |
+| 最初の安全な確認をする | [はじめに](./tutorials/getting-started.md) |
+| WAN と LAN を持つ小さなルーターを作る | [最初のルーターを立ち上げる](./tutorials/first-router.md) |
+| IPv4 NAT の形を知る | [基本的な IPv4 NAT ルーター](./config-examples/basic-ipv4-nat.md) |
+| routerd が設定をどう扱うか知る | [適用と生成](./concepts/apply-and-render.md) |
+| ファイアウォールの現在地を知る | [NAT44 とファイアウォールの準備](./tutorials/basic-firewall.md) |
+| ゲスト端末を本当に分ける方法を知る | [ゲスト / IoT の分離を設計する](./config-examples/guest-isolation.md) |
+| 稼働中のルーターを運用する | [調整（リコンサイル）](./operations/reconcile.md) |
+| リソース名や項目を調べる | [リソース API](./api-v1alpha1.md) |
 
-## セクション一覧
+## 大切な言葉
 
-- **はじめに** — routerd とは何か、位置づけ、設計思想
-- **導入（クイックスタート）** — インストールとアップグレード、最初のルーター、OS 別の入門（FreeBSD）、ディスクレス mini PC
-- **機能解説（宣言型モデル）** — 用語集、リソースモデル、適用と生成、状態と所有、調整（リコンサイル）、Web 管理画面
-- **設定リファレンス（機能別）** — DNS リゾルバー、ファイアウォール、Egress・マルチ WAN、BGP、Tailscale、OpenTelemetry など、機能ごとの設定方法
-- **設定例集（シナリオ別）** — NAT、LAN の DHCP/DNS、DS-Lite、PPPoE、ポート転送、ゲスト分離、マルチ WAN フェイルオーバーなどの検証済み構成例
-- **How-to ガイド** — フレッツ初期設定、IPv6 デュアルスタック、ゲストモード、OS ブートストラップ、VS Code YAML schema、PVE オーバーレイ、トラブルシューティング
-- **ナレッジベース（実環境知見）** — 実環境で得た現場メモ（DHCPv6-PD クライアント、NTT NGN の PD 取得）
-- **運用** — 状態データベース、インベントリ、USB 永続化、シークレット、観測、冗長化 など
-- **リファレンス（API・プロトコル・対応環境）** — リソース API、制御 API、プラグインプロトコル、対応プラットフォーム、ハードウェア
-- **リリースと安定版** — 安定版マイルストーン、変更履歴、リリース手順
-- **設計ノート** — アーキテクチャー上の論点と設計の根拠
-- **プロジェクト** — 貢献方法、ライセンスと法務
+- **WAN** は、インターネットや上流ルーターにつながる側です。
+- **LAN** は、自分で使う PC やスマートフォンをつなぐ側です。
+- **YAML** は、設定を人が読み書きしやすい形で書くファイル形式です。
+- **validate** は、設定の書き方を確認することです。
+- **dry-run** は、本当には変更せず、何をする予定か試すことです。
+- **daemon（デーモン）** は、起動し続けて状態を見守るプログラムです。
 
-## 次のステップ
+分からない言葉が出たら、まず [ネットワーク基礎](./tutorials/network-basics.md) を
+読んでください。全部を暗記する必要はありません。
 
-- [routerd を導入する](./install-and-upgrade.md) — リリースアーカイブを取得し `install.sh` を実行
-- [config wizard](https://routerd.net/wizard) — ブラウザーで初期設定を生成
-- [リソースモデル](./concepts/resource-model.md) — routerd がルーターの意図をどう整理するかを理解する
-- [クイックスタート](./tutorials/getting-started.md) — 安全な最初のループ: validate → plan → dry-run → serve
+## できることと、まだ途中のこと
+
+routerd は、インターフェース、IPv4 アドレス、DHCP、NAT44、経路、dnsmasq を使う
+LAN サービスなどを扱えます。一方、ファイアウォールのリソースは現在も土台を
+整えている段階です。インターネットに公開する機器の唯一の防御としては使わないで
+ください。
+
+同じスイッチや同じ Wi-Fi にいる端末は、ルーターを通らず直接通信できることが
+あります。ゲストと信頼済み端末を本当に分けるには、管理できるスイッチや AP で
+VLAN / SSID を分ける必要があります。
+
+## 次の一歩
+
+[隔離した Ubuntu Server VM へのインストール](./tutorials/install.md) から始めます。

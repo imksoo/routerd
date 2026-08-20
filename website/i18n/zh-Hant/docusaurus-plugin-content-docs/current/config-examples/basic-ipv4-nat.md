@@ -1,64 +1,61 @@
 ---
-title: 基本 IPv4 NAT 路由器
+title: 基本 IPv4 NAT 閘道
 sidebar_position: 10
 ---
 
-# 基本 IPv4 NAT 路由器
+# 基本 IPv4 NAT 閘道
 
-![由 DHCP WAN、routerd 管理的 LAN address、DHCPv4 server、NAT44 與 firewall zone 組成的基本 IPv4 gateway](/img/diagrams/config-example-basic-ipv4-nat.png)
+![DHCP WAN、routerd 管理的 LAN 閘道、DHCPv4、NAT44 與區域資源組成的 IPv4 閘道](/img/diagrams/config-example-basic-ipv4-nat.png)
 
-這是一個接近最小設定的家用路由器範例，讓 LAN 用戶端透過 DHCP 取得的 WAN 端 IPv4 位址連上網際網路。
+這是適合實驗室閱讀的家用 IPv4 閘道形狀：WAN 以 DHCPv4 取得位址，LAN 使用 `192.168.10.1/24`，用戶端經 NAT44 連往外部網路。完整 YAML 位於 `examples/example-basic-ipv4-nat.yaml`。
 
-完整的已驗證 YAML 位於 `examples/example-basic-ipv4-nat.yaml`。
+請先在隔離的 Ubuntu Server VM 進行測試，並保留主控台。這不是將正在承載生產網路的設備直接改成路由器的捷徑。
 
-## 架構圖
+## 拓撲
 
-```mermaid
-flowchart LR
-  internet((Internet))
-  upstream["[1] ISP / upstream router"]
-  wan["[2] wan<br/>DHCPv4 client"]
-  router["[3] routerd host"]
-  lan["[4] lan<br/>192.168.10.1/24"]
-  clients["[5] LAN clients<br/>192.168.10.100-199"]
-
-  internet --- upstream --- wan --- router --- lan --- clients
+```text
+網際網路／上游路由器
+          |
+        wan（DHCPv4）
+          |
+      routerd 主機
+          |
+  lan（192.168.10.1/24）
+          |
+      LAN 用戶端
 ```
 
-## 圖示對應表
-
-| 編號 | 說明 | 主要資源 |
-| --- | --- | --- |
-| [1] | 分配 WAN 端 IPv4 租約的上游網路。 | routerd 管理範圍外 |
-| [2] | 實體 WAN 介面，在此執行 DHCPv4 用戶端。 | `Interface/wan`、`DHCPv4Client/wan-dhcpv4` |
-| [3] | 套用推導出的 forwarding sysctl 和 nftables 規則的 Linux 主機。 | Derived host runtime |
-| [4] | routerd 持有的 LAN 閘道位址。 | `Interface/lan`、`IPv4StaticAddress/lan-base` |
-| [5] | 將路由器作為閘道 / DNS 使用的 LAN 用戶端。 | `DHCPv4Server/lan-dhcpv4` |
-
-## 此範例管理的項目
-
-| 領域 | routerd 資源 |
+| 工作 | 主要資源 |
 | --- | --- |
-| WAN 位址 | `Interface/wan`、`DHCPv4Client/wan-dhcpv4` |
-| LAN 位址 | `Interface/lan`、`IPv4StaticAddress/lan-base` |
-| LAN DHCPv4 | `DHCPv4Server/lan-dhcpv4` |
-| IPv4 網際網路連線 | `NAT44Rule/lan-to-wan` |
-| 基本過濾器 | `FirewallZone/wan`、`FirewallZone/lan`、`FirewallPolicy/home` |
+| 宣告 WAN 和 LAN | `Interface/wan`、`Interface/lan` |
+| 取得 WAN IPv4 | `DHCPv4Client/wan-dhcpv4` |
+| 持有 LAN 閘道位址 | `IPv4StaticAddress/lan-base` |
+| 分配 LAN 位址 | `DHCPv4Server/lan-dhcpv4` |
+| 讓 LAN IPv4 對外連線 | `NAT44Rule/lan-to-wan` |
 
-此範例盡量簡化 DNS。向 DHCPv4 用戶端分發路由器的 LAN 位址作為 DNS 伺服器。在基本路由運作後，可視需要再新增 `DNSResolver` 和 `DNSZone`。
-
-## 設定重點
+## 重要設定：現代 NAT 欄位
 
 ```yaml
-# [2] WAN 位址從上游網路透過 DHCPv4 取得。
 - apiVersion: net.routerd.net/v1alpha1
-  kind: DHCPv4Client
+  kind: NAT44Rule
   metadata:
-    name: wan-dhcpv4
+    name: lan-to-wan
   spec:
-    interface: wan
+    type: masquerade
+    egressInterface: wan
+    sourceRanges:
+      - 192.168.10.0/24
+    excludeDestinationCIDRs:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+```
 
-# [4] routerd 持有 LAN 閘道位址。
+這是目前 `NAT44Rule` 的結構：使用 `type`、`egressInterface` 和 `sourceRanges`。`masquerade` 適合 WAN 位址會改變的 DHCP 上游。排除的私有目的網段不會做 NAT，避免損壞內部、VPN 或管理路由。
+
+下列資源將 LAN 位址與 DHCP 位址池連起來：
+
+```yaml
 - apiVersion: net.routerd.net/v1alpha1
   kind: IPv4StaticAddress
   metadata:
@@ -67,7 +64,6 @@ flowchart LR
     interface: lan
     address: 192.168.10.1/24
 
-# [5] 向 LAN 用戶端分發位址、閘道、DNS、搜尋網域。
 - apiVersion: net.routerd.net/v1alpha1
   kind: DHCPv4Server
   metadata:
@@ -81,60 +77,43 @@ flowchart LR
     gatewayFrom:
       resource: IPv4StaticAddress/lan-base
       field: address
-    dnsServerFrom:
-      - resource: IPv4StaticAddress/lan-base
-        field: address
-
-# [2] -> [5] LAN IPv4 流量在出往 WAN 時進行 masquerade。
-- apiVersion: net.routerd.net/v1alpha1
-  kind: NAT44Rule
-  metadata:
-    name: lan-to-wan
-  spec:
-    type: masquerade
-    egressInterface: wan
-    sourceRanges:
-      - 192.168.10.0/24
+    dnsServers:
+      - 1.1.1.1
+      - 1.0.0.1
 ```
 
-`NAT44Rule` 會反映至 routerd 的 nftables NAT 表格。在防火牆資源中，
-將 WAN 介面加入 `untrust` 區域，LAN 介面加入 `trust` 區域。
+這個第一輪實驗直接對用戶端公告外部 DNS 解析器 `1.1.1.1` 和 `1.0.0.1`，因此路由器本身暫時不需要承擔 DNS 服務。請先確認學校、家庭、公司或上游網路允許使用這些公共解析器；若網路政策指定 DNS，或你要讓路由器提供本地名稱、過濾或條件式轉送，請改用獲准的 DNS 位址，或先設定 `DNSResolver`，再公告路由器的 LAN 位址。
 
-## 套用步驟
+## 先用本機命令檢查
+
+以具有 `sudo` 權限的本機使用者執行下列獨立檢查；它們不需要 daemon，也不會套用網路變更。
 
 ```bash
-cp examples/example-basic-ipv4-nat.yaml router.yaml
-routerctl validate -f router.yaml --replace
-routerctl plan -f router.yaml --replace
+LAB_DIR="$(mktemp -d)"
+sudo routerd validate --config examples/example-basic-ipv4-nat.yaml
+sudo routerd apply --config examples/example-basic-ipv4-nat.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
+rm -rf "$LAB_DIR"
 ```
 
-確認管理存取並非依賴即將變更位址的 LAN 介面，或已具備主控台存取權限後再執行套用。
+服務未啟動時，不要用 `routerctl validate` 或 `routerctl plan` 代替。
+
+真實服務運行後，才可查詢資源。首次安裝請保留 `sudo`；若管理員透過 `routerd` 群組授予本機 socket 存取權，加入後必須重新登入才會生效：
 
 ```bash
-routerctl apply -f router.yaml --replace
+sudo routerctl get status
+sudo routerctl describe DHCPv4Client/wan-dhcpv4
+sudo routerctl describe NAT44Rule/lan-to-wan
 ```
 
-## 確認
+## 關於防火牆
 
-```bash
-routerctl get status
-routerctl describe DHCPv4Client/wan-dhcpv4
-routerctl describe IPv4StaticAddress/lan-base
-routerctl describe NAT44Rule/lan-to-wan
-nft list table ip routerd_nat
-nft list table inet routerd_filter
-```
+完整範例也包含 `FirewallZone` 和 `FirewallPolicy`，用來展示 NAT 與區域策略如何搭配。不過防火牆功能仍在預發布的基礎實作階段，不是完整安全邊界。NAT 成功、dry-run 成功，或看到 nftables 表存在，都不能證明對外曝露已安全。
 
-在 LAN 用戶端端確認以下項目。
+## 常見調整
 
-```bash
-ip route
-ping 192.168.10.1
-curl https://1.1.1.1/
-```
-
-## 常見的修改點
-
-- 將 `ens18` 和 `ens19` 改為實際的介面名稱。
-- 若與上游、VPN 或管理網路重疊，請變更 `192.168.10.0/24`。
-- 在分發路由器作為 DNS 伺服器之前，視需要先新增 `DNSResolver`。
+- 將 `ens18`、`ens19` 換成真實介面名稱。
+- 若 `192.168.10.0/24` 與上游、VPN 或管理網路重疊，改用未使用的私有網段。
+- 若需要可信的訪客隔離，請採用 VLAN、獨立 SSID 或獨立實體埠；不要只依賴共用二層 LAN 上的 MAC 分類。

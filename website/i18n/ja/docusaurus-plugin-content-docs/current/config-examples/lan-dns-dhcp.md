@@ -79,13 +79,29 @@ flowchart LR
       field: zone
 ```
 
-## 確認
+## daemon の前に確認する
 
-```bash
-routerctl validate -f examples/example-lan-dns-dhcp.yaml --replace
-routerctl plan -f examples/example-lan-dns-dhcp.yaml --replace
-routerctl describe DNSZone/home
-routerctl describe DHCPv4Server/lan-dhcpv4
+以下は `sudo` を実行できる通常ユーザーを想定します。まだサービスを起動していないため、
+`routerctl` ではなく `routerd` を使い、dry-run の状態ファイルは一時ディレクトリへ隔離します。
+
+```sh
+LAB_DIR="$(mktemp -d)"
+sudo routerd validate --config examples/example-lan-dns-dhcp.yaml
+sudo routerd apply --config examples/example-lan-dns-dhcp.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
+sudo sed -n "1,160p" "$LAB_DIR/status.json"
+```
+
+## サービス起動後に確認する
+
+レビュー済みの設定を適用して `routerd.service` を起動した**後で**、ルーター上で次を実行します。
+`dig` は LAN 側のクライアントから実行します。
+
+```sh
+sudo routerctl describe DNSZone/home
+sudo routerctl describe DHCPv4Server/lan-dhcpv4
 dig @192.168.30.1 router.home.example
 ```
 

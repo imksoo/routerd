@@ -77,13 +77,20 @@ flowchart LR
 
 ## 確認
 
+先在 daemon 尚未啟動時進行獨立檢查。下列指令需要具有 `sudo` 權限的本機使用者，但不會套用網路變更。
+
 ```bash
-routerctl validate -f examples/example-pppoe-ipv4-nat.yaml --replace
-routerctl plan -f examples/example-pppoe-ipv4-nat.yaml --replace
-routerctl describe PPPoESession/pppoe-home
-ip link show ppp-home
-ip route show default
+LAB_DIR="$(mktemp -d)"
+sudo routerd validate --config examples/example-pppoe-ipv4-nat.yaml
+sudo routerd apply --config examples/example-pppoe-ipv4-nat.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
+rm -rf "$LAB_DIR"
 ```
+
+完成 live apply 並啟動服務後，才在路由器上執行 `sudo routerctl describe
+PPPoESession/pppoe-home`、`sudo ip link show ppp-home` 與 `sudo ip route show default`。
 
 ## 常見調整項目
 

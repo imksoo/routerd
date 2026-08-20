@@ -76,13 +76,21 @@ flowchart LR
 
 ## 确认
 
+先在 daemon 未启动时进行独立检查。以下命令需要具有 `sudo` 权限的本地用户，但不会应用网络变更。
+
 ```bash
-routerctl validate -f examples/example-lan-dns-dhcp.yaml --replace
-routerctl plan -f examples/example-lan-dns-dhcp.yaml --replace
-routerctl describe DNSZone/home
-routerctl describe DHCPv4Server/lan-dhcpv4
-dig @192.168.30.1 router.home.example
+LAB_DIR="$(mktemp -d)"
+sudo routerd validate --config examples/example-lan-dns-dhcp.yaml
+sudo routerd apply --config examples/example-lan-dns-dhcp.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
+rm -rf "$LAB_DIR"
 ```
+
+服务已启动后，才在路由器上运行 `sudo routerctl describe DNSZone/home` 和
+`sudo routerctl describe DHCPv4Server/lan-dhcpv4`。从 LAN 客户端运行
+`dig @192.168.30.1 router.home.example` 验证本地名称。
 
 ## 常见调整项目
 

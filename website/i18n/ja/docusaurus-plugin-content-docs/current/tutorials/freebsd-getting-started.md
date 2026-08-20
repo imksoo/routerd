@@ -6,8 +6,10 @@ title: FreeBSD から始める
 
 ![リリースアーカイブの導入から rc.d、rc.conf.d、pf、dnsmasq、mpd5 の生成と適用検証へ進む FreeBSD 入門の流れ](/img/diagrams/tutorial-freebsd-getting-started.png)
 
-FreeBSD は、Ubuntu と同じ routerd リソースモデルを使います。
-ただし、生成されるホスト成果物は FreeBSD の機構に合わせます。
+FreeBSD は、Ubuntu と同じ routerd リソースモデルを使います。ただし Ubuntu と
+同じ初回ラボの対応範囲ではなく、選択されたネイティブ連携を持つ第 2 対象です。
+最初はコンソールを使える隔離テストホストで試してください。生成されるホスト成果物は
+FreeBSD の機構に合わせます。
 routerd は、`rc.conf.d`、`rc.d` スクリプト、`pf.conf`、`dhclient.conf`、
 dnsmasq 設定、`mpd5.conf`、そして DS-Lite 用の動的な `ifconfig gif` 操作を扱います。
 
@@ -52,16 +54,16 @@ sudo install -m 0600 examples/freebsd-edge.yaml /usr/local/etc/routerd/router.ya
 まず設定を検証します。
 
 ```sh
-routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
+sudo routerd validate --config /usr/local/etc/routerd/router.yaml
 ```
 
 次に、FreeBSD 用の成果物を一時ディレクトリへ生成します。
 
 ```sh
-rm -rf /tmp/routerd-freebsd-render
-routerd render freebsd \
+render_dir=$(mktemp -d)
+sudo routerd render freebsd \
   --config /usr/local/etc/routerd/router.yaml \
-  --out-dir /tmp/routerd-freebsd-render
+  --out-dir "$render_dir"
 ```
 
 主な出力は次のとおりです。
@@ -77,9 +79,9 @@ routerd render freebsd \
 実ホストへ反映する前に、内容を確認します。
 
 ```sh
-less /tmp/routerd-freebsd-render/rc.conf.d-routerd
-less /tmp/routerd-freebsd-render/pf.conf
-less /tmp/routerd-freebsd-render/dnsmasq.conf
+sudo less "$render_dir/rc.conf.d-routerd"
+sudo less "$render_dir/pf.conf"
+sudo less "$render_dir/dnsmasq.conf"
 ```
 
 ## 4. FreeBSD 側の役割を理解する
@@ -97,30 +99,41 @@ routerd は、リソースを次の FreeBSD の機構へ対応付けます。
 | `mpd5.conf` | PPPoE の bundle、link、認証、MTU/MRU、既定経路 |
 | `ifconfig gif` | 静的な `rc.conf` だけでは足りない DS-Lite トンネルの動的な適用 |
 
-## 5. 適用する
+## 5. dry-run の後、コンソールから適用する
 
-先に計画を確認します。
+使い捨ての state ファイルで、ネットワークを変更しない確認を行います。
 
 ```sh
-routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
+workdir=$(mktemp -d)
+sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run --skip-service-manager \
+  --state-file "$workdir/state.db" \
+  --ledger-file "$workdir/ledger.db" \
+  --status-file "$workdir/status.json"
 ```
 
-生成ファイルと計画が想定どおりなら、適用します。
+生成ファイルと dry-run が想定どおりなら、コンソールまたは独立した管理経路から
+適用します。次のコマンドはホストを変更します。
 
 ```sh
-sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
+sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
 ```
 
 routerd は、`pf.conf` を読み込む前に `pfctl -nf` で検証します。
 dnsmasq も、再起動の前に `dnsmasq --test` で検証します。
+one-shot apply が正常なら rc.d サービスを起動します。
+
+```sh
+sudo sysrc routerd_enable=YES
+sudo service routerd start
+```
 
 ## 6. 状態とログを確認する
 
 routerd の状態を確認します。
 
 ```sh
-routerctl get status
-routerctl get events --limit 20
+sudo routerctl get status
+sudo routerctl get events --limit 20
 ```
 
 システムログを追います。

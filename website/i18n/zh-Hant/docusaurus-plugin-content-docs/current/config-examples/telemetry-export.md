@@ -56,10 +56,17 @@ flowchart LR
 
 ## 確認步驟
 
+先在 daemon 尚未啟動時進行獨立檢查。下列指令需要具有 `sudo` 權限的本機使用者，但不會套用網路變更。
+
 ```bash
-routerctl validate -f examples/telemetry-export.yaml --replace
-routerctl describe Telemetry/otlp
+LAB_DIR="$(mktemp -d)"
+sudo routerd validate --config examples/telemetry-export.yaml
+sudo routerd apply --config examples/telemetry-export.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
+rm -rf "$LAB_DIR"
 ```
 
-請確認收集器及後端端均已正確接收資料。
+服務運行後，可在路由器上使用 `sudo routerctl describe Telemetry/otlp`；請同時確認收集器及後端端均已正確接收資料。
 endpoint 應置於可信任的管理網路或專用觀測網路中。

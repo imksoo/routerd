@@ -4,369 +4,95 @@ title: 安装与升级
 
 # 安装与升级
 
-![Diagram showing routerd install and upgrade from release archive download and install.sh through first router.yaml validation, plan, serve mode, preserved config and state, and uninstall](/img/diagrams/install-and-upgrade.png)
+![routerd 从发布归档安装、检查配置、dry-run，到启动服务的流程](/img/diagrams/install-and-upgrade.png)
 
-通过发布归档包将 routerd 安装至路由器主机。
-归档包含可执行文件、服务模板、配置示例及安装程序。
-路由器主机上不需要 Go 或 Makefile。
+本页采用 Ubuntu Server + systemd 的入门路径。请在隔离 VM 或有本地控制台的备用主机上完成第一次安装；它不适合在唯一的生产网关上远程试错。
 
-## 快速安装
+## 1. 下载并安装发布归档
 
-从 [GitHub Releases](https://github.com/imksoo/routerd/releases) 获取符合您操作系统与架构的归档包。
+在 [GitHub Releases](https://github.com/imksoo/routerd/releases) 选择与 CPU 架构相符的归档。下面使用当前推荐的稳定里程碑 [v20260707.1514](https://github.com/imksoo/routerd/releases/tag/v20260707.1514)；[稳定版页面](./releases/stable.md)是这个推荐的唯一来源。示例为 Linux amd64；arm64 请把文件名改为 `linux-arm64`。
 
-Linux amd64：
-
-```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
+```bash
+RELEASE=v20260707.1514
+curl -fLO https://github.com/imksoo/routerd/releases/download/${RELEASE}/routerd-linux-amd64.tar.gz
+curl -fLO https://github.com/imksoo/routerd/releases/download/${RELEASE}/routerd-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-linux-amd64.tar.gz.sha256
 tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
-Linux arm64 请使用 `linux-arm64` 归档包。
+归档带有程序、服务模板、示例配置和安装脚本；路由器主机不需要 Go 或 Makefile。安装脚本会安装或检查常用运行时依赖，并把程序放在 `/usr/local/sbin`。它会写入 `/usr/local/etc/routerd/router.yaml.sample`，但不会覆盖已有的 `/usr/local/etc/routerd/router.yaml`。全新安装没有配置时，服务不会自动启动。
 
-FreeBSD amd64：
+确认安装：
 
-```sh
-fetch https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-freebsd-amd64.tar.gz
-fetch https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-freebsd-amd64.tar.gz.sha256
-cat routerd-freebsd-amd64.tar.gz.sha256
-sha256 routerd-freebsd-amd64.tar.gz
-tar -xzf routerd-freebsd-amd64.tar.gz
-sudo ./install.sh
+```bash
+routerd --version
+routerd --help
 ```
 
-FreeBSD arm64 请使用 `freebsd-arm64` 归档包。
-最新发布也提供带版本号的归档包，格式如 `routerd-vYYYYMMDD.HHmm-linux-amd64.tar.gz`。
-若需固定于特定版本，请使用带版本号的归档包。
+## 2. 先准备配置，再启动服务
 
-Linux 归档包含以 `CGO_ENABLED=0` 静态链接的 routerd 二进制文件，
-因此不依赖部署目标主机的 glibc 版本。
-`dnsmasq`、`nft`、`ip`、`conntrack`、`tcpdump` 等运行时工具，
-仍由 `install.sh` 负责安装或确认。
+把示例复制成自己的配置并编辑接口名。`ens18`、`ens19` 只是常见 VM 名称，不一定是你的机器上的名字。服务尚未运行时，不要用 `routerctl`；先直接使用 `routerd` 检查文件。
 
-若主机需要以 native nDPI 进行应用识别，请另外获取对应的
-`routerd-ndpi-agent-libndpi-linux-amd64.tar.gz`，并在常规归档包的安装流程中明确应用。
-
-```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
-sha256sum -c routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
-sudo ./install.sh --with-ndpi \
-  --with-ndpi-archive ./routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
+```bash
+sudo install -d -m 0755 /usr/local/etc/routerd
+sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
+sudoedit /usr/local/etc/routerd/router.yaml
+sudo routerd validate --config /usr/local/etc/routerd/router.yaml
 ```
 
-加上 `--with-ndpi` 时，安装后的 `routerd-ndpi-agent` 若未返回 `libndpiLoaded: true`，
-安装程序即会失败。此设计确保静态回退代理不会在未实际支持 native nDPI 的情况下静默通过。
+`routerd validate` 直接读取 YAML，不需要服务已经运行，也不会改动主机网络。
 
-`install.sh` 会自动判断是全新安装还是升级。
-它会将可执行文件放置于 `/usr/local/sbin`，并安装服务模板。
-同时会创建 `/usr/local/etc/routerd/router.yaml.sample`，
-但不会覆盖现有的 `/usr/local/etc/routerd/router.yaml`。
+接着做一次隔离的 dry-run。临时路径让状态报告和所有可能的渲染目标都远离系统默认目录；`--skip-service-manager` 会略过服务管理器操作，`--dry-run` 本身不会提交网络变更。
 
-## 使用 Live ISO 试用
-
-发布页面也提供以 Ubuntu 为基础的可启动 Live ISO。
-
-```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-live.iso
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-live.iso.sha256
-sha256sum -c routerd-live.iso.sha256
+```bash
+LAB_DIR="$(mktemp -d)"
+sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json" \
+  --netplan-file "$LAB_DIR/50-routerd.yaml" \
+  --dnsmasq-file "$LAB_DIR/dnsmasq.conf" \
+  --dnsmasq-service-file "$LAB_DIR/routerd-dnsmasq.service" \
+  --nftables-file "$LAB_DIR/routerd-nat.nft"
 ```
 
-将 ISO 挂载至 Proxmox VE 的测试 VM 并启动。
-控制台会显示 routerd 的初始配置步骤。
-以 root 登录后，可启动相同的 `install.sh configure` 向导。
-ISO 适合演示或短时间试用。
-若要作为正式路由器使用，请从发布归档包安装至磁盘。
+检查输出中的接口名、依赖和警告。dry-run 会观察部分主机信息，但不应把网络设置应用到主机；它也不能证明网线、ISP 或防火墙策略在真实流量下正确。
 
-Live ISO 同时启用视频控制台与串口控制台。
-在 Proxmox VE 中，请添加串口插槽，并以 `qm terminal` 连接。
+确认有控制台或独立管理路径后，才启动正常服务：
 
-```sh
-qm create 200 \
-  --name routerd-live-demo \
-  --memory 1536 \
-  --cores 2 \
-  --ostype l26 \
-  --serial0 socket \
-  --vga serial0 \
-  --boot order=ide2 \
-  --ide2 local:iso/routerd-live.iso,media=cdrom \
-  --net0 virtio,bridge=vmbr0 \
-  --net1 virtio,bridge=vmbr490
-qm start 200
-qm terminal 200
+```bash
+sudo systemctl enable --now routerd.service
+sudo systemctl is-active routerd.service
+sudo routerctl get status
 ```
 
-测试 DHCP 或 RA 时，请在 `net1` 使用隔离的 LAN 桥接。
-串口控制台配置为 115200 8N1。
-向导以纯文本显示，因此无论使用 `qm terminal`、Framebuffer 控制台或最小化终端，操作体验均相同。
-
-Live ISO 有两种操作模式：
-
-- **临时演示模式：** 不选取 USB 存储设备。
-  配置与日志保存于 RAM，重启后消失。
-- **持久路由器模式：** 在向导中选取 USB 分区。
-  向导会将 `router.yaml` 保存至 USB 设备。
-  下次启动时，ISO 会挂载 USB 设备并还原配置，自动应用。
-
-持久模式下，USB 分区需标记为 `ROUTERD`。
-若有多个可移动设备，可在内核参数中指定 `routerd.usb=/dev/sdX1`。
-辅助工具以 `blkid` 识别 `ext4`、`vfat`、`exfat`。
-默认以 `async,noatime` 挂载。
-仅在明确需要同步写入时，才指定 `routerd.usb_mount=sync`。
-
-日志暂存于 `/run/routerd/logs` 的 tmpfs。
-向导可启用每日一次的写出作业，
-将配置、状态快照及压缩日志归档复制至 USB 设备。
-tmpfs 日志上限默认为 100 MiB，
-超出上限时，依序删除较旧的日志文件。
-
-安全移除 USB 时，请执行：
-
-```sh
-/usr/share/routerd/live-persistence.sh flush
-/usr/share/routerd/live-persistence.sh umount
-```
-
-有关部署位置与挂载选项，
-请参阅 [Operations → USB 持久化](./operations/usb-persistence)。
-
-也提供带版本号的 ISO，格式如 `routerd-live-vYYYYMMDD.HHmm.iso`。
-
-## 运行时依赖包
-
-默认情况下，`install.sh` 会安装已知的 OS 软件包。
-若只要查看软件包清单，请执行：
-
-```sh
-./install.sh --list-deps
-```
-
-若以其他机制管理软件包，可禁用自动安装：
-
-```sh
-sudo ./install.sh --no-install-deps
-```
-
-也可以只安装依赖包：
-
-```sh
-sudo ./install.sh --deps-only
-```
-
-Tailscale 为可选项目，安装时请加上 `--with-tailscale`：
-
-```sh
-sudo ./install.sh --with-tailscale
-```
-
-### Debian / Ubuntu
-
-安装程序使用 `apt-get` 安装以下软件包：
-
-```text
-ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables
-```
-
-### Fedora 系
-
-安装程序使用 `dnf` 安装以下软件包：
-
-```text
-ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod radvd strongswan iptables
-```
-
-### Arch 系
-
-安装程序使用 `pacman` 安装以下软件包：
-
-```text
-ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables
-```
-
-### FreeBSD
-
-安装程序使用 `pkg` 安装以下软件包：
-
-```text
-ca_root_nss curl dnsmasq wireguard-tools mpd5 bind-tools tcpdump jq chrony strongswan
-```
-
-FreeBSD 的 `pf`、`ifconfig`、`route`、`sysctl`、`service`、`sysrc`、`cron`、
-`netstat`、`sockstat`、`ping`、`traceroute` 均为基本系统功能，
-不通过软件包安装，仅确认命令是否存在。
+现在 `routerd serve` 已通过 systemd 运行，`routerctl` 才有可连接的本机 socket。之后的 `routerctl validate`、`routerctl plan` 和 `routerctl apply` 都是向这个运行中的服务请求操作。
 
 ## 升级
 
-解压新版归档包，执行相同的安装程序即可：
+下载新版本、校验哈希、解压后再次运行同一个安装脚本即可：
 
-```sh
+```bash
 tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
-若 `/usr/local/sbin/routerd` 已存在，安装程序会切换为升级模式。
-此时会显示旧版与新版的 `routerd --version`，
-替换可执行文件与服务模板，同时保留配置与状态。
-若 routerd 服务正在运行，则会重新启动。
-在 systemd 主机上，安装程序会等待重启后的 `routerd.service` 状态插槽就绪，
-待 routerd 管理的单元文件更新稳定后，仅重启需要更新的 routerd 辅助服务。
-仅在辅助程序运行的是已删除的升级前二进制，或辅助程序启动后单元文件有更新时，才会重启。
-若 `/etc/systemd/system/routerd.service` 已由 routerd 配置管理，
-则不以归档包模板覆盖，保留该单元。
+安装程序会保留已有配置和状态。升级前先备份自己的 `router.yaml`；如果 `routerd.service` 已在运行，安装程序可能会重启它以换用新程序。因此请先安排维护窗口并确认管理路径；升级后检查服务状态和本机控制接口：
 
-被替换的文件会备份为 `*.backup.YYYYMMDDHHMMSS`。
-中途失败时，会从临时备份中还原。
-
-若 routerd 本身将 `routerd.service` 作为生成的服务产物资源进行管理，
-对单元文件的变更会谨慎处理。
-应用过程中不会直接重启自身，而是通过 `systemd-run` 预排一个略有延迟的自我重启。
-若同一配置中包含 VRRP 或 ingress 服务资源，
-生成的 `routerd.service` 会自动加入 keepalived 所需的可写路径与 capability。
-BGP 通过本地 gRPC Unix 插槽控制长期存活的 `routerd-bgp` 守护进程，
-因此不需要 FRR group 或 FRR 运行时目录。
-
-常用选项：
-
-```sh
-sudo ./install.sh --no-restart
-sudo ./install.sh --dry-run
-sudo ./install.sh --verbose
-sudo ./install.sh --no-config-update
+```bash
+sudo systemctl is-active routerd.service
+sudo routerctl get status
 ```
 
-## 安装位置
+涉及 BGP 等对短暂重启敏感的生产功能时，请先阅读[变更记录](./releases/changelog.md)和自己的运维流程。
 
-| 项目 | Linux | FreeBSD |
-| --- | --- | --- |
-| 配置 | `/usr/local/etc/routerd/router.yaml` | `/usr/local/etc/routerd/router.yaml` |
-| 配置示例 | `/usr/local/etc/routerd/router.yaml.sample` | `/usr/local/etc/routerd/router.yaml.sample` |
-| 可执行文件 | `/usr/local/sbin` | `/usr/local/sbin` |
-| 服务模板 | `/etc/systemd/system/routerd.service` | `/usr/local/etc/rc.d/routerd` |
-| 运行时插槽 | `/run/routerd` | `/var/run/routerd` |
-| 持久状态 | `/var/lib/routerd` | `/var/db/routerd` |
+## 平台范围
 
-安装程序不会删除以下状态：
+Ubuntu Server 是当前主要目标。FreeBSD 和 NixOS 的安装布局、服务管理和网络渲染仍是各自的平台工作，不能把本页的 systemd/nftables 步骤当成它们的等价操作说明。请先读[支持的平台](./platforms.md)。
 
-- `/usr/local/etc/routerd/router.yaml`
-- `/var/lib/routerd`
-- `/var/db/routerd`
-- `/run/routerd`
-- `/var/run/routerd`
-- `/var/log/otelcol`
+## 继续学习
 
-## 初始配置
-
-初次试用时，可使用内置的初始配置向导：
-
-```sh
-sudo ./install.sh configure
-```
-
-向导会依次询问 WAN 接口、LAN 接口、LAN 地址、
-LAN 服务、管理路径的放置位置，以及可选的 USB 持久化。
-生成的候选配置保存于 `/usr/local/etc/routerd/router.yaml.configure`，
-若已有现有配置，则显示差异。
-确认后，安装至 `/usr/local/etc/routerd/router.yaml`，
-接着依次执行 `routerctl validate`、`routerctl plan`、`routerctl apply`。
-
-自动化时，可通过环境变量传递值以跳过提问：
-
-```sh
-sudo ROUTERD_WAN_INTERFACE=ens18 \
-  ROUTERD_LAN_INTERFACE=ens19 \
-  ROUTERD_LAN_ADDRESS=192.168.10.1/24 \
-  ROUTERD_LAN_CIDR=192.168.10.0/24 \
-  ROUTERD_MGMT_MODE=lan \
-  ROUTERD_ENABLE_USB_PERSISTENCE=no \
-  ./install.sh configure --non-interactive --yes
-```
-
-在 Live ISO 上使用 USB 持久化时，请指定以下值：
-
-```sh
-sudo ROUTERD_ENABLE_USB_PERSISTENCE=yes \
-  ROUTERD_USB_DEVICE=/dev/sdb1 \
-  ROUTERD_USB_FLUSH=yes \
-  ROUTERD_LOG_TMPFS_LIMIT=100M \
-  ./install.sh configure --non-interactive --yes
-```
-
-若只需生成 YAML 文件而不应用，请使用 `--no-apply`：
-
-```sh
-sudo ./install.sh configure --no-apply
-```
-
-也可以手动配置。
-复制配置示例，编辑接口名称等项目：
-
-```sh
-sudo install -d -m 0755 /usr/local/etc/routerd
-sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
-sudo vi /usr/local/etc/routerd/router.yaml
-```
-
-验证并确认计划：
-
-```sh
-routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
-routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
-```
-
-确认管理路径安全后再应用：
-
-```sh
-sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
-```
-
-单次应用正常完成后，启动服务：
-
-```sh
-sudo systemctl enable --now routerd.service
-```
-
-在 FreeBSD 上请执行：
-
-```sh
-sudo sysrc routerd_enable=YES
-sudo service routerd start
-```
-
-## 卸载
-
-发布归档包也包含 `uninstall.sh`。
-默认情况下，它会删除可执行文件、服务模板及运行时文件，保留配置与状态。
-
-```sh
-sudo ./uninstall.sh --yes
-```
-
-若要扩大删除范围，请明确指定：
-
-```sh
-sudo ./uninstall.sh --yes --purge-config
-sudo ./uninstall.sh --yes --purge-state
-sudo ./uninstall.sh --yes --all
-```
-
-使用 `--dry-run` 可仅确认将被删除的内容。
-
-## 开发者工作流程
-
-Makefile 供开发用途使用，
-包含测试、构建、Schema 生成、配置示例验证、网站构建及发布归档包制作。
-
-```sh
-make test
-make check-schema
-make validate-example
-make website-build
-make dist ROUTERD_OS=linux GOARCH=amd64 VERSION="$(git describe --tags --abbrev=0)"
-```
-
-Makefile 不作为用户的安装路径。
-标准安装方式为发布归档包搭配 `install.sh`。
+- [安全起步](./tutorials/getting-started.md)
+- [第一台实验路由器](./tutorials/first-router.md)
+- [发布版和稳定版](./releases/stable.md)

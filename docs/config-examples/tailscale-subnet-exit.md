@@ -7,10 +7,20 @@ sidebar_position: 90
 
 ![Diagram showing routerd configuring a Tailscale node to advertise LAN and management prefixes plus exit-node intent](/img/diagrams/config-example-tailscale-subnet-exit.png)
 
-This example installs or expects Tailscale and advertises the router as both a
-subnet router and an exit node.
+This example configures an already installed Tailscale client to advertise the
+router as both a subnet router and an exit node. The YAML contains a
+`TailscaleNode`; it does not contain a `Package` resource that installs
+Tailscale for you. Install it first (for example, with `install.sh
+--with-tailscale`) and follow your tailnet's enrollment procedure.
 
 The complete, validated YAML is in `examples/tailscale-exit-subnet.yaml`.
+
+:::danger Review what remote users can reach
+Advertising a subnet route or an exit node can let tailnet users reach a LAN or
+send their Internet traffic through this router. Use a test tailnet first,
+protect the auth key, and approve only the intended routes in the Tailscale
+admin console.
+:::
 
 ## Topology
 
@@ -41,7 +51,6 @@ flowchart LR
 
 | Area | routerd resources |
 | --- | --- |
-| Runtime package | `Package/tailscale-runtime` |
 | Tailnet node | `TailscaleNode/home` |
 | Route advertisement | `advertiseRoutes` |
 | Exit node | `advertiseExitNode` |
@@ -69,10 +78,14 @@ flowchart LR
 ## Checks
 
 ```bash
-routerctl validate -f examples/tailscale-exit-subnet.yaml --replace
-routerctl plan -f examples/tailscale-exit-subnet.yaml --replace
-routerctl describe TailscaleNode/home
-tailscale status
+routerd validate --config examples/tailscale-exit-subnet.yaml
+
+workdir=$(mktemp -d)
+routerd apply --config examples/tailscale-exit-subnet.yaml --once --dry-run \
+  --state-file "$workdir/state.db" \
+  --ledger-file "$workdir/ledger.db" \
+  --status-file "$workdir/status.json"
+rm -rf "$workdir"
 ```
 
 Approve the advertised routes and exit-node use in the Tailscale admin console

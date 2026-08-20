@@ -2,8 +2,14 @@
 
 This directory contains the Docusaurus site for `routerd.net`.
 
-The English docs source is the repository `docs/` directory. Japanese translated
-docs live under `website/i18n/ja/docusaurus-plugin-content-docs/current/`.
+The English docs source is the repository `docs/` directory. Localized docs
+live under `website/i18n/<locale>/docusaurus-plugin-content-docs/current/`.
+
+For beginner-facing changes, start by checking that the Japanese explanation is
+natural and understandable to a network-curious student, then keep the English,
+Traditional Chinese, and Simplified Chinese core onboarding pages equivalent in
+meaning. The source layout stays English for Docusaurus mechanics; this is an
+editorial review order, not a claim that a translation is less important.
 
 Cloudflare Pages settings:
 

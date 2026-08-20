@@ -62,12 +62,22 @@ flowchart LR
       - traces
 ```
 
-## 確認
+## daemon の前に確認する
 
-```bash
-routerctl validate -f examples/telemetry-export.yaml --replace
-routerctl describe Telemetry/otlp
+以下は `sudo` を実行できる通常ユーザーを想定します。まだサービスを起動していないため、
+`routerctl` ではなく `routerd` を使い、dry-run の状態ファイルは一時ディレクトリへ隔離します。
+
+```sh
+LAB_DIR="$(mktemp -d)"
+sudo routerd validate --config examples/telemetry-export.yaml
+sudo routerd apply --config examples/telemetry-export.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
+sudo sed -n "1,160p" "$LAB_DIR/status.json"
 ```
 
+レビュー済みの設定を適用して `routerd.service` を起動した**後で**、
+`sudo routerctl describe Telemetry/otlp` で routerd 側の状態を確認します。
 コレクターやバックエンド側でデータが届いていることを確認します。
 エンドポイントは信頼できる管理網または観測用ネットワークに置いてください。

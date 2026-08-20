@@ -55,9 +55,11 @@ spec:
         gatewayFrom:
           resource: IPv4StaticAddress/lan-base
           field: address
-        dnsServerFrom:
-          - resource: IPv4StaticAddress/lan-base
-            field: address
+        # This first-lab example advertises external resolvers. Add a
+        # DNSResolver before advertising the router's LAN address as DNS.
+        dnsServers:
+          - 1.1.1.1
+          - 1.0.0.1
         domain: home.example
 
     - apiVersion: net.routerd.net/v1alpha1

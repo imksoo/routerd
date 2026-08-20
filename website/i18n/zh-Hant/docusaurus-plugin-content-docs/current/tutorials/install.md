@@ -3,74 +3,66 @@ title: 安裝
 sidebar_position: 1
 ---
 
-# 安裝
+# 安裝 routerd
 
-![從 release archive install routerd，安裝 dependency 與 service template，preserve config/state，並執行 validate-plan-dry-run 的流程](/img/diagrams/tutorial-install.png)
+![routerd 安裝：發布封存檔、相依套件與服務範本、保留的設定和狀態，以及安裝後的驗證與 dry-run](/img/diagrams/tutorial-install.png)
 
-routerd 從 release 封存檔安裝。
-路由器主機上不需要 Go 或 Makefile。
+最快的入門方式是在隔離的 Ubuntu Server VM 使用發布封存檔。路由器主機不需要 Go、Makefile 或原始碼樹。以下使用目前建議的穩定里程碑 [v20260707.1514](../releases/stable.md)。
 
-```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
+```bash
+RELEASE=v20260707.1514
+curl -fLO https://github.com/imksoo/routerd/releases/download/${RELEASE}/routerd-linux-amd64.tar.gz
+curl -fLO https://github.com/imksoo/routerd/releases/download/${RELEASE}/routerd-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-linux-amd64.tar.gz.sha256
 tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
-Linux arm64 主機請使用 `routerd-linux-arm64.tar.gz`。
+arm64 主機請使用 `routerd-linux-arm64.tar.gz`。安裝腳本會放入執行檔與 systemd 範本、建立設定樣本，但不會覆寫既有 `/usr/local/etc/routerd/router.yaml`。
 
-FreeBSD 請取得 `routerd-freebsd-amd64.tar.gz`，並執行相同的
-`./install.sh`。
-FreeBSD arm64 主機請使用 `routerd-freebsd-arm64.tar.gz`。
-若要固定至特定版本，請使用 release 頁面上附有版本號的封存檔。
-
-Linux 封存檔包含靜態連結的 routerd 執行檔
-（`CGO_ENABLED=0`）。
-不依賴路由器主機的 glibc 版本。
-
-安裝程式將執行以下步驟：
-
-- 透過對應的套件管理員安裝執行時期套件。
-- 將執行檔放置至 `/usr/local/sbin`。
-- 放置 systemd 或 rc.d 的服務範本。
-- 建立 `/usr/local/etc/routerd/router.yaml.sample`。
-- 保留現有的 `/usr/local/etc/routerd/router.yaml`。
-- 保留 `/var/lib/routerd` 或 `/var/db/routerd` 的狀態。
-- 若有唯讀狀態 socket，則執行 `routerctl get status`。
-
-常用選項：
-
-```sh
-./install.sh --list-deps
-sudo ./install.sh --no-install-deps
-sudo ./install.sh --deps-only
-sudo ./install.sh --with-tailscale
-sudo ./install.sh --dry-run
+```bash
+routerd --version
 ```
 
-安裝後，建立設定檔並進行驗證。
+## 安裝後先完成兩件事
 
-```sh
+1. 編輯自己的設定。
+2. 先用 `routerd` 檢查檔案，不要先用 `routerctl`。
+
+```bash
 sudo install -d -m 0755 /usr/local/etc/routerd
 sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
-sudo vi /usr/local/etc/routerd/router.yaml
-
-routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
-routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
+sudoedit /usr/local/etc/routerd/router.yaml
+sudo routerd validate --config /usr/local/etc/routerd/router.yaml
 ```
 
-確認管理路徑仍可存取後再正式套用。
+接著用暫存目錄執行 dry-run：
 
-```sh
-sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
+```bash
+LAB_DIR="$(mktemp -d)"
+sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json" \
+  --netplan-file "$LAB_DIR/50-routerd.yaml" \
+  --dnsmasq-file "$LAB_DIR/dnsmasq.conf" \
+  --dnsmasq-service-file "$LAB_DIR/routerd-dnsmasq.service" \
+  --nftables-file "$LAB_DIR/routerd-nat.nft"
 ```
 
-各 OS 的套件清單、升級、解除安裝，以及開發者適用的
-release 步驟，請參閱[安裝與升級](../install-and-upgrade.md)。
+`--skip-service-manager` 會略過服務管理器操作；所有狀態和產生的檔案都留在暫存目錄。
 
-若要在不寫入磁碟的情況下試用，請啟動 `routerd-live.iso`。
-以 root 登入後，相同的 `install.sh configure` 精靈將會啟動。
-亦支援 Proxmox VE 的 `qm terminal` 序列主控台。
-在精靈中選擇 USB 永久保存，即可將 Live ISO 作為無磁碟的永久路由器使用。
-若不選擇 USB 永久保存，ISO 將作為臨時示範運行，重新啟動後設定將消失。
+只有在主控台或獨立管理路徑可用，而且已經看過輸出後，才啟動服務：
+
+```bash
+sudo systemctl enable --now routerd
+sudo routerctl get status
+```
+
+現在 `routerctl` 能運作，是因為 `routerd serve` 已經作為 systemd 服務執行。它不是離線 YAML 驗證器。
+
+:::note 平台範圍
+本教學針對 Ubuntu Server + systemd。FreeBSD 與 NixOS 的支援仍在不同階段，不能直接照搬這裡的服務和 nftables 指令；請先看[支援的平台](../platforms.md)。
+:::
+
+升級、相依套件清單、Live ISO 與解除安裝請見[安裝與升級](../install-and-upgrade.md)。

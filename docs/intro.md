@@ -7,46 +7,70 @@ sidebar_label: Overview
 
 # routerd documentation
 
-![Diagram showing the routerd documentation map from install and first router goals through concepts, examples, tutorials, how-to guides, operations, API references, platforms, plugins, and schemas](/img/diagrams/intro.png)
+![Diagram showing the routerd documentation map from a safe first lab through concepts, examples, operations, and reference material](/img/diagrams/intro.png)
 
-routerd turns typed YAML resources into a working, observable router on a Linux, NixOS, or FreeBSD host. Pick the section that matches what you are trying to do.
+routerd describes a router in YAML, checks the description, and applies the
+matching host configuration. A router is a computer that connects networks. In
+routerd, one file can describe the WAN side, the LAN side, DHCP, DNS, routes,
+and selected services instead of scattering the intent across many unrelated
+files.
 
-:::tip Recommended stable release
-For a new deployment, start from the recommended stable milestone **v20260707.1514**. See [Stable milestone](./releases/stable.md) for details.
+:::caution Start in a lab
+For a first live test, use an isolated Ubuntu Server VM or a spare computer and
+keep a console or separate management network. A live apply can change routes,
+addresses, and services. Do not begin with the only router for a home, school,
+or workplace.
 :::
 
-## By goal
+:::tip Recommended stable milestone
+For a new deployment, start from the recommended stable milestone
+**v20260707.1514**. The current release may contain newer work; the
+[Stable milestone](./releases/stable.md) page explains why this milestone is
+the production recommendation.
+:::
+
+## First route for a new reader
+
+1. [Network basics](./tutorials/network-basics.md) — WAN, LAN, DHCP, DNS, NAT,
+   and the `/24` notation in plain language.
+2. [Install and upgrade](./install-and-upgrade.md) — install routerd on an
+   isolated Ubuntu Server lab host.
+3. [Getting started safely](./tutorials/getting-started.md) — validate and
+   preview a file before any live network change.
+4. [Bring up the first lab router](./tutorials/first-router.md) — test DHCP and
+   IPv4 NAT with one isolated LAN client.
+5. [Resource model](./concepts/resource-model.md) — learn how a routerd file
+   links its named resources together.
+
+Ubuntu Server is the primary, most exercised target. FreeBSD and NixOS include
+groundwork and selected integration paths, but are not the recommended first
+platform. See [Supported platforms](./platforms.md) before choosing one.
+
+## Find the page for your goal
 
 | If you want to… | Start here |
 | --- | --- |
 | Install or upgrade routerd | [Install and upgrade](./install-and-upgrade.md) |
-| Understand what routerd is and why it exists | [Concepts → What is routerd](./concepts/what-is-routerd.md) |
-| Understand where routerd fits | [Concepts → Positioning](./concepts/positioning.md) |
-| Stand up a router for the first time | [Tutorials → Getting started](./tutorials/getting-started.md) |
+| Learn basic networking words first | [Network basics](./tutorials/network-basics.md) |
+| Make a first safe lab configuration | [Getting started safely](./tutorials/getting-started.md) |
+| Build a working DHCP/NAT lab router | [Bring up the first lab router](./tutorials/first-router.md) |
+| Understand what routerd is and why it exists | [What is routerd?](./concepts/what-is-routerd.md) |
 | Generate a starter config in the browser | [routerd config wizard](https://routerd.net/wizard) |
-| Enable editor completion and validation | [How-to → VS Code YAML schema](./how-to/vscode-yaml-schema.md) |
-| Try a diskless mini PC router | [Tutorials → Diskless mini PC walkthrough](./tutorials/diskless-minipc-walkthrough.md) |
-| Solve a specific deployment problem | [How-to guides](./how-to/multi-wan.md) |
-| Look up a resource kind or field | [Reference → Resource API](./api-v1alpha1.md) |
-| Operate a running router | [Operations → Reconcile](/docs/operations/reconcile) |
-| Read background notes on hard cases | [Knowledge base](./knowledge-base/dhcpv6-pd-clients.md) |
-| Catch up on what changed | [Releases → Changelog](./releases/changelog.md) |
+| Enable editor completion and validation | [VS Code YAML schema](./how-to/vscode-yaml-schema.md) |
+| Operate a running router | [Reconcile](./operations/reconcile.md) |
+| Look up a resource kind or field | [Resource API](./api-v1alpha1.md) |
+| Read release changes | [Changelog](./releases/changelog.md) |
 
-## All sections
+## How the documentation is organized
 
-- **Concepts** — positioning, vision, design philosophy, resource model, ownership semantics
-- **Install and upgrade** — release archive install, package dependencies, upgrade, uninstall
-- **Tutorials** — diskless mini PC, first router, WAN/LAN services, basic firewall, NixOS quickstart
-- **How-to** — multi-WAN, FLET'S setup, VS Code YAML schema, PVE overlay, OpenTelemetry export, troubleshooting
-- **Knowledge base** — field notes from real deployments (DHCPv6-PD clients, NTT NGN PD acquisition)
-- **Reference** — Resource API, control API, plugin protocol, supported platforms, hardware, ownership rules
-- **Operations** — reconcile and removal, state database, host inventory
-- **Design notes** — open architectural questions and design rationales
-- **Releases** — changelog
+- **Start** — a safe first path and the vocabulary needed to follow it.
+- **Learn** — concepts such as resource ownership, rendering, and reconcile.
+- **Build** — focused features such as DNS, firewall groundwork, and multi-WAN.
+- **Configuration examples** — complete examples with prerequisites and limits.
+- **Tutorials and how-to guides** — a practical task with checks and safe
+  stopping points.
+- **Operate and reference** — status, state, platform support, and API details.
 
-## Next steps
-
-- [Install routerd](./install-and-upgrade.md) — download the release archive and run `install.sh`
-- [Config wizard](https://routerd.net/wizard) — generate a starter configuration in the browser
-- [Resource model](./concepts/resource-model.md) — understand how routerd organizes router intent
-- [Getting started](./tutorials/getting-started.md) — the safe first loop: validate → plan → dry-run → serve
+If a page uses a word you do not know, follow its first link or use the
+[glossary](./concepts/glossary.md). It is safer to understand one small step
+than to combine several advanced examples at once.

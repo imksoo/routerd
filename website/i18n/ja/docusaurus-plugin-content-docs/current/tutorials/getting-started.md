@@ -4,33 +4,41 @@ title: はじめに
 
 # はじめに
 
-![インターフェースの確認と小さな YAML 設定から validate、plan、dry-run、serve、routerctl get status へ進む安全な最初の routerd ループ](/img/diagrams/tutorial-getting-started.png)
+![インターフェース名を調べ、小さな YAML を validate と dry-run で確認してからサービスを起動する流れ](/img/diagrams/tutorial-getting-started.png)
 
-このチュートリアルでは、まず安全な進め方を確認します。
+このページでは、ネットワークを急に変えない最初の手順を試します。
+最初の 4 段階では daemon（起動し続けるプログラム）を起動せず、VM のネットワークを
+本当に変更しません。
 
-1. 小さなルーターリソースファイルを書きます。
-2. 検証します。
-3. 計画を確認します。
-4. 予行実行します。
-5. 安全を確かめてからデーモンを起動します。
+## 0. 安全を確認する
 
-最初の確認では、ホストのネットワークを変更しません。
-先にリリースアーカイブと `install.sh` で routerd を導入してください。
-OS 別の手順は [インストールとアップグレード](../install-and-upgrade.md) を参照してください。
+次の条件がそろってから進めます。
 
-## 1. インターフェース名の確認
+- 隔離した Ubuntu Server VM を使っている。
+- Proxmox、KVM、VirtualBox などの **VM コンソール**を開ける。
+- 変更する WAN / LAN 用 NIC（ネットワークにつなぐ口）とは別に、管理用 NIC または
+  コンソールがある。
+- WAN / LAN 用の仮想ネットワークは、普段の家・学校・職場のネットワークから分かれている。
 
-```bash
-ip link
+routerd は、起動後にインターフェース、アドレス、経路、サービスを変えることが
+あります。SSH 接続が切れても直せることを先に確認してください。
+
+まだ routerd を入れていなければ、[インストール](./install.md) を先に行います。
+
+## 1. インターフェース名を調べる
+
+```sh
+ip -br link
+ip -br address
 ```
 
-ここでは WAN を `ens18`、LAN を `ens19`、管理用を `ens20` とします。
-実機では必ず自分のホストに合わせて読み替えてください。
+ここでは例として、`ens18` を WAN、`ens19` を LAN にします。
+あなたの VM の表示に合わせて必ず読み替えてください。管理用 NIC を `ens20` に
+していても、この最初の YAML には入れません。routerd に管理させないからです。
 
-管理経路は、変更するインターフェースと分けてください。
-routerd が引き継ぐ予定のインターフェースだけで最初の検証をすると危険です。
+## 2. 小さな YAML を作る
 
-## 2. インターフェースとホスト準備の記述
+作業用ディレクトリで `first-router.yaml` を作り、次を書きます。
 
 ```yaml
 apiVersion: routerd.net/v1alpha1
@@ -39,15 +47,7 @@ metadata:
   name: first-router
 spec:
   resources:
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: Package
-      metadata:
-        name: router-host-tools
-      spec:
-        packages:
-          - os: ubuntu
-            names: [dnsmasq, nftables, conntrack, iproute2]
-
+    # 上流側は、最初は外部のネットワーク設定に任せる。
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
@@ -55,8 +55,10 @@ spec:
       spec:
         ifname: ens18
         adminUp: true
-        managed: true
+        managed: false
+        owner: external
 
+    # LAN 側だけを routerd が管理する候補にする。
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
@@ -65,59 +67,70 @@ spec:
         ifname: ens19
         adminUp: true
         managed: true
+        owner: routerd
 ```
 
-ルーター機能に必要なホスト側の実行時設定は、宣言したリソースから routerd が導き出します。
-`Package`、`Sysctl`、`SysctlProfile` は、まだ自動で導けないパッケージやカーネル設定を補うための、
-限定的な逃げ道としてのみ使います。
+この段階ではまだ WAN の DHCP、LAN の IP アドレス、NAT は入れません。
+一度にたくさん変えるより、役割を一つずつ足す方が原因を見つけやすくなります。
 
-## 3. 検証
+## 3. daemon の前に検証する
 
-```bash
-routerctl validate -f first-router.yaml --replace
+`routerctl validate` は動いている daemon のソケットに接続するコマンドです。
+まだサービスを起動していない最初の確認では、`routerd validate` を使います。
+
+```sh
+sudo routerd validate --config ./first-router.yaml
 ```
 
-検証では、routerd がホストに触れる前にリソースの形を確かめます。
+`config is valid` と表示されれば、YAML の形は通っています。エラーが出たら
+サービスを起動せず、ファイル名、インデント、インターフェース名を見直します。
 
-## 4. 計画の確認
+## 4. 使い捨ての場所で dry-run する
 
-```bash
-routerctl plan -f first-router.yaml --replace
+次は、適用の流れを試します。`state`、`ledger`、`status` の保存先を明示的に
+一時ディレクトリへ向けます。
+
+```sh
+LAB_DIR="$(mktemp -d)"
+sudo routerd apply --config ./first-router.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
+sed -n "1,120p" "$LAB_DIR/status.json"
 ```
 
-計画では、インターフェース名の間違い、依存関係の不足、作成されるホスト成果物を確認します。
+`--dry-run` があるため、routerd は本当のネットワーク変更をしません。
+表示された plan と `status.json` で、`ens18` と `ens19` が意図どおりかを
+確認します。知らない NIC、知らないファイル、警告が出たら、ここで止めて YAML を
+直します。
 
-## 5. 予行実行
+## 5. 安全なときだけサービスを起動する
 
-```bash
-routerctl plan -f first-router.yaml --replace
+ここから先は **live** の操作です。VM コンソールを開いたまま、管理用 NIC が
+この YAML に含まれていないこと、dry-run が安全だったことを確認してください。
+
+```sh
+sudo install -d -m 0755 /usr/local/etc/routerd
+sudo install -m 0600 ./first-router.yaml /usr/local/etc/routerd/router.yaml
+sudo systemctl enable --now routerd.service
+sudo systemctl is-active routerd.service
 ```
 
-予行実行では、リソースの読み込み、依存の順序、生成内容を確かめます。
-ネットワークの変更は確定しません。
+## 6. 起動後に routerctl で見る
 
-## 6. 計画が安全ならデーモンを起動
+`routerctl` は `routerd.service` が作ったローカルソケットを使います。
+そのため、サービスが起動してから実行します。
 
-```bash
-sudo routerd serve --config first-router.yaml
+```sh
+sudo routerctl get status
+sudo routerctl get events --limit 20
 ```
 
-本番では、同梱のサービスマネージャー用ファイルを使って routerd を導入してください。
-こうすると、起動時に `routerd serve` が自動的に開始されます。
-
-## 7. 状態の確認
-
-```bash
-routerctl get status
-routerctl get events --limit 20
-routerctl get connections --limit 50
-```
-
-次のチュートリアルでは、LAN の DHCP、RA、DNS、経路ポリシー、NAT44、DS-Lite を追加します。
+初回は `sudo` を付けます。後で運用者を `routerd` グループへ追加し、新しいログインを
+開始すれば、読み取り専用の状態確認は `sudo` なしでも使えます。
 
 ## 次に読むもの
 
-- [WAN 側サービス](./wan-side-services.md) — DHCPv6-PD、PPPoE、DS-Lite、DHCPv4 WAN を設定する
-- [LAN 側サービス](./lan-side-services.md) — DHCPv4 スコープ、RA、DNS、NTP を追加する
-- [基本のファイアウォール](./basic-firewall.md) — 3 ロール構成のファイアウォールゾーンを有効にする
-- [routerctl doctor](../operations/routerctl-doctor.md) — 適用後のルーターの健全性を確認する
+- [最初のルーターを立ち上げる](./first-router.md) — DHCPv4 WAN と LAN の IP アドレスを足す
+- [適用と生成](../concepts/apply-and-render.md) — `routerd` と `routerctl` の役割を知る
+- [NAT44 とファイアウォールの準備](./basic-firewall.md) — NAT と現在のファイアウォール機能の注意

@@ -15,14 +15,12 @@ ISP 固有値、管理アクセスの経路を、必ず自分の環境に合わ�
 
 ![構成図の番号、対応表、YAML 抜粋、ローカル編集、validate-plan-dry-run、apply、routerctl 確認の流れを示す設定事例の読み方図](/img/diagrams/config-example-workflow.png)
 
-:::tip 標準の出発点
-家庭ルーターを routerd で置き換える場合は、
-[`examples/home-router-mgmt-protected.yaml`](https://github.com/imksoo/routerd/blob/main/examples/home-router-mgmt-protected.yaml)
-を出発点にしてください。3 ロールのファイアウォール（untrust / trust / mgmt）、
-DS-Lite 優先 + PPPoE フォールバック、apply 時のロックアウト防止のための
-`ManagementAccess`、管理アドレスへ bind した `WebConsole` を含む、
-**安全最小の標準構成**です。インターフェースと ISP を自環境に合わせ、
-下の安全チェックの順序で適用してください。
+:::tip 最初は最も小さい構成から
+初めての隔離済み IPv4 ラボでは、
+[基本的な IPv4 NAT ルーター](./basic-ipv4-nat.md)から始めます。DHCP の WAN と
+プライベートな LAN を 1 つずつ使うため、確認する項目を絞れます。home-router、
+DS-Lite、PPPoE、BGP、管理保護の例は、ISP 固有の情報や追加の NIC、動作する基礎構成を
+前提にする後の段階の例です。どの YAML も、すべての環境で安全な標準設定ではありません。
 :::
 
 ## 読み方
@@ -32,8 +30,8 @@ DS-Lite 優先 + PPPoE フォールバック、apply 時のロックアウト防
 1. **構成図**: 物理構成または論理構成。
 2. **図の対応表**: 図の番号が何を表すか。
 3. **設定例**: 完全な YAML は `examples/` に置き、ページ内では番号付きで要点を抜粋します。
-4. **適用手順**: 先に実行する validate、plan、dry-run。
-5. **確認方法**: 収束したことを確認するコマンド。
+4. **適用手順**: daemon の前に実行する validate と、隔離した dry-run。
+5. **確認方法**: サービス起動後に収束を確認するコマンド。
 
 構成図の `[1]` と YAML コメントの `# [1]` は同じ対象を指します。
 図を見ながら、どのリソースがどの場所を管理するのか追えるようにしています。
@@ -48,8 +46,8 @@ DS-Lite 優先 + PPPoE フォールバック、apply 時のロックアウト防
 | [PPPoE IPv4 NAT ルーター](./pppoe-ipv4-nat.md) | ISP 認証情報を入れれば現在の実装で利用可能 | Ethernet の WAN 上に PPPoE セッションを張って IPv4 インターネットに出たい。 |
 | [内部 Web サーバーへのポートフォワード](./port-forward-web.md) | WAN アドレスが分かっていれば現在の実装で利用可能 | 内部の HTTPS サーバーを 1 つ公開し、LAN からも同じ公開名で到達したい。 |
 | [BGP 付き Kubernetes API VIP](./kubernetes-api-vip.md) | `routerd-bgp` GoBGP と keepalived で現在の実装で利用可能 | Kubernetes API VIP を routerd が保持し、control plane をヘルスチェックし、Service prefix を BGP で受けたい。 |
-| [ゲスト / IoT 端末の分離](./guest-isolation.md) | Linux nftables で利用可能 | 一部の MAC アドレスだけインターネットを許可し、LAN と管理網へは届かせたくない。 |
-| [ファイアウォールのレート制限と ICMP ルール](./firewall-rate-limit.md) | Linux nftables で利用可能 | 複数ポートのサービス開放、ICMP type のマッチ、SSH ブルートフォース緩和を使いたい。 |
+| [ゲスト / IoT 端末の分離](./guest-isolation.md) | ルーターポリシーの例 | VLAN、SSID、スイッチポート、Wi-Fi のクライアント分離とは別物だと理解している。 |
+| [ファイアウォールのレート制限と ICMP ルール](./firewall-rate-limit.md) | ファイアウォール機能の土台 | 隔離したホストで試し、唯一のセキュリティ境界としては使わない。 |
 | [Multi-WAN IPv4 failover](./multi-wan-failover.md) | 現在の実装で利用可能。ヘルスチェックは慎重に調整 | 複数の IPv4 出口から正常な default route を選びたい。 |
 | [パブリック DNS をローカルリゾルバーへリダイレクト](./local-dns-redirect.md) | Linux nftables で利用可能 | LAN クライアントが平文 DNS を外へ直接投げるのを、ルーターの DNS に集約したい。 |
 | [Tailscale subnet / exit node](./tailscale-subnet-exit.md) | Tailscale が利用できる環境で利用可能 | LAN の経路や exit node を tailnet に広告したい。 |
@@ -73,16 +71,25 @@ DS-Lite 優先 + PPPoE フォールバック、apply 時のロックアウト防
 
 - コンソールまたは hypervisor から入れる経路を残す。
 - 管理通信がどのインターフェースを通っているか把握する。
-- `routerctl validate` と `routerctl plan` を先に実行する。
-- plan が管理インターフェースのアドレス、経路、ファイアウォールの開放を消さないことを確認する。
+- 次のコマンドを実行できる `sudo` 権限があることを確認する。ない場合は管理者に依頼する。
+- daemon がまだない段階では、`sudo routerd validate` と隔離した dry-run を先に実行する。
+- dry-run の結果に、管理インターフェースのアドレス、経路、想定外の host artifact がないことを確認する。
 - ルーター上にインストールしたリリースバイナリで適用し、別の開発ツリーからは実行しない。
 
-```bash
-routerctl validate -f router.yaml --replace
-routerctl plan -f router.yaml --replace
-routerctl apply -f router.yaml --replace
-routerctl get status
+```sh
+LAB_DIR="$(mktemp -d)"
+sudo routerd validate --config router.yaml
+sudo routerd apply --config router.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
+sudo sed -n "1,160p" "$LAB_DIR/status.json"
 ```
+
+dry-run は live のネットワークを変更しません。レビュー済みの設定を標準の場所へ置き、
+コンソールまたは独立した管理経路を残して `routerd.service` を起動した**後で**、
+`sudo routerctl get status` を使います。`routerctl` は稼働中の daemon の socket に接続する
+クライアントであり、単体の YAML を validate / plan / apply するコマンドではありません。
 
 ## 関連ページ
 

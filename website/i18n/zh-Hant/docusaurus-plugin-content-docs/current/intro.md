@@ -1,52 +1,56 @@
 ---
-title: 文件說明
+title: 從這裡開始
 slug: /
 sidebar_position: 0
-sidebar_label: 概覽
+sidebar_label: 開始
 ---
 
-# routerd 文件
+# 歡迎使用 routerd
 
-![Diagram showing the routerd documentation map from install and first router goals through concepts, examples, tutorials, how-to guides, operations, API references, platforms, plugins, and schemas](/img/diagrams/intro.png)
+![routerd 文件地圖：從安裝與第一台路由器，延伸到概念、設定範例、教學、維運與 API 參考](/img/diagrams/intro.png)
 
-routerd 是一個宣告式路由器，透過以型別化 YAML 描述的期望狀態，在 Linux / FreeBSD 上建構可運作的路由器。無需以程序步驟堆疊設定，只需宣告您想要的狀態，routerd 便會將實際系統收斂至該狀態。
+routerd 讓你以 YAML 寫下「這台電腦要成為怎樣的路由器」，再把這個目標轉成主機上的網路設定和服務。可以把 YAML 想成一張可檢查的清單：哪個介面接上游、哪個介面服務本地裝置，以及要開哪些功能。
 
-請從符合您目的的章節開始閱讀。
+第一次嘗試請使用**隔離的 Ubuntu Server VM 或備用電腦**。Ubuntu Server + systemd 是目前最適合依照本入門文件操作的環境。NixOS 與 FreeBSD 有整合基礎，但功能和操作流程不與 Ubuntu 完全對等；上線前請先看[支援的平台](./platforms.md)。
 
-:::tip 建議的穩定版本
-若是全新導入，請從建議的穩定版里程碑 **v20260707.1514** 開始。詳情請參閱[穩定版里程碑](./releases/stable.md)。
+## 先認識兩個程式
+
+- `routerd` 是主要程式。它能直接檢查本機的檔案，例如 `routerd validate --config …`；也能進行一次不提交網路變更的試跑：`routerd apply --once --dry-run …`。
+- `routerctl` 是連到**正在執行的** `routerd serve` 的客戶端。它經由本機 Unix socket 看狀態、送出候選設定或要求計畫；它不是離線 YAML 檢查工具。
+
+所以在服務尚未啟動時，應先使用 `routerd validate`，而不是 `routerctl validate` 或 `routerctl plan`。
+
+## 建議的安全起點
+
+1. 準備 VM 主控台、序列主控台，或完全獨立的管理網卡。
+2. 依照[安裝與升級](./install-and-upgrade.md)在 Ubuntu Server 安裝 routerd。
+3. 先閱讀[網路基礎](./tutorials/network-basics.md)，再完成[安全起步](./tutorials/getting-started.md)：驗證檔案，接著以暫存路徑做 dry-run。
+4. 確認不會中斷管理連線後，才讓 `routerd serve` 或 systemd 服務套用真實設定。
+5. 服務運行後，使用 `routerctl get status` 和 `routerctl describe …` 觀察。
+
+:::caution 不要把第一次實驗放在生產網路
+`routerd apply --once`（未加 `--dry-run`）和 `routerd serve` 都可能改變主機網路。不要透過同一條即將被改動的 SSH 連線，去實驗唯一承載家中、學校或工作網路的路由器。請保留主控台或另一條管理路徑。
 :::
 
-## 依目的查找
+:::caution 防火牆不是安全認證
+routerd 仍在預發布階段。防火牆資源仍在基礎實作階段，不是通用防火牆語言或安全認證。不要把網站上的單一範例當成面向網際網路設備的唯一防線。
+:::
 
-| 想做的事 | 起點 |
+## 依目的選頁面
+
+| 你想做什麼 | 建議從哪裡開始 |
 | --- | --- |
-| 導入或更新 routerd | [導入 → 安裝與升級](./install-and-upgrade.md) |
-| 了解 routerd 是什麼、為何存在 | [入門 → routerd 是什麼](./concepts/what-is-routerd.md) |
-| 了解與其他產品和方式的定位差異 | [入門 → 定位](./concepts/positioning.md) |
-| 第一次建立路由器 | [導入 → 快速入門](./tutorials/getting-started.md) |
-| 在瀏覽器中產生初始設定 | [routerd config wizard](https://routerd.net/wizard) |
-| 啟用 editor 補全與驗證 | [How-to → VS Code YAML schema](./how-to/vscode-yaml-schema.md) |
-| 將無磁碟 mini PC 作為路由器 | [導入 → 無磁碟 mini PC](./tutorials/diskless-minipc-walkthrough.md) |
-| 理解宣告式模型（資源、套用、調和） | [功能說明 → 資源模型](./concepts/resource-model.md) |
-| 從已驗證的設定範例組建設定 | [設定範例集](./config-examples/index.md) |
-| 解決特定部署問題 | [How-to 指南](./how-to/multi-wan.md) |
-| 查詢資源種類或欄位 | [參考文件 → 資源 API](./api-v1alpha1.md) |
-| 運維運行中的路由器 | [功能說明 → 調和（reconcile）](/docs/operations/reconcile) |
-| 追蹤變更內容 | [發行版與穩定版 → 變更記錄](./releases/changelog.md) |
-| 了解複雜案例的背景 | [知識庫](./knowledge-base/dhcpv6-pd-clients.md) |
+| 認識 WAN、LAN、DHCP、DNS 與 NAT | [網路基礎](./tutorials/network-basics.md) |
+| 在 Ubuntu Server 安裝或升級 routerd | [安裝與升級](./install-and-upgrade.md) |
+| 不變更網路地檢查第一份 YAML | [安全起步](./tutorials/getting-started.md) |
+| 讓 WAN 以 DHCP 取得 IPv4，並設定 LAN 閘道 | [第一台實驗路由器](./tutorials/first-router.md) |
+| 看完整 IPv4 NAT 的結構 | [基本 IPv4 NAT 閘道](./config-examples/basic-ipv4-nat.md) |
+| 搞清楚「套用」「產生」「調和」 | [套用、產生與調和](./concepts/apply-and-render.md) |
+| 檢查作業系統支援範圍 | [支援的平台](./platforms.md) |
+| 在服務運行後檢查健康狀態 | [routerctl doctor](./operations/routerctl-doctor.md) |
 
-## 章節一覽
+## 接下來
 
-- **入門** — routerd 是什麼、定位、設計理念
-- **導入（快速入門）** — 安裝與升級、第一台路由器、各 OS 入門（FreeBSD）、無磁碟 mini PC
-- **功能說明（宣告式模型）** — 詞彙表、資源模型、套用與產生、狀態與擁有權、調和（reconcile）、Web 管理介面
-- **設定參考文件（依功能）** — DNS 解析器、防火牆、Egress・多 WAN、BGP、Tailscale、OpenTelemetry 等各功能的設定方式
-- **設定範例集（依情境）** — NAT、LAN 的 DHCP/DNS、DS-Lite、PPPoE、連接埠轉發、訪客隔離、多 WAN 故障切換等已驗證的設定範例
-- **How-to 指南** — Flets 初始設定、IPv6 雙協定疊加、訪客模式、OS 啟動設定（bootstrap）、VS Code YAML schema、PVE overlay、疑難排解
-- **知識庫（實際環境知識）** — 從實際環境獲得的現場筆記（DHCPv6-PD 客戶端、NTT NGN 的前綴委派取得）
-- **運維** — 狀態資料庫、設備清單、USB 持久化、密鑰、可觀測性、備援等
-- **參考文件（API・通訊協定・支援環境）** — 資源 API、控制 API、外掛程式通訊協定、支援平台、硬體
-- **發行版與穩定版** — 穩定版里程碑、變更記錄、發行程序
-- **設計筆記** — 架構上的討論點與設計依據
-- **專案** — 貢獻方式、授權與法律事務
+- [安裝 routerd](./tutorials/install.md)
+- [安全起步：驗證和 dry-run](./tutorials/getting-started.md)
+- [設定範例集](./config-examples/index.md)
