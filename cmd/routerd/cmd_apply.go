@@ -151,23 +151,59 @@ func routerWithIPv6PDClientOptions(router *api.Router, opts applyOptions, osName
 	return &out, warnings, nil
 }
 
-func routerConfigHash(router *api.Router) string {
-	data, _ := json.Marshal(router)
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
-}
-
-func routerConfigYAML(router *api.Router, opts applyOptions) string {
+func routerConfigYAML(router *api.Router, opts applyOptions) (string, error) {
 	if strings.TrimSpace(opts.ConfigYAMLOverride) != "" {
-		return opts.ConfigYAMLOverride
+		return opts.ConfigYAMLOverride, nil
 	}
 	if path := strings.TrimSpace(opts.ConfigPath); path != "" {
-		if data, err := config.CanonicalYAMLFile(path); err == nil {
-			return string(data)
+		data, err := config.CanonicalYAMLFile(path)
+		if err == nil {
+			snapshot, err := config.LoadBytes(data, path)
+			if err != nil {
+				return "", err
+			}
+			if err := config.Validate(snapshot); err != nil {
+				return "", fmt.Errorf("validate configuration snapshot %s: %w", path, err)
+			}
+			if !reflect.DeepEqual(snapshot, router) {
+				return "", fmt.Errorf("configuration %s changed after it was loaded; retry the apply", path)
+			}
+			return string(data), nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
 		}
 	}
-	data, _ := yaml.Marshal(router)
-	return string(data)
+	data, err := yaml.Marshal(router)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func configGenerationHash(configYAML string, effectiveRouter *api.Router) (string, error) {
+	sourceHash, err := config.NormalizedYAMLHash([]byte(configYAML))
+	if err != nil {
+		return "", fmt.Errorf("normalize configuration for generation: %w", err)
+	}
+	effective, err := json.Marshal(effectiveRouter)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(append(append([]byte(sourceHash), '\n'), effective...))
+	return "generation-v1-sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func beginConfigGeneration(store *routerstate.SQLiteStore, configYAML string, effectiveRouter *api.Router) (int64, bool, error) {
+	configHash, err := configGenerationHash(configYAML, effectiveRouter)
+	if err != nil {
+		return 0, false, err
+	}
+	generation, changed, err := store.BeginGenerationIfChanged(configHash, configYAML)
+	if err != nil {
+		return 0, false, err
+	}
+	return generation, changed, nil
 }
 
 func commitConfigAfterSuccessfulApply(opts applyOptions, configYAML string, logger *eventlog.Logger) error {
@@ -185,7 +221,7 @@ func commitConfigAfterSuccessfulApply(opts applyOptions, configYAML string, logg
 
 func configCommitPhase(phase string) bool {
 	switch strings.TrimSpace(phase) {
-	case "Healthy", "Applied":
+	case "Healthy", "Applied", "Committed":
 		return true
 	default:
 		return false
@@ -508,6 +544,14 @@ func objectStatusID(status routerstate.ObjectStatus) string {
 
 func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOptions, stdout io.Writer, logger *eventlog.Logger) (*apply.Result, error) {
 	var optionWarnings []string
+	var configYAML string
+	var err error
+	if !opts.DryRun {
+		configYAML, err = routerConfigYAML(router, opts)
+		if err != nil {
+			return nil, err
+		}
+	}
 	effectiveConfig, warnings, err := routerWithIPv6PDClientOptions(router, opts, string(platformDefaults.OS))
 	if err != nil {
 		return nil, err
@@ -520,7 +564,6 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 		return nil, err
 	}
 	optionWarnings = append(optionWarnings, managementWarnings...)
-	configYAML := routerConfigYAML(router, opts)
 	if opts.DryRun && !opts.Sandbox {
 		dryRunDir, err := os.MkdirTemp("", "routerd-apply-dryrun-artifacts-*")
 		if err != nil {
@@ -540,17 +583,15 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 
 	effectiveRouter := filterRouterByWhen(router, stateStore)
 	var generation int64
+	generationCreated := false
 	generationFinished := false
 	if !opts.DryRun {
-		generation, err = stateStore.BeginGeneration(routerConfigHash(router))
+		generation, generationCreated, err = beginConfigGeneration(stateStore, configYAML, router)
 		if err != nil {
 			return nil, err
 		}
-		if err := stateStore.RecordGenerationConfig(generation, configYAML); err != nil {
-			return nil, err
-		}
 		defer func() {
-			if generation != 0 && !generationFinished {
+			if generationCreated && !generationFinished {
 				_ = stateStore.FinishGeneration(generation, "Errored", nil)
 			}
 		}()
@@ -590,7 +631,7 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 			if err := writeResult(stdout, opts.StatusFile, result); err != nil {
 				return nil, err
 			}
-			if generation != 0 {
+			if generationCreated {
 				_ = stateStore.FinishGeneration(generation, result.Phase, result.Warnings)
 				generationFinished = true
 			}
@@ -652,7 +693,7 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 	if err := writeResult(stdout, opts.StatusFile, result); err != nil {
 		return nil, err
 	}
-	if !opts.DryRun && generation != 0 {
+	if !opts.DryRun && generationCreated {
 		_ = stateStore.FinishGeneration(generation, result.Phase, result.Warnings)
 		generationFinished = true
 	}

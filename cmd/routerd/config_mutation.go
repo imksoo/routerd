@@ -348,27 +348,26 @@ func (m serveConfigMutator) commitOnly(router *api.Router, configYAML string) (*
 		return nil, err
 	}
 	defer func() { _ = store.Close() }()
-	generation, err := store.BeginGeneration(routerConfigHash(router))
+	generation, generationCreated, err := beginConfigGeneration(store, configYAML, router)
 	if err != nil {
 		return nil, err
 	}
 	finished := false
 	defer func() {
-		if !finished {
+		if generationCreated && !finished {
 			_ = store.FinishGeneration(generation, "Errored", nil)
 		}
 	}()
-	if err := store.RecordGenerationConfig(generation, configYAML); err != nil {
-		return nil, err
-	}
 	if err := config.AtomicWriteFile(m.configPath, []byte(configYAML)); err != nil {
 		return nil, err
 	}
 	if err := recordLastAppliedPath(router, store, m.configPath); err != nil {
 		return nil, err
 	}
-	if err := store.FinishGeneration(generation, "Committed", nil); err != nil {
-		return nil, err
+	if generationCreated {
+		if err := store.FinishGeneration(generation, "Committed", nil); err != nil {
+			return nil, err
+		}
 	}
 	finished = true
 	if m.logger != nil {
