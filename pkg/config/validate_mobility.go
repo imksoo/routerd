@@ -735,7 +735,9 @@ func validateSAMTransportProfile(router *api.Router, res api.Resource, spec api.
 // explicit on an RR that intentionally has no local MobilityPool plan. A
 // profile-local policy is the only declared source of that authority; a
 // generic BGPRouter import policy must not turn arbitrary tagged BGP paths
-// into kernel FIB routes.
+// into kernel FIB routes. The transport controller applies exact /32 bounds
+// to each generated peer, so an omitted bound here retains the established
+// profile format without widening FIB admission.
 func validateSAMTransportTransitImportPolicy(router *api.Router, res api.Resource, spec api.SAMTransportProfileSpec) error {
 	if !spec.BGP.RouteReflectorClient || routerHasMobilityPool(router) {
 		return nil
@@ -756,8 +758,10 @@ func validateSAMTransportTransitImportPolicy(router *api.Router, res api.Resourc
 	if !found {
 		return fmt.Errorf("%s spec.bgp.importPolicy.allowedPrefixes is required when routeReflectorClient is true without a local MobilityPool", res.ID())
 	}
-	if policy.AllowedPrefixLengthMin != 32 || policy.AllowedPrefixLengthMax != 32 {
-		return fmt.Errorf("%s spec.bgp.importPolicy.allowedPrefixLengthMin and allowedPrefixLengthMax must both be 32 when routeReflectorClient is true without a local MobilityPool", res.ID())
+	if policy.AllowedPrefixLengthMin != 0 || policy.AllowedPrefixLengthMax != 0 {
+		if policy.AllowedPrefixLengthMin != 32 || policy.AllowedPrefixLengthMax != 32 {
+			return fmt.Errorf("%s spec.bgp.importPolicy.allowedPrefixLengthMin and allowedPrefixLengthMax must be omitted or both be 32 when routeReflectorClient is true without a local MobilityPool", res.ID())
+		}
 	}
 	return nil
 }

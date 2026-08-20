@@ -80,7 +80,7 @@ func TestValidateSAMTransportProfile(t *testing.T) {
 	}
 }
 
-func TestValidateSAMTransportRRWithoutPoolRequiresExplicitTransitScope(t *testing.T) {
+func TestValidateSAMTransportRRWithoutPoolRequiresExplicitTransitPrefixes(t *testing.T) {
 	spec := validSAMTransportProfileSpec()
 	spec.BGP.RouteReflectorClient = true
 	err := Validate(samTransportProfileRouter(spec))
@@ -89,12 +89,28 @@ func TestValidateSAMTransportRRWithoutPoolRequiresExplicitTransitScope(t *testin
 	}
 
 	spec.BGP.ImportPolicy = api.BGPImportPolicySpec{
-		AllowedPrefixes:        []string{"10.77.60.11/24"},
-		AllowedPrefixLengthMin: 32,
-		AllowedPrefixLengthMax: 32,
+		AllowedPrefixes: []string{"10.77.60.11/24", "10.255.1.0/24"},
 	}
 	if err := Validate(samTransportProfileRouter(spec)); err != nil {
-		t.Fatalf("Validate scoped no-pool RR: %v", err)
+		t.Fatalf("Validate legacy no-pool RR with omitted length bounds: %v", err)
+	}
+
+	spec.BGP.ImportPolicy.AllowedPrefixLengthMin = 32
+	spec.BGP.ImportPolicy.AllowedPrefixLengthMax = 32
+	if err := Validate(samTransportProfileRouter(spec)); err != nil {
+		t.Fatalf("Validate no-pool RR with explicit /32 bounds: %v", err)
+	}
+
+	spec.BGP.ImportPolicy.AllowedPrefixLengthMin = 0
+	spec.BGP.ImportPolicy.AllowedPrefixLengthMax = 32
+	if err := Validate(samTransportProfileRouter(spec)); err == nil || !strings.Contains(err.Error(), "must be omitted or both be 32") {
+		t.Fatalf("Validate partial no-pool RR bounds = %v, want explicit /32 constraint error", err)
+	}
+
+	spec.BGP.ImportPolicy.AllowedPrefixLengthMin = 24
+	spec.BGP.ImportPolicy.AllowedPrefixLengthMax = 24
+	if err := Validate(samTransportProfileRouter(spec)); err == nil || !strings.Contains(err.Error(), "must be omitted or both be 32") {
+		t.Fatalf("Validate broad no-pool RR bounds = %v, want explicit /32 constraint error", err)
 	}
 }
 
