@@ -25,6 +25,10 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
   `RemoteAddressClaim`、`AddressMobilityDomain`、`MobilityMemberSet`、
   `Delivery`、`DeliveryTo`、non-BGP delivery 與 remote-full-member API surface。
   BGP Pool 現在直接輸出型別化 local capture intent。這是 v1alpha1 API 的破壞性變更。
+- 已移除 `/v1/member-sets` 及其 response envelope。新的 `SAMPeerGroup` sync
+  protocol 與舊 member-set peer 不具 wire compatibility；同一
+  peer-synchronization domain 的所有 RR 與 leaf 必須以一次計畫切換完成升級，
+  不可採用混合版本的 rolling upgrade。
 - 已移除平行的手動 RRSet bootstrap 路徑 `routerctl mobility
   enrollment-join`。現在僅由 `SAMEnrollmentClient` 執行 submit/fetch/persist，
   並保留已設定的 bearer token/mTLS 驗證與 refresh backoff。

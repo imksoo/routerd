@@ -27,6 +27,10 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
   `Delivery`、`DeliveryTo`、non-BGP delivery、remote-full-member API surface を
   削除しました。BGP Pool は型付き local capture intent を直接出力します。これは
   v1alpha1 API の破壊的変更です。
+- `/v1/member-sets` とその response envelope を削除しました。新しい
+  `SAMPeerGroup` sync protocol は従来の member-set peer と wire-compatible では
+  ありません。同じ peer-synchronization domain 内の RR と leaf は、混在版の
+  rolling upgrade ではなく、計画された一回の cutover でまとめて更新してください。
 - 手動の並列 RRSet bootstrap 経路であった `routerctl mobility
   enrollment-join` を削除しました。submit/fetch/persist は
   `SAMEnrollmentClient` のみが担い、設定済みの bearer token/mTLS 認証と
