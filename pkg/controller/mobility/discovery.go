@@ -47,15 +47,20 @@ type DiscoveryStore interface {
 }
 
 type DiscoveryController struct {
-	Router    *api.Router
-	Bus       *bus.Bus
-	Store     DiscoveryStore
-	Runner    providerinventory.Runner
-	Now       func() time.Time
-	StartedAt time.Time
+	Router           *api.Router
+	Bus              *bus.Bus
+	Store            DiscoveryStore
+	Runner           providerinventory.Runner
+	ProbeARP         ARPProbeFunc
+	ARPProbeRequests *ARPProbeRequestTracker
+	Now              func() time.Time
+	StartedAt        time.Time
 }
 
 func (c DiscoveryController) HandleEvent(ctx context.Context, event daemonapi.DaemonEvent) error {
+	if event.Type == OnPremARPRequestObservedEvent {
+		return c.handleOnPremARPRequestEvent(event)
+	}
 	if err := c.handleOnPremDiscoveryEvent(ctx, event); err != nil {
 		return err
 	}

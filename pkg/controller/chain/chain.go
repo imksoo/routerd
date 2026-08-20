@@ -1458,6 +1458,7 @@ func newSupervisedDaemonOwnerToken() (string, error) {
 type arpObserverCommandPusher interface {
 	Status(context.Context, string) (daemonapi.DaemonStatus, error)
 	SetIgnoredSenderMACs(context.Context, string, []string) error
+	ProbeTarget(context.Context, string, string) error
 }
 
 func (r *Runner) effectiveRouter(store eventedStore) *api.Router {
@@ -2107,7 +2108,7 @@ func scheduledReconcileSkipsController(name string) bool {
 		"link", "tunnel", "wireguard", "ipv4-static-address", "ipv4-policy-route", "ipv4-route", "hybrid-route",
 		"sam", "sam-enrollment-client", "sam-transport", "path-mtu", "dslite", "dhcpv6-information", "lan-address",
 		"dhcpv6-server", "dhcpv4-lease", "pppoe-session", "dns-resolver", "event-federation", "event-subscription",
-		"mobility-discovery", "mobility", "mobility-shard", "provider-action-execution", "egress-route-policy",
+		"mobility-discovery", "mobility-arp-request", "mobility", "mobility-shard", "provider-action-execution", "egress-route-policy",
 		"ingress-service", "nat44", "bfd", "bgp", "vrrp", "ip-address-set", "firewall", "observability-pipeline",
 		"daemon-status", "daemon-supervisor", "daemon-supervisor-reconcile", "dhcp-lease-sync", "nat44-session-sync":
 		return true
@@ -2234,11 +2235,13 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			peerGroupSync = mobilitycontroller.NewPeerGroupSyncClient(rawStore)
 		}
 		mobilityDiscovery = mobilitycontroller.DiscoveryController{
-			Router:    r.Router,
-			Bus:       r.Bus,
-			Store:     mobilityData,
-			Runner:    opts.ProviderInventoryRunner,
-			StartedAt: r.startedAt(),
+			Router:           r.Router,
+			Bus:              r.Bus,
+			Store:            mobilityData,
+			Runner:           opts.ProviderInventoryRunner,
+			ProbeARP:         r.probeARPObservers,
+			ARPProbeRequests: mobilitycontroller.NewARPProbeRequestTracker(),
+			StartedAt:        r.startedAt(),
 		}
 		mobility = mobilitycontroller.Controller{
 			Router:    r.Router,
@@ -2652,7 +2655,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "event-subscription", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: didWorkPeriodic(eventSubscription.Reconcile)},
-		framework.FuncController{ControllerName: "mobility-discovery", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", daemonapi.EventDHCPLeaseAdded, daemonapi.EventDHCPLeaseRenewed, daemonapi.EventDHCPLeaseRemoved, mobilitycontroller.OnPremARPObservedEvent, mobilitycontroller.OnPremARPProbeHitEvent, mobilitycontroller.OnPremPVESVNetObservedEvent, provideraction.ProviderCaptureChangedEvent}}}, ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
+		framework.FuncController{ControllerName: "mobility-discovery", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", daemonapi.EventDHCPLeaseAdded, daemonapi.EventDHCPLeaseRenewed, daemonapi.EventDHCPLeaseRemoved, mobilitycontroller.OnPremARPObservedEvent, mobilitycontroller.OnPremARPProbeHitEvent, mobilitycontroller.OnPremARPRequestObservedEvent, mobilitycontroller.OnPremPVESVNetObservedEvent, provideraction.ProviderCaptureChangedEvent}}}, ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
 			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return err
@@ -2668,6 +2671,15 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current := mobilityDiscovery
 			current.Router = effective
 			return didWorkError(current.Reconcile(ctx))
+		}},
+		framework.FuncController{ControllerName: "mobility-arp-request", Every: time.Second, PeriodicFunc: func(ctx context.Context) (bool, error) {
+			effective, err := effectiveDynamicForReconcile()
+			if err != nil {
+				return false, err
+			}
+			current := mobilityDiscovery
+			current.Router = effective
+			return didWorkError(current.ReconcileARPProbeRequests(ctx))
 		}},
 		framework.FuncController{ControllerName: "mobility", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", mobilitycontroller.OwnershipChangedEvent}}}, ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
 			effective, err := effectiveDynamicForReconcile()
@@ -3597,18 +3609,29 @@ func (socketARPObserverCommandPusher) Status(ctx context.Context, socketPath str
 }
 
 func (socketARPObserverCommandPusher) SetIgnoredSenderMACs(ctx context.Context, socketPath string, macs []string) error {
-	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		var dialer net.Dialer
-		return dialer.DialContext(ctx, "unix", socketPath)
-	}}}
-	defer client.CloseIdleConnections()
-	reqBody := daemonapi.CommandRequest{
+	return postARPObserverCommand(ctx, socketPath, daemonapi.CommandRequest{
 		TypeMeta: daemonapi.TypeMeta{APIVersion: daemonapi.APIVersion, Kind: daemonapi.KindCommandRequest},
 		Command:  "set-ignored-sender-macs",
 		Attributes: map[string]string{
 			"macAddresses": strings.Join(normalizeMACStringList(macs), ","),
 		},
-	}
+	})
+}
+
+func (socketARPObserverCommandPusher) ProbeTarget(ctx context.Context, socketPath, target string) error {
+	return postARPObserverCommand(ctx, socketPath, daemonapi.CommandRequest{
+		TypeMeta:   daemonapi.TypeMeta{APIVersion: daemonapi.APIVersion, Kind: daemonapi.KindCommandRequest},
+		Command:    "probe-target",
+		Attributes: map[string]string{"target": strings.TrimSpace(target)},
+	})
+}
+
+func postARPObserverCommand(ctx context.Context, socketPath string, reqBody daemonapi.CommandRequest) error {
+	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var dialer net.Dialer
+		return dialer.DialContext(ctx, "unix", socketPath)
+	}}}
+	defer client.CloseIdleConnections()
 	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return err
@@ -3632,6 +3655,33 @@ func (socketARPObserverCommandPusher) SetIgnoredSenderMACs(ctx context.Context, 
 		return fmt.Errorf("arp observer command rejected: %s", result.Message)
 	}
 	return nil
+}
+
+func (r *Runner) probeARPObservers(ctx context.Context, poolName, address string) error {
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(address))
+	if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 32 {
+		return fmt.Errorf("ARP probe target must be an IPv4 /32: %q", address)
+	}
+	target := prefix.Addr().String()
+	matched := 0
+	var errs []error
+	for _, spec := range r.mobilityARPObserverDaemonSpecs() {
+		if strings.TrimSpace(spec.PoolName) != strings.TrimSpace(poolName) || spec.SourceType != mobilitycontroller.OnPremSourceOnDemandARP || !spec.OnDemand || !r.arpObserverReady(spec.ResourceName) {
+			continue
+		}
+		observerPrefix, parseErr := netip.ParsePrefix(spec.Prefix)
+		if parseErr != nil || !observerPrefix.Contains(prefix.Addr()) {
+			continue
+		}
+		matched++
+		if err := r.arpObserverCommandPusher().ProbeTarget(ctx, spec.Socket, target); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", spec.ResourceName, err))
+		}
+	}
+	if matched == 0 {
+		return fmt.Errorf("no ready on-demand-arp observer for MobilityPool/%s target %s", poolName, target)
+	}
+	return errors.Join(errs...)
 }
 
 func parseARPObserverIgnoredSenderMACs(value string) ([]string, error) {

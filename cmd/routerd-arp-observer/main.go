@@ -35,6 +35,7 @@ const (
 
 	eventARPObserved      = "routerd.mobility.arp.observed"
 	eventARPProbeHit      = "routerd.mobility.arp.probe.hit"
+	eventARPRequestSeen   = "routerd.mobility.arp.request.observed"
 	eventPVESVNetObserved = "routerd.mobility.pve-svnet.observed"
 
 	arpRequest = 1
@@ -80,6 +81,8 @@ type daemon struct {
 	probeHitCount                    uint64
 	scanCount                        uint64
 	proactiveCount                   uint64
+	requestObservedCount             uint64
+	commandProbeCount                uint64
 	lastPacketAt                     time.Time
 	lastEventAt                      time.Time
 	lastScanAt                       time.Time
@@ -91,7 +94,8 @@ type daemon struct {
 	ignoredSenderMACsInitialized     bool
 	ignoredSenderMACObservationCount uint64
 
-	socketMu sync.Mutex
+	socketMu     sync.Mutex
+	activeSocket *packetSocket
 }
 
 type arpClient struct {
@@ -298,6 +302,16 @@ func (d *daemon) observe(ctx context.Context) {
 func (d *daemon) observeSocket(ctx context.Context, socket *packetSocket) error {
 	socketCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	d.socketMu.Lock()
+	d.activeSocket = socket
+	d.socketMu.Unlock()
+	defer func() {
+		d.socketMu.Lock()
+		if d.activeSocket == socket {
+			d.activeSocket = nil
+		}
+		d.socketMu.Unlock()
+	}()
 	go func() {
 		<-ctx.Done()
 		_ = socket.close()
@@ -348,7 +362,7 @@ func (d *daemon) probeNextPrefixTarget(ctx context.Context, socket *packetSocket
 	d.mu.Lock()
 	d.proactiveCount++
 	d.mu.Unlock()
-	d.probeTarget(ctx, socket, target)
+	_ = d.probeTarget(ctx, socket, target)
 }
 
 func (d *daemon) nextProactiveTarget() (netip.Addr, bool) {
@@ -380,14 +394,47 @@ func (d *daemon) recordPacket(ctx context.Context, socket *packetSocket, packet 
 			d.publishObservation(packet.SenderIP, packet.SenderMAC, eventARPProbeHit, sourceOnDemandARP, "ARPProbeHit", "observed ARP response for probed target")
 		}
 	}
-	if d.opts.onDemand && packet.Operation == arpRequest && packet.TargetIP.IsValid() && packet.TargetIP.Is4() && d.opts.prefix.Contains(packet.TargetIP) && !packet.TargetIP.IsUnspecified() {
+	if d.opts.onDemand && packet.Operation == arpRequest && usableIPv4ProbeTarget(d.opts.prefix, packet.TargetIP) && !d.ignoredSenderMAC(packet.SenderMAC) {
 		if sameAddr(packet.TargetIP, packet.SenderIP) {
 			return
 		}
 		if d.shouldStartActiveProbe(packet.TargetIP, now) {
-			go d.probeTarget(ctx, socket, packet.TargetIP)
+			d.publishARPRequestObserved(packet, now)
+			go func() { _ = d.probeTarget(ctx, socket, packet.TargetIP) }()
 		}
 	}
+}
+
+func (d *daemon) ignoredSenderMAC(mac net.HardwareAddr) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.opts.ignoredSenderMACs[strings.ToLower(mac.String())]
+}
+
+func (d *daemon) publishARPRequestObserved(packet arpPacket, now time.Time) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.requestObservedCount++
+	d.lastEventAt = now
+	attrs := map[string]string{
+		"target":       packet.TargetIP.String(),
+		"address":      packet.TargetIP.String(),
+		"interface":    strings.TrimSpace(d.opts.eventInterface),
+		"ifname":       strings.TrimSpace(d.opts.ifname),
+		"pool":         strings.TrimSpace(d.opts.poolName),
+		"sourceType":   sourceOnDemandARP,
+		"prefix":       d.opts.prefix.String(),
+		"requesterIP":  packet.SenderIP.String(),
+		"requesterMAC": strings.ToLower(packet.SenderMAC.String()),
+	}
+	if value := strings.TrimSpace(d.opts.network); value != "" {
+		attrs["network"] = value
+		attrs["svnet"] = value
+	}
+	if value := strings.TrimSpace(d.opts.bridge); value != "" {
+		attrs["bridge"] = value
+	}
+	d.publishLocked(eventARPRequestSeen, daemonapi.SeverityInfo, "ARPRequestObserved", "observed unresolved local ARP request", attrs)
 }
 
 func (d *daemon) pollARPTable(ctx context.Context) {
@@ -522,24 +569,36 @@ func (d *daemon) markProbeHit(address netip.Addr) bool {
 	return true
 }
 
-func (d *daemon) probeTarget(ctx context.Context, socket *packetSocket, target netip.Addr) {
+func (d *daemon) probeTarget(ctx context.Context, socket *packetSocket, target netip.Addr) error {
 	attempts := d.opts.probeRetries + 1
 	for i := 0; i < attempts; i++ {
-		if ctx.Err() != nil || !d.activeProbingArmed() {
-			return
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if !d.activeProbingArmed() {
+			return fmt.Errorf("ARP observer is not armed")
 		}
 		if err := d.sendARPProbe(socket, target); err != nil {
 			d.setObserverError(err)
-			return
+			d.clearPendingProbe(target)
+			return err
 		}
 		if i+1 < attempts {
 			select {
 			case <-time.After(d.opts.probeTimeout):
 			case <-ctx.Done():
-				return
+				return ctx.Err()
 			}
 		}
 	}
+	return nil
+}
+
+func (d *daemon) clearPendingProbe(target netip.Addr) {
+	d.mu.Lock()
+	delete(d.pendingProbe, target.String())
+	delete(d.lastProbeAt, target.String())
+	d.mu.Unlock()
 }
 
 func (d *daemon) sendARPProbe(socket *packetSocket, target netip.Addr) error {
@@ -597,6 +656,37 @@ func (d *daemon) serve(ctx context.Context) error {
 			d.opts.ignoredSenderMACs = macs
 			d.ignoredSenderMACsInitialized = true
 			d.mu.Unlock()
+		case "probe-target":
+			target, err := d.commandProbeTarget(req.Attributes["target"])
+			if err != nil {
+				result.Accepted = false
+				result.Message = err.Error()
+				break
+			}
+			socket := d.currentPacketSocket()
+			if socket == nil {
+				result.Accepted = false
+				result.Message = "ARP packet socket is not ready"
+				break
+			}
+			if !d.activeProbingArmed() {
+				result.Accepted = false
+				result.Message = "ARP observer is not armed"
+				break
+			}
+			if !d.shouldProbe(target, time.Now().UTC()) {
+				result.Message = "probe suppressed by cooldown"
+				break
+			}
+			if err := d.probeTarget(r.Context(), socket, target); err != nil {
+				result.Accepted = false
+				result.Message = err.Error()
+				break
+			}
+			d.mu.Lock()
+			d.commandProbeCount++
+			d.mu.Unlock()
+			result.Message = "target probe sent"
 		default:
 			result.Accepted = false
 			result.Message = "unknown command"
@@ -631,21 +721,23 @@ func (d *daemon) status() daemonapi.DaemonStatus {
 	}
 	clients, _ := json.Marshal(d.observedClientsLocked())
 	observed := map[string]string{
-		"interface":       d.opts.eventInterface,
-		"ifname":          d.opts.ifname,
-		"pool":            d.opts.poolName,
-		"prefix":          d.opts.prefix.String(),
-		"sourceType":      d.opts.sourceType,
-		"observe":         strconv.FormatBool(d.opts.observe),
-		"onDemand":        strconv.FormatBool(d.opts.onDemand),
-		"packetsSeen":     strconv.FormatUint(d.packetsSeen, 10),
-		"observedCount":   strconv.FormatUint(d.observedCount, 10),
-		"probeCount":      strconv.FormatUint(d.probeCount, 10),
-		"probeHitCount":   strconv.FormatUint(d.probeHitCount, 10),
-		"proactiveCount":  strconv.FormatUint(d.proactiveCount, 10),
-		"scanCount":       strconv.FormatUint(d.scanCount, 10),
-		"scanInterval":    d.opts.scanInterval.String(),
-		"observedClients": string(clients),
+		"interface":            d.opts.eventInterface,
+		"ifname":               d.opts.ifname,
+		"pool":                 d.opts.poolName,
+		"prefix":               d.opts.prefix.String(),
+		"sourceType":           d.opts.sourceType,
+		"observe":              strconv.FormatBool(d.opts.observe),
+		"onDemand":             strconv.FormatBool(d.opts.onDemand),
+		"packetsSeen":          strconv.FormatUint(d.packetsSeen, 10),
+		"observedCount":        strconv.FormatUint(d.observedCount, 10),
+		"probeCount":           strconv.FormatUint(d.probeCount, 10),
+		"probeHitCount":        strconv.FormatUint(d.probeHitCount, 10),
+		"proactiveCount":       strconv.FormatUint(d.proactiveCount, 10),
+		"requestObservedCount": strconv.FormatUint(d.requestObservedCount, 10),
+		"commandProbeCount":    strconv.FormatUint(d.commandProbeCount, 10),
+		"scanCount":            strconv.FormatUint(d.scanCount, 10),
+		"scanInterval":         d.opts.scanInterval.String(),
+		"observedClients":      string(clients),
 	}
 	ignoredSenderMACs := boolMapKeysSorted(d.opts.ignoredSenderMACs)
 	observed["ignoredSenderMACs"] = strings.Join(ignoredSenderMACs, ",")
@@ -695,6 +787,46 @@ func (d *daemon) status() daemonapi.DaemonStatus {
 		}},
 		Observed: observed,
 	}
+}
+
+func (d *daemon) currentPacketSocket() *packetSocket {
+	d.socketMu.Lock()
+	defer d.socketMu.Unlock()
+	return d.activeSocket
+}
+
+func (d *daemon) commandProbeTarget(raw string) (netip.Addr, error) {
+	if d.opts.sourceType != sourceOnDemandARP || !d.opts.onDemand {
+		return netip.Addr{}, fmt.Errorf("probe-target requires an on-demand-arp observer")
+	}
+	target, err := netip.ParseAddr(strings.TrimSpace(raw))
+	if err != nil || !target.Is4() || target.Is4In6() || target.IsUnspecified() {
+		return netip.Addr{}, fmt.Errorf("target must be an IPv4 address")
+	}
+	if !d.opts.prefix.Contains(target) {
+		return netip.Addr{}, fmt.Errorf("target %s is outside prefix %s", target, d.opts.prefix)
+	}
+	if sameAddr(target, d.opts.sourceAddress) {
+		return netip.Addr{}, fmt.Errorf("target %s is the observer source address", target)
+	}
+	if !usableIPv4ProbeTarget(d.opts.prefix, target) {
+		return netip.Addr{}, fmt.Errorf("target %s is not a usable host address in %s", target, d.opts.prefix)
+	}
+	return target, nil
+}
+
+func usableIPv4ProbeTarget(prefix netip.Prefix, target netip.Addr) bool {
+	if !prefix.IsValid() || !prefix.Addr().Is4() || !target.IsValid() || !target.Is4() || target.Is4In6() || !prefix.Contains(target) {
+		return false
+	}
+	prefix = prefix.Masked()
+	baseBytes := prefix.Addr().As4()
+	targetBytes := target.As4()
+	base := binary.BigEndian.Uint32(baseBytes[:])
+	value := binary.BigEndian.Uint32(targetBytes[:])
+	offset := uint64(value - base)
+	total := uint64(1) << uint(32-prefix.Bits())
+	return probeUsableOffset(prefix.Bits(), total, offset)
 }
 
 func (d *daemon) observedClientsLocked() []arpClient {

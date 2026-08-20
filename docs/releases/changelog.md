@@ -12,6 +12,16 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- SAM `onprem-l2` leaves with authenticated Event Federation now share a
+  short-lived fact when a CE asks for an unresolved ARP target. Eligible remote
+  leaves issue a rate-limited target-only probe through their existing
+  `on-demand-arp` observer, so a quiet client can be found without waiting for a
+  full proactive prefix sweep. Group, member, pool, prefix, scope, subject,
+  expiry, source-node, and observer-readiness checks bound the fanout; raw L2
+  frames are not extended.
+
 ## v20260820.1911
 
 ### Changed

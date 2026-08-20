@@ -327,6 +327,16 @@ planner, so PVE IPAM environments do not have to rely on DHCP lease visibility
 alone. `on-demand-arp` uses source `scanInterval` for a low-rate proactive
 prefix sweep, probing one target per interval so quiet existing clients can be
 discovered without manual owner-side ARP traffic.
+When the pool's `EventGroup` has authenticated listen and peer delivery
+configured, an ARP request observed on one leaf is also published as the
+short-lived fact `routerd.mobility.arp.request.observed`. Remote leaves in the
+same group, pool, and discovery scope ask only their local `on-demand-arp`
+observer to probe that target. The owner then publishes the ordinary
+`routerd.client.ipv4.observed` fact and BGP `/32`; raw Ethernet frames are not
+extended. Stable event IDs, expiry, source-node loop prevention, and the
+observer's target cooldown bound duplicate work. An identity-only `EventGroup`
+keeps the proactive sweep as the fallback. If an `EventPeer.types` allowlist is
+used, it must include `routerd.mobility.arp.request.observed` for this fanout.
 Passive on-prem sources are not authoritative by default. If operations accept
 an empty L2 segment after the sources have been armed, set
 `ownershipDiscovery.allowEmptyAfter`; the pool reports a non-authoritative

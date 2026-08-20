@@ -548,6 +548,21 @@ Keep `scanInterval` conservative on broad prefixes; for `/24` lab validation a
 short interval such as `1s` gives fast convergence while still limiting traffic
 to one active ARP probe per second.
 
+For faster discovery across separate leaf L2 segments, configure authenticated
+Event Federation listen and peer delivery on the pool's `EventGroup`. A leaf
+that sees an unresolved ARP request records
+`routerd.mobility.arp.request.observed` with a 45-second lifetime. Every remote
+pool member validates the group, source membership, pool, prefix, discovery
+scope, subject, and expiry before asking its local `on-demand-arp` observer to
+probe only that target. The source leaf is skipped, received facts are not
+re-forwarded, and the observer's normal target cooldown suppresses duplicate
+packets. This follows the EVPN Proxy ARP model of suppressing known bindings and
+flooding a lookup miss, while keeping SAM's dataplane L3/IPIP rather than
+carrying raw ARP frames over the overlay. If `EventPeer.spec.types` is non-empty,
+add `routerd.mobility.arp.request.observed`; an empty list already carries the
+new fact. Without Event Federation peers, the proactive prefix sweep remains
+available as the compatibility fallback.
+
 For `proxy-arp` capture on Linux, routerd:
 
 - enables `net.ipv4.conf.<capture-interface>.proxy_arp=1` through the normal

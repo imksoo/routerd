@@ -289,6 +289,64 @@ func TestOnDemandProbingRequiresIgnoredSenderMACHandshake(t *testing.T) {
 	}
 }
 
+func TestCommandProbeTargetValidatesOnDemandScopeAndHostBoundary(t *testing.T) {
+	d := &daemon{opts: options{
+		sourceType:    sourceOnDemandARP,
+		onDemand:      true,
+		prefix:        netip.MustParsePrefix("192.168.123.0/24"),
+		sourceAddress: netip.MustParseAddr("192.168.123.208"),
+	}}
+	if target, err := d.commandProbeTarget("192.168.123.129"); err != nil || target.String() != "192.168.123.129" {
+		t.Fatalf("valid target = %s, err=%v", target, err)
+	}
+	for _, target := range []string{"192.168.122.129", "192.168.123.0", "192.168.123.255", "192.168.123.208", "2001:db8::1", "bad"} {
+		if _, err := d.commandProbeTarget(target); err == nil {
+			t.Fatalf("target %q accepted", target)
+		}
+	}
+	d.opts.sourceType = sourceARPObserver
+	if _, err := d.commandProbeTarget("192.168.123.129"); err == nil {
+		t.Fatal("passive observer accepted probe-target")
+	}
+}
+
+func TestPublishARPRequestObservedCarriesTargetFact(t *testing.T) {
+	d := &daemon{
+		opts: options{
+			resource:       "demand",
+			ifname:         "eth1",
+			eventInterface: "svnet1",
+			eventFile:      filepath.Join(t.TempDir(), "events.jsonl"),
+			poolName:       "svnet1",
+			prefix:         netip.MustParsePrefix("192.168.123.0/24"),
+			sourceType:     sourceOnDemandARP,
+			network:        "svnet1",
+			bridge:         "vmbr123",
+		},
+	}
+	d.cond = sync.NewCond(&d.mu)
+	now := time.Date(2026, 8, 20, 17, 0, 0, 0, time.UTC)
+	d.publishARPRequestObserved(arpPacket{
+		Operation: arpRequest,
+		SenderMAC: mustMAC(t, "02:00:00:00:00:31"),
+		SenderIP:  netip.MustParseAddr("192.168.123.132"),
+		TargetIP:  netip.MustParseAddr("192.168.123.129"),
+	}, now)
+	if len(d.events) != 1 || d.events[0].Type != eventARPRequestSeen {
+		t.Fatalf("events = %#v, want one typed ARP request fact", d.events)
+	}
+	attrs := d.events[0].Attributes
+	if attrs["target"] != "192.168.123.129" || attrs["pool"] != "svnet1" || attrs["interface"] != "svnet1" || attrs["network"] != "svnet1" || attrs["bridge"] != "vmbr123" {
+		t.Fatalf("request attributes = %#v", attrs)
+	}
+	if attrs["requesterIP"] != "192.168.123.132" || attrs["requesterMAC"] != "02:00:00:00:00:31" {
+		t.Fatalf("requester attributes = %#v", attrs)
+	}
+	if d.requestObservedCount != 1 {
+		t.Fatalf("requestObservedCount = %d, want 1", d.requestObservedCount)
+	}
+}
+
 func TestPublishObservationDemotesKnownSameIPMAC(t *testing.T) {
 	d := &daemon{
 		opts: options{

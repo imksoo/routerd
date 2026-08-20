@@ -298,10 +298,34 @@ func TestRunnerDoesNotMarkARPObserverReadyBeforeInitialIgnoredSenderMACPush(t *t
 	}
 }
 
+func TestRunnerProbesOnlyReadyOnDemandObserverForPool(t *testing.T) {
+	store := &dynamicRouteSAMStore{records: []routerstate.DynamicConfigPartRecord{arpObserverIntentRecord(t, []dynamicconfig.ARPObserverIntent{
+		{ResourceName: "mobility-arp-svnet1-observe-0", PoolRef: "svnet1", Prefix: "192.168.123.0/24", SourceType: "arp-observer", IfName: "eth1", EventInterface: "svnet1", Observe: true},
+		{ResourceName: "mobility-arp-svnet1-demand-1", PoolRef: "svnet1", Prefix: "192.168.123.0/24", SourceType: "on-demand-arp", IfName: "eth1", EventInterface: "svnet1", OnDemand: true, SourceAddress: "192.168.123.208"},
+	}, time.Now().Add(time.Hour))}}
+	pusher := &fakeARPObserverCommandPusher{}
+	runner := Runner{
+		Store:               store,
+		ARPObserverCommands: pusher,
+		arpObserverReadySet: map[string]bool{"mobility-arp-svnet1-demand-1": true},
+	}
+	if err := runner.probeARPObservers(context.Background(), "svnet1", "192.168.123.129/32"); err != nil {
+		t.Fatalf("probeARPObservers: %v", err)
+	}
+	if !reflect.DeepEqual(pusher.probes, []string{"192.168.123.129"}) {
+		t.Fatalf("probes = %#v, want one svnet1 on-demand probe", pusher.probes)
+	}
+	if err := runner.probeARPObservers(context.Background(), "svnet1", "192.168.124.1/32"); err == nil {
+		t.Fatal("out-of-prefix probe found an observer")
+	}
+}
+
 type fakeARPObserverCommandPusher struct {
 	statuses []daemonapi.DaemonStatus
 	sets     [][]string
 	setErr   error
+	probes   []string
+	probeErr error
 }
 
 func (f *fakeARPObserverCommandPusher) Status(_ context.Context, _ string) (daemonapi.DaemonStatus, error) {
@@ -318,6 +342,14 @@ func (f *fakeARPObserverCommandPusher) SetIgnoredSenderMACs(_ context.Context, _
 		return f.setErr
 	}
 	f.sets = append(f.sets, append([]string(nil), macs...))
+	return nil
+}
+
+func (f *fakeARPObserverCommandPusher) ProbeTarget(_ context.Context, _ string, target string) error {
+	if f.probeErr != nil {
+		return f.probeErr
+	}
+	f.probes = append(f.probes, target)
 	return nil
 }
 
