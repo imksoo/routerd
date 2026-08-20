@@ -17,6 +17,10 @@ ownership facts used by the receiving `MobilityPool` plan.
 The model is **at-least-once delivery with idempotent, observed-fact events**.
 Events are immutable statements about the world ("observed"), never imperative
 commands; a receiver re-deriving the same state from the same events is a no-op.
+For example, `routerd.mobility.arp.request.observed` states that a leaf saw a CE
+ask for an unresolved IPv4 target. A receiving leaf may apply its own
+MobilityPool scope and rate-limit policy and issue a local probe; the event does
+not instruct the receiver to execute one.
 
 ## Kinds
 
