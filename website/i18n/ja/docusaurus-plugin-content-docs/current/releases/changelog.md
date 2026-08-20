@@ -11,6 +11,17 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260820.1423
+
+### 修正
+
+- local `MobilityPool` を持たない static direct-IPIP route reflector について、
+  明示した IPv4 の `allowedPrefixes` を維持したまま
+  `allowedPrefixLengthMin` / `allowedPrefixLengthMax` を未指定にできる既存構成との
+  互換性を復旧しました。transport が生成する RR-client peer は、型付き transit FIB
+  scope を導出する前に引き続き exact `/32` と peer ごとの node-identity 制約を強制
+  します。片側だけの指定や明示的な non-`/32` bounds は引き続き不正です。
+
 ## v20260820.1144
 
 ### 修正

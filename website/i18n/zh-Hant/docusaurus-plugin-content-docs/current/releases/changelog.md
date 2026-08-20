@@ -11,6 +11,16 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260820.1423
+
+### 修正
+
+- 恢復不含 local `MobilityPool` 的 static direct-IPIP route reflector 相容性：profile
+  可保留明示的 IPv4 `allowedPrefixes`，同時省略
+  `allowedPrefixLengthMin` 與 `allowedPrefixLengthMax`。transport 產生的 RR-client
+  peer 在導出型別化 transit FIB scope 前仍強制 exact `/32` 與逐 peer 的
+  node-identity 約束。只設定一個 bound 或明示設定 non-`/32` bounds 仍然無效。
+
 ## v20260820.1144
 
 ### 修正

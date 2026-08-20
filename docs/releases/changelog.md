@@ -12,6 +12,18 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260820.1423
+
+### Fixed
+
+- Restored compatibility for a static direct-IPIP route reflector that has no
+  local `MobilityPool`: its profile may retain an explicit IPv4
+  `allowedPrefixes` list while omitting `allowedPrefixLengthMin` and
+  `allowedPrefixLengthMax`. The transport-generated RR-client peers still
+  enforce exact `/32` admission and per-peer node-identity constraints before
+  the typed transit FIB scope is derived. Partial or explicitly non-`/32`
+  bounds remain invalid.
+
 ## v20260820.1144
 
 ### Fixed
