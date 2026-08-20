@@ -109,7 +109,7 @@ func (l *DHCPStickyLog) RecordLeaseEvent(ctx context.Context, action, mac, ip, h
 		family = "ipv6"
 	}
 	switch strings.ToLower(strings.TrimSpace(action)) {
-	case "removed", "del", "release", "released", "expired":
+	case "removed":
 		var stickyUntil int64
 		if holdDays > 0 {
 			stickyUntil = now.Add(time.Duration(holdDays) * 24 * time.Hour).UnixNano()

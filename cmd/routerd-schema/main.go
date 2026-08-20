@@ -13,6 +13,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/controlapi"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 )
 
 var (
@@ -101,6 +102,8 @@ func controlSchema() map[string]any {
 			reflectedSchema(controlapi.DeleteResult{}),
 			reflectedSchema(controlapi.DHCPv6EventRequest{}),
 			reflectedSchema(controlapi.DHCPv6EventResult{}),
+			dhcpLeaseEventRequestSchema(),
+			reflectedSchema(controlapi.DHCPLeaseEventResult{}),
 			reflectedSchema(controlapi.Error{}),
 		},
 	}
@@ -233,27 +236,70 @@ func controlOpenAPISchema() map[string]any {
 					},
 				},
 			},
+			controlapi.Prefix + "/dhcp-lease-event": map[string]any{
+				"post": map[string]any{
+					"operationId": "recordDHCPLeaseEvent",
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": schemaRef("DHCPLeaseEventRequest"),
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200":     responseRef("DHCPLeaseEventResult"),
+						"default": responseRef("Error"),
+					},
+				},
+			},
 		},
 		"components": map[string]any{
 			"schemas": map[string]any{
-				"Status":             reflectedSchema(controlapi.Status{}),
-				"ConnectionTable":    reflectedSchema(controlapi.ConnectionTable{}),
-				"DNSQueries":         reflectedSchema(controlapi.DNSQueries{}),
-				"TrafficFlows":       reflectedSchema(controlapi.TrafficFlows{}),
-				"FirewallLogs":       reflectedSchema(controlapi.FirewallLogs{}),
-				"GetResult":          reflectedSchema(controlapi.GetResult{}),
-				"DescribeResult":     reflectedSchema(controlapi.DescribeResult{}),
-				"ProbeResult":        reflectedSchema(controlapi.ProbeResult{}),
-				"ApplyRequest":       reflectedSchema(controlapi.ApplyRequest{}),
-				"ApplyResult":        reflectedSchema(controlapi.ApplyResult{}),
-				"DeleteRequest":      reflectedSchema(controlapi.DeleteRequest{}),
-				"DeleteResult":       reflectedSchema(controlapi.DeleteResult{}),
-				"DHCPv6EventRequest": reflectedSchema(controlapi.DHCPv6EventRequest{}),
-				"DHCPv6EventResult":  reflectedSchema(controlapi.DHCPv6EventResult{}),
-				"Error":              reflectedSchema(controlapi.Error{}),
+				"Status":                reflectedSchema(controlapi.Status{}),
+				"ConnectionTable":       reflectedSchema(controlapi.ConnectionTable{}),
+				"DNSQueries":            reflectedSchema(controlapi.DNSQueries{}),
+				"TrafficFlows":          reflectedSchema(controlapi.TrafficFlows{}),
+				"FirewallLogs":          reflectedSchema(controlapi.FirewallLogs{}),
+				"GetResult":             reflectedSchema(controlapi.GetResult{}),
+				"DescribeResult":        reflectedSchema(controlapi.DescribeResult{}),
+				"ProbeResult":           reflectedSchema(controlapi.ProbeResult{}),
+				"ApplyRequest":          reflectedSchema(controlapi.ApplyRequest{}),
+				"ApplyResult":           reflectedSchema(controlapi.ApplyResult{}),
+				"DeleteRequest":         reflectedSchema(controlapi.DeleteRequest{}),
+				"DeleteResult":          reflectedSchema(controlapi.DeleteResult{}),
+				"DHCPv6EventRequest":    reflectedSchema(controlapi.DHCPv6EventRequest{}),
+				"DHCPv6EventResult":     reflectedSchema(controlapi.DHCPv6EventResult{}),
+				"DHCPLeaseEventRequest": dhcpLeaseEventRequestSchema(),
+				"DHCPLeaseEventResult":  reflectedSchema(controlapi.DHCPLeaseEventResult{}),
+				"Error":                 reflectedSchema(controlapi.Error{}),
 			},
 		},
 	}
+}
+
+func dhcpLeaseEventRequestSchema() map[string]any {
+	schema := reflectedSchema(controlapi.DHCPLeaseEventRequest{})
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		panic("DHCPLeaseEventRequest schema has no properties")
+	}
+	action, ok := properties["action"].(map[string]any)
+	if !ok {
+		panic("DHCPLeaseEventRequest schema has no action property")
+	}
+	action["description"] = "Canonical internal DHCP lease action. dnsmasq callback verbs are normalized at the relay boundary."
+	action["enum"] = []string{
+		daemonapi.DHCPLeaseActionAdded,
+		daemonapi.DHCPLeaseActionRenewed,
+		daemonapi.DHCPLeaseActionRemoved,
+	}
+	interfaceField, ok := properties["interface"].(map[string]any)
+	if !ok {
+		panic("DHCPLeaseEventRequest schema has no interface property")
+	}
+	interfaceField["description"] = "Optional dnsmasq interface observed by the lease hook."
+	return schema
 }
 
 func responseRef(name string) map[string]any {

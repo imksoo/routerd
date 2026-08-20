@@ -151,7 +151,7 @@ func TestMobilityStoreForwardsRecordBusEventThroughProductionBus(t *testing.T) {
 	}
 }
 
-func TestDaemonStatusControllerMergesMobilityPoolStatus(t *testing.T) {
+func TestDaemonStatusControllerStoresARPObserverDiagnosticsSeparately(t *testing.T) {
 	socket := filepath.Join(t.TempDir(), "daemon.sock")
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
@@ -164,7 +164,7 @@ func TestDaemonStatusControllerMergesMobilityPoolStatus(t *testing.T) {
 			return
 		}
 		status := daemonapi.DaemonStatus{Resources: []daemonapi.ResourceStatus{{
-			Resource: daemonapi.ResourceRef{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool", Name: "cloudedge"},
+			Resource: daemonapi.ResourceRef{APIVersion: api.MobilityAPIVersion, Kind: "ARPObserver", Name: "cloudedge-pve-rt08-arp-observer"},
 			Phase:    "Observed",
 			Health:   "OK",
 			Observed: map[string]string{
@@ -179,8 +179,8 @@ func TestDaemonStatusControllerMergesMobilityPoolStatus(t *testing.T) {
 
 	base := &mergeTrackingMapStore{mapStore: mapStore{
 		api.MobilityAPIVersion + "/MobilityPool/cloudedge": {
-			"plannerPhase":            "BGPPlanned",
-			"discoverySelfPrivateIPs": []string{"10.88.60.21"},
+			"plannerPhase":      "BGPPlanned",
+			"discoveryObserved": 1,
 		},
 	}}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
@@ -195,15 +195,16 @@ func TestDaemonStatusControllerMergesMobilityPoolStatus(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if base.mergeCalls != 1 || base.saveCalls != 0 {
-		t.Fatalf("mergeCalls=%d saveCalls=%d, want MobilityPool partial merge", base.mergeCalls, base.saveCalls)
+	if base.mergeCalls != 0 || base.saveCalls != 1 {
+		t.Fatalf("mergeCalls=%d saveCalls=%d, want separate ARPObserver status", base.mergeCalls, base.saveCalls)
 	}
-	status := base.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
-	if status["plannerPhase"] != "BGPPlanned" || status["discoverySelfPrivateIPs"] == nil {
-		t.Fatalf("status fields were not preserved: %#v", status)
+	poolStatus := base.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
+	if poolStatus["plannerPhase"] != "BGPPlanned" || poolStatus["discoveryObserved"] != 1 || poolStatus["phase"] != nil {
+		t.Fatalf("MobilityPool status was changed by diagnostics: %#v", poolStatus)
 	}
-	if status["phase"] != "Observed" || status["address"] != "10.88.60.10/32" {
-		t.Fatalf("daemon observed fields missing: %#v", status)
+	status := base.ObjectStatus(api.MobilityAPIVersion, "ARPObserver", "cloudedge-pve-rt08-arp-observer")
+	if status["phase"] != "Observed" || status["address"] != "10.88.60.10/32" || status["sourceType"] != "arp-observer" {
+		t.Fatalf("ARPObserver diagnostics missing: %#v", status)
 	}
 }
 
@@ -646,14 +647,14 @@ func TestStatusChangedIgnoresDHCPv4ClientLeaseTimestamps(t *testing.T) {
 
 func TestStatusChangedEventSeverityDemotesChattyFields(t *testing.T) {
 	current := map[string]any{
-		"phase":                      "Ready",
-		"observedClients":            []any{"192.0.2.10=02:00:00:00:00:10"},
-		"ownershipResolverDecisions": map[string]any{"192.0.2.10/32": "node-a"},
+		"phase":             "Ready",
+		"discoveryObserved": 1,
+		"ownershipResolverControlPlaneOwnerTable": map[string]any{"192.0.2.10/32": "node-a"},
 	}
 	next := map[string]any{
-		"phase":                      "Ready",
-		"observedClients":            []any{"192.0.2.10=02:00:00:00:00:10", "192.0.2.11=02:00:00:00:00:11"},
-		"ownershipResolverDecisions": map[string]any{"192.0.2.10/32": "node-a"},
+		"phase":             "Ready",
+		"discoveryObserved": 2,
+		"ownershipResolverControlPlaneOwnerTable": map[string]any{"192.0.2.10/32": "node-a"},
 	}
 	fields := statusChangedFieldsForEvent(api.MobilityAPIVersion, "MobilityPool", current, next)
 	if got := statusChangedEventSeverity(api.MobilityAPIVersion, "MobilityPool", current, next, fields); got != daemonapi.SeverityDebug {
@@ -745,30 +746,23 @@ func TestEventedStoreDoesNotPublishTimestampOnlyStatusChange(t *testing.T) {
 	}
 }
 
-func TestEventedStoreDoesNotPublishMobilityTimestampOnlyStatusRefresh(t *testing.T) {
+func TestEventedStoreDoesNotPublishMobilityObservationOnlyStatusRefresh(t *testing.T) {
 	base := mapStore{
 		api.MobilityAPIVersion + "/MobilityPool/cloudedge": statusWithOwnership(api.MobilityAPIVersion, "MobilityPool", map[string]any{
-			"plannerPhase":        "Planned",
-			"phase":               "Projected",
-			"dynamicDigest":       "sha256:abc",
-			"generatedClaims":     1,
-			"generatedActions":    2,
-			"placementActive":     false,
-			"plannedAt":           "2026-06-01T10:00:00Z",
-			"projectedAt":         "2026-06-01T10:00:00Z",
-			"dynamicExpiresAt":    "2026-06-01T10:05:00Z",
-			"discoveryLastScanAt": "2026-06-01T10:00:00Z",
-			"lastEventAt":         "2026-06-01T10:00:00Z",
-			"lastPacketAt":        "2026-06-01T10:00:00Z",
-			"lastScanAt":          "2026-06-01T10:00:00Z",
-			"packetsSeen":         10,
-			"scanCount":           20,
-			"probeCount":          30,
-			"probeHitCount":       40,
-			"proactiveCount":      50,
-			"observedCount":       60,
-			"operatorIntent":      "MobilityPool",
-			"derivedConfigKinds":  []string{"AddressMobilityDomain", "RemoteAddressClaim"},
+			"plannerPhase":                 "Planned",
+			"phase":                        "Projected",
+			"dynamicDigest":                "sha256:abc",
+			"generatedLocalCaptureIntents": 1,
+			"placementActive":              false,
+			"discoveryLastScanAt":          "2026-06-01T10:00:00Z",
+			"lastEventAt":                  "2026-06-01T10:00:00Z",
+			"lastPacketAt":                 "2026-06-01T10:00:00Z",
+			"lastScanAt":                   "2026-06-01T10:00:00Z",
+			"packetsSeen":                  10,
+			"scanCount":                    20,
+			"probeCount":                   30,
+			"probeHitCount":                40,
+			"proactiveCount":               50,
 		}),
 	}
 	eventBus := bus.New()
@@ -781,27 +775,20 @@ func TestEventedStoreDoesNotPublishMobilityTimestampOnlyStatusRefresh(t *testing
 
 	store := eventedStore{Store: base, Bus: eventBus}
 	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
-		"plannerPhase":        "Planned",
-		"phase":               "Projected",
-		"dynamicDigest":       "sha256:abc",
-		"generatedClaims":     1,
-		"generatedActions":    2,
-		"placementActive":     false,
-		"plannedAt":           "2026-06-01T10:00:30Z",
-		"projectedAt":         "2026-06-01T10:00:30Z",
-		"dynamicExpiresAt":    "2026-06-01T10:05:30Z",
-		"discoveryLastScanAt": "2026-06-01T10:00:30Z",
-		"lastEventAt":         "2026-06-01T10:00:30Z",
-		"lastPacketAt":        "2026-06-01T10:00:30Z",
-		"lastScanAt":          "2026-06-01T10:00:30Z",
-		"packetsSeen":         11,
-		"scanCount":           21,
-		"probeCount":          31,
-		"probeHitCount":       41,
-		"proactiveCount":      51,
-		"observedCount":       61,
-		"operatorIntent":      "MobilityPool",
-		"derivedConfigKinds":  []string{"AddressMobilityDomain", "RemoteAddressClaim"},
+		"plannerPhase":                 "Planned",
+		"phase":                        "Projected",
+		"dynamicDigest":                "sha256:abc",
+		"generatedLocalCaptureIntents": 1,
+		"placementActive":              false,
+		"discoveryLastScanAt":          "2026-06-01T10:00:30Z",
+		"lastEventAt":                  "2026-06-01T10:00:30Z",
+		"lastPacketAt":                 "2026-06-01T10:00:30Z",
+		"lastScanAt":                   "2026-06-01T10:00:30Z",
+		"packetsSeen":                  11,
+		"scanCount":                    21,
+		"probeCount":                   31,
+		"probeHitCount":                41,
+		"proactiveCount":               51,
 	}); err != nil {
 		t.Fatalf("save mobility status refresh: %v", err)
 	}
@@ -811,22 +798,16 @@ func TestEventedStoreDoesNotPublishMobilityTimestampOnlyStatusRefresh(t *testing
 		t.Fatalf("unexpected mobility timestamp-only event: %#v", event)
 	case <-time.After(20 * time.Millisecond):
 	}
-	if got := base.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")["plannedAt"]; got != "2026-06-01T10:00:30Z" {
-		t.Fatalf("plannedAt was not persisted: %v", got)
+	if got := base.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")["discoveryLastScanAt"]; got != "2026-06-01T10:00:30Z" {
+		t.Fatalf("discoveryLastScanAt was not persisted: %v", got)
 	}
 
 	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
-		"plannerPhase":       "Planned",
-		"phase":              "Projected",
-		"dynamicDigest":      "sha256:def",
-		"generatedClaims":    1,
-		"generatedActions":   3,
-		"placementActive":    false,
-		"plannedAt":          "2026-06-01T10:01:00Z",
-		"projectedAt":        "2026-06-01T10:01:00Z",
-		"dynamicExpiresAt":   "2026-06-01T10:06:00Z",
-		"operatorIntent":     "MobilityPool",
-		"derivedConfigKinds": []string{"AddressMobilityDomain", "RemoteAddressClaim"},
+		"plannerPhase":                 "Planned",
+		"phase":                        "Projected",
+		"dynamicDigest":                "sha256:def",
+		"generatedLocalCaptureIntents": 1,
+		"placementActive":              false,
 	}); err != nil {
 		t.Fatalf("save semantic mobility status: %v", err)
 	}
@@ -834,10 +815,10 @@ func TestEventedStoreDoesNotPublishMobilityTimestampOnlyStatusRefresh(t *testing
 	select {
 	case event := <-ch:
 		fields := event.Attributes["changedFields"]
-		if !strings.Contains(fields, "dynamicDigest") || !strings.Contains(fields, "generatedActions") {
+		if !strings.Contains(fields, "dynamicDigest") {
 			t.Fatalf("changedFields = %q, want semantic fields", fields)
 		}
-		for _, volatile := range []string{"plannedAt", "projectedAt", "dynamicExpiresAt", "discoveryLastScanAt", "lastEventAt", "lastPacketAt", "lastScanAt", "packetsSeen", "scanCount", "probeCount", "probeHitCount", "proactiveCount", "observedCount"} {
+		for _, volatile := range []string{"discoveryLastScanAt", "lastEventAt", "lastPacketAt", "lastScanAt", "packetsSeen", "scanCount", "probeCount", "probeHitCount", "proactiveCount"} {
 			if strings.Contains(fields, volatile) {
 				t.Fatalf("changedFields = %q, should omit volatile %s", fields, volatile)
 			}
@@ -922,10 +903,6 @@ func TestMobilityStatusEventComparisonKeepsBehavioralFields(t *testing.T) {
 		"captureActive":       true,
 		"allowReassignment":   false,
 		"deliveryRoute":       "Installed",
-		"generatedActions":    1,
-		"plannedAt":           "2026-06-01T10:00:00Z",
-		"projectedAt":         "2026-06-01T10:00:00Z",
-		"dynamicExpiresAt":    "2026-06-01T10:05:00Z",
 		"streamMaxObservedAt": "2026-06-01T10:00:00Z",
 	}
 	for _, field := range []string{
@@ -937,7 +914,6 @@ func TestMobilityStatusEventComparisonKeepsBehavioralFields(t *testing.T) {
 		"captureActive",
 		"allowReassignment",
 		"deliveryRoute",
-		"generatedActions",
 		"streamMaxObservedAt",
 	} {
 		next := map[string]any{}
@@ -954,9 +930,6 @@ func TestMobilityStatusEventComparisonKeepsBehavioralFields(t *testing.T) {
 	for key, value := range current {
 		next[key] = value
 	}
-	next["plannedAt"] = "2026-06-01T10:00:30Z"
-	next["projectedAt"] = "2026-06-01T10:00:30Z"
-	next["dynamicExpiresAt"] = "2026-06-01T10:05:30Z"
 	next["discoveryLastScanAt"] = "2026-06-01T10:00:30Z"
 	next["lastEventAt"] = "2026-06-01T10:00:30Z"
 	next["lastPacketAt"] = "2026-06-01T10:00:30Z"
@@ -966,7 +939,6 @@ func TestMobilityStatusEventComparisonKeepsBehavioralFields(t *testing.T) {
 	next["probeCount"] = 31
 	next["probeHitCount"] = 41
 	next["proactiveCount"] = 51
-	next["observedCount"] = 61
 	if statusChangedForEvent(api.MobilityAPIVersion, "MobilityPool", current, next) {
 		t.Fatalf("mobility scan-only refresh should not be event-significant")
 	}
@@ -975,12 +947,8 @@ func TestMobilityStatusEventComparisonKeepsBehavioralFields(t *testing.T) {
 func TestMobilityPoolObservationRefreshDoesNotPublishStatusEvent(t *testing.T) {
 	base := mapStore{
 		api.MobilityAPIVersion + "/MobilityPool/cloudedge": statusWithOwnership(api.MobilityAPIVersion, "MobilityPool", map[string]any{
-			"phase":                         "Ready",
-			"observedClients":               `[{"ip":"192.168.123.129","mac":"02:00:00:00:01:29"}]`,
-			"observedClientsBySource":       map[string]any{"pve-svnet": map[string]any{"observedClients": `[{"ip":"192.168.123.129"}]`}},
-			"ownershipResolverAddressCount": 1,
-			"ownershipResolverDecisions":    []map[string]any{{"address": "192.168.123.129/32", "owner": "pve-rt08"}},
-			"bgpCaptureObservedAt":          "2026-07-07T00:48:00Z",
+			"phase":             "Ready",
+			"discoveryObserved": 1,
 		}),
 	}
 	eventBus := bus.New()
@@ -993,10 +961,8 @@ func TestMobilityPoolObservationRefreshDoesNotPublishStatusEvent(t *testing.T) {
 
 	store := eventedStore{Store: base, Bus: eventBus}
 	if err := store.MergeObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
-		"phase":                   "Watching",
-		"observedClients":         `[{"ip":"192.168.123.129","mac":"02:00:00:00:01:29"},{"ip":"192.168.123.132","mac":"02:00:00:00:01:32"}]`,
-		"observedClientsBySource": map[string]any{"pve-svnet": map[string]any{"observedClients": `[{"ip":"192.168.123.129"},{"ip":"192.168.123.132"}]`}},
-		"bgpCaptureObservedAt":    "2026-07-07T00:49:00Z",
+		"phase":             "Watching",
+		"discoveryObserved": 2,
 	}); err != nil {
 		t.Fatalf("merge observation refresh: %v", err)
 	}
@@ -1007,7 +973,7 @@ func TestMobilityPoolObservationRefreshDoesNotPublishStatusEvent(t *testing.T) {
 	case <-time.After(20 * time.Millisecond):
 	}
 	status := base.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
-	if status["phase"] != "Watching" || !strings.Contains(fmt.Sprint(status["observedClients"]), "192.168.123.132") {
+	if status["phase"] != "Watching" || status["discoveryObserved"] != 2 {
 		t.Fatalf("status was not persisted: %#v", status)
 	}
 }
@@ -1015,11 +981,8 @@ func TestMobilityPoolObservationRefreshDoesNotPublishStatusEvent(t *testing.T) {
 func TestMobilityPoolPendingWatchingObservationRefreshDoesNotPublishStatusEvent(t *testing.T) {
 	base := mapStore{
 		api.MobilityAPIVersion + "/MobilityPool/cloudedge": statusWithOwnership(api.MobilityAPIVersion, "MobilityPool", map[string]any{
-			"phase":                         "Pending",
-			"observedClients":               `[]`,
-			"observedClientsBySource":       map[string]any{},
-			"sourceType":                    "onprem-l2",
-			"ownershipResolverAddressCount": 1,
+			"phase":             "Pending",
+			"discoveryObserved": 0,
 		}),
 	}
 	eventBus := bus.New()
@@ -1032,10 +995,8 @@ func TestMobilityPoolPendingWatchingObservationRefreshDoesNotPublishStatusEvent(
 
 	store := eventedStore{Store: base, Bus: eventBus}
 	if err := store.MergeObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
-		"phase":                   "Watching",
-		"observedClients":         `[{"ip":"192.168.123.1","mac":"02:00:00:00:00:01"}]`,
-		"observedClientsBySource": map[string]string{"pve-svnet": `[{"ip":"192.168.123.1"}]`},
-		"sourceType":              "pve-svnet",
+		"phase":             "Watching",
+		"discoveryObserved": 1,
 	}); err != nil {
 		t.Fatalf("merge pending/watching observation refresh: %v", err)
 	}
@@ -1050,9 +1011,8 @@ func TestMobilityPoolPendingWatchingObservationRefreshDoesNotPublishStatusEvent(
 func TestMobilityPoolOwnershipResolverChangePublishesStatusEvent(t *testing.T) {
 	base := mapStore{
 		api.MobilityAPIVersion + "/MobilityPool/cloudedge": statusWithOwnership(api.MobilityAPIVersion, "MobilityPool", map[string]any{
-			"phase":                         "Ready",
-			"ownershipResolverAddressCount": 1,
-			"ownershipResolverDecisions":    []map[string]any{{"address": "192.168.123.129/32", "owner": "pve-rt08"}},
+			"phase": "Ready",
+			"ownershipResolverControlPlaneOwnerTable": []map[string]any{{"address": "192.168.123.129/32", "ownerNode": "pve-rt08"}},
 		}),
 	}
 	eventBus := bus.New()
@@ -1065,11 +1025,10 @@ func TestMobilityPoolOwnershipResolverChangePublishesStatusEvent(t *testing.T) {
 
 	store := eventedStore{Store: base, Bus: eventBus}
 	if err := store.MergeObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
-		"phase":                         "Ready",
-		"ownershipResolverAddressCount": 2,
-		"ownershipResolverDecisions": []map[string]any{
-			{"address": "192.168.123.129/32", "owner": "pve-rt08"},
-			{"address": "192.168.123.132/32", "owner": "pve-rt07"},
+		"phase": "Ready",
+		"ownershipResolverControlPlaneOwnerTable": []map[string]any{
+			{"address": "192.168.123.129/32", "ownerNode": "pve-rt08"},
+			{"address": "192.168.123.132/32", "ownerNode": "pve-rt07"},
 		},
 	}); err != nil {
 		t.Fatalf("merge ownership resolver status: %v", err)
@@ -1078,7 +1037,7 @@ func TestMobilityPoolOwnershipResolverChangePublishesStatusEvent(t *testing.T) {
 	select {
 	case event := <-ch:
 		fields := event.Attributes["changedFields"]
-		if !strings.Contains(fields, "ownershipResolverAddressCount") || !strings.Contains(fields, "ownershipResolverDecisions") {
+		if !strings.Contains(fields, "ownershipResolverControlPlaneOwnerTable") {
 			t.Fatalf("changedFields = %q, want ownership resolver fields", fields)
 		}
 	case <-time.After(time.Second):
@@ -1121,23 +1080,18 @@ func TestMobilityPoolPendingWatchingSemanticStatusPublishesEvent(t *testing.T) {
 	}
 }
 
-func TestMobilityPoolLeaseRefreshAndNestedMapTypesDoNotPublishStatusEvent(t *testing.T) {
+func TestMobilityPoolTransitionDedupeAndNestedMapTypesDoNotPublishStatusEvent(t *testing.T) {
 	base := mapStore{
 		api.MobilityAPIVersion + "/MobilityPool/cloudedge": statusWithOwnership(api.MobilityAPIVersion, "MobilityPool", map[string]any{
 			"phase": "Ready",
-			"addresses": map[string]any{
-				"192.168.123.129/32": map[string]any{
-					"phase":            "Ready",
-					"conditions":       map[string]string{"OwnershipResolved": "True"},
-					"conditionReasons": map[string]string{"OwnershipResolved": "LocalHomeOwned"},
-				},
-			},
-			"bgpCaptureClaim": map[string]any{
-				"phase":         "Active",
-				"generation":    "cloudedge/1",
-				"desiredHolder": "pve-rt08",
-				"renewedAt":     "2026-07-07T01:13:07Z",
-				"leaseUntil":    "2026-07-07T01:18:07Z",
+			"ownershipResolverControlPlaneOwnerTable": []map[string]any{{
+				"address":            "192.168.123.129/32",
+				"state":              "OK",
+				"class":              "LocalHomeOwned",
+				"captureDisposition": "prohibited",
+			}},
+			"bgpCaptureTransitionCompleted": map[string]map[string]string{
+				"seizeComplete": {"192.168.123.129/32": "cloudedge/1"},
 			},
 			"observedSelfStaleCaptures": map[string]string{},
 		}),
@@ -1153,28 +1107,23 @@ func TestMobilityPoolLeaseRefreshAndNestedMapTypesDoNotPublishStatusEvent(t *tes
 	store := eventedStore{Store: base, Bus: eventBus}
 	if err := store.MergeObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
 		"phase": "Ready",
-		"addresses": map[string]any{
-			"192.168.123.129/32": map[string]any{
-				"phase":            "Ready",
-				"conditions":       map[string]any{"OwnershipResolved": "True"},
-				"conditionReasons": map[string]any{"OwnershipResolved": "LocalHomeOwned"},
-			},
-		},
-		"bgpCaptureClaim": map[string]any{
-			"phase":         "Active",
-			"generation":    "cloudedge/1",
-			"desiredHolder": "pve-rt08",
-			"renewedAt":     "2026-07-07T01:13:09Z",
-			"leaseUntil":    "2026-07-07T01:18:09Z",
+		"ownershipResolverControlPlaneOwnerTable": []any{map[string]any{
+			"address":            "192.168.123.129/32",
+			"state":              "OK",
+			"class":              "LocalHomeOwned",
+			"captureDisposition": "prohibited",
+		}},
+		"bgpCaptureTransitionCompleted": map[string]any{
+			"seizeComplete": map[string]any{"192.168.123.129/32": "cloudedge/2"},
 		},
 		"observedSelfStaleCaptures": map[string]any{},
 	}); err != nil {
-		t.Fatalf("merge lease refresh status: %v", err)
+		t.Fatalf("merge transition dedupe status: %v", err)
 	}
 
 	select {
 	case event := <-ch:
-		t.Fatalf("unexpected lease refresh event: %#v", event)
+		t.Fatalf("unexpected transition dedupe event: %#v", event)
 	case <-time.After(20 * time.Millisecond):
 	}
 }
@@ -1182,9 +1131,8 @@ func TestMobilityPoolLeaseRefreshAndNestedMapTypesDoNotPublishStatusEvent(t *tes
 func TestMobilityPoolSemanticStatusStillPublishesEvent(t *testing.T) {
 	base := mapStore{
 		api.MobilityAPIVersion + "/MobilityPool/cloudedge": statusWithOwnership(api.MobilityAPIVersion, "MobilityPool", map[string]any{
-			"phase":                         "Ready",
-			"plannerPhase":                  "Planned",
-			"ownershipResolverAddressCount": 1,
+			"phase":        "Ready",
+			"plannerPhase": "Planned",
 		}),
 	}
 	eventBus := bus.New()
@@ -1197,10 +1145,9 @@ func TestMobilityPoolSemanticStatusStillPublishesEvent(t *testing.T) {
 
 	store := eventedStore{Store: base, Bus: eventBus}
 	if err := store.MergeObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge", map[string]any{
-		"phase":                         "Degraded",
-		"plannerPhase":                  "Degraded",
-		"plannerReason":                 "ownership resolver conflict",
-		"ownershipResolverAddressCount": 1,
+		"phase":         "Degraded",
+		"plannerPhase":  "Degraded",
+		"plannerReason": "ownership resolver conflict",
 	}); err != nil {
 		t.Fatalf("merge semantic status: %v", err)
 	}

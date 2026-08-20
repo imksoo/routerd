@@ -7,7 +7,10 @@ Usage:
   scripts/sam-full-validation.sh --tofu-output tofu-output.json --artifact routerd.tar.gz --evidence-root DIR [options]
 
 Options:
-  --ssh-key FILE      Fixed lab SSH key (default: ~/.ssh/routerd-cloudedge-lab-20260529)
+  --ssh-key FILE      Guest/cloud SSH key (required)
+  --pve-ssh-key FILE  Exact root PVE SSH key for hypervisor bridge audit
+  --pve-known-hosts FILE
+                      Pinned known_hosts for the PVE hypervisors
   --scenario NAME     Run only the named scenario; may be repeated. Use --list-scenarios for names
   --resume-status FILE
                       Resume the default ordered suite after a contiguous PASS prefix
@@ -17,7 +20,7 @@ Options:
 Runs the standard full-topology SAM validation sequence against an already
 applied OpenTofu environment:
   1. baseline full matrix + legacy + performance + load-balance report
-  2. RR failover/rejoin for aws-rr-a and aws-rr-b, with full traffic matrices
+  2. RR failover/rejoin for pve-rr-a and pve-rr-b, with full traffic matrices
   3. leaf failover/rejoin for both leaf nodes at each site, with full matrices
   4. load-balance report rerun
 
@@ -36,7 +39,9 @@ USAGE
 tofu_output=
 artifact=
 evidence_root=
-ssh_key="${HOME}/.ssh/routerd-cloudedge-lab-20260529"
+ssh_key=
+pve_ssh_key=
+pve_known_hosts=
 resume_status=
 destroy_cmd=
 list_scenarios=0
@@ -49,6 +54,8 @@ while [ "$#" -gt 0 ]; do
     --artifact) artifact="$2"; shift 2 ;;
     --evidence-root) evidence_root="$2"; shift 2 ;;
     --ssh-key) ssh_key="$2"; shift 2 ;;
+    --pve-ssh-key) pve_ssh_key="$2"; shift 2 ;;
+    --pve-known-hosts) pve_known_hosts="$2"; shift 2 ;;
     --scenario) selected_scenarios+=("$2"); scenario_filter=1; shift 2 ;;
     --resume-status) resume_status="$2"; shift 2 ;;
     --destroy-cmd) destroy_cmd="$2"; shift 2 ;;
@@ -61,6 +68,10 @@ done
 [ -n "$tofu_output" ] || { echo "--tofu-output is required" >&2; exit 2; }
 [ -n "$evidence_root" ] || { echo "--evidence-root is required" >&2; exit 2; }
 [ -f "$tofu_output" ] || { echo "tofu output not found: $tofu_output" >&2; exit 2; }
+[ -n "$ssh_key" ] || { echo "--ssh-key FILE is required" >&2; exit 2; }
+[ -f "$ssh_key" ] || { echo "ssh key not found: $ssh_key" >&2; exit 2; }
+[ -f "$pve_ssh_key" ] || { echo "--pve-ssh-key FILE is required" >&2; exit 2; }
+[ -f "$pve_known_hosts" ] || { echo "--pve-known-hosts FILE is required" >&2; exit 2; }
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -90,14 +101,14 @@ require_node() {
   }
 }
 
-for node in aws-rr-a aws-rr-b aws-leaf-a aws-leaf-b azure-leaf-a azure-leaf-b oci-leaf-a oci-leaf-b pve-leaf-a pve-leaf-b; do
+for node in pve-rr-a pve-rr-b aws-leaf-a aws-leaf-b azure-leaf-a azure-leaf-b oci-leaf-a oci-leaf-b pve-leaf-a pve-leaf-b; do
   require_node "$node"
 done
 
 scenario_names=(
   baseline
-  rr-failover-aws-rr-a
-  rr-failover-aws-rr-b
+  rr-failover-pve-rr-a
+  rr-failover-pve-rr-b
   leaf-failover-aws-leaf-a
   leaf-failover-aws-leaf-b
   leaf-failover-azure-leaf-a
@@ -196,6 +207,8 @@ run_scenario() {
     --tofu-output "$tofu_output" \
     --artifact "$artifact" \
     --ssh-key "$ssh_key" \
+    --pve-ssh-key "$pve_ssh_key" \
+    --pve-known-hosts "$pve_known_hosts" \
     --evidence-dir "$dir" \
     "$@" 2>&1 | tee "$dir/sam-e2e.log"
   rc=${PIPESTATUS[0]}
@@ -239,19 +252,19 @@ run_named_scenario() {
         --load-balance-report \
         --performance-tests
       ;;
-    rr-failover-aws-rr-a)
-      run_scenario rr-failover-aws-rr-a \
+    rr-failover-pve-rr-a)
+      run_scenario rr-failover-pve-rr-a \
         --skip-deploy \
-        --failover-node aws-rr-a \
+        --failover-node pve-rr-a \
         --rejoin-after-failover \
         --load-balance-report \
         "${failover_suite_args[@]}" \
         --failover-transfer-observe
       ;;
-    rr-failover-aws-rr-b)
-      run_scenario rr-failover-aws-rr-b \
+    rr-failover-pve-rr-b)
+      run_scenario rr-failover-pve-rr-b \
         --skip-deploy \
-        --failover-node aws-rr-b \
+        --failover-node pve-rr-b \
         --rejoin-after-failover \
         --load-balance-report \
         "${failover_suite_args[@]}" \

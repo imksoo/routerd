@@ -40,8 +40,8 @@
 - `capture.interface` (proxy-arp) は実際の OS NIC 名 (ens21/eth1) でなければならない — 手動確認。
 - オーバーレイ `/32`、共有サブネット、`ownerSide`、`domain.peerRef` vs `delivery.peerRef` は
   手動で整合させる必要がある; 2 つの peerRef は部分的に冗長。(フォローアップ: 簡素化/明確化。)
-- `configureOSAddress=false` のセマンティクスは #41 以前は曖昧だった (現在は "routerd が
-  OS ローカルでの不在を強制" として明確化)。
+- BGP `provider-secondary-ip` は OS ローカルでの不在を常に強制し、メンバー単位の
+  OS-address toggle は存在しない。
 - `doctor` の FORWARD ポリシースキップは Azure では読みにくかった (`exit status 1`); AWS では改善。
 
 ## 4. WireGuard 鍵プロビジョニング

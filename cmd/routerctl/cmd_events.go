@@ -10,6 +10,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -81,8 +82,8 @@ func writeEventsTable(stdout io.Writer, events []routerstate.StoredEvent) error 
 		if event.ResourceKind != "" && event.ResourceName != "" {
 			resource = event.ResourceKind + "/" + event.ResourceName
 		}
-		topic := firstNonEmpty(event.Topic, event.Type)
-		severity := firstNonEmpty(event.Severity, event.Type)
+		topic := stringutil.FirstNonEmpty(event.Topic, event.Type)
+		severity := stringutil.FirstNonEmpty(event.Severity, event.Type)
 		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			event.ID,
 			event.CreatedAt.Format(time.RFC3339),

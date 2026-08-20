@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/imksoo/routerd/pkg/daemonapi"
 )
 
 const (
@@ -90,7 +92,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleSetLogLevel(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/dhcpv6-event":
 		h.handleDHCPv6Event(w, r)
-	case r.Method == http.MethodPost && (r.URL.Path == Prefix+"/dhcp-lease-event" || r.URL.Path == "/v1/events/dhcp"):
+	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/dhcp-lease-event":
 		h.handleDHCPLeaseEvent(w, r)
 	default:
 		writeError(w, http.StatusNotFound, "not found")
@@ -211,6 +213,10 @@ func (h Handler) handleDHCPLeaseEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Kind != "" && req.Kind != "DHCPLeaseEvent" {
 		writeError(w, http.StatusBadRequest, "unsupported kind")
+		return
+	}
+	if _, ok := daemonapi.DHCPLeaseEventType(req.Action); !ok || strings.TrimSpace(req.IP) == "" {
+		writeError(w, http.StatusBadRequest, "invalid DHCP lease event")
 		return
 	}
 	result, err := h.DHCPLeaseEvent(r, req)

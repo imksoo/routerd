@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
@@ -51,7 +52,7 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 	if len(data) == 0 {
 		return backendResult{}, nil
 	}
-	path := firstNonEmpty(c.ConfigPath, "/etc/keepalived/keepalived.conf")
+	path := stringutil.FirstNonEmpty(c.ConfigPath, "/etc/keepalived/keepalived.conf")
 	changed, err := fileContentChanged(path, data)
 	if err != nil {
 		return backendResult{}, err
@@ -155,7 +156,7 @@ func syncFailoverVMACs(ctx context.Context, c *Controller, aliases map[string]st
 }
 
 func reloadOrRestartSystemdKeepalived(ctx context.Context, c *Controller, path string) (string, error) {
-	systemctl := firstNonEmpty(c.Systemctl, "systemctl")
+	systemctl := stringutil.FirstNonEmpty(c.Systemctl, "systemctl")
 	if _, err := c.run(ctx, systemctl, "is-active", "--quiet", "keepalived.service"); err == nil {
 		if out, err := c.run(ctx, systemctl, "reload", "keepalived.service"); err == nil {
 			return "reload", nil
@@ -199,7 +200,7 @@ func observeKeepalivedRolesWithWait(ctx context.Context, c *Controller, aliases 
 			roles[resource.Metadata.Name] = "unknown"
 			continue
 		}
-		ip := firstNonEmpty(c.IP, "ip")
+		ip := stringutil.FirstNonEmpty(c.IP, "ip")
 		ipFamily := "-4"
 		if spec.Family == "ipv6" {
 			ipFamily = "-6"
@@ -248,7 +249,7 @@ func (c *Controller) keepalivedServiceActive(ctx context.Context) bool {
 }
 
 func (c *Controller) refreshKeepalivedServiceActive(ctx context.Context) bool {
-	systemctl := firstNonEmpty(c.Systemctl, "systemctl")
+	systemctl := stringutil.FirstNonEmpty(c.Systemctl, "systemctl")
 	_, err := c.run(ctx, systemctl, "is-active", "--quiet", "keepalived.service")
 	active := err == nil
 	c.keepalivedActiveCached = active
@@ -270,9 +271,9 @@ func (carpBackend) Apply(ctx context.Context, c *Controller, aliases map[string]
 	}
 	changed := false
 	if !c.DryRun {
-		kldload := firstNonEmpty(c.Kldload, "kldload")
+		kldload := stringutil.FirstNonEmpty(c.Kldload, "kldload")
 		_, _ = c.run(ctx, kldload, "carp")
-		sysctl := firstNonEmpty(c.Sysctl, "sysctl")
+		sysctl := stringutil.FirstNonEmpty(c.Sysctl, "sysctl")
 		wantedPreempt := config.PreemptSysctlValue()
 		currentPreempt, currentErr := c.run(ctx, sysctl, "-n", "net.inet.carp.preempt")
 		if currentErr != nil || strings.TrimSpace(string(currentPreempt)) != wantedPreempt {
@@ -281,7 +282,7 @@ func (carpBackend) Apply(ctx context.Context, c *Controller, aliases map[string]
 			}
 			changed = true
 		}
-		ifconfig := firstNonEmpty(c.Ifconfig, "ifconfig")
+		ifconfig := stringutil.FirstNonEmpty(c.Ifconfig, "ifconfig")
 		commands := config.IfconfigCommands()
 		for i, iface := range config.Interfaces {
 			out, err := c.run(ctx, ifconfig, iface.Interface)
@@ -303,7 +304,7 @@ func observeCARPRoles(ctx context.Context, c *Controller, config render.CARPConf
 	if roles != nil {
 		return roles
 	}
-	ifconfig := firstNonEmpty(c.Ifconfig, "ifconfig")
+	ifconfig := stringutil.FirstNonEmpty(c.Ifconfig, "ifconfig")
 	roles = map[string]string{}
 	for _, iface := range config.Interfaces {
 		out, err := c.run(ctx, ifconfig, iface.Interface)

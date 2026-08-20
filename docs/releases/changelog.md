@@ -12,6 +12,31 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Changed
+
+- Cloud SAM now evaluates each BGP pool through one typed
+  `PoolRuntimeSnapshot` → `PoolPlan` pipeline. Placement, ownership, BGP,
+  provider actions, FIB verdicts, and local capture intents use that one plan;
+  desired dataplane state is no longer reconstructed from status values.
+- PVE route reflectors are now a host-redundant PVE pair. Cloud capacity is
+  reserved for the leaf topology used by qualification.
+
+### Removed
+
+- The legacy BGP-to-synthetic-`RemoteAddressClaim` lowering path and its
+  `RemoteAddressClaim`, `AddressMobilityDomain`, `MobilityMemberSet`,
+  `Delivery`, `DeliveryTo`, non-BGP delivery, and remote-full-member API
+  surfaces. BGP pools now emit typed local capture intents directly. This is a
+  breaking v1alpha1 API change.
+- `/v1/member-sets` and its response envelope. The new `SAMPeerGroup` sync
+  protocol is not wire-compatible with preceding member-set peers: upgrade
+  every RR and leaf within a peer-synchronization domain in one planned
+  cutover, not a mixed-version rolling upgrade.
+- `routerctl mobility enrollment-join`, the parallel manual RRSet bootstrap
+  path. `SAMEnrollmentClient` is now the sole submit/fetch/persist
+  implementation and retains configured bearer-token/mTLS authentication and
+  refresh backoff.
+
 ## v20260808.1741
 
 ### Added
@@ -627,13 +652,6 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   WireGuard inner network. Publisher serves `GET /v1/peer-groups`;
   consumer discovers WireGuard peers and fetches matching groups
   automatically. Eliminates manual `SAMPeerGroup` distribution (#334, #336).
-- `MobilityMemberSet` Kind and `MobilityPool.spec.membersFrom` for
-  shared identity-only pool member distribution. Leaves import the
-  shared topology and keep only their own capture/discovery details
-  inline, reducing O(N²) config duplication (#339, #340).
-- `MobilityPool.spec.publishMemberSet` generates a `MobilityMemberSet`
-  `DynamicConfigPart` on RR nodes; leaves fetch via
-  `GET /v1/member-sets` on the same sync service (#340).
 
 ### Fixed
 

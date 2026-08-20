@@ -216,8 +216,8 @@ aws ec2 describe-route-tables \
 - [ ] actionPlan 生成 -> 导入 -> 批准 -> 执行 -> 日志 `succeeded`。
 - [ ] **辅助 IP 存在于 ENI 上**（`describe-network-interfaces` 中 `<address>` 显示在 `PrivateIpAddresses` 中）。
 - [ ] ENI 的 **Source/dest check 已禁用**（`SourceDestCheck=false`）。日志中记录了 `Observed.priorSourceDestCheck`。
-- [ ] 如果 `configureOSAddress=false`，`routerd-cloud` **不持有**该地址作为 OS 本地地址（捕获仅用于路由/转发，无 OS 地址）。
-- [ ] `RemoteAddressClaim` 达到 **Ready** 状态。
+- [ ] 对于 BGP `provider-secondary-ip`，`routerd-cloud` **不持有**该地址作为 OS 本地地址；即使 provider secondary IP 仍保留在 ENI 上也是如此（捕获仅用于路由/转发，无 OS 地址）。
+- [ ] `MobilityPool` 达到 **Ready** 状态，目标地址的 provider action 已成功或确认无需执行。
 - [ ] `routerctl doctor` 的 hybrid 检查**通过**。
 - [ ] cloud-client **`.7`** 和 on-prem-client **`.9`** — **双向 ping 和 ssh** 成功。
 - [ ] 捕获路径上**不存在 NAT**（流量被路由/转发，而非转换）。

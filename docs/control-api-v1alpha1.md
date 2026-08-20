@@ -32,6 +32,29 @@ state. Highlights:
 | `GET /api/control.routerd.net/v1alpha1/dns-queries` | DNS query history |
 | `GET /api/control.routerd.net/v1alpha1/traffic-flows` | traffic flow history |
 | `GET /api/control.routerd.net/v1alpha1/firewall-logs` | firewall log entries |
+| `POST /api/control.routerd.net/v1alpha1/dhcp-lease-event` | local dnsmasq lease-hook event |
+
+## DHCP lease hook
+
+`POST /api/control.routerd.net/v1alpha1/dhcp-lease-event` is a privileged,
+local hook endpoint for dnsmasq lease changes; it is not a remote-management or
+general-purpose event API. `routerd-dhcp-event-relay` runs once for each
+dnsmasq callback and normalizes dnsmasq's raw callback verbs before posting the
+event.
+
+Direct callers must send only the canonical `action` values `added`, `renewed`,
+or `removed`. The raw dnsmasq verbs `add`, `old`, and `del` are accepted only at
+the relay boundary. `ip` is required; `mac`, `hostname`, and `interface` are
+optional. `interface` is the value reported by dnsmasq for the lease hook; raw
+environment variables are never forwarded through this API.
+
+Each accepted action publishes one exact event topic:
+
+| Action | Topic |
+| --- | --- |
+| `added` | `routerd.dhcp.lease.added` |
+| `renewed` | `routerd.dhcp.lease.renewed` |
+| `removed` | `routerd.dhcp.lease.removed` |
 
 ## Controller status
 

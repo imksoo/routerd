@@ -24,7 +24,7 @@ CloudEdge の Selective Address Mobility は元々、routerd 固有の制御プ�
 
 - Event Federation が observed/expired/heartbeat ファクトを運ぶ；
 - mobility コントローラーがそれらのイベントを `AddressLease` 行に射影する；
-- プランナーがリースを `AddressMobilityDomain`、`RemoteAddressClaim`、
+- プランナーがリースを旧来の mobility-domain/claim リソースグラフ、
   プロバイダー `ActionPlan`、`captureEpoch`、`ownershipEpoch` 状態に下降させる；
 - SAM が生成された claim をルート、proxy-ARP、プロバイダー secondary-IP アクションに
   下降させる；
@@ -135,7 +135,7 @@ reconciliation に降格**：
 | expired/released イベント | ローカル `/32` withdraw |
 | `staticOwnedAddresses` | 所有メンバーによる静的ローカル `/32` advertise |
 | F3 ハンドオーバー | release/withdraw バリア、その後新オーナーが advertise |
-| `RemoteAddressClaim` 配送ルート | インポートされた BGP `/32` FIB ルート |
+| 旧来の claim 配送ルート | インポートされた BGP `/32` FIB ルート |
 | 捕捉プレースメントのアクティブメンバー | パス優先度 / origin 適格性 |
 | オーバーレイルーティングの `ownershipEpoch`/`captureEpoch` | best-path ビューとオプションのルートメタデータ |
 | プロバイダー secondary-IP アクション | バックグラウンドファブリック ingress reconciliation |

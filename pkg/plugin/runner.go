@@ -18,6 +18,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/subprocessio"
 )
@@ -176,7 +177,7 @@ func pluginTimeout(value string) (time.Duration, error) {
 // top for explicit site-local configuration.
 func pluginEnvironment(extra map[string]string) []string {
 	env := map[string]string{
-		"PATH": firstNonEmpty(os.Getenv("PATH"), defaultPathEnv),
+		"PATH": stringutil.FirstPresent(os.Getenv("PATH"), defaultPathEnv),
 	}
 	for key, value := range extra {
 		key = strings.TrimSpace(key)
@@ -207,13 +208,4 @@ func truncateString(value string, limit int) string {
 		return value
 	}
 	return value[:limit]
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }

@@ -3,7 +3,7 @@
 # Copy this file to terraform.tfvars and fill in the values.
 # Sensitive values (PVE API token) should be set via environment variables:
 #
-#   export TF_VAR_pve_api_token='root@pam!tofu=<secret>'
+#   export TF_VAR_pve_api_token='<preprovisioned-release-qa-user>@<realm>!<run_id>=<secret>'
 #
 # *.tfvars is gitignored. Do not commit real credentials.
 
@@ -46,14 +46,66 @@ oci_shape               = "VM.Standard.E2.1"
 
 # --- Proxmox VE ---
 # PVE API token is sensitive. Set via env var instead of this file:
-#   export TF_VAR_pve_api_token='root@pam!tofu=<secret>'
-pve_endpoint        = "https://pve01.local:8006/"
-pve_node_name       = "pve01"
-pve_ssh_host        = "pve01.local"
+#   export TF_VAR_pve_api_token='<preprovisioned-release-qa-user>@<realm>!<run_id>=<secret>'
+# This public template is deliberately non-executable. Replace every
+# <certified-...> value only in the run-confined tfvars after the PVE
+# substrate review has reserved the bridge, hosts, template, and VMID range.
+pve_endpoint        = "https://<certified-pve-leaf-ssh-host>:8006/"
+# Qualification always verifies PVE TLS with runtime/secrets/pve-ca.pem.
+pve_insecure        = false
+pve_node_name       = "<certified-pve-leaf-node>"
+pve_ssh_host        = "<certified-pve-leaf-ssh-host>"
 pve_boot_source     = "template"        # "iso" to boot from ISO instead
-pve_template_vm_id  = 9000              # cloud-init template VM ID
-# pve_iso_file_id   = "local:iso/routerd.iso"
-pve_datastore_id    = "local-lvm"
-pve_underlay_bridge = "svnet1"          # management/underlay bridge
-pve_capture_bridge  = null              # null auto-creates a run-scoped bridge
+# Template-backed release qualification first makes an unstarted full-copy
+# template on the shared qnap datastore, then clones every PVE workload from
+# that stage. `pve_template_source_node` must be the leaf/source PVE node;
+# the stage VMID is a seventh, disposable ID and must not overlap the six
+# workload VMIDs below. The preflight rejects a non-shared datastore or a
+# linked-clone configuration before any mutation.
+# pve_template_vm_id       = <certified-pve-template-vmid>
+# pve_template_source_node = "<certified-pve-leaf-node>"
+# pve_template_stage_vm_id = <certified-pve-template-stage-vmid>
+pve_clone_full             = true
+# pve_iso_file_id    = "<certified-pve-iso-file-id>"
+pve_datastore_id    = "<certified-pve-datastore>"
+pve_underlay_bridge = "<certified-pve-underlay-bridge>"
+pve_capture_bridge  = "<certified-run-scoped-capture-bridge>"
 pve_username        = "ubuntu"
+
+# The shared PVE management underlay assigns guest IPv4 through its existing
+# DHCP service. Do not set a static address or gateway here. After PVE apply,
+# the qualification driver requires QGA to discover every guest address before
+# it generates or deploys routerd configuration. routerd itself does not manage
+# DHCPv4, DHCPv6, or IPv6 RA on this NIC.
+
+# Pin every workload VMID.  The release contract's keyed `pve.vmids` object
+# must name these same values, plus both RRs below; no PVE VMID is inferred or
+# auto-assigned during full qualification. Keep these lines commented until
+# the certified six-ID range is reserved; `<certified-...>` is intentionally
+# not valid HCL when uncommented.
+# pve_router_vm_id        = <certified-pve-leaf-a-vmid>
+# pve_client_vm_id        = <certified-pve-client-a-vmid>
+# pve_leaf_b_router_vm_id = <certified-pve-leaf-b-vmid>
+# pve_leaf_b_client_vm_id = <certified-pve-client-b-vmid>
+
+# Route reflectors run on PVE, not AWS.  `pve_rr_*_host` values are Proxmox
+# cluster node IDs. The matching `*_ssh_host` values are the FQDNs used for
+# PVE-host inspection. QGA discovers each guest's DHCP management address;
+# the generated PVE configs use those local guest addresses only for same-site
+# WireGuard bootstrap.
+#
+# A reviewed full topology requires pve-rr-a and pve-rr-b on different PVE
+# hosts. The API endpoint above must address the same PVE cluster that contains
+# both hosts. Public RR WireGuard endpoints are intentionally not configured.
+pve_rr_fault_domain             = "host-redundant"
+pve_rr_a_host                   = "<certified-pve-rr-a-node>"
+pve_rr_a_ssh_host               = "<certified-pve-rr-a-ssh-host>"
+# pve_rr_a_vm_id         = <certified-pve-rr-a-vmid>
+pve_rr_a_underlay_bridge = "<certified-pve-rr-a-underlay-bridge>"
+# pve_rr_a_vlan_id              = <certified-pve-rr-a-vlan-id>
+
+pve_rr_b_host                   = "<certified-pve-rr-b-node>"
+pve_rr_b_ssh_host               = "<certified-pve-rr-b-ssh-host>"
+# pve_rr_b_vm_id         = <certified-pve-rr-b-vmid>
+pve_rr_b_underlay_bridge = "<certified-pve-rr-b-underlay-bridge>"
+# pve_rr_b_vlan_id              = <certified-pve-rr-b-vlan-id>

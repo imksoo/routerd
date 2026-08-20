@@ -17,14 +17,15 @@ OUT_DIR/secrets and are intentionally not checked into git.
 PVE overrides for mixed-OS qualification:
   PVE_MANAGEMENT_INTERFACE=vtnet0
   PVE_CAPTURE_INTERFACE=vtnet1
-  PVE_MANAGEMENT_DHCP=false
   PVE_OWNERSHIP_GATE=carp
   PVE_CARP_ADDRESS=10.77.60.254/32
 
-The defaults preserve the Linux E2E fixture (ens18 DHCP management, eth1
-capture, and the single-router ownership gate). CARP mode assigns priority 151
+The defaults preserve the Ubuntu PVE template fixture (host-provided ens18
+management, ens19 capture, and the single-router ownership gate). CARP mode assigns priority 151
 to PVE_CARP_PRIMARY_NODE (pve-leaf-a by default) and 100 to the other PVE
-leaves.
+leaves. The shared SAMNodeSet deliberately omits all PVE WireGuard endpoints.
+Each PVE router adds same-site static peer overrides that use only the peer
+guest's management IPv4 address; cloud configs never receive those addresses.
 USAGE
 }
 
@@ -50,6 +51,13 @@ command -v wg >/dev/null || { echo "wg is required to generate WireGuard keys" >
 
 mkdir -p "$out_dir/configs" "$out_dir/secrets"
 harness_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# The release supervisor intentionally makes its checkout root-owned. Git's
+# safe.directory exemption must name that worktree root, not this harness
+# subdirectory, while the commands themselves still operate on the harness.
+repo_root="$(cd "$harness_root/../../.." && pwd -P)"
+harness_git() {
+  git -c "safe.directory=$repo_root" -C "$harness_root" "$@"
+}
 secret_path="${event_secret_file:-$out_dir/secrets/eventd-cloudedge.key}"
 if [ ! -s "$secret_path" ]; then
   umask 077
@@ -66,7 +74,6 @@ mapfile -t rr_nodes < <(jq -r 'to_entries[] | select(.value.role == "rr") | .key
 mapfile -t leaf_nodes < <(jq -r 'to_entries[] | select(.value.role == "leaf") | .key' "$nodes_json" | sort)
 mapfile -t cloud_leaf_nodes < <(jq -r 'to_entries[] | select(.value.role == "leaf" and .value.site != "pve") | .key' "$nodes_json" | sort)
 mapfile -t pve_leaf_nodes < <(jq -r 'to_entries[] | select(.value.role == "leaf" and .value.site == "pve") | .key' "$nodes_json" | sort)
-mapfile -t clients < <(jq -r 'to_entries[] | select(.value.role == "client") | .key' "$nodes_json" | sort)
 
 [ "${#routers[@]}" -gt 0 ] || { echo "no router nodes found in $nodes_json" >&2; exit 2; }
 [ "${#leaf_nodes[@]}" -gt 0 ] || { echo "no leaf nodes found in $nodes_json" >&2; exit 2; }
@@ -111,9 +118,8 @@ mobility_prefix="$(fabric '.mobility_prefix')"
 inner_prefix="$(fabric '.tunnel_inner_prefix')"
 bgp_asn="$(fabric '.bgp_asn')"
 wg_port="$(fabric '.wg_port')"
-pve_capture_interface="${PVE_CAPTURE_INTERFACE:-eth1}"
+pve_capture_interface="${PVE_CAPTURE_INTERFACE:-ens19}"
 pve_management_interface="${PVE_MANAGEMENT_INTERFACE:-ens18}"
-pve_management_dhcp="${PVE_MANAGEMENT_DHCP:-true}"
 pve_ownership_gate="${PVE_OWNERSHIP_GATE:-single-router}"
 pve_carp_address="${PVE_CARP_ADDRESS:-}"
 pve_carp_primary_node="${PVE_CARP_PRIMARY_NODE:-pve-leaf-a}"
@@ -122,10 +128,6 @@ pve_carp_authentication="${PVE_CARP_AUTHENTICATION:-routerd-sam-e2e}"
 capture_max_secondary_ips="${SAM_E2E_MAX_SECONDARY_IPS:-128}"
 run1_verification_pool_nodes="${SAM_E2E_RUN1_VERIFICATION_POOL_NODES:-pve-leaf-a}"
 
-case "$pve_management_dhcp" in
-  true|false) ;;
-  *) echo "PVE_MANAGEMENT_DHCP must be true or false" >&2; exit 2 ;;
-esac
 case "$pve_ownership_gate" in
   single-router) ;;
   carp)
@@ -137,21 +139,86 @@ case "$pve_ownership_gate" in
   *) echo "PVE_OWNERSHIP_GATE must be single-router or carp" >&2; exit 2 ;;
 esac
 
+shared_wireguard_endpoint() {
+  local node="$1" site="$2" public_ip
+
+  # PVE guest management addresses are local bootstrap inputs, not public
+  # topology data. The shared NodeSet must remain endpoint-less for every PVE
+  # router so cloud configs cannot accidentally learn an on-prem address.
+  if [ "$site" = "pve" ]; then
+    return 0
+  fi
+
+  public_ip="$(jq_node "$node" ".[\$node].public_ip // empty")"
+  if [ -n "$public_ip" ] && [ "$public_ip" != "null" ]; then
+    printf '%s:%s\n' "$public_ip" "$wg_port"
+  fi
+}
+
+pve_management_ip() {
+  local node="$1" management_ip management_source octet first_octet
+  # The PVE certification path records the QGA-discovered guest address as
+  # management_ip. This helper is never called for cloud nodes and does not
+  # accept the generic public_ip field as a second source of topology truth.
+  management_ip="$(jq_node "$node" ".[\$node].management_ip // empty")"
+  management_source="$(jq_node "$node" ".[\$node].pve_management_source // empty")"
+  if [ "$management_source" != "qga-dhcp" ]; then
+    echo "PVE router $node requires pve_management_source=qga-dhcp before local WireGuard bootstrap" >&2
+    return 1
+  fi
+  if [ -z "$management_ip" ] || [ "$management_ip" = "null" ]; then
+    echo "PVE router $node requires a QGA-discovered management_ip for local WireGuard bootstrap" >&2
+    return 1
+  fi
+  if [[ ! "$management_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    echo "PVE router $node management_ip must be an IPv4 address, got: $management_ip" >&2
+    return 1
+  fi
+  IFS=. read -r -a octets <<<"$management_ip"
+  for octet in "${octets[@]}"; do
+    if { [ "${#octet}" -gt 1 ] && [ "${octet:0:1}" = 0 ]; } || [ "$((10#$octet))" -gt 255 ]; then
+      echo "PVE router $node management_ip must be an IPv4 address, got: $management_ip" >&2
+      return 1
+    fi
+  done
+  first_octet="$((10#${octets[0]}))"
+  if [ "$first_octet" -eq 0 ] || [ "$first_octet" -eq 127 ] || [ "$first_octet" -ge 224 ] || [[ "$management_ip" == 169.254.* ]]; then
+    echo "PVE router $node management_ip must be a unicast IPv4 address, got: $management_ip" >&2
+    return 1
+  fi
+  printf '%s\n' "$management_ip"
+}
+
+pve_capture_mac() {
+  local node="$1" capture_mac first_octet
+  # The PVE certification path derives this from QGA's
+  # network-get-interfaces result for the interface holding private_ip. It is
+  # deliberately distinct from the PVE management NIC and is used only to
+  # keep router-member proxy ARP frames out of on-prem ownership discovery.
+  capture_mac="$(jq_node "$node" ".[\$node].capture_mac // empty")"
+  capture_mac="$(printf '%s' "$capture_mac" | tr '[:upper:]' '[:lower:]')"
+  if [[ ! "$capture_mac" =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]]; then
+    echo "PVE leaf $node requires a QGA-derived capture_mac before ARP observer configuration" >&2
+    return 1
+  fi
+  [ "$capture_mac" != "00:00:00:00:00:00" ] || {
+    echo "PVE leaf $node capture_mac must not be all zero" >&2
+    return 1
+  }
+  first_octet="${capture_mac%%:*}"
+  if (( (16#$first_octet & 1) != 0 )); then
+    echo "PVE leaf $node capture_mac must be a unicast Ethernet MAC" >&2
+    return 1
+  fi
+  printf '%s\n' "$capture_mac"
+}
+
 run1_pool_role() {
   local node="$1"
   case " $run1_verification_pool_nodes " in
     *" $node "*) echo "verification" ;;
     *) echo "control" ;;
   esac
-}
-
-run1_delivery_policy() {
-  local role="$1"
-  if [ "$role" = "verification" ]; then
-    echo "{ mode: bgp, gratuitousARPOnSeize: true }"
-  else
-    echo "{ mode: bgp }"
-  fi
 }
 
 node_set_file="$out_dir/node-set.yaml"
@@ -162,14 +229,14 @@ node_set_file="$out_dir/node-set.yaml"
   echo "      spec:"
   echo "        nodes:"
   for node in "${routers[@]}"; do
-    site="$(jq_node "$node" '.[$node].site')"
-    node_role="$(jq_node "$node" '.[$node].role')"
+    site="$(jq_node "$node" ".[\$node].site")"
     role="cloud"
     [ "$site" = "pve" ] && role="onprem"
-    overlay="$(jq_node "$node" '.[$node].overlay_ip')"
-    public_ip="$(jq_node "$node" '.[$node].public_ip')"
+    overlay="$(jq_node "$node" ".[\$node].overlay_ip")"
+    endpoint="$(shared_wireguard_endpoint "$node" "$site")"
     pub_key="$(cat "$out_dir/secrets/${node}.wg.pub")"
     rr=false
+    node_role="$(jq_node "$node" ".[\$node].role")"
     [ "$node_role" = "rr" ] && rr=true
     echo "          - nodeRef: $node"
     echo "            site: $site"
@@ -177,10 +244,18 @@ node_set_file="$out_dir/node-set.yaml"
     echo "            routeReflector: $rr"
     echo "            eventEndpoint: http://$overlay:9443"
     echo "            samEndpoint: $overlay"
+    if [ "$node_role" = "leaf" ] && [ "$site" = "pve" ]; then
+      capture_mac="$(pve_capture_mac "$node")" || exit 1
+      echo "            macAddresses: [\"$capture_mac\"]"
+    fi
+    if [ "$node_role" = "leaf" ] && [ "$site" != "pve" ]; then
+      echo "            placement: { group: $site-leaf }"
+      echo "            maxSecondaryIPs: $capture_max_secondary_ips"
+    fi
     echo "            wireGuard:"
     echo "              publicKey: $pub_key"
-    if [ "$site" != "pve" ] && [ -n "$public_ip" ] && [ "$public_ip" != "null" ]; then
-      echo "              endpoint: $public_ip:$wg_port"
+    if [ -n "$endpoint" ]; then
+      echo "              endpoint: $endpoint"
     fi
     echo "              allowedIPs: [$overlay/32]"
     echo "              persistentKeepalive: 25"
@@ -249,12 +324,6 @@ render_common() {
         underlayInterface: wg-hybrid
         localEndpoint: $router_id
         addressingMode: pair-stable
-        topologyNodeRefs:
-EOF
-  for topology_node in "${routers[@]}"; do
-    echo "          - $topology_node"
-  done
-  cat <<EOF
         peersFrom:
           - resource: SAMNodeSet/cloudedge-nodes
         bgp:
@@ -267,35 +336,44 @@ EOF
 EOF
 }
 
-render_members() {
-  local self_node="$1" self_profile="$2"
-  for node in "${leaf_nodes[@]}"; do
-    site="$(jq_node "$node" '.[$node].site')"
-    echo "          - nodeRef: $node"
-    echo "            site: $site"
-    if [ "$site" = "pve" ]; then
-      echo "            role: onprem"
-    else
-      echo "            role: cloud"
-    fi
-    if [ "$node" = "$self_node" ] && [ -n "$self_profile" ]; then
-      echo "            profileRef: $self_profile"
-    fi
-    if [ "$site" != "pve" ]; then
-      echo "            placement: { group: $site-leaf }"
-      echo "            maxSecondaryIPs: $capture_max_secondary_ips"
-    fi
+render_pve_local_wireguard_peers() {
+  local node="$1" node_site peer peer_site peer_management peer_overlay peer_public_key
+
+  # Static resources win over peersFrom with the same name. They seed only
+  # PVE-to-PVE sessions; PVE-to-cloud still uses cloud public endpoints from
+  # the shared NodeSet, while cloud learns PVE endpoints from inbound traffic.
+  # Keep the boundary explicit so a future non-PVE RR cannot accidentally
+  # render an on-prem management address into a cloud configuration.
+  node_site="$(jq_node "$node" ".[\$node].site")"
+  [ "$node_site" = "pve" ] || return 0
+  for peer in "${routers[@]}"; do
+    [ "$peer" != "$node" ] || continue
+    peer_site="$(jq_node "$peer" ".[\$node].site")"
+    [ "$peer_site" = "pve" ] || continue
+    peer_management="$(pve_management_ip "$peer")"
+    peer_overlay="$(jq_node "$peer" ".[\$node].overlay_ip")"
+    peer_public_key="$(cat "$out_dir/secrets/${peer}.wg.pub")"
+    cat <<EOF
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardPeer
+      metadata: { name: $peer }
+      spec:
+        interface: wg-hybrid
+        publicKey: $peer_public_key
+        allowedIPs: [$peer_overlay/32]
+        endpoint: $peer_management:$wg_port
+        persistentKeepalive: 25
+EOF
   done
 }
 
 render_provider_leaf() {
   local node="$1" provider="$2" profile="$3" iface="$4"
-  local overlay provider_mode target_values target_from provider_env executor_timeout inventory_timeout
-  local pool_role delivery_policy
-  overlay="$(jq_node "$node" '.[$node].overlay_ip')"
+  local overlay target_values target_from provider_env executor_timeout inventory_timeout
+  local pool_role
+  overlay="$(jq_node "$node" ".[\$node].overlay_ip")"
   pool_role="$(run1_pool_role "$node")"
-  delivery_policy="$(run1_delivery_policy "$pool_role")"
-  provider_mode="secondary-ip"
   target_values=""
   target_from=""
   provider_env=""
@@ -325,7 +403,6 @@ EOF
       metadata: { name: aws-lab }
       spec:
         provider: aws
-        region: "$region"
         capabilities: [secondary-ip, source-dest-check-disable]
         auth: { mode: external-command, command: /bin/true }
 EOF
@@ -350,7 +427,6 @@ EOF
       spec:
         provider: azure
         resourceGroup: "$rg"
-        region: "$region"
         capabilities: [secondary-ip, ip-forwarding]
         auth: { mode: external-command, command: /bin/true }
 EOF
@@ -359,7 +435,6 @@ EOF
       region="$(fabric '.oci.region')"
       compartment="$(fabric '.oci.compartment_id')"
       subnet="$(fabric '.oci.subnet_id')"
-      provider_mode="vnic-secondary-ip"
       target_values="          self.region: $region
           self.compartmentId: $compartment"
       target_from="                targetFrom:
@@ -374,7 +449,6 @@ EOF
       metadata: { name: oci-lab }
       spec:
         provider: oci
-        region: "$region"
         capabilities: [vnic-secondary-ip, skip-source-dest-check]
         auth: { mode: external-command, command: /bin/true }
 EOF
@@ -402,9 +476,6 @@ $target_values
                 type: provider-secondary-ip
                 interface: $iface
                 providerRef: ${provider}-lab
-                providerMode: $provider_mode
-                captureStrategy: secondary-ip
-                configureOSAddress: false
 $target_from
               ownershipDiscovery:
                 mode: provider-private-ip
@@ -414,13 +485,11 @@ $target_from
                     cloudedge-mobility: "true"
                 scanInterval: 30s
                 leaseTTL: 10m
-        deliveryPolicy: $delivery_policy
-        capturePolicy: { mode: all-non-owner-sites }
-        ipOwnershipPolicy: { type: centralized, autoFailover: true }
+        membersFrom:
+          - resource: SAMNodeSet/cloudedge-nodes
         members:
-EOF
-  render_members "$node" "$profile"
-  cat <<EOF
+          - nodeRef: $node
+            profileRef: $profile
 
     - apiVersion: hybrid.routerd.net/v1alpha1
       kind: ProviderActionPolicy
@@ -460,7 +529,7 @@ EOF
 
 render_rr() {
   local node="$1" overlay
-  overlay="$(jq_node "$node" '.[$node].overlay_ip')"
+  overlay="$(jq_node "$node" ".[\$node].overlay_ip")"
   cat <<EOF
 apiVersion: routerd.net/v1alpha1
 kind: Router
@@ -470,15 +539,15 @@ spec:
   resources:
 EOF
   render_common "$node" "$overlay"
+  render_pve_local_wireguard_peers "$node"
 }
 
 render_pve_leaf() {
   local node="$1" overlay dataplane_ip
-  local pool_role delivery_policy carp_priority
-  overlay="$(jq_node "$node" '.[$node].overlay_ip')"
-  dataplane_ip="$(jq_node "$node" '.[$node].private_ip')"
+  local pool_role carp_priority
+  overlay="$(jq_node "$node" ".[\$node].overlay_ip")"
+  dataplane_ip="$(jq_node "$node" ".[\$node].private_ip")"
   pool_role="$(run1_pool_role "$node")"
-  delivery_policy="$(run1_delivery_policy "$pool_role")"
   carp_priority=100
   [ "$node" = "$pve_carp_primary_node" ] && carp_priority=151
   cat <<EOF
@@ -501,17 +570,6 @@ spec:
         managed: false
         owner: external
 EOF
-  if [ "$pve_management_dhcp" = true ]; then
-    cat <<EOF
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: DHCPv4Client
-      metadata: { name: mgmt-dhcpv4 }
-      spec:
-        interface: mgmt
-        useRoutes: true
-        useDNS: true
-EOF
-  fi
   cat <<EOF
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
@@ -524,6 +582,7 @@ EOF
 
 EOF
   render_common "$node" "$overlay"
+  render_pve_local_wireguard_peers "$node"
   if [ "$pve_ownership_gate" = carp ]; then
     cat <<EOF
 
@@ -553,24 +612,10 @@ EOF
       spec:
         prefix: $mobility_prefix
         groupRef: cloudedge
-        deliveryPolicy: $delivery_policy
-        capturePolicy: { mode: all-non-owner-sites }
-        ipOwnershipPolicy: { type: centralized, autoFailover: true }
+        membersFrom:
+          - resource: SAMNodeSet/cloudedge-nodes
         members:
-EOF
-  for member in "${leaf_nodes[@]}"; do
-    site="$(jq_node "$member" '.[$node].site')"
-    echo "          - nodeRef: $member"
-    echo "            site: $site"
-    if [ "$site" = "pve" ]; then
-      echo "            role: onprem"
-    else
-      echo "            role: cloud"
-      echo "            placement: { group: $site-leaf }"
-      echo "            maxSecondaryIPs: $capture_max_secondary_ips"
-    fi
-    if [ "$member" = "$node" ]; then
-      cat <<EOF
+          - nodeRef: $node
             ownershipDiscovery:
               mode: onprem-l2
               sources:
@@ -586,17 +631,15 @@ EOF
               interface: $pve_capture_interface
               sourceAddress: $dataplane_ip
 EOF
-      if [ "$pve_ownership_gate" = carp ]; then
-        cat <<EOF
+  if [ "$pve_ownership_gate" = carp ]; then
+    cat <<EOF
               activeWhen: { type: vrrp-master, virtualAddressRef: cloudedge-carp }
 EOF
-      else
-        cat <<EOF
+  else
+    cat <<EOF
               activeWhen: { type: single-router }
 EOF
-      fi
-    fi
-  done
+  fi
 }
 
 for node in "${rr_nodes[@]}"; do
@@ -604,7 +647,7 @@ for node in "${rr_nodes[@]}"; do
 done
 
 for node in "${cloud_leaf_nodes[@]}"; do
-  site="$(jq_node "$node" '.[$node].site')"
+  site="$(jq_node "$node" ".[\$node].site")"
   provider="$(site_provider "$site")"
   iface="$(site_interface "$site")"
   render_provider_leaf "$node" "$provider" "${node}-self" "$iface" >"$out_dir/configs/$node.yaml"
@@ -622,19 +665,19 @@ done
 } >"$out_dir/configs/manifest.csv"
 
 {
-  echo "node,pool,run1Role,deliveryPolicy"
+  echo "node,pool,run1Role"
   for node in "${routers[@]}"; do
     role="$(run1_pool_role "$node")"
-    echo "$node,cloudedge,$role,$(run1_delivery_policy "$role")"
+    echo "$node,cloudedge,$role"
   done
 } >"$out_dir/configs/run1-pool-overlays.csv"
 
 {
   echo "harness_root=$harness_root"
-  if git -C "$harness_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    echo "harness_git_head=$(git -C "$harness_root" rev-parse --short HEAD)"
-    if git -C "$harness_root" diff --quiet -- configs/sam-e2e-generate.sh scripts/sam-e2e.sh &&
-       git -C "$harness_root" diff --cached --quiet -- configs/sam-e2e-generate.sh scripts/sam-e2e.sh; then
+  if harness_git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "harness_git_head=$(harness_git rev-parse --short HEAD)"
+    if harness_git diff --quiet -- configs/sam-e2e-generate.sh scripts/sam-e2e.sh &&
+       harness_git diff --cached --quiet -- configs/sam-e2e-generate.sh scripts/sam-e2e.sh; then
       echo "harness_git_dirty=0"
     else
       echo "harness_git_dirty=1"

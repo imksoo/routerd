@@ -18,6 +18,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 )
 
@@ -179,6 +180,9 @@ CREATE TABLE IF NOT EXISTS dynamic_config_parts (
   resources_json TEXT,
   directives_json TEXT,
   actionplans_json TEXT,
+  mobility_dataplane_json TEXT,
+  arp_observer_intents_json TEXT,
+  fib_verdicts_json TEXT,
   status TEXT NOT NULL,
   error TEXT,
   created_at TEXT NOT NULL,
@@ -298,6 +302,13 @@ func (s *SQLiteStore) ensureDynamicConfigPartColumns() error {
 		// EventSubscription-driven runs stay reviewable. routerd never executes
 		// them; missing/empty column simply means no action plans.
 		"actionplans_json": "TEXT",
+		// mobility_dataplane_json is the typed internal desired-state channel
+		// from mobility planning to the local SAM dataplane.
+		"mobility_dataplane_json": "TEXT",
+		// arp_observer_intents_json is the typed internal bootstrap channel from
+		// normalized on-prem mobility discovery to the ARP observer supervisor.
+		"arp_observer_intents_json": "TEXT",
+		"fib_verdicts_json":         "TEXT",
 	}
 	for column, typ := range columns {
 		hasColumn, err := s.tableHasColumn("dynamic_config_parts", column)
@@ -800,9 +811,17 @@ type DynamicConfigPartRecord struct {
 	Digest         string    `json:"digest" yaml:"digest"`
 	ResourcesJSON  string    `json:"resourcesJson,omitempty" yaml:"resourcesJson,omitempty"`
 	DirectivesJSON string    `json:"directivesJson,omitempty" yaml:"directivesJson,omitempty"`
-	// ActionPlansJSON holds the JSON-encoded display-only ActionPlans. routerd
-	// never executes these; empty means none.
+	// ActionPlansJSON holds JSON-encoded provider ActionPlans. They are inert
+	// in this store; the separate provider-action engine may consider them only
+	// after its policy, approval, fencing, and typed-source checks pass.
 	ActionPlansJSON string `json:"actionPlansJson,omitempty" yaml:"actionPlansJson,omitempty"`
+	// MobilityDataplaneJSON holds the JSON-encoded typed local dataplane plan.
+	// It is not a user-authored resource or status projection.
+	MobilityDataplaneJSON string `json:"mobilityDataplaneJson,omitempty" yaml:"mobilityDataplaneJson,omitempty"`
+	// ARPObserverIntentsJSON holds the JSON-encoded typed local observation
+	// bootstrap intents. It is not a user-authored resource or status projection.
+	ARPObserverIntentsJSON string `json:"arpObserverIntentsJson,omitempty" yaml:"arpObserverIntentsJson,omitempty"`
+	FIBVerdictsJSON        string `json:"fibVerdictsJson,omitempty" yaml:"fibVerdictsJson,omitempty"`
 	// Status is the writer-provided state stored in SQLite. Readers should call
 	// EffectiveStatus so active records age into expired without a rewrite.
 	Status    string    `json:"status" yaml:"status"`
@@ -849,10 +868,10 @@ func (s *SQLiteStore) UpsertDynamicConfigPart(part DynamicConfigPartRecord) erro
 	if part.UpdatedAt.IsZero() {
 		part.UpdatedAt = now
 	}
-	_, err := s.db.Exec(`INSERT INTO dynamic_config_parts(source,generation,observed_at,expires_at,digest,resources_json,directives_json,actionplans_json,status,error,created_at,updated_at)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-ON CONFLICT(source,generation) DO UPDATE SET observed_at=excluded.observed_at,expires_at=excluded.expires_at,digest=excluded.digest,resources_json=excluded.resources_json,directives_json=excluded.directives_json,actionplans_json=excluded.actionplans_json,status=excluded.status,error=excluded.error,updated_at=excluded.updated_at`,
-		part.Source, part.Generation, formatStateTime(part.ObservedAt), formatStateTime(part.ExpiresAt), part.Digest, nullableString(part.ResourcesJSON), nullableString(part.DirectivesJSON), nullableString(part.ActionPlansJSON), part.Status, nullableString(part.Error), formatStateTime(part.CreatedAt), formatStateTime(part.UpdatedAt))
+	_, err := s.db.Exec(`INSERT INTO dynamic_config_parts(source,generation,observed_at,expires_at,digest,resources_json,directives_json,actionplans_json,mobility_dataplane_json,arp_observer_intents_json,fib_verdicts_json,status,error,created_at,updated_at)
+	VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	ON CONFLICT(source,generation) DO UPDATE SET observed_at=excluded.observed_at,expires_at=excluded.expires_at,digest=excluded.digest,resources_json=excluded.resources_json,directives_json=excluded.directives_json,actionplans_json=excluded.actionplans_json,mobility_dataplane_json=excluded.mobility_dataplane_json,arp_observer_intents_json=excluded.arp_observer_intents_json,fib_verdicts_json=excluded.fib_verdicts_json,status=excluded.status,error=excluded.error,updated_at=excluded.updated_at`,
+		part.Source, part.Generation, formatStateTime(part.ObservedAt), formatStateTime(part.ExpiresAt), part.Digest, nullableString(part.ResourcesJSON), nullableString(part.DirectivesJSON), nullableString(part.ActionPlansJSON), nullableString(part.MobilityDataplaneJSON), nullableString(part.ARPObserverIntentsJSON), nullableString(part.FIBVerdictsJSON), part.Status, nullableString(part.Error), formatStateTime(part.CreatedAt), formatStateTime(part.UpdatedAt))
 	return err
 }
 
@@ -862,7 +881,7 @@ func (s *SQLiteStore) ListDynamicConfigParts() ([]DynamicConfigPartRecord, error
 	if s.closed {
 		return []DynamicConfigPartRecord{}, nil
 	}
-	rows, err := s.db.Query(`SELECT id,source,generation,observed_at,expires_at,digest,coalesce(resources_json,''),coalesce(directives_json,''),coalesce(actionplans_json,''),status,coalesce(error,''),created_at,updated_at FROM dynamic_config_parts ORDER BY observed_at DESC,generation DESC,id DESC`)
+	rows, err := s.db.Query(`SELECT id,source,generation,observed_at,expires_at,digest,coalesce(resources_json,''),coalesce(directives_json,''),coalesce(actionplans_json,''),coalesce(mobility_dataplane_json,''),coalesce(arp_observer_intents_json,''),coalesce(fib_verdicts_json,''),status,coalesce(error,''),created_at,updated_at FROM dynamic_config_parts ORDER BY observed_at DESC,generation DESC,id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -876,7 +895,7 @@ func (s *SQLiteStore) GetDynamicConfigPartsBySource(source string) ([]DynamicCon
 	if s.closed {
 		return []DynamicConfigPartRecord{}, nil
 	}
-	rows, err := s.db.Query(`SELECT id,source,generation,observed_at,expires_at,digest,coalesce(resources_json,''),coalesce(directives_json,''),coalesce(actionplans_json,''),status,coalesce(error,''),created_at,updated_at FROM dynamic_config_parts WHERE source = ? ORDER BY generation DESC,observed_at DESC,id DESC`, source)
+	rows, err := s.db.Query(`SELECT id,source,generation,observed_at,expires_at,digest,coalesce(resources_json,''),coalesce(directives_json,''),coalesce(actionplans_json,''),coalesce(mobility_dataplane_json,''),coalesce(arp_observer_intents_json,''),coalesce(fib_verdicts_json,''),status,coalesce(error,''),created_at,updated_at FROM dynamic_config_parts WHERE source = ? ORDER BY generation DESC,observed_at DESC,id DESC`, source)
 	if err != nil {
 		return nil, err
 	}
@@ -889,7 +908,7 @@ func scanDynamicConfigPartRecords(rows *sql.Rows) ([]DynamicConfigPartRecord, er
 	for rows.Next() {
 		var rec DynamicConfigPartRecord
 		var observed, expires, created, updated string
-		if err := rows.Scan(&rec.ID, &rec.Source, &rec.Generation, &observed, &expires, &rec.Digest, &rec.ResourcesJSON, &rec.DirectivesJSON, &rec.ActionPlansJSON, &rec.Status, &rec.Error, &created, &updated); err != nil {
+		if err := rows.Scan(&rec.ID, &rec.Source, &rec.Generation, &observed, &expires, &rec.Digest, &rec.ResourcesJSON, &rec.DirectivesJSON, &rec.ActionPlansJSON, &rec.MobilityDataplaneJSON, &rec.ARPObserverIntentsJSON, &rec.FIBVerdictsJSON, &rec.Status, &rec.Error, &created, &updated); err != nil {
 			return nil, err
 		}
 		rec.ObservedAt = parseStateTime(observed)
@@ -1217,26 +1236,15 @@ func (s *SQLiteStore) ListObjectStatuses() ([]ObjectStatus, error) {
 		if err := json.Unmarshal([]byte(raw), &item.Status); err != nil {
 			item.Status = map[string]any{"error": err.Error()}
 		}
-		item.Owner = statusString(item.Status, "owner")
-		item.ManagedBy = statusString(item.Status, "managedBy")
-		item.Management = statusString(item.Status, "management")
+		item.Owner = statusvalue.Field(item.Status, "owner")
+		item.ManagedBy = statusvalue.Field(item.Status, "managedBy")
+		item.Management = statusvalue.Field(item.Status, "management")
 		out = append(out, item)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return out, nil
-}
-
-func statusString(status map[string]any, key string) string {
-	if status == nil {
-		return ""
-	}
-	value, ok := status[key]
-	if !ok || value == nil {
-		return ""
-	}
-	return strings.TrimSpace(fmt.Sprint(value))
 }
 
 func (s *SQLiteStore) DeleteObject(apiVersion, kind, name string) error {

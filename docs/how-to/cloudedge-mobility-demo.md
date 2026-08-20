@@ -66,12 +66,14 @@ client's **default gateway is unchanged**.
 
 The operator declares only intent; everything else is derived.
 
-- **MobilityPool** — the single operator-authored intent (members, capture mode,
-  delivery, placement, maintenance drain).
+- **SAMNodeSet** — the single shared identity/topology/placement registry for
+  all seven routers.
+- **MobilityPool** — the local address/capture intent. It imports that node set
+  and retains only its self provider, capture, and discovery overlay.
 - **North-star member shape** — each rendered config declares its own site
   completely with `profiles.cloudCaptures`, `spec.values`, `targetFrom`, and
-  `subnetRefFrom`; remote sites are identity-only peer entries. Like BGP, a node
-  needs to know the peers, not their provider NIC/subnet implementation details.
+  `subnetRefFrom`; it does not repeat remote member entries or their provider
+  NIC/subnet implementation details.
 - **SAMTransportProfile** — derives the per-peer `TunnelInterface`, endpoint
   `/32` `IPv4Route`, and `BGPPeer` resources from a shared topology and inner
   prefix.
@@ -91,11 +93,10 @@ The operator declares only intent; everything else is derived.
   desired path signature and holder, so stale actions cannot mutate a route that
   has reconverged elsewhere.
 
-The example configs intentionally avoid the older remote-full inline style. That
-style is still accepted during the pre-release period, but `routerctl validate`,
-plan, and apply warn when a remote `MobilityPool` member contains local provider
-capture or discovery details. Future pre-release configs may require identity-only
-remote members.
+The example configs use a shared `SAMNodeSet` and `MobilityPool.membersFrom`.
+Each Pool retains exactly one local self overlay; remote identity, placement,
+and maintenance stay in the node set. `routerctl validate`, plan, and apply
+reject provider, capture, or discovery details on remote members.
 
 ## How to run it
 

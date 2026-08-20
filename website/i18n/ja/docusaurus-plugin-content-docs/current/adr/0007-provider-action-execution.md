@@ -64,7 +64,7 @@ allowlist 済み/リダクト済みコンテキストのみを渡す。エグゼ
 ### `ProviderActionPolicy` Kind
 
 新しい Kind（`apiVersion: hybrid.routerd.net/v1alpha1`）が実行をゲートする。
-`RemoteAddressClaim` と `CloudProviderProfile` と同じ `hybrid` グループに定義し、
+`CloudProviderProfile` と、それが扱う型付き mobility plan と同じ `hybrid` グループに定義し、
 それらを管理する。ゼロ値は安全なロックダウン状態：
 
 - `enabled`（bool、デフォルト false）— true でない限り実行は無効。

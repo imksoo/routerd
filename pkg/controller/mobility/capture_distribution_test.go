@@ -18,12 +18,13 @@ func TestDistributeCaptures_EvenSpread(t *testing.T) {
 	for i := 1; i <= 20; i++ {
 		addresses = append(addresses, fmt.Sprintf("10.0.0.%d", i))
 	}
-	dist := distributeCaptures(addresses, nodes)
-	if len(dist.Assignments) != 20 {
-		t.Fatalf("expected 20 assignments, got %d", len(dist.Assignments))
+	assignments := distributeCaptures(addresses, nodes)
+	if len(assignments) != 20 {
+		t.Fatalf("expected 20 assignments, got %d", len(assignments))
 	}
-	if dist.NodeCounts["node-a"] == 0 || dist.NodeCounts["node-b"] == 0 {
-		t.Fatalf("expected both nodes to get addresses: %v", dist.NodeCounts)
+	counts := captureAssignmentCounts(assignments)
+	if counts["node-a"] == 0 || counts["node-b"] == 0 {
+		t.Fatalf("expected both nodes to get addresses: %v", counts)
 	}
 }
 
@@ -36,12 +37,13 @@ func TestDistributeCaptures_RespectsCapacity(t *testing.T) {
 	for i := 1; i <= 10; i++ {
 		addresses = append(addresses, fmt.Sprintf("10.0.0.%d", i))
 	}
-	dist := distributeCaptures(addresses, nodes)
-	if dist.NodeCounts["node-a"] > 5 {
-		t.Fatalf("node-a exceeded capacity: %d", dist.NodeCounts["node-a"])
+	assignments := distributeCaptures(addresses, nodes)
+	counts := captureAssignmentCounts(assignments)
+	if counts["node-a"] > 5 {
+		t.Fatalf("node-a exceeded capacity: %d", counts["node-a"])
 	}
-	if dist.NodeCounts["node-b"] > 5 {
-		t.Fatalf("node-b exceeded capacity: %d", dist.NodeCounts["node-b"])
+	if counts["node-b"] > 5 {
+		t.Fatalf("node-b exceeded capacity: %d", counts["node-b"])
 	}
 }
 
@@ -54,9 +56,9 @@ func TestDistributeCaptures_OverCapacity(t *testing.T) {
 	for i := 1; i <= 10; i++ {
 		addresses = append(addresses, fmt.Sprintf("10.0.0.%d", i))
 	}
-	dist := distributeCaptures(addresses, nodes)
-	if len(dist.Assignments) != 6 {
-		t.Fatalf("expected 6 assigned (total capacity), got %d", len(dist.Assignments))
+	assignments := distributeCaptures(addresses, nodes)
+	if len(assignments) != 6 {
+		t.Fatalf("expected 6 assigned (total capacity), got %d", len(assignments))
 	}
 }
 
@@ -70,11 +72,11 @@ func TestDistributeCaptures_Deterministic(t *testing.T) {
 	for i := 1; i <= 30; i++ {
 		addresses = append(addresses, fmt.Sprintf("10.0.0.%d", i))
 	}
-	dist1 := distributeCaptures(addresses, nodes)
-	dist2 := distributeCaptures(addresses, nodes)
-	for addr, node := range dist1.Assignments {
-		if dist2.Assignments[addr] != node {
-			t.Fatalf("non-deterministic: %s -> %s vs %s", addr, node, dist2.Assignments[addr])
+	assignments1 := distributeCaptures(addresses, nodes)
+	assignments2 := distributeCaptures(addresses, nodes)
+	for addr, node := range assignments1 {
+		if assignments2[addr] != node {
+			t.Fatalf("non-deterministic: %s -> %s vs %s", addr, node, assignments2[addr])
 		}
 	}
 }
@@ -93,11 +95,11 @@ func TestDistributeCaptures_MinimalRedistribution(t *testing.T) {
 	for i := 1; i <= 90; i++ {
 		addresses = append(addresses, fmt.Sprintf("10.0.0.%d", i))
 	}
-	dist3 := distributeCaptures(addresses, nodes3)
-	dist2 := distributeCaptures(addresses, nodes2)
+	assignments3 := distributeCaptures(addresses, nodes3)
+	assignments2 := distributeCaptures(addresses, nodes2)
 	moved := 0
-	for addr, node3 := range dist3.Assignments {
-		if node2, ok := dist2.Assignments[addr]; ok && node3 != node2 {
+	for addr, node3 := range assignments3 {
+		if node2, ok := assignments2[addr]; ok && node3 != node2 {
 			if node3 != "node-c" {
 				moved++
 			}
@@ -109,9 +111,9 @@ func TestDistributeCaptures_MinimalRedistribution(t *testing.T) {
 }
 
 func TestDistributeCaptures_NoNodes(t *testing.T) {
-	dist := distributeCaptures([]string{"10.0.0.1"}, nil)
-	if len(dist.Assignments) != 0 {
-		t.Fatalf("expected 0 assignments with no nodes, got %d", len(dist.Assignments))
+	assignments := distributeCaptures([]string{"10.0.0.1"}, nil)
+	if len(assignments) != 0 {
+		t.Fatalf("expected 0 assignments with no nodes, got %d", len(assignments))
 	}
 }
 
@@ -123,9 +125,9 @@ func TestDistributeCaptures_SingleNode(t *testing.T) {
 	for i := 1; i <= 30; i++ {
 		addresses = append(addresses, fmt.Sprintf("10.0.0.%d", i))
 	}
-	dist := distributeCaptures(addresses, nodes)
-	if dist.NodeCounts["node-a"] != 30 {
-		t.Fatalf("single node should get all: got %d", dist.NodeCounts["node-a"])
+	assignments := distributeCaptures(addresses, nodes)
+	if got := captureAssignmentCounts(assignments)["node-a"]; got != 30 {
+		t.Fatalf("single node should get all: got %d", got)
 	}
 }
 
@@ -138,9 +140,9 @@ func TestDistributeCaptures_UnlimitedCapacity(t *testing.T) {
 	for i := 1; i <= 100; i++ {
 		addresses = append(addresses, fmt.Sprintf("10.0.0.%d", i))
 	}
-	dist := distributeCaptures(addresses, nodes)
-	if len(dist.Assignments) != 100 {
-		t.Fatalf("unlimited capacity nodes should assign all: got %d", len(dist.Assignments))
+	assignments := distributeCaptures(addresses, nodes)
+	if len(assignments) != 100 {
+		t.Fatalf("unlimited capacity nodes should assign all: got %d", len(assignments))
 	}
 }
 
@@ -158,10 +160,10 @@ func TestDistributeCaptures_FailoverRedistribution(t *testing.T) {
 	for i := 1; i <= 30; i++ {
 		addresses = append(addresses, fmt.Sprintf("10.0.0.%d", i))
 	}
-	distBefore := distributeCaptures(addresses, nodesAll)
-	distAfter := distributeCaptures(addresses, nodesSurvivors)
-	for addr, nodeBefore := range distBefore.Assignments {
-		nodeAfter, ok := distAfter.Assignments[addr]
+	assignmentsBefore := distributeCaptures(addresses, nodesAll)
+	assignmentsAfter := distributeCaptures(addresses, nodesSurvivors)
+	for addr, nodeBefore := range assignmentsBefore {
+		nodeAfter, ok := assignmentsAfter[addr]
 		if !ok {
 			t.Fatalf("address %s unassigned after failover", addr)
 		}
@@ -172,9 +174,18 @@ func TestDistributeCaptures_FailoverRedistribution(t *testing.T) {
 			t.Fatalf("address %s moved from %s to %s (not from dead node)", addr, nodeBefore, nodeAfter)
 		}
 	}
-	if distAfter.NodeCounts["node-a"] > 15 || distAfter.NodeCounts["node-b"] > 15 {
-		t.Fatalf("capacity exceeded after failover: %v", distAfter.NodeCounts)
+	counts := captureAssignmentCounts(assignmentsAfter)
+	if counts["node-a"] > 15 || counts["node-b"] > 15 {
+		t.Fatalf("capacity exceeded after failover: %v", counts)
 	}
+}
+
+func captureAssignmentCounts(assignments map[string]string) map[string]int {
+	counts := make(map[string]int)
+	for _, node := range assignments {
+		counts[node]++
+	}
+	return counts
 }
 
 func TestDistributedCaptureEnabled(t *testing.T) {

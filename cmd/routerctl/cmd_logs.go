@@ -13,6 +13,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/observe"
@@ -371,7 +372,7 @@ func writeConnectionsTable(stdout io.Writer, table observe.ConnectionTable) erro
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "FAMILY\tPROTO\tSTATE\tFLOW\tRETURN\tNAT\tTIMEOUT")
 	for _, row := range table.Entries {
-		state := firstNonEmpty(row.State, assuredState(row.Assured))
+		state := stringutil.FirstNonEmpty(row.State, assuredState(row.Assured))
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\n",
 			displayCell(row.Family),
 			displayCell(row.Protocol),
@@ -637,7 +638,7 @@ func writeTrafficFlowsTable(stdout io.Writer, rows []logstore.TrafficFlow) error
 			displayCell(row.NATTranslatedAddress),
 			row.BytesOut,
 			row.BytesIn,
-			displayCell(firstNonEmpty(row.TLSSNI, row.ResolvedHostname)),
+			displayCell(stringutil.FirstNonEmpty(row.TLSSNI, row.ResolvedHostname)),
 		)
 	}
 	return w.Flush()

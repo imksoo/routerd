@@ -4,13 +4,14 @@
 
 > 実験的（CloudEdge）。設計と不変条件については [ADR 0006: CloudEdge Event Federation](../adr/0006-event-federation.md) を、
 > 実践的な例については how-to の
-> [Event Federation subscription](../how-to/event-federation-subscription.md) を参照してください。
+> [CloudEdge mobility demo](../how-to/cloudedge-mobility-demo.md) を参照してください。
 
 Event Federation は、routerd ノード間で **型付きの観測ファクト**（例: 「このクライアント
 IPv4 が観測された」「このアドレスが期限切れになった」）をオーバーレイ経由で交換し、
 サブスクライバーがマッチしたイベントをプラグイン経由で導出設定に変換する仕組みです。
 [選択的アドレス移動性](./selective-address-mobility)の下にある制御プレーン基盤であり、
-あるノードで観測されたアドレスが別のノードの `RemoteAddressClaim`（捕捉）になります。
+あるノードで観測されたアドレスは別のノードの `MobilityPool` 計画で使う型付き ownership
+fact になります。
 
 モデルは **冪等な観測ファクトイベントの at-least-once 配送**です。
 イベントは世界についての不変の記述（「observed」）であり、命令的コマンドではありません。
@@ -76,7 +77,7 @@ routerctl federation event deliveries --group <g>
 イベントを表示し、`deliveries` はピアごとの push 配送状態を表示します。
 
 > 自己捕捉ガード（ADR 0006 の no-feedback-loop 不変条件）: ノードは自身が
-> ローカルの `RemoteAddressClaim` で捕捉しているアドレスに対して
+> ローカルの `MobilityPool` 計画で捕捉しているアドレスに対して
 > `routerd.client.ipv4.observed` を発行してはなりません。さもなければ、配送された
 > 捕捉アドレスが新しい観測としてループバックしてしまいます。
 
@@ -105,9 +106,8 @@ EventPeer 導出用に別個の `DynamicConfigPart` は作成しません。
 2. `routerd-eventd` がピアに配送し、各ピアが自身のイベントストアに記録。
 3. ピアの `EventSubscription` がイベントにマッチし、`trigger.pluginRef` を呼び出す
    （`batchWindow` / `debounce` で集約）。
-4. プラグインが `DynamicConfigPart`（例: `RemoteAddressClaim`）を返し、
-   [dynamic-config](./dynamic-config.md) チェーンが effective config に統合して
-   データプレーンにリコンサイルする。
+4. プラグインが観測ファクトまたは通常の動的 resource を返し、Mobility controller が
+   型付き local capture plan を保存してデータプレーンにリコンサイルする。
 
 これにより運用者が書く意図は宣言的に保たれます。運用者は group/peers/subscription
-を宣言し、claim、捕捉、action plan は**導出**されます。
+を宣言し、捕捉と action plan は**導出**されます。

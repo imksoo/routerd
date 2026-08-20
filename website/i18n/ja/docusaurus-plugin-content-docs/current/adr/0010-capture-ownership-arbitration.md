@@ -22,12 +22,10 @@
 - 協調は**単一ノードのローカル射影**：各ノードが同じフェデレーションイベントストリームから
   独立に同じ `AddressLease` 状態に射影する
   （`pkg/controller/mobility/controller.go`）。**分散ロック、クォーラム、コンセンサスはない**。
-- 「単一所有者」は*暗黙的*（capturePolicy `all-non-owner-sites` + 決定的
-  `evaluatePlacement`）であり、`captureEpoch`
+- 「単一所有者」は各メンバーの捕捉宣言と決定的な配置から導出され、`captureEpoch`
   （`pkg/state/mobility_capture_epoch.go`）は**ノードごと、(pool, address,
   captureDomain) ごと**の単調増加トークンで、インポート/実行ゲートで stale な
   プロバイダーアクションをフェンスする（ADR 0008）。
-- 予約フィールド `MobilityPoolSpec.Authority` は未使用。
 
 #76 は集中型の所有権マップ、競合排除、スプリットブレイン防止を求めている。
 ADR 0008 は意図的に**コンセンサスを回避**し（Paxos/Raft/etcd）、
@@ -69,7 +67,7 @@ ADR 0008 は意図的に**コンセンサスを回避**し（Paxos/Raft/etcd）�
 各ノードがフェデレーションイベントストリームから決定的に構築する**収束したビュー**：
 
 - 各 `(pool, address)` について、オーナーは決定的アービトレーションで選択される：
-  **preferNodes → プレースメント優先度 → 安定タイブレーク**を*適格な*メンバーに対して適用
+  **プレースメント優先度 → 安定タイブレーク**を*適格な*メンバーに対して適用
   （適格性は ADR 0011 で定義：ドレインされていない、健全、生存、該当する場合 VRRP マスター）。
 - マルチインスタンス分散：プレースメントグループ内で各アドレスが 1 つのオーナーに
   アービトレーションされる。アドレスのセットは適格なメンバーに分散される
@@ -79,20 +77,11 @@ ADR 0008 は意図的に**コンセンサスを回避**し（Paxos/Raft/etcd）�
   #76 が求める「集中型所有権マップ」を、単一ライターストアではなく
   収束したビューとして実現。
 
-### `MobilityPool` の `ipOwnershipPolicy`
+### `MobilityPool` の意図
 
-```yaml
-spec:
-  ipOwnershipPolicy:
-    type: centralized          # 収束した決定的マップ（唯一のモード）
-    epochLocking: true         # ownershipEpoch でアクションをスタンプ+フェンス
-    preferNodes: [aws-router-a, aws-router-b]
-    autoFailover: true         # ADR 0011（活性駆動 seize）が消費
-```
-
-`preferNodes` がアービトレーションにバイアスをかける。`epochLocking` が
-ownershipEpoch フェンシングを有効にする。`autoFailover` は ADR 0011 が使うフック。
-`type` は現在 1 つのモード（`centralized` = 収束した決定的）。
+`MobilityPool` にグローバルな capture、authority、ownership policy のスイッチはありません。
+メンバーがローカルの capture/discovery を宣言し、配置、BGP 観測、provider facts から
+所有権を決定的に導出します。実行中の controller に影響しない設定は受理しません。
 
 ### アクション冪等性キー
 
@@ -103,8 +92,8 @@ ownershipEpoch / actionVerb / provider / nicRef` を含む。stale epoch また�
 ## フェーズ分割（この ADR）
 
 - **Phase 1（この ADR の最小スコープ）**: `ownershipEpoch` トークン、
-  決定的所有権レコード + アービトレーション（preferNodes/priority/tie-break）、
-  `ipOwnershipPolicy` spec + バリデーション、**所有権マップの可視化**（status +
+  決定的所有権レコード + アービトレーション（配置優先度/tie-break）、
+  **所有権マップの可視化**（status +
   メトリクス + `routerctl`）。**自動 seizure なし** — Phase 1 は desired 所有権を
   *計算・公開*し、ownershipEpoch でアクションをフェンスするのみ。
   既存の静的プレースメントが引き続き誰が行動するかを駆動する。

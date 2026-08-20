@@ -26,7 +26,7 @@ generalized as designed. The only provider-specific work is provisioning-side
 - ENI: primary `10.88.60.4`, secondary private IPv4 `10.88.60.9`.
 - EC2 source/destination check: DISABLED (AWS equivalent of Azure NIC IP forwarding).
 - routerd-cloud guest OS: `10.88.60.9` removed from local addresses by routerd
-  (`provider-secondary-ip` + `configureOSAddress=false` de-assign enforcement).
+  (BGP `provider-secondary-ip` no-local-address enforcement).
 
 ## Assertions (all PASS)
 

@@ -12,23 +12,21 @@ title: 選択的アドレス移動性
 
 ## リソースモデル
 
-CloudEdge モビリティコントロールプレーンにおいて、運用者が記述するモビリティインテントは `MobilityPool` だけです。論理 IPv4 プール、読み取る EventGroup、メンバーノードとサイト、BGP 配送モード、捕捉ポリシー、プロバイダートラップの配置を宣言します。メンバーリストは BGP ピアリストと同様に扱います。各ノードは他のノードの識別情報・サイト・ロール・配置を知る必要がありますが、リモートノードの NIC ID、プロバイダーリソース名、サブネット ID などの実装詳細を知る必要はありません。
+CloudEdge モビリティコントロールプレーンでは、`SAMNodeSet` が共有の operator-authored identity/topology intent、`MobilityPool` がローカルの address/capture intent です。Pool は論理 IPv4 プール、EventGroup、BGP 配送、ローカル捕捉ポリシー、プロバイダートラップの詳細を宣言します。全参加者の identity、site、role、placement、transport endpoint は `SAMNodeSet` に一度だけ置き、Pool で remote member を繰り返しません。
 
 目標とする設定の構造は次のとおりです。
 
-- **自サイト**は、捕捉とプロバイダーディスカバリーの詳細まで完全に宣言する。
-- **リモートサイト**は、識別情報のみのメンバー（`nodeRef`、`site`、`role`、任意で `placement` / `maintenance`）として宣言する。
-- 規模の大きなファブリックでは、共有する識別情報のみのメンバーリストを `MobilityMemberSet` に置き、`MobilityPool.spec.membersFrom` で取り込む。
+- 共有 identity/topology と placement は `SAMNodeSet` に一度だけ置き、`MobilityPool.spec.membersFrom` で取り込む。
+- **自サイト**だけを、捕捉とプロバイダーディスカバリーの詳細を持つ local MobilityPool overlay として宣言する。
 - ローカルのクラウド捕捉に関する再利用可能な詳細は `profiles.cloudCaptures` に置く。
 - 秘密でないノードローカルな値は `spec.values` に置き、`capture.targetFrom` と `ownershipDiscovery.subnetRefFrom` で参照する。
 
-`MobilityMemberSet` はモビリティ側における `SAMPeerGroup` に相当するリソースです。含めるのは共有されるメンバー識別情報フィールド（`nodeRef`、`site`、`role`、任意で `placement` / `maintenance`）だけです。`capture`、`ownershipDiscovery`、`profileRef`、配送関連フィールド、静的所有アドレスは意図的に含めません。これらはそれを必要とするノードの `MobilityPool` 側にローカル設定として残します。
-
-`SAMNodeSet` は同じファブリックにおける次の write-once 集約点です。現在は
-`EventPeer`、`WireGuardPeer`、`SAMTransportProfile` の peers/topology、
-`MobilityPool` の members に重複しているノード識別情報フィールドを集約します。この
-リリースでは Event Federation と WireGuard がピアターゲットをここから導出でき、
-残りの機能ごとのリストも同じソースへ移していきます。ノードセットから
+`SAMNodeSet` は同じファブリックにおける write-once 集約点です。
+`MobilityPool` の共有 member identity（`nodeRef`、`site`、`role`、任意で
+`placement` / `maintenance`）と、`EventPeer`、`WireGuardPeer`、
+`SAMTransportProfile` の identity/topology を一元化します。`capture`、
+`ownershipDiscovery`、`profileRef`、静的所有アドレスは、そのノードの
+`MobilityPool` overlay にローカル設定として残します。ノードセットから
 `SAMTransportProfile` の topology を導出する設計は、ノード追加時に既存トンネルの `/31`
 割り当てが振り直されないよう `addressingMode: pair-stable` を前提にします。
 
@@ -66,24 +64,9 @@ spec:
         allowedIPs: [10.99.0.1/32]
 ```
 
-```yaml
-apiVersion: mobility.routerd.net/v1alpha1
-kind: MobilityMemberSet
-metadata: { name: svnet1-members }
-spec:
-  members:
-    - nodeRef: pve-rt01
-      site: pve01
-      role: onprem
-    - nodeRef: pve-rt02
-      site: pve02
-      role: onprem
-    - nodeRef: rr01
-      site: backbone
-      role: cloud
-```
+プールは 1 つ以上の `SAMNodeSet` を取り込めます。取り込んだメンバーを先に追加し、ローカルの `spec.members` を `nodeRef` 単位で後から上書きします。そのためリーフは、共有トポロジーを node registry から受け取りつつ、自分自身の捕捉/ディスカバリーの詳細だけをローカルに記述できます。
 
-プールは 1 つ以上のメンバーセットを取り込めます。取り込んだメンバーを先に追加し、ローカルの `spec.members` を `nodeRef` 単位で後から上書きします。そのためリーフは、共有トポロジーをメンバーセットから受け取りつつ、自分自身の捕捉/ディスカバリーの詳細だけをローカルに記述できます。
+source node に一致する overlay には、`nodeRef` とローカルの `profileRef`、捕捉、静的所有アドレス、ディスカバリーの詳細だけを置けます。`site`、`role`、placement、maintenance、secondary-IP capacity は `SAMNodeSet` 専用であり、overlay で変更できません。
 
 ```yaml
 apiVersion: mobility.routerd.net/v1alpha1
@@ -93,11 +76,9 @@ spec:
   prefix: 10.88.60.0/24
   groupRef: svnet1
   membersFrom:
-    - resource: MobilityMemberSet/svnet1-members
+    - resource: SAMNodeSet/svnet1-nodes
   members:
     - nodeRef: pve-rt01
-      site: pve01
-      role: onprem
       capture:
         type: proxy-arp
         interface: vmbr0
@@ -108,7 +89,7 @@ spec:
             bridge: vmbr0
 ```
 
-必須の `membersFrom` ソースがまだ届いていない場合、プールは `Pending` になります。ブートストラップ中に部分的なローカルメンバーリストで動作させてよい場合にのみ `optional: true` を指定してください。RR dynamic sync で以前に取得済みの source については、保存済み DynamicConfigPart を last-known-good 入力として扱います。期限切れの `member-set-sync/<name>` record は source を `Stale` と表示しますが、既存の MobilityPool planning path は維持します。これは RR 障害時の fail-static 保証であり、publisher の喪失は freshness にだけ影響し、既に render 済みの data plane を壊しません。Stale source には warning field も出るため、運用者は fail-static 状態を fresh topology と区別できます。
+必須の `membersFrom` `SAMNodeSet` が存在しない場合、プールは `Pending` になります。ブートストラップ中に部分的なローカルメンバーリストで動作させてよい場合にのみ `optional: true` を指定してください。node-set membership は宣言的 router configuration であり、MobilityPool planning は HTTP membership-sync endpoint に依存しません。
 
 WireGuard インターフェースも同じノードレジストリからピアを取り込めます。
 
@@ -151,37 +132,16 @@ RR/spine が承認してから生成ピアの入力にする、提案中の Wire
 
 ```yaml
 apiVersion: mobility.routerd.net/v1alpha1
-kind: MobilityPool
-metadata: { name: lab-same-subnet }
+kind: SAMNodeSet
+metadata: { name: lab-same-subnet-nodes }
 spec:
-  prefix: 10.0.0.0/24
-  groupRef: cloudedge
-  values:
-    self.region: ap-northeast-1
-    self.subnetRef: subnet-0123456789abcdef0
-  profiles:
-    cloudCaptures:
-      aws-self:
-        capture:
-          type: provider-secondary-ip
-          providerRef: aws-lab
-          providerMode: eni-secondary-ip
-          nicRef: eni-0123456789abcdef0
-          configureOSAddress: false
-          targetFrom:
-            region: self.region
-        ownershipDiscovery:
-          mode: provider-private-ip
-          scanInterval: 60s
-          subnetRefFrom: self.subnetRef
-  members:
+  nodes:
     - nodeRef: onprem-router
       site: onprem
       role: onprem
     - nodeRef: cloud-router
       site: aws
       role: cloud
-      profileRef: aws-self
       placement:
         group: aws-edge
         priority: 10
@@ -199,22 +159,43 @@ spec:
       placement:
         group: oci-edge
         priority: 10
-  deliveryPolicy:
-    mode: bgp
-  capturePolicy:
-    mode: all-non-owner-sites
+---
+apiVersion: mobility.routerd.net/v1alpha1
+kind: MobilityPool
+metadata: { name: lab-same-subnet }
+spec:
+  prefix: 10.0.0.0/24
+  groupRef: cloudedge
+  membersFrom:
+    - resource: SAMNodeSet/lab-same-subnet-nodes
+  values:
+    self.region: ap-northeast-1
+    self.subnetRef: subnet-0123456789abcdef0
+  profiles:
+    cloudCaptures:
+      aws-self:
+        capture:
+          type: provider-secondary-ip
+          providerRef: aws-lab
+          nicRef: eni-0123456789abcdef0
+          targetFrom:
+            region: self.region
+        ownershipDiscovery:
+          mode: provider-private-ip
+          scanInterval: 60s
+          subnetRefFrom: self.subnetRef
+          # 空または hold は停止済みインスタンスを所有権事実として保持し、release は失効させます。
+          stoppedInstancePolicy: hold
+  members:
+    - nodeRef: cloud-router
+      profileRef: aws-self
 ```
 
-オンプレミスノードでは逆に、オンプレミスメンバーが完全な自己宣言になります。通常は `staticOwnedAddresses` と、`activeWhen.type` でゲートした `proxy-arp` 捕捉を持ちます。サイト内にルーターが 1 台なら `single-router`、HA ペアで VRRP マスター状態で捕捉をゲートする場合は `vrrp-master` を使います。クラウドメンバーは識別情報のみのままです。どの方向でも同じ原則が成り立ちます。ローカルルーターがローカルの実装詳細を保持し、リモートメンバーはピア識別情報だけを持ちます。
-動的なオンプレミスクライアントの検知は、オンプレミスメンバーに `ownershipDiscovery`
-`mode: onprem-l2` と少なくとも 1 つのソース（`ens21` の `arp-observer` など）を
-追加します。クラウドメンバーは識別情報のみのままです。どの方向でも同じ原則が
-成り立ちます。ローカルルーターがローカルの実装詳細を保持し、リモートメンバー
-はピア識別情報だけを持ちます。
+オンプレミスノードでは、self overlay に通常 `staticOwnedAddresses` と、`activeWhen.type` でゲートした `proxy-arp` 捕捉を置きます。サイト内にルーターが 1 台なら `single-router`、HA ペアで VRRP マスター状態で捕捉をゲートする場合は `vrrp-master` を使います。`activeWhen` はこのオンプレミス `proxy-arp` 捕捉だけでサポートされます。クラウドの `provider-secondary-ip` 捕捉で設定すると拒否されるため、ローカル VRRP の遷移が対応する BGP とローカルデータプレーン計画なしにプロバイダー割り当てを作ることはありません。動的なオンプレミスクライアントの検知には、`ownershipDiscovery` の `mode: onprem-l2` と少なくとも 1 つのソース（`ens21` の `arp-observer` など）を追加します。クラウドとオンプレミスの完全なトポロジーは `SAMNodeSet` に残し、ローカルルーターはローカル実装の詳細だけを保持します。
 
 routerd はフェデレーションやプロバイダーディスカバリーで得た観測事実から、所有中の `/32` パスを BGP で広告します。運用者は `MobilityPool` だけを編集してコントロールプレーンを宣言的に保ちます。アドレスごとの広告やプロバイダートラップのアクションプランはコントローラーが導出します。
 
-同一プロバイダーのクラウドルーター保守では、`members[].placement.group` 内の `drain` されていないメンバーから `priority` 順、次に `nodeRef` 順でアクティブ捕捉メンバーを選出します。`members[].maintenance.drain: true` にすると、そのメンバーはアクティブ選出から外れます。アクティブメンバーだけがプロバイダートラップアクションを発行し、全メンバーが BGP スタンバイパスを広告できます。配置の導出を決定的に保つため、プール内の全ノードに同じ `MobilityPool` 設定を配布してください。
+同一プロバイダーのクラウドルーター保守では、`SAMNodeSet.spec.nodes[].placement.group` 内の `drain` されていないメンバーから `priority` 順、次に `nodeRef` 順でアクティブ捕捉メンバーを選出します。その `maintenance.drain: true` にすると、メンバーはアクティブ選出から外れます。アクティブメンバーだけがプロバイダートラップアクションを発行し、全メンバーが BGP スタンバイパスを広告できます。すべてのノードに同じ `SAMNodeSet` の identity/placement source を配布し、各 MobilityPool にはローカル self overlay だけを残してください。これによりリモート member detail を繰り返さず、決定的な配置導出を維持できます。
 
 ### 目標フィールドリファレンス
 
@@ -228,7 +209,7 @@ routerd はフェデレーションやプロバイダーディスカバリーで
 : プロバイダーのプライベート IP 棚卸しスキャン用の再利用可能な既定値です。`ownershipDiscovery.providerRef` が省略された場合、有効な `capture.providerRef` を継承します。
 
 `members[].profileRef`
-: 名前付きクラウド捕捉プロファイルをメンバーに適用します。通常はローカルの自メンバーにだけ使い、リモートメンバーでは省略します。
+: 名前付きクラウド捕捉プロファイルをメンバーに適用します。ローカルの自メンバーにだけ使い、リモートメンバーでは無効です。
 
 `members[].capture.targetFrom`
 : 生成されるプロバイダーアクションのターゲットキーを `spec.values` のキーに対応づけます。同じキーが `capture.target` にもある場合は、明示的な `capture.target` が優先されます。
@@ -236,10 +217,10 @@ routerd はフェデレーションやプロバイダーディスカバリーで
 `members[].ownershipDiscovery.subnetRefFrom`
 : `ownershipDiscovery.subnetRef` が空の場合に `spec.values` から値を解決します。
 
-`members[].placement`
-: 決定的なアクティブ/スタンバイ捕捉の配置を宣言します。識別情報のみのリモートクラウドメンバーにも配置は有効です。他のノードが同一サイト内のどのメンバーがアクティブかを同じように判断するためです。
+`SAMNodeSet.spec.nodes[].placement` と `.maintenance`
+: 共有 node registry に決定的な active/standby capture の配置と drain 状態を宣言します。`membersFrom` の後の `MobilityPool.spec.members` は local self overlay 専用であり、remote identity、placement、maintenance をそこへ繰り返しません。
 
-古い「リモート完全インライン」方式、つまり各ノードがリモートメンバーのプロバイダー詳細まで繰り返し記述する形式は、プレリリース期間の互換性のために引き続き受け付けます。ただし非推奨です。リモートメンバーがローカルの捕捉/ディスカバリー詳細を持っている場合、`routerctl validate`・plan・apply は警告を表示します。将来のプレリリースでは、リモートメンバーを識別情報のみにすることを必須とする可能性があります。
+共有 membership は `SAMNodeSet` に置きます。pool が remote-node identity や provider detail を繰り返す古い inline shape は有効な authoring model ではなく、pool は node set を取り込み local overlay だけを持ちます。provider、capture、discovery detail は対応するノードのローカル pool だけに置きます。
 
 ## トランスポートプロファイル
 
@@ -249,14 +230,14 @@ routerd はフェデレーションやプロバイダーディスカバリーで
 
 `spec.addressingMode` は `/31` スロットの導出方法を制御します。
 
-- `edge-index`（デフォルト）: ピアが複数あるプロファイルでは、トランスポートドメイン内の全ルーターで同じ topology node list が必要です。運用者が `spec.topologyNodeRefs` を直接宣言することも、`spec.peersFrom` で `SAMNodeSet` から取り込むこともできます。コントローラーはこの共有ノードリストをソートし、順序なしノードペアの順位から `spec.innerPrefix` 内の `/31` を割り当てます。
-- `pair-stable`: 各ピアエッジが安定ハッシュからスロットを導出するため、リーフ/ルータープロファイルはグローバルな `topologyNodeRefs` を省略できます。衝突検出は現在プロファイルローカル（1 つのプロファイルの `spec.peers` リスト内）です。衝突が発生した場合は、該当ピアの `override.localInner` と `override.remoteInner` の両方を設定して明示的にアドレスを予約してください。
+- `edge-index`（デフォルト）: profiles は `spec.peersFrom` で同じ `SAMNodeSet` を使います。コントローラーはこの共有 node list をソートし、順序なしノードペアの順位から `spec.innerPrefix` 内の `/31` を割り当てます。
+- `pair-stable`: 各ピアエッジが安定ハッシュからスロットを導出するため、リーフ/ルータープロファイルは共有 node set を変えずに実際の peer だけを選択できます。
 
 本番ファブリックでは可能な限り `/20` 以上の `innerPrefix` を推奨します。`/24`（128 個の `/31` スロット）のように小さなプールはハッシュ＋剰余割り当てで衝突しやすくなります。
 
-`spec.peersFrom` は `SAMNodeSet/<name>` または `SAMPeerGroup/<name>` を参照できます。`SAMNodeSet` ソースは `spec.nodes[].nodeRef` を解決済みの topology に追加し、自ノード以外で `samEndpoint` を持つノードからピアを生成します。生成されたピアはその `samEndpoint` を `remoteEndpoint` として使います。`SAMPeerGroup` ソースは再利用可能なトランスポートピアだけを追加します。
+`spec.peersFrom` は `SAMNodeSet/<name>` または `SAMPeerGroup/<name>` を参照できます。`SAMNodeSet` ソースは `spec.nodes[].nodeRef` を解決済みの topology に追加します。`samEndpoint` を持つ自ノード以外の全 node から peer を生成しますが、`nodeRefs` を指定すると列挙した adjacency node に限定されます。生成された peer はその `samEndpoint` を `remoteEndpoint` として使います。`SAMPeerGroup` ソースは再利用可能なトランスポート peer だけを追加します。`SAMPeerGroup` は top-level `spec.resources` には書けない runtime-only sync payload であり、publisher の `publishPeerGroup` と consumer の sync cache 経由でのみ扱われます。
 
-コントローラーはリコンサイル時にすべての source を解決し、取り込んだ peer を先に追加してから、プロファイル直下の `spec.peers` を重ねます。同じ `nodeRef` が両方にある場合は `spec.peers` が優先されるため、リーフ側に静的なブートストラップ用 peer やローカル override を残せます。必須の `peersFrom` source が未到着の場合、プロファイルは `Pending` になります。`optional: true` の source は到着するまで無視されます。source が以前に取得済みで DynamicConfigPart の TTL だけが切れている場合、routerd は source を `Stale` と warning 付きで表示し、生成済み transport artifact を削除せず last-known-good peer group を使い続けます。
+コントローラーはリコンサイル時にすべての source を解決します。直接 peer または topology のリストは受け付けません。`SAMNodeSet` が唯一の identity/topology/endpoint 入力であり、`nodeRefs` は adjacency だけを表します。必須の `peersFrom` source が未到着の場合、プロファイルは `Pending` になります。`optional: true` の source は到着するまで無視されます。source が以前に取得済みで DynamicConfigPart の TTL だけが切れている場合、routerd は source を `Stale` と warning 付きで表示し、生成済み transport artifact を削除せず last-known-good peer group を使い続けます。
 
 `SAMNodeSet` の各 node は静的な `samEndpoint` か `samEndpointFrom` のどちらかを指定できます。`samEndpointFrom` は `DHCPv4Client/<name>.currentAddress` や `Interface/<name>.primaryIPv4` のような status field を読み、CIDR の prefix 長を取り除いた IPv4 アドレスを生成 peer の `remoteEndpoint` として使います。source が未解決の場合、古い endpoint で tunnel を生成せず、トランスポートプロファイルは `Pending` になります。
 
@@ -284,9 +265,18 @@ spec:
 
 `publishPeerGroup: true` を持つノードで `routerd serve` が動作している場合、routerd は公開済みピアグループをトランスポートネットワーク上の TCP ポート `19652`（`GET /v1/peer-groups`）でも返します。リーフ側で必須の `peersFrom` グループが見つからない場合、`spec.underlayInterface` から到達できる WireGuard ピアへ問い合わせ、名前が一致するグループを `peer-group-sync/<group-name>` としてローカルに保存します。この DynamicConfigPart は通常の TTL で期限切れになりますが、publisher が消えてもリーフは生成済み tunnel や BGP peer を tear down しません。期限切れ record を last-known-good 入力として再利用し、source を `Stale` と warning 付きで表示し、既存 transport artifact を render し続けます。一度も見たことのない必須 group だけが `Pending` になります。
 
-MobilityPool のメンバーシップについても同様に、ルートリフレクター側の正規プールに `spec.publishMemberSet: true` を指定できます。routerd はローカル専用のメンバーフィールドを取り除き、ソース `mobility-member-set/<pool>` の `MobilityMemberSet` DynamicConfigPart を公開し、同じ TCP ポートの `GET /v1/member-sets` で返します。リーフ側で必須の `membersFrom` ソースが見つからない場合、取得したセットを `member-set-sync/<set-name>` として保存します。peer-group sync と同じく、期限切れの member set は fail-static です。routerd は `membersFrom.phase: Stale` と warning を表示し、より新しい publisher 応答が得られるまで last-known-good member list を使い続けます。
+MobilityPool のメンバーシップは `SAMNodeSet` resource から直接解決します。transport sync service で公開しないため、BGP placement は一つの canonical identity/topology input を使い、動的同期するのは `SAMPeerGroup` だけです。
 
 ```yaml
+apiVersion: mobility.routerd.net/v1alpha1
+kind: SAMNodeSet
+metadata: { name: cloudedge-nodes }
+spec:
+  nodes:
+    - { nodeRef: onprem-router, site: onprem, role: onprem, routeReflector: true, samEndpoint: 10.252.0.1 }
+    - { nodeRef: aws-router-a, site: aws, role: cloud, samEndpoint: 10.252.0.2 }
+    - { nodeRef: azure-router, site: azure, role: cloud, samEndpoint: 10.252.0.3 }
+---
 apiVersion: mobility.routerd.net/v1alpha1
 kind: SAMTransportProfile
 metadata: { name: cloudedge-transport }
@@ -295,10 +285,6 @@ spec:
   mode: ipip
   encryption: wireguard
   innerPrefix: 10.255.0.0/24
-  topologyNodeRefs:
-    - onprem-router
-    - aws-router-a
-    - azure-router
   underlayInterface: wg-hybrid
   localEndpointFrom:
     resource: Interface/wg-hybrid
@@ -307,58 +293,14 @@ spec:
     routerRef: BGPRouter/mobility
     peerASN: 64512
     timersPreset: fast
-  peers:
-    - nodeRef: onprem-router
-      remoteEndpoint: 10.252.0.1
+  peersFrom:
+    - resource: SAMNodeSet/cloudedge-nodes
+      nodeRefs: [onprem-router]
 ```
 
 コアルーターでは `spec.bgp.routeReflectorClient` と `spec.bgp.routeReflectorClusterID` を設定できます。これらは生成される各 `BGPPeer` にコピーされます。`routeReflectorClient` が true の場合、routerd はその leaf 向けの generated import policy も強化します。取り込む route は configured `importPolicy.allowedPrefixes`、未指定なら宣言済み `MobilityPool` prefix 配下の `/32` で、その leaf 自身の node-identity community を持ち、他の topology node の node-identity community を持たない必要があります。これにより RR admission boundary は宣言された SAM topology に結び付き、leaf は別ノード identity や広い mobility prefix を generated RR session から主張できません。侵害された leaf が自分の identity のまま pool 内 `/32` を広告するリスクは残り、per-node ownership の制約には route filter とは別の authorization signal が必要です。エッジルーターでは未指定のまま通常の iBGP セッションとして使えます。
 
 ピアをプロファイルから削除すると、そのプロファイルが生成した `DynamicConfigPart` は新しいリソースセットで置き換えられます。プロファイル自体を削除した場合は、古いパートが空のアクティブパートで置き換えられ、実効設定から生成済みのトンネル、BGP ピア、エンドポイント経路が消えます。生成されたリソースの具体的な後片付けは、通常のオーナー参照 GC とリソース固有のティアダウンに委ねます。
-
-## 低レベル互換リソース
-
-`AddressMobilityDomain` と `RemoteAddressClaim` は SAM の低レベル表現です。既存の手書き SAM 設定はプレリリース期間の互換性のために引き続きサポートしますが、CloudEdge モビリティの主要な記述面ではありません。アドレス所有権と捕捉のインテントには `MobilityPool` を、トランスポート/BGP の生成には `SAMTransportProfile` を使ってください。
-
-`AddressMobilityDomain` は選択されたアドレスが移動しうる IPv4 プレフィックスを定義します。
-
-```yaml
-apiVersion: hybrid.routerd.net/v1alpha1
-kind: AddressMobilityDomain
-metadata: { name: lab-same-subnet }
-spec:
-  prefix: 10.0.0.0/24
-  mode: selective-address
-  peerRef: cloud-main
-```
-
-`RemoteAddressClaim` は 1 つのモバイル `/32`、捕捉方法、配送方法を宣言します。
-
-```yaml
-apiVersion: hybrid.routerd.net/v1alpha1
-kind: RemoteAddressClaim
-metadata: { name: onprem-vm-10-0-0-9 }
-spec:
-  domainRef: lab-same-subnet
-  address: 10.0.0.9/32
-  ownerSide: onprem
-  capture:
-    type: provider-secondary-ip
-    providerRef: azure-lab
-    providerMode: nic-secondary-ip
-    nicRef: /subscriptions/.../networkInterfaces/routerd-nic
-    configureOSAddress: false
-  delivery:
-    peerRef: cloud-main
-    mode: route
-    tunnelInterface: wg-hybrid
-```
-
-`AddressMobilityDomain.spec.peerRef` はドメインレベルのデフォルト/ドキュメント用ピアで、グルーピングメタデータとして扱います。MVP のデータプレーンが実際の配送ピアとして使うのは `RemoteAddressClaim.spec.delivery.peerRef` であり、各クレームに必須です。
-
-`CloudProviderProfile` はプロバイダーの機能と外部ツールの認証方法を記述します。モビリティプランナーはプロバイダー API を直接呼びません。クラウド捕捉では `assign-secondary-ip` や `ensure-forwarding-enabled` のドライラン `ActionPlan` レコードを生成し、別のプロバイダーアクション実行パスが `ProviderActionPolicy` で明示的に許可された場合にのみインポート/実行します。
-
-`OverlayPeer` はレガシーの経路低レベル化設定におけるリモート routerd ピアとアンダーレイを表します。`HybridRoute` は通常の L3 リモートプレフィックスルーティング用に残ります。新しい CloudEdge モビリティ設定では `OverlayPeer` でモビリティ `/32` を運ばず、`SAMTransportProfile` による BGP 配送を使ってください。
 
 ## 捕捉と配送
 
@@ -376,11 +318,11 @@ MVP のバリデーションで拒否される予約済み捕捉タイプは次�
 | `static-host-route` | 将来のデータプレーン設計用に予約されています。 |
 | `garp` | 将来のデータプレーン設計用に予約されています。 |
 
-`MobilityPool` の配送モードは BGP です。所有アドレスは IPv4 ユニキャスト `/32` パスとして広告され、非所有者は BGP ベストパスをローカル FIB にインポートして、選択されたオーバーレイのネクストホップへ届けます。`deliveryPolicy.mode: bgp` がデフォルトであり、現在の MobilityPool コントロールプレーンで唯一サポートされる配送モードです。古い経路低レベル化 SAM 配送は、手書きの `RemoteAddressClaim` 互換設定のためにのみ残っています。
+`MobilityPool` は常に BGP で配送します。所有アドレスは IPv4 ユニキャスト `/32` パスとして広告され、非所有者は BGP ベストパスをローカル FIB にインポートして、選択されたオーバーレイのネクストホップへ届けます。
 
 `members[].capture.target` は、生成されるプロバイダー `ActionPlan.target` の値にコピーされる、秘密でないプロバイダーターゲットヒントです。リージョン、コンパートメント ID、リソースグループ、NIC 名、IP 設定名などの識別子だけを置き、認証情報、トークン、秘密鍵はプロバイダー認証の仕組み側に置きます。
 
-クラウドの `provider-secondary-ip` 捕捉では `members[].capture.strategy` を指定できます。デフォルトは `secondary-ip` で、従来どおり AWS ENI、Azure NIC ipConfig、OCI VNIC のセカンダリアドレスを使います。Azure では代わりに `strategy: route-table` を指定できます。Azure は `capture.target.routeTableRef` の UDR を作成して `capture.target.nextHopIPAddress` を next-hop にします。routerd は、プロバイダー inventory がその route table がローカル router を指していることを確認してから、捕捉済み `/32` を BGP 広告します。この provider 観測ゲートは `route-table` 戦略固有です。`secondary-ip` 捕捉では、overlay holder をいつ広告するかの判定に route-table 観測を使いません。
+クラウドの `provider-secondary-ip` 捕捉は `type` から通常の `secondary-ip` 動作を導出するため、その冗長な指定は不要です。Azure では例外として `captureStrategy: route-table` を指定できます。Azure は `capture.target.routeTableRef` の UDR を作成して `capture.target.nextHopIPAddress` を next-hop にします。routerd は、プロバイダー inventory がその route table がローカル router を指していることを確認してから、捕捉済み `/32` を BGP 広告します。この provider 観測ゲートは `route-table` 戦略固有です。`secondary-ip` 捕捉では、overlay holder をいつ広告するかの判定に route-table 観測を使いません。
 
 現在の lab 認定は `secondary-ip` 捕捉のみを対象にしています。`route-table` 戦略は、provider 観測、BGP 広告との結合、provider API 遅延時の挙動が release lab で検証されるまで **未認定 (uncertified)** です。この戦略は設計上、provider route-table 観測後に捕捉済み `/32` を BGP 広告するため、ARM/API 遅延がこの戦略の overlay 収束に波及します。
 
@@ -400,16 +342,15 @@ Linux での `proxy-arp` 捕捉では、routerd は以下を行います。
 - `ip neigh add proxy <address> dev <capture-interface>` 相当のプロキシネイバーエントリを netlink で追加する。
 - 通常の sysctl コントローラーで `net.ipv4.ip_forward=1` を有効化する。
 
-`provider-secondary-ip` では、プロバイダーファブリックがアドレス捕捉を担当します。`configureOSAddress: false` の場合、routerd はモバイルアドレスをローカル OS のアドレスとして設定しません。BGP delivery では、`configureOSAddress` が true であっても routerd はモバイル `/32` をローカル OS インターフェースに存在させません。クラウドプロバイダーのセカンダリ IP は provider-fabric ingress owner であり、Linux FIB はそのパケットをローカル宛てとして扱うのではなく、選択された overlay path へ転送する必要があるためです。Linux では cloud-init、netplan、ゲストエージェントなどがそのアドレスを戻した場合でも、その特定のアドレスだけをローカルインターフェースから削除します。そのうえで IPv4 フォワーディング、必要に応じた provider ingress 用の明示的 proxy neighbor、インターフェース単位の forwarding state を確保し、オーバーレイへの `/32` 配送経路は BGP ベストパスのインポートから得ます。捕捉を削除しても routerd はアドレスを戻しません。ゲスト OS へのアドレス割り当ては routerd が所有していないためです。
+`provider-secondary-ip` の BGP delivery では、プロバイダーファブリックがアドレス捕捉を担当し、routerd はモバイル `/32` をローカル OS のアドレスとして設定しません。クラウドプロバイダーのセカンダリ IP は provider-fabric ingress owner であり、Linux FIB はそのパケットをローカル宛てとして扱うのではなく、選択された overlay path へ転送します。Linux では cloud-init、netplan、ゲストエージェントなどがそのアドレスを戻した場合でも、その特定のアドレスだけをローカルインターフェースから削除します。そのうえで IPv4 フォワーディング、必要に応じた provider ingress 用の明示的 proxy neighbor、インターフェース単位の forwarding state を確保し、オーバーレイへの `/32` 配送経路は BGP ベストパスのインポートから得ます。捕捉を削除しても routerd はアドレスを戻しません。ゲスト OS へのアドレス割り当ては routerd が所有していないためです。
 
-ステータスではこれを `captureOSAddressAbsence` として報告します。`enforced: true` は、routerd が捕捉されたアドレスをローカル OS インターフェースに存在させないことを継続的に適用していることを示す監査フラグです。`lastReconcileRemoved: true` は、直近のリコンサイルで実際にそのアドレスを削除したことを示します。アドレスがすでに存在しない定常状態では通常 `false` です。`reason` は、明示的な `configureOSAddress=false` enforcement と BGP delivery の no-local-address projection を区別します。
+ステータスではこれを `captureOSAddressAbsence` として報告します。`enforced: true` は、routerd が捕捉されたアドレスをローカル OS インターフェースに存在させないことを継続的に適用していることを示す監査フラグです。`lastReconcileRemoved: true` は、直近のリコンサイルで実際にそのアドレスを削除したことを示します。アドレスがすでに存在しない定常状態では通常 `false` です。`reason` は BGP provider-secondary の no-local-address projection を示します。
 
 ## 所有権の確認
 
-`MobilityPool` status は 2 つの所有権ビューを公開します。
+`MobilityPool` status は 1 つの所有権ビューを公開します。
 
-- `ownershipResolverOwnerTable` は、`doctor sam` と FIB ポリシーチェックが使うローカルの resolver テーブルです。
-- `ownershipResolverControlPlaneOwnerTable` は、運用者向けのコントロールプレーンテーブルです。観測されたモビリティアドレスごとに決定的な 1 行を持ち、選択された owner node/provider/NIC/subnet/resource、local evidence node/provider/NIC/subnet/resource/source、捕捉状態、広告/抑制状態、競合理由/勝者/resolution を含みます。
+- `ownershipResolverControlPlaneOwnerTable` は唯一のアドレス単位の運用投影であり、`doctor sam`、FIB ポリシーチェック、運用者が共通して使うコントロールプレーンテーブルです。観測されたモビリティアドレスごとに決定的な 1 行を持ち、選択された owner node/provider/NIC/subnet/resource、local evidence node/provider/NIC/subnet/resource/source、捕捉状態と最終的な `captureDisposition`/`captureReason`、広告/抑制状態、競合理由/勝者/resolution を含みます。
 
 raw な status JSON に依存せずコントロールプレーンテーブルを確認するには、`routerctl mobility owners` を使います。
 
@@ -417,6 +358,15 @@ raw な status JSON に依存せずコントロールプレーンテーブルを
 routerctl mobility owners
 routerctl mobility owners --pool cloudedge --address 10.77.60.10/32 -o json
 ```
+
+1 アドレスについて owner-table の行と pool-level provider status をまとめて見るには、`routerctl mobility explain` を使います。
+
+```sh
+routerctl mobility explain --pool cloudedge --address 10.77.60.10/32
+routerctl mobility explain --pool cloudedge --address 10.77.60.10/32 -o json
+```
+
+`OwnershipResolved` はその行から導出します。provider status は pool status が対象アドレスを明示した場合だけアドレス単位で扱います。`providerActionFailedAddresses` に入るアドレスだけが `ProviderActionApplied=False`、`providerObservationPendingAddresses` に入るアドレスだけが `ProviderObserved=False` です。それ以外は `Unknown` とし、pool-level phase をすべてのアドレスの失敗として投影しません。FIB と到達性は `doctor sam` またはデータプレーン probe で確認するまで `Unknown` のままです。
 
 行は pool と address でソートされます。remote provider owner が local evidence と重なる場合や、2 つの fresh provider owner が同じ `/32` を主張する場合、行の state は `Conflict` になり、`conflictReason` が理由を示します。期限切れの所有権イベントはライブな競合としては残しません。duplicate provider-owner conflict では `conflictWinnerNode` と `conflictResolution` も出ます。healed BGP owner があればそれが勝者、なければ provider scan の新しさには依存せず、安定した owner key（`nodeRef`、provider ref、resource ref、NIC ref、subnet ref、address）の辞書順で勝者を選びます。local の provider-secondary capture を観測している敗者は `loser-release-local-capture` を報告し、stale-capture hold-down 後にその local capture だけを release します。`routerctl doctor sam` は同じ所有権状態を競合チェックに使い、ホストチェックが有効な場合は endpoint owner としてローカル所有する行を Linux のメイン FIB と比較します。provider-secondary BGP capture ホルダー行はローカルの endpoint owner ではないため、local/cloud route として解決されることを要求しません。その経路は delivery/forwarding チェックとデータプレーンプローブで確認します。
 
@@ -453,24 +403,21 @@ Linux のライブデータプレーンは Azure + PVE 同一サブネットの�
 
 `10.0.0.7/32` の戻り経路はオンプレミス側の proxy-ARP で捕捉します。PVE LAN のホストはオンプレミス側の routerd ノード経由で `.7` に到達し、オンプレミス側の routerd ノードが同じ生成済み SAM トランスポート経由でクラウド側の routerd ノードへ配送します。
 
-分割した設定例は次の 2 つです。
-
-- `examples/hybrid-azure-pve-same-subnet-cloud.yaml`: クラウド側の routerd ノードに適用し、オンプレミス VM `10.0.0.9/32` のプロバイダーセカンダリ IP クレームを含みます。
-- `examples/hybrid-azure-pve-same-subnet-onprem.yaml`: オンプレミス側の routerd ノードに適用し、クラウド VM `10.0.0.7/32` の proxy-ARP クレームを含みます。
+現在の MobilityPool ベースのクラウド/オンプレミス設定は
+`examples/cloudedge-mobility-demo/` にあります。
 
 ## ファイアウォールと NAT の構成
 
 選択的アドレス移動性は通常のスイッチング/フォワーディングプレーンに位置します。`nat`、`preserveSource`、ファイアウォール、ゾーンのフィールドは持ちません。アドレスの透過性は本質的に備わっており、送信元アドレスと宛先アドレスはそのまま保持されます。
 
-モバイルアドレスにファイアウォールや NAT を適用する場合は、既存の `FirewallZone`、`FirewallRule`、`NAT44Rule` リソースでリテラルの `/32` アドレスを参照します。現在のモデルではファイアウォールや NAT の Kind から `MobilityPool` や低レベルの `RemoteAddressClaim` へのクロス Kind 参照はありません。結合は意図的にリテラルアドレスによる緩い結合としています。有用と判明すれば、名前付き参照を後日追加できます。
+モバイルアドレスにファイアウォールや NAT を適用する場合は、既存の `FirewallZone`、`FirewallRule`、`NAT44Rule` リソースでリテラルの `/32` アドレスを参照します。現在のモデルではファイアウォールや NAT の Kind から `MobilityPool` へのクロス Kind 参照はありません。結合は意図的にリテラルアドレスによる緩い結合としています。有用と判明すれば、名前付き参照を後日追加できます。
 
 SAM で転送されたトラフィックは、他の転送トラフィックと同様に既存のファイアウォールと conntrack のパスを通ります。独立しているとは、モビリティリソースが任意のファイアウォールや NAT のポリシーを設定しないという意味であり、バイパスするという意味ではありません。
 
 ### conntrack cleanup design note
 
-routerd は一時的に `MobilityPool.spec.deliveryPolicy.conntrackCleanupOnSeize` を、
-BGP mode SAM failover 向けの opt-in scoped conntrack cleanup hook として公開していました。
-このフィールドは削除済みです。参照 SAM leaf 構成では、routerd は配送された overlay flow を
+routerd は一時的に BGP mode SAM failover 向けの手動 opt-in scoped conntrack cleanup hook を公開していました。
+この機能は削除済みです。参照 SAM leaf 構成では、routerd は配送された overlay flow を
 conntrack に載せる dataplane rule を描画しないため、leaf 側の scoped cleanup は no-op であり、
 failover flow anomaly の対策にはなりませんでした。
 
@@ -479,7 +426,7 @@ failover flow anomaly の対策にはなりませんでした。
 再導入する場合は、routerd が管理する ct-engage dataplane を検出し、その場合だけ自動有効化する設計にしてください。
 手動 opt-in flag として再導入しないでください。
 
-特に、配送された `/32` トラフィックは捕捉インターフェースとトンネルインターフェースの間で Linux ファイアウォールの `FORWARD` チェインを通過します。デフォルト拒否のフォワーディングポリシーを持つルーターでは、捕捉されたアドレスのフォワーディングパスを明示的に許可してください。管理対象の例外は狭く、`WireGuardInterface` は Linux の UDP listen port を `INPUT` で開き、`RemoteAddressClaim` は自分が所有する capture-to-tunnel の `FORWARD` パスを開きます。
+特に、配送された `/32` トラフィックは捕捉インターフェースとトンネルインターフェースの間で Linux ファイアウォールの `FORWARD` チェインを通過します。デフォルト拒否のフォワーディングポリシーを持つルーターでは、捕捉されたアドレスのフォワーディングパスを明示的に許可してください。管理対象の例外は狭く、`WireGuardInterface` は Linux の UDP listen port を `INPUT` で開き、`MobilityPool` の型付き local capture intent が capture-to-tunnel の `FORWARD` パスを導出します。
 
 ## クラウドノードでのオーバーレイ/フェデレーションアドレッシング
 

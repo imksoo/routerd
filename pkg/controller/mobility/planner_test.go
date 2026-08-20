@@ -5,7 +5,7 @@ package mobility
 import (
 	"encoding/json"
 	"fmt"
-	"os"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -13,68 +13,137 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
-
-func TestMain(m *testing.M) {
-	// The startup fence is anchored on package-load wall-clock time, which does not
-	// match the fixed clocks reconcile tests inject. Anchor it far in the past so the
-	// fence is inert by default and unrelated tests exercise steady-state placement;
-	// the fence's own tests set placementSettleStart/Window locally.
-	placementSettleStart = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-	os.Exit(m.Run())
-}
 
 func TestPlacementDecision(t *testing.T) {
 	base := placementPoolSpec()
 	members := plannerMembers(base.Members)
-	if got := evaluatePlacement(members["azure-router-a"], members); !got.Active || got.ActiveNode != "azure-router-a" {
+	if got := evaluatePlacementWithIncumbent(members["azure-router-a"], members, ""); !got.Active || got.ActiveNode != "azure-router-a" {
 		t.Fatalf("router-a placement = %+v, want active", got)
 	}
-	if got := evaluatePlacement(members["azure-router-b"], members); got.Active || got.ActiveNode != "azure-router-a" {
+	if got := evaluatePlacementWithIncumbent(members["azure-router-b"], members, ""); got.Active || got.ActiveNode != "azure-router-a" {
 		t.Fatalf("router-b placement = %+v, want standby", got)
 	}
 	base.Members[1].Maintenance.Drain = true
 	members = plannerMembers(base.Members)
-	if got := evaluatePlacement(members["azure-router-b"], members); !got.Active || got.ActiveNode != "azure-router-b" {
+	if got := evaluatePlacementWithIncumbent(members["azure-router-b"], members, ""); !got.Active || got.ActiveNode != "azure-router-b" {
 		t.Fatalf("router-b after drain = %+v, want active", got)
 	}
 	base.Members[2].Maintenance.Drain = true
 	members = plannerMembers(base.Members)
-	if got := evaluatePlacement(members["azure-router-b"], members); got.Active || got.ActiveNode != "" {
+	if got := evaluatePlacementWithIncumbent(members["azure-router-b"], members, ""); got.Active || got.ActiveNode != "" {
 		t.Fatalf("all drained placement = %+v, want fail-closed", got)
 	}
 	ungrouped := plannerMembers(plannedPoolSpec().Members)
-	if got := evaluatePlacement(ungrouped["azure-router"], ungrouped); !got.Active || got.ActiveNode != "azure-router" {
+	if got := evaluatePlacementWithIncumbent(ungrouped["azure-router"], ungrouped, ""); !got.Active || got.ActiveNode != "azure-router" {
 		t.Fatalf("ungrouped placement = %+v, want active", got)
+	}
+}
+
+func TestFIBVerdictsEmitNormalizedPoolScope(t *testing.T) {
+	self := memberPlanInfo{NodeRef: "aws-router-a", Site: "aws", Capture: api.MobilityMemberCapture{Type: "provider-secondary-ip", Interface: "ens5"}}
+	peer := memberPlanInfo{NodeRef: "aws-router-b", Site: "aws"}
+	remote := memberPlanInfo{NodeRef: "azure-router", Site: "azure"}
+	pool := NormalizedMobilityPool{
+		Name:                 "cloudedge",
+		SelfCaptureInterface: "ens5",
+		Spec: api.MobilityPoolSpec{
+			Prefix: "10.77.60.7/24",
+		},
+		Prefix: netip.MustParsePrefix("10.77.60.7/24").Masked(),
+		Self:   self,
+		Members: map[string]memberPlanInfo{
+			self.NodeRef:   self,
+			peer.NodeRef:   peer,
+			remote.NodeRef: remote,
+		},
+	}
+	verdicts, routes := planFIB(pool, []ownershipDecision{{
+		Address:       "10.77.60.10/32",
+		Class:         ownershipClassStaticOwned,
+		HomeOwnerNode: self.NodeRef,
+	}})
+	if len(verdicts) != 2 || verdicts[0].Scope == nil {
+		t.Fatalf("FIB verdicts = %#v, want scope plus address verdict", verdicts)
+	}
+	scope := verdicts[0].Scope
+	if scope.Prefix != "10.77.60.0/24" || scope.PreferredSource != "10.77.60.10/32" {
+		t.Fatalf("scope = %#v", scope)
+	}
+	communities := map[string]bool{}
+	for _, community := range scope.RemoteReturnCommunities {
+		communities[community] = true
+	}
+	for _, node := range []string{"azure-router"} {
+		if !communities[bgpstate.MobilityNodeIdentityCommunity(node)] {
+			t.Fatalf("scope communities = %#v, want remote-site %s", scope.RemoteReturnCommunities, node)
+		}
+	}
+	for _, node := range []string{"aws-router-a", "aws-router-b"} {
+		if communities[bgpstate.MobilityNodeIdentityCommunity(node)] {
+			t.Fatalf("scope communities = %#v, must exclude same-site %s", scope.RemoteReturnCommunities, node)
+		}
+	}
+	if verdicts[1].Action != "local-route" || verdicts[1].Class != ownershipClassStaticOwned {
+		t.Fatalf("address verdict = %#v", verdicts[1])
+	}
+	if len(routes) != 1 {
+		t.Fatalf("local inventory route intents = %#v, want one route", routes)
+	}
+	route := routes[0]
+	if route.ID != "mobility-cloudedge-local-10-77-60-10" || route.Purpose != dynamicconfig.MobilityIPv4RoutePurposeLocalInventory || route.Destination != "10.77.60.10/32" || route.Device != "ens5" || route.Metric != 1 {
+		t.Fatalf("local inventory route intent = %#v", route)
 	}
 }
 
 func TestPlacementAutoPriority(t *testing.T) {
 	spec := placementPoolSpec()
+	placementMembers := func() []api.ResolvedMobilityPoolMember {
+		members := append([]api.ResolvedMobilityPoolMember(nil), spec.Members...)
+		for i := range members {
+			if members[i].NodeRef == "azure-router-a" {
+				continue
+			}
+			members[i].ProfileRef = ""
+			members[i].Capture = api.MobilityMemberCapture{}
+			members[i].StaticOwnedAddresses = nil
+			members[i].OwnershipDiscovery = api.MobilityOwnershipDiscovery{}
+		}
+		return members
+	}
 	spec.Members[1].Placement.Priority = 0
 	spec.Members[2].Placement.Priority = 0
-	members := plannerMembers(spec.Members)
+	normalizedMembers, err := mobilityconfig.NormalizeResolvedMobilityPoolMembers(spec.MobilityPoolSpec, placementMembers(), "azure-router-a")
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	members := plannerMembers(normalizedMembers)
 	if got := members["azure-router-a"].PlacementPriority; got != 10 {
 		t.Fatalf("azure-router-a auto priority = %d, want 10", got)
 	}
 	if got := members["azure-router-b"].PlacementPriority; got != 20 {
 		t.Fatalf("azure-router-b auto priority = %d, want 20", got)
 	}
-	if got := evaluatePlacement(members["azure-router-a"], members); !got.Active || got.ActiveNode != "azure-router-a" {
+	if got := evaluatePlacementWithIncumbent(members["azure-router-a"], members, ""); !got.Active || got.ActiveNode != "azure-router-a" {
 		t.Fatalf("auto priority placement = %+v, want router-a active", got)
 	}
 
 	spec.Members[1].Placement.Priority = 20
 	spec.Members[2].Placement.Priority = 0
-	members = plannerMembers(spec.Members)
+	normalizedMembers, err = mobilityconfig.NormalizeResolvedMobilityPoolMembers(spec.MobilityPoolSpec, placementMembers(), "azure-router-a")
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	members = plannerMembers(normalizedMembers)
 	if got := members["azure-router-a"].PlacementPriority; got != 20 {
 		t.Fatalf("explicit azure-router-a priority = %d, want 20", got)
 	}
 	if got := members["azure-router-b"].PlacementPriority; got != 10 {
 		t.Fatalf("azure-router-b auto priority = %d, want first free 10", got)
 	}
-	if got := evaluatePlacement(members["azure-router-b"], members); !got.Active || got.ActiveNode != "azure-router-b" {
+	if got := evaluatePlacementWithIncumbent(members["azure-router-b"], members, ""); !got.Active || got.ActiveNode != "azure-router-b" {
 		t.Fatalf("mixed priority placement = %+v, want explicit priority respected and router-b active", got)
 	}
 }
@@ -83,13 +152,13 @@ func equalPriorityPlacementMembers() map[string]memberPlanInfo {
 	return map[string]memberPlanInfo{
 		"aws-router-a": {
 			NodeRef:           "aws-router-a",
-			Capture:           api.AddressCapture{Type: "provider-secondary-ip", NICRef: "eni-a"},
+			Capture:           api.MobilityMemberCapture{Type: "provider-secondary-ip", NICRef: "eni-a"},
 			PlacementGroup:    "aws-edge",
 			PlacementPriority: 10,
 		},
 		"aws-router-b": {
 			NodeRef:           "aws-router-b",
-			Capture:           api.AddressCapture{Type: "provider-secondary-ip", NICRef: "eni-b"},
+			Capture:           api.MobilityMemberCapture{Type: "provider-secondary-ip", NICRef: "eni-b"},
 			PlacementGroup:    "aws-edge",
 			PlacementPriority: 10,
 		},
@@ -132,20 +201,20 @@ func TestPlacementSettleDefersReturningNodeUntilConverged(t *testing.T) {
 	// A returning node would win the equal-priority tie-break (active, no incumbent
 	// observed yet) but is still inside the settle window: it must defer so it does
 	// not preempt before the live peer surfaces.
-	if !placementSettleDefersActive(true, "", 10*time.Second, settle) {
+	if !placementStartupFenceDefersActive(true, "", 10*time.Second, settle, placementStartupReadiness{}) {
 		t.Fatalf("returning node inside settle should defer")
 	}
 	// Once the incumbent peer is observed, the tie-break already defers; the fence
 	// does not need to (and must not block legitimate post-settle behaviour).
-	if placementSettleDefersActive(true, "aws-router-b", 10*time.Second, settle) {
+	if placementStartupFenceDefersActive(true, "aws-router-b", 10*time.Second, settle, placementStartupReadiness{}) {
 		t.Fatalf("observed incumbent should not be fenced")
 	}
 	// After the settle window, normal placement applies (cold-start winner claims).
-	if placementSettleDefersActive(true, "", settle+time.Second, settle) {
+	if placementStartupFenceDefersActive(true, "", settle+time.Second, settle, placementStartupReadiness{}) {
 		t.Fatalf("after settle window should not defer")
 	}
 	// A standby (not asserting active) is never fenced.
-	if placementSettleDefersActive(false, "", 1*time.Second, settle) {
+	if placementStartupFenceDefersActive(false, "", 1*time.Second, settle, placementStartupReadiness{}) {
 		t.Fatalf("standby should not be fenced")
 	}
 }
@@ -173,59 +242,41 @@ func TestPlacementStartupFenceUsesReadiness(t *testing.T) {
 }
 
 func TestFencePlacementForStartupConvertsActiveToStandby(t *testing.T) {
-	saveStart, saveWindow := placementSettleStart, placementSettleWindow
-	defer func() { placementSettleStart, placementSettleWindow = saveStart, saveWindow }()
-	now := saveStart.Add(30 * time.Second)
-	placementSettleStart = now.Add(-30 * time.Second)
-	placementSettleWindow = 120 * time.Second
+	now := time.Date(2026, 6, 3, 10, 0, 0, 0, time.UTC)
+	startedAt := now.Add(-30 * time.Second)
+	settleWindow := 120 * time.Second
 
 	active := PlacementDecision{Group: "aws-edge", Active: true, ActiveNode: "aws-router-a"}
-	got := fencePlacementForStartup(active, "", now)
+	got := fencePlacementForStartupWithReadiness(active, "", now, startedAt, settleWindow, placementStartupReadiness{})
 	if got.Active || got.Seize {
 		t.Fatalf("fenced placement = %+v, want standby", got)
 	}
 	// With an observed incumbent the decision is left untouched.
-	withIncumbent := fencePlacementForStartup(PlacementDecision{Group: "aws-edge", Active: true}, "aws-router-b", now)
+	withIncumbent := fencePlacementForStartupWithReadiness(PlacementDecision{Group: "aws-edge", Active: true}, "aws-router-b", now, startedAt, settleWindow, placementStartupReadiness{})
 	if !withIncumbent.Active {
 		t.Fatalf("incumbent-observed placement must not be fenced: %+v", withIncumbent)
 	}
 }
 
 func TestFencePlacementForStartupWithReadiness(t *testing.T) {
-	saveStart, saveWindow := placementSettleStart, placementSettleWindow
-	defer func() { placementSettleStart, placementSettleWindow = saveStart, saveWindow }()
-	now := saveStart.Add(180 * time.Second)
-	placementSettleStart = now.Add(-180 * time.Second)
-	placementSettleWindow = 120 * time.Second
+	now := time.Date(2026, 6, 3, 10, 0, 0, 0, time.UTC)
+	startedAt := now.Add(-180 * time.Second)
+	settleWindow := 120 * time.Second
 
 	active := PlacementDecision{Group: "aws-edge", Active: true, ActiveNode: "aws-router-a"}
 	notReady := placementStartupReadiness{Known: true, BGPObserved: true, ProviderRequired: true, ProviderObserved: false}
-	got := fencePlacementForStartupWithReadiness(active, "", now, notReady)
+	got := fencePlacementForStartupWithReadiness(active, "", now, startedAt, settleWindow, notReady)
 	if got.Active || !strings.Contains(got.Reason, "startup readiness") {
 		t.Fatalf("not-ready fenced placement = %+v, want readiness standby", got)
 	}
-	got = fencePlacementForStartupWithReadiness(active, "", now.Add(placementStartupReadinessFallbackWindow(placementSettleWindow)), notReady)
+	got = fencePlacementForStartupWithReadiness(active, "", now.Add(placementStartupReadinessFallbackWindow(settleWindow)), startedAt, settleWindow, notReady)
 	if !got.Active {
 		t.Fatalf("not-ready placement should release after fallback window: %+v", got)
 	}
 	ready := placementStartupReadiness{Known: true, BGPObserved: true, ProviderRequired: true, ProviderObserved: true}
-	got = fencePlacementForStartupWithReadiness(active, "", now.Add(-290*time.Second), ready)
+	got = fencePlacementForStartupWithReadiness(active, "", now.Add(-290*time.Second), startedAt, settleWindow, ready)
 	if !got.Active {
 		t.Fatalf("ready placement should remain active inside settle window: %+v", got)
-	}
-}
-
-func TestPlacementStartupReadinessStatusReportsFallbackDegraded(t *testing.T) {
-	saveStart, saveWindow := placementSettleStart, placementSettleWindow
-	defer func() { placementSettleStart, placementSettleWindow = saveStart, saveWindow }()
-	now := saveStart.Add(400 * time.Second)
-	placementSettleStart = now.Add(-400 * time.Second)
-	placementSettleWindow = 120 * time.Second
-
-	notReady := placementStartupReadiness{Known: true, BGPObserved: true, ProviderRequired: true, ProviderObserved: false}
-	status := placementStartupReadinessStatus(notReady, now)
-	if status["degraded"] != true || status["degradeReason"] == "" {
-		t.Fatalf("status = %#v, want degraded fallback visibility", status)
 	}
 }
 
@@ -251,32 +302,30 @@ func TestHigherPriorityHolderActive(t *testing.T) {
 }
 
 func TestApplyHolderRetentionKeepsHolderActive(t *testing.T) {
-	saveStart, saveWindow := placementSettleStart, placementSettleWindow
-	defer func() { placementSettleStart, placementSettleWindow = saveStart, saveWindow }()
-	placementSettleWindow = 120 * time.Second
-	now := saveStart.Add(1000 * time.Second)
+	settleWindow := 120 * time.Second
+	now := time.Date(2026, 6, 3, 10, 0, 0, 0, time.UTC)
 
 	// Past the settle window, a node that still holds its captures must stay active
 	// even when the base decision (deterministic tie-break / peer observation) would
 	// make it stand by — the live holder never yields just because a peer is seen.
-	placementSettleStart = now.Add(-1000 * time.Second)
+	startedAt := now.Add(-1000 * time.Second)
 	standby := PlacementDecision{Group: "aws-edge", Active: false, ActiveNode: "aws-router-a"}
-	if got := applyHolderRetention(standby, true, false, now); !got.Active {
+	if got := applyHolderRetention(standby, true, false, now, startedAt, settleWindow); !got.Active {
 		t.Fatalf("holder past settle = %+v, want retained active", got)
 	}
 	// A node that does not hold is not retained.
-	if got := applyHolderRetention(standby, false, false, now); got.Active {
+	if got := applyHolderRetention(standby, false, false, now, startedAt, settleWindow); got.Active {
 		t.Fatalf("non-holder = %+v, want standby", got)
 	}
 	// A strictly higher-priority peer is the active holder: the local holder must
 	// yield (no retention) so the configured priority restore can complete.
-	if got := applyHolderRetention(standby, true, true, now); got.Active {
+	if got := applyHolderRetention(standby, true, true, now, startedAt, settleWindow); got.Active {
 		t.Fatalf("holder yielding to higher priority = %+v, want standby", got)
 	}
 	// Inside the settle window the selfHolds signal may be the returning node's stale
 	// memory, so retention must not apply (the fence keeps it passive instead).
-	placementSettleStart = now.Add(-30 * time.Second)
-	if got := applyHolderRetention(standby, true, false, now); got.Active {
+	startedAt = now.Add(-30 * time.Second)
+	if got := applyHolderRetention(standby, true, false, now, startedAt, settleWindow); got.Active {
 		t.Fatalf("holder inside settle = %+v, want not retained (stale signal)", got)
 	}
 }
@@ -342,57 +391,54 @@ func TestBGPCapturePlacementEqualPriorityNoPreemptButFailsOver(t *testing.T) {
 	}
 }
 
-func TestPlannerMembersInheritOwnershipDiscoveryProviderRef(t *testing.T) {
-	spec := discoveryPoolSpec()
-	spec.Members[1].OwnershipDiscovery.ProviderRef = ""
-	members := plannerMembers(spec.Members)
-	if got := members["azure-router-a"].OwnershipDiscovery.ProviderRef; got != "azure-provider" {
-		t.Fatalf("ownershipDiscovery providerRef = %q, want capture providerRef", got)
-	}
-}
-
 func TestProviderActionPlansRouteTableStrategy(t *testing.T) {
 	profile := api.CloudProviderProfileSpec{Provider: "aws"}
-	capture := api.AddressCapture{
+	capture := api.MobilityMemberCapture{
 		Type:            "provider-secondary-ip",
 		ProviderRef:     "aws-provider",
-		ProviderMode:    "route-table",
 		CaptureStrategy: captureStrategyRouteTable,
 		NICRef:          "eni-router",
+		Target: map[string]string{
+			"region":        "ap-northeast-1",
+			"routeTableRef": "rtb-123",
+		},
 	}
-	plans, err := providerActionPlans("cloudedge", profile, capture, map[string]string{
-		"region":        "ap-northeast-1",
-		"routeTableRef": "rtb-123",
-	}, "10.88.60.10/32", map[string]bool{}, true)
+	plans, err := providerActionPlans("cloudedge", profile, capture, "10.88.60.10/32", map[string]bool{}, true)
 	if err != nil {
 		t.Fatalf("providerActionPlans: %v", err)
 	}
-	assign := findActionPlanByAddress(plans, actionAssignSecondaryIP, "10.88.60.10/32")
+	assign := findActionPlanByAddress(plans, actionAssignRouteTableRoute, "10.88.60.10/32")
 	if assign == nil {
-		t.Fatalf("plans = %#v, want abstract assign action", plans)
+		t.Fatalf("plans = %#v, want route-table assign action", plans)
 	}
 	if assign.Target["routeTableRef"] != "rtb-123" || assign.Target["nicRef"] != "eni-router" || assign.Target["captureStrategy"] != captureStrategyRouteTable {
 		t.Fatalf("assign target = %#v, want route table target", assign.Target)
 	}
-	if assign.Undo == nil || assign.Undo.Action != actionUnassignSecondaryIP {
-		t.Fatalf("assign undo = %#v, want abstract unassign", assign.Undo)
+	if assign.Undo == nil || assign.Undo.Action != actionUnassignRouteTableRoute {
+		t.Fatalf("assign undo = %#v, want route-table unassign", assign.Undo)
 	}
 	if assign.Parameters["allowReassignment"] != "true" {
 		t.Fatalf("assign parameters = %#v, want allowReassignment", assign.Parameters)
+	}
+	unassign, err := providerCaptureActionPlan("cloudedge", profile, capture, "10.88.60.10/32", false, false, time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("route-table unassign: %v", err)
+	}
+	if unassign.Action != actionUnassignRouteTableRoute || unassign.Undo == nil || unassign.Undo.Action != actionAssignRouteTableRoute {
+		t.Fatalf("route-table unassign = %#v", unassign)
 	}
 }
 
 func TestProviderActionPlansRouteTableStrategyRequiresRouteTableRef(t *testing.T) {
 	profile := api.CloudProviderProfileSpec{Provider: "aws"}
-	capture := api.AddressCapture{
+	capture := api.MobilityMemberCapture{
 		Type:            "provider-secondary-ip",
 		ProviderRef:     "aws-provider",
 		CaptureStrategy: captureStrategyRouteTable,
 		NICRef:          "eni-router",
+		Target:          map[string]string{"region": "ap-northeast-1"},
 	}
-	_, err := providerActionPlans("cloudedge", profile, capture, map[string]string{
-		"region": "ap-northeast-1",
-	}, "10.88.60.10/32", map[string]bool{}, false)
+	_, err := providerActionPlans("cloudedge", profile, capture, "10.88.60.10/32", map[string]bool{}, false)
 	if err == nil || !strings.Contains(err.Error(), "capture.captureStrategy route-table requires capture.target.routeTableRef") {
 		t.Fatalf("providerActionPlans error = %v, want missing routeTableRef", err)
 	}
@@ -400,15 +446,16 @@ func TestProviderActionPlansRouteTableStrategyRequiresRouteTableRef(t *testing.T
 
 func TestProviderActionPlansAzureRouteTableStrategyRequiresNextHopIPAddress(t *testing.T) {
 	profile := api.CloudProviderProfileSpec{Provider: "azure"}
-	capture := api.AddressCapture{
+	capture := api.MobilityMemberCapture{
 		Type:            "provider-secondary-ip",
 		ProviderRef:     "azure-provider",
 		CaptureStrategy: captureStrategyRouteTable,
 		NICRef:          "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic",
+		Target: map[string]string{
+			"routeTableRef": "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/routeTables/rt-cloudedge",
+		},
 	}
-	_, err := providerActionPlans("cloudedge", profile, capture, map[string]string{
-		"routeTableRef": "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/routeTables/rt-cloudedge",
-	}, "10.88.60.10/32", map[string]bool{}, false)
+	_, err := providerActionPlans("cloudedge", profile, capture, "10.88.60.10/32", map[string]bool{}, false)
 	if err == nil || !strings.Contains(err.Error(), "provider azure capture.captureStrategy route-table requires capture.target.nextHopIPAddress") {
 		t.Fatalf("providerActionPlans error = %v, want missing nextHopIPAddress", err)
 	}
@@ -416,23 +463,23 @@ func TestProviderActionPlansAzureRouteTableStrategyRequiresNextHopIPAddress(t *t
 
 func TestProviderActionPlansOCIRouteTableStrategy(t *testing.T) {
 	profile := api.CloudProviderProfileSpec{Provider: "oci"}
-	capture := api.AddressCapture{
+	capture := api.MobilityMemberCapture{
 		Type:            "provider-secondary-ip",
 		ProviderRef:     "oci-provider",
-		ProviderMode:    "route-table",
 		CaptureStrategy: captureStrategyRouteTable,
 		NICRef:          "ocid1.vnic.oc1..router",
+		Target: map[string]string{
+			"routeTableRef":    "ocid1.routetable.oc1..rt1",
+			"nextHopIPAddress": "10.88.60.1",
+		},
 	}
-	plans, err := providerActionPlans("cloudedge", profile, capture, map[string]string{
-		"routeTableRef":    "ocid1.routetable.oc1..rt1",
-		"nextHopIPAddress": "10.88.60.1",
-	}, "10.88.60.10/32", map[string]bool{}, true)
+	plans, err := providerActionPlans("cloudedge", profile, capture, "10.88.60.10/32", map[string]bool{}, true)
 	if err != nil {
 		t.Fatalf("providerActionPlans: %v", err)
 	}
-	assign := findActionPlanByAddress(plans, actionAssignSecondaryIP, "10.88.60.10/32")
+	assign := findActionPlanByAddress(plans, actionAssignRouteTableRoute, "10.88.60.10/32")
 	if assign == nil {
-		t.Fatalf("plans = %#v, want abstract assign action", plans)
+		t.Fatalf("plans = %#v, want route-table assign action", plans)
 	}
 	if assign.Target["routeTableRef"] != "ocid1.routetable.oc1..rt1" ||
 		assign.Target["nextHopIPAddress"] != "10.88.60.1" ||
@@ -444,48 +491,63 @@ func TestProviderActionPlansOCIRouteTableStrategy(t *testing.T) {
 
 func TestProviderActionPlansOCIRouteTableStrategyRequiresNextHopIPAddress(t *testing.T) {
 	profile := api.CloudProviderProfileSpec{Provider: "oci"}
-	capture := api.AddressCapture{
+	capture := api.MobilityMemberCapture{
 		Type:            "provider-secondary-ip",
 		ProviderRef:     "oci-provider",
 		CaptureStrategy: captureStrategyRouteTable,
 		NICRef:          "ocid1.vnic.oc1..router",
+		Target:          map[string]string{"routeTableRef": "ocid1.routetable.oc1..rt1"},
 	}
-	_, err := providerActionPlans("cloudedge", profile, capture, map[string]string{
-		"routeTableRef": "ocid1.routetable.oc1..rt1",
-	}, "10.88.60.10/32", map[string]bool{}, false)
+	_, err := providerActionPlans("cloudedge", profile, capture, "10.88.60.10/32", map[string]bool{}, false)
 	if err == nil || !strings.Contains(err.Error(), "provider oci capture.captureStrategy route-table requires capture.target.nextHopIPAddress") {
 		t.Fatalf("providerActionPlans error = %v, want missing nextHopIPAddress", err)
 	}
 }
 
-func TestProviderActionTargetUsesCaptureTargetNICFallback(t *testing.T) {
+func TestProviderActionTargetUsesCanonicalCaptureNICRef(t *testing.T) {
 	profile := api.CloudProviderProfileSpec{Provider: "azure", SubscriptionID: "sub-1", ResourceGroup: "rg-router"}
-	target := providerActionTarget("cloudedge", profile, api.AddressCapture{
+	target := providerActionTarget("cloudedge", profile, api.MobilityMemberCapture{
 		Type:        "provider-secondary-ip",
 		ProviderRef: "azure-provider",
-	}, map[string]string{
-		"nicRef": "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic",
+		NICRef:      "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic",
 	}, "10.88.60.10/32")
 	if target["nicRef"] == "" {
-		t.Fatalf("target = %#v, want nicRef fallback from capture target", target)
+		t.Fatalf("target = %#v, want canonical capture nicRef", target)
 	}
 	if target["ipConfigName"] == "" {
-		t.Fatalf("target = %#v, want provider fields derived with fallback nicRef", target)
+		t.Fatalf("target = %#v, want provider fields derived with canonical nicRef", target)
 	}
 }
 
-func TestProviderActionPlansFallsBackToCaptureTargetNICRef(t *testing.T) {
-	profile := api.CloudProviderProfileSpec{Provider: "azure", SubscriptionID: "sub-1", ResourceGroup: "rg-router"}
-	capture := api.AddressCapture{
-		Type:        "provider-secondary-ip",
-		ProviderRef: "azure-provider",
+func TestProviderCaptureRefFromCaptureUsesCanonicalNICRef(t *testing.T) {
+	if got := providerCaptureRefFromCapture(api.MobilityMemberCapture{
+		NICRef: "eni-canonical",
+		Target: map[string]string{"nicRef": "eni-ignored"},
+	}); got != "eni-canonical" {
+		t.Fatalf("provider capture ref = %q, want canonical nicRef", got)
 	}
+	if got := providerCaptureRefFromCapture(api.MobilityMemberCapture{
+		CaptureStrategy: captureStrategyRouteTable,
+		NICRef:          "eni-canonical",
+		Target:          map[string]string{"routeTableRef": "rtb-123"},
+	}); got != "rtb-123" {
+		t.Fatalf("route-table capture ref = %q, want route table", got)
+	}
+}
+
+func TestProviderActionPlansUsesCanonicalCaptureNICRef(t *testing.T) {
+	profile := api.CloudProviderProfileSpec{Provider: "azure", SubscriptionID: "sub-1", ResourceGroup: "rg-router"}
 	captureTarget := map[string]string{
-		"nicRef":       "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic",
 		"region":       "japaneast",
 		"ipConfigName": "capture-a",
 	}
-	plans, err := providerActionPlans("cloudedge", profile, capture, captureTarget, "10.88.60.10/32", map[string]bool{}, false)
+	capture := api.MobilityMemberCapture{
+		Type:        "provider-secondary-ip",
+		ProviderRef: "azure-provider",
+		NICRef:      "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic",
+		Target:      captureTarget,
+	}
+	plans, err := providerActionPlans("cloudedge", profile, capture, "10.88.60.10/32", map[string]bool{}, false)
 	if err != nil {
 		t.Fatalf("providerActionPlans: %v", err)
 	}
@@ -493,32 +555,32 @@ func TestProviderActionPlansFallsBackToCaptureTargetNICRef(t *testing.T) {
 	if assign == nil {
 		t.Fatalf("plans = %#v, want assign plan", plans)
 	}
-	if assign.Target["nicRef"] != captureTarget["nicRef"] {
-		t.Fatalf("assign target = %#v, want nicRef from captureTarget", assign.Target)
+	if assign.Target["nicRef"] != capture.NICRef {
+		t.Fatalf("assign target = %#v, want canonical capture nicRef", assign.Target)
 	}
 
-	unassign, err := providerUnassignActionPlan("cloudedge", profile, capture, captureTarget, "10.88.60.10/32", time.Time{})
+	unassign, err := providerCaptureActionPlan("cloudedge", profile, capture, "10.88.60.10/32", false, false, time.Time{})
 	if err != nil {
-		t.Fatalf("providerUnassignActionPlan: %v", err)
+		t.Fatalf("providerCaptureActionPlan: %v", err)
 	}
-	if unassign.Target["nicRef"] != captureTarget["nicRef"] {
-		t.Fatalf("unassign target = %#v, want nicRef from captureTarget", unassign.Target)
+	if unassign.Target["nicRef"] != capture.NICRef {
+		t.Fatalf("unassign target = %#v, want canonical capture nicRef", unassign.Target)
 	}
 }
 
-func TestBGPCapturePlacementSeizesWhenActiveMarkerAbsentWithCanonicalNodeIdentity(t *testing.T) {
+func TestBGPCapturePlacementSeizesWhenActiveMarkerAbsent(t *testing.T) {
 	members := map[string]memberPlanInfo{
 		"aws-router-a": {
-			NodeRef:            "Node/aws-router-a",
-			Capture:            api.AddressCapture{Type: "provider-secondary-ip"},
+			NodeRef:            "aws-router-a",
+			Capture:            api.MobilityMemberCapture{Type: "provider-secondary-ip"},
 			PlacementGroup:     "aws-edge",
 			PlacementPriority:  10,
 			MaintenanceDrain:   false,
 			OwnershipDiscovery: api.MobilityOwnershipDiscovery{},
 		},
 		"aws-router-b": {
-			NodeRef:           "Node/aws-router-b",
-			Capture:           api.AddressCapture{Type: "provider-secondary-ip"},
+			NodeRef:           "aws-router-b",
+			Capture:           api.MobilityMemberCapture{Type: "provider-secondary-ip"},
 			PlacementGroup:    "aws-edge",
 			PlacementPriority: 20,
 		},
@@ -527,8 +589,8 @@ func TestBGPCapturePlacementSeizesWhenActiveMarkerAbsentWithCanonicalNodeIdentit
 		bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32",
 	}
 	got := evaluateBGPCapturePlacement(members["aws-router-b"], members, markers, true, "")
-	if !got.Active || !got.Seize || got.ActiveNode != "Node/aws-router-b" {
-		t.Fatalf("placement = %+v, want canonical identity failover seize by aws-router-b", got)
+	if !got.Active || !got.Seize || got.ActiveNode != "aws-router-b" {
+		t.Fatalf("placement = %+v, want failover seize by aws-router-b", got)
 	}
 	if got.SelfCommunity != bgpstate.MobilityNodeIdentityCommunity("aws-router-b") || !got.SelfMarkerPresent {
 		t.Fatalf("self liveness = %+v, want canonical aws-router-b marker present", got)
@@ -538,59 +600,27 @@ func TestBGPCapturePlacementSeizesWhenActiveMarkerAbsentWithCanonicalNodeIdentit
 	}
 }
 
-func TestBGPCapturePlacementUsesCanonicalAdvertisedMarkerForReverseNodeRefForms(t *testing.T) {
-	members := map[string]memberPlanInfo{
-		"aws-router-a": {
-			NodeRef:           "aws-router-a",
-			Capture:           api.AddressCapture{Type: "provider-secondary-ip"},
-			PlacementGroup:    "aws-edge",
-			PlacementPriority: 10,
-		},
-		"aws-router-b": {
-			NodeRef:           "aws-router-b",
-			Capture:           api.AddressCapture{Type: "provider-secondary-ip"},
-			PlacementGroup:    "aws-edge",
-			PlacementPriority: 20,
-		},
-	}
-	self := members["aws-router-b"]
-	self.NodeRef = "Node/aws-router-b"
-	present := map[string]string{
-		bgpstate.MobilityNodeIdentityCommunity("aws-router-a"): "10.99.0.2/32",
-		bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32",
-	}
-	if got := evaluateBGPCapturePlacement(self, members, present, true, ""); got.Active || got.Seize || !got.ActiveMarkerPresent {
-		t.Fatalf("placement with active marker = %+v, want standby defer", got)
-	}
-	absent := map[string]string{
-		bgpstate.MobilityNodeIdentityCommunity("aws-router-b"): "10.99.0.5/32",
-	}
-	if got := evaluateBGPCapturePlacement(self, members, absent, true, ""); !got.Active || !got.Seize || got.ActiveNode != "Node/aws-router-b" {
-		t.Fatalf("placement without active marker = %+v, want canonical reverse-form seize", got)
-	}
-}
-
-func TestBGPCapturePlacementRecognizesEventGroupAliasMarkerForActiveMember(t *testing.T) {
+func TestBGPCapturePlacementRecognizesCanonicalMarkerForActiveMember(t *testing.T) {
 	members := map[string]memberPlanInfo{
 		"azure-router-a": {
 			NodeRef:           "azure-router-a",
-			Capture:           api.AddressCapture{Type: "provider-secondary-ip"},
+			Capture:           api.MobilityMemberCapture{Type: "provider-secondary-ip"},
 			PlacementGroup:    "azure-edge",
 			PlacementPriority: 10,
 		},
 		"azure-router-b": {
 			NodeRef:           "azure-router-b",
-			Capture:           api.AddressCapture{Type: "provider-secondary-ip"},
+			Capture:           api.MobilityMemberCapture{Type: "provider-secondary-ip"},
 			PlacementGroup:    "azure-edge",
 			PlacementPriority: 20,
 		},
 	}
 	present := map[string]string{
-		bgpstate.MobilityNodeIdentityCommunity("azure-router"):   "10.99.0.3/32",
+		bgpstate.MobilityNodeIdentityCommunity("azure-router-a"): "10.99.0.3/32",
 		bgpstate.MobilityNodeIdentityCommunity("azure-router-b"): "10.99.0.6/32",
 	}
 	if got := evaluateBGPCapturePlacement(members["azure-router-b"], members, present, true, ""); got.Active || got.Seize || !got.ActiveMarkerPresent {
-		t.Fatalf("placement with active alias marker = %+v, want standby defer", got)
+		t.Fatalf("placement with active canonical marker = %+v, want standby defer", got)
 	}
 	absent := map[string]string{
 		bgpstate.MobilityNodeIdentityCommunity("azure-router-b"): "10.99.0.6/32",
@@ -600,51 +630,54 @@ func TestBGPCapturePlacementRecognizesEventGroupAliasMarkerForActiveMember(t *te
 	}
 }
 
-func plannedPoolSpec() api.MobilityPoolSpec {
-	return api.MobilityPoolSpec{
+// testMobilityPoolSpec keeps the resolved topology separate from the declared
+// MobilityPool overlay. Production tests build a SAMNodeSet from Members so
+// controller fixtures exercise the same one-topology contract as real config.
+type testMobilityPoolSpec struct {
+	api.MobilityPoolSpec
+	Members []api.ResolvedMobilityPoolMember
+}
+
+func plannedPoolSpec() testMobilityPoolSpec {
+	return testMobilityPoolSpec{MobilityPoolSpec: api.MobilityPoolSpec{
 		Prefix:   "10.88.60.0/24",
 		GroupRef: "cloudedge",
-		Members: []api.MobilityPoolMember{
-			{
-				NodeRef:  "onprem-router",
-				Site:     "onprem",
-				Role:     "onprem",
-				Capture:  api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan"},
-				Delivery: api.MobilityMemberDelivery{PeerRef: "azure", Mode: "route", TunnelInterface: "wg-hybrid"},
-			},
-			{
-				NodeRef: "azure-router",
-				Site:    "azure",
-				Role:    "cloud",
-				Capture: api.MobilityMemberCapture{
-					Type:         "provider-secondary-ip",
-					ProviderRef:  "azure-provider",
-					ProviderMode: "nic-secondary-ip",
-					NICRef:       "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic",
-					Target:       map[string]string{"region": "japaneast"},
-				},
-				Delivery: api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
+	}, Members: []api.ResolvedMobilityPoolMember{
+		{
+			NodeRef: "onprem-router",
+			Site:    "onprem",
+			Role:    "onprem",
+			Capture: api.MobilityMemberCapture{Type: "proxy-arp", Interface: "lan"},
+		},
+		{
+			NodeRef: "azure-router",
+			Site:    "azure",
+			Role:    "cloud",
+			Capture: api.MobilityMemberCapture{
+				Type:        "provider-secondary-ip",
+				ProviderRef: "azure-provider",
+				NICRef:      "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic",
+				Target:      map[string]string{"region": "japaneast"},
 			},
 		},
+	},
 	}
 }
 
-func placementPoolSpec() api.MobilityPoolSpec {
+func placementPoolSpec() testMobilityPoolSpec {
 	spec := plannedPoolSpec()
-	spec.Members = []api.MobilityPoolMember{
+	spec.Members = []api.ResolvedMobilityPoolMember{
 		spec.Members[0],
 		{
 			NodeRef: "azure-router-a",
 			Site:    "azure",
 			Role:    "cloud",
 			Capture: api.MobilityMemberCapture{
-				Type:         "provider-secondary-ip",
-				ProviderRef:  "azure-provider",
-				ProviderMode: "nic-secondary-ip",
-				NICRef:       "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-a",
-				Target:       map[string]string{"region": "japaneast", "ipConfigName": "capture-a"},
+				Type:        "provider-secondary-ip",
+				ProviderRef: "azure-provider",
+				NICRef:      "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-a",
+				Target:      map[string]string{"region": "japaneast", "ipConfigName": "capture-a"},
 			},
-			Delivery:  api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
 			Placement: api.MobilityMemberPlacement{Group: "azure-edge", Priority: 10},
 		},
 		{
@@ -652,43 +685,38 @@ func placementPoolSpec() api.MobilityPoolSpec {
 			Site:    "azure",
 			Role:    "cloud",
 			Capture: api.MobilityMemberCapture{
-				Type:         "provider-secondary-ip",
-				ProviderRef:  "azure-provider",
-				ProviderMode: "nic-secondary-ip",
-				NICRef:       "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-b",
-				Target:       map[string]string{"region": "japaneast", "ipConfigName": "capture-b"},
+				Type:        "provider-secondary-ip",
+				ProviderRef: "azure-provider",
+				NICRef:      "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-b",
+				Target:      map[string]string{"region": "japaneast", "ipConfigName": "capture-b"},
 			},
-			Delivery:  api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
 			Placement: api.MobilityMemberPlacement{Group: "azure-edge", Priority: 20},
 		},
 	}
 	return spec
 }
 
-func centralizedOwnershipPoolSpec() api.MobilityPoolSpec {
+func centralizedOwnershipPoolSpec() testMobilityPoolSpec {
 	spec := placementPoolSpec()
-	spec.IPOwnershipPolicy = api.MobilityIPOwnershipPolicy{Type: "centralized"}
 	spec.Members[1].Placement.Priority = 10
 	spec.Members[2].Placement.Priority = 20
 	return spec
 }
 
-func awsFailoverPoolSpec() api.MobilityPoolSpec {
+func awsFailoverPoolSpec() testMobilityPoolSpec {
 	spec := plannedPoolSpec()
-	spec.Members = []api.MobilityPoolMember{
+	spec.Members = []api.ResolvedMobilityPoolMember{
 		spec.Members[0],
 		{
 			NodeRef: "aws-router-a",
 			Site:    "aws",
 			Role:    "cloud",
 			Capture: api.MobilityMemberCapture{
-				Type:         "provider-secondary-ip",
-				ProviderRef:  "aws-provider",
-				ProviderMode: "nic-secondary-ip",
-				NICRef:       "eni-a",
-				Target:       map[string]string{"region": "ap-northeast-1"},
+				Type:        "provider-secondary-ip",
+				ProviderRef: "aws-provider",
+				NICRef:      "eni-a",
+				Target:      map[string]string{"region": "ap-northeast-1"},
 			},
-			Delivery:  api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
 			Placement: api.MobilityMemberPlacement{Group: "aws-edge", Priority: 10},
 		},
 		{
@@ -696,31 +724,24 @@ func awsFailoverPoolSpec() api.MobilityPoolSpec {
 			Site:    "aws",
 			Role:    "cloud",
 			Capture: api.MobilityMemberCapture{
-				Type:         "provider-secondary-ip",
-				ProviderRef:  "aws-provider",
-				ProviderMode: "nic-secondary-ip",
-				NICRef:       "eni-b",
-				Target:       map[string]string{"region": "ap-northeast-1"},
+				Type:        "provider-secondary-ip",
+				ProviderRef: "aws-provider",
+				NICRef:      "eni-b",
+				Target:      map[string]string{"region": "ap-northeast-1"},
 			},
-			Delivery:  api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
 			Placement: api.MobilityMemberPlacement{Group: "aws-edge", Priority: 20},
 		},
 		{
-			NodeRef:  "azure-router",
-			Site:     "azure",
-			Role:     "cloud",
-			Capture:  api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "azure-provider", ProviderMode: "nic-secondary-ip", NICRef: "azure-nic"},
-			Delivery: api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
+			NodeRef: "azure-router",
+			Site:    "azure",
+			Role:    "cloud",
 		},
 		{
-			NodeRef:  "oci-router",
-			Site:     "oci",
-			Role:     "cloud",
-			Capture:  api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "oci-provider", ProviderMode: "vnic-secondary-ip", NICRef: "oci-vnic"},
-			Delivery: api.MobilityMemberDelivery{PeerRef: "onprem", Mode: "route", TunnelInterface: "wg-hybrid"},
+			NodeRef: "oci-router",
+			Site:    "oci",
+			Role:    "cloud",
 		},
 	}
-	spec.IPOwnershipPolicy = api.MobilityIPOwnershipPolicy{Type: "centralized", AutoFailover: true}
 	return spec
 }
 
@@ -728,42 +749,89 @@ func planningRouter() *api.Router {
 	return planningRouterForNode("azure-router", plannedPoolSpec())
 }
 
-func planningRouterForNode(nodeName string, spec api.MobilityPoolSpec) *api.Router {
+// localizeMobilityPoolSpecForNode models one node's authoring surface. Shared
+// members retain only topology fields; capture, provider discovery, and static
+// ownership belong to the local member and are observed elsewhere through BGP
+// or federation facts.
+func localizeMobilityPoolSpecForNode(spec testMobilityPoolSpec, nodeName string) (api.MobilityPoolSpec, api.Resource) {
+	members := plannerMembers(spec.Members)
+	self, ok := lookupMemberByNodeRef(members, nodeName)
+	if !ok {
+		return spec.MobilityPoolSpec, api.Resource{}
+	}
+	var selfMember api.ResolvedMobilityPoolMember
+	for _, member := range spec.Members {
+		if member.NodeRef == self.NodeRef {
+			selfMember = member
+			break
+		}
+	}
+	out := spec.MobilityPoolSpec
+	out.MembersFrom = []api.MobilityMembersSourceSpec{{Resource: "SAMNodeSet/cloudedge"}}
+	out.Members = []api.MobilityPoolMemberOverlay{{
+		NodeRef:              self.NodeRef,
+		ProfileRef:           selfMember.ProfileRef,
+		Capture:              self.Capture,
+		StaticOwnedAddresses: append([]string(nil), self.StaticOwnedAddresses...),
+		OwnershipDiscovery:   self.OwnershipDiscovery,
+	}}
+	nodes := make([]api.SAMNodeSpec, 0, len(spec.Members))
+	for _, member := range spec.Members {
+		nodes = append(nodes, api.SAMNodeSpec{
+			NodeRef:         member.NodeRef,
+			Site:            member.Site,
+			Role:            member.Role,
+			Placement:       member.Placement,
+			Maintenance:     member.Maintenance,
+			MaxSecondaryIPs: member.MaxSecondaryIPs,
+		})
+	}
+	return out, mobilityNodeSetResource("cloudedge", nodes)
+}
+
+func planningRouterForNode(nodeName string, spec testMobilityPoolSpec) *api.Router {
+	poolSpec, nodeSet := localizeMobilityPoolSpecForNode(spec, nodeName)
+	resources := []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec:     api.EventGroupSpec{NodeName: nodeName},
+		},
+	}
+	if nodeSet.Kind != "" {
+		resources = append(resources, nodeSet)
+	}
+	resources = append(resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
+			Metadata: api.ObjectMeta{Name: "cloudedge"},
+			Spec:     poolSpec,
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "CloudProviderProfile"},
+			Metadata: api.ObjectMeta{Name: "azure-provider"},
+			Spec: api.CloudProviderProfileSpec{
+				Provider:       "azure",
+				SubscriptionID: "sub-1",
+				ResourceGroup:  "rg-router",
+				Capabilities:   []string{"nic-secondary-ip", "ip-forwarding"},
+				Auth:           api.ProviderAuth{Mode: "external-command", Command: "az"},
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "CloudProviderProfile"},
+			Metadata: api.ObjectMeta{Name: "aws-provider"},
+			Spec: api.CloudProviderProfileSpec{
+				Provider:     "aws",
+				Capabilities: []string{"nic-secondary-ip", "ip-forwarding"},
+				Auth:         api.ProviderAuth{Mode: "external-command", Command: "aws"},
+			},
+		},
+	)
 	return &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
-				Metadata: api.ObjectMeta{Name: "cloudedge"},
-				Spec:     api.EventGroupSpec{NodeName: nodeName},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
-				Metadata: api.ObjectMeta{Name: "cloudedge"},
-				Spec:     spec,
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "CloudProviderProfile"},
-				Metadata: api.ObjectMeta{Name: "azure-provider"},
-				Spec: api.CloudProviderProfileSpec{
-					Provider:       "azure",
-					SubscriptionID: "sub-1",
-					ResourceGroup:  "rg-router",
-					Capabilities:   []string{"nic-secondary-ip", "ip-forwarding"},
-					Auth:           api.ProviderAuth{Mode: "external-command", Command: "az"},
-				},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "CloudProviderProfile"},
-				Metadata: api.ObjectMeta{Name: "aws-provider"},
-				Spec: api.CloudProviderProfileSpec{
-					Provider:     "aws",
-					Capabilities: []string{"nic-secondary-ip", "ip-forwarding"},
-					Auth:         api.ProviderAuth{Mode: "external-command", Command: "aws"},
-				},
-			},
-		}},
+		Spec:     api.RouterSpec{Resources: resources},
 	}
 }
 
@@ -889,9 +957,9 @@ func saveBGPStatus(t *testing.T, store interface {
 func seedElapsedBGPSeizeHoldDown(t *testing.T, store interface {
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
 	ObjectStatus(apiVersion, kind, name string) map[string]any
-}, poolName, selfNode string, spec api.MobilityPoolSpec, livenessMarkers map[string]string, now time.Time) {
+}, poolName, selfNode string, resolvedMembers []api.ResolvedMobilityPoolMember, livenessMarkers map[string]string, now time.Time) {
 	t.Helper()
-	members := plannerMembers(spec.Members)
+	members := plannerMembers(resolvedMembers)
 	self, ok := lookupMemberByNodeRef(members, selfNode)
 	if !ok {
 		t.Fatalf("self member %q not found", selfNode)

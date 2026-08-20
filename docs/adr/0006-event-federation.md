@@ -13,10 +13,10 @@ Phases 1, 1.5, 2, and 3 are **implemented on `event-federation`**:
 - **Phase 2** (peer delivery over the overlay via `routerd-eventd`, HMAC, retry,
   retention prune) — done; **lab-smoke PASS**
   ([transport evidence](../releases/evidence/cloudedge-event-federation-transport-20260530.md)).
-- **Phase 3** (subscription → plugin → `RemoteAddressClaim` `DynamicConfigPart`) —
+- **Phase 3** (subscription → plugin → typed `DynamicConfigPart`) —
   done; **lab-smoke PASS**
   ([subscription evidence](../releases/evidence/cloudedge-event-federation-subscription-20260530.md),
-  [how-to](../how-to/event-federation-subscription.md)).
+  [mobility demo](../how-to/cloudedge-mobility-demo.md)).
 
 Phase 4 (provider `actionPlan` plugins, dry-run) and Phase 5 (provider action
 execution) are **implemented on `main`**.
@@ -36,15 +36,15 @@ Post-MVP reliability phases:
 SAM ([reference](../reference/selective-address-mobility),
 [milestone](../releases/cloudedge-sam-mvp-milestone.md)) is clean-validated
 on Azure×PVE, AWS×PVE, and OCI×PVE (3-cloud parity). It proves the
-**capture (provider-specific) / delivery+claim (routerd-common)** split. But the
-`RemoteAddressClaim` that drives it is **hand-authored** today. The next step is to
-discover, propagate, and materialize claims **event-driven**:
+**capture (provider-specific) / BGP delivery plus typed local plan** split. The
+former hand-authored claim-resource stage has been retired; observed facts now
+feed `MobilityPool` planning **event-driven**:
 
 > on-prem routerctl plans a client IPv4 (ARP/Clients/DHCP) → emits a typed event →
-> federation bus delivers it to the cloud routerd → a subscription triggers a
-> provider plugin → plugin returns a `RemoteAddressClaim` as a `DynamicConfigPart`
-> (+ a provider secondary-IP `actionPlan`) → cloud is ready for `provider-secondary-ip`
-> capture, with **no human editing the cloud config**.
+> federation bus delivers it to the cloud routerd → a subscription records/adopts
+> the observed fact → `MobilityPool` planning emits typed local capture and FIB
+> intents (+ a provider secondary-IP `actionPlan`) → cloud is ready for
+> `provider-secondary-ip` capture, with **no human editing the cloud config**.
 
 ### What already exists (so the MVP is *not* greenfield)
 
@@ -55,12 +55,13 @@ genuinely new work is the **node-to-node federation transport** and the
 - **Typed event envelope**: `pkg/daemonapi` `DaemonEvent{Type,Time,Daemon,Resource,
   Severity,Reason,Message,Attributes}` + `NewEvent(...)`. Today it flows
   daemon→main, but it is already a typed topic-carrying envelope.
-- **Daemon→routerd transport pattern**: daemons POST to the control socket over
-  HTTP-over-unix (`cmd/routerd-dhcp-event-relay` → `controlapi.Prefix +
-  /dhcp-lease-event` via `unix:/run/routerd/routerd.sock`). There is even an
-  *event-relay daemon precedent*.
-- **Separate long-lived daemon precedent**: 13 `cmd/routerd-*` daemons
-  (`routerd-bgp`, `routerd-ra-observer`, `routerd-dhcp-event-relay`, …). The
+- **Helper→routerd transport pattern**: local helpers POST to the control
+  socket over HTTP-over-unix (`cmd/routerd-dhcp-event-relay` →
+  `controlapi.Prefix + /dhcp-lease-event` via
+  `unix:/run/routerd/routerd.sock`). The DHCP relay is a one-shot dnsmasq
+  callback helper, not a daemon.
+- **Separate long-lived daemon precedent**: long-lived `cmd/routerd-*`
+  processes such as `routerd-bgp` and `routerd-ra-observer`. The
   gobgp pivot (ADR 0004) established "separate long-lived process over in-process"
   to avoid restart-drops.
 - **Plugin → DynamicConfigPart pipeline**: `pkg/plugin/runner.go`,
@@ -81,9 +82,10 @@ ships a working, demoable slice and gates the next.
 ### Design principles
 
 1. **Events are observed facts, not config.** A node sends
-   `routerd.client.ipv4.observed`, never a raw `RemoteAddressClaim`. The receiver's
-   *trusted local plugin* decides whether/how to turn it into a typed claim +
-   actionPlan. The wire never carries commands to execute.
+   `routerd.client.ipv4.observed`, never a raw desired-capture resource. The
+   receiver's *trusted local admission path* decides whether/how that fact feeds a
+   `MobilityPool` plan and provider action proposal. The wire never carries
+   commands to execute.
 2. **at-least-once + idempotent**, not exactly-once. Store idempotency is keyed on
    the event `id` (a duplicate `id` is a no-op insert); `dedupeKey` is a
    subscription-side grouping key for collapsing repeated observations of the same
@@ -126,13 +128,14 @@ correctness conditions, stated as invariants:
   `ownerSide` + `domain`; captured/secondary addresses are excluded from the
   observer's source set. Without this, cloud's own secondary `.9` gets re-observed →
   re-propagated → flap.
-- **Asymmetric provision vs de-provision.** Provisioning (claim appears) may be
-  prompt. **De-provisioning (TTL expiry / `*.expired`) must be hysteretic** — a much
+- **Asymmetric provision vs de-provision.** Provisioning (an address becomes
+  eligible) may be prompt. **De-provisioning (TTL expiry / `*.expired`) must be hysteretic** — a much
   longer grace + debounce than the 300s observe TTL — because a flapping client must
   not drive repeated cloud secondary-IP assign/unassign (API rate limits + cost +
   dataplane churn). TTL→teardown policy is explicit and conservative.
 - **Single writer per (domain, address).** The owning side is authoritative; the
-  receiver only ever proposes a claim for an address whose `ownerSide` is the *sender*.
+  receiver only ever records an ownership fact for an address whose `ownerSide` is
+  the *sender*.
 - **Idempotent provider actions.** "already assigned" ⇒ success/no-op across
   aws/azure/oci.
 
@@ -171,12 +174,11 @@ acceptance. Implementation delegated to codex; claude orchestrates + reviews.
   `EventSubscription` Kind; event batch → `PluginRequest`; `PluginResult` →
   `DynamicConfigPart` (with `routerd.net/dynamic-source`, `event-id`, `event-group`
   annotations); debounce/batchWindow; `event_subscription_runs`. *Accept:* cloud
-  receives `client.ipv4.observed` for `10.88.60.9/32` → plugin → `RemoteAddressClaim`
-  DynamicConfigPart visible in `routerctl dynamic render`; actionPlan shown,
-  not executed.
-- **✅ DONE — Phase 4 — Provider actionPlan plugins (dry-run).** `aws/azure/oci-address-claim`
-  plugins; standardized `actionPlan` format; instance-identity auth.
-  Plugins propose assign-secondary-IP; plan visible in
+  receives `client.ipv4.observed` for `10.88.60.9/32` → typed DynamicConfigPart
+  visible in `routerctl dynamic render`; actionPlan shown, not executed.
+- **✅ DONE — Phase 4 — Provider `actionPlan` planning (dry-run).** Standardized
+  `actionPlan` data carries an assign-secondary-IP proposal with
+  instance-identity inputs; the plan is visible in
   `routerctl plugin`/`dynamic`.
 - **✅ DONE (lab-smoke PASS) — Phase 5 — Provider action execution.** Approval/auto-apply policy;
   action journal; `routerctl action` commands; engine.go + executor.go.

@@ -253,6 +253,42 @@ func TestNextIPv4PrefixProbeTargetAllowsPointToPointHosts(t *testing.T) {
 	}
 }
 
+func TestOnDemandProbingRequiresIgnoredSenderMACHandshake(t *testing.T) {
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	target := netip.MustParseAddr("192.168.123.10")
+	d := &daemon{
+		opts: options{
+			ignoredSenderMACs: map[string]bool{},
+			probeCooldown:     time.Minute,
+			probeTimeout:      time.Second,
+		},
+		lastProbeAt:  map[string]time.Time{},
+		pendingProbe: map[string]time.Time{},
+	}
+
+	if d.shouldStartActiveProbe(target, now) {
+		t.Fatal("probe admission succeeded before ignored-sender handshake")
+	}
+	if len(d.lastProbeAt) != 0 || len(d.pendingProbe) != 0 {
+		t.Fatalf("unarmed probe changed probe state: last=%#v pending=%#v", d.lastProbeAt, d.pendingProbe)
+	}
+
+	// An empty set is a completed controller handshake and must arm probing.
+	d.mu.Lock()
+	d.opts.ignoredSenderMACs = map[string]bool{}
+	d.ignoredSenderMACsInitialized = true
+	d.mu.Unlock()
+	if !d.shouldStartActiveProbe(target, now) {
+		t.Fatal("probe admission rejected after empty ignored-sender handshake")
+	}
+	if _, ok := d.lastProbeAt[target.String()]; !ok {
+		t.Fatalf("armed probe did not record cooldown for %s", target)
+	}
+	if _, ok := d.pendingProbe[target.String()]; !ok {
+		t.Fatalf("armed probe did not record pending target for %s", target)
+	}
+}
+
 func TestPublishObservationDemotesKnownSameIPMAC(t *testing.T) {
 	d := &daemon{
 		opts: options{

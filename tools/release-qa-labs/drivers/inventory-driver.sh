@@ -166,10 +166,16 @@ else
 fi
 
 pve_host="$pve_ssh_host"
-pve_vmids="$(jq -c '.pve.vmids' "$contract_path")"
+# The disposable qnap template stage is a real PVE VM/template resource and
+# must be zeroed with the six workload VMs before cleanup can claim success.
+pve_vmids="$(jq -ec '[.pve.templateStage.vmid] + [.pve.vmids[]] | unique' "$contract_path")"
+pve_ssh=(ssh -n -i "$pve_ssh_private_key" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+  -o UserKnownHostsFile="$pve_ssh_known_hosts" -o GlobalKnownHostsFile=/dev/null \
+  -o CanonicalizeHostname=no -o IdentitiesOnly=yes -o PasswordAuthentication=no \
+  -o KbdInteractiveAuthentication=no -o ConnectTimeout=10)
 # One authoritative cluster query distinguishes absence from SSH/auth/API
 # failure. Any nonzero SSH status or malformed result aborts inventory.
-ssh -n -i "$pve_ssh_private_key" -o BatchMode=yes -o ConnectTimeout=10 "root@$pve_host" \
+"${pve_ssh[@]}" "root@$pve_host" \
   "pvesh get /cluster/resources --type vm --output-format json" \
   >"$inventory_evidence/pve-cluster-vms.json"
 jq -e 'type == "array"' "$inventory_evidence/pve-cluster-vms.json" >/dev/null ||
@@ -184,14 +190,25 @@ else
 fi
 
 pve_bridge="$(jq -er '.pve.captureBridge' "$contract_path")"
-ssh -n -i "$pve_ssh_private_key" -o BatchMode=yes -o ConnectTimeout=10 "root@$pve_host" \
+"${pve_ssh[@]}" "root@$pve_host" \
   "pvesh get /nodes/$(printf '%q' "$pve_node")/network --output-format json" \
   >"$inventory_evidence/pve-network.json"
-pve_bridge_count="$(jq --arg bridge "$pve_bridge" '[.[] | select(.iface == $bridge)] | length' "$inventory_evidence/pve-network.json")"
+jq -e 'type == "array"' "$inventory_evidence/pve-network.json" >/dev/null ||
+  die "PVE persistent network inventory is invalid"
+pve_persistent_bridge_count="$(jq --arg bridge "$pve_bridge" '[.[] | select(.iface == $bridge)] | length' "$inventory_evidence/pve-network.json")"
+"${pve_ssh[@]}" "root@$pve_host" "ip -j -d link show" \
+  >"$inventory_evidence/pve-live-links.json"
+jq -e 'type == "array"' "$inventory_evidence/pve-live-links.json" >/dev/null ||
+  die "PVE live link inventory is invalid"
+pve_live_bridge_count="$(jq --arg bridge "$pve_bridge" '[.[] | select(.ifname == $bridge)] | length' "$inventory_evidence/pve-live-links.json")"
+# Both inventories may describe the same bridge; this scope counts the exact
+# run-scoped target as occupied once while retaining both raw counts in its
+# diagnostic for cleanup forensics.
+pve_bridge_count=$((pve_persistent_bridge_count > 0 || pve_live_bridge_count > 0 ? 1 : 0))
 if [ "$pve_bridge_count" -eq 0 ]; then
-  record pve-bridges PASS "exact capture bridge absent"
+  record pve-bridges PASS "exact capture bridge absent from persistent config and live links"
 else
-  record pve-bridges FAIL "exact capture bridge count=$pve_bridge_count"
+  record pve-bridges FAIL "exact capture bridge persistent=$pve_persistent_bridge_count live=$pve_live_bridge_count"
 fi
 
 jq -n \

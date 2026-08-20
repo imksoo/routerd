@@ -1,17 +1,22 @@
-[Unit]
 # routerd-managed-service: v1
-Description=routerd declarative router controller
-After=network-pre.target
-Wants=network-pre.target
+# Managed by routerd. Do not edit by hand.
+[Unit]
+Description=routerd daemon
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/sbin/routerd serve --config /usr/local/etc/routerd/router.yaml --socket /run/routerd/routerd.sock --status-socket /run/routerd/routerd-status.sock --apply-interval 60s
+ExecStart=/usr/local/sbin/routerd serve
 Restart=always
-RestartSec=2s
-RuntimeDirectory=routerd
+RestartSec=5s
+RuntimeDirectory=routerd routerd/bgp routerd/dhcpv6-client routerd/dhcpv4-client routerd/pppoe-client routerd/dns-resolver
 RuntimeDirectoryPreserve=yes
 StateDirectory=routerd
+LogsDirectory=routerd
+NoNewPrivileges=no
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN
 
 [Install]
 WantedBy=multi-user.target

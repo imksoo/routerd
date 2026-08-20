@@ -250,65 +250,6 @@ func TestKernelModulesForFreeBSDUsePFRuntimeModules(t *testing.T) {
 	}
 }
 
-func TestDerivedSysctlResourcesForSAMAreStrictlyGated(t *testing.T) {
-	empty := &api.Router{}
-	if keys := derivedSysctlKeys(t, empty); len(keys) != 0 {
-		t.Fatalf("empty router derived sysctls = %#v, want none", keys)
-	}
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"}, Metadata: api.ObjectMeta{Name: "app"}, Spec: api.RemoteAddressClaimSpec{
-			DomainRef: "same-subnet",
-			Address:   "10.0.1.123/32",
-			OwnerSide: "onprem",
-			Capture:   api.AddressCapture{Type: "proxy-arp", Interface: "lan0"},
-			Delivery:  api.AddressDelivery{PeerRef: "cloud-main", Mode: "route", TunnelInterface: "wg-sam"},
-		}},
-	}}}
-	keys := derivedSysctlKeys(t, router)
-	for _, want := range []string{"net.ipv4.ip_forward", "net.ipv4.conf.lan0.proxy_arp"} {
-		if !keys[want] {
-			t.Fatalf("missing SAM sysctl %s in %#v", want, sortedKeys(keys))
-		}
-	}
-	for _, unwanted := range []string{"net.ipv4.conf.all.rp_filter", "net.ipv4.conf.default.rp_filter"} {
-		if keys[unwanted] {
-			t.Fatalf("SAM must not derive rp_filter sysctl %s: %#v", unwanted, sortedKeys(keys))
-		}
-	}
-
-	spec := router.Spec.Resources[0].Spec.(api.RemoteAddressClaimSpec)
-	spec.Capture.ActiveWhen = api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"}
-	router.Spec.Resources[0].Spec = spec
-	keys = derivedSysctlKeys(t, router)
-	if keys["net.ipv4.conf.lan0.proxy_arp"] {
-		t.Fatalf("VRRP-gated SAM must not derive unconditional proxy_arp sysctl: %#v", sortedKeys(keys))
-	}
-	if !keys["net.ipv4.ip_forward"] {
-		t.Fatalf("VRRP-gated SAM still needs ip_forward sysctl: %#v", sortedKeys(keys))
-	}
-}
-
-func TestPackageFeaturesIncludeArpingForVRRPGatedSAMCapture(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
-		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
-		Metadata: api.ObjectMeta{Name: "app"},
-		Spec: api.RemoteAddressClaimSpec{
-			DomainRef: "same-subnet",
-			Address:   "10.0.1.123/32",
-			OwnerSide: "onprem",
-			Capture: api.AddressCapture{
-				Type:       "proxy-arp",
-				Interface:  "lan0",
-				ActiveWhen: api.CaptureActiveWhen{Type: "vrrp-master", VirtualAddressRef: "onprem-vip"},
-			},
-			Delivery: api.AddressDelivery{PeerRef: "cloud-main", Mode: "route", TunnelInterface: "wg-sam"},
-		},
-	}}}}
-	if features := packageFeatures(router); !features["arping"] {
-		t.Fatalf("features = %#v, want arping for VRRP-gated SAM capture", features)
-	}
-}
-
 func TestPackageFeaturesIncludeArpingForStaticVirtualAddressAnnouncement(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
 		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
@@ -317,6 +258,21 @@ func TestPackageFeaturesIncludeArpingForStaticVirtualAddressAnnouncement(t *test
 	}}}}
 	if features := packageFeatures(router); !features["arping"] {
 		t.Fatalf("features = %#v, want arping for static VirtualAddress gratuitousARP", features)
+	}
+}
+
+func TestDerivedPackagesDoNotManageHostServiceManager(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+		Metadata: api.ObjectMeta{Name: "wan"},
+		Spec:     api.InterfaceSpec{IfName: "ens18"},
+	}}}}
+	for _, set := range PackageSets(router) {
+		for _, name := range set.Names {
+			if name == "systemd" {
+				t.Fatalf("derived package set for %s must not manage systemd: %#v", set.OS, set.Names)
+			}
+		}
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/conntracktuning"
 	"github.com/imksoo/routerd/pkg/daemonapi"
@@ -32,6 +33,7 @@ type SysctlController struct {
 	Store   Store
 	Command outputCommandFunc
 	BaseDir string
+	DryRun  bool
 }
 
 func (c SysctlController) Reconcile(ctx context.Context) error {
@@ -48,7 +50,7 @@ func (c SysctlController) Reconcile(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			if result.changed && c.Bus != nil {
+			if result.changed && !c.DryRun && c.Bus != nil {
 				if err := c.publishApplied(ctx, "Sysctl", resource.Metadata.Name, spec.Key, spec.Value); err != nil {
 					return err
 				}
@@ -81,6 +83,9 @@ func (c SysctlController) Reconcile(ctx context.Context) error {
 			if len(skipped) > 0 {
 				phase = "Degraded"
 			}
+			if c.DryRun && len(changed) > 0 && phase == "Applied" {
+				phase = "Rendered"
+			}
 			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "SysctlProfile", resource.Metadata.Name, map[string]any{
 				"phase":      phase,
 				"profile":    spec.Profile,
@@ -89,11 +94,12 @@ func (c SysctlController) Reconcile(ctx context.Context) error {
 				"skipped":    skipped,
 				"runtime":    api.BoolDefault(spec.Runtime, true),
 				"persistent": spec.Persistent,
+				"dryRun":     c.DryRun,
 				"updatedAt":  time.Now().UTC().Format(time.RFC3339Nano),
 			}); err != nil {
 				return err
 			}
-			if len(changed) > 0 && c.Bus != nil {
+			if len(changed) > 0 && !c.DryRun && c.Bus != nil {
 				if err := c.publishApplied(ctx, "SysctlProfile", resource.Metadata.Name, "profile", spec.Profile); err != nil {
 					return err
 				}
@@ -135,6 +141,7 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 			"value":      spec.Value,
 			"updatedAt":  time.Now().UTC().Format(time.RFC3339Nano),
 			"persistent": spec.Persistent,
+			"dryRun":     c.DryRun,
 		}); err != nil {
 			return sysctlApplyResult{}, err
 		}
@@ -160,7 +167,7 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 	}
 	matches, compareErr := sysctlValueMatches(current, expected, spec.Compare)
 	runtimeChanged := currentErr != nil || compareErr != nil || !matches
-	if runtimeChanged {
+	if runtimeChanged && !c.DryRun {
 		if out, err := command(ctx, "sysctl", "-w", spec.Key+"="+spec.Value); err != nil {
 			status := map[string]any{
 				"phase":        "Error",
@@ -194,7 +201,7 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 		persistentPath = filepath.Join(baseDir, "90-routerd-"+safeSysctlName(name)+".conf")
 		data := []byte(fmt.Sprintf("# Managed by routerd. Do not edit by hand.\n%s = %s\n", spec.Key, spec.Value))
 		var err error
-		persistentChanged, err = writeFileIfChanged(persistentPath, data, 0644, false)
+		persistentChanged, err = writeFileIfChanged(persistentPath, data, 0644, c.DryRun)
 		if err != nil {
 			status := map[string]any{
 				"phase":        "Error",
@@ -220,8 +227,12 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 		}
 	}
 	changed := runtimeChanged || persistentChanged
+	phase := "Applied"
+	if c.DryRun && changed {
+		phase = "Rendered"
+	}
 	status := map[string]any{
-		"phase":         "Applied",
+		"phase":         phase,
 		"key":           spec.Key,
 		"value":         spec.Value,
 		"expectedValue": expected,
@@ -232,6 +243,7 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 		"persistent":    spec.Persistent,
 		"optional":      spec.Optional,
 		"path":          persistentPath,
+		"dryRun":        c.DryRun,
 		"updatedAt":     time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	if runtimeChanged && currentErr == nil {
@@ -244,7 +256,7 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 }
 
 func (c SysctlController) cleanupRemovedSAMProxyARP(ctx context.Context, desired map[string]bool) error {
-	if c.Store == nil {
+	if c.DryRun || c.Store == nil {
 		return nil
 	}
 	lister, ok := c.Store.(interface {
@@ -288,7 +300,7 @@ func (c SysctlController) cleanupRemovedSAMProxyARP(ctx context.Context, desired
 		}
 		key := strings.TrimSpace(fmt.Sprint(status.Status["key"]))
 		previous := strings.TrimSpace(fmt.Sprint(status.Status["previousValue"]))
-		changed, _ := statusBool(status.Status["changed"])
+		changed, _ := statusvalue.ExtendedBool(status.Status["changed"])
 		if changed && key != "" && key != "<nil>" && previous != "" && previous != "<nil>" && previous != "1" {
 			if out, err := command(ctx, "sysctl", "-w", key+"="+previous); err != nil {
 				return fmt.Errorf("restore removed SAM proxy_arp sysctl %s: %w: %s", key, err, strings.TrimSpace(string(out)))
@@ -377,13 +389,18 @@ func (c SysctlController) applyConntrackTuning(ctx context.Context) error {
 		}
 	}
 	if c.Store != nil {
+		phase := "Applied"
+		if c.DryRun && len(changed) > 0 {
+			phase = "Rendered"
+		}
 		return c.Store.SaveObjectStatus(api.SystemAPIVersion, "ConntrackTuning", "default", map[string]any{
-			"phase":       "Applied",
+			"phase":       phase,
 			"applyMode":   summary.ApplyMode,
 			"autoApply":   summary.AutoApply,
 			"suggestions": len(summary.Suggestions),
 			"applied":     applied,
 			"changed":     changed,
+			"dryRun":      c.DryRun,
 			"updatedAt":   now.Format(time.RFC3339Nano),
 		})
 	}

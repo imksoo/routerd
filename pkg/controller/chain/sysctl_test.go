@@ -4,6 +4,8 @@ package chain
 
 import (
 	"context"
+	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -53,6 +55,67 @@ func TestSysctlControllerAppliesRuntimeValue(t *testing.T) {
 	status := store.ObjectStatus(api.SystemAPIVersion, "Sysctl", "ipv4-forwarding")
 	if status["phase"] != "Applied" || status["currentValue"] != "1" || status["changed"] != true {
 		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestSysctlControllerDryRunRendersWithoutRuntimeOrPersistentEffects(t *testing.T) {
+	const name = "ipv4-forwarding"
+	staleStatusKey := api.SystemAPIVersion + "/Sysctl/sam-proxy-arp-ens19"
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Sysctl"}, Metadata: api.ObjectMeta{Name: name}, Spec: api.SysctlSpec{
+			Key:        "net.ipv4.ip_forward",
+			Value:      "1",
+			Runtime:    boolPtr(true),
+			Persistent: true,
+		}},
+	}}}
+	store := mapStore{
+		staleStatusKey: {
+			"key":           "net.ipv4.conf.ens19.proxy_arp",
+			"previousValue": "0",
+			"changed":       true,
+		},
+	}
+	bus := &recordingBus{}
+	var commands []string
+	baseDir := t.TempDir()
+	controller := SysctlController{
+		Router:  router,
+		Store:   store,
+		Bus:     bus,
+		BaseDir: baseDir,
+		DryRun:  true,
+		Command: func(ctx context.Context, command string, args ...string) ([]byte, error) {
+			_ = ctx
+			commands = append(commands, strings.Join(append([]string{command}, args...), " "))
+			if command == "sysctl" && len(args) == 2 && args[0] == "-n" {
+				return []byte("0\n"), nil
+			}
+			if command == "sysctl" && len(args) == 2 && args[0] == "-w" {
+				t.Fatalf("dry-run must not write a runtime sysctl: %s %v", command, args)
+			}
+			return nil, errors.New("unexpected command")
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(commands, "\n"); !strings.Contains(got, "sysctl -n net.ipv4.ip_forward") || strings.Contains(got, "sysctl -w") {
+		t.Fatalf("commands = %q", got)
+	}
+	persistentPath := filepath.Join(baseDir, "90-routerd-"+safeSysctlName(name)+".conf")
+	if _, err := os.Stat(persistentPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dry-run created persistent sysctl file: %v", err)
+	}
+	status := store.ObjectStatus(api.SystemAPIVersion, "Sysctl", name)
+	if status["phase"] != "Rendered" || status["changed"] != true || status["dryRun"] != true || status["currentValue"] != "0" {
+		t.Fatalf("status = %#v", status)
+	}
+	if _, ok := store[staleStatusKey]; !ok {
+		t.Fatal("dry-run removed stale SAM proxy_arp status")
+	}
+	if len(bus.events) != 0 {
+		t.Fatalf("dry-run published applied events: %#v", bus.events)
 	}
 }
 

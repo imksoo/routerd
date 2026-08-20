@@ -4,15 +4,15 @@
 
 > Experimental (CloudEdge). See [ADR 0006: CloudEdge Event Federation](../adr/0006-event-federation.md)
 > for the design and invariants, and the how-to
-> [Event Federation subscription](../how-to/event-federation-subscription.md) for a
-> worked example.
+> [CloudEdge mobility demo](../how-to/cloudedge-mobility-demo.md) for a worked
+> example.
 
 Event Federation lets routerd nodes exchange **typed, observed facts** (e.g. "this
 client IPv4 was observed", "this address expired") over the overlay, and lets a
 subscriber turn matched events into derived configuration via a plugin. It is the
 control-plane substrate beneath
-[Selective Address Mobility](./selective-address-mobility): an observed address
-on one node becomes a `RemoteAddressClaim` (capture) on another.
+[Cloud SAM](./cloudedge-sam-internals): an observed address contributes typed
+ownership facts used by the receiving `MobilityPool` plan.
 
 The model is **at-least-once delivery with idempotent, observed-fact events**.
 Events are immutable statements about the world ("observed"), never imperative
@@ -78,8 +78,8 @@ routerctl federation event deliveries --group <g>
 recorded events; `deliveries` shows per-peer push delivery state.
 
 > Self-capture guard (ADR 0006 no-feedback-loop invariant): a node must not emit
-> `routerd.client.ipv4.observed` for an address it is itself capturing via a local
-> `RemoteAddressClaim`, or the delivered capture address would loop back as a fresh
+> `routerd.client.ipv4.observed` for an address already captured by its local
+> `MobilityPool` plan, or the delivered capture address would loop back as a fresh
 > observation.
 
 ## Transport — `routerd-eventd`
@@ -109,9 +109,9 @@ created for EventPeer derivation.
 2. `routerd-eventd` delivers it to peers; each peer records it in its event store.
 3. A peer's `EventSubscription` matches the event and invokes `trigger.pluginRef`,
    coalescing per `batchWindow` / `debounce`.
-4. The plugin returns a `DynamicConfigPart` (e.g. a `RemoteAddressClaim`), which the
-   [dynamic-config](./dynamic-config.md) chain unions into the effective config and
-   reconciles into the dataplane.
+4. The plugin returns observed facts or ordinary dynamic resources. The Mobility
+   controller consumes the facts and persists one typed local capture plan for the
+   dataplane.
 
 This keeps the operator-authored intent declarative: the operator declares the
-group/peers/subscription; the claims, captures, and action plans are **derived**.
+group/peers/subscription; capture and provider action plans are **derived**.

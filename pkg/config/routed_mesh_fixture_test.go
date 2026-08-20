@@ -199,7 +199,7 @@ func assertNoMobilityResources(t *testing.T, router *api.Router) {
 	t.Helper()
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
-		case "MobilityPool", "RemoteAddressClaim", "AddressMobilityDomain":
+		case "MobilityPool":
 			t.Fatalf("%s fixture must be routed mesh only; unexpected %s", router.Metadata.Name, res.ID())
 		}
 	}

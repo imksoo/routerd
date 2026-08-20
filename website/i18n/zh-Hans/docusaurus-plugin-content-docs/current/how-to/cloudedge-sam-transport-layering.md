@@ -39,6 +39,16 @@ endpoint prefix。SAM mobile `/32` 由 BGP、kernel FIB 与 SAM resource 处理�
 
 ```yaml
 apiVersion: mobility.routerd.net/v1alpha1
+kind: SAMNodeSet
+metadata:
+  name: cloudedge-nodes
+spec:
+  nodes:
+    - { nodeRef: onprem-router, site: onprem, role: onprem, routeReflector: true, samEndpoint: 10.252.0.1 }
+    - { nodeRef: aws-router-a, site: aws, role: cloud, samEndpoint: 10.252.0.2 }
+    - { nodeRef: azure-router, site: azure, role: cloud, samEndpoint: 10.252.0.3 }
+---
+apiVersion: mobility.routerd.net/v1alpha1
 kind: SAMTransportProfile
 metadata:
   name: cloudedge-transport
@@ -47,10 +57,6 @@ spec:
   mode: ipip
   encryption: wireguard
   innerPrefix: 10.255.0.0/24
-  topologyNodeRefs:
-    - onprem-router
-    - aws-router-a
-    - azure-router
   underlayInterface: wg-hybrid
   localEndpointFrom:
     resource: Interface/wg-hybrid
@@ -59,14 +65,16 @@ spec:
     routerRef: BGPRouter/mobility
     peerASN: 64512
     timersPreset: fast
-  peers:
-    - nodeRef: aws-router-a
-      remoteEndpoint: 10.252.0.2
+  peersFrom:
+    - resource: SAMNodeSet/cloudedge-nodes
+      nodeRefs: [aws-router-a]
 ```
 
-`spec.selfNodeRef` 是每台 router 的稳定 ID。一个 profile 有多个 peer 时，所有 router
-必须使用相同的 `spec.topologyNodeRefs`。routerd 会排序这份共享 node list，并为每个
-unordered node pair 从 `innerPrefix` 分配 deterministic `/31`。
+`spec.selfNodeRef` 是每台 router 的稳定 ID。`SAMNodeSet` 是共享的 identity、topology
+和 endpoint source；routerd 会排序该 node set，并为每个 unordered node pair 从
+`innerPrefix` 分配 deterministic `/31`。`SAMTransportProfile` 不接受直接的 peer 或
+topology list；`nodeRefs` 只选择需要建立 transport 的相邻 node。省略 `nodeRefs` 会选择
+所有带 `samEndpoint` 的非 self node。
 
 ## cleanup
 

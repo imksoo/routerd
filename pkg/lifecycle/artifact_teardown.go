@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resource"
 )
@@ -436,14 +437,5 @@ func nftTableArtifactParts(artifact resource.Artifact) (string, string) {
 	if family, name, ok := strings.Cut(artifact.Name, "/"); ok {
 		return family, name
 	}
-	return family, firstNonEmpty(name, artifact.Name)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
+	return family, stringutil.FirstPresent(name, artifact.Name)
 }

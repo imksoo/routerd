@@ -11,6 +11,28 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 變更
+
+- Cloud SAM 現在透過單一型別化的 `PoolRuntimeSnapshot` → `PoolPlan` 管線評估每個
+  BGP Pool。placement、ownership、BGP、provider action、FIB verdict 與 local
+  capture intent 都使用同一個 plan；dataplane desired state 不再從 status 值重建。
+- PVE route reflector 現在是 host-redundant 的 PVE pair。cloud capacity 僅保留給
+  qualification 所使用的 leaf topology。
+
+### 已移除
+
+- 已移除 legacy BGP → synthetic `RemoteAddressClaim` lowering 路徑，以及
+  `RemoteAddressClaim`、`AddressMobilityDomain`、`MobilityMemberSet`、
+  `Delivery`、`DeliveryTo`、non-BGP delivery 與 remote-full-member API surface。
+  BGP Pool 現在直接輸出型別化 local capture intent。這是 v1alpha1 API 的破壞性變更。
+- 已移除 `/v1/member-sets` 及其 response envelope。新的 `SAMPeerGroup` sync
+  protocol 與舊 member-set peer 不具 wire compatibility；同一
+  peer-synchronization domain 的所有 RR 與 leaf 必須以一次計畫切換完成升級，
+  不可採用混合版本的 rolling upgrade。
+- 已移除平行的手動 RRSet bootstrap 路徑 `routerctl mobility
+  enrollment-join`。現在僅由 `SAMEnrollmentClient` 執行 submit/fetch/persist，
+  並保留已設定的 bearer token/mTLS 驗證與 refresh backoff。
+
 ## v20260808.1741
 
 ### 新增

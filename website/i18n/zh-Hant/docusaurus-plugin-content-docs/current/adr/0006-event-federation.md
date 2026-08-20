@@ -13,10 +13,10 @@ Phase 1、1.5、2、3 已在 **`event-federation` 分支實作**：
 - **Phase 2**（經由 overlay 的 peer 投遞、`routerd-eventd`、HMAC、重試、
   retention 清理）— 完成。**lab-smoke PASS**
   （[傳輸證據](../releases/evidence/cloudedge-event-federation-transport-20260530.md)）。
-- **Phase 3**（subscription → plugin → `RemoteAddressClaim` `DynamicConfigPart`）—
+- **Phase 3**（subscription → plugin → 型別化 `DynamicConfigPart`）—
   完成。**lab-smoke PASS**
   （[subscription 證據](../releases/evidence/cloudedge-event-federation-subscription-20260530.md)、
-  [how-to](../how-to/event-federation-subscription.md)）。
+  [mobility demo](../how-to/cloudedge-mobility-demo.md)）。
 
 Phase 4（provider `actionPlan` 外掛、dry-run）**下一階段尚未開始**。
 Phase 5（provider action 執行）**不在 MVP 範圍內**。
@@ -26,13 +26,12 @@ Phase 5（provider action 執行）**不在 MVP 範圍內**。
 SAM（[參考](../reference/selective-address-mobility)、
 [里程碑](../releases/cloudedge-sam-mvp-milestone.md)）已在
 Azure×PVE、AWS×PVE、OCI×PVE 上完成乾淨驗證（3 雲對等）。SAM 證明了
-**capture（provider 特定）/ delivery+claim（routerd 通用）** 的分離。然而，
-驅動它的 `RemoteAddressClaim` **目前仍是手動描述的**。下一步是透過
-**事件驅動**來發現、傳播和實體化 claim：
+**capture（provider 特定）/ BGP delivery 加型別化本機計畫**的分離。舊的手動位址資源
+階段已被移除，觀測事實透過**事件驅動**進入 `MobilityPool` 計畫：
 
 > on-prem 的 routerctl 偵測到用戶端 IPv4（ARP/Clients/DHCP）→ 發出型別化事件 →
-> federation 匯流排將其投遞到雲端 routerd → subscription 啟動 provider 外掛 →
-> 外掛以 `DynamicConfigPart` 形式傳回 `RemoteAddressClaim`
+> federation 匯流排將其投遞到雲端 routerd → subscription 記錄/接納觀測事實 →
+> `MobilityPool` 計畫產生型別化本機 capture 與 FIB intent
 > （+ provider secondary-IP `actionPlan`）→ **無需人工編輯雲端組態**，
 > 雲端即準備好執行 `provider-secondary-ip` capture。
 
@@ -45,11 +44,10 @@ Azure×PVE、AWS×PVE、OCI×PVE 上完成乾淨驗證（3 雲對等）。SAM �
 - **型別化事件信封**: `pkg/daemonapi` 的 `DaemonEvent{Type,Time,Daemon,Resource,
   Severity,Reason,Message,Attributes}` + `NewEvent(...)`。目前是 daemon→main 流程，
   但已經是帶型別和 topic 的信封。
-- **daemon→routerd 傳輸模式**: daemon 透過 UNIX 套接字上的
+- **helper→routerd 傳輸模式**: 本地 helper 透過 UNIX 套接字上的
   HTTP POST 到控制套接字（`cmd/routerd-dhcp-event-relay` → `controlapi.Prefix +
-  /dhcp-lease-event` via `unix:/run/routerd/routerd.sock`）。已有*事件中繼 daemon 的先例*。
-- **分離的長生命週期 daemon 先例**: 13 個 `cmd/routerd-*` daemon
-  （`routerd-bgp`、`routerd-ra-observer`、`routerd-dhcp-event-relay` 等）。
+  /dhcp-lease-event` via `unix:/run/routerd/routerd.sock`）。DHCP relay 不是 daemon，而是由 dnsmasq 每次呼叫的一次性 callback helper。
+- **分離的長生命週期 daemon 先例**: `routerd-bgp`、`routerd-ra-observer` 等長生命週期 `cmd/routerd-*` 行程。
   gobgp pivot（ADR 0004）確立了「為避免重啟導致的中斷，使用分離行程而非行程內嵌入」。
 - **Plugin → DynamicConfigPart 管線**: `pkg/plugin/runner.go`、
   `pkg/plugin/dynamic_config.go`、`pkg/dynamicconfig/{types,merge}.go`、
@@ -66,8 +64,8 @@ Azure×PVE、AWS×PVE、OCI×PVE 上完成乾淨驗證（3 雲對等）。SAM �
 ### 設計原則
 
 1. **事件是觀測事實，不是組態。** 節點傳送
-   `routerd.client.ipv4.observed`，而不傳送原始的 `RemoteAddressClaim`。接收端的
-   *受信任本機外掛*決定是否以及如何將其轉換為型別化 claim + actionPlan。線路上不傳輸命令。
+   `routerd.client.ipv4.observed`，而不傳送原始 desired-capture 資源。接收端的
+   *受信任本機接納路徑*決定該事實是否以及如何進入 `MobilityPool` 計畫與 provider action proposal。線路上不傳輸命令。
 2. **at-least-once + 冪等**，而非 exactly-once。儲存的冪等性以事件 `id` 為鍵
    （重複 `id` 為 no-op insert）。`dedupeKey` 是 subscription 端的分組鍵，
    用於彙總同一事實的重複觀測，在 Phase 1 中**不是** DB 的唯一約束。動態資源名稱是確定性的
@@ -148,11 +146,11 @@ Azure×PVE、AWS×PVE、OCI×PVE 上完成乾淨驗證（3 雲對等）。SAM �
   `DynamicConfigPart`（帶 `routerd.net/dynamic-source`、`event-id`、`event-group`
   註解）。去抖/batchWindow。`event_subscription_runs`。
   *驗收條件:* 雲端收到 `10.88.60.9/32` 的 `client.ipv4.observed` → 外掛 →
-  `RemoteAddressClaim` DynamicConfigPart 可透過 `routerctl dynamic render` 確認。
+  型別化 DynamicConfigPart 可透過 `routerctl dynamic render` 確認。
   actionPlan 僅顯示，不執行。
-- **下一步（未開始）— Phase 4 — provider actionPlan 外掛（dry-run）。** `aws/azure/oci-address-claim`
-  範例外掛。標準化 `actionPlan` 格式。執行個體 ID 驗證。
-  *驗收條件:* 外掛提議 assign-secondary-IP。無 mutation。計畫可透過
+- **下一步（未開始）— Phase 4 — provider `actionPlan` 規劃（dry-run）。**
+  使用標準化的 `actionPlan` 格式和執行個體 ID 驗證。
+  *驗收條件:* 規劃提議 assign-secondary-IP。無 mutation。計畫可透過
   `routerctl plugin`/`dynamic` 確認。
 - **Phase 5 —（MVP 後）provider action 執行。** approval/auto-apply 策略、
   action 日誌、盡力 undo、身分文件。不在 MVP 範圍內。

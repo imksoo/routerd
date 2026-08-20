@@ -34,19 +34,39 @@ load_contract "$default_contract_path"
   die "certification run ID does not equal contract"
 heartbeat="$(absolute_path "$heartbeat_arg")"
 
-full_validation="$(routerd_script tests/e2e/cloudedge/scripts/sam-full-validation.sh)"
-qualification_dir="$evidence_root/qualification/full"
+qualification_profile="$(jq -er '.qualification.profile' "$contract_path")"
+qualification_budget_seconds="$(jq -er '.qualification.qualificationBudgetSeconds' "$contract_path")"
+safety_pve_management_control_plane="$(jq -er '.safety.pveManagementControlPlane' "$contract_path")"
+[ "$qualification_profile" = "representative-redundancy" ] ||
+  die "unsupported release qualification profile: $qualification_profile"
+[ "$safety_pve_management_control_plane" = "none" ] ||
+  die "release qualification requires passive PVE management control plane"
+case "$qualification_budget_seconds" in
+  ''|*[!0-9]*) die "qualification budget must be a positive integer" ;;
+esac
+[ "$qualification_budget_seconds" -gt 0 ] || die "qualification budget must be positive"
+
+representative_validation="$(routerd_script tests/e2e/cloudedge/scripts/sam-representative-redundancy.sh)"
+qualification_dir="$evidence_root/qualification/$qualification_profile"
 mkdir -p "$qualification_dir"
-log="$evidence_root/commands/full-qualification.log"
+log="$evidence_root/commands/$qualification_profile-qualification.log"
 : >"$log"
 
 # Do not create a nested session: the durable supervisor owns and quiesces the
 # complete mutation process group before cleanup.
-"$full_validation" \
+# The production profile requires the generator's QGA-DHCP management safety
+# policy. The representative wrapper validates generated PVE configs before
+# deployment; routerd never owns DHCP, DHCPv6, or RA on that shared underlay.
+# The representative wrapper validates generated PVE configs before deploy.
+"$representative_validation" \
   --tofu-output "$tofu_output_path" \
   --artifact "$artifact_path" \
-  --ssh-key "$pve_ssh_private_key" \
+  --tfvars "$tfvars_path" \
+  --ssh-key "$guest_ssh_private_key" \
+  --pve-ssh-key "$pve_ssh_private_key" \
+  --pve-known-hosts "$pve_ssh_known_hosts" \
   --evidence-root "$qualification_dir" \
+  --max-runtime-seconds "$qualification_budget_seconds" \
   >"$log" 2>&1 &
 pid=$!
 printf '%s\n' "$pid" >"$active_pid_file"
@@ -69,25 +89,43 @@ set -e
 rm -f "$active_pid_file"
 touch "$heartbeat"
 
-scenario_status="$qualification_dir/scenario-status.tsv"
-pass_count=0
-fail_count=0
-if [ -f "$scenario_status" ]; then
-  pass_count="$(awk -F '\t' 'NR > 1 && $2 == "PASS" {count++} END {print count+0}' "$scenario_status")"
-  fail_count="$(awk -F '\t' 'NR > 1 && $2 != "PASS" {count++} END {print count+0}' "$scenario_status")"
-fi
+profile_result="$qualification_dir/profile-result.json"
 
-if [ "$driver_rc" -eq 0 ] && [ "$pass_count" -eq 12 ] && [ "$fail_count" -eq 0 ]; then
+if [ "$driver_rc" -eq 0 ] && jq -e \
+  --arg profile "$qualification_profile" \
+  --argjson budget "$qualification_budget_seconds" \
+  '.profile == $profile and .result == "pass" and .gates == {
+    rrAStaged:true,
+    rrAJoined:true,
+    rrBStaged:true,
+    rrBJoined:true,
+    rrPairReady:true,
+    fullBaseline:true,
+    directedClientMatrix:true,
+    directedCloudIngressMatrix:true,
+    providerReadiness:true,
+    rrAFailover:true,
+    rrBControlPlaneContinuity:true,
+    rrBContinuityCanary:true,
+    rrARejoin:true,
+    legacyProtocols:false,
+    performance:false,
+    symmetricBFailover:false,
+    provisioning:false,
+    destruction:false
+  } and .limits.maxRuntimeSeconds == $budget
+    and .topology == {routerCount:10,clientCount:8,cloudClientCount:6,rrFaultDomain:"host-redundant"}' \
+  "$profile_result" >/dev/null 2>&1; then
   status=pass
   classification=none
   result=pass
-  summary="all twelve ordered real-machine scenarios passed without repair"
+  summary="representative PVE-RR A/AB/B-only/AB full-topology qualification passed without repair"
   rc=0
 else
   status=fail
   classification=product_failure
   result=fail
-  summary="full validation exit=$driver_rc pass_scenarios=$pass_count failed_scenarios=$fail_count"
+  summary="$qualification_profile validation exit=$driver_rc; inspect $profile_result"
   rc=1
 fi
 
@@ -101,7 +139,7 @@ jq -n \
     status:$status,
     classification:$classification,
     checks:[{
-      name:"CloudEdge SAM full real-machine qualification",
+      name:"CloudEdge SAM representative-redundancy real-machine qualification",
       component:"cross-substrate",
       result:$result,
       checkedAt:$checkedAt,

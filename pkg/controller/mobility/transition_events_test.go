@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
@@ -37,8 +38,6 @@ func TestRecordBGPCaptureAssignmentTransitionsEmitsMachineReadableSequence(t *te
 		Address:        address,
 		Phase:          "Active",
 		Generation:     "group-a/7",
-		Seq:            7,
-		ClaimEpoch:     "group-a/7",
 		DesiredHolder:  "aws-rr-b",
 		PreviousHolder: "aws-rr-a",
 		Reason:         "hard-failure",
@@ -60,10 +59,7 @@ func TestRecordBGPCaptureAssignmentTransitionsEmitsMachineReadableSequence(t *te
 		SeizeHoldDownUntil: now.Add(9 * time.Second),
 	}
 
-	nextStatus := map[string]any{}
-	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, nil, map[string]bgpCaptureAssignment{address: assignment}, plans, placement, nil, nil, nil, nil, nil, nextStatus, now); err != nil {
-		t.Fatalf("record start transition: %v", err)
-	}
+	state := recordBGPCaptureAssignmentTransitionsForTest(t, controller, "cloudedge", self, nil, map[string]bgpCaptureAssignment{address: assignment}, plans, placement, nil, nil, nil, nil, bgpCaptureTransitionState{}, now)
 	events := listMobilityTransitionEvents(t, store)
 	if len(events) != 1 {
 		t.Fatalf("events after start = %d, want 1", len(events))
@@ -76,10 +72,7 @@ func TestRecordBGPCaptureAssignmentTransitionsEmitsMachineReadableSequence(t *te
 		t.Fatalf("holdDownRemainingSeconds.seize = %q, want 9", got)
 	}
 
-	seizeCompleteStatus := map[string]any{}
-	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, livenessMarkers, mobilityPrefixCommunities, nil, nil, nextStatus, seizeCompleteStatus, now.Add(151*time.Second)); err != nil {
-		t.Fatalf("record dataplane complete transition: %v", err)
-	}
+	state = recordBGPCaptureAssignmentTransitionsForTest(t, controller, "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, livenessMarkers, mobilityPrefixCommunities, nil, nil, state, now.Add(151*time.Second))
 	events = listMobilityTransitionEvents(t, store)
 	if len(events) != 2 {
 		t.Fatalf("events after dataplane complete = %d, want 2", len(events))
@@ -87,49 +80,37 @@ func TestRecordBGPCaptureAssignmentTransitionsEmitsMachineReadableSequence(t *te
 	assertTransitionEvent(t, events[1], "seize-complete", address, "aws-rr-a", "aws-rr-b", assignment.Generation)
 	assertExtractableTransitionCount(t, events, "seize-complete", 1)
 	assertExtractableTransitionCount(t, events, "capture-confirmed", 0)
-	completed := bgpCaptureTransitionCompletedByKindFromStatus(seizeCompleteStatus)
-	if got := completed[bgpCaptureTransitionCompletedField][address]; got != assignment.Generation {
+	completed := state.SeizeComplete
+	if got := completed[address]; got != assignment.Generation {
 		t.Fatalf("seize completion marker = %q, want %q", got, assignment.Generation)
 	}
-	captureStatus := map[string]any{}
-	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, livenessMarkers, mobilityPrefixCommunities, []ownershipDecision{{
+	state = recordBGPCaptureAssignmentTransitionsForTest(t, controller, "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, livenessMarkers, mobilityPrefixCommunities, []ownershipDecision{{
 		Address:           address,
 		Class:             ownershipClassConfirmedCapture,
 		CaptureHolderNode: "aws-rr-b",
-		CaptureStrategy:   captureStrategySecondaryIP,
-	}}, nil, seizeCompleteStatus, captureStatus, now.Add(173*time.Second)); err != nil {
-		t.Fatalf("record provider confirmed transition: %v", err)
-	}
+	}}, nil, state, now.Add(173*time.Second))
 	events = listMobilityTransitionEvents(t, store)
 	if len(events) != 3 {
 		t.Fatalf("events after provider confirmed = %d, want 3", len(events))
 	}
 	assertTransitionEvent(t, events[2], "capture-confirmed", address, "aws-rr-a", "aws-rr-b", assignment.Generation)
-	if got := events[2].Attributes["captureStrategy"]; got != captureStrategySecondaryIP {
-		t.Fatalf("captureStrategy = %q, want %q", got, captureStrategySecondaryIP)
-	}
 	assertExtractableTransitionCount(t, events, "seize-complete", 1)
 	assertExtractableTransitionCount(t, events, "capture-confirmed", 1)
-	completed = bgpCaptureTransitionCompletedByKindFromStatus(captureStatus)
-	if got := completed[bgpCaptureConfirmedField][address]; got != assignment.Generation {
+	completed = state.CaptureConfirmed
+	if got := completed[address]; got != assignment.Generation {
 		t.Fatalf("capture confirmation marker = %q, want %q", got, assignment.Generation)
 	}
 
-	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, livenessMarkers, mobilityPrefixCommunities, []ownershipDecision{{
+	state = recordBGPCaptureAssignmentTransitionsForTest(t, controller, "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, livenessMarkers, mobilityPrefixCommunities, []ownershipDecision{{
 		Address:           address,
 		Class:             ownershipClassConfirmedCapture,
 		CaptureHolderNode: "aws-rr-b",
-		CaptureStrategy:   captureStrategySecondaryIP,
-	}}, nil, captureStatus, map[string]any{}, now.Add(174*time.Second)); err != nil {
-		t.Fatalf("record duplicate transitions: %v", err)
-	}
+	}}, nil, state, now.Add(174*time.Second))
 	events = listMobilityTransitionEvents(t, store)
 	if len(events) != 3 {
 		t.Fatalf("events after duplicate transitions = %d, want 3", len(events))
 	}
-	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, nil, plans, PlacementDecision{}, nil, nil, nil, nil, captureStatus, map[string]any{}, now.Add(180*time.Second)); err != nil {
-		t.Fatalf("record yield transition: %v", err)
-	}
+	_ = recordBGPCaptureAssignmentTransitionsForTest(t, controller, "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, nil, plans, PlacementDecision{}, nil, nil, nil, nil, state, now.Add(180*time.Second))
 	events = listMobilityTransitionEvents(t, store)
 	if len(events) != 4 {
 		t.Fatalf("events after yield = %d, want 4", len(events))
@@ -145,12 +126,11 @@ func TestRecordBGPCaptureAssignmentTransitionsCompletesProviderCaptureFromSuccee
 	address := "10.88.60.17/32"
 	self := memberPlanInfo{
 		NodeRef: "aws-rr-b",
-		Capture: api.AddressCapture{
+		Capture: api.MobilityMemberCapture{
 			Type:        "provider-secondary-ip",
 			ProviderRef: "aws-provider",
 			NICRef:      "eni-b",
 		},
-		CaptureTarget: map[string]string{"nicRef": "eni-b"},
 	}
 	assignment := activeCaptureAssignmentForTransitionTest(address, "aws-rr-b", "aws-rr-a", now)
 	plans := []dynamicconfig.ActionPlan{assignSecondaryIPPlanForTransitionTest(address, "aws-provider", "eni-b", "aws-rr-b")}
@@ -158,10 +138,7 @@ func TestRecordBGPCaptureAssignmentTransitionsCompletesProviderCaptureFromSuccee
 		providerCaptureActionRecordForTransitionTest(t, 89, actionAssignSecondaryIP, address, "aws-provider", "eni-b", "aws-rr-b", assignment.Generation, executedAt),
 	}
 
-	nextStatus := map[string]any{}
-	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, nil, nil, nil, journal, map[string]any{}, nextStatus, now); err != nil {
-		t.Fatalf("record provider accepted transition: %v", err)
-	}
+	state := recordBGPCaptureAssignmentTransitionsForTest(t, controller, "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, nil, nil, nil, journal, bgpCaptureTransitionState{}, now)
 	events := listMobilityTransitionEvents(t, store)
 	if len(events) != 1 {
 		t.Fatalf("events after provider accepted = %d, want 1", len(events))
@@ -170,14 +147,12 @@ func TestRecordBGPCaptureAssignmentTransitionsCompletesProviderCaptureFromSuccee
 	if got := events[0].Attributes["issuedAt"]; got != executedAt.UTC().Format(time.RFC3339Nano) {
 		t.Fatalf("issuedAt = %q, want journal ExecutedAt %s", got, executedAt.UTC().Format(time.RFC3339Nano))
 	}
-	completed := bgpCaptureTransitionCompletedByKindFromStatus(nextStatus)
-	if got := completed[bgpCaptureTransitionCompletedField][address]; got != "provider-capture/89" {
+	completed := state.SeizeComplete
+	if got := completed[address]; got != "provider-capture/89" {
 		t.Fatalf("seize completion marker = %q, want provider-capture/89", got)
 	}
 
-	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, nil, nil, nil, journal, nextStatus, map[string]any{}, now.Add(time.Second)); err != nil {
-		t.Fatalf("record duplicate provider accepted transition: %v", err)
-	}
+	_ = recordBGPCaptureAssignmentTransitionsForTest(t, controller, "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, nil, nil, nil, journal, state, now.Add(time.Second))
 	events = listMobilityTransitionEvents(t, store)
 	if len(events) != 1 {
 		t.Fatalf("events after duplicate provider accepted = %d, want 1", len(events))
@@ -190,9 +165,8 @@ func TestRecordBGPCaptureAssignmentTransitionsDoesNotCompleteProviderCaptureAfte
 	controller := Controller{Store: store}
 	address := "10.88.60.17/32"
 	self := memberPlanInfo{
-		NodeRef:       "aws-rr-b",
-		Capture:       api.AddressCapture{Type: "provider-secondary-ip", ProviderRef: "aws-provider", NICRef: "eni-b"},
-		CaptureTarget: map[string]string{"nicRef": "eni-b"},
+		NodeRef: "aws-rr-b",
+		Capture: api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "aws-provider", NICRef: "eni-b"},
 	}
 	assignment := activeCaptureAssignmentForTransitionTest(address, "aws-rr-b", "aws-rr-a", now)
 	plans := []dynamicconfig.ActionPlan{assignSecondaryIPPlanForTransitionTest(address, "aws-provider", "eni-b", "aws-rr-b")}
@@ -201,9 +175,7 @@ func TestRecordBGPCaptureAssignmentTransitionsDoesNotCompleteProviderCaptureAfte
 		providerCaptureActionRecordForTransitionTest(t, 90, actionUnassignSecondaryIP, address, "aws-provider", "eni-b", "aws-rr-b", assignment.Generation, now.Add(-time.Second)),
 	}
 
-	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, nil, nil, nil, journal, map[string]any{}, map[string]any{}, now); err != nil {
-		t.Fatalf("record provider accepted transition: %v", err)
-	}
+	_ = recordBGPCaptureAssignmentTransitionsForTest(t, controller, "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, nil, nil, nil, journal, bgpCaptureTransitionState{}, now)
 	events := listMobilityTransitionEvents(t, store)
 	if len(events) != 0 {
 		t.Fatalf("events after latest unassign = %d, want 0 (%#v)", len(events), events)
@@ -216,9 +188,8 @@ func TestRecordBGPCaptureAssignmentTransitionsDoesNotCompleteProviderCaptureForS
 	controller := Controller{Store: store}
 	address := "10.88.60.17/32"
 	self := memberPlanInfo{
-		NodeRef:       "aws-rr-b",
-		Capture:       api.AddressCapture{Type: "provider-secondary-ip", ProviderRef: "aws-provider", NICRef: "eni-b"},
-		CaptureTarget: map[string]string{"nicRef": "eni-b"},
+		NodeRef: "aws-rr-b",
+		Capture: api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "aws-provider", NICRef: "eni-b"},
 	}
 	assignment := activeCaptureAssignmentForTransitionTest(address, "aws-rr-b", "aws-rr-a", now)
 	plans := []dynamicconfig.ActionPlan{assignSecondaryIPPlanForTransitionTest(address, "aws-provider", "eni-b", "aws-rr-b")}
@@ -226,9 +197,7 @@ func TestRecordBGPCaptureAssignmentTransitionsDoesNotCompleteProviderCaptureForS
 		providerCaptureActionRecordForTransitionTest(t, 89, actionAssignSecondaryIP, address, "aws-provider", "eni-b", "aws-rr-b", "stale-generation", now.Add(-time.Second)),
 	}
 
-	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, nil, nil, nil, journal, map[string]any{}, map[string]any{}, now); err != nil {
-		t.Fatalf("record provider accepted transition: %v", err)
-	}
+	_ = recordBGPCaptureAssignmentTransitionsForTest(t, controller, "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, nil, nil, nil, journal, bgpCaptureTransitionState{}, now)
 	events := listMobilityTransitionEvents(t, store)
 	if len(events) != 0 {
 		t.Fatalf("events for stale assignment generation = %d, want 0 (%#v)", len(events), events)
@@ -241,20 +210,39 @@ func TestRecordBGPCaptureAssignmentTransitionsDoesNotCompleteProviderCaptureWith
 	controller := Controller{Store: store}
 	address := "10.88.60.17/32"
 	self := memberPlanInfo{
-		NodeRef:       "aws-rr-b",
-		Capture:       api.AddressCapture{Type: "provider-secondary-ip", ProviderRef: "aws-provider", NICRef: "eni-b"},
-		CaptureTarget: map[string]string{"nicRef": "eni-b"},
+		NodeRef: "aws-rr-b",
+		Capture: api.MobilityMemberCapture{Type: "provider-secondary-ip", ProviderRef: "aws-provider", NICRef: "eni-b"},
 	}
 	assignment := activeCaptureAssignmentForTransitionTest(address, "aws-rr-b", "aws-rr-a", now)
 	plans := []dynamicconfig.ActionPlan{assignSecondaryIPPlanForTransitionTest(address, "aws-provider", "eni-b", "aws-rr-b")}
 
-	if err := controller.recordBGPCaptureAssignmentTransitions(context.Background(), "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, nil, nil, nil, nil, map[string]any{}, map[string]any{}, now); err != nil {
-		t.Fatalf("record provider accepted transition: %v", err)
-	}
+	_ = recordBGPCaptureAssignmentTransitionsForTest(t, controller, "cloudedge", self, map[string]bgpCaptureAssignment{address: assignment}, map[string]bgpCaptureAssignment{address: assignment}, plans, PlacementDecision{}, nil, nil, nil, nil, bgpCaptureTransitionState{}, now)
 	events := listMobilityTransitionEvents(t, store)
 	if len(events) != 0 {
 		t.Fatalf("events without journal fact = %d, want 0 (%#v)", len(events), events)
 	}
+}
+
+func recordBGPCaptureAssignmentTransitionsForTest(t *testing.T, controller Controller, poolName string, self memberPlanInfo, previous, current map[string]bgpCaptureAssignment, plans []dynamicconfig.ActionPlan, placement PlacementDecision, livenessMarkers map[string]string, mobilityPrefixCommunities map[string][]string, decisions []ownershipDecision, actionJournal []routerstate.ActionExecutionRecord, previousState bgpCaptureTransitionState, now time.Time) bgpCaptureTransitionState {
+	t.Helper()
+	history := newProviderActionHistoryWithRevision(nil, actionJournal, "")
+	state := poolReconcileState{Runtime: PoolRuntimeSnapshot{
+		Pool:     NormalizedMobilityPool{Name: poolName, Self: self},
+		BGP:      BGPSnapshot{LivenessMarkers: livenessMarkers, PrefixCommunities: mobilityPrefixCommunities},
+		Provider: ProviderSnapshot{ActionHistory: history},
+		Previous: PreviousPoolState{Transitions: previousState},
+		Now:      now,
+	}}
+	next, err := controller.recordBGPCaptureAssignmentTransitions(
+		context.Background(),
+		state,
+		PoolPlan{Placement: placement, Addresses: decisions},
+		captureTransitionEffects{Previous: previous, Current: current, ActionPlans: plans},
+	)
+	if err != nil {
+		t.Fatalf("record BGP capture assignment transitions: %v", err)
+	}
+	return next
 }
 
 func listMobilityTransitionEvents(t *testing.T, store *routerstate.SQLiteStore) []routerstate.StoredEvent {
@@ -307,8 +295,6 @@ func activeCaptureAssignmentForTransitionTest(address, holder, previousHolder st
 		Address:        address,
 		Phase:          "Active",
 		Generation:     "group-a/7",
-		Seq:            7,
-		ClaimEpoch:     "group-a/7",
 		DesiredHolder:  holder,
 		PreviousHolder: previousHolder,
 		Reason:         "placement-election",
@@ -356,10 +342,10 @@ func providerCaptureActionRecordForTransitionTest(t *testing.T, id int64, action
 func transitionEventsByKindAddress(events []routerstate.StoredEvent, kind string) map[string]routerstate.StoredEvent {
 	out := map[string]routerstate.StoredEvent{}
 	for _, event := range events {
-		if statusString(event.Attributes["transitionKind"]) != kind {
+		if statusvalue.Text(event.Attributes["transitionKind"]) != kind {
 			continue
 		}
-		address := statusString(event.Attributes["address"])
+		address := statusvalue.Text(event.Attributes["address"])
 		if address == "" {
 			continue
 		}
@@ -372,10 +358,10 @@ func extractTransitionDurationsByAddress(t *testing.T, events []routerstate.Stor
 	t.Helper()
 	out := map[string]map[string]time.Duration{}
 	for _, event := range events {
-		kind := statusString(event.Attributes["transitionKind"])
-		address := statusString(event.Attributes["address"])
-		timestamp := statusString(event.Attributes["timestamp"])
-		issuedAt := statusString(event.Attributes["issuedAt"])
+		kind := statusvalue.Text(event.Attributes["transitionKind"])
+		address := statusvalue.Text(event.Attributes["address"])
+		timestamp := statusvalue.Text(event.Attributes["timestamp"])
+		issuedAt := statusvalue.Text(event.Attributes["issuedAt"])
 		if kind == "" || address == "" || timestamp == "" || issuedAt == "" {
 			continue
 		}

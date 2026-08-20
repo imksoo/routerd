@@ -237,10 +237,10 @@ func TestGetSAMRRSetHandler(t *testing.T) {
 				Metadata: api.ObjectMeta{Name: "pve-rrs"},
 				Spec: api.SAMRRSetSpec{
 					EnrollmentPolicyRef: "SAMEnrollmentPolicy/pve-leaves",
-					Members: []api.SAMRRSetMember{{
-						NodeRef:       "pve-rr",
-						Endpoint:      "10.30.0.10",
-						TunnelAddress: "10.255.10.1/32",
+					Nodes: []api.SAMNodeSpec{{
+						NodeRef:        "pve-rr",
+						RouteReflector: true,
+						SAMEndpoint:    "10.30.0.10",
 					}},
 				},
 			})
@@ -446,5 +446,39 @@ func TestDHCPv6EventHandler(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"kind": "DHCPv6EventResult"`) {
 		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestDHCPLeaseEventHandlerAcceptsCanonicalActionsOnly(t *testing.T) {
+	seen := 0
+	handler := Handler{DHCPLeaseEvent: func(_ *http.Request, req DHCPLeaseEventRequest) (*DHCPLeaseEventResult, error) {
+		if req.Interface != "lan0" {
+			t.Fatalf("interface = %q, want lan0", req.Interface)
+		}
+		seen++
+		result := NewDHCPLeaseEventResult()
+		return &result, nil
+	}}
+	for _, tt := range []struct {
+		path, action, ip string
+		wantCode         int
+	}{
+		{Prefix + "/dhcp-lease-event", "added", "192.0.2.10", http.StatusOK},
+		{Prefix + "/dhcp-lease-event", "renewed", "192.0.2.10", http.StatusOK},
+		{Prefix + "/dhcp-lease-event", "removed", "192.0.2.10", http.StatusOK},
+		{Prefix + "/dhcp-lease-event", "add", "192.0.2.10", http.StatusBadRequest},
+		{Prefix + "/dhcp-lease-event", "unknown", "192.0.2.10", http.StatusBadRequest},
+		{Prefix + "/dhcp-lease-event", "added", "", http.StatusBadRequest},
+		{"/v1/events/dhcp", "added", "192.0.2.10", http.StatusNotFound},
+	} {
+		body := `{"apiVersion":"` + APIVersion + `","kind":"DHCPLeaseEvent","action":"` + tt.action + `","ip":"` + tt.ip + `","interface":"lan0"}`
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, tt.path, strings.NewReader(body)))
+		if rec.Code != tt.wantCode {
+			t.Fatalf("%s %q status = %d, want %d: %s", tt.path, tt.action, rec.Code, tt.wantCode, rec.Body.String())
+		}
+	}
+	if seen != 3 {
+		t.Fatalf("DHCP lease callback count = %d, want 3", seen)
 	}
 }

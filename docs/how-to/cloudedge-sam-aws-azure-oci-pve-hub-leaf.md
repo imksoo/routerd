@@ -21,8 +21,8 @@ evidence-frozen in
 
 | Role | Responsibility |
 | --- | --- |
-| RR/hub | Stable admission point. Runs `BGPRouter`, `BGPDynamicPeer`, `SAMRRSet`, `SAMTransportProfile`, `SAMEnrollmentPolicy`, `MobilityPool`, local transport endpoint, and optional `WireGuardInterface`. |
-| Leaf | Runs routerd at each AWS/Azure/OCI/PVE site. Submits a local `SAMEnrollmentClaim`, fetches the authorized `SAMRRSet`, and materializes transport plus BGP peers from dynamic state. |
+| RR/hub | Stable admission point. Owns `BGPRouter`, `BGPDynamicPeer`, static `SAMNodeSet` topology, `SAMTransportProfile`, `SAMEnrollmentPolicy`, `MobilityPool`, local transport endpoint, and optional `WireGuardInterface`. |
+| Leaf | Runs routerd at each AWS/Azure/OCI/PVE site. Owns only a local remote-request `SAMEnrollmentClaim` and `SAMEnrollmentClient`, fetches the authorized `SAMRRSet`, and materializes transport plus BGP peers from dynamic state. |
 | Client/workload | Uses the local leaf as the next hop for remote client /32s and advertises or is represented by MobilityPool-owned /32 reachability. |
 
 The RR base config must not list leaves. It must contain zero
@@ -59,27 +59,20 @@ The hub config is stable across leaf additions. The important pieces are:
       allowedPrefixLengthMax: 32
       nextHopRewrite: peer-address
 
-- kind: SAMRRSet
-  metadata: { name: fullmesh-rrs }
+- kind: SAMNodeSet
+  metadata: { name: fullmesh-rr-nodes }
   spec:
-    enrollmentPolicyRef: SAMEnrollmentPolicy/fullmesh-public-leaves
-    mobilityPoolRefs: [MobilityPool/fullmesh]
-    routeAdmission:
-      allowedPrefixes: [10.77.60.0/24]
-      allowedPrefixLengthMin: 32
-      allowedPrefixLengthMax: 32
-      nextHopRewrite: peer-address
-    members:
+    nodes:
       - nodeRef: azure-rr
-        endpoint: 10.82.10.5
-        tunnelAddress: 10.255.0.1/32
-        bgp: { asn: 64577, routerID: 10.255.0.1 }
+        routeReflector: true
+        samEndpoint: 10.82.10.5
 
 - kind: SAMEnrollmentPolicy
   metadata: { name: fullmesh-public-leaves }
   spec:
     transportProfileRef: SAMTransportProfile/azure-rr-public
     rrSetRef: SAMRRSet/fullmesh-rrs
+    rrNodeSetRef: SAMNodeSet/fullmesh-rr-nodes
     joinTokenFrom:
       file: /usr/local/etc/routerd/secrets/fullmesh-join-token
     joinAudience: fullmesh-public-underlay
@@ -91,15 +84,21 @@ The hub config is stable across leaf additions. The important pieces are:
     ttl: 24h
 ```
 
-`BGPDynamicPeer` is only the BGP acceptor. Leaf identity, join authentication,
-tunnel address authorization, and MobilityPool /32 ownership stay in SAM
-enrollment and MobilityPool resources.
+`BGPDynamicPeer` is only the BGP acceptor. `SAMNodeSet` is the static RR
+identity/topology source. `SAMEnrollmentPolicy.spec.rrNodeSetRef` is required
+server-side to project its route-reflector nodes into the policy-scoped,
+runtime-only `SAMRRSet/fullmesh-rrs` returned to an admitted leaf; that RRSet
+is not declared in the hub YAML. Leaf identity, join authentication, tunnel
+address authorization, and MobilityPool /32 ownership stay in SAM enrollment
+and MobilityPool resources.
 
 ## Leaf Shape
 
-A leaf keeps only its own claim and a bootstrap client. It learns the RRSet from
-the RR admission API, then the SAM transport controller uses that fetched RRSet
-to create RR-facing `TunnelInterface` and `BGPPeer` resources.
+A leaf keeps only its own claim and a bootstrap client. Its claim references
+the policy owned by the RR, but the leaf does not declare a copy of
+`SAMEnrollmentPolicy` or the RR `SAMNodeSet`. It learns the RRSet from the RR
+admission API, then the SAM transport controller uses that fetched RRSet to
+create RR-facing `TunnelInterface` and `BGPPeer` resources.
 
 ```yaml
 - kind: SAMEnrollmentClaim
@@ -124,8 +123,7 @@ to create RR-facing `TunnelInterface` and `BGPPeer` resources.
   metadata: { name: fullmesh }
   spec:
     claimRef: SAMEnrollmentClaim/aws-leaf
-    bootstrap:
-      url: http://10.82.10.5:8080
+    bootstrapEndpoints: [http://10.82.10.5:8080]
     stateTTLRefreshBefore: 2h
 
 - kind: SAMTransportProfile

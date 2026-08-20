@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/dpi"
 	"github.com/imksoo/routerd/pkg/version"
 )
@@ -438,9 +439,9 @@ func metadataOnlyResult(req dpi.ClassifyRequest) dpi.ClassifyResult {
 
 func flowKey(req dpi.ClassifyRequest) string {
 	meta := dpi.Classify(req)
-	proto := strings.ToLower(strings.TrimSpace(firstNonEmpty(req.TransportProtocol, meta.TransportProtocol)))
-	src := firstNonEmpty(req.SrcAddress, meta.SrcAddress)
-	dst := firstNonEmpty(req.DstAddress, meta.DstAddress)
+	proto := strings.ToLower(strings.TrimSpace(stringutil.FirstNonEmpty(req.TransportProtocol, meta.TransportProtocol)))
+	src := stringutil.FirstNonEmpty(req.SrcAddress, meta.SrcAddress)
+	dst := stringutil.FirstNonEmpty(req.DstAddress, meta.DstAddress)
 	srcPort := firstNonZero(req.SrcPort, meta.SrcPort)
 	dstPort := firstNonZero(req.DstPort, meta.DstPort)
 	if proto == "" || src == "" || dst == "" {
@@ -448,15 +449,6 @@ func flowKey(req dpi.ClassifyRequest) string {
 	}
 	sum := sha256.Sum256([]byte(strings.Join([]string{proto, src, strconv.Itoa(srcPort), dst, strconv.Itoa(dstPort)}, "|")))
 	return hex.EncodeToString(sum[:16])
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func firstNonZero(values ...int) int {

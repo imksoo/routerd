@@ -157,25 +157,10 @@ environment.
     "ttl": "300s",
     "resources": [
       {
-        "apiVersion": "hybrid.routerd.net/v1alpha1",
-        "kind": "RemoteAddressClaim",
-        "metadata": { "name": "app-10-0-1-123" },
-        "spec": {
-          "domainRef": "cloudedge-same-subnet",
-          "address": "10.0.1.123/32",
-          "ownerSide": "cloud",
-          "capture": {
-            "type": "provider-secondary-ip",
-            "providerRef": "oci-prod",
-            "providerMode": "vnic-private-ip",
-            "nicRef": "ocid1.vnic.oc1..example"
-          },
-          "delivery": {
-            "peerRef": "cloud-main",
-            "mode": "route",
-            "tunnelInterface": "wg-hybrid"
-          }
-        }
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "IPv4Route",
+        "metadata": { "name": "cloud-app-static-fallback" },
+        "spec": { "destination": "10.0.1.123/32", "gateway": "192.0.2.1" }
       }
     ],
     "directives": [
@@ -186,7 +171,7 @@ environment.
           "kind": "IPv4Route",
           "name": "cloud-app-static-fallback"
         },
-        "reason": "RemoteAddressClaim/app-10-0-1-123 is active"
+        "reason": "provider inventory confirms the dynamic route"
       }
     ],
     "actionPlans": [
@@ -243,9 +228,10 @@ routerd falls back to `observedCandidates` and then `ips`.
 
 `status.observedCandidates` can be used when a plugin wants to return a narrower
 event-emission candidate set while still exposing the full local inventory in
-`localIPs`. SAM's ownership resolver uses `localIPs` for shadow locality
-classification; the existing discovery event path continues to use
-`observedCandidates` or legacy `ips`.
+`localIPs`. SAM uses that local inventory only to establish the router's own
+NIC, private-IP, and trusted-subnet scope. Durable ownership facts are emitted
+from the filtered `observedCandidates` set, or legacy `ips` when candidates are
+not supplied.
 
 Each private-IP record should set `resourceRef` to the owning compute instance
 ID when the provider can report it, and `resourceType` to distinguish router

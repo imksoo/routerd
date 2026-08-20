@@ -319,7 +319,7 @@ routerctl dynamic list --state-file /var/lib/routerd/routerd.db
 On the leaf, `routerctl dynamic list` should show a `DynamicConfigPart` with
 provenance `routerd.net/event-group: cloudedge`. If the event is delivered but
 no dynamic config appears, the issue is on the subscription/plugin side, not
-delivery — see [Event Federation Subscription](./event-federation-subscription).
+delivery is consumed directly by the MobilityPool controller.
 
 ## JSON output for automation
 

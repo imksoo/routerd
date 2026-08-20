@@ -30,6 +30,7 @@ import (
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/dynamicconfig/codec"
 	routerplugin "github.com/imksoo/routerd/pkg/plugin"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -300,7 +301,7 @@ func (c *Controller) processBatch(ctx context.Context, resource api.Resource, sp
 
 	annotateDynamicPart(&part, subName, batch)
 
-	record, err := dynamicPartRecord(part)
+	record, err := codec.Encode(part)
 	if err != nil {
 		c.failBatch(batch, subKey, err.Error())
 		c.completeRun(runID, outcome, "failed", err.Error())
@@ -629,7 +630,7 @@ func subscriptionTopic(subName string) string {
 // generation per source. UpsertDynamicConfigPart, however, keys rows by
 // UNIQUE(source, generation), so reusing one (source, generation) would
 // overwrite an earlier still-valid claim. To let distinct batches of events
-// each contribute their RemoteAddressClaim WITHOUT clobbering earlier active
+// each contribute their DynamicConfigPart without clobbering earlier active
 // parts, we make the source batch-distinct ("EventSubscription/<sub>/<digest>"
 // of the sorted event ids) and keep generation fixed at 1. Distinct batches ->
 // distinct sources -> independent rows -> all coexist in the effective config.
@@ -678,36 +679,4 @@ func annotateDynamicPart(part *dynamicconfig.DynamicConfigPart, subName string, 
 			res.Metadata.Annotations["routerd.net/event-subject"] = strings.Join(subjects, ",")
 		}
 	}
-}
-
-func dynamicPartRecord(part dynamicconfig.DynamicConfigPart) (routerstate.DynamicConfigPartRecord, error) {
-	resources, err := json.Marshal(part.Spec.Resources)
-	if err != nil {
-		return routerstate.DynamicConfigPartRecord{}, err
-	}
-	directives, err := json.Marshal(part.Spec.Directives)
-	if err != nil {
-		return routerstate.DynamicConfigPartRecord{}, err
-	}
-	var actionPlansJSON string
-	if len(part.Spec.ActionPlans) > 0 {
-		// Preserve the plugin's display-only ActionPlans so federation-triggered
-		// runs stay reviewable. routerd never executes them.
-		data, err := json.Marshal(part.Spec.ActionPlans)
-		if err != nil {
-			return routerstate.DynamicConfigPartRecord{}, err
-		}
-		actionPlansJSON = string(data)
-	}
-	return routerstate.DynamicConfigPartRecord{
-		Source:          part.Spec.Source,
-		Generation:      part.Spec.Generation,
-		ObservedAt:      part.Spec.ObservedAt,
-		ExpiresAt:       part.Spec.ExpiresAt,
-		Digest:          part.Spec.Digest,
-		ResourcesJSON:   string(resources),
-		DirectivesJSON:  string(directives),
-		ActionPlansJSON: actionPlansJSON,
-		Status:          "active",
-	}, nil
 }

@@ -152,19 +152,17 @@ only selected mobile `/32` IPv4 addresses.
 
 The current primary authoring model is:
 
-- `MobilityPool` declares the mobility prefix, federation group, member
-  identities, site roles, capture policy, provider trap placement, and BGP
-  delivery policy.
+- `SAMNodeSet` declares shared member identity, site/role, placement, and
+  transport endpoints once for the fabric.
+- `MobilityPool` declares the mobility prefix, federation group, local capture
+  policy, provider trap placement, and BGP delivery. It imports topology from
+  `SAMNodeSet` and carries only the local self overlay.
 - `SAMTransportProfile` declares the router-to-router transport: self node,
-  shared topology node list, inner prefix, IPIP/GRE mode, optional WireGuard
-  encryption underlay, BGP router, and peers.
+  inner prefix, IPIP/GRE mode, optional WireGuard encryption underlay, BGP
+  router, and NodeSet-selected peers.
 - `CloudProviderProfile` describes provider capabilities and external auth shape.
 - `ProviderActionPolicy` controls whether imported provider action plans may be
   handed to an executor plugin.
-
-The lower-level `AddressMobilityDomain` and `RemoteAddressClaim` resources remain
-available for compatibility and experiments, but they are no longer the primary
-CloudEdge SAM authoring surface.
 
 Selective Address Mobility lives in the ordinary switching/forwarding plane and
 contains no firewall or NAT concept. Source and destination transparency is
@@ -172,8 +170,8 @@ intrinsic, not a configurable field. Operators compose firewall and NAT policy
 separately by referencing literal addresses in existing `FirewallZone`,
 `FirewallRule`, or `NAT44Rule` resources.
 
-See [Selective Address Mobility](./reference/selective-address-mobility) for
-the resource model and provider capability framing.
+See [Cloud SAM internals](./reference/cloudedge-sam-internals) for the resource
+model and provider capability framing.
 
 ## Cloud inventory and provider actions
 

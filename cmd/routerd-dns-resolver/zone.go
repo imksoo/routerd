@@ -11,7 +11,9 @@ import (
 
 	"github.com/miekg/dns"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dnsresolver"
 )
 
@@ -50,7 +52,7 @@ func newZoneTable(zones []dnsresolver.RuntimeZone) *zoneTable {
 	table := &zoneTable{zones: map[string]*zoneData{}}
 	for _, runtime := range zones {
 		spec := runtime.Spec
-		name := dns.Fqdn(firstNonEmpty(spec.Zone, runtime.Name))
+		name := dns.Fqdn(stringutil.FirstNonEmpty(spec.Zone, runtime.Name))
 		ttl := uint32(spec.TTL)
 		if ttl == 0 {
 			ttl = 300
@@ -184,7 +186,7 @@ func (t *zoneTable) ApplyLease(lease dhcpLeaseEvent) {
 			continue
 		}
 		switch lease.Action {
-		case "del", "remove", "removed":
+		case daemonapi.DHCPLeaseActionRemoved:
 			zone.deleteDynamic(lease.IP)
 		default:
 			zone.addLease(lease)
@@ -335,7 +337,7 @@ func (z *zoneData) loadDnsmasqLeases(path string) {
 		if len(fields) < 4 || fields[3] == "*" {
 			continue
 		}
-		z.addLease(dhcpLeaseEvent{Action: "add", MAC: fields[1], IP: fields[2], Hostname: fields[3]})
+		z.addLease(dhcpLeaseEvent{MAC: fields[1], IP: fields[2], Hostname: fields[3]})
 	}
 }
 

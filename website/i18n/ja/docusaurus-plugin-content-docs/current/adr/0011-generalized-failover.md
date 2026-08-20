@@ -4,7 +4,14 @@
 
 ## ステータス
 
-提案済み。実験的実装として承認 — 2026-06-01。
+置換済み — 2026-08-18。[ADR 0012: BGP Address Mobility](0012-bgp-address-mobility.md) を参照。
+
+> **歴史的な記録であり、現行 API の契約ではありません。** この ADR は採用されなかった
+> 実験設計を記録しています。以下に記載されたグローバルなフェイルオーバー・ポリシー、
+> ハートビート、epoch、互換フィールドは現在の MobilityPool モデルには存在しません。
+> 現行の実装は ADR 0012 の型付き `PoolRuntimeSnapshot -> PoolPlan` パイプラインです。
+> BGP liveness marker、placement、startup fence、holder retention、hold-down は、
+> ユーザー設定可能なポリシースイッチではなく実行時の安全規則です。
 
 [ADR 0010: 捕捉所有権アービトレーション](../adr/0010-capture-ownership-arbitration.md)
 （所有権マップ + `ownershipEpoch`）を消費し、

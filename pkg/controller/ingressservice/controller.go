@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/ingressdrain"
@@ -133,9 +134,9 @@ func (c *Controller) reconcileResource(ctx context.Context, name string, spec ap
 			phase = "Degraded"
 		}
 	}
-	listenAddress := statusAddressValue(spec.Listen.Address)
+	listenAddress := statusvalue.Address(spec.Listen.Address)
 	if listenAddress == "" && strings.TrimSpace(spec.Listen.AddressFrom.Resource) != "" {
-		listenAddress = statusAddressValue(resourcequery.Value(c.Store, spec.Listen.AddressFrom))
+		listenAddress = statusvalue.Address(resourcequery.Value(c.Store, spec.Listen.AddressFrom))
 	}
 	status := map[string]any{
 		"phase":              phase,
@@ -153,7 +154,7 @@ func (c *Controller) reconcileResource(ctx context.Context, name string, spec ap
 		"observedAt":         now,
 	}
 	if sameActiveBackend(previousStatus["activeBackend"], active) {
-		if previousTransition := statusString(previousStatus["lastActiveBackendTransitionAt"]); previousTransition != "" {
+		if previousTransition := statusvalue.Text(previousStatus["lastActiveBackendTransitionAt"]); previousTransition != "" {
 			status["lastActiveBackendTransitionAt"] = previousTransition
 		}
 	} else {
@@ -202,13 +203,13 @@ func sameActiveBackend(previous any, active backendStatus) bool {
 	if !ok {
 		return active.Name == "" && active.ResolvedAddress == "" && active.Port == 0
 	}
-	return statusString(item["name"]) == active.Name && statusString(item["address"]) == active.ResolvedAddress && statusInt(item["port"]) == active.Port
+	return statusvalue.Text(item["name"]) == active.Name && statusvalue.Text(item["address"]) == active.ResolvedAddress && statusInt(item["port"]) == active.Port
 }
 
 func (c *Controller) resolveAddress(ctx context.Context, backend api.IngressBackendSpec, previous previousBackendStatus) (string, string) {
 	address := strings.TrimSpace(backend.Address)
 	if address == "" && strings.TrimSpace(backend.AddressFrom.Resource) != "" {
-		address = statusAddressValue(resourcequery.Value(c.Store, backend.AddressFrom))
+		address = statusvalue.Address(resourcequery.Value(c.Store, backend.AddressFrom))
 	}
 	if address == "" {
 		return "", "AddressFromPending"
@@ -262,17 +263,6 @@ func (s *backendStatus) applyCheckResult(ok bool, previous previousBackendStatus
 	s.LastHealthyAt = previous.LastHealthyAt
 	s.LastUnhealthyAt = now
 	s.Healthy = previous.Healthy && s.UnhealthyCount < unhealthyThreshold
-}
-
-func statusAddressValue(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	if prefix, err := netip.ParsePrefix(value); err == nil {
-		return prefix.Addr().String()
-	}
-	return value
 }
 
 func (c *Controller) check(ctx context.Context, address string, port int, timeout time.Duration) error {
@@ -391,12 +381,12 @@ func previousBackends(status map[string]any) map[string]previousBackendStatus {
 			name := strings.TrimSpace(fmt.Sprint(item["name"]))
 			if name != "" {
 				out[name] = previousBackendStatus{
-					ResolvedAddress: statusString(item["resolvedAddress"]),
-					Healthy:         statusBool(item["healthy"]),
+					ResolvedAddress: statusvalue.Text(item["resolvedAddress"]),
+					Healthy:         statusvalue.BoolOrFalse(item["healthy"]),
 					HealthyCount:    statusInt(item["healthyCount"]),
 					UnhealthyCount:  statusInt(item["unhealthyCount"]),
-					LastHealthyAt:   statusString(item["lastHealthyAt"]),
-					LastUnhealthyAt: statusString(item["lastUnhealthyAt"]),
+					LastHealthyAt:   statusvalue.Text(item["lastHealthyAt"]),
+					LastUnhealthyAt: statusvalue.Text(item["lastUnhealthyAt"]),
 				}
 			}
 		}
@@ -417,13 +407,6 @@ func previousBackends(status map[string]any) map[string]previousBackendStatus {
 	return out
 }
 
-func statusString(value any) string {
-	if value == nil {
-		return ""
-	}
-	return strings.TrimSpace(fmt.Sprint(value))
-}
-
 func statusInt(value any) int {
 	switch typed := value.(type) {
 	case int:
@@ -438,17 +421,6 @@ func statusInt(value any) int {
 		return out
 	default:
 		return 0
-	}
-}
-
-func statusBool(value any) bool {
-	switch typed := value.(type) {
-	case bool:
-		return typed
-	case string:
-		return strings.EqualFold(strings.TrimSpace(typed), "true")
-	default:
-		return false
 	}
 }
 

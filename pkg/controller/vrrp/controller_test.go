@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resourcequery"
@@ -673,7 +674,7 @@ func TestReconcileObservesVRRPRoleFromVIPAddress(t *testing.T) {
 	if status["role"] != "master" {
 		t.Fatalf("role = %#v, status=%#v", status["role"], status)
 	}
-	firstTransition := statusString(status, "lastRoleTransitionAt")
+	firstTransition := statusvalue.Field(status, "lastRoleTransitionAt")
 	if firstTransition == "" {
 		t.Fatalf("lastRoleTransitionAt missing: %#v", status)
 	}
@@ -731,7 +732,7 @@ func TestReconcileRestartsInactiveSystemdKeepalived(t *testing.T) {
 	if status["role"] != "master" || status["serviceActive"] != true {
 		t.Fatalf("restarted keepalived status = %#v, want role master and serviceActive true", status)
 	}
-	if statusString(status, "lastRestartAt") == "" || statusString(status, "lastChangeReason") != "keepalived.service inactive" {
+	if statusvalue.Field(status, "lastRestartAt") == "" || statusvalue.Field(status, "lastChangeReason") != "keepalived.service inactive" {
 		t.Fatalf("restart metadata missing: %#v", status)
 	}
 }
@@ -1079,7 +1080,7 @@ func TestReconcilePublishesRoleBeforeVMACRepairFailure(t *testing.T) {
 		t.Fatal("expected VMAC repair error")
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
-	if status["role"] != "master" || status["failoverVMACs"] != 2 || !strings.Contains(statusString(status, "vmacRepairError"), "repair failed") {
+	if status["role"] != "master" || status["failoverVMACs"] != 2 || !strings.Contains(statusvalue.Field(status, "vmacRepairError"), "repair failed") {
 		t.Fatalf("status must publish role and repair error: %#v", status)
 	}
 
@@ -1088,7 +1089,7 @@ func TestReconcilePublishesRoleBeforeVMACRepairFailure(t *testing.T) {
 		t.Fatalf("successful VMAC repair: %v", err)
 	}
 	status = store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
-	if status["failoverVMACs"] != 2 || statusString(status, "vmacRepairError") != "" {
+	if status["failoverVMACs"] != 2 || statusvalue.Field(status, "vmacRepairError") != "" {
 		t.Fatalf("successful repair must clear error and retain desired count: %#v", status)
 	}
 
@@ -1099,7 +1100,7 @@ func TestReconcilePublishesRoleBeforeVMACRepairFailure(t *testing.T) {
 		t.Fatalf("reconcile after removing VMAC spec: %v", err)
 	}
 	status = store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
-	if status["failoverVMACs"] != 0 || statusString(status, "vmacRepairError") != "" {
+	if status["failoverVMACs"] != 0 || statusvalue.Field(status, "vmacRepairError") != "" {
 		t.Fatalf("removed VMAC spec must publish zero without stale error: %#v", status)
 	}
 }

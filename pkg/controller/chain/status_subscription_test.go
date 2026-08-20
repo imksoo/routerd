@@ -7,6 +7,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
+	mobilitycontroller "github.com/imksoo/routerd/pkg/controller/mobility"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 )
 
@@ -37,7 +38,32 @@ func TestSAMRouteControllersSubscribeToVirtualAddressStatus(t *testing.T) {
 	}
 }
 
-func TestSAMControllerSubscribesToBGPRouterStatus(t *testing.T) {
+func TestLocalMobilityEffectorsSubscribeToTypedMobilityPoolPlan(t *testing.T) {
+	event := daemonapi.DaemonEvent{
+		Type: mobilitycontroller.PoolPlanChangedEvent,
+		Resource: &daemonapi.ResourceRef{
+			APIVersion: api.MobilityAPIVersion,
+			Kind:       "MobilityPool",
+			Name:       "cloudedge",
+		},
+		Attributes: map[string]string{"source": "MobilityPool/cloudedge/node/router-a", "digest": "sha256:plan"},
+	}
+	router := &api.Router{}
+	for name, subscriptions := range map[string][]bus.Subscription{
+		"bgp":                 bgpStatusSubscriptions(router),
+		"ipv4-route":          ipv4RouteStatusSubscriptions(),
+		"ipv4-static-address": ipv4StaticAddressStatusSubscriptions(),
+		"path-mtu":            pathMTUStatusSubscriptions(router),
+		"firewall":            firewallStatusSubscriptions(router),
+		"sam":                 samStatusSubscriptions(),
+	} {
+		if !subscriptionSetAccepts(subscriptions, event) {
+			t.Fatalf("%s subscriptions did not accept typed MobilityPool plan update", name)
+		}
+	}
+}
+
+func TestSAMControllerIgnoresBGPRouterStatus(t *testing.T) {
 	event := daemonapi.DaemonEvent{
 		Type: "routerd.resource.status.changed",
 		Resource: &daemonapi.ResourceRef{
@@ -45,31 +71,10 @@ func TestSAMControllerSubscribesToBGPRouterStatus(t *testing.T) {
 			Kind:       "BGPRouter",
 			Name:       "lan",
 		},
-		Attributes: map[string]string{"changedFields": "installedNextHops,peers,phase"},
+		Attributes: map[string]string{"changedFields": "installedNextHops,prefixes,phase,fibRoutes,fibUnsupportedRoutes"},
 	}
-	if !subscriptionSetAccepts(samStatusSubscriptions(), event) {
-		t.Fatal("sam subscriptions did not accept BGPRouter status change")
-	}
-}
-
-func TestBGPControllerSubscribesToMobilityFIBVerdictsOnly(t *testing.T) {
-	verdicts := daemonapi.DaemonEvent{
-		Type: "routerd.resource.status.changed",
-		Resource: &daemonapi.ResourceRef{
-			APIVersion: api.MobilityAPIVersion,
-			Kind:       "MobilityPool",
-			Name:       "cloudedge",
-		},
-		Attributes: map[string]string{"changedFields": "ownershipResolverFIBVerdicts,phase"},
-	}
-	subs := bgpStatusSubscriptions(&api.Router{})
-	if !subscriptionSetAccepts(subs, verdicts) {
-		t.Fatal("bgp subscriptions did not accept MobilityPool FIB verdict change")
-	}
-	unrelated := verdicts
-	unrelated.Attributes = map[string]string{"changedFields": "packetsSeen,observedAt"}
-	if subscriptionSetAccepts(subs, unrelated) {
-		t.Fatal("bgp subscriptions accepted unrelated high-churn MobilityPool status")
+	if subscriptionSetAccepts(samStatusSubscriptions(), event) {
+		t.Fatal("sam subscriptions accepted legacy BGPRouter status wake-up")
 	}
 }
 
@@ -329,8 +334,11 @@ func TestDNSResolverSubscriptionsKeepLeaseAndDNSEvents(t *testing.T) {
 	if !subscriptionSetAccepts(subs, statusChangedEvent("DNSResolver", "lan-resolver")) {
 		t.Fatal("dns-resolver did not accept DNSResolver status change")
 	}
-	if !subscriptionSetAccepts(subs, daemonapi.DaemonEvent{Type: "routerd.dhcp.lease.add"}) {
+	if !subscriptionSetAccepts(subs, daemonapi.DaemonEvent{Type: daemonapi.EventDHCPLeaseAdded}) {
 		t.Fatal("dns-resolver did not accept DHCP lease event")
+	}
+	if subscriptionSetAccepts(subs, daemonapi.DaemonEvent{Type: "routerd.dhcp.lease.add"}) {
+		t.Fatal("dns-resolver accepted removed DHCP lease topic")
 	}
 }
 

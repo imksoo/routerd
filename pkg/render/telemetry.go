@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/imksoo/routerd/internal/mapsort"
 	"github.com/imksoo/routerd/pkg/api"
 )
 
@@ -61,7 +62,7 @@ func TelemetryEnvironment(router *api.Router) ([]string, error) {
 	env = append(env, "OTEL_SERVICE_NAMESPACE="+namespace)
 	if len(selected.Attributes) > 0 {
 		var attrs []string
-		for _, key := range sortedMapKeysString(selected.Attributes) {
+		for _, key := range mapsort.Keys(selected.Attributes) {
 			attrs = append(attrs, key+"="+selected.Attributes[key])
 		}
 		env = append(env, "OTEL_RESOURCE_ATTRIBUTES="+strings.Join(attrs, ","))
@@ -84,7 +85,7 @@ func observabilityPipelineEnvironment(spec api.ObservabilityPipelineSpec) []stri
 	}
 	if len(spec.OTLP.Headers) > 0 {
 		var headers []string
-		for _, key := range sortedMapKeysString(spec.OTLP.Headers) {
+		for _, key := range mapsort.Keys(spec.OTLP.Headers) {
 			headers = append(headers, key+"="+spec.OTLP.Headers[key])
 		}
 		env = append(env, "OTEL_EXPORTER_OTLP_HEADERS="+strings.Join(headers, ","))
@@ -96,7 +97,7 @@ func observabilityPipelineEnvironment(spec api.ObservabilityPipelineSpec) []stri
 	env = append(env, "OTEL_SERVICE_NAMESPACE="+namespace)
 	if len(spec.Attributes) > 0 {
 		var attrs []string
-		for _, key := range sortedMapKeysString(spec.Attributes) {
+		for _, key := range mapsort.Keys(spec.Attributes) {
 			attrs = append(attrs, key+"="+spec.Attributes[key])
 		}
 		env = append(env, "OTEL_RESOURCE_ATTRIBUTES="+strings.Join(attrs, ","))

@@ -4,21 +4,21 @@ package chain
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/netip"
+	"sort"
 	"strings"
-	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/bus"
-	"github.com/imksoo/routerd/pkg/daemonapi"
-	"github.com/imksoo/routerd/pkg/lifecycle"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/sam"
-	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 type samProxyNeighborApplier interface {
-	SetProxyARP(ctx context.Context, ifname string, enabled, owned bool) error
+	SetProxyARP(ctx context.Context, ifname string, enabled, owned bool) (samProxyARPApplyResult, error)
 	SetIPForwarding(ctx context.Context, enabled bool) error
 	EnsureProxyNeighbor(ctx context.Context, address, ifname string) error
 	DeleteProxyNeighbor(ctx context.Context, address, ifname string) error
@@ -26,42 +26,33 @@ type samProxyNeighborApplier interface {
 	ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction) error
 }
 
+// samProxyARPApplyResult records whether this reconcile changed a sysctl from
+// its safe disabled value.  The applied-effect ledger persists only that
+// ownership proof; an already-enabled operator setting is never adopted.
+type samProxyARPApplyResult struct {
+	changedByRouterd bool
+}
+
 type samGratuitousARPAnnouncer interface {
 	SendGratuitousARP(ctx context.Context, address, ifname string) error
 }
 
-type samStoredProxyNeighbor struct {
-	address string
-	ifname  string
-}
-
 type samOSAddressDeassignResult struct {
-	address string
-	ifname  string
-	// removedThisReconcile is true only when this reconcile deleted the
-	// captured address from a local OS interface.
+	address, ifname      string
 	removedThisReconcile bool
 }
 
-func samSelectResources(resources []api.Resource, kind string) []api.Resource {
-	var out []api.Resource
-	for _, resource := range resources {
-		if resource.Kind == kind {
-			out = append(out, resource)
-		}
-	}
-	return out
-}
-
+// SAMController applies only the typed local capture intents emitted by a
+// MobilityPool plan. It deliberately does not inspect status or legacy SAM
+// resources to rediscover desired state.
 type SAMController struct {
-	Router    *api.Router
-	Bus       *bus.Bus
-	Store     Store
-	Lowerings []sam.DeliveryLowering
-	DryRun    bool
-	OS        platform.OS
-	Applier   samProxyNeighborApplier
-	GARP      samGratuitousARPAnnouncer
+	Router              *api.Router
+	Store               Store
+	LocalCaptureIntents []dynamicconfig.LocalCaptureIntent
+	DryRun              bool
+	OS                  platform.OS
+	Applier             samProxyNeighborApplier
+	GARP                samGratuitousARPAnnouncer
 }
 
 func (c SAMController) Reconcile(ctx context.Context) error {
@@ -73,175 +64,518 @@ func (c SAMController) Reconcile(ctx context.Context) error {
 		targetOS = platform.CurrentOS()
 	}
 	if targetOS != platform.OSLinux && targetOS != platform.OSFreeBSD {
-		return c.reconcileStatuses(targetOS, nil, nil, nil, nil, nil, nil)
+		return nil
 	}
-	statuses, err := c.listObjectStatuses()
+	actions, err := sam.PlanLocalCaptureIntents(c.LocalCaptureIntents, targetOS)
 	if err != nil {
 		return err
 	}
-	if err := c.cleanupRemovedCaptures(ctx, statuses); err != nil {
-		return err
-	}
-	actions, err := sam.PlanCaptureWithOptions(c.Router, targetOS, sam.PlanOptions{StatusReader: c.Store})
+	state, err := c.reconcileState(actions, targetOS)
 	if err != nil {
 		return err
 	}
-	if err := c.cleanupChangedCaptures(ctx, statuses, actions); err != nil {
-		return err
-	}
-	if err := c.reconcileSAMIPForwarding(ctx, actions); err != nil {
-		return err
-	}
-	if targetOS != platform.OSFreeBSD {
-		if err := c.reconcileProxyARPSysctls(ctx, actions, statuses, nil); err != nil {
-			return err
-		}
-		if err := c.reconcileForwardPaths(ctx, actions); err != nil {
-			return err
+	if !c.DryRun && (len(actions) != 0 || len(state.previousProxyNeighbors) != 0 || len(state.heldForwardPaths) != 0 || len(state.previousProxyARP) != 0) {
+		if _, ok := c.Store.(objectStatusMerger); !ok {
+			return fmt.Errorf("SAM capture effects require an applied-effect status merger")
 		}
 	}
+	blocked := map[string]bool{}
+	deassigned := map[string]bool{}
 	var failures []string
-	deassignResults := map[string]samOSAddressDeassignResult{}
-	garpSent := map[string]bool{}
-	garpErrors := map[string]string{}
-	proxyNeighborApplied := map[string]bool{}
-	captureFailures := map[string]string{}
-	blockedPublication := map[string]bool{}
-	priorNeighbors := samStoredProxyNeighbors(statuses)
-	for _, action := range actions {
-		if action.Kind == "deassign-os-address" {
-			result := samOSAddressDeassignResult{address: strings.TrimSpace(action.Address)}
-			deassignResults[action.ClaimName] = result
-			if c.DryRun {
-				continue
-			}
-			applier := c.Applier
-			if applier == nil {
-				applier = defaultSAMProxyNeighborApplier()
-			}
-			result, err := applier.EnsureOSAddressAbsent(ctx, action.Address)
-			if result.address == "" {
-				result.address = strings.TrimSpace(action.Address)
-			}
-			deassignResults[action.ClaimName] = result
-			if err != nil {
-				blockedPublication[action.ClaimName] = true
-				failure := fmt.Sprintf("%s deassign %s: %v", action.ClaimName, action.Address, err)
-				failures = append(failures, failure)
-				captureFailures[action.ClaimName] = failure
-			}
-		}
+	applier := c.Applier
+	if applier == nil {
+		applier = defaultSAMProxyNeighborApplier()
 	}
-	freeBSDValidated := map[string]bool{}
-	if targetOS == platform.OSFreeBSD && !c.DryRun {
-		applier := c.Applier
-		if applier == nil {
-			applier = defaultSAMProxyNeighborApplier()
+	for _, action := range actions {
+		if action.Kind != "deassign-os-address" || c.DryRun {
+			continue
 		}
-		for _, action := range actions {
-			if action.Kind != "proxy-neighbor" || blockedPublication[action.ClaimName] {
-				continue
-			}
-			if err := applier.EnsureProxyNeighbor(ctx, action.Address, action.Interface); err != nil {
-				failure := fmt.Sprintf("%s %s dev %s: %v", action.ClaimName, action.Address, action.Interface, err)
-				failures = append(failures, failure)
-				captureFailures[action.ClaimName] = failure
-				blockedPublication[action.ClaimName] = true
-				continue
-			}
-			freeBSDValidated[action.ClaimName] = true
+		result, err := applier.EnsureOSAddressAbsent(ctx, action.Address)
+		if err != nil {
+			blocked[action.IntentID] = true
+			failures = append(failures, fmt.Sprintf("%s deassign %s: %v", action.IntentID, action.Address, err))
+			continue
+		}
+		deassigned[action.IntentID] = result.removedThisReconcile
+	}
+	if len(failures) != 0 {
+		return fmt.Errorf("SAM capture failed: %s", strings.Join(failures, "; "))
+	}
+	if targetOS == platform.OSLinux {
+		if err := c.reconcileProxyARPSysctls(ctx, actions, nil, &state); err != nil {
+			return err
 		}
 	}
 	if targetOS == platform.OSFreeBSD {
-		proxyARPEnabled := freeBSDProxyARPEnabled(actions, blockedPublication)
-		if !proxyARPEnabled {
-			// Failed-owner silence takes precedence over PF cleanup. Once no
-			// valid active claim remains, drop routerd-owned global proxy ARP
-			// before any later cleanup operation that could fail.
-			if err := c.reconcileProxyARPSysctls(ctx, actions, statuses, blockedPublication); err != nil {
-				return err
-			}
-		}
-		if err := c.reconcileForwardPaths(ctx, actions); err != nil {
+		if err := c.reconcileProxyARPSysctls(ctx, actions, blocked, &state); err != nil {
 			return err
 		}
-		if proxyARPEnabled {
-			if err := c.reconcileProxyARPSysctls(ctx, actions, statuses, blockedPublication); err != nil {
-				return err
-			}
-		}
+	}
+	if err := c.reconcileSAMIPForwarding(ctx, targetOS, actions, state); err != nil {
+		return err
+	}
+	if err := c.reconcileForwardPaths(ctx, state); err != nil {
+		return err
+	}
+	if err := c.cleanupReleasedProxyNeighbors(ctx, actions, state); err != nil {
+		return err
 	}
 	for _, action := range actions {
-		if action.Kind != "proxy-neighbor" || blockedPublication[action.ClaimName] || c.DryRun {
+		if action.Kind != "proxy-neighbor" || blocked[action.IntentID] || c.DryRun {
 			continue
 		}
-		applier := c.Applier
-		if applier == nil {
-			applier = defaultSAMProxyNeighborApplier()
+		if err := applier.EnsureProxyNeighbor(ctx, action.Address, action.Interface); err != nil {
+			failures = append(failures, fmt.Sprintf("%s %s dev %s: %v", action.IntentID, action.Address, action.Interface, err))
+			continue
 		}
-		if targetOS != platform.OSFreeBSD || !freeBSDValidated[action.ClaimName] {
-			if err := applier.EnsureProxyNeighbor(ctx, action.Address, action.Interface); err != nil {
-				failure := fmt.Sprintf("%s %s dev %s: %v", action.ClaimName, action.Address, action.Interface, err)
-				failures = append(failures, failure)
-				captureFailures[action.ClaimName] = failure
-				continue
-			}
-		}
-		proxyNeighborApplied[action.ClaimName] = true
-		current := samStoredProxyNeighbor{address: strings.TrimSpace(action.Address), ifname: strings.TrimSpace(action.Interface)}
-		if shouldSendSAMGratuitousARP(action, priorNeighbors[action.ClaimName], current) {
+		if action.GratuitousARP && deassigned[action.IntentID] {
 			announcer := c.GARP
 			if announcer == nil {
 				announcer = defaultSAMGratuitousARPAnnouncer()
 			}
 			if err := announcer.SendGratuitousARP(ctx, action.Address, action.Interface); err != nil {
-				garpErrors[action.ClaimName] = fmt.Sprintf("gratuitous ARP %s dev %s: %v", action.Address, action.Interface, err)
-			} else {
-				garpSent[action.ClaimName] = true
+				failures = append(failures, fmt.Sprintf("%s gratuitous ARP %s dev %s: %v", action.IntentID, action.Address, action.Interface, err))
 			}
 		}
 	}
-	if err := c.reconcileStatuses(targetOS, deassignResults, garpSent, garpErrors, proxyNeighborApplied, captureFailures, actions); err != nil {
-		return err
-	}
-	if len(failures) > 0 {
+	if len(failures) != 0 {
 		return fmt.Errorf("SAM capture failed: %s", strings.Join(failures, "; "))
+	}
+	return c.saveAppliedDataplane(actions, state)
+}
+
+type samAppliedProxyNeighbor struct {
+	ID         string `json:"id"`
+	PoolRef    string `json:"poolRef"`
+	PoolPrefix string `json:"poolPrefix"`
+	Address    string `json:"address"`
+	Interface  string `json:"interface"`
+}
+
+type samAppliedForwardPath struct {
+	ID            string `json:"id"`
+	PoolRef       string `json:"poolRef"`
+	PoolPrefix    string `json:"poolPrefix"`
+	Kind          string `json:"kind"`
+	Address       string `json:"address"`
+	Interface     string `json:"interface"`
+	PeerInterface string `json:"peerInterface"`
+}
+
+// samAppliedProxyARP is a narrow ownership ledger for a sysctl that routerd
+// itself moved from disabled to enabled.  It intentionally has no desired
+// semantics: absence means "do not change this host setting".
+type samAppliedProxyARP struct {
+	Interface string `json:"interface"`
+	Owned     bool   `json:"owned"`
+}
+
+const samDataplaneStatusName = "sam-dataplane"
+
+// samReconcileState is one observed snapshot for a local SAM reconcile. The
+// applied status is used only to retain or remove effects that routerd already
+// installed; it never creates new desired capture.
+type samReconcileState struct {
+	previousProxyNeighbors []samAppliedProxyNeighbor
+	heldProxyNeighbors     []samAppliedProxyNeighbor
+	heldForwardPaths       []samAppliedForwardPath
+	heldProxyARPIDs        map[string]bool
+	previousProxyARP       map[string]samAppliedProxyARP
+	nextProxyARP           map[string]samAppliedProxyARP
+	forwardPaths           []sam.CaptureAction
+}
+
+func (c SAMController) reconcileState(actions []sam.CaptureAction, targetOS platform.OS) (samReconcileState, error) {
+	status := c.Store.ObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName)
+	previousProxyNeighbors, err := samAppliedProxyNeighbors(status["appliedProxyNeighbors"], statusValuePresent(status, "appliedProxyNeighbors"))
+	if err != nil {
+		return samReconcileState{}, fmt.Errorf("decode applied SAM proxy-neighbor ledger: %w", err)
+	}
+	previousForwardPaths, err := samAppliedForwardPaths(status["appliedForwardPaths"], statusValuePresent(status, "appliedForwardPaths"))
+	if err != nil {
+		return samReconcileState{}, fmt.Errorf("decode applied SAM forward-path ledger: %w", err)
+	}
+	previousProxyARP, err := samAppliedProxyARPSettings(status["appliedProxyARP"], statusValuePresent(status, "appliedProxyARP"), targetOS)
+	if err != nil {
+		return samReconcileState{}, fmt.Errorf("decode applied SAM proxy_arp ledger: %w", err)
+	}
+	held, heldProxyARPIDs, err := samHeldCaptures(c.LocalCaptureIntents)
+	if err != nil {
+		return samReconcileState{}, err
+	}
+	state := samReconcileState{
+		previousProxyNeighbors: previousProxyNeighbors,
+		heldProxyARPIDs:        heldProxyARPIDs,
+		previousProxyARP:       previousProxyARP,
+		nextProxyARP:           map[string]samAppliedProxyARP{},
+	}
+	for _, applied := range state.previousProxyNeighbors {
+		if hold, ok := held[applied.ID]; ok && hold.matchesProxyNeighbor(applied) {
+			state.heldProxyNeighbors = append(state.heldProxyNeighbors, applied)
+		}
+	}
+	for _, applied := range previousForwardPaths {
+		if hold, ok := held[applied.ID]; ok && hold.matchesForwardPath(applied) {
+			state.heldForwardPaths = append(state.heldForwardPaths, applied)
+		}
+	}
+	state.forwardPaths = reconciledSAMForwardPaths(actions, state.heldForwardPaths)
+	return state, nil
+}
+
+type samHeldCapture struct {
+	id, poolRef, poolPrefix, address, captureType, captureInterface string
+	tunnels                                                         map[string]bool
+}
+
+func (h samHeldCapture) matchesProxyNeighbor(applied samAppliedProxyNeighbor) bool {
+	return h.id == applied.ID && h.poolRef == applied.PoolRef && h.poolPrefix == applied.PoolPrefix &&
+		h.address == applied.Address && h.captureInterface == applied.Interface
+}
+
+func (h samHeldCapture) matchesForwardPath(applied samAppliedForwardPath) bool {
+	return h.captureType == "provider-secondary-ip" && h.id == applied.ID && h.poolRef == applied.PoolRef &&
+		h.poolPrefix == applied.PoolPrefix && h.address == applied.Address && h.captureInterface == applied.Interface &&
+		applied.Kind == "forward-path" && h.tunnels[applied.PeerInterface]
+}
+
+func samHeldCaptures(intents []dynamicconfig.LocalCaptureIntent) (map[string]samHeldCapture, map[string]bool, error) {
+	held, proxyARP := map[string]samHeldCapture{}, map[string]bool{}
+	for _, intent := range intents {
+		if intent.Disposition != dynamicconfig.CaptureHold {
+			continue
+		}
+		address, err := canonicalSAMIPv4Host(intent.Address)
+		if err != nil {
+			return nil, nil, err
+		}
+		scope, err := dynamicconfig.ParseCanonicalIPv4Prefix(intent.PoolPrefix)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !scope.Contains(address.Addr()) {
+			return nil, nil, fmt.Errorf("held local capture intent %q address %q is outside poolPrefix %q", intent.ID, intent.Address, intent.PoolPrefix)
+		}
+		if err := sam.ValidateCaptureInterface(intent.CaptureInterface); err != nil {
+			return nil, nil, err
+		}
+		id := intent.ID
+		if _, exists := held[id]; exists {
+			return nil, nil, fmt.Errorf("duplicate held local capture intent %q", id)
+		}
+		capture := samHeldCapture{
+			id:               id,
+			poolRef:          intent.PoolRef,
+			poolPrefix:       intent.PoolPrefix,
+			address:          address.String(),
+			captureType:      intent.CaptureType,
+			captureInterface: intent.CaptureInterface,
+			tunnels:          map[string]bool{},
+		}
+		for _, tunnel := range intent.TunnelInterfaces {
+			capture.tunnels[tunnel] = true
+		}
+		held[id] = capture
+		if intent.CaptureType == "proxy-arp" {
+			proxyARP[id] = true
+		}
+	}
+	return held, proxyARP, nil
+}
+
+// cleanupReleasedProxyNeighbors uses observed, successfully-applied state only.
+// Desired capture remains exclusively in LocalCaptureIntents; status is never
+// consulted to recreate it.
+func (c SAMController) cleanupReleasedProxyNeighbors(ctx context.Context, actions []sam.CaptureAction, state samReconcileState) error {
+	desired := map[string]bool{}
+	for _, action := range actions {
+		if action.Kind == "proxy-neighbor" {
+			desired[samProxyNeighborKey(action.IntentID, action.Address, action.Interface)] = true
+		}
+	}
+	// CaptureHold is deliberately not lowered to new actions. Retain only an
+	// effect we previously recorded as applied for that same intent; it must not
+	// turn an uncertain observation into a new capture.
+	for _, applied := range state.heldProxyNeighbors {
+		desired[samProxyNeighborKey(applied.ID, applied.Address, applied.Interface)] = true
+	}
+	applier := c.Applier
+	if applier == nil {
+		applier = defaultSAMProxyNeighborApplier()
+	}
+	for _, applied := range state.previousProxyNeighbors {
+		key := samProxyNeighborKey(applied.ID, applied.Address, applied.Interface)
+		if desired[key] || c.DryRun {
+			continue
+		}
+		if err := applier.DeleteProxyNeighbor(ctx, applied.Address, applied.Interface); err != nil {
+			return fmt.Errorf("remove stale SAM proxy neighbor %s dev %s: %w", applied.Address, applied.Interface, err)
+		}
 	}
 	return nil
 }
 
-// reconcileSAMIPForwarding applies the planner's global forwarding intent only
-// when a concrete SAM forward path exists. Empty desired state must still reach
-// the adapter for stale-rule cleanup, but must not change a host-wide forwarding
-// setting merely because a prior SAM configuration once needed it.
-func (c SAMController) reconcileSAMIPForwarding(ctx context.Context, actions []sam.CaptureAction) error {
-	targetOS := c.OS
-	if targetOS == "" {
-		targetOS = platform.CurrentOS()
+func (c SAMController) saveAppliedDataplane(actions []sam.CaptureAction, state samReconcileState) error {
+	merger, ok := c.Store.(objectStatusMerger)
+	if !ok || c.DryRun {
+		if c.DryRun {
+			return nil
+		}
+		return fmt.Errorf("SAM capture effects require an applied-effect status merger")
 	}
-	if (targetOS != platform.OSLinux && targetOS != platform.OSFreeBSD) || c.DryRun {
+	neighborsByKey := map[string]samAppliedProxyNeighbor{}
+	for _, action := range actions {
+		if action.Kind == "proxy-neighbor" {
+			neighbor := samAppliedProxyNeighbor{ID: action.IntentID, PoolRef: action.PoolRef, PoolPrefix: action.PoolPrefix, Address: action.Address, Interface: action.Interface}
+			neighborsByKey[samProxyNeighborKey(neighbor.ID, neighbor.Address, neighbor.Interface)] = neighbor
+		}
+	}
+	for _, applied := range state.heldProxyNeighbors {
+		neighborsByKey[samProxyNeighborKey(applied.ID, applied.Address, applied.Interface)] = applied
+	}
+	neighbors := make([]samAppliedProxyNeighbor, 0, len(neighborsByKey))
+	for _, neighbor := range neighborsByKey {
+		neighbors = append(neighbors, neighbor)
+	}
+	sort.Slice(neighbors, func(i, j int) bool {
+		return samProxyNeighborKey(neighbors[i].ID, neighbors[i].Address, neighbors[i].Interface) < samProxyNeighborKey(neighbors[j].ID, neighbors[j].Address, neighbors[j].Interface)
+	})
+
+	pathsByKey := map[string]samAppliedForwardPath{}
+	for _, path := range state.forwardPaths {
+		applied := samAppliedForwardPath{ID: path.IntentID, PoolRef: path.PoolRef, PoolPrefix: path.PoolPrefix, Kind: path.Kind, Address: path.Address, Interface: path.Interface, PeerInterface: path.PeerInterface}
+		pathsByKey[samForwardPathKey(applied)] = applied
+	}
+	paths := make([]samAppliedForwardPath, 0, len(pathsByKey))
+	for _, path := range pathsByKey {
+		paths = append(paths, path)
+	}
+	sort.Slice(paths, func(i, j int) bool { return samForwardPathKey(paths[i]) < samForwardPathKey(paths[j]) })
+	proxyARP := make([]samAppliedProxyARP, 0, len(state.nextProxyARP))
+	for _, setting := range state.nextProxyARP {
+		proxyARP = append(proxyARP, setting)
+	}
+	sort.Slice(proxyARP, func(i, j int) bool { return proxyARP[i].Interface < proxyARP[j].Interface })
+	return merger.MergeObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName, map[string]any{
+		"appliedProxyNeighbors": neighbors,
+		"appliedForwardPaths":   paths,
+		"appliedProxyARP":       proxyARP,
+	})
+}
+
+func samAppliedProxyNeighbors(value any, present bool) ([]samAppliedProxyNeighbor, error) {
+	if !present {
+		return nil, nil
+	}
+	var decoded []samAppliedProxyNeighbor
+	if !decodeAppliedDataplaneStatus(value, &decoded) || decoded == nil {
+		return nil, fmt.Errorf("must be a non-null JSON array")
+	}
+	byKey := map[string]samAppliedProxyNeighbor{}
+	for _, neighbor := range decoded {
+		if err := validateSAMAppliedProxyNeighbor(neighbor); err != nil {
+			return nil, err
+		}
+		key := samProxyNeighborKey(neighbor.ID, neighbor.Address, neighbor.Interface)
+		if previous, found := byKey[key]; found {
+			if previous != neighbor {
+				return nil, fmt.Errorf("conflicting proxy-neighbor ledger entries for %q", key)
+			}
+			continue
+		}
+		byKey[key] = neighbor
+	}
+	out := make([]samAppliedProxyNeighbor, 0, len(byKey))
+	for _, neighbor := range byKey {
+		out = append(out, neighbor)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return samProxyNeighborKey(out[i].ID, out[i].Address, out[i].Interface) < samProxyNeighborKey(out[j].ID, out[j].Address, out[j].Interface)
+	})
+	return out, nil
+}
+
+func samAppliedForwardPaths(value any, present bool) ([]samAppliedForwardPath, error) {
+	if !present {
+		return nil, nil
+	}
+	var decoded []samAppliedForwardPath
+	if !decodeAppliedDataplaneStatus(value, &decoded) || decoded == nil {
+		return nil, fmt.Errorf("must be a non-null JSON array")
+	}
+	byKey := map[string]samAppliedForwardPath{}
+	for _, path := range decoded {
+		if err := validateSAMAppliedForwardPath(path); err != nil {
+			return nil, err
+		}
+		key := samForwardPathKey(path)
+		if previous, found := byKey[key]; found {
+			if previous != path {
+				return nil, fmt.Errorf("conflicting forward-path ledger entries for %q", key)
+			}
+			continue
+		}
+		byKey[key] = path
+	}
+	out := make([]samAppliedForwardPath, 0, len(byKey))
+	for _, path := range byKey {
+		out = append(out, path)
+	}
+	sort.Slice(out, func(i, j int) bool { return samForwardPathKey(out[i]) < samForwardPathKey(out[j]) })
+	return out, nil
+}
+
+func samAppliedProxyARPSettings(value any, present bool, targetOS platform.OS) (map[string]samAppliedProxyARP, error) {
+	if !present {
+		return map[string]samAppliedProxyARP{}, nil
+	}
+	var decoded []samAppliedProxyARP
+	if !decodeAppliedDataplaneStatus(value, &decoded) || decoded == nil {
+		return nil, fmt.Errorf("must be a non-null JSON array")
+	}
+	settings := make(map[string]samAppliedProxyARP, len(decoded))
+	for _, setting := range decoded {
+		if !setting.Owned {
+			return nil, fmt.Errorf("proxy_arp ledger may retain only routerd-owned settings")
+		}
+		if targetOS == platform.OSFreeBSD {
+			if setting.Interface != "" {
+				return nil, fmt.Errorf("FreeBSD proxyall ledger interface must be empty")
+			}
+		} else if err := sam.ValidateCaptureInterface(setting.Interface); err != nil {
+			return nil, fmt.Errorf("proxy_arp ledger interface: %w", err)
+		}
+		if previous, exists := settings[setting.Interface]; exists && previous != setting {
+			return nil, fmt.Errorf("conflicting proxy_arp ledger entries for interface %q", setting.Interface)
+		}
+		settings[setting.Interface] = setting
+	}
+	return settings, nil
+}
+
+func validateSAMAppliedProxyNeighbor(neighbor samAppliedProxyNeighbor) error {
+	if err := validateSAMAppliedLedgerScope(neighbor.ID, neighbor.PoolRef, neighbor.PoolPrefix, neighbor.Address); err != nil {
+		return err
+	}
+	if err := sam.ValidateCaptureInterface(neighbor.Interface); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateSAMAppliedForwardPath(path samAppliedForwardPath) error {
+	if path.Kind != "forward-path" {
+		return fmt.Errorf("unsupported applied forward-path kind %q", path.Kind)
+	}
+	if err := validateSAMAppliedLedgerScope(path.ID, path.PoolRef, path.PoolPrefix, path.Address); err != nil {
+		return err
+	}
+	if err := sam.ValidateCaptureInterface(path.Interface); err != nil {
+		return err
+	}
+	return sam.ValidateCaptureInterface(path.PeerInterface)
+}
+
+func validateSAMAppliedLedgerScope(id, poolRef, poolPrefix, address string) error {
+	if id == "" || strings.TrimSpace(id) != id || strings.ContainsRune(id, '\x00') ||
+		poolRef == "" || strings.TrimSpace(poolRef) != poolRef || strings.ContainsRune(poolRef, '\x00') {
+		return fmt.Errorf("id and poolRef must be non-empty canonical tokens")
+	}
+	scope, err := dynamicconfig.ParseCanonicalIPv4Prefix(poolPrefix)
+	if err != nil {
+		return fmt.Errorf("poolPrefix: %w", err)
+	}
+	host, err := canonicalSAMIPv4Host(address)
+	if err != nil || !scope.Contains(host.Addr()) {
+		return fmt.Errorf("address %q must be a canonical IPv4 host within %q", address, poolPrefix)
+	}
+	return nil
+}
+
+func canonicalSAMIPv4Host(value string) (netip.Prefix, error) {
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 32 || prefix.Masked().String() != value {
+		return netip.Prefix{}, fmt.Errorf("%q must be a canonical IPv4 host prefix", value)
+	}
+	return prefix, nil
+}
+
+func statusValuePresent(status map[string]any, key string) bool {
+	_, present := status[key]
+	return present
+}
+
+// decodeAppliedDataplaneStatus is the one codec for observed local dataplane
+// effects. Desired state never crosses this boundary: it comes only from the
+// typed MobilityDataplane plan. JSON keeps SQLite-decoded map values and
+// in-memory typed test/runtime values on the same small, validated path.
+func decodeAppliedDataplaneStatus(value any, target any) bool {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return false
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return false
+	}
+	return decoder.Decode(&struct{}{}) == io.EOF
+}
+
+func samProxyNeighborKey(id, address, ifname string) string {
+	return strings.TrimSpace(id) + "\x00" + strings.TrimSpace(address) + "\x00" + strings.TrimSpace(ifname)
+}
+
+func samForwardPathKey(path samAppliedForwardPath) string {
+	return strings.TrimSpace(path.ID) + "\x00" + strings.TrimSpace(path.PoolRef) + "\x00" + strings.TrimSpace(path.PoolPrefix) + "\x00" + strings.TrimSpace(path.Kind) + "\x00" + strings.TrimSpace(path.Address) + "\x00" + strings.TrimSpace(path.Interface) + "\x00" + strings.TrimSpace(path.PeerInterface)
+}
+
+func reconciledSAMForwardPaths(actions []sam.CaptureAction, held []samAppliedForwardPath) []sam.CaptureAction {
+	byKey := map[string]sam.CaptureAction{}
+	for _, action := range actions {
+		if action.Kind != "forward-path" {
+			continue
+		}
+		path := samAppliedForwardPath{ID: action.IntentID, PoolRef: action.PoolRef, PoolPrefix: action.PoolPrefix, Kind: action.Kind, Address: action.Address, Interface: action.Interface, PeerInterface: action.PeerInterface}
+		byKey[samForwardPathKey(path)] = action
+	}
+	for _, applied := range held {
+		key := samForwardPathKey(applied)
+		if _, exists := byKey[key]; !exists {
+			byKey[key] = sam.CaptureAction{Kind: applied.Kind, IntentID: applied.ID, PoolRef: applied.PoolRef, PoolPrefix: applied.PoolPrefix, Address: applied.Address, Interface: applied.Interface, PeerInterface: applied.PeerInterface}
+		}
+	}
+	paths := make([]sam.CaptureAction, 0, len(byKey))
+	for _, path := range byKey {
+		paths = append(paths, path)
+	}
+	sort.Slice(paths, func(i, j int) bool {
+		left := samAppliedForwardPath{ID: paths[i].IntentID, PoolRef: paths[i].PoolRef, PoolPrefix: paths[i].PoolPrefix, Kind: paths[i].Kind, Address: paths[i].Address, Interface: paths[i].Interface, PeerInterface: paths[i].PeerInterface}
+		right := samAppliedForwardPath{ID: paths[j].IntentID, PoolRef: paths[j].PoolRef, PoolPrefix: paths[j].PoolPrefix, Kind: paths[j].Kind, Address: paths[j].Address, Interface: paths[j].Interface, PeerInterface: paths[j].PeerInterface}
+		return samForwardPathKey(left) < samForwardPathKey(right)
+	})
+	return paths
+}
+
+func (c SAMController) reconcileSAMIPForwarding(ctx context.Context, targetOS platform.OS, actions []sam.CaptureAction, state samReconcileState) error {
+	if c.DryRun {
 		return nil
 	}
-	forwardPath := false
-	forwardingIntent := false
+	forwardPath, forwardingIntent := false, false
 	key := "net.ipv4.ip_forward"
 	if targetOS == platform.OSFreeBSD {
 		key = "net.inet.ip.forwarding"
 	}
+	for _, action := range state.forwardPaths {
+		forwardPath = forwardPath || action.Kind == "forward-path" || action.Kind == "forward-local-path"
+	}
 	for _, action := range actions {
-		switch action.Kind {
-		case "forward-path", "forward-local-path":
-			forwardPath = true
-		case "sysctl":
-			if action.Key == key && action.Value == "1" {
-				forwardingIntent = true
-			}
-		}
+		forwardingIntent = forwardingIntent || action.Kind == "sysctl" && action.Key == key && action.Value == "1"
 	}
 	if !forwardPath {
 		return nil
 	}
-	if !forwardingIntent {
+	if !forwardingIntent && len(state.heldForwardPaths) == 0 {
 		return fmt.Errorf("SAM forwarding path is missing planned %s=1", key)
 	}
 	applier := c.Applier
@@ -254,13 +588,7 @@ func (c SAMController) reconcileSAMIPForwarding(ctx context.Context, actions []s
 	return nil
 }
 
-func (c SAMController) reconcileForwardPaths(ctx context.Context, actions []sam.CaptureAction) error {
-	var paths []sam.CaptureAction
-	for _, action := range actions {
-		if action.Kind == "forward-path" || action.Kind == "forward-local-path" {
-			paths = append(paths, action)
-		}
-	}
+func (c SAMController) reconcileForwardPaths(ctx context.Context, state samReconcileState) error {
 	if c.DryRun {
 		return nil
 	}
@@ -268,73 +596,62 @@ func (c SAMController) reconcileForwardPaths(ctx context.Context, actions []sam.
 	if applier == nil {
 		applier = defaultSAMProxyNeighborApplier()
 	}
-	return applier.ReconcileForwardPaths(ctx, paths)
+	return applier.ReconcileForwardPaths(ctx, state.forwardPaths)
 }
 
-func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []sam.CaptureAction, statuses []routerstate.ObjectStatus, blocked map[string]bool) error {
+func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []sam.CaptureAction, blocked map[string]bool, state *samReconcileState) error {
+	if c.DryRun {
+		return nil
+	}
 	targetOS := c.OS
 	if targetOS == "" {
 		targetOS = platform.CurrentOS()
 	}
-	if targetOS != platform.OSLinux && targetOS != platform.OSFreeBSD {
-		return nil
-	}
-	if c.DryRun {
-		return nil
-	}
 	applier := c.Applier
 	if applier == nil {
 		applier = defaultSAMProxyNeighborApplier()
 	}
+	desired := map[string]bool{}
 	if targetOS == platform.OSFreeBSD {
-		if !c.managesFreeBSDProxyARP(statuses) {
-			return nil
+		if freeBSDProxyARPEnabled(actions, blocked) || len(state.heldProxyNeighbors) != 0 {
+			desired[""] = true
 		}
-		// FreeBSD's proxyall knob is host-global, unlike Linux's per-interface
-		// proxy_arp. Reconcile it exactly once from the aggregate active plan:
-		// a BACKUP with no active proxy-neighbor action must not answer ARP,
-		// while any active claim needs proxyall for routes reached via GIF.
-		enabled := freeBSDProxyARPEnabled(actions, blocked)
-		owned := len(samStoredProxyNeighbors(statuses)) > 0
-		if err := applier.SetProxyARP(ctx, "", enabled, owned); err != nil {
-			return fmt.Errorf("set SAM FreeBSD proxyall=%t: %w", enabled, err)
+	} else {
+		for _, action := range actions {
+			if action.Kind == "sysctl" && strings.HasSuffix(action.Key, ".proxy_arp") && action.Value == "1" && action.Interface != "" {
+				desired[action.Interface] = true
+			}
 		}
-		return nil
+		for _, applied := range state.heldProxyNeighbors {
+			if state.heldProxyARPIDs[applied.ID] {
+				desired[applied.Interface] = true
+			}
+		}
 	}
-	all := map[string]bool{}
-	aliases := sam.CaptureInterfaceAliases(c.Router)
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "RemoteAddressClaim" {
-			continue
-		}
-		spec, err := resource.RemoteAddressClaimSpec()
+	interfaces := map[string]bool{}
+	for iface := range desired {
+		interfaces[iface] = true
+	}
+	for iface := range state.previousProxyARP {
+		interfaces[iface] = true
+	}
+	ordered := make([]string, 0, len(interfaces))
+	for iface := range interfaces {
+		ordered = append(ordered, iface)
+	}
+	sort.Strings(ordered)
+	state.nextProxyARP = map[string]samAppliedProxyARP{}
+	for _, iface := range ordered {
+		_, previouslyOwned := state.previousProxyARP[iface]
+		result, err := applier.SetProxyARP(ctx, iface, desired[iface], previouslyOwned)
 		if err != nil {
-			continue
+			return fmt.Errorf("set SAM proxy_arp %q=%t: %w", iface, desired[iface], err)
 		}
-		captureType := strings.TrimSpace(spec.Capture.Type)
-		bgpDelivery := strings.TrimSpace(spec.Delivery.Mode) == "bgp"
-		// provider-secondary+BGP uses explicit proxy-neighbor entries but must
-		// keep interface-wide proxy_arp disabled. Include its interfaces here
-		// so older routerd state is actively reset to proxy_arp=0.
-		if captureType != "proxy-arp" && !(captureType == "provider-secondary-ip" && bgpDelivery) {
-			continue
-		}
-		if iface := sam.ResolveCaptureInterface(strings.TrimSpace(spec.Capture.Interface), aliases); iface != "" {
-			all[iface] = true
-		}
-	}
-	if len(all) == 0 {
-		return nil
-	}
-	active := map[string]bool{}
-	for _, action := range actions {
-		if action.Kind == "sysctl" && strings.HasSuffix(action.Key, ".proxy_arp") && action.Value == "1" && strings.TrimSpace(action.Interface) != "" {
-			active[strings.TrimSpace(action.Interface)] = true
-		}
-	}
-	for iface := range all {
-		if err := applier.SetProxyARP(ctx, iface, active[iface], true); err != nil {
-			return fmt.Errorf("set SAM proxy_arp %s=%t: %w", iface, active[iface], err)
+		if desired[iface] {
+			if !previouslyOwned && !result.changedByRouterd {
+				return fmt.Errorf("set SAM proxy_arp %q enabled without ownership proof", iface)
+			}
+			state.nextProxyARP[iface] = samAppliedProxyARP{Interface: iface, Owned: true}
 		}
 	}
 	return nil
@@ -342,270 +659,9 @@ func (c SAMController) reconcileProxyARPSysctls(ctx context.Context, actions []s
 
 func freeBSDProxyARPEnabled(actions []sam.CaptureAction, blocked map[string]bool) bool {
 	for _, action := range actions {
-		if action.Kind == "proxy-neighbor" && !blocked[action.ClaimName] {
+		if action.Kind == "proxy-neighbor" && !blocked[action.IntentID] {
 			return true
 		}
 	}
 	return false
-}
-
-func (c SAMController) managesFreeBSDProxyARP(statuses []routerstate.ObjectStatus) bool {
-	if len(samStoredProxyNeighbors(statuses)) > 0 {
-		return true
-	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.HybridAPIVersion || resource.Kind != "RemoteAddressClaim" {
-			continue
-		}
-		spec, err := resource.RemoteAddressClaimSpec()
-		if err != nil {
-			continue
-		}
-		captureType := strings.TrimSpace(spec.Capture.Type)
-		if captureType == "proxy-arp" || (captureType == "provider-secondary-ip" && strings.TrimSpace(spec.Delivery.Mode) == "bgp") {
-			return true
-		}
-	}
-	return false
-}
-
-func (c SAMController) reconcileStatuses(targetOS platform.OS, deassignResults map[string]samOSAddressDeassignResult, garpSent map[string]bool, garpErrors map[string]string, proxyNeighborApplied map[string]bool, captureFailures map[string]string, actions []sam.CaptureAction) error {
-	proxyNeighbors := map[string]samStoredProxyNeighbor{}
-	for _, action := range actions {
-		if action.Kind != "proxy-neighbor" {
-			continue
-		}
-		proxyNeighbors[action.ClaimName] = samStoredProxyNeighbor{
-			address: strings.TrimSpace(action.Address),
-			ifname:  strings.TrimSpace(action.Interface),
-		}
-	}
-	claims := samSelectResources(c.Router.Spec.Resources, "RemoteAddressClaim")
-	for _, claim := range claims {
-		status := sam.StatusForRemoteAddressClaim(claim, c.Lowerings, c.Store, targetOS)
-		status["dryRun"] = c.DryRun
-		captureFailure := captureFailures[claim.Metadata.Name]
-		if captureFailure != "" {
-			status["phase"] = "Error"
-			status["reason"] = "CaptureFailed"
-			status["message"] = captureFailure
-			status["error"] = captureFailure
-			status["captureStatus"] = sam.CaptureStatusBlocked
-		}
-		if targetOS == platform.OSLinux || targetOS == platform.OSFreeBSD {
-			if neighbor, ok := proxyNeighbors[claim.Metadata.Name]; ok && proxyNeighborApplied[claim.Metadata.Name] {
-				aliases := sam.CaptureInterfaceAliases(c.Router)
-				status["captureProxyNeighbor"] = map[string]any{
-					"address":   neighbor.address,
-					"interface": sam.ResolveCaptureInterface(neighbor.ifname, aliases),
-				}
-				if garpSent[claim.Metadata.Name] {
-					status["lastGARPSent"] = true
-				}
-				if garpErrors[claim.Metadata.Name] != "" {
-					status["lastGARPError"] = garpErrors[claim.Metadata.Name]
-				}
-			}
-			if spec, err := claim.RemoteAddressClaimSpec(); err == nil && captureFailure == "" && providerSecondaryEnforcesOSAddressAbsence(spec) {
-				result := deassignResults[claim.Metadata.Name]
-				note := map[string]any{
-					"address": firstNonEmpty(result.address, strings.TrimSpace(spec.Address)),
-					// enforced is an audit flag: routerd is actively enforcing
-					// OS-absence for this provider-captured address.
-					"enforced": true,
-					// lastReconcileRemoved is a per-reconcile action signal. It
-					// is false in steady state when the address was already absent.
-					"lastReconcileRemoved": result.removedThisReconcile,
-				}
-				if result.ifname != "" {
-					note["interface"] = result.ifname
-				}
-				if strings.TrimSpace(spec.Delivery.Mode) == "bgp" {
-					note["reason"] = "bgp-delivery"
-				} else {
-					note["reason"] = "configureOSAddress=false"
-				}
-				status["captureOSAddressAbsence"] = note
-			}
-		}
-		if err := c.Store.SaveObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", claim.Metadata.Name, status); err != nil {
-			return err
-		}
-	}
-	for _, domain := range samSelectResources(c.Router.Spec.Resources, "AddressMobilityDomain") {
-		status := sam.StatusForAddressMobilityDomain(domain, claims, c.Store)
-		if err := c.Store.SaveObjectStatus(api.HybridAPIVersion, "AddressMobilityDomain", domain.Metadata.Name, status); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func providerSecondaryEnforcesOSAddressAbsence(spec api.RemoteAddressClaimSpec) bool {
-	if strings.TrimSpace(spec.Capture.Type) != "provider-secondary-ip" {
-		return false
-	}
-	return !spec.Capture.ConfigureOSAddress || strings.TrimSpace(spec.Delivery.Mode) == "bgp"
-}
-
-func (c SAMController) cleanupRemovedCaptures(ctx context.Context, statuses []routerstate.ObjectStatus) error {
-	if c.Store == nil {
-		return nil
-	}
-	deleter, ok := c.Store.(interface {
-		DeleteObject(apiVersion, kind, name string) error
-	})
-	if !ok {
-		return nil
-	}
-	desired := map[string]bool{}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion == api.HybridAPIVersion && resource.Kind == "RemoteAddressClaim" {
-			desired[lifecycle.OwnerKey(resource.APIVersion, resource.Kind, resource.Metadata.Name)] = true
-		}
-	}
-	applier := c.Applier
-	if applier == nil {
-		applier = defaultSAMProxyNeighborApplier()
-	}
-	plan := lifecycle.PlanResourceTeardownGC(desired, statuses)
-	for _, action := range plan.Actions {
-		if action.Type != lifecycle.GCActionTeardownResource {
-			continue
-		}
-		status := action.Status
-		if status.APIVersion != api.HybridAPIVersion || status.Kind != "RemoteAddressClaim" {
-			continue
-		}
-		if err := c.teardownRemovedCapture(ctx, status, applier, deleter); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (c SAMController) teardownRemovedCapture(ctx context.Context, status routerstate.ObjectStatus, applier samProxyNeighborApplier, deleter routerstate.ObjectDeleteStore) error {
-	if !c.DryRun {
-		if capture, ok := samStoredProxyNeighborFromStatus(status); ok {
-			capture.ifname = sam.ResolveCaptureInterface(capture.ifname, sam.CaptureInterfaceAliases(c.Router))
-			if err := applier.DeleteProxyNeighbor(ctx, capture.address, capture.ifname); err != nil {
-				return fmt.Errorf("delete removed SAM proxy neighbor %s dev %s: %w", capture.address, capture.ifname, err)
-			}
-		}
-	}
-	if err := deleter.DeleteObject(api.HybridAPIVersion, "RemoteAddressClaim", status.Name); err != nil {
-		return err
-	}
-	if c.Bus != nil {
-		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.sam.capture.removed", daemonapi.SeverityInfo)
-		event.Resource = &daemonapi.ResourceRef{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim", Name: status.Name}
-		event.Attributes = map[string]string{"removedAt": time.Now().UTC().Format(time.RFC3339Nano)}
-		if err := c.Bus.Publish(ctx, event); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (c SAMController) cleanupChangedCaptures(ctx context.Context, statuses []routerstate.ObjectStatus, actions []sam.CaptureAction) error {
-	if c.Store == nil || c.DryRun {
-		return nil
-	}
-	prior := samStoredProxyNeighbors(statuses)
-	if len(prior) == 0 {
-		return nil
-	}
-	desiredClaims := map[string]bool{}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion == api.HybridAPIVersion && resource.Kind == "RemoteAddressClaim" {
-			desiredClaims[resource.Metadata.Name] = true
-		}
-	}
-	desiredNeighbors := map[string]samStoredProxyNeighbor{}
-	for _, action := range actions {
-		if action.Kind == "proxy-neighbor" {
-			desiredNeighbors[action.ClaimName] = samStoredProxyNeighbor{address: strings.TrimSpace(action.Address), ifname: strings.TrimSpace(action.Interface)}
-		}
-	}
-	applier := c.Applier
-	if applier == nil {
-		applier = defaultSAMProxyNeighborApplier()
-	}
-	aliases := sam.CaptureInterfaceAliases(c.Router)
-	for name, old := range prior {
-		if !desiredClaims[name] {
-			continue
-		}
-		old.ifname = sam.ResolveCaptureInterface(old.ifname, aliases)
-		next, ok := desiredNeighbors[name]
-		if ok && next.sameEndpoint(old) {
-			continue
-		}
-		if err := applier.DeleteProxyNeighbor(ctx, old.address, old.ifname); err != nil {
-			return fmt.Errorf("delete changed SAM proxy neighbor %s dev %s: %w", old.address, old.ifname, err)
-		}
-	}
-	return nil
-}
-
-func (c SAMController) listObjectStatuses() ([]routerstate.ObjectStatus, error) {
-	if c.Store == nil {
-		return nil, nil
-	}
-	lister, ok := c.Store.(interface {
-		ListObjectStatuses() ([]routerstate.ObjectStatus, error)
-	})
-	if !ok {
-		return nil, nil
-	}
-	return lister.ListObjectStatuses()
-}
-
-func shouldSendSAMGratuitousARP(action sam.CaptureAction, previous, current samStoredProxyNeighbor) bool {
-	if !action.GratuitousARP {
-		return false
-	}
-	return !previous.sameEndpoint(current)
-}
-
-func (n samStoredProxyNeighbor) sameEndpoint(other samStoredProxyNeighbor) bool {
-	return n.address == other.address && n.ifname == other.ifname
-}
-
-func samStoredProxyNeighbors(statuses []routerstate.ObjectStatus) map[string]samStoredProxyNeighbor {
-	out := map[string]samStoredProxyNeighbor{}
-	for _, status := range statuses {
-		if status.APIVersion != api.HybridAPIVersion || status.Kind != "RemoteAddressClaim" {
-			continue
-		}
-		if capture, ok := samStoredProxyNeighborFromStatus(status); ok {
-			out[status.Name] = capture
-		}
-	}
-	return out
-}
-
-func samStoredProxyNeighborFromStore(store Store, name string) (samStoredProxyNeighbor, bool) {
-	if store == nil || strings.TrimSpace(name) == "" {
-		return samStoredProxyNeighbor{}, false
-	}
-	return samStoredProxyNeighborFromStatus(routerstate.ObjectStatus{
-		APIVersion: api.HybridAPIVersion,
-		Kind:       "RemoteAddressClaim",
-		Name:       name,
-		Status:     store.ObjectStatus(api.HybridAPIVersion, "RemoteAddressClaim", name),
-	})
-}
-
-func samStoredProxyNeighborFromStatus(status routerstate.ObjectStatus) (samStoredProxyNeighbor, bool) {
-	capture, ok := status.Status["captureProxyNeighbor"].(map[string]any)
-	if !ok {
-		return samStoredProxyNeighbor{}, false
-	}
-	address := strings.TrimSpace(fmt.Sprint(capture["address"]))
-	ifname := strings.TrimSpace(fmt.Sprint(capture["interface"]))
-	if address == "" || address == "<nil>" || ifname == "" || ifname == "<nil>" {
-		return samStoredProxyNeighbor{}, false
-	}
-	return samStoredProxyNeighbor{address: address, ifname: ifname}, true
 }

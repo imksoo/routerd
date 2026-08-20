@@ -38,3 +38,20 @@ func TestConfigSchemaDescribesTunnelInterfacePeerAddress(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigSchemaRequiresMobilityPoolTopology(t *testing.T) {
+	encoded, err := json.Marshal(configSchema())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(encoded)
+	for _, want := range []string{
+		`"membersFrom":{"`,
+		`"minItems":1`,
+		`"required":["prefix","groupRef","membersFrom"]`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("generated MobilityPool schema is missing %q", want)
+		}
+	}
+}

@@ -43,8 +43,8 @@ core) and the #52 host-firewall prerequisite (by-design host-side, surfaced by d
 - `capture.interface` (proxy-arp) must be the real OS NIC name (ens21/eth1) — hand-found.
 - overlay `/32`, shared subnet, `ownerSide`, and `domain.peerRef` vs `delivery.peerRef` must be
   hand-reconciled; the two peerRefs are partly redundant. (Follow-up: simplify/clarify.)
-- `configureOSAddress=false` semantics were ambiguous pre-#41 (now clarified as "routerd
-  enforces OS-local absence").
+- BGP `provider-secondary-ip` now unconditionally enforces OS-local absence;
+  there is no per-member OS-address toggle.
 - `doctor` FORWARD-policy skip was hard to read on Azure (`exit status 1`); improved on AWS.
 
 ## 4. WireGuard key provisioning

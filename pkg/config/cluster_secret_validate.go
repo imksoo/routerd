@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/mobilityconfig"
 )
 
 func validateClusterNetworkRoute(resourceID string, spec api.ClusterNetworkRouteSpec) error {
@@ -161,34 +160,6 @@ func Warnings(router *api.Router) []string {
 			}
 			if err == nil && (spec.Underlay.Type == "ipip" || spec.Underlay.Type == "gre" || spec.Underlay.Type == "fou" || spec.Underlay.Type == "gue") && spec.Underlay.Interface != "" && !tunnelInterfaces[spec.Underlay.Interface] {
 				warnings = append(warnings, fmt.Sprintf("%s spec.underlay.interface references TunnelInterface %q which is not declared", res.ID(), spec.Underlay.Interface))
-			}
-		case "RemoteAddressClaim":
-			spec, err := res.RemoteAddressClaimSpec()
-			if err != nil {
-				continue
-			}
-			if spec.Capture.Type == "provider-secondary-ip" && spec.Capture.ProviderRef != "" {
-				if profile, ok := cloudProviderProfiles[spec.Capture.ProviderRef]; ok && !stringInSlice(spec.Capture.ProviderMode, profile.Capabilities) {
-					warnings = append(warnings, fmt.Sprintf("%s spec.capture.providerMode %q is not declared in CloudProviderProfile %q capabilities; the provider profile may not support this capture mode", res.ID(), spec.Capture.ProviderMode, spec.Capture.ProviderRef))
-				}
-			}
-			if spec.Capture.Type == "proxy-arp" && spec.Capture.Interface != "" && !interfaces[spec.Capture.Interface] {
-				warnings = append(warnings, fmt.Sprintf("%s spec.capture.interface references Interface %q which is not declared; assuming the interface is managed externally", res.ID(), spec.Capture.Interface))
-			}
-		case "MobilityPool":
-			spec, err := res.MobilityPoolSpec()
-			if err != nil {
-				continue
-			}
-			_, diagnostics, err := mobilityconfig.NormalizeMobilityPool(spec, mobilitySelfNode(router, spec.GroupRef))
-			if err != nil {
-				continue
-			}
-			for _, diagnostic := range diagnostics {
-				if diagnostic.Severity != mobilityconfig.DiagnosticWarning {
-					continue
-				}
-				warnings = append(warnings, fmt.Sprintf("%s %s: %s", res.ID(), diagnostic.Path, diagnostic.Message))
 			}
 		}
 	}

@@ -1316,6 +1316,9 @@ func TestSandboxControllerOptionsRoutePathMTUArtifactsIntoRuntimeDir(t *testing.
 
 	var opts controllerchain.Options
 	applySandboxControllerOptions(&opts, "", "")
+	if !opts.DryRunSysctl {
+		t.Fatal("sandbox must dry-run sysctl changes")
+	}
 
 	if got, want := opts.PathMTUPath, filepath.Join(platformDefaults.RuntimeDir, "mss.nft"); got != want {
 		t.Fatalf("PathMTUPath = %q, want %q", got, want)
@@ -2166,12 +2169,22 @@ func TestCleanupUnsupportedLegacyObjectStatusesUsesDynamicEffectiveView(t *testi
 					Mode:              "ipip",
 					Encryption:        "wireguard",
 					InnerPrefix:       "10.255.0.0/24",
-					TopologyNodeRefs:  []string{"core-a", "core-b"},
 					UnderlayInterface: "wg-hybrid",
 					LocalEndpoint:     "10.99.0.1",
 					BGP:               api.SAMTransportBGPProfileSpec{RouterRef: "BGPRouter/core", PeerASN: 64512},
-					Peers:             []api.SAMTransportPeerSpec{{NodeRef: "core-b", RemoteEndpoint: "10.99.0.2"}},
+					PeersFrom: []api.SAMTransportPeersSourceSpec{{
+						Resource: "SAMNodeSet/fabric-nodes",
+						NodeRefs: []string{"core-b"},
+					}},
 				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMNodeSet"},
+				Metadata: api.ObjectMeta{Name: "fabric-nodes"},
+				Spec: api.SAMNodeSetSpec{Nodes: []api.SAMNodeSpec{
+					{NodeRef: "core-a", SAMEndpoint: "10.99.0.1"},
+					{NodeRef: "core-b", SAMEndpoint: "10.99.0.2"},
+				}},
 			},
 		}},
 	}

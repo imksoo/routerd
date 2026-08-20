@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/hybrid"
-	"github.com/imksoo/routerd/pkg/mobilityconfig"
 )
 
 type pathMTUPolicy struct {
@@ -52,19 +52,27 @@ type pathMTUForwardedPath struct {
 	ForceFragmentIPv4 bool
 }
 
-type pathMTUSAMTransportTunnel struct {
+type pathMTUForwardingTunnel struct {
 	Name              string
 	MTU               int
 	ForceFragmentIPv4 bool
 }
 
 func pathMTUPolicies(router *api.Router) ([]pathMTUPolicy, error) {
-	mtus, err := resourceMTUs(router)
+	return pathMTUPoliciesWithLocalCaptureIntents(router, nil)
+}
+
+// pathMTUPoliciesWithLocalCaptureIntents adds forwarded-path policies from the
+// already-decided mobility dataplane plan. It deliberately accepts no raw
+// planner resource: placement, capture interface selection, and forwarding
+// targets cross this boundary as LocalCaptureIntents.
+func pathMTUPoliciesWithLocalCaptureIntents(router *api.Router, intents []dynamicconfig.LocalCaptureIntent) ([]pathMTUPolicy, error) {
+	mtus, err := resourceMTUsWithLocalCaptureIntents(router, intents)
 	if err != nil {
 		return nil, err
 	}
 	var policies []pathMTUPolicy
-	for _, spec := range derivedPathMTUPolicySpecs(router, mtus) {
+	for _, spec := range derivedPathMTUPolicySpecsWithLocalCaptureIntents(router, mtus, intents) {
 		if len(spec.ToInterfaces) == 0 {
 			continue
 		}
@@ -111,11 +119,15 @@ func pathMTUPolicies(router *api.Router) ([]pathMTUPolicy, error) {
 }
 
 func resourceMTUs(router *api.Router) (map[string]int, error) {
+	return resourceMTUsWithLocalCaptureIntents(router, nil)
+}
+
+func resourceMTUsWithLocalCaptureIntents(router *api.Router, intents []dynamicconfig.LocalCaptureIntent) (map[string]int, error) {
 	mtus := map[string]int{}
 	for _, iface := range pathMTUResourceInterfaces(router) {
 		mtus[iface.Name] = iface.MTU
 	}
-	for _, iface := range pathMTUForwardedPathInterfaces(router) {
+	for _, iface := range pathMTUForwardedPathInterfacesWithLocalCaptureIntents(router, intents) {
 		if mtus[iface] == 0 {
 			mtus[iface] = 1500
 		}
@@ -124,8 +136,12 @@ func resourceMTUs(router *api.Router) (map[string]int, error) {
 }
 
 func derivedPathMTUPolicySpecs(router *api.Router, mtus map[string]int) []pathMTUPolicySpec {
+	return derivedPathMTUPolicySpecsWithLocalCaptureIntents(router, mtus, nil)
+}
+
+func derivedPathMTUPolicySpecsWithLocalCaptureIntents(router *api.Router, mtus map[string]int, intents []dynamicconfig.LocalCaptureIntent) []pathMTUPolicySpec {
 	tunnels := pathMTUTunnels(router)
-	forwardedPathPolicies := derivedForwardedPathMTUPolicySpecs(router, mtus)
+	forwardedPathPolicies := derivedForwardedPathMTUPolicySpecsWithLocalCaptureIntents(router, mtus, intents)
 	if len(tunnels) == 0 {
 		return forwardedPathPolicies
 	}
@@ -169,8 +185,12 @@ func derivedPathMTUPolicySpecs(router *api.Router, mtus map[string]int) []pathMT
 }
 
 func derivedForwardedPathMTUPolicySpecs(router *api.Router, mtus map[string]int) []pathMTUPolicySpec {
+	return derivedForwardedPathMTUPolicySpecsWithLocalCaptureIntents(router, mtus, nil)
+}
+
+func derivedForwardedPathMTUPolicySpecsWithLocalCaptureIntents(router *api.Router, mtus map[string]int, intents []dynamicconfig.LocalCaptureIntent) []pathMTUPolicySpec {
 	var policies []pathMTUPolicySpec
-	for _, path := range pathMTUForwardedPaths(router) {
+	for _, path := range pathMTUForwardedPathsWithLocalCaptureIntents(router, intents) {
 		if path.FromInterface == "" || path.ToInterface == "" || path.FromInterface == path.ToInterface {
 			continue
 		}
@@ -195,126 +215,64 @@ func derivedForwardedPathMTUPolicySpecs(router *api.Router, mtus map[string]int)
 }
 
 func pathMTUForwardedPaths(router *api.Router) []pathMTUForwardedPath {
+	return pathMTUForwardedPathsWithLocalCaptureIntents(router, nil)
+}
+
+func pathMTUForwardedPathsWithLocalCaptureIntents(router *api.Router, intents []dynamicconfig.LocalCaptureIntent) []pathMTUForwardedPath {
 	if router == nil {
 		return nil
 	}
 	peers := pathMTUOverlayPeers(router)
-	defaultSources := pathMTUDefaultForwardedPathSourceInterfaces(router)
-	paths := pathMTUBGPMobilityForwardedPaths(router, peers)
-	for _, res := range router.Spec.Resources {
-		if res.APIVersion != api.HybridAPIVersion || res.Kind != "RemoteAddressClaim" {
+	paths := pathMTULocalCaptureForwardedPaths(router, intents, peers)
+	return compactForwardedPaths(paths)
+}
+
+func pathMTULocalCaptureForwardedPaths(router *api.Router, intents []dynamicconfig.LocalCaptureIntent, peers map[string]api.OverlayPeerSpec) []pathMTUForwardedPath {
+	if router == nil {
+		return nil
+	}
+	tunnels := pathMTUForwardingTunnels(router)
+	var paths []pathMTUForwardedPath
+	for _, intent := range intents {
+		// Release is an explicit teardown operation. It must clear an earlier
+		// clamp rather than keep forwarding policy alive. A held capture stays
+		// here because SAM deliberately retains its previously-applied effect.
+		if intent.Disposition == dynamicconfig.CaptureRelease || intent.Disposition == dynamicconfig.CaptureProhibited {
 			continue
 		}
-		spec, err := res.RemoteAddressClaimSpec()
-		if err != nil {
+		source := strings.TrimSpace(intent.CaptureInterface)
+		if source == "" {
 			continue
 		}
-		peer := peers[refName(spec.Delivery.PeerRef)]
-		tunnel := firstNonEmpty(strings.TrimSpace(spec.Delivery.TunnelInterface), strings.TrimSpace(peer.Underlay.Interface))
-		if tunnel == "" {
-			continue
-		}
-		tunnelMTU := pathMTUOverlayPeerEffectiveMTU(router, refName(spec.Delivery.PeerRef))
-		for _, source := range pathMTUClaimSourceInterfaces(spec, defaultSources) {
-			if source == "" || source == tunnel {
+		for peerName, peer := range peers {
+			tunnel := strings.TrimSpace(peer.Underlay.Interface)
+			if tunnel == "" || tunnel == source {
 				continue
 			}
 			paths = append(paths, pathMTUForwardedPath{
 				FromInterface:     source,
 				ToInterface:       tunnel,
-				MTU:               tunnelMTU,
-				ForceFragmentIPv4: pathMTUOverlayPeerForceFragmentIPv4(router, refName(spec.Delivery.PeerRef), peer),
+				MTU:               pathMTUOverlayPeerEffectiveMTU(router, peerName),
+				ForceFragmentIPv4: pathMTUOverlayPeerForceFragmentIPv4(router, peerName, peer),
 			})
 		}
-	}
-	return compactForwardedPaths(paths)
-}
-
-func pathMTUBGPMobilityForwardedPaths(router *api.Router, peers map[string]api.OverlayPeerSpec) []pathMTUForwardedPath {
-	if router == nil {
-		return nil
-	}
-	samTunnels := pathMTUSAMTransportTunnels(router)
-	samTunnelByName := map[string]pathMTUSAMTransportTunnel{}
-	for _, tunnel := range samTunnels {
-		samTunnelByName[tunnel.Name] = tunnel
-	}
-	var paths []pathMTUForwardedPath
-	for _, res := range router.Spec.Resources {
-		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "MobilityPool" {
-			continue
-		}
-		spec, err := res.MobilityPoolSpec()
-		if err != nil || strings.TrimSpace(spec.DeliveryPolicy.Mode) != "bgp" {
-			continue
-		}
-		selfNode := pathMTUSelfNode(router, spec.GroupRef)
-		if selfNode == "" {
-			continue
-		}
-		spec, _, err = mobilityconfig.NormalizeMobilityPool(spec, selfNode)
-		if err != nil {
-			continue
-		}
-		for _, member := range spec.Members {
-			if strings.TrimSpace(member.NodeRef) != selfNode {
+		var forwardingTunnels []pathMTUForwardingTunnel
+		for _, name := range compactStrings(sortedStrings(intent.TunnelInterfaces)) {
+			tunnel, ok := tunnels[name]
+			if !ok || tunnel.Name == "" || tunnel.Name == source {
 				continue
 			}
-			source := strings.TrimSpace(member.Capture.Interface)
-			if source == "" {
-				break
-			}
-			deliveries := pathMTUMemberDeliveries(member)
-			if len(deliveries) == 0 {
-				for peerName, peer := range peers {
-					tunnel := strings.TrimSpace(peer.Underlay.Interface)
-					if tunnel == "" || tunnel == source {
-						continue
-					}
-					paths = append(paths, pathMTUForwardedPath{
-						FromInterface:     source,
-						ToInterface:       tunnel,
-						MTU:               pathMTUOverlayPeerEffectiveMTU(router, peerName),
-						ForceFragmentIPv4: pathMTUOverlayPeerForceFragmentIPv4(router, peerName, peer),
-					})
-				}
-				for _, tunnel := range samTunnels {
-					if tunnel.Name == "" || tunnel.Name == source {
-						continue
-					}
-					paths = append(paths, pathMTUForwardedPath{
-						FromInterface:     source,
-						ToInterface:       tunnel.Name,
-						MTU:               tunnel.MTU,
-						ForceFragmentIPv4: tunnel.ForceFragmentIPv4,
-					})
-				}
-				break
-			}
-			for _, delivery := range deliveries {
-				tunnel := firstNonEmpty(strings.TrimSpace(delivery.TunnelInterface), strings.TrimSpace(peers[refName(delivery.PeerRef)].Underlay.Interface))
-				if tunnel == "" || tunnel == source {
-					continue
-				}
-				tunnelMTU := 0
-				if strings.TrimSpace(delivery.PeerRef) != "" {
-					tunnelMTU = pathMTUOverlayPeerEffectiveMTU(router, refName(delivery.PeerRef))
-				}
-				if samTunnel, ok := samTunnelByName[tunnel]; ok && samTunnel.MTU > 0 {
-					tunnelMTU = samTunnel.MTU
-				}
-				paths = append(paths, pathMTUForwardedPath{
-					FromInterface:     source,
-					ToInterface:       tunnel,
-					MTU:               tunnelMTU,
-					ForceFragmentIPv4: pathMTUOverlayPeerForceFragmentIPv4(router, refName(delivery.PeerRef), peers[refName(delivery.PeerRef)]) || pathMTUTunnelForceFragmentIPv4(router, tunnel),
-				})
-			}
-			break
+			forwardingTunnels = append(forwardingTunnels, tunnel)
+			paths = append(paths, pathMTUForwardedPath{
+				FromInterface:     source,
+				ToInterface:       tunnel.Name,
+				MTU:               tunnel.MTU,
+				ForceFragmentIPv4: tunnel.ForceFragmentIPv4,
+			})
 		}
-		for _, from := range samTunnels {
-			for _, to := range samTunnels {
-				if from.Name == "" || to.Name == "" || from.Name == to.Name {
+		for _, from := range forwardingTunnels {
+			for _, to := range forwardingTunnels {
+				if from.Name == to.Name {
 					continue
 				}
 				mtu := to.MTU
@@ -333,46 +291,33 @@ func pathMTUBGPMobilityForwardedPaths(router *api.Router, peers map[string]api.O
 	return compactForwardedPaths(paths)
 }
 
-func pathMTUSAMTransportTunnels(router *api.Router) []pathMTUSAMTransportTunnel {
+func pathMTUForwardingTunnels(router *api.Router) map[string]pathMTUForwardingTunnel {
+	out := map[string]pathMTUForwardingTunnel{}
 	if router == nil {
-		return nil
+		return out
 	}
-	var out []pathMTUSAMTransportTunnel
 	for _, res := range router.Spec.Resources {
-		if !pathMTUIsSAMTransportTunnel(res) {
+		if res.APIVersion != api.HybridAPIVersion || res.Kind != "TunnelInterface" || strings.TrimSpace(res.Metadata.Name) == "" {
 			continue
 		}
 		spec, err := res.TunnelInterfaceSpec()
 		if err != nil {
 			continue
 		}
-		mtu := pathMTUSAMTransportTunnelMTU(router, spec)
+		mtu := pathMTUForwardingTunnelMTU(router, spec)
 		if mtu == 0 {
 			continue
 		}
-		out = append(out, pathMTUSAMTransportTunnel{
+		out[res.Metadata.Name] = pathMTUForwardingTunnel{
 			Name:              strings.TrimSpace(res.Metadata.Name),
 			MTU:               mtu,
 			ForceFragmentIPv4: spec.PathMTU.ForceFragmentIPv4,
-		})
+		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
-func pathMTUIsSAMTransportTunnel(res api.Resource) bool {
-	if res.APIVersion != api.HybridAPIVersion || res.Kind != "TunnelInterface" || strings.TrimSpace(res.Metadata.Name) == "" {
-		return false
-	}
-	for _, owner := range res.Metadata.OwnerRefs {
-		if owner.APIVersion == api.MobilityAPIVersion && owner.Kind == "SAMTransportProfile" && strings.TrimSpace(owner.Name) != "" {
-			return true
-		}
-	}
-	return false
-}
-
-func pathMTUSAMTransportTunnelMTU(router *api.Router, spec api.TunnelInterfaceSpec) int {
+func pathMTUForwardingTunnelMTU(router *api.Router, spec api.TunnelInterfaceSpec) int {
 	if router == nil {
 		return 0
 	}
@@ -414,41 +359,6 @@ func pathMTUUnderlayOverlayOverheadSeen(router *api.Router, interfaceName string
 		}
 	}
 	return 0
-}
-
-func pathMTUSelfNode(router *api.Router, groupRef string) string {
-	if router == nil || strings.TrimSpace(groupRef) == "" {
-		return ""
-	}
-	for _, res := range router.Spec.Resources {
-		if res.APIVersion != api.FederationAPIVersion || res.Kind != "EventGroup" || res.Metadata.Name != strings.TrimSpace(groupRef) {
-			continue
-		}
-		spec, err := res.EventGroupSpec()
-		if err != nil {
-			return ""
-		}
-		return strings.TrimSpace(spec.NodeName)
-	}
-	return ""
-}
-
-func pathMTUMemberDeliveries(member api.MobilityPoolMember) []api.MobilityMemberDelivery {
-	var out []api.MobilityMemberDelivery
-	if strings.TrimSpace(member.Delivery.PeerRef) != "" || strings.TrimSpace(member.Delivery.TunnelInterface) != "" {
-		out = append(out, member.Delivery)
-	}
-	for _, target := range member.DeliveryTo {
-		delivery := api.MobilityMemberDelivery{
-			PeerRef:         target.PeerRef,
-			Mode:            target.Mode,
-			TunnelInterface: target.TunnelInterface,
-		}
-		if strings.TrimSpace(delivery.PeerRef) != "" || strings.TrimSpace(delivery.TunnelInterface) != "" {
-			out = append(out, delivery)
-		}
-	}
-	return out
 }
 
 func pathMTUOverlayPeerEffectiveMTU(router *api.Router, peerName string) int {
@@ -503,36 +413,17 @@ func pathMTUOverlayPeers(router *api.Router) map[string]api.OverlayPeerSpec {
 	return out
 }
 
-func pathMTUClaimSourceInterfaces(spec api.RemoteAddressClaimSpec, defaults []string) []string {
-	if iface := strings.TrimSpace(spec.Capture.Interface); iface != "" {
-		return []string{iface}
-	}
-	if strings.TrimSpace(spec.Capture.Type) == "provider-secondary-ip" {
-		return defaults
-	}
-	return nil
-}
-
 func pathMTUForwardedPathInterfaces(router *api.Router) []string {
-	if router == nil {
-		return nil
-	}
-	var out []string
-	for _, path := range pathMTUForwardedPaths(router) {
-		out = append(out, path.FromInterface, path.ToInterface)
-	}
-	return compactStrings(sortedStrings(out))
+	return pathMTUForwardedPathInterfacesWithLocalCaptureIntents(router, nil)
 }
 
-func pathMTUDefaultForwardedPathSourceInterfaces(router *api.Router) []string {
+func pathMTUForwardedPathInterfacesWithLocalCaptureIntents(router *api.Router, intents []dynamicconfig.LocalCaptureIntent) []string {
 	if router == nil {
 		return nil
 	}
 	var out []string
-	for _, res := range router.Spec.Resources {
-		if res.APIVersion == api.NetAPIVersion && res.Kind == "Interface" {
-			out = append(out, res.Metadata.Name)
-		}
+	for _, path := range pathMTUForwardedPathsWithLocalCaptureIntents(router, intents) {
+		out = append(out, path.FromInterface, path.ToInterface)
 	}
 	return compactStrings(sortedStrings(out))
 }
@@ -787,11 +678,27 @@ func RouterWantsTCPMSSClamp(router *api.Router) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return len(policies) > 0, nil
+	if len(policies) > 0 {
+		return true, nil
+	}
+	// LocalCaptureIntents are persisted independently from Router resources.
+	// A declared transport can therefore cause the path-MTU controller to
+	// create routerd_mss after this static artifact ownership check. Retain
+	// ownership based on transport capability without reopening MobilityPool or
+	// status as a desired-state channel.
+	capabilities, err := pathMTUDynamicTransportCapabilities(router)
+	if err != nil {
+		return false, err
+	}
+	return capabilities.LocalCapture, nil
 }
 
 func pathMTUMSSPolicies(router *api.Router) ([]pathMTUPolicy, error) {
-	policies, err := pathMTUPolicies(router)
+	return pathMTUMSSPoliciesWithLocalCaptureIntents(router, nil)
+}
+
+func pathMTUMSSPoliciesWithLocalCaptureIntents(router *api.Router, intents []dynamicconfig.LocalCaptureIntent) ([]pathMTUPolicy, error) {
+	policies, err := pathMTUPoliciesWithLocalCaptureIntents(router, intents)
 	if err != nil {
 		return nil, err
 	}
@@ -809,11 +716,66 @@ func RouterWantsIPv4ForceFragment(router *api.Router) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return len(policies) > 0, nil
+	if len(policies) > 0 {
+		return true, nil
+	}
+	// LocalCaptureIntents cross the dynamic-config persistence boundary rather
+	// than being reconstructed from MobilityPool or status here. The path-MTU
+	// controller can therefore create routerd_forcefrag after this static
+	// ownership check has run. Keep the table router-owned whenever a declared
+	// transport can request IPv4 force-fragment handling, so the artifact
+	// lifecycle does not mistake that controller-owned table for an orphan.
+	capabilities, err := pathMTUDynamicTransportCapabilities(router)
+	if err != nil {
+		return false, err
+	}
+	return capabilities.ForceFragmentIPv4, nil
+}
+
+type pathMTUDynamicTransportState struct {
+	LocalCapture      bool
+	ForceFragmentIPv4 bool
+}
+
+func pathMTUDynamicTransportCapabilities(router *api.Router) (pathMTUDynamicTransportState, error) {
+	var capabilities pathMTUDynamicTransportState
+	if router == nil {
+		return capabilities, nil
+	}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.HybridAPIVersion {
+			continue
+		}
+		switch res.Kind {
+		case "OverlayPeer":
+			spec, err := res.OverlayPeerSpec()
+			if err != nil {
+				return capabilities, err
+			}
+			capabilities.LocalCapture = capabilities.LocalCapture || strings.TrimSpace(spec.Underlay.Interface) != ""
+			if spec.PathMTU.ForceFragmentIPv4 {
+				capabilities.ForceFragmentIPv4 = true
+			}
+		case "TunnelInterface":
+			spec, err := res.TunnelInterfaceSpec()
+			if err != nil {
+				return capabilities, err
+			}
+			capabilities.LocalCapture = capabilities.LocalCapture || strings.TrimSpace(res.Metadata.Name) != ""
+			if spec.PathMTU.ForceFragmentIPv4 {
+				capabilities.ForceFragmentIPv4 = true
+			}
+		}
+	}
+	return capabilities, nil
 }
 
 func pathMTUForceFragmentPolicies(router *api.Router) ([]pathMTUPolicy, error) {
-	policies, err := pathMTUPolicies(router)
+	return pathMTUForceFragmentPoliciesWithLocalCaptureIntents(router, nil)
+}
+
+func pathMTUForceFragmentPoliciesWithLocalCaptureIntents(router *api.Router, intents []dynamicconfig.LocalCaptureIntent) ([]pathMTUPolicy, error) {
+	policies, err := pathMTUPoliciesWithLocalCaptureIntents(router, intents)
 	if err != nil {
 		return nil, err
 	}

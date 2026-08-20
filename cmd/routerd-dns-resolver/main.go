@@ -21,6 +21,7 @@ import (
 
 	"github.com/miekg/dns"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dnsresolver"
@@ -260,8 +261,8 @@ func buildRuntimeSources(config dnsresolver.RuntimeConfig) ([]runtimeSource, err
 	for _, source := range config.Spec.Sources {
 		runtime := runtimeSource{Spec: source}
 		if source.Kind == "forward" || source.Kind == "upstream" {
-			timeout, _ := time.ParseDuration(firstNonEmpty(source.Healthcheck.Timeout, "3s"))
-			interval, _ := time.ParseDuration(firstNonEmpty(source.Healthcheck.Interval, "15s"))
+			timeout, _ := time.ParseDuration(stringutil.FirstNonEmpty(source.Healthcheck.Timeout, "3s"))
+			interval, _ := time.ParseDuration(stringutil.FirstNonEmpty(source.Healthcheck.Interval, "15s"))
 			pool, err := newUpstreamPool(source.Upstreams, upstreamPoolConfig{
 				ProbeInterval:     interval,
 				ProbeTimeout:      timeout,
@@ -700,11 +701,16 @@ func (d *daemon) leaseHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	topic, ok := daemonapi.DHCPLeaseEventType(lease.Action)
+	if !ok {
+		http.Error(w, "unsupported DHCP lease action", http.StatusBadRequest)
+		return
+	}
 	d.stateMu.RLock()
 	zones := d.zones
 	d.stateMu.RUnlock()
 	zones.ApplyLease(lease)
-	d.publish("routerd.dhcp.lease."+lease.Action, daemonapi.SeverityInfo, "LeaseUpdated", lease.Hostname, map[string]string{"mac": lease.MAC, "ip": lease.IP, "hostname": lease.Hostname})
+	d.publish(topic, daemonapi.SeverityInfo, "LeaseUpdated", lease.Hostname, map[string]string{"mac": lease.MAC, "ip": lease.IP, "hostname": lease.Hostname})
 	_ = json.NewEncoder(w).Encode(map[string]any{"accepted": true})
 }
 
@@ -936,13 +942,4 @@ func listenAddressSet(listen []api.DNSResolverListenSpec) map[string]struct{} {
 
 func usage(w io.Writer) {
 	fmt.Fprintln(w, "usage: routerd-dns-resolver daemon --resource NAME --config-file /path/config.json")
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }

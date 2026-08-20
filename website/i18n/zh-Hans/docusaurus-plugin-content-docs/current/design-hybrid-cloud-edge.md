@@ -49,9 +49,6 @@ CloudEdge SAM 的主要 authoring surface 是 `MobilityPool` 与 `SAMTransportPr
 `MobilityPool` 表示 address ownership/capture intent，`SAMTransportProfile` 表示
 transport/BGP intent。
 
-`AddressMobilityDomain` 与 `RemoteAddressClaim` 仍作为低层兼容 resource 保留，但不再是当前
-CloudEdge Mobility 的主角。
-
 ## provider actions
 
 Cloud inventory plugin 可以观测 provider state 并返回 dynamic resource。provider capture

@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
@@ -57,7 +58,7 @@ func (c Controller) Start(ctx context.Context) {
 }
 
 func (c Controller) HandleEvent(ctx context.Context, event daemonapi.DaemonEvent) error {
-	if strings.HasPrefix(event.Type, "routerd.dhcp.lease.") {
+	if _, ok := daemonapi.DHCPLeaseActionFromEventType(event.Type); ok {
 		return c.forwardLeaseEvent(ctx, event)
 	}
 	return c.Reconcile(ctx)
@@ -184,9 +185,9 @@ func (c Controller) hostnameRecordsForResolver(servedZones map[string]bool) map[
 			if hostname == "" {
 				continue
 			}
-			address := statusAddressValue(statusString(c.Store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", resource.Metadata.Name)["address"]))
+			address := statusvalue.Address(statusvalue.Text(c.Store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", resource.Metadata.Name)["address"]))
 			if address == "" {
-				address = statusAddressValue(spec.Address)
+				address = statusvalue.Address(spec.Address)
 			}
 			c.addHostnameRecord(out, servedZones, hostname, address)
 		case "IngressService":
@@ -204,12 +205,12 @@ func (c Controller) hostnameRecordsForResolver(servedZones map[string]bool) map[
 			if hostname == "" {
 				continue
 			}
-			address := statusAddressValue(statusString(c.Store.ObjectStatus(api.FirewallAPIVersion, "IngressService", resource.Metadata.Name)["listenAddress"]))
+			address := statusvalue.Address(statusvalue.Text(c.Store.ObjectStatus(api.FirewallAPIVersion, "IngressService", resource.Metadata.Name)["listenAddress"]))
 			if address == "" {
-				address = statusAddressValue(spec.Listen.Address)
+				address = statusvalue.Address(spec.Listen.Address)
 			}
 			if address == "" && strings.TrimSpace(spec.Listen.AddressFrom.Resource) != "" {
-				address = statusAddressValue(resourcequery.Value(c.Store, spec.Listen.AddressFrom))
+				address = statusvalue.Address(resourcequery.Value(c.Store, spec.Listen.AddressFrom))
 			}
 			c.addHostnameRecord(out, servedZones, hostname, address)
 		}
@@ -219,7 +220,7 @@ func (c Controller) hostnameRecordsForResolver(servedZones map[string]bool) map[
 
 func (c Controller) addHostnameRecord(out map[string][]hostnameRecord, servedZones map[string]bool, hostname, address string) {
 	hostname = strings.Trim(strings.TrimSpace(hostname), ".")
-	address = statusAddressValue(address)
+	address = statusvalue.Address(address)
 	if hostname == "" || address == "" {
 		return
 	}
@@ -526,7 +527,7 @@ func (c Controller) expandZoneSpec(spec api.DNSZoneSpec) (api.DNSZoneSpec, []map
 }
 
 func (c Controller) eventRelevant(event daemonapi.DaemonEvent) bool {
-	if strings.HasPrefix(event.Type, "routerd.dhcp.lease.") {
+	if _, ok := daemonapi.DHCPLeaseActionFromEventType(event.Type); ok {
 		return true
 	}
 	if event.Resource == nil {
@@ -651,8 +652,8 @@ func resolvedListenAddresses(spec api.DNSResolverSpec) []string {
 }
 
 func (c Controller) forwardLeaseEvent(ctx context.Context, event daemonapi.DaemonEvent) error {
-	action := strings.TrimPrefix(event.Type, "routerd.dhcp.lease.")
-	if action == event.Type {
+	action, ok := daemonapi.DHCPLeaseActionFromEventType(event.Type)
+	if !ok {
 		return nil
 	}
 	payload := map[string]string{
@@ -766,13 +767,13 @@ func expandListenAddresses(store Store, router *api.Router, listen api.DNSResolv
 		resolved := value
 		if list := decodeStringList(resolved); len(list) > 0 {
 			for _, item := range list {
-				if address := statusAddressValue(item); address != "" {
+				if address := statusvalue.Address(item); address != "" {
 					out = append(out, address)
 				}
 			}
 			continue
 		}
-		if address := statusAddressValue(resolved); address != "" {
+		if address := statusvalue.Address(resolved); address != "" {
 			out = append(out, address)
 		}
 	}
@@ -793,13 +794,13 @@ func expandListenAddresses(store Store, router *api.Router, listen api.DNSResolv
 		}
 		if list := decodeStringList(resolved); len(list) > 0 {
 			for _, item := range list {
-				if address := statusAddressValue(item); address != "" {
+				if address := statusvalue.Address(item); address != "" {
 					out = append(out, address)
 				}
 			}
 			continue
 		}
-		if address := statusAddressValue(resolved); address != "" {
+		if address := statusvalue.Address(resolved); address != "" {
 			out = append(out, address)
 		}
 	}
@@ -842,17 +843,6 @@ func resolveRecordAddress(store Store, source api.StatusValueSourceSpec, wantIPv
 		return "", "", nil
 	}
 	return "", "AddressUnresolved", nil
-}
-
-func statusAddressValue(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	if prefix, err := netip.ParsePrefix(value); err == nil {
-		return prefix.Addr().String()
-	}
-	return value
 }
 
 // expandUpstreams resolves a source's static upstreams plus any upstreamFrom
@@ -1191,11 +1181,4 @@ func valueFromStatusRef(store Store, ref string) string {
 		}
 		return fmt.Sprint(value)
 	}
-}
-
-func statusString(value any) string {
-	if value == nil {
-		return ""
-	}
-	return strings.TrimSpace(fmt.Sprint(value))
 }

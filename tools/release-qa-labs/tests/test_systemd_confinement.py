@@ -1,4 +1,5 @@
 import os
+import hashlib
 import json
 import pwd
 from pathlib import Path
@@ -215,6 +216,20 @@ class SystemdConfinementTests(unittest.TestCase):
             lifecycle.write_text(json.dumps({
                 "phase": "PRECHECK", "mutationCommandExecuted": False, "mutationPgid": None,
             }))
+            pinned = run_root / "runtime/pinned"
+            pinned.mkdir(parents=True)
+            token_owner = "release-qa@pve"
+            (pinned / "contract.json").write_text(json.dumps({"pve": {"tokenOwner": token_owner}}))
+            (pinned / "contract.json").chmod(0o600)
+            receipt = evidence / "final-token-revocation/revocation.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text(json.dumps({
+                "runId": run_id,
+                "status": "revoked",
+                "tokenIdentitySha256": hashlib.sha256(f"{token_owner}!{run_id}".encode()).hexdigest(),
+                "revokedAt": "2026-01-01T00:00:00Z",
+            }))
+            receipt.chmod(0o600)
             scopes = [
                 "tofu-state", "aws-tagged-resources", "azure-resource-group",
                 "azure-contained-resources", "oci-tagged-resources", "pve-vms", "pve-bridges",
@@ -250,7 +265,7 @@ class SystemdConfinementTests(unittest.TestCase):
             inventory.write_text(json.dumps({"scopes": [
                 {"name": name, "count": 0, "queryStatus": "complete"} for name in scopes
             ]}))
-            for phase in ("MUTATING", "STOPPING", "CLEANING", "VERIFYING_ZERO"):
+            for phase in ("PRECHECK", "STAGING_ARMED", "MUTATING", "STOPPING", "CLEANING", "VERIFYING_ZERO", "REVOKING_TOKEN"):
                 lifecycle.write_text(json.dumps({
                     "phase": phase, "mutationCommandExecuted": True, "mutationPgid": 123,
                 }))
@@ -265,7 +280,7 @@ class SystemdConfinementTests(unittest.TestCase):
             armed_mutated = subprocess.run(["sudo", "-n", "env", env_path, finalize, run_id], check=False)
             self.assertNotEqual(armed_mutated.returncode, 0)
             lifecycle.write_text(json.dumps({
-                "phase": "STAGING_ARMED", "mutationCommandExecuted": False, "mutationPgid": None,
+                "phase": "FAILED", "mutationCommandExecuted": False, "mutationPgid": None,
             }))
             listening = subprocess.run([
                 "sudo", "-n", "env", env_path, "PROXY_LISTENING=1", finalize, run_id,

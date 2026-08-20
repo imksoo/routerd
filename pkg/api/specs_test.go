@@ -3,7 +3,7 @@
 package api
 
 import (
-	"reflect"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -28,15 +28,123 @@ func TestIPsecConnectionUsesCanonicalPhaseProposalFieldsAndAcceptsLegacyAlias(t 
 	}
 }
 
-func TestMobilityDeliveryPolicyDoesNotExposeGratuitousARPOnSeize(t *testing.T) {
-	if _, ok := reflect.TypeOf(MobilityDeliveryPolicy{}).FieldByName("GratuitousARPOnSeize"); ok {
-		t.Fatalf("MobilityDeliveryPolicy exposes unreachable GratuitousARPOnSeize field")
+func TestMobilityPoolRejectsRemovedMemberDeliveryFields(t *testing.T) {
+	var resource Resource
+	err := yaml.Unmarshal([]byte(`
+apiVersion: mobility.routerd.net/v1alpha1
+kind: MobilityPool
+metadata: {name: pool}
+spec:
+  prefix: 10.77.60.0/24
+  groupRef: cloudedge
+  members:
+    - nodeRef: edge-a
+      delivery:
+        peerRef: onprem
+`), &resource)
+	if err == nil {
+		t.Fatal("MobilityPool accepted removed member delivery configuration")
+	}
+	if !strings.Contains(err.Error(), "members[0].delivery is not supported") {
+		t.Fatalf("unmarshal error = %v", err)
 	}
 }
 
-func TestMobilityDeliveryPolicyDoesNotExposeConntrackCleanupOnSeize(t *testing.T) {
-	if _, ok := reflect.TypeOf(MobilityDeliveryPolicy{}).FieldByName("ConntrackCleanupOnSeize"); ok {
-		t.Fatalf("MobilityDeliveryPolicy exposes no-op ConntrackCleanupOnSeize field")
+func TestMobilityPoolRejectsTopologyAndUnknownMemberFields(t *testing.T) {
+	for _, test := range []struct {
+		field string
+		value string
+	}{
+		{field: "site", value: "cloud-a"},
+		{field: "role", value: "cloud"},
+		{field: "placement", value: "{group: cloud-a, priority: 10}"},
+		{field: "maintenance", value: "{drain: true}"},
+		{field: "maxSecondaryIPs", value: "4"},
+		{field: "eventEndpoint", value: "https://edge-a.example.test/events"},
+		{field: "samEndpoint", value: "10.0.0.1"},
+		{field: "macAddresses", value: "[02:00:00:00:00:01]"},
+		{field: "routeReflector", value: "true"},
+		{field: "wireGuard", value: "{publicKey: key}"},
+		{field: "unknown", value: "value"},
+	} {
+		t.Run(test.field, func(t *testing.T) {
+			var resource Resource
+			err := yaml.Unmarshal([]byte(`
+apiVersion: mobility.routerd.net/v1alpha1
+kind: MobilityPool
+metadata: {name: pool}
+spec:
+  prefix: 10.77.60.0/24
+  groupRef: cloudedge
+  members:
+    - nodeRef: edge-a
+      `+test.field+`: `+test.value+`
+`), &resource)
+			if err == nil {
+				t.Fatalf("MobilityPool accepted members[0].%s", test.field)
+			}
+			if !strings.Contains(err.Error(), "members[0]."+test.field+" is not supported") {
+				t.Fatalf("unmarshal error = %v", err)
+			}
+		})
+	}
+}
+
+func TestMobilityPoolDecodesOnlyLocalMemberOverlay(t *testing.T) {
+	var resource Resource
+	err := yaml.Unmarshal([]byte(`
+apiVersion: mobility.routerd.net/v1alpha1
+kind: MobilityPool
+metadata: {name: pool}
+spec:
+  prefix: 10.77.60.0/24
+  groupRef: cloudedge
+  membersFrom:
+    - resource: SAMNodeSet/cloudedge
+  members:
+    - nodeRef: edge-a
+      profileRef: cloud-self
+      capture: {type: provider-secondary-ip, providerRef: aws, nicRef: eni-a}
+      staticOwnedAddresses: [10.77.60.10/32]
+      ownershipDiscovery: {mode: provider-private-ip}
+`), &resource)
+	if err != nil {
+		t.Fatalf("unmarshal local overlay: %v", err)
+	}
+	spec, err := resource.MobilityPoolSpec()
+	if err != nil {
+		t.Fatalf("MobilityPoolSpec: %v", err)
+	}
+	if len(spec.MembersFrom) != 1 || spec.MembersFrom[0].Resource != "SAMNodeSet/cloudedge" {
+		t.Fatalf("membersFrom = %#v", spec.MembersFrom)
+	}
+	if len(spec.Members) != 1 || spec.Members[0].NodeRef != "edge-a" || spec.Members[0].Capture.NICRef != "eni-a" {
+		t.Fatalf("members = %#v", spec.Members)
+	}
+}
+
+func TestMobilityPoolRejectsRemovedPolicyFields(t *testing.T) {
+	for _, field := range []string{"mode", "capturePolicy", "authority", "ipOwnershipPolicy", "deliveryPolicy", "publishMemberSet"} {
+		t.Run(field, func(t *testing.T) {
+			var resource Resource
+			err := yaml.Unmarshal([]byte(`
+apiVersion: mobility.routerd.net/v1alpha1
+kind: MobilityPool
+metadata: {name: pool}
+spec:
+  prefix: 10.77.60.0/24
+  groupRef: cloudedge
+  `+field+`: {}
+  members:
+    - nodeRef: edge-a
+`), &resource)
+			if err == nil {
+				t.Fatalf("MobilityPool accepted removed %s configuration", field)
+			}
+			if !strings.Contains(err.Error(), field+" is not supported") {
+				t.Fatalf("unmarshal error = %v", err)
+			}
+		})
 	}
 }
 

@@ -77,7 +77,7 @@ flowchart TB
 ## 3. BGP ownership plane
 
 mobile `/32` 的所有者是该前缀当前的 BGP best path。
-运维人员无需手动记述 lease、claim 或每地址的 provider action。
+运维人员无需手动记述 lease、每地址 ownership record 或 provider action。
 routerd 将 `MobilityPool` 的意图投影为 BGP 广告，观测 RIB 来判断本地
 应实现什么。
 

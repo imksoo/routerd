@@ -8,15 +8,24 @@ Usage:
 
 Options:
   --tfvars FILE           Optional OpenTofu tfvars file; used for provider CLI profiles during inventory
-  --ssh-key FILE          Fixed lab SSH key (default: ~/.ssh/routerd-cloudedge-lab-20260529)
+  --ssh-key FILE          Guest/cloud SSH key (required)
+  --pve-ssh-key FILE      Root PVE SSH key, used only for hypervisor bridge audit
+  --pve-known-hosts FILE  Pinned known_hosts used exclusively for root@PVE SSH
   --configs-dir DIR       Use existing generated configs instead of generating into evidence/config-gen
   --skip-deploy           Do not install routerd/configs; useful for diagnostics-only reruns
   --skip-initial-validation
                           Continue from a separately recorded PASS and start with failover;
                           only the full-suite resume path should normally use this
+  --staged-rr-pair A B   Deploy non-RR routers first, then RR A and RR B in order;
+                          records the staged pair lifecycle for representative HA qualification
   --failover-node NODE    Optional router node name; may be repeated. Stops routerd.service and reruns convergence/matrix
   --rejoin-after-failover Restart stopped failover nodes and rerun convergence/matrix
+  --transition-canary     For post-transition validation, retain all-leaf control/provider
+                          gates but run four fixed cross-site hostname canaries instead of a
+                          second full client/cloud-ingress matrix
   --load-balance-report   Capture MobilityPool owner-table snapshots after each matrix run
+  --skip-load-balance-report
+                          Explicitly suppress owner-table snapshots; conflicts with --load-balance-report
   --skip-matrix           Skip SSH hostname matrix; useful when rerunning performance after a clean matrix
   --skip-legacy-protocols Skip FTP/RPC/NFS/CIFS pseudo-client matrix
   --performance-tests     Run SAM iperf3/ping probes, plus public direct comparison for cross-cloud AWS/Azure/OCI pairs
@@ -35,14 +44,18 @@ tofu_output=
 artifact=
 evidence_dir=
 tfvars=
-ssh_key="${HOME}/.ssh/routerd-cloudedge-lab-20260529"
+ssh_key=
+pve_ssh_key=
+pve_known_hosts=
 configs_dir=
 skip_deploy=0
 skip_initial_validation=0
+staged_rr_pair=()
 failover_nodes=()
 stopped_routers=()
 rejoin_after_failover=0
 load_balance_report=0
+skip_load_balance_report=0
 skip_matrix=0
 legacy_protocols=1
 performance_tests=0
@@ -50,6 +63,7 @@ failover_transfer_tests=0
 failover_transfer_required=0
 failover_transfer_smoke=0
 success_evidence_minimal=0
+transition_canary=0
 destroy_cmd=
 overall=0
 validation_started=0
@@ -61,12 +75,17 @@ while [ "$#" -gt 0 ]; do
     --evidence-dir) evidence_dir="$2"; shift 2 ;;
     --tfvars) tfvars="$2"; shift 2 ;;
     --ssh-key) ssh_key="$2"; shift 2 ;;
+    --pve-ssh-key) pve_ssh_key="$2"; shift 2 ;;
+    --pve-known-hosts) pve_known_hosts="$2"; shift 2 ;;
     --configs-dir) configs_dir="$2"; shift 2 ;;
     --skip-deploy) skip_deploy=1; shift ;;
     --skip-initial-validation) skip_initial_validation=1; shift ;;
+    --staged-rr-pair) staged_rr_pair=("${2:?missing RR A}" "${3:?missing RR B}"); shift 3 ;;
     --failover-node) failover_nodes+=("$2"); shift 2 ;;
     --rejoin-after-failover) rejoin_after_failover=1; shift ;;
+    --transition-canary) transition_canary=1; shift ;;
     --load-balance-report) load_balance_report=1; shift ;;
+    --skip-load-balance-report) skip_load_balance_report=1; shift ;;
     --skip-matrix) skip_matrix=1; shift ;;
     --skip-legacy-protocols) legacy_protocols=0; shift ;;
     --performance-tests) performance_tests=1; shift ;;
@@ -80,14 +99,23 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+if [ "$load_balance_report" -eq 1 ] && [ "$skip_load_balance_report" -eq 1 ]; then
+  echo "--load-balance-report cannot be combined with --skip-load-balance-report" >&2
+  exit 2
+fi
+
 [ -n "$tofu_output" ] || { echo "--tofu-output is required" >&2; exit 2; }
 [ -n "$artifact" ] || { echo "--artifact is required" >&2; exit 2; }
 [ -n "$evidence_dir" ] || { echo "--evidence-dir is required" >&2; exit 2; }
 [ -f "$tofu_output" ] || { echo "tofu output not found: $tofu_output" >&2; exit 2; }
 [ -f "$artifact" ] || { echo "artifact not found: $artifact" >&2; exit 2; }
 [ -z "$tfvars" ] || [ -f "$tfvars" ] || { echo "tfvars not found: $tfvars" >&2; exit 2; }
+[ -n "$ssh_key" ] || { echo "--ssh-key FILE is required" >&2; exit 2; }
 [ -f "$ssh_key" ] || { echo "ssh key not found: $ssh_key" >&2; exit 2; }
+[ -z "$pve_ssh_key" ] || [ -f "$pve_ssh_key" ] || { echo "PVE SSH key not found: $pve_ssh_key" >&2; exit 2; }
+[ -z "$pve_known_hosts" ] || [ -f "$pve_known_hosts" ] || { echo "PVE known_hosts not found: $pve_known_hosts" >&2; exit 2; }
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }
+command -v ssh-keygen >/dev/null || { echo "ssh-keygen is required" >&2; exit 2; }
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 config_generator="$(cd "$script_dir/.." && pwd)/configs/sam-e2e-generate.sh"
@@ -105,10 +133,18 @@ jq '.fabric.value' "$tofu_output" >"$fabric_json"
 mapfile -t routers < <(jq -r 'to_entries[] | select(.value.role == "rr" or .value.role == "leaf") | .key' "$nodes_json" | sort)
 mapfile -t leaf_routers < <(jq -r 'to_entries[] | select(.value.role == "leaf") | .key' "$nodes_json" | sort)
 mapfile -t pve_leaf_routers < <(jq -r 'to_entries[] | select(.value.site == "pve" and .value.role == "leaf") | .key' "$nodes_json" | sort)
+mapfile -t pve_routers < <(jq -r 'to_entries[] | select(.value.site == "pve" and (.value.role == "rr" or .value.role == "leaf")) | .key' "$nodes_json" | sort)
 mapfile -t clients < <(jq -r 'to_entries[] | select(.value.role == "client") | .key' "$nodes_json" | sort)
-mapfile -t pve_dataplane_nodes < <(jq -r 'to_entries[] | select(.value.site == "pve" and (.value.role == "leaf" or .value.role == "client")) | .key' "$nodes_json" | sort)
-pve_boot_source="$(jq -r '.pve.boot_source // "template"' "$fabric_json")"
-pve_capture_interface="${PVE_CAPTURE_INTERFACE:-$([ "$pve_boot_source" = "iso" ] && printf ens19 || printf eth1)}"
+mapfile -t pve_clients < <(jq -r 'to_entries[] | select(.value.site == "pve" and .value.role == "client") | .key' "$nodes_json" | sort)
+# Both supported PVE boot sources use the Ubuntu virtio convention: ens18 is
+# the provider-owned QGA management NIC and ens19 is the isolated capture NIC.
+# A cloud-init configuration that assigns a client-side capture address may
+# expose that client NIC as eth1 even while the unaddressed leaf NIC remains
+# ens19.  Keep the router's capture interface authoritative for generated
+# MobilityPool configuration and allow only the client-side setup to override
+# its local name.
+pve_capture_interface="${PVE_CAPTURE_INTERFACE:-ens19}"
+pve_client_capture_interface="${PVE_CLIENT_CAPTURE_INTERFACE:-$pve_capture_interface}"
 aws_profile="${AWS_PROFILE:-}"
 oci_profile="${OCI_PROFILE:-}"
 
@@ -119,9 +155,32 @@ if [ "$skip_initial_validation" -eq 1 ] && [ "${#failover_nodes[@]}" -eq 0 ]; th
   echo "--skip-initial-validation requires at least one --failover-node" >&2
   exit 2
 fi
+if [ "${#staged_rr_pair[@]}" -ne 0 ] && [ "${#staged_rr_pair[@]}" -ne 2 ]; then
+  echo "--staged-rr-pair requires exactly two distinct RR nodes" >&2
+  exit 2
+fi
+if [ "${#staged_rr_pair[@]}" -eq 2 ]; then
+  if [ "${staged_rr_pair[0]}" = "${staged_rr_pair[1]}" ]; then
+    echo "--staged-rr-pair requires two distinct RR nodes" >&2
+    exit 2
+  fi
+  for staged_rr in "${staged_rr_pair[@]}"; do
+    if ! jq -e --arg node "$staged_rr" '.[$node]? | .role == "rr"' "$nodes_json" >/dev/null; then
+      echo "--staged-rr-pair node is not a declared RR: $staged_rr" >&2
+      exit 2
+    fi
+  done
+fi
+if [ "$transition_canary" -eq 1 ] && [ "${#failover_nodes[@]}" -eq 0 ]; then
+  echo "--transition-canary requires at least one --failover-node" >&2
+  exit 2
+fi
 
 known_hosts="$evidence_dir/ssh/known_hosts"
 : >"$known_hosts"
+chmod 600 "$known_hosts"
+pve_qga_host_keys_evidence="$evidence_dir/ssh/pve-qga-host-keys.tsv"
+printf 'node\tmanagement_ip\tkey_type\tfingerprint\n' >"$pve_qga_host_keys_evidence"
 
 extract_tfvars_string() {
   local key="$1"
@@ -188,66 +247,6 @@ node_ssh_host() {
   return 1
 }
 
-node_has_management_address() {
-  node_ssh_host "$1" >/dev/null
-}
-
-node_requires_qga() {
-  local node="$1" site vm_id
-  site="$(node_field "$node" site)"
-  vm_id="$(node_field "$node" vm_id)"
-  [ "$site" = "pve" ] || return 1
-  [ -n "$vm_id" ] && [ "$vm_id" != "null" ] || return 1
-  ! node_has_management_address "$node"
-}
-
-pve_qga_preflight() {
-  local node="$1" vm_id pve_host agent boot_source
-  vm_id="$(node_field "$node" vm_id)"
-  boot_source="$(jq -r '.pve.boot_source // empty' "$fabric_json")"
-  if [ "$boot_source" != "iso" ]; then
-    echo "PVEQGAUnsupportedBootSource: node $node has no management address, but boot_source=${boot_source:-<empty>}; QGA fallback requires boot_source=iso" >&2
-    return 1
-  fi
-  pve_host="$(jq -r '.pve.node_ssh_host // empty' "$fabric_json")"
-  [ -n "$pve_host" ] && [ "$pve_host" != "null" ] || {
-    echo "PVEQGATransportUnavailable: cannot query QGA capability because no PVE SSH host is configured" >&2
-    return 1
-  }
-  if ! agent="$(ssh "root@$pve_host" "qm config $vm_id | awk -F: '\$1 == \"agent\" { gsub(/[[:space:]]/, \"\", \$2); print \$2; exit }'")"; then
-    echo "PVEQGATransportUnavailable: cannot query QGA capability on PVE host $pve_host" >&2
-    return 1
-  fi
-  case "$agent" in 1|1,*|yes|yes,*|enabled=1|enabled=1,*|enabled=yes|enabled=yes,*) return 0 ;; esac
-  echo "PVEQGADisabled: QEMU guest agent is disabled for node $node vmid=$vm_id" >&2
-  return 1
-}
-
-pve_qga_exec() {
-  local node="$1" command="$2" vm_id pve_host raw exitcode
-  pve_qga_preflight "$node" || return 1
-  vm_id="$(node_field "$node" vm_id)"
-  pve_host="$(jq -er '.pve.node_ssh_host' "$fabric_json")"
-  raw="$(ssh "root@$pve_host" "qm guest exec $vm_id --timeout 600 -- /bin/sh -lc $(printf '%q' "$command")")"
-  printf '%s\n' "$raw" | jq -r '."out-data" // empty'
-  printf '%s\n' "$raw" | jq -r '."err-data" // empty' >&2
-  exitcode="$(printf '%s\n' "$raw" | jq -r '.exitcode // 255')"
-  [ "$exitcode" = "0" ]
-}
-
-pve_qga_copy() {
-  local src="$1" node="$2" dst="$3" vm_id pve_host raw exitcode quoted_dst
-  pve_qga_preflight "$node" || return 1
-  vm_id="$(node_field "$node" vm_id)"
-  pve_host="$(jq -er '.pve.node_ssh_host' "$fabric_json")"
-  quoted_dst="$(printf '%q' "$dst")"
-  raw="$(ssh "root@$pve_host" "qm guest exec $vm_id --pass-stdin 1 --timeout 120 -- /bin/sh -lc 'cat > $quoted_dst'" <"$src")"
-  printf '%s\n' "$raw" | jq -r '."out-data" // empty'
-  printf '%s\n' "$raw" | jq -r '."err-data" // empty' >&2
-  exitcode="$(printf '%s\n' "$raw" | jq -r '.exitcode // 255')"
-  [ "$exitcode" = "0" ]
-}
-
 node_is_stopped() {
   local want="$1" node
   for node in "${stopped_routers[@]}"; do
@@ -281,15 +280,11 @@ mark_node_running() {
   stopped_routers=("${next[@]}")
 }
 
-ssh_base=(-i "$ssh_key" -o UserKnownHostsFile="$known_hosts" -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3)
+ssh_base=(-i "$ssh_key" -o UserKnownHostsFile="$known_hosts" -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes -o BatchMode=yes -o CanonicalizeHostname=no -o IdentitiesOnly=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3)
 
 ssh_node() {
   local node="$1"; shift
   local user host
-  if node_requires_qga "$node"; then
-    pve_qga_exec "$node" "$*"
-    return
-  fi
   user="$(node_field "$node" ssh_user)"
   host="$(node_ssh_host "$node")" || { echo "missing management address for node $node" >&2; return 1; }
   ssh -n "${ssh_base[@]}" "$user@$host" "$@"
@@ -298,13 +293,17 @@ ssh_node() {
 scp_node() {
   local src="$1" node="$2" dst="$3"
   local user host
-  if node_requires_qga "$node"; then
-    pve_qga_copy "$src" "$node" "$dst"
-    return
-  fi
   user="$(node_field "$node" ssh_user)"
   host="$(node_ssh_host "$node")" || { echo "missing management address for node $node" >&2; return 1; }
-  scp -i "$ssh_key" -o UserKnownHostsFile="$known_hosts" -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 "$src" "$user@$host:$dst"
+  scp -i "$ssh_key" -o UserKnownHostsFile="$known_hosts" -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes -o BatchMode=yes -o CanonicalizeHostname=no -o IdentitiesOnly=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 "$src" "$user@$host:$dst"
+}
+
+scp_from_node() {
+  local node="$1" src="$2" dst="$3"
+  local user host
+  user="$(node_field "$node" ssh_user)"
+  host="$(node_ssh_host "$node")" || { echo "missing management address for node $node" >&2; return 1; }
+  scp -i "$ssh_key" -o UserKnownHostsFile="$known_hosts" -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes -o BatchMode=yes -o CanonicalizeHostname=no -o IdentitiesOnly=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 "$user@$host:$src" "$dst"
 }
 
 remote_prepare_script() {
@@ -388,13 +387,16 @@ record_note() {
     echo "ssh_key=$ssh_key"
     ssh-keygen -lf "${ssh_key}.pub" 2>/dev/null || ssh-keygen -y -f "$ssh_key" | ssh-keygen -lf -
     echo "skip_initial_validation=$skip_initial_validation"
+    echo "staged_rr_pair=${staged_rr_pair[*]:-}"
     echo "legacy_protocols=$legacy_protocols"
     echo "performance_tests=$performance_tests"
     echo "failover_transfer_tests=$failover_transfer_tests"
     echo "failover_transfer_required=$failover_transfer_required"
     echo "failover_transfer_smoke=$failover_transfer_smoke"
     echo "rejoin_after_failover=$rejoin_after_failover"
+    echo "skip_load_balance_report=$skip_load_balance_report"
     echo "success_evidence_minimal=$success_evidence_minimal"
+    echo "transition_canary=$transition_canary"
     echo "policy_read=cloudedge-mobility/LAB_POLICY.md and ~/routerd-orchestration.md must be reread before real-machine validation"
   } >"$evidence_dir/run-note.txt"
 }
@@ -405,14 +407,113 @@ mark_failed() {
 }
 
 merge_validation_status() {
-  local current="$1" next="$2"
-  if [ "$current" -eq 1 ] || [ "$next" -eq 1 ]; then
+  local current="$1" next_status="$2"
+  if [ "$current" -eq 1 ] || [ "$next_status" -eq 1 ]; then
     printf '1\n'
-  elif [ "$current" -eq 2 ] || [ "$next" -eq 2 ]; then
+  elif [ "$current" -eq 2 ] || [ "$next_status" -eq 2 ]; then
     printf '2\n'
   else
     printf '0\n'
   fi
+}
+
+valid_pve_qga_host_key() {
+  local line="$1" key_type key_blob _comment canonical
+  read -r key_type key_blob _comment <<<"$line"
+  [ -n "$key_type" ] && [ -n "$key_blob" ] || return 1
+  case "$key_type" in
+    ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|ssh-rsa) ;;
+    *) return 1 ;;
+  esac
+  [[ "$key_blob" =~ ^[A-Za-z0-9+/]+={0,3}$ ]] || return 1
+  canonical="$key_type $key_blob"
+  printf '%s\n' "$canonical" | ssh-keygen -lf - >/dev/null 2>&1 || return 1
+  printf '%s\n' "$canonical"
+}
+
+pin_pve_guest_host_keys() {
+  local node="$1" management_ip public_ip host source key_source key canonical fingerprint
+  local -a declared_keys=() canonical_keys=()
+
+  management_ip="$(node_field "$node" management_ip)"
+  public_ip="$(node_field "$node" public_ip)"
+  source="$(node_field "$node" pve_management_source)"
+  key_source="$(node_field "$node" ssh_host_key_source)"
+  case "$management_ip" in
+    ''|null)
+      echo "PVEQGAManagementAddressMissing: node $node has no QGA-discovered management_ip" >&2
+      return 1
+      ;;
+  esac
+  if [ "$source" != "qga-dhcp" ] || [ "$key_source" != "qga" ]; then
+    echo "PVEQGAHostKeyProvenance: node $node requires qga-dhcp address and qga SSH host-key provenance" >&2
+    return 1
+  fi
+  if [ "$public_ip" != "$management_ip" ]; then
+    echo "PVEQGAHostKeyAddressMismatch: node $node public_ip does not equal its QGA-discovered management_ip" >&2
+    return 1
+  fi
+  host="$(node_ssh_host "$node")" || { echo "missing management address for node $node" >&2; return 1; }
+  if [ "$host" != "$management_ip" ]; then
+    echo "PVEQGAHostKeyEndpointMismatch: node $node direct SSH host differs from its QGA-discovered management_ip" >&2
+    return 1
+  fi
+
+  mapfile -t declared_keys < <(jq -r --arg node "$node" '
+    .[$node].ssh_host_keys?
+    | if type == "array" then .[] else empty end
+  ' "$nodes_json")
+  [ "${#declared_keys[@]}" -gt 0 ] || {
+    echo "PVEQGAHostKeyMissing: node $node has no QGA-provided SSH host key" >&2
+    return 1
+  }
+  for key in "${declared_keys[@]}"; do
+    if ! canonical="$(valid_pve_qga_host_key "$key")"; then
+      echo "PVEQGAHostKeyInvalid: node $node supplied an invalid SSH host key" >&2
+      return 1
+    fi
+    canonical_keys+=("$canonical")
+  done
+  mapfile -t canonical_keys < <(printf '%s\n' "${canonical_keys[@]}" | LC_ALL=C sort -u)
+  [ "${#canonical_keys[@]}" -gt 0 ] || {
+    echo "PVEQGAHostKeyMissing: node $node has no usable QGA-provided SSH host key" >&2
+    return 1
+  }
+
+  : >"$evidence_dir/ssh/${node}.qga-host-keys"
+  for key in "${canonical_keys[@]}"; do
+    fingerprint="$(printf '%s\n' "$key" | ssh-keygen -lf - | awk '{print $2}')"
+    printf '%s %s\n' "$management_ip" "$key" >>"$known_hosts"
+    printf '%s\t%s\t%s\t%s\n' "$node" "$management_ip" "${key%% *}" "$fingerprint" >>"$pve_qga_host_keys_evidence"
+    printf '%s %s\n' "$management_ip" "$key" >>"$evidence_dir/ssh/${node}.qga-host-keys"
+  done
+}
+
+append_pve_guest_keys_for_client() {
+  local node="$1" destination_ip="$2" destination_known_hosts="$3" source key_source key canonical
+  local -a declared_keys=()
+
+  source="$(node_field "$node" pve_management_source)"
+  key_source="$(node_field "$node" ssh_host_key_source)"
+  if [ "$source" != "qga-dhcp" ] || [ "$key_source" != "qga" ]; then
+    echo "PVEQGAHostKeyProvenance: node $node cannot supply a client SSH key without QGA provenance" >&2
+    return 1
+  fi
+  mapfile -t declared_keys < <(jq -r --arg node "$node" '
+    .[$node].ssh_host_keys?
+    | if type == "array" then .[] else empty end
+  ' "$nodes_json")
+  [ "${#declared_keys[@]}" -gt 0 ] || {
+    echo "PVEQGAHostKeyMissing: node $node has no QGA-provided SSH host key" >&2
+    return 1
+  }
+  for key in "${declared_keys[@]}"; do
+    if ! canonical="$(valid_pve_qga_host_key "$key")"; then
+      echo "PVEQGAHostKeyInvalid: node $node supplied an invalid SSH host key" >&2
+      return 1
+    fi
+    printf '%s %s\n' "$destination_ip" "$canonical" >>"$destination_known_hosts"
+  done
 }
 
 scan_host_key() {
@@ -447,22 +548,69 @@ run_preflight_probe() {
   return 1
 }
 
+quiesce_existing_routerd_units() {
+  local node
+  # A reused Live ISO can boot its sample router.yaml before this test has
+  # copied the generated configuration. Stop only routerd units on the exact
+  # test guests after their SSH keys are pinned, before any guest probe or
+  # provider/control-plane work. deploy_one_router repeats this defensively
+  # immediately before installing its intended configuration.
+  for node in "${routers[@]}"; do
+    ssh_node "$node" "$(cat <<'REMOTE_QUIESCE'
+set -e
+systemctl list-units --all --type=service --no-legend 'routerd*.service' 2>/dev/null \
+  | awk '{print $1}' \
+  | while IFS= read -r unit; do
+      [ -n "$unit" ] || continue
+      sudo systemctl stop "$unit"
+    done
+if systemctl list-units --all --type=service --no-legend 'routerd*.service' 2>/dev/null \
+  | awk '$3 == "active" || $4 == "running" { exit 1 }'; then
+  exit 0
+fi
+echo "routerd unit remained active after quiesce" >&2
+exit 1
+REMOTE_QUIESCE
+)" >"$evidence_dir/preflight/${node}-routerd-quiesce.txt" 2>&1 || return 1
+  done
+}
+
 preflight() {
   echo "== preflight =="
-  local node host pve_host
-  if jq -e '.fabric.value.pve.capture_bridge? and (.nodes.value | to_entries[] | select(.value.site == "pve"))' "$tofu_output" >/dev/null; then
-    pve_host="$(jq -er '.fabric.value.pve.node_ssh_host' "$tofu_output")" || return 1
+  local node host pve_host site
+  if jq -e '.fabric.value.pve.leaf_capture_bridge? and (.nodes.value | to_entries[] | select(.value.site == "pve" and .value.capture_bridge?))' "$tofu_output" >/dev/null; then
+    [ -n "$pve_ssh_key" ] || {
+      echo "--pve-ssh-key is required before a PVE bridge audit" >&2
+      return 1
+    }
+    [ -n "$pve_known_hosts" ] || {
+      echo "--pve-known-hosts is required before a PVE bridge audit" >&2
+      return 1
+    }
+    pve_host="$(jq -er '.fabric.value.pve.leaf_ssh_host' "$tofu_output")" || return 1
     "$script_dir/sam-pve-bridge-audit.sh" \
       --tofu-output "$tofu_output" \
       --pve-node-ssh-host "$pve_host" \
-      --ssh-key "$ssh_key" \
+      --pve-ssh-key "$pve_ssh_key" \
+      --pve-known-hosts "$pve_known_hosts" \
       --evidence "$evidence_dir/preflight/pve-bridge-audit.txt" || return 1
   fi
   for node in "${routers[@]}" "${clients[@]}"; do
+    site="$(node_field "$node" site)"
+    if [ "$site" = "pve" ]; then
+      # PVE guests are on the shared management underlay. Their keys are read
+      # through authenticated PVE/QGA and pinned before the first guest SSH;
+      # never learn those keys with an unauthenticated ssh-keyscan.
+      pin_pve_guest_host_keys "$node" || return 1
+      continue
+    fi
     host="$(node_field "$node" public_ip)"
-    [ -n "$host" ] && [ "$host" != "null" ] || continue
+    if [ -z "$host" ] || [ "$host" = "null" ]; then
+      continue
+    fi
     scan_host_key "$node" "$host" || return 1
   done
+  quiesce_existing_routerd_units || return 1
   for node in "${routers[@]}" "${clients[@]}"; do
     run_preflight_probe "$node" || {
       echo "$node preflight failed" >&2
@@ -522,9 +670,8 @@ collect_provider_inventory() {
         fi
       fi
       echo "## aws route tables"
-      if ! aws_cli ec2 describe-route-tables --region "$aws_region" --route-table-ids \
-        "$(jq -r '.aws.rr_route_table // empty' "$fabric_json")" \
-        "$(jq -r '.aws.leaf_route_table_id // empty' "$fabric_json")"; then
+      mapfile -t aws_route_tables < <(jq -r '[.aws.leaf_route_table_id // empty] | .[] | select(length > 0)' "$fabric_json")
+      if [ "${#aws_route_tables[@]}" -gt 0 ] && ! aws_cli ec2 describe-route-tables --region "$aws_region" --route-table-ids "${aws_route_tables[@]}"; then
         echo "FAIL: aws EC2 route-table inventory failed"
         status=1
       fi
@@ -624,8 +771,8 @@ collect_provider_inventory() {
   fi
 
   {
-    pve_node="$(jq -r '.pve.node_name // empty' "$fabric_json")"
-    pve_capture_bridge="$(jq -r '.pve.capture_bridge // empty' "$fabric_json")"
+    pve_node="$(jq -r '.pve.leaf_host // empty' "$fabric_json")"
+    pve_capture_bridge="$(jq -r '.pve.leaf_capture_bridge // empty' "$fabric_json")"
     echo "pve_node=$pve_node"
     echo "pve_capture_bridge=$pve_capture_bridge"
     jq -r 'to_entries[] | select(.value.site == "pve") | [.key, (.value.role // ""), (.value.vm_id // ""), (.value.private_ip // ""), (.value.public_ip // "")] | @tsv' "$nodes_json"
@@ -651,101 +798,304 @@ generate_configs() {
   echo "$gen_dir/configs"
 }
 
-find_artifact_binary() {
-  local root="$1" name="$2" path
-  path="$(find "$root" -type f -name "$name" -perm -100 | sort | head -n 1)"
-  [ -n "$path" ] || { echo "$name not found in artifact $artifact" >&2; return 1; }
-  printf '%s\n' "$path"
-}
-
-wait_for_sandbox_socket() {
-  local pid="$1" socket="$2" stdout_log="$3" stderr_log="$4"
-  local i
-  for i in $(seq 1 300); do
-    if ! kill -0 "$pid" >/dev/null 2>&1; then
-      echo "routerd sandbox exited before status socket became ready" >&2
-      cat "$stdout_log" >&2 || true
-      cat "$stderr_log" >&2 || true
+reject_pve_control_plane_resources() {
+  local cfg_dir="$1" node cfg kind
+  # Every PVE router, including the RR pair, is connected to the shared
+  # management underlay. Generated resources must never make that host a DHCP
+  # client/server or an IPv6 RA sender. Match the complete DHCP resource family
+  # so a new subtype cannot bypass this guard without changing the harness
+  # deliberately.
+  for node in "${pve_routers[@]}"; do
+    cfg="$cfg_dir/$node.yaml"
+    if [ ! -f "$cfg" ]; then
+      echo "missing generated PVE router config for control-plane safety check: $cfg" >&2
       return 1
     fi
-    [ -S "$socket" ] && return 0
-    sleep 0.1
+    kind="$(awk '
+      /^[[:space:]]*kind:[[:space:]]*/ {
+        value = $0
+        sub(/^[[:space:]]*kind:[[:space:]]*/, "", value)
+        sub(/[[:space:]]*(#.*)?$/, "", value)
+        quote = substr(value, 1, 1)
+        if ((quote == "\"" || quote == sprintf("%c", 39)) &&
+            substr(value, length(value), 1) == quote) {
+          value = substr(value, 2, length(value) - 2)
+        }
+        if (value ~ /^DHCPv4[[:alnum:]]*$/ ||
+            value ~ /^DHCPv6[[:alnum:]]*$/ ||
+            value == "IPv6RAAddress" ||
+            value == "IPv6RouterAdvertisement" ||
+            value == "RouterAdvertisement") {
+          print value
+          exit
+        }
+      }
+    ' "$cfg")"
+    if [ -n "$kind" ]; then
+      echo "refusing PVE router config: forbidden resource kind $kind (node=$node file=$cfg)" >&2
+      return 1
+    fi
   done
-  echo "routerd sandbox status socket did not become ready: $socket" >&2
-  cat "$stdout_log" >&2 || true
-  cat "$stderr_log" >&2 || true
-  return 1
 }
 
 validate_generated_configs() {
   local cfg_dir="$1"
   local out_dir="$evidence_dir/config-validate"
-  local artifact_root="$out_dir/artifact"
-  local routerd_bin routerctl_bin sandbox_root status_socket sandbox_pid cfg name rc
+  local validation_node input_archive remote_artifact remote_input remote_evidence
+  local validation_rc copy_rc validation_script
   mkdir -p "$out_dir"
-  rm -rf "$artifact_root"
-  mkdir -p "$artifact_root"
-  tar -xzf "$artifact" -C "$artifact_root"
-  routerd_bin="$(find_artifact_binary "$artifact_root" routerd)"
-  routerctl_bin="$(find_artifact_binary "$artifact_root" routerctl)"
-  {
-    echo "artifact=$artifact"
-    echo "routerd_bin=$routerd_bin"
-    "$routerd_bin" version || true
-    echo "routerctl_bin=$routerctl_bin"
-    "$routerctl_bin" version || true
-  } >"$out_dir/binaries.txt" 2>&1
+  validation_node="$(jq -r 'to_entries[] | select(.value.site == "pve" and .value.role == "client") | .key' "$nodes_json" | sort | head -n 1)"
+  [ -n "$validation_node" ] || {
+    echo "a PVE client is required for isolated config validation" >&2
+    return 1
+  }
+  # The QA coordinator must never start routerd, even in sandbox mode.  Send
+  # the artifact and generated configs to a disposable PVE workload guest and
+  # run the exact same dry-run canonical-load check there.  The guest is
+  # reached only through its QGA-pinned SSH identity established by preflight.
+  input_archive="$out_dir/configs.tar.gz"
+  tar -C "$cfg_dir" -czf "$input_archive" .
+  remote_artifact=/tmp/routerd-sam-config-validation-artifact.tar.gz
+  remote_input=/tmp/routerd-sam-config-validation-input.tar.gz
+  remote_evidence=/tmp/routerd-sam-config-validation-evidence.tar.gz
+  scp_node "$artifact" "$validation_node" "$remote_artifact"
+  scp_node "$input_archive" "$validation_node" "$remote_input"
+  printf 'execution_host=guest:%s\nrouterd_on_qa_host=false\n' "$validation_node" \
+    >"$out_dir/execution.txt"
 
-  sandbox_root="$(mktemp -d "${TMPDIR:-/tmp}/routerd-sam-sandbox.XXXXXX")"
-  echo "$sandbox_root" >"$out_dir/sandbox-root.txt"
-  "$routerd_bin" serve --sandbox --root "$sandbox_root" >"$out_dir/sandbox.stdout" 2>"$out_dir/sandbox.stderr" &
-  sandbox_pid=$!
-  trap 'kill "$sandbox_pid" >/dev/null 2>&1 || true; rm -rf "$sandbox_root"; trap - RETURN' RETURN
-  status_socket="$sandbox_root/run/routerd/routerd-status.sock"
-  wait_for_sandbox_socket "$sandbox_pid" "$status_socket" "$out_dir/sandbox.stdout" "$out_dir/sandbox.stderr"
-
-  for cfg in "$cfg_dir"/*.yaml; do
-    [ -f "$cfg" ] || continue
-    name="$(basename "$cfg" .yaml)"
-    rc=0
-    "$routerctl_bin" validate --socket "$status_socket" -f "$cfg" --replace >"$out_dir/$name.routerctl-validate.json" 2>"$out_dir/$name.routerctl-validate.stderr" || rc=$?
-    echo "$rc" >"$out_dir/$name.routerctl-validate.rc"
-    if [ "$rc" -ne 0 ]; then
-      echo "routerctl validate failed for $cfg with rc=$rc" >&2
-      cat "$out_dir/$name.routerctl-validate.stderr" >&2 || true
+  validation_script="$(
+    printf 'artifact=%q\ninput=%q\nevidence=%q\n' \
+      "$remote_artifact" "$remote_input" "$remote_evidence"
+    cat <<'REMOTE_VALIDATE'
+set -euo pipefail
+work="$(mktemp -d /tmp/routerd-sam-config-validation.XXXXXX)"
+out_dir="$work/out"
+sandbox_pid=
+cleanup() {
+  if [ -n "$sandbox_pid" ]; then
+    kill "$sandbox_pid" >/dev/null 2>&1 || true
+    wait "$sandbox_pid" >/dev/null 2>&1 || true
+  fi
+  if [ -d "$out_dir" ]; then
+    tar -C "$out_dir" -czf "$evidence" . || true
+  fi
+  rm -f "$artifact" "$input"
+  rm -rf "$work"
+}
+trap cleanup EXIT
+mkdir -p "$out_dir/artifact" "$work/configs"
+tar -xzf "$artifact" -C "$out_dir/artifact"
+tar -xzf "$input" -C "$work/configs"
+routerd_bin="$(find "$out_dir/artifact" -type f -name routerd -perm -100 | sort | head -n 1)"
+routerctl_bin="$(find "$out_dir/artifact" -type f -name routerctl -perm -100 | sort | head -n 1)"
+[ -n "$routerd_bin" ] && [ -n "$routerctl_bin" ]
+{
+  echo "artifact=$artifact"
+  echo "routerd_bin=$routerd_bin"
+  "$routerd_bin" version || true
+  echo "routerctl_bin=$routerctl_bin"
+  "$routerctl_bin" version || true
+  echo "sandbox=guest-only-dry-run"
+} >"$out_dir/binaries.txt" 2>&1
+sandbox_root="$work/sandbox"
+printf '%s\n' "$sandbox_root" >"$out_dir/sandbox-root.txt"
+"$routerd_bin" serve --sandbox --root "$sandbox_root" >"$out_dir/sandbox.stdout" 2>"$out_dir/sandbox.stderr" &
+sandbox_pid=$!
+status_socket="$sandbox_root/run/routerd/routerd-status.sock"
+for _ in $(seq 1 300); do
+  if ! kill -0 "$sandbox_pid" >/dev/null 2>&1; then
+    echo "routerd sandbox exited before status socket became ready" >&2
+    cat "$out_dir/sandbox.stdout" >&2 || true
+    cat "$out_dir/sandbox.stderr" >&2 || true
+    exit 1
+  fi
+  [ -S "$status_socket" ] && break
+  sleep 0.1
+done
+[ -S "$status_socket" ] || {
+  echo "routerd sandbox status socket did not become ready: $status_socket" >&2
+  exit 1
+}
+for cfg in "$work/configs"/*.yaml; do
+  [ -f "$cfg" ] || continue
+  name="$(basename "$cfg" .yaml)"
+  rc=0
+  "$routerctl_bin" validate --socket "$status_socket" -f "$cfg" --replace >"$out_dir/$name.routerctl-validate.json" 2>"$out_dir/$name.routerctl-validate.stderr" || rc=$?
+  printf '%s\n' "$rc" >"$out_dir/$name.routerctl-validate.rc"
+  if [ "$rc" -ne 0 ] || ! jq -e '.valid == true' "$out_dir/$name.routerctl-validate.json" >/dev/null; then
+    echo "routerctl validate failed for $cfg with rc=$rc" >&2
+    exit 1
+  fi
+  load_root="$work/load-$name"
+  mkdir -p "$load_root"
+  printf '%s\n' "$load_root" >"$out_dir/$name.routerd-load-root.txt"
+  rc=0
+  "$routerd_bin" serve --sandbox --root "$load_root" --config "$cfg" --once >"$out_dir/$name.routerd-validate.txt" 2>"$out_dir/$name.routerd-validate.stderr" || rc=$?
+  printf '%s\n' "$rc" >"$out_dir/$name.routerd-validate.rc"
+  if [ "$rc" -ne 0 ]; then
+    echo "routerd canonical load failed for $cfg with rc=$rc" >&2
+    exit 1
+  fi
+done
+REMOTE_VALIDATE
+  )"
+  validation_rc=0
+  ssh_node "$validation_node" "$validation_script" \
+    >"$out_dir/guest-validation.stdout" 2>"$out_dir/guest-validation.stderr" || validation_rc=$?
+  copy_rc=0
+  scp_from_node "$validation_node" "$remote_evidence" "$out_dir/guest-evidence.tar.gz" || copy_rc=$?
+  if [ "$copy_rc" -eq 0 ]; then
+    if ! tar -xzf "$out_dir/guest-evidence.tar.gz" -C "$out_dir"; then
+      echo "isolated guest config-validation evidence is malformed" >&2
       return 1
     fi
-    if ! jq -e '.valid == true' "$out_dir/$name.routerctl-validate.json" >/dev/null; then
-      echo "routerctl validate returned JSON .valid != true for $cfg" >&2
-      cat "$out_dir/$name.routerctl-validate.json" >&2 || true
-      return 1
-    fi
-    local load_root
-    load_root="$(mktemp -d "${TMPDIR:-/tmp}/routerd-sam-load.XXXXXX")"
-    echo "$load_root" >"$out_dir/$name.routerd-load-root.txt"
-    rc=0
-    "$routerd_bin" serve --sandbox --root "$load_root" --config "$cfg" --once >"$out_dir/$name.routerd-validate.txt" 2>"$out_dir/$name.routerd-validate.stderr" || rc=$?
-    rm -rf "$load_root"
-    echo "$rc" >"$out_dir/$name.routerd-validate.rc"
-    if [ "$rc" -ne 0 ]; then
-      echo "routerd canonical load failed for $cfg with rc=$rc" >&2
-      cat "$out_dir/$name.routerd-validate.stderr" >&2 || true
-      return 1
-    fi
-  done
-  kill "$sandbox_pid" >/dev/null 2>&1 || true
-  wait "$sandbox_pid" >/dev/null 2>&1 || true
-  rm -rf "$sandbox_root"
-  trap - RETURN
+  fi
+  if [ "$validation_rc" -ne 0 ]; then
+    cat "$out_dir/guest-validation.stderr" >&2 || true
+    return "$validation_rc"
+  fi
+  if [ "$copy_rc" -ne 0 ]; then
+    echo "could not retrieve isolated guest config-validation evidence" >&2
+    return "$copy_rc"
+  fi
 }
 
 deploy() {
   [ "$skip_deploy" -eq 0 ] || return 0
-  local cfg_dir="$1"
-  local node
+  local cfg_dir="$1" node
+  if [ "${#staged_rr_pair[@]}" -eq 0 ]; then
+    for node in "${routers[@]}"; do
+      deploy_one_router "$cfg_dir" "$node" || return 1
+    done
+    return 0
+  fi
+
+  # A representative RR transition needs a visible lifecycle: the leaf
+  # routers are prepared first, then the two reflectors join in a fixed
+  # sequence. This changes deployment order only when explicitly requested;
+  # the normal harness still deploys its sorted router set unchanged.
+  : >"$evidence_dir/deploy/rr-stage.tsv"
+  printf 'stage\tnode\tstatus\telapsed_seconds\n' >"$evidence_dir/deploy/rr-stage.tsv"
   for node in "${routers[@]}"; do
+    [ "$node" = "${staged_rr_pair[0]}" ] && continue
+    [ "$node" = "${staged_rr_pair[1]}" ] && continue
     deploy_one_router "$cfg_dir" "$node" || return 1
   done
+  deploy_staged_rr "$cfg_dir" "rr-a-started" "${staged_rr_pair[0]}" || return 1
+  # Do not treat a service/status socket as RR participation.  Before B is
+  # even installed, A must have an observed, established BGP session with the
+  # prepared leaves.  This proves the requested A-created -> A-joined stage.
+  stage_staged_rr_membership "rr-a-joined" "${staged_rr_pair[0]}" || return 1
+  deploy_staged_rr "$cfg_dir" "rr-b-started" "${staged_rr_pair[1]}" || return 1
+  stage_staged_rr_membership "rr-b-joined" "${staged_rr_pair[1]}" || return 1
+  # B joins only after A's membership evidence exists.  Require both
+  # reflectors to retain an observed session before declaring AB ready.
+  stage_staged_rr_membership "rr-pair-ready" "${staged_rr_pair[0]}" "${staged_rr_pair[1]}" || return 1
+}
+
+deploy_staged_rr() {
+  local cfg_dir="$1" stage="$2" node="$3" started status
+  started="$SECONDS"
+  status=PASS
+  if ! deploy_one_router "$cfg_dir" "$node"; then
+    status=FAIL_DEPLOY
+  elif ! wait_router_service_ready "$node"; then
+    status=FAIL_SERVICE_READY
+  fi
+  printf '%s\t%s\t%s\t%s\n' "$stage" "$node" "$status" "$((SECONDS - started))" \
+    >>"$evidence_dir/deploy/rr-stage.tsv"
+  [ "$status" = PASS ]
+}
+
+wait_router_service_ready() {
+  # A first cloud reconciliation can include a real provider inventory/action
+  # before routerd exposes its control socket.  This is a bounded readiness
+  # wait, not a retry of a failed scenario; the former 60-second deploy-local
+  # probe rejected healthy nodes while that first reconciliation was still in
+  # progress.
+  local node="$1" deadline=$((SECONDS + 180))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if ssh_node "$node" 'systemctl is-active --quiet routerd.service && sudo routerctl get status -o json >/dev/null'; then
+      return 0
+    fi
+    sleep 5
+  done
+  return 1
+}
+
+rr_membership_probe() {
+  local node="$1"
+  ssh_node "$node" "$(cat <<'REMOTE_RR_MEMBERSHIP'
+set -e
+systemctl is-active --quiet routerd.service
+if systemctl list-unit-files routerd-bgp.service --no-legend 2>/dev/null | grep -q "^routerd-bgp\\.service"; then
+  systemctl is-active --quiet routerd-bgp.service
+fi
+status="$(sudo routerctl get BGPRouter/mobility-bgp -o json)"
+printf "%s\n" "$status" | jq -e '
+  (.items[0].status // .resource.status // .status // {}) as $s
+  | (($s.establishedPeers // 0) >= 1)
+  | select(.)
+  | (($s.phase // "") | ascii_downcase)
+  | IN("established", "degraded", "reconverging")
+' >/dev/null
+REMOTE_RR_MEMBERSHIP
+)"
+}
+
+wait_rr_membership_gate() {
+  local label="$1"
+  shift
+  local started="$SECONDS" deadline=$((SECONDS + 300)) node status=TIMEOUT ok
+  [ "$#" -gt 0 ] || return 0
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    ok=1
+    for node in "$@"; do
+      if node_is_stopped "$node" || ! rr_membership_probe "$node" \
+        >"$evidence_dir/convergence/${label}-${node}-rr-membership.txt" 2>&1; then
+        ok=0
+      fi
+    done
+    [ "$ok" -eq 1 ] && { status=PASS; break; }
+    sleep 10
+  done
+  for node in "$@"; do
+    printf '%s\t%s\t%s\t%s\n' "$label" "$node" "$status" "$((SECONDS - started))" \
+      >>"$evidence_dir/deploy/rr-membership.tsv"
+    printf '%s-rr-%s\t%s\t%s\n' "$label" "$node" "$status" "$((SECONDS - started))" \
+      >>"$evidence_dir/convergence/summary.tsv"
+  done
+  [ "$status" = PASS ]
+}
+
+stage_staged_rr_membership() {
+  local stage="$1" started status nodes
+  shift
+  started="$SECONDS"
+  status=PASS
+  if ! wait_rr_membership_gate "$stage" "$@"; then
+    status=FAIL_BGP_MEMBERSHIP
+  fi
+  nodes="$(IFS=,; printf '%s' "$*")"
+  printf '%s\t%s\t%s\t%s\n' "$stage" "$nodes" "$status" "$((SECONDS - started))" \
+    >>"$evidence_dir/deploy/rr-stage.tsv"
+  [ "$status" = PASS ]
+}
+
+required_staged_rrs() {
+  local label="$1" failed_node
+  [ "${#staged_rr_pair[@]}" -eq 2 ] || return 0
+  case "$label" in
+    after-failover-*)
+      failed_node="${label#after-failover-}"
+      for node in "${staged_rr_pair[@]}"; do
+        [ "$node" = "$failed_node" ] || printf '%s\n' "$node"
+      done
+      ;;
+    *)
+      printf '%s\n' "${staged_rr_pair[@]}"
+      ;;
+  esac
 }
 
 deploy_one_router() {
@@ -766,19 +1116,31 @@ deploy_one_router() {
     fi
     ssh_node "$node" "$(printf 'export ROUTERD_E2E_REQUIRE_AWS_CLI=%q\n' "$require_aws_cli"; remote_prepare_script; cat <<'REMOTE_DEPLOY'
 set -e
-rm -rf /tmp/routerd-sam-e2e
-mkdir -p /tmp/routerd-sam-e2e
-tar -xzf /tmp/routerd-sam-e2e.tar.gz -C /tmp/routerd-sam-e2e
-cd /tmp/routerd-sam-e2e
-sudo ./install.sh --yes --prefix /usr/local
-if [ -f systemd/routerd-bgp.service ] && ! systemctl list-unit-files routerd-bgp.service --no-legend 2>/dev/null | grep -q '^routerd-bgp\.service'; then
-  sudo install -m 0644 systemd/routerd-bgp.service /etc/systemd/system/routerd-bgp.service
-  sudo systemctl daemon-reload
-fi
+stop_existing_routerd_units() {
+  # A live-ISO guest can still be running its sample router.yaml.  Do not let
+  # the installer restart that configuration while replacing binaries: apart
+  # from being the wrong test input, it can start services such as DHCP/RA.
+  systemctl list-units --all --type=service --no-legend 'routerd*.service' 2>/dev/null \
+    | awk '{print $1}' \
+    | while IFS= read -r unit; do
+        [ -n "$unit" ] || continue
+        sudo systemctl stop "$unit" || true
+      done
+}
+stop_existing_routerd_units
 sudo mkdir -p /usr/local/etc/routerd/secrets
 sudo install -m 0600 /tmp/router.yaml /usr/local/etc/routerd/router.yaml
 if [ -f /tmp/eventd-cloudedge.key ]; then
   sudo install -m 0600 /tmp/eventd-cloudedge.key /usr/local/etc/routerd/secrets/eventd-cloudedge.key
+fi
+rm -rf /tmp/routerd-sam-e2e
+mkdir -p /tmp/routerd-sam-e2e
+tar -xzf /tmp/routerd-sam-e2e.tar.gz -C /tmp/routerd-sam-e2e
+cd /tmp/routerd-sam-e2e
+sudo ./install.sh --yes --prefix /usr/local --no-restart --no-config-update
+if [ -f systemd/routerd-bgp.service ] && ! systemctl list-unit-files routerd-bgp.service --no-legend 2>/dev/null | grep -q '^routerd-bgp\.service'; then
+  sudo install -m 0644 systemd/routerd-bgp.service /etc/systemd/system/routerd-bgp.service
+  sudo systemctl daemon-reload
 fi
 sudo systemctl restart routerd.service
 if systemctl list-unit-files routerd-bgp.service --no-legend 2>/dev/null | grep -q '^routerd-bgp\.service'; then
@@ -789,30 +1151,41 @@ sudo systemctl is-active routerd.service
 command -v routerd
 command -v routerctl
 command -v jq
-ready=0
-deadline=$((SECONDS + 60))
-while [ "$SECONDS" -lt "$deadline" ]; do
-  if sudo routerctl get status -o json >/dev/null 2>&1; then
-    ready=1
-    break
-  fi
-  sleep 2
-done
-if [ "$ready" -ne 1 ]; then
-  sudo systemctl status routerd.service routerd-bgp.service --no-pager -l || true
-  ls -la /run/routerd 2>&1 || true
-  sudo routerctl get status -o json >/dev/null
-fi
 REMOTE_DEPLOY
-)"
-  } >"$evidence_dir/deploy/${node}.txt" 2>&1
+    )"
+  } >"$evidence_dir/deploy/${node}.txt" 2>&1 || return 1
+  if ! wait_router_service_ready "$node"; then
+    ssh_node "$node" 'sudo systemctl status routerd.service routerd-bgp.service --no-pager -l || true; ls -la /run/routerd 2>&1 || true; sudo routerctl get status -o json >/dev/null' \
+      >>"$evidence_dir/deploy/${node}.txt" 2>&1 || true
+    return 1
+  fi
 }
 
 setup_pve_dataplane() {
   local node ip
-  for node in "${pve_dataplane_nodes[@]}"; do
+  # MobilityPool owns a leaf capture.sourceAddress as a /32.  Do not seed it
+  # as a /24: that makes the applied-effect ledger mistake an external subnet
+  # for the managed host address and blocks on-prem discovery.  The exact
+  # cleanup below also makes an in-place qualification retry converge from the
+  # old, incorrect setup without touching the management NIC or bridge. The
+  # capture link is externally managed, so this run-scoped setup also brings
+  # the isolated guest NIC up before routerd installs its capture-prefix route.
+  for node in "${pve_leaf_routers[@]}"; do
     ip="$(node_field "$node" private_ip)"
-    ssh_node "$node" "set -e; if ! ip -4 addr show dev '$pve_capture_interface' | grep -qw '$ip/24'; then sudo ip addr add '$ip/24' dev '$pve_capture_interface'; fi; ip -br addr show dev '$pve_capture_interface'" \
+    ssh_node "$node" "set -e
+sudo ip link set dev '$pve_capture_interface' up
+ip -o link show dev '$pve_capture_interface' | grep -q '<.*UP.*>'
+sudo ip -4 addr del '$ip/24' dev '$pve_capture_interface' 2>/dev/null || true
+if ip -4 -o addr show dev '$pve_capture_interface' | awk '\$3 == \"inet\" { print \$4 }' | grep -Fxq '$ip/24'; then
+  echo 'unexpected external capture subnet remains: $ip/24' >&2
+  exit 1
+fi
+ip -br addr show dev '$pve_capture_interface'" \
+      >"$evidence_dir/preflight/${node}-capture-source-normalized.txt" 2>&1
+  done
+  for node in "${pve_clients[@]}"; do
+    ip="$(node_field "$node" private_ip)"
+    ssh_node "$node" "set -e; if ! ip -4 addr show dev '$pve_client_capture_interface' | grep -qw '$ip/24'; then sudo ip addr add '$ip/24' dev '$pve_client_capture_interface'; fi; ip -br addr show dev '$pve_client_capture_interface'" \
       >"$evidence_dir/preflight/${node}-dataplane-ip.txt" 2>&1
   done
 }
@@ -875,7 +1248,7 @@ status=\"\$(sudo routerctl describe MobilityPool/cloudedge -o json)\"
 while read -r ip; do
   [ -n \"\$ip\" ] || continue
   printf '%s\n' \"\$status\" | jq -e --arg addr \"\$ip/32\" '
-    any(.resource.status.ownershipResolverOwnerTable[]?; .address == \$addr)
+    any(.resource.status.ownershipResolverControlPlaneOwnerTable[]?; .address == \$addr)
   ' >/dev/null
 done <<'IPS'
 $local_client_ips_text
@@ -904,12 +1277,12 @@ wait_provider_gate() {
 status=\"\$(sudo routerctl describe MobilityPool/cloudedge -o json)\"
 printf '%s\n' \"\$status\" | jq -e '
   .resource.status as \$s
-  | ((\$s.phase // \"\") != \"Degraded\")
-  and ((\$s.phase // \"\") != \"Failed\")
-  and ((\$s.providerActionPendingCount // 0) == 0)
-  and ((\$s.providerActionFailedCount // 0) == 0)
-  and ((\$s.providerObservationPendingCount // 0) == 0)
-  and ((\$s.ownershipResolverConflictCount // 0) == 0)
+  | ((\$s.phase // \"\") == \"Ready\")
+  and (
+    [(\$s.ownershipResolverControlPlaneOwnerTable // [])[]
+     | select((.state // \"\" | ascii_downcase) == \"conflict\")]
+    | length == 0
+  )
 ' >/dev/null"; then
         ok=0
       fi
@@ -929,6 +1302,63 @@ collect_convergence_snapshot() {
     node_is_stopped "$node" && continue
     ssh_node "$node" 'sudo routerctl doctor sam; sudo routerctl get status -o json; ip -br addr; ip route' >"$evidence_dir/convergence/${label}-${node}.txt" 2>&1 || true
   done
+}
+
+transition_canary_matrix() {
+  local label="$1"
+  local out="$evidence_dir/matrix/$label"
+  local sites=(aws azure oci pve)
+  local index next_index src_site dst_site src dst src_ip dst_ip dst_host dst_user result actual
+  local status=0
+
+  mkdir -p "$out"
+  : >"$out/transition-canary-summary.tsv"
+  # The baseline has already exercised every directed client path.  During an
+  # RR transition, retain the all-leaf route/ownership gate and use this one
+  # four-edge ring to prove traffic crosses every site without paying for the
+  # same 56+42 matrices again.
+  for index in "${!sites[@]}"; do
+    src_site="${sites[$index]}"
+    next_index=$(((index + 1) % ${#sites[@]}))
+    dst_site="${sites[$next_index]}"
+    src="$(jq -r --arg site "$src_site" 'to_entries[] | select(.value.role == "client" and .value.site == $site) | .key' "$nodes_json" | sort | head -n 1)"
+    dst="$(jq -r --arg site "$dst_site" 'to_entries[] | select(.value.role == "client" and .value.site == $site) | .key' "$nodes_json" | sort | head -n 1)"
+    if [ -z "$src" ] || [ -z "$dst" ]; then
+      echo "transition canary requires one client at every site; missing $src_site or $dst_site" >&2
+      return 1
+    fi
+    src_ip="$(node_field "$src" private_ip)"
+    dst_ip="$(node_field "$dst" private_ip)"
+    dst_host="$(node_field "$dst" name)"
+    dst_user="$(node_field "$dst" ssh_user)"
+    result=PASS
+    {
+      echo "=== transition canary $src ($src_site) -> $dst ($dst_site) ==="
+      echo "SRC=$src SRCIP=$src_ip DST=$dst DSTIP=$dst_ip"
+      echo "## route-get"
+      if ! ssh_node "$src" "ip route get '$dst_ip' from '$src_ip'"; then
+        result=FAIL_ROUTE
+      fi
+      echo "## ping"
+      if ! ssh_node "$src" "ping -I '$src_ip' -c 3 -W 2 '$dst_ip'"; then
+        result=FAIL_PING
+      fi
+      echo "## ssh-hostname"
+      actual=
+      for attempt in 1 2 3; do
+        actual="$(ssh_node "$src" "ssh -i ~/.ssh/routerd-cloudedge-guest -o UserKnownHostsFile=~/.ssh/routerd-e2e-known_hosts -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes -o BatchMode=yes -o CanonicalizeHostname=no -o IdentitiesOnly=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 '$dst_user@$dst_ip' hostname 2>/dev/null" 2>"$out/${src}_to_${dst}.nested-ssh.stderr" | tail -n 1)" || true
+        [ "$actual" = "$dst_host" ] && break
+        sleep 2
+      done
+      if [ "$actual" != "$dst_host" ]; then
+        result=FAIL_HOSTNAME
+      fi
+      printf '%s\n' "$actual"
+    } >"$out/${src}_to_${dst}.transition-canary.txt" 2>&1
+    printf '%s\t%s\t%s\n' "$src" "$dst" "$result" >>"$out/transition-canary-summary.tsv"
+    [ "$result" = PASS ] || status=1
+  done
+  return "$status"
 }
 
 client_matrix() {
@@ -957,7 +1387,7 @@ client_matrix() {
         echo "## ssh-hostname"
         actual=
         for attempt in 1 2 3; do
-          actual="$(ssh_node "$src" "ssh -i ~/.ssh/routerd-cloudedge-lab-20260529 -o UserKnownHostsFile=~/.ssh/routerd-e2e-known_hosts -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 '$dst_user@$dst_ip' hostname 2>/dev/null" 2>"$out/${src}_to_${dst}.nested-ssh.stderr" | tail -n 1)" || true
+          actual="$(ssh_node "$src" "ssh -i ~/.ssh/routerd-cloudedge-guest -o UserKnownHostsFile=~/.ssh/routerd-e2e-known_hosts -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes -o BatchMode=yes -o CanonicalizeHostname=no -o IdentitiesOnly=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 '$dst_user@$dst_ip' hostname 2>/dev/null" 2>"$out/${src}_to_${dst}.nested-ssh.stderr" | tail -n 1)" || true
           [ "$actual" = "$dst_host" ] && break
           sleep 2
         done
@@ -1010,7 +1440,7 @@ cloud_ingress_matrix() {
         echo "## ssh-hostname"
         actual=
         for attempt in 1 2 3; do
-          actual="$(ssh_node "$src" "ssh -i ~/.ssh/routerd-cloudedge-lab-20260529 -o UserKnownHostsFile=~/.ssh/routerd-e2e-known_hosts -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 '$dst_user@$dst_ip' hostname 2>/dev/null" 2>"$out/${src}_to_${dst}.cloud-ingress-nested-ssh.stderr" | tail -n 1)" || true
+          actual="$(ssh_node "$src" "ssh -i ~/.ssh/routerd-cloudedge-guest -o UserKnownHostsFile=~/.ssh/routerd-e2e-known_hosts -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes -o BatchMode=yes -o CanonicalizeHostname=no -o IdentitiesOnly=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 '$dst_user@$dst_ip' hostname 2>/dev/null" 2>"$out/${src}_to_${dst}.cloud-ingress-nested-ssh.stderr" | tail -n 1)" || true
           [ "$actual" = "$dst_host" ] && break
           sleep 2
         done
@@ -1030,12 +1460,19 @@ cloud_ingress_matrix() {
 
 setup_client_ssh() {
   local client_known_hosts="$evidence_dir/ssh/client_known_hosts"
-  local dst dst_ip dst_public client client_name client_site remote_client_ips_text local_leaf_ips_text
+  local dst dst_ip dst_public dst_site client client_name client_site remote_client_ips_text local_leaf_ips_text
   : >"$client_known_hosts"
+  chmod 600 "$client_known_hosts"
   for dst in "${clients[@]}"; do
     dst_ip="$(node_field "$dst" private_ip)"
     dst_public="$(node_field "$dst" public_ip)"
-    if [ -n "$dst_public" ] && [ "$dst_public" != "null" ]; then
+    dst_site="$(node_field "$dst" site)"
+    if [ "$dst_site" = "pve" ]; then
+      # The data-plane SSH matrix still needs each destination's host key, but
+      # PVE guests must use the key authenticated through PVE/QGA rather than
+      # an unauthenticated management-network ssh-keyscan.
+      append_pve_guest_keys_for_client "$dst" "$dst_ip" "$client_known_hosts" || return 1
+    elif [ -n "$dst_public" ] && [ "$dst_public" != "null" ]; then
       ssh-keyscan -T 10 "$dst_public" 2>"$evidence_dir/ssh/${dst}.client-keyscan.err" \
         | awk -v host="$dst_ip" 'NF >= 3 {$1 = host; print}' >>"$client_known_hosts"
     else
@@ -1048,12 +1485,12 @@ setup_client_ssh() {
     client_site="$(node_field "$client" site)"
     remote_client_ips_text="$(jq -r --arg site "$client_site" 'to_entries[] | select(.value.role == "client" and .value.site != $site) | .value.private_ip' "$nodes_json")"
     local_leaf_ips_text="$(jq -r --arg site "$client_site" 'to_entries[] | select(.value.role == "leaf" and .value.site == $site) | .value.private_ip' "$nodes_json")"
-    scp_node "$ssh_key" "$client" /tmp/routerd-cloudedge-lab-20260529
+    scp_node "$ssh_key" "$client" /tmp/routerd-cloudedge-guest
     scp_node "$client_known_hosts" "$client" /tmp/routerd-e2e-known_hosts
     ssh_node "$client" "set -e
 sudo hostnamectl set-hostname '$client_name'
 mkdir -p ~/.ssh
-install -m 0600 /tmp/routerd-cloudedge-lab-20260529 ~/.ssh/routerd-cloudedge-lab-20260529
+install -m 0600 /tmp/routerd-cloudedge-guest ~/.ssh/routerd-cloudedge-guest
 install -m 0644 /tmp/routerd-e2e-known_hosts ~/.ssh/routerd-e2e-known_hosts
 leaf_nexthops=
 while read -r gw; do
@@ -1239,7 +1676,7 @@ is_global_ipv4() {
 $ip
 EOF
   case "$a.$b.$c.$d" in
-    ""|*[!0-9.]*)
+    *[!0-9.]*)
       return 1
       ;;
   esac
@@ -1416,14 +1853,33 @@ run_validation_set() {
   local label="$1"
   local status=0 provider_status=0 dataplane_status=PASS dataplane_started="$SECONDS"
   local phase_started
+  local -a required_rrs=()
 
   phase_started="$SECONDS"
-  if ! wait_dataplane_control_gate "$label"; then
+  if [ "${#staged_rr_pair[@]}" -eq 2 ]; then
+    mapfile -t required_rrs < <(required_staged_rrs "$label")
+    if ! wait_rr_membership_gate "$label" "${required_rrs[@]}"; then
+      dataplane_status=FAIL_RR_MEMBERSHIP
+      record_timing "$label" rr-membership-gate "$phase_started"
+    else
+      record_timing "$label" rr-membership-gate "$phase_started"
+    fi
+  fi
+  if [ "$dataplane_status" != PASS ]; then
+    :
+  elif ! wait_dataplane_control_gate "$label"; then
     dataplane_status=TIMEOUT
     record_timing "$label" dataplane-control-gate "$phase_started"
   elif [ "$skip_matrix" -eq 1 ]; then
     dataplane_status=PASS
     record_timing "$label" dataplane-control-gate "$phase_started"
+  elif [ "$transition_canary" -eq 1 ] && [ "$label" != "initial" ]; then
+    if ! transition_canary_matrix "$label"; then
+      dataplane_status=FAIL_TRANSITION_CANARY
+      record_timing "$label" dataplane-control-transition-canary "$phase_started"
+    else
+      record_timing "$label" dataplane-control-transition-canary "$phase_started"
+    fi
   elif ! client_matrix "$label"; then
     dataplane_status=FAIL_MATRIX
     record_timing "$label" dataplane-control-and-client-matrix "$phase_started"
@@ -1579,6 +2035,7 @@ collect_success_optional_provider_inventory() {
 }
 
 collect_load_balance_report() {
+  [ "$skip_load_balance_report" -eq 0 ] || return 0
   [ "$load_balance_report" -eq 1 ] || return 0
   local label="$1"
   local dir="$evidence_dir/diagnostics/load-balance-$label"
@@ -1592,7 +2049,7 @@ collect_load_balance_report() {
     node_is_stopped "$node" && continue
     ssh_node "$node" 'sudo routerctl describe MobilityPool/cloudedge -o json' >"$dir/${node}.json" 2>"$dir/${node}.stderr" || continue
     jq -r --arg node "$node" '
-      (.resource.status.ownershipResolverOwnerTable // [])[]
+      (.resource.status.ownershipResolverControlPlaneOwnerTable // [])[]
       | [
           $node,
           (.address // ""),
@@ -1831,17 +2288,22 @@ teardown() {
   bash -lc "$destroy_cmd" >"$evidence_dir/cleanup/destroy.txt" 2>&1
 }
 
+if [ "$overall" -eq 0 ]; then
+  cfg_dir="$(generate_configs)" || mark_failed "config generation"
+fi
+if [ "$overall" -eq 0 ]; then
+  reject_pve_control_plane_resources "$cfg_dir" || mark_failed "PVE DHCP/RA safety gate"
+fi
 record_note
 printf 'label\tstatus\telapsed_seconds\n' >"$evidence_dir/convergence/summary.tsv"
-preflight || mark_failed "preflight"
+if [ "$overall" -eq 0 ]; then
+  preflight || mark_failed "preflight"
+fi
 if [ "$overall" -eq 0 ]; then
   collect_provider_inventory "preflight" || mark_failed "provider inventory preflight"
 fi
 if [ "$overall" -eq 0 ]; then
   setup_pve_dataplane || mark_failed "PVE dataplane IP setup"
-fi
-if [ "$overall" -eq 0 ]; then
-  cfg_dir="$(generate_configs)" || mark_failed "config generation"
 fi
 if [ "$overall" -eq 0 ]; then
   validate_generated_configs "$cfg_dir" || mark_failed "config validation"

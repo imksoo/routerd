@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/conntrack"
@@ -208,7 +209,7 @@ func (c *Controller) recordTrafficFlows(ctx context.Context, count int) error {
 	status := map[string]any{
 		"phase":       "Observed",
 		"path":        path,
-		"source":      firstNonEmpty(spec.Source, "conntrack"),
+		"source":      stringutil.FirstNonEmpty(spec.Source, "conntrack"),
 		"activeFlows": len(active),
 		"count":       count,
 		"observedAt":  now.Format(time.RFC3339Nano),
@@ -291,7 +292,7 @@ func probeApplicationLayerStatus(ctx context.Context, socket string) api.Traffic
 		status.ProbeError = err.Error()
 		return status
 	}
-	status.Engine = firstNonEmpty(body.Engine, "ndpi-agent")
+	status.Engine = stringutil.FirstNonEmpty(body.Engine, "ndpi-agent")
 	status.LibNDPILoaded = body.LibNDPILoaded
 	status.LibNDPIVersion = body.LibNDPIVersion
 	status.Available = body.LibNDPILoaded
@@ -299,7 +300,7 @@ func probeApplicationLayerStatus(ctx context.Context, socket string) api.Traffic
 		status.Message = "application-layer classification is available"
 		return status
 	}
-	status.Message = firstNonEmpty(body.Reason, "libndpi backend is unavailable")
+	status.Message = stringutil.FirstNonEmpty(body.Reason, "libndpi backend is unavailable")
 	status.ProbeError = status.Message
 	return status
 }
@@ -418,7 +419,7 @@ func applyDPIFlow(flow *logstore.TrafficFlow, dpiFlow logstore.DPIFlowEntry) {
 		flow.DNSQuery = dpiFlow.DNSQuery
 	}
 	if flow.ResolvedHostname == "" {
-		flow.ResolvedHostname = firstNonEmpty(dpiFlow.TLSSNI, dpiFlow.HTTPHost, dpiFlow.DNSQuery)
+		flow.ResolvedHostname = stringutil.FirstNonEmpty(dpiFlow.TLSSNI, dpiFlow.HTTPHost, dpiFlow.DNSQuery)
 	}
 }
 
@@ -450,7 +451,7 @@ func trafficFlowFromConnection(entry observe.ConnectionEntry, now time.Time) log
 		TLSSNI:               entry.TLSSNI,
 		HTTPHost:             entry.HTTPHost,
 		DNSQuery:             entry.DNSQuery,
-		ResolvedHostname:     firstNonEmpty(entry.TLSSNI, entry.HTTPHost, entry.DNSQuery),
+		ResolvedHostname:     stringutil.FirstNonEmpty(entry.TLSSNI, entry.HTTPHost, entry.DNSQuery),
 	}
 	flow.FlowKey = logstore.FlowKey(flow.Protocol, flow.ClientAddress, flow.ClientPort, flow.PeerAddress, flow.PeerPort)
 	return flow
@@ -570,13 +571,4 @@ func providerTrafficProtocol(app string, flow logstore.TrafficFlow) string {
 func atoi(value string) int {
 	parsed, _ := strconv.Atoi(value)
 	return parsed
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }

@@ -206,8 +206,8 @@ var runtimeShapeKinds = map[string]bool{
 	"PPPoESession": true, "HealthCheck": true, "DNSResolver": true,
 	"DSLiteTunnel": true,
 	"EventGroup":   true, "EventSubscription": true, "WebConsole": true,
-	"SAMPeerGroup": true, "MobilityMemberSet": true, "SAMTransportProfile": true,
-	"MobilityPool": true, "ServiceUnit": true,
+	"SAMTransportProfile": true,
+	"MobilityPool":        true, "ServiceUnit": true,
 }
 
 func runtimeShapeChanged(current, next *api.Router) (bool, []string) {

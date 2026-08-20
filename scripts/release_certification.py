@@ -188,6 +188,19 @@ def normalize_providers(value: str) -> list[str]:
 def validate_contract(
     contract: dict[str, Any], environment: str, topology: str, providers: list[str]
 ) -> str:
+    # The certification manifest embeds the full run contract.  Validate the
+    # exact embedded schema before a provider driver can run, rather than
+    # discovering a contract/schema drift only while serializing evidence
+    # after a potentially mutating certification step.
+    certification_schema = load_json(CERT_SCHEMA)
+    try:
+        run_schema = certification_schema["properties"]["run"]
+    except (KeyError, TypeError) as exc:
+        raise ContractError("release certification schema lacks the embedded run schema") from exc
+    if not isinstance(run_schema, dict):
+        raise ContractError("release certification embedded run schema is invalid")
+    validate_schema(contract, run_schema, "$")
+
     required = {
         "schemaVersion",
         "runId",

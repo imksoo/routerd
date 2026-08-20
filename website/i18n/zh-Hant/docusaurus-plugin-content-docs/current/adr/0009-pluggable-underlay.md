@@ -21,7 +21,7 @@ Overlay 已在適當的接縫處抽象（程式碼中已確認）：
 
 - **投遞與 underlay 無關。** `hybrid.RouteTarget(peer)` 將
   `OverlayPeer.Underlay.Type` 對映到 `(device, gateway)`，`/32` 投遞路由
-  （`RemoteAddressClaim` / `HybridRoute`）指向該裝置。新增傳輸只需
+  （BGP 匯入的 `/32` 路由與 `HybridRoute`）指向該裝置。新增傳輸只需
   新增 `switch` 分支。
 - **MTU / MSS clamp 已參數化。** `hybrid.EstimateMTU = underlayMTU(interface)
   − overheadFor(type)`。zone 無關的 clamp 遵循 `EstimateMTU`。新傳輸只需

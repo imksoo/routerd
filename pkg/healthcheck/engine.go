@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/netip"
 	"os"
 	"strings"
 	"sync"
@@ -19,6 +18,8 @@ import (
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
 
+	"github.com/imksoo/routerd/internal/statusvalue"
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
@@ -357,7 +358,7 @@ func sameDerivedSourceInterface(current *string, next string) bool {
 func ResolveSpecWithStore(router *api.Router, store Store, spec api.HealthCheckSpec) api.HealthCheckSpec {
 	spec = ResolveSpec(router, spec)
 	if strings.TrimSpace(spec.SourceAddress) == "" && strings.TrimSpace(spec.SourceAddressFrom.Resource) != "" && store != nil {
-		spec.SourceAddress = statusAddressValue(resourcequery.Value(store, spec.SourceAddressFrom))
+		spec.SourceAddress = statusvalue.Address(resourcequery.Value(store, spec.SourceAddressFrom))
 	}
 	return spec
 }
@@ -365,7 +366,7 @@ func ResolveSpecWithStore(router *api.Router, store Store, spec api.HealthCheckS
 func ResolveSpecWithStoreForResource(router *api.Router, store Store, resourceName string, spec api.HealthCheckSpec) api.HealthCheckSpec {
 	spec = ResolveSpecForResource(router, resourceName, spec)
 	if strings.TrimSpace(spec.SourceAddress) == "" && strings.TrimSpace(spec.SourceAddressFrom.Resource) != "" && store != nil {
-		spec.SourceAddress = statusAddressValue(resourcequery.Value(store, spec.SourceAddressFrom))
+		spec.SourceAddress = statusvalue.Address(resourcequery.Value(store, spec.SourceAddressFrom))
 	}
 	return spec
 }
@@ -426,17 +427,6 @@ func DerivedFwMarkRefs(router *api.Router, healthCheckName string) []FwMarkRef {
 		}
 	}
 	return refs
-}
-
-func statusAddressValue(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	if prefix, err := netip.ParsePrefix(value); err == nil {
-		return prefix.Addr().String()
-	}
-	return value
 }
 
 func Probe(ctx context.Context, spec api.HealthCheckSpec) ProbeResult {
@@ -682,27 +672,27 @@ func resolveInterfaceName(router *api.Router, name string) string {
 		case "DSLiteTunnel":
 			spec, err := resource.DSLiteTunnelSpec()
 			if err == nil {
-				return firstNonEmpty(spec.TunnelName, resource.Metadata.Name)
+				return stringutil.FirstNonEmpty(spec.TunnelName, resource.Metadata.Name)
 			}
 		case "PPPoESession":
 			spec, err := resource.PPPoESessionSpec()
 			if err == nil {
-				return firstNonEmpty(spec.IfName, "ppp-"+resource.Metadata.Name)
+				return stringutil.FirstNonEmpty(spec.IfName, "ppp-"+resource.Metadata.Name)
 			}
 		case "Bridge":
 			spec, err := resource.BridgeSpec()
 			if err == nil {
-				return firstNonEmpty(spec.IfName, resource.Metadata.Name)
+				return stringutil.FirstNonEmpty(spec.IfName, resource.Metadata.Name)
 			}
 		case "VRF":
 			spec, err := resource.VRFSpec()
 			if err == nil {
-				return firstNonEmpty(spec.IfName, resource.Metadata.Name)
+				return stringutil.FirstNonEmpty(spec.IfName, resource.Metadata.Name)
 			}
 		case "VXLANTunnel":
 			spec, err := resource.VXLANTunnelSpec()
 			if err == nil {
-				return firstNonEmpty(spec.IfName, resource.Metadata.Name)
+				return stringutil.FirstNonEmpty(spec.IfName, resource.Metadata.Name)
 			}
 		case "WireGuardInterface":
 			return resource.Metadata.Name
@@ -1016,15 +1006,6 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func resolveICMPTarget(ctx context.Context, target, family string) (net.IP, string, error) {

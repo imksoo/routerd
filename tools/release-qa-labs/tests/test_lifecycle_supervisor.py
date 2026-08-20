@@ -51,6 +51,7 @@ class SupervisorTests(unittest.TestCase):
             mutation_command=["mutation"],
             cleanup_command=["cleanup"],
             inventory_command=["inventory"],
+            post_zero_command=["post-zero"],
             cleanup_timeout_seconds=600,
             inventory_timeout_seconds=300,
             max_cleanup_attempts=2,
@@ -62,6 +63,9 @@ class SupervisorTests(unittest.TestCase):
         for key in (
             "ROUTERD_RELEASE_QA_PINNED_CONTRACT", "ROUTERD_RELEASE_QA_PINNED_RUN_ENV",
             "ROUTERD_RELEASE_QA_PINNED_TFVARS", "ROUTERD_RELEASE_QA_PINNED_PVE_SSH_PRIVATE_KEY",
+            "ROUTERD_RELEASE_QA_PINNED_GUEST_SSH_PRIVATE_KEY",
+            "ROUTERD_RELEASE_QA_PINNED_PVE_SSH_KNOWN_HOSTS",
+            "ROUTERD_RELEASE_QA_PINNED_PVE_TOKEN_TFVARS", "ROUTERD_RELEASE_QA_PINNED_PVE_CA_PEM",
         ):
             os.environ.pop(key, None)
         self.temp.cleanup()
@@ -69,7 +73,8 @@ class SupervisorTests(unittest.TestCase):
     def phases(self):
         return [item["to"] for item in json.loads(self.state.read_text())["history"]]
 
-    def run_with_commands(self, mutation_exit=0, cleanup_exit=0, inventory_exit=0, stop_reason=None):
+    def run_with_commands(self, mutation_exit=0, cleanup_exit=0, inventory_exit=0,
+                          post_zero_exit=0, precheck_exit=0, stop_reason=None):
         events = []
         child = FakeChild([mutation_exit])
 
@@ -81,7 +86,12 @@ class SupervisorTests(unittest.TestCase):
         def run(command, check=False, timeout=None):
             label = command[0]
             events.append(label)
-            return mock.Mock(returncode={"precheck": 0, "cleanup": cleanup_exit, "inventory": inventory_exit}[label])
+            return mock.Mock(returncode={
+                "precheck": precheck_exit,
+                "cleanup": cleanup_exit,
+                "inventory": inventory_exit,
+                "post-zero": post_zero_exit,
+            }[label])
 
         supervisor = lifecycle.Supervisor(self.args)
         supervisor.stop_reason = stop_reason
@@ -109,7 +119,7 @@ class SupervisorTests(unittest.TestCase):
             self.assertEqual(json.loads(self.state.read_text())["phase"], "STAGING_ARMED")
             self.assertEqual(lifecycle.Supervisor(self.args).run(), 0)
         popen.assert_not_called()
-        self.assertEqual(events, ["precheck", "cleanup", "inventory"])
+        self.assertEqual(events, ["precheck", "cleanup", "inventory", "post-zero"])
         final = json.loads(self.state.read_text())
         self.assertEqual(final["phase"], "STAGING_DONE")
         self.assertIn("STAGING_ARMED", [item["to"] for item in final["history"]])
@@ -137,7 +147,7 @@ class SupervisorTests(unittest.TestCase):
              mock.patch.object(lifecycle.subprocess, "Popen") as popen:
             self.assertEqual(supervisor.run(), 1)
         popen.assert_not_called()
-        self.assertEqual(events, ["precheck", "cleanup", "inventory"])
+        self.assertEqual(events, ["precheck", "cleanup", "inventory", "post-zero"])
         final = json.loads(self.state.read_text())
         self.assertEqual(final["stopReason"], "SIGTERM")
         self.assertEqual(final["phase"], "FAILED")
@@ -190,14 +200,61 @@ class SupervisorTests(unittest.TestCase):
     def test_success_cleans_and_verifies_before_done(self):
         rc, events = self.run_with_commands()
         self.assertEqual(rc, 0)
-        self.assertEqual(events, ["precheck", "mutation-start", "cleanup", "inventory"])
-        self.assertEqual(self.phases(), ["MUTATING", "STOPPING", "CLEANING", "VERIFYING_ZERO", "DONE"])
+        self.assertEqual(events, ["precheck", "mutation-start", "cleanup", "inventory", "post-zero"])
+        self.assertEqual(self.phases(), ["MUTATING", "STOPPING", "CLEANING", "VERIFYING_ZERO", "REVOKING_TOKEN", "DONE"])
+
+    def test_post_zero_revocation_retry_never_repeats_cleanup_or_mutation(self):
+        rc, events = self.run_with_commands(post_zero_exit=1)
+        self.assertEqual(rc, 2)
+        self.assertEqual(events, ["precheck", "mutation-start", "cleanup", "inventory", "post-zero"])
+        self.assertEqual(json.loads(self.state.read_text())["phase"], "REVOKING_TOKEN")
+        retried = []
+
+        def run(command, check=False, timeout=None):
+            retried.append(command[0])
+            return mock.Mock(returncode=0)
+
+        with mock.patch.object(lifecycle.subprocess, "run", side_effect=run), \
+             mock.patch.object(lifecycle.subprocess, "Popen") as popen:
+            self.assertEqual(lifecycle.Supervisor(self.args).run(), 0)
+        popen.assert_not_called()
+        self.assertEqual(retried, ["post-zero"])
+        self.assertEqual(json.loads(self.state.read_text())["phase"], "DONE")
+
+    def test_precheck_failure_is_recovered_to_zero_and_revokes_the_run_token(self):
+        rc, events = self.run_with_commands(precheck_exit=9)
+        self.assertEqual(rc, 1)
+        self.assertEqual(events, ["precheck", "cleanup", "inventory", "post-zero"])
+        final = json.loads(self.state.read_text())
+        self.assertEqual(final["precheckExit"], 9)
+        self.assertFalse(final["mutationCommandExecuted"])
+        self.assertEqual(final["stopReason"], "precheck-failed")
+        self.assertEqual(final["phase"], "FAILED")
+
+    def test_precheck_start_error_is_recovered_to_zero_and_revokes_the_run_token(self):
+        events = []
+
+        def run(command, check=False, timeout=None):
+            events.append(command[0])
+            if command[0] == "precheck":
+                raise FileNotFoundError("fixture precheck missing")
+            return mock.Mock(returncode=0)
+
+        supervisor = lifecycle.Supervisor(self.args)
+        with mock.patch.object(lifecycle.subprocess, "run", side_effect=run), \
+             mock.patch.object(lifecycle.subprocess, "Popen") as popen:
+            self.assertEqual(supervisor.run(), 1)
+        popen.assert_not_called()
+        self.assertEqual(events, ["precheck", "cleanup", "inventory", "post-zero"])
+        final = json.loads(self.state.read_text())
+        self.assertEqual(final["precheckError"], "FileNotFoundError")
+        self.assertEqual(final["phase"], "FAILED")
 
     def test_production_source_tamper_cleans_to_zero_but_fails_qualification(self):
         self.args.source_input_tamper_detected = True
         rc, events = self.run_with_commands()
         self.assertEqual(rc, 1)
-        self.assertEqual(events[-2:], ["cleanup", "inventory"])
+        self.assertEqual(events[-3:], ["cleanup", "inventory", "post-zero"])
         final = json.loads(self.state.read_text())
         self.assertEqual(final["phase"], "FAILED")
         self.assertTrue(final["sourceInputTamperDetected"])
@@ -206,7 +263,7 @@ class SupervisorTests(unittest.TestCase):
     def test_mutation_failure_still_cleans_and_returns_failure(self):
         rc, events = self.run_with_commands(mutation_exit=7)
         self.assertEqual(rc, 1)
-        self.assertEqual(events[-2:], ["cleanup", "inventory"])
+        self.assertEqual(events[-3:], ["cleanup", "inventory", "post-zero"])
         final = json.loads(self.state.read_text())
         self.assertEqual(final["phase"], "FAILED")
         self.assertEqual(final["inventoryExit"], 0)
@@ -241,7 +298,7 @@ class SupervisorTests(unittest.TestCase):
                      mock.patch.object(lifecycle.subprocess, "run", side_effect=run):
                     rc = supervisor.cleanup_and_verify(supervisor.stop_reason)
                 self.assertEqual(rc, 1)
-                self.assertEqual(events, ["quiesce", "cleanup", "inventory"])
+                self.assertEqual(events, ["quiesce", "cleanup", "inventory", "post-zero"])
                 final = json.loads(self.state.read_text())
                 self.assertEqual(final["stopReason"], signal.Signals(caught_signal).name)
                 self.assertEqual(final["phase"], "FAILED")
@@ -261,7 +318,7 @@ class SupervisorTests(unittest.TestCase):
 
                 with mock.patch.object(lifecycle.subprocess, "run", side_effect=run):
                     self.assertEqual(lifecycle.Supervisor(self.args).run(), 1)
-                self.assertEqual(events, ["cleanup", "inventory"])
+                self.assertEqual(events, ["cleanup", "inventory", "post-zero"])
                 final = json.loads(self.state.read_text())
                 self.assertEqual(final["phase"], "FAILED")
                 self.assertEqual(final["inventoryExit"], 0)
@@ -313,6 +370,10 @@ class SupervisorTests(unittest.TestCase):
         for attribute, name in (
             ("contract", "contract.json"), ("run_env", "run.env.json"),
             ("tfvars", "terraform.tfvars"), ("pve_ssh_private_key", "pve_ssh"),
+            ("guest_ssh_private_key", "guest_ssh"),
+            ("pve_ssh_known_hosts", "pve-known_hosts"),
+            ("pve_token_tfvars", "pve-token.tfvars"),
+            ("pve_ca_pem", "pve-ca.pem"),
         ):
             path = run_root / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -333,8 +394,18 @@ class SupervisorTests(unittest.TestCase):
         with mock.patch.object(lifecycle.Supervisor, "validate_run_root", return_value=run_root):
             first = lifecycle.Supervisor(self.args)
             first.transition("MUTATING", mutationPgid=None)
-            inputs["contract"].write_text("tampered", encoding="utf-8")
-            inputs["contract"].chmod(0o600)
+            pinned_token = Path(first.state["inputs"]["pveTokenTfvars"]["pinned"])
+            self.assertEqual(pinned_token.read_text(encoding="utf-8"), "pve-token.tfvars")
+            pinned_guest_key = Path(first.state["inputs"]["guestSshPrivateKey"]["pinned"])
+            self.assertEqual(pinned_guest_key.read_text(encoding="utf-8"), "guest_ssh")
+            self.assertNotEqual(
+                first.state["inputs"]["pveSshPrivateKey"]["sha256"],
+                first.state["inputs"]["guestSshPrivateKey"]["sha256"],
+            )
+            pinned_ca = Path(first.state["inputs"]["pveCaPem"]["pinned"])
+            self.assertEqual(pinned_ca.read_text(encoding="utf-8"), "pve-ca.pem")
+            inputs["pve_token_tfvars"].unlink()
+            inputs["pve_ca_pem"].unlink()
             restarted = lifecycle.Supervisor(self.args)
         self.assertTrue(restarted.state["sourceInputTamperDetected"])
         observed = []
@@ -342,13 +413,25 @@ class SupervisorTests(unittest.TestCase):
         def run(command, check=False, timeout=None):
             observed.append({key: os.environ[key] for key in (
                 "ROUTERD_RELEASE_QA_PINNED_CONTRACT", "ROUTERD_RELEASE_QA_PINNED_RUN_ENV",
-                "ROUTERD_RELEASE_QA_PINNED_TFVARS", "ROUTERD_RELEASE_QA_PINNED_PVE_SSH_PRIVATE_KEY")})
+                "ROUTERD_RELEASE_QA_PINNED_TFVARS", "ROUTERD_RELEASE_QA_PINNED_PVE_SSH_PRIVATE_KEY",
+                "ROUTERD_RELEASE_QA_PINNED_GUEST_SSH_PRIVATE_KEY",
+                "ROUTERD_RELEASE_QA_PINNED_PVE_SSH_KNOWN_HOSTS",
+                "ROUTERD_RELEASE_QA_PINNED_PVE_TOKEN_TFVARS",
+                "ROUTERD_RELEASE_QA_PINNED_PVE_CA_PEM")})
             return mock.Mock(returncode=0)
 
         with mock.patch.object(lifecycle.subprocess, "run", side_effect=run):
             self.assertEqual(restarted.cleanup_and_verify("supervisor-restart"), 1)
-        self.assertEqual(len(observed), 2)
+        self.assertEqual(len(observed), 3)
         self.assertTrue(all("/pinned/" in value for env in observed for value in env.values()))
+        self.assertEqual(Path(observed[0]["ROUTERD_RELEASE_QA_PINNED_PVE_TOKEN_TFVARS"]).read_text(),
+                         "pve-token.tfvars")
+        self.assertEqual(Path(observed[0]["ROUTERD_RELEASE_QA_PINNED_GUEST_SSH_PRIVATE_KEY"]).read_text(),
+                         "guest_ssh")
+        self.assertEqual(Path(observed[0]["ROUTERD_RELEASE_QA_PINNED_PVE_CA_PEM"]).read_text(),
+                         "pve-ca.pem")
+        self.assertEqual(Path(observed[0]["ROUTERD_RELEASE_QA_PINNED_PVE_SSH_KNOWN_HOSTS"]).read_text(),
+                         "pve-known_hosts")
         durable = json.loads(self.state.read_text())
         durable["executionMode"] = lifecycle.STAGING_MODE
         durable["effectiveLifecycle"]["executionMode"] = lifecycle.STAGING_MODE
@@ -388,7 +471,7 @@ class SupervisorTests(unittest.TestCase):
 
         with mock.patch.object(lifecycle.subprocess, "run", side_effect=recovered):
             self.assertEqual(restarted.run(), 1)
-        self.assertEqual(calls, ["cleanup", "inventory"])
+        self.assertEqual(calls, ["cleanup", "inventory", "post-zero"])
         self.assertEqual(json.loads(self.state.read_text())["inventoryExit"], 0)
 
     def test_real_nested_descendant_is_quiesced_before_cleanup(self):
@@ -421,6 +504,7 @@ class SupervisorTests(unittest.TestCase):
         self.args.mutation_command = [sys.executable, str(mutation)]
         self.args.cleanup_command = [sys.executable, str(cleanup)]
         self.args.inventory_command = ["/bin/true"]
+        self.args.post_zero_command = ["/bin/true"]
         self.args.term_grace_seconds = 1
         supervisor = lifecycle.Supervisor(self.args)
         def request_stop():

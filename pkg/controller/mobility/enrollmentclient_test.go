@@ -12,6 +12,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/controlapi"
+	"github.com/imksoo/routerd/pkg/dynamicconfig/codec"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -228,17 +229,23 @@ func testSAMEnrollmentRRSetResource() api.Resource {
 		Metadata: api.ObjectMeta{Name: "pve-rrs"},
 		Spec: api.SAMRRSetSpec{
 			EnrollmentPolicyRef: "SAMEnrollmentPolicy/pve-wg-leaves",
-			Members: []api.SAMRRSetMember{{
-				NodeRef:       "pve-rr",
-				Endpoint:      "10.30.0.10",
-				TunnelAddress: "10.255.10.1/32",
+			Nodes: []api.SAMNodeSpec{{
+				NodeRef:     "pve-rr",
+				SAMEndpoint: "10.30.0.10",
 			}},
 		},
 	}
 }
 
 func seedSAMEnrollmentClientRRSet(store *samEnrollmentClientTestStore, observedAt, expiresAt time.Time) error {
-	record, err := samEnrollmentClientRRSetRecord(testSAMEnrollmentRRSetResource(), observedAt, expiresAt)
+	resource := testSAMEnrollmentRRSetResource()
+	record, err := codec.FetchedSAMRRSetRecord(resource, observedAt, expiresAt, codec.FetchedSAMRRSetRecordOptions{
+		Name:                              safeName("fetched-sam-rrset-" + resource.Metadata.Name),
+		Generation:                        dynamicGeneration,
+		DefaultTTL:                        DefaultLeaseTTL,
+		IncludeEmptyDirectivesActionPlans: true,
+		Digest:                            digestDynamicPart,
+	})
 	if err != nil {
 		return err
 	}

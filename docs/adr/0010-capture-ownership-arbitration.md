@@ -23,12 +23,11 @@ exclusion**:
   projects the same federation event stream to the same `AddressLease` state
   (`pkg/controller/mobility/controller.go`). There is **no distributed lock,
   quorum, or consensus**.
-- "Single owner" is *implicit* (capturePolicy `all-non-owner-sites` + deterministic
-  `evaluatePlacement`), and `captureEpoch`
+- "Single owner" is derived from each member's capture declaration and deterministic
+  placement, and `captureEpoch`
   (`pkg/state/mobility_capture_epoch.go`) is a **per-node, per-(pool,address,
   captureDomain)** monotonic token that fences stale provider actions at the
   import/execute gate (ADR 0008).
-- The reserved `MobilityPoolSpec.Authority` field is unused.
 
 #76 asks for a centralized ownership map, conflict exclusion, and split-brain
 prevention. ADR 0008 deliberately **avoided consensus** (Paxos/Raft/etcd) and built
@@ -71,7 +70,7 @@ is a **converged view** each node builds deterministically from the federated ev
 stream:
 
 - For each `(pool, address)`, the owner is chosen by a deterministic arbitration:
-  **preferNodes → placement priority → stable tie-break** over the *eligible*
+  **placement priority → stable tie-break** over the *eligible*
   members (eligibility defined by ADR 0011: not drained, healthy, live, VRRP-master
   where applicable).
 - Multi-instance distribution: within a placement group, each address is arbitrated
@@ -81,20 +80,12 @@ stream:
   see "which IP is owned by which node" — the "centralized ownership map" #76 wants,
   realized as a converged view rather than a single-writer store.
 
-### `ipOwnershipPolicy` on `MobilityPool`
+### `MobilityPool` intent
 
-```yaml
-spec:
-  ipOwnershipPolicy:
-    type: centralized          # converged deterministic map (only mode)
-    epochLocking: true         # stamp + fence actions by ownershipEpoch
-    preferNodes: [aws-router-a, aws-router-b]
-    autoFailover: true         # consumed by ADR 0011 (liveness-driven seize)
-```
-
-`preferNodes` biases arbitration; `epochLocking` enables ownershipEpoch fencing;
-`autoFailover` is the hook ADR 0011 uses. `type` has one mode now (`centralized` =
-converged-deterministic).
+`MobilityPool` has no global capture, authority, or ownership-policy switches.
+Members declare local capture and discovery; placement, BGP observations, and
+provider facts deterministically derive ownership. This keeps the ownership model
+from accepting configuration that does not affect the running controller.
 
 ### Action idempotency key
 
@@ -105,8 +96,8 @@ wrong-owner action is fenced deterministically.
 ## Phasing (this ADR)
 
 - **Phase 1 (this ADR's minimal scope)**: the `ownershipEpoch` token, the
-  deterministic ownership record + arbitration (preferNodes/priority/tie-break),
-  `ipOwnershipPolicy` spec + validation, and **ownership-map visibility** (status +
+  deterministic ownership record + arbitration (placement priority/tie-break),
+  and **ownership-map visibility** (status +
   metrics + `routerctl`). **No automatic seizure** — Phase 1 only *computes and
   exposes* desired ownership and fences actions by ownershipEpoch; the existing
   static placement still drives who acts.

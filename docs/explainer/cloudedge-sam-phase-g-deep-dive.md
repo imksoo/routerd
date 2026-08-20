@@ -82,7 +82,8 @@ flowchart TB
 ## 3. BGP ownership plane
 
 The owner of a mobile `/32` is the current BGP best path for that prefix.
-Operators do not hand-author leases, claims, or per-address provider actions.
+Operators do not hand-author leases, per-address ownership records, or provider
+actions.
 routerd projects `MobilityPool` intent into BGP advertisements and observes the
 RIB to decide what to realize locally.
 

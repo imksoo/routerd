@@ -14,14 +14,16 @@ address 会保留；firewall 与 NAT 是单独的 routerd layer。
 
 当前 CloudEdge Mobility 的 operator-authored surface 是：
 
-- `MobilityPool`: 声明 mobility prefix、EventGroup、member node/site、BGP delivery
-  policy、capture policy、provider trap placement，以及本 node 的 capture/discovery 细节。
-- `SAMTransportProfile`: 声明 router-to-router transport、`selfNodeRef`、共享
-  `topologyNodeRefs`、`innerPrefix`、underlay interface、BGP router 与 peers。
+- `SAMNodeSet`: 一次性声明完整共享的 node identity、topology、placement 与 SAM endpoint。
+- `MobilityPool`: 声明 mobility prefix、EventGroup、BGP delivery、以及本 node 的
+  capture/discovery/provider trap local overlay。
+- `SAMTransportProfile`: 声明 router-to-router transport、`selfNodeRef`、`innerPrefix`、
+  underlay interface、BGP router，以及从 `SAMNodeSet` 选择的 peer source。
 
-`MobilityPool` 中 self site 应完整声明；remote site 通常保持 identity-only，仅包含
-`nodeRef`、`site`、`role`，以及可选的 `placement` / `maintenance`。所有 node 应获得相同的
-pool identity 与 placement set，以便 deterministic projection。
+`MobilityPool` 通过 `membersFrom` 导入共享 `SAMNodeSet`，并且只保留 self-member
+overlay。不要在 Pool 内重复 remote identity、placement 或 maintenance。provider、capture
+与 discovery detail 只能属于 self-member overlay。所有 node 应获得相同的 `SAMNodeSet`，以便
+deterministic projection。
 
 `SAMNodeSet.spec.nodes[].macAddresses` 可静态列出同一 fabric 中 member 的 MAC
 地址。on-prem ARP observer 会把所有 member MAC 的并集作为 ignore set，避免 routerd
@@ -30,38 +32,33 @@ member 发出的 ARP frame 被当作 mobile `/32` 的 ownership signal。`macAdd
 自动收敛，不需要重启 observer 或 routerd。observer status 会显示当前生效的 ignore set
 和被忽略的 observation 计数，便于确认收敛状态。
 
-`AddressMobilityDomain` 与 `RemoteAddressClaim` 是低层兼容 resource。pre-release 期间仍支持
-hand-authored config，但新 CloudEdge Mobility config 应优先使用 `MobilityPool` 与
-`SAMTransportProfile`。
-
 ## transport
 
 当前 SAM transport 默认使用 IPIP delivery plane。WireGuard 如存在，只作为加密 underlay；
 WireGuard peer 的 `AllowedIPs` 应只包含 transport endpoint prefix，不应包含 mobile `/32`。
 
 `SAMTransportProfile` 会生成 per-peer `TunnelInterface`、endpoint `/32` `IPv4Route`
-与 `BGPPeer`。多个 peer 的 profile 必须在所有 router 上使用相同的 `topologyNodeRefs` 与
-`innerPrefix`，这样每条 node pair edge 才能导出相同的 `/31`。
+与 `BGPPeer`。所有 profile 通过 `peersFrom` 使用相同的 `SAMNodeSet`，因此每条 node pair
+edge 都能导出相同的 `/31`。`nodeRefs` 可将 peer 限制为实际 adjacency；省略时会选择带
+`samEndpoint` 的所有非 self node。直接 peer 或 topology list 不受支持。
 
 ## dynamic RR sync fail-static
 
-RR 可以发布 `SAMPeerGroup` 和 `MobilityMemberSet`，leaf 通过 TCP 19652
-获取缺失的 transport peer group 或 shared member set。获取成功后，leaf 会把它们保存为
-带 TTL 的 dynamic config part：
+RR 可以发布 `SAMPeerGroup`，leaf 通过 TCP 19652 获取缺失的 transport peer group。
+`SAMPeerGroup` 仅是运行时同步 payload，不能作为 top-level `spec.resources` 声明。
+获取成功后，leaf 会把它保存为带 TTL 的 dynamic config part：
 
 - `peer-group-sync/<name>` 对应 `SAMPeerGroup`
-- `member-set-sync/<name>` 对应 `MobilityMemberSet`
 
-TTL 过期或 RR publisher 消失时，leaf 不会删除已经生成的 tunnel、BGP peer 或
-MobilityPool planning artifact。routerd 会继续使用 last-known-good 记录，并把来源标记为
-`Stale`，同时在 status 中输出 `warning`。只有从未获取过的必需 source 才保持
-`Pending`。
+TTL 过期或 RR publisher 消失时，leaf 不会删除已经生成的 tunnel 或 BGP peer。routerd
+会继续使用 last-known-good 记录，并把来源标记为 `Stale`，同时在 status 中输出
+`warning`。MobilityPool membership 直接从静态 `SAMNodeSet` 配置解析，不依赖成员资格
+同步端点。
 
 ## capture and delivery
 
-`MobilityPool.spec.deliveryPolicy.mode` 默认为 `bgp`。owner advertise selected `/32`，
-non-owner 将 BGP best path import 到 local FIB。旧的 route-lowered delivery 仅用于
-`RemoteAddressClaim` 兼容 config。
+`MobilityPool` 始终使用 BGP delivery。owner advertise selected `/32`，non-owner 将
+BGP best path import 到 local FIB。
 
 支持的 capture type：
 
@@ -81,6 +78,9 @@ route-table 观测来决定何时广告 overlay holder。由于该设计会把 A
 
 on-prem `proxy-arp` capture 可使用 `activeWhen.type: single-router` 作为单 router
 always-active capture，也可使用 `vrrp-master` 由 HA pair 的 VRRP master gate 控制。
+`activeWhen` 仅支持此 on-prem `proxy-arp` capture；cloud
+`provider-secondary-ip` capture 设置该字段会被拒绝，因此本地 VRRP 状态变化
+不会在缺少对应 BGP 和本地数据平面计划时创建 provider assignment。
 
 `on-demand-arp` source 会以低速 proactive sweep 探测 mobility prefix：每个
 `scanInterval` 探测一个 target，使已启动但安静的 L2 client 也能被观测到。
@@ -106,11 +106,20 @@ ownership requires a separate authorization signal beyond this route filter.
 
 ## ownership inspection
 
-`MobilityPool` status exposes `ownershipResolverOwnerTable` for local
-`doctor sam` / FIB checks and `ownershipResolverControlPlaneOwnerTable` for
-operators. The control-plane table keeps one deterministic row per observed
-mobility address and includes owner provider/NIC/subnet/resource, local
-evidence, capture state, advertise/suppression state, and conflict details.
+`MobilityPool` status exposes one per-address operational view:
+`ownershipResolverControlPlaneOwnerTable`. `doctor sam`, FIB checks, and
+operators use this control-plane table. It keeps one deterministic row per
+observed mobility address and includes owner provider/NIC/subnet/resource,
+local evidence, capture state and final `captureDisposition`/`captureReason`,
+advertise/suppression state, and conflict details.
+
+Use `routerctl mobility explain --pool <pool> --address <ipv4/32>` to render an
+owner-table row together with pool-level provider status. `OwnershipResolved`
+comes from the row. `providerActionFailedAddresses` makes
+`ProviderActionApplied=False` only for a named address, and
+`providerObservationPendingAddresses` makes `ProviderObserved=False` only for
+a named address. Those conditions remain `Unknown` for all other addresses;
+the pool-level provider phase is not projected as a failure for every address.
 
 When two fresh provider owners claim the same `/32`, the row state is
 `Conflict` with `conflictReason=duplicate-provider-home-owners`. The row also
@@ -129,8 +138,8 @@ SAM forwarded traffic 仍会经过普通 forwarding/firewall/conntrack path。
 
 ### conntrack cleanup design note
 
-routerd 曾短暂公开 `MobilityPool.spec.deliveryPolicy.conntrackCleanupOnSeize`，
-作为 BGP mode SAM failover 的 opt-in scoped conntrack cleanup hook。该字段已经移除。
+routerd 曾短暂公开 BGP mode SAM failover 的手动 opt-in scoped conntrack cleanup hook。
+该功能已经移除。
 在参考 SAM leaf 构成中，routerd 不会绘制让 delivered overlay flow 进入 conntrack 的
 dataplane rule，因此 leaf 侧 scoped cleanup 是 no-op，也不能解决 failover flow anomaly。
 

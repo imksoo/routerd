@@ -80,8 +80,25 @@ function recordSAMTransportProfile(fullPath, doc) {
   if (!profile) {
     return;
   }
-  const topology = Array.isArray(profile.spec?.topologyNodeRefs)
-    ? [...profile.spec.topologyNodeRefs].sort().join(",")
+  if (Object.hasOwn(profile.spec || {}, "topologyNodeRefs") || Object.hasOwn(profile.spec || {}, "peers")) {
+    failed = true;
+    console.error(`${fullPath}: SAMTransportProfile must use SAMNodeSet peersFrom, not direct peers or topology`);
+  }
+  const nodeSetSource = (profile.spec?.peersFrom || []).find((source) =>
+    typeof source?.resource === "string" && source.resource.startsWith("SAMNodeSet/")
+  );
+  const nodeSetName = nodeSetSource?.resource?.slice("SAMNodeSet/".length);
+  const nodeSet = resources.find((resource) =>
+    resource?.apiVersion === "mobility.routerd.net/v1alpha1" &&
+    resource?.kind === "SAMNodeSet" &&
+    resource?.metadata?.name === nodeSetName
+  );
+  if (!nodeSet) {
+    failed = true;
+    console.error(`${fullPath}: SAMTransportProfile peersFrom must reference a local SAMNodeSet`);
+  }
+  const topology = Array.isArray(nodeSet?.spec?.nodes)
+    ? nodeSet.spec.nodes.map((node) => node?.nodeRef).filter(Boolean).sort().join(",")
     : "";
   const innerPrefix = profile.spec?.innerPrefix || "";
   const dir = path.dirname(fullPath);

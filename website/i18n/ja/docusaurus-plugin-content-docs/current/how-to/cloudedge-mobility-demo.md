@@ -48,8 +48,9 @@ on-prem 側は `10.77.60.10/32` のみを `staticOwnedAddresses` で宣言しま
 
 運用者が宣言するのは意図のみで、それ以外はすべて導出されます。
 
-- **MobilityPool** — 運用者が記述する唯一の意図（メンバー、捕捉モード、配送、配置、メンテナンスドレイン）。
-- **目標メンバー構造** — 各レンダリング設定は `profiles.cloudCaptures`、`spec.values`、`targetFrom`、`subnetRefFrom` で自サイトを完全に宣言し、リモートサイトは識別情報のみのピアエントリです。BGP と同様に、ノードはピアを知る必要がありますが、ピアのプロバイダー NIC/サブネット実装の詳細は不要です。
+- **SAMNodeSet** — 7 台すべてのルーターの共有 identity/topology/placement registry です。
+- **MobilityPool** — ローカルの address/capture intent です。その node set を取り込み、self の provider、capture、discovery overlay だけを保持します。
+- **目標メンバー構造** — 各レンダリング設定は `profiles.cloudCaptures`、`spec.values`、`targetFrom`、`subnetRefFrom` で自サイトを完全に宣言し、remote member entry やその provider NIC/サブネット実装の詳細を繰り返しません。
 - **SAMTransportProfile** — 共有トポロジと内部プレフィックスからピアごとの `TunnelInterface`、エンドポイント `/32` `IPv4Route`、`BGPPeer` リソースを導出します。
 - **BGP `/32` モビリティパス** — 各オーナーが所有するホストルートを広告し、他サイトが生成された SAM トランスポート上で現在のベストパスを学習します。
 - **プロバイダー trap アクション** — クラウドルーターはリモート所有の `/32` をローカルトラッピング用にセカンダリ IP として最終的に assign/unassign します。これらのアクションはクリティカルな転送パス上にはもうありません。
@@ -57,7 +58,10 @@ on-prem 側は `10.77.60.10/32` のみを `staticOwnedAddresses` で宣言しま
 - **プロバイダーアクションエグゼキューター** — `ProviderActionPolicy` の下で、インスタンス自身のクラウドネイティブ識別情報を使用して、ゲート付きクラウド変更（セカンダリ IP の assign / unassign、forwarding）を実行します（[ADR 0007](../adr/0007-provider-action-execution.md) 参照）。
 - **pathSig フェンシング** — プロバイダーアクションは現在の BGP 希望パスシグネチャとホルダーに対してフェンスされるため、古いアクションが他で再収束したルートを変更することはできません。
 
-サンプル設定は、旧来の remote-full インラインスタイルを意図的に避けています。プレリリース期間中は旧スタイルもまだ受け付けますが、リモートの `MobilityPool` メンバーにローカルプロバイダーの捕捉やディスカバリーの詳細が含まれている場合、`routerctl validate`、plan、apply は警告を出します。将来のプレリリース設定では、リモートメンバーは識別情報のみが必須となる可能性があります。
+サンプル設定は共有 `SAMNodeSet` と `MobilityPool.membersFrom` を使います。各 Pool には
+local self overlay をちょうど 1 つだけ残し、remote identity、placement、maintenance は
+node set に置きます。remote member の provider、capture、discovery detail は
+`routerctl validate`、plan、apply で拒否されます。
 
 ## 実行方法
 

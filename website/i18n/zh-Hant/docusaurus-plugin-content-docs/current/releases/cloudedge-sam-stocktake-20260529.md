@@ -40,8 +40,8 @@
 - `capture.interface` (proxy-arp) 必須為實際 OS NIC 名 (ens21/eth1) — 手動確認。
 - overlay `/32`、共享子網、`ownerSide`、`domain.peerRef` vs `delivery.peerRef` 需
   手動對齊; 兩個 peerRef 部分冗餘。(後續跟進: 簡化/明確化。)
-- `configureOSAddress=false` 的語義在 #41 之前是模糊的 (現已明確為 "routerd
-  強制 OS 本地不存在")。
+- BGP `provider-secondary-ip` 始終強制 OS 本機位址不存在；不再存在每個成員的
+  OS-address 開關。
 - `doctor` 的 FORWARD 策略跳過在 Azure 時可讀性差 (`exit status 1`); AWS 時有改善。
 
 ## 4. WireGuard 金鑰供應 — 手動

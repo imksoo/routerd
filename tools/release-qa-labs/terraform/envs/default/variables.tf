@@ -117,17 +117,116 @@ variable "pve_endpoint" {
   type        = string
 }
 variable "pve_api_token" {
-  description = "PVE API token. Prefer TF_VAR_pve_api_token env var over tfvars."
+  description = "Run-scoped PVE API token (<pve.tokenOwner>!<run_id>=<secret>). Prefer the pinned TF_VAR input over tfvars."
   type        = string
   sensitive   = true
 }
 variable "pve_insecure" {
   type    = bool
-  default = true
+  default = false
+  validation {
+    condition     = var.pve_insecure == false
+    error_message = "pve_insecure must be false for release qualification; provide the pinned PVE CA instead."
+  }
 }
 variable "pve_node_name" {
   description = "PVE cluster node to deploy VMs on."
   type        = string
+}
+variable "pve_rr_fault_domain" {
+  description = "Assertion for the PVE RR fault domain. host-redundant requires distinct PVE hosts; cost-smoke labels an intentionally same-host RR pair and is rejected for topology_scale=full."
+  type        = string
+  default     = "host-redundant"
+  validation {
+    condition     = contains(["host-redundant", "cost-smoke"], var.pve_rr_fault_domain)
+    error_message = "pve_rr_fault_domain must be either host-redundant or cost-smoke."
+  }
+}
+variable "pve_rr_a_host" {
+  description = "Short PVE cluster node ID that hosts pve-rr-a."
+  type        = string
+  validation {
+    condition     = try(trimspace(var.pve_rr_a_host) != "", false)
+    error_message = "pve_rr_a_host must be non-empty."
+  }
+}
+variable "pve_rr_a_ssh_host" {
+  description = "PVE host FQDN used to inspect pve-rr-a."
+  type        = string
+  validation {
+    condition     = try(trimspace(var.pve_rr_a_ssh_host) != "", false)
+    error_message = "pve_rr_a_ssh_host must be non-empty."
+  }
+}
+variable "pve_rr_a_vm_id" {
+  type = number
+  validation {
+    condition     = try(var.pve_rr_a_vm_id > 0, false)
+    error_message = "pve_rr_a_vm_id must be positive."
+  }
+}
+variable "pve_rr_a_underlay_bridge" {
+  description = "Optional PVE bridge for pve-rr-a; defaults to pve_underlay_bridge."
+  type        = string
+  default     = null
+  validation {
+    condition     = try(var.pve_rr_a_underlay_bridge == null || trimspace(var.pve_rr_a_underlay_bridge) != "", true)
+    error_message = "pve_rr_a_underlay_bridge must be non-empty when set."
+  }
+}
+variable "pve_rr_a_vlan_id" {
+  description = "Optional VLAN ID for pve-rr-a; defaults to pve_vlan_id."
+  type        = number
+  default     = null
+  validation {
+    condition     = try(var.pve_rr_a_vlan_id == null || (var.pve_rr_a_vlan_id >= 1 && var.pve_rr_a_vlan_id <= 4094), true)
+    error_message = "pve_rr_a_vlan_id must be in 1..4094 when set."
+  }
+}
+
+variable "pve_rr_b_host" {
+  description = "Short PVE cluster node ID that hosts pve-rr-b. Required for topology_scale=full."
+  type        = string
+  default     = null
+  validation {
+    condition     = try(var.pve_rr_b_host == null || trimspace(var.pve_rr_b_host) != "", true)
+    error_message = "pve_rr_b_host must be non-empty when set."
+  }
+}
+variable "pve_rr_b_ssh_host" {
+  description = "PVE host FQDN used to inspect pve-rr-b."
+  type        = string
+  default     = null
+  validation {
+    condition     = try(var.pve_rr_b_ssh_host == null || trimspace(var.pve_rr_b_ssh_host) != "", true)
+    error_message = "pve_rr_b_ssh_host must be non-empty when set."
+  }
+}
+variable "pve_rr_b_vm_id" {
+  type    = number
+  default = null
+  validation {
+    condition     = try(var.pve_rr_b_vm_id == null || var.pve_rr_b_vm_id > 0, true)
+    error_message = "pve_rr_b_vm_id must be positive when set."
+  }
+}
+variable "pve_rr_b_underlay_bridge" {
+  description = "Optional PVE bridge for pve-rr-b; defaults to pve_underlay_bridge."
+  type        = string
+  default     = null
+  validation {
+    condition     = try(var.pve_rr_b_underlay_bridge == null || trimspace(var.pve_rr_b_underlay_bridge) != "", true)
+    error_message = "pve_rr_b_underlay_bridge must be non-empty when set."
+  }
+}
+variable "pve_rr_b_vlan_id" {
+  description = "Optional VLAN ID for pve-rr-b; defaults to pve_vlan_id."
+  type        = number
+  default     = null
+  validation {
+    condition     = try(var.pve_rr_b_vlan_id == null || (var.pve_rr_b_vlan_id >= 1 && var.pve_rr_b_vlan_id <= 4094), true)
+    error_message = "pve_rr_b_vlan_id must be in 1..4094 when set."
+  }
 }
 variable "pve_ssh_host" {
   description = "DNS FQDN used for PVE SSH and TCP connectivity."
@@ -142,11 +241,26 @@ variable "pve_boot_source" {
   }
 }
 variable "pve_template_vm_id" {
-  type    = number
-  default = null
+  description = "Existing immutable source template VMID. The release run copies it to a disposable shared-storage template before cloning any workload."
+  type        = number
+  default     = null
+}
+variable "pve_template_source_node" {
+  description = "PVE node that owns pve_template_vm_id and creates the run-scoped shared template."
+  type        = string
+  default     = null
+}
+variable "pve_template_stage_vm_id" {
+  description = "Disposable, run-scoped VMID used only for the full shared-storage template stage."
+  type        = number
+  default     = null
+  validation {
+    condition     = try(var.pve_template_stage_vm_id == null || var.pve_template_stage_vm_id > 0, true)
+    error_message = "pve_template_stage_vm_id must be positive when set."
+  }
 }
 variable "pve_clone_full" {
-  description = "Use full clones for PVE template boot source. Defaults to false for short-lived SAM labs so VM creation uses linked clones."
+  description = "Use full clones from the run-scoped shared template. Release qualification requires true."
   type        = bool
   default     = false
 }
@@ -179,8 +293,34 @@ variable "pve_username" {
 variable "pve_router_vm_id" {
   type    = number
   default = null
+  validation {
+    condition     = try(var.pve_router_vm_id == null || var.pve_router_vm_id > 0, true)
+    error_message = "pve_router_vm_id must be positive when set."
+  }
 }
 variable "pve_client_vm_id" {
   type    = number
   default = null
+  validation {
+    condition     = try(var.pve_client_vm_id == null || var.pve_client_vm_id > 0, true)
+    error_message = "pve_client_vm_id must be positive when set."
+  }
+}
+variable "pve_leaf_b_router_vm_id" {
+  description = "Explicit VM ID for pve-leaf-b. Required for topology_scale=full."
+  type        = number
+  default     = null
+  validation {
+    condition     = try(var.pve_leaf_b_router_vm_id == null || var.pve_leaf_b_router_vm_id > 0, true)
+    error_message = "pve_leaf_b_router_vm_id must be positive when set."
+  }
+}
+variable "pve_leaf_b_client_vm_id" {
+  description = "Explicit VM ID for pve-client-b. Required for topology_scale=full."
+  type        = number
+  default     = null
+  validation {
+    condition     = try(var.pve_leaf_b_client_vm_id == null || var.pve_leaf_b_client_vm_id > 0, true)
+    error_message = "pve_leaf_b_client_vm_id must be positive when set."
+  }
 }

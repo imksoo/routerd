@@ -42,7 +42,6 @@ routerd は、ホスト上の構成物をリソースに対応付けて管理し
 | `TunnelInterface` | Linux の `ipip` / `gre` tunnel device。FOU/GUE mode では対応する `ip fou` listener port も ensure します |
 | `SAMTransportProfile` | 生成された `TunnelInterface`、endpoint `/32` `IPv4Route`、`BGPPeer` を含む `DynamicConfigPart` |
 | `MobilityPool` | 動的な SAM 捕捉/制御プレーンリソース、BGP `/32` advertisement、プロバイダー action plan、所有権の観測 |
-| `RemoteAddressClaim` | 低レベル SAM 捕捉状態、proxy-ARP sysctl/neighbor 状態、プロバイダー secondary 捕捉状態、リソース固有の teardown |
 | `IPAddressSet` | Linux の生成器が参照する nftables の IPv4/IPv6 named set |
 | `IPv4Route` | カーネルの経路 |
 | `ClusterNetworkRoute` | Pod / Service CIDR を指定した next hop 経由にする、生成済みの `IPv4StaticRoute` の意図 |

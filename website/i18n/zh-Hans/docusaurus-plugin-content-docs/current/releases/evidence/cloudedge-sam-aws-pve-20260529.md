@@ -22,7 +22,7 @@ Result: PASS (干净 — 无手动变通; Azure 对等)
 - ENI: 主 `10.88.60.4`, 辅助私有 IPv4 `10.88.60.9`。
 - EC2 source/destination check: DISABLED (AWS 对应 Azure NIC IP 转发)。
 - routerd-cloud 来宾 OS: routerd 将 `10.88.60.9` 从本地地址中删除
-  (`provider-secondary-ip` + `configureOSAddress=false` de-assign 强制)。
+  （BGP `provider-secondary-ip` no-local-address 强制）。
 
 ## 断言 (全部 PASS)
 

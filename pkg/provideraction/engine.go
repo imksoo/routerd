@@ -12,6 +12,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/dynamicconfig/codec"
 	"github.com/imksoo/routerd/pkg/state"
 )
 
@@ -146,15 +147,12 @@ func (e *Engine) ImportFromDynamicParts() (ImportResult, error) {
 	if err != nil {
 		return res, fmt.Errorf("list dynamic config parts: %w", err)
 	}
-	for _, part := range parts {
-		if part.EffectiveStatus(e.now()) == "expired" {
-			continue
-		}
+	for _, part := range providerEligibleDynamicParts(parts, e.now()) {
 		if strings.TrimSpace(part.ActionPlansJSON) == "" {
 			continue
 		}
-		var plans []dynamicconfig.ActionPlan
-		if err := json.Unmarshal([]byte(part.ActionPlansJSON), &plans); err != nil {
+		plans, err := codec.DecodeActionPlans(part.ActionPlansJSON)
+		if err != nil {
 			return res, fmt.Errorf("decode actionPlans for source %q: %w", part.Source, err)
 		}
 		for _, plan := range plans {
@@ -368,20 +366,48 @@ func (e *Engine) currentFreshDesiredActionPlans() ([]dynamicconfig.ActionPlan, e
 	}
 	now := e.now().UTC()
 	freshAfter := now.Add(-pathFenceFreshness)
-	for _, part := range parts {
-		if part.EffectiveStatus(now) == "expired" || strings.TrimSpace(part.ActionPlansJSON) == "" {
+	for _, part := range providerEligibleDynamicParts(parts, now) {
+		if strings.TrimSpace(part.ActionPlansJSON) == "" {
 			continue
 		}
 		if pathFencedPartStale(part, freshAfter) {
 			continue
 		}
-		var plans []dynamicconfig.ActionPlan
-		if err := json.Unmarshal([]byte(part.ActionPlansJSON), &plans); err != nil {
+		plans, err := codec.DecodeActionPlans(part.ActionPlansJSON)
+		if err != nil {
 			return nil, fmt.Errorf("decode actionPlans for source %q: %w", part.Source, err)
 		}
 		out = append(out, plans...)
 	}
 	return out, nil
+}
+
+// providerEligibleDynamicParts keeps the generic DynamicConfigPart contract
+// intact while treating the reserved MobilityPool channel as a strict
+// capability boundary. Only a canonical main plan with a live bounded lease
+// may propose provider mutations; ARP-observer siblings, malformed source
+// names, and an entire invalid/duplicate Pool are inert.
+func providerEligibleDynamicParts(parts []state.DynamicConfigPartRecord, now time.Time) []state.DynamicConfigPartRecord {
+	activeMobility, invalidPools := codec.ActiveMobilityPoolPlanRecords(parts, now)
+	acceptedMobility := map[string]bool{}
+	for _, part := range activeMobility {
+		if !part.Source.ARPObserver && !invalidPools[part.Source.PoolRef] {
+			acceptedMobility[part.Record.Source] = true
+		}
+	}
+	out := make([]state.DynamicConfigPartRecord, 0, len(parts))
+	for _, part := range parts {
+		if dynamicconfig.IsMobilityPoolReservedSource(part.Source) {
+			if acceptedMobility[part.Source] {
+				out = append(out, part)
+			}
+			continue
+		}
+		if part.EffectiveStatus(now) != "expired" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 func (e *Engine) currentDesiredPathFenceKeys() (map[string]bool, error) {

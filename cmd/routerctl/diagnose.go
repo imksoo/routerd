@@ -15,6 +15,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/imksoo/routerd/internal/mapsort"
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -120,7 +122,7 @@ func diagnoseEgressCommand(args []string, stdout, stderr io.Writer) error {
 			report.Resources = append(report.Resources, diagnoseResource{
 				Kind:   "HealthCheck",
 				Name:   candidate.HealthCheck,
-				Spec:   map[string]any{"candidate": firstNonEmpty(candidate.Name, candidate.Source)},
+				Spec:   map[string]any{"candidate": stringutil.FirstNonEmpty(candidate.Name, candidate.Source)},
 				Status: objectStatus(store, api.NetAPIVersion, "HealthCheck", candidate.HealthCheck),
 			})
 		}
@@ -178,8 +180,8 @@ func diagnoseDNSCommand(args []string, stdout, stderr io.Writer) error {
 	if opts.Host {
 		ctx, cancel := context.WithTimeout(context.Background(), opts.Timeout)
 		defer cancel()
-		server := firstNonEmpty(opts.Server, "127.0.0.1")
-		for _, name := range splitCSV(firstNonEmpty(opts.Names, "example.com")) {
+		server := stringutil.FirstNonEmpty(opts.Server, "127.0.0.1")
+		for _, name := range splitCSV(stringutil.FirstNonEmpty(opts.Names, "example.com")) {
 			report.Commands = append(report.Commands, runDiagnosticCommand(ctx, "dig "+name, "dig", "@"+server, name, "A", "+time=2", "+tries=1"))
 		}
 	}
@@ -420,7 +422,7 @@ func writeDiagnoseTable(stdout io.Writer, report diagnoseReport) error {
 	fmt.Fprintln(w)
 	if len(report.Summary) > 0 {
 		fmt.Fprintln(w, "SUMMARY\tKEY\tVALUE")
-		for _, key := range sortedMapKeys(report.Summary) {
+		for _, key := range mapsort.Keys(report.Summary) {
 			fmt.Fprintf(w, "SUMMARY\t%s\t%v\n", key, report.Summary[key])
 		}
 	}
@@ -464,21 +466,12 @@ func splitCSV(value string) []string {
 	return out
 }
 
-func sortedMapKeys(values map[string]any) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 func compactDiagnoseMap(values map[string]any) string {
 	if len(values) == 0 {
 		return "-"
 	}
 	var parts []string
-	for _, key := range sortedMapKeys(values) {
+	for _, key := range mapsort.Keys(values) {
 		if key == "conditions" || key == "updatedAt" || key == "lastCheckedAt" {
 			continue
 		}

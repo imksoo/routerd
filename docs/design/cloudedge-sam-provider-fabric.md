@@ -70,12 +70,13 @@ Each `(pool, address)` should be explainable with these facts:
 | `captureHolder` | The provider/on-prem capture artifact holder, such as a secondary IP holder, route-table target, or proxy-ARP master. |
 | `captureState` | Whether capture is confirmed, stale, absent, or unknown for this node. |
 | `advertiseOwner` | The node whose BGP owner advertisement is allowed for the address. |
-| `suppressionReason` | Why advertisement or provider claim is withheld. |
+| `suppressionReason` | Why advertisement or provider capture intent is withheld. |
 | `conflictReason` | Why ownership evidence is inconsistent, for example duplicate provider owners or remote owner overlapping local evidence. |
 
 `ownershipResolverControlPlaneOwnerTable` is the operator-facing snapshot of
-these facts. `ownershipResolverFIBVerdicts` is the corresponding route action
-view: local route, deliver remote, or withhold.
+these facts. The `PoolPlan` carries the corresponding typed `FIBVerdict`
+outputs directly to its `DynamicConfigPart`: local route, deliver remote, or
+withhold. They are not reconstructed from status.
 
 ## Provider Secondary-IP Mode
 
@@ -91,19 +92,12 @@ Expected steady state for an active cloud holder:
    - AWS source/destination check disabled.
    - Azure `enableIPForwarding=true`.
    - OCI source/destination check skipped.
-3. Guest OS state matches the delivery role:
-   - For BGP delivery to a remote owner, the provider-captured `/32` is absent
-     from guest interfaces even when `configureOSAddress=true`. Linux must
-     forward the packet through the selected overlay path rather than consume it
-     as a local destination. The OS projection is explicit proxy-neighbor state,
-     forwarding rules, per-interface `accept_local`/forwarding sysctls, and the
-     BGP-imported `/32` route.
-   - For a local endpoint owner path where the node is expected to terminate the
-     address, the `/32` may be present on the declared interface when the capture
-     policy explicitly enables OS address configuration.
-   - For no-local-address provider capture, the provider-captured address is
-     absent from guest interfaces and packets are forwarded to the selected
-     owner path.
+3. BGP provider-secondary capture never configures the mobile `/32` on a guest
+   interface. The provider attachment is the ingress holder; Linux forwards
+   packets through the selected overlay path rather than consuming them as local
+   destinations. The OS projection is explicit proxy-neighbor state, forwarding
+   rules, per-interface `accept_local`/forwarding sysctls, and the BGP-imported
+   `/32` route.
 4. BGP owner advertisement is allowed only for addresses the ownership resolver
    classifies as local/static/on-prem owned or as a valid ownership event. A
    mere provider capture holder is not a home owner by itself.

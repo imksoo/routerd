@@ -16,9 +16,9 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
-	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 func TestPathMTUControllerRendersMSSClamp(t *testing.T) {
@@ -113,17 +113,15 @@ func TestPathMTUControllerRendersForceFragment(t *testing.T) {
 			Underlay: api.OverlayUnderlay{Type: "wireguard", Interface: "wg-hybrid"},
 			PathMTU:  api.PathMTUOptions{ForceFragmentIPv4: true},
 		}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "AddressMobilityDomain"}, Metadata: api.ObjectMeta{Name: "same-subnet"}, Spec: api.AddressMobilityDomainSpec{Prefix: "10.77.60.0/24", Mode: "selective-address", PeerRef: "onprem-main"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"}, Metadata: api.ObjectMeta{Name: "onprem-client"}, Spec: api.RemoteAddressClaimSpec{
-			DomainRef: "same-subnet",
-			Address:   "10.77.60.9/32",
-			OwnerSide: "onprem",
-			Capture:   api.AddressCapture{Type: "provider-secondary-ip", ProviderRef: "oci-lab", ProviderMode: "vnic-secondary-ip", NICRef: "ocid1.vnic.example", Interface: "ens3"},
-			Delivery:  api.AddressDelivery{PeerRef: "onprem-main", Mode: "route", TunnelInterface: "wg-hybrid"},
-		}},
 	}}}
 	store := mapStore{}
-	controller := PathMTUController{Router: router, OS: platform.OSLinux, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft"), ForceFragmentPath: filepath.Join(dir, "forcefrag.nft")}
+	controller := PathMTUController{
+		Router: router, OS: platform.OSLinux, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft"), ForceFragmentPath: filepath.Join(dir, "forcefrag.nft"),
+		LocalCaptureIntents: []dynamicconfig.LocalCaptureIntent{{
+			ID: "cloudedge/10.77.60.9", PoolRef: "cloudedge", Address: "10.77.60.9/32",
+			Disposition: dynamicconfig.CaptureProtectExisting, CaptureType: "provider-secondary-ip", CaptureInterface: "ens3",
+		}},
+	}
 	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -559,69 +557,9 @@ func TestPathMTUControllerTransientListErrorPreservesJournal(t *testing.T) {
 	}
 }
 
-func TestPathMTUControllerRendersDynamicRemoteAddressClaimMSSClamp(t *testing.T) {
-	dir := t.TempDir()
-	startup := startupHybridContextRouter()
-	startup.Spec.Resources = append(startup.Spec.Resources,
-		api.Resource{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
-			Metadata: api.ObjectMeta{Name: "wg-sam"},
-			Spec:     api.WireGuardInterfaceSpec{MTU: 1420},
-		},
-		api.Resource{
-			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "CloudProviderProfile"},
-			Metadata: api.ObjectMeta{Name: "lab-cloud"},
-			Spec: api.CloudProviderProfileSpec{
-				Provider:     "oci",
-				Capabilities: []string{"vnic-secondary-ip"},
-				Auth:         api.ProviderAuth{Mode: "external-command", Command: "/bin/true"},
-			},
-		},
-	)
-	claim := remoteAddressClaimResource("app", "10.0.1.123/32", "provider-secondary-ip", "ens3")
-	claimSpec := claim.Spec.(api.RemoteAddressClaimSpec)
-	claimSpec.Capture.ProviderRef = "lab-cloud"
-	claimSpec.Capture.ProviderMode = "vnic-secondary-ip"
-	claimSpec.Capture.NICRef = "ocid1.vnic.example"
-	claim.Spec = claimSpec
-	store := &dynamicRouteSAMStore{
-		records: []routerstate.DynamicConfigPartRecord{dynamicPartRecord(t, "MobilityPool/cloudedge/node/cloud", []api.Resource{
-			addressMobilityDomainResource(),
-			claim,
-		}, time.Now().Add(time.Hour))},
-		objects: map[string]map[string]any{},
-	}
-	view, err := buildDynamicRouteSAMView(startup, store, time.Now().UTC(), platform.OSLinux)
-	if err != nil {
-		t.Fatalf("buildDynamicRouteSAMView: %v", err)
-	}
-	controller := PathMTUController{Router: view.EffectiveRouter, OS: platform.OSLinux, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft")}
-	if err := controller.Reconcile(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(controller.Path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := string(data)
-	for _, want := range []string{
-		"table inet routerd_mss",
-		`iifname "ens3" oifname "wg-sam" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1300 tcp option maxseg size set 1300`,
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("dynamic SAM MSS clamp missing %q:\n%s", want, got)
-		}
-	}
-}
-
-func TestPathMTUControllerRendersBGPMobilityMSSClamp(t *testing.T) {
+func TestPathMTUControllerRendersLocalCaptureMSSClamp(t *testing.T) {
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
-			Metadata: api.ObjectMeta{Name: "cloudedge"},
-			Spec:     api.EventGroupSpec{NodeName: "oci-router"},
-		},
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
 			Metadata: api.ObjectMeta{Name: "wg-hybrid"},
@@ -636,105 +574,15 @@ func TestPathMTUControllerRendersBGPMobilityMSSClamp(t *testing.T) {
 				Underlay: api.OverlayUnderlay{Type: "wireguard", Interface: "wg-hybrid"},
 			},
 		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
-			Metadata: api.ObjectMeta{Name: "cloudedge"},
-			Spec: api.MobilityPoolSpec{
-				Prefix:         "10.77.60.0/24",
-				GroupRef:       "cloudedge",
-				DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
-				Members: []api.MobilityPoolMember{
-					{
-						NodeRef: "onprem-router",
-						Site:    "onprem",
-						Role:    "onprem",
-						Capture: api.MobilityMemberCapture{Type: "proxy-arp", Interface: "ens21"},
-						DeliveryTo: []api.MobilityMemberDeliveryTarget{
-							{NodeRef: "oci-router", PeerRef: "onprem-main", Mode: "route", TunnelInterface: "wg-hybrid"},
-						},
-					},
-					{
-						NodeRef:  "oci-router",
-						Site:     "oci",
-						Role:     "cloud",
-						Capture:  api.MobilityMemberCapture{Type: "provider-secondary-ip", Interface: "ens3", ProviderRef: "oci-lab"},
-						Delivery: api.MobilityMemberDelivery{PeerRef: "onprem-main", Mode: "route", TunnelInterface: "wg-hybrid"},
-					},
-				},
-			},
-		},
 	}}}
 	store := mapStore{}
-	controller := PathMTUController{Router: router, OS: platform.OSLinux, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft")}
-	if err := controller.Reconcile(t.Context()); err != nil {
-		t.Fatal(err)
+	controller := PathMTUController{
+		Router: router, OS: platform.OSLinux, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft"),
+		LocalCaptureIntents: []dynamicconfig.LocalCaptureIntent{{
+			ID: "cloudedge/10.77.60.9", PoolRef: "cloudedge", Address: "10.77.60.9/32",
+			Disposition: dynamicconfig.CaptureProtectExisting, CaptureType: "provider-secondary-ip", CaptureInterface: "ens3",
+		}},
 	}
-	data, err := os.ReadFile(controller.Path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := string(data)
-	for _, want := range []string{
-		"table inet routerd_mss",
-		`iifname "ens3" oifname "wg-hybrid" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1300 tcp option maxseg size set 1300`,
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("BGP mobility MSS clamp missing %q:\n%s", want, got)
-		}
-	}
-	if strings.Contains(got, `iifname "ens21"`) || strings.Contains(got, "meta nfproto ipv6") {
-		t.Fatalf("BGP mobility MSS clamp should be self-member IPv4-only:\n%s", got)
-	}
-}
-
-func TestPathMTUControllerRendersBGPMobilityMSSClampWithoutMemberDelivery(t *testing.T) {
-	dir := t.TempDir()
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
-			Metadata: api.ObjectMeta{Name: "cloudedge"},
-			Spec:     api.EventGroupSpec{NodeName: "oci-router"},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
-			Metadata: api.ObjectMeta{Name: "wg-hybrid"},
-			Spec:     api.WireGuardInterfaceSpec{MTU: 1420},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "OverlayPeer"},
-			Metadata: api.ObjectMeta{Name: "onprem-main"},
-			Spec: api.OverlayPeerSpec{
-				Role:     "onprem",
-				NodeID:   "onprem-router",
-				Underlay: api.OverlayUnderlay{Type: "wireguard", Interface: "wg-hybrid"},
-			},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
-			Metadata: api.ObjectMeta{Name: "cloudedge"},
-			Spec: api.MobilityPoolSpec{
-				Prefix:         "10.77.60.0/24",
-				GroupRef:       "cloudedge",
-				DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
-				Members: []api.MobilityPoolMember{
-					{
-						NodeRef: "onprem-router",
-						Site:    "onprem",
-						Role:    "onprem",
-						Capture: api.MobilityMemberCapture{Type: "proxy-arp", Interface: "ens21"},
-					},
-					{
-						NodeRef: "oci-router",
-						Site:    "oci",
-						Role:    "cloud",
-						Capture: api.MobilityMemberCapture{Type: "provider-secondary-ip", Interface: "ens3", ProviderRef: "oci-lab"},
-					},
-				},
-			},
-		},
-	}}}
-	store := mapStore{}
-	controller := PathMTUController{Router: router, OS: platform.OSLinux, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft")}
 	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -745,7 +593,7 @@ func TestPathMTUControllerRendersBGPMobilityMSSClampWithoutMemberDelivery(t *tes
 	got := string(data)
 	want := `iifname "ens3" oifname "wg-hybrid" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1300 tcp option maxseg size set 1300`
 	if !strings.Contains(got, want) {
-		t.Fatalf("BGP mobility MSS clamp without member delivery missing %q:\n%s", want, got)
+		t.Fatalf("BGP mobility MSS clamp missing %q:\n%s", want, got)
 	}
 }
 
@@ -753,11 +601,6 @@ func TestPathMTUControllerRendersSAMTransportMSSClamp(t *testing.T) {
 	dir := t.TempDir()
 	owner := []api.OwnerRef{{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile", Name: "cloudedge-transport"}}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
-			Metadata: api.ObjectMeta{Name: "cloudedge"},
-			Spec:     api.EventGroupSpec{NodeName: "aws-router-a"},
-		},
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 			Metadata: api.ObjectMeta{Name: "ens5"},
@@ -779,22 +622,16 @@ func TestPathMTUControllerRendersSAMTransportMSSClamp(t *testing.T) {
 				UnderlayInterface: "wg-hybrid",
 			},
 		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
-			Metadata: api.ObjectMeta{Name: "cloudedge"},
-			Spec: api.MobilityPoolSpec{
-				Prefix:         "10.77.60.0/24",
-				GroupRef:       "cloudedge",
-				DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
-				Members: []api.MobilityPoolMember{
-					{NodeRef: "onprem-router", Site: "onprem", Role: "onprem"},
-					{NodeRef: "aws-router-a", Site: "aws", Role: "cloud", Capture: api.MobilityMemberCapture{Type: "provider-secondary-ip", Interface: "ens5"}},
-				},
-			},
-		},
 	}}}
 	store := mapStore{}
-	controller := PathMTUController{Router: router, OS: platform.OSLinux, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft")}
+	controller := PathMTUController{
+		Router: router, OS: platform.OSLinux, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft"),
+		LocalCaptureIntents: []dynamicconfig.LocalCaptureIntent{{
+			ID: "cloudedge/10.77.60.9", PoolRef: "cloudedge", Address: "10.77.60.9/32",
+			Disposition: dynamicconfig.CaptureProtectExisting, CaptureType: "provider-secondary-ip", CaptureInterface: "ens5",
+			TunnelInterfaces: []string{"samt-aws-onprem"},
+		}},
+	}
 	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -813,11 +650,6 @@ func TestPathMTUControllerRendersSAMTransportHubRelayMSSClamp(t *testing.T) {
 	dir := t.TempDir()
 	owner := []api.OwnerRef{{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile", Name: "cloudedge-transport"}}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"},
-			Metadata: api.ObjectMeta{Name: "cloudedge"},
-			Spec:     api.EventGroupSpec{NodeName: "onprem-router"},
-		},
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
 			Metadata: api.ObjectMeta{Name: "ens20"},
@@ -850,23 +682,16 @@ func TestPathMTUControllerRendersSAMTransportHubRelayMSSClamp(t *testing.T) {
 				UnderlayInterface: "wg-hybrid",
 			},
 		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityPool"},
-			Metadata: api.ObjectMeta{Name: "cloudedge"},
-			Spec: api.MobilityPoolSpec{
-				Prefix:         "10.77.60.0/24",
-				GroupRef:       "cloudedge",
-				DeliveryPolicy: api.MobilityDeliveryPolicy{Mode: "bgp"},
-				Members: []api.MobilityPoolMember{
-					{NodeRef: "onprem-router", Site: "onprem", Role: "onprem", Capture: api.MobilityMemberCapture{Type: "proxy-arp", Interface: "ens20"}},
-					{NodeRef: "aws-router-a", Site: "aws", Role: "cloud"},
-					{NodeRef: "oci-router", Site: "oci", Role: "cloud"},
-				},
-			},
-		},
 	}}}
 	store := mapStore{}
-	controller := PathMTUController{Router: router, OS: platform.OSLinux, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft")}
+	controller := PathMTUController{
+		Router: router, OS: platform.OSLinux, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft"),
+		LocalCaptureIntents: []dynamicconfig.LocalCaptureIntent{{
+			ID: "cloudedge/10.77.60.9", PoolRef: "cloudedge", Address: "10.77.60.9/32",
+			Disposition: dynamicconfig.CaptureDesired, CaptureType: "proxy-arp", CaptureInterface: "ens20",
+			TunnelInterfaces: []string{"samt-aws", "samt-oci"},
+		}},
+	}
 	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}

@@ -12,11 +12,10 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/dynamicconfig/codec"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -320,15 +319,15 @@ type dynamicPartDetail struct {
 func dynamicListRows(parts []routerstate.DynamicConfigPartRecord, now time.Time) ([]dynamicListRow, error) {
 	rows := make([]dynamicListRow, 0, len(parts))
 	for _, part := range parts {
-		resources, err := countJSONArray(part.ResourcesJSON)
+		resources, err := codec.DecodeGenericResources(part)
 		if err != nil {
 			return nil, fmt.Errorf("%s generation %d resources: %w", part.Source, part.Generation, err)
 		}
-		directives, err := countJSONArray(part.DirectivesJSON)
+		directives, err := codec.DecodeGenericDirectives(part)
 		if err != nil {
 			return nil, fmt.Errorf("%s generation %d directives: %w", part.Source, part.Generation, err)
 		}
-		actionPlans, err := countJSONArray(part.ActionPlansJSON)
+		actionPlans, err := codec.DecodeActionPlans(part.ActionPlansJSON)
 		if err != nil {
 			return nil, fmt.Errorf("%s generation %d actionPlans: %w", part.Source, part.Generation, err)
 		}
@@ -336,9 +335,9 @@ func dynamicListRows(parts []routerstate.DynamicConfigPartRecord, now time.Time)
 			Source:      part.Source,
 			Generation:  part.Generation,
 			Status:      part.EffectiveStatus(now),
-			Resources:   resources,
-			Directives:  directives,
-			ActionPlans: actionPlans,
+			Resources:   len(resources),
+			Directives:  len(directives),
+			ActionPlans: len(actionPlans),
 			ExpiresAt:   part.ExpiresAt,
 		})
 	}
@@ -348,15 +347,15 @@ func dynamicListRows(parts []routerstate.DynamicConfigPartRecord, now time.Time)
 func dynamicPartDetails(parts []routerstate.DynamicConfigPartRecord, now time.Time) ([]dynamicPartDetail, error) {
 	details := make([]dynamicPartDetail, 0, len(parts))
 	for _, part := range parts {
-		resources, err := decodeDynamicResources(part.ResourcesJSON)
+		resources, err := codec.DecodeGenericResources(part)
 		if err != nil {
 			return nil, fmt.Errorf("%s generation %d resources: %w", part.Source, part.Generation, err)
 		}
-		directives, err := decodeDynamicDirectives(part.DirectivesJSON)
+		directives, err := codec.DecodeGenericDirectives(part)
 		if err != nil {
 			return nil, fmt.Errorf("%s generation %d directives: %w", part.Source, part.Generation, err)
 		}
-		actionPlans, err := decodeDynamicActionPlans(part.ActionPlansJSON)
+		actionPlans, err := codec.DecodeActionPlans(part.ActionPlansJSON)
 		if err != nil {
 			return nil, fmt.Errorf("%s generation %d actionPlans: %w", part.Source, part.Generation, err)
 		}
@@ -381,77 +380,7 @@ func dynamicPartDetails(parts []routerstate.DynamicConfigPartRecord, now time.Ti
 }
 
 func dynamicPartsFromRecords(records []routerstate.DynamicConfigPartRecord) ([]dynamicconfig.DynamicConfigPart, error) {
-	parts := make([]dynamicconfig.DynamicConfigPart, 0, len(records))
-	for _, record := range records {
-		resources, err := decodeDynamicResources(record.ResourcesJSON)
-		if err != nil {
-			return nil, fmt.Errorf("%s generation %d resources: %w", record.Source, record.Generation, err)
-		}
-		directives, err := decodeDynamicDirectives(record.DirectivesJSON)
-		if err != nil {
-			return nil, fmt.Errorf("%s generation %d directives: %w", record.Source, record.Generation, err)
-		}
-		parts = append(parts, dynamicconfig.DynamicConfigPart{
-			TypeMeta: api.TypeMeta{APIVersion: dynamicconfig.ConfigAPIVersion, Kind: "DynamicConfigPart"},
-			Metadata: api.ObjectMeta{
-				Name: fmt.Sprintf("%s-%d", record.Source, record.Generation),
-			},
-			Spec: dynamicconfig.DynamicConfigPartSpec{
-				Source:     record.Source,
-				Generation: record.Generation,
-				ObservedAt: record.ObservedAt,
-				ExpiresAt:  record.ExpiresAt,
-				Digest:     record.Digest,
-				Resources:  resources,
-				Directives: directives,
-			},
-		})
-	}
-	return parts, nil
-}
-
-func countJSONArray(raw string) (int, error) {
-	if strings.TrimSpace(raw) == "" {
-		return 0, nil
-	}
-	var items []json.RawMessage
-	if err := json.Unmarshal([]byte(raw), &items); err != nil {
-		return 0, err
-	}
-	return len(items), nil
-}
-
-func decodeDynamicResources(raw string) ([]api.Resource, error) {
-	if strings.TrimSpace(raw) == "" {
-		return nil, nil
-	}
-	var resources []api.Resource
-	if err := yaml.Unmarshal([]byte(raw), &resources); err != nil {
-		return nil, err
-	}
-	return resources, nil
-}
-
-func decodeDynamicDirectives(raw string) ([]dynamicconfig.DynamicConfigDirective, error) {
-	if strings.TrimSpace(raw) == "" {
-		return nil, nil
-	}
-	var directives []dynamicconfig.DynamicConfigDirective
-	if err := json.Unmarshal([]byte(raw), &directives); err != nil {
-		return nil, err
-	}
-	return directives, nil
-}
-
-func decodeDynamicActionPlans(raw string) ([]dynamicconfig.ActionPlan, error) {
-	if strings.TrimSpace(raw) == "" {
-		return nil, nil
-	}
-	var plans []dynamicconfig.ActionPlan
-	if err := json.Unmarshal([]byte(raw), &plans); err != nil {
-		return nil, err
-	}
-	return plans, nil
+	return codec.DecodeAll(records)
 }
 
 func writeDynamicListTable(stdout io.Writer, rows []dynamicListRow) error {

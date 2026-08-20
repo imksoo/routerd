@@ -22,6 +22,7 @@ import (
 	"golang.org/x/crypto/curve25519"
 
 	"github.com/imksoo/routerd/internal/hostcmd"
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
 )
@@ -87,7 +88,7 @@ func BuildInterface(resource api.Resource, peers []api.Resource) (InterfaceConfi
 		return InterfaceConfig{}, err
 	}
 	cfg := InterfaceConfig{
-		Name:           firstNonEmpty(spec.IfName, resource.Metadata.Name),
+		Name:           stringutil.FirstNonBlank(spec.IfName, resource.Metadata.Name),
 		PrivateKey:     spec.PrivateKey,
 		PrivateKeyFile: spec.PrivateKeyFile,
 		ListenPort:     spec.ListenPort,
@@ -120,15 +121,6 @@ func BuildInterface(resource api.Resource, peers []api.Resource) (InterfaceConfi
 	}
 	sort.SliceStable(cfg.Peers, func(i, j int) bool { return cfg.Peers[i].Name < cfg.Peers[j].Name })
 	return cfg, nil
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
 }
 
 func PeerSpecConfigured(spec api.WireGuardPeerSpec) bool {

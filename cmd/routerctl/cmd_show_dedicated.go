@@ -13,6 +13,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -46,17 +47,17 @@ func writeBGPShowTable(stdout io.Writer, router *api.Router, resources []routers
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "PEER\tAS\tSTATE\tUP\tRCVD\tSENT\tPFX\tLAST_ERROR")
 		for _, peer := range peers {
-			state := defaultShowString(statusString(peer["state"]), "unknown")
+			state := defaultShowString(statusvalue.Text(peer["state"]), "unknown")
 			up := "-"
 			if strings.EqualFold(state, "Established") {
-				up = ageString(statusString(peer["lastEstablishedAt"]))
+				up = ageString(statusvalue.Text(peer["lastEstablishedAt"]))
 			}
-			lastError := defaultShowString(statusString(peer["lastErrorReason"]), "-")
+			lastError := defaultShowString(statusvalue.Text(peer["lastErrorReason"]), "-")
 			if strings.EqualFold(state, "Established") {
 				lastError = "-"
 			}
 			fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%d\t%d\t%d\t%s\n",
-				statusString(peer["address"]),
+				statusvalue.Text(peer["address"]),
 				statusInt(peer["asn"]),
 				state,
 				up,
@@ -82,13 +83,13 @@ func writeBGPShowTable(stdout io.Writer, router *api.Router, resources []routers
 		fmt.Fprintln(w, "PREFIX\tROUTER\tBEST\tVALID\tINSTALLED\tSTATE\tREASON")
 		for _, prefix := range prefixes {
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-				statusString(prefix["prefix"]),
-				statusString(prefix["_router"]),
+				statusvalue.Text(prefix["prefix"]),
+				statusvalue.Text(prefix["_router"]),
 				boolShow(prefix["best"]),
 				boolShow(prefix["valid"]),
 				boolShow(prefix["installed"]),
-				defaultShowString(statusString(prefix["selectionState"]), "-"),
-				defaultShowString(statusString(prefix["selectionReason"]), "-"),
+				defaultShowString(statusvalue.Text(prefix["selectionState"]), "-"),
+				defaultShowString(statusvalue.Text(prefix["selectionReason"]), "-"),
 			)
 		}
 	}
@@ -176,19 +177,19 @@ func writeVRRPShowTable(stdout io.Writer, router *api.Router, resources []router
 			continue
 		}
 		spec := specs[resource.Name]
-		if defaultShowString(spec.Mode, "static") != "vrrp" && statusString(resource.Status["virtualRouterID"]) == "" {
+		if defaultShowString(spec.Mode, "static") != "vrrp" && statusvalue.Text(resource.Status["virtualRouterID"]) == "" {
 			continue
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%s\t%d\t%s\t%s\n",
-			statusString(resource.Status["address"]),
-			defaultShowString(statusString(resource.Status["hostname"]), "-"),
-			defaultShowString(statusString(resource.Status["role"]), "unknown"),
+			statusvalue.Text(resource.Status["address"]),
+			defaultShowString(statusvalue.Text(resource.Status["hostname"]), "-"),
+			defaultShowString(statusvalue.Text(resource.Status["role"]), "unknown"),
 			statusInt(resource.Status["priority"]),
 			statusInt(resource.Status["basePriority"]),
-			defaultShowString(statusString(resource.Status["interface"]), spec.Interface),
+			defaultShowString(statusvalue.Text(resource.Status["interface"]), spec.Interface),
 			statusInt(resource.Status["virtualRouterID"]),
 			strings.Join(spec.Peers, ","),
-			ageString(statusString(resource.Status["lastRoleTransitionAt"])),
+			ageString(statusvalue.Text(resource.Status["lastRoleTransitionAt"])),
 		)
 		tracks := statusMaps(resource.Status["track"])
 		if len(tracks) > 0 {
@@ -196,11 +197,11 @@ func writeVRRPShowTable(stdout io.Writer, router *api.Router, resources []router
 			fmt.Fprintln(w, "TRACK\tSTATE\tPENALTY\tDETAIL")
 			for _, track := range tracks {
 				fmt.Fprintf(w, "%s\t%s\t%d\t%s/%s unhealthy=%d\n",
-					statusString(track["resource"]),
-					statusString(track["state"]),
+					statusvalue.Text(track["resource"]),
+					statusvalue.Text(track["state"]),
 					statusInt(track["penalty"]),
-					statusString(track["unhealthyCount"]),
-					statusString(track["confirmConsecutiveUnhealthy"]),
+					statusvalue.Text(track["unhealthyCount"]),
+					statusvalue.Text(track["confirmConsecutiveUnhealthy"]),
 					statusInt(track["unhealthyConsecutive"]),
 				)
 			}
@@ -382,7 +383,7 @@ func withLiveVRRPRoles(router *api.Router, resources []routerstate.ObjectStatus)
 		for key, value := range out[i].Status {
 			status[key] = value
 		}
-		if previous := statusString(status["role"]); previous != role {
+		if previous := statusvalue.Text(status["role"]); previous != role {
 			status["role"] = role
 			status["lastRoleTransitionAt"] = time.Now().UTC().Format(time.RFC3339Nano)
 		}
@@ -392,11 +393,11 @@ func withLiveVRRPRoles(router *api.Router, resources []routerstate.ObjectStatus)
 }
 
 func liveVRRPRole(status map[string]any, spec virtualAddressShowSpec, aliases map[string]string) (string, bool) {
-	ifname := statusString(status["ifname"])
+	ifname := statusvalue.Text(status["ifname"])
 	if ifname == "" {
 		ifname = aliases[spec.Interface]
 	}
-	address := statusString(status["address"])
+	address := statusvalue.Text(status["address"])
 	if address == "" {
 		address = spec.Address
 	}

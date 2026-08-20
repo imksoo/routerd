@@ -214,7 +214,7 @@ dig @<lan-ip> example.com
 ## Operational notes
 
 - Begin with `routerctl plan`. Only enable the real LAN listener after the management path and a known rollback are ready.
-- If you replace dnsmasq leases manually, restart `routerd-dhcp-event-relay` so the in-memory state catches up. Prefer changing the lease through routerd.
+- Manual dnsmasq lease-file edits do not notify routerd automatically. Reconcile the affected lease through the supported configuration workflow; `routerd-dhcp-event-relay` is a one-shot dnsmasq hook, not a service to restart. Prefer changing the lease through routerd.
 - Keep upstream public resolvers as a fallback: `routerd-dns-resolver` will demote a forwarder that fails health checks but only if a working alternative exists.
 
 ## See also

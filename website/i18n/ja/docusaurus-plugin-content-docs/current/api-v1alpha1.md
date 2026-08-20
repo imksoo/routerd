@@ -42,8 +42,8 @@ spec:
 | `system.routerd.net/v1alpha1` | `Hostname`, `Sysctl`, `SysctlProfile`, `Package`, `NTPClient`, `NTPServer`, `LogSink`, `ObservabilityPipeline`, `RouterdCluster`, `LogRetention`, `WebConsole` |
 | `observability.routerd.net/v1alpha1` | `Telemetry` |
 | `plugin.routerd.net/v1alpha1` | プラグインマニフェスト |
-| `hybrid.routerd.net/v1alpha1` | `TunnelInterface`, `OverlayPeer`, `HybridRoute`, `AddressMobilityDomain`, `CloudProviderProfile`, `RemoteAddressClaim` |
-| `mobility.routerd.net/v1alpha1` | `MobilityPool`, `MobilityMemberSet`, `SAMNodeSet`, `SAMTransportProfile` |
+| `hybrid.routerd.net/v1alpha1` | `TunnelInterface`, `OverlayPeer`, `HybridRoute`, `CloudProviderProfile` |
+| `mobility.routerd.net/v1alpha1` | `MobilityPool`, `SAMNodeSet`, `SAMRRSet`, `SAMEnrollmentPolicy`, `SAMEnrollmentClaim`, `SAMEnrollmentClient`, `SAMTransportProfile` |
 
 ## システム準備
 
@@ -77,7 +77,7 @@ spec:
 | `ManagementAccess` | 管理用インターフェースと apply 前の lockout チェックを宣言します。宣言時は、管理 IF の欠落、firewall zone による遮断、WebConsole の全アドレス待ち受けを検出すると、`--allow-mgmt-lockout` なしの apply を止めます。 |
 | `PPPoESession` | PPPoE 用の下位インターフェース設定を表します。 |
 | `PPPoESession` | `routerd-pppoe-client` が管理する PPPoE セッションです。 |
-| `WireGuardInterface` | WireGuard インターフェースを表します。`peersFrom` で `SAMNodeSet` から peer 定義を取り込めます。 |
+| `WireGuardInterface` | WireGuard インターフェースを表します。暗号化を選ぶ場合、`peersFrom` で `SAMNodeSet`、`SAMEnrollmentPolicy`、または取得済み `SAMRRSet` から peer 定義を取り込めます。 |
 | `WireGuardPeer` | WireGuard の相手を表します。 |
 | `TailscaleNode` | Tailscale ノードを設定します。Exit node と subnet router の広告を管理対象 systemd ユニットで行います。 |
 | `IPsecConnection` | strongSwan の cloud VPN 向け接続定義を表します。 |
@@ -105,9 +105,11 @@ WireGuard の待ち受けポートには、別の番号を使ってください�
 FreeBSD では、routerd が rc.d サービスを生成します。
 そのサービスは `wg` インターフェースを作成し、ファイルから秘密鍵を読み込み、
 宣言された peer と static address を適用します。
-`WireGuardInterface.spec.peersFrom` は `SAMNodeSet/<name>` を参照し、
-`SAMNodeSet.spec.nodes[].wireGuard` から peer を導出します。同じ `metadata.name` の
-静的 `WireGuardPeer` は生成 peer を override します。
+`WireGuardInterface.spec.peersFrom` は `SAMNodeSet/<name>`、
+`SAMEnrollmentPolicy/<name>`、または取得済み `SAMRRSet/<name>` を参照し、
+node-set の WireGuard identity、受理済み enrollment claim、または投影済み RR node の
+WireGuard identity から peer を導出します。同じ `metadata.name` の静的
+`WireGuardPeer` は生成 peer を override します。
 
 Kernel module と、systemd-networkd/resolved の adoption drop-in は、router resource から自動で導出されます。削除済みの `KernelModule`、`NetworkAdoption`、`Link` が config に残っている場合、routerd は黙って無視せず、エラーを返します。
 
@@ -174,13 +176,14 @@ DNSSEC validation は `DNSForwarder.spec.dnssecValidate` に書きます。
 | `TunnelInterface` | hybrid overlay delivery 用の trusted Linux L3 underlay tunnel device を作ります。`mode` は `ipip`、`gre`、IPIP-over-UDP の `fou` / `gue` を受け付けます。`fou` / `gue` では `encapSport` と `encapDport` が必須です。 |
 | `OverlayPeer` | on-prem または cloud の overlay peer と、それに到達する local underlay を表します。 |
 | `HybridRoute` | default ではない remote IPv4 prefix を、`OverlayPeer` 経由の managed `IPv4Route` に lower します。 |
-| `MobilityPool` | CloudEdge mobility intent です。pool prefix、federation group、node-to-site membership または `membersFrom` source、BGP delivery policy、再利用可能な cloud capture profile、local value expansion、provider trap placement を宣言し、routerd は observed fact と BGP best path から BGP `/32` advertisement と provider trap action plan を導出します。 |
-| `MobilityMemberSet` | 共有される identity-only MobilityPool member（`nodeRef`、`site`、`role`、任意の placement/maintenance）をまとめます。leaf は `MobilityPool.spec.membersFrom` で import し、local capture/discovery だけを inline に残せます。 |
-| `SAMNodeSet` | 共有される SAM fabric node identity registry です。node identity、任意の site/role、Event Federation endpoint、SAM transport endpoint、秘密を含まない WireGuard peer identity を集約します。後続 controller はここから EventPeer、WireGuardPeer、SAM transport peer、MobilityPool member を生成します。 |
-| `SAMTransportProfile` | この router の安定した `selfNodeRef`、inner tunnel prefix、underlay interface、BGP router、SAM transport peer を宣言します。`peersFrom` で `SAMNodeSet` から topology と peer endpoint を取り込めます。routerd は peer ごとの `TunnelInterface`、endpoint `/32` `IPv4Route`、`BGPPeer` を `DynamicConfigPart` として導出します。 |
-| `AddressMobilityDomain` | hand-authored selective-address config の IPv4 prefix を定義する低レベル互換 SAM resource です。現在の CloudEdge Mobility の主な authoring surface ではありません。 |
+| `MobilityPool` | CloudEdge のローカル address/capture intent です。pool prefix、federation group、BGP delivery、再利用可能な cloud capture profile、local value expansion、provider trap placement と 1 つの local self overlay を宣言します。共有 topology は `membersFrom` だけから取り込み、routerd は observed fact と BGP best path から BGP `/32` advertisement と provider trap action plan を導出します。 |
+| `SAMNodeSet` | 共有される SAM fabric identity/topology registry です。node identity、site、role、placement、maintenance、Event Federation endpoint、SAM transport endpoint、秘密を含まない WireGuard peer identity を集約します。MobilityPool topology の唯一の source であり、local pool overlay にはローカルの capture/discovery detail だけを置きます。 |
+| `SAMRRSet` | 受理済み leaf に返す runtime-only かつ policy-scoped な enrollment snapshot です。policy が参照する静的 `SAMNodeSet` から選んだ RR node を含み、top-level router YAML には宣言できません。 |
+| `SAMEnrollmentPolicy` | hub/RR 専用で SAM transport enrollment claim を認可します。transport profile、出力 `rrSetRef`、必須の静的 RR topology `rrNodeSetRef`、join token/audience、tunnel/endpoint prefix、leaf ID policy、TTL/revocation、任意の WireGuard materialization、MobilityPool または直接 `mobilityPrefixes` の admission authority を結びます。leaf は copy を宣言しません。 |
+| `SAMEnrollmentClaim` | leaf に置く remote enrollment request です。leaf identity、join nonce/timestamp/HMAC、remote policy/RRSet reference、tunnel address、endpoint、任意の BGP identity、MobilityPool 所有 `/32`、任意の WireGuard credential、expiry、revocation state を運びます。 |
+| `SAMEnrollmentClient` | leaf 側の bootstrap/refresh controller です。local の remote-request `SAMEnrollmentClaim` を RR endpoint に送信し、許可された `SAMRRSet` を取得して、欠落・期限接近・claim 変更時だけ dynamic state に保存します。local policy や NodeSet は必要ありません。 |
+| `SAMTransportProfile` | この router の安定した `selfNodeRef`、inner tunnel prefix、underlay interface、BGP router、peer source を宣言します。`peersFrom` で `SAMNodeSet`、runtime-synchronized `SAMPeerGroup`、`SAMEnrollmentPolicy`、または取得済み `SAMRRSet` から topology と peer endpoint を取り込み、`nodeRefs` で adjacency を選択できます。`SAMNodeSet` は identity/topology/endpoint の唯一の共有 source です。`SAMPeerGroup` は top-level resource として author できません。routerd は peer ごとの `TunnelInterface`、endpoint `/32` `IPv4Route`、`BGPPeer` を `DynamicConfigPart` として導出します。 |
 | `CloudProviderProfile` | declarative address capture planning 用の provider capability と external-command auth を記述します。 |
-| `RemoteAddressClaim` | 1 つの mobile IPv4 `/32`、capture mechanism、legacy `OverlayPeer` route delivery を宣言する低レベル互換 SAM resource です。 |
 | `IPAddressSet` | 直接指定したアドレスや FQDN から、再利用可能な IP address set を定義します。Linux nftables renderer はこれを named set として出力し、redirect、NAT、policy routing から参照できます。 |
 | `IPv4Route` | IPv4 経路を追加します。DS-Lite 経由の既定経路や、明示的な破棄経路にも使います。 |
 | `ClusterNetworkRoute` | Kubernetes の Pod / Service CIDR を、worker の next hop 経由の static IPv4 route に展開します。 |
@@ -194,38 +197,42 @@ DNSSEC validation は `DNSForwarder.spec.dnssecValidate` に書きます。
 | `LocalServiceRedirect` | LAN 側 client から `IPAddressSet` 宛てに出る IPv4/IPv6 通信を、router の local port へ redirect します。平文 DNS/NTP の集約を想定し、DoH や DoT の port には触れません。 |
 | `EgressRoutePolicy` | 既定経路の選択、mark ベースの IPv4 policy routing、複数 target への hash 分散を表します。 |
 
-CloudEdge Mobility の operator-authored surface は `MobilityPool`、
-`MobilityMemberSet`、`SAMNodeSet`、`SAMTransportProfile` です。`MobilityPool` は address ownership/capture intent、
-`MobilityMemberSet` は再利用する共有 member list、
-`SAMNodeSet` は生成される peer の write-once node identity registry、
-`SAMTransportProfile` は transport/BGP intent を担当します。federation event は
+CloudEdge Mobility の operator-authored surface は `MobilityPool`、`SAMNodeSet`、
+`SAMEnrollmentPolicy`、`SAMEnrollmentClaim`、`SAMEnrollmentClient`、
+`SAMTransportProfile` です。`MobilityPool` は address ownership/capture intent、
+`SAMNodeSet` は生成される peer と共有 membership の write-once node identity registry、
+`SAMEnrollmentPolicy` は hub/RR 専用で静的 RR topology を `rrNodeSetRef` で選び
+`rrSetRef` に runtime snapshot の名前を付けます。leaf は remote request の
+`SAMEnrollmentClaim` とそれを取得する `SAMEnrollmentClient` だけを持ち、local policy
+や NodeSet を copy しません。`SAMRRSet` は static authoring surface ではありません。
+`SAMTransportProfile` は
+transport/BGP intent を担当します。federation event は
 observed fact、BGP best path は mobility ownership/delivery view です。mobility
 planner は BGP `/32` advertisement と provider trap action plan を導出します。
 operator は per-address path や capture procedure を手書きしません。
-`AddressMobilityDomain` と `RemoteAddressClaim` は MobilityPool BGP path 外の
-低レベル互換 Kind として残っています。
+`MobilityPool` がアドレスごとの所有権、捕捉、BGP 配送を一貫して計画し、型付きの
+ローカルデータプレーン intent と FIB verdict を `DynamicConfigPart` に保存します。
 
-CloudEdge Mobility では、自 site は完全に宣言し、remote site は identity-only に
-保ちます。remote member は通常 `nodeRef`、`site`、`role`、必要なら `placement` /
-`maintenance` だけを持ちます。これは BGP peering と同じ形で、各 node は peer が
-誰かを知ればよく、remote provider の NIC や subnet の詳細を知る必要はありません。
+CloudEdge Mobility では、共有 identity、topology、placement、maintenance registry を
+`SAMNodeSet` に置き、`MobilityPool.spec.membersFrom` で取り込みます。Pool には self
+member overlay だけを置き、remote member を繰り返しません。
 `spec.profiles.cloudCaptures` は self-site cloud capture の再利用可能な default、
 `spec.values` は non-secret な local identifier、`capture.targetFrom` と
-`ownershipDiscovery.subnetRefFrom` はそれらの local 値を generated provider
-action target と discovery scope に投影するための field です。member に明示した
-field は profile default より優先されます。
-`members[].placement` は同一 provider の cloud router を deterministic な
-active/standby capture group にまとめます。`members[].maintenance.drain` を
-true にすると、その member は active 選出から外れます。placement projection を
-揃えるため、mobility demo の全 node に同じ `MobilityPool` の identity と
-placement set を配ります。古い remote-full inline style は pre-release 互換として
-まだ受け付けますが、remote member が local capture/discovery detail を持つ場合は
-`routerctl validate`、plan、apply が warning を表示します。将来の pre-release では
-remote member の identity-only 化を必須にする可能性があります。
+`ownershipDiscovery.subnetRefFrom` はそれらの local 値を generated provider action
+target と discovery scope に投影するための field です。provider、capture、discovery の
+field は self-member overlay だけに置きます。self member に明示した field は profile
+default より優先されます。
+`SAMNodeSet.spec.nodes[].placement` は同一 provider の cloud router を deterministic な
+active/standby capture group にまとめます。その `maintenance.drain` を true にすると、
+member は active 選出から外れます。placement projection を揃えるため、mobility demo の
+全 node に同じ `SAMNodeSet` の identity と placement source を配り、各 MobilityPool
+には self の capture/discovery overlay だけを残します。これにより remote member を
+繰り返さずに同じ placement decision を導出できます。remote member の provider、capture、
+discovery detail は無効です。
 
-`MobilityPool.spec.deliveryPolicy.mode` の既定は `bgp` です。Provider action plan は
-review artifact であり、action journal に import され、`ProviderActionPolicy`、
-approval、allowlist、executor plugin gate を通った場合だけ実行できます。
+`MobilityPool` は常に BGP 配送を使用し、配送モードを選ぶ field は公開していません。
+Provider action plan は review artifact であり、action journal に import され、
+`ProviderActionPolicy`、approval、allowlist、executor plugin gate を通った場合だけ実行できます。
 
 `EgressRoutePolicy` は、CIDR 指定に加えて `destinationSetRefs` と
 `excludeDestinationSetRefs` を持ちます。これにより、FQDN-backed な宛先 set を policy
@@ -562,7 +569,6 @@ validator がエラーにします。
 | `DNSUpstream` | `address` (string), `phase` (string), `url` (string) |
 | `DNSZone` | `pendingRecords` (objectList), `phase` (string), `records` (int), `updatedAt` (timestamp), `zone` (string) |
 | `DSLiteTunnel` | `aftrIPv6` (string), `aftrName` (string), `device` (string), `dryRun` (bool), `innerLocalIPv4` (string), `innerRemoteIPv4` (string), `interface` (string), `localIPv6` (string), `localInterface` (string), `mtu` (int), `phase` (string), `tunnelName` (string) |
-| `AddressMobilityDomain` | `mode` (string), `peerRef` (string), `phase` (string), `prefix` (string) |
 | `CloudProviderProfile` | `capabilities` (stringList), `phase` (string), `provider` (string) |
 | `DerivedEvent` | `phase` (string), `topic` (string) |
 | `EgressRoutePolicy` | `advisory` (bool), `candidates` (objectList), `dryRun` (bool), `family` (string), `lastTransitionAt` (timestamp), `phase` (string), `role` (string), `selectedCandidate` (string), `selectedDevice` (string), `selectedGateway` (string), `selectedGatewaySource` (string), `selectedInterface` (string), `selectedMetric` (int), `selectedRouteTable` (int), `selectedSource` (string), `selectedTargets` (int), `selectedWeight` (int), `updatedAt` (timestamp) |
@@ -592,10 +598,9 @@ validator がエラーにします。
 | `LogRetention` | `phase` (string), `targets` (objectList), `updatedAt` (timestamp) |
 | `LogSink` | `phase` (string), `type` (string) |
 | `ManagementAccess` | `interfaces` (stringList), `phase` (string) |
-| `MobilityMemberSet` | `memberCount` (int) |
-| `MobilityPool` | `dynamicSource` (string), `generatedActions` (int), `generatedBGPPaths` (int), `generatedBGPTraps` (int), `groupRef` (string), `memberSet` (object), `membersFrom` (objectList), `pendingSources` (stringList), `placementActive` (bool), `placementActiveNode` (string), `placementGroup` (string), `plannerPhase` (string), `plannerReason` (string), `prefix` (string), `resolvedMemberCount` (int), `deliveryMode` (string), `discoverySelfPrivateIPs` (stringList), `providerActionPhase` (string), `providerActionFailedCount` (int), `providerActionFailedAddresses` (stringList), `providerActionSupersededFailureCount` (int), `providerActionSupersededFailureAddresses` (stringList), `providerActionSupersededFailureReason` (string), `ownershipResolverPhase` (string), `ownershipResolverReason` (string), `ownershipResolverConflictCount` (int), `ownershipResolverConflicts` (objectList), `ownershipResolverOwnerTable` (objectList), `ownershipResolverControlPlaneOwnerTable` (objectList) |
+| `MobilityPool` | `generatedBGPPaths` (int), `groupRef` (string), `ownershipResolverControlPlaneOwnerTable` (objectList), `pendingSources` (stringList), `phase` (string), `placementActive` (bool), `placementActiveNode` (string), `placementGroup` (string), `prefix` (string), `providerActionError` (string), `providerActionFailedAddresses` (stringList), `providerActionPhase` (string), `providerObservationPendingAddresses` (stringList), `reason` (string), `resolvedMemberCount` (int) |
 | `SAMNodeSet` | `nodeCount` (int) |
-| `SAMTransportProfile` | `dynamicSource` (string), `generatedBGPPeers` (int), `generatedEndpointRoutes` (int), `generatedTunnels` (int), `innerPrefix` (string), `peers` (objectList), `peersFrom` (objectList), `pendingSources` (stringList), `phase` (string), `selfNode` (string), `topologyNodeRefs` (stringList) |
+| `SAMTransportProfile` | `peersFrom` (objectList), `pendingSources` (stringList), `phase` (string), `reason` (string) |
 | `NAT44Rule` | `dryRun` (bool), `egressInterface` (string), `phase` (string), `snatAddress` (string) |
 | `NAT44SessionSync` | `deleteFailed` (int), `deleteMissing` (int), `deleteOK` (int), `dryRun` (bool), `insertExisting` (int), `insertFailed` (int), `insertOK` (int), `lastBatchAt` (timestamp), `lastBatchEvents` (int), `lastEventAt` (timestamp), `lastResyncAt` (timestamp), `mode` (string), `phase` (string), `pruneCandidateCount` (int), `pruneFailed` (int), `pruneMissing` (int), `pruneOK` (int), `queuedEventCount` (int), `remoteSessionCount` (int), `resyncCount` (int), `sessionCount` (int), `snatAddresses` (stringList), `streamState` (string), `syncedAt` (timestamp), `targetCount` (int), `targets` (objectList) |
 | `NTPClient` | `phase` (string), `servers` (stringList), `source` (string), `updatedAt` (timestamp) |
@@ -608,7 +613,6 @@ validator がエラーにします。
 | `PortForward` | `dryRun` (bool), `listenAddress` (string), `phase` (string), `target` (object) |
 | `RouterdCluster` | `leader` (string), `leaseExpiresAt` (timestamp), `phase` (string) |
 | `SelfAddressPolicy` | `address` (string), `phase` (string), `source` (string) |
-| `RemoteAddressClaim` | `address` (string), `captureType` (string), `deliveryMode` (string), `domainRef` (string), `ownerSide` (string), `peerRef` (string), `phase` (string) |
 | `Sysctl` | `dryRun` (bool), `key` (string), `phase` (string), `value` (string) |
 | `SysctlProfile` | `dryRun` (bool), `phase` (string), `profile` (string) |
 | `TailscaleNode` | `advertiseRoutes` (stringList), `peerCount` (int), `phase` (string), `tailnetName` (string) |

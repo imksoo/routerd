@@ -342,12 +342,6 @@ func gcRoundTripCases() []gcRoundTripCase {
 			},
 		},
 		{
-			name: "RemoteAddressClaim SAM capture status cleanup",
-			statuses: []routerstate.ObjectStatus{
-				{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim", Name: "client-a", Status: map[string]any{"phase": "Captured", "captureProxyNeighbor": map[string]any{"address": "10.77.60.9/32", "interface": "lan"}}},
-			},
-		},
-		{
 			name: "SAM proxy ARP sysctl status cleanup",
 			statuses: []routerstate.ObjectStatus{
 				{APIVersion: api.SystemAPIVersion, Kind: "Sysctl", Name: "sam-proxy-arp-lan", Status: map[string]any{"key": "net.ipv4.conf.lan.proxy_arp", "previousValue": "0", "changed": true}},

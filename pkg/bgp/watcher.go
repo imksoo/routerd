@@ -3,6 +3,7 @@
 package bgp
 
 import (
+	"fmt"
 	"hash/fnv"
 	"sort"
 	"strconv"
@@ -101,6 +102,43 @@ func HasCommunity(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// InstalledNextHopsFromStatus decodes the BGPRouter observation field while
+// accepting both in-memory and JSON-decoded status values.
+func InstalledNextHopsFromStatus(value any) map[string][]string {
+	out := map[string][]string{}
+	switch typed := value.(type) {
+	case map[string][]string:
+		for prefix, hops := range typed {
+			out[strings.TrimSpace(prefix)] = sortedUnique(hops)
+		}
+	case map[string]any:
+		for prefix, raw := range typed {
+			out[strings.TrimSpace(prefix)] = sortedUnique(statusStrings(raw))
+		}
+	}
+	return out
+}
+
+func statusStrings(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return sortedUnique(typed)
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if value := strings.TrimSpace(fmt.Sprint(item)); value != "" {
+				out = append(out, value)
+			}
+		}
+		return sortedUnique(out)
+	default:
+		if value := strings.TrimSpace(fmt.Sprint(value)); value != "" && value != "<nil>" {
+			return []string{value}
+		}
+	}
+	return nil
 }
 
 func Diff(previous, current State) []Event {

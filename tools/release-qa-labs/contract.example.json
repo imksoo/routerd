@@ -3,6 +3,17 @@
   "runId": "relqa-<rc8>-<UTC timestamp>",
   "environment": "routerd-release-qualification",
   "topology": "cloudedge-sam-full",
+  "qualification": {
+    "profile": "representative-redundancy",
+    "runScope": "full-representative",
+    "provisioningBudgetSeconds": 1080,
+    "qualificationBudgetSeconds": 1920,
+    "minimumSupervisorReserveSeconds": 300
+  },
+  "safety": {
+    "pveManagementControlPlane": "none",
+    "pveTLS": "pinned-ca"
+  },
   "stateMode": "fresh-fabric-fresh-state",
   "routerdArtifact": {
     "version": "vYYYYMMDD.HHMM",
@@ -15,9 +26,11 @@
     "scriptBlobs": {
       "scripts/certify-cloud-substrate.sh": "<committed blob SHA-256>",
       "scripts/certify-pve-substrate.sh": "<committed blob SHA-256>",
-      "tests/e2e/cloudedge/scripts/sam-full-validation.sh": "<committed blob SHA-256>",
+      "tests/e2e/cloudedge/scripts/sam-representative-redundancy.sh": "<committed blob SHA-256>",
+      "tests/e2e/cloudedge/scripts/sam-e2e.sh": "<committed blob SHA-256>",
       "tests/e2e/cloudedge/scripts/sam-pve-qga-addresses.sh": "<committed blob SHA-256>",
-      "tests/e2e/cloudedge/scripts/sam-pve-bridge-audit.sh": "<committed blob SHA-256>"
+      "tests/e2e/cloudedge/scripts/sam-pve-bridge-audit.sh": "<committed blob SHA-256>",
+      "tools/release-qa-labs/drivers/pve-capture-bridge.sh": "<committed blob SHA-256>"
     }
   },
   "qaImplementation": {
@@ -26,7 +39,10 @@
     "scriptBlobs": {
       "tools/release-qa-labs/qa_guard.py": "<committed blob SHA-256>",
       "tools/release-qa-labs/lifecycle_supervisor.py": "<committed blob SHA-256>",
-      "tools/release-qa-labs/drivers/start-supervised-release-qa.sh": "<committed blob SHA-256>"
+      "tools/release-qa-labs/drivers/start-supervised-release-qa.sh": "<committed blob SHA-256>",
+      "tools/release-qa-labs/drivers/pve-capture-bridge.sh": "<committed blob SHA-256>",
+      "tools/release-qa-labs/drivers/pve-orphan-cleanup.sh": "<committed blob SHA-256>",
+      "tools/release-qa-labs/drivers/revoke-pve-run-token.sh": "<committed blob SHA-256>"
     }
   },
   "execution": {
@@ -41,14 +57,17 @@
       "bpg/proxmox": "0.111.1"
     }
   },
+  "guestSSH": {
+    "publicKey": "ssh-ed25519 AAAA..."
+  },
   "limits": {
     "maxEstimatedCostUsd": 1.0,
-    "providerCounts": {"aws": 6, "azure": 4, "oci": 4, "pve": 4},
+    "providerCounts": {"aws": 4, "azure": 4, "oci": 4, "pve": 7},
     "instanceTypes": {
-      "aws": {"t3.medium": 2, "t3.large": 2, "t3.micro": 2},
+      "aws": {"t3.large": 2, "t3.micro": 2},
       "azure": {"Standard_B1s": 4},
       "oci": {"VM.Standard.E2.1": 4},
-      "pve": {"template-clone": 4}
+      "pve": {"template-stage": 1, "template-clone": 6}
     },
     "regions": {"aws": "ap-northeast-1", "azure": "japaneast", "oci": "ap-tokyo-1", "pve": "local"}
   },
@@ -66,22 +85,51 @@
     "outputPath": "/var/lib/routerd-release-qa/<run>/runtime/tofu-output-full.json"
   },
   "pve": {
-    "node": "pve01",
-    "sshHost": "pve01.lain.local",
-    "datastore": "local-lvm",
+    "node": "<certified-pve-leaf-node>",
+    "sshHost": "<certified-pve-leaf-ssh-host>",
+    "tokenOwner": "<preprovisioned-release-qa-user>@<realm>",
+    "datastore": "<certified-pve-datastore>",
     "bootSource": "template",
-    "underlayBridge": "vmbr0",
-    "captureBridge": "<run-scoped bridge>",
-    "managementAddressSource": "certified-static",
-    "vmids": [131, 141, 181, 182]
+    "templateStage": {
+      "sourceNode": "<certified-pve-leaf-node>",
+      "sourceTemplateVMID": 0,
+      "vmid": 0,
+      "datastore": "<certified-pve-datastore>"
+    },
+    "underlayBridge": "<certified-pve-underlay-bridge>",
+    "captureBridge": "<certified-run-scoped-capture-bridge>",
+    "managementAddressSource": "qga-dhcp",
+    "vmids": {
+      "pve-leaf-a": 0,
+      "pve-client-a": 0,
+      "pve-leaf-b": 0,
+      "pve-client-b": 0,
+      "pve-rr-a": 0,
+      "pve-rr-b": 0
+    },
+    "rrFaultDomain": "host-redundant",
+    "rrNodes": {
+      "pve-rr-a": {
+        "node": "<certified-pve-rr-a-node>",
+        "sshHost": "<certified-pve-rr-a-ssh-host>",
+        "vmid": 0,
+        "underlayBridge": "<certified-pve-rr-a-underlay-bridge>"
+      },
+      "pve-rr-b": {
+        "node": "<certified-pve-rr-b-node>",
+        "sshHost": "<certified-pve-rr-b-ssh-host>",
+        "vmid": 0,
+        "underlayBridge": "<certified-pve-rr-b-underlay-bridge>"
+      }
+    }
   },
   "lifecycle": {
-    "ttl": "45m",
+    "ttl": "55m",
     "heartbeatStale": "5m",
     "cleanupTimeout": "10m",
     "inventoryTimeout": "5m",
     "maxCleanupAttempts": 2,
-    "maxPaidLifecycleSeconds": 4500,
+    "maxPaidLifecycleSeconds": 5100,
     "cleanupScope": "run-id"
   }
 }

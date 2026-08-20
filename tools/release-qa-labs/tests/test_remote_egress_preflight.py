@@ -35,6 +35,7 @@ class RemoteEgressPreflightTests(unittest.TestCase):
         self.tfvars.write_text(
             'run_id = "run-1"\ncommit = "release-commit"\n'
             'aws_region = "ap-northeast-1"\naws_profile = "fixture"\n'
+            'aws_key_name = "routerd-release-qa-run-1"\n'
             'oci_region = "ap-tokyo-1"\noci_profile = "fixture"\n', encoding="utf-8")
         with self.tfvars.open("a", encoding="utf-8") as handle:
             handle.write('pve_node_name = "pve01"\npve_ssh_host = "pve01.lain.local"\n'
@@ -43,10 +44,32 @@ class RemoteEgressPreflightTests(unittest.TestCase):
         self.token = self.runtime / "pve-token.tfvars"
         self.token.write_text('pve_api_token = "fixture"\n', encoding="utf-8")
         self.token.chmod(0o600)
+        self.pinned_token = self.runtime / "pinned/pve-token.tfvars"
+        self.pinned_token.parent.mkdir(mode=0o700)
+        self.pinned_token.write_text(self.token.read_text(encoding="utf-8"), encoding="utf-8")
+        self.pinned_token.chmod(0o600)
         self.ssh_key = self.runtime / "secrets/pve_ssh"
         self.ssh_key.parent.mkdir(mode=0o700)
         self.ssh_key.write_text("fixture key\n", encoding="utf-8")
         self.ssh_key.chmod(0o600)
+        self.guest_ssh_key = self.runtime / "secrets/guest_ssh"
+        subprocess.run(
+            ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(self.guest_ssh_key)],
+            check=True,
+        )
+        self.guest_public_key = " ".join(
+            self.guest_ssh_key.with_suffix(".pub").read_text(encoding="utf-8").split()[:2]
+        )
+        self.pve_known_hosts = self.runtime / "secrets/pve-known_hosts"
+        self.pve_known_hosts.write_text(
+            "\n".join((
+                "pve01.lain.local ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEZpeHR1cmUtcHZlLWhvc3Qta2V5LTE=",
+                "pve02.lain.local ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEZpeHR1cmUtcHZlLWhvc3Qta2V5LTI=",
+                "pve03.lain.local ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEZpeHR1cmUtcHZlLWhvc3Qta2V5LTM=",
+            )) + "\n",
+            encoding="utf-8",
+        )
+        self.pve_known_hosts.chmod(0o600)
         self.azure_source = self.runtime / "secrets/azure-auth-source"
         self.azure_source.mkdir(mode=0o700)
         (self.azure_source / "azureProfile.json").write_text("{}\n", encoding="utf-8")
@@ -63,7 +86,21 @@ class RemoteEgressPreflightTests(unittest.TestCase):
             "lifecycle": {"ttl": "75m", "heartbeatStale": "5m"},
             "execution": {"host": "chatty", "providerMirror": str(self.mirror),
                           "providerVersions": {"hashicorp/aws": "1.2.3"}},
-            "pve": {"node": "pve01", "sshHost": "pve01.lain.local"},
+            "pve": {
+                "node": "pve01", "sshHost": "pve01.lain.local",
+                "rrFaultDomain": "host-redundant",
+                "managementAddressSource": "qga-dhcp",
+                "rrNodes": {
+                    "pve-rr-a": {
+                        "node": "pve02", "sshHost": "pve02.lain.local",
+                        "vmid": 171,
+                    },
+                    "pve-rr-b": {
+                        "node": "pve03", "sshHost": "pve03.lain.local",
+                        "vmid": 172,
+                    },
+                },
+            },
         }
         self.contract = self.runtime / "contract.json"
         self.contract.write_text(json.dumps(contract), encoding="utf-8")
@@ -111,7 +148,13 @@ exec "$@"''')
         self.make("openssl", '''echo "openssl $*" >>"$CALLS"
 case "${FAILURE:-}:$*" in tls:*|v6_tls:*-6*) exit 9;; esac
 exit 0''')
-        for name in ("aws", "oci", "ssh"):
+        self.make("aws", '''echo "aws $*" >>"$CALLS"
+[ "${FAILURE:-}" = aws ] && exit 9
+case " $* " in
+  *" ec2 describe-key-pairs "*) printf '%s\\n' "${AWS_PUBLIC_KEY:?}" ;;
+  *) echo "{}" ;;
+esac''')
+        for name in ("oci", "ssh"):
             self.make(name, f'echo "{name} $*" >>"$CALLS"; [ "${{FAILURE:-}}" = {name} ] && exit 9; echo "{{}}"')
         self.make("az", 'mkdir -p "$AZURE_CONFIG_DIR/commands"; echo "$*" >>"$AZURE_CONFIG_DIR/commands/test.log"; '
                          'echo "az $*" >>"$CALLS"; [ "${FAILURE:-}" = az ] && exit 9; echo "{}"')
@@ -124,9 +167,11 @@ exit 0''')
         path.write_text("#!/bin/sh\nset -eu\n" + body + "\n", encoding="utf-8")
         path.chmod(0o755)
 
-    def run_preflight(self, failure="", proxy=True, mirror_present=True, address_mode="native"):
+    def run_preflight(self, failure="", proxy=True, mirror_present=True, address_mode="native", aws_public_key=None):
         run_env = {"noProxy": "127.0.0.1,localhost,pve01", "pveTokenTfvars": str(self.token),
-                   "pveSshPrivateKey": str(self.ssh_key), "azureAuthSource": str(self.azure_source)}
+                   "pveSshPrivateKey": str(self.ssh_key), "guestSshPrivateKey": str(self.guest_ssh_key),
+                   "pveSshKnownHosts": str(self.pve_known_hosts),
+                   "azureAuthSource": str(self.azure_source)}
         if proxy:
             run_env["httpsProxy"] = "http://127.0.0.1:18081"
         run_env_path = self.runtime / "run.env.json"
@@ -144,7 +189,9 @@ exit 0''')
         for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"):
             environment.pop(key, None)
         environment.update(PATH=f"{self.bin}:/usr/bin:/bin", CALLS=str(call_log), FAILURE=failure,
-                           ADDRESS_MODE=address_mode)
+                           ADDRESS_MODE=address_mode,
+                           AWS_PUBLIC_KEY=aws_public_key or self.guest_public_key,
+                           ROUTERD_RELEASE_QA_PINNED_PVE_TOKEN_TFVARS=str(self.pinned_token))
         result = subprocess.run(
             [str(self.drivers / "remote-egress-preflight.sh"), "--contract", str(self.contract)],
             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment, check=False)
@@ -169,12 +216,27 @@ exit 0''')
         self.assertRegex(result_data["contractSha256"], r"^[0-9a-f]{64}$")
         self.assertIn("pve01.lain.local", log)
         self.assertNotIn("root@pve01 ", log)
+        self.assertIn("-n -i", log)
+        self.assertIn("BatchMode=yes", log)
+        self.assertIn("StrictHostKeyChecking=yes", log)
+        self.assertIn(f"UserKnownHostsFile={self.pve_known_hosts}", log)
+        self.assertIn("GlobalKnownHostsFile=/dev/null", log)
+        self.assertIn("ConnectTimeout=10", log)
 
     def test_proxy_negative_matrix_is_fail_closed(self):
         for failure in ("dns", "tcp", "proxy", "aws", "az", "oci", "ssh", "pve_tcp"):
             with self.subTest(failure=failure):
                 self.assert_failed(failure, proxy=True)
         self.assert_failed("mirror", proxy=True, mirror_present=False)
+
+    def test_aws_key_pair_must_match_the_pinned_guest_key(self):
+        other = self.root / "other-guest-key"
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(other)], check=True)
+        other_public = " ".join(other.with_suffix(".pub").read_text(encoding="utf-8").split()[:2])
+        result, _calls, output = self.run_preflight(proxy=True, aws_public_key=other_public)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not match", result.stderr)
+        self.assertFalse(output.exists())
 
     def test_mid_auth_failure_leaves_no_group_or_world_readable_evidence(self):
         self.assert_failed("az", proxy=True)

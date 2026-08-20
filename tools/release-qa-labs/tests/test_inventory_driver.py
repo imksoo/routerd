@@ -48,10 +48,21 @@ class InventoryDriverTests(unittest.TestCase):
         ssh_key.parent.mkdir(mode=0o700)
         ssh_key.write_text("fixture key\n", encoding="utf-8")
         ssh_key.chmod(0o600)
+        guest_ssh_key = self.runtime / "secrets/guest_ssh"
+        guest_ssh_key.write_text("fixture guest key\n", encoding="utf-8")
+        guest_ssh_key.chmod(0o600)
+        self.pve_known_hosts = self.runtime / "secrets/pve-known_hosts"
+        self.pve_known_hosts.write_text(
+            "pve01.lain.local ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEZpeHR1cmUtcHZlLWhvc3Qta2V5\n",
+            encoding="utf-8",
+        )
+        self.pve_known_hosts.chmod(0o600)
         run_env_path = self.runtime / "run.env.json"
         run_env_path.write_text(json.dumps({
             "httpsProxy": "http://127.0.0.1:18081", "noProxy": "localhost,pve01",
             "pveTokenTfvars": str(token), "pveSshPrivateKey": str(ssh_key),
+            "guestSshPrivateKey": str(guest_ssh_key),
+            "pveSshKnownHosts": str(self.pve_known_hosts),
         }), encoding="utf-8")
         run_env_path.chmod(0o600)
         contract = {
@@ -61,7 +72,9 @@ class InventoryDriverTests(unittest.TestCase):
                      "variablesPath": str(self.tfvars), "outputPath": str(self.tf / "output")},
             "lifecycle": {"ttl": "75m", "heartbeatStale": "5m"},
             "pve": {"node": "pve01", "sshHost": "pve01.lain.local",
-                    "vmids": [131, 141, 181, 182], "captureBridge": "vmbr999"},
+                    "vmids": {"pve-leaf-a": 131, "pve-client-a": 141,
+                              "pve-leaf-b": 181, "pve-client-b": 182},
+                    "captureBridge": "vmbr999"},
         }
         contract_path = self.runtime / "contract.json"
         contract_path.write_text(json.dumps(contract), encoding="utf-8")
@@ -84,7 +97,8 @@ exit 0''')
     def install_provider_fixtures(self, *, aws_tagged='{"ResourceTagMappingList":[]}',
                                   azure_exists="false", azure_resources="[]",
                                   oci_tagged='{"data":{"items":[]}}', pve_bridge="[]",
-                                  oci_pages=None, pve_vm=False, qm_transient=False, fail=""):
+                                  pve_live_bridge="[]", oci_pages=None, pve_vm=False,
+                                  qm_transient=False, fail=""):
         self.make("aws", f'''echo "$*" >>"$CALLS/aws"
 [ "{fail}" = aws ] && exit 7
 case " $* " in *" ec2 describe-instances "*) echo '{{"Reservations":[]}}';; *) printf '%s\\n' '{aws_tagged}';; esac''')
@@ -111,6 +125,7 @@ esac''')
 case " $* " in
   *"pvesh get /cluster/resources"*) [ "{str(qm_transient).lower()}" = true ] && exit 255; printf '%s\\n' '{pve_vms}';;
   *"pvesh get /nodes/"*) printf '%s\\n' '{pve_bridge}';;
+  *"ip -j -d link show"*) printf '%s\\n' '{pve_live_bridge}';;
 esac''')
 
     def run_driver(self):
@@ -136,7 +151,14 @@ esac''')
         ssh = (self.calls / "ssh").read_text()
         self.assertIn("pvesh get /cluster/resources --type vm", ssh)
         self.assertIn("pvesh get /nodes/pve01/network", ssh)
+        self.assertIn("ip -j -d link show", ssh)
         self.assertIn("root@pve01.lain.local", ssh)
+        self.assertIn("-n -i", ssh)
+        self.assertIn("BatchMode=yes", ssh)
+        self.assertIn("StrictHostKeyChecking=yes", ssh)
+        self.assertIn(f"UserKnownHostsFile={self.pve_known_hosts}", ssh)
+        self.assertIn("GlobalKnownHostsFile=/dev/null", ssh)
+        self.assertIn("ConnectTimeout=10", ssh)
         scopes = {x["name"]: x for x in json.loads((evidence / "inventory.json").read_text())["scopes"]}
         self.assertTrue(all(x["count"] == 0 and x["queryStatus"] == "complete" for x in scopes.values()))
 
@@ -155,6 +177,7 @@ esac''')
             aws_tagged='{"ResourceTagMappingList":[{"ResourceARN":"arn:fixture"}]}',
             oci_tagged='{"data":{"items":[{"identifier":"ocid.fixture"}]}}',
             pve_bridge='[{"iface":"vmbr999"}]',
+            pve_live_bridge='[{"ifname":"vmbr999","linkinfo":{"info_kind":"bridge"}}]',
             pve_vm=True,
         )
         result, evidence = self.run_driver()
@@ -164,6 +187,16 @@ esac''')
         self.assertEqual(counts["oci-tagged-resources"], 1)
         self.assertEqual(counts["pve-vms"], 4)
         self.assertEqual(counts["pve-bridges"], 1)
+
+    def test_live_only_pve_capture_bridge_is_not_reported_as_zero(self):
+        self.install_provider_fixtures(
+            pve_live_bridge='[{"ifname":"vmbr999","linkinfo":{"info_kind":"bridge"}}]'
+        )
+        result, evidence = self.run_driver()
+        self.assertNotEqual(result.returncode, 0)
+        scopes = {x["name"]: x for x in json.loads((evidence / "inventory.json").read_text())["scopes"]}
+        self.assertEqual(scopes["pve-bridges"]["count"], 1)
+        self.assertEqual(scopes["pve-bridges"]["queryStatus"], "complete")
 
     def test_provider_failure_and_invalid_json_fail_closed(self):
         for provider in ("aws", "az", "oci", "ssh"):

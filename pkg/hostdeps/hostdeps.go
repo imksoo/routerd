@@ -8,7 +8,6 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
-	"github.com/imksoo/routerd/pkg/sam"
 	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
 
@@ -61,8 +60,11 @@ func PackageSets(router *api.Router) []api.OSPackageSetSpec {
 }
 
 var ubuntuPackages = map[string][]string{
-	"arping":        {"iputils-arping"},
-	"base":          {"iproute2", "systemd"},
+	"arping": {"iputils-arping"},
+	// systemd is the host service manager, not a routerd runtime dependency.
+	// Letting the Package controller upgrade it can re-exec PID 1 while routerd
+	// is reconciling, interrupting its own control socket and service restart.
+	"base":          {"iproute2"},
 	"bgp":           {},
 	"conntrack":     {"conntrack"},
 	"dhcp-dns":      {"dnsmasq-base"},
@@ -146,10 +148,6 @@ func packageFeatures(router *api.Router) map[string]bool {
 			features["ipsec"] = true
 		case "TailscaleNode":
 			features["tailscale"] = true
-		case "RemoteAddressClaim":
-			if spec, err := res.RemoteAddressClaimSpec(); err == nil && spec.Capture.Type == "proxy-arp" && (spec.Capture.GratuitousARP || spec.Capture.ActiveWhen.Type == "vrrp-master") {
-				features["arping"] = true
-			}
 		}
 	}
 	if len(KernelModules(router)) > 0 {
@@ -315,47 +313,12 @@ func DerivedSysctlResourcesForOS(router *api.Router, osName platform.OS) []api.R
 			}
 		}
 	}
-	for _, setting := range derivedSAMSysctls(router) {
-		if explicit[setting.Spec.Key] {
-			continue
-		}
-		out = append(out, sysctlResourceFor(setting.Name, setting.Spec))
-		explicit[setting.Spec.Key] = true
-	}
 	for _, setting := range derivedInterfaceSysctls(router) {
 		if explicit[setting.Spec.Key] {
 			continue
 		}
 		out = append(out, sysctlResourceFor(setting.Name, setting.Spec))
 		explicit[setting.Spec.Key] = true
-	}
-	return out
-}
-
-func derivedSAMSysctls(router *api.Router) []sysctlResource {
-	if router == nil || !sam.HasRemoteAddressClaims(router) {
-		return nil
-	}
-	var out []sysctlResource
-	out = append(out, sysctlResource{
-		Name: "sam-ip-forward",
-		Spec: api.SysctlSpec{
-			Key:        "net.ipv4.ip_forward",
-			Value:      "1",
-			Runtime:    boolPtr(true),
-			Persistent: true,
-		},
-	})
-	for _, iface := range sam.ProxyARPInterfaces(router) {
-		out = append(out, sysctlResource{
-			Name: "sam-proxy-arp-" + safeResourceName(iface),
-			Spec: api.SysctlSpec{
-				Key:      "net.ipv4.conf." + iface + ".proxy_arp",
-				Value:    "1",
-				Runtime:  boolPtr(true),
-				Optional: true,
-			},
-		})
 	}
 	return out
 }

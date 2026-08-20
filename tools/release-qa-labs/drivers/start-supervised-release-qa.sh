@@ -23,6 +23,26 @@ launcher_run_env="$runtime_root/run.env.json"
 if [ -f "$state" ] && [ -f "$runtime_root/pinned/run.env.json" ]; then
   launcher_run_env="$runtime_root/pinned/run.env.json"
 fi
+pve_token_tfvars="$(jq -er '.pveTokenTfvars' "$launcher_run_env")"
+pve_token_expected="$runtime_root/secrets/pve-token.tfvars"
+[ "$pve_token_tfvars" = "$pve_token_expected" ] || {
+  echo "release QA launcher: PVE token source is not canonical" >&2; exit 2;
+}
+pve_ca_pem="$(jq -er '.pveCaPem' "$launcher_run_env")"
+pve_ca_expected="$runtime_root/secrets/pve-ca.pem"
+[ "$pve_ca_pem" = "$pve_ca_expected" ] || {
+  echo "release QA launcher: PVE CA source is not canonical" >&2; exit 2;
+}
+guest_ssh_private_key="$(jq -er '.guestSshPrivateKey' "$launcher_run_env")"
+guest_ssh_private_key_expected="$runtime_root/secrets/guest_ssh"
+[ "$guest_ssh_private_key" = "$guest_ssh_private_key_expected" ] || {
+  echo "release QA launcher: guest SSH private key source is not canonical" >&2; exit 2;
+}
+pve_ssh_known_hosts="$(jq -er '.pveSshKnownHosts' "$launcher_run_env")"
+pve_ssh_known_hosts_expected="$runtime_root/secrets/pve-known_hosts"
+[ "$pve_ssh_known_hosts" = "$pve_ssh_known_hosts_expected" ] || {
+  echo "release QA launcher: PVE SSH known_hosts source is not canonical" >&2; exit 2;
+}
 azure_source="$(jq -er '.azureAuthSource' "$launcher_run_env")"
 azure_expected="$runtime_root/secrets/azure-auth-source"
 azure_state="$runtime_root/provider-state/azure"
@@ -95,8 +115,13 @@ exec python3 "$framework_root/lifecycle_supervisor.py" \
   --contract "$contract_path" --run-env "$runtime_root/run.env.json" \
   --tfvars "$runtime_root/terraform.tfvars" \
   --pve-ssh-private-key "$runtime_root/secrets/pve_ssh" \
+  --guest-ssh-private-key "$guest_ssh_private_key" \
+  --pve-ssh-known-hosts "$pve_ssh_known_hosts" \
+  --pve-token-tfvars "$pve_token_tfvars" \
+  --pve-ca-pem "$pve_ca_pem" \
   "${tamper_args[@]}" \
   --precheck-command "$framework_root/drivers/precheck-driver.sh" \
   --mutation-command "$framework_root/drivers/mutation-driver.sh" \
   --cleanup-command "$framework_root/drivers/supervisor-cleanup.sh" \
-  --inventory-command "$framework_root/drivers/supervisor-inventory.sh"
+  --inventory-command "$framework_root/drivers/supervisor-inventory.sh" \
+  --post-zero-command "$framework_root/drivers/revoke-pve-run-token.sh" --supervised "$run_id"

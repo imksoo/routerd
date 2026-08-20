@@ -62,7 +62,7 @@ allowlist/脫敏上下文。executor 自行向雲端驗證。憑證不經過 rou
 ### `ProviderActionPolicy` Kind
 
 新 Kind（`apiVersion: hybrid.routerd.net/v1alpha1`）對執行進行閘門控制。
-與 `RemoteAddressClaim` 和 `CloudProviderProfile` 定義在同一 `hybrid` 組中，
+與 `CloudProviderProfile` 及其管理的型別化 mobility plan 定義在同一 `hybrid` 組中，
 由它們管理。零值為安全的鎖定狀態：
 
 - `enabled`（bool，預設 false）— 除非為 true，否則執行被停用。

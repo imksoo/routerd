@@ -13,10 +13,10 @@ Phase 1、1.5、2、3 已在 **`event-federation` 分支实现**：
 - **Phase 2**（经由 overlay 的 peer 投递、`routerd-eventd`、HMAC、重试、
   retention 清理）— 完成。**lab-smoke PASS**
   （[传输证据](../releases/evidence/cloudedge-event-federation-transport-20260530.md)）。
-- **Phase 3**（subscription → plugin → `RemoteAddressClaim` `DynamicConfigPart`）—
+- **Phase 3**（subscription → plugin → 类型化 `DynamicConfigPart`）—
   完成。**lab-smoke PASS**
   （[subscription 证据](../releases/evidence/cloudedge-event-federation-subscription-20260530.md)、
-  [how-to](../how-to/event-federation-subscription.md)）。
+  [mobility demo](../how-to/cloudedge-mobility-demo.md)）。
 
 Phase 4（provider `actionPlan` 插件、dry-run）**下一阶段尚未开始**。
 Phase 5（provider action 执行）**不在 MVP 范围内**。
@@ -26,13 +26,12 @@ Phase 5（provider action 执行）**不在 MVP 范围内**。
 SAM（[参考](../reference/selective-address-mobility)、
 [里程碑](../releases/cloudedge-sam-mvp-milestone.md)）已在
 Azure×PVE、AWS×PVE、OCI×PVE 上完成清洁验证（3 云对等）。SAM 证明了
-**capture（provider 特定）/ delivery+claim（routerd 通用）** 的分离。但是，
-驱动它的 `RemoteAddressClaim` **目前仍是手动描述的**。下一步是通过
-**事件驱动**来发现、传播和实体化 claim：
+**capture（provider 特定）/ BGP delivery 加类型化本地计划**的分离。旧的手工地址资源
+阶段已被移除，观测事实通过**事件驱动**进入 `MobilityPool` 计划：
 
 > on-prem 的 routerctl 检测到客户端 IPv4（ARP/Clients/DHCP）→ 发出类型化事件 →
-> federation 总线将其投递到云端 routerd → subscription 启动 provider 插件 →
-> 插件以 `DynamicConfigPart` 形式返回 `RemoteAddressClaim`
+> federation 总线将其投递到云端 routerd → subscription 记录/接纳观测事实 →
+> `MobilityPool` 计划生成类型化本地 capture 与 FIB intent
 > （+ provider secondary-IP `actionPlan`）→ **无需人工编辑云端配置**，
 > 云端即准备好执行 `provider-secondary-ip` capture。
 
@@ -45,11 +44,10 @@ Azure×PVE、AWS×PVE、OCI×PVE 上完成清洁验证（3 云对等）。SAM �
 - **类型化事件信封**: `pkg/daemonapi` 的 `DaemonEvent{Type,Time,Daemon,Resource,
   Severity,Reason,Message,Attributes}` + `NewEvent(...)`。当前是 daemon→main 流程，
   但已经是带类型和 topic 的信封。
-- **daemon→routerd 传输模式**: daemon 通过 UNIX 套接字上的
+- **helper→routerd 传输模式**: 本地 helper 通过 UNIX 套接字上的
   HTTP POST 到控制套接字（`cmd/routerd-dhcp-event-relay` → `controlapi.Prefix +
-  /dhcp-lease-event` via `unix:/run/routerd/routerd.sock`）。已有*事件中继 daemon 的先例*。
-- **分离的长生命周期 daemon 先例**: 13 个 `cmd/routerd-*` daemon
-  （`routerd-bgp`、`routerd-ra-observer`、`routerd-dhcp-event-relay` 等）。
+  /dhcp-lease-event` via `unix:/run/routerd/routerd.sock`）。DHCP relay 不是 daemon，而是由 dnsmasq 按次调用的一次性 callback helper。
+- **分离的长生命周期 daemon 先例**: `routerd-bgp`、`routerd-ra-observer` 等长生命周期 `cmd/routerd-*` 进程。
   gobgp pivot（ADR 0004）确立了"为避免重启导致的中断，使用分离进程而非进程内嵌入"。
 - **Plugin → DynamicConfigPart 管线**: `pkg/plugin/runner.go`、
   `pkg/plugin/dynamic_config.go`、`pkg/dynamicconfig/{types,merge}.go`、
@@ -66,8 +64,8 @@ Azure×PVE、AWS×PVE、OCI×PVE 上完成清洁验证（3 云对等）。SAM �
 ### 设计原则
 
 1. **事件是观测事实，不是配置。** 节点发送
-   `routerd.client.ipv4.observed`，而不发送原始的 `RemoteAddressClaim`。接收端的
-   *受信任本地插件*决定是否以及如何将其转换为类型化 claim + actionPlan。线路上不传输命令。
+   `routerd.client.ipv4.observed`，而不发送原始 desired-capture 资源。接收端的
+   *受信任本地接纳路径*决定该事实是否以及如何进入 `MobilityPool` 计划与 provider action proposal。线路上不传输命令。
 2. **at-least-once + 幂等**，而非 exactly-once。存储的幂等性以事件 `id` 为键
    （重复 `id` 为 no-op insert）。`dedupeKey` 是 subscription 端的分组键，
    用于聚合同一事实的重复观测，在 Phase 1 中**不是** DB 的唯一约束。动态资源名称是确定性的
@@ -148,11 +146,11 @@ Azure×PVE、AWS×PVE、OCI×PVE 上完成清洁验证（3 云对等）。SAM �
   `DynamicConfigPart`（带 `routerd.net/dynamic-source`、`event-id`、`event-group`
   注解）。去抖/batchWindow。`event_subscription_runs`。
   *验收条件:* 云端收到 `10.88.60.9/32` 的 `client.ipv4.observed` → 插件 →
-  `RemoteAddressClaim` DynamicConfigPart 可通过 `routerctl dynamic render` 确认。
+  类型化 DynamicConfigPart 可通过 `routerctl dynamic render` 确认。
   actionPlan 仅显示，不执行。
-- **下一步（未开始）— Phase 4 — provider actionPlan 插件（dry-run）。** `aws/azure/oci-address-claim`
-  示例插件。标准化 `actionPlan` 格式。实例 ID 认证。
-  *验收条件:* 插件提议 assign-secondary-IP。无 mutation。计划可通过
+- **下一步（未开始）— Phase 4 — provider `actionPlan` 规划（dry-run）。**
+  使用标准化的 `actionPlan` 格式和实例 ID 认证。
+  *验收条件:* 规划提议 assign-secondary-IP。无 mutation。计划可通过
   `routerctl plugin`/`dynamic` 确认。
 - **Phase 5 —（MVP 后）provider action 执行。** approval/auto-apply 策略、
   action 日志、尽力 undo、身份文档。不在 MVP 范围内。

@@ -3,8 +3,10 @@ set -euo pipefail
 
 # Scenario/mechanism check only: this script drives proxy-neighbor and GARP
 # behavior itself inside netns. It does not verify routerd's SAM policy wiring.
-# The policy gate is the Go test
-# TestSAMControllerGARPPolicyCaptureSilentHolderTransitionOnly.
+# The typed LocalCaptureIntent-to-SAM boundaries are covered separately by
+# TestBuildDynamicRouteSAMViewReadsTypedMobilityPlanFromOneSnapshot,
+# TestPlanLocalCaptureIntentsLowersProviderCaptureDirectly, and
+# TestBuildGratuitousARPFrameUsesUnassignedAddress.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=tests/netns/lib.sh

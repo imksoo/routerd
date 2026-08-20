@@ -325,7 +325,7 @@ func TestDaemonObservedOnlyStatusPromotesHealthCheckObservedPhase(t *testing.T) 
 	if got := status["reason"]; got == "WhenFalse" {
 		t.Fatalf("reason = %v, want cleared after healthcheck observation", got)
 	}
-	if observed := statusMap(status["observed"]); observed["phase"] != healthcheck.PhaseHealthy {
+	if observed := statusValueMap(status["observed"]); observed["phase"] != healthcheck.PhaseHealthy {
 		t.Fatalf("observed phase = %v, want %s", observed["phase"], healthcheck.PhaseHealthy)
 	}
 }
@@ -401,7 +401,7 @@ func TestDaemonObservedOnlyStatusPromotesDHCPv6PrefixDelegationObservedPhase(t *
 	if got := status["reason"]; got == "WhenFalse" {
 		t.Fatalf("reason = %v, want cleared after DHCPv6-PD observation", got)
 	}
-	if observed := statusMap(status["observed"]); observed["phase"] != daemonapi.ResourcePhaseBound || observed["currentPrefix"] != "2409:10:3d60:1220::/60" {
+	if observed := statusValueMap(status["observed"]); observed["phase"] != daemonapi.ResourcePhaseBound || observed["currentPrefix"] != "2409:10:3d60:1220::/60" {
 		t.Fatalf("observed = %#v, want Bound observed prefix", observed)
 	}
 }

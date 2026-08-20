@@ -70,6 +70,13 @@ func BuildEffectiveConfig(startup api.Router, parts []DynamicConfigPart, policie
 // router for targetOS. Cross-platform callers must use this form rather than
 // letting validation inherit the host running the caller.
 func BuildEffectiveConfigForOS(startup api.Router, parts []DynamicConfigPart, policies []DynamicOverridePolicy, now time.Time, targetOS platform.OS) (api.Router, EffectiveResult, error) {
+	// The startup Router is the operator-authored boundary. Validate it before
+	// adding runtime payloads so a runtime-only resource kind cannot be smuggled
+	// into static configuration merely because it also has a DynamicConfigPart
+	// representation.
+	if err := config.ValidateForOS(&startup, targetOS); err != nil {
+		return api.Router{}, EffectiveResult{}, err
+	}
 	effective, err := cloneRouter(startup)
 	if err != nil {
 		return api.Router{}, EffectiveResult{}, err
@@ -187,7 +194,7 @@ func BuildEffectiveConfigForOS(startup api.Router, parts []DynamicConfigPart, po
 		}
 	}
 
-	if err := config.ValidateForOS(&effective, targetOS); err != nil {
+	if err := config.ValidateEffectiveForOS(&effective, targetOS); err != nil {
 		return api.Router{}, result, err
 	}
 	return effective, result, nil

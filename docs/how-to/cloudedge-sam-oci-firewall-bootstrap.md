@@ -34,9 +34,9 @@ On each OCI SAM router, the host firewall must permit:
 `WireGuardInterface` controller ensures an `INPUT` accept rule for that UDP
 port and reports the result in `WireGuardInterface.status.hostFirewall`.
 
-Forwarding allowances remain path-specific. For managed capture paths,
-`RemoteAddressClaim` owns the capture-interface-to-tunnel `FORWARD` opening
-that it needs. Until the full CloudEdge SAM path is green on clean OCI hosts,
+Forwarding allowances remain path-specific. The typed `MobilityPool` local
+capture plan owns the capture-interface-to-tunnel `FORWARD` opening it needs.
+Until the full CloudEdge SAM path is green on clean OCI hosts,
 keep `routerctl doctor hybrid` in the acceptance gate so image-level
 reject-all `FORWARD` rules are detected instead of becoming a silent dataplane
 failure.

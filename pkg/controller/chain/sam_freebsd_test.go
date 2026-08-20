@@ -133,10 +133,10 @@ func TestFreeBSDSAMProxyAllSysctlAndPerClaimDelete(t *testing.T) {
 		}
 	}
 	applier := freeBSDSAMProxyNeighborApplier{}
-	if err := applier.SetProxyARP(context.Background(), "", true, false); err != nil {
+	if _, err := applier.SetProxyARP(context.Background(), "", true, false); err != nil {
 		t.Fatalf("SetProxyARP(true): %v", err)
 	}
-	if err := applier.SetProxyARP(context.Background(), "", false, true); err != nil {
+	if _, err := applier.SetProxyARP(context.Background(), "", false, true); err != nil {
 		t.Fatalf("SetProxyARP(false): %v", err)
 	}
 	if err := applier.DeleteProxyNeighbor(context.Background(), "192.0.2.55/32", "em0"); err != nil {
@@ -147,7 +147,7 @@ func TestFreeBSDSAMProxyAllSysctlAndPerClaimDelete(t *testing.T) {
 	}
 
 	current = "1"
-	if err := applier.SetProxyARP(context.Background(), "", false, false); err == nil || !strings.Contains(err.Error(), "refusing adoption") {
+	if _, err := applier.SetProxyARP(context.Background(), "", false, false); err == nil || !strings.Contains(err.Error(), "refusing disable") {
 		t.Fatalf("foreign proxyall refusal = %v", err)
 	}
 }
@@ -201,7 +201,7 @@ func TestFreeBSDSAMPFDeviceMissingIsOnlyAnEmptyDesiredNoop(t *testing.T) {
 	if err := (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), nil); err != nil {
 		t.Fatalf("empty desired missing PF = %v", err)
 	}
-	paths := []sam.CaptureAction{{Kind: "forward-path", ClaimName: "claim", Address: "192.0.2.55", Interface: "em0", PeerInterface: "gif0"}}
+	paths := []sam.CaptureAction{{Kind: "forward-path", IntentID: "intent", Address: "192.0.2.55", Interface: "em0", PeerInterface: "gif0"}}
 	if err := (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), paths); err == nil || !strings.Contains(err.Error(), "/dev/pf") {
 		t.Fatalf("non-empty desired missing PF error = %v", err)
 	}
@@ -228,7 +228,7 @@ func TestFreeBSDSAMPFForwardPathRequiresReachableAnchorAndUses32(t *testing.T) {
 		input = gotInput
 		return nil, nil
 	}
-	paths := []sam.CaptureAction{{Kind: "forward-path", ClaimName: "claim", Address: "192.0.2.55/24", Interface: "em0", PeerInterface: "gif0"}}
+	paths := []sam.CaptureAction{{Kind: "forward-path", IntentID: "intent", Address: "192.0.2.55/24", Interface: "em0", PeerInterface: "gif0"}}
 	if err := (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), paths); err != nil {
 		t.Fatalf("ReconcileForwardPaths: %v", err)
 	}
@@ -299,7 +299,7 @@ func TestFreeBSDSAMPFForwardPathSerializesAnchorTransactions(t *testing.T) {
 		<-release
 		return nil, nil
 	}
-	paths := []sam.CaptureAction{{Kind: "forward-path", ClaimName: "claim", Address: "192.0.2.55", Interface: "em0", PeerInterface: "gif0"}}
+	paths := []sam.CaptureAction{{Kind: "forward-path", IntentID: "intent", Address: "192.0.2.55", Interface: "em0", PeerInterface: "gif0"}}
 	errCh := make(chan error, 2)
 	go func() { errCh <- (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), paths) }()
 	select {

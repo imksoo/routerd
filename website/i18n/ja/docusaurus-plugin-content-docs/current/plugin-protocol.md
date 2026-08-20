@@ -158,25 +158,10 @@ Go 形式の構文です。
     "ttl": "300s",
     "resources": [
       {
-        "apiVersion": "hybrid.routerd.net/v1alpha1",
-        "kind": "RemoteAddressClaim",
-        "metadata": { "name": "app-10-0-1-123" },
-        "spec": {
-          "domainRef": "cloudedge-same-subnet",
-          "address": "10.0.1.123/32",
-          "ownerSide": "cloud",
-          "capture": {
-            "type": "provider-secondary-ip",
-            "providerRef": "oci-prod",
-            "providerMode": "vnic-private-ip",
-            "nicRef": "ocid1.vnic.oc1..example"
-          },
-          "delivery": {
-            "peerRef": "cloud-main",
-            "mode": "route",
-            "tunnelInterface": "wg-hybrid"
-          }
-        }
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "IPv4Route",
+        "metadata": { "name": "cloud-app-static-fallback" },
+        "spec": { "destination": "10.0.1.123/32", "gateway": "192.0.2.1" }
       }
     ],
     "directives": [
@@ -187,7 +172,7 @@ Go 形式の構文です。
           "kind": "IPv4Route",
           "name": "cloud-app-static-fallback"
         },
-        "reason": "RemoteAddressClaim/app-10-0-1-123 is active"
+        "reason": "provider inventory confirms the dynamic route"
       }
     ],
     "actionPlans": [
@@ -242,9 +227,9 @@ Private Endpoint のアドレス一覧を `status.localIPs` にも入れてく�
 ない場合、routerd は `observedCandidates`、次に `ips` へフォールバックします。
 
 プラグインが完全な local inventory を `localIPs` で返しつつ、event 発行候補だけを狭めたい
-場合は `status.observedCandidates` を使えます。SAM の ownership resolver は shadow
-locality 分類に `localIPs` を使い、既存の discovery event 経路は `observedCandidates`
-または legacy `ips` を使い続けます。
+場合は `status.observedCandidates` を使えます。SAM はこの local inventory を router 自身の
+NIC、private IP、trusted subnet の範囲を確定するためだけに使います。永続的な ownership
+fact は filter 済みの `observedCandidates` から作られ、候補がなければ legacy `ips` を使います。
 
 各 private IP record は、プロバイダーが取得できる場合は `resourceRef` にその IP が
 紐づく compute instance ID を入れ、`resourceType` で router NIC、通常の instance NIC、

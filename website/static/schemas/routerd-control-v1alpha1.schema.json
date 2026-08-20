@@ -2027,6 +2027,66 @@
     {
       "additionalProperties": false,
       "properties": {
+        "action": {
+          "description": "Canonical internal DHCP lease action. dnsmasq callback verbs are normalized at the relay boundary.",
+          "enum": [
+            "added",
+            "renewed",
+            "removed"
+          ],
+          "type": "string"
+        },
+        "apiVersion": {
+          "type": "string"
+        },
+        "hostname": {
+          "type": "string"
+        },
+        "interface": {
+          "description": "Optional dnsmasq interface observed by the lease hook.",
+          "type": "string"
+        },
+        "ip": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "mac": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "action",
+        "ip"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "accepted": {
+          "type": "boolean"
+        },
+        "apiVersion": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "accepted"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
         "apiVersion": {
           "type": "string"
         },

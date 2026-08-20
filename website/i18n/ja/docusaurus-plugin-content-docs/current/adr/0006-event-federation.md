@@ -13,10 +13,10 @@ Phase 1、1.5、2、3 は **`event-federation` ブランチで実装済み**：
 - **Phase 2**（オーバーレイ経由のピア配送、`routerd-eventd`、HMAC、リトライ、
   リテンション prune）— 完了。**lab-smoke PASS**
   （[トランスポートエビデンス](../releases/evidence/cloudedge-event-federation-transport-20260530.md)）。
-- **Phase 3**（subscription → plugin → `RemoteAddressClaim` `DynamicConfigPart`）—
+- **Phase 3**（subscription → plugin → 型付き `DynamicConfigPart`）—
   完了。**lab-smoke PASS**
   （[subscription エビデンス](../releases/evidence/cloudedge-event-federation-subscription-20260530.md)、
-  [how-to](../how-to/event-federation-subscription.md)）。
+  [mobility demo](../how-to/cloudedge-mobility-demo.md)）。
 
 Phase 4（プロバイダー `actionPlan` プラグイン、dry-run）は**次のフェーズで未着手**。
 Phase 5（プロバイダーアクション実行）は **MVP スコープ外**。
@@ -26,13 +26,13 @@ Phase 5（プロバイダーアクション実行）は **MVP スコープ外**�
 SAM（[リファレンス](../reference/selective-address-mobility)、
 [マイルストーン](../releases/cloudedge-sam-mvp-milestone.md)）は
 Azure×PVE、AWS×PVE、OCI×PVE でクリーン検証済みです（3 クラウドパリティ）。SAM は
-**捕捉（プロバイダー固有）/ 配送+claim（routerd 共通）** の分離を証明しました。しかし、
-これを駆動する `RemoteAddressClaim` は**現時点では手動記述**です。次のステップは、
-claim を**イベント駆動**で発見・伝搬・実体化することです：
+**捕捉（プロバイダー固有）/ BGP 配送 + 型付きローカルプラン**の分離を証明しました。
+旧来の手動アドレスリソース段階は廃止され、観測事実は `MobilityPool` 計画へ
+**イベント駆動**で渡されます：
 
 > オンプレミスの routerctl がクライアント IPv4（ARP/Clients/DHCP）を検知 → 型付きイベントを発行 →
-> フェデレーションバスがクラウド側 routerd に配送 → subscription がプロバイダープラグインを起動 →
-> プラグインが `RemoteAddressClaim` を `DynamicConfigPart` として返却
+> フェデレーションバスがクラウド側 routerd に配送 → subscription が観測事実を記録/採用 →
+> `MobilityPool` 計画が型付きローカル捕捉と FIB intent を出力
 > （+ プロバイダー secondary-IP `actionPlan`）→ **クラウド設定を人手で編集することなく**、
 > クラウド側が `provider-secondary-ip` 捕捉の準備完了。
 
@@ -45,11 +45,10 @@ claim を**イベント駆動**で発見・伝搬・実体化することです�
 - **型付きイベントエンベロープ**: `pkg/daemonapi` の `DaemonEvent{Type,Time,Daemon,Resource,
   Severity,Reason,Message,Attributes}` + `NewEvent(...)`。現在は daemon→main のフローだが、
   既に型付きのトピック付きエンベロープになっている。
-- **daemon→routerd トランスポートパターン**: daemon が UNIX ソケット上の
+- **helper→routerd トランスポートパターン**: ローカル helper が UNIX ソケット上の
   HTTP で制御ソケットに POST する（`cmd/routerd-dhcp-event-relay` → `controlapi.Prefix +
-  /dhcp-lease-event` via `unix:/run/routerd/routerd.sock`）。*イベントリレー daemon の前例*もある。
-- **分離された長寿命 daemon の前例**: 13 個の `cmd/routerd-*` daemon
-  （`routerd-bgp`、`routerd-ra-observer`、`routerd-dhcp-event-relay` 等）。
+  /dhcp-lease-event` via `unix:/run/routerd/routerd.sock`）。DHCP relay は daemon ではなく、dnsmasq から都度呼ばれる one-shot callback helper である。
+- **分離された長寿命 daemon の前例**: `routerd-bgp` や `routerd-ra-observer` などの長寿命 `cmd/routerd-*` プロセス。
   gobgp pivot（ADR 0004）が「再起動によるドロップを避けるため in-process より分離プロセス」を確立。
 - **Plugin → DynamicConfigPart パイプライン**: `pkg/plugin/runner.go`、
   `pkg/plugin/dynamic_config.go`、`pkg/dynamicconfig/{types,merge}.go`、
@@ -66,8 +65,9 @@ claim を**イベント駆動**で発見・伝搬・実体化することです�
 ### 設計原則
 
 1. **イベントは観測事実であり、設定ではない。** ノードは
-   `routerd.client.ipv4.observed` を送信し、生の `RemoteAddressClaim` は送信しない。受信側の
-   *信頼されたローカルプラグイン*が、それを型付き claim + actionPlan に変換するかどうか・どう変換するかを決定する。ワイヤ上にコマンドは流れない。
+   `routerd.client.ipv4.observed` を送信し、生の desired-capture リソースは送信しない。受信側の
+   *信頼されたローカル admission パス*が、その事実を `MobilityPool` 計画と provider action proposal に
+   使うかどうかを決定する。ワイヤ上にコマンドは流れない。
 2. **at-least-once + idempotent**、exactly-once ではない。ストアの冪等性はイベント `id` をキーとする
    （重複 `id` は no-op insert）。`dedupeKey` は subscription 側のグルーピングキーで、同一事実の繰り返し観測を
    集約するためのものであり、Phase 1 では DB のユニーク制約**ではない**。動的リソース名は決定的
@@ -148,11 +148,11 @@ OS CLI を呼び出すローカル実行ファイル。SDK を routerd に静的
   `DynamicConfigPart`（`routerd.net/dynamic-source`、`event-id`、`event-group`
   アノテーション付き）。デバウンス/batchWindow。`event_subscription_runs`。
   *受け入れ条件:* クラウドが `10.88.60.9/32` の `client.ipv4.observed` を受信 → プラグイン →
-  `RemoteAddressClaim` DynamicConfigPart が `routerctl dynamic render` で確認可能。
+  型付き DynamicConfigPart が `routerctl dynamic render` で確認可能。
   actionPlan は表示のみ、実行しない。
-- **⏭ 次（未着手）— Phase 4 — プロバイダー actionPlan プラグイン（dry-run）。** `aws/azure/oci-address-claim`
-  サンプルプラグイン。標準化された `actionPlan` フォーマット。インスタンス識別情報による認証。
-  *受け入れ条件:* プラグインが assign-secondary-IP を提案。mutation なし。プランが
+- **⏭ 次（未着手）— Phase 4 — プロバイダー `actionPlan` 計画（dry-run）。**
+  標準化された `actionPlan` フォーマットとインスタンス識別情報を使う。
+  *受け入れ条件:* 計画が assign-secondary-IP を提案。mutation なし。プランが
   `routerctl plugin`/`dynamic` で確認可能。
 - **Phase 5 —（MVP 後）プロバイダーアクション実行。** approval/auto-apply ポリシー、
   アクションジャーナル、ベストエフォートの undo、識別情報ドキュメント。MVP スコープ外。

@@ -575,7 +575,7 @@ func showAPIVersionForKnownKind(kind string) string {
 		return api.ObservabilityAPIVersion
 	case "FirewallZone", "FirewallPolicy", "FirewallEventLog", "FirewallRule", "FirewallFlowPinhole", "ClientPolicy", "PortForward", "IngressService", "LocalServiceRedirect":
 		return api.FirewallAPIVersion
-	case "TunnelInterface", "OverlayPeer", "HybridRoute", "AddressMobilityDomain", "CloudProviderProfile", "RemoteAddressClaim", "ProviderActionPolicy":
+	case "TunnelInterface", "OverlayPeer", "HybridRoute", "CloudProviderProfile", "ProviderActionPolicy":
 		return api.HybridAPIVersion
 	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoESession", "IPv4StaticAddress", "VirtualAddress", "BGPRouter", "BGPPeer", "BFD", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4ServerLeaseSync", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "DHCPv4Relay", "DNSZone", "DNSResolver", "DNSForwarder", "DNSUpstream", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "NAT44Rule", "NAT44FlowDNATPinhole", "NAT44SessionSync", "ManagementAccess", "IPAddressSet", "TrafficFlowLog":
 		return api.NetAPIVersion

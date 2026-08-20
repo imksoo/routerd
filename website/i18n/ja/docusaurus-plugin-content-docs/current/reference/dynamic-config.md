@@ -22,7 +22,10 @@ Dynamic config は、信頼されたローカルソースが startup-config を�
 ## DynamicConfigPart
 
 `DynamicConfigPart` は、動的ソースからの検証済みランタイムフラグメントです。
-ソースは通常の `api.Resource` オブジェクトとディレクティブを提供できます。
+ソースは通常の `api.Resource` オブジェクトとディレクティブを提供できます。Mobility
+controller は型付き `mobilityDataplane` 計画、`fibVerdicts`、fact-side の
+`arpObserverIntents` も保存します。これらは controller が出力するものであり、plugin
+が記述する resource ではありません。
 
 ```yaml
 apiVersion: config.routerd.net/v1alpha1
@@ -36,19 +39,14 @@ spec:
   expiresAt: "2026-05-29T12:05:00Z"
   digest: sha256:...
   resources:
-    - apiVersion: hybrid.routerd.net/v1alpha1
-      kind: RemoteAddressClaim
-      metadata: { name: app-10-0-1-123 }
-      spec:
-        domainRef: cloudedge-same-subnet
-        address: 10.0.1.123/32
-        ownerSide: cloud
-        capture: { type: provider-secondary-ip, providerRef: oci-prod, providerMode: vnic-private-ip, nicRef: ocid1.vnic.oc1..example }
-        delivery: { peerRef: cloud-main, mode: route, tunnelInterface: wg-hybrid }
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4Route
+      metadata: { name: cloud-app-static-fallback }
+      spec: { destination: 10.0.1.123/32, gateway: 192.0.2.1 }
   directives:
     - op: mask
       target: { apiVersion: net.routerd.net/v1alpha1, kind: IPv4Route, name: cloud-app-static-fallback }
-      reason: "RemoteAddressClaim/app-10-0-1-123 is active"
+      reason: "provider inventory confirms the dynamic route"
 ```
 
 | フィールド | 意味 |

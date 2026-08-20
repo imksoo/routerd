@@ -86,9 +86,9 @@ internals are in [CloudEdge SAM internals](../reference/cloudedge-sam-internals.
   **authoritative marker** that prevents a standby's weak advertisement or a
   just-booted advertisement from being mistaken for holdership.
 - **dynamic RR sync** — route reflectors can publish shared transport peer
-  groups and member sets to leaves. Leaves keep the last-known-good synced input
-  if the RR publisher disappears, marking it `Stale` instead of tearing down
-  generated transport.
+  groups to leaves. Leaves keep the last-known-good synced input if the RR
+  publisher disappears, marking it `Stale` instead of tearing down generated
+  transport. MobilityPool membership comes directly from `SAMNodeSet`.
 - **RR admission filter** — generated RR-client BGP peers accept only `/32`
   mobility routes carrying the advertising leaf's own node-identity community
   and reject routes carrying another topology node's identity.
@@ -135,7 +135,7 @@ To reconcile all three, routerd combines the following mechanisms (details in
 ## What to read next
 
 - [Selective Address Mobility (config model)](../reference/selective-address-mobility.md)
-  — how to author `MobilityPool`, self/remote members, capture policy.
+  — how to author `SAMNodeSet`, a local `MobilityPool` overlay, and capture policy.
 - [CloudEdge SAM internals](../reference/cloudedge-sam-internals.md)
   — the BGP community taxonomy, placement, no-preempt, holder-beacon, failover.
 - [ADR 0012: BGP /32 Address Mobility](../adr/0012-bgp-address-mobility.md)

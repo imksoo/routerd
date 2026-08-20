@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 )
 
@@ -99,7 +100,7 @@ func InternalFirewallHoles(router *api.Router) []FirewallHole {
 			}
 		case "TailscaleNode":
 			spec, _ := resource.TailscaleNodeSpec()
-			if firstNonEmpty(spec.State, "present") != "absent" {
+			if stringutil.FirstNonBlank(spec.State, "present") != "absent" {
 				add(resource.Metadata.Name+"-tailscale", zones.firstUntrust(), "self", "udp", 41641, resource.ID(), zones.firstUntrustIfName())
 			}
 		case "VXLANSegment":

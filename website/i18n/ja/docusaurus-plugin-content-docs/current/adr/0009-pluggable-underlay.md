@@ -23,7 +23,7 @@ L3 トランスポートを選べるようにしたい。
 
 - **配送はアンダーレイ非依存。** `hybrid.RouteTarget(peer)` が
   `OverlayPeer.Underlay.Type` を `(device, gateway)` にマップし、`/32` 配送ルート
-  （`RemoteAddressClaim` / `HybridRoute`）がそのデバイスを指す。トランスポートの追加は
+  （BGP が import した `/32` ルートと `HybridRoute`）がそのデバイスを指す。トランスポートの追加は
   新しい `switch` ケース。
 - **MTU / MSS clamp はパラメーター化済み。** `hybrid.EstimateMTU = underlayMTU(interface)
   − overheadFor(type)`。ゾーン非依存の clamp は `EstimateMTU` に従う。新しいトランスポートは

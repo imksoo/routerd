@@ -14,14 +14,16 @@ address 會保留；firewall 與 NAT 是單獨的 routerd layer。
 
 目前 CloudEdge Mobility 的 operator-authored surface 是：
 
-- `MobilityPool`: 宣告 mobility prefix、EventGroup、member node/site、BGP delivery
-  policy、capture policy、provider trap placement，以及本 node 的 capture/discovery 細節。
-- `SAMTransportProfile`: 宣告 router-to-router transport、`selfNodeRef`、共享
-  `topologyNodeRefs`、`innerPrefix`、underlay interface、BGP router 與 peers。
+- `SAMNodeSet`: 一次性宣告完整共享的 node identity、topology、placement 與 SAM endpoint。
+- `MobilityPool`: 宣告 mobility prefix、EventGroup、BGP delivery，以及本 node 的
+  capture/discovery/provider trap local overlay。
+- `SAMTransportProfile`: 宣告 router-to-router transport、`selfNodeRef`、`innerPrefix`、
+  underlay interface、BGP router，以及從 `SAMNodeSet` 選擇的 peer source。
 
-`MobilityPool` 中 self site 應完整宣告；remote site 通常保持 identity-only，僅包含
-`nodeRef`、`site`、`role`，以及可選的 `placement` / `maintenance`。所有 node 應取得相同的
-pool identity 與 placement set，以便 deterministic projection。
+`MobilityPool` 透過 `membersFrom` 匯入共享 `SAMNodeSet`，並且只保留 self-member
+overlay。不要在 Pool 內重複 remote identity、placement 或 maintenance。provider、capture
+與 discovery detail 只能屬於 self-member overlay。所有 node 應取得相同的 `SAMNodeSet`，以便
+deterministic projection。
 
 `SAMNodeSet.spec.nodes[].macAddresses` 可靜態列出同一 fabric 中 member 的 MAC
 地址。on-prem ARP observer 會把所有 member MAC 的聯集作為 ignore set，避免 routerd
@@ -30,38 +32,33 @@ member 發出的 ARP frame 被當作 mobile `/32` 的 ownership signal。`macAdd
 自動收斂，不需要重啟 observer 或 routerd。observer status 會顯示目前生效的 ignore set
 和被忽略的 observation 計數，便於確認收斂狀態。
 
-`AddressMobilityDomain` 與 `RemoteAddressClaim` 是低層相容 resource。pre-release 期間仍支援
-hand-authored config，但新 CloudEdge Mobility config 應優先使用 `MobilityPool` 與
-`SAMTransportProfile`。
-
 ## transport
 
 目前 SAM transport 預設使用 IPIP delivery plane。WireGuard 如存在，只作為加密 underlay；
 WireGuard peer 的 `AllowedIPs` 應只包含 transport endpoint prefix，不應包含 mobile `/32`。
 
 `SAMTransportProfile` 會產生 per-peer `TunnelInterface`、endpoint `/32` `IPv4Route`
-與 `BGPPeer`。多個 peer 的 profile 必須在所有 router 上使用相同的 `topologyNodeRefs` 與
-`innerPrefix`，這樣每條 node pair edge 才能導出相同的 `/31`。
+與 `BGPPeer`。所有 profile 透過 `peersFrom` 使用相同的 `SAMNodeSet`，因此每條 node pair
+edge 都能導出相同的 `/31`。`nodeRefs` 可將 peer 限制為實際 adjacency；省略時會選擇帶
+`samEndpoint` 的所有非 self node。直接 peer 或 topology list 不受支援。
 
 ## dynamic RR sync fail-static
 
-RR 可以發布 `SAMPeerGroup` 和 `MobilityMemberSet`，leaf 透過 TCP 19652
-取得缺失的 transport peer group 或 shared member set。取得成功後，leaf 會把它們保存為
-帶 TTL 的 dynamic config part：
+RR 可以發布 `SAMPeerGroup`，leaf 透過 TCP 19652 取得缺失的 transport peer group。
+`SAMPeerGroup` 僅是執行期同步 payload，不能作為 top-level `spec.resources` 宣告。
+取得成功後，leaf 會把它保存為帶 TTL 的 dynamic config part：
 
 - `peer-group-sync/<name>` 對應 `SAMPeerGroup`
-- `member-set-sync/<name>` 對應 `MobilityMemberSet`
 
-TTL 過期或 RR publisher 消失時，leaf 不會刪除已經產生的 tunnel、BGP peer 或
-MobilityPool planning artifact。routerd 會繼續使用 last-known-good record，並把來源標記為
-`Stale`，同時在 status 中輸出 `warning`。只有從未取得過的必需 source 才保持
-`Pending`。
+TTL 過期或 RR publisher 消失時，leaf 不會刪除已經產生的 tunnel 或 BGP peer。routerd
+會繼續使用 last-known-good record，並把來源標記為 `Stale`，同時在 status 中輸出
+`warning`。MobilityPool membership 直接從靜態 `SAMNodeSet` configuration 解析，不依賴
+成員資格同步端點。
 
 ## capture and delivery
 
-`MobilityPool.spec.deliveryPolicy.mode` 預設為 `bgp`。owner advertise selected `/32`，
-non-owner 將 BGP best path import 到 local FIB。舊的 route-lowered delivery 僅用於
-`RemoteAddressClaim` 相容 config。
+`MobilityPool` 一律使用 BGP delivery。owner advertise selected `/32`，non-owner 將
+BGP best path import 到 local FIB。
 
 支援的 capture type：
 
@@ -81,6 +78,9 @@ route-table 觀測來決定何時廣告 overlay holder。由於該設計會把 A
 
 on-prem `proxy-arp` capture 可使用 `activeWhen.type: single-router` 作為單 router
 always-active capture，也可使用 `vrrp-master` 由 HA pair 的 VRRP master gate 控制。
+`activeWhen` 僅支援此 on-prem `proxy-arp` capture；cloud
+`provider-secondary-ip` capture 設定該欄位會被拒絕，因此本機 VRRP 狀態變化
+不會在缺少對應 BGP 與本機資料平面計畫時建立 provider assignment。
 
 `on-demand-arp` source 會以低速 proactive sweep 探測 mobility prefix：每個
 `scanInterval` 探測一個 target，使已啟動但安靜的 L2 client 也能被觀測到。
@@ -106,11 +106,20 @@ ownership requires a separate authorization signal beyond this route filter.
 
 ## ownership inspection
 
-`MobilityPool` status exposes `ownershipResolverOwnerTable` for local
-`doctor sam` / FIB checks and `ownershipResolverControlPlaneOwnerTable` for
-operators. The control-plane table keeps one deterministic row per observed
-mobility address and includes owner provider/NIC/subnet/resource, local
-evidence, capture state, advertise/suppression state, and conflict details.
+`MobilityPool` status exposes one per-address operational view:
+`ownershipResolverControlPlaneOwnerTable`. `doctor sam`, FIB checks, and
+operators use this control-plane table. It keeps one deterministic row per
+observed mobility address and includes owner provider/NIC/subnet/resource,
+local evidence, capture state and final `captureDisposition`/`captureReason`,
+advertise/suppression state, and conflict details.
+
+Use `routerctl mobility explain --pool <pool> --address <ipv4/32>` to render an
+owner-table row together with pool-level provider status. `OwnershipResolved`
+comes from the row. `providerActionFailedAddresses` makes
+`ProviderActionApplied=False` only for a named address, and
+`providerObservationPendingAddresses` makes `ProviderObserved=False` only for
+a named address. Those conditions remain `Unknown` for all other addresses;
+the pool-level provider phase is not projected as a failure for every address.
 
 When two fresh provider owners claim the same `/32`, the row state is
 `Conflict` with `conflictReason=duplicate-provider-home-owners`. The row also
@@ -129,8 +138,8 @@ SAM forwarded traffic 仍會經過普通 forwarding/firewall/conntrack path。
 
 ### conntrack cleanup design note
 
-routerd 曾短暫公開 `MobilityPool.spec.deliveryPolicy.conntrackCleanupOnSeize`，
-作為 BGP mode SAM failover 的 opt-in scoped conntrack cleanup hook。該欄位已經移除。
+routerd 曾短暫公開 BGP mode SAM failover 的手動 opt-in scoped conntrack cleanup hook。
+該功能已經移除。
 在參考 SAM leaf 構成中，routerd 不會繪製讓 delivered overlay flow 進入 conntrack 的
 dataplane rule，因此 leaf 側 scoped cleanup 是 no-op，也不能解決 failover flow anomaly。
 

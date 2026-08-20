@@ -83,9 +83,10 @@ routerd 特有の用語が出てきます。最初に押さえるべきものだ
   community（`64512:121`）。他ノードは「この community が付いた best-path を出して
   いるノードだけが本当のホルダー」と判断します。スタンバイの弱い広告や起動直後の
   広告をホルダーと誤認しないための、**権威ある目印** です。
-- **dynamic RR sync** — ルートリフレクターは共有 transport peer group と member set
-  を leaf に配布できます。leaf は RR publisher が消えても last-known-good の同期入力を
-  保持し、生成済み transport を tear down せず source を `Stale` と表示します。
+- **dynamic RR sync** — ルートリフレクターは共有 transport peer group を leaf に
+  配布できます。leaf は RR publisher が消えても last-known-good の同期入力を保持し、
+  生成済み transport を tear down せず source を `Stale` と表示します。MobilityPool の
+  メンバーシップは `SAMNodeSet` から直接解決します。
 - **RR admission filter** — generated RR-client BGP peer では、自 leaf の
   node-identity community を持つ `/32` mobility route だけを受け入れ、他 topology node
   の identity を持つ route を拒否します。
@@ -130,7 +131,7 @@ CloudEdge SAM が解こうとしている難問は「**切り替え操作は最�
 ## 次に読むもの
 
 - [Selective Address Mobility（設定モデル）](../reference/selective-address-mobility.md)
-  — `MobilityPool` の宣言方法、self/remote メンバー、capture ポリシー。
+  — `SAMNodeSet`、ローカル `MobilityPool` overlay、capture ポリシーの宣言方法。
 - [CloudEdge SAM 内部実装](../reference/cloudedge-sam-internals.md)
   — BGP community 体系、placement、no-preempt、ホルダービーコン、failover の詳細。
 - [ADR 0012: BGP /32 Address Mobility](../adr/0012-bgp-address-mobility.md)

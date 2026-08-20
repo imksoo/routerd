@@ -18,7 +18,7 @@ auth_complete=0
 cleanup_partial_auth() {
   if [ "$auth_complete" -ne 1 ]; then
     rm -f "$out/aws-auth.json" "$out/azure-auth.json" \
-      "$out/oci-auth.json" "$out/pve-auth.txt"
+      "$out/oci-auth.json" "$out/aws-key-binding.json" "$out"/pve-auth-*.txt
   fi
 }
 trap cleanup_partial_auth EXIT INT TERM
@@ -31,14 +31,23 @@ case "$actual" in
 esac
 
 aws_region="$(extract_tfvars_string "$tfvars_path" aws_region)"
+aws_profile="$(extract_tfvars_string "$tfvars_path" aws_profile)"
+aws_key_name="$(extract_tfvars_string "$tfvars_path" aws_key_name)"
 oci_region="$(extract_tfvars_string "$tfvars_path" oci_region)"
-pve_host="$pve_ssh_host"
+[ -n "$aws_profile" ] || die "OpenTofu aws_profile is required"
+[ -n "$aws_key_name" ] || die "OpenTofu aws_key_name is required"
+mapfile -t pve_hosts < <(jq -er '([.pve.sshHost] + [.pve.rrNodes["pve-rr-a"].sshHost, .pve.rrNodes["pve-rr-b"].sshHost]) | unique[]' "$contract_path")
+[ "${#pve_hosts[@]}" -eq 3 ] || die "PVE RR contract must name the leaf host and two distinct RR hosts"
+pve_ssh=(ssh -n -i "$pve_ssh_private_key" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+  -o UserKnownHostsFile="$pve_ssh_known_hosts" -o GlobalKnownHostsFile=/dev/null \
+  -o CanonicalizeHostname=no -o IdentitiesOnly=yes -o PasswordAuthentication=no \
+  -o KbdInteractiveAuthentication=no -o ConnectTimeout=10)
 hosts=(
   "sts.${aws_region}.amazonaws.com"
   "management.azure.com"
   "identity.${oci_region}.oci.oraclecloud.com"
   "github.com"
-  "$pve_host"
+  "${pve_hosts[@]}"
 )
 for host in "${hosts[@]}"; do
   getent ahosts "$host" >"$out/dns-${host//[^A-Za-z0-9_.-]/_}.txt"
@@ -166,18 +175,51 @@ else
     direct_tcp_tls "$host" 443 "$out/tls-${host//[^A-Za-z0-9_.-]/_}.txt"
   done
 fi
-# PVE's API endpoint is only a TCP reachability gate here. Its authenticated
+# Each PVE API endpoint is only a TCP reachability gate here. Its authenticated
 # API/SSH checks below are separate and do not claim a shared selected family.
-direct_tcp_any_family "$pve_host" 8006 "$out/tcp-${pve_host//[^A-Za-z0-9_.-]/_}-8006"
+for pve_host in "${pve_hosts[@]}"; do
+  direct_tcp_any_family "$pve_host" 8006 "$out/tcp-${pve_host//[^A-Za-z0-9_.-]/_}-8006"
+done
 
 # Authenticated reads are deliberately redirected to private evidence files.
-aws --profile "$(extract_tfvars_string "$tfvars_path" aws_profile)" \
+aws --profile "$aws_profile" \
   --region "$aws_region" sts get-caller-identity >"$out/aws-auth.json"
+# Terraform uses the one guest public key for PVE, Azure and OCI. AWS instead
+# references a pre-existing EC2 key pair by name, so bind that remote key pair
+# to the same pinned private-key identity before any mutation is permitted.
+# Keep only fingerprints in private evidence; neither public-key text nor a
+# key-pair name is needed in durable logs.
+guest_public="$(ssh-keygen -y -f "$guest_ssh_private_key" 2>/dev/null)" ||
+  die "could not derive the pinned guest SSH public key"
+aws_public="$(aws --profile "$aws_profile" --region "$aws_region" ec2 describe-key-pairs \
+  --key-names "$aws_key_name" --include-public-key \
+  --query 'KeyPairs[0].PublicKey' --output text)" ||
+  die "could not read the selected AWS EC2 key pair"
+normalize_public_key() {
+  awk 'NF >= 2 { print $1 " " $2; exit }'
+}
+guest_identity="$(printf '%s\n' "$guest_public" | normalize_public_key)"
+aws_identity="$(printf '%s\n' "$aws_public" | normalize_public_key)"
+if [ -z "$guest_identity" ] || [ -z "$aws_identity" ]; then
+  die "guest or AWS SSH public key is malformed"
+fi
+guest_fingerprint="$(printf '%s\n' "$guest_identity" | ssh-keygen -lf - -E sha256 2>/dev/null | awk 'NR == 1 { print $2 }')"
+aws_fingerprint="$(printf '%s\n' "$aws_identity" | ssh-keygen -lf - -E sha256 2>/dev/null | awk 'NR == 1 { print $2 }')"
+if [ -z "$guest_fingerprint" ] || [ -z "$aws_fingerprint" ]; then
+  die "guest or AWS SSH public key is malformed"
+fi
+[ "$guest_identity" = "$aws_identity" ] ||
+  die "AWS EC2 key pair does not match the pinned guest SSH identity"
+jq -n --arg guestFingerprint "$guest_fingerprint" --arg awsFingerprint "$aws_fingerprint" \
+  '{status:"pass",guestFingerprint:$guestFingerprint,awsFingerprint:$awsFingerprint}' \
+  >"$out/aws-key-binding.json"
 az account show --output json >"$out/azure-auth.json"
 oci --profile "$(extract_tfvars_string "$tfvars_path" oci_profile)" \
   --region "$oci_region" iam region-subscription list >"$out/oci-auth.json"
-ssh -i "$pve_ssh_private_key" -o BatchMode=yes -o ConnectTimeout=10 "root@$pve_host" pveversion \
-  >"$out/pve-auth.txt"
+for pve_host in "${pve_hosts[@]}"; do
+  "${pve_ssh[@]}" "root@$pve_host" pveversion \
+    >"$out/pve-auth-${pve_host//[^A-Za-z0-9_.-]/_}.txt"
+done
 
 mirror="$(jq -er '.execution.providerMirror' "$contract_path")"
 [ -d "$mirror" ] || die "provider mirror is missing"

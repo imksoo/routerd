@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -111,29 +111,22 @@ func TestFederationEventEmitRejectsSelfCapturedObservedAddress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	resources, err := json.Marshal([]api.Resource{{
-		TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "RemoteAddressClaim"},
-		Metadata: api.ObjectMeta{
-			Name:        "claim-local",
-			Annotations: map[string]string{"routerd.net/dynamic-source": "MobilityPool/cloudedge/node/cloud-a"},
-		},
-		Spec: api.RemoteAddressClaimSpec{
-			Address:   "10.88.60.9/32",
-			OwnerSide: "onprem",
-			Capture:   api.AddressCapture{Type: "proxy-arp", Interface: "lan0"},
-			Delivery:  api.AddressDelivery{Mode: "route", PeerRef: "onprem"},
-		},
-	}})
+	intents, err := json.Marshal(dynamicconfig.MobilityDataplanePlan{PoolPrefix: "10.88.60.0/24", Captures: []dynamicconfig.LocalCaptureIntent{{
+		ID: "cloud-a/10.88.60.9", PoolRef: "cloudedge", Address: "10.88.60.9/32",
+		CaptureType: "proxy-arp", CaptureInterface: "lan0", Disposition: dynamicconfig.CaptureDesired,
+	}}})
 	if err != nil {
 		t.Fatalf("marshal resources: %v", err)
 	}
+	now := time.Now().UTC()
 	if err := store.UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord{
-		Source:        "MobilityPool/cloudedge/node/cloud-a",
-		Generation:    1,
-		ObservedAt:    time.Now().UTC(),
-		ExpiresAt:     time.Now().UTC().Add(time.Hour),
-		ResourcesJSON: string(resources),
-		Status:        "active",
+		Source:                "MobilityPool/cloudedge/node/cloud-a",
+		Generation:            1,
+		ObservedAt:            now,
+		ExpiresAt:             now.Add(5 * time.Minute),
+		Digest:                "sha256:self-capture-test",
+		MobilityDataplaneJSON: string(intents),
+		Status:                "active",
 	}); err != nil {
 		t.Fatalf("seed dynamic part: %v", err)
 	}

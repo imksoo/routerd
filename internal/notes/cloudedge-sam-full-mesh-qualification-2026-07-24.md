@@ -111,7 +111,7 @@ the Linux-only qualification reaches its terminal cleanup.
 Mixed qualification uses the exact FreeBSD amd64 binary bundle
 `routerd-1eec779a-freebsd-amd64-qualification.tar.gz`, with SHA-256
 `a6ac365598817a6d2b8bdbd6dbf260940889e41742b791479fa3871ac4ebb058`.
-`sam-pve-freebsd-bootstrap-iso.sh` creates per-clone read-only ISOs that
+The now-retired FreeBSD bootstrap helper created per-clone read-only ISOs that
 checksum the bundle in the guest, install it under `/usr/local`, configure
 the isolated `vtnet0` capture address and DHCP management on `vtnet1`, and
 enable key-only SSH without QGA. The three ISOs passed checksum verification

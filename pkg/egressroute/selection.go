@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
@@ -258,8 +259,8 @@ func (c Controller) candidateStates(spec api.EgressRoutePolicySpec) []CandidateS
 		out = append(out, CandidateState{
 			Name:          name,
 			Source:        candidate.Source,
-			Device:        firstNonEmpty(resourcequery.Value(c.Store, candidate.DeviceFrom), strings.TrimSpace(candidate.Device)),
-			Gateway:       firstNonEmpty(resourcequery.Value(c.Store, candidate.GatewayFrom), strings.TrimSpace(candidate.Gateway)),
+			Device:        stringutil.FirstNonEmpty(resourcequery.Value(c.Store, candidate.DeviceFrom), strings.TrimSpace(candidate.Device)),
+			Gateway:       stringutil.FirstNonEmpty(resourcequery.Value(c.Store, candidate.GatewayFrom), strings.TrimSpace(candidate.Gateway)),
 			GatewaySource: defaultString(candidate.GatewaySource, "none"),
 			RouteTable:    candidate.EffectiveTable(),
 			Metric:        candidate.EffectiveMetric(),
@@ -404,7 +405,7 @@ func candidateDisabled(candidate api.EgressRoutePolicyCandidate) bool {
 }
 
 func (c Controller) hasResolvedOutput(candidate api.EgressRoutePolicyCandidate) bool {
-	device := firstNonEmpty(resourcequery.Value(c.Store, candidate.DeviceFrom), strings.TrimSpace(candidate.Device))
+	device := stringutil.FirstNonEmpty(resourcequery.Value(c.Store, candidate.DeviceFrom), strings.TrimSpace(candidate.Device))
 	if device == "" {
 		return false
 	}
@@ -508,13 +509,4 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }

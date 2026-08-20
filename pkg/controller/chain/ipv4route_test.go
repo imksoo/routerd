@@ -514,6 +514,14 @@ func TestFreeBSDIPv4RoutePreferredSourceCommand(t *testing.T) {
 	}
 }
 
+func TestFreeBSDIPv4RouteRemovalDeleteCommand(t *testing.T) {
+	name, args := freeBSDIPv4RouteRemovalDeleteCommand(ipv4RouteRemoval{Destination: "10.77.60.11/32"})
+	want := []string{"-n", "delete", "-host", "10.77.60.11"}
+	if name != "route" || !reflect.DeepEqual(args, want) {
+		t.Fatalf("command = %s %#v, want route %#v", name, args, want)
+	}
+}
+
 type routeCleanupStore struct {
 	statuses []routerstate.ObjectStatus
 	deleted  map[string]bool

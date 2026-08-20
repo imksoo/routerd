@@ -19,40 +19,31 @@ fields on mobility resources.
 
 ## Resource Model
 
-For the CloudEdge Mobility control plane, `MobilityPool` is the only
-operator-authored mobility intent. It declares the logical IPv4 pool, the
-EventGroup to read, member nodes and sites, BGP delivery mode, capture policy,
-and provider trap placement. Treat the member list like a BGP peer list:
-every node must know the identity, site, role, and placement of the other
-participants, but it does not need the other nodes' NIC IDs, provider resource
-names, or subnet IDs.
+For the CloudEdge Mobility control plane, `SAMNodeSet` is the shared
+operator-authored identity/topology intent and `MobilityPool` is the local
+address/capture intent. The pool declares the logical IPv4 pool, EventGroup,
+BGP delivery, local capture policy, and provider trap details. The node set is
+the one shared record of every participant's identity, site, role, placement,
+and transport endpoint; a pool does not repeat remote members.
 
 The north-star config shape is:
 
-- declare the **self site** completely, including capture and provider
-  discovery details;
-- declare **remote sites** as identity-only members (`nodeRef`, `site`, `role`,
-  and optional `placement`/`maintenance`);
-- for larger fabrics, keep the shared identity-only member list in a
-  `MobilityMemberSet` and import it with `MobilityPool.spec.membersFrom`;
+- declare the full shared identity/topology and placement once in a
+  `SAMNodeSet`, then import it with `MobilityPool.spec.membersFrom`;
+- declare only the **self site** as a local MobilityPool overlay, including its
+  capture and provider discovery details;
 - keep reusable local cloud capture details in `profiles.cloudCaptures`;
 - keep non-secret node-local values in `spec.values`, then project them with
   `capture.targetFrom` and `ownershipDiscovery.subnetRefFrom`.
 
-`MobilityMemberSet` is the mobility counterpart to `SAMPeerGroup`: it contains
-only the shared member identity fields (`nodeRef`, `site`, `role`, and optional
-`placement`/`maintenance`). It deliberately does not carry `capture`,
-`ownershipDiscovery`, `profileRef`, delivery fields, or static owned addresses;
-those remain local to the `MobilityPool` on the node that needs them.
-
-`SAMNodeSet` is the next write-once aggregation point for the same fabric. It
-collects the node identity fields that today are repeated across EventPeer,
-WireGuardPeer, SAMTransportProfile peers/topology, and MobilityPool members. In
-this release Event Federation and WireGuard can derive their peer targets from
-it, and follow-on controllers continue moving the remaining per-feature lists to
-the same source. `SAMTransportProfile` topology derivation from a node set is
-designed around `addressingMode: pair-stable` so adding a node does not renumber
-existing tunnel `/31` assignments.
+`SAMNodeSet` is the write-once aggregation point for a fabric. It supplies the
+shared MobilityPool membership fields (`nodeRef`, `site`, `role`, and optional
+`placement`/`maintenance`) as well as Event Federation, WireGuard, and SAM
+transport identity. Provider references, capture details, discovery selectors,
+profiles, and static owned addresses remain a local `MobilityPool` overlay.
+`SAMTransportProfile` topology derivation from a node set uses
+`addressingMode: pair-stable` so adding a node does not renumber existing tunnel
+`/31` assignments.
 
 `SAMNodeSet.spec.nodes[].macAddresses` can list static member MAC addresses for
 the same fabric. On-prem ARP observers use the union of those MAC addresses as
@@ -88,27 +79,15 @@ spec:
         allowedIPs: [10.99.0.1/32]
 ```
 
-```yaml
-apiVersion: mobility.routerd.net/v1alpha1
-kind: MobilityMemberSet
-metadata: { name: svnet1-members }
-spec:
-  members:
-    - nodeRef: pve-rt01
-      site: pve01
-      role: onprem
-    - nodeRef: pve-rt02
-      site: pve02
-      role: onprem
-    - nodeRef: rr01
-      site: backbone
-      role: cloud
-```
-
-A pool can import one or more member sets. Imported members are added first and
+A pool can import one or more node sets. Imported members are added first and
 local `spec.members` entries are overlaid by `nodeRef`, so a leaf can keep only
 its self member with capture/discovery details while still learning the shared
-topology from the member set.
+topology from the node registry.
+
+When an overlay matches a sourced node, it may contain `nodeRef` plus only its
+local `profileRef`, capture, static-owned-address, and discovery fields.
+`site`, `role`, placement, maintenance, and secondary-IP capacity belong
+exclusively to `SAMNodeSet`; an overlay cannot change them.
 
 ```yaml
 apiVersion: mobility.routerd.net/v1alpha1
@@ -118,11 +97,9 @@ spec:
   prefix: 10.88.60.0/24
   groupRef: svnet1
   membersFrom:
-    - resource: MobilityMemberSet/svnet1-members
+    - resource: SAMNodeSet/svnet1-nodes
   members:
     - nodeRef: pve-rt01
-      site: pve01
-      role: onprem
       capture:
         type: proxy-arp
         interface: vmbr0
@@ -133,15 +110,11 @@ spec:
             bridge: vmbr0
 ```
 
-If a required `membersFrom` source is not yet present, the pool reports
+If a required `membersFrom` `SAMNodeSet` is not present, the pool reports
 `Pending`. Mark the source `optional: true` only when a partial local member list
-is acceptable during bootstrap. When that source was previously fetched through
-RR dynamic sync, routerd treats the saved dynamic part as last-known-good input:
-an expired `member-set-sync/<name>` record marks the source `Stale` but keeps the
-existing MobilityPool planning path intact. This is a fail-static guarantee for
-RR outages; loss of the publisher affects freshness, not the already-rendered
-data plane. Stale sources also carry a status warning so operators can
-distinguish deliberate fail-static operation from a fresh topology.
+is acceptable during bootstrap. Node-set membership is declarative router
+configuration, not a dynamic RR cache, so MobilityPool planning never depends on
+an HTTP membership-sync endpoint.
 
 WireGuard interfaces can import peers from the same node registry:
 
@@ -187,37 +160,16 @@ For example, on an AWS router:
 
 ```yaml
 apiVersion: mobility.routerd.net/v1alpha1
-kind: MobilityPool
-metadata: { name: lab-same-subnet }
+kind: SAMNodeSet
+metadata: { name: lab-same-subnet-nodes }
 spec:
-  prefix: 10.0.0.0/24
-  groupRef: cloudedge
-  values:
-    self.region: ap-northeast-1
-    self.subnetRef: subnet-0123456789abcdef0
-  profiles:
-    cloudCaptures:
-      aws-self:
-        capture:
-          type: provider-secondary-ip
-          providerRef: aws-lab
-          providerMode: eni-secondary-ip
-          nicRef: eni-0123456789abcdef0
-          configureOSAddress: false
-          targetFrom:
-            region: self.region
-        ownershipDiscovery:
-          mode: provider-private-ip
-          scanInterval: 60s
-          subnetRefFrom: self.subnetRef
-  members:
+  nodes:
     - nodeRef: onprem-router
       site: onprem
       role: onprem
     - nodeRef: cloud-router
       site: aws
       role: cloud
-      profileRef: aws-self
       placement:
         group: aws-edge
         priority: 10
@@ -235,33 +187,66 @@ spec:
       placement:
         group: oci-edge
         priority: 10
-  deliveryPolicy:
-    mode: bgp
-  capturePolicy:
-    mode: all-non-owner-sites
+---
+apiVersion: mobility.routerd.net/v1alpha1
+kind: MobilityPool
+metadata: { name: lab-same-subnet }
+spec:
+  prefix: 10.0.0.0/24
+  groupRef: cloudedge
+  membersFrom:
+    - resource: SAMNodeSet/lab-same-subnet-nodes
+  values:
+    self.region: ap-northeast-1
+    self.subnetRef: subnet-0123456789abcdef0
+  profiles:
+    cloudCaptures:
+      aws-self:
+        capture:
+          type: provider-secondary-ip
+          providerRef: aws-lab
+          nicRef: eni-0123456789abcdef0
+          targetFrom:
+            region: self.region
+        ownershipDiscovery:
+          mode: provider-private-ip
+          scanInterval: 60s
+          subnetRefFrom: self.subnetRef
+          # Empty/hold keeps a stopped instance as an ownership fact; release
+          # expires it instead.
+          stoppedInstancePolicy: hold
+  members:
+    - nodeRef: cloud-router
+      profileRef: aws-self
 ```
 
-On the on-prem node, the on-prem member is the complete self declaration
-instead: it normally carries `staticOwnedAddresses` and a `proxy-arp` capture
-with an explicit `activeWhen.type`. Use `single-router` when one local router
-owns capture for the site, or `vrrp-master` when an HA pair gates capture by
-VRRP master state. For discovery of dynamic on-prem clients beyond this bootstrap
-owner, add `ownershipDiscovery` with `mode: onprem-l2` and at least one source
-(for example `type: arp-observer` on `ens21`). The cloud members remain
-identity-only. The same rule applies in every direction: the local router owns
-its local implementation details; remote members are peer identities.
+On the on-prem node, the self overlay normally carries
+`staticOwnedAddresses` and a `proxy-arp` capture with an explicit
+`activeWhen.type`. Use `single-router` when one local router owns capture for
+the site, or `vrrp-master` when an HA pair gates capture by VRRP master state.
+`activeWhen` is supported only for this on-prem `proxy-arp` capture; a cloud
+`provider-secondary-ip` capture is rejected if it sets the field, so a local
+VRRP transition can never create a provider assignment without its matching
+BGP and local-dataplane plan.
+For discovery of dynamic on-prem clients beyond this bootstrap owner, add
+`ownershipDiscovery` with `mode: onprem-l2` and at least one source (for
+example `type: arp-observer` on `ens21`). The complete cloud and on-prem
+topology remains in `SAMNodeSet`; the local router owns only its local
+implementation details.
 
 routerd uses observed facts from federation or provider discovery to advertise
 owned `/32` paths through BGP. Operators keep the control plane declarative by
 editing only `MobilityPool`; per-address advertisements and provider trap action
 plans are derived by the controller.
 
-For same-provider cloud router maintenance, `members[].placement.group` elects
-one non-drained active capture member by `priority` and then `nodeRef`.
-`members[].maintenance.drain: true` removes that member from active selection,
-so only the active member emits provider trap actions while every member can
-advertise its BGP standby path. Distribute the same `MobilityPool` config to
-every node in the pool to keep placement projection deterministic.
+For same-provider cloud router maintenance,
+`SAMNodeSet.spec.nodes[].placement.group` elects one non-drained active capture
+member by `priority` and then `nodeRef`. Its `maintenance.drain: true` removes
+that member from active selection, so only the active member emits provider trap
+actions while every member can advertise its BGP standby path. Distribute the
+same `SAMNodeSet` identity and placement source to every node; each node's
+MobilityPool keeps only its local self overlay, which preserves deterministic
+placement without repeating remote member details.
 
 ### North-Star Field Reference
 
@@ -283,7 +268,7 @@ every node in the pool to keep placement projection deterministic.
 
 `members[].profileRef`
 : Applies a named cloud capture profile to that member. Use it for the local
-  self member. Remote members should normally omit it.
+  self member. It is invalid on remote members.
 
 `members[].capture.targetFrom`
 : Maps generated provider action target keys to keys in `spec.values`. Explicit
@@ -293,16 +278,17 @@ every node in the pool to keep placement projection deterministic.
 : Resolves `ownershipDiscovery.subnetRef` from `spec.values` when the explicit
   field is empty.
 
-`members[].placement`
-: Declares deterministic active/standby capture placement. Placement is still
-  useful on identity-only remote cloud members because other nodes need to know
-  which same-site member is active.
+`SAMNodeSet.spec.nodes[].placement` and `.maintenance`
+: Declare deterministic active/standby capture placement and drain state in the
+  shared node registry. `MobilityPool.spec.members` is only the local self
+  overlay after `membersFrom`; do not repeat remote identity, placement, or
+  maintenance fields there.
 
-The older "remote-full inline" style, where each node repeats every remote
-member's provider details, remains accepted during the pre-release period for
-compatibility. It is deprecated. `routerctl validate`, plan, and apply surface a
-warning when a remote member declares local capture or discovery details; a
-future pre-release may make identity-only remote members mandatory.
+The shared membership belongs in `SAMNodeSet`. The older inline shape, where a
+pool repeats remote-node identity or provider details, is not a valid authoring
+model; a pool imports the node set and carries only its local overlay. Provider,
+capture, and discovery details belong only to the corresponding node's local
+pool.
 
 ## Transport Profile
 
@@ -318,17 +304,12 @@ node identity from hostname or BGP router ID.
 
 `spec.addressingMode` controls `/31` slot derivation:
 
-- `edge-index` (default): profiles with more than one peer need the same
-  topology node list on every router in the transport domain. Operators can
-  still declare `spec.topologyNodeRefs` directly, or import it from
-  `SAMNodeSet` with `spec.peersFrom`. The controller sorts that shared node list
-  and ranks each unordered node pair before allocating a `/31` from
-  `spec.innerPrefix`.
+- `edge-index` (default): profiles use the same `SAMNodeSet` through
+  `spec.peersFrom`. The controller sorts that shared node list and ranks each
+  unordered node pair before allocating a `/31` from `spec.innerPrefix`.
 - `pair-stable`: each peer edge derives a slot from a stable hash, so
-  leaf/router profiles can omit global `topologyNodeRefs`. Collision detection
-  is currently profile-local (within one profile's `spec.peers` list). When a
-  collision occurs, set both `override.localInner` and `override.remoteInner`
-  for the affected peer to reserve explicit addresses.
+  leaf/router profiles can select only their actual peers without changing the
+  shared node set.
 
 For production fabrics, prefer `/20` or larger `innerPrefix` where practical;
 smaller pools such as `/24` (128 `/31` slots) collide more easily under
@@ -336,19 +317,22 @@ hash+mod allocation.
 
 `spec.peersFrom` can reference either `SAMNodeSet/<name>` or
 `SAMPeerGroup/<name>`. A `SAMNodeSet` source contributes every
-`spec.nodes[].nodeRef` to the resolved topology, and contributes peers for every
-non-self node that has `samEndpoint` set. The generated peer uses that
-`samEndpoint` as `remoteEndpoint`. A `SAMPeerGroup` source contributes reusable
-transport peers only.
+`spec.nodes[].nodeRef` to the resolved topology. It creates peers for every
+non-self node with a `samEndpoint`, unless `nodeRefs` narrows the source to the
+listed adjacent nodes. The generated peer uses that `samEndpoint` as
+`remoteEndpoint`. A `SAMPeerGroup` source contributes reusable transport peers
+only. `SAMPeerGroup` is a runtime-only sync payload, not a top-level
+`spec.resources` kind: a publisher creates it with `publishPeerGroup`, and a
+consumer reads it only through the peer-group sync cache.
 
-The controller resolves all sources at reconcile time, adds imported peers
-first, then overlays the profile's local `spec.peers`. When the same `nodeRef`
-appears in both, the local `spec.peers` entry wins so operators can keep static
-bootstrap or override entries on a leaf. If a required `peersFrom` source is not
-yet present, the profile reports `Pending`; optional sources are ignored until
-they arrive. If the source was fetched before and only its dynamic-config TTL has
-expired, routerd reports the source as `Stale` and keeps using the
-last-known-good peer group instead of removing generated transport artifacts.
+The controller resolves all sources at reconcile time. Direct peer and topology
+lists are not accepted: `SAMNodeSet` is the single identity/topology/endpoint
+input, while `nodeRefs` expresses only adjacency. If a required `peersFrom`
+source is not yet present, the profile reports `Pending`; optional sources are
+ignored until they arrive. If the source was fetched before and only its
+dynamic-config TTL has expired, routerd reports the source as `Stale` and keeps
+using the last-known-good peer group instead of removing generated transport
+artifacts.
 
 `SAMNodeSet` entries may provide either a static `samEndpoint` or
 `samEndpointFrom`. The latter reads a status field such as
@@ -394,17 +378,21 @@ existing transport artifacts rendered. Stale peer sources include a status
 warning for long-lived fail-static operation. A never-seen required group still
 reports `Pending`.
 
-For MobilityPool membership, an RR can set `spec.publishMemberSet: true` on the
-canonical pool. routerd strips local-only member fields, publishes a
-`MobilityMemberSet` DynamicConfigPart with source `mobility-member-set/<pool>`,
-and serves it on the same TCP port via `GET /v1/member-sets`. Leaves with a
-missing required `membersFrom` source store a fetched set as
-`member-set-sync/<set-name>`. Like peer-group sync, an expired fetched member set
-is fail-static: routerd reports `membersFrom.phase: Stale` and continues using
-the last-known-good member list until a fresher publisher response is available;
-the source also carries a warning field while it remains stale.
+MobilityPool membership is resolved directly from `SAMNodeSet` resources. It is
+not published through the transport sync service, so BGP placement receives one
+canonical identity/topology input and only `SAMPeerGroup` remains dynamically
+synchronised.
 
 ```yaml
+apiVersion: mobility.routerd.net/v1alpha1
+kind: SAMNodeSet
+metadata: { name: cloudedge-nodes }
+spec:
+  nodes:
+    - { nodeRef: onprem-router, site: onprem, role: onprem, routeReflector: true, samEndpoint: 10.252.0.1 }
+    - { nodeRef: aws-router-a, site: aws, role: cloud, samEndpoint: 10.252.0.2 }
+    - { nodeRef: azure-router, site: azure, role: cloud, samEndpoint: 10.252.0.3 }
+---
 apiVersion: mobility.routerd.net/v1alpha1
 kind: SAMTransportProfile
 metadata: { name: cloudedge-transport }
@@ -413,10 +401,6 @@ spec:
   mode: ipip
   encryption: wireguard
   innerPrefix: 10.255.0.0/24
-  topologyNodeRefs:
-    - onprem-router
-    - aws-router-a
-    - azure-router
   underlayInterface: wg-hybrid
   localEndpointFrom:
     resource: Interface/wg-hybrid
@@ -425,9 +409,9 @@ spec:
     routerRef: BGPRouter/mobility
     peerASN: 64512
     timersPreset: fast
-  peers:
-    - nodeRef: onprem-router
-      remoteEndpoint: 10.252.0.1
+  peersFrom:
+    - resource: SAMNodeSet/cloudedge-nodes
+      nodeRefs: [onprem-router]
 ```
 
 Core routers can set `spec.bgp.routeReflectorClient` and
@@ -450,55 +434,6 @@ so effective config drops generated tunnel, BGP peer, and endpoint route
 resources. The generated resources then clean up through normal owner-reference
 GC and resource-specific teardown.
 
-## Low-Level Compatibility Resources
-
-`AddressMobilityDomain` and `RemoteAddressClaim` are the lower-level SAM
-representation. Existing hand-authored SAM configs remain supported during the
-pre-release period for compatibility, but they are not the primary authoring
-surface for CloudEdge Mobility. Prefer `MobilityPool` for address ownership and
-capture intent, and `SAMTransportProfile` for transport/BGP generation.
-
-`AddressMobilityDomain` defines the IPv4 prefix where selected addresses may
-move:
-
-```yaml
-apiVersion: hybrid.routerd.net/v1alpha1
-kind: AddressMobilityDomain
-metadata: { name: lab-same-subnet }
-spec:
-  prefix: 10.0.0.0/24
-  mode: selective-address
-  peerRef: cloud-main
-```
-
-`RemoteAddressClaim` declares one mobile `/32`, how it is captured, and how it
-is delivered:
-
-```yaml
-apiVersion: hybrid.routerd.net/v1alpha1
-kind: RemoteAddressClaim
-metadata: { name: onprem-vm-10-0-0-9 }
-spec:
-  domainRef: lab-same-subnet
-  address: 10.0.0.9/32
-  ownerSide: onprem
-  capture:
-    type: provider-secondary-ip
-    providerRef: azure-lab
-    providerMode: nic-secondary-ip
-    nicRef: /subscriptions/.../networkInterfaces/routerd-nic
-    configureOSAddress: false
-  delivery:
-    peerRef: cloud-main
-    mode: route
-    tunnelInterface: wg-hybrid
-```
-
-`AddressMobilityDomain.spec.peerRef` is a domain-level default/documentation
-peer for grouping metadata. The MVP dataplane uses
-`RemoteAddressClaim.spec.delivery.peerRef` as the actual delivery peer, and it
-is required on each claim.
-
 `CloudProviderProfile` describes provider capabilities and how an external
 tool would authenticate. The mobility planner does not call provider APIs
 directly. For cloud capture it emits dry-run `ActionPlan` records such as
@@ -506,10 +441,8 @@ directly. For cloud capture it emits dry-run `ActionPlan` records such as
 provider-action executor path may import and execute those only when explicitly
 allowed by `ProviderActionPolicy`.
 
-`OverlayPeer` identifies the remote routerd peer and underlay for legacy
-route-lowered configs. `HybridRoute` continues to model ordinary L3
-remote-prefix routing. New CloudEdge Mobility configs should not use
-`OverlayPeer` to carry mobility `/32`s; use BGP delivery through
+`OverlayPeer` identifies a remote routerd peer and underlay for ordinary L3
+`HybridRoute` delivery. Mobility `/32`s use BGP delivery through
 `SAMTransportProfile`.
 
 ## Capture And Delivery
@@ -528,22 +461,18 @@ Reserved capture types rejected by MVP validation:
 | `static-host-route` | Reserved for a later dataplane design. |
 | `garp` | Reserved for a later dataplane design. |
 
-For `MobilityPool`, delivery mode is BGP. Owned addresses are advertised as
-IPv4 unicast `/32` paths; non-owners import the BGP best path into the local FIB
-over the selected overlay next hop. `deliveryPolicy.mode: bgp` is the default
-and the only supported MobilityPool delivery mode in the current control plane.
-Older route-lowered SAM delivery remains available only for hand-authored
-`RemoteAddressClaim` compatibility configs.
+`MobilityPool` always uses BGP delivery. Owned addresses are advertised as IPv4
+unicast `/32` paths; non-owners import the BGP best path into the local FIB over
+the selected overlay next hop.
 
 `members[].capture.target` carries non-secret provider target hints copied into
 generated provider `ActionPlan.target` values. Put identifiers such as region,
 compartment ID, resource group, NIC name, or IP config name there; credentials,
 tokens, and private keys must stay in provider auth mechanisms.
 
-Cloud `provider-secondary-ip` capture supports `members[].capture.strategy`.
-The default is `secondary-ip`, which keeps the historical AWS ENI, Azure NIC
-ipConfig, and OCI VNIC secondary-address behavior. Azure may instead set
-`strategy: route-table`: Azure writes a UDR in `capture.target.routeTableRef`
+Cloud `provider-secondary-ip` capture derives ordinary `secondary-ip` behavior
+from its `type`; do not configure that redundant strategy. Azure may instead
+set `captureStrategy: route-table`: Azure writes a UDR in `capture.target.routeTableRef`
 with `NextHopType=VirtualAppliance` and requires
 `capture.target.nextHopIPAddress`. Provider inventory must confirm that
 the route table points at the local router before routerd advertises the captured
@@ -582,7 +511,7 @@ Use `members[].capture.excludeAddresses` for local-only addresses inside the
 mobility prefix that must never be proxy-ARP captured across the extended
 segment. On PVE Simple SDN, for example, each host may own the same local
 gateway address such as `192.168.123.1/32`; excluding it prevents generated BGP
-proxy-ARP claims for that address and splits the capture-prefix route so Linux
+proxy-neighbor capture for that address and splits the capture-prefix route so Linux
 does not send local gateway ARP across the SAM capture path.
 
 SAM does not provide transparent DHCP broadcast extension. Keep DHCP ownership
@@ -597,8 +526,8 @@ Passive sources cannot prove that zero clients exist. By default, an on-prem L2
 discovery member with no observed clients remains pending. To make an empty
 segment an explicit operational policy, set `ownershipDiscovery.allowEmptyAfter`
 to a duration such as `2m`; after the sources have been armed for that duration,
-routerd marks discovery `Complete`, keeps `discoveryAuthoritative: false`, and
-publishes `discoveryResultCount: 0` plus freshness timestamps in status.
+routerd marks discovery `Complete` and publishes `discoveryObserved: 0`
+plus freshness timestamps in status.
 
 `on-demand-arp` also performs a conservative proactive sweep of the mobility
 prefix: one ARP target is probed per source `scanInterval`, using the same
@@ -622,40 +551,35 @@ observed as the `/32` holder. Remote capture remains silent, so an on-prem to
 cloud move can still leave a bounded stale-neighbor window on the old on-prem
 segment until existing neighbor cache entries expire.
 
-For `provider-secondary-ip`, the provider fabric owns address capture. routerd
-does not assign the mobile address to the local OS when
-`configureOSAddress: false`. For BGP delivery, routerd also keeps the mobile
-`/32` absent from local OS interfaces even if `configureOSAddress` is true:
-the cloud provider secondary IP is only the provider-fabric ingress owner, and
-the Linux FIB must forward the packet through the selected overlay path instead
-of treating it as a local destination. On Linux routerd removes that specific
-address from local interfaces if cloud-init, netplan, or another guest agent
-adds it back. It then ensures IPv4 forwarding, explicit proxy-neighbor state
-for provider ingress when needed, and per-interface forwarding state; the
-overlay `/32` delivery route comes from BGP best-path import. routerd does not
-re-add the address when the capture is removed, because it never owned the guest
-OS assignment.
+For `provider-secondary-ip` in BGP mode, the provider fabric owns address
+capture and routerd never assigns the mobile `/32` to the local OS. The cloud
+provider secondary IP is only the provider-fabric ingress owner, and the Linux
+FIB forwards the packet through the selected overlay path instead of treating it
+as a local destination. On Linux routerd removes that specific address from
+local interfaces if cloud-init, netplan, or another guest agent adds it back. It
+then ensures IPv4 forwarding, explicit proxy-neighbor state for provider ingress
+when needed, and per-interface forwarding state; the overlay `/32` delivery
+route comes from BGP best-path import. routerd does not re-add the address when
+the capture is removed, because it never owns the guest OS assignment.
 
 Status reports this as `captureOSAddressAbsence`. `enforced: true` means
 routerd is actively enforcing that the captured address is absent from local OS
 interfaces. `lastReconcileRemoved: true` means the most recent reconcile
 actually removed the address; it is normally `false` in steady state once the
-address is already absent. `reason` distinguishes explicit
-`configureOSAddress=false` enforcement from the BGP-delivery no-local-address
-projection.
+address is already absent. `reason` identifies the BGP provider-secondary
+no-local-address projection.
 
 ## Inspecting Ownership
 
-`MobilityPool` status exposes two ownership views:
+`MobilityPool` status exposes one ownership view:
 
-- `ownershipResolverOwnerTable` is the local resolver table used by `doctor sam`
-  and FIB policy checks.
-- `ownershipResolverControlPlaneOwnerTable` is the operator-facing
-  control-plane table. It keeps one deterministic row per observed mobility
-  address and includes the selected owner node/provider/NIC/subnet/resource,
-  local evidence node/provider/NIC/subnet/resource/source, capture state,
-  advertise/suppression state, and conflict reason/winner/resolution when
-  present.
+- `ownershipResolverControlPlaneOwnerTable` is the only per-address
+  operational projection. It is used by `doctor sam`, FIB policy checks, and
+  operators. It keeps one deterministic row per observed mobility address and
+  includes the selected owner node/provider/NIC/subnet/resource, local
+  evidence node/provider/NIC/subnet/resource/source, capture state and final
+  `captureDisposition`/`captureReason`, advertise/suppression state, and
+  conflict reason/winner/resolution when present.
 
 Use `routerctl mobility owners` to inspect the control-plane table without
 pattern-matching raw status JSON:
@@ -665,16 +589,22 @@ routerctl mobility owners
 routerctl mobility owners --pool cloudedge --address 10.77.60.10/32 -o json
 ```
 
-`MobilityPool.status.addresses` is the per-address operational view. It keeps
-the older flat status keys for compatibility, but also records conditions such
-as `OwnershipResolved`, `ProviderActionApplied`, and `ProviderObserved` plus a
-`blockingCondition` when one address is not yet converged. Use
-`routerctl mobility explain` to render that view for one address:
+Use `routerctl mobility explain` to render one owner-table row together with
+pool-level provider status for one address:
 
 ```sh
 routerctl mobility explain --pool cloudedge --address 10.77.60.10/32
 routerctl mobility explain --pool cloudedge --address 10.77.60.10/32 -o json
 ```
+
+`OwnershipResolved` comes from that row. Provider status is intentionally
+address-scoped only when the pool status names the address:
+`providerActionFailedAddresses` makes `ProviderActionApplied=False`, and
+`providerObservationPendingAddresses` makes `ProviderObserved=False`. For all
+other addresses those conditions are `Unknown`; a pool-level provider phase is
+not incorrectly projected as a failure for every address. FIB installation and
+reachability remain external checks, reported as `Unknown` until `doctor sam`
+or a dataplane probe verifies them.
 
 Rows are sorted by pool and address. When a remote provider owner overlaps local
 evidence, or when two fresh provider owners claim the same `/32`, the row state
@@ -692,9 +622,9 @@ capture-holder rows are not local endpoint owners, so they are not required to
 resolve as local/cloud routes; delivery/forwarding checks and dataplane probes
 prove that path.
 
-FreeBSD and other non-Linux hosts do not have live SAM local capture. On
-FreeBSD, validation rejects `RemoteAddressClaim.capture.type: proxy-arp` rather
-than accepting a configuration that cannot safely provide the Linux contract:
+FreeBSD and other non-Linux hosts do not have live SAM local capture. The
+MobilityPool planner rejects proxy-ARP capture on FreeBSD rather than accepting
+a configuration that cannot safely provide the Linux contract:
 owned proxy-neighbor capture, gratuitous ARP, and the narrow routerd-owned
 forwarding path. Provider-secondary capture configuration and the surrounding
 SAM/BGP control plane remain portable, but their local capture status stays
@@ -753,11 +683,8 @@ node.
 
 The split example configs are:
 
-- `examples/hybrid-azure-pve-same-subnet-cloud.yaml`, applied on the cloud
-  routerd node, contains the provider-secondary-IP claim for on-prem VM
-  `10.0.0.9/32`.
-- `examples/hybrid-azure-pve-same-subnet-onprem.yaml`, applied on the on-prem
-  routerd node, contains the proxy-ARP claim for cloud VM `10.0.0.7/32`.
+- `examples/cloudedge-mobility-demo/` contains the current MobilityPool-based
+  cloud/on-prem configuration.
 
 ## Firewall And NAT Composition
 
@@ -767,9 +694,9 @@ transparency is intrinsic: the source and destination addresses are preserved.
 
 To firewall or NAT a mobile address, reference its literal `/32` in the
 existing `FirewallZone`, `FirewallRule`, or `NAT44Rule` resources. The current
-model has no cross-kind reference from firewall or NAT kinds to `MobilityPool`
-or low-level `RemoteAddressClaim`; the coupling is intentionally loose by
-literal address. A named reference can be added later if it proves useful.
+model has no cross-kind reference from firewall or NAT kinds to `MobilityPool`;
+the coupling is intentionally loose by literal address. A named reference can
+be added later if it proves useful.
 
 SAM-forwarded traffic still traverses the existing firewall and conntrack path
 like any other forwarded traffic. Independence means the mobility resources do
@@ -777,12 +704,11 @@ not configure arbitrary firewall or NAT policy; it does not mean bypass.
 
 ### Conntrack cleanup design note
 
-routerd briefly exposed
-`MobilityPool.spec.deliveryPolicy.conntrackCleanupOnSeize` as an opt-in scoped
-conntrack cleanup hook for BGP-mode SAM failover. It has been removed. In the
-reference SAM leaf configuration, routerd does not draw dataplane rules that
-engage conntrack for the delivered overlay flow, so the leaf-side scoped cleanup
-was a no-op and did not address failover flow anomalies.
+routerd briefly exposed a manual, scoped conntrack cleanup option for BGP SAM
+failover. It has been removed. In the reference SAM leaf configuration, routerd
+does not draw dataplane rules that engage conntrack for the delivered overlay
+flow, so the leaf-side scoped cleanup was a no-op and did not address failover
+flow anomalies.
 
 The problem statement remains valid for future stateful SAM leaf designs: a
 router that deliberately tracks forwarded mobile `/32` flows may need a scoped
@@ -795,8 +721,9 @@ In particular, the delivered `/32` traffic crosses the Linux firewall
 `FORWARD` chain between the capture interface and the tunnel interface. Permit
 that forwarding path for the captured address explicitly when the router has a
 default-drop forwarding policy. The managed exceptions are narrow:
-`WireGuardInterface` opens its Linux UDP listen port in `INPUT`, and
-`RemoteAddressClaim` opens the capture-to-tunnel `FORWARD` path it owns.
+`WireGuardInterface` opens its Linux UDP listen port in `INPUT`, and the typed
+MobilityPool local capture plan opens the capture-to-tunnel `FORWARD` path it
+owns.
 
 ## Overlay And Federation Addressing On Cloud Nodes
 

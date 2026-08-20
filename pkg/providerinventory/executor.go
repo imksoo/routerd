@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/plugin"
 	"github.com/imksoo/routerd/pkg/subprocessio"
@@ -128,7 +129,7 @@ func inventoryTimeout(value string) (time.Duration, error) {
 
 func inventoryEnvironment(extra map[string]string) []string {
 	env := map[string]string{
-		"PATH": firstNonEmpty(os.Getenv("PATH"), defaultInventoryPathEnv),
+		"PATH": stringutil.FirstNonEmpty(os.Getenv("PATH"), defaultInventoryPathEnv),
 	}
 	for key, value := range extra {
 		key = strings.TrimSpace(key)
@@ -147,15 +148,6 @@ func inventoryEnvironment(extra map[string]string) []string {
 		out = append(out, key+"="+env[key])
 	}
 	return out
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func truncateString(value string, limit int) string {

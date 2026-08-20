@@ -120,11 +120,6 @@ assert_northstar_rendered() {
   local cfg base profile_count provider_capture_count discovery_count
   for cfg in "$WORKDIR"/*.yaml; do
     base=$(basename "$cfg")
-    grep -F 'deliveryPolicy: { mode: bgp }' "$cfg" >/dev/null
-    if grep -Eq 'kind: (RemoteAddressClaim|AddressMobilityDomain)' "$cfg"; then
-      echo "$base rendered legacy SAM mobility resource" >&2
-      return 1
-    fi
     profile_count=$(grep -c 'profileRef:' "$cfg" || true)
     provider_capture_count=$(grep -c 'type: provider-secondary-ip' "$cfg" || true)
     discovery_count=$(grep -c 'ownershipDiscovery:' "$cfg" || true)

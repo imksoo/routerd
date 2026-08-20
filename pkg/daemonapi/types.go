@@ -87,6 +87,46 @@ const (
 	EventDHCPv6ServerLost        = "routerd.dhcpv6.client.server.lost"
 )
 
+const (
+	DHCPLeaseActionAdded   = "added"
+	DHCPLeaseActionRenewed = "renewed"
+	DHCPLeaseActionRemoved = "removed"
+
+	EventDHCPLeaseAdded   = "routerd.dhcp.lease.added"
+	EventDHCPLeaseRenewed = "routerd.dhcp.lease.renewed"
+	EventDHCPLeaseRemoved = "routerd.dhcp.lease.removed"
+)
+
+// DHCPLeaseEventType returns the canonical event topic for a DHCP lease action.
+// dnsmasq's raw callback verbs are normalized at the relay boundary and are not
+// accepted here.
+func DHCPLeaseEventType(action string) (string, bool) {
+	switch action {
+	case DHCPLeaseActionAdded:
+		return EventDHCPLeaseAdded, true
+	case DHCPLeaseActionRenewed:
+		return EventDHCPLeaseRenewed, true
+	case DHCPLeaseActionRemoved:
+		return EventDHCPLeaseRemoved, true
+	default:
+		return "", false
+	}
+}
+
+// DHCPLeaseActionFromEventType validates a canonical DHCP lease event topic.
+func DHCPLeaseActionFromEventType(eventType string) (string, bool) {
+	switch eventType {
+	case EventDHCPLeaseAdded:
+		return DHCPLeaseActionAdded, true
+	case EventDHCPLeaseRenewed:
+		return DHCPLeaseActionRenewed, true
+	case EventDHCPLeaseRemoved:
+		return DHCPLeaseActionRemoved, true
+	default:
+		return "", false
+	}
+}
+
 type TypeMeta struct {
 	APIVersion string `json:"apiVersion"`
 	Kind       string `json:"kind"`

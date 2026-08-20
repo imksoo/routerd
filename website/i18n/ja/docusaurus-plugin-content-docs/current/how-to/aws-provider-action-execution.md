@@ -216,8 +216,8 @@ aws ec2 describe-route-tables \
 - [ ] actionPlan 生成 → インポート → 承認 → 実行 → ジャーナル `succeeded`。
 - [ ] **セカンダリ IP が ENI 上に存在する**（`describe-network-interfaces` で `<address>` が `PrivateIpAddresses` に表示される）。
 - [ ] ENI で **Source/dest check が無効化**されている（`SourceDestCheck=false`）。ジャーナルに `Observed.priorSourceDestCheck` が記録されている。
-- [ ] no-local 捕捉では、`routerd-cloud` はアドレスを OS のローカルアドレスとして**保持しない**。これは `configureOSAddress=false` の場合と、プロバイダーのセカンダリ IP を ENI に残したまま BGP delivery でリモートオーナーへ配送する場合の両方を含む。捕捉はプロバイダー ingress とルート/転送状態であり、Linux local `/32` ではない。
-- [ ] `RemoteAddressClaim` が **Ready** に到達する。
+- [ ] BGP `provider-secondary-ip` では、`routerd-cloud` はアドレスを OS のローカルアドレスとして**保持しない**。プロバイダーのセカンダリ IP を ENI に残したままでも同じである。捕捉はプロバイダー ingress とルート/転送状態であり、Linux local `/32` ではない。
+- [ ] `MobilityPool` が **Ready** に到達し、対象アドレスの provider action が成功または不要として収束する。
 - [ ] `routerctl doctor` の hybrid チェックが**パス**する。
 - [ ] cloud-client **`.7`** と on-prem-client **`.9`** — **ping と ssh が双方向で**成功する。
 - [ ] 捕捉パスに **NAT が存在しない**（ルーティング/転送され、変換されない）。

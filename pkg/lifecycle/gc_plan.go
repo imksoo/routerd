@@ -3,10 +3,11 @@
 package lifecycle
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 
+	"github.com/imksoo/routerd/internal/statusvalue"
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/resource"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -266,10 +267,8 @@ func resourceLifecycleObjectStatus(status routerstate.ObjectStatus) bool {
 	case status.APIVersion == api.NetAPIVersion && (status.Kind == "IPv4Route" || status.Kind == "IPv4StaticAddress" || status.Kind == "WireGuardInterface" || status.Kind == "WireGuardPeer"):
 		return true
 	case status.APIVersion == api.HybridAPIVersion && status.Kind == "TunnelInterface":
-		owned, _ := statusBool(status.Status["interfaceOwned"])
+		owned, _ := statusvalue.ExtendedBool(status.Status["interfaceOwned"])
 		return owned
-	case status.APIVersion == api.HybridAPIVersion && status.Kind == "RemoteAddressClaim":
-		return true
 	case status.APIVersion == api.SystemAPIVersion && status.Kind == "Sysctl" && strings.HasPrefix(status.Name, "sam-proxy-arp-"):
 		return true
 	default:
@@ -278,50 +277,15 @@ func resourceLifecycleObjectStatus(status routerstate.ObjectStatus) bool {
 }
 
 func routerdManagedStatus(status routerstate.ObjectStatus) bool {
-	if managed, ok := statusBool(status.Status["managed"]); ok && !managed {
+	if managed, ok := statusvalue.ExtendedBool(status.Status["managed"]); ok && !managed {
 		return false
 	}
-	managedBy := firstNonEmptyString(status.ManagedBy, statusMapString(status.Status, "managedBy"))
+	managedBy := stringutil.FirstNonBlank(status.ManagedBy, statusvalue.Field(status.Status, "managedBy"))
 	if strings.EqualFold(managedBy, "external") {
 		return false
 	}
-	management := firstNonEmptyString(status.Management, statusMapString(status.Status, "management"))
+	management := stringutil.FirstNonBlank(status.Management, statusvalue.Field(status.Status, "management"))
 	return !strings.EqualFold(management, "adopted")
-}
-
-func statusBool(value any) (bool, bool) {
-	switch v := value.(type) {
-	case bool:
-		return v, true
-	case string:
-		switch strings.ToLower(strings.TrimSpace(v)) {
-		case "true", "yes", "1":
-			return true, true
-		case "false", "no", "0":
-			return false, true
-		}
-	}
-	return false, false
-}
-
-func statusMapString(status map[string]any, key string) string {
-	if status == nil {
-		return ""
-	}
-	value, ok := status[key]
-	if !ok || value == nil {
-		return ""
-	}
-	return strings.TrimSpace(fmt.Sprint(value))
-}
-
-func firstNonEmptyString(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }
 
 func ObjectStatusID(status routerstate.ObjectStatus) string {

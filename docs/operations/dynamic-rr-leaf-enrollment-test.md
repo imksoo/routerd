@@ -1,11 +1,12 @@
 # Dynamic RR/Leaf Enrollment Test Runbook
 
-This runbook validates the dual-RR `SAMRRSet` enrollment flow before any
-cloud/PVE full-topology test.
+This runbook validates the dual-RR enrollment flow before any cloud/PVE
+full-topology test. `SAMRRSet` is the fetched, policy-scoped runtime snapshot
+used by an admitted leaf, not a static topology resource.
 
 Primary target: private-underlay SAM transport without mandatory WireGuard.
 The review shape also includes one encrypted public-underlay leaf so the same
-dual-RR `SAMRRSet` proves both transport paths:
+dual-RR runtime snapshot proves both transport paths:
 
 - `leaf-a`: `mode: ipip`, `encryption: wireguard`, connects to rr-a and rr-b.
 - `leaf-b`: `mode: fou`, `encryption: none`, connects to rr-a and rr-b.
@@ -15,12 +16,19 @@ is not the default enrollment identity or the default private-underlay model.
 
 ## Resource Boundaries
 
-- `SAMRRSet` is control-plane intent: it lists rr-a/rr-b members and shared
-  admission references. It never lists leaves and is not a data-plane primitive.
-- `SAMEnrollmentPolicy` and `SAMEnrollmentClaim` authorize leaf join data,
-  tunnel address, endpoint, and MobilityPool `/32` claims. Join authentication
-  is modeled with `joinTokenFrom` plus claim `joinNonce`, `joinTimestamp`, and
-  `joinHMAC`.
+- `SAMNodeSet` is the static server-side identity/topology source. It lists
+  rr-a/rr-b (marked `routeReflector: true`) and never lists leaves.
+- `SAMEnrollmentPolicy.spec.rrNodeSetRef` is required on the RR-side policy to
+  select that static RR topology. The policy's `rrSetRef` names the
+  `SAMRRSet` that the server projects only after a claim is admitted. Policies
+  exist only on serving hubs/RRs; leaves do not copy them.
+- `SAMRRSet` is the resulting policy-scoped, fetched runtime snapshot. It is
+  not an operator-authored top-level resource and is not a data-plane primitive.
+- `SAMEnrollmentPolicy` authorizes leaf join data, tunnel address, endpoint,
+  and policy-scoped SAM `/32` claims on the serving hub/RR. A leaf's local
+  `SAMEnrollmentClaim` is a remote request that references that policy; join
+  authentication is modeled with the server policy's `joinTokenFrom` plus
+  claim `joinNonce`, `joinTimestamp`, and `joinHMAC`.
 - `SAMTransportProfile` consumes `SAMRRSet` or accepted enrollment claims and
   generates existing `TunnelInterface` and `BGPPeer` resources.
 - On RRs, `SAMTransportProfile.spec.bgp.generatePeers: false` can generate
@@ -28,7 +36,7 @@ is not the default enrollment identity or the default private-underlay model.
   `BGPDynamicPeer`.
 - `BGPDynamicPeer` is only the RR BGP acceptor. It owns listen source-prefix
   admission and BGP policy. It does not own leaf identity, tunnel assignment,
-  WireGuard material, or MobilityPool authorization.
+  WireGuard material, or enrollment claim route authorization.
 - `BGPDynamicPeer` status reports the configured peer group/source prefixes,
   discovered dynamic peers, best-effort routerd-side accepted/rejected route
   counters, and enrollment correlation when the peer address matches an
@@ -37,22 +45,27 @@ is not the default enrollment identity or the default private-underlay model.
   import-policy rejection counters.
 - `WireGuardInterface` / `WireGuardPeer` are used only when
   `encryption: wireguard` is selected.
-- `MobilityPool` remains the `/32` ownership authority.
+- `MobilityPool` is intentionally absent from this dynamic RR/leaf topology.
+  It remains the ownership/capture authority only for a full Cloud SAM
+  control-plane deployment with a local `EventGroup`; it is not a leaf route
+  authorization resource.
 - `SAMEnrollmentClaim.spec.mobility.ownedAddresses` is bound to dynamic BGP
   admission by the BGP neighbor/tunnel address, not by the route's FIB
   next-hop. A dynamic leaf can advertise only its accepted claim-owned `/32`;
-  another leaf's `/32`, an unclaimed pool `/32`, pool aggregate, subprefix,
-  default route, or underlay route is rejected before FIB installation.
+  another leaf's `/32`, an unclaimed authorized-prefix `/32`, an aggregate,
+  subprefix, default route, or underlay route is rejected before FIB
+  installation.
 - RR-side enrollment admission supports both deployment shapes:
   - use `SAMEnrollmentPolicy.spec.mobilityPoolRefs` when the RR also declares a
-    valid local `MobilityPool` member because RR and leaf/capture duties are
-    colocated, or because the RR is an actual mobility-planning participant;
+    valid local `MobilityPool` that imports its `SAMNodeSet` topology and carries
+    the RR's self capture/discovery overlay, because RR and capture duties are
+    colocated or the RR is an actual mobility-planning participant;
   - use `SAMEnrollmentPolicy.spec.mobilityPrefixes` when the RR is only serving
     enrollment, WireGuard/dynamic peer admission, and BGP route reflection. In
-    this separated shape, the policy is the RR-side admission authority, and
-    `SAMRRSet.spec.mobilityPrefixes` publishes matching fetched RRSet metadata
-    for leaf-side consumers. The RR must not declare a placeholder
-    `MobilityPool` just to authorize leaf-owned `/32` claims.
+    this separated shape, the policy is the RR-side admission authority. The
+    fetched RRSet carries selected RR nodes only; the RR must not declare a placeholder
+    `MobilityPool` just to authorize leaf-owned `/32` claims; leaves use this
+    separated shape and never declare a placeholder pool.
 - `SAMEnrollmentClaim.spec.expiresAt` and `spec.revoked` are
   RR/controller/admin-owned admission state. They are intentionally not part of
   the leaf-authored join HMAC payload, so an operator can revoke or shorten
@@ -68,15 +81,15 @@ Leaf-side automatic enrollment uses `SAMEnrollmentClient`:
 4. persist the fetched RRSet into the leaf's local state DB as
    `DynamicConfigPart` source `SAMRRSet/<name>`.
 
-The leaf startup config can then keep only the bootstrap claim/policy
-reference and `peersFrom: SAMRRSet/<name>`. It does not need the full rr-a/rr-b
-inventory as hand-edited static YAML for the automatic path.
+The leaf startup config keeps only its bootstrap claim, client, and
+`peersFrom: SAMRRSet/<name>`. The claim names a remote server policy; the leaf
+does not author a local `SAMEnrollmentPolicy`, `SAMNodeSet`, or rr-a/rr-b
+inventory in static YAML.
 
-`routerctl mobility enrollment-join` remains available as a manual/script path,
-but it is not the normal every-reconcile operation. `SAMEnrollmentClient`
-refreshes only when the fetched RRSet is missing, near expiry, or the local
-claim material changes. Failed attempts use exponential backoff and transport
-or BGP degradation does not trigger immediate rejoin loops.
+`SAMEnrollmentClient` is the sole submit/fetch/persist path. It refreshes only
+when the fetched RRSet is missing, near expiry, or the local claim material
+changes. Failed attempts use exponential backoff and transport or BGP
+degradation does not trigger immediate rejoin loops.
 
 ## Revoke, Rotate, And Re-Enroll
 
@@ -88,8 +101,8 @@ claim as active.
 
 ```sh
 routerctl mobility enrollment-revoke \
-  --claim pve-leaf-b \
-  --rr-url https://10.30.0.10:65432 \
+  --claim leaf-b \
+  --rr-url https://10.10.0.2:65432 \
   --rr-token-file /usr/local/etc/routerd/secrets/control-api-token \
   --rr-ca-file /usr/local/etc/routerd/secrets/rr-ca.pem \
   --rr-client-cert-file /usr/local/etc/routerd/secrets/admin.crt \
@@ -109,19 +122,21 @@ To rotate and re-enroll a leaf:
 3. recompute `spec.joinHMAC` with `routerctl mobility enrollment-hmac`, or
    regenerate the leaf config with `routerctl mobility leaf-config` and a join
    secret source;
-4. let `SAMEnrollmentClient` refresh after the local claim material changes, or
-   run `routerctl mobility enrollment-join` once to force submit/fetch and
+4. let `SAMEnrollmentClient` refresh after the local claim material changes and
    persist the new `SAMRRSet`; and
 5. check `routerctl doctor sam-enrollment-client` on the leaf and
    `routerctl doctor bgp-dynamic-peer` on the RR.
 
 Use `routerctl mobility leaf-config` to generate a minimal leaf startup config
 for this automatic path. The generated config contains the local underlay
-interface/address, owned mobility `/32`, `BGPRouter`, `SAMTransportProfile`,
-`MobilityPool`, `SAMEnrollmentPolicy`, `SAMEnrollmentClaim`, and
-`SAMEnrollmentClient`. It intentionally does not embed the fetched `SAMRRSet`;
-the client submits the claim to one of the configured bootstrap endpoints and
-persists the authorized RRSet as dynamic state.
+interface/address, owned SAM `/32`, `BGPRouter`, `SAMTransportProfile`,
+`SAMEnrollmentClaim`, and `SAMEnrollmentClient`. It deliberately omits
+`MobilityPool` and `EventGroup`: neither can reconcile without the full local
+ownership/capture topology. The claim references the remote server policy; the
+generated leaf config intentionally
+does not embed a `SAMEnrollmentPolicy`, `SAMNodeSet`, or the fetched
+`SAMRRSet`. The client submits the claim to one of the configured bootstrap
+endpoints and persists the authorized RRSet as dynamic state.
 
 ## Example Configs
 
@@ -136,19 +151,10 @@ Mixed transport review examples:
 - `examples/cloudedge-dynamic-leaf-a-wg.yaml`
 - `examples/cloudedge-dynamic-leaf-b-fou.yaml`
 
-PVE minimal automatic review examples:
-
-- `examples/pve-minimal-rr.yaml`
-- `examples/pve-minimal-rr-b.yaml`
-- `examples/pve-minimal-leaf-a-wg.yaml`
-- `examples/pve-minimal-leaf-b-fou.yaml`
-- `examples/pve-minimal-leaf-c-wg.yaml`
-- `examples/pve-minimal-leaf-d-fou.yaml`
-- `tests/fixtures/pve-minimal-leaf-rrset-fetched.yaml`
-
 These configs model:
 
-- rr-a and rr-b as members of `SAMRRSet/cloudedge-rrs`;
+- rr-a and rr-b as `routeReflector` nodes in a static `SAMNodeSet`, selected by
+  each RR-side policy's `rrNodeSetRef`;
 - no static RR-side `BGPPeer/leaf-*`;
 - RR-side `BGPDynamicPeer/cloudedge-leaves`;
 - RR-side `SAMTransportProfile.spec.bgp.generatePeers: false`;
@@ -162,21 +168,13 @@ These configs model:
 
 The dual-RR CloudEdge examples intentionally model separated RR/leaf roles:
 `examples/cloudedge-dynamic-rr-a-hub.yaml` and
-`examples/cloudedge-dynamic-rr-b-hub.yaml` do not declare `EventGroup` or
-`MobilityPool`. They use `SAMEnrollmentPolicy.spec.mobilityPrefixes` set to
-`[10.77.60.0/24]` as the RR-side admission authority, with matching
-`SAMRRSet.spec.mobilityPrefixes` metadata for fetched RRSet consumers, so local
-validation catches invalid claim addresses without starting mobility planning on
-the RRs.
-
-The PVE minimal examples use the same separated RR/leaf admission shape, reduced
-to two local RRs and four leaves. `examples/pve-minimal-rr.yaml` models
-`pve-rr-a`, `examples/pve-minimal-rr-b.yaml` models `pve-rr-b`, and both RR
-configs authorize leaf-owned `/32` claims with
-`SAMEnrollmentPolicy.spec.mobilityPrefixes: [10.77.70.0/24]`, while the fetched
-`SAMRRSet` publishes matching `mobilityPrefixes` metadata, instead of declaring
-a placeholder `MobilityPool`. Leaf startup configs bootstrap against both RRs
-and consume a fetched `SAMRRSet/pve-rrs` containing `pve-rr-a` and `pve-rr-b`.
+`examples/cloudedge-dynamic-rr-b-hub.yaml` and all three leaf examples do not
+declare `EventGroup` or `MobilityPool`. They use
+`SAMEnrollmentPolicy.spec.mobilityPrefixes` set to `[10.77.60.0/24]` as the
+RR-side admission authority, while
+`rrNodeSetRef` selects the static RR topology for the fetched snapshot. Local
+validation therefore catches invalid claim addresses without starting mobility
+planning on the RRs.
 
 The mixed examples model:
 
@@ -218,9 +216,9 @@ Replace example values before live testing:
 | `10.255.0.21/32` | leaf tunnel address, inside policy `tunnelAddressPrefixes`. |
 | `10.255.0.31/32` | leaf-a tunnel address, inside policy `tunnelAddressPrefixes`. |
 | `10.255.0.32/32` | leaf-b tunnel address, inside policy `tunnelAddressPrefixes`. |
-| `10.77.60.21/32` | leaf-owned MobilityPool address. |
-| `10.77.60.31/32` | leaf-a owned MobilityPool address. |
-| `10.77.60.32/32` | leaf-b owned MobilityPool address. |
+| `10.77.60.21/32` | leaf-owned SAM address authorized by the RR policy. |
+| `10.77.60.31/32` | leaf-a SAM address authorized by the RR policy. |
+| `10.77.60.32/32` | leaf-b SAM address authorized by the RR policy. |
 | `203.0.113.10:51820` / `203.0.113.11:51820` | rr-a/rr-b WG UDP endpoints for the public-underlay WG example. |
 | UDP `5555` | FOU/GUE encapsulation port used by the leaf-b private-underlay example. |
 
@@ -306,12 +304,6 @@ scripts/routerd-sandbox-run.sh sh -c '
 ' sh \
   examples/cloudedge-dynamic-rr-a-hub.yaml \
   examples/cloudedge-dynamic-rr-b-hub.yaml \
-  examples/pve-minimal-rr.yaml \
-  examples/pve-minimal-rr-b.yaml \
-  examples/pve-minimal-leaf-a-wg.yaml \
-  examples/pve-minimal-leaf-b-fou.yaml \
-  examples/pve-minimal-leaf-c-wg.yaml \
-  examples/pve-minimal-leaf-d-fou.yaml \
   examples/cloudedge-dynamic-leaf-pve.yaml \
   examples/cloudedge-dynamic-leaf-a-wg.yaml \
   examples/cloudedge-dynamic-leaf-b-fou.yaml
@@ -333,8 +325,9 @@ Expected local evidence:
   resources for those profiles.
 - the RR-side `WireGuardInterface/wg-cloudedge` derives only
   `WireGuardPeer/leaf-a`; `leaf-b` remains non-WG.
-- leaf contains `SAMRRSet/cloudedge-rrs` and no static `BGPPeer/rr-a` or
-  `BGPPeer/rr-b`.
+- leaf contains no static `SAMRRSet/cloudedge-rrs`, `BGPPeer/rr-a`, or
+  `BGPPeer/rr-b`; after enrollment its effective dynamic state contains the
+  fetched `SAMRRSet/cloudedge-rrs`.
 - leaf `SAMTransportProfile/leaf-pve` consumes `SAMRRSet/cloudedge-rrs`.
 - controller tests show leaf-side generated `TunnelInterface` and `BGPPeer`
   resources for rr-a and rr-b.
@@ -357,18 +350,8 @@ Expected local evidence:
 - `TestCloudEdgeRRExamplesDeriveOnlyWGAdmissionPeers` proves the RR-side WG
   materialization path derives only `WireGuardPeer/leaf-a` and does not turn the
   non-WG `leaf-b` FOU claim into a WG peer.
-- `examples/pve-minimal-leaf-a-wg.yaml`,
-  `examples/pve-minimal-leaf-b-fou.yaml`,
-  `examples/pve-minimal-leaf-c-wg.yaml`, and
-  `examples/pve-minimal-leaf-d-fou.yaml` contain no static
-  `SAMRRSet/pve-rrs`; tests inject
-  `tests/fixtures/pve-minimal-leaf-rrset-fetched.yaml` as fetched dynamic
-  state and prove the leaf generates RR-facing `TunnelInterface` and `BGPPeer`
-  resources toward both `pve-rr-a` and `pve-rr-b`.
 - `SAMEnrollmentClient` submits the leaf claim, fetches the allowed RRSet, and
   writes the fetched RRSet to local dynamic state only when refresh is needed.
-- `routerctl mobility enrollment-join` performs the same submit/fetch/write
-  path for manual bootstrap and troubleshooting.
 - WG materialization is covered only by WG-specific tests using optional
   `wireGuard` blocks; non-WG materialization is covered without WG resources.
 
@@ -376,27 +359,25 @@ Example leaf bootstrap command:
 
 ```sh
 routerctl mobility leaf-config \
-  --leaf-id pve-leaf-b \
-  --underlay-ifname vmbr0 \
-  --underlay-address 10.30.0.22/24 \
-  --local-endpoint 10.30.0.22 \
-  --endpoint-prefix 10.30.0.0/24 \
-  --inner-prefix 10.255.10.0/24 \
-  --tunnel-address 10.255.10.22/32 \
-  --mobility-pool pve-mobility \
-  --mobility-pool-prefix 10.77.70.0/24 \
-  --owned-address 10.77.70.22/32 \
-  --rr-set pve-rrs \
-  --policy pve-fou-leaves \
-  --join-token-file /usr/local/etc/routerd/secrets/pve-join-token \
-  --join-audience pve-private-underlay \
-  --bootstrap-endpoint https://10.30.0.10:65432 \
-  --bootstrap-endpoint https://10.30.0.11:65432 \
+  --leaf-id leaf-b \
+  --underlay-ifname private-wan \
+  --underlay-address 10.20.0.32/24 \
+  --local-endpoint 10.20.0.32 \
+  --endpoint-prefix 10.20.0.0/24 \
+  --inner-prefix 10.255.0.0/20 \
+  --tunnel-address 10.255.0.32/32 \
+  --mobility-prefix 10.77.60.0/24 \
+  --owned-address 10.77.60.32/32 \
+  --rr-set cloudedge-rrs \
+  --policy cloudedge-private-fou-leaves \
+  --join-audience cloudedge-private-underlay \
+  --bootstrap-endpoint https://10.10.0.2:65432 \
+  --bootstrap-endpoint https://10.10.0.3:65432 \
   --control-api-token-file /usr/local/etc/routerd/secrets/control-api-token \
   --control-api-ca-file /usr/local/etc/routerd/secrets/rr-ca.pem \
   --control-api-client-cert-file /usr/local/etc/routerd/secrets/leaf.crt \
   --control-api-client-key-file /usr/local/etc/routerd/secrets/leaf.key \
-  --secret-file /usr/local/etc/routerd/secrets/pve-join-token \
+  --secret-file /usr/local/etc/routerd/secrets/cloudedge-join-token \
   > /usr/local/etc/routerd/router.yaml
 ```
 
@@ -405,24 +386,6 @@ computes `SAMEnrollmentClaim.spec.joinHMAC` from the same canonical payload used
 by `routerctl mobility enrollment-hmac`. Without a secret source, it writes the
 placeholder `EXAMPLE_HMAC_SHA256_HEX` so the config can still be reviewed
 before secrets are installed.
-
-```sh
-routerctl mobility enrollment-join \
-  --config /usr/local/etc/routerd/router.yaml \
-  --claim pve-leaf-b \
-  --rr-url http://10.30.0.10:65432 \
-  --state-file /var/lib/routerd/routerd.db
-```
-
-For local Unix-socket review against a sandbox RR:
-
-```sh
-routerctl mobility enrollment-join \
-  --config examples/pve-minimal-leaf-b-fou.yaml \
-  --claim pve-leaf-b \
-  --rr-socket /run/routerd/routerd.sock \
-  --state-file /tmp/routerd-leaf/routerd.db
-```
 
 For manual materialization evidence without touching cloud/PVE, run a sandbox
 controller pass and render the effective config:
@@ -475,7 +438,7 @@ Local tests should cover:
 - static `BGPPeer` reconcile does not delete live peers from
   `routerd-dynamic-*` peer groups.
 - watch-triggered BGP observation includes dynamic peer import allowlists.
-- `SAMRRSet` allows members without `wireGuard` blocks.
+- a fetched `SAMRRSet` accepts projected RR nodes without `wireGuard` blocks.
 - `SAMEnrollmentClaim` is valid without `wireGuard.publicKey`.
 - missing `SAMEnrollmentPolicy` references are validation errors.
 - `policy.ttl` with `claim.joinTimestamp` expires claims during materialization.
@@ -490,13 +453,13 @@ Local tests should cover:
 - a configured `joinTokenFrom` requires claim `joinNonce`, `joinTimestamp`, and
   `joinHMAC`.
 - duplicate `joinNonce` values are rejected within the same enrollment policy.
-- unauthorized MobilityPool `/32` claims are rejected.
+- unauthorized policy-scoped SAM `/32` claims are rejected.
 - revoked or expired claims are skipped.
 - BGP import policy can require exact host routes with
   `allowedPrefixLengthMin: 32` and `allowedPrefixLengthMax: 32`.
-- dynamic SAM route admission rejects pool aggregates, non-/32 subprefixes,
-  default routes, underlay prefixes, MobilityPool-outside `/32`s, another
-  claim's `/32`, and unclaimed pool `/32`s.
+- dynamic SAM route admission rejects authorized-prefix aggregates, non-/32
+  subprefixes, default routes, underlay prefixes, `/32`s outside the policy,
+  another claim's `/32`, and unclaimed `/32`s.
 - `BGPDynamicPeer` status exposes discovered dynamic peers, accepted route
   count, rejected route count, and rejected route summary from routerd-side
   observation.
@@ -507,8 +470,9 @@ For public underlay or encrypted transport, use:
 
 - `SAMTransportProfile.spec.encryption: wireguard`;
 - `WireGuardInterface.spec.peersFrom` referencing `SAMEnrollmentPolicy` on the
-  RR or `SAMRRSet` on the leaf;
-- optional `wireGuard` blocks on enrollment claims and RRSet members.
+  RR or the fetched `SAMRRSet` on the leaf;
+- optional `wireGuard` blocks on enrollment claims and static `SAMNodeSet` RR
+  nodes, which are projected into the fetched snapshot.
 
 WG credentials remain transport-specific. The leaf generates its private key
 locally; only the leaf public key is accepted by the RR. The generic enrollment
@@ -556,8 +520,8 @@ Required live-test artifacts:
   after final config edits;
 - firewall/underlay reachability for BGP TCP/179 over the generated tunnel
   addresses;
-- UDP `5555` permitted between leaf-b/leaf-d and both RRs for the FOU path;
-- for the optional WG path only, leaf-a/leaf-c local WG private key, RR WG public keys,
+- UDP `5555` permitted between leaf-b and both RRs for the FOU path;
+- for the optional WG path only, leaf-a local WG private key, RR WG public keys,
   reachable RR WG UDP endpoints, and UDP `51820` permitted;
 - rollback artifacts: previous routerd binary/package, previous config, and
   service restart commands for each host.
@@ -569,7 +533,7 @@ routerctl validate -f /etc/routerd/routerd.yaml
 routerctl plan -f /etc/routerd/routerd.yaml
 ```
 
-On each PVE minimal leaf, run a local controller materialization check before
+On each reviewed leaf, run a local controller materialization check before
 starting live forwarding:
 
 ```sh
@@ -610,7 +574,7 @@ Full topology pass criteria:
 - if the optional WG test is selected, leaf-a establishes WG plus IPIP transport
   toward both rr-a and rr-b;
 - both RRs accept BGP sessions through `BGPDynamicPeer/cloudedge-leaves`;
-- each RR learns only the authorized MobilityPool `/32` routes;
+- each RR learns only the policy-authorized SAM `/32` routes;
 - `routerctl get BGPDynamicPeer/cloudedge-leaves` shows the connected leaf
   under `discoveredPeers`, maps it to `enrollmentClaimRef`, and reports zero
   rejected routes for the positive path;
@@ -631,7 +595,11 @@ Items intentionally not covered unless selected for the first live run:
 - RR-to-RR peering behavior when a leaf can reach only one RR;
 - provider action side effects outside the chosen test providers/hosts.
 
-## PVE Live Redundancy Evidence - 2026-06-29
+## Historical PVE Live Redundancy Evidence - 2026-06-29
+
+This is preserved release evidence, not an executable current runbook. The
+former minimal PVE leaf fixtures were removed; use the current CloudEdge
+examples and the Full Topology Gate above for any new qualification.
 
 The PVE cloud-SAM redundancy topology passed live validation on 2026-06-29.
 

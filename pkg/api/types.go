@@ -550,12 +550,6 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
-	case "MobilityMemberSet":
-		var spec MobilityMemberSetSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "SAMNodeSet":
 		var spec SAMNodeSetSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
@@ -574,20 +568,8 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
 		r.Spec = spec
-	case "AddressMobilityDomain":
-		var spec AddressMobilityDomainSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "CloudProviderProfile":
 		var spec CloudProviderProfileSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "RemoteAddressClaim":
-		var spec RemoteAddressClaimSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
@@ -658,6 +640,9 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		}
 		r.Spec = spec
 	case "MobilityPool":
+		if err := rejectMobilityPoolRemovedFields(&raw.Spec); err != nil {
+			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		}
 		var spec MobilityPoolSpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
@@ -796,6 +781,59 @@ func mappingValueNode(node *yaml.Node, key string) *yaml.Node {
 	for i := 0; i+1 < len(node.Content); i += 2 {
 		if node.Content[i].Value == key {
 			return node.Content[i+1]
+		}
+	}
+	return nil
+}
+
+func rejectMobilityPoolRemovedFields(spec *yaml.Node) error {
+	if hasMappingKey(spec, "deliveryPolicy") {
+		return fmt.Errorf("deliveryPolicy is not supported; MobilityPool always uses BGP delivery")
+	}
+	for _, field := range []string{"mode", "capturePolicy", "authority", "ipOwnershipPolicy", "publishMemberSet"} {
+		if hasMappingKey(spec, field) {
+			return fmt.Errorf("%s is not supported; MobilityPool derives capture, ownership, and placement from members, discovery, and BGP state", field)
+		}
+	}
+	members := mappingValueNode(spec, "members")
+	if members == nil || members.Kind != yaml.SequenceNode {
+		return nil
+	}
+	allowedMemberFields := map[string]bool{
+		"nodeRef":              true,
+		"profileRef":           true,
+		"capture":              true,
+		"staticOwnedAddresses": true,
+		"ownershipDiscovery":   true,
+	}
+	topologyFields := map[string]bool{
+		"site":            true,
+		"role":            true,
+		"placement":       true,
+		"maintenance":     true,
+		"maxSecondaryIPs": true,
+		"eventEndpoint":   true,
+		"samEndpoint":     true,
+		"macAddresses":    true,
+		"routeReflector":  true,
+		"wireGuard":       true,
+	}
+	for i, member := range members.Content {
+		if member.Kind != yaml.MappingNode {
+			continue
+		}
+		for fieldIndex := 0; fieldIndex+1 < len(member.Content); fieldIndex += 2 {
+			field := member.Content[fieldIndex].Value
+			switch field {
+			case "delivery", "deliveryTo", "deliveryTargets":
+				return fmt.Errorf("members[%d].%s is not supported; BGP mobility derives transport from SAMTransportProfile and OverlayPeer resources", i, field)
+			}
+			if topologyFields[field] {
+				return fmt.Errorf("members[%d].%s is not supported; shared identity and topology belong in SAMNodeSet", i, field)
+			}
+			if !allowedMemberFields[field] {
+				return fmt.Errorf("members[%d].%s is not supported; MobilityPool members are local provider/L2 overlays only", i, field)
+			}
 		}
 	}
 	return nil

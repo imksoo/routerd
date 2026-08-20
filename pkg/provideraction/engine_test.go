@@ -152,6 +152,42 @@ func allowForwardingPolicy() api.ProviderActionPolicySpec {
 	return pol
 }
 
+func TestProviderEligibleDynamicPartsRejectsMalformedReservedMobilitySources(t *testing.T) {
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	activeMobility := state.DynamicConfigPartRecord{
+		Source:     "MobilityPool/cloudedge/node/router-a",
+		Generation: 1,
+		ObservedAt: now,
+		ExpiresAt:  now.Add(5 * time.Minute),
+		Digest:     "sha256:active-mobility",
+		Status:     "active",
+	}
+	parts := []state.DynamicConfigPartRecord{
+		activeMobility,
+		{
+			Source:     "MobilityPool/cloudedge/node/router-a/not-a-plan",
+			Generation: 1,
+			ObservedAt: now,
+			ExpiresAt:  now.Add(5 * time.Minute),
+			Digest:     "sha256:malformed-suffix",
+			Status:     "active",
+		},
+		{
+			Source:     " MobilityPool/cloudedge/node/router-a",
+			Generation: 1,
+			ObservedAt: now,
+			ExpiresAt:  now.Add(5 * time.Minute),
+			Digest:     "sha256:whitespace-source",
+			Status:     "active",
+		},
+		{Source: "plugin/example", Status: "active", ExpiresAt: now.Add(time.Hour)},
+	}
+	eligible := providerEligibleDynamicParts(parts, now)
+	if len(eligible) != 2 || eligible[0].Source != activeMobility.Source || eligible[1].Source != "plugin/example" {
+		t.Fatalf("eligible DynamicConfigParts = %#v, want canonical MobilityPool main plan and generic plugin source only", eligible)
+	}
+}
+
 func TestImportDedup(t *testing.T) {
 	store := mustStore(t)
 	runner := &fakeRunner{result: succeededResult()}

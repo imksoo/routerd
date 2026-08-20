@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 )
 
@@ -14,7 +15,7 @@ func TailscaleUnitName(name string) string {
 }
 
 func TailscaleSystemdSpec(name string, spec api.TailscaleNodeSpec) api.SystemdUnitSpec {
-	if firstNonEmpty(spec.State, "present") == "absent" {
+	if stringutil.FirstNonBlank(spec.State, "present") == "absent" {
 		return api.SystemdUnitSpec{State: "absent", UnitName: TailscaleUnitName(name)}
 	}
 	noNewPrivileges := true
@@ -43,7 +44,7 @@ func TailscaleSystemdSpec(name string, spec api.TailscaleNodeSpec) api.SystemdUn
 }
 
 func TailscaleUpArgs(spec api.TailscaleNodeSpec) []string {
-	binary := firstNonEmpty(spec.BinaryPath, "/usr/bin/tailscale")
+	binary := stringutil.FirstNonBlank(spec.BinaryPath, "/usr/bin/tailscale")
 	// tailscale up defaults to an unbounded initialization wait. Keep the
 	// lifecycle bound in the shared CLI arguments so Linux and FreeBSD have
 	// identical semantics without changing ownership of tailscaled itself.
@@ -110,13 +111,4 @@ func sanitizeSystemdName(name string) string {
 		return "default"
 	}
 	return out
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }

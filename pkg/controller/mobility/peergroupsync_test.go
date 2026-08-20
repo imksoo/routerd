@@ -15,6 +15,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/dynamicconfig/codec"
 	"github.com/imksoo/routerd/pkg/wireguard"
 )
 
@@ -41,18 +42,20 @@ func TestPeerGroupSyncServerReturnsPublishedGroups(t *testing.T) {
 	if len(payload.PeerGroups) != 1 || payload.PeerGroups[0].Metadata.Name != "svnet1-rrs" {
 		t.Fatalf("peer groups = %#v, want svnet1-rrs", payload.PeerGroups)
 	}
-	if payload.Revision == 0 {
-		t.Fatal("semantic source generation was not published")
+	metadata := syncMetadataForResource(payload.PeerGroups[0], "rr-a")
+	if metadata.Revision == 0 || metadata.ValidUntil.IsZero() {
+		t.Fatalf("resource metadata = %#v, want source generation and TTL", metadata)
 	}
-	firstRevision, firstDigest := payload.Revision, payload.ResourceDigest
+	firstRevision, firstValidUntil, firstDigest := metadata.Revision, metadata.ValidUntil, resourceDigest(payload.PeerGroups[0])
 	server.Now = func() time.Time { return now.Add(time.Minute) }
 	rr = httptest.NewRecorder()
 	server.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, peerGroupSyncPath+"?name=svnet1-rrs", nil))
 	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.Revision != firstRevision || payload.ResourceDigest != firstDigest {
-		t.Fatalf("unchanged resource changed semantic envelope: revision %d->%d digest %s->%s", firstRevision, payload.Revision, firstDigest, payload.ResourceDigest)
+	metadata = syncMetadataForResource(payload.PeerGroups[0], "rr-a")
+	if metadata.Revision != firstRevision || !metadata.ValidUntil.Equal(firstValidUntil) || resourceDigest(payload.PeerGroups[0]) != firstDigest {
+		t.Fatalf("unchanged resource changed sync metadata: %#v digest=%s", metadata, resourceDigest(payload.PeerGroups[0]))
 	}
 }
 
@@ -91,36 +94,10 @@ func TestSelectSyncCandidateRejectsSameRevisionConflict(t *testing.T) {
 	}
 }
 
-func TestPeerGroupSyncServerReturnsPublishedMemberSets(t *testing.T) {
-	now := time.Date(2026, 6, 8, 10, 0, 30, 0, time.UTC)
-	store := testStore(t, now)
-	writeMemberSetPart(t, store, MobilityMemberSetDynamicSource("svnet1"), "svnet1", []api.MobilityMemberSetMember{{
-		NodeRef: "pve-rt01",
-		Site:    "pve01",
-		Role:    "onprem",
-	}}, now)
-
-	req := httptest.NewRequest(http.MethodGet, memberSetSyncPath, nil)
-	rr := httptest.NewRecorder()
-	server := &PeerGroupSyncServer{Store: store, Now: func() time.Time { return now }}
-	server.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("GET %s status = %d body=%s", memberSetSyncPath, rr.Code, rr.Body.String())
-	}
-	var payload MemberSetSyncResponse
-	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if len(payload.MemberSets) != 1 || payload.MemberSets[0].Metadata.Name != "svnet1" {
-		t.Fatalf("member sets = %#v, want svnet1", payload.MemberSets)
-	}
-}
-
 func TestPeerGroupSyncClientFetchesAndStoresGroup(t *testing.T) {
 	now := time.Date(2026, 6, 8, 10, 1, 0, 0, time.UTC)
 	store := testStore(t, now)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newIPv4TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != peerGroupSyncPath {
 			t.Fatalf("request path = %s, want %s", r.URL.Path, peerGroupSyncPath)
 		}
@@ -153,44 +130,10 @@ func TestPeerGroupSyncClientFetchesAndStoresGroup(t *testing.T) {
 	if len(resources) != 1 || resources[0].Kind != "SAMPeerGroup" || resources[0].Metadata.Name != "svnet1-rrs" {
 		t.Fatalf("stored resources = %#v, want SAMPeerGroup/svnet1-rrs", resources)
 	}
-}
-
-func TestPeerGroupSyncClientFetchesAndStoresMemberSet(t *testing.T) {
-	now := time.Date(2026, 6, 8, 10, 1, 30, 0, time.UTC)
-	store := testStore(t, now)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != memberSetSyncPath {
-			t.Fatalf("request path = %s, want %s", r.URL.Path, memberSetSyncPath)
+	for _, key := range []string{"routerd.net/sync-publisher", "routerd.net/sync-revision", "routerd.net/sync-digest"} {
+		if resources[0].Metadata.Annotations[key] != "" {
+			t.Fatalf("stored resource retained write-only %s annotation: %#v", key, resources[0].Metadata.Annotations)
 		}
-		_ = json.NewEncoder(w).Encode(MemberSetSyncResponse{MemberSets: []api.Resource{mobilityMemberSetResource("svnet1", []api.MobilityMemberSetMember{{
-			NodeRef: "pve-rt01",
-			Site:    "pve01",
-			Role:    "onprem",
-		}})}})
-	}))
-	defer srv.Close()
-	addr, port := serverAddr(t, srv)
-
-	client := &PeerGroupSyncClient{
-		Store:      store,
-		HTTPClient: srv.Client(),
-		Port:       port,
-		Now:        func() time.Time { return now },
-		Discover: func(context.Context, *api.Router, string) ([]netip.Addr, error) {
-			return []netip.Addr{addr}, nil
-		},
-	}
-	set, ok, err := client.SyncMemberSet(context.Background(), nil, "svnet1")
-	if err != nil {
-		t.Fatalf("SyncMemberSet: %v", err)
-	}
-	if !ok || len(set.Members) != 1 || set.Members[0].NodeRef != "pve-rt01" {
-		t.Fatalf("synced member set = %#v ok=%v, want pve member", set, ok)
-	}
-	part := latestPart(t, store, MemberSetSyncDynamicSource("svnet1"))
-	resources := decodeResources(t, part.ResourcesJSON)
-	if len(resources) != 1 || resources[0].Kind != "MobilityMemberSet" || resources[0].Metadata.Name != "svnet1" {
-		t.Fatalf("stored resources = %#v, want MobilityMemberSet/svnet1", resources)
 	}
 }
 
@@ -204,7 +147,7 @@ func TestSAMTransportProfilePeersFromSyncResolvesMissingGroup(t *testing.T) {
 	}
 	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMPeerGroup/svnet1-rrs"}}
 	router.Spec.Resources[0].Spec = spec
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newIPv4TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(PeerGroupSyncResponse{PeerGroups: []api.Resource{samPeerGroupResource("svnet1-rrs", []api.SAMTransportPeerSpec{{
 			NodeRef:        "rr-rt01",
 			RemoteEndpoint: "10.252.0.1",
@@ -312,43 +255,12 @@ func writePeerGroupPart(t *testing.T, store peerGroupSyncStore, source, name str
 		},
 	}
 	part.Spec.Digest = digestDynamicPart(part)
-	record, err := dynamicPartRecord(part)
+	record, err := codec.Encode(part)
 	if err != nil {
-		t.Fatalf("dynamicPartRecord: %v", err)
+		t.Fatalf("encode dynamic part: %v", err)
 	}
 	if err := store.UpsertDynamicConfigPart(record); err != nil {
 		t.Fatalf("UpsertDynamicConfigPart: %v", err)
-	}
-}
-
-func writeMemberSetPart(t *testing.T, store peerGroupSyncStore, source, name string, members []api.MobilityMemberSetMember, now time.Time) {
-	t.Helper()
-	part := dynamicconfig.DynamicConfigPart{
-		TypeMeta: api.TypeMeta{APIVersion: dynamicconfig.ConfigAPIVersion, Kind: "DynamicConfigPart"},
-		Metadata: api.ObjectMeta{Name: name},
-		Spec: dynamicconfig.DynamicConfigPartSpec{
-			Source:     source,
-			Generation: dynamicGeneration,
-			ObservedAt: now,
-			ExpiresAt:  now.Add(DefaultLeaseTTL),
-			Resources:  []api.Resource{mobilityMemberSetResource(name, members)},
-		},
-	}
-	part.Spec.Digest = digestDynamicPart(part)
-	record, err := dynamicPartRecord(part)
-	if err != nil {
-		t.Fatalf("dynamicPartRecord: %v", err)
-	}
-	if err := store.UpsertDynamicConfigPart(record); err != nil {
-		t.Fatalf("UpsertDynamicConfigPart: %v", err)
-	}
-}
-
-func mobilityMemberSetResource(name string, members []api.MobilityMemberSetMember) api.Resource {
-	return api.Resource{
-		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "MobilityMemberSet"},
-		Metadata: api.ObjectMeta{Name: name},
-		Spec:     api.MobilityMemberSetSpec{Members: members},
 	}
 }
 
@@ -370,6 +282,21 @@ func serverAddr(t *testing.T, srv *httptest.Server) (netip.Addr, int) {
 		t.Fatalf("Atoi(%q): %v", portText, err)
 	}
 	return addr, port
+}
+
+// newIPv4TestServer avoids depending on an IPv6 loopback listener.  The sync
+// protocol is IP-family independent, while restricted CI sandboxes commonly
+// disallow creating a TCP6 listener.
+func newIPv4TestServer(t *testing.T, handler http.Handler) *httptest.Server {
+	t.Helper()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen IPv4 test server: %v", err)
+	}
+	server := httptest.NewUnstartedServer(handler)
+	server.Listener = listener
+	server.Start()
+	return server
 }
 
 func addrStrings(addrs []netip.Addr) []string {

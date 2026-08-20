@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/dpi"
 	"github.com/imksoo/routerd/pkg/version"
 )
@@ -494,18 +495,9 @@ func probeAgent(ctx context.Context, opts options) agentStatus {
 	status.LibNDPILoaded = body.LibNDPILoaded
 	status.Available = body.LibNDPILoaded
 	if !status.Available {
-		status.Error = firstNonEmpty(body.Reason, "libndpi backend is unavailable")
+		status.Error = stringutil.FirstNonEmpty(body.Reason, "libndpi backend is unavailable")
 	}
 	return status
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func writeJSON(w http.ResponseWriter, value any) {
