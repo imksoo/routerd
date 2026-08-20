@@ -12,6 +12,16 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260820.1629
+
+### Fixed
+
+- SQLite configuration generations now deduplicate unchanged source YAML.
+  Comments, whitespace, and mapping-key order no longer create another stored
+  snapshot; reconciliation continues and records observed state against the
+  existing generation. Snapshot insertion is atomic, and a failed apply remains
+  retryable.
+
 ## v20260820.1423
 
 ### Fixed

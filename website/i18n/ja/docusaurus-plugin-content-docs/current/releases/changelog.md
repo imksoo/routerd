@@ -11,6 +11,15 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260820.1629
+
+### 修正
+
+- SQLite の設定世代は、内容が同じ source YAML を重複保存しなくなりました。コメント、
+  空白、mapping key の順序だけの差では新しい snapshot を作成せず、reconcile は継続して
+  既存 generation に observed state を記録します。snapshot の挿入は atomic であり、
+  失敗した apply は再試行できます。
+
 ## v20260820.1423
 
 ### 修正

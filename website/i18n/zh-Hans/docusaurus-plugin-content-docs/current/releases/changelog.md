@@ -11,6 +11,14 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260820.1629
+
+### 修复
+
+- SQLite 配置世代现在会去除未变更 source YAML 的重复项。只有注释、空白或 mapping key
+  顺序差异时不会创建新的 snapshot；reconcile 仍会继续，并将 observed state 记录到既有
+  generation。snapshot 插入是 atomic，失败的 apply 仍可重试。
+
 ## v20260820.1423
 
 ### 修复
