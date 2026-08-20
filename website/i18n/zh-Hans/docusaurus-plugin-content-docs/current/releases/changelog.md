@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260820.1911
+
 ### 变更
 
 - 以日语为起点重写初学者文档，并同步英语、繁体中文和简体中文入口。第一段导览现在说明
