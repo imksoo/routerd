@@ -12,6 +12,18 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Static direct-IPIP route reflectors that intentionally omit `MobilityPool`
+  now install a remote mobility `/32` into their FIB only through the typed
+  transport-owned RR-client peer scope (explicit prefix, exact `/32`, peer
+  neighbor, and node-identity community). Such a profile must explicitly set
+  its IPv4 mobility prefix and `/32` bounds in `spec.bgp.importPolicy`;
+  validation now rejects an unbounded no-pool RR rather than reporting a
+  healthy control plane while dropping its FIB route. This restores RR transit
+  without reopening unscoped mobility routes. Proxy-ARP local capture intents
+  now also emit their tunnel-to-capture forwarding paths.
+
 ## v20260820.0052
 
 ### Changed

@@ -2230,6 +2230,106 @@ func TestReconcileInstallsMobilityReturnRouteWithoutOwnerRetain(t *testing.T) {
 	}
 }
 
+func TestReconcileInstallsTransportScopedMobilityRouteOnRRWithoutPool(t *testing.T) {
+	const (
+		mobilityPrefix = "192.168.123.0/24"
+		leafTunnel     = "10.255.1.72"
+	)
+	leafIdentity := bgpstate.MobilityNodeIdentityCommunity("pve-rt-06")
+	otherIdentity := bgpstate.MobilityNodeIdentityCommunity("pve-rt-07")
+	router := bgpRouterWithImportPrefixes(mobilityPrefix)
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile"},
+			Metadata: api.ObjectMeta{Name: "svnet1-rr"},
+			Spec: api.SAMTransportProfileSpec{
+				SelfNodeRef: "rr-a",
+				Mode:        "ipip",
+				InnerPrefix: "10.255.1.0/24",
+				BGP: api.SAMTransportBGPProfileSpec{
+					RouterRef:            "BGPRouter/lan",
+					RouteReflectorClient: true,
+					ImportPolicy: api.BGPImportPolicySpec{
+						AllowedPrefixes:        []string{mobilityPrefix},
+						AllowedPrefixLengthMin: 32,
+						AllowedPrefixLengthMax: 32,
+					},
+				},
+			},
+		},
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
+			Metadata: api.ObjectMeta{
+				Name:      "sam-transport-svnet1-rr-pve-rt-06",
+				OwnerRefs: []api.OwnerRef{{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile", Name: "svnet1-rr"}},
+				Annotations: map[string]string{
+					"mobility.routerd.net/transport-profile": "svnet1-rr",
+					"mobility.routerd.net/self-node":         "rr-a",
+					"mobility.routerd.net/peer-node":         "pve-rt-06",
+				},
+			},
+			Spec: api.BGPPeerSpec{
+				RouterRef:            "BGPRouter/lan",
+				PeerASN:              64512,
+				Peers:                []string{leafTunnel},
+				RouteReflectorClient: true,
+				ImportPolicy: api.BGPImportPolicySpec{
+					AllowedPrefixes:        []string{mobilityPrefix},
+					AllowedPrefixLengthMin: 32,
+					AllowedPrefixLengthMax: 32,
+					RequiredCommunities:    []string{leafIdentity},
+					ForbiddenCommunities:   []string{otherIdentity},
+				},
+			},
+		},
+	)
+	valid := testDestinationWithCommunities("192.168.123.111/32", leafTunnel, bgpstate.MobilityCommunityOwner, leafIdentity)
+	valid.Paths[0].NeighborIp = leafTunnel
+	wrongNeighbor := testDestinationWithCommunities("192.168.123.112/32", "10.255.1.73", bgpstate.MobilityCommunityOwner, leafIdentity)
+	wrongNeighbor.Paths[0].NeighborIp = "10.255.1.73"
+	wrongIdentity := testDestinationWithCommunities("192.168.123.113/32", leafTunnel, bgpstate.MobilityCommunityOwner, otherIdentity)
+	wrongIdentity.Paths[0].NeighborIp = leafTunnel
+	server := &fakeServer{routes: []*gobgpapi.Destination{valid, wrongNeighbor, wrongIdentity}}
+	fib := &fakeFIB{}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: fib}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	want := []FIBRoute{{Prefix: "192.168.123.111/32", NextHops: []string{leafTunnel}}}
+	if !reflect.DeepEqual(fib.routes, want) {
+		t.Fatalf("RR FIB routes = %#v, want only typed transport route %#v", fib.routes, want)
+	}
+	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
+	prefixes, ok := status["prefixes"].([]bgpstate.Prefix)
+	if !ok {
+		t.Fatalf("RR RIB status prefixes = %#v, want typed prefixes", status["prefixes"])
+	}
+	seen := map[string]bool{}
+	for _, prefix := range prefixes {
+		seen[prefix.Prefix] = true
+	}
+	for _, prefix := range []string{"192.168.123.111/32", "192.168.123.112/32", "192.168.123.113/32"} {
+		if !seen[prefix] {
+			t.Fatalf("RR RIB status prefixes = %#v, missing observed route %s", prefixes, prefix)
+		}
+	}
+}
+
+func TestExactIPv4TransitPrefixesNormalizesHostBits(t *testing.T) {
+	prefixes, ok := exactIPv4TransitPrefixes(api.BGPImportPolicySpec{
+		AllowedPrefixes:        []string{"192.168.123.111/24"},
+		AllowedPrefixLengthMin: 32,
+		AllowedPrefixLengthMax: 32,
+	})
+	if !ok {
+		t.Fatal("exactIPv4TransitPrefixes rejected a valid IPv4 prefix")
+	}
+	want := []netip.Prefix{netip.MustParsePrefix("192.168.123.0/24")}
+	if !reflect.DeepEqual(prefixes, want) {
+		t.Fatalf("transit prefixes = %#v, want %#v", prefixes, want)
+	}
+}
+
 func TestWatchEventTriggersImmediateFIBSync(t *testing.T) {
 	server := &fakeServer{
 		routes:        []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.11")},

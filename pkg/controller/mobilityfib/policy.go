@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-// Package mobilityfib admits only the typed MobilityPool FIB plan produced by
-// the mobility controller. It must not normalize MobilityPool configuration or
-// recover desired state from status.
+// Package mobilityfib admits typed MobilityPool FIB plans and the narrow RR
+// transit scopes derived from generated SAM transport peers. It must not
+// normalize MobilityPool configuration or recover desired state from status.
 package mobilityfib
 
 import (
@@ -16,6 +16,7 @@ import (
 
 type Snapshot struct {
 	pools           []poolSnapshot
+	transit         []transitScope
 	invalidPrefixes []netip.Prefix
 }
 
@@ -32,6 +33,24 @@ type scopedPool struct {
 	prefix          netip.Prefix
 	remoteReturn    map[string]bool
 	preferredSource netip.Prefix
+}
+
+// TransitScope is the narrow, typed FIB authority for an RR that forwards
+// MobilityPool routes without itself running MobilityPool ownership planning.
+// It is derived only from a transport-owned RR-client peer; it is never
+// reconstructed from BGP status.
+type TransitScope struct {
+	Prefix               netip.Prefix
+	Neighbor             netip.Addr
+	RequiredCommunities  []string
+	ForbiddenCommunities []string
+}
+
+type transitScope struct {
+	prefix    netip.Prefix
+	neighbor  netip.Addr
+	required  map[string]bool
+	forbidden map[string]bool
 }
 
 const (
@@ -75,11 +94,21 @@ type PreferredSource struct {
 // unscoped mobility data is deliberately fail-closed rather than falling back
 // to a second MobilityPool normalization.
 func NewSnapshotFromVerdicts(verdicts []dynamicconfig.FIBVerdict) Snapshot {
+	return NewSnapshotFromVerdictsAndTransit(verdicts, nil)
+}
+
+// NewSnapshotFromVerdictsAndTransit combines the local MobilityPool plan with
+// explicit RR transit authorities. Local pool verdicts always take precedence:
+// a transit scope cannot bypass a local ownership decision or malformed local
+// plan. Invalid transit input is omitted, which leaves mobility-tagged paths
+// fail-closed.
+func NewSnapshotFromVerdictsAndTransit(verdicts []dynamicconfig.FIBVerdict, transit []TransitScope) Snapshot {
 	validatedVerdicts, invalidPrefixes := validatedMobilityFIBVerdicts(verdicts)
 	scopes, scopeInvalidPrefixes := poolScopesFromVerdicts(validatedVerdicts)
 	invalidPrefixes = appendInvalidPrefixes(invalidPrefixes, scopeInvalidPrefixes)
+	validatedTransit := validatedTransitScopes(transit)
 	if len(scopes) == 0 {
-		return Snapshot{invalidPrefixes: invalidPrefixes}
+		return Snapshot{transit: validatedTransit, invalidPrefixes: invalidPrefixes}
 	}
 	pools := make([]poolSnapshot, 0, len(scopes))
 	poolIndexes := make(map[string]int, len(scopes))
@@ -137,7 +166,73 @@ func NewSnapshotFromVerdicts(verdicts []dynamicconfig.FIBVerdict) Snapshot {
 		}
 		sort.Slice(invalidPrefixes, func(i, j int) bool { return invalidPrefixes[i].String() < invalidPrefixes[j].String() })
 	}
-	return Snapshot{pools: pools, invalidPrefixes: invalidPrefixes}
+	return Snapshot{pools: pools, transit: validatedTransit, invalidPrefixes: invalidPrefixes}
+}
+
+func validatedTransitScopes(scopes []TransitScope) []transitScope {
+	byKey := map[string]transitScope{}
+	for _, raw := range scopes {
+		prefix := raw.Prefix.Masked()
+		neighbor := raw.Neighbor.Unmap()
+		if !prefix.IsValid() || !prefix.Addr().Is4() || !neighbor.IsValid() || !neighbor.Is4() {
+			continue
+		}
+		required := communitySet(raw.RequiredCommunities)
+		forbidden := communitySet(raw.ForbiddenCommunities)
+		if !hasNodeIdentityCommunity(required) || communitySetsOverlap(required, forbidden) {
+			continue
+		}
+		key := prefix.String() + "\x00" + neighbor.String() + "\x00" + strings.Join(sortedCommunitySet(required), ",") + "\x00" + strings.Join(sortedCommunitySet(forbidden), ",")
+		byKey[key] = transitScope{prefix: prefix, neighbor: neighbor, required: required, forbidden: forbidden}
+	}
+	out := make([]transitScope, 0, len(byKey))
+	for _, scope := range byKey {
+		out = append(out, scope)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].prefix != out[j].prefix {
+			return out[i].prefix.String() < out[j].prefix.String()
+		}
+		return out[i].neighbor.String() < out[j].neighbor.String()
+	})
+	return out
+}
+
+func communitySet(values []string) map[string]bool {
+	out := map[string]bool{}
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			out[value] = true
+		}
+	}
+	return out
+}
+
+func hasNodeIdentityCommunity(values map[string]bool) bool {
+	for value := range values {
+		if bgpstate.IsMobilityNodeIdentityCommunity(value) {
+			return true
+		}
+	}
+	return false
+}
+
+func communitySetsOverlap(a, b map[string]bool) bool {
+	for value := range a {
+		if b[value] {
+			return true
+		}
+	}
+	return false
+}
+
+func sortedCommunitySet(values map[string]bool) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // validatedMobilityFIBVerdicts keeps the in-process policy boundary as strict
@@ -332,15 +427,26 @@ func samePoolScope(a, b scopedPool) bool {
 }
 
 func (s Snapshot) AdmitBGPPath(prefix netip.Prefix, communities []string) bool {
+	return s.AdmitBGPPathFrom(prefix, netip.Addr{}, communities)
+}
+
+// AdmitBGPPathFrom applies local MobilityPool verdicts first, then a typed RR
+// transit scope when the router has no local pool for the prefix. A route that
+// falls under a transit scope may not fall back to ordinary BGP admission:
+// transit is intentionally a mobility-only authority.
+func (s Snapshot) AdmitBGPPathFrom(prefix netip.Prefix, neighbor netip.Addr, communities []string) bool {
 	prefix = prefix.Masked()
 	if s.invalidFor(prefix) {
 		return false
 	}
 	pool, ok := s.poolFor(prefix)
 	if !ok {
-		// Without a valid scope, an old FIB verdict cannot establish either
-		// the Pool boundary or return-route topology. Fail only mobility-tagged
-		// paths closed; ordinary BGP remains governed by its import policy.
+		if s.transitFor(prefix) {
+			return s.admitTransitPath(prefix, neighbor, communities)
+		}
+		// Without a local or transit scope, old unscoped mobility data cannot
+		// establish either a Pool boundary or RR forwarding authority. Ordinary
+		// BGP remains governed by its import policy.
 		return !hasMobilityRoutingCommunity(communities)
 	}
 	if prefix.Bits() != 32 {
@@ -354,6 +460,52 @@ func (s Snapshot) AdmitBGPPath(prefix netip.Prefix, communities []string) bool {
 		return strings.TrimSpace(verdict.Action) == ActionDeliverRemote
 	}
 	return false
+}
+
+func (s Snapshot) transitFor(prefix netip.Prefix) bool {
+	for _, scope := range s.transit {
+		if scope.prefix.Contains(prefix.Addr()) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s Snapshot) admitTransitPath(prefix netip.Prefix, neighbor netip.Addr, communities []string) bool {
+	if prefix.Bits() != 32 || !prefix.Addr().Is4() || !hasTransitMobilitySignature(communities) {
+		return false
+	}
+	neighbor = neighbor.Unmap()
+	if !neighbor.IsValid() || !neighbor.Is4() {
+		return false
+	}
+	for _, scope := range s.transit {
+		if !scope.prefix.Contains(prefix.Addr()) || scope.neighbor != neighbor {
+			continue
+		}
+		if communitiesMeetScope(communities, scope) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTransitMobilitySignature(communities []string) bool {
+	return hasCommunity(communities, communityMobilityOwner) || hasCommunity(communities, communityMobilityReturnRoute)
+}
+
+func communitiesMeetScope(communities []string, scope transitScope) bool {
+	for required := range scope.required {
+		if !hasCommunity(communities, required) {
+			return false
+		}
+	}
+	for forbidden := range scope.forbidden {
+		if hasCommunity(communities, forbidden) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s Snapshot) invalidFor(prefix netip.Prefix) bool {

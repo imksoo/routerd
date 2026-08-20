@@ -221,7 +221,7 @@ func validateMobilityResource(router *api.Router, res api.Resource, _ platform.O
 		if err != nil {
 			return true, err
 		}
-		if err := validateSAMTransportProfile(res, spec); err != nil {
+		if err := validateSAMTransportProfile(router, res, spec); err != nil {
 			return true, err
 		}
 		return true, nil
@@ -652,7 +652,7 @@ func validateControlAPIClientTLS(resourceID string, spec api.ControlAPIClientTLS
 	return nil
 }
 
-func validateSAMTransportProfile(res api.Resource, spec api.SAMTransportProfileSpec) error {
+func validateSAMTransportProfile(router *api.Router, res api.Resource, spec api.SAMTransportProfileSpec) error {
 	if strings.TrimSpace(spec.SelfNodeRef) == "" {
 		return fmt.Errorf("%s spec.selfNodeRef is required", res.ID())
 	}
@@ -725,7 +725,53 @@ func validateSAMTransportProfile(res api.Resource, spec api.SAMTransportProfileS
 	if strings.TrimSpace(spec.AddressingMode) != "" && addressingMode == "" {
 		return fmt.Errorf("%s spec.addressingMode must be edge-index or pair-stable", res.ID())
 	}
+	if err := validateSAMTransportTransitImportPolicy(router, res, spec); err != nil {
+		return err
+	}
 	return nil
+}
+
+// validateSAMTransportTransitImportPolicy makes the forwarding boundary
+// explicit on an RR that intentionally has no local MobilityPool plan. A
+// profile-local policy is the only declared source of that authority; a
+// generic BGPRouter import policy must not turn arbitrary tagged BGP paths
+// into kernel FIB routes.
+func validateSAMTransportTransitImportPolicy(router *api.Router, res api.Resource, spec api.SAMTransportProfileSpec) error {
+	if !spec.BGP.RouteReflectorClient || routerHasMobilityPool(router) {
+		return nil
+	}
+	policy := spec.BGP.ImportPolicy
+	found := false
+	for i, value := range policy.AllowedPrefixes {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		found = true
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil || !prefix.Addr().Is4() {
+			return fmt.Errorf("%s spec.bgp.importPolicy.allowedPrefixes[%d] must be an IPv4 CIDR when routeReflectorClient is true without a local MobilityPool", res.ID(), i)
+		}
+	}
+	if !found {
+		return fmt.Errorf("%s spec.bgp.importPolicy.allowedPrefixes is required when routeReflectorClient is true without a local MobilityPool", res.ID())
+	}
+	if policy.AllowedPrefixLengthMin != 32 || policy.AllowedPrefixLengthMax != 32 {
+		return fmt.Errorf("%s spec.bgp.importPolicy.allowedPrefixLengthMin and allowedPrefixLengthMax must both be 32 when routeReflectorClient is true without a local MobilityPool", res.ID())
+	}
+	return nil
+}
+
+func routerHasMobilityPool(router *api.Router) bool {
+	if router == nil {
+		return false
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "MobilityPool" {
+			return true
+		}
+	}
+	return false
 }
 
 func validateSAMTransportPeersFrom(resourceID string, index int, source api.SAMTransportPeersSourceSpec) error {

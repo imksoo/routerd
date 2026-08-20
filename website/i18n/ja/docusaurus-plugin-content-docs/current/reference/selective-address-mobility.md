@@ -300,6 +300,8 @@ spec:
 
 コアルーターでは `spec.bgp.routeReflectorClient` と `spec.bgp.routeReflectorClusterID` を設定できます。これらは生成される各 `BGPPeer` にコピーされます。`routeReflectorClient` が true の場合、routerd はその leaf 向けの generated import policy も強化します。取り込む route は configured `importPolicy.allowedPrefixes`、未指定なら宣言済み `MobilityPool` prefix 配下の `/32` で、その leaf 自身の node-identity community を持ち、他の topology node の node-identity community を持たない必要があります。これにより RR admission boundary は宣言された SAM topology に結び付き、leaf は別ノード identity や広い mobility prefix を generated RR session から主張できません。侵害された leaf が自分の identity のまま pool 内 `/32` を広告するリスクは残り、per-node ownership の制約には route filter とは別の authorization signal が必要です。エッジルーターでは未指定のまま通常の iBGP セッションとして使えます。
 
+static RR が意図的にローカル `MobilityPool` を持たない場合、生成された RR-client peer は型付き transit FIB authority にもなります。`spec.bgp.importPolicy.allowedPrefixes` へ各 mobility prefix を明示し、prefix-length の最小値・最大値をともに `32` にしてください。unbounded no-pool RR は validation で拒否されます。routerd は、その生成済み peer から受信し、peer に対応する required/forbidden node-identity community を満たす owner/return mobility `/32` だけを FIB に入れます。汎用の `BGPRouter` import policy は transit authority には使わず、leaf 所有 route を中継するだけの RR に placeholder `MobilityPool` を追加してはいけません。
+
 ピアをプロファイルから削除すると、そのプロファイルが生成した `DynamicConfigPart` は新しいリソースセットで置き換えられます。プロファイル自体を削除した場合は、古いパートが空のアクティブパートで置き換えられ、実効設定から生成済みのトンネル、BGP ピア、エンドポイント経路が消えます。生成されたリソースの具体的な後片付けは、通常のオーナー参照 GC とリソース固有のティアダウンに委ねます。
 
 ## 捕捉と配送

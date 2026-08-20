@@ -60,6 +60,46 @@ func TestSAMControllerHoldRetainsPreviouslyAppliedDataplane(t *testing.T) {
 	}
 }
 
+func TestSAMControllerAppliesProxyARPTunnelForwardPaths(t *testing.T) {
+	const (
+		intentID = "mobility-svnet1-192-168-123-111"
+		address  = "192.168.123.111/32"
+	)
+	store := &mergeTrackingMapStore{mapStore: mapStore{}}
+	applier := &fakeSAMApplier{}
+	controller := SAMController{
+		Router: &api.Router{}, Store: store, OS: platform.OSLinux, Applier: applier,
+		LocalCaptureIntents: []dynamicconfig.LocalCaptureIntent{{
+			ID: intentID, PoolRef: "svnet1", PoolPrefix: "192.168.123.0/24", Address: address,
+			Disposition: dynamicconfig.CaptureDesired, CaptureType: "proxy-arp", CaptureInterface: "ens19",
+			TunnelInterfaces: []string{"samt-rr-a", "samt-rr-b"},
+		}},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(applier.ensure) != 1 || applier.ensure[0] != address+"@ens19" || len(applier.ipForwarding) != 1 || applier.ipForwarding[0] != "1" {
+		t.Fatalf("proxy capture effects = %#v", applier.calls)
+	}
+	if len(applier.forwardSets) != 1 || len(applier.forwardSets[0]) != 2 {
+		t.Fatalf("forward paths = %#v", applier.forwardSets)
+	}
+	for index, tunnel := range []string{"samt-rr-a", "samt-rr-b"} {
+		path := applier.forwardSets[0][index]
+		if path.Kind != "forward-local-path" || path.IntentID != intentID || path.Address != address || path.Interface != "ens19" || path.PeerInterface != tunnel {
+			t.Fatalf("forward path[%d] = %#v", index, path)
+		}
+	}
+	status := store.ObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName)
+	paths, err := samAppliedForwardPaths(status["appliedForwardPaths"], true)
+	if err != nil || len(paths) != 2 || paths[0].Kind != "forward-local-path" || paths[1].Kind != "forward-local-path" {
+		t.Fatalf("persisted proxy forward paths = %#v, err=%v", paths, err)
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+}
+
 func TestSAMControllerRejectsMalformedAppliedLedgerBeforeEffects(t *testing.T) {
 	store := &mergeTrackingMapStore{mapStore: mapStore{
 		api.RouterAPIVersion + "/Router/" + samDataplaneStatusName: {
