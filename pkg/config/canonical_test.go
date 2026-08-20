@@ -9,6 +9,61 @@ import (
 	"testing"
 )
 
+func TestNormalizedYAMLHashIgnoresPresentationDifferences(t *testing.T) {
+	first := []byte(`# operator note
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: lab
+spec:
+  resources:
+    - kind: Hostname
+      apiVersion: net.routerd.net/v1alpha1
+      metadata: {name: lan}
+      spec:
+        hostname: lan.example
+`)
+	second := []byte(`kind: Router
+spec:
+  resources:
+  - spec: {hostname: lan.example}
+    metadata: {name: lan}
+    apiVersion: net.routerd.net/v1alpha1
+    kind: Hostname
+metadata: {name: lab}
+apiVersion: routerd.net/v1alpha1
+`)
+	changed := []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: lab}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Hostname
+      metadata: {name: lan}
+      spec: {hostname: changed.example}
+`)
+
+	firstHash, err := NormalizedYAMLHash(first)
+	if err != nil {
+		t.Fatalf("hash first YAML: %v", err)
+	}
+	secondHash, err := NormalizedYAMLHash(second)
+	if err != nil {
+		t.Fatalf("hash equivalent YAML: %v", err)
+	}
+	changedHash, err := NormalizedYAMLHash(changed)
+	if err != nil {
+		t.Fatalf("hash changed YAML: %v", err)
+	}
+	if firstHash != secondHash {
+		t.Fatalf("equivalent YAML hashes differ: %s != %s", firstHash, secondHash)
+	}
+	if firstHash == changedHash {
+		t.Fatalf("changed YAML hash = %s, want a different hash", changedHash)
+	}
+}
+
 func TestCanonicalYAMLPreservesCommentsAndOrder(t *testing.T) {
 	input := []byte(`# router owner note
 apiVersion: routerd.net/v1alpha1

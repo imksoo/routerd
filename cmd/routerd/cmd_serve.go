@@ -485,6 +485,16 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		SkipServiceManager: *sandbox,
 		Sandbox:            *sandbox,
 	}
+	if bootFallback.Used {
+		configYAML, ok, err := stateStore.GenerationConfig(bootFallback.Generation)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("boot fallback generation %d has no saved config", bootFallback.Generation)
+		}
+		applyOpts.ConfigYAMLOverride = configYAML
+	}
 	mutationGate := &sync.RWMutex{}
 	applyOpts.MutationGate = mutationGate
 	cache := &resultCache{}
@@ -2304,22 +2314,22 @@ func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, 
 	if runner == nil {
 		return nil, errors.New("controller chain runner is nil")
 	}
-	configYAML := routerConfigYAML(router, opts)
 	var generation int64
+	generationCreated := false
 	generationFinished := false
 	// Scheduled reconciliation repairs already-applied state. It must not create
 	// another identical configuration snapshot on every interval.
 	if !opts.DryRun && store != nil && !scheduled {
-		var err error
-		generation, err = store.BeginGeneration(routerConfigHash(router))
+		configYAML, err := routerConfigYAML(router, opts)
 		if err != nil {
 			return nil, err
 		}
-		if err := store.RecordGenerationConfig(generation, configYAML); err != nil {
+		generation, generationCreated, err = beginConfigGeneration(store, configYAML, router)
+		if err != nil {
 			return nil, err
 		}
 		defer func() {
-			if generation != 0 && !generationFinished {
+			if generationCreated && !generationFinished {
 				_ = store.FinishGeneration(generation, "Errored", nil)
 			}
 		}()
@@ -2346,7 +2356,7 @@ func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, 
 	if err := writeResult(stdout, opts.StatusFile, result); err != nil {
 		return nil, err
 	}
-	if !opts.DryRun && store != nil && generation != 0 {
+	if !opts.DryRun && store != nil && generationCreated {
 		_ = store.FinishGeneration(generation, result.Phase, result.Warnings)
 		generationFinished = true
 	}

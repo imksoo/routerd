@@ -304,6 +304,76 @@ func TestSQLiteStoreGenerationsAndEvents(t *testing.T) {
 	}
 }
 
+func TestSQLiteStoreBeginGenerationIfChanged(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "routerd.db"))
+	if err != nil {
+		t.Fatalf("open sqlite store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	first, changed, err := store.BeginGenerationIfChanged("normalized-a", "kind: Router\n")
+	if err != nil {
+		t.Fatalf("begin first generation: %v", err)
+	}
+	if !changed || first == 0 {
+		t.Fatalf("first generation = %d changed=%t, want a new generation", first, changed)
+	}
+	if err := store.FinishGeneration(first, "Healthy", nil); err != nil {
+		t.Fatalf("finish first generation: %v", err)
+	}
+
+	duplicate, changed, err := store.BeginGenerationIfChanged("normalized-a", "kind: Router\n")
+	if err != nil {
+		t.Fatalf("begin duplicate generation: %v", err)
+	}
+	if changed || duplicate != first {
+		t.Fatalf("duplicate generation = %d changed=%t, want existing generation %d", duplicate, changed, first)
+	}
+	if got := store.CurrentGeneration(); got != first {
+		t.Fatalf("current generation after duplicate = %d, want %d", got, first)
+	}
+	if err := store.SaveObjectStatus("net.routerd.net/v1alpha1", "Hostname", "lan", map[string]any{"observed": "unchanged-config-reconcile"}); err != nil {
+		t.Fatalf("save observed status: %v", err)
+	}
+	if got := store.ObjectGeneration("net.routerd.net/v1alpha1", "Hostname", "lan"); got != first {
+		t.Fatalf("observed status generation = %d, want %d", got, first)
+	}
+
+	failed, changed, err := store.BeginGenerationIfChanged("normalized-b", "kind: Router\nmetadata: {}\n")
+	if err != nil {
+		t.Fatalf("begin failed generation: %v", err)
+	}
+	if !changed || failed <= first {
+		t.Fatalf("failed generation = %d changed=%t, want generation after %d", failed, changed, first)
+	}
+	if err := store.FinishGeneration(failed, "Errored", nil); err != nil {
+		t.Fatalf("finish failed generation: %v", err)
+	}
+
+	retry, changed, err := store.BeginGenerationIfChanged("normalized-b", "kind: Router\nmetadata: {}\n")
+	if err != nil {
+		t.Fatalf("retry changed generation: %v", err)
+	}
+	if !changed || retry <= failed {
+		t.Fatalf("retry generation = %d changed=%t, want generation after %d", retry, changed, failed)
+	}
+	if err := store.FinishGeneration(retry, "Healthy", nil); err != nil {
+		t.Fatalf("finish retry generation: %v", err)
+	}
+	duplicate, changed, err = store.BeginGenerationIfChanged("normalized-b", "kind: Router\nmetadata: {}\n")
+	if err != nil {
+		t.Fatalf("begin successful duplicate generation: %v", err)
+	}
+	if changed || duplicate != retry {
+		t.Fatalf("successful duplicate generation = %d changed=%t, want existing generation %d", duplicate, changed, retry)
+	}
+	if records, err := store.ListGenerations(10); err != nil {
+		t.Fatalf("list generations: %v", err)
+	} else if len(records) != 3 {
+		t.Fatalf("generation records = %+v, want 3", records)
+	}
+}
+
 func TestSQLiteStoreMaintenance(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "routerd.db")

@@ -4,6 +4,9 @@ package config
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -23,6 +26,8 @@ type MutationTarget struct {
 	Name       string
 }
 
+const normalizedYAMLHashPrefix = "yaml-v1-sha256:"
+
 func CanonicalYAML(data []byte) ([]byte, error) {
 	var node yaml.Node
 	if err := yaml.Unmarshal(data, &node); err != nil {
@@ -39,6 +44,72 @@ func CanonicalYAML(data []byte) ([]byte, error) {
 		return nil, err
 	}
 	return out.Bytes(), nil
+}
+
+// NormalizedYAMLHash returns a deterministic digest of a YAML document's
+// data model. Unlike CanonicalYAML, it intentionally ignores comments,
+// presentation whitespace, and mapping-key order. Sequence order remains
+// significant.
+//
+// It is intended for deciding whether a configuration snapshot is new, not
+// for rewriting an operator's configuration. CanonicalYAML continues to
+// preserve comments and field order when routerd commits a configuration.
+func NormalizedYAMLHash(data []byte) (string, error) {
+	var value any
+	if err := yaml.Unmarshal(data, &value); err != nil {
+		return "", err
+	}
+	normalized, err := normalizedYAMLValue(value)
+	if err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(normalized)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(encoded)
+	return normalizedYAMLHashPrefix + hex.EncodeToString(sum[:]), nil
+}
+
+func normalizedYAMLValue(value any) (any, error) {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			normalized, err := normalizedYAMLValue(item)
+			if err != nil {
+				return nil, err
+			}
+			out[key] = normalized
+		}
+		return out, nil
+	case map[any]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			keyText, ok := key.(string)
+			if !ok {
+				return nil, fmt.Errorf("YAML mapping key %v is not a string", key)
+			}
+			normalized, err := normalizedYAMLValue(item)
+			if err != nil {
+				return nil, err
+			}
+			out[keyText] = normalized
+		}
+		return out, nil
+	case []any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			normalized, err := normalizedYAMLValue(item)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = normalized
+		}
+		return out, nil
+	default:
+		return value, nil
+	}
 }
 
 func CanonicalYAMLFile(path string) ([]byte, error) {

@@ -931,6 +931,41 @@ spec:
 	}
 }
 
+func TestRouterConfigYAMLRejectsChangedSource(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "router.yaml")
+	if err := os.WriteFile(configPath, []byte(testRouterYAML("original-router")), 0644); err != nil {
+		t.Fatalf("write original config: %v", err)
+	}
+	router, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("load original config: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte(testRouterYAML("changed-router")), 0644); err != nil {
+		t.Fatalf("replace config: %v", err)
+	}
+	if _, err := routerConfigYAML(router, applyOptions{ConfigPath: configPath}); err == nil || !strings.Contains(err.Error(), "changed after it was loaded") {
+		t.Fatalf("changed config error = %v, want source-change error", err)
+	}
+}
+
+func TestConfigGenerationHashIncludesEffectiveRouter(t *testing.T) {
+	source := testRouterYAML("generation-router")
+	first := &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "generation-router"}}
+	second := *first
+	second.Spec.Apply.Mode = "warn"
+	firstHash, err := configGenerationHash(source, first)
+	if err != nil {
+		t.Fatalf("hash first effective router: %v", err)
+	}
+	secondHash, err := configGenerationHash(source, &second)
+	if err != nil {
+		t.Fatalf("hash changed effective router: %v", err)
+	}
+	if firstHash == secondHash {
+		t.Fatalf("effective-router change did not change generation hash: %s", firstHash)
+	}
+}
+
 func TestLoadServeRouterFallsBackToLastGoodGeneration(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "router.yaml")
@@ -1127,6 +1162,24 @@ spec:
 	if len(router.Spec.Resources) != 1 {
 		t.Fatalf("running generation changed before restart: resources = %d, want 1", len(router.Spec.Resources))
 	}
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("open state: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	if err := os.WriteFile(configPath, []byte("not: valid: YAML\n"), 0644); err != nil {
+		t.Fatalf("corrupt canonical config: %v", err)
+	}
+	fallbackRouter, fallback, err := loadServeRouter(configPath, routerstate.GenerationHistoryReader(store))
+	if err != nil {
+		t.Fatalf("load committed fallback: %v", err)
+	}
+	if !fallback.Used || fallback.Generation != result.Result.Generation {
+		t.Fatalf("committed fallback = %+v, want generation %d", fallback, result.Result.Generation)
+	}
+	if len(fallbackRouter.Spec.Resources) != 0 {
+		t.Fatalf("committed fallback resources = %d, want 0", len(fallbackRouter.Spec.Resources))
+	}
 }
 
 func TestServeConfigMutatorSandboxApplyCommitsCanonicalAndDryRuns(t *testing.T) {
@@ -1233,18 +1286,40 @@ func TestScheduledServeReconcileDoesNotCreateConfigGeneration(t *testing.T) {
 	defer func() { _ = store.Close() }()
 	router := &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "scheduled-reconcile-router"}}
 	runner := &controllerchain.Runner{Router: router, Bus: bus.New(), Store: store, Opts: controllerchain.Options{EnabledControllers: []string{"log-retention"}}}
-	if _, err := runServeChainOnce(context.Background(), runner, router, applyOptions{}, store, io.Discard, nil); err != nil {
+	initialOpts := applyOptions{ConfigYAMLOverride: testRouterYAML("scheduled-reconcile-router")}
+	if _, err := runServeChainOnce(context.Background(), runner, router, initialOpts, store, io.Discard, nil); err != nil {
 		t.Fatalf("initial reconcile: %v", err)
 	}
 	before := store.LatestGeneration()
 	if before == 0 {
 		t.Fatal("initial reconcile did not create a generation")
 	}
-	if _, err := runServeChainScheduledOnce(context.Background(), runner, router, applyOptions{}, store, io.Discard, nil); err != nil {
+	unchanged, err := runServeChainOnce(context.Background(), runner, router, initialOpts, store, io.Discard, nil)
+	if err != nil {
+		t.Fatalf("unchanged reconcile: %v", err)
+	}
+	if unchanged.Generation != before {
+		t.Fatalf("unchanged reconcile result generation = %d, want %d", unchanged.Generation, before)
+	}
+	if got := store.LatestGeneration(); got != before {
+		t.Fatalf("generation after unchanged reconcile = %d, want %d", got, before)
+	}
+	if _, err := runServeChainScheduledOnce(context.Background(), runner, router, applyOptions{ConfigPath: filepath.Join(t.TempDir(), "changed-after-boot.yaml")}, store, io.Discard, nil); err != nil {
 		t.Fatalf("scheduled reconcile: %v", err)
 	}
 	if got := store.LatestGeneration(); got != before {
 		t.Fatalf("generation after scheduled reconcile = %d, want %d", got, before)
+	}
+}
+
+func TestConfigCommitPhaseIncludesCommittedConfig(t *testing.T) {
+	for _, phase := range []string{"Healthy", "Applied", "Committed"} {
+		if !configCommitPhase(phase) {
+			t.Fatalf("configCommitPhase(%q) = false, want true", phase)
+		}
+	}
+	if configCommitPhase("Errored") {
+		t.Fatal("configCommitPhase(Errored) = true, want false")
 	}
 }
 

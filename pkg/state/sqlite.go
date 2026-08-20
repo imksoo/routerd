@@ -1050,6 +1050,65 @@ func (s *SQLiteStore) BeginGeneration(configHash string) (int64, error) {
 	return generation, nil
 }
 
+// BeginGenerationIfChanged atomically records configYAML only when its
+// normalized configuration hash differs from the most recently successful
+// configuration snapshot. Reconciles without a configuration change still run
+// and may update observed state against that existing generation, but do not
+// create another config_yaml snapshot. An errored attempt never suppresses a
+// later retry of the same configuration.
+func (s *SQLiteStore) BeginGenerationIfChanged(configHash, configYAML string) (int64, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return 0, false, nil
+	}
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	result, err := s.db.Exec(`
+INSERT INTO generations(started_at,warnings,config_hash,config_yaml)
+SELECT ?,'[]',?,?
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM (
+    SELECT config_hash
+    FROM generations
+    WHERE config_yaml IS NOT NULL
+      AND phase IN ('Healthy', 'Applied', 'Committed')
+    ORDER BY generation DESC
+    LIMIT 1
+  ) AS latest
+  WHERE latest.config_hash = ?
+)`, now, configHash, configYAML, configHash)
+	if err != nil {
+		return 0, false, err
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return 0, false, err
+	}
+	if inserted == 0 {
+		var generation int64
+		err := s.db.QueryRow(`
+SELECT generation
+FROM generations
+WHERE config_yaml IS NOT NULL
+  AND phase IN ('Healthy', 'Applied', 'Committed')
+  AND config_hash = ?
+ORDER BY generation DESC
+LIMIT 1`, configHash).Scan(&generation)
+		if err != nil {
+			return 0, false, err
+		}
+		s.generation = generation
+		return generation, false, nil
+	}
+	generation, err := result.LastInsertId()
+	if err != nil {
+		return 0, false, err
+	}
+	s.generation = generation
+	return generation, true, nil
+}
+
 func (s *SQLiteStore) RecordGenerationConfig(generation int64, configYAML string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
