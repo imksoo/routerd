@@ -10,6 +10,13 @@ sidebar_position: 100
 This template describes a routed WireGuard hub with two spokes. Treat it as a
 starting point: replace keys, endpoint names, and routed prefixes before use.
 
+:::caution WAN reachability is a separate prerequisite
+The template configures the WireGuard interface and peers. It does not create
+an upstream Internet port-forward, open a cloud security group, or prove a WAN
+firewall rule for UDP 51820. Arrange those safely before expecting remote peers
+to connect, and keep private keys out of the YAML repository.
+:::
+
 The complete YAML template is in `examples/wireguard-hub-spoke.yaml`.
 
 ## Topology
@@ -66,10 +73,14 @@ flowchart LR
 ## Checks
 
 ```bash
-routerctl validate -f examples/wireguard-hub-spoke.yaml --replace
-routerctl plan -f examples/wireguard-hub-spoke.yaml --replace
-routerctl describe WireGuardInterface/wg-hub
-wg show
+routerd validate --config examples/wireguard-hub-spoke.yaml
+
+workdir=$(mktemp -d)
+routerd apply --config examples/wireguard-hub-spoke.yaml --once --dry-run \
+  --state-file "$workdir/state.db" \
+  --ledger-file "$workdir/ledger.db" \
+  --status-file "$workdir/status.json"
+rm -rf "$workdir"
 ```
 
 ## Common edits

@@ -6,8 +6,9 @@ title: 从 FreeBSD 开始
 
 ![从 release archive install 到 rc.d、rc.conf.d、pf、dnsmasq、mpd5 render 与 apply validation 的 FreeBSD getting started flow](/img/diagrams/tutorial-freebsd-getting-started.png)
 
-FreeBSD 使用与 Ubuntu 相同的 routerd 资源模型。
-但生成的主机产物对应 FreeBSD 的机制。
+FreeBSD 使用与 Ubuntu 相同的 routerd 资源模型，但它不是与 Ubuntu 首次实验相同的
+支持范围；它是具有部分原生集成的第二目标。第一次请在可使用控制台的隔离测试主机上操作。
+生成的主机产物对应 FreeBSD 的机制。
 routerd 负责处理 `rc.conf.d`、`rc.d` script、`pf.conf`、`dhclient.conf`、
 dnsmasq 配置、`mpd5.conf`，以及 DS-Lite 用的动态 `ifconfig gif` 操作。
 
@@ -52,16 +53,16 @@ sudo install -m 0600 examples/freebsd-edge.yaml /usr/local/etc/routerd/router.ya
 首先验证配置。
 
 ```sh
-routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
+sudo routerd validate --config /usr/local/etc/routerd/router.yaml
 ```
 
 接着将 FreeBSD 用的产物生成至临时目录。
 
 ```sh
-rm -rf /tmp/routerd-freebsd-render
-routerd render freebsd \
+render_dir=$(mktemp -d)
+sudo routerd render freebsd \
   --config /usr/local/etc/routerd/router.yaml \
-  --out-dir /tmp/routerd-freebsd-render
+  --out-dir "$render_dir"
 ```
 
 主要输出如下。
@@ -77,9 +78,9 @@ routerd render freebsd \
 应用至实际主机前，请先确认内容。
 
 ```sh
-less /tmp/routerd-freebsd-render/rc.conf.d-routerd
-less /tmp/routerd-freebsd-render/pf.conf
-less /tmp/routerd-freebsd-render/dnsmasq.conf
+sudo less "$render_dir/rc.conf.d-routerd"
+sudo less "$render_dir/pf.conf"
+sudo less "$render_dir/dnsmasq.conf"
 ```
 
 ## 4. 了解 FreeBSD 侧的角色
@@ -97,30 +98,41 @@ routerd 将资源对应至以下 FreeBSD 机制。
 | `mpd5.conf` | PPPoE 的 bundle、link、认证、MTU/MRU、默认路由 |
 | `ifconfig gif` | 静态 `rc.conf` 不足时的动态 DS-Lite tunnel 应用 |
 
-## 5. 应用
+## 5. 先 dry-run，再从控制台应用
 
-先确认计划。
+使用一次性的 state 文件进行不变更网络的预览。
 
 ```sh
-routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
+workdir=$(mktemp -d)
+sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run --skip-service-manager \
+  --state-file "$workdir/state.db" \
+  --ledger-file "$workdir/ledger.db" \
+  --status-file "$workdir/status.json"
 ```
 
-生成的文件与计划符合预期后，应用配置。
+只有在生成的文件与 dry-run 都符合预期时，才从控制台或独立管理路径应用。以下命令会
+变更主机。
 
 ```sh
-sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
+sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
 ```
 
 routerd 在加载 `pf.conf` 前以 `pfctl -nf` 验证。
 dnsmasq 也在重新启动前以 `dnsmasq --test` 验证配置。
+one-shot apply 成功后再启动 rc.d 服务：
+
+```sh
+sudo sysrc routerd_enable=YES
+sudo service routerd start
+```
 
 ## 6. 确认状态与日志
 
 确认 routerd 状态。
 
 ```sh
-routerctl get status
-routerctl get events --limit 20
+sudo routerctl get status
+sudo routerctl get events --limit 20
 ```
 
 追踪系统日志。

@@ -14,11 +14,23 @@ This example shows stateful `FirewallRule` expressions for a small router:
 
 The complete YAML is in `examples/firewall-rate-limit.yaml`.
 
+:::caution Firewall groundwork
+These rules are an example of routerd's current firewall groundwork, not a
+complete Internet-security policy. Test them on an isolated host and do not use
+them as the only protection for a reachable router.
+:::
+
 ## Apply sequence
 
 ```bash
-routerctl validate -f examples/firewall-rate-limit.yaml --replace
-routerctl plan -f examples/firewall-rate-limit.yaml --replace
+routerd validate --config examples/firewall-rate-limit.yaml
+
+workdir=$(mktemp -d)
+routerd apply --config examples/firewall-rate-limit.yaml --once --dry-run \
+  --state-file "$workdir/state.db" \
+  --ledger-file "$workdir/ledger.db" \
+  --status-file "$workdir/status.json"
+rm -rf "$workdir"
 ```
 
 ## Rule excerpt

@@ -5,63 +5,71 @@ sidebar_position: 10
 
 # 基本的な IPv4 NAT ルーター
 
-![DHCP WAN、routerd 管理の LAN アドレス、DHCPv4 サーバー、NAT44、ファイアウォールゾーンで構成する基本的な IPv4 ゲートウェイ](/img/diagrams/config-example-basic-ipv4-nat.png)
+![DHCP WAN、LAN アドレス、DHCPv4 サーバー、NAT44 を持つ小さな IPv4 ルーター](/img/diagrams/config-example-basic-ipv4-nat.png)
 
-LAN クライアントが、DHCP で取得した WAN 側 IPv4 アドレスを使ってインターネットに出るための、
-最小構成に近いホームルーターの例です。
+これは、テスト用 LAN の端末がルーターから DHCP（アドレスを自動で配る仕組み）で
+private IPv4 アドレスを受け取り、ルーターが WAN 側の IPv4 へ NAT（アドレスの書き換え）して
+外へ出す例です。最初は **隔離した Ubuntu Server VM** と VM コンソールで試してください。
 
-完全な検証済み YAML は `examples/example-basic-ipv4-nat.yaml` にあります。
+完全な YAML は `examples/example-basic-ipv4-nat.yaml` にあります。
 
-## 構成図
+:::caution 本番用の安全設計ではありません
 
-```mermaid
-flowchart LR
-  internet((Internet))
-  upstream["[1] ISP / upstream router"]
-  wan["[2] wan<br/>DHCPv4 client"]
-  router["[3] routerd host"]
-  lan["[4] lan<br/>192.168.10.1/24"]
-  clients["[5] LAN clients<br/>192.168.10.100-199"]
+この例にはファイアウォール用リソースも含まれますが、routerd の
+ファイアウォール機能は現在も土台を整えている段階です。
+インターネットに公開するルーターや、家・学校・職場の唯一の防御としては
+使わないでください。
 
-  internet --- upstream --- wan --- router --- lan --- clients
+:::
+
+## 構成
+
+```text
+テスト用上流ネットワーク
+          |
+        ens18 (WAN, DHCPv4)
+          |
+      [ routerd VM ]
+          |
+        ens19 (LAN, 192.168.10.1/24)
+          |
+     テスト用クライアント
 ```
 
-## 図の対応表
-
-| 番号 | 意味 | 主なリソース |
+| 場所 | 役割 | 主なリソース |
 | --- | --- | --- |
-| [1] | WAN 側 IPv4 リースを配る上流ネットワーク。 | routerd 管理外 |
-| [2] | 物理 WAN インターフェース。ここで DHCPv4 クライアントを動かす。 | `Interface/wan`, `DHCPv4Client/wan-dhcpv4` |
-| [3] | 転送用の sysctl と nftables ルールを自動導出して適用する Linux ホスト。 | Derived host runtime |
-| [4] | routerd が持つ LAN ゲートウェイアドレス。 | `Interface/lan`, `IPv4StaticAddress/lan-base` |
-| [5] | ルーターをゲートウェイ / DNS として使う LAN クライアント。 | `DHCPv4Server/lan-dhcpv4` |
+| WAN | 上流から IPv4 を DHCP で受ける | `Interface/wan`、`DHCPv4Client/wan-dhcpv4` |
+| LAN | ルーター自身の IPv4 と DHCP の範囲 | `Interface/lan`、`IPv4StaticAddress/lan-base`、`DHCPv4Server/lan-dhcpv4` |
+| NAT | LAN の IPv4 が WAN に出るときだけ書き換える | `NAT44Rule/lan-to-wan` |
 
-## この例で管理するもの
+VM の NIC 名、LAN の番号、DHCP の範囲は例です。管理用 NIC と重ならない値に
+変えてください。
 
-| 領域 | routerd リソース |
-| --- | --- |
-| WAN アドレス | `Interface/wan`, `DHCPv4Client/wan-dhcpv4` |
-| LAN アドレス | `Interface/lan`, `IPv4StaticAddress/lan-base` |
-| LAN DHCPv4 | `DHCPv4Server/lan-dhcpv4` |
-| IPv4 インターネット接続 | `NAT44Rule/lan-to-wan` |
-| 基本的なフィルター | `FirewallZone/wan`, `FirewallZone/lan`, `FirewallPolicy/home` |
+## 要点となる設定
 
-この例では DNS をできるだけ単純にしています。DHCPv4 クライアントには、ルーターの
-LAN アドレスを DNS サーバーとして配ります。基本的なルーティングが動いたあとで、
-必要に応じて `DNSResolver` と `DNSZone` を追加してください。
-
-## 設定の要点
+WAN は、最初は外部のネットワーク設定が所有します。LAN は routerd が管理します。
 
 ```yaml
-# [2] WAN アドレスは上流ネットワークから DHCPv4 で取得する。
 - apiVersion: net.routerd.net/v1alpha1
-  kind: DHCPv4Client
+  kind: Interface
   metadata:
-    name: wan-dhcpv4
+    name: wan
   spec:
-    interface: wan
+    ifname: ens18
+    adminUp: true
+    managed: false
+    owner: external
 
-# [4] routerd が LAN ゲートウェイアドレスを持つ。
+- apiVersion: net.routerd.net/v1alpha1
+  kind: Interface
+  metadata:
+    name: lan
+  spec:
+    ifname: ens19
+    adminUp: true
+    managed: true
+    owner: routerd
+
 - apiVersion: net.routerd.net/v1alpha1
   kind: IPv4StaticAddress
   metadata:
@@ -69,8 +77,11 @@ LAN アドレスを DNS サーバーとして配ります。基本的なルー�
   spec:
     interface: lan
     address: 192.168.10.1/24
+```
 
-# [5] LAN クライアントへアドレス、ゲートウェイ、DNS、検索ドメインを配る。
+LAN の DHCP サーバーは、LAN のアドレスをゲートウェイとしてクライアントへ配ります。
+
+```yaml
 - apiVersion: net.routerd.net/v1alpha1
   kind: DHCPv4Server
   metadata:
@@ -84,11 +95,17 @@ LAN アドレスを DNS サーバーとして配ります。基本的なルー�
     gatewayFrom:
       resource: IPv4StaticAddress/lan-base
       field: address
-    dnsServerFrom:
-      - resource: IPv4StaticAddress/lan-base
-        field: address
+    # この学習用の例では、routerd 自身ではなく外部 DNS を配る。
+    dnsServers:
+      - 1.1.1.1
+      - 1.0.0.1
+```
 
-# [2] -> [5] LAN の IPv4 トラフィックは WAN に出るときマスカレードする。
+### NAT44Rule の形
+
+NAT の項目名は `type`、`egressInterface`、`sourceRanges` です。
+
+```yaml
 - apiVersion: net.routerd.net/v1alpha1
   kind: NAT44Rule
   metadata:
@@ -98,48 +115,64 @@ LAN アドレスを DNS サーバーとして配ります。基本的なルー�
     egressInterface: wan
     sourceRanges:
       - 192.168.10.0/24
+    excludeDestinationCIDRs:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
 ```
 
-`NAT44Rule` は routerd の nftables NAT テーブルに反映されます。ファイアウォールの
-リソースでは、WAN インターフェースを `untrust` ゾーン、LAN インターフェースを
-`trust` ゾーンに入れます。
+`sourceRanges` は NAT してよい送信元だけを示します。
+`excludeDestinationCIDRs` は、ほかのプライベートネットワークへの通信を
+うっかり NAT しないための例です。実際の上流や VPN と重なる範囲は、
+自分の構成に合わせて見直します。
 
-## 適用手順
+:::note DNS は何を配るか確認する
 
-```bash
-cp examples/example-basic-ipv4-nat.yaml router.yaml
-routerctl validate -f router.yaml --replace
-routerctl plan -f router.yaml --replace
+この例の DHCP は、外部 DNS (`1.1.1.1` と `1.0.0.1`) をクライアントへ配ります。
+利用を許可された DNS を自分のネットワークに合わせて選んでください。routerd 自身を
+DNS サーバーとして配りたいときは、先に `DNSResolver` などの DNS サービスを追加します。
+
+:::
+
+## daemon の前に確認する
+
+例をコピーして NIC 名とアドレスを直したら、サービスを起動する前に確認します。
+
+```sh
+cp examples/example-basic-ipv4-nat.yaml ./router.yaml
+LAB_DIR="$(mktemp -d)"
+sudo routerd validate --config ./router.yaml
+sudo routerd apply --config ./router.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
+sudo sed -n "1,160p" "$LAB_DIR/status.json"
 ```
 
-管理アクセスが、アドレスを変更しようとしている LAN インターフェースに依存していないこと、
-あるいはコンソールアクセスがあることを確認してから適用します。
+dry-run の出力で、WAN と LAN の名前、DHCP の範囲、NAT の送信元が正しいことを
+確認します。管理用 NIC や、普段のネットワークの範囲が入っていたら先へ進みません。
 
-```bash
-routerctl apply -f router.yaml --replace
+## サービス起動後の確認
+
+VM コンソールを開いたまま設定を標準の場所に置き、サービスを起動した**後で**、
+`routerctl` を使います。
+
+```sh
+sudo install -m 0600 ./router.yaml /usr/local/etc/routerd/router.yaml
+sudo systemctl enable --now routerd.service
+sudo systemctl is-active routerd.service
+sudo routerctl get status
+sudo routerctl describe DHCPv4Client/wan-dhcpv4
+sudo routerctl describe NAT44Rule/lan-to-wan
+sudo nft list table ip routerd_nat
 ```
 
-## 確認
+LAN クライアントには DHCP を受けさせるか、手動で `192.168.10.x/24` と
+ゲートウェイ `192.168.10.1` を設定します。DNS は例の外部アドレスを使うか、
+自分の LAN 用 DNS を設定してから確認します。
 
-```bash
-routerctl get status
-routerctl describe DHCPv4Client/wan-dhcpv4
-routerctl describe IPv4StaticAddress/lan-base
-routerctl describe NAT44Rule/lan-to-wan
-nft list table ip routerd_nat
-nft list table inet routerd_filter
-```
+## 関連項目
 
-LAN クライアント側では次を確認します。
-
-```bash
-ip route
-ping 192.168.10.1
-curl https://1.1.1.1/
-```
-
-## よく変える場所
-
-- `ens18` と `ens19` を実際のインターフェース名に変更する。
-- 上流、VPN、管理ネットワークと重なる場合は `192.168.10.0/24` を変更する。
-- ルーターを DNS サーバーとして配る前に、必要なら `DNSResolver` を追加する。
+- [NAT44 とファイアウォールの準備](../tutorials/basic-firewall.md)
+- [LAN 側サービス](../tutorials/lan-side-services.md)
+- [適用と生成](../concepts/apply-and-render.md)

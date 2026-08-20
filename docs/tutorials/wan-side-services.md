@@ -11,6 +11,13 @@ This page introduces the routerd resources that handle the WAN side of a router:
 
 The companion page on the [LAN side](./lan-side-services.md) covers what the router serves to its inside.
 
+:::caution These are guided fragments, not an ISP configuration
+Each block belongs in a complete `Router.spec.resources` list with matching
+interfaces and LAN resources. ISP settings, credentials, AFTR names, and
+address ranges are not interchangeable. Build the [first lab router](./first-router.md)
+first, then use a matching complete example before making a live WAN change.
+:::
+
 ## Summary table
 
 | Concern | Resource | Daemon backing it |
@@ -56,9 +63,10 @@ The ISP gives you a public IPv4 address via DHCPv4 and an IPv6 prefix via DHCPv6
   kind: IPv6DelegatedAddress
   metadata: {name: lan-base}
   spec:
-    pdRef: wan-pd
+    prefixDelegation: wan-pd
     interface: lan
-    suffix: ::1/64
+    subnetID: "0"
+    addressSuffix: "::1"
 
 - apiVersion: net.routerd.net/v1alpha1
   kind: NAT44Rule
@@ -67,7 +75,7 @@ The ISP gives you a public IPv4 address via DHCPv4 and an IPv6 prefix via DHCPv6
     type: masquerade
     egressInterface: wan
     sourceRanges:
-      - 192.0.2.0/24
+      - 192.168.10.0/24
 ```
 
 `DHCPv4Client` runs `routerd-dhcpv4-client` and writes the lease to `lease.json`. The kernel takes the address; routerd publishes events for downstream resources to react.
@@ -108,10 +116,12 @@ Common for older xDSL plans where the IPv4 path goes through PPPoE while IPv6 st
   metadata: {name: wan-pppoe}
   spec:
     interface: wan
-    user: "user@isp.example"
-    passwordFromSecret: pppoe-password
+    ifname: ppp-home
+    username: "user@isp.example"
+    passwordFile: /usr/local/etc/routerd/secrets/pppoe-password
     mtu: 1454
     mru: 1454
+    defaultRoute: true
 
 - apiVersion: net.routerd.net/v1alpha1
   kind: DHCPv6PrefixDelegation
@@ -120,7 +130,9 @@ Common for older xDSL plans where the IPv4 path goes through PPPoE while IPv6 st
     interface: wan
 ```
 
-`PPPoESession` runs `routerd-pppoe-client`, which wraps `pppd`/`rp-pppoe` on Linux and `ppp(8)` on FreeBSD. The session interface (typically `ppp0`) becomes available for routes and `NAT44Rule`.
+`PPPoESession` runs `routerd-pppoe-client`, which wraps `pppd`/`rp-pppoe` on
+Linux and renders an `mpd5` client configuration on FreeBSD. The session
+interface (typically `ppp0`) becomes available for routes and `NAT44Rule`.
 
 ## Pattern C: DS-Lite (IPv6-only access network with IPv4-in-IPv6 tunnel)
 
@@ -143,15 +155,22 @@ The ISP provides only IPv6 natively. IPv4 is delivered through a DS-Lite tunnel 
   kind: DSLiteTunnel
   metadata: {name: ds-lite-primary}
   spec:
-    sourceInterface: wan
+    interface: wan
+    tunnelName: ds-lite-primary
     aftrFQDN: gw.transix.jp
-    aftrFQDNResolverFromResource:
-      resource: DHCPv6Information/wan-info
-      field: dnsServers
-    mtu: 1454
+    aftrDNSServers:
+      - 2404:1a8:7f01:a::3
+      - 2404:1a8:7f01:b::3
+    localAddressSource: delegatedAddress
+    localDelegatedAddress: lan-base
+    localAddressSuffix: "::100"
+    defaultRoute: true
 ```
 
-`DSLiteTunnel` is created as a kernel `ip6tnl` device once the AFTR address is resolved. `aftrFQDNResolverFromResource` ensures the AFTR FQDN is resolved through the ISP's own DNS rather than a public resolver, since AFTR records are usually only authoritative inside the access network.
+`DSLiteTunnel` is created as a kernel `ip6tnl` device once the AFTR address is
+resolved. The `aftrDNSServers` values are ISP-specific: use the resolvers your
+access line requires, because an AFTR name is often not meaningful through a
+public resolver.
 
 ## Pattern D: Multi-WAN (primary + backup)
 
@@ -159,12 +178,12 @@ When more than one path is available, pair the WAN-acquisition resources with `E
 
 ## Status and observation
 
-For each WAN resource, `routerctl describe <kind>/<name>` shows the current phase, observed leases, and recent events. Examples:
+For each WAN resource, `sudo routerctl describe <kind>/<name>` shows the current phase, observed leases, and recent events. Examples:
 
 ```sh
-routerctl describe DHCPv6PrefixDelegation/wan-pd      # phase: Bound, prefix: 2001:db8:1::/56
-routerctl describe DSLiteTunnel/ds-lite-primary       # phase: Up, aftr: 2001:db8:cafe::1
-routerctl describe EgressRoutePolicy/ipv4-default     # selectedCandidate: ds-lite-primary
+sudo routerctl describe DHCPv6PrefixDelegation/wan-pd  # phase: Bound, prefix: 2001:db8:1::/56
+sudo routerctl describe DSLiteTunnel/ds-lite-primary   # phase: Up, aftr: 2001:db8:cafe::1
+sudo routerctl describe EgressRoutePolicy/ipv4-default # selectedCandidate: ds-lite-primary
 ```
 
 The Web Console summarises the same information under the **Overview** and **Resources** tabs, and the **Connections** tab shows real conntrack/pf state per WAN path.

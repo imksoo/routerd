@@ -14,11 +14,27 @@ title: ファイアウォールのレート制限と ICMP ルール
 
 完全な YAML は `examples/firewall-rate-limit.yaml` にあります。
 
-## 適用手順
+:::caution ファイアウォール機能の現在地
 
-```bash
-routerctl validate -f examples/firewall-rate-limit.yaml --replace
-routerctl plan -f examples/firewall-rate-limit.yaml --replace
+これらは routerd の現在のファイアウォール機能の土台を示すルール例であり、
+インターネットに公開するルーターの完全なセキュリティポリシーではありません。
+隔離したホストで試し、到達可能なルーターの唯一の防御としては使わないでください。
+
+:::
+
+## daemon の前に確認する
+
+以下は `sudo` を実行できる通常ユーザーを想定します。まだサービスを起動していないため、
+`routerctl` ではなく `routerd` を使い、dry-run の状態ファイルは一時ディレクトリへ隔離します。
+
+```sh
+LAB_DIR="$(mktemp -d)"
+sudo routerd validate --config examples/firewall-rate-limit.yaml
+sudo routerd apply --config examples/firewall-rate-limit.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
+sudo sed -n "1,160p" "$LAB_DIR/status.json"
 ```
 
 ## ルールの抜粋

@@ -2,7 +2,10 @@
 
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD--3--Clause-blue.svg)](LICENSE)
 
-[Project site and documentation: routerd.net](https://routerd.net/)
+[Project site and documentation: routerd.net](https://routerd.net/) ·
+[日本語の入口](https://routerd.net/ja/docs/) ·
+[繁體中文入口](https://routerd.net/zh-Hant/docs/) ·
+[简体中文入口](https://routerd.net/zh-Hans/docs/)
 
 Prebuilt release archives for Linux amd64 and FreeBSD amd64 are published on
 the [GitHub Releases page](https://github.com/imksoo/routerd/releases).
@@ -13,6 +16,29 @@ Release automation for maintainers is documented in
 
 routerd is a pre-release declarative router control plane for people who want a
 general-purpose host to behave like an understandable router.
+
+## Start safely
+
+If you are new to routing, begin with an isolated Ubuntu Server VM or a spare
+computer, not the only router for a home, school, or workplace. Keep a console
+or a separate management NIC. `routerd apply --once` and `routerd serve` can
+change the host network.
+
+The short learning path is:
+
+1. [Network basics](https://routerd.net/docs/tutorials/network-basics) — WAN,
+   LAN, DHCP, DNS, NAT, and `/24` in plain language.
+2. [Install and upgrade](https://routerd.net/docs/install-and-upgrade) — the
+   authoritative installation path.
+3. [Getting started safely](https://routerd.net/docs/tutorials/getting-started)
+   — validate and dry-run before a live change.
+4. [Bring up the first lab router](https://routerd.net/docs/tutorials/first-router)
+   — a small DHCP and IPv4 NAT lab with an observable success check.
+
+Ubuntu Server is the primary, most exercised target. FreeBSD and NixOS have
+groundwork and selected integration paths; review
+[the platform matrix](https://routerd.net/docs/platforms) before treating them
+as equivalent first-lab targets.
 
 Instead of spreading intent across netplan, systemd-networkd, dnsmasq,
 nftables, sysctl files, custom scripts, and one-off daemon units, routerd keeps
@@ -52,14 +78,16 @@ segments and a diskless physical mini PC router can use the same resource
 model. The host artifacts differ. The intent file stays recognizable.
 
 routerd is not trying to replace every router project or appliance UI. It is
-strongest when the same network intent must move between a Proxmox lab, a
-FreeBSD router, an Ubuntu home gateway, and a diskless mini PC booted from
-the live ISO.
+strongest when the same network intent must move between a Proxmox lab, an
+Ubuntu home gateway, and a diskless mini PC booted from the live ISO. FreeBSD
+and NixOS work is intentionally second-tier while native renderer parity is
+still under development.
 
 The project focuses on a few independent strengths:
 
-- **Cross-OS declarative resources** for Ubuntu and FreeBSD host
-  integration.
+- **Cross-OS declarative resources** with Ubuntu Server as the primary host;
+  FreeBSD and NixOS integration is documented as groundwork where the native
+  renderer is not yet complete.
 - **Live ISO plus USB persistence** for diskless mini PC routers.
 - **Observable routing decisions** through events, generation diffs,
   health checks, Web Console, and OpenTelemetry.
@@ -148,8 +176,8 @@ The production-style examples show how the pieces fit together:
   DS-Lite rendering example.
 - `examples/tailscale-exit-subnet.yaml`: Tailscale exit-node and subnet-router
   advertisement through a managed systemd unit.
-- `examples/guest-mode.yaml`: MAC-based guest-device isolation on a shared
-  LAN.
+- `examples/guest-mode.yaml`: a MAC-based router policy example. It is not a
+  substitute for VLAN, SSID, switch-port, or Wi-Fi client isolation.
 - `examples/cloudedge-mobility-demo/`: on-prem/AWS/Azure/OCI CloudEdge SAM
   configs using `SAMTransportProfile`.
 - `examples/README.md`: an index of focused templates, including minimal
@@ -242,21 +270,28 @@ under `/usr/share/licenses/routerd/`. Regenerate the inventory with:
 make third-party-licenses
 ```
 
-Then create and validate the configuration:
+Then create a configuration and validate it directly before a daemon exists:
 
 ```sh
 sudo install -d -m 0755 /usr/local/etc/routerd
 sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
 sudo vi /usr/local/etc/routerd/router.yaml
 
-routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
-routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
+sudo routerd validate --config /usr/local/etc/routerd/router.yaml
+
+workdir=$(mktemp -d)
+sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run \
+  --state-file "$workdir/state.db" \
+  --ledger-file "$workdir/ledger.db" \
+  --status-file "$workdir/status.json"
+rm -rf "$workdir"
 ```
 
-Apply only after confirming that the management path is safe:
+Apply only from a console or independent management path after confirming it is
+safe. This changes the host network:
 
 ```sh
-sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
+sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
 ```
 
 ## Developer Build
@@ -286,16 +321,17 @@ Important binaries built by `make build` include:
 - `routerd-dhcp-event-relay`
 - `routerd-firewall-logger`
 
-Useful direct commands:
+Useful direct commands (the `routerctl` commands require a running local
+`routerd.service`; use `sudo` unless your account has deliberately joined the
+`routerd` group and started a new login session):
 
 ```sh
-routerctl validate -f examples/home-router.yaml --replace
-routerctl plan -f examples/home-router.yaml --replace
-routerctl get status
-routerctl get events --limit 20
-routerctl get connections --limit 50
-routerctl plugin list
-routerctl plugin run <name> --dry-run
+routerd validate --config examples/home-router.yaml
+sudo routerctl get status
+sudo routerctl get events --limit 20
+sudo routerctl get connections --limit 50
+sudo routerctl plugin list
+sudo routerctl plugin run <name> --dry-run
 ```
 
 ## Runtime Layout
@@ -319,10 +355,11 @@ Managed daemons expose the same local contract:
 
 ## Platform Notes
 
-Ubuntu Server is the most exercised deployment target. NixOS and FreeBSD use
-the same resource model through their native activation paths. Alpine supports
-the live ISO and `apk` package bootstrap, while OpenRC service parity is still
-tracked as groundwork. See
+Ubuntu Server is the most exercised deployment target. NixOS and FreeBSD share
+the resource model but remain second-tier: some native renderers and service
+integration are groundwork rather than feature parity. Alpine supports the live
+ISO and `apk` package bootstrap, while OpenRC service parity is also
+groundwork. See
 `docs/platforms.md` for the current OS surface matrix.
 
 The implementation is pre-release. v1alpha1 names and fields may still change

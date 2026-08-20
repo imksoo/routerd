@@ -1,29 +1,22 @@
 ---
-title: 基本的 NAT 與防火牆政策
+title: 基本 NAT 與防火牆
 sidebar_position: 6
 ---
 
-# 基本的 NAT 與防火牆政策
+# 基本 NAT 與防火牆：先了解責任邊界
 
-![包含 WAN、LAN、可選 management、NAT44Rule、FirewallZone、FirewallPolicy 與 nftables validation 的基本 routerd NAT44 與 firewall tutorial 流程](/img/diagrams/tutorial-basic-firewall.png)
+![WAN、LAN、NAT44Rule、FirewallZone 與 FirewallPolicy 的 routerd 入門關係圖](/img/diagrams/tutorial-basic-firewall.png)
 
-routerd 在 Linux 路由器上套用 IPv4 NAPT（NAT44）與 stateful 防火牆。
-本教學示範在初始設定的主機上同時啟用兩者的最小步驟。
+NAT 和防火牆不是同一件事：
 
-## 預設構成
+- **NAT44** 讓私有 LAN 位址借用 WAN 的 IPv4 位址與外部網路通訊。
+- **防火牆** 決定哪些流量可通過或到達路由器。
 
-假設路由器的構成如下：
+本頁說明資源的寫法，不應視為可直接暴露到網際網路的生產安全方案。目前著重 Linux 的 nftables 路徑，Ubuntu Server 是主要入門平台。
 
-- 承載 IPv4 的上游介面（`wan`）。原生雙堆疊、PPPoE 或 DS-Lite 皆可。
-- 向 LAN 內用戶端分配 private 位址的 LAN 介面（`lan`）。
-- 可選的管理介面（`mgmt`）。
+## 一條現代的 NAT44Rule
 
-本教學的目標有兩個：
-
-- 對 LAN 發往外部的 IPv4 流量進行 masquerade。
-- 套用健全的防火牆預設狀態（WAN 無法到達 LAN、LAN 可以到達 WAN、管理端可以到達路由器本身）。
-
-## NAT44
+假設已宣告名為 `wan` 和 `lan` 的 `Interface` 資源，LAN 網段為 `192.168.10.0/24`。現行欄位如下：
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
@@ -31,64 +24,75 @@ routerd 在 Linux 路由器上套用 IPv4 NAPT（NAT44）與 stateful 防火牆�
   metadata:
     name: lan-to-wan
   spec:
-    outboundInterface: wan
-    sourceCIDRs:
-      - 192.0.2.0/24
-    masquerade: true
+    type: masquerade
+    egressInterface: wan
+    sourceRanges:
+      - 192.168.10.0/24
+    excludeDestinationCIDRs:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
 ```
 
-routerd 會在 `routerd_nat` nftables 表中產生規則。
-無論是 DHCP 取得的線路、PPPoE 虛擬介面還是 DS-Lite 隧道，寫法相同，只需變更 `outboundInterface`。
+`type: masquerade` 是採用出站介面目前 IPv4 位址的方式，適合位址可能變動的 DHCP WAN。`egressInterface` 指的是邏輯介面資源名稱，不是任意猜測的網卡名稱。`excludeDestinationCIDRs` 讓通往常見私有網段的流量不做偽裝，避免把原本應走內部路由的流量錯當成網際網路流量。
 
-## conntrack 觀測
+## 防火牆資源表達什麼
 
-routerd 讀取 conntrack，並在 Web 管理介面與 `routerctl get connections` 中顯示即時流量。
-若環境中沒有 `/proc/net/nf_conntrack`，則退回為以 sysctl 為基礎的摘要。不會視為失敗，僅顯示可觀測的範圍。
-
-## Firewall Kind
-
-`FirewallZone`、`FirewallPolicy`、`FirewallRule` 用於表達 stateful 過濾條件。
-routerd 會將這些資源產生至 `inet routerd_filter` nftables 表。
-
-角色（`untrust`、`trust`、`mgmt`）提供隱含的 accept / drop 矩陣。
-DHCP、DNS、DS-Lite 控制等受管理服務所需的通道，routerd 會自動開放。
+以下為 WAN/LAN 區域與一個策略資源的最小結構：
 
 ```yaml
 - apiVersion: firewall.routerd.net/v1alpha1
   kind: FirewallZone
-  metadata: {name: wan}
+  metadata:
+    name: wan
   spec:
     role: untrust
     interfaces:
-      - Interface/wan
+      - wan
 
 - apiVersion: firewall.routerd.net/v1alpha1
   kind: FirewallZone
-  metadata: {name: lan}
+  metadata:
+    name: lan
   spec:
     role: trust
     interfaces:
-      - Interface/lan
+      - lan
 
 - apiVersion: firewall.routerd.net/v1alpha1
   kind: FirewallPolicy
-  metadata: {name: default}
-  spec: {}
+  metadata:
+    name: home
+  spec:
+    logDeny: true
 ```
 
-需要新增例外時，請參閱[防火牆規則指南](../how-to/firewall-rule.md)。
+`FirewallZone` 以 `untrust`、`trust`、`mgmt` 描述網路位置；`FirewallPolicy` 放置全域行為，例如拒絕記錄。NAT44 與過濾使用不同 nftables 表，所以「已經有 NAT」不代表「所有入站流量都已審查並保護」。
 
-## 確認
+:::caution 防火牆仍在基礎實作階段
+routerd 是預發布軟體。這裡的區域與策略資源不是通用防火牆語言，也不是安全認證。不要只憑這段 YAML 就宣稱 WAN 一定無法連到 LAN，或把主機暴露到公網。真實部署前需要針對介面、管理入口、VLAN、連接埠轉送與回程流量做獨立檢查與測試。
+:::
 
-```sh
-routerctl describe NAT44Rule/lan-to-wan
-routerctl firewall test from=wan to=lan proto=tcp dport=22
-nft list table inet routerd_filter
-nft list table ip routerd_nat
+## 安全檢查設定
+
+先讓 `routerd` 直接驗證完整檔案，再使用暫存路徑做 dry-run：
+
+```bash
+routerd validate --config router.yaml
+workdir=$(mktemp -d)
+routerd apply --once --dry-run --skip-service-manager --config router.yaml --status-file "$workdir/status.json" --state-file "$workdir/state.db" --ledger-file "$workdir/ledger.db" --netplan-file "$workdir/50-routerd.yaml" --dnsmasq-file "$workdir/dnsmasq.conf" --dnsmasq-service-file "$workdir/routerd-dnsmasq.service" --nftables-file "$workdir/routerd-nat.nft"
 ```
 
-## 相關項目
+只有在 `routerd serve` 已藉由主控台或獨立管理路徑啟動後，才以 `routerctl` 檢查運行結果：
 
-- [定義防火牆區域](../how-to/firewall-zone.md)
-- [新增防火牆例外](../how-to/firewall-rule.md)
+```bash
+sudo routerctl get status
+sudo routerctl describe NAT44Rule/lan-to-wan
+sudo nft list table ip routerd_nat
+```
+
+## 繼續閱讀
+
+- [基本 IPv4 NAT 閘道](../config-examples/basic-ipv4-nat.md)
 - [防火牆概念](../concepts/firewall.md)
+- [支援的平台](../platforms.md)

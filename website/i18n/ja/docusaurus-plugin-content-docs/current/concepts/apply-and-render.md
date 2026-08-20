@@ -6,67 +6,106 @@ sidebar_position: 4
 
 # 適用と生成
 
-![routerd の validate、plan、dry-run、apply、render が同じ有効リソースグラフを使う流れ](/img/diagrams/concept-apply-and-render.png)
+![routerd で設定を検証し、dry-run し、サービスを起動して routerctl で状態を見る流れ](/img/diagrams/concept-apply-and-render.png)
 
-routerd には、日常の運用でよく使う操作がいくつかあります。
-このページでは、ドキュメント内で使う言葉をそろえて説明します。
+routerd には、設定を書く段階で使う `routerd` と、動いている daemon
+（起動し続けるプログラム）に話しかける
+`routerctl` があります。最初は、この順番を守ると安全です。
 
-## 検証する
-
-`routerctl validate` は YAML の形を確認します。
-Kind 名、必須フィールド、値の範囲、明らかな依存関係の誤りを検出します。
-
-```bash
-routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
+```text
+YAML を書く
+    ↓
+routerd validate
+    ↓
+routerd apply --once --dry-run
+    ↓
+安全を確認して routerd.service を起動
+    ↓
+routerctl get status
 ```
 
-スクリプトから使う場合、`routerctl validate` は返された
-`ValidateResult` が valid のときだけ終了コード `0` になります。
-routerd に到達でき、候補 config が invalid の場合は `1`、候補
-ファイルを読めない場合や daemon に接続できない場合などの実行・
-transport エラーでは `2` で終了します。routerd が JSON 結果を
-返した場合、その出力は従来どおり stdout に書かれます。
-`valid: true` の warning だけなら終了コードは `0` のままです。
+## 1. 検証する
 
-## 計画を見る
+`routerd validate` は YAML の書き方を確認します。Kind 名、必須の項目、値の範囲、
+分かりやすい参照ミスを見つけます。daemon はまだ必要なく、ホストのネットワークも
+変更しません。
 
-`routerctl plan` は、ホストに対して何をしようとしているかを表示します。
-本番ルーターへ適用する前に、管理用の接続が切れないか、予期しない経路変更がないかを確認できます。
-
-```bash
-routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
+```sh
+sudo routerd validate --config ./router.yaml
 ```
 
-## 予行実行する
+初回に `routerctl validate` を使わない理由は、`routerctl` が動いている
+`routerd.service` のローカルソケットに接続するからです。
 
-`--dry-run` は、ホストを変更せずに適用の流れだけを確認します。実際に変わる箇所を事前に把握できます。
+## 2. dry-run する
 
-```bash
-routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
+dry-run は、読み込んだリソースの順番と生成する内容を確認する予行演習です。
+初回は常設の状態ファイルを使わず、使い捨ての場所を明示します。
+
+```sh
+LAB_DIR="$(mktemp -d)"
+sudo routerd apply --config ./router.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
+sed -n "1,120p" "$LAB_DIR/status.json"
 ```
 
-## 適用する
+- **state** は、routerd が見た状態を保存するデータベースです。
+- **ledger** は、routerd が所有する成果物の記録です。
+- **status** は、今回の結果を書いた JSON ファイルです。
 
-`routerctl apply` は、一度きりのホスト操作です。意図を検証し、必要に応じてホストの現在状態を観測し、生成した成果物を書き出し、状態を記録して終了します。長時間動くデーモンのライフサイクルは管理しません。管理対象デーモンの起動・有効化・再起動・再読み込みは `routerd serve` が担当します。
+`--dry-run` がある間はネットワークを本当に変更しません。それでも、設定の内容は
+正しく読む必要があります。最初は隔離した Ubuntu Server VM とコンソールで行います。
 
-```bash
-sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
-sudo routerd serve --config /usr/local/etc/routerd/router.yaml
+## 3. 適用する
+
+`routerd apply --once` から `--dry-run` を外すと、本当にホストを変更できます。
+これは WAN、LAN、経路、NAT、サービスを変える可能性がある操作です。
+最初の VM では、いきなり一回だけの live apply を勧めません。
+
+代わりに、dry-run が安全だと確認してから設定を
+`/usr/local/etc/routerd/router.yaml` に置き、`routerd.service` を起動します。
+常駐するサービスは、設定と実際の状態の差を見つけて必要な処理を続けます。
+
+```sh
+sudo systemctl enable --now routerd.service
+sudo systemctl is-active routerd.service
 ```
 
-## 生成する
+## 4. サービス起動後に routerctl を使う
 
-ドキュメント内の「生成」は、routerd が dnsmasq 設定、nftables 設定、systemd ユニットなどのホスト向けファイルを組み立てることを指します。
-生成しただけでホストが変わるとは限りません。
-実際に反映するかどうかは、適用処理と予行実行の指定で決まります。
+サービスが作るローカルソケットに接続できるようになったら、`routerctl` を使います。
+状態を読む例は次のとおりです。
 
-現在の routerd では、dnsmasq は DNS 応答を担当しません。
-dnsmasq 向けには、DHCPv4、DHCPv6、中継、RA の設定だけを生成します。
-DNS の待ち受け、ローカルゾーン、条件付き転送、暗号化 DNS は `DNSResolver` が扱います。
-`DNSResolver` は `routerd-dns-resolver` の実行設定です。
+```sh
+sudo routerctl get status
+sudo routerctl get events --limit 20
+```
 
-## 調整する
+動いている routerd に候補 YAML を渡して検証や計画を見る場合も、この後です。
 
-常駐モードでは、routerd はイベントを受け取り、必要なリソースを再評価します。
-この「意図と現在状態の差を縮める処理」を、このドキュメントでは調整（リコンサイル）と呼びます。
-たとえば DHCPv6-PD の Renew 後にプレフィックスが変わると、LAN アドレス、RA、DNS 応答、DS-Lite 経路の順に調整が伝わります。
+```sh
+sudo routerctl validate -f candidate.yaml --replace
+sudo routerctl plan -f candidate.yaml --replace
+```
+
+この 2 つは host の状態を変えませんが、稼働中の daemon が必要です。
+
+## 生成とは
+
+「生成」は、routerd が dnsmasq の設定、nftables の設定、systemd の unit など、
+ホスト向けのファイルを組み立てることです。生成しただけで、必ずホストが変わる
+わけではありません。dry-run では生成内容を確認し、live の適用やサービス起動で
+必要な変更を反映します。
+
+現在の routerd では、dnsmasq 向けには DHCPv4、DHCPv6、中継、RA の設定を
+生成します。DNS の待ち受け、ローカルゾーン、条件付き転送、暗号化 DNS は
+`DNSResolver` が扱います。
+
+## プラットフォームの範囲
+
+このページの初回手順は Ubuntu Server を対象にしています。netplan、systemd、
+nftables のような Linux 固有の生成は、対応する機能がある環境だけで使います。
+FreeBSD と NixOS の導入・サービス連携は土台がありますが、Ubuntu と同じ
+レンダラーの対応を意味しません。

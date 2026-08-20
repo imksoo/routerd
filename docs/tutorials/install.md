@@ -1,76 +1,24 @@
 ---
-title: Install
+title: Install (first-lab shortcut)
 sidebar_position: 1
 ---
 
-# Install
+# Install routerd for a first lab
 
-![Diagram showing routerd installation from release archive, dependency and service template installation, preserved config and state, and validate-plan-dry-run after install](/img/diagrams/tutorial-install.png)
+The authoritative installation and upgrade instructions are in
+[Install and upgrade](../install-and-upgrade.md). This short page exists so a
+reader following the tutorial list reaches that one source of truth.
 
-Install routerd from a release archive.
-The router host does not need Go or a Makefile.
+For a first experiment, choose an isolated Ubuntu Server VM or a spare computer
+with console access. Ubuntu Server is the primary target. FreeBSD and NixOS are
+second-tier groundwork and should not be the first platform you use to learn
+the workflow.
 
-```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
-sha256sum -c routerd-linux-amd64.tar.gz.sha256
-tar -xzf routerd-linux-amd64.tar.gz
-sudo ./install.sh
-```
+After installation, continue in this order:
 
-On Linux arm64 hosts, use `routerd-linux-arm64.tar.gz`.
+1. [Network basics](./network-basics.md)
+2. [Getting started safely](./getting-started.md)
+3. [Bring up the first lab router](./first-router.md)
 
-For FreeBSD, download `routerd-freebsd-amd64.tar.gz` and run the
-same `./install.sh`.
-On FreeBSD arm64 hosts, use `routerd-freebsd-arm64.tar.gz`.
-Use the versioned archives on a release page when you need an exact release.
-
-Linux archives contain statically linked routerd binaries (`CGO_ENABLED=0`).
-They are not tied to the glibc version on the router host.
-
-The installer:
-
-- installs runtime packages on supported package managers
-- copies binaries to `/usr/local/sbin`
-- installs the systemd or rc.d service template
-- writes `/usr/local/etc/routerd/router.yaml.sample`
-- preserves an existing `/usr/local/etc/routerd/router.yaml`
-- preserves state under `/var/lib/routerd` or `/var/db/routerd`
-- runs `routerctl get status` when the read-only status socket exists
-
-Common options:
-
-```sh
-./install.sh --list-deps
-sudo ./install.sh --no-install-deps
-sudo ./install.sh --deps-only
-sudo ./install.sh --with-tailscale
-sudo ./install.sh --dry-run
-```
-
-After installation, create a configuration and validate it:
-
-```sh
-sudo install -d -m 0755 /usr/local/etc/routerd
-sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
-sudo vi /usr/local/etc/routerd/router.yaml
-
-routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
-routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
-```
-
-Apply only after confirming that management access stays reachable:
-
-```sh
-sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
-```
-
-See [Install and upgrade](../install-and-upgrade.md) for OS-specific package
-lists, upgrade behavior, uninstall options, and developer release commands.
-
-To try routerd without installing to disk, boot `routerd-live.iso`.
-The ISO starts the same `install.sh configure` wizard after root login.
-It also supports Proxmox VE serial consoles through `qm terminal`.
-When the wizard asks about USB persistence, choose a USB partition to turn the
-live ISO into a diskless persistent router. Without USB persistence, the ISO
-runs as an ephemeral demo and loses config at reboot.
+Do not run a live apply over the only SSH connection to a router. The install
+page explains how to validate and dry-run a file before starting the service.

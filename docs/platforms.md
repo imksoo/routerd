@@ -8,6 +8,13 @@ title: Supported platforms
 
 routerd is designed to be cross-OS, but each platform uses a different host integration model. This page lists the concrete OS surfaces routerd uses on each platform, so you can review generated files and runtime ownership before applying a router configuration.
 
+:::caution Choose Ubuntu Server for a first lab
+Ubuntu Server is the primary, most exercised target. FreeBSD and NixOS are
+second-tier: some feature areas are groundwork or have narrower native evidence.
+Read the relevant section before assuming the same YAML has identical host
+behavior on every OS.
+:::
+
 ## Linux (Ubuntu / Debian)
 
 Linux with systemd is the primary platform. Release installs land under `/usr/local` by default.

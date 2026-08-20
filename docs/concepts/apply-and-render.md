@@ -6,56 +6,86 @@ sidebar_position: 4
 
 # Apply and render
 
-![Diagram showing how routerctl validate, plan, apply, and render use the same effective resource graph](/img/diagrams/concept-apply-and-render.png)
+![Diagram showing how standalone routerd validation and dry-run differ from routerctl requests to a running daemon](/img/diagrams/concept-apply-and-render.png)
 
-There are a few common operations you will use day to day. This page settles the vocabulary used elsewhere in the documentation.
+There are two ways to work with a routerd configuration. The important first
+question is whether `routerd` is already running as a service.
 
-## Validate
+| Situation | Use | What it does |
+| --- | --- | --- |
+| Before the service exists | `routerd validate --config FILE` | Reads and validates a YAML file directly. |
+| Before a live change | `routerd apply --config FILE --once --dry-run` | Builds the desired work without committing host changes. Use explicit temporary state paths for a first lab. |
+| Service already running | `routerctl validate`, `routerctl plan`, `routerctl apply` | Sends a candidate file to the local routerd daemon through a Unix socket. |
 
-`routerctl validate` checks the YAML's shape: kind names, required fields, value ranges, obvious dependency errors.
-
-```bash
-routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
-```
-
-For scripts, `routerctl validate` exits `0` only when the returned
-`ValidateResult` is valid. It exits `1` when routerd is reachable and the
-candidate is invalid, and `2` for execution or transport errors such as an
-unreadable candidate file or unreachable daemon. The JSON result is still
-written to stdout when routerd returns one; warnings with `valid: true` keep
-exit code `0`.
-
-## Plan
-
-`routerctl plan` shows what routerd is about to do to the host. Before pointing it at a production router, check the plan for anything that would cut the management connection or change a route unexpectedly.
+## Validate a file directly
 
 ```bash
-routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
+routerd validate --config /path/to/router.yaml
 ```
 
-## Preview
+This is the safe first validation command. It does not need a running
+`routerd.service`.
 
-`routerctl plan` previews the effective change without changing the host, so you can inspect what would happen before a live change.
+## Preview without committing a network change
+
+For a first lab, keep every generated state file in a new temporary directory:
 
 ```bash
-routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
+workdir=$(mktemp -d)
+routerd apply --config /path/to/router.yaml --once --dry-run \
+  --state-file "$workdir/state.db" \
+  --ledger-file "$workdir/ledger.db" \
+  --status-file "$workdir/status.json"
 ```
 
-## Apply
+This is a preview, not a permission to apply the configuration to a production
+router. Read the result, then remove the temporary directory when finished.
 
-`routerctl apply` is a bounded host pass: it validates intent, observes the current host where needed, writes rendered artifacts, records state, and exits. It does not own long-running daemon lifecycle. Starting, enabling, restarting, or reloading managed daemons is the responsibility of `routerd serve`.
+## Live one-shot apply
+
+`routerd apply --once` changes the host and exits. Use it only from a console
+or an independent management path after reviewing the configuration:
 
 ```bash
-sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
-sudo routerd serve --config /usr/local/etc/routerd/router.yaml
+sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
 ```
+
+## Run the service and use `routerctl`
+
+`routerd serve` is the long-running reconcile loop. The packaged service starts
+it for normal deployments:
+
+```bash
+sudo systemctl enable --now routerd.service
+sudo routerctl get status
+```
+
+Once the service is running, `routerctl` is the local control client. For
+example, a plan asks the daemon what it would change for a candidate file:
+
+```bash
+sudo routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
+```
+
+`routerctl apply` asks that daemon to make a live update. It is not a standalone
+one-shot host command, and neither `routerctl plan` nor a repeated plan is a
+dry-run apply.
 
 ## Render
 
-When this documentation says "render", it means routerd produces host-side files such as a dnsmasq configuration, an nftables ruleset, a systemd unit, or a NixOS module. Rendering alone does not necessarily change the host — whether the host is updated depends on the operation (`plan`, `apply`, or `serve`) and the active controller mode.
+When this documentation says "render", it means routerd produces host-side
+files such as a dnsmasq configuration, an nftables ruleset, a systemd unit, or
+a NixOS module. Whether those files reach the host depends on the operation:
+validation only checks the description; a dry-run previews; a live apply or
+serve reconciliation can update the host.
 
-In current routerd, dnsmasq is no longer responsible for DNS answering. dnsmasq renders DHCPv4, DHCPv6, relay, and RA configuration only. DNS listening, local zones, conditional forwarding, and encrypted DNS are handled by `DNSResolver`, which is the configuration shape for `routerd-dns-resolver`.
+In current routerd, dnsmasq provides DHCPv4, DHCPv6, relay, and RA rendering.
+DNS listening, local zones, conditional forwarding, and encrypted DNS are
+handled by `DNSResolver` and `routerd-dns-resolver`.
 
 ## Reconcile
 
-In serve mode, routerd consumes events and re-evaluates only the affected resources. The shrinking-difference loop between intent and current state is what we call **reconcile** throughout these docs. For example, after a DHCPv6-PD renewal changes the prefix, the LAN address, RA, DNS answers, and DS-Lite path are reconciled in sequence.
+In serve mode, routerd consumes events and re-evaluates affected resources. The
+shrinking difference between the description and the observed host is called
+**reconcile**. For example, after a DHCPv6-PD renewal changes a prefix, routerd
+can update the derived LAN address, RA, DNS answers, and DS-Lite path in order.

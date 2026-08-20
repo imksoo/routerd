@@ -12,11 +12,18 @@ title: BGP 付き Kubernetes API VIP
 HTTPS の `/readyz` を確認し、Kubernetes の BGP speaker と peer を張って Service
 prefix を受け取ります。
 
-出発点として、次の順で確認します。
+小さなラボ用ルーターが動作してから使う、複数の障害要因を持つ end-to-end の例です。
+最初のコピー＆ペースト用の設定ではありません。daemon を起動する前に validate と隔離した
+dry-run を実行します。以下は `sudo` を実行できる通常ユーザーを想定します。
 
-```bash
-routerctl validate -f examples/kubernetes-api-vip.yaml --replace
-routerctl plan -f examples/kubernetes-api-vip.yaml --replace
+```sh
+LAB_DIR="$(mktemp -d)"
+sudo routerd validate --config examples/kubernetes-api-vip.yaml
+sudo routerd apply --config examples/kubernetes-api-vip.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
+sudo sed -n "1,160p" "$LAB_DIR/status.json"
 ```
 
 構成:
@@ -33,15 +40,16 @@ routerd-01/02  VRRP VIP 192.168.70.10
 
 | リソース | 設定 |
 | --- | --- |
-| `VirtualAddress/k8s-api-vip` | VRRP の preempt 設定、API のヘルスと BGP のヘルスの追跡。 |
+| `VirtualAddress/k8s-api-vip` | VRRP の ID、priority、peer と、API / BGP のヘルスを追跡する `track`。 |
 | `IngressService/kubernetes-api` | `/readyz` への HTTPS ヘルスチェック、kubeadm のブートストラップで使う self-signed 証明書向けの `tlsSkipVerify: true`、フェイルオーバーの選択、healthy な backend が無いときの reject、VIP と選択された control-plane backend が同じ LAN prefix または同じプライベート `/24` 上にある場合の、同一インターフェース hairpin SNAT の自動生成。 |
 | `BGPRouter/lan` | `convergenceProfile: fast`、BGP timers `3s/9s/5s`、既定で graceful restart を無効化、Kubernetes の Service prefix だけを受け取る import の allow-list。 |
-| `DNSResolver/lan-resolver` | VIP の `hostname` フィールドから `k8s-api.cluster.example` を自動で返し、control plane と worker の静的レコードも提供。 |
+| `DNSResolver/lan` | VIP の `hostname` フィールドから `k8s-api.cluster.example` を自動で返し、control plane の静的レコードも提供。 |
 
 DHCP のプールは、VIP、control-plane のアドレス、worker のアドレス、LoadBalancer /
 Service の advertisement の範囲と重ならないようにしてください。
 
-運用時は `routerctl get BGPRouter`、`routerctl get VirtualAddress`、
-`routerctl get IngressService` を使うと、peer の状態、VIP の役割、backend のヘルスを、
+レビュー済みの設定を適用して `routerd.service` を起動した**後で**、
+`sudo routerctl get BGPRouter`、`sudo routerctl get VirtualAddress`、
+`sudo routerctl get IngressService` を使うと、peer の状態、VIP の役割、backend のヘルスを、
 生の status JSON ではなく表形式で確認できます。live dataplane のデバッグでは、
-host の `ip`、`nft`、conntrack state を直接確認してください。
+host の `sudo ip`、`sudo nft`、conntrack state を直接確認してください。

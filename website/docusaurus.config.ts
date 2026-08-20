@@ -87,14 +87,6 @@ const config: Config = {
 
   themeConfig: {
     image: 'img/routerd-social-card.svg',
-    announcementBar: {
-      id: 'stable-milestone-20260707-1514',
-      content:
-        'Stable milestone: <a href="/docs/releases/stable"><b>v20260707.1514</b></a> — AWS/Azure/OCI/PVE redundant full topology 56/56',
-      backgroundColor: '#1f6feb',
-      textColor: '#ffffff',
-      isCloseable: true,
-    },
     navbar: {
       title: 'routerd',
       logo: {
@@ -109,7 +101,6 @@ const config: Config = {
           items: [
             {to: '/docs/', label: 'Overview'},
             {to: '/docs/install-and-upgrade', label: 'Install'},
-            {to: '/wizard', label: 'Config wizard'},
             {to: '/docs/concepts/resource-model', label: 'Resource model'},
             {to: '/docs/concepts/glossary', label: 'Glossary'},
             {to: '/docs/concepts/firewall', label: 'Build a router'},

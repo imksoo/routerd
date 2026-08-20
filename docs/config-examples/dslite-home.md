@@ -5,83 +5,59 @@ sidebar_position: 30
 
 # DS-Lite home gateway
 
-![Diagram showing IPv6 WAN prefix delegation, DS-Lite tunnel egress, derived NAT44, and LAN IPv4 plus delegated IPv6 services](/img/diagrams/config-example-dslite-home.png)
+![Diagram showing an IPv6 WAN prefix, a DS-Lite tunnel, and LAN IPv4 plus delegated IPv6 services](/img/diagrams/config-example-dslite-home.png)
 
-This example models a common IPv6-first access line: the router receives IPv6
-through Router Advertisement and DHCPv6-PD, derives a LAN prefix, and sends IPv4
-traffic through a DS-Lite tunnel.
+DS-Lite is for an IPv6-first access line where IPv4 packets leave through an
+ISP tunnel. This is an ISP-specific, advanced example—not a first router
+tutorial. Test it from a console or independent management path: a wrong WAN,
+tunnel, or DNS setting can interrupt connectivity.
 
-The complete, validated YAML is in `examples/example-dslite-home.yaml`.
+The complete, validated YAML is
+[`examples/example-dslite-home.yaml`](https://github.com/imksoo/routerd/blob/main/examples/example-dslite-home.yaml).
+Its Transix-like AFTR values are placeholders. Replace them with facts from
+your own access line.
 
-## Topology
+## What the example builds
 
-```mermaid
-flowchart LR
-  internet((Internet))
-  aftr["[1] AFTR<br/>gw.transix.jp"]
-  wan["[2] wan<br/>IPv6 RA + DHCPv6-PD"]
-  router["[3] routerd host"]
-  dslite["[4] DS-Lite tunnel<br/>ds-transix"]
-  lan["[5] lan<br/>IPv4 + delegated IPv6"]
-  clients["[6] LAN clients"]
-
-  internet --- aftr --- dslite --- router
-  wan --- router --- lan --- clients
-```
-
-## Diagram map
-
-| No. | Meaning | Main resources |
-| --- | --- | --- |
-| [1] | ISP AFTR endpoint used by the DS-Lite tunnel. | `DSLiteTunnel/transix` |
-| [2] | WAN interface receiving IPv6 RA and DHCPv6-PD. | `DHCPv6PrefixDelegation/wan-pd` |
-| [3] | routerd host that creates the tunnel, derives sysctls, and runs LAN services. | Derived host runtime |
-| [4] | DS-Lite `ip6tnl` device used for IPv4 egress. | `DSLiteTunnel/transix`, derived NAT44 |
-| [5] | LAN interface with IPv4 plus a delegated IPv6 address. | `IPv4StaticAddress/lan-ipv4`, `IPv6DelegatedAddress/lan-ipv6` |
-| [6] | LAN clients receiving DHCPv4, RA, RDNSS, and DNSSL. | `DHCPv4Server/lan-dhcpv4`, `IPv6RouterAdvertisement/lan-ra` |
-
-## What this manages
-
-| Area | routerd resources |
+| Job | Actual resource names in the YAML |
 | --- | --- |
-| WAN IPv6 | `DHCPv6PrefixDelegation/wan-pd` |
-| Prefix delegation | `DHCPv6PrefixDelegation/wan-pd`, `IPv6DelegatedAddress/lan-ipv6` |
-| DS-Lite | `DSLiteTunnel/transix` |
-| LAN IPv4 and DHCPv4 | `IPv4StaticAddress/lan-ipv4`, `DHCPv4Server/lan-dhcpv4` |
-| LAN IPv6 advertisement | `IPv6RouterAdvertisement/lan-ra` |
-| DNS | `DNSZone/home`, `DNSResolver/lan-resolver` |
-| IPv4 egress | Derived NAT44 from trust/untrust zones |
-| MTU/MSS | Derived from `DSLiteTunnel/transix` and firewall zones |
+| Receive an IPv6 delegated prefix | `DHCPv6PrefixDelegation/wan-pd` |
+| Give the LAN a derived IPv6 address | `IPv6DelegatedAddress/lan-v6` |
+| Answer DNS on the LAN | `DNSResolver/lan`, `DNSZone/home` |
+| Build the IPv4-over-IPv6 tunnel | `DSLiteTunnel/transix` |
+| Give LAN clients IPv4, DNS, and IPv6 router information | `DHCPv4Server/lan`, `IPv6RouterAdvertisement/lan` |
 
-This example uses Transix-like AFTR values as placeholders. Replace the AFTR
-FQDN, DNS servers, and DHCPv6 client profile with the values for your access
-line.
+`lan-v4`, `lan-v6`, `lan`, and `transix` are names chosen by this file. They
+are not generic names that every routerd configuration must use.
 
-## Key config
+## Key configuration
+
+The prefix delegation and derived LAN IPv6 address are connected by name:
 
 ```yaml
-# [2] Ask the WAN for delegated IPv6 prefix information.
 - apiVersion: net.routerd.net/v1alpha1
   kind: DHCPv6PrefixDelegation
   metadata:
     name: wan-pd
   spec:
     interface: wan
-    client: dhcp6c
     profile: ntt-hgw-lan-pd
 
-# [5] Derive a LAN IPv6 address from the delegated prefix.
 - apiVersion: net.routerd.net/v1alpha1
   kind: IPv6DelegatedAddress
   metadata:
-    name: lan-ipv6
+    name: lan-v6
   spec:
     prefixDelegation: wan-pd
     interface: lan
     subnetID: "0"
     addressSuffix: "::1"
+    announce: true
+```
 
-# [1] + [4] Build the DS-Lite tunnel toward the ISP AFTR.
+The tunnel then uses that same delegated address:
+
+```yaml
 - apiVersion: net.routerd.net/v1alpha1
   kind: DSLiteTunnel
   metadata:
@@ -90,95 +66,83 @@ line.
     interface: wan
     tunnelName: ds-transix
     aftrFQDN: gw.transix.jp
-    aftrDNSServers:
-      - 2404:1a8:7f01:a::3
-      - 2404:1a8:7f01:b::3
+    aftrDNSServers: [2404:1a8:7f01:a::3, 2404:1a8:7f01:b::3]
     localAddressSource: delegatedAddress
-    localDelegatedAddress: lan-ipv6
+    localDelegatedAddress: lan-v6
     localAddressSuffix: "::100"
     defaultRoute: true
-    mtu: 1454
 ```
 
-The DS-Lite tunnel uses a delegated IPv6 address as its local endpoint. If your
-access line expects the WAN RA address instead, switch `localAddressSource` to
-`interface`.
+If your provider requires the WAN Router Advertisement address as the tunnel
+source instead, use the provider-approved `localAddressSource` setting rather
+than copying this one blindly.
 
-## LAN services
-
-The example advertises the delegated prefix through RA and gives clients the
-router as DNS:
+The same local resource names are used by DNS, DHCPv4, and Router Advertisement:
 
 ```yaml
-# [6] Advertise the delegated LAN prefix and local DNS information.
-- apiVersion: net.routerd.net/v1alpha1
-  kind: IPv6RouterAdvertisement
+- kind: DNSResolver
   metadata:
-    name: lan-ra
-  spec:
-    interface: lan
-    prefixFrom:
-      resource: IPv6DelegatedAddress/lan-ipv6
-      field: address
-    rdnssFrom:
-      - resource: IPv6DelegatedAddress/lan-ipv6
-        field: address
-    dnsslFrom:
-      - resource: DNSZone/home
-        field: zone
-    oFlag: true
-    mtu: 1454
+    name: lan
+  # Listens on IPv4StaticAddress/lan-v4 and IPv6DelegatedAddress/lan-v6.
+
+- kind: DHCPv4Server
+  metadata:
+    name: lan
+  # Gives clients IPv4StaticAddress/lan-v4 as their gateway and DNS server.
+
+- kind: IPv6RouterAdvertisement
+  metadata:
+    name: lan
+  # Advertises IPv6DelegatedAddress/lan-v6 and DNSZone/home.
 ```
 
-The `DNSResolver` includes a conditional forwarder for the AFTR name. This is
-important when the AFTR record is only meaningful through the access-network
-resolver.
+Read the complete YAML for the required `spec` fields; the short excerpts above
+only explain how the resource names connect.
 
-## Apply sequence
+## Check before a daemon exists
 
-```bash
+Copy the file, change every ISP-specific value, and run the standalone checks.
+They do not start a service or apply a network change.
+
+```sh
 cp examples/example-dslite-home.yaml router.yaml
-routerctl validate -f router.yaml --replace
-routerctl plan -f router.yaml --replace
+LAB_DIR="$(mktemp -d)"
+sudo routerd validate --config router.yaml
+sudo routerd apply --config router.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
 ```
 
-Check the plan for:
+Confirm the WAN and LAN interface names, AFTR FQDN, resolver addresses, and
+management path. Stop if any of them are not yours.
 
-- the correct WAN and LAN interface names,
-- no accidental removal of management connectivity,
-- the intended AFTR FQDN and resolver addresses,
-- NAT using the DS-Lite tunnel, not the physical WAN interface.
+## Apply and observe
 
-Then apply:
+Only from a console or independent management path, apply the reviewed file and
+then start or restart the service that owns it. After the service is running:
 
-```bash
-routerctl apply -f router.yaml --replace
-```
-
-## Checks
-
-```bash
-routerctl get status
-routerctl describe DHCPv6PrefixDelegation/wan-pd
-routerctl describe IPv6DelegatedAddress/lan-ipv6
-routerctl describe DSLiteTunnel/transix
-routerctl describe FirewallZone/wan
+```sh
+sudo routerctl get status
+sudo routerctl describe DHCPv6PrefixDelegation/wan-pd
+sudo routerctl describe IPv6DelegatedAddress/lan-v6
+sudo routerctl describe DSLiteTunnel/transix
+sudo routerctl describe FirewallZone/wan
 ip -6 tunnel show
 ip route show default
 ```
 
-From a LAN client:
+From a LAN client, check both address families and local DNS:
 
-```bash
+```sh
 ip -6 addr
 ip route
 curl https://1.1.1.1/
 dig router.home.example
 ```
 
-## Common edits
+## Related pages
 
-- Change `client` and `profile` for the DHCPv6-PD client used by your platform.
-- Replace `gw.transix.jp` and the AFTR resolver addresses for non-Transix deployments.
-- Use `localAddressSource: interface` when the DS-Lite tunnel must originate from the WAN RA address.
-- DS-Lite commonly needs MSS clamping; routerd derives it from the tunnel MTU and LAN/WAN firewall zones.
+- [WAN-side services](../tutorials/wan-side-services.md)
+- [LAN-side services](../tutorials/lan-side-services.md)
+- [Basic IPv4 NAT gateway](./basic-ipv4-nat.md)

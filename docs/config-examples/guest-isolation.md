@@ -7,11 +7,21 @@ sidebar_position: 60
 
 ![Diagram showing ClientPolicy classifying guest and IoT MAC addresses on a shared LAN and denying LAN or management access](/img/diagrams/config-example-guest-isolation.png)
 
-This example keeps selected MAC addresses on the same LAN but treats them as
-guest or IoT clients: internet access is allowed, while trusted LAN and
-management access are denied.
+This example shows how a router can classify selected MAC addresses as guest or
+IoT clients and apply a `ClientPolicy` to traffic that reaches the router.
 
 The complete, validated YAML is in `examples/guest-mode.yaml`.
+
+:::danger This is not complete guest-network isolation
+This policy only controls traffic that passes through the router. Devices on
+the same switch, VLAN, or Wi-Fi SSID can send layer-2 traffic directly to each
+other without visiting the router. A MAC address is also not a strong identity;
+it can be copied.
+
+For a real guest network, use a separate VLAN, SSID, or physical port and turn
+on the access point or switch's client-isolation feature. Treat this example as
+an additional router policy, not the security boundary by itself.
+:::
 
 ## Topology
 
@@ -60,7 +70,8 @@ flowchart LR
     mode: include
     macs:
       - 18:ec:e7:33:12:6c
-    # [4] -> [1] Internet is allowed, but LAN and management access are denied.
+# [4] Router-routed traffic can allow Internet destinations while denying
+# router-routed LAN and management destinations.
     isolation:
       lanInternet: allow
       lanLAN: deny
@@ -71,17 +82,23 @@ flowchart LR
 ## Checks
 
 ```bash
-routerctl validate -f examples/guest-mode.yaml --replace
-routerctl plan -f examples/guest-mode.yaml --replace
-routerctl describe ClientPolicy/guest-devices
-nft list table inet routerd_filter
+routerd validate --config examples/guest-mode.yaml
+
+workdir=$(mktemp -d)
+routerd apply --config examples/guest-mode.yaml --once --dry-run \
+  --state-file "$workdir/state.db" \
+  --ledger-file "$workdir/ledger.db" \
+  --status-file "$workdir/status.json"
+rm -rf "$workdir"
 ```
 
-From a guest client, verify internet access and confirm that trusted LAN and
-management addresses are blocked.
+On an isolated test network, verify the intended routed traffic policy. Do not
+claim that this proves separation from a device on the same L2 segment.
 
 ## Common edits
 
 - Use `mode: include` when only listed MAC addresses are isolated.
 - Use `mode: exclude` for a guest-first network where only listed devices are trusted.
 - Pair this with DHCP reservations so client names in the Web Console stay readable.
+- Add `DNSResolver` or `NTPServer` before advertising the router as those
+  services. The example advertises external DNS and does not advertise local NTP.

@@ -1,37 +1,49 @@
 ---
-title: Getting started
+title: Getting started safely
 ---
 
-# Getting started
+# Getting started safely
 
-![Diagram showing the safe first routerd loop from interface discovery and a small YAML config to validate, plan, dry-run, serve, and routerctl get status](/img/diagrams/tutorial-getting-started.png)
+![Diagram showing the safe first routerd loop from interface discovery and a small YAML config to validate, dry-run, live apply, serve, and routerctl get status](/img/diagrams/tutorial-getting-started.png)
 
-This tutorial shows the safest first loop:
+This is the first route through routerd for someone learning how routers work.
+It deliberately starts with a file check, not with a change to a network.
 
-1. write a small router resource file
-2. validate it
-3. inspect the plan
-4. run a dry application
-5. only then run the daemon
+:::caution Use a lab for the first live change
+Use an isolated Ubuntu Server VM or a spare computer. Keep a hypervisor,
+serial, or physical console open, or keep a separate management NIC that this
+configuration does not change. Do **not** start by changing the only router
+for your home, school, or work network.
 
-The first pass should not change the host network.
-Install routerd first with the release archive and `install.sh`.
-See [Install and upgrade](../install-and-upgrade.md) for the OS-specific steps.
+`routerd apply --once` and `routerd serve` can change network state. The first
+two checks below do not commit network changes when you use the temporary paths
+shown here.
+:::
 
-## 1. Check interface names
+Before continuing, read [Network basics](./network-basics.md). It explains WAN,
+LAN, DHCP, DNS, NAT, and the `/24` notation used in the examples.
+
+## 1. Install on an Ubuntu Server lab host
+
+Ubuntu Server is the primary, most exercised target. Install a release archive
+with [Install and upgrade](../install-and-upgrade.md). FreeBSD and NixOS have
+groundwork and selected integration paths; they are not the recommended first
+lab target.
+
+## 2. Find the real interface names
 
 ```bash
-ip link
+ip -br link
 ```
 
-The examples use `ens18` for WAN, `ens19` for LAN, and `ens20` for management.
-Use the names from your host.
+Examples often use `ens18` for WAN and `ens19` for LAN. Those are placeholders,
+not universal names. Do not adopt the interface that carries your only SSH
+connection during a first experiment.
 
-Keep the management path separate from the interface being changed. Do not
-test a first configuration over the same interface that routerd is about to
-adopt.
+## 3. Start with a small description
 
-## 2. Start with interfaces and host bootstrap
+Save this as `first-router.yaml`. It only describes two existing interfaces;
+the next tutorial adds a complete LAN DHCP and NAT lab.
 
 ```yaml
 apiVersion: routerd.net/v1alpha1
@@ -40,86 +52,102 @@ metadata:
   name: first-router
 spec:
   resources:
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: Package
-      metadata:
-        name: router-host-tools
-      spec:
-        packages:
-          - os: ubuntu
-            names: [dnsmasq, nftables, conntrack, iproute2]
-
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
         name: wan
       spec:
-        ifname: ens18
+        ifname: ens18 # replace with the lab WAN interface
         adminUp: true
-        managed: true
+        managed: false
+        owner: external
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
       metadata:
         name: lan
       spec:
-        ifname: ens19
+        ifname: ens19 # replace with the lab LAN interface
         adminUp: true
         managed: true
+        owner: routerd
 ```
 
-Router features derive their host runtime needs from the resources you declare.
-Use `Package`, `Sysctl`, or `SysctlProfile` only as narrow escape hatches when a
-package or kernel setting is not yet derivable.
+Each item has a `kind` (what it is), a `metadata.name` (the short name used by
+other items), and a `spec` (the desired settings).
 
-## 3. Validate
+## 4. Check the YAML without a running daemon
+
+`routerd validate` reads the file directly. It is the right first command when
+`routerd.service` is not running yet.
 
 ```bash
-routerctl validate -f first-router.yaml --replace
+routerd validate --config first-router.yaml
 ```
 
-Validation checks the resource shape before routerd touches the host.
+## 5. Run a non-destructive preview
 
-## 4. Inspect the plan
+Use temporary state, ledger, and status paths. This exercises loading,
+dependency ordering, and rendering without applying the network change or
+writing routerd's normal state files.
 
 ```bash
-routerctl plan -f first-router.yaml --replace
+workdir=$(mktemp -d)
+routerd apply --config first-router.yaml --once --dry-run \
+  --state-file "$workdir/state.db" \
+  --ledger-file "$workdir/ledger.db" \
+  --status-file "$workdir/status.json"
 ```
 
-Use the plan to catch accidental interface names, missing dependencies, and
-host artifacts that routerd would create.
-
-## 5. Dry apply
+Inspect the output and remove the temporary directory when you are done:
 
 ```bash
-routerctl plan -f first-router.yaml --replace
+rm -rf "$workdir"
 ```
 
-Dry application exercises resource loading, dependency ordering, and generated
-artifacts without committing network changes.
+## 6. Make a live change only from the lab console
 
-## 6. Run the daemon when the plan is safe
+When the interface names and intent are correct, a one-shot apply changes the
+host and exits:
 
 ```bash
-sudo routerd serve --config first-router.yaml
+sudo routerd apply --config first-router.yaml --once
 ```
 
-In production, install routerd with the packaged service manager files so that
-`routerd serve` starts on boot.
-
-## 7. Inspect status
+For a persistent router, put the reviewed file at
+`/usr/local/etc/routerd/router.yaml` and start the installed service:
 
 ```bash
-routerctl get status
-routerctl get events --limit 20
-routerctl get connections --limit 50
+sudo install -d -m 0755 /usr/local/etc/routerd
+sudo install -m 0600 first-router.yaml /usr/local/etc/routerd/router.yaml
+sudo systemctl enable --now routerd.service
 ```
 
-The next tutorials add LAN DHCP, RA, DNS, route policy, NAT44, and DS-Lite.
+On FreeBSD, use the rc.d service documented in
+[Install and upgrade](../install-and-upgrade.md) instead.
+
+## 7. Use `routerctl` after the service starts
+
+`routerctl` is a client for the running local `routerd` daemon. It is useful
+after the service has created its Unix sockets:
+
+```bash
+sudo routerctl get status
+sudo routerctl get events --limit 20
+sudo routerctl get connections --limit 50
+```
+
+On a fresh installation, use `sudo` for these commands. You can later add an
+operator to the `routerd` group and start a new login session for read-only
+status access without `sudo`.
+
+When the daemon is running, `routerctl validate`, `routerctl plan`, and
+`routerctl apply` submit a candidate configuration to that daemon. They are not
+standalone first-install commands.
 
 ## Next steps
 
-- [WAN-side services](./wan-side-services.md) — configure DHCPv6-PD, PPPoE, DS-Lite, or DHCPv4 WAN
-- [LAN-side services](./lan-side-services.md) — add DHCPv4 scopes, RA, DNS, and NTP
-- [Basic firewall](./basic-firewall.md) — enable three-role firewall zones
-- [routerctl doctor](../operations/routerctl-doctor.md) — check router health after applying
+- [Bring up the first lab router](./first-router.md) — DHCP, DNS advertisement,
+  and IPv4 NAT in an isolated lab
+- [LAN-side services](./lan-side-services.md) — local DNS, DHCPv6, RA, and NTP
+- [WAN-side services](./wan-side-services.md) — DHCPv6-PD, PPPoE, and DS-Lite

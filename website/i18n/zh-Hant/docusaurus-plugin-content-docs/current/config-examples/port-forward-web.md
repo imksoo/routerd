@@ -67,12 +67,20 @@ flowchart LR
 
 ## 確認
 
+先在 daemon 尚未啟動時進行獨立檢查。下列指令需要具有 `sudo` 權限的本機使用者，但不會套用網路變更。
+
 ```bash
-routerctl validate -f examples/example-port-forward-web.yaml --replace
-routerctl plan -f examples/example-port-forward-web.yaml --replace
-routerctl describe PortForward/web-https
-nft list table ip routerd_nat
+LAB_DIR="$(mktemp -d)"
+sudo routerd validate --config examples/example-port-forward-web.yaml
+sudo routerd apply --config examples/example-port-forward-web.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
+rm -rf "$LAB_DIR"
 ```
+
+只有在已套用經過審閱的設定且服務正在運行後，才在路由器上使用 `sudo routerctl describe
+PortForward/web-https` 與 `sudo nft list table ip routerd_nat`。
 
 ## 常見調整項目
 

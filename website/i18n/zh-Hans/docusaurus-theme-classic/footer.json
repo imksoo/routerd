@@ -1,0 +1,42 @@
+{
+  "link.title.Docs": {
+    "message": "文档",
+    "description": "页脚文档链接栏的标题"
+  },
+  "link.title.Project": {
+    "message": "项目",
+    "description": "页脚项目链接栏的标题"
+  },
+  "link.item.label.Install & Upgrade": {
+    "message": "安装与升级",
+    "description": "安装与升级页面的链接"
+  },
+  "link.item.label.Getting Started": {
+    "message": "快速开始",
+    "description": "快速开始页面的链接"
+  },
+  "link.item.label.Resource API": {
+    "message": "资源 API",
+    "description": "资源 API 页面的链接"
+  },
+  "link.item.label.Plugin Protocol": {
+    "message": "插件协议",
+    "description": "插件协议页面的链接"
+  },
+  "link.item.label.GitHub": {
+    "message": "GitHub",
+    "description": "GitHub 项目页面的链接"
+  },
+  "link.item.label.Stable milestone": {
+    "message": "稳定版里程碑",
+    "description": "稳定版里程碑页面的链接"
+  },
+  "link.item.label.Changelog": {
+    "message": "变更记录",
+    "description": "变更记录页面的链接"
+  },
+  "copyright": {
+    "message": "Copyright © 2026 Kirino Minato and routerd contributors. 依 BSD 3-Clause License 授权。",
+    "description": "页脚版权信息"
+  }
+}

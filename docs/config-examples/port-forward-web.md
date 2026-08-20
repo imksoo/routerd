@@ -12,6 +12,12 @@ address and enables hairpin access so LAN clients can use the same public name.
 
 The complete, validated YAML is in `examples/example-port-forward-web.yaml`.
 
+:::danger Publishing a service changes who can reach it
+This example makes one inside service reachable from the WAN. Use a test
+address first, verify the backend is patched and authenticated, and confirm an
+independent firewall/security review before exposing a real service.
+:::
+
 ## Topology
 
 ```mermaid
@@ -76,11 +82,18 @@ LAN-side clients must match the public destination address before DNAT.
 ## Checks
 
 ```bash
-routerctl validate -f examples/example-port-forward-web.yaml --replace
-routerctl plan -f examples/example-port-forward-web.yaml --replace
-routerctl describe PortForward/web-https
-nft list table ip routerd_nat
+routerd validate --config examples/example-port-forward-web.yaml
+
+workdir=$(mktemp -d)
+routerd apply --config examples/example-port-forward-web.yaml --once --dry-run \
+  --state-file "$workdir/state.db" \
+  --ledger-file "$workdir/ledger.db" \
+  --status-file "$workdir/status.json"
+rm -rf "$workdir"
 ```
+
+After a reviewed configuration is running, use `sudo routerctl describe
+PortForward/web-https` and `sudo nft list table ip routerd_nat` from the router.
 
 ## Common edits
 

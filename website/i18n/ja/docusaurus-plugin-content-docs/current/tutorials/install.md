@@ -5,73 +5,70 @@ sidebar_position: 1
 
 # インストール
 
-![リリースアーカイブから routerd を導入し、依存パッケージとサービステンプレートを入れ、設定と状態を保持して validate-plan-dry-run する流れ](/img/diagrams/tutorial-install.png)
+![リリースアーカイブを Ubuntu Server VM に入れ、設定を検証してからサービスを起動する流れ](/img/diagrams/tutorial-install.png)
 
-routerd はリリースアーカイブから導入します。
-ルーターホストに Go や Makefile は不要です。
+このページは、最初の練習用の **Ubuntu Server VM** に routerd を入れる手順です。
+本物のルーターや、SSH しか入る方法がない機械では始めないでください。
+ハイパーバイザーの画面、シリアルコンソール、または別の管理 NIC を用意します。
+
+## 0. VM を安全に用意する
+
+VM には、次のように役割を分けると安全です。
+
+- 管理用 NIC（ネットワークにつなぐ口）: SSH などで VM に入るための線。最初は routerd に任せません。
+- WAN 用 NIC: 上流のテスト用ネットワークにつなぐ線。
+- LAN 用 NIC: テスト用クライアントだけをつなぐ線。
+
+WAN と LAN は、普段のネットワークから分けます。WAN 用 NIC や LAN 用 NIC が
+止まっても、コンソールから VM を操作できることを先に確かめてください。
+
+## 1. リリースアーカイブを入手する
+
+次は Linux amd64 の例です。まず [GitHub Releases](https://github.com/imksoo/routerd/releases)
+で、使う版と CPU を確認してください。
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
+RELEASE=v20260707.1514
+curl -fLO https://github.com/imksoo/routerd/releases/download/${RELEASE}/routerd-linux-amd64.tar.gz
+curl -fLO https://github.com/imksoo/routerd/releases/download/${RELEASE}/routerd-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-linux-amd64.tar.gz.sha256
 tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
-Linux arm64 ホストでは `routerd-linux-arm64.tar.gz` を使います。
+arm64 の Ubuntu Server では、ファイル名の `linux-amd64` を `linux-arm64` に
+変えます。`install.sh` は必要な実行時パッケージを確認し、`routerd` と
+`routerctl` を `/usr/local/sbin` に置きます。Go や Makefile は不要です。
 
-FreeBSD では `routerd-freebsd-amd64.tar.gz` を取得し、同じ
-`./install.sh` を実行します。
-FreeBSD arm64 ホストでは `routerd-freebsd-arm64.tar.gz` を使います。
-特定の版に固定したい場合は、リリースページにある版番号付きアーカイブを使います。
-
-Linux 用アーカイブには、静的リンクした routerd バイナリを含めます
-(`CGO_ENABLED=0`)。
-ルーターホストの glibc 版には依存しません。
-
-インストーラーは次を行います。
-
-- 対応するパッケージマネージャーで実行時パッケージを導入します。
-- 実行ファイルを `/usr/local/sbin` に配置します。
-- systemd または rc.d のサービステンプレートを配置します。
-- `/usr/local/etc/routerd/router.yaml.sample` を作成します。
-- 既存の `/usr/local/etc/routerd/router.yaml` は保持します。
-- `/var/lib/routerd` または `/var/db/routerd` の状態は保持します。
-- 読み取り専用の状態ソケットがある場合は `routerctl get status` を実行します。
-
-よく使うオプション:
+新しい導入では、インストーラーだけでサービスは起動しません。設定を読んで
+安全を確かめてから、あとで自分で起動します。
 
 ```sh
-./install.sh --list-deps
-sudo ./install.sh --no-install-deps
-sudo ./install.sh --deps-only
-sudo ./install.sh --with-tailscale
-sudo ./install.sh --dry-run
+routerd --version
 ```
 
-インストール後、設定ファイルを作成して検証します。
+## 2. 次のページで YAML を作る
 
-```sh
-sudo install -d -m 0755 /usr/local/etc/routerd
-sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
-sudo vi /usr/local/etc/routerd/router.yaml
+設定例は `/usr/local/etc/routerd/router.yaml.sample` に置かれますが、最初は
+そのままサービスを起動しません。次の [はじめに](./getting-started.md) で
+`first-router.yaml` を実際に作り、`routerd validate` と使い捨ての場所での
+dry-run を行います。このページだけでは `first-router.yaml` はまだ存在しません。
 
-routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
-routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
-```
+## 3. サービスを起動するのは dry-run の後
 
-管理経路が残ることを確認してから反映します。
+次のページで WAN と LAN の名前、管理経路、dry-run の出力を確認してから、
+設定を標準の場所へ置き、サービスを起動します。`routerctl` はサービスが起動して
+ローカルソケットを作った後にだけ使います。初回は `sudo routerctl get status` の
+ように `sudo` を付けます。
 
-```sh
-sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
-```
+## Ubuntu 以外について
 
-OS 別のパッケージ一覧、アップグレード、アンインストール、開発者向けの
-リリース手順は [インストールとアップグレード](../install-and-upgrade.md) を
-参照してください。
+FreeBSD には rc.d と導入の土台があり、NixOS にも導入用の土台があります。
+ただし、Ubuntu と同じネットワーク設定の生成や機能がそろっているわけではありません。
+初めて試す手順としては Ubuntu Server を使い、他の OS は
+[対応プラットフォーム](../platforms.md) を読んでから進めてください。
 
-ディスクに導入せず試す場合は、`routerd-live.iso` を起動します。
-root でログインすると、同じ `install.sh configure` ウィザードが起動します。
-Proxmox VE の `qm terminal` によるシリアルコンソールにも対応します。
-ウィザードで USB 永続化を選べば、ライブ ISO をディスクレスの永続ルーターとして使えます。
-USB 永続化を選ばない場合、ISO は一時的なデモとして動作し、再起動で設定が消えます。
+## 次に読むもの
+
+- [はじめに](./getting-started.md) — YAML の作成、検証、dry-run
+- [インストールとアップグレード](../install-and-upgrade.md) — 更新、削除、配置先

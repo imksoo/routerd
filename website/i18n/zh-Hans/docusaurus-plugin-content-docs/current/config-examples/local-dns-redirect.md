@@ -72,12 +72,20 @@ flowchart LR
 
 ## 确认
 
+先在 daemon 未启动时进行独立检查。以下命令需要具有 `sudo` 权限的本地用户，但不会应用网络变更。
+
 ```bash
-routerctl validate -f examples/example-local-dns-redirect.yaml --replace
-routerctl plan -f examples/example-local-dns-redirect.yaml --replace
-routerctl describe IPAddressSet/public-dns
-nft list table ip routerd_nat
+LAB_DIR="$(mktemp -d)"
+sudo routerd validate --config examples/example-local-dns-redirect.yaml
+sudo routerd apply --config examples/example-local-dns-redirect.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
+rm -rf "$LAB_DIR"
 ```
+
+服务已运行后，才在路由器上运行 `sudo routerctl describe IPAddressSet/public-dns`
+和 `sudo nft list table ip routerd_nat`。
 
 从 LAN 客户端可通过以下方式确认：
 

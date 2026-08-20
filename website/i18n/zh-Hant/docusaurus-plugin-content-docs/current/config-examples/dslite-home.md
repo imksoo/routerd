@@ -1,85 +1,60 @@
 ---
-title: DS-Lite 家用路由器
+title: DS-Lite 家用閘道器
 sidebar_position: 30
 ---
 
-# DS-Lite 家用路由器
+# DS-Lite 家用閘道器
 
-![IPv6 WAN prefix delegation、DS-Lite tunnel egress、derived NAT44、LAN IPv4 與 delegated IPv6 service 的構成](/img/diagrams/config-example-dslite-home.png)
+![IPv6 WAN、DS-Lite tunnel、LAN IPv4 與 delegated IPv6 service 的架構](/img/diagrams/config-example-dslite-home.png)
 
-這是以 IPv6 作為主要線路的連線範例。路由器透過 Router Advertisement 和 DHCPv6-PD 取得 IPv6，
-衍生 LAN 前綴，並將 IPv4 流量通過 DS-Lite 通道傳送。
+DS-Lite 用在 IPv6 為主的線路：IPv4 封包經 ISP 的 tunnel 出網。這不是第一台路由器的
+教學，而是需要 ISP 資料的進階範例。WAN、tunnel 或 DNS 設錯會中斷連線，請只在有主控台或
+獨立管理路徑的實驗環境操作。
 
-完整的已驗證 YAML 位於 `examples/example-dslite-home.yaml`。
+完整且已驗證的 YAML 在
+[`examples/example-dslite-home.yaml`](https://github.com/imksoo/routerd/blob/main/examples/example-dslite-home.yaml)。
+其中接近 Transix 的 AFTR 值只是範例，必須換成自己線路的資料。
 
-## 架構圖
+## 此範例建立什麼
 
-```mermaid
-flowchart LR
-  internet((Internet))
-  aftr["[1] AFTR<br/>gw.transix.jp"]
-  wan["[2] wan<br/>IPv6 RA + DHCPv6-PD"]
-  router["[3] routerd host"]
-  dslite["[4] DS-Lite tunnel<br/>ds-transix"]
-  lan["[5] lan<br/>IPv4 + delegated IPv6"]
-  clients["[6] LAN clients"]
-
-  internet --- aftr --- dslite --- router
-  wan --- router --- lan --- clients
-```
-
-## 圖示對應表
-
-| 編號 | 說明 | 主要資源 |
-| --- | --- | --- |
-| [1] | DS-Lite 通道連線目標的 ISP 端 AFTR。 | `DSLiteTunnel/transix` |
-| [2] | 接收 IPv6 RA 和 DHCPv6-PD 的 WAN 介面。 | `DHCPv6PrefixDelegation/wan-pd` |
-| [3] | 建立通道和 LAN 服務、並推導所需 sysctl 的 routerd 主機。 | Derived host runtime |
-| [4] | 用於 IPv4 egress 的 DS-Lite `ip6tnl` 裝置。 | `DSLiteTunnel/transix`，從 trust/untrust 區域自動推導的 NAT44 |
-| [5] | 持有 IPv4 位址和委派 IPv6 位址的 LAN 介面。 | `IPv4StaticAddress/lan-ipv4`、`IPv6DelegatedAddress/lan-ipv6` |
-| [6] | 接收 DHCPv4、RA、RDNSS、DNSSL 的 LAN 用戶端。 | `DHCPv4Server/lan-dhcpv4`、`IPv6RouterAdvertisement/lan-ra` |
-
-## 此範例管理的項目
-
-| 領域 | routerd 資源 |
+| 工作 | YAML 中實際的資源名 |
 | --- | --- |
-| WAN IPv6 | `DHCPv6PrefixDelegation/wan-pd` |
-| 前綴委派（PD） | `DHCPv6PrefixDelegation/wan-pd`、`IPv6DelegatedAddress/lan-ipv6` |
-| DS-Lite | `DSLiteTunnel/transix` |
-| LAN IPv4 和 DHCPv4 | `IPv4StaticAddress/lan-ipv4`、`DHCPv4Server/lan-dhcpv4` |
-| LAN IPv6 廣播 | `IPv6RouterAdvertisement/lan-ra` |
-| DNS | `DNSZone/home`、`DNSResolver/lan-resolver` |
-| IPv4 egress | 從 trust/untrust 區域自動推導的 NAT44 |
-| MTU/MSS | 從 `DSLiteTunnel/transix` 和防火牆區域自動推導 |
+| 從 WAN 取得 IPv6 delegated prefix | `DHCPv6PrefixDelegation/wan-pd` |
+| 導出 LAN 的 IPv6 位址 | `IPv6DelegatedAddress/lan-v6` |
+| 在 LAN 回答 DNS | `DNSResolver/lan`、`DNSZone/home` |
+| 建立 IPv4-over-IPv6 tunnel | `DSLiteTunnel/transix` |
+| 對 LAN 配發 IPv4、DNS 與 IPv6 router 資訊 | `DHCPv4Server/lan`、`IPv6RouterAdvertisement/lan` |
 
-此範例使用近似 Transix 的 AFTR 值作為預留位置。請依照實際線路替換
-AFTR FQDN、DNS 伺服器，以及 DHCPv6 用戶端的 profile。
+`lan-v4`、`lan-v6`、`lan`、`transix` 是此檔案選的名稱，不是每個 routerd 設定都必須使用的名稱。
 
-## 設定重點
+## 設定如何相連
+
+WAN prefix delegation 與從中導出的 LAN IPv6 位址以名稱相連：
 
 ```yaml
-# [2] 從 WAN 取得 IPv6 前綴委派（PD）。
 - apiVersion: net.routerd.net/v1alpha1
   kind: DHCPv6PrefixDelegation
   metadata:
     name: wan-pd
   spec:
     interface: wan
-    client: dhcp6c
     profile: ntt-hgw-lan-pd
 
-# [5] 從委派前綴衍生 LAN IPv6 位址。
 - apiVersion: net.routerd.net/v1alpha1
   kind: IPv6DelegatedAddress
   metadata:
-    name: lan-ipv6
+    name: lan-v6
   spec:
     prefixDelegation: wan-pd
     interface: lan
     subnetID: "0"
     addressSuffix: "::1"
+    announce: true
+```
 
-# [1] + [4] 建立指向 ISP AFTR 的 DS-Lite 通道。
+DS-Lite tunnel 使用同一個 `lan-v6` 作為本地端位址：
+
+```yaml
 - apiVersion: net.routerd.net/v1alpha1
   kind: DSLiteTunnel
   metadata:
@@ -88,92 +63,80 @@ AFTR FQDN、DNS 伺服器，以及 DHCPv6 用戶端的 profile。
     interface: wan
     tunnelName: ds-transix
     aftrFQDN: gw.transix.jp
-    aftrDNSServers:
-      - 2404:1a8:7f01:a::3
-      - 2404:1a8:7f01:b::3
+    aftrDNSServers: [2404:1a8:7f01:a::3, 2404:1a8:7f01:b::3]
     localAddressSource: delegatedAddress
-    localDelegatedAddress: lan-ipv6
+    localDelegatedAddress: lan-v6
     localAddressSuffix: "::100"
     defaultRoute: true
-    mtu: 1454
 ```
 
-此 DS-Lite 通道以委派的 IPv6 位址作為本地端點。
-若線路端預期以 WAN RA 位址作為端點，請將 `localAddressSource` 改為
-`interface`。
+若你的 ISP 要求用 WAN Router Advertisement 位址當 tunnel source，請依 ISP 指定選擇
+`localAddressSource`，不要直接複製此值。
 
-## LAN 端服務
-
-此範例透過 RA 廣播委派的前綴，並向用戶端分發路由器作為 DNS。
+DNS、DHCPv4、RA 也使用同一組本地資源名：
 
 ```yaml
-# [6] 透過 RA 廣播委派的 LAN 前綴和本地 DNS 資訊。
-- apiVersion: net.routerd.net/v1alpha1
-  kind: IPv6RouterAdvertisement
+- kind: DNSResolver
   metadata:
-    name: lan-ra
-  spec:
-    interface: lan
-    prefixFrom:
-      resource: IPv6DelegatedAddress/lan-ipv6
-      field: address
-    rdnssFrom:
-      - resource: IPv6DelegatedAddress/lan-ipv6
-        field: address
-    dnsslFrom:
-      - resource: DNSZone/home
-        field: zone
-    oFlag: true
-    mtu: 1454
+    name: lan
+  # 在 IPv4StaticAddress/lan-v4 與 IPv6DelegatedAddress/lan-v6 監聽。
+
+- kind: DHCPv4Server
+  metadata:
+    name: lan
+  # 對用戶端公告 IPv4StaticAddress/lan-v4 為 gateway 與 DNS。
+
+- kind: IPv6RouterAdvertisement
+  metadata:
+    name: lan
+  # 公告 IPv6DelegatedAddress/lan-v6 與 DNSZone/home。
 ```
 
-`DNSResolver` 中設定了針對 AFTR 名稱的條件式轉送器。在 AFTR 記錄只在線路端解析器才有意義的設定中，此指定至關重要。
+短摘錄只說明資源名的連結；必要的 `spec` 欄位請閱讀完整 YAML。
 
-## 套用步驟
+## daemon 尚未啟動時先檢查
 
-```bash
+複製檔案並更換所有 ISP 專屬的值後，以具有 `sudo` 權限的本機使用者執行獨立檢查。它們不會啟動服務或套用網路變更。
+
+```sh
 cp examples/example-dslite-home.yaml router.yaml
-routerctl validate -f router.yaml --replace
-routerctl plan -f router.yaml --replace
+LAB_DIR="$(mktemp -d)"
+sudo routerd validate --config router.yaml
+sudo routerd apply --config router.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
+rm -rf "$LAB_DIR"
 ```
 
-執行 plan 時請確認以下項目。
+確認 WAN/LAN 名稱、AFTR FQDN、resolver 位址與管理路徑都是自己的資料。只要其中一項不對，
+就不要進行下一步。
 
-- WAN / LAN 的介面名稱正確。
-- 不會誤刪管理存取路徑。
-- AFTR FQDN 和解析器位址為預期的值。
-- NAT 出口為 DS-Lite 通道而非實體 WAN。
+## 套用後觀察
 
-確認無誤後執行套用。
+只能從主控台或獨立管理路徑執行 live 操作。服務啟動後可檢查；首次安裝請保留 `sudo`。若管理員透過 `routerd` 群組授予本機 socket 存取權，加入後必須重新登入才會生效：
 
-```bash
-routerctl apply -f router.yaml --replace
+```sh
+sudo routerctl get status
+sudo routerctl describe DHCPv6PrefixDelegation/wan-pd
+sudo routerctl describe IPv6DelegatedAddress/lan-v6
+sudo routerctl describe DSLiteTunnel/transix
+sudo routerctl describe FirewallZone/wan
+sudo ip -6 tunnel show
+sudo ip route show default
 ```
 
-## 確認
+LAN 用戶端上檢查 IPv6、路由和本地 DNS：
 
-```bash
-routerctl get status
-routerctl describe DHCPv6PrefixDelegation/wan-pd
-routerctl describe IPv6DelegatedAddress/lan-ipv6
-routerctl describe DSLiteTunnel/transix
-routerctl describe FirewallZone/wan
-ip -6 tunnel show
-ip route show default
-```
-
-在 LAN 用戶端端確認以下項目。
-
-```bash
+```sh
 ip -6 addr
 ip route
 curl https://1.1.1.1/
 dig router.home.example
 ```
 
-## 常見的修改點
+## 相關頁面
 
-- 依照平台變更 `client` 和 `profile`。
-- 非 Transix 的場合，請替換 `gw.transix.jp` 和 AFTR 解析器位址。
-- 若需從 WAN RA 位址建立 DS-Lite 通道，請使用 `localAddressSource: interface`。
-- DS-Lite 通常需要 MSS clamp。routerd 會從通道 MTU 和 LAN/WAN 的防火牆區域自動推導。
+- [WAN 側服務](../tutorials/wan-side-services.md)
+- [LAN 側服務](../tutorials/lan-side-services.md)
+- [基本 IPv4 NAT 閘道器](./basic-ipv4-nat.md)

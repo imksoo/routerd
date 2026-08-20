@@ -1,0 +1,66 @@
+{
+  "version.label": {
+    "message": "当前开发版",
+    "description": "The label for version current"
+  },
+  "sidebar.tutorialSidebar.category.Start": {
+    "message": "从这里开始",
+    "description": "The label for category 'Start' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.Learn": {
+    "message": "先弄懂原理",
+    "description": "The label for category 'Learn' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.Build": {
+    "message": "搭建功能",
+    "description": "The label for category 'Build' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.DNS resolver": {
+    "message": "DNS 解析器",
+    "description": "The label for category 'DNS resolver' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.Firewall": {
+    "message": "防火墙",
+    "description": "The label for category 'Firewall' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.Egress & multi-WAN": {
+    "message": "出口与多 WAN",
+    "description": "The label for category 'Egress & multi-WAN' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.Configuration examples": {
+    "message": "配置示例",
+    "description": "The label for category 'Configuration examples' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.Tutorials": {
+    "message": "分步教程",
+    "description": "The label for category 'Tutorials' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.How-to guides": {
+    "message": "按任务操作",
+    "description": "The label for category 'How-to guides' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.Knowledge base": {
+    "message": "知识库",
+    "description": "The label for category 'Knowledge base' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.Operate": {
+    "message": "运行与维护",
+    "description": "The label for category 'Operate' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.Reference": {
+    "message": "参考资料",
+    "description": "The label for category 'Reference' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.Releases": {
+    "message": "发行版本",
+    "description": "The label for category 'Releases' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.Design notes": {
+    "message": "设计笔记",
+    "description": "The label for category 'Design notes' in sidebar 'tutorialSidebar'"
+  },
+  "sidebar.tutorialSidebar.category.Project": {
+    "message": "项目",
+    "description": "The label for category 'Project' in sidebar 'tutorialSidebar'"
+  }
+}

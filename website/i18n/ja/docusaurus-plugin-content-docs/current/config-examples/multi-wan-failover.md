@@ -5,14 +5,13 @@ sidebar_position: 70
 
 # マルチ WAN IPv4 フェイルオーバー
 
-![DS-Lite、PPPoE、直結 IPv4 の候補をヘルスチェックと EgressRoutePolicy で選び 1 本のデフォルトルートにする構成](/img/diagrams/config-example-multi-wan-failover.png)
+![2 本の DS-Lite 候補と直接 IPv4 のフォールバックを EgressRoutePolicy が 1 本のデフォルトルートに選ぶ構成](/img/diagrams/config-example-multi-wan-failover.png)
 
-複数の IPv4 出口から、正常な default route を選ぶ例です。
-DS-Lite トンネル、PPPoE、上流ルーター直結の IPv4 を候補にしています。
+この例は、2 本の DS-Lite トンネルと上流ルーター直結 IPv4 から、現在使う
+IPv4 default route を 1 つ選びます。完全な YAML は
+`examples/multi-wan-home.yaml` にあります。**PPPoE はこの YAML には含みません。**
 
-完全な YAML は `examples/multi-wan-home.yaml` にあります。
-
-## 構成図
+## 構成
 
 ```mermaid
 flowchart LR
@@ -21,79 +20,92 @@ flowchart LR
   router["[2] routerd host"]
   dsa["[3] DS-Lite A"]
   dsb["[4] DS-Lite B"]
-  ppp["[5] PPPoE backup"]
-  hgw["[6] HGW direct IPv4"]
-  lan["[7] LAN clients"]
+  hgw["[5] HGW direct IPv4"]
+  lan["[6] LAN clients"]
 
   internet --- dsa --- router
   internet --- dsb --- router
-  internet --- ppp --- router
   internet --- hgw --- router
   wan --- router --- lan
 ```
 
-## 図の対応表
-
-| 番号 | 意味 | 主なリソース |
+| 番号 | 役割 | 実際のリソース |
 | --- | --- | --- |
-| [1] | 複数の WAN 候補が共有する物理回線。 | `Interface/wan`, `DHCPv4Client/wan-dhcpv4` |
-| [2] | default route を 1 つ選ぶルーター。 | `EgressRoutePolicy/ipv4-default`, `IPv4Route/default` |
-| [3] | 第一候補の DS-Lite。 | `DSLiteTunnel/ds-lite-a`, `HealthCheck/internet-via-dslite-a` |
-| [4] | 追加の DS-Lite 候補。 | `DSLiteTunnel/ds-lite-b`, `HealthCheck/internet-via-dslite-b` |
-| [5] | 優先度を下げた PPPoE のバックアップ。 | `PPPoESession/pppoe-flets`, `HealthCheck/internet-via-pppoe` |
-| [6] | 上流ルーター直結の IPv4 フォールバック。 | `DHCPv4Client/wan-dhcpv4`, `HealthCheck/internet-via-hgw-direct` |
-| [7] | 選択された出口経路を NAT 経由で使う LAN クライアント。 | `NAT44Rule/lan-to-selected-wan` |
+| [1] | すべての WAN 候補が使う物理回線 | `Interface/wan`、`DHCPv4Client/wan-dhcpv4` |
+| [2] | 使う default route を選ぶ | `EgressRoutePolicy/ipv4-default` |
+| [3] | 第一候補の DS-Lite | `DSLiteTunnel/ds-lite-a`、`HealthCheck/internet-a` |
+| [4] | 第二候補の DS-Lite | `DSLiteTunnel/ds-lite-b`、`HealthCheck/internet-b` |
+| [5] | 上流ルーター直結の最後の IPv4 フォールバック | `DHCPv4Client/wan-dhcpv4` |
+| [6] | 選ばれた出口を NAT で使う LAN | `NAT44Rule/lan-to-selected-wan` |
 
-## この例で管理するもの
+## 選び方
 
-| 領域 | routerd リソース |
-| --- | --- |
-| 出口経路 | `DSLiteTunnel/*`, `PPPoESession/pppoe-flets`, `DHCPv4Client/wan-dhcpv4` |
-| 回線の正常性 | `HealthCheck/internet-via-*` |
-| 選択 | `EgressRoutePolicy/ipv4-default` |
-| デフォルトルート | `IPv4Route/default` |
-| NAT | `NAT44Rule/lan-to-selected-wan` |
-
-## 設定の要点
+`weight`（優先度の数字）が大きく、health check が成功している候補を選びます。
+この YAML と同じ形は次です。
 
 ```yaml
-# [2] 現在正常な候補のうち、weight が最も高いものを選ぶ。
 - kind: EgressRoutePolicy
   metadata:
     name: ipv4-default
   spec:
     family: ipv4
-    destinationCIDRs:
-      - 0.0.0.0/0
+    destinationCIDRs: [0.0.0.0/0]
     selection: highest-weight-ready
-    hysteresis: 30s
     candidates:
-      # [3] 第一候補の DS-Lite。
       - name: ds-lite-a
-        weight: 120
-        healthCheck: internet-via-dslite-a
-      # [5] PPPoE バックアップは低めの weight にする。
-      - name: pppoe-flets
-        weight: 60
-        healthCheck: internet-via-pppoe
-      # [6] この例では HGW 直結を最後のフォールバックにする。
+        deviceFrom:
+          resource: DSLiteTunnel/ds-lite-a
+          field: device
+        gatewaySource: none
+        weight: 100
+        healthCheck: internet-a
+      - name: ds-lite-b
+        deviceFrom:
+          resource: DSLiteTunnel/ds-lite-b
+          field: device
+        gatewaySource: none
+        weight: 80
+        healthCheck: internet-b
       - name: hgw-direct
+        deviceFrom:
+          resource: Interface/wan
+          field: ifname
+        gatewaySource: dhcpv4
+        gatewayFrom:
+          resource: DHCPv4Client/wan-dhcpv4
+          field: gateway
         weight: 40
-        healthCheck: internet-via-hgw-direct
 ```
 
-## 確認
+この例は `hysteresis` を設定しません。実際の回線切替が頻繁に揺れることを確認してから、
+現在の API 説明に従って追加を検討してください。
 
-```bash
-routerctl validate -f examples/multi-wan-home.yaml --replace
-routerctl plan -f examples/multi-wan-home.yaml --replace
-routerctl describe EgressRoutePolicy/ipv4-default
-routerctl describe IPv4Route/default
-ip route show default
+## daemon の前に確認する
+
+```sh
+LAB_DIR="$(mktemp -d)"
+sudo routerd validate --config examples/multi-wan-home.yaml
+sudo routerd apply --config examples/multi-wan-home.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
 ```
+
+dry-run では、`ens18`、LAN の `172.18.0.0/16`、DS-Lite の候補名が自分のラボに
+合っているかを確認します。普段の管理ネットワークと重なるなら、live 操作をしません。
+
+## サービス起動後に確認する
+
+```sh
+sudo routerctl describe EgressRoutePolicy/ipv4-default
+sudo ip route show default
+```
+
+この例は `IPv4Route/default` を書きません。`EgressRoutePolicy` のコントローラーが
+選んだ default route を導出するため、policy の status と OS の経路表を見ます。
 
 ## 運用上の注意
 
-- ヘルスチェックは保守的に設定します。間隔が短すぎると、弱い回線がフラップします。
-- `hysteresis` を入れて、一時的な失敗だけで出口が切り替わらないようにします。
+- health check の間隔を極端に短くすると、弱い回線で切替が繰り返されます。
 - RFC1918 宛ては、意図がない限り NAT と経路ポリシーから除外します。
+- 本番で初めて試さず、コンソールまたは独立した管理 NIC を残します。

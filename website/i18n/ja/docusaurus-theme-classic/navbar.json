@@ -11,52 +11,52 @@
     "message": "ドキュメント",
     "description": "Navbar item with label Docs"
   },
-  "item.label.GitHub": {
-    "message": "GitHub",
-    "description": "Navbar item with label GitHub"
+  "item.label.Overview": {
+    "message": "まず読む",
+    "description": "Navbar item with label Overview"
   },
-  "item.label.Introduction": {
-    "message": "はじめに",
-    "description": "Navbar item with label Introduction"
+  "item.label.Install": {
+    "message": "導入",
+    "description": "Navbar item with label Install"
   },
-  "item.label.Get started": {
-    "message": "導入（クイックスタート）",
-    "description": "Navbar item with label Get started"
-  },
-  "item.label.Concepts (declarative model)": {
-    "message": "機能解説（宣言型モデル）",
-    "description": "Navbar item with label Concepts (declarative model)"
+  "item.label.Resource model": {
+    "message": "リソースの仕組み",
+    "description": "Navbar item with label Resource model"
   },
   "item.label.Glossary": {
     "message": "用語集",
     "description": "Navbar item with label Glossary"
   },
-  "item.label.Configuration reference": {
-    "message": "設定リファレンス（機能別）",
-    "description": "Navbar item with label Configuration reference"
+  "item.label.Build a router": {
+    "message": "ルーターを作る",
+    "description": "Navbar item with label Build a router"
   },
   "item.label.Configuration examples": {
-    "message": "設定例集",
+    "message": "設定例",
     "description": "Navbar item with label Configuration examples"
   },
   "item.label.How-to guides": {
-    "message": "How-to ガイド",
+    "message": "目的別ガイド",
     "description": "Navbar item with label How-to guides"
   },
-  "item.label.Operations": {
+  "item.label.Operate": {
     "message": "運用",
-    "description": "Navbar item with label Operations"
+    "description": "Navbar item with label Operate"
   },
-  "item.label.Reference (API)": {
-    "message": "リファレンス（API）",
-    "description": "Navbar item with label Reference (API)"
+  "item.label.API reference": {
+    "message": "API リファレンス",
+    "description": "Navbar item with label API reference"
   },
   "item.label.Design notes": {
     "message": "設計ノート",
     "description": "Navbar item with label Design notes"
   },
-  "item.label.Releases & stable": {
-    "message": "リリースと安定版",
-    "description": "Navbar item with label Releases & stable"
+  "item.label.Releases": {
+    "message": "リリース",
+    "description": "Navbar item with label Releases"
+  },
+  "item.label.GitHub": {
+    "message": "GitHub",
+    "description": "Navbar item with label GitHub"
   }
 }

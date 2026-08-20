@@ -77,6 +77,24 @@ func TestPathMTUControllerRendersBridgeFamilyMSSClamp(t *testing.T) {
 	}
 }
 
+func TestPathMTUControllerKeepsImplicitL2ArtifactBesideConfiguredPath(t *testing.T) {
+	dir := t.TempDir()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lan0", MTU: 1500, Managed: true}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"}, Metadata: api.ObjectMeta{Name: "br"}, Spec: api.BridgeSpec{IfName: "br0", Members: []string{"lan"}, MTU: 1500}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "underlay"}, Spec: api.InterfaceSpec{IfName: "underlay0", MTU: 1500, Managed: true}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"}, Metadata: api.ObjectMeta{Name: "vx"}, Spec: api.VXLANTunnelSpec{IfName: "vx0", VNI: 42, LocalAddress: "198.18.0.1", UnderlayInterface: "underlay", MTU: 1280, Bridge: "br", TCPMSSClamp: true}},
+	}}}
+	path := filepath.Join(dir, "artifacts", "mss.nft")
+	controller := PathMTUController{Router: router, OS: platform.OSLinux, Store: mapStore{}, DryRun: true, Path: path, ForceFragmentPath: filepath.Join(dir, "artifacts", "forcefrag.nft")}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "artifacts", "l2-mss.nft")); err != nil {
+		t.Fatalf("implicit L2 artifact beside configured path: %v", err)
+	}
+}
+
 func TestPathMTUControllerSkipsNftablesOnFreeBSD(t *testing.T) {
 	dir := t.TempDir()
 	store := mapStore{}

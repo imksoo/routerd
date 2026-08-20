@@ -1,29 +1,43 @@
 ---
-title: 基本の NAT とファイアウォールポリシー
+title: NAT44 とファイアウォールの準備
 sidebar_position: 6
 ---
 
-# 基本の NAT とファイアウォールポリシー
+# NAT44 とファイアウォールの準備
 
-![WAN、LAN、任意の管理インターフェース、NAT44Rule、FirewallZone、FirewallPolicy、nftables 検証を含む基本的な routerd NAT44 とファイアウォールチュートリアルの流れ](/img/diagrams/tutorial-basic-firewall.png)
+![WAN、LAN、NAT44Rule、FirewallZone、FirewallPolicy と確認手順を示す図](/img/diagrams/tutorial-basic-firewall.png)
 
-routerd は、Linux ルーター上で IPv4 NAPT (NAT44) とステートフルファイアウォールを適用します。
-このチュートリアルでは、初期構成のホストに両方を入れる最小手順を示します。
+このページでは、LAN の IPv4 を WAN へ出す NAT44 の書き方と、
+ファイアウォール機能を扱うときの大切な注意を説明します。
 
-## 想定する構成
+:::danger ファイアウォールはまだ唯一の防御にしない
 
-ルーターは次の構成になっているものとします。
+routerd のファイアウォール用リソースは、現在も API、検証、生成の土台を
+整えている段階です。このページの設定は、インターネット公開用ルーターの
+完成した安全設計やセキュリティ保証ではありません。
 
-- IPv4 が乗っている上流インターフェース (`wan`)。ネイティブデュアルスタック / PPPoE / DS-Lite のいずれでもかまいません。
-- LAN 内クライアントにプライベートアドレスを配る LAN インターフェース (`lan`)。
-- 任意で、管理インターフェース (`mgmt`)。
+WAN をインターネットへ公開したり、自宅・学校・職場の唯一の防御にしたり
+しないでください。隔離した Ubuntu Server VM での学習に限り、実運用では
+別に設計・検証した防御を用意してください。
 
-ここでの目的は次の 2 つです。
+:::
 
-- LAN からの外向き IPv4 を masquerade する。
-- 健全なファイアウォールの既定状態を適用する (WAN は LAN に届かない、LAN は WAN に届く、管理側はルーター自身に届く)。
+## NAT44 は何をするか
 
-## NAT44
+NAT44 は、LAN の複数のプライベート IPv4 アドレスが、WAN 側へ出るときに
+1 つの外向き IPv4 アドレスを共有できるようにする仕組みです。
+NAT は「外からの通信を安全に止める」仕組みそのものではありません。
+NAT とファイアウォールは別の役目だと考えてください。
+
+ここでは、次の構成を想定します。
+
+- `wan`: 上流ネットワークにつながるインターフェース
+- `lan`: テスト用クライアントにつながるインターフェース
+- `192.168.50.0/24`: テスト用 LAN のアドレス範囲
+
+## 正しい NAT44Rule の形
+
+次のリソースを、`Router.spec.resources` の中へ追加します。
 
 ```yaml
 - apiVersion: net.routerd.net/v1alpha1
@@ -31,64 +45,88 @@ routerd は、Linux ルーター上で IPv4 NAPT (NAT44) とステートフル�
   metadata:
     name: lan-to-wan
   spec:
-    outboundInterface: wan
-    sourceCIDRs:
-      - 192.0.2.0/24
-    masquerade: true
+    type: masquerade
+    egressInterface: wan
+    sourceRanges:
+      - 192.168.50.0/24
 ```
 
-routerd は、`routerd_nat` nftables テーブルにルールを生成します。
-DHCP 取得回線、PPPoE 仮想インターフェース、DS-Lite トンネルのいずれでも書き方は同じで、`outboundInterface` だけを変えます。
+- `type: masquerade` は、LAN の送信元を WAN 側の IPv4 アドレスへ置き換える NAT を選びます。
+- `egressInterface` は、外へ出る側の routerd リソース名です。
+- `sourceRanges` は、NAT してよい LAN の範囲です。
 
-## conntrack 観測
+DHCP でアドレスを受ける WAN、PPPoE、DS-Lite のどれでも、基本の形は同じです。
+外向きのリソース名だけを実際の構成に合わせます。
 
-routerd は conntrack を読み、Web 管理画面と `routerctl get connections` でライブフローを表示します。
-`/proc/net/nf_conntrack` がない環境では、sysctl 由来のサマリに縮退します。失敗にはせず、観測できる範囲だけを表示します。
+## ファイアウォール用のリソース
 
-## ファイアウォール Kind
-
-`FirewallZone`、`FirewallPolicy`、`FirewallRule` がステートフルフィルターを表現します。
-routerd は、これらを `inet routerd_filter` nftables テーブルに生成します。
-
-役割 (`untrust`、`trust`、`mgmt`) が、暗黙の accept / drop マトリクスを提供します。
-DHCP / DNS / DS-Lite 制御のような管理対象サービスに必要な穴は、routerd が自動で開けます。
+`FirewallZone`、`FirewallPolicy`、`FirewallRule` は、どの線をどの役割として
+扱いたいかを書くためのリソースです。たとえば、WAN を `untrust`、LAN を `trust`
+として書く形は次のようになります。
 
 ```yaml
 - apiVersion: firewall.routerd.net/v1alpha1
   kind: FirewallZone
-  metadata: {name: wan}
+  metadata:
+    name: wan
   spec:
     role: untrust
     interfaces:
-      - Interface/wan
+      - wan
 
 - apiVersion: firewall.routerd.net/v1alpha1
   kind: FirewallZone
-  metadata: {name: lan}
+  metadata:
+    name: lan
   spec:
     role: trust
     interfaces:
-      - Interface/lan
+      - lan
 
 - apiVersion: firewall.routerd.net/v1alpha1
   kind: FirewallPolicy
-  metadata: {name: default}
+  metadata:
+    name: lab-default
   spec: {}
 ```
 
-例外を入れたいときは [ファイアウォールルールのガイド](../how-to/firewall-rule.md) を参照してください。
+この YAML が通ることと、外部から安全であることは同じではありません。
+特に初めての構成では、VM コンソールを残し、WAN を外部へ公開しません。
 
-## 確認
+## daemon の前に確認する
+
+設定ファイル全体を作ったら、サービスを起動する前に `routerd` 本体で確認します。
 
 ```sh
-routerctl describe NAT44Rule/lan-to-wan
-routerctl firewall test from=wan to=lan proto=tcp dport=22
-nft list table inet routerd_filter
-nft list table ip routerd_nat
+LAB_DIR="$(mktemp -d)"
+sudo routerd validate --config ./router.yaml
+sudo routerd apply --config ./router.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
 ```
 
-## 関連項目
+NAT の対象が `192.168.50.0/24` だけか、WAN と LAN の取り違えがないか、
+dry-run の結果で確認します。
 
-- [ファイアウォールゾーンを定義する](../how-to/firewall-zone.md)
-- [ファイアウォール例外を追加する](../how-to/firewall-rule.md)
+## サービス起動後の観察
+
+サービスを起動した**後で**、`routerctl` と `nft` で観察できます。
+
+```sh
+sudo systemctl is-active routerd.service
+sudo routerctl get status
+sudo routerctl describe NAT44Rule/lan-to-wan
+sudo routerctl firewall test from=wan to=lan proto=tcp dport=22
+sudo nft list table ip routerd_nat
+sudo nft list table inet routerd_filter
+```
+
+これらは「今見えている設定」を確認するためのコマンドです。外部攻撃に耐える
+ことの証明にはなりません。
+
+## 次に読むもの
+
+- [基本的な IPv4 NAT ルーター](../config-examples/basic-ipv4-nat.md)
 - [ファイアウォールのコンセプト](../concepts/firewall.md)
+- [対応プラットフォーム](../platforms.md) — Linux 以外の現在の対応範囲

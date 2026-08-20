@@ -11,6 +11,21 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 変更
+
+- 日本語を起点に初学者向けドキュメントを作り直し、英語・繁体字中国語・簡体字中国語の
+  入口も同期しました。最初の導線で WAN、LAN、DHCP、DNS、YAML リソース、単体での検証、
+  隔離した dry-run、`routerctl` が使えるタイミングを説明します。
+- コピーして使う IPv4 NAT、ゲスト分離、DS-Lite、マルチ WAN の説明を YAML と一致させ、
+  運用時の安全上の境界を明記しました。
+
+### 修正
+
+- `routerd apply --once --dry-run` が DHCPv4/DHCPv6 の lease path、dnsmasq、
+  firewall、Path MTU の artifact を通常の runtime path ではなく一時 artifact
+  directory に置くようにしました。生成する dnsmasq RA parameter も、導出した MTU を
+  dnsmasq が受け付ける構文で表すように修正しました。
+
 ## v20260820.1629
 
 ### 修正

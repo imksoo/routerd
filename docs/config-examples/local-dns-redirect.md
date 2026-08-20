@@ -86,11 +86,18 @@ you want to match.
 ## Checks
 
 ```bash
-routerctl validate -f examples/example-local-dns-redirect.yaml --replace
-routerctl plan -f examples/example-local-dns-redirect.yaml --replace
-routerctl describe IPAddressSet/public-dns
-nft list table ip routerd_nat
+routerd validate --config examples/example-local-dns-redirect.yaml
+
+workdir=$(mktemp -d)
+routerd apply --config examples/example-local-dns-redirect.yaml --once --dry-run \
+  --state-file "$workdir/state.db" \
+  --ledger-file "$workdir/ledger.db" \
+  --status-file "$workdir/status.json"
+rm -rf "$workdir"
 ```
+
+After the configuration runs, inspect `sudo routerctl describe
+IPAddressSet/public-dns` and `sudo nft list table ip routerd_nat`.
 
 From a LAN client:
 

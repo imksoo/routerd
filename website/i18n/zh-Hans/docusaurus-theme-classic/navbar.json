@@ -1,0 +1,62 @@
+{
+  "title": {
+    "message": "routerd",
+    "description": "The title in the navbar"
+  },
+  "logo.alt": {
+    "message": "routerd",
+    "description": "The alt text of navbar logo"
+  },
+  "item.label.Docs": {
+    "message": "文档",
+    "description": "Navbar item with label Docs"
+  },
+  "item.label.Overview": {
+    "message": "概览",
+    "description": "Navbar item with label Overview"
+  },
+  "item.label.Install": {
+    "message": "安装",
+    "description": "Navbar item with label Install"
+  },
+  "item.label.Resource model": {
+    "message": "资源模型",
+    "description": "Navbar item with label Resource model"
+  },
+  "item.label.Glossary": {
+    "message": "术语表",
+    "description": "Navbar item with label Glossary"
+  },
+  "item.label.Build a router": {
+    "message": "搭建路由器",
+    "description": "Navbar item with label Build a router"
+  },
+  "item.label.Configuration examples": {
+    "message": "配置示例",
+    "description": "Navbar item with label Configuration examples"
+  },
+  "item.label.How-to guides": {
+    "message": "按任务操作",
+    "description": "Navbar item with label How-to guides"
+  },
+  "item.label.Operate": {
+    "message": "运行与维护",
+    "description": "Navbar item with label Operate"
+  },
+  "item.label.API reference": {
+    "message": "API 参考",
+    "description": "Navbar item with label API reference"
+  },
+  "item.label.Design notes": {
+    "message": "设计笔记",
+    "description": "Navbar item with label Design notes"
+  },
+  "item.label.Releases": {
+    "message": "发行版本",
+    "description": "Navbar item with label Releases"
+  },
+  "item.label.GitHub": {
+    "message": "GitHub",
+    "description": "Navbar item with label GitHub"
+  }
+}

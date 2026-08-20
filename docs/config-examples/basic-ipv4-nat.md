@@ -7,8 +7,9 @@ sidebar_position: 10
 
 ![Diagram showing a DHCP WAN, routerd-managed LAN address, DHCPv4 server, NAT44, and firewall zones for a basic IPv4 gateway](/img/diagrams/config-example-basic-ipv4-nat.png)
 
-This is the smallest home-router shape that gives LAN clients IPv4 internet
-access through a DHCP-acquired WAN address.
+This is a small **isolated-lab** router shape that gives LAN clients IPv4
+internet access through a DHCP-acquired WAN address. It is a learning example,
+not a replacement for an already working household or school router.
 
 The complete, validated YAML is in `examples/example-basic-ipv4-nat.yaml`.
 
@@ -34,7 +35,7 @@ flowchart LR
 | [2] | Physical WAN interface. routerd runs a DHCPv4 client here. | `Interface/wan`, `DHCPv4Client/wan-dhcpv4` |
 | [3] | Linux host applying derived forwarding sysctls and nftables rules. | Derived host runtime |
 | [4] | LAN gateway address owned by routerd. | `Interface/lan`, `IPv4StaticAddress/lan-base` |
-| [5] | DHCPv4 clients using the router as gateway and DNS. | `DHCPv4Server/lan-dhcpv4` |
+| [5] | DHCPv4 clients using the router as gateway and external DNS servers. | `DHCPv4Server/lan-dhcpv4` |
 
 ## What this manages
 
@@ -46,9 +47,10 @@ flowchart LR
 | IPv4 internet access | `NAT44Rule/lan-to-wan` |
 | Basic filtering | `FirewallZone/wan`, `FirewallZone/lan`, `FirewallPolicy/home` |
 
-This example leaves DNS resolution simple: DHCPv4 clients receive the router's
-LAN address as their DNS server. Add a `DNSResolver` and `DNSZone` once the basic
-routing path is working.
+This example leaves DNS resolution simple: DHCPv4 clients receive the external
+resolvers `1.1.1.1` and `1.0.0.1`. The router is **not** a DNS server in this
+file. Choose resolvers permitted by your network, or add `DNSResolver` and a
+local DNS design before advertising the router's LAN address as DNS.
 
 ## Key config
 
@@ -70,7 +72,7 @@ routing path is working.
     interface: lan
     address: 192.168.10.1/24
 
-# [5] LAN clients receive addresses, gateway, DNS, and search domain.
+# [5] LAN clients receive addresses, a gateway, and external DNS servers.
 - apiVersion: net.routerd.net/v1alpha1
   kind: DHCPv4Server
   metadata:
@@ -84,9 +86,9 @@ routing path is working.
     gatewayFrom:
       resource: IPv4StaticAddress/lan-base
       field: address
-    dnsServerFrom:
-      - resource: IPv4StaticAddress/lan-base
-        field: address
+    dnsServers:
+      - 1.1.1.1
+      - 1.0.0.1
 
 # [2] -> [5] LAN IPv4 is masqueraded when it exits through the WAN.
 - apiVersion: net.routerd.net/v1alpha1
@@ -108,26 +110,32 @@ zone.
 
 ```bash
 cp examples/example-basic-ipv4-nat.yaml router.yaml
-routerctl validate -f router.yaml --replace
-routerctl plan -f router.yaml --replace
+routerd validate --config router.yaml
+
+workdir=$(mktemp -d)
+routerd apply --config router.yaml --once --dry-run \
+  --state-file "$workdir/state.db" \
+  --ledger-file "$workdir/ledger.db" \
+  --status-file "$workdir/status.json"
+rm -rf "$workdir"
 ```
 
-Only apply for real after confirming that management access is not on the LAN
-interface being readdressed, or that you have console access.
+Only apply for real from a console or an independent management path. Confirm
+that management access is not on the LAN interface being readdressed.
 
 ```bash
-routerctl apply -f router.yaml --replace
+sudo routerd apply --config router.yaml --once
 ```
 
 ## Checks
 
 ```bash
-routerctl get status
-routerctl describe DHCPv4Client/wan-dhcpv4
-routerctl describe IPv4StaticAddress/lan-base
-routerctl describe NAT44Rule/lan-to-wan
-nft list table ip routerd_nat
-nft list table inet routerd_filter
+sudo routerctl get status
+sudo routerctl describe DHCPv4Client/wan-dhcpv4
+sudo routerctl describe IPv4StaticAddress/lan-base
+sudo routerctl describe NAT44Rule/lan-to-wan
+sudo nft list table ip routerd_nat
+sudo nft list table inet routerd_filter
 ```
 
 From a LAN client:
@@ -142,4 +150,5 @@ curl https://1.1.1.1/
 
 - Change `ens18` and `ens19` to the host's real interface names.
 - Change `192.168.10.0/24` when it overlaps with an upstream, VPN, or management network.
-- Add a `DNSResolver` before advertising the router as DNS if the host does not already answer DNS on the LAN address.
+- Add a `DNSResolver` before advertising the router as DNS. This example does not
+  make the router answer DNS itself.

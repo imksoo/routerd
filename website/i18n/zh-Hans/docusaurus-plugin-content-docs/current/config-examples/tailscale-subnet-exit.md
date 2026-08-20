@@ -7,7 +7,9 @@ sidebar_position: 90
 
 ![routerd 让 Tailscale node advertise LAN 与 management prefix 以及 exit-node intent 的构成](/img/diagrams/config-example-tailscale-subnet-exit.png)
 
-此示例演示如何将路由器同时作为 Tailscale 的 subnet router 和 exit node 进行广播。
+此示例配置已安装的 Tailscale 客户端，将路由器同时作为 subnet router 和 exit node
+进行广播。YAML 只有 `TailscaleNode`，并不安装 Tailscale；请先安装客户端并按 tailnet
+的注册流程加入设备。
 
 完整的 YAML 位于 `examples/tailscale-exit-subnet.yaml`。
 
@@ -58,11 +60,19 @@ flowchart LR
 
 ## 确认步骤
 
+先在 daemon 未启动时进行独立检查。以下命令需要具有 `sudo` 权限的本地用户，但不会应用网络变更。
+
 ```bash
-routerctl validate -f examples/tailscale-exit-subnet.yaml --replace
-routerctl plan -f examples/tailscale-exit-subnet.yaml --replace
-routerctl describe TailscaleNode/home
-tailscale status
+LAB_DIR="$(mktemp -d)"
+sudo routerd validate --config examples/tailscale-exit-subnet.yaml
+sudo routerd apply --config examples/tailscale-exit-subnet.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
+rm -rf "$LAB_DIR"
 ```
+
+服务运行后，才在路由器上运行 `sudo routerctl describe TailscaleNode/home` 和
+`sudo tailscale status`。
 
 请依照 tailnet 的访问策略，在 Tailscale 管理控制台端批准路由与出口节点。

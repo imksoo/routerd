@@ -11,6 +11,20 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 变更
+
+- 以日语为起点重写初学者文档，并同步英语、繁体中文和简体中文入口。第一段导览现在说明
+  WAN、LAN、DHCP、DNS、YAML resource、独立 validation、隔离 dry-run，以及何时可使用
+  `routerctl`。
+- 修正可直接复制的 IPv4 NAT、访客隔离、DS-Lite 和 multi-WAN 说明，使其与 YAML 一致，
+  并清晰标明操作安全边界。
+
+### 修复
+
+- `routerd apply --once --dry-run` 现在会将 DHCPv4/DHCPv6 的 lease path、dnsmasq、
+  firewall 和 Path MTU artifact 保留在临时 artifact directory，而不是普通 runtime
+  path。生成的 dnsmasq RA parameter 也会用 dnsmasq 接受的语法表示派生 MTU。
+
 ## v20260820.1629
 
 ### 修复

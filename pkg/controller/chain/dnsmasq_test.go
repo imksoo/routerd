@@ -170,6 +170,30 @@ func TestDnsmasqLANServiceLines(t *testing.T) {
 	}
 }
 
+func TestDnsmasqLANServiceLinesAddsDefaultIntervalForPartialRAParams(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "transix"}, Spec: api.DSLiteTunnelSpec{TunnelName: "ds-transix"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-mtu"}, Spec: api.IPv6RouterAdvertisementSpec{Interface: "lan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-priority"}, Spec: api.IPv6RouterAdvertisementSpec{Interface: "lan", PRFPreference: "high"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"transix"}}},
+	}}}
+
+	lines, err := dnsmasqLANServiceLines(router, mapStore{})
+	if err != nil {
+		t.Fatalf("render lines: %v", err)
+	}
+	for _, want := range []string{
+		"ra-param=ens19,mtu:1454,0",
+		"ra-param=ens19,high,0",
+	} {
+		if !containsLine(lines, want) {
+			t.Fatalf("dnsmasq LAN service lines missing %q:\n%#v", want, lines)
+		}
+	}
+}
+
 func TestDnsmasqLANServiceLinesStripIPv6PrefixLengthFromOptions(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},

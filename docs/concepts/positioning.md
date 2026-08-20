@@ -40,7 +40,7 @@ routerd intentionally covers a wide spectrum of router work:
 | IPv4 transition | DS-Lite, NAT44, multi-stage WAN fallback |
 | LAN service | DHCPv4, DHCPv6, RA, DNS, NTP |
 | Routing | static routes, policy routes, EgressRoutePolicy, health checks |
-| Security | three-role firewall model, guest mode, denial logging |
+| Traffic policy groundwork | NAT44, zone policy inputs, guest-mode examples, denial logging |
 | Overlay | WireGuard, Tailscale integration, VXLAN groundwork, VRF |
 | Operations | Web Console, `routerctl`, OpenTelemetry, log stores |
 | Bootstrap | packages, sysctl profiles, systemd units, live ISO |
@@ -102,4 +102,5 @@ routerd does not currently aim to be:
 - a GUI-first configuration system
 
 The project favors explicit YAML, local control, and high-quality operational
-feedback over a broad clickable management surface.
+feedback over a broad clickable management surface. Its firewall resources are
+not a substitute for a full security review or for VLAN/SSID/switch isolation.

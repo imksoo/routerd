@@ -151,6 +151,43 @@ func routerWithIPv6PDClientOptions(router *api.Router, opts applyOptions, osName
 	return &out, warnings, nil
 }
 
+// routerWithDryRunLeaseFiles prevents a dry-run from creating the normal
+// dnsmasq lease directory. A dry-run renders and validates dnsmasq, but its
+// generated lease path must remain inside the temporary artifact directory.
+func routerWithDryRunLeaseFiles(router *api.Router, artifactDir string) (*api.Router, error) {
+	if router == nil {
+		return nil, errors.New("router is nil")
+	}
+	artifactDir = strings.TrimSpace(artifactDir)
+	if artifactDir == "" {
+		return nil, errors.New("dry-run artifact directory is empty")
+	}
+
+	out := *router
+	out.Spec.Resources = append([]api.Resource(nil), router.Spec.Resources...)
+	leaseFile := filepath.Join(artifactDir, "dnsmasq.leases")
+	for i := range out.Spec.Resources {
+		resource := out.Spec.Resources[i]
+		switch resource.Kind {
+		case "DHCPv4Server":
+			spec, err := resource.DHCPv4ServerSpec()
+			if err != nil {
+				return nil, err
+			}
+			spec.LeaseFile = leaseFile
+			out.Spec.Resources[i].Spec = spec
+		case "DHCPv6Server":
+			spec, err := resource.DHCPv6ServerSpec()
+			if err != nil {
+				return nil, err
+			}
+			spec.LeaseFile = leaseFile
+			out.Spec.Resources[i].Spec = spec
+		}
+	}
+	return &out, nil
+}
+
 func routerConfigYAML(router *api.Router, opts applyOptions) (string, error) {
 	if strings.TrimSpace(opts.ConfigYAMLOverride) != "" {
 		return opts.ConfigYAMLOverride, nil
@@ -572,6 +609,10 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 		defer func() { _ = os.RemoveAll(dryRunDir) }()
 		opts.DnsmasqConfigPath = filepath.Join(dryRunDir, "dnsmasq.conf")
 		opts.NftablesPath = filepath.Join(dryRunDir, "nat44.nft")
+		router, err = routerWithDryRunLeaseFiles(router, dryRunDir)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	statePath := defaultString(opts.StatePath, defaultStatePath)

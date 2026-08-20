@@ -12,6 +12,14 @@ sidebar_position: 50
 
 完全な YAML は `examples/example-port-forward-web.yaml` にあります。
 
+:::danger サービスを公開すると到達できる人が変わる
+
+この例は内部サービスを WAN から到達可能にします。最初はテスト用アドレスを使い、
+backend の更新と認証を確認してから、実サービスを公開する前に独立した
+ファイアウォール／セキュリティレビューを行ってください。
+
+:::
+
 ## 構成図
 
 ```mermaid
@@ -73,13 +81,28 @@ flowchart LR
 hairpin を使うには、LAN 側から見える公開宛先のアドレスが必要です。
 そのため `listen.address` または `listen.addressFrom` を指定します。
 
-## 確認
+## daemon の前に確認する
 
-```bash
-routerctl validate -f examples/example-port-forward-web.yaml --replace
-routerctl plan -f examples/example-port-forward-web.yaml --replace
-routerctl describe PortForward/web-https
-nft list table ip routerd_nat
+以下は `sudo` を実行できる通常ユーザーを想定します。まだサービスを起動していないため、
+`routerctl` ではなく `routerd` を使い、dry-run の状態ファイルは一時ディレクトリへ隔離します。
+
+```sh
+LAB_DIR="$(mktemp -d)"
+sudo routerd validate --config examples/example-port-forward-web.yaml
+sudo routerd apply --config examples/example-port-forward-web.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
+sudo sed -n "1,160p" "$LAB_DIR/status.json"
+```
+
+## サービス起動後に確認する
+
+レビュー済みの設定を適用して `routerd.service` を起動した**後で**、ルーター上で次を実行します。
+
+```sh
+sudo routerctl describe PortForward/web-https
+sudo nft list table ip routerd_nat
 ```
 
 ## よく変えるところ

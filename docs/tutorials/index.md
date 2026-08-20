@@ -5,30 +5,37 @@ slug: /tutorials
 
 # Tutorials
 
-![Diagram showing the routerd tutorial path from install, getting started, and diskless live ISO to WAN services, LAN services, firewall, and FreeBSD](/img/diagrams/tutorial-index.png)
+![Diagram showing the routerd tutorial path from safe lab and network basics through first router, WAN services, LAN services, and advanced deployment options](/img/diagrams/tutorial-index.png)
 
-## Diskless mini PC router in five minutes
+Start with one small, observable goal. Do not start with a production router or
+an ISP-specific configuration.
 
-Boot the routerd live ISO, answer the text wizard, save the configuration to a
-USB stick, and turn a small x86 mini PC into a persistent router without
-installing an OS to the internal disk.
+## First path: an isolated Ubuntu lab
 
-[Start the diskless walkthrough](/docs/tutorials/diskless-minipc-walkthrough)
+1. [Network basics](./network-basics.md) — learn WAN, LAN, DHCP, DNS, NAT, and
+   the shape of a routerd resource.
+2. [Install and upgrade](../install-and-upgrade.md) — install the release on an
+   Ubuntu Server VM or spare computer.
+3. [Getting started safely](./getting-started.md) — validate and dry-run a file
+   before any live change.
+4. [Bring up the first lab router](./first-router.md) — test DHCP and IPv4 NAT
+   with a client on an isolated LAN.
+5. [LAN-side services](./lan-side-services.md) and
+   [WAN-side services](./wan-side-services.md) — add one feature at a time.
 
-![Diskless mini PC flow](/img/routerd-diskless-minipc.svg)
+## Choose the next tutorial by goal
 
-## Pick a path
+| Goal | Read this next | Prerequisite |
+| --- | --- | --- |
+| Add local DHCP, DNS, RA, or NTP | [LAN-side services](./lan-side-services.md) | Working isolated LAN |
+| Add DHCPv6-PD, PPPoE, or DS-Lite | [WAN-side services](./wan-side-services.md) | ISP-specific facts and a recovery path |
+| Understand current firewall resources | [Basic NAT and firewall policy](./basic-firewall.md) | Do not use as the only Internet security boundary |
+| Use a diskless mini PC | [Diskless mini PC walkthrough](./diskless-minipc-walkthrough.md) | A removable USB you can identify safely |
+| Start from FreeBSD | [FreeBSD getting started](./freebsd-getting-started.md) | Feature support review; Ubuntu is the first-lab target |
 
-| Goal | Tutorial |
-| --- | --- |
-| Install routerd from a release archive | [Install](/docs/tutorials/install) |
-| Build a first router from YAML | [Getting started](/docs/tutorials/getting-started) |
-| Configure WAN-side acquisition and tunnels | [WAN-side services](/docs/tutorials/wan-side-services) |
-| Configure DHCP, DNS, RA, and NTP on LAN | [LAN-side services](/docs/tutorials/lan-side-services) |
-| Add a conservative firewall baseline | [Basic firewall](/docs/tutorials/basic-firewall) |
-| Start from FreeBSD | [FreeBSD getting started](/docs/tutorials/freebsd-getting-started) |
+## Advanced examples come later
 
-routerd is unusual because the same resource model can describe a virtual lab
-router between SDN/VNET segments and a diskless physical router on a mini PC.
-Use the tutorial that matches your first deployment, then reuse the same
-resources as the network grows.
+The configuration examples for DS-Lite, multi-WAN, WireGuard, Tailscale,
+CloudEdge SAM, Kubernetes, and high availability solve real problems, but each
+assumes a working basic router first. Read their prerequisites before applying
+them. A sample is a map of one situation, not a safe default for every network.

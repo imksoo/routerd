@@ -30,14 +30,25 @@ media. Label it `ROUTERD` so the ISO can find it automatically.
 FAT32 is reported by `blkid` as `vfat`; it is supported, but `ext4` is better
 for a USB stick that is dedicated to routerd.
 
+:::danger Stop before formatting if the USB is not unmistakable
+This command erases the selected partition. First identify the removable USB by
+its size, model, transport, serial number, and mount points:
+
+```sh
+lsblk -o NAME,SIZE,MODEL,TRAN,SERIAL,MOUNTPOINTS
+```
+
+Stop if you cannot identify the removable USB. Never replace `/dev/sdX1` with
+`/dev/sda` by guesswork, and never format the host's internal disk.
+:::
+
 Example from a Linux workstation:
 
 ```sh
 sudo mkfs.ext4 -L ROUTERD /dev/sdX1
 ```
 
-Replace `/dev/sdX1` with the actual USB partition. Do not format the wrong
-device.
+Replace `/dev/sdX1` only after identifying the actual removable USB partition.
 
 ## 2. Boot the live ISO
 
@@ -64,13 +75,15 @@ qm create 200 \
   --vga std \
   --boot order=ide2 \
   --ide2 local:iso/routerd-live.iso,media=cdrom \
-  --net0 virtio,bridge=vmbr0 \
-  --net1 virtio,bridge=vmbr490
+  --net0 virtio,bridge=vmbr-lab-wan \
+  --net1 virtio,bridge=vmbr-lab-lan
 qm start 200
 qm terminal 200
 ```
 
-Use an isolated LAN bridge for early DHCP and RA testing.
+Create and use isolated test bridges for both links before running this command.
+The names `vmbr-lab-wan` and `vmbr-lab-lan` are placeholders; do not substitute
+an existing production bridge such as `vmbr0` just because it is available.
 
 ![routerd live boot menu](/img/iso-boot/iso-boot-01-grub.png)
 
@@ -165,11 +178,20 @@ configuration path is `/media/routerd-usb/routerd/router.yaml`. It is not
 
 ## 4. Confirm the first apply
 
+The following commands assume the `root` live-ISO console login from the
+previous step. On an installed non-root account, prefix `routerctl` with
+`sudo` unless the account has been deliberately added to the `routerd` group.
+
 After confirmation, the wizard writes:
 
 ```text
 /usr/local/etc/routerd/router.yaml
 ```
+
+The live ISO starts `routerd.service` before this point, so the wizard can use
+the daemon-backed `routerctl` requests below. Do not copy this command order to
+a manually installed host; use `routerd validate` and an isolated dry-run first
+as described in [Getting started safely](./getting-started.md).
 
 It then runs:
 

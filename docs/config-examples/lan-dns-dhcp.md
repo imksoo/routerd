@@ -83,12 +83,19 @@ flowchart LR
 ## Checks
 
 ```bash
-routerctl validate -f examples/example-lan-dns-dhcp.yaml --replace
-routerctl plan -f examples/example-lan-dns-dhcp.yaml --replace
-routerctl describe DNSZone/home
-routerctl describe DHCPv4Server/lan-dhcpv4
-dig @192.168.30.1 router.home.example
+routerd validate --config examples/example-lan-dns-dhcp.yaml
+
+workdir=$(mktemp -d)
+routerd apply --config examples/example-lan-dns-dhcp.yaml --once --dry-run \
+  --state-file "$workdir/state.db" \
+  --ledger-file "$workdir/ledger.db" \
+  --status-file "$workdir/status.json"
+rm -rf "$workdir"
 ```
+
+After the service is running, inspect `routerctl describe DNSZone/home`,
+`routerctl describe DHCPv4Server/lan-dhcpv4`, and
+`dig @192.168.30.1 router.home.example` from the LAN.
 
 ## Common edits
 

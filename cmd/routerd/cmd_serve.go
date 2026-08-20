@@ -1130,14 +1130,21 @@ func applySandboxControllerOptions(opts *controllerchain.Options, dnsmasqConfigP
 	opts.DryRunVXLANTunnel = true
 	opts.DryRunServiceUnit = true
 	opts.DnsmasqConfig = dnsmasqConfigPath
-	opts.DnsmasqPID = filepath.Join(platformDefaults.RuntimeDir, "dnsmasq.pid")
+	sandboxDir := platformDefaults.RuntimeDir
+	if strings.TrimSpace(dnsmasqConfigPath) != "" {
+		sandboxDir = filepath.Dir(dnsmasqConfigPath)
+	}
+	opts.DnsmasqPID = filepath.Join(sandboxDir, "dnsmasq.pid")
 	opts.NftablesPath = filepath.Join(platformDefaults.RuntimeDir, "nat44.nft")
 	if strings.TrimSpace(nftablesPath) != "" {
 		opts.NftablesPath = nftablesPath
 	}
-	opts.FirewallPath = filepath.Join(platformDefaults.RuntimeDir, "firewall.nft")
-	opts.PathMTUPath = filepath.Join(platformDefaults.RuntimeDir, "mss.nft")
-	opts.ForceFragmentPath = filepath.Join(platformDefaults.RuntimeDir, "forcefrag.nft")
+	// Every rendered artifact in a dry-run belongs next to the dnsmasq config.
+	// In one-shot apply this is a temporary directory, so dry-run never needs
+	// access to the normal runtime directory.
+	opts.FirewallPath = filepath.Join(sandboxDir, "firewall.nft")
+	opts.PathMTUPath = filepath.Join(sandboxDir, "mss.nft")
+	opts.ForceFragmentPath = filepath.Join(sandboxDir, "forcefrag.nft")
 }
 
 // groupOwnStatusSocket makes the read-only status socket reachable by members

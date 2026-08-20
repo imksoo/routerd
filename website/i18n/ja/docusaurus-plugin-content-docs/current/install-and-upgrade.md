@@ -4,448 +4,159 @@ title: インストールとアップグレード
 
 # インストールとアップグレード
 
-![Diagram showing routerd install and upgrade from release archive download and install.sh through first router.yaml validation, plan, serve mode, preserved config and state, and uninstall](/img/diagrams/install-and-upgrade.png)
+![リリースアーカイブの取得、検証、導入、設定の確認、サービス起動、更新の流れ](/img/diagrams/install-and-upgrade.png)
 
-ルーターホストへはリリースアーカイブから導入します。
-アーカイブには、実行ファイル、サービステンプレート、設定例、インストーラーが
-含まれます。
-ルーターホストに Go や Makefile は要りません。
+routerd はリリースアーカイブから導入します。ルーターホストに Go や Makefile は
+必要ありません。最初の対象は Ubuntu Server です。
 
-## クイックインストール
+:::caution 初回は隔離した VM で
 
-[GitHub Releases](https://github.com/imksoo/routerd/releases) から、OS と
-アーキテクチャーに合うアーカイブを取得します。
+初めての導入は、普段の回線を運ぶルーターでは行わないでください。
+隔離した Ubuntu Server VM、VM コンソール、変更する NIC とは別の管理経路を
+用意します。`routerd.service` を起動するとネットワークが変わることがあります。
 
-Linux amd64:
+:::
+
+## Ubuntu Server への新規導入
+
+[GitHub Releases](https://github.com/imksoo/routerd/releases) で、使う版と CPU に
+合うアーカイブを選びます。次は Linux amd64 の例です。
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260820.1629/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260820.1629/routerd-linux-amd64.tar.gz.sha256
+RELEASE=v20260707.1514
+curl -fLO https://github.com/imksoo/routerd/releases/download/${RELEASE}/routerd-linux-amd64.tar.gz
+curl -fLO https://github.com/imksoo/routerd/releases/download/${RELEASE}/routerd-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-linux-amd64.tar.gz.sha256
 tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
-Linux arm64 では `linux-arm64` アーカイブを使います。
-
-FreeBSD amd64:
-
-```sh
-fetch https://github.com/imksoo/routerd/releases/download/v20260820.1629/routerd-freebsd-amd64.tar.gz
-fetch https://github.com/imksoo/routerd/releases/download/v20260820.1629/routerd-freebsd-amd64.tar.gz.sha256
-cat routerd-freebsd-amd64.tar.gz.sha256
-sha256 routerd-freebsd-amd64.tar.gz
-tar -xzf routerd-freebsd-amd64.tar.gz
-sudo ./install.sh
-```
-
-FreeBSD arm64 では `freebsd-arm64` アーカイブを使います。
-最新リリースには `routerd-vYYYYMMDD.HHmm-linux-amd64.tar.gz` のような
-版番号付きアーカイブもあります。
-特定の版に固定する場合は、版番号付きアーカイブを使います。
-
-Linux 用アーカイブには、`CGO_ENABLED=0` で静的リンクした routerd バイナリを
-含めます。
-そのため、配置先ホストの glibc 版には依存しません。
-`dnsmasq`、`nft`、`ip`、`conntrack`、`tcpdump` などの実行時ツールは、
-引き続き `install.sh` が導入または確認します。
-
-native nDPI によるアプリケーション識別が必要なホストでは、対応する
-`routerd-ndpi-agent-libndpi-linux-amd64.tar.gz` も取得し、通常のアーカイブと
-同じインストール処理の中で明示的に適用します。
+arm64 では `linux-amd64` を `linux-arm64` に読み替えます。
+インストーラーは実行時パッケージを確認し、実行ファイルと systemd の
+サービス定義、設定例を置きます。新規導入では設定がないため、サービスを
+勝手に開始しません。
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260820.1629/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260820.1629/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
-sha256sum -c routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
-sudo ./install.sh --with-ndpi \
-  --with-ndpi-archive ./routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
+routerd --version
 ```
 
-`--with-ndpi` を付けた場合、導入後の `routerd-ndpi-agent` が
-`libndpiLoaded: true` を返さなければ処理は失敗します。これにより、static な
-フォールバックエージェントが native nDPI の要件を黙って満たしたことにはなりません。
+## 最初の設定は、起動前に確認する
 
-`install.sh` は新規導入かアップグレードかを自動で判定します。
-実行ファイルを `/usr/local/sbin` に配置し、サービステンプレートを導入します。
-また、`/usr/local/etc/routerd/router.yaml.sample` を作成します。
-既存の `/usr/local/etc/routerd/router.yaml` は上書きしません。
-systemd ホストでは、インストーラーがローカルソケットアクセス用の `routerd` グループを
-作成します。`sudo usermod -aG routerd <user>` で運用者を追加すれば、
-`routerctl get status` などのローカル制御ソケット操作を sudo なしで実行できます。
-
-## BGP を動かしているルーターのアップグレード
-
-`routerd-bgp` は長寿命のデーモンで、BGP セッションを保持します。
-再起動するとセッションが切断され、ピアは保留タイマーが満了するまで古い経路を
-保持するため、その間 ECMP の幅が縮小します。
-systemd ホストでは、`install.sh` がアップグレード前の削除済みバイナリをまだ
-実行中のアクティブな routerd ヘルパーサービス (`routerd-bgp` や
-`routerd-dns-resolver` など) を自動でリフレッシュします。
-これにより、アップグレード後のホストが `/proc/*/exe` の下に古い実行ファイルを
-抱え続けることを防ぎます。
-
-インストーラーがヘルパーを再起動した後は、BGP の再収束が起きます。
-再収束中に `routerd-bgp` を再度再起動しないでください。短時間に 2 回再起動すると、
-ピアが古い経路を保持し続け、ECMP が崩壊します。
-Graceful Restart が保護できるのは 1 回の再起動だけです。
-判断は再収束を待ってから行います (BGP の保留タイマーと Graceful Restart の
-stale-path タイマーにより、最大約 3--6 分かかります)。
-合格条件は、すべてのピアが `Established` に戻ること、影響するプレフィックスで
-ECMP 幅が回復すること、エンドツーエンドの疎通 (例: ECMP 経路を通る HTTP 200) が
-成功することです。
-
-この間、1 つのピアが `IDLE` のまま `Closed an accepted connection` を
-繰り返しログに出すことがあります。これは、前のセッションをまだ保持している
-ピアが保留タイマーの満了を待っている状態です。
-追加の再起動はせず、待ってください。タイマー満了後にピアは自動で接続を確立し、
-ECMP も回復します。
-
-## root 以外の運用者によるローカル制御ソケットアクセス
-
-読み取り専用の状態ソケット (`/run/routerd/routerd-status.sock`) を使えば、
-root 以外の運用者も sudo なしで `routerctl get status` を実行できます。
-`routerd` グループが存在する場合、routerd はこのソケットを
-`root:routerd`、モード `0o660` で作成します。
-Unix ソケットへの接続には書き込み権限が必要なので、グループのメンバーは
-読み書き可能です。
-このグループ所有権は、routerd がソケットを作成する際に自身で設定するため、
-サービスユニットの `Group=` 設定には依存**しません**。
-`routerd` グループが存在しない場合は、誰もロックアウトされないよう、
-状態ソケットを全アクセス可 (`0o666`) にフォールバックします。
-
-読み書き用の制御ソケット (`/run/routerd/routerd.sock`、`routerctl apply` /
-`delete` で使用) は、`root` 所有の `0o660` のままです。
-ルーターへの変更操作には、引き続き root / sudo が必要です。
-
-sudo なしで `routerctl get status` を使えるようにする手順:
-
-1. `sudo usermod -aG routerd <user>` (インストーラーがグループを作成済み)。
-2. グループメンバーシップは**新しい**ログインセッションにのみ適用されます。
-   反映前に再ログイン (または新しい SSH セッションを開く / `newgrp routerd` を
-   実行) してください。フルの再ログインなしで現在のシェルでグループを使うには、
-   コマンドをラップします: `sg routerd -c 'routerctl get status'`。
-
-`ls -l /run/routerd/routerd-status.sock` で確認します (期待値:
-`srw-rw---- root routerd`)。`id <user>` でグループ一覧に `routerd` が含まれる
-ことを確認します。
-グループに入っていないユーザーが拒否されるのは、意図した堅牢化であり、
-後退ではありません。サービスユニットの変更は不要です。
-
-## ライブ ISO で試す
-
-リリースページでは、Ubuntu ベースの起動可能なライブ ISO も公開します。
+設定の置き場所は `/usr/local/etc/routerd/router.yaml` です。
+まずは [はじめに](./tutorials/getting-started.md) の小さな YAML を
+`first-router.yaml` として作ってください。サービスがまだ動いていない段階では、
+`routerctl` を使わず、`routerd` 本体で確認します。
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260820.1629/routerd-live.iso
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260820.1629/routerd-live.iso.sha256
-sha256sum -c routerd-live.iso.sha256
+LAB_DIR="$(mktemp -d)"
+sudo routerd validate --config ./first-router.yaml
+sudo routerd apply --config ./first-router.yaml --once --dry-run --skip-service-manager \
+  --state-file "$LAB_DIR/state.db" \
+  --ledger-file "$LAB_DIR/ledger.db" \
+  --status-file "$LAB_DIR/status.json"
 ```
 
-ISO を Proxmox VE のテスト VM に接続して起動します。
-コンソールには routerd の初期設定手順が表示されます。
-root でログインすれば、同じ `install.sh configure` ウィザードを起動できます。
-ISO はデモや短時間の試用に向いています。
-永続的なルーターとして使う場合は、リリースアーカイブからディスクへ導入します。
+`validate` は YAML の書き方を調べます。dry-run は、依存関係と生成する内容を
+調べますが、本当のネットワーク変更は行いません。state、ledger、status の
+保存先を `LAB_DIR` の下にしているので、普段使う状態ファイルにも触れません。
 
-ライブ ISO は、ビデオコンソールとシリアルコンソールの両方を有効にします。
-仮想マシン (KVM / Proxmox など) では、ライブ起動時に `qemu-guest-agent`
-サービスが利用可能であれば自動起動を試みます。
-`sshd` は仮想化環境での運用者アクセス用に同梱していますが、ライブ ISO ではデフォルトで停止しています。
-Proxmox VE では、シリアルソケットを追加し、`qm terminal` で接続します。
+:::tip state、ledger、status とは
+
+- **state** は、routerd が見た状態を保存するデータベースです。
+- **ledger** は、routerd が所有するファイルや設定の記録です。
+- **status** は、その dry-run の結果を書いた JSON ファイルです。
+
+初回の dry-run では、どれも使い捨ての場所を指定します。
+
+:::
+
+## サービスを起動する
+
+ここから先は VM のネットワークを変える可能性があります。コンソールを開いたまま、
+インターフェース名、管理経路、dry-run の出力を確認してから実行します。
 
 ```sh
-qm create 200 \
-  --name routerd-live-demo \
-  --memory 1536 \
-  --cores 2 \
-  --ostype l26 \
-  --serial0 socket \
-  --vga serial0 \
-  --boot order=ide2 \
-  --ide2 local:iso/routerd-live.iso,media=cdrom \
-  --net0 virtio,bridge=vmbr0 \
-  --net1 virtio,bridge=vmbr490
-qm start 200
-qm terminal 200
+sudo install -d -m 0755 /usr/local/etc/routerd
+sudo install -m 0600 ./first-router.yaml /usr/local/etc/routerd/router.yaml
+sudo systemctl enable --now routerd.service
+sudo systemctl is-active routerd.service
 ```
 
-DHCP や RA を試す場合は、`net1` に隔離した LAN ブリッジを使います。
-シリアルコンソールは 115200 8N1 です。
-ウィザードはプレーンテキストで表示します。
-そのため、`qm terminal`、フレームバッファーコンソール、最小構成の端末のいずれでも同じように動きます。
-
-ライブ ISO には 2 つの動作があります。
-
-- **一時デモモード:** USB ストレージを選びません。
-  設定とログは RAM 上に置かれ、再起動で消えます。
-- **永続ルーターモード:** ウィザードで USB パーティションを選びます。
-  ウィザードが `router.yaml` を USB デバイスへ保存します。
-  次回の起動時には、ISO が USB デバイスをマウントし、設定を復元して自動的に反映します。
-
-永続モードでは、USB パーティションに `ROUTERD` というラベルを付けます。
-リムーバブルデバイスが複数ある場合は、カーネル引数に
-`routerd.usb=/dev/sdX1` を指定できます。
-ヘルパーは `blkid` で `ext4`、`vfat`、`exfat` を判別します。
-既定では `async,noatime` でマウントします。
-同期書き込みを明示したい場合にだけ、`routerd.usb_mount=sync` を指定します。
-
-ログは `/run/routerd/logs` の tmpfs に一時保存します。
-ウィザードでは、1 日 1 回の書き出しジョブを有効にできます。
-このジョブは、設定、状態スナップショット、圧縮したログアーカイブを USB デバイスへコピーします。
-tmpfs のログ上限は既定で 100 MiB です。
-上限を超えた場合は、古いログファイルから順に削除します。
-
-USB を安全に取り外す場合は、次を実行します。
+サービスが起動して初めて、`routerctl` でローカルソケットの状態を確認できます。
 
 ```sh
-/usr/share/routerd/live-persistence.sh flush
-/usr/share/routerd/live-persistence.sh umount
+sudo routerctl get status
+sudo routerctl get events --limit 20
 ```
 
-配置先、マウントオプションは
-[Operations → USB 永続化](./operations/usb-persistence) を参照してください。
+## 更新する
 
-`routerd-live-vYYYYMMDD.HHmm.iso` のような版番号付き ISO も公開します。
-
-## 実行時の依存パッケージ
-
-既定では、`install.sh` が既知の OS パッケージを導入します。
-一覧だけを確認するには、次を実行します。
-
-```sh
-./install.sh --list-deps
-```
-
-別の仕組みでパッケージを管理する場合は、自動導入を止めます。
-
-```sh
-sudo ./install.sh --no-install-deps
-```
-
-依存パッケージだけを導入することもできます。
-
-```sh
-sudo ./install.sh --deps-only
-```
-
-Tailscale の導入は任意です。
-導入する場合は `--with-tailscale` を付けます。
-
-```sh
-sudo ./install.sh --with-tailscale
-```
-
-### Debian / Ubuntu
-
-インストーラーは `apt-get` を使い、次を導入します。
-
-```text
-ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables keepalived openssh-server
-```
-
-### Fedora 系
-
-インストーラーは `dnf` を使い、次を導入します。
-
-```text
-ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-utils tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute iputils traceroute kmod radvd strongswan iptables keepalived openssh-server
-```
-
-### Arch 系
-
-インストーラーは `pacman` を使い、次を導入します。
-
-```text
-ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables keepalived openssh
-```
-
-### FreeBSD
-
-インストーラーは `pkg` を使い、次を導入します。
-
-```text
-ca_root_nss curl dnsmasq wireguard-tools mpd5 bind-tools tcpdump jq chrony strongswan
-```
-
-FreeBSD の `pf`、`ifconfig`、`route`、`sysctl`、`service`、`sysrc`、`cron`、
-`netstat`、`sockstat`、`ping`、`traceroute` は基本システムの機能です。
-これらはパッケージとして導入せず、コマンドの存在だけを確認します。
-
-## アップグレード
-
-新しいアーカイブを展開し、同じインストーラーを実行します。
+更新も、まず VM コンソールと管理経路を確認してから行います。新しいアーカイブを
+展開し、同じ `install.sh` を実行します。
 
 ```sh
 tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
-`/usr/local/sbin/routerd` が存在する場合、インストーラーはアップグレードモードに
-切り替わります。
-このとき、古い `routerd --version` と新しい `routerd --version` を表示します。
-実行ファイルとサービステンプレートを置き換える一方で、設定と状態は保持します。
-routerd サービスが起動中であれば再起動します。
-systemd ホストでは、再起動した `routerd.service` の状態ソケットを待ち、
-routerd が管理するユニットファイルの更新が落ち着いてから、更新が必要な
-routerd ヘルパーサービスだけを再起動します。
-再起動するのは、削除済みのアップグレード前バイナリを実行している場合、または
-ヘルパーのプロセス起動後にユニットファイルが更新された場合だけです。
-`/etc/systemd/system/routerd.service` が routerd の設定で管理されている場合は、
-アーカイブのテンプレートで上書きせず、そのユニットを保持します。
-
-置き換えるファイルは `*.backup.YYYYMMDDHHMMSS` に退避します。
-途中で失敗した場合は、一時バックアップから復元します。
-
-routerd 自身が `routerd.service` を、生成されるサービス成果物のリソースとして管理している場合、
-ユニットファイルの変更は慎重に扱います。
-適用の途中で自分自身を直接再起動するのではなく、`systemd-run` で少し遅らせた
-自己再起動を予約します。
-VRRP または ingress サービスのリソースを同じ設定に含む場合は、生成される
-`routerd.service` に、keepalived 用の書き込み可能なパスと capability を自動で追加します。
-BGP は長寿命の `routerd-bgp` デーモンをローカルの gRPC Unix ソケットで制御するため、
-FRR group や FRR の実行時ディレクトリは要りません。
-
-よく使うオプション:
+既存の `/usr/local/etc/routerd/router.yaml` と状態ディレクトリは保持されます。
+すでに `routerd.service` が動いている場合、インストーラーはサービスを
+再起動することがあります。更新後は、サービスが動いていることを確かめてから
+状態を見ます。
 
 ```sh
-sudo ./install.sh --no-restart
-sudo ./install.sh --dry-run
-sudo ./install.sh --verbose
-sudo ./install.sh --no-config-update
+sudo systemctl is-active routerd.service
+sudo routerctl get status
 ```
+
+BGP など、短い再起動でも影響が出る機能を本番で使っている場合は、保守時間を
+取り、[変更履歴](./releases/changelog.md) と運用手順を確認してください。
+
+## よく使う導入オプション
+
+```sh
+./install.sh --list-deps
+sudo ./install.sh --no-install-deps
+sudo ./install.sh --deps-only
+sudo ./install.sh --dry-run
+```
+
+`--dry-run` は、インストーラーが置くファイルや実行するサービス操作を表示する
+ためのものです。routerd の設定を確認する dry-run とは別です。
 
 ## 配置先
 
-| 項目 | Linux | FreeBSD |
-| --- | --- | --- |
-| 設定 | `/usr/local/etc/routerd/router.yaml` | `/usr/local/etc/routerd/router.yaml` |
-| 設定例 | `/usr/local/etc/routerd/router.yaml.sample` | `/usr/local/etc/routerd/router.yaml.sample` |
-| 実行ファイル | `/usr/local/sbin` | `/usr/local/sbin` |
-| サービステンプレート | `/etc/systemd/system/routerd.service` | `/usr/local/etc/rc.d/routerd` |
-| 実行時ソケット | `/run/routerd` | `/var/run/routerd` |
-| 永続状態 | `/var/lib/routerd` | `/var/db/routerd` |
+| 項目 | Ubuntu Server |
+| --- | --- |
+| 設定 | `/usr/local/etc/routerd/router.yaml` |
+| 設定例 | `/usr/local/etc/routerd/router.yaml.sample` |
+| 実行ファイル | `/usr/local/sbin/routerd`、`/usr/local/sbin/routerctl` |
+| systemd サービス | `/etc/systemd/system/routerd.service` |
+| 実行時ソケット | `/run/routerd` |
+| 永続状態 | `/var/lib/routerd` |
 
-インストーラーは次の状態を削除しません。
+## ライブ ISO
 
-- `/usr/local/etc/routerd/router.yaml`
-- `/var/lib/routerd`
-- `/var/db/routerd`
-- `/run/routerd`
-- `/var/run/routerd`
-- `/var/log/otelcol`
-
-## 最初の設定
-
-最初の試用では、組み込みの初期設定ウィザードを使えます。
-
-```sh
-sudo ./install.sh configure
-```
-
-ウィザードは、WAN インターフェース、LAN インターフェース、LAN アドレス、
-LAN 向けサービス、管理経路の置き場所、任意の USB 永続化を順に確認します。
-生成した候補は `/usr/local/etc/routerd/router.yaml.configure` に保存します。
-既存の設定がある場合は差分を表示します。
-確認後、`/usr/local/etc/routerd/router.yaml` へ導入します。
-その後、`routerctl validate`、`routerctl plan`、`routerctl apply` を実行します。
-
-自動化する場合は、環境変数で値を渡して質問を省略できます。
-
-```sh
-sudo ROUTERD_WAN_INTERFACE=ens18 \
-  ROUTERD_LAN_INTERFACE=ens19 \
-  ROUTERD_LAN_ADDRESS=192.168.10.1/24 \
-  ROUTERD_LAN_CIDR=192.168.10.0/24 \
-  ROUTERD_MGMT_MODE=lan \
-  ROUTERD_ENABLE_USB_PERSISTENCE=no \
-  ./install.sh configure --non-interactive --yes
-```
-
-ライブ ISO で USB 永続化を使う場合は、次の値を指定します。
-
-```sh
-sudo ROUTERD_ENABLE_USB_PERSISTENCE=yes \
-  ROUTERD_USB_DEVICE=/dev/sdb1 \
-  ROUTERD_USB_FLUSH=yes \
-  ROUTERD_LOG_TMPFS_LIMIT=100M \
-  ./install.sh configure --non-interactive --yes
-```
-
-YAML ファイルの生成だけを行う場合は、`--no-apply` を使います。
-
-```sh
-sudo ./install.sh configure --no-apply
-```
-
-手動で設定することもできます。
-設定例をコピーし、インターフェース名などを編集してください。
-
-```sh
-sudo install -d -m 0755 /usr/local/etc/routerd
-sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
-sudo vi /usr/local/etc/routerd/router.yaml
-```
-
-検証し、計画を確認します。
-
-```sh
-routerctl validate -f /usr/local/etc/routerd/router.yaml --replace
-routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
-```
-
-管理経路が安全だと確認してから反映します。
-
-```sh
-sudo routerctl apply -f /usr/local/etc/routerd/router.yaml --replace
-```
-
-一度だけの反映が正常に終われば、サービスを起動します。
-
-```sh
-sudo systemctl enable --now routerd.service
-```
-
-FreeBSD では次のようにします。
-
-```sh
-sudo sysrc routerd_enable=YES
-sudo service routerd start
-```
+短いデモには Ubuntu ベースのライブ ISO も使えます。VM コンソールで試せますが、
+初めて YAML とネットワークの関係を学ぶなら、上の Ubuntu Server VM の手順の方が
+確認しやすく安全です。USB に設定を保存するディスクレス mini PC の手順は
+[ディスクレス mini PC](./tutorials/diskless-minipc-walkthrough.md) を参照してください。
 
 ## アンインストール
 
-リリースアーカイブには `uninstall.sh` も含まれます。
-既定では、実行ファイル、サービステンプレート、実行時ファイルを削除し、
-設定と状態は残します。
+リリースアーカイブの `uninstall.sh` は、既定では実行ファイルとサービス定義を
+削除し、設定と状態は残します。
 
 ```sh
 sudo ./uninstall.sh --yes
 ```
 
-削除範囲を広げる場合は、明示的に指定します。
+設定や状態まで削除する操作は、内容をバックアップしてから明示的なオプションで
+行ってください。先に `--dry-run` で削除予定を確認できます。
 
-```sh
-sudo ./uninstall.sh --yes --purge-config
-sudo ./uninstall.sh --yes --purge-state
-sudo ./uninstall.sh --yes --all
-```
+## Ubuntu 以外の対応範囲
 
-`--dry-run` で削除内容だけ確認できます。
-
-## 開発者向けワークフロー
-
-Makefile は開発用です。
-テスト、ビルド、スキーマ生成、設定例の検証、Web サイトのビルド、
-リリースアーカイブの作成に使います。
-
-```sh
-make test
-make check-schema
-make validate-example
-make website-build
-make dist ROUTERD_OS=linux GOARCH=amd64 VERSION="$(git describe --tags --abbrev=0)"
-```
-
-利用者向けの導入経路としては Makefile を使いません。
-標準の配置方法は、リリースアーカイブと `install.sh` です。
+FreeBSD と NixOS には、導入場所やサービス管理の土台があります。しかし、
+Ubuntu と同じネットワーク設定の生成が使えることを意味しません。
+[対応プラットフォーム](./platforms.md) を確認し、最初の学習には Ubuntu Server を
+使ってください。
