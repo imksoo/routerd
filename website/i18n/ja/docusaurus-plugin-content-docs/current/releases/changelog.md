@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260820.0052
+
 ### 変更
 
 - Cloud SAM は各 BGP Pool を単一の型付き

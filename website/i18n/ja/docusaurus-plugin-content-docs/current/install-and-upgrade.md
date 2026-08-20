@@ -19,8 +19,8 @@ title: インストールとアップグレード
 Linux amd64:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260808.1741/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260808.1741/routerd-linux-amd64.tar.gz.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260820.0052/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260820.0052/routerd-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-linux-amd64.tar.gz.sha256
 tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
@@ -31,8 +31,8 @@ Linux arm64 では `linux-arm64` アーカイブを使います。
 FreeBSD amd64:
 
 ```sh
-fetch https://github.com/imksoo/routerd/releases/download/v20260808.1741/routerd-freebsd-amd64.tar.gz
-fetch https://github.com/imksoo/routerd/releases/download/v20260808.1741/routerd-freebsd-amd64.tar.gz.sha256
+fetch https://github.com/imksoo/routerd/releases/download/v20260820.0052/routerd-freebsd-amd64.tar.gz
+fetch https://github.com/imksoo/routerd/releases/download/v20260820.0052/routerd-freebsd-amd64.tar.gz.sha256
 cat routerd-freebsd-amd64.tar.gz.sha256
 sha256 routerd-freebsd-amd64.tar.gz
 tar -xzf routerd-freebsd-amd64.tar.gz
@@ -55,8 +55,8 @@ native nDPI によるアプリケーション識別が必要なホストでは�
 同じインストール処理の中で明示的に適用します。
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260808.1741/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260808.1741/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260820.0052/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260820.0052/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
 sudo ./install.sh --with-ndpi \
   --with-ndpi-archive ./routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
@@ -137,8 +137,8 @@ sudo なしで `routerctl get status` を使えるようにする手順:
 リリースページでは、Ubuntu ベースの起動可能なライブ ISO も公開します。
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260808.1741/routerd-live.iso
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260808.1741/routerd-live.iso.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260820.0052/routerd-live.iso
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260820.0052/routerd-live.iso.sha256
 sha256sum -c routerd-live.iso.sha256
 ```
 

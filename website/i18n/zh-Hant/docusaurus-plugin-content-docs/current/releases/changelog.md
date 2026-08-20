@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260820.0052
+
 ### 變更
 
 - Cloud SAM 現在透過單一型別化的 `PoolRuntimeSnapshot` → `PoolPlan` 管線評估每個

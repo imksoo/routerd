@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260820.0052
+
 ### Changed
 
 - Cloud SAM now evaluates each BGP pool through one typed
