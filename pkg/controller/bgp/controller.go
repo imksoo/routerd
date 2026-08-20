@@ -2124,6 +2124,119 @@ func (c *Controller) mobilityFIBVerdicts() []dynamicconfig.FIBVerdict {
 	return filtered
 }
 
+// samTransportTransitScopes derives the RR forwarding authority from the raw
+// transport-generated BGPPeer resource. It deliberately does not use the
+// effective peer policy: router defaults can widen that policy with unrelated
+// dynamic export prefixes. A malformed or manually authored peer contributes
+// no authority, leaving mobility-tagged paths fail-closed.
+func (c *Controller) samTransportTransitScopes() []mobilityfib.TransitScope {
+	if c.Router == nil {
+		return nil
+	}
+	profiles := map[string]routerapi.SAMTransportProfileSpec{}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != routerapi.MobilityAPIVersion || resource.Kind != "SAMTransportProfile" {
+			continue
+		}
+		spec, err := resource.SAMTransportProfileSpec()
+		if err == nil {
+			profiles[resource.Metadata.Name] = spec
+		}
+	}
+	routers := c.bgpRouters()
+	if len(routers) != 1 {
+		return nil
+	}
+	routerName := strings.TrimSpace(routers[0].Metadata.Name)
+	var out []mobilityfib.TransitScope
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != routerapi.NetAPIVersion || resource.Kind != "BGPPeer" {
+			continue
+		}
+		profileName, selfNode, peerNode, ok := samTransportPeerProvenance(resource)
+		if !ok {
+			continue
+		}
+		profile, ok := profiles[profileName]
+		if !ok || strings.TrimSpace(profile.SelfNodeRef) != selfNode {
+			continue
+		}
+		spec, err := resource.BGPPeerSpec()
+		if err != nil || !spec.RouteReflectorClient || strings.TrimSpace(profile.BGP.RouterRef) != strings.TrimSpace(spec.RouterRef) {
+			continue
+		}
+		_, targetRouter, routerRefOK := strings.Cut(strings.TrimSpace(spec.RouterRef), "/")
+		if !routerRefOK || targetRouter != routerName {
+			continue
+		}
+		expectedIdentity := bgpstate.MobilityNodeIdentityCommunity(peerNode)
+		if expectedIdentity == "" || !bgpstate.HasCommunity(spec.ImportPolicy.RequiredCommunities, expectedIdentity) {
+			continue
+		}
+		prefixes, ok := exactIPv4TransitPrefixes(spec.ImportPolicy)
+		if !ok {
+			continue
+		}
+		peers := make([]netip.Addr, 0, len(spec.Peers))
+		for _, rawPeer := range spec.Peers {
+			peer, err := netip.ParseAddr(strings.TrimSpace(rawPeer))
+			if err != nil || !peer.Is4() {
+				peers = nil
+				break
+			}
+			peers = append(peers, peer.Unmap())
+		}
+		if len(peers) == 0 {
+			continue
+		}
+		for _, peer := range peers {
+			for _, prefix := range prefixes {
+				out = append(out, mobilityfib.TransitScope{
+					Prefix:               prefix,
+					Neighbor:             peer,
+					RequiredCommunities:  append([]string(nil), spec.ImportPolicy.RequiredCommunities...),
+					ForbiddenCommunities: append([]string(nil), spec.ImportPolicy.ForbiddenCommunities...),
+				})
+			}
+		}
+	}
+	return out
+}
+
+func samTransportPeerProvenance(resource routerapi.Resource) (profileName, selfNode, peerNode string, ok bool) {
+	profileName = strings.TrimSpace(resource.Metadata.Annotations["mobility.routerd.net/transport-profile"])
+	selfNode = strings.TrimSpace(resource.Metadata.Annotations["mobility.routerd.net/self-node"])
+	peerNode = strings.TrimSpace(resource.Metadata.Annotations["mobility.routerd.net/peer-node"])
+	if profileName == "" || selfNode == "" || peerNode == "" || selfNode == peerNode {
+		return "", "", "", false
+	}
+	for _, owner := range resource.Metadata.OwnerRefs {
+		if owner.APIVersion == routerapi.MobilityAPIVersion && owner.Kind == "SAMTransportProfile" && strings.TrimSpace(owner.Name) == profileName {
+			return profileName, selfNode, peerNode, true
+		}
+	}
+	return "", "", "", false
+}
+
+func exactIPv4TransitPrefixes(policy routerapi.BGPImportPolicySpec) ([]netip.Prefix, bool) {
+	if policy.AllowedPrefixLengthMin != 32 || policy.AllowedPrefixLengthMax != 32 {
+		return nil, false
+	}
+	values := stringutil.UniqueTrimmedSorted(policy.AllowedPrefixes)
+	if len(values) == 0 {
+		return nil, false
+	}
+	out := make([]netip.Prefix, 0, len(values))
+	for _, value := range values {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil || !prefix.Addr().Is4() {
+			return nil, false
+		}
+		out = append(out, prefix.Masked())
+	}
+	return out, true
+}
+
 func mobilityFIBScopePrefix(verdicts []dynamicconfig.FIBVerdict) string {
 	for _, verdict := range verdicts {
 		if verdict.Scope != nil {
@@ -2139,11 +2252,12 @@ func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []a
 	livenessMarkers := map[string]string{}
 	fibNextHopRewritePeers := peerAddressFIBRewritePeers(desired)
 	mobilityVerdicts := c.mobilityFIBVerdicts()
-	fibPolicy := mobilityfib.NewSnapshotFromVerdicts(mobilityVerdicts)
 	claimAdmission := c.samDynamicClaimAdmission()
 	if !routerHasBGPDynamicPeer(c.Router) {
 		claimAdmission = samDynamicClaimAdmission{}
 	}
+	transitScopes := c.samTransportTransitScopes()
+	fibPolicy := mobilityfib.NewSnapshotFromVerdictsAndTransit(mobilityVerdicts, transitScopes)
 	admissionTracker := newDynamicRouteAdmissionTracker(claimAdmission)
 	var dynamicPeers []dynamicPeerObservation
 	if err := c.Server.ListPeer(ctx, &gobgpapi.ListPeerRequest{EnableAdvertised: true}, func(peer *gobgpapi.Peer) {
@@ -2159,7 +2273,8 @@ func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []a
 			state.Prefixes = append(state.Prefixes, statePrefixes(dst)...)
 			mergeStringMap(livenessMarkers, mobilityLivenessMarkersFromDestination(dst))
 			routes = append(routes, fibRoutesFromDestination(dst, allowedImportPrefixes, fibNextHopRewritePeers, func(prefix netip.Prefix, identityAddress, _ string, communities []string) bool {
-				if !fibPolicy.AdmitBGPPath(prefix, communities) {
+				neighbor, _ := netip.ParseAddr(strings.TrimSpace(identityAddress))
+				if !fibPolicy.AdmitBGPPathFrom(prefix, neighbor, communities) {
 					admissionTracker.Reject(identityAddress, prefix, "mobility-fib-policy")
 					return false
 				}

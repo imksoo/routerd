@@ -428,6 +428,16 @@ the generated RR session. A compromised leaf can still advertise a pool-local
 authorization signal beyond this route filter. Edge routers can leave the RR
 fields unset and use ordinary iBGP sessions.
 
+When a static RR intentionally has no local `MobilityPool`, its generated
+RR-client peers also provide the typed transit FIB authority. Set
+`spec.bgp.importPolicy.allowedPrefixes` explicitly to each mobility prefix and
+set both prefix-length bounds to `32`; validation rejects an unbounded no-pool
+RR. routerd then installs only an exact
+owner/return mobility `/32` received from that generated peer, with the
+peer's required/forbidden node-identity communities. A generic `BGPRouter`
+import policy is not used as transit authority, and an RR must not add a
+placeholder `MobilityPool` merely to forward leaf-owned routes.
+
 Peer removal replaces the profile's generated `DynamicConfigPart` with the new
 resource set. Profile deletion replaces the old part with an empty active part,
 so effective config drops generated tunnel, BGP peer, and endpoint route

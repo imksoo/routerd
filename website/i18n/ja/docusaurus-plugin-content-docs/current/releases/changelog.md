@@ -11,6 +11,18 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- `MobilityPool` を意図的に置かない static direct-IPIP route reflector が、
+  transport 所有の RR-client peer scope（明示 prefix、exact `/32`、peer
+  neighbor、node-identity community）を通してのみ remote mobility `/32` を
+  FIB に入れるようにしました。この profile では IPv4 mobility prefix と
+  `/32` bounds を `spec.bgp.importPolicy` に明示する必要があり、unbounded
+  no-pool RR は control plane を正常と表示したまま FIB route を落とすのでは
+  なく validation で拒否されます。unscoped mobility route を再び許可せずに
+  RR transit を復旧します。Proxy-ARP の local capture intent は
+  tunnel-to-capture forwarding path も直接出力します。
+
 ## v20260820.0052
 
 ### 変更

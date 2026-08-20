@@ -234,9 +234,16 @@ func (h samHeldCapture) matchesProxyNeighbor(applied samAppliedProxyNeighbor) bo
 }
 
 func (h samHeldCapture) matchesForwardPath(applied samAppliedForwardPath) bool {
-	return h.captureType == "provider-secondary-ip" && h.id == applied.ID && h.poolRef == applied.PoolRef &&
+	wantKind := ""
+	switch h.captureType {
+	case "provider-secondary-ip":
+		wantKind = "forward-path"
+	case "proxy-arp":
+		wantKind = "forward-local-path"
+	}
+	return wantKind != "" && h.id == applied.ID && h.poolRef == applied.PoolRef &&
 		h.poolPrefix == applied.PoolPrefix && h.address == applied.Address && h.captureInterface == applied.Interface &&
-		applied.Kind == "forward-path" && h.tunnels[applied.PeerInterface]
+		applied.Kind == wantKind && h.tunnels[applied.PeerInterface]
 }
 
 func samHeldCaptures(intents []dynamicconfig.LocalCaptureIntent) (map[string]samHeldCapture, map[string]bool, error) {
@@ -464,7 +471,7 @@ func validateSAMAppliedProxyNeighbor(neighbor samAppliedProxyNeighbor) error {
 }
 
 func validateSAMAppliedForwardPath(path samAppliedForwardPath) error {
-	if path.Kind != "forward-path" {
+	if path.Kind != "forward-path" && path.Kind != "forward-local-path" {
 		return fmt.Errorf("unsupported applied forward-path kind %q", path.Kind)
 	}
 	if err := validateSAMAppliedLedgerScope(path.ID, path.PoolRef, path.PoolPrefix, path.Address); err != nil {
@@ -533,7 +540,7 @@ func samForwardPathKey(path samAppliedForwardPath) string {
 func reconciledSAMForwardPaths(actions []sam.CaptureAction, held []samAppliedForwardPath) []sam.CaptureAction {
 	byKey := map[string]sam.CaptureAction{}
 	for _, action := range actions {
-		if action.Kind != "forward-path" {
+		if action.Kind != "forward-path" && action.Kind != "forward-local-path" {
 			continue
 		}
 		path := samAppliedForwardPath{ID: action.IntentID, PoolRef: action.PoolRef, PoolPrefix: action.PoolPrefix, Kind: action.Kind, Address: action.Address, Interface: action.Interface, PeerInterface: action.PeerInterface}

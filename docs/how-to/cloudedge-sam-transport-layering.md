@@ -147,6 +147,12 @@ spec:
     # Set these only on route-reflector core routers.
     routeReflectorClient: true
     routeReflectorClusterID: 192.168.1.38
+    # A transit RR without a local MobilityPool must state its mobility /32
+    # boundary here; generic BGPRouter import policy is not transit authority.
+    importPolicy:
+      allowedPrefixes: [192.168.123.0/24]
+      allowedPrefixLengthMin: 32
+      allowedPrefixLengthMax: 32
   peersFrom:
     - resource: SAMNodeSet/lab-nodes
       nodeRefs: [k8s-rt]
@@ -156,6 +162,15 @@ spec:
 identity and endpoint registry in `SAMNodeSet`; use `nodeRefs` only to select
 which non-self nodes become transport peers. Omitting `nodeRefs` selects every
 non-self node with a `samEndpoint`.
+
+A static RR that does not run `MobilityPool` planning still needs a narrow FIB
+authority for leaf-owned routes. The generated RR-client `BGPPeer` derives that
+authority from this profile's explicit `/32` import policy plus peer identity;
+it does not fall back to the global BGP policy, and validation rejects this RR
+role if that explicit policy is absent. Do not create a no-capture
+placeholder pool for this role. Use one shared full `SAMNodeSet` on RR and leaf
+profiles with `nodeRefs` to select hub-spoke adjacency, or use `pair-stable`
+and verify the derived `/31` peer addresses before cutover.
 
 The controller writes one `DynamicConfigPart` per profile and self node. Peer
 removal replaces that part with the new generated resource set. Profile deletion

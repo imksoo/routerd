@@ -80,6 +80,24 @@ func TestValidateSAMTransportProfile(t *testing.T) {
 	}
 }
 
+func TestValidateSAMTransportRRWithoutPoolRequiresExplicitTransitScope(t *testing.T) {
+	spec := validSAMTransportProfileSpec()
+	spec.BGP.RouteReflectorClient = true
+	err := Validate(samTransportProfileRouter(spec))
+	if err == nil || !strings.Contains(err.Error(), "spec.bgp.importPolicy.allowedPrefixes is required") {
+		t.Fatalf("Validate no-pool RR = %v, want explicit transit prefix error", err)
+	}
+
+	spec.BGP.ImportPolicy = api.BGPImportPolicySpec{
+		AllowedPrefixes:        []string{"10.77.60.11/24"},
+		AllowedPrefixLengthMin: 32,
+		AllowedPrefixLengthMax: 32,
+	}
+	if err := Validate(samTransportProfileRouter(spec)); err != nil {
+		t.Fatalf("Validate scoped no-pool RR: %v", err)
+	}
+}
+
 func TestValidateSAMTransportProfileRejectsInvalidFields(t *testing.T) {
 	cases := []struct {
 		name string

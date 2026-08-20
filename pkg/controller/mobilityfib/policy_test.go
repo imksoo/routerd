@@ -124,6 +124,55 @@ func TestSnapshotRejectsUnscopedMobilityData(t *testing.T) {
 	}
 }
 
+func TestSnapshotAdmitsOnlyTypedTransitMobilityPath(t *testing.T) {
+	identity := bgpstate.MobilityNodeIdentityCommunity("pve-rt-06")
+	otherIdentity := bgpstate.MobilityNodeIdentityCommunity("pve-rt-07")
+	snapshot := NewSnapshotFromVerdictsAndTransit(nil, []TransitScope{{
+		Prefix:               netip.MustParsePrefix("192.168.123.0/24"),
+		Neighbor:             netip.MustParseAddr("10.255.1.72"),
+		RequiredCommunities:  []string{identity},
+		ForbiddenCommunities: []string{otherIdentity},
+	}})
+	prefix := netip.MustParsePrefix("192.168.123.111/32")
+	communities := []string{communityMobilityOwner, identity}
+	if !snapshot.AdmitBGPPathFrom(prefix, netip.MustParseAddr("10.255.1.72"), communities) {
+		t.Fatal("typed RR transit path was rejected")
+	}
+	if !snapshot.AdmitBGPPathFrom(prefix, netip.MustParseAddr("10.255.1.72"), []string{communityMobilityReturnRoute, identity}) {
+		t.Fatal("typed RR transit return route was rejected")
+	}
+	for _, tt := range []struct {
+		name        string
+		prefix      netip.Prefix
+		neighbor    netip.Addr
+		communities []string
+	}{
+		{name: "wrong neighbor", prefix: prefix, neighbor: netip.MustParseAddr("10.255.1.73"), communities: communities},
+		{name: "missing identity", prefix: prefix, neighbor: netip.MustParseAddr("10.255.1.72"), communities: []string{communityMobilityOwner}},
+		{name: "forbidden identity", prefix: prefix, neighbor: netip.MustParseAddr("10.255.1.72"), communities: []string{communityMobilityOwner, identity, otherIdentity}},
+		{name: "ordinary route in transit prefix", prefix: prefix, neighbor: netip.MustParseAddr("10.255.1.72")},
+		{name: "aggregate", prefix: netip.MustParsePrefix("192.168.123.0/24"), neighbor: netip.MustParseAddr("10.255.1.72"), communities: communities},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if snapshot.AdmitBGPPathFrom(tt.prefix, tt.neighbor, tt.communities) {
+				t.Fatalf("transit path was admitted: prefix=%s neighbor=%s communities=%#v", tt.prefix, tt.neighbor, tt.communities)
+			}
+		})
+	}
+}
+
+func TestSnapshotLocalPoolScopeTakesPrecedenceOverTransit(t *testing.T) {
+	identity := bgpstate.MobilityNodeIdentityCommunity("pve-rt-06")
+	snapshot := NewSnapshotFromVerdictsAndTransit([]dynamicconfig.FIBVerdict{testScopeVerdict()}, []TransitScope{{
+		Prefix:              netip.MustParsePrefix("10.77.60.0/24"),
+		Neighbor:            netip.MustParseAddr("10.255.1.72"),
+		RequiredCommunities: []string{identity},
+	}})
+	if snapshot.AdmitBGPPathFrom(netip.MustParsePrefix("10.77.60.111/32"), netip.MustParseAddr("10.255.1.72"), []string{communityMobilityOwner, identity}) {
+		t.Fatal("transit scope bypassed the local pool's missing ownership verdict")
+	}
+}
+
 func TestSnapshotRejectsInvalidOrConflictingScope(t *testing.T) {
 	valid := testScopeVerdict()
 	conflict := testScopeVerdict()

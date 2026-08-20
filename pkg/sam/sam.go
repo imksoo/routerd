@@ -99,7 +99,7 @@ func PlanLocalCaptureIntents(intents []dynamicconfig.LocalCaptureIntent, targetO
 				return nil, fmt.Errorf("local capture intent %q captureInterface: %w", intentID, err)
 			}
 		}
-		if captureType == "provider-secondary-ip" && intent.Disposition != dynamicconfig.CaptureRelease {
+		if intent.Disposition != dynamicconfig.CaptureRelease {
 			if err := validateCaptureTunnelInterfaces(intent.TunnelInterfaces); err != nil {
 				return nil, fmt.Errorf("local capture intent %q tunnelInterfaces: %w", intentID, err)
 			}
@@ -128,6 +128,11 @@ func PlanLocalCaptureIntents(intents []dynamicconfig.LocalCaptureIntent, targetO
 				actions = append(actions, CaptureAction{Kind: "deassign-os-address", IntentID: intentID, PoolRef: intent.PoolRef, PoolPrefix: poolPrefix.String(), Address: address})
 			}
 			actions = append(actions, CaptureAction{Kind: "proxy-neighbor", IntentID: intentID, PoolRef: intent.PoolRef, PoolPrefix: poolPrefix.String(), Address: address, Interface: iface, GratuitousARP: intent.GratuitousARP})
+			for _, tunnel := range intent.TunnelInterfaces {
+				if tunnel = strings.TrimSpace(tunnel); tunnel != "" {
+					actions = append(actions, CaptureAction{Kind: "forward-local-path", IntentID: intentID, PoolRef: intent.PoolRef, PoolPrefix: poolPrefix.String(), Address: address, Interface: iface, PeerInterface: tunnel})
+				}
+			}
 		case "provider-secondary-ip":
 			actions = append(actions, CaptureAction{Kind: "deassign-os-address", IntentID: intentID, PoolRef: intent.PoolRef, PoolPrefix: poolPrefix.String(), Address: address})
 			actions = append(actions, CaptureAction{Kind: "proxy-neighbor", IntentID: intentID, PoolRef: intent.PoolRef, PoolPrefix: poolPrefix.String(), Address: address, Interface: iface, GratuitousARP: intent.GratuitousARP})

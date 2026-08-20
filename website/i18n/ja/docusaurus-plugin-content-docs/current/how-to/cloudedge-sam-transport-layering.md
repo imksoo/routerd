@@ -116,12 +116,20 @@ spec:
     # ルートリフレクターのコアルーターでのみ設定してください。
     routeReflectorClient: true
     routeReflectorClusterID: 192.168.1.38
+    # local MobilityPool を持たない transit RR は、mobility /32 の境界を
+    # ここで明示します。汎用 BGPRouter import policy は transit authority ではありません。
+    importPolicy:
+      allowedPrefixes: [192.168.123.0/24]
+      allowedPrefixLengthMin: 32
+      allowedPrefixLengthMax: 32
   peersFrom:
     - resource: SAMNodeSet/lab-nodes
       nodeRefs: [k8s-rt]
 ```
 
 `SAMTransportProfile` に直接 peer または topology のリストはありません。共有の identity と endpoint はすべて `SAMNodeSet` に置き、`nodeRefs` では transport peer にする非 self node だけを選択します。`nodeRefs` を省略すると、`samEndpoint` を持つすべての非 self node を選びます。
+
+`MobilityPool` planning を実行しない static RR にも、leaf 所有 route 用の狭い FIB authority が必要です。生成済み RR-client `BGPPeer` は、この profile の明示的な `/32` import policy と peer identity から authority を導出し、global BGP policy へは fallback しません。この明示 policy がない RR role は validation で拒否されます。この役割のために no-capture placeholder pool を作らないでください。RR と leaf profile は 1 つの完全な共有 `SAMNodeSet` を使い、`nodeRefs` で hub-spoke adjacency を選ぶか、`pair-stable` を使って derived `/31` peer address を cutover 前に確認してください。
 
 ## クリーンアップ
 

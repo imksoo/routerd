@@ -60,6 +60,30 @@ func TestPlanLocalCaptureIntentsLowersProviderCaptureDirectly(t *testing.T) {
 	}
 }
 
+func TestPlanLocalCaptureIntentsLowersProxyARPCaptureWithTunnelForwarding(t *testing.T) {
+	actions, err := PlanLocalCaptureIntents([]dynamicconfig.LocalCaptureIntent{{
+		ID: "svnet1/192.168.123.111", PoolRef: "svnet1", PoolPrefix: "192.168.123.0/24", Address: "192.168.123.111/32",
+		Disposition: dynamicconfig.CaptureDesired, CaptureType: "proxy-arp",
+		CaptureInterface: "ens19", TunnelInterfaces: []string{"samt-rr-a", "samt-rr-b"},
+	}}, platform.OSLinux)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !captureActionPresent(actions, "proxy-neighbor", "", "192.168.123.111/32", "ens19") ||
+		!captureActionPresent(actions, "forward-local-path", "", "192.168.123.111/32", "ens19") {
+		t.Fatalf("actions = %#v", actions)
+	}
+	var tunnels []string
+	for _, action := range actions {
+		if action.Kind == "forward-local-path" {
+			tunnels = append(tunnels, action.PeerInterface)
+		}
+	}
+	if len(tunnels) != 2 || tunnels[0] != "samt-rr-a" || tunnels[1] != "samt-rr-b" {
+		t.Fatalf("forward-local tunnels = %#v", tunnels)
+	}
+}
+
 func TestPlanLocalCaptureIntentsDoesNotApplyHeldCapture(t *testing.T) {
 	actions, err := PlanLocalCaptureIntents([]dynamicconfig.LocalCaptureIntent{{
 		ID: "cloud/10.88.60.9", PoolRef: "cloud", PoolPrefix: "10.88.60.0/24", Address: "10.88.60.9/32", Disposition: dynamicconfig.CaptureHold,
