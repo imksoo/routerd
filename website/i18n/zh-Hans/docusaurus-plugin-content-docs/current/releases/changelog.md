@@ -11,6 +11,16 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260821.0106
+
+### 修复
+
+- 使用经过验证的 Event Federation 的 SAM `onprem-l2` leaf，现在会在 CE 请求尚未解析的 ARP target
+  时共享短生命周期的观测事实。符合条件的 remote leaf 会通过现有的 `on-demand-arp` observer
+  对目标地址执行带有 rate limit 的 probe，因此不必等待完整的 proactive prefix scan 就能找到
+  quiet client。group、member、pool、prefix、scope、subject、expiry、source node 和 observer
+  readiness 检查会限制 fanout；不会延伸原始 L2 frame。
+
 ## v20260820.1911
 
 ### 变更

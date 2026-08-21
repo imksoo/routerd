@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260821.0106
+
 ### Fixed
 
 - SAM `onprem-l2` leaves with authenticated Event Federation now share a

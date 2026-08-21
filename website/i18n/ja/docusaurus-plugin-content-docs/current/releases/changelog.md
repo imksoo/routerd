@@ -11,6 +11,16 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260821.0106
+
+### 修正
+
+- 認証済み Event Federation を使う SAM `onprem-l2` leaf は、CE が未解決の ARP target を
+  要求したときに短命の観測事実を共有できるようになりました。条件に合う remote leaf は既存の
+  `on-demand-arp` observer を通して対象だけを rate-limit 付きで probe するため、quiet client
+  を全prefixのproactive scan完了前に発見できます。group、member、pool、prefix、scope、subject、
+  expiry、source node、observer readiness の検証で fanout を制限し、生のL2 frameは延伸しません。
+
 ## v20260820.1911
 
 ### 変更
