@@ -293,6 +293,11 @@ func TestSAMEnrollmentClientRefreshesDirectTopologyBeforeRRLeaseExpiry(t *testin
 	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-a", map[string]any{
 		"claimDigest": samEnrollmentClientClaimDigest(claim),
 		"lastSuccess": now.Add(-defaultSAMEnrollmentDirectTopologyRefresh).Format(time.RFC3339),
+		// A successful join normally schedules RR lease renewal much later than
+		// the direct refresh interval. That ordinary schedule must not be
+		// mistaken for a retry backoff and defer discovery of a newly joined
+		// direct peer until lease expiry.
+		"nextAttempt": expiresAt.Add(-defaultSAMEnrollmentRefreshBefore).Format(time.RFC3339),
 	}); err != nil {
 		t.Fatalf("SaveObjectStatus: %v", err)
 	}
