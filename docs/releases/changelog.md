@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260822.2333
+
 ### Fixed
 
 - `routerd-bgp` now bounds both its local control-socket drain and GoBGP stop

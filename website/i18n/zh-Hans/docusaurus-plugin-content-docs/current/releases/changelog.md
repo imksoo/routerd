@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260822.2333
+
 ### 修复
 
 - `routerd-bgp` 现在会限制 SIGTERM 时本地 control socket 的排空时间和 GoBGP 的停止

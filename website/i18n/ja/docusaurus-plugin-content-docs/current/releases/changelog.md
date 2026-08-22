@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260822.2333
+
 ### 修正
 
 - `routerd-bgp` は SIGTERM 時の local control socket drain と GoBGP 停止の両方に
