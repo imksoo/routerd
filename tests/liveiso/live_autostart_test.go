@@ -75,14 +75,17 @@ func TestLiveISOUsesSystemdFirstBootSetup(t *testing.T) {
 	for _, needle := range []string{
 		"routerd-live-setup.service",
 		"WantedBy=multi-user.target",
-		"systemctl enable routerd.service",
-		"systemctl start --no-block routerd.service",
 		"systemctl enable routerd-dns-resolver@lan-resolver.service",
 		"multi-user.target.wants/routerd-live-setup.service",
+		"multi-user.target.wants/routerd.service",
+		"Before=routerd.service",
 	} {
 		if !strings.Contains(script, needle) {
 			t.Fatalf("Ubuntu live ISO systemd setup missing %q", needle)
 		}
+	}
+	if strings.Contains(script, "systemctl enable routerd.service") || strings.Contains(script, "systemctl start --no-block routerd.service") {
+		t.Fatal("routerd must be enabled statically with the live setup ordering, not started dynamically from firstboot")
 	}
 }
 
@@ -158,11 +161,11 @@ func TestLiveISODisablesBootstrapDHCPBeforeRouterdStarts(t *testing.T) {
 
 	configIdx := strings.Index(script, "if ! restore_config_disk_config")
 	disableIdx := strings.Index(script, "\ndisable_bootstrap_dhcp\n")
-	startIdx := strings.Index(script, "systemctl start --no-block routerd.service")
-	if configIdx < 0 || disableIdx < 0 || startIdx < 0 {
-		t.Fatal("missing config restore, bootstrap DHCP teardown, or routerd start order marker")
+	setupIdx := strings.Index(script, "Before=routerd.service")
+	if configIdx < 0 || disableIdx < 0 || setupIdx < 0 {
+		t.Fatal("missing config restore, bootstrap DHCP teardown, or static routerd ordering marker")
 	}
-	if !(configIdx < disableIdx && disableIdx < startIdx) {
+	if !(configIdx < disableIdx && disableIdx < setupIdx) {
 		t.Fatal("bootstrap DHCP must be disabled after config restore and before routerd starts")
 	}
 }
