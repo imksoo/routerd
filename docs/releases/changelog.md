@@ -12,6 +12,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- BGP FIB selection now groups every streamed alternative for a prefix before
+  comparing path rank. A direct Cloud SAM path with higher `LOCAL_PREF` can no
+  longer be accidentally installed as equal-cost multipath with its lower-
+  preference RR fallback after a leaf recovers.
+
 ## v20260822.1210
 
 ### Fixed
