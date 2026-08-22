@@ -12,14 +12,22 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- BGP FIB synchronization now projects GoBGP's selected path set directly.
+  A Cloud SAM direct path selected over RR fallback paths can no longer be
+  widened back into ECMP by routerd's partial attribute comparison. GoBGP's
+  selected equal-cost multipaths remain installed together, and the existing
+  rank fallback remains only when the remaining admissible, non-stale
+  candidates have no selected path.
+
 ## v20260822.1308
 
 ### Fixed
 
-- BGP FIB selection now groups every streamed alternative for a prefix before
-  comparing path rank. A direct Cloud SAM path with higher `LOCAL_PREF` can no
-  longer be accidentally installed as equal-cost multipath with its lower-
-  preference RR fallback after a leaf recovers.
+- Updated the internal BGP FIB observation path used during Cloud SAM
+  direct-mesh recovery. The selected-path projection was completed in the
+  following maintenance release.
 
 ## v20260822.1210
 

@@ -4309,38 +4309,28 @@ func TestFIBRoutesFromDestinationChoosesHigherLocalPref(t *testing.T) {
 	}
 }
 
-func TestFIBRoutesFromDestinationsRanksSplitStreamPaths(t *testing.T) {
+func TestFIBRoutesFromDestinationUsesGoBGPSelectedECMPSet(t *testing.T) {
 	allowed := allowedImportPrefixesForTest(api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}})
-	tests := []struct {
-		name         string
-		destinations []*gobgpapi.Destination
-		want         []FIBRoute
-	}{
-		{
-			name: "higher local preference direct path wins",
-			destinations: []*gobgpapi.Destination{
-				testRankedDestination("10.77.60.12/32", rankedPath{nextHop: "10.255.0.211", localPref: 200}),
-				testRankedDestination("10.77.60.12/32", rankedPath{nextHop: "10.255.0.124", localPref: 100}),
-				testRankedDestination("10.77.60.12/32", rankedPath{nextHop: "10.255.0.238", localPref: 100}),
-			},
-			want: []FIBRoute{{Prefix: "10.77.60.12/32", NextHops: []string{"10.255.0.211"}}},
-		},
-		{
-			name: "equal rank paths remain ECMP",
-			destinations: []*gobgpapi.Destination{
-				testRankedDestination("10.77.60.12/32", rankedPath{nextHop: "10.255.0.124", localPref: 100}),
-				testRankedDestination("10.77.60.12/32", rankedPath{nextHop: "10.255.0.238", localPref: 100}),
-			},
-			want: []FIBRoute{{Prefix: "10.77.60.12/32", NextHops: []string{"10.255.0.124", "10.255.0.238"}}},
-		},
+	destination := testRankedDestination("10.77.60.12/32",
+		rankedPath{nextHop: "10.255.0.124", localPref: 100},
+		rankedPath{nextHop: "10.255.0.211", localPref: 100},
+		rankedPath{nextHop: "10.255.0.238", localPref: 100},
+	)
+	destination.Paths[1].Best = true
+
+	routes := fibRoutesFromDestination(destination, allowed, nil, nil)
+	want := []FIBRoute{{Prefix: "10.77.60.12/32", NextHops: []string{"10.255.0.211"}}}
+	if !reflect.DeepEqual(routes, want) {
+		t.Fatalf("routes = %#v, want selected direct path %#v", routes, want)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := fibRoutesFromDestinations(tt.destinations, allowed, nil, nil)
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("routes = %#v, want %#v", got, tt.want)
-			}
-		})
+
+	destination.Paths[1].Best = false
+	destination.Paths[0].Best = true
+	destination.Paths[2].Best = true
+	routes = fibRoutesFromDestination(destination, allowed, nil, nil)
+	want = []FIBRoute{{Prefix: "10.77.60.12/32", NextHops: []string{"10.255.0.124", "10.255.0.238"}}}
+	if !reflect.DeepEqual(routes, want) {
+		t.Fatalf("routes = %#v, want selected ECMP set %#v", routes, want)
 	}
 }
 
