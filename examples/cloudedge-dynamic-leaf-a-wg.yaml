@@ -75,7 +75,7 @@ spec:
             allowedPrefixes: [10.77.60.0/24]
             allowedPrefixLengthMin: 32
             allowedPrefixLengthMax: 32
-            nextHopRewrite: unchanged
+            nextHopRewrite: peer-address
           exportPolicy:
             allowedPrefixes: [10.77.60.31/32]
 

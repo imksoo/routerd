@@ -878,6 +878,9 @@ func validateSAMTransportProfile(router *api.Router, res api.Resource, spec api.
 		if spec.BGP.ImportPolicy.AllowedPrefixLengthMin != 32 || spec.BGP.ImportPolicy.AllowedPrefixLengthMax != 32 {
 			return fmt.Errorf("%s spec.bgp.importPolicy.allowedPrefixLengthMin and allowedPrefixLengthMax must both be 32 when a peersFrom source is direct", res.ID())
 		}
+		if strings.TrimSpace(spec.BGP.ImportPolicy.NextHopRewrite) == "unchanged" {
+			return fmt.Errorf("%s spec.bgp.importPolicy.nextHopRewrite must be peer-address when a peersFrom source is direct so RR-reflected routes use the reachable RR tunnel peer", res.ID())
+		}
 		directPreference := mobilityconfig.EffectiveSAMTransportDirectLocalPreference(spec.BGP.DirectLocalPreference)
 		rrPreference := spec.BGP.ImportPolicy.LocalPreference
 		if rrPreference >= directPreference {

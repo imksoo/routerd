@@ -55,6 +55,11 @@ reflector client。
 leaf 還只能通告其簽署 claim 中列出的 IPv4 `/32`；沒有、過期、不相容或不可達的 direct
 group 會被忽略，RR 路徑繼續工作。
 
+RR import 的 `nextHopRewrite` 請維持預設的 `peer-address`，或明確寫出該值。direct
+profile 不能使用 `unchanged`：RR 反射的路由可能來自另一台 leaf，但真正可達的下一跳是
+直接相連的 RR tunnel。驗證會拒絕 `unchanged`，以免 direct mesh 依賴無關的 transport
+prefix route；它只決定學到 route 後的轉送下一跳，不會改變是否接納 direct peer。
+
 ## dynamic RR sync fail-static
 
 RR 可以發布 `SAMPeerGroup`，leaf 透過 TCP 19652 取得缺失的 transport peer group。

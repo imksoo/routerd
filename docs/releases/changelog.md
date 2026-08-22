@@ -12,6 +12,15 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Generated Cloud SAM direct-leaf configurations now import reflected RR routes
+  through the reachable immediate RR peer (`nextHopRewrite: peer-address`). A
+  direct profile rejects the unsafe explicit `unchanged` setting instead of
+  letting its RR fallback depend on another leaf's transport address.
+- FIB selection no longer installs a lower-ranked remote path when GoBGP has
+  selected a local best path for the same prefix.
+
 ## v20260822.1014
 
 ### Fixed

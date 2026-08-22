@@ -351,8 +351,18 @@ convention:
 bgp:
   importPolicy:
     localPreference: 100 # RR peers
+    nextHopRewrite: peer-address
   directLocalPreference: 200 # direct peers; must be greater than RR
 ```
+
+For the RR import, leave `nextHopRewrite` unset (its default is
+`peer-address`) or set it explicitly as above. Do not use `unchanged` on a
+direct profile: an RR-reflected route may have been originated by a third leaf,
+but its reachable next hop is the immediately connected RR tunnel. Validation
+rejects `unchanged` here rather than allowing a direct mesh to depend on an
+unrelated transport-prefix route. It only chooses the forwarding next hop after
+a route is learned; it does not affect whether an optional direct peer is
+admitted.
 
 A missing, expired, incompatible, or unreachable direct group
 does not make the profile pending and never removes the RR-generated tunnel or

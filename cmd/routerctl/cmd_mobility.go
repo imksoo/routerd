@@ -665,8 +665,12 @@ func mobilityGeneratedLeafConfig(opts mobilityLeafConfigOptions) (*api.Router, e
 						AllowedPrefixes:        []string{strings.TrimSpace(opts.MobilityPrefix)},
 						AllowedPrefixLengthMin: 32,
 						AllowedPrefixLengthMax: 32,
-						NextHopRewrite:         "unchanged",
-						LocalPreference:        rrLocalPreference,
+						// An enrolled leaf reaches reflected routes through its
+						// immediately connected RR tunnel. Keeping an origin leaf's
+						// advertised router ID as the next hop would make a partial
+						// mesh depend on an unrelated inner-prefix aggregate.
+						NextHopRewrite:  "peer-address",
+						LocalPreference: rrLocalPreference,
 					},
 					ExportPolicy: api.BGPExportPolicySpec{AllowedPrefixes: []string{strings.TrimSpace(opts.OwnedAddress)}},
 				},

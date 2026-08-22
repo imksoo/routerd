@@ -11,6 +11,14 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- 產生的 Cloud SAM direct leaf 設定現在使用 `nextHopRewrite: peer-address`，讓 RR
+  反射 route 經由可達的直連 RR peer 轉送。direct profile 中明確設定的危險 `unchanged`
+  會被拒絕，不再讓 RR 備援依賴另一台 leaf 的 transport address。
+- 當 GoBGP 將本機 path 選為同一 prefix 的最佳 path 時，FIB 不再安裝優先權較低的遠端
+  path。
+
 ## v20260822.1014
 
 ### 修正

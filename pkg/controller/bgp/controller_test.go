@@ -4309,6 +4309,18 @@ func TestFIBRoutesFromDestinationChoosesHigherLocalPref(t *testing.T) {
 	}
 }
 
+func TestFIBRoutesFromDestinationDoesNotOverrideLocalBestPath(t *testing.T) {
+	dst := testRankedDestination("10.77.60.12/32",
+		rankedPath{nextHop: "0.0.0.0", localPref: 201},
+		rankedPath{nextHop: "10.255.0.2", localPref: 200},
+	)
+	dst.Paths[0].Best = true
+	routes := fibRoutesFromDestination(dst, allowedImportPrefixesForTest(api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}}), nil, nil)
+	if len(routes) != 0 {
+		t.Fatalf("routes = %#v, want no FIB route when GoBGP selected a local path", routes)
+	}
+}
+
 func TestFIBRoutesFromDestinationPrefersLiveRRPathOverStaleDirectMeshPath(t *testing.T) {
 	dst := testRankedDestination("10.77.60.12/32",
 		rankedPath{nextHop: "10.255.0.2", localPref: 200},
