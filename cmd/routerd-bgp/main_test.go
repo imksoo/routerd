@@ -31,6 +31,8 @@ type fakePathServer struct {
 	deleteErr         error
 	addStarted        chan struct{}
 	releaseAdd        <-chan struct{}
+	observed          []bgpdaemon.ObservedPath
+	observedErr       error
 }
 
 func (s *fakePathServer) AddPath(_ context.Context, req *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error) {
@@ -70,6 +72,13 @@ func (s *fakePathServer) SetPolicyAssignment(_ context.Context, req *gobgpapi.Se
 func (s *fakePathServer) ResetPeer(_ context.Context, req *gobgpapi.ResetPeerRequest) error {
 	s.resetRequests = append(s.resetRequests, req)
 	return nil
+}
+
+func (s *fakePathServer) ListObservedPaths(context.Context) ([]bgpdaemon.ObservedPath, error) {
+	if s.observedErr != nil {
+		return nil, s.observedErr
+	}
+	return append([]bgpdaemon.ObservedPath(nil), s.observed...), nil
 }
 
 func TestAppliedPoliciesRestoreNeighborScopedGlobalImportPolicy(t *testing.T) {
@@ -676,6 +685,67 @@ func TestControlPathAPISourceScopedMobilityUpsertAndDelete(t *testing.T) {
 	}
 	if len(applied.Advertisements) != 1 || applied.Advertisements[0] != "10.20.0.0/24" {
 		t.Fatalf("static advertisements changed: %#v", applied.Advertisements)
+	}
+}
+
+func TestControlObservedPathAPIReadsLiveRIBNotAppliedPathJournal(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "applied.json")
+	if err := bgpdaemon.WriteApplied(statePath, bgpdaemon.AppliedConfig{
+		Global: bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1", ListenPort: 179},
+		Paths: []bgpdaemon.AppliedPath{{
+			Source: "MobilityPool/demo/node/router-a",
+			Prefix: "10.77.60.11/32",
+		}},
+	}); err != nil {
+		t.Fatalf("write applied state: %v", err)
+	}
+	socketPath := filepath.Join(dir, "control.sock")
+	paths := &fakePathServer{observed: []bgpdaemon.ObservedPath{{
+		Prefix:      "10.77.60.11/32",
+		PeerAddress: "10.99.0.2",
+		Best:        true,
+		Valid:       true,
+		Communities: []string{"64512:100", "64512:121", "64512:22222"},
+	}}}
+	server, err := serveControlSocket(socketPath, statePath, paths)
+	if err != nil {
+		t.Fatalf("serve control socket: %v", err)
+	}
+	defer server.Shutdown(context.Background())
+	client := unixHTTPClient(socketPath)
+	defer client.CloseIdleConnections()
+
+	resp := doJSON(t, client, http.MethodGet, "/v1/observed-paths", nil)
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("GET /v1/observed-paths status = %d body=%s", resp.StatusCode, bytes.TrimSpace(data))
+	}
+	var got []bgpdaemon.ObservedPath
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		resp.Body.Close()
+		t.Fatalf("decode observed paths: %v", err)
+	}
+	resp.Body.Close()
+	if len(got) != 1 || got[0].PeerAddress != "10.99.0.2" || !got[0].Best || !got[0].Valid {
+		t.Fatalf("observed paths = %#v", got)
+	}
+
+	resp = doJSON(t, client, http.MethodGet, "/v1/paths", nil)
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("GET /v1/paths status = %d body=%s", resp.StatusCode, bytes.TrimSpace(data))
+	}
+	var applied []bgpdaemon.AppliedPath
+	if err := json.NewDecoder(resp.Body).Decode(&applied); err != nil {
+		resp.Body.Close()
+		t.Fatalf("decode applied paths: %v", err)
+	}
+	resp.Body.Close()
+	if len(applied) != 1 || applied[0].Source != "MobilityPool/demo/node/router-a" {
+		t.Fatalf("applied paths = %#v", applied)
 	}
 }
 

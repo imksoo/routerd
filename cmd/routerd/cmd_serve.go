@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -430,7 +431,16 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	if err != nil {
 		return err
 	}
-	defer stateStore.Close()
+	closeStateStore := true
+	defer func() {
+		// Bootstrap can still hold the store mutex after a stop request. The
+		// process is about to exit in this path, so leave descriptor cleanup to
+		// the OS instead of turning a cancelled bootstrap into a synchronous
+		// SQLite Close wait.
+		if closeStateStore {
+			_ = stateStore.Close()
+		}
+	}()
 	router, bootFallback, err := loadServeRouter(*configPath, stateStore)
 	if err != nil {
 		return err
@@ -498,6 +508,8 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	mutationGate := &sync.RWMutex{}
 	applyOpts.MutationGate = mutationGate
 	cache := &resultCache{}
+	applyMu := &sync.Mutex{}
+	var stopping atomic.Bool
 
 	signalCtx, cancelSignalCtx := context.WithCancel(context.Background())
 	defer cancelSignalCtx()
@@ -572,29 +584,48 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		_, err := runServeChainOnce(ctx, chainRunner, router, applyOpts, stateStore, stdout, logger)
 		return err
 	}
-	if err := chainRunner.Start(ctx); err != nil {
-		return err
-	}
+	// Start receiving stop signals before bootstrap.  A generated service-unit
+	// update can legitimately ask systemd to restart routerd while its next
+	// process is still bootstrapping; waiting until Start returns leaves that
+	// SIGTERM queued behind the bootstrap and eventually reaches systemd's much
+	// longer kill timeout.
+	controllerRuntimeStarted := make(chan struct{})
 	go func() {
 		sig, ok := <-signalCh
 		if !ok {
 			return
 		}
-		logger.Emit(eventlog.LevelInfo, "serve", "routerd daemon stopping", map[string]string{"signal": sig.String()})
-		if !*sandbox && *gracefulStopTimeout > 0 {
-			handoffCtx, handoffCancel := context.WithTimeout(context.Background(), *gracefulStopTimeout+5*time.Second)
-			err := runGracefulStopHandoff(handoffCtx, currentRouter(), stateStore, gracefulStopOptions{
-				Timeout:          *gracefulStopTimeout,
-				PollInterval:     time.Second,
-				BGPPaths:         bgpdaemon.NewControlClient(controllerOpts.BGPControlSocketPath),
-				ProviderAction:   provideractioncontroller.Controller{Bus: controllerBus, Runner: controllerOpts.ProviderActionRunner, DryRun: controllerOpts.DryRunProviderAction},
-				Logger:           logger,
-				ControllerLogger: controllerOpts.Logger,
-			})
-			handoffCancel()
-			if err != nil {
-				logger.Emit(eventlog.LevelWarning, "serve", "graceful mobility stop did not complete", map[string]string{"error": err.Error()})
+		stopping.Store(true)
+		select {
+		case <-controllerRuntimeStarted:
+			logger.Emit(eventlog.LevelInfo, "serve", "routerd daemon stopping", map[string]string{"signal": sig.String()})
+			// Serialize shutdown with any request that was already admitted. New
+			// requests see stopping=true and are rejected before they can enter.
+			applyMu.Lock()
+			// Fence the normal controller generation before applying its ephemeral
+			// ForceSelfDrain counterpart.  The BGP daemon is an independent unit,
+			// so it remains available to publish and observe the handoff.
+			cancelControllers()
+			if !*sandbox && *gracefulStopTimeout > 0 {
+				handoffCtx, handoffCancel := context.WithTimeout(context.Background(), *gracefulStopTimeout+5*time.Second)
+				err := runGracefulStopHandoffExclusive(handoffCtx, mutationGate, func(handoffCtx context.Context) error {
+					return runGracefulStopHandoff(handoffCtx, currentRouter(), stateStore, gracefulStopOptions{
+						Timeout:          *gracefulStopTimeout,
+						PollInterval:     time.Second,
+						BGPPaths:         bgpdaemon.NewControlClient(controllerOpts.BGPControlSocketPath),
+						ProviderAction:   provideractioncontroller.Controller{Bus: controllerBus, Runner: controllerOpts.ProviderActionRunner, DryRun: controllerOpts.DryRunProviderAction},
+						Logger:           logger,
+						ControllerLogger: controllerOpts.Logger,
+					})
+				})
+				handoffCancel()
+				if err != nil {
+					logger.Emit(eventlog.LevelWarning, "serve", "graceful mobility stop did not complete", map[string]string{"error": err.Error()})
+				}
 			}
+			applyMu.Unlock()
+		default:
+			logger.Emit(eventlog.LevelInfo, "serve", "routerd startup interrupted; stopping without graceful handoff", map[string]string{"signal": sig.String()})
 		}
 		closeStop()
 		cancelSignalCtx()
@@ -606,6 +637,14 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		default:
 		}
 	}()
+	runtimeStarted, err := startControllerRuntime(ctx, stop, chainRunner.Start, controllerRuntimeStarted)
+	if err != nil {
+		return err
+	}
+	if !runtimeStarted {
+		closeStateStore = false
+		return nil
+	}
 	mutator := serveConfigMutator{
 		configPath: *configPath,
 		statePath:  *statePath,
@@ -615,10 +654,11 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		getRouter:  currentRouter,
 		setRouter:  setCurrentRouter,
 		reload:     chainRunner.ReloadRuntime,
+		stopping:   stopping.Load,
 	}
-	applyMu := &sync.Mutex{}
+	mutationAdmission := serveMutationAdmission{mu: applyMu, stopping: &stopping}
 	if *applyInterval > 0 {
-		go runApplySchedule(ctx, stop, *applyInterval, currentRouter, func() *controllerchain.Runner { return chainRunner }, applyOpts, stateStore, cache, logger, applyMu)
+		go runApplySchedule(ctx, stop, *applyInterval, currentRouter, func() *controllerchain.Runner { return chainRunner }, applyOpts, stateStore, cache, logger, applyMu, &stopping)
 	}
 	if webConsoleResourcePresent(router) {
 		var webStore routerstate.Store
@@ -756,28 +796,43 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			return &result, nil
 		},
 		Apply: func(r *http.Request, req controlapi.ApplyRequest) (*controlapi.ApplyResult, error) {
-			applyMu.Lock()
-			defer applyMu.Unlock()
+			unlock, err := mutationAdmission.lock()
+			if err != nil {
+				return nil, err
+			}
+			defer unlock()
 			return mutator.apply(r, req)
 		},
 		Plan: func(r *http.Request, req controlapi.PlanRequest) (*controlapi.PlanResult, error) {
-			applyMu.Lock()
-			defer applyMu.Unlock()
+			unlock, err := mutationAdmission.lock()
+			if err != nil {
+				return nil, err
+			}
+			defer unlock()
 			return mutator.plan(r, req)
 		},
 		Delete: func(r *http.Request, req controlapi.DeleteRequest) (*controlapi.DeleteResult, error) {
-			applyMu.Lock()
-			defer applyMu.Unlock()
+			unlock, err := mutationAdmission.lock()
+			if err != nil {
+				return nil, err
+			}
+			defer unlock()
 			return mutator.delete(r, req)
 		},
 		Validate: func(r *http.Request, req controlapi.ValidateRequest) (*controlapi.ValidateResult, error) {
-			applyMu.Lock()
-			defer applyMu.Unlock()
+			unlock, err := mutationAdmission.lock()
+			if err != nil {
+				return nil, err
+			}
+			defer unlock()
 			return mutator.validate(r, req)
 		},
 		SubmitSAMEnrollmentClaim: func(r *http.Request, req controlapi.SAMEnrollmentClaimSubmitRequest) (*controlapi.SAMEnrollmentClaimSubmitResult, error) {
-			applyMu.Lock()
-			defer applyMu.Unlock()
+			unlock, err := mutationAdmission.lock()
+			if err != nil {
+				return nil, err
+			}
+			defer unlock()
 			result, err := submitSAMEnrollmentClaim(currentRouter(), stateStore, req, time.Now().UTC())
 			if err != nil {
 				return nil, err
@@ -798,8 +853,11 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			return result, nil
 		},
 		RevokeSAMEnrollmentClaim: func(r *http.Request, req controlapi.SAMEnrollmentClaimRevokeRequest) (*controlapi.SAMEnrollmentClaimRevokeResult, error) {
-			applyMu.Lock()
-			defer applyMu.Unlock()
+			unlock, err := mutationAdmission.lock()
+			if err != nil {
+				return nil, err
+			}
+			defer unlock()
 			result, err := revokeSAMEnrollmentClaim(currentRouter(), stateStore, req, time.Now().UTC())
 			if err != nil {
 				return nil, err
@@ -821,8 +879,11 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			return result, nil
 		},
 		GetSAMEnrollmentTopology: func(r *http.Request, req controlapi.SAMEnrollmentTopologyGetRequest) (*controlapi.SAMEnrollmentTopologyGetResult, error) {
-			applyMu.Lock()
-			defer applyMu.Unlock()
+			unlock, err := mutationAdmission.lock()
+			if err != nil {
+				return nil, err
+			}
+			defer unlock()
 			return getSAMEnrollmentTopologyForAcceptedClaim(currentRouter(), stateStore, req, time.Now().UTC())
 		},
 		SetLogLevel: func(r *http.Request, req controlapi.LogLevelRequest) (*controlapi.LogLevelResult, error) {
@@ -2285,7 +2346,76 @@ func containsString(values []string, needle string) bool {
 	return false
 }
 
-func runApplySchedule(ctx context.Context, stop <-chan struct{}, interval time.Duration, router func() *api.Router, runner func() *controllerchain.Runner, opts applyOptions, store *routerstate.SQLiteStore, cache *resultCache, logger *eventlog.Logger, applyMu *sync.Mutex) {
+// startControllerRuntime keeps a stop request ahead of synchronous bootstrap.
+// A controller start is normally quick, but systemd may request another
+// routerd restart while that bootstrap is applying a generated service unit.
+// In that case the serving process must return promptly rather than wait for a
+// bootstrap operation which will be cancelled with its parent context.
+func startControllerRuntime(ctx context.Context, stop <-chan struct{}, start func(context.Context) error, ready chan<- struct{}) (bool, error) {
+	if start == nil {
+		return false, errors.New("controller runtime start function is nil")
+	}
+	select {
+	case <-stop:
+		return false, nil
+	default:
+	}
+	started := make(chan error, 1)
+	go func() {
+		started <- start(ctx)
+	}()
+	select {
+	case err := <-started:
+		if err != nil {
+			select {
+			case <-stop:
+				return false, nil
+			default:
+			}
+			return false, err
+		}
+		if ready != nil {
+			close(ready)
+		}
+	case <-stop:
+		return false, nil
+	}
+	// A SIGTERM can race successful bootstrap.  In that case prefer the safe
+	// immediate stop over starting a second handoff after cancellation.
+	select {
+	case <-stop:
+		return false, nil
+	default:
+		return true, nil
+	}
+}
+
+var errServeMutationStopping = errors.New("routerd is stopping; configuration mutations are unavailable")
+
+// serveMutationAdmission rejects a request both before and after it waits for
+// the shared transaction lock. The second check closes the shutdown race where
+// a request was queued behind graceful-stop's exclusive mobility handoff.
+type serveMutationAdmission struct {
+	mu       *sync.Mutex
+	stopping *atomic.Bool
+}
+
+func (a serveMutationAdmission) lock() (func(), error) {
+	if a.stopping != nil && a.stopping.Load() {
+		return nil, errServeMutationStopping
+	}
+	if a.mu == nil {
+		return func() {}, nil
+	}
+	a.mu.Lock()
+	if a.stopping != nil && a.stopping.Load() {
+		a.mu.Unlock()
+		return nil, errServeMutationStopping
+	}
+	return a.mu.Unlock, nil
+}
+
+func runApplySchedule(ctx context.Context, stop <-chan struct{}, interval time.Duration, router func() *api.Router, runner func() *controllerchain.Runner, opts applyOptions, store *routerstate.SQLiteStore, cache *resultCache, logger *eventlog.Logger, applyMu *sync.Mutex, stopping *atomic.Bool) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -2293,7 +2423,14 @@ func runApplySchedule(ctx context.Context, stop <-chan struct{}, interval time.D
 		case <-stop:
 			return
 		case <-ticker.C:
+			if stopping != nil && stopping.Load() {
+				return
+			}
 			applyMu.Lock()
+			if stopping != nil && stopping.Load() {
+				applyMu.Unlock()
+				return
+			}
 			chainRunner := runner()
 			if chainRunner != nil {
 				chainRunner.Router = router()

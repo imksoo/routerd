@@ -11,6 +11,15 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- 當 `routerd serve` 仍在 bootstrap 時收到 systemd restart，現在會取消 bootstrap 並迅速結束，
+  不再讓 SIGTERM 一直擱置到 service manager 強制終止程序。正常的 MobilityPool graceful stop
+  會與正在執行的 controller generation 隔離。
+
+- Mobility graceful stop 現在從 GoBGP 的 live selected RIB 確認 peer 接手；不再把本機
+  `applied.json` dynamic-path journal 視為 remote peer 已發佈路由的證據。
+
 ## v20260822.1715
 
 ### 修正

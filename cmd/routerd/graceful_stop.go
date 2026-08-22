@@ -9,9 +9,11 @@ import (
 	"net/netip"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/bgpdaemon"
 	mobilitycontroller "github.com/imksoo/routerd/pkg/controller/mobility"
 	provideractioncontroller "github.com/imksoo/routerd/pkg/controller/provideraction"
@@ -21,10 +23,10 @@ import (
 )
 
 type gracefulStopTarget struct {
-	PoolName string
-	SelfNode string
-	Source   string
-	Prefixes []string
+	PoolName             string
+	Source               string
+	Prefixes             []string
+	SuccessorCommunities map[string]bool
 }
 
 type gracefulStopOptions struct {
@@ -34,6 +36,14 @@ type gracefulStopOptions struct {
 	ProviderAction   provideractioncontroller.Controller
 	Logger           *eventlog.Logger
 	ControllerLogger *slog.Logger
+}
+
+// gracefulStopObservedPathClient is deliberately separate from
+// mobilitycontroller.BGPPathClient.  ListPaths is the local applied-path
+// journal, whereas graceful handoff must prove that a peer route is present
+// in this router's live RIB.
+type gracefulStopObservedPathClient interface {
+	ListObservedPaths(context.Context) ([]bgpdaemon.ObservedPath, error)
 }
 
 func runGracefulStopHandoff(ctx context.Context, router *api.Router, store *routerstate.SQLiteStore, opts gracefulStopOptions) error {
@@ -48,8 +58,14 @@ func runGracefulStopHandoff(ctx context.Context, router *api.Router, store *rout
 		logGracefulStop(opts.Logger, eventlog.LevelInfo, "graceful stop found no mobility /32 paths to hand off", nil)
 		return nil
 	}
-	if !hasGracefulStopDrainablePool(router) {
-		return nil
+	targetPools := gracefulStopTargetPools(targets)
+	// Probe before mutating the local advertisement. During an in-place
+	// package upgrade routerd can briefly be newer than the already-running
+	// routerd-bgp helper. A missing read-only live-RIB endpoint must make this
+	// best-effort handoff a no-op, never leave a partial ForceSelfDrain behind.
+	observed, err := gracefulStopLiveRIB(ctx, opts.BGPPaths)
+	if err != nil {
+		return err
 	}
 	prepare := mobilitycontroller.Controller{
 		Router:                      router,
@@ -57,7 +73,8 @@ func runGracefulStopHandoff(ctx context.Context, router *api.Router, store *rout
 		BGPPaths:                    opts.BGPPaths,
 		StartedAt:                   time.Unix(0, 0).UTC(),
 		SuppressProviderDeprovision: true,
-		ForceSelfDrain:              true,
+		ForceSelfDrainPools:         targetPools,
+		ReconcilePools:              targetPools,
 	}
 	if err := prepare.Reconcile(ctx); err != nil {
 		return fmt.Errorf("prepare graceful mobility stop: %w", err)
@@ -65,15 +82,16 @@ func runGracefulStopHandoff(ctx context.Context, router *api.Router, store *rout
 	logGracefulStop(opts.Logger, eventlog.LevelInfo, "graceful stop notified mobility peers", map[string]string{"targets": fmt.Sprint(gracefulStopTargetCount(targets))})
 	waitCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
-	if err := waitForGracefulStopTakeover(waitCtx, opts.BGPPaths, targets, defaultGracefulStopPoll(opts.PollInterval)); err != nil {
+	if err := waitForGracefulStopTakeover(waitCtx, observed, targets, defaultGracefulStopPoll(opts.PollInterval)); err != nil {
 		return err
 	}
 	final := mobilitycontroller.Controller{
-		Router:         router,
-		Store:          store,
-		BGPPaths:       opts.BGPPaths,
-		StartedAt:      time.Unix(0, 0).UTC(),
-		ForceSelfDrain: true,
+		Router:              router,
+		Store:               store,
+		BGPPaths:            opts.BGPPaths,
+		StartedAt:           time.Unix(0, 0).UTC(),
+		ForceSelfDrainPools: targetPools,
+		ReconcilePools:      targetPools,
 	}
 	if err := final.Reconcile(ctx); err != nil {
 		return fmt.Errorf("finalize graceful mobility stop: %w", err)
@@ -89,6 +107,17 @@ func runGracefulStopHandoff(ctx context.Context, router *api.Router, store *rout
 	}
 	logGracefulStop(opts.Logger, eventlog.LevelInfo, "graceful stop completed mobility handoff", map[string]string{"targets": fmt.Sprint(gracefulStopTargetCount(targets))})
 	return nil
+}
+
+func gracefulStopLiveRIB(ctx context.Context, bgp mobilitycontroller.BGPPathClient) (gracefulStopObservedPathClient, error) {
+	observed, ok := bgp.(gracefulStopObservedPathClient)
+	if !ok {
+		return nil, fmt.Errorf("graceful mobility stop requires live BGP RIB observation")
+	}
+	if _, err := observed.ListObservedPaths(ctx); err != nil {
+		return nil, fmt.Errorf("probe live BGP RIB before graceful mobility stop: %w", err)
+	}
+	return observed, nil
 }
 
 func gracefulStopTargets(ctx context.Context, router *api.Router, bgp mobilitycontroller.BGPPathClient) ([]gracefulStopTarget, error) {
@@ -118,46 +147,78 @@ func gracefulStopTargets(ctx context.Context, router *api.Router, bgp mobilityco
 		if len(prefixes) == 0 {
 			continue
 		}
-		targets = append(targets, gracefulStopTarget{PoolName: res.Metadata.Name, SelfNode: selfNode, Source: source, Prefixes: prefixes})
+		successors, err := gracefulStopSuccessorCommunities(router, spec, selfNode)
+		if err != nil {
+			return nil, fmt.Errorf("resolve graceful stop successors for %s: %w", res.Metadata.Name, err)
+		}
+		if len(successors) == 0 {
+			// A target-scoped ForceSelfDrain leaves this singleton/drained pool
+			// untouched. Other pools with a real successor may still hand off.
+			continue
+		}
+		targets = append(targets, gracefulStopTarget{
+			PoolName:             res.Metadata.Name,
+			Source:               source,
+			Prefixes:             prefixes,
+			SuccessorCommunities: successors,
+		})
 	}
 	return targets, nil
 }
 
-func hasGracefulStopDrainablePool(router *api.Router) bool {
-	if router == nil {
-		return false
-	}
-	for i := range router.Spec.Resources {
-		res := &router.Spec.Resources[i]
-		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "MobilityPool" {
-			continue
-		}
-		spec, err := res.MobilityPoolSpec()
-		if err != nil {
-			continue
-		}
-		selfNode, err := api.EventGroupSelfNode(router, spec.GroupRef)
-		if err != nil {
-			continue
-		}
-		resolved, err := mobilityconfig.ResolveMobilityPoolMembers(router, spec)
-		if err != nil {
-			continue
-		}
-		for _, member := range resolved.Members {
-			if strings.TrimSpace(member.NodeRef) != strings.TrimSpace(selfNode) {
-				continue
-			}
-			if member.Placement.Group == "" {
-				continue
-			}
-			return true
+func gracefulStopTargetPools(targets []gracefulStopTarget) map[string]bool {
+	pools := make(map[string]bool, len(targets))
+	for _, target := range targets {
+		if name := strings.TrimSpace(target.PoolName); name != "" {
+			pools[name] = true
 		}
 	}
-	return false
+	return pools
 }
 
-func waitForGracefulStopTakeover(ctx context.Context, bgp mobilitycontroller.BGPPathClient, targets []gracefulStopTarget, poll time.Duration) error {
+// gracefulStopSuccessorCommunities limits handoff proof to members that can
+// actually replace self in this pool's placement group. The global RIB can
+// contain unrelated MobilityPool routes with a syntactically valid identity
+// community; those routes are never evidence that this pool has a successor.
+func gracefulStopSuccessorCommunities(router *api.Router, spec api.MobilityPoolSpec, selfNode string) (map[string]bool, error) {
+	resolved, err := mobilityconfig.ResolveMobilityPoolMembers(router, spec)
+	if err != nil {
+		return nil, err
+	}
+	identityNodes := make([]string, 0, len(resolved.Members))
+	for _, member := range resolved.Members {
+		identityNodes = append(identityNodes, strings.TrimSpace(member.NodeRef))
+	}
+	if collisions := bgpstate.MobilityNodeIdentityCollisions(identityNodes); len(collisions) > 0 {
+		return nil, fmt.Errorf("MobilityPool has ambiguous mobility identity community %s", collisions[0].Community)
+	}
+	selfNode = strings.TrimSpace(selfNode)
+	placementGroup := ""
+	for _, member := range resolved.Members {
+		if strings.TrimSpace(member.NodeRef) == selfNode {
+			placementGroup = strings.TrimSpace(member.Placement.Group)
+			break
+		}
+	}
+	if placementGroup == "" {
+		return nil, fmt.Errorf("self node %q has no placement group", selfNode)
+	}
+	successors := map[string]bool{}
+	for _, member := range resolved.Members {
+		if strings.TrimSpace(member.NodeRef) == selfNode || strings.TrimSpace(member.Placement.Group) != placementGroup {
+			continue
+		}
+		if member.Maintenance.Drain {
+			continue
+		}
+		if community := bgpstate.MobilityNodeIdentityCommunity(member.NodeRef); community != "" {
+			successors[community] = true
+		}
+	}
+	return successors, nil
+}
+
+func waitForGracefulStopTakeover(ctx context.Context, bgp gracefulStopObservedPathClient, targets []gracefulStopTarget, poll time.Duration) error {
 	for {
 		complete, err := gracefulStopTakeoverComplete(ctx, bgp, targets)
 		if err != nil {
@@ -176,24 +237,35 @@ func waitForGracefulStopTakeover(ctx context.Context, bgp mobilitycontroller.BGP
 	}
 }
 
-func gracefulStopTakeoverComplete(ctx context.Context, bgp mobilitycontroller.BGPPathClient, targets []gracefulStopTarget) (bool, error) {
-	paths, err := bgp.ListPaths(ctx, "")
+func gracefulStopTakeoverComplete(ctx context.Context, bgp gracefulStopObservedPathClient, targets []gracefulStopTarget) (bool, error) {
+	paths, err := bgp.ListObservedPaths(ctx)
 	if err != nil {
-		return false, fmt.Errorf("list BGP paths for graceful stop takeover: %w", err)
+		return false, fmt.Errorf("list live BGP RIB paths for graceful stop takeover: %w", err)
 	}
-	peerActive := map[string]bool{}
+	peerActive := map[string]map[string]bool{}
 	for _, path := range paths {
-		path = bgpdaemon.NormalizeAppliedPath(path)
-		if path.Source == "" || path.Prefix == "" || path.Attrs.LocalPref <= 200 {
+		prefix := normalizeGracefulStopPrefix(path.Prefix)
+		if prefix == "" || !path.Best || !path.Valid || path.Stale || strings.TrimSpace(path.PeerAddress) == "" ||
+			!bgpstate.HasCommunity(path.Communities, bgpstate.MobilityCommunityOwner) ||
+			!bgpstate.HasCommunity(path.Communities, bgpstate.MobilityCommunityActiveHolder) {
 			continue
 		}
-		peerActive[path.Source+"\x00"+path.Prefix] = true
+		for _, community := range path.Communities {
+			community = strings.TrimSpace(community)
+			if bgpstate.IsMobilityNodeIdentityCommunity(community) {
+				if peerActive[prefix] == nil {
+					peerActive[prefix] = map[string]bool{}
+				}
+				peerActive[prefix][community] = true
+			}
+		}
 	}
 	for _, target := range targets {
 		for _, prefix := range target.Prefixes {
+			active := peerActive[normalizeGracefulStopPrefix(prefix)]
 			found := false
-			for key := range peerActive {
-				if strings.HasSuffix(key, "\x00"+prefix) && !strings.HasPrefix(key, target.Source+"\x00") {
+			for community := range active {
+				if target.SuccessorCommunities[community] {
 					found = true
 					break
 				}
@@ -204,6 +276,42 @@ func gracefulStopTakeoverComplete(ctx context.Context, bgp mobilitycontroller.BG
 		}
 	}
 	return true, nil
+}
+
+func normalizeGracefulStopPrefix(value string) string {
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+	if err != nil {
+		return ""
+	}
+	return prefix.Masked().String()
+}
+
+// runGracefulStopHandoffExclusive keeps the ephemeral ForceSelfDrain plan
+// from racing the normal controller generation while shutdown is in progress.
+func runGracefulStopHandoffExclusive(ctx context.Context, gate *sync.RWMutex, handoff func(context.Context) error) error {
+	if handoff == nil {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("graceful mobility stop context ended before mutation fence: %w", err)
+	}
+	if gate == nil {
+		return handoff(ctx)
+	}
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for !gate.TryLock() {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("wait for controller mutation fence: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
+	defer gate.Unlock()
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("graceful mobility stop context ended after mutation fence: %w", err)
+	}
+	return handoff(ctx)
 }
 
 func withdrawGracefulStopSelfPaths(ctx context.Context, bgp mobilitycontroller.BGPPathClient, targets []gracefulStopTarget) error {

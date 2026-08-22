@@ -39,7 +39,7 @@ const (
 	// treat a node as the group's holder only when its owner /32 carries this
 	// community, so a standby's lower-preference make-before-break advertisement and
 	// a cold-start advertisement (neither active) are not mistaken for holdership.
-	bgpMobilityCommunityActiveHolder = "64512:121"
+	bgpMobilityCommunityActiveHolder = bgpstate.MobilityCommunityActiveHolder
 
 	bgpPathSigParam             = "mobilityPathSig"
 	bgpTrapLastSeenAtParam      = "mobilityTrapLastSeenAt"
@@ -87,8 +87,28 @@ type Controller struct {
 	// local provider to unassign until the caller has observed peer takeover.
 	SuppressProviderDeprovision bool
 	// ForceSelfDrain is an ephemeral handoff fact, not a MobilityPool config
-	// mutation. It drains only this controller's resolved local placement member.
+	// mutation. It drains every resolved local placement member when no scoped
+	// pool set is supplied.
 	ForceSelfDrain bool
+	// ForceSelfDrainPools narrows an ephemeral drain to named MobilityPools. A
+	// graceful restart uses this to avoid changing unrelated or singleton pools
+	// while handing off an owned /32 from another pool.
+	ForceSelfDrainPools map[string]bool
+	// ReconcilePools narrows an ephemeral reconcile to named MobilityPools.
+	// Sources for other pools are retained unchanged rather than treated as
+	// stale. It is used together with ForceSelfDrainPools during graceful stop.
+	ReconcilePools map[string]bool
+}
+
+func (c Controller) forceSelfDrainPool(name string) bool {
+	if len(c.ForceSelfDrainPools) > 0 {
+		return c.ForceSelfDrainPools[name]
+	}
+	return c.ForceSelfDrain
+}
+
+func (c Controller) reconcilesPool(name string) bool {
+	return len(c.ReconcilePools) == 0 || c.ReconcilePools[name]
 }
 
 func (c Controller) HandleEvent(ctx context.Context, _ daemonapi.DaemonEvent) error {
@@ -104,6 +124,12 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	retainPoolSources := map[string]bool{}
 	for _, res := range c.Router.Spec.Resources {
 		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "MobilityPool" {
+			continue
+		}
+		if !c.reconcilesPool(res.Metadata.Name) {
+			// A scoped graceful handoff must not infer that unrelated plan sources
+			// are stale merely because it intentionally skipped their reconcile.
+			retainPoolSources[res.Metadata.Name] = true
 			continue
 		}
 		spec, err := res.MobilityPoolSpec()

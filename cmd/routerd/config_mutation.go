@@ -31,9 +31,13 @@ type serveConfigMutator struct {
 	getRouter  func() *api.Router
 	setRouter  func(*api.Router)
 	reload     func(context.Context, *api.Router) error
+	stopping   func() bool
 }
 
 func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) (*controlapi.ApplyResult, error) {
+	if err := m.rejectIfStopping(); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(req.CandidateYAML) == "" {
 		return nil, fmt.Errorf("%w: apply requires candidateYaml", controlapi.ErrBadRequest)
 	}
@@ -51,6 +55,9 @@ func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) 
 		return &apiResult, nil
 	}
 	if req.NoReconcile {
+		if err := m.rejectIfStopping(); err != nil {
+			return nil, err
+		}
 		result, err := m.commitOnly(nextRouter, nextYAML)
 		if err != nil {
 			return nil, err
@@ -58,7 +65,10 @@ func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) 
 		apiResult := controlapi.NewApplyResult(result)
 		return &apiResult, nil
 	}
-	unlock := m.lockMutationTransaction()
+	unlock, err := m.lockMutationTransaction()
+	if err != nil {
+		return nil, err
+	}
 	defer unlock()
 	previous := m.getRouter()
 	if shapeChanged {
@@ -122,6 +132,9 @@ func (m serveConfigMutator) validate(r *http.Request, req controlapi.ValidateReq
 }
 
 func (m serveConfigMutator) delete(r *http.Request, req controlapi.DeleteRequest) (*controlapi.DeleteResult, error) {
+	if err := m.rejectIfStopping(); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(req.Target) == "" {
 		return nil, controlapi.ErrBadRequest
 	}
@@ -165,6 +178,9 @@ func (m serveConfigMutator) delete(r *http.Request, req controlapi.DeleteRequest
 		return &result, nil
 	}
 	if req.NoReconcile {
+		if err := m.rejectIfStopping(); err != nil {
+			return nil, err
+		}
 		committed, err := m.commitOnly(nextRouter, string(nextYAML))
 		if err != nil {
 			return nil, err
@@ -172,7 +188,10 @@ func (m serveConfigMutator) delete(r *http.Request, req controlapi.DeleteRequest
 		result.Result = committed
 		return &result, nil
 	}
-	unlock := m.lockMutationTransaction()
+	unlock, err := m.lockMutationTransaction()
+	if err != nil {
+		return nil, err
+	}
 	defer unlock()
 	previous := m.getRouter()
 	if shapeChanged {
@@ -302,6 +321,9 @@ func (m serveConfigMutator) planRouter(router *api.Router, configYAML string) (*
 }
 
 func (m serveConfigMutator) reconcile(router *api.Router, configYAML string) (*apply.Result, error) {
+	if err := m.rejectIfStopping(); err != nil {
+		return nil, err
+	}
 	if m.baseOpts.Sandbox {
 		committed, err := m.commitOnly(router, configYAML)
 		if err != nil {
@@ -328,21 +350,41 @@ func (m serveConfigMutator) reconcile(router *api.Router, configYAML string) (*a
 	return runApplyChainOnce(context.Background(), router, opts, io.Discard, m.logger)
 }
 
-func (m serveConfigMutator) lockMutationTransaction() func() {
+func (m serveConfigMutator) lockMutationTransaction() (func(), error) {
+	if err := m.rejectIfStopping(); err != nil {
+		return nil, err
+	}
 	if m.baseOpts.MutationGate == nil {
-		return func() {}
+		return func() {}, nil
 	}
 	m.baseOpts.MutationGate.Lock()
-	return m.baseOpts.MutationGate.Unlock
+	if err := m.rejectIfStopping(); err != nil {
+		m.baseOpts.MutationGate.Unlock()
+		return nil, err
+	}
+	return m.baseOpts.MutationGate.Unlock, nil
+}
+
+func (m serveConfigMutator) rejectIfStopping() error {
+	if m.stopping != nil && m.stopping() {
+		return errServeMutationStopping
+	}
+	return nil
 }
 
 func (m serveConfigMutator) reloadRuntime(router *api.Router) error {
+	if err := m.rejectIfStopping(); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	return m.reload(ctx, router)
 }
 
 func (m serveConfigMutator) commitOnly(router *api.Router, configYAML string) (*apply.Result, error) {
+	if err := m.rejectIfStopping(); err != nil {
+		return nil, err
+	}
 	store, err := routerstate.OpenSQLite(m.statePath)
 	if err != nil {
 		return nil, err

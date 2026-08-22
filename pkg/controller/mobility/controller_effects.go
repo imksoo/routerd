@@ -239,6 +239,13 @@ func (c Controller) deprovisionStaleMobilitySources(ctx context.Context, desired
 		if !ok || seen[record.Source] || retainPoolSources[parsed.PoolRef] {
 			continue
 		}
+		// A scoped graceful handoff intentionally reconciles only its target
+		// Pools. Keep an already-persisted source for every other Pool even
+		// when that Pool is absent from the current Router spec: this narrow
+		// controller invocation must not turn that absence into a withdrawal.
+		if len(c.ReconcilePools) > 0 && !c.reconcilesPool(parsed.PoolRef) {
+			continue
+		}
 		if !localNodes[parsed.NodeRef] {
 			continue
 		}

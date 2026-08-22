@@ -117,6 +117,14 @@ type policyPathServer interface {
 	ResetPeer(context.Context, *gobgpapi.ResetPeerRequest) error
 }
 
+// observedPathServer is intentionally separate from pathServer.  The control
+// API's /v1/paths endpoint is a serialized read-modify-write view of
+// applied.json; a live RIB observation must never be mistaken for that local
+// desired-path journal.
+type observedPathServer interface {
+	ListObservedPaths(context.Context) ([]bgpdaemon.ObservedPath, error)
+}
+
 // localPathServer keeps routerd's narrow protobuf-shaped path interface while
 // adapting GoBGP v4's in-process native path API. The remote controller uses
 // the same protobuf requests over gRPC.
@@ -169,6 +177,71 @@ func (s *localPathServer) DeletePath(_ context.Context, req *gobgpapi.DeletePath
 		}
 	}
 	return s.BgpServer.DeletePath(request)
+}
+
+// ListObservedPaths returns the live IPv4 unicast global RIB.  The response
+// keeps only the fields needed by routerd's control-plane safety checks; it is
+// never persisted and is not an alternate configuration API.
+func (s *localPathServer) ListObservedPaths(ctx context.Context) ([]bgpdaemon.ObservedPath, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var out []bgpdaemon.ObservedPath
+	var callbackErr error
+	err := s.BgpServer.ListPath(gobgpapiutil.ListPathRequest{
+		TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL,
+		Family:    gobgp.RF_IPv4_UC,
+	}, func(prefix gobgp.NLRI, paths []*gobgpapiutil.Path) {
+		if callbackErr != nil || ctx.Err() != nil {
+			callbackErr = ctx.Err()
+			return
+		}
+		for _, path := range paths {
+			if path == nil || path.Withdrawal {
+				continue
+			}
+			out = append(out, observedPath(prefix.String(), path))
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	if callbackErr != nil {
+		return nil, callbackErr
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Prefix != out[j].Prefix {
+			return out[i].Prefix < out[j].Prefix
+		}
+		if out[i].PeerAddress != out[j].PeerAddress {
+			return out[i].PeerAddress < out[j].PeerAddress
+		}
+		return out[i].Best && !out[j].Best
+	})
+	return out, nil
+}
+
+func observedPath(prefix string, path *gobgpapiutil.Path) bgpdaemon.ObservedPath {
+	out := bgpdaemon.ObservedPath{
+		Prefix:      strings.TrimSpace(prefix),
+		Best:        path.Best,
+		Valid:       !path.IsNexthopInvalid,
+		Stale:       path.Stale,
+		PeerAddress: path.PeerAddress.String(),
+	}
+	if !path.PeerAddress.IsValid() {
+		out.PeerAddress = ""
+	}
+	for _, attr := range path.Attrs {
+		switch value := attr.(type) {
+		case *gobgp.PathAttributeCommunities:
+			for _, community := range value.Value {
+				out.Communities = append(out.Communities, fmt.Sprintf("%d:%d", community>>16, community&0xffff))
+			}
+		}
+	}
+	out.Communities = stringutil.UniqueTrimmedSorted(out.Communities)
+	return out
 }
 
 func nativePath(path *gobgpapi.Path) (*gobgpapiutil.Path, error) {
@@ -305,6 +378,23 @@ func serveControlSocket(socketPath, statePath string, paths pathServer) (*http.S
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
+	})
+	mux.HandleFunc("/v1/observed-paths", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		observer, ok := paths.(observedPathServer)
+		if !ok {
+			http.Error(w, "live BGP RIB observation is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		observed, err := observer.ListObservedPaths(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, observed)
 	})
 	server := &http.Server{Handler: mux}
 	go func() {

@@ -353,6 +353,12 @@ SIGTERM/SIGINT, **wait up to this long for the mobility make-before-break
 handover**. `0` disables it. On a planned restart, the new holder establishes its
 advertisement before the old holder steps down, avoiding a dip.
 
+The handover check reads the live, selected GoBGP RIB; routerd's local
+`applied.json` path journal is not evidence that a peer has taken over. A stop
+received while routerd is still bootstrapping exits immediately instead of
+waiting for a handover that has not started. The peer-takeover polling phase of
+a normal handover uses the configured `graceful-stop-timeout`.
+
 ## Status fields
 
 `MobilityPool` status is a display projection, not a desired-state transport.

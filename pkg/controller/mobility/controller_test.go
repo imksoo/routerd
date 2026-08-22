@@ -4665,3 +4665,16 @@ func TestMobilityPoolStatusWritersUsePartialMerge(t *testing.T) {
 		t.Fatalf("mergeCalls=%d objectStatusCalls=%d, want partial merge without read-modify-write", store.mergeCalls, store.objectStatusCalls)
 	}
 }
+
+func TestControllerScopesEphemeralGracefulDrain(t *testing.T) {
+	controller := Controller{
+		ForceSelfDrainPools: map[string]bool{"handoff": true},
+		ReconcilePools:      map[string]bool{"handoff": true},
+	}
+	if !controller.forceSelfDrainPool("handoff") || controller.forceSelfDrainPool("singleton") {
+		t.Fatalf("force drain scope = %#v", controller.ForceSelfDrainPools)
+	}
+	if !controller.reconcilesPool("handoff") || controller.reconcilesPool("singleton") {
+		t.Fatalf("reconcile scope = %#v", controller.ReconcilePools)
+	}
+}
