@@ -2832,13 +2832,6 @@ func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []a
 	var state bgpstate.State
 	var routes []FIBRoute
 	livenessMarkers := map[string]string{}
-	// GoBGP's ListPath stream may split alternatives for one prefix across
-	// separate Destination responses. Keep those responses together until the
-	// complete stream has been read so FIB ranking sees the direct and RR
-	// alternatives at the same time. Ranking each fragment independently and
-	// merging the resulting routes would incorrectly turn unequal LOCAL_PREF
-	// paths into ECMP.
-	var fibDestinations []*gobgpapi.Destination
 	fibNextHopRewritePeers := peerAddressFIBRewritePeers(desired)
 	mobilityVerdicts := c.mobilityFIBVerdicts()
 	claimAdmission := c.samDynamicClaimAdmission()
@@ -2861,20 +2854,19 @@ func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []a
 		err := c.Server.ListPath(ctx, &gobgpapi.ListPathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Family: family}, func(dst *gobgpapi.Destination) {
 			state.Prefixes = append(state.Prefixes, statePrefixes(dst)...)
 			mergeStringMap(livenessMarkers, mobilityLivenessMarkersFromDestination(dst))
-			fibDestinations = append(fibDestinations, dst)
+			routes = append(routes, fibRoutesFromDestination(dst, allowedImportPrefixes, fibNextHopRewritePeers, func(prefix netip.Prefix, identityAddress, _ string, communities []string) bool {
+				neighbor, _ := netip.ParseAddr(strings.TrimSpace(identityAddress))
+				if !fibPolicy.AdmitBGPPathFrom(prefix, neighbor, communities) {
+					admissionTracker.Reject(identityAddress, prefix, "mobility-fib-policy")
+					return false
+				}
+				return admissionTracker.Admit(identityAddress, prefix)
+			})...)
 		})
 		if err != nil {
 			return bgpstate.State{}, nil, nil, err
 		}
 	}
-	routes = append(routes, fibRoutesFromDestinations(fibDestinations, allowedImportPrefixes, fibNextHopRewritePeers, func(prefix netip.Prefix, identityAddress, _ string, communities []string) bool {
-		neighbor, _ := netip.ParseAddr(strings.TrimSpace(identityAddress))
-		if !fibPolicy.AdmitBGPPathFrom(prefix, neighbor, communities) {
-			admissionTracker.Reject(identityAddress, prefix, "mobility-fib-policy")
-			return false
-		}
-		return admissionTracker.Admit(identityAddress, prefix)
-	})...)
 	routes = mergeFIBRoutes(routes)
 	// SAM transport inner prefixes are point-to-point tunnel addressing space.
 	// They are already owned by the tunnel interfaces, so a reflected aggregate
@@ -3670,43 +3662,6 @@ type bgpPathRank struct {
 	MED       uint32
 }
 
-// fibRoutesFromDestinations groups every streamed alternative for a prefix
-// before choosing kernel next hops. The GoBGP gRPC API is allowed to return
-// one prefix's paths in separate Destination messages; FIB selection must not
-// make an ECMP decision until all of those messages have been considered.
-func fibRoutesFromDestinations(destinations []*gobgpapi.Destination, allowed []allowedImportPrefix, peerAddressRewrite map[string]bool, admit func(netip.Prefix, string, string, []string) bool) []FIBRoute {
-	byPrefix := map[string][]*gobgpapi.Path{}
-	for _, destination := range destinations {
-		if destination == nil {
-			continue
-		}
-		destinationPrefix := normalizeRoutePrefix(destination.GetPrefix())
-		for _, path := range destination.GetPaths() {
-			if path == nil {
-				continue
-			}
-			prefix := destinationPrefix
-			if prefix == "" {
-				prefix = normalizeRoutePrefix(pathPrefix(path))
-			}
-			if prefix == "" {
-				continue
-			}
-			byPrefix[prefix] = append(byPrefix[prefix], path)
-		}
-	}
-	keys := make([]string, 0, len(byPrefix))
-	for prefix := range byPrefix {
-		keys = append(keys, prefix)
-	}
-	sort.Strings(keys)
-	out := make([]FIBRoute, 0, len(keys))
-	for _, prefix := range keys {
-		out = append(out, fibRoutesFromDestination(&gobgpapi.Destination{Prefix: prefix, Paths: byPrefix[prefix]}, allowed, peerAddressRewrite, admit)...)
-	}
-	return out
-}
-
 func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []allowedImportPrefix, peerAddressRewrite map[string]bool, admit func(netip.Prefix, string, string, []string) bool) []FIBRoute {
 	prefix := normalizeRoutePrefix(dst.GetPrefix())
 	type candidate struct {
@@ -3778,30 +3733,44 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []allowedImport
 	if len(liveCandidates) > 0 {
 		candidates = liveCandidates
 	}
-	bestRank := candidates[0].rank
-	bestSet := false
+	seen := map[string]bool{}
+	var nextHops []string
+	hasBest := false
 	for _, candidate := range candidates {
 		if candidate.best {
-			bestRank = candidate.rank
-			bestSet = true
+			hasBest = true
 			break
 		}
 	}
-	if !bestSet {
+	if hasBest {
+		// GoBGP has already performed the complete BGP best-path comparison.
+		// Its comparator has more inputs than bgpPathRank (for example
+		// local-vs-remote and eBGP-vs-iBGP), so selected paths are the
+		// authoritative ECMP set. Do not reintroduce an unselected path just
+		// because the subset of attributes used by the fallback rank ties.
+		for _, candidate := range candidates {
+			if !candidate.best || seen[candidate.nextHop] {
+				continue
+			}
+			seen[candidate.nextHop] = true
+			nextHops = append(nextHops, candidate.nextHop)
+		}
+	} else {
+		// Some incomplete or synthetic ListPath streams do not set Best. Keep a
+		// deterministic attribute-based fallback for those observations.
+		bestRank := candidates[0].rank
 		for _, candidate := range candidates[1:] {
 			if comparePathRank(candidate.rank, bestRank) > 0 {
 				bestRank = candidate.rank
 			}
 		}
-	}
-	seen := map[string]bool{}
-	var nextHops []string
-	for _, candidate := range candidates {
-		if comparePathRank(candidate.rank, bestRank) != 0 || seen[candidate.nextHop] {
-			continue
+		for _, candidate := range candidates {
+			if comparePathRank(candidate.rank, bestRank) != 0 || seen[candidate.nextHop] {
+				continue
+			}
+			seen[candidate.nextHop] = true
+			nextHops = append(nextHops, candidate.nextHop)
 		}
-		seen[candidate.nextHop] = true
-		nextHops = append(nextHops, candidate.nextHop)
 	}
 	sort.Strings(nextHops)
 	if len(nextHops) == 0 {

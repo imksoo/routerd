@@ -11,13 +11,19 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- BGP FIB 現在直接採用 GoBGP 已選取的 path 集合。Cloud SAM 的 direct path 被選為優於
+  RR 備援時，routerd 不會再因不完整的屬性比較把它擴大回 ECMP。GoBGP 選取的等價多路徑
+  仍會一同安裝；只有在 admission 與 stale 排除後剩餘候選沒有 selected path 時才使用原有的
+  優先權備援。
+
 ## v20260822.1308
 
 ### 修正
 
-- BGP FIB 現在會先彙整同一 prefix 在串流中到達的全部 path，再比較 path 的優先權。leaf 復原後，
-  不會再把 `LOCAL_PREF` 較高的 Cloud SAM direct path 與優先權較低的 RR 回退錯誤地作為
-  等價多路徑安裝。
+- 更新了 Cloud SAM direct-mesh leaf 復原時使用的內部 BGP FIB 觀測路徑。將 GoBGP 的
+  selected path 投影到 FIB 的修正將在下一次維護版本中完成。
 
 ## v20260822.1210
 

@@ -11,13 +11,20 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- BGP FIB は GoBGP が選択した path 集合をそのまま投影するようにしました。Cloud SAM の
+  direct path が RR fallback より選ばれた場合、routerd 側の不完全な属性比較によって
+  ECMP へ戻すことはありません。GoBGP が等コストとして選んだ複数 path は従来どおり
+  一緒に導入し、admission と stale 除外後の候補に selected path がない場合だけ、従来の
+  優先度 fallback を使います。
+
 ## v20260822.1308
 
 ### 修正
 
-- BGP FIB へ入れる経路は、同じ prefix に対してストリームで届くすべての経路候補を
-  先にまとめてから優先度を比較するようにしました。leaf 復帰後、`LOCAL_PREF` が高い
-  Cloud SAM direct 経路と低い RR fallback を誤って同一コストの multipath にしません。
+- Cloud SAM direct-mesh の leaf 復帰時に使う、内部 BGP FIB 観測経路を更新しました。
+  GoBGP の selected path を FIB へ投影する修正は次の保守リリースで完了します。
 
 ## v20260822.1210
 
