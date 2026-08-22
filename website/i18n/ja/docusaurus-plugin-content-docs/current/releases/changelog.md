@@ -11,6 +11,13 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- Ubuntu Live ISO では、`routerd.service` をイメージ内の最初の systemd 起動
+  transaction に含め、`routerd-live-setup.service` の完了後に起動するようにしました。
+  setup script から routerd を二度目に起動しないため、利用可能になった control socket が
+  一時的に消えることはありません。
+
 ## v20260822.1852
 
 ### 修正

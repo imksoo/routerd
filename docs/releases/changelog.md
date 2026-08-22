@@ -12,6 +12,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- The Ubuntu Live ISO now enables `routerd.service` in the image's initial
+  systemd boot transaction, ordered after `routerd-live-setup.service`.
+  It no longer starts routerd a second time from the setup script, which could
+  briefly remove the control sockets after they had become available.
+
 ## v20260822.1852
 
 ### Fixed

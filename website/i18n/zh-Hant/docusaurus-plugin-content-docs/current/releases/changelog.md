@@ -11,6 +11,12 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- Ubuntu Live ISO 現在會在映像檔的初始 systemd 啟動 transaction 中啟用
+  `routerd.service`，並確保它在 `routerd-live-setup.service` 完成後才啟動。不再由
+  setup script 第二次啟動 routerd，因此已可用的 control socket 不會短暫消失。
+
 ## v20260822.1852
 
 ### 修正
