@@ -11,13 +11,17 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- 舊 direct profile 即使明確使用 `nextHopRewrite: unchanged` 也能安全啟動；在更新 YAML 前，
+  其有效 RR import policy 會正規化為 `peer-address`，避免備援依賴另一台 leaf 的 transport address。
+
 ## v20260822.1116
 
 ### 修正
 
 - 產生的 Cloud SAM direct leaf 設定現在使用 `nextHopRewrite: peer-address`，讓 RR
-  反射 route 經由可達的直連 RR peer 轉送。舊 direct profile 中明確設定的 `unchanged`
-  會在啟動時安全地正規化為 `peer-address`，不再讓 RR 備援依賴另一台 leaf 的 transport address。
+  反射 route 經由可達的直連 RR peer 轉送。
 - 當 GoBGP 將本機 path 選為同一 prefix 的最佳 path 時，FIB 不再安裝優先權較低的遠端
   path。
 
