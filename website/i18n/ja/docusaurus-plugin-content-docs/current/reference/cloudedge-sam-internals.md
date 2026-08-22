@@ -301,6 +301,11 @@ BGP は **remote オーバーレイ到達性** を決めますが、ローカル
 設定です。`0` で無効化します。計画的な再起動で、新しいホルダーが広告を確立してから
 旧ホルダーが退くことで、瞬断を避けます。
 
+引き継ぎの確認には、実際に選択された GoBGP の live RIB を使います。routerd 自身の
+`applied.json` にあるローカル広告の記録は、相手 node が引き継いだ証拠にはなりません。
+bootstrap 中に停止を受けた場合は、まだ handover を始めていないため待たずに終了します。
+通常の handover で peer の引き継ぎを確認する待機には、設定した `graceful-stop-timeout` を使います。
+
 ## 状態（status）フィールド
 
 `MobilityPool` status は desired-state の配送路ではなく表示用 projection です。

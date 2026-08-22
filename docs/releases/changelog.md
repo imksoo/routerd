@@ -12,6 +12,17 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- A systemd restart received while `routerd serve` is bootstrapping now cancels
+  bootstrap and exits promptly instead of leaving SIGTERM pending until the
+  service manager kills the process. Normal MobilityPool graceful-stop work is
+  fenced from the running controller generation.
+
+- Mobility graceful stop now verifies a peer takeover from the live selected
+  GoBGP RIB. It no longer treats the local `applied.json` dynamic-path journal
+  as evidence of a remote peer advertisement.
+
 ## v20260822.1715
 
 ### Fixed

@@ -11,6 +11,17 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- `routerd serve` の bootstrap 中に systemd から restart を受けても、SIGTERM を保留して
+  service manager に強制終了されるのではなく、bootstrap を取り消して速やかに終了するように
+  しました。通常の MobilityPool graceful stop は、実行中 controller generation と競合しない
+  ようにしています。
+
+- Mobility の graceful stop は、peer による引き継ぎを GoBGP の live selected RIB で確認する
+  ようにしました。ローカルの `applied.json` dynamic-path journal を remote peer の広告証拠と
+  みなさなくなりました。
+
 ## v20260822.1715
 
 ### 修正

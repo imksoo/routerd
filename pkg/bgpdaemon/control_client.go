@@ -23,6 +23,19 @@ func NewControlClient(socketPath string) *ControlClient {
 	return &ControlClient{SocketPath: strings.TrimSpace(socketPath)}
 }
 
+// ObservedPath is a read-only path from the live GoBGP global RIB.  Unlike
+// AppliedPath, it is not routerd's locally originated desired-path journal;
+// callers use it only when they need to know what this router has actually
+// learned and selected from a peer.
+type ObservedPath struct {
+	Prefix      string   `json:"prefix"`
+	PeerAddress string   `json:"peerAddress,omitempty"`
+	Best        bool     `json:"best"`
+	Valid       bool     `json:"valid"`
+	Stale       bool     `json:"stale,omitempty"`
+	Communities []string `json:"communities,omitempty"`
+}
+
 func (c *ControlClient) ListPaths(ctx context.Context, source string) ([]AppliedPath, error) {
 	if c == nil || strings.TrimSpace(c.SocketPath) == "" {
 		return nil, errors.New("routerd-bgp control socket is not configured")
@@ -49,6 +62,34 @@ func (c *ControlClient) ListPaths(ctx context.Context, source string) ([]Applied
 		return nil, err
 	}
 	return Normalize(AppliedConfig{Paths: paths}).Paths, nil
+}
+
+// ListObservedPaths reads the live GoBGP RIB.  It deliberately has a
+// different method and return type from ListPaths: /v1/paths is the durable
+// locally-originated applied-path journal and cannot prove that a remote peer
+// has taken over a route.
+func (c *ControlClient) ListObservedPaths(ctx context.Context) ([]ObservedPath, error) {
+	if c == nil || strings.TrimSpace(c.SocketPath) == "" {
+		return nil, errors.New("routerd-bgp control socket is not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://routerd-bgp/v1/observed-paths", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Close = true
+	resp, err := c.do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, responseError(resp)
+	}
+	var paths []ObservedPath
+	if err := json.NewDecoder(resp.Body).Decode(&paths); err != nil {
+		return nil, err
+	}
+	return paths, nil
 }
 
 func (c *ControlClient) UpsertPath(ctx context.Context, path AppliedPath) (AppliedPath, error) {

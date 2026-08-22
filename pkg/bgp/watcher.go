@@ -17,7 +17,11 @@ const (
 	EventPrefixWithdrawn = "prefix withdrawn"
 	DefaultMaxPrefixes   = 4096
 
-	MobilityCommunityOwner        = "64512:100"
+	MobilityCommunityOwner = "64512:100"
+	// MobilityCommunityActiveHolder marks the currently active placement
+	// holder's owner /32.  It is a routing fact shared by mobility planning and
+	// graceful-stop live-RIB observation.
+	MobilityCommunityActiveHolder = "64512:121"
 	MobilityCommunityReturnRoute  = "64512:114"
 	MobilityCommunityNodeLiveness = "64512:130"
 )

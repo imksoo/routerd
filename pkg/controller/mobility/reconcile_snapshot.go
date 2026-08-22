@@ -104,7 +104,7 @@ func (c Controller) collectPoolReconcileState(res api.Resource, spec api.Mobilit
 		return state, nil
 	}
 	pool := normalized.Pool
-	if c.ForceSelfDrain {
+	if c.forceSelfDrainPool(res.Metadata.Name) {
 		pool = poolWithForcedSelfDrain(pool)
 	}
 	pool.Name = res.Metadata.Name

@@ -179,6 +179,47 @@ func TestDeprovisionStaleMobilitySourcesRetainsPendingPoolSources(t *testing.T) 
 	}
 }
 
+func TestDeprovisionStaleMobilitySourcesRetainsUnscopedPoolSources(t *testing.T) {
+	now := time.Date(2026, 8, 18, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	const (
+		pool = "unrelated-pool"
+		node = "local-node"
+	)
+	mainSource := DynamicSource(pool, node)
+	seedMobilitySourceForDeprovision(t, store, mainSource, pool, false, now)
+
+	path := bgpdaemon.NormalizeAppliedPath(bgpdaemon.AppliedPath{
+		Source: mainSource,
+		Prefix: "10.88.60.30/32",
+		Family: bgpdaemon.AppliedPathFamilyIPv4Unicast,
+	})
+	bgp := &fakeBGPPaths{paths: map[string]bgpdaemon.AppliedPath{
+		bgpdaemon.AppliedPathKey(path): path,
+	}}
+	controller := Controller{
+		Router:         localMobilityEffectsRouter(node),
+		Store:          store,
+		BGPPaths:       bgp,
+		ReconcilePools: map[string]bool{"handoff-pool": true},
+	}
+
+	if err := controller.deprovisionStaleMobilitySources(context.Background(), nil, nil, now); err != nil {
+		t.Fatalf("deprovisionStaleMobilitySources: %v", err)
+	}
+	if len(bgp.deletes) != 0 {
+		t.Fatalf("BGP deletes = %#v, want none for an unscoped Pool", bgp.deletes)
+	}
+	if _, found := maybePathBySourcePrefix(bgp, mainSource, path.Prefix); !found {
+		t.Fatalf("unscoped Pool BGP path %s %s was withdrawn", mainSource, path.Prefix)
+	}
+
+	main := latestPart(t, store, mainSource)
+	if main.EffectiveStatus(now) != "active" || strings.TrimSpace(main.ActionPlansJSON) == "" || strings.TrimSpace(main.MobilityDataplaneJSON) == "" {
+		t.Fatalf("unscoped Pool main plan = %#v, want active typed record", main)
+	}
+}
+
 func seedMobilitySourceForDeprovision(t *testing.T, store *routerstate.SQLiteStore, source, pool string, arpObserver bool, now time.Time) {
 	t.Helper()
 	part := dynamicconfig.NewPart(

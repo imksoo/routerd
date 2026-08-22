@@ -17,6 +17,8 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -1317,6 +1319,102 @@ func TestServeOnceConvergesAndExits(t *testing.T) {
 	}
 	if _, err := os.Stat(statusPath); err != nil {
 		t.Fatalf("status file: %v", err)
+	}
+}
+
+func TestStartControllerRuntimeReturnsWhenStoppedDuringBootstrap(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stop := make(chan struct{})
+	ready := make(chan struct{})
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	type startResult struct {
+		started bool
+		err     error
+	}
+	result := make(chan startResult, 1)
+	go func() {
+		started, err := startControllerRuntime(ctx, stop, func(context.Context) error {
+			close(entered)
+			<-release
+			return nil
+		}, ready)
+		result <- startResult{started: started, err: err}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("controller bootstrap did not start")
+	}
+	close(stop)
+	select {
+	case result := <-result:
+		if result.err != nil {
+			t.Fatalf("startControllerRuntime during stop: %v", result.err)
+		}
+		if result.started {
+			t.Fatal("startControllerRuntime reported ready after stop")
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("startControllerRuntime waited for blocked bootstrap after stop")
+	}
+	select {
+	case <-ready:
+		t.Fatal("controller runtime became ready after stop")
+	default:
+	}
+	close(release)
+}
+
+func TestStartControllerRuntimePrefersStopOverBootstrapError(t *testing.T) {
+	stop := make(chan struct{})
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	result := make(chan struct {
+		started bool
+		err     error
+	}, 1)
+	go func() {
+		started, err := startControllerRuntime(context.Background(), stop, func(context.Context) error {
+			close(entered)
+			<-release
+			return context.Canceled
+		}, nil)
+		result <- struct {
+			started bool
+			err     error
+		}{started: started, err: err}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("controller bootstrap did not start")
+	}
+	close(stop)
+	close(release)
+	select {
+	case got := <-result:
+		if got.err != nil || got.started {
+			t.Fatalf("startControllerRuntime = (%t, %v), want (false, nil)", got.started, got.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("startControllerRuntime did not return after concurrent stop")
+	}
+}
+
+func TestServeMutationAdmissionRejectsStop(t *testing.T) {
+	var mu sync.Mutex
+	var stopping atomic.Bool
+	admission := serveMutationAdmission{mu: &mu, stopping: &stopping}
+	unlock, err := admission.lock()
+	if err != nil {
+		t.Fatalf("admission before stop: %v", err)
+	}
+	unlock()
+	stopping.Store(true)
+	if _, err := admission.lock(); !errors.Is(err, errServeMutationStopping) {
+		t.Fatalf("admission after stop error = %v, want %v", err, errServeMutationStopping)
 	}
 }
 
