@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260822.1648
+
 ### Fixed
 
 - Signed Cloud SAM direct leaves with no current `ownedAddresses` now remain

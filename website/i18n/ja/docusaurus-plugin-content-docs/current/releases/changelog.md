@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260822.1648
+
 ### 修正
 
 - 署名済み Cloud SAM direct leaf は、現在の `ownedAddresses` が空でも pair-stable の

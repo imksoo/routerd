@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260822.1648
+
 ### 修正
 
 - 已簽署的 Cloud SAM direct leaf 即使目前 `ownedAddresses` 是空的，也會保留在 pair-stable
