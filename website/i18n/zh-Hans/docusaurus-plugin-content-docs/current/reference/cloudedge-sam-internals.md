@@ -222,13 +222,20 @@ is visible without tearing down the working data plane.
 当 policy 配置了 `directMesh.peerGroupRef`，并且 leaf 的 claim 已签名且选择了
 `directMesh: true` 时，RR 会把第二个、带 policy 范围的 `SAMPeerGroup` 放进与
 `SAMRRSet` 相同的 dynamic-config part。该 group 只包含符合条件的远端 leaf，必须匹配
-本地 transport fingerprint，并且每个 leaf 都带有自己经签名确认的 IPv4 `/32` 列表。
+本地 transport fingerprint，并携带由签名 claim 投影的 IPv4 `/32` 列表；尚未拥有地址的
+leaf 的列表可以为空。
 
 这个 direct group 是可选的加速器，不是新的 L2 overlay。`SAMTransportProfile` 保留
 `SAMRRSet` source，再把 direct group 作为最后一个 `direct: true` source 加入。只有 direct
 BGP session 存活时，它的路由才会取得比 RR 更高的 `LOCAL_PREF`。若 group 缺失、过期、
 不兼容或 underlay 无法到达，routerd 不会创建该 direct artifact，仍使用 RR peer。这样 RR
 同时负责启动和安全回退。
+
+刚加入时，已签名 leaf 的 `mobility.ownedAddresses` 可以为空，这是正常状态。routerd 仍会
+建立已认证的 direct BGP session，但会给该邻居加上一条明确的 **全部拒绝** import 规则：空
+claim 不会通告 mobility route，也不会从这条 direct link 接收 route。之后出现已签名的 `/32`
+时，才只允许该地址并使用 direct preference。这样无需编造 IP，通信在准备期间仍安全地经由
+RR 转发。
 
 ## Capture strategies (how cloud ingress is built)
 

@@ -200,6 +200,47 @@ func TestActiveDirectMeshTopologyKeepsUnencryptedTopologyAndRejectsIncompleteWir
 	}
 }
 
+// A real direct-mesh enrollment can contain a freshly joined leaf before it
+// owns a movable address.  It must stay in the transport topology: omitting it
+// here made an otherwise healthy leaf report no eligible direct peers until a
+// fabricated /32 was claimed.
+func TestActiveDirectMeshTopologyKeepsDirectLeafWithoutOwnedAddress(t *testing.T) {
+	selection := ActiveClaimSelection{Claims: []ActiveClaim{
+		{
+			ResourceName: "leaf-owned",
+			Claim: api.SAMEnrollmentClaimSpec{
+				LeafID:        "leaf-owned",
+				DirectMesh:    true,
+				TunnelAddress: "10.255.0.32/32",
+				Endpoint:      "10.30.0.32",
+				Mobility:      api.SAMEnrollmentClaimMobilitySpec{OwnedAddresses: []string{"10.77.60.32/32"}},
+			},
+			Tunnel: netip.MustParsePrefix("10.255.0.32/32"),
+		},
+		{
+			ResourceName: "leaf-empty",
+			Claim: api.SAMEnrollmentClaimSpec{
+				LeafID:        "leaf-empty",
+				DirectMesh:    true,
+				TunnelAddress: "10.255.0.33/32",
+				Endpoint:      "10.30.0.33",
+			},
+			Tunnel: netip.MustParsePrefix("10.255.0.33/32"),
+		},
+	}}
+
+	group, leafIDs := ActiveDirectMeshTopology(selection, api.SAMEnrollmentPolicySpec{}, "leaf-self", false)
+	if len(group.Nodes.Nodes) != 2 || len(leafIDs) != 2 || leafIDs[0] != "leaf-empty" || leafIDs[1] != "leaf-owned" {
+		t.Fatalf("direct topology = %#v, leafIDs=%#v; want owned and empty direct leaves", group, leafIDs)
+	}
+	if got := group.OwnedPrefixesByNode["leaf-owned"]; len(got) != 1 || got[0] != "10.77.60.32/32" {
+		t.Fatalf("owned direct prefixes = %#v", group.OwnedPrefixesByNode)
+	}
+	if got := group.OwnedPrefixesByNode["leaf-empty"]; len(got) != 0 {
+		t.Fatalf("empty direct leaf received invented owned prefixes: %#v", group.OwnedPrefixesByNode)
+	}
+}
+
 func TestJoinHMACExcludesAdminOwnedExpiryAndRevocation(t *testing.T) {
 	claim := api.SAMEnrollmentClaimSpec{
 		PolicyRef:     "SAMEnrollmentPolicy/cloudedge-leaves",

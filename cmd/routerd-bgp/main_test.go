@@ -193,6 +193,36 @@ func TestAppliedPoliciesPreservePrefixlessPeerImportPreference(t *testing.T) {
 	}
 }
 
+func TestAppliedPoliciesRestoreRejectsRoutesFromEmptyOwnershipDirectPeer(t *testing.T) {
+	peer := bgpdaemon.AppliedPeer{
+		Address:                "10.99.0.3",
+		PreserveImportPrefixes: true,
+		RejectImportAll:        true,
+		ImportPolicy: bgpdaemon.AppliedImportPolicy{
+			NextHopRewrite:  "peer-address",
+			LocalPreference: 200,
+		},
+	}
+	req, assignment := appliedPolicies(bgpdaemon.AppliedConfig{
+		Global: bgpdaemon.AppliedGlobal{ImportPolicy: bgpdaemon.AppliedImportPolicy{
+			AllowedPrefixes: []string{"10.77.60.0/24"},
+		}},
+		Peers: map[string]bgpdaemon.AppliedPeer{peer.Address: peer},
+	})
+	if len(req.GetPolicies()) != 1 || len(req.GetDefinedSets()) != 1 || len(req.GetPolicies()[0].GetStatements()) != 1 {
+		t.Fatalf("restored empty-ownership direct policy = %#v, want one neighbor-scoped reject statement", req)
+	}
+	statement := req.GetPolicies()[0].GetStatements()[0]
+	if statement.GetName() != "routerd-restore-import-effective-peer-10-99-0-3-reject-all-import" ||
+		statement.GetActions().GetRouteAction() != gobgpapi.RouteAction_ROUTE_ACTION_REJECT ||
+		statement.GetConditions().GetNeighborSet().GetName() != "routerd-restore-import-effective-peer-10-99-0-3-neighbors" {
+		t.Fatalf("restored empty-ownership direct statement = %#v", statement)
+	}
+	if assignment.GetDefaultAction() != gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT {
+		t.Fatalf("global assignment = %#v, want default accept for local paths", assignment)
+	}
+}
+
 func TestAppliedPoliciesRestorePeerExportPolicy(t *testing.T) {
 	peer := bgpdaemon.AppliedPeer{
 		Address: "10.252.0.18",

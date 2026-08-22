@@ -249,6 +249,25 @@ func TestGetSAMEnrollmentTopologyForAcceptedDirectClaimReturnsPolicyScopedPeerGr
 	peerSpec.JoinHMAC = samenrollment.JoinHMAC([]byte("test-join-token"), peerSpec)
 	peer.Spec = peerSpec
 
+	// This is the rollout state that matters in practice: an accepted leaf has
+	// opted into direct mesh but has not captured any mobility address yet. It
+	// still needs to be present in the RR-projected peer group so its direct
+	// session can be established before ownership appears.
+	emptyPeer := peer
+	emptyPeer.Metadata.Name = "pve-leaf-empty"
+	emptySpec := peerSpec
+	emptySpec.LeafID = "pve-leaf-empty"
+	emptySpec.JoinNonce = "pve-leaf-empty-0001"
+	emptySpec.TunnelAddress = "10.255.10.26/32"
+	emptySpec.Endpoint = "10.31.0.26"
+	emptySpec.WireGuard.PublicKey = "PVE_LEAF_EMPTY_WIREGUARD_PUBLIC_KEY"
+	emptySpec.WireGuard.Endpoint = "10.30.0.26:51820"
+	emptySpec.WireGuard.AllowedIPs = []string{"10.31.0.26/32"}
+	emptySpec.Mobility.OwnedAddresses = nil
+	emptySpec.BGP.RouterID = "10.255.10.26"
+	emptySpec.JoinHMAC = samenrollment.JoinHMAC([]byte("test-join-token"), emptySpec)
+	emptyPeer.Spec = emptySpec
+
 	nonDirect := peer
 	nonDirect.Metadata.Name = "pve-leaf-non-direct"
 	nonDirectSpec := peerSpec
@@ -270,7 +289,7 @@ func TestGetSAMEnrollmentTopologyForAcceptedDirectClaimReturnsPolicyScopedPeerGr
 		t.Fatalf("OpenSQLite: %v", err)
 	}
 	defer store.Close()
-	for _, claim := range []api.Resource{requester, peer, nonDirect} {
+	for _, claim := range []api.Resource{requester, peer, emptyPeer, nonDirect} {
 		if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now); err != nil {
 			t.Fatalf("submit %s: %v", claim.Metadata.Name, err)
 		}
@@ -301,14 +320,24 @@ func TestGetSAMEnrollmentTopologyForAcceptedDirectClaimReturnsPolicyScopedPeerGr
 	if group.TransportFingerprint != mobilityconfig.SAMTransportMeshFingerprint(transport) {
 		t.Fatalf("transport fingerprint = %q", group.TransportFingerprint)
 	}
-	if len(group.Nodes) != 1 || group.Nodes[0].NodeRef != "pve-leaf-c" {
-		t.Fatalf("direct nodes = %#v, want only opted-in remote leaf", group.Nodes)
+	if len(group.Nodes) != 2 {
+		t.Fatalf("direct nodes = %#v, want owned and empty opted-in remote leaves", group.Nodes)
 	}
-	if group.Nodes[0].SAMEndpoint != "10.31.0.23" || group.Nodes[0].WireGuard.PublicKey != "PVE_LEAF_C_WIREGUARD_PUBLIC_KEY" {
-		t.Fatalf("direct node material = %#v", group.Nodes[0])
+	nodes := map[string]api.SAMNodeSpec{}
+	for _, node := range group.Nodes {
+		nodes[node.NodeRef] = node
+	}
+	ownedNode, ownedFound := nodes["pve-leaf-c"]
+	emptyNode, emptyFound := nodes["pve-leaf-empty"]
+	if !ownedFound || !emptyFound || ownedNode.SAMEndpoint != "10.31.0.23" || ownedNode.WireGuard.PublicKey != "PVE_LEAF_C_WIREGUARD_PUBLIC_KEY" ||
+		emptyNode.SAMEndpoint != "10.31.0.26" || emptyNode.WireGuard.PublicKey != "PVE_LEAF_EMPTY_WIREGUARD_PUBLIC_KEY" {
+		t.Fatalf("direct node material = %#v", group.Nodes)
 	}
 	if got := group.OwnedPrefixesByNode["pve-leaf-c"]; len(got) != 2 || got[0] != "10.77.70.19/32" || got[1] != "10.77.70.23/32" {
 		t.Fatalf("direct node signed owned prefixes = %#v", group.OwnedPrefixesByNode)
+	}
+	if got := group.OwnedPrefixesByNode["pve-leaf-empty"]; len(got) != 0 {
+		t.Fatalf("empty direct leaf received invented owned prefixes: %#v", group.OwnedPrefixesByNode)
 	}
 
 	// A claim rotation retains the same resource name.  A lagging client (or

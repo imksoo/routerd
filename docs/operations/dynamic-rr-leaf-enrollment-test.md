@@ -150,6 +150,14 @@ remote opted-in leaves, never the RR itself. Its transport fingerprint must
 match the leaf profile. Direct mode requires `addressingMode: pair-stable` and
 `bgp.routeReflectorClient: false`; routerd assigns the direct imported route a
 higher local preference (default `200`) than the normal RR import preference.
+
+An opted-in leaf may have an empty `mobility.ownedAddresses` list. This is a
+normal joining state, not a reason to invent a `/32`: routerd creates the
+direct session but installs a neighbor-scoped reject-all import rule, so it
+cannot advertise or accept a mobility route over that direct link. When the RR
+later projects a signed owned `/32`, the same session receives the exact-prefix
+allowlist and becomes eligible for the higher direct preference.
+
 Use BGP local preference rather than AS_PATH length or administrative distance:
 the RR is normally an iBGP reflector, so the extra forwarding hop is not a
 reliable AS-path signal. A direct profile must explicitly set the normal RR

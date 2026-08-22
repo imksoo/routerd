@@ -772,10 +772,13 @@ type SAMPeerGroupSpec struct {
 	TransportFingerprint string        `yaml:"transportFingerprint,omitempty" json:"transportFingerprint,omitempty"`
 	Nodes                []SAMNodeSpec `yaml:"nodes" json:"nodes"`
 	// OwnedPrefixesByNode is present only on an enrollment direct-mesh group.
-	// Each entry is copied from the admitted, signed claim for that node and
-	// binds its direct BGP session to exactly those IPv4 /32 advertisements.
-	// It prevents a reachable leaf from using direct's higher LOCAL_PREF to
-	// advertise a different address from the policy-wide mobility range.
+	// Each non-empty entry is copied from the admitted, signed claim for that
+	// node and binds its direct BGP session to exactly those IPv4 /32
+	// advertisements. A missing or empty entry means that the signed leaf owns
+	// no mobility address right now: its direct transport session remains
+	// eligible, but it must not import a mobility route. This prevents a
+	// reachable leaf from using direct's higher LOCAL_PREF to advertise a
+	// different address from the policy-wide mobility range.
 	OwnedPrefixesByNode map[string][]string `yaml:"ownedPrefixesByNode,omitempty" json:"ownedPrefixesByNode,omitempty"`
 }
 
@@ -1004,6 +1007,10 @@ type SAMTransportPeerSpec struct {
 	// from SAMPeerGroupSpec.OwnedPrefixesByNode. It must never become a
 	// user-authored transport peer field.
 	AllowedPrefixes []string `yaml:"-" json:"-"`
+	// RejectRoutes is an in-memory direct-mesh marker for a signed remote leaf
+	// that currently owns no mobility /32. The transport remains present, while
+	// the BGP controller installs a deny-all import boundary for this peer.
+	RejectRoutes bool `yaml:"-" json:"-"`
 }
 
 type BFDSpec struct {

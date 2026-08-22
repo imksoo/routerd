@@ -27,6 +27,7 @@ import (
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/bgpdaemon"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -568,7 +569,10 @@ func TestApplyRouterBGPDefaultsKeepsDirectTransportAllowlistNarrow(t *testing.T)
 func TestDesiredPeersMarksDirectTransportImportBoundary(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
 		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
-		Metadata: api.ObjectMeta{Name: "direct", Annotations: map[string]string{"mobility.routerd.net/direct-peer": "true"}},
+		Metadata: api.ObjectMeta{Name: "direct", Annotations: map[string]string{
+			mobilityconfig.SAMTransportDirectPeerAnnotation:             "true",
+			mobilityconfig.SAMTransportDirectPeerRejectRoutesAnnotation: "true",
+		}},
 		Spec: api.BGPPeerSpec{
 			RouterRef: "BGPRouter/lan",
 			PeerASN:   64512,
@@ -579,8 +583,8 @@ func TestDesiredPeersMarksDirectTransportImportBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("desiredPeers: %v", err)
 	}
-	if !peers["10.255.0.2"].PreserveImportPrefixes {
-		t.Fatalf("direct transport peer = %#v, want explicit import boundary", peers["10.255.0.2"])
+	if !peers["10.255.0.2"].PreserveImportPrefixes || !peers["10.255.0.2"].RejectImportAll {
+		t.Fatalf("direct transport peer = %#v, want explicit empty-ownership import boundary", peers["10.255.0.2"])
 	}
 }
 
@@ -3099,6 +3103,7 @@ func TestGlobalImportPolicyPrefersDirectPeerInRealGoBGP(t *testing.T) {
 		centralIP = "127.0.0.1"
 		directIP  = "127.0.0.2"
 		rrIP      = "127.0.0.3"
+		emptyIP   = "127.0.0.4"
 		prefix    = "192.0.2.10/32"
 	)
 	port := loopbackTCPPort(t)
@@ -3139,7 +3144,21 @@ func TestGlobalImportPolicyPrefersDirectPeerInRealGoBGP(t *testing.T) {
 			LocalPreference: 100,
 		},
 	}
-	desired := map[string]desiredPeer{directIP: direct, rrIP: rr}
+	// A signed direct leaf can be connected before it owns a mobility /32.
+	// Its session must come up, but even an erroneous route from that neighbor
+	// must not be admitted through a prefixless direct policy.
+	empty := desiredPeer{
+		Address:         emptyIP,
+		ASN:             asn,
+		LocalASN:        asn,
+		PassiveMode:     true,
+		RejectImportAll: true,
+		ImportPolicy: api.BGPImportPolicySpec{
+			NextHopRewrite:  "peer-address",
+			LocalPreference: 200,
+		},
+	}
+	desired := map[string]desiredPeer{directIP: direct, rrIP: rr, emptyIP: empty}
 	plan := buildBGPPolicyPlan("mesh", api.BGPImportPolicySpec{}, desired, nil)
 	if err := central.SetPolicies(ctx, plan.SetPolicies); err != nil {
 		t.Fatalf("set global import policies: %v", err)
@@ -3147,7 +3166,7 @@ func TestGlobalImportPolicyPrefersDirectPeerInRealGoBGP(t *testing.T) {
 	if err := central.SetPolicyAssignment(ctx, &gobgpapi.SetPolicyAssignmentRequest{Assignment: plan.GlobalImportAssignment}); err != nil {
 		t.Fatalf("set global import assignment: %v", err)
 	}
-	for _, peer := range []desiredPeer{direct, rr} {
+	for _, peer := range []desiredPeer{direct, rr, empty} {
 		if err := central.AddPeer(ctx, &gobgpapi.AddPeerRequest{Peer: goBGPPeer(peer)}); err != nil {
 			t.Fatalf("add central peer %s: %v", peer.Address, err)
 		}
@@ -3188,6 +3207,7 @@ func TestGlobalImportPolicyPrefersDirectPeerInRealGoBGP(t *testing.T) {
 	}
 	directRemote := startRemote("10.255.0.2", directIP)
 	rrRemote := startRemote("10.255.0.3", rrIP)
+	emptyRemote := startRemote("10.255.0.4", emptyIP)
 
 	established := func(address string) bool {
 		ready := false
@@ -3196,7 +3216,7 @@ func TestGlobalImportPolicyPrefersDirectPeerInRealGoBGP(t *testing.T) {
 		})
 		return err == nil && ready
 	}
-	waitForCondition(t, 5*time.Second, func() bool { return established(directIP) && established(rrIP) })
+	waitForCondition(t, 5*time.Second, func() bool { return established(directIP) && established(rrIP) && established(emptyIP) })
 
 	advertise := func(server *testGoBGPServer, nextHop string) {
 		t.Helper()
@@ -3210,6 +3230,7 @@ func TestGlobalImportPolicyPrefersDirectPeerInRealGoBGP(t *testing.T) {
 	}
 	advertise(directRemote, directIP)
 	advertise(rrRemote, rrIP)
+	advertise(emptyRemote, emptyIP)
 
 	var got *gobgpapi.Destination
 	readDestination := func() *gobgpapi.Destination {
@@ -3239,6 +3260,8 @@ func TestGlobalImportPolicyPrefersDirectPeerInRealGoBGP(t *testing.T) {
 			directPath = path
 		case rrIP:
 			rrPath = path
+		case emptyIP:
+			t.Fatalf("empty-ownership direct peer route was imported: %#v", path)
 		}
 	}
 	if directPath == nil || rrPath == nil {
@@ -3370,6 +3393,7 @@ func TestAppliedImportPolicyLocalPreferenceRoundTrip(t *testing.T) {
 		Address:                "10.0.0.2",
 		ASN:                    64513,
 		PreserveImportPrefixes: true,
+		RejectImportAll:        true,
 		ImportPolicy: api.BGPImportPolicySpec{
 			AllowedPrefixes:        []string{"10.77.60.22/32"},
 			AllowedPrefixLengthMin: 32,
@@ -3388,7 +3412,7 @@ func TestAppliedImportPolicyLocalPreferenceRoundTrip(t *testing.T) {
 		!sameStringSet(restored.ImportPolicy.AllowedPrefixes, []string{"10.77.60.22/32"}) ||
 		!sameStringSet(restored.ImportPolicy.RequiredCommunities, []string{"64512:301"}) ||
 		!sameStringSet(restored.ImportPolicy.ForbiddenCommunities, []string{"64512:302"}) ||
-		!restored.PreserveImportPrefixes {
+		!restored.PreserveImportPrefixes || !restored.RejectImportAll {
 		t.Fatalf("restored direct peer import boundary = %#v", restored)
 	}
 }
@@ -3420,6 +3444,11 @@ func TestImportPolicyKeysIncludeLocalPreference(t *testing.T) {
 	prefixlessPreferredPeer.ImportPolicy.LocalPreference = 201
 	if bgpImportPoliciesKey(base, map[string]desiredPeer{prefixlessPeer.Address: prefixlessPeer}, nil) == bgpImportPoliciesKey(base, map[string]desiredPeer{prefixlessPreferredPeer.Address: prefixlessPreferredPeer}, nil) {
 		t.Fatal("bgpImportPoliciesKey ignored prefixless peer local preference")
+	}
+	rejectAllPeer := prefixlessPeer
+	rejectAllPeer.RejectImportAll = true
+	if bgpImportPoliciesKey(base, map[string]desiredPeer{prefixlessPeer.Address: prefixlessPeer}, nil) == bgpImportPoliciesKey(base, map[string]desiredPeer{rejectAllPeer.Address: rejectAllPeer}, nil) {
+		t.Fatal("bgpImportPoliciesKey ignored empty-ownership reject-all boundary")
 	}
 	dynamic := desiredDynamicPeer{
 		PeerGroupName: "routerd-dynamic-leaves",

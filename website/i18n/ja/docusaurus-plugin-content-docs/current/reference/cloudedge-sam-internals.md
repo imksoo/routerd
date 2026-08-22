@@ -210,6 +210,13 @@ preference を使います。group の欠落、期限切れ、transport fingerpr
 underlay の未到達では direct artifact を省き、RR peer をそのまま使います。つまり RR
 を壊してから直接経路へ切り替えるのではなく、常に安全な fallback を残します。
 
+参加直後などは、署名済み leaf の `mobility.ownedAddresses` が空でも正常です。この場合も
+routerd は本人確認済みの direct BGP session を作ります。ただし、その相手からの経路は
+明示的に **全拒否** します。空の claim から mobility route を広告せず、direct link 経由の
+route も受け入れません。後から署名済みの `/32` が現れた時だけ、その一つのアドレスを
+許可して direct preference を使います。架空の IP を書かずに接続準備だけを済ませ、通信は
+その間も RR 経由で安全に続きます。
+
 ## capture strategy（クラウド受け口の作り方）
 
 通常のクラウド受け口は `capture.type` で決まります。

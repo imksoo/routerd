@@ -12,6 +12,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Signed Cloud SAM direct leaves with no current `ownedAddresses` now remain
+  eligible for pair-stable direct BGP transport. Their peer-specific import
+  policy rejects every route until a signed owner `/32` exists, so rollout does
+  not need a fabricated address and RR forwarding remains the safe fallback.
+
 ## v20260822.1505
 
 ### Fixed

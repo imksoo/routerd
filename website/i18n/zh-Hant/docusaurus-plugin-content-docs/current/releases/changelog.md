@@ -11,6 +11,12 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- 已簽署的 Cloud SAM direct leaf 即使目前 `ownedAddresses` 是空的，也會保留在 pair-stable
+  direct BGP transport 中。在出現已簽署的 owner `/32` 前，該 peer 專屬 import policy 會拒絕
+  所有 route，因此不必虛構 IP，RR 轉送仍是安全的備援路徑。
+
 ## v20260822.1505
 
 ### 修正
