@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260822.0915
+
 ### 变更
 
 - Cloud SAM direct leaf-mesh 现在只有在每个已配置的 route reflector 都证明当前有效的已签名

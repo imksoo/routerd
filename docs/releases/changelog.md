@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260822.0915
+
 ### Changed
 
 - Cloud SAM direct leaf-mesh admission now requires every configured route

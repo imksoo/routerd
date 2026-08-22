@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260822.0915
+
 ### 変更
 
 - Cloud SAM の direct leaf-mesh への参加は、設定したすべての route reflector が現在有効な
