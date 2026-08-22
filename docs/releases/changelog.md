@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260822.1715
+
 ### Fixed
 
 - `routerctl mobility leaf-config` now permits omitting `--owned-address` for

@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260822.1715
+
 ### 修复
 
 - 对于尚未获得 mobility `/32` 的 direct leaf，`routerctl mobility leaf-config` 现在允许省略

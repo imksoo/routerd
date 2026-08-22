@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260822.1715
+
 ### 修正
 
 - `routerctl mobility leaf-config` で、まだ mobility `/32` を取得していない direct leaf は
