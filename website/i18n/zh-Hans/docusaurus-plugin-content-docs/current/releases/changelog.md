@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260822.0714
+
 ### 新增
 
 - Cloud SAM leaf 现在可以选择启用由已签名 claim 动态推导的 leaf 间 BGP mesh。direct `/32`

@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260822.0714
+
 ### Added
 
 - Cloud SAM leaves can now opt in to a dynamically derived, signed-claim

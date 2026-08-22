@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260822.0714
+
 ### 追加
 
 - Cloud SAM の leaf は、署名付き claim から動的に導出する leaf 間 BGP mesh を任意で有効化
