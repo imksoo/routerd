@@ -11,6 +11,12 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- BGP FIB 現在會先彙整同一 prefix 在串流中到達的全部 path，再比較 path 的優先權。leaf 復原後，
+  不會再把 `LOCAL_PREF` 較高的 Cloud SAM direct path 與優先權較低的 RR 回退錯誤地作為
+  等價多路徑安裝。
+
 ## v20260822.1210
 
 ### 修正

@@ -11,6 +11,12 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- BGP FIB へ入れる経路は、同じ prefix に対してストリームで届くすべての経路候補を
+  先にまとめてから優先度を比較するようにしました。leaf 復帰後、`LOCAL_PREF` が高い
+  Cloud SAM direct 経路と低い RR fallback を誤って同一コストの multipath にしません。
+
 ## v20260822.1210
 
 ### 修正
