@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260822.1852
+
 ### 修正
 
 - 當 `routerd serve` 仍在 bootstrap 時收到 systemd restart，現在會取消 bootstrap 並迅速結束，

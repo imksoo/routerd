@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260822.1852
+
 ### 修正
 
 - `routerd serve` の bootstrap 中に systemd から restart を受けても、SIGTERM を保留して
