@@ -362,6 +362,9 @@ func (c *Client) GetSAMEnrollmentTopology(ctx context.Context, request SAMEnroll
 	if strings.TrimSpace(request.ClaimDigest) != "" {
 		values.Set("claimDigest", request.ClaimDigest)
 	}
+	if strings.TrimSpace(request.ClaimIdentityDigest) != "" {
+		values.Set("claimIdentityDigest", request.ClaimIdentityDigest)
+	}
 	path := c.baseURL + Prefix + "/sam-enrollment-topologies/" + url.PathEscape(strings.TrimSpace(request.Name))
 	if encoded := values.Encode(); encoded != "" {
 		path += "?" + encoded

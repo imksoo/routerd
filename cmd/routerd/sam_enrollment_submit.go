@@ -28,6 +28,8 @@ const samEnrollmentClaimDynamicGeneration = int64(1)
 type samEnrollmentClaimStore interface {
 	ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error)
 	UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord) error
+	RecordSAMEnrollmentRevokedIdentity(claimSource, identityDigest string, revokedAt time.Time) error
+	HasSAMEnrollmentRevokedIdentity(identityDigest string) (bool, error)
 }
 
 func submitSAMEnrollmentClaim(router *api.Router, store samEnrollmentClaimStore, req controlapi.SAMEnrollmentClaimSubmitRequest, now time.Time) (*controlapi.SAMEnrollmentClaimSubmitResult, error) {
@@ -46,6 +48,40 @@ func submitSAMEnrollmentClaim(router *api.Router, store samEnrollmentClaimStore,
 	}
 	source := "SAMEnrollmentClaim/" + claimResource.Metadata.Name
 	observedAt := now.UTC()
+	records, err := store.ListDynamicConfigParts()
+	if err != nil {
+		return nil, err
+	}
+	identityDigest := samenrollment.ClientIdentityDigest(claim)
+	identityRevoked, err := store.HasSAMEnrollmentRevokedIdentity(identityDigest)
+	if err != nil {
+		return nil, err
+	}
+	if !identityRevoked {
+		if legacySource, found := revokedSAMEnrollmentClaimIdentitySource(records, identityDigest); found {
+			// Upgrade-safe lazy backfill: older releases stored only a revoked
+			// dynamic claim row, so preserve its client identity before accepting
+			// any future request that might replace that row.
+			if err := store.RecordSAMEnrollmentRevokedIdentity(legacySource, identityDigest, observedAt); err != nil {
+				return nil, err
+			}
+			identityRevoked = true
+		}
+	}
+	if identityRevoked {
+		return nil, fmt.Errorf("%w: %s was revoked; use a new client identity (advance spec.joinNonce for join-token enrollment)", controlapi.ErrBadRequest, source)
+	}
+	if revokedClaim, revoked := revokedSubmittedSAMEnrollmentClaim(records, source); revoked && !submittedSAMEnrollmentClaimRotatesIdentity(revokedClaim, claim) {
+		return nil, fmt.Errorf("%w: %s was revoked; use a new client identity (advance spec.joinNonce for join-token enrollment)", controlapi.ErrBadRequest, source)
+	} else if revoked {
+		// Preserve the old identity before this successful re-enrollment
+		// replaces the current dynamic claim row. Without this ledger, a
+		// captured pre-revoke client identity could be replayed after the new
+		// identity becomes active.
+		if err := store.RecordSAMEnrollmentRevokedIdentity(source, samenrollment.ClientIdentityDigest(revokedClaim), observedAt); err != nil {
+			return nil, err
+		}
+	}
 	policy, err := submittedSAMEnrollmentClaimPolicy(router, store, source, claim, observedAt)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", controlapi.ErrBadRequest, err)
@@ -113,9 +149,40 @@ func getSAMEnrollmentTopologyForAcceptedClaim(router *api.Router, store samEnrol
 	if err != nil {
 		return nil, err
 	}
+	identityDigest := strings.TrimSpace(req.ClaimIdentityDigest)
+	identityRevoked := false
+	if identityDigest != "" {
+		identityRevoked, err = store.HasSAMEnrollmentRevokedIdentity(identityDigest)
+		if err != nil {
+			return nil, err
+		}
+		if !identityRevoked {
+			if legacySource, found := revokedSAMEnrollmentClaimIdentitySource(records, identityDigest); found {
+				// Preserve a pre-table tombstone when a new client first asks for
+				// it, before another admission can replace the dynamic record.
+				if err := store.RecordSAMEnrollmentRevokedIdentity(legacySource, identityDigest, now.UTC()); err != nil {
+					return nil, err
+				}
+				identityRevoked = true
+			}
+		}
+	}
+	if identityRevoked {
+		return nil, fmt.Errorf("%w: accepted %s is revoked", controlapi.ErrBadRequest, claimSource)
+	}
 	_, acceptedClaim, ok := activeSubmittedSAMEnrollmentClaimResource(records, claimSource, now.UTC())
 	if !ok {
-		return nil, fmt.Errorf("%w: accepted %s not found", controlapi.ErrBadRequest, claimSource)
+		if identityDigest == "" && submittedSAMEnrollmentClaimWasExplicitlyRevoked(records, claimSource) {
+			return nil, fmt.Errorf("%w: accepted %s is revoked", controlapi.ErrBadRequest, claimSource)
+		}
+		return nil, samEnrollmentTopologyClaimIdentityAbsentError(req, claimSource)
+	}
+	if identityDigest != "" && samenrollment.ClientIdentityDigest(acceptedClaim) != identityDigest {
+		// A client with a deliberately rotated identity must reach Submit rather
+		// than treating an older active same-name claim as proof of direct
+		// topology. Keep this distinct from an empty admission store: a periodic
+		// direct refresh must not overwrite a newer active identity.
+		return nil, samEnrollmentTopologyClaimIdentityMismatchError(claimSource)
 	}
 	acceptedClaimDigest := samenrollment.ClaimDigest(acceptedClaim)
 	claimDigestMatches := strings.TrimSpace(req.ClaimDigest) != "" && strings.TrimSpace(req.ClaimDigest) == acceptedClaimDigest
@@ -164,7 +231,7 @@ func getSAMEnrollmentTopologyForAcceptedClaim(router *api.Router, store samEnrol
 		return nil, fmt.Errorf("%w: %v", controlapi.ErrBadRequest, err)
 	}
 	// The RR topology is safe as a compatibility fallback, but a direct peer
-	// group must be tied to the exact active signed claim.  Older clients that
+	// group must be tied to the exact active client claim. Older clients that
 	// do not send a digest and clients talking to a stale RR therefore keep
 	// renewing their RR path without being handed a high-preference direct
 	// path.  The result always echoes the RR's active digest so a new client
@@ -174,6 +241,23 @@ func getSAMEnrollmentTopologyForAcceptedClaim(router *api.Router, store samEnrol
 	}
 	result := controlapi.NewSAMEnrollmentTopologyGetResult(rrSetName, acceptedClaimDigest, rrSetResource, peerGroup)
 	return &result, nil
+}
+
+// samEnrollmentTopologyClaimIdentityAbsentError preserves the legacy response
+// for callers that do not send an identity digest. An identity-aware client
+// can safely distinguish a current RR's empty admission store from an older
+// RR that ignored the identity query and returned its ambiguous legacy
+// not-found response. Only the former may trigger automatic direct-claim
+// re-admission.
+func samEnrollmentTopologyClaimIdentityAbsentError(req controlapi.SAMEnrollmentTopologyGetRequest, claimSource string) error {
+	if strings.TrimSpace(req.ClaimIdentityDigest) != "" {
+		return fmt.Errorf("%w: accepted %s %s", controlapi.ErrBadRequest, claimSource, controlapi.SAMEnrollmentTopologyIdentityAbsentMessage)
+	}
+	return fmt.Errorf("%w: accepted %s not found", controlapi.ErrBadRequest, claimSource)
+}
+
+func samEnrollmentTopologyClaimIdentityMismatchError(claimSource string) error {
+	return fmt.Errorf("%w: accepted %s %s", controlapi.ErrBadRequest, claimSource, controlapi.SAMEnrollmentTopologyIdentityMismatchMessage)
 }
 
 func revokeSAMEnrollmentClaim(router *api.Router, store samEnrollmentClaimStore, req controlapi.SAMEnrollmentClaimRevokeRequest, now time.Time) (*controlapi.SAMEnrollmentClaimRevokeResult, error) {
@@ -224,6 +308,12 @@ func revokeSAMEnrollmentClaim(router *api.Router, store samEnrollmentClaimStore,
 		return nil, err
 	}
 	if err := store.UpsertDynamicConfigPart(record); err != nil {
+		return nil, err
+	}
+	// The active claim row is replaced on a later re-enrollment. Preserve the
+	// revoked client identity separately so that an old request cannot roll the
+	// claim back after a successful rotation.
+	if err := store.RecordSAMEnrollmentRevokedIdentity(source, samenrollment.ClientIdentityDigest(claim), observedAt); err != nil {
 		return nil, err
 	}
 	result := controlapi.NewSAMEnrollmentClaimRevokeResult(source, source, samEnrollmentClaimDynamicGeneration, observedAt, observedAt, strings.TrimSpace(req.Reason))
@@ -299,6 +389,97 @@ func activeSubmittedSAMEnrollmentClaimResource(records []routerstate.DynamicConf
 		}
 	}
 	return api.Resource{}, api.SAMEnrollmentClaimSpec{}, false
+}
+
+// submittedSAMEnrollmentClaimWasExplicitlyRevoked distinguishes an operator
+// revocation from a reflector restart that simply lost its volatile claim
+// store. The client must retain its RR fallback for a revocation rather than
+// treating it as a recovery signal and silently re-admitting the claim.
+func submittedSAMEnrollmentClaimWasExplicitlyRevoked(records []routerstate.DynamicConfigPartRecord, source string) bool {
+	_, found := revokedSubmittedSAMEnrollmentClaim(records, source)
+	return found
+}
+
+func revokedSubmittedSAMEnrollmentClaim(records []routerstate.DynamicConfigPartRecord, source string) (api.SAMEnrollmentClaimSpec, bool) {
+	claimName, err := samEnrollmentClaimNameFromRef(source)
+	if err != nil {
+		return api.SAMEnrollmentClaimSpec{}, false
+	}
+	for _, record := range records {
+		if record.Source != source || strings.TrimSpace(record.ResourcesJSON) == "" {
+			continue
+		}
+		resources, err := codec.DecodeGenericResources(record)
+		if err != nil {
+			continue
+		}
+		for _, resource := range resources {
+			if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentClaim" || strings.TrimSpace(resource.Metadata.Name) != claimName {
+				continue
+			}
+			claim, err := resource.SAMEnrollmentClaimSpec()
+			if err == nil && claim.Revoked {
+				return claim, true
+			}
+		}
+	}
+	return api.SAMEnrollmentClaimSpec{}, false
+}
+
+// revokedSAMEnrollmentClaimIdentitySource recognizes tombstones produced
+// before the dedicated revocation table existed. Match the client identity
+// across every enrollment source, not only the mutable resource name, so an
+// old request cannot bypass an upgrade-era tombstone by changing metadata.name.
+func revokedSAMEnrollmentClaimIdentitySource(records []routerstate.DynamicConfigPartRecord, identityDigest string) (string, bool) {
+	identityDigest = strings.TrimSpace(identityDigest)
+	if identityDigest == "" {
+		return "", false
+	}
+	for _, record := range records {
+		claimName, err := samEnrollmentClaimNameFromRef(record.Source)
+		if err != nil || strings.TrimSpace(record.ResourcesJSON) == "" {
+			continue
+		}
+		resources, err := codec.DecodeGenericResources(record)
+		if err != nil {
+			continue
+		}
+		for _, resource := range resources {
+			if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentClaim" || strings.TrimSpace(resource.Metadata.Name) != claimName {
+				continue
+			}
+			claim, err := resource.SAMEnrollmentClaimSpec()
+			if err == nil && claim.Revoked && samenrollment.ClientIdentityDigest(claim) == identityDigest {
+				return record.Source, true
+			}
+		}
+	}
+	return "", false
+}
+
+// submittedSAMEnrollmentClaimRotatesIdentity permits intentional re-enrollment
+// after an operator revokes a claim, but never lets the old claim overwrite a
+// revocation tombstone. Join-token policies already require a nonce; for an
+// older nonce-less policy, compare only the client-authored identity. ClaimDigest
+// deliberately includes RR-owned expiry and revocation state, so it is not a
+// valid replay boundary here.
+func submittedSAMEnrollmentClaimRotatesIdentity(revoked, submitted api.SAMEnrollmentClaimSpec) bool {
+	previousNonce := strings.TrimSpace(revoked.JoinNonce)
+	nextNonce := strings.TrimSpace(submitted.JoinNonce)
+	switch {
+	case previousNonce != "" && nextNonce != "":
+		// A token-authenticated claim must advance its replay nonce; changing
+		// some other signed field is not a substitute for that boundary.
+		return previousNonce != nextNonce
+	case previousNonce != "" && nextNonce == "":
+		// Never permit a token-era claim to downgrade to nonce-less admission.
+		return false
+	case previousNonce == "" && nextNonce != "":
+		// A legacy nonce-less claim can deliberately move onto the current
+		// nonce-based identity format after operator revocation.
+		return true
+	}
+	return samenrollment.ClientIdentityDigest(revoked) != samenrollment.ClientIdentityDigest(submitted)
 }
 
 func findSAMEnrollmentClaimResource(router *api.Router, name string) (api.Resource, api.SAMEnrollmentClaimSpec, bool, error) {

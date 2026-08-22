@@ -411,7 +411,7 @@ func validateSAMPeerGroup(res api.Resource, spec api.SAMPeerGroupSpec) error {
 }
 
 // validateSAMDirectPeerGroupOwnedPrefixes keeps an enrollment-delivered direct
-// peer group bound to the signed claim facts from which it was projected. The
+// peer group bound to the admitted claim facts from which it was projected. The
 // direct path has higher LOCAL_PREF, so accepting a policy-wide prefix here
 // would let one reachable leaf win traffic for another leaf's /32. A direct
 // node may have no map entry (or an empty one): that represents a signed leaf

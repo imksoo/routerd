@@ -11,6 +11,16 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- Cloud SAM の direct leaf は、clean boot 後に RR の一つが現在の client identity を失ったことを
+  明示し、他の RR がその identity を確認するか同じ明示応答を返す場合だけ、claim をすべての RR
+  へ再登録するようになりました。長い RR lease の期限を待たずに任意の direct mesh を復旧します。
+  旧版／混在 RR、revoke、その他の refresh 失敗では direct group を外し、安全な RR fallback を
+  維持します。
+- 明示的に revoke された enrollment claim は RR の状態消失とは扱いません。direct leaf は
+  自動再登録せず、RR は claim を rotate するまで revoke 済みの client identity の再送を拒否します。
+
 ## v20260822.2024
 
 ### 修正
@@ -50,8 +60,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
   `--owned-address` を省略できるようにしました。実際の所有アドレスが指定されるまで、生成設定は
   service address、BGP export、redistribute route を作りません。
 
-- 署名済み Cloud SAM direct leaf は、現在の `ownedAddresses` が空でも pair-stable の
-  direct BGP transport の対象に残るようにしました。署名済みの所有 `/32` が現れるまで
+- 受理済み Cloud SAM direct leaf は、現在の `ownedAddresses` が空でも pair-stable の
+  direct BGP transport の対象に残るようにしました。受理済みの所有 `/32` が現れるまで
   peer 固有の import policy が全経路を拒否するため、架空の IP を書く必要はなく、RR 転送を
   安全な fallback として維持します。
 

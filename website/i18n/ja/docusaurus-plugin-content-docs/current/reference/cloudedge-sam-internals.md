@@ -199,7 +199,7 @@ configuration から解決します。
 
 SAM enrollment はこの TCP 19652 sync を使いません。claim が受理されると RR は
 `SAMEnrollmentPolicy.spec.rrNodeSetRef` で選んだ RR node を runtime `SAMRRSet` として
-返します。policy に `directMesh.peerGroupRef` があり、署名済み claim が
+返します。policy に `directMesh.peerGroupRef` があり、受理済み claim が
 `directMesh: true` の場合だけ、同じ DynamicConfigPart に policy-scoped な direct
 `SAMPeerGroup` も入ります。この group は eligible な remote leaf だけを持ち、通常の
 sync cache には載りません。
@@ -210,16 +210,16 @@ preference を使います。group の欠落、期限切れ、transport fingerpr
 underlay の未到達では direct artifact を省き、RR peer をそのまま使います。つまり RR
 を壊してから直接経路へ切り替えるのではなく、常に安全な fallback を残します。
 
-参加直後などは、署名済み leaf の `mobility.ownedAddresses` が空でも正常です。この場合も
-routerd は本人確認済みの direct BGP session を作ります。ただし、その相手からの経路は
+参加直後などは、受理済み leaf の `mobility.ownedAddresses` が空でも正常です。この場合も
+routerd は受理済みの direct BGP session を作ります。ただし、その相手からの経路は
 明示的に **全拒否** します。空の claim から mobility route を広告せず、direct link 経由の
-route も受け入れません。後から署名済みの `/32` が現れた時だけ、その一つのアドレスを
+route も受け入れません。後から受理済みの `/32` が現れた時だけ、その一つのアドレスを
 許可して direct preference を使います。架空の IP を書かずに接続準備だけを済ませ、通信は
 その間も RR 経由で安全に続きます。
 
 `routerctl mobility leaf-config` でも `--owned-address` を省略してこの状態を生成できます。
 その場合は local service address と BGP の export/redistribute prefix を一切生成しないため、
-生成された設定も署名済み claim と同じく経路を広告しません。
+生成された設定も受理済み claim と同じく経路を広告しません。
 
 ## capture strategy（クラウド受け口の作り方）
 

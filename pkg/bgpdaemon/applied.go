@@ -104,11 +104,11 @@ type AppliedPeer struct {
 	ImportPolicy            AppliedImportPolicy `json:"importPolicy,omitempty"`
 	// PreserveImportPrefixes keeps an explicit peer import allowlist from being
 	// widened with router-wide dynamic prefixes during daemon restore. It is
-	// used by direct SAM leaf peers, whose signed /32 boundary must survive a
+	// used by direct SAM leaf peers, whose admitted /32 boundary must survive a
 	// routerd-bgp restart unchanged.
 	PreserveImportPrefixes bool `json:"preserveImportPrefixes,omitempty"`
 	// RejectImportAll retains the route boundary for a direct SAM peer whose
-	// signed claim currently owns no mobility /32. The session is restored, but
+	// admitted claim currently owns no mobility /32. The session is restored, but
 	// every inbound route remains rejected until fresh desired state says
 	// otherwise.
 	RejectImportAll  bool                    `json:"rejectImportAll,omitempty"`

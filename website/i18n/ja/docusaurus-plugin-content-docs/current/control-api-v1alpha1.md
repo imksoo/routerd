@@ -34,6 +34,27 @@ routerd と管理対象デーモンは、ローカルの Unix domain socket 上�
 | `GET /api/control.routerd.net/v1alpha1/traffic-flows` | 通信フロー履歴 |
 | `GET /api/control.routerd.net/v1alpha1/firewall-logs` | ファイアウォールログ |
 
+## SAM enrollment endpoint
+
+Dynamic SAM enrollment も同じ API handler を使いますが、RR が公開するのは enrollment
+runbook で明示した認証済み listener、または権限を持つ local socket だけです。一般的な
+remote 管理 API ではありません。
+
+| Method + Path | 用途 |
+| --- | --- |
+| `POST /api/control.routerd.net/v1alpha1/sam-enrollment-claims` | leaf の client-authored enrollment claim を受理します。 |
+| `POST /api/control.routerd.net/v1alpha1/sam-enrollment-claims/{name}/revoke` | 受理済み claim を明示的に revoke します。復旧用途には使いません。 |
+| `GET /api/control.routerd.net/v1alpha1/sam-enrollment-topologies/{name}?claim=...&claimDigest=...&claimIdentityDigest=...` | 指定した RRSet と、確認できた場合だけ任意の direct peer group を取得します。 |
+
+`claimIdentityDigest` は client-authored claim material だけの hash です。`joinTokenFrom` が
+あれば join HMAC で認証され、無い場合は trusted control-plane です。現行 RR はこれで明示的な
+revoke、clean boot による空の admission store、別 active identity を区別します。
+`SAMEnrollmentClient` は、すべての bootstrap RR を確認した後に限り identity-aware な absence
+応答を現在の direct claim の再送許可として扱います。別 active identity を置き換えられるのは
+初回 admission または local claim 変更時だけで、periodic renewal ではありません。digest が無い場合、
+旧版／混在 RR、revoke、request failure では RR-only fallback を維持します。caller が応答を直接
+解釈せず、client/controller を使ってください。
+
 ## コントローラーの状態
 
 `Status.status.controllers` と `Controllers` エンドポイントは、コントローラーの設定上の

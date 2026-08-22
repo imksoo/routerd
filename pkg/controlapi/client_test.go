@@ -310,12 +310,13 @@ func TestClientGetSAMEnrollmentTopology(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	var gotPath, gotClaim, gotClaimDigest string
+	var gotPath, gotClaim, gotClaimDigest, gotClaimIdentityDigest string
 	client := &Client{
 		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			gotPath = req.URL.Path
 			gotClaim = req.URL.Query().Get("claim")
 			gotClaimDigest = req.URL.Query().Get("claimDigest")
+			gotClaimIdentityDigest = req.URL.Query().Get("claimIdentityDigest")
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Body:       io.NopCloser(strings.NewReader(string(payload))),
@@ -326,12 +327,12 @@ func TestClientGetSAMEnrollmentTopology(t *testing.T) {
 		retryAttempts: 1,
 		retryDelay:    time.Millisecond,
 	}
-	result, err := client.GetSAMEnrollmentTopology(context.Background(), SAMEnrollmentTopologyGetRequest{Name: "pve-rrs", ClaimRef: "SAMEnrollmentClaim/pve-leaf-a", ClaimDigest: "sha256:claim-a"})
+	result, err := client.GetSAMEnrollmentTopology(context.Background(), SAMEnrollmentTopologyGetRequest{Name: "pve-rrs", ClaimRef: "SAMEnrollmentClaim/pve-leaf-a", ClaimDigest: "sha256:claim-a", ClaimIdentityDigest: "sha256:identity-a"})
 	if err != nil {
 		t.Fatalf("GetSAMEnrollmentTopology: %v", err)
 	}
-	if gotPath != Prefix+"/sam-enrollment-topologies/pve-rrs" || gotClaim != "SAMEnrollmentClaim/pve-leaf-a" || gotClaimDigest != "sha256:claim-a" {
-		t.Fatalf("request path/query = %q claim=%q claimDigest=%q", gotPath, gotClaim, gotClaimDigest)
+	if gotPath != Prefix+"/sam-enrollment-topologies/pve-rrs" || gotClaim != "SAMEnrollmentClaim/pve-leaf-a" || gotClaimDigest != "sha256:claim-a" || gotClaimIdentityDigest != "sha256:identity-a" {
+		t.Fatalf("request path/query = %q claim=%q claimDigest=%q claimIdentityDigest=%q", gotPath, gotClaim, gotClaimDigest, gotClaimIdentityDigest)
 	}
 	if result.RRSet.Kind != "SAMRRSet" || result.RRSet.Metadata.Name != "pve-rrs" {
 		t.Fatalf("result = %#v", result)

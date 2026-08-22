@@ -9481,7 +9481,7 @@
                         "type": "object"
                       },
                       "directMesh": {
-                        "description": "DirectMesh opts this signed claim into the policy's direct-leaf snapshot.\nA false value keeps this leaf on RR peers only.",
+                        "description": "DirectMesh opts this claim into the policy's direct-leaf snapshot.\nA false value keeps this leaf on RR peers only.",
                         "type": "boolean"
                       },
                       "endpoint": {

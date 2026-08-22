@@ -1934,6 +1934,9 @@
           "claimDigest": {
             "type": "string"
           },
+          "claimIdentityDigest": {
+            "type": "string"
+          },
           "claimRef": {
             "type": "string"
           },
@@ -3125,9 +3128,18 @@
             }
           },
           {
-            "description": "Digest of the caller's current signed claim. A mismatched or omitted digest returns only the RR fallback topology.",
+            "description": "Digest of the caller's current submitted claim. A mismatched or omitted digest returns only the RR fallback topology.",
             "in": "query",
             "name": "claimDigest",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Digest of client-authored claim material. A join-token policy authenticates it with JoinHMAC; it distinguishes an exact revoked identity, an empty admission store, and a different active identity before admission.",
+            "in": "query",
+            "name": "claimIdentityDigest",
             "required": false,
             "schema": {
               "type": "string"

@@ -91,24 +91,37 @@ inventory in static YAML.
 `SAMEnrollmentClient` is the sole submit/fetch/persist path. It refreshes when
 the fetched RRSet is missing, near expiry, or the local claim material changes.
 For a claim that opts into direct mesh, it also revalidates the optional direct
-peer snapshot every minute with a GET only: this neither re-submits the claim
-nor extends its RR lease. routerd gives each enrollment request a bounded
-10-second deadline. A direct group is usable only after every configured
-bootstrap RR has accepted the current signed claim and returns the same direct
-topology. If an RR is unreachable, times out, or disagrees, routerd withdraws
-only the higher-preference direct peers and keeps the cached RR topology as the
-safe fallback. Other failed attempts use exponential backoff; transport or BGP
-degradation does not trigger immediate rejoin loops.
+peer snapshot every minute with a GET only; this normally neither re-submits
+the claim nor extends its RR lease. Here, a *client identity* means
+client-authored claim material; a policy with `joinTokenFrom` authenticates it
+with join HMAC, while a token-less policy is trusted control-plane input. There
+is one narrow recovery exception: if a current RR explicitly reports that this
+exact client identity is absent after its volatile admission state was lost,
+and every other RR either still attests that identity or reports the same
+identity-aware absence, the leaf re-submits its current claim to all bootstrap
+RRs. A different active identity is never replaced by periodic refresh or
+renewal; it is replaceable only during initial admission or after a local claim
+change. routerd gives each enrollment request a bounded 10-second deadline. A
+direct group is usable only after every configured bootstrap RR has accepted
+the current claim and returns the same direct topology. If an RR is
+unreachable, times out, returns the older ambiguous `not found` response,
+reports revocation, reports a different active identity during renewal, or
+disagrees, routerd withdraws only the higher-preference direct peers and keeps
+the cached RR topology as the safe fallback. Other failed attempts use
+exponential backoff; transport or BGP degradation does not trigger immediate
+rejoin loops.
 
-Each direct-topology GET carries a digest of the local signed claim. The RR
-echoes the digest of the exact accepted claim from which it projected the
-snapshot. A missing or different digest is never a direct-path authorization:
-the leaf discards any direct group and persists the RRSet only. This also makes
-a rolling RR upgrade safe: an older RR can continue to serve the ordinary RR
-topology, while direct peering stays disabled until every RR supports and
-attests the current claim. Conversely, an older leaf that does not send a
-digest receives an RR-only response from an upgraded RR, rather than losing
-its lease refresh.
+Each direct-topology GET carries a digest of the local current claim plus a
+client-identity digest. The RR echoes the digest of the exact accepted claim
+from which it projected the snapshot. A missing or different digest is never a
+direct-path authorization: the leaf discards any direct group and persists the
+RRSet only. An older RR can continue to serve ordinary RR topology but
+deliberately cannot permit automatic direct re-admission: only a current RR
+that understands `claimIdentityDigest` can give the unambiguous recovery
+response. Upgrade every RR in the peer domain before relying on automatic
+recovery after an RR clean boot. Conversely, an older leaf that does not send a
+digest receives an RR-only response from an upgraded RR, rather than losing its
+lease refresh.
 
 ## Optional Direct Leaf Path, With RR Fallback
 
@@ -132,7 +145,7 @@ spec:
 ```
 
 Generate each participating leaf with `routerctl mobility leaf-config` and add
-`--direct-peer-group pve-direct-leaves`. That sets the signed claim field
+`--direct-peer-group pve-direct-leaves`. That sets the claim field
 `directMesh: true` and adds this source after a non-optional RRSet source. The
 ordering is required: routerd rejects a direct-only profile because direct
 peering is never a replacement for RR bootstrap or fallback:
@@ -190,7 +203,15 @@ RR-side revocation is an admin operation against accepted dynamic enrollment
 state. It replaces the accepted `SAMEnrollmentClaim/<name>` dynamic part with a
 revoked claim whose `expiresAt` is the revoke time. After that point, RRSet
 fetch for the old claim fails and dynamic BGP admission stops treating the
-claim as active.
+claim as active. A direct leaf treats that explicit revocation as authoritative:
+it retains its RR fallback and never automatically submits the revoked claim
+again. The RR also rejects replay of the revoked client identity. For a
+join-token policy, re-enrollment must advance `spec.joinNonce` and recompute
+its timestamp and HMAC. A deployment that deliberately omits a join token is a
+trusted control-plane deployment: routerd can still reject the same revoked
+client identity, but it cannot cryptographically prove that a changed,
+nonce-less claim came from an authorized leaf. Do not use a token-less policy
+for untrusted enrollment.
 
 ```sh
 routerctl mobility enrollment-revoke \
@@ -207,7 +228,7 @@ Use `--rr-socket /run/routerd/routerd.sock` for local RR maintenance instead
 of `--rr-url`. The same bearer-token and mTLS hardening used by enrollment
 submit/fetch applies to revoke over TCP.
 
-To rotate and re-enroll a leaf:
+To rotate and re-enroll a leaf under a `joinTokenFrom` policy:
 
 1. revoke the old accepted claim on every RR that accepted it;
 2. update the leaf `SAMEnrollmentClaim.spec.joinNonce` and
@@ -219,6 +240,11 @@ To rotate and re-enroll a leaf:
    persist the new `SAMRRSet`; and
 5. check `routerctl doctor sam-enrollment-client` on the leaf and
    `routerctl doctor bgp-dynamic-peer` on the RR.
+
+For a token-less trusted policy, use a different client identity after
+revocation and coordinate the change as privileged control-plane maintenance.
+There is no HMAC or nonce-based proof that the changed request belongs to the
+same authorized leaf.
 
 Use `routerctl mobility leaf-config` to generate a minimal leaf startup config
 for this automatic path. The generated config contains the local underlay

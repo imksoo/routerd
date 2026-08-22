@@ -21,6 +21,18 @@ func JoinHMAC(secret []byte, claim api.SAMEnrollmentClaimSpec) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
+// ClientIdentityDigest identifies exactly client-authored claim material. A
+// join-token policy authenticates this material with JoinHMAC; a token-less
+// policy is a trusted control-plane boundary instead. The digest deliberately
+// excludes RR-owned admission fields such as expiresAt and revoked, so it is
+// suitable for replay protection and revocation lookups before an RR has
+// admitted the current claim.
+func ClientIdentityDigest(claim api.SAMEnrollmentClaimSpec) string {
+	payload := JoinCanonicalPayload(claim) + "\njoinHMAC=" + strings.TrimSpace(claim.JoinHMAC)
+	sum := sha256.Sum256([]byte(payload))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
 // ClaimDigest is the stable identity of an enrollment claim after admission.
 //
 // Unlike JoinHMAC, this includes the submitted signature and the
@@ -187,7 +199,7 @@ func ActiveClaimNodeSet(selection ActiveClaimSelection, policy api.SAMEnrollment
 	return api.SAMNodeSetSpec{Nodes: nodes}, leafIDs
 }
 
-// DirectMeshTopology is the runtime projection of signed, admitted leaf claims
+// DirectMeshTopology is the runtime projection of admitted leaf claims
 // used by an opportunistic direct peer group. Nodes carry connectivity material;
 // OwnedPrefixesByNode carries the equally important BGP admission boundary.
 // Keeping them in one projection prevents a direct session from becoming a
@@ -200,7 +212,7 @@ type DirectMeshTopology struct {
 // ActiveDirectMeshTopology projects the eligible remote leaves for one
 // enrollment client. The RR remains outside this topology: it is already
 // supplied through the accompanying SAMRRSet and is the fallback path when a
-// direct peer is unavailable. Only signed claims that opted into direct mesh
+// direct peer is unavailable. Only admitted claims that opted into direct mesh
 // are included. A remote leaf with no currently owned IPv4 /32 still needs a
 // pair-stable direct transport session so it can be ready before ownership
 // appears; its absent ownership entry later compiles to a deny-all route

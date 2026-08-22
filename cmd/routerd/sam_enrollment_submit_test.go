@@ -196,7 +196,7 @@ func TestGetSAMEnrollmentTopologyForAcceptedClaimReturnsRRSet(t *testing.T) {
 	}
 	defer store.Close()
 
-	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, submitTestTopologyRequest(t, claim), now); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a not found") {
+	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, submitTestTopologyRequest(t, claim), now); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a "+controlapi.SAMEnrollmentTopologyIdentityAbsentMessage) {
 		t.Fatalf("pre-submit getSAMEnrollmentTopologyForAcceptedClaim error = %v, want accepted claim required", err)
 	}
 	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now); err != nil {
@@ -340,9 +340,10 @@ func TestGetSAMEnrollmentTopologyForAcceptedDirectClaimReturnsPolicyScopedPeerGr
 		t.Fatalf("empty direct leaf received invented owned prefixes: %#v", group.OwnedPrefixesByNode)
 	}
 
-	// A claim rotation retains the same resource name.  A lagging client (or
-	// RR) must still receive its usable RR fallback, but never a direct group
-	// derived from the now-replaced accepted claim.
+	// A claim rotation retains the same resource name. An identity-aware
+	// client must be told that its old identity is not accepted, so it can
+	// submit the deliberate rotation rather than treating a same-name claim as
+	// authority for direct topology. A legacy client remains RR-only.
 	rotated := requesterSpec
 	rotated.JoinNonce = "pve-leaf-a-rotated-0001"
 	rotated.JoinHMAC = samenrollment.JoinHMAC([]byte("test-join-token"), rotated)
@@ -350,18 +351,12 @@ func TestGetSAMEnrollmentTopologyForAcceptedDirectClaimReturnsPolicyScopedPeerGr
 	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: requester}, now); err != nil {
 		t.Fatalf("submit rotated requester: %v", err)
 	}
-	staleResult, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, oldRequest, now)
-	if err != nil {
-		t.Fatalf("get stale claim topology: %v", err)
+	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, oldRequest, now); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a "+controlapi.SAMEnrollmentTopologyIdentityMismatchMessage) {
+		t.Fatalf("stale identity topology error = %v, want active identity mismatch", err)
 	}
-	if staleResult.RRSet.Kind != "SAMRRSet" || staleResult.PeerGroup != nil {
-		t.Fatalf("stale claim topology = %#v, want RR fallback only", staleResult)
-	}
-	if staleResult.ClaimDigest != samenrollment.ClaimDigest(rotated) {
-		t.Fatalf("stale topology claimDigest = %q, want current %q", staleResult.ClaimDigest, samenrollment.ClaimDigest(rotated))
-	}
-	legacyRequest := submitTestTopologyRequest(t, requester)
+	legacyRequest := oldRequest
 	legacyRequest.ClaimDigest = ""
+	legacyRequest.ClaimIdentityDigest = ""
 	legacyResult, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, legacyRequest, now)
 	if err != nil {
 		t.Fatalf("get legacy claim topology: %v", err)
@@ -460,7 +455,8 @@ func TestRevokeSAMEnrollmentClaimExpiresAcceptedClaim(t *testing.T) {
 	}
 	claimSpec.JoinHMAC = samenrollment.JoinHMAC([]byte("test-join-token"), claimSpec)
 	claim.Spec = claimSpec
-	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "routerd.db"))
+	statePath := filepath.Join(t.TempDir(), "routerd.db")
+	store, err := routerstate.OpenSQLite(statePath)
 	if err != nil {
 		t.Fatalf("OpenSQLite: %v", err)
 	}
@@ -477,8 +473,11 @@ func TestRevokeSAMEnrollmentClaimExpiresAcceptedClaim(t *testing.T) {
 	if !result.Revoked || result.ClaimRef != "SAMEnrollmentClaim/pve-leaf-a" || !result.ExpiresAt.Equal(revokeAt) {
 		t.Fatalf("revoke result = %#v", result)
 	}
-	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, submitTestTopologyRequest(t, claim), revokeAt); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a not found") {
-		t.Fatalf("post-revoke getSAMEnrollmentTopologyForAcceptedClaim error = %v, want accepted claim required", err)
+	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, submitTestTopologyRequest(t, claim), revokeAt); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a is revoked") {
+		t.Fatalf("post-revoke getSAMEnrollmentTopologyForAcceptedClaim error = %v, want explicit revocation", err)
+	}
+	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, revokeAt.Add(time.Second)); err == nil || !strings.Contains(err.Error(), "was revoked; use a new client identity") {
+		t.Fatalf("replay revoked submit error = %v, want new identity required", err)
 	}
 	records, err := store.GetDynamicConfigPartsBySource("SAMEnrollmentClaim/pve-leaf-a")
 	if err != nil {
@@ -486,6 +485,167 @@ func TestRevokeSAMEnrollmentClaimExpiresAcceptedClaim(t *testing.T) {
 	}
 	if len(records) != 1 || records[0].EffectiveStatus(revokeAt) != "expired" || !strings.Contains(records[0].ResourcesJSON, `"revoked":true`) {
 		t.Fatalf("records = %#v", records)
+	}
+	rotated := claim
+	rotatedSpec, err := rotated.SAMEnrollmentClaimSpec()
+	if err != nil {
+		t.Fatalf("rotated claim spec: %v", err)
+	}
+	rotatedSpec.JoinNonce = "pve-leaf-a-rotated-0001"
+	rotatedSpec.JoinTimestamp = revokeAt.Add(2 * time.Minute).Format(time.RFC3339)
+	rotatedSpec.JoinHMAC = samenrollment.JoinHMAC([]byte("test-join-token"), rotatedSpec)
+	rotated.Spec = rotatedSpec
+	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: rotated}, revokeAt.Add(2*time.Minute)); err != nil {
+		t.Fatalf("rotated submitSAMEnrollmentClaim: %v", err)
+	}
+	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, submitTestTopologyRequest(t, rotated), revokeAt.Add(2*time.Minute)); err != nil {
+		t.Fatalf("rotated getSAMEnrollmentTopologyForAcceptedClaim: %v", err)
+	}
+	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, submitTestTopologyRequest(t, claim), revokeAt.Add(2*time.Minute)); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a is revoked") {
+		t.Fatalf("revoked identity against rotated active claim error = %v, want explicit revocation", err)
+	}
+	fresh := rotated
+	freshSpec, err := fresh.SAMEnrollmentClaimSpec()
+	if err != nil {
+		t.Fatalf("fresh claim spec: %v", err)
+	}
+	freshSpec.JoinNonce = "pve-leaf-a-rotated-0002"
+	freshSpec.JoinTimestamp = revokeAt.Add(3 * time.Minute).Format(time.RFC3339)
+	freshSpec.JoinHMAC = samenrollment.JoinHMAC([]byte("test-join-token"), freshSpec)
+	fresh.Spec = freshSpec
+	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, submitTestTopologyRequest(t, fresh), revokeAt.Add(2*time.Minute)); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a "+controlapi.SAMEnrollmentTopologyIdentityMismatchMessage) {
+		t.Fatalf("fresh replacement identity error = %v, want active identity mismatch before submit", err)
+	}
+	// The new active row replaced the revoked row, but the old client identity
+	// must remain denied. Otherwise a captured nonce-A claim could roll a
+	// successfully re-enrolled nonce-B leaf back during its old lease window.
+	if err := store.Close(); err != nil {
+		t.Fatalf("close state before replay check: %v", err)
+	}
+	store, err = routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatalf("reopen state before replay check: %v", err)
+	}
+	defer store.Close()
+	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, revokeAt.Add(3*time.Minute)); err == nil || !strings.Contains(err.Error(), "was revoked; use a new client identity") {
+		t.Fatalf("old claim after rotation error = %v, want durable replay rejection", err)
+	}
+	renamed := claim
+	renamed.Metadata.Name = "pve-leaf-a-replay"
+	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: renamed}, revokeAt.Add(3*time.Minute)); err == nil || !strings.Contains(err.Error(), "was revoked; use a new client identity") {
+		t.Fatalf("renamed old claim after rotation error = %v, want global identity replay rejection", err)
+	}
+	identityRevoked, err := store.HasSAMEnrollmentRevokedIdentity(samenrollment.ClientIdentityDigest(claimSpec))
+	if err != nil {
+		t.Fatalf("HasSAMEnrollmentRevokedIdentity: %v", err)
+	}
+	if !identityRevoked {
+		t.Fatal("missing durable revoked identity after state reopen")
+	}
+}
+
+func TestRevokeSAMEnrollmentClaimRejectsNonceLessReplay(t *testing.T) {
+	now := time.Date(2026, 6, 28, 0, 1, 0, 0, time.UTC)
+	router := loadSubmitTestRouter(t)
+	clearSubmitTestJoinToken(t, router, "pve-wg-leaves")
+	claim := loadSubmitTestClaim(t, "pve-leaf-a")
+	claimSpec, err := claim.SAMEnrollmentClaimSpec()
+	if err != nil {
+		t.Fatalf("claim spec: %v", err)
+	}
+	claimSpec.JoinNonce = ""
+	claimSpec.JoinTimestamp = ""
+	claimSpec.JoinHMAC = ""
+	claim.Spec = claimSpec
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "routerd.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer store.Close()
+
+	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now); err != nil {
+		t.Fatalf("submit nonce-less claim: %v", err)
+	}
+	if _, err := revokeSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimRevokeRequest{Name: "pve-leaf-a", Reason: "retire"}, now.Add(time.Minute)); err != nil {
+		t.Fatalf("revoke nonce-less claim: %v", err)
+	}
+	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now.Add(2*time.Minute)); err == nil || !strings.Contains(err.Error(), "was revoked; use a new client identity") {
+		t.Fatalf("nonce-less replay error = %v, want revoked identity rejection", err)
+	}
+	records, err := store.GetDynamicConfigPartsBySource("SAMEnrollmentClaim/pve-leaf-a")
+	if err != nil {
+		t.Fatalf("GetDynamicConfigPartsBySource: %v", err)
+	}
+	if len(records) != 1 || !strings.Contains(records[0].ResourcesJSON, `"revoked":true`) {
+		t.Fatalf("nonce-less replay replaced revoked record: %#v", records)
+	}
+	rotated := claim
+	rotatedSpec, err := rotated.SAMEnrollmentClaimSpec()
+	if err != nil {
+		t.Fatalf("rotated nonce-less claim spec: %v", err)
+	}
+	rotatedSpec.JoinNonce = "pve-leaf-a-reenroll-0001"
+	rotatedSpec.JoinTimestamp = now.Add(3 * time.Minute).Format(time.RFC3339)
+	rotated.Spec = rotatedSpec
+	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: rotated}, now.Add(3*time.Minute)); err != nil {
+		t.Fatalf("nonce-added re-enrollment: %v", err)
+	}
+}
+
+func TestSAMEnrollmentLegacyRevocationTombstoneBackfillsIdentity(t *testing.T) {
+	now := time.Date(2026, 8, 22, 21, 30, 0, 0, time.UTC)
+	router := loadSubmitTestRouter(t)
+	secretFile := filepath.Join(t.TempDir(), "join-token")
+	if err := os.WriteFile(secretFile, []byte("test-join-token\n"), 0o600); err != nil {
+		t.Fatalf("write join token: %v", err)
+	}
+	setSubmitTestJoinToken(t, router, "pve-wg-leaves", secretFile)
+	claim := loadSubmitTestClaim(t, "pve-leaf-a")
+	claimSpec, err := claim.SAMEnrollmentClaimSpec()
+	if err != nil {
+		t.Fatalf("claim spec: %v", err)
+	}
+	claimSpec.JoinHMAC = samenrollment.JoinHMAC([]byte("test-join-token"), claimSpec)
+	claim.Spec = claimSpec
+
+	legacy := claim
+	legacySpec := claimSpec
+	legacySpec.Revoked = true
+	legacySpec.ExpiresAt = now.Add(-time.Minute).Format(time.RFC3339)
+	legacy.Spec = legacySpec
+	resources, err := json.Marshal([]api.Resource{legacy})
+	if err != nil {
+		t.Fatalf("marshal legacy revoked claim: %v", err)
+	}
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "routerd.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer store.Close()
+	if err := store.UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord{
+		Source:        "SAMEnrollmentClaim/pve-leaf-a",
+		Generation:    1,
+		ObservedAt:    now.Add(-2 * time.Minute),
+		ExpiresAt:     now.Add(-time.Minute),
+		Digest:        "sha256:legacy-tombstone",
+		ResourcesJSON: string(resources),
+	}); err != nil {
+		t.Fatalf("UpsertDynamicConfigPart legacy tombstone: %v", err)
+	}
+	identity := samenrollment.ClientIdentityDigest(claimSpec)
+	if found, err := store.HasSAMEnrollmentRevokedIdentity(identity); err != nil || found {
+		t.Fatalf("pre-upgrade identity ledger found=%t err=%v, want absent", found, err)
+	}
+	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, submitTestTopologyRequest(t, claim), now); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a is revoked") {
+		t.Fatalf("legacy topology error = %v, want explicit revocation", err)
+	}
+	if found, err := store.HasSAMEnrollmentRevokedIdentity(identity); err != nil || !found {
+		t.Fatalf("legacy identity ledger found=%t err=%v, want durable backfill", found, err)
+	}
+	renamed := claim
+	renamed.Metadata.Name = "pve-leaf-a-replay"
+	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: renamed}, now); err == nil || !strings.Contains(err.Error(), "was revoked; use a new client identity") {
+		t.Fatalf("renamed legacy replay error = %v, want global identity rejection", err)
 	}
 }
 
@@ -528,9 +688,10 @@ func submitTestTopologyRequest(t *testing.T, claim api.Resource) controlapi.SAME
 		t.Fatalf("claim spec: %v", err)
 	}
 	return controlapi.SAMEnrollmentTopologyGetRequest{
-		Name:        "pve-rrs",
-		ClaimRef:    "SAMEnrollmentClaim/" + claim.Metadata.Name,
-		ClaimDigest: samenrollment.ClaimDigest(spec),
+		Name:                "pve-rrs",
+		ClaimRef:            "SAMEnrollmentClaim/" + claim.Metadata.Name,
+		ClaimDigest:         samenrollment.ClaimDigest(spec),
+		ClaimIdentityDigest: samenrollment.ClientIdentityDigest(spec),
 	}
 }
 
@@ -564,6 +725,23 @@ func setSubmitTestJoinToken(t *testing.T, router *api.Router, policyName, secret
 			t.Fatalf("policy spec: %v", err)
 		}
 		spec.JoinTokenFrom.File = secretFile
+		router.Spec.Resources[i].Spec = spec
+		return
+	}
+	t.Fatalf("missing policy %s", policyName)
+}
+
+func clearSubmitTestJoinToken(t *testing.T, router *api.Router, policyName string) {
+	t.Helper()
+	for i, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentPolicy" || resource.Metadata.Name != policyName {
+			continue
+		}
+		spec, err := resource.SAMEnrollmentPolicySpec()
+		if err != nil {
+			t.Fatalf("policy spec: %v", err)
+		}
+		spec.JoinTokenFrom = api.SecretValueSourceSpec{}
 		router.Spec.Resources[i].Spec = spec
 		return
 	}

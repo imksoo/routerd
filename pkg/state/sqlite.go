@@ -189,6 +189,11 @@ CREATE TABLE IF NOT EXISTS dynamic_config_parts (
   updated_at TEXT NOT NULL,
   UNIQUE(source, generation)
 );
+CREATE TABLE IF NOT EXISTS sam_enrollment_revoked_identities (
+  identity_digest TEXT PRIMARY KEY,
+  claim_source TEXT NOT NULL,
+  revoked_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS plugin_runs (
   id INTEGER PRIMARY KEY,
   plugin TEXT NOT NULL,
@@ -901,6 +906,51 @@ func (s *SQLiteStore) GetDynamicConfigPartsBySource(source string) ([]DynamicCon
 	}
 	defer rows.Close()
 	return scanDynamicConfigPartRecords(rows)
+}
+
+// RecordSAMEnrollmentRevokedIdentity permanently records an enrollment
+// identity that an operator revoked. The identity digest is global rather than
+// keyed by the mutable resource name: a captured client-authored claim must not become
+// usable again merely by changing metadata.name.
+func (s *SQLiteStore) RecordSAMEnrollmentRevokedIdentity(claimSource, identityDigest string, revokedAt time.Time) error {
+	claimSource = strings.TrimSpace(claimSource)
+	identityDigest = strings.TrimSpace(identityDigest)
+	if claimSource == "" || identityDigest == "" {
+		return fmt.Errorf("SAM enrollment revoked identity source and digest are required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	if revokedAt.IsZero() {
+		revokedAt = s.now().UTC()
+	}
+	_, err := s.db.Exec(`INSERT INTO sam_enrollment_revoked_identities(identity_digest,claim_source,revoked_at)
+	VALUES(?,?,?) ON CONFLICT(identity_digest) DO NOTHING`, identityDigest, claimSource, formatStateTime(revokedAt.UTC()))
+	return err
+}
+
+// HasSAMEnrollmentRevokedIdentity reports whether an enrollment identity
+// was explicitly revoked. It intentionally ignores resource names so callers
+// cannot bypass a revocation by replaying the same signed spec under a new
+// DynamicConfigPart source.
+func (s *SQLiteStore) HasSAMEnrollmentRevokedIdentity(identityDigest string) (bool, error) {
+	identityDigest = strings.TrimSpace(identityDigest)
+	if identityDigest == "" {
+		return false, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return false, nil
+	}
+	var found int
+	err := s.db.QueryRow(`SELECT 1 FROM sam_enrollment_revoked_identities WHERE identity_digest = ?`, identityDigest).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func scanDynamicConfigPartRecords(rows *sql.Rows) ([]DynamicConfigPartRecord, error) {
