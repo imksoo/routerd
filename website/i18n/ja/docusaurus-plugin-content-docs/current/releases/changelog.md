@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260822.1116
+
 ### 修正
 
 - 生成する Cloud SAM direct leaf 設定で、RR が反射した route の next hop を直結 RR peer

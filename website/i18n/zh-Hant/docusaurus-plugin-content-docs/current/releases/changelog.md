@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260822.1116
+
 ### 修正
 
 - 產生的 Cloud SAM direct leaf 設定現在使用 `nextHopRewrite: peer-address`，讓 RR
