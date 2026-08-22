@@ -195,6 +195,9 @@ func TestMobilityLeafConfigCommandGeneratesValidConfig(t *testing.T) {
 	if transport.BGP.ImportPolicy.LocalPreference != 110 || transport.BGP.DirectLocalPreference != 240 {
 		t.Fatalf("generated direct transport preferences = %#v", transport.BGP)
 	}
+	if got, want := transport.BGP.ImportPolicy.NextHopRewrite, "peer-address"; got != want {
+		t.Fatalf("generated RR import next-hop rewrite = %q, want %q", got, want)
+	}
 	var bgpRouter api.BGPRouterSpec
 	for _, resource := range router.Spec.Resources {
 		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" || resource.Metadata.Name != "mobility-bgp" {

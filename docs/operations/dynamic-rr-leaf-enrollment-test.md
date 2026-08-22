@@ -155,6 +155,11 @@ the RR is normally an iBGP reflector, so the extra forwarding hop is not a
 reliable AS-path signal. A direct profile must explicitly set the normal RR
 `bgp.importPolicy.localPreference`; set `bgp.directLocalPreference` to a
 greater value. Validation rejects a missing, equal, or lower direct value.
+Keep the RR import `nextHopRewrite` at its `peer-address` default (or set it
+explicitly). A reflected route can retain the address of the leaf that
+originated it, while the RR tunnel is the reachable forwarding next hop.
+`unchanged` is therefore rejected for a direct profile; it is not a way to
+make the optional direct peer more direct.
 
 Check the profile status after refresh. Its `peersFrom` rows show the RRSet as
 `Resolved` and the direct group as `Direct`, `Unavailable`, or `Incompatible`.

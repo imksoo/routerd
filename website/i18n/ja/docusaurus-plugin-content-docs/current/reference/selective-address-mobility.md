@@ -252,8 +252,11 @@ peersFrom:
 bgp:
   importPolicy:
     localPreference: 100 # RR peer
+    nextHopRewrite: peer-address
   directLocalPreference: 200 # direct peer。RR より大きくする
 ```
+
+RR import の `nextHopRewrite` は省略して既定の `peer-address` を使うか、上のように明示します。direct profile で `unchanged` は使えません。RR が反射する route は別の leaf が起点であることがありますが、実際に到達できる次 hop は直結している RR tunnel だからです。無関係な transport prefix route に依存する direct mesh を作らないよう、`unchanged` は validation が拒否します。この設定は学習済み route の転送 next hop を決めるだけで、direct peer を採用するかどうかは変えません。
 
 group がない・期限切れ・transport fingerprint 不一致・ネットワーク的に未到達なら direct artifact は作られず、RR tunnel/BGP peer がそのまま fallback になります。つまり direct は高速化の試行であり、RR を置き換えません。
 

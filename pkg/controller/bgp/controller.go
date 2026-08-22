@@ -3671,6 +3671,7 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []allowedImport
 		stale   bool
 	}
 	var candidates []candidate
+	localBest := false
 	for _, path := range dst.GetPaths() {
 		if path.GetIsWithdraw() || path.GetIsNexthopInvalid() {
 			continue
@@ -3692,6 +3693,12 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []allowedImport
 		}
 		nextHop := strings.TrimSpace(pathFIBNextHop(path, peerAddressRewrite))
 		if nextHop == "" || nextHop == "0.0.0.0" || nextHop == "::" {
+			// A GoBGP-local best path has no remote gateway. Do not synthesize
+			// a kernel route through a lower-ranked remote alternate: traffic for
+			// this prefix is local to the router that selected it.
+			if path.GetBest() {
+				localBest = true
+			}
 			continue
 		}
 		identityAddress := stringutil.FirstNonBlank(normalizedPathNeighbor(path), nextHop)
@@ -3708,6 +3715,9 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []allowedImport
 		prefix = parsed.String()
 	}
 	if len(candidates) == 0 || prefix == "" {
+		return nil
+	}
+	if localBest {
 		return nil
 	}
 	// A stale direct-mesh path can remain GoBGP's best path during graceful
