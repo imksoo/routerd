@@ -144,6 +144,12 @@ peersFrom:
     direct: true
 ```
 
+`--owned-address` is optional. Omit it while a leaf is only joining the mesh:
+the generator then writes an empty signed ownership list and deliberately
+omits the loopback service address plus all BGP export/redistribution prefixes.
+The leaf can establish its direct transport session, but cannot invent or
+advertise a mobility route before it has a real signed `/32`.
+
 The RR returns the direct group only for an admitted, opted-in claim and stores
 it beside the RRSet in the same `DynamicConfigPart`. A direct group contains
 remote opted-in leaves, never the RR itself. Its transport fingerprint must
@@ -216,8 +222,9 @@ To rotate and re-enroll a leaf:
 
 Use `routerctl mobility leaf-config` to generate a minimal leaf startup config
 for this automatic path. The generated config contains the local underlay
-interface/address, owned SAM `/32`, `BGPRouter`, `SAMTransportProfile`,
-`SAMEnrollmentClaim`, and `SAMEnrollmentClient`. It deliberately omits
+interface/address, `BGPRouter`, `SAMTransportProfile`, `SAMEnrollmentClaim`,
+and `SAMEnrollmentClient`; it adds a local owned SAM `/32` and its BGP export
+only when `--owned-address` is supplied. It deliberately omits
 `MobilityPool` and `EventGroup`: neither can reconcile without the full local
 ownership/capture topology. The claim references the remote server policy; the
 generated leaf config intentionally

@@ -12,9 +12,12 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
-## v20260822.1648
-
 ### Fixed
+
+- `routerctl mobility leaf-config` now permits omitting `--owned-address` for
+  a direct leaf that has not acquired a mobility `/32`. Its generated config
+  creates no service address, BGP export, or redistribution route until an
+  actual owned address is supplied.
 
 - Signed Cloud SAM direct leaves with no current `ownedAddresses` now remain
   eligible for pair-stable direct BGP transport. Their peer-specific import

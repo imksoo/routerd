@@ -235,6 +235,10 @@ allowlist becomes that exact address and the normal direct preference applies.
 This lets a leaf become ready without inventing an address, while the RR path
 continues to carry all usable traffic.
 
+`routerctl mobility leaf-config` accepts this state without `--owned-address`.
+It omits the local service address and all BGP export/redistribution prefixes,
+so the generated file has the same no-route behavior as the signed claim.
+
 The direct group is deliberately optional. `SAMTransportProfile` keeps the
 `SAMRRSet` source and adds the direct group with `direct: true`. Direct peers
 receive a higher local preference only while their BGP session is alive. If the

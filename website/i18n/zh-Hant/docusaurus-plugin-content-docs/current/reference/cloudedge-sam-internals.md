@@ -237,6 +237,10 @@ BGP session 存活時，它的路由才會取得比 RR 更高的 `LOCAL_PREF`。
 才只允許那一個位址並使用 direct preference。這樣不用虛構 IP，準備期間的通信仍安全地經由
 RR 轉送。
 
+`routerctl mobility leaf-config` 也可省略 `--owned-address` 來產生這個狀態。此時它不會產生
+local service address，也不會產生任何 BGP export/redistribute prefix，因此生成的設定會和已簽署
+claim 一樣不通告路由。
+
 ## Capture strategies (how cloud ingress is built)
 
 `capture.type` selects the normal ingress mechanism. `capture.captureStrategy`

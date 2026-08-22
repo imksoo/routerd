@@ -217,6 +217,10 @@ route も受け入れません。後から署名済みの `/32` が現れた時�
 許可して direct preference を使います。架空の IP を書かずに接続準備だけを済ませ、通信は
 その間も RR 経由で安全に続きます。
 
+`routerctl mobility leaf-config` でも `--owned-address` を省略してこの状態を生成できます。
+その場合は local service address と BGP の export/redistribute prefix を一切生成しないため、
+生成された設定も署名済み claim と同じく経路を広告しません。
+
 ## capture strategy（クラウド受け口の作り方）
 
 通常のクラウド受け口は `capture.type` で決まります。

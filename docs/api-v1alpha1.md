@@ -472,6 +472,9 @@ leaf config for this shape. It emits local leaf resources plus
 embedding static RR inventory in the generated leaf YAML. Add
 `--direct-peer-group <name>` only for policy-approved leaves that should try a
 direct path; the generated RRSet source remains first and is never removed.
+`--owned-address` is optional: when omitted, the generator writes no local
+service address and no BGP export/redistribution prefix, so a joining direct
+leaf can establish transport without inventing a mobility `/32`.
 
 `BGPRouter.spec.convergenceProfile: fast` is intended for Kubernetes/edge
 routers that prefer quick convergence over graceful restart stale-path

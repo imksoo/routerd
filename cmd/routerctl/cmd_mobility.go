@@ -339,7 +339,7 @@ func mobilityLeafConfigCommand(args []string, stdout io.Writer) error {
 	fs.Usage = func() {
 		printSubcommandHelp(fs,
 			"Generate a minimal SAM dynamic leaf config with SAMEnrollmentClient bootstrap.",
-			"routerctl mobility leaf-config --leaf-id pve-leaf-b --underlay-ifname vmbr0 --underlay-address 10.30.0.22/24 --local-endpoint 10.30.0.22 --endpoint-prefix 10.30.0.0/24 --inner-prefix 10.255.10.0/24 --tunnel-address 10.255.10.22/32 --mobility-prefix 10.77.70.0/24 --owned-address 10.77.70.22/32 --rr-set pve-rrs --policy pve-fou-leaves --join-audience pve-private-underlay --bootstrap-endpoint https://10.30.0.10:65432 --control-api-token-file /usr/local/etc/routerd/secrets/control-api-token --control-api-ca-file /usr/local/etc/routerd/secrets/rr-ca.pem --control-api-client-cert-file /usr/local/etc/routerd/secrets/leaf.crt --control-api-client-key-file /usr/local/etc/routerd/secrets/leaf.key --secret-file /usr/local/etc/routerd/secrets/pve-join-token")
+			"routerctl mobility leaf-config --leaf-id pve-leaf-b --underlay-ifname vmbr0 --underlay-address 10.30.0.22/24 --local-endpoint 10.30.0.22 --endpoint-prefix 10.30.0.0/24 --inner-prefix 10.255.10.0/24 --tunnel-address 10.255.10.22/32 --mobility-prefix 10.77.70.0/24 [--owned-address 10.77.70.22/32] --rr-set pve-rrs --policy pve-fou-leaves --join-audience pve-private-underlay --bootstrap-endpoint https://10.30.0.10:65432 --control-api-token-file /usr/local/etc/routerd/secrets/control-api-token --control-api-ca-file /usr/local/etc/routerd/secrets/rr-ca.pem --control-api-client-cert-file /usr/local/etc/routerd/secrets/leaf.crt --control-api-client-key-file /usr/local/etc/routerd/secrets/leaf.key --secret-file /usr/local/etc/routerd/secrets/pve-join-token")
 	}
 	leafID := fs.String("leaf-id", "", "leaf node ID, Router.metadata.name, and claim/client/profile name")
 	underlayName := fs.String("underlay-name", "private-wan", "routerd Interface resource name for the underlay")
@@ -350,7 +350,7 @@ func mobilityLeafConfigCommand(args []string, stdout io.Writer) error {
 	innerPrefix := fs.String("inner-prefix", "", "SAM tunnel inner prefix")
 	tunnelAddress := fs.String("tunnel-address", "", "leaf SAM tunnel /32")
 	mobilityPrefix := fs.String("mobility-prefix", "", "authorized SAM IPv4 prefix accepted from the RR")
-	ownedAddress := fs.String("owned-address", "", "leaf-owned SAM IPv4 /32")
+	ownedAddress := fs.String("owned-address", "", "optional leaf-owned SAM IPv4 /32; omit before the leaf owns a mobility address")
 	rrSet := fs.String("rr-set", "", "SAMRRSet name fetched from the RR")
 	directPeerGroup := fs.String("direct-peer-group", "", "policy-scoped SAMPeerGroup name for opportunistic direct leaf peers; RR remains the fallback")
 	policy := fs.String("policy", "", "SAMEnrollmentPolicy name")
@@ -502,7 +502,6 @@ func mobilityGeneratedLeafConfig(opts mobilityLeafConfigOptions) (*api.Router, e
 		"--inner-prefix":     opts.InnerPrefix,
 		"--tunnel-address":   opts.TunnelAddress,
 		"--mobility-prefix":  opts.MobilityPrefix,
-		"--owned-address":    opts.OwnedAddress,
 		"--rr-set":           opts.RRSet,
 		"--policy":           opts.Policy,
 		"--join-audience":    opts.JoinAudience,
@@ -553,9 +552,13 @@ func mobilityGeneratedLeafConfig(opts mobilityLeafConfigOptions) (*api.Router, e
 	if _, err := netip.ParsePrefix(strings.TrimSpace(opts.MobilityPrefix)); err != nil {
 		return nil, fmt.Errorf("--mobility-prefix must be an IP prefix: %w", err)
 	}
-	ownedPrefix, err := netip.ParsePrefix(strings.TrimSpace(opts.OwnedAddress))
-	if err != nil || !ownedPrefix.Addr().Is4() || ownedPrefix.Bits() != 32 {
-		return nil, errors.New("--owned-address must be an IPv4 /32")
+	ownedAddresses := []string(nil)
+	if ownedAddress := strings.TrimSpace(opts.OwnedAddress); ownedAddress != "" {
+		ownedPrefix, err := netip.ParsePrefix(ownedAddress)
+		if err != nil || !ownedPrefix.Addr().Is4() || ownedPrefix.Bits() != 32 {
+			return nil, errors.New("--owned-address must be an IPv4 /32")
+		}
+		ownedAddresses = []string{ownedPrefix.Masked().String()}
 	}
 	if strings.TrimSpace(opts.BGPRouterID) == "" {
 		opts.BGPRouterID = tunnelPrefix.Addr().String()
@@ -581,7 +584,7 @@ func mobilityGeneratedLeafConfig(opts mobilityLeafConfigOptions) (*api.Router, e
 		JoinTimestamp: strings.TrimSpace(opts.JoinTimestamp),
 		TunnelAddress: strings.TrimSpace(opts.TunnelAddress),
 		Endpoint:      strings.TrimSpace(opts.LocalEndpoint),
-		Mobility:      api.SAMEnrollmentClaimMobilitySpec{OwnedAddresses: []string{strings.TrimSpace(opts.OwnedAddress)}},
+		Mobility:      api.SAMEnrollmentClaimMobilitySpec{OwnedAddresses: append([]string(nil), ownedAddresses...)},
 		BGP:           api.SAMEnrollmentClaimBGPSpec{ASN: opts.BGPASN, RouterID: strings.TrimSpace(opts.BGPRouterID)},
 	}
 	if strings.TrimSpace(opts.DirectPeerGroup) != "" {
@@ -612,10 +615,10 @@ func mobilityGeneratedLeafConfig(opts mobilityLeafConfigOptions) (*api.Router, e
 		rrLocalPreference = opts.RRLocalPreference
 		directLocalPreference = opts.DirectLocalPreference
 	}
-	// Direct peers require a signed, deterministic identity community in
-	// addition to their per-leaf /32 allowlist. Tag the generated leaf's local
-	// advertisement at its source so another direct leaf can prove both who
-	// sent the route and which signed address that sender owns.
+	// Direct peers require a signed, deterministic identity community. When a
+	// leaf owns a /32, tag its local advertisement at the source so another
+	// direct leaf can prove both who sent the route and which signed address it
+	// owns. An empty-owner leaf emits no route until it has that /32.
 	communities := api.BGPCommunitiesSpec{}
 	if strings.TrimSpace(opts.DirectPeerGroup) != "" {
 		communities = api.BGPCommunitiesSpec{
@@ -624,67 +627,70 @@ func mobilityGeneratedLeafConfig(opts mobilityLeafConfigOptions) (*api.Router, e
 		}
 	}
 	controlTokenFrom := api.SecretValueSourceSpec{File: strings.TrimSpace(opts.ControlAPITokenFile), Env: strings.TrimSpace(opts.ControlAPITokenEnv)}
+	exportPolicy := api.BGPExportPolicySpec{AllowedPrefixes: append([]string(nil), ownedAddresses...)}
+	redistribute := api.BGPRedistributeSpec{Connected: api.BGPRedistributeRouteSpec{AllowedPrefixes: append([]string(nil), ownedAddresses...)}}
+	resources := []api.Resource{
+		leafResource(api.NetAPIVersion, "Interface", strings.TrimSpace(opts.UnderlayName), api.InterfaceSpec{IfName: strings.TrimSpace(opts.UnderlayIfName), Managed: false, MTU: 1500}),
+		leafResource(api.NetAPIVersion, "IPv4StaticAddress", strings.TrimSpace(opts.UnderlayName)+"-ipv4", api.IPv4StaticAddressSpec{Interface: strings.TrimSpace(opts.UnderlayName), Address: strings.TrimSpace(opts.UnderlayAddress)}),
+		leafResource(api.NetAPIVersion, "Interface", "lo-mobility", api.InterfaceSpec{IfName: "lo", Managed: false}),
+	}
+	if len(ownedAddresses) > 0 {
+		resources = append(resources, leafResource(api.NetAPIVersion, "IPv4StaticAddress", "owned-service-ip", api.IPv4StaticAddressSpec{Interface: "lo-mobility", Address: ownedAddresses[0], AllowOverlap: true, AllowOverlapReason: opts.LeafID + " owned SAM /32 authorized by the RR policy"}))
+	}
+	resources = append(resources,
+		leafResource(api.NetAPIVersion, "BGPRouter", "mobility-bgp", api.BGPRouterSpec{
+			ASN:                opts.BGPASN,
+			RouterID:           strings.TrimSpace(opts.BGPRouterID),
+			ExportPolicy:       exportPolicy,
+			Communities:        communities,
+			Redistribute:       redistribute,
+			Timers:             api.BGPTimersSpec{Profile: "fast"},
+			ConvergenceProfile: "fast",
+		}),
+		leafResource(api.MobilityAPIVersion, "SAMTransportProfile", opts.LeafID, api.SAMTransportProfileSpec{
+			SelfNodeRef:       opts.LeafID,
+			Mode:              mode,
+			Encryption:        encryption,
+			AddressingMode:    "pair-stable",
+			InnerPrefix:       strings.TrimSpace(opts.InnerPrefix),
+			UnderlayInterface: strings.TrimSpace(opts.UnderlayName),
+			LocalEndpoint:     strings.TrimSpace(opts.LocalEndpoint),
+			EncapSport:        opts.EncapSport,
+			EncapDport:        opts.EncapDport,
+			PeersFrom:         peersFrom,
+			BGP: api.SAMTransportBGPProfileSpec{
+				RouterRef:             "BGPRouter/mobility-bgp",
+				PeerASN:               opts.BGPASN,
+				TimersPreset:          "fast",
+				DirectLocalPreference: directLocalPreference,
+				ImportPolicy: api.BGPImportPolicySpec{
+					AllowedPrefixes:        []string{strings.TrimSpace(opts.MobilityPrefix)},
+					AllowedPrefixLengthMin: 32,
+					AllowedPrefixLengthMax: 32,
+					// An enrolled leaf reaches reflected routes through its
+					// immediately connected RR tunnel. Keeping an origin leaf's
+					// advertised router ID as the next hop would make a partial
+					// mesh depend on an unrelated inner-prefix aggregate.
+					NextHopRewrite:  "peer-address",
+					LocalPreference: rrLocalPreference,
+				},
+				ExportPolicy: exportPolicy,
+			},
+		}),
+		leafResource(api.MobilityAPIVersion, "SAMEnrollmentClaim", opts.LeafID, claim),
+		leafResource(api.MobilityAPIVersion, "SAMEnrollmentClient", opts.LeafID, api.SAMEnrollmentClientSpec{
+			ClaimRef:              "SAMEnrollmentClaim/" + opts.LeafID,
+			BootstrapEndpoints:    trimmedStrings(opts.BootstrapEndpoints),
+			ControlAPITokenFrom:   controlTokenFrom,
+			ControlAPITLS:         api.ControlAPIClientTLSSpec{CAFile: strings.TrimSpace(opts.ControlAPICAFile), CertFile: strings.TrimSpace(opts.ControlAPIClientCertFile), KeyFile: strings.TrimSpace(opts.ControlAPIClientKeyFile), ServerName: strings.TrimSpace(opts.ControlAPIServerName), InsecureSkipVerify: opts.ControlAPIInsecureSkipVerify},
+			StateTTLRefreshBefore: strings.TrimSpace(opts.StateTTLRefreshBefore),
+			RetryBackoff:          api.SAMEnrollmentRetryBackoffSpec{Min: strings.TrimSpace(opts.RetryMin), Max: strings.TrimSpace(opts.RetryMax)},
+		}),
+	)
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: opts.LeafID},
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			leafResource(api.NetAPIVersion, "Interface", strings.TrimSpace(opts.UnderlayName), api.InterfaceSpec{IfName: strings.TrimSpace(opts.UnderlayIfName), Managed: false, MTU: 1500}),
-			leafResource(api.NetAPIVersion, "IPv4StaticAddress", strings.TrimSpace(opts.UnderlayName)+"-ipv4", api.IPv4StaticAddressSpec{Interface: strings.TrimSpace(opts.UnderlayName), Address: strings.TrimSpace(opts.UnderlayAddress)}),
-			leafResource(api.NetAPIVersion, "Interface", "lo-mobility", api.InterfaceSpec{IfName: "lo", Managed: false}),
-			leafResource(api.NetAPIVersion, "IPv4StaticAddress", "owned-service-ip", api.IPv4StaticAddressSpec{Interface: "lo-mobility", Address: strings.TrimSpace(opts.OwnedAddress), AllowOverlap: true, AllowOverlapReason: opts.LeafID + " owned SAM /32 authorized by the RR policy"}),
-			leafResource(api.NetAPIVersion, "BGPRouter", "mobility-bgp", api.BGPRouterSpec{
-				ASN:      opts.BGPASN,
-				RouterID: strings.TrimSpace(opts.BGPRouterID),
-				ExportPolicy: api.BGPExportPolicySpec{
-					AllowedPrefixes: []string{strings.TrimSpace(opts.OwnedAddress)},
-				},
-				Communities: communities,
-				Redistribute: api.BGPRedistributeSpec{
-					Connected: api.BGPRedistributeRouteSpec{AllowedPrefixes: []string{strings.TrimSpace(opts.OwnedAddress)}},
-				},
-				Timers:             api.BGPTimersSpec{Profile: "fast"},
-				ConvergenceProfile: "fast",
-			}),
-			leafResource(api.MobilityAPIVersion, "SAMTransportProfile", opts.LeafID, api.SAMTransportProfileSpec{
-				SelfNodeRef:       opts.LeafID,
-				Mode:              mode,
-				Encryption:        encryption,
-				AddressingMode:    "pair-stable",
-				InnerPrefix:       strings.TrimSpace(opts.InnerPrefix),
-				UnderlayInterface: strings.TrimSpace(opts.UnderlayName),
-				LocalEndpoint:     strings.TrimSpace(opts.LocalEndpoint),
-				EncapSport:        opts.EncapSport,
-				EncapDport:        opts.EncapDport,
-				PeersFrom:         peersFrom,
-				BGP: api.SAMTransportBGPProfileSpec{
-					RouterRef:             "BGPRouter/mobility-bgp",
-					PeerASN:               opts.BGPASN,
-					TimersPreset:          "fast",
-					DirectLocalPreference: directLocalPreference,
-					ImportPolicy: api.BGPImportPolicySpec{
-						AllowedPrefixes:        []string{strings.TrimSpace(opts.MobilityPrefix)},
-						AllowedPrefixLengthMin: 32,
-						AllowedPrefixLengthMax: 32,
-						// An enrolled leaf reaches reflected routes through its
-						// immediately connected RR tunnel. Keeping an origin leaf's
-						// advertised router ID as the next hop would make a partial
-						// mesh depend on an unrelated inner-prefix aggregate.
-						NextHopRewrite:  "peer-address",
-						LocalPreference: rrLocalPreference,
-					},
-					ExportPolicy: api.BGPExportPolicySpec{AllowedPrefixes: []string{strings.TrimSpace(opts.OwnedAddress)}},
-				},
-			}),
-			leafResource(api.MobilityAPIVersion, "SAMEnrollmentClaim", opts.LeafID, claim),
-			leafResource(api.MobilityAPIVersion, "SAMEnrollmentClient", opts.LeafID, api.SAMEnrollmentClientSpec{
-				ClaimRef:              "SAMEnrollmentClaim/" + opts.LeafID,
-				BootstrapEndpoints:    trimmedStrings(opts.BootstrapEndpoints),
-				ControlAPITokenFrom:   controlTokenFrom,
-				ControlAPITLS:         api.ControlAPIClientTLSSpec{CAFile: strings.TrimSpace(opts.ControlAPICAFile), CertFile: strings.TrimSpace(opts.ControlAPIClientCertFile), KeyFile: strings.TrimSpace(opts.ControlAPIClientKeyFile), ServerName: strings.TrimSpace(opts.ControlAPIServerName), InsecureSkipVerify: opts.ControlAPIInsecureSkipVerify},
-				StateTTLRefreshBefore: strings.TrimSpace(opts.StateTTLRefreshBefore),
-				RetryBackoff:          api.SAMEnrollmentRetryBackoffSpec{Min: strings.TrimSpace(opts.RetryMin), Max: strings.TrimSpace(opts.RetryMax)},
-			}),
-		}},
+		Spec:     api.RouterSpec{Resources: resources},
 	}
 	return router, nil
 }
@@ -968,7 +974,7 @@ func mobilityUsage(w io.Writer) {
 	fmt.Fprintln(w, "  enrollment-hmac --config <path> --claim <name> (--secret-file <path>|--secret-env <name>|--secret <value>) [--secret-base64] [--show-payload]")
 	fmt.Fprintln(w, "  enrollment-submit --config <path> --claim <name> [--socket <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  enrollment-revoke --claim <name> [--rr-socket <path>|--rr-url <url>] [--rr-token-file <path>|--rr-token-env <name>] [--rr-ca-file <path>] [--rr-client-cert-file <path> --rr-client-key-file <path>] [-o table|json|yaml]")
-	fmt.Fprintln(w, "  leaf-config --leaf-id <name> --underlay-ifname <ifname> --underlay-address <cidr> --local-endpoint <ip> --endpoint-prefix <cidr> --inner-prefix <cidr> --tunnel-address <ipv4/32> --mobility-prefix <cidr> --owned-address <ipv4/32> --rr-set <name> [--direct-peer-group <name> --rr-local-preference 100 --direct-local-preference 200] --policy <name> --join-audience <name> --bootstrap-endpoint <url>")
+	fmt.Fprintln(w, "  leaf-config --leaf-id <name> --underlay-ifname <ifname> --underlay-address <cidr> --local-endpoint <ip> --endpoint-prefix <cidr> --inner-prefix <cidr> --tunnel-address <ipv4/32> --mobility-prefix <cidr> [--owned-address <ipv4/32>] --rr-set <name> [--direct-peer-group <name> --rr-local-preference 100 --direct-local-preference 200] --policy <name> --join-audience <name> --bootstrap-endpoint <url>")
 }
 
 func mobilityOwnerRows(statuses []routerstate.ObjectStatus, poolFilter, addressFilter string) []mobilityOwnerRow {

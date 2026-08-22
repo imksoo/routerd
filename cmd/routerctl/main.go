@@ -129,7 +129,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  mobility traps [--address <ipv4/32>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  mobility enrollment-hmac --config <path> --claim <name> (--secret-file <path>|--secret-env <name>|--secret <value>) [--show-payload]")
 	fmt.Fprintln(w, "  mobility enrollment-submit --config <path> --claim <name> [--socket <path>] [-o table|json|yaml]")
-	fmt.Fprintln(w, "  mobility leaf-config --leaf-id <name> --underlay-ifname <ifname> --underlay-address <cidr> --local-endpoint <ip> --endpoint-prefix <cidr> --inner-prefix <cidr> --tunnel-address <ipv4/32> --mobility-prefix <cidr> --owned-address <ipv4/32> --rr-set <name> [--direct-peer-group <name> --rr-local-preference 100 --direct-local-preference 200] --policy <name> --join-audience <name> --bootstrap-endpoint <url>")
+	fmt.Fprintln(w, "  mobility leaf-config --leaf-id <name> --underlay-ifname <ifname> --underlay-address <cidr> --local-endpoint <ip> --endpoint-prefix <cidr> --inner-prefix <cidr> --tunnel-address <ipv4/32> --mobility-prefix <cidr> [--owned-address <ipv4/32>] --rr-set <name> [--direct-peer-group <name> --rr-local-preference 100 --direct-local-preference 200] --policy <name> --join-audience <name> --bootstrap-endpoint <url>")
 	fmt.Fprintln(w, "  plugin list [--config <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  plugin run <name> [--dry-run] [--config <path>] [--state-file <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  action import [--config <path>] [--state-file <path>]")
