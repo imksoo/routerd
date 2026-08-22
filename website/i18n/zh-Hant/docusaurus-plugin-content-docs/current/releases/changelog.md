@@ -11,6 +11,20 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 變更
+
+- Cloud SAM direct leaf-mesh 現在只有在每個已設定的 route reflector 都證明目前有效的已簽章
+  enrollment claim，並傳回相同的 direct topology 時才會加入。control API 為此驗證帶有可選的
+  claim digest。leaf 或 reflector 處於舊版的滾動更新期間，會只使用既有 RR 路徑，而不會加入
+  未驗證的 direct peer。
+
+### 修正
+
+- 若同名 resource 的 claim 輪替、驗證資訊遺失或不相符、receipt 被拒、timeout、direct policy
+  opt-out，或 RR 之間不一致，現在會立即移除 direct peer group，並保留已建立的 RR 路徑作為
+  回退。所有 RR 對目前 claim 達成一致前不會重新建立 direct topology，因此 policy 或 identity
+  變更後不會殘留舊 tunnel 或 BGP peer。
+
 ## v20260822.0714
 
 ### 新增

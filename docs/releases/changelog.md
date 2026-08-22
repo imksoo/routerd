@@ -12,6 +12,24 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Changed
+
+- Cloud SAM direct leaf-mesh admission now requires every configured route
+  reflector to attest the currently accepted signed enrollment claim and to
+  return the identical direct topology. The control API carries an optional
+  claim digest for that attestation. An older leaf or reflector therefore uses
+  the existing RR-only path during a rolling upgrade instead of accidentally
+  admitting an unauthenticated direct peer.
+
+### Fixed
+
+- A rotated claim with the same resource name, a stale/missing attestation,
+  rejected receipt, timeout, direct-policy opt-out, or an RR disagreement now
+  removes the direct peer group immediately and retains the established RR
+  path as the fallback. Direct topology is retried only after all RRs agree on
+  the current claim, preventing stale direct tunnels and BGP peers from
+  surviving a policy or identity change.
+
 ## v20260822.0714
 
 ### Added

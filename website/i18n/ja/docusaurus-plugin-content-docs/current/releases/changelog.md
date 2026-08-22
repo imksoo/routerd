@@ -11,6 +11,21 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 変更
+
+- Cloud SAM の direct leaf-mesh への参加は、設定したすべての route reflector が現在有効な
+  署名付き enrollment claim を検証し、同一の direct topology を返した場合だけ許可するように
+  しました。この検証用に control API は任意の claim digest を扱います。旧版の leaf または
+  reflector が混在する更新中は、未検証の direct peer を作らず、既存の RR 経由だけを使います。
+
+### 修正
+
+- 同じ resource 名の claim が更新された場合、検証情報の欠落・不一致、receipt の拒否、timeout、
+  direct policy の opt-out、RR 間の不一致が起きた場合は、direct peer group を直ちに取り除き、
+  確立済みの RR 経由をフォールバックとして保持するようにしました。すべての RR が現在の claim に
+  合意するまで direct topology は再作成されないため、policy や identity の変更後に古い tunnel や
+  BGP peer が残りません。
+
 ## v20260822.0714
 
 ### 追加
