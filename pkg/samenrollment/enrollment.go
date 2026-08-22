@@ -201,7 +201,10 @@ type DirectMeshTopology struct {
 // enrollment client. The RR remains outside this topology: it is already
 // supplied through the accompanying SAMRRSet and is the fallback path when a
 // direct peer is unavailable. Only signed claims that opted into direct mesh
-// and have at least one valid owned IPv4 /32 are included.
+// are included. A remote leaf with no currently owned IPv4 /32 still needs a
+// pair-stable direct transport session so it can be ready before ownership
+// appears; its absent ownership entry later compiles to a deny-all route
+// boundary rather than a broad import allowlist.
 func ActiveDirectMeshTopology(selection ActiveClaimSelection, policy api.SAMEnrollmentPolicySpec, selfLeafID string, includeWireGuard bool) (DirectMeshTopology, []string) {
 	selfLeafID = strings.TrimSpace(selfLeafID)
 	filtered := ActiveClaimSelection{}
@@ -217,14 +220,10 @@ func ActiveDirectMeshTopology(selection ActiveClaimSelection, policy api.SAMEnro
 			continue
 		}
 		owned := directMeshOwnedPrefixes(active.Claim.Mobility.OwnedAddresses)
-		if len(owned) == 0 {
-			// There is no direct routing work for a leaf without an admitted /32,
-			// and emitting it would force a broad per-profile import allowlist.
-			// Omit it so the RR remains the safe path.
-			continue
-		}
 		filtered.Claims = append(filtered.Claims, active)
-		ownedPrefixesByNode[strings.TrimSpace(active.Claim.LeafID)] = owned
+		if len(owned) > 0 {
+			ownedPrefixesByNode[strings.TrimSpace(active.Claim.LeafID)] = owned
+		}
 	}
 	nodes, leafIDs := ActiveClaimNodeSet(filtered, policy, ActiveClaimNodeSetOptions{
 		UseClaimEndpoint: true,

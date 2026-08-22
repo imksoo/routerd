@@ -265,7 +265,10 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 			}
 			annotations := transportAnnotations(owner.Metadata.Name, self, peerNode)
 			if peer.Direct {
-				annotations["mobility.routerd.net/direct-peer"] = "true"
+				annotations[mobilityconfig.SAMTransportDirectPeerAnnotation] = "true"
+				if peer.RejectRoutes {
+					annotations[mobilityconfig.SAMTransportDirectPeerRejectRoutesAnnotation] = "true"
+				}
 			}
 			out.Resources = append(out.Resources, api.Resource{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
@@ -353,9 +356,11 @@ func directTransportBGPImportPolicy(base api.BGPImportPolicySpec, preference uin
 
 // directPeerGroupOwnedPrefixes validates the runtime counterpart of the
 // enrollment direct-peer schema. It is intentionally repeated at the effect
-// boundary: dynamic config may have been created by an older or malformed RR,
-// and an optional accelerator must degrade to its RR fallback rather than turn
-// a missing ownership map into a broad import policy.
+// boundary: dynamic config may have been created by an older or malformed RR.
+// A missing or empty map entry is a valid signed no-ownership state and is
+// turned into a direct session with a deny-all import policy. Invalid entries
+// still degrade the optional accelerator to its RR fallback rather than turn
+// it into a broad import policy.
 func directPeerGroupOwnedPrefixes(group api.SAMPeerGroupSpec) (map[string][]string, error) {
 	nodeRefs := map[string]bool{}
 	seenPrefixes := map[string]string{}
@@ -367,9 +372,7 @@ func directPeerGroupOwnedPrefixes(group api.SAMPeerGroupSpec) (map[string][]stri
 		}
 		nodeRefs[nodeRef] = true
 		values := group.OwnedPrefixesByNode[nodeRef]
-		if len(values) == 0 {
-			return nil, fmt.Errorf("direct peer-group node %s has no signed owned IPv4 /32", nodeRef)
-		}
+		out[nodeRef] = nil
 		seenForNode := map[string]bool{}
 		for _, value := range values {
 			prefix, err := samenrollment.ParsePrefixOrAddress(value)
@@ -699,6 +702,7 @@ func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Re
 				}
 				if source.Direct {
 					peer.AllowedPrefixes = append([]string(nil), directOwnedPrefixes[nodeRef]...)
+					peer.RejectRoutes = len(peer.AllowedPrefixes) == 0
 				}
 				if source.Direct {
 					stagedPeers = append(stagedPeers, peer)

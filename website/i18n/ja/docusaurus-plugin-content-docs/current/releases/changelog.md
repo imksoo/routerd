@@ -11,6 +11,13 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- 署名済み Cloud SAM direct leaf は、現在の `ownedAddresses` が空でも pair-stable の
+  direct BGP transport の対象に残るようにしました。署名済みの所有 `/32` が現れるまで
+  peer 固有の import policy が全経路を拒否するため、架空の IP を書く必要はなく、RR 転送を
+  安全な fallback として維持します。
+
 ## v20260822.1505
 
 ### 修正

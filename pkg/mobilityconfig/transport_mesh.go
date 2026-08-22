@@ -22,6 +22,17 @@ const DefaultBGPImportLocalPreference uint32 = 100
 // path preferred over the normal RR import path by default.
 const DefaultSAMTransportDirectLocalPreference uint32 = 200
 
+// SAMTransportDirectPeerAnnotation marks the generated BGP peer for an
+// optional direct SAM adjacency. It is consumed only at the controller/effect
+// boundary; users do not author it in a transport profile.
+const SAMTransportDirectPeerAnnotation = "mobility.routerd.net/direct-peer"
+
+// SAMTransportDirectPeerRejectRoutesAnnotation keeps a direct BGP session for
+// a signed leaf that currently owns no mobility /32 while making its import
+// policy reject every route. This lets pair-stable transport converge before
+// ownership appears without creating a broad higher-preference route path.
+const SAMTransportDirectPeerRejectRoutesAnnotation = "mobility.routerd.net/direct-peer-reject-routes"
+
 func EffectiveBGPImportLocalPreference(preference uint32) uint32 {
 	if preference == 0 {
 		return DefaultBGPImportLocalPreference

@@ -582,9 +582,10 @@ func cleanCommunityPolicyValues(values []string) []string {
 }
 
 type appliedImportPolicyScope struct {
-	Name      string
-	Neighbors []string
-	Spec      bgpdaemon.AppliedImportPolicy
+	Name            string
+	Neighbors       []string
+	Spec            bgpdaemon.AppliedImportPolicy
+	RejectImportAll bool
 }
 
 func appliedEffectiveImportPolicyScopes(config bgpdaemon.AppliedConfig) []appliedImportPolicyScope {
@@ -606,19 +607,20 @@ func appliedEffectiveImportPolicyScopes(config bgpdaemon.AppliedConfig) []applie
 		// Keep a prefixless per-peer rule such as the direct-mesh
 		// local-preference/next-hop policy.  The controller chooses the global
 		// default only when the peer has no import policy at all.
-		if !appliedImportPolicyConfigured(spec) && !peer.PreserveImportPrefixes {
+		if !appliedImportPolicyConfigured(spec) && !peer.PreserveImportPrefixes && !peer.RejectImportAll {
 			spec = config.Global.ImportPolicy
 		}
 		if !peer.PreserveImportPrefixes {
 			spec.AllowedPrefixes = mergeStringSets(spec.AllowedPrefixes, dynamicPrefixes)
 		}
-		if !appliedImportPolicyConfigured(spec) {
+		if !appliedImportPolicyConfigured(spec) && !peer.RejectImportAll {
 			continue
 		}
 		scopes = append(scopes, appliedImportPolicyScope{
-			Name:      "routerd-restore-import-effective-peer-" + stringutil.ConservativeName(address, "peer"),
-			Neighbors: []string{neighbor},
-			Spec:      spec,
+			Name:            "routerd-restore-import-effective-peer-" + stringutil.ConservativeName(address, "peer"),
+			Neighbors:       []string{neighbor},
+			Spec:            spec,
+			RejectImportAll: peer.RejectImportAll,
 		})
 	}
 	return scopes
@@ -676,6 +678,13 @@ func appliedEffectiveImportPolicyStatements(req *gobgpapi.SetPoliciesRequest, sc
 	}
 	neighborSet := func() *gobgpapi.MatchSet {
 		return &gobgpapi.MatchSet{Type: gobgpapi.MatchSet_TYPE_ANY, Name: neighborSetName}
+	}
+	if scope.RejectImportAll {
+		return []*gobgpapi.Statement{{
+			Name:       appliedPolicyStatementName(scope.Name, "reject-all-import"),
+			Conditions: &gobgpapi.Conditions{NeighborSet: neighborSet()},
+			Actions:    &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_REJECT},
+		}}
 	}
 	var statements []*gobgpapi.Statement
 	if len(forbiddenCommunities) > 0 {

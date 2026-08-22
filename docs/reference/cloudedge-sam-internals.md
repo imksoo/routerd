@@ -226,6 +226,15 @@ into that **same** fetched dynamic-config part for a signed `directMesh: true`
 claim. That group contains eligible remote leaves only; it is not cached through
 TCP 19652 and must match the local transport fingerprint.
 
+A signed direct leaf may legitimately have an empty `mobility.ownedAddresses`
+list while it is joining or has no address to capture. routerd still creates its
+authenticated direct BGP session, but gives that neighbor an explicit
+**reject-all** import rule: no mobility route is advertised from the empty
+claim or accepted over that direct link. When a signed `/32` later appears, the
+allowlist becomes that exact address and the normal direct preference applies.
+This lets a leaf become ready without inventing an address, while the RR path
+continues to carry all usable traffic.
+
 The direct group is deliberately optional. `SAMTransportProfile` keeps the
 `SAMRRSet` source and adds the direct group with `direct: true`. Direct peers
 receive a higher local preference only while their BGP session is alive. If the

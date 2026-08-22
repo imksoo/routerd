@@ -34,6 +34,7 @@ import (
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/dynamicconfig/codec"
 	"github.com/imksoo/routerd/pkg/manageddaemon"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/samenrollment"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -177,8 +178,12 @@ type desiredPeer struct {
 	// peer groups are untrusted accelerators and may only receive the /32s
 	// named in their profile's allowlist.
 	PreserveImportPrefixes bool
-	ExportPolicy           routerapi.BGPExportPolicySpec
-	ExportPolicyName       string
+	// RejectImportAll keeps a signed direct leaf with no current mobility
+	// ownership connected without turning an empty allowlist into an unrestricted
+	// BGP import. It is set only by the generated direct-transport marker.
+	RejectImportAll  bool
+	ExportPolicy     routerapi.BGPExportPolicySpec
+	ExportPolicyName string
 }
 
 type desiredDynamicPeer struct {
@@ -732,6 +737,8 @@ func (c *Controller) desiredPeers(routerName string, localASN uint32) (map[strin
 		if err != nil {
 			return nil, fmt.Errorf("%s/%s passwordFrom: %w", resource.Kind, resource.Metadata.Name, err)
 		}
+		directPeer := strings.EqualFold(strings.TrimSpace(resource.Metadata.Annotations[mobilityconfig.SAMTransportDirectPeerAnnotation]), "true")
+		rejectDirectPeerRoutes := directPeer && strings.EqualFold(strings.TrimSpace(resource.Metadata.Annotations[mobilityconfig.SAMTransportDirectPeerRejectRoutesAnnotation]), "true")
 		for _, peer := range spec.Peers {
 			peer = strings.TrimSpace(peer)
 			out[peer] = desiredPeer{
@@ -745,7 +752,8 @@ func (c *Controller) desiredPeers(routerName string, localASN uint32) (map[strin
 				RouteReflectorClient:    spec.RouteReflectorClient,
 				RouteReflectorClusterID: strings.TrimSpace(spec.RouteReflectorClusterID),
 				ImportPolicy:            spec.ImportPolicy,
-				PreserveImportPrefixes:  strings.EqualFold(strings.TrimSpace(resource.Metadata.Annotations["mobility.routerd.net/direct-peer"]), "true"),
+				PreserveImportPrefixes:  directPeer,
+				RejectImportAll:         rejectDirectPeerRoutes,
 				ExportPolicy:            spec.ExportPolicy,
 				Timers:                  spec.Timers,
 			}
@@ -944,9 +952,10 @@ type bgpPolicyPlan struct {
 }
 
 type importPolicyScope struct {
-	Name      string
-	Neighbors []string
-	Spec      routerapi.BGPImportPolicySpec
+	Name            string
+	Neighbors       []string
+	Spec            routerapi.BGPImportPolicySpec
+	RejectImportAll bool
 }
 
 // buildBGPPolicyPlan compiles every per-neighbor import boundary into the
@@ -1024,7 +1033,7 @@ func buildBGPPolicyPlan(routerName string, _ routerapi.BGPImportPolicySpec, peer
 func effectiveImportPolicyScopes(routerName string, peers map[string]desiredPeer, dynamicPeers map[string]desiredDynamicPeer) []importPolicyScope {
 	var scopes []importPolicyScope
 	for _, peer := range sortedDesiredPeers(peers) {
-		if !peerHasImportPolicy(peer.ImportPolicy) {
+		if !peerHasImportPolicy(peer.ImportPolicy) && !peer.RejectImportAll {
 			continue
 		}
 		neighbor := neighborSetAddress(peer.Address)
@@ -1032,9 +1041,10 @@ func effectiveImportPolicyScopes(routerName string, peers map[string]desiredPeer
 			continue
 		}
 		scopes = append(scopes, importPolicyScope{
-			Name:      bgpPolicyName(routerName, "import-effective-peer-"+sanitizeBGPPolicyName(peer.Address)),
-			Neighbors: []string{neighbor},
-			Spec:      peer.ImportPolicy,
+			Name:            bgpPolicyName(routerName, "import-effective-peer-"+sanitizeBGPPolicyName(peer.Address)),
+			Neighbors:       []string{neighbor},
+			Spec:            peer.ImportPolicy,
+			RejectImportAll: peer.RejectImportAll,
 		})
 	}
 	for _, peer := range sortedDesiredDynamicPeers(dynamicPeers) {
@@ -1128,6 +1138,13 @@ func effectiveImportPolicyStatements(req *gobgpapi.SetPoliciesRequest, scope imp
 	}
 	neighborSet := func() *gobgpapi.MatchSet {
 		return &gobgpapi.MatchSet{Type: gobgpapi.MatchSet_TYPE_ANY, Name: neighborSetName}
+	}
+	if scope.RejectImportAll {
+		return []*gobgpapi.Statement{{
+			Name:       bgpPolicyStatementName(scope.Name, "reject-all-import"),
+			Conditions: &gobgpapi.Conditions{NeighborSet: neighborSet()},
+			Actions:    &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_REJECT},
+		}}
 	}
 	var statements []*gobgpapi.Statement
 	if len(forbiddenCommunities) > 0 {
@@ -1544,6 +1561,7 @@ func desiredPeersFromApplied(localASN uint32, peers map[string]bgpdaemon.Applied
 				LocalPreference:        peer.ImportPolicy.LocalPreference,
 			},
 			PreserveImportPrefixes: peer.PreserveImportPrefixes,
+			RejectImportAll:        peer.RejectImportAll,
 			ExportPolicy: routerapi.BGPExportPolicySpec{
 				AllowedPrefixes: peer.ExportPolicy.AllowedPrefixes,
 			},
@@ -1625,6 +1643,7 @@ func appliedPeer(peer desiredPeer) bgpdaemon.AppliedPeer {
 			LocalPreference:        peer.ImportPolicy.LocalPreference,
 		},
 		PreserveImportPrefixes: peer.PreserveImportPrefixes,
+		RejectImportAll:        peer.RejectImportAll,
 		ExportPolicyName:       peer.ExportPolicyName,
 		ExportPolicy: bgpdaemon.AppliedExportPolicy{
 			AllowedPrefixes: stringutil.UniqueTrimmedSorted(peer.ExportPolicy.AllowedPrefixes),
@@ -4129,6 +4148,7 @@ func bgpPoliciesKeyWithExports(importSpec routerapi.BGPImportPolicySpec, peers m
 		ImportLocalPreference      uint32   `json:"importLocalPreference,omitempty"`
 		ImportRequiredCommunities  []string `json:"importRequiredCommunities,omitempty"`
 		ImportForbiddenCommunities []string `json:"importForbiddenCommunities,omitempty"`
+		RejectImportAll            bool     `json:"rejectImportAll,omitempty"`
 		ExportPolicyName           string   `json:"exportPolicyName,omitempty"`
 		ExportAllowedPrefixes      []string `json:"exportAllowedPrefixes,omitempty"`
 	}
@@ -4170,7 +4190,7 @@ func bgpPoliciesKeyWithExports(importSpec routerapi.BGPImportPolicySpec, peers m
 			exportPrefixes = stringutil.UniqueTrimmedSorted(peer.ExportPolicy.AllowedPrefixes)
 			exportPolicyName = strings.TrimSpace(peer.ExportPolicyName)
 		}
-		if !peerHasImportPolicy(peer.ImportPolicy) && len(exportPrefixes) == 0 {
+		if !peerHasImportPolicy(peer.ImportPolicy) && !peer.RejectImportAll && len(exportPrefixes) == 0 {
 			continue
 		}
 		normalized.Peers = append(normalized.Peers, peerPolicyKey{
@@ -4182,6 +4202,7 @@ func bgpPoliciesKeyWithExports(importSpec routerapi.BGPImportPolicySpec, peers m
 			ImportLocalPreference:      peer.ImportPolicy.LocalPreference,
 			ImportRequiredCommunities:  requiredCommunities,
 			ImportForbiddenCommunities: forbiddenCommunities,
+			RejectImportAll:            peer.RejectImportAll,
 			ExportPolicyName:           exportPolicyName,
 			ExportAllowedPrefixes:      exportPrefixes,
 		})

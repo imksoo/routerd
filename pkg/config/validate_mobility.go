@@ -413,7 +413,10 @@ func validateSAMPeerGroup(res api.Resource, spec api.SAMPeerGroupSpec) error {
 // validateSAMDirectPeerGroupOwnedPrefixes keeps an enrollment-delivered direct
 // peer group bound to the signed claim facts from which it was projected. The
 // direct path has higher LOCAL_PREF, so accepting a policy-wide prefix here
-// would let one reachable leaf win traffic for another leaf's /32.
+// would let one reachable leaf win traffic for another leaf's /32. A direct
+// node may have no map entry (or an empty one): that represents a signed leaf
+// with no current ownership, whose direct transport is valid but whose import
+// boundary rejects every mobility route.
 func validateSAMDirectPeerGroupOwnedPrefixes(res api.Resource, spec api.SAMPeerGroupSpec) error {
 	nodes := map[string]bool{}
 	seenPrefixes := map[string]string{}
@@ -421,9 +424,6 @@ func validateSAMDirectPeerGroupOwnedPrefixes(res api.Resource, spec api.SAMPeerG
 		nodeRef := strings.TrimSpace(node.NodeRef)
 		nodes[nodeRef] = true
 		values := spec.OwnedPrefixesByNode[nodeRef]
-		if len(values) == 0 {
-			return fmt.Errorf("%s spec.ownedPrefixesByNode[%q] requires at least one signed IPv4 /32", res.ID(), nodeRef)
-		}
 		seenNodePrefixes := map[string]bool{}
 		for i, value := range values {
 			prefix, err := samenrollment.ParsePrefixOrAddress(value)

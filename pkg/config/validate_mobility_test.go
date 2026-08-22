@@ -751,6 +751,40 @@ func TestValidateSAMEnrollmentPolicyAllowsDirectMobilityPrefixesWithoutPool(t *t
 	}
 }
 
+func TestValidateFetchedSAMEnrollmentTopologyAllowsDirectLeafWithoutOwnedAddress(t *testing.T) {
+	rrSet := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMRRSet"},
+		Metadata: api.ObjectMeta{Name: "svnet1-rrs"},
+		Spec: api.SAMRRSetSpec{
+			EnrollmentPolicyRef: "SAMEnrollmentPolicy/svnet1-leaves",
+			Nodes: []api.SAMNodeSpec{
+				{NodeRef: "pve-rr01", SAMEndpoint: "10.20.0.2", RouteReflector: true},
+				{NodeRef: "pve-rr02", SAMEndpoint: "10.20.0.3", RouteReflector: true},
+			},
+		},
+	}
+	direct := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
+		Metadata: api.ObjectMeta{Name: "svnet1-direct-leaves"},
+		Spec: api.SAMPeerGroupSpec{
+			EnrollmentPolicyRef:  "SAMEnrollmentPolicy/svnet1-leaves",
+			TransportFingerprint: "sha256:test-direct-mesh",
+			Nodes: []api.SAMNodeSpec{
+				{NodeRef: "pve-rt01", SAMEndpoint: "10.20.0.21"},
+				{NodeRef: "pve-rt02", SAMEndpoint: "10.20.0.22"},
+			},
+			OwnedPrefixesByNode: map[string][]string{
+				"pve-rt02": {"10.77.60.22/32"},
+				// pve-rt01 is enrolled and directMesh=true but currently owns no
+				// mobility /32. The runtime snapshot must still be accepted.
+			},
+		},
+	}
+	if err := ValidateFetchedSAMEnrollmentTopology(rrSet, &direct); err != nil {
+		t.Fatalf("ValidateFetchedSAMEnrollmentTopology empty direct ownership: %v", err)
+	}
+}
+
 func TestValidateSAMEnrollmentJoinTokenRequiresHMACFields(t *testing.T) {
 	router := samEnrollmentRouter()
 	policyIndex := len(router.Spec.Resources) - 2

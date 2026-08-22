@@ -636,6 +636,207 @@ func TestSAMTransportProfileDirectLeafPeerPrefersDirectAndKeepsRRs(t *testing.T)
 	}
 }
 
+// A production RR snapshot can contain a mixture of established leaves: one
+// may currently own a mobility /32 while another has joined the same direct
+// mesh but has no address to advertise. Both must receive direct transport;
+// only the empty leaf gets the deny-all route marker. This mirrors the PVE
+// rollout shape rather than the earlier two-owned-leaf happy path.
+func TestSAMTransportProfileDirectMeshKeepsEmptyOwnershipLeafAndRRFallback(t *testing.T) {
+	now := time.Date(2026, 8, 22, 16, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouterWithMode("leaf-a", "leaf-a", "pair-stable", nil)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.Encryption = "none"
+	spec.LocalEndpoint = "10.20.0.31"
+	spec.BGP.ImportPolicy = api.BGPImportPolicySpec{
+		LocalPreference:        100,
+		AllowedPrefixes:        []string{"10.77.60.0/24"},
+		AllowedPrefixLengthMin: 32,
+		AllowedPrefixLengthMax: 32,
+		NextHopRewrite:         "unchanged",
+	}
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{
+		{Resource: "SAMRRSet/cloudedge-rrs"},
+		{Resource: "SAMPeerGroup/cloudedge-direct-leaves", Direct: true},
+	}
+	router.Spec.Resources[0].Spec = spec
+	directGroup := samDirectPeerGroupResource("cloudedge-direct-leaves", "SAMEnrollmentPolicy/cloudedge-leaves", mobilityconfig.SAMTransportMeshFingerprint(spec), []api.SAMNodeSpec{
+		{NodeRef: "leaf-owned", SAMEndpoint: "10.20.0.32"},
+		{NodeRef: "leaf-empty", SAMEndpoint: "10.20.0.33"},
+	})
+	directSpec, err := directGroup.SAMPeerGroupSpec()
+	if err != nil {
+		t.Fatalf("SAMPeerGroup spec: %v", err)
+	}
+	directSpec.OwnedPrefixesByNode = map[string][]string{
+		"leaf-owned": {"10.77.60.32/32"},
+		// Deliberately omit leaf-empty: an accepted signed claim with no
+		// ownedAddresses must not need a fabricated address to form transport.
+	}
+	directGroup.Spec = directSpec
+	router.Spec.Resources = append(router.Spec.Resources,
+		samRRSetResource("cloudedge-rrs", []api.SAMNodeSpec{
+			{NodeRef: "rr-a", SAMEndpoint: "10.10.0.2", RouteReflector: true},
+			{NodeRef: "rr-b", SAMEndpoint: "10.10.0.3", RouteReflector: true},
+		}),
+		directGroup,
+	)
+
+	controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("leaf-a", "leaf-a")).ResourcesJSON)
+	if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 4; got != want {
+		t.Fatalf("TunnelInterface count = %d, want RR pair plus owned and empty direct leaves; resources=%#v", got, resources)
+	}
+	if got, want := countResources(resources, api.NetAPIVersion, "BGPPeer"), 4; got != want {
+		t.Fatalf("BGPPeer count = %d, want RR pair plus owned and empty direct leaves; resources=%#v", got, resources)
+	}
+	owned := findTransportBGPPeerForPeer(t, resources, "leaf-a", "leaf-owned").ImportPolicy
+	if got, want := owned.AllowedPrefixes, []string{"10.77.60.32/32"}; !sameStringSetForTest(got, want) {
+		t.Fatalf("owned direct leaf allowlist = %#v, want %#v", got, want)
+	}
+	for _, resource := range resources {
+		if resource.APIVersion == api.NetAPIVersion && resource.Kind == "BGPPeer" &&
+			resource.Metadata.Annotations["mobility.routerd.net/self-node"] == "leaf-a" &&
+			resource.Metadata.Annotations["mobility.routerd.net/peer-node"] == "leaf-owned" &&
+			resource.Metadata.Annotations[mobilityconfig.SAMTransportDirectPeerRejectRoutesAnnotation] != "" {
+			t.Fatalf("owned direct leaf must not receive reject-routes marker: %#v", resource.Metadata.Annotations)
+		}
+	}
+	_, empty := findTransportBGPPeerResourceForPeer(t, resources, "leaf-a", "leaf-empty")
+	if len(empty.ImportPolicy.AllowedPrefixes) != 0 {
+		t.Fatalf("empty direct leaf allowlist = %#v, want no advertised mobility prefix", empty.ImportPolicy.AllowedPrefixes)
+	}
+	if empty.ImportPolicy.LocalPreference != mobilityconfig.DefaultSAMTransportDirectLocalPreference || empty.ImportPolicy.NextHopRewrite != "peer-address" {
+		t.Fatalf("empty direct leaf transport policy = %#v, want direct session policy", empty.ImportPolicy)
+	}
+	var emptyResource *api.Resource
+	for i := range resources {
+		resource := &resources[i]
+		if resource.APIVersion == api.NetAPIVersion && resource.Kind == "BGPPeer" &&
+			resource.Metadata.Annotations["mobility.routerd.net/self-node"] == "leaf-a" &&
+			resource.Metadata.Annotations["mobility.routerd.net/peer-node"] == "leaf-empty" {
+			emptyResource = resource
+			break
+		}
+	}
+	if emptyResource == nil || emptyResource.Metadata.Annotations[mobilityconfig.SAMTransportDirectPeerAnnotation] != "true" ||
+		emptyResource.Metadata.Annotations[mobilityconfig.SAMTransportDirectPeerRejectRoutesAnnotation] != "true" {
+		t.Fatalf("empty direct leaf resource = %#v, want direct reject-routes marker", emptyResource)
+	}
+	for _, rr := range []string{"rr-a", "rr-b"} {
+		if got := findTransportBGPPeerForPeer(t, resources, "leaf-a", rr).ImportPolicy.LocalPreference; got != 100 {
+			t.Fatalf("RR fallback %s local preference = %d, want 100", rr, got)
+		}
+	}
+}
+
+// The deployed PVE topology has two RRs and eight leaves. During a clean
+// direct-mesh rollout all seven remote leaves seen by pve-rt01 can legitimately
+// have empty ownership at once. Keep this full leaf-set projection separate
+// from the mixed owned/empty test above so a two-node smoke cannot hide an
+// "no eligible remote direct peers" regression again.
+func TestSAMTransportProfileFullLeafSetWithoutOwnershipBuildsDirectSessions(t *testing.T) {
+	now := time.Date(2026, 8, 22, 16, 5, 0, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouterWithMode("svnet1-core", "pve-rt01", "pair-stable", nil)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.Encryption = "none"
+	spec.LocalEndpoint = "10.20.0.21"
+	spec.BGP.ImportPolicy = api.BGPImportPolicySpec{
+		LocalPreference:        100,
+		AllowedPrefixes:        []string{"10.77.60.0/24"},
+		AllowedPrefixLengthMin: 32,
+		AllowedPrefixLengthMax: 32,
+		NextHopRewrite:         "unchanged",
+	}
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{
+		{Resource: "SAMRRSet/svnet1-rrs"},
+		{Resource: "SAMPeerGroup/svnet1-direct-leaves", Direct: true},
+	}
+	router.Spec.Resources[0].Spec = spec
+	remoteLeaves := make([]api.SAMNodeSpec, 0, 7)
+	for leaf := 2; leaf <= 8; leaf++ {
+		remoteLeaves = append(remoteLeaves, api.SAMNodeSpec{
+			NodeRef:     fmt.Sprintf("pve-rt%02d", leaf),
+			SAMEndpoint: fmt.Sprintf("10.20.0.%d", 20+leaf),
+		})
+	}
+	directGroup := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
+		Metadata: api.ObjectMeta{Name: "svnet1-direct-leaves"},
+		Spec: api.SAMPeerGroupSpec{
+			EnrollmentPolicyRef:  "SAMEnrollmentPolicy/svnet1-leaves",
+			TransportFingerprint: mobilityconfig.SAMTransportMeshFingerprint(spec),
+			Nodes:                remoteLeaves,
+			// No entry means no remote leaf currently owns a mobility /32.
+		},
+	}
+	rrSet := samRRSetResource("svnet1-rrs", []api.SAMNodeSpec{
+		{NodeRef: "pve-rr01", SAMEndpoint: "10.20.0.2", RouteReflector: true},
+		{NodeRef: "pve-rr02", SAMEndpoint: "10.20.0.3", RouteReflector: true},
+	})
+	rrSpec, err := rrSet.SAMRRSetSpec()
+	if err != nil {
+		t.Fatalf("SAMRRSet spec: %v", err)
+	}
+	rrSpec.EnrollmentPolicyRef = "SAMEnrollmentPolicy/svnet1-leaves"
+	rrSet.Spec = rrSpec
+	router.Spec.Resources = append(router.Spec.Resources,
+		rrSet,
+		directGroup,
+	)
+
+	controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("svnet1-core", "pve-rt01")).ResourcesJSON)
+	if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 9; got != want {
+		t.Fatalf("TunnelInterface count = %d, want 2 RR + 7 direct leaf sessions; status=%#v resources=%#v", got, store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "svnet1-core"), resources)
+	}
+	if got, want := countResources(resources, api.NetAPIVersion, "BGPPeer"), 9; got != want {
+		t.Fatalf("BGPPeer count = %d, want 2 RR + 7 direct leaf sessions", got)
+	}
+	for leaf := 2; leaf <= 8; leaf++ {
+		peerNode := fmt.Sprintf("pve-rt%02d", leaf)
+		_, peer := findTransportBGPPeerResourceForPeer(t, resources, "pve-rt01", peerNode)
+		if len(peer.ImportPolicy.AllowedPrefixes) != 0 {
+			t.Fatalf("%s allowlist = %#v, want no invented mobility prefix", peerNode, peer.ImportPolicy.AllowedPrefixes)
+		}
+		var resource *api.Resource
+		for i := range resources {
+			candidate := &resources[i]
+			if candidate.APIVersion == api.NetAPIVersion && candidate.Kind == "BGPPeer" &&
+				candidate.Metadata.Annotations["mobility.routerd.net/self-node"] == "pve-rt01" &&
+				candidate.Metadata.Annotations["mobility.routerd.net/peer-node"] == peerNode {
+				resource = candidate
+				break
+			}
+		}
+		if resource == nil || resource.Metadata.Annotations[mobilityconfig.SAMTransportDirectPeerRejectRoutesAnnotation] != "true" {
+			t.Fatalf("%s direct resource = %#v, want reject-routes session", peerNode, resource)
+		}
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "svnet1-core")
+	rows, ok := status["peersFrom"].([]any)
+	if !ok || len(rows) != 2 {
+		t.Fatalf("peersFrom = %#v, want RR and full direct source", status["peersFrom"])
+	}
+	directRow, ok := rows[1].(map[string]any)
+	if !ok || directRow["phase"] != "Direct" || fmt.Sprint(directRow["peerCount"]) != "7" {
+		t.Fatalf("full empty-ownership direct status = %#v, want Direct with 7 peers", rows[1])
+	}
+}
+
 func TestDirectTransportBGPImportPolicyPreference(t *testing.T) {
 	base := api.BGPImportPolicySpec{LocalPreference: 100}
 	for _, test := range []struct {
