@@ -233,8 +233,8 @@ func TestValidateSAMTransportProfileDirectPeerSourceRequiresSafeShape(t *testing
 	base.BGP.ImportPolicy.AllowedPrefixLengthMax = 32
 	base.BGP.ImportPolicy.LocalPreference = 100
 	base.BGP.ImportPolicy.NextHopRewrite = "unchanged"
-	if err := Validate(samTransportProfileRouter(base)); err == nil || !strings.Contains(err.Error(), "nextHopRewrite must be peer-address") {
-		t.Fatalf("Validate direct source with unchanged RR next hop = %v, want peer-address rejection", err)
+	if err := Validate(samTransportProfileRouter(base)); err != nil {
+		t.Fatalf("Validate direct source with legacy unchanged RR next hop = %v, want upgrade-compatible acceptance", err)
 	}
 	base.BGP.ImportPolicy.NextHopRewrite = ""
 	base.BGP.DirectLocalPreference = 100

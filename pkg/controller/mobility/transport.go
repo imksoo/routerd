@@ -246,6 +246,14 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 			// only then give it the higher LOCAL_PREF.
 			requirePeerIdentity := spec.BGP.RouteReflectorClient || peer.Direct
 			baseImportPolicy := spec.BGP.ImportPolicy
+			// A direct profile always has an RR fallback. Older generated configs
+			// wrote unchanged here, which left an RR-reflected route with the
+			// origin leaf as an unreachable gateway. Normalize that legacy spelling
+			// at the effect boundary so an upgraded daemon can start before the
+			// management API replaces its persisted YAML.
+			if mobilityconfig.SAMTransportHasDirectPeerSource(spec.PeersFrom) {
+				baseImportPolicy.NextHopRewrite = "peer-address"
+			}
 			defaultAllowedPrefixes := mobilityPoolImportPrefixes(c.Router)
 			if peer.Direct {
 				baseImportPolicy.AllowedPrefixes = append([]string(nil), peer.AllowedPrefixes...)

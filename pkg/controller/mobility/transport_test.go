@@ -525,6 +525,7 @@ func TestSAMTransportProfileConsumesSAMRRSetWithoutWireGuard(t *testing.T) {
 	}
 	spec.Encryption = "none"
 	spec.LocalEndpoint = "10.20.0.21"
+	spec.BGP.ImportPolicy.NextHopRewrite = "unchanged"
 	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMRRSet/cloudedge-rrs"}}
 	router.Spec.Resources[0].Spec = spec
 	router.Spec.Resources = append(router.Spec.Resources, samRRSetResource("cloudedge-rrs", []api.SAMNodeSpec{
@@ -554,8 +555,11 @@ func TestSAMTransportProfileConsumesSAMRRSetWithoutWireGuard(t *testing.T) {
 	if rrBTunnel.Mode != "ipip" || rrBTunnel.Remote != "10.10.0.3" {
 		t.Fatalf("rr-b tunnel = %#v, want ipip remote 10.10.0.3", rrBTunnel)
 	}
-	_ = findTransportBGPPeerForPeer(t, resources, "leaf-pve", "rr-a")
-	_ = findTransportBGPPeerForPeer(t, resources, "leaf-pve", "rr-b")
+	for _, peer := range []string{"rr-a", "rr-b"} {
+		if got := findTransportBGPPeerForPeer(t, resources, "leaf-pve", peer).ImportPolicy.NextHopRewrite; got != "unchanged" {
+			t.Fatalf("non-direct RR peer %s nextHopRewrite = %q, want unchanged", peer, got)
+		}
+	}
 }
 
 func TestSAMTransportProfileDirectLeafPeerPrefersDirectAndKeepsRRs(t *testing.T) {
@@ -573,6 +577,7 @@ func TestSAMTransportProfileDirectLeafPeerPrefersDirectAndKeepsRRs(t *testing.T)
 		AllowedPrefixes:        []string{"10.77.60.0/24"},
 		AllowedPrefixLengthMin: 32,
 		AllowedPrefixLengthMax: 32,
+		NextHopRewrite:         "unchanged",
 	}
 	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{
 		{Resource: "SAMRRSet/cloudedge-rrs"},
@@ -599,8 +604,8 @@ func TestSAMTransportProfileDirectLeafPeerPrefersDirectAndKeepsRRs(t *testing.T)
 		t.Fatalf("TunnelInterface count = %d, want %d resources=%#v", got, want, resources)
 	}
 	for _, peer := range []string{"rr-a", "rr-b"} {
-		if got := findTransportBGPPeerForPeer(t, resources, "leaf-a", peer).ImportPolicy; got.LocalPreference != 100 || got.NextHopRewrite == "peer-address" {
-			t.Fatalf("RR peer %s import policy = %#v, want unchanged RR preference", peer, got)
+		if got := findTransportBGPPeerForPeer(t, resources, "leaf-a", peer).ImportPolicy; got.LocalPreference != 100 || got.NextHopRewrite != "peer-address" {
+			t.Fatalf("RR peer %s import policy = %#v, want peer-address RR fallback", peer, got)
 		}
 	}
 	direct := findTransportBGPPeerForPeer(t, resources, "leaf-a", "leaf-b").ImportPolicy

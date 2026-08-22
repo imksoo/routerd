@@ -856,7 +856,7 @@ func validateSAMTransportProfile(router *api.Router, res api.Resource, spec api.
 	if strings.TrimSpace(spec.AddressingMode) != "" && addressingMode == "" {
 		return fmt.Errorf("%s spec.addressingMode must be edge-index or pair-stable", res.ID())
 	}
-	if samTransportHasDirectPeerSource(spec.PeersFrom) {
+	if mobilityconfig.SAMTransportHasDirectPeerSource(spec.PeersFrom) {
 		if addressingMode != "pair-stable" {
 			return fmt.Errorf("%s spec.addressingMode must be pair-stable when a peersFrom source is direct", res.ID())
 		}
@@ -877,9 +877,6 @@ func validateSAMTransportProfile(router *api.Router, res api.Resource, spec api.
 		}
 		if spec.BGP.ImportPolicy.AllowedPrefixLengthMin != 32 || spec.BGP.ImportPolicy.AllowedPrefixLengthMax != 32 {
 			return fmt.Errorf("%s spec.bgp.importPolicy.allowedPrefixLengthMin and allowedPrefixLengthMax must both be 32 when a peersFrom source is direct", res.ID())
-		}
-		if strings.TrimSpace(spec.BGP.ImportPolicy.NextHopRewrite) == "unchanged" {
-			return fmt.Errorf("%s spec.bgp.importPolicy.nextHopRewrite must be peer-address when a peersFrom source is direct so RR-reflected routes use the reachable RR tunnel peer", res.ID())
 		}
 		directPreference := mobilityconfig.EffectiveSAMTransportDirectLocalPreference(spec.BGP.DirectLocalPreference)
 		rrPreference := spec.BGP.ImportPolicy.LocalPreference
@@ -1008,15 +1005,6 @@ func validateSAMTransportPeersFrom(resourceID string, index int, source api.SAMT
 		seen[nodeRef] = true
 	}
 	return nil
-}
-
-func samTransportHasDirectPeerSource(sources []api.SAMTransportPeersSourceSpec) bool {
-	for _, source := range sources {
-		if source.Direct {
-			return true
-		}
-	}
-	return false
 }
 
 // validateSAMTransportDirectFallback makes the direct source deliberately

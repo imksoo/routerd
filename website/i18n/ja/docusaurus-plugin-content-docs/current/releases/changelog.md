@@ -17,7 +17,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 - 生成する Cloud SAM direct leaf 設定で、RR が反射した route の next hop を直結 RR peer
   にする `nextHopRewrite: peer-address` を使うようにしました。direct profile で明示した
-  危険な `unchanged` は、別 leaf の transport address に fallback が依存しないよう拒否します。
+  古い `unchanged` は起動時に安全に `peer-address` へ正規化し、YAML 更新前でも fallback が
+  別 leaf の transport address に依存しないようにします。
 - GoBGP が同じ prefix の local path を best に選んだとき、低い優先度の remote path を
   kernel FIB に入れなくなりました。
 
