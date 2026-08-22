@@ -24,6 +24,52 @@ func TestRunDispatchesRenderFreeBSD(t *testing.T) {
 	}
 }
 
+func TestRunRendersSystemdServiceWithoutHostMutation(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "router.yaml")
+	config := `apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: render-systemd}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata: {name: lan}
+      spec: {ifname: lan0, managed: false, owner: external}
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: IngressService
+      metadata: {name: ssh}
+      spec:
+        listen: {interface: lan, address: 192.0.2.250, port: 22, protocol: tcp}
+        backends: [{address: 192.0.2.10, port: 22}]
+    - apiVersion: observability.routerd.net/v1alpha1
+      kind: Telemetry
+      metadata: {name: default}
+      spec:
+        otlp: {endpoint: https://telemetry.example.test:4318, insecure: true}
+        serviceNamespace: lab
+        signals: [metrics]
+`
+	if err := os.WriteFile(configPath, []byte(config), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout strings.Builder
+	if err := run([]string{"render", "systemd-service", "--config", configPath}, &stdout, os.Stderr); err != nil {
+		t.Fatalf("routerd render systemd-service: %v", err)
+	}
+	got := stdout.String()
+	for _, want := range []string{
+		"# routerd-managed-service: v1",
+		"AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN CAP_DAC_OVERRIDE",
+		"Environment=\"OTEL_EXPORTER_OTLP_ENDPOINT=https://telemetry.example.test:4318\"",
+		"Environment=\"OTEL_SERVICE_NAMESPACE=lab\"",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("rendered routerd.service missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestRenderCommandRejectsUnknownTarget(t *testing.T) {
 	err := renderCommand([]string{"linux"}, &strings.Builder{})
 	if err == nil || !strings.Contains(err.Error(), `unknown render target "linux"`) {

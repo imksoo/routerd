@@ -79,6 +79,10 @@ func TestLiveISOUsesSystemdFirstBootSetup(t *testing.T) {
 		"multi-user.target.wants/routerd-live-setup.service",
 		"multi-user.target.wants/routerd.service",
 		"Before=routerd.service",
+		"AssertPathExists=/opt/routerd-live/firstboot.sh",
+		"routerd.service.d/10-live-setup.conf",
+		"Requires=routerd-live-setup.service",
+		"After=routerd-live-setup.service",
 	} {
 		if !strings.Contains(script, needle) {
 			t.Fatalf("Ubuntu live ISO systemd setup missing %q", needle)
@@ -153,6 +157,12 @@ func TestLiveISODisablesBootstrapDHCPBeforeRouterdStarts(t *testing.T) {
 		"disabled bootstrap DHCP; routerd will manage network from here",
 		"preserved DHCP/DNS on uplink",
 		"disable_bootstrap_dhcp",
+		"prepare_routerd_service()",
+		"routerd render systemd-service --config \"${config_file}\"",
+		"mktemp /etc/systemd/system/.routerd.service.XXXXXX",
+		"mv -f \"${tmp}\" /etc/systemd/system/routerd.service",
+		"prepared routerd.service from restored configuration",
+		"systemctl daemon-reload",
 	} {
 		if !strings.Contains(script, needle) {
 			t.Fatalf("Ubuntu live ISO bootstrap DHCP teardown missing %q", needle)
@@ -161,12 +171,13 @@ func TestLiveISODisablesBootstrapDHCPBeforeRouterdStarts(t *testing.T) {
 
 	configIdx := strings.Index(script, "if ! restore_config_disk_config")
 	disableIdx := strings.Index(script, "\ndisable_bootstrap_dhcp\n")
+	prepareIdx := strings.Index(script, "\nprepare_routerd_service\n")
 	setupIdx := strings.Index(script, "Before=routerd.service")
-	if configIdx < 0 || disableIdx < 0 || setupIdx < 0 {
-		t.Fatal("missing config restore, bootstrap DHCP teardown, or static routerd ordering marker")
+	if configIdx < 0 || disableIdx < 0 || prepareIdx < 0 || setupIdx < 0 {
+		t.Fatal("missing config restore, bootstrap DHCP teardown, unit preparation, or static routerd ordering marker")
 	}
-	if !(configIdx < disableIdx && disableIdx < setupIdx) {
-		t.Fatal("bootstrap DHCP must be disabled after config restore and before routerd starts")
+	if !(configIdx < disableIdx && disableIdx < prepareIdx && prepareIdx < setupIdx) {
+		t.Fatal("bootstrap DHCP must be disabled and routerd.service prepared after config restore and before routerd starts")
 	}
 }
 

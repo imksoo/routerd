@@ -860,6 +860,20 @@ disable_bootstrap_dhcp()
     fi
 }
 
+prepare_routerd_service()
+{
+    tmp=$(mktemp /etc/systemd/system/.routerd.service.XXXXXX)
+    if ! /usr/local/sbin/routerd render systemd-service --config "${config_file}" > "${tmp}"; then
+        rm -f "${tmp}"
+        log "failed to render routerd.service from restored configuration"
+        return 1
+    fi
+    chmod 0644 "${tmp}"
+    mv -f "${tmp}" /etc/systemd/system/routerd.service
+    systemctl daemon-reload
+    log "prepared routerd.service from restored configuration"
+}
+
 install -d /run/routerd /var/lib/routerd "${config_dir}"
 apply_cloudinit_hostname || true
 enable_qemu_guest_agent
@@ -872,6 +886,7 @@ if ! restore_config_disk_config && ! restore_cloudinit_configs && ! restore_prov
 fi
 
 disable_bootstrap_dhcp
+prepare_routerd_service
 
 if [ -x /usr/local/sbin/routerd-dns-resolver ]; then
     systemctl enable routerd-dns-resolver@lan-resolver.service >/dev/null 2>&1 || true
@@ -896,10 +911,11 @@ ln -sf /run/systemd/resolve/resolv.conf "${rootfs}/etc/resolv.conf"
 install -d "${rootfs}/etc/systemd/system/multi-user.target.wants"
 ln -sf /usr/lib/systemd/system/systemd-networkd.service "${rootfs}/etc/systemd/system/multi-user.target.wants/systemd-networkd.service"
 ln -sf /usr/lib/systemd/system/systemd-resolved.service "${rootfs}/etc/systemd/system/multi-user.target.wants/systemd-resolved.service"
-# Start setup and routerd in the same boot transaction.  The ordering below
-# guarantees that the restored configuration and bootstrap DHCP teardown finish
-# before routerd can create its control sockets.  Starting routerd dynamically
-# from firstboot.sh left a second, late start job that could briefly remove them.
+# Start setup and routerd in the same boot transaction.  The setup service
+# renders the final, configuration-dependent routerd.service before the daemon
+# can start, so its first process already has the intended environment and
+# capabilities.  Starting routerd dynamically from firstboot.sh left a second,
+# late start job that could briefly remove its control sockets.
 ln -sf ../routerd.service "${rootfs}/etc/systemd/system/multi-user.target.wants/routerd.service"
 
 install -d "${rootfs}/etc/systemd/system" "${rootfs}/etc/systemd/system/multi-user.target.wants"
@@ -908,7 +924,7 @@ cat > "${rootfs}/etc/systemd/system/routerd-live-setup.service" <<'EOF'
 Description=Prepare routerd live runtime
 After=local-fs.target
 Before=routerd.service
-ConditionPathExists=/opt/routerd-live/firstboot.sh
+AssertPathExists=/opt/routerd-live/firstboot.sh
 
 [Service]
 Type=oneshot
@@ -919,6 +935,16 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 EOF
 ln -sf ../routerd-live-setup.service "${rootfs}/etc/systemd/system/multi-user.target.wants/routerd-live-setup.service"
+
+# Keep the live setup dependency outside the controller-owned base unit.  The
+# controller may rewrite routerd.service from the restored configuration, but
+# it must never erase the boot ordering or let routerd run after a failed setup.
+install -d "${rootfs}/etc/systemd/system/routerd.service.d"
+cat > "${rootfs}/etc/systemd/system/routerd.service.d/10-live-setup.conf" <<'EOF'
+[Unit]
+Requires=routerd-live-setup.service
+After=routerd-live-setup.service
+EOF
 
 # Enable serial console login (ttyS0 @ 115200 baud).
 install -d "${rootfs}/etc/systemd/system/getty.target.wants"

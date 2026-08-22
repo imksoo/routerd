@@ -12,6 +12,14 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- The Ubuntu Live ISO now renders the configuration-dependent `routerd.service`
+  before the first daemon process starts and keeps its setup dependency in a
+  separate systemd drop-in. This prevents the service-unit controller from
+  scheduling a delayed self-restart after the control sockets are ready, while
+  later real unit changes still use the normal deferred restart.
+
 ## v20260822.1944
 
 ### Fixed
