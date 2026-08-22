@@ -31,6 +31,25 @@ routerd 與受管理的常駐程式會在本機的 Unix domain socket 上公開 
 | `GET /api/control.routerd.net/v1alpha1/traffic-flows` | 通訊流量歷程 |
 | `GET /api/control.routerd.net/v1alpha1/firewall-logs` | 防火牆日誌 |
 
+## SAM enrollment endpoint
+
+Dynamic SAM enrollment 也使用同一 API handler，但 RR 只能透過 enrollment runbook 中明確
+設定的已認證 listener 或有權限的本機 socket 公開這些 endpoint。它們不是通用的遠端管理 API。
+
+| Method + Path | 用途 |
+| --- | --- |
+| `POST /api/control.routerd.net/v1alpha1/sam-enrollment-claims` | 接納一個 leaf 的 client-authored enrollment claim。 |
+| `POST /api/control.routerd.net/v1alpha1/sam-enrollment-claims/{name}/revoke` | 明確 revoke 已接納的 claim；不要將其用於復原。 |
+| `GET /api/control.routerd.net/v1alpha1/sam-enrollment-topologies/{name}?claim=...&claimDigest=...&claimIdentityDigest=...` | 取得指定的 RRSet，以及僅在已證明時取得選用的直連 peer group。 |
+
+`claimIdentityDigest` 是只包含 client-authored claim material 的 hash。設定 `joinTokenFrom` 時由
+join HMAC 驗證；未設定時屬於 trusted control-plane。目前 RR 用它區分明確 revoke、clean boot 後
+空的 admission store 和不同的 active identity。只有檢查過所有 bootstrap RR 後，
+`SAMEnrollmentClient` 才會把 identity-aware 缺失回應視為重新提交目前 direct claim 的許可。不同
+active identity 只可在初次 admission 或本機 claim 變更時替換，periodic renewal 絕不替換。缺少
+digest、舊版／混合 RR、revoke 或任何 request failure 都必須保留 RR-only fallback；呼叫端應使用
+client/controller，而不是自行解讀這些回應。
+
 ## Controller status
 
 `Status.status.controllers` 與 `Controllers` endpoint 會回傳控制器在設定上的 mode，以及執行時期的調和（reconcile）狀態。runtime 欄位包含 `interval`、`lastTrigger`、`lastReconcileTime`、`nextReconcileTime`、`reconcileCount`、`reconcileErrorCount`、`consecutiveErrorCount`、`currentError`、`lastDuration`、`maxDuration`、`averageDuration`、`lastError`、`lastErrorTime`、`lastErrorClearedAt`。`reconcileErrorCount` 為累計值，如需判斷目前是否處於失敗狀態，請使用 `currentError` 與 `consecutiveErrorCount`。這些皆為觀測值，若控制器尚未執行過，請視為欄位不存在。

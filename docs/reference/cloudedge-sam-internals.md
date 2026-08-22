@@ -237,7 +237,7 @@ continues to carry all usable traffic.
 
 `routerctl mobility leaf-config` accepts this state without `--owned-address`.
 It omits the local service address and all BGP export/redistribution prefixes,
-so the generated file has the same no-route behavior as the signed claim.
+so the generated file has the same no-route behavior as the admitted claim.
 
 The direct group is deliberately optional. `SAMTransportProfile` keeps the
 `SAMRRSet` source and adds the direct group with `direct: true`. Direct peers

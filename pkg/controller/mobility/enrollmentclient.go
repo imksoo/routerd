@@ -7,8 +7,10 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
@@ -193,7 +195,15 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 	if reason == "direct-topology-refresh" {
 		err = c.refreshDirectTopologyAndPersist(ctx, spec, claimResource, claim, rrSetName, rrState, now)
 	} else {
-		err = c.joinFetchAndPersist(ctx, spec, claimResource, claim, rrSetName, now)
+		// A differing active identity may be deliberately replaced only for an
+		// initial admission (no recorded local identity) or a local claim
+		// change. RRSet expiry/loss is a renewal of the existing identity and
+		// must not let a stale leaf overwrite a newer active claim.
+		allowIdentityReplacement := strings.TrimSpace(previous.ClaimDigest) == "" || previous.ClaimDigest != claimDigest
+		// A direct claim has a higher-preference data path. Before every normal
+		// direct admission or renewal, query every RR so a revoke retained by one
+		// replica cannot be overwritten after another replica restarted.
+		err = c.joinFetchAndPersist(ctx, spec, claimResource, claim, rrSetName, now, claim.DirectMesh, allowIdentityReplacement)
 	}
 	if err != nil {
 		failures := previous.FailureCount + 1
@@ -221,7 +231,7 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 			// claimDigest denotes the last successfully confirmed claim. Do not
 			// advance it for a failed rotation or partial multi-RR admission, or
 			// a later GET-only direct refresh could re-enable topology from an RR
-			// that never accepted the current signed claim.
+			// that never accepted the current client claim.
 			ClaimDigest: previous.ClaimDigest,
 			Reason:      err.Error(),
 		}, now)
@@ -260,7 +270,7 @@ type samEnrollmentFetchedTopology struct {
 	rrSet           api.Resource
 	directPeerGroup *api.Resource
 	// directAttested means this endpoint explicitly bound its optional direct
-	// group to the exact locally configured, signed claim.  An RR-only result
+	// group to the exact locally configured client claim. An RR-only result
 	// remains useful when false, but it must not count toward direct agreement.
 	directAttested bool
 }
@@ -286,12 +296,23 @@ func validateSAMEnrollmentClaimSubmitResult(result *controlapi.SAMEnrollmentClai
 	return nil
 }
 
-func (c SAMEnrollmentClientController) joinFetchAndPersist(ctx context.Context, spec api.SAMEnrollmentClientSpec, claimResource api.Resource, claim api.SAMEnrollmentClaimSpec, rrSetName string, now time.Time) error {
+func (c SAMEnrollmentClientController) joinFetchAndPersist(ctx context.Context, spec api.SAMEnrollmentClientSpec, claimResource api.Resource, claim api.SAMEnrollmentClaimSpec, rrSetName string, now time.Time, preflightDirect, allowIdentityReplacement bool) error {
 	var lastErr error
 	var submitted []samEnrollmentSubmittedClient
 	clients, err := c.clients(spec)
 	if err != nil {
 		return err
+	}
+	if preflightDirect {
+		// Query every RR before POSTing a high-preference direct claim. Re-admit
+		// only when failed endpoints report this exact identity missing (healthy
+		// endpoints may retain it). Any revoke, malformed response, or transport
+		// failure leaves the RR fallback in place. The server distinguishes a
+		// different active identity only for initial admission or a local
+		// claim-change path; ordinary renewal remains fail-closed.
+		if err := c.preflightDirectEnrollment(ctx, clients, claimResource, claim, rrSetName); err != nil && !samEnrollmentClientDirectAdmissionPermitted(err, claimResource, allowIdentityReplacement) {
+			return err
+		}
 	}
 	for _, client := range clients {
 		requestCtx, cancel := c.enrollmentRequestContext(ctx)
@@ -329,6 +350,33 @@ func (c SAMEnrollmentClientController) joinFetchAndPersist(ctx context.Context, 
 		return lastErr
 	}
 	return fmt.Errorf("no SAM enrollment bootstrap endpoint configured")
+}
+
+// preflightDirectEnrollment decides whether it is safe to submit a direct
+// claim again. It deliberately does not compare direct-peer-group digests:
+// a disagreement is handled by the normal post-submit path, which preserves
+// the verified RRSet while withdrawing only the optional direct group. The
+// preflight's sole job is to stop an automatic POST when any RR reports a
+// revoke, an old ambiguous response, an unattested claim, or a request error.
+func (c SAMEnrollmentClientController) preflightDirectEnrollment(ctx context.Context, clients []SAMEnrollmentJoinClient, claimResource api.Resource, claim api.SAMEnrollmentClaimSpec, rrSetName string) error {
+	if len(clients) == 0 {
+		return fmt.Errorf("no SAM enrollment bootstrap endpoint configured")
+	}
+	var endpointErrors []error
+	for _, client := range clients {
+		topology, err := c.fetchSAMEnrollmentTopology(ctx, client, claimResource, claim, rrSetName)
+		if err != nil {
+			endpointErrors = append(endpointErrors, err)
+			continue
+		}
+		if !topology.directAttested {
+			endpointErrors = append(endpointErrors, fmt.Errorf("enrollment endpoint did not attest the current claim for direct topology"))
+		}
+	}
+	if len(endpointErrors) > 0 {
+		return &samEnrollmentDirectTopologyFetchErrors{Errors: endpointErrors}
+	}
+	return nil
 }
 
 // fetchAndPersistAgreedDirectTopology lets an otherwise-degraded RR pair keep
@@ -414,9 +462,98 @@ func (c SAMEnrollmentClientController) refreshDirectTopologyAndPersist(ctx conte
 	}
 	topology, err := c.fetchAgreedDirectTopology(ctx, clients, claimResource, claim, rrSetName)
 	if err != nil {
+		// A route reflector can restart with an empty volatile enrollment
+		// store while its long-lived RRSet is still usable on every leaf. A
+		// direct refresh normally performs GET only so it does not needlessly
+		// rewrite an accepted claim. The RR's identity-aware "accepted client
+		// identity not found" response is the narrow exception: it proves that
+		// this leaf's current claim must be re-admitted before that RR can
+		// project the optional direct topology again. Reuse the normal
+		// all-endpoint admission path rather than retaining a stale direct group
+		// or waiting for the much later RR lease renewal.
+		if samEnrollmentClientReadmissionRequired(err, claimResource) {
+			// fetchAgreedDirectTopology already queried every RR and established
+			// that no replica holds an explicit revoke, so do not issue a redundant
+			// second GET before re-admitting this unchanged claim.
+			return c.joinFetchAndPersist(ctx, spec, claimResource, claim, rrSetName, now, false, false)
+		}
 		return err
 	}
 	return c.persistFetchedSAMEnrollmentTopology(topology, now, rrState.ExpiresAt)
+}
+
+// samEnrollmentClientReadmissionRequired recognizes only the identity-aware
+// 400 returned by a current enrollment server which has lost this leaf's
+// accepted dynamic claim. Keep this narrow: an older RR's ambiguous legacy
+// not-found response, every other request failure, and malformed data retain
+// the RR-only fallback rather than turning uncertainty into a claim rewrite.
+// Every RR is examined first, so an explicit revocation at one endpoint wins
+// over another endpoint's empty volatile store.
+func samEnrollmentClientReadmissionRequired(err error, claimResource api.Resource) bool {
+	claimName := strings.TrimSpace(claimResource.Metadata.Name)
+	if claimName == "" {
+		return false
+	}
+	endpointErrors := []error{err}
+	var aggregate *samEnrollmentDirectTopologyFetchErrors
+	if errors.As(err, &aggregate) {
+		endpointErrors = aggregate.Errors
+	}
+	missing := false
+	claimRef := "SAMEnrollmentClaim/" + claimName
+	for _, endpointErr := range endpointErrors {
+		var apiErr *controlapi.APIError
+		if !errors.As(endpointErr, &apiErr) || apiErr.StatusCode != http.StatusBadRequest {
+			return false
+		}
+		switch strings.TrimSpace(apiErr.Message) {
+		case "bad request: accepted " + claimRef + " " + controlapi.SAMEnrollmentTopologyIdentityAbsentMessage:
+			missing = true
+		case "bad request: accepted " + claimRef + " is revoked":
+			// A revoke tombstone is authoritative even if a different RR
+			// restarted empty. Never turn it into an automatic submit.
+			return false
+		default:
+			return false
+		}
+	}
+	return missing
+}
+
+// samEnrollmentClientDirectAdmissionPermitted is broader than direct-refresh
+// recovery only when the local configuration intentionally changes identity or
+// has never recorded one. A same-identity renewal never accepts an RR that
+// reports a different active identity.
+func samEnrollmentClientDirectAdmissionPermitted(err error, claimResource api.Resource, allowIdentityReplacement bool) bool {
+	claimName := strings.TrimSpace(claimResource.Metadata.Name)
+	if claimName == "" {
+		return false
+	}
+	endpointErrors := []error{err}
+	var aggregate *samEnrollmentDirectTopologyFetchErrors
+	if errors.As(err, &aggregate) {
+		endpointErrors = aggregate.Errors
+	}
+	permitted := false
+	claimRef := "SAMEnrollmentClaim/" + claimName
+	for _, endpointErr := range endpointErrors {
+		var apiErr *controlapi.APIError
+		if !errors.As(endpointErr, &apiErr) || apiErr.StatusCode != http.StatusBadRequest {
+			return false
+		}
+		switch strings.TrimSpace(apiErr.Message) {
+		case "bad request: accepted " + claimRef + " " + controlapi.SAMEnrollmentTopologyIdentityAbsentMessage:
+			permitted = true
+		case "bad request: accepted " + claimRef + " " + controlapi.SAMEnrollmentTopologyIdentityMismatchMessage:
+			if !allowIdentityReplacement {
+				return false
+			}
+			permitted = true
+		default:
+			return false
+		}
+	}
+	return permitted
 }
 
 func (c SAMEnrollmentClientController) fetchAndPersistTopology(ctx context.Context, client SAMEnrollmentJoinClient, claimResource api.Resource, claim api.SAMEnrollmentClaimSpec, rrSetName string, observedAt, expiresAt time.Time) error {
@@ -434,10 +571,16 @@ func (c SAMEnrollmentClientController) fetchAgreedDirectTopology(ctx context.Con
 	var first samEnrollmentFetchedTopology
 	firstSet := false
 	firstDigest := ""
+	var endpointErrors []error
 	for _, client := range clients {
 		topology, err := c.fetchSAMEnrollmentTopology(ctx, client, claimResource, claim, rrSetName)
 		if err != nil {
-			return samEnrollmentFetchedTopology{}, err
+			// Query every configured RR before deciding whether a missing claim
+			// warrants readmission. A later RR can hold an explicit revocation
+			// tombstone; returning at the first missing response would otherwise
+			// allow that tombstone to be overwritten.
+			endpointErrors = append(endpointErrors, err)
+			continue
 		}
 		if !topology.directAttested {
 			return samEnrollmentFetchedTopology{}, fmt.Errorf("enrollment endpoint did not attest the current claim for direct topology")
@@ -456,7 +599,40 @@ func (c SAMEnrollmentClientController) fetchAgreedDirectTopology(ctx context.Con
 			return samEnrollmentFetchedTopology{}, fmt.Errorf("direct topology differs across enrollment endpoints")
 		}
 	}
+	if len(endpointErrors) > 0 {
+		return samEnrollmentFetchedTopology{}, &samEnrollmentDirectTopologyFetchErrors{Errors: endpointErrors}
+	}
 	return first, nil
+}
+
+// samEnrollmentDirectTopologyFetchErrors preserves every endpoint response
+// from a direct refresh. Callers need the complete set to distinguish a
+// recoverable empty RR store from an explicit revocation at another RR.
+type samEnrollmentDirectTopologyFetchErrors struct {
+	Errors []error
+}
+
+func (e *samEnrollmentDirectTopologyFetchErrors) Error() string {
+	if e == nil || len(e.Errors) == 0 {
+		return "direct enrollment topology request failed"
+	}
+	if len(e.Errors) == 1 {
+		return e.Errors[0].Error()
+	}
+	parts := make([]string, 0, len(e.Errors))
+	for _, err := range e.Errors {
+		if err != nil {
+			parts = append(parts, err.Error())
+		}
+	}
+	return "direct enrollment topology requests failed: " + strings.Join(parts, "; ")
+}
+
+func (e *samEnrollmentDirectTopologyFetchErrors) Unwrap() []error {
+	if e == nil {
+		return nil
+	}
+	return e.Errors
 }
 
 func (c SAMEnrollmentClientController) fetchSAMEnrollmentTopology(ctx context.Context, client SAMEnrollmentJoinClient, claimResource api.Resource, claim api.SAMEnrollmentClaimSpec, rrSetName string) (samEnrollmentFetchedTopology, error) {
@@ -467,9 +643,10 @@ func (c SAMEnrollmentClientController) fetchSAMEnrollmentTopology(ctx context.Co
 	requestCtx, cancel := c.enrollmentRequestContext(ctx)
 	defer cancel()
 	topology, err := client.GetSAMEnrollmentTopology(requestCtx, controlapi.SAMEnrollmentTopologyGetRequest{
-		Name:        rrSetName,
-		ClaimRef:    "SAMEnrollmentClaim/" + claimResource.Metadata.Name,
-		ClaimDigest: claimDigest,
+		Name:                rrSetName,
+		ClaimRef:            "SAMEnrollmentClaim/" + claimResource.Metadata.Name,
+		ClaimDigest:         claimDigest,
+		ClaimIdentityDigest: samenrollment.ClientIdentityDigest(claim),
 	})
 	if err != nil {
 		return samEnrollmentFetchedTopology{}, err

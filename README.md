@@ -107,12 +107,16 @@ The project focuses on a few independent strengths:
   source as stale with an operator warning. Enrollment is separate: an
   admitted leaf fetches a policy-scoped runtime `SAMRRSet`, never a statically
   authored RR topology. A policy can additionally offer an **optional direct
-  leaf path**. routerd tries that path only for signed, opted-in leaves, gives
-  it a higher BGP local preference while it is established, and keeps the RR
-  peers as the safe fallback when the direct path is absent or unreachable.
-  Every configured RR must attest the current signed claim before routerd
-  enables that higher-preference path; an older or stale RR still supplies the
-  ordinary RR fallback, never an unverified direct peer.
+  leaf path**. routerd tries that path only for client-authored, opted-in
+  leaves, gives it a higher BGP local preference while it is established, and
+  keeps the RR peers as the safe fallback when the direct path is absent or
+  unreachable. `joinTokenFrom` authenticates that client identity; a policy
+  without it is a trusted control-plane deployment. Every configured RR must
+  attest the same current client identity before routerd enables the
+  higher-preference path. After a clean RR boot, only the explicit
+  identity-aware "not admitted" response can trigger automatic re-admission;
+  a revoked claim, different active identity, old RR, or uncertainty retains
+  the ordinary RR fallback, never an unverified direct peer.
   Static identity/topology comes from `SAMNodeSet`, while
   each MobilityPool supplies the local `/32` and capture intent. Startup
   fencing is readiness-first but bounded, and

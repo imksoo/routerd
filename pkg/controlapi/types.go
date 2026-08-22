@@ -14,6 +14,14 @@ import (
 
 const APIVersion = "control.routerd.net/v1alpha1"
 
+// Enrollment topology identity messages are intentionally narrow protocol
+// markers. SAMEnrollmentClient uses them to distinguish an empty current RR
+// admission store from an active but different client identity.
+const (
+	SAMEnrollmentTopologyIdentityAbsentMessage   = "client identity not found"
+	SAMEnrollmentTopologyIdentityMismatchMessage = "client identity differs from active claim"
+)
+
 type ObjectMeta struct {
 	Name string `json:"name" yaml:"name"`
 }
@@ -201,10 +209,15 @@ type SAMEnrollmentClaimRevokeResult struct {
 type SAMEnrollmentTopologyGetRequest struct {
 	Name     string `json:"name" yaml:"name"`
 	ClaimRef string `json:"claimRef" yaml:"claimRef"`
-	// ClaimDigest is the caller's identity for its current signed claim. It is
+	// ClaimDigest is the caller's identity for its current submitted claim. It is
 	// optional for an RR-only compatibility response, but an RR must omit any
 	// direct peer group unless it matches its active accepted claim.
 	ClaimDigest string `json:"claimDigest,omitempty" yaml:"claimDigest,omitempty"`
+	// ClaimIdentityDigest identifies only client-authored claim material. With a
+	// join-token policy, that material is authenticated by JoinHMAC. It lets an
+	// RR distinguish an explicit revoke of this exact identity from a tombstone
+	// for an older claim with the same resource name before admission.
+	ClaimIdentityDigest string `json:"claimIdentityDigest,omitempty" yaml:"claimIdentityDigest,omitempty"`
 }
 
 type SAMEnrollmentTopologyGetResult struct {

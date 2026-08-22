@@ -11,6 +11,15 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修复
+
+- Cloud SAM direct leaf 现在只会在一个 RR 在 clean boot 后明确报告丢失当前 client identity、且其他
+  RR 都确认该 identity 或返回相同的明确缺失响应时，才把 claim 重新提交给所有 RR。这样无需等待很长的
+  RR lease 到期即可恢复可选的 direct mesh；旧版/混合 RR、revoke 或其他 refresh 失败仍会移除 direct
+  group 并保留安全的 RR fallback。
+- 明确被 revoke 的 enrollment claim 不会被当作 RR 状态丢失处理。direct leaf 不会自动重新提交它；
+  在 claim 完成 rotate 前，RR 会拒绝重放已 revoke 的 client identity。
+
 ## v20260822.2024
 
 ### 修复

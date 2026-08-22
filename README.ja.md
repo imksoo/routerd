@@ -104,13 +104,15 @@ routerd は、次の独立した特徴を大切にします。
   stale と warning 付きで表示しつつ、生成済み transport / BGP artifact を維持します。
   enrollment は別経路です。受理済み leaf は policy-scoped な runtime `SAMRRSet` を
   取得し、静的な RR topology は author しません。policy は任意で **leaf 間の直接経路**
-  も提供できます。routerd は署名済みで opt-in した leaf だけにこれを試行し、確立中は
+  も提供できます。routerd は client が作成して opt-in した leaf だけにこれを試行し、確立中は
   BGP local preference を高くしますが、直接経路が欠ける・届かない場合も RR peer を
-  安全な fallback として残します。静的な identity/topology は
+  安全な fallback として残します。`joinTokenFrom` がある policy ではその client identity を
+  認証します。ない policy は trusted control-plane として扱います。direct 経路を有効にするには、
+  設定したすべての RR が同じ現在の client identity を確認する必要があります。RR を clean boot
+  した後も、identity-aware な「未受理」応答だけが自動再受理を許可します。revoke 済み claim、
+  別の active identity、古い RR、不確実な応答では通常の RR fallback を維持し、未確認 direct peer
+  は返しません。静的な identity/topology は
   `SAMNodeSet` が持ち、各 MobilityPool はローカルの `/32` と capture intent を持ちます。
-  direct 経路を有効にするには、設定したすべての RR が現在の署名済み claim を確認する
-  必要があります。古い・遅れた RR は通常の RR fallback を返せますが、未確認の direct peer
-  は返せません。
   startup fence は readiness 優先ですが上限付きで、明示的な
   allowed prefix がない RR-client import admission は宣言済み MobilityPool prefix
   を既定値にします。

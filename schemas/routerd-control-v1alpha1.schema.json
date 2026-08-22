@@ -2137,6 +2137,9 @@
         "claimDigest": {
           "type": "string"
         },
+        "claimIdentityDigest": {
+          "type": "string"
+        },
         "claimRef": {
           "type": "string"
         },

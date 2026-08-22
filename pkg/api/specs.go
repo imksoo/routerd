@@ -772,9 +772,9 @@ type SAMPeerGroupSpec struct {
 	TransportFingerprint string        `yaml:"transportFingerprint,omitempty" json:"transportFingerprint,omitempty"`
 	Nodes                []SAMNodeSpec `yaml:"nodes" json:"nodes"`
 	// OwnedPrefixesByNode is present only on an enrollment direct-mesh group.
-	// Each non-empty entry is copied from the admitted, signed claim for that
+	// Each non-empty entry is copied from the admitted claim for that
 	// node and binds its direct BGP session to exactly those IPv4 /32
-	// advertisements. A missing or empty entry means that the signed leaf owns
+	// advertisements. A missing or empty entry means that the admitted leaf owns
 	// no mobility address right now: its direct transport session remains
 	// eligible, but it must not import a mobility route. This prevents a
 	// reachable leaf from using direct's higher LOCAL_PREF to advertise a
@@ -855,7 +855,7 @@ type SAMEnrollmentClaimSpec struct {
 	TunnelAddress string                          `yaml:"tunnelAddress" json:"tunnelAddress"`
 	Endpoint      string                          `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
 	WireGuard     SAMEnrollmentClaimWireGuardSpec `yaml:"wireGuard,omitempty" json:"wireGuard,omitempty"`
-	// DirectMesh opts this signed claim into the policy's direct-leaf snapshot.
+	// DirectMesh opts this claim into the policy's direct-leaf snapshot.
 	// A false value keeps this leaf on RR peers only.
 	DirectMesh bool                           `yaml:"directMesh,omitempty" json:"directMesh,omitempty"`
 	Mobility   SAMEnrollmentClaimMobilitySpec `yaml:"mobility,omitempty" json:"mobility,omitempty"`

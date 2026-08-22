@@ -673,7 +673,7 @@ func TestSAMTransportProfileDirectMeshKeepsEmptyOwnershipLeafAndRRFallback(t *te
 	}
 	directSpec.OwnedPrefixesByNode = map[string][]string{
 		"leaf-owned": {"10.77.60.32/32"},
-		// Deliberately omit leaf-empty: an accepted signed claim with no
+		// Deliberately omit leaf-empty: an admitted claim with no
 		// ownedAddresses must not need a fabricated address to form transport.
 	}
 	directGroup.Spec = directSpec

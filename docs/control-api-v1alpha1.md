@@ -34,6 +34,31 @@ state. Highlights:
 | `GET /api/control.routerd.net/v1alpha1/firewall-logs` | firewall log entries |
 | `POST /api/control.routerd.net/v1alpha1/dhcp-lease-event` | local dnsmasq lease-hook event |
 
+## SAM enrollment endpoints
+
+Dynamic SAM enrollment uses the same API handler, but an RR exposes these
+endpoints only through the explicitly configured authenticated listener or
+privileged local socket described by the enrollment runbook. They are not a
+general remote-management API.
+
+| Method and path | Purpose |
+| --- | --- |
+| `POST /api/control.routerd.net/v1alpha1/sam-enrollment-claims` | Admit one leaf's client-authored enrollment claim. |
+| `POST /api/control.routerd.net/v1alpha1/sam-enrollment-claims/{name}/revoke` | Revoke an accepted claim; use it for deliberate operator action, not recovery. |
+| `GET /api/control.routerd.net/v1alpha1/sam-enrollment-topologies/{name}?claim=...&claimDigest=...&claimIdentityDigest=...` | Fetch the named RRSet and, only when it is attested, the optional direct peer group. |
+
+`claimIdentityDigest` is a hash of only client-authored claim material. With a
+`joinTokenFrom` policy, that material is authenticated by the join HMAC; without
+one, the deployment is a trusted control-plane boundary. A current RR uses the
+digest to distinguish an explicit revoke, an empty clean-boot admission store,
+and a different active identity. `SAMEnrollmentClient` treats identity-aware
+absence as permission to re-submit its current direct claim only after every
+bootstrap RR has been checked. A different active identity is replaceable only
+for initial admission or a local claim change, never a periodic renewal. A
+missing digest, an old/mixed RR, a revoke, or any request failure must keep the
+RR-only fallback; callers should use the client/controller rather than
+interpreting these responses themselves.
+
 ## DHCP lease hook
 
 `POST /api/control.routerd.net/v1alpha1/dhcp-lease-event` is a privileged,

@@ -205,18 +205,31 @@ transitions and backend health.
 
 ### 5.3 Dynamic SAM topology keeps a safe fallback
 
-Dynamic SAM enrollment is a functional-core boundary: an RR admits a signed
-leaf claim, projects a typed `SAMRRSet`, and a leaf's existing transport and
+Dynamic SAM enrollment is a functional-core boundary: an RR admits a
+client-authored leaf claim (authenticated by `joinTokenFrom` when configured),
+projects a typed `SAMRRSet`, and a leaf's existing transport and
 BGP controllers apply that snapshot. A policy may bundle an optional direct
 leaf `SAMPeerGroup` in the same dynamic-config part. This does not replace the
 RR topology. The leaf retains its RR peers, and direct imported routes have a
 higher local preference only while their direct BGP session is established.
 Missing, incompatible, or unreachable direct peers therefore fall back to the
 RR path without a special recovery controller or a destructive topology update.
-For direct topology, the leaf sends a digest of its current signed claim and
-requires every configured RR to echo that same accepted-claim digest and the
-same peer group. A stale or older RR can still refresh the RRSet, but cannot
-authorize the higher-preference direct path.
+
+For direct topology, the leaf sends a digest of its current claim and requires
+every configured RR to echo that same accepted-claim digest and the same peer
+group. It also sends an identity digest that covers only client-authored claim
+material, not RR-owned expiry or revocation fields. A `joinTokenFrom` policy
+authenticates that material with its join HMAC; a token-less policy is trusted
+control-plane input, not cryptographic admission. On a direct-refresh GET, an
+RR that lost its volatile admission row can explicitly report that this client
+identity is absent. The leaf re-submits only when every other RR either still
+attests that identity or gives the same identity-aware absence response. A
+revoked identity, a different active identity, an unreachable or ambiguous
+legacy RR, or any mismatched topology leaves the RR-only fallback in place.
+Revoked client identities are retained in a durable identity ledger, so
+replacing an expired dynamic row cannot make an old identity replayable. A
+stale or older RR can still refresh the RRSet, but cannot authorize the
+higher-preference direct path.
 
 ### 5.4 Daemon contract
 

@@ -80,6 +80,7 @@ func TestControlSchemasCoverSAMEnrollmentTopology(t *testing.T) {
 		"\"operationId\":\"getSAMEnrollmentTopology\"",
 		"\"name\":\"claim\"",
 		"\"name\":\"claimDigest\"",
+		"\"name\":\"claimIdentityDigest\"",
 		"\"SAMEnrollmentClaimSubmitRequest\"",
 		"\"SAMEnrollmentClaimSubmitResult\"",
 		"\"SAMEnrollmentClaimRevokeRequest\"",

@@ -12,6 +12,19 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Cloud SAM direct leaves now re-admit their current enrollment claim to every
+  route reflector after one explicitly reports that this client identity
+  was lost at clean boot and every other RR either attests it or reports the
+  same identity-aware absence. This restores the optional direct mesh without
+  waiting for the long RR lease to expire. An old/mixed RR, revocation, or any
+  other refresh failure still withdraws the direct group and retains the safe
+  RR fallback.
+- An explicit enrollment revocation is not treated as a lost RR state. Direct
+  leaves do not re-submit it automatically, and the RR rejects replay of the
+  revoked client identity until the claim is rotated.
+
 ## v20260822.2024
 
 ### Fixed
@@ -124,7 +137,7 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 ### Changed
 
 - Cloud SAM direct leaf-mesh admission now requires every configured route
-  reflector to attest the currently accepted signed enrollment claim and to
+  reflector to attest the currently accepted enrollment claim and to
   return the identical direct topology. The control API carries an optional
   claim digest for that attestation. An older leaf or reflector therefore uses
   the existing RR-only path during a rolling upgrade instead of accidentally
