@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260822.1210
+
 ### 修正
 
 - `nextHopRewrite: unchanged` が明示された古い direct profile でも安全に起動し、YAML を

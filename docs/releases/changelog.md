@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260822.1210
+
 ### Fixed
 
 - Direct profiles with a legacy explicit `nextHopRewrite: unchanged` now start

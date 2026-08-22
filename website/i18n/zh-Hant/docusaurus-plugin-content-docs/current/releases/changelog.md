@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260822.1210
+
 ### 修正
 
 - 舊 direct profile 即使明確使用 `nextHopRewrite: unchanged` 也能安全啟動；在更新 YAML 前，
