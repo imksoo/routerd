@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260822.2235
+
 ### 修复
 
 - Cloud SAM direct leaf 现在只会在一个 RR 在 clean boot 后明确报告丢失当前 client identity、且其他

@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260822.2235
+
 ### Fixed
 
 - Cloud SAM direct leaves now re-admit their current enrollment claim to every

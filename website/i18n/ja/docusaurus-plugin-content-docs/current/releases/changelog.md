@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260822.2235
+
 ### 修正
 
 - Cloud SAM の direct leaf は、clean boot 後に RR の一つが現在の client identity を失ったことを
