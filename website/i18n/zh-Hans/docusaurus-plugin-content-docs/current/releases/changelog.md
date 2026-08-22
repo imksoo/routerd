@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260822.1308
+
 ### 修复
 
 - BGP FIB 现在会先汇合同一 prefix 在流中到达的全部路径，再比较路径优先级。leaf 恢复后，

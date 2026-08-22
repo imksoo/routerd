@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260822.1308
+
 ### Fixed
 
 - BGP FIB selection now groups every streamed alternative for a prefix before

@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260822.1308
+
 ### 修正
 
 - BGP FIB へ入れる経路は、同じ prefix に対してストリームで届くすべての経路候補を
