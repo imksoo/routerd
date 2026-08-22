@@ -11,6 +11,12 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- `routerd-bgp` 現在會限制 SIGTERM 時本機 control socket 的排空時間與 GoBGP 的停止
+  時間。即使仍有卡住的 request 或 peer，daemon 停止也不會無限期阻塞主機關機；超過上限後
+  會關閉自己擁有的 socket 並結束。
+
 ## v20260822.2235
 
 ### 修正

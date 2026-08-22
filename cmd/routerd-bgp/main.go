@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/google/uuid"
 	gobgpapi "github.com/osrg/gobgp/v4/api"
@@ -35,6 +36,14 @@ import (
 const defaultSocketPath = "/run/routerd/bgp/gobgp.sock"
 const defaultControlSocketPath = "/run/routerd/bgp/control.sock"
 const defaultStatePath = "/var/lib/routerd/bgp/applied.json"
+
+// Keep shutdown bounded even when a control request or a GoBGP peer goroutine
+// does not drain.  The service manager can then complete a host power-down
+// without waiting for its much longer default stop timeout.
+const (
+	defaultControlShutdownTimeout = 5 * time.Second
+	defaultBGPShutdownTimeout     = 10 * time.Second
+)
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -98,11 +107,60 @@ func run(args []string) error {
 	defer stop()
 	<-ctx.Done()
 	logger.Info("routerd-bgp daemon stopping")
-	_ = control.Shutdown(context.Background())
-	server.Stop()
+	stopBGPDaemon(control, server.Stop, logger, defaultControlShutdownTimeout, defaultBGPShutdownTimeout)
 	_ = os.Remove(*socketPath)
 	_ = os.Remove(*controlSocketPath)
 	return nil
+}
+
+type bgpControlShutdowner interface {
+	Shutdown(context.Context) error
+	Close() error
+}
+
+// stopBGPDaemon gives the control HTTP server a brief graceful drain, then
+// gives GoBGP a separate bounded chance to withdraw its sessions.  Both
+// dependencies have historically exposed unbounded stop operations.  Returning
+// after the deadline is safe here: process exit closes the remaining sockets,
+// and the next daemon start removes its owned Unix sockets before listening.
+func stopBGPDaemon(control bgpControlShutdowner, stop func(), logger *slog.Logger, controlTimeout, bgpTimeout time.Duration) {
+	if controlTimeout <= 0 {
+		controlTimeout = defaultControlShutdownTimeout
+	}
+	if bgpTimeout <= 0 {
+		bgpTimeout = defaultBGPShutdownTimeout
+	}
+	if control != nil {
+		controlCtx, cancel := context.WithTimeout(context.Background(), controlTimeout)
+		err := control.Shutdown(controlCtx)
+		cancel()
+		if err != nil {
+			if logger != nil {
+				logger.Warn("routerd-bgp control socket did not drain before shutdown deadline", "error", err)
+			}
+			// Shutdown leaves active requests alive on a deadline.  Close makes
+			// the stop boundary explicit rather than carrying those requests into
+			// the remaining BGP shutdown window.
+			_ = control.Close()
+		}
+	}
+	if stop == nil {
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		stop()
+		close(done)
+	}()
+	timer := time.NewTimer(bgpTimeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		if logger != nil {
+			logger.Warn("routerd-bgp GoBGP shutdown exceeded deadline; exiting process", "timeout", bgpTimeout)
+		}
+	}
 }
 
 type pathServer interface {

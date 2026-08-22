@@ -12,6 +12,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- `routerd-bgp` now bounds both its local control-socket drain and GoBGP stop
+  operation during SIGTERM. A stuck request or peer shutdown can no longer hold
+  a host power-down behind an unbounded daemon shutdown; the process closes its
+  owned sockets and exits after the bounded grace windows.
+
 ## v20260822.2235
 
 ### Fixed

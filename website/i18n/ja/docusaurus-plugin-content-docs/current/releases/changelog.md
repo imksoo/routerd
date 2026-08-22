@@ -11,6 +11,12 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- `routerd-bgp` は SIGTERM 時の local control socket drain と GoBGP 停止の両方に
+  明示的な上限時間を設けました。停止中の request や peer が残っても daemon 停止が
+  無期限に host power-down を止めず、上限後は所有 socket を閉じて終了します。
+
 ## v20260822.2235
 
 ### 修正

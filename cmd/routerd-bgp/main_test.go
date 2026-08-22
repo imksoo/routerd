@@ -35,6 +35,56 @@ type fakePathServer struct {
 	observedErr       error
 }
 
+type blockingControlShutdowner struct {
+	closed chan struct{}
+}
+
+func (s *blockingControlShutdowner) Shutdown(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (s *blockingControlShutdowner) Close() error {
+	select {
+	case <-s.closed:
+	default:
+		close(s.closed)
+	}
+	return nil
+}
+
+func TestStopBGPDaemonBoundsBlockingControlAndGoBGP(t *testing.T) {
+	control := &blockingControlShutdowner{closed: make(chan struct{})}
+	stopStarted := make(chan struct{})
+	releaseStop := make(chan struct{})
+	stopDone := make(chan struct{})
+	start := time.Now()
+	stopBGPDaemon(control, func() {
+		close(stopStarted)
+		<-releaseStop
+		close(stopDone)
+	}, nil, 15*time.Millisecond, 15*time.Millisecond)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("bounded shutdown took %s, want < 1s", elapsed)
+	}
+	select {
+	case <-control.closed:
+	default:
+		t.Fatal("control server was not force-closed after its drain deadline")
+	}
+	select {
+	case <-stopStarted:
+	default:
+		t.Fatal("GoBGP stop was not started")
+	}
+	close(releaseStop)
+	select {
+	case <-stopDone:
+	case <-time.After(time.Second):
+		t.Fatal("blocked GoBGP stop did not finish after release")
+	}
+}
+
 func (s *fakePathServer) AddPath(_ context.Context, req *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error) {
 	if s.addStarted != nil {
 		select {
